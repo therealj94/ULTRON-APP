@@ -1897,8 +1897,17 @@ function leerPeticionVoz(req: express.Request) {
     privado: fuente.privado === true || fuente.privado === '1' || fuente.privado === 'true',
     // La app nueva pide los tiempos por letra para mover la boca a tiempo (sin ellos, la de antes).
     tiempos: String(fuente.tiempos || '') === '1',
+    /*
+     * La mesa web habla frase a frase: lo dicho justo antes y lo que viene hacen que ElevenLabs no
+     * arranque cada frase con la entonación de un comienzo (como ya hace la voz de Dr Electrum).
+     */
+    previo: vecinoDeVoz(fuente.previo, 'final'),
+    siguiente: vecinoDeVoz(fuente.siguiente, 'comienzo'),
   };
 }
+
+/** Lo de antes (su final) o lo de después (su comienzo): solo un texto, y corto (ElevenLabs usa 300). */
+const vecinoDeVoz = (v: unknown, lado: 'final' | 'comienzo') => (typeof v === 'string' && v.trim() ? (lado === 'final' ? v.slice(-400) : v.slice(0, 400)) : undefined);
 
 /**
  * A nombre de quién se cuenta la voz de ElevenLabs de esta petición, si es de un MIEMBRO (server/
@@ -1916,7 +1925,7 @@ async function responderVoz(req: express.Request, res: express.Response) {
   // del servidor propio (Voicebox), que no gasta créditos.
   const cuenta = cuentaDeVozMiembro(req);
   const sinEleven = !!cuenta && restanteVozMs(cuenta) <= 0;
-  const out = await hablar({ texto: p.texto, emocion: p.emocion, performance: p.performance, avatar: p.avatar, idioma: p.idioma, sinEleven, tiempos: p.tiempos, ...(p.privado ? { sinCache: true, privado: true } : {}) });
+  const out = await hablar({ texto: p.texto, emocion: p.emocion, performance: p.performance, avatar: p.avatar, idioma: p.idioma, previo: p.previo, siguiente: p.siguiente, sinEleven, tiempos: p.tiempos, ...(p.privado ? { sinCache: true, privado: true } : {}) });
   if (!out) return res.status(503).json({ error: 'Voz no disponible (Voicebox sin respuesta)', honesto: true });
   if (cuenta && !out.cache && out.motor.startsWith('elevenlabs')) anotarVoz(cuenta, msDeHabla(p.texto));
   if (sinEleven) res.setHeader('X-Ultron-Tope-Voz', '1');
@@ -1944,7 +1953,7 @@ async function responderVozVivo(req: express.Request, res: express.Response) {
   const sinEleven = !!cuenta && restanteVozMs(cuenta) <= 0;
   if (p.tiempos || p.privado || sinEleven || p.performance !== 'speak') return responderVoz(req, res);
   try {
-    const vivo = await abrirVozEnVivo({ texto: p.texto, emocion: p.emocion, plataforma: 'ultron', idioma: p.idioma, avatar: p.avatar });
+    const vivo = await abrirVozEnVivo({ texto: p.texto, emocion: p.emocion, plataforma: 'ultron', idioma: p.idioma, avatar: p.avatar, previo: p.previo, siguiente: p.siguiente });
     if (!vivo) return responderVoz(req, res);
     if (vivo.tipo === 'cache') {
       res.setHeader('Content-Type', vivo.habla.contentType);

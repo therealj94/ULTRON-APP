@@ -6,7 +6,7 @@ import { caraDeTexto } from './02-cara/emocion';
 import { DockDrawer, SettingsSheet, nombreModo, Arranque, AccesoModal, UltronVaultModal, VisionOverlay, PhotoCaptureModal, CameraCountdownModal, MenuMas } from './07-pantallas';
 import type { Escena } from './02-cara/vision/escena';
 import { playSfx } from './03-voz/audio';
-import { hablar, cantar, callar, precargar, setVozActiva, type Dicho } from './03-voz/hablar';
+import { hablar, cantar, callar, precargar, setVozActiva, type Dicho, type Vecinos } from './03-voz/hablar';
 import { cortarFrases } from './03-voz/frases';
 import { onLip, desbloquearAudio, audioDesbloqueado } from './03-voz/player';
 import { clipDeEmocion, clipDeTexto, saludoDe, saludoHora, siguienteChiste } from './03-voz/banco';
@@ -207,7 +207,7 @@ export default function App() {
   // ---- HABLAR: una sola función. Emoción → cara + voz.
   const hablando = useRef<Dicho | null>(null);
   const decir = useCallback(
-    (texto: string, o: { emocion?: Emocion; caraFinal?: FaceState; sinBurbuja?: boolean } = {}) => {
+    (texto: string, o: { emocion?: Emocion; caraFinal?: FaceState; sinBurbuja?: boolean } & Vecinos = {}) => {
       const t = String(texto || '').trim();
       if (!t) return { fin: Promise.resolve() };
       // Respuesta a un pedido de la persona (no un saludo ni una reacción): queda en la conversación,
@@ -219,7 +219,7 @@ export default function App() {
       }
       const e = o.emocion || 'neutral';
       if (e !== 'neutral') setEmocion(e);
-      const d = hablar(t, { emocion: e });
+      const d = hablar(t, { emocion: e, previo: o.previo, siguiente: o.siguiente });
       hablando.current = d;
       const caraHabla: FaceState = d.clip?.cara || (e === 'canto' ? 'SING' : e === 'oracion' ? 'PRAY' : e === 'risa' ? 'LAUGH' : 'SPEAKING');
       d.inicio.then(() => {
@@ -266,21 +266,25 @@ export default function App() {
     callar();
     hablando.current = null;
     colaRef.current = [];
+    previoRef.current = '';
     setFace('IDLE');
   }, []);
 
   // ---- Cola de frases (el turno llega en stream; se habla frase a frase, sin pisarse)
   const colaRef = useRef<Array<{ texto: string; emocion: Emocion }>>([]);
   const colaActiva = useRef(false);
+  /** La última frase que la cola mandó a decir en este turno: la voz de la siguiente se enlaza con ella. */
+  const previoRef = useRef('');
   const bombear = useCallback(async () => {
     if (colaActiva.current) return;
     colaActiva.current = true;
     while (colaRef.current.length) {
       const item = colaRef.current.shift()!;
-      const d = decir(item.texto, { emocion: item.emocion, sinBurbuja: false });
-      // La que sigue se pide mientras esta suena: entre frase y frase no queda el silencio de sintetizar.
       const siguiente = colaRef.current[0];
-      if (siguiente) precargar(siguiente.texto, { emocion: siguiente.emocion });
+      const d = decir(item.texto, { emocion: item.emocion, sinBurbuja: false, previo: previoRef.current, siguiente: siguiente?.texto });
+      previoRef.current = item.texto;
+      // La que sigue se pide mientras esta suena: entre frase y frase no queda el silencio de sintetizar.
+      if (siguiente) precargar(siguiente.texto, { emocion: siguiente.emocion, previo: item.texto, siguiente: colaRef.current[1]?.texto });
       await d.fin;
     }
     colaActiva.current = false;
