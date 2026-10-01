@@ -1965,6 +1965,32 @@ prueba('ciclo: la máquina entera — REPOSO → SONANDO → CONECTANDO → EN_L
   assert.equal(c.usadoMs(), 90_000, 'solo se cobra lo conectado');
 });
 
+prueba('ciclo: «Hablar» abre la conversación al instante — sin timbre ni pantalla entrante (José 1-oct)', () => {
+  const { c, tipos2 } = cicloDePrueba();
+  const vistos = [];
+  c.suscribir((e) => vistos.push(e));
+  assert.deepEqual(tipos2(c.hablarYa()), ['contestada', 'abrir'], 'nada de timbre');
+  assert.equal(c.estado(), 'conectando');
+  assert.deepEqual(vistos, ['conectando'], 'nunca pasa por «sonando»');
+  assert.deepEqual(c.conectado(), [], 'el saludo es el first_message del agente');
+  assert.equal(c.estado(), 'en_llamada');
+  assert.deepEqual(c.hablarYa(), [], 'ya hablando, no abre otra');
+  // Si algo ya sonaba (un recordatorio), «Hablar» lo contesta.
+  const b = cicloDePrueba();
+  b.c.llamar(RECL);
+  assert.deepEqual(b.tipos2(b.c.hablarYa()), ['timbre', 'contestada', 'abrir']);
+  assert.deepEqual(b.c.conectado(), [{ tipo: 'primerMensaje', texto: '[[recordatorio]] Llamar a Beto' }]);
+  // Sin minutos de hoy: lo dice la mesa, no se abre nada.
+  const d = cicloDePrueba();
+  d.c.hablarYa();
+  d.c.conectado();
+  d.c.fallo('HTTP 429 · tope de voz');
+  d.c.listo();
+  assert.equal(d.c.llamadaDisponible(), false);
+  assert.deepEqual(d.c.hablarYa(), [{ tipo: 'alNativo', texto: null, motivo: 'tope' }]);
+  assert.equal(d.c.estado(), 'reposo');
+});
+
 prueba('ciclo: rechazar → RECHAZADA; no contestar en 60 s → PERDIDA; «llámame» en llamada no suena otra', () => {
   const a = cicloDePrueba();
   a.c.llamar({ tipo: 'llamame' });

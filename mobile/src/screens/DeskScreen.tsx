@@ -1603,7 +1603,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const toggleConversar = () => {
     void haptic('medium');
     setMenuOpen(false);
-    // En llamada, cuelga; sonando, rechaza; si no, que el avatar llame (la pantalla entrante).
+    // En llamada, cuelga; sonando, rechaza; si no, la conversación se abre al instante (sin timbre).
     voz.alternar();
   };
 

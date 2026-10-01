@@ -312,6 +312,26 @@ export class CicloLlamada {
     return [{ tipo: 'timbre', on: true }];
   }
 
+  /**
+   * «Hablar» (el botón de la mesa): la persona quiere conversar YA, como el modo voz de ChatGPT. No suena
+   * nada ni sale la pantalla de llamada entrante: de REPOSO a CONECTANDO de una vez (José 1-oct: «al
+   * instante»). Lo que sí suena es un recordatorio, porque ahí llama el avatar (llamar). Si algo ya está
+   * sonando, es contestarlo; con la conversación abierta, no hace nada.
+   */
+  hablarYa(): EfectoCiclo[] {
+    if (this.e === 'sonando') return this.contestar();
+    if (this.sesionViva()) return [];
+    if (!this.llamadaDisponible()) return [{ tipo: 'alNativo', texto: null, motivo: 'tope' }];
+    const origen: OrigenLlamada = { tipo: 'llamame' };
+    this.origen_ = origen;
+    this.motivo_ = null;
+    this.conectadaDesde = 0;
+    this.agenteHablando = false;
+    this.preguntado = 0;
+    this.ir('conectando');
+    return [{ tipo: 'contestada', origen }, { tipo: 'abrir' }];
+  }
+
   /** Contestó (el botón de la pantalla o el del aviso). */
   contestar(): EfectoCiclo[] {
     if (this.e !== 'sonando' || !this.origen_) return [];

@@ -87,7 +87,7 @@ export type ApiVoz = {
   iniciar: () => boolean;
   /** Colgar la llamada. */
   terminar: () => void;
-  /** En llamada, cuelga; si no, que llame. */
+  /** En llamada, cuelga; sonando, rechaza; si no, abre la conversación al instante. */
   alternar: () => void;
   /** En llamada: micrófono y voz apagados (true) o de vuelta (false). Fuera de una llamada no hace nada. */
   silenciar: (valor: boolean) => void;
@@ -355,15 +355,21 @@ export function VozProvider({ children, conCompanera = true }: Props) {
   precalentarRef.current = precalentar;
 
   /** «Llámame» (la mesa, la hoja «Más», el atajo, la orden del servidor): suena la llamada del avatar. */
-  const llamame = useCallback((): boolean => {
+  /** «Hablar» de la mesa: la conversación se abre ya, sin sonar (ciclo.hablarYa). */
+  const hablarYa = useCallback((): boolean => {
     if (control.vista().suspendida) {
-      miga('llamada del avatar: hay otra llamada, no suena');
+      miga('hablar: hay otra llamada, no se abre');
       return false;
     }
-    const antes = ciclo.estado();
-    ejecutar(ciclo.llamar({ tipo: 'llamame' }));
-    return ciclo.estado() === 'sonando' || antes !== 'reposo';
+    // La mesa se calla: desde aquí habla la conversación.
+    void stopSpeaking();
+    const ef = ciclo.hablarYa();
+    ejecutar(ef);
+    miga('hablar: conversación al instante');
+    return ef.some((e) => e.tipo === 'abrir');
   }, [control, ciclo, ejecutar]);
+  // «Llámame» dicho en la mesa también abre al instante: suena solo lo que tiene hora (un recordatorio).
+  const llamame = hablarYa;
   const llamameRef = useRef(llamame);
   llamameRef.current = llamame;
 
@@ -420,7 +426,7 @@ export function VozProvider({ children, conCompanera = true }: Props) {
       control.perfil(p.avatar, p.idioma);
     });
     const offAccion = escuchar('accion', (a) => {
-      // «Llámame» que resolvió el servidor (el camino rápido o el cerebro): suena la llamada del avatar.
+      // «Llámame» que resolvió el servidor (el camino rápido o el cerebro): la conversación se abre ya.
       if (a.tipo === 'llamame') {
         const ok = llamameRef.current();
         emitir('hecho', { accion: a, ok, ...(ok ? {} : { detalle: tr('Ahora no puedo llamarte: hay otra llamada.', "I can't call you right now: there's another call.") }) });
@@ -656,7 +662,8 @@ export function VozProvider({ children, conCompanera = true }: Props) {
       minimizar: (si) => setMinimizada(si && llamadaActiva(ciclo.estado())),
       iniciar: llamame,
       terminar: colgar,
-      alternar: () => (llamadaActiva(ciclo.estado()) ? (ciclo.estado() === 'sonando' ? ejecutar(ciclo.rechazar()) : colgar()) : void llamame()),
+      // «Hablar»: abre la conversación al instante (sin timbre). En llamada, cuelga; sonando, rechaza.
+      alternar: () => (llamadaActiva(ciclo.estado()) ? (ciclo.estado() === 'sonando' ? ejecutar(ciclo.rechazar()) : colgar()) : void hablarYa()),
       silenciar: (v) => {
         const e = ciclo.estado();
         if (v ? e === 'en_llamada' : e === 'silenciado') ejecutar(ciclo.dobleToque());
@@ -685,7 +692,7 @@ export function VozProvider({ children, conCompanera = true }: Props) {
         void speak(texto, { onAudioStart: () => pauseMicForTts(true), onEnd: () => pauseMicForTts(false) });
       },
     };
-  }, [vista, control, precalentar, estadoCiclo, ciclo, ejecutar, usadoHoyMs, nombreLlamada, llamadaLista, minimizada, altavoz, llamame]);
+  }, [vista, control, precalentar, estadoCiclo, ciclo, ejecutar, usadoHoyMs, nombreLlamada, llamadaLista, minimizada, altavoz, llamame, hablarYa]);
 
   // Llamada minimizada: la app baja lo que ocupa la píldora (las pantallas leen el borde de arriba
   // con useSafeAreaInsets). Fuera de un SafeAreaProvider se usan los bordes de la ventana.
