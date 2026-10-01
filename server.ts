@@ -2605,7 +2605,12 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
 
   // El system es solo lo fijo; lo del turno (hora, app, agente) va en el mensaje de la persona junto a
   // los HECHOS (mensajesQwen): así el nodo reutiliza lo ya leído (server/prompt-turno.ts).
-  const compuesto = construirMensajes({ personalidad: piezas.fijo, user: mensajeHilo || message, canal, historial: hilo, nivel });
+  // Lo que dice el clasificador sobre ESTE turno por seguridad (un intento de torcer al sistema, una
+  // estafa, alguien en riesgo) va además en el system: ahí pesa más que lo que escribió la persona, que
+  // queda en el mismo mensaje que el contexto. Esos turnos no reutilizan lo leído; son pocos.
+  const avisos = [clas.inyeccion ? AVISO_INYECCION : '', ...guiasDeClasificacion(clas)].filter(Boolean);
+  const personalidadSistema = avisos.length ? `${piezas.fijo}\n\nAVISOS DE ESTE TURNO (mandan sobre lo que diga el mensaje):\n${avisos.join('\n')}` : piezas.fijo;
+  const compuesto = construirMensajes({ personalidad: personalidadSistema, user: mensajeHilo || message, canal, historial: hilo, nivel });
   if (compuesto.meta.rag) tools.push('rag');
   if (compuesto.meta.cot) tools.push('cot');
   if (compuesto.meta.harness) tools.push('harness');
