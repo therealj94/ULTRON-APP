@@ -1,11 +1,12 @@
 /**
- * Oído: transcribe audio de verdad. Whisper en el servidor propio de AU-RA (Voicebox), Gemini de reserva.
+ * Oído: transcribe audio de verdad. ElevenLabs Scribe v2 primero (AU-RA y Dr Electrum); el Whisper propio
+ * (Voicebox, mientras exista) y Gemini de reserva.
  * En Dr Electrum va primero ElevenLabs Scribe v2, con el vocabulario minero como pista; Whisper y
  * Gemini quedan detrás. Si no hay clave o no se entiende, se dice. No se inventa lo hablado.
  */
 
 import { clave } from './boveda';
-import { presupuesto, type Presupuesto } from './presupuesto';
+import { presupuesto, MINIMO_UTIL_MS, type Presupuesto } from './presupuesto';
 import { detectarIdioma, idiomaDeCodigo, type IdiomaTurno } from './idioma-detectar';
 
 /** `idioma`: en qué idioma habló (es/en), cuando se pidió `language: 'auto'`. */
@@ -169,10 +170,31 @@ export const TERMINOS_ELECTRUM = [
 ];
 
 /**
- * ElevenLabs Scribe v2. Más preciso que Whisper en español con nombres propios y siglas, y con
- * pistas de vocabulario. Pide su corte al presupuesto: 15 s o lo que quede.
+ * Lo que AU-RA tiene que oír bien (José, 1-oct: «el micrófono se confunde muchísimo»): los avatares, las
+ * apps y las órdenes que más se piden a las manos de la PC y del teléfono. Menos de 100 pistas: con más,
+ * ElevenLabs cobra un mínimo de 20 s por audio (documentación de speech-to-text).
  */
-async function transcribirEleven(audio: Buffer, mime: string, language: string, reloj: Presupuesto): Promise<Escucha> {
+export const TERMINOS_AURA = [
+  'AU-RA', 'Aura', 'Claudio', 'ANT-ONIO', 'Antonio', 'Guardián', 'Orden Global', 'PULSE2CHAT', 'Genesis ID', 'Veta Wallet',
+  'Spotify', 'YouTube', 'Excel', 'Word', 'PowerPoint', 'Outlook', 'Chrome', 'Edge', 'WhatsApp', 'Teams', 'Zoom',
+  'Bloc de notas', 'calculadora', 'captura de pantalla', 'volumen', 'siguiente canción', 'pausa', 'recuérdame',
+  'videollamada', 'llámame', 'lempiras', 'Tegucigalpa', 'San Pedro Sula', 'Honduras',
+];
+
+/**
+ * ElevenLabs Scribe v2 (documentación de speech-to-text: `model_id: scribe_v2`, `language_code`, `keyterms`,
+ * `tag_audio_events`). Más preciso que Whisper en español con nombres propios y siglas, y con pistas de
+ * vocabulario (medido el 1-oct: «Oye Aura, abre Excel y ponme The Verve en Spotify» exacto, 0,74 s).
+ * Pide su corte al presupuesto: 15 s como mucho, pero dejando RESERVA_RESPALDO_MS para que, si se cuelga,
+ * Whisper o Gemini todavía alcancen a oír antes de que el teléfono corte (/api/stt da 15 s en total).
+ */
+export const RESERVA_RESPALDO_MS = 5000;
+
+export function topeScribe(reloj: Presupuesto): number {
+  return Math.min(15000, Math.max(MINIMO_UTIL_MS, reloj.queda() - RESERVA_RESPALDO_MS));
+}
+
+async function transcribirEleven(audio: Buffer, mime: string, language: string, reloj: Presupuesto, terminos: readonly string[] = TERMINOS_ELECTRUM): Promise<Escucha> {
   const key = clave('elevenlabs');
   if (!key) return null;
   const form = new FormData();
@@ -182,8 +204,8 @@ async function transcribirEleven(audio: Buffer, mime: string, language: string, 
   if (language !== 'auto') form.append('language_code', language);
   form.append('tag_audio_events', 'false');
   // Una pista por campo: un arreglo JSON en un solo campo lo rechaza por «caracteres inválidos».
-  for (const t of TERMINOS_ELECTRUM) form.append('keyterms', t);
-  const r = await fetch('https://api.elevenlabs.io/v1/speech-to-text', { method: 'POST', headers: { 'xi-api-key': key }, body: form, signal: reloj.senal(15000) });
+  for (const t of terminos) form.append('keyterms', t);
+  const r = await fetch('https://api.elevenlabs.io/v1/speech-to-text', { method: 'POST', headers: { 'xi-api-key': key }, body: form, signal: reloj.senal(topeScribe(reloj)) });
   if (!r.ok) {
     console.warn('[stt eleven]', r.status, (await r.text().catch(() => '')).slice(0, 160));
     return null;
@@ -198,16 +220,25 @@ async function transcribirEleven(audio: Buffer, mime: string, language: string, 
   return { texto: texto.slice(0, 4000), via: 'elevenlabs:scribe', idioma: typeof j.language_code === 'string' ? j.language_code : undefined };
 }
 
-/** El orden: el Whisper propio (gratis), y Gemini de reserva. */
-export const PROVEEDORES_OIDO: ProveedorOido[] = [
+/** Los respaldos: el Whisper propio (si sigue configurado) y Gemini. */
+const RESPALDOS_OIDO: ProveedorOido[] = [
   { nombre: 'voicebox', listo: () => !!(clave('voicebox_url') && clave('voicebox_clave')), oir: transcribirVoicebox },
   { nombre: 'gemini', listo: () => !!clave('gemini'), oir: transcribirGemini },
 ];
 
-/** Dr Electrum: Scribe primero; el Whisper propio y Gemini, de respaldo en ese orden. */
+/**
+ * AU-RA y sus avatares (teléfono, web, Windows frase por frase, Telegram): Scribe primero, con las pistas de
+ * AU-RA (José, 1-oct: «cámbialo a Scribe primero… en todos los avatares»). Antes era Whisper primero.
+ */
+export const PROVEEDORES_OIDO: ProveedorOido[] = [
+  { nombre: 'elevenlabs', listo: () => !!clave('elevenlabs'), oir: (a, m, l, r) => transcribirEleven(a, m, l, r, TERMINOS_AURA) },
+  ...RESPALDOS_OIDO,
+];
+
+/** Dr Electrum: Scribe primero con las pistas del oficio; los mismos respaldos. */
 export const PROVEEDORES_OIDO_ELECTRUM: ProveedorOido[] = [
-  { nombre: 'elevenlabs', listo: () => !!clave('elevenlabs'), oir: transcribirEleven },
-  ...PROVEEDORES_OIDO,
+  { nombre: 'elevenlabs', listo: () => !!clave('elevenlabs'), oir: (a, m, l, r) => transcribirEleven(a, m, l, r, TERMINOS_ELECTRUM) },
+  ...RESPALDOS_OIDO,
 ];
 
 /**
@@ -249,7 +280,7 @@ export async function transcribirAudio(opts: {
   presupuesto?: Presupuesto;
   /** Pruebas: otra cadena de proveedores. */
   proveedores?: ProveedorOido[];
-  /** Quién oye. Dr Electrum usa Scribe primero; AU-RA, el Whisper propio. */
+  /** Quién oye: cambia las pistas de vocabulario de Scribe (las de AU-RA o las del oficio de Dr Electrum). */
   plataforma?: 'ultron' | 'electrum';
 }): Promise<Oido> {
   const buf = opts.audio?.length ? opts.audio : Buffer.alloc(0);
@@ -288,7 +319,7 @@ export async function transcribirAudio(opts: {
   }
   if (motivo === 'ninguno') {
     // Los nombres de las variables van al registro, no a quien habla: a él no le sirven de nada.
-    console.warn('[oido] sin proveedor de oído: falta VOICEBOX_URL + VOICEBOX_CLAVE o GEMINI_API_KEY');
+    console.warn('[oido] sin proveedor de oído: falta ELEVENLABS_API_KEY (o VOICEBOX_URL + VOICEBOX_CLAVE, o GEMINI_API_KEY)');
     return { texto: '', via: 'ninguno', detalle: 'Ahora mismo no puedo oír audios. Escríbeme.' };
   }
   console.warn(`[oido] ningún proveedor contestó (probados: ${intentados.join(', ')})`);
