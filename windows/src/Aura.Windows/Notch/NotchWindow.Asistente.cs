@@ -281,6 +281,9 @@ public partial class NotchWindow
                 return;
             }
         }
+        // Si el reconocedor de Windows ya la despertó, la frase que llega todavía trae el nombre («Hola Aura, pon
+        // bachata en Spotify»): se quita igual, o las reglas no la reconocen y se va al cerebro (8 s más).
+        else if (Parametros.QuitarNombre(texto, out var sinNombre) && sinNombre.Length > 0) texto = sinNombre;
         llamadaExplicita = false;
         ultimaCharla = DateTime.Now;
         await Procesar(texto, true);
@@ -383,6 +386,21 @@ public partial class NotchWindow
         string emocion = "neutral";
         int dichas = 0;
         Respuesta? r = null;
+        bool rellenoDicho = false;
+        // El cerebro tarda (a veces 8–10 s hasta la primera palabra): si a los 1,8 s no ha dicho nada, AURA dice
+        // algo corto para que se sepa que está en eso. Una sola vez por turno, solo con voz y si la hablaste.
+        if (conVoz && hablado)
+        {
+            var relleno = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1800) };
+            relleno.Tick += (_, _) =>
+            {
+                relleno.Stop();
+                if (g != generacion || dichas > 0 || vcts.IsCancellationRequested) return;
+                var frases = Ingles ? new[] { "Let me see…", "One sec…", "Hmm, let me think…" } : new[] { "A ver…", "Dame un segundo…", "Mmm, déjame ver…" };
+                rellenoDicho = Decir(frases[Random.Shared.Next(frases.Length)], "neutral", vcts.Token);
+            };
+            relleno.Start();
+        }
         // Las manos que pide el cerebro (⟦hacer: …⟧): no se ven ni se dicen, y se hacen apenas llegan. Con texto
         // de otro lado delante (pantalla, archivo, portapapeles) no: ese texto podría traer órdenes escondidas.
         var filtro = new FiltroAcciones();
@@ -434,7 +452,7 @@ public partial class NotchWindow
         emocionActual = r.Emocion;
         // Con voz, el altavoz decide cuándo termina (Empezo/Termino): así el notch no parpadea entre piensa y habla.
         // Si ya terminó de sonar todo antes de que el cerebro cerrara el turno, se cierra aquí.
-        if (conVoz && dichas > 0 && !altavoz.Ocupado) AlTerminarDeHablar();
+        if (conVoz && (dichas > 0 || rellenoDicho) && !altavoz.Ocupado) AlTerminarDeHablar();
         if (!conVoz || dichas == 0)
         {
             pensando = false;
