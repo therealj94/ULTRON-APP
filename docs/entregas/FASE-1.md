@@ -8,9 +8,10 @@ AURA para Windows ya puede conversar en vivo con el agente de ElevenLabs, igual 
 
 Si la voz en vivo no abre (sin sesión, sin red o sin minutos), AURA sigue con el oído de siempre durante 10 minutos y avisa.
 
-Faltan dos cosas:
-- **«Hey AURA» con openWakeWord (1.4).** Necesita entrenar un modelo en GPU.
-- **Medir en tu PC (1.7).** El registro ya anota los tiempos, pero hay que probarlo con micrófono real.
+«Hey AURA» ya tiene modelo propio (1.4, v3), entrenado en la T4. Corre junto con el reconocedor de Windows.
+
+Falta una cosa:
+- **Medir en tu PC (1.7).** El registro ya anota los tiempos y qué motor la despertó, pero hay que probarlo con micrófono real.
 
 ## Estado por tarea
 
