@@ -303,8 +303,36 @@ async function probeJson(url: string, headers: Record<string, string> = {}, time
 type Salud = { qwen: boolean; ojo: boolean; vision: boolean; voz: boolean; fp: boolean; at: number; raw?: any };
 let saludCache: Salud | null = null;
 
+/** La medición en curso: dos peticiones a la vez esperan la misma, no lanzan cuatro sondeos cada una. */
+let midiendo: Promise<Salud> | null = null;
+
 async function medirSalud(force = false): Promise<Salud> {
   if (!force && saludCache && Date.now() - saludCache.at < 15000) return saludCache;
+  if (midiendo) return midiendo;
+  midiendo = medirSaludYa().finally(() => {
+    midiendo = null;
+  });
+  return midiendo;
+}
+
+/**
+ * Lo que contesta /api/health sin sesión, al instante. La app pide /api/health al abrir con un tope de
+ * 2,5 s, y medir los cuatro nodos tarda hasta 4 s (el nodo FP tarda 8,6 s en contestar y agota su
+ * sondeo): con la caché fría la app decidía «sin conexión con el servidor: modo local» con el servidor
+ * vivo. Ahora se contesta con la última medición (aunque tenga más de 15 s) y se mide de nuevo detrás;
+ * sin ninguna todavía, se espera como mucho 1,2 s y si no, «sin medir» (vivo: false en los nodos). Que
+ * conteste ya prueba que hay servidor.
+ */
+async function saludRapida(): Promise<Salud> {
+  if (saludCache) {
+    if (Date.now() - saludCache.at >= 15000) void medirSalud().catch(() => undefined);
+    return saludCache;
+  }
+  const sinMedir: Salud = { qwen: false, ojo: false, vision: !!clave('gemini'), voz: false, fp: false, at: 0, raw: {} };
+  return Promise.race([medirSalud().catch(() => sinMedir), new Promise<Salud>((r) => setTimeout(() => r(sinMedir), 1200))]);
+}
+
+async function medirSaludYa(): Promise<Salud> {
   const [fp, nodo, ojo, voz] = await Promise.all([
     probeJson(`${ULTRON_REMOTE_URL}/salud`),
     saludNodo(),
@@ -353,7 +381,7 @@ app.get('/api/health', async (req, res) => {
   // Sin sesión: solo lo que usan los clientes (vivo o no) y con la caché de 15 s. Las direcciones de
   // los nodos y los sondeos forzados son para quien tiene sesión de mesa.
   const autorizado = mesaAutorizada(req);
-  const s = await medirSalud(autorizado);
+  const s = autorizado ? await medirSalud(true) : await saludRapida();
   const raw = s.raw || {};
   if (!autorizado) {
     return res.json({

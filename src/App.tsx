@@ -788,7 +788,8 @@ export default function App() {
         onMensaje: (quien, texto) => {
           const cb = vivoCbs.current.conv;
           if (quien === 'persona') cb.persona(texto);
-          else cb.aura(texto, 'lista');
+          // La voz llega con sus etiquetas de audio ([laughs], [warmly]): se oyen, no se leen.
+          else cb.aura(quitarExpresiones(texto).trim(), 'lista');
         },
       });
     }

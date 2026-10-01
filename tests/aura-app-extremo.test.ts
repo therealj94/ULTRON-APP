@@ -290,7 +290,8 @@ test('el perfil llega al prompt en cada turno: texto y voz, con los tres avatare
   // un gracias ni una despedida: esas las contesta el banco al instante, abajo).
   alChico.length = 0;
   const ligera = await voz(paseDe(yo, 'claudio'), [{ role: 'user', content: 'muy bien, igualmente' }]);
-  assert.equal(ligera.dicho, '¡Muy bien! ¿Y tú?');
+  // La voz lleva el tono de la emoción como etiqueta v4 (se oye, no se lee).
+  assert.equal(ligera.dicho, '[warmly] ¡Muy bien! ¿Y tú?');
   assert.match(alChico.at(-1)!, /Te habla Majo/);
   assert.match(alChico.at(-1)!, /Claudio/);
   // «Hola» hablado: el banco de Claudio, con su apodo, sin modelo (charla-rapida).
@@ -636,7 +637,7 @@ test('las manos: llamar espera el «sí»; leer vuelve por la voz con su boleto 
     alNodo.length = 0;
     contestar = () => '[EMO: feliz] ¡Hola! Te llamo para recordarte la pastilla.';
     const contesta = await voz(pase, [{ role: 'user', content: '[[recordatorio]] La pastilla' }]);
-    assert.equal(contesta.dicho, '¡Hola! Te llamo para recordarte la pastilla.');
+    assert.equal(contesta.dicho, '[warmly] ¡Hola! Te llamo para recordarte la pastilla.');
     assert.match(alNodo.at(-1)!.ultimo, /Contesté la llamada de recordatorio .*«La pastilla»/);
 
     // ¿Qué recordatorios tengo? / cancela el de la pastilla (con el contexto que manda el teléfono).

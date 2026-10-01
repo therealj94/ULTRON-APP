@@ -43,6 +43,7 @@ const {
   continuaLaFrase,
   apartarMemoria,
   resolverMemoriaPendiente,
+  EtiquetasVoz,
 } = await import('../server/voz-agente');
 const { secretoDerivado, emitirSesion, borrarSesion, soltarSesion, sesionDe, fijarClaveCambiadaEn } = await import('../server/seguridad');
 type TurnoVoz = import('../server/voz-agente').TurnoVoz;
@@ -86,6 +87,39 @@ test('el pase: firmado, atado a la sesión y a una conversación, vence a los 20
   // Un pase no abre la app: no es una sesión.
   const req = { headers: { 'x-ultron-sesion': pase } } as any;
   assert.equal(sesionDe(req), null);
+});
+
+test('EtiquetasVoz: marcas partidas entre trozos, tope por turno y las que no tienen etiqueta v4 se quitan', () => {
+  const e = new EtiquetasVoz(2);
+  assert.deepEqual(e.pasar('Claro que sí [ri'), [{ texto: 'Claro que sí ' }]);
+  assert.equal(e.pendiente, true, 'el corchete abierto espera su cierre');
+  assert.deepEqual(e.pasar('sa] mire. [carcajada estruendosa] '), [{ etiqueta: 'laughs' }, { texto: ' mire. ' }, { texto: ' ' }]);
+  assert.deepEqual(e.pasar('[suspiro] Listo. [risa]'), [{ etiqueta: 'sighs' }, { texto: ' Listo. ' }], 'la tercera ya no entra');
+  assert.deepEqual(new EtiquetasVoz(2).pasar('[softly, reverent] Amén.'), [{ etiqueta: 'softly, reverent' }, { texto: ' Amén.' }], 'una ya en inglés pasa');
+  assert.deepEqual(new EtiquetasVoz(0).pasar('[risa] Hola.'), [{ texto: ' Hola.' }], 'apagado: se quitan');
+  const f = new EtiquetasVoz(2);
+  f.pasar('Ojo [esto no cierra');
+  assert.deepEqual(f.pasar('', true), [{ texto: '[esto no cierra' }], 'al final lo guardado sale como texto');
+});
+
+test('la llamada actúa las marcas v4 y pone el tono de la emoción delante de lo primero del cerebro', async () => {
+  const s = await montar(
+    async (t) => {
+      t.enviar('emocion', { emocion: 'feliz' });
+      t.enviar('delta', { text: 'Claro que sí ', voz: 'Claro que sí [ri' });
+      t.enviar('delta', { text: 'mire. ', voz: 'sa] mire. [carcajada estruendosa] ' });
+      t.enviar('delta', { text: 'Listo.', voz: '[suspiro] Listo. [risa]' });
+      t.enviar('done', { reply: 'Claro que sí mire. Listo.' });
+    },
+    { etiquetas: true, puenteMs: 0 }
+  );
+  try {
+    const pase = paseDe(persona(), 'claudio', 'es');
+    const dicho = dichoDe(await (await llm(s.base, pase, [{ role: 'user', content: '¿Me ayudas?' }])).text());
+    assert.equal(dicho.trim(), '[warmly] Claro que sí [laughs] mire. [sighs] Listo.');
+  } finally {
+    await s.cerrar();
+  }
 });
 
 test('formato OpenAI: el último mensaje de la persona y los trozos del stream', () => {

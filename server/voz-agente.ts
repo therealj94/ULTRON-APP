@@ -45,7 +45,7 @@ import { quitarExpresiones } from '../lib/expresiones';
 import { afinarParaBoca, afinarParaBocaIngles } from './habla';
 import { interruptor } from '../lib/interruptores';
 import { firmarDato, gastarCupo, huellaSesion, leerDato, mismoSecreto, secretoDerivado, sesionSigueViva, type Sesion } from './seguridad';
-import { apiEleven, normalizarAvatar, normalizarIdioma, type AvatarVoz, type Idioma } from './eleven';
+import { apiEleven, etiquetaV4, normalizarAvatar, normalizarIdioma, TONO_V4, type AvatarVoz, type Idioma } from './eleven';
 import { modoValido } from './desk';
 import { aparatoValido, empujarAmbiente, empujarOrdenPc, lecturaDe, turnoDeRecordatorio, type EventoAmbiente } from '../lib/acciones-app';
 import { FiltroOrdenes, quitarMarcas } from '../lib/ordenes-pc';
@@ -355,6 +355,53 @@ export function continuaLaFrase(viejo: string, nuevo: string): boolean {
   const ultima = v[v.length - 1];
   const suya = n[v.length - 1];
   return suya.startsWith(ultima) || ultima.startsWith(suya) || suya.slice(0, 2) === ultima.slice(0, 2);
+}
+
+/**
+ * Las marcas de expresión del cerebro, para la voz de la llamada (eleven_v4_turbo con modo expresivo).
+ * Antes se quitaban todas (`quitarExpresiones`) y la llamada sonaba plana, como leer el chat: la mesa
+ * web sí las actúa. El texto llega a trozos, así que una marca puede venir partida («… [ri» + «sa] …»):
+ * lo que queda de un corchete abierto se guarda hasta el trozo siguiente. Como mucho `max` por turno
+ * (más suena sobreactuado) y solo las que tienen etiqueta v4 (eleven.etiquetaV4); las demás se quitan.
+ */
+export class EtiquetasVoz {
+  private resto = '';
+  private usadas = 0;
+  constructor(private readonly max: number) {}
+
+  /** Parte el trozo en texto y etiquetas. `fin`: no queda nada por llegar (lo guardado sale como texto). */
+  pasar(t: string, fin = false): Array<{ etiqueta: string } | { texto: string }> {
+    let s = this.resto + String(t || '');
+    this.resto = '';
+    const out: Array<{ etiqueta: string } | { texto: string }> = [];
+    for (;;) {
+      const i = s.indexOf('[');
+      if (i < 0) {
+        if (s) out.push({ texto: s });
+        break;
+      }
+      if (i > 0) out.push({ texto: s.slice(0, i) });
+      const j = s.indexOf(']', i + 1);
+      if (j < 0) {
+        // Corchete sin cerrar: se espera el resto, salvo al final o si ya es demasiado largo para marca.
+        if (!fin && s.length - i <= 80) this.resto = s.slice(i);
+        else out.push({ texto: s.slice(i) });
+        break;
+      }
+      const v4 = etiquetaV4(s.slice(i + 1, j));
+      if (v4 && this.usadas < this.max) {
+        this.usadas++;
+        out.push({ etiqueta: v4 });
+      }
+      s = s.slice(j + 1);
+    }
+    return out;
+  }
+
+  /** ¿Queda algo guardado esperando su «]»? */
+  get pendiente(): boolean {
+    return !!this.resto;
+  }
 }
 
 /** Con el turno siguiente (o sin él, al vencer): la frase a medias se tira, un turno de verdad se guarda. */
@@ -1222,7 +1269,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
      * `text_normalisation_type: system_prompt` nadie más lo hace: la instrucción va en el system que
      * manda ElevenLabs, y el cerebro solo lee el último mensaje de la persona (1-oct).
      */
-    const paraVoz = (t: string) => {
+    const afinar = (t: string) => {
       const sin = quitarExpresiones(t);
       if (!sin.trim()) return sin;
       const antes = /^\s*/.exec(sin)![0];
@@ -1230,15 +1277,52 @@ export function montarVozAgente(app: express.Express, d: Deps) {
       const limpio = pase.idioma === 'en' ? afinarParaBocaIngles(sin, 100_000) : afinarParaBoca(sin, 100_000, { cifras: false });
       return antes + limpio + despues;
     };
+    /**
+     * Con etiquetas (interruptor `etiquetasVoz`): las marcas del cerebro pasan a v4 y la emoción del
+     * turno pone su tono delante de lo primero que dice el cerebro, como la mesa web (eleven.guionEleven).
+     */
+    const actuar = conEtiquetas && interruptor('etiquetasVoz');
+    const MAX_ETIQUETAS_TURNO = 2;
+    const etiquetas = new EtiquetasVoz(actuar ? MAX_ETIQUETAS_TURNO : 0);
+    let tono = '';
+    /** Une texto y etiquetas con un solo espacio entre medio (una marca quitada no deja dobles). */
+    const unir = (partes: Array<{ etiqueta: string } | { texto: string }>) => {
+      let out = '';
+      for (const p of partes) {
+        if ('etiqueta' in p) out += `${out && !/\s$/.test(out) ? ' ' : ''}[${p.etiqueta}] `;
+        else {
+          const v = afinar(p.texto);
+          out += /\s$/.test(out) ? v.replace(/^\s+/, '') : v;
+        }
+      }
+      return out;
+    };
+    const paraVoz = (t: string, fin = false) => unir(etiquetas.pasar(t, fin));
+    /** Un texto entero (un `replace` o el `done` sin trozos), con su tono, sin tocar el estado de los trozos. */
+    const paraVozEntera = (t: string) => {
+      const v = unir(new EtiquetasVoz(actuar ? MAX_ETIQUETAS_TURNO : 0).pasar(t, true));
+      return tono && v.trim() && !v.trimStart().startsWith('[') ? `[${tono}] ${v.trimStart()}` : v;
+    };
+    /** El tono va una vez, delante de lo primero del cerebro (si no empieza ya con su etiqueta). */
+    const conTono = (v: string) => {
+      if (!tono || !v.trim()) return v;
+      const t = tono;
+      tono = '';
+      return v.trimStart().startsWith('[') ? v : `[${t}] ${v.trimStart()}`;
+    };
 
     const enviar = (evento: string, datos: any) => {
       if (terminado || senal.aborted) return;
-      if (evento === 'delta') {
+      if (evento === 'emocion') {
+        // El tono de la emoción del turno (TONO_V4); `neutral` no lleva: la voz ya es serena.
+        const t = actuar ? TONO_V4[String(datos?.emocion || '') as keyof typeof TONO_V4] : undefined;
+        if (t && dicho.length <= inicioCerebro) tono = t;
+      } else if (evento === 'delta') {
         const crudo = sinRelleno(paraVoz(String(datos?.voz ?? datos?.text ?? '')));
         // Al quitar una marca del principio queda un espacio: el primer trozo empieza limpio.
-        decirCerebro(dicho.length > inicioCerebro ? crudo : crudo.replace(/^\s+/, ''));
+        decirCerebro(dicho.length > inicioCerebro ? crudo : conTono(crudo.replace(/^\s+/, '')));
       } else if (evento === 'replace') {
-        const nuevo = paraVoz(String(datos?.voz ?? datos?.text ?? ''));
+        const nuevo = paraVozEntera(String(datos?.voz ?? datos?.text ?? ''));
         decirCerebro(restoDeReemplazo(dicho.slice(inicioCerebro), nuevo));
       } else if (evento === 'tarea') {
         const tr = tareaDe(String(datos?.herramienta || ''));
@@ -1252,7 +1336,9 @@ export function montarVozAgente(app: express.Express, d: Deps) {
         if (conv.ambiente?.de === corte) ambiente(tr.sonido);
         if (tr.lenta && !(antes?.lenta && esperando)) programar(alEsperar, cuandoEsperar());
       } else if (evento === 'done') {
-        if (!algo) decirCerebro(sinRelleno(paraVoz(String(datos?.voz ?? datos?.reply ?? '')).trim()));
+        // Un corchete que quedó abierto al final del último trozo sale como texto (afinar lo limpia).
+        if (algo && etiquetas.pendiente) decirCerebro(paraVoz('', true));
+        if (!algo) decirCerebro(sinRelleno(paraVozEntera(String(datos?.voz ?? datos?.reply ?? '')).trim()));
         // Solo acciones y nada que decir (un cerebro viejo, o la frase se perdió): «Listo.», no «se me
         // fue el hilo» mientras la app sí la hace.
         if (!algo && Array.isArray(datos?.acciones) && datos.acciones.length) decirCerebro(PHRASES.listo[pase.idioma]);
