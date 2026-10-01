@@ -438,6 +438,13 @@ export default function App() {
 
   // ---- CEREBRO: un turno en stream. Emoción antes del texto; frases a la cola de voz.
   const turnoEnCurso = useRef<AbortController | null>(null);
+  /**
+   * El turno al que la persona le cortó la voz (barge-in). Sigue corriendo (su texto llega a la
+   * conversación y al historial, y lo que hizo en el servidor no se repite), pero ya no habla: antes
+   * `callarTodo` vaciaba la cola y el siguiente trozo del stream la volvía a llenar. Se despeja solo:
+   * el próximo turno trae otro AbortController.
+   */
+  const turnoCallado = useRef<AbortController | null>(null);
   /** El turno que viene lo dijo en voz alta (el oído), no lo escribió: el servidor le pone los topes de la voz. */
   const habladoRef = useRef(false);
   const pensar = useCallback(
@@ -466,7 +473,7 @@ export default function App() {
       const image = o.imagen || (quiereVer && visionEnabled ? grabFrame() : null);
       // Si el 27B tarda, AU-RA piensa en voz alta con un clip (sin red).
       const relleno = setTimeout(() => {
-        if (turnoEnCurso.current === ac && colaRef.current.length === 0 && !hablando.current) decir(alAzar(['mmm', 'mmm2', 'unmomento']), { emocion: 'pensando', sinBurbuja: true });
+        if (turnoEnCurso.current === ac && turnoCallado.current !== ac && colaRef.current.length === 0 && !hablando.current) decir(alAzar(['mmm', 'mmm2', 'unmomento']), { emocion: 'pensando', sinBurbuja: true });
       }, 1400);
       // Lo que llega es el texto de DECIR (con sus [risa]…): la burbuja se los quita en `decir`.
       let pendiente = '';
@@ -476,6 +483,7 @@ export default function App() {
         // Frases cerradas ya (src/03-voz/frases.ts): la que terminó en punto sale sin esperar al siguiente trozo.
         const { listas, resto } = cortarFrases(pendiente, final);
         pendiente = resto;
+        if (turnoCallado.current === ac) return;
         for (const p of listas) colaRef.current.push({ texto: p, emocion: emo });
         if (colaRef.current.length) void bombear();
       };
@@ -504,7 +512,7 @@ export default function App() {
               const c = caraDeEmocion(e);
               if (c !== 'IDLE') setFace(c);
               const clip = clipDeEmocion(e);
-              if (clip && (e === 'risa' || e === 'sorpresa')) colaRef.current.push({ texto: clip.id, emocion: e });
+              if (clip && (e === 'risa' || e === 'sorpresa') && turnoCallado.current !== ac) colaRef.current.push({ texto: clip.id, emocion: e });
             },
             onDelta: (t) => {
               clearTimeout(relleno);
@@ -515,8 +523,10 @@ export default function App() {
               conv.actualizar(idTurno, { texto: quitarExpresiones(dicho).trim(), estado: 'respondiendo' } as any);
             },
             onReplace: (t) => {
-              colaRef.current = [];
-              callar();
+              if (turnoCallado.current !== ac) {
+                colaRef.current = [];
+                callar();
+              }
               huboTexto = true;
               pendiente = t;
               soltar(true);
@@ -554,7 +564,7 @@ export default function App() {
         soltar(true);
         if (data.trazaId) setOpinion({ id: data.trazaId, estado: 'preguntar' });
         historialRef.current = [...historialRef.current, { rol: 'user', texto: cmd }, { rol: 'ultron', texto }].slice(-12);
-        if (pendienteGenesis.current && /orden global|junta|mina|prospera|aucorp|token|concesi/i.test(cmd)) {
+        if (turnoCallado.current !== ac && pendienteGenesis.current && /orden global|junta|mina|prospera|aucorp|token|concesi/i.test(cmd)) {
           colaRef.current.push({ texto: '¿Lo actualizo en el cerebro Genesis Core?', emocion: 'curioso' });
           void bombear();
         }
@@ -592,6 +602,8 @@ export default function App() {
       switch (it.tipo) {
         case 'callar':
           callarTodo();
+          // «Callate» con un turno en camino: lo que falte por llegar tampoco se dice.
+          turnoCallado.current = turnoEnCurso.current;
           return;
         case 'recordar':
           hacerTarea('anotar');
@@ -747,7 +759,10 @@ export default function App() {
       setFace((f) => (f === 'SLEEPING' ? f : 'LISTENING'));
     },
     onBargeIn: () => {
-      if (hablando.current || colaRef.current.length) callarTodo();
+      if (hablando.current || colaRef.current.length) {
+        callarTodo();
+        turnoCallado.current = turnoEnCurso.current;
+      }
       setFace('LISTENING');
     },
     onSinPermiso: () => {
