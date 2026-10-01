@@ -3943,6 +3943,10 @@ async function startServer() {
     // Y la propia, por su nombre, también lleva a la raíz: una sola dirección por producto.
     app.get(`/${PAGINA_RAIZ}`, (_req, res) => res.redirect(302, '/'));
 
+    // El servidor compilado y sus sourcemaps NUNCA se sirven (1-oct: /server.cjs y /server.cjs.map, 5,7 MB
+    // con el código fuente entero, salían públicos porque el build los escribía en dist/). El build ya los
+    // deja en build-server/; esto es la red por si algún día vuelven a caer aquí.
+    app.use((req, res, next) => (/\.(c?js\.map|map|cjs)$|^\/(server|importar-cubo)\b/i.test(req.path) ? res.status(404).end() : next()));
     app.use(express.static(distPath, { index: false }));
 
     app.get('*', (req, res) => {

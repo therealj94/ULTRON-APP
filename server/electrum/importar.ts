@@ -165,7 +165,7 @@ async function lanzarTrabajo(id: number): Promise<{ ok: boolean; detalle: string
     const r = await fetch(`https://api.render.com/v1/services/${process.env.RENDER_SERVICE_ID}/jobs`, {
       method: 'POST',
       headers: { authorization: `Bearer ${process.env.RENDER_API_KEY}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ startCommand: `node dist/importar-cubo.cjs ${id}`, planId: plan }),
+      body: JSON.stringify({ startCommand: `node build-server/importar-cubo.cjs ${id}`, planId: plan }),
       signal: AbortSignal.timeout(20_000),
     });
     const j: any = await r.json().catch(() => ({}));
@@ -301,7 +301,7 @@ export async function pararImportacion(id: number): Promise<boolean> {
 }
 
 /**
- * Corre una importación ya creada: la usa el trabajo de Render (`dist/importar-cubo.cjs <id>`) y,
+ * Corre una importación ya creada: la usa el trabajo de Render (`build-server/importar-cubo.cjs <id>`) y,
  * sin trabajos, el propio servidor. Vuelve a listar y a planear en vez de fiarse de una lista
  * guardada: si José subió algo más a la carpeta entre medio, entra también.
  */

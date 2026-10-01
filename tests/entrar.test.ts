@@ -17,7 +17,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const SERVIDOR = path.join(process.cwd(), 'dist', 'server.cjs');
+const SERVIDOR = path.join(process.cwd(), 'build-server', 'server.cjs');
 const PUERTO = 7799;
 const BASE = `http://127.0.0.1:${PUERTO}`;
 
@@ -39,7 +39,7 @@ async function esperar(intentos = 40) {
 
 test(
   'la puerta acepta lo que mandan los dos clientes',
-  { skip: hay ? false : 'sin dist/server.cjs: correr `npm run build` antes' },
+  { skip: hay ? false : 'sin build-server/server.cjs: correr `npm run build` antes' },
   async (t) => {
     proc = spawn('node', [SERVIDOR], {
       env: { ...process.env, NODE_ENV: 'production', PORT: String(PUERTO) },

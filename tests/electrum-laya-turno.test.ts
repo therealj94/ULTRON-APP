@@ -86,9 +86,9 @@ test('el panel se pide a Laya sin esperar a que termine la clasificación', asyn
   );
 });
 
-const SERVIDOR = path.join(process.cwd(), 'dist', 'server.cjs');
+const SERVIDOR = path.join(process.cwd(), 'build-server', 'server.cjs');
 
-test('salud: Laya a todos por encima, el detalle solo a quien manda', { skip: fs.existsSync(SERVIDOR) ? false : 'sin dist/server.cjs' }, async (t) => {
+test('salud: Laya a todos por encima, el detalle solo a quien manda', { skip: fs.existsSync(SERVIDOR) ? false : 'sin build-server/server.cjs' }, async (t) => {
   const puerto = 7860 + Math.floor(Math.random() * 30);
   const base = `http://127.0.0.1:${puerto}`;
   const secreto = 'secreto-salud-laya';

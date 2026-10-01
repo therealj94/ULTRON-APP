@@ -5,10 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs && esbuild scripts/electrum/importar-cubo.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/importar-cubo.cjs",
-    "start": "node dist/server.cjs",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=build-server/server.cjs && esbuild scripts/electrum/importar-cubo.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=build-server/importar-cubo.cjs",
+    "start": "node build-server/server.cjs",
     "preview": "vite preview",
-    "clean": "rm -rf dist server.js",
+    "clean": "rm -rf dist build-server server.js",
     "lint": "tsc --noEmit",
     "test": "tsx --test --test-concurrency=1 server/seguridad.test.ts tests/*.test.ts",
     "avatar3d": "node scripts/avatar3d-movil.mjs && tsx scripts/avatar3d-assets.mjs --fotos"

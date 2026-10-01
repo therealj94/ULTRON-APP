@@ -97,7 +97,7 @@ test('qué deja pasar cada plataforma', async (t) => {
 
 /* ------------------------------------------------- contra el servidor de verdad */
 
-const SERVIDOR = path.join(process.cwd(), 'dist', 'server.cjs');
+const SERVIDOR = path.join(process.cwd(), 'build-server', 'server.cjs');
 const PUERTO = 7803;
 const BASE = `http://127.0.0.1:${PUERTO}`;
 const hay = fs.existsSync(SERVIDOR);
@@ -117,7 +117,7 @@ async function esperar(intentos = 40) {
 
 test(
   'el despliegue de Dr Electrum, contra el binario',
-  { skip: hay ? false : 'sin dist/server.cjs: correr `npm run build` antes' },
+  { skip: hay ? false : 'sin build-server/server.cjs: correr `npm run build` antes' },
   async (t) => {
     proc = spawn('node', [SERVIDOR], {
       env: { ...process.env, PLATAFORMA: 'electrum', NODE_ENV: 'production', PORT: String(PUERTO) },

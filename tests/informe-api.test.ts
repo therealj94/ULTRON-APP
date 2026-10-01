@@ -16,7 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { cerrarBase, consulta } from '../server/electrum/db';
 
-const SERVIDOR = path.join(process.cwd(), 'dist', 'server.cjs');
+const SERVIDOR = path.join(process.cwd(), 'build-server', 'server.cjs');
 const PUERTO = 7802;
 const BASE = `http://127.0.0.1:${PUERTO}`;
 const SECRETO = 'secreto-de-prueba';
@@ -96,7 +96,7 @@ test('el informe es de quien lo pidió', { skip: hay ? false : 'hace falta `npm 
     const pdf = Buffer.from(await r.arrayBuffer());
     assert.equal(pdf.subarray(0, 5).toString(), '%PDF-');
     /*
-     * Y lleva el plano dibujado en el servidor: esto corre sobre dist/server.cjs, así que prueba que
+     * Y lleva el plano dibujado en el servidor: esto corre sobre build-server/server.cjs, así que prueba que
      * el bundle deja @resvg/resvg-js fuera (--packages=external) y que su binario carga desde ahí.
      * Sin navegador y sin captura del mapa, que es como llega un pedido por Telegram.
      */

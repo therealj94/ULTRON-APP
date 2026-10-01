@@ -2,7 +2,7 @@
 /**
  * Capturas de la cara en cada estado, con Chromium headless (Playwright).
  * Uso: node scripts/qa/capturas.mjs [urlBase] [dirSalida]
- *   urlBase por defecto http://127.0.0.1:3459 (levantar antes: npm run build && NODE_ENV=production PORT=3459 node dist/server.cjs)
+ *   urlBase por defecto http://127.0.0.1:3459 (levantar antes: npm run build && NODE_ENV=production PORT=3459 node build-server/server.cjs)
  * Genera dirSalida/<estado>.png y dirSalida/hoja.png (mosaico).
  */
 import { chromium } from 'playwright';
