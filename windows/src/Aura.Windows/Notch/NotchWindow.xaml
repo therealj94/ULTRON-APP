@@ -3,10 +3,15 @@
         Background="Transparent" Topmost="True" ShowInTaskbar="False" ShowActivated="False" UseLayoutRounding="True" SnapsToDevicePixels="True"
         FontFamily="{StaticResource Letra}" PreviewKeyDown="Teclas">
  <Canvas x:Name="Raiz">
-  <!-- La silueta: pegada al borde de arriba, con las «orejas» cóncavas y las esquinas de abajo redondas (la geometría la dibuja Forma() cada fotograma). -->
+  <!-- La silueta: pegada al borde de arriba, con las «orejas» cóncavas y las esquinas de abajo redondas (la geometría la dibuja Forma() cada fotograma).
+       El relleno y el borde los pone AplicarVidrio(): vidrio oscuro translúcido, o negro sólido con Transparencia = 1. -->
   <Path x:Name="Forma" Fill="#000000" MouseEnter="EntraRaton" MouseLeave="SaleRaton" MouseLeftButtonUp="ClicForma" MouseRightButtonUp="MenuForma">
    <Path.Stroke><LinearGradientBrush StartPoint="0,0" EndPoint="0,1"><GradientStop Color="#00000000" Offset="0"/><GradientStop Color="#00000000" Offset="0.35"/><GradientStop Color="#2E2E34" Offset="1"/></LinearGradientBrush></Path.Stroke>
    <Path.Effect><DropShadowEffect x:Name="Brillo" ShadowDepth="0" BlurRadius="28" Opacity="0" Color="#D6B56C"/></Path.Effect>
+  </Path>
+  <!-- El reflejo del vidrio: un velo claro arriba que se apaga hacia el centro y un filo de luz abajo. No recibe clics. -->
+  <Path x:Name="Reflejo" IsHitTestVisible="False" Opacity="0">
+   <Path.Fill><LinearGradientBrush StartPoint="0,0" EndPoint="0,1"><GradientStop Color="#16FFFFFF" Offset="0"/><GradientStop Color="#05FFFFFF" Offset="0.42"/><GradientStop Color="#00FFFFFF" Offset="0.7"/><GradientStop Color="#0AFFFFFF" Offset="1"/></LinearGradientBrush></Path.Fill>
   </Path>
 
   <Grid x:Name="Contenido" ClipToBounds="False">
@@ -19,9 +24,17 @@
      <TextBlock x:Name="NombreChico" Text="AU-RA" FontWeight="SemiBold" FontSize="12.5" VerticalAlignment="Center" Margin="8,0,0,0" Opacity="0"/>
     </StackPanel>
     <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,10,0">
-     <!-- Con música sonando, como la isla: la portada y unas barritas. -->
-     <Border x:Name="PortadaChica" Width="20" Height="20" CornerRadius="5" Margin="0,0,6,0" Visibility="Collapsed" Background="{StaticResource Superficie2}"/>
-     <n:Barras x:Name="BarrasMusica" Width="18" Height="12" Margin="0,0,6,0" Visibility="Collapsed"/>
+     <!-- Con música sonando, como la isla: la portada y unas barritas. Un toque ahí abre la tarjeta de música. -->
+     <StackPanel x:Name="ZonaMusicaChica" Orientation="Horizontal" Background="Transparent" Cursor="Hand" MouseLeftButtonUp="PortadaChicaClic" AutomationProperties.Name="Ver lo que suena">
+      <Border x:Name="PortadaChica" Width="20" Height="20" CornerRadius="5" Margin="0,0,6,0" Visibility="Collapsed" Background="{StaticResource Superficie2}" VerticalAlignment="Center"/>
+      <n:Barras x:Name="BarrasMusica" Width="18" Height="12" Margin="0,0,6,0" Visibility="Collapsed" VerticalAlignment="Center"/>
+     </StackPanel>
+     <!-- Al pasar el ratón con música: anterior, play/pausa y siguiente, sin abrir nada. -->
+     <StackPanel x:Name="ControlesChicos" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,4,0" Visibility="Collapsed">
+      <Button Style="{StaticResource Icono}" Content="&#xE892;" Width="26" Height="26" FontSize="11" Click="MusicaAnteriorChico" ToolTip="Canción anterior" AutomationProperties.Name="Canción anterior"/>
+      <Button x:Name="BotonPlayChico" Style="{StaticResource Icono}" Content="&#xE769;" Width="26" Height="26" FontSize="12" Click="MusicaPlayChico" ToolTip="Play / pausa" AutomationProperties.Name="Reproducir o pausar"/>
+      <Button Style="{StaticResource Icono}" Content="&#xE893;" Width="26" Height="26" FontSize="11" Click="MusicaSiguienteChico" ToolTip="Canción siguiente" AutomationProperties.Name="Canción siguiente"/>
+     </StackPanel>
      <Button x:Name="BotonCentroChico" Style="{StaticResource Icono}" Content="&#xE8A9;" Width="28" Height="28" FontSize="13" Opacity="0" Click="AbrirCentroClic" ToolTip="Abrir el Centro (chats, música, cartera, ajustes) · Ctrl+Alt+C" AutomationProperties.Name="Abrir el Centro"/>
      <Button x:Name="BotonSilencio" Style="{StaticResource Icono}" Content="&#xEC54;" Width="28" Height="28" FontSize="13" Opacity="0" Click="SilencioClic" ToolTip="Silenciar el micrófono: AURA deja de escucharte hasta que lo vuelvas a tocar" AutomationProperties.Name="Silenciar el micrófono"/>
      <Button x:Name="MicChico" Style="{StaticResource Icono}" Content="&#xE720;" Width="28" Height="28" FontSize="13" Opacity="0" Click="Microfono" ToolTip="Hablarle ahora · Ctrl+Alt+Espacio" AutomationProperties.Name="Hablar con AURA"/>
