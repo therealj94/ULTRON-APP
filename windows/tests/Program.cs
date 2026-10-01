@@ -429,5 +429,28 @@ foreach (var f in new[] { "quién es mejor, claudio o antonio", "cómo se hace u
     reloj.Now += TimeSpan.FromSeconds(61);
     Check(!hechas.Repetida("o3", "abre la calculadora"), "pasado un rato, sí se puede otra vez");
 }
+// «Hey AURA» con el modelo propio: despierta con «oye aura» y no con «oye laura» (clips de prueba en datos/).
+{
+    string? Subir(string rel) { for (var d = new DirectoryInfo(AppContext.BaseDirectory); d != null; d = d.Parent) { var p = Path.Combine(d.FullName, rel); if (Directory.Exists(p)) return p; } return null; }
+    var modelos = Subir(Path.Combine("src", "Aura.Windows", "Modelos"));
+    var datos = Subir(Path.Combine("tests", "datos")) ?? Subir("datos");
+    Check(modelos != null && datos != null, "están los modelos y los clips de prueba");
+    if (modelos != null && datos != null)
+    {
+        float Puntaje(string wav)
+        {
+            var b = File.ReadAllBytes(Path.Combine(datos, wav))[44..];
+            var pcm = new short[b.Length / 2];
+            Buffer.BlockCopy(b, 0, pcm, 0, pcm.Length * 2);
+            using var pc = new PalabraClave(modelos, Path.Combine(modelos, "hey_aura.onnx"));
+            float max = 0;
+            for (int i = 0; i + 1280 <= pcm.Length; i += 1280) max = Math.Max(max, pc.Alimentar(pcm.AsSpan(i, 1280)));
+            return max;
+        }
+        var si = Puntaje("oye_aura.wav"); var no = Puntaje("oye_laura.wav");
+        Check(si >= 0.9f, $"«oye aura» la despierta ({si:0.000}; Python da 0.973)");
+        Check(no < 0.1f, $"«oye laura, ven» no ({no:0.000})");
+    }
+}
 Console.WriteLine($"PASS {count} assertions");
 class Clock : TimeProvider { public DateTimeOffset Now = DateTimeOffset.UtcNow; public override DateTimeOffset GetUtcNow() => Now; }

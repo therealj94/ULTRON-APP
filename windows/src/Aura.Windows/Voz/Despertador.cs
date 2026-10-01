@@ -28,12 +28,12 @@ internal sealed class Despertador : IDisposable
     /// </summary>
     public string? Encender(string idioma)
     {
-        // Ya encendido: el modelo propio no depende del idioma; el de Windows sí (se rehace si cambió).
-        if (propio != null) return null;
+        // Los dos escuchan a la vez y cualquiera la despierta: el modelo propio (mejor con «hey aura») y el de
+        // Windows (respaldo, y el único si no está el modelo). El propio no depende del idioma; el de Windows sí.
+        if (propio == null) EncenderPropio();
         if (motor != null && idioma == idiomaEncendido) return null;
-        if (motor != null) Apagar();
+        if (motor != null) ApagarWindows();
         idiomaEncendido = idioma;
-        if (EncenderPropio()) return null;
         try
         {
             var todos = SpeechRecognitionEngine.InstalledRecognizers();
@@ -61,13 +61,16 @@ internal sealed class Despertador : IDisposable
             Centro.Registro.Anotar("despertar", "reconocedor de Windows: " + string.Join(", ", elegidos.Select(x => x.Culture.Name)));
             return null;
         }
-        catch (Exception ex) { Apagar(); Centro.Registro.Anotar("despertar", ex.Message); return null; }
+        catch (Exception ex) { ApagarWindows(); Centro.Registro.Anotar("despertar", ex.Message); return null; }
     }
 
     // ───────────── el modelo propio (openWakeWord) ─────────────
 
-    /// <summary>Lo mínimo para despertar (0..1). Medido con las frases de prueba del entrenamiento.</summary>
-    public const float Umbral = 0.5f;
+    /// <summary>
+    /// Lo mínimo para despertar (0..1). Con 0,9 (medido el 1-oct, modelo v3): 67 % de «oye aura» en español y 90 % de
+    /// «hey aura» que no vio al entrenar, 0 % de frases parecidas y ~0,56 falsas por hora de audio general.
+    /// </summary>
+    public const float Umbral = 0.9f;
     PalabraClave? propio;
     WaveInEvent? micPropio;
     /// <summary>El hilo del micrófono usa el modelo mientras otro lo apaga: nunca a la vez (es memoria nativa).</summary>
@@ -131,6 +134,11 @@ internal sealed class Despertador : IDisposable
     public void Apagar()
     {
         ApagarPropio();
+        ApagarWindows();
+    }
+
+    void ApagarWindows()
+    {
         var m = motor; motor = null;
         foreach (var x in extras) { try { x.RecognizeAsyncCancel(); } catch { } x.Dispose(); }
         extras.Clear();

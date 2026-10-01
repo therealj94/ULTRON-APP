@@ -19,7 +19,7 @@ Faltan dos cosas:
 | 1.1 | Origen `windows` en el agente de voz | ✅ | `server/voz-agente.ts`: el pase lleva `origen` y `aparato`, y el turno manda `origen: 'windows'`, así el cerebro recibe `instruccionWindows`. Windows sin aparato recibe 400. |
 | 1.2 | Cliente de voz | ✅ | `windows/src/Aura.Windows/Voz/AgenteVoz.cs`: WebSocket con URL firmada de un solo uso. Micrófono PCM 16 kHz en bloques de 50 ms. Reproduce PCM o μ-law, maneja ping/pong y las interrupciones. La API key nunca llega al cliente. |
 | 1.3 | Manos dentro de la voz | ✅ | Servidor: `lib/ordenes-pc.ts` quita `⟦hacer⟧` del texto y de la voz mientras llega. La orden va por `event: pc` al canal del .exe con `retener.hacer`, o sea solo cuando el turno se confirma. Windows: `CanalPc` lee el canal; `NotchWindow.Agente.cs` ejecuta las reglas al instante, pasa la guarda `Coherente` y evita repetidas con `HechasRecientes`. |
-| 1.4 | «Hey AURA» con openWakeWord | ⏳ | Pendiente. Ver la sección «Pendiente» más abajo. Sigue SAPI. |
+| 1.4 | «Hey AURA» con openWakeWord | ✅ (v3) | Modelo propio `Modelos/hey_aura.onnx`, entrenado en la T4. Motor `PalabraClave` en C#, idéntico a la referencia de Python. Corre **junto** con SAPI y cualquiera de los dos la despierta. Umbral 0,9: 67 % «oye aura», 90 % «hey aura», 0 % parecidas, ~0,56 falsas por hora. Detalle en `Modelos/LEEME.md`. |
 | 1.5 | Respaldo | ✅ | Ajuste `VozMotor` = `agente` \| `local`, en el Centro → Voz → «Cómo conversa». Si en vivo falla, usa el oído local 10 min (2 min si se cortó a mitad). |
 | 1.6 | Región de ElevenLabs | ✅ (configurable) | `ELEVEN_API_BASE` en Render, por ejemplo `https://api.us.elevenlabs.io`. Por omisión sigue la de siempre: no la cambié sin poder probar la región con la cuenta real. |
 | 1.7 | Medición | 🟡 | `aura.log` registra: «conversación abierta en X ms», «primera voz a los X ms de entender tu frase», cada frase oída y cada orden. El servidor ya registraba una línea por turno (`[voz] turno …`). Falta medir 20 turnos reales en tu PC. |
@@ -69,10 +69,10 @@ Faltan dos cosas:
 
 ## Pendiente y decisiones que te tocan
 
-1. **«Hey AURA» con openWakeWord (1.4).**
-   - No existe un modelo «hey aura». Hay que entrenarlo: se generan miles de voces sintéticas con Piper y se mezclan con ruido. Toma 1–2 horas de GPU.
-   - La T4 está encendida sin uso, así que puede servir para esto. Necesito tu OK para usarla.
-   - Después el motor ONNX se integra en `Voz/Despertador.cs`. SAPI queda de respaldo.
+1. **«Hey AURA» (1.4), siguiente versión.**
+   - El registro anota qué motor la despertó (modelo propio o Windows) y con qué puntuación. Con eso se ve si el umbral 0,9 está bien en tu PC.
+   - Para la v4 conviene grabar unas 50 veces «oye aura» con voces reales (la tuya y las del equipo) y agregarlas a los positivos.
+   - **Licencia:** los dos modelos base de openWakeWord son CC BY-NC-SA (no comercial). Hay que revisarlo antes de distribuir AURA comercialmente.
 2. **Región de ElevenLabs en EE. UU.** Probar `ELEVEN_API_BASE=https://api.us.elevenlabs.io` en Render. Si ElevenLabs falla, se borra la variable.
 3. **Prueba real en tu PC:**
    - 20 turnos con acciones («pon bachata en Spotify», «cierra el bloc de notas», «apágate»);
