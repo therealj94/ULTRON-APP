@@ -20,6 +20,10 @@ import { emitirSesion, emitirTokenMcp, sesionDe } from '../server/seguridad';
 import { reiniciarPadron } from '../lib/acceso';
 import { listarTrazas } from '../lib/cognitivo/traza';
 
+// El servidor de estas pruebas es http://127.0.0.1: la dirección pública sale de la petición solo en
+// modo desarrollo (lib/entorno.ts); sin la marca, basePublica anuncia https.
+process.env.AURA_DEV = '1';
+
 const JOSE = { correo: 'j.ordonez@ordenglobal.org', nombre: 'José', rol: 'Junta' };
 
 async function conEntorno<T>(vars: Record<string, string | undefined>, fn: () => Promise<T>): Promise<T> {

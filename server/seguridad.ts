@@ -7,6 +7,7 @@ import fs from 'fs';
 import path from 'path';
 import { ipPrivada } from '../lib/red-publica';
 import { s3GetJson, s3Listo, s3PutJson } from '../lib/s3';
+import { modoDesarrollo } from '../lib/entorno';
 
 export type Sesion = {
   token: string;
@@ -433,7 +434,8 @@ export function mesaAutorizada(req: Request): boolean {
   const clave = process.env.ULTRON_MESA_CLAVE || '';
   const got = String(req.headers['x-ultron-mesa'] || '');
   if (clave && got && secretosIguales(clave, got)) return true;
-  if (process.env.NODE_ENV !== 'production' && !clave) return true;
+  // El hueco de desarrollo solo con marca explícita (lib/entorno.ts): sin NODE_ENV ya no se abre.
+  if (modoDesarrollo() && !clave) return true;
   return false;
 }
 
@@ -624,12 +626,12 @@ export function plataformaAutorizada(req: Request, plataforma: Plataforma): bool
   const got = String(req.headers['x-ultron-llave'] || req.headers[plataforma === 'electrum' ? 'x-electrum-llave' : 'x-ultron-mesa'] || '');
   if (clave && got && secretosIguales(clave, got)) return true;
 
-  // Fuera de producción y sin llave puesta, se abre: es lo que deja correr las pruebas y el QA de
-  // Playwright. En producción no hay hueco, con llave o sin ella.
-  if (process.env.NODE_ENV !== 'production' && !clave) {
+  // En modo desarrollo (AURA_DEV=1 o NODE_ENV=test, lib/entorno.ts) y sin llave puesta, se abre: es
+  // lo que deja correr las pruebas y el QA de Playwright. Sin esa marca no hay hueco, con llave o sin ella.
+  if (modoDesarrollo() && !clave) {
     if (!avisadoHueco) {
       avisadoHueco = true;
-      console.warn('[AU-RA] sin NODE_ENV=production y sin llave: las plataformas quedan abiertas. Solo desarrollo.');
+      console.warn('[AU-RA] modo desarrollo y sin llave: las plataformas quedan abiertas. Solo desarrollo.');
     }
     return true;
   }

@@ -1,6 +1,39 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { capturaAcotada, ejecutarCodigo, TOPE_CAPTURA_BYTES } from '../lib/ejecutor';
+import { capturaAcotada, ejecutarCodigo, ejecutorActivo, TOPE_CAPTURA_BYTES } from '../lib/ejecutor';
+
+// python3 en el host solo corre con marca explícita de desarrollo (lib/entorno.ts). Estas pruebas la
+// ponen a propósito; la de abajo comprueba que sin ella no corre nada.
+process.env.AURA_DEV = '1';
+
+/** Corre `fn` con el entorno cambiado y lo deja como estaba. */
+async function conEntorno<T>(cambios: Record<string, string | undefined>, fn: () => Promise<T> | T): Promise<T> {
+  const antes = Object.fromEntries(Object.keys(cambios).map((k) => [k, process.env[k]]));
+  for (const [k, v] of Object.entries(cambios)) v === undefined ? delete process.env[k] : (process.env[k] = v);
+  try {
+    return await fn();
+  } finally {
+    for (const [k, v] of Object.entries(antes)) v === undefined ? delete process.env[k] : (process.env[k] = v);
+  }
+}
+
+describe('Fase 0.2 — el ejecutor falla cerrado', () => {
+  it('sin NODE_ENV ni AURA_DEV (y sin sandbox) no corre python en el host', () =>
+    conEntorno({ NODE_ENV: undefined, AURA_DEV: undefined, EJECUTOR_URL: undefined, EJECUTOR_DOCKER: undefined, EJECUTOR_ACTIVO: undefined }, async () => {
+      assert.equal(ejecutorActivo(), false);
+      const r = await ejecutarCodigo('print(1+1)');
+      assert.equal(r.ok, false);
+      assert.equal(r.via, 'omitido');
+      assert.equal(r.stdout, '');
+    }));
+
+  it('NODE_ENV=production gana aunque alguien deje AURA_DEV=1', () =>
+    conEntorno({ NODE_ENV: 'production', AURA_DEV: '1', EJECUTOR_URL: undefined, EJECUTOR_DOCKER: undefined, EJECUTOR_ACTIVO: undefined }, async () => {
+      assert.equal(ejecutorActivo(), false);
+      const r = await ejecutarCodigo('print(1+1)');
+      assert.equal(r.via, 'omitido');
+    }));
+});
 
 describe('Fase 5 — ejecutor real', () => {
   it('ejecuta python correcto y reporta stdout', async () => {

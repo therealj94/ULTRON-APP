@@ -6,6 +6,7 @@ import { promisify } from 'util';
 import zlib from 'zlib';
 import { createServer as createViteServer } from 'vite';
 import { crearComprobadorListo } from './lib/nodo-listo';
+import { modoDesarrollo } from './lib/entorno';
 import { sanearDiag } from './lib/diag-saneador';
 import { autocuraDe, fetchNodo, saludNodo, nodoConfigurado, precalentarSistema, NODO_URL as ULTRON_NODO_URL, NODO_SECRETO as ULTRON_NODO_SECRETO, NODO_MODELO as ULTRON_NODO_MODELO } from './lib/nodo';
 import { JUNTA, buildPersonality, decodeDataUrl, normalizarCorreo, buscarWeb, leerPagina } from './server/desk';
@@ -3905,7 +3906,9 @@ app.post(['/api/telegram/webhook', '/api/telegram/webhook/'], limitar(40), async
 });
 
 async function startServer() {
-  if (process.env.NODE_ENV !== 'production') {
+  // Vite en modo middleware sirve el árbol del repo (fuentes, data/) con recarga en vivo: solo con
+  // marca explícita (AURA_DEV=1, lib/entorno.ts). Sin NODE_ENV antes caía aquí; ahora sirve dist/.
+  if (modoDesarrollo()) {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
