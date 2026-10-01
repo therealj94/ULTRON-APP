@@ -20,6 +20,7 @@ import { headersMesa } from './10-infra/sesionCliente';
 import { cargarPerfil, perfil as perfilActual } from './perfil';
 import type { Emocion } from '../lib/emocion';
 import { quitarExpresiones } from '../lib/expresiones';
+import { ESPERA_FRASE_MS, estadoDeEspera, fraseDeEstado, vozDeEspera } from '../mobile/src/compa/frasesEstado';
 import { Fingerprint, ShieldCheck, Settings2, Mic, MicOff, Keyboard, MoreHorizontal, MessagesSquare, LayoutPanelLeft, AudioLines, PhoneOff } from 'lucide-react';
 import { hayWebGL } from './11-sala/webgl';
 import { tareaDeHerramientas, type Postura, type Tarea } from './11-sala/tareas';
@@ -480,10 +481,16 @@ export default function App() {
       const quiereVer = /qu[eé] ves|qu[eé] hay aqu[ií]|imagen|c[aá]mara|le[eé] (esto|la foto|la etiqueta)/i.test(cmd);
       // Una foto ya tomada («¿Qué ves en la foto?») manda esa foto, no un cuadro en vivo.
       const image = o.imagen || (quiereVer && visionEnabled ? grabFrame() : null);
-      // Si el 27B tarda, AU-RA piensa en voz alta con un clip (sin red).
+      // Si el 27B de verdad tarda, AU-RA lo dice en voz alta: una frase del banco según lo pedido
+      // (buscar, leer, calcular, mirar…), sin repetir las últimas ni su arranque, casi siempre con su
+      // etiqueta de audio v4 (mobile/src/compa/etiquetasVoz.ts). Antes eran tres clips fijos («Mmm…
+      // déjame ver»), a los 1,4 s: José, «es molesto después de un rato».
       const relleno = setTimeout(() => {
-        if (turnoEnCurso.current === ac && turnoCallado.current !== ac && colaRef.current.length === 0 && !hablando.current) decir(alAzar(['mmm', 'mmm2', 'unmomento']), { emocion: 'pensando', sinBurbuja: true });
-      }, 1400);
+        if (turnoEnCurso.current !== ac || turnoCallado.current === ac || colaRef.current.length > 0 || hablando.current) return;
+        const estado = image ? 'mirando' : estadoDeEspera(cmd);
+        const f = fraseDeEstado(estado, 'aura', 'es');
+        decir(vozDeEspera(f.texto, estado, 'aura'), { emocion: f.emocion, sinBurbuja: true });
+      }, ESPERA_FRASE_MS);
       // Lo que llega es el texto de DECIR (con sus [risa]…): la burbuja se los quita en `decir`.
       let pendiente = '';
       let huboTexto = false;

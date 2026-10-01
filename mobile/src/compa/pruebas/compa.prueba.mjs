@@ -49,6 +49,7 @@ import { OidoMesa, VigilanteOido, TOPE_REINICIOS_OIDO, ESPERA_SORDO_MS, ESPERA_S
 import { FIGURAS, mezclarFigura, estiloDe } from '../figura.ts';
 import { emocionDeTexto } from '../../lib/emocion.ts';
 import { emitir, escuchar } from '../../nucleo/contrato.ts';
+import { MemoriaEtiquetas, etiquetasDe } from '../etiquetasVoz.ts';
 import { ESTADOS_FRASE, EMOCION_DE_ESTADO, MemoriaFrases, fraseDeEstado, frasesDe, esRelleno, quitarRellenoInicial, estadoDeEspera, empiezaConMuletilla, tareaDe, TAREAS, SONIDOS_AMBIENTE, vozDeEspera } from '../frasesEstado.ts';
 import { EXPRESIONES_AVATAR } from '../../avatar3d/tipos.ts';
 import { EMOCIONES } from '../../lib/emocion.ts';
@@ -897,12 +898,13 @@ prueba('frases de estado: tareas → estado y sonido; muchas por avatar para esp
   assert.deepEqual([tareaDe('vision').estado, tareaDe('vision').sonido], ['mirando', null]);
   assert.equal(tareaDe('rag'), null, 'lo que no es tarea no hace esperar');
   assert.equal(tareaDe('harness'), null);
-  // «Muchísimas para que suene humano siempre»: de 15 a 25 por estado de tarea, avatar e idioma.
+  // «Muchísimas para que suene humano siempre»: de 15 a 45 por estado de tarea, avatar e idioma (José,
+  // 1-oct: «no escuchemos siempre lo mismo»).
   for (const e of ['pensando', 'revisando', 'buscando', 'calculando', 'abriendo', 'leyendo', 'mirando', 'seguimiento'])
     for (const a of AVATARES_BANCO)
       for (const i of ['es', 'en']) {
         const n = frasesDe(e, a, i).length;
-        assert.ok(n >= 15 && n <= 25, `${e}/${a}/${i}: ${n}`);
+        assert.ok(n >= 15 && n <= 45, `${e}/${a}/${i}: ${n}`);
         // Siempre quedan de sobra sin muletilla para después del relleno del agente.
         assert.ok(frasesDe(e, a, i).filter((f) => !empiezaConMuletilla(f)).length >= 12, `${e}/${a}/${i} sin muletilla`);
       }
@@ -916,8 +918,10 @@ prueba('frases de estado: tareas → estado y sonido; muchas por avatar para esp
   assert.equal(estadoDeEspera('léeme este pdf'), 'leyendo');
   assert.equal(estadoDeEspera('¿qué ves?'), 'mirando');
   // Las etiquetas v4 van en la voz, nunca en el banco (el globito).
-  assert.equal(vozDeEspera('Buscando…', 'buscando', 'aura', () => 0.1), '[curious] Buscando…');
-  assert.equal(vozDeEspera('Buscando…', 'buscando', 'aura', () => 0.99), 'Buscando…');
+  const me = new MemoriaEtiquetas();
+  const dicha = vozDeEspera('Buscando…', 'buscando', 'aura', () => 0.1, me);
+  assert.ok(etiquetasDe('buscando', 'aura').some((t) => dicha === `[${t}] Buscando…`), dicha);
+  assert.equal(vozDeEspera('Buscando…', 'buscando', 'aura', () => 0.99, me), 'Buscando…');
 });
 
 prueba('puente: parado en segundo plano, al volver reconecta con Last-Event-ID (revisión 5, B11)', async () => {

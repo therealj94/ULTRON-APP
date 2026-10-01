@@ -75,7 +75,7 @@ import { HojaMas, type OpcionMas } from '../components/HojaMas';
 import { Tutorial } from '../tutorial/Tutorial';
 import { conTutorialVisto, tocaTutorial } from '../tutorial/pasos';
 import { OidoMesa, VigilanteOido, duenoAudio, motivoFalloVoz, oidoPropio } from '../compa/duenoAudio';
-import { ESPERA_FRASE_MS } from '../compa/frasesEstado';
+import { ESPERA_FRASE_MS, estadoDeEspera, fraseDeEstado, vozDeEspera } from '../compa/frasesEstado';
 import { ControlCamara, conPreferencia, pedidoDeCamara, prefiereSiempre, respuestaModoCamara, type EstadoCamara } from '../lib/camaraModo';
 import { marcoMesa, useMesaVisible, useModoPresencia } from '../avatar3d/usePresencia';
 import { useCaras, type ApiCaras } from '../caras/useCaras';
@@ -729,13 +729,20 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       let emocion: Emocion = 'neutral';
       let reacted = false;
       // Un solo relleno y solo si el cerebro de verdad tarda (ESPERA_FRASE_MS, ~2,5 s; inmediato con
-      // imagen, que siempre tarda): «mmm, déjame ver» con la voz del avatar. Antes salía a los 700 ms,
-      // en casi todos los turnos, y la respuesta ESPERABA a que terminara (StreamSpeaker no corta la
-      // frase en curso): el relleno no tapaba la espera, la alargaba. Lo que contesta el camino rápido
-      // llega mucho antes y no lo oye nunca (el primer trozo lo cancela).
+      // imagen, que siempre tarda), con la voz del avatar. Antes salía a los 700 ms, en casi todos los
+      // turnos, y la respuesta ESPERABA a que terminara (StreamSpeaker no corta la frase en curso): el
+      // relleno no tapaba la espera, la alargaba. Lo que contesta el camino rápido llega mucho antes y
+      // no lo oye nunca (el primer trozo lo cancela).
+      // La frase sale del banco según lo pedido (buscar, leer, calcular, mirar…), con la forma de ser
+      // del avatar, sin repetir las últimas ni su arranque, y casi siempre con su etiqueta de audio v4
+      // (compa/etiquetasVoz.ts). Antes eran dos fijas: «Mmm… déjame ver» y «Un momento» (José: «es
+      // molesto después de un rato»).
       const mmm = () => {
         if (!oidoMesa.current?.puedeHablar()) return;
-        void speak(frase(pick(['mmm', 'unmomento'] as const)), { onAudioStart: () => pauseMicForTts(true), onEnd: () => !speakingRef.current && pauseMicForTts(false) });
+        const quien = avatarActual();
+        const estado = opts?.image ? 'mirando' : estadoDeEspera(cmd);
+        const f = fraseDeEstado(estado, quien, idiomaActual() === 'en' ? 'en' : 'es');
+        void speak(vozDeEspera(f.texto, estado, quien), { emocion: f.emocion, onAudioStart: () => pauseMicForTts(true), onEnd: () => !speakingRef.current && pauseMicForTts(false) });
       };
       let mmmTimer: ReturnType<typeof setTimeout> | null = opts?.image ? (mmm(), null) : setTimeout(mmm, ESPERA_FRASE_MS);
       const cancelMmm = () => {

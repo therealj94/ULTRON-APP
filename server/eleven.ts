@@ -183,6 +183,55 @@ const EXPRESION_A_V4: Record<string, string> = {
   respiro: 'inhales',
   bufido: 'scoffs',
   carraspeo: 'clears throat',
+  // Las de tono y de acción que v4 actúa (verificadas el 1-oct, mobile/src/compa/etiquetasVoz.ts):
+  // el cerebro las escribe en español y aquí pasan a la etiqueta.
+  tarareo: 'hums',
+  jadeo: 'gasps',
+  carcajada: 'laughs',
+  'risa burlona': 'scoffs',
+  'risa picara': 'mischievously',
+  emocionado: 'excited',
+  emocionada: 'excited',
+  entusiasmado: 'enthusiastic',
+  entusiasmada: 'enthusiastic',
+  'con ternura': 'tender',
+  'en voz baja': 'whispers',
+  bajito: 'softly',
+  pensativo: 'thoughtful',
+  pensativa: 'thoughtful',
+  curioso: 'curious',
+  curiosa: 'curious',
+  'con picardia': 'mischievously',
+  jugueton: 'playfully',
+  juguetona: 'playfully',
+  serio: 'matter-of-fact',
+  seria: 'matter-of-fact',
+  aliviado: 'relieved',
+  aliviada: 'relieved',
+  nervioso: 'nervously',
+  nerviosa: 'nervously',
+  apenado: 'sheepish',
+  apenada: 'sheepish',
+  impresionado: 'impressed',
+  impresionada: 'impressed',
+  asombrado: 'amazed',
+  asombrada: 'amazed',
+  encantado: 'delighted',
+  encantada: 'delighted',
+  tranquilizando: 'reassuring',
+  calmado: 'calm',
+  calmada: 'calm',
+  orgulloso: 'proud',
+  orgullosa: 'proud',
+  sarcastico: 'sarcastic',
+  sarcastica: 'sarcastic',
+  'sin emocion': 'deadpan',
+  titubeo: 'hesitates',
+  tartamudeo: 'stammers',
+  'con calidez': 'warmly',
+  alegre: 'cheerfully',
+  concentrado: 'focused',
+  concentrada: 'focused',
   aja: '',
   eso: '',
   auch: '',
@@ -241,7 +290,9 @@ const VOCABULARIO_INGLES = new Set(
     // Las de Eleven v4: se pueden encadenar y las sigue en orden.
     'whispering shouting laughing ecstatic excitedly cheerfully nervously sarcastic sarcastically confidently ' +
     'seriously dramatically proudly sadly happily curiously thoughtfully reassuring encouraging ' +
-    'patient patiently enthusiastic enthusiastically amazed awe hushed chuckling giggling grin smiling'
+    'patient patiently enthusiastic enthusiastically amazed awe hushed chuckling giggling grin smiling ' +
+    // Las del catálogo verificado el 1-oct (mobile/src/compa/etiquetasVoz.ts).
+    'hums mischievously deadpan delighted sheepish focused stammers playfully'
   ).split(' ')
 );
 function esEtiquetaIngles(k: string): boolean {

@@ -707,9 +707,9 @@ test('tarea lenta por voz (el modelo pide la web): frase de espera a tiempo, tec
     const pase = emitirPase(otra, 'claudio', 'es', { aparato: 'tel-ambiente' }).pase;
     const r = await voz(pase, [{ role: 'user', content: 'investiga el precio del cobre hoy en la bolsa de Londres' }]);
     console.log(`[latencia] tarea web por voz: primera palabra (la frase de espera) a los ${Math.round(r.primeraMs)} ms, respuesta completa a los ${Math.round(r.totalMs)} ms`);
-    // A veces lleva delante una etiqueta de audio de la voz v4 («[curious] Buscando…»): la voz la
-    // interpreta y no la lee (frasesEstado.ts, vozDeEspera).
-    const sinEtiqueta = r.dicho.replace(/^\[(thoughtful|curious|calm|exhales|laughs softly|chuckles)\] /, '');
+    // Casi siempre lleva delante una etiqueta de audio de la voz v4 («[curious] Buscando…»): la voz la
+    // interpreta y no la lee (compa/etiquetasVoz.ts).
+    const sinEtiqueta = r.dicho.replace(/^\[[a-z -]+\] /, '');
     const frase = frasesDe('buscando', 'claudio', 'es').find((f) => sinEtiqueta.startsWith(f));
     assert.ok(frase, `empieza con una frase de «buscando» de Claudio: ${r.dicho}`);
     assert.ok(r.primeraMs < 3_000, `la frase sale antes del corte de ElevenLabs (4 s): ${r.primeraMs} ms`);

@@ -1,0 +1,12 @@
+{
+  "//": "Solo para la web y el servidor: compa/frasesEstado.ts y compa/etiquetasVoz.ts son puros y los importan src/App.tsx (Vite) y server/voz-agente.ts. Vite usa el tsconfig más cercano y el de mobile/ extiende expo/tsconfig.base, que no existe donde no se instalan las dependencias del teléfono (la CI de la web, Render). El tsc del teléfono y Metro siguen usando mobile/tsconfig.json.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "jsx": "react-jsx",
+    "skipLibCheck": true,
+    "noEmit": true
+  }
+}
