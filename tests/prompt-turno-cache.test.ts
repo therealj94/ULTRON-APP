@@ -7,7 +7,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CONGELAR_INACTIVA_MS, CONGELAR_MAX_MS, CONGELAR_MAX_NUEVOS, HILO_BASE, ventanaDelHilo, _olvidarFijos, fijoDeLaConversacion, piezasDelTurno, personalidadDelTurno, renovarFijo } from '../server/prompt-turno';
+import { CONGELAR_INACTIVA_MS, CONGELAR_MAX_MS, CONGELAR_MAX_NUEVOS, HILO_BASE, LIMITES_VOZ, ventanaDelHilo, _olvidarFijos, fijoDeLaConversacion, piezasDelTurno, personalidadDelTurno, renovarFijo } from '../server/prompt-turno';
 import { recordarTurno, resetMemoriaTest } from '../lib/memoria';
 import { construirMensajes } from '../lib/qwen';
 
@@ -191,4 +191,29 @@ test('pasado el tope de turnos nuevos desde la foto, se rehace (la ventana no cr
   // La foto nueva cuenta desde cero.
   guardados.push(t + 501_000);
   assert.equal(fijoDeLaConversacion('j@x', 'otro', 'firma', t + 501_001, desde), 'fijo nuevo');
+});
+
+test('la voz lleva el system corto: sin el cerebro entero ni el catálogo, con su resumen y menos de dos tercios', () => {
+  const largo = piezasDelTurno({ ...base, hechos: [] });
+  const corto = piezasDelTurno({ ...base, hechos: [], compacto: true });
+  assert.ok(corto.fijo.length < largo.fijo.length * 0.67, `${corto.fijo.length} vs ${largo.fijo.length}`);
+  assert.match(corto.fijo, /\(resumen\)/);
+  assert.match(corto.fijo, /Lo concreto de cada tema te llega en HECHOS/);
+  // Las líneas de hecho del cerebro («- …») no van: llegan en HECHOS cuando el tema las pide.
+  const lineaDeHecho = largo.fijo.split('\n').find((l) => l.trim().startsWith('- ') && l.length > 40)!;
+  assert.ok(lineaDeHecho && !corto.fijo.includes(lineaDeHecho));
+  // Lo fijo corto no depende de la conversación: es su propia firma.
+  assert.equal(corto.fijo, corto.firma);
+});
+
+test('la voz tiene su ventana de hilo: 8 de base y se rehace pasados 12 nuevos', () => {
+  _olvidarFijos();
+  const ahora = Date.now();
+  fijoDeLaConversacion('jose@x|voz', 'F', 'G', ahora, () => 0, undefined, LIMITES_VOZ);
+  assert.equal(ventanaDelHilo('jose@x|voz', () => 3, ahora + 1000, undefined, LIMITES_VOZ), 8 + 3);
+  assert.equal(ventanaDelHilo('jose@x|voz', () => 13, ahora + 1000, undefined, LIMITES_VOZ), 8);
+  // Con 13 nuevos la foto se rehace (el texto aguanta 24).
+  assert.equal(fijoDeLaConversacion('jose@x|voz', 'F2', 'G', ahora + 2000, () => 13, undefined, LIMITES_VOZ), 'F2');
+  assert.equal(fijoDeLaConversacion('jose@x', 'T', 'G', ahora, () => 0), 'T');
+  assert.equal(fijoDeLaConversacion('jose@x', 'T2', 'G', ahora + 2000, () => 13), 'T');
 });

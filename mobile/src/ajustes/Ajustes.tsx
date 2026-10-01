@@ -16,6 +16,7 @@ import { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { APP_VERSION } from '../config';
+import { versionInstalada } from '../lib/ota';
 import { de, tr, useIdioma, type Idioma } from '../i18n';
 import { cumpleLegible, estadoPerfil, guardarPerfil, perfilSincronizado, usePerfil } from '../lib/perfil';
 import { setAvatarVoz } from '../lib/tts';
@@ -31,6 +32,15 @@ import { INFO_PERMISOS, estadosPermisos, listo } from '../primeravez/permisos';
 import { SelectorCumple, VistaAvatar } from '../primeravez/piezas';
 import type { RaizParams } from '../app/rutas';
 import { salirDeLaSesion, useUsuario } from '../app/sesion';
+
+/** Lo que corre: la OTA (o el JS de la APK), cuándo se publicó y la huella nativa. */
+function lineaOta(idioma: Idioma): string {
+  const v = versionInstalada();
+  if (!v.runtime) return tr('Sin actualizaciones por aire', 'No over-the-air updates');
+  const cuando = v.creada ? v.creada.toLocaleString(idioma === 'en' ? 'en-US' : 'es-HN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+  const que = v.ota ? `OTA ${v.ota}` : tr('JS de la APK', 'APK’s JS');
+  return [que, cuando, `runtime ${v.runtime}`].filter(Boolean).join(' · ');
+}
 
 type Props = NativeStackScreenProps<RaizParams, 'Ajustes'>;
 type HojaAbierta = 'apodo' | 'avatar' | 'cumple' | 'permisos' | 'salir' | null;
@@ -157,6 +167,9 @@ export function Ajustes({ navigation }: Props) {
         <View style={s.pie}>
           <Texto v="chica" color="texto3">
             PULSE 2CHAT × AURA · v{APP_VERSION}
+          </Texto>
+          <Texto v="mini" color="texto3">
+            {lineaOta(idioma)}
           </Texto>
           <Texto v="mini" color="texto3" style={[fuenteDisplay(), { fontSize: 13, letterSpacing: 2 }]}>
             powered by ORDEN GLOBAL

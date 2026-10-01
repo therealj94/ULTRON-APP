@@ -22,7 +22,10 @@ export type Contacto = { correo: string; nombre: string };
 
 let borradores: Record<string, Borrador> = {};
 // Los borradores viven solo en memoria: con alguno escrito, la actualización por aire no recarga.
-registrarTrabajoActivo('borrador-chat', () => Object.values(borradores).some((b) => !!b?.texto?.trim()));
+// Devuelve cuándo se tocó el último: uno olvidado hace rato deja de frenarla (barreraOta.ts).
+registrarTrabajoActivo('borrador-chat', () =>
+  Object.values(borradores).reduce((m, b) => (b?.texto?.trim() ? Math.max(m, b.en || Date.now()) : m), 0) || false
+);
 let abierto: Contacto | null = null;
 /** El último que redactó AURA: a quién va «envíalo» si no hay un chat abierto. */
 let ultimoRedactado: string | null = null;

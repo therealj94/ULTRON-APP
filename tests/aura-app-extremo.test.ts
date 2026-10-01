@@ -642,7 +642,7 @@ test('las manos: llamar espera el «sí»; leer vuelve por la voz con su boleto 
     const manana7 = Date.now() + 26 * 3600_000;
     assert.equal((await contexto({ manos: ['llamar', 'leer', 'recordatorio', 'recordatorio_llamada'], recordatorios: [{ id: 'aura-rec-prueba-1', texto: 'La pastilla', cuando: manana7, llamada: true }] })).status, 200);
     const lista = await voz(pase, [{ role: 'user', content: '¿qué recordatorios tengo?' }]);
-    assert.match(lista.dicho, /^Tienes un recordatorio: .*«La pastilla» \(te llamo\)\.$/);
+    assert.match(lista.dicho, /^Tienes un recordatorio[:,] .*«La pastilla» \(te llamo\)\.$/);
     const cancela = await voz(pase, [{ role: 'user', content: 'cancela el recordatorio de la pastilla' }]);
     assert.match(cancela.dicho, /^¿Cancelo el recordatorio «La pastilla» de /);
     const siCancela = await voz(pase, [{ role: 'user', content: 'sí, cancélalo' }]);

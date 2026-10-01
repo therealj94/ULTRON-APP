@@ -98,7 +98,7 @@ function notifeeFalso(o = {}) {
   } else {
     const fuera = 11 * 60_000;
     ok('sin trabajo, vuelve tras 11 min: aplica', BARRERA.decidirAlVolver({ pendiente: true, fueraMs: fuera }) === 'aplicar');
-    ok('vuelve tras 2 min: nada', BARRERA.decidirAlVolver({ pendiente: true, fueraMs: 2 * 60_000 }) === 'nada');
+    ok('vuelve tras 20 s: nada', BARRERA.decidirAlVolver({ pendiente: true, fueraMs: 20_000 }) === 'nada');
     CONTRATO.emitir('llamada', { activa: true, video: false });
     ok('A24: con llamada activa, se pospone', BARRERA.decidirAlVolver({ pendiente: true, fueraMs: fuera }) === 'posponer', BARRERA.motivosParaNoRecargar().join());
     CONTRATO.emitir('llamada', { activa: false, video: false });

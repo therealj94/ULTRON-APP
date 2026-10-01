@@ -62,6 +62,7 @@ import { ALTO_PILDORA, LlamadaAvatar, type VistaLlamada } from './LlamadaAvatar'
 import { callarTimbre, sonarTimbre } from './timbre';
 import { AudioVoz } from './audioVoz';
 import { cabecerasAparato } from '../lib/aparato';
+import { registrarTrabajoActivo } from '../lib/barreraOta';
 import { escucharCuenta } from '../pulse/relevo';
 import { contactosParaAura } from './contactos';
 import { ecoMesa, interrupcionVoz, mensajeVoz, nivelOido } from './canales';
@@ -143,6 +144,8 @@ const avisarCierre = (pase: string) =>
 
 /** Una sola para toda la app: la llamada escucha su aviso en el bus (`voz`). */
 const audioVoz = new AudioVoz((libre) => emitir('voz', { libre }));
+/** Para la mesa: espera a que la conversación suelte el audio del teléfono (como mucho `topeMs`, 4 s). */
+export const esperarAudioLibre = (topeMs?: number) => audioVoz.esperarLibre(topeMs);
 
 async function hayToken(): Promise<boolean> {
   return !!(await loadMesaToken().catch(() => ''));
@@ -199,6 +202,8 @@ export function VozProvider({ children, conCompanera = true }: Props) {
   const cic = useRef<CicloLlamada | null>(null);
   if (!cic.current) cic.current = new CicloLlamada({ idioma: () => control.vista().idioma });
   const ciclo = cic.current;
+  // La conversación con AURA o su llamada, vivas: la OTA no recarga encima (lib/barreraOta.ts).
+  useEffect(() => registrarTrabajoActivo('conversacion-aura', () => control.vista().montada || llamadaActiva(ciclo.estado())), [control, ciclo]);
   const estadoCiclo = useSyncExternalStore(
     useCallback((f: () => void) => ciclo.suscribir(f), [ciclo]),
     () => ciclo.estado(),

@@ -54,50 +54,41 @@ jobs:
         # Cada app con su proyecto EAS en la cuenta ordenglobal (app.json / app.config.js).
         variante: ["ultron", "electrum"]
     steps:
-      # Sin el token no se puede publicar: se avisa y el resto se salta (no se deja main en rojo por
-      # algo que solo el dueño de la cuenta de Expo puede poner).
+      # Sin el token no se puede publicar: en main eso es un fallo (rojo), no un verde que no publicó
+      # nada. Lo arregla quien tenga la cuenta de Expo poniendo el secreto.
       - name: ¿Hay EXPO_TOKEN?
-        id: token
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
           if [ -z "$EXPO_TOKEN" ]; then
-            echo "::warning::Falta el secreto EXPO_TOKEN (token de la cuenta dueña de los proyectos, ordenglobal): no se publica la OTA. https://expo.dev/settings/access-tokens"
-            echo "hay=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "hay=true" >> "$GITHUB_OUTPUT"
+            echo "::error::Falta el secreto EXPO_TOKEN (token de la cuenta dueña de los proyectos, ordenglobal): la OTA de este commit NO se publicó. https://expo.dev/settings/access-tokens"
+            exit 1
           fi
 
       - uses: actions/checkout@v4
-        if: steps.token.outputs.hay == 'true'
 
       - uses: actions/setup-node@v4
-        if: steps.token.outputs.hay == 'true'
         with:
           node-version: "20"
           cache: npm
           cache-dependency-path: mobile/package-lock.json
 
+      # Versión fija: con `latest`, un eas-cli nuevo puede romper la publicación sin que cambie nada
+      # aquí. 24.8.0 es la que publicó bien las últimas OTA; se sube a mano.
       - name: Setup EAS
-        if: steps.token.outputs.hay == 'true'
         uses: expo/expo-github-action@v8
         with:
-          eas-version: latest
+          eas-version: 24.8.0
           packager: npm
           token: ${{ secrets.EXPO_TOKEN }}
 
+      # Solo lo que hace falta para publicar: el typecheck y las pruebas ya pasaron en `calidad`
+      # (mismo commit), aquí no se repiten.
       - name: Install JS
-        if: steps.token.outputs.hay == 'true'
         working-directory: mobile
         run: npm ci
 
-      - name: Typecheck
-        if: steps.token.outputs.hay == 'true' && inputs.accion != 'volver-a-la-apk'
-        working-directory: mobile
-        run: npm run typecheck
-
       - name: Runtime (huella nativa) de este commit
-        if: steps.token.outputs.hay == 'true'
         id: runtime
         working-directory: mobile
         run: echo "runtime=$(node ../scripts/qa/runtime-android.mjs)" >> "$GITHUB_OUTPUT"
@@ -108,7 +99,7 @@ jobs:
       # nueva que android-apk.yml ya está compilando para este mismo push.
       - name: ¿Lo puede recibir la APK publicada?
         id: apk
-        if: steps.token.outputs.hay == 'true' && inputs.accion != 'volver-a-la-apk'
+        if: inputs.accion != 'volver-a-la-apk'
         env:
           GH_TOKEN: ${{ github.token }}
           RT: ${{ steps.runtime.outputs.runtime }}
@@ -121,12 +112,13 @@ jobs:
             echo "✓ ${ULTRON_APP}: misma huella que la APK publicada ($RT) → se publica OTA" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "compatible=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::${ULTRON_APP}: este commit cambia el nativo (huella $RT, APK publicada ${PUBLICADA:-ninguna}). No va por OTA: hace falta la APK nueva."
+            # Verde a propósito (no es un error), pero que se vea en el resumen de la ejecución.
+            echo "::warning title=OTA no publicada en ${ULTRON_APP} por cambio nativo::Este commit cambia la huella nativa ($RT; APK publicada: ${PUBLICADA:-ninguna}). Las APK instaladas no pueden recibirlo por aire: hay que instalar la APK nueva que compila android-apk.yml."
             echo "✗ ${ULTRON_APP}: requiere APK nueva (huella $RT ≠ ${PUBLICADA:-ninguna})" >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Publicar OTA
-        if: steps.token.outputs.hay == 'true' && inputs.accion != 'volver-a-la-apk' && steps.apk.outputs.compatible == 'true'
+        if: inputs.accion != 'volver-a-la-apk' && steps.apk.outputs.compatible == 'true'
         working-directory: mobile
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
@@ -143,7 +135,7 @@ jobs:
       # Marcha atrás de emergencia: las APK de esta huella dejan de usar cualquier OTA y vuelven al
       # JS con el que se compilaron. Para volver a una OTA anterior concreta: `eas update:republish`.
       - name: Volver al JS de la APK
-        if: steps.token.outputs.hay == 'true' && inputs.accion == 'volver-a-la-apk'
+        if: inputs.accion == 'volver-a-la-apk'
         working-directory: mobile
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}

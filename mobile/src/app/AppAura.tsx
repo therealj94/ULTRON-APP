@@ -42,6 +42,7 @@ import { Ajustes } from '../ajustes/Ajustes';
 import { LoQueSabe } from '../ajustes/LoQueSabe';
 import { PrimeraVez } from '../primeravez/PrimeraVez';
 import { useAccionesDeAura } from './acciones';
+import { AvisoActualizacion } from './AvisoActualizacion';
 import { Bienvenida } from './pantallas/Bienvenida';
 import { CrearGenesis } from './pantallas/CrearGenesis';
 import { Entrar } from './pantallas/Entrar';
@@ -160,6 +161,8 @@ export function AppAura() {
             <Pila.Screen name="Conversacion" component={Conversacion} />
           </Pila.Navigator>
         </NavigationContainer>
+        {/* «Actualización lista · Reiniciar» (lib/ota.ts), solo con la sesión abierta. */}
+        {enSesion && <AvisoActualizacion />}
         </VozProvider>
         </PulseProvider>
       </SafeAreaProvider>
