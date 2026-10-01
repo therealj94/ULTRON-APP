@@ -117,7 +117,7 @@ import {
   procesarElectrumTelegram,
   registrarWebhookElectrum,
 } from './server/electrum/telegram';
-import { identidadDe, exigirPlataforma, esInvitado, sesionAbreAura } from './server/seguridad';
+import { identidadDe, exigirPlataforma, esInvitado, plataformaAutorizada, sesionAbreAura } from './server/seguridad';
 import { cuentaDe, cuentasDisponibles, crearSolicitud, entrarConCuenta, mantenerCuentasAlDia } from './server/cuentas';
 import { aprobadores, montarRutasCuentas, plantilla } from './server/cuentas-rutas';
 import { montarRutasGenesis } from './server/genesis';
@@ -201,8 +201,28 @@ app.use(redirigirADominio);
  * cuerpo que no es un Buffer: contestaba «El archivo llegó vacío» a un GeoJSON perfectamente bueno
  * (y a partir de 12 MB, «demasiado grande»).
  */
-const leerJson = express.json({ limit: '12mb' });
-app.use((req, res, next) => (/^\/api\/electrum\/subir\/?$/i.test(req.path) ? next() : leerJson(req, res, next)));
+/*
+ * TOPE DEL CUERPO (Fase 0.4). Antes eran 12 MB para todas las rutas y ANTES de mirar credenciales:
+ * cualquiera, sin cuenta, hacía que el servidor leyera y parseara 12 MB de JSON por petición. Ahora
+ * el tope general es 1 MB y solo suben a 12 MB las rutas que llevan imagen, PDF o audio en el cuerpo,
+ * y solo si la petición ya trae su credencial (se mira en las cabeceras, antes de leer el cuerpo).
+ * Sin ella, un cuerpo grande se corta con 413 sin llegar a la ruta.
+ */
+const leerJson = express.json({ limit: '1mb' });
+const leerJsonGrande = express.json({ limit: '12mb' });
+/** AU-RA: turnos con foto o PDF, la visión y el oído (el teléfono manda el audio dos veces, en base64). */
+const CUERPO_GRANDE_AURA = ['/api/turno', '/api/turno/stream', '/api/vision/analyze', '/api/stt'];
+/** Dr Electrum: foto, audio, el mapa del informe, el polígono del área y las cargas por lote. */
+const CUERPO_GRANDE_ELECTRUM = ['/api/electrum/ver', '/api/electrum/oir', '/api/electrum/informe', '/api/electrum/area/analizar', '/api/electrum/area/informe', '/api/electrum/muestras/cargar', '/api/electrum/satelite/cargar'];
+function cuerpoGrandePermitido(req: express.Request): boolean {
+  const ruta = req.path.replace(/\/+$/, '');
+  if (CUERPO_GRANDE_ELECTRUM.includes(ruta)) return plataformaAutorizada(req, 'electrum');
+  return CUERPO_GRANDE_AURA.includes(ruta) && mesaAutorizada(req);
+}
+app.use((req, res, next) => {
+  if (/^\/api\/electrum\/subir\/?$/i.test(req.path)) return next();
+  return (cuerpoGrandePermitido(req) ? leerJsonGrande : leerJson)(req, res, next);
+});
 // Cuerpo roto o demasiado grande: una respuesta JSON clara en vez de la página HTML de Express.
 app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
   if (err?.type === 'entity.too.large') return res.status(413).json({ error: 'Lo que mandaste es demasiado grande.', honesto: true });

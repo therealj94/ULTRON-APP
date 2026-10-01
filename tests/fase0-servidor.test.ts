@@ -4,6 +4,8 @@
  *
  *  · 0.2: sin marca de desarrollo no hay Vite sirviendo el repo ni mesa abierta.
  *  · 0.3: un turno sin sesión no llega al nodo del 27B (401); con sesión de AU-RA, sí.
+ *  · 0.4: el tope general del cuerpo es 1 MB; solo las rutas de foto/PDF/audio suben a 12 MB, y solo
+ *         con credencial.
  *  · 0.6: una sesión de Dr Electrum (código temporal o persona solo de Electrum) no abre la mesa.
  */
 import test, { after, before } from 'node:test';
@@ -159,4 +161,30 @@ test('0.6 una sesión de Dr Electrum no abre la mesa de AU-RA', async () => {
     assert.equal((await fetch(`${BASE}/api/memoria`, { headers: h })).status, 401, `${quien}: leyó la memoria de la mesa`);
     assert.equal((await turno('/api/voz/agente', { avatar: 'aura' }, h)).status, 401, `${quien}: abrió una conversación de voz`);
   }
+});
+
+test('0.4 un cuerpo grande sin sesión se corta con 413; con sesión, la ruta de la foto lo recibe', async () => {
+  // ~2 MB de una «foto» en base64: más que el tope general, menos que el de la visión (3 MB).
+  const foto = `data:image/jpeg;base64,${Buffer.alloc(1_500_000, 7).toString('base64')}`;
+  const audio = `data:audio/m4a;base64,${Buffer.alloc(1_500_000, 7).toString('base64')}`;
+  const vision = { mediaType: 'image/jpeg', fileName: 'mesa.jpg', base64Data: foto, prompt: 'lista corta' };
+
+  for (const [ruta, cuerpo] of [['/api/vision/analyze', vision], ['/api/stt', { audioBase64: audio, mimeType: 'audio/m4a' }], ['/api/turno', { message: 'qué ves', image: foto }], ['/api/memoria', { hecho: 'x'.repeat(2_000_000) }]] as const) {
+    const r = await turno(ruta, cuerpo);
+    assert.equal(r.status, 413, `${ruta}: sin sesión leyó un cuerpo de ${JSON.stringify(cuerpo).length} bytes`);
+    assert.match(((await r.json()) as any).error, /demasiado grande/);
+  }
+
+  const h = { 'x-ultron-sesion': sesion('aura.prueba@ordenglobal.org') };
+  // Con sesión la visión lo lee y lo intenta ver (aquí no hay ojo ni Gemini: 503 de la ruta, no 413).
+  const v = await turno('/api/vision/analyze', vision, h);
+  assert.notEqual(v.status, 413);
+  assert.ok('via' in ((await v.json()) as any), 'contestó la ruta de la visión');
+  const o = await turno('/api/stt', { audioBase64: audio, mimeType: 'audio/m4a' }, h);
+  assert.notEqual(o.status, 413);
+  assert.ok('via' in ((await o.json()) as any), 'contestó la ruta del oído');
+  // Una ruta que no lleva archivos sigue con el tope general aunque haya sesión.
+  assert.equal((await turno('/api/memoria', { hecho: 'x'.repeat(2_000_000) }, h)).status, 413);
+  // Y lo normal, chico, pasa como siempre.
+  assert.notEqual((await turno('/api/vision/analyze', { ...vision, base64Data: 'data:image/jpeg;base64,AAAA' })).status, 413);
 });
