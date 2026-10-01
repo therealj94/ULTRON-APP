@@ -42,6 +42,7 @@ import crypto from 'crypto';
 import type express from 'express';
 import { clave } from '../lib/boveda';
 import { quitarExpresiones } from '../lib/expresiones';
+import { afinarParaBoca, afinarParaBocaIngles } from './habla';
 import { firmarDato, gastarCupo, huellaSesion, leerDato, mismoSecreto, secretoDerivado, sesionSigueViva, type Sesion } from './seguridad';
 import { normalizarAvatar, normalizarIdioma, type AvatarVoz, type Idioma } from './eleven';
 import { modoValido } from './desk';
@@ -909,15 +910,30 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     const fin = new Promise<void>((r) => (avisarFin = r));
     senal.addEventListener('abort', () => avisarFin(), { once: true });
 
+    /**
+     * Lo del cerebro, listo para la boca: sin las marcas de expresión de la mesa, sin markdown ni emojis,
+     * «AU-RA» como «Aura» y las unidades en palabras («3 km» → «3 kilómetros»). Las cifras quedan en
+     * dígitos: ElevenLabs las lee bien (concuerda el género, dice las fechas como fechas). Con el agente en
+     * `text_normalisation_type: system_prompt` nadie más lo hace: la instrucción va en el system que
+     * manda ElevenLabs, y el cerebro solo lee el último mensaje de la persona (1-oct).
+     */
+    const paraVoz = (t: string) => {
+      const sin = quitarExpresiones(t);
+      if (!sin.trim()) return sin;
+      const antes = /^\s*/.exec(sin)![0];
+      const despues = /\s*$/.exec(sin)![0];
+      const limpio = pase.idioma === 'en' ? afinarParaBocaIngles(sin, 100_000) : afinarParaBoca(sin, 100_000, { cifras: false });
+      return antes + limpio + despues;
+    };
+
     const enviar = (evento: string, datos: any) => {
       if (terminado || senal.aborted) return;
       if (evento === 'delta') {
-        // La voz del agente lee el texto tal cual: sin las marcas de expresión de la mesa.
-        const crudo = sinRelleno(quitarExpresiones(String(datos?.voz ?? datos?.text ?? '')));
+        const crudo = sinRelleno(paraVoz(String(datos?.voz ?? datos?.text ?? '')));
         // Al quitar una marca del principio queda un espacio: el primer trozo empieza limpio.
         decirCerebro(dicho.length > inicioCerebro ? crudo : crudo.replace(/^\s+/, ''));
       } else if (evento === 'replace') {
-        const nuevo = quitarExpresiones(String(datos?.voz ?? datos?.text ?? ''));
+        const nuevo = paraVoz(String(datos?.voz ?? datos?.text ?? ''));
         decirCerebro(restoDeReemplazo(dicho.slice(inicioCerebro), nuevo));
       } else if (evento === 'tarea') {
         const tr = tareaDe(String(datos?.herramienta || ''));
@@ -931,7 +947,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
         if (conv.ambiente?.de === corte) ambiente(tr.sonido);
         if (tr.lenta && !(antes?.lenta && esperando)) programar(alEsperar, cuandoEsperar());
       } else if (evento === 'done') {
-        if (!algo) decirCerebro(sinRelleno(quitarExpresiones(String(datos?.voz ?? datos?.reply ?? '')).trim()));
+        if (!algo) decirCerebro(sinRelleno(paraVoz(String(datos?.voz ?? datos?.reply ?? '')).trim()));
         // Solo acciones y nada que decir (un cerebro viejo, o la frase se perdió): «Listo.», no «se me
         // fue el hilo» mientras la app sí la hace.
         if (!algo && Array.isArray(datos?.acciones) && datos.acciones.length) decirCerebro(PHRASES.listo[pase.idioma]);

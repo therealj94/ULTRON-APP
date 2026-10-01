@@ -863,7 +863,8 @@ test('charla rápida (<1 s): sin frase y sin sonido; una tarea que termina antes
   });
   try {
     const dicho = dichoDe(await (await llm(veloz.base, paseDe(persona(), 'aura', 'es', 'tel-2'), [{ role: 'user', content: 'busca qué hora es en Madrid' }])).text());
-    assert.equal(dicho, 'Listo: son las tres.');
+    // Los dos puntos se dicen como pausa de coma (server/habla.ts, afinarParaBoca).
+    assert.equal(dicho, 'Listo, son las tres.');
     assert.deepEqual(veloz.ambientes, []);
   } finally {
     await veloz.cerrar();
@@ -992,5 +993,19 @@ test('etiquetas de audio v4: a veces la frase de espera lleva una (de las que v4
     assert.ok(con < 12, 'con mesura: no todas');
   } finally {
     await s.cerrar();
+  }
+});
+
+test('lo del cerebro llega a la voz sin markdown, con «Aura» y unidades en palabras (las cifras en dígitos)', async () => {
+  const m = await montar(async (t) => {
+    t.enviar('delta', { text: '**AU-RA** dice: la ley es 3,4 g/t ', voz: '**AU-RA** dice: la ley es 3,4 g/t ' });
+    t.enviar('delta', { text: 'a 12 km de Danlí.', voz: 'a 12 km de Danlí.' });
+    t.enviar('done', { reply: 'AU-RA dice: la ley es 3,4 g/t a 12 km de Danlí.' });
+  });
+  try {
+    const dicho = dichoDe(await (await llm(m.base, paseDe(persona(), 'aura', 'es', 'tel-9'), [{ role: 'user', content: 'cuál es la ley' }])).text());
+    assert.equal(dicho, 'Aura dice, la ley es 3,4 gramos por tonelada a 12 kilómetros de Danlí.');
+  } finally {
+    await m.cerrar();
   }
 });

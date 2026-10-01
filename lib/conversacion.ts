@@ -66,18 +66,21 @@ export function esInterno(message: string): boolean {
   return false;
 }
 
+/**
+ * «Sí, hazlo», «dale», «revisa eso»: sigue con lo último del hilo. Con límite de palabra y sin
+ * despedidas ni negaciones: «buenos días», «bueno, gracias», «claro que no» o «siempre me pasa eso»
+ * no son un «sí» (1-oct: lanzaban una búsqueda web con la última frase de AU-RA como consulta).
+ */
 export function esContinuacion(message: string): boolean {
   const q = fold(message);
   if (!q) return false;
-  if (
-    /^(si|dale|ok|vale|hazlo|hazlo vos|procede|adelante|claro|bueno|si hacerlo|si,? haz|si, hacerlo)/.test(q) &&
-    q.length < 240
-  ) {
-    return true;
-  }
+  if (/\b(no|gracias|buen[oa]s? (dias|tardes|noches)|adios|chao|hasta luego)\b/.test(q)) return false;
+  if (/^(si|dale|ok|okay|vale|hazlo|procede|adelante|claro|bueno|listo)\b/.test(q) && q.length < 120) return true;
   return (
     q.length < 280 &&
-    /\b(esto|eso|ese codigo|el codigo|el repo|el readme|la pagina|el enlace|el link|el proyecto|profund[oa]|descarga(lo| el codigo)?|analiza(lo)?|revisa (esto|eso|el|la|lo|profundo)|el objeto)\b/.test(q)
+    (/\b(ese codigo|el codigo|el repo|el readme|la pagina|el enlace|el link|el proyecto|el objeto)\b/.test(q) ||
+      /\b(revisa|analiza|descarga|lee|abre|mira|busca|investiga)(lo|la)?( (mas )?(a )?profund[oa])? (esto|eso|ese|esa|aquello)\b/.test(q) ||
+      /\b(analizalo|descargalo|revisalo|revisa profundo|a fondo)\b/.test(q))
   );
 }
 

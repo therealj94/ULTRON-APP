@@ -26,6 +26,11 @@ def linea(content, done, extra=None, tools=None):
     }
     if done:
         o["done_reason"] = "stop"
+    if u.get("error"):
+        # 1-oct: un fallo va como error, sin texto. Antes iba como si lo dijera AU-RA («Proba de nuevo.»,
+        # «Te escucho.»): la voz lo leia y quedaba en su memoria. Quien llama elige que decir.
+        o["error"] = str(u["error"])[:200]
+        o["done_reason"] = "error"
     return json.dumps(o, ensure_ascii=False) + "\n"
 
 def largo(msgs):
@@ -86,7 +91,7 @@ def chat():
         tcs, usage, got = [], {}, False
         r = requests.post(LLAMA + "/v1/chat/completions", json=payload, stream=True, timeout=600)
         if r.status_code != 200:
-            yield linea("El modelo no tomo el turno (" + str(r.status_code) + "). Proba de nuevo.", True)
+            yield linea("", True, {"error": "llama-server HTTP " + str(r.status_code)})
             return
         for raw in r.iter_lines():
             if not raw:
@@ -101,7 +106,7 @@ def chat():
             except Exception:
                 continue
             if chunk.get("error"):
-                yield linea("No pude completar este turno. Proba de nuevo.", True)
+                yield linea("", True, {"error": str(chunk.get("error"))[:200]})
                 return
             delta = ((chunk.get("choices") or [{}])[0].get("delta") or {})
             tim = chunk.get("timings") or {}
@@ -114,7 +119,9 @@ def chat():
             if txt:
                 got = True
                 yield linea(txt, False)
-        yield linea("" if got else "Te escucho.", True, usage)
+        if not got:
+            usage["error"] = "sin texto"
+        yield linea("", True, usage)
     # Ollama contesta en un solo JSON cuando piden stream:false (asi templa el asistente de
     # PULSE2CHAT y asi preguntan los que no leen a trozos).
     if data.get("stream", True) is False:
