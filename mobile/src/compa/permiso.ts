@@ -3,9 +3,9 @@
  *
  * Abrir una conversación son dos esperas: pedirle a nuestro servidor el permiso de un solo uso
  * (POST /api/voz/agente → token de ElevenLabs + pase firmado de quién habla) y conectar el WebRTC. La
- * primera se adelanta: al entrar a la app, al cambiar de avatar o idioma, al volver del segundo plano
- * y en cuanto el dedo toca a la compañera o el botón «Conversar». Cuando la persona de verdad quiere
- * hablar, el permiso ya está en la mano y solo falta conectar.
+ * primera se adelanta mientras SUENA la llamada del avatar (toda conversación empieza sonando): cuando
+ * la persona contesta, el permiso ya está en la mano y solo falta conectar. Antes también al entrar, al
+ * volver a la app y al tocar a la compañera, y cada vez el servidor calentaba el nodo sin ninguna llamada.
  *
  * El token sirve UNA vez y vence (se guarda 4 minutos, bastante menos de lo que dura en ElevenLabs);
  * al tomarlo se gasta. El pase dura 30 minutos en el servidor.

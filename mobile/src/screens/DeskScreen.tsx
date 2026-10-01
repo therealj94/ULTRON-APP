@@ -1690,13 +1690,11 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     }
   }, [enLlamada, vozOcupa, mesaVisible, appActiva, companeraVisible, restFace]);
 
-  // La voz toma el avatar de la mesa; al entrar se deja el permiso de la conversación listo.
+  // La voz toma el avatar de la mesa. El permiso de la conversación se pide cuando suena la llamada
+  // (VozProvider, `timbre`), no al entrar: eran segundos de GPU del nodo sin ninguna llamada.
   useEffect(() => {
     if (avatar) vozRef.current.fijarAvatar(avatar);
   }, [avatar]);
-  useEffect(() => {
-    vozRef.current.precalentar();
-  }, []);
   // El perfil cambió en otra pantalla (ajustes, la primera vez): la mesa toma el avatar nuevo en silencio.
   useEffect(
     () =>
