@@ -193,6 +193,16 @@ prueba('los 18 clips existen, son livianos y clips.ts los pide todos', () => {
   assert.ok(total < 8 * 1024 * 1024, `los 18 pesan ${(total / 1048576).toFixed(1)} MB`);
 });
 
+prueba('en la APK el clip se reproduce desde un archivo (expo-asset), nunca desde el require crudo', () => {
+  // El 1-oct, en el Samsung de José, `source={require(clip)}` daba FileDataSourceException: en la APK
+  // el require es el nombre de un recurso (res/raw), no un archivo. Se copia con expo-asset primero.
+  const vista = fs.readFileSync(path.resolve(AQUI, '../video/CuerpoVideo.tsx'), 'utf8');
+  assert.match(vista, /Asset\.fromModule\(mod\)/);
+  assert.match(vista, /downloadAsync\(\)/);
+  assert.match(vista, /source=\{\{ uri: uris\[/);
+  assert.doesNotMatch(vista, /source=\{clips\[/, 'el require crudo no va al reproductor');
+});
+
 let fallas = 0;
 for (const [nombre, f] of pruebas) {
   try {

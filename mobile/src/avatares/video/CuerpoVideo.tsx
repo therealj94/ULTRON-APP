@@ -14,6 +14,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { ResizeMode, Video, type AVPlaybackStatus } from 'expo-av';
+import { Asset } from 'expo-asset';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, { useAnimatedStyle, useReducedMotion, useSharedValue, withTiming } from 'react-native-reanimated';
 import { miga } from '../../lib/reporte';
@@ -47,8 +48,35 @@ type Props = {
 /** Lo que falló en esta sesión no se vuelve a intentar (se queda con las fotos). */
 let videoRoto = false;
 
+/**
+ * Cada clip, copiado a un archivo de verdad en el teléfono (file://…). En la APK los videos van
+ * empaquetados como recursos (res/raw) y `require()` da solo el NOMBRE del recurso: el reproductor
+ * de expo-av lo trataba como ruta de archivo y fallaba (FileDataSourceException en el Samsung de
+ * José, 1-oct): se veían las fotos quietas. expo-asset lo copia una vez a la caché —igual que hace
+ * el modelo 3D (Avatar3D.tsx)— y se reproduce desde ahí. Por OTA ya llegan como archivo: no copia.
+ */
+const archivos = new Map<number, Promise<string>>();
+function archivoDe(mod: number): Promise<string> {
+  let p = archivos.get(mod);
+  if (!p) {
+    p = (async () => {
+      const a = Asset.fromModule(mod);
+      await a.downloadAsync();
+      const uri = a.localUri || '';
+      // `file:///android_res/…` es la dirección del recurso dentro de la APK: el reproductor no la abre.
+      if (!/^(file|content):/.test(uri) || uri.startsWith('file:///android_res/')) throw new Error(`el clip no quedó en archivo (${uri.slice(0, 40) || 'sin dirección'})`);
+      return uri;
+    })();
+    p.catch(() => archivos.delete(mod));
+    archivos.set(mod, p);
+  }
+  return p;
+}
+
 export const CuerpoVideo = forwardRef<ControlCuerpo, Props>(function CuerpoVideo({ avatar, camara, estado, ancho, alto, respaldo, activo = true, saludar = false }, ref) {
   const clips = CLIPS[avatar];
+  /** Los clips de este avatar ya copiados a archivo (null mientras se preparan: se ven las fotos). */
+  const [uris, setUris] = useState<Partial<Record<ClipVideo, string>> | null>(null);
   const reducido = useReducedMotion();
   const director = useRef<DirectorVideo | null>(null);
   if (!director.current) {
@@ -65,6 +93,22 @@ export const CuerpoVideo = forwardRef<ControlCuerpo, Props>(function CuerpoVideo
   const avisado = useRef(-1);
   const [visto, setVisto] = useState(false);
   const [roto, setRoto] = useState(videoRoto);
+  useEffect(() => {
+    setUris(null);
+    if (!clips || videoRoto) return;
+    let vivo = true;
+    void Promise.all(CLIPS_VIDEO.filter((c) => clips[c] != null).map(async (c) => [c, await archivoDe(clips[c])] as const))
+      .then((pares) => vivo && setUris(Object.fromEntries(pares)))
+      .catch((e) => {
+        if (!vivo) return;
+        videoRoto = true;
+        miga(`avatar en video: no pude preparar los clips (${String(e?.message || e).slice(0, 80)})`);
+        setRoto(true);
+      });
+    return () => {
+      vivo = false;
+    };
+  }, [clips]);
   const op0 = useSharedValue(0);
   const op1 = useSharedValue(0);
   const op = useMemo(() => [op0, op1] as const, [op0, op1]);
@@ -175,14 +219,14 @@ export const CuerpoVideo = forwardRef<ControlCuerpo, Props>(function CuerpoVideo
   const estilo1 = useAnimatedStyle(() => ({ opacity: op1.value }));
   const fondo = avatarPorId(avatar).tema.fondo;
 
-  if (!clips || roto || !activo || ancho <= 0 || alto <= 0) return <>{respaldo}</>;
+  if (!clips || !uris || roto || !activo || ancho <= 0 || alto <= 0) return <>{respaldo}</>;
 
   const capa = (i: 0 | 1, r: Reproduccion | null, estilo: typeof estilo0) =>
     r ? (
       <Animated.View key={i} style={[StyleSheet.absoluteFill, estilo]} pointerEvents="none">
         <Video
           key={`${r.clip}-${r.n}`}
-          source={clips[r.clip as ClipVideo]}
+          source={{ uri: uris[r.clip as ClipVideo] || uris.reposo! }}
           style={{ position: 'absolute', left: encuadre.left, top: encuadre.top, width: encuadre.width, height: encuadre.height }}
           resizeMode={ResizeMode.COVER}
           shouldPlay
