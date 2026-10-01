@@ -985,7 +985,7 @@ test('modo llamada en espera: «Aura, …» se prueba primero por el camino ráp
 
 test('un miembro de la comunidad (fuera del padrón): lo público, sin taller ni nada de la junta, en texto y en voz', { skip: !listo }, async () => {
   // Entró por Genesis abierto; se llama «José», pero su correo no está en el padrón.
-  const m = emitirSesion({ correo: 'comunidad.prueba@gmail.com', nombre: 'José', rol: 'Miembro · Genesis ID' });
+  const m = emitirSesion({ correo: 'comunidad.prueba@gmail.com', nombre: 'José', rol: 'Miembro · Genesis ID' }, { comunidad: true });
   const hm = { 'content-type': 'application/json', 'x-ultron-sesion': m.token };
   const interno = ['8443', 'watchdog', 'NameSilo', 'nonce 0', 'Emisión interna', 'Mayra', 'express-js-on-vercel', 'asistente de la junta', 'HECHOS COMPARTIDOS DE LA JUNTA', 'TALLER: listos'];
   contestar = () => '[EMO: neutral] Te cuento lo público.';
@@ -1027,7 +1027,7 @@ test('un miembro de la comunidad (fuera del padrón): lo público, sin taller ni
   const memM = await (await fetch(`${BASE}/api/memoria`, { headers: hm })).json();
   assert.ok(memM.privada.larga.some((x: any) => /Toby/.test(x.hecho)), '/api/memoria le enseña lo suyo');
   // Otro miembro y la junta no lo ven.
-  const otroM = emitirSesion({ correo: 'vecino.prueba@gmail.com', nombre: 'Vecino', rol: 'Miembro · Genesis ID' });
+  const otroM = emitirSesion({ correo: 'vecino.prueba@gmail.com', nombre: 'Vecino', rol: 'Miembro · Genesis ID' }, { comunidad: true });
   alNodo.length = 0;
   await turnoM('explícame qué es Veta Wallet y para qué me sirve a mí', otroM.token);
   assert.equal(alNodo.at(-1)!.system.includes('Toby'), false, 'lo de un miembro no lo ve otro');

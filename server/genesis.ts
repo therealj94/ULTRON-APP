@@ -106,7 +106,9 @@ export type DepsGenesis = {
   /** ¿Esta persona (por correo) tiene acceso a AU-RA en el padrón? */
   tieneAcceso: (correo: string) => boolean;
   nombreYRol: (correo: string, nombre?: string) => { nombre: string; rol: string };
-  emitirSesion: (u: { correo: string; nombre: string; rol: string }) => { token: string };
+  emitirSesion: (u: { correo: string; nombre: string; rol: string }, o?: { comunidad?: boolean }) => { token: string };
+  /** ¿Entra como miembro de la comunidad (fuera del padrón)? Su sesión lo lleva firmado (seguridad.sesionAbreAura). */
+  deComunidad?: (correo: string) => boolean;
   /** Deja la solicitud de acceso para que la apruebe José. Devuelve false si no se pudo guardar. */
   pedirAcceso: (s: { nombre: string; correo: string; motivo: string }) => Promise<boolean>;
   /**
@@ -171,7 +173,7 @@ export function montarRutasGenesis(app: Express, d: DepsGenesis) {
       });
     }
     const { nombre, rol } = d.nombreYRol(correo, v.nombre);
-    const s = d.emitirSesion({ correo, nombre, rol });
+    const s = d.emitirSesion({ correo, nombre, rol }, { comunidad: d.deComunidad?.(correo) ?? false });
     console.log(`[genesis] ${v.gid} entró a AU-RA`);
     if (d.sembrarPerfil) {
       const sembrado = Promise.resolve()

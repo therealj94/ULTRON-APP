@@ -121,7 +121,7 @@ import {
   procesarElectrumTelegram,
   registrarWebhookElectrum,
 } from './server/electrum/telegram';
-import { identidadDe, exigirPlataforma, esInvitado, plataformaAutorizada, sesionAbreAura } from './server/seguridad';
+import { identidadDe, exigirPlataforma, esInvitado, plataformaAutorizada, sesionAbreAura, esDeComunidad } from './server/seguridad';
 import { cuentaDe, cuentasDisponibles, crearSolicitud, entrarConCuenta, mantenerCuentasAlDia } from './server/cuentas';
 import { aprobadores, montarRutasCuentas, plantilla } from './server/cuentas-rutas';
 import { montarRutasGenesis } from './server/genesis';
@@ -1492,7 +1492,7 @@ app.post(['/api/electrum/entrar', '/api/ultron/entrar'], limitar(12), async (req
       }
       anotarExitoEntrada(correo, ipEntrada);
       const { nombre, rol } = nombreYRolDe(correo, (await cuentaDe(correo).catch(() => null))?.nombre);
-      const s = emitirSesion({ correo, nombre, rol });
+      const s = emitirSesion({ correo, nombre, rol }, { comunidad: esDeComunidad(correo, PLATAFORMA) });
       const producto = ES_ELECTRUM ? 'Dr Electrum FP' : 'AU-RA FP';
       return res.json({ ok: true, token: s.token, miembro: { nombre, correo, rol }, message: `Bienvenido a ${producto}, ${nombre}` });
     }
@@ -1512,7 +1512,9 @@ app.post(['/api/electrum/entrar', '/api/ultron/entrar'], limitar(12), async (req
     }
     // El cerebro remoto abre a quien conoce, pero en AU-RA no entra quien el padrón deja fuera (una
     // persona solo de Dr Electrum): su sesión no abriría la mesa (sesionAbreAura), mejor decirlo aquí.
-    if (!ES_ELECTRUM && !sesionAbreAura(correo)) {
+    // Quien no está en el padrón entra como miembro de la comunidad: su sesión lo lleva firmado.
+    const deComunidad = esDeComunidad(correo, PLATAFORMA);
+    if (!ES_ELECTRUM && !sesionAbreAura(correo, deComunidad)) {
       return res.status(403).json({ error: 'Tu cuenta no tiene acceso a AU-RA FP. Pedilo desde «Solicitar acceso».', codigo: 'SIN_ACCESO' });
     }
     anotarExitoEntrada(correo, ipEntrada);
@@ -1525,7 +1527,7 @@ app.post(['/api/electrum/entrar', '/api/ultron/entrar'], limitar(12), async (req
     // Y en AU-RA, quien no está en el padrón no es de la junta aunque el cerebro remoto le abra:
     // entra como miembro (server/nivel.ts), con el rol de miembro.
     const rol = ES_ELECTRUM ? JUNTA[correo]?.rol || 'Dr Electrum FP' : rolVisible(correo);
-    const s = emitirSesion({ correo, nombre, rol });
+    const s = emitirSesion({ correo, nombre, rol }, { comunidad: deComunidad });
     const producto = ES_ELECTRUM ? 'Dr Electrum FP' : 'AU-RA FP';
     return res.json({ ok: true, token: s.token, miembro: { nombre, correo, rol }, message: `Bienvenido a ${producto}, ${nombre}`, remoteUrl: ULTRON_REMOTE_URL });
   } catch (err: any) {
@@ -1594,6 +1596,7 @@ if (!ES_ELECTRUM) {
     limitar,
     normalizarCorreo,
     tieneAcceso: (correo) => puedeEntrar(identificar({ correo }), PLATAFORMA),
+    deComunidad: (correo) => esDeComunidad(correo, PLATAFORMA),
     nombreYRol: nombreYRolDe,
     emitirSesion,
     sembrarPerfil: (correo, g) => sembrarDesdeGenesis(correo, { nombreGenesis: g.nombreGenesis, cumple: g.cumple || undefined, apodo: g.apodo }),

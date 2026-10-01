@@ -57,7 +57,7 @@ const ojo = http.createServer((req, res) => {
 });
 
 const PADRON = ['aura | Persona Aura | aura.prueba@ordenglobal.org | | ultron=lee', 'solo-electrum | Ing. Electrum | ing.electrum@mina.hn | | electrum=escribe'].join('\n');
-const sesion = (correo: string, nombre = 'Prueba') => emitirSesion({ correo, nombre, rol: 'Prueba' }).token;
+const sesion = (correo: string, nombre = 'Prueba') => emitirSesion({ correo, nombre, rol: 'Prueba' }, { comunidad: true }).token;
 /** Una pregunta de verdad (no un saludo): la contesta el 27B, no la charla rápida. */
 const PREGUNTA = (marca: string) => `explícame cómo va el proyecto de la planta de beneficio este trimestre ${marca}`;
 const llego = (marca: string) => alNodo.some((c) => c.includes(marca));
@@ -160,6 +160,16 @@ test('0.3 con sesión de AU-RA el turno sí llega (junta del padrón y miembro d
     assert.equal(r.status, 200, `${quien}: ${await r.clone().text()}`);
     assert.ok(llego(marca), `${quien}: el turno no llegó al nodo`);
   }
+});
+
+test('hallazgo de Codex en #104: un correo fuera del padrón SIN sesión de comunidad no corre turnos', async () => {
+  // Así queda el token de alguien que sacaron del padrón: firmado y vigente, pero no lo emitió AU-RA
+  // como miembro de la comunidad. Antes contaba como miembro y abría la mesa.
+  const token = emitirSesion({ correo: 'sacada.del.padron@ejemplo.org', nombre: 'Sacada', rol: 'Prueba' }).token;
+  const r = await turno('/api/turno', { message: PREGUNTA('SACADA') }, { 'x-ultron-sesion': token });
+  assert.equal(r.status, 401);
+  assert.equal(llego('SACADA'), false);
+  assert.equal((await turno('/api/voz/agente', { avatar: 'aura' }, { 'x-ultron-sesion': token })).status, 401);
 });
 
 test('0.6 una sesión de Dr Electrum no abre la mesa de AU-RA', async () => {

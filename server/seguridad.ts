@@ -17,6 +17,12 @@ export type Sesion = {
   at: number;
   /** Cuándo vence (ms). Las de un código temporal vencen con el código, no a los 14 días. */
   exp?: number;
+  /**
+   * Sesión de MIEMBRO DE LA COMUNIDAD: la emitió AU-RA a alguien que no está en el padrón (entró por el
+   * cerebro remoto). Va firmada en el token: sin ella, un correo que el padrón no conoce no abre la mesa
+   * (sesionAbreAura), así sacar a alguien del padrón le cierra AU-RA en vez de abrírsela como miembro.
+   */
+  comunidad?: boolean;
 };
 
 const sesiones = new Map<string, Sesion>();
@@ -97,10 +103,11 @@ function leerSesionFirmada(token: string): Sesion | null {
     rol: String(p.rol || 'Junta'),
     at: Number(p.at) || Date.now(),
     exp: Number(p.exp) || undefined,
+    ...(p.com === 1 ? { comunidad: true } : {}),
   };
 }
 
-export function emitirSesion(user: { correo: string; nombre: string; rol: string }, opciones: { vence?: number } = {}): Sesion {
+export function emitirSesion(user: { correo: string; nombre: string; rol: string }, opciones: { vence?: number; comunidad?: boolean } = {}): Sesion {
   const at = Date.now();
   // Nunca más de 14 días; una sesión de código temporal vence justo con el código.
   const exp = Math.min(at + SESION_TTL_MS, opciones.vence ?? Infinity);
@@ -113,8 +120,9 @@ export function emitirSesion(user: { correo: string; nombre: string; rol: string
     // Dos entradas del mismo miembro en el mismo milisegundo (teléfono y web a la vez) daban el mismo
     // token, y cerrar la de un aparato cerraba la del otro.
     n: crypto.randomBytes(9).toString('base64url'),
+    ...(opciones.comunidad ? { com: 1 } : {}),
   });
-  const s: Sesion = { token, correo: user.correo, nombre: user.nombre, rol: user.rol, at, exp };
+  const s: Sesion = { token, correo: user.correo, nombre: user.nombre, rol: user.rol, at, exp, ...(opciones.comunidad ? { comunidad: true } : {}) };
   sesiones.set(token, s);
   return s;
 }
@@ -433,21 +441,36 @@ function secretosIguales(a: string, b: string) {
  * «tiene sesión» no basta: una de Dr Electrum —un código temporal de la demo, o alguien del padrón que
  * solo tiene Electrum— entraba a AU-RA y hablaba con el 27B. Abre la mesa:
  *  · quien está en el padrón CON acceso a AU-RA (la junta y quien se haya aprobado), o
- *  · quien NO está en el padrón: el miembro de la comunidad que entró con Genesis ID o por el cerebro
- *    remoto (server/nivel.ts lo trata como miembro, con su perfil recortado).
- * No la abre quien el padrón conoce y deja fuera de AU-RA, ni un código temporal (son de Electrum).
+ *  · el miembro de la comunidad: alguien que NO está en el padrón y cuya sesión AU-RA emitió como tal
+ *    (`comunidad`, firmado en el token al entrar por el cerebro remoto; server/nivel.ts lo trata como
+ *    miembro, con su perfil recortado).
+ * No la abre quien el padrón conoce y deja fuera de AU-RA, ni un código temporal (son de Electrum), ni
+ * un correo que el padrón ya no conoce con una sesión que no era de comunidad: alguien que sacaron del
+ * padrón (o una cuenta solo de Electrum que borraron) con su token todavía vigente. Antes ese caso caía
+ * en «no está en el padrón → miembro» y sacarlo le ABRÍA AU-RA por 14 días.
  */
-export function sesionAbreAura(correo: string): boolean {
+export function sesionAbreAura(correo: string, comunidad = false): boolean {
   const c = String(correo || '').trim().toLowerCase();
   if (!c || c.endsWith(DOMINIO_CODIGO)) return false;
   const persona = personaPorCorreoExacto(c);
-  return !persona || !!persona.acceso.ultron;
+  return persona ? !!persona.acceso.ultron : comunidad;
+}
+
+/**
+ * ¿La sesión que AU-RA está por emitir es de un miembro de la comunidad? Sí cuando la emite AU-RA (no
+ * Dr Electrum) a alguien que el padrón no conoce: entró por el cerebro remoto, con Genesis ID abierto o
+ * con una cuenta propia de miembro. Esa marca, firmada en el token, es lo único que deja a un correo
+ * fuera del padrón abrir la mesa (sesionAbreAura).
+ */
+export function esDeComunidad(correo: string, plataforma: Plataforma): boolean {
+  const c = String(correo || '').trim().toLowerCase();
+  return plataforma !== 'electrum' && !!c && !c.endsWith(DOMINIO_CODIGO) && !personaPorCorreoExacto(c);
 }
 
 /** Junta: sesión de AU-RA (sesionAbreAura), o clave de mesa en header. Sin marca de desarrollo no hay hueco. */
 export function mesaAutorizada(req: Request): boolean {
   const s = sesionDe(req);
-  if (s && sesionAbreAura(s.correo)) return true;
+  if (s && sesionAbreAura(s.correo, !!s.comunidad)) return true;
   const clave = process.env.ULTRON_MESA_CLAVE || '';
   const got = String(req.headers['x-ultron-mesa'] || '');
   if (clave && got && secretosIguales(clave, got)) return true;
