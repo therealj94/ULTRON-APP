@@ -29,5 +29,5 @@ Cada área tiene un dueño de archivo claro. Cambiar una no obliga a tocar otra:
 - La identidad sale de la sesión firmada o del id de Telegram verificado. El cuerpo de la petición no escala privilegios.
 - `/api/turno`, `/api/tts`, `/api/stt`, `/api/vision/analyze` y `/api/cantar` conversan sin sesión con rate limit por IP (decisión de la junta para que la APK no quede muda). Memoria, bóveda, ejecutor y redespliegue exigen sesión.
 - El ejecutor de Python solo corre con sandbox (`EJECUTOR_URL` o `EJECUTOR_DOCKER=1`) en producción.
-- El nodo Qwen `34.207.148.69:8443` no se toca; su TLS autofirmado se acepta solo para ese host.
+- El nodo Qwen `<ip-qwen>:8443` no se toca; su TLS autofirmado se acepta solo para ese host.
 - Un clip grabado antes que una síntesis; una síntesis antes que la voz del navegador; nunca silencio sin aviso.

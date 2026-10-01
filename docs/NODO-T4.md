@@ -1,4 +1,4 @@
-# Nodo T4 (`35.175.175.203`, g4dn.xlarge): qué hacer con él
+# Nodo T4 (`<ip-t4>`, g4dn.xlarge): qué hacer con él
 
 **Estado que pude comprobar (20-sep-2026):** la instancia está **encendida** (arrancó el 17-sep) con etiqueta «aura-gpu-T4-APAGADA (voz movida a ElevenLabs 5-sep)». Render la sondea en `:8790/salud` y responde 200, así que algo corre ahí (probablemente el servidor Qwen3-TTS viejo). No pude entrar a mirar qué hay dentro: el acceso por SSM fue bloqueado por permisos de esta sesión. Chatterbox (`:4123`) no responde desde fuera.
 
@@ -10,7 +10,7 @@ Lo que más se usa por minuto en AU-RA es el oído (cada frase que decís pasa p
 
 1. En el nodo: `bash scripts/nodo-t4/instalar-oido.sh` (Docker con GPU; deja `ultron-oido` en `:8791`, API compatible OpenAI `/v1/audio/transcriptions`).
 2. Security group: abrir `8791` solo a la IP de salida de Render.
-3. En Render: `ULTRON_STT_URL=http://35.175.175.203:8791` (+ `ULTRON_STT_CLAVE` si se puso `API_KEY`).
+3. En Render: `ULTRON_STT_URL=http://<ip-t4>:8791` (+ `ULTRON_STT_CLAVE` si se puso `API_KEY`).
 4. El servidor ya lo usa primero (`lib/oido.ts` → `transcribirLocal`); si el nodo no responde en 12 s, cae a Scribe sin que nadie lo note.
 
 Opcional en el mismo nodo (cabe en 16 GB): **respaldo de voz** con Kokoro o Chatterbox en `:8790` compatible con `POST /decir|/tts|/synthesize {texto}` (el servidor ya intenta esas tres rutas si ElevenLabs cae). Solo vale la pena si ElevenLabs falla seguido; hoy no.
@@ -21,7 +21,7 @@ Opcional en el mismo nodo (cabe en 16 GB): **respaldo de voz** con Kokoro o Chat
 
 1. En el nodo, desde un clon del repo: `bash scripts/nodo-t4/instalar-laya.sh`. Crea un venv en `/opt/laya` con las versiones fijadas que corren hoy (torch 2.14.0 cu130, transformers 5.17.0, laya 0.3.20), **entrena en la GPU** con `scripts/nodo-t4/laya/datos` si no hay modelo (unos minutos; no hay pesos que copiar; también `mensaje` y `documento` si tienen datos, ver «Varios modelos» abajo), genera la clave en `/etc/laya-electrum.env` (`LAYA_CLAVE`, `LAYA_PUERTO`, `LAYA_MODELO`; root, 600) y deja el servicio systemd `laya-electrum` (usuario `ubuntu`) en `:8792`.
 2. TLS: el `:8792` no se abre en el security group. Laya sale por el Caddy de Voicebox (`443`, `/opt/voicebox/caddy/Caddyfile`), con `handle_path /laya/* { reverse_proxy 127.0.0.1:8792 }` antes de `@autorizado`. `/laya/decidir` exige la clave; `/laya/salud` es público y dice umbral, fecha de los pesos (`entrenado`) y recorte.
-3. En Render (`aura-fp` y `ultron-looi-desk`): `ULTRON_LAYA_URL=https://35-175-175-203.sslip.io/laya`, `ULTRON_LAYA_CLAVE=` (la de `/etc/laya-electrum.env`) y `ULTRON_LAYA_TIMEOUT_MS=1000`. `lib/laya.ts` ignora cualquier URL `http://` que no sea local: el texto del usuario y la clave no viajan sin cifrar.
+3. En Render (`aura-fp` y `ultron-looi-desk`): `ULTRON_LAYA_URL=https://<ip-t4-con-guiones>.sslip.io/laya`, `ULTRON_LAYA_CLAVE=` (la de `/etc/laya-electrum.env`) y `ULTRON_LAYA_TIMEOUT_MS=1000`. `lib/laya.ts` ignora cualquier URL `http://` que no sea local: el texto del usuario y la clave no viajan sin cifrar.
 4. `turnoElectrum` llama a `decidirPanel()`: los especialistas que el usuario nombra («pásame al geólogo») van primero, el resto lo decide Laya, y si así no queda nadie decide la tabla. Si Laya no está configurado, tarda más que `ULTRON_LAYA_TIMEOUT_MS` o falla, se usa la tabla de siempre y no se reintenta durante 5 s, que se duplican con cada fallo seguido hasta 2 min (un acierto lo pone en cero).
 5. Lo que se manda: si el mensaje pasa de 700 caracteres, los 200 primeros + « … » + los 500 últimos (lo mismo hace `servidor.py`, y por tanto `evaluar.py`). Ver abajo por qué.
 
@@ -156,12 +156,12 @@ La búsqueda por significado de Dr Electrum (`lib/cognitivo/embeddings.ts`, `ser
 
 ```bash
 # en el nodo del cerebro (i-06530893af0dd0638), escucha SOLO en su IP privada
-sudo docker run -d --name embed --restart unless-stopped --gpus all -p 172.31.23.34:8794:80 -v embed-modelos:/data \
+sudo docker run -d --name embed --restart unless-stopped --gpus all -p <ip-privada-qwen>:8794:80 -v embed-modelos:/data \
   ghcr.io/huggingface/text-embeddings-inference:86-1.9.4 --model-id BAAI/bge-m3 --max-client-batch-size 32 --max-batch-tokens 4096
 ```
 
 - ~1,5 GB de VRAM, 67 ms por consulta. Indexar los 3706 fragmentos tardó unos minutos (38/s).
-- Security group: `8794` abierto **solo desde la IP privada de la T4** (`172.31.19.170/32`, regla `sgr-0af61442e031b96a4`). No se expone a internet.
+- Security group: `8794` abierto **solo desde la IP privada de la T4** (`<ip-privada-t4>/32`, regla `sgr-0af61442e031b96a4`). No se expone a internet.
 - En `/opt/voicebox/caddy/Caddyfile` de la T4, antes del bloque de Laya, una ruta que exige la clave y reenvía por la red privada:
 
   ```
@@ -171,18 +171,18 @@ sudo docker run -d --name embed --restart unless-stopped --gpus all -p 172.31.23
   }
   handle @embed {
   	uri strip_prefix /embed
-  	reverse_proxy 172.31.23.34:8794
+  	reverse_proxy <ip-privada-qwen>:8794
   }
   ```
 
   Sin la clave, `/embed/*` cae en el `respond 403` del final. TEI no lleva `--api-key` a propósito: imprime sus argumentos al arrancar.
-- En Render (`ultron-looi-desk`): `EMBED_URL=https://35-175-175-203.sslip.io/embed` y `EMBED_API_KEY` (la misma de la ruta). Lo que ya estaba cargado se indexa con `scripts/cognitivo/indexar-vectores.ts`; lo que se sube después se indexa solo.
+- En Render (`ultron-looi-desk`): `EMBED_URL=https://<ip-t4-con-guiones>.sslip.io/embed` y `EMBED_API_KEY` (la misma de la ruta). Lo que ya estaba cargado se indexa con `scripts/cognitivo/indexar-vectores.ts`; lo que se sube después se indexa solo.
 - Si el servicio cae, la búsqueda vuelve sola a texto completo (interruptor en `lib/cognitivo/interruptor.ts`): Electrum no se rompe, busca peor.
 
 ## Si no se va a usar
 
 Apagarla (`stop`, no `terminate`, el disco se conserva). Quitar `ULTRON_TTS_URL`/`CHATTERBOX_URL` de Render para que `/api/health` no la sondee.
 
-## Qwen (g5.xlarge, `34.207.148.69`)
+## Qwen (g5.xlarge, `<ip-qwen>`)
 
 Responde en 0,4 s el calentado y 2,8–6,4 s un turno completo con harness. No necesita nada por ahora. Lo que sí necesita el sistema alrededor: la clave AWS de Render (memoria S3) estaba borrada en IAM; ver `docs/ENTREGA-4.0.md` § Pendientes.

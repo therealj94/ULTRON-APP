@@ -49,7 +49,7 @@ Fuentes usadas en la investigación:
 | VAD browser | `@ricky0123/vad-web` Silero | barge-in local 200 ms |
 | Loop local referencia | katipally/openlive | VAD→STT→TTS→stop |
 | First packet | camelCase12/qwen3-tts-streaming o vllm-omni WS | PCM chunks |
-| Nodo nuestro | `35.175.175.203:8790` hoy `/synthesize` WAV | añadir `/ws/stream` o `/synthesize?stream=1` |
+| Nodo nuestro | `<ip-t4>:8790` hoy `/synthesize` WAV | añadir `/ws/stream` o `/synthesize?stream=1` |
 
 **Solución (dos tramos):**
 - **2A (desk, esta semana):** sesión abierta 25 s; Silero VAD corta `Audio` + abort fetch TTS; no esperar WAV para poner SPEAKING (SPEAKING al primer byte).

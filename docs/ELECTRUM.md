@@ -507,14 +507,14 @@ Hasta el 26-09-2026 ningún servicio de Render tenía `ELECTRUM_DB_URL`: Electru
 no está conectado» y no podía citar nada de lo cargado. Render no puede abrir un túnel SSH, así que
 se abrió el puerto con cuatro candados:
 
-1. **Postgres** escucha en `localhost,172.31.23.34` (IP privada) y `pg_hba.conf` solo acepta
+1. **Postgres** escucha en `localhost,<ip-privada-qwen>` (IP privada) y `pg_hba.conf` solo acepta
    `hostssl electrum electrum 74.220.48.0/24 scram-sha-256`: TLS obligatorio, solo esa base, solo
    ese usuario, solo la red de salida de Render Oregon (las dos IPs vistas: `74.220.48.161` y `.179`).
 2. **Security group**: `5432` solo desde `74.220.48.0/24` (`sgr-03db89e3f278f7a21`).
 3. **Certificado verificable**: `/etc/postgresql/16/main/tls/server.crt`, autofirmado para
-   `DNS:34-207-148-69.sslip.io` y las dos IPs, hasta 2036. El mismo certificado (público) está en
+   `DNS:<ip-qwen-con-guiones>.sslip.io` y las dos IPs, hasta 2036. El mismo certificado (público) está en
    Render como archivo secreto `electrum-db-ca.pem`.
-4. **La URL verifica todo**: `…@34-207-148-69.sslip.io:5432/electrum?sslmode=verify-full&sslrootcert=/etc/secrets/electrum-db-ca.pem`.
+4. **La URL verifica todo**: `…@<ip-qwen-con-guiones>.sslip.io:5432/electrum?sslmode=verify-full&sslrootcert=/etc/secrets/electrum-db-ca.pem`.
 
 Dos fallos que obligaron a esto, y que conviene no redescubrir:
 
