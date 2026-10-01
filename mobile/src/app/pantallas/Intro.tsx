@@ -118,10 +118,16 @@ export function Intro(_: Props) {
     // Sin servidor se entra igual (la mesa tiene modo local); solo se avisa.
     // Con sesión, de paso se pregunta si el servidor todavía la reconoce: un token vencido (el de
     // Genesis dura 14 días y no se renueva solo) dejaba a la persona «dentro» con todo roto.
-    const [salud, estadoSesion] = await Promise.all([
-      conTope(healthCheck(), sesion ? 2_500 : 4_000),
+    // «Hay servidor» = contestó cualquiera de las dos: la salud, o la sesión (viva o vencida, pero
+    // contestada). Antes solo contaba la salud, que con la caché fría tardaba ~4,5 s contra un tope de
+    // 2,5 s: salía «modo local» con el servidor vivo (1-oct, Samsung de José).
+    const tServidor = Date.now();
+    const [saludResp, estadoSesion] = await Promise.all([
+      conTope(healthCheck(), 4_000),
       sesion ? conTope(comprobarSesion(sesion.correo), 4_000) : Promise.resolve(null),
     ]);
+    const salud = !!saludResp || (estadoSesion !== null && estadoSesion !== 'sin_red');
+    miga(`servidor: ${salud ? 'contesta' : 'sin respuesta'} en ${Date.now() - tServidor} ms (salud ${saludResp ? 'sí' : 'no'}, sesión ${estadoSesion ?? '—'})`);
     if (!salud) setAviso(tr('Sin conexión con el servidor: entras en modo local', 'No connection to the server: you’re entering local mode'));
     marcar('servidor');
     const caida = !!sesion && estadoSesion === 'caida';

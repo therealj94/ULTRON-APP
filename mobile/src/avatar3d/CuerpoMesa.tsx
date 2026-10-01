@@ -45,6 +45,9 @@ type Props = {
 export function CuerpoMesa({ avatar, camara, face, emocion, mirada, respaldo, onTap, onLongPress, activo = true, senal = 0 }: Props) {
   const [lugar, setLugar] = useState({ w: 0, h: 0 });
   const [gesto, setGesto] = useState<EstadoAvatar['gesto']>(null);
+  // Si el video no se puede usar en este teléfono, el cuerpo 3D (que mueve brazos y cuerpo) en vez de
+  // las fotos quietas. Sin modelo 3D, las fotos de siempre.
+  const [sinVideo, setSinVideo] = useState(false);
   const cuerpo = useRef<ControlCuerpo>(null);
   const medir = (e: LayoutChangeEvent) => {
     const { width, height } = e.nativeEvent.layout;
@@ -74,8 +77,8 @@ export function CuerpoMesa({ avatar, camara, face, emocion, mirada, respaldo, on
       accessibilityRole="imagebutton"
     >
       {lugar.w > 0 && lugar.h > 0 ? (
-        hayVideo(avatar) ? (
-          <CuerpoVideo ref={cuerpo} avatar={avatar} camara={camara} estado={estado} ancho={lugar.w} alto={lugar.h} respaldo={respaldo} activo={activo} saludar />
+        hayVideo(avatar) && !sinVideo ? (
+          <CuerpoVideo ref={cuerpo} avatar={avatar} camara={camara} estado={estado} ancho={lugar.w} alto={lugar.h} respaldo={respaldo} activo={activo} saludar onFallo={() => setSinVideo(true)} />
         ) : (
           <AvatarVivo ref={cuerpo} avatar={avatar} camara={camara} estado={estado} ancho={lugar.w} alto={lugar.h} fpsMax={60} respaldo={respaldo} activo={activo} />
         )

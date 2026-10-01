@@ -249,6 +249,17 @@ function esEtiquetaIngles(k: string): boolean {
   return palabras.length > 0 && palabras.length <= 8 && palabras.every((w) => VOCABULARIO_INGLES.has(w));
 }
 
+/**
+ * La etiqueta v4 de una marca del cerebro («risa» → «laughs», «softly, reverent» tal cual), o null si
+ * no tiene una que sume (se quita). La usa la voz de la llamada (server/voz-agente.ts), que recibe el
+ * texto a trozos y no puede pasar por `guionEleven` entero.
+ */
+export function etiquetaV4(marca: string): string | null {
+  const k = sinTildes(marca);
+  if (k in EXPRESION_A_V4) return EXPRESION_A_V4[k] || null;
+  return esEtiquetaIngles(k) ? k : null;
+}
+
 /** Cuántas etiquetas como mucho por trozo: más de eso suena a actor sobreactuando. */
 const MAX_ETIQUETAS = 4;
 

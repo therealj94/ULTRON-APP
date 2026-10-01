@@ -24,6 +24,12 @@ export type Interruptores = {
    * ese rato y la acción no se hace (server/voz-agente.ts, RetencionAcciones). 0: se hace al terminar.
    */
   confirmarAccionVozMs: number;
+  /**
+   * La voz de la llamada actúa las marcas del cerebro ([risa] → [laughs]) y el tono de la emoción del
+   * turno ([warmly]…), como la mesa web con v4. Los agentes están en eleven_v4_turbo con modo expresivo.
+   * false: se quitan, como antes.
+   */
+  etiquetasVoz: boolean;
 };
 
 export const POR_OMISION: Interruptores = {
@@ -32,6 +38,7 @@ export const POR_OMISION: Interruptores = {
   graciaReintentoMs: 2_500,
   puenteVozMs: 3_000,
   confirmarAccionVozMs: 1_000,
+  etiquetasVoz: true,
 };
 
 /** Lo que se acepta de cada uno: los números con su rango (un valor fuera de rango no se guarda). */
