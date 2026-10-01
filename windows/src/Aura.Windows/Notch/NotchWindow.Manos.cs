@@ -167,6 +167,8 @@ public partial class NotchWindow
                 case Mano.Ventana: await HacerVentana(p.Valor); break;
                 case Mano.Portapapeles: await Portapapeles(texto, hablado); break;
                 case Mano.AbrirArchivo: AbrirArchivo(p.Valor); break;
+                case Mano.VolumenA or Mano.Apps or Mano.Teclas or Mano.Archivos or Mano.Herramienta or Mano.Navegador or Mano.TextoPantalla or Mano.Varias:
+                    await HacerMas(p, hablado); break; // NotchWindow.ManosMas.cs
                 default: await Conversar(texto, hablado); break;
             }
         }
