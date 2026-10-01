@@ -45,12 +45,27 @@ import { quitarExpresiones } from '../lib/expresiones';
 import { firmarDato, gastarCupo, huellaSesion, leerDato, mismoSecreto, secretoDerivado, sesionSigueViva, type Sesion } from './seguridad';
 import { normalizarAvatar, normalizarIdioma, type AvatarVoz, type Idioma } from './eleven';
 import { modoValido } from './desk';
-import { aparatoValido, lecturaDe, turnoDeRecordatorio } from '../lib/acciones-app';
+import { aparatoValido, empujarAmbiente, lecturaDe, turnoDeRecordatorio, type EventoAmbiente } from '../lib/acciones-app';
 import { preguntaSigues, RE_LLAMADA, RE_SIGUES, saludoDeLlamada } from '../lib/manos-app';
 import { nivelDeCorreo, nivelMasEstrecho, nivelValido, type NivelAura } from './nivel';
 import { anotarVoz, fraseTopeVoz, restanteVozMs } from './tope-voz';
 // El banco de frases de estado es uno solo, el de la app (sin React Native: se empaqueta aquí igual).
-import { ESPERA_FRASE_MS, esRelleno, estadoDeEspera, fraseDeEstado, quitarRellenoInicial } from '../mobile/src/compa/frasesEstado';
+import {
+  ESPERA_FRASE_MS,
+  ESPERA_TAREA_MS,
+  MAX_SEGUIMIENTOS,
+  SEGUIMIENTO_MS,
+  esRelleno,
+  estadoDeEspera,
+  fraseDeEstado,
+  quitarRellenoInicial,
+  sonidoDeEstado,
+  tareaDe,
+  vozDeEspera,
+  type EstadoFrase,
+  type SonidoAmbiente,
+  type Tarea,
+} from '../mobile/src/compa/frasesEstado';
 
 /** La etiqueta del secreto que ElevenLabs manda como Bearer. Cambiarla invalida el guardado allá. */
 export const ETIQUETA_SECRETO_LLM = 'elevenlabs-llm-v1';
@@ -77,6 +92,27 @@ export const TURNO_VOZ_MS = 45_000;
  */
 export const CASCADA_ELEVENLABS_MS = 4_000;
 export const PUENTE_VOZ_MS = Math.min(ESPERA_FRASE_MS + 500, CASCADA_ELEVENLABS_MS - 1_000);
+/** Cuándo dice el agente de ElevenLabs su propio relleno («Mmm… a ver.») si no le llegó texto (no se puede cambiar). */
+export const RELLENO_AGENTE_MS = 2_500;
+
+/*
+ * LAS TAREAS LENTAS (José: «si busca en internet que se escuche tecleando y diga "estoy revisando"…
+ * y si es rápido contesta sin usar esto»). El turno avisa con el evento `tarea` (server.ts, alTarea)
+ * en cuanto sabe que va a hacer algo que tarda: una herramienta del harness —en cuanto el modelo
+ * escribe PEDIR_HERRAMIENTA web|leer|sistema|ejecutor—, un precio, un cálculo, una imagen, un PDF; y
+ * las manos del teléfono que vuelven como lectura (buscar o leer en sus chats) salen del `done`.
+ *
+ * Cuándo se habla:
+ *  · Charla normal: igual que siempre, el puente solo a PUENTE_VOZ_MS (3 s).
+ *  · Tarea LENTA conocida (frasesEstado.ts, TAREAS): la frase de espera sale ESPERA_TAREA_MS después de
+ *    saberse (0,9 s); si con eso caería encima del relleno del agente (2,5 s) se adelanta a 2,2 s o, si
+ *    ya no da tiempo, espera al puente. Si el cerebro contesta antes, no se dice nada.
+ *  · Si sigue sin respuesta, una frase de SEGUIMIENTO («ya casi lo tengo…») a SEGUIMIENTO_MS (7 s) de
+ *    lo último dicho, como mucho MAX_SEGUIMIENTOS, nunca la misma de esta espera.
+ *  · Con el relleno del agente ya dicho, la nuestra no empieza con otra muletilla («Mmm, a ver…»).
+ * Mientras dura, el teléfono de la conversación pone el sonido de la tarea (`ambiente`, tecleo, papel o
+ * lápiz; lib/acciones-app.ts, empujarAmbiente) y lo quita en cuanto el cerebro empieza a contestar.
+ */
 
 /**
  * Un agente de ElevenLabs por avatar e idioma (voz, idioma del reconocimiento y del turno). Los crea
@@ -224,6 +260,11 @@ type Conversacion = {
   algoEnCurso: boolean;
   /** Hasta cuándo ya se contó el tiempo de esta conversación en el tope de voz. */
   medido: number;
+  /**
+   * El sonido de fondo que está puesto en el teléfono y qué turno lo puso (`de`); null en `de` si es
+   * de la conversación (buscar o leer en sus chats: se quita cuando vuelve la lectura, en el turno siguiente).
+   */
+  ambiente: { sonido: SonidoAmbiente; de: AbortController | null } | null;
 };
 const conversaciones = new Map<string, Conversacion>();
 
@@ -254,7 +295,7 @@ export function abrirConversacion(correo: string, cid: string, ahora = Date.now(
     conversaciones.delete(vieja.cid);
     cerradas++;
   }
-  conversaciones.set(cid, { cid, correo: c, abierta: ahora, ultimo: ahora, cerrada: false, ultimaDicha: '', cortada: false, turnos: 0, enCurso: null, dichoEnCurso: '', algoEnCurso: false, medido: ahora });
+  conversaciones.set(cid, { cid, correo: c, abierta: ahora, ultimo: ahora, cerrada: false, ultimaDicha: '', cortada: false, turnos: 0, enCurso: null, dichoEnCurso: '', algoEnCurso: false, medido: ahora, ambiente: null });
   return { cerradas };
 }
 
@@ -355,7 +396,8 @@ export function asistenteTruncado(messages: unknown, ultimaDicha: string): boole
   while (i >= 0 && (lista[i] as any)?.role === 'user') i--;
   const m: any = lista[i];
   if (!m || m.role !== 'assistant') return false;
-  const suya = aplanar(textoDe(m.content)).replace(/(\.{3}|…|—|-)$/, '').trim();
+  // Sin etiquetas de audio: las frases de espera pueden llevar una («[thoughtful] …») y ElevenLabs la devuelve.
+  const suya = aplanar(quitarExpresiones(textoDe(m.content))).replace(/(\.{3}|…|—|-)$/, '').trim();
   if (!suya) return true;
   return suya.length + 8 < nuestra.length && nuestra.startsWith(suya);
 }
@@ -448,7 +490,10 @@ export type TurnoVoz = {
   /** La persona interrumpió la respuesta anterior (y ya se le dijo «perdón»). */
   interrumpida: boolean;
   senal: AbortSignal;
-  /** Los mismos eventos que /api/turno/stream: tools, emocion, delta, replace, done, error. */
+  /**
+   * Los mismos eventos que /api/turno/stream: tools, emocion, delta, replace, done, error; y además
+   * `tarea` ({ herramienta }), que la voz usa para la frase de espera y el sonido de fondo.
+   */
   enviar: (evento: string, datos: any) => void;
 };
 
@@ -472,6 +517,14 @@ type Deps = {
    * pregunta no espera a que el nodo lea miles de fichas. Sin esperar, y si falla no pasa nada.
    */
   calentar?: (correo: string) => void;
+  /** Pone o quita el sonido de fondo en el teléfono de la conversación (empujarAmbiente; las pruebas espían). */
+  ambiente?: (correo: string, aparato: string | null, e: EventoAmbiente) => void;
+  /** ESPERA_TAREA_MS, SEGUIMIENTO_MS y RELLENO_AGENTE_MS (las pruebas los acortan). */
+  esperaTareaMs?: number;
+  seguimientoMs?: number;
+  rellenoAgenteMs?: number;
+  /** Etiquetas de audio v4 en las frases de espera (frasesEstado.ts, vozDeEspera). Por omisión, sí. */
+  etiquetas?: boolean;
 };
 
 const PHRASES = {
@@ -629,6 +682,19 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     const interrumpida = !!mensaje && (conv.cortada || asistenteTruncado(req.body?.messages, conv.ultimaDicha));
     conv.cortada = false;
     conv.turnos++;
+    // Un turno nuevo (la lectura que volvió del teléfono, o la persona que habló) quita el sonido de
+    // fondo que hubiera: la tarea de antes ya terminó o ya nadie la espera.
+    const avisarAmbiente = (sonido: SonidoAmbiente | null) => {
+      try {
+        (d.ambiente ?? empujarAmbiente)(pase.correo, pase.aparato, { sonido, on: !!sonido });
+      } catch {
+        /* el teléfono se fue: no rompe el turno */
+      }
+    };
+    if (conv.ambiente) {
+      conv.ambiente = null;
+      avisarAmbiente(null);
+    }
 
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store, no-transform');
@@ -688,10 +754,16 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     // turno que venga, si la persona cortó esta respuesta a la mitad.
     let dicho = '';
     let terminado = false;
+    const t0 = Date.now();
+    /** Cuándo se le dio el primer y el último texto a la voz (0: nada todavía). */
+    let primeroEn = 0;
+    let ultimoEn = t0;
     const decir = (t: string, forzar = false) => {
       if (!t || (terminado && !forzar)) return;
       algo = true;
       dicho += t;
+      ultimoEn = Date.now();
+      if (!primeroEn) primeroEn = ultimoEn;
       if (conv.enCurso === corte) {
         conv.dichoEnCurso = dicho;
         conv.algoEnCurso = true;
@@ -722,25 +794,113 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     // falla, igual se explica). Lo que el cerebro diga después no puede empezar con otra muletilla.
     let puenteDicho = false;
     let primerTrozo = true;
-    // Desde dónde empieza lo que dice el CEREBRO (después del perdón y del puente, si los hubo).
+    // Desde dónde empieza lo que dice el CEREBRO (después del perdón y de las frases de espera).
     let inicioCerebro = inicioPropio;
     const msPuente = d.puenteMs ?? PUENTE_VOZ_MS;
-    const puente =
-      msPuente > 0
-        ? setTimeout(() => {
-            if (algo || terminado || corte.signal.aborted) return;
-            decir(`${fraseDeEstado(estadoDeEspera(mensaje), pase.avatar, pase.idioma).texto} `);
-            algo = false;
-            conv.algoEnCurso = false;
-            puenteDicho = true;
-            inicioCerebro = dicho.length;
-          }, msPuente)
-        : null;
+    const msTarea = d.esperaTareaMs ?? ESPERA_TAREA_MS;
+    const msSeguimiento = d.seguimientoMs ?? SEGUIMIENTO_MS;
+    const msRelleno = d.rellenoAgenteMs ?? RELLENO_AGENTE_MS;
+    const conEtiquetas = d.etiquetas ?? true;
+    /** La tarea de este turno (evento `tarea`), si se sabe. */
+    let tarea: Tarea | null = null;
+    /** El cerebro ya dijo algo suyo desde que empezó la última tarea: no hay a quién hacer esperar. */
+    let cerebroHablo = false;
+    /** Hay una espera en curso (se dijo la frase o sonó el ambiente) y el cerebro no ha contestado. */
+    let esperando = false;
+    let seguimientos = 0;
+    /** Las frases de espera de este turno: ninguna sale dos veces. */
+    const dichasEspera: string[] = [];
+    const relojes = new Set<ReturnType<typeof setTimeout>>();
+    const programar = (f: () => void, ms: number) => {
+      const h = setTimeout(() => {
+        relojes.delete(h);
+        f();
+      }, Math.max(0, ms));
+      relojes.add(h);
+    };
+
+    /** Pone (o cambia) el sonido de fondo de ESTE turno, o lo quita si lo puso este turno. */
+    const ambiente = (sonido: SonidoAmbiente | null) => {
+      const actual = conv.ambiente;
+      if (sonido) {
+        if (corte.signal.aborted || conv.enCurso !== corte || (actual?.sonido === sonido && actual.de === corte)) return;
+        conv.ambiente = { sonido, de: corte };
+      } else {
+        if (!actual || actual.de !== corte) return;
+        conv.ambiente = null;
+      }
+      avisarAmbiente(sonido);
+    };
+
+    /** Una frase de espera (o de seguimiento) con la forma de ser del avatar, sin repetir las de este turno. */
+    const decirEspera = (estado: EstadoFrase) => {
+      const ahora = Date.now();
+      // El relleno del agente («Mmm… a ver.») ya sonó si no le dimos nada antes de ~2,5 s: la nuestra
+      // no puede empezar con otra muletilla, que quedaría pegada («Mmm… a ver. Mmm, a ver…»).
+      const trasRelleno = ahora - t0 >= msRelleno - 150 && (!primeroEn || primeroEn - t0 >= msRelleno - 150);
+      const f = fraseDeEstado(estado, pase.avatar, pase.idioma, { sinMuletilla: trasRelleno, evitar: dichasEspera });
+      dichasEspera.push(f.texto);
+      const voz = conEtiquetas ? vozDeEspera(f.texto, estado, pase.avatar) : f.texto;
+      const algoAntes = algo;
+      decir(`${dicho && !/\s$/.test(dicho) ? ' ' : ''}${voz} `);
+      // No cuenta como «ya dijo algo»: si el cerebro falla después, igual se explica.
+      algo = algoAntes;
+      if (conv.enCurso === corte) conv.algoEnCurso = algoAntes;
+      puenteDicho = true;
+      primerTrozo = true;
+      inicioCerebro = dicho.length;
+    };
+
+    /** «Ya casi lo tengo…»: si la espera sigue SEGUIMIENTO_MS después de lo último que se dijo. */
+    const programarSeguimiento = () => {
+      if (seguimientos >= MAX_SEGUIMIENTOS) return;
+      programar(() => {
+        if (terminado || corte.signal.aborted || cerebroHablo || !esperando || seguimientos >= MAX_SEGUIMIENTOS) return;
+        if (msSeguimiento - (Date.now() - ultimoEn) > 50) return programarSeguimiento();
+        seguimientos++;
+        decirEspera('seguimiento');
+        programarSeguimiento();
+      }, msSeguimiento - (Date.now() - ultimoEn));
+    };
+
+    /** Empieza la espera: el sonido de la tarea y, si todavía no se dijo nada, la frase de espera. */
+    const alEsperar = () => {
+      if (terminado || corte.signal.aborted || cerebroHablo) return;
+      const estado = tarea?.estado ?? estadoDeEspera(mensaje);
+      ambiente(tarea ? tarea.sonido : sonidoDeEstado(estado));
+      if (!algo && !puenteDicho) decirEspera(estado);
+      if (!esperando) {
+        esperando = true;
+        programarSeguimiento();
+      }
+    };
+
+    /** Cuánto esperar, desde que se supo una tarea lenta, para la frase (sin pisar el relleno del agente). */
+    const cuandoEsperar = () => {
+      const desde = Date.now() - t0;
+      const limite = msRelleno - 300;
+      if (desde >= msPuente || desde + msTarea <= limite) return msTarea;
+      if (desde <= limite - 200) return limite - desde;
+      return msPuente - desde;
+    };
+
+    if (msPuente > 0) programar(alEsperar, msPuente);
+
     /** Lo que dice el cerebro, sin la muletilla del principio si ya se dijo la frase de espera. */
     const sinRelleno = (t: string) => {
       if (!puenteDicho || !primerTrozo || !t.trim()) return t;
       primerTrozo = false;
       return esRelleno(t) ? '' : quitarRellenoInicial(t.replace(/^\s+/, ''));
+    };
+    /** Lo del cerebro: la espera terminó (sin seguimiento) y el sonido de fondo se quita. */
+    const decirCerebro = (t: string) => {
+      if (!t || terminado) return;
+      if (t.trim()) {
+        cerebroHablo = true;
+        esperando = false;
+        ambiente(null);
+      }
+      decir(t);
     };
 
     const reloj = AbortSignal.timeout(d.turnoMs ?? TURNO_VOZ_MS);
@@ -755,15 +915,34 @@ export function montarVozAgente(app: express.Express, d: Deps) {
         // La voz del agente lee el texto tal cual: sin las marcas de expresión de la mesa.
         const crudo = sinRelleno(quitarExpresiones(String(datos?.voz ?? datos?.text ?? '')));
         // Al quitar una marca del principio queda un espacio: el primer trozo empieza limpio.
-        decir(dicho.length > inicioCerebro ? crudo : crudo.replace(/^\s+/, ''));
+        decirCerebro(dicho.length > inicioCerebro ? crudo : crudo.replace(/^\s+/, ''));
       } else if (evento === 'replace') {
         const nuevo = quitarExpresiones(String(datos?.voz ?? datos?.text ?? ''));
-        decir(restoDeReemplazo(dicho.slice(inicioCerebro), nuevo));
+        decirCerebro(restoDeReemplazo(dicho.slice(inicioCerebro), nuevo));
+      } else if (evento === 'tarea') {
+        const tr = tareaDe(String(datos?.herramienta || ''));
+        if (!tr) return;
+        const antes = tarea;
+        tarea = tr;
+        // Una tarea nueva después de algo que el cerebro dijo («Déjame buscarlo.» y luego la búsqueda):
+        // vuelve a haber a quién hacer esperar.
+        cerebroHablo = false;
+        // Otra ronda del harness (buscar → leer la página): si ya sonaba, cambia el sonido.
+        if (conv.ambiente?.de === corte) ambiente(tr.sonido);
+        if (tr.lenta && !(antes?.lenta && esperando)) programar(alEsperar, cuandoEsperar());
       } else if (evento === 'done') {
-        if (!algo) decir(sinRelleno(quitarExpresiones(String(datos?.voz ?? datos?.reply ?? '')).trim()));
+        if (!algo) decirCerebro(sinRelleno(quitarExpresiones(String(datos?.voz ?? datos?.reply ?? '')).trim()));
         // Solo acciones y nada que decir (un cerebro viejo, o la frase se perdió): «Listo.», no «se me
         // fue el hilo» mientras la app sí la hace.
-        if (!algo && Array.isArray(datos?.acciones) && datos.acciones.length) decir(PHRASES.listo[pase.idioma]);
+        if (!algo && Array.isArray(datos?.acciones) && datos.acciones.length) decirCerebro(PHRASES.listo[pase.idioma]);
+        // Buscar o leer en sus chats lo hace el teléfono y vuelve como lectura (otro turno): mientras,
+        // suena la tarea. La quita el turno de la lectura (o el propio teléfono, con su tope).
+        const manos = (Array.isArray(datos?.acciones) ? datos.acciones : []).map((x: any) => String(x?.accion?.tipo ?? x?.tipo ?? ''));
+        const deTelefono = manos.includes('buscar') ? tareaDe('buscar') : manos.includes('leer') ? tareaDe('leer-chat') : null;
+        if (deTelefono?.sonido && !corte.signal.aborted && conv.enCurso === corte) {
+          conv.ambiente = { sonido: deTelefono.sonido, de: null };
+          avisarAmbiente(deTelefono.sonido);
+        }
         terminado = true;
         avisarFin();
       } else if (evento === 'error') {
@@ -792,7 +971,10 @@ export function montarVozAgente(app: express.Express, d: Deps) {
         }
       );
     await Promise.race([fin, t]);
-    if (puente) clearTimeout(puente);
+    for (const h of relojes) clearTimeout(h);
+    relojes.clear();
+    // El turno terminó (o lo cortaron): el sonido que puso este turno se quita.
+    ambiente(null);
     if (corte.signal.aborted) {
       // La persona interrumpió (o llegó otro turno de esta conversación, que ya tomó lo que este dijo
       // como `ultimaDicha`): nadie espera esto. Si la petición sigue abierta, se cierra bien para que

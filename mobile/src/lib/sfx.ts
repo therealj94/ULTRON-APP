@@ -42,6 +42,10 @@ let sfxEnabled = true;
 export function setSfxEnabled(on: boolean) {
   sfxEnabled = on;
 }
+/** ¿Los sonidos de la app están activados (ajuste «sonidos») y no hay una llamada de PULSE2CHAT? */
+export function sfxActivos(): boolean {
+  return sfxEnabled && !enLlamada;
+}
 
 /** En una llamada no suena ningún efecto (ni la risita de la compañera): el audio es de la llamada. */
 let enLlamada = false;

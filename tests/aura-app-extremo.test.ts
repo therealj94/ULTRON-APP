@@ -219,9 +219,19 @@ async function canal(token = yo.token, aparato?: string) {
     }
   })();
   await new Promise((r) => setTimeout(r, 100));
+  // Las acciones son los bloques sin `event:` (o `event: accion`); `event: ambiente` es el sonido de fondo.
+  const bloques = (tipo: 'accion' | 'ambiente') =>
+    texto
+      .split('\n\n')
+      .filter((b) => (tipo === 'ambiente' ? /^event: ambiente$/m.test(b) : !/^event: (?!accion$)/m.test(b)))
+      .map((b) => /^data: (\{.*\})$/m.exec(b)?.[1])
+      .filter((d): d is string => !!d)
+      .map((d) => JSON.parse(d));
   return {
-    acciones: () => [...texto.matchAll(/^data: (\{.*\})$/gm)].map((m) => JSON.parse(m[1]).accion),
-    eventos: () => [...texto.matchAll(/^data: (\{.*\})$/gm)].map((m) => JSON.parse(m[1]) as { id: string; accion: any }),
+    acciones: () => bloques('accion').map((e) => e.accion),
+    eventos: () => bloques('accion') as { id: string; accion: any }[],
+    ambientes: () => bloques('ambiente') as { sonido: string | null; on: boolean }[],
+    texto: () => texto,
     cerrar: async () => {
       ctrl.abort();
       await leyendo;
@@ -642,6 +652,42 @@ test('interrupción: ElevenLabs corta a mitad y la respuesta siguiente empieza c
   // Y si la dijo entera, nada de perdón.
   const cuarta = await voz(pase2, [...hist, { role: 'assistant', content: 'La plata está a cuarenta dólares.' }, { role: 'user', content: '¿y la plata?' }]);
   assert.doesNotMatch(cuarta.dicho, /perdón/i);
+});
+
+test('tarea lenta por voz (el modelo pide la web): frase de espera a tiempo, tecleo en el teléfono de la conversación y se para al contestar', { skip: !listo }, async () => {
+  const { frasesDe } = await import('../mobile/src/compa/frasesEstado');
+  const otra = emitirSesion({ correo: 'otra.prueba@ordenglobal.org', nombre: 'Otra Persona', rol: 'Junta' });
+  const tel = await canal(otra.token, 'tel-ambiente');
+  const otroTel = await canal(otra.token, 'tel-otro');
+  let vuelta = 0;
+  const antes = contestar;
+  // El 27B pide la web (la red de afuera tarda 2,5 s y falla, como en el CI); con el resultado, contesta.
+  contestar = () => (vuelta++ === 0 ? 'PEDIR_HERRAMIENTA: web precio del cobre hoy' : 'No encontré el dato de hoy; la semana pasada rondaba cuatro dólares la libra.');
+  try {
+    const pase = emitirPase(otra, 'claudio', 'es', { aparato: 'tel-ambiente' }).pase;
+    const r = await voz(pase, [{ role: 'user', content: 'investiga el precio del cobre hoy en la bolsa de Londres' }]);
+    console.log(`[latencia] tarea web por voz: primera palabra (la frase de espera) a los ${Math.round(r.primeraMs)} ms, respuesta completa a los ${Math.round(r.totalMs)} ms`);
+    // A veces lleva delante una etiqueta de audio de la voz v4 («[curious] Buscando…»): la voz la
+    // interpreta y no la lee (frasesEstado.ts, vozDeEspera).
+    const sinEtiqueta = r.dicho.replace(/^\[(thoughtful|curious|calm|exhales|laughs softly|chuckles)\] /, '');
+    const frase = frasesDe('buscando', 'claudio', 'es').find((f) => sinEtiqueta.startsWith(f));
+    assert.ok(frase, `empieza con una frase de «buscando» de Claudio: ${r.dicho}`);
+    assert.ok(r.primeraMs < 3_000, `la frase sale antes del corte de ElevenLabs (4 s): ${r.primeraMs} ms`);
+    assert.match(r.dicho, /rondaba cuatro dólares la libra\.$/);
+    assert.doesNotMatch(r.dicho, /PEDIR_HERRAMIENTA/);
+    assert.ok(await espera(() => tel.ambientes().length >= 2));
+    assert.deepEqual(tel.ambientes(), [
+      { sonido: 'teclado', on: true },
+      { sonido: null, on: false },
+    ]);
+    assert.deepEqual(otroTel.ambientes(), [], 'el otro teléfono de la persona no suena');
+    assert.ok(!/^id: /m.test(tel.texto().split('event: ambiente')[1] || ''), 'el ambiente no lleva id (no mueve el Last-Event-ID de las acciones)');
+    assert.deepEqual(tel.acciones(), [], 'y no es una acción');
+  } finally {
+    contestar = antes;
+    await tel.cerrar();
+    await otroTel.cerrar();
+  }
 });
 
 test('latencia hasta la primera palabra (voz), con cifras', { skip: !listo }, async () => {

@@ -6,7 +6,9 @@
  *   PUT  /api/perfil  Partial<Perfil>  → { perfil, durable } (503 `perfil_no_disponible` si el guardado
  *                                  no se pudo leer). El teléfono saca el cambio de su cola solo con `durable: true`.
  *   GET  /api/app/acciones      text/event-stream: cada evento `data: {"id","accion"}`
- *                                  (cabecera opcional `x-aura-aparato: <id del teléfono>`)
+ *                                  (cabecera opcional `x-aura-aparato: <id del teléfono>`); además,
+ *                                  durante la conversación, `event: ambiente` + `data: {"sonido","on"}`
+ *                                  (el sonido de fondo de una tarea lenta; lib/acciones-app.ts)
  *   POST /api/app/contexto      { pantalla, chatAbierto?, contactos, borrador? }
  *
  * Todo con la sesión de la mesa: el perfil, el canal y el contexto son de un CORREO, y el correo sale
@@ -135,7 +137,17 @@ export function montarRutasApp(app: express.Express, d: Deps) {
         escribir(`id: ${e.id}\ndata: ${JSON.stringify(e)}\n\n`);
       },
       // El mismo aparato que vuelve reemplaza a su canal viejo; al tope se desaloja el más viejo.
-      { aparato, max: MAX_CANALES_POR_CUENTA, desalojar: () => cerrar('reemplazado') }
+      // `alEvento`: lo que no es acción (el sonido de fondo de la conversación, `event: ambiente`), sin
+      // `id` para no mover el Last-Event-ID de las acciones.
+      {
+        aparato,
+        max: MAX_CANALES_POR_CUENTA,
+        desalojar: () => cerrar('reemplazado'),
+        alEvento: (nombre, datos) => {
+          if (cerrado || res.writableEnded || res.destroyed) throw new Error('canal cerrado');
+          escribir(`event: ${nombre}\ndata: ${JSON.stringify(datos)}\n\n`);
+        },
+      }
     );
     latido = setInterval(() => {
       if (!d.sesionDe(req)) return cerrar('sesion');
