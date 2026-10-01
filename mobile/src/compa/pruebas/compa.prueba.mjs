@@ -2125,6 +2125,21 @@ prueba('ciclo: `[[reconecta]]` solo con una frase reciente y de la persona (no l
   c.turnoUsuario('[[reconecta]] gracias');
   c.sesionAbriendo();
   assert.deepEqual(c.conectado(), [{ tipo: 'primerMensaje', texto: MENSAJE_RECONECTA }]);
+  // Una frase YA CONTESTADA (el avatar habló de verdad después) no se vuelve a hacer al reconectar.
+  c.turnoUsuario('pon una alarma en tres minutos');
+  r.t += 500;
+  c.agente(true);
+  r.t += 3_000;
+  c.agente(false);
+  c.sesionAbriendo();
+  assert.deepEqual(c.conectado(), [{ tipo: 'primerMensaje', texto: MENSAJE_RECONECTA }], 'contestada: no se repite (la alarma no se pone dos veces)');
+  // Solo el relleno («Mmm… a ver.», corto) no la contesta: sí se retoma.
+  c.turnoUsuario('¿cómo va el oro?');
+  c.agente(true);
+  r.t += 900;
+  c.agente(false);
+  c.sesionAbriendo();
+  assert.deepEqual(c.conectado(), [{ tipo: 'primerMensaje', texto: '[[reconecta]] ¿cómo va el oro?' }]);
   // Solo la ÚLTIMA frase, limpia.
   c.turnoUsuario('hola');
   c.turnoUsuario('  ¿y   mañana qué tengo? ');
