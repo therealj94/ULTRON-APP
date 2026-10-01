@@ -53,3 +53,10 @@ test('el prompt de una pieza sigue trayendo todo (la hora, el agente, la app y l
   const p = personalidadDelTurno({ ...base, agente: null, bloqueApp: 'APP: pantalla mesa', hechos: ['SPOT XAU/USD = 3000'] }, new Date('2026-09-30T20:00:00Z'));
   for (const trozo of ['AHORA:', 'APP: pantalla mesa', 'HECHOS:', 'SPOT XAU/USD = 3000', 'Modo de mesa pedido: CREATIVE']) assert.ok(p.includes(trozo), trozo);
 });
+
+test('el contexto del turno (para el mensaje de la persona) no trae los HECHOS ni cambia lo fijo', () => {
+  const t1 = piezasDelTurno({ ...base, agente: null, bloqueApp: 'APP: pantalla mesa', hechos: ['SPOT XAU/USD = 3000'] }, new Date('2026-09-30T20:00:00Z'));
+  assert.ok(t1.contexto.includes('AHORA:') && t1.contexto.includes('APP: pantalla mesa'));
+  assert.ok(!t1.contexto.includes('SPOT XAU'), 'los HECHOS los pone el turno aparte (el harness les suma lo de cada herramienta)');
+  assert.ok(!t1.fijo.includes(t1.contexto.slice(0, 20)));
+});

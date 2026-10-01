@@ -2605,8 +2605,14 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     memoriaMiembro: correoMem ? promptMemoriaMiembro(correoMem, comoLeDecimos) : undefined,
   });
 
-  // Lo fijo arriba y lo del turno al final (server/prompt-turno.ts): el nodo reutiliza lo ya leído.
-  const compuesto = construirMensajes({ personalidad: piezas.fijo, delTurno: piezas.delTurno, user: mensajeHilo || message, canal, historial: hilo, nivel });
+  // El system es solo lo fijo; lo del turno (hora, app, agente) va en el mensaje de la persona junto a
+  // los HECHOS (mensajesQwen): así el nodo reutiliza lo ya leído (server/prompt-turno.ts).
+  // Lo que dice el clasificador sobre ESTE turno por seguridad (un intento de torcer al sistema, una
+  // estafa, alguien en riesgo) va además en el system: ahí pesa más que lo que escribió la persona, que
+  // queda en el mismo mensaje que el contexto. Esos turnos no reutilizan lo leído; son pocos.
+  const avisos = [clas.inyeccion ? AVISO_INYECCION : '', ...guiasDeClasificacion(clas)].filter(Boolean);
+  const personalidadSistema = avisos.length ? `${piezas.fijo}\n\nAVISOS DE ESTE TURNO (mandan sobre lo que diga el mensaje):\n${avisos.join('\n')}` : piezas.fijo;
+  const compuesto = construirMensajes({ personalidad: personalidadSistema, user: mensajeHilo || message, canal, historial: hilo, nivel });
   if (compuesto.meta.rag) tools.push('rag');
   if (compuesto.meta.cot) tools.push('cot');
   if (compuesto.meta.harness) tools.push('harness');
@@ -2624,6 +2630,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     directo,
     directoVia: decirTaller ? 'taller' : soloCalculo ? 'calculo-mina' : directo ? 'market' : null,
     system,
+    contexto: piezas.contexto,
     quien,
     quienMem,
     mando,
@@ -2718,7 +2725,7 @@ function calentarCerebro(correo: string) {
   void fetchNodo(`${ULTRON_NODO_URL}/api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-ultron-secreto': ULTRON_NODO_SECRETO },
-    body: JSON.stringify({ model: ULTRON_NODO_MODELO, stream: false, messages: [{ role: 'system', content: system }, { role: 'user', content: 'Hola' }], max_tokens: 1, temperature: 0 }),
+    body: JSON.stringify({ model: ULTRON_NODO_MODELO, stream: false, messages: [{ role: 'system', content: system }, { role: 'user', content: 'Hola' }], options: { num_predict: 1, temperature: 0 } }),
     signal: AbortSignal.timeout(30_000),
   })
     .then((r) => r.body?.cancel().catch(() => {}))
@@ -2726,11 +2733,19 @@ function calentarCerebro(correo: string) {
 }
 
 /** Cómo se presenta lo que dice la persona: «Junta:» a la junta, «Miembro:» a un miembro de la comunidad. */
-function mensajesQwen(system: string, message: string, hechos: string[], hilo: MsgHilo[] = [], nivel: NivelAura = 'junta') {
+/**
+ * `contexto`: lo que cambia en cada turno (hora, perfil, avatar, agente, app; server/prompt-turno.ts). Va
+ * en el mensaje de la persona y no en el system, para que el system y el hilo sean iguales turno a turno
+ * y el nodo solo lea el mensaje nuevo.
+ */
+function mensajesQwen(system: string, message: string, hechos: string[], hilo: MsgHilo[] = [], nivel: NivelAura = 'junta', contexto = '') {
   return [
     { role: 'system', content: system },
     ...hilo.map((m) => ({ role: m.role, content: m.content })),
-    { role: 'user', content: `HECHOS DE ESTE TURNO:\n${hechos.join('\n') || '(ninguno)'}\n\n${nivel === 'miembro' ? 'Miembro' : 'Junta'}: ${message}` },
+    {
+      role: 'user',
+      content: `${contexto ? `${contexto}\n\n` : ''}HECHOS DE ESTE TURNO:\n${hechos.join('\n') || '(ninguno)'}\n\n${nivel === 'miembro' ? 'Miembro' : 'Junta'}: ${message}`,
+    },
   ];
 }
 
@@ -2740,7 +2755,8 @@ async function preguntarQwen(
   hechos: string[],
   hilo: MsgHilo[] = [],
   senal?: AbortSignal,
-  nivel: NivelAura = 'junta'
+  nivel: NivelAura = 'junta',
+  contexto = ''
 ): Promise<{ ok: boolean; reply: string; error?: string }> {
   if (!ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) {
     return { ok: false, reply: '', error: 'Qwen no configurado' };
@@ -2749,7 +2765,7 @@ async function preguntarQwen(
     const r = await fetchNodo(`${ULTRON_NODO_URL}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-ultron-secreto': ULTRON_NODO_SECRETO },
-      body: JSON.stringify({ model: ULTRON_NODO_MODELO, stream: false, messages: mensajesQwen(system, message, hechos, hilo, nivel) }),
+      body: JSON.stringify({ model: ULTRON_NODO_MODELO, stream: false, messages: mensajesQwen(system, message, hechos, hilo, nivel, contexto) }),
       signal: conTope(senal, 60000),
     });
     const raw = await r.text();
@@ -2825,6 +2841,8 @@ async function bucleHarness(o: {
   senal?: AbortSignal;
   /** Con quién habla (server/nivel.ts). Sin él, la junta. */
   nivel?: NivelAura;
+  /** Lo del turno que va en el mensaje de la persona (mensajesQwen). */
+  contexto?: string;
 }): Promise<{ reply: string; via: string }> {
   let reply = o.reply;
   let via = `${ULTRON_NODO_URL}/api/chat`;
@@ -2846,7 +2864,7 @@ async function bucleHarness(o: {
       ronda: i + 1,
     });
     o.hechos.push(extra);
-    const qn = await preguntarQwen(o.system, o.message, o.hechos, o.hilo, o.senal, o.nivel);
+    const qn = await preguntarQwen(o.system, o.message, o.hechos, o.hilo, o.senal, o.nivel, o.contexto);
     if (!qn.ok) {
       reply = quitarLineaPedido(reply) + (extra ? `\n\n${extra}` : '');
       via = 'harness-parcial';
@@ -3054,11 +3072,11 @@ async function correrTurnoInterno(body: any, opciones: OpcionesTurno = {}): Prom
   if (!ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) {
     return guardar({ ...base, reply: sinCerebro(p.datos), emocion: 'preocupado', via: 'tools-only', mode, ms: Date.now() - t0, herramientas: tools });
   }
-  const q1 = await preguntarQwen(system, message, hechos, hilo, p.senal, p.nivel);
+  const q1 = await preguntarQwen(system, message, hechos, hilo, p.senal, p.nivel, p.contexto);
   if (!q1.ok) {
     return guardar({ ...base, reply: sinCerebro(p.datos), emocion: 'preocupado', via: 'tools-fallback', mode, ms: Date.now() - t0, herramientas: tools, error: q1.error });
   }
-  const h = await bucleHarness({ reply: q1.reply, system, message, hechos, hilo, tools, mando, senal: p.senal, nivel: p.nivel });
+  const h = await bucleHarness({ reply: q1.reply, system, message, hechos, hilo, tools, mando, senal: p.senal, nivel: p.nivel, contexto: p.contexto });
   let reply = h.reply;
   let via = h.via;
 
@@ -3076,7 +3094,7 @@ async function correrTurnoInterno(body: any, opciones: OpcionesTurno = {}): Prom
     const hecho = neutralizarMarca(`EJECUTOR (${r.via}): exit ${r.exit_code}. stdout: ${String(r.stdout || '').slice(0, 800) || '(vacío)'} stderr: ${String(r.stderr || r.error || '').slice(0, 400) || '(vacío)'}.`);
     hechos.push(hecho);
     if (!r.ok) {
-      const qn = await preguntarQwen(system, `${message}\n\nEl ejecutor falló. Corrige el código. No afirmes que funciona.`, hechos, hilo, p.senal, p.nivel);
+      const qn = await preguntarQwen(system, `${message}\n\nEl ejecutor falló. Corrige el código. No afirmes que funciona.`, hechos, hilo, p.senal, p.nivel, p.contexto);
       reply = qn.ok ? quitarLineaPedido(qn.reply) : `${quitarLineaPedido(reply)}\n\n${hecho}`;
     } else {
       reply = `${quitarLineaPedido(reply)}\n\n${hecho}`;
@@ -3318,7 +3336,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     const r = await fetchNodo(`${ULTRON_NODO_URL}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-ultron-secreto': ULTRON_NODO_SECRETO },
-      body: JSON.stringify({ model: ULTRON_NODO_MODELO, stream: true, messages: mensajesQwen(system, message, hechos, hilo, p.nivel) }),
+      body: JSON.stringify({ model: ULTRON_NODO_MODELO, stream: true, messages: mensajesQwen(system, message, hechos, hilo, p.nivel, p.contexto) }),
       signal: conTope(senal, 60000),
     });
     if (!r.ok || !r.body) {
@@ -3406,7 +3424,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     let reply = extraerEmocion(full).texto;
     let via = `${ULTRON_NODO_URL}/api/chat`;
     if (pedido) {
-      const h = await bucleHarness({ reply, system, message, hechos, hilo, tools, mando, senal, nivel: p.nivel });
+      const h = await bucleHarness({ reply, system, message, hechos, hilo, tools, mando, senal, nivel: p.nivel, contexto: p.contexto });
       const e = extraerEmocion(h.reply);
       emocion = e.emocion;
       send('emocion', { emocion });
