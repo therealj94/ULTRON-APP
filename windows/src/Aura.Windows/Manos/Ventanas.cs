@@ -121,6 +121,47 @@ internal static class Ventanas
         return await Verificar.Esperar(() => GetForegroundWindow() == h, 600, 100);
     }, 3) > 0;
 
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+
+    /// <summary>El escritorio y la barra de tareas: nunca se les pide cerrar (a Progman, WM_CLOSE le abre «Apagar Windows»).</summary>
+    static bool EsDelShell(IntPtr h)
+    {
+        var sb = new StringBuilder(64); GetClassName(h, sb, 64);
+        return sb.ToString() is "Progman" or "WorkerW" or "Shell_TrayWnd" or "Shell_SecondaryTrayWnd";
+    }
+
+    /// <summary>Las ventanas de una app (por su programa o su título); con `dicho` vacío, todas las de trabajo.</summary>
+    public static List<VentanaAbierta> TodasDe(string dicho)
+    {
+        var todas = Abiertas().Where(v => !EsDelShell(v.Handle)).ToList();
+        var q = LayaLigera.Normalizar(dicho);
+        if (q.Length == 0) return todas;
+        if (Procesos.TryGetValue(q, out var procs)) return todas.Where(v => procs.Contains(v.Proceso, StringComparer.OrdinalIgnoreCase)).ToList();
+        var porProceso = todas.Where(v => LayaLigera.Normalizar(v.Proceso) == q).ToList();
+        if (porProceso.Count > 0) return porProceso;
+        var una = Buscar(dicho);
+        return una == null ? new() : todas.Where(v => v.Proceso.Equals(una.Proceso, StringComparison.OrdinalIgnoreCase)).ToList();
+    }
+
+    /// <summary>Le pide a cada ventana que se cierre (las apps preguntan si guardar). Cuántas quedaron cerradas.</summary>
+    public static async Task<(int Cerradas, int Preguntan)> CerrarTodas(IReadOnlyList<VentanaAbierta> ventanas)
+    {
+        foreach (var v in ventanas) { try { Cerrar(v.Handle); } catch (InvalidOperationException) { } }
+        await Verificar.Esperar(() => ventanas.All(v => !IsWindow(v.Handle) || !IsWindowVisible(v.Handle)), 3000, 150);
+        int cerradas = ventanas.Count(v => !IsWindow(v.Handle) || !IsWindowVisible(v.Handle));
+        int preguntan = ventanas.Where(v => IsWindow(v.Handle) && IsWindowVisible(v.Handle)).Select(v => { GetWindowThreadProcessId(v.Handle, out var pid); return pid; }).Distinct().Count(DialogoDe);
+        return (cerradas, preguntan);
+    }
+
+    /// <summary>La ventana al frente ahora mismo (para saber en qué navegador estás).</summary>
+    public static string ProcesoAlFrente()
+    {
+        var h = GetForegroundWindow();
+        if (h == IntPtr.Zero) return "";
+        GetWindowThreadProcessId(h, out var pid);
+        try { using var p = Process.GetProcessById((int)pid); return p.ProcessName; } catch { return ""; }
+    }
+
     /// <summary>Le PIDE a la ventana que se cierre (WM_CLOSE): si hay algo sin guardar, la app pregunta.</summary>
     public static void Cerrar(IntPtr h) { if (!PostMessage(h, 0x0010, IntPtr.Zero, IntPtr.Zero)) throw new InvalidOperationException("La ventana no aceptó cerrarse."); }
 }

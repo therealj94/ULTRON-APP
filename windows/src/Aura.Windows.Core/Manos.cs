@@ -20,7 +20,10 @@ public enum Mano
     // 2.0: PULSE2CHAT por voz (llamar, videollamar, mandar un mensaje).
     Pulse,
     // 2.0: apagar el micrófono por voz («deja de escuchar»).
-    Dormir
+    Dormir,
+    // 2.1 (ManosMas.cs, solo por reglas): volumen exacto, apps abiertas, teclas repetidas y atajos de Windows,
+    // archivos y carpetas, herramientas del sistema, una página en un navegador, el texto de la pantalla y dos órdenes en una frase.
+    VolumenA, Apps, Teclas, Archivos, Herramienta, Navegador, TextoPantalla, Varias
 }
 
 /// <summary>Lo que se va a hacer: la mano, su parámetro (qué app, qué búsqueda, qué texto…) y de dónde salió.</summary>
@@ -35,7 +38,8 @@ public sealed record Pedido(Mano Mano, string Valor = "", TimeSpan? Cuando = nul
     /// Pulsar un control se confirma cuando su nombre suena a algo con efecto (Enviar, Eliminar, Pagar…);
     /// eso lo decide Controles.EsDelicado en el .exe, con el nombre real del control.
     /// </summary>
-    public bool PideConfirmacion => Mano is Mano.Escribir or Mano.Bloquear || Mano == Mano.Ventana && Valor == "cerrar|todo";
+    public bool PideConfirmacion => Mano is Mano.Escribir or Mano.Bloquear || Mano == Mano.Ventana && Valor == "cerrar|todo"
+        || Mano == Mano.Apps && (Valor == "cerrar-todas|" || Valor.StartsWith("forzar|", StringComparison.Ordinal)) || Mano == Mano.Archivos && Valor == "vaciar-papelera";
 }
 
 /// <summary>Una decisión de Laya en el nodo (vía /api/windows/intencion).</summary>
@@ -62,10 +66,16 @@ public static class Intencion
         _ => Mano.Ninguna
     };
 
-    public static Pedido PorReglas(string texto)
+    public static Pedido PorReglas(string texto) => PorReglas(texto, true);
+
+    static Pedido PorReglas(string texto, bool cadena)
     {
         var t = Parametros.Limpiar(texto);
         if (t.Length == 0 || t.Length > 400) return Pedido.Nada;
+        // «abre el bloc de notas y escribe hola»: dos órdenes, cada una entendida sola (ManosMas.Encadenadas).
+        if (cadena && ManosMas.Encadenadas(texto, x => PorReglas(x, false)) is { } varias) return varias;
+        // Las manos 2.1 van primero: son frases exactas que antes caían en otra regla («pon el volumen al 30»).
+        if (ManosMas.Pedir(t, texto) is { } mas) return mas;
         // Lo que se PREGUNTA al equipo (hora, batería, disco, red) se contesta aquí, sin red: va antes que el filtro de preguntas.
         if (Parametros.Info(t) is { } info) return new(Mano.Info, info);
         if (Parametros.Musica(texto) is { } musica) return new(Mano.Musica, musica);
@@ -393,7 +403,7 @@ public static class Parametros
         return original ?? q;
     }
 
-    static string? BuscarEnOriginal(string original, string normalizado)
+    internal static string? BuscarEnOriginal(string original, string normalizado)
     {
         // Cada palabra original puede normalizarse en varias («10:30» → «10 30»): se aplana y se recuerda de qué palabra vino.
         var palabras = original.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);

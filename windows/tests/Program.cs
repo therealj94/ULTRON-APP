@@ -512,5 +512,47 @@ foreach (var f in new[] { "quién es mejor, claudio o antonio", "cómo se hace u
         Check(no < 0.1f, $"«oye laura, ven» no ({no:0.000})");
     }
 }
+// ── Manos 2.1 (ManosMas): más cosas en la PC, con las mismas reglas de seguridad ──
+foreach (var (f, v) in new[] { ("pon el volumen al 30", "30"), ("volume to 50%", "50"), ("pon el volumen al máximo", "100"), ("volumen a la mitad", "50"),
+    ("set the volume to 20 percent", "20"), ("baja el volumen a 10", "10"), ("¿a cuánto está el volumen?", "?") })
+    Check(R(f) is { Mano: Mano.VolumenA } pv && pv.Valor == v, "volumen exacto: " + f + " → " + R(f));
+Check(R("pon el volumen al 300").Mano != Mano.VolumenA && R("sube el volumen") is { Mano: Mano.VolumenSubir } && R("bájale un poco") is { Mano: Mano.VolumenBajar } && R("volume up") is { Mano: Mano.VolumenSubir }, "volumen fuera de rango no; subir y bajar siguen igual");
+Check(R("qué tengo abierto") is { Mano: Mano.Apps, Valor: "lista" } && R("what's open") is { Valor: "lista" } && R("qué ventanas tengo abiertas") is { Valor: "lista" }, "apps abiertas");
+Check(R("cierra todas las ventanas de Excel") is { Mano: Mano.Apps, Valor: "cerrar-todas|excel", PideConfirmacion: false } && R("close all excel windows") is { Valor: "cerrar-todas|excel" }, "cerrar todas las de una app va de una");
+Check(R("cierra todo") is { Mano: Mano.Apps, Valor: "cerrar-todas|", PideConfirmacion: true } && R("close all windows") is { PideConfirmacion: true }, "cerrar TODO espera el sí");
+foreach (var f in new[] { "cierra chrome a la fuerza", "mata el proceso de chrome", "force quit chrome", "fuerza el cierre de chrome", "kill chrome" })
+    Check(R(f) is { Mano: Mano.Apps, Valor: "forzar|chrome", PideConfirmacion: true }, "forzar cierre confirma: " + f + " → " + R(f));
+Check(R("cierra chrome") is { Mano: Mano.Ventana, Valor: "cerrar|chrome" } && R("mata eso").Mano != Mano.Apps && ManosMas.NombreApp("chrome & del c: windows system32") == null && ManosMas.NombreApp("chrome; del") == "chrome del", "cerrar normal sigue igual y nombres raros no");
+Check(ManosMas.ProcesosProtegidos.Contains("explorer") && ManosMas.ProcesosProtegidos.Contains("winlogon"), "Windows no se mata");
+Check(R("presiona tab tres veces") is { Mano: Mano.Teclas, Valor: "TAB|3" } && R("dale enter dos veces") is { Valor: "ENTER|2" } && R("press down 5 times") is { Valor: "DOWN|5" } && R("presiona control z twice") is { Valor: "CTRL+Z|2" }, "teclas repetidas: " + R("dale enter dos veces"));
+Check(R("presiona tab 50 veces").Mano != Mano.Teclas && R("presiona alt f4 dos veces").Mano != Mano.Teclas, "repetir con tope y sin combos peligrosos");
+foreach (var (f, k) in new[] { ("nuevo escritorio virtual", "CTRL+WIN+D"), ("ve al siguiente escritorio", "CTRL+WIN+RIGHT"), ("escritorio anterior", "CTRL+WIN+LEFT"),
+    ("mueve la ventana al otro monitor", "WIN+SHIFT+RIGHT"), ("haz un recorte de pantalla", "WIN+SHIFT+S"), ("toma una captura de una parte de la pantalla", "WIN+SHIFT+S"),
+    ("graba la pantalla", "WIN+ALT+R"), ("abre el historial del portapapeles", "WIN+V"), ("abre el panel de emojis", "WIN+PERIOD"),
+    ("abre una ventana de incógnito", "CTRL+SHIFT+N"), ("open a new window", "CTRL+N"), ("agrégalo a favoritos", "CTRL+D"), ("open the notification center", "WIN+N") })
+    Check(R(f) is { Mano: Mano.Teclas } pt && pt.Valor == k + "|1", "atajo de windows: " + f + " → " + R(f));
+Check(R("toma una captura de pantalla") is { Mano: Mano.Captura } && R("ve al escritorio") is { Mano: Mano.Escritorio } && R("resume lo que copié") is { Mano: Mano.Portapapeles }, "captura, escritorio y portapapeles siguen igual");
+Check(R("activa la luz nocturna") is { Mano: Mano.Atajo, Valor: "config|nightlight" } && R("pon no molestar") is { Valor: "config|quiethours" } && R("turn on the hotspot") is { Valor: "config|network-mobilehotspot" }, "configuraciones nuevas");
+Check(R("crea una carpeta Proyectos en el escritorio") is { Mano: Mano.Archivos, Valor: "carpeta|escritorio|Proyectos" } && R("crea una carpeta llamada Facturas 2026 en documentos") is { Valor: "carpeta|documentos|Facturas 2026" }
+    && R("create a folder called Taxes") is { Valor: "carpeta|escritorio|Taxes" } && R("crea una carpeta en descargas llamada Viaje") is { Valor: "carpeta|descargas|Viaje" }, "crear carpeta: " + R("crea una carpeta llamada Facturas 2026 en documentos"));
+Check(R("crea una carpeta en el escritorio").Mano != Mano.Archivos, "carpeta sin nombre no");
+Check(ManosMas.NombreCarpetaSeguro("..\\..\\Windows") == null && ManosMas.NombreCarpetaSeguro("CON") == null && ManosMas.NombreCarpetaSeguro("a/b:c*") == "abc" && ManosMas.NombreCarpetaSeguro("Hola. ") == "Hola" && ManosMas.NombreCarpetaSeguro(new string('x', 80)) == null, "nombre de carpeta seguro");
+Check(R("vacía la papelera") is { Mano: Mano.Archivos, Valor: "vaciar-papelera", PideConfirmacion: true } && R("empty the recycle bin") is { PideConfirmacion: true }, "papelera espera el sí");
+Check(R("dónde está el archivo del contrato") is { Mano: Mano.Archivos, Valor: "mostrar|contrato" } && R("qué descargué hoy") is { Valor: "descargas-recientes" } && R("abre el archivo del contrato") is { Mano: Mano.AbrirArchivo }, "archivos: mostrar y descargas");
+Check(R("abre el administrador de dispositivos") is { Mano: Mano.Herramienta, Valor: "dispositivos" } && R("open disk cleanup") is { Valor: "limpieza" } && R("abre la lupa") is { Valor: "lupa" } && R("abre el administrador de tareas") is { Mano: Mano.AbrirApp }, "herramientas de windows");
+Check(R("abre youtube en firefox") is { Mano: Mano.Navegador, Valor: "firefox.exe|https://www.youtube.com" } && R("abre sar.gob.hn en chrome") is { Valor: "chrome.exe|https://sar.gob.hn" } && R("abre youtube") is { Mano: Mano.AbrirWeb }, "página en un navegador: " + R("abre sar.gob.hn en chrome"));
+Check(R("abre javascript:alert(1) en chrome").Mano != Mano.Navegador, "navegador solo https");
+Check(R("copia el texto de la pantalla") is { Mano: Mano.TextoPantalla } && R("copy the text from the screen") is { Mano: Mano.TextoPantalla }, "texto de la pantalla");
+foreach (var (f, q) in new[] { ("cuánta memoria RAM estoy usando", "memoria"), ("cuál es mi IP", "ip"), ("uso de cpu", "cpu"), ("a qué wifi estoy conectado", "wifi"),
+    ("what wifi am I connected to", "wifi"), ("cuánto tiempo lleva encendida la compu", "encendido"), ("qué versión de windows tengo", "version") })
+    Check(R(f) is { Mano: Mano.Info } pi && pi.Valor == q, "info: " + f + " → " + R(f));
+Check(R("qué hora es") is { Mano: Mano.Info, Valor: "hora" } && R("tengo internet?") is { Valor: "red" }, "info de antes sigue");
+// Dos órdenes en una frase: cada una entendida sola; la escritura no va primero (su texto puede tener «y»).
+var cad = R("abre el bloc de notas y escribe hola");
+Check(cad.Mano == Mano.Varias && cad.Valor.Split(ManosMas.Separador) is [var c1, var c2] && R(c1).Mano == Mano.AbrirApp && R(c2) is { Mano: Mano.Escribir, Valor: "hola" }, "abre y escribe: " + cad);
+Check(R("abre word y excel") is { Mano: Mano.Varias } we && we.Valor.Split(ManosMas.Separador)[1] == "abre excel", "abre word y excel: " + R("abre word y excel"));
+Check(R("cierra chrome y luego abre spotify") is { Mano: Mano.Varias } && R("open notepad and then type hello world") is { Mano: Mano.Varias }, "cadena con luego / and then");
+Check(R("escribe pan y leche") is { Mano: Mano.Escribir, Valor: "pan y leche" } && R("busca tom y jerry") is { Mano: Mano.BuscarWeb } && R("ayer abrí word y se trabó").Mano == Mano.Ninguna && R("pon salsa y merengue").Mano != Mano.Varias, "no se parte lo que no son dos órdenes");
+Check(R("presiona control y c") is { Mano: Mano.Atajo, Valor: "teclas|CTRL+C" }, "control y c sigue siendo un atajo: " + R("presiona control y c"));
 Console.WriteLine($"PASS {count} assertions");
 class Clock : TimeProvider { public DateTimeOffset Now = DateTimeOffset.UtcNow; public override DateTimeOffset GetUtcNow() => Now; }
