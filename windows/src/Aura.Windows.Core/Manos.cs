@@ -20,7 +20,10 @@ public enum Mano
     // 2.0: PULSE2CHAT por voz (llamar, videollamar, mandar un mensaje).
     Pulse,
     // 2.0: apagar el micrófono por voz («deja de escuchar»).
-    Dormir
+    Dormir,
+    // 2.1 (ManosMas.cs, solo por reglas): volumen exacto, apps abiertas, teclas repetidas y atajos de Windows,
+    // archivos y carpetas, herramientas del sistema, una página en un navegador, el texto de la pantalla y dos órdenes en una frase.
+    VolumenA, Apps, Teclas, Archivos, Herramienta, Navegador, TextoPantalla, Varias
 }
 
 /// <summary>Lo que se va a hacer: la mano, su parámetro (qué app, qué búsqueda, qué texto…) y de dónde salió.</summary>
@@ -35,7 +38,8 @@ public sealed record Pedido(Mano Mano, string Valor = "", TimeSpan? Cuando = nul
     /// Pulsar un control se confirma cuando su nombre suena a algo con efecto (Enviar, Eliminar, Pagar…);
     /// eso lo decide Controles.EsDelicado en el .exe, con el nombre real del control.
     /// </summary>
-    public bool PideConfirmacion => Mano is Mano.Escribir or Mano.Bloquear || Mano == Mano.Ventana && Valor == "cerrar|todo";
+    public bool PideConfirmacion => Mano is Mano.Escribir or Mano.Bloquear || Mano == Mano.Ventana && Valor == "cerrar|todo"
+        || Mano == Mano.Apps && (Valor == "cerrar-todas|" || Valor.StartsWith("forzar|", StringComparison.Ordinal)) || Mano == Mano.Archivos && Valor == "vaciar-papelera";
 }
 
 /// <summary>Una decisión de Laya en el nodo (vía /api/windows/intencion).</summary>
@@ -62,10 +66,16 @@ public static class Intencion
         _ => Mano.Ninguna
     };
 
-    public static Pedido PorReglas(string texto)
+    public static Pedido PorReglas(string texto) => PorReglas(texto, true);
+
+    static Pedido PorReglas(string texto, bool cadena)
     {
         var t = Parametros.Limpiar(texto);
         if (t.Length == 0 || t.Length > 400) return Pedido.Nada;
+        // «abre el bloc de notas y escribe hola»: dos órdenes, cada una entendida sola (ManosMas.Encadenadas).
+        if (cadena && ManosMas.Encadenadas(texto, x => PorReglas(x, false)) is { } varias) return varias;
+        // Las manos 2.1 van primero: son frases exactas que antes caían en otra regla («pon el volumen al 30»).
+        if (ManosMas.Pedir(t, texto) is { } mas) return mas;
         // Lo que se PREGUNTA al equipo (hora, batería, disco, red) se contesta aquí, sin red: va antes que el filtro de preguntas.
         if (Parametros.Info(t) is { } info) return new(Mano.Info, info);
         if (Parametros.Musica(texto) is { } musica) return new(Mano.Musica, musica);
@@ -86,7 +96,7 @@ public static class Intencion
         if (Parametros.Mute.IsMatch(t)) return new(Mano.Silenciar);
         if (Parametros.Anterior.IsMatch(t)) return new(Mano.MultimediaAnterior);
         if (Parametros.Siguiente.IsMatch(t)) return new(Mano.MultimediaSiguiente);
-        if (Parametros.PlayPausa.IsMatch(t)) return new(Mano.MultimediaPausa);
+        if (Parametros.PlayPausa.IsMatch(t)) return new(Mano.MultimediaPausa, Parametros.SentidoPlay(t));
         if (Parametros.Captura.IsMatch(t)) return new(Mano.Captura);
         if (Parametros.VerPantalla.IsMatch(t)) return new(Mano.VerPantalla);
         if (Parametros.Escritorio.IsMatch(t)) return new(Mano.Escritorio);
@@ -239,9 +249,15 @@ public static class Parametros
     public static readonly Regex SubirVolumen = new(@"^(?:sube|subele|subi|subile|aumenta|ponle mas)(?:\s+(?:el|al|un poco|un poco el|tantito))?\s*(?:volumen|sonido|audio)?(?:\s+un poco)?$|^(?:mas volumen|mas fuerte|volumen mas alto|turn it up|volume up|louder|turn up the volume|raise the volume|increase (?:the )?volume|make it louder)$", O);
     public static readonly Regex BajarVolumen = new(@"^(?:baja|bajale|baji|bajile|disminuye|ponle menos)(?:\s+(?:el|al|un poco|un poco el|tantito))?\s*(?:volumen|sonido|audio)?(?:\s+un poco)?$|^(?:menos volumen|mas bajo|mas bajito|volumen mas bajo|no tan alto|turn it down|volume down|quieter|turn down the volume|lower the volume|decrease (?:the )?volume|make it quieter)$", O);
     public static readonly Regex Mute = new(@"^(?:mute|mutea|unmute|silencia (?:la computadora|la compu|el volumen|el sonido)|quita(?:le)? el (?:sonido|audio|mute)|pon(?:le)? (?:en )?mute|mute (?:the )?(?:sound|audio|computer|volume)|turn off the sound)$", O);
-    public static readonly Regex Siguiente = new(@"^(?:siguiente (?:cancion|tema|video)|pasa (?:la|esta) cancion|salta (?:esta|la) cancion|cambia (?:de|la) cancion|next (?:song|track)|skip (?:this )?(?:song|track)|skip)$", O);
-    public static readonly Regex Anterior = new(@"^(?:(?:pon|pasa a|regresa a|vuelve a|dame|play)\s+)?(?:la |el )?(?:cancion anterior|tema anterior|anterior cancion|previous (?:song|track)|go back a song|the previous (?:song|track))$", O);
-    public static readonly Regex PlayPausa = new(@"^(?:pausa|pausala|pausalo|pause|pause it|reanuda|reanudala|continua|resume|pausa (?:la|el) (?:musica|cancion|video|reproduccion)|para la musica|deten (?:la musica|el video)|dale play|dale a play|dale al play|ponle play|play|reanuda (?:la musica|el video)|continua (?:la cancion|la musica)|pause (?:the )?(?:music|song|video|playback)|resume (?:the )?(?:music|playback)|hit play)$", O);
+    // Con palabras de música siempre: «para» o «detente» solos son para AURA (callar / pausa), no para la canción.
+    public static readonly Regex Siguiente = new(@"^(?:siguiente (?:cancion|tema|video)|pasa (?:la|esta) cancion|salta (?:esta|la) cancion|cambia (?:de|la) cancion|(?:(?:pon(?:me)?|pasa a|dame)\s+)?la (?:siguiente(?: cancion)?|que sigue)|la siguiente cancion|otra cancion|pasala|saltala|next (?:song|track|one)|skip (?:this )?(?:song|track)|skip(?: it)?)$", O);
+    public static readonly Regex Anterior = new(@"^(?:(?:pon(?:me)?|pasa a|regresa a|regresame a|vuelve a|dame|play|otra vez)\s+)?(?:(?:la |el )?(?:cancion anterior|tema anterior|anterior cancion|cancion de antes)|la anterior|la de antes|previous (?:song|track)|go back a song|the previous (?:song|track))$|^(?:regresa|regresame|devuelve|retrocede)\s+(?:la|el|una|esta)\s+(?:cancion|tema|rola)$|^(?:regresala|regresalo|devuelvela|previous|una cancion (?:para )?atras)$", O);
+    public static readonly Regex PlayPausa = new(@"^(?:pausa|pausala|pausalo|pause|pause it|reanuda|reanudala|continua|resume|pausa (?:la|el) (?:musica|cancion|video|reproduccion)|pon(?:le)? pausa|para (?:la musica|la cancion|el video)|deten (?:la musica|la cancion|el video)|quita la musica|apaga la musica|dale play|dale a play|dale al play|ponle play|pon play|play|reanuda (?:la musica|la cancion|el video)|continua (?:con )?(?:la cancion|la musica)|sigue (?:con )?(?:la musica|la cancion)|vuelve a poner la musica|pause (?:the )?(?:music|song|video|playback)|stop (?:the )?music|resume (?:the )?(?:music|playback)|play (?:the )?music|hit play)$", O);
+    static readonly Regex PlayPausar = new(@"^(?:paus|pon(?:le)? pausa|para |deten|quita|apaga|stop)", O);
+    static readonly Regex PlayReanudar = new(@"^(?:reanuda|continua|sigue|resume|dale|ponle play|pon play|play|vuelve a poner|hit play)", O);
+
+    /// <summary>Qué pide la frase de play/pausa: «pausar», «reanudar» o "" (alternar). Así «pausa» con la música ya en pausa no la vuelve a poner.</summary>
+    public static string SentidoPlay(string limpio) => PlayPausar.IsMatch(limpio) ? "pausar" : PlayReanudar.IsMatch(limpio) ? "reanudar" : "";
     public static readonly Regex Captura = new(@"^(?:(?:toma(?:me|le)?|haz(?:me)?|saca(?:me|le)?|guarda(?:me)?|captura|take|grab|capture|save|snap|make)\s+(?:(?:una|un|a|la|the)\s+)?(?:foto (?:de|a) la pantalla|captura(?: de pantalla)?|pantallazo|screenshot|screen ?capture|la pantalla|the screen)(?:\s+.*)?|screenshot|pantallazo)$", O);
     public static readonly Regex VerPantalla = new(@"^(?:que ves(?: en (?:mi|la) pantalla)?|mira (?:mi|la) pantalla|lee (?:mi|la) pantalla|que hay en (?:mi|la) pantalla|revisa (?:mi|la) pantalla|analiza (?:mi|la) pantalla|what do you see(?: on (?:my|the) screen)?|look at (?:my|the) screen|read (?:my|the) screen|what is on (?:my|the) screen)$", O);
     public static readonly Regex Escritorio = new(@"^(?:minimiza todo|minimiza todas las ventanas|muestrame el escritorio|ve al escritorio|show (?:the|my) desktop|minimize (?:everything|all windows))$", O);
@@ -393,7 +409,7 @@ public static class Parametros
         return original ?? q;
     }
 
-    static string? BuscarEnOriginal(string original, string normalizado)
+    internal static string? BuscarEnOriginal(string original, string normalizado)
     {
         // Cada palabra original puede normalizarse en varias («10:30» → «10 30»): se aplana y se recuerda de qué palabra vino.
         var palabras = original.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
@@ -837,10 +853,22 @@ public static class Parametros
     static readonly Regex PulseMensaje = new(@"^(?:mandale|enviale|escribele|mandale un mensaje a|enviale un mensaje a|escribele un mensaje a|manda(?:le)? un mensaje a|dile a)\s+(?:a\s+)?(?<c>[a-z][a-z'-]{1,20}(?: [a-z][a-z'-]{1,20})?)\s+(?:que|diciendo que|diciendole que|:)\s+(?<t>.{1,500})$|^(?:text|message|tell)\s+(?<c>[a-z][a-z'-]{1,20})\s+(?:that\s+)?(?<t>.{1,500})$", O);
 
     /// <summary>«llamada|voz|karla», «llamada|video|karla», «mensaje|karla|ya voy» (el texto como se dijo), o null.</summary>
+    /// <summary>
+    /// «Mándale 10 ORIGEN a Beto», «envíale 2.5 AUKA a Karla», «send 10 origen to Beto», «pásale a Beto 10 origen».
+    /// La cantidad sale del texto original (la normalización parte «2.5» en «2 5»).
+    /// </summary>
+    static readonly Regex PulsePago = new(@"^(?:mandale|enviale|manda(?:le)?|envia(?:le)?|transfiere(?:le)?|pasale|pagale|deposita(?:le)?|send|transfer|pay)\s+(?:(?<m>\d+(?: \d+)*)\s+(?<s>" + Monedas + @")\s+(?:a|para|to)\s+(?<c>[a-z][a-z'-]{1,20}(?: [a-z][a-z'-]{1,20})?)|(?:a\s+)?(?<c>[a-z][a-z'-]{1,20}(?: [a-z][a-z'-]{1,20})?)\s+(?<m>\d+(?: \d+)*)\s+(?<s>" + Monedas + @"))$", O);
+
     public static string? Pulse(string texto)
     {
         var t = Limpiar(texto);
         var n = LayaLigera.Normalizar(t);
+        if (PulsePago.Match(n) is { Success: true } pg
+            && Regex.Match(texto, @"\d[\d.,]*\d|\d") is { Success: true } cifra && CarteraVeta.Monto(cifra.Value.TrimEnd('.', ',')) is { } monto)
+        {
+            var sim = CarteraVeta.Simbolo(pg.Groups["s"].Value) ?? "ORIGEN";
+            return "pago|" + pg.Groups["c"].Value.Trim() + "|" + monto.ToString("0.##################", CultureInfo.InvariantCulture) + "|" + sim;
+        }
         if (PulseVideo.Match(n) is { Success: true } v) return "llamada|video|" + v.Groups["c"].Value.Trim();
         if (PulseLlamar.Match(n) is { Success: true } l && !Regex.IsMatch(l.Groups["c"].Value, @"^(?:la atencion|atencion|me|el|la|un|una)\b")) return "llamada|voz|" + l.Groups["c"].Value.Trim();
         if (PulseMensaje.Match(n) is { Success: true } m)

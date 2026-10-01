@@ -50,7 +50,7 @@ public partial class NotchWindow
         centro.Show();
     }
 
-    /// <summary>«llamada|voz|karla», «llamada|video|karla», «mensaje|karla|texto». Los mensajes esperan el «sí».</summary>
+    /// <summary>«llamada|voz|karla», «llamada|video|karla», «mensaje|karla|texto», «pago|karla|10|ORIGEN». Los mensajes esperan el «sí».</summary>
     void HacerPulse(string valor)
     {
         var p = valor.Split('|', 3);
@@ -62,6 +62,15 @@ public partial class NotchWindow
             // La página tarda un momento en cargar si el Centro no estaba abierto.
             Dispatcher.BeginInvoke(new Action(() => Mandar(new { tipo = "llamada", video = p[1] == "video", con = p[2] })), DispatcherPriority.ApplicationIdle);
             Hecho(p[1] == "video" ? T("Videollamada", "Video call") : T("Llamando", "Calling"), p[2], "\uE717");
+            return;
+        }
+        if (p[0] == "pago")
+        {
+            // «pago|beto|10|ORIGEN»: el Centro busca a la persona y abre el envío para revisarlo; se firma en Veta Wallet.
+            var q = p[2].Split('|', 2);
+            AbrirCentro("pulse");
+            Dispatcher.BeginInvoke(new Action(() => Mandar(new { tipo = "pago", con = p[1], monto = q[0], moneda = q.Length > 1 ? q[1] : "ORIGEN" })), DispatcherPriority.ApplicationIdle);
+            Hecho(T($"Enviar {q[0]} {(q.Length > 1 ? q[1] : "ORIGEN")}", $"Send {q[0]} {(q.Length > 1 ? q[1] : "ORIGEN")}"), T($"a {p[1]} · revísalo y fírmalo en Veta Wallet", $"to {p[1]} · review and sign it in Veta Wallet"), "\uE8C7");
             return;
         }
         var con = p[1];
@@ -288,7 +297,7 @@ public partial class NotchWindow
         manosLibres = ajustes.ManosLibres, interrumpir = ajustes.Interrumpir, responderConVoz = ajustes.ResponderConVoz,
         ocultarEnPantallaCompleta = ajustes.OcultarEnPantallaCompleta, vozDeWindows = ajustes.VozDeWindows, oidoDeWindows = ajustes.OidoDeWindows,
         avisosDeApps = ajustes.AvisosDeApps, avisosPrivados = ajustes.AvisosPrivados, avisosEnVoz = ajustes.AvisosEnVoz, appsSilenciadas = ajustes.AppsSilenciadas,
-        avisarCorreos = ajustes.AvisarCorreos, mostrarMusica = ajustes.MostrarMusica, actualizarSolo = ajustes.ActualizarSolo,
+        avisarCorreos = ajustes.AvisarCorreos, mostrarMusica = ajustes.MostrarMusica, actualizarSolo = ajustes.ActualizarSolo, transparencia = ajustes.Transparencia,
         correoDireccion = ajustes.CorreoDireccion, agendaUrl = ajustes.AgendaUrl, tieneClaveCorreo = ajustes.CorreoClave.Length > 0,
         carteraDireccion = ajustes.CarteraDireccion, servidor = ajustes.Servidor,
         clientes = new { spotify = ajustes.SpotifyClientId, google = ajustes.GoogleClientId, microsoft = ajustes.MicrosoftClientId },
@@ -322,6 +331,8 @@ public partial class NotchWindow
                 case "appsSilenciadas": ajustes.AppsSilenciadas = p.Value.EnumerateArray().Select(x => x.GetString() ?? "").Where(x => x.Length > 0).Distinct().ToList(); break;
                 case "avisarCorreos": ajustes.AvisarCorreos = p.Value.GetBoolean(); break;
                 case "mostrarMusica": ajustes.MostrarMusica = p.Value.GetBoolean(); AlCambiarMusica(cancion, false); break;
+                case "transparencia" when p.Value.ValueKind == JsonValueKind.Number && p.Value.TryGetDouble(out var vidrio) && double.IsFinite(vidrio):
+                    ajustes.Transparencia = Math.Clamp(vidrio, VidrioMin, VidrioMax); AplicarVidrio(); break;
                 case "correoDireccion": ajustes.CorreoDireccion = (p.Value.GetString() ?? "").Trim(); cuentas = true; break;
                 case "correoClave": ajustes.CorreoClave = p.Value.GetString() ?? ""; cuentas = true; break;
                 case "agendaUrl": ajustes.AgendaUrl = (p.Value.GetString() ?? "").Trim(); cuentas = true; break;

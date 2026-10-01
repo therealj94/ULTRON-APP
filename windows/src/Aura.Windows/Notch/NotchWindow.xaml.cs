@@ -109,8 +109,9 @@ public partial class NotchWindow : Window
 
     (double W, double H, double R) Tamano(Modo m) => m switch
     {
-        // Con música sonando el reposo se ensancha para su portada y sus barritas, como la isla.
-        Modo.Reposo => raton ? (MusicaSonando ? 400 : 370, 42, 15) : (MusicaSonando ? 290 : 236, 36, 13),
+        // Con música sonando el reposo se ensancha para su portada y sus barritas, como la isla; con el ratón
+        // encima, más todavía para los controles (anterior, play/pausa, siguiente) sin tapar la cámara.
+        Modo.Reposo => raton ? (MusicaALaMano ? 500 : 370, 42, 15) : (MusicaSonando ? 290 : 236, 36, 13),
         Modo.Musica => (450, 94, 28),
         Modo.Escucha => (360, 58, 21),
         Modo.Piensa => (340, 58, 21),
@@ -166,6 +167,7 @@ public partial class NotchWindow : Window
         BotonCentroChico.Opacity = modo == Modo.Reposo && raton ? 1 : 0;
         // El micrófono silenciado se ve SIEMPRE (tachado, en rojo): nunca quedas sin saber si te oye.
         BotonSilencio.Opacity = modo == Modo.Reposo && (raton || microSilenciado) ? 1 : 0;
+        PintarMusicaChica();
         Camara.Margin = new Thickness(0, modo == Modo.Reposo && !raton ? 13 : 14, 0, 0);
         brillo.Objetivo = modo switch { Modo.Escucha => 0.55, Modo.Habla => 0.35, Modo.Confirma => 0.45, Modo.Aviso => 0.3, Modo.Musica => 0.25, _ => 0 };
         if (soloRender && !pruebaAnimacion) { ancho.Saltar(w); alto.Saltar(h); radio.Saltar(r); brillo.Saltar(brillo.Objetivo); foreach (var (m, (_, op)) in capas) op.Saltar(m == modo ? 1 : 0); Dibujar(); return; }
@@ -227,7 +229,8 @@ public partial class NotchWindow : Window
         if (b < 0.01) { if (Forma.Effect != null) Forma.Effect = null; }
         else { if (Forma.Effect == null) Forma.Effect = Brillo; Brillo.Opacity = b; }
         double x0 = (AnchoVentana - w) / 2;
-        Forma.Data = Silueta(x0, w, h, r, Oreja);
+        Forma.Data = Reflejo.Data = Silueta(x0, w, h, r, Oreja);
+        PintarVidrio();
         Canvas.SetLeft(Contenido, x0); Canvas.SetTop(Contenido, 0);
         Contenido.Width = w; Contenido.Height = h;
         var clip = new RectangleGeometry(new Rect(0, -r, w, h + r), r, r); clip.Freeze();

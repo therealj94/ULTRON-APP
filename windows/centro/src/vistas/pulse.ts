@@ -19,6 +19,7 @@ import * as PULSE from '../pulse';
 import * as RELEVO from '../pulse/relevo';
 import * as CHATS from '../pulse/chats';
 import { botonP, iconoP } from '../pulse/iconos';
+import * as PAGAR from '../pulse/pagar';
 import { cuandoLista, filasDelHilo, hora, iniciales, recortar, resumen, type Fila } from '../pulse/formato';
 
 let unica: HTMLElement | null = null;
@@ -189,6 +190,59 @@ function dialogoConfirmar(titulo: string, texto: string, si: string): Promise<bo
     );
     d.alCerrar(() => listo(dicho));
   });
+}
+
+/* ── enviar ORIGEN: AURA lo prepara, Veta Wallet lo firma ─────────────────────────────────── */
+
+/**
+ * El diálogo de enviar: la dirección sale de la ficha de la persona en el chat (nunca escrita a mano).
+ * «Revisar en Veta Wallet» abre el envío ya llenado; allá se firma con la contraseña. AURA vigila la
+ * cadena y, cuando el envío pasó, deja el comprobante en el hilo.
+ */
+export async function abrirPagar(correo: string, nombre: string, monto = '', moneda = 'ORIGEN') {
+  const estadoEl = h('p', { class: 'p2c-resultado', role: 'status' });
+  const direccionEl = h('small', { class: 'tenue' }, T('Buscando su dirección de Veta Wallet…', 'Looking up their Veta Wallet address…'));
+  const campo = h('input', { type: 'text', inputmode: 'decimal', value: monto, placeholder: '0.00', 'aria-label': T('Cantidad', 'Amount'), class: 'p2c-monto' }) as HTMLInputElement;
+  const elegir = h('select', { 'aria-label': T('Moneda', 'Coin') }, ...PAGAR.MONEDAS.map((x) => h('option', { value: x, selected: x === moneda }, x))) as HTMLSelectElement;
+  let direccion: string | null = null;
+  const ir = boton(T('Revisar y firmar en Veta Wallet', 'Review and sign in Veta Wallet'), () => void enviar(), { tipo: 'acento', icono: 'enlace', deshabilitado: true });
+  const d = dialogo(
+    T(`Enviar a ${nombre}`, `Send to ${nombre}`),
+    direccionEl,
+    h('div', { class: 'fila p2c-pago-fila' }, campo, elegir),
+    h('p', { class: 'nota' }, T('AURA no mueve tu dinero: abre el envío ya llenado en Veta Wallet y tú lo confirmas allá con tu contraseña. Cuando la cadena lo confirme, dejo el comprobante en este chat.', 'AURA never moves your money: it opens the send pre-filled in Veta Wallet and you confirm it there with your password. Once the chain confirms it, I post the receipt in this chat.')),
+    estadoEl,
+    h('div', { class: 'p2c-dialogo-pie' }, boton(T('Cancelar', 'Cancel'), () => d.cerrar(), { tipo: 'fantasma' }), ir),
+  );
+  const decir = (t: string, bien: boolean | null) => {
+    estadoEl.textContent = t;
+    estadoEl.className = 'p2c-resultado' + (bien == null ? '' : bien ? ' bien' : ' mal');
+  };
+  campo.addEventListener('keydown', (e) => e.key === 'Enter' && !ir.disabled && void enviar());
+  direccion = await PAGAR.direccionDe(correo);
+  if (!direccion) {
+    direccionEl.textContent = T(`${nombre} todavía no tiene su dirección de Veta Wallet a la vista en PULSE2CHAT. Pídele que entre una vez a Veta Wallet con su cuenta.`, `${nombre} has no Veta Wallet address visible in PULSE2CHAT yet.`);
+    return;
+  }
+  direccionEl.textContent = T('A su Veta Wallet: ', 'To their Veta Wallet: ') + `${direccion.slice(0, 8)}…${direccion.slice(-6)}`;
+  direccionEl.title = direccion;
+  ir.disabled = false;
+
+  async function enviar() {
+    const m = PAGAR.montoValido(campo.value);
+    if (!m) { decir(T('Escribe una cantidad mayor que cero.', 'Enter an amount above zero.'), false); campo.focus(); return; }
+    ir.disabled = true;
+    try {
+      await PAGAR.pagar({ correo, nombre, direccion: direccion!, monto: m, moneda: elegir.value }, (e, hash) => {
+        if (e === 'abierto') decir(T(`Abrí Veta Wallet con ${m} ${elegir.value} para ${nombre}. Confírmalo allá; te aviso cuando la cadena lo confirme.`, `Opened Veta Wallet. Confirm it there.`), true);
+        if (e === 'sin-comprobante') avisar(T(`Vi el envío en la cadena (${hash?.slice(0, 10)}…), pero el chat no aceptó el comprobante.`, 'I saw the payment on-chain, but the chat rejected the receipt.'), 'mal', 9000);
+        if (e === 'confirmado') avisar(T(`Envío confirmado (${hash?.slice(0, 10)}…). El comprobante quedó en el chat.`, 'Payment confirmed. The receipt is in the chat.'), 'ok', 7000);
+      });
+    } catch (e: any) {
+      decir(e?.message || T('No pude abrir Veta Wallet.', 'Couldn’t open Veta Wallet.'), false);
+      ir.disabled = false;
+    }
+  }
 }
 
 /* ── piezas ───────────────────────────────────────────────────────────────────────────────── */
@@ -563,11 +617,13 @@ function armarApp() {
     const sub = h('small', { class: 'p2c-sub' }, '');
     const btnVoz = botonP('telefono', T('Llamar', 'Call'), () => PULSE.llamar(c, false), 'acento-texto');
     const btnVideo = botonP('video', T('Videollamada', 'Video call'), () => PULSE.llamar(c, true), 'acento-texto');
+    const btnPagar = botonP('cartera', T('Enviar ORIGEN (lo firmas en Veta Wallet)', 'Send ORIGEN (you sign it in Veta Wallet)'), () => void abrirPagar(c, nombreVisto()), 'acento-texto');
     const cab = h(
       'header',
       { class: 'p2c-hilo-cab' },
       botonP('atras', T('Volver a los chats', 'Back to chats'), () => cerrarHilo(), 'p2c-volver'),
       h('button', { type: 'button', class: 'p2c-quien', title: T('Ver el código de seguridad', 'View security code'), on: { click: () => verCodigo() } }, caraCaja, h('div', null, nombre, sub)),
+      btnPagar,
       btnVideo,
       btnVoz,
       botonP('escudo', T('Código de seguridad', 'Security code'), () => verCodigo()),
@@ -698,6 +754,7 @@ function armarApp() {
       let cuerpo: (Node | null)[];
       if (m.borrado) cuerpo = [h('em', { class: 'p2c-tenue-msg' }, T('Mensaje borrado', 'Message deleted'))];
       else if (m.cerrado) cuerpo = [h('em', { class: 'p2c-tenue-msg', title: T('Llegó antes de que este equipo publicara su llave: ábrelo en el aparato donde lo recibiste.', 'It arrived before this PC published its key: open it on the device that received it.') }, '🔒 ' + T('Cifrado para otro de tus aparatos', 'Encrypted for another of your devices'))];
+      else if (m.tipo === 'pago') cuerpo = [comprobante(m)];
       else cuerpo = [esFoto ? fotoMensaje(m) : null, m.texto ? h('div', { class: 'p2c-texto' }, m.texto) : null];
       const fila = h(
         'div',
@@ -723,6 +780,19 @@ function armarApp() {
       fila.dataset.m = '1';
       (fila as any)._m = m;
       return fila;
+    }
+
+    /** El comprobante de un envío: la tarjeta con el hash, que enlaza al explorador (no pide que se confíe). */
+    function comprobante(m: CHATS.MensajeHilo): HTMLElement {
+      const hash = /^0x[0-9a-fA-F]{64}$/.test(String(m.hash || '')) ? String(m.hash) : '';
+      return h(
+        'div',
+        { class: 'p2c-pago' },
+        h('small', null, T('Envío', 'Payment')),
+        h('strong', null, `${m.monto || '?'} ${m.moneda || 'ORIGEN'}`),
+        m.texto ? h('p', null, m.texto) : null,
+        hash ? h('button', { type: 'button', class: 'p2c-enlace', on: { click: () => window.open('https://ordenscan.com/tx/' + hash, '_blank') } }, T('Ver en OrdenScan', 'View on OrdenScan')) : null,
+      );
     }
 
     function palomitas(pendiente: boolean, leido: boolean) {
@@ -928,6 +998,11 @@ function armarApp() {
 
   // Las horas relativas («Ayer») se redibujan al pasar la medianoche con la lista abierta.
   const tic = setInterval(pintarLista, 60_000);
+
+  // La voz («mándale 10 ORIGEN a Beto», pulseVoz.ts) abre el hilo de esa persona.
+  const abrirDeVoz = (e: Event) => { const d = (e as CustomEvent).detail; if (d?.correo) abrirHiloCon(String(d.correo)); };
+  window.addEventListener('p2c:abrir', abrirDeVoz);
+  quitar.push(() => window.removeEventListener('p2c:abrir', abrirDeVoz));
 
   return {
     el,

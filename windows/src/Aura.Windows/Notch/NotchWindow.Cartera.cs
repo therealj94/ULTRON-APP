@@ -16,7 +16,7 @@ public partial class NotchWindow
         if (!CarteraVeta.EsDireccion(ajustes.CarteraDireccion) && DireccionCopiada() is { } copiada) { ajustes.CarteraDireccion = copiada; GuardarAjustes(); AvisarEstadoCentro(); }
         if (!CarteraVeta.EsDireccion(ajustes.CarteraDireccion))
         {
-            NoPude(T("Todavía no conozco tu cartera. En Veta Wallet toca Recibir → Copiar dirección y pídemelo otra vez: la tomo sola.", "I don't know your wallet yet. Open the Center → Wallet and paste your Veta Wallet address (read-only)."));
+            NoPude(T("Todavía no conozco tu cartera. Te abro el Centro: con PULSE2CHAT conectado se conecta sola (o copia tu dirección en Veta Wallet → Recibir).", "I don't know your wallet yet. Opening the Center: with PULSE2CHAT connected it links by itself."));
             AbrirCentro("cartera");
             return;
         }
@@ -65,6 +65,26 @@ public partial class NotchWindow
                 };
             }
             case "cartera.portapapeles": return DireccionCopiada() ?? "";
+            case "cartera.pagar":
+            {
+                // AURA solo abre el envío ya llenado en Veta Wallet: allá se revisa y se firma con la contraseña.
+                var monto = CarteraVeta.Monto(Texto(a, "monto")) ?? throw new InvalidOperationException(T("Escribe una cantidad mayor que cero.", "Enter an amount above zero."));
+                var enlace = CarteraVeta.EnlacePagar(Texto(a, "direccion"), monto, Texto(a, "simbolo"));
+                Centro.Registro.Anotar("cartera", $"envío preparado en Veta Wallet: {monto} {Texto(a, "simbolo")}");
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(enlace) { UseShellExecute = true });
+                long bloque = 0;
+                try { bloque = await Cartera.Bloque(); } catch (Exception ex) when (ex is InvalidOperationException or System.Net.Http.HttpRequestException or TaskCanceledException) { /* se busca desde lo último al vigilar */ }
+                return new { ok = true, bloque, desde = ajustes.CarteraDireccion };
+            }
+            case "cartera.buscarEnvio":
+            {
+                if (!CarteraVeta.EsDireccion(ajustes.CarteraDireccion)) return new { hash = (string?)null, siguiente = 0L };
+                var monto = CarteraVeta.Monto(Texto(a, "monto")) ?? throw new InvalidOperationException("Cantidad inválida.");
+                long.TryParse(Texto(a, "desde"), out var desde);
+                var (hash, siguiente) = await Cartera.BuscarEnvio(ajustes.CarteraDireccion, Texto(a, "para"), Texto(a, "simbolo"), monto, desde);
+                if (hash != null) { Centro.Registro.Anotar("cartera", "envío confirmado en la cadena: " + hash); _ = Cartera.Saldos(ajustes.CarteraDireccion, forzar: true); }
+                return new { hash, siguiente = siguiente.ToString() };
+            }
             case "cartera.abrirWallet":
                 System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("https://app.vetawallet.com/") { UseShellExecute = true });
                 return true;
