@@ -36,6 +36,7 @@ import {
   setSpeechCallbacks,
   setSttEngine,
   unmuteMic,
+  volverANativoSiToca,
 } from '../lib/speech';
 import {
   addLongFact,
@@ -61,7 +62,7 @@ import { hayModelo3D } from '../avatar3d/AvatarVivo';
 import { SelectorAvatar } from '../avatares/SelectorAvatar';
 import { avatarPorId, conFotos, distribucion, type AvatarId } from '../avatares/catalogo';
 import { AccionesAvatar } from '../components/AccionesAvatar';
-import { VozProvider, useVoz, useVozOpcional, vozOcupaMicrofono } from '../compa/VozProvider';
+import { VozProvider, esperarAudioLibre, useVoz, useVozOpcional, vozOcupaMicrofono } from '../compa/VozProvider';
 import { avisarMesa, mensajeVoz, nivelOido, oidoTelefono, sueloCompa } from '../compa/canales';
 import { etiquetaCiclo, llamadaActiva, llamadaTerminada } from '../compa/llamadaCiclo';
 import { accionesDelTurno } from '../compa/acciones';
@@ -339,6 +340,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       },
       // Solo si el oído ya se abrió una vez con el permiso (no se abre «a ciegas» al volver de otra pantalla).
       micQuerido: () => oidoListo.current && !micMutedRef.current,
+      // Al colgar, el oído se reabre cuando la conversación soltó de verdad el audio (como mucho 4 s).
+      esperarAudioLibre: () => esperarAudioLibre(),
       miga,
     });
     // Nace dueña (la mesa se monta visible) sin abrir nada todavía: el oído lo abre el arranque, con
@@ -1417,7 +1420,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
    * El vigilante del oído (compa/duenoAudio.ts, VigilanteOido): con la app delante y el oído NUESTRO
    * (en la mesa o, con la mesa tapada, en la compañera). Antes solo corría con la mesa a la vista: en
    * los chats nadie cuidaba el oído. Suelta una pausa colgada, reinicia al reconocedor que no da
-   * señales de vida (un bucle de errores no es vida), y tras varios intentos pasa a la nube. De paso,
+   * señales de vida (un bucle de errores no es vida), y tras varios intentos pasa a la nube; si
+   * tampoco, sigue probando cada vez más espaciado (antes quedaba sordo para siempre). De paso,
    * la etiqueta y la cara de la compañera dicen «te escucho» solo si un motor escucha.
    */
   const vigilante = useRef<VigilanteOido | null>(null);
@@ -1433,6 +1437,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       revivio: oidoVivoDeVerdad,
       reiniciar: () => restartMic(),
       caerANube,
+      // En la nube por un fallo: a los 10 min se vuelve a probar el reconocedor del teléfono.
+      volverANativo: () => volverANativoSiToca(),
       miga,
     });
   }

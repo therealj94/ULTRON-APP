@@ -23,6 +23,19 @@ export type SpeechCallbacks = {
 let engine: SttEngine = 'native';
 let callbacks: SpeechCallbacks = {};
 let enabled = false;
+/**
+ * El oído cayó a la nube por un FALLO del reconocedor del teléfono (no porque la persona la eligió en
+ * Ajustes) y desde cuándo. Antes era para siempre; ahora se vuelve a probar el del teléfono pasado
+ * VOLVER_A_NATIVO_MS (volverANativoSiToca) o la próxima vez que el oído vuelve de otro dueño (reabrirMic).
+ */
+let nubePorFallo = false;
+let nubeDesde = 0;
+export const VOLVER_A_NATIVO_MS = 10 * 60_000;
+
+function anotarMotor(next: SttEngine, porFallo: boolean) {
+  nubePorFallo = next === 'cloud' && porFallo;
+  nubeDesde = Date.now();
+}
 
 function wire() {
   const common = {
@@ -37,7 +50,7 @@ function wire() {
     onPartial: (t) => callbacks.onPartial?.(t),
     onUnavailable: (reason) => {
       if (engine !== 'native') return;
-      void switchEngine('cloud', `nativo no disponible (${reason})`);
+      void switchEngine('cloud', `nativo no disponible (${reason})`, true);
     },
   });
   cloud.setSpeechCallbacks(common);
@@ -52,13 +65,14 @@ export function currentSttEngine(): SttEngine {
   return engine;
 }
 
-async function switchEngine(next: SttEngine, reason: string) {
+async function switchEngine(next: SttEngine, reason: string, porFallo = false) {
   if (next === engine) return;
   const wasWanted = isMicWanted();
   const wasPaused = isMicPaused();
   if (engine === 'native') await native.nativeDestroy();
   else await cloud.destroySpeech();
   engine = next;
+  anotarMotor(next, porFallo);
   wire();
   callbacks.onEngineChange?.(next, reason);
   if (enabled && wasWanted) {
@@ -76,7 +90,7 @@ async function switchEngine(next: SttEngine, reason: string) {
 export async function setSttEngine(next: SttEngine) {
   if (next === 'native' && !native.nativeAvailable()) {
     callbacks.onEngineChange?.('cloud', 'este teléfono no tiene reconocimiento del sistema');
-    return switchEngine('cloud', 'sin servicio nativo');
+    return switchEngine('cloud', 'sin servicio nativo', true);
   }
   return switchEngine(next, 'ajustes');
 }
@@ -100,6 +114,7 @@ export async function enableAlwaysOnMic() {
   if (engine === 'native') {
     if (!native.nativeAvailable()) {
       engine = 'cloud';
+      anotarMotor('cloud', true);
       wire();
       callbacks.onEngineChange?.('cloud', 'este teléfono no tiene reconocimiento del sistema');
       return cloud.enableAlwaysOnMic();
@@ -193,6 +208,8 @@ export async function reabrirMic() {
     queridoAlVolver = { abierto: true, pausado: false };
     return;
   }
+  // El oído vuelve de otro dueño: si había caído a la nube por un fallo, se prueba otra vez el del teléfono.
+  await probarNativo('el oído vuelve: se prueba otra vez el reconocedor del teléfono');
   if (engine === 'native') {
     native.nativePause(false);
     return native.nativeReabrir();
@@ -223,8 +240,21 @@ export function oidoEscuchando(): boolean {
  */
 export async function caerANube(motivo: string): Promise<boolean> {
   if (engine === 'cloud') return false;
-  await switchEngine('cloud', motivo);
+  await switchEngine('cloud', motivo, true);
   return true;
+}
+
+/** Vuelve al reconocedor del teléfono si el oído está en la nube por un fallo y el teléfono lo tiene. */
+async function probarNativo(motivo: string): Promise<boolean> {
+  if (engine !== 'cloud' || !nubePorFallo || suspendido || !native.nativeAvailable()) return false;
+  await switchEngine('native', motivo);
+  return true;
+}
+
+/** Pasados VOLVER_A_NATIVO_MS en la nube por un fallo, se vuelve a probar el del teléfono (el vigilante lo llama). */
+export async function volverANativoSiToca(ahora = Date.now()): Promise<boolean> {
+  if (engine !== 'cloud' || !nubePorFallo || ahora - nubeDesde < VOLVER_A_NATIVO_MS) return false;
+  return probarNativo('pasó un rato en la nube: se prueba otra vez el reconocedor del teléfono');
 }
 
 export async function destroySpeech() {
