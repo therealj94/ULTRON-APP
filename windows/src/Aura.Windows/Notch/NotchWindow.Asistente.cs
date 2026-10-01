@@ -247,7 +247,8 @@ public partial class NotchWindow
             return;
         }
         vaciasSeguidas = 0;
-        Centro.Registro.Anotar("oir", $"{cronoTurno.ElapsedMilliseconds} ms · {texto.Length} letras");
+        // Lo que entendió (solo en el registro de esta PC, que nadie más ve): para afinar el micrófono con datos.
+        Centro.Registro.Anotar("oir", $"{cronoTurno.ElapsedMilliseconds} ms · «{(texto.Length > 140 ? texto[..140] + "…" : texto)}»");
         // «¡Hasta la próxima!», «Gracias por ver»…: el transcriptor inventando en el ruido, o el eco de AURA. No es la persona.
         if (propuesta == null && Fantasma.Es(texto, ultimaRespuesta))
         {
@@ -420,7 +421,7 @@ public partial class NotchWindow
         // de otro lado delante (pantalla, archivo, portapapeles) no: ese texto podría traer órdenes escondidas.
         var filtro = new FiltroAcciones();
         bool conManos = contexto == null && !redactar;
-        void Orden(string o) { if (conManos) _ = Dispatcher.BeginInvoke(new Action(() => _ = HacerOrdenDelCerebro(o, hablado))); }
+        void Orden(string o) { if (conManos) _ = Dispatcher.BeginInvoke(new Action(() => _ = HacerOrdenDelCerebro(o, texto, hablado))); }
         try
         {
             r = await api.Turno(contexto == null ? texto : texto + "\n\n" + contexto, historial, ajustes.Nombre.Length > 0 ? ajustes.Nombre : Environment.UserName, ajustes.Avatar, ajustes.Idioma, hablado,
