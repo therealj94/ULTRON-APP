@@ -146,6 +146,42 @@ export function llamadaActiva(e: EstadoCiclo): boolean {
   return e === 'sonando' || e === 'conectando' || e === 'en_llamada' || e === 'silenciado';
 }
 
+/**
+ * ¿La voz de la mesa (su TTS) tiene que callar? Con la llamada a la vista o la sesión de ElevenLabs
+ * montada (también una abierta por otro lado, antes de que el ciclo se entere) habla el agente: la mesa
+ * no le pone otra voz encima, ni la de un turno que ya venía en camino ni un saludo o una reacción.
+ */
+export function mesaCallada(e: EstadoCiclo, sesion: { montada: boolean }): boolean {
+  return llamadaActiva(e) || sesion.montada;
+}
+
+/**
+ * Sigue el ciclo y la sesión y avisa `callar(true | false)` en cuanto cambia `mesaCallada`. Va por las
+ * suscripciones (síncronas) y no por un efecto de React: así la mesa calla en el mismo instante en que
+ * se abre la llamada, antes del siguiente render, y vuelve a poder hablar antes de que se ejecute lo que
+ * pide el ciclo al fallar (que la mesa diga por qué no conectó). Devuelve cómo dejar de seguirlos.
+ */
+export function seguirVozMesa(
+  ciclo: { estado(): EstadoCiclo; suscribir(f: () => void): () => void },
+  sesion: { vista(): { montada: boolean }; suscribir(f: () => void): () => void },
+  callar: (on: boolean) => void
+): () => void {
+  let antes: boolean | null = null;
+  const revisar = () => {
+    const ahora = mesaCallada(ciclo.estado(), sesion.vista());
+    if (ahora === antes) return;
+    antes = ahora;
+    callar(ahora);
+  };
+  const offCiclo = ciclo.suscribir(revisar);
+  const offSesion = sesion.suscribir(revisar);
+  revisar();
+  return () => {
+    offCiclo();
+    offSesion();
+  };
+}
+
 /** ¿Terminó hace nada (se ve «Llamada terminada» un momento)? */
 export function llamadaTerminada(e: EstadoCiclo): boolean {
   return e === 'colgada' || e === 'perdida' || e === 'rechazada';
