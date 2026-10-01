@@ -40,6 +40,7 @@ const {
   _conversaciones,
   _reiniciarConversaciones,
   abrirConversacion,
+  continuaLaFrase,
 } = await import('../server/voz-agente');
 const { secretoDerivado, emitirSesion, borrarSesion, soltarSesion, sesionDe, fijarClaveCambiadaEn } = await import('../server/seguridad');
 type TurnoVoz = import('../server/voz-agente').TurnoVoz;
@@ -151,7 +152,7 @@ test('eventosSSE: lee eventos a trozos y suelta el lector al abortar', async () 
 type Ambiente = { correo: string; aparato: string | null; sonido: string | null; on: boolean; ms: number };
 async function montar(
   cerebro: (t: TurnoVoz) => Promise<void>,
-  o: { fetch?: typeof fetch; turnoMs?: number; puenteMs?: number; esperaTareaMs?: number; seguimientoMs?: number; rellenoAgenteMs?: number; etiquetas?: boolean; graciaReintentoMs?: number; confirmarAccionMs?: number } = {}
+  o: { fetch?: typeof fetch; turnoMs?: number; puenteMs?: number; esperaTareaMs?: number; seguimientoMs?: number; rellenoAgenteMs?: number; etiquetas?: boolean; graciaReintentoMs?: number; confirmarAccionMs?: number; ordenPc?: (correo: string, aparato: string | null, o: { orden: string; dicho: string }) => unknown } = {}
 ) {
   const ambientes: Ambiente[] = [];
   const t0 = Date.now();
@@ -175,6 +176,7 @@ async function montar(
     rellenoAgenteMs: o.rellenoAgenteMs,
     graciaReintentoMs: o.graciaReintentoMs,
     confirmarAccionMs: o.confirmarAccionMs,
+    ordenPc: o.ordenPc,
     // Las etiquetas v4 salen al azar: fuera de su prueba, apagadas (el texto dicho se compara exacto).
     etiquetas: o.etiquetas ?? false,
     ambiente: (correo, aparato, e) => ambientes.push({ correo, aparato, sonido: e.sonido, on: e.on, ms: Date.now() - t0 }),
@@ -1233,6 +1235,217 @@ test('turno especulativo: una respuesta sin acciones no espera nada', async () =
     const t0 = Date.now();
     assert.equal(dichoDe(await (await llm(m.base, pase, [{ role: 'user', content: 'qué hora es' }])).text()), 'Son las tres.');
     assert.ok(Date.now() - t0 < 1000, 'sin acciones, la respuesta cierra al terminar');
+  } finally {
+    await m.cerrar();
+  }
+});
+
+/** Un cerebro que guarda en la memoria como el de verdad (t.retener.recordar). */
+function cerebroConMemoria(memoria: string[], ms = 50) {
+  return async (t: TurnoVoz) => {
+    const frase = String(t.body.message);
+    t.retener.recordar(() => memoria.push(`user:${frase}`));
+    await dormir(ms);
+    t.enviar('delta', { text: 'Listo.', voz: 'Listo.' });
+    t.enviar('done', { reply: 'Listo.' });
+    t.retener.recordar(() => memoria.push('aura:Listo.'));
+  };
+}
+
+test('turno especulativo: la frase a medias no queda en la memoria; la entera sí, una vez', async () => {
+  const memoria: string[] = [];
+  const m = await montar(cerebroConMemoria(memoria), { puenteMs: 0, graciaReintentoMs: 2000, confirmarAccionMs: 200 });
+  try {
+    const pase = paseDe(persona(), 'aura', 'es', 'tel-m1');
+    const c = new AbortController();
+    const r1 = llm(m.base, pase, [{ role: 'user', content: 'pon una alarma en tres' }], {}, c.signal).then((x) => x.text()).catch(() => '');
+    await dormir(120);
+    c.abort();
+    await r1;
+    await llm(m.base, pase, [{ role: 'user', content: 'pon una alarma en treinta minutos' }]).then((x) => x.text());
+    // El turno siguiente (otra cosa) decide el anterior: ese sí se guarda.
+    await llm(m.base, pase, [{ role: 'user', content: 'gracias' }]).then((x) => x.text());
+    await dormir(20);
+    assert.deepEqual(memoria, ['user:pon una alarma en treinta minutos', 'aura:Listo.']);
+  } finally {
+    await m.cerrar();
+  }
+});
+
+test('la misma frase repetida en un turno nuevo se guarda una vez', async () => {
+  const memoria: string[] = [];
+  const m = await montar(cerebroConMemoria(memoria, 0), { puenteMs: 0 });
+  try {
+    const pase = paseDe(persona(), 'aura', 'es', 'tel-m4');
+    await llm(m.base, pase, [{ role: 'user', content: 'qué hora es' }]).then((x) => x.text());
+    await llm(m.base, pase, [{ role: 'user', content: 'qué hora es' }]).then((x) => x.text());
+    await llm(m.base, pase, [{ role: 'user', content: 'gracias' }]).then((x) => x.text());
+    await dormir(20);
+    assert.deepEqual(memoria, ['user:qué hora es', 'aura:Listo.']);
+  } finally {
+    await m.cerrar();
+  }
+});
+
+test('turno cortado por una frase distinta (la persona interrumpió): el turno anterior sí queda en la memoria, antes que el nuevo', async () => {
+  const memoria: string[] = [];
+  const m = await montar(cerebroConMemoria(memoria), { puenteMs: 0, graciaReintentoMs: 2000, confirmarAccionMs: 200 });
+  try {
+    const pase = paseDe(persona(), 'aura', 'es', 'tel-m2');
+    const c = new AbortController();
+    const r1 = llm(m.base, pase, [{ role: 'user', content: 'cuéntame del oro' }], {}, c.signal).then((x) => x.text()).catch(() => '');
+    await dormir(120);
+    c.abort();
+    await r1;
+    await llm(m.base, pase, [{ role: 'user', content: 'mejor dime la hora' }]).then((x) => x.text());
+    await dormir(20);
+    assert.deepEqual(memoria, ['user:cuéntame del oro', 'aura:Listo.'], 'el anterior se guarda al empezar el nuevo; el nuevo espera al siguiente');
+  } finally {
+    await m.cerrar();
+  }
+});
+
+test('una respuesta que solo guarda en la memoria no espera la confirmación', async () => {
+  const memoria: string[] = [];
+  const m = await montar(cerebroConMemoria(memoria, 0), { puenteMs: 0, confirmarAccionMs: 2000 });
+  try {
+    const pase = paseDe(persona(), 'aura', 'es', 'tel-m3');
+    const t0 = Date.now();
+    await llm(m.base, pase, [{ role: 'user', content: 'qué hora es' }]).then((x) => x.text());
+    assert.ok(Date.now() - t0 < 1000);
+  } finally {
+    await m.cerrar();
+  }
+});
+
+test('continuaLaFrase: la frase entera de la que la otra era el principio', () => {
+  assert.equal(continuaLaFrase('pon una alarma en tres', 'pon una alarma en treinta minutos'), true);
+  assert.equal(continuaLaFrase('pon una alarma', 'pon una alarma a las seis'), true);
+  assert.equal(continuaLaFrase('qué hora es', 'qué hora es'), true);
+  assert.equal(continuaLaFrase('hola', 'hola aura'), true);
+  assert.equal(continuaLaFrase('cuéntame del oro', 'mejor dime la hora'), false);
+  assert.equal(continuaLaFrase('pon bachata', 'pon música'), false);
+  assert.equal(continuaLaFrase('pon una alarma en tres minutos', 'pon una alarma'), false);
+  assert.equal(continuaLaFrase('', 'algo'), false);
+});
+
+/* ------------------------------------------------------------------ Windows (el .exe) por voz */
+
+test('/api/voz/agente desde Windows: URL firmada por WebSocket, pase con origen y aparato; sin aparato, 400', async () => {
+  const pedidas: string[] = [];
+  const elevenFalso: typeof fetch = (async (url: any) => {
+    pedidas.push(String(url));
+    const body = String(url).includes('get-signed-url') ? { signed_url: 'wss://api.elevenlabs.io/v1/convai/conversation?agent_id=x&conversation_signature=y' } : { token: 'tok' };
+    return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+  }) as any;
+  const s = await montar(async () => {}, { fetch: elevenFalso });
+  const antes = process.env.ELEVENLABS_API_KEY;
+  process.env.ELEVENLABS_API_KEY = 'llave-falsa';
+  try {
+    const yo = persona();
+    const abrir = (cab: Record<string, string>) =>
+      fetch(`${s.base}/api/voz/agente`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-ultron-sesion': yo.token, 'x-aura-origen': 'windows', ...cab },
+        body: JSON.stringify({ avatar: 'aura', idioma: 'es', transporte: 'websocket' }),
+      });
+    assert.equal((await abrir({})).status, 400, 'Windows sin id de equipo no abre: sus órdenes no pueden ir a todos');
+    const ok = await abrir({ 'x-aura-aparato': 'win-abc123' });
+    assert.equal(ok.status, 200);
+    const j: any = await ok.json();
+    assert.match(j.url, /^wss:\/\//);
+    assert.equal(j.token, undefined, 'por WebSocket no va el token de WebRTC');
+    assert.match(pedidas.at(-1)!, /\/v1\/convai\/conversation\/get-signed-url\?agent_id=/);
+    const p = leerPase(j.pase)!;
+    assert.equal(p.origen, 'windows');
+    assert.equal(p.aparato, 'win-abc123');
+    // El teléfono sigue igual: token, sin origen.
+    const tel = await fetch(`${s.base}/api/voz/agente`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-ultron-sesion': yo.token }, body: JSON.stringify({ avatar: 'aura', idioma: 'es' }) });
+    const jt: any = await tel.json();
+    assert.equal(jt.token, 'tok');
+    assert.equal(leerPase(jt.pase)!.origen, null);
+  } finally {
+    if (antes === undefined) delete process.env.ELEVENLABS_API_KEY;
+    else process.env.ELEVENLABS_API_KEY = antes;
+    await s.cerrar();
+  }
+});
+
+function paseWindows(s: ReturnType<typeof persona>, aparato = 'win-1') {
+  const p = emitirPase(s, 'aura', 'es', { aparato, origen: 'windows' });
+  abrirConversacion(s.correo, p.cid);
+  return p.pase;
+}
+
+test('Windows por voz: la marca ⟦hacer⟧ no se dice y la orden va a su .exe cuando el turno se confirma', async () => {
+  const ordenes: { correo: string; aparato: string | null; orden: string; dicho: string }[] = [];
+  let origen: unknown;
+  const m = await montar(
+    async (t) => {
+      origen = (t.body as any).origen;
+      t.enviar('delta', { text: 'Va, la cierro. ⟦hac', voz: 'Va, la cierro. ⟦hac' });
+      t.enviar('delta', { text: 'er: cierra spotify⟧', voz: 'er: cierra spotify⟧' });
+      t.enviar('done', { reply: 'Va, la cierro. ⟦hacer: cierra spotify⟧', voz: 'Va, la cierro. ⟦hacer: cierra spotify⟧' });
+    },
+    { puenteMs: 0, confirmarAccionMs: 150, graciaReintentoMs: 150, ordenPc: (correo, aparato, o) => ordenes.push({ correo, aparato, ...o }) }
+  );
+  try {
+    const yo = persona();
+    const pase = paseWindows(yo);
+    const r = llm(m.base, pase, [{ role: 'user', content: 'ciérrame eso de Spotify' }]).then((x) => x.text());
+    await dormir(60);
+    assert.deepEqual(ordenes, [], 'mientras el turno no se confirma, nada');
+    const dicho = dichoDe(await r);
+    assert.ok(!dicho.includes('⟦') && !dicho.includes('hacer'), 'la marca no suena: ' + dicho);
+    assert.match(dicho, /Va, la cierro\./);
+    assert.equal(origen, 'windows', 'el cerebro sabe que es Windows (instruccionWindows)');
+    assert.deepEqual(ordenes, [{ correo: yo.correo, aparato: 'win-1', orden: 'cierra spotify', dicho: 'ciérrame eso de Spotify' }]);
+  } finally {
+    await m.cerrar();
+  }
+});
+
+test('Windows por voz: solo la orden y nada que decir suena «Listo.»; una frase a medias descartada no hace nada', async () => {
+  const ordenes: string[] = [];
+  const m = await montar(
+    async (t) => {
+      await dormir(40);
+      t.enviar('delta', { text: '⟦hacer: abre la calculadora⟧', voz: '⟦hacer: abre la calculadora⟧' });
+      t.enviar('done', { reply: '⟦hacer: abre la calculadora⟧' });
+    },
+    { puenteMs: 0, confirmarAccionMs: 300, graciaReintentoMs: 150, ordenPc: (_c, _a, o) => ordenes.push(o.orden) }
+  );
+  try {
+    const yo = persona();
+    const pase = paseWindows(yo, 'win-2');
+    assert.equal(dichoDe(await (await llm(m.base, pase, [{ role: 'user', content: 'abre la calculadora' }])).text()), 'Listo.');
+    assert.deepEqual(ordenes, ['abre la calculadora']);
+    const c = new AbortController();
+    const r = llm(m.base, pase, [{ role: 'user', content: 'abre la calcu' }], {}, c.signal).then((x) => x.text()).catch(() => '');
+    await dormir(120);
+    c.abort();
+    await r;
+    await dormir(400);
+    assert.deepEqual(ordenes, ['abre la calculadora'], 'la frase a medias no abrió otra');
+  } finally {
+    await m.cerrar();
+  }
+});
+
+test('un pase del teléfono no filtra marcas ni manda órdenes a la PC', async () => {
+  const ordenes: string[] = [];
+  const m = await montar(
+    async (t) => {
+      assert.equal((t.body as any).origen, undefined);
+      t.enviar('delta', { text: 'Hola.', voz: 'Hola.' });
+      t.enviar('done', { reply: 'Hola.' });
+    },
+    { puenteMs: 0, ordenPc: (_c, _a, o) => ordenes.push(o.orden) }
+  );
+  try {
+    const pase = paseDe(persona(), 'aura', 'es', 'tel-x');
+    assert.equal(dichoDe(await (await llm(m.base, pase, [{ role: 'user', content: 'hola' }])).text()), 'Hola.');
+    assert.deepEqual(ordenes, []);
   } finally {
     await m.cerrar();
   }

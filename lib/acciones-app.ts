@@ -250,6 +250,32 @@ export function empujarAmbiente(correo: string, aparato: string | null | undefin
   return entregado;
 }
 
+/** Una orden para las manos de la PC (Windows): la frase de la persona va con ella para la guarda. */
+export type OrdenPc = { id: string; orden: string; dicho: string };
+
+/**
+ * Manda una orden del cerebro al .exe de Windows de esa conversación (`event: pc` del canal; los
+ * teléfonos no la escuchan). Solo con aparato: una orden de la PC nunca va «a todos». El .exe la pasa
+ * por sus reglas y su guarda (FiltroAcciones.Coherente) antes de hacerla. Devuelve a cuántos llegó.
+ */
+export function empujarOrdenPc(correo: string, aparato: string | null | undefined, o: { orden: string; dicho: string; id?: string }): number {
+  const ap = aparatoValido(aparato);
+  const orden = linea(o.orden, 160);
+  if (!ap || !orden) return 0;
+  const datos: OrdenPc = { id: o.id || nuevoIdAccion(), orden, dicho: linea(o.dicho, 600) };
+  let entregado = 0;
+  for (const c of [...(canales.get(clave(correo)) || [])]) {
+    if (c.aparato !== ap || !c.alEvento) continue;
+    try {
+      c.alEvento('pc', datos);
+      entregado++;
+    } catch {
+      /* ese canal se fue */
+    }
+  }
+  return entregado;
+}
+
 /**
  * Manda la acción a los teléfonos de esa persona: con `aparato`, SOLO a ese (si no está escuchando,
  * a ninguno: el teléfono que hizo el turno la recibe igual en la respuesta, con el mismo id); sin

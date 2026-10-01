@@ -207,10 +207,14 @@ export default function App() {
 
   // ---- HABLAR: una sola función. Emoción → cara + voz.
   const hablando = useRef<Dicho | null>(null);
+  /** La conversación en vivo está abierta (se actualiza en cada render, abajo). */
+  const vivoAbiertaRef = useRef(false);
   const decir = useCallback(
     (texto: string, o: { emocion?: Emocion; caraFinal?: FaceState; sinBurbuja?: boolean } & Vecinos = {}) => {
       const t = String(texto || '').trim();
       if (!t) return { fin: Promise.resolve() };
+      // Con la conversación en vivo abierta habla el agente: la mesa no le pone otra voz encima.
+      if (vivoAbiertaRef.current) return { fin: Promise.resolve() };
       // Respuesta a un pedido de la persona (no un saludo ni una reacción): queda en la conversación,
       // con el texto humano del clip si lo es, nunca su id interno.
       if (enComando.current) {
@@ -798,9 +802,13 @@ export default function App() {
     if (face === 'SLEEPING') despertar();
     // Lo que la mesa estaba diciendo se corta: desde aquí habla la conversación.
     callarTodo();
+    // Y lo que falte por llegar del turno en camino tampoco se dice (sigue escribiéndose en el chat).
+    turnoCallado.current = turnoEnCurso.current;
+    vivoAbiertaRef.current = true;
     void c.abrir({ avatar: 'aura', idioma: 'es' });
   };
   const vivoAbierta = enVivo === 'conectando' || enVivo === 'escuchando' || enVivo === 'hablando';
+  vivoAbiertaRef.current = vivoAbierta;
 
   // ---- OÍDO continuo con barge-in.
   useOido({

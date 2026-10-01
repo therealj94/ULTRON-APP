@@ -284,7 +284,7 @@ public partial class NotchWindow
 
     object AjustesParaCentro() => new
     {
-        avatar = ajustes.Avatar, idioma = ajustes.Idioma, escucha = ajustes.Escucha,
+        avatar = ajustes.Avatar, idioma = ajustes.Idioma, escucha = ajustes.Escucha, vozMotor = ajustes.VozMotor,
         manosLibres = ajustes.ManosLibres, interrumpir = ajustes.Interrumpir, responderConVoz = ajustes.ResponderConVoz,
         ocultarEnPantallaCompleta = ajustes.OcultarEnPantallaCompleta, vozDeWindows = ajustes.VozDeWindows, oidoDeWindows = ajustes.OidoDeWindows,
         avisosDeApps = ajustes.AvisosDeApps, avisosPrivados = ajustes.AvisosPrivados, avisosEnVoz = ajustes.AvisosEnVoz, appsSilenciadas = ajustes.AppsSilenciadas,
@@ -306,6 +306,10 @@ public partial class NotchWindow
                 case "idioma" when p.Value.GetString() is "es" or "en": ajustes.Idioma = p.Value.GetString()!; escucha = true; break;
                 case "escucha" when p.Value.GetString() is "pedir" or "palabra" or "siempre": ajustes.Escucha = p.Value.GetString()!; escucha = true; break;
                 case "manosLibres": ajustes.ManosLibres = p.Value.GetBoolean(); break;
+                case "vozMotor" when p.Value.GetString() is "agente" or "local":
+                    ajustes.VozMotor = p.Value.GetString()!; agenteFalloHasta = DateTime.MinValue;
+                    if (ajustes.VozMotor == "local") CerrarAgente();
+                    break;
                 case "actualizarSolo": ajustes.ActualizarSolo = p.Value.GetBoolean(); break;
                 case "interrumpir": ajustes.Interrumpir = p.Value.GetBoolean(); break;
                 case "responderConVoz": ajustes.ResponderConVoz = p.Value.GetBoolean(); break;

@@ -61,6 +61,10 @@ export function vistaAjustes(): HTMLElement {
         { valor: 'siempre', texto: T('Siempre atenta', 'Always attentive'), explica: T('Micrófono abierto: atiende cuando la nombras o mientras conversan. Lo que dices se envía al servidor para entenderlo.', 'Mic open: answers when named.') },
         { valor: 'pedir', texto: T('Solo si lo pido', 'Only when asked'), explica: T('Solo con Ctrl+Alt+Espacio o tocando el micrófono del notch.', 'Only with Ctrl+Alt+Space.') },
       ], aj.escucha, (v) => guardar({ escucha: v })),
+      eleccion(T('Cómo conversa', 'How it talks'), [
+        { valor: 'agente', texto: T('En vivo', 'Live'), explica: T('Recomendado. Como la llamada del teléfono: te contesta más rápido y la puedes interrumpir. Usa la voz de ElevenLabs en tiempo real.', 'Recommended: like the phone call, faster and you can interrupt.') },
+        { valor: 'local', texto: T('Frase por frase', 'Phrase by phrase'), explica: T('El oído de siempre: graba tu frase, la entiende y contesta. Se usa sola si la de en vivo no abre.', 'The classic ear: records, understands, answers.') },
+      ], aj.vozMotor ?? 'agente', (v) => guardar({ vozMotor: v })),
       interruptor(T('Contestar con voz', 'Answer with voice'), T('Habla con la voz de su avatar (ElevenLabs, la misma de la app). Si lo apagas, contesta solo por escrito en el notch.', 'Speaks with the avatar voice.'), aj.responderConVoz, (v) => guardar({ responderConVoz: v })),
       interruptor(T('Conversación continua', 'Continuous conversation'), T('Después de contestar vuelve a escucharte sola, sin tocar nada.', 'Listens again after answering.'), aj.manosLibres, (v) => guardar({ manosLibres: v })),
       interruptor(T('Interrumpirla hablándole', 'Interrupt by talking'), T('Si le hablas mientras habla, se calla y te escucha.', 'Talk over her to interrupt.'), aj.interrumpir, (v) => guardar({ interrumpir: v })),

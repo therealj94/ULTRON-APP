@@ -88,3 +88,37 @@ test('si el navegador niega el micrófono, lo dice y suelta el pase', async () =
   assert.match(estados.at(-1)!, /Permití el micrófono/);
   assert.deepEqual(pedidos, ['/api/voz/agente', '/api/voz/agente/cerrar']);
 });
+
+test('un error con la sesión abierta la cuelga ya: la mesa vuelve a su micrófono sin dos abiertos', async () => {
+  const a = armar();
+  await a.c.abrir({ avatar: 'aura', idioma: 'es' });
+  const viejo = a.sdk();
+  viejo.onConnect!();
+  viejo.onError!('ice failed');
+  assert.equal(a.c.estado(), 'error');
+  assert.equal(a.terminadas(), 1, 'la sesión del error se cuelga');
+  assert.equal(a.pedidos.filter((p) => p.ruta.endsWith('/cerrar')).length, 1);
+  viejo.onDisconnect!();
+  viejo.onMessage!({ source: 'ai', message: 'tarde' });
+  assert.equal(a.c.estado(), 'error', 'lo que llega tarde de la vieja no cambia nada');
+  assert.deepEqual(a.mensajes, []);
+  // Reabrir tras el error: una sola sesión viva.
+  assert.equal(await a.c.abrir({ avatar: 'aura', idioma: 'es' }), true);
+  assert.equal(a.terminadas(), 1);
+});
+
+test('un error mientras conecta (antes de tener la sesión) también la cuelga', async () => {
+  let terminadas = 0;
+  const c = new ConversacionEnVivo({
+    pedir: async () => ({ ok: true, status: 200, json: { token: 't', pase: 'p' } }),
+    abrirSesion: async (o) => {
+      o.onError!('se cayó');
+      return { endSession: () => void terminadas++ };
+    },
+    onEstado: () => {},
+    onMensaje: () => {},
+  });
+  assert.equal(await c.abrir({ avatar: 'aura', idioma: 'es' }), false);
+  assert.equal(terminadas, 1);
+  assert.equal(c.estado(), 'error');
+});
