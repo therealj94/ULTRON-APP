@@ -235,6 +235,7 @@ export async function abrirPagar(correo: string, nombre: string, monto = '', mon
     try {
       await PAGAR.pagar({ correo, nombre, direccion: direccion!, monto: m, moneda: elegir.value }, (e, hash) => {
         if (e === 'abierto') decir(T(`Abrí Veta Wallet con ${m} ${elegir.value} para ${nombre}. Confírmalo allá; te aviso cuando la cadena lo confirme.`, `Opened Veta Wallet. Confirm it there.`), true);
+        if (e === 'sin-comprobante') avisar(T(`Vi el envío en la cadena (${hash?.slice(0, 10)}…), pero el chat no aceptó el comprobante.`, 'I saw the payment on-chain, but the chat rejected the receipt.'), 'mal', 9000);
         if (e === 'confirmado') avisar(T(`Envío confirmado (${hash?.slice(0, 10)}…). El comprobante quedó en el chat.`, 'Payment confirmed. The receipt is in the chat.'), 'ok', 7000);
       });
     } catch (e: any) {

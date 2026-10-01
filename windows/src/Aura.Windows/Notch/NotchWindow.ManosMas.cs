@@ -144,9 +144,11 @@ public partial class NotchWindow
                 break;
             }
             case "descargas-recientes":
+            case "descargas-hoy":
             {
-                var l = Manos.Archivos.Recientes();
-                if (l.Count == 0) { NoPude(T("No hay descargas.", "There are no downloads.")); return; }
+                var hoy = partes[0] == "descargas-hoy";
+                var l = Manos.Archivos.Recientes(5, hoy);
+                if (l.Count == 0) { NoPude(hoy ? T("Hoy no has descargado nada.", "You haven't downloaded anything today.") : T("No hay descargas.", "There are no downloads.")); return; }
                 AgregarMensaje(ajustes.NombreAvatar, T("Lo último que descargaste: ", "Your latest downloads: ") + string.Join(" · ", l.Select(x => x.Name)));
                 Hecho(T("Últimas descargas", "Latest downloads"), string.Join(", ", l.Take(3).Select(x => x.Name)), "",
                     T("Lo último que descargaste: ", "Your latest downloads: ") + string.Join(", ", l.Take(3).Select(x => System.IO.Path.GetFileNameWithoutExtension(x.Name))) + ".",

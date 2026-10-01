@@ -45,12 +45,13 @@ internal static class Archivos
         Process.Start(new ProcessStartInfo("explorer.exe", "/select,\"" + ruta + "\"") { UseShellExecute = true });
     }
 
-    /// <summary>Lo más nuevo de Descargas (sin descargas a medias ni ocultos).</summary>
-    public static List<FileInfo> Recientes(int max = 5)
+    /// <summary>Lo más nuevo de Descargas (sin descargas a medias ni ocultos). Con `soloHoy`, solo lo de hoy.</summary>
+    public static List<FileInfo> Recientes(int max = 5, bool soloHoy = false)
     {
         var d = new DirectoryInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads"));
         if (!d.Exists) return new();
-        return d.EnumerateFiles().Where(f => f.Extension is not (".crdownload" or ".part" or ".tmp" or ".download") && !f.Attributes.HasFlag(FileAttributes.Hidden))
+        return d.EnumerateFiles().Where(f => f.Extension is not (".crdownload" or ".part" or ".tmp" or ".download") && !f.Attributes.HasFlag(FileAttributes.Hidden)
+                && (!soloHoy || f.LastWriteTime.Date == DateTime.Today))
                 .OrderByDescending(f => f.LastWriteTimeUtc).Take(max).ToList();
     }
 

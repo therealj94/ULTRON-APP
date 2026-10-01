@@ -68,12 +68,14 @@ export function autoConectarCartera(): Promise<boolean> {
 export type Envio = { correo: string; nombre: string; direccion: string; monto: string; moneda: string };
 
 const vigilando = new Map<string, number>();
+/** Hashes que ya se publicaron como comprobante: el mismo envío nunca prueba dos pagos. */
+const usados = new Set<string>();
 
 /**
  * Abre el envío en Veta Wallet y vigila la cadena hasta 15 min. Cuando el envío aparece, publica el
  * comprobante en el hilo. `alCambiar` cuenta en qué va (para la interfaz).
  */
-export async function pagar(e: Envio, alCambiar?: (estado: 'abierto' | 'confirmado' | 'sin-ver', hash?: string) => void): Promise<void> {
+export async function pagar(e: Envio, alCambiar?: (estado: 'abierto' | 'confirmado' | 'sin-comprobante' | 'sin-ver', hash?: string) => void): Promise<void> {
   const r = await pedir<{ ok: boolean; bloque: number; desde: string }>('cartera.pagar', { direccion: e.direccion, monto: e.monto, simbolo: e.moneda });
   alCambiar?.('abierto');
   // Sin la dirección propia no se puede reconocer el envío: queda hecho en la wallet, sin comprobante aquí.
@@ -83,7 +85,8 @@ export async function pagar(e: Envio, alCambiar?: (estado: 'abierto' | 'confirma
   }
   const clave = `${e.correo}|${e.monto}|${e.moneda}`;
   window.clearTimeout(vigilando.get(clave));
-  let desde = String(Math.max(0, Number(r.bloque) - 2));
+  // Solo bloques DESPUÉS de abrir el envío: uno anterior con la misma cantidad sería otro pago, no este.
+  let desde = Number(r.bloque) > 0 ? String(Number(r.bloque) + 1) : '0';
   const hasta = Date.now() + 15 * 60_000;
   const mirar = async () => {
     if (Date.now() > hasta) {
@@ -93,11 +96,15 @@ export async function pagar(e: Envio, alCambiar?: (estado: 'abierto' | 'confirma
     }
     try {
       const v = await pedir<{ hash: string | null; siguiente: string }>('cartera.buscarEnvio', { para: e.direccion, simbolo: e.moneda, monto: e.monto, desde }, 60_000);
-      if (v?.hash) {
+      if (v?.hash && !usados.has(v.hash.toLowerCase())) {
         vigilando.delete(clave);
-        await RELEVO.pago({ para: e.correo, monto: e.monto, moneda: e.moneda, hash: v.hash }).catch(() => null);
-        pedir('notch.aviso', { titulo: `Enviaste ${e.monto} ${e.moneda}`, cuerpo: `A ${e.nombre}. El comprobante quedó en su chat.` }).catch(() => {});
-        alCambiar?.('confirmado', v.hash);
+        usados.add(v.hash.toLowerCase());
+        // El relevo comprueba el hash contra la cadena: solo si lo aceptó se dice que el comprobante quedó.
+        const publicado = await RELEVO.pago({ para: e.correo, monto: e.monto, moneda: e.moneda, hash: v.hash }).then(() => true, () => false);
+        pedir('notch.aviso', publicado
+          ? { titulo: `Enviaste ${e.monto} ${e.moneda}`, cuerpo: `A ${e.nombre}. El comprobante quedó en su chat.` }
+          : { titulo: `Vi tu envío de ${e.monto} ${e.moneda}`, cuerpo: `Pero el chat no aceptó el comprobante. Revísalo en OrdenScan: ${v.hash.slice(0, 12)}…` }).catch(() => {});
+        alCambiar?.(publicado ? 'confirmado' : 'sin-comprobante', v.hash);
         return;
       }
       if (v?.siguiente) desde = v.siguiente;

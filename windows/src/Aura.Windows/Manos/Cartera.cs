@@ -78,7 +78,8 @@ internal static class Cartera
     public static async Task<(string? Hash, long Siguiente)> BuscarEnvio(string desde, string para, string simbolo, decimal monto, long inicio, CancellationToken ct = default)
     {
         var ultimo = await Bloque(ct);
-        if (inicio <= 0 || inicio > ultimo + 1) inicio = Math.Max(0, ultimo - 5);
+        // Sin base conocida se empieza en el último bloque: mirar hacia atrás podría tomar un envío viejo igual.
+        if (inicio <= 0 || inicio > ultimo + 1) inicio = ultimo;
         var fin = Math.Min(ultimo, inicio + 199);
         if (fin < inicio) return (null, inicio);
         var lote = new List<object>();

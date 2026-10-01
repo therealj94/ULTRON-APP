@@ -203,11 +203,12 @@ public static class ManosMas
     static readonly Regex DondeArchivo = new(@"^(?:donde (?:esta|quedo|guarde)|muestrame donde esta|ensename donde esta|en que carpeta esta|where is|where s|show me where)\s+(?:el |mi |la |the |my )?(?:archivo|documento|file|document)\s+(?:de |del |que se llama |llamado |called |named )?(?<o>.+?)(?:\s+is)?$", O);
     static readonly Regex Descargas = new(@"^(?:que (?:descargue|he descargado|baje|he bajado)(?: hoy| ultimamente| recientemente)?|(?:muestrame|dime|leeme|lista(?:me)?)\s+(?:mis |las )?(?:descargas recientes|ultimas descargas)|what did i (?:just )?download|(?:show|list|read) (?:me )?(?:my )?(?:recent|latest) downloads)$", O);
 
-    /// <summary>«carpeta|escritorio|Proyectos», «vaciar-papelera» (con «sí»), «mostrar|contrato» o «descargas-recientes».</summary>
+    /// <summary>«carpeta|escritorio|Proyectos», «vaciar-papelera» (con «sí»), «mostrar|contrato», «descargas-hoy» o «descargas-recientes».</summary>
     public static string? Archivos(string t, string texto)
     {
         if (VaciarPapelera.IsMatch(t)) return "vaciar-papelera";
-        if (Descargas.IsMatch(t)) return "descargas-recientes";
+        // «qué descargué hoy» pide SOLO lo de hoy: con «hoy» no se contestan descargas de otros días.
+        if (Descargas.IsMatch(t)) return Regex.IsMatch(t, @"\b(?:hoy|today)\b") ? "descargas-hoy" : "descargas-recientes";
         var c = CrearCarpetaEn.Match(t);
         if (!c.Success) c = CrearCarpeta.Match(t);
         if (c.Success)
