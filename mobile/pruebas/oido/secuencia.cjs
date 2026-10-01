@@ -432,7 +432,7 @@ prueba('LA LLAMADA DEL AVATAR de punta a punta: mesa habla → «llámame» → 
   await avanzar(1500);
   paso('3 contestó');
   chequear(c.estado() === 'en_llamada' && !app.timbre, '3: en llamada y el timbre calló');
-  chequear(app.oidos.some((o) => o.por === 'conversacion (primer mensaje)' && o.texto === '[[llamada]]'), '3: el primer mensaje es [[llamada]] (saluda como quien llama)');
+  chequear(!app.oidos.some((o) => o.por === 'conversacion (primer mensaje)' && o.texto === '[[llamada]]'), '3: no se manda [[llamada]]: el saludo es el first_message del agente (antes salía doble)');
   const gen = app.control.vista().gen;
   r = await decirYEsperar(app, '¿qué hay de nuevo hoy?', '4 hablar en la llamada');
   chequear(r.quien === 'conversacion', '4: la oye la llamada');

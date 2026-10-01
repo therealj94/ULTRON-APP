@@ -8,13 +8,16 @@
  */
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { CONECTAR_MAX_MS, ControlSesion, SORDA_MS } from '../sesion.ts';
+import { CONECTAR_MAX_MS, ControlSesion, SORDA_MS, TOPE_RECONEXIONES } from '../sesion.ts';
 import {
   CicloLlamada,
   ESPERA_SIGUES_MS,
   FIN_VISIBLE_MS,
+  FRASE_RECONECTA_MS,
   MENSAJE_LLAMAME,
+  MENSAJE_RECONECTA,
   MENSAJE_SIGUES,
+  mensajeReconecta,
   PREGUNTA_SIGUES_MS,
   SONAR_MS,
   avisoMinutos,
@@ -117,6 +120,37 @@ prueba('sesión: un error reintenta una vez con generación nueva y después se 
   // Iniciar después de un error abre de nuevo.
   assert.equal(c.iniciar(), true);
   assert.equal(c.vista().montada, true);
+});
+
+prueba('sesión (1-oct): las reconexiones por error tienen tope por conversación; conectar NO lo vuelve a cero', () => {
+  const c = new ControlSesion('claudio', 'es');
+  c.iniciar();
+  c.alEstado(c.vista().gen, 'escuchando');
+  const g0 = c.vista().gen;
+  // ElevenLabs corta («Server error») una y otra vez, cada vez DESPUÉS de conectar (antes: infinito).
+  for (let i = 1; i <= TOPE_RECONEXIONES; i++) {
+    c.alEstado(c.vista().gen, 'error', 'Server error');
+    assert.equal(c.vista().montada, true, `reconexión ${i}`);
+    assert.equal(c.vista().gen, g0 + i);
+    c.alEstado(c.vista().gen, 'escuchando');
+    assert.equal(c.vista().intento, 0, 'el intento sí vuelve a 0 al conectar');
+  }
+  c.alEstado(c.vista().gen, 'error', 'Server error');
+  assert.equal(c.vista().montada, false, 'pasado el tope falla limpio: el audio vuelve a la mesa');
+  assert.equal(c.vista().estado, 'error');
+  assert.equal(c.vista().gen, g0 + TOPE_RECONEXIONES, 'no abrió otra');
+  // Una conversación nueva (la persona vuelve a abrir) empieza con el tope entero.
+  c.iniciar();
+  c.alEstado(c.vista().gen, 'escuchando');
+  const g1 = c.vista().gen;
+  c.alEstado(g1, 'error', 'Server error');
+  assert.equal(c.vista().montada, true);
+  assert.equal(c.vista().gen, g1 + 1);
+  // Con `reconexiones: 0` no se reconecta nunca (y el reintento al abrir tampoco).
+  const d = new ControlSesion('aura', 'es', { reconexiones: 0 });
+  d.iniciar();
+  d.alEstado(d.vista().gen, 'error', 'red');
+  assert.equal(d.vista().montada, false);
 });
 
 prueba('sesión: el doble toque silencia sin cerrar y otro la despierta al instante', () => {
@@ -1772,7 +1806,9 @@ prueba('ciclo: la máquina entera — REPOSO → SONANDO → CONECTANDO → EN_L
   assert.equal(c.sesionViva(), false, 'sonando tampoco (no se cobra hasta contestar)');
   assert.deepEqual(tipos2(c.contestar()), ['timbre', 'contestada', 'abrir']);
   assert.equal(c.estado(), 'conectando');
-  assert.deepEqual(c.conectado(), [{ tipo: 'primerMensaje', texto: MENSAJE_LLAMAME }], '«llámame»: el primer mensaje es [[llamada]] (saluda como quien llama)');
+  // El saludo es el first_message del agente: mandar [[llamada]] además hacía un saludo doble.
+  assert.deepEqual(c.conectado(), [], '«llámame»: no se manda [[llamada]] (antes: «¡Aquí estoy! Cuéntame.» + «¡Hola! Aquí estoy…»)');
+  assert.equal(MENSAJE_LLAMAME, '[[llamada]]', 'la marca sigue existiendo (el servidor la atiende para versiones viejas)');
   assert.equal(c.estado(), 'en_llamada');
   assert.deepEqual(c.dobleToque(), [{ tipo: 'silenciar', valor: true }]);
   assert.equal(c.estado(), 'silenciado');
@@ -1880,6 +1916,96 @@ prueba('ciclo: silencio 3 min → «¿sigues ahí?» → 20 s sin respuesta → 
   mudo.c.dobleToque();
   mudo.r.t += PREGUNTA_SIGUES_MS + ESPERA_SIGUES_MS;
   assert.deepEqual(mudo.c.tic(), [{ tipo: 'cerrar', motivo: 'silencio' }]);
+});
+
+prueba('ciclo (1-oct): la sesión se cae a mitad de llamada → reconecta con `[[reconecta]] <última frase>`, sin otro saludo; pasado el tope cuelga y el oído vuelve a la mesa', () => {
+  const { c, r } = cicloDePrueba();
+  const ctl = new ControlSesion('claudio', 'es', { reloj: () => r.t });
+  const enviados = [];
+  const efectos = [];
+  const ejecutar = (ef) => {
+    for (const e of ef) {
+      efectos.push(e.tipo);
+      if (e.tipo === 'abrir') ctl.iniciar();
+      if (e.tipo === 'cerrar') ctl.terminar();
+      if (e.tipo === 'primerMensaje') enviados.push(e.texto);
+    }
+  };
+  // Lo mismo que el VozProvider: lo que pasa en la sesión, contado al ciclo.
+  let antes = ctl.vista();
+  ctl.suscribir((v) => {
+    const a = antes;
+    antes = v;
+    const ef = [];
+    if (v.montada && v.estado === 'conectando' && (!a.montada || a.gen !== v.gen)) ef.push(...c.sesionAbriendo());
+    if (v.montada && (v.estado === 'escuchando' || v.estado === 'hablando') && a.estado === 'conectando') ef.push(...c.conectado());
+    if (!v.montada && v.estado === 'error' && (a.montada || a.estado !== 'error')) ef.push(...c.fallo(v.detalle));
+    else if (a.montada && !v.montada) ef.push(...c.cerrada('cortada'));
+    ejecutar(ef);
+  });
+  const dueno = () => duenoAudio({ enLlamada: false, conversacion: ctl.vista().montada || ctl.vista().dormida || llamadaActiva(c.estado()), mesaVisible: true, appActiva: true });
+  ejecutar(c.llamar({ tipo: 'llamame' }));
+  ejecutar(c.contestar());
+  ctl.alEstado(ctl.vista().gen, 'escuchando');
+  assert.deepEqual(enviados, [], 'al contestar no se manda saludo (lo dice el agente)');
+  // La persona pide algo; el cerebro tarda y ElevenLabs corta la sesión («Server error»).
+  r.t += 2_000;
+  c.turnoUsuario('pon una alarma en tres minutos');
+  r.t += 5_000;
+  ctl.alEstado(ctl.vista().gen, 'error', 'Server error');
+  assert.equal(c.estado(), 'en_llamada', 'la llamada sigue (reconectando)');
+  ctl.alEstado(ctl.vista().gen, 'escuchando');
+  assert.deepEqual(enviados, ['[[reconecta]] pon una alarma en tres minutos'], 'la conversación nueva pide perdón y retoma lo que pidió');
+  // Se cae otra vez sin que la persona dijera nada en esta sesión: solo el perdón (la frase ya se mandó).
+  r.t += 3_000;
+  ctl.alEstado(ctl.vista().gen, 'error', 'Server error');
+  ctl.alEstado(ctl.vista().gen, 'escuchando');
+  assert.deepEqual(enviados.slice(1), [MENSAJE_RECONECTA]);
+  // Y otra: pasado el tope ya no reconecta: cuelga por fallo y el oído vuelve a la mesa.
+  ctl.alEstado(ctl.vista().gen, 'error', 'Server error');
+  assert.equal(ctl.vista().montada, false);
+  assert.equal(c.estado(), 'colgada');
+  assert.equal(c.motivo(), 'fallo');
+  assert.ok(efectos.includes('alNativo'), 'lo dice la mesa');
+  assert.equal(dueno(), 'mesa', 'el audio vuelve a la mesa');
+  assert.ok(!enviados.some((t) => /\[\[llamada\]\]/.test(t)), 'nunca otro saludo');
+});
+
+prueba('ciclo: `[[reconecta]]` solo con una frase reciente y de la persona (no las marcas de la app); silenciada no se manda', () => {
+  const { c, r } = cicloDePrueba();
+  c.llamar(RECL);
+  c.contestar();
+  c.sesionAbriendo();
+  assert.deepEqual(c.conectado(), [{ tipo: 'primerMensaje', texto: '[[recordatorio]] Llamar a Beto' }]);
+  // Una frase vieja (ya contestada) no se vuelve a hacer.
+  c.turnoUsuario('gracias');
+  r.t += FRASE_RECONECTA_MS + 1;
+  c.sesionAbriendo();
+  assert.deepEqual(c.conectado(), [{ tipo: 'primerMensaje', texto: MENSAJE_RECONECTA }]);
+  // Una marca que vuelve como «frase de la persona» (el eco del texto mandado) no cuenta.
+  c.turnoUsuario('[[reconecta]] gracias');
+  c.sesionAbriendo();
+  assert.deepEqual(c.conectado(), [{ tipo: 'primerMensaje', texto: MENSAJE_RECONECTA }]);
+  // Solo la ÚLTIMA frase, limpia.
+  c.turnoUsuario('hola');
+  c.turnoUsuario('  ¿y   mañana qué tengo? ');
+  c.sesionAbriendo();
+  assert.deepEqual(c.conectado(), [{ tipo: 'primerMensaje', texto: '[[reconecta]] ¿y mañana qué tengo?' }]);
+  // Silenciada: se reconecta callada (no se la oiría).
+  c.turnoUsuario('una cosa');
+  c.dobleToque();
+  c.sesionAbriendo();
+  assert.deepEqual(c.conectado(), []);
+  assert.equal(c.estado(), 'silenciado');
+  // Una llamada NUEVA no hereda nada de la anterior.
+  c.colgar();
+  c.listo();
+  c.llamar({ tipo: 'llamame' });
+  c.contestar();
+  c.sesionAbriendo();
+  assert.deepEqual(c.conectado(), []);
+  assert.equal(mensajeReconecta(''), MENSAJE_RECONECTA);
+  assert.equal(mensajeReconecta('x'.repeat(400)).length, MENSAJE_RECONECTA.length + 1 + 300);
 });
 
 prueba('ciclo: colgar corta la sesión y devuelve el oído de la mesa (con el ControlSesion y el dueño del audio reales)', () => {

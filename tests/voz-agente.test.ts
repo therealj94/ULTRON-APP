@@ -696,6 +696,42 @@ test('la llamada del avatar: `[[llamada]]` saluda como quien llama y `[[sigues]]
   }
 });
 
+test('reconexión a mitad de llamada: `[[reconecta]] <frase>` pide un perdón corto y atiende la frase con el cerebro (la marca no llega al hilo)', async () => {
+  const s = await montar(async (t) => {
+    t.enviar('delta', { text: 'El oro está a tres mil.', voz: 'El oro está a tres mil.' });
+    t.enviar('done', { reply: 'El oro está a tres mil.' });
+  });
+  try {
+    const es = dichoDe(await (await llm(s.base, paseDe(persona()), [{ role: 'assistant', content: '¡Aquí estoy! Cuéntame.' }, { role: 'user', content: '[[reconecta]]  ¿cómo va   el oro?' }])).text());
+    assert.equal(es, 'Perdón, se me cortó. El oro está a tres mil.');
+    assert.equal(s.vistos.length, 1);
+    assert.equal(s.vistos[0].body.message, '¿cómo va el oro?', 'el cerebro (y su hilo) ve la frase de la persona, no la marca');
+    assert.equal(s.vistos[0].interrumpida, false, 'no es una interrupción: no se pide perdón dos veces');
+    const en = dichoDe(await (await llm(s.base, paseDe(persona(), 'claudio', 'en'), [{ role: 'user', content: '[[reconecta]] how is gold doing?' }])).text());
+    assert.equal(en, 'Sorry, I got cut off. El oro está a tres mil.');
+    assert.equal(s.vistos[1].body.message, 'how is gold doing?');
+  } finally {
+    await s.cerrar();
+  }
+});
+
+test('reconexión sin frase: `[[reconecta]]` solo pide perdón y que la repita, al instante y sin cerebro', async () => {
+  const { reconexionDe } = await import('../server/voz-agente');
+  const s = await montar(async (t) => t.enviar('done', { reply: 'no debería llegar aquí' }));
+  try {
+    const es = dichoDe(await (await llm(s.base, paseDe(persona()), [{ role: 'user', content: '[[reconecta]]' }])).text());
+    assert.equal(es, 'Perdón, se me cortó. ¿Me repites?');
+    const en = dichoDe(await (await llm(s.base, paseDe(persona(), 'aura', 'en'), [{ role: 'user', content: ' [[reconecta]]  ' }])).text());
+    assert.equal(en, 'Sorry, I got cut off. Could you repeat that?');
+    assert.equal(s.vistos.length, 0, 'el cerebro no lo vio');
+  } finally {
+    await s.cerrar();
+  }
+  assert.equal(reconexionDe('hola', 'es'), null, 'una frase normal no es una reconexión');
+  assert.equal(reconexionDe('[[reconectar]] x', 'es'), null);
+  assert.deepEqual(reconexionDe('[[reconecta]] pon una alarma', 'es'), { frase: 'pon una alarma', perdon: 'Perdón, se me cortó. ' });
+});
+
 test('el puente por omisión: ~3 s, después del relleno del agente y ANTES del corte de ElevenLabs (4 s); un cerebro que contesta en 1,8 s no lo oye', async () => {
   const { PUENTE_VOZ_MS, CASCADA_ELEVENLABS_MS } = await import('../server/voz-agente');
   const { ESPERA_FRASE_MS, frasesDe } = await import('../mobile/src/compa/frasesEstado');
