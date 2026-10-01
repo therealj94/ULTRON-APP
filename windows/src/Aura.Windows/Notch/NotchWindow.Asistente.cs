@@ -39,6 +39,8 @@ public partial class NotchWindow
     bool microSilenciado;
     /// <summary>La persona pidió hablar (tecla, clic, «Oye AURA» de Windows): la próxima frase cuenta sin decir el nombre.</summary>
     bool llamadaExplicita;
+    /// <summary>«Oye AURA» llegó a media frase: la orden viene en esa misma frase, se deja terminar y se hace.</summary>
+    bool despertarAlTerminar;
     DateTime ultimaCharla = DateTime.MinValue;
     readonly System.Diagnostics.Stopwatch cronoTurno = new();
     bool primerAudioAnotado;
@@ -87,6 +89,15 @@ public partial class NotchWindow
             Centro.Registro.Anotar("despertar", "Windows oyó «Oye AURA»");
             llamadaExplicita = true; ultimaCharla = DateTime.Now; continuo = ajustes.ManosLibres;
             if (!AgenteAbierto && !abriendoAgente) TextoEscucha.Text = T("Te escucho…", "Listening…");
+            // «Oye AURA, abre Excel» de corrido: Windows la despierta a media frase. Antes se abría la conversación
+            // y esa frase (con la orden) se tiraba: había que repetirla. Ahora se deja terminar y se hace.
+            if (oido.Abierto && oido.OyendoFrase && !AgenteAbierto && !abriendoAgente)
+            {
+                despertarAlTerminar = true;
+                Centro.Registro.Anotar("despertar", "a media frase: la dejo terminar");
+                Recalcular();
+                return;
+            }
             _ = Despertar();
             Recalcular();
         }));
@@ -223,6 +234,9 @@ public partial class NotchWindow
 
     async Task AlTerminarFrase(byte[] wav)
     {
+        // Si «Oye AURA» llegó a media frase, esta es esa frase: con orden se hace; sola, se abre la conversación.
+        bool despertarPedido = despertarAlTerminar;
+        despertarAlTerminar = false;
         if (pausado) return;
         bool eraInterrupcion = oido.ModoInterrupcion;
         oido.Cerrar();
@@ -248,6 +262,7 @@ public partial class NotchWindow
         if (g != generacion) return;
         pensando = false;
         if (error != null) { continuo = false; Avisar(new Aviso(T("No pude oírte", "I couldn't hear you"), error, "", "worried", Segundos: 6)); Recalcular(); return; }
+        if (texto.Length == 0 && despertarPedido) { _ = Despertar(); return; }
         if (texto.Length == 0)
         {
             // Ruido (la tele, el ventilador): después de dos vacías seguidas, deja de escuchar sola.
@@ -294,7 +309,12 @@ public partial class NotchWindow
         }
         // Si el reconocedor de Windows ya la despertó, la frase que llega todavía trae el nombre («Hola Aura, pon
         // bachata en Spotify»): se quita igual, o las reglas no la reconocen y se va al cerebro (8 s más).
-        else if (Parametros.QuitarNombre(texto, out var sinNombre) && sinNombre.Length > 0) texto = sinNombre;
+        else if (Parametros.QuitarNombre(texto, out var sinNombre))
+        {
+            if (sinNombre.Length > 0) texto = sinNombre;
+            // «Oye AURA» sola (la despertó Windows a media frase): la conversación en vivo, como siempre.
+            else if (despertarPedido) { llamadaExplicita = false; ultimaCharla = DateTime.Now; _ = Despertar(); return; }
+        }
         llamadaExplicita = false;
         ultimaCharla = DateTime.Now;
         await Procesar(texto, true);

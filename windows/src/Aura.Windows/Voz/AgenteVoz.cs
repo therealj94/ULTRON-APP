@@ -95,6 +95,9 @@ internal sealed class AgenteVoz : IDisposable
 
     void Mandar(string json) => envios?.Writer.TryWrite(json);
 
+    /// <summary>Lo que de verdad pasó en la PC, a la conversación: si <paramref name="hablar"/>, el agente lo dice; si no, lo sabe.</summary>
+    public void AvisarPc(string texto, bool hablar) { if (Abierto) Mandar(AgenteProtocolo.AvisoPc(texto, hablar)); }
+
     async Task BucleEnvio(CancellationToken ct)
     {
         try

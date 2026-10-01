@@ -750,7 +750,8 @@ const PHRASES = {
   corte: { es: 'Perdón, se me cortó un segundo. ¿Me lo repites?', en: 'Sorry, I lost the connection for a second. Can you repeat that?' },
   vencida: { es: 'Llevamos un buen rato hablando y esta conversación se cerró. Tócame para empezar otra y seguimos.', en: "We've been talking for a while and this conversation closed. Tap me to start a new one and we'll keep going." },
   tarde: { es: 'Perdón, me estoy tardando demasiado. ¿Me lo preguntas otra vez?', en: "Sorry, I'm taking too long. Could you ask me again?" },
-  listo: { es: 'Listo.', en: 'Done.' },
+  // Solo acciones y nada que decir: que va, no que quedó (la app o la PC la hacen después y avisan si falla).
+  listo: { es: 'Va, enseguida.', en: 'Okay, right away.' },
   noLei: { es: 'Perdón, no pude leértelo. Pídemelo otra vez.', en: "Sorry, I couldn't read it to you. Ask me again." },
 };
 
@@ -1362,8 +1363,8 @@ export function montarVozAgente(app: express.Express, d: Deps) {
         // Un corchete que quedó abierto al final del último trozo sale como texto (afinar lo limpia).
         if (algo && etiquetas.pendiente) decirCerebro(paraVoz('', true));
         if (!algo) decirCerebro(sinRelleno(paraVozEntera(String(datos?.voz ?? datos?.reply ?? '')).trim()));
-        // Solo acciones y nada que decir (un cerebro viejo, o la frase se perdió): «Listo.», no «se me
-        // fue el hilo» mientras la app sí la hace.
+        // Solo acciones y nada que decir (un cerebro viejo, o la frase se perdió): «Va, enseguida.», no «se
+        // me fue el hilo» mientras la app sí la hace (ni «Listo» antes de que quede).
         if (!algo && Array.isArray(datos?.acciones) && datos.acciones.length) decirCerebro(PHRASES.listo[pase.idioma]);
         // Buscar o leer en sus chats lo hace el teléfono y vuelve como lectura (otro turno): mientras,
         // suena la tarea. La quita el turno de la lectura (o el propio teléfono, con su tope).
@@ -1395,7 +1396,11 @@ export function montarVozAgente(app: express.Express, d: Deps) {
       if (ordenesPc!.vistas.has(orden)) return;
       ordenesPc!.vistas.add(orden);
       ordenesPc!.n++;
-      retener.hacer(() => void empujarPc(pase.correo, pase.aparato, { orden, dicho: mensaje }));
+      retener.hacer(() => {
+        // Sin el canal del .exe abierto la orden no llega a nadie: queda en el registro (antes se perdía callada).
+        const entregada = empujarPc(pase.correo, pase.aparato, { orden, dicho: mensaje });
+        if (!entregada) console.warn(`[voz] orden para la PC sin canal abierto (${conv.cid.slice(0, 8)}): ${orden.slice(0, 60)}`);
+      });
     };
     const enviarTurno: TurnoVoz['enviar'] = !ordenesPc
       ? enviar
@@ -1415,7 +1420,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
           }
           if (evento === 'done' && datos && typeof datos === 'object') {
             const limpio = { ...datos, reply: quitarMarcas(String(datos.reply ?? '')), ...(datos.voz != null ? { voz: quitarMarcas(String(datos.voz)) } : {}) };
-            // Solo la orden y nada que decir: «Listo.», no «se me fue el hilo».
+            // Solo la orden y nada que decir: «Va, enseguida.», no «se me fue el hilo».
             if (ordenesPc.n && !(Array.isArray(limpio.acciones) && limpio.acciones.length)) limpio.acciones = [{ accion: { tipo: 'pc' } }];
             return enviar(evento, limpio);
           }

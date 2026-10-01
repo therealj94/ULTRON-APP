@@ -69,10 +69,38 @@ public sealed class FiltroAcciones
             if (w.Length < 3 || Genericas.Contains(w)) continue;
             var raiz = w.Length > 5 ? w[..5] : w;
             bool esta = false;
-            foreach (var d in dichas) if (d.StartsWith(raiz, StringComparison.Ordinal) || w.StartsWith(d.Length > 5 ? d[..5] : d, StringComparison.Ordinal) && d.Length >= 4) { esta = true; break; }
+            foreach (var d in dichas) if (d.StartsWith(raiz, StringComparison.Ordinal) || w.StartsWith(d.Length > 5 ? d[..5] : d, StringComparison.Ordinal) && d.Length >= 4 || Parecidas(w, d)) { esta = true; break; }
             if (!esta) return false;
         }
         return true;
+    }
+
+    /// <summary>
+    /// La misma palabra mal oída o mal escrita: «exel» y «excel», «spotifai» y «spotify». El cerebro corrige lo que
+    /// el micrófono entendió mal, y eso no es «traer algo que no dijiste». Una letra de diferencia (dos en palabras
+    /// largas), y solo con palabras de cuatro letras o más: «word» y «ward» sí, «rock» y «pop» no.
+    /// </summary>
+    public static bool Parecidas(string a, string b)
+    {
+        if (a.Length < 4 || b.Length < 4) return false;
+        int tope = Math.Max(a.Length, b.Length) >= 7 ? 2 : 1;
+        if (Math.Abs(a.Length - b.Length) > tope) return false;
+        var previo = new int[b.Length + 1];
+        var actual = new int[b.Length + 1];
+        for (int j = 0; j <= b.Length; j++) previo[j] = j;
+        for (int i = 1; i <= a.Length; i++)
+        {
+            actual[0] = i;
+            int menor = actual[0];
+            for (int j = 1; j <= b.Length; j++)
+            {
+                actual[j] = Math.Min(Math.Min(actual[j - 1] + 1, previo[j] + 1), previo[j - 1] + (a[i - 1] == b[j - 1] ? 0 : 1));
+                menor = Math.Min(menor, actual[j]);
+            }
+            if (menor > tope) return false;
+            (previo, actual) = (actual, previo);
+        }
+        return previo[b.Length] <= tope;
     }
 
     /// <summary>«hacer: cierra spotify» → «cierra spotify». Solo órdenes cortas, de una línea.</summary>

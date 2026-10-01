@@ -46,7 +46,27 @@ internal static class Aplicaciones
         ["microsoft edge"] = "microsoft-edge:", ["media player"] = "mswindowsmusic:",
     };
 
-    public static Task Indexar() => Task.Run(() =>
+    static Task? indexado;
+
+    /// <summary>Lee las apps de este equipo (al arrancar, en segundo plano).</summary>
+    public static Task Indexar() => indexado = IndexarAhora();
+
+    /// <summary>
+    /// «Abre Spotify» antes de que termine de indexar (al arrancar), o una app recién instalada: se espera el índice
+    /// y, si sigue sin estar, se rehace una vez. Antes la primera vez decía «no la encontré» y la segunda sí.
+    /// </summary>
+    public static async Task<AppInstalada?> BuscarConIndice(string dicho)
+    {
+        if (indexado is { IsCompleted: false } t)
+        {
+            try { await t; } catch { }
+            if (Buscar(dicho) is { } ya) return ya;
+        }
+        try { await Indexar(); } catch { }
+        return Buscar(dicho);
+    }
+
+    static Task IndexarAhora() => Task.Run(() =>
     {
         var lista = new List<AppInstalada>();
         foreach (var raiz in new[] { Environment.GetFolderPath(Environment.SpecialFolder.StartMenu), Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu) })
@@ -102,6 +122,22 @@ internal static class Aplicaciones
         if (mejor != null && puntos >= minimo) return mejor;
         foreach (var c in candidatos) if (Sistema.TryGetValue(c, out var s)) return new AppInstalada(dicho, s, false);
         return null;
+    }
+
+    /// <summary>
+    /// Abre y COMPRUEBA: una ventana DE esa app (por su programa o su título; también si ya estaba abierta, las de
+    /// una sola instancia solo se traen al frente). Si no aparece, otra vez. José: «tiene que probar hasta lograrlo
+    /// y no decir que sí y no». Una ventana nueva de otra cosa no cuenta (Codex en #112).
+    /// </summary>
+    public static async Task<bool> AbrirVerificado(AppInstalada app)
+    {
+        bool Abierta() => Ventanas.Abiertas().Any(v => AppVentana.Es(app.Nombre, v.Titulo, v.Proceso)) || Ventanas.Buscar(app.Nombre) != null;
+        return await Verificar.Reintentar(async intento =>
+        {
+            if (intento > 1 && Abierta()) return true;
+            Abrir(app);
+            return await Verificar.Esperar(Abierta, intento == 1 ? 6000 : 8000, 250);
+        }) > 0;
     }
 
     public static void Abrir(AppInstalada app)

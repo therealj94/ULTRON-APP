@@ -24,6 +24,8 @@ internal sealed class Oido : IDisposable
     readonly DetectorVoz det = new() { Continuo = false };
 
     public bool Abierto => mic != null;
+    /// <summary>Está oyendo una frase ahora mismo (empezó a hablar y todavía no termina).</summary>
+    public bool OyendoFrase => mic != null && det.Hablando;
     /// <summary>Esperando voz: después de este tiempo sin que nadie hable, se cierra (salvo en continuo).</summary>
     public int EsperaMaxMs { get => det.EsperaMaxMs; set => det.EsperaMaxMs = value; }
     public bool Continuo { get => det.Continuo; set => det.Continuo = value; }

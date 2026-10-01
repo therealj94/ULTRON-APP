@@ -28,6 +28,12 @@ public partial class NotchWindow
     bool abriendoAgente;
     string agenteUltimoDicho = "";
     readonly HechasRecientes hechasRecientes = new();
+    /// <summary>Las reglas lo están intentando con lo que dijiste: un fallo todavía no se le dice al agente (puede venir la orden del cerebro).</summary>
+    bool intentoLocal;
+    DateTime ultimaOrdenCerebro = DateTime.MinValue;
+    /// <summary>La orden del cerebro que llegó mientras las reglas lo intentaban (se saltó por repetida): el segundo intento si el primero falla.</summary>
+    OrdenPc? ordenSaltada;
+    string ultimoMotivo = "";
     System.Windows.Controls.TextBlock? burbujaAgente;
     readonly Stopwatch cronoAgente = new();
     CancellationTokenSource? canal;
@@ -179,14 +185,48 @@ public partial class NotchWindow
         if (p.Mano == Mano.Ninguna) return;
         Centro.Registro.Anotar("entender", $"en vivo · {p.Mano} (reglas)");
         hechasRecientes.Anotar(texto);
-        await Hacer(p, frase, true);
+        var desde = DateTime.Now;
+        resultadoUltimo = null;
+        ordenSaltada = null;
+        intentoLocal = true;
+        try { await Hacer(p, frase, true); }
+        finally { intentoLocal = false; }
+        if (resultadoUltimo != false) return;
+        // No salió: la orden del cerebro (que a veces entendió mejor: «abre exel» → «abre excel») sí se hace.
+        // Si en unos segundos no llega ninguna, el agente dice que no se pudo: nunca un «sí» callado.
+        hechasRecientes.Olvidar(texto);
+        var motivo = ultimoMotivo;
+        Centro.Registro.Anotar("cerebro-manos", "las reglas no pudieron: " + motivo);
+        // La orden del cerebro ya llegó mientras se intentaba (y se saltó por repetida): es el segundo intento.
+        if (ordenSaltada is { } os)
+        {
+            ordenSaltada = null;
+            Centro.Registro.Anotar("cerebro-manos", "segundo intento con la orden del cerebro: " + os.Orden);
+            await HacerOrdenDelCerebro(os.Orden, os.Dicho, true);
+            return;
+        }
+        await Task.Delay(TimeSpan.FromSeconds(8));
+        // Ninguna orden del cerebro en ese rato: ahora sí, el fallo se muestra y el agente lo dice.
+        if (ultimaOrdenCerebro < desde) NoPude(motivo);
+    }
+
+    /// <summary>El resultado real de una mano, a la conversación en vivo (si hay una).</summary>
+    void AvisarAgente(string texto, bool hablar)
+    {
+        if (agente is { Abierto: true } a) a.AvisarPc(texto, hablar);
     }
 
     /// <summary>Una orden del cerebro que llegó por el canal (la conversación en vivo): guarda y repetidas.</summary>
     async Task OrdenDelCanal(OrdenPc o)
     {
+        ultimaOrdenCerebro = DateTime.Now;
         // Las reglas ya hicieron algo con esa misma frase: el cerebro pide lo mismo, no se repite.
-        if (hechasRecientes.Repetida(o.Id, o.Dicho)) { Centro.Registro.Anotar("cerebro-manos", $"ya hecha: {o.Orden}"); return; }
+        if (hechasRecientes.Repetida(o.Id, o.Dicho))
+        {
+            if (intentoLocal) ordenSaltada = o;
+            Centro.Registro.Anotar("cerebro-manos", $"ya hecha: {o.Orden}");
+            return;
+        }
         await HacerOrdenDelCerebro(o.Orden, o.Dicho, true);
     }
 

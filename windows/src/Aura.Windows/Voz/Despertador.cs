@@ -73,9 +73,11 @@ internal sealed class Despertador : IDisposable
 
     /// <summary>
     /// Lo mínimo para despertar (0..1). Con 0,9 (medido el 1-oct, modelo v3): 67 % de «oye aura» en español y 90 % de
-    /// «hey aura» que no vio al entrenar, 0 % de frases parecidas y ~0,56 falsas por hora de audio general.
+    /// «hey aura» que no vio al entrenar, 0 % de frases parecidas y ~0,56 falsas por hora de audio general. Ahora
+    /// 0,75 sostenido dos trozos seguidos (o 0,9 de una): ConfirmaPalabra, en Aura.Windows.Core, probado.
     /// </summary>
-    public const float Umbral = 0.9f;
+    public const float Umbral = ConfirmaPalabra.Umbral;
+    readonly ConfirmaPalabra confirma = new();
     PalabraClave? propio;
     WaveInEvent? micPropio;
     /// <summary>El hilo del micrófono usa el modelo mientras otro lo apaga: nunca a la vez (es memoria nativa).</summary>
@@ -106,7 +108,7 @@ internal sealed class Despertador : IDisposable
                     try { p = propio.Alimentar(muestras); } catch { return; }
                 }
                 // Una vez por llamada: la misma palabra da varios trozos seguidos por encima del umbral.
-                if (p < Umbral || DateTime.Now - ultimaVez < TimeSpan.FromSeconds(2)) return;
+                if (!confirma.Alimentar(p) || DateTime.Now - ultimaVez < TimeSpan.FromSeconds(2)) return;
                 ultimaVez = DateTime.Now;
                 Centro.Registro.Anotar("despertar", $"«Hey AURA» (modelo propio) con {p:0.00}");
                 Desperto?.Invoke();
