@@ -13,6 +13,7 @@ import { hablar, abrirVozEnVivo, cantar, orar, repertorio, cancionPorPedido, est
 import { lineaAvatar, normalizarAvatar, normalizarIdioma, NOMBRE_AVATAR, type AvatarVoz } from './server/eleven';
 import { montarVozAgente, type TurnoVoz } from './server/voz-agente';
 import { fijoDeLaConversacion, piezasDelTurno, renovarFijo, ventanaDelHilo } from './server/prompt-turno';
+import { ESPACIO_COMUN, espacioDe } from './lib/espacio-nodo';
 import { cargarMiembro, fotoMemoriaMiembro, guardarHechoMiembro, hiloMiembro, olvidarMiembro, promptMemoriaMiembro, recordarTurnoMiembro } from './lib/memoria-miembro';
 import { montarRutasApp } from './server/app-rutas';
 import { montarRutasCaras } from './server/caras-rutas';
@@ -29,7 +30,8 @@ import {
   dichoDePropuesta,
   empujarAccion,
   extraerAcciones,
-  instruccionAcciones,
+  estadoAcciones,
+  reglasAcciones,
   neutralizarMarca,
   oyentesDe,
   ordenRapida,
@@ -67,7 +69,7 @@ import { presupuesto, PRESUPUESTO_OIDO_MS, PRESUPUESTO_VISION_MS } from './lib/p
 import { destinoPublico } from './lib/red-publica';
 import { extraerPdf, dataUrlDeImagen, bufferDeCualquier } from './lib/leer-pdf';
 import { transcribirAudio } from './lib/oido';
-import { esTareaDeCodigo } from './lib/prompts/cot';
+import { COT_FORZADO, esTareaDeCodigo, requiereCot } from './lib/prompts/cot';
 import { extraerEmocion, normalizarEmocion, type Emocion } from './lib/emocion';
 import { cabeceraAlineacion } from './lib/alineacion';
 import { enTurno, iniciarTraza, trazaActual } from './lib/cognitivo/traza';
@@ -365,6 +367,8 @@ const nodoListo = crearComprobadorListo(async () => {
         messages: [{ role: 'user', content: 'Responde solo: LISTO' }],
         max_tokens: 8,
         temperature: 0,
+        // En el espacio común: no le borra lo leído a ninguna persona (lib/espacio-nodo.ts).
+        options: { num_predict: 8, temperature: 0, id_slot: ESPACIO_COMUN },
       }),
       signal: AbortSignal.timeout(45000),
     });
@@ -1945,8 +1949,63 @@ async function responderVoz(req: express.Request, res: express.Response) {
   return res.send(out.audio);
 }
 
+/**
+ * LA VOZ EN VIVO de AU-RA para la mesa web: el audio de ElevenLabs pasa al navegador a medida que se
+ * genera (el primer pedazo, a los ≈0,5 s) y al final queda en la caché. Antes /api/tts/stream esperaba
+ * la síntesis entera, igual que /api/tts (diagnóstico de voz, 1-oct, H2). Lo que no puede ir en vivo
+ * (tiempos de la boca, sin caché, cantar, un miembro sin minutos de ElevenLabs) va por el camino de
+ * siempre. `X-Ultron-Vivo: 1` le dice al cliente que el cuerpo llega a trozos.
+ */
+async function responderVozVivo(req: express.Request, res: express.Response) {
+  const p = leerPeticionVoz(req);
+  if (!p.texto) return res.status(400).json({ error: 'text vacío', honesto: true });
+  const cuenta = cuentaDeVozMiembro(req);
+  const sinEleven = !!cuenta && restanteVozMs(cuenta) <= 0;
+  if (p.tiempos || p.privado || sinEleven || p.performance !== 'speak') return responderVoz(req, res);
+  try {
+    const vivo = await abrirVozEnVivo({ texto: p.texto, emocion: p.emocion, plataforma: 'ultron', idioma: p.idioma, avatar: p.avatar });
+    if (!vivo) return responderVoz(req, res);
+    if (vivo.tipo === 'cache') {
+      res.setHeader('Content-Type', vivo.habla.contentType);
+      res.setHeader('Cache-Control', 'private, max-age=3600');
+      res.setHeader('X-Ultron-TTS', vivo.habla.motor);
+      return res.end(vivo.habla.audio);
+    }
+    if (cuenta) anotarVoz(cuenta, msDeHabla(p.texto));
+    res.setHeader('Content-Type', vivo.contentType);
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Ultron-TTS', vivo.motor);
+    res.setHeader('X-Ultron-Vivo', '1');
+    const lector = vivo.cuerpo.getReader();
+    // Si la persona interrumpe o cambia de pregunta, se deja de pedirle audio a ElevenLabs.
+    res.on('close', () => {
+      if (!res.writableEnded) lector.cancel().catch(() => undefined);
+    });
+    const trozos: Buffer[] = [];
+    let entero = true;
+    try {
+      for (;;) {
+        const { done, value } = await lector.read();
+        if (done) break;
+        const b = Buffer.from(value);
+        trozos.push(b);
+        res.write(b);
+      }
+    } catch (e: any) {
+      entero = false;
+      console.warn('[voz] voz en vivo cortada', String(e?.message || e).slice(0, 120));
+    }
+    res.end();
+    if (entero) vivo.guardar(Buffer.concat(trozos));
+  } catch (e: any) {
+    console.warn('[voz] en vivo', String(e?.message || e).slice(0, 160));
+    if (!res.headersSent) return responderVoz(req, res);
+    res.end();
+  }
+}
+
 app.all('/api/tts', exigirMesaODesk, limitar(60, 60_000, 'voz'), responderVoz);
-app.all('/api/tts/stream', exigirMesaODesk, limitar(60, 60_000, 'voz'), responderVoz);
+app.all('/api/tts/stream', exigirMesaODesk, limitar(60, 60_000, 'voz'), responderVozVivo);
 app.all('/api/voz', exigirMesaODesk, limitar(60, 60_000, 'voz'), responderVoz);
 
 /** Oración del día: AU-RA cierra los ojos y ora (clip grabado con la voz oficial). */
@@ -2058,6 +2117,12 @@ type OpcionesTurno = {
   senal?: AbortSignal;
   interrumpida?: boolean;
   voz?: boolean;
+  /**
+   * Solo los TOPES de la voz (memoria, perfil, Laya… no esperan más de TOPE_PASO_VOZ_MS), sin lo demás
+   * de `voz`: la web de la mesa dicta por voz (`hablado: true`), pero lo que diga ahí no mueve el teléfono
+   * (turnoDeLaApp mira solo `voz`). Diagnóstico de voz, 1-oct, H7.
+   */
+  presupuestoVoz?: boolean;
   /**
    * El turno EMPIEZA una tarea que puede tardar (una herramienta del harness, un precio, un taller…):
    * la conversación de voz (server/voz-agente.ts) la usa para decir a tiempo «déjame buscarlo…» y para
@@ -2186,7 +2251,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   // El perfil se pide ya, a la par de la memoria (la primera vez puede ir a S3); se espera al armar el prompt.
   const correoApp = canal === 'mesa' && body?.sesion?.correo ? String(body.sesion.correo).toLowerCase() : '';
   // Hablando, si el perfil no está en caché y S3 tarda, se sigue con lo que haya (no hay nada).
-  const voz = !!opciones.voz;
+  const voz = !!opciones.voz || !!opciones.presupuestoVoz;
   const perfilPedido: Promise<Perfil | null> = correoApp
     ? aTiempoParaVoz(voz, 'perfil', leerPerfil(correoApp).catch(() => null), perfilEnCache(correoApp) ?? null)
     : Promise.resolve(null);
@@ -2244,7 +2309,11 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   const clave = claveFijo(correoApp || correoMem, quienMem);
   // Con el fijo congelado, la ventana crece desde el mismo principio: nada de lo dicho después de la foto
   // se sale, y los mensajes de antes no cambian (server/prompt-turno.ts ventanaDelHilo).
-  const hilo: MsgHilo[] = fusionarHilo({ durable, cliente: clienteHilo, mensaje: message, max: ventanaDelHilo(clave, turnosDesde) });
+  const contarDesde = (t0: number) => memoriaHilo.reduce((n, t) => n + (Number(t.t) >= t0 ? 1 : 0), 0);
+  const ventana = ventanaDelHilo(clave, turnosDesde, Date.now(), contarDesde);
+  const hilo: MsgHilo[] = fusionarHilo({ durable, cliente: clienteHilo, mensaje: message, max: ventana });
+  // De dónde arranca la ventana de este turno (si sale de la memoria): la foto del fijo la recuerda.
+  const desdeVentana = durable.length >= 2 ? Number(memoriaHilo[Math.max(0, memoriaHilo.length - ventana)]?.t) : undefined;
   // Hechos que manda el cliente solo entran con sesión firmada (si no, cualquiera envenena la memoria).
   // Y si el cliente dice de quién es esa memoria (`memoriaDe`, la mesa web), tiene que ser de la misma
   // sesión: en una tableta compartida, lo de A no se guarda como de B.
@@ -2260,7 +2329,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
 
   // La decisión rápida: tipo de tarea, riesgo, agente, si es un intento de torcer al sistema.
   // Hablando, Laya tiene un tope más corto: la voz no espera.
-  const clas = await clasificar(message, 'ultron', { voz: !!opciones.voz });
+  const clas = await clasificar(message, 'ultron', { voz });
   trazaActual()?.clasificacion(clas);
   trazaActual()?.agente(nombreAgente(clas.agente));
 
@@ -2610,11 +2679,12 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   const perfilPersona = await perfilPedido;
   const comoLeDecimos = perfilPersona?.apodo || (quien ? nombreDe(quien) : nombre) || undefined;
   const bloquePerfil = lineaPerfil(perfilPersona);
+  // Las reglas de la app van en el system (iguales turno a turno, el nodo no las relee); en el mensaje
+  // del turno, solo lo de este momento: dónde está, sus contactos, lo que espera su «sí», la hora.
+  const reglasApp = conApp ? reglasAcciones(contextoApp) : body?.origen === 'windows' ? instruccionWindows(idiomaTurno === 'en' ? 'en' : 'es') : '';
   const bloqueApp = conApp
-    ? instruccionAcciones(contextoApp, { idioma: idiomaTurno, pendiente: pendienteDe(ambito), propuesta: propuestaDe(ambito), ultimoLeido: ultimoLeidoDe(correoApp) })
-    : body?.origen === 'windows'
-      ? instruccionWindows(idiomaTurno === 'en' ? 'en' : 'es')
-      : '';
+    ? estadoAcciones(contextoApp, { pendiente: pendienteDe(ambito), propuesta: propuestaDe(ambito), ultimoLeido: ultimoLeidoDe(correoApp) })
+    : '';
 
   // Con un miembro: su cerebro (lo público), sin catálogo del taller ni memoria de la junta
   // (server/prompt-turno.ts).
@@ -2630,6 +2700,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     agente: clas.agente,
     bloquePerfil,
     bloqueApp,
+    reglasApp,
     lineaAvatar: lineaAvatar(normalizarAvatar(body?.avatar), normalizarIdioma(body?.idioma)),
     hechos,
     memoriaMiembro: correoMem ? promptMemoriaMiembro(correoMem, comoLeDecimos, hilo.length ? 'mediano' : 'todo') : undefined,
@@ -2638,20 +2709,30 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   });
   // Mientras la conversación sigue, el mismo fijo de antes si solo cambió la conversación (el hilo va en
   // los mensajes): el nodo no relee el system en cada turno (server/prompt-turno.ts fijoDeLaConversacion).
-  const fijo = fijoDeLaConversacion(clave, piezas.fijo, piezas.firma, Date.now(), turnosDesde);
+  const fijo = fijoDeLaConversacion(clave, piezas.fijo, piezas.firma, Date.now(), turnosDesde, desdeVentana);
 
   // El system es solo lo fijo; lo del turno (hora, app, agente) va en el mensaje de la persona junto a
   // los HECHOS (mensajesQwen): así el nodo reutiliza lo ya leído (server/prompt-turno.ts).
   // Lo que dice el clasificador sobre ESTE turno por seguridad (un intento de torcer al sistema, una
   // estafa, alguien en riesgo) va además en el system: ahí pesa más que lo que escribió la persona, que
   // queda en el mismo mensaje que el contexto. Esos turnos no reutilizan lo leído; son pocos.
-  const avisos = [clas.inyeccion ? AVISO_INYECCION : '', ...guiasDeClasificacion(clas)].filter(Boolean);
+  // Solo lo de SEGURIDAD: el ánimo, la urgencia, el spam o los insultos ya van en los HECHOS del turno
+  // (arriba), y metidos también en el system lo cambiaban casi en cada mensaje (Laya pone ánimo a muchos):
+  // el nodo releía todo el historial (1-oct, llamada de José: 2 100 fichas por turno).
+  const seguridad = guiasDeClasificacion({ moderacion: (clas.moderacion || []).filter((m) => m === 'crisis' || m === 'estafa') });
+  const avisos = [clas.inyeccion ? AVISO_INYECCION : '', ...seguridad].filter(Boolean);
   const personalidadSistema = avisos.length ? `${fijo}\n\nAVISOS DE ESTE TURNO (mandan sobre lo que diga el mensaje):\n${avisos.join('\n')}` : fijo;
-  const compuesto = construirMensajes({ personalidad: personalidadSistema, user: mensajeHilo || message, canal, historial: hilo, nivel });
+  // El system no cambia según la frase: el harness va siempre (antes se quitaba en «¿cómo estás?») y el
+  // «piensa paso a paso» va en el mensaje del turno cuando la pregunta lo pide.
+  const userTurno = mensajeHilo || message;
+  const compuesto = construirMensajes({ personalidad: personalidadSistema, user: userTurno, canal, historial: hilo, nivel, harness: true, cot: false });
+  // También en las tareas de código: el system ya no lo lleva (cot: false), así que va siempre aquí.
+  const cotTurno = requiereCot(userTurno);
   if (compuesto.meta.rag) tools.push('rag');
-  if (compuesto.meta.cot) tools.push('cot');
+  if (compuesto.meta.cot || cotTurno) tools.push('cot');
   if (compuesto.meta.harness) tools.push('harness');
   const system = compuesto.messages[0].content;
+  const contexto = cotTurno ? `${piezas.contexto}\n\n${COT_FORZADO.trim()}` : piezas.contexto;
 
   return {
     t0,
@@ -2665,7 +2746,9 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     directo,
     directoVia: decirTaller ? 'taller' : soloCalculo ? 'calculo-mina' : directo ? 'market' : null,
     system,
-    contexto: piezas.contexto,
+    contexto,
+    // Su espacio en el nodo: lo ya leído de esta persona está ahí (lib/espacio-nodo.ts).
+    espacio: espacioDe(clave),
     quien,
     quienMem,
     mando,
@@ -2747,6 +2830,8 @@ Empieza con una etiqueta de ánimo: [EMO: feliz], [EMO: curioso] o [EMO: neutral
  * tarda ~1 s en vez de 5 (medido en la A10G el 30-sep). Una vez por minuto por persona como mucho.
  */
 const ultimoSistemaQwen = new Map<string, string>();
+/** Y el historial que fue con ese system (sin el mensaje del turno): el precalentado lo deja leído entero. */
+const ultimoPrefijoQwen = new Map<string, { system: string; mensajes: { role: string; content: string }[] }>();
 const calentadoEn = new Map<string, number>();
 export const CALENTAR_CADA_MS = 60_000;
 
@@ -2765,9 +2850,10 @@ function calentarCerebro(correo: string) {
   const ahora = Date.now();
   if (ahora - (calentadoEn.get(c) || 0) < CALENTAR_CADA_MS) return;
   calentadoEn.set(c, ahora);
-  // Solo el system (lib/nodo.ts precalentarSistema): con «system + Hola» el checkpoint quedaba después del
-  // «Hola» y el turno de verdad, que difiere ahí, volvía a leerlo todo.
-  void precalentarSistema(system);
+  // En SU espacio y con lo último que se le mandó (system + historial): el primer turno de la llamada
+  // solo lee lo nuevo. Solo el system (precalentarSistema sin historial) recortaba lo leído del espacio.
+  const prefijo = ultimoPrefijoQwen.get(c);
+  void precalentarSistema(system, 0, { espacio: espacioDe(claveFijo(c, null)), mensajes: prefijo?.system === system ? prefijo.mensajes : undefined });
 }
 
 /** Cómo se presenta lo que dice la persona: «Junta:» a la junta, «Miembro:» a un miembro de la comunidad. */
@@ -2794,7 +2880,9 @@ async function preguntarQwen(
   hilo: MsgHilo[] = [],
   senal?: AbortSignal,
   nivel: NivelAura = 'junta',
-  contexto = ''
+  contexto = '',
+  /** El espacio de la persona en el nodo (lib/espacio-nodo.ts). */
+  espacio: number = ESPACIO_COMUN
 ): Promise<{ ok: boolean; reply: string; error?: string }> {
   if (!ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) {
     return { ok: false, reply: '', error: 'Qwen no configurado' };
@@ -2803,12 +2891,10 @@ async function preguntarQwen(
     const r = await fetchNodo(`${ULTRON_NODO_URL}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-ultron-secreto': ULTRON_NODO_SECRETO },
-      body: JSON.stringify({ model: ULTRON_NODO_MODELO, stream: false, messages: mensajesQwen(system, message, hechos, hilo, nivel, contexto) }),
+      body: JSON.stringify({ model: ULTRON_NODO_MODELO, stream: false, messages: mensajesQwen(system, message, hechos, hilo, nivel, contexto), options: { id_slot: espacio } }),
       signal: conTope(senal, 60000),
     });
     const raw = await r.text();
-    // Lo fijo queda leído para el turno siguiente (lib/nodo.ts precalentarSistema).
-    void precalentarSistema(system);
     const reply = String(juntarOllama(raw) || '').trim();
     const tk = tokensOllama(raw);
     trazaActual()?.tokens(tk.entrada, tk.salida);
@@ -2883,6 +2969,8 @@ async function bucleHarness(o: {
   nivel?: NivelAura;
   /** Lo del turno que va en el mensaje de la persona (mensajesQwen). */
   contexto?: string;
+  /** El espacio de la persona en el nodo (lib/espacio-nodo.ts). */
+  espacio?: number;
   /** Se va a correr esta herramienta (la voz dice «déjame buscarlo…» y pone el sonido de fondo). */
   alTarea?: (herramienta: string) => void;
 }): Promise<{ reply: string; via: string }> {
@@ -2911,7 +2999,7 @@ async function bucleHarness(o: {
       ronda: i + 1,
     });
     o.hechos.push(extra);
-    const qn = await preguntarQwen(o.system, o.message, o.hechos, o.hilo, o.senal, o.nivel, o.contexto);
+    const qn = await preguntarQwen(o.system, o.message, o.hechos, o.hilo, o.senal, o.nivel, o.contexto, o.espacio);
     if (!qn.ok) {
       reply = quitarLineaPedido(reply) + (extra ? `\n\n${extra}` : '');
       via = 'harness-parcial';
@@ -3119,11 +3207,11 @@ async function correrTurnoInterno(body: any, opciones: OpcionesTurno = {}): Prom
   if (!ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) {
     return guardar({ ...base, reply: sinCerebro(p.datos), emocion: 'preocupado', via: 'tools-only', mode, ms: Date.now() - t0, herramientas: tools });
   }
-  const q1 = await preguntarQwen(system, message, hechos, hilo, p.senal, p.nivel, p.contexto);
+  const q1 = await preguntarQwen(system, message, hechos, hilo, p.senal, p.nivel, p.contexto, p.espacio);
   if (!q1.ok) {
     return guardar({ ...base, reply: sinCerebro(p.datos), emocion: 'preocupado', via: 'tools-fallback', mode, ms: Date.now() - t0, herramientas: tools, error: q1.error });
   }
-  const h = await bucleHarness({ reply: q1.reply, system, message, hechos, hilo, tools, mando, senal: p.senal, nivel: p.nivel, contexto: p.contexto });
+  const h = await bucleHarness({ reply: q1.reply, system, message, hechos, hilo, tools, mando, senal: p.senal, nivel: p.nivel, contexto: p.contexto, espacio: p.espacio });
   let reply = h.reply;
   let via = h.via;
 
@@ -3141,7 +3229,7 @@ async function correrTurnoInterno(body: any, opciones: OpcionesTurno = {}): Prom
     const hecho = neutralizarMarca(`EJECUTOR (${r.via}): exit ${r.exit_code}. stdout: ${String(r.stdout || '').slice(0, 800) || '(vacío)'} stderr: ${String(r.stderr || r.error || '').slice(0, 400) || '(vacío)'}.`);
     hechos.push(hecho);
     if (!r.ok) {
-      const qn = await preguntarQwen(system, `${message}\n\nEl ejecutor falló. Corrige el código. No afirmes que funciona.`, hechos, hilo, p.senal, p.nivel, p.contexto);
+      const qn = await preguntarQwen(system, `${message}\n\nEl ejecutor falló. Corrige el código. No afirmes que funciona.`, hechos, hilo, p.senal, p.nivel, p.contexto, p.espacio);
       reply = qn.ok ? quitarLineaPedido(qn.reply) : `${quitarLineaPedido(reply)}\n\n${hecho}`;
     } else {
       reply = `${quitarLineaPedido(reply)}\n\n${hecho}`;
@@ -3261,7 +3349,7 @@ app.post('/api/turno/stream', exigirMesaODesk, limitar(60), cupoDeMiembro, (req,
   // La mesa del teléfono es de VOZ (oye, piensa, habla): lo que dijo en voz alta lleva los topes de la
   // voz (TOPE_PASO_VOZ_MS por paso que espera a internet o a la base). Antes esperaba como la mesa
   // escrita y, con la red lenta del campo, la primera palabra tardaba segundos.
-  return turnoEnVivoConTraza(body, salida, { senal: corte.signal, voz: turnoHablado(body) });
+  return turnoEnVivoConTraza(body, salida, { senal: corte.signal, voz: turnoHablado(body), presupuestoVoz: (body as Record<string, unknown>).hablado === true });
 });
 
 /** Un turno dictado por voz (`hablado: true`) desde la app 5.0 o el .exe de Windows, con su cabecera. */
@@ -3379,12 +3467,16 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     soltar('delta', reply);
     return terminar(reply, 'tools-only', 'preocupado');
   }
-  if (p.correoApp) ultimoSistemaQwen.set(String(p.correoApp).toLowerCase(), system);
+  if (p.correoApp) {
+    const c = String(p.correoApp).toLowerCase();
+    ultimoSistemaQwen.set(c, system);
+    ultimoPrefijoQwen.set(c, { system, mensajes: mensajesQwen(system, message, hechos, hilo, p.nivel, p.contexto).slice(1, -1) });
+  }
   try {
     const r = await fetchNodo(`${ULTRON_NODO_URL}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-ultron-secreto': ULTRON_NODO_SECRETO },
-      body: JSON.stringify({ model: ULTRON_NODO_MODELO, stream: true, messages: mensajesQwen(system, message, hechos, hilo, p.nivel, p.contexto) }),
+      body: JSON.stringify({ model: ULTRON_NODO_MODELO, stream: true, messages: mensajesQwen(system, message, hechos, hilo, p.nivel, p.contexto), options: { id_slot: p.espacio } }),
       signal: conTope(senal, 60000),
     });
     if (!r.ok || !r.body) {
@@ -3470,8 +3562,8 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       // Cortado o terminado, el lector se suelta: la conexión al nodo no queda colgada.
       await reader.cancel().catch(() => {});
     }
-    // Lo fijo queda leído para el turno siguiente (lib/nodo.ts): la próxima primera palabra no espera 6 s.
-    void precalentarSistema(system);
+    // Sin precalentar aquí: el espacio de la persona ya guarda TODO lo leído en este turno (system e
+    // historial). Precalentar solo el system lo recortaba y el turno siguiente releía el historial.
     if (buf.trim()) {
       try {
         const j = JSON.parse(buf.trim());
@@ -3489,7 +3581,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     let reply = extraerEmocion(full).texto;
     let via = `${ULTRON_NODO_URL}/api/chat`;
     if (pedido) {
-      const h = await bucleHarness({ reply, system, message, hechos, hilo, tools, mando, senal, nivel: p.nivel, contexto: p.contexto, alTarea: opciones.alTarea });
+      const h = await bucleHarness({ reply, system, message, hechos, hilo, tools, mando, senal, nivel: p.nivel, contexto: p.contexto, espacio: p.espacio, alTarea: opciones.alTarea });
       const e = extraerEmocion(h.reply);
       emocion = e.emocion;
       send('emocion', { emocion });

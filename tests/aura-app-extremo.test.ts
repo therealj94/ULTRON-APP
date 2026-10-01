@@ -33,7 +33,7 @@ const { hoyMMDD } = await import('../lib/perfil-persona');
 
 /* ------------------------------------------------------------------ los falsos */
 
-type Pedido = { system: string; soloSystem: string; ultimo: string; stream: boolean };
+type Pedido = { system: string; soloSystem: string; ultimo: string; stream: boolean; todo: { role: string; content: string }[]; espacio?: number };
 const alNodo: Pedido[] = [];
 /** Qué contesta el 27B según lo que dijo la persona (el texto después de «Junta: »). */
 let contestar: (dicho: string) => string = () => '[EMO: neutral] Claro. Te cuento lo que sé.';
@@ -56,7 +56,7 @@ const nodo = http.createServer((req, res) => {
     const dicho = ultimo.split('\n\nJunta: ').pop() || '';
     // `system` es todo lo que el modelo recibe como instrucciones: el system (lo fijo) y el contexto del
     // turno, que va en el mensaje de la persona (server/prompt-turno.ts, para que el nodo reutilice lo leído).
-    alNodo.push({ system: `${String(msgs[0]?.content || '')}\n${ultimo}`, soloSystem: String(msgs[0]?.content || ''), ultimo, stream: !!j.stream });
+    alNodo.push({ system: `${String(msgs[0]?.content || '')}\n${ultimo}`, soloSystem: String(msgs[0]?.content || ''), ultimo, stream: !!j.stream, todo: msgs.map((m: any) => ({ role: String(m.role), content: String(m.content) })), espacio: j.options?.id_slot });
     const respuesta = contestar(dicho);
     if (!j.stream) return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ message: { content: respuesta } }));
     res.writeHead(200, { 'content-type': 'application/x-ndjson' });
@@ -90,6 +90,15 @@ const laya = http.createServer((req, res) => {
     const j = JSON.parse(c || '{}');
     alLaya.push(`${req.url} ${j.texto}`);
     const accion = /no me hables tanto|deja la habladera/.test(j.texto) ? 'callar' : 'ninguna';
+    // «harto»: Laya le pone ánimo molesto (el aviso de ánimo no puede cambiar el system).
+    const etiquetas = /harto/.test(String(j.texto || '')) ? ['molesto'] : [];
+    // El modelo `mensaje` (el clasificador del turno): solo contesta de verdad a «harto»; lo demás, a reglas.
+    if (req.url?.endsWith('/v1/mensaje')) {
+      if (!etiquetas.length) return res.writeHead(503).end();
+      return res
+        .writeHead(200, { 'content-type': 'application/json' })
+        .end(JSON.stringify({ p: { tarea_conversacion: 0.9, molesto: 0.95, razonar: 0.9 }, etiquetas, grupos: { tarea: 'tarea_conversacion' } }));
+    }
     res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ p: { [accion]: 0.92, ninguna: accion === 'ninguna' ? 0.92 : 0.03 }, etiquetas: [], grupos: { accion } }));
   });
 });
@@ -464,6 +473,9 @@ test('las acciones van solo al aparato que hizo el turno; la web de la mesa no m
     assert.deepEqual(web.acciones, []);
     assert.ok(!/ACCION_APP/.test(web.reply));
     assert.doesNotMatch(alNodo.at(-1)!.system, /APP \(puedes manejar la app/, 'a la web no se le enseñan las reglas de la app');
+    // Dictado en la web (hablado: true): lleva los topes de la voz, pero tampoco mueve el teléfono.
+    const webHablado = await (await fetch(`${BASE}/api/turno/stream`, { method: 'POST', headers: hTurno({ web: true }), body: JSON.stringify({ message: 'vete atrás', hablado: true }) })).text();
+    assert.doesNotMatch(webHablado, /"tipo":"atras"/, 'la web dictada no manda acciones al teléfono');
     await new Promise((res) => setTimeout(res, 100));
     assert.ok(![...telA.acciones(), ...telB.acciones()].some((a) => a.tipo === 'atras'));
   } finally {
@@ -1058,12 +1070,82 @@ test('un miembro de la comunidad (fuera del padrón): lo público, sin taller ni
   assert.equal(sesJunta.user.nivel, 'junta');
 });
 
-test('después de un turno, el servidor deja leído en el nodo el MISMO system que usó (precalentar)', { skip: !listo }, async () => {
+test('después de un turno NO se precalienta solo el system: recortaría lo leído del espacio de la persona', { skip: !listo }, async () => {
+  // El espacio de la persona (lib/espacio-nodo.ts) ya guarda todo lo leído en el turno (system e historial).
+  // Precalentar solo el system lo recortaba y el turno siguiente releía el historial entero.
   alNodo.length = 0;
   precalentados.length = 0;
   contestar = () => '[EMO: neutral] Listo, aquí estoy.';
   await turno('explícame cómo va el proyecto de la planta de beneficio este trimestre');
-  for (let i = 0; i < 20 && precalentados.length === 0; i++) await new Promise((r) => setTimeout(r, 50));
-  assert.ok(precalentados.length >= 1, 'no precalentó');
-  assert.equal(precalentados.at(-1), alNodo.at(-1)!.soloSystem);
+  await new Promise((r) => setTimeout(r, 300));
+  assert.ok(alNodo.length >= 1, 'el turno llegó al 27B');
+  assert.equal(precalentados.length, 0, 'sin precalentado después del turno');
+});
+
+// Al final: deja memoria y la foto del fijo de la persona (cambia el hilo de las pruebas de después).
+test('en una llamada con frases de todo tipo, cada turno manda el mismo prompt de antes más lo nuevo (el nodo no relee)', { skip: !listo }, async () => {
+  // 1-oct, llamada de José: el nodo releía ~2 100 fichas por turno. El system cambiaba según la frase:
+  // el aviso de ánimo de Laya, el harness que se quitaba en «¿cómo estás?» y el «paso a paso».
+  contestar = (d) => (/recuerdes/.test(d) ? '[EMO: neutral] Listo, te llamo a las 7:45 de la noche.' : '[EMO: neutral] Claro, te cuento.');
+  // Con el teléfono conectado, como en la llamada de José: las reglas de la app (≈2 000 fichas) iban en
+  // el mensaje de cada turno.
+  const tel = await canal();
+  const r = await fetch(`${BASE}/api/app/contexto`, {
+    method: 'POST',
+    headers: h(),
+    body: JSON.stringify({ pantalla: 'mesa', contactos: [{ correo: 'beto@x.com', nombre: 'Beto Pérez' }, { correo: 'mama@x.com', nombre: 'Mamá' }], manos: ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame'] }),
+  });
+  assert.equal(r.status, 200);
+  const pase = paseDe();
+  const hilo: { role: string; content: string }[] = [{ role: 'user', content: '[[llamada]]' }, { role: 'assistant', content: '¡Hola, hola! Ya te tengo en la línea. ¿De qué hablamos?' }];
+  const pedidos: Pedido[] = [];
+  for (const dicho of [
+    '¿Cómo estás?',
+    'Bien, bien, bien. Aquí. Necesito que me ayudes en unas cosas. Buscar en internet.',
+    'Ya me tienes harto, la llamada se corta a cada rato, explícame qué pasa con la planta',
+    'Analiza paso a paso cuánto oro sale de cien toneladas a dos gramos por tonelada',
+    'Y fíjate que mañana tengo reunión con la junta, ¿qué me sugieres preparar?',
+    'Cuéntame un chiste corto',
+  ]) {
+    alNodo.length = 0;
+    hilo.push({ role: 'user', content: dicho });
+    const v = await voz(pase, hilo);
+    assert.equal(v.status, 200, dicho);
+    pedidos.push(...alNodo.filter((x) => x.stream));
+    hilo.push({ role: 'assistant', content: v.dicho });
+  }
+  assert.ok(pedidos.length >= 4, `llegaron ${pedidos.length} turnos al 27B`);
+  // Todos los turnos de la persona van a SU espacio del nodo (lib/espacio-nodo.ts).
+  assert.equal(new Set(pedidos.map((p) => p.espacio)).size, 1, 'siempre el mismo espacio');
+  assert.ok(Number.isInteger(pedidos[0].espacio), 'el espacio viaja en options.id_slot');
+  const sinUltimo = (p: Pedido) => p.todo.slice(0, -1).map((m) => `<${m.role}>${m.content}`).join('');
+  const todo = (p: Pedido) => p.todo.map((m) => `<${m.role}>${m.content}`).join('');
+  for (let i = 1; i < pedidos.length; i++) {
+    assert.equal(pedidos[i].todo[0].content, pedidos[0].todo[0].content, `turno ${i + 1}: el mismo system`);
+    // Todo lo de antes (system e historial) sigue igual: solo se agrega lo nuevo al final.
+    assert.ok(todo(pedidos[i]).startsWith(sinUltimo(pedidos[i - 1])), `turno ${i + 1}: lo de antes no cambia`);
+  }
+  // El paso a paso sigue llegando, en el mensaje del turno.
+  assert.ok(pedidos.some((p) => /PASOS OBLIGATORIOS/.test(p.ultimo.split('HECHOS DE ESTE TURNO')[0])), 'el paso a paso va en el mensaje del turno');
+  assert.ok(pedidos.every((p) => !/PASOS OBLIGATORIOS/.test(p.soloSystem)), 'y no en el system');
+  // Las reglas de la app, en el system; en el mensaje del turno solo lo de este momento.
+  assert.match(pedidos[0].soloSystem, /ACCION_APP: \{"tipo":"atras"\}/);
+  assert.match(pedidos[0].soloSystem, /MANOS \(también puedes/);
+  assert.doesNotMatch(pedidos[0].soloSystem, /AHORA en Honduras: |CONTACTOS \(a quién|DÓNDE ESTÁ \(/);
+  assert.match(pedidos[0].ultimo, /AHORA en Honduras/);
+  assert.match(pedidos[0].ultimo, /CONTACTOS \(a quién puede escribirle[^)]*\): Beto Pérez, Mamá/);
+  assert.doesNotMatch(pedidos[0].ultimo, /ACCION_APP: \{"tipo":"atras"\}/);
+  const ctxTurno = pedidos[0].ultimo.split('HECHOS DE ESTE TURNO')[0];
+  assert.ok(ctxTurno.length < 2_500, `lo del turno es corto (${ctxTurno.length} letras)`);
+  await tel.cerrar();
+  await fetch(`${BASE}/api/app/contexto`, { method: 'POST', headers: h(), body: JSON.stringify({ pantalla: 'mesa', contactos: [], manos: [] }) });
+});
+
+test('una tarea de código que pide paso a paso recibe el «paso a paso» en el mensaje del turno (Codex en #99)', { skip: !listo }, async () => {
+  alNodo.length = 0;
+  contestar = () => '[EMO: neutral] PASO 1: reviso la función.';
+  await turno('debuguea esta recursión paso a paso: def f(n): return f(n - 1)');
+  const p = alNodo.filter((x) => x.stream).at(-1) || alNodo.at(-1);
+  assert.ok(p, 'llegó al 27B');
+  assert.match(p!.ultimo.split('HECHOS DE ESTE TURNO')[0], /PASOS OBLIGATORIOS/);
 });

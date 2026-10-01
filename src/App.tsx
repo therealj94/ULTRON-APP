@@ -6,7 +6,8 @@ import { caraDeTexto } from './02-cara/emocion';
 import { DockDrawer, SettingsSheet, nombreModo, Arranque, AccesoModal, UltronVaultModal, VisionOverlay, PhotoCaptureModal, CameraCountdownModal, MenuMas } from './07-pantallas';
 import type { Escena } from './02-cara/vision/escena';
 import { playSfx } from './03-voz/audio';
-import { hablar, cantar, callar, setVozActiva, type Dicho } from './03-voz/hablar';
+import { hablar, cantar, callar, precargar, setVozActiva, type Dicho } from './03-voz/hablar';
+import { cortarFrases } from './03-voz/frases';
 import { onLip, desbloquearAudio, audioDesbloqueado } from './03-voz/player';
 import { clipDeEmocion, clipDeTexto, saludoDe, saludoHora, siguienteChiste } from './03-voz/banco';
 import { useOido } from './03-voz/useOido';
@@ -277,6 +278,9 @@ export default function App() {
     while (colaRef.current.length) {
       const item = colaRef.current.shift()!;
       const d = decir(item.texto, { emocion: item.emocion, sinBurbuja: false });
+      // La que sigue se pide mientras esta suena: entre frase y frase no queda el silencio de sintetizar.
+      const siguiente = colaRef.current[0];
+      if (siguiente) precargar(siguiente.texto, { emocion: siguiente.emocion });
       await d.fin;
     }
     colaActiva.current = false;
@@ -434,8 +438,12 @@ export default function App() {
 
   // ---- CEREBRO: un turno en stream. Emoción antes del texto; frases a la cola de voz.
   const turnoEnCurso = useRef<AbortController | null>(null);
+  /** El turno que viene lo dijo en voz alta (el oído), no lo escribió: el servidor le pone los topes de la voz. */
+  const habladoRef = useRef(false);
   const pensar = useCallback(
     async (cmd: string, o: { imagen?: string; accionId?: string } = {}) => {
+      const hablado = habladoRef.current;
+      habladoRef.current = false;
       turnoEnCurso.current?.abort();
       const ac = new AbortController();
       turnoEnCurso.current = ac;
@@ -465,10 +473,10 @@ export default function App() {
       let huboTexto = false;
       let emo: Emocion = 'neutral';
       const soltar = (final = false) => {
-        const partes = pendiente.split(/(?<=[.!?…])\s+/);
-        const listas = final ? partes : partes.slice(0, -1);
-        pendiente = final ? '' : partes[partes.length - 1] || '';
-        for (const p of listas) if (p.trim()) colaRef.current.push({ texto: p.trim(), emocion: emo });
+        // Frases cerradas ya (src/03-voz/frases.ts): la que terminó en punto sale sin esperar al siguiente trozo.
+        const { listas, resto } = cortarFrases(pendiente, final);
+        pendiente = resto;
+        for (const p of listas) colaRef.current.push({ texto: p, emocion: emo });
         if (colaRef.current.length) void bombear();
       };
       try {
@@ -481,6 +489,7 @@ export default function App() {
             usuario: usuario.name || undefined,
             // Solo si es reciente: una escena vieja como hecho es peor que ninguna.
             escena: Date.now() - escenaRef.current.ts < 12000 ? escenaRef.current.texto : undefined,
+            hablado,
             signal: ac.signal,
           },
           {
@@ -679,9 +688,10 @@ export default function App() {
    * espera Confirmar. Lo demás sigue por `comando`, igual que siempre.
    */
   const pedir = useCallback(
-    (raw: string) => {
+    (raw: string, hablado = false) => {
       const cmd = raw.trim();
       if (!cmd) return;
+      habladoRef.current = hablado;
       conv.persona(cmd);
       const accion = accionSensibleDe(cmd);
       if (accion) {
@@ -727,7 +737,7 @@ export default function App() {
     activo: micEnabled && !isBooting,
     onFinal: (t) => {
       setOyendo('');
-      pedir(t);
+      pedir(t, true);
     },
     onParcial: (t) => {
       showBubble(t, 2500);

@@ -39,7 +39,8 @@ import {
   dichoDePropuesta,
   dichoNegado,
   manoDe,
-  instruccionManos,
+  estadoManos,
+  reglasManos,
   limpiarDicho,
   manoPorReglas,
   MAX_LECTURA,
@@ -681,6 +682,16 @@ export function instruccionAcciones(
   ctx: ContextoApp | null,
   o: { idioma?: 'es' | 'en'; pendiente?: { para: string; texto: string } | null; propuesta?: Propuesta | null; ultimoLeido?: string | null; ahora?: number } = {}
 ): string {
+  return `${reglasAcciones(ctx)}\n${estadoAcciones(ctx, o)}`;
+}
+
+/**
+ * Las reglas de la app (qué acciones hay y cuándo se usan, y las manos que este teléfono sabe hacer). No
+ * cambian de un turno a otro: van en el system (server/prompt-turno.ts `reglasApp`) y el nodo no las
+ * relee. 1-oct, llamada de José: todo el bloque iba en el mensaje de cada turno y el nodo releía ~2 000
+ * fichas por turno.
+ */
+export function reglasAcciones(ctx: ContextoApp | null): string {
   const lineas = [
     'APP (puedes manejar la app de la persona): para hacer algo en su teléfono, escribe al final de tu respuesta UNA línea sola por acción, así:',
     'ACCION_APP: {"tipo":"atras"}',
@@ -690,6 +701,16 @@ export function instruccionAcciones(
     'Enviar SOLO si la persona lo confirma de forma explícita («sí», «envíalo», «mándalo») en el turno siguiente a oír el borrador: entonces enviar y di «¡Listo, enviado!». Aunque la orden de redactar diga «y mándalo», primero redacta y pregunta; nunca redactar y enviar en la misma respuesta. «Bórralo / no lo mandes» → descartar. Nunca envíes por tu cuenta.',
     'La línea ACCION_APP no se lee ni se dice: la hace la app. No expliques la línea ni la menciones.',
   ];
+  lineas.push(...reglasManos(ctx));
+  return lineas.join('\n');
+}
+
+/** Lo de este momento en la app: dónde está, sus contactos, lo que espera su «sí». Va en el mensaje del turno. */
+export function estadoAcciones(
+  ctx: ContextoApp | null,
+  o: { pendiente?: { para: string; texto: string } | null; propuesta?: Propuesta | null; ultimoLeido?: string | null; ahora?: number } = {}
+): string {
+  const lineas: string[] = [];
   if (ctx) {
     const nombres = ctx.contactos.slice(0, 80).map((c) => c.nombre);
     lineas.push(
@@ -703,7 +724,7 @@ export function instruccionAcciones(
   if (o.pendiente) lineas.push(`BORRADOR QUE ESPERA SU «SÍ»: para ${o.pendiente.para}: «${o.pendiente.texto.slice(0, 300)}».`);
   // Las manos nuevas, solo las que este teléfono sabe hacer (un APK viejo no ve ninguna).
   const leido = o.ultimoLeido ? ctx?.contactos.find((c) => c.correo === o.ultimoLeido)?.nombre || o.ultimoLeido : null;
-  lineas.push(...instruccionManos(ctx, { propuesta: o.propuesta, ultimoLeido: leido, ahora: o.ahora }));
+  lineas.push(...estadoManos(ctx, { propuesta: o.propuesta, ultimoLeido: leido, ahora: o.ahora }));
   return lineas.join('\n');
 }
 

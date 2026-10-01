@@ -5,7 +5,7 @@
  */
 
 import { FEW_SHOT_HONESTO } from './prompts/few-shot';
-import { COT_FORZADO, esTareaDeCodigo, requiereCot } from './prompts/cot';
+import { COT_FORZADO, pideCodigo, requiereCot } from './prompts/cot';
 import { HONESTIDAD_CONVERSACION, promptHonesto, TEXTO_TELEGRAM, VOZ_ESCRITORIO } from './prompts/honestidad';
 import { instruccionHarness } from './harness';
 import type { NivelAura } from './perfiles/tipos';
@@ -42,7 +42,8 @@ export function construirMensajes(opts: {
   delTurno?: string;
 }): { messages: ChatMessage[]; meta: MensajesMeta } {
   const user = String(opts.user || '').trim();
-  const codigo = esTareaDeCodigo(user);
+  // Solo un pedido de código cambia las instrucciones (pideCodigo); «analiza» solo es pensar con cuidado (cot).
+  const codigo = pideCodigo(user);
   const cot = opts.cot ?? requiereCot(user);
   const fewShot = opts.fewShot ?? codigo;
   const ragOn = opts.rag ?? codigo;

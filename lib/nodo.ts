@@ -32,10 +32,24 @@ const precalentados = new Map<string, number>();
  * turno siguiente (que difiere justo ahí) releía las ~6 000 fichas del system: 6,5 s antes de la primera
  * palabra. Con el system solo, el checkpoint queda donde termina y el turno siguiente lee solo lo nuevo
  * (medido el 1-oct: 0,4–0,6 s). Cuesta ~0,2 s si ya estaba leído. Nunca lanza.
+ *
+ * Se usa al TIMBRAR la llamada (server.ts calentarCerebro), en el espacio de la persona y con su último
+ * historial: así el primer turno lee solo lo nuevo. Después de un turno NO: con el espacio fijo de cada
+ * persona (lib/espacio-nodo.ts), ese espacio ya guarda todo lo leído, y dejarle solo el system recortaba
+ * el historial (el turno siguiente lo releía entero).
  */
-export async function precalentarSistema(system: string, minimoMs = 0): Promise<{ ok: boolean; leidas?: number; reusadas?: number; ms?: number } | null> {
+export async function precalentarSistema(
+  system: string,
+  minimoMs = 0,
+  /**
+   * `espacio`: el de la persona en el nodo (lib/espacio-nodo.ts), para que quede leído donde caerán sus
+   * turnos. `mensajes`: el historial que va después del system; si viene, queda leído también, y el turno
+   * siguiente solo lee lo nuevo.
+   */
+  o: { espacio?: number; mensajes?: { role: string; content: string }[] } = {}
+): Promise<{ ok: boolean; leidas?: number; reusadas?: number; ms?: number } | null> {
   if (!nodoConfigurado() || !system) return null;
-  const huella = createHash('sha1').update(system).digest('hex');
+  const huella = createHash('sha1').update(system).update(String(o.espacio ?? '')).update(JSON.stringify(o.mensajes || [])).digest('hex');
   const ahora = Date.now();
   if (minimoMs > 0 && ahora - (precalentados.get(huella) ?? 0) < minimoMs) return null;
   precalentados.set(huella, ahora);
@@ -44,7 +58,7 @@ export async function precalentarSistema(system: string, minimoMs = 0): Promise<
     const r = await fetchNodo(`${NODO_URL}/api/precalentar`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-ultron-secreto': NODO_SECRETO },
-      body: JSON.stringify({ system }),
+      body: JSON.stringify({ system, ...(o.mensajes?.length ? { mensajes: o.mensajes } : {}), ...(Number.isInteger(o.espacio) ? { id_slot: o.espacio } : {}) }),
       signal: AbortSignal.timeout(60_000),
     });
     if (!r.ok) return { ok: false };

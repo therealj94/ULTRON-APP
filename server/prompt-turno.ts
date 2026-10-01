@@ -29,7 +29,10 @@ export type PiezasTurno = {
   quienMem: MiembroId | null;
   agente?: string | null;
   bloquePerfil?: string;
+  /** Lo de este momento en la app (dónde está, contactos, lo que espera su «sí»): va en el mensaje del turno. */
   bloqueApp?: string;
+  /** Las reglas de la app (o de Windows): iguales turno a turno, van en lo fijo (el system). */
+  reglasApp?: string;
   /** La línea del avatar (solo en la mesa). */
   lineaAvatar?: string;
   hechos: string[];
@@ -79,10 +82,11 @@ ${perfil.conocimiento}
 ${recuerdos}
 ${miembro ? '' : `${hechosCatalogo()}\n`}`;
   const memoria = miembro && p.memoriaMiembro ? p.memoriaMiembro : promptMemoria(p.quienMem, { nivel: p.nivel, nombre: p.nombre, hilo: p.hiloEnMensajes ? 'mediano' : 'todo' });
-  const fijo = `${cabeza}${memoria}`;
+  const app = p.reglasApp?.trim() ? `\n\n${p.reglasApp.trim()}` : '';
+  const fijo = `${cabeza}${memoria}${app}`;
   // Lo fijo sin la conversación ni lo guardado solo: si esto no cambió, el system de antes sigue valiendo
   // (fijoDeLaConversacion).
-  const firma = `${cabeza}${miembro && p.memoriaMiembro ? p.memoriaMiembroFirma ?? p.memoriaMiembro : promptMemoria(p.quienMem, { nivel: p.nivel, nombre: p.nombre, hilo: 'firma' })}`;
+  const firma = `${cabeza}${miembro && p.memoriaMiembro ? p.memoriaMiembroFirma ?? p.memoriaMiembro : promptMemoria(p.quienMem, { nivel: p.nivel, nombre: p.nombre, hilo: 'firma' })}${app}`;
   const agente = promptAgente(p.agente, p.nivel);
   // Lo del turno sin los HECHOS (el turno los pone él mismo, y el harness les suma lo que devuelve cada
   // herramienta): va en el MENSAJE de la persona, no en el system (server.ts mensajesQwen).
@@ -127,7 +131,7 @@ export const CONGELAR_MAX_MS = 30 * 60_000;
  */
 export const CONGELAR_MAX_NUEVOS = 24;
 export const HILO_BASE = 16;
-const congelados = new Map<string, { fijo: string; firma: string; foto: number; creado: number; usado: number }>();
+const congelados = new Map<string, { fijo: string; firma: string; foto: number; creado: number; usado: number; desde?: number }>();
 
 /**
  * `turnosDesde(foto)`: cuántos turnos de la memoria de la persona se guardaron después de `foto`
@@ -138,7 +142,9 @@ export function fijoDeLaConversacion(
   fijo: string,
   firma: string,
   ahora = Date.now(),
-  turnosDesde?: (foto: number) => number
+  turnosDesde?: (foto: number) => number,
+  /** Cuándo se guardó el primer mensaje de la ventana del hilo de ESTE turno (ventanaDelHilo la mantiene). */
+  desde?: number
 ): string {
   if (!clave) return fijo;
   const c = congelados.get(clave);
@@ -153,7 +159,7 @@ export function fijoDeLaConversacion(
     return c.fijo;
   }
   congelados.delete(clave);
-  congelados.set(clave, { fijo, firma, foto: ahora, creado: ahora, usado: ahora });
+  congelados.set(clave, { fijo, firma, foto: ahora, creado: ahora, usado: ahora, ...(Number.isFinite(desde) ? { desde } : {}) });
   // Una por persona; las más viejas se van primero.
   while (congelados.size > 500) congelados.delete(congelados.keys().next().value as string);
   return fijo;
@@ -165,11 +171,21 @@ export function fijoDeLaConversacion(
  * (los mensajes de antes no cambian y el nodo los reutiliza) y nada de lo dicho después de la foto se
  * sale. Sin foto vigente, o pasada de CONGELAR_MAX_NUEVOS (se rehará), HILO_BASE.
  */
-export function ventanaDelHilo(clave: string, turnosDesde: (foto: number) => number, ahora = Date.now()): number {
+export function ventanaDelHilo(
+  clave: string,
+  turnosDesde: (foto: number) => number,
+  ahora = Date.now(),
+  /** Cuántos mensajes de la memoria se guardaron en o después de este instante. */
+  contarDesde?: (t: number) => number
+): number {
   const c = clave ? congelados.get(clave) : undefined;
   if (!c || ahora - c.usado >= CONGELAR_INACTIVA_MS || ahora - c.creado >= CONGELAR_MAX_MS) return HILO_BASE;
   const n = turnosDesde(c.foto);
-  return n <= CONGELAR_MAX_NUEVOS ? HILO_BASE + n : HILO_BASE;
+  if (n > CONGELAR_MAX_NUEVOS) return HILO_BASE;
+  // La ventana empieza en el mismo mensaje que cuando se tomó la foto (aunque ese turno la tuviera más
+  // larga que HILO_BASE): si no, al rehacerse la foto el principio se corría y el nodo releía el hilo.
+  if (c.desde !== undefined && contarDesde) return Math.max(1, contarDesde(c.desde));
+  return HILO_BASE + n;
 }
 
 /**
