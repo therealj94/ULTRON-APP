@@ -837,10 +837,22 @@ public static class Parametros
     static readonly Regex PulseMensaje = new(@"^(?:mandale|enviale|escribele|mandale un mensaje a|enviale un mensaje a|escribele un mensaje a|manda(?:le)? un mensaje a|dile a)\s+(?:a\s+)?(?<c>[a-z][a-z'-]{1,20}(?: [a-z][a-z'-]{1,20})?)\s+(?:que|diciendo que|diciendole que|:)\s+(?<t>.{1,500})$|^(?:text|message|tell)\s+(?<c>[a-z][a-z'-]{1,20})\s+(?:that\s+)?(?<t>.{1,500})$", O);
 
     /// <summary>«llamada|voz|karla», «llamada|video|karla», «mensaje|karla|ya voy» (el texto como se dijo), o null.</summary>
+    /// <summary>
+    /// «Mándale 10 ORIGEN a Beto», «envíale 2.5 AUKA a Karla», «send 10 origen to Beto», «pásale a Beto 10 origen».
+    /// La cantidad sale del texto original (la normalización parte «2.5» en «2 5»).
+    /// </summary>
+    static readonly Regex PulsePago = new(@"^(?:mandale|enviale|manda(?:le)?|envia(?:le)?|transfiere(?:le)?|pasale|pagale|deposita(?:le)?|send|transfer|pay)\s+(?:(?<m>\d+(?: \d+)*)\s+(?<s>" + Monedas + @")\s+(?:a|para|to)\s+(?<c>[a-z][a-z'-]{1,20}(?: [a-z][a-z'-]{1,20})?)|(?:a\s+)?(?<c>[a-z][a-z'-]{1,20}(?: [a-z][a-z'-]{1,20})?)\s+(?<m>\d+(?: \d+)*)\s+(?<s>" + Monedas + @"))$", O);
+
     public static string? Pulse(string texto)
     {
         var t = Limpiar(texto);
         var n = LayaLigera.Normalizar(t);
+        if (PulsePago.Match(n) is { Success: true } pg
+            && Regex.Match(texto, @"\d[\d.,]*\d|\d") is { Success: true } cifra && CarteraVeta.Monto(cifra.Value.TrimEnd('.', ',')) is { } monto)
+        {
+            var sim = CarteraVeta.Simbolo(pg.Groups["s"].Value) ?? "ORIGEN";
+            return "pago|" + pg.Groups["c"].Value.Trim() + "|" + monto.ToString("0.##################", CultureInfo.InvariantCulture) + "|" + sim;
+        }
         if (PulseVideo.Match(n) is { Success: true } v) return "llamada|video|" + v.Groups["c"].Value.Trim();
         if (PulseLlamar.Match(n) is { Success: true } l && !Regex.IsMatch(l.Groups["c"].Value, @"^(?:la atencion|atencion|me|el|la|un|una)\b")) return "llamada|voz|" + l.Groups["c"].Value.Trim();
         if (PulseMensaje.Match(n) is { Success: true } m)

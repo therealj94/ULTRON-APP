@@ -2,6 +2,8 @@
 import { h, boton, tarjeta, avisar, botonIcono } from '../ui';
 import { pedir } from '../puente';
 import { T } from '../estado';
+import { autoConectarCartera } from '../pulse/pagar';
+import * as RELEVO from '../pulse/relevo';
 
 const dinero = (n: number | null) => n == null ? '—' : n.toLocaleString(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: n < 1 ? 4 : 2 });
 const cantidad = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: n < 1 ? 6 : 4 });
@@ -27,7 +29,9 @@ export function vistaCartera(): HTMLElement {
     const paso = (n: string, t: string) => h('li', null, h('strong', null, n + ' '), t);
     const tarj = tarjeta(T('Conecta tu cartera en 2 pasos', 'Connect your wallet in 2 steps'),
       h('ol', { class: 'nota', style: 'line-height:1.9;padding-left:18px;margin:0 0 10px' },
-        paso('1.', T('Toca «Abrir Veta Wallet» (arriba) y entra como siempre.', 'Tap “Open Veta Wallet” and sign in.')),
+        paso('1.', RELEVO.quien()
+        ? T('Tu cuenta de PULSE2CHAT todavía no muestra tu dirección: abre Veta Wallet (arriba) y entra una vez con tu cuenta.', 'Your PULSE2CHAT account doesn’t show your address yet: open Veta Wallet and sign in once.')
+        : T('Conecta PULSE2CHAT (en su sección) y tu cartera aparece sola. O toca «Abrir Veta Wallet» (arriba) y entra como siempre.', 'Connect PULSE2CHAT and your wallet appears by itself. Or tap “Open Veta Wallet” and sign in.')),
         paso('2.', T('Ve a Recibir → Copiar dirección. AURA la detecta sola en cuanto la copies; no tienes que pegar nada.', 'Go to Receive → Copy address. AURA picks it up automatically.'))),
       h('p', { class: 'nota' }, T('La dirección es pública (como un número de cuenta para recibir): con ella AURA solo puede VER saldos, nunca mover dinero.', 'The address is public: AURA can only READ balances.')),
       h('div', { class: 'fila' }, input, boton(T('Guardar', 'Save'), () => guardarDireccion(input.value), { tipo: 'acento' })));
@@ -46,7 +50,15 @@ export function vistaCartera(): HTMLElement {
   async function cargar(forzar = false) {
     try {
       const c = await pedir<any>('cartera.saldos', { forzar });
-      if (!c?.direccion) { cuerpo.replaceChildren(formularioDireccion()); return; }
+      if (!c?.direccion) {
+        // Con PULSE2CHAT conectado, la dirección sale sola de tu ficha (la misma cuenta de Veta Wallet).
+        if (RELEVO.quien()) {
+          cuerpo.replaceChildren(tarjeta(null, h('span', { class: 'cargando' }), h('p', { class: 'tenue' }, T('Conectando tu cartera con tu cuenta de PULSE2CHAT…', 'Connecting your wallet from your PULSE2CHAT account…'))));
+          if (await autoConectarCartera()) { avisar(T('Listo, ya veo tu cartera.', 'Done, I can see your wallet.'), 'ok'); return cargar(true); }
+        }
+        cuerpo.replaceChildren(formularioDireccion());
+        return;
+      }
       const saldos = (c.saldos as any[]);
       const conSaldo = saldos.filter((s) => s.cantidad > 0);
       const sinSaldo = saldos.filter((s) => s.cantidad <= 0);

@@ -297,6 +297,30 @@ Check(saldosCartera[0] is { Simbolo: "ORIGEN", Cantidad: 1000m } && saldosCarter
 Check(CarteraVeta.Decir(saldosCartera, "origen", false).StartsWith("Tienes 1,000 ORIGEN (unos 1,818"), "decir origen: " + CarteraVeta.Decir(saldosCartera, "origen", false));
 Check(CarteraVeta.Decir(saldosCartera, null, false).StartsWith("Tienes unos 8,038.7 dólares: 2 AUKA, 1,000 ORIGEN") || CarteraVeta.Decir(saldosCartera, null, false).StartsWith("Tienes unos 8,039 dólares"), "decir todo: " + CarteraVeta.Decir(saldosCartera, null, false));
 Check(CarteraVeta.Decir(new List<Saldo>(), null, true) == "Your wallet is empty.", "cartera vacia");
+static bool Lanza(Action f) { try { f(); return false; } catch { return true; } }
+// Enviar por PULSE2CHAT: AURA prepara el enlace de Veta Wallet (#pagar) y mira la cadena; nunca firma.
+Check(CarteraVeta.Monto("10") == 10m && CarteraVeta.Monto("2.5") == 2.5m && CarteraVeta.Monto("2,5") == 2.5m && CarteraVeta.Monto("1,000") == 1000m && CarteraVeta.Monto("1,000.25") == 1000.25m, "monto escrito");
+Check(CarteraVeta.Monto("0") == null && CarteraVeta.Monto("-3") == null && CarteraVeta.Monto("abc") == null && CarteraVeta.Monto("1.2.3") == null && CarteraVeta.Monto("") == null, "monto invalido");
+Check(CarteraVeta.EnlacePagar("0x6Facc8Df79cEDc6C5065442ce27e915Aa3a26B9B", 2.5m, "origen") == "https://app.vetawallet.com/#pagar?a=0x6Facc8Df79cEDc6C5065442ce27e915Aa3a26B9B&m=2.5&s=ORIGEN", "enlace pagar");
+Check(Lanza(() => CarteraVeta.EnlacePagar("0x123", 1m, "ORIGEN")) && Lanza(() => CarteraVeta.EnlacePagar("0x6Facc8Df79cEDc6C5065442ce27e915Aa3a26B9B", 1m, "BTC")) && Lanza(() => CarteraVeta.EnlacePagar("0x6Facc8Df79cEDc6C5065442ce27e915Aa3a26B9B", 0m, "ORIGEN")), "enlace pagar invalido");
+Check(CarteraVeta.AWei(2m) == System.Numerics.BigInteger.Parse("2000000000000000000") && CarteraVeta.AWei(0.000000000000000001m) == 1 && CarteraVeta.AWei(1.5m) == System.Numerics.BigInteger.Parse("1500000000000000000"), "a wei");
+{
+    const string yoDir = "0x1111111111111111111111111111111111111111", suDir = "0x2222222222222222222222222222222222222222";
+    var hashN = "0x" + new string('a', 64); var hashT = "0x" + new string('b', 64);
+    var datosT = "0xa9059cbb" + suDir[2..].PadLeft(64, '0') + "1bc16d674ec80000".PadLeft(64, '0');
+    var bloques = "[{\"id\":1,\"result\":{\"transactions\":[" +
+        "{\"hash\":\"0x" + new string('c', 64) + "\",\"from\":\"" + yoDir + "\",\"to\":\"" + suDir + "\",\"value\":\"0x1\",\"input\":\"0x\"}," +
+        "{\"hash\":\"" + hashN + "\",\"from\":\"" + yoDir.ToUpperInvariant().Replace("0X", "0x") + "\",\"to\":\"" + suDir + "\",\"value\":\"0x22b1c8c1227a0000\",\"input\":\"0x\"}]}}," +
+        "{\"id\":2,\"result\":{\"transactions\":[{\"hash\":\"" + hashT + "\",\"from\":\"" + yoDir + "\",\"to\":\"0x6facc8df79cedc6c5065442ce27e915aa3a26b9b\",\"value\":\"0x0\",\"input\":\"" + datosT + "\"}]}}]";
+    Check(CarteraVeta.BuscarEnvio(bloques, yoDir, suDir, "ORIGEN", 2.5m) == hashN, "envio nativo encontrado");
+    Check(CarteraVeta.BuscarEnvio(bloques, yoDir, suDir, "AUKA", 2m) == hashT, "envio token encontrado");
+    Check(CarteraVeta.BuscarEnvio(bloques, yoDir, suDir, "ORIGEN", 3m) == null && CarteraVeta.BuscarEnvio(bloques, suDir, yoDir, "ORIGEN", 2.5m) == null, "envio que no paso");
+}
+Check(Intencion.PorReglas("mándale 10 ORIGEN a Beto") is { Mano: Mano.Pulse, Valor: "pago|beto|10|ORIGEN" }, "voz pago: " + Intencion.PorReglas("mándale 10 ORIGEN a Beto").Valor);
+Check(Intencion.PorReglas("envíale 2.5 auka a Karla López") is { Mano: Mano.Pulse, Valor: "pago|karla lopez|2.5|AUKA" }, "voz pago decimal: " + Intencion.PorReglas("envíale 2.5 auka a Karla López").Valor);
+Check(Intencion.PorReglas("send 3 origen to Beto") is { Mano: Mano.Pulse, Valor: "pago|beto|3|ORIGEN" }, "voz pago en ingles");
+Check(Intencion.PorReglas("pásale a Beto 1,000 origen") is { Mano: Mano.Pulse, Valor: "pago|beto|1000|ORIGEN" }, "voz pago al reves: " + Intencion.PorReglas("pásale a Beto 1,000 origen").Valor);
+Check(Intencion.PorReglas("mándale a Beto que ya llegué").Valor.StartsWith("mensaje|beto|"), "mensaje sigue siendo mensaje");
 
 Check(R("¿cuánto tengo?") is { Mano: Mano.Cartera, Valor: "todo" } && R("cuánto ORIGEN tengo") is { Mano: Mano.Cartera, Valor: "ORIGEN" } && R("cuántos orígenes tengo") is { Valor: "ORIGEN" }, "cartera por voz: " + R("cuántos orígenes tengo"));
 Check(R("mi saldo de AUKA") is { Mano: Mano.Cartera, Valor: "AUKA" } && R("how much origen do I have") is { Valor: "ORIGEN" } && R("check my wallet") is { Mano: Mano.Cartera }, "cartera variantes");

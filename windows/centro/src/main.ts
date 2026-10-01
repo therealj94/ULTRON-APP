@@ -10,6 +10,8 @@ import { cargar, estado, alCambiar, T } from './estado';
 import { entrada, alEntrarConPase } from './vistas/entrada';
 import { conectarConPase, iniciarPulse } from './pulse';
 import './pulseVoz';
+import * as RELEVO from './pulse/relevo';
+import { autoConectarCartera } from './pulse/pagar';
 import { vistaInicio } from './vistas/inicio';
 import { vistaChat } from './vistas/chat';
 import { vistaPulse } from './vistas/pulse';
@@ -91,6 +93,8 @@ al('salio', () => location.reload());
   if (!estado().sesion || estado().primeraVez) await entrada(raiz);
   armazon();
   // PULSE2CHAT escucha siempre (llamadas y mensajes llegan aunque no estés en su sección).
-  iniciarPulse(estado().sesion?.correo).catch(() => null);
+  iniciarPulse(estado().sesion?.correo).then(() => autoConectarCartera()).catch(() => null);
+  // La cartera se conecta sola con la dirección de tu ficha de PULSE2CHAT (la misma cuenta de Veta Wallet).
+  RELEVO.escucharCuenta(() => void autoConectarCartera());
   alCambiar(() => { /* las vistas se actualizan solas con sus propios oyentes */ });
 })();

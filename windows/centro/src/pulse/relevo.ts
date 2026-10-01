@@ -307,6 +307,10 @@ export type Mensaje = {
   llaveArchivo?: string;
   ivArchivo?: string;
   cita?: string;
+  /** Comprobante de un envío (tipo «pago»): lo publica el relevo después de comprobarlo en la cadena. */
+  monto?: string;
+  moneda?: string;
+  hash?: string;
 };
 
 function soloPersonas(para: string) {
@@ -561,6 +565,13 @@ export const responderAmistad = async (de: string, aceptar: boolean) => {
 };
 export const leido = (de: string) => pedir('/leido', firmado({ de })).catch(() => null);
 export const ficha = (de: string) => pedir<any>('/ficha', firmado({ de }));
+
+/**
+ * El comprobante de un envío que la cadena YA confirmó (como Veta Wallet): no mueve dinero, deja la
+ * tarjeta con el hash en el hilo. El relevo lo comprueba contra la cadena (espera el recibo hasta 40 s).
+ */
+export const pago = (p: { para: string; monto: string; moneda: string; hash: string; nota?: string }) =>
+  pedir<{ mensaje?: unknown }>('/pago', firmado({ para: String(p.para).toLowerCase(), monto: p.monto, moneda: p.moneda, hash: p.hash, nota: p.nota || '' }), 45_000);
 
 /** El código de seguridad con alguien: si coincide en los dos aparatos, no hay nadie en medio. */
 export async function codigoCon(correo: string): Promise<string | null> {
