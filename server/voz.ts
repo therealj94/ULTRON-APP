@@ -383,7 +383,8 @@ function pedidoEleven(o: {
   const humano = o.plataforma === 'electrum' ? conMuletillas(base, { primero: !o.previo, emocion: o.emocion }) : base;
   // En inglés no se pasan cifras ni unidades a palabras en español: ElevenLabs las lee solo.
   const preparar = idioma === 'en' ? (t: string) => afinarParaBocaIngles(t, MAX_GUION) : (t: string) => expresar(t, o.emocion, 'speak', { cifras: false });
-  const guion = guionEleven(humano, o.emocion, preparar);
+  // El tono de la emoción solo en la primera frase de la respuesta (la que no tiene `previo`).
+  const guion = guionEleven(humano, o.emocion, preparar, { tono: !o.previo });
   if (!guion) return null;
   const estabilidad = estabilidadDe(o.emocion);
   const clave = crypto

@@ -742,7 +742,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         const quien = avatarActual();
         const estado = opts?.image ? 'mirando' : estadoDeEspera(cmd);
         const f = fraseDeEstado(estado, quien, idiomaActual() === 'en' ? 'en' : 'es');
-        void speak(vozDeEspera(f.texto, estado, quien), { emocion: f.emocion, onAudioStart: () => pauseMicForTts(true), onEnd: () => !speakingRef.current && pauseMicForTts(false) });
+        // `neutral`: la etiqueta ya la eligió vozDeEspera (o ninguna, a propósito); con la emoción, el
+        // servidor le ponía además su tono y casi todas sonaban igual (auditoría externa, 1-oct).
+        void speak(vozDeEspera(f.texto, estado, quien), { emocion: 'neutral', onAudioStart: () => pauseMicForTts(true), onEnd: () => !speakingRef.current && pauseMicForTts(false) });
       };
       let mmmTimer: ReturnType<typeof setTimeout> | null = opts?.image ? (mmm(), null) : setTimeout(mmm, ESPERA_FRASE_MS);
       const cancelMmm = () => {

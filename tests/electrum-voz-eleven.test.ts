@@ -89,7 +89,8 @@ test('Dr Electrum habla con v4 Turbo, con los vecinos para enlazar la entonació
           assert.equal(llamadas[0].clave, 'xi-de-prueba');
           assert.equal(llamadas[0].cuerpo.model_id, 'eleven_v4_turbo');
           assert.equal(llamadas[0].cuerpo.language_code, 'es');
-          assert.equal(llamadas[0].cuerpo.text, '[warmly] Buenas tardes, José.');
+          // Con frase antes (`previo`), sin el tono: va solo en la primera de la respuesta (auditoría, 1-oct).
+          assert.equal(llamadas[0].cuerpo.text, 'Buenas tardes, José.');
           assert.equal(llamadas[0].cuerpo.previous_text, 'Antes.');
           assert.equal(llamadas[0].cuerpo.next_text, 'Después.');
           assert.equal(vb.pedidos.filter((p) => p.ruta.startsWith('POST /generate')).length, 0, 'Voicebox ni se entera');

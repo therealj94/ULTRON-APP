@@ -93,17 +93,18 @@ const plana = (t: string) => String(t || '').toLowerCase().replace(/\s+/g, ' ').
  * EL PUENTE: si en este tiempo el cerebro no dijo nada, AURA dice una frase corta del estado en que está
  * («Déjame revisar…», «Buscando…», «Sacando cuentas…»), con la forma de ser del avatar y en su idioma,
  * en vez de quedarse callada. Una orden rápida o una charla contestan antes y no lo oyen nunca.
- * En la llamada, el agente de ElevenLabs ya dice su propio relleno corto («Mmm… a ver.») a los ~2,5 s,
- * pero ESE relleno no cuenta como respuesta: si el LLM propio no manda texto antes de CASCADA_ELEVENLABS_MS
- * (el `cascade_timeout_seconds` de los agentes, 4 s), ElevenLabs corta la conversación con «LLM Cascade
- * Error: TimeoutError» (30-sep: con el puente a 4,5 s, toda pregunta que pensaba más de 4 s colgaba la
- * llamada). Por eso el puente va a los 3 s: después del relleno del agente y antes del corte. Antes
- * 1,2 s, y salía en turnos que iban a contestar enseguida (José: «no se siente conversación fluida»).
+ * En la llamada, el corte de ElevenLabs (`cascade_timeout_seconds` de los agentes) era de 4 s: si el LLM
+ * propio no mandaba texto antes, colgaba con «LLM Cascade Error: TimeoutError» (30-sep), y el puente
+ * tenía que ir antes. Desde el 1-oct (auditoría externa, con permiso de José) los agentes cortan a los
+ * 12 s y su relleno propio («Mmm… a ver.») salta a los 4,5 s, solo de respaldo por si nuestro servidor
+ * no dijo nada: antes sonaban DOS rellenos seguidos (el suyo a 2,5 s y el nuestro a 3 s). El puente va a
+ * los 3 s: después de la charla rápida (que no lo oye) y antes del relleno del agente.
+ * scripts/elevenlabs-agentes.ts deja los agentes así.
  */
-export const CASCADA_ELEVENLABS_MS = 4_000;
-export const PUENTE_VOZ_MS = Math.min(ESPERA_FRASE_MS + 500, CASCADA_ELEVENLABS_MS - 1_000);
-/** Cuándo dice el agente de ElevenLabs su propio relleno («Mmm… a ver.») si no le llegó texto (no se puede cambiar). */
-export const RELLENO_AGENTE_MS = 2_500;
+export const CASCADA_ELEVENLABS_MS = 12_000;
+/** Cuándo dice el agente de ElevenLabs su propio relleno si no le llegó NADA (soft_timeout_config, 4,5 s). */
+export const RELLENO_AGENTE_MS = 4_500;
+export const PUENTE_VOZ_MS = Math.min(ESPERA_FRASE_MS + 500, RELLENO_AGENTE_MS - 1_000);
 
 /*
  * LAS TAREAS LENTAS (José: «si busca en internet que se escuche tecleando y diga "estoy revisando"…
@@ -115,8 +116,8 @@ export const RELLENO_AGENTE_MS = 2_500;
  * Cuándo se habla:
  *  · Charla normal: igual que siempre, el puente solo a PUENTE_VOZ_MS (3 s).
  *  · Tarea LENTA conocida (frasesEstado.ts, TAREAS): la frase de espera sale ESPERA_TAREA_MS después de
- *    saberse (0,9 s); si con eso caería encima del relleno del agente (2,5 s) se adelanta a 2,2 s o, si
- *    ya no da tiempo, espera al puente. Si el cerebro contesta antes, no se dice nada.
+ *    saberse (0,9 s); si con eso caería encima del relleno del agente (RELLENO_AGENTE_MS) se adelanta o,
+ *    si ya no da tiempo, espera al puente. Si el cerebro contesta antes, no se dice nada.
  *  · Si sigue sin respuesta, una frase de SEGUIMIENTO («ya casi lo tengo…») a SEGUIMIENTO_MS (7 s) de
  *    lo último dicho, como mucho MAX_SEGUIMIENTOS, nunca la misma de esta espera.
  *  · Con el relleno del agente ya dicho, la nuestra no empieza con otra muletilla («Mmm, a ver…»).
@@ -551,7 +552,28 @@ export function asistenteTruncado(messages: unknown, ultimaDicha: string): boole
   return suya.length + 8 < nuestra.length && nuestra.startsWith(suya);
 }
 
-/** Lo primero que dice AU-RA cuando la interrumpieron: un perdón breve, y enseguida lo nuevo. */
+/**
+ * ¿Se dice el perdón en voz alta? Solo si la persona cortó una respuesta LARGA (ya había oído un buen
+ * trozo): cortar algo corto es turno normal, y ChatGPT voz no se disculpa, se calla y atiende
+ * (auditoría externa, 1-oct). El cerebro igual sabe que lo interrumpieron (`interrumpida`).
+ */
+export const PERDON_DESDE_CARACTERES = 120;
+/**
+ * Cuánto OYÓ la persona de la respuesta anterior: el último mensaje de asistente que manda ElevenLabs
+ * ya viene recortado a lo que alcanzó a decir (asistenteTruncado). Lo que el servidor mandó
+ * (`ultimaDicha`) puede ser mucho más (se genera más rápido de lo que se dice), así que solo vale si
+ * ElevenLabs no trae ese mensaje (revisión de Codex en #111).
+ */
+export function perdonEnVoz(messages: unknown, ultimaDicha: string): boolean {
+  const lista = Array.isArray(messages) ? messages : [];
+  let i = lista.length - 1;
+  while (i >= 0 && (lista[i] as any)?.role === 'user') i--;
+  const m: any = lista[i];
+  const oido = m && m.role === 'assistant' ? textoDe(m.content) : ultimaDicha || '';
+  return aplanar(quitarExpresiones(oido)).replace(/(\.{3}|…|—|-)$/, '').trim().length >= PERDON_DESDE_CARACTERES;
+}
+
+/** Lo primero que dice AU-RA cuando cortó una respuesta larga: un perdón breve, y enseguida lo nuevo. */
 const PERDON: Record<Idioma, string[]> = {
   es: ['¡Ah, perdón! ', '¡Uy, perdón! ', 'Perdón. '],
   en: ['Oh, sorry! ', 'Oops, sorry! ', 'Sorry. '],
@@ -1133,7 +1155,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     };
     conv.vivo = vivoDeEste;
 
-    if (interrumpida || reconexion) {
+    if (reconexion || (interrumpida && perdonEnVoz(req.body?.messages, conv.ultimaDicha))) {
       decir(reconexion ? reconexion.perdon : perdonDe(pase.idioma, conv.turnos));
       // El perdón no cuenta como «ya dijo algo»: si el cerebro falla, igual se explica.
       algo = false;
@@ -1292,7 +1314,8 @@ export function montarVozAgente(app: express.Express, d: Deps) {
         if ('etiqueta' in p) out += `${out && !/\s$/.test(out) ? ' ' : ''}[${p.etiqueta}] `;
         else {
           const v = afinar(p.texto);
-          out += /\s$/.test(out) ? v.replace(/^\s+/, '') : v;
+          // Tras una etiqueta, la puntuación va pegada: «bien [laughs], ¿y tú?», no «[laughs] ,».
+          out = /\]\s$/.test(out) && /^\s*[,.;:!?…]/.test(v) ? out.replace(/\s$/, '') + v.replace(/^\s+/, '') : /\s$/.test(out) ? out + v.replace(/^\s+/, '') : out + v;
         }
       }
       return out;
