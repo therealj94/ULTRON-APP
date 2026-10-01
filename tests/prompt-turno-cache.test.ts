@@ -7,7 +7,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CONGELAR_INACTIVA_MS, CONGELAR_MAX_MS, _olvidarFijos, fijoDeLaConversacion, piezasDelTurno, personalidadDelTurno, renovarFijo } from '../server/prompt-turno';
+import { CONGELAR_INACTIVA_MS, CONGELAR_MAX_MS, CONGELAR_MAX_NUEVOS, HILO_BASE, ventanaDelHilo, _olvidarFijos, fijoDeLaConversacion, piezasDelTurno, personalidadDelTurno, renovarFijo } from '../server/prompt-turno';
 import { recordarTurno, resetMemoriaTest } from '../lib/memoria';
 import { construirMensajes } from '../lib/qwen';
 
@@ -149,4 +149,46 @@ test('el precalentamiento de la llamada renueva el fijo para que el primer turno
   assert.equal(fijoDeLaConversacion('j@x', 'fijo nuevo', 'firma', despues + 5_000), 'fijo de la tarde');
   // Sin firma igual no hay renovación que valga.
   assert.equal(fijoDeLaConversacion('j@x', 'fijo nuevo', 'otra firma', despues + 6_000), 'fijo nuevo');
+});
+
+test('con el fijo congelado, la ventana del hilo crece desde el mismo principio y no pierde nada', async () => {
+  // Codex en #98: con la ventana fija de 16 que se corre, lo dicho justo después de la foto se salía y
+  // no estaba ni en la conversación mediana congelada ni en los mensajes.
+  const { fusionarHilo } = await import('../lib/conversacion');
+  _olvidarFijos();
+  const t = Date.parse('2026-10-01T01:00:00Z');
+  const memoria = Array.from({ length: 40 }, (_, i) => ({ rol: i % 2 ? 'ultron' : 'user', texto: `turno ${i}`, t: t - (40 - i) * 1_000 }));
+  const desde = (foto: number) => memoria.filter((x) => x.t > foto).length;
+  assert.equal(ventanaDelHilo('j@x', desde, t), HILO_BASE, 'sin foto, la de siempre');
+  fijoDeLaConversacion('j@x', 'fijo de la foto', 'firma', t, desde);
+  const principio = fusionarHilo({ durable: memoria, mensaje: '', max: ventanaDelHilo('j@x', desde, t) })[0].content;
+  for (let i = 1; i <= CONGELAR_MAX_NUEVOS; i++) {
+    memoria.push({ rol: i % 2 ? 'user' : 'ultron', texto: `nuevo ${i}`, t: t + i * 1_000 });
+    const ahora = t + i * 1_000 + 1;
+    const hilo = fusionarHilo({ durable: memoria, mensaje: '', max: ventanaDelHilo('j@x', desde, ahora) });
+    assert.equal(hilo[0].content, principio, `con ${i} nuevos el principio no se mueve`);
+    assert.ok(hilo.some((m) => m.content === 'nuevo 1'), `con ${i} nuevos, lo primero después de la foto sigue`);
+    assert.equal(fijoDeLaConversacion('j@x', `fijo ${i}`, 'firma', ahora, desde), 'fijo de la foto');
+  }
+  // Pasado el tope, se rehace la foto y la ventana vuelve a la de siempre.
+  memoria.push({ rol: 'user', texto: 'uno más', t: t + 100_000 });
+  assert.equal(ventanaDelHilo('j@x', desde, t + 100_001), HILO_BASE);
+  assert.equal(fijoDeLaConversacion('j@x', 'fijo nuevo', 'firma', t + 100_001, desde), 'fijo nuevo');
+});
+
+test('pasado el tope de turnos nuevos desde la foto, se rehace (la ventana no crece sin fin)', () => {
+  _olvidarFijos();
+  const t = Date.parse('2026-10-01T01:00:00Z');
+  fijoDeLaConversacion('j@x', 'fijo de la foto', 'firma', t);
+  const guardados: number[] = [];
+  const desde = (foto: number) => guardados.filter((x) => x > foto).length;
+  for (let i = 1; i <= CONGELAR_MAX_NUEVOS; i++) {
+    guardados.push(t + i * 1_000);
+    assert.equal(fijoDeLaConversacion('j@x', `fijo ${i}`, 'firma', t + i * 1_000 + 1, desde), 'fijo de la foto', `con ${i} turnos nuevos sigue`);
+  }
+  guardados.push(t + 500_000);
+  assert.equal(fijoDeLaConversacion('j@x', 'fijo nuevo', 'firma', t + 500_001, desde), 'fijo nuevo', 'uno más del tope lo rehace');
+  // La foto nueva cuenta desde cero.
+  guardados.push(t + 501_000);
+  assert.equal(fijoDeLaConversacion('j@x', 'otro', 'firma', t + 501_001, desde), 'fijo nuevo');
 });

@@ -12,7 +12,7 @@ import { JUNTA, buildPersonality, decodeDataUrl, normalizarCorreo, buscarWeb, le
 import { hablar, abrirVozEnVivo, cantar, orar, repertorio, cancionPorPedido, estadoVoz, saludVoz, vozDe, sinEtiquetas } from './server/voz';
 import { lineaAvatar, normalizarAvatar, normalizarIdioma, NOMBRE_AVATAR, type AvatarVoz } from './server/eleven';
 import { montarVozAgente, type TurnoVoz } from './server/voz-agente';
-import { fijoDeLaConversacion, piezasDelTurno, renovarFijo } from './server/prompt-turno';
+import { fijoDeLaConversacion, piezasDelTurno, renovarFijo, ventanaDelHilo } from './server/prompt-turno';
 import { cargarMiembro, fotoMemoriaMiembro, guardarHechoMiembro, hiloMiembro, olvidarMiembro, promptMemoriaMiembro, recordarTurnoMiembro } from './lib/memoria-miembro';
 import { montarRutasApp } from './server/app-rutas';
 import { montarRutasCaras } from './server/caras-rutas';
@@ -2232,13 +2232,19 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
         texto: String(x?.texto || x?.content || ''),
       }))
     : [];
-  const durable = (miembro ? hiloMiembro(correoMem) : hiloDe(quienMem)).map((t) => ({ rol: t.rol, texto: t.texto }));
+  const memoriaHilo = miembro ? hiloMiembro(correoMem) : hiloDe(quienMem);
+  const durable = memoriaHilo.map((t) => ({ rol: t.rol, texto: t.texto }));
   const hiloTodo = durable.length >= 2 ? durable : [...clienteHilo, ...durable];
   const hiloPrevio = hiloTodo.filter(
     (t, i) => !(i === hiloTodo.length - 1 && t.rol === 'user' && t.texto === message)
   );
   const mensajeHilo = resolverReferencia(message, hiloPrevio);
-  const hilo: MsgHilo[] = fusionarHilo({ durable, cliente: clienteHilo, mensaje: message, max: 16 });
+  // Cuántos turnos de la memoria se guardaron después de la foto del fijo congelado (fijoDeLaConversacion).
+  const turnosDesde = (foto: number) => memoriaHilo.reduce((n, t) => n + (Number(t.t) > foto ? 1 : 0), 0);
+  const clave = claveFijo(correoApp || correoMem, quienMem);
+  // Con el fijo congelado, la ventana crece desde el mismo principio: nada de lo dicho después de la foto
+  // se sale, y los mensajes de antes no cambian (server/prompt-turno.ts ventanaDelHilo).
+  const hilo: MsgHilo[] = fusionarHilo({ durable, cliente: clienteHilo, mensaje: message, max: ventanaDelHilo(clave, turnosDesde) });
   // Hechos que manda el cliente solo entran con sesión firmada (si no, cualquiera envenena la memoria).
   // Y si el cliente dice de quién es esa memoria (`memoriaDe`, la mesa web), tiene que ser de la misma
   // sesión: en una tableta compartida, lo de A no se guarda como de B.
@@ -2632,7 +2638,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   });
   // Mientras la conversación sigue, el mismo fijo de antes si solo cambió la conversación (el hilo va en
   // los mensajes): el nodo no relee el system en cada turno (server/prompt-turno.ts fijoDeLaConversacion).
-  const fijo = fijoDeLaConversacion(claveFijo(correoApp || correoMem, quienMem), piezas.fijo, piezas.firma);
+  const fijo = fijoDeLaConversacion(clave, piezas.fijo, piezas.firma, Date.now(), turnosDesde);
 
   // El system es solo lo fijo; lo del turno (hora, app, agente) va en el mensaje de la persona junto a
   // los HECHOS (mensajesQwen): así el nodo reutiliza lo ya leído (server/prompt-turno.ts).

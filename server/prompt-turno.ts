@@ -111,25 +111,65 @@ ${miembro ? '' : `${hechosCatalogo()}\n`}`;
  * cambiado. Lo que se guarda solo, por nombrar «la mina» o «la junta», no entra en la firma: pasaba casi
  * cada turno. Lo dicho en la conversación no se pierde: va en los mensajes.
  *   · Se rehace al instante si cambia la firma (pidió recordar algo, otro avatar, otro modo, otro acceso).
+ *   · Se rehace con más de CONGELAR_MAX_NUEVOS turnos guardados desde la foto. Hasta entonces, todo lo
+ *     de después de la foto va en los mensajes del turno (ventanaDelHilo).
  *   · Se rehace tras CONGELAR_INACTIVA_MS sin turnos o CONGELAR_MAX_MS desde que se armó: lo guardado
  *     desde otro lado (Telegram, la web) llega a la conversación a más tardar entonces.
  */
 export const CONGELAR_INACTIVA_MS = 10 * 60_000;
 export const CONGELAR_MAX_MS = 30 * 60_000;
-const congelados = new Map<string, { fijo: string; firma: string; creado: number; usado: number }>();
+/**
+ * Cuántos turnos guardados después de la foto aguanta el fijo. La foto trae la conversación mediana
+ * hasta 8 turnos antes de la foto; los mensajes del turno llevan los 16 de antes de la foto MÁS todos
+ * los guardados desde entonces (ventanaDelHilo): la ventana crece desde un principio fijo en vez de
+ * correrse, así no se pierde nada (Codex en #98) y el nodo tampoco relee el historial. Pasados estos,
+ * se rehace la foto para que la ventana no crezca sin fin.
+ */
+export const CONGELAR_MAX_NUEVOS = 24;
+export const HILO_BASE = 16;
+const congelados = new Map<string, { fijo: string; firma: string; foto: number; creado: number; usado: number }>();
 
-export function fijoDeLaConversacion(clave: string, fijo: string, firma: string, ahora = Date.now()): string {
+/**
+ * `turnosDesde(foto)`: cuántos turnos de la memoria de la persona se guardaron después de `foto`
+ * (en ms). Sin él, se cuentan cero (no hay memoria que se corra).
+ */
+export function fijoDeLaConversacion(
+  clave: string,
+  fijo: string,
+  firma: string,
+  ahora = Date.now(),
+  turnosDesde?: (foto: number) => number
+): string {
   if (!clave) return fijo;
   const c = congelados.get(clave);
-  if (c && c.firma === firma && ahora - c.usado < CONGELAR_INACTIVA_MS && ahora - c.creado < CONGELAR_MAX_MS) {
+  if (
+    c &&
+    c.firma === firma &&
+    ahora - c.usado < CONGELAR_INACTIVA_MS &&
+    ahora - c.creado < CONGELAR_MAX_MS &&
+    (turnosDesde ? turnosDesde(c.foto) : 0) <= CONGELAR_MAX_NUEVOS
+  ) {
     c.usado = ahora;
     return c.fijo;
   }
   congelados.delete(clave);
-  congelados.set(clave, { fijo, firma, creado: ahora, usado: ahora });
+  congelados.set(clave, { fijo, firma, foto: ahora, creado: ahora, usado: ahora });
   // Una por persona; las más viejas se van primero.
   while (congelados.size > 500) congelados.delete(congelados.keys().next().value as string);
   return fijo;
+}
+
+/**
+ * Cuántos mensajes del hilo van en el turno (server.ts fusionarHilo): HILO_BASE más los guardados
+ * desde la foto del fijo congelado. Así el principio de la ventana no se mueve mientras dura la foto
+ * (los mensajes de antes no cambian y el nodo los reutiliza) y nada de lo dicho después de la foto se
+ * sale. Sin foto vigente, o pasada de CONGELAR_MAX_NUEVOS (se rehará), HILO_BASE.
+ */
+export function ventanaDelHilo(clave: string, turnosDesde: (foto: number) => number, ahora = Date.now()): number {
+  const c = clave ? congelados.get(clave) : undefined;
+  if (!c || ahora - c.usado >= CONGELAR_INACTIVA_MS || ahora - c.creado >= CONGELAR_MAX_MS) return HILO_BASE;
+  const n = turnosDesde(c.foto);
+  return n <= CONGELAR_MAX_NUEVOS ? HILO_BASE + n : HILO_BASE;
 }
 
 /**
