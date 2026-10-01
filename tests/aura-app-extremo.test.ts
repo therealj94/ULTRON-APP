@@ -1116,3 +1116,12 @@ test('en una llamada con frases de todo tipo, cada turno manda el mismo prompt d
   await tel.cerrar();
   await fetch(`${BASE}/api/app/contexto`, { method: 'POST', headers: h(), body: JSON.stringify({ pantalla: 'mesa', contactos: [], manos: [] }) });
 });
+
+test('una tarea de código que pide paso a paso recibe el «paso a paso» en el mensaje del turno (Codex en #99)', { skip: !listo }, async () => {
+  alNodo.length = 0;
+  contestar = () => '[EMO: neutral] PASO 1: reviso la función.';
+  await turno('debuguea esta recursión paso a paso: def f(n): return f(n - 1)');
+  const p = alNodo.filter((x) => x.stream).at(-1) || alNodo.at(-1);
+  assert.ok(p, 'llegó al 27B');
+  assert.match(p!.ultimo.split('HECHOS DE ESTE TURNO')[0], /PASOS OBLIGATORIOS/);
+});

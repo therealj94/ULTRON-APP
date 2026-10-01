@@ -32,4 +32,7 @@ it('«analiza» o «paso a paso» no es pedir código: no cambia las instruccion
   assert.equal(pideCodigo('escribe una función en python que sume'), true);
   assert.equal(pideCodigo('mira esto ```x = 1```'), true);
   assert.equal(pideCodigo('Traza misterio(10) paso a paso'), true);
+  // Depurar y algoritmos siguen siendo código (Codex en #99); hablar de la mina no.
+  for (const q of ['debuguea esta recursión', 'traza el algoritmo de ordenamiento', 'analiza la complejidad temporal', 'depura esto', 'cuál es el big-o']) assert.equal(pideCodigo(q), true, q);
+  for (const q of ['hay trazas de oro en la muestra', 'analiza la complejidad del proyecto', 'explícame paso a paso el permiso ambiental']) assert.equal(pideCodigo(q), false, q);
 });

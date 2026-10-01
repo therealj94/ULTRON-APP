@@ -2662,7 +2662,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   // «piensa paso a paso» va en el mensaje del turno cuando la pregunta lo pide.
   const userTurno = mensajeHilo || message;
   const compuesto = construirMensajes({ personalidad: personalidadSistema, user: userTurno, canal, historial: hilo, nivel, harness: true, cot: false });
-  const cotTurno = !compuesto.meta.codigo && requiereCot(userTurno);
+  // También en las tareas de código: el system ya no lo lleva (cot: false), así que va siempre aquí.
+  const cotTurno = requiereCot(userTurno);
   if (compuesto.meta.rag) tools.push('rag');
   if (compuesto.meta.cot || cotTurno) tools.push('cot');
   if (compuesto.meta.harness) tools.push('harness');
