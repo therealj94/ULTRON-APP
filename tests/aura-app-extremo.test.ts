@@ -1179,3 +1179,28 @@ test('una tarea de código que pide paso a paso recibe el «paso a paso» en el 
   assert.ok(p, 'llegó al 27B');
   assert.match(p!.ultimo.split('HECHOS DE ESTE TURNO')[0], /PASOS OBLIGATORIOS/);
 });
+
+test('Windows en vivo: el cerebro sabe que es la PC, la marca ⟦hacer⟧ no suena y la orden llega al canal del .exe, no al teléfono', { skip: !listo }, async () => {
+  const win = await canal(yo.token, 'win-e2e0000000000');
+  const tel = await canal(yo.token, 'tel-e2e');
+  const antes = contestar;
+  contestar = () => '[EMO: neutral] Va, la cierro.\n⟦hacer: cierra spotify⟧';
+  try {
+    const pase = emitirPase(yo, 'aura', 'es', { aparato: 'win-e2e0000000000', origen: 'windows' }).pase;
+    const r = await voz(pase, [{ role: 'user', content: 'ciérrame eso de Spotify' }]);
+    assert.equal(r.status, 200);
+    assert.ok(!r.dicho.includes('⟦') && !/hacer/i.test(r.dicho), 'la marca no se dice: ' + r.dicho);
+    assert.match(r.dicho, /Va, la cierro/);
+    assert.match(alNodo.at(-1)!.system, /ESTÁS EN AURA PARA WINDOWS/, 'la instrucción de Windows va al cerebro también en la voz');
+    const pc = () => win.texto().split('\n\n').filter((b) => /^event: pc$/m.test(b)).map((b) => JSON.parse(/^data: (\{.*\})$/m.exec(b)![1]));
+    assert.ok(await espera(() => pc().length > 0, 10_000), 'la orden llegó al .exe');
+    assert.equal(pc()[0].orden, 'cierra spotify');
+    assert.equal(pc()[0].dicho, 'ciérrame eso de Spotify');
+    assert.ok(!/^event: pc$/m.test(tel.texto()), 'el teléfono no recibe órdenes de la PC');
+    assert.deepEqual(tel.acciones(), [], 'ni acciones');
+  } finally {
+    contestar = antes;
+    await win.cerrar();
+    await tel.cerrar();
+  }
+});

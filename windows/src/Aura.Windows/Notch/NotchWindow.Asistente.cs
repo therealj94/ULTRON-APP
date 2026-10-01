@@ -61,6 +61,7 @@ public partial class NotchWindow
         relojRecordatorios.Tick += (_, _) =>
         {
             RevisarRecordatorios();
+            RevisarAgente();
             // «Siempre atenta»: si algo cerró el micrófono (un aviso, una acción), vuelve a escuchar sola.
             if (ajustes.Escucha is "siempre" or "palabra" && !microSilenciado && !pausado && !escuchando && !hablandoAhora && !pensando && propuesta == null && !soloRender)
             { continuo = true; EmpezarAEscuchar(); }
@@ -85,8 +86,9 @@ public partial class NotchWindow
             if (pausado || microSilenciado || pensando || hablandoAhora || altavoz.Ocupado) return;
             Centro.Registro.Anotar("despertar", "Windows oyó «Oye AURA»");
             llamadaExplicita = true; ultimaCharla = DateTime.Now; continuo = ajustes.ManosLibres;
-            if (!escuchando) { Callar(); EmpezarAEscuchar(); }
-            TextoEscucha.Text = T("Te escucho…", "Listening…"); Recalcular();
+            if (!AgenteAbierto && !abriendoAgente) TextoEscucha.Text = T("Te escucho…", "Listening…");
+            _ = Despertar();
+            Recalcular();
         }));
         AplicarEscucha();
         IniciarActualizaciones();
@@ -109,9 +111,11 @@ public partial class NotchWindow
 
     void CrearApi()
     {
+        CerrarAgente();
         api?.Dispose();
-        try { api = new AuraApi(ajustes.Servidor, string.IsNullOrEmpty(ajustes.Token) ? null : ajustes.Token) { Renovar = RenovarSesion }; }
+        try { api = new AuraApi(ajustes.Servidor, string.IsNullOrEmpty(ajustes.Token) ? null : ajustes.Token) { Renovar = RenovarSesion, Aparato = ajustes.Aparato }; }
         catch (AuraError ex) { api = null; Avisar(new Aviso("Revisa el servidor", ex.Message, "", "worried")); }
+        IniciarCanal();
     }
 
     /// <summary>
@@ -151,16 +155,21 @@ public partial class NotchWindow
     {
         if (pausado) { Reanudar(); return; }
         if (microSilenciado) { microSilenciado = false; AplicarEscucha(); Avisar(new Aviso(T("Te escucho de nuevo", "Listening again"), "", "\uE720", "happy", Segundos: 1.6)); }
+        // Con la conversación en vivo abierta, el micrófono del notch la cuelga.
+        if (AgenteAbierto) { CerrarAgente(); return; }
+        if (abriendoAgente) return;
         llamadaExplicita = true; ultimaCharla = DateTime.Now;
         if (escuchando && !hablandoAhora) { CerrarOido(); continuo = false; Recalcular(); return; }
         Callar();
         continuo = ajustes.ManosLibres;
+        if (PuedeAgente) { _ = Despertar(); return; }
         EmpezarAEscuchar();
     }
 
     void EmpezarAEscuchar()
     {
-        if (pausado || soloRender) return;
+        // La conversación en vivo tiene su propio micrófono: el oído de siempre no la duplica.
+        if (pausado || soloRender || AgenteAbierto || abriendoAgente) return;
         oido.ModoInterrupcion = false;
         // «Oye AURA» y «siempre atenta»: el micrófono no se cansa; cada frase se oye y solo se atiende si es para AURA.
         oido.Continuo = ajustes.Escucha is "siempre" or "palabra";
@@ -328,7 +337,7 @@ public partial class NotchWindow
         BotonSilencio.Foreground = microSilenciado ? new SolidColorBrush(Color.FromRgb(0xFF, 0x6B, 0x6B)) : (Brush)FindResource("Texto");
         BotonSilencio.ToolTip = microSilenciado ? T("Micrófono silenciado. Tócalo para que AURA vuelva a escucharte.", "Microphone muted. Tap to let AURA listen again.")
                                                 : T("Silenciar el micrófono: AURA deja de escucharte hasta que lo vuelvas a tocar", "Mute: AURA stops listening until you tap again");
-        if (microSilenciado || pausado) { if (!hablandoAhora) CerrarOido(); Recalcular(); return; }
+        if (microSilenciado || pausado) { CerrarAgente(); if (!hablandoAhora) CerrarOido(); Recalcular(); return; }
         if (ajustes.Escucha is "palabra" or "siempre")
         {
             var e = despertador.Encender(ajustes.Idioma);
@@ -388,6 +397,8 @@ public partial class NotchWindow
     internal async Task<Respuesta?> Conversar(string texto, bool hablado, bool redactar = false, string? contexto = null)
     {
         if (api == null) { NoPude(T("Conecta AURA en Ajustes para conversar.", "Connect AURA in Settings to chat.")); return null; }
+        // Escribirle con la conversación en vivo abierta: se cuelga y contesta por el chat de siempre.
+        if (AgenteAbierto) CerrarAgente();
         Callar(false);
         long g = ++generacion;
         var cts = turno = new CancellationTokenSource();
@@ -506,6 +517,8 @@ public partial class NotchWindow
     bool Contestar(string frase, string emocion = "feliz")
     {
         Subtitulo.Text = frase;
+        // En la conversación en vivo habla el agente: lo de las manos queda escrito, sin otra voz encima.
+        if (AgenteAbierto) return false;
         if (escuchando && !oido.ModoInterrupcion) return false;
         if (voz == null || voz.IsCancellationRequested) voz = new CancellationTokenSource();
         return Decir(frase, emocion, voz.Token);
@@ -533,7 +546,7 @@ public partial class NotchWindow
         turno?.Cancel(); voz?.Cancel(); voz = null;
         altavoz.Detener();
         hablandoAhora = false; pensando = false; turnoEnCurso = false;
-        if (terminarSesion) continuo = false;
+        if (terminarSesion) { continuo = false; CerrarAgente(); }
         // El oído en modo interrupción era para ESTA voz: si ya no habla, se cierra.
         if (terminarSesion || oido.ModoInterrupcion) CerrarOido();
         Recalcular();
@@ -584,6 +597,7 @@ public partial class NotchWindow
     void Terminar()
     {
         Callar(true);
+        canal?.Cancel();
         GuardarRecuperacion();
         despertador.Dispose(); oido.Dispose(); altavoz.Dispose(); api?.Dispose();
         centro?.CerrarDeVerdad();

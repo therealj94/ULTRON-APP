@@ -15,6 +15,9 @@ public sealed record Respuesta(string Texto, string Voz, string Emocion, string?
 /// <summary>Audio de la voz del avatar (ElevenLabs en el servidor) y sus tiempos por letra si los hubo.</summary>
 public sealed record Audio(byte[] Bytes, string Tipo, string Motor, string? Alineacion);
 
+/// <summary>El permiso para hablar con el agente: la URL firmada (wss://), el pase y la conversación.</summary>
+public sealed record PermisoAgente(string Url, string Pase, string Cid, long? RestanteMs);
+
 public sealed class AuraError : Exception
 {
     public HttpStatusCode? Estado { get; }
@@ -36,6 +39,8 @@ public sealed class AuraApi : IDisposable
     public string? Token { get; set; }
     /// <summary>Si el servidor rechaza el token, se pide uno nuevo con las credenciales guardadas (una vez).</summary>
     public Func<CancellationToken, Task<string?>>? Renovar { get; set; }
+    /// <summary>El id de este equipo (x-aura-aparato): lo que el cerebro pida para la PC va solo a su canal.</summary>
+    public string? Aparato { get; set; }
 
     public AuraApi(string servidor, string? token = null, HttpMessageHandler? handler = null)
     {
@@ -59,6 +64,7 @@ public sealed class AuraApi : IDisposable
         if (cuerpo != null) r.Content = new StringContent(JsonSerializer.Serialize(cuerpo), Encoding.UTF8, "application/json");
         if (!string.IsNullOrEmpty(Token)) r.Headers.TryAddWithoutValidation("x-ultron-sesion", Token);
         r.Headers.TryAddWithoutValidation("x-aura-origen", "windows");
+        if (!string.IsNullOrEmpty(Aparato)) r.Headers.TryAddWithoutValidation("x-aura-aparato", Aparato);
         r.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(aceptar ?? "application/json"));
         return r;
     }
@@ -177,6 +183,37 @@ public sealed class AuraApi : IDisposable
         try { using var r = await Enviar(() => Pedido(HttpMethod.Post, "api/ultron/salir", new { }), ct, TimeSpan.FromSeconds(8), renovar: false).ConfigureAwait(false); }
         catch (AuraError) { }
         Token = null;
+    }
+
+    /// <summary>
+    /// Abre una conversación por voz con el agente de ElevenLabs de su avatar: una URL firmada de un
+    /// solo uso (wss://) y el pase que vuelve al servidor en cada turno. Necesita sesión y <see cref="Aparato"/>.
+    /// </summary>
+    public async Task<PermisoAgente> AbrirAgente(string avatar, string idioma, CancellationToken ct = default)
+    {
+        using var r = await Enviar(() => Pedido(HttpMethod.Post, "api/voz/agente", new { avatar, idioma, transporte = "websocket" }), ct, TimeSpan.FromSeconds(15)).ConfigureAwait(false);
+        using var j = await Json(r, ct).ConfigureAwait(false);
+        var raiz = j.RootElement;
+        string S(string k) => raiz.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : "";
+        var url = S("url");
+        if (!url.StartsWith("wss://", StringComparison.Ordinal) || S("pase").Length == 0) throw new AuraError("El servidor no abrió la conversación por voz.");
+        long? restante = raiz.TryGetProperty("restanteMs", out var rm) && rm.TryGetInt64(out var ms) ? ms : null;
+        return new PermisoAgente(url, S("pase"), S("cid"), restante);
+    }
+
+    /// <summary>Cuelga: el pase deja de valer ya (no a los cinco minutos).</summary>
+    public async Task CerrarAgente(string pase, CancellationToken ct = default)
+    {
+        try { using var r = await Enviar(() => Pedido(HttpMethod.Post, "api/voz/agente/cerrar", new { pase }), ct, TimeSpan.FromSeconds(8)).ConfigureAwait(false); }
+        catch (AuraError) { }
+    }
+
+    /// <summary>El canal de AURA (SSE) de este equipo: lo lee <see cref="CanalPc"/>. Queda abierto hasta que se corte.</summary>
+    public async Task<Stream> Canal(CancellationToken ct = default)
+    {
+        if (string.IsNullOrEmpty(Token) || string.IsNullOrEmpty(Aparato)) throw new AuraError("Sin sesión no hay canal.");
+        var r = await Enviar(() => Pedido(HttpMethod.Get, "api/app/acciones", null, "text/event-stream"), ct, Timeout.InfiniteTimeSpan, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
+        return await r.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
     }
 
     public async Task<bool> Salud(CancellationToken ct = default)

@@ -78,6 +78,17 @@ internal sealed class Ajustes
     /// <summary>La dirección pública de Veta Wallet (0x…) para leer los saldos. Solo lectura: nunca mueve dinero.</summary>
     public string CarteraDireccion { get; set; } = "";
     public List<Recordatorio> Recordatorios { get; set; } = new();
+    /// <summary>
+    /// Cómo conversa por voz: «agente» (en vivo con ElevenLabs, como la llamada del teléfono: se le puede
+    /// interrumpir y contesta más rápido) o «local» (el oído de siempre, frase por frase). Si la de en vivo
+    /// no abre, usa la local sola.
+    /// </summary>
+    public string VozMotor { get; set; } = "agente";
+    /// <summary>El id de este equipo para el canal de AURA (no es secreto: elige a qué equipo va una orden).</summary>
+    public string Aparato { get; set; } = NuevoAparato();
+
+    static string NuevoAparato() => "win-" + Guid.NewGuid().ToString("N")[..16];
+    static bool AparatoValido(string? a) => a != null && System.Text.RegularExpressions.Regex.IsMatch(a, "^win-[0-9a-f]{16}$");
 
     static string Carpeta => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AuraWindows");
     static string Archivo => Path.Combine(Carpeta, "ajustes.bin");
@@ -94,6 +105,8 @@ internal sealed class Ajustes
             a.Conexiones ??= new();
             a.AppsSilenciadas ??= new();
             if (a.Escucha is not ("pedir" or "palabra" or "siempre")) a.Escucha = a.PalabraActivacion ? "palabra" : "pedir";
+            if (a.VozMotor is not ("agente" or "local")) a.VozMotor = "agente";
+            if (!AparatoValido(a.Aparato)) a.Aparato = NuevoAparato();
             return a;
         }
         catch { return new Ajustes(); }

@@ -398,5 +398,37 @@ foreach (var f in new[] { "quién es mejor, claudio o antonio", "cómo se hace u
     for (int i = 0; i < 50; i++) ev.Add(q.Bloque(0.003));
     Check(ev.Count(x => x == EventoVoz.Empezo) == 1 && ev.Count(x => x == EventoVoz.Fin) == 1 && !ev.Contains(EventoVoz.Ruido), "una frase normal, una sola vez: " + string.Join(",", ev.Where(x => x != EventoVoz.Nada)));
 }
+// La conversación en vivo (Fase 1): el protocolo del agente, el canal y lo ya hecho.
+{
+    var ini = System.Text.Json.JsonDocument.Parse(AgenteProtocolo.Inicio("pase-1")).RootElement;
+    Check(ini.GetProperty("type").GetString() == "conversation_initiation_client_data" && ini.GetProperty("dynamic_variables").GetProperty("pase").GetString() == "pase-1", "inicio con el pase como variable");
+    Check(AgenteProtocolo.Audio(new byte[] { 1, 2, 3 }) == "{\"user_audio_chunk\":\"AQID\"}" && AgenteProtocolo.Pong(7) == "{\"type\":\"pong\",\"event_id\":7}", "audio y pong");
+    var hola = AgenteProtocolo.Leer("{\"type\":\"conversation_initiation_metadata\",\"conversation_initiation_metadata_event\":{\"conversation_id\":\"c1\",\"agent_output_audio_format\":\"pcm_22050\",\"user_input_audio_format\":\"pcm_16000\"}}");
+    Check(hola is AgenteListo { ConversacionId: "c1", Salida.Muestreo: 22050, Salida.Ulaw: false, Entrada.Muestreo: 16000 }, "formatos del agente: " + hola);
+    Check(AgenteProtocolo.Leer("{\"type\":\"audio\",\"audio_event\":{\"audio_base_64\":\"AQI=\",\"event_id\":4}}") is AgenteAudio { EventoId: 4, Pcm.Length: 2 }, "audio pcm");
+    Check(AgenteProtocolo.Leer("{\"type\":\"audio\",\"audio_event\":{\"audio_base_64\":\"/w==\",\"event_id\":1}}", new FormatoAudio(8000, true)) is AgenteAudio { Pcm.Length: 2 } a8 && a8.Pcm[0] == 0 && a8.Pcm[1] == 0, "μ-law 0xFF es silencio");
+    Check(AgenteProtocolo.Leer("{\"type\":\"user_transcript\",\"user_transcription_event\":{\"user_transcript\":\" pon bachata \"}}") is AgenteTuDijiste { Texto: "pon bachata" }, "lo que dijiste");
+    Check(AgenteProtocolo.Leer("{\"type\":\"agent_response\",\"agent_response_event\":{\"agent_response\":\"Va.\"}}") is AgenteRespuesta { Texto: "Va." }, "lo que dice");
+    Check(AgenteProtocolo.Leer("{\"type\":\"agent_response_correction\",\"agent_response_correction_event\":{\"original_agent_response\":\"Va, te cuento todo\",\"corrected_agent_response\":\"Va, te\"}}") is AgenteRespuesta { Texto: "Va, te" }, "lo que alcanzó a decir");
+    Check(AgenteProtocolo.Leer("{\"type\":\"interruption\",\"interruption_event\":{\"event_id\":9}}") is AgenteInterrumpido { EventoId: 9 }, "interrupción");
+    Check(AgenteProtocolo.Leer("{\"type\":\"ping\",\"ping_event\":{\"event_id\":3,\"ping_ms\":40}}") is AgentePing { EventoId: 3, Ms: 40 }, "ping");
+    Check(AgenteProtocolo.Leer("{\"type\":\"vad_score\"}") == null && AgenteProtocolo.Leer("no es json") == null && AgenteProtocolo.Leer("{\"type\":\"audio\",\"audio_event\":{\"audio_base_64\":\"%%%\"}}") == null, "lo demás se ignora sin romper");
+    Check(FormatoAudio.Leer("ulaw_8000") is { Muestreo: 8000, Ulaw: true } && FormatoAudio.Leer("raro") == FormatoAudio.Pcm16k, "formatos");
+
+    var sseCanal = ": canal abierto\n\nid: a1\ndata: {\"id\":\"a1\",\"accion\":{\"tipo\":\"atras\"}}\n\nevent: ambiente\ndata: {\"sonido\":null}\n\nevent: pc\ndata: {\"id\":\"p1\",\"orden\":\"cierra spotify\",\"dicho\":\"ciérrame Spotify\"}\n\n: latido\n\nevent: pc\ndata: {\"id\":\"p2\",\"orden\":\"x\"}\n\n";
+    var llegaron = new List<OrdenPc>();
+    await CanalPc.Leer(new StringReader(sseCanal), llegaron.Add, CancellationToken.None);
+    Check(llegaron.Count == 1 && llegaron[0] is { Id: "p1", Orden: "cierra spotify", Dicho: "ciérrame Spotify" }, "del canal solo las órdenes de la PC: " + string.Join(";", llegaron));
+
+    var reloj = new Clock();
+    var hechas = new HechasRecientes(reloj);
+    var local = Intencion.PorReglas("abre la calculadora");
+    hechas.Anotar(local);
+    Check(hechas.Repetida(Intencion.PorReglas("abre la calculadora"), "o1"), "lo que las reglas ya hicieron, el cerebro no lo repite");
+    Check(!hechas.Repetida(Intencion.PorReglas("abre el bloc de notas"), "o2"), "otra cosa sí");
+    Check(hechas.Repetida(Intencion.PorReglas("abre el bloc de notas"), "o2"), "el mismo id dos veces, no");
+    reloj.Now += TimeSpan.FromSeconds(20);
+    Check(!hechas.Repetida(Intencion.PorReglas("abre la calculadora"), "o3"), "pasado un rato, sí se puede otra vez");
+}
 Console.WriteLine($"PASS {count} assertions");
 class Clock : TimeProvider { public DateTimeOffset Now = DateTimeOffset.UtcNow; public override DateTimeOffset GetUtcNow() => Now; }
