@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { ETIQUETAS_VERIFICADAS, MemoriaEtiquetas, conEtiqueta, etiquetasDe } from '../mobile/src/compa/etiquetasVoz';
 import { ESTADOS_FRASE, MemoriaFrases, arranqueDe, fraseDeEstado, frasesDe } from '../mobile/src/compa/frasesEstado';
 import { TONOS_VOZ, quitarExpresiones } from '../lib/expresiones';
-import { etiquetaV4, guionEleven } from '../server/eleven';
+import { EXPRESION_A_V4, TONO_V4, etiquetaV4, guionEleven } from '../server/eleven';
 import { buildPersonality } from '../server/desk';
 
 const AVATARES = ['ojos', 'aura', 'claudio', 'antonio'] as const;
@@ -78,4 +78,18 @@ test('el cerebro: no abre con «déjame ver» y conoce las marcas de tono, que l
   // La mesa (texto a voz) la pasa a su etiqueta en inglés.
   assert.equal(guionEleven('[con picardía] Ya lo tengo.', 'neutral', (x) => x.trim()), '[mischievously] Ya lo tengo.');
   assert.equal(guionEleven('Mira [tarareo] esto.', 'neutral', (x) => x.trim()), 'Mira [hums] esto.');
+});
+
+test('el tono de cada emoción y las marcas del cerebro (servidor) solo usan etiquetas verificadas', () => {
+  const verificadas = new Set<string>(ETIQUETAS_VERIFICADAS);
+  for (const [emo, t] of Object.entries(TONO_V4)) assert.ok(verificadas.has(String(t)), `TONO_V4.${emo} = [${t}] sin verificar`);
+  for (const [marca, t] of Object.entries(EXPRESION_A_V4)) if (t) assert.ok(verificadas.has(t), `[${marca}] → [${t}] sin verificar`);
+});
+
+test('el tono va solo en la primera frase de una respuesta (auditoría externa, 1-oct)', () => {
+  const p = (x: string) => x.trim();
+  assert.equal(guionEleven('Claro que sí.', 'feliz', p), '[warmly] Claro que sí.');
+  assert.equal(guionEleven('Y otra cosa.', 'feliz', p, { tono: false }), 'Y otra cosa.');
+  // Las marcas propias del texto siguen sonando aunque no lleve el tono.
+  assert.equal(guionEleven('Mira [risa] eso.', 'feliz', p, { tono: false }), 'Mira [laughs] eso.');
 });

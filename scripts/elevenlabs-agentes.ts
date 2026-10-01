@@ -17,7 +17,7 @@
  */
 import { pathToFileURL } from 'node:url';
 import { secretoDerivado } from '../server/seguridad';
-import { ETIQUETA_SECRETO_LLM, PASE_TTL_MS } from '../server/voz-agente';
+import { CASCADA_ELEVENLABS_MS, ETIQUETA_SECRETO_LLM, PASE_TTL_MS, RELLENO_AGENTE_MS } from '../server/voz-agente';
 import { NOMBRE_AVATAR, VOCES_ELEVEN, type AvatarVoz, type Idioma } from '../server/eleven';
 
 const API = 'https://api.elevenlabs.io/v1';
@@ -127,6 +127,9 @@ function config(avatar: AvatarVoz, idioma: Idioma, secretId: string, modeloTts: 
             request_headers: { 'X-Pase': { variable_name: 'pase' } },
           },
           backup_llm_config: { preference: 'disabled' },
+          // Cuánto espera ElevenLabs al cerebro antes de cortar (1-oct: de 4 s por omisión a 12 s). Con 4 s
+          // toda respuesta lenta obligaba a meter relleno antes del corte; el puente del servidor ya cubre.
+          cascade_timeout_seconds: CASCADA_ELEVENLABS_MS / 1000,
         },
       },
       tts: { model_id: modeloTts, voice_id: VOCES_ELEVEN[avatar][idioma] },
@@ -140,10 +143,10 @@ function config(avatar: AvatarVoz, idioma: Idioma, secretId: string, modeloTts: 
         interruption_ignore_terms: ASENTIR[idioma],
         interruption_ignore_term_languages: [idioma],
         merge_with_default_ignore_terms: true,
-        // El relleno de ElevenLabs si el cerebro no mandó nada a los 2,5 s: al azar entre varios (José,
-        // 1-oct: «Mmm… a ver.» siempre igual sonaba a máquina). Ninguno es una promesa ni una respuesta.
+        // El relleno de ElevenLabs, solo de RESPALDO: si nuestro servidor no mandó nada a los 4,5 s (el puente
+        // habla a los 3 s). Antes a 2,5 s y sonaban dos rellenos seguidos (auditoría externa, 1-oct).
         soft_timeout_config: {
-          timeout_seconds: 2.5,
+          timeout_seconds: RELLENO_AGENTE_MS / 1000,
           message: RELLENOS[idioma][0],
           additional_soft_timeout_messages: RELLENOS[idioma].slice(1),
           randomize_fillers: true,

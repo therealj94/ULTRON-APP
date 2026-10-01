@@ -28,7 +28,7 @@ import { API_BASE } from '../config';
 import type { Emocion } from './emocion';
 import { envolventeDeTexto, envolventeLibre, type EnvelopeKind } from './lipsync';
 import { frase, reaccionDe, type FraseId } from './frases';
-import { soloExpresiones } from './expresiones';
+import { quitarExpresiones, soloExpresiones } from './expresiones';
 import type { AvatarId } from '../avatares/catalogo';
 import { avatarActual, fijarAvatar } from '../avatares/actual';
 import { senalVoz } from '../avatar3d/senalVoz';
@@ -256,7 +256,20 @@ async function conExtension(path: string, ct: string): Promise<string> {
   }
 }
 
-async function fetchSource(text: string, perf: Perf, emocion: Emocion, privado = false): Promise<AVPlaybackSource | null> {
+/**
+ * Lo dicho justo antes y lo que viene, como ElevenLabs los quiere (`previous_text` / `next_text`): texto
+ * plano, sin etiquetas, corto. Con ellos la frase no arranca con entonación de comienzo, y el servidor
+ * pone el tono de la emoción solo en la primera (la que no tiene `previo`) — auditoría externa, 1-oct.
+ */
+export type VecinosVoz = { previo?: string; siguiente?: string };
+function vecinosLimpios(v?: VecinosVoz): { previo?: string; siguiente?: string } {
+  const limpio = (t?: string) => quitarExpresiones(String(t || '')).replace(/\s+/g, ' ').trim();
+  const previo = limpio(v?.previo).slice(-200);
+  const siguiente = limpio(v?.siguiente).slice(0, 200);
+  return { ...(previo ? { previo } : {}), ...(siguiente ? { siguiente } : {}) };
+}
+
+async function fetchSource(text: string, perf: Perf, emocion: Emocion, privado = false, vecinos?: VecinosVoz): Promise<AVPlaybackSource | null> {
   // Con la conversación en vivo nadie la va a oír: ni se le pide al servidor (cuesta voz).
   if (callaPorConversacion) return null;
   const avatar = avatarActual();
@@ -264,17 +277,19 @@ async function fetchSource(text: string, perf: Perf, emocion: Emocion, privado =
   if (privado) {
     // Lo que se lee de un chat cifrado: por POST (el texto no va en la URL), `privado` (el servidor no
     // guarda el audio en su caché) y sin la caché de aquí.
-    const uri = await downloadPost(TTS_ENDPOINT, { text, performance: perf, emocion, avatar, idioma, privado: true }, 40_000);
+    const uri = await downloadPost(TTS_ENDPOINT, { text, performance: perf, emocion, avatar, idioma, privado: true, ...vecinosLimpios(vecinos) }, 40_000);
     return uri ? { uri } : null;
   }
-  const key = `${avatar}|${idioma}|${perf}|${emocion}|${text}`;
+  const v = perf === 'sing' ? {} : vecinosLimpios(vecinos);
+  // Los vecinos cambian la entonación (y el tono va solo en la primera): forman parte de la clave.
+  const key = `${avatar}|${idioma}|${perf}|${emocion}|${text}|${(v.previo || '').slice(-40)}|${(v.siguiente || '').slice(0, 40)}`;
   const hit = fileCache.get(key);
   if (hit) return { uri: hit };
   const headers = { Accept: 'audio/*', ...(await sessionHeaders()) };
   for (let attempt = 0; attempt < 2; attempt++) {
     const path = tmpPath('ultron', 'wav');
     try {
-      const r = await FileSystem.downloadAsync(ttsUrl(text, perf, emocion, avatar, idioma), path, { headers });
+      const r = await FileSystem.downloadAsync(ttsUrl(text, perf, emocion, avatar, idioma, v), path, { headers });
       const ct = String((r.headers as any)?.['Content-Type'] || (r.headers as any)?.['content-type'] || '');
       const info = await FileSystem.getInfoAsync(path);
       if (r.status === 200 && info.exists && (info.size || 0) > 64 && (!ct || /audio|octet/.test(ct))) {
@@ -287,7 +302,7 @@ async function fetchSource(text: string, perf: Perf, emocion: Emocion, privado =
       await FileSystem.deleteAsync(path, { idempotent: true }).catch(() => {});
       if (r.status === 200 && ct && !/audio|octet/.test(ct)) {
         // servidor sin GET /api/tts: devolvió HTML. Usar POST.
-        const uri = await downloadPost(TTS_ENDPOINT, { text, performance: perf, emocion, avatar, idioma }, 40_000);
+        const uri = await downloadPost(TTS_ENDPOINT, { text, performance: perf, emocion, avatar, idioma, ...v }, 40_000);
         if (uri) guardarEnCache(key, uri);
         return uri ? { uri } : null;
       }
@@ -603,7 +618,7 @@ export async function speak(
   const AHEAD = 2;
   const sources: Array<Promise<AVPlaybackSource | null>> = [];
   const launch = (i: number) => {
-    if (i < sentences.length && !sources[i]) sources[i] = fetchSource(sentences[i], perf, emocion, !!opts?.privado);
+    if (i < sentences.length && !sources[i]) sources[i] = fetchSource(sentences[i], perf, emocion, !!opts?.privado, { previo: sentences[i - 1], siguiente: sentences[i + 1] });
   };
   for (let i = 0; i < Math.min(AHEAD + 1, sentences.length); i++) launch(i);
 
@@ -730,10 +745,13 @@ export class StreamSpeaker {
     return this.spoke;
   }
 
-  private source(sentence: string) {
+  /** La última frase que se mandó a decir: es el `previo` de la siguiente (entonación y tono solo al empezar). */
+  private ultima = '';
+
+  private source(sentence: string, previo?: string) {
     let p = this.sources.get(sentence);
     if (!p) {
-      p = fetchSource(sentence, 'speak', this.opts.emocion || 'neutral');
+      p = fetchSource(sentence, 'speak', this.opts.emocion || 'neutral', false, { previo });
       this.sources.set(sentence, p);
     }
     return p;
@@ -741,7 +759,8 @@ export class StreamSpeaker {
 
   private enqueue(sentence: string) {
     this.queue.push(sentence);
-    void this.source(sentence);
+    void this.source(sentence, this.ultima);
+    this.ultima = sentence;
     if (!this.pumping) void this.pump();
   }
 

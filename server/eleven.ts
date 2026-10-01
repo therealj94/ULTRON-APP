@@ -161,7 +161,7 @@ export function pausaPorFallo(status: number, cuerpo: string): number {
  * Las marcas de expresión que escribe el cerebro (las mismas de AU-RA, lib/expresiones.ts), en la
  * etiqueta de v4 que suena a eso. Las que en boca de un doctor de minas no suman se quitan.
  */
-const EXPRESION_A_V4: Record<string, string> = {
+export const EXPRESION_A_V4: Record<string, string> = {
   risa: 'laughs',
   risita: 'chuckles',
   'risa tierna': 'chuckles',
@@ -318,7 +318,18 @@ const MAX_ETIQUETAS = 4;
  * El texto que se manda a v4. `preparar` es lo mismo que Voicebox usa para la boca (markdown fuera,
  * cifras y unidades en palabras, «mmm...»): se inyecta para no duplicar esas reglas aquí.
  */
-export function guionEleven(texto: string, emocion: Emocion, preparar: (t: string) => string): string {
+export function guionEleven(
+  texto: string,
+  emocion: Emocion,
+  preparar: (t: string) => string,
+  /**
+   * `tono`: poner el tono de la emoción delante. Solo en la PRIMERA frase de una respuesta: el teléfono y
+   * la web piden la voz frase por frase, y con el tono en cada una sonaba «[warmly]… [warmly]… [warmly]»
+   * (auditoría externa, 1-oct; ElevenLabs recomienda 1-2 etiquetas por línea). Quien tiene `previo`
+   * (hay frase antes) no lo pone.
+   */
+  o: { tono?: boolean } = {}
+): string {
   const crudo = String(texto || '');
   const partes = crudo.split(/\[([^\]\n]{1,80})\]/);
   const salida: string[] = [];
@@ -349,7 +360,7 @@ export function guionEleven(texto: string, emocion: Emocion, preparar: (t: strin
     .replace(/\s{2,}/g, ' ')
     .trim();
   if (!/[\p{L}\p{N}]/u.test(guion.replace(/\[[^\]]*\]/g, ''))) return '';
-  const tono = TONO_V4[emocion];
+  const tono = o.tono === false ? undefined : TONO_V4[emocion];
   if (tono && !guion.startsWith('[')) guion = `[${tono}] ${guion}`;
   return guion;
 }

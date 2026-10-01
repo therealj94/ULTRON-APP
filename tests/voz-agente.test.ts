@@ -416,7 +416,7 @@ test('un error de adentro se dice como persona; un segundo done no se lee; un tu
   }
 });
 
-test('si la persona interrumpe (ElevenLabs cierra), la señal del turno de adentro se aborta, y lo siguiente empieza con perdón', async () => {
+test('si la persona interrumpe (ElevenLabs cierra), la señal del turno de adentro se aborta; un corte corto no pide perdón en voz', async () => {
   let abortado = false;
   let turno = 0;
   const s = await montar(async (t) => {
@@ -455,7 +455,9 @@ test('si la persona interrumpe (ElevenLabs cierra), la señal del turno de adent
       { role: 'user', content: '¿Y la plata?' },
     ]);
     const dicho = dichoDe(await r2.text());
-    assert.match(dicho, /^(¡Ah, perdón!|¡Uy, perdón!|Perdón\.) La plata está a cuarenta\.$/);
+    // Se cortó al empezar (lo dicho es corto): turno normal, sin perdón en voz (auditoría externa, 1-oct:
+    // ChatGPT voz se calla y atiende). El cerebro igual sabe que lo interrumpieron.
+    assert.equal(dicho, 'La plata está a cuarenta.');
     assert.equal(s.vistos[1].interrumpida, true, 'el cerebro sabe que lo interrumpieron (para no pedir perdón dos veces)');
 
     // El turno siguiente, sin interrupción, ya no pide perdón.
@@ -595,7 +597,7 @@ test('una conversación vencida por inactividad no se retoma aunque otra la haya
   }
 });
 
-test('un turno que corta a otro a la mitad toma lo que ese alcanzó a decir: el siguiente pide perdón', async () => {
+test('un turno que corta a otro a la mitad toma lo que ese alcanzó a decir: tras una respuesta larga, el siguiente pide perdón', async () => {
   let turno = 0;
   const s = await montar(async (t) => {
     turno++;
@@ -605,7 +607,8 @@ test('un turno que corta a otro a la mitad toma lo que ese alcanzó a decir: el 
       return;
     }
     if (turno === 2) {
-      t.enviar('delta', { text: 'Segunda respuesta que es bastante larga ', voz: 'Segunda respuesta que es bastante larga ' });
+      const larga = 'Segunda respuesta que es bastante larga, con detalles del proyecto, las concesiones, los permisos y lo que falta para cerrar el expediente ';
+      t.enviar('delta', { text: larga, voz: larga });
       await new Promise<void>((resolve) => {
         const iv = setInterval(() => t.enviar('delta', { text: 'y sigue ', voz: 'y sigue ' }), 20);
         t.senal.addEventListener('abort', () => {
@@ -773,11 +776,13 @@ test('reconexión sin frase: `[[reconecta]]` solo pide perdón y que la repita, 
   assert.deepEqual(reconexionDe('[[reconecta]] pon una alarma', 'es'), { frase: 'pon una alarma', perdon: 'Perdón, se me cortó. ' });
 });
 
-test('el puente por omisión: ~3 s, después del relleno del agente y ANTES del corte de ElevenLabs (4 s); un cerebro que contesta en 1,8 s no lo oye', async () => {
-  const { PUENTE_VOZ_MS, CASCADA_ELEVENLABS_MS } = await import('../server/voz-agente');
+test('el puente por omisión: ~3 s, ANTES del relleno de respaldo del agente (4,5 s) y del corte (12 s); un cerebro que contesta en 1,8 s no lo oye', async () => {
+  const { PUENTE_VOZ_MS, CASCADA_ELEVENLABS_MS, RELLENO_AGENTE_MS } = await import('../server/voz-agente');
   const { ESPERA_FRASE_MS, frasesDe } = await import('../mobile/src/compa/frasesEstado');
-  // Después del relleno propio del agente (~2,5 s), para no sonar dos muletillas encimadas…
-  assert.ok(PUENTE_VOZ_MS > ESPERA_FRASE_MS, `el puente (${PUENTE_VOZ_MS} ms) va después del relleno del agente`);
+  // Después de la charla rápida (que no lo oye)…
+  assert.ok(PUENTE_VOZ_MS >= ESPERA_FRASE_MS, `el puente (${PUENTE_VOZ_MS} ms) no sale en turnos rápidos`);
+  // …y antes del relleno del agente: un solo relleno por respuesta (auditoría externa, 1-oct)…
+  assert.ok(PUENTE_VOZ_MS <= RELLENO_AGENTE_MS - 800, `el puente (${PUENTE_VOZ_MS} ms) va antes del relleno del agente (${RELLENO_AGENTE_MS} ms)`);
   // …y con margen antes del cascade_timeout de los agentes: si no llega texto, ElevenLabs cuelga (30-sep).
   assert.ok(PUENTE_VOZ_MS <= CASCADA_ELEVENLABS_MS - 800, `umbral ${PUENTE_VOZ_MS} ms: tiene que llegar antes del corte de ${CASCADA_ELEVENLABS_MS} ms`);
   const espera = (ms: number) => async (t: TurnoVoz) => {

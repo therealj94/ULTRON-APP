@@ -20,7 +20,8 @@ import { useVozOpcional } from '../compa/VozProvider';
 import { mensajeVoz, type MensajeVoz } from '../compa/canales';
 import { Icono } from '../pulse/ui/Icono';
 import { Tocable } from '../pulse/ui/Tocable';
-import { AvatarVivo, type ControlCuerpo } from './AvatarVivo';
+import { type ControlCuerpo } from './AvatarVivo';
+import { CuerpoElegido } from './CuerpoElegido';
 import { Figura2D } from './Figura2D';
 import { BotonMicrofono, textoEstado } from './DockAura';
 import { siguienteModo } from './presencia';
@@ -92,7 +93,7 @@ function Escenario() {
           accessibilityLabel={tr('AURA, tu compañera', 'AURA, your companion')}
           accessibilityHint={tr('Toca para saludarla; toca dos veces para silenciarla o despertarla', 'Tap to say hi; double-tap to mute or wake her')}
         >
-          <AvatarVivo
+          <CuerpoElegido
             ref={cuerpo}
             avatar={avatar}
             camara="retrato"

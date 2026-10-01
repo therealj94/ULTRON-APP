@@ -87,6 +87,8 @@ const SIN_VOLUMEN_MS = 600;
 
 function Sesion({ gen, silenciada, permiso, onEstado, onMensaje, onInterrupcion, onNiveles, controles, onAudio, onFin }: Props) {
   const conv = useConversation();
+  /** Cuándo llegó lo último que ElevenLabs oyó de la persona (para la miga de cuánto tardó en hablar). */
+  const oidoEn = useRef(0);
   const cbs = useRef({ onEstado, onMensaje, onInterrupcion, onNiveles, permiso, onAudio, onFin });
   cbs.current = { onEstado, onMensaje, onInterrupcion, onNiveles, permiso, onAudio, onFin };
   const abierta = useRef(false);
@@ -187,6 +189,9 @@ function Sesion({ gen, silenciada, permiso, onEstado, onMensaje, onInterrupcion,
             avisar('escuchando');
           },
           onModeChange: ({ mode }) => {
+            // Para diagnosticar una llamada que «no contesta» (1-oct): cuánto tardó en hablar desde que
+            // ElevenLabs entregó lo que oyó. Sin esto no se distingue si falló el oído, el cerebro o el audio.
+            if (mode === 'speaking' && !hablando.current) miga(`voz: habla${oidoEn.current ? ` a los ${Date.now() - oidoEn.current} ms de oírte` : ''}`);
             hablando.current = mode === 'speaking';
             // Terminó de hablar: la boca se cierra ya, no con la caída.
             if (!hablando.current) boca.cortar();
@@ -194,9 +199,14 @@ function Sesion({ gen, silenciada, permiso, onEstado, onMensaje, onInterrupcion,
           },
           onMessage: (m) => {
             const texto = String(m.message || '').trim();
+            if (texto && m.source === 'user') {
+              oidoEn.current = Date.now();
+              miga(`voz: te oyó (${texto.split(/\s+/).length} palabras)`);
+            }
             if (texto && vivo) cbs.current.onMensaje(gen, m.source === 'user' ? 'usuario' : 'ultron', texto);
           },
           onInterruption: () => {
+            miga('voz: la interrumpiste');
             boca.cortar();
             if (vivo) cbs.current.onInterrupcion(gen);
           },

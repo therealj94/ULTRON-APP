@@ -489,7 +489,8 @@ export default function App() {
         if (turnoEnCurso.current !== ac || turnoCallado.current === ac || colaRef.current.length > 0 || hablando.current) return;
         const estado = image ? 'mirando' : estadoDeEspera(cmd);
         const f = fraseDeEstado(estado, 'aura', 'es');
-        decir(vozDeEspera(f.texto, estado, 'aura'), { emocion: f.emocion, sinBurbuja: true });
+        // `neutral`: la etiqueta ya la eligió vozDeEspera; con la emoción el servidor le sumaba su tono.
+        decir(vozDeEspera(f.texto, estado, 'aura'), { emocion: 'neutral', sinBurbuja: true });
       }, ESPERA_FRASE_MS);
       // Lo que llega es el texto de DECIR (con sus [risa]…): la burbuja se los quita en `decir`.
       let pendiente = '';

@@ -669,7 +669,7 @@ test('las manos: llamar espera el «sí»; leer vuelve por la voz con su boleto 
   }
 });
 
-test('interrupción: ElevenLabs corta a mitad y la respuesta siguiente empieza con un perdón', { skip: !listo }, async () => {
+test('interrupción: un corte al empezar no pide perdón en voz; uno tras una respuesta larga sí', { skip: !listo }, async () => {
   const larga = 'El oro está a tres mil cuatrocientos dólares la onza. Subió un poco esta semana. La plata también subió. Y el cobre se quedó igual que la semana pasada.';
   contestar = (d) => (/plata/.test(d) ? 'La plata está a cuarenta dólares.' : larga);
   const pase = paseDe();
@@ -679,8 +679,9 @@ test('interrupción: ElevenLabs corta a mitad y la respuesta siguiente empieza c
   await new Promise((r) => setTimeout(r, 150));
   alNodo.length = 0;
   const segunda = await voz(pase, [...hist, { role: 'assistant', content: primera.dicho + '...' }, { role: 'user', content: 'espera, ¿y la plata cuánto está?' }]);
-  assert.match(segunda.dicho, /^(¡Ah, perdón!|¡Uy, perdón!|Perdón\.) La plata está a cuarenta dólares\.$/);
-  assert.match(alNodo.at(-1)!.ultimo, /TE INTERRUMPIÓ/, 'el cerebro sabe que lo cortaron y no vuelve a pedir perdón');
+  // Lo cortó al empezar: sin perdón en voz (ChatGPT voz se calla y atiende), pero el cerebro lo sabe.
+  assert.equal(segunda.dicho, 'La plata está a cuarenta dólares.');
+  assert.match(alNodo.at(-1)!.ultimo, /TE INTERRUMPIÓ/, 'el cerebro sabe que lo cortaron');
 
   // Sin corte de la conexión: ElevenLabs manda la respuesta recortada a lo que alcanzó a decir.
   const pase2 = paseDe();

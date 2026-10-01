@@ -1985,7 +1985,11 @@ function leerPeticionVoz(req: express.Request) {
 }
 
 /** Lo de antes (su final) o lo de después (su comienzo): solo un texto, y corto (ElevenLabs usa 300). */
-const vecinoDeVoz = (v: unknown, lado: 'final' | 'comienzo') => (typeof v === 'string' && v.trim() ? (lado === 'final' ? v.slice(-400) : v.slice(0, 400)) : undefined);
+const vecinoDeVoz = (v: unknown, lado: 'final' | 'comienzo') => {
+  // Sin marcas ni etiquetas: ElevenLabs lee `previous_text`/`next_text` como texto dicho (auditoría, 1-oct).
+  const t = typeof v === 'string' ? quitarExpresiones(v).replace(/\s+/g, ' ').trim() : '';
+  return t ? (lado === 'final' ? t.slice(-400) : t.slice(0, 400)) : undefined;
+};
 
 /**
  * A nombre de quién se cuenta la voz de ElevenLabs de esta petición, si es de un MIEMBRO (server/

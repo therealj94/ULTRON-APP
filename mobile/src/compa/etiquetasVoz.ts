@@ -15,8 +15,11 @@
  * softly, warmly, cheerfully, excited, playfully, mischievously, sarcastic, deadpan, impressed, amazed,
  * delighted, relieved, nervously, sheepish, reassuring, gently, tender, focused, matter-of-fact, calm,
  * confident, enthusiastic, surprised, concerned, sad, proud, annoyed, short pause, stammers.
+ * En las 8 voces (los cuatro avatares en español e inglés) se repitió con 15 de las más usadas (warmly,
+ * thoughtful, curious, laughs softly, chuckles, sighs, hums, exhales, playfully, mischievously,
+ * enthusiastic, calm, matter-of-fact, concerned, cheerfully): 105 de 105 sin leerse (1-oct).
  * Cualquier etiqueta nueva se comprueba igual antes de entrar aquí (tests/etiquetas-voz.test.ts vigila
- * que el catálogo solo use las de esta lista).
+ * que el catálogo, el tono de cada emoción y las marcas del cerebro solo usen las de esta lista).
  *
  * Puro y sin React Native: lo usan el servidor (las frases de espera de la llamada), la mesa del
  * teléfono, la web y las pruebas en Node.
@@ -31,6 +34,10 @@ export const ETIQUETAS_VERIFICADAS = [
   'mischievously', 'sarcastic', 'deadpan', 'impressed', 'amazed', 'delighted', 'relieved', 'nervously',
   'sheepish', 'reassuring', 'gently', 'tender', 'focused', 'matter-of-fact', 'calm', 'confident',
   'enthusiastic', 'surprised', 'concerned', 'sad', 'proud', 'annoyed', 'short pause', 'stammers',
+  // Las del tono de cada emoción en el servidor (server/eleven.ts, TONO_V4) y alguna marca del cerebro,
+  // verificadas igual el 1-oct (auditoría externa: faltaban). «amused» suena con una risita.
+  'amused', 'pleasantly surprised', 'playful', 'skeptical', 'hesitant', 'reverent', 'serious, urgent',
+  'firm, measured', 'softly, reverent', 'annoyed, restrained', 'softly, sad', 'warmly, tender',
 ] as const;
 export type EtiquetaVoz = (typeof ETIQUETAS_VERIFICADAS)[number];
 
