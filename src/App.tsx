@@ -11,6 +11,7 @@ import { cortarFrases } from './03-voz/frases';
 import { onLip, desbloquearAudio, audioDesbloqueado } from './03-voz/player';
 import { clipDeEmocion, clipDeTexto, saludoDe, saludoHora, siguienteChiste } from './03-voz/banco';
 import { useOido } from './03-voz/useOido';
+import { ConversacionEnVivo, type EstadoEnVivo } from './03-voz/enVivo';
 import { opinarTurno, pedirTurnoStream } from './04-cerebro/turno';
 import { detectarIntencion } from './04-cerebro/intenciones';
 import { grabFrame, achicarFoto } from './04-cerebro/grabFrame';
@@ -19,7 +20,7 @@ import { headersMesa } from './10-infra/sesionCliente';
 import { cargarPerfil, perfil as perfilActual } from './perfil';
 import type { Emocion } from '../lib/emocion';
 import { quitarExpresiones } from '../lib/expresiones';
-import { Fingerprint, ShieldCheck, Settings2, Mic, MicOff, Keyboard, MoreHorizontal, MessagesSquare, LayoutPanelLeft } from 'lucide-react';
+import { Fingerprint, ShieldCheck, Settings2, Mic, MicOff, Keyboard, MoreHorizontal, MessagesSquare, LayoutPanelLeft, AudioLines, PhoneOff } from 'lucide-react';
 import { hayWebGL } from './11-sala/webgl';
 import { tareaDeHerramientas, type Postura, type Tarea } from './11-sala/tareas';
 import type { PedidoTarea } from './11-sala/VistaSala';
@@ -748,9 +749,62 @@ export default function App() {
     [conv.actualizar, decir]
   );
 
+  /*
+   * ---- EN VIVO: la conversación con el agente de ElevenLabs (03-voz/enVivo.ts), como el modo voz de
+   * ChatGPT. Mientras está abierta, el oído del navegador y la voz frase a frase se apagan: habla la
+   * conversación. Si no abre, queda el micrófono de siempre.
+   */
+  const [enVivo, setEnVivo] = useState<EstadoEnVivo>('cerrada');
+  const vivoRef = useRef<ConversacionEnVivo | null>(null);
+  const vivoCbs = useRef({ conv, showBubble, setFace });
+  vivoCbs.current = { conv, showBubble, setFace };
+  const conversacionEnVivo = () => {
+    if (!vivoRef.current) {
+      vivoRef.current = new ConversacionEnVivo({
+        // El SDK se carga al abrir la primera vez: no pesa en la primera pantalla.
+        abrirSesion: async (o) => {
+          const { Conversation } = await import('@elevenlabs/client');
+          return Conversation.startSession(o as any);
+        },
+        pedir: async (ruta, cuerpo) => {
+          const r = await fetch(ruta, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headersMesa() }, body: JSON.stringify(cuerpo) });
+          return { ok: r.ok, status: r.status, json: await r.json().catch(() => null) };
+        },
+        onEstado: (e, detalle) => {
+          setEnVivo(e);
+          const cb = vivoCbs.current;
+          if (e === 'escuchando') cb.setFace('LISTENING');
+          else if (e === 'hablando') cb.setFace('SPEAKING');
+          else if (e === 'cerrada') cb.setFace('IDLE');
+          else if (e === 'error') {
+            cb.setFace('IDLE');
+            if (detalle) cb.showBubble(detalle, 6000);
+          }
+        },
+        onMensaje: (quien, texto) => {
+          const cb = vivoCbs.current.conv;
+          if (quien === 'persona') cb.persona(texto);
+          else cb.aura(texto, 'lista');
+        },
+      });
+    }
+    return vivoRef.current;
+  };
+  useEffect(() => () => vivoRef.current?.cerrar(), []);
+  const alternarEnVivo = () => {
+    playSfx('tap', soundFxEnabled);
+    const c = conversacionEnVivo();
+    if (c.estado() !== 'cerrada' && c.estado() !== 'error') return c.cerrar();
+    if (face === 'SLEEPING') despertar();
+    // Lo que la mesa estaba diciendo se corta: desde aquí habla la conversación.
+    callarTodo();
+    void c.abrir({ avatar: 'aura', idioma: 'es' });
+  };
+  const vivoAbierta = enVivo === 'conectando' || enVivo === 'escuchando' || enVivo === 'hablando';
+
   // ---- OÍDO continuo con barge-in.
   useOido({
-    activo: micEnabled && !isBooting,
+    activo: micEnabled && !isBooting && !vivoAbierta,
     onFinal: (t) => {
       setOyendo('');
       pedir(t, true);
@@ -1079,20 +1133,25 @@ export default function App() {
                   )}
                 </div>
               )}
-              <div className="pointer-events-auto flex items-center justify-center gap-3">
-                <button ref={escribirBtn} type="button" onClick={() => setDockOpen(true)} className="aura-primario" aria-haspopup="dialog">
+              <div className="pointer-events-auto flex items-center justify-center gap-2 min-[420px]:gap-3">
+                <button ref={escribirBtn} type="button" onClick={() => setDockOpen(true)} className="aura-primario" aria-haspopup="dialog" aria-label="Escribir">
                   <Keyboard className="w-5 h-5" aria-hidden="true" />
-                  <span>Escribir</span>
+                  {/* En un teléfono angosto entran los cuatro botones: «Escribir» queda con su ícono. */}
+                  <span className="hidden min-[420px]:inline">Escribir</span>
                 </button>
-                <button type="button" onClick={alternarMic} aria-pressed={micEnabled} aria-label={etiquetaMic} className={`aura-mic ${micEnabled ? 'abierto' : ''} ${escuchando ? 'escuchando' : ''}`}>
+                <button type="button" onClick={alternarMic} disabled={vivoAbierta} aria-pressed={micEnabled} aria-label={etiquetaMic} className={`aura-mic ${micEnabled ? 'abierto' : ''} ${escuchando ? 'escuchando' : ''}`}>
                   {micEnabled ? <Mic className="w-7 h-7" aria-hidden="true" /> : <MicOff className="w-7 h-7" aria-hidden="true" />}
+                </button>
+                <button type="button" onClick={alternarEnVivo} aria-pressed={vivoAbierta} aria-label={vivoAbierta ? 'Colgar la conversación en vivo' : 'Hablar en vivo'} className={`aura-primario ${vivoAbierta ? 'en-vivo' : ''}`}>
+                  {vivoAbierta ? <PhoneOff className="w-5 h-5" aria-hidden="true" /> : <AudioLines className="w-5 h-5" aria-hidden="true" />}
+                  <span className="whitespace-nowrap">{vivoAbierta ? 'Colgar' : 'En vivo'}</span>
                 </button>
                 <button type="button" onClick={() => setMasOpen(true)} aria-label="Más opciones" aria-haspopup="dialog" className="aura-redondo !w-12 !h-12">
                   <MoreHorizontal className="w-5 h-5" aria-hidden="true" />
                 </button>
               </div>
               <span className="text-[14px] font-medium text-(--aura-tinta-2) bg-(--aura-fondo)/85 px-3 py-0.5 rounded-full" aria-hidden="true">
-                {!micEnabled ? 'Micrófono apagado' : escuchando ? 'Te escucho…' : 'Micrófono abierto · háblale'}
+                {enVivo === 'conectando' ? 'Conectando en vivo…' : enVivo === 'hablando' ? 'En vivo · podés interrumpirla' : enVivo === 'escuchando' ? 'En vivo · te escucho' : !micEnabled ? 'Micrófono apagado' : escuchando ? 'Te escucho…' : 'Micrófono abierto · háblale'}
               </span>
             </div>
           )}
