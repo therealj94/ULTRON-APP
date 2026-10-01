@@ -48,6 +48,7 @@ import { RTCIceCandidate, RTCPeerConnection, RTCSessionDescription, mediaDevices
 import { AudioSession } from '@livekit/react-native';
 import { emitir, escuchar } from '../nucleo/contrato';
 import * as SERVICIO from './servicioLlamada';
+import { registrarTrabajoActivo } from '../lib/barreraOta';
 
 const HIELO = [
   { urls: 'stun:stun.l.google.com:19302' },
@@ -979,3 +980,5 @@ export function arrancar(o: {
 }
 
 export const enLlamada = () => estado !== 'libre';
+// Lo vivo, no el aviso del bus: con una llamada en pie la OTA no recarga (lib/barreraOta.ts).
+registrarTrabajoActivo('llamada-en-curso', enLlamada);
