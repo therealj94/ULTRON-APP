@@ -49,6 +49,8 @@ export type Opciones = {
   silencioCierraMs?: number;
   /** Reintentos automáticos si falla al abrir. */
   reintentos?: number;
+  /** Reconexiones por error en TODA la conversación abierta (TOPE_RECONEXIONES). */
+  reconexiones?: number;
   /** «Conectando…» más de esto sin conectar cuenta como fallo (CONECTAR_MAX_MS). */
   conectarMaxMs?: number;
   /** Abierta y sin silencio, sin nada del micrófono en este rato: no le llega la voz (SORDA_MS). */
@@ -71,6 +73,15 @@ export const CONECTAR_MAX_MS = 12_000;
 export const SORDA_MS = 15_000;
 /** Un micrófono vivo nunca da un cero perfecto (ruido de fondo): por debajo de esto es que no llega nada. */
 export const UMBRAL_ENTRADA = 0.0005;
+/**
+ * Lo más que se reconecta por error una misma conversación (desde que se abre hasta que se cierra). El
+ * `intento` vuelve a 0 al conectar (así un reintento con permiso nuevo vale para cada apertura), y
+ * con eso solo, el único reintento se volvía infinito: 1-oct, el cerebro tardó, ElevenLabs cortó con
+ * «Server error» y la app reconectó una y otra vez (gen 2, gen 3…), cada una una conversación nueva.
+ * Este tope NO vuelve a 0 al conectar: solo al abrir una conversación nueva. Pasado, falla como
+ * siempre (error, el audio vuelve a la mesa).
+ */
+export const TOPE_RECONEXIONES = 2;
 
 export class ControlSesion {
   private v: VistaSesion;
@@ -81,6 +92,9 @@ export class ControlSesion {
   private reloj: () => number;
   private silencioCierraMs: number;
   private reintentos: number;
+  private topeReconexiones: number;
+  /** Reconexiones por error de la conversación abierta (vuelve a 0 solo al abrir una nueva). */
+  private reconexiones = 0;
   private conectarMaxMs: number;
   private sordaMs: number;
   /** Desde cuándo está «conectando» la generación vigente. */
@@ -94,6 +108,7 @@ export class ControlSesion {
     this.reloj = o.reloj || Date.now;
     this.silencioCierraMs = o.silencioCierraMs ?? SILENCIO_CIERRA_MS;
     this.reintentos = o.reintentos ?? 1;
+    this.topeReconexiones = o.reconexiones ?? TOPE_RECONEXIONES;
     this.conectarMaxMs = o.conectarMaxMs ?? CONECTAR_MAX_MS;
     this.sordaMs = o.sordaMs ?? SORDA_MS;
     this.v = { gen: 0, montada: false, estado: 'cerrada', silenciada: false, dormida: false, suspendida: false, avatar, idioma, intento: 0 };
@@ -168,6 +183,7 @@ export class ControlSesion {
 
   /** Una generación nueva: la sesión anterior (si había) se desmonta y se monta otra limpia. */
   private abrir(cambio: Partial<VistaSesion> = {}) {
+    this.reconexiones = 0;
     this.poner({ gen: this.v.gen + 1, montada: true, estado: 'conectando', intento: 0, dormida: false, ...cambio });
   }
 
@@ -256,7 +272,8 @@ export class ControlSesion {
   alEstado(gen: number, e: EstadoVoz, detalle?: string) {
     if (gen !== this.v.gen || !this.v.montada) return;
     if (e === 'error') {
-      if (this.v.intento < this.reintentos) {
+      if (this.v.intento < this.reintentos && this.reconexiones < this.topeReconexiones) {
+        this.reconexiones += 1;
         this.poner({ gen: this.v.gen + 1, estado: 'conectando', intento: this.v.intento + 1, detalle });
         return;
       }

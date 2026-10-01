@@ -143,6 +143,8 @@ const avisarCierre = (pase: string) =>
 
 /** Una sola para toda la app: la llamada escucha su aviso en el bus (`voz`). */
 const audioVoz = new AudioVoz((libre) => emitir('voz', { libre }));
+/** Para la mesa: espera a que la conversación suelte el audio del teléfono (como mucho `topeMs`, 4 s). */
+export const esperarAudioLibre = (topeMs?: number) => audioVoz.esperarLibre(topeMs);
 
 async function hayToken(): Promise<boolean> {
   return !!(await loadMesaToken().catch(() => ''));

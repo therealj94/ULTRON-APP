@@ -50,7 +50,15 @@ let lastPartial = '';
 let lastFinalAt = 0;
 let lastFinalText = '';
 let consecutiveFails = 0;
-let unavailable = false;
+/**
+ * Hasta cuándo el motor está marcado no disponible (0: disponible). Antes era para siempre: cuatro
+ * arranques fallidos (p. ej. justo cuando la conversación en vivo soltaba el audio) lo apagaban hasta
+ * reiniciar la app. Ahora se vuelve a probar pasado REINTENTO_NATIVO_MS; solo «el idioma no está» es
+ * para siempre (no se arregla solo).
+ */
+let noDisponibleHasta = 0;
+export const REINTENTO_NATIVO_MS = 10 * 60_000;
+const noDisponible = () => Date.now() < noDisponibleHasta;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -60,7 +68,7 @@ export function setNativeCallbacks(next: NativeCallbacks) {
 
 export function nativeAvailable(): boolean {
   try {
-    return !unavailable && ExpoSpeechRecognitionModule.isRecognitionAvailable();
+    return !noDisponible() && ExpoSpeechRecognitionModule.isRecognitionAvailable();
   } catch {
     return false;
   }
@@ -149,7 +157,7 @@ function attach() {
       if (code === 'aborted') return;
       starting = false;
       if (code === 'service-not-allowed' || code === 'language-not-supported' || code === 'not-allowed') {
-        unavailable = code !== 'not-allowed';
+        if (code !== 'not-allowed') noDisponibleHasta = code === 'language-not-supported' ? Infinity : Date.now() + REINTENTO_NATIVO_MS;
         emitListening(false);
         cb.onUnavailable?.(`${code}: ${String(e?.message || '')}`);
         return;
@@ -188,7 +196,7 @@ function detach() {
 }
 
 async function start() {
-  if (!wanted || paused || starting || running || unavailable) return;
+  if (!wanted || paused || starting || running || noDisponible()) return;
   starting = true;
   attach();
   try {
@@ -221,7 +229,7 @@ async function start() {
     consecutiveFails += 1;
     cb.onError?.(String(e?.message || e));
     if (consecutiveFails >= 4 && Platform.OS === 'android') {
-      unavailable = true;
+      noDisponibleHasta = Date.now() + REINTENTO_NATIVO_MS;
       cb.onUnavailable?.('start-failed');
       return;
     }
@@ -253,7 +261,7 @@ function darPlazo() {
 
 export async function nativeEnable() {
   wanted = true;
-  unavailable = false;
+  noDisponibleHasta = 0;
   consecutiveFails = 0;
   darPlazo();
   await start();
@@ -318,7 +326,7 @@ export function nativeVidaReciente() {
  * frase se reinicia en ~300 ms) o acaba de pedirse y está en su plazo corto de arranque.
  */
 export function nativeEscuchando(plazoMs = 2500) {
-  if (!wanted || paused || unavailable) return false;
+  if (!wanted || paused || noDisponible()) return false;
   const t = Date.now();
   return running || t - ultimaVidaAt < plazoMs || t - plazoDesde < plazoMs;
 }
@@ -338,7 +346,7 @@ export async function nativeRestart() {
  */
 export async function nativeReabrir() {
   wanted = true;
-  unavailable = false;
+  noDisponibleHasta = 0;
   await nativeRestart();
 }
 

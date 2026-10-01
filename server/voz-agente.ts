@@ -413,6 +413,27 @@ export function perdonDe(idioma: Idioma, n = 0): string {
   return l[Math.abs(n) % l.length];
 }
 
+/**
+ * LA RECONEXIÓN A MITAD DE LLAMADA (compa/llamadaCiclo.ts, mensajeReconecta): la sesión de ElevenLabs se
+ * cayó (1-oct: el cerebro tardó y ElevenLabs cortó con «Server error») y el teléfono abrió otra, que
+ * para ElevenLabs es una conversación NUEVA. Al conectar manda `[[reconecta]] <la última frase de la
+ * persona>`: se pide un perdón corto y se atiende esa frase con el cerebro (como si la hubiera dicho
+ * ahora: queda en el hilo ella, no la marca). Sin frase, `[[reconecta]]` solo: el perdón y que la
+ * repita, sin cerebro. Nunca otro saludo.
+ */
+export const RE_RECONECTA = /^\s*\[\[reconecta\]\]\s*([\s\S]{0,400})$/;
+const PERDON_RECONEXION: Record<Idioma, { con: string; sin: string }> = {
+  es: { con: 'Perdón, se me cortó. ', sin: 'Perdón, se me cortó. ¿Me repites?' },
+  en: { con: 'Sorry, I got cut off. ', sin: 'Sorry, I got cut off. Could you repeat that?' },
+};
+/** Lo que trae un `[[reconecta]]`: la frase que se cortó ('' si no hay) y el perdón con que empieza; null si no es uno. */
+export function reconexionDe(mensaje: string, idioma: Idioma): { frase: string; perdon: string } | null {
+  const m = RE_RECONECTA.exec(String(mensaje || ''));
+  if (!m) return null;
+  const frase = aplanar(m[1] || '');
+  return { frase, perdon: frase ? PERDON_RECONEXION[idioma].con : PERDON_RECONEXION[idioma].sin };
+}
+
 /** Un trozo SSE con la forma de OpenAI. */
 export function trozoOpenAI(id: string, modelo: string, contenido: string | null, fin: string | null = null, rol = false): string {
   const delta: Record<string, string> = {};
@@ -665,7 +686,10 @@ export function montarVozAgente(app: express.Express, d: Deps) {
       if (restanteVozMs(pase.correo, ahora) <= 0) return soloFrase(fraseTopeVoz(pase.idioma));
     }
 
-    const mensaje = ultimoDeLaPersona(req.body?.messages);
+    const recibido = ultimoDeLaPersona(req.body?.messages);
+    // `[[reconecta]] <frase>`: desde aquí el turno es de la frase (la marca no la ve el cerebro ni queda en el hilo).
+    const reconexion = reconexionDe(recibido, pase.idioma);
+    const mensaje = reconexion ? reconexion.frase : recibido;
     const id = `chatcmpl-${crypto.randomBytes(8).toString('hex')}`;
     const modelo = String(req.body?.model || 'aura');
 
@@ -680,7 +704,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     }
     conv.dichoEnCurso = '';
     conv.algoEnCurso = false;
-    const interrumpida = !!mensaje && (conv.cortada || asistenteTruncado(req.body?.messages, conv.ultimaDicha));
+    const interrumpida = !reconexion && !!mensaje && (conv.cortada || asistenteTruncado(req.body?.messages, conv.ultimaDicha));
     conv.cortada = false;
     conv.turnos++;
     // Un turno nuevo (la lectura que volvió del teléfono, o la persona que habló) quita el sonido de
@@ -710,6 +734,13 @@ export function montarVozAgente(app: express.Express, d: Deps) {
       if (!res.writableEnded) res.end();
     };
     escribir(trozoOpenAI(id, modelo, null, null, true));
+    // Se reconectó sin frase que retomar: el perdón y que la repita, al instante y sin cerebro.
+    if (reconexion && !reconexion.frase) {
+      escribir(trozoOpenAI(id, modelo, reconexion.perdon));
+      conv.ultimaDicha = reconexion.perdon;
+      escribir(trozoOpenAI(id, modelo, null, 'stop'));
+      return cerrar();
+    }
     if (!mensaje) {
       escribir(trozoOpenAI(id, modelo, null, 'stop'));
       return cerrar();
@@ -784,8 +815,8 @@ export function montarVozAgente(app: express.Express, d: Deps) {
       }
     });
 
-    if (interrumpida) {
-      decir(perdonDe(pase.idioma, conv.turnos));
+    if (interrumpida || reconexion) {
+      decir(reconexion ? reconexion.perdon : perdonDe(pase.idioma, conv.turnos));
       // El perdón no cuenta como «ya dijo algo»: si el cerebro falla, igual se explica.
       algo = false;
       conv.algoEnCurso = false;
