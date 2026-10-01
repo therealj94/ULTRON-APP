@@ -25,6 +25,7 @@ import { adaptarPcm, empalmar, escribirWav, tomaDeExpresion } from './empalme';
 import type { Presupuesto } from '../lib/presupuesto';
 import type { AlineacionEleven } from '../lib/alineacion';
 import { s3GetJson, s3Listo, s3PutJson } from '../lib/s3';
+import { esFraseConocida } from '../lib/frases-conocidas';
 import { abrirEleven, conMuletillas, elevenListo, estabilidadDe, guionEleven, hablarEleven, modeloEleven, normalizarAvatar, normalizarIdioma, vozEleven, type AvatarVoz, type Idioma } from './eleven';
 
 export type Performance = 'speak' | 'sing';
@@ -229,7 +230,8 @@ function cacheSet(key: string, hit: Omit<AudioHit, 'at'>) {
  * (las de lib/respuestas-fijas.ts, las de espera, los saludos) se guarda en el cubo de memoria con su
  * clave (voz, modelo, idioma, guion y vecinos) y sus tiempos por letra (la boca del avatar): la primera
  * vez se genera con la voz del avatar y después sale de S3, sin costo, sobreviviendo a los despliegues.
- *  · Solo frases cortas: una respuesta larga casi nunca se repite igual y no vale la vuelta a S3.
+ *  · Solo las frases del banco y las de espera (lib/frases-conocidas.ts), y cortas: una respuesta del
+ *    cerebro nunca va a S3, aunque sea corta (puede traer datos de la persona o de un cliente).
  *  · Nunca lo privado (un chat de la persona): ni se lee ni se guarda.
  *  · La lectura tiene tope (S3_VOZ_MS): si S3 tarda, se sigue a ElevenLabs como siempre.
  *  · Lo que no está se recuerda un rato (no se pregunta a S3 por cada frase nueva dos veces).
@@ -252,8 +254,8 @@ export function _vaciarCacheVoz() {
   cacheBytes = 0;
 }
 
-function persistible(guion: string, privado?: boolean): boolean {
-  return !privado && guion.length > 0 && guion.length <= PERSISTIR_MAX_CARACTERES && s3Voz.listo();
+function persistible(guion: string, texto: string, privado?: boolean): boolean {
+  return !privado && guion.length > 0 && guion.length <= PERSISTIR_MAX_CARACTERES && esFraseConocida(texto) && s3Voz.listo();
 }
 
 async function leerVozDeS3(claveAudio: string): Promise<Omit<AudioHit, 'at'> | null> {
@@ -491,7 +493,7 @@ export async function abrirVozEnVivo(opts: {
   if (!p) return null;
   const hit = cacheGet(p.clave);
   if (hit) return { tipo: 'cache', habla: { audio: hit.audio, contentType: hit.contentType, motor: hit.motor, cache: true, ms: 0 } };
-  const guardable = persistible(p.guion);
+  const guardable = persistible(p.guion, opts.texto);
   const deS3 = guardable ? await leerVozDeS3(p.clave) : null;
   if (deS3) {
     cacheSet(p.clave, deS3);
@@ -597,7 +599,7 @@ export async function hablar(opts: {
       const sirve = hit && (!opts.tiempos || hit.alineacion !== undefined);
       if (hit && sirve) return { audio: hit.audio, contentType: hit.contentType, motor: hit.motor, cache: true, ms: Date.now() - t0, alineacion: hit.alineacion };
     }
-    const guardable = persistible(xiPedido.guion, opts.privado);
+    const guardable = persistible(xiPedido.guion, String(opts.texto || ''), opts.privado);
     if (guardable && !opts.sinCache) {
       const deS3 = await leerVozDeS3(xiPedido.clave);
       if (deS3 && (!opts.tiempos || deS3.alineacion !== undefined)) {

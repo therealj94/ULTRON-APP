@@ -24,6 +24,7 @@ import { tipoCharla } from './charla-rapida';
 import { MemoriaEtiquetas, type EtiquetaVoz } from '../mobile/src/compa/etiquetasVoz';
 import type { AvatarVoz, Idioma } from '../server/eleven';
 import { ejemploDeManos, quePuedoDecir } from './manos-ficha';
+import { anotarFraseFija } from './frases-conocidas';
 
 export type Intencion =
   | 'saludo'
@@ -444,5 +445,7 @@ export function respuestaFija(
   const sobria = persona === 'ojos' || persona === 'electrum';
   const lista = sobria ? ETIQUETAS[intencion].filter((e) => SOBRIAS.includes(e)) : ETIQUETAS[intencion];
   const etiqueta = azar() < 0.8 ? memoriaEtiquetas.elegir(lista.length ? lista : SOBRIAS, persona, azar) : null;
+  // Su voz se puede guardar en S3 (es del banco, no del cerebro): lib/frases-conocidas.ts.
+  anotarFraseFija(textoFinal);
   return { intencion, texto: textoFinal, voz: etiqueta ? `[${etiqueta}] ${textoFinal}` : textoFinal, emocion: EMOCION[intencion] };
 }

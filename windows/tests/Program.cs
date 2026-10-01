@@ -373,6 +373,10 @@ foreach (var (f, q) in new[] { ("pon the verve", "the verve"), ("ponme bohemian 
     Check(R(f) is { Mano: Mano.Musica } pm && pm.Valor == "buscar|" + q, "música sin app: " + f + " → " + R(f));
 foreach (var f in new[] { "pon la alarma a las 7", "pon el volumen al 50", "pon esto en word", "pon una película", "ponme el despertador", "quiero escuchar el correo", "pon a cargar el celular" })
     Check(R(f).Mano != Mano.Musica, "no es música: " + f + " → " + R(f));
+// Abrir una app: cuenta una ventana DE esa app, no cualquiera nueva (Codex en #112).
+Check(AppVentana.Es("Microsoft Excel", "Libro1 - Excel", "EXCEL") && AppVentana.Es("Word", "Documento1 - Word", "WINWORD") && AppVentana.Es("Spotify", "Spotify Premium", "Spotify"), "ventana de la app");
+Check(AppVentana.Es("configuracion", "Configuración", "SystemSettings") && AppVentana.Es("Calculadora", "Calculadora", "ApplicationFrameHost"), "apps del sistema");
+Check(!AppVentana.Es("Microsoft Excel", "Actualización de Windows", "explorer") && !AppVentana.Es("Word", "WhatsApp", "WhatsApp"), "otra ventana no es la app");
 // La música: solo cuenta lo que nombra lo pedido (antes le daba play a lo de la búsqueda anterior).
 Check(!MusicaPedida.Menciona("Reproducir Bohemian Rhapsody", "the verve") && MusicaPedida.Menciona("Reproducir Bitter Sweet Symphony de The Verve", "the verve"), "the verve no es bohemian");
 Check(MusicaPedida.Menciona("Play Bohemian Rhapsody - Remastered 2011", "bohemian rhapsody de queen") && MusicaPedida.Menciona("Queen", "bohemian rhapsody de queen"), "lo pedido sí");

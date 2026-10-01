@@ -63,8 +63,11 @@ public partial class NotchWindow
     {
         resultadoUltimo = false;
         ultimoMotivo = motivo;
+        // Primer intento de las reglas en la conversación en vivo: todavía no se muestra ni se dice nada. Si la orden
+        // del cerebro (el segundo intento) sale, no hubo fallo; si no, AlOirEnVivo lo dice entonces (Codex en #112).
+        if (intentoLocal) return;
         // En la conversación en vivo el agente lo dice (antes quedaba solo escrito y AURA ya había dicho «listo»).
-        if (!intentoLocal) AvisarAgente(T("no se pudo — ", "couldn't do it — ") + motivo, true);
+        AvisarAgente(T("no se pudo — ", "couldn't do it — ") + motivo, true);
         pensando = false;
         Recalcular();
         Avisar(new Aviso(T("No se pudo", "Couldn't do it"), motivo, "", "worried", Segundos: 5));

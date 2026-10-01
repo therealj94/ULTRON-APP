@@ -99,6 +99,12 @@ test('mientras HACE algo (cerrar, llamar, mandar, música) dice que va, nunca qu
   assert.equal(estadoDeEspera('llama a Beto'), 'haciendo');
   assert.equal(estadoDeEspera('pon Bad Bunny en spotify'), 'haciendo');
   assert.equal(estadoDeEspera('abre excel'), 'abriendo');
+  // El verbo manda sobre lo que nombra (Codex en #112).
+  assert.equal(estadoDeEspera('manda el PDF a Beto'), 'haciendo');
+  assert.equal(estadoDeEspera('cierra esta página'), 'haciendo');
+  assert.equal(estadoDeEspera('abre el PDF'), 'abriendo');
+  assert.equal(estadoDeEspera('lee el PDF'), 'leyendo');
+  assert.equal(estadoDeEspera('busca el precio del oro'), 'buscando');
   assert.equal(estadoDeEspera('¿cómo se llama el presidente?'), 'pensando', 'una pregunta no es una orden');
   // Ni «haciendo» ni «abriendo» dan el resultado por hecho: eso lo dice quien lo ejecutó, cuando quedó.
   for (const estado of ['haciendo', 'abriendo'] as const)

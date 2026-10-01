@@ -125,13 +125,13 @@ internal static class Aplicaciones
     }
 
     /// <summary>
-    /// Abre y COMPRUEBA: una ventana nueva, o la de esa app ya abierta (las de una sola instancia solo se traen al
-    /// frente). Si no aparece, otra vez. José: «tiene que probar hasta lograrlo y no decir que sí y no».
+    /// Abre y COMPRUEBA: una ventana DE esa app (por su programa o su título; también si ya estaba abierta, las de
+    /// una sola instancia solo se traen al frente). Si no aparece, otra vez. José: «tiene que probar hasta lograrlo
+    /// y no decir que sí y no». Una ventana nueva de otra cosa no cuenta (Codex en #112).
     /// </summary>
     public static async Task<bool> AbrirVerificado(AppInstalada app)
     {
-        var antes = new HashSet<IntPtr>(Ventanas.Abiertas().Select(v => v.Handle));
-        bool Abierta() => Ventanas.Abiertas().Any(v => !antes.Contains(v.Handle)) || Ventanas.Buscar(app.Nombre) != null;
+        bool Abierta() => Ventanas.Abiertas().Any(v => AppVentana.Es(app.Nombre, v.Titulo, v.Proceso)) || Ventanas.Buscar(app.Nombre) != null;
         return await Verificar.Reintentar(async intento =>
         {
             if (intento > 1 && Abierta()) return true;

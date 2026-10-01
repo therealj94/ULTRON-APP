@@ -637,13 +637,14 @@ export function estadoDeEspera(pregunta: string): EstadoFrase {
     .toLowerCase()
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '');
+  // Primero las órdenes (el verbo manda sobre lo que nombra: «manda el PDF» es mandar, no leer; Codex en #112).
+  // Una orden que no es abrir (cerrar, llamar, mandar, recordar, música): «¿cómo se llama…?» no es llamar.
+  if (/(?<!se )\b(cierra|cerrar|minimiza|llama|llamame|llamar|videollama|manda|mandale|envia|enviale|escribele|recuerdame|recordame|apaga|silencia|ponme|pausa|close|call me|send|remind|turn (up|down|off)|mute|pause|skip)\b/.test(q) || /^(pon|play|dile|escribe|sube|baja)\b/.test(q)) return 'haciendo';
+  if (/\b(abre|abrir|abreme|open)\b/.test(q)) return 'abriendo';
   if (/\b(calcula|calcular|cuanto (es|son|da|sale)|convierte|convert|how much is|calculate|porcentaje|percent|suma|multiplica|divide)\b|\d+\s*[x*/+-]\s*\d+/.test(q)) return 'calculando';
   if (/\b(busca|buscame|internet|google|noticias|precio|cotiza|clima|search|look up|news|price|weather|averigua|investiga)\b/.test(q)) return 'buscando';
   if (/\b(lee|leeme|leer|pdf|pagina|articulo|read)\b|https?:\/\//.test(q)) return 'leyendo';
   if (/\b(que ves|me ves|mira esto|camara|look at this|what do you see)\b/.test(q)) return 'mirando';
-  // Una orden que no es abrir (cerrar, llamar, mandar, recordar, música): «¿cómo se llama…?» no es llamar.
-  if (/(?<!se )\b(cierra|cerrar|minimiza|llama|llamame|llamar|videollama|manda|mandale|envia|enviale|escribele|recuerdame|recordame|apaga|silencia|ponme|pausa|close|call me|send|remind|turn (up|down|off)|mute|pause|skip)\b/.test(q) || /^(pon|play|dile|escribe|sube|baja)\b/.test(q)) return 'haciendo';
-  if (/\b(abre|abrir|abreme|open)\b/.test(q)) return 'abriendo';
   if (/\b(revisa|revisar|verifica|confirma|expediente|documento|contrato|check|verify|review|pendientes|tareas|agenda)\b/.test(q)) return 'revisando';
   return 'pensando';
 }

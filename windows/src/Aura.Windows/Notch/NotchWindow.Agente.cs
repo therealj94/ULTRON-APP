@@ -185,7 +185,6 @@ public partial class NotchWindow
         if (p.Mano == Mano.Ninguna) return;
         Centro.Registro.Anotar("entender", $"en vivo · {p.Mano} (reglas)");
         hechasRecientes.Anotar(texto);
-        var a = agente;
         var desde = DateTime.Now;
         resultadoUltimo = null;
         ordenSaltada = null;
@@ -207,7 +206,8 @@ public partial class NotchWindow
             return;
         }
         await Task.Delay(TimeSpan.FromSeconds(8));
-        if (ReferenceEquals(agente, a) && ultimaOrdenCerebro < desde) AvisarAgente(T("no se pudo — ", "couldn't do it — ") + motivo, true);
+        // Ninguna orden del cerebro en ese rato: ahora sí, el fallo se muestra y el agente lo dice.
+        if (ultimaOrdenCerebro < desde) NoPude(motivo);
     }
 
     /// <summary>El resultado real de una mano, a la conversación en vivo (si hay una).</summary>

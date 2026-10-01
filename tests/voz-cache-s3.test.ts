@@ -7,6 +7,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { _reiniciarFrenoEleven, _olvidarSinTiempos } from '../server/eleven';
+import { anotarFraseFija } from '../lib/frases-conocidas';
 import { hablar, abrirVozEnVivo, _s3VozDePrueba, _vaciarCacheVoz, PREFIJO_S3_VOZ, S3_VOZ_MS } from '../server/voz';
 
 type S3Falso = { datos: Map<string, any>; gets: string[]; puts: string[]; lento?: boolean };
@@ -67,6 +68,7 @@ test('la frase corta se guarda en S3 y, tras redesplegar (LRU vacía), sale de S
   _s3VozDePrueba(s3.impl);
   await conEleven(async (llamadas) => {
     const texto = `¡Hola, José! ¿En qué te ayudo? ${Math.random()}`;
+    anotarFraseFija(texto);
     const primera = await hablar({ texto, avatar: 'claudio', idioma: 'es' });
     assert.equal(primera?.cache, false);
     assert.equal(llamadas.length, 1);
@@ -95,6 +97,7 @@ test('la voz en vivo (web de Dr Electrum) también lee y guarda en S3', async ()
   _s3VozDePrueba(s3.impl);
   await conEleven(async (llamadas) => {
     const texto = `Buen día. ¿En qué le ayudo? ${Math.random()}`;
+    anotarFraseFija(texto);
     const vivo = await abrirVozEnVivo({ texto, plataforma: 'electrum', idioma: 'es' });
     assert.equal(vivo?.tipo, 'vivo');
     if (vivo?.tipo === 'vivo') vivo.guardar(Buffer.alloc(3000, 0xcd));
@@ -112,18 +115,35 @@ test('lo privado y lo largo nunca van a S3; si S3 tarda, se sigue con ElevenLabs
   const s3 = s3Falso();
   _s3VozDePrueba(s3.impl);
   await conEleven(async (llamadas) => {
-    await hablar({ texto: `Beto dice: te veo a las cinco ${Math.random()}`, avatar: 'aura', idioma: 'es', privado: true });
+    const privada = `Beto dice: te veo a las cinco ${Math.random()}`;
+    anotarFraseFija(privada);
+    await hablar({ texto: privada, avatar: 'aura', idioma: 'es', privado: true });
+    // Una respuesta del cerebro, aunque sea corta, tampoco (puede traer datos de la persona o de un cliente).
+    await hablar({ texto: `La concesión Oro Azul vence el 3 de marzo. ${Math.random()}`, avatar: 'aura', idioma: 'es' });
     await hablar({ texto: 'Una respuesta larga. '.repeat(20) + Math.random(), avatar: 'aura', idioma: 'es' });
     await espera();
-    assert.equal(s3.puts.length, 0, 'ni lo privado ni lo largo');
+    assert.equal(s3.puts.length, 0, 'ni lo privado, ni lo largo, ni lo que dijo el cerebro');
     assert.equal(s3.gets.length, 0, 'ni se pregunta');
     s3.lento = true;
     const t0 = Date.now();
-    const r = await hablar({ texto: `Aquí estoy. ${Math.random()}`, avatar: 'aura', idioma: 'es' });
+    const aqui = `Aquí estoy. ${Math.random()}`;
+    anotarFraseFija(aqui);
+    const r = await hablar({ texto: aqui, avatar: 'aura', idioma: 'es' });
     assert.ok(r && r.cache === false);
     assert.ok(Date.now() - t0 < S3_VOZ_MS + 250, `no esperó a S3: ${Date.now() - t0} ms`);
-    assert.equal(llamadas.length, 3);
+    assert.equal(llamadas.length, 4);
   });
+});
+
+test('las frases de espera y las del banco (con el nombre, oración por oración) sí se pueden guardar', async () => {
+  const { esFraseConocida } = await import('../lib/frases-conocidas');
+  const { respuestaFija } = await import('../lib/respuestas-fijas');
+  assert.ok(esFraseConocida('[calm] Ya casi.') || esFraseConocida('Buscando…'), 'las de espera');
+  const r = respuestaFija('hola', { avatar: 'aura', nombre: 'Marta', quien: 'fc' })!;
+  assert.ok(esFraseConocida(r.voz), 'la del banco, con su etiqueta');
+  const primera = r.texto.split(/(?<=[.!?…])\s+/)[0];
+  assert.ok(esFraseConocida(primera), 'y su primera oración sola (el teléfono pide la voz por oración)');
+  assert.ok(!esFraseConocida('Tu cita con el doctor Pérez es a las tres.'), 'lo del cerebro, no');
 });
 
 test('lo que no está en S3 no se vuelve a preguntar enseguida', async () => {
@@ -131,6 +151,7 @@ test('lo que no está en S3 no se vuelve a preguntar enseguida', async () => {
   _s3VozDePrueba(s3.impl);
   await conEleven(async () => {
     const texto = `Dígame. ${Math.random()}`;
+    anotarFraseFija(texto);
     assert.equal((await abrirVozEnVivo({ texto, plataforma: 'electrum', idioma: 'es' }))?.tipo, 'vivo');
     assert.equal(s3.gets.length, 1);
     // No se terminó de oír (no se guardó): la segunda vez va directo a ElevenLabs, sin preguntar a S3.
