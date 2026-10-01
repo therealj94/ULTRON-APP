@@ -65,6 +65,8 @@ async function imapPara(prov: Pick<Proveedor, 'imap'>, cred: Credencial): Promis
     host: ip,
     port: prov.imap.puerto,
     secure: prov.imap.seguro,
+    // En 143 el cifrado (STARTTLS) es obligatorio: sin él, la clave viajaría en claro.
+    ...(prov.imap.seguro ? {} : { doSTARTTLS: true }),
     servername: prov.imap.host,
     tls: { servername: prov.imap.host, rejectUnauthorized: !PRUEBA.local },
     auth: cred.accessToken ? { user: cred.user, accessToken: cred.accessToken } : { user: cred.user, pass: cred.pass },
@@ -221,7 +223,7 @@ export type Envio = { para: string[]; asunto: string; texto: string; enRespuesta
  * Manda un correo. Se arma una sola vez (MailComposer) para mandar por SMTP y, si el proveedor no lo
  * hace solo, guardar esa misma copia en «Enviados» por IMAP.
  */
-export async function mandar(quien: string, c: CuentaCorreo, e: Envio): Promise<{ messageId: string; guardadoEnEnviados: boolean }> {
+export async function mandar(quien: string, c: CuentaCorreo, e: Envio): Promise<{ messageId: string; guardadoEnEnviados: boolean; aceptados: string[]; rechazados: string[] }> {
   const cred = await credencial(quien, c);
   const correo = {
     from: c.correo,
@@ -233,12 +235,18 @@ export async function mandar(quien: string, c: CuentaCorreo, e: Envio): Promise<
   const crudo = await new MailComposer(correo).compile().build();
   const t = await smtpPara(c.proveedor, cred);
   let messageId = '';
+  let aceptados: string[] = [];
+  let rechazados: string[] = [];
   try {
     const r = await t.sendMail({ envelope: { from: c.correo, to: e.para }, raw: crudo });
     messageId = r.messageId || '';
+    const dir = (x: unknown) => (typeof x === 'string' ? x : (x as { address?: string })?.address || '');
+    aceptados = (r.accepted || []).map(dir).filter(Boolean);
+    rechazados = (r.rejected || []).map(dir).filter(Boolean);
   } finally {
     t.close();
   }
+  if (!aceptados.length) return { messageId, guardadoEnEnviados: false, aceptados, rechazados };
   let guardado = c.proveedor.guardaEnviados;
   if (!guardado) {
     try {
@@ -254,5 +262,5 @@ export async function mandar(quien: string, c: CuentaCorreo, e: Envio): Promise<
       console.warn('[correo] mandado, pero no lo pude guardar en Enviados:', String(err?.message || err).slice(0, 120));
     }
   }
-  return { messageId, guardadoEnEnviados: guardado };
+  return { messageId, guardadoEnEnviados: guardado, aceptados, rechazados };
 }

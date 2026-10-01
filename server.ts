@@ -2461,7 +2461,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   const deLaComputadora = duenoComputadora ? avisosPendientes(duenoComputadora) : null;
   if (deLaComputadora) hechos.push(neutralizarMarca(deLaComputadora.hecho));
   // Un correo que esperaba su «sí» o su «no» (server/correo.ts): lo manda (o lo descarta) el servidor, aquí.
-  const delCorreo = duenoComputadora ? await resolverBorrador(duenoComputadora, message) : null;
+  const ambitoTurno = aparatoValido(body?.aparato) || String(body?.origen || (opciones.voz ? 'voz' : canal)).slice(0, 40);
+  const delCorreo = duenoComputadora ? await resolverBorrador(duenoComputadora, ambitoTurno, message) : null;
   if (delCorreo) hechos.push(delCorreo);
   // Fichas de la memoria estructurada de lo que se nombra (empresas, personas, proyectos). En una
   // charla hablada no: es una consulta a la base antes de la primera palabra y no hay nada que buscar.
@@ -2908,6 +2909,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     avisoComputadora: deLaComputadora ? { quien: duenoComputadora, ids: deLaComputadora.ids } : null,
     // De quién es el turno, verificado (sesión o Telegram): sus correos y su computadora.
     dueno: duenoComputadora,
+    // En qué conversación (teléfono, web, voz): el borrador de correo es de esta, no de otra.
+    ambito: ambitoTurno,
   };
 }
 
@@ -3132,7 +3135,8 @@ async function correrHerramientaPedida(
   nivel: NivelAura = 'junta',
   compu?: TurnoComputadora,
   senal?: AbortSignal,
-  dueno = ''
+  dueno = '',
+  ambito = ''
 ): Promise<string> {
   if (!ped) return 'HARNESS: pedido vacío.';
   return resolverPedido(
@@ -3172,7 +3176,7 @@ async function correrHerramientaPedida(
         compu
           ? (await encargarTarea({ instruccion: tarea, quien: compu.quien, motor: compu.motor, esperaMs: compu.esperaMs, senal })).hecho
           : 'HARNESS computadora: solo la uso para alguien con sesión. Pídele que entre con su cuenta.',
-      correo: (arg) => correrCorreo(dueno, arg),
+      correo: (arg) => correrCorreo(dueno, arg, ambito),
     },
     extraerPython(reply),
     nivel
@@ -3208,6 +3212,8 @@ async function bucleHarness(o: {
   computadora?: TurnoComputadora;
   /** De quién es el turno (verificado): sus correos. */
   dueno?: string;
+  /** En qué conversación: su borrador de correo es de esta. */
+  ambito?: string;
 }): Promise<{ reply: string; via: string }> {
   let reply = o.reply;
   let via = `${ULTRON_NODO_URL}/api/chat`;
@@ -3225,7 +3231,7 @@ async function bucleHarness(o: {
     const tH = Date.now();
     // Lo que devuelve la herramienta (una página, una búsqueda) no lo escribió el modelo: si trae la
     // marca de acción, se rompe aquí, antes de ir al prompt o de pegarse a la respuesta parcial.
-    const extra = neutralizarMarca(await correrHerramientaPedida(ped, reply, o.mando, o.nivel, o.computadora, o.senal, o.dueno));
+    const extra = neutralizarMarca(await correrHerramientaPedida(ped, reply, o.mando, o.nivel, o.computadora, o.senal, o.dueno, o.ambito));
     trazaActual()?.paso({
       herramienta: ped.herramienta,
       ok: !/fall[oó]|no abr[ií]|sin resultados|ACCESO: consulta|pedido vac[ií]o/i.test(extra),
@@ -3492,7 +3498,7 @@ async function correrTurnoInterno(body: any, opciones: OpcionesTurno = {}): Prom
     return guardar({ ...base, reply: sinCerebro(p.datos), emocion: 'preocupado', via: 'tools-fallback', mode, ms: Date.now() - t0, herramientas: tools, error: q1.error });
   }
   if (p.avisoComputadora) confirmarAvisos(p.avisoComputadora.quien, p.avisoComputadora.ids);
-  const h = await bucleHarness({ reply: q1.reply, system, message, hechos, hilo, tools, mando, senal: p.senal, nivel: p.nivel, contexto: p.contexto, espacio: p.espacio, computadora: p.computadora, dueno: p.dueno });
+  const h = await bucleHarness({ reply: q1.reply, system, message, hechos, hilo, tools, mando, senal: p.senal, nivel: p.nivel, contexto: p.contexto, espacio: p.espacio, computadora: p.computadora, dueno: p.dueno, ambito: p.ambito });
   let reply = h.reply;
   let via = h.via;
 
@@ -3955,7 +3961,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
         else return;
         dichoH = nuevo;
       };
-      const h = await bucleHarness({ reply, system, message, hechos, hilo, tools, mando, senal, nivel: p.nivel, contexto: p.contexto, espacio: p.espacio, alTarea: opciones.alTarea, alTexto, computadora: p.computadora, dueno: p.dueno });
+      const h = await bucleHarness({ reply, system, message, hechos, hilo, tools, mando, senal, nivel: p.nivel, contexto: p.contexto, espacio: p.espacio, alTarea: opciones.alTarea, alTexto, computadora: p.computadora, dueno: p.dueno, ambito: p.ambito });
       const e = extraerEmocion(h.reply);
       emocion = e.emocion;
       send('emocion', { emocion });

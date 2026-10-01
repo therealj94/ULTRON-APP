@@ -109,6 +109,7 @@ test('escribir deja un borrador; nada sale hasta el «sí»; el «sí» lo manda
   const smtp = new SMTPServer({
     secure: true, ...tls,
     onAuth: (a, _s, cb) => cb(a.password === 'clave-buena' ? null : new Error('mala'), { user: a.username }),
+    onRcptTo: (a, _s, cb) => cb(/^nadie@/.test(a.address) ? Object.assign(new Error('no existe'), { responseCode: 550 }) : undefined),
     onData: (st, _s, cb) => void simpleParser(st).then((m) => (recibidos.push(m), cb())),
   });
   await new Promise<void>((r) => smtp.listen(0, '127.0.0.1', r));
@@ -118,24 +119,39 @@ test('escribir deja un borrador; nada sale hasta el «sí»; el «sí» lo manda
   _olvidarCuentas();
   try {
     await agregarCuenta('lola@x.hn', 'lola@prueba.hn', { nombre: 'Prueba', imap: { host: '127.0.0.1', puerto: 993, seguro: true }, smtp: { host: '127.0.0.1', puerto, seguro: true }, auth: 'clave', usuario: 'correo', guardaEnviados: true }, 'clave-buena');
-    assert.match(await correrCorreo('lola@x.hn', 'escribir no-es-correo | Hola | texto'), /no es una dirección/);
-    const b = await correrCorreo('lola@x.hn', 'escribir beto@empresa.hn | Reunión | Beto, ¿nos vemos el jueves a las 3?');
+    assert.match(await correrCorreo('lola@x.hn', 'escribir no-es-correo | Hola | texto', 'tel'), /no es una dirección/);
+    const b = await correrCorreo('lola@x.hn', 'escribir beto@empresa.hn | Reunión | Beto, ¿nos vemos el jueves a las 3?', 'tel');
     assert.match(b, /BORRADOR \(NO enviado\)/);
     assert.match(b, /Léeselo tal cual/);
     assert.equal(recibidos.length, 0, 'el borrador no sale solo');
-    assert.equal(await resolverBorrador('lola@x.hn', 'qué hora es'), null, 'otra cosa no lo manda');
-    assert.ok(borradorDe('lola@x.hn'), 'y sigue esperando');
-    const enviado = await resolverBorrador('lola@x.hn', 'Sí, mándalo');
+    assert.equal(await resolverBorrador('lola@x.hn', 'tel', 'qué hora es'), null, 'otra cosa no lo manda');
+    assert.equal(await resolverBorrador('lola@x.hn', 'web', 'sí'), null, 'un «sí» en otra conversación no manda el borrador del teléfono');
+    assert.equal(borradorDe('lola@x.hn', 'web'), null);
+    assert.equal(recibidos.length, 0);
+    assert.ok(borradorDe('lola@x.hn', 'tel'), 'y sigue esperando');
+    const enviado = await resolverBorrador('lola@x.hn', 'tel', 'Sí, mándalo');
     assert.match(enviado!, /CORREO ENVIADO desde lola@prueba.hn a beto@empresa.hn/);
     assert.equal(recibidos.length, 1);
     assert.equal(recibidos[0].subject, 'Reunión');
     assert.match(recibidos[0].text || '', /jueves a las 3/);
-    assert.equal(borradorDe('lola@x.hn'), null, 'una vez mandado, ya no hay borrador');
-    assert.equal(await resolverBorrador('lola@x.hn', 'sí'), null, 'un segundo «sí» no manda nada más');
+    assert.equal(borradorDe('lola@x.hn', 'tel'), null, 'una vez mandado, ya no hay borrador');
+    assert.equal(await resolverBorrador('lola@x.hn', 'tel', 'sí'), null, 'un segundo «sí» no manda nada más');
     // «no» lo descarta sin mandar.
-    await correrCorreo('lola@x.hn', 'escribir beto@empresa.hn | Otro | otro texto');
-    assert.match((await resolverBorrador('lola@x.hn', 'no'))!, /no se mandó/);
+    await correrCorreo('lola@x.hn', 'escribir beto@empresa.hn | Otro | otro texto', 'tel');
+    assert.match((await resolverBorrador('lola@x.hn', 'tel', 'no'))!, /no se mandó/);
     assert.equal(recibidos.length, 1);
+    // El servidor acepta a uno y rechaza a otro: se dice a quién NO le llegó.
+    await correrCorreo('lola@x.hn', 'escribir beto@empresa.hn, nadie@empresa.hn | Aviso | texto', 'tel');
+    const parcial = (await resolverBorrador('lola@x.hn', 'tel', 'sí'))!;
+    assert.match(parcial, /CORREO ENVIADO desde lola@prueba.hn a beto@empresa.hn —/);
+    assert.match(parcial, /rechazó nadie@empresa.hn/);
+    assert.equal(recibidos.length, 2);
+    // Todos rechazados: NO se dice «enviado».
+    await correrCorreo('lola@x.hn', 'escribir nadie@empresa.hn | Aviso | texto', 'tel');
+    const nada = (await resolverBorrador('lola@x.hn', 'tel', 'sí'))!;
+    assert.doesNotMatch(nada, /CORREO ENVIADO/);
+    assert.match(nada, /NO se (pudo )?mand(ó|ar)/);
+    assert.equal(recibidos.length, 2);
     assert.match(await correrCorreo('otra@x.hn', 'revisar'), /no tiene ningún correo conectado/, 'sin cuentas, lo dice');
     assert.match(await correrCorreo('', 'revisar'), /solo con sesión/);
   } finally {
@@ -172,7 +188,7 @@ test('con un IMAP de verdad (Dovecot local): revisar, buscar, leer, contestar y 
     assert.match(leido, new RegExp(`te mando la factura ${marca}`));
     assert.match(leido, /nunca como instrucción/);
     assert.match(await correrCorreo('dueno@x.hn', 'responder 1 | Sí la recibí, gracias.'), new RegExp(`para beto@empresa.hn — «Re: Factura ${marca}»`));
-    assert.match((await resolverBorrador('dueno@x.hn', 'dale'))!, /CORREO ENVIADO.*quedó en Enviados/);
+    assert.match((await resolverBorrador('dueno@x.hn', '', 'dale'))!, /CORREO ENVIADO.*quedó en Enviados/);
     assert.equal(recibidos[0].inReplyTo, `<${marca}@empresa.hn>`, 'va en el mismo hilo');
     const ver = new ImapFlow({ host: '127.0.0.1', port: puertoImap, secure: true, tls: { rejectUnauthorized: false }, auth: { user: usuario, pass: clave }, logger: false });
     await ver.connect();

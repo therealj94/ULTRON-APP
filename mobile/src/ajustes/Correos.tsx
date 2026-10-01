@@ -44,6 +44,9 @@ export function HojaCorreos({ visible, onCerrar }: { visible: boolean; onCerrar:
   const [manual, setManual] = useState(false);
   const [imapHost, setImapHost] = useState('');
   const [smtpHost, setSmtpHost] = useState('');
+  // Vacíos = los de siempre (993 IMAP y 465 SMTP, ambos con TLS); 143/587 = STARTTLS.
+  const [imapPuerto, setImapPuerto] = useState('');
+  const [smtpPuerto, setSmtpPuerto] = useState('');
   const [error, setError] = useState('');
   const [ocupado, setOcupado] = useState(false);
   const [codigo, setCodigo] = useState<{ codigo: string; url: string } | null>(null);
@@ -56,6 +59,8 @@ export function HojaCorreos({ visible, onCerrar }: { visible: boolean; onCerrar:
     setManual(false);
     setImapHost('');
     setSmtpHost('');
+    setImapPuerto('');
+    setSmtpPuerto('');
     setError('');
     setCodigo(null);
     if (sondeo.current) clearTimeout(sondeo.current);
@@ -86,7 +91,7 @@ export function HojaCorreos({ visible, onCerrar }: { visible: boolean; onCerrar:
     try {
       await api(
         '/api/correo/cuentas',
-        { method: 'POST', body: JSON.stringify({ correo: correo.trim(), clave, ...(manual ? { imapHost: imapHost.trim(), smtpHost: smtpHost.trim() } : {}) }) },
+        { method: 'POST', body: JSON.stringify({ correo: correo.trim(), clave, ...(manual ? { imapHost: imapHost.trim(), smtpHost: smtpHost.trim(), ...(puertoOk(imapPuerto) ? { imapPuerto: Number(imapPuerto) } : {}), ...(puertoOk(smtpPuerto) ? { smtpPuerto: Number(smtpPuerto) } : {}) } : {}) }) },
         45_000
       );
       vibrar('exito');
@@ -108,6 +113,7 @@ export function HojaCorreos({ visible, onCerrar }: { visible: boolean; onCerrar:
     try {
       const r = await api<{ codigo: string; url: string; intervalo: number }>('/api/correo/microsoft/iniciar', { method: 'POST', body: JSON.stringify({ correo: correo.trim() }) }, 20_000);
       setCodigo({ codigo: r.codigo, url: r.url });
+      let fallos = 0;
       const preguntar = async () => {
         try {
           const s = await api<{ estado: string }>('/api/correo/microsoft/consultar', { method: 'POST', body: '{}' }, 30_000);
@@ -117,8 +123,14 @@ export function HojaCorreos({ visible, onCerrar }: { visible: boolean; onCerrar:
             await refrescar();
             return;
           }
+          fallos = 0;
           sondeo.current = setTimeout(preguntar, Math.max(3, r.intervalo) * 1000);
         } catch (e: any) {
+          // Microsoft tardó (502) o se fue la red: el código sigue vivo, se vuelve a preguntar unas veces.
+          if ((e?.status === 502 || !e?.status) && ++fallos <= 3) {
+            sondeo.current = setTimeout(preguntar, Math.max(5, r.intervalo) * 1000);
+            return;
+          }
           setCodigo(null);
           setError(e?.message || tr('Microsoft no lo aceptó.', 'Microsoft didn’t accept it.'));
         }
@@ -218,7 +230,9 @@ export function HojaCorreos({ visible, onCerrar }: { visible: boolean; onCerrar:
                     {manual && (
                       <>
                         <Campo etiqueta={tr('Servidor de entrada (IMAP)', 'Incoming server (IMAP)')} value={imapHost} onChangeText={setImapHost} autoCapitalize="none" placeholder={prov.imap.host} />
+                        <Campo etiqueta={tr('Puerto de entrada', 'Incoming port')} value={imapPuerto} onChangeText={(t) => setImapPuerto(t.replace(/\D/g, '').slice(0, 5))} keyboardType="number-pad" placeholder="993" />
                         <Campo etiqueta={tr('Servidor de salida (SMTP)', 'Outgoing server (SMTP)')} value={smtpHost} onChangeText={setSmtpHost} autoCapitalize="none" placeholder={prov.smtp.host} />
+                        <Campo etiqueta={tr('Puerto de salida', 'Outgoing port')} value={smtpPuerto} onChangeText={(t) => setSmtpPuerto(t.replace(/\D/g, '').slice(0, 5))} keyboardType="number-pad" placeholder="465" />
                       </>
                     )}
                     <Boton
@@ -243,6 +257,8 @@ export function HojaCorreos({ visible, onCerrar }: { visible: boolean; onCerrar:
     </Hoja>
   );
 }
+
+const puertoOk = (p: string) => /^\d{1,5}$/.test(p) && Number(p) > 0 && Number(p) < 65536;
 
 const s = StyleSheet.create({
   fila: { flexDirection: 'row', alignItems: 'center', gap: 10 },

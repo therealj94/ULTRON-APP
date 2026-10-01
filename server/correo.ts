@@ -31,6 +31,11 @@ const BORRADORES = new Map<string, Borrador>();
 const BORRADOR_VIVE_MS = 15 * 60_000;
 
 const normal = (quien: string) => String(quien || '').trim().toLowerCase();
+/**
+ * La lista y el borrador son de una persona EN una conversación (el teléfono, la web, la voz): un «sí»
+ * dicho en la web no manda el borrador que se armó en el teléfono, ni uno nuevo pisa al de otro lado.
+ */
+const llave = (quien: string, ambito = '') => `${normal(quien)}|${String(ambito || 'general').slice(0, 80)}`;
 
 function hora(iso: string): string {
   const d = new Date(iso);
@@ -55,7 +60,7 @@ async function cuentaDeRef(quien: string, ref: string): Promise<{ c: CuentaCorre
 }
 
 /** Revisar (los no leídos de todas sus cuentas) o buscar. Numera para que después diga «lee el 2». */
-async function revisar(quien: string, buscar?: string): Promise<string> {
+async function revisar(quien: string, ambito: string, buscar?: string): Promise<string> {
   const cuentas = await cuentasDe(quien);
   if (!cuentas.length) return SIN_CUENTAS;
   const errores: string[] = [];
@@ -71,7 +76,7 @@ async function revisar(quien: string, buscar?: string): Promise<string> {
   );
   todos.sort((a, b) => b.fecha.localeCompare(a.fecha));
   const lista = todos.slice(0, 12);
-  LISTAS.set(normal(quien), lista);
+  LISTAS.set(llave(quien, ambito), lista);
   const varias = cuentas.length > 1;
   const que = buscar ? `buscando «${buscar}»` : 'sin leer';
   const fallo = errores.length ? ` No pude abrir: ${errores.join('; ')}.` : '';
@@ -79,8 +84,8 @@ async function revisar(quien: string, buscar?: string): Promise<string> {
   return `CORREO (${que}, ${lista.length}):\n${lista.map((m, i) => lineaDe(m, i, varias)).join('\n')}${fallo}\nPara abrir uno: correo leer <número>.`;
 }
 
-async function leerNumero(quien: string, n: number): Promise<string> {
-  const m = LISTAS.get(normal(quien))?.[n - 1];
+async function leerNumero(quien: string, ambito: string, n: number): Promise<string> {
+  const m = LISTAS.get(llave(quien, ambito))?.[n - 1];
   if (!m) return `CORREO: no hay un correo ${n} en la última lista. Revisa primero (correo revisar).`;
   const ubic = await cuentaDeRef(quien, m.ref);
   if (!ubic) return 'CORREO: esa cuenta ya no está conectada.';
@@ -94,28 +99,28 @@ async function leerNumero(quien: string, n: number): Promise<string> {
   }
 }
 
-async function responder(quien: string, n: number, texto: string): Promise<string> {
-  const m = LISTAS.get(normal(quien))?.[n - 1];
+async function responder(quien: string, ambito: string, n: number, texto: string): Promise<string> {
+  const m = LISTAS.get(llave(quien, ambito))?.[n - 1];
   if (!m) return `CORREO: no hay un correo ${n} en la última lista. Revisa primero.`;
   const ubic = await cuentaDeRef(quien, m.ref);
   if (!ubic) return 'CORREO: esa cuenta ya no está conectada.';
   const x = await leer(quien, ubic.c, ubic.uid).catch(() => null);
   if (!x) return 'CORREO: no pude abrir ese correo para contestarlo.';
   const asunto = /^re:/i.test(x.asunto) ? x.asunto : `Re: ${x.asunto}`;
-  return guardarBorrador(quien, { cuentaId: ubic.c.id, desde: ubic.c.correo, para: [x.responderA], asunto, texto, enRespuestaA: x.messageId || undefined, referencias: x.referencias, creado: Date.now() });
+  return guardarBorrador(quien, ambito, { cuentaId: ubic.c.id, desde: ubic.c.correo, para: [x.responderA], asunto, texto, enRespuestaA: x.messageId || undefined, referencias: x.referencias, creado: Date.now() });
 }
 
-async function escribir(quien: string, para: string, asunto: string, texto: string): Promise<string> {
+async function escribir(quien: string, ambito: string, para: string, asunto: string, texto: string): Promise<string> {
   const cuentas = await cuentasDe(quien);
   if (!cuentas.length) return SIN_CUENTAS;
   const destinos = para.split(/[,;\s]+/).filter(Boolean);
   if (!destinos.length || !destinos.every(correoValido)) return `CORREO: «${para}» no es una dirección de correo. Pídele la dirección exacta.`;
-  return guardarBorrador(quien, { cuentaId: cuentas[0].id, desde: cuentas[0].correo, para: destinos, asunto: asunto || '(sin asunto)', texto, creado: Date.now() });
+  return guardarBorrador(quien, ambito, { cuentaId: cuentas[0].id, desde: cuentas[0].correo, para: destinos, asunto: asunto || '(sin asunto)', texto, creado: Date.now() });
 }
 
-function guardarBorrador(quien: string, b: Borrador): string {
+function guardarBorrador(quien: string, ambito: string, b: Borrador): string {
   if (!b.texto.trim()) return 'CORREO: el borrador vino vacío. Pregúntale qué quiere decir.';
-  BORRADORES.set(normal(quien), b);
+  BORRADORES.set(llave(quien, ambito), b);
   return (
     `BORRADOR (NO enviado) desde ${b.desde} para ${b.para.join(', ')} — «${b.asunto}»:\n${b.texto}\n` +
     'Léeselo tal cual y pregúntale si lo mandas. Solo se manda si dice que sí; si quiere cambios, haz otro borrador.'
@@ -123,11 +128,11 @@ function guardarBorrador(quien: string, b: Borrador): string {
 }
 
 /** Pruebas y la app: el borrador que espera su «sí». */
-export function borradorDe(quien: string): Borrador | null {
-  const b = BORRADORES.get(normal(quien));
+export function borradorDe(quien: string, ambito = ''): Borrador | null {
+  const b = BORRADORES.get(llave(quien, ambito));
   if (!b) return null;
   if (Date.now() - b.creado > BORRADOR_VIVE_MS) {
-    BORRADORES.delete(normal(quien));
+    BORRADORES.delete(llave(quien, ambito));
     return null;
   }
   return b;
@@ -157,38 +162,41 @@ export function respuestaAlBorrador(mensaje: string): 'si' | 'no' | null {
  * Al empezar el turno: si espera un borrador y la persona contestó sí o no, se resuelve AQUÍ (lo manda
  * el servidor, no el modelo) y vuelve el HECHO para que el modelo lo diga. Null si no había nada.
  */
-export async function resolverBorrador(quien: string, mensaje: string): Promise<string | null> {
-  const b = borradorDe(quien);
+export async function resolverBorrador(quien: string, ambito: string, mensaje: string): Promise<string | null> {
+  const b = borradorDe(quien, ambito);
   if (!b) return null;
   const r = respuestaAlBorrador(mensaje);
   if (!r) return null;
-  BORRADORES.delete(normal(quien));
+  BORRADORES.delete(llave(quien, ambito));
   if (r === 'no') return `CORREO: no se mandó; el borrador para ${b.para.join(', ')} quedó descartado. Díselo en pocas palabras.`;
   const c = (await cuentasDe(quien)).find((x) => x.id === b.cuentaId);
   if (!c) return 'CORREO: no lo mandé: esa cuenta ya no está conectada.';
   try {
     const r2 = await mandar(quien, c, { para: b.para, asunto: b.asunto, texto: b.texto, enRespuestaA: b.enRespuestaA, referencias: b.referencias });
-    return `CORREO ENVIADO desde ${b.desde} a ${b.para.join(', ')} — «${b.asunto}»${r2.guardadoEnEnviados ? ' (quedó en Enviados)' : ''}. Díselo en una frase.`;
+    // El SMTP puede aceptar unas direcciones y rechazar otras sin fallar: se dice exactamente a quién llegó.
+    if (!r2.aceptados.length) return `CORREO: NO se mandó: el servidor rechazó ${r2.rechazados.join(', ') || 'las direcciones'}. Díselo con honestidad.`;
+    const faltan = r2.rechazados.length ? ` OJO: el servidor rechazó ${r2.rechazados.join(', ')}; a esas no les llegó.` : '';
+    return `CORREO ENVIADO desde ${b.desde} a ${r2.aceptados.join(', ')} — «${b.asunto}»${r2.guardadoEnEnviados ? ' (quedó en Enviados)' : ''}.${faltan} Díselo en una frase.`;
   } catch (e: any) {
     return `CORREO: NO se pudo mandar (${String(e?.response || e?.message || e).slice(0, 140)}). El borrador no salió; díselo con honestidad.`;
   }
 }
 
 /** El runner del harness: «revisar», «buscar x», «leer 2», «responder 2 | texto», «escribir a@b | asunto | texto». */
-export async function correrCorreo(quien: string, arg: string): Promise<string> {
+export async function correrCorreo(quien: string, arg: string, ambito = ''): Promise<string> {
   if (!quien) return 'CORREO: solo con sesión. Pídele que entre con su cuenta.';
   const [cabeza, ...partes] = String(arg || '').split('|').map((x) => x.trim());
   const m = cabeza.match(/^(\S+)\s*(.*)$/s);
   const verbo = (m?.[1] || 'revisar').toLowerCase();
   const resto = (m?.[2] || '').trim();
   try {
-    if (/^(revisar|revisa|nuevos|bandeja)$/.test(verbo)) return await revisar(quien);
-    if (/^(buscar|busca)$/.test(verbo)) return resto ? await revisar(quien, resto) : 'CORREO: ¿qué busco? Falta el texto.';
-    if (/^(leer|lee|abrir|abre)$/.test(verbo)) return await leerNumero(quien, parseInt(resto, 10) || 1);
-    if (/^(responder|responde|contestar|contesta)$/.test(verbo)) return await responder(quien, parseInt(resto, 10) || 1, partes.join(' | '));
+    if (/^(revisar|revisa|nuevos|bandeja)$/.test(verbo)) return await revisar(quien, ambito);
+    if (/^(buscar|busca)$/.test(verbo)) return resto ? await revisar(quien, ambito, resto) : 'CORREO: ¿qué busco? Falta el texto.';
+    if (/^(leer|lee|abrir|abre)$/.test(verbo)) return await leerNumero(quien, ambito, parseInt(resto, 10) || 1);
+    if (/^(responder|responde|contestar|contesta)$/.test(verbo)) return await responder(quien, ambito, parseInt(resto, 10) || 1, partes.join(' | '));
     if (/^(escribir|escribe|nuevo|mandar)$/.test(verbo)) {
       const [asunto = '', ...texto] = partes;
-      return await escribir(quien, resto, asunto, texto.join(' | '));
+      return await escribir(quien, ambito, resto, asunto, texto.join(' | '));
     }
     return `CORREO: no entiendo «${verbo}». Usa revisar, buscar, leer, responder o escribir.`;
   } catch (e: any) {
@@ -294,7 +302,13 @@ export function montarRutasCorreo(app: express.Express, d: Deps) {
     if (!q) return sinSesion(res);
     const pend = CODIGOS_MS.get(q);
     if (!pend || Date.now() > pend.vence) return res.status(410).json({ estado: 'error', error: 'El código venció. Pide otro.', honesto: true });
-    const r = await consultarCodigo(pend.codigo);
+    let r: Awaited<ReturnType<typeof consultarCodigo>>;
+    try {
+      r = await consultarCodigo(pend.codigo);
+    } catch (e: any) {
+      // Microsoft tardó o devolvió basura: el teléfono vuelve a preguntar; el código sigue vivo.
+      return res.status(502).json({ estado: 'pendiente', error: `Microsoft no contestó (${String(e?.message || e).slice(0, 80)}).`, honesto: true });
+    }
     if (r.estado === 'pendiente') return res.json({ estado: 'pendiente', honesto: true });
     CODIGOS_MS.delete(q);
     if (r.estado === 'error') return res.status(400).json({ estado: 'error', error: r.error, honesto: true });
