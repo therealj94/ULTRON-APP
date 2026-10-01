@@ -359,6 +359,11 @@ Check(R("apaga la computadora") is { Mano: Mano.Atajo, Valor: "energia|apagar" }
 Check(R("apaga el micrófono") is { Mano: Mano.Dormir } && R("duerme").Mano != Mano.Atajo && R("apágate") is { Mano: Mano.Dormir }, "apagar el mic no apaga la PC");
 Check(R("pon la alarma a las 7").Mano != Mano.Musica && R("pon el volumen al 50").Mano != Mano.Musica, "pon X que no es música");
 
+// El cerebro no trae cosas que no dijiste
+Check(!FiltroAcciones.Coherente("pon Queen Bohemian Rhapsody en spotify", "pon bachata en spotify"), "no cambia bachata por Queen");
+Check(FiltroAcciones.Coherente("cierra spotify", "ciérrame eso de Spotify") && FiltroAcciones.Coherente("pon bad bunny en spotify", "ponme algo de Bad Bunny porfa") && FiltroAcciones.Coherente("cierra esta ventana", "quita esa ventana"), "ordenar lo tuyo sí");
+Check(FiltroAcciones.Coherente("pon bachata en spotify", "pon bachatas en Spotify") && !FiltroAcciones.Coherente("abre excel", "abre el bloc de notas"), "plural sí, otra app no");
+
 // La ligera nunca cambia de avatar, captura, bloquea… por su cuenta (sin reglas ni nodo).
 foreach (var f in new[] { "quién es mejor, claudio o antonio", "cómo se hace una captura de pantalla en windows", "ayer me dijiste que bloqueara la compu" })
 {

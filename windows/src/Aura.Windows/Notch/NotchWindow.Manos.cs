@@ -199,9 +199,15 @@ public partial class NotchWindow
     /// Una orden que pidió el cerebro («cierra spotify»): pasa por las MISMAS reglas que lo que tú dices, así
     /// que solo puede hacer lo que AURA ya sabe hacer, con sus mismas confirmaciones. Nunca vuelve al cerebro.
     /// </summary>
-    async Task HacerOrdenDelCerebro(string orden, bool hablado)
+    async Task HacerOrdenDelCerebro(string orden, string dicho, bool hablado)
     {
         var p = Intencion.PorReglas(orden);
+        // El cerebro no trae cosas que no dijiste (una canción de antes, otra app): solo ordena lo tuyo.
+        if (p.Mano != Mano.Ninguna && !FiltroAcciones.Coherente(orden, dicho))
+        {
+            Centro.Registro.Anotar("cerebro-manos", $"descartada (no sale de lo dicho): {orden}");
+            return;
+        }
         Centro.Registro.Anotar("cerebro-manos", $"{orden} → {p.Mano}");
         if (p.Mano == Mano.Ninguna) return;
         try { await Hacer(p, orden, false); }

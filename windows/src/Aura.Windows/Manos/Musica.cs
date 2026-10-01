@@ -112,8 +112,9 @@ internal sealed class Musica : IDisposable
     {
         if (donde == "spotify")
         {
-            try { Process.Start(new ProcessStartInfo("spotify:search:" + Uri.EscapeDataString(q)) { UseShellExecute = true }); return "Spotify"; }
-            catch { Process.Start(new ProcessStartInfo("https://open.spotify.com/search/" + Uri.EscapeDataString(q)) { UseShellExecute = true }); return "Spotify web"; }
+            if (SpotifyWeb.HayAppSpotify()) { try { Process.Start(new ProcessStartInfo("spotify:search:" + Uri.EscapeDataString(q)) { UseShellExecute = true }); return "Spotify"; } catch { } }
+            Process.Start(new ProcessStartInfo("https://open.spotify.com/search/" + Uri.EscapeDataString(q)) { UseShellExecute = true });
+            return "Spotify web";
         }
         Process.Start(new ProcessStartInfo("https://music.youtube.com/search?q=" + Uri.EscapeDataString(q)) { UseShellExecute = true });
         return "YouTube Music";
@@ -126,7 +127,7 @@ internal sealed class Musica : IDisposable
     /// </summary>
     public static async Task<string?> PonerEnEscritorio(string q, bool ingles, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(q)) return null;
+        if (string.IsNullOrWhiteSpace(q) || !SpotifyWeb.HayAppSpotify()) return null;
         try { Process.Start(new ProcessStartInfo("spotify:search:" + Uri.EscapeDataString(q)) { UseShellExecute = true }); }
         catch { return null; }
         var reloj = Stopwatch.StartNew();

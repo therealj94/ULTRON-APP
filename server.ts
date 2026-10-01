@@ -7,7 +7,7 @@ import zlib from 'zlib';
 import { createServer as createViteServer } from 'vite';
 import { crearComprobadorListo } from './lib/nodo-listo';
 import { sanearDiag } from './lib/diag-saneador';
-import { autocuraDe, fetchNodo, saludNodo, nodoConfigurado, NODO_URL as ULTRON_NODO_URL, NODO_SECRETO as ULTRON_NODO_SECRETO, NODO_MODELO as ULTRON_NODO_MODELO } from './lib/nodo';
+import { autocuraDe, fetchNodo, saludNodo, nodoConfigurado, precalentarSistema, NODO_URL as ULTRON_NODO_URL, NODO_SECRETO as ULTRON_NODO_SECRETO, NODO_MODELO as ULTRON_NODO_MODELO } from './lib/nodo';
 import { JUNTA, buildPersonality, decodeDataUrl, normalizarCorreo, buscarWeb, leerPagina } from './server/desk';
 import { hablar, abrirVozEnVivo, cantar, orar, repertorio, cancionPorPedido, estadoVoz, saludVoz, vozDe, sinEtiquetas } from './server/voz';
 import { lineaAvatar, normalizarAvatar, normalizarIdioma, NOMBRE_AVATAR, type AvatarVoz } from './server/eleven';
@@ -2830,6 +2830,8 @@ Empieza con una etiqueta de ánimo: [EMO: feliz], [EMO: curioso] o [EMO: neutral
  * tarda ~1 s en vez de 5 (medido en la A10G el 30-sep). Una vez por minuto por persona como mucho.
  */
 const ultimoSistemaQwen = new Map<string, string>();
+/** Y el historial que fue con ese system (sin el mensaje del turno): el precalentado lo deja leído entero. */
+const ultimoPrefijoQwen = new Map<string, { system: string; mensajes: { role: string; content: string }[] }>();
 const calentadoEn = new Map<string, number>();
 export const CALENTAR_CADA_MS = 60_000;
 
@@ -2848,15 +2850,10 @@ function calentarCerebro(correo: string) {
   const ahora = Date.now();
   if (ahora - (calentadoEn.get(c) || 0) < CALENTAR_CADA_MS) return;
   calentadoEn.set(c, ahora);
-  void fetchNodo(`${ULTRON_NODO_URL}/api/chat`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-ultron-secreto': ULTRON_NODO_SECRETO },
-    // En SU espacio: el primer turno de la llamada cae donde ya está leído (lib/espacio-nodo.ts).
-    body: JSON.stringify({ model: ULTRON_NODO_MODELO, stream: false, messages: [{ role: 'system', content: system }, { role: 'user', content: 'Hola' }], options: { num_predict: 1, temperature: 0, id_slot: espacioDe(claveFijo(c, null)) } }),
-    signal: AbortSignal.timeout(30_000),
-  })
-    .then((r) => r.body?.cancel().catch(() => {}))
-    .catch(() => {});
+  // En SU espacio y con lo último que se le mandó (system + historial): el primer turno de la llamada
+  // solo lee lo nuevo. Solo el system (precalentarSistema sin historial) recortaba lo leído del espacio.
+  const prefijo = ultimoPrefijoQwen.get(c);
+  void precalentarSistema(system, 0, { espacio: espacioDe(claveFijo(c, null)), mensajes: prefijo?.system === system ? prefijo.mensajes : undefined });
 }
 
 /** Cómo se presenta lo que dice la persona: «Junta:» a la junta, «Miembro:» a un miembro de la comunidad. */
@@ -3470,7 +3467,11 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     soltar('delta', reply);
     return terminar(reply, 'tools-only', 'preocupado');
   }
-  if (p.correoApp) ultimoSistemaQwen.set(String(p.correoApp).toLowerCase(), system);
+  if (p.correoApp) {
+    const c = String(p.correoApp).toLowerCase();
+    ultimoSistemaQwen.set(c, system);
+    ultimoPrefijoQwen.set(c, { system, mensajes: mensajesQwen(system, message, hechos, hilo, p.nivel, p.contexto).slice(1, -1) });
+  }
   try {
     const r = await fetchNodo(`${ULTRON_NODO_URL}/api/chat`, {
       method: 'POST',
@@ -3561,6 +3562,8 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       // Cortado o terminado, el lector se suelta: la conexión al nodo no queda colgada.
       await reader.cancel().catch(() => {});
     }
+    // Sin precalentar aquí: el espacio de la persona ya guarda TODO lo leído en este turno (system e
+    // historial). Precalentar solo el system lo recortaba y el turno siguiente releía el historial.
     if (buf.trim()) {
       try {
         const j = JSON.parse(buf.trim());

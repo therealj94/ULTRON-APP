@@ -69,7 +69,7 @@ CUPO = threading.BoundedSemaphore(int(os.environ.get('ULTRON_MOTOR_CUPO', '2')))
 
 # Solo lo que ULTRON necesita. Todo lo demás es 404, no 403: no se cuenta qué
 # hay detrás.
-PERMITIDO = {('POST', '/api/chat'), ('POST', '/api/embed'), ('GET', '/api/tags'), ('GET', '/salud')}
+PERMITIDO = {('POST', '/api/chat'), ('POST', '/api/embed'), ('POST', '/api/precalentar'), ('GET', '/api/tags'), ('GET', '/salud')}
 
 contador = {'pedidos': 0, 'rechazados': 0, 'desde': time.time()}
 
@@ -152,6 +152,13 @@ class Motor(BaseHTTPRequestHandler):
         # LA REGLA QUE NO SE NEGOCIA: el modelo y el contexto son los de esta
         # casa, no los que pida quien llama. Un pedido con otro modelo u otra
         # ventana obliga a ollama a recargar 17 GB y deja a AU-RA esperando.
+        if ruta == '/api/precalentar':
+            # Solo el system de AU-RA, para dejarlo leído (ollama-proxy-ndjson.py): sin modelo ni opciones.
+            sistema = pedido.get('system')
+            if not isinstance(sistema, str) or not sistema:
+                return self._json(400, {'error': 'falta system', 'codigo': 'SIN_SYSTEM'})
+            self._reenviar('POST', ruta, json.dumps({'system': sistema}).encode())
+            return
         if ruta == '/api/embed':
             # Los vectores van con SU modelo, que es otro y chico. Del pedido
             # solo se respeta la entrada: ni modelo ni opciones se aceptan de

@@ -40,11 +40,17 @@ let contestar: (dicho: string) => string = () => '[EMO: neutral] Claro. Te cuent
 let primerTokenMs = 0;
 /** Cada cuánto escribe el nodo un trozo de seis letras (un 27B en una T4 anda por ahí). */
 let pasoMs = 4;
+const precalentados: string[] = [];
 const nodo = http.createServer((req, res) => {
   let c = '';
   req.on('data', (d) => (c += d));
   req.on('end', async () => {
     const j = JSON.parse(c || '{}');
+    // Como el motor de verdad: precalentar deja leído el system y no es un turno (lib/nodo.ts precalentarSistema).
+    if (req.url === '/api/precalentar') {
+      precalentados.push(String(j.system || ''));
+      return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: true, leidas: 0, reusadas: 0, ms: 1 }));
+    }
     const msgs = j.messages || [];
     const ultimo = String(msgs.at(-1)?.content || '');
     const dicho = ultimo.split('\n\nJunta: ').pop() || '';
@@ -1062,6 +1068,18 @@ test('un miembro de la comunidad (fuera del padrón): lo público, sin taller ni
   assert.match(alNodo.at(-1)!.ultimo, /\n\nJunta: /);
   const sesJunta = await (await fetch(`${BASE}/api/ultron/sesion`, { headers: h() })).json();
   assert.equal(sesJunta.user.nivel, 'junta');
+});
+
+test('después de un turno NO se precalienta solo el system: recortaría lo leído del espacio de la persona', { skip: !listo }, async () => {
+  // El espacio de la persona (lib/espacio-nodo.ts) ya guarda todo lo leído en el turno (system e historial).
+  // Precalentar solo el system lo recortaba y el turno siguiente releía el historial entero.
+  alNodo.length = 0;
+  precalentados.length = 0;
+  contestar = () => '[EMO: neutral] Listo, aquí estoy.';
+  await turno('explícame cómo va el proyecto de la planta de beneficio este trimestre');
+  await new Promise((r) => setTimeout(r, 300));
+  assert.ok(alNodo.length >= 1, 'el turno llegó al 27B');
+  assert.equal(precalentados.length, 0, 'sin precalentado después del turno');
 });
 
 // Al final: deja memoria y la foto del fijo de la persona (cambia el hilo de las pruebas de después).

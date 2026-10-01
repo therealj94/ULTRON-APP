@@ -240,6 +240,9 @@ export function VozProvider({ children, conCompanera = true }: Props) {
             // Con el registro de toda la llamada: si se cortó sola, en el servidor se ve por qué.
             reportarEstado(`llamada del avatar: cuelga (${ef.motivo})`);
             control.terminar();
+            // Y otra vez a los 5 s: si el oído de la mesa no volvió a tomar el micrófono, se ve en el
+            // servidor (1-oct: «el micrófono dejó de escuchar» después de una llamada que falló).
+            setTimeout(() => reportarEstado('5 s después de colgar'), 5_000);
             break;
           case 'silenciar':
             control.silenciar(ef.valor);
