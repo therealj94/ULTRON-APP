@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { describe, it } from 'node:test';
-import { capturaAcotada, ejecutarCodigo, ejecutorActivo, TOPE_CAPTURA_BYTES } from '../lib/ejecutor';
+import { cabecerasEjecutor, capturaAcotada, ejecutarCodigo, ejecutorActivo, TOPE_CAPTURA_BYTES } from '../lib/ejecutor';
 
 // python3 en el host solo corre con marca explícita de desarrollo (lib/entorno.ts). Estas pruebas la
 // ponen a propósito; la de abajo comprueba que sin ella no corre nada.
@@ -81,5 +83,45 @@ describe('Fase 5 — ejecutor real', () => {
     const r = await ejecutarCodigo('import time\ntime.sleep(30)');
     assert.equal(r.ok, false);
     assert.ok(r.exit_code === 124 || /Timeout|timeout/i.test(r.stderr + (r.error || '')));
+  });
+});
+
+describe('Fase 0.5 — el ejecutor remoto lleva su secreto', () => {
+  /** Un sandbox de mentira que anota la cabecera del secreto de cada llamada. */
+  async function conSandbox(fn: (url: string, recibidas: Array<string | undefined>) => Promise<void>) {
+    const recibidas: Array<string | undefined> = [];
+    const srv = http.createServer((req, res) => {
+      recibidas.push(req.headers['x-ejecutor-secreto'] as string | undefined);
+      req.resume();
+      req.on('end', () => res.setHeader('Content-Type', 'application/json').end(JSON.stringify({ stdout: '2\n', stderr: '', exit_code: 0, ok: true })));
+    });
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+    try {
+      await fn(`http://127.0.0.1:${(srv.address() as AddressInfo).port}`, recibidas);
+    } finally {
+      srv.close();
+    }
+  }
+
+  it('con EJECUTOR_SECRETO, cada llamada a EJECUTOR_URL lo manda en x-ejecutor-secreto', () =>
+    conSandbox((url, recibidas) =>
+      conEntorno({ EJECUTOR_URL: url, EJECUTOR_SECRETO: 'secreto-del-sandbox-de-prueba', EJECUTOR_ACTIVO: undefined }, async () => {
+        const r = await ejecutarCodigo('print(1+1)');
+        assert.equal(r.via, 'remoto');
+        assert.equal(r.stdout.trim(), '2');
+        assert.deepEqual(recibidas, ['secreto-del-sandbox-de-prueba']);
+        assert.ok(!JSON.stringify(r).includes('secreto-del-sandbox'), 'el secreto no vuelve en la respuesta');
+      })
+    ));
+
+  it('sin EJECUTOR_SECRETO no se inventa ninguna cabecera', () => {
+    assert.deepEqual(cabecerasEjecutor({}), { 'Content-Type': 'application/json' });
+    assert.deepEqual(cabecerasEjecutor({ EJECUTOR_SECRETO: '   ' }), { 'Content-Type': 'application/json' });
+    return conSandbox((url, recibidas) =>
+      conEntorno({ EJECUTOR_URL: url, EJECUTOR_SECRETO: undefined, EJECUTOR_ACTIVO: undefined }, async () => {
+        await ejecutarCodigo('print(1+1)');
+        assert.deepEqual(recibidas, [undefined]);
+      })
+    );
   });
 });

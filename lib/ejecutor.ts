@@ -235,10 +235,20 @@ async function cuerpoAcotado(r: Response, tope = TOPE_CAPTURA_BYTES): Promise<st
   return Buffer.concat(trozos).toString('utf8');
 }
 
+/**
+ * La cabecera del secreto compartido con el sandbox remoto (Fase 0.5). Antes EJECUTOR_URL se llamaba
+ * sin nada: quien encontrara el servicio corría Python en él. Con EJECUTOR_SECRETO puesto viaja en cada
+ * llamada, como `x-ultron-secreto` al nodo; el servicio debe exigirlo (docs/entregas/FASE-0.md).
+ */
+export function cabecerasEjecutor(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const secreto = String(env.EJECUTOR_SECRETO || '').trim();
+  return { 'Content-Type': 'application/json', ...(secreto ? { 'x-ejecutor-secreto': secreto } : {}) };
+}
+
 async function ejecutarRemoto(codigo: string, url: string): Promise<Ejecucion> {
   const r = await fetch(`${url.replace(/\/$/, '')}/ejecutar`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: cabecerasEjecutor(),
     body: JSON.stringify({ codigo }),
     signal: AbortSignal.timeout(TIMEOUT_MS + 2000),
   });
