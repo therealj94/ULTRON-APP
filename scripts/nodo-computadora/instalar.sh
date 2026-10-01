@@ -49,6 +49,7 @@ ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
 MODELO_URL=http://127.0.0.1:8000/v1
 MODELO=holo3-1-9b
 ESCRITORIO=escritorio
+ESCRITORIO_IMAGEN=$ESCRITORIO_IMAGEN
 ENV
 umask 022
 cat > /etc/systemd/system/computadora.service <<UNIT

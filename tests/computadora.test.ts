@@ -7,7 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { encargarTarea, motorDelPerfil, tareaTerminadaPara, duenoDe, ultimaTareaDe, estadoComputadora, _olvidarEncargos } from '../server/computadora';
+import { encargarTarea, motorDelPerfil, avisosPendientes, confirmarAvisos, pendientesDe, duenoDe, ultimaTareaDe, estadoComputadora, _olvidarEncargos } from '../server/computadora';
 import { extraerPedidoHerramienta, instruccionHarness, resolverPedido } from '../lib/harness';
 import { validarCambios } from '../lib/perfil-persona';
 import { fichaManosPrompt, manosDe } from '../lib/manos-ficha';
@@ -15,13 +15,14 @@ import { fichaManosPrompt, manosDe } from '../lib/manos-ficha';
 const CLAVE = 'clave-de-prueba';
 
 /** Un nodo que termina cada tarea tras `pasosHastaTerminar` consultas. */
-async function nodoFalso(pasosHastaTerminar: number, sinClaude = false) {
+async function nodoFalso(pasosHastaTerminar: number, sinClaude = false, demoraMs = 0) {
   const tareas = new Map<string, { consultas: number; instruccion: string; motor: string }>();
   const pedidos: Array<{ ruta: string; cuerpo: any; auth: string | undefined }> = [];
   const srv = http.createServer((req, res) => {
     let datos = '';
     req.on('data', (c) => (datos += c));
-    req.on('end', () => {
+    req.on('end', async () => {
+      if (demoraMs && req.method === 'GET') await new Promise((r) => setTimeout(r, demoraMs));
       const cuerpo = datos ? JSON.parse(datos) : null;
       pedidos.push({ ruta: `${req.method} ${req.url}`, cuerpo, auth: req.headers.authorization });
       const json = (code: number, j: unknown) => {
@@ -86,32 +87,61 @@ test('encargar y esperar: si termina a tiempo, el hecho trae la respuesta y no s
       assert.equal(nodo.pedidos[0].auth, `Bearer ${CLAVE}`);
       assert.equal(duenoDe(r.id!), 'jose@x.hn');
       assert.equal(ultimaTareaDe('jose@x.hn'), r.id);
-      // Ya se dijo en este turno: el siguiente no la vuelve a contar.
-      assert.equal(tareaTerminadaPara('jose@x.hn'), null);
+      // Ya se dijo en este turno: el siguiente no la vuelve a contar, y el nodo supo el dueño (sin el correo).
+      assert.equal(avisosPendientes('jose@x.hn'), null);
+      assert.match(nodo.pedidos[0].cuerpo.dueno, /^[0-9a-f]{24}$/);
+      assert.ok(!JSON.stringify(nodo.pedidos[0].cuerpo).includes('jose@x.hn'));
     });
   } finally {
     await nodo.cerrar();
   }
 });
 
-test('si no alcanza el turno: dice que sigue, y al terminar se avisa UNA vez en el turno siguiente', async () => {
+test('si no alcanza el turno: dice que sigue; al terminar se avisa hasta que el modelo lo diga, y una segunda tarea no tapa a la primera', async () => {
   const nodo = await nodoFalso(3);
   try {
     await conNodo(nodo.url, async () => {
-      const r = await encargarTarea({ instruccion: 'Compara precios', quien: 'ana@x.hn', motor: 'claude', esperaMs: 100 });
-      assert.match(r.hecho, /sigue en tu computadora/);
-      assert.match(r.hecho, /No inventes el resultado/);
-      assert.equal(tareaTerminadaPara('ana@x.hn'), null, 'todavía no terminó');
-      // El seguimiento consulta cada 5 s: se espera a que la vea terminada.
-      let aviso: string | null = null;
-      for (let i = 0; i < 40 && !aviso; i++) {
+      const r1 = await encargarTarea({ instruccion: 'Compara precios', quien: 'ana@x.hn', motor: 'claude', esperaMs: 100 });
+      assert.match(r1.hecho, /sigue en tu computadora/);
+      assert.match(r1.hecho, /No inventes el resultado/);
+      const r2 = await encargarTarea({ instruccion: 'Busca horarios', quien: 'ana@x.hn', motor: 'holo', esperaMs: 100 });
+      assert.deepEqual(pendientesDe('ana@x.hn').sort(), [r1.id, r2.id].sort(), 'las dos quedan pendientes');
+      assert.equal(avisosPendientes('ana@x.hn'), null, 'todavía no terminaron');
+      // El seguimiento consulta cada 5 s: se espera a que vea las dos terminadas.
+      let aviso: ReturnType<typeof avisosPendientes> = null;
+      for (let i = 0; i < 60 && (aviso?.ids.length ?? 0) < 2; i++) {
         await new Promise((res) => setTimeout(res, 500));
-        aviso = tareaTerminadaPara('ana@x.hn');
+        aviso = avisosPendientes('ana@x.hn');
       }
-      assert.ok(aviso, 'se avisó al terminar');
-      assert.match(aviso!, /terminó la tarea que te encargaron antes, «Compara precios»/);
-      assert.equal(tareaTerminadaPara('ana@x.hn'), null, 'una sola vez');
-      assert.equal(tareaTerminadaPara('otra@x.hn'), null, 'cada quien sus tareas');
+      assert.equal(aviso?.ids.length, 2, 'se cuentan las dos');
+      assert.match(aviso!.hecho, /«Compara precios»/);
+      assert.match(aviso!.hecho, /«Busca horarios»/);
+      // Un «hola» que contestó el banco no lo dijo: sigue pendiente.
+      assert.equal(avisosPendientes('ana@x.hn')?.ids.length, 2);
+      confirmarAvisos('ana@x.hn', aviso!.ids);
+      assert.equal(avisosPendientes('ana@x.hn'), null, 'dicho una vez, no se repite');
+      assert.deepEqual(pendientesDe('ana@x.hn'), []);
+      assert.equal(avisosPendientes('otra@x.hn'), null, 'cada quien sus tareas');
+    });
+  } finally {
+    await nodo.cerrar();
+  }
+});
+
+test('el plazo de espera es de verdad aunque el nodo tarde en contestar', async () => {
+  const nodo = await nodoFalso(99, false, 4000);
+  try {
+    await conNodo(nodo.url, async () => {
+      const t0 = Date.now();
+      const r = await encargarTarea({ instruccion: 'Algo lento', quien: 'a@x.hn', motor: 'holo', esperaMs: 1500 });
+      const ms = Date.now() - t0;
+      assert.match(r.hecho, /sigue en tu computadora/);
+      assert.ok(ms < 2500, `no se pasa del plazo (${ms} ms con 1500 de plazo)`);
+      const ctrl = new AbortController();
+      setTimeout(() => ctrl.abort(), 300);
+      const t1 = Date.now();
+      await encargarTarea({ instruccion: 'Interrumpida', quien: 'a@x.hn', motor: 'holo', esperaMs: 20_000, senal: ctrl.signal });
+      assert.ok(Date.now() - t1 < 1500, 'la interrupción corta la espera');
     });
   } finally {
     await nodo.cerrar();

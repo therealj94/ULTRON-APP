@@ -59,7 +59,7 @@ import { quitarExpresiones } from './lib/expresiones';
 import { puntoDeCorte } from './lib/trozos';
 import { claveTurno, reclamarTurno, type TurnoGuardado } from './server/turno-unico';
 import { respuestaFija } from './lib/respuestas-fijas';
-import { encargarTarea, montarRutasComputadora, motorDelPerfil, tareaTerminadaPara, type MotorNodo } from './server/computadora';
+import { avisosPendientes, confirmarAvisos, encargarTarea, montarRutasComputadora, motorDelPerfil, type MotorNodo } from './server/computadora';
 import { fichaManosPrompt } from './lib/manos-ficha';
 import { emitirSesion, borrarSesion, cerrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica, mesaAutorizada, cuerpoHttp, gastarCupo, esperaEntrada, anotarFalloEntrada, anotarExitoEntrada, cargarSesionesCerradas } from './server/seguridad';
 import { canales, leerPdf, telegramFoto, telegramVoz } from './lib/canales';
@@ -2456,8 +2456,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   hechos.push(...guiasDeClasificacion(clas));
   // Lo que su computadora terminó después de que el turno anterior dejó de esperar (server/computadora.ts).
   const duenoComputadora = correoApp || quienMem || '';
-  const deLaComputadora = duenoComputadora ? tareaTerminadaPara(duenoComputadora) : null;
-  if (deLaComputadora) hechos.push(neutralizarMarca(deLaComputadora));
+  const deLaComputadora = duenoComputadora ? avisosPendientes(duenoComputadora) : null;
+  if (deLaComputadora) hechos.push(neutralizarMarca(deLaComputadora.hecho));
   // Fichas de la memoria estructurada de lo que se nombra (empresas, personas, proyectos). En una
   // charla hablada no: es una consulta a la base antes de la primera palabra y no hay nada que buscar.
   const charlaHablada = !!opciones.voz && clas.tarea === 'conversacion' && !clas.requiereQwen;
@@ -2899,6 +2899,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     computadora: duenoComputadora
       ? { quien: duenoComputadora, motor: motorDelPerfil((await perfilPedido)?.motorComputadora), esperaMs: voz ? 20_000 : 50_000 }
       : null,
+    // Lo que su computadora terminó y va en los hechos: se da por dicho solo si el modelo contesta con ellos.
+    avisoComputadora: deLaComputadora ? { quien: duenoComputadora, ids: deLaComputadora.ids } : null,
   };
 }
 
@@ -3478,6 +3480,7 @@ async function correrTurnoInterno(body: any, opciones: OpcionesTurno = {}): Prom
   if (!q1.ok) {
     return guardar({ ...base, reply: sinCerebro(p.datos), emocion: 'preocupado', via: 'tools-fallback', mode, ms: Date.now() - t0, herramientas: tools, error: q1.error });
   }
+  if (p.avisoComputadora) confirmarAvisos(p.avisoComputadora.quien, p.avisoComputadora.ids);
   const h = await bucleHarness({ reply: q1.reply, system, message, hechos, hilo, tools, mando, senal: p.senal, nivel: p.nivel, contexto: p.contexto, espacio: p.espacio, computadora: p.computadora });
   let reply = h.reply;
   let via = h.via;
@@ -3895,6 +3898,8 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       // Cortado o terminado, el lector se suelta: la conexión al nodo no queda colgada.
       await reader.cancel().catch(() => {});
     }
+    // El modelo contestó con los hechos: lo que terminó su computadora ya quedó dicho.
+    if (full.trim() && !senal?.aborted && p.avisoComputadora) confirmarAvisos(p.avisoComputadora.quien, p.avisoComputadora.ids);
     // Sin precalentar aquí: el espacio de la persona ya guarda TODO lo leído en este turno (system e
     // historial). Precalentar solo el system lo recortaba y el turno siguiente releía el historial.
     if (buf.trim()) {

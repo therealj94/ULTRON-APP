@@ -18,7 +18,11 @@ hechas. Solo se ofrece si hay ANTHROPIC_API_KEY.
 
 API (todo con `Authorization: Bearer $COMPUTADORA_CLAVE`, salvo /salud):
   GET  /salud
-  POST /tareas {"instruccion": "...", "motor": "holo"|"claude", "max_pasos": 25}   → {"id": ...}
+  POST /tareas {"instruccion": "...", "motor": "holo"|"claude", "max_pasos": 25, "dueno": "<huella>"}   → {"id": ...}
+
+Cada dueño (una huella, nunca el correo) trabaja en un escritorio limpio: si la tarea es de otro dueño que
+la anterior, el contenedor del escritorio se borra y se crea de nuevo (pestañas, historial, descargas y
+documentos del anterior no quedan). Las tareas terminadas se olvidan tras una hora.
   GET  /tareas/{id}                                      → estado, pasos y respuesta
   GET  /tareas/{id}/eventos                              → los mismos pasos en vivo (SSE)
   POST /tareas/{id}/parar
@@ -52,6 +56,9 @@ MODELO = os.environ.get('MODELO', 'holo3-1-9b')
 ESCRITORIO = os.environ.get('ESCRITORIO', 'escritorio')
 PANTALLA = os.environ.get('PANTALLA', ':1')
 PASOS_MAX = int(os.environ.get('PASOS_MAX', '30'))
+ESCRITORIO_IMAGEN = os.environ.get('ESCRITORIO_IMAGEN', 'ghcr.io/anthropics/anthropic-quickstarts:computer-use-demo-latest')
+OLVIDAR_TRAS_S = int(os.environ.get('OLVIDAR_TRAS_S', '3600'))
+TAREAS_MAX = int(os.environ.get('TAREAS_MAX', '100'))
 ESPERA_TRAS_ACCION = float(os.environ.get('ESPERA_TRAS_ACCION', '1.2'))
 CLAUDE_CLAVE = os.environ.get('ANTHROPIC_API_KEY', '')
 CLAUDE_MODELO = os.environ.get('CLAUDE_MODELO', 'claude-sonnet-5-5')
@@ -76,6 +83,27 @@ def captura():
     png = en_escritorio('import -window root png:-', timeout=20)
     ancho, alto = Image.open(io.BytesIO(png)).size
     return png, ancho, alto
+
+
+def escritorio_nuevo():
+    """Borra el escritorio y crea uno limpio, igual que instalar.sh, y espera a que tenga pantalla."""
+    subprocess.run(['docker', 'rm', '-f', ESCRITORIO], capture_output=True, timeout=60)
+    r = subprocess.run(['docker', 'run', '-d', '--name', ESCRITORIO, '--restart', 'unless-stopped',
+                        '-e', 'WIDTH=1280', '-e', 'HEIGHT=800', '-p', '127.0.0.1:6080:6080', '--shm-size', '2g',
+                        ESCRITORIO_IMAGEN], capture_output=True, timeout=120)
+    if r.returncode != 0:
+        raise RuntimeError('no pude crear el escritorio: ' + r.stderr.decode('utf-8', 'ignore')[:200])
+    hasta = time.time() + 90
+    while time.time() < hasta:
+        try:
+            captura()
+            # La barra y el gestor de ventanas tardan un poco más que la pantalla.
+            en_escritorio('pgrep -x tint2 >/dev/null && pgrep -x mutter >/dev/null', timeout=10)
+            time.sleep(2)
+            return
+        except Exception:
+            time.sleep(1)
+    raise RuntimeError('el escritorio nuevo no arrancó a tiempo')
 
 
 def xdotool(*args):
@@ -333,12 +361,31 @@ def correr_claude(t):
 
 TAREAS = {}
 TURNO = threading.Lock()  # un escritorio: una tarea a la vez, las demás esperan su turno
+# De quién fue la última tarea en el escritorio. None al arrancar: la primera tarea también estrena escritorio.
+DUENO_ACTUAL = {'v': None}
+
+
+def olvidar_viejas():
+    """Las terminadas hace más de OLVIDAR_TRAS_S se van; y nunca más de TAREAS_MAX en memoria."""
+    ahora = time.time()
+    terminadas = sorted((t for t in TAREAS.values() if t.estado not in ('en_cola', 'trabajando')), key=lambda t: t.creada)
+    for t in terminadas:
+        if ahora - t.creada > OLVIDAR_TRAS_S:
+            TAREAS.pop(t.id, None)
+    sobran = len(TAREAS) - TAREAS_MAX
+    for t in terminadas:
+        if sobran <= 0:
+            break
+        if t.id in TAREAS:
+            TAREAS.pop(t.id, None)
+            sobran -= 1
 
 
 class Tarea:
-    def __init__(self, instruccion, max_pasos, motor='holo'):
+    def __init__(self, instruccion, max_pasos, motor='holo', dueno=''):
         self.id = uuid.uuid4().hex[:12]
         self.motor = motor
+        self.dueno = dueno
         self.instruccion = instruccion
         self.max_pasos = max_pasos
         self.estado = 'en_cola'
@@ -372,6 +419,13 @@ def correr(t: Tarea):
         if t.parar:
             return t.cerrar('parada')
         t.estado = 'trabajando'
+        if DUENO_ACTUAL['v'] != t.dueno:
+            try:
+                escritorio_nuevo()
+            except Exception as e:
+                return t.cerrar('fallo', error=str(e)[:500])
+            DUENO_ACTUAL['v'] = t.dueno
+            t.anotar(accion='escritorio_limpio')
         if t.motor == 'claude':
             try:
                 return correr_claude(t)
@@ -452,7 +506,9 @@ async def crear(req: Request):
     motor = 'claude' if cuerpo.get('motor') == 'claude' else 'holo'
     if motor == 'claude' and not CLAUDE_CLAVE:
         raise HTTPException(400, 'el motor Claude no está configurado (falta ANTHROPIC_API_KEY)')
-    t = Tarea(instruccion, max(1, min(PASOS_MAX, int(cuerpo.get('max_pasos') or 25))), motor)
+    dueno = str(cuerpo.get('dueno') or '')[:64]
+    t = Tarea(instruccion, max(1, min(PASOS_MAX, int(cuerpo.get('max_pasos') or 25))), motor, dueno)
+    olvidar_viejas()
     TAREAS[t.id] = t
     threading.Thread(target=correr, args=(t,), daemon=True).start()
     return {'id': t.id, 'estado': t.estado}

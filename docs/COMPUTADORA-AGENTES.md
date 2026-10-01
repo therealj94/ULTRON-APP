@@ -36,4 +36,5 @@ Instalación en el nodo: `sudo COMPUTADORA_CLAVE=... DOMINIO=54-85-85-77.sslip.i
 
 - La vista en vivo (noVNC), con la que se puede tomar el control del escritorio, no se publica: queda en 127.0.0.1:6080. Lo que hizo el agente se mira con las capturas de cada paso, que piden la clave.
 - El escritorio es un contenedor aparte, sin sesiones ni contraseñas de nadie. La instrucción del modelo le prohíbe pagar, comprar o poner contraseñas, y si algo lo bloquea lo dice.
-- Una tarea a la vez; las demás esperan su turno.
+- Cada dueño trabaja en un escritorio limpio: si la tarea es de otra persona que la anterior, el contenedor se borra y se crea de nuevo (comprobado: el segundo dueño solo vio las pestañas de bienvenida de Firefox). El nodo recibe una huella, nunca el correo.
+- Una tarea a la vez; las demás esperan su turno. Las terminadas se olvidan tras una hora (máximo 100 en memoria).

@@ -11,6 +11,7 @@
  * (`esperaMs`); si no alcanza, la tarea sigue y el resultado queda guardado para esa persona: se lo dice
  * en el turno siguiente (`tareaTerminadaPara`) y la app lo puede mirar (`/api/computadora/...`).
  */
+import crypto from 'node:crypto';
 import { clave } from '../lib/boveda';
 
 export type MotorNodo = 'holo' | 'claude';
@@ -32,6 +33,11 @@ const TERMINADA = new Set<EstadoTarea>(['hecha', 'parada', 'sin_pasos', 'fallo']
 const SONDEO_MS = 2000;
 /** Tras esto, una tarea que nadie terminó de esperar se deja de seguir. */
 const SEGUIR_MAX_MS = 15 * 60_000;
+
+/** Quién es, sin decirle el correo al nodo: le basta para saber si cambió de dueño (y limpiar el escritorio). */
+function huellaDe(quien: string): string {
+  return crypto.createHash('sha256').update(`computadora|${quien}`).digest('hex').slice(0, 24);
+}
 
 function conf() {
   return { url: clave('computadora_url').replace(/\/+$/, ''), clave: clave('computadora_clave') };
@@ -76,8 +82,9 @@ export async function estadoComputadora(): Promise<{ configurada: boolean; ok: b
   }
 }
 
-export async function verTarea(id: string, miniaturas = false): Promise<Tarea> {
-  return pedir(`/tareas/${encodeURIComponent(id)}${miniaturas ? '?miniaturas=1' : ''}`, { ms: 10_000 });
+export async function verTarea(id: string, miniaturas = false, ms = 10_000, senal?: AbortSignal): Promise<Tarea> {
+  const tope = AbortSignal.timeout(Math.max(1, ms));
+  return pedir(`/tareas/${encodeURIComponent(id)}${miniaturas ? '?miniaturas=1' : ''}`, { signal: senal ? AbortSignal.any([senal, tope]) : tope });
 }
 
 export async function pararTarea(id: string): Promise<void> {
@@ -95,8 +102,13 @@ export async function pantallaComputadora(): Promise<Buffer> {
 
 type Encargo = { id: string; quien: string; instruccion: string; creada: number; terminada?: Tarea; avisada?: boolean };
 const ENCARGOS = new Map<string, Encargo>();
-/** La última tarea de cada persona (para la app y para avisarle en el turno siguiente). */
+/** La última tarea de cada persona (para la app). */
 const ULTIMA = new Map<string, string>();
+/**
+ * Las tareas de cada persona que siguieron después de que su turno dejó de esperar y que todavía no se
+ * le contaron. Todas: una segunda tarea no tapa a la primera.
+ */
+const PENDIENTES = new Map<string, Set<string>>();
 
 export function duenoDe(id: string): string | null {
   return ENCARGOS.get(id)?.quien ?? null;
@@ -106,19 +118,41 @@ export function ultimaTareaDe(quien: string): string | null {
   return ULTIMA.get(quien) ?? null;
 }
 
+export function pendientesDe(quien: string): string[] {
+  return [...(PENDIENTES.get(quien) ?? [])];
+}
+
 /**
  * Lo que terminó después de que el turno dejó de esperar y todavía no se le dijo: va como HECHO en el
- * turno siguiente de esa persona, una sola vez.
+ * turno siguiente de esa persona. Solo se mira: se da por dicho con `confirmarAvisos` cuando el modelo
+ * de verdad contestó con esos hechos (un «hola» que contesta el banco o el modelo chico no los lleva).
  */
-export function tareaTerminadaPara(quien: string): string | null {
-  const id = ULTIMA.get(quien);
-  const e = id ? ENCARGOS.get(id) : null;
-  if (!e?.terminada || e.avisada) return null;
-  e.avisada = true;
-  return `COMPUTADORA (terminó la tarea que te encargaron antes, «${e.instruccion.slice(0, 160)}»): ${resumenTarea(e.terminada)} Díselo al empezar, en una o dos frases.`;
+export function avisosPendientes(quien: string): { ids: string[]; hecho: string } | null {
+  const listas = pendientesDe(quien)
+    .map((id) => ENCARGOS.get(id))
+    .filter((e): e is Encargo => !!e?.terminada && !e.avisada);
+  if (!listas.length) return null;
+  const partes = listas.map((e) => `«${e.instruccion.slice(0, 160)}»: ${resumenTarea(e.terminada!)}`);
+  return {
+    ids: listas.map((e) => e.id),
+    hecho: `COMPUTADORA (terminó lo que te encargaron antes) ${partes.join(' · ')} Díselo al empezar, en una o dos frases.`,
+  };
+}
+
+/** Ya se le dijo: no se vuelve a contar. */
+export function confirmarAvisos(quien: string, ids: readonly string[]) {
+  const set = PENDIENTES.get(quien);
+  for (const id of ids) {
+    const e = ENCARGOS.get(id);
+    if (e) e.avisada = true;
+    set?.delete(id);
+  }
+  if (set && !set.size) PENDIENTES.delete(quien);
 }
 
 function seguirEnSegundoPlano(e: Encargo) {
+  if (!PENDIENTES.has(e.quien)) PENDIENTES.set(e.quien, new Set());
+  PENDIENTES.get(e.quien)!.add(e.id);
   const hasta = e.creada + SEGUIR_MAX_MS;
   const vuelta = async () => {
     if (Date.now() > hasta) return;
@@ -138,7 +172,7 @@ function seguirEnSegundoPlano(e: Encargo) {
 
 /** El resultado contado para el modelo: qué pasó, en cuántos pasos, y la respuesta tal cual. */
 export function resumenTarea(t: Tarea): string {
-  const pasos = t.pasos.filter((p) => p.accion !== 'answer').length;
+  const pasos = t.pasos.filter((p) => p.accion !== 'answer' && p.accion !== 'escritorio_limpio').length;
   if (t.estado === 'hecha') return `Hecha en ${pasos} pasos (${Math.round(t.segundos)} s). Lo que encontró o hizo: ${String(t.respuesta || '').slice(0, 1500)}`;
   if (t.estado === 'parada') return 'La pararon antes de terminar.';
   if (t.estado === 'sin_pasos') return `No la terminó en ${pasos} pasos. ${t.error || ''}`.trim();
@@ -163,7 +197,7 @@ export async function encargarTarea(o: {
   let creada: { id: string };
   let nota = '';
   const encargar = (motor: MotorNodo) =>
-    pedir('/tareas', { method: 'POST', body: JSON.stringify({ instruccion: o.instruccion, motor, max_pasos: o.maxPasos ?? 25 }) });
+    pedir('/tareas', { method: 'POST', body: JSON.stringify({ instruccion: o.instruccion, motor, max_pasos: o.maxPasos ?? 25, dueno: huellaDe(o.quien) }) });
   try {
     try {
       creada = await encargar(o.motor);
@@ -181,10 +215,13 @@ export async function encargarTarea(o: {
   ULTIMA.set(o.quien, e.id);
   const hasta = Date.now() + Math.max(0, o.esperaMs);
   let t: Tarea | null = null;
+  // El plazo es de verdad: ni la pausa ni la consulta se pasan de lo que queda (ni de la interrupción).
   while (Date.now() < hasta && !o.senal?.aborted) {
-    await new Promise((r) => setTimeout(r, SONDEO_MS));
+    await esperar(Math.min(SONDEO_MS, hasta - Date.now()), o.senal);
+    const queda = hasta - Date.now();
+    if (queda <= 0 || o.senal?.aborted) break;
     try {
-      t = await verTarea(e.id);
+      t = await verTarea(e.id, false, Math.min(10_000, queda), o.senal);
     } catch {
       continue;
     }
@@ -206,10 +243,19 @@ export async function encargarTarea(o: {
   };
 }
 
+function esperar(ms: number, senal?: AbortSignal): Promise<void> {
+  return new Promise((r) => {
+    if (ms <= 0 || senal?.aborted) return r();
+    const t = setTimeout(r, ms);
+    senal?.addEventListener('abort', () => (clearTimeout(t), r()), { once: true });
+  });
+}
+
 /** Pruebas: olvidar los encargos. */
 export function _olvidarEncargos() {
   ENCARGOS.clear();
   ULTIMA.clear();
+  PENDIENTES.clear();
 }
 
 /* ------------------------------------------------------------------ rutas para la app y la web */
@@ -236,7 +282,7 @@ export function montarRutasComputadora(app: import('express').Express, d: DepsRu
     if (!correo) return sinSesion(res);
     const estado = await estadoComputadora();
     res.setHeader('Cache-Control', 'no-store');
-    return res.json({ ...estado, ultima: ultimaTareaDe(correo), honesto: true });
+    return res.json({ ...estado, ultima: ultimaTareaDe(correo), pendientes: pendientesDe(correo), honesto: true });
   });
 
   app.get('/api/computadora/tareas/:id', d.exigirMesa, d.limitar(60), async (req, res) => {
