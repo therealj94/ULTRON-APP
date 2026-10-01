@@ -1,18 +1,32 @@
 name: Web (mesa + servidor)
 
+# Una sola vez por cambio: antes corría dos veces en cada PR (el push a la rama y el pull_request).
+# Las ramas se prueban por su PR; main, al empujar. Un push nuevo al mismo PR corta la vuelta vieja
+# (en main nunca: cada commit de main queda probado).
 on:
   workflow_dispatch:
   pull_request:
   push:
-    branches: [main, "cursor/**", "claude/**"]
+    branches: [main]
     paths-ignore:
       - "mobile/**"
       - "**.md"
 
+concurrency:
+  group: web-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  web:
+  # `npm test` en 4 tandas, cada una en su máquina con su propia base (scripts/qa/repartir-pruebas.mjs):
+  # de una en una eran ~15 min. Dentro de cada tanda siguen de una en una (comparten la base).
+  pruebas:
+    name: pruebas (${{ matrix.tanda }}/4)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        tanda: [1, 2, 3, 4]
     # El catastro de Dr Electrum vive en PostGIS. Sin una base, las pruebas del catastro, de los
     # expedientes y de los informes se saltaban en CI —diez de ellas, con más de cincuenta casos
     # dentro— y lo que no se prueba en CI se rompe en producción sin que nadie se entere.
@@ -44,7 +58,9 @@ jobs:
       - run: npm ci
       # Antes que nada: si un flujo no arranca, el resto de la comprobación no se entera.
       # Una clave repetida hace que GitHub rechace el fichero entero, sin un trabajo ni un log.
-      - run: node scripts/qa/revisar-workflows.mjs
+      # (Lo que se mira una sola vez va en la tanda 1.)
+      - if: matrix.tanda == 1
+        run: node scripts/qa/revisar-workflows.mjs
 
       # La base como la deja scripts/electrum/instalar-postgis.sh en el nodo: el esquema lo aplica
       # el superusuario (CREATE EXTENSION lo exige) y después las tablas pasan a ser del usuario de
@@ -92,8 +108,24 @@ jobs:
           SQL
           psql "$ELECTRUM_DB_URL" -tAc "SELECT 'PostGIS ' || postgis_lib_version() || ', esquema ' || max(version) FROM esquema_version"
 
-      - run: npx tsc --noEmit
+      - if: matrix.tanda == 1
+        run: npx tsc --noEmit
       # La compilación va ANTES de las pruebas: las de expedientes, informes y el cargador levantan
       # el servidor compilado (dist/server.cjs) contra la base, y sin él se saltan.
       - run: npm run build
-      - run: npm test
+      # Lo mismo que `npm test`, solo los archivos de esta tanda.
+      - name: Pruebas (tanda ${{ matrix.tanda }}/4)
+        run: npx tsx --test --test-concurrency=1 $(node scripts/qa/repartir-pruebas.mjs ${{ matrix.tanda }} 4)
+
+  # El nombre de siempre («web») para quien espere ese check: verde solo si las cuatro tandas lo están.
+  web:
+    needs: pruebas
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: ¿Pasaron las cuatro tandas?
+        env:
+          RESULTADO: ${{ needs.pruebas.result }}
+        run: |
+          echo "tandas: $RESULTADO"
+          [ "$RESULTADO" = "success" ]
