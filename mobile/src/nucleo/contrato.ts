@@ -33,6 +33,8 @@ export type Encuesta = {
   otros?: string;
 };
 
+export type MotorComputadora = 'gratis' | 'pago';
+
 export type Perfil = {
   /** Cómo quiere que le digan («José», «Jefe», «Pepe»). */
   apodo: string;
@@ -51,6 +53,11 @@ export type Perfil = {
    * de los chats (lado) o a pantalla completa (completa). Sin valor, paseo. Ver avatar3d/presencia.ts.
    */
   presencia?: ModoPresencia;
+  /**
+   * Quién maneja su computadora en la nube (server/computadora.ts): el modelo propio (gratis) o Claude
+   * (de pago). Sin valor, gratis.
+   */
+  motorComputadora?: MotorComputadora;
   /** Milisegundos. */
   actualizado: number;
 };

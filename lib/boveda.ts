@@ -36,6 +36,9 @@ const ENV: Record<string, string[]> = {
   jefe_tel: ['JEFE_TELEFONO'],
   resend: ['RESEND_API_KEY'],
   mail_from: ['MAIL_FROM'],
+  // La computadora de los agentes (scripts/nodo-computadora): https://<ip>.sslip.io/api y su clave.
+  computadora_url: ['COMPUTADORA_URL'],
+  computadora_clave: ['COMPUTADORA_CLAVE'],
 };
 
 export function clave(id: string): string {

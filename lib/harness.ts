@@ -4,8 +4,9 @@
  */
 
 import type { NivelAura } from './perfiles/tipos';
+import { clave } from './boveda';
 
-export type HerramientaHarness = 'web' | 'sistema' | 'ejecutor' | 'leer';
+export type HerramientaHarness = 'web' | 'sistema' | 'ejecutor' | 'leer' | 'computadora';
 
 export type PedidoHerramienta = { herramienta: HerramientaHarness; arg: string };
 
@@ -30,8 +31,21 @@ export const INSTRUCCION_HARNESS_MIEMBRO = INSTRUCCION_HARNESS.split('\n')
   .filter((l) => !/^PEDIR_HERRAMIENTA: (sistema|ejecutor)\b/.test(l))
   .join('\n');
 
-export function instruccionHarness(nivel: NivelAura = 'junta'): string {
-  return nivel === 'miembro' ? INSTRUCCION_HARNESS_MIEMBRO : INSTRUCCION_HARNESS;
+/**
+ * Su propia computadora en la nube (server/computadora.ts): solo se ofrece si el servidor la tiene.
+ * Va para todos (junta y miembros): es de cada avatar, no del taller.
+ */
+export const INSTRUCCION_COMPUTADORA = `
+PEDIR_HERRAMIENTA: computadora <la tarea entera en una frase, con todos los datos que hagan falta>
+Tienes tu propia computadora en la nube (Ubuntu con Firefox y LibreOffice). Úsala cuando haya que HACER algo en páginas: entrar a un sitio y buscar dentro, comparar varias páginas, llenar un formulario, sacar datos de una tabla, o cuando te digan «usa tu computadora». Para una pregunta que una búsqueda contesta, usa web. Nunca la uses para pagar, comprar ni poner contraseñas.`.trim();
+
+export function computadoraDisponible(): boolean {
+  return !!clave('computadora_url') && !!clave('computadora_clave');
+}
+
+export function instruccionHarness(nivel: NivelAura = 'junta', conComputadora = computadoraDisponible()): string {
+  const base = nivel === 'miembro' ? INSTRUCCION_HARNESS_MIEMBRO : INSTRUCCION_HARNESS;
+  return conComputadora ? `${base}\n${INSTRUCCION_COMPUTADORA}` : base;
 }
 
 /**
@@ -45,7 +59,7 @@ export function pedidoPermitido(ped: PedidoHerramienta, nivel: NivelAura): strin
   return null;
 }
 
-const RE = /^\s*PEDIR_HERRAMIENTA:\s*(web|sistema|ejecutor|leer)\s*(.*)$/im;
+const RE = /^\s*PEDIR_HERRAMIENTA:\s*(web|sistema|ejecutor|leer|computadora)\s*(.*)$/im;
 
 export function extraerPedidoHerramienta(texto: string): PedidoHerramienta | null {
   const m = String(texto || '').match(RE);
@@ -67,6 +81,8 @@ export async function resolverPedido(
     sistema: () => Promise<string>;
     leer: (url: string) => Promise<string>;
     ejecutor: (codigo: string) => Promise<string>;
+    /** La computadora del agente (server/computadora.ts). Sin ella, el pedido se contesta como no disponible. */
+    computadora?: (tarea: string) => Promise<string>;
   },
   codigoDelTurno = '',
   /** Con quién habla: con un miembro, `sistema` y `ejecutor` no llegan a sus runners. */
@@ -80,6 +96,12 @@ export async function resolverPedido(
     return runners.web(q);
   }
   if (ped.herramienta === 'sistema') return runners.sistema();
+  if (ped.herramienta === 'computadora') {
+    const tarea = ped.arg.trim();
+    if (!tarea) return 'HARNESS computadora: no vino la tarea. No encargué nada.';
+    if (!runners.computadora) return 'HARNESS computadora: no está disponible aquí. No la usé.';
+    return runners.computadora(tarea);
+  }
   if (ped.herramienta === 'leer') {
     let url = ped.arg.trim();
     if (/^github\.com\//i.test(url)) url = 'https://' + url;

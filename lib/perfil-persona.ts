@@ -24,6 +24,8 @@ export type AvatarPerfil = 'ojos' | 'aura' | 'claudio' | 'antonio';
 export type IdiomaPerfil = 'es' | 'en';
 /** Cómo tiene a AURA en el teléfono: caminando chiquita, al lado de los chats o a pantalla completa. */
 export type PresenciaPerfil = 'paseo' | 'lado' | 'completa';
+/** Quién maneja la computadora del agente: el modelo abierto propio (gratis) o Claude (de pago). */
+export type MotorComputadora = 'gratis' | 'pago';
 
 export type Encuesta = {
   vive?: string;
@@ -45,6 +47,7 @@ export type Perfil = {
   encuesta: Encuesta;
   completado: boolean;
   presencia?: PresenciaPerfil;
+  motorComputadora?: MotorComputadora;
   actualizado: number;
 };
 
@@ -54,6 +57,7 @@ export const CAMPOS_ENCUESTA = ['vive', 'comida', 'musica', 'familia', 'trabajo'
 const AVATARES: AvatarPerfil[] = ['ojos', 'aura', 'claudio', 'antonio'];
 const TEMAS: Tema[] = ['oscuro', 'claro', 'sistema'];
 const PRESENCIAS: PresenciaPerfil[] = ['paseo', 'lado', 'completa'];
+const MOTORES: MotorComputadora[] = ['gratis', 'pago'];
 const DIAS_DEL_MES = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
 /** Texto limpio de una línea: sin caracteres de control ni saltos (van al prompt), recortado. */
@@ -121,6 +125,10 @@ export function validarCambios(cuerpo: unknown): { ok: true; cambios: Cambios } 
     if (!PRESENCIAS.includes(b.presencia as PresenciaPerfil)) return { ok: false, error: 'La presencia es paseo, lado o completa.' };
     c.presencia = b.presencia as PresenciaPerfil;
   }
+  if (b.motorComputadora !== undefined) {
+    if (!MOTORES.includes(b.motorComputadora as MotorComputadora)) return { ok: false, error: 'La computadora es gratis o pago.' };
+    c.motorComputadora = b.motorComputadora as MotorComputadora;
+  }
   if (b.encuesta !== undefined) {
     if (!b.encuesta || typeof b.encuesta !== 'object' || Array.isArray(b.encuesta)) return { ok: false, error: 'La encuesta tiene que ser un objeto.' };
     const e = b.encuesta as Record<string, unknown>;
@@ -181,6 +189,7 @@ function sanear(raw: unknown): Perfil | null {
     encuesta: r.encuesta || {},
     // Un valor viejo o raro no invalida el perfil entero: se queda sin presencia (paseo).
     presencia: PRESENCIAS.includes(r.presencia as PresenciaPerfil) ? r.presencia : undefined,
+    motorComputadora: MOTORES.includes(r.motorComputadora as MotorComputadora) ? r.motorComputadora : undefined,
   });
   if (!v.ok) return null;
   const p = aplicarCambios(perfilInicial({ nombreGenesis: String(r.nombreGenesis || '') }), v.cambios, Number(r.actualizado) || 0);

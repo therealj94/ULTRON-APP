@@ -23,7 +23,8 @@ export type Herramienta =
   | 'taller' // estado del sistema, redespliegue, mantenimiento
   | 'canto' // repertorio y oración: el cuerpo puede, pero no toda plataforma lo ofrece
   | 'calculos-mina' // ley, tonelaje, onzas, recuperación, strip ratio, cutoff
-  | 'concesiones'; // fichas de concesiones y permisos
+  | 'concesiones' // fichas de concesiones y permisos
+  | 'computadora'; // su propia computadora en la nube: navegar, llenar formularios, comparar (scripts/nodo-computadora)
 
 export type PerfilCerebro = {
   /** Identificador corto, el valor de ULTRON_PERFIL. */

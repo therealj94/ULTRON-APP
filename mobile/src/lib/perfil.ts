@@ -118,6 +118,7 @@ export function normalizarPerfil(raw: unknown): Perfil | null {
   if (c) p.cumple = c;
   const pr = normalizarPresencia(r.presencia);
   if (pr) p.presencia = pr;
+  if (r.motorComputadora === 'gratis' || r.motorComputadora === 'pago') p.motorComputadora = r.motorComputadora;
   return p;
 }
 
@@ -140,6 +141,7 @@ export function aplicarCambios(base: Perfil, c: Partial<Perfil>, ahora: number):
     const pr = normalizarPresencia(c.presencia);
     if (pr) p.presencia = pr;
   }
+  if (c.motorComputadora === 'gratis' || c.motorComputadora === 'pago') p.motorComputadora = c.motorComputadora;
   if (c.nombreGenesis !== undefined && !base.nombreGenesis) {
     const ng = textoLimpio(c.nombreGenesis, 120);
     if (ng) p.nombreGenesis = ng;
@@ -172,6 +174,7 @@ export function cuerpoPut(p: Perfil, cambios: Partial<Perfil>): Record<string, u
   if (cambios.idioma !== undefined) b.idioma = p.idioma;
   if (cambios.completado !== undefined) b.completado = p.completado;
   if (cambios.presencia !== undefined && p.presencia) b.presencia = p.presencia;
+  if (cambios.motorComputadora !== undefined && p.motorComputadora) b.motorComputadora = p.motorComputadora;
   if (cambios.cumple !== undefined) b.cumple = p.cumple || '';
   if (cambios.encuesta !== undefined) {
     const e: Record<string, string> = {};
