@@ -558,8 +558,19 @@ export function asistenteTruncado(messages: unknown, ultimaDicha: string): boole
  * (auditoría externa, 1-oct). El cerebro igual sabe que lo interrumpieron (`interrumpida`).
  */
 export const PERDON_DESDE_CARACTERES = 120;
-export function perdonEnVoz(ultimaDicha: string): boolean {
-  return aplanar(quitarExpresiones(ultimaDicha || '')).length >= PERDON_DESDE_CARACTERES;
+/**
+ * Cuánto OYÓ la persona de la respuesta anterior: el último mensaje de asistente que manda ElevenLabs
+ * ya viene recortado a lo que alcanzó a decir (asistenteTruncado). Lo que el servidor mandó
+ * (`ultimaDicha`) puede ser mucho más (se genera más rápido de lo que se dice), así que solo vale si
+ * ElevenLabs no trae ese mensaje (revisión de Codex en #111).
+ */
+export function perdonEnVoz(messages: unknown, ultimaDicha: string): boolean {
+  const lista = Array.isArray(messages) ? messages : [];
+  let i = lista.length - 1;
+  while (i >= 0 && (lista[i] as any)?.role === 'user') i--;
+  const m: any = lista[i];
+  const oido = m && m.role === 'assistant' ? textoDe(m.content) : ultimaDicha || '';
+  return aplanar(quitarExpresiones(oido)).replace(/(\.{3}|…|—|-)$/, '').trim().length >= PERDON_DESDE_CARACTERES;
 }
 
 /** Lo primero que dice AU-RA cuando cortó una respuesta larga: un perdón breve, y enseguida lo nuevo. */
@@ -1144,7 +1155,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     };
     conv.vivo = vivoDeEste;
 
-    if (reconexion || (interrumpida && perdonEnVoz(conv.ultimaDicha))) {
+    if (reconexion || (interrumpida && perdonEnVoz(req.body?.messages, conv.ultimaDicha))) {
       decir(reconexion ? reconexion.perdon : perdonDe(pase.idioma, conv.turnos));
       // El perdón no cuenta como «ya dijo algo»: si el cerebro falla, igual se explica.
       algo = false;

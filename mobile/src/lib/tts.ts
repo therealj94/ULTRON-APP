@@ -674,7 +674,8 @@ const RE_COMA_PRIMERA = new RegExp(`^([\\s\\S]{${COMA_PRIMERA - 1},}?[^\\d\\s][,
  */
 export class StreamSpeaker {
   private buf = '';
-  private queue: string[] = [];
+  /** Las frases por decir, cada una con la que se dijo antes (su `previo`: entonación y tono). */
+  private queue: Array<{ texto: string; previo: string }> = [];
   private pumping = false;
   private closed = false;
   private my: number;
@@ -749,16 +750,19 @@ export class StreamSpeaker {
   private ultima = '';
 
   private source(sentence: string, previo?: string) {
-    let p = this.sources.get(sentence);
+    // La clave lleva lo dicho antes: la misma frase después de otra se pide aparte (sin el tono del
+    // comienzo y con su entonación seguida) — revisión de Codex en #111.
+    const clave = `${previo || ''}\u0000${sentence}`;
+    let p = this.sources.get(clave);
     if (!p) {
       p = fetchSource(sentence, 'speak', this.opts.emocion || 'neutral', false, { previo });
-      this.sources.set(sentence, p);
+      this.sources.set(clave, p);
     }
     return p;
   }
 
   private enqueue(sentence: string) {
-    this.queue.push(sentence);
+    this.queue.push({ texto: sentence, previo: this.ultima });
     void this.source(sentence, this.ultima);
     this.ultima = sentence;
     if (!this.pumping) void this.pump();
@@ -769,11 +773,11 @@ export class StreamSpeaker {
     try {
       if (!this.spoke) await lastSpeak.catch(() => {});
       while (this.queue.length && this.my === gen) {
-        const sentence = this.queue.shift()!;
+        const { texto: sentence, previo } = this.queue.shift()!;
         const sound = this.nextPrepared
           ? await this.nextPrepared
           : await (async () => {
-              const src = await this.source(sentence);
+              const src = await this.source(sentence, previo);
               return src ? prepare(src) : null;
             })();
         this.nextPrepared = null;
@@ -784,7 +788,7 @@ export class StreamSpeaker {
         if (this.queue[0]) {
           const nxt = this.queue[0];
           this.nextPrepared = (async () => {
-            const src = await this.source(nxt);
+            const src = await this.source(nxt.texto, nxt.previo);
             return src ? prepare(src) : null;
           })();
         }

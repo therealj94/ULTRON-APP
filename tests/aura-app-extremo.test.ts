@@ -688,8 +688,10 @@ test('interrupción: un corte al empezar no pide perdón en voz; uno tras una re
   contestar = (d) => (/plata/.test(d) ? 'La plata está a cuarenta dólares.' : larga);
   const entera = await voz(pase2, hist);
   assert.equal(entera.dicho, larga);
+  // Oyó solo el principio (ElevenLabs la recortó a pocas palabras): sin perdón en voz (Codex en #111).
   const tercera = await voz(pase2, [...hist, { role: 'assistant', content: 'El oro está a tres mil cuatrocientos...' }, { role: 'user', content: '¿y la plata?' }]);
-  assert.match(tercera.dicho, /perdón/i);
+  assert.doesNotMatch(tercera.dicho, /perdón/i);
+  assert.match(alNodo.at(-1)!.ultimo, /TE INTERRUMPIÓ/, 'el cerebro igual sabe que lo cortaron');
   // Y si la dijo entera, nada de perdón.
   const cuarta = await voz(pase2, [...hist, { role: 'assistant', content: 'La plata está a cuarenta dólares.' }, { role: 'user', content: '¿y la plata?' }]);
   assert.doesNotMatch(cuarta.dicho, /perdón/i);

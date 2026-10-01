@@ -44,6 +44,7 @@ const {
   apartarMemoria,
   resolverMemoriaPendiente,
   EtiquetasVoz,
+  perdonEnVoz,
 } = await import('../server/voz-agente');
 const { secretoDerivado, emitirSesion, borrarSesion, soltarSesion, sesionDe, fijarClaveCambiadaEn } = await import('../server/seguridad');
 type TurnoVoz = import('../server/voz-agente').TurnoVoz;
@@ -237,6 +238,16 @@ const dichoDe = (texto: string) =>
     .filter((l) => l.startsWith('data: {'))
     .map((l) => JSON.parse(l.slice(6)).choices[0].delta.content || '')
     .join('');
+
+test('el perdón en voz se mide por lo que la persona OYÓ, no por lo que el servidor mandó (Codex en #111)', () => {
+  const generado = 'El oro está a tres mil cuatrocientos dólares la onza. Subió un poco esta semana. La plata también subió. Y el cobre se quedó igual que la semana pasada.';
+  // Se generó entera pero ElevenLabs la cortó a las pocas palabras: sin perdón.
+  assert.equal(perdonEnVoz([{ role: 'user', content: 'oro' }, { role: 'assistant', content: 'El oro está a tres mil...' }, { role: 'user', content: 'espera' }], generado), false);
+  // Ya había oído un buen trozo: con perdón.
+  assert.equal(perdonEnVoz([{ role: 'assistant', content: generado.slice(0, 130) + '...' }, { role: 'user', content: 'espera' }], 'corto'), true);
+  // Sin el mensaje de ElevenLabs, lo que se mandó.
+  assert.equal(perdonEnVoz([{ role: 'user', content: 'espera' }], generado), true);
+});
 
 test('la ruta del LLM: exige el secreto y el pase, y devuelve el turno del cerebro a trozos, sin sesión ni mando', async () => {
   const s = await montar(async (t) => {
@@ -636,7 +647,8 @@ test('un turno que corta a otro a la mitad toma lo que ese alcanzó a decir: tra
       ...hist,
       { role: 'assistant', content: 'Primera respuesta, completa y bastante larga.' },
       { role: 'user', content: '¿y lo otro?' },
-      { role: 'assistant', content: 'Segunda respuesta que es...' },
+      // ElevenLabs devuelve la respuesta recortada a lo que alcanzó a decir: aquí, un buen trozo.
+      { role: 'assistant', content: 'Segunda respuesta que es bastante larga, con detalles del proyecto, las concesiones, los permisos y lo que falta para cerrar...' },
       { role: 'user', content: 'espera' },
     ]);
     assert.match(dichoDe(await r3.text()), /^(¡Ah, perdón!|¡Uy, perdón!|Perdón\.) Te escucho\.$/);
