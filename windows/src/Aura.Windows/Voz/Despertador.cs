@@ -21,6 +21,9 @@ internal sealed class Despertador : IDisposable
 
     readonly System.Collections.Generic.List<SpeechRecognitionEngine> extras = new();
 
+    /// <summary>Frases de la gramática que existen solo para absorber lo que se parece a su nombre: no despiertan.</summary>
+    internal static readonly System.Collections.Generic.HashSet<string> Senuelos = new(StringComparer.OrdinalIgnoreCase) { "oye laura" };
+
     /// <summary>
     /// Enciende el reconocedor de Windows del idioma (y el de inglés, que entiende mejor «hey aura»). Es un
     /// ATAJO: aunque no haya ninguno instalado, «Oye AURA» igual funciona por el oído de AURA (la frase que
@@ -51,6 +54,8 @@ internal sealed class Despertador : IDisposable
                 m.SpeechRecognized += (_, e) =>
                 {
                     Centro.Registro.Anotar("despertar", $"Windows ({info.Culture.Name}) oyó «{e.Result.Text}» con {e.Result.Confidence:0.00}");
+                    // Los señuelos («oye laura») están en la gramática para que SAPI no los confunda con «oye aura»: nunca despiertan.
+                    if (Senuelos.Contains(e.Result.Text)) return;
                     // «aura» sola pide más seguridad (se parece a otras palabras); con «oye/hey» basta menos.
                     var minimo = e.Result.Text == "aura" ? 0.75f : 0.55f;
                     if (e.Result.Confidence >= minimo) Desperto?.Invoke();
