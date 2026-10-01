@@ -115,6 +115,12 @@ export const mensajeReconecta = (frase?: string | null) => {
  * se contestó, no se vuelve a hacer.
  */
 export const FRASE_RECONECTA_MS = 60_000;
+/**
+ * Si el avatar habló al menos esto después de la frase, la frase ya está contestada: al reconectar no se
+ * vuelve a mandar (Codex en #101: se repetía la respuesta o la acción, p. ej. la alarma dos veces). El
+ * relleno de ElevenLabs («Mmm… a ver.», ~1 s) no cuenta como respuesta.
+ */
+export const CONTESTADA_MS = 1_500;
 /** El recordatorio tal como viaja por la conversación (lo mismo que compa/acciones.ts, mensajeDeRecordatorio). */
 export const mensajeRecordatorio = (texto: string) => `[[recordatorio]] ${String(texto || '').replace(/\s+/g, ' ').trim().slice(0, 300)}`;
 
@@ -171,6 +177,8 @@ export class CicloLlamada {
   private cerrandoNosotros = false;
   /** La última frase de la persona en la sesión vigente, y la de la sesión que se cayó (para reconectar). */
   private fraseSesion: { texto: string; en: number } | null = null;
+  /** Desde cuándo habla el avatar (0: no habla). */
+  private hablaDesde = 0;
   private fraseCortada: string | null = null;
 
   constructor(o: OpcionesCiclo = {}) {
@@ -302,6 +310,26 @@ export class CicloLlamada {
     this.conectadaDesde = 0;
     this.ir('sonando');
     return [{ tipo: 'timbre', on: true }];
+  }
+
+  /**
+   * «Hablar» (el botón de la mesa): la persona quiere conversar YA, como el modo voz de ChatGPT. No suena
+   * nada ni sale la pantalla de llamada entrante: de REPOSO a CONECTANDO de una vez (José 1-oct: «al
+   * instante»). Lo que sí suena es un recordatorio, porque ahí llama el avatar (llamar). Si algo ya está
+   * sonando, es contestarlo; con la conversación abierta, no hace nada.
+   */
+  hablarYa(): EfectoCiclo[] {
+    if (this.e === 'sonando') return this.contestar();
+    if (this.sesionViva()) return [];
+    if (!this.llamadaDisponible()) return [{ tipo: 'alNativo', texto: null, motivo: 'tope' }];
+    const origen: OrigenLlamada = { tipo: 'llamame' };
+    this.origen_ = origen;
+    this.motivo_ = null;
+    this.conectadaDesde = 0;
+    this.agenteHablando = false;
+    this.preguntado = 0;
+    this.ir('conectando');
+    return [{ tipo: 'contestada', origen }, { tipo: 'abrir' }];
   }
 
   /** Contestó (el botón de la pantalla o el del aviso). */
@@ -442,6 +470,13 @@ export class CicloLlamada {
     if (this.e !== 'en_llamada' && this.e !== 'silenciado') return [];
     this.agenteHablando = hablando;
     const ahora = this.reloj();
+    if (hablando) this.hablaDesde = this.hablaDesde || ahora;
+    else {
+      // Lo que dijo después de la frase, si fue una respuesta de verdad, la deja contestada.
+      const f = this.fraseSesion;
+      if (f && this.hablaDesde && this.hablaDesde >= f.en && ahora - this.hablaDesde >= CONTESTADA_MS) this.fraseSesion = null;
+      this.hablaDesde = 0;
+    }
     if (this.preguntado) {
       if (!hablando) this.finPregunta = ahora;
     } else this.ultimaVoz = ahora;

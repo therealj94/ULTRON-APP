@@ -307,7 +307,7 @@ test('sin historial el system no habla de conversación previa', async () => {
 
 /* ------------------------------------------------------------------ contra el servidor compilado */
 
-const SERVIDOR = path.join(process.cwd(), 'dist', 'server.cjs');
+const SERVIDOR = path.join(process.cwd(), 'build-server', 'server.cjs');
 const HAY_BINARIO = fs.existsSync(SERVIDOR);
 
 /**
@@ -315,7 +315,7 @@ const HAY_BINARIO = fs.existsSync(SERVIDOR);
  * mentira de arriba mirando qué historial le llega al modelo en cada turno. Es la única forma de
  * saber que TODAS las rutas (turno, turno en vivo y el borrado) usan la misma llave de hilo.
  */
-test('servidor: los visitantes de la demo no se ven entre sí', { skip: HAY_BINARIO ? false : 'sin dist/server.cjs: correr `npm run build` antes' }, async (t) => {
+test('servidor: los visitantes de la demo no se ven entre sí', { skip: HAY_BINARIO ? false : 'sin build-server/server.cjs: correr `npm run build` antes' }, async (t) => {
   const puerto = 7840 + Math.floor(Math.random() * 40);
   const base = `http://127.0.0.1:${puerto}`;
   const proc: ChildProcess = spawn('node', [SERVIDOR], {

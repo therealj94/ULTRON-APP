@@ -151,7 +151,7 @@ test('eventosSSE: lee eventos a trozos y suelta el lector al abortar', async () 
 type Ambiente = { correo: string; aparato: string | null; sonido: string | null; on: boolean; ms: number };
 async function montar(
   cerebro: (t: TurnoVoz) => Promise<void>,
-  o: { fetch?: typeof fetch; turnoMs?: number; puenteMs?: number; esperaTareaMs?: number; seguimientoMs?: number; rellenoAgenteMs?: number; etiquetas?: boolean; graciaReintentoMs?: number } = {}
+  o: { fetch?: typeof fetch; turnoMs?: number; puenteMs?: number; esperaTareaMs?: number; seguimientoMs?: number; rellenoAgenteMs?: number; etiquetas?: boolean; graciaReintentoMs?: number; confirmarAccionMs?: number } = {}
 ) {
   const ambientes: Ambiente[] = [];
   const t0 = Date.now();
@@ -174,6 +174,7 @@ async function montar(
     seguimientoMs: o.seguimientoMs,
     rellenoAgenteMs: o.rellenoAgenteMs,
     graciaReintentoMs: o.graciaReintentoMs,
+    confirmarAccionMs: o.confirmarAccionMs,
     // Las etiquetas v4 salen al azar: fuera de su prueba, apagadas (el texto dicho se compara exacto).
     etiquetas: o.etiquetas ?? false,
     ambiente: (correo, aparato, e) => ambientes.push({ correo, aparato, sonido: e.sonido, on: e.on, ms: Date.now() - t0 }),
@@ -1121,6 +1122,117 @@ test('otra frase no es un reintento: el turno anterior se corta y el nuevo piens
     const dicho = dichoDe(await (await llm(m.base, pase, [{ role: 'user', content: 'cómo va el oro' }, { role: 'user', content: 'y la plata' }])).text());
     assert.equal(dicho, 'La plata, a cuarenta.');
     assert.equal(m.vistos.length, 2);
+  } finally {
+    await m.cerrar();
+  }
+});
+
+/*
+ * EL TURNO ESPECULATIVO: ElevenLabs pide la respuesta en una pausa y la tira si la persona sigue
+ * hablando. Lo que el turno le pide al teléfono (t.retener) espera a que el turno se confirme.
+ */
+function cerebroConAccion(registro: { hechas: string[]; deshechas: string[] }, ms = 50) {
+  return async (t: TurnoVoz) => {
+    const frase = String(t.body.message);
+    t.retener.alDescartar(() => registro.deshechas.push(frase));
+    await dormir(ms);
+    t.retener.hacer(() => registro.hechas.push(frase));
+    t.enviar('delta', { text: 'Listo.', voz: 'Listo.' });
+    t.enviar('done', { reply: 'Listo.', acciones: [{ id: 'x', accion: { tipo: 'recordatorio' } }] });
+  };
+}
+
+test('turno especulativo: la acción se hace cuando ElevenLabs sigue escuchando la respuesta un momento', async () => {
+  const reg = { hechas: [] as string[], deshechas: [] as string[] };
+  const m = await montar(cerebroConAccion(reg), { puenteMs: 0, graciaReintentoMs: 150, confirmarAccionMs: 250 });
+  try {
+    const pase = paseDe(persona(), 'aura', 'es', 'tel-e1');
+    const t0 = Date.now();
+    const r = llm(m.base, pase, [{ role: 'user', content: 'pon una alarma en tres minutos' }]).then((x) => x.text());
+    await dormir(150);
+    assert.deepEqual(reg.hechas, [], 'con la respuesta ya dicha, la acción todavía espera');
+    assert.equal(dichoDe(await r), 'Listo.');
+    assert.ok(Date.now() - t0 >= 280, 'la respuesta siguió abierta la espera de confirmación');
+    assert.deepEqual(reg.hechas, ['pon una alarma en tres minutos']);
+    assert.deepEqual(reg.deshechas, []);
+  } finally {
+    await m.cerrar();
+  }
+});
+
+test('turno especulativo: si ElevenLabs cierra la respuesta y no reintenta, la acción no se hace y el turno se deshace', async () => {
+  const reg = { hechas: [] as string[], deshechas: [] as string[] };
+  const m = await montar(cerebroConAccion(reg), { puenteMs: 0, graciaReintentoMs: 150, confirmarAccionMs: 400 });
+  try {
+    const pase = paseDe(persona(), 'aura', 'es', 'tel-e2');
+    const c = new AbortController();
+    const r = llm(m.base, pase, [{ role: 'user', content: 'pon una alarma en tres' }], {}, c.signal).then((x) => x.text()).catch(() => '');
+    await dormir(150); // la respuesta ya está escrita; la persona siguió hablando
+    c.abort();
+    await r;
+    await dormir(400);
+    assert.deepEqual(reg.hechas, [], 'la frase a medias no puso ninguna alarma');
+    assert.deepEqual(reg.deshechas, ['pon una alarma en tres']);
+  } finally {
+    await m.cerrar();
+  }
+});
+
+test('turno especulativo: la frase entera descarta la a medias y solo ella hace su acción', async () => {
+  const reg = { hechas: [] as string[], deshechas: [] as string[] };
+  const m = await montar(cerebroConAccion(reg), { puenteMs: 0, graciaReintentoMs: 2000, confirmarAccionMs: 200 });
+  try {
+    const pase = paseDe(persona(), 'aura', 'es', 'tel-e3');
+    const c = new AbortController();
+    const r1 = llm(m.base, pase, [{ role: 'user', content: 'pon una alarma en tres' }], {}, c.signal).then((x) => x.text()).catch(() => '');
+    await dormir(120);
+    c.abort();
+    await r1;
+    // Antes de que venza la gracia llega la frase entera.
+    const dicho = dichoDe(await (await llm(m.base, pase, [{ role: 'user', content: 'pon una alarma en treinta minutos' }])).text());
+    assert.equal(dicho, 'Listo.');
+    assert.deepEqual(reg.hechas, ['pon una alarma en treinta minutos'], 'una sola alarma: la de la frase entera');
+    assert.deepEqual(reg.deshechas, ['pon una alarma en tres']);
+  } finally {
+    await m.cerrar();
+  }
+});
+
+test('turno especulativo: un reintento de la misma frase mientras espera la confirmación la confirma una sola vez', async () => {
+  const reg = { hechas: [] as string[], deshechas: [] as string[] };
+  const m = await montar(cerebroConAccion(reg), { puenteMs: 0, graciaReintentoMs: 1000, confirmarAccionMs: 400 });
+  try {
+    const pase = paseDe(persona(), 'aura', 'es', 'tel-e4');
+    const msgs = [{ role: 'user', content: 'pon una alarma a las seis' }];
+    const c = new AbortController();
+    const r1 = llm(m.base, pase, msgs, {}, c.signal).then((x) => x.text()).catch(() => '');
+    await dormir(120);
+    c.abort();
+    await r1;
+    const dicho = dichoDe(await (await llm(m.base, pase, msgs)).text());
+    assert.equal(dicho, 'Listo.');
+    await dormir(50);
+    assert.deepEqual(reg.hechas, ['pon una alarma a las seis']);
+    assert.deepEqual(reg.deshechas, []);
+    assert.equal(m.vistos.length, 1, 'el cerebro pensó una vez');
+  } finally {
+    await m.cerrar();
+  }
+});
+
+test('turno especulativo: una respuesta sin acciones no espera nada', async () => {
+  const m = await montar(
+    async (t) => {
+      t.enviar('delta', { text: 'Son las tres.', voz: 'Son las tres.' });
+      t.enviar('done', { reply: 'Son las tres.' });
+    },
+    { puenteMs: 0, confirmarAccionMs: 2000 }
+  );
+  try {
+    const pase = paseDe(persona(), 'aura', 'es', 'tel-e5');
+    const t0 = Date.now();
+    assert.equal(dichoDe(await (await llm(m.base, pase, [{ role: 'user', content: 'qué hora es' }])).text()), 'Son las tres.');
+    assert.ok(Date.now() - t0 < 1000, 'sin acciones, la respuesta cierra al terminar');
   } finally {
     await m.cerrar();
   }

@@ -7,7 +7,7 @@
  *
  *  · la sesión de ElevenLabs (components/ModoConversacion, montada con `key={gen}`) y su control
  *    (sesion.ts): abrir, cerrar, silenciar de verdad, reintentar, generaciones (M4);
- *  · el permiso precalentado (permiso.ts): cuando la persona quiere hablar, solo falta conectar;
+ *  · el permiso precalentado (permiso.ts) mientras suena la llamada: al contestar, solo falta conectar;
  *  · segundo plano: la sesión se cierra (M5); al volver se precalienta otra vez;
  *  · llamadas (llamada.ts): AURA se apaga del todo y vuelve como estaba al colgar;
  *  · el puente de acciones y el contexto (acciones.ts): lo que AURA decide hacer llega por SSE y se
@@ -87,13 +87,13 @@ export type ApiVoz = {
   iniciar: () => boolean;
   /** Colgar la llamada. */
   terminar: () => void;
-  /** En llamada, cuelga; si no, que llame. */
+  /** En llamada, cuelga; sonando, rechaza; si no, abre la conversación al instante. */
   alternar: () => void;
   /** En llamada: micrófono y voz apagados (true) o de vuelta (false). Fuera de una llamada no hace nada. */
   silenciar: (valor: boolean) => void;
   /** El doble toque: en llamada, silenciar / volver a escuchar. */
   despertarOSilenciar: () => 'despierta' | 'duerme' | 'nada';
-  /** Dejar el permiso listo (al entrar, al sonar la llamada). */
+  /** Dejar el permiso listo. Solo al sonar la llamada (el timbre lo llama solo): no al entrar ni al tocar. */
   precalentar: () => void;
   /** El avatar de la mesa cambió: la voz se reabre con él. */
   fijarAvatar: (id: AvatarId) => void;
@@ -355,15 +355,21 @@ export function VozProvider({ children, conCompanera = true }: Props) {
   precalentarRef.current = precalentar;
 
   /** «Llámame» (la mesa, la hoja «Más», el atajo, la orden del servidor): suena la llamada del avatar. */
-  const llamame = useCallback((): boolean => {
+  /** «Hablar» de la mesa: la conversación se abre ya, sin sonar (ciclo.hablarYa). */
+  const hablarYa = useCallback((): boolean => {
     if (control.vista().suspendida) {
-      miga('llamada del avatar: hay otra llamada, no suena');
+      miga('hablar: hay otra llamada, no se abre');
       return false;
     }
-    const antes = ciclo.estado();
-    ejecutar(ciclo.llamar({ tipo: 'llamame' }));
-    return ciclo.estado() === 'sonando' || antes !== 'reposo';
+    // La mesa se calla: desde aquí habla la conversación.
+    void stopSpeaking();
+    const ef = ciclo.hablarYa();
+    ejecutar(ef);
+    miga('hablar: conversación al instante');
+    return ef.some((e) => e.tipo === 'abrir');
   }, [control, ciclo, ejecutar]);
+  // «Llámame» dicho en la mesa también abre al instante: suena solo lo que tiene hora (un recordatorio).
+  const llamame = hablarYa;
   const llamameRef = useRef(llamame);
   llamameRef.current = llamame;
 
@@ -401,7 +407,8 @@ export function VozProvider({ children, conCompanera = true }: Props) {
           miga('voz: volvió del segundo plano a tiempo; la llamada sigue');
           return;
         }
-        precalentar();
+        // Sin precalentar aquí: cada vuelta a la app eran ~8 s de la GPU del nodo sin ninguna llamada
+        // (y podía demorar el primer turno de la mesa). Se precalienta solo cuando suena (`timbre`).
         puenteRef.current?.arrancar();
       } else if (st === 'background' && !detras) {
         detras = setTimeout(() => {
@@ -417,10 +424,9 @@ export function VozProvider({ children, conCompanera = true }: Props) {
     });
     const offPerfil = escuchar('perfil', (p) => {
       control.perfil(p.avatar, p.idioma);
-      precalentar();
     });
     const offAccion = escuchar('accion', (a) => {
-      // «Llámame» que resolvió el servidor (el camino rápido o el cerebro): suena la llamada del avatar.
+      // «Llámame» que resolvió el servidor (el camino rápido o el cerebro): la conversación se abre ya.
       if (a.tipo === 'llamame') {
         const ok = llamameRef.current();
         emitir('hecho', { accion: a, ok, ...(ok ? {} : { detalle: tr('Ahora no puedo llamarte: hay otra llamada.', "I can't call you right now: there's another call.") }) });
@@ -497,12 +503,14 @@ export function VozProvider({ children, conCompanera = true }: Props) {
       offPantalla();
       offLlamada();
     };
-  }, [control, precalentar, ciclo, ejecutar]);
+  }, [control, ciclo, ejecutar]);
 
-  // Precalentar al montarse (entrar a la app con sesión) y al cambiar de avatar o idioma.
-  useEffect(() => {
-    precalentar();
-  }, [precalentar, vista.avatar, vista.idioma]);
+  /*
+   * El permiso de la conversación (y con él el cerebro del nodo, server.ts calentarCerebro) se
+   * precalienta SOLO cuando suena la llamada del avatar (el efecto `timbre`): toda conversación empieza
+   * sonando, y la persona tarda más en contestar que el permiso en llegar. Antes también al montarse,
+   * al volver a la app, al cambiar de avatar o idioma y al tocar a la compañera: ~8 s de GPU sin llamada.
+   */
 
   // El puente de acciones y el contexto: viven mientras viva la app (sin sesión, esperan).
   const contexto = useRef<ContextoApp | null>(null);
@@ -654,7 +662,8 @@ export function VozProvider({ children, conCompanera = true }: Props) {
       minimizar: (si) => setMinimizada(si && llamadaActiva(ciclo.estado())),
       iniciar: llamame,
       terminar: colgar,
-      alternar: () => (llamadaActiva(ciclo.estado()) ? (ciclo.estado() === 'sonando' ? ejecutar(ciclo.rechazar()) : colgar()) : void llamame()),
+      // «Hablar»: abre la conversación al instante (sin timbre). En llamada, cuelga; sonando, rechaza.
+      alternar: () => (llamadaActiva(ciclo.estado()) ? (ciclo.estado() === 'sonando' ? ejecutar(ciclo.rechazar()) : colgar()) : void hablarYa()),
       silenciar: (v) => {
         const e = ciclo.estado();
         if (v ? e === 'en_llamada' : e === 'silenciado') ejecutar(ciclo.dobleToque());
@@ -683,7 +692,7 @@ export function VozProvider({ children, conCompanera = true }: Props) {
         void speak(texto, { onAudioStart: () => pauseMicForTts(true), onEnd: () => pauseMicForTts(false) });
       },
     };
-  }, [vista, control, precalentar, estadoCiclo, ciclo, ejecutar, usadoHoyMs, nombreLlamada, llamadaLista, minimizada, altavoz, llamame]);
+  }, [vista, control, precalentar, estadoCiclo, ciclo, ejecutar, usadoHoyMs, nombreLlamada, llamadaLista, minimizada, altavoz, llamame, hablarYa]);
 
   // Llamada minimizada: la app baja lo que ocupa la píldora (las pantallas leen el borde de arriba
   // con useSafeAreaInsets). Fuera de un SafeAreaProvider se usan los bordes de la ventana.

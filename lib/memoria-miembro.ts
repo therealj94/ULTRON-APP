@@ -177,6 +177,8 @@ export async function guardarHechoMiembro(correo: string, hecho: string): Promis
   const h = String(hecho || '').trim().slice(0, 400);
   if (!c || !h) return;
   const cajon = await cargarMiembro(c);
+  // Ya guardado: no se reescribe (lib/memoria.ts guardarHechoQuien, el mismo motivo).
+  if (cajon.larga.some((x) => x.hecho === h)) return;
   cajon.larga = [{ hecho: h, t: Date.now() }, ...cajon.larga.filter((x) => x.hecho !== h)].slice(0, MAX_LARGA_MIEMBRO);
   enCache(c, cajon);
   await guardar(c, cajon);

@@ -2,7 +2,7 @@
  * HABLAR — la única puerta por la que la web hace sonar a AU-RA.
  *
  *   1. Clip grabado del banco (0 ms, sin red) si la frase es un clip.
- *   2. POST /api/tts con la emoción del turno (Voicebox en el servidor, devuelve WAV).
+ *   2. POST /api/tts con la emoción del turno y las frases vecinas (ElevenLabs o Voicebox en el servidor).
  *   3. Si el servidor no da voz, silencio: el texto ya está en la burbuja. Nunca la voz robótica
  *      del navegador, que no es AU-RA.
  *
@@ -64,7 +64,22 @@ function reproducirClip(clip: Clip): Dicho {
  * Di algo. `emocion` viaja al servidor para colorear la voz.
  * Si `soloClip` es true y no hay clip, no hace nada (para reacciones táctiles baratas).
  */
-export function hablar(texto: string, opts: { emocion?: Emocion | string; performance?: 'speak' | 'sing'; soloClip?: boolean } = {}): Dicho {
+/**
+ * Lo dicho justo antes y lo que viene en el mismo turno: la cola habla frase a frase y, sin esto,
+ * ElevenLabs entonaba cada una como si empezara a hablar. El servidor los pasa como previous_text /
+ * next_text (como la voz de Dr Electrum). Un clip del banco no es texto que enlazar.
+ */
+export type Vecinos = { previo?: string; siguiente?: string };
+
+function vecinos(o: Vecinos): Vecinos {
+  const v = (t?: string) => {
+    const x = String(t || '').trim();
+    return x && !clipDeTexto(x) ? x : undefined;
+  };
+  return { previo: v(o.previo), siguiente: v(o.siguiente) };
+}
+
+export function hablar(texto: string, opts: { emocion?: Emocion | string; performance?: 'speak' | 'sing'; soloClip?: boolean } & Vecinos = {}): Dicho {
   const t = String(texto || '').trim();
   const nada: Dicho = { motor: 'silencio', inicio: Promise.resolve(), fin: Promise.resolve() };
   if (!t || !activo) return nada;
@@ -80,6 +95,7 @@ export function hablar(texto: string, opts: { emocion?: Emocion | string; perfor
   const salida: Dicho = { motor: 'servidor', inicio, fin };
   const emocion = opts.emocion || 'neutral';
   const performance = opts.performance || 'speak';
+  const contexto = vecinos(opts);
 
   // Si la cola ya la había pedido (precargar), se usa ese audio: llega listo mientras sonaba la anterior.
   const clave = claveAudio(t, emocion, performance);
@@ -91,7 +107,7 @@ export function hablar(texto: string, opts: { emocion?: Emocion | string; perfor
     fetch('/api/tts/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...headersMesa() },
-      body: JSON.stringify({ text: t, emocion, performance }),
+      body: JSON.stringify({ text: t, emocion, performance, ...contexto }),
       signal: ac.signal,
     })
       .then(async (r) => {
@@ -123,7 +139,7 @@ export function hablar(texto: string, opts: { emocion?: Emocion | string; perfor
       });
     return salida;
   }
-  const audio = ya ? ya.blob.then((b) => b || pedirAudio(t, emocion, performance, ac.signal)) : pedirAudio(t, emocion, performance, ac.signal);
+  const audio = ya ? ya.blob.then((b) => b || pedirAudio(t, emocion, performance, contexto, ac.signal)) : pedirAudio(t, emocion, performance, contexto, ac.signal);
   // Callar también corta lo que se estaba precargando para esta frase.
   ac.signal.addEventListener('abort', () => ya?.ac.abort(), { once: true });
 
@@ -201,11 +217,11 @@ function claveAudio(t: string, emocion: string, performance: string) {
   return `${performance}|${emocion}|${t}`;
 }
 
-async function pedirAudio(t: string, emocion: string, performance: string, signal: AbortSignal): Promise<Blob> {
+async function pedirAudio(t: string, emocion: string, performance: string, contexto: Vecinos, signal: AbortSignal): Promise<Blob> {
   const r = await fetch('/api/tts', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...headersMesa() },
-    body: JSON.stringify({ text: t, emocion, performance }),
+    body: JSON.stringify({ text: t, emocion, performance, ...contexto }),
     signal,
   });
   const ctype = r.headers.get('content-type') || '';
@@ -214,11 +230,11 @@ async function pedirAudio(t: string, emocion: string, performance: string, signa
 }
 
 /** Pide ya el audio de una frase que va a sonar después (los clips del banco no hacen falta). */
-export function precargar(texto: string, opts: { emocion?: Emocion | string; performance?: 'speak' | 'sing' } = {}) {
+export function precargar(texto: string, opts: { emocion?: Emocion | string; performance?: 'speak' | 'sing' } & Vecinos = {}) {
   const t = String(texto || '').trim();
   if (!t || !activo || clipDeTexto(t)) return;
   const clave = claveAudio(t, opts.emocion || 'neutral', opts.performance || 'speak');
   if (precargas.has(clave) || precargas.size >= MAX_PRECARGAS) return;
   const ac = new AbortController();
-  precargas.set(clave, { ac, blob: pedirAudio(t, opts.emocion || 'neutral', opts.performance || 'speak', ac.signal).catch(() => null) });
+  precargas.set(clave, { ac, blob: pedirAudio(t, opts.emocion || 'neutral', opts.performance || 'speak', vecinos(opts), ac.signal).catch(() => null) });
 }

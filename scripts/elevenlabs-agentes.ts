@@ -94,6 +94,12 @@ const PRIMERA: Record<AvatarVoz, Record<Idioma, string>> = {
 export const PALABRAS_ASR = ['AU-RA', 'Aura', 'Claudio', 'ANT-ONIO', 'Antonio', 'Orden Global', 'Guardián', 'Genesis ID', 'Veta Wallet'];
 
 /** Lo que no hay que tomar como interrupción: asentir mientras el avatar habla. */
+/** Los rellenos de la espera (soft timeout), en cada idioma. */
+export const RELLENOS: Record<'es' | 'en', string[]> = {
+  es: ['Mmm… a ver.', 'Déjame ver.', 'A ver…', 'Un segundo.'],
+  en: ['Hmm… let me see.', 'Let me check.', 'One sec.', 'Hmm…'],
+};
+
 const ASENTIR: Record<Idioma, string[]> = {
   es: ['ajá', 'sí', 'ok', 'okay', 'mhm', 'claro', 'ya', 'exacto', 'ah ok', 'vale'],
   en: ['uh-huh', 'yeah', 'yes', 'ok', 'okay', 'mhm', 'right', 'sure', 'got it'],
@@ -128,11 +134,22 @@ function config(avatar: AvatarVoz, idioma: Idioma, secretId: string, modeloTts: 
       turn: {
         turn_model: 'turn_v3',
         turn_eagerness: 'normal',
-        speculative_turn: false,
+        // Turno especulativo (José, 1-oct): la respuesta se pide en la pausa. Las acciones esperan a que
+        // el turno se confirme (server/voz-agente.ts, RetencionAcciones): una frase a medias no hace nada.
+        speculative_turn: true,
         interruption_ignore_terms: ASENTIR[idioma],
         interruption_ignore_term_languages: [idioma],
         merge_with_default_ignore_terms: true,
-        soft_timeout_config: { timeout_seconds: 2.5, message: idioma === 'en' ? 'Hmm… let me see.' : 'Mmm… a ver.' },
+        // El relleno de ElevenLabs si el cerebro no mandó nada a los 2,5 s: al azar entre varios (José,
+        // 1-oct: «Mmm… a ver.» siempre igual sonaba a máquina). Ninguno es una promesa ni una respuesta.
+        soft_timeout_config: {
+          timeout_seconds: 2.5,
+          message: RELLENOS[idioma][0],
+          additional_soft_timeout_messages: RELLENOS[idioma].slice(1),
+          randomize_fillers: true,
+          // Uno por respuesta (el puente y los seguimientos del servidor hacen el resto).
+          max_soft_timeouts_per_generation: 1,
+        },
       },
       // Lo mismo que dura un pase (PASE_TTL_MS en server/voz-agente.ts): más allá, la voz solo se despide.
       conversation: { max_duration_seconds: Math.floor(PASE_TTL_MS / 1000) },

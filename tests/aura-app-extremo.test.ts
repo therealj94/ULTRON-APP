@@ -713,6 +713,9 @@ test('tarea lenta por voz (el modelo pide la web): frase de espera a tiempo, tec
     assert.ok(r.primeraMs < 3_000, `la frase sale antes del corte de ElevenLabs (4 s): ${r.primeraMs} ms`);
     assert.match(r.dicho, /rondaba cuatro dólares la libra\.$/);
     assert.doesNotMatch(r.dicho, /PEDIR_HERRAMIENTA/);
+    // La vuelta con el resultado de la herramienta también se pide a trozos (habla en cuanto hay frase).
+    const ultimas = alNodo.slice(-2);
+    assert.deepEqual(ultimas.map((x) => x.stream), [true, true], 'la vuelta del harness va a trozos');
     assert.ok(await espera(() => tel.ambientes().length >= 2));
     assert.deepEqual(tel.ambientes(), [
       { sonido: 'teclado', on: true },
@@ -1080,6 +1083,32 @@ test('después de un turno NO se precalienta solo el system: recortaría lo leí
   await new Promise((r) => setTimeout(r, 300));
   assert.ok(alNodo.length >= 1, 'el turno llegó al 27B');
   assert.equal(precalentados.length, 0, 'sin precalentado después del turno');
+});
+
+test('una frase, un turno: los reintentos de la app con el mismo idTurno no vuelven a correr el turno', { skip: !listo }, async () => {
+  // La mesa del teléfono reintentaba un stream fallido por JSON y otra vez: hasta tres turnos por frase.
+  contestar = () => '[EMO: neutral] El proyecto de la planta va según lo previsto este trimestre.';
+  const frase = 'explícame cómo va el proyecto de la planta de beneficio, versión reintento';
+  const alCerebro = () => alNodo.filter((x) => x.ultimo.includes('versión reintento')).length;
+  alNodo.length = 0;
+  const idTurno = `prueba-${Date.now().toString(36)}`;
+  const r1 = await fetch(`${BASE}/api/turno/stream`, { method: 'POST', headers: hTurno(), body: JSON.stringify({ message: frase, idTurno }) });
+  const sse = await r1.text();
+  assert.match(sse, /event: done/);
+  assert.equal(alCerebro(), 1, 'el primer intento llega al 27B');
+  // El reintento por JSON (la app no vio el `done`): la misma respuesta, sin el 27B.
+  const r2 = await turno(frase, { idTurno });
+  assert.equal(r2.repetido, true);
+  assert.match(r2.reply, /según lo previsto/);
+  // Y otro stream con el mismo id, igual.
+  const r3 = await (await fetch(`${BASE}/api/turno/stream`, { method: 'POST', headers: hTurno(), body: JSON.stringify({ message: frase, idTurno }) })).text();
+  assert.match(r3, /"repetido":true/);
+  assert.match(r3, /event: delta/);
+  assert.equal(alCerebro(), 1, 'ningún reintento volvió a correr el turno');
+  // Otra frase (otro id) sí es otro turno; y sin id, como siempre.
+  await turno(frase, { idTurno: `${idTurno}-b` });
+  await turno(frase);
+  assert.equal(alCerebro(), 3);
 });
 
 // Al final: deja memoria y la foto del fijo de la persona (cambia el hilo de las pruebas de después).

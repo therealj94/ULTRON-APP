@@ -323,7 +323,18 @@ type TurnoOpts = {
    * `via: 'solo-rapido'` sin despertar al cerebro (la usaba la espera del modo llamada anterior).
    */
   soloRapido?: boolean;
+  /**
+   * Uno por frase de la persona, el MISMO en sus reintentos (stream → JSON → JSON): el servidor no
+   * corre otro turno con ese id, devuelve el que ya corrió o espera al que sigue en curso
+   * (server/turno-unico.ts). Sin él, una frase podía ser tres turnos: el hilo repetido y las acciones dos veces.
+   */
+  idTurno?: string;
 };
+
+/** Un id para el turno de una frase (sin módulos nativos: no tiene que ser criptográfico, solo no repetirse). */
+export function nuevoIdTurno(): string {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
 
 function turnoBody(opts: TurnoOpts) {
   const escena = String(opts.escena || '').replace(/\s+/g, ' ').trim().slice(0, 300);
@@ -338,6 +349,7 @@ function turnoBody(opts: TurnoOpts) {
     ...(escena ? { escena } : {}),
     ...(opts.hablado ? { hablado: true } : {}),
     ...(opts.soloRapido ? { soloRapido: true } : {}),
+    ...(opts.idTurno ? { idTurno: opts.idTurno } : {}),
     // Con quién habla la persona y en qué idioma: el cerebro contesta como ese avatar y en esa lengua.
     avatar: avatarActual(),
     idioma: idiomaActual(),

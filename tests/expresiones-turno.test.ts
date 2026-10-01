@@ -48,9 +48,9 @@ test('Dr Electrum: si su modelo escribe una expresión, no llega a la pantalla',
   assert.match(salida.texto, /Esa no me la sabía\. ¿Y ahora qué hacemos\? Bueno, vamos por partes\./);
 });
 
-const SERVIDOR = path.join(process.cwd(), 'dist', 'server.cjs');
+const SERVIDOR = path.join(process.cwd(), 'build-server', 'server.cjs');
 
-test('servidor de AU-RA: se lee sin etiquetas y se dice con ellas', { skip: fs.existsSync(SERVIDOR) ? false : 'sin dist/server.cjs: correr `npm run build` antes' }, async (t) => {
+test('servidor de AU-RA: se lee sin etiquetas y se dice con ellas', { skip: fs.existsSync(SERVIDOR) ? false : 'sin build-server/server.cjs: correr `npm run build` antes' }, async (t) => {
   const puerto = 7900 + Math.floor(Math.random() * 60);
   const base = `http://127.0.0.1:${puerto}`;
   const proc: ChildProcess = spawn('node', [SERVIDOR], {

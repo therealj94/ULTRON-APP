@@ -111,7 +111,7 @@ jobs:
       - if: matrix.tanda == 1
         run: npx tsc --noEmit
       # La compilación va ANTES de las pruebas: las de expedientes, informes y el cargador levantan
-      # el servidor compilado (dist/server.cjs) contra la base, y sin él se saltan.
+      # el servidor compilado (build-server/server.cjs) contra la base, y sin él se saltan.
       - run: npm run build
       # Lo mismo que `npm test`, solo los archivos de esta tanda.
       - name: Pruebas (tanda ${{ matrix.tanda }}/4)

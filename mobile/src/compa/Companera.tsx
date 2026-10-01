@@ -651,7 +651,7 @@ export function Companera() {
         onPanResponderTerminationRequest: () => !gestos.llevando(),
         onPanResponderGrant: (e) => {
           const { pageX, pageY } = e.nativeEvent;
-          vozRef.current.precalentar();
+          // Sin precalentar al tocar: el permiso de la conversación se pide cuando suena la llamada.
           mirarDedo(pageX, pageY);
           alGesto(gestos.bajar(Date.now(), pageX, pageY));
           programarVencer();

@@ -6,11 +6,12 @@ import { caraDeTexto } from './02-cara/emocion';
 import { DockDrawer, SettingsSheet, nombreModo, Arranque, AccesoModal, UltronVaultModal, VisionOverlay, PhotoCaptureModal, CameraCountdownModal, MenuMas } from './07-pantallas';
 import type { Escena } from './02-cara/vision/escena';
 import { playSfx } from './03-voz/audio';
-import { hablar, cantar, callar, precargar, setVozActiva, type Dicho } from './03-voz/hablar';
+import { hablar, cantar, callar, precargar, setVozActiva, type Dicho, type Vecinos } from './03-voz/hablar';
 import { cortarFrases } from './03-voz/frases';
 import { onLip, desbloquearAudio, audioDesbloqueado } from './03-voz/player';
 import { clipDeEmocion, clipDeTexto, saludoDe, saludoHora, siguienteChiste } from './03-voz/banco';
 import { useOido } from './03-voz/useOido';
+import { ConversacionEnVivo, type EstadoEnVivo } from './03-voz/enVivo';
 import { opinarTurno, pedirTurnoStream } from './04-cerebro/turno';
 import { detectarIntencion } from './04-cerebro/intenciones';
 import { grabFrame, achicarFoto } from './04-cerebro/grabFrame';
@@ -19,7 +20,7 @@ import { headersMesa } from './10-infra/sesionCliente';
 import { cargarPerfil, perfil as perfilActual } from './perfil';
 import type { Emocion } from '../lib/emocion';
 import { quitarExpresiones } from '../lib/expresiones';
-import { Fingerprint, ShieldCheck, Settings2, Mic, MicOff, Keyboard, MoreHorizontal, MessagesSquare, LayoutPanelLeft } from 'lucide-react';
+import { Fingerprint, ShieldCheck, Settings2, Mic, MicOff, Keyboard, MoreHorizontal, MessagesSquare, LayoutPanelLeft, AudioLines, PhoneOff } from 'lucide-react';
 import { hayWebGL } from './11-sala/webgl';
 import { tareaDeHerramientas, type Postura, type Tarea } from './11-sala/tareas';
 import type { PedidoTarea } from './11-sala/VistaSala';
@@ -207,7 +208,7 @@ export default function App() {
   // ---- HABLAR: una sola función. Emoción → cara + voz.
   const hablando = useRef<Dicho | null>(null);
   const decir = useCallback(
-    (texto: string, o: { emocion?: Emocion; caraFinal?: FaceState; sinBurbuja?: boolean } = {}) => {
+    (texto: string, o: { emocion?: Emocion; caraFinal?: FaceState; sinBurbuja?: boolean } & Vecinos = {}) => {
       const t = String(texto || '').trim();
       if (!t) return { fin: Promise.resolve() };
       // Respuesta a un pedido de la persona (no un saludo ni una reacción): queda en la conversación,
@@ -219,7 +220,7 @@ export default function App() {
       }
       const e = o.emocion || 'neutral';
       if (e !== 'neutral') setEmocion(e);
-      const d = hablar(t, { emocion: e });
+      const d = hablar(t, { emocion: e, previo: o.previo, siguiente: o.siguiente });
       hablando.current = d;
       const caraHabla: FaceState = d.clip?.cara || (e === 'canto' ? 'SING' : e === 'oracion' ? 'PRAY' : e === 'risa' ? 'LAUGH' : 'SPEAKING');
       d.inicio.then(() => {
@@ -266,21 +267,25 @@ export default function App() {
     callar();
     hablando.current = null;
     colaRef.current = [];
+    previoRef.current = '';
     setFace('IDLE');
   }, []);
 
   // ---- Cola de frases (el turno llega en stream; se habla frase a frase, sin pisarse)
   const colaRef = useRef<Array<{ texto: string; emocion: Emocion }>>([]);
   const colaActiva = useRef(false);
+  /** La última frase que la cola mandó a decir en este turno: la voz de la siguiente se enlaza con ella. */
+  const previoRef = useRef('');
   const bombear = useCallback(async () => {
     if (colaActiva.current) return;
     colaActiva.current = true;
     while (colaRef.current.length) {
       const item = colaRef.current.shift()!;
-      const d = decir(item.texto, { emocion: item.emocion, sinBurbuja: false });
-      // La que sigue se pide mientras esta suena: entre frase y frase no queda el silencio de sintetizar.
       const siguiente = colaRef.current[0];
-      if (siguiente) precargar(siguiente.texto, { emocion: siguiente.emocion });
+      const d = decir(item.texto, { emocion: item.emocion, sinBurbuja: false, previo: previoRef.current, siguiente: siguiente?.texto });
+      previoRef.current = item.texto;
+      // La que sigue se pide mientras esta suena: entre frase y frase no queda el silencio de sintetizar.
+      if (siguiente) precargar(siguiente.texto, { emocion: siguiente.emocion, previo: item.texto, siguiente: colaRef.current[1]?.texto });
       await d.fin;
     }
     colaActiva.current = false;
@@ -438,6 +443,13 @@ export default function App() {
 
   // ---- CEREBRO: un turno en stream. Emoción antes del texto; frases a la cola de voz.
   const turnoEnCurso = useRef<AbortController | null>(null);
+  /**
+   * El turno al que la persona le cortó la voz (barge-in). Sigue corriendo (su texto llega a la
+   * conversación y al historial, y lo que hizo en el servidor no se repite), pero ya no habla: antes
+   * `callarTodo` vaciaba la cola y el siguiente trozo del stream la volvía a llenar. Se despeja solo:
+   * el próximo turno trae otro AbortController.
+   */
+  const turnoCallado = useRef<AbortController | null>(null);
   /** El turno que viene lo dijo en voz alta (el oído), no lo escribió: el servidor le pone los topes de la voz. */
   const habladoRef = useRef(false);
   const pensar = useCallback(
@@ -466,7 +478,7 @@ export default function App() {
       const image = o.imagen || (quiereVer && visionEnabled ? grabFrame() : null);
       // Si el 27B tarda, AU-RA piensa en voz alta con un clip (sin red).
       const relleno = setTimeout(() => {
-        if (turnoEnCurso.current === ac && colaRef.current.length === 0 && !hablando.current) decir(alAzar(['mmm', 'mmm2', 'unmomento']), { emocion: 'pensando', sinBurbuja: true });
+        if (turnoEnCurso.current === ac && turnoCallado.current !== ac && colaRef.current.length === 0 && !hablando.current) decir(alAzar(['mmm', 'mmm2', 'unmomento']), { emocion: 'pensando', sinBurbuja: true });
       }, 1400);
       // Lo que llega es el texto de DECIR (con sus [risa]…): la burbuja se los quita en `decir`.
       let pendiente = '';
@@ -476,6 +488,7 @@ export default function App() {
         // Frases cerradas ya (src/03-voz/frases.ts): la que terminó en punto sale sin esperar al siguiente trozo.
         const { listas, resto } = cortarFrases(pendiente, final);
         pendiente = resto;
+        if (turnoCallado.current === ac) return;
         for (const p of listas) colaRef.current.push({ texto: p, emocion: emo });
         if (colaRef.current.length) void bombear();
       };
@@ -504,7 +517,7 @@ export default function App() {
               const c = caraDeEmocion(e);
               if (c !== 'IDLE') setFace(c);
               const clip = clipDeEmocion(e);
-              if (clip && (e === 'risa' || e === 'sorpresa')) colaRef.current.push({ texto: clip.id, emocion: e });
+              if (clip && (e === 'risa' || e === 'sorpresa') && turnoCallado.current !== ac) colaRef.current.push({ texto: clip.id, emocion: e });
             },
             onDelta: (t) => {
               clearTimeout(relleno);
@@ -515,8 +528,10 @@ export default function App() {
               conv.actualizar(idTurno, { texto: quitarExpresiones(dicho).trim(), estado: 'respondiendo' } as any);
             },
             onReplace: (t) => {
-              colaRef.current = [];
-              callar();
+              if (turnoCallado.current !== ac) {
+                colaRef.current = [];
+                callar();
+              }
               huboTexto = true;
               pendiente = t;
               soltar(true);
@@ -554,7 +569,7 @@ export default function App() {
         soltar(true);
         if (data.trazaId) setOpinion({ id: data.trazaId, estado: 'preguntar' });
         historialRef.current = [...historialRef.current, { rol: 'user', texto: cmd }, { rol: 'ultron', texto }].slice(-12);
-        if (pendienteGenesis.current && /orden global|junta|mina|prospera|aucorp|token|concesi/i.test(cmd)) {
+        if (turnoCallado.current !== ac && pendienteGenesis.current && /orden global|junta|mina|prospera|aucorp|token|concesi/i.test(cmd)) {
           colaRef.current.push({ texto: '¿Lo actualizo en el cerebro Genesis Core?', emocion: 'curioso' });
           void bombear();
         }
@@ -592,6 +607,8 @@ export default function App() {
       switch (it.tipo) {
         case 'callar':
           callarTodo();
+          // «Callate» con un turno en camino: lo que falte por llegar tampoco se dice.
+          turnoCallado.current = turnoEnCurso.current;
           return;
         case 'recordar':
           hacerTarea('anotar');
@@ -732,9 +749,62 @@ export default function App() {
     [conv.actualizar, decir]
   );
 
+  /*
+   * ---- EN VIVO: la conversación con el agente de ElevenLabs (03-voz/enVivo.ts), como el modo voz de
+   * ChatGPT. Mientras está abierta, el oído del navegador y la voz frase a frase se apagan: habla la
+   * conversación. Si no abre, queda el micrófono de siempre.
+   */
+  const [enVivo, setEnVivo] = useState<EstadoEnVivo>('cerrada');
+  const vivoRef = useRef<ConversacionEnVivo | null>(null);
+  const vivoCbs = useRef({ conv, showBubble, setFace });
+  vivoCbs.current = { conv, showBubble, setFace };
+  const conversacionEnVivo = () => {
+    if (!vivoRef.current) {
+      vivoRef.current = new ConversacionEnVivo({
+        // El SDK se carga al abrir la primera vez: no pesa en la primera pantalla.
+        abrirSesion: async (o) => {
+          const { Conversation } = await import('@elevenlabs/client');
+          return Conversation.startSession(o as any);
+        },
+        pedir: async (ruta, cuerpo) => {
+          const r = await fetch(ruta, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headersMesa() }, body: JSON.stringify(cuerpo) });
+          return { ok: r.ok, status: r.status, json: await r.json().catch(() => null) };
+        },
+        onEstado: (e, detalle) => {
+          setEnVivo(e);
+          const cb = vivoCbs.current;
+          if (e === 'escuchando') cb.setFace('LISTENING');
+          else if (e === 'hablando') cb.setFace('SPEAKING');
+          else if (e === 'cerrada') cb.setFace('IDLE');
+          else if (e === 'error') {
+            cb.setFace('IDLE');
+            if (detalle) cb.showBubble(detalle, 6000);
+          }
+        },
+        onMensaje: (quien, texto) => {
+          const cb = vivoCbs.current.conv;
+          if (quien === 'persona') cb.persona(texto);
+          else cb.aura(texto, 'lista');
+        },
+      });
+    }
+    return vivoRef.current;
+  };
+  useEffect(() => () => vivoRef.current?.cerrar(), []);
+  const alternarEnVivo = () => {
+    playSfx('tap', soundFxEnabled);
+    const c = conversacionEnVivo();
+    if (c.estado() !== 'cerrada' && c.estado() !== 'error') return c.cerrar();
+    if (face === 'SLEEPING') despertar();
+    // Lo que la mesa estaba diciendo se corta: desde aquí habla la conversación.
+    callarTodo();
+    void c.abrir({ avatar: 'aura', idioma: 'es' });
+  };
+  const vivoAbierta = enVivo === 'conectando' || enVivo === 'escuchando' || enVivo === 'hablando';
+
   // ---- OÍDO continuo con barge-in.
   useOido({
-    activo: micEnabled && !isBooting,
+    activo: micEnabled && !isBooting && !vivoAbierta,
     onFinal: (t) => {
       setOyendo('');
       pedir(t, true);
@@ -747,7 +817,10 @@ export default function App() {
       setFace((f) => (f === 'SLEEPING' ? f : 'LISTENING'));
     },
     onBargeIn: () => {
-      if (hablando.current || colaRef.current.length) callarTodo();
+      if (hablando.current || colaRef.current.length) {
+        callarTodo();
+        turnoCallado.current = turnoEnCurso.current;
+      }
       setFace('LISTENING');
     },
     onSinPermiso: () => {
@@ -1060,20 +1133,25 @@ export default function App() {
                   )}
                 </div>
               )}
-              <div className="pointer-events-auto flex items-center justify-center gap-3">
-                <button ref={escribirBtn} type="button" onClick={() => setDockOpen(true)} className="aura-primario" aria-haspopup="dialog">
+              <div className="pointer-events-auto flex items-center justify-center gap-2 min-[420px]:gap-3">
+                <button ref={escribirBtn} type="button" onClick={() => setDockOpen(true)} className="aura-primario" aria-haspopup="dialog" aria-label="Escribir">
                   <Keyboard className="w-5 h-5" aria-hidden="true" />
-                  <span>Escribir</span>
+                  {/* En un teléfono angosto entran los cuatro botones: «Escribir» queda con su ícono. */}
+                  <span className="hidden min-[420px]:inline">Escribir</span>
                 </button>
-                <button type="button" onClick={alternarMic} aria-pressed={micEnabled} aria-label={etiquetaMic} className={`aura-mic ${micEnabled ? 'abierto' : ''} ${escuchando ? 'escuchando' : ''}`}>
+                <button type="button" onClick={alternarMic} disabled={vivoAbierta} aria-pressed={micEnabled} aria-label={etiquetaMic} className={`aura-mic ${micEnabled ? 'abierto' : ''} ${escuchando ? 'escuchando' : ''}`}>
                   {micEnabled ? <Mic className="w-7 h-7" aria-hidden="true" /> : <MicOff className="w-7 h-7" aria-hidden="true" />}
+                </button>
+                <button type="button" onClick={alternarEnVivo} aria-pressed={vivoAbierta} aria-label={vivoAbierta ? 'Colgar la conversación en vivo' : 'Hablar en vivo'} className={`aura-primario ${vivoAbierta ? 'en-vivo' : ''}`}>
+                  {vivoAbierta ? <PhoneOff className="w-5 h-5" aria-hidden="true" /> : <AudioLines className="w-5 h-5" aria-hidden="true" />}
+                  <span className="whitespace-nowrap">{vivoAbierta ? 'Colgar' : 'En vivo'}</span>
                 </button>
                 <button type="button" onClick={() => setMasOpen(true)} aria-label="Más opciones" aria-haspopup="dialog" className="aura-redondo !w-12 !h-12">
                   <MoreHorizontal className="w-5 h-5" aria-hidden="true" />
                 </button>
               </div>
               <span className="text-[14px] font-medium text-(--aura-tinta-2) bg-(--aura-fondo)/85 px-3 py-0.5 rounded-full" aria-hidden="true">
-                {!micEnabled ? 'Micrófono apagado' : escuchando ? 'Te escucho…' : 'Micrófono abierto · háblale'}
+                {enVivo === 'conectando' ? 'Conectando en vivo…' : enVivo === 'hablando' ? 'En vivo · podés interrumpirla' : enVivo === 'escuchando' ? 'En vivo · te escucho' : !micEnabled ? 'Micrófono apagado' : escuchando ? 'Te escucho…' : 'Micrófono abierto · háblale'}
               </span>
             </div>
           )}

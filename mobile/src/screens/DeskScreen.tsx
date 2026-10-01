@@ -14,7 +14,7 @@ import { CamaraVision, DORMIDO_PERIODO_MS, SERVIDOR_CADA_MS, SERVIDOR_DORMIDO_MS
 import { DeskMenu } from '../components/DeskMenu';
 import type { Escena, MotorVision } from '../lib/escena';
 import type { DeskPresence, FaceState, Mode, SessionUser } from '../config';
-import { CANCIONES_LOCAL, healthCheck, listCanciones, rememberFact, turno, turnoStream, type Cancion, type Turn } from '../lib/api';
+import { CANCIONES_LOCAL, healthCheck, listCanciones, nuevoIdTurno, rememberFact, turno, turnoStream, type Cancion, type Turn } from '../lib/api';
 import { faceForEmocion, type Emocion } from '../lib/emocion';
 import { GENEROS, generoPorId, interpretar, type Gag } from '../lib/intenciones';
 import { ayuda, CONOCER_CORE, CONOCER_QUESTIONS, fechaLocal, horaLocal, preguntaConocer } from '../lib/knowledge';
@@ -719,6 +719,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         image: opts?.image,
         escena: escenaReciente(),
         hablado: ultimoHablado.current,
+        // Uno por frase y el mismo en los reintentos de abajo: el servidor no corre la frase dos veces.
+        idTurno: nuevoIdTurno(),
       };
       ultimoHablado.current = false;
       let emocion: Emocion = 'neutral';
@@ -1601,7 +1603,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const toggleConversar = () => {
     void haptic('medium');
     setMenuOpen(false);
-    // En llamada, cuelga; sonando, rechaza; si no, que el avatar llame (la pantalla entrante).
+    // En llamada, cuelga; sonando, rechaza; si no, la conversación se abre al instante (sin timbre).
     voz.alternar();
   };
 
@@ -1688,13 +1690,11 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     }
   }, [enLlamada, vozOcupa, mesaVisible, appActiva, companeraVisible, restFace]);
 
-  // La voz toma el avatar de la mesa; al entrar se deja el permiso de la conversación listo.
+  // La voz toma el avatar de la mesa. El permiso de la conversación se pide cuando suena la llamada
+  // (VozProvider, `timbre`), no al entrar: eran segundos de GPU del nodo sin ninguna llamada.
   useEffect(() => {
     if (avatar) vozRef.current.fijarAvatar(avatar);
   }, [avatar]);
-  useEffect(() => {
-    vozRef.current.precalentar();
-  }, []);
   // El perfil cambió en otra pantalla (ajustes, la primera vez): la mesa toma el avatar nuevo en silencio.
   useEffect(
     () =>

@@ -43,6 +43,7 @@ import type express from 'express';
 import { clave } from '../lib/boveda';
 import { quitarExpresiones } from '../lib/expresiones';
 import { afinarParaBoca, afinarParaBocaIngles } from './habla';
+import { interruptor } from '../lib/interruptores';
 import { firmarDato, gastarCupo, huellaSesion, leerDato, mismoSecreto, secretoDerivado, sesionSigueViva, type Sesion } from './seguridad';
 import { normalizarAvatar, normalizarIdioma, type AvatarVoz, type Idioma } from './eleven';
 import { modoValido } from './desk';
@@ -279,6 +280,11 @@ type Conversacion = {
    * de la conversación (buscar o leer en sus chats: se quita cuando vuelve la lectura, en el turno siguiente).
    */
   ambiente: { sonido: SonidoAmbiente; de: AbortController | null } | null;
+  /**
+   * El turno que todavía no se sabe si alguien oyó (sus acciones esperan; ver RetencionAcciones). Si
+   * llega otro turno antes, ese era una frase a medias que ElevenLabs descartó: se descarta.
+   */
+  porConfirmar?: (() => void) | null;
 };
 const conversaciones = new Map<string, Conversacion>();
 
@@ -530,6 +536,24 @@ export type TurnoVoz = {
    * `tarea` ({ herramienta }), que la voz usa para la frase de espera y el sonido de fondo.
    */
   enviar: (evento: string, datos: any) => void;
+  /** Lo que el turno le pide al teléfono espera a que ElevenLabs confirme el turno (RetencionAcciones). */
+  retener: RetencionAcciones;
+};
+
+/**
+ * EL TURNO ESPECULATIVO (speculative_turn de ElevenLabs): la voz le pide la respuesta al cerebro en
+ * cuanto la persona hace una pausa, antes de saber si terminó de hablar. Si sigue hablando, esa
+ * respuesta se tira y llega la frase entera. Lo que se DICE no importa (no sonó), pero lo que se HACE
+ * sí: «pon una alarma en tres…» no puede poner una alarma y «…en treinta minutos» otra.
+ *
+ * Por eso, en la voz, el cerebro no empuja acciones al teléfono: se las da a `hacer`, que las suelta
+ * cuando el turno se confirma (la respuesta terminó y ElevenLabs siguió escuchándola un momento,
+ * CONFIRMAR_ACCION_MS), y las tira si se descarta (ElevenLabs cerró la petición sin reintentar, o
+ * llegó otro turno antes). `alDescartar` deshace lo que el turno ya anotó (el número de turno de la cuenta).
+ */
+export type RetencionAcciones = {
+  hacer: (f: () => void) => void;
+  alDescartar: (f: () => void) => void;
 };
 
 type Deps = {
@@ -546,6 +570,8 @@ type Deps = {
   puenteMs?: number;
   /** Cuánto se espera el reintento de ElevenLabs antes de cortar un turno sin oyente (GRACIA_REINTENTO_MS). */
   graciaReintentoMs?: number;
+  /** Cuánto sigue abierta la respuesta de un turno con acciones antes de soltarlas (interruptor confirmarAccionVozMs). */
+  confirmarAccionMs?: number;
   /** Junta o miembro por correo (server/nivel.ts; las pruebas pueden poner otro). */
   nivelDe?: (correo: string) => NivelAura;
   /**
@@ -715,6 +741,11 @@ export function montarVozAgente(app: express.Express, d: Deps) {
       await vivo.enganchar(res);
       return;
     }
+    // El turno anterior que nadie confirmó (una frase a medias del turno especulativo): sus acciones no se hacen.
+    if (conv.porConfirmar) {
+      conv.porConfirmar();
+      conv.porConfirmar = null;
+    }
     // Si el turno anterior sigue pensando, ya nadie lo va a oír. Lo que alcanzó a decir es lo último
     // que oyó la persona: con eso se mira si este turno la interrumpió (y si ya había dicho algo, la
     // cortó a la mitad).
@@ -814,6 +845,51 @@ export function montarVozAgente(app: express.Express, d: Deps) {
 
     const corte = new AbortController();
     conv.enCurso = corte;
+    /** Las acciones de este turno, esperando a que se confirme (RetencionAcciones). */
+    const retenidas: (() => void)[] = [];
+    const deshacer: (() => void)[] = [];
+    let accionesPedidas = 0;
+    let suerte: 'espera' | 'hecho' | 'descartado' = 'espera';
+    /** `suerte` leída de nuevo (la cambian los relojes y el turno siguiente, no este código en línea). */
+    const suerteAhora = () => suerte;
+    /** Si la respuesta sigue abierta esperando la confirmación, cómo termina esa espera. */
+    let finRetencion: ((oida: boolean) => void) | null = null;
+    const correr = (fs: (() => void)[]) => {
+      for (const f of fs.splice(0)) {
+        try {
+          f();
+        } catch (e: any) {
+          console.warn('[voz agente] acción', String(e?.message || e).slice(0, 160));
+        }
+      }
+    };
+    const confirmarAcciones = () => {
+      if (suerte !== 'espera') return;
+      suerte = 'hecho';
+      if (conv.porConfirmar === descartarAcciones) conv.porConfirmar = null;
+      deshacer.length = 0;
+      correr(retenidas);
+      finRetencion?.(true);
+    };
+    function descartarAcciones() {
+      if (suerte !== 'espera') return;
+      suerte = 'descartado';
+      if (conv.porConfirmar === descartarAcciones) conv.porConfirmar = null;
+      retenidas.length = 0;
+      correr(deshacer);
+      finRetencion?.(false);
+    }
+    conv.porConfirmar = descartarAcciones;
+    const retener: RetencionAcciones = {
+      hacer: (f) => {
+        accionesPedidas++;
+        if (suerte === 'hecho') correr([f]);
+        else if (suerte === 'espera') retenidas.push(f);
+      },
+      alDescartar: (f) => {
+        if (suerte === 'espera') deshacer.push(f);
+      },
+    };
     let algo = false;
     // Lo que ya se le dio a la voz, en claro: sirve para seguir un «replace» y para saber, en el
     // turno que venga, si la persona cortó esta respuesta a la mitad.
@@ -842,6 +918,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     /** Nadie lo oye ya: se corta. Lo último que oyó la persona es lo que llegó a alguna petición. */
     const abandonar = () => {
       corte.abort();
+      descartarAcciones();
       // ElevenLabs cortó mientras hablábamos: la próxima respuesta empieza pidiendo perdón. Si otro
       // turno ya tomó la conversación, él ya anotó lo que este dijo (y ya usó el «cortada»).
       if (conv.enCurso === corte) {
@@ -854,13 +931,16 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     const alCerrarSalida = (r: express.Response) => {
       if (r.writableEnded) return;
       salidas.delete(r);
-      if (salidas.size || terminado || corte.signal.aborted) return;
+      if (salidas.size || (terminado && !finRetencion) || corte.signal.aborted) return;
       // Puede ser un reintento de ElevenLabs (vuelve con la misma frase) o la persona que lo cortó: se
-      // espera un momento al reintento antes de soltar lo que el nodo ya está leyendo.
+      // espera un momento al reintento antes de soltar lo que el nodo ya está leyendo. Si la respuesta ya
+      // terminó y solo esperaba la confirmación, cerrarla sin reintento es el descarte del turno especulativo.
       gracia = setTimeout(() => {
         gracia = null;
-        if (!salidas.size) abandonar();
-      }, d.graciaReintentoMs ?? GRACIA_REINTENTO_MS);
+        if (salidas.size) return;
+        if (finRetencion) descartarAcciones();
+        else abandonar();
+      }, d.graciaReintentoMs ?? interruptor('graciaReintentoMs'));
     };
     res.on('close', () => alCerrarSalida(res));
     const vivoDeEste: NonNullable<Conversacion['vivo']> = {
@@ -883,6 +963,8 @@ export function montarVozAgente(app: express.Express, d: Deps) {
             conv.ultimaDicha = dicho;
             conv.cortada = false;
             if (conv.vivo === vivoDeEste) conv.vivo = null;
+            // El reintento se lleva la respuesta entera: ese turno sí se oyó.
+            confirmarAcciones();
             r.write(trozoOpenAI(id, modelo, null, 'stop'));
             r.write('data: [DONE]\n\n');
             r.end();
@@ -916,7 +998,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     let primerTrozo = true;
     // Desde dónde empieza lo que dice el CEREBRO (después del perdón y de las frases de espera).
     let inicioCerebro = inicioPropio;
-    const msPuente = d.puenteMs ?? PUENTE_VOZ_MS;
+    const msPuente = d.puenteMs ?? interruptor('puenteVozMs');
     const msTarea = d.esperaTareaMs ?? ESPERA_TAREA_MS;
     const msSeguimiento = d.seguimientoMs ?? SEGUIMIENTO_MS;
     const msRelleno = d.rellenoAgenteMs ?? RELLENO_AGENTE_MS;
@@ -1098,6 +1180,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
         interrumpida,
         senal,
         enviar,
+        retener,
       })
       .then(
         () => avisarFin(),
@@ -1117,6 +1200,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
       // La persona interrumpió (o llegó otro turno de esta conversación, que ya tomó lo que este dijo
       // como `ultimaDicha`): nadie espera esto. Si la petición sigue abierta, se cierra bien para que
       // ElevenLabs no quede esperando.
+      descartarAcciones();
       escribir(trozoOpenAI(id, modelo, null, 'stop'));
       cerrar();
       if (gracia) clearTimeout(gracia);
@@ -1133,21 +1217,46 @@ export function montarVozAgente(app: express.Express, d: Deps) {
       clearTimeout(gracia);
       gracia = null;
     }
+    // Un turno que le pidió algo al teléfono: la respuesta sigue abierta un momento. Si ElevenLabs la
+    // cierra sin reintentar (descartó la frase a medias del turno especulativo), las acciones no se hacen.
+    const msConfirmar = d.confirmarAccionMs ?? interruptor('confirmarAccionVozMs');
+    if (retenidas.length && salidas.size && suerte === 'espera' && msConfirmar > 0) {
+      vivoDeEste.hasta = Date.now() + msConfirmar + (d.graciaReintentoMs ?? interruptor('graciaReintentoMs'));
+      await new Promise<void>((listo) => {
+        const h = setTimeout(() => {
+          // Sin oyente, decide la gracia (el reintento confirma; si no llega, se descarta).
+          if (salidas.size) confirmarAcciones();
+        }, msConfirmar);
+        finRetencion = () => {
+          clearTimeout(h);
+          finRetencion = null;
+          listo();
+        };
+        if (suerteAhora() !== 'espera') finRetencion(suerteAhora() === 'hecho');
+      });
+      if (gracia) {
+        clearTimeout(gracia);
+        gracia = null;
+      }
+    }
     if (salidas.size) {
       conv.ultimaDicha = dicho;
+      if (conv.vivo === vivoDeEste) conv.vivo = null;
+      confirmarAcciones();
+    } else if (suerteAhora() === 'descartado') {
       if (conv.vivo === vivoDeEste) conv.vivo = null;
     } else {
       // Terminó mientras nadie oía: si el reintento llega en un momento, se lleva la respuesta entera.
       // Si no llega, la persona oyó solo el principio: la próxima respuesta empieza pidiendo perdón.
       conv.ultimaDicha = dicho.slice(0, oido);
       if (oido > 0 && oido < dicho.length) conv.cortada = true;
-      vivoDeEste.hasta = Date.now() + (d.graciaReintentoMs ?? GRACIA_REINTENTO_MS);
+      vivoDeEste.hasta = Date.now() + (d.graciaReintentoMs ?? interruptor('graciaReintentoMs'));
     }
     escribir(trozoOpenAI(id, modelo, null, 'stop'));
     cerrar();
     // Una línea por turno hablado, para ver la latencia real en el log (Render): la voz espera lo primero.
     const msDe = (t: number) => (t ? `${t - t0} ms` : '—');
-    console.log(`[voz] turno ${conv.cid.slice(0, 8)}: primer texto ${msDe(primeroEn)}${puenteDicho ? ' (espera)' : ''} · cerebro ${msDe(cerebroEn)} · total ${Date.now() - t0} ms${porReloj ? ' · TARDE' : ''}`);
+    console.log(`[voz] turno ${conv.cid.slice(0, 8)}: primer texto ${msDe(primeroEn)}${puenteDicho ? ' (espera)' : ''} · cerebro ${msDe(cerebroEn)} · total ${Date.now() - t0} ms${porReloj ? ' · TARDE' : ''}${accionesPedidas ? ` · acciones ${accionesPedidas} ${suerte}` : ''}`);
   };
   // ElevenLabs puede añadir /chat/completions a la URL o usarla tal cual: se aceptan las formas.
   app.post('/api/voz/llm', llm);
