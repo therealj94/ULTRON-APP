@@ -6,7 +6,7 @@
 import type { NivelAura } from './perfiles/tipos';
 import { clave } from './boveda';
 
-export type HerramientaHarness = 'web' | 'sistema' | 'ejecutor' | 'leer' | 'computadora';
+export type HerramientaHarness = 'web' | 'sistema' | 'ejecutor' | 'leer' | 'computadora' | 'correo';
 
 export type PedidoHerramienta = { herramienta: HerramientaHarness; arg: string };
 
@@ -39,13 +39,26 @@ export const INSTRUCCION_COMPUTADORA = `
 PEDIR_HERRAMIENTA: computadora <la tarea entera en una frase, con todos los datos que hagan falta>
 Tienes tu propia computadora en la nube (Ubuntu con Firefox y LibreOffice). Úsala cuando haya que HACER algo en páginas: entrar a un sitio y buscar dentro, comparar varias páginas, llenar un formulario, sacar datos de una tabla, o cuando te digan «usa tu computadora». Para una pregunta que una búsqueda contesta, usa web. Nunca la uses para pagar, comprar ni poner contraseñas.`.trim();
 
+/** Su correo (server/correo.ts): revisar, buscar, leer y contestar. Nada se manda sin su «sí». */
+export const INSTRUCCION_CORREO = `
+PEDIR_HERRAMIENTA: correo revisar
+PEDIR_HERRAMIENTA: correo buscar <texto>
+PEDIR_HERRAMIENTA: correo leer <número de la lista>
+PEDIR_HERRAMIENTA: correo responder <número> | <el texto de la respuesta, ya redactado, en su voz>
+PEDIR_HERRAMIENTA: correo escribir <dirección> | <asunto> | <texto>
+Puedes revisar y contestar su correo (Gmail, Outlook, Yahoo, iCloud o el de su empresa). Responder y escribir solo dejan un borrador: léeselo y pregúntale si lo mandas; el servidor lo manda cuando diga que sí. Nunca digas que ya salió si no te llegó «CORREO ENVIADO».`.trim();
+
+export function correoDisponible(): boolean {
+  return !!clave('correo_cifrado');
+}
+
 export function computadoraDisponible(): boolean {
   return !!clave('computadora_url') && !!clave('computadora_clave');
 }
 
 export function instruccionHarness(nivel: NivelAura = 'junta', conComputadora = computadoraDisponible()): string {
   const base = nivel === 'miembro' ? INSTRUCCION_HARNESS_MIEMBRO : INSTRUCCION_HARNESS;
-  return conComputadora ? `${base}\n${INSTRUCCION_COMPUTADORA}` : base;
+  return [base, correoDisponible() ? INSTRUCCION_CORREO : '', conComputadora ? INSTRUCCION_COMPUTADORA : ''].filter(Boolean).join('\n');
 }
 
 /**
@@ -59,7 +72,7 @@ export function pedidoPermitido(ped: PedidoHerramienta, nivel: NivelAura): strin
   return null;
 }
 
-const RE = /^\s*PEDIR_HERRAMIENTA:\s*(web|sistema|ejecutor|leer|computadora)\s*(.*)$/im;
+const RE = /^\s*PEDIR_HERRAMIENTA:\s*(web|sistema|ejecutor|leer|computadora|correo)\s*(.*)$/im;
 
 export function extraerPedidoHerramienta(texto: string): PedidoHerramienta | null {
   const m = String(texto || '').match(RE);
@@ -83,6 +96,8 @@ export async function resolverPedido(
     ejecutor: (codigo: string) => Promise<string>;
     /** La computadora del agente (server/computadora.ts). Sin ella, el pedido se contesta como no disponible. */
     computadora?: (tarea: string) => Promise<string>;
+    /** Su correo (server/correo.ts). */
+    correo?: (arg: string) => Promise<string>;
   },
   codigoDelTurno = '',
   /** Con quién habla: con un miembro, `sistema` y `ejecutor` no llegan a sus runners. */
@@ -96,6 +111,10 @@ export async function resolverPedido(
     return runners.web(q);
   }
   if (ped.herramienta === 'sistema') return runners.sistema();
+  if (ped.herramienta === 'correo') {
+    if (!runners.correo) return 'HARNESS correo: no está disponible aquí. No lo usé.';
+    return runners.correo(ped.arg.trim() || 'revisar');
+  }
   if (ped.herramienta === 'computadora') {
     const tarea = ped.arg.trim();
     if (!tarea) return 'HARNESS computadora: no vino la tarea. No encargué nada.';

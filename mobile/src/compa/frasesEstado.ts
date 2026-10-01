@@ -597,6 +597,8 @@ export const TAREAS: Record<string, Tarea> = {
   app: { estado: 'abriendo', sonido: null, lenta: false },
   /** «Usa tu computadora y…»: su propia computadora en la nube (server/computadora.ts), tarda minutos. */
   computadora: { estado: 'haciendo', sonido: 'teclado', lenta: true },
+  /** «Revisa mi correo», «contéstale a Beto»: abre su buzón (server/correo.ts). */
+  correo: { estado: 'leyendo', sonido: 'teclado', lenta: true },
 };
 
 /** La tarea de una herramienta, o null si no es una tarea (rag, cot, harness, cerebro-*…). */

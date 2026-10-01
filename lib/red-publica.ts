@@ -127,3 +127,19 @@ export async function destinoPublico(raw: string, ms = 8000): Promise<{ ok: true
     return { ok: false, error: `no la abro (${String(e?.message || e).slice(0, 80)})` };
   }
 }
+
+/**
+ * La IP pública de un servidor (de correo, por ejemplo) o un error si es interno. Quien conecta usa ESA
+ * IP (y el nombre solo para el certificado TLS): así el DNS no puede cambiarla entre mirar y conectar.
+ */
+export async function ipPublicaDe(host: string): Promise<string> {
+  const h = String(host || '').trim().toLowerCase().replace(/^\[|\]$/g, '');
+  if (!h || h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local') || h.endsWith('.internal')) throw new Error('servidor interno bloqueado');
+  if (net.isIP(h)) {
+    if (ipPrivada(h)) throw new Error('servidor interno bloqueado');
+    return h;
+  }
+  const lista = await dns.promises.lookup(h, { all: true });
+  if (!lista.length || lista.some((r) => ipPrivada(r.address))) throw new Error('servidor interno bloqueado');
+  return lista[0].address;
+}
