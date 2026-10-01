@@ -171,12 +171,9 @@ test('AU-RA FP habla con ElevenLabs: la voz del avatar y del idioma elegidos; Vo
   }
 });
 
-test('el oído de Dr Electrum: Scribe primero con el vocabulario minero, Whisper de respaldo', async () => {
-  assert.deepEqual(
-    PROVEEDORES_OIDO_ELECTRUM.map((p) => p.nombre),
-    ['elevenlabs', ...PROVEEDORES_OIDO.map((p) => p.nombre)]
-  );
-  assert.ok(!PROVEEDORES_OIDO.some((p) => p.nombre === 'elevenlabs'), 'AU-RA no cambia');
+test('el oído: Scribe primero en Dr Electrum (vocabulario minero) y en AU-RA (sus apps y avatares), Whisper de respaldo', async () => {
+  assert.deepEqual(PROVEEDORES_OIDO_ELECTRUM.map((p) => p.nombre), ['elevenlabs', 'voicebox', 'gemini']);
+  assert.deepEqual(PROVEEDORES_OIDO.map((p) => p.nombre), ['elevenlabs', 'voicebox', 'gemini'], 'AU-RA también: Scribe primero (José, 1-oct)');
   const vb = await voiceboxFalso({ transcripcion: () => ({ texto: 'lo oyó whisper' }) });
   const audio = Buffer.alloc(2000, 1);
   try {
@@ -190,10 +187,15 @@ test('el oído de Dr Electrum: Scribe primero con el vocabulario minero, Whisper
           const form = llamadas[0].cuerpo as FormData;
           assert.equal(form.get('model_id'), 'scribe_v2');
           assert.ok(form.getAll('keyterms').includes('INHGEOMIN'));
-          // AU-RA, con la misma clave puesta, sigue oyendo con Whisper.
+          // AU-RA también oye con Scribe, pero con SUS pistas (apps y avatares), no las del oficio minero.
           const a = await transcribirAudio({ audio, mime: 'audio/webm', language: 'es' });
-          assert.equal(a.via, 'voicebox:whisper');
-          assert.equal(llamadas.length, 1);
+          assert.equal(a.via, 'elevenlabs:scribe');
+          assert.equal(llamadas.length, 2);
+          const formAura = llamadas[1].cuerpo as FormData;
+          assert.equal(formAura.get('model_id'), 'scribe_v2');
+          assert.ok(formAura.getAll('keyterms').includes('Spotify') && formAura.getAll('keyterms').includes('AU-RA'));
+          assert.ok(!formAura.getAll('keyterms').includes('INHGEOMIN'));
+          assert.ok(formAura.getAll('keyterms').length < 100, 'menos de 100 pistas: con más, ElevenLabs cobra 20 s mínimo');
         }
       );
       await conEleven(
