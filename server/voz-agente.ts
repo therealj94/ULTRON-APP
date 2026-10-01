@@ -298,12 +298,17 @@ type Conversacion = {
    * la misma frase más larga («pon una alarma en tres» → «… en treinta minutos»), era la frase a medias
    * del turno especulativo y se tira; si no (o no llega en ESPERA_MEMORIA_MS), se guarda.
    */
-  memoriaPendiente?: { mensaje: string; mem: MemoriaTurno; reloj: ReturnType<typeof setTimeout> } | null;
+  memoriaPendiente?: { mensaje: string; mem: MemoriaTurno; reloj: ReturnType<typeof setTimeout>; inicio: number } | null;
 };
 const conversaciones = new Map<string, Conversacion>();
 
 /** Cuánto espera la memoria de un turno a saber si era una frase a medias. */
 const ESPERA_MEMORIA_MS = 20_000;
+/**
+ * La frase entera del turno especulativo llega enseguida (la persona solo hizo una pausa). Más tarde ya
+ * es la charla de verdad («pon música» → «¿cuál?» → «pon música de Bad Bunny»): esa no se borra.
+ */
+export const VENTANA_A_MEDIAS_MS = 3_000;
 
 /** Lo que un turno guarda en la memoria: espera, se guarda o se tira (y lo que llegue después, igual). */
 export type MemoriaTurno = { fs: (() => void)[]; estado: 'espera' | 'guardada' | 'tirada' };
@@ -325,14 +330,14 @@ export function recordarEnTurno(mem: MemoriaTurno, f: () => void) {
 }
 
 /** El turno terminó (confirmado o descartado): su memoria espera al turno siguiente para decidir. */
-export function apartarMemoria(conv: Pick<Conversacion, 'memoriaPendiente'>, mensaje: string, mem: MemoriaTurno) {
+export function apartarMemoria(conv: Pick<Conversacion, 'memoriaPendiente'>, mensaje: string, mem: MemoriaTurno, inicio = Date.now()) {
   if (mem.estado !== 'espera' || conv.memoriaPendiente?.mem === mem) return;
   resolverMemoriaPendiente(conv, '');
   const reloj = setTimeout(() => {
     if (conv.memoriaPendiente?.mem === mem) resolverMemoriaPendiente(conv, '');
   }, ESPERA_MEMORIA_MS);
   reloj.unref?.();
-  conv.memoriaPendiente = { mensaje: plana(mensaje), mem, reloj };
+  conv.memoriaPendiente = { mensaje: plana(mensaje), mem, reloj, inicio };
 }
 
 /**
@@ -353,13 +358,13 @@ export function continuaLaFrase(viejo: string, nuevo: string): boolean {
 }
 
 /** Con el turno siguiente (o sin él, al vencer): la frase a medias se tira, un turno de verdad se guarda. */
-export function resolverMemoriaPendiente(conv: Pick<Conversacion, 'memoriaPendiente'>, siguiente: string) {
+export function resolverMemoriaPendiente(conv: Pick<Conversacion, 'memoriaPendiente'>, siguiente: string, ahora = Date.now()) {
   const p = conv.memoriaPendiente;
   if (!p) return;
   conv.memoriaPendiente = null;
   clearTimeout(p.reloj);
   const nuevo = plana(siguiente);
-  const aMedias = continuaLaFrase(p.mensaje, nuevo);
+  const aMedias = ahora - p.inicio < VENTANA_A_MEDIAS_MS && continuaLaFrase(p.mensaje, nuevo);
   p.mem.estado = aMedias ? 'tirada' : 'guardada';
   if (aMedias) p.mem.fs.length = 0;
   else correrMemoria(p.mem.fs);
@@ -960,7 +965,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
       suerte = 'hecho';
       if (conv.porConfirmar === descartarAcciones) conv.porConfirmar = null;
       deshacer.length = 0;
-      apartarMemoria(conv, mensaje, memoria);
+      apartarMemoria(conv, mensaje, memoria, t0);
       correr(retenidas);
       finRetencion?.(true);
     };
@@ -969,7 +974,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
       suerte = 'descartado';
       if (conv.porConfirmar === descartarAcciones) conv.porConfirmar = null;
       retenidas.length = 0;
-      apartarMemoria(conv, mensaje, memoria);
+      apartarMemoria(conv, mensaje, memoria, t0);
       correr(deshacer);
       finRetencion?.(false);
     }
@@ -1274,9 +1279,12 @@ export function montarVozAgente(app: express.Express, d: Deps) {
      * texto y de la voz mientras llega) y la orden va al canal de ese .exe cuando el turno se confirma
      * (`retener.hacer`, como las acciones del teléfono): una frase a medias no cierra ninguna ventana.
      */
-    const ordenesPc = pase.origen === 'windows' ? { texto: new FiltroOrdenes(), voz: new FiltroOrdenes(), n: 0 } : null;
+    const ordenesPc = pase.origen === 'windows' ? { texto: new FiltroOrdenes(), voz: new FiltroOrdenes(), n: 0, vistas: new Set<string>() } : null;
     const empujarPc = d.ordenPc ?? empujarOrdenPc;
     const alOrdenPc = (orden: string) => {
+      // La misma orden dos veces en un turno (un «replace» del harness la trae de nuevo) va una vez.
+      if (ordenesPc!.vistas.has(orden)) return;
+      ordenesPc!.vistas.add(orden);
       ordenesPc!.n++;
       retener.hacer(() => void empujarPc(pase.correo, pase.aparato, { orden, dicho: mensaje }));
     };
@@ -1287,6 +1295,13 @@ export function montarVozAgente(app: express.Express, d: Deps) {
             const texto = ordenesPc.texto.agregar(String(datos.text ?? ''), alOrdenPc);
             const voz = datos.voz == null ? undefined : ordenesPc.voz.agregar(String(datos.voz));
             if (!texto && !voz) return;
+            return enviar(evento, { ...datos, text: texto, ...(voz !== undefined ? { voz } : {}) });
+          }
+          // El harness cambió la respuesta entera: sus órdenes se toman (las nuevas) y la marca no suena.
+          if (evento === 'replace' && datos && typeof datos === 'object') {
+            const f = new FiltroOrdenes();
+            const texto = f.agregar(String(datos.text ?? ''), alOrdenPc);
+            const voz = datos.voz == null ? undefined : new FiltroOrdenes().agregar(String(datos.voz));
             return enviar(evento, { ...datos, text: texto, ...(voz !== undefined ? { voz } : {}) });
           }
           if (evento === 'done' && datos && typeof datos === 'object') {

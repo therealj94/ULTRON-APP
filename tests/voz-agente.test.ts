@@ -41,6 +41,8 @@ const {
   _reiniciarConversaciones,
   abrirConversacion,
   continuaLaFrase,
+  apartarMemoria,
+  resolverMemoriaPendiente,
 } = await import('../server/voz-agente');
 const { secretoDerivado, emitirSesion, borrarSesion, soltarSesion, sesionDe, fijarClaveCambiadaEn } = await import('../server/seguridad');
 type TurnoVoz = import('../server/voz-agente').TurnoVoz;
@@ -1446,6 +1448,43 @@ test('un pase del teléfono no filtra marcas ni manda órdenes a la PC', async (
     const pase = paseDe(persona(), 'aura', 'es', 'tel-x');
     assert.equal(dichoDe(await (await llm(m.base, pase, [{ role: 'user', content: 'hola' }])).text()), 'Hola.');
     assert.deepEqual(ordenes, []);
+  } finally {
+    await m.cerrar();
+  }
+});
+
+test('la memoria de un turno: solo se tira si la frase entera llega enseguida (no en la charla normal)', () => {
+  const t0 = 1_000_000;
+  const hechos: string[] = [];
+  const conv: any = {};
+  const mem1: any = { fs: [() => hechos.push('pon música')], estado: 'espera' };
+  apartarMemoria(conv, 'pon música', mem1, t0);
+  resolverMemoriaPendiente(conv, 'pon música de bad bunny', t0 + 6_000);
+  assert.deepEqual(hechos, ['pon música'], 'seis segundos después es la charla: se guarda');
+  const mem2: any = { fs: [() => hechos.push('pon una alarma en tres')], estado: 'espera' };
+  apartarMemoria(conv, 'pon una alarma en tres', mem2, t0);
+  resolverMemoriaPendiente(conv, 'pon una alarma en treinta minutos', t0 + 1_200);
+  assert.deepEqual(hechos, ['pon música'], 'al segundo es la frase a medias: se tira');
+  assert.equal(mem2.estado, 'tirada');
+});
+
+test('Windows por voz: un «replace» del harness tampoco dice la marca y su orden va una sola vez', async () => {
+  const ordenes: string[] = [];
+  const m = await montar(
+    async (t) => {
+      t.enviar('delta', { text: 'Déjame ver. ', voz: 'Déjame ver. ' });
+      t.enviar('replace', { text: 'Va, la cierro. ⟦hacer: cierra spotify⟧', voz: 'Va, la cierro. ⟦hacer: cierra spotify⟧' });
+      t.enviar('done', { reply: 'Va, la cierro. ⟦hacer: cierra spotify⟧' });
+    },
+    { puenteMs: 0, confirmarAccionMs: 100, graciaReintentoMs: 100, ordenPc: (_c, _a, o) => ordenes.push(o.orden) }
+  );
+  try {
+    const p = emitirPase(persona(), 'aura', 'es', { aparato: 'win-r', origen: 'windows' });
+    abrirConversacion(leerPase(p.pase)!.correo, p.cid);
+    const dicho = dichoDe(await (await llm(m.base, p.pase, [{ role: 'user', content: 'cierra spotify' }])).text());
+    assert.ok(!dicho.includes('⟦') && !/hacer/i.test(dicho), 'la marca no suena: ' + dicho);
+    await dormir(50);
+    assert.deepEqual(ordenes, ['cierra spotify']);
   } finally {
     await m.cerrar();
   }

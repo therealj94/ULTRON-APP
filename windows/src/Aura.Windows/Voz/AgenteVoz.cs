@@ -33,15 +33,20 @@ internal sealed class AgenteVoz : IDisposable
     int interrumpidoHasta = -1;
     volatile bool hablando;
     double nivelVoz;
+    /// <summary>Cuándo sonó por última vez: la cola de su voz (y el eco del cuarto) sigue unos ms después.</summary>
+    DateTime ultimoSonido = DateTime.MinValue;
+    /// <summary>La persona la mandó callar: el resto de ESTA respuesta no suena (la próxima frase suya lo quita).</summary>
+    volatile bool callada;
+    readonly object candado = new();
     readonly TaskCompletionSource<AgenteListo> listo = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    public bool Abierto => ws?.State == WebSocketState.Open && corte is { IsCancellationRequested: false };
+    public bool Abierto => terminado == 0 && ws?.State == WebSocketState.Open && corte is { IsCancellationRequested: false };
     public string ConversacionId { get; private set; } = "";
     /// <summary>El micrófono no manda nada (silenciado): la conversación sigue abierta.</summary>
     public bool Mudo { get; set; }
 
     public event Action<string>? TuDijiste;
-    public event Action<string>? Respuesta;
+    public event Action<AgenteRespuesta>? Respuesta;
     public event Action? Interrumpida;
     /// <summary>Empieza o deja de sonar la voz de AURA.</summary>
     public event Action<bool>? Hablando;
@@ -72,8 +77,20 @@ internal sealed class AgenteVoz : IDisposable
         var hola = await listo.Task.WaitAsync(TimeSpan.FromSeconds(8), c).ConfigureAwait(false);
         if (hola.Entrada.Ulaw) throw new IOException("El agente pide audio μ-law y este equipo manda PCM.");
         ConversacionId = hola.ConversacionId;
-        AbrirBoca();
-        AbrirMicrofono();
+        // Si se cerró mientras llegaba el saludo (o justo ahora), no se abren aparatos que nadie apagaría.
+        lock (candado)
+        {
+            if (terminado == 1 || c.IsCancellationRequested) throw new OperationCanceledException("La conversación se cerró al abrir.");
+            AbrirBoca();
+            AbrirMicrofono();
+        }
+    }
+
+    /// <summary>Calla lo que está diciendo (sin colgar). Su próxima respuesta vuelve a sonar.</summary>
+    public void CallarVoz()
+    {
+        callada = true;
+        try { boca?.ClearBuffer(); } catch { }
     }
 
     void Mandar(string json) => envios?.Writer.TryWrite(json);
@@ -129,7 +146,7 @@ internal sealed class AgenteVoz : IDisposable
                 sale = l.Salida; entrada = l.Entrada;
                 listo.TrySetResult(l);
                 break;
-            case AgenteAudio a when a.EventoId > interrumpidoHasta:
+            case AgenteAudio a when a.EventoId > interrumpidoHasta && !callada:
                 boca?.AddSamples(a.Pcm, 0, a.Pcm.Length);
                 nivelVoz = Math.Max(nivelVoz, Math.Min(1, AgenteProtocolo.Rms(a.Pcm) * 6));
                 break;
@@ -143,10 +160,11 @@ internal sealed class AgenteVoz : IDisposable
                 Mandar(AgenteProtocolo.Pong(p.EventoId));
                 break;
             case AgenteTuDijiste t:
+                callada = false;
                 TuDijiste?.Invoke(t.Texto);
                 break;
             case AgenteRespuesta r:
-                Respuesta?.Invoke(r.Texto);
+                Respuesta?.Invoke(r);
                 break;
         }
     }
@@ -160,10 +178,16 @@ internal sealed class AgenteVoz : IDisposable
         // Cada 80 ms: ¿suena algo? y el nivel para la boca del avatar (baja solo entre trozos).
         relojBoca = new Timer(_ =>
         {
-            var suena = boca != null && boca.BufferedDuration > TimeSpan.FromMilliseconds(40);
-            if (suena != hablando) { hablando = suena; Hablando?.Invoke(suena); }
-            nivelVoz = suena ? nivelVoz * 0.85 : 0;
-            NivelBoca?.Invoke(nivelVoz);
+            try
+            {
+                var b = boca; // Terminar lo pone en null desde otro hilo
+                var suena = b != null && b.BufferedDuration > TimeSpan.FromMilliseconds(40);
+                if (suena) ultimoSonido = DateTime.UtcNow;
+                if (suena != hablando) { hablando = suena; Hablando?.Invoke(suena); }
+                nivelVoz = suena ? nivelVoz * 0.85 : 0;
+                NivelBoca?.Invoke(nivelVoz);
+            }
+            catch { /* un tic tardío después de cerrar no tumba nada */ }
         }, null, 80, 80);
     }
 
@@ -176,8 +200,10 @@ internal sealed class AgenteVoz : IDisposable
             var pcm = new ReadOnlySpan<byte>(e.Buffer, 0, e.BytesRecorded);
             double rms = AgenteProtocolo.Rms(pcm);
             NivelMic?.Invoke(Math.Min(1, rms * 9));
-            // Mudo, o AURA hablando y esto suena más bajo que su eco: silencio (el tiempo sigue corriendo).
-            bool tapar = Mudo || (hablando && rms < Math.Max(0.05, nivelVoz * 0.12));
+            // Mudo, o AURA hablando (o recién terminando: la cola en el altavoz y el eco del cuarto) y esto suena
+            // más bajo que su voz: silencio (el tiempo sigue corriendo). La tuya, cerca y más fuerte, pasa.
+            bool cola = DateTime.UtcNow - ultimoSonido < TimeSpan.FromMilliseconds(500);
+            bool tapar = Mudo || ((hablando || cola) && rms < Math.Max(0.05, nivelVoz * 0.12));
             Mandar(AgenteProtocolo.Audio(tapar ? new byte[e.BytesRecorded] : pcm));
         };
         mic.RecordingStopped += (_, e) => { if (e.Exception != null) Terminar("El micrófono se detuvo: " + e.Exception.Message); };
@@ -187,8 +213,7 @@ internal sealed class AgenteVoz : IDisposable
     int terminado;
     void Terminar(string? motivo)
     {
-        if (Interlocked.Exchange(ref terminado, 1) == 1) return;
-        try { corte?.Cancel(); } catch { }
+        lock (candado) { if (Interlocked.Exchange(ref terminado, 1) == 1) return; }
         envios?.Writer.TryComplete();
         relojBoca?.Dispose(); relojBoca = null;
         var m = mic; mic = null;
@@ -200,6 +225,7 @@ internal sealed class AgenteVoz : IDisposable
         var w = ws;
         if (w != null)
         {
+            // Primero se despide (cierre limpio) y después se corta lo que quede esperando.
             _ = Task.Run(async () =>
             {
                 try
@@ -211,9 +237,10 @@ internal sealed class AgenteVoz : IDisposable
                     }
                 }
                 catch { }
-                finally { w.Dispose(); }
+                finally { try { corte?.Cancel(); } catch { } w.Dispose(); }
             });
         }
+        else { try { corte?.Cancel(); } catch { } }
         Cerrada?.Invoke(motivo);
     }
 

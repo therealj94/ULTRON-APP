@@ -169,7 +169,8 @@ public partial class NotchWindow
     void EmpezarAEscuchar()
     {
         // La conversación en vivo tiene su propio micrófono: el oído de siempre no la duplica.
-        if (pausado || soloRender || AgenteAbierto || abriendoAgente) return;
+        // Silenciada por ti: ningún camino abre el micrófono hasta que lo vuelvas a tocar.
+        if (pausado || microSilenciado || soloRender || AgenteAbierto || abriendoAgente) return;
         oido.ModoInterrupcion = false;
         // «Oye AURA» y «siempre atenta»: el micrófono no se cansa; cada frase se oye y solo se atiende si es para AURA.
         oido.Continuo = ajustes.Escucha is "siempre" or "palabra";
@@ -187,7 +188,7 @@ public partial class NotchWindow
     /// <summary>Mientras AURA habla, el oído queda en modo interrupción (más umbral: su propia voz no la corta).</summary>
     void AbrirOidoParaInterrumpir()
     {
-        if (!ajustes.Interrumpir || pausado || soloRender) return;
+        if (!ajustes.Interrumpir || pausado || microSilenciado || soloRender) return;
         oido.ModoInterrupcion = true;
         oido.Continuo = true;
         oido.Abrir();
@@ -333,7 +334,8 @@ public partial class NotchWindow
     internal void AplicarEscucha()
     {
         if (soloRender) return;
-        despertador.Apagar();
+        // El despertador queda encendido mientras haga falta (no se rehace cada vez: cargar el modelo cuesta).
+        if (microSilenciado || pausado || ajustes.Escucha is not ("palabra" or "siempre")) despertador.Apagar();
         BotonSilencio.Foreground = microSilenciado ? new SolidColorBrush(Color.FromRgb(0xFF, 0x6B, 0x6B)) : (Brush)FindResource("Texto");
         BotonSilencio.ToolTip = microSilenciado ? T("Micrófono silenciado. Tócalo para que AURA vuelva a escucharte.", "Microphone muted. Tap to let AURA listen again.")
                                                 : T("Silenciar el micrófono: AURA deja de escucharte hasta que lo vuelvas a tocar", "Mute: AURA stops listening until you tap again");
@@ -547,6 +549,7 @@ public partial class NotchWindow
         altavoz.Detener();
         hablandoAhora = false; pensando = false; turnoEnCurso = false;
         if (terminarSesion) { continuo = false; CerrarAgente(); }
+        else agente?.CallarVoz(); // «cállate» con la conversación en vivo: calla esta respuesta, sin colgar
         // El oído en modo interrupción era para ESTA voz: si ya no habla, se cierra.
         if (terminarSesion || oido.ModoInterrupcion) CerrarOido();
         Recalcular();

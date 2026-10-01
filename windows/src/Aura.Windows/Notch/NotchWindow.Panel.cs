@@ -46,7 +46,7 @@ public partial class NotchWindow
             var usar = new Button { Content = "Al borrador", Style = (Style)FindResource("Pildora"), Padding = new Thickness(10, 4, 10, 4), FontSize = 11.5 };
             usar.Click += (_, _) => { if (cuerpo.Text.Length == 0) return; Borrador.Text = cuerpo.Text; PestanaBorrador.IsChecked = true; };
             var oir = new Button { Content = "Escuchar", Style = (Style)FindResource("Pildora"), Padding = new Thickness(10, 4, 10, 4), FontSize = 11.5 };
-            oir.Click += (_, _) => { if (cuerpo.Text.Length == 0) return; Callar(); voz = new System.Threading.CancellationTokenSource(); var c = new Core.CortadorFrases(); foreach (var f in c.Agregar(cuerpo.Text)) Decir(f, "neutral", voz.Token); if (c.Resto() is { } r) Decir(r, "neutral", voz.Token); };
+            oir.Click += (_, _) => { if (cuerpo.Text.Length == 0) return; if (AgenteAbierto) CerrarAgente(); Callar(); voz = new System.Threading.CancellationTokenSource(); var c = new Core.CortadorFrases(); foreach (var f in c.Agregar(cuerpo.Text)) Decir(f, "neutral", voz.Token); if (c.Resto() is { } r) Decir(r, "neutral", voz.Token); };
             var copiar = new Button { Content = "Copiar", Style = (Style)FindResource("Pildora"), Padding = new Thickness(10, 4, 10, 4), FontSize = 11.5 };
             copiar.Click += (_, _) => { try { Clipboard.SetText(cuerpo.Text); } catch { } };
             fila.Children.Add(usar); fila.Children.Add(oir); fila.Children.Add(copiar);

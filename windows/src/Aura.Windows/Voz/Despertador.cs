@@ -1,20 +1,23 @@
 using System;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Speech.Recognition;
+using Aura.Windows.Core;
+using NAudio.Wave;
 
 namespace Aura.Windows.Voz;
 
 /// <summary>
-/// «Oye AURA» / «Hey AURA»: una gramática de pocas palabras con el reconocedor de Windows, sin red.
-/// Solo reconoce esas frases (no dicta nada) y solo corre si la persona lo activó en Ajustes.
-/// Si Windows no tiene un reconocedor instalado, lo dice y no hace nada.
+/// «Oye AURA» / «Hey AURA», sin red. Si está el modelo propio (Modelos/hey_aura.onnx, entrenado con
+/// openWakeWord para «hey aura» y «oye aura»), lo usa: escucha en el equipo y nunca manda audio. Si no,
+/// una gramática de pocas palabras con el reconocedor de Windows (SAPI), que se equivoca más.
 /// </summary>
 internal sealed class Despertador : IDisposable
 {
     SpeechRecognitionEngine? motor;
     public event Action? Desperto;
-    public bool Activo => motor != null;
+    public bool Activo => motor != null || propio != null;
 
     readonly System.Collections.Generic.List<SpeechRecognitionEngine> extras = new();
 
@@ -25,7 +28,12 @@ internal sealed class Despertador : IDisposable
     /// </summary>
     public string? Encender(string idioma)
     {
-        if (motor != null) return null;
+        // Ya encendido: el modelo propio no depende del idioma; el de Windows sí (se rehace si cambió).
+        if (propio != null) return null;
+        if (motor != null && idioma == idiomaEncendido) return null;
+        if (motor != null) Apagar();
+        idiomaEncendido = idioma;
+        if (EncenderPropio()) return null;
         try
         {
             var todos = SpeechRecognitionEngine.InstalledRecognizers();
@@ -56,8 +64,73 @@ internal sealed class Despertador : IDisposable
         catch (Exception ex) { Apagar(); Centro.Registro.Anotar("despertar", ex.Message); return null; }
     }
 
+    // ───────────── el modelo propio (openWakeWord) ─────────────
+
+    /// <summary>Lo mínimo para despertar (0..1). Medido con las frases de prueba del entrenamiento.</summary>
+    public const float Umbral = 0.5f;
+    PalabraClave? propio;
+    WaveInEvent? micPropio;
+    /// <summary>El hilo del micrófono usa el modelo mientras otro lo apaga: nunca a la vez (es memoria nativa).</summary>
+    readonly object candadoPropio = new();
+    string idiomaEncendido = "";
+    DateTime ultimaVez = DateTime.MinValue;
+    public bool UsaModeloPropio => propio != null;
+
+    static string CarpetaModelos => Path.Combine(AppContext.BaseDirectory, "Modelos");
+
+    bool EncenderPropio()
+    {
+        var modelo = Path.Combine(CarpetaModelos, "hey_aura.onnx");
+        if (!File.Exists(modelo) || !File.Exists(Path.Combine(CarpetaModelos, "melspectrogram.onnx"))) return false;
+        try
+        {
+            var pc = new PalabraClave(CarpetaModelos, modelo);
+            var mic = new WaveInEvent { WaveFormat = new WaveFormat(PalabraClave.Muestreo, 16, 1), BufferMilliseconds = 80, NumberOfBuffers = 4 };
+            mic.DataAvailable += (s, e) =>
+            {
+                if (!ReferenceEquals(s, micPropio) || propio == null) return;
+                var muestras = new short[e.BytesRecorded / 2];
+                Buffer.BlockCopy(e.Buffer, 0, muestras, 0, muestras.Length * 2);
+                float p;
+                lock (candadoPropio)
+                {
+                    if (propio == null) return;
+                    try { p = propio.Alimentar(muestras); } catch { return; }
+                }
+                // Una vez por llamada: la misma palabra da varios trozos seguidos por encima del umbral.
+                if (p < Umbral || DateTime.Now - ultimaVez < TimeSpan.FromSeconds(2)) return;
+                ultimaVez = DateTime.Now;
+                Centro.Registro.Anotar("despertar", $"«Hey AURA» (modelo propio) con {p:0.00}");
+                Desperto?.Invoke();
+            };
+            mic.RecordingStopped += (_, e) => { if (e.Exception != null) Centro.Registro.Anotar("despertar", "el micrófono se detuvo: " + e.Exception.Message); };
+            propio = pc; micPropio = mic;
+            mic.StartRecording();
+            Centro.Registro.Anotar("despertar", "modelo propio «hey aura» (en el equipo, sin red)");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            ApagarPropio();
+            Centro.Registro.Anotar("despertar", "el modelo propio no arrancó: " + ex.Message + " · sigo con el de Windows");
+            return false;
+        }
+    }
+
+    void ApagarPropio()
+    {
+        var m = micPropio; micPropio = null;
+        if (m != null) { try { m.StopRecording(); } catch { } m.Dispose(); }
+        lock (candadoPropio)
+        {
+            var p = propio; propio = null;
+            p?.Dispose();
+        }
+    }
+
     public void Apagar()
     {
+        ApagarPropio();
         var m = motor; motor = null;
         foreach (var x in extras) { try { x.RecognizeAsyncCancel(); } catch { } x.Dispose(); }
         extras.Clear();
