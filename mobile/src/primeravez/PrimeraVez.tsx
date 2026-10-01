@@ -161,6 +161,18 @@ export function PrimeraVez(_: Props) {
     ir(siguiente(i), 1);
   };
 
+  /** Las preguntas de la encuesta, de una vez: lo ya contestado se queda y se sigue en los permisos. */
+  const saltarEncuesta = () => {
+    const q = preguntaDe(paso);
+    if (q) {
+      const e = { ...b.encuesta };
+      delete e[q.campo];
+      setB((x) => ({ ...x, encuesta: e }));
+    }
+    vibrar('seleccion');
+    ir(Math.max(i + 1, PASOS.indexOf('permisos')), 1);
+  };
+
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', volver);
     return () => sub.remove();
@@ -209,6 +221,7 @@ export function PrimeraVez(_: Props) {
           <BarraProgreso valor={progreso(i)} alto={5} />
         </View>
         <View style={[s.lado, { alignItems: 'flex-end' }, horizontal && s.ladoH]}>
+          {paso.startsWith('encuesta:') && <Boton titulo={tr('Saltar todas', 'Skip all')} variante="fantasma" tam="chico" onPress={saltarEncuesta} />}
           {saltable(paso) && <Boton titulo={tr('Saltar', 'Skip')} variante="fantasma" tam="chico" onPress={saltar} />}
           {/* Acostado, el botón para seguir va arriba: la pantalla es baja y el paso necesita el alto. */}
           {horizontal && boton('chico')}
