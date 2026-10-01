@@ -2764,6 +2764,8 @@ async function preguntarQwen(
       signal: conTope(senal, 60000),
     });
     const raw = await r.text();
+    // Lo fijo queda leído para el turno siguiente (lib/nodo.ts precalentarSistema).
+    void precalentarSistema(system);
     const reply = String(juntarOllama(raw) || '').trim();
     const tk = tokensOllama(raw);
     trazaActual()?.tokens(tk.entrada, tk.salida);
