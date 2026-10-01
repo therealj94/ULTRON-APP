@@ -101,5 +101,6 @@ jobs:
           npx tsx src/compa/pruebas/compa.prueba.mjs
           npx tsx src/avatar3d/pruebas/avatar3d.prueba.mjs
           npx tsx src/avatar3d/pruebas/sincronia.prueba.mjs
+          npx tsx src/avatares/pruebas/video.prueba.mjs
           npx tsx pruebas/mesa/mesa.prueba.mjs
           sh pruebas/oido/todas.sh
