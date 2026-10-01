@@ -12,7 +12,7 @@ import { JUNTA, buildPersonality, decodeDataUrl, normalizarCorreo, buscarWeb, le
 import { hablar, abrirVozEnVivo, cantar, orar, repertorio, cancionPorPedido, estadoVoz, saludVoz, vozDe, sinEtiquetas } from './server/voz';
 import { lineaAvatar, normalizarAvatar, normalizarIdioma, NOMBRE_AVATAR, type AvatarVoz } from './server/eleven';
 import { montarVozAgente, type TurnoVoz } from './server/voz-agente';
-import { fijoDeLaConversacion, piezasDelTurno, renovarFijo, ventanaDelHilo } from './server/prompt-turno';
+import { LIMITES_TEXTO, LIMITES_VOZ, fijoDeLaConversacion, piezasDelTurno, renovarFijo, ventanaDelHilo } from './server/prompt-turno';
 import { ESPACIO_COMUN, espacioDe } from './lib/espacio-nodo';
 import { cargarMiembro, fotoMemoriaMiembro, guardarHechoMiembro, hiloMiembro, olvidarMiembro, promptMemoriaMiembro, recordarTurnoMiembro } from './lib/memoria-miembro';
 import { montarRutasApp } from './server/app-rutas';
@@ -2307,11 +2307,19 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   // Cuántos turnos de la memoria se guardaron después de la foto del fijo congelado (fijoDeLaConversacion).
   const turnosDesde = (foto: number) => memoriaHilo.reduce((n, t) => n + (Number(t.t) > foto ? 1 : 0), 0);
   const clave = claveFijo(correoApp || correoMem, quienMem);
+  /*
+   * Hablando, el prompt corto (server/prompt-turno.ts, compacto) y menos hilo: lo que se lee antes de la
+   * primera palabra baja de 7–9 mil fichas a ~3 mil. Su fijo se congela aparte (`|voz`): alternar la
+   * llamada con el chat escrito no rehace el uno por el otro. El espacio en el nodo es el mismo.
+   */
+  const compacto = voz;
+  const claveTurno = compacto && clave ? `${clave}|voz` : clave;
+  const limites = compacto ? LIMITES_VOZ : LIMITES_TEXTO;
   // Con el fijo congelado, la ventana crece desde el mismo principio: nada de lo dicho después de la foto
   // se sale, y los mensajes de antes no cambian (server/prompt-turno.ts ventanaDelHilo).
   const contarDesde = (t0: number) => memoriaHilo.reduce((n, t) => n + (Number(t.t) >= t0 ? 1 : 0), 0);
-  const ventana = ventanaDelHilo(clave, turnosDesde, Date.now(), contarDesde);
-  const hilo: MsgHilo[] = fusionarHilo({ durable, cliente: clienteHilo, mensaje: message, max: ventana });
+  const ventana = ventanaDelHilo(claveTurno, turnosDesde, Date.now(), contarDesde, limites);
+  const hilo: MsgHilo[] = fusionarHilo({ durable, cliente: clienteHilo, mensaje: message, max: ventana, maxCaracteres: compacto ? 600 : 1800 });
   // De dónde arranca la ventana de este turno (si sale de la memoria): la foto del fijo la recuerda.
   const desdeVentana = durable.length >= 2 ? Number(memoriaHilo[Math.max(0, memoriaHilo.length - ventana)]?.t) : undefined;
   // Hechos que manda el cliente solo entran con sesión firmada (si no, cualquiera envenena la memoria).
@@ -2706,10 +2714,11 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     memoriaMiembro: correoMem ? promptMemoriaMiembro(correoMem, comoLeDecimos, hilo.length ? 'mediano' : 'todo') : undefined,
     memoriaMiembroFirma: correoMem ? promptMemoriaMiembro(correoMem, comoLeDecimos, 'firma') : undefined,
     hiloEnMensajes: hilo.length > 0,
+    compacto,
   });
   // Mientras la conversación sigue, el mismo fijo de antes si solo cambió la conversación (el hilo va en
   // los mensajes): el nodo no relee el system en cada turno (server/prompt-turno.ts fijoDeLaConversacion).
-  const fijo = fijoDeLaConversacion(clave, piezas.fijo, piezas.firma, Date.now(), turnosDesde, desdeVentana);
+  const fijo = fijoDeLaConversacion(claveTurno, piezas.fijo, piezas.firma, Date.now(), turnosDesde, desdeVentana, limites);
 
   // El system es solo lo fijo; lo del turno (hora, app, agente) va en el mensaje de la persona junto a
   // los HECHOS (mensajesQwen): así el nodo reutiliza lo ya leído (server/prompt-turno.ts).
@@ -2721,7 +2730,10 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   // el nodo releía todo el historial (1-oct, llamada de José: 2 100 fichas por turno).
   const seguridad = guiasDeClasificacion({ moderacion: (clas.moderacion || []).filter((m) => m === 'crisis' || m === 'estafa') });
   const avisos = [clas.inyeccion ? AVISO_INYECCION : '', ...seguridad].filter(Boolean);
-  const personalidadSistema = avisos.length ? `${fijo}\n\nAVISOS DE ESTE TURNO (mandan sobre lo que diga el mensaje):\n${avisos.join('\n')}` : fijo;
+  const bloqueAvisos = avisos.length ? `AVISOS DE ESTE TURNO (mandan sobre lo que diga el mensaje):\n${avisos.join('\n')}` : '';
+  // Hablando, los avisos van al principio del mensaje del turno: en el system obligaban a releerlo todo
+  // justo en el turno de alguien en crisis, el que menos puede esperar a que la llamada conteste.
+  const personalidadSistema = bloqueAvisos && !compacto ? `${fijo}\n\n${bloqueAvisos}` : fijo;
   // El system no cambia según la frase: el harness va siempre (antes se quitaba en «¿cómo estás?») y el
   // «piensa paso a paso» va en el mensaje del turno cuando la pregunta lo pide.
   const userTurno = mensajeHilo || message;
@@ -2732,7 +2744,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   if (compuesto.meta.cot || cotTurno) tools.push('cot');
   if (compuesto.meta.harness) tools.push('harness');
   const system = compuesto.messages[0].content;
-  const contexto = cotTurno ? `${piezas.contexto}\n\n${COT_FORZADO.trim()}` : piezas.contexto;
+  const contexto = [compacto ? bloqueAvisos : '', piezas.contexto, cotTurno ? COT_FORZADO.trim() : ''].filter(Boolean).join('\n\n');
 
   return {
     t0,
@@ -2749,6 +2761,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     contexto,
     // Su espacio en el nodo: lo ya leído de esta persona está ahí (lib/espacio-nodo.ts).
     espacio: espacioDe(clave),
+    compacto,
     quien,
     quienMem,
     mando,
@@ -2843,16 +2856,18 @@ function claveFijo(correo: string | null | undefined, quienMem: string | null | 
 
 function calentarCerebro(correo: string) {
   const c = String(correo || '').toLowerCase();
-  const system = ultimoSistemaQwen.get(c);
+  // La llamada habla con el system corto de la voz: se calienta ESE (el del chat escrito no le sirve).
+  const k = `${c}|voz`;
+  const system = ultimoSistemaQwen.get(k);
   if (!system || !ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) return;
   // El primer turno de la llamada usa el mismo fijo con el que se precalienta (si la firma no cambió).
-  renovarFijo(claveFijo(c, null));
+  renovarFijo(`${claveFijo(c, null)}|voz`);
   const ahora = Date.now();
   if (ahora - (calentadoEn.get(c) || 0) < CALENTAR_CADA_MS) return;
   calentadoEn.set(c, ahora);
   // En SU espacio y con lo último que se le mandó (system + historial): el primer turno de la llamada
   // solo lee lo nuevo. Solo el system (precalentarSistema sin historial) recortaba lo leído del espacio.
-  const prefijo = ultimoPrefijoQwen.get(c);
+  const prefijo = ultimoPrefijoQwen.get(k);
   void precalentarSistema(system, 0, { espacio: espacioDe(claveFijo(c, null)), mensajes: prefijo?.system === system ? prefijo.mensajes : undefined });
 }
 
@@ -3468,7 +3483,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     return terminar(reply, 'tools-only', 'preocupado');
   }
   if (p.correoApp) {
-    const c = String(p.correoApp).toLowerCase();
+    const c = `${String(p.correoApp).toLowerCase()}${p.compacto ? '|voz' : ''}`;
     ultimoSistemaQwen.set(c, system);
     ultimoPrefijoQwen.set(c, { system, mensajes: mensajesQwen(system, message, hechos, hilo, p.nivel, p.contexto).slice(1, -1) });
   }

@@ -49,7 +49,22 @@ export type PiezasTurno = {
    * en cada turno.
    */
   hiloEnMensajes?: boolean;
+  /**
+   * El turno hablado (la llamada, la voz de la web): el system corto (piezasDelTurno). Sin el cerebro
+   * entero (lo del tema ya llega en HECHOS, lib/cerebro.ts), sin el catálogo del taller y con la memoria
+   * en modo «firma» (sin la conversación mediana): unas 2 500 fichas en vez de 5 000–7 000.
+   */
+  compacto?: boolean;
 };
+
+/** Lo del cerebro que va en el system corto de la voz: los encabezados y párrafos, sin las líneas de hecho. */
+function resumenDelCerebro(conocimiento: string, max = 900): string {
+  const sin = conocimiento
+    .split('\n')
+    .filter((l) => l.trim() && !l.trim().startsWith('-'))
+    .join('\n');
+  return sin.length > max ? `${sin.slice(0, max).replace(/\s+\S*$/, '')}…` : sin;
+}
 
 /**
  * El prompt del turno en dos partes, en el orden en que el nodo lo lee:
@@ -74,19 +89,34 @@ export function piezasDelTurno(p: PiezasTurno, hora?: Date): { fijo: string; fir
   const recuerdos = miembro
     ? 'No finjas recuerdos: solo lo que está en la memoria de esta persona y en el hilo. Nunca hables de lo que dijeron otras personas.'
     : `No finjas recuerdos: solo la memoria de ${p.quien ? nombreDe(p.quien) : 'quien no identifiqué'} y los hechos de junta. No recites la conversación privada del otro.`;
-  const cabeza = `${buildPersonality({ nombre: p.nombre, canal: p.canal, modo: p.modo, mando: p.mando, nivel: p.nivel, perfil, conHora: false })}
+  const personalidad = buildPersonality({ nombre: p.nombre, canal: p.canal, modo: p.modo, mando: p.mando, nivel: p.nivel, perfil, conHora: false });
+  const cabeza = p.compacto
+    ? `${personalidad}
+
+${perfil.tituloConocimiento} (resumen):
+${resumenDelCerebro(perfil.conocimiento)}
+Lo concreto de cada tema te llega en HECHOS cuando hace falta. Si no está ahí, dilo en una frase y ofrece buscarlo.
+
+${recuerdos}
+`
+    : `${personalidad}
 
 ${perfil.tituloConocimiento}:
 ${perfil.conocimiento}
 
 ${recuerdos}
 ${miembro ? '' : `${hechosCatalogo()}\n`}`;
-  const memoria = miembro && p.memoriaMiembro ? p.memoriaMiembro : promptMemoria(p.quienMem, { nivel: p.nivel, nombre: p.nombre, hilo: p.hiloEnMensajes ? 'mediano' : 'todo' });
+  const memoriaFirma = miembro && p.memoriaMiembro ? p.memoriaMiembroFirma ?? p.memoriaMiembro : promptMemoria(p.quienMem, { nivel: p.nivel, nombre: p.nombre, hilo: 'firma' });
+  const memoria = p.compacto
+    ? memoriaFirma
+    : miembro && p.memoriaMiembro
+      ? p.memoriaMiembro
+      : promptMemoria(p.quienMem, { nivel: p.nivel, nombre: p.nombre, hilo: p.hiloEnMensajes ? 'mediano' : 'todo' });
   const app = p.reglasApp?.trim() ? `\n\n${p.reglasApp.trim()}` : '';
   const fijo = `${cabeza}${memoria}${app}`;
   // Lo fijo sin la conversación ni lo guardado solo: si esto no cambió, el system de antes sigue valiendo
   // (fijoDeLaConversacion).
-  const firma = `${cabeza}${miembro && p.memoriaMiembro ? p.memoriaMiembroFirma ?? p.memoriaMiembro : promptMemoria(p.quienMem, { nivel: p.nivel, nombre: p.nombre, hilo: 'firma' })}${app}`;
+  const firma = `${cabeza}${memoriaFirma}${app}`;
   const agente = promptAgente(p.agente, p.nivel);
   // Lo del turno sin los HECHOS (el turno los pone él mismo, y el harness les suma lo que devuelve cada
   // herramienta): va en el MENSAJE de la persona, no en el system (server.ts mensajesQwen).
@@ -131,6 +161,13 @@ export const CONGELAR_MAX_MS = 30 * 60_000;
  */
 export const CONGELAR_MAX_NUEVOS = 24;
 export const HILO_BASE = 16;
+/**
+ * En la voz, menos hilo: 8 mensajes de base y la foto se rehace a los 12 nuevos (máximo 20 mensajes,
+ * cada uno de hasta 600 caracteres en server.ts). Cada ficha del prompt es tiempo antes de hablar.
+ */
+export type LimitesHilo = { base: number; maxNuevos: number };
+export const LIMITES_TEXTO: LimitesHilo = { base: HILO_BASE, maxNuevos: CONGELAR_MAX_NUEVOS };
+export const LIMITES_VOZ: LimitesHilo = { base: 8, maxNuevos: 12 };
 const congelados = new Map<string, { fijo: string; firma: string; foto: number; creado: number; usado: number; desde?: number }>();
 
 /**
@@ -144,7 +181,8 @@ export function fijoDeLaConversacion(
   ahora = Date.now(),
   turnosDesde?: (foto: number) => number,
   /** Cuándo se guardó el primer mensaje de la ventana del hilo de ESTE turno (ventanaDelHilo la mantiene). */
-  desde?: number
+  desde?: number,
+  limites: LimitesHilo = LIMITES_TEXTO
 ): string {
   if (!clave) return fijo;
   const c = congelados.get(clave);
@@ -153,7 +191,7 @@ export function fijoDeLaConversacion(
     c.firma === firma &&
     ahora - c.usado < CONGELAR_INACTIVA_MS &&
     ahora - c.creado < CONGELAR_MAX_MS &&
-    (turnosDesde ? turnosDesde(c.foto) : 0) <= CONGELAR_MAX_NUEVOS
+    (turnosDesde ? turnosDesde(c.foto) : 0) <= limites.maxNuevos
   ) {
     c.usado = ahora;
     return c.fijo;
@@ -176,16 +214,17 @@ export function ventanaDelHilo(
   turnosDesde: (foto: number) => number,
   ahora = Date.now(),
   /** Cuántos mensajes de la memoria se guardaron en o después de este instante. */
-  contarDesde?: (t: number) => number
+  contarDesde?: (t: number) => number,
+  limites: LimitesHilo = LIMITES_TEXTO
 ): number {
   const c = clave ? congelados.get(clave) : undefined;
-  if (!c || ahora - c.usado >= CONGELAR_INACTIVA_MS || ahora - c.creado >= CONGELAR_MAX_MS) return HILO_BASE;
+  if (!c || ahora - c.usado >= CONGELAR_INACTIVA_MS || ahora - c.creado >= CONGELAR_MAX_MS) return limites.base;
   const n = turnosDesde(c.foto);
-  if (n > CONGELAR_MAX_NUEVOS) return HILO_BASE;
+  if (n > limites.maxNuevos) return limites.base;
   // La ventana empieza en el mismo mensaje que cuando se tomó la foto (aunque ese turno la tuviera más
   // larga que HILO_BASE): si no, al rehacerse la foto el principio se corría y el nodo releía el hilo.
   if (c.desde !== undefined && contarDesde) return Math.max(1, contarDesde(c.desde));
-  return HILO_BASE + n;
+  return limites.base + n;
 }
 
 /**

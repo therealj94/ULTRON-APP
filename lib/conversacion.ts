@@ -166,18 +166,21 @@ export function fusionarHilo(opts: {
   cliente?: TurnoHilo[];
   mensaje: string;
   max?: number;
+  /** Caracteres por mensaje (la voz usa menos: cada ficha es tiempo antes de hablar). */
+  maxCaracteres?: number;
 }): MsgHilo[] {
   const durable = opts.durable || [];
   const cliente = opts.cliente || [];
   const src = durable.length >= 2 ? durable : [...cliente, ...durable];
+  const tope = opts.maxCaracteres ?? 1800;
   const msgs: MsgHilo[] = [];
   for (const t of src.slice(-(opts.max ?? 16))) {
-    const content = String(t.texto || '').trim().slice(0, 1800);
+    const content = String(t.texto || '').trim().slice(0, tope);
     if (!content) continue;
     const role: 'user' | 'assistant' = t.rol === 'ultron' || t.rol === 'assistant' ? 'assistant' : 'user';
     msgs.push({ role, content });
   }
-  const actual = String(opts.mensaje || '').trim().slice(0, 1800);
+  const actual = String(opts.mensaje || '').trim().slice(0, tope);
   if (msgs.length && msgs[msgs.length - 1].role === 'user' && msgs[msgs.length - 1].content === actual) {
     msgs.pop();
   }
