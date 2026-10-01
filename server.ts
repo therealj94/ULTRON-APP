@@ -9,7 +9,7 @@ import { crearComprobadorListo } from './lib/nodo-listo';
 import { sanearDiag } from './lib/diag-saneador';
 import { autocuraDe, fetchNodo, saludNodo, nodoConfigurado, precalentarSistema, NODO_URL as ULTRON_NODO_URL, NODO_SECRETO as ULTRON_NODO_SECRETO, NODO_MODELO as ULTRON_NODO_MODELO } from './lib/nodo';
 import { JUNTA, buildPersonality, decodeDataUrl, normalizarCorreo, buscarWeb, leerPagina } from './server/desk';
-import { hablar, abrirVozEnVivo, cantar, orar, repertorio, cancionPorPedido, estadoVoz, saludVoz, vozDe, sinEtiquetas } from './server/voz';
+import { hablar, abrirVozEnVivo, pasarVozEnVivo, cantar, orar, repertorio, cancionPorPedido, estadoVoz, saludVoz, vozDe, sinEtiquetas } from './server/voz';
 import { lineaAvatar, normalizarAvatar, normalizarIdioma, NOMBRE_AVATAR, type AvatarVoz } from './server/eleven';
 import { montarVozAgente, type TurnoVoz } from './server/voz-agente';
 import { LIMITES_TEXTO, LIMITES_VOZ, fijoDeLaConversacion, piezasDelTurno, renovarFijo, ventanaDelHilo } from './server/prompt-turno';
@@ -1197,27 +1197,8 @@ app.post('/api/electrum/voz', exigirPlataforma('electrum'), limitar(90), async (
       res.setHeader('Content-Type', vivo.contentType);
       res.setHeader('Cache-Control', 'private, max-age=600');
       res.setHeader('X-Motor', vivo.motor);
-      const lector = vivo.cuerpo.getReader();
-      // Si la persona calla o cambia de pregunta, se deja de pedirle audio a ElevenLabs.
-      res.on('close', () => {
-        if (!res.writableEnded) lector.cancel().catch(() => undefined);
-      });
-      const trozos: Buffer[] = [];
-      let entero = true;
-      try {
-        for (;;) {
-          const { done, value } = await lector.read();
-          if (done) break;
-          const b = Buffer.from(value);
-          trozos.push(b);
-          res.write(b);
-        }
-      } catch (e: any) {
-        entero = false;
-        console.warn('[electrum] voz en vivo cortada', String(e?.message || e).slice(0, 120));
-      }
-      res.end();
-      if (entero) vivo.guardar(Buffer.concat(trozos));
+      // Solo se guarda en la caché si llegó entera (server/voz.ts).
+      await pasarVozEnVivo(vivo, res, '[electrum]');
       return;
     }
     const out = vivo?.tipo === 'cache' ? vivo.habla : await hablar({ ...pedido, sinEleven: true });
@@ -1976,27 +1957,8 @@ async function responderVozVivo(req: express.Request, res: express.Response) {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Ultron-TTS', vivo.motor);
     res.setHeader('X-Ultron-Vivo', '1');
-    const lector = vivo.cuerpo.getReader();
-    // Si la persona interrumpe o cambia de pregunta, se deja de pedirle audio a ElevenLabs.
-    res.on('close', () => {
-      if (!res.writableEnded) lector.cancel().catch(() => undefined);
-    });
-    const trozos: Buffer[] = [];
-    let entero = true;
-    try {
-      for (;;) {
-        const { done, value } = await lector.read();
-        if (done) break;
-        const b = Buffer.from(value);
-        trozos.push(b);
-        res.write(b);
-      }
-    } catch (e: any) {
-      entero = false;
-      console.warn('[voz] voz en vivo cortada', String(e?.message || e).slice(0, 120));
-    }
-    res.end();
-    if (entero) vivo.guardar(Buffer.concat(trozos));
+    // Solo se guarda en la caché si llegó entera: una persona que corta no deja un MP3 mocho (server/voz.ts).
+    await pasarVozEnVivo(vivo, res);
   } catch (e: any) {
     console.warn('[voz] en vivo', String(e?.message || e).slice(0, 160));
     if (!res.headersSent) return responderVoz(req, res);

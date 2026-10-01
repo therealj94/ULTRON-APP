@@ -434,6 +434,44 @@ export async function abrirVozEnVivo(opts: {
   };
 }
 
+/** Lo que `pasarVozEnVivo` usa de la respuesta HTTP (express.Response lo cumple; las pruebas lo fingen). */
+type SalidaVoz = { write: (b: Buffer) => unknown; end: () => unknown; on: (evento: 'close', fn: () => void) => unknown; readonly writableEnded: boolean };
+
+/**
+ * Pasa la voz en vivo a la respuesta trozo a trozo y SOLO la guarda en la caché si ElevenLabs la
+ * terminó sola. Si la persona cuelga a medias, `lector.cancel()` hace que `read()` devuelva `done`
+ * como un final normal: antes eso guardaba para siempre un MP3 cortado (basta con 400 bytes), y la
+ * próxima vez esa frase sonaba mocha desde la caché. Devuelve si quedó guardada.
+ */
+export async function pasarVozEnVivo(vivo: { cuerpo: ReadableStream<Uint8Array>; guardar: (audio: Buffer) => void }, res: SalidaVoz, etiqueta = '[voz]'): Promise<boolean> {
+  const lector = vivo.cuerpo.getReader();
+  let cortada = false;
+  // Si la persona interrumpe o cambia de pregunta, se deja de pedirle audio a ElevenLabs.
+  res.on('close', () => {
+    if (res.writableEnded) return;
+    cortada = true;
+    lector.cancel().catch(() => undefined);
+  });
+  const trozos: Buffer[] = [];
+  let entero = true;
+  try {
+    for (;;) {
+      const { done, value } = await lector.read();
+      if (done) break;
+      const b = Buffer.from(value);
+      trozos.push(b);
+      res.write(b);
+    }
+  } catch (e: any) {
+    entero = false;
+    console.warn(`${etiqueta} voz en vivo cortada`, String(e?.message || e).slice(0, 120));
+  }
+  res.end();
+  if (!entero || cortada) return false;
+  vivo.guardar(Buffer.concat(trozos));
+  return true;
+}
+
 export async function hablar(opts: {
   texto: string;
   /** Se acepta y se normaliza por compatibilidad; ya no cambia la voz. */
