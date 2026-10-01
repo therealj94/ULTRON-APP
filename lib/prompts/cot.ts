@@ -37,6 +37,17 @@ export function requiereCot(mensaje: string): boolean {
   return COT_RE.test(String(mensaje || ''));
 }
 
+/**
+ * Pide código de verdad (función, python, snippet, un bloque de código). Es lo que cambia las
+ * instrucciones al modo código (lib/qwen.ts). «Analiza» o «paso a paso» solos NO: en una llamada sobre
+ * la mina salen a cada rato, y cambiaban el system entero (el nodo releía todo; 1-oct).
+ */
+export function pideCodigo(mensaje: string): boolean {
+  const t = String(mensaje || '');
+  // `misterio(10)`: una llamada a función escrita (en la voz no salen paréntesis).
+  return CODIGO_RE.test(t) || /```/.test(t) || /\b[a-z_]\w*\([^()]{0,40}\)/i.test(t);
+}
+
 export function esTareaDeCodigo(mensaje: string): boolean {
   const t = String(mensaje || '');
   return requiereCot(t) || CODIGO_RE.test(t) || /```/.test(t);

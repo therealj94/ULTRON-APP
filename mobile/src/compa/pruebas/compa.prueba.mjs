@@ -1188,6 +1188,27 @@ prueba('manos: recordatorio — permiso de avisos, aviso programado una sola vez
   assert.equal((await programarRecordatorio({ texto: 'X', cuando: ahora + 7200_000 }, { notifee: () => null, ahora: () => ahora })).ok, false, 'sin notifee se dice');
 });
 
+prueba('recordatorio: con el permiso de avisos ya dado NO se vuelve a pedir (pedirlo pausa la app y colgaba la llamada)', async () => {
+  _olvidarRecordatorios();
+  const ahora = Date.UTC(2026, 8, 30, 20, 0);
+  const K = { TriggerType: { TIMESTAMP: 0 }, AlarmType: { SET_AND_ALLOW_WHILE_IDLE: 1 }, AuthorizationStatus: { DENIED: 0, AUTHORIZED: 1 }, AndroidImportance: { HIGH: 4 } };
+  let pedidos = 0;
+  let estado = 1;
+  const m = {
+    requestPermission: async () => (pedidos++, { authorizationStatus: 1 }),
+    getNotificationSettings: async () => ({ authorizationStatus: estado, android: { alarm: 0 } }),
+    createChannel: async (c) => c.id,
+    createTriggerNotification: async (n) => n.id,
+  };
+  const d = { notifee: () => ({ m, k: K }), ahora: () => ahora, dueno: () => 'u-prueba' };
+  assert.equal((await programarRecordatorio({ texto: 'Hacer una llamada', cuando: ahora + 3 * 60_000, llamada: true }, d)).ok, true);
+  assert.equal(pedidos, 0, 'ya estaba dado: no se abre la ventana del permiso');
+  // Sin el permiso todavía, sí se pide (la primera vez).
+  estado = 0;
+  assert.equal((await programarRecordatorio({ texto: 'Otra', cuando: ahora + 4 * 60_000 }, d)).ok, true);
+  assert.equal(pedidos, 1);
+});
+
 /** Un notifee falso con lo que usan los recordatorios: guarda lo programado y lo mostrado. */
 function notifeeFalso({ exacto = false, permiso = 1 } = {}) {
   const K = {

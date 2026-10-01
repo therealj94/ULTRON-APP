@@ -33,7 +33,7 @@ const { hoyMMDD } = await import('../lib/perfil-persona');
 
 /* ------------------------------------------------------------------ los falsos */
 
-type Pedido = { system: string; soloSystem: string; ultimo: string; stream: boolean };
+type Pedido = { system: string; soloSystem: string; ultimo: string; stream: boolean; todo: { role: string; content: string }[] };
 const alNodo: Pedido[] = [];
 /** Qué contesta el 27B según lo que dijo la persona (el texto después de «Junta: »). */
 let contestar: (dicho: string) => string = () => '[EMO: neutral] Claro. Te cuento lo que sé.';
@@ -50,7 +50,7 @@ const nodo = http.createServer((req, res) => {
     const dicho = ultimo.split('\n\nJunta: ').pop() || '';
     // `system` es todo lo que el modelo recibe como instrucciones: el system (lo fijo) y el contexto del
     // turno, que va en el mensaje de la persona (server/prompt-turno.ts, para que el nodo reutilice lo leído).
-    alNodo.push({ system: `${String(msgs[0]?.content || '')}\n${ultimo}`, soloSystem: String(msgs[0]?.content || ''), ultimo, stream: !!j.stream });
+    alNodo.push({ system: `${String(msgs[0]?.content || '')}\n${ultimo}`, soloSystem: String(msgs[0]?.content || ''), ultimo, stream: !!j.stream, todo: msgs.map((m: any) => ({ role: String(m.role), content: String(m.content) })) });
     const respuesta = contestar(dicho);
     if (!j.stream) return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ message: { content: respuesta } }));
     res.writeHead(200, { 'content-type': 'application/x-ndjson' });
@@ -84,6 +84,15 @@ const laya = http.createServer((req, res) => {
     const j = JSON.parse(c || '{}');
     alLaya.push(`${req.url} ${j.texto}`);
     const accion = /no me hables tanto|deja la habladera/.test(j.texto) ? 'callar' : 'ninguna';
+    // «harto»: Laya le pone ánimo molesto (el aviso de ánimo no puede cambiar el system).
+    const etiquetas = /harto/.test(String(j.texto || '')) ? ['molesto'] : [];
+    // El modelo `mensaje` (el clasificador del turno): solo contesta de verdad a «harto»; lo demás, a reglas.
+    if (req.url?.endsWith('/v1/mensaje')) {
+      if (!etiquetas.length) return res.writeHead(503).end();
+      return res
+        .writeHead(200, { 'content-type': 'application/json' })
+        .end(JSON.stringify({ p: { tarea_conversacion: 0.9, molesto: 0.95, razonar: 0.9 }, etiquetas, grupos: { tarea: 'tarea_conversacion' } }));
+    }
     res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ p: { [accion]: 0.92, ninguna: accion === 'ninguna' ? 0.92 : 0.03 }, etiquetas: [], grupos: { accion } }));
   });
 });
@@ -1050,4 +1059,60 @@ test('un miembro de la comunidad (fuera del padrón): lo público, sin taller ni
   assert.match(alNodo.at(-1)!.ultimo, /\n\nJunta: /);
   const sesJunta = await (await fetch(`${BASE}/api/ultron/sesion`, { headers: h() })).json();
   assert.equal(sesJunta.user.nivel, 'junta');
+});
+
+// Al final: deja memoria y la foto del fijo de la persona (cambia el hilo de las pruebas de después).
+test('en una llamada con frases de todo tipo, cada turno manda el mismo prompt de antes más lo nuevo (el nodo no relee)', { skip: !listo }, async () => {
+  // 1-oct, llamada de José: el nodo releía ~2 100 fichas por turno. El system cambiaba según la frase:
+  // el aviso de ánimo de Laya, el harness que se quitaba en «¿cómo estás?» y el «paso a paso».
+  contestar = (d) => (/recuerdes/.test(d) ? '[EMO: neutral] Listo, te llamo a las 7:45 de la noche.' : '[EMO: neutral] Claro, te cuento.');
+  // Con el teléfono conectado, como en la llamada de José: las reglas de la app (≈2 000 fichas) iban en
+  // el mensaje de cada turno.
+  const tel = await canal();
+  const r = await fetch(`${BASE}/api/app/contexto`, {
+    method: 'POST',
+    headers: h(),
+    body: JSON.stringify({ pantalla: 'mesa', contactos: [{ correo: 'beto@x.com', nombre: 'Beto Pérez' }, { correo: 'mama@x.com', nombre: 'Mamá' }], manos: ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame'] }),
+  });
+  assert.equal(r.status, 200);
+  const pase = paseDe();
+  const hilo: { role: string; content: string }[] = [{ role: 'user', content: '[[llamada]]' }, { role: 'assistant', content: '¡Hola, hola! Ya te tengo en la línea. ¿De qué hablamos?' }];
+  const pedidos: Pedido[] = [];
+  for (const dicho of [
+    '¿Cómo estás?',
+    'Bien, bien, bien. Aquí. Necesito que me ayudes en unas cosas. Buscar en internet.',
+    'Ya me tienes harto, la llamada se corta a cada rato, explícame qué pasa con la planta',
+    'Analiza paso a paso cuánto oro sale de cien toneladas a dos gramos por tonelada',
+    'Y fíjate que mañana tengo reunión con la junta, ¿qué me sugieres preparar?',
+    'Cuéntame un chiste corto',
+  ]) {
+    alNodo.length = 0;
+    hilo.push({ role: 'user', content: dicho });
+    const v = await voz(pase, hilo);
+    assert.equal(v.status, 200, dicho);
+    pedidos.push(...alNodo.filter((x) => x.stream));
+    hilo.push({ role: 'assistant', content: v.dicho });
+  }
+  assert.ok(pedidos.length >= 4, `llegaron ${pedidos.length} turnos al 27B`);
+  const sinUltimo = (p: Pedido) => p.todo.slice(0, -1).map((m) => `<${m.role}>${m.content}`).join('');
+  const todo = (p: Pedido) => p.todo.map((m) => `<${m.role}>${m.content}`).join('');
+  for (let i = 1; i < pedidos.length; i++) {
+    assert.equal(pedidos[i].todo[0].content, pedidos[0].todo[0].content, `turno ${i + 1}: el mismo system`);
+    // Todo lo de antes (system e historial) sigue igual: solo se agrega lo nuevo al final.
+    assert.ok(todo(pedidos[i]).startsWith(sinUltimo(pedidos[i - 1])), `turno ${i + 1}: lo de antes no cambia`);
+  }
+  // El paso a paso sigue llegando, en el mensaje del turno.
+  assert.ok(pedidos.some((p) => /PASOS OBLIGATORIOS/.test(p.ultimo.split('HECHOS DE ESTE TURNO')[0])), 'el paso a paso va en el mensaje del turno');
+  assert.ok(pedidos.every((p) => !/PASOS OBLIGATORIOS/.test(p.soloSystem)), 'y no en el system');
+  // Las reglas de la app, en el system; en el mensaje del turno solo lo de este momento.
+  assert.match(pedidos[0].soloSystem, /ACCION_APP: \{"tipo":"atras"\}/);
+  assert.match(pedidos[0].soloSystem, /MANOS \(también puedes/);
+  assert.doesNotMatch(pedidos[0].soloSystem, /AHORA en Honduras: |CONTACTOS \(a quién|DÓNDE ESTÁ \(/);
+  assert.match(pedidos[0].ultimo, /AHORA en Honduras/);
+  assert.match(pedidos[0].ultimo, /CONTACTOS \(a quién puede escribirle[^)]*\): Beto Pérez, Mamá/);
+  assert.doesNotMatch(pedidos[0].ultimo, /ACCION_APP: \{"tipo":"atras"\}/);
+  const ctxTurno = pedidos[0].ultimo.split('HECHOS DE ESTE TURNO')[0];
+  assert.ok(ctxTurno.length < 2_500, `lo del turno es corto (${ctxTurno.length} letras)`);
+  await tel.cerrar();
+  await fetch(`${BASE}/api/app/contexto`, { method: 'POST', headers: h(), body: JSON.stringify({ pantalla: 'mesa', contactos: [], manos: [] }) });
 });

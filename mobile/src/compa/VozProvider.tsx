@@ -116,6 +116,9 @@ export type ApiVoz = {
 
 const VozCtx = createContext<ApiVoz | null>(null);
 
+
+/** Lo que la app tiene que seguir detrás para colgar la llamada (un diálogo del sistema dura menos). */
+export const SEGUNDO_PLANO_MS = 3_000;
 export function useVoz(): ApiVoz {
   const v = useContext(VozCtx);
   if (!v) throw new Error('useVoz fuera de VozProvider');
@@ -374,16 +377,34 @@ export function VozProvider({ children, conCompanera = true }: Props) {
       const r = control.revisar();
       if (r !== 'nada') miga(`voz: ${r === 'sorda' ? 'abierta pero sin audio del micrófono' : 'no conectó a tiempo'}; el audio vuelve al oído del teléfono`);
     }, 1_000);
+    /*
+     * Segundo plano de verdad, no un parpadeo. En Android, cualquier ventana del sistema por encima (el
+     * diálogo de un permiso, aunque ya esté dado y se cierre solo) pausa la app, y React Native lo da como
+     * `background` durante unos milisegundos. 1-oct: poner un recordatorio pide el permiso de avisos y eso
+     * colgaba la llamada justo cuando AURA decía «Listo, te llamo a las 7:45». Se cuelga solo si sigue
+     * detrás pasado SEGUNDO_PLANO_MS.
+     */
+    let detras: ReturnType<typeof setTimeout> | null = null;
     const app = AppState.addEventListener('change', (st) => {
       if (st === 'active') {
+        if (detras) {
+          clearTimeout(detras);
+          detras = null;
+          miga('voz: volvió del segundo plano a tiempo; la llamada sigue');
+          return;
+        }
         precalentar();
         puenteRef.current?.arrancar();
-      } else if (st === 'background') {
-        miga('voz: segundo plano, la llamada del avatar se cuelga');
-        ejecutar(ciclo.apagar());
-        control.segundoPlano();
-        // Sin SSE en segundo plano (batería, datos): al volver se reconecta con Last-Event-ID.
-        puenteRef.current?.parar();
+      } else if (st === 'background' && !detras) {
+        detras = setTimeout(() => {
+          detras = null;
+          if (AppState.currentState === 'active') return;
+          miga('voz: segundo plano, la llamada del avatar se cuelga');
+          ejecutar(ciclo.apagar());
+          control.segundoPlano();
+          // Sin SSE en segundo plano (batería, datos): al volver se reconecta con Last-Event-ID.
+          puenteRef.current?.parar();
+        }, SEGUNDO_PLANO_MS);
       }
     });
     const offPerfil = escuchar('perfil', (p) => {
@@ -458,6 +479,7 @@ export function VozProvider({ children, conCompanera = true }: Props) {
     return () => {
       clearInterval(tic);
       clearInterval(vigia);
+      if (detras) clearTimeout(detras);
       app.remove();
       offPerfil();
       offAccion();

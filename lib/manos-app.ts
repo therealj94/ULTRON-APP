@@ -922,11 +922,21 @@ export function dichoDeMano(a: AccionMano, idioma: IdiomaApp = 'es'): string {
  * Las líneas del prompt para las manos que ESTE teléfono sabe hacer (ninguna si es un APK viejo).
  * Cortas: cada una dice la forma, cuándo usarla con ejemplos como habla la gente aquí, y lo que no.
  */
+/** Las manos: las reglas (fijas) y lo de este momento (cambia), en ese orden. */
 export function instruccionManos(ctx: ContextoApp | null, o: { propuesta?: Propuesta | null; ultimoLeido?: string | null; ahora?: number } = {}): string[] {
+  return [...reglasManos(ctx), ...estadoManos(ctx, o)];
+}
+
+/**
+ * Las reglas de las manos: dependen solo de lo que este teléfono sabe hacer (`ctx.manos`), no del
+ * momento. Van en el system (server/prompt-turno.ts `reglasApp`): igual turno a turno, el nodo no las
+ * relee. Lo que cambia (la hora, a quién responder, los recordatorios, lo que espera su «sí») va en
+ * estadoManos, en el mensaje del turno.
+ */
+export function reglasManos(ctx: ContextoApp | null): string[] {
   const l: string[] = [];
   const puede = (m: Mano) => puedeMano(ctx, m);
   if (!ctx?.manos?.length) return l;
-  const ahora = o.ahora ?? Date.now();
   l.push('MANOS (también puedes, con la misma línea ACCION_APP):');
   if (puede('llamar'))
     l.push(
@@ -936,10 +946,7 @@ export function instruccionManos(ctx: ContextoApp | null, o: { propuesta?: Propu
     l.push(
       '· Leer: {"tipo":"leer","de":"<nombre>"} o {"tipo":"leer"} (lo no leído de todos). «¿qué me dijo Beto?», «léeme mis mensajes», «¿tengo mensajes?». Tú NO ves los mensajes (van cifrados en su teléfono): di solo «A ver…» y el teléfono los lee con tu voz. Nunca inventes lo que dicen.'
     );
-  if (puede('leer') || ctx.chatAbierto)
-    l.push(
-      `· Responder: «respóndele que ya voy» es redactar a ${ctx.chatAbierto ? `${ctx.chatAbierto.nombre} (el chat abierto)` : o.ultimoLeido ? `${o.ultimoLeido} (a quien le leíste de último)` : 'quien te diga'}, igual que «escríbele».`
-    );
+  if (puede('leer')) l.push('· Responder: «respóndele que ya voy» es redactar (igual que «escríbele») a quien diga RESPONDER A, abajo.');
   if (puede('buscar')) l.push('· Buscar: {"tipo":"buscar","q":"<palabras>"}. «busca en mis chats la dirección», «¿dónde me mandaron el número del doctor?» (q: "número del doctor"). Di «Déjame buscar»; el teléfono dice en qué chat está y lo abre.');
   if (puede('idioma')) l.push('· Idioma: {"tipo":"idioma","valor":"en|es"}. «háblame en inglés», «volvamos al español».');
   if (puede('perfil'))
@@ -952,15 +959,29 @@ export function instruccionManos(ctx: ContextoApp | null, o: { propuesta?: Propu
     );
   if (puede('recordatorio') && puede('llamame'))
     l.push(
-      `· Recordatorio, timer o despertador: {"tipo":"recordatorio","texto":"Llamar a Beto","cuando":"AAAA-MM-DDTHH:MM","llamada":true} (hora de Honduras). «recuérdame a las 2 llamar a Beto», «ponme un timer de 10 minutos», «despiértame a las 6»: a esa hora TÚ la llamas y se lo dices. Se pone DIRECTO (no preguntes) y confirma con la hora exacta: «Listo, te llamo a las 2:00 p. m.». Si la hora no está clara, pregunta la hora. AHORA en Honduras: ${ahoraEnHonduras(ahora)}.`
+      `· Recordatorio, timer o despertador: {"tipo":"recordatorio","texto":"Llamar a Beto","cuando":"AAAA-MM-DDTHH:MM","llamada":true} (hora de Honduras). «recuérdame a las 2 llamar a Beto», «ponme un timer de 10 minutos», «despiértame a las 6»: a esa hora TÚ la llamas y se lo dices. Se pone DIRECTO (no preguntes) y confirma con la hora exacta: «Listo, te llamo a las 2:00 p. m.». Si la hora no está clara, pregunta la hora. La hora de ahora: AHORA en Honduras, abajo.`
     );
   else if (puede('recordatorio'))
     l.push(
-      `· Recordatorio: {"tipo":"recordatorio","texto":"Llamar a mi mamá","cuando":"AAAA-MM-DDTHH:MM"} (hora de Honduras). «recuérdame a las 5 llamar a mi mamá», «avísame en media hora que saque la ropa». Como llamar: escribe la línea y PREGUNTA con la hora exacta («¿Te recuerdo "Llamar a mi mamá" hoy a las 5:00 de la tarde?»); se pone solo con su «sí». AHORA en Honduras: ${ahoraEnHonduras(ahora)}.`
+      `· Recordatorio: {"tipo":"recordatorio","texto":"Llamar a mi mamá","cuando":"AAAA-MM-DDTHH:MM"} (hora de Honduras). «recuérdame a las 5 llamar a mi mamá», «avísame en media hora que saque la ropa». Como llamar: escribe la línea y PREGUNTA con la hora exacta («¿Te recuerdo "Llamar a mi mamá" hoy a las 5:00 de la tarde?»); se pone solo con su «sí». La hora de ahora: AHORA en Honduras, abajo.`
     );
   if (puede('recordatorio_llamada') && !puede('llamame'))
     l.push(
       '· Recordatorio con llamada: igual, con "llamada":true, cuando pida que lo LLAMES para recordarle («llámame a las 5 para recordarme la pastilla», «márcame mañana a las 7 y recuérdame la cita»): a esa hora le entra tu llamada y, si contesta, se lo dices con tu voz. Pregunta «¿Te llamo hoy a las 5:00 de la tarde para recordarte …?». «llámame» solo, sin recordar nada, no es esto.'
+    );
+  return l;
+}
+
+/** Lo de este momento para las manos (va en el mensaje del turno, no en el system). */
+export function estadoManos(ctx: ContextoApp | null, o: { propuesta?: Propuesta | null; ultimoLeido?: string | null; ahora?: number } = {}): string[] {
+  const l: string[] = [];
+  const puede = (m: Mano) => puedeMano(ctx, m);
+  if (!ctx?.manos?.length) return l;
+  const ahora = o.ahora ?? Date.now();
+  if (puede('recordatorio')) l.push(`AHORA en Honduras: ${ahoraEnHonduras(ahora)}.`);
+  if (puede('leer') || ctx.chatAbierto)
+    l.push(
+      `RESPONDER A: ${ctx.chatAbierto ? `${ctx.chatAbierto.nombre} (el chat abierto)` : o.ultimoLeido ? `${o.ultimoLeido} (a quien le leíste de último)` : 'quien te diga'}.${ctx.chatAbierto ? ` «Respóndele que ya voy» es redactar a ${ctx.chatAbierto.nombre} (el chat abierto).` : o.ultimoLeido ? ` «Respóndele que ya voy» es redactar a ${o.ultimoLeido} (a quien le leíste de último).` : ''}`
     );
   if (puede('recordatorio') && ctx.recordatorios) {
     const recs = ctx.recordatorios.filter((r) => r.cuando > ahora - 60_000);

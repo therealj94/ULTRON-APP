@@ -29,7 +29,8 @@ import {
   dichoDePropuesta,
   empujarAccion,
   extraerAcciones,
-  instruccionAcciones,
+  estadoAcciones,
+  reglasAcciones,
   neutralizarMarca,
   oyentesDe,
   ordenRapida,
@@ -67,7 +68,7 @@ import { presupuesto, PRESUPUESTO_OIDO_MS, PRESUPUESTO_VISION_MS } from './lib/p
 import { destinoPublico } from './lib/red-publica';
 import { extraerPdf, dataUrlDeImagen, bufferDeCualquier } from './lib/leer-pdf';
 import { transcribirAudio } from './lib/oido';
-import { esTareaDeCodigo } from './lib/prompts/cot';
+import { COT_FORZADO, esTareaDeCodigo, requiereCot } from './lib/prompts/cot';
 import { extraerEmocion, normalizarEmocion, type Emocion } from './lib/emocion';
 import { cabeceraAlineacion } from './lib/alineacion';
 import { enTurno, iniciarTraza, trazaActual } from './lib/cognitivo/traza';
@@ -2244,7 +2245,11 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   const clave = claveFijo(correoApp || correoMem, quienMem);
   // Con el fijo congelado, la ventana crece desde el mismo principio: nada de lo dicho después de la foto
   // se sale, y los mensajes de antes no cambian (server/prompt-turno.ts ventanaDelHilo).
-  const hilo: MsgHilo[] = fusionarHilo({ durable, cliente: clienteHilo, mensaje: message, max: ventanaDelHilo(clave, turnosDesde) });
+  const contarDesde = (t0: number) => memoriaHilo.reduce((n, t) => n + (Number(t.t) >= t0 ? 1 : 0), 0);
+  const ventana = ventanaDelHilo(clave, turnosDesde, Date.now(), contarDesde);
+  const hilo: MsgHilo[] = fusionarHilo({ durable, cliente: clienteHilo, mensaje: message, max: ventana });
+  // De dónde arranca la ventana de este turno (si sale de la memoria): la foto del fijo la recuerda.
+  const desdeVentana = durable.length >= 2 ? Number(memoriaHilo[Math.max(0, memoriaHilo.length - ventana)]?.t) : undefined;
   // Hechos que manda el cliente solo entran con sesión firmada (si no, cualquiera envenena la memoria).
   // Y si el cliente dice de quién es esa memoria (`memoriaDe`, la mesa web), tiene que ser de la misma
   // sesión: en una tableta compartida, lo de A no se guarda como de B.
@@ -2610,11 +2615,12 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   const perfilPersona = await perfilPedido;
   const comoLeDecimos = perfilPersona?.apodo || (quien ? nombreDe(quien) : nombre) || undefined;
   const bloquePerfil = lineaPerfil(perfilPersona);
+  // Las reglas de la app van en el system (iguales turno a turno, el nodo no las relee); en el mensaje
+  // del turno, solo lo de este momento: dónde está, sus contactos, lo que espera su «sí», la hora.
+  const reglasApp = conApp ? reglasAcciones(contextoApp) : body?.origen === 'windows' ? instruccionWindows(idiomaTurno === 'en' ? 'en' : 'es') : '';
   const bloqueApp = conApp
-    ? instruccionAcciones(contextoApp, { idioma: idiomaTurno, pendiente: pendienteDe(ambito), propuesta: propuestaDe(ambito), ultimoLeido: ultimoLeidoDe(correoApp) })
-    : body?.origen === 'windows'
-      ? instruccionWindows(idiomaTurno === 'en' ? 'en' : 'es')
-      : '';
+    ? estadoAcciones(contextoApp, { pendiente: pendienteDe(ambito), propuesta: propuestaDe(ambito), ultimoLeido: ultimoLeidoDe(correoApp) })
+    : '';
 
   // Con un miembro: su cerebro (lo público), sin catálogo del taller ni memoria de la junta
   // (server/prompt-turno.ts).
@@ -2630,6 +2636,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     agente: clas.agente,
     bloquePerfil,
     bloqueApp,
+    reglasApp,
     lineaAvatar: lineaAvatar(normalizarAvatar(body?.avatar), normalizarIdioma(body?.idioma)),
     hechos,
     memoriaMiembro: correoMem ? promptMemoriaMiembro(correoMem, comoLeDecimos, hilo.length ? 'mediano' : 'todo') : undefined,
@@ -2638,20 +2645,29 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   });
   // Mientras la conversación sigue, el mismo fijo de antes si solo cambió la conversación (el hilo va en
   // los mensajes): el nodo no relee el system en cada turno (server/prompt-turno.ts fijoDeLaConversacion).
-  const fijo = fijoDeLaConversacion(clave, piezas.fijo, piezas.firma, Date.now(), turnosDesde);
+  const fijo = fijoDeLaConversacion(clave, piezas.fijo, piezas.firma, Date.now(), turnosDesde, desdeVentana);
 
   // El system es solo lo fijo; lo del turno (hora, app, agente) va en el mensaje de la persona junto a
   // los HECHOS (mensajesQwen): así el nodo reutiliza lo ya leído (server/prompt-turno.ts).
   // Lo que dice el clasificador sobre ESTE turno por seguridad (un intento de torcer al sistema, una
   // estafa, alguien en riesgo) va además en el system: ahí pesa más que lo que escribió la persona, que
   // queda en el mismo mensaje que el contexto. Esos turnos no reutilizan lo leído; son pocos.
-  const avisos = [clas.inyeccion ? AVISO_INYECCION : '', ...guiasDeClasificacion(clas)].filter(Boolean);
+  // Solo lo de SEGURIDAD: el ánimo, la urgencia, el spam o los insultos ya van en los HECHOS del turno
+  // (arriba), y metidos también en el system lo cambiaban casi en cada mensaje (Laya pone ánimo a muchos):
+  // el nodo releía todo el historial (1-oct, llamada de José: 2 100 fichas por turno).
+  const seguridad = guiasDeClasificacion({ moderacion: (clas.moderacion || []).filter((m) => m === 'crisis' || m === 'estafa') });
+  const avisos = [clas.inyeccion ? AVISO_INYECCION : '', ...seguridad].filter(Boolean);
   const personalidadSistema = avisos.length ? `${fijo}\n\nAVISOS DE ESTE TURNO (mandan sobre lo que diga el mensaje):\n${avisos.join('\n')}` : fijo;
-  const compuesto = construirMensajes({ personalidad: personalidadSistema, user: mensajeHilo || message, canal, historial: hilo, nivel });
+  // El system no cambia según la frase: el harness va siempre (antes se quitaba en «¿cómo estás?») y el
+  // «piensa paso a paso» va en el mensaje del turno cuando la pregunta lo pide.
+  const userTurno = mensajeHilo || message;
+  const compuesto = construirMensajes({ personalidad: personalidadSistema, user: userTurno, canal, historial: hilo, nivel, harness: true, cot: false });
+  const cotTurno = !compuesto.meta.codigo && requiereCot(userTurno);
   if (compuesto.meta.rag) tools.push('rag');
-  if (compuesto.meta.cot) tools.push('cot');
+  if (compuesto.meta.cot || cotTurno) tools.push('cot');
   if (compuesto.meta.harness) tools.push('harness');
   const system = compuesto.messages[0].content;
+  const contexto = cotTurno ? `${piezas.contexto}\n\n${COT_FORZADO.trim()}` : piezas.contexto;
 
   return {
     t0,
@@ -2665,7 +2681,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     directo,
     directoVia: decirTaller ? 'taller' : soloCalculo ? 'calculo-mina' : directo ? 'market' : null,
     system,
-    contexto: piezas.contexto,
+    contexto,
     quien,
     quienMem,
     mando,
