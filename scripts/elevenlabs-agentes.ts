@@ -90,8 +90,16 @@ const PRIMERA: Record<AvatarVoz, Record<Idioma, string>> = {
   antonio: { es: '¡Aquí ANT-ONIO! ¿En qué te echo una mano?', en: 'ANT-ONIO here! What can I help you with?' },
 };
 
-/** Lo que el reconocimiento tiene que oír bien (nombres propios de la app). */
-export const PALABRAS_ASR = ['AU-RA', 'Aura', 'Claudio', 'ANT-ONIO', 'Antonio', 'Orden Global', 'Guardián', 'Genesis ID', 'Veta Wallet'];
+/**
+ * Lo que el reconocimiento tiene que oír bien: los nombres propios de la app y, desde el 1-oct (José: «el
+ * micrófono en Windows se confunde muchísimo»), las apps y órdenes que más se piden a las manos de la PC y del
+ * teléfono. «abre exel», «pon spotifai», «cierra el crom» llegaban así y las reglas no las reconocían.
+ */
+export const PALABRAS_ASR = [
+  'AU-RA', 'Aura', 'Claudio', 'ANT-ONIO', 'Antonio', 'Orden Global', 'Guardián', 'Genesis ID', 'Veta Wallet', 'PULSE2CHAT',
+  'Spotify', 'YouTube', 'Excel', 'Word', 'PowerPoint', 'Outlook', 'Chrome', 'Edge', 'WhatsApp', 'Teams', 'Zoom',
+  'Bloc de notas', 'calculadora', 'captura de pantalla', 'volumen', 'siguiente canción', 'pausa', 'recuérdame', 'videollamada',
+];
 
 /** Lo que no hay que tomar como interrupción: asentir mientras el avatar habla. */
 /** Los rellenos de la espera (soft timeout), en cada idioma. */

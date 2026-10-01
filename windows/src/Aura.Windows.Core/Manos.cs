@@ -615,6 +615,8 @@ public static class Parametros
     static readonly Regex MusicaSinMas = new(@"^(?:pon(?:me)?|reproduce|toca|tocame|play|put on)\s+(?:algo de |un poco de |some |la |el )?(?:musica|music|mi musica|my music)$", O);
     static readonly Regex PonAlgo = new(@"^(?:pon(?:me)?|reproduce|toca(?:me)?|play|put on)\s+(?<q>.+)$", O);
     static readonly Regex NoEsMusica = new(@"\b(?:alarma|recordatorio|volumen|brillo|modo|tema|nota|timer|temporizador|pantalla|ventana|mute|pausa|atencion|cuidado|luz|hora|fecha|cursor|escritorio|foco|wifi|bluetooth|reloj|fondo|contrasena|clave|mensaje|correo)\b", O);
+    static readonly Regex PonCancion = new(@"^(?:pon(?:me)?|ponle|reproduce(?:me)?|tocame|play|put on|quiero (?:escuchar|oir)|(?:pon(?:me)?|ponle) a sonar)\s+(?<q>.+)$", O);
+    static readonly Regex NoEsMusicaTampoco = new(@"^(?:esto|eso|aqui|ahi|esta|este|la |el |los |las |un |una |mas |menos |a [a-z]+(?:ar|er|ir)\b)|\b(?:despertador|pelicula|video|serie|canal|subtitulos|idioma|cronometro|contador|aviso|boton|enlace|link|archivo|carpeta|word|excel|powerpoint|chrome|edge|calculadora|notas?|bloc|pausa|silencio|nombre|numero|precio|dolar|lempira)\b", O);
     static readonly Regex PonMusicaSinApp = new(@"^(?:pon(?:me)?|reproduce|tocame|play|put on)\s+(?:(?:la |el |una |un |a |the |some )?(?:cancion|canciones|musica|tema|song|songs|music|album|playlist)\s+(?:de\s+|del\s+|by\s+)?)(?<q>.+)$", O);
 
     /// <summary>«que-suena», «spotify|busqueda», «ytmusic|busqueda», «buscar|busqueda» (la app de música de siempre), o null.</summary>
@@ -639,6 +641,14 @@ public static class Parametros
         {
             var q = Regex.Replace(m.Groups["q"].Value.Trim(), @"^a\s+", "");
             return q.Length is >= 2 and <= 100 ? "buscar|" + (BuscarEnOriginal(texto, q) ?? q) : null;
+        }
+        // «Pon The Verve», «quiero escuchar Bohemian Rhapsody», «reprodúceme Bitter Sweet Symphony» (José, 1-oct): sin «en
+        // Spotify» igual es música; antes se iba al cerebro (segundos más, y a veces decía que la ponía sin ponerla).
+        // Solo con verbos de música y nada que suene a otra cosa («pon la alarma», «pon el volumen», «pon esto…»).
+        if (PonCancion.Match(t) is { Success: true } pc && !NoEsMusica.IsMatch(pc.Groups["q"].Value) && !NoEsMusicaTampoco.IsMatch(pc.Groups["q"].Value))
+        {
+            var q = Regex.Replace(pc.Groups["q"].Value.Trim(), @"^(?:algo de|un poco de|a|some)\s+", "");
+            if (q.Length is >= 3 and <= 100 && MusicaPedida.Claves(q).Count > 0) return "buscar|" + (BuscarEnOriginal(texto, q) ?? q);
         }
         // Laya ya sabe que es música: «pon bad bunny», «tócame algo de Shakira» → buscarlo y ponerlo (no «qué suena»).
         if (laxa && PonAlgo.Match(t) is { Success: true } pa && !NoEsMusica.IsMatch(pa.Groups["q"].Value))

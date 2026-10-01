@@ -6,6 +6,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using GSMTC = global::Windows.Media.Control;
 
+using Aura.Windows.Core;
+
 namespace Aura.Windows.Manos;
 
 /// <summary>Lo que suena ahora, de la app que sea (Spotify, YouTube Music, el navegador…).</summary>
@@ -138,7 +140,10 @@ internal sealed class Musica : IDisposable
             if (v != null)
             {
                 var botones = await Task.Run(() => Controles.Visibles(v.Handle, ingles, 8000, 2500), ct);
-                var play = botones.FirstOrDefault(b => System.Text.RegularExpressions.Regex.IsMatch(b.Nombre, @"^(?:Play|Reproducir|Reproduce)\s+\S", System.Text.RegularExpressions.RegexOptions.IgnoreCase));
+                // Solo un «Reproducir X» que nombre lo pedido: mientras la búsqueda nueva carga, los botones que se ven
+                // son los de la anterior (así volvía a sonar «Bohemian Rhapsody» cuando se pedía «The Verve»).
+                var play = botones.FirstOrDefault(b => System.Text.RegularExpressions.Regex.IsMatch(b.Nombre, @"^(?:Play|Reproducir|Reproduce)\s+\S", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+                                                       && MusicaPedida.Menciona(b.Nombre, q));
                 if (play != null)
                 {
                     Controles.Pulsar(play);

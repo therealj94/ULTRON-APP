@@ -368,6 +368,23 @@ Check(FiltroAcciones.Coherente("pon bachata en spotify", "pon bachatas en Spotif
 Check(FiltroAcciones.Coherente("abre excel", "abre exel") && FiltroAcciones.Coherente("abre spotify", "abre spotifai"), "mal oído, misma app");
 Check(!FiltroAcciones.Coherente("abre word", "abre excel") && !FiltroAcciones.Coherente("pon rock", "pon pop") && !FiltroAcciones.Coherente("abre teams", "abre steam"), "parecida no es cualquiera");
 Check(FiltroAcciones.Parecidas("excel", "exel") && !FiltroAcciones.Parecidas("rock", "pop") && !FiltroAcciones.Parecidas("sol", "sal"), "parecidas");
+// Música sin decir «en Spotify»: se hace aquí mismo, sin esperar al cerebro (José: «puse the verve…»).
+foreach (var (f, q) in new[] { ("pon the verve", "the verve"), ("ponme bohemian rhapsody", "bohemian rhapsody"), ("quiero escuchar the verve", "the verve"), ("reprodúceme bitter sweet symphony", "bitter sweet symphony") })
+    Check(R(f) is { Mano: Mano.Musica } pm && pm.Valor == "buscar|" + q, "música sin app: " + f + " → " + R(f));
+foreach (var f in new[] { "pon la alarma a las 7", "pon el volumen al 50", "pon esto en word", "pon una película", "ponme el despertador", "quiero escuchar el correo", "pon a cargar el celular" })
+    Check(R(f).Mano != Mano.Musica, "no es música: " + f + " → " + R(f));
+// La música: solo cuenta lo que nombra lo pedido (antes le daba play a lo de la búsqueda anterior).
+Check(!MusicaPedida.Menciona("Reproducir Bohemian Rhapsody", "the verve") && MusicaPedida.Menciona("Reproducir Bitter Sweet Symphony de The Verve", "the verve"), "the verve no es bohemian");
+Check(MusicaPedida.Menciona("Play Bohemian Rhapsody - Remastered 2011", "bohemian rhapsody de queen") && MusicaPedida.Menciona("Queen", "bohemian rhapsody de queen"), "lo pedido sí");
+Check(MusicaPedida.Claves("pon una canción de The Verve en Spotify").SequenceEqual(new[] { "verve" }) && MusicaPedida.Menciona("lo que sea", "pon música"), "claves con sustancia; sin claves, no se puede saber");
+// «Oye AURA» con el umbral más bajo, pero sostenido: un pico suelto (ruido) no despierta.
+{
+    var c = new ConfirmaPalabra();
+    Check(!c.Alimentar(0.8f) && c.Alimentar(0.78f), "dos trozos seguidos sobre 0,75 despiertan");
+    c.Reiniciar();
+    Check(!c.Alimentar(0.8f) && !c.Alimentar(0.2f) && !c.Alimentar(0.76f), "un pico suelto no");
+    Check(new ConfirmaPalabra().Alimentar(0.93f), "0,9 o más despierta de una (como antes)");
+}
 // Hacer y comprobar: se espera a VER el resultado, y si no se ve, otra vez.
 {
     int n = 0;
@@ -475,6 +492,17 @@ foreach (var f in new[] { "quién es mejor, claudio o antonio", "cómo se hace u
             for (int i = 0; i + 1280 <= pcm.Length; i += 1280) max = Math.Max(max, pc.Alimentar(pcm.AsSpan(i, 1280)));
             return max;
         }
+        bool Despierta(string wav)
+        {
+            var b = File.ReadAllBytes(Path.Combine(datos, wav))[44..];
+            var pcm = new short[b.Length / 2];
+            Buffer.BlockCopy(b, 0, pcm, 0, pcm.Length * 2);
+            using var pc = new PalabraClave(modelos, Path.Combine(modelos, "hey_aura.onnx"));
+            var c = new ConfirmaPalabra();
+            for (int i = 0; i + 1280 <= pcm.Length; i += 1280) if (c.Alimentar(pc.Alimentar(pcm.AsSpan(i, 1280)))) return true;
+            return false;
+        }
+        Check(Despierta("oye_aura.wav") && !Despierta("oye_laura.wav"), "con el umbral más bajo: «oye aura» sí, «oye laura» no");
         var si = Puntaje("oye_aura.wav"); var no = Puntaje("oye_laura.wav");
         Check(si >= 0.9f, $"«oye aura» la despierta ({si:0.000}; Python da 0.973)");
         Check(no < 0.1f, $"«oye laura, ven» no ({no:0.000})");

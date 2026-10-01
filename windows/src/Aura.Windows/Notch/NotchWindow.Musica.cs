@@ -173,8 +173,18 @@ public partial class NotchWindow
             string? puesto = null;
             try { puesto = await Musica.PonerEnEscritorio(q, Ingles); } catch (Exception ex) { Centro.Registro.Anotar("spotify", ex.Message); }
             pensando = false;
-            if (puesto != null) { Hecho(T("Sonando en Spotify", "Playing on Spotify"), puesto, "\uE8D6", T($"Listo, suena {puesto}.", $"Playing {puesto}.")); return; }
-            Hecho(T("Spotify", "Spotify"), q, "\uE8D6", T($"Te dejé {q} buscado en Spotify; toca play en el primero.", $"I searched {q} in Spotify; hit play on the first one."));
+            if (puesto != null)
+            {
+                // Se dice que suena cuando Windows dice que suena ESO (lo que muestra la tarjeta de música).
+                if (await Verificar.Esperar(() => cancion is { } c && MusicaPedida.Menciona(c.Titulo + " " + c.Artista, q), 5000, 250))
+                { Hecho(T("Sonando en Spotify", "Playing on Spotify"), puesto, "\uE8D6", T($"Listo, suena {puesto}.", $"Playing {puesto}.")); return; }
+                if (cancion is { Titulo.Length: > 0 } otra)
+                { NoPude(T($"Le di play a «{puesto}», pero sigue sonando «{otra.Titulo}». Dale play tú en Spotify o pídemelo otra vez.", $"I pressed play on “{puesto}”, but “{otra.Titulo}” is still playing.")); return; }
+                Hecho(T("Sonando en Spotify", "Playing on Spotify"), puesto, "\uE8D6", T($"Le di play a {puesto}.", $"Pressed play on {puesto}."));
+                return;
+            }
+            // No apareció un botón de lo pedido: no se le da play a otra cosa, y se dice tal cual.
+            NoPude(T($"Te dejé «{q}» buscado en Spotify, pero no pude darle play: tócalo tú en el primero.", $"I searched “{q}” in Spotify but couldn't press play: hit play on the first one."));
             return;
         }
         var app = await Task.Run(() => Musica.Buscar(donde, q));
