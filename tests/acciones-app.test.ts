@@ -25,6 +25,9 @@ import {
   ordenRapida,
   prepararAcciones,
   abrirTurnoApp,
+  deshacerTurnoApp,
+  repetidaEnVoz,
+  REPETIDA_VOZ_MS,
   pendienteAnterior,
   neutralizarMarca,
   pareceOrden,
@@ -459,4 +462,35 @@ test('presencia: «ponte a pantalla completa / al lado / chiquita» se resuelven
   assert.deepEqual(ordenPorReglas('abre los chats')?.accion, { tipo: 'abrir', pantalla: 'chats' });
   assert.equal(dichoDeAcciones([{ tipo: 'presencia', valor: 'lado' }]), 'Me pongo a tu lado.');
   assert.match(instruccionAcciones(null), /"tipo":"presencia"/);
+});
+
+test('turno especulativo: la frase a medias descartada no cuenta como turno y el «sí» sigue valiendo', () => {
+  _reiniciarAccionesApp();
+  const yo = 'jose@x.com';
+  abrirTurnoApp(yo); // «escríbele a Beto que llego tarde»
+  empujarAccion(yo, { tipo: 'redactar', para: 'beto@x.com', texto: 'Llego tarde' });
+  const n = abrirTurnoApp(yo); // «eh…» (ElevenLabs lo pidió en la pausa y lo tiró)
+  deshacerTurnoApp(yo, n);
+  abrirTurnoApp(yo); // «sí, mándalo»
+  assert.equal(pendienteAnterior(yo)?.texto, 'Llego tarde');
+  // Si ya se abrió otro turno, deshacer uno viejo no mueve nada.
+  const viejo = abrirTurnoApp(yo);
+  abrirTurnoApp(yo);
+  deshacerTurnoApp(yo, viejo);
+  assert.equal(pendienteDe(yo), null, 'el borrador ya se soltó por el turno de por medio');
+});
+
+test('turno especulativo: la misma acción en pocos segundos no se hace dos veces', () => {
+  _reiniciarAccionesApp();
+  const amb = 'jose@x.com|tel-1';
+  const t = 1_000_000;
+  const alarma = { tipo: 'recordatorio', texto: 'la olla', minutos: 3 } as any;
+  assert.equal(repetidaEnVoz(amb, alarma, t), false);
+  assert.equal(repetidaEnVoz(amb, alarma, t + 2_000), true, 'la frase entera repite la de la frase a medias');
+  assert.equal(repetidaEnVoz(amb, { ...alarma, minutos: 30 }, t + 2_000), false, 'otra alarma sí se hace');
+  assert.equal(repetidaEnVoz('otra@x.com|tel-1', alarma, t + 2_000), false, 'otra cuenta no cuenta');
+  assert.equal(repetidaEnVoz(amb, alarma, t + REPETIDA_VOZ_MS + 1), false, 'pasado el rato, es una orden nueva');
+  // El boleto (de un solo uso) no hace distinta una lectura repetida.
+  assert.equal(repetidaEnVoz(amb, { tipo: 'leer', boleto: 'a' } as any, t), false);
+  assert.equal(repetidaEnVoz(amb, { tipo: 'leer', boleto: 'b' } as any, t + 500), true);
 });

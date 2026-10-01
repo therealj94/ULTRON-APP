@@ -134,7 +134,9 @@ function config(avatar: AvatarVoz, idioma: Idioma, secretId: string, modeloTts: 
       turn: {
         turn_model: 'turn_v3',
         turn_eagerness: 'normal',
-        speculative_turn: false,
+        // Turno especulativo (José, 1-oct): la respuesta se pide en la pausa. Las acciones esperan a que
+        // el turno se confirme (server/voz-agente.ts, RetencionAcciones): una frase a medias no hace nada.
+        speculative_turn: true,
         interruption_ignore_terms: ASENTIR[idioma],
         interruption_ignore_term_languages: [idioma],
         merge_with_default_ignore_terms: true,

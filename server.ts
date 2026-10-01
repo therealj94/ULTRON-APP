@@ -11,7 +11,7 @@ import { autocuraDe, fetchNodo, saludNodo, nodoConfigurado, precalentarSistema, 
 import { JUNTA, buildPersonality, decodeDataUrl, normalizarCorreo, buscarWeb, leerPagina } from './server/desk';
 import { hablar, abrirVozEnVivo, pasarVozEnVivo, cantar, orar, repertorio, cancionPorPedido, estadoVoz, saludVoz, vozDe, sinEtiquetas } from './server/voz';
 import { lineaAvatar, normalizarAvatar, normalizarIdioma, NOMBRE_AVATAR, type AvatarVoz } from './server/eleven';
-import { montarVozAgente, type TurnoVoz } from './server/voz-agente';
+import { montarVozAgente, type RetencionAcciones, type TurnoVoz } from './server/voz-agente';
 import { interruptor } from './lib/interruptores';
 import { LIMITES_TEXTO, LIMITES_VOZ, fijoDeLaConversacion, piezasDelTurno, renovarFijo, ventanaDelHilo } from './server/prompt-turno';
 import { ESPACIO_COMUN, espacioDe } from './lib/espacio-nodo';
@@ -27,11 +27,14 @@ import {
   aparatoValido,
   contextoDe,
   decibleHasta,
+  deshacerTurnoApp,
   dichoDeAcciones,
   dichoDePropuesta,
   empujarAccion,
   extraerAcciones,
   estadoAcciones,
+  nuevoIdAccion,
+  repetidaEnVoz,
   reglasAcciones,
   neutralizarMarca,
   oyentesDe,
@@ -44,6 +47,7 @@ import {
   propuestaDe,
   soltarPropuesta,
   ultimoLeidoDe,
+  type AccionApp,
   type ContextoApp,
   type Propuesta,
   type EventoAccion,
@@ -2103,6 +2107,12 @@ type OpcionesTurno = {
    * escribe PEDIR_HERRAMIENTA, antes de terminar su respuesta. El SSE de la mesa no la usa.
    */
   alTarea?: (herramienta: string) => void;
+  /**
+   * La conversación de voz: las acciones para el teléfono (y lo que anotan para el «sí» siguiente) no se
+   * hacen al momento sino cuando la voz confirma el turno, y el turno de la cuenta se deshace si la voz
+   * lo descarta (turno especulativo de ElevenLabs: server/voz-agente.ts, RetencionAcciones).
+   */
+  retener?: RetencionAcciones;
 };
 
 /**
@@ -2765,6 +2775,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     avatar: normalizarAvatar(body?.avatar),
     idioma: idiomaTurno,
     senal: opciones.senal,
+    retener: opciones.retener,
     nivel,
   };
 }
@@ -3162,11 +3173,19 @@ async function ordenDeApp(body: any, opciones: OpcionesTurno = {}): Promise<{ de
     orden.decir = orden.decir && /[a-z]/i.test(orden.decir) && /calling/i.test(orden.decir) ? "We're already on a call. Tell me!" : 'Ya estamos en llamada. ¡Dime!';
   }
   // Llamar y recordar se preguntan primero: la propuesta espera el «sí» del turno siguiente.
-  if (orden.propuesta) anotarPropuesta(amb, orden.propuesta);
-  if (orden.soltarPropuesta) soltarPropuesta(amb);
   // El evento (con su id) va por el canal del aparato y el MISMO va en la respuesta del turno: la
   // app deduplica por id y no hace la acción dos veces (Beto recibió dos mensajes, 29-sep).
-  const eventos = orden.accion ? [empujarAccion(correo, orden.accion, { aparato: aparatoValido(body?.aparato) }).evento] : [];
+  const eventos = empujarDelTurno(correo, orden.accion ? [orden.accion] : [], {
+    aparato: aparatoValido(body?.aparato),
+    retener: opciones.retener,
+    antes:
+      orden.propuesta || orden.soltarPropuesta
+        ? () => {
+            if (orden.propuesta) anotarPropuesta(amb, orden.propuesta);
+            if (orden.soltarPropuesta) soltarPropuesta(amb);
+          }
+        : undefined,
+  });
   // El turno queda en el hilo como cualquier otro (sin esperar a S3): el de la junta o el del miembro.
   const quienMem = body?.nivel === 'junta' ? quienVerificado(body, body?.sesion || null) : null;
   // En orden (lo de la persona y después lo que dijo AU-RA); hablando, con tope: sigue en segundo plano.
@@ -3181,9 +3200,42 @@ async function ordenDeApp(body: any, opciones: OpcionesTurno = {}): Promise<{ de
  * Empieza el turno de la cuenta para las acciones de la app (lo hace CADA turno con sesión, venga de
  * donde venga): el borrador que espera el «sí» solo sobrevive si este es el turno siguiente.
  */
-function empezarTurnoDeCuenta(body: any) {
+function empezarTurnoDeCuenta(body: any, opciones: OpcionesTurno = {}) {
   const correo = body?.canal !== 'telegram' && body?.sesion?.correo ? String(body.sesion.correo).toLowerCase() : '';
-  if (correo) abrirTurnoApp(ambitoApp(correo, body?.aparato));
+  if (!correo) return;
+  const amb = ambitoApp(correo, body?.aparato);
+  const n = abrirTurnoApp(amb);
+  // Una frase a medias que la voz descartó no cuenta como turno: el «sí» que viene sigue valiendo.
+  opciones.retener?.alDescartar(() => deshacerTurnoApp(amb, n));
+}
+
+/**
+ * Empuja las acciones de un turno. Fuera de la voz, al momento (los eventos con su boleto van también
+ * en la respuesta). En la voz, cuando el turno se confirma (`retener`), y la misma acción repetida en
+ * pocos segundos no se hace dos veces (repetidaEnVoz). `antes` y `despues` son lo que el turno anota
+ * para el «sí» siguiente, en el mismo orden de siempre respecto al empuje.
+ */
+function empujarDelTurno(
+  correo: string,
+  acciones: AccionApp[],
+  o: { aparato: string | null; retener?: RetencionAcciones; antes?: () => void; despues?: () => void }
+): EventoAccion[] {
+  if (!o.retener) {
+    o.antes?.();
+    const eventos = acciones.map((a) => empujarAccion(correo, a, { aparato: o.aparato }).evento);
+    o.despues?.();
+    return eventos;
+  }
+  // Nada que hacer: el turno no espera ninguna confirmación (la respuesta cierra al terminar).
+  if (!acciones.length && !o.antes && !o.despues) return [];
+  const eventos = acciones.map((accion) => ({ id: nuevoIdAccion(), accion }));
+  const amb = ambitoApp(correo, o.aparato);
+  o.retener.hacer(() => {
+    o.antes?.();
+    for (const e of eventos) if (!repetidaEnVoz(amb, e.accion)) empujarAccion(correo, e.accion, { aparato: o.aparato, id: e.id });
+    o.despues?.();
+  });
+  return eventos;
 }
 
 /**
@@ -3197,7 +3249,7 @@ function empezarTurnoDeCuenta(body: any) {
  */
 function accionesDelCerebro(
   texto: string,
-  p: { correoApp: string; contextoApp: ContextoApp | null; crudo: string; conApp: boolean; aparato: string | null; idioma: 'es' | 'en' },
+  p: { correoApp: string; contextoApp: ContextoApp | null; crudo: string; conApp: boolean; aparato: string | null; idioma: 'es' | 'en'; retener?: RetencionAcciones },
   delModelo: boolean
 ): { texto: string; acciones: EventoAccion[]; sustituido: boolean } {
   if (!delModelo) return { texto: neutralizarMarca(texto), acciones: [], sustituido: false };
@@ -3215,10 +3267,13 @@ function accionesDelCerebro(
     propuesta: previa,
     alProponer: (x) => (nueva.p = x),
   });
-  const eventos = listas.map((a) => empujarAccion(p.correoApp, a, { aparato: p.aparato }).evento);
   const propuesta = nueva.p;
   // La propuesta se anota DESPUÉS de empujar: una llamada cumplida suelta la vieja y no la nueva.
-  if (propuesta) anotarPropuesta(amb, propuesta);
+  const eventos = empujarDelTurno(p.correoApp, listas, {
+    aparato: p.aparato,
+    retener: p.retener,
+    despues: propuesta ? () => anotarPropuesta(amb, propuesta) : undefined,
+  });
   const mudo = !extraerEmocion(limpio).texto.trim();
   // El modelo escribió solo la línea: se dice la frase de la acción o, si era una propuesta, la pregunta.
   // Una llamada o un recordatorio que se cumplió: con el nombre y la hora que la persona confirmó.
@@ -3253,7 +3308,7 @@ async function correrTurno(body: any, opciones: OpcionesTurno = {}): Promise<Sal
 
 async function correrTurnoInterno(body: any, opciones: OpcionesTurno = {}): Promise<SalidaTurno> {
   const t00 = Date.now();
-  empezarTurnoDeCuenta(body);
+  empezarTurnoDeCuenta(body, opciones);
   const rapida = await ordenDeApp(body, opciones);
   if (rapida) {
     return { reply: rapida.decir, voz: rapida.decir, emocion: 'neutral', via: rapida.via, mode: String(body?.mode || 'GUARDIAN'), ms: Date.now() - t00, herramientas: ['app'], foto: null, acciones: rapida.acciones, honesto: true };
@@ -3413,7 +3468,8 @@ montarVozAgente(app, {
       })(),
       { enviar: t.enviar, fin: () => {} },
       // Las tareas lentas se le avisan a la voz como un evento más del turno (`tarea`).
-      { soloConsulta: true, senal: t.senal, interrumpida: t.interrumpida, voz: true, alTarea: (herramienta) => t.enviar('tarea', { herramienta }) }
+      // Las acciones esperan a que la voz confirme el turno (turno especulativo): t.retener.
+      { soloConsulta: true, senal: t.senal, interrumpida: t.interrumpida, voz: true, retener: t.retener, alTarea: (herramienta) => t.enviar('tarea', { herramienta }) }
     ),
 });
 
@@ -3495,7 +3551,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     send(evento, { text: quitarExpresiones(texto), voz: texto });
   };
 
-  empezarTurnoDeCuenta(body);
+  empezarTurnoDeCuenta(body, opciones);
   // Una orden simple para la app no espera al cerebro.
   const rapida = await ordenDeApp(body, opciones);
   if (rapida) {

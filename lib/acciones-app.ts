@@ -257,10 +257,10 @@ export function empujarAmbiente(correo: string, aparato: string | null | undefin
  * evento (su id va también en la respuesta del turno, para que la app no la haga dos veces) y a
  * cuántos canales llegó.
  */
-export function empujarAccion(correo: string, accion: AccionApp, o: { aparato?: string | null } = {}): { evento: EventoAccion; entregada: number } {
+export function empujarAccion(correo: string, accion: AccionApp, o: { aparato?: string | null; id?: string } = {}): { evento: EventoAccion; entregada: number } {
   // Leer y buscar llevan un boleto de un solo uso: con él vuelve la lectura del teléfono (lecturaDe).
   if (accion.tipo === 'leer' || accion.tipo === 'buscar') accion = { ...accion, boleto: anotarLectura(correo) };
-  const evento: EventoAccion = { id: crypto.randomBytes(6).toString('base64url'), accion };
+  const evento: EventoAccion = { id: o.id || nuevoIdAccion(), accion };
   const aparato = aparatoValido(o.aparato);
   // Lo que espera el «sí» es de ESTE aparato (ámbito), no de la cuenta entera.
   const amb = ambitoApp(correo, aparato);
@@ -283,6 +283,30 @@ export function empujarAccion(correo: string, accion: AccionApp, o: { aparato?: 
   // «Respóndele» después de leer: a quien se le leyó.
   if (accion.tipo === 'leer' && accion.de) ultimosLeidos.set(clave(correo), { de: accion.de, t: Date.now() });
   return { evento, entregada };
+}
+
+/** El id de un evento de acción. Un turno de voz lo pide antes de empujar (la acción espera a que se confirme). */
+export function nuevoIdAccion(): string {
+  return crypto.randomBytes(6).toString('base64url');
+}
+
+/**
+ * La misma acción, otra vez, en pocos segundos y en el mismo aparato: el respaldo del turno especulativo
+ * de la voz. Si ElevenLabs no avisó que descartó la frase a medias («pon una alarma en tres minutos»)
+ * y después llega la frase entera con la misma orden, la segunda no se hace. Anota la acción si es nueva.
+ */
+export const REPETIDA_VOZ_MS = 10_000;
+const hechasVoz = new Map<string, { firma: string; t: number }[]>();
+export function repetidaEnVoz(amb: string, accion: AccionApp, ahora = Date.now()): boolean {
+  const k = clave(amb);
+  const { boleto: _b, ...resto } = accion as AccionApp & { boleto?: string };
+  const firma = JSON.stringify(resto);
+  const lista = (hechasVoz.get(k) || []).filter((x) => ahora - x.t < REPETIDA_VOZ_MS);
+  const repetida = lista.some((x) => x.firma === firma);
+  if (!repetida) lista.push({ firma, t: ahora });
+  if (lista.length) hechasVoz.set(k, lista);
+  else hechasVoz.delete(k);
+  return repetida;
 }
 
 /* ------------------------------------------------------------------ la reconexión (Last-Event-ID) */
@@ -411,6 +435,16 @@ export function abrirTurnoApp(correo: string): number {
   return n;
 }
 
+/**
+ * El turno `n` no contó: era una frase a medias que la voz descartó (turno especulativo de ElevenLabs).
+ * Si ningún otro turno se abrió después, el contador vuelve atrás y el «sí» del turno siguiente sigue
+ * respondiendo al borrador o a la propuesta de antes.
+ */
+export function deshacerTurnoApp(correo: string, n: number) {
+  const k = clave(correo);
+  if (turnosApp.get(k) === n) turnosApp.set(k, n - 1);
+}
+
 export function anotarPendiente(correo: string, p: { para: string; texto: string }, ahora = Date.now()) {
   pendientes.set(clave(correo), { para: p.para, texto: p.texto, t: ahora, turno: turnoAppActual(correo) });
   // Un «sí» tiene UN significado: el borrador nuevo reemplaza a la llamada o al recordatorio que esperaba.
@@ -533,6 +567,7 @@ export function _reiniciarAccionesApp() {
   contextos.clear();
   pendientes.clear();
   turnosApp.clear();
+  hechasVoz.clear();
   propuestas.clear();
   lecturas.clear();
   registro.clear();
