@@ -64,9 +64,10 @@ function archivoDe(mod: number): Promise<string> {
     p = (async () => {
       const a = Asset.fromModule(mod);
       await a.downloadAsync();
-      const uri = a.localUri || '';
+      const uri = a.localUri || a.uri || '';
       // `file:///android_res/…` es la dirección del recurso dentro de la APK: el reproductor no la abre.
-      if (!/^(file|content):/.test(uri) || uri.startsWith('file:///android_res/')) throw new Error(`el clip no quedó en archivo (${uri.slice(0, 40) || 'sin dirección'})`);
+      // Lo demás se reproduce: un archivo (teléfono), o http(s)/blob (desarrollo y web, Codex en #109).
+      if (!/^(file|content|https?|blob):/.test(uri) || uri.startsWith('file:///android_res/')) throw new Error(`el clip no quedó en archivo (${uri.slice(0, 40) || 'sin dirección'})`);
       return uri;
     })();
     p.catch(() => archivos.delete(mod));
