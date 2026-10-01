@@ -112,7 +112,12 @@ public partial class NotchWindow
                 case Mano.VolumenSubir: Escritorio.Volumen(true, Parametros.Limpiar(texto).Contains("poco") ? 2 : 5); Hecho(T("Volumen arriba", "Volume up"), "", ""); break;
                 case Mano.VolumenBajar: Escritorio.Volumen(false, Parametros.Limpiar(texto).Contains("poco") ? 2 : 5); Hecho(T("Volumen abajo", "Volume down"), "", ""); break;
                 case Mano.Silenciar: Escritorio.Mute(); Hecho(T("Sonido", "Sound"), T("Silencio activado o quitado", "Mute toggled"), ""); break;
-                case Mano.MultimediaPausa: if (!await musica.PlayPausa()) Escritorio.PlayPausa(); HechoMusica(T("Play / pausa", "Play / pause"), 4); break;
+                case Mano.MultimediaPausa:
+                    // «Pausa» con la música ya en pausa (o «sigue» con la música sonando) no la alterna al revés.
+                    if (!(p.Valor == "pausar" && cancion is { Sonando: false } || p.Valor == "reanudar" && cancion is { Sonando: true }))
+                        if (!await musica.PlayPausa()) Escritorio.PlayPausa();
+                    HechoMusica(p.Valor switch { "pausar" => T("Música en pausa", "Music paused"), "reanudar" => T("Música sonando", "Music playing"), _ => T("Play / pausa", "Play / pause") }, 4);
+                    break;
                 case Mano.MultimediaSiguiente: if (!await musica.Siguiente()) Escritorio.Siguiente(); HechoMusica(T("Siguiente canción", "Next track"), 5); break;
                 case Mano.MultimediaAnterior: if (!await musica.Anterior()) Escritorio.Anterior(); HechoMusica(T("Canción anterior", "Previous track"), 5); break;
                 case Mano.Escritorio: Escritorio.MostrarEscritorio(); Hecho(T("Escritorio", "Desktop"), "", ""); break;

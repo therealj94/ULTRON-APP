@@ -156,6 +156,19 @@ Check(R("resume lo que copié") is { Mano: Mano.Portapapeles }, "portapapeles");
 Check(R("abre el último archivo que descargué") is { Mano: Mano.AbrirArchivo, Valor: "ultimo-descargado" }, "ultima descarga");
 Check(R("abre el archivo del contrato") is { Mano: Mano.AbrirArchivo, Valor: "contrato" }, "archivo por nombre");
 Check(R("dale play").Mano == Mano.MultimediaPausa && R("dale a play").Mano == Mano.MultimediaPausa, "dale play es musica");
+// ── Música por voz: pausa, siguiente y anterior dichas como se dicen ──
+foreach (var f in new[] { "pausa la música", "pon pausa", "para la música", "detén la música", "quita la música", "ya para la música por favor", "pause the music", "stop the music" })
+    Check(R(f) is { Mano: Mano.MultimediaPausa, Valor: "pausar" }, "pausar música: " + f + " → " + R(f));
+foreach (var f in new[] { "dale play", "reanuda la música", "sigue la música", "continúa la canción", "sigue con la canción", "resume the music", "play" })
+    Check(R(f) is { Mano: Mano.MultimediaPausa, Valor: "reanudar" }, "reanudar música: " + f + " → " + R(f));
+foreach (var f in new[] { "siguiente canción", "next song", "pasa a la siguiente", "pon la que sigue", "otra canción", "skip" })
+    Check(R(f).Mano == Mano.MultimediaSiguiente, "siguiente: " + f + " → " + R(f));
+foreach (var f in new[] { "la anterior", "regresa la canción", "regrésala", "la de antes", "pon la de antes", "otra vez la anterior", "vuelve a la anterior", "canción anterior", "previous", "previous song" })
+    Check(R(f).Mano == Mano.MultimediaAnterior, "anterior: " + f + " → " + R(f));
+// «para» o «detente» solos son para AURA, nunca para la canción; ni hablar de la canción anterior la regresa.
+foreach (var f in new[] { "para", "detente", "para de hablar", "la canción anterior era mejor", "la de antes me gustaba más" })
+    Check(R(f).Mano is not (Mano.MultimediaPausa or Mano.MultimediaAnterior or Mano.MultimediaSiguiente), "no es la música: " + f + " → " + R(f));
+Check(R("para de hablar").Mano == Mano.Callar && R("para todo").Mano == Mano.Pausa, "para de hablar calla; para todo pausa");
 
 // ── 1.2: música, correo, agenda ──
 Check(R("qué está sonando") is { Mano: Mano.Musica, Valor: "que-suena" }, "que suena");

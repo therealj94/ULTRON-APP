@@ -27,6 +27,8 @@ public partial class NotchWindow
     AgendaCuenta? agenda;
 
     bool MusicaSonando => ajustes.MostrarMusica && cancion is { Sonando: true };
+    /// <summary>Hay una canción (sonando o en pausa): con el ratón encima del reposo salen sus controles.</summary>
+    bool MusicaALaMano => ajustes.MostrarMusica && cancion != null;
 
     void IniciarMusicaYCuentas()
     {
@@ -41,18 +43,19 @@ public partial class NotchWindow
     {
         cancion = c;
         cancionDesde = DateTime.Now;
-        PortadaChica.Visibility = BarrasMusica.Visibility = MusicaSonando ? Visibility.Visible : Visibility.Collapsed;
         BarrasMusica.Nivel = MusicaSonando ? 0.55 : 0;
         if (c == null) { musicaVisible = false; Recalcular(); return; }
         TituloMusica.Text = c.Titulo;
         ArtistaMusica.Text = c.Artista.Length > 0 ? $"{c.Artista} · {c.App}" : c.App;
-        BotonPlayMusica.Content = c.Sonando ? "" : "";
+        BotonPlayMusica.Content = BotonPlayChico.Content = c.Sonando ? "\uE769" : "\uE768";
+        ZonaMusicaChica.ToolTip = (c.Artista.Length > 0 ? $"{c.Titulo} · {c.Artista}" : c.Titulo) + T(" — toca para ver la tarjeta", " — click to open the card");
         var img = Imagen(c.Portada);
         PortadaChica.Background = img != null ? new ImageBrush(img) { Stretch = Stretch.UniformToFill } : (Brush)FindResource("Superficie2");
         PortadaGrande.Background = img != null ? new ImageBrush(img) { Stretch = Stretch.UniformToFill } : (Brush)FindResource("Superficie2");
         GlifoMusica.Visibility = img != null ? Visibility.Collapsed : Visibility.Visible;
         // Canción nueva: la tarjeta aparece unos segundos (como la isla) si no hay algo más importante.
-        if (nueva && c.Sonando && ajustes.MostrarMusica && !hablandoAhora && !escuchando) MostrarTarjetaMusica(5);
+        // Con el ratón sobre el reposo los controles ya están a la mano: la tarjeta no se le pone encima.
+        if (nueva && c.Sonando && ajustes.MostrarMusica && !hablandoAhora && !escuchando && !(raton && modo == Modo.Reposo)) MostrarTarjetaMusica(5);
         Recalcular();
     }
 
@@ -90,6 +93,38 @@ public partial class NotchWindow
     async void MusicaPlay(object s, RoutedEventArgs e) { e.Handled = true; if (!await musica.PlayPausa()) Escritorio.PlayPausa(); MostrarTarjetaMusica(5); }
     async void MusicaSiguiente(object s, RoutedEventArgs e) { e.Handled = true; if (!await musica.Siguiente()) Escritorio.Siguiente(); MostrarTarjetaMusica(5); }
     async void MusicaAnterior(object s, RoutedEventArgs e) { e.Handled = true; if (!await musica.Anterior()) Escritorio.Anterior(); MostrarTarjetaMusica(5); }
+
+    /// <summary>
+    /// La música en el reposo: sin ratón, la portada y las barritas (si suena); con el ratón encima, la portada
+    /// y los controles (también en pausa, para poder volver a darle play). Las barritas se apartan para hacerles sitio.
+    /// </summary>
+    void PintarMusicaChica()
+    {
+        bool controles = modo == Modo.Reposo && raton && MusicaALaMano;
+        ControlesChicos.Visibility = controles ? Visibility.Visible : Visibility.Collapsed;
+        PortadaChica.Visibility = MusicaSonando || controles ? Visibility.Visible : Visibility.Collapsed;
+        BarrasMusica.Visibility = MusicaSonando && !controles ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    // Los controles chicos del reposo: actúan sin abrir la tarjeta (el ratón ya está ahí).
+    async void MusicaPlayChico(object s, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        var antes = cancion?.Sonando;
+        if (!await musica.PlayPausa()) Escritorio.PlayPausa();
+        // Se ve al instante; si Windows ya avisó del cambio (AlCambiarMusica), su glifo manda.
+        if (cancion is { } c && c.Sonando == antes) BotonPlayChico.Content = c.Sonando ? "\uE768" : "\uE769";
+    }
+    async void MusicaSiguienteChico(object s, RoutedEventArgs e) { e.Handled = true; if (!await musica.Siguiente()) Escritorio.Siguiente(); }
+    async void MusicaAnteriorChico(object s, RoutedEventArgs e) { e.Handled = true; if (!await musica.Anterior()) Escritorio.Anterior(); }
+
+    /// <summary>Tocar la portada chica (o sus barritas) abre la tarjeta completa de lo que suena.</summary>
+    void PortadaChicaClic(object s, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (cancion == null || modo != Modo.Reposo) return;
+        e.Handled = true;
+        MostrarTarjetaMusica(6);
+    }
 
     /// <summary>Las manos de música: qué suena, buscar en Spotify o YouTube Music.</summary>
     async Task HacerMusica(string valor)

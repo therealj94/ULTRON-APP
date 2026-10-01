@@ -11,7 +11,7 @@ type Aj = Record<string, any>;
 export function vistaAjustes(): HTMLElement {
   const cuerpo = h('div', null, h('span', { class: 'cargando' }));
   const secciones = [
-    ['cuenta', T('Cuenta', 'Account')], ['avatar', T('Avatar e idioma', 'Avatar & language')], ['voz', T('Voz y escucha', 'Voice & listening')],
+    ['cuenta', T('Cuenta', 'Account')], ['avatar', T('Avatar, idioma y notch', 'Avatar, language & notch')], ['voz', T('Voz y escucha', 'Voice & listening')],
     ['conexiones', T('Conexiones', 'Connections')], ['avisos', T('Notificaciones', 'Notifications')], ['cuentas', T('Correo y agenda', 'Email & calendar')],
     ['privacidad', T('Privacidad y diagnóstico', 'Privacy & diagnostics')], ['actualizar', T('Actualizaciones', 'Updates')], ['atajos', T('Atajos', 'Shortcuts')],
   ];
@@ -41,8 +41,23 @@ export function vistaAjustes(): HTMLElement {
         : h('p', null, T('No has entrado.', 'Not signed in.')),
       h('p', { class: 'nota' }, T('Tu sesión de AU-RA dura 14 días. Con Genesis ID no se guarda ninguna clave: al vencer, vuelves a entrar con Veta Wallet.', 'Your session lasts 14 days.')));
 
+    // ── Vidrio del notch: 0.55 deja ver el fondo; 1 es el negro sólido de antes. Se guarda al soltar (guardar repinta la vista). ──
+    const vidrio = (valor: number) => {
+      const cuanto = h('small', { class: 'tenue', style: 'min-width:64px;text-align:right' });
+      const decir = (v: number) => { cuanto.textContent = v >= 1 ? T('Sólido', 'Solid') : T(`Vidrio ${Math.round(((1 - v) / 0.45) * 100)} %`, `Glass ${Math.round(((1 - v) / 0.45) * 100)}%`); };
+      decir(valor);
+      const barra = h('input', { type: 'range', min: '55', max: '100', step: '1', value: String(Math.round(valor * 100)),
+        'aria-label': T('Vidrio del notch', 'Notch glass'), title: T('Izquierda: más transparente · derecha: negro sólido', 'Left: more transparent · right: solid black'),
+        style: 'flex:1;accent-color:var(--acento)',
+        on: { input: (ev: Event) => decir(+(ev.target as HTMLInputElement).value / 100), change: (ev: Event) => guardar({ transparencia: +(ev.target as HTMLInputElement).value / 100 }) } });
+      return h('div', { class: 'campo', style: 'margin-top:12px' },
+        h('strong', null, T('Vidrio del notch', 'Notch glass')),
+        h('div', { class: 'fila' }, h('small', { class: 'tenue' }, T('Más vidrio', 'More glass')), barra, h('small', { class: 'tenue' }, T('Sólido', 'Solid')), cuanto),
+        h('small', null, T('Qué tanto se ve lo que hay detrás del notch. Todo a la derecha es el negro sólido de antes. Al conversar o leer un aviso se vuelve más opaco para que el texto se lea bien.', 'How much of what’s behind the notch shows through. Far right is the old solid black. It turns more opaque while chatting or showing a notice so text stays readable.')));
+    };
+
     // ── Avatar e idioma ──
-    const avatar = seccion('avatar', T('Avatar e idioma', 'Avatar & language'),
+    const avatar = seccion('avatar', T('Avatar, idioma y notch', 'Avatar, language & notch'),
       eleccion(T('Avatar', 'Avatar'), [
         { valor: 'aura', texto: 'AU-RA', explica: T('Cálida y precisa. Acento dorado.', 'Warm and precise.') },
         { valor: 'claudio', texto: 'Claudio', explica: T('Creativo: ideas, marketing y contenido. Acento naranja.', 'Creative.') },
@@ -52,7 +67,8 @@ export function vistaAjustes(): HTMLElement {
       eleccion(T('Idioma', 'Language'), [
         { valor: 'es', texto: 'Español', explica: T('AURA te habla y te escucha en español.', 'Spanish.') },
         { valor: 'en', texto: 'English', explica: T('AURA habla y escucha en inglés.', 'AURA speaks and listens in English.') },
-      ], aj.idioma, (v) => guardar({ idioma: v }).then(() => cargar())));
+      ], aj.idioma, (v) => guardar({ idioma: v }).then(() => cargar())),
+      vidrio(aj.transparencia ?? 0.72));
 
     // ── Voz y escucha ──
     const voz = seccion('voz', T('Voz y escucha', 'Voice & listening'),

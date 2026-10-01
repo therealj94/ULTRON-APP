@@ -47,6 +47,8 @@ internal sealed class Ajustes
     public string AgendaUrl { get; set; } = "";
     /// <summary>Mostrar en el notch lo que suena (Spotify, YouTube Music, el navegador…).</summary>
     public bool MostrarMusica { get; set; } = true;
+    /// <summary>Cuánto tapa el notch lo de atrás: 0.55 (mucho vidrio) a 1 (negro sólido, como antes).</summary>
+    public double Transparencia { get; set; } = 0.72;
     /// <summary>
     /// Cuentas conectadas con OAuth («spotify», «google», «microsoft»): el token de acceso y el de
     /// renovar, cifrados con DPAPI como todo lo demás. Nunca salen de este equipo.
@@ -106,6 +108,7 @@ internal sealed class Ajustes
             a.AppsSilenciadas ??= new();
             if (a.Escucha is not ("pedir" or "palabra" or "siempre")) a.Escucha = a.PalabraActivacion ? "palabra" : "pedir";
             if (a.VozMotor is not ("agente" or "local")) a.VozMotor = "agente";
+            a.Transparencia = double.IsFinite(a.Transparencia) ? Math.Clamp(a.Transparencia, 0.55, 1) : 0.72;
             if (!AparatoValido(a.Aparato)) a.Aparato = NuevoAparato();
             return a;
         }

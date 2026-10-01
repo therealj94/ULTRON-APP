@@ -135,6 +135,8 @@ public partial class NotchWindow
             w.cancion = new Manos.Cancion("Vivir mi vida", "Marc Anthony", "Spotify", true, null, TimeSpan.FromSeconds(80), TimeSpan.FromMinutes(4));
             w.PortadaChica.Visibility = w.BarrasMusica.Visibility = Visibility.Visible; w.BarrasMusica.Nivel = 0.6;
             w.modo = w.ModoQueToca(); Foto($"{avatar}-06b-reposo-musica");
+            // Con el ratón encima: la portada y los controles (anterior, play/pausa, siguiente) sin abrir nada.
+            w.raton = true; Foto($"{avatar}-06e-reposo-musica-controles"); w.raton = false;
             w.TituloMusica.Text = w.cancion.Titulo; w.ArtistaMusica.Text = "Marc Anthony · Spotify"; w.ProgresoMusica.Width = 90;
             w.musicaVisible = true; w.modo = w.ModoQueToca(); Foto($"{avatar}-06c-musica"); w.musicaVisible = false; w.cancion = null;
             w.PortadaChica.Visibility = w.BarrasMusica.Visibility = Visibility.Collapsed;
