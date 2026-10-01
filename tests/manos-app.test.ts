@@ -547,6 +547,13 @@ test('con la mano `llamame`, recordatorios, timers y despertadores se ponen DIRE
   assert.equal(en.decir, "Done, I'll call you in 5 minutes, at 11:05 AM.");
   assert.equal((ordenPorReglas('wake me up at 7', { ...o, idioma: 'en' })!.accion as any).cuando, msDeHN(2026, 10, 1, 7, 0));
   assert.equal((ordenPorReglas('pon una alarma a las 5 para la pastilla', o)!.accion as any).texto, 'La pastilla');
+  // Como lo dijo José en la llamada (1-oct): iba al cerebro y tardaba; ahora es directo.
+  const jose = ordenPorReglas('Cuéntame, necesito una alarma en 3 minutos y me llames.', o)!;
+  assert.deepEqual(jose.accion, { tipo: 'recordatorio', texto: 'Tu alarma', cuando: temprano + 3 * 60_000, llamada: true });
+  assert.equal(jose.decir, 'Listo, te llamo en 3 minutos, a las 11:03 a. m.');
+  assert.equal((ordenPorReglas('ponme una alarma en 20 minutos para sacar la ropa', o)!.accion as any).texto, 'Sacar la ropa');
+  assert.equal((ordenPorReglas('quiero un timer en media hora', o)!.accion as any).cuando, temprano + 30 * 60_000);
+  assert.match((ordenPorReglas('necesito un recordatorio en una hora', o)!.accion as any).texto, /alarma/i);
   // Un timer de segundos no es un recordatorio (menos de un minuto): contesta el cerebro.
   assert.equal(ordenPorReglas('ponme un timer de 30 segundos', o), null);
   // Cancelarlo sigue pidiendo el «sí».

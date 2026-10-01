@@ -407,7 +407,7 @@ export function palabras(texto: string): { q: string; orig: string[] } {
  */
 const INICIO = [
   'oye', 'hey', 'ey', 'aura', 'au ra', 'au-ra', 'claudio', 'guardian', 'porfa', 'por favor', 'please', 'ok', 'okay', 'ya', 'a ver', 'mira', 'mire',
-  'fijate que', 'fijate q', 'fijese que', 'bueno', 'este', 'mi reina', 'mi amor', 'mi vida', 'eh', 'ah', 'vaya', 'hola',
+  'fijate que', 'fijate q', 'fijese que', 'bueno', 'este', 'mi reina', 'mi amor', 'mi vida', 'eh', 'ah', 'vaya', 'hola', 'cuentame',
 ].map((m) => m.split(' '));
 const FIN = ['por favor', 'porfa', 'porfis', 'please', 'ya', 'ahora', 'ahorita', 'pues', 'dale', 'gracias', 'si puedes', 'rapido', 'mi reina', 'aura'].map((m) => m.split(' '));
 
@@ -507,7 +507,9 @@ const TXT_TIMER = String.raw`(?: (?:para|que|de|to|for) (?<txt>.+))?`;
  * «despiértame a las 6» sin «de la tarde» es de mañana.
  */
 function timerPorReglas(q: string, orig: string[], ahora: number, en: boolean): { texto: string; cuando: number; dentro?: string } | null {
-  const intentos: Array<[RegExp, 'timer' | 'alarma' | 'despertar' | 'despertarDentro']> = [
+  const intentos: Array<[RegExp, 'timer' | 'alarma' | 'alarmaDentro' | 'despertar' | 'despertarDentro']> = [
+    // «necesito una alarma en 3 minutos y me llames» (1-oct, llamada de José: iba al cerebro y tardaba).
+    [new RegExp(String.raw`^(?:(?:necesito|quiero|ocupo|ponme|pon|poneme|pone|programa|programame|activa|activame|hazme) )?(?:que me pongas )?(?:un |una |el |la )?(?<cual>alarma|despertador|timer|taimer|temporizador|recordatorio|aviso) (?:en|dentro de|para dentro de) ${NUM_TIMER} ${UNIDAD_TIMER}(?: y (?:me llames|llamame|me marques|marcame|me avises|avisame|me timbres))?${TXT_TIMER}$`, 'd'), 'alarmaDentro'],
     [new RegExp(String.raw`^(?:(?:ponme|pon|poneme|programa|programame|activa|activame|inicia|iniciame|arranca|hazme|pone) )?(?:un |una |el |la )?(?:timer|taimer|temporizador|cronometro|cuenta regresiva)(?: de| por| para)? ${NUM_TIMER} ${UNIDAD_TIMER}${TXT_TIMER}$`, 'd'), 'timer'],
     [new RegExp(String.raw`^(?:set |start )?(?:a |an )?(?:timer|countdown)(?: for| of)? ${NUM_TIMER} ${UNIDAD_TIMER}${TXT_TIMER}$`, 'd'), 'timer'],
     [new RegExp(String.raw`^(?:set |start )?(?:a |an )?${NUM_TIMER} ${UNIDAD_TIMER} (?:timer|countdown)${TXT_TIMER}$`, 'd'), 'timer'],
@@ -523,7 +525,7 @@ function timerPorReglas(q: string, orig: string[], ahora: number, en: boolean): 
     if (!m || !g) continue;
     let cuando: number | null;
     let dentro: string | undefined;
-    if (forma === 'timer' || forma === 'despertarDentro') {
+    if (forma === 'timer' || forma === 'despertarDentro' || forma === 'alarmaDentro') {
       const u = /hora|hour/.test(g.u) ? 'hora' : 'minuto';
       const n = g.n === 'a' || g.n === 'an' || g.n === 'one' ? 'un' : g.n;
       cuando = dentroDe(n, u, ahora);
@@ -538,11 +540,11 @@ function timerPorReglas(q: string, orig: string[], ahora: number, en: boolean): 
     const dicho = g.txt ? linea(mayuscula(tramo(q, orig, m.indices?.groups?.txt)), MAX_RECORDATORIO) : '';
     const texto =
       dicho ||
-      (forma === 'timer'
+      (forma === 'timer' || (forma === 'alarmaDentro' && /timer|taimer|temporizador/.test(g.cual || ''))
         ? en
           ? `Your ${dentro} timer is up`
           : `Se cumplió tu timer de ${dentro}`
-        : forma === 'alarma'
+        : forma === 'alarma' || forma === 'alarmaDentro'
           ? en
             ? 'Your alarm'
             : 'Tu alarma'
