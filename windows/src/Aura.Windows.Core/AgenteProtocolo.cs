@@ -57,6 +57,17 @@ public static class AgenteProtocolo
 
     public static string Pong(int eventoId) => "{\"type\":\"pong\",\"event_id\":" + eventoId + "}";
 
+    /// <summary>
+    /// Lo que de verdad pasó en la PC, de vuelta a la conversación. <paramref name="hablar"/>: como un mensaje
+    /// (el agente contesta: «no pude abrir Excel…»); si no, un dato de contexto que no interrumpe (lo sabe para
+    /// lo que siga). El texto va como «[La PC: …]», que el cerebro sabe que no lo dijo la persona.
+    /// </summary>
+    public static string AvisoPc(string texto, bool hablar) => new JsonObject
+    {
+        ["type"] = hablar ? "user_message" : "contextual_update",
+        ["text"] = "[La PC: " + (texto.Length > 300 ? texto[..300] + "…" : texto).Replace("[", "(").Replace("]", ")") + "]",
+    }.ToJsonString();
+
     /// <summary>Un mensaje del agente, entendido; null si no es uno que AURA use.</summary>
     public static EventoAgente? Leer(string json, FormatoAudio? salida = null)
     {

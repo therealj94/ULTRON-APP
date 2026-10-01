@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading.Tasks;
 using Aura.Windows.Core;
 
 namespace Aura.Windows.Manos;
@@ -25,6 +26,8 @@ internal static class Ventanas
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
     [DllImport("user32.dll")] static extern bool PostMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
     [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+    [DllImport("user32.dll")] static extern bool IsWindow(IntPtr h);
+    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
 
     /// <summary>Ventanas de primer nivel visibles, con título, que no son herramientas ni de AURA.</summary>
     public static List<VentanaAbierta> Abiertas()
@@ -78,6 +81,46 @@ internal static class Ventanas
     public static void Minimizar(IntPtr h) => ShowWindow(h, 6);
     public static void Maximizar(IntPtr h) { ShowWindow(h, 3); SetForegroundWindow(h); }
     public static void Restaurar(IntPtr h) { ShowWindow(h, 9); SetForegroundWindow(h); }
+    public enum Cierre { Cerrada, PreguntaGuardar, SigueAbierta }
+
+    /// <summary>
+    /// Pide que se cierre y COMPRUEBA que ya no está (las de la bandeja, como Spotify, se esconden: también cuenta).
+    /// Si la app pregunta «¿guardar cambios?», se dice eso; si sigue abierta sin preguntar, se pide otra vez.
+    /// </summary>
+    public static async Task<Cierre> CerrarVerificado(IntPtr h)
+    {
+        GetWindowThreadProcessId(h, out var pid);
+        bool Ida() => !IsWindow(h) || !IsWindowVisible(h);
+        Cerrar(h);
+        if (await Verificar.Esperar(Ida, 3000, 150)) return Cierre.Cerrada;
+        if (DialogoDe(pid)) return Cierre.PreguntaGuardar;
+        Cerrar(h);
+        if (await Verificar.Esperar(Ida, 2000, 150)) return Cierre.Cerrada;
+        return DialogoDe(pid) ? Cierre.PreguntaGuardar : Cierre.SigueAbierta;
+    }
+
+    /// <summary>¿Esa app tiene abierto un diálogo (una ventana visible con dueño, como «¿Guardar los cambios?»)?</summary>
+    static bool DialogoDe(uint pid)
+    {
+        bool hay = false;
+        EnumWindows((w, _) =>
+        {
+            if (!IsWindowVisible(w) || GetWindow(w, 4) == IntPtr.Zero) return true;
+            GetWindowThreadProcessId(w, out var p);
+            if (p != pid) return true;
+            hay = true;
+            return false;
+        }, IntPtr.Zero);
+        return hay;
+    }
+
+    /// <summary>Al frente y comprobado (Windows a veces no deja a la primera): hasta tres intentos.</summary>
+    public static async Task<bool> AlFrenteVerificado(IntPtr h) => await Verificar.Reintentar(async _ =>
+    {
+        try { AlFrente(h); } catch (InvalidOperationException) { }
+        return await Verificar.Esperar(() => GetForegroundWindow() == h, 600, 100);
+    }, 3) > 0;
+
     /// <summary>Le PIDE a la ventana que se cierre (WM_CLOSE): si hay algo sin guardar, la app pregunta.</summary>
     public static void Cerrar(IntPtr h) { if (!PostMessage(h, 0x0010, IntPtr.Zero, IntPtr.Zero)) throw new InvalidOperationException("La ventana no aceptó cerrarse."); }
 }

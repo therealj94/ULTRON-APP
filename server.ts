@@ -58,7 +58,8 @@ import { redirigirADominio } from './server/dominio';
 import { quitarExpresiones } from './lib/expresiones';
 import { puntoDeCorte } from './lib/trozos';
 import { claveTurno, reclamarTurno, type TurnoGuardado } from './server/turno-unico';
-import { respuestaCharla } from './lib/charla-rapida';
+import { respuestaFija } from './lib/respuestas-fijas';
+import { fichaManosPrompt } from './lib/manos-ficha';
 import { emitirSesion, borrarSesion, cerrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica, mesaAutorizada, cuerpoHttp, gastarCupo, esperaEntrada, anotarFalloEntrada, anotarExitoEntrada, cargarSesionesCerradas } from './server/seguridad';
 import { canales, leerPdf, telegramFoto, telegramVoz } from './lib/canales';
 import { catalogoCanales, fotoSistema } from './lib/sistema';
@@ -454,6 +455,13 @@ app.get('/api/nodo/listo', limitar(60), async (_req, res) => {
  */
 /* ------------------------------------------------------------------ Dr Electrum FP */
 
+/** La respuesta al instante de Dr Electrum (lib/respuestas-fijas.ts), con la forma de su turno; null si no es de esas. */
+function fijaElectrum(mensaje: string, idiomaPedido: unknown, id: ReturnType<typeof identidadDe>) {
+  const idioma = String(idiomaPedido || '').toLowerCase().startsWith('en') ? ('en' as const) : ('es' as const);
+  const f = respuestaFija(mensaje, { avatar: 'electrum', idioma, nombre: id?.persona.nombre, quien: id?.persona.id || '' });
+  return f ? { texto: f.texto, voz: f.voz, emocion: f.emocion, panel: '', traza: [], ui: [], fin: 'respuesta-fija', idioma } : null;
+}
+
 /** El turno de Electrum: panel de especialistas + harness con manos + órdenes para el mapa. */
 app.post('/api/electrum/turno', exigirPlataforma('electrum'), limitar(30), async (req, res) => {
   const inicio = Date.now();
@@ -470,6 +478,13 @@ app.post('/api/electrum/turno', exigirPlataforma('electrum'), limitar(30), async
     // nivel salía siempre nulo. Fallaba hacia el lado seguro, pero fallaba.
     const id = identidadDe(req);
     const clave = claveHiloDe(id?.persona.id, req, 'mesa');
+    // «Buen día», «¿me escucha?», «¿quién es usted?», «¿qué puede hacer?», «gracias»: al instante, sin
+    // panel ni modelo (lib/respuestas-fijas.ts, con el trato de usted y la voz sobria del doctor).
+    const fija = fijaElectrum(mensaje, req.body?.idioma, id);
+    if (fija) {
+      recordarHilo(clave, mensaje, fija.texto);
+      return res.json({ ...fija, ms: Date.now() - inicio, honesto: true });
+    }
     const historial = fusionarHiloElectrum({
       servidor: await cargarHiloElectrum(clave),
       cliente: hiloDelCliente(req.body?.hilo),
@@ -927,6 +942,13 @@ app.post('/api/electrum/turno/stream', exigirPlataforma('electrum'), limitar(30)
   try {
     const id = identidadDe(req);
     const clave = claveHiloDe(id?.persona.id, req, 'mesa');
+    // Lo de siempre («buen día», «¿me escucha?», «gracias»), al instante; la mesa abierta sí contesta entera.
+    const fija = req.body?.mesa === true ? null : fijaElectrum(mensaje, req.body?.idioma, id);
+    if (fija) {
+      recordarHilo(clave, mensaje, fija.texto);
+      enviar('fin', fija);
+      return res.end();
+    }
     const historial = fusionarHiloElectrum({
       servidor: await cargarHiloElectrum(clave),
       cliente: hiloDelCliente(req.body?.hilo),
@@ -2772,7 +2794,10 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   const bloquePerfil = lineaPerfil(perfilPersona);
   // Las reglas de la app van en el system (iguales turno a turno, el nodo no las relee); en el mensaje
   // del turno, solo lo de este momento: dónde está, sus contactos, lo que espera su «sí», la hora.
-  const reglasApp = conApp ? reglasAcciones(contextoApp) : body?.origen === 'windows' ? instruccionWindows(idiomaTurno === 'en' ? 'en' : 'es') : '';
+  // Qué puede hacer en ESTA plataforma (lib/manos-ficha.ts): lo ofrece sin miedo y nunca ofrece lo que aquí no hace.
+  const idiomaManos = idiomaTurno === 'en' ? 'en' : 'es';
+  const manosAqui = fichaManosPrompt(body?.origen === 'windows' ? 'windows' : turnoDeLaApp(body, opciones) ? 'app' : 'web', idiomaManos);
+  const reglasApp = [manosAqui, conApp ? reglasAcciones(contextoApp) : body?.origen === 'windows' ? instruccionWindows(idiomaManos) : ''].filter(Boolean).join('\n');
   const bloqueApp = conApp
     ? estadoAcciones(contextoApp, { pendiente: pendienteDe(ambito), propuesta: propuestaDe(ambito), ultimoLeido: ultimoLeidoDe(correoApp) })
     : '';
@@ -3658,31 +3683,35 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     return salida.fin();
   }
   /*
-   * LA CHARLA DE SIEMPRE, AL INSTANTE (hablada): «hola», «¿cómo estás?», «gracias», «adiós». José:
-   * «"¿cómo estás?" demasiado lenta». Antes pasaba por preparar el turno (memoria, clasificación) y el
-   * modelo chico (apagado por omisión: entonces el 27B). Ahora, si por su forma es solo charla
-   * (esCharlaTrivial), contesta el banco del avatar en el acto; el hilo se anota sin esperar.
+   * LO QUE SIEMPRE SE CONTESTA IGUAL, AL INSTANTE (lib/respuestas-fijas.ts): «hola», «¿cómo estás?»,
+   * «¿me escuchas?», «¿qué hora es?», «¿quién eres?», «¿qué puedes hacer?», «gracias»… José: «"¿cómo
+   * estás?" demasiado lenta» y «grabar bien todo, preguntas comunes, que roten y no se sienta grabado».
+   * Antes pasaba por preparar el turno (memoria, clasificación) y el modelo; ahora, si el mensaje ENTERO
+   * es solo eso, contesta el banco del avatar en el acto, con su nombre y una etiqueta de voz que va con
+   * lo que dice. Escrito o hablado, en la app, la web, Windows y la llamada. El hilo se anota sin esperar.
    */
-  if (opciones.voz && !body?.image) {
+  if (!body?.image) {
     // Cómo se le dice: su apodo si el perfil ya está en memoria (sin ir a buscarlo), si no su nombre.
     const correoCharla = body?.sesion?.correo ? String(body.sesion.correo).toLowerCase() : '';
     const apodo = correoCharla ? perfilEnCache(correoCharla)?.apodo : '';
-    const charla = respuestaCharla(String(body?.message || body?.text || ''), {
+    const fija = respuestaFija(String(body?.message || body?.text || ''), {
       avatar: normalizarAvatar(body?.avatar),
       idioma,
       nombre: apodo || String(body?.usuario || body?.userName || '').trim().split(/\s+/)[0] || null,
+      plataforma: body?.origen === 'windows' ? 'windows' : turnoDeLaApp(body, opciones) ? 'app' : 'web',
+      quien: correoCharla || String(body?.aparato || ''),
     });
-    if (charla) {
+    if (fija) {
       const quienMem = body?.nivel === 'junta' ? quienVerificado(body, body?.sesion || null) : null;
       const mensaje = String(body?.message || body?.text || '').trim();
       void recordarSegunNivel(body, { quienMem, rol: 'user', texto: mensaje, canal: 'mesa', esperar: false }, opciones.retener)
-        .then(() => recordarSegunNivel(body, { quienMem, rol: 'ultron', texto: charla.texto, canal: 'mesa', esperar: false }, opciones.retener))
+        .then(() => recordarSegunNivel(body, { quienMem, rol: 'ultron', texto: fija.texto, canal: 'mesa', esperar: false }, opciones.retener))
         .catch(() => {});
       send('tools', { tools: [] });
-      send('emocion', { emocion: charla.emocion });
-      soltar('delta', charla.texto);
-      reg.cerrar({ respuesta: charla.texto, emocion: charla.emocion, via: 'charla-rapida' });
-      send('done', { reply: charla.texto, voz: charla.texto, emocion: charla.emocion, ms: 0, via: 'charla-rapida', acciones: [], trazaId: reg.id });
+      send('emocion', { emocion: fija.emocion });
+      soltar('delta', fija.voz);
+      reg.cerrar({ respuesta: fija.texto, emocion: fija.emocion, via: 'respuesta-fija' });
+      send('done', { reply: fija.texto, voz: fija.voz, emocion: fija.emocion, ms: 0, via: 'respuesta-fija', intencion: fija.intencion, acciones: [], trazaId: reg.id });
       return salida.fin();
     }
   }

@@ -6,13 +6,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ETIQUETAS_VERIFICADAS, MemoriaEtiquetas, conEtiqueta, etiquetasDe } from '../mobile/src/compa/etiquetasVoz';
-import { ESTADOS_FRASE, MemoriaFrases, arranqueDe, fraseDeEstado, frasesDe } from '../mobile/src/compa/frasesEstado';
+import { ESTADOS_FRASE, MemoriaFrases, arranqueDe, estadoDeEspera, fraseDeEstado, frasesDe } from '../mobile/src/compa/frasesEstado';
 import { TONOS_VOZ, quitarExpresiones } from '../lib/expresiones';
 import { EXPRESION_A_V4, TONO_V4, etiquetaV4, guionEleven } from '../server/eleven';
 import { buildPersonality } from '../server/desk';
 
 const AVATARES = ['ojos', 'aura', 'claudio', 'antonio'] as const;
-const ESPERA = ['pensando', 'revisando', 'buscando', 'calculando', 'leyendo', 'mirando', 'seguimiento', 'conectando'] as const;
+const ESPERA = ['pensando', 'revisando', 'buscando', 'calculando', 'haciendo', 'leyendo', 'mirando', 'seguimiento', 'conectando'] as const;
 
 test('el catálogo solo usa etiquetas verificadas, y el servidor las pasa tal cual a la voz v4', () => {
   const verificadas = new Set<string>(ETIQUETAS_VERIFICADAS);
@@ -92,4 +92,20 @@ test('el tono va solo en la primera frase de una respuesta (auditoría externa, 
   assert.equal(guionEleven('Y otra cosa.', 'feliz', p, { tono: false }), 'Y otra cosa.');
   // Las marcas propias del texto siguen sonando aunque no lleve el tono.
   assert.equal(guionEleven('Mira [risa] eso.', 'feliz', p, { tono: false }), 'Mira [laughs] eso.');
+});
+
+test('mientras HACE algo (cerrar, llamar, mandar, música) dice que va, nunca que ya quedó; y la etiqueta va con eso', () => {
+  assert.equal(estadoDeEspera('cierra chrome'), 'haciendo');
+  assert.equal(estadoDeEspera('llama a Beto'), 'haciendo');
+  assert.equal(estadoDeEspera('pon Bad Bunny en spotify'), 'haciendo');
+  assert.equal(estadoDeEspera('abre excel'), 'abriendo');
+  assert.equal(estadoDeEspera('¿cómo se llama el presidente?'), 'pensando', 'una pregunta no es una orden');
+  // Ni «haciendo» ni «abriendo» dan el resultado por hecho: eso lo dice quien lo ejecutó, cuando quedó.
+  for (const estado of ['haciendo', 'abriendo'] as const)
+    for (const a of AVATARES) {
+      for (const f of frasesDe(estado, a, 'es')) assert.doesNotMatch(f, /\b(listo|hecho|quedó|abierto|ya está)\b/i, `${estado}/${a}: «${f}»`);
+      for (const f of frasesDe(estado, a, 'en')) assert.doesNotMatch(f, /\b(done|it’s open|finished|all set)\b/i, `${estado}/${a}: «${f}»`);
+      assert.ok(frasesDe(estado, a, 'es').length >= 8, `${estado}/${a}: pocas frases`);
+      assert.ok(etiquetasDe(estado, a).length >= 3, `${estado}/${a}: pocas etiquetas`);
+    }
 });

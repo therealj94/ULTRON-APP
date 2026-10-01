@@ -77,6 +77,17 @@ public sealed class HechasRecientes
         if (f.Length > 0) hechas.Add((f, reloj.GetUtcNow()));
     }
 
+    /// <summary>
+    /// Lo que las reglas intentaron con esa frase NO salió: se olvida, para que la orden del cerebro (que a veces
+    /// entendió mejor: «abre exel» → «abre excel») sí se haga. Antes se anotaba antes de hacerla y el segundo
+    /// intento se descartaba como «ya hecha».
+    /// </summary>
+    public void Olvidar(string dicho)
+    {
+        var f = LayaLigera.Normalizar(dicho);
+        if (f.Length > 0) hechas.RemoveAll(h => h.Frase == f);
+    }
+
     /// <summary>¿Esta orden del cerebro viene de una frase que las reglas ya hicieron (o su id ya llegó)?</summary>
     public bool Repetida(string? id, string dicho)
     {

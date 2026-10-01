@@ -659,11 +659,11 @@ test('un turno que corta a otro a la mitad toma lo que ese alcanzó a decir: tra
   }
 });
 
-test('una respuesta que fue solo una acción para la app: la voz dice «Listo.», no «se me fue el hilo»', async () => {
+test('una respuesta que fue solo una acción para la app: la voz dice que va («Va, enseguida.»), ni «Listo» antes de tiempo ni «se me fue el hilo»', async () => {
   const s = await montar(async (t) => t.enviar('done', { reply: '', voz: '', acciones: [{ id: 'abc', accion: { tipo: 'atras' } }] }));
   try {
     const r = await llm(s.base, paseDe(persona()), [{ role: 'user', content: 'vete para atrás, por favor' }]);
-    assert.equal(dichoDe(await r.text()), 'Listo.');
+    assert.equal(dichoDe(await r.text()), 'Va, enseguida.');
   } finally {
     await s.cerrar();
   }
@@ -1457,7 +1457,7 @@ test('Windows por voz: la marca ⟦hacer⟧ no se dice y la orden va a su .exe c
   }
 });
 
-test('Windows por voz: solo la orden y nada que decir suena «Listo.»; una frase a medias descartada no hace nada', async () => {
+test('Windows por voz: solo la orden y nada que decir suena «Va, enseguida.» (no «Listo»: la PC aún no la hizo); una frase a medias descartada no hace nada', async () => {
   const ordenes: string[] = [];
   const m = await montar(
     async (t) => {
@@ -1470,7 +1470,7 @@ test('Windows por voz: solo la orden y nada que decir suena «Listo.»; una fras
   try {
     const yo = persona();
     const pase = paseWindows(yo, 'win-2');
-    assert.equal(dichoDe(await (await llm(m.base, pase, [{ role: 'user', content: 'abre la calculadora' }])).text()), 'Listo.');
+    assert.equal(dichoDe(await (await llm(m.base, pase, [{ role: 'user', content: 'abre la calculadora' }])).text()), 'Va, enseguida.');
     assert.deepEqual(ordenes, ['abre la calculadora']);
     const c = new AbortController();
     const r = llm(m.base, pase, [{ role: 'user', content: 'abre la calcu' }], {}, c.signal).then((x) => x.text()).catch(() => '');

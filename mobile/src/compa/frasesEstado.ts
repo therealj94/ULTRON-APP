@@ -47,6 +47,11 @@ export const ESTADOS_FRASE = [
   'buscando',
   'calculando',
   'abriendo',
+  /**
+   * Haciendo algo que no es abrir: cerrar una ventana, llamar, mandar un mensaje, poner un recordatorio
+   * o música. Nunca da el resultado por hecho («ya quedó»): eso lo dice quien lo ejecutó, cuando quedó.
+   */
+  'haciendo',
   /** Leyendo una página, un PDF o un documento. */
   'leyendo',
   /** Mirando por la cámara o una imagen. */
@@ -79,6 +84,7 @@ export const EMOCION_DE_ESTADO: Record<EstadoFrase, { expresion: ExpresionAvatar
   buscando: { expresion: 'piensa', emocion: 'curioso', cara: 'SCAN' },
   calculando: { expresion: 'piensa', emocion: 'pensando', cara: 'THINKING' },
   abriendo: { expresion: 'tranquila', emocion: 'neutral', cara: 'IDLE' },
+  haciendo: { expresion: 'tranquila', emocion: 'neutral', cara: 'THINKING' },
   leyendo: { expresion: 'piensa', emocion: 'pensando', cara: 'SCAN' },
   mirando: { expresion: 'piensa', emocion: 'curioso', cara: 'CURIOUS' },
   seguimiento: { expresion: 'piensa', emocion: 'pensando', cara: 'THINKING' },
@@ -169,13 +175,23 @@ const BASE: Record<EstadoFrase, Lista> = {
       'Ya lo abro.', 'Abriendo…', 'Va, lo abro.', 'Enseguida.', 'Ahí te va.',
       'Ya voy.', 'Abriendo, un segundo…', 'Déjame abrirlo.', 'Cargando…', 'Va, ahorita lo abro.', 'Ahí va.',
       'Lo abro de una vez.', 'Enseguida lo tienes.', 'Preparándolo…',
-      'Listo, ahí va…', 'Ahorita lo pongo…', 'Te lo abro…', 'Va saliendo…', 'Abriéndolo para ti…',
+      'Ahí va…', 'Ahorita lo pongo…', 'Te lo abro…', 'Va saliendo…', 'Abriéndolo para ti…',
     ],
     en: [
       'Opening it.', 'Opening…', 'Sure, opening it.', 'Right away.', 'Here it comes.',
       'On my way.', 'Opening, one sec…', 'Let me open it.', 'Loading…', 'Sure, opening it now.', 'There it goes.',
       'Opening it right now.', 'You’ll have it in a sec.', 'Getting it ready…',
-      'Okay, here it goes…', 'Putting it up now…', 'Opening it for you…', 'Coming right up…', 'Opening it for you now…',
+      'Here it goes…', 'Putting it up now…', 'Opening it for you…', 'Coming right up…', 'Opening it for you now…',
+    ],
+  },
+  haciendo: {
+    es: [
+      'Va, ya lo hago.', 'Enseguida.', 'Dame un segundo, ya lo hago…', 'Ahorita mismo.', 'En eso estoy…', 'Va, déjamelo a mí.',
+      'Ya me encargo.', 'Haciéndolo…', 'Un momentito, ya va…', 'Claro, ahorita lo hago.', 'Manos a la obra…', 'Lo hago de una vez.',
+    ],
+    en: [
+      'Sure, doing it.', 'Right away.', 'One sec, on it…', 'Right now.', 'Working on it…', 'Okay, leave it to me.',
+      'I’ll take care of it.', 'Doing it…', 'Just a moment, on its way…', 'Sure, doing it now.', 'Getting to work…', 'Doing it right away.',
     ],
   },
   leyendo: {
@@ -276,8 +292,12 @@ const PROPIAS: Record<AvatarFrase, Partial<Record<EstadoFrase, Lista>>> = {
       en: ['Calculating.', 'Computing.', 'Running the numbers.', 'Measuring.', 'Figures in progress.', 'Quantifying.', 'Estimating.', 'Working the figures.', 'Calculation underway.', 'Projecting.', 'Adding it up.', 'Solving.', 'Calculating values.', 'Processing figures.', 'Adjusting numbers.', 'Measuring amounts.', 'One moment, calculating.'],
     },
     abriendo: {
-      es: ['Abriendo.', 'Enseguida.', 'En pantalla.', 'Hecho, abierto.', 'Accediendo.', 'Cargando.', 'Accediendo ahora.', 'Desplegando.', 'Iniciando.', 'Abriendo acceso.', 'Preparando vista.', 'En curso.', 'Ejecutando.', 'Mostrando.', 'Cargando vista.', 'Abierto en breve.', 'Un instante, abro.'],
-      en: ['Opening.', 'Right away.', 'On screen.', 'Done, it’s open.', 'Accessing.', 'Loading.', 'Accessing now.', 'Deploying view.', 'Starting.', 'Opening access.', 'Preparing view.', 'In progress.', 'Executing.', 'Displaying.', 'Loading view.', 'Open shortly.', 'One instant, opening.'],
+      es: ['Abriendo.', 'Enseguida.', 'Accediendo.', 'Cargando.', 'Accediendo ahora.', 'Desplegando.', 'Iniciando.', 'Abriendo acceso.', 'Preparando vista.', 'En curso.', 'Ejecutando.', 'Mostrando.', 'Cargando vista.', 'En breve, abro.', 'Un instante, abro.'],
+      en: ['Opening.', 'Right away.', 'Accessing.', 'Loading.', 'Accessing now.', 'Deploying view.', 'Starting.', 'Opening access.', 'Preparing view.', 'In progress.', 'Executing.', 'Displaying.', 'Loading view.', 'Open shortly.', 'One instant, opening.'],
+    },
+    haciendo: {
+      es: ['Ejecutando.', 'En curso.', 'Procedo.', 'Enseguida.', 'Atendiendo la orden.', 'Un instante.', 'Lo hago.', 'Recibido, procedo.'],
+      en: ['Executing.', 'In progress.', 'Proceeding.', 'Right away.', 'Handling it.', 'One instant.', 'Doing it.', 'Copy, proceeding.'],
     },
     leyendo: {
       es: ['Leyendo.', 'Leyendo el documento.', 'Extrayendo datos.', 'Revisando el texto.', 'Lectura en curso.', 'Analizando el documento.', 'Procesando páginas.', 'Leyendo con atención.', 'Escaneando el texto.', 'Extrayendo lo clave.', 'Revisando páginas.', 'Leo y resumo.', 'Leyendo la fuente.', 'Examinando el texto.', 'Documento en análisis.', 'Leyendo cláusulas.'],
@@ -323,6 +343,10 @@ const PROPIAS: Record<AvatarFrase, Partial<Record<EstadoFrase, Lista>>> = {
       es: ['Ya te lo abro.', 'Ahí te lo abro.', 'Va, enseguida.', 'Ahorita te lo abro.', 'Con gusto, lo abro.', 'Ya está abriendo…', 'Te lo pongo enseguida.', 'Va pues, lo abro.'],
       en: ['Opening it for you.', 'There, opening it.', 'Sure, right away.', 'Opening it for you now.', 'Happy to, opening it.', 'It’s opening…', 'Putting it up now.', 'Alright, opening it.'],
     },
+    haciendo: {
+      es: ['Ya te lo hago.', 'Va, enseguida lo hago.', 'Con gusto, ya voy.', 'Ahorita te lo resuelvo…', 'Déjamelo a mí…', 'Ya me encargo yo.', 'Va pues, ya lo hago.', 'Enseguida, tranquilo…'],
+      en: ['Doing it for you.', 'Sure, doing it now.', 'Happy to, on my way.', 'Taking care of it for you…', 'Leave it to me…', 'I’ll take care of it.', 'Alright, doing it.', 'Right away, no worries…'],
+    },
     leyendo: {
       es: ['Déjame leértelo tantito…', 'Ahorita lo leo…', 'Leyendo con cariño…', 'A ver qué dice aquí…', 'Lo voy leyendo, ya casi…', 'Hojeando tantito…', 'Leyendo despacito…', 'Déjame leerlo bien…'],
       en: ['Let me read it for you…', 'Reading it now…', 'Reading it with care…', 'Let me see what it says here…', 'Reading through, almost…', 'Skimming a little…', 'Reading slowly…', 'Let me read it well…'],
@@ -367,6 +391,10 @@ const PROPIAS: Record<AvatarFrase, Partial<Record<EstadoFrase, Lista>>> = {
       es: ['¡Telón arriba!', 'Abriendo, con estilo.', 'Ahí va, en primera fila.', '¡Y se abre el telón!', 'Pasen adelante, abriendo.', 'Abriendo, como buen anfitrión.', 'Con una reverencia, lo abro.', '¡Tarán! Abriendo.'],
       en: ['Curtain up!', 'Opening, in style.', 'There it goes, front row.', 'And the curtain rises!', 'Step right in, opening.', 'Opening, like a good host.', 'With a bow, opening it.', 'Ta-da! Opening.'],
     },
+    haciendo: {
+      es: ['Un zorro en acción…', 'Patitas a la obra.', 'Déjamelo, con estilo.', 'Ahí voy, sigiloso…', 'Misión aceptada.', 'Con astucia, ya lo hago.', 'Orejas arriba, manos a la obra.', 'Eso es pan comido…'],
+      en: ['A fox in action…', 'Paws to work.', 'Leave it to me, in style.', 'On my way, stealthy…', 'Mission accepted.', 'Cleverly, doing it.', 'Ears up, getting to work.', 'Piece of cake…'],
+    },
     leyendo: {
       es: ['Leyendo con mis lentes de zorro…', 'Devorando el documento…', 'Hojeando con estilo…', 'Leyendo entre líneas…', 'Esto se lee interesante…', 'Pasando páginas, olfateando…', 'Letra chiquita, no te me escapas…', 'Lectura rápida de zorro…'],
       en: ['Reading with my fox glasses…', 'Devouring the document…', 'Skimming in style…', 'Reading between the lines…', 'This reads interesting…', 'Flipping pages, sniffing…', 'Fine print, you won’t escape…', 'Speed-reading, fox style…'],
@@ -408,8 +436,12 @@ const PROPIAS: Record<AvatarFrase, Partial<Record<EstadoFrase, Lista>>> = {
       en: ['Calculating at full speed…', 'Numbers in motion…', 'Let me work it out quick…', 'One hand adds, one subtracts…', 'Calculator running…', 'Four hands, zero errors…', 'Crunching numbers, go!', 'Balancing it all quick…'],
     },
     abriendo: {
-      es: ['¡Abriendo!', 'Ahí va, rapidito.', 'Listo el acceso.', '¡Va, abriendo!', 'Abriendo con un brazo libre.', 'En un dos por tres.', '¡Abierto en nada!', 'Ahí te lo pongo, ¡va!'],
-      en: ['Opening!', 'There it goes, quick.', 'Access ready.', 'Okay, opening!', 'Opening with a spare arm.', 'In a flash.', 'Open in no time!', 'Putting it up for you, go!'],
+      es: ['¡Abriendo!', 'Ahí va, rapidito.', '¡Va, abriendo!', 'Abriendo con un brazo libre.', 'En un dos por tres.', 'Ahí te lo pongo, ¡va!'],
+      en: ['Opening!', 'There it goes, quick.', 'Okay, opening!', 'Opening with a spare arm.', 'In a flash.', 'Putting it up for you, go!'],
+    },
+    haciendo: {
+      es: ['¡Cuatro brazos a la obra!', '¡Va, ya lo hago!', 'Rapidito, ahí voy.', '¡A trabajar!', 'Con un brazo lo hago, ¡va!', 'En un dos por tres…', '¡Manos a la obra!', 'Ahí voy, a toda máquina.'],
+      en: ['Four arms to work!', 'Okay, doing it!', 'Quick, on my way.', 'To work!', 'One arm’s enough, go!', 'In a flash…', 'Let’s get to work!', 'On it, full speed.'],
     },
     leyendo: {
       es: ['Leyendo con dos brazos, anotando con dos…', 'Hojeando a toda máquina…', 'Leyendo rapidito…', 'Página por página, ¡va!', 'Leyendo y organizando…', 'Pasando hojas a mil…', 'Lectura en marcha…', 'Subrayando lo importante…'],
@@ -609,13 +641,16 @@ export function estadoDeEspera(pregunta: string): EstadoFrase {
   if (/\b(busca|buscame|internet|google|noticias|precio|cotiza|clima|search|look up|news|price|weather|averigua|investiga)\b/.test(q)) return 'buscando';
   if (/\b(lee|leeme|leer|pdf|pagina|articulo|read)\b|https?:\/\//.test(q)) return 'leyendo';
   if (/\b(que ves|me ves|mira esto|camara|look at this|what do you see)\b/.test(q)) return 'mirando';
+  // Una orden que no es abrir (cerrar, llamar, mandar, recordar, música): «¿cómo se llama…?» no es llamar.
+  if (/(?<!se )\b(cierra|cerrar|minimiza|llama|llamame|llamar|videollama|manda|mandale|envia|enviale|escribele|recuerdame|recordame|apaga|silencia|ponme|pausa|close|call me|send|remind|turn (up|down|off)|mute|pause|skip)\b/.test(q) || /^(pon|play|dile|escribe|sube|baja)\b/.test(q)) return 'haciendo';
+  if (/\b(abre|abrir|abreme|open)\b/.test(q)) return 'abriendo';
   if (/\b(revisa|revisar|verifica|confirma|expediente|documento|contrato|check|verify|review|pendientes|tareas|agenda)\b/.test(q)) return 'revisando';
   return 'pensando';
 }
 
 // Lo que se dice mientras se espera: si el cerebro EMPIEZA su respuesta con una de estas (o con una
 // muletilla de espera cualquiera), sobra: ya se dijo. Se compara sin tildes, signos ni mayúsculas.
-const ESPERA: EstadoFrase[] = ['escuchando', 'conectando', 'pensando', 'revisando', 'buscando', 'calculando', 'leyendo', 'mirando', 'seguimiento'];
+const ESPERA: EstadoFrase[] = ['escuchando', 'conectando', 'pensando', 'revisando', 'buscando', 'calculando', 'abriendo', 'haciendo', 'leyendo', 'mirando', 'seguimiento'];
 const plano = (s: string) =>
   String(s || '')
     .toLowerCase()

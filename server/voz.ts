@@ -24,6 +24,7 @@ import { trocearExpresiones } from '../lib/expresiones';
 import { adaptarPcm, empalmar, escribirWav, tomaDeExpresion } from './empalme';
 import type { Presupuesto } from '../lib/presupuesto';
 import type { AlineacionEleven } from '../lib/alineacion';
+import { s3GetJson, s3Listo, s3PutJson } from '../lib/s3';
 import { abrirEleven, conMuletillas, elevenListo, estabilidadDe, guionEleven, hablarEleven, modeloEleven, normalizarAvatar, normalizarIdioma, vozEleven, type AvatarVoz, type Idioma } from './eleven';
 
 export type Performance = 'speak' | 'sing';
@@ -217,6 +218,75 @@ function cacheSet(key: string, hit: Omit<AudioHit, 'at'>) {
     cache.delete(oldest);
     if (gone) cacheBytes -= gone.audio.length;
   }
+}
+
+/*
+ * ---------------- Caché permanente en S3 (segundo nivel) ----------------
+ *
+ * José (1-oct): «grabar los mensajes comunes y guardarlos en caché, que conteste muchísimo más rápido».
+ * La LRU de arriba se pierde en cada redespliegue (y Render redespliega seguido): «¡Hola, José! ¿En qué
+ * te ayudo?» se volvía a pagar y a esperar a ElevenLabs. Aquí la voz de ElevenLabs de las frases cortas
+ * (las de lib/respuestas-fijas.ts, las de espera, los saludos) se guarda en el cubo de memoria con su
+ * clave (voz, modelo, idioma, guion y vecinos) y sus tiempos por letra (la boca del avatar): la primera
+ * vez se genera con la voz del avatar y después sale de S3, sin costo, sobreviviendo a los despliegues.
+ *  · Solo frases cortas: una respuesta larga casi nunca se repite igual y no vale la vuelta a S3.
+ *  · Nunca lo privado (un chat de la persona): ni se lee ni se guarda.
+ *  · La lectura tiene tope (S3_VOZ_MS): si S3 tarda, se sigue a ElevenLabs como siempre.
+ *  · Lo que no está se recuerda un rato (no se pregunta a S3 por cada frase nueva dos veces).
+ */
+export const PERSISTIR_MAX_CARACTERES = 240;
+export const PREFIJO_S3_VOZ = 'voz-cache/v1/';
+export const S3_VOZ_MS = 450;
+const FALTA_TTL_MS = 10 * 60_000;
+const faltanEnS3 = new Map<string, number>();
+type S3Voz = { listo: () => boolean; get: typeof s3GetJson; put: typeof s3PutJson };
+let s3Voz: S3Voz = { listo: s3Listo, get: s3GetJson, put: s3PutJson };
+/** Solo pruebas: un S3 fingido (null vuelve al de verdad) y la memoria de faltantes limpia. */
+export function _s3VozDePrueba(falso: S3Voz | null) {
+  s3Voz = falso ?? { listo: s3Listo, get: s3GetJson, put: s3PutJson };
+  faltanEnS3.clear();
+}
+/** Solo pruebas: la LRU vacía, como un proceso recién desplegado. */
+export function _vaciarCacheVoz() {
+  cache.clear();
+  cacheBytes = 0;
+}
+
+function persistible(guion: string, privado?: boolean): boolean {
+  return !privado && guion.length > 0 && guion.length <= PERSISTIR_MAX_CARACTERES && s3Voz.listo();
+}
+
+async function leerVozDeS3(claveAudio: string): Promise<Omit<AudioHit, 'at'> | null> {
+  const visto = faltanEnS3.get(claveAudio);
+  if (visto && Date.now() - visto < FALTA_TTL_MS) return null;
+  let reloj: NodeJS.Timeout | undefined;
+  const r = await Promise.race([
+    s3Voz.get(`${PREFIJO_S3_VOZ}${claveAudio}.json`).catch(() => null),
+    new Promise<null>((ok) => (reloj = setTimeout(() => ok(null), S3_VOZ_MS))),
+  ]);
+  clearTimeout(reloj);
+  if (r?.missing) {
+    if (faltanEnS3.size > 5_000) faltanEnS3.clear();
+    faltanEnS3.set(claveAudio, Date.now());
+    return null;
+  }
+  const j = r?.ok ? r.json : null;
+  if (!j || typeof j.audio !== 'string' || !j.audio) return null;
+  const audio = Buffer.from(j.audio, 'base64');
+  if (audio.length < 400) return null;
+  return { audio, contentType: String(j.contentType || 'audio/mpeg'), motor: String(j.motor || 'elevenlabs'), ...(j.alineacion !== undefined ? { alineacion: j.alineacion } : {}) };
+}
+
+function guardarVozEnS3(claveAudio: string, hit: Omit<AudioHit, 'at'>) {
+  if (hit.audio.length < 400) return;
+  faltanEnS3.delete(claveAudio);
+  const cuerpo = { audio: hit.audio.toString('base64'), contentType: hit.contentType, motor: hit.motor, ...(hit.alineacion !== undefined ? { alineacion: hit.alineacion } : {}), guardado: new Date().toISOString() };
+  void s3Voz
+    .put(`${PREFIJO_S3_VOZ}${claveAudio}.json`, cuerpo)
+    .then((r) => {
+      if (!r.ok) console.warn('[voz] no se guardó en S3:', r.detalle.slice(0, 120));
+    })
+    .catch(() => undefined);
 }
 
 /* ---------------- Voicebox ---------------- */
@@ -421,6 +491,12 @@ export async function abrirVozEnVivo(opts: {
   if (!p) return null;
   const hit = cacheGet(p.clave);
   if (hit) return { tipo: 'cache', habla: { audio: hit.audio, contentType: hit.contentType, motor: hit.motor, cache: true, ms: 0 } };
+  const guardable = persistible(p.guion);
+  const deS3 = guardable ? await leerVozDeS3(p.clave) : null;
+  if (deS3) {
+    cacheSet(p.clave, deS3);
+    return { tipo: 'cache', habla: { audio: deS3.audio, contentType: deS3.contentType, motor: deS3.motor, cache: true, ms: 0 } };
+  }
   // Sin el idioma, ElevenLabs leía todo como español (language_code 'es'), inglés incluido.
   const r = await abrirEleven({ texto: p.guion, voz: p.voz, previo: opts.previo, siguiente: opts.siguiente, estabilidad: p.estabilidad, idioma });
   if (!r?.body) return null;
@@ -430,7 +506,9 @@ export async function abrirVozEnVivo(opts: {
     motor: p.motor,
     cuerpo: r.body,
     guardar: (audio) => {
-      if (audio.length >= 400) cacheSet(p.clave, { audio, contentType: 'audio/mpeg', motor: p.motor });
+      if (audio.length < 400) return;
+      cacheSet(p.clave, { audio, contentType: 'audio/mpeg', motor: p.motor });
+      if (guardable) guardarVozEnS3(p.clave, { audio, contentType: 'audio/mpeg', motor: p.motor });
     },
   };
 }
@@ -519,11 +597,20 @@ export async function hablar(opts: {
       const sirve = hit && (!opts.tiempos || hit.alineacion !== undefined);
       if (hit && sirve) return { audio: hit.audio, contentType: hit.contentType, motor: hit.motor, cache: true, ms: Date.now() - t0, alineacion: hit.alineacion };
     }
+    const guardable = persistible(xiPedido.guion, opts.privado);
+    if (guardable && !opts.sinCache) {
+      const deS3 = await leerVozDeS3(xiPedido.clave);
+      if (deS3 && (!opts.tiempos || deS3.alineacion !== undefined)) {
+        cacheSet(xiPedido.clave, deS3);
+        return { ...deS3, cache: true, ms: Date.now() - t0 };
+      }
+    }
     const xi = await hablarEleven({ texto: xiPedido.guion, voz: xiPedido.voz, previo: opts.previo, siguiente: opts.siguiente, reloj: opts.presupuesto, estabilidad: xiPedido.estabilidad, idioma, tiempos: opts.tiempos });
     if (xi) {
       // null: se pidieron los tiempos y no vinieron (así lo guardado no los vuelve a pedir).
       const out = { ...xi, motor: xiPedido.motor, ...(opts.tiempos ? { alineacion: xi.alineacion ?? null } : {}) };
       if (!opts.privado) cacheSet(xiPedido.clave, out);
+      if (guardable) guardarVozEnS3(xiPedido.clave, out);
       return { ...out, cache: false, ms: Date.now() - t0 };
     }
   }

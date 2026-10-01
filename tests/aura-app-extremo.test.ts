@@ -294,7 +294,7 @@ test('el perfil llega al prompt en cada turno: texto y voz, con los tres avatare
   assert.equal(ligera.dicho, '[warmly] ¡Muy bien! ¿Y tú?');
   assert.match(alChico.at(-1)!, /Te habla Majo/);
   assert.match(alChico.at(-1)!, /Claudio/);
-  // «Hola» hablado: el banco de Claudio, con su apodo, sin modelo (charla-rapida).
+  // «Hola» hablado: el banco de Claudio, con su apodo, sin modelo (respuestas-fijas).
   alChico.length = 0;
   alNodo.length = 0;
   const hola = await voz(paseDe(yo, 'claudio'), [{ role: 'user', content: 'hola' }]);
@@ -947,9 +947,9 @@ test('latencia del turno hablado de la mesa, tramo por tramo: charla («¿cómo 
   primerTokenMs = 0;
   pasoMs = 4;
   chicoMs = 0;
-  // La charla de siempre la contesta el banco del avatar al instante (charla-rapida): ni el chico ni el 27B.
-  assert.match(charla.quien, /sin modelo \(charla-rapida\)/, `«¿cómo estás?» lo contestó: ${charla.quien}`);
-  assert.match(hola.quien, /sin modelo \(charla-rapida\)/, `«hola, buenos días» lo contestó: ${hola.quien}`);
+  // La charla de siempre la contesta el banco del avatar al instante (respuestas-fijas): ni el chico ni el 27B.
+  assert.match(charla.quien, /sin modelo \(respuesta-fija\)/, `«¿cómo estás?» lo contestó: ${charla.quien}`);
+  assert.match(hola.quien, /sin modelo \(respuesta-fija\)/, `«hola, buenos días» lo contestó: ${hola.quien}`);
   assert.ok(charla.frase < 300, `charla: primera frase en ${charla.frase} ms (antes ~360 con el chico a 350 ms, y el 27B si el chico está apagado)`);
   assert.ok(hola.frase < 300, `saludo: primera frase en ${hola.frase} ms`);
   // La pregunta normal: la primera frase sale en cuanto el 27B la escribe (sin esperar la respuesta entera).

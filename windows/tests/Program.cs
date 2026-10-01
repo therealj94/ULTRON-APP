@@ -364,6 +364,34 @@ Check(!FiltroAcciones.Coherente("pon Queen Bohemian Rhapsody en spotify", "pon b
 Check(FiltroAcciones.Coherente("cierra spotify", "ciérrame eso de Spotify") && FiltroAcciones.Coherente("pon bad bunny en spotify", "ponme algo de Bad Bunny porfa") && FiltroAcciones.Coherente("cierra esta ventana", "quita esa ventana"), "ordenar lo tuyo sí");
 Check(FiltroAcciones.Coherente("pon bachata en spotify", "pon bachatas en Spotify") && !FiltroAcciones.Coherente("abre excel", "abre el bloc de notas"), "plural sí, otra app no");
 
+// El cerebro corrige lo que el micrófono entendió mal: eso sí sale de lo dicho (José: «hasta la segunda vez lo hace»).
+Check(FiltroAcciones.Coherente("abre excel", "abre exel") && FiltroAcciones.Coherente("abre spotify", "abre spotifai"), "mal oído, misma app");
+Check(!FiltroAcciones.Coherente("abre word", "abre excel") && !FiltroAcciones.Coherente("pon rock", "pon pop") && !FiltroAcciones.Coherente("abre teams", "abre steam"), "parecida no es cualquiera");
+Check(FiltroAcciones.Parecidas("excel", "exel") && !FiltroAcciones.Parecidas("rock", "pop") && !FiltroAcciones.Parecidas("sol", "sal"), "parecidas");
+// Hacer y comprobar: se espera a VER el resultado, y si no se ve, otra vez.
+{
+    int n = 0;
+    Check(await Verificar.Esperar(() => ++n >= 3, 2000, 10) && n == 3, "esperar hasta verlo");
+    Check(!await Verificar.Esperar(() => false, 60, 10), "con tope, no espera para siempre");
+    Check(!await Verificar.Esperar(() => throw new Exception("x"), 30, 10), "un error es «no se ve»");
+    int intentos = 0;
+    Check(await Verificar.Reintentar(async i => { intentos++; await Task.Yield(); return i == 2; }) == 2 && intentos == 2, "el segundo intento sale");
+    Check(await Verificar.Reintentar(_ => Task.FromResult(false), 3) == 0, "si nunca sale, 0 (y se dice que no se pudo)");
+}
+{
+    var habla = System.Text.Json.JsonDocument.Parse(AgenteProtocolo.AvisoPc("no se pudo — No encontré «exel» [x]", true)).RootElement;
+    var calla = System.Text.Json.JsonDocument.Parse(AgenteProtocolo.AvisoPc("hecho — Abriendo Excel", false)).RootElement;
+    Check(habla.GetProperty("type").GetString() == "user_message" && habla.GetProperty("text").GetString() == "[La PC: no se pudo — No encontré «exel» (x)]", "el fallo se le dice al agente (y contesta)");
+    Check(calla.GetProperty("type").GetString() == "contextual_update" && calla.GetProperty("text").GetString()!.StartsWith("[La PC: hecho"), "lo hecho, como contexto (no interrumpe)");
+}
+{
+    var hr = new HechasRecientes();
+    hr.Anotar("abre exel");
+    Check(hr.Repetida(null, "abre exel"), "anotada");
+    hr.Olvidar("abre exel");
+    Check(!hr.Repetida(null, "abre exel"), "si falló, la orden del cerebro sí se hace");
+}
+
 // La ligera nunca cambia de avatar, captura, bloquea… por su cuenta (sin reglas ni nodo).
 foreach (var f in new[] { "quién es mejor, claudio o antonio", "cómo se hace una captura de pantalla en windows", "ayer me dijiste que bloqueara la compu" })
 {

@@ -96,3 +96,13 @@ test('salud con ?probar=1 pregunta de verdad al modelo windows (frase fija) y se
   await fetch(`${base}/api/windows/salud?probar=1`);
   assert.equal(preguntas, antes + 1);
 });
+
+test('el cerebro en Windows dice que VA a hacerlo, nunca «listo» antes de que la PC lo haga, y entiende el aviso real de la PC', async () => {
+  const { instruccionWindows } = await import('../server/windows-rutas');
+  for (const idioma of ['es', 'en'] as const) {
+    const p = instruccionWindows(idioma);
+    assert.doesNotMatch(p, /«Listo, la cierro\.»|"Done, closing it\."/);
+    assert.match(p, idioma === 'es' ? /nunca «listo»/ : /never "done"/);
+    assert.match(p, /\[La PC: …\]/);
+  }
+});
