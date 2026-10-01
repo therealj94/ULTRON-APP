@@ -129,5 +129,29 @@ def tags():
     # Tambien bajo el nombre corto que configura el asistente (AURA_MODELO=qwen3.8:27b).
     return jsonify({"models": [{"name": MODEL, "model": MODEL}, {"name": "qwen3.8:27b", "model": "qwen3.8:27b"}, {"name": "orcarouter/Qwen3.8-27B-Uncensored", "model": "orcarouter/Qwen3.8-27B-Uncensored"}]})
 
+
+# 1-oct: precalentar lo fijo de AU-RA. Este llama-server (Qwen3.8 con draft-mtp) solo reutiliza lo ya leído
+# desde un checkpoint, y el checkpoint queda al FINAL de cada prompt. Si se le manda solo el system (hasta su
+# <|im_end|>), el checkpoint queda justo ahí y el turno siguiente lee solo lo nuevo: 0,4 s en vez de 6,5 s.
+@app.route("/api/precalentar", methods=["POST"])
+def precalentar():
+    data = request.get_json(force=True, silent=True) or {}
+    system = str(data.get("system") or "")
+    if not system or len(system) > MAX_CHARS:
+        return jsonify({"ok": False, "error": "system vacio o demasiado largo"}), 400
+    try:
+        t0 = time.time()
+        plantilla = requests.post(LLAMA + "/apply-template", json={"messages": [{"role": "system", "content": system}, {"role": "user", "content": "x"}]}, timeout=10).json().get("prompt") or ""
+        i = plantilla.find(system)
+        fin = plantilla.find("<|im_end|>", i + len(system)) if i >= 0 else -1
+        if fin < 0:
+            return jsonify({"ok": False, "error": "no encontre el system en la plantilla"}), 500
+        prefijo = plantilla[: fin + len("<|im_end|>\n")]
+        r = requests.post(LLAMA + "/completion", json={"prompt": prefijo, "n_predict": 0, "cache_prompt": True}, timeout=90).json()
+        tm = r.get("timings") or {}
+        return jsonify({"ok": True, "leidas": tm.get("prompt_n"), "reusadas": tm.get("cache_n"), "ms": int((time.time() - t0) * 1000)})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)[:200]}), 502
+
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=11434, threaded=True)

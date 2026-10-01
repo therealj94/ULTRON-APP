@@ -7,7 +7,7 @@ import zlib from 'zlib';
 import { createServer as createViteServer } from 'vite';
 import { crearComprobadorListo } from './lib/nodo-listo';
 import { sanearDiag } from './lib/diag-saneador';
-import { autocuraDe, fetchNodo, saludNodo, nodoConfigurado, NODO_URL as ULTRON_NODO_URL, NODO_SECRETO as ULTRON_NODO_SECRETO, NODO_MODELO as ULTRON_NODO_MODELO } from './lib/nodo';
+import { autocuraDe, fetchNodo, saludNodo, nodoConfigurado, precalentarSistema, NODO_URL as ULTRON_NODO_URL, NODO_SECRETO as ULTRON_NODO_SECRETO, NODO_MODELO as ULTRON_NODO_MODELO } from './lib/nodo';
 import { JUNTA, buildPersonality, decodeDataUrl, normalizarCorreo, buscarWeb, leerPagina } from './server/desk';
 import { hablar, abrirVozEnVivo, cantar, orar, repertorio, cancionPorPedido, estadoVoz, saludVoz, vozDe, sinEtiquetas } from './server/voz';
 import { lineaAvatar, normalizarAvatar, normalizarIdioma, NOMBRE_AVATAR, type AvatarVoz } from './server/eleven';
@@ -2722,14 +2722,9 @@ function calentarCerebro(correo: string) {
   const ahora = Date.now();
   if (ahora - (calentadoEn.get(c) || 0) < CALENTAR_CADA_MS) return;
   calentadoEn.set(c, ahora);
-  void fetchNodo(`${ULTRON_NODO_URL}/api/chat`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-ultron-secreto': ULTRON_NODO_SECRETO },
-    body: JSON.stringify({ model: ULTRON_NODO_MODELO, stream: false, messages: [{ role: 'system', content: system }, { role: 'user', content: 'Hola' }], options: { num_predict: 1, temperature: 0 } }),
-    signal: AbortSignal.timeout(30_000),
-  })
-    .then((r) => r.body?.cancel().catch(() => {}))
-    .catch(() => {});
+  // Solo el system (lib/nodo.ts precalentarSistema): con «system + Hola» el checkpoint quedaba después del
+  // «Hola» y el turno de verdad, que difiere ahí, volvía a leerlo todo.
+  void precalentarSistema(system);
 }
 
 /** Cómo se presenta lo que dice la persona: «Junta:» a la junta, «Miembro:» a un miembro de la comunidad. */
@@ -3407,6 +3402,8 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       // Cortado o terminado, el lector se suelta: la conexión al nodo no queda colgada.
       await reader.cancel().catch(() => {});
     }
+    // Lo fijo queda leído para el turno siguiente (lib/nodo.ts): la próxima primera palabra no espera 6 s.
+    void precalentarSistema(system);
     if (buf.trim()) {
       try {
         const j = JSON.parse(buf.trim());

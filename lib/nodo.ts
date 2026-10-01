@@ -2,6 +2,7 @@
  * Acceso al nodo Qwen (cerebro). Único sitio que conoce su URL, su secreto y su TLS autofirmado.
  * Todo lo que hable con el 27B (turno, calentado, salud, centinela) pasa por aquí.
  */
+import { createHash } from 'node:crypto';
 import { Agent as UndiciAgent } from 'undici';
 
 export const NODO_URL = (process.env.ULTRON_NODO_URL || process.env.QWEN_ENDPOINT_URL || '').replace(/\/$/, '');
@@ -20,6 +21,37 @@ export function fetchNodo(url: string, init: RequestInit = {}): Promise<Response
 
 export function nodoConfigurado() {
   return !!(NODO_URL && NODO_SECRETO);
+}
+
+const precalentados = new Map<string, number>();
+
+/**
+ * Deja LEÍDO en el nodo el system de un turno (POST /api/precalentar del motor → ollama-proxy-ndjson.py).
+ * El llama-server del A10G (Qwen3.8 con draft-mtp) solo reutiliza lo ya leído desde un checkpoint, y el
+ * checkpoint queda al final de cada prompt: después de un turno queda tras el mensaje de la persona, y el
+ * turno siguiente (que difiere justo ahí) releía las ~6 000 fichas del system: 6,5 s antes de la primera
+ * palabra. Con el system solo, el checkpoint queda donde termina y el turno siguiente lee solo lo nuevo
+ * (medido el 1-oct: 0,4–0,6 s). Cuesta ~0,2 s si ya estaba leído. Nunca lanza.
+ */
+export async function precalentarSistema(system: string, minimoMs = 0): Promise<{ ok: boolean; leidas?: number; reusadas?: number; ms?: number } | null> {
+  if (!nodoConfigurado() || !system) return null;
+  const huella = createHash('sha1').update(system).digest('hex');
+  const ahora = Date.now();
+  if (minimoMs > 0 && ahora - (precalentados.get(huella) ?? 0) < minimoMs) return null;
+  precalentados.set(huella, ahora);
+  if (precalentados.size > 200) precalentados.delete(precalentados.keys().next().value as string);
+  try {
+    const r = await fetchNodo(`${NODO_URL}/api/precalentar`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-ultron-secreto': NODO_SECRETO },
+      body: JSON.stringify({ system }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!r.ok) return { ok: false };
+    return (await r.json()) as { ok: boolean; leidas?: number; reusadas?: number; ms?: number };
+  } catch {
+    return null;
+  }
 }
 
 /** Sonda de salud del nodo. */
