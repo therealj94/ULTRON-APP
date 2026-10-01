@@ -1013,9 +1013,12 @@ export function montarVozAgente(app: express.Express, d: Deps) {
       return esRelleno(t) ? '' : quitarRellenoInicial(t.replace(/^\s+/, ''));
     };
     /** Lo del cerebro: la espera terminó (sin seguimiento) y el sonido de fondo se quita. */
+    /** Cuándo llegó lo primero del cerebro (no la frase de espera): va al log de latencia del turno. */
+    let cerebroEn = 0;
     const decirCerebro = (t: string) => {
       if (!t || terminado) return;
       if (t.trim()) {
+        if (!cerebroEn) cerebroEn = Date.now();
         cerebroHablo = true;
         esperando = false;
         ambiente(null);
@@ -1142,6 +1145,9 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     }
     escribir(trozoOpenAI(id, modelo, null, 'stop'));
     cerrar();
+    // Una línea por turno hablado, para ver la latencia real en el log (Render): la voz espera lo primero.
+    const msDe = (t: number) => (t ? `${t - t0} ms` : '—');
+    console.log(`[voz] turno ${conv.cid.slice(0, 8)}: primer texto ${msDe(primeroEn)}${puenteDicho ? ' (espera)' : ''} · cerebro ${msDe(cerebroEn)} · total ${Date.now() - t0} ms${porReloj ? ' · TARDE' : ''}`);
   };
   // ElevenLabs puede añadir /chat/completions a la URL o usarla tal cual: se aceptan las formas.
   app.post('/api/voz/llm', llm);

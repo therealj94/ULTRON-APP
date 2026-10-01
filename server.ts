@@ -3381,7 +3381,10 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
   };
   // Cada trozo sale dos veces: `text` para leer (sin expresiones; es lo único que entienden las APK
   // viejas) y `voz` con sus [risa]… para la voz. Los clientes nuevos hablan `voz` y enseñan `text`.
-  const soltar = (evento: 'delta' | 'replace', texto: string) => send(evento, { text: quitarExpresiones(texto), voz: texto });
+  const soltar = (evento: 'delta' | 'replace', texto: string) => {
+    if (texto.trim()) trazaActual()?.marca('primer-texto');
+    send(evento, { text: quitarExpresiones(texto), voz: texto });
+  };
 
   empezarTurnoDeCuenta(body);
   // Una orden simple para la app no espera al cerebro.
@@ -3435,6 +3438,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
   }
 
   const p = await prepararTurno(body, opciones);
+  trazaActual()?.marca('preparado');
   if (!p.message) {
     send('error', { error: FRASE_FALLO.vacio[idioma], codigo: 'vacio' });
     reg.cerrar({ error: 'message vacío' });
@@ -3566,8 +3570,15 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
           try {
             const j = JSON.parse(l);
             const piece = j.message?.content || j.response || '';
-            if (piece) procesar(piece);
-            if (j.done) reg.tokens(j.prompt_eval_count, j.eval_count);
+            if (piece) {
+              reg.marca('nodo');
+              procesar(piece);
+            }
+            if (j.done) {
+              reg.tokens(j.prompt_eval_count, j.eval_count);
+              // El proxy del nodo dice cuántas fichas del prompt ya estaban leídas (caché del espacio).
+              reg.lectura(j.prompt_eval_count, j.prompt_cache_count);
+            }
           } catch {
             /* línea parcial */
           }

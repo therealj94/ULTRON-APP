@@ -110,6 +110,23 @@ export class RegistroTurno {
   readonly t: Traza;
   private readonly t0 = Date.now();
   private cerrado = false;
+  /**
+   * Cuándo pasó cada etapa del turno (ms desde que empezó) y lo que leyó el nodo. Va como el paso
+   * «tiempos» de la traza (sin columnas nuevas): preparado, primera ficha del nodo, primer texto a la voz.
+   */
+  private readonly etapas: Record<string, number> = {};
+
+  /** Anota la primera vez que el turno llega a `etapa`. */
+  marca(etapa: string) {
+    if (this.cerrado || etapa in this.etapas) return;
+    this.etapas[etapa] = Date.now() - this.t0;
+  }
+
+  /** Lo que leyó el nodo en una llamada: fichas del prompt y cuántas venían ya leídas (caché). */
+  lectura(fichas?: number | null, enCache?: number | null) {
+    if (Number.isFinite(fichas as number)) this.etapas.fichas = (this.etapas.fichas || 0) + Number(fichas);
+    if (Number.isFinite(enCache as number)) this.etapas.cache = (this.etapas.cache || 0) + Number(enCache);
+  }
   /** Se resuelve cuando la traza quedó guardada (o falló). Solo para pruebas y para cierres ordenados. */
   guardado: Promise<void> = Promise.resolve();
 
@@ -220,6 +237,7 @@ export class RegistroTurno {
     if (o.error) this.error(o.error);
     this.t.t_fin = new Date().toISOString();
     this.t.ms = Date.now() - this.t0;
+    if (Object.keys(this.etapas).length && this.t.pasos.length < MAX_PASOS) this.t.pasos.push({ herramienta: 'tiempos', ok: true, ms: this.t.ms, args: { ...this.etapas } });
     this.guardado = guardarTraza(this.t).catch((e) => console.error('[traza] no se guardó', this.t.id, String(e?.message || e).slice(0, 160)));
     return this.guardado;
   }
@@ -341,8 +359,20 @@ export async function resumenTrazas(plataforma?: string, horas = 24 * 7) {
   const ms = ts.map((t) => t.ms || 0).filter(Boolean).sort((a, b) => a - b);
   const p = (q: number) => (ms.length ? ms[Math.min(ms.length - 1, Math.floor(q * ms.length))] : null);
   const porHerramienta: Record<string, { usos: number; fallos: number }> = {};
+  // Las etapas de cada turno (el paso «tiempos»): p50/p95 de cada una y las fichas leídas.
+  const valoresEtapa: Record<string, number[]> = {};
+  for (const t of ts)
+    for (const s of t.pasos)
+      if (s.herramienta === 'tiempos' && s.args)
+        for (const [k, v] of Object.entries(s.args)) if (typeof v === 'number' && Number.isFinite(v)) (valoresEtapa[k] ||= []).push(v);
+  const etapas: Record<string, { n: number; p50: number; p95: number }> = {};
+  for (const [k, vs] of Object.entries(valoresEtapa)) {
+    vs.sort((a, b) => a - b);
+    etapas[k] = { n: vs.length, p50: vs[Math.floor(0.5 * (vs.length - 1))], p95: vs[Math.floor(0.95 * (vs.length - 1))] };
+  }
   for (const t of ts)
     for (const s of t.pasos) {
+      if (s.herramienta === 'tiempos') continue;
       const h = (porHerramienta[s.herramienta] ||= { usos: 0, fallos: 0 });
       h.usos++;
       if (!s.ok) h.fallos++;
@@ -360,6 +390,7 @@ export async function resumenTrazas(plataforma?: string, horas = 24 * 7) {
     utiles: ts.filter((t) => t.feedback === 1).length,
     noUtiles: ts.filter((t) => t.feedback === -1).length,
     porHerramienta,
+    etapas,
     porAgente: ts.reduce<Record<string, number>>((m, t) => ((m[t.agente || 'general'] = (m[t.agente || 'general'] || 0) + 1), m), {}),
   };
 }

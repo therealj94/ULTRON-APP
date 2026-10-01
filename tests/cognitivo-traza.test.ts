@@ -166,3 +166,29 @@ test('traza y auditoría en Postgres', { skip: !conBase && 'sin base de pruebas'
   await sql('TRUNCATE cognitivo.auditoria, cognitivo.traza_turno');
   await cerrar();
 });
+
+test('las etapas del turno (preparado, primera ficha, primer texto) y lo leído del nodo van al resumen p50/p95', () =>
+  conArchivos(async () => {
+    for (const [prep, nodo, texto, fichas, cache] of [
+      [100, 600, 700, 3000, 2900],
+      [200, 900, 1000, 3100, 0],
+      [150, 700, 800, 2950, 2800],
+    ]) {
+      const reg = iniciarTraza({ plataforma: 'ultron', canal: 'mesa', pregunta: 'hola' });
+      // Sin esperar de verdad: se anotan las marcas como las dejaría el turno.
+      (reg as any).etapas.preparado = prep;
+      (reg as any).etapas.nodo = nodo;
+      (reg as any).etapas['primer-texto'] = texto;
+      reg.lectura(fichas, cache);
+      reg.marca('preparado'); // la segunda vez no cambia la primera
+      await reg.cerrar({ respuesta: 'ok' });
+      const t = await trazaPorId(reg.id);
+      const tiempos = t!.pasos.find((p) => p.herramienta === 'tiempos');
+      assert.equal((tiempos!.args as any).preparado, prep);
+      assert.equal((tiempos!.args as any).fichas, fichas);
+    }
+    const r = await resumenTrazas('ultron', 1);
+    assert.deepEqual(r.etapas['primer-texto'], { n: 3, p50: 800, p95: 800 });
+    assert.equal(r.etapas.nodo.p50, 700);
+    assert.equal(r.porHerramienta.tiempos, undefined, 'las etapas no cuentan como herramienta');
+  }));

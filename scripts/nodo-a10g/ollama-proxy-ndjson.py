@@ -24,6 +24,9 @@ def linea(content, done, extra=None, tools=None):
         "eval_count": int(u.get("completion_tokens") or 0),
         "eval_duration": int(float(u.get("predicted_ms") or 0) * 1e6),
     }
+    if u.get("prompt_cache") is not None:
+        # Cuantas fichas del prompt ya estaban leidas en el espacio (el servidor lo anota en la traza).
+        o["prompt_cache_count"] = int(u.get("prompt_cache") or 0)
     if done:
         o["done_reason"] = "stop"
     if u.get("error"):
@@ -115,6 +118,7 @@ def chat():
                 usage["predicted_ms"] = tim.get("predicted_ms") or 0
             if tim.get("prompt_n") is not None:
                 usage["prompt_tokens"] = tim["prompt_n"] + int(tim.get("cache_n") or 0)
+                usage["prompt_cache"] = int(tim.get("cache_n") or 0)
             txt = delta.get("content") or ""
             if txt:
                 got = True
