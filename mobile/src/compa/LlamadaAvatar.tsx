@@ -246,7 +246,8 @@ export function LlamadaAvatar({ v, onContestar, onRechazar, onColgar, onSilencia
             style={s.pildora}
           >
             <View style={s.pildoraCara}>
-              <CaraLlamada avatar={v.avatar} lado={40} habla={false} />
+              {/* Minimizada, la cara de la píldora es la misma de la llamada (Claudio y ANT-ONIO en video). */}
+              <CaraLlamada avatar={v.avatar} lado={40} habla={false} cuerpo3D={cuerpo3D} />
             </View>
             <View style={s.pildoraTextos}>
               <Text style={s.pildoraNombre} numberOfLines={1}>
