@@ -134,6 +134,22 @@ export class DirectorVideo {
     return fondo === this.actual.clip ? null : this.poner(fondo, true);
   }
 
+  /**
+   * Si está hablando con un golpe en pantalla que todavía no cumplió su tiempo mínimo: cuánto falta
+   * (ms) para pasar a «habla». La vista pone un reloj y llama a `revisar()`; sin él, el avatar seguía
+   * con el golpe (sin mover la boca) hasta que el clip terminaba, casi 5 s después.
+   */
+  msParaHablar(): number | null {
+    if (this.actual.bucle || !this.estadoVisto || this.fondo(this.estadoVisto) !== 'habla') return null;
+    return Math.max(0, GOLPE_ANTES_DE_HABLAR_MS - (this.ahora() - this.desde));
+  }
+
+  /** Vuelve a mirar el último estado (el reloj de `msParaHablar` se cumplió). */
+  revisar(): Reproduccion | null {
+    const falta = this.msParaHablar();
+    return falta === 0 ? this.poner('habla', true) : null;
+  }
+
   /** El golpe `n` terminó (o está por terminar): vuelve al fondo que toca ahora. */
   termino(n: number): Reproduccion | null {
     if (n !== this.actual.n || this.actual.bucle) return null;

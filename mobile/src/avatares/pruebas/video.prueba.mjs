@@ -102,6 +102,25 @@ prueba('si empieza a hablar en medio de un golpe, lo deja terminar su gesto y lu
   assert.equal(d.golpe('saluda'), null, 'acaba de saludar: no repite');
 });
 
+prueba('hablar a mitad de un golpe: dice cuánto falta y al cumplirse pasa a hablar sin otro estado (Codex en #106)', () => {
+  const { d, r } = nuevo();
+  d.golpe('saluda');
+  r.pasar(400);
+  assert.equal(d.estado(est({ hablando: true })), null);
+  assert.equal(d.msParaHablar(), GOLPE_ANTES_DE_HABLAR_MS - 400, 'falta lo que le queda al saludo');
+  assert.equal(d.revisar(), null, 'antes de tiempo no cambia');
+  r.pasar(GOLPE_ANTES_DE_HABLAR_MS - 400);
+  const h = d.revisar();
+  assert.deepEqual([h.clip, h.bucle], ['habla', true], 'cumplido el tiempo, habla');
+  assert.equal(d.msParaHablar(), null, 'hablando en bucle no hay reloj');
+  // Si dejó de hablar antes, no hay nada que esperar.
+  const otro = nuevo();
+  otro.d.golpe('risa');
+  otro.d.estado(est({ hablando: true }));
+  otro.d.estado(est());
+  assert.equal(otro.d.msParaHablar(), null);
+});
+
 prueba('«reducir movimiento»: sin golpes, solo los fondos', () => {
   const { d } = nuevo({ reducido: true });
   assert.equal(d.golpe('saluda'), null);

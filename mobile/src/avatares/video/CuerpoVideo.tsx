@@ -120,10 +120,18 @@ export const CuerpoVideo = forwardRef<ControlCuerpo, Props>(function CuerpoVideo
     setVisto(false);
   }, [activo, op0, op1]);
 
-  // Cada estado nuevo: el guion decide si cambia de clip.
+  // Cada estado nuevo: el guion decide si cambia de clip. Si empezó a hablar en medio de un golpe,
+  // un reloj lo pasa a «habla» cuando el golpe cumple su tiempo mínimo (no hay otro estado que lo avise).
+  const relojHabla = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    poner(director.current!.estado(estado));
+    const d = director.current!;
+    poner(d.estado(estado));
+    if (relojHabla.current) clearTimeout(relojHabla.current);
+    relojHabla.current = null;
+    const falta = d.msParaHablar();
+    if (falta !== null) relojHabla.current = setTimeout(() => poner(d.revisar()), falta + 20);
   }, [estado, poner]);
+  useEffect(() => () => void (relojHabla.current && clearTimeout(relojHabla.current)), []);
 
   const alEstado = useCallback(
     (r: Reproduccion, s: AVPlaybackStatus) => {
