@@ -35,7 +35,7 @@ await new Promise((r) => srv.once('listening', r));
 const base = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
 after(() => srv.close());
 
-const yo = emitirSesion({ correo: 'Maria@Ordenglobal.org', nombre: 'María José', rol: 'Junta' });
+const yo = emitirSesion({ correo: 'Maria@Ordenglobal.org', nombre: 'María José', rol: 'Junta' }, { comunidad: true });
 const h = (token?: string) => ({ 'content-type': 'application/json', ...(token ? { 'x-ultron-sesion': token } : {}) });
 
 test('GET /api/perfil: sin token la ficha pública; con token malo 401; con sesión y sin perfil, perfil: null', async () => {
@@ -73,7 +73,7 @@ test('PUT /api/perfil: valida, guarda por el correo de la sesión y se lee de vu
   assert.equal(leido.perfil.encuesta.vive, 'Comayagua');
   assert.equal(leido.perfil.cumple, '12-08');
   // El cuerpo no elige de quién es el perfil.
-  const otra = emitirSesion({ correo: 'otra@x.com', nombre: 'Otra', rol: 'Junta' });
+  const otra = emitirSesion({ correo: 'otra@x.com', nombre: 'Otra', rol: 'Junta' }, { comunidad: true });
   assert.equal(((await (await fetch(`${base}/api/perfil`, { headers: h(otra.token) })).json()) as any).perfil, null);
   // Un segundo PUT parcial solo cambia lo que trae.
   const p2: any = await (await fetch(`${base}/api/perfil`, { method: 'PUT', headers: h(yo.token), body: JSON.stringify({ encuesta: { familia: 'dos gatos' } }) })).json();
@@ -119,7 +119,7 @@ test('el canal de acciones: SSE, varios teléfonos de la misma cuenta, eventos {
   assert.equal((await fetch(`${base}/api/app/acciones`)).status, 401, 'sin sesión no');
   const tel1 = await abrirCanal(yo.token);
   const tel2 = await abrirCanal(yo.token);
-  const ajeno = await abrirCanal(emitirSesion({ correo: 'ajeno@x.com', nombre: 'Ajeno', rol: 'Junta' }).token);
+  const ajeno = await abrirCanal(emitirSesion({ correo: 'ajeno@x.com', nombre: 'Ajeno', rol: 'Junta' }, { comunidad: true }).token);
   try {
     assert.equal(tel1.r.status, 200);
     assert.match(String(tel1.r.headers.get('content-type')), /text\/event-stream/);
@@ -141,7 +141,7 @@ test('el canal de acciones: SSE, varios teléfonos de la misma cuenta, eventos {
 
 test('el canal tiene tope por cuenta (al pasarlo se desaloja el más viejo), y una sesión cerrada ya no abre', async () => {
   _reiniciarAccionesApp();
-  const s = emitirSesion({ correo: 'muchos@x.com', nombre: 'Muchos', rol: 'Junta' });
+  const s = emitirSesion({ correo: 'muchos@x.com', nombre: 'Muchos', rol: 'Junta' }, { comunidad: true });
   const abiertos = [];
   for (let i = 0; i < MAX_CANALES_POR_CUENTA; i++) {
     abiertos.push(await abrirCanal(s.token));
@@ -164,7 +164,7 @@ test('el canal tiene tope por cuenta (al pasarlo se desaloja el más viejo), y u
 
 test('el canal se corta en el latido siguiente si la sesión se cierra, y nunca pasa de su vida máxima', async () => {
   _reiniciarAccionesApp();
-  const s = emitirSesion({ correo: 'sale@x.com', nombre: 'Sale', rol: 'Junta' });
+  const s = emitirSesion({ correo: 'sale@x.com', nombre: 'Sale', rol: 'Junta' }, { comunidad: true });
   const tel = await abrirCanal(s.token);
   try {
     assert.ok(await espera(() => oyentesDe('sale@x.com') === 1));
@@ -184,7 +184,7 @@ test('el canal se corta en el latido siguiente si la sesión se cierra, y nunca 
   const srv2 = app2.listen(0, '127.0.0.1');
   await new Promise((r) => srv2.once('listening', r));
   const base2 = `http://127.0.0.1:${(srv2.address() as AddressInfo).port}`;
-  const s2 = emitirSesion({ correo: 'vida@x.com', nombre: 'Vida', rol: 'Junta' });
+  const s2 = emitirSesion({ correo: 'vida@x.com', nombre: 'Vida', rol: 'Junta' }, { comunidad: true });
   const tel2 = await abrirCanal(s2.token, undefined, base2);
   try {
     assert.ok(await espera(() => tel2.terminado(), 2000), 'se cerró al cumplir su vida');
@@ -197,7 +197,7 @@ test('el canal se corta en el latido siguiente si la sesión se cierra, y nunca 
 
 test('el canal por aparato: la acción va al teléfono del turno; el mismo aparato reemplaza su canal viejo', async () => {
   _reiniciarAccionesApp();
-  const s = emitirSesion({ correo: 'dos@x.com', nombre: 'Dos', rol: 'Junta' });
+  const s = emitirSesion({ correo: 'dos@x.com', nombre: 'Dos', rol: 'Junta' }, { comunidad: true });
   const a = await abrirCanal(s.token, 'tel-A');
   const b = await abrirCanal(s.token, 'tel-B');
   try {
@@ -271,7 +271,7 @@ test('A20: A propone llamar a X, B propone recordar Y, A confirma: solo la propu
 
 test('A21: el canal que vuelve con Last-Event-ID recibe lo que se perdió (reciente), y nada si no se conoce el id', async () => {
   _reiniciarAccionesApp();
-  const s = emitirSesion({ correo: 'tres@x.com', nombre: 'Tres', rol: 'Junta' });
+  const s = emitirSesion({ correo: 'tres@x.com', nombre: 'Tres', rol: 'Junta' }, { comunidad: true });
   const c1 = await abrirCanal(s.token, 'tel-C');
   let e1 = '';
   try {
@@ -327,7 +327,7 @@ test('PUT /api/perfil con S3 caído y sin copia local: 503 y no se sube nada enc
   }) as typeof fetch;
   Object.assign(process.env, { ULTRON_MEMORIA_BUCKET: 'cubo-prueba', AWS_ACCESS_KEY_ID: 'AKIAPRUEBA', AWS_SECRET_ACCESS_KEY: 'secreto-prueba' });
   try {
-    const s = emitirSesion({ correo: 'sin-s3@x.com', nombre: 'Sin Ese', rol: 'Junta' });
+    const s = emitirSesion({ correo: 'sin-s3@x.com', nombre: 'Sin Ese', rol: 'Junta' }, { comunidad: true });
     const r = await fetch(`${base}/api/perfil`, { method: 'PUT', headers: h(s.token), body: JSON.stringify({ apodo: 'Nuevo' }) });
     assert.equal(r.status, 503);
     assert.equal(((await r.json()) as any).code, 'perfil_no_disponible');

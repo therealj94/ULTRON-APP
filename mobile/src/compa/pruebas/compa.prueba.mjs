@@ -26,7 +26,9 @@ import {
   leyendaLlamada,
   llamadaActiva,
   llamadaTerminada,
+  mesaCallada,
   relojLlamada,
+  seguirVozMesa,
 } from '../llamadaCiclo.ts';
 import { Precalentador } from '../permiso.ts';
 import { coordinarLlamadas } from '../llamada.ts';
@@ -2355,6 +2357,100 @@ prueba('«llámame» en la mesa: lo reconoce el intérprete del teléfono (sin r
   // El teléfono le dice al servidor que sabe esta mano (así el camino rápido del servidor también la usa).
   assert.ok(MANOS_APP.includes('llamame'));
   assert.ok(esAccionApp({ tipo: 'llamame' }));
+});
+
+/* ── la voz de la mesa con la conversación en vivo (auditoría 1-oct, el mismo arreglo que la web) ── */
+
+/** El ciclo y la sesión conectados como en el VozProvider: lo que pasa en la sesión se le cuenta al ciclo. */
+function llamadaConVozMesa() {
+  const { c: ciclo } = cicloDePrueba();
+  const control = new ControlSesion('aura', 'es');
+  const voz = { callada: false, cambios: [], alNativo: [] };
+  const ejecutar = (efs) => {
+    for (const ef of efs) {
+      if (ef.tipo === 'abrir') control.iniciar();
+      else if (ef.tipo === 'cerrar') control.terminar();
+      // Lo que la mesa diría con su voz: se anota si en ese instante podía hablar.
+      else if (ef.tipo === 'alNativo') voz.alNativo.push({ ...ef, mesaPodiaHablar: !voz.callada });
+    }
+  };
+  let antes = control.vista();
+  control.suscribir((v) => {
+    const a = antes;
+    antes = v;
+    const ef = [];
+    if (v.montada && v.estado === 'conectando' && (!a.montada || a.gen !== v.gen)) ef.push(...ciclo.sesionAbriendo());
+    if (v.montada && (v.estado === 'escuchando' || v.estado === 'hablando') && a.estado === 'conectando') ef.push(...ciclo.conectado());
+    if (!v.montada && v.estado === 'error' && (a.montada || a.estado !== 'error')) ef.push(...ciclo.fallo(v.detalle));
+    else if (a.montada && !v.montada) ef.push(...ciclo.cerrada('cortada'));
+    ejecutar(ef);
+  });
+  const off = seguirVozMesa(ciclo, control, (on) => {
+    voz.callada = on;
+    voz.cambios.push(on);
+  });
+  return { ciclo, control, voz, ejecutar, off };
+}
+
+prueba('voz de la mesa: con la conversación en vivo abierta calla (también lo que ya venía), y vuelve al colgar', () => {
+  const { ciclo, control, voz, ejecutar, off } = llamadaConVozMesa();
+  assert.equal(voz.callada, false, 'en reposo la mesa habla');
+  assert.deepEqual(voz.cambios, [false]);
+  // «Hablar»: la mesa calla en el MISMO instante en que el ciclo pasa a conectando, antes de abrir la
+  // sesión (un turno en camino no alcanza a decir nada en medio).
+  const ef = ciclo.hablarYa();
+  assert.equal(voz.callada, true, 'conectando: la mesa ya no habla');
+  ejecutar(ef);
+  assert.equal(control.vista().montada, true);
+  control.alEstado(control.vista().gen, 'escuchando');
+  assert.equal(ciclo.estado(), 'en_llamada');
+  control.alEstado(control.vista().gen, 'hablando');
+  assert.equal(voz.callada, true, 'en llamada, hablando el agente: la mesa calla');
+  ejecutar(ciclo.dobleToque());
+  assert.equal(voz.callada, true, 'silenciada sigue siendo la llamada: la mesa no habla por su cuenta');
+  ejecutar(ciclo.dobleToque());
+  ejecutar(ciclo.colgar());
+  assert.equal(control.vista().montada, false);
+  assert.equal(voz.callada, false, 'colgó: la mesa vuelve a tener voz');
+  assert.deepEqual(voz.cambios, [false, true, false], 'un solo aviso por cambio');
+  // Sonando (el timbre de un recordatorio) tampoco habla encima; rechazada, vuelve.
+  ciclo.tic();
+  ciclo.listo();
+  ciclo.llamar(RECL);
+  assert.equal(voz.callada, true, 'sonando: la mesa calla');
+  ciclo.rechazar();
+  assert.equal(voz.callada, false, 'rechazada: la mesa vuelve');
+  off();
+  ciclo.llamar({ tipo: 'llamame' });
+  assert.equal(voz.callada, false, 'sin seguirlos, ya no avisa');
+});
+
+prueba('voz de la mesa: una sesión montada por otro lado (sin llamada en el ciclo) también la calla', () => {
+  assert.equal(mesaCallada('reposo', { montada: true }), true);
+  assert.equal(mesaCallada('reposo', { montada: false }), false);
+  assert.equal(mesaCallada('colgada', { montada: false }), false);
+  for (const e of ['sonando', 'conectando', 'en_llamada', 'silenciado']) assert.equal(mesaCallada(e, { montada: false }), true, e);
+  const { control, voz } = llamadaConVozMesa();
+  control.iniciar();
+  assert.equal(voz.callada, true);
+});
+
+prueba('voz de la mesa: si la conversación falla (también conectando) la mesa recupera la voz ANTES de decir por qué', () => {
+  const { ciclo, control, voz, ejecutar } = llamadaConVozMesa();
+  // Un recordatorio que llama: contesta y la sesión no llega a conectar (el reintento tampoco).
+  ejecutar(ciclo.llamar(RECL));
+  ejecutar(ciclo.contestar());
+  assert.equal(voz.callada, true);
+  control.alEstado(control.vista().gen, 'error', 'webrtc: ice failed');
+  assert.equal(control.vista().montada, true, 'primero, un reintento: sigue siendo la llamada');
+  assert.equal(voz.callada, true, 'en el reintento la mesa sigue callada');
+  control.alEstado(control.vista().gen, 'error', 'webrtc: ice failed');
+  assert.equal(control.vista().montada, false, 'el fallo desmonta la sesión (y con eso ModoConversacion la cuelga)');
+  assert.equal(ciclo.estado(), 'colgada');
+  assert.equal(voz.callada, false);
+  assert.equal(voz.alNativo.length, 1, 'el recordatorio lo dice la mesa');
+  assert.equal(voz.alNativo[0].texto, RECL.texto);
+  assert.equal(voz.alNativo[0].mesaPodiaHablar, true, 'cuando lo pide el ciclo, la mesa ya tiene voz');
 });
 
 for (const [nombre, f] of pruebas) {

@@ -130,6 +130,22 @@ export function vozSuspendida() {
   return suspendida;
 }
 
+/**
+ * Con la conversación en vivo (la llamada del avatar) abierta habla el agente por WebRTC: la mesa no le
+ * pone su voz encima. No basta con callar lo que suena al abrirse: cada `speak()` empieza una generación
+ * nueva, así que un turno que ya venía en camino (su locutor por frases), la segunda parte de una
+ * reacción («ya, ya» y la risa) o una canción pedida desde el menú volvían a sonar encima del agente.
+ * Aquí se corta en la raíz: no se pide audio ni se reproduce nada; el texto sigue llegando a la pantalla.
+ * Lo fija el VozProvider (llamadaCiclo.ts, `seguirVozMesa`). Aparte de `suspendida`: esa es la de las
+ * llamadas de PULSE2CHAT, con su propio dueño y su modo de audio.
+ */
+let callaPorConversacion = false;
+export function callarPorConversacion(on: boolean) {
+  if (callaPorConversacion === on) return;
+  callaPorConversacion = on;
+  if (on) void stopSpeaking();
+}
+
 /** El nivel de boca de una voz que no suena por aquí (la conversación fluida, por WebRTC). */
 export function nivelExterno(v01: number) {
   emitLevel(v01);
@@ -241,6 +257,8 @@ async function conExtension(path: string, ct: string): Promise<string> {
 }
 
 async function fetchSource(text: string, perf: Perf, emocion: Emocion, privado = false): Promise<AVPlaybackSource | null> {
+  // Con la conversación en vivo nadie la va a oír: ni se le pide al servidor (cuesta voz).
+  if (callaPorConversacion) return null;
   const avatar = avatarActual();
   const idioma = idiomaActual();
   if (privado) {
@@ -329,7 +347,8 @@ async function downloadPost(url: string, body: Record<string, unknown>, timeoutM
 // ---------------------------------------------------------------- reproducción
 
 async function prepare(source: AVPlaybackSource): Promise<Audio.Sound | null> {
-  if (suspendida) return null;
+  // Todo lo que suena pasa por aquí (frases, el locutor del turno, canciones, oraciones).
+  if (suspendida || callaPorConversacion) return null;
   try {
     const { sound } = await Audio.Sound.createAsync(source, { shouldPlay: false, progressUpdateIntervalMillis: 50 });
     const uri = typeof source === 'object' && source && 'uri' in source ? String((source as { uri?: string }).uri || '') : '';
@@ -566,7 +585,9 @@ export async function speak(
   }
 ): Promise<boolean> {
   const clean = cleanForSpeech(text);
-  if (!clean) {
+  // Con la conversación en vivo, ni siquiera el stopSpeaking de abajo: comparte el nivel de la boca con
+  // el agente y se la cerraría de golpe a media frase.
+  if (!clean || callaPorConversacion) {
     opts?.onEnd?.();
     return false;
   }

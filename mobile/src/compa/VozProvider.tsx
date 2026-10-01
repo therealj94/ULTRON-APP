@@ -41,7 +41,7 @@ import { api } from '../lib/api';
 import { loadMesaToken } from '../lib/storage';
 import { miga, reportarEstado } from '../lib/reporte';
 import { emocionDeTexto } from '../lib/emocion';
-import { escucharNivelVoz, nivelExterno, speak, stopSpeaking, suspenderVoz, vozSuspendida } from '../lib/tts';
+import { callarPorConversacion, escucharNivelVoz, nivelExterno, speak, stopSpeaking, suspenderVoz, vozSuspendida } from '../lib/tts';
 import { pauseMicForTts, suspenderOido } from '../lib/speech';
 import { sfxActivos, suspenderSfx } from '../lib/sfx';
 import { quitarExpresiones } from '../lib/expresiones';
@@ -66,7 +66,7 @@ import { registrarTrabajoActivo } from '../lib/barreraOta';
 import { escucharCuenta } from '../pulse/relevo';
 import { contactosParaAura } from './contactos';
 import { ecoMesa, interrupcionVoz, mensajeVoz, nivelOido } from './canales';
-import { CicloLlamada, MENSAJE_SIGUES, avisoMinutos, diaHonduras, llamadaActiva, type EfectoCiclo, type EstadoCiclo, type OrigenLlamada } from './llamadaCiclo';
+import { CicloLlamada, MENSAJE_SIGUES, avisoMinutos, diaHonduras, llamadaActiva, seguirVozMesa, type EfectoCiclo, type EstadoCiclo, type OrigenLlamada } from './llamadaCiclo';
 import { loadVozHoy, saveVozHoy } from '../lib/storage';
 import { avatarPorId } from '../avatares/catalogo';
 import { de } from '../i18n';
@@ -579,6 +579,16 @@ export function VozProvider({ children, conCompanera = true }: Props) {
   useEffect(() => {
     if (vista.montada) void stopSpeaking();
   }, [vista.montada, vista.gen]);
+  // Y mientras dure no vuelve a sonar: ni el resto de un turno que venía en camino ni un saludo, una
+  // reacción o algo pedido desde el menú (lib/tts.ts, callarPorConversacion). Al colgar, o al fallar,
+  // la mesa vuelve a tener voz antes de decir por qué no conectó.
+  useEffect(() => {
+    const off = seguirVozMesa(ciclo, control, callarPorConversacion);
+    return () => {
+      off();
+      callarPorConversacion(false);
+    };
+  }, [ciclo, control]);
   const conversando = vista.montada && (vista.estado === 'escuchando' || vista.estado === 'hablando');
   useEffect(() => {
     contexto.current?.fijarConversando(conversando);

@@ -121,8 +121,8 @@ import {
   procesarElectrumTelegram,
   registrarWebhookElectrum,
 } from './server/electrum/telegram';
-import { identidadDe, exigirPlataforma, esInvitado, plataformaAutorizada, sesionAbreAura } from './server/seguridad';
-import { cuentaDe, cuentasDisponibles, crearSolicitud, entrarConCuenta, mantenerCuentasAlDia } from './server/cuentas';
+import { identidadDe, exigirPlataforma, esInvitado, plataformaAutorizada, sesionAbreAura, esDeComunidad } from './server/seguridad';
+import { cuentaDe, cuentasDisponibles, crearSolicitud, entrarConCuenta, cuentaSuspendida, mantenerCuentasAlDia } from './server/cuentas';
 import { aprobadores, montarRutasCuentas, plantilla } from './server/cuentas-rutas';
 import { montarRutasGenesis } from './server/genesis';
 import { montarEnlacesApp } from './server/enlaces-app';
@@ -225,6 +225,12 @@ function cuerpoGrandePermitido(req: express.Request): boolean {
 }
 app.use((req, res, next) => {
   if (/^\/api\/electrum\/subir\/?$/i.test(req.path)) return next();
+  // Una ruta de cuerpo grande de AU-RA sin credencial válida: 401 (sesión requerida), no 413. Con el
+  // token vencido, la foto o el audio daban 413 y la app no renovaba la sesión: se perdía el pedido.
+  const ruta = req.path.replace(/\/+$/, '');
+  if (!ES_ELECTRUM && CUERPO_GRANDE_AURA.includes(ruta) && req.method === 'POST' && !mesaAutorizada(req) && Number(req.headers['content-length'] || 0) > 1024 * 1024) {
+    return res.status(401).json({ error: 'sesión requerida', code: 'sesion_requerida', honesto: true });
+  }
   return (cuerpoGrandePermitido(req) ? leerJsonGrande : leerJson)(req, res, next);
 });
 // Cuerpo roto o demasiado grande: una respuesta JSON clara en vez de la página HTML de Express.
@@ -1487,12 +1493,13 @@ app.post(['/api/electrum/entrar', '/api/ultron/entrar'], limitar(12), async (req
     if (propia === 'ok') {
       // Una cuenta propia solo abre la plataforma que tiene aprobada: una de Dr Electrum no entra a
       // AU-RA (donde cualquier sesión abre la mesa) aunque la clave sea la misma para las dos.
-      if (!puedeEntrar(identificar({ correo }), PLATAFORMA)) {
+      // Un miembro de la comunidad (fuera del padrón) que se puso clave aquí también entra, como miembro.
+      if (!puedeEntrar(identificar({ correo }), PLATAFORMA) && !esDeComunidad(correo, PLATAFORMA)) {
         return res.status(403).json({ error: `Tu cuenta no tiene acceso a ${ES_ELECTRUM ? 'Dr Electrum FP' : 'AU-RA FP'}. Pedilo desde «Solicitar acceso».`, codigo: 'SIN_ACCESO' });
       }
       anotarExitoEntrada(correo, ipEntrada);
       const { nombre, rol } = nombreYRolDe(correo, (await cuentaDe(correo).catch(() => null))?.nombre);
-      const s = emitirSesion({ correo, nombre, rol });
+      const s = emitirSesion({ correo, nombre, rol }, { comunidad: esDeComunidad(correo, PLATAFORMA) });
       const producto = ES_ELECTRUM ? 'Dr Electrum FP' : 'AU-RA FP';
       return res.json({ ok: true, token: s.token, miembro: { nombre, correo, rol }, message: `Bienvenido a ${producto}, ${nombre}` });
     }
@@ -1512,7 +1519,9 @@ app.post(['/api/electrum/entrar', '/api/ultron/entrar'], limitar(12), async (req
     }
     // El cerebro remoto abre a quien conoce, pero en AU-RA no entra quien el padrón deja fuera (una
     // persona solo de Dr Electrum): su sesión no abriría la mesa (sesionAbreAura), mejor decirlo aquí.
-    if (!ES_ELECTRUM && !sesionAbreAura(correo)) {
+    // Quien no está en el padrón entra como miembro de la comunidad: su sesión lo lleva firmado.
+    const deComunidad = esDeComunidad(correo, PLATAFORMA);
+    if (!ES_ELECTRUM && !sesionAbreAura(correo, deComunidad)) {
       return res.status(403).json({ error: 'Tu cuenta no tiene acceso a AU-RA FP. Pedilo desde «Solicitar acceso».', codigo: 'SIN_ACCESO' });
     }
     anotarExitoEntrada(correo, ipEntrada);
@@ -1525,7 +1534,7 @@ app.post(['/api/electrum/entrar', '/api/ultron/entrar'], limitar(12), async (req
     // Y en AU-RA, quien no está en el padrón no es de la junta aunque el cerebro remoto le abra:
     // entra como miembro (server/nivel.ts), con el rol de miembro.
     const rol = ES_ELECTRUM ? JUNTA[correo]?.rol || 'Dr Electrum FP' : rolVisible(correo);
-    const s = emitirSesion({ correo, nombre, rol });
+    const s = emitirSesion({ correo, nombre, rol }, { comunidad: deComunidad });
     const producto = ES_ELECTRUM ? 'Dr Electrum FP' : 'AU-RA FP';
     return res.json({ ok: true, token: s.token, miembro: { nombre, correo, rol }, message: `Bienvenido a ${producto}, ${nombre}`, remoteUrl: ULTRON_REMOTE_URL });
   } catch (err: any) {
@@ -1594,6 +1603,8 @@ if (!ES_ELECTRUM) {
     limitar,
     normalizarCorreo,
     tieneAcceso: (correo) => puedeEntrar(identificar({ correo }), PLATAFORMA),
+    deComunidad: (correo) => esDeComunidad(correo, PLATAFORMA),
+    suspendida: async (correo) => (cuentasDisponibles() ? cuentaSuspendida(correo) : false),
     nombreYRol: nombreYRolDe,
     emitirSesion,
     sembrarPerfil: (correo, g) => sembrarDesdeGenesis(correo, { nombreGenesis: g.nombreGenesis, cumple: g.cumple || undefined, apodo: g.apodo }),
@@ -1635,6 +1646,12 @@ app.post('/api/ultron/biometric-login', limitar(12), async (req, res) => {
 
 app.get('/api/ultron/sesion', async (req, res) => {
   const s = sesionDe(req);
+  // En AU-RA, una sesión que ya no abre la mesa (lo sacaron del padrón, o un token de comunidad de antes
+  // de la marca) no es «viva»: con 401 la app la renueva o pide entrar, en vez de quedar atrapada con
+  // cada turno en 401.
+  if (s && !ES_ELECTRUM && !sesionAbreAura(s.correo, !!s.comunidad)) {
+    return res.status(401).json({ authenticated: false, error: 'sesión requerida', code: 'sesion_requerida', honesto: true });
+  }
   if (s) {
     // `vence` va solo cuando la sesión es de un código temporal: la pantalla cuenta hacia atrás y se cierra sola.
     const vence = s.exp && s.exp - s.at < 7 * 24 * 3600_000 ? new Date(s.exp).toISOString() : null;

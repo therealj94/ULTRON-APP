@@ -59,6 +59,7 @@ import { ClaudioRetrato, fotosRetrato } from '../avatares/ClaudioRetrato';
 import { ClaudioDePie, FOTOS_ANTONIO_PIE } from '../avatares/ClaudioDePie';
 import { CuerpoMesa } from '../avatar3d/CuerpoMesa';
 import { hayModelo3D } from '../avatar3d/AvatarVivo';
+import { hayVideo } from '../avatares/video/clips';
 import { SelectorAvatar } from '../avatares/SelectorAvatar';
 import { avatarPorId, conFotos, distribucion, type AvatarId } from '../avatares/catalogo';
 import { AccionesAvatar } from '../components/AccionesAvatar';
@@ -159,6 +160,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const [face, setFace] = useState<FaceState>('IDLE');
   /** La emoción que abrió la respuesta: la sala la muestra con el cuerpo (la cara de respaldo no la usa). */
   const [emocion, setEmocion] = useState<Emocion>('neutral');
+  /** Sube cada vez que se toca un atajo: Claudio o ANT-ONIO lo señalan. */
+  const [senalAtajo, setSenalAtajo] = useState(0);
   /** AU-RA de cuerpo entero; si la WebView no puede con la sala, vuelve la cara de siempre. */
   const [conSala, setConSala] = useState(true);
   /** Su cara: los anillos (Skia) o la habitación 3D. null hasta leer los ajustes, para no parpadear entre las dos. */
@@ -1955,9 +1958,10 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         onSwipe={onSwipe}
       />
     ) : null;
-  // Claudio y ANT-ONIO: su cuerpo 3D si hay modelo y el teléfono lo aguanta; si no, sus fotos (retrato
-  // acostado, de pie derecho), las de siempre. AU-RA sigue con su sala o sus anillos: la sala es su
-  // mesa (silla, escritorio, tareas) y su cuerpo 3D nuevo va en la compañera, al lado y a pantalla completa.
+  // Claudio y ANT-ONIO: su cuerpo en video (clips animados); sin video, el 3D si hay modelo y el teléfono
+  // lo aguanta; si no, sus fotos (retrato acostado, de pie derecho), las de siempre. AU-RA sigue con su
+  // sala o sus anillos: la sala es su mesa (silla, escritorio, tareas) y su cuerpo 3D nuevo va en la
+  // compañera, al lado y a pantalla completa.
   const nombreAvatar = de(avatarPorId(avatarId).nombre);
   const fotosCara =
     reparto.pose === 'pie' ? (
@@ -1983,7 +1987,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       />
     );
   const caraNode = conFotos(avatarId) ? (
-    hayModelo3D(avatarId) ? (
+    hayVideo(avatarId) || hayModelo3D(avatarId) ? (
       <CuerpoMesa
         avatar={avatarId}
         camara={reparto.pose === 'pie' ? 'cuerpo' : 'retrato'}
@@ -1994,6 +1998,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         onTap={() => onTap('face', 0, 0)}
         onLongPress={onLongPress}
         activo={mesaActiva && !(llamadaActiva(voz.ciclo) && !voz.llamada.minimizada)}
+        senal={senalAtajo}
       />
     ) : (
       fotosCara
@@ -2033,6 +2038,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
 
   const onAccion = (pedido: string) => {
     void haptic('light');
+    setSenalAtajo((n) => n + 1);
     void handleCommand(pedido);
   };
 
