@@ -7,7 +7,7 @@
  *
  *  · la sesión de ElevenLabs (components/ModoConversacion, montada con `key={gen}`) y su control
  *    (sesion.ts): abrir, cerrar, silenciar de verdad, reintentar, generaciones (M4);
- *  · el permiso precalentado (permiso.ts): cuando la persona quiere hablar, solo falta conectar;
+ *  · el permiso precalentado (permiso.ts) mientras suena la llamada: al contestar, solo falta conectar;
  *  · segundo plano: la sesión se cierra (M5); al volver se precalienta otra vez;
  *  · llamadas (llamada.ts): AURA se apaga del todo y vuelve como estaba al colgar;
  *  · el puente de acciones y el contexto (acciones.ts): lo que AURA decide hacer llega por SSE y se
@@ -93,7 +93,7 @@ export type ApiVoz = {
   silenciar: (valor: boolean) => void;
   /** El doble toque: en llamada, silenciar / volver a escuchar. */
   despertarOSilenciar: () => 'despierta' | 'duerme' | 'nada';
-  /** Dejar el permiso listo (al entrar, al sonar la llamada). */
+  /** Dejar el permiso listo. Solo al sonar la llamada (el timbre lo llama solo): no al entrar ni al tocar. */
   precalentar: () => void;
   /** El avatar de la mesa cambió: la voz se reabre con él. */
   fijarAvatar: (id: AvatarId) => void;
@@ -401,7 +401,8 @@ export function VozProvider({ children, conCompanera = true }: Props) {
           miga('voz: volvió del segundo plano a tiempo; la llamada sigue');
           return;
         }
-        precalentar();
+        // Sin precalentar aquí: cada vuelta a la app eran ~8 s de la GPU del nodo sin ninguna llamada
+        // (y podía demorar el primer turno de la mesa). Se precalienta solo cuando suena (`timbre`).
         puenteRef.current?.arrancar();
       } else if (st === 'background' && !detras) {
         detras = setTimeout(() => {
@@ -417,7 +418,6 @@ export function VozProvider({ children, conCompanera = true }: Props) {
     });
     const offPerfil = escuchar('perfil', (p) => {
       control.perfil(p.avatar, p.idioma);
-      precalentar();
     });
     const offAccion = escuchar('accion', (a) => {
       // «Llámame» que resolvió el servidor (el camino rápido o el cerebro): suena la llamada del avatar.
@@ -497,12 +497,14 @@ export function VozProvider({ children, conCompanera = true }: Props) {
       offPantalla();
       offLlamada();
     };
-  }, [control, precalentar, ciclo, ejecutar]);
+  }, [control, ciclo, ejecutar]);
 
-  // Precalentar al montarse (entrar a la app con sesión) y al cambiar de avatar o idioma.
-  useEffect(() => {
-    precalentar();
-  }, [precalentar, vista.avatar, vista.idioma]);
+  /*
+   * El permiso de la conversación (y con él el cerebro del nodo, server.ts calentarCerebro) se
+   * precalienta SOLO cuando suena la llamada del avatar (el efecto `timbre`): toda conversación empieza
+   * sonando, y la persona tarda más en contestar que el permiso en llegar. Antes también al montarse,
+   * al volver a la app, al cambiar de avatar o idioma y al tocar a la compañera: ~8 s de GPU sin llamada.
+   */
 
   // El puente de acciones y el contexto: viven mientras viva la app (sin sesión, esperan).
   const contexto = useRef<ContextoApp | null>(null);

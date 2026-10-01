@@ -624,6 +624,14 @@ export async function speak(
 }
 
 /**
+ * Desde cuántas letras ANTES de la coma sale la primera frase: el mismo número que el servidor
+ * (lib/trozos.ts COMA_PRIMERA) y la mesa web (src/03-voz/frases.ts). Si no coinciden, un tramo que el
+ * servidor ya soltó se queda esperando aquí. tests/web-frases.test.ts vigila que sigan iguales.
+ */
+export const COMA_PRIMERA = 28;
+const RE_COMA_PRIMERA = new RegExp(`^([\\s\\S]{${COMA_PRIMERA - 1},}?[^\\d\\s][,;:])(\\s+|$)([\\s\\S]*)$`);
+
+/**
  * Locutor incremental: recibe texto a trozos (stream del cerebro) y va hablando cada oración
  * completa mientras siguen llegando las siguientes. Misma cola/generación que speak(): si algo
  * llama a stopSpeaking(), el locutor se detiene.
@@ -661,7 +669,7 @@ export class StreamSpeaker {
     // La PRIMERA frase larga sale en su coma (como la corta el servidor, lib/trozos COMA_PRIMERA): su
     // audio se pide mientras el cerebro sigue escribiendo. Antes esperaba al punto y una respuesta de
     // una sola frase sonaba recién al final.
-    const coma = !m && !this.sources.size ? this.buf.match(/^([\s\S]{27,}?[^\d\s][,;:])(\s+|$)([\s\S]*)$/) : null;
+    const coma = !m && !this.sources.size ? this.buf.match(RE_COMA_PRIMERA) : null;
     if (m && m[1].trim().length >= 6) {
       const sentence = cleanForSpeech(m[1]);
       this.buf = m[3] || '';

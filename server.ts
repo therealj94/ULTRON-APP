@@ -9,7 +9,7 @@ import { crearComprobadorListo } from './lib/nodo-listo';
 import { sanearDiag } from './lib/diag-saneador';
 import { autocuraDe, fetchNodo, saludNodo, nodoConfigurado, precalentarSistema, NODO_URL as ULTRON_NODO_URL, NODO_SECRETO as ULTRON_NODO_SECRETO, NODO_MODELO as ULTRON_NODO_MODELO } from './lib/nodo';
 import { JUNTA, buildPersonality, decodeDataUrl, normalizarCorreo, buscarWeb, leerPagina } from './server/desk';
-import { hablar, abrirVozEnVivo, cantar, orar, repertorio, cancionPorPedido, estadoVoz, saludVoz, vozDe, sinEtiquetas } from './server/voz';
+import { hablar, abrirVozEnVivo, pasarVozEnVivo, cantar, orar, repertorio, cancionPorPedido, estadoVoz, saludVoz, vozDe, sinEtiquetas } from './server/voz';
 import { lineaAvatar, normalizarAvatar, normalizarIdioma, NOMBRE_AVATAR, type AvatarVoz } from './server/eleven';
 import { montarVozAgente, type TurnoVoz } from './server/voz-agente';
 import { interruptor } from './lib/interruptores';
@@ -52,6 +52,7 @@ import { detectarIdioma } from './lib/idioma-detectar';
 import { redirigirADominio } from './server/dominio';
 import { quitarExpresiones } from './lib/expresiones';
 import { puntoDeCorte } from './lib/trozos';
+import { claveTurno, reclamarTurno, type TurnoGuardado } from './server/turno-unico';
 import { respuestaCharla } from './lib/charla-rapida';
 import { emitirSesion, borrarSesion, cerrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica, mesaAutorizada, cuerpoHttp, gastarCupo, esperaEntrada, anotarFalloEntrada, anotarExitoEntrada, cargarSesionesCerradas } from './server/seguridad';
 import { canales, leerPdf, telegramFoto, telegramVoz } from './lib/canales';
@@ -1198,27 +1199,8 @@ app.post('/api/electrum/voz', exigirPlataforma('electrum'), limitar(90), async (
       res.setHeader('Content-Type', vivo.contentType);
       res.setHeader('Cache-Control', 'private, max-age=600');
       res.setHeader('X-Motor', vivo.motor);
-      const lector = vivo.cuerpo.getReader();
-      // Si la persona calla o cambia de pregunta, se deja de pedirle audio a ElevenLabs.
-      res.on('close', () => {
-        if (!res.writableEnded) lector.cancel().catch(() => undefined);
-      });
-      const trozos: Buffer[] = [];
-      let entero = true;
-      try {
-        for (;;) {
-          const { done, value } = await lector.read();
-          if (done) break;
-          const b = Buffer.from(value);
-          trozos.push(b);
-          res.write(b);
-        }
-      } catch (e: any) {
-        entero = false;
-        console.warn('[electrum] voz en vivo cortada', String(e?.message || e).slice(0, 120));
-      }
-      res.end();
-      if (entero) vivo.guardar(Buffer.concat(trozos));
+      // Solo se guarda en la caché si llegó entera (server/voz.ts).
+      await pasarVozEnVivo(vivo, res, '[electrum]');
       return;
     }
     const out = vivo?.tipo === 'cache' ? vivo.habla : await hablar({ ...pedido, sinEleven: true });
@@ -1917,8 +1899,17 @@ function leerPeticionVoz(req: express.Request) {
     privado: fuente.privado === true || fuente.privado === '1' || fuente.privado === 'true',
     // La app nueva pide los tiempos por letra para mover la boca a tiempo (sin ellos, la de antes).
     tiempos: String(fuente.tiempos || '') === '1',
+    /*
+     * La mesa web habla frase a frase: lo dicho justo antes y lo que viene hacen que ElevenLabs no
+     * arranque cada frase con la entonación de un comienzo (como ya hace la voz de Dr Electrum).
+     */
+    previo: vecinoDeVoz(fuente.previo, 'final'),
+    siguiente: vecinoDeVoz(fuente.siguiente, 'comienzo'),
   };
 }
+
+/** Lo de antes (su final) o lo de después (su comienzo): solo un texto, y corto (ElevenLabs usa 300). */
+const vecinoDeVoz = (v: unknown, lado: 'final' | 'comienzo') => (typeof v === 'string' && v.trim() ? (lado === 'final' ? v.slice(-400) : v.slice(0, 400)) : undefined);
 
 /**
  * A nombre de quién se cuenta la voz de ElevenLabs de esta petición, si es de un MIEMBRO (server/
@@ -1936,7 +1927,7 @@ async function responderVoz(req: express.Request, res: express.Response) {
   // del servidor propio (Voicebox), que no gasta créditos.
   const cuenta = cuentaDeVozMiembro(req);
   const sinEleven = !!cuenta && restanteVozMs(cuenta) <= 0;
-  const out = await hablar({ texto: p.texto, emocion: p.emocion, performance: p.performance, avatar: p.avatar, idioma: p.idioma, sinEleven, tiempos: p.tiempos, ...(p.privado ? { sinCache: true, privado: true } : {}) });
+  const out = await hablar({ texto: p.texto, emocion: p.emocion, performance: p.performance, avatar: p.avatar, idioma: p.idioma, previo: p.previo, siguiente: p.siguiente, sinEleven, tiempos: p.tiempos, ...(p.privado ? { sinCache: true, privado: true } : {}) });
   if (!out) return res.status(503).json({ error: 'Voz no disponible (Voicebox sin respuesta)', honesto: true });
   if (cuenta && !out.cache && out.motor.startsWith('elevenlabs')) anotarVoz(cuenta, msDeHabla(p.texto));
   if (sinEleven) res.setHeader('X-Ultron-Tope-Voz', '1');
@@ -1964,7 +1955,7 @@ async function responderVozVivo(req: express.Request, res: express.Response) {
   const sinEleven = !!cuenta && restanteVozMs(cuenta) <= 0;
   if (p.tiempos || p.privado || sinEleven || p.performance !== 'speak') return responderVoz(req, res);
   try {
-    const vivo = await abrirVozEnVivo({ texto: p.texto, emocion: p.emocion, plataforma: 'ultron', idioma: p.idioma, avatar: p.avatar });
+    const vivo = await abrirVozEnVivo({ texto: p.texto, emocion: p.emocion, plataforma: 'ultron', idioma: p.idioma, avatar: p.avatar, previo: p.previo, siguiente: p.siguiente });
     if (!vivo) return responderVoz(req, res);
     if (vivo.tipo === 'cache') {
       res.setHeader('Content-Type', vivo.habla.contentType);
@@ -1977,27 +1968,8 @@ async function responderVozVivo(req: express.Request, res: express.Response) {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Ultron-TTS', vivo.motor);
     res.setHeader('X-Ultron-Vivo', '1');
-    const lector = vivo.cuerpo.getReader();
-    // Si la persona interrumpe o cambia de pregunta, se deja de pedirle audio a ElevenLabs.
-    res.on('close', () => {
-      if (!res.writableEnded) lector.cancel().catch(() => undefined);
-    });
-    const trozos: Buffer[] = [];
-    let entero = true;
-    try {
-      for (;;) {
-        const { done, value } = await lector.read();
-        if (done) break;
-        const b = Buffer.from(value);
-        trozos.push(b);
-        res.write(b);
-      }
-    } catch (e: any) {
-      entero = false;
-      console.warn('[voz] voz en vivo cortada', String(e?.message || e).slice(0, 120));
-    }
-    res.end();
-    if (entero) vivo.guardar(Buffer.concat(trozos));
+    // Solo se guarda en la caché si llegó entera: una persona que corta no deja un MP3 mocho (server/voz.ts).
+    await pasarVozEnVivo(vivo, res);
   } catch (e: any) {
     console.warn('[voz] en vivo', String(e?.message || e).slice(0, 160));
     if (!res.headersSent) return responderVoz(req, res);
@@ -3342,34 +3314,57 @@ async function correrTurnoInterno(body: any, opciones: OpcionesTurno = {}): Prom
   return guardar({ ...base, reply, via, mode, ms: Date.now() - t0, herramientas: tools }, true);
 }
 
+/**
+ * La clave del turno para no correrlo dos veces (server/turno-unico.ts): quién habla según el servidor
+ * (el correo de la sesión; sin sesión, el aparato o la IP) + el `idTurno` que manda la app por frase.
+ */
+function claveDelTurno(req: express.Request, body: { sesion?: { correo?: string } | null; aparato?: string | null; idTurno?: unknown }): string | null {
+  const quien = body.sesion?.correo || (body.aparato ? `aparato:${body.aparato}` : `ip:${String(req.ip || req.socket.remoteAddress || '')}`);
+  return claveTurno(quien, body.idTurno);
+}
+
+/** El JSON de /api/turno, igual para un turno recién corrido que para uno repetido. */
+function jsonDelTurno(g: TurnoGuardado, extra: Record<string, unknown> = {}) {
+  return {
+    reply: g.reply,
+    voz: g.voz,
+    emocion: g.emocion,
+    modelo: g.via === 'modelo-chico' ? process.env.MODELO_CHICO_NOMBRE || 'chico' : g.via === 'taller' || g.via.includes('gold') || g.via.startsWith('app-') ? 'tools' : ULTRON_NODO_MODELO,
+    via: g.via,
+    mode: g.mode,
+    ms: g.ms,
+    tools: g.herramientas.length,
+    herramientas: g.herramientas,
+    foto: null as string | null,
+    acciones: g.acciones,
+    trazaId: g.trazaId,
+    ...extra,
+    honesto: true,
+  };
+}
+
 app.post('/api/turno', exigirMesaODesk, limitar(60), cupoDeMiembro, async (req, res) => {
+  const body = cuerpoTurnoHttp(req);
+  // Un reintento de la app con el mismo `idTurno`: la misma respuesta, sin correr otro turno.
+  const unico = await reclamarTurno(claveDelTurno(req, body));
+  if ('previo' in unico) return res.json(jsonDelTurno(unico.previo, { repetido: true }));
   let out: Awaited<ReturnType<typeof correrTurno>>;
   try {
-    out = await correrTurno(cuerpoTurnoHttp(req));
+    out = await correrTurno(body);
   } catch (e: any) {
+    unico.terminar(null);
     // Sin esto la petición quedaba colgada: Express 4 no atrapa rechazos de handlers async.
     console.error('[AU-RA] turno falló:', String(e?.message || e).slice(0, 300));
     return res.status(500).json({ error: FRASE_FALLO.caido[normalizarIdioma(req.body?.idioma)], honesto: true });
   }
+  // Una respuesta con error (el cerebro no contestó) no se repite: el reintento es para probar otra vez.
+  const g: TurnoGuardado = { reply: out.reply, voz: out.voz, emocion: out.emocion, via: out.via, mode: out.mode, ms: out.ms, herramientas: out.herramientas, acciones: out.acciones, trazaId: out.trazaId };
+  unico.terminar(out.reply && !out.error ? g : null);
   if (out.error && !out.reply) {
     const code = out.error === 'message vacío' ? 400 : out.error.includes('configurado') ? 503 : 502;
     return res.status(code).json({ error: out.error, emocion: out.emocion, honesto: true });
   }
-  return res.json({
-    reply: out.reply,
-    voz: out.voz,
-    emocion: out.emocion,
-    modelo: out.via === 'modelo-chico' ? process.env.MODELO_CHICO_NOMBRE || 'chico' : out.via === 'taller' || out.via.includes('gold') || out.via.startsWith('app-') ? 'tools' : ULTRON_NODO_MODELO,
-    via: out.via,
-    mode: out.mode,
-    ms: out.ms,
-    tools: out.herramientas.length,
-    herramientas: out.herramientas,
-    foto: out.foto,
-    acciones: out.acciones,
-    trazaId: out.trazaId,
-    honesto: true,
-  });
+  return res.json(jsonDelTurno(g, { foto: out.foto }));
 });
 
 /**
@@ -3428,7 +3423,7 @@ montarVozAgente(app, {
  * Aplica el mismo harness que /api/turno: si el 27B pide una herramienta, se corre y se
  * vuelve a preguntar; el usuario nunca oye «PEDIR_HERRAMIENTA» ni lee «ACCION_APP».
  */
-app.post('/api/turno/stream', exigirMesaODesk, limitar(60), cupoDeMiembro, (req, res) => {
+app.post('/api/turno/stream', exigirMesaODesk, limitar(60), cupoDeMiembro, async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store, no-transform');
   res.setHeader('X-Accel-Buffering', 'no');
@@ -3440,18 +3435,45 @@ app.post('/api/turno/stream', exigirMesaODesk, limitar(60), cupoDeMiembro, (req,
     if (!res.writableEnded) corte.abort();
   });
   const body = cuerpoTurnoHttp(req);
+  const escribir = (evento: string, datos: unknown) => {
+    if (!corte.signal.aborted && !res.writableEnded) res.write(`event: ${evento}\ndata: ${JSON.stringify(datos)}\n\n`);
+  };
+  // Un reintento de la app con el mismo `idTurno` (server/turno-unico.ts): si ese turno sigue en curso
+  // se espera; si ya contestó, se repite su respuesta tal cual, sin pasar otra vez por el cerebro.
+  const unico = await reclamarTurno(claveDelTurno(req, body));
+  if ('previo' in unico) {
+    const g = unico.previo;
+    escribir('tools', { tools: g.herramientas });
+    escribir('emocion', { emocion: g.emocion });
+    if (g.voz || g.reply) escribir('delta', { text: g.reply, voz: g.voz || g.reply });
+    escribir('done', { reply: g.reply, voz: g.voz, emocion: g.emocion, ms: g.ms, via: g.via, acciones: g.acciones, trazaId: g.trazaId, repetido: true });
+    return res.end();
+  }
+  // Lo que se guarda para un reintento: las herramientas y el `done` (sin `done`, no hubo respuesta).
+  let herramientas: string[] = [];
+  let hecho: any = null;
+  const terminar = () =>
+    unico.terminar(
+      hecho && (hecho.reply || hecho.voz)
+        ? { reply: String(hecho.reply || ''), voz: String(hecho.voz || hecho.reply || ''), emocion: String(hecho.emocion || 'neutral'), via: String(hecho.via || ''), mode: String((body as Record<string, unknown>).mode || 'GUARDIAN'), ms: hecho.ms, herramientas, acciones: hecho.acciones, trazaId: hecho.trazaId }
+        : null
+    );
   const salida: SalidaEnVivo = {
     enviar: (evento, datos) => {
-      if (!corte.signal.aborted && !res.writableEnded) res.write(`event: ${evento}\ndata: ${JSON.stringify(datos)}\n\n`);
+      if (evento === 'tools') herramientas = Array.isArray((datos as any)?.tools) ? (datos as any).tools : [];
+      if (evento === 'done') hecho = datos;
+      escribir(evento, datos);
     },
     fin: () => {
+      terminar();
       if (!res.writableEnded) res.end();
     },
   };
   // La mesa del teléfono es de VOZ (oye, piensa, habla): lo que dijo en voz alta lleva los topes de la
   // voz (TOPE_PASO_VOZ_MS por paso que espera a internet o a la base). Antes esperaba como la mesa
   // escrita y, con la red lenta del campo, la primera palabra tardaba segundos.
-  return turnoEnVivoConTraza(body, salida, { senal: corte.signal, voz: turnoHablado(body), presupuestoVoz: (body as Record<string, unknown>).hablado === true });
+  // `terminar` también al final: si algún camino no llamara a `fin`, un reintento no queda esperando.
+  return turnoEnVivoConTraza(body, salida, { senal: corte.signal, voz: turnoHablado(body), presupuestoVoz: (body as Record<string, unknown>).hablado === true }).finally(terminar);
 });
 
 /** Un turno dictado por voz (`hablado: true`) desde la app 5.0 o el .exe de Windows, con su cabecera. */
