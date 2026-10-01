@@ -1057,19 +1057,16 @@ test('etiquetas de audio v4: casi siempre la frase de espera lleva una del catá
     { puenteMs: 30, etiquetas: true }
   );
   try {
-    let con = 0;
+    // Por la ruta solo se mira la forma (etiqueta del catálogo + frase del banco): con azar real, cuántas
+    // llevan etiqueta varía. La proporción se mide con azar fijo en tests/etiquetas-voz.test.ts.
     const yo = persona();
     for (let k = 0; k < 12; k++) {
       const dicho = dichoDe(await (await llm(s.base, paseDe(yo, 'claudio', 'es'), [{ role: 'user', content: `explícame la regla ${k}` }])).text());
       const m = /^(\[[a-z -]+\] )?(.*) Ya está\.$/.exec(dicho);
       assert.ok(m, dicho);
-      if (m[1]) {
-        con++;
-        assert.ok(PERMITIDAS.includes(m[1].trim()), m[1]);
-      }
+      if (m[1]) assert.ok(PERMITIDAS.includes(m[1].trim()), m[1]);
       assert.ok(frasesDe('pensando', 'claudio', 'es').includes(m[2]), m[2]);
     }
-    assert.ok(con >= 4 && con < 12, `casi siempre con etiqueta, pero no todas: ${con}/12`);
   } finally {
     await s.cerrar();
   }

@@ -40,7 +40,7 @@ test('no se oye siempre lo mismo: las etiquetas no se repiten seguidas y salen m
     const e = /^\[([^\]]+)\]/.exec(t)?.[1];
     if (e) dichas.push(e);
   }
-  assert.ok(dichas.length >= 20, `casi siempre lleva etiqueta: ${dichas.length}/40`);
+  assert.ok(dichas.length >= 20 && dichas.length < 40, `casi siempre lleva etiqueta, pero no todas: ${dichas.length}/40`);
   for (let i = 1; i < dichas.length; i++) assert.notEqual(dichas[i], dichas[i - 1], `repitió [${dichas[i]}] seguida`);
   assert.ok(new Set(dichas).size >= 6, `variedad: ${[...new Set(dichas)].join(', ')}`);
   // Si la frase ya empieza con «Mmm», no le toca el tarareo encima.
