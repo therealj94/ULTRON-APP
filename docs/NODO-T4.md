@@ -1,19 +1,39 @@
 # Nodo T4 (`<ip-t4>`, g4dn.xlarge): qué hacer con él
 
-**Estado que pude comprobar (20-sep-2026):** la instancia está **encendida** (arrancó el 17-sep) con etiqueta «aura-gpu-T4-APAGADA (voz movida a ElevenLabs 5-sep)». Render la sondea en `:8790/salud` y responde 200, así que algo corre ahí (probablemente el servidor Qwen3-TTS viejo). No pude entrar a mirar qué hay dentro: el acceso por SSM fue bloqueado por permisos de esta sesión. Chatterbox (`:4123`) no responde desde fuera.
+**Estado (1-oct-2026, medido en la máquina):** encendida, unos 380 USD al mes. Es la GPU más barata de AWS, y Laya la necesita (abajo, por qué).
 
-**Costo:** unos 380 USD al mes encendida las 24 h. Hoy no aporta nada al producto: la voz es ElevenLabs.
+### Por qué no se apaga
 
-## Recomendación: convertirla en el **oído local** de AU-RA
+Se probó mover todo a una máquina sin GPU. Laya en CPU (los mismos cinco modelos ModernBERT, 2 y 4 hilos) tarda **3,5 s** en `mensaje` y **más de 5 s** en `comando`, `windows` y `/decidir`. En la GPU de la T4 tarda **0,21 s**. El servidor la espera como mucho 0,8 a 1 s (`ULTRON_LAYA_TIMEOUT_MS`): en CPU, Laya quedaría apagada de hecho y AU-RA y Dr Electrum decidirían con la tabla de palabras. Por eso la T4 se queda y se aligera.
 
-Lo que más se usa por minuto en AU-RA es el oído (cada frase que decís pasa por Scribe de ElevenLabs, que cobra por minuto y tarda 0,4–0,6 s). Un T4 con **faster-whisper large-v3** transcribe español en ~0,3 s, gratis por minuto, y sirve también para las notas de voz de Telegram.
+### Qué corre y cuánta GPU usa (15 360 MiB)
 
-1. En el nodo: `bash scripts/nodo-t4/instalar-oido.sh` (Docker con GPU; deja `ultron-oido` en `:8791`, API compatible OpenAI `/v1/audio/transcriptions`).
-2. Security group: abrir `8791` solo a la IP de salida de Render.
-3. En Render: `ULTRON_STT_URL=http://<ip-t4>:8791` (+ `ULTRON_STT_CLAVE` si se puso `API_KEY`).
-4. El servidor ya lo usa primero (`lib/oido.ts` → `transcribirLocal`); si el nodo no responde en 12 s, cae a Scribe sin que nadie lo note.
+| Servicio | Puerto | GPU | Estado |
+|---|---|---|---|
+| Laya (`laya-electrum`, 5 modelos) | 8792 | 3 582 MiB | se queda |
+| Oído de respaldo (`oido`, Whisper large-v3-turbo, faster-whisper) | 17495 | 1 172 MiB | nuevo: `scripts/nodo-t4/instalar-oido.sh` |
+| Voicebox (Kokoro + Whisper) | 17493 | 4 720 MiB | pasa a CPU: queda solo la voz de respaldo |
+| Modelo chico (Qwen3-4B, llama.cpp) | 8793 | 3 428 MiB | se quita |
+| `ultron-manos` (Playwright, ojo) | 8787 | — | se queda |
+| Caddy (TLS, sslip.io) | 443 | — | se queda |
 
-Opcional en el mismo nodo (cabe en 16 GB): **respaldo de voz** con Kokoro o Chatterbox en `:8790` compatible con `POST /decir|/tts|/synthesize {texto}` (el servidor ya intenta esas tres rutas si ElevenLabs cae). Solo vale la pena si ElevenLabs falla seguido; hoy no.
+Con eso quedan unos **10 GB de GPU libres** para el modelo abierto de la computadora del agente, sin encender la L4 (que cuesta más por hora que la T4).
+
+### Oído y voz de respaldo (detrás de ElevenLabs)
+
+ElevenLabs es la voz (v4) y el oído (Scribe v2) de todos los avatares. En Render no hay clave de Gemini: Voicebox es el **único** respaldo. Por eso no se borra, se reparte:
+
+- **Oído:** Whisper turbo en la GPU con faster-whisper. Medido con una frase de 4,5 s: **0,35 s** (con Voicebox eran 0,79 s), 1,2 GB de VRAM (Voicebox ocupa 4,7 GB). Contesta en `/transcribe` como Voicebox (`file`, `language`, `model`; devuelve `text`), así `lib/oido.ts` no cambia. Caddy lo publica con la misma `X-Voz-Clave`. En CPU, turbo tardaba 10 s y `small` 2,6 s. El Whisper de Voicebox en CPU falla desde la segunda llamada (*meta tensor*).
+- **Voz:** Kokoro de Voicebox en CPU. Medido: **1,1 a 2,2 s** por frase corta (en GPU, 0,46 s). Alcanza como respaldo.
+- **Canciones con letra libre** (`/api/cantar` con `letra`): solo las dice Voicebox. En CPU tardan más (unos 2 s cada 80 caracteres); el teléfono espera 55 s.
+
+### Pasos en la máquina (en orden; cada uno se puede deshacer)
+
+1. `sudo OIDO_CLAVE=<la X-Voz-Clave> bash scripts/nodo-t4/instalar-oido.sh` y comprobar `/health` (hecho el 1-oct).
+2. Caddy (`/opt/voicebox/caddy/Caddyfile`): sacar `/transcribe` de `@autorizado` y ponerla en su propio bloque con la misma clave hacia `127.0.0.1:17495`; quitar `handle_path /chico/*`. Respaldo del archivo antes; `docker exec caddy caddy reload --config /etc/caddy/Caddyfile`.
+3. Voicebox en CPU: el mismo contenedor sin `docker-compose.cuda.yml`, con `127.0.0.1:17493` y `--cpus 2` (para no quitarle CPU a Laya ni a las manos).
+4. Modelo chico: en Render `MODELO_CHICO_MODO=apagado` (ya no contesta nada: las respuestas al instante cubren los saludos y lo demás va al 27B); `docker update --restart=no chico && docker stop chico`; copiar `scripts/nodo-t4/vigia.json` a la máquina (sin `chico`; si no, el vigía lo vuelve a levantar).
+5. En Render, quitar `ULTRON_TTS_URL` (apunta a `:8790`, que ya no existe y el código no la lee).
 
 ## Laya: quién contesta en Dr Electrum (`:8792`)
 

@@ -187,8 +187,10 @@ class VigiaT4(unittest.TestCase):
         importlib.reload(vigia)  # vuelve la A10G para las demás pruebas
 
     def test_capas_de_la_t4(self):
-        self.assertEqual(set(vigia.CAPAS), {'voz', 'chico', 'laya', 'manos', 'entrada'})
+        # Sin `chico` (quitado el 1-oct-2026): si estuviera, el vigía lo volvería a levantar.
+        self.assertEqual(set(vigia.CAPAS), {'voz', 'oido', 'laya', 'manos', 'entrada'})
         self.assertIsNone(vigia.CAPA_BASE)
+        self.assertEqual(vigia.SINTOMAS['oido_caida'], ('oido', ['oido']))
         self.assertEqual(vigia.SINTOMAS['voz_caida'], ('voz', ['docker:voicebox']))
         self.assertIn('docker:voicebox', vigia.CARO)
 

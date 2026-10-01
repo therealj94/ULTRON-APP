@@ -1,5 +1,5 @@
 {
-  "_nota": "Vigía de la T4 (voz, Laya, modelo chico, manos y la puerta HTTPS). Mismo programa que la A10G: scripts/nodo-a10g/vigia/vigia.py.",
+  "_nota": "Vigía de la T4 (voz de respaldo, oído, Laya, manos y la puerta HTTPS). Mismo programa que la A10G: scripts/nodo-a10g/vigia/vigia.py. El modelo chico se quitó el 1-oct-2026: si siguiera aquí, el vigía lo volvería a levantar.",
   "capas": {
     "voz": {
       "sonda": { "tipo": "docker", "contenedor": "voicebox" },
@@ -8,10 +8,10 @@
       "tope_hora": 2,
       "caro": true
     },
-    "chico": {
-      "sonda": { "tipo": "http", "url": "http://127.0.0.1:8793/health", "codigos": [200] },
-      "remedios": ["docker:chico"],
-      "espera_s": 90,
+    "oido": {
+      "sonda": { "tipo": "http", "url": "http://127.0.0.1:17495/health", "codigos": [200] },
+      "remedios": ["oido"],
+      "espera_s": 60,
       "tope_hora": 2,
       "caro": true
     },
@@ -33,5 +33,5 @@
       "espera_s": 10
     }
   },
-  "puertos_cola": ["443", "17493", "8793", "8792", "8787"]
+  "puertos_cola": ["443", "17493", "17495", "8792", "8787"]
 }
