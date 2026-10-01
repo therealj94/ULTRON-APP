@@ -86,3 +86,13 @@ test('el cerebro en Windows sabe que tiene manos y cómo pedirlas', () => {
   assert.match(es, /Nunca hables de «ejecutor»/);
   assert.match(instruccionWindows('en'), /Never mention an "executor"/);
 });
+
+test('salud con ?probar=1 pregunta de verdad al modelo windows (frase fija) y se guarda un minuto', async () => {
+  respuesta = { p: { win_abrir_app: 0.97 }, etiquetas: [], grupos: { win: 'win_abrir_app' } };
+  const antes = preguntas;
+  const j: any = await (await fetch(`${base}/api/windows/salud?probar=1`)).json();
+  assert.equal(j.prueba.etiqueta, 'win_abrir_app');
+  assert.equal(j.prueba.frase, 'abre la calculadora');
+  await fetch(`${base}/api/windows/salud?probar=1`);
+  assert.equal(preguntas, antes + 1);
+});
