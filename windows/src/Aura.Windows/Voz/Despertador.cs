@@ -21,6 +21,9 @@ internal sealed class Despertador : IDisposable
 
     readonly System.Collections.Generic.List<SpeechRecognitionEngine> extras = new();
 
+    /// <summary>Frases de la gramática que existen solo para absorber lo que se parece a su nombre: no despiertan.</summary>
+    internal static readonly System.Collections.Generic.HashSet<string> Senuelos = new(StringComparer.OrdinalIgnoreCase) { "oye laura" };
+
     /// <summary>
     /// Enciende el reconocedor de Windows del idioma (y el de inglés, que entiende mejor «hey aura»). Es un
     /// ATAJO: aunque no haya ninguno instalado, «Oye AURA» igual funciona por el oído de AURA (la frase que
@@ -28,12 +31,12 @@ internal sealed class Despertador : IDisposable
     /// </summary>
     public string? Encender(string idioma)
     {
-        // Ya encendido: el modelo propio no depende del idioma; el de Windows sí (se rehace si cambió).
-        if (propio != null) return null;
+        // Los dos escuchan a la vez y cualquiera la despierta: el modelo propio (mejor con «hey aura») y el de
+        // Windows (respaldo, y el único si no está el modelo). El propio no depende del idioma; el de Windows sí.
+        if (propio == null) EncenderPropio();
         if (motor != null && idioma == idiomaEncendido) return null;
-        if (motor != null) Apagar();
+        if (motor != null) ApagarWindows();
         idiomaEncendido = idioma;
-        if (EncenderPropio()) return null;
         try
         {
             var todos = SpeechRecognitionEngine.InstalledRecognizers();
@@ -51,6 +54,8 @@ internal sealed class Despertador : IDisposable
                 m.SpeechRecognized += (_, e) =>
                 {
                     Centro.Registro.Anotar("despertar", $"Windows ({info.Culture.Name}) oyó «{e.Result.Text}» con {e.Result.Confidence:0.00}");
+                    // Los señuelos («oye laura») están en la gramática para que SAPI no los confunda con «oye aura»: nunca despiertan.
+                    if (Senuelos.Contains(e.Result.Text)) return;
                     // «aura» sola pide más seguridad (se parece a otras palabras); con «oye/hey» basta menos.
                     var minimo = e.Result.Text == "aura" ? 0.75f : 0.55f;
                     if (e.Result.Confidence >= minimo) Desperto?.Invoke();
@@ -61,13 +66,16 @@ internal sealed class Despertador : IDisposable
             Centro.Registro.Anotar("despertar", "reconocedor de Windows: " + string.Join(", ", elegidos.Select(x => x.Culture.Name)));
             return null;
         }
-        catch (Exception ex) { Apagar(); Centro.Registro.Anotar("despertar", ex.Message); return null; }
+        catch (Exception ex) { ApagarWindows(); Centro.Registro.Anotar("despertar", ex.Message); return null; }
     }
 
     // ───────────── el modelo propio (openWakeWord) ─────────────
 
-    /// <summary>Lo mínimo para despertar (0..1). Medido con las frases de prueba del entrenamiento.</summary>
-    public const float Umbral = 0.5f;
+    /// <summary>
+    /// Lo mínimo para despertar (0..1). Con 0,9 (medido el 1-oct, modelo v3): 67 % de «oye aura» en español y 90 % de
+    /// «hey aura» que no vio al entrenar, 0 % de frases parecidas y ~0,56 falsas por hora de audio general.
+    /// </summary>
+    public const float Umbral = 0.9f;
     PalabraClave? propio;
     WaveInEvent? micPropio;
     /// <summary>El hilo del micrófono usa el modelo mientras otro lo apaga: nunca a la vez (es memoria nativa).</summary>
@@ -131,6 +139,11 @@ internal sealed class Despertador : IDisposable
     public void Apagar()
     {
         ApagarPropio();
+        ApagarWindows();
+    }
+
+    void ApagarWindows()
+    {
         var m = motor; motor = null;
         foreach (var x in extras) { try { x.RecognizeAsyncCancel(); } catch { } x.Dispose(); }
         extras.Clear();
