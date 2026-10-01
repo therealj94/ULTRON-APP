@@ -467,6 +467,9 @@ test('las acciones van solo al aparato que hizo el turno; la web de la mesa no m
     assert.deepEqual(web.acciones, []);
     assert.ok(!/ACCION_APP/.test(web.reply));
     assert.doesNotMatch(alNodo.at(-1)!.system, /APP \(puedes manejar la app/, 'a la web no se le enseñan las reglas de la app');
+    // Dictado en la web (hablado: true): lleva los topes de la voz, pero tampoco mueve el teléfono.
+    const webHablado = await (await fetch(`${BASE}/api/turno/stream`, { method: 'POST', headers: hTurno({ web: true }), body: JSON.stringify({ message: 'vete atrás', hablado: true }) })).text();
+    assert.doesNotMatch(webHablado, /"tipo":"atras"/, 'la web dictada no manda acciones al teléfono');
     await new Promise((res) => setTimeout(res, 100));
     assert.ok(![...telA.acciones(), ...telB.acciones()].some((a) => a.tipo === 'atras'));
   } finally {

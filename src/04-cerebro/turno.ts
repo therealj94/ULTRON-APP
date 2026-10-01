@@ -34,6 +34,8 @@ export type PeticionTurno = {
   correo?: string;
   /** Descripción de la escena que ya interpretó la cámara local (quién está, qué hace). */
   escena?: string;
+  /** Lo dijo en voz alta (el oído de la web): el servidor le pone los topes de la voz. */
+  hablado?: boolean;
 };
 
 function cuerpo(opts: PeticionTurno) {
@@ -48,6 +50,7 @@ function cuerpo(opts: PeticionTurno) {
     usuario: opts.usuario,
     correo: opts.correo,
     escena: opts.escena || undefined,
+    hablado: opts.hablado ? true : undefined,
   });
 }
 

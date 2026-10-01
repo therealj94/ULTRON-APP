@@ -406,6 +406,8 @@ export async function abrirVozEnVivo(opts: {
   siguiente?: string;
   /** Español o inglés: el de la respuesta que se lee. */
   idioma?: Idioma | string;
+  /** La voz del avatar de AU-RA (ojos, aura, claudio); Dr Electrum no lo usa. */
+  avatar?: AvatarVoz;
 }): Promise<
   | { tipo: 'cache'; habla: Habla }
   | { tipo: 'vivo'; contentType: string; motor: string; cuerpo: ReadableStream<Uint8Array>; guardar: (audio: Buffer) => void }

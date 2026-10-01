@@ -1949,8 +1949,63 @@ async function responderVoz(req: express.Request, res: express.Response) {
   return res.send(out.audio);
 }
 
+/**
+ * LA VOZ EN VIVO de AU-RA para la mesa web: el audio de ElevenLabs pasa al navegador a medida que se
+ * genera (el primer pedazo, a los ≈0,5 s) y al final queda en la caché. Antes /api/tts/stream esperaba
+ * la síntesis entera, igual que /api/tts (diagnóstico de voz, 1-oct, H2). Lo que no puede ir en vivo
+ * (tiempos de la boca, sin caché, cantar, un miembro sin minutos de ElevenLabs) va por el camino de
+ * siempre. `X-Ultron-Vivo: 1` le dice al cliente que el cuerpo llega a trozos.
+ */
+async function responderVozVivo(req: express.Request, res: express.Response) {
+  const p = leerPeticionVoz(req);
+  if (!p.texto) return res.status(400).json({ error: 'text vacío', honesto: true });
+  const cuenta = cuentaDeVozMiembro(req);
+  const sinEleven = !!cuenta && restanteVozMs(cuenta) <= 0;
+  if (p.tiempos || p.privado || sinEleven || p.performance !== 'speak') return responderVoz(req, res);
+  try {
+    const vivo = await abrirVozEnVivo({ texto: p.texto, emocion: p.emocion, plataforma: 'ultron', idioma: p.idioma, avatar: p.avatar });
+    if (!vivo) return responderVoz(req, res);
+    if (vivo.tipo === 'cache') {
+      res.setHeader('Content-Type', vivo.habla.contentType);
+      res.setHeader('Cache-Control', 'private, max-age=3600');
+      res.setHeader('X-Ultron-TTS', vivo.habla.motor);
+      return res.end(vivo.habla.audio);
+    }
+    if (cuenta) anotarVoz(cuenta, msDeHabla(p.texto));
+    res.setHeader('Content-Type', vivo.contentType);
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Ultron-TTS', vivo.motor);
+    res.setHeader('X-Ultron-Vivo', '1');
+    const lector = vivo.cuerpo.getReader();
+    // Si la persona interrumpe o cambia de pregunta, se deja de pedirle audio a ElevenLabs.
+    res.on('close', () => {
+      if (!res.writableEnded) lector.cancel().catch(() => undefined);
+    });
+    const trozos: Buffer[] = [];
+    let entero = true;
+    try {
+      for (;;) {
+        const { done, value } = await lector.read();
+        if (done) break;
+        const b = Buffer.from(value);
+        trozos.push(b);
+        res.write(b);
+      }
+    } catch (e: any) {
+      entero = false;
+      console.warn('[voz] voz en vivo cortada', String(e?.message || e).slice(0, 120));
+    }
+    res.end();
+    if (entero) vivo.guardar(Buffer.concat(trozos));
+  } catch (e: any) {
+    console.warn('[voz] en vivo', String(e?.message || e).slice(0, 160));
+    if (!res.headersSent) return responderVoz(req, res);
+    res.end();
+  }
+}
+
 app.all('/api/tts', exigirMesaODesk, limitar(60, 60_000, 'voz'), responderVoz);
-app.all('/api/tts/stream', exigirMesaODesk, limitar(60, 60_000, 'voz'), responderVoz);
+app.all('/api/tts/stream', exigirMesaODesk, limitar(60, 60_000, 'voz'), responderVozVivo);
 app.all('/api/voz', exigirMesaODesk, limitar(60, 60_000, 'voz'), responderVoz);
 
 /** Oración del día: AU-RA cierra los ojos y ora (clip grabado con la voz oficial). */
@@ -2062,6 +2117,12 @@ type OpcionesTurno = {
   senal?: AbortSignal;
   interrumpida?: boolean;
   voz?: boolean;
+  /**
+   * Solo los TOPES de la voz (memoria, perfil, Laya… no esperan más de TOPE_PASO_VOZ_MS), sin lo demás
+   * de `voz`: la web de la mesa dicta por voz (`hablado: true`), pero lo que diga ahí no mueve el teléfono
+   * (turnoDeLaApp mira solo `voz`). Diagnóstico de voz, 1-oct, H7.
+   */
+  presupuestoVoz?: boolean;
   /**
    * El turno EMPIEZA una tarea que puede tardar (una herramienta del harness, un precio, un taller…):
    * la conversación de voz (server/voz-agente.ts) la usa para decir a tiempo «déjame buscarlo…» y para
@@ -2190,7 +2251,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   // El perfil se pide ya, a la par de la memoria (la primera vez puede ir a S3); se espera al armar el prompt.
   const correoApp = canal === 'mesa' && body?.sesion?.correo ? String(body.sesion.correo).toLowerCase() : '';
   // Hablando, si el perfil no está en caché y S3 tarda, se sigue con lo que haya (no hay nada).
-  const voz = !!opciones.voz;
+  const voz = !!opciones.voz || !!opciones.presupuestoVoz;
   const perfilPedido: Promise<Perfil | null> = correoApp
     ? aTiempoParaVoz(voz, 'perfil', leerPerfil(correoApp).catch(() => null), perfilEnCache(correoApp) ?? null)
     : Promise.resolve(null);
@@ -2268,7 +2329,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
 
   // La decisión rápida: tipo de tarea, riesgo, agente, si es un intento de torcer al sistema.
   // Hablando, Laya tiene un tope más corto: la voz no espera.
-  const clas = await clasificar(message, 'ultron', { voz: !!opciones.voz });
+  const clas = await clasificar(message, 'ultron', { voz });
   trazaActual()?.clasificacion(clas);
   trazaActual()?.agente(nombreAgente(clas.agente));
 
@@ -3291,7 +3352,7 @@ app.post('/api/turno/stream', exigirMesaODesk, limitar(60), cupoDeMiembro, (req,
   // La mesa del teléfono es de VOZ (oye, piensa, habla): lo que dijo en voz alta lleva los topes de la
   // voz (TOPE_PASO_VOZ_MS por paso que espera a internet o a la base). Antes esperaba como la mesa
   // escrita y, con la red lenta del campo, la primera palabra tardaba segundos.
-  return turnoEnVivoConTraza(body, salida, { senal: corte.signal, voz: turnoHablado(body) });
+  return turnoEnVivoConTraza(body, salida, { senal: corte.signal, voz: turnoHablado(body), presupuestoVoz: (body as Record<string, unknown>).hablado === true });
 });
 
 /** Un turno dictado por voz (`hablado: true`) desde la app 5.0 o el .exe de Windows, con su cabecera. */

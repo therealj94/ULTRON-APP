@@ -106,3 +106,25 @@ test('/api/tts sin tiempos es como antes; con tiempos, la alineación va con el 
     }
   );
 });
+
+test('voz en vivo (/api/tts/stream de la mesa web): pide el stream de ElevenLabs con la voz del avatar y lo devuelve a trozos', async () => {
+  const { abrirVozEnVivo } = await import('../server/voz');
+  await conEleven(
+    () => mp3(),
+    async (llamadas) => {
+      const vivo = await abrirVozEnVivo({ texto: 'Hola, ¿cómo estás hoy?', emocion: 'neutral', plataforma: 'ultron', idioma: 'es', avatar: 'claudio' });
+      assert.ok(vivo && vivo.tipo === 'vivo', 'en vivo, no la caché');
+      assert.equal(llamadas.length, 1);
+      assert.match(llamadas[0].url, new RegExp(`/text-to-speech/${VOCES_ELEVEN.claudio.es}/stream`), 'la voz de Claudio');
+      if (vivo?.tipo !== 'vivo') return;
+      const lector = vivo.cuerpo.getReader();
+      let bytes = 0;
+      for (;;) {
+        const { done, value } = await lector.read();
+        if (done) break;
+        bytes += value.length;
+      }
+      assert.equal(bytes, 4000);
+    }
+  );
+});
