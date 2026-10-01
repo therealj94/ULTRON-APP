@@ -117,7 +117,7 @@ import {
   procesarElectrumTelegram,
   registrarWebhookElectrum,
 } from './server/electrum/telegram';
-import { identidadDe, exigirPlataforma, esInvitado } from './server/seguridad';
+import { identidadDe, exigirPlataforma, esInvitado, sesionAbreAura } from './server/seguridad';
 import { cuentaDe, cuentasDisponibles, crearSolicitud, entrarConCuenta, mantenerCuentasAlDia } from './server/cuentas';
 import { aprobadores, montarRutasCuentas, plantilla } from './server/cuentas-rutas';
 import { montarRutasGenesis } from './server/genesis';
@@ -1485,6 +1485,11 @@ app.post(['/api/electrum/entrar', '/api/ultron/entrar'], limitar(12), async (req
       // Solo cuenta como intento fallido una clave rechazada, no un cerebro caído.
       if (remoteRes.status === 401 || remoteRes.status === 403) anotarFalloEntrada(correo, ipEntrada);
       return res.status(remoteRes.status).json(data);
+    }
+    // El cerebro remoto abre a quien conoce, pero en AU-RA no entra quien el padrón deja fuera (una
+    // persona solo de Dr Electrum): su sesión no abriría la mesa (sesionAbreAura), mejor decirlo aquí.
+    if (!ES_ELECTRUM && !sesionAbreAura(correo)) {
+      return res.status(403).json({ error: 'Tu cuenta no tiene acceso a AU-RA FP. Pedilo desde «Solicitar acceso».', codigo: 'SIN_ACCESO' });
     }
     anotarExitoEntrada(correo, ipEntrada);
     const nombre = data.miembro?.nombre || JUNTA[correo]?.nombre || correo.split('@')[0];
