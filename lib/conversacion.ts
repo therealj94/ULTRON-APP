@@ -181,6 +181,18 @@ export function fusionarHilo(opts: {
   return msgs;
 }
 
+/**
+ * Qué va en el bloque de memoria del prompt (lib/memoria.ts, lib/memoria-miembro.ts):
+ *   · 'todo'    — todo: la memoria larga, el hilo corto y la conversación mediana (lo de siempre).
+ *   · 'mediano' — sin el hilo corto: el turno ya manda el hilo como mensajes (server.ts), y el corto
+ *                 repetido dentro del system cambiaba en cada turno y obligaba al nodo a releerlo todo.
+ *   · 'firma'   — lo que, si cambia, obliga a rehacer el system a media conversación
+ *                 (server/prompt-turno.ts fijoDeLaConversacion): con quién habla, su acceso y lo que
+ *                 pidió recordar a propósito. Lo que se guarda solo por nombrar «la mina» o «la junta»
+ *                 no entra: pasa en muchos turnos, y lo dicho en la conversación ya está en los mensajes.
+ */
+export type HiloMemoria = 'todo' | 'mediano' | 'firma';
+
 export function capasHilo(corta: TurnoHilo[]): { corto: string; mediano: string } {
   const items = (corta || []).filter((t) => String(t.texto || '').trim());
   const cortoItems = items.slice(-8);

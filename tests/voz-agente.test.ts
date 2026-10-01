@@ -52,8 +52,8 @@ function persona(nombre = 'José') {
   return emitirSesion({ correo: `persona${n}@ordenglobal.org`, nombre, rol: 'Junta' });
 }
 /** Un pase de una conversación abierta, como lo da /api/voz/agente. */
-function paseDe(s: ReturnType<typeof persona>, avatar: 'ojos' | 'aura' | 'claudio' = 'aura', idioma: 'es' | 'en' = 'es') {
-  const p = emitirPase(s, avatar, idioma);
+function paseDe(s: ReturnType<typeof persona>, avatar: 'ojos' | 'aura' | 'claudio' | 'antonio' = 'aura', idioma: 'es' | 'en' = 'es', aparato?: string) {
+  const p = emitirPase(s, avatar, idioma, aparato ? { aparato } : {});
   abrirConversacion(s.correo, p.cid);
   return p.pase;
 }
@@ -148,7 +148,13 @@ test('eventosSSE: lee eventos a trozos y suelta el lector al abortar', async () 
 });
 
 /** Un servidor con las rutas reales y un cerebro falso en proceso. */
-async function montar(cerebro: (t: TurnoVoz) => Promise<void>, o: { fetch?: typeof fetch; turnoMs?: number; puenteMs?: number } = {}) {
+type Ambiente = { correo: string; aparato: string | null; sonido: string | null; on: boolean; ms: number };
+async function montar(
+  cerebro: (t: TurnoVoz) => Promise<void>,
+  o: { fetch?: typeof fetch; turnoMs?: number; puenteMs?: number; esperaTareaMs?: number; seguimientoMs?: number; rellenoAgenteMs?: number; etiquetas?: boolean } = {}
+) {
+  const ambientes: Ambiente[] = [];
+  const t0 = Date.now();
   const app = express();
   app.use(express.json());
   const vistos: TurnoVoz[] = [];
@@ -164,11 +170,17 @@ async function montar(cerebro: (t: TurnoVoz) => Promise<void>, o: { fetch?: type
     fetch: o.fetch,
     turnoMs: o.turnoMs,
     puenteMs: o.puenteMs,
+    esperaTareaMs: o.esperaTareaMs,
+    seguimientoMs: o.seguimientoMs,
+    rellenoAgenteMs: o.rellenoAgenteMs,
+    // Las etiquetas v4 salen al azar: fuera de su prueba, apagadas (el texto dicho se compara exacto).
+    etiquetas: o.etiquetas ?? false,
+    ambiente: (correo, aparato, e) => ambientes.push({ correo, aparato, sonido: e.sonido, on: e.on, ms: Date.now() - t0 }),
   });
   const srv = app.listen(0);
   await new Promise((r) => srv.once('listening', r));
   const base = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
-  return { base, vistos, cerrar: () => new Promise((r) => srv.close(r)) };
+  return { base, vistos, ambientes, cerrar: () => new Promise((r) => srv.close(r)) };
 }
 
 const llm = (base: string, pase: string | null, messages: unknown[], extra: Record<string, string> = {}, signal?: AbortSignal) =>
@@ -767,5 +779,218 @@ test('el puente: si el cerebro tarda, dice una frase de espera del avatar y en s
     assert.match(dicho, /Se me fue el hilo\. ¿Me lo repites\?$/);
   } finally {
     await falla.cerrar();
+  }
+});
+
+/* ── las tareas lentas: frase a tiempo, seguimiento y sonido de fondo en el teléfono ─────────── */
+
+/** Los trozos de texto del stream con el momento (ms desde `t0`) en que llegó cada uno. */
+async function trozosConTiempo(r: Response, t0: number) {
+  const lector = r.body!.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  const trozos: { ms: number; texto: string }[] = [];
+  for (;;) {
+    const { done, value } = await lector.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let i: number;
+    while ((i = buf.indexOf('\n\n')) >= 0) {
+      const l = buf.slice(0, i);
+      buf = buf.slice(i + 2);
+      if (!l.startsWith('data: {')) continue;
+      const c = JSON.parse(l.slice(6)).choices[0].delta.content;
+      if (c) trozos.push({ ms: Date.now() - t0, texto: c });
+    }
+  }
+  return trozos;
+}
+const dormir = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+test('tarea web lenta: la frase de «buscando» sale ~1 s después de saberse (mucho antes del corte de 4 s) y suena el tecleo hasta que contesta', async () => {
+  const { frasesDe } = await import('../mobile/src/compa/frasesEstado');
+  // Como en producción: el modelo pide la herramienta web a los 1,2 s y la respuesta llega a los 4,6 s.
+  const s = await montar(async (t) => {
+    await dormir(1_200);
+    t.enviar('tarea', { herramienta: 'web' });
+    await dormir(3_400);
+    t.enviar('delta', { text: 'El oro cerró en tres mil.', voz: 'El oro cerró en tres mil.' });
+    t.enviar('done', { reply: 'El oro cerró en tres mil.' });
+  });
+  try {
+    const t0 = Date.now();
+    const trozos = await trozosConTiempo(await llm(s.base, paseDe(persona(), 'claudio', 'es', 'tel-1'), [{ role: 'user', content: 'qué pasó hoy con el oro en las noticias' }]), t0);
+    const primero = trozos[0];
+    console.log(`[latencia] tarea web: frase de espera a los ${primero.ms} ms (tarea a 1200 ms), respuesta a los ${trozos[trozos.length - 1].ms} ms`);
+    assert.ok(frasesDe('buscando', 'claudio', 'es').includes(primero.texto.trim()), `una frase de «buscando» de Claudio: «${primero.texto}»`);
+    assert.ok(primero.ms >= 1_900 && primero.ms < 2_500, `sale ~0,9 s después de la tarea y antes del relleno del agente (2,5 s): ${primero.ms} ms`);
+    assert.equal(trozos.map((x) => x.texto).join(''), `${primero.texto}El oro cerró en tres mil.`, 'la frase y la respuesta, nada más (sin seguimiento: tardó menos de 7 s)');
+    // El sonido: tecleo en el teléfono de la conversación al decir la frase, y se quita al contestar.
+    assert.deepEqual(
+      s.ambientes.map((a) => [a.aparato, a.sonido, a.on]),
+      [
+        ['tel-1', 'teclado', true],
+        ['tel-1', null, false],
+      ]
+    );
+    assert.ok(Math.abs(s.ambientes[0].ms - (s.ambientes[1].ms - (trozos[1].ms - primero.ms))) < 400, 'el tecleo empieza con la frase');
+    assert.ok(s.ambientes[1].ms - s.ambientes[0].ms >= 2_000, 'y se para cuando el avatar empieza a contestar');
+  } finally {
+    await s.cerrar();
+  }
+});
+
+test('charla rápida (<1 s): sin frase y sin sonido; una tarea que termina antes del umbral tampoco dice nada', async () => {
+  const rapida = await montar(async (t) => {
+    await dormir(300);
+    t.enviar('delta', { text: 'Todo bien, ¿y tú?', voz: 'Todo bien, ¿y tú?' });
+    t.enviar('done', { reply: 'Todo bien, ¿y tú?' });
+  });
+  try {
+    const dicho = dichoDe(await (await llm(rapida.base, paseDe(persona(), 'aura', 'es', 'tel-2'), [{ role: 'user', content: '¿cómo estás?' }])).text());
+    assert.equal(dicho, 'Todo bien, ¿y tú?');
+    assert.deepEqual(rapida.ambientes, [], 'ni tecleo ni nada');
+  } finally {
+    await rapida.cerrar();
+  }
+  // La búsqueda se supo a los 100 ms y contestó a los 700 ms: antes de 100 + 900 ms, no se dice nada.
+  const veloz = await montar(async (t) => {
+    await dormir(100);
+    t.enviar('tarea', { herramienta: 'web' });
+    await dormir(600);
+    t.enviar('delta', { text: 'Listo: son las tres.', voz: 'Listo: son las tres.' });
+    t.enviar('done', { reply: 'Listo: son las tres.' });
+  });
+  try {
+    const dicho = dichoDe(await (await llm(veloz.base, paseDe(persona(), 'aura', 'es', 'tel-2'), [{ role: 'user', content: 'busca qué hora es en Madrid' }])).text());
+    assert.equal(dicho, 'Listo: son las tres.');
+    assert.deepEqual(veloz.ambientes, []);
+  } finally {
+    await veloz.cerrar();
+  }
+});
+
+test('tarea muy lenta: después de la frase de espera, hasta dos de seguimiento distintas (sin repetir) y el sonido cambia si pasa a leer', async () => {
+  const { frasesDe } = await import('../mobile/src/compa/frasesEstado');
+  const s = await montar(
+    async (t) => {
+      await dormir(50);
+      t.enviar('tarea', { herramienta: 'web' });
+      await dormir(700);
+      // Segunda ronda del harness: ahora lee la página que encontró.
+      t.enviar('tarea', { herramienta: 'leer' });
+      await dormir(1_000);
+      t.enviar('delta', { text: 'Según la fuente, subió un dos por ciento.', voz: 'Según la fuente, subió un dos por ciento.' });
+      t.enviar('done', { reply: 'Según la fuente, subió un dos por ciento.' });
+    },
+    { esperaTareaMs: 100, seguimientoMs: 400, puenteMs: 3_000 }
+  );
+  try {
+    const t0 = Date.now();
+    const trozos = await trozosConTiempo(await llm(s.base, paseDe(persona(), 'antonio', 'es', 'tel-3'), [{ role: 'user', content: 'investiga el precio del cobre' }]), t0);
+    const textos = trozos.map((x) => x.texto.trim());
+    assert.equal(textos.length, 4, JSON.stringify(trozos));
+    assert.ok(frasesDe('buscando', 'antonio', 'es').includes(textos[0]), textos[0]);
+    assert.ok(frasesDe('seguimiento', 'antonio', 'es').includes(textos[1]), textos[1]);
+    assert.ok(frasesDe('seguimiento', 'antonio', 'es').includes(textos[2]), textos[2]);
+    assert.notEqual(textos[1], textos[2], 'el seguimiento no se repite');
+    assert.equal(textos[3], 'Según la fuente, subió un dos por ciento.');
+    assert.ok(trozos[2].ms - trozos[1].ms >= 350, 'cada seguimiento espera su tiempo desde lo último dicho');
+    // Tecleo al buscar, papel al leer, y nada al contestar.
+    assert.deepEqual(
+      s.ambientes.map((a) => [a.sonido, a.on]),
+      [
+        ['teclado', true],
+        ['papel', true],
+        [null, false],
+      ]
+    );
+  } finally {
+    await s.cerrar();
+  }
+});
+
+test('tarea que se sabe tarde (después del relleno del agente): la frase no empieza con otra muletilla ni se repite', async () => {
+  const { frasesDe, empiezaConMuletilla } = await import('../mobile/src/compa/frasesEstado');
+  // Relleno del agente a los 200 ms (como 2,5 s en producción) y puente a los 300 ms: la tarea llega a
+  // los 250 ms y la frase sale con el puente, sin «Mmm, a ver…» pegado al «Mmm… a ver.» del agente.
+  const s = await montar(
+    async (t) => {
+      await dormir(250);
+      t.enviar('tarea', { herramienta: 'web' });
+      await dormir(250);
+      t.enviar('delta', { text: 'Encontré esto.', voz: 'Encontré esto.' });
+      t.enviar('done', { reply: 'Encontré esto.' });
+    },
+    { rellenoAgenteMs: 200, puenteMs: 300, esperaTareaMs: 900 }
+  );
+  try {
+    const yo = persona();
+    const vistas: string[] = [];
+    for (let k = 0; k < 8; k++) {
+      const dicho = dichoDe(await (await llm(s.base, paseDe(yo, 'aura', 'es'), [{ role: 'user', content: `busca lo último del catastro ${k}` }])).text());
+      const frase = frasesDe('buscando', 'aura', 'es').find((f) => dicho.startsWith(f));
+      assert.ok(frase, dicho);
+      assert.ok(!empiezaConMuletilla(frase), `no empieza con muletilla: «${frase}»`);
+      assert.equal(dicho, `${frase} Encontré esto.`);
+      vistas.push(frase);
+    }
+    for (let k = 1; k < vistas.length; k++) assert.notEqual(vistas[k], vistas[k - 1], 'nunca la misma dos veces seguidas');
+  } finally {
+    await s.cerrar();
+  }
+});
+
+test('buscar en sus chats: el tecleo sigue mientras el teléfono busca y se quita cuando vuelve la lectura', async () => {
+  const s = await montar(async (t) => {
+    const m = String(t.body.message);
+    t.enviar('delta', { text: 'Te lo busco en tus chats.', voz: 'Te lo busco en tus chats.' });
+    t.enviar('done', { reply: 'Te lo busco en tus chats.', acciones: /Beto/.test(m) ? [{ id: 'a1', accion: { tipo: 'buscar', q: 'Beto' } }] : [] });
+  });
+  try {
+    const pase = paseDe(persona(), 'aura', 'es', 'tel-4');
+    const dicho = dichoDe(await (await llm(s.base, pase, [{ role: 'user', content: 'busca en mis chats lo que dijo Beto' }])).text());
+    assert.equal(dicho, 'Te lo busco en tus chats.');
+    assert.deepEqual(s.ambientes.map((a) => [a.aparato, a.sonido, a.on]), [['tel-4', 'teclado', true]], 'sigue sonando al terminar el turno');
+    // Vuelve la lectura o la persona habla: el turno siguiente lo quita antes de nada.
+    await (await llm(s.base, pase, [{ role: 'user', content: 'gracias' }])).text();
+    assert.deepEqual([s.ambientes[1]?.sonido, s.ambientes[1]?.on], [null, false]);
+  } finally {
+    await s.cerrar();
+  }
+});
+
+test('etiquetas de audio v4: a veces la frase de espera lleva una (de las que v4 interpreta), nunca en el globito', async () => {
+  const { frasesDe, vozDeEspera } = await import('../mobile/src/compa/frasesEstado');
+  const PERMITIDAS = ['[thoughtful]', '[curious]', '[calm]', '[exhales]', '[laughs softly]', '[chuckles]'];
+  // La función sola: con azar bajo lleva etiqueta, con azar alto no; el Guardián nunca se ríe.
+  assert.equal(vozDeEspera('Buscando…', 'buscando', 'aura', () => 0.9), 'Buscando…');
+  assert.equal(vozDeEspera('Buscando…', 'buscando', 'aura', () => 0.1), '[curious] Buscando…');
+  for (let k = 0; k < 30; k++) assert.doesNotMatch(vozDeEspera('Casi listo.', 'seguimiento', 'ojos', () => k / 90), /laughs|chuckles/);
+  // Por la ruta: con etiquetas encendidas, lo que se dice es «[etiqueta] frase» o la frase sola.
+  const s = await montar(
+    async (t) => {
+      await dormir(120);
+      t.enviar('delta', { text: 'Ya está.', voz: 'Ya está.' });
+      t.enviar('done', { reply: 'Ya está.' });
+    },
+    { puenteMs: 30, etiquetas: true }
+  );
+  try {
+    let con = 0;
+    const yo = persona();
+    for (let k = 0; k < 12; k++) {
+      const dicho = dichoDe(await (await llm(s.base, paseDe(yo, 'claudio', 'es'), [{ role: 'user', content: `explícame la regla ${k}` }])).text());
+      const m = /^(\[[a-z ]+\] )?(.*) Ya está\.$/.exec(dicho);
+      assert.ok(m, dicho);
+      if (m[1]) {
+        con++;
+        assert.ok(PERMITIDAS.includes(m[1].trim()), m[1]);
+      }
+      assert.ok(frasesDe('pensando', 'claudio', 'es').includes(m[2]), m[2]);
+    }
+    assert.ok(con < 12, 'con mesura: no todas');
+  } finally {
+    await s.cerrar();
   }
 });

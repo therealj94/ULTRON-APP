@@ -38,6 +38,14 @@ export type PiezasTurno = {
    * miembro que habla sin sesión—, solo con quién habla. La junta no la usa: tiene la suya.
    */
   memoriaMiembro?: string;
+  /** La memoria del miembro en modo 'firma' (con quién habla y lo que pidió recordar). */
+  memoriaMiembroFirma?: string;
+  /**
+   * El hilo de la conversación va como mensajes del turno (server.ts mensajesQwen). Entonces el hilo
+   * corto no se repite en la memoria del system: ya está en los mensajes, y dentro del system cambiaba
+   * en cada turno.
+   */
+  hiloEnMensajes?: boolean;
 };
 
 /**
@@ -57,19 +65,24 @@ export type PiezasTurno = {
  * hasta un punto guardado, y guarda uno al empezar cada mensaje de la persona, nunca dentro del system.
  * Con cualquier cosa que cambie dentro del system, relee todo (medido: 6 s por turno con 5 800 fichas).
  */
-export function piezasDelTurno(p: PiezasTurno, hora?: Date): { fijo: string; delTurno: string; contexto: string } {
+export function piezasDelTurno(p: PiezasTurno, hora?: Date): { fijo: string; firma: string; delTurno: string; contexto: string } {
   const miembro = p.nivel === 'miembro';
   const perfil = p.perfil || perfilPara(p.nivel);
   const recuerdos = miembro
     ? 'No finjas recuerdos: solo lo que está en la memoria de esta persona y en el hilo. Nunca hables de lo que dijeron otras personas.'
     : `No finjas recuerdos: solo la memoria de ${p.quien ? nombreDe(p.quien) : 'quien no identifiqué'} y los hechos de junta. No recites la conversación privada del otro.`;
-  const fijo = `${buildPersonality({ nombre: p.nombre, canal: p.canal, modo: p.modo, mando: p.mando, nivel: p.nivel, perfil, conHora: false })}
+  const cabeza = `${buildPersonality({ nombre: p.nombre, canal: p.canal, modo: p.modo, mando: p.mando, nivel: p.nivel, perfil, conHora: false })}
 
 ${perfil.tituloConocimiento}:
 ${perfil.conocimiento}
 
 ${recuerdos}
-${miembro ? '' : `${hechosCatalogo()}\n`}${miembro && p.memoriaMiembro ? p.memoriaMiembro : promptMemoria(p.quienMem, { nivel: p.nivel, nombre: p.nombre })}`;
+${miembro ? '' : `${hechosCatalogo()}\n`}`;
+  const memoria = miembro && p.memoriaMiembro ? p.memoriaMiembro : promptMemoria(p.quienMem, { nivel: p.nivel, nombre: p.nombre, hilo: p.hiloEnMensajes ? 'mediano' : 'todo' });
+  const fijo = `${cabeza}${memoria}`;
+  // Lo fijo sin la conversación ni lo guardado solo: si esto no cambió, el system de antes sigue valiendo
+  // (fijoDeLaConversacion).
+  const firma = `${cabeza}${miembro && p.memoriaMiembro ? p.memoriaMiembroFirma ?? p.memoriaMiembro : promptMemoria(p.quienMem, { nivel: p.nivel, nombre: p.nombre, hilo: 'firma' })}`;
   const agente = promptAgente(p.agente, p.nivel);
   // Lo del turno sin los HECHOS (el turno los pone él mismo, y el harness les suma lo que devuelve cada
   // herramienta): va en el MENSAJE de la persona, no en el system (server.ts mensajesQwen).
@@ -83,7 +96,98 @@ ${miembro ? '' : `${hechosCatalogo()}\n`}${miembro && p.memoriaMiembro ? p.memor
     .filter((x) => x.trim())
     .join('\n\n');
   const delTurno = `${contexto}\n\nHECHOS:\n${p.hechos.join('\n') || '(ninguno)'}`;
-  return { fijo, delTurno, contexto };
+  return { fijo, firma, delTurno, contexto };
+}
+
+/**
+ * LO FIJO SE QUEDA FIJO DURANTE LA CONVERSACIÓN.
+ *
+ * La memoria de la persona trae la conversación mediana (los turnos 40 a 8 hacia atrás), y cada turno
+ * la corre un lugar: dentro del system, eso obligaba al nodo a releerlo todo (1-oct, medido en
+ * producción después de #95: 66 % común, 5 700 fichas releídas, 6 s por turno).
+ *
+ * Mientras la conversación sigue viva, el turno reutiliza el `fijo` que ya armó, siempre que su `firma`
+ * (reglas, cerebro, catálogo, modo, avatar, con quién habla, su acceso y lo que pidió recordar) no haya
+ * cambiado. Lo que se guarda solo, por nombrar «la mina» o «la junta», no entra en la firma: pasaba casi
+ * cada turno. Lo dicho en la conversación no se pierde: va en los mensajes.
+ *   · Se rehace al instante si cambia la firma (pidió recordar algo, otro avatar, otro modo, otro acceso).
+ *   · Se rehace con más de CONGELAR_MAX_NUEVOS turnos guardados desde la foto. Hasta entonces, todo lo
+ *     de después de la foto va en los mensajes del turno (ventanaDelHilo).
+ *   · Se rehace tras CONGELAR_INACTIVA_MS sin turnos o CONGELAR_MAX_MS desde que se armó: lo guardado
+ *     desde otro lado (Telegram, la web) llega a la conversación a más tardar entonces.
+ */
+export const CONGELAR_INACTIVA_MS = 10 * 60_000;
+export const CONGELAR_MAX_MS = 30 * 60_000;
+/**
+ * Cuántos turnos guardados después de la foto aguanta el fijo. La foto trae la conversación mediana
+ * hasta 8 turnos antes de la foto; los mensajes del turno llevan los 16 de antes de la foto MÁS todos
+ * los guardados desde entonces (ventanaDelHilo): la ventana crece desde un principio fijo en vez de
+ * correrse, así no se pierde nada (Codex en #98) y el nodo tampoco relee el historial. Pasados estos,
+ * se rehace la foto para que la ventana no crezca sin fin.
+ */
+export const CONGELAR_MAX_NUEVOS = 24;
+export const HILO_BASE = 16;
+const congelados = new Map<string, { fijo: string; firma: string; foto: number; creado: number; usado: number }>();
+
+/**
+ * `turnosDesde(foto)`: cuántos turnos de la memoria de la persona se guardaron después de `foto`
+ * (en ms). Sin él, se cuentan cero (no hay memoria que se corra).
+ */
+export function fijoDeLaConversacion(
+  clave: string,
+  fijo: string,
+  firma: string,
+  ahora = Date.now(),
+  turnosDesde?: (foto: number) => number
+): string {
+  if (!clave) return fijo;
+  const c = congelados.get(clave);
+  if (
+    c &&
+    c.firma === firma &&
+    ahora - c.usado < CONGELAR_INACTIVA_MS &&
+    ahora - c.creado < CONGELAR_MAX_MS &&
+    (turnosDesde ? turnosDesde(c.foto) : 0) <= CONGELAR_MAX_NUEVOS
+  ) {
+    c.usado = ahora;
+    return c.fijo;
+  }
+  congelados.delete(clave);
+  congelados.set(clave, { fijo, firma, foto: ahora, creado: ahora, usado: ahora });
+  // Una por persona; las más viejas se van primero.
+  while (congelados.size > 500) congelados.delete(congelados.keys().next().value as string);
+  return fijo;
+}
+
+/**
+ * Cuántos mensajes del hilo van en el turno (server.ts fusionarHilo): HILO_BASE más los guardados
+ * desde la foto del fijo congelado. Así el principio de la ventana no se mueve mientras dura la foto
+ * (los mensajes de antes no cambian y el nodo los reutiliza) y nada de lo dicho después de la foto se
+ * sale. Sin foto vigente, o pasada de CONGELAR_MAX_NUEVOS (se rehará), HILO_BASE.
+ */
+export function ventanaDelHilo(clave: string, turnosDesde: (foto: number) => number, ahora = Date.now()): number {
+  const c = clave ? congelados.get(clave) : undefined;
+  if (!c || ahora - c.usado >= CONGELAR_INACTIVA_MS || ahora - c.creado >= CONGELAR_MAX_MS) return HILO_BASE;
+  const n = turnosDesde(c.foto);
+  return n <= CONGELAR_MAX_NUEVOS ? HILO_BASE + n : HILO_BASE;
+}
+
+/**
+ * Suena la llamada y el nodo se precalienta con el último system de la persona (server.ts
+ * calentarCerebro): el primer turno de la llamada tiene que usar ESE mismo fijo, aunque haga rato que no
+ * hablaba. La firma se sigue comprobando en el turno.
+ */
+export function renovarFijo(clave: string, ahora = Date.now()): void {
+  const c = congelados.get(clave);
+  if (c) {
+    c.creado = ahora;
+    c.usado = ahora;
+  }
+}
+
+/** Solo pruebas. */
+export function _olvidarFijos(): void {
+  congelados.clear();
 }
 
 /** El prompt del turno de una pieza (lo fijo y después lo del turno). */

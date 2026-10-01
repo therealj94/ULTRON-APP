@@ -21,6 +21,9 @@
  *    píldora para usar la app (entrar a los chats la minimiza sola) y no hay sesión fuera de ella;
  *  · el audio: cuándo la conversación suelta de verdad el audio del teléfono (audioVoz.ts), avisado en
  *    el bus (`voz`) para que una llamada no arranque el suyo mientras AURA todavía se cierra;
+ *  · el SONIDO DE FONDO de una tarea lenta en la conversación (ambiente.ts): tecleo, papel o lápiz
+ *    mientras AURA busca, lee o calcula; lo manda el servidor por el canal de acciones y se para al
+ *    contestar, al hablar la persona, al colgar o silenciar y con la app detrás;
  *  · el puente de acciones se detiene con la app detrás y se reanuda al volver (sin SSE en segundo
  *    plano); al cerrar cada conversación se le avisa al servidor (POST /api/voz/agente/cerrar);
  *  · la boca de AURA como señal para cualquier cuerpo (avatar3d/senalVoz.ts): el nivel de la voz
@@ -40,7 +43,7 @@ import { miga, reportarEstado } from '../lib/reporte';
 import { emocionDeTexto } from '../lib/emocion';
 import { escucharNivelVoz, nivelExterno, speak, stopSpeaking, suspenderVoz, vozSuspendida } from '../lib/tts';
 import { pauseMicForTts, suspenderOido } from '../lib/speech';
-import { suspenderSfx } from '../lib/sfx';
+import { sfxActivos, suspenderSfx } from '../lib/sfx';
 import { quitarExpresiones } from '../lib/expresiones';
 import { idiomaActual, tr, useIdioma } from '../i18n';
 import { avatarActual } from '../avatares/actual';
@@ -51,6 +54,8 @@ import { ControlSesion, type EstadoVoz, type VistaSesion } from './sesion';
 import { Precalentador } from './permiso';
 import { coordinarLlamadas } from './llamada';
 import { ContextoApp, PuenteAcciones, decirLectura, type XhrMin } from './acciones';
+import { AmbienteConversacion } from './ambiente';
+import { reproductorAmbiente } from './ambienteSonido';
 import { escucharPorDecir, escucharSonando, listarRecordatorios, llamadaSonando, tomarPorDecir, type LlamadaRecordatorio } from './recordatorios';
 import { callarAvisoQueSuena, contestadaEnPantalla, depsRecordatorios, perdidaEnPantalla, rechazar as rechazarRecordatorio } from './recordatoriosNativo';
 import { ALTO_PILDORA, LlamadaAvatar, type VistaLlamada } from './LlamadaAvatar';
@@ -160,6 +165,19 @@ export function VozProvider({ children, conCompanera = true }: Props) {
   if (!pre.current) pre.current = new Precalentador(pedirPermiso);
   const precalentador = pre.current;
   const controles = useRef<ControlesSesion | null>(null);
+  // El sonido de fondo de las tareas lentas: solo con la conversación abierta, sin silencio, la app
+  // delante y los sonidos de la app activados.
+  const amb = useRef<AmbienteConversacion | null>(null);
+  if (!amb.current)
+    amb.current = new AmbienteConversacion({
+      reproductor: reproductorAmbiente,
+      puede: () => {
+        const v = control.vista();
+        return v.montada && !v.silenciada && !v.suspendida && (v.estado === 'escuchando' || v.estado === 'hablando') && AppState.currentState === 'active' && sfxActivos();
+      },
+      miga,
+    });
+  const ambiente = amb.current;
 
   const precalentar = useCallback(() => {
     const v = control.vista();
@@ -464,6 +482,11 @@ export function VozProvider({ children, conCompanera = true }: Props) {
       token: async () => (await loadMesaToken().catch(() => '')) || null,
       xhr: () => new XMLHttpRequest() as unknown as XhrMin,
       alAccion: (a) => emitir('accion', a),
+      // El sonido de fondo de la conversación (event: ambiente): se pone o se quita aquí mismo.
+      alAmbiente: (a) => {
+        emitir('ambiente', a);
+        ambiente.alEvento(a);
+      },
       // api() renueva la sesión sola si el servidor dice 401.
       renovar: () => api(RUTA_PERFIL, undefined, 10_000).then(() => undefined),
       // Qué teléfono escucha: el servidor le empuja las acciones al aparato que habló.
@@ -498,7 +521,21 @@ export function VozProvider({ children, conCompanera = true }: Props) {
       ctx.parar();
       contexto.current = null;
     };
-  }, [precalentador]);
+  }, [precalentador, ambiente]);
+  // El sonido de fondo se va si la conversación se cierra, se silencia, llega una llamada o la app se va
+  // atrás (y al desmontarse la voz).
+  useEffect(() => {
+    if (!(vista.montada && !vista.silenciada && !vista.suspendida && (vista.estado === 'escuchando' || vista.estado === 'hablando'))) ambiente.parar('conversación');
+  }, [ambiente, vista.montada, vista.silenciada, vista.suspendida, vista.estado]);
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (e) => {
+      if (e !== 'active') ambiente.parar('detrás');
+    });
+    return () => {
+      sub.remove();
+      ambiente.parar('fin');
+    };
+  }, [ambiente]);
   // Un solo dueño del audio (compa/duenoAudio.ts): al abrirse la conversación en vivo, venga de donde
   // venga (la mesa, la compañera, el panel), la voz de la mesa se calla. Nunca dos voces a la vez.
   useEffect(() => {
@@ -519,10 +556,11 @@ export function VozProvider({ children, conCompanera = true }: Props) {
       if (rol === 'usuario') {
         control.oyoFrase();
         ejecutar(ciclo.turnoUsuario(limpio));
-      }
+        ambiente.parar('persona');
+      } else ambiente.alHablaAvatar(texto);
       mensajeVoz.emitir({ rol, texto: limpio, emocion: rol === 'ultron' ? emocionDeTexto(texto) : 'neutral', en: Date.now() });
     },
-    [control, ciclo, ejecutar]
+    [control, ciclo, ejecutar, ambiente]
   );
   const alInterrupcion = useCallback(
     (gen: number) => {

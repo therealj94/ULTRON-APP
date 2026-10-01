@@ -31,7 +31,8 @@ import { ANIMO_INICIAL, GLOBO_PENSANDO_MS, expresion, puedeCaminar, reducir } fr
 import { Gestos } from '../gestos.ts';
 import { pegarABorde, reubicar, yCarril, limitar, destinoPaseo, lugarGlobo } from '../borde.ts';
 import { LectorSse } from '../sse.ts';
-import { PuenteAcciones, ContextoApp, esAccionApp, accionesDelTurno, accionNueva, depurarContactos, VENTANA_MISMA_ACCION_MS, mensajeDeLectura, decirLectura, mensajeDeRecordatorio, decirRecordatorio } from '../acciones.ts';
+import { PuenteAcciones, ContextoApp, esAccionApp, accionesDelTurno, accionNueva, depurarContactos, VENTANA_MISMA_ACCION_MS, mensajeDeLectura, decirLectura, mensajeDeRecordatorio, decirRecordatorio, ambienteDe } from '../acciones.ts';
+import { AmbienteConversacion, GRACIA_MS, AMBIENTE_MAX_MS, VOLUMEN_AMBIENTE } from '../ambiente.ts';
 import * as REC from '../recordatorios.ts';
 import { programarRecordatorio, _olvidarRecordatorios, CANAL_RECORDATORIOS } from '../recordatorios.ts';
 // Del servidor (lib/manos-app.ts), con import dinámico: el typecheck de la app (mobile/tsconfig, que
@@ -43,7 +44,7 @@ import { OidoMesa, VigilanteOido, TOPE_REINICIOS_OIDO, duenoAudio, motivoFalloVo
 import { FIGURAS, mezclarFigura, estiloDe } from '../figura.ts';
 import { emocionDeTexto } from '../../lib/emocion.ts';
 import { emitir, escuchar } from '../../nucleo/contrato.ts';
-import { ESTADOS_FRASE, EMOCION_DE_ESTADO, MemoriaFrases, fraseDeEstado, frasesDe, esRelleno, quitarRellenoInicial, estadoDeEspera } from '../frasesEstado.ts';
+import { ESTADOS_FRASE, EMOCION_DE_ESTADO, MemoriaFrases, fraseDeEstado, frasesDe, esRelleno, quitarRellenoInicial, estadoDeEspera, empiezaConMuletilla, tareaDe, TAREAS, SONIDOS_AMBIENTE, vozDeEspera } from '../frasesEstado.ts';
 import { EXPRESIONES_AVATAR } from '../../avatar3d/tipos.ts';
 import { EMOCIONES } from '../../lib/emocion.ts';
 import { AVATARES } from '../../avatares/catalogo.ts';
@@ -672,6 +673,187 @@ prueba('puente + turno: el «enviar» del SSE y el del done no salen dos veces (
   xhr.onprogress();
   puente.parar();
   assert.equal(ejecutadas.length, 1, JSON.stringify(ejecutadas));
+});
+
+/* ── el sonido de fondo de la conversación (tecleo, papel, lápiz) ─────────────────────────── */
+
+/** Un XHR falso para el puente: `llega(texto)` le suma texto al cuerpo como lo haría el SSE. */
+function puenteConXhr(d) {
+  let xhr;
+  const puente = new PuenteAcciones({
+    base: 'http://x',
+    token: async () => 't',
+    xhr: () =>
+      (xhr = {
+        responseText: '',
+        status: 200,
+        readyState: 1,
+        cab: {},
+        onprogress: null,
+        onreadystatechange: null,
+        onerror: null,
+        open() {},
+        setRequestHeader(k, v) {
+          this.cab[k] = v;
+        },
+        send() {},
+        abort() {},
+      }),
+    esperar: () => () => {},
+    ...d,
+  });
+  return {
+    puente,
+    llega(t) {
+      xhr.responseText += t;
+      xhr.readyState = 3;
+      xhr.onprogress();
+    },
+    xhr: () => xhr,
+  };
+}
+
+/** Un reloj y un temporizador a mano para el controlador del sonido. */
+function relojFalso() {
+  let ahora = 0;
+  const pendientes = [];
+  return {
+    reloj: () => ahora,
+    esperar: (f, ms) => {
+      const p = { f, en: ahora + ms, vivo: true };
+      pendientes.push(p);
+      return () => (p.vivo = false);
+    },
+    avanzar(ms) {
+      ahora += ms;
+      for (const p of pendientes) if (p.vivo && p.en <= ahora) {
+        p.vivo = false;
+        p.f();
+      }
+    },
+  };
+}
+
+prueba('ambiente: `event: ambiente` llega por el canal de acciones, no es una acción ni mueve el Last-Event-ID', async () => {
+  const acciones = [];
+  const ambientes = [];
+  const c = puenteConXhr({ alAccion: (a) => acciones.push(a), alAmbiente: (a) => ambientes.push(a) });
+  c.puente.arrancar();
+  await dormir(10);
+  c.llega('id: acc-1\ndata: ' + JSON.stringify({ id: 'acc-1', accion: { tipo: 'atras' } }) + '\n\n');
+  c.llega('event: ambiente\ndata: {"sonido":"teclado","on":true}\n\n');
+  c.llega('event: ambiente\ndata: {"sonido":"papel","on":true}\n\n');
+  c.llega('event: ambiente\ndata: {"sonido":"tambor","on":true}\n\n');
+  c.llega('event: ambiente\ndata: {"sonido":null,"on":false}\n\n');
+  c.llega('event: ambiente\ndata: no-es-json\n\n');
+  assert.deepEqual(acciones, [{ tipo: 'atras' }], 'el ambiente no es una acción');
+  assert.deepEqual(ambientes, [
+    { sonido: 'teclado', on: true },
+    { sonido: 'papel', on: true },
+    { sonido: null, on: false },
+    { sonido: null, on: false },
+  ], 'un sonido que no conozco es «sin sonido»');
+  // Al reconectar pide lo que vino después de la última ACCIÓN (el ambiente no lleva id).
+  c.puente.parar();
+  c.puente.arrancar();
+  await dormir(10);
+  assert.equal(c.xhr().cab['Last-Event-ID'], 'acc-1');
+  c.puente.parar();
+  // Un puente sin `alAmbiente` (una pieza vieja) lo salta sin romperse.
+  const viejo = puenteConXhr({ alAccion: (a) => acciones.push(a) });
+  viejo.puente.arrancar();
+  await dormir(10);
+  viejo.llega('event: ambiente\ndata: {"sonido":"teclado","on":true}\n\n');
+  viejo.puente.parar();
+  assert.equal(acciones.length, 1);
+  assert.equal(ambienteDe({ on: true, sonido: 'lapiz' }).sonido, 'lapiz');
+  assert.equal(ambienteDe({ sonido: 'lapiz' }), null);
+  // Los mismos nombres en el servidor, el contrato y el banco de tareas.
+  const { SONIDOS_AMBIENTE: delServidor } = await import(new URL('../../../../lib/acciones-app.ts', import.meta.url).href);
+  assert.deepEqual([...delServidor], [...SONIDOS_AMBIENTE]);
+  for (const t of Object.values(TAREAS)) assert.ok(t.sonido === null || SONIDOS_AMBIENTE.includes(t.sonido));
+});
+
+prueba('ambiente: suena al llegar, sigue con las frases de espera y se para cuando el avatar empieza a contestar', async () => {
+  const r = relojFalso();
+  const log = [];
+  let puede = true;
+  const amb = new AmbienteConversacion({
+    reproductor: { poner: (s) => log.push(`poner ${s}`), quitar: () => log.push('quitar') },
+    puede: () => puede,
+    reloj: r.reloj,
+    esperar: r.esperar,
+  });
+  const c = puenteConXhr({ alAccion: () => {}, alAmbiente: (a) => amb.alEvento(a) });
+  c.puente.arrancar();
+  await dormir(10);
+  c.llega('event: ambiente\ndata: {"sonido":"teclado","on":true}\n\n');
+  assert.equal(amb.actual, 'teclado');
+  assert.deepEqual(log, ['poner teclado']);
+  // La frase que lo acompaña, la del agente y una de seguimiento: no lo paran.
+  amb.alHablaAvatar('Te lo busco en tus chats.');
+  r.avanzar(GRACIA_MS + 100);
+  amb.alHablaAvatar('[curious] Déjame buscarlo…');
+  amb.alHablaAvatar('Mmm… a ver.');
+  amb.alHablaAvatar(frasesDe('seguimiento', 'claudio', 'es')[0]);
+  assert.equal(amb.actual, 'teclado', 'las frases de espera no cuentan como respuesta');
+  // Otra ronda (ahora lee la página): cambia el sonido.
+  c.llega('event: ambiente\ndata: {"sonido":"papel","on":true}\n\n');
+  assert.deepEqual(log, ['poner teclado', 'poner papel']);
+  // La respuesta de verdad: se para aunque el `off` del servidor no haya llegado.
+  r.avanzar(GRACIA_MS + 100);
+  amb.alHablaAvatar('El cobre está a cuatro dólares la libra.');
+  assert.equal(amb.actual, null);
+  assert.deepEqual(log, ['poner teclado', 'poner papel', 'quitar']);
+  // El `off` que llega después no hace nada más.
+  c.llega('event: ambiente\ndata: {"sonido":null,"on":false}\n\n');
+  assert.deepEqual(log.slice(3), []);
+  // Off del servidor, la persona que habla, el tope: siempre se para.
+  amb.alEvento({ sonido: 'lapiz', on: true });
+  amb.alEvento({ sonido: null, on: false });
+  amb.alEvento({ sonido: 'lapiz', on: true });
+  amb.parar('persona');
+  amb.alEvento({ sonido: 'teclado', on: true });
+  r.avanzar(AMBIENTE_MAX_MS + 1);
+  assert.equal(amb.actual, null, 'un off perdido no deja tecleando para siempre');
+  assert.deepEqual(log.slice(3), ['poner lapiz', 'quitar', 'poner lapiz', 'quitar', 'poner teclado', 'quitar']);
+  // Silenciada, cerrada, la app detrás o los sonidos apagados: no suena.
+  puede = false;
+  amb.alEvento({ sonido: 'teclado', on: true });
+  assert.equal(amb.actual, null);
+  assert.ok(VOLUMEN_AMBIENTE > 0 && VOLUMEN_AMBIENTE <= 0.25, 'bajito, por debajo de la voz');
+  c.puente.parar();
+});
+
+prueba('frases de estado: tareas → estado y sonido; muchas por avatar para esperar; sin muletilla tras el relleno; etiquetas v4 solo en la voz', () => {
+  assert.deepEqual([tareaDe('web').estado, tareaDe('web').sonido, tareaDe('web').lenta], ['buscando', 'teclado', true]);
+  assert.deepEqual([tareaDe('leer').estado, tareaDe('leer').sonido], ['leyendo', 'papel']);
+  assert.deepEqual([tareaDe('pdf-leer').estado, tareaDe('pdf-leer').sonido], ['leyendo', 'papel']);
+  assert.deepEqual([tareaDe('calculo-mina').estado, tareaDe('calculo-mina').sonido, tareaDe('calculo-mina').lenta], ['calculando', 'lapiz', false]);
+  assert.deepEqual([tareaDe('vision').estado, tareaDe('vision').sonido], ['mirando', null]);
+  assert.equal(tareaDe('rag'), null, 'lo que no es tarea no hace esperar');
+  assert.equal(tareaDe('harness'), null);
+  // «Muchísimas para que suene humano siempre»: de 15 a 25 por estado de tarea, avatar e idioma.
+  for (const e of ['pensando', 'revisando', 'buscando', 'calculando', 'abriendo', 'leyendo', 'mirando', 'seguimiento'])
+    for (const a of AVATARES_BANCO)
+      for (const i of ['es', 'en']) {
+        const n = frasesDe(e, a, i).length;
+        assert.ok(n >= 15 && n <= 25, `${e}/${a}/${i}: ${n}`);
+        // Siempre quedan de sobra sin muletilla para después del relleno del agente.
+        assert.ok(frasesDe(e, a, i).filter((f) => !empiezaConMuletilla(f)).length >= 12, `${e}/${a}/${i} sin muletilla`);
+      }
+  const m = new MemoriaFrases();
+  for (let k = 0; k < 30; k++) assert.ok(!empiezaConMuletilla(fraseDeEstado('pensando', 'aura', 'es', { memoria: m, sinMuletilla: true }).texto));
+  const evitar = frasesDe('seguimiento', 'ojos', 'es').slice(0, -1);
+  assert.equal(fraseDeEstado('seguimiento', 'ojos', 'es', { memoria: m, evitar }).texto, frasesDe('seguimiento', 'ojos', 'es').at(-1), 'no repite las ya dichas en la espera');
+  // Las frases de espera son relleno: si el cerebro empieza con una, sobra.
+  assert.equal(esRelleno('Ya casi lo tengo…'), true);
+  assert.equal(esRelleno('Hojeando el documento…'), true);
+  assert.equal(estadoDeEspera('léeme este pdf'), 'leyendo');
+  assert.equal(estadoDeEspera('¿qué ves?'), 'mirando');
+  // Las etiquetas v4 van en la voz, nunca en el banco (el globito).
+  assert.equal(vozDeEspera('Buscando…', 'buscando', 'aura', () => 0.1), '[curious] Buscando…');
+  assert.equal(vozDeEspera('Buscando…', 'buscando', 'aura', () => 0.99), 'Buscando…');
 });
 
 prueba('puente: parado en segundo plano, al volver reconecta con Last-Event-ID (revisión 5, B11)', async () => {
