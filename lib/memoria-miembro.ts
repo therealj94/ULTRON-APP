@@ -18,7 +18,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { capasHilo } from './conversacion';
+import { capasHilo, type HiloMemoria } from './conversacion';
 import { s3GetJson, s3Listo, s3PutJson } from './s3';
 
 export type TurnoMiembro = { rol: 'user' | 'ultron'; texto: string; t: number; canal: 'mesa' | 'telegram' | 'sistema' };
@@ -192,18 +192,25 @@ export async function olvidarMiembro(correo: string): Promise<void> {
 }
 
 /** Lo que va al prompt: con quién habla, lo que pidió recordar y su hilo. Nada de nadie más. */
-export function promptMemoriaMiembro(correo: string, nombre?: string): string {
+/** `hilo`: como en lib/memoria.ts promptMemoria ('todo', 'mediano' o 'firma'; lib/conversacion.ts). */
+export function promptMemoriaMiembro(correo: string, nombre?: string, hilo: HiloMemoria = 'todo'): string {
   const cajon = cache.get(correoNormal(correo)) || vacio();
   const n = String(nombre || '').trim() || 'un miembro de la comunidad';
   const capas = capasHilo(cajon.corta);
   // El hilo se etiqueta como lo que es: la persona, no «Junta».
   const miembro = (s: string) => s.replace(/^Junta: /gm, 'Miembro: ');
+  const hablas = `HABLAS CON: ${n}, miembro de la comunidad de Orden Global (no es de la junta). Esta memoria es solo suya.`;
+  // Lo de un miembro solo se guarda cuando lo pide («recuerda que…»): entra entero en la firma.
+  const pidio = `LO QUE ${n.toUpperCase()} TE PIDIÓ RECORDAR:\n${cajon.larga.map((h) => `- ${h.hecho}`).join('\n') || '(nada aún)'}`;
+  if (hilo === 'firma') return [hablas, pidio].join('\n');
   return [
-    `HABLAS CON: ${n}, miembro de la comunidad de Orden Global (no es de la junta). Esta memoria es solo suya.`,
-    `LO QUE ${n.toUpperCase()} TE PIDIÓ RECORDAR:\n${cajon.larga.map((h) => `- ${h.hecho}`).join('\n') || '(nada aún)'}`,
-    `HILO CORTO CON ${n.toUpperCase()} (lo último; «esto» es esto):\n${miembro(capas.corto) || '(nada)'}`,
+    hablas,
+    pidio,
+    hilo === 'todo' ? `HILO CORTO CON ${n.toUpperCase()} (lo último; «esto» es esto):\n${miembro(capas.corto) || '(nada)'}` : '',
     `CONVERSACIÓN MEDIANA CON ${n.toUpperCase()}:\n${miembro(capas.mediano) || '(nada)'}`,
-  ].join('\n');
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 /** Lo que ve el miembro en /api/memoria: lo suyo, y de la junta nada. */

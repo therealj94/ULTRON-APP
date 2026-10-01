@@ -300,6 +300,26 @@ test('un intento de torcer al sistema: el aviso del clasificador va en el system
   assert.doesNotMatch(alNodo.at(-1)!.soloSystem, /AVISOS DE ESTE TURNO/);
 });
 
+test('en una llamada, el system es el mismo turno a turno aunque la memoria cambie (el nodo no relee)', { skip: !listo }, async () => {
+  // 1-oct: el hilo corto y la conversación mediana iban dentro del system, y «… de la mina» se guarda
+  // como dato largo: el system cambiaba cada turno y el nodo releía 5 700 fichas (6 s).
+  contestar = () => '[EMO: neutral] Va, te cuento.';
+  const hilo: { role: string; content: string }[] = [];
+  const systems: string[] = [];
+  for (const dicho of ['cuéntame cómo va la mina de Danlí este mes', 'y qué falta para la concesión de la mina nueva', 'qué opina la junta del avance de la mina']) {
+    alNodo.length = 0;
+    hilo.push({ role: 'user', content: dicho });
+    const v = await voz(paseDe(), hilo);
+    assert.equal(v.status, 200, dicho);
+    assert.ok(alNodo.length > 0, `«${dicho}» llegó al 27B`);
+    systems.push(alNodo.at(-1)!.soloSystem);
+    hilo.push({ role: 'assistant', content: v.dicho });
+  }
+  assert.equal(systems[1], systems[0], 'turno 2: mismo system');
+  assert.equal(systems[2], systems[1], 'turno 3: mismo system');
+  assert.ok(alNodo.at(-1)!.ultimo.includes('AHORA:'), 'lo del turno va en el mensaje');
+});
+
 test('la voz corre sin mando: «redespliega» se contesta con la negativa y no despierta al 27B', { skip: !listo }, async () => {
   alNodo.length = 0;
   const v = await voz(paseDe(), [{ role: 'user', content: 'redespliega la mesa' }]);

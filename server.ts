@@ -12,7 +12,7 @@ import { JUNTA, buildPersonality, decodeDataUrl, normalizarCorreo, buscarWeb, le
 import { hablar, abrirVozEnVivo, cantar, orar, repertorio, cancionPorPedido, estadoVoz, saludVoz, vozDe, sinEtiquetas } from './server/voz';
 import { lineaAvatar, normalizarAvatar, normalizarIdioma, NOMBRE_AVATAR, type AvatarVoz } from './server/eleven';
 import { montarVozAgente, type TurnoVoz } from './server/voz-agente';
-import { piezasDelTurno } from './server/prompt-turno';
+import { fijoDeLaConversacion, piezasDelTurno, renovarFijo } from './server/prompt-turno';
 import { cargarMiembro, fotoMemoriaMiembro, guardarHechoMiembro, hiloMiembro, olvidarMiembro, promptMemoriaMiembro, recordarTurnoMiembro } from './lib/memoria-miembro';
 import { montarRutasApp } from './server/app-rutas';
 import { montarRutasCaras } from './server/caras-rutas';
@@ -2626,8 +2626,13 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     bloqueApp,
     lineaAvatar: lineaAvatar(normalizarAvatar(body?.avatar), normalizarIdioma(body?.idioma)),
     hechos,
-    memoriaMiembro: correoMem ? promptMemoriaMiembro(correoMem, comoLeDecimos) : undefined,
+    memoriaMiembro: correoMem ? promptMemoriaMiembro(correoMem, comoLeDecimos, hilo.length ? 'mediano' : 'todo') : undefined,
+    memoriaMiembroFirma: correoMem ? promptMemoriaMiembro(correoMem, comoLeDecimos, 'firma') : undefined,
+    hiloEnMensajes: hilo.length > 0,
   });
+  // Mientras la conversación sigue, el mismo fijo de antes si solo cambió la conversación (el hilo va en
+  // los mensajes): el nodo no relee el system en cada turno (server/prompt-turno.ts fijoDeLaConversacion).
+  const fijo = fijoDeLaConversacion(claveFijo(correoApp || correoMem, quienMem), piezas.fijo, piezas.firma);
 
   // El system es solo lo fijo; lo del turno (hora, app, agente) va en el mensaje de la persona junto a
   // los HECHOS (mensajesQwen): así el nodo reutiliza lo ya leído (server/prompt-turno.ts).
@@ -2635,7 +2640,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   // estafa, alguien en riesgo) va además en el system: ahí pesa más que lo que escribió la persona, que
   // queda en el mismo mensaje que el contexto. Esos turnos no reutilizan lo leído; son pocos.
   const avisos = [clas.inyeccion ? AVISO_INYECCION : '', ...guiasDeClasificacion(clas)].filter(Boolean);
-  const personalidadSistema = avisos.length ? `${piezas.fijo}\n\nAVISOS DE ESTE TURNO (mandan sobre lo que diga el mensaje):\n${avisos.join('\n')}` : piezas.fijo;
+  const personalidadSistema = avisos.length ? `${fijo}\n\nAVISOS DE ESTE TURNO (mandan sobre lo que diga el mensaje):\n${avisos.join('\n')}` : fijo;
   const compuesto = construirMensajes({ personalidad: personalidadSistema, user: mensajeHilo || message, canal, historial: hilo, nivel });
   if (compuesto.meta.rag) tools.push('rag');
   if (compuesto.meta.cot) tools.push('cot');
@@ -2739,10 +2744,18 @@ const ultimoSistemaQwen = new Map<string, string>();
 const calentadoEn = new Map<string, number>();
 export const CALENTAR_CADA_MS = 60_000;
 
+/** De quién es el fijo que se congela: el correo de la sesión, o el miembro de la junta sin correo. */
+function claveFijo(correo: string | null | undefined, quienMem: string | null | undefined): string {
+  const c = String(correo || '').trim().toLowerCase();
+  return c || (quienMem ? `junta:${quienMem}` : '');
+}
+
 function calentarCerebro(correo: string) {
   const c = String(correo || '').toLowerCase();
   const system = ultimoSistemaQwen.get(c);
   if (!system || !ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) return;
+  // El primer turno de la llamada usa el mismo fijo con el que se precalienta (si la firma no cambió).
+  renovarFijo(claveFijo(c, null));
   const ahora = Date.now();
   if (ahora - (calentadoEn.get(c) || 0) < CALENTAR_CADA_MS) return;
   calentadoEn.set(c, ahora);
