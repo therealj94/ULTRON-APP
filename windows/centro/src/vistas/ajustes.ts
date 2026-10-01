@@ -135,8 +135,13 @@ export function vistaAjustes(): HTMLElement {
     const act: any = await pedir('actualizar.estado').catch(() => null);
     const estadoAct = h('p', { class: 'nota', role: 'status' },
       act?.lista ? T(`Hay una versión nueva lista (${act.nueva}).`, `A new version is ready (${act.nueva}).`) : T(`Tienes la versión ${act?.version ?? e.version}${act?.commit ? ' · ' + act.commit : ''}.`, `You have version ${act?.version ?? e.version}.`));
-    const instalar = boton(T('Actualizar ahora', 'Update now'), async () => { await pedir('actualizar.instalar'); }, { tipo: 'acento', icono: 'actualizar', titulo: T('Instala la versión nueva (ya verificada) y AURA vuelve sola en segundos', 'Installs the verified new version') });
-    if (!act?.lista) instalar.style.display = 'none';
+    const instalar = boton(T('Actualizar ahora', 'Update now'), async () => {
+      instalar.disabled = true;
+      estadoAct.textContent = T('Preparando la actualización… AURA se cerrará y volverá sola en unos segundos.', 'Preparing the update… AURA will close and come back.');
+      const r: any = await pedir('actualizar.instalar', null, 600_000).catch((x: any) => ({ ok: false, motivo: x.message }));
+      if (r && r.ok === false) { estadoAct.textContent = r.motivo || T('No se pudo actualizar.', 'Update failed.'); instalar.disabled = false; }
+    }, { tipo: 'acento', icono: 'actualizar', titulo: T('Instala la versión nueva (ya verificada) y AURA vuelve sola en segundos', 'Installs the verified new version') });
+    if (!act?.lista && !act?.nueva) instalar.style.display = 'none';
     const actualizar = seccion('actualizar', T('Actualizaciones', 'Updates'),
       h('p', { class: 'nota' }, T('AURA se actualiza por internet desde el GitHub del proyecto: baja la versión nueva, comprueba que sea la original (SHA-256) y se instala en segundos, sin volver a descargar nada a mano.', 'AURA updates over the air from the project GitHub, verified by SHA-256.')),
       interruptor(T('Instalar sola las versiones nuevas', 'Install new versions automatically'),
@@ -148,7 +153,7 @@ export function vistaAjustes(): HTMLElement {
           estadoAct.textContent = T('Buscando…', 'Checking…');
           const r: any = await pedir('actualizar.buscar', null, 600_000).catch((x: any) => ({ error: x.message }));
           estadoAct.textContent = r?.error ?? (r?.lista ? T(`Versión nueva lista (${r.nueva}).`, `New version ready (${r.nueva}).`) : T('Ya tienes la última versión.', 'You have the latest version.'));
-          instalar.style.display = r?.lista ? '' : 'none';
+          instalar.style.display = r?.lista || r?.nueva ? '' : 'none';
         }, { titulo: T('Mira si hay una versión nueva y la baja', 'Checks for and downloads a new version') }),
         instalar));
 
