@@ -7,6 +7,7 @@
  *   Apariencia    Oscuro · Claro · Sistema (cambia al instante)
  *   Idioma        Español · English (la interfaz, la voz y las respuestas)
  *   AURA          «Lo que AURA sabe de ti» (la ruta Perfil) y la vibración
+ *   Computadora   quién maneja su computadora en la nube: gratis (modelo propio) o Claude (de pago)
  *   Privacidad    los permisos del teléfono, con su ✔
  *   Cerrar sesión (con confirmación) y la versión
  *
@@ -20,7 +21,7 @@ import { versionInstalada } from '../lib/ota';
 import { de, tr, useIdioma, type Idioma } from '../i18n';
 import { cumpleLegible, estadoPerfil, guardarPerfil, perfilSincronizado, usePerfil } from '../lib/perfil';
 import { setAvatarVoz } from '../lib/tts';
-import type { Tema } from '../nucleo/contrato';
+import type { MotorComputadora, Tema } from '../nucleo/contrato';
 import { MEDIDA } from '../nucleo/tema';
 import { AVATARES, avatarPorId, type AvatarId } from '../avatares/catalogo';
 import { MiniAvatar } from '../avatares/MiniAvatar';
@@ -144,6 +145,27 @@ export function Ajustes({ navigation }: Props) {
           <Grupo titulo="AURA">
             <Fila titulo={tr('Lo que AURA sabe de ti', 'What AURA knows about you')} detalle={tr('Lo que le contaste: verlo, cambiarlo o borrarlo', 'What you told her: see, change or erase it')} icono="corazon" onPress={() => navigation.navigate('Perfil')} />
             <Fila titulo={tr('Vibración', 'Vibration')} detalle={tr('Al tocar botones y al completar algo', 'When tapping buttons and completing things')} icono="tocar" derecha={<Interruptor valor={hapticos} onCambiar={(v) => void fijarHapticos(v)} etiqueta={tr('Vibración', 'Vibration')} />} />
+          </Grupo>
+        </Aparecer>
+
+        <Aparecer retraso={180}>
+          <Grupo
+            titulo={tr('Su computadora', 'Their computer')}
+            pie={tr(
+              'Los avatares tienen su propia computadora en la nube para hacer cosas en páginas por ti. Gratis la maneja nuestro modelo; Claude es más hábil y tiene costo. Nunca pagan ni ponen contraseñas.',
+              'The avatars have their own cloud computer to do things on websites for you. Free uses our own model; Claude is more capable and costs money. They never pay or enter passwords.'
+            )}
+          >
+            <View style={s.segmento}>
+              <Segmentado<MotorComputadora>
+                opciones={[
+                  { id: 'gratis', texto: tr('Gratis', 'Free') },
+                  { id: 'pago', texto: 'Claude' },
+                ]}
+                valor={perfil?.motorComputadora ?? 'gratis'}
+                onCambiar={(m) => guardarPerfil({ motorComputadora: m })}
+              />
+            </View>
           </Grupo>
         </Aparecer>
 

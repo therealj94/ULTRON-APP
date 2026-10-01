@@ -16,6 +16,7 @@
  * grabada. tests/manos-ficha.test.ts vigila que cada mano de la ficha exista en su plataforma.
  */
 import type { Idioma } from '../server/eleven';
+import { computadoraDisponible } from './harness';
 
 export type PlataformaManos = 'app' | 'web' | 'windows' | 'electrum';
 
@@ -27,6 +28,16 @@ type Mano = {
   /** Un ejemplo de cómo pedirlo (para el prompt y para «¿qué puedes hacer?»). */
   ejemplo?: { es: string; en: string };
 };
+
+/** Las manos que dependen de un servicio aparte: sin él configurado, no se ofrecen. */
+function disponible(m: Mano): boolean {
+  return m.de !== 'computadora' || computadoraDisponible();
+}
+
+/** Las manos de una plataforma que de verdad están hoy. */
+export function manosDe(plataforma: PlataformaManos): Mano[] {
+  return FICHA[plataforma].filter(disponible);
+}
 
 export const FICHA: Record<PlataformaManos, readonly Mano[]> = {
   app: [
@@ -43,6 +54,7 @@ export const FICHA: Record<PlataformaManos, readonly Mano[]> = {
     { de: 'pdf', es: 'leer tus PDF o fotos', en: 'read your PDFs or photos' },
     { de: 'perfil', es: 'acordarme de lo que me cuentes de ti', en: 'remember what you tell me about yourself' },
     { de: 'abrir', es: 'abrir pantallas de la app o cambiar el tema', en: 'open app screens or change the theme' },
+    { de: 'computadora', es: 'usar mi propia computadora en la nube para hacer cosas en páginas por ti', en: 'use my own cloud computer to do things on websites for you', ejemplo: { es: '«usa tu computadora y compárame precios de vuelos a Miami»', en: '“use your computer and compare flight prices to Miami”' } },
   ],
   web: [
     { de: 'chat', es: 'platicar contigo por voz o por escrito', en: 'talk with you by voice or text' },
@@ -52,6 +64,7 @@ export const FICHA: Record<PlataformaManos, readonly Mano[]> = {
     { de: 'metales', es: 'darte el precio del oro', en: 'give you gold and silver prices' },
     { de: 'fx', es: 'convertir lempiras a dólares', en: 'convert lempiras to dollars' },
     { de: 'pagina', es: 'leerte páginas web', en: 'read web pages for you' },
+    { de: 'computadora', es: 'usar mi propia computadora en la nube para hacer cosas en páginas por ti', en: 'use my own cloud computer to do things on websites for you' },
   ],
   windows: [
     { de: 'AbrirApp', es: 'abrir o cerrar programas', en: 'open or close programs', ejemplo: { es: '«abre Excel»', en: '“open Excel”' } },
@@ -81,7 +94,10 @@ export const FICHA: Record<PlataformaManos, readonly Mano[]> = {
 
 /** Lo que una plataforma NO hace (para que nunca lo ofrezca). */
 const NO_AQUI: Record<PlataformaManos, { es: string; en: string }> = {
-  app: { es: 'no manejas la computadora de la persona (eso es AURA para Windows)', en: 'you do not control the person’s computer (that is AURA for Windows)' },
+  app: {
+    es: 'no manejas la computadora de la persona (eso es AURA para Windows): la tuya es otra, en la nube, y nunca pagas ni pones contraseñas con ella',
+    en: 'you do not control the person’s computer (that is AURA for Windows): yours is a separate one in the cloud, and you never pay or enter passwords with it',
+  },
   web: {
     es: 'desde la web no llamas, no mandas mensajes, no pones recordatorios ni lees chats (eso lo hace la app del teléfono); si te lo piden, dilo y ofrece hacerlo desde la app',
     en: 'from the web you do not call, send messages, set reminders or read chats (the phone app does that); if asked, say so and offer the app',
@@ -92,7 +108,7 @@ const NO_AQUI: Record<PlataformaManos, { es: string; en: string }> = {
 
 /** El bloque del prompt: una línea con lo que puede y otra con lo que no (corto: va en el system). */
 export function fichaManosPrompt(plataforma: PlataformaManos, idioma: Idioma = 'es'): string {
-  const manos = FICHA[plataforma].map((m) => m[idioma]).join('; ');
+  const manos = manosDe(plataforma).map((m) => m[idioma]).join('; ');
   const no = NO_AQUI[plataforma][idioma];
   return idioma === 'en'
     ? `YOUR HANDS HERE (offer them with confidence and use them when asked; say it is done only once it really is): ${manos}. ${no[0].toUpperCase()}${no.slice(1)}.`
@@ -104,7 +120,7 @@ export function fichaManosPrompt(plataforma: PlataformaManos, idioma: Idioma = '
  * grabado), unidas como se dicen, y un ejemplo para pedirlo.
  */
 export function quePuedoDecir(plataforma: PlataformaManos, idioma: Idioma = 'es', azar: () => number = Math.random): string {
-  const todas = [...FICHA[plataforma]];
+  const todas = manosDe(plataforma);
   // Barajar (Fisher-Yates) y tomar 4 o 5, conservando el orden de la ficha (de lo más útil a lo menos).
   for (let i = todas.length - 1; i > 0; i--) {
     const j = Math.floor(azar() * (i + 1)) % (i + 1);
@@ -120,7 +136,7 @@ export function quePuedoDecir(plataforma: PlataformaManos, idioma: Idioma = 'es'
 
 /** Un ejemplo de cómo pedir algo (de las manos que tienen ejemplo), o '' si ninguna. */
 export function ejemploDeManos(plataforma: PlataformaManos, idioma: Idioma = 'es', azar: () => number = Math.random): string {
-  const con = FICHA[plataforma].filter((m) => m.ejemplo);
+  const con = manosDe(plataforma).filter((m) => m.ejemplo);
   if (!con.length) return '';
   return con[Math.floor(azar() * con.length) % con.length].ejemplo![idioma];
 }
