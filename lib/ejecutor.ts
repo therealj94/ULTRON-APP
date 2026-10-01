@@ -19,6 +19,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { modoDesarrollo } from './entorno';
 
 export type Ejecucion = {
   stdout: string;
@@ -71,21 +72,20 @@ async function conTurno<T>(fn: () => Promise<T>): Promise<T> {
 
 /**
  * Activo por defecto SOLO si hay dónde correr con aislamiento: EJECUTOR_URL (sandbox remoto)
- * o EJECUTOR_DOCKER=1. python3 en el propio host (Render) solo con EJECUTOR_LOCAL=1 y fuera
- * de producción: ahí corre con el mismo usuario que el servidor y ve todas las claves.
+ * o EJECUTOR_DOCKER=1. python3 en el propio host solo en modo desarrollo (AURA_DEV=1 o
+ * NODE_ENV=test, lib/entorno.ts): ahí corre con el mismo usuario que el servidor y ve todas las
+ * claves. Sin la marca —también sin NODE_ENV— no corre nada en el host.
  */
 export function ejecutorActivo(): boolean {
   const v = process.env.EJECUTOR_ACTIVO;
   if (v === 'false' || v === '0') return false;
   if (process.env.EJECUTOR_URL) return true;
   if (process.env.EJECUTOR_DOCKER === '1' || process.env.EJECUTOR_DOCKER === 'true') return true;
-  if (process.env.EJECUTOR_LOCAL === '1') return process.env.NODE_ENV !== 'production';
-  return process.env.NODE_ENV !== 'production';
+  return modoDesarrollo();
 }
 
 function localPermitido(): boolean {
-  if (process.env.NODE_ENV === 'production') return false;
-  return true;
+  return modoDesarrollo();
 }
 
 function recortar(s: string) {
@@ -235,10 +235,20 @@ async function cuerpoAcotado(r: Response, tope = TOPE_CAPTURA_BYTES): Promise<st
   return Buffer.concat(trozos).toString('utf8');
 }
 
+/**
+ * La cabecera del secreto compartido con el sandbox remoto (Fase 0.5). Antes EJECUTOR_URL se llamaba
+ * sin nada: quien encontrara el servicio corría Python en él. Con EJECUTOR_SECRETO puesto viaja en cada
+ * llamada, como `x-ultron-secreto` al nodo; el servicio debe exigirlo (docs/entregas/FASE-0.md).
+ */
+export function cabecerasEjecutor(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const secreto = String(env.EJECUTOR_SECRETO || '').trim();
+  return { 'Content-Type': 'application/json', ...(secreto ? { 'x-ejecutor-secreto': secreto } : {}) };
+}
+
 async function ejecutarRemoto(codigo: string, url: string): Promise<Ejecucion> {
   const r = await fetch(`${url.replace(/\/$/, '')}/ejecutar`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: cabecerasEjecutor(),
     body: JSON.stringify({ codigo }),
     signal: AbortSignal.timeout(TIMEOUT_MS + 2000),
   });

@@ -73,7 +73,7 @@ Web: `Arranque.tsx` (ojos que despiertan detrás del wordmark «AU-RA FP · powe
 
 1. Fijar `ULTRON_SESION_SECRETO` en Render y rotar Render/AWS/GitHub/ElevenLabs.
 2. Si se quiere el ejecutor en producción: `EJECUTOR_URL` a un sandbox aparte (o Docker).
-3. La instancia T4 (`35.175.175.203`, g4dn) sigue encendida con etiqueta «APAGADA»; si Chatterbox/Qwen-TTS ya no se usan, apagarla ahorra unos 380 USD al mes.
+3. La instancia T4 (`<ip-t4>`, g4dn) sigue encendida con etiqueta «APAGADA»; si Chatterbox/Qwen-TTS ya no se usan, apagarla ahorra unos 380 USD al mes.
 4. Escuchar los clips de voz entregados y decir si Gabriela sigue siendo la voz o se cambia el `ELEVENLABS_VOZ` (el resto del sistema no cambia).
 5. Dar permiso `music_generation` a la key de ElevenLabs si se quiere canto con acompañamiento (Eleven Music) además del canto a capela.
 

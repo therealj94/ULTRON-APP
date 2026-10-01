@@ -6,6 +6,7 @@ import { promisify } from 'util';
 import zlib from 'zlib';
 import { createServer as createViteServer } from 'vite';
 import { crearComprobadorListo } from './lib/nodo-listo';
+import { modoDesarrollo } from './lib/entorno';
 import { sanearDiag } from './lib/diag-saneador';
 import { autocuraDe, fetchNodo, saludNodo, nodoConfigurado, precalentarSistema, NODO_URL as ULTRON_NODO_URL, NODO_SECRETO as ULTRON_NODO_SECRETO, NODO_MODELO as ULTRON_NODO_MODELO } from './lib/nodo';
 import { JUNTA, buildPersonality, decodeDataUrl, normalizarCorreo, buscarWeb, leerPagina } from './server/desk';
@@ -120,7 +121,7 @@ import {
   procesarElectrumTelegram,
   registrarWebhookElectrum,
 } from './server/electrum/telegram';
-import { identidadDe, exigirPlataforma, esInvitado } from './server/seguridad';
+import { identidadDe, exigirPlataforma, esInvitado, plataformaAutorizada, sesionAbreAura } from './server/seguridad';
 import { cuentaDe, cuentasDisponibles, crearSolicitud, entrarConCuenta, mantenerCuentasAlDia } from './server/cuentas';
 import { aprobadores, montarRutasCuentas, plantilla } from './server/cuentas-rutas';
 import { montarRutasGenesis } from './server/genesis';
@@ -204,8 +205,28 @@ app.use(redirigirADominio);
  * cuerpo que no es un Buffer: contestaba «El archivo llegó vacío» a un GeoJSON perfectamente bueno
  * (y a partir de 12 MB, «demasiado grande»).
  */
-const leerJson = express.json({ limit: '12mb' });
-app.use((req, res, next) => (/^\/api\/electrum\/subir\/?$/i.test(req.path) ? next() : leerJson(req, res, next)));
+/*
+ * TOPE DEL CUERPO (Fase 0.4). Antes eran 12 MB para todas las rutas y ANTES de mirar credenciales:
+ * cualquiera, sin cuenta, hacía que el servidor leyera y parseara 12 MB de JSON por petición. Ahora
+ * el tope general es 1 MB y solo suben a 12 MB las rutas que llevan imagen, PDF o audio en el cuerpo,
+ * y solo si la petición ya trae su credencial (se mira en las cabeceras, antes de leer el cuerpo).
+ * Sin ella, un cuerpo grande se corta con 413 sin llegar a la ruta.
+ */
+const leerJson = express.json({ limit: '1mb' });
+const leerJsonGrande = express.json({ limit: '12mb' });
+/** AU-RA: turnos con foto o PDF, la visión y el oído (el teléfono manda el audio dos veces, en base64). */
+const CUERPO_GRANDE_AURA = ['/api/turno', '/api/turno/stream', '/api/vision/analyze', '/api/stt'];
+/** Dr Electrum: foto, audio, el mapa del informe, el polígono del área y las cargas por lote. */
+const CUERPO_GRANDE_ELECTRUM = ['/api/electrum/ver', '/api/electrum/oir', '/api/electrum/informe', '/api/electrum/area/analizar', '/api/electrum/area/informe', '/api/electrum/muestras/cargar', '/api/electrum/satelite/cargar'];
+function cuerpoGrandePermitido(req: express.Request): boolean {
+  const ruta = req.path.replace(/\/+$/, '');
+  if (CUERPO_GRANDE_ELECTRUM.includes(ruta)) return plataformaAutorizada(req, 'electrum');
+  return CUERPO_GRANDE_AURA.includes(ruta) && mesaAutorizada(req);
+}
+app.use((req, res, next) => {
+  if (/^\/api\/electrum\/subir\/?$/i.test(req.path)) return next();
+  return (cuerpoGrandePermitido(req) ? leerJsonGrande : leerJson)(req, res, next);
+});
 // Cuerpo roto o demasiado grande: una respuesta JSON clara en vez de la página HTML de Express.
 app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
   if (err?.type === 'entity.too.large') return res.status(413).json({ error: 'Lo que mandaste es demasiado grande.', honesto: true });
@@ -1489,6 +1510,11 @@ app.post(['/api/electrum/entrar', '/api/ultron/entrar'], limitar(12), async (req
       if (remoteRes.status === 401 || remoteRes.status === 403) anotarFalloEntrada(correo, ipEntrada);
       return res.status(remoteRes.status).json(data);
     }
+    // El cerebro remoto abre a quien conoce, pero en AU-RA no entra quien el padrón deja fuera (una
+    // persona solo de Dr Electrum): su sesión no abriría la mesa (sesionAbreAura), mejor decirlo aquí.
+    if (!ES_ELECTRUM && !sesionAbreAura(correo)) {
+      return res.status(403).json({ error: 'Tu cuenta no tiene acceso a AU-RA FP. Pedilo desde «Solicitar acceso».', codigo: 'SIN_ACCESO' });
+    }
     anotarExitoEntrada(correo, ipEntrada);
     const nombre = data.miembro?.nombre || JUNTA[correo]?.nombre || correo.split('@')[0];
     /*
@@ -1728,9 +1754,10 @@ app.post('/api/vision/analyze', exigirMesaODesk, limitar(20), async (req, res) =
   if (vistaFallida(vista)) {
     // El porqué (cuota, llave, nodo dormido) ya quedó en el registro; al teléfono, una frase humana.
     console.error(`[AU-RA] /vision/analyze falló (${vista.via}) con ${String(base64Data).length} car.`);
-    return res.status(503).json({ error: `${NO_PUDE_VER} Inténtalo de nuevo en un momento.`, via: vista.via, honesto: true });
+    // `via` sin la dirección del ojo (Fase 0.10): vista.via puede ser «http://<ip-ojo>:8787/ver», y esta ruta contesta sin sesión.
+    return res.status(503).json({ error: `${NO_PUDE_VER} Inténtalo de nuevo en un momento.`, via: ojoQueLeyo(vista.via), honesto: true });
   }
-  return res.json({ success: true, summary: vista.texto, via: vista.via, honesto: true });
+  return res.json({ success: true, summary: vista.texto, via: ojoQueLeyo(vista.via), honesto: true });
 });
 
 
@@ -3961,7 +3988,9 @@ app.post(['/api/telegram/webhook', '/api/telegram/webhook/'], limitar(40), async
 });
 
 async function startServer() {
-  if (process.env.NODE_ENV !== 'production') {
+  // Vite en modo middleware sirve el árbol del repo (fuentes, data/) con recarga en vivo: solo con
+  // marca explícita (AURA_DEV=1, lib/entorno.ts). Sin NODE_ENV antes caía aquí; ahora sirve dist/.
+  if (modoDesarrollo()) {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',

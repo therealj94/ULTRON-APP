@@ -21,6 +21,7 @@ import { identificar, puedeEntrar, type Plataforma } from '../lib/acceso';
 import type { NivelAura } from '../lib/perfiles/tipos';
 import { JUNTA, normalizarCorreo } from './desk';
 import { mesaAutorizada, sesionDe } from './seguridad';
+import { modoDesarrollo } from '../lib/entorno';
 
 export type { NivelAura } from '../lib/perfiles/tipos';
 
@@ -55,8 +56,8 @@ function mismaClave(a: string, b: string): boolean {
  * El nivel de una petición HTTP:
  *  · con sesión firmada, el de su correo (aunque además traiga la clave de la mesa);
  *  · sin sesión, con la clave de la mesa (`x-ultron-mesa`), junta: es el aparato de la junta;
- *  · fuera de producción y sin clave de mesa puesta, junta (el mismo hueco de desarrollo que
- *    `mesaAutorizada`, para que las pruebas y el QA local sigan como hoy);
+ *  · en modo desarrollo (AURA_DEV=1 o NODE_ENV=test) y sin clave de mesa puesta, junta (el mismo
+ *    hueco de desarrollo que `mesaAutorizada`, para que las pruebas y el QA local sigan como hoy);
  *  · cualquier otra cosa (las rutas de conversación abiertas por IP, sin sesión), miembro.
  */
 export function nivelDePeticion(req: Request): NivelAura {
@@ -65,7 +66,7 @@ export function nivelDePeticion(req: Request): NivelAura {
   const clave = String(process.env.ULTRON_MESA_CLAVE || '');
   const dada = String(req.headers['x-ultron-mesa'] || '');
   if (clave && dada && mismaClave(clave, dada)) return 'junta';
-  if (process.env.NODE_ENV !== 'production' && !clave) return 'junta';
+  if (modoDesarrollo() && !clave) return 'junta';
   return 'miembro';
 }
 

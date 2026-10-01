@@ -20,6 +20,7 @@ import express from 'express';
 import { identificar, nivelDe } from '../lib/acceso';
 import { PLATAFORMA, type Plataforma } from '../lib/plataforma';
 import { borrarSesion, emitirTokenMcp, firmarDato, leerDato, leerTokenMcp, limitar, sesionDe } from './seguridad';
+import { modoDesarrollo } from '../lib/entorno';
 
 export const TTL_ACCESO_MS = 60 * 60_000;
 export const TTL_REFRESCO_MS = 30 * 24 * 60 * 60_000;
@@ -53,7 +54,8 @@ export function redireccionPermitida(uri: string): boolean {
 export function basePublica(req: express.Request): string {
   const fija = String(process.env.URL_PUBLICA || '').trim().replace(/\/+$/, '');
   if (fija) return fija;
-  const proto = process.env.NODE_ENV === 'production' ? 'https' : req.protocol;
+  // https salvo en modo desarrollo: un despliegue sin NODE_ENV no anuncia endpoints de OAuth en http.
+  const proto = modoDesarrollo() ? req.protocol : 'https';
   return `${proto}://${req.get('host')}`;
 }
 

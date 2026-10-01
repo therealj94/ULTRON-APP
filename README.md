@@ -11,7 +11,7 @@ Asistente con cuerpo digital para la junta directiva de **Orden Global**. Una ca
 ```bash
 cp .env.example .env      # rellenar claves
 npm install
-npm run dev               # servidor + Vite en :3000
+npm run dev               # servidor + Vite en :3000 (pone AURA_DEV=1: modo desarrollo explícito)
 npm test                  # 88 tests
 npm run build && npm start
 ```

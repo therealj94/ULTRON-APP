@@ -1,8 +1,8 @@
 /**
  * Lo que puede y no puede decidir el CUERPO de un turno que llega por HTTP (server/seguridad.ts).
  *
- * `/api/turno` está abierta sin sesión (la APK habla aunque su token muera). Por eso el cuerpo no puede
- * traer identidad: con `telegramUserId` de José, cualquiera hablaba con mando (redespliegue, ejecutor)
+ * `/api/turno` estuvo abierta sin sesión (hasta la Fase 0.3, 1-oct) y hoy la abre también la clave de
+ * la mesa, que no dice quién es nadie. Por eso el cuerpo no puede traer identidad: con `telegramUserId` de José, cualquiera hablaba con mando (redespliegue, ejecutor)
  * y leía su memoria privada. La identidad de Telegram solo la pone el webhook, dentro del servidor.
  */
 import test from 'node:test';

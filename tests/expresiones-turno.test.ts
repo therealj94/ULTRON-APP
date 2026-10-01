@@ -49,6 +49,7 @@ test('Dr Electrum: si su modelo escribe una expresión, no llega a la pantalla',
 });
 
 const SERVIDOR = path.join(process.cwd(), 'build-server', 'server.cjs');
+const MESA = 'clave-de-mesa-de-prueba-expresiones-123456';
 
 test('servidor de AU-RA: se lee sin etiquetas y se dice con ellas', { skip: fs.existsSync(SERVIDOR) ? false : 'sin build-server/server.cjs: correr `npm run build` antes' }, async (t) => {
   const puerto = 7900 + Math.floor(Math.random() * 60);
@@ -61,6 +62,8 @@ test('servidor de AU-RA: se lee sin etiquetas y se dice con ellas', { skip: fs.e
       PLATAFORMA: 'ultron',
       ULTRON_NODO_URL: process.env.ULTRON_NODO_URL,
       ULTRON_NODO_SECRETO: 'prueba',
+      // Un turno ya no corre sin credencial (Fase 0.3): la prueba entra con la clave de la mesa.
+      ULTRON_MESA_CLAVE: MESA,
       MODELO_CHICO_URL: '',
       TELEGRAM_BOT_TOKEN: '',
       ULTRON_MEMORIA_BUCKET: '',
@@ -88,7 +91,7 @@ test('servidor de AU-RA: se lee sin etiquetas y se dice con ellas', { skip: fs.e
   }
   assert.ok(listo, 'el servidor no levantó');
   const pedir = (ruta: string) =>
-    fetch(`${base}${ruta}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: 'contame qué pasó con la reunión de ayer en la oficina' }) });
+    fetch(`${base}${ruta}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-ultron-mesa': MESA }, body: JSON.stringify({ message: 'contame qué pasó con la reunión de ayer en la oficina' }) });
 
   await t.test('/api/turno: `reply` para leer, `voz` para decir', async () => {
     const r = await pedir('/api/turno');
