@@ -247,10 +247,13 @@ internal static class SpotifyWeb
                 if (e2 is >= 200 and < 300) return eleccion.Descripcion;
             }
             else if (intento == 0) { Abrir("spotify:"); }
-            await Task.Delay(TimeSpan.FromSeconds(intento == 0 ? 4 : 3), ct);
+            // El reproductor web tarda más que la app en aparecer como dispositivo.
+            await Task.Delay(TimeSpan.FromSeconds(HayAppSpotify() ? (intento == 0 ? 4 : 3) : (intento == 0 ? 8 : 5)), ct);
         }
         Abrir(eleccion.Uri);
-        throw new InvalidOperationException($"Te abrí {eleccion.Descripcion} en Spotify; dale play ahí (no encontré un dispositivo listo).");
+        throw new InvalidOperationException(HayAppSpotify()
+            ? $"Te abrí {eleccion.Descripcion} en Spotify; dale play ahí (no encontré un dispositivo listo)."
+            : $"Te abrí {eleccion.Descripcion} en Spotify web (no tienes la app de Spotify instalada); dale play ahí. Con la app de Spotify para Windows la pongo sola.");
     }
 
     /// <summary>Lo que suena en la cuenta (null si nada).</summary>
@@ -290,7 +293,8 @@ internal static class SpotifyWeb
                 if (e2 is >= 200 and < 300) return;
             }
             else if (intento == 0) Abrir("spotify:");
-            await Task.Delay(TimeSpan.FromSeconds(intento == 0 ? 4 : 3), ct);
+            // El reproductor web tarda más que la app en aparecer como dispositivo.
+            await Task.Delay(TimeSpan.FromSeconds(HayAppSpotify() ? (intento == 0 ? 4 : 3) : (intento == 0 ? 8 : 5)), ct);
         }
         Abrir(uri);
         throw new InvalidOperationException("Te la abrí en Spotify; dale play ahí (no encontré un dispositivo listo).");
@@ -325,11 +329,27 @@ internal static class SpotifyWeb
         if (e is < 200 or >= 300) throw new InvalidOperationException($"Spotify no cambió de dispositivo ({e}).");
     }
 
+    /// <summary>¿Está instalada la app de Spotify (el enlace spotify: tiene quién lo abra)? Sin ella, Windows ofrece la Tienda.</summary>
+    public static bool HayAppSpotify()
+    {
+        try
+        {
+            using var k = Microsoft.Win32.Registry.ClassesRoot.OpenSubKey(@"spotify\shell\open\command");
+            return k?.GetValue(null) is string c && c.Length > 0;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>En la app de Spotify si está instalada; si no, en el reproductor web (open.spotify.com) del navegador.</summary>
     static void Abrir(string uri)
     {
-        if (!uri.StartsWith("spotify:", StringComparison.Ordinal)) return; // solo la app de Spotify, nunca otra cosa
-        try { Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true }); }
-        catch { Process.Start(new ProcessStartInfo("https://open.spotify.com/" + uri.Replace("spotify:", "").Replace(':', '/')) { UseShellExecute = true }); }
+        if (!uri.StartsWith("spotify:", StringComparison.Ordinal)) return; // solo Spotify, nunca otra cosa
+        var web = "https://open.spotify.com/" + uri["spotify:".Length..].Replace(':', '/');
+        if (HayAppSpotify())
+        {
+            try { Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true }); return; } catch { }
+        }
+        Process.Start(new ProcessStartInfo(web) { UseShellExecute = true });
     }
 }
 
