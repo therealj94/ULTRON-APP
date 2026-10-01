@@ -159,7 +159,7 @@ public partial class NotchWindow
             case "diagnostico.leer": return Registro.Ultimo(400);
             case "actualizar.estado": return EstadoActualizacion();
             case "actualizar.buscar": await BuscarActualizacion(true); return EstadoActualizacion();
-            case "actualizar.instalar": return InstalarActualizacion();
+            case "actualizar.instalar": { var motivo = await InstalarAhora(); return new { ok = motivo == null, motivo }; }
             case "diagnostico.carpeta": Process.Start(new ProcessStartInfo("explorer.exe", "\"" + Registro.Carpeta + "\"") { UseShellExecute = true }); return true;
             default:
                 if (metodo.StartsWith("spotify.", StringComparison.Ordinal)) return await ManejarSpotify(metodo, a);
