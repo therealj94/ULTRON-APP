@@ -11,8 +11,8 @@ public sealed record AgenteListo(string ConversacionId, FormatoAudio Salida, For
 public sealed record AgenteAudio(byte[] Pcm, int EventoId) : EventoAgente;
 /// <summary>Lo que entendió que dijo la persona (la frase cerrada).</summary>
 public sealed record AgenteTuDijiste(string Texto) : EventoAgente;
-/// <summary>Lo que AURA va a decir (el texto de la respuesta).</summary>
-public sealed record AgenteRespuesta(string Texto) : EventoAgente;
+/// <summary>Lo que AURA va a decir (el texto de la respuesta). Corrección: lo que de verdad alcanzó a decir antes de que la cortaran.</summary>
+public sealed record AgenteRespuesta(string Texto, bool Correccion = false) : EventoAgente;
 /// <summary>La persona la interrumpió: el audio de antes de ese evento ya no se toca.</summary>
 public sealed record AgenteInterrumpido(int EventoId) : EventoAgente;
 /// <summary>Hay que contestar con un pong (o ElevenLabs corta).</summary>
@@ -98,7 +98,7 @@ public static class AgenteProtocolo
             {
                 // La respuesta se cortó (la interrumpieron): lo que de verdad alcanzó a decir.
                 var t = S(Sub("agent_response_correction_event"), "corrected_agent_response").Trim();
-                return t.Length > 0 ? new AgenteRespuesta(t) : null;
+                return t.Length > 0 ? new AgenteRespuesta(t, true) : null;
             }
             case "interruption":
                 return new AgenteInterrumpido(N(Sub("interruption_event"), "event_id"));

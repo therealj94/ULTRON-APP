@@ -28,6 +28,7 @@ public partial class NotchWindow
     bool abriendoAgente;
     string agenteUltimoDicho = "";
     readonly HechasRecientes hechasRecientes = new();
+    System.Windows.Controls.TextBlock? burbujaAgente;
     readonly Stopwatch cronoAgente = new();
     CancellationTokenSource? canal;
 
@@ -57,9 +58,12 @@ public partial class NotchWindow
         try
         {
             permisoAgente = await api.AbrirAgente(ajustes.Avatar, ajustes.Idioma);
+            // Mientras conectaba pudieron silenciarla, pausarla o elegir «frase por frase»: no se abre nada.
+            if (!PuedeAgente) { SoltarPermiso(); return false; }
             CablearAgente(nuevo);
             agente = nuevo;
             await nuevo.Abrir(permisoAgente, CancellationToken.None);
+            if (!PuedeAgente || !ReferenceEquals(agente, nuevo)) { agente = null; nuevo.Cerrar(); SoltarPermiso(); return false; }
             agenteUltimaVoz = DateTime.Now;
             escuchando = true;
             TextoEscucha.Text = T("Te escucho…", "Listening…");
@@ -86,14 +90,16 @@ public partial class NotchWindow
     void CablearAgente(AgenteVoz a)
     {
         a.TuDijiste += t => Dispatcher.BeginInvoke(new Action(() => { if (ReferenceEquals(agente, a)) _ = AlOirEnVivo(t); }));
-        a.Respuesta += t => Dispatcher.BeginInvoke(new Action(() =>
+        a.Respuesta += r => Dispatcher.BeginInvoke(new Action(() =>
         {
             if (!ReferenceEquals(agente, a)) return;
-            var visible = Expresiones.Quitar(t).Trim();
+            var visible = Expresiones.Quitar(r.Texto).Trim();
             if (visible.Length == 0) return;
             Subtitulo.Text = visible;
-            AgregarMensaje(ajustes.NombreAvatar, visible);
             ultimaRespuesta = visible;
+            // La corrección (la cortaste a mitad) cambia la burbuja que ya estaba, no agrega otra.
+            if (r.Correccion && burbujaAgente != null) { burbujaAgente.Text = visible; return; }
+            burbujaAgente = AgregarMensaje(ajustes.NombreAvatar, visible);
             if (agenteUltimoDicho.Length > 0) { Recordar(agenteUltimoDicho, visible); agenteUltimoDicho = ""; }
         }));
         a.Hablando += si => Dispatcher.BeginInvoke(new Action(() =>
@@ -116,7 +122,8 @@ public partial class NotchWindow
         a.NivelBoca += n => Dispatcher.BeginInvoke(new Action(() => { if (ReferenceEquals(agente, a)) { AvatarHabla.Boca = n; AvatarPanel.Boca = n; BarrasHabla.Nivel = n; } }));
         a.Cerrada += motivo => Dispatcher.BeginInvoke(new Action(() =>
         {
-            if (!ReferenceEquals(agente, a)) return;
+            // Mientras se abre, el fallo lo avisa AbrirAgente (un solo aviso).
+            if (!ReferenceEquals(agente, a) || abriendoAgente) return;
             agente = null;
             SoltarPermiso();
             hablandoAhora = false; escuchando = false;
@@ -169,16 +176,15 @@ public partial class NotchWindow
         var p = Intencion.PorReglas(frase);
         if (p.Mano == Mano.Ninguna) return;
         Centro.Registro.Anotar("entender", $"en vivo · {p.Mano} (reglas)");
-        hechasRecientes.Anotar(p);
+        hechasRecientes.Anotar(texto);
         await Hacer(p, frase, true);
     }
 
     /// <summary>Una orden del cerebro que llegó por el canal (la conversación en vivo): guarda y repetidas.</summary>
     async Task OrdenDelCanal(OrdenPc o)
     {
-        var p = Intencion.PorReglas(o.Orden);
-        if (hechasRecientes.Repetida(p, o.Id)) { Centro.Registro.Anotar("cerebro-manos", $"ya hecha: {o.Orden}"); return; }
-        hechasRecientes.Anotar(p);
+        // Las reglas ya hicieron algo con esa misma frase: el cerebro pide lo mismo, no se repite.
+        if (hechasRecientes.Repetida(o.Id, o.Dicho)) { Centro.Registro.Anotar("cerebro-manos", $"ya hecha: {o.Orden}"); return; }
         await HacerOrdenDelCerebro(o.Orden, o.Dicho, true);
     }
 
@@ -197,13 +203,19 @@ public partial class NotchWindow
             var espera = TimeSpan.FromSeconds(3);
             while (!cts.IsCancellationRequested)
             {
+                // Si en 60 s no llega ni el latido (cada 20 s), el socket quedó medio abierto (la PC se
+                // suspendió, cambió de red): se corta y se vuelve a conectar.
+                using var vivo = CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
                 try
                 {
-                    await using var s = await cliente.Canal(cts.Token);
+                    vivo.CancelAfter(TimeSpan.FromSeconds(60));
+                    await using var s = await cliente.Canal(vivo.Token);
                     using var r = new StreamReader(s);
                     espera = TimeSpan.FromSeconds(3);
-                    await CanalPc.Leer(r, o => Dispatcher.BeginInvoke(new Action(() => { if (!pausado) _ = OrdenDelCanal(o); })), cts.Token);
+                    await CanalPc.Leer(r, o => Dispatcher.BeginInvoke(new Action(() => { if (!pausado) _ = OrdenDelCanal(o); })), vivo.Token,
+                        () => { try { vivo.CancelAfter(TimeSpan.FromSeconds(60)); } catch (ObjectDisposedException) { } });
                 }
+                catch (OperationCanceledException) when (!cts.IsCancellationRequested) { espera = TimeSpan.FromSeconds(1); }
                 catch (OperationCanceledException) { return; }
                 catch (ObjectDisposedException) { return; }
                 catch (AuraError e) when (e.Estado == System.Net.HttpStatusCode.Unauthorized) { espera = TimeSpan.FromMinutes(1); }

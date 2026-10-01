@@ -28,7 +28,11 @@ internal sealed class Despertador : IDisposable
     /// </summary>
     public string? Encender(string idioma)
     {
-        if (motor != null || propio != null) return null;
+        // Ya encendido: el modelo propio no depende del idioma; el de Windows sí (se rehace si cambió).
+        if (propio != null) return null;
+        if (motor != null && idioma == idiomaEncendido) return null;
+        if (motor != null) Apagar();
+        idiomaEncendido = idioma;
         if (EncenderPropio()) return null;
         try
         {
@@ -66,6 +70,9 @@ internal sealed class Despertador : IDisposable
     public const float Umbral = 0.5f;
     PalabraClave? propio;
     WaveInEvent? micPropio;
+    /// <summary>El hilo del micrófono usa el modelo mientras otro lo apaga: nunca a la vez (es memoria nativa).</summary>
+    readonly object candadoPropio = new();
+    string idiomaEncendido = "";
     DateTime ultimaVez = DateTime.MinValue;
     public bool UsaModeloPropio => propio != null;
 
@@ -85,7 +92,11 @@ internal sealed class Despertador : IDisposable
                 var muestras = new short[e.BytesRecorded / 2];
                 Buffer.BlockCopy(e.Buffer, 0, muestras, 0, muestras.Length * 2);
                 float p;
-                try { p = propio.Alimentar(muestras); } catch { return; }
+                lock (candadoPropio)
+                {
+                    if (propio == null) return;
+                    try { p = propio.Alimentar(muestras); } catch { return; }
+                }
                 // Una vez por llamada: la misma palabra da varios trozos seguidos por encima del umbral.
                 if (p < Umbral || DateTime.Now - ultimaVez < TimeSpan.FromSeconds(2)) return;
                 ultimaVez = DateTime.Now;
@@ -110,8 +121,11 @@ internal sealed class Despertador : IDisposable
     {
         var m = micPropio; micPropio = null;
         if (m != null) { try { m.StopRecording(); } catch { } m.Dispose(); }
-        var p = propio; propio = null;
-        p?.Dispose();
+        lock (candadoPropio)
+        {
+            var p = propio; propio = null;
+            p?.Dispose();
+        }
     }
 
     public void Apagar()

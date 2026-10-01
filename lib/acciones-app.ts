@@ -216,7 +216,10 @@ export function suscribir(correo: string, oyente: Oyente, o: { aparato?: string 
 }
 
 export function oyentesDe(correo: string): number {
-  return canales.get(clave(correo))?.size || 0;
+  // El .exe de Windows (aparato «win-…») deja su canal abierto siempre, pero no es un teléfono: no cuenta.
+  let n = 0;
+  for (const c of canales.get(clave(correo)) || []) if (!c.aparato?.startsWith('win-')) n++;
+  return n;
 }
 
 /**

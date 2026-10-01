@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { FiltroOrdenes, ordenDeMarca, quitarMarcas } from '../lib/ordenes-pc';
-import { empujarOrdenPc, suscribir } from '../lib/acciones-app';
+import { empujarOrdenPc, oyentesDe, suscribir } from '../lib/acciones-app';
 
 test('el filtro quita la marca aunque llegue partida y entrega la orden una vez', () => {
   const f = new FiltroOrdenes();
@@ -40,5 +40,18 @@ test('la orden de la PC va solo al canal de ese aparato, nunca a todos', () => {
   } finally {
     s1();
     s2();
+  }
+});
+
+test('el canal del .exe de Windows no cuenta como teléfono escuchando', () => {
+  const correo = `oy-${Date.now()}@x.com`;
+  const w = suscribir(correo, () => {}, { aparato: 'win-0123456789abcdef' });
+  try {
+    assert.equal(oyentesDe(correo), 0);
+    const t = suscribir(correo, () => {}, { aparato: 'tel-1' });
+    assert.equal(oyentesDe(correo), 1);
+    t();
+  } finally {
+    w();
   }
 });

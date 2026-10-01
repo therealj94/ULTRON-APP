@@ -13,8 +13,8 @@ public sealed record OrdenPc(string Id, string Orden, string Dicho);
 /// </summary>
 public static class CanalPc
 {
-    /// <summary>Lee el SSE hasta que se corte; cada orden de la PC va a <paramref name="alOrden"/>.</summary>
-    public static async Task Leer(TextReader r, Action<OrdenPc> alOrden, CancellationToken ct)
+    /// <summary>Lee el SSE hasta que se corte; cada orden de la PC va a <paramref name="alOrden"/>. <paramref name="alLinea"/>: llegó algo (latido incluido).</summary>
+    public static async Task Leer(TextReader r, Action<OrdenPc> alOrden, CancellationToken ct, Action? alLinea = null)
     {
         string evento = "";
         var datos = new StringBuilder();
@@ -22,6 +22,7 @@ public static class CanalPc
         {
             var linea = await r.ReadLineAsync(ct).ConfigureAwait(false);
             if (linea == null) return;
+            alLinea?.Invoke();
             if (linea.Length == 0)
             {
                 if (evento == "pc" && Orden(datos.ToString()) is { } o) alOrden(o);
@@ -53,34 +54,36 @@ public static class CanalPc
 }
 
 /// <summary>
-/// Lo que AURA ya hizo hace un momento con las manos. En la conversación por voz la frase se entiende
-/// dos veces: las reglas de la PC la hacen al instante y el cerebro, que también la oyó, pide lo mismo
-/// con «⟦hacer⟧» un segundo después. La segunda no se hace (ni se repite un id ya visto).
+/// Las frases con las que las reglas de la PC ya actuaron. En la conversación por voz la frase se entiende
+/// dos veces: las reglas la hacen al instante y el cerebro, que también la oyó, pide lo mismo con
+/// «⟦hacer⟧» unos segundos después (con la frase dicha adjunta). Esa orden no se hace otra vez. Si dices
+/// otra cosa parecida («sube el volumen» y luego «súbele más»), es otra frase y sí se hace. Un id de orden
+/// que ya llegó tampoco se repite.
 /// </summary>
 public sealed class HechasRecientes
 {
     readonly TimeProvider reloj;
-    readonly List<(string Firma, DateTimeOffset Cuando)> hechas = new();
+    readonly List<(string Frase, DateTimeOffset Cuando)> hechas = new();
     readonly HashSet<string> ids = new();
-    public TimeSpan Ventana { get; init; } = TimeSpan.FromSeconds(15);
+    public TimeSpan Ventana { get; init; } = TimeSpan.FromSeconds(60);
 
     public HechasRecientes(TimeProvider? reloj = null) => this.reloj = reloj ?? TimeProvider.System;
 
-    static string Firma(Pedido p) => p.Mano + "|" + LayaLigera.Normalizar(p.Valor);
-
-    public void Anotar(Pedido p)
+    /// <summary>Las reglas hicieron algo con esta frase de la persona.</summary>
+    public void Anotar(string dicho)
     {
         Limpiar();
-        if (p.Mano != Mano.Ninguna) hechas.Add((Firma(p), reloj.GetUtcNow()));
+        var f = LayaLigera.Normalizar(dicho);
+        if (f.Length > 0) hechas.Add((f, reloj.GetUtcNow()));
     }
 
-    /// <summary>¿Ya se hizo esto hace un momento? (o esa orden ya llegó)</summary>
-    public bool Repetida(Pedido p, string? id = null)
+    /// <summary>¿Esta orden del cerebro viene de una frase que las reglas ya hicieron (o su id ya llegó)?</summary>
+    public bool Repetida(string? id, string dicho)
     {
         Limpiar();
         if (!string.IsNullOrEmpty(id) && !ids.Add(id)) return true;
-        var f = Firma(p);
-        return hechas.Any(h => h.Firma == f);
+        var f = LayaLigera.Normalizar(dicho);
+        return f.Length > 0 && hechas.Any(h => h.Frase == f);
     }
 
     void Limpiar()
