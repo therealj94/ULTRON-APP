@@ -18,6 +18,12 @@ export type Interruptores = {
   graciaReintentoMs: number;
   /** Cuándo dice la llamada su frase de espera si el cerebro no habló (ms; 0 la apaga). */
   puenteVozMs: number;
+  /**
+   * Cuánto sigue abierta la respuesta de un turno hablado que le pidió algo al teléfono antes de hacerlo
+   * (ms). Con el turno especulativo de ElevenLabs, si la persona seguía hablando la petición se cierra en
+   * ese rato y la acción no se hace (server/voz-agente.ts, RetencionAcciones). 0: se hace al terminar.
+   */
+  confirmarAccionVozMs: number;
 };
 
 export const POR_OMISION: Interruptores = {
@@ -25,20 +31,26 @@ export const POR_OMISION: Interruptores = {
   vozCompacta: true,
   graciaReintentoMs: 2_500,
   puenteVozMs: 3_000,
+  confirmarAccionVozMs: 1_000,
 };
 
 /** Lo que se acepta de cada uno: los números con su rango (un valor fuera de rango no se guarda). */
 const RANGOS: Partial<Record<keyof Interruptores, [number, number]>> = {
   graciaReintentoMs: [0, 10_000],
   puenteVozMs: [0, 3_500],
+  confirmarAccionVozMs: [0, 5_000],
 };
 
 const CLAVE_S3 = 'aura/interruptores.json';
+/** Dónde se guardan (S3; las pruebas ponen uno en memoria). */
+let almacen = { listo: s3Listo, leer: s3GetJson, guardar: s3PutJson };
 const RELEER_MS = 60_000;
 
 let actuales: Interruptores = { ...POR_OMISION };
 let leidoEn = 0;
 let leyendo: Promise<void> | null = null;
+/** Sube con cada cambio guardado: una lectura que empezó antes no pisa lo recién guardado. */
+let generacion = 0;
 
 /** Solo las claves conocidas y con el tipo y el rango correctos. Lo demás se descarta. */
 export function validar(cambios: unknown): Partial<Interruptores> {
@@ -58,9 +70,11 @@ export function validar(cambios: unknown): Partial<Interruptores> {
 }
 
 function releer() {
-  if (leyendo || !s3Listo()) return;
-  leyendo = s3GetJson(CLAVE_S3)
+  if (leyendo || !almacen.listo()) return;
+  const gen = generacion;
+  leyendo = almacen.leer(CLAVE_S3)
     .then((r) => {
+      if (gen !== generacion) return;
       if (r.ok) actuales = { ...POR_OMISION, ...validar(r.json) };
       else if (r.missing) actuales = { ...POR_OMISION };
     })
@@ -85,16 +99,27 @@ export function todosLosInterruptores(): Interruptores {
 export async function fijarInterruptores(cambios: unknown): Promise<{ ok: boolean; interruptores: Interruptores; detalle: string; descartados: string[] }> {
   const validos = validar(cambios);
   const descartados = cambios && typeof cambios === 'object' ? Object.keys(cambios).filter((k) => !(k in validos)) : [];
-  const nuevos = { ...actuales, ...validos };
-  if (!s3Listo()) {
+  if (!almacen.listo()) {
+    const nuevos = { ...actuales, ...validos };
     actuales = nuevos;
     leidoEn = Date.now();
     return { ok: true, interruptores: { ...actuales }, detalle: 'Sin S3: quedan en este proceso hasta el próximo despliegue.', descartados };
   }
+  // Se mezcla con lo GUARDADO, no con lo que este proceso tenga en memoria: recién arrancado (o con la
+  // primera lectura en vuelo) solo tiene los valores por omisión, y guardar un interruptor borraba los demás.
+  generacion++;
+  if (leyendo) await leyendo;
+  const leido = await almacen.leer(CLAVE_S3);
+  if (!leido.ok && !leido.missing) {
+    return { ok: false, interruptores: { ...actuales }, detalle: 'No pude leer los interruptores guardados; no se cambió nada.', descartados };
+  }
+  const guardados = leido.ok ? validar(leido.json) : {};
+  const nuevos = { ...POR_OMISION, ...guardados, ...validos };
   // Solo lo que difiere de lo de siempre: si mañana cambia un valor por omisión, el JSON no lo tapa.
   const guardar = Object.fromEntries(Object.entries(nuevos).filter(([k, v]) => POR_OMISION[k as keyof Interruptores] !== v));
-  const r = await s3PutJson(CLAVE_S3, guardar);
+  const r = await almacen.guardar(CLAVE_S3, guardar);
   if (r.ok) {
+    generacion++;
     actuales = nuevos;
     leidoEn = Date.now();
   }
@@ -102,7 +127,9 @@ export async function fijarInterruptores(cambios: unknown): Promise<{ ok: boolea
 }
 
 /** Solo pruebas. */
-export function _reiniciarInterruptores() {
+export function _reiniciarInterruptores(otro?: Partial<typeof almacen>) {
+  almacen = { listo: s3Listo, leer: s3GetJson, guardar: s3PutJson, ...otro };
   actuales = { ...POR_OMISION };
   leidoEn = Date.now();
+  leyendo = null;
 }
