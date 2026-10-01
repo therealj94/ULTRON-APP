@@ -33,7 +33,7 @@ const { hoyMMDD } = await import('../lib/perfil-persona');
 
 /* ------------------------------------------------------------------ los falsos */
 
-type Pedido = { system: string; soloSystem: string; ultimo: string; stream: boolean; todo: { role: string; content: string }[] };
+type Pedido = { system: string; soloSystem: string; ultimo: string; stream: boolean; todo: { role: string; content: string }[]; espacio?: number };
 const alNodo: Pedido[] = [];
 /** Qué contesta el 27B según lo que dijo la persona (el texto después de «Junta: »). */
 let contestar: (dicho: string) => string = () => '[EMO: neutral] Claro. Te cuento lo que sé.';
@@ -50,7 +50,7 @@ const nodo = http.createServer((req, res) => {
     const dicho = ultimo.split('\n\nJunta: ').pop() || '';
     // `system` es todo lo que el modelo recibe como instrucciones: el system (lo fijo) y el contexto del
     // turno, que va en el mensaje de la persona (server/prompt-turno.ts, para que el nodo reutilice lo leído).
-    alNodo.push({ system: `${String(msgs[0]?.content || '')}\n${ultimo}`, soloSystem: String(msgs[0]?.content || ''), ultimo, stream: !!j.stream, todo: msgs.map((m: any) => ({ role: String(m.role), content: String(m.content) })) });
+    alNodo.push({ system: `${String(msgs[0]?.content || '')}\n${ultimo}`, soloSystem: String(msgs[0]?.content || ''), ultimo, stream: !!j.stream, todo: msgs.map((m: any) => ({ role: String(m.role), content: String(m.content) })), espacio: j.options?.id_slot });
     const respuesta = contestar(dicho);
     if (!j.stream) return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ message: { content: respuesta } }));
     res.writeHead(200, { 'content-type': 'application/x-ndjson' });
@@ -1094,6 +1094,9 @@ test('en una llamada con frases de todo tipo, cada turno manda el mismo prompt d
     hilo.push({ role: 'assistant', content: v.dicho });
   }
   assert.ok(pedidos.length >= 4, `llegaron ${pedidos.length} turnos al 27B`);
+  // Todos los turnos de la persona van a SU espacio del nodo (lib/espacio-nodo.ts).
+  assert.equal(new Set(pedidos.map((p) => p.espacio)).size, 1, 'siempre el mismo espacio');
+  assert.ok(Number.isInteger(pedidos[0].espacio), 'el espacio viaja en options.id_slot');
   const sinUltimo = (p: Pedido) => p.todo.slice(0, -1).map((m) => `<${m.role}>${m.content}`).join('');
   const todo = (p: Pedido) => p.todo.map((m) => `<${m.role}>${m.content}`).join('');
   for (let i = 1; i < pedidos.length; i++) {

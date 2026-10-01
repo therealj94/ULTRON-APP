@@ -13,6 +13,7 @@ import { hablar, abrirVozEnVivo, cantar, orar, repertorio, cancionPorPedido, est
 import { lineaAvatar, normalizarAvatar, normalizarIdioma, NOMBRE_AVATAR, type AvatarVoz } from './server/eleven';
 import { montarVozAgente, type TurnoVoz } from './server/voz-agente';
 import { fijoDeLaConversacion, piezasDelTurno, renovarFijo, ventanaDelHilo } from './server/prompt-turno';
+import { ESPACIO_COMUN, espacioDe } from './lib/espacio-nodo';
 import { cargarMiembro, fotoMemoriaMiembro, guardarHechoMiembro, hiloMiembro, olvidarMiembro, promptMemoriaMiembro, recordarTurnoMiembro } from './lib/memoria-miembro';
 import { montarRutasApp } from './server/app-rutas';
 import { montarRutasCaras } from './server/caras-rutas';
@@ -366,6 +367,8 @@ const nodoListo = crearComprobadorListo(async () => {
         messages: [{ role: 'user', content: 'Responde solo: LISTO' }],
         max_tokens: 8,
         temperature: 0,
+        // En el espacio común: no le borra lo leído a ninguna persona (lib/espacio-nodo.ts).
+        options: { num_predict: 8, temperature: 0, id_slot: ESPACIO_COMUN },
       }),
       signal: AbortSignal.timeout(45000),
     });
@@ -2683,6 +2686,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     directoVia: decirTaller ? 'taller' : soloCalculo ? 'calculo-mina' : directo ? 'market' : null,
     system,
     contexto,
+    // Su espacio en el nodo: lo ya leído de esta persona está ahí (lib/espacio-nodo.ts).
+    espacio: espacioDe(clave),
     quien,
     quienMem,
     mando,
@@ -2785,7 +2790,8 @@ function calentarCerebro(correo: string) {
   void fetchNodo(`${ULTRON_NODO_URL}/api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-ultron-secreto': ULTRON_NODO_SECRETO },
-    body: JSON.stringify({ model: ULTRON_NODO_MODELO, stream: false, messages: [{ role: 'system', content: system }, { role: 'user', content: 'Hola' }], options: { num_predict: 1, temperature: 0 } }),
+    // En SU espacio: el primer turno de la llamada cae donde ya está leído (lib/espacio-nodo.ts).
+    body: JSON.stringify({ model: ULTRON_NODO_MODELO, stream: false, messages: [{ role: 'system', content: system }, { role: 'user', content: 'Hola' }], options: { num_predict: 1, temperature: 0, id_slot: espacioDe(claveFijo(c, null)) } }),
     signal: AbortSignal.timeout(30_000),
   })
     .then((r) => r.body?.cancel().catch(() => {}))
@@ -2816,7 +2822,9 @@ async function preguntarQwen(
   hilo: MsgHilo[] = [],
   senal?: AbortSignal,
   nivel: NivelAura = 'junta',
-  contexto = ''
+  contexto = '',
+  /** El espacio de la persona en el nodo (lib/espacio-nodo.ts). */
+  espacio: number = ESPACIO_COMUN
 ): Promise<{ ok: boolean; reply: string; error?: string }> {
   if (!ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) {
     return { ok: false, reply: '', error: 'Qwen no configurado' };
@@ -2825,7 +2833,7 @@ async function preguntarQwen(
     const r = await fetchNodo(`${ULTRON_NODO_URL}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-ultron-secreto': ULTRON_NODO_SECRETO },
-      body: JSON.stringify({ model: ULTRON_NODO_MODELO, stream: false, messages: mensajesQwen(system, message, hechos, hilo, nivel, contexto) }),
+      body: JSON.stringify({ model: ULTRON_NODO_MODELO, stream: false, messages: mensajesQwen(system, message, hechos, hilo, nivel, contexto), options: { id_slot: espacio } }),
       signal: conTope(senal, 60000),
     });
     const raw = await r.text();
@@ -2903,6 +2911,8 @@ async function bucleHarness(o: {
   nivel?: NivelAura;
   /** Lo del turno que va en el mensaje de la persona (mensajesQwen). */
   contexto?: string;
+  /** El espacio de la persona en el nodo (lib/espacio-nodo.ts). */
+  espacio?: number;
   /** Se va a correr esta herramienta (la voz dice «déjame buscarlo…» y pone el sonido de fondo). */
   alTarea?: (herramienta: string) => void;
 }): Promise<{ reply: string; via: string }> {
@@ -2931,7 +2941,7 @@ async function bucleHarness(o: {
       ronda: i + 1,
     });
     o.hechos.push(extra);
-    const qn = await preguntarQwen(o.system, o.message, o.hechos, o.hilo, o.senal, o.nivel, o.contexto);
+    const qn = await preguntarQwen(o.system, o.message, o.hechos, o.hilo, o.senal, o.nivel, o.contexto, o.espacio);
     if (!qn.ok) {
       reply = quitarLineaPedido(reply) + (extra ? `\n\n${extra}` : '');
       via = 'harness-parcial';
@@ -3139,11 +3149,11 @@ async function correrTurnoInterno(body: any, opciones: OpcionesTurno = {}): Prom
   if (!ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) {
     return guardar({ ...base, reply: sinCerebro(p.datos), emocion: 'preocupado', via: 'tools-only', mode, ms: Date.now() - t0, herramientas: tools });
   }
-  const q1 = await preguntarQwen(system, message, hechos, hilo, p.senal, p.nivel, p.contexto);
+  const q1 = await preguntarQwen(system, message, hechos, hilo, p.senal, p.nivel, p.contexto, p.espacio);
   if (!q1.ok) {
     return guardar({ ...base, reply: sinCerebro(p.datos), emocion: 'preocupado', via: 'tools-fallback', mode, ms: Date.now() - t0, herramientas: tools, error: q1.error });
   }
-  const h = await bucleHarness({ reply: q1.reply, system, message, hechos, hilo, tools, mando, senal: p.senal, nivel: p.nivel, contexto: p.contexto });
+  const h = await bucleHarness({ reply: q1.reply, system, message, hechos, hilo, tools, mando, senal: p.senal, nivel: p.nivel, contexto: p.contexto, espacio: p.espacio });
   let reply = h.reply;
   let via = h.via;
 
@@ -3161,7 +3171,7 @@ async function correrTurnoInterno(body: any, opciones: OpcionesTurno = {}): Prom
     const hecho = neutralizarMarca(`EJECUTOR (${r.via}): exit ${r.exit_code}. stdout: ${String(r.stdout || '').slice(0, 800) || '(vacío)'} stderr: ${String(r.stderr || r.error || '').slice(0, 400) || '(vacío)'}.`);
     hechos.push(hecho);
     if (!r.ok) {
-      const qn = await preguntarQwen(system, `${message}\n\nEl ejecutor falló. Corrige el código. No afirmes que funciona.`, hechos, hilo, p.senal, p.nivel, p.contexto);
+      const qn = await preguntarQwen(system, `${message}\n\nEl ejecutor falló. Corrige el código. No afirmes que funciona.`, hechos, hilo, p.senal, p.nivel, p.contexto, p.espacio);
       reply = qn.ok ? quitarLineaPedido(qn.reply) : `${quitarLineaPedido(reply)}\n\n${hecho}`;
     } else {
       reply = `${quitarLineaPedido(reply)}\n\n${hecho}`;
@@ -3404,7 +3414,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     const r = await fetchNodo(`${ULTRON_NODO_URL}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-ultron-secreto': ULTRON_NODO_SECRETO },
-      body: JSON.stringify({ model: ULTRON_NODO_MODELO, stream: true, messages: mensajesQwen(system, message, hechos, hilo, p.nivel, p.contexto) }),
+      body: JSON.stringify({ model: ULTRON_NODO_MODELO, stream: true, messages: mensajesQwen(system, message, hechos, hilo, p.nivel, p.contexto), options: { id_slot: p.espacio } }),
       signal: conTope(senal, 60000),
     });
     if (!r.ok || !r.body) {
@@ -3507,7 +3517,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     let reply = extraerEmocion(full).texto;
     let via = `${ULTRON_NODO_URL}/api/chat`;
     if (pedido) {
-      const h = await bucleHarness({ reply, system, message, hechos, hilo, tools, mando, senal, nivel: p.nivel, contexto: p.contexto, alTarea: opciones.alTarea });
+      const h = await bucleHarness({ reply, system, message, hechos, hilo, tools, mando, senal, nivel: p.nivel, contexto: p.contexto, espacio: p.espacio, alTarea: opciones.alTarea });
       const e = extraerEmocion(h.reply);
       emocion = e.emocion;
       send('emocion', { emocion });
