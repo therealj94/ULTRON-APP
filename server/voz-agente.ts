@@ -43,6 +43,7 @@ import type express from 'express';
 import { clave } from '../lib/boveda';
 import { quitarExpresiones } from '../lib/expresiones';
 import { afinarParaBoca, afinarParaBocaIngles } from './habla';
+import { interruptor } from '../lib/interruptores';
 import { firmarDato, gastarCupo, huellaSesion, leerDato, mismoSecreto, secretoDerivado, sesionSigueViva, type Sesion } from './seguridad';
 import { normalizarAvatar, normalizarIdioma, type AvatarVoz, type Idioma } from './eleven';
 import { modoValido } from './desk';
@@ -860,7 +861,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
       gracia = setTimeout(() => {
         gracia = null;
         if (!salidas.size) abandonar();
-      }, d.graciaReintentoMs ?? GRACIA_REINTENTO_MS);
+      }, d.graciaReintentoMs ?? interruptor('graciaReintentoMs'));
     };
     res.on('close', () => alCerrarSalida(res));
     const vivoDeEste: NonNullable<Conversacion['vivo']> = {
@@ -916,7 +917,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     let primerTrozo = true;
     // Desde dónde empieza lo que dice el CEREBRO (después del perdón y de las frases de espera).
     let inicioCerebro = inicioPropio;
-    const msPuente = d.puenteMs ?? PUENTE_VOZ_MS;
+    const msPuente = d.puenteMs ?? interruptor('puenteVozMs');
     const msTarea = d.esperaTareaMs ?? ESPERA_TAREA_MS;
     const msSeguimiento = d.seguimientoMs ?? SEGUIMIENTO_MS;
     const msRelleno = d.rellenoAgenteMs ?? RELLENO_AGENTE_MS;
@@ -1141,7 +1142,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
       // Si no llega, la persona oyó solo el principio: la próxima respuesta empieza pidiendo perdón.
       conv.ultimaDicha = dicho.slice(0, oido);
       if (oido > 0 && oido < dicho.length) conv.cortada = true;
-      vivoDeEste.hasta = Date.now() + (d.graciaReintentoMs ?? GRACIA_REINTENTO_MS);
+      vivoDeEste.hasta = Date.now() + (d.graciaReintentoMs ?? interruptor('graciaReintentoMs'));
     }
     escribir(trozoOpenAI(id, modelo, null, 'stop'));
     cerrar();

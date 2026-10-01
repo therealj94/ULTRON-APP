@@ -12,6 +12,7 @@ import { JUNTA, buildPersonality, decodeDataUrl, normalizarCorreo, buscarWeb, le
 import { hablar, abrirVozEnVivo, cantar, orar, repertorio, cancionPorPedido, estadoVoz, saludVoz, vozDe, sinEtiquetas } from './server/voz';
 import { lineaAvatar, normalizarAvatar, normalizarIdioma, NOMBRE_AVATAR, type AvatarVoz } from './server/eleven';
 import { montarVozAgente, type TurnoVoz } from './server/voz-agente';
+import { interruptor } from './lib/interruptores';
 import { LIMITES_TEXTO, LIMITES_VOZ, fijoDeLaConversacion, piezasDelTurno, renovarFijo, ventanaDelHilo } from './server/prompt-turno';
 import { ESPACIO_COMUN, espacioDe } from './lib/espacio-nodo';
 import { cargarMiembro, fotoMemoriaMiembro, guardarHechoMiembro, hiloMiembro, olvidarMiembro, promptMemoriaMiembro, recordarTurnoMiembro } from './lib/memoria-miembro';
@@ -2312,7 +2313,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
    * primera palabra baja de 7–9 mil fichas a ~3 mil. Su fijo se congela aparte (`|voz`): alternar la
    * llamada con el chat escrito no rehace el uno por el otro. El espacio en el nodo es el mismo.
    */
-  const compacto = voz;
+  const compacto = voz && interruptor('vozCompacta');
   const claveTurno = compacto && clave ? `${clave}|voz` : clave;
   const limites = compacto ? LIMITES_VOZ : LIMITES_TEXTO;
   // Con el fijo congelado, la ventana crece desde el mismo principio: nada de lo dicho después de la foto
@@ -2818,7 +2819,7 @@ async function respuestaChica(p: {
   idioma?: 'es' | 'en';
   senal?: AbortSignal;
 }): Promise<string | null> {
-  if (!usarModeloChico(p.clas) || !soloMarcasDeContexto(p.tools) || p.foto) return null;
+  if (!interruptor('modeloChico') || !usarModeloChico(p.clas) || !soloMarcasDeContexto(p.tools) || p.foto) return null;
   // Con Laya, «no hace falta Qwen» ya es una decisión segura (clasificador.combinar); con las reglas
   // solas, solo lo que por su forma es un saludo, un gracias o una despedida.
   if (p.clas.fuente !== 'laya' && !esCharlaTrivial(p.crudo || p.message)) return null;
