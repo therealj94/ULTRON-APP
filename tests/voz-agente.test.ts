@@ -151,7 +151,7 @@ test('eventosSSE: lee eventos a trozos y suelta el lector al abortar', async () 
 type Ambiente = { correo: string; aparato: string | null; sonido: string | null; on: boolean; ms: number };
 async function montar(
   cerebro: (t: TurnoVoz) => Promise<void>,
-  o: { fetch?: typeof fetch; turnoMs?: number; puenteMs?: number; esperaTareaMs?: number; seguimientoMs?: number; rellenoAgenteMs?: number; etiquetas?: boolean } = {}
+  o: { fetch?: typeof fetch; turnoMs?: number; puenteMs?: number; esperaTareaMs?: number; seguimientoMs?: number; rellenoAgenteMs?: number; etiquetas?: boolean; graciaReintentoMs?: number } = {}
 ) {
   const ambientes: Ambiente[] = [];
   const t0 = Date.now();
@@ -173,6 +173,7 @@ async function montar(
     esperaTareaMs: o.esperaTareaMs,
     seguimientoMs: o.seguimientoMs,
     rellenoAgenteMs: o.rellenoAgenteMs,
+    graciaReintentoMs: o.graciaReintentoMs,
     // Las etiquetas v4 salen al azar: fuera de su prueba, apagadas (el texto dicho se compara exacto).
     etiquetas: o.etiquetas ?? false,
     ambiente: (correo, aparato, e) => ambientes.push({ correo, aparato, sonido: e.sonido, on: e.on, ms: Date.now() - t0 }),
@@ -395,7 +396,7 @@ test('si la persona interrumpe (ElevenLabs cierra), la señal del turno de adent
     }
     t.enviar('delta', { text: 'La plata está a cuarenta.', voz: 'La plata está a cuarenta.' });
     t.enviar('done', { reply: 'La plata está a cuarenta.' });
-  });
+  }, { graciaReintentoMs: 100 });
   try {
     const yo = persona();
     const pase = paseDe(yo, 'aura', 'es');
@@ -405,7 +406,8 @@ test('si la persona interrumpe (ElevenLabs cierra), la señal del turno de adent
     await lector.read();
     await lector.read();
     ctrl.abort();
-    await new Promise((r2) => setTimeout(r2, 200));
+    // Se espera un momento por si es un reintento de ElevenLabs (GRACIA_REINTENTO_MS); después, el corte.
+    await new Promise((r2) => setTimeout(r2, 350));
     assert.ok(abortado, 'el cerebro recibió el corte');
 
     const r2 = await llm(s.base, pase, [
@@ -1041,6 +1043,84 @@ test('lo del cerebro llega a la voz sin markdown, con «Aura» y unidades en pal
   try {
     const dicho = dichoDe(await (await llm(m.base, paseDe(persona(), 'aura', 'es', 'tel-9'), [{ role: 'user', content: 'cuál es la ley' }])).text());
     assert.equal(dicho, 'Aura dice, la ley es 3,4 gramos por tonelada a 12 kilómetros de Danlí.');
+  } finally {
+    await m.cerrar();
+  }
+});
+
+test('reintento de ElevenLabs (la misma frase): se engancha al turno que sigue pensando, no lo mata ni lo repite', async () => {
+  const m = await montar(
+    async (t) => {
+      await dormir(400);
+      t.enviar('delta', { text: 'Listo, la alarma queda a las tres.', voz: 'Listo, la alarma queda a las tres.' });
+      t.enviar('done', { reply: 'Listo, la alarma queda a las tres.' });
+    },
+    { puenteMs: 0, graciaReintentoMs: 1500 }
+  );
+  try {
+    const pase = paseDe(persona(), 'aura', 'es', 'tel-r1');
+    const msgs = [{ role: 'user', content: 'ponme una alarma a las tres' }];
+    // El primer intento: ElevenLabs lo suelta a los 150 ms (su corte) y reintenta.
+    const c1 = new AbortController();
+    const r1 = llm(m.base, pase, msgs, {}, c1.signal).then((r) => r.text()).catch(() => '');
+    await dormir(150);
+    c1.abort();
+    await r1;
+    await dormir(50);
+    const dicho = dichoDe(await (await llm(m.base, pase, msgs)).text());
+    assert.equal(dicho, 'Listo, la alarma queda a las tres.');
+    assert.equal(m.vistos.length, 1, 'el cerebro pensó una sola vez');
+  } finally {
+    await m.cerrar();
+  }
+});
+
+test('reintento que llega cuando el turno ya terminó sin oyente: se lleva la respuesta entera, sin pensar otra vez', async () => {
+  const m = await montar(
+    async (t) => {
+      await dormir(100);
+      t.enviar('delta', { text: 'Son las tres.', voz: 'Son las tres.' });
+      t.enviar('done', { reply: 'Son las tres.' });
+    },
+    { puenteMs: 0, graciaReintentoMs: 1500 }
+  );
+  try {
+    const pase = paseDe(persona(), 'aura', 'es', 'tel-r2');
+    const msgs = [{ role: 'user', content: 'qué hora es' }];
+    const c1 = new AbortController();
+    const r1 = llm(m.base, pase, msgs, {}, c1.signal).then((r) => r.text()).catch(() => '');
+    await dormir(50);
+    c1.abort();
+    await r1;
+    await dormir(300); // el turno ya terminó
+    const dicho = dichoDe(await (await llm(m.base, pase, msgs)).text());
+    assert.equal(dicho, 'Son las tres.');
+    assert.equal(m.vistos.length, 1);
+  } finally {
+    await m.cerrar();
+  }
+});
+
+test('otra frase no es un reintento: el turno anterior se corta y el nuevo piensa', async () => {
+  const m = await montar(
+    async (t) => {
+      await dormir(300);
+      const r = /plata/.test(String(t.body.message)) ? 'La plata, a cuarenta.' : 'El oro, a tres mil.';
+      t.enviar('delta', { text: r, voz: r });
+      t.enviar('done', { reply: r });
+    },
+    { puenteMs: 0, graciaReintentoMs: 1500 }
+  );
+  try {
+    const pase = paseDe(persona(), 'aura', 'es', 'tel-r3');
+    const c1 = new AbortController();
+    const r1 = llm(m.base, pase, [{ role: 'user', content: 'cómo va el oro' }], {}, c1.signal).then((r) => r.text()).catch(() => '');
+    await dormir(100);
+    c1.abort();
+    await r1;
+    const dicho = dichoDe(await (await llm(m.base, pase, [{ role: 'user', content: 'cómo va el oro' }, { role: 'user', content: 'y la plata' }])).text());
+    assert.equal(dicho, 'La plata, a cuarenta.');
+    assert.equal(m.vistos.length, 2);
   } finally {
     await m.cerrar();
   }

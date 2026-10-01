@@ -81,6 +81,13 @@ export const CUPO_TURNOS_MIN = 30;
 /** Lo que puede tardar un turno hablado antes de pedir perdón y soltar a la persona. */
 export const TURNO_VOZ_MS = 45_000;
 /**
+ * Cuando ElevenLabs suelta la petición de un turno que sigue pensando, se espera esto a que llegue su
+ * reintento (la misma frase) antes de cortarlo: si llega, se engancha y no se pierde lo ya leído.
+ */
+export const GRACIA_REINTENTO_MS = 2_500;
+/** La frase, aplanada, para reconocer un reintento. */
+const plana = (t: string) => String(t || '').toLowerCase().replace(/\s+/g, ' ').trim();
+/**
  * EL PUENTE: si en este tiempo el cerebro no dijo nada, AURA dice una frase corta del estado en que está
  * («Déjame revisar…», «Buscando…», «Sacando cuentas…»), con la forma de ser del avatar y en su idioma,
  * en vez de quedarse callada. Una orden rápida o una charla contestan antes y no lo oyen nunca.
@@ -252,6 +259,12 @@ type Conversacion = {
   turnos: number;
   /** El turno que está pensando ahora (si llega otro, este ya no lo oye nadie). */
   enCurso: AbortController | null;
+  /**
+   * El turno en curso, para que un REINTENTO de ElevenLabs (la misma frase otra vez) se enganche a él
+   * en vez de matarlo y empezar de cero (1-oct: tres intentos de la misma pregunta, cada uno releyendo
+   * 7 000 fichas en otro espacio del nodo, y el que se mataba antes de hablar dejaba la respuesta vacía).
+   */
+  vivo?: { mensaje: string; hasta: number; vigente: () => boolean; enganchar: (r: express.Response) => Promise<void> } | null;
   /**
    * Lo que el turno en curso ya le dio a la voz. Si llega otro turno antes de que termine, esto pasa
    * a ser `ultimaDicha` (antes quedaba la del turno anterior y la interrupción no se notaba).
@@ -531,6 +544,8 @@ type Deps = {
   turnoMs?: number;
   /** Cuánto se espera al cerebro antes de decir la frase de espera (PUENTE_VOZ_MS; 0 la apaga). */
   puenteMs?: number;
+  /** Cuánto se espera el reintento de ElevenLabs antes de cortar un turno sin oyente (GRACIA_REINTENTO_MS). */
+  graciaReintentoMs?: number;
   /** Junta o miembro por correo (server/nivel.ts; las pruebas pueden poner otro). */
   nivelDe?: (correo: string) => NivelAura;
   /**
@@ -693,6 +708,13 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     const id = `chatcmpl-${crypto.randomBytes(8).toString('hex')}`;
     const modelo = String(req.body?.model || 'aura');
 
+    // ¿Un reintento de ElevenLabs? La misma frase mientras ese turno sigue pensando: se engancha a él.
+    const vivo = conv.vivo;
+    if (vivo && mensaje && vivo.mensaje === plana(mensaje) && ahora < vivo.hasta && vivo.vigente()) {
+      req.socket.setNoDelay?.(true);
+      await vivo.enganchar(res);
+      return;
+    }
     // Si el turno anterior sigue pensando, ya nadie lo va a oír. Lo que alcanzó a decir es lo último
     // que oyó la persona: con eso se mira si este turno la interrumpió (y si ya había dicho algo, la
     // cortó a la mitad).
@@ -721,17 +743,28 @@ export function montarVozAgente(app: express.Express, d: Deps) {
       avisarAmbiente(null);
     }
 
-    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
-    res.setHeader('Cache-Control', 'no-store, no-transform');
-    res.setHeader('X-Accel-Buffering', 'no');
-    req.socket.setNoDelay?.(true);
-    res.flushHeaders?.();
-    const escribir = (t: string) => {
-      if (!res.writableEnded && !res.destroyed) res.write(t);
+    const abrirSSE = (r: express.Response) => {
+      r.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+      r.setHeader('Cache-Control', 'no-store, no-transform');
+      r.setHeader('X-Accel-Buffering', 'no');
+      r.flushHeaders?.();
     };
+    abrirSSE(res);
+    req.socket.setNoDelay?.(true);
+    /** Quienes oyen este turno: la petición y, si ElevenLabs reintenta, la del reintento. */
+    const salidas = new Set<express.Response>([res]);
+    const escribir = (t: string) => {
+      for (const r of salidas) if (!r.writableEnded && !r.destroyed) r.write(t);
+    };
+    /** Al terminar el turno, cada petición enganchada también termina. */
+    const alTerminar: (() => void)[] = [];
     const cerrar = () => {
-      escribir('data: [DONE]\n\n');
-      if (!res.writableEnded) res.end();
+      for (const r of salidas) {
+        if (r.writableEnded || r.destroyed) continue;
+        r.write('data: [DONE]\n\n');
+        r.end();
+      }
+      for (const f of alTerminar.splice(0)) f();
     };
     escribir(trozoOpenAI(id, modelo, null, null, true));
     // Se reconectó sin frase que retomar: el perdón y que la repita, al instante y sin cerebro.
@@ -790,30 +823,85 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     /** Cuándo se le dio el primer y el último texto a la voz (0: nada todavía). */
     let primeroEn = 0;
     let ultimoEn = t0;
+    /** Hasta dónde de `dicho` llegó a alguien (sin petición abierta, lo dicho espera un reintento). */
+    let oido = 0;
     const decir = (t: string, forzar = false) => {
       if (!t || (terminado && !forzar)) return;
       algo = true;
       dicho += t;
       ultimoEn = Date.now();
       if (!primeroEn) primeroEn = ultimoEn;
+      if (!salidas.size) return;
+      oido = dicho.length;
       if (conv.enCurso === corte) {
         conv.dichoEnCurso = dicho;
         conv.algoEnCurso = true;
       }
       escribir(trozoOpenAI(id, modelo, t));
     };
-    res.on('close', () => {
-      if (!res.writableEnded) {
-        corte.abort();
-        // ElevenLabs cortó mientras hablábamos: la próxima respuesta empieza pidiendo perdón. Si otro
-        // turno ya tomó la conversación, él ya anotó lo que este dijo (y ya usó el «cortada»).
-        if (conv.enCurso === corte) {
-          if (algo) conv.cortada = true;
-          conv.ultimaDicha = dicho;
-          conv.enCurso = null;
-        }
+    /** Nadie lo oye ya: se corta. Lo último que oyó la persona es lo que llegó a alguna petición. */
+    const abandonar = () => {
+      corte.abort();
+      // ElevenLabs cortó mientras hablábamos: la próxima respuesta empieza pidiendo perdón. Si otro
+      // turno ya tomó la conversación, él ya anotó lo que este dijo (y ya usó el «cortada»).
+      if (conv.enCurso === corte) {
+        if (oido > 0 && algo) conv.cortada = true;
+        conv.ultimaDicha = dicho.slice(0, oido);
+        conv.enCurso = null;
       }
-    });
+    };
+    let gracia: ReturnType<typeof setTimeout> | null = null;
+    const alCerrarSalida = (r: express.Response) => {
+      if (r.writableEnded) return;
+      salidas.delete(r);
+      if (salidas.size || terminado || corte.signal.aborted) return;
+      // Puede ser un reintento de ElevenLabs (vuelve con la misma frase) o la persona que lo cortó: se
+      // espera un momento al reintento antes de soltar lo que el nodo ya está leyendo.
+      gracia = setTimeout(() => {
+        gracia = null;
+        if (!salidas.size) abandonar();
+      }, d.graciaReintentoMs ?? GRACIA_REINTENTO_MS);
+    };
+    res.on('close', () => alCerrarSalida(res));
+    const vivoDeEste: NonNullable<Conversacion['vivo']> = {
+      mensaje: plana(mensaje),
+      hasta: t0 + TURNO_VOZ_MS,
+      // Sigue pensando, o ya terminó sin que nadie lo oyera (su reintento llega tarde): se reproduce.
+      vigente: () => terminado || !corte.signal.aborted,
+      enganchar: (r) =>
+        new Promise<void>((listo) => {
+          if (gracia) {
+            clearTimeout(gracia);
+            gracia = null;
+          }
+          abrirSSE(r);
+          r.write(trozoOpenAI(id, modelo, null, null, true));
+          // Lo que ya dijo este turno (y lo que pensó mientras nadie oía), de una vez.
+          if (dicho) r.write(trozoOpenAI(id, modelo, dicho));
+          if (terminado) {
+            oido = dicho.length;
+            conv.ultimaDicha = dicho;
+            conv.cortada = false;
+            if (conv.vivo === vivoDeEste) conv.vivo = null;
+            r.write(trozoOpenAI(id, modelo, null, 'stop'));
+            r.write('data: [DONE]\n\n');
+            r.end();
+            return listo();
+          }
+          oido = dicho.length;
+          if (conv.enCurso === corte && dicho) {
+            conv.dichoEnCurso = dicho;
+            conv.algoEnCurso = algo;
+          }
+          salidas.add(r);
+          r.on('close', () => {
+            alCerrarSalida(r);
+            listo();
+          });
+          alTerminar.push(listo);
+        }),
+    };
+    conv.vivo = vivoDeEste;
 
     if (interrumpida || reconexion) {
       decir(reconexion ? reconexion.perdon : perdonDe(pase.idioma, conv.turnos));
@@ -1026,10 +1114,10 @@ export function montarVozAgente(app: express.Express, d: Deps) {
       // La persona interrumpió (o llegó otro turno de esta conversación, que ya tomó lo que este dijo
       // como `ultimaDicha`): nadie espera esto. Si la petición sigue abierta, se cierra bien para que
       // ElevenLabs no quede esperando.
-      if (!res.writableEnded && !res.destroyed) {
-        escribir(trozoOpenAI(id, modelo, null, 'stop'));
-        cerrar();
-      }
+      escribir(trozoOpenAI(id, modelo, null, 'stop'));
+      cerrar();
+      if (gracia) clearTimeout(gracia);
+      if (conv.vivo === vivoDeEste) conv.vivo = null;
       return;
     }
     const porReloj = reloj.aborted && !terminado;
@@ -1038,7 +1126,20 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     if (porReloj) corte.abort(); // que el cerebro suelte también
     if (!algo) decir(porReloj ? PHRASES.tarde[pase.idioma] : PHRASES.hilo[pase.idioma], true);
     if (conv.enCurso === corte) conv.enCurso = null;
-    conv.ultimaDicha = dicho;
+    if (gracia) {
+      clearTimeout(gracia);
+      gracia = null;
+    }
+    if (salidas.size) {
+      conv.ultimaDicha = dicho;
+      if (conv.vivo === vivoDeEste) conv.vivo = null;
+    } else {
+      // Terminó mientras nadie oía: si el reintento llega en un momento, se lleva la respuesta entera.
+      // Si no llega, la persona oyó solo el principio: la próxima respuesta empieza pidiendo perdón.
+      conv.ultimaDicha = dicho.slice(0, oido);
+      if (oido > 0 && oido < dicho.length) conv.cortada = true;
+      vivoDeEste.hasta = Date.now() + (d.graciaReintentoMs ?? GRACIA_REINTENTO_MS);
+    }
     escribir(trozoOpenAI(id, modelo, null, 'stop'));
     cerrar();
   };
