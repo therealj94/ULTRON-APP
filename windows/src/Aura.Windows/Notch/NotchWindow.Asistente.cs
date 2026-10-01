@@ -220,7 +220,7 @@ public partial class NotchWindow
         // Sin conversación ni llamada explícita, una frase larguísima (la tele, una charla al lado) no se manda a transcribir:
         // «Oye AURA, …» cabe en 12 segundos.
         bool esperandoNombre = ajustes.Escucha is "siempre" or "palabra" && !llamadaExplicita && propuesta == null
-                               && DateTime.Now - ultimaCharla > (ajustes.Escucha == "siempre" ? TimeSpan.FromMinutes(2) : TimeSpan.FromSeconds(45));
+                               && DateTime.Now - ultimaCharla > (ajustes.Escucha == "siempre" ? TimeSpan.FromMinutes(3) : TimeSpan.FromSeconds(90));
         if (esperandoNombre && !eraInterrupcion && wav.Length > 44 + 12 * 32000)
         {
             if (!microSilenciado && !pausado) EmpezarAEscuchar();
@@ -247,7 +247,8 @@ public partial class NotchWindow
             return;
         }
         vaciasSeguidas = 0;
-        Centro.Registro.Anotar("oir", $"{cronoTurno.ElapsedMilliseconds} ms · {texto.Length} letras");
+        // Lo que entendió (solo en el registro de esta PC, que nadie más ve): para afinar el micrófono con datos.
+        Centro.Registro.Anotar("oir", $"{cronoTurno.ElapsedMilliseconds} ms · «{(texto.Length > 140 ? texto[..140] + "…" : texto)}»");
         // «¡Hasta la próxima!», «Gracias por ver»…: el transcriptor inventando en el ruido, o el eco de AURA. No es la persona.
         if (propuesta == null && Fantasma.Es(texto, ultimaRespuesta))
         {
@@ -258,7 +259,7 @@ public partial class NotchWindow
         }
         // Sin conversación en curso, solo se atiende lo que empieza por su nombre: «Oye AURA, abre Excel»
         // (en una frase) o «Oye AURA» sola (contesta «¿sí?» y escucha). En conversación, todo cuenta.
-        bool enCharla = DateTime.Now - ultimaCharla < (ajustes.Escucha == "siempre" ? TimeSpan.FromMinutes(2) : TimeSpan.FromSeconds(45));
+        bool enCharla = DateTime.Now - ultimaCharla < (ajustes.Escucha == "siempre" ? TimeSpan.FromMinutes(3) : TimeSpan.FromSeconds(90));
         if (ajustes.Escucha is "siempre" or "palabra" && !eraInterrupcion && propuesta == null && !llamadaExplicita)
         {
             if (Parametros.QuitarNombre(texto, out var resto))
@@ -281,9 +282,20 @@ public partial class NotchWindow
                 return;
             }
         }
+        // Si el reconocedor de Windows ya la despertó, la frase que llega todavía trae el nombre («Hola Aura, pon
+        // bachata en Spotify»): se quita igual, o las reglas no la reconocen y se va al cerebro (8 s más).
+        else if (Parametros.QuitarNombre(texto, out var sinNombre) && sinNombre.Length > 0) texto = sinNombre;
         llamadaExplicita = false;
         ultimaCharla = DateTime.Now;
         await Procesar(texto, true);
+    }
+
+    /// <summary>Un turno al hilo de la conversación (los últimos 8 intercambios viajan al cerebro).</summary>
+    void Recordar(string dicho, string respuesta)
+    {
+        historial.Add(new Turno("usuario", dicho));
+        historial.Add(new Turno("ultron", respuesta));
+        while (historial.Count > 24) historial.RemoveRange(0, 2);
     }
 
     /// <summary>El oído del servidor (Whisper/Scribe) o, sin él, el dictado de Windows. Si se eligió, siempre el de Windows.</summary>
@@ -359,7 +371,14 @@ public partial class NotchWindow
         catch { pedido = Pedido.Nada; }
         Centro.Registro.Anotar("entender", $"{cronoTurno.ElapsedMilliseconds - antesDeEntender} ms · {pedido.Mano} ({pedido.Origen})");
         if (g != generacion) return;
-        if (pedido.Mano != Mano.Ninguna) { await Hacer(pedido, texto, hablado); return; }
+        if (pedido.Mano != Mano.Ninguna)
+        {
+            await Hacer(pedido, texto, hablado);
+            // Lo que hizo con las manos también es parte de la charla: si después dices «súbele» o «otra de él»,
+            // el cerebro sabe de qué hablan.
+            Recordar(texto, T($"[Hecho en la PC: {pedido.Mano} {pedido.Valor}]", $"[Done on the PC: {pedido.Mano} {pedido.Valor}]"));
+            return;
+        }
         if (await PreguntarArchivo(texto, hablado)) return;
         await Conversar(texto, hablado);
     }
@@ -383,11 +402,26 @@ public partial class NotchWindow
         string emocion = "neutral";
         int dichas = 0;
         Respuesta? r = null;
+        bool rellenoDicho = false;
+        // El cerebro tarda (a veces 8–10 s hasta la primera palabra): si a los 1,8 s no ha dicho nada, AURA dice
+        // algo corto para que se sepa que está en eso. Una sola vez por turno, solo con voz y si la hablaste.
+        if (conVoz && hablado)
+        {
+            var relleno = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1800) };
+            relleno.Tick += (_, _) =>
+            {
+                relleno.Stop();
+                if (g != generacion || dichas > 0 || vcts.IsCancellationRequested) return;
+                var frases = Ingles ? new[] { "Let me see…", "One sec…", "Hmm, let me think…" } : new[] { "A ver…", "Dame un segundo…", "Mmm, déjame ver…" };
+                rellenoDicho = Decir(frases[Random.Shared.Next(frases.Length)], "neutral", vcts.Token);
+            };
+            relleno.Start();
+        }
         // Las manos que pide el cerebro (⟦hacer: …⟧): no se ven ni se dicen, y se hacen apenas llegan. Con texto
         // de otro lado delante (pantalla, archivo, portapapeles) no: ese texto podría traer órdenes escondidas.
         var filtro = new FiltroAcciones();
         bool conManos = contexto == null && !redactar;
-        void Orden(string o) { if (conManos) _ = Dispatcher.BeginInvoke(new Action(() => _ = HacerOrdenDelCerebro(o, hablado))); }
+        void Orden(string o) { if (conManos) _ = Dispatcher.BeginInvoke(new Action(() => _ = HacerOrdenDelCerebro(o, texto, hablado))); }
         try
         {
             r = await api.Turno(contexto == null ? texto : texto + "\n\n" + contexto, historial, ajustes.Nombre.Length > 0 ? ajustes.Nombre : Environment.UserName, ajustes.Avatar, ajustes.Idioma, hablado,
@@ -428,13 +462,11 @@ public partial class NotchWindow
         // Nunca una burbuja vacía: si no llegó nada, se quita.
         if (burbuja != null && string.IsNullOrWhiteSpace(burbuja.Text)) QuitarBurbuja(burbuja);
         ultimaRespuesta = r.Texto;
-        historial.Add(new Turno("usuario", texto));
-        historial.Add(new Turno("ultron", r.Texto.Length > 4000 ? r.Texto[..4000] : r.Texto));
-        while (historial.Count > 20) historial.RemoveRange(0, 2);
+        Recordar(texto, r.Texto.Length > 4000 ? r.Texto[..4000] : r.Texto);
         emocionActual = r.Emocion;
         // Con voz, el altavoz decide cuándo termina (Empezo/Termino): así el notch no parpadea entre piensa y habla.
         // Si ya terminó de sonar todo antes de que el cerebro cerrara el turno, se cierra aquí.
-        if (conVoz && dichas > 0 && !altavoz.Ocupado) AlTerminarDeHablar();
+        if (conVoz && (dichas > 0 || rellenoDicho) && !altavoz.Ocupado) AlTerminarDeHablar();
         if (!conVoz || dichas == 0)
         {
             pensando = false;

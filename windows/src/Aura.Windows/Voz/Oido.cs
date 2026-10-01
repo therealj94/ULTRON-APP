@@ -85,13 +85,14 @@ internal sealed class Oido : IDisposable
         {
             double umbral = Math.Max(0.012, piso * (ModoInterrupcion ? 7 : 3.2));
             if (ModoInterrupcion) umbral = Math.Max(Math.Max(umbral, 0.05), NivelAltavoz * 0.22);
-            bool voz = rms > umbral;
+            // Ya hablando, el final de la frase suele bajar («…en Spotify»): con menos umbral no se corta la cola.
+            bool voz = rms > (hablando && !ModoInterrupcion ? umbral * 0.6 : umbral);
             if (!hablando)
             {
                 // El piso solo aprende del silencio (y despacio): la voz no lo sube.
                 if (!voz) piso = piso * 0.97 + rms * 0.03;
                 previo.Enqueue(bloque);
-                while (previo.Count > 15) previo.Dequeue(); // 300 ms antes de la primera sílaba
+                while (previo.Count > 20) previo.Dequeue(); // 400 ms antes de la primera sílaba
                 msVoz = voz ? msVoz + MsBloque : Math.Max(0, msVoz - MsBloque);
                 msEsperando += MsBloque;
                 if (msVoz >= (ModoInterrupcion ? 260 : 120))
@@ -109,7 +110,7 @@ internal sealed class Oido : IDisposable
                 msSilencio = voz ? 0 : msSilencio + MsBloque;
                 if (msSilencio >= SilencioFinMs || msTotal >= 25000)
                 {
-                    lista = Wav(frase.ToArray());
+                    lista = Wav(Normalizar(frase.ToArray()));
                     frase.Clear(); hablando = false; msVoz = 0; msEsperando = 0;
                 }
             }
@@ -117,6 +118,26 @@ internal sealed class Oido : IDisposable
         if (empezo) EmpezoAHablar?.Invoke();
         if (lista != null && lista.Length > 44 + Muestreo / 2) Frase?.Invoke(lista); // menos de 0,25 s de audio no es una frase
         if (canso) SeCanso?.Invoke();
+    }
+
+    /// <summary>
+    /// Sube el volumen de la frase para que el pico quede cerca de -3 dB (máximo ×8): el micrófono de una laptop
+    /// a un metro llega muy bajo y el transcriptor se equivoca más. Nunca la satura; si ya viene fuerte, no la toca.
+    /// </summary>
+    public static byte[] Normalizar(byte[] pcm)
+    {
+        int pico = 1;
+        for (int i = 0; i + 1 < pcm.Length; i += 2) pico = Math.Max(pico, Math.Abs((int)BitConverter.ToInt16(pcm, i)));
+        double g = Math.Min(8.0, 0.7 * short.MaxValue / pico);
+        if (g <= 1.15) return pcm;
+        var o = new byte[pcm.Length];
+        for (int i = 0; i + 1 < pcm.Length; i += 2)
+        {
+            int v = (int)Math.Round(BitConverter.ToInt16(pcm, i) * g);
+            v = Math.Clamp(v, short.MinValue, short.MaxValue);
+            o[i] = (byte)(v & 0xFF); o[i + 1] = (byte)((v >> 8) & 0xFF);
+        }
+        return o;
     }
 
     public static byte[] Wav(byte[] pcm)
