@@ -17,6 +17,7 @@ import type { Emocion } from '../../lib/emocion';
 import { animoDe, HABLA, poseDe, type Pose, type Postura, type Tarea } from './tareas';
 import { COLORES, CUERPOS, estiloDe, type Estilo } from './estilos';
 import { hayWebGL } from './webgl';
+import { Rostro, rasgosDe } from './rostro';
 
 export type ZonaToque = 'cuerpo' | 'cabeza';
 export type OpcionesSala = {
@@ -334,79 +335,95 @@ export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl
   const cuerpo = new THREE.Group();
   cuerpo.position.y = BASE_Y + F.flota;
   aura.add(cuerpo);
-  const matPiel = std(C.piel, 0.5);
+  // Cerámica suave con barniz: la luz resbala por ella (antes, plástico mate).
+  const matPiel = new THREE.MeshPhysicalMaterial({ color: C.piel, roughness: 0.42, metalness: 0, clearcoat: 0.55, clearcoatRoughness: 0.32, sheen: 0.35, sheenRoughness: 0.6, sheenColor: new THREE.Color('#FFF6EA') });
   const piel = sombra(new THREE.Mesh(new THREE.LatheGeometry(perfil, 64), matPiel));
   cuerpo.add(piel);
 
   const OJO_Y = 0.84 * fy;
   const BOCA_Y = F.ojosLuz ? OJO_Y - 0.12 : 0.71 * fy;
-  // Con ojos de luz la cara es un visor oscuro y los ojos brillan dentro; si no, van pintados.
-  const LUZ = '#F7EBD0';
-  const ojoFuera = F.ojosLuz ? -0.014 : 0.02;
-  if (F.ojosLuz) {
-    // Un trozo del mismo torno, apenas por fuera de la piel: la pantalla sigue la curva de la cabeza.
-    // Lo que dibuja la textura (una píldora oscura con reflejo) es lo único que se ve de ella.
-    const y0 = BOCA_Y - 0.09;
-    const y1 = OJO_Y + 0.11;
-    const tramo: THREE.Vector2[] = [];
-    for (let i = 0; i <= 16; i++) {
-      const y = y0 + ((y1 - y0) * i) / 16;
-      tramo.push(new THREE.Vector2(radio(y) + 0.006, y));
-    }
-    const visorTex = lienzo(512, 256, (g, w, h) => {
-      g.clearRect(0, 0, w, h);
-      const fondo = g.createLinearGradient(0, 0, 0, h);
-      fondo.addColorStop(0, C.ojos);
-      fondo.addColorStop(1, '#3A3835');
-      g.fillStyle = fondo;
-      redondo(g, 24, 16, w - 48, h - 32, (h - 32) / 2);
-      g.fill();
-      g.fillStyle = 'rgba(255,255,255,0.08)';
-      redondo(g, 70, 26, w - 140, 34, 17);
-      g.fill();
-    });
-    const visor = new THREE.Mesh(
-      new THREE.LatheGeometry(tramo, 32, -0.62, 1.24),
-      new THREE.MeshStandardMaterial({ map: visorTex.t, transparent: true, alphaTest: 0.05, roughness: 0.3 })
-    );
-    cuerpo.add(visor);
+  /*
+   * LA CARA es una pantalla (rostro.ts): un trozo del mismo torno, apenas por fuera de la piel, con la
+   * cara dibujada cuadro a cuadro en su textura. Con ojos de luz es un visor de cristal oscuro y los
+   * ojos brillan (también en la sala de noche: la textura es emisiva); si no, la cara va pintada.
+   */
+  const caraY0 = BOCA_Y - (F.ojosLuz ? 0.11 : 0.08);
+  const caraY1 = OJO_Y + (F.ojosLuz ? 0.15 : 0.12);
+  const CARA_ANG = F.ojosLuz ? 1.5 : 1.55;
+  const tramoCara: THREE.Vector2[] = [];
+  for (let i = 0; i <= 24; i++) {
+    const y = caraY0 + ((caraY1 - caraY0) * i) / 24;
+    tramoCara.push(new THREE.Vector2(radio(y) + 0.006, y));
   }
-  const tinta = F.ojosLuz ? basica(LUZ) : std(C.ojos, 0.3);
-  const ojo = (x: number) => {
+  // El lienzo con la proporción real del trozo (los círculos salen círculos).
+  const CARA_W = 640;
+  const CARA_H = Math.round(Math.max(220, Math.min(480, (CARA_W * (caraY1 - caraY0)) / (radio(OJO_Y) * CARA_ANG))));
+  const enCara = (y: number) => 1 - (y - caraY0) / (caraY1 - caraY0);
+  const rostro = new Rostro({
+    luz: F.ojosLuz,
+    tinta: C.ojos,
+    mejilla: C.mejilla,
+    ojoY: enCara(OJO_Y),
+    bocaY: enCara(BOCA_Y) + (F.ojosLuz ? 0.02 : 0),
+    separacion: Math.asin(Math.min(0.95, F.ojoSep / radio(OJO_Y))) / CARA_ANG,
+    ojoAlto: ((2 * F.ojo * F.ojoAlto) / (caraY1 - caraY0)) * (F.ojosLuz ? 1.25 : 1.1),
+    ojoAncho: 1 / F.ojoAlto,
+  });
+  const caraTex = lienzo(CARA_W, CARA_H, (g, w, h) => rostro.dibujar(g, w, h));
+  caraTex.t.anisotropy = 4;
+  const matCara = new THREE.MeshStandardMaterial({
+    map: caraTex.t,
+    transparent: true,
+    alphaTest: 0.02,
+    roughness: F.ojosLuz ? 0.18 : 0.5,
+    metalness: F.ojosLuz ? 0.08 : 0,
+    // Lo que brilla de la cara (ojos, boca, rubor de luz) se ve aunque la sala esté a oscuras.
+    ...(F.ojosLuz ? { emissive: new THREE.Color('#FFFFFF'), emissiveMap: caraTex.t, emissiveIntensity: 0.85 } : {}),
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+  });
+  const caraMalla = new THREE.Mesh(new THREE.LatheGeometry(tramoCara, 48, -CARA_ANG / 2, CARA_ANG), matCara);
+  // El torno empieza en +z girando hacia +x: se gira para que el centro del trozo mire al frente.
+  caraMalla.rotation.y = 0;
+  cuerpo.add(caraMalla);
+  // La luz de su cara alumbra un poco lo que tiene cerca (y cambia de color con la emoción). Va debajo
+  // del visor: delante de él, su brillo se reflejaba en el cristal como un punto.
+  const luzCara = new THREE.PointLight('#F7EBD0', 0, 1.2, 2);
+  luzCara.position.copy(enSuperficie(0, caraY0 - 0.12, -0.18));
+  if (F.ojosLuz) cuerpo.add(luzCara);
+  /*
+   * Los audífonos de luz: dos discos a los lados de la cabeza con un anillo que brilla. Laten con su voz
+   * cuando habla y respiran cuando escucha: se ve que está oyendo, no solo que tiene los ojos abiertos.
+   */
+  const matAnilloOido = new THREE.MeshBasicMaterial({ color: '#F7EBD0', transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false });
+  const oidos = [-1, 1].map((lado) => {
     const g = new THREE.Group();
-    g.position.copy(enSuperficie(x, OJO_Y, ojoFuera));
-    const globo = new THREE.Mesh(new THREE.SphereGeometry(F.ojo, 24, 16), tinta);
-    globo.scale.set(1, F.ojoAlto, 0.7);
-    g.add(globo);
-    if (F.brillo) g.add(en(new THREE.Mesh(new THREE.SphereGeometry(0.022, 12, 8), basica('#FFFFFF')), 0.024, 0.028, 0.047));
+    const yO = OJO_Y - 0.03;
+    const rO = radio(yO);
+    g.position.set(lado * (rO - 0.012), yO, 0);
+    g.rotation.z = (-lado * Math.PI) / 2;
+    const disco = sombra(new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.092, 0.05, 32), new THREE.MeshStandardMaterial({ color: C.ojos, roughness: 0.3, metalness: 0.3 })));
+    disco.position.y = 0.02;
+    const aro = new THREE.Mesh(new THREE.TorusGeometry(0.066, 0.011, 10, 40), matAnilloOido);
+    aro.rotation.x = Math.PI / 2;
+    aro.position.y = 0.047;
+    const centro = new THREE.Mesh(new THREE.CircleGeometry(0.03, 24), matAnilloOido);
+    centro.rotation.x = -Math.PI / 2;
+    centro.position.y = 0.046;
+    g.add(disco, aro, centro);
+    g.visible = F.ojosLuz;
     cuerpo.add(g);
     return g;
-  };
-  const ojoI = ojo(-F.ojoSep);
-  const ojoD = ojo(F.ojoSep);
-  const mejillas = [-0.29, 0.29].map((x) => {
-    const m = new THREE.Mesh(new THREE.CircleGeometry(0.06, 24), basica(C.mejilla, { transparent: true, opacity: 0.5 }));
-    const p = enSuperficie(x * (R / 0.56), 0.74 * fy, -0.004);
-    m.position.copy(p);
-    m.lookAt(p.clone().add(new THREE.Vector3(p.x, 0, p.z)));
-    m.visible = F.mejillas;
-    cuerpo.add(m);
-    return m;
   });
-
-  const matBoca = F.ojosLuz ? basica(LUZ) : std(C.boca, 0.5);
-  const bocaSonrisa = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.012, 8, 24, Math.PI), matBoca);
-  bocaSonrisa.rotation.z = Math.PI;
-  const bocaTriste = en(new THREE.Mesh(new THREE.TorusGeometry(0.045, 0.012, 8, 24, Math.PI), matBoca), 0, -0.03, 0);
-  const bocaAbierta = new THREE.Mesh(new THREE.SphereGeometry(0.055, 20, 12), matBoca);
-  const bocaO = new THREE.Mesh(new THREE.TorusGeometry(0.028, 0.013, 8, 20), matBoca);
-  const bocaLinea = new THREE.Mesh(new THREE.CapsuleGeometry(0.011, 0.07, 4, 8), matBoca);
-  bocaLinea.rotation.z = Math.PI / 2;
-  const boca = new THREE.Group();
-  boca.position.copy(enSuperficie(0, BOCA_Y, F.ojosLuz ? -0.012 : -0.005));
-  boca.scale.setScalar(F.boca);
-  boca.add(bocaSonrisa, bocaTriste, bocaAbierta, bocaO, bocaLinea);
-  cuerpo.add(boca);
+  void oidos;
+  // Un collar fino de metal dorado (el mismo del anillo): separa cabeza y cuerpo, como una pieza bien hecha.
+  const yCollar = caraY0 - 0.07;
+  const collar = sombra(new THREE.Mesh(new THREE.TorusGeometry(radio(yCollar) + 0.004, 0.011, 10, 72), new THREE.MeshStandardMaterial({ color: C.anillo, metalness: 0.85, roughness: 0.28 })));
+  collar.rotation.x = Math.PI / 2;
+  collar.position.y = yCollar;
+  collar.visible = F.ojosLuz;
+  cuerpo.add(collar);
+  let caraCada = 0;
 
   const verde = std(C.bufanda, 0.95);
   const bufanda = sombra(new THREE.Mesh(new THREE.TorusGeometry(radio(0.52 * fy) + 0.005, 0.07, 14, 56), verde));
@@ -627,6 +644,8 @@ export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl
     mirarX: 0, mirarY: 0, apreton: 0,
     postura: (op.postura || 'pie') as Postura,
     finTareaEn: 0, volverEn: 0,
+    /** Un respingo al cambiar de emoción (se encoge y se estira): 1 al empezar, baja a 0. */
+    impulso: 0,
   };
   let face: FaceState = 'IDLE';
   let emocion: Emocion = 'neutral';
@@ -876,6 +895,9 @@ export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl
   }
   function estado(f: FaceState, e: Emocion) {
     const antes = face;
+    // Una emoción fuerte que llega se nota en el cuerpo: un respingo, no solo la cara.
+    const fuerte = (x: FaceState, em: Emocion) => ['SURPRISED', 'STARTLE', 'LAUGH', 'HAPPY'].includes(x) || ['sorpresa', 'alarma', 'risa', 'feliz', 'orgullo'].includes(em);
+    if (!reducido && fuerte(f, e) && (f !== face || e !== emocion)) st.impulso = 1;
     face = f;
     emocion = e;
     if (f === 'SLEEPING' && antes !== 'SLEEPING') {
@@ -1096,7 +1118,10 @@ export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl
     aura.rotation.y = st.rotY;
 
     const aprieta = st.apreton > 0 ? 1 - Math.sin((st.apreton / 0.3) * Math.PI) * 0.06 : 1;
-    const resp = (1 + Math.sin(t * 2.2) * 0.015) * P.escY * aprieta;
+    // El respingo: primero se encoge, después se estira y vuelve (con su rebote).
+    st.impulso = Math.max(0, st.impulso - dt / 0.55);
+    const imp = st.impulso > 0 ? Math.sin((1 - st.impulso) * Math.PI * 2) * -0.07 * st.impulso : 0;
+    const resp = (1 + Math.sin(t * 2.2) * 0.015 + imp) * P.escY * aprieta;
     cuerpo.scale.set(1 / Math.sqrt(resp), resp, 1 / Math.sqrt(resp));
     if (F.flota) cuerpo.position.y = BASE_Y + F.flota + (reducido ? 0 : Math.sin(t * 1.6) * 0.025);
     cuerpo.rotation.x = P.inclX - (libre ? st.mirarY * 0.08 : 0);
@@ -1104,31 +1129,35 @@ export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl
     brazoI.rotation.set(P.bIx, 0, P.bIz);
     brazoD.rotation.set(P.bDx, 0, P.bDz);
 
-    const mx = st.mirarX * 0.02 + st.leer * 0.03;
-    // Los ojos de luz son altos: medio cerrados todavía parecen abiertos, así que cierran más.
-    const cierraLuz = F.ojosLuz ? Math.min(1, P.ojoY * cierre * 1.25) : 1;
-    ojoI.scale.set(P.ojoS, P.ojoS * P.ojoY * cierre * P.guino * cierraLuz, P.ojoS);
-    ojoD.scale.set(P.ojoS, P.ojoS * P.ojoY * cierre * cierraLuz, P.ojoS);
-    ojoI.position.copy(enSuperficie(-F.ojoSep + mx, OJO_Y + P.ojoMY + st.mirarY * 0.015, ojoFuera));
-    ojoD.position.copy(enSuperficie(F.ojoSep + mx, OJO_Y + P.ojoMY + st.mirarY * 0.015, ojoFuera));
-    if (F.mejillas) for (const m of mejillas) (m.material as THREE.MeshBasicMaterial).opacity = P.mej;
-
-    bocaSonrisa.visible = o.boca === 'sonrisa';
-    bocaTriste.visible = o.boca === 'triste';
-    bocaAbierta.visible = o.boca === 'abierta';
-    bocaO.visible = o.boca === 'o';
-    bocaLinea.visible = o.boca === 'linea';
-    if (bocaAbierta.visible) {
-      // la boca sigue el audio de verdad; si nadie manda nivel (el teléfono a veces no), se mueve sola
-      const conAudio = performance.now() - lipTs < 350;
-      const amp = habla
-        ? conAudio
-          ? 0.25 + lip * 1.1
-          : 0.35 + Math.abs(Math.sin(t * 17) * Math.sin(t * 5.3)) * 0.9
-        : animo === 'canto'
-          ? 0.7 + Math.sin(t * 6) * 0.3
-          : 0.9;
-      bocaAbierta.scale.set(1, 0.7 * Math.min(1.3, amp), 0.35);
+    // La cara: la emoción de ahora, hacia dónde mira y lo que dice (rostro.ts).
+    const cara = rasgosDe(animo);
+    if (F.mejillas) cara.rasgos.rubor = Math.max(cara.rasgos.rubor, P.mej * 0.5);
+    if (st.gesto === 'teclear' || st.gesto === 'mirar-pantalla' || st.gesto === 'escribir' || st.gesto === 'sostener-doc') cara.rasgos.miraY = 0.55;
+    if (st.caminando) cara.rasgos.miraY = 0.1;
+    const conAudio = performance.now() - lipTs < 350;
+    rostro.avanzar(dt, cara, {
+      habla: habla || animo === 'canto',
+      nivel: lip,
+      conAudio,
+      mirarX: st.mirarX + st.leer * 0.6,
+      mirarY: -st.mirarY,
+      reducido,
+    });
+    // A 30 cuadros basta para la cara (y en el teléfono ahorra subir la textura en cada cuadro).
+    caraCada += dt;
+    if (caraCada >= 1 / 30) {
+      caraCada = 0;
+      caraTex.dibujar();
+    }
+    if (F.ojosLuz) {
+      const ar = rostro.estadoActual().rasgos;
+      luzCara.color.setRGB(ar.tono[0] / 255, ar.tono[1] / 255, ar.tono[2] / 255);
+      luzCara.intensity = 0.3 * ar.brillo;
+      matCara.emissiveIntensity = 0.7 + 0.25 * ar.brillo;
+      // Los audífonos: laten con la voz, respiran al escuchar, casi apagados dormida.
+      matAnilloOido.color.setRGB(ar.tono[0] / 255, ar.tono[1] / 255, ar.tono[2] / 255);
+      const voz = rostro.estadoActual().boca;
+      matAnilloOido.opacity = st.dormido ? 0.12 : animo === 'escuchando' ? 0.45 + Math.sin(t * 4) * 0.25 : 0.35 + voz * 0.6;
     }
 
     if (lapiz.visible) {
