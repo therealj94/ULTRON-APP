@@ -109,6 +109,8 @@ export type DepsGenesis = {
   emitirSesion: (u: { correo: string; nombre: string; rol: string }, o?: { comunidad?: boolean }) => { token: string };
   /** ¿Entra como miembro de la comunidad (fuera del padrón)? Su sesión lo lleva firmado (seguridad.sesionAbreAura). */
   deComunidad?: (correo: string) => boolean;
+  /** ¿La cuenta está suspendida? Una suspendida no entra por Genesis. */
+  suspendida?: (correo: string) => Promise<boolean>;
   /** Deja la solicitud de acceso para que la apruebe José. Devuelve false si no se pudo guardar. */
   pedirAcceso: (s: { nombre: string; correo: string; motivo: string }) => Promise<boolean>;
   /**
@@ -154,6 +156,10 @@ export function montarRutasGenesis(app: Express, d: DepsGenesis) {
       return res.status(v.estado).json({ ok: false, error: MENSAJE[v.codigo], codigo: v.codigo });
     }
     const correo = d.normalizarCorreo(v.correo);
+    // Una cuenta suspendida no entra por Genesis (con Genesis abierto entraba como miembro).
+    if (d.suspendida && (await d.suspendida(correo).catch(() => false))) {
+      return res.status(403).json({ ok: false, codigo: 'SUSPENDIDA', error: 'Esta cuenta está suspendida.' });
+    }
     if (!d.tieneAcceso(correo) && !genesisAbierto()) {
       const guardada = await d
         .pedirAcceso({

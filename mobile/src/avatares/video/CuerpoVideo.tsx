@@ -59,6 +59,8 @@ export const CuerpoVideo = forwardRef<ControlCuerpo, Props>(function CuerpoVideo
     return [(saludar && d.golpe('saluda')) || d.reproduccion, null];
   });
   const frente = useRef<0 | 1>(0);
+  const activoRef = useRef(activo);
+  activoRef.current = activo;
   const pendiente = useRef<0 | 1 | null>(null);
   const avisado = useRef(-1);
   const [visto, setVisto] = useState(false);
@@ -100,6 +102,13 @@ export const CuerpoVideo = forwardRef<ControlCuerpo, Props>(function CuerpoVideo
   const poner = useCallback(
     (r: Reproduccion | null) => {
       if (!r) return;
+      // Tapado no hay videos: el clip nuevo queda listo en la capa 0 para cuando vuelva.
+      if (!activoRef.current) {
+        frente.current = 0;
+        pendiente.current = null;
+        setCapas([r, null]);
+        return;
+      }
       const atras: 0 | 1 = frente.current === 0 ? 1 : 0;
       pendiente.current = atras;
       op[atras].value = 0;
@@ -111,12 +120,20 @@ export const CuerpoVideo = forwardRef<ControlCuerpo, Props>(function CuerpoVideo
   );
 
   // Tapado, los videos se desmontan; al volver, la capa de adelante aparece otra vez sobre el respaldo.
+  // Si lo taparon con un golpe a medias (un atajo que abre la llamada antes de que «señala» sonara), el
+  // guion se queda esperando un «terminó» que no va a llegar: se da por terminado y vuelve al fondo. Al
+  // volver arranca limpio desde la capa 0, sin avisos ni relojes viejos.
   useEffect(() => {
     if (activo) return;
+    const d = director.current!;
+    const r = d.reproduccion.bucle ? d.reproduccion : d.termino(d.reproduccion.n) ?? d.reproduccion;
     op0.value = 0;
     op1.value = 0;
     pendiente.current = null;
-    setCapas((c) => (frente.current === 0 ? [c[0], null] : [null, c[1]]));
+    esperaN.current = -1;
+    avisado.current = -1;
+    frente.current = 0;
+    setCapas([r, null]);
     setVisto(false);
   }, [activo, op0, op1]);
 

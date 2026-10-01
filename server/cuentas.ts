@@ -282,8 +282,10 @@ export async function cuentaDe(correo: string): Promise<Cuenta | null> {
  */
 export async function entrarConCuenta(correo: string, clave: string): Promise<'ok' | 'mal' | 'suspendida' | 'sin_clave'> {
   const [f] = await q(`SELECT clave_hash, estado FROM cuentas.cuenta WHERE correo = $1`, [correo]);
+  // La suspensión va ANTES que «sin clave»: una cuenta suspendida que nunca se puso clave caía al
+  // cerebro remoto, que la aceptaba, y volvía a entrar a AU-RA como miembro de la comunidad.
+  if (f?.estado === 'suspendida') return 'suspendida';
   if (!f?.clave_hash) return 'sin_clave';
-  if (f.estado === 'suspendida') return 'suspendida';
   return (await claveCoincide(clave, f.clave_hash)) ? 'ok' : 'mal';
 }
 
@@ -302,6 +304,12 @@ export async function fijarClave(correo: string, clave: string, nombre = ''): Pr
   );
   claveDesdePorCorreo.set(correo, desde);
   return desde;
+}
+
+/** ¿La cuenta de este correo está suspendida? (sin cuenta, no). */
+export async function cuentaSuspendida(correo: string): Promise<boolean> {
+  const [f] = await q(`SELECT estado FROM cuentas.cuenta WHERE correo = $1`, [correo]);
+  return f?.estado === 'suspendida';
 }
 
 /** ¿Este correo puede pedir un enlace de clave? Solo si está EXACTO en el padrón o tiene cuenta activa. */

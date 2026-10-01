@@ -172,6 +172,14 @@ test('hallazgo de Codex en #104: un correo fuera del padrón SIN sesión de comu
   assert.equal((await turno('/api/voz/agente', { avatar: 'aura' }, { 'x-ultron-sesion': token })).status, 401);
 });
 
+test('/api/ultron/sesion: una sesión que ya no abre la mesa no se presenta como viva (401)', async () => {
+  const sin = emitirSesion({ correo: 'sacada2.del.padron@ejemplo.org', nombre: 'Sacada', rol: 'Prueba' }).token;
+  assert.equal((await fetch(`${BASE}/api/ultron/sesion`, { headers: { 'x-ultron-sesion': sin } })).status, 401);
+  const r = await fetch(`${BASE}/api/ultron/sesion`, { headers: { 'x-ultron-sesion': sesion('aura.prueba@ordenglobal.org') } });
+  assert.equal(r.status, 200);
+  assert.equal(((await r.json()) as any).authenticated, true);
+});
+
 test('0.6 una sesión de Dr Electrum no abre la mesa de AU-RA', async () => {
   const deElectrum = { 'código temporal': sesion(`codigo-7${DOMINIO_CODIGO}`, 'Keidy'), 'persona solo de Electrum': sesion('ing.electrum@mina.hn', 'Ing. Electrum') };
   for (const [quien, token] of Object.entries(deElectrum)) {
@@ -185,7 +193,7 @@ test('0.6 una sesión de Dr Electrum no abre la mesa de AU-RA', async () => {
   }
 });
 
-test('0.4 un cuerpo grande sin sesión se corta con 413; con sesión, la ruta de la foto lo recibe', async () => {
+test('0.4 un cuerpo grande sin sesión se corta sin leerlo (401 en las rutas de archivos, para que la app renueve; 413 en las demás); con sesión, la ruta de la foto lo recibe', async () => {
   // ~2 MB de una «foto» en base64: más que el tope general, menos que el de la visión (3 MB).
   const foto = `data:image/jpeg;base64,${Buffer.alloc(1_500_000, 7).toString('base64')}`;
   const audio = `data:audio/m4a;base64,${Buffer.alloc(1_500_000, 7).toString('base64')}`;
@@ -193,8 +201,15 @@ test('0.4 un cuerpo grande sin sesión se corta con 413; con sesión, la ruta de
 
   for (const [ruta, cuerpo] of [['/api/vision/analyze', vision], ['/api/stt', { audioBase64: audio, mimeType: 'audio/m4a' }], ['/api/turno', { message: 'qué ves', image: foto }], ['/api/memoria', { hecho: 'x'.repeat(2_000_000) }]] as const) {
     const r = await turno(ruta, cuerpo);
-    assert.equal(r.status, 413, `${ruta}: sin sesión leyó un cuerpo de ${JSON.stringify(cuerpo).length} bytes`);
-    assert.match(((await r.json()) as any).error, /demasiado grande/);
+    if (ruta === '/api/memoria') {
+      assert.equal(r.status, 413, `${ruta}: sin sesión leyó un cuerpo de ${JSON.stringify(cuerpo).length} bytes`);
+      assert.match(((await r.json()) as any).error, /demasiado grande/);
+    } else {
+      // Ruta de foto o audio sin credencial: «sesión requerida», así el teléfono con el token vencido
+      // renueva y reintenta en vez de perder la foto con un 413. El cuerpo tampoco se lee.
+      assert.equal(r.status, 401, `${ruta}: sin sesión debía pedir sesión`);
+      assert.equal(((await r.json()) as any).code, 'sesion_requerida');
+    }
   }
 
   const h = { 'x-ultron-sesion': sesion('aura.prueba@ordenglobal.org') };
