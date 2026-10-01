@@ -3,7 +3,7 @@
 Estado: **FASE C EN CURSO · A/B parcheados · no production launch**
 Repo: `therealj94/ULTRON-APP`
 Cara/desk: Render `ultron-looi-desk` (`srv-dalojou1egvs73fb7lfg`)
-Cerebro: Ultron FP `https://ultron.ordenglobal.link` + Qwen 3.8 27B (g5) + manos Playwright/visión (`34.229.88.165:8787`)
+Cerebro: Ultron FP `https://ultron.ordenglobal.link` + Qwen 3.8 27B (g5) + manos Playwright/visión (`<ip-ojo>:8787`)
 Dueño: José · Orden Global
 Regla de oro: **la cara no razona, no inventa, no dice Qwen/Playwright/AWS si no lo llamó.**
 

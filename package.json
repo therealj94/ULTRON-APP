@@ -4,7 +4,7 @@
   "version": "4.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx server.ts",
+    "dev": "AURA_DEV=1 tsx server.ts",
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=build-server/server.cjs && esbuild scripts/electrum/importar-cubo.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=build-server/importar-cubo.cjs",
     "start": "node build-server/server.cjs",
     "preview": "vite preview",

@@ -4,7 +4,8 @@
  */
 export const SECRETOS_PUBLICOS = {
   mesa: import.meta.env?.VITE_MESA_URL || 'https://ultron-looi-desk.onrender.com',
-  qwenUrl: import.meta.env?.VITE_QWEN_URL || 'https://34.207.148.69:8443',
+  // Sin dirección por omisión: la del nodo no viaja en el JavaScript público (Fase 0.7).
+  qwenUrl: import.meta.env?.VITE_QWEN_URL || '',
 } as const;
 
 export function envServidor(nombre: string, fallback = ''): string {
