@@ -45,7 +45,7 @@ internal sealed class Conexion : IDisposable
     /// equipo; un socket propio, sin HttpListener, que en Windows pediría permisos de administrador).
     /// `abrir` es quién abre la URL (el navegador; en las pruebas, un cliente HTTP).
     /// </summary>
-    public static async Task<TokenOauth> Entrar(ProveedorConfig c, Func<string, Task>? abrir = null, CancellationToken ct = default)
+    public static async Task<TokenOauth> Entrar(ProveedorConfig c, Func<string, Task>? abrir = null, CancellationToken ct = default, Action<string>? alAbrir = null)
     {
         if (string.IsNullOrWhiteSpace(c.ClientId)) throw new InvalidOperationException($"Falta el Client ID de {c.Nombre} (Ajustes → Conexiones, o ponlo en el servidor).");
         var (verificador, reto) = Oauth.Pkce();
@@ -60,40 +60,59 @@ internal sealed class Conexion : IDisposable
             try
             {
                 var url = Oauth.UrlAutorizar(c, reto, estado);
+                alAbrir?.Invoke(url);
                 if (abrir != null) _ = abrir(url);
                 else Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
-                while (true)
+                // Los navegadores abren conexiones «de reserva» que no mandan nada: cada conexión se atiende
+                // aparte y con su propio límite, así una vacía nunca tapa la que trae la vuelta.
+                var vuelta = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+                async Task Atender(TcpClient cli)
                 {
-                    using var cli = await escucha.AcceptTcpClientAsync(limite.Token);
-                    using var st = cli.GetStream();
-                    st.ReadTimeout = 5000;
-                    var buf = new byte[8192]; int n = 0;
-                    while (n < buf.Length)
+                    using (cli)
+                    using (var propio = CancellationTokenSource.CreateLinkedTokenSource(limite.Token))
                     {
-                        int r = await st.ReadAsync(buf.AsMemory(n), limite.Token);
-                        if (r <= 0) break;
-                        n += r;
-                        if (Encoding.ASCII.GetString(buf, 0, n).Contains("\r\n\r\n")) break;
-                    }
-                    var linea = Encoding.ASCII.GetString(buf, 0, n).Split("\r\n")[0].Split(' ');
-                    if (linea.Length < 2 || !linea[1].StartsWith("/callback", StringComparison.Ordinal))
-                    {
-                        // favicon u otra cosa del navegador: no es la vuelta
-                        await Responder(st, 404, "", limite.Token);
-                        continue;
-                    }
-                    try
-                    {
-                        codigo = Oauth.CodigoDe(linea[1], estado);
-                        await Responder(st, 200, Pagina(true, $"{c.Nombre} quedó conectado"), limite.Token);
-                        break;
-                    }
-                    catch (InvalidOperationException ex)
-                    {
-                        await Responder(st, 400, Pagina(false, ex.Message), limite.Token);
-                        throw;
+                        propio.CancelAfter(TimeSpan.FromSeconds(10));
+                        try
+                        {
+                            var st = cli.GetStream();
+                            var buf = new byte[8192]; int n = 0;
+                            while (n < buf.Length)
+                            {
+                                int r = await st.ReadAsync(buf.AsMemory(n), propio.Token);
+                                if (r <= 0) break;
+                                n += r;
+                                if (Encoding.ASCII.GetString(buf, 0, n).Contains("\r\n\r\n")) break;
+                            }
+                            if (n == 0) return;
+                            var linea = Encoding.ASCII.GetString(buf, 0, n).Split("\r\n")[0].Split(' ');
+                            if (linea.Length < 2 || !linea[1].StartsWith("/callback", StringComparison.Ordinal))
+                            {
+                                // favicon u otra cosa del navegador: no es la vuelta
+                                await Responder(st, 404, "", propio.Token);
+                                return;
+                            }
+                            try
+                            {
+                                var cod = Oauth.CodigoDe(linea[1], estado);
+                                await Responder(st, 200, Pagina(true, $"{c.Nombre} quedó conectado"), propio.Token);
+                                vuelta.TrySetResult(cod);
+                            }
+                            catch (InvalidOperationException ex)
+                            {
+                                await Responder(st, 400, Pagina(false, ex.Message), propio.Token);
+                                vuelta.TrySetException(ex);
+                            }
+                        }
+                        catch (Exception ex) when (ex is OperationCanceledException or System.IO.IOException or SocketException) { }
                     }
                 }
+                _ = Task.Run(async () =>
+                {
+                    try { while (!vuelta.Task.IsCompleted) { var cli = await escucha.AcceptTcpClientAsync(limite.Token); _ = Atender(cli); } }
+                    catch (Exception ex) when (ex is OperationCanceledException or SocketException or ObjectDisposedException) { }
+                });
+                using (limite.Token.Register(() => vuelta.TrySetCanceled(limite.Token)))
+                    codigo = await vuelta.Task;
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {

@@ -16,14 +16,31 @@ export function vistaCartera(): HTMLElement {
         boton(T('Abrir Veta Wallet', 'Open Veta Wallet'), () => pedir('cartera.abrirWallet'), { icono: 'enlace', titulo: T('Para enviar o recibir, se hace en Veta Wallet con tu contraseña.', 'Send or receive in Veta Wallet.') }))),
     cuerpo);
 
+  let vigia: number | undefined;
+  const guardarDireccion = async (d: string) => {
+    try { await pedir('cartera.direccion', { direccion: d }); avisar(T('Listo, ya veo tu cartera.', 'Done, I can see your wallet.'), 'ok'); cargar(true); }
+    catch (e: any) { avisar(e.message, 'mal', 7000); }
+  };
+
   function formularioDireccion(actual = '') {
     const input = h('input', { type: 'text', value: actual, placeholder: '0x…', spellcheck: 'false', 'aria-label': T('Dirección de Veta Wallet', 'Veta Wallet address') }) as HTMLInputElement;
-    return tarjeta(T('Tu dirección', 'Your address'),
-      h('p', { class: 'nota' }, T('En Veta Wallet: Recibir → Copiar dirección. Es pública (como un número de cuenta para recibir): con ella solo se pueden VER saldos.', 'In Veta Wallet: Receive → Copy address. It’s public: it only lets AURA READ balances.')),
-      h('div', { class: 'fila' }, input, boton(T('Guardar', 'Save'), async () => {
-        try { await pedir('cartera.direccion', { direccion: input.value }); avisar(T('Listo, ya veo tu cartera.', 'Done.'), 'ok'); cargar(true); }
-        catch (e: any) { avisar(e.message, 'mal', 7000); }
-      }, { tipo: 'acento' })));
+    const paso = (n: string, t: string) => h('li', null, h('strong', null, n + ' '), t);
+    const tarj = tarjeta(T('Conecta tu cartera en 2 pasos', 'Connect your wallet in 2 steps'),
+      h('ol', { class: 'nota', style: 'line-height:1.9;padding-left:18px;margin:0 0 10px' },
+        paso('1.', T('Toca «Abrir Veta Wallet» (arriba) y entra como siempre.', 'Tap “Open Veta Wallet” and sign in.')),
+        paso('2.', T('Ve a Recibir → Copiar dirección. AURA la detecta sola en cuanto la copies; no tienes que pegar nada.', 'Go to Receive → Copy address. AURA picks it up automatically.'))),
+      h('p', { class: 'nota' }, T('La dirección es pública (como un número de cuenta para recibir): con ella AURA solo puede VER saldos, nunca mover dinero.', 'The address is public: AURA can only READ balances.')),
+      h('div', { class: 'fila' }, input, boton(T('Guardar', 'Save'), () => guardarDireccion(input.value), { tipo: 'acento' })));
+    // Mientras falta la dirección, se mira lo copiado cada poco: al copiarla en la wallet, queda puesta sola.
+    if (!actual) {
+      window.clearInterval(vigia);
+      vigia = window.setInterval(async () => {
+        if (!tarj.isConnected) { window.clearInterval(vigia); return; }
+        const d = await pedir<string>('cartera.portapapeles').catch(() => '');
+        if (d) { window.clearInterval(vigia); input.value = d; await guardarDireccion(d); }
+      }, 1500);
+    }
+    return tarj;
   }
 
   async function cargar(forzar = false) {

@@ -195,6 +195,19 @@ public partial class NotchWindow
     }
 
     /// <summary>«Dale a Guardar»: el control por su nombre, con UI Automation. Si suena a algo con efecto, primero pregunta.</summary>
+    /// <summary>
+    /// Una orden que pidió el cerebro («cierra spotify»): pasa por las MISMAS reglas que lo que tú dices, así
+    /// que solo puede hacer lo que AURA ya sabe hacer, con sus mismas confirmaciones. Nunca vuelve al cerebro.
+    /// </summary>
+    async Task HacerOrdenDelCerebro(string orden, bool hablado)
+    {
+        var p = Intencion.PorReglas(orden);
+        Centro.Registro.Anotar("cerebro-manos", $"{orden} → {p.Mano}");
+        if (p.Mano == Mano.Ninguna) return;
+        try { await Hacer(p, orden, false); }
+        catch (Exception ex) { NoPude(ex.Message); }
+    }
+
     async Task PulsarControl(string nombre)
     {
         var h = Pantalla.Objetivo(fuente?.Handle ?? IntPtr.Zero);
@@ -229,8 +242,8 @@ public partial class NotchWindow
             case "maximizar": Ventanas.Maximizar(h); Hecho(T("Maximizada", "Maximized"), titulo, "\uE737"); break;
             case "restaurar": Ventanas.Restaurar(h); Hecho(T("Restaurada", "Restored"), titulo, "\uE737"); break;
             case "cerrar":
-                Proponer(new Propuesta(T($"¿Cierro «{titulo}»?", $"Close “{titulo}”?"), T("Si hay algo sin guardar, la app te va a preguntar.", "If something isn't saved, the app will ask you."), DateTime.Now.AddSeconds(30),
-                    () => { Ventanas.Cerrar(h); Hecho(T("Cerrando ", "Closing ") + titulo, "", "\uE711"); return System.Threading.Tasks.Task.CompletedTask; }));
+                // De una: si hay algo sin guardar, la propia app pregunta.
+                Ventanas.Cerrar(h); Hecho(T("Cerrando ", "Closing ") + titulo, "", "\uE711");
                 break;
         }
     }

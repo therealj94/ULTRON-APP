@@ -51,6 +51,20 @@ internal static class ConexionesSelfTest
             if (tSp.Renovar != "SP-R1" || tG.Renovar != "G-R1") throw new Exception("sin refresh token");
             r["entrar"] = new[] { tSp.Cuenta, tG.Cuenta, tMs.Cuenta };
 
+            // 1b) Como Chrome/Edge: una conexión «de reserva» que no manda nada NO debe tapar la vuelta.
+            {
+                var tReserva = await Conexion.Entrar(sp, async url =>
+                {
+                    await Task.Delay(200);
+                    var vacia = new System.Net.Sockets.TcpClient();
+                    await vacia.ConnectAsync("127.0.0.1", 43821); // queda abierta y muda
+                    await Navegador(url);
+                    vacia.Dispose();
+                }, ct.Token);
+                if (tReserva.Renovar.Length == 0) throw new Exception("con conexión de reserva no volvió");
+                r["conexion_de_reserva"] = "ok";
+            }
+
             // 2) Un estado falso no entra (otra página no puede colarse en la vuelta).
             try
             {

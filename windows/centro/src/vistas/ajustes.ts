@@ -13,7 +13,7 @@ export function vistaAjustes(): HTMLElement {
   const secciones = [
     ['cuenta', T('Cuenta', 'Account')], ['avatar', T('Avatar e idioma', 'Avatar & language')], ['voz', T('Voz y escucha', 'Voice & listening')],
     ['conexiones', T('Conexiones', 'Connections')], ['avisos', T('Notificaciones', 'Notifications')], ['cuentas', T('Correo y agenda', 'Email & calendar')],
-    ['privacidad', T('Privacidad y diagnóstico', 'Privacy & diagnostics')], ['atajos', T('Atajos', 'Shortcuts')],
+    ['privacidad', T('Privacidad y diagnóstico', 'Privacy & diagnostics')], ['actualizar', T('Actualizaciones', 'Updates')], ['atajos', T('Atajos', 'Shortcuts')],
   ];
   const nav = h('div', { class: 'pastillas', style: 'margin-bottom:18px;position:sticky;top:-28px;background:var(--fondo);padding:10px 0;z-index:2' },
     ...secciones.map(([id, t]) => h('button', { class: 'pastilla', on: { click: () => document.getElementById('aj-' + id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }) } }, t)));
@@ -131,6 +131,27 @@ export function vistaAjustes(): HTMLElement {
         boton(T('Abrir carpeta', 'Open folder'), () => pedir('diagnostico.carpeta'), { tipo: 'fantasma', titulo: '%LOCALAPPDATA%\\AuraWindows' })),
       registro);
 
+    // ── Actualizaciones (por el aire) ──
+    const act: any = await pedir('actualizar.estado').catch(() => null);
+    const estadoAct = h('p', { class: 'nota', role: 'status' },
+      act?.lista ? T(`Hay una versión nueva lista (${act.nueva}).`, `A new version is ready (${act.nueva}).`) : T(`Tienes la versión ${act?.version ?? e.version}${act?.commit ? ' · ' + act.commit : ''}.`, `You have version ${act?.version ?? e.version}.`));
+    const instalar = boton(T('Actualizar ahora', 'Update now'), async () => { await pedir('actualizar.instalar'); }, { tipo: 'acento', icono: 'actualizar', titulo: T('Instala la versión nueva (ya verificada) y AURA vuelve sola en segundos', 'Installs the verified new version') });
+    if (!act?.lista) instalar.style.display = 'none';
+    const actualizar = seccion('actualizar', T('Actualizaciones', 'Updates'),
+      h('p', { class: 'nota' }, T('AURA se actualiza por internet desde el GitHub del proyecto: baja la versión nueva, comprueba que sea la original (SHA-256) y se instala en segundos, sin volver a descargar nada a mano.', 'AURA updates over the air from the project GitHub, verified by SHA-256.')),
+      interruptor(T('Instalar sola las versiones nuevas', 'Install new versions automatically'),
+        T('Cuando llevas 10 minutos sin usar la PC y no hay nada en curso. Si lo apagas, te avisa en el notch y tú eliges cuándo.', 'When the PC has been idle for 10 minutes. Off: the notch asks you.'),
+        !!aj.actualizarSolo, (v) => guardar({ actualizarSolo: v })),
+      estadoAct,
+      h('div', { class: 'fila', style: 'flex-wrap:wrap' },
+        boton(T('Buscar ahora', 'Check now'), async () => {
+          estadoAct.textContent = T('Buscando…', 'Checking…');
+          const r: any = await pedir('actualizar.buscar', null, 600_000).catch((x: any) => ({ error: x.message }));
+          estadoAct.textContent = r?.error ?? (r?.lista ? T(`Versión nueva lista (${r.nueva}).`, `New version ready (${r.nueva}).`) : T('Ya tienes la última versión.', 'You have the latest version.'));
+          instalar.style.display = r?.lista ? '' : 'none';
+        }, { titulo: T('Mira si hay una versión nueva y la baja', 'Checks for and downloads a new version') }),
+        instalar));
+
     // ── Atajos ──
     const tecla = (k: string, que: string) => h('div', { class: 'fila', style: 'justify-content:space-between;padding:6px 0;border-top:1px solid var(--linea)' }, h('span', null, que), h('span', { class: 'etiqueta' }, k));
     const atajos = seccion('atajos', T('Atajos', 'Shortcuts'),
@@ -138,7 +159,7 @@ export function vistaAjustes(): HTMLElement {
       tecla('Ctrl+Alt+W', T('Elegir la ventana donde escribirá', 'Pick the window to type into')), tecla('Ctrl+Alt+Esc', T('Pausar todo (micrófono, voz y acciones)', 'Pause everything')),
       h('p', { class: 'nota' }, T(`Versión ${e.version}`, `Version ${e.version}`)));
 
-    cuerpo.replaceChildren(cuenta, avatar, voz, conexiones, avisos, cuentas, privacidad, atajos);
+    cuerpo.replaceChildren(cuenta, avatar, voz, conexiones, avisos, cuentas, privacidad, actualizar, atajos);
   }
   pintar().catch((e) => cuerpo.replaceChildren(tarjeta(null, h('p', null, e.message))));
   al('estado', () => { if (vista.isConnected) pintar().catch(() => {}); });

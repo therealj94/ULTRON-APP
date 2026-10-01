@@ -12,9 +12,11 @@ public partial class NotchWindow
 {
     async Task HacerCartera(string valor)
     {
+        // Si la copiaste en Veta Wallet (Recibir → Copiar), AURA la toma sola.
+        if (!CarteraVeta.EsDireccion(ajustes.CarteraDireccion) && DireccionCopiada() is { } copiada) { ajustes.CarteraDireccion = copiada; GuardarAjustes(); AvisarEstadoCentro(); }
         if (!CarteraVeta.EsDireccion(ajustes.CarteraDireccion))
         {
-            NoPude(T("Todavía no conozco tu cartera. Abre el Centro → Cartera y pega tu dirección de Veta Wallet (solo para leer saldos).", "I don't know your wallet yet. Open the Center → Wallet and paste your Veta Wallet address (read-only)."));
+            NoPude(T("Todavía no conozco tu cartera. En Veta Wallet toca Recibir → Copiar dirección y pídemelo otra vez: la tomo sola.", "I don't know your wallet yet. Open the Center → Wallet and paste your Veta Wallet address (read-only)."));
             AbrirCentro("cartera");
             return;
         }
@@ -28,6 +30,18 @@ public partial class NotchWindow
             Hecho(valor == "todo" ? T("Tu cartera", "Your wallet") : valor, valor == "todo" ? $"≈ US$ {total:#,0.##}" : dicho, "", dicho, T("Ver", "View"), () => AbrirCentro("cartera"), 6);
         }
         catch (Exception ex) when (ex is InvalidOperationException or System.Net.Http.HttpRequestException or TaskCanceledException) { NoPude(ex.Message); }
+    }
+
+    /// <summary>Una dirección 0x… de 40 cifras en lo copiado (la dirección es pública: solo sirve para leer saldos).</summary>
+    static string? DireccionCopiada()
+    {
+        try
+        {
+            if (!System.Windows.Clipboard.ContainsText()) return null;
+            var m = System.Text.RegularExpressions.Regex.Match(System.Windows.Clipboard.GetText(), @"\b0x[0-9a-fA-F]{40}\b");
+            return m.Success && CarteraVeta.EsDireccion(m.Value) ? m.Value : null;
+        }
+        catch { return null; }
     }
 
     async Task<object?> ManejarCartera(string metodo, JsonElement a)
@@ -50,6 +64,7 @@ public partial class NotchWindow
                     actualizado = DateTime.Now.ToString("HH:mm"),
                 };
             }
+            case "cartera.portapapeles": return DireccionCopiada() ?? "";
             case "cartera.abrirWallet":
                 System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("https://app.vetawallet.com/") { UseShellExecute = true });
                 return true;
@@ -83,6 +98,25 @@ public partial class NotchWindow
                     var nombre = NombresAtajo.TryGetValue(arg, out var n) ? T(n.Es, n.En) : arg.Replace("+", " + ");
                     Hecho(nombre, "", ""); // sin voz: un atajo no necesita que AURA hable
                     break;
+                case "energia":
+                {
+                    var (titulo, args) = arg switch
+                    {
+                        "apagar" => (T("¿Apago la computadora?", "Shut down the PC?"), "/s /t 30"),
+                        "reiniciar" => (T("¿Reinicio la computadora?", "Restart the PC?"), "/r /t 30"),
+                        "salir" => (T("¿Cierro tu sesión de Windows?", "Sign out of Windows?"), "/l"),
+                        _ => (T("¿Suspendo la computadora?", "Put the PC to sleep?"), ""),
+                    };
+                    Proponer(new Propuesta(titulo, T("Guarda lo que tengas abierto antes de decir que sí.", "Save your work first."), DateTime.Now.AddSeconds(20), () =>
+                    {
+                        if (arg == "suspender") System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("rundll32.exe", "powrprof.dll,SetSuspendState 0,1,0") { UseShellExecute = false, CreateNoWindow = true });
+                        else System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("shutdown.exe", args) { UseShellExecute = false, CreateNoWindow = true });
+                        if (arg is "apagar" or "reiniciar") Avisar(new Aviso(T("En 30 segundos…", "In 30 seconds…"), T("Toca Cancelar para detenerlo.", "Tap Cancel to stop it."), "", "worried", T("Cancelar", "Cancel"),
+                            () => System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("shutdown.exe", "/a") { UseShellExecute = false, CreateNoWindow = true }), 28));
+                        return Task.CompletedTask;
+                    }));
+                    break;
+                }
                 case "config":
                     Manos.Teclado.Configuracion(arg);
                     Hecho(T("Configuración de Windows", "Windows Settings"), arg, "");

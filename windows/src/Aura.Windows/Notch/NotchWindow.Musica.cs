@@ -104,6 +104,21 @@ public partial class NotchWindow
             Contestar(dicho, "feliz");
             return;
         }
+        if (partes[0] == "reanudar")
+        {
+            // Lo que estaba sonando sigue; si no había nada, Spotify se abre y retoma lo último.
+            if (cancion is { Titulo.Length: > 0 }) { if (!await musica.PlayPausa()) Escritorio.PlayPausa(); HechoMusica(T("Música", "Music"), 4); return; }
+            if (Aplicaciones.Buscar("spotify", 80) is { } sp)
+            {
+                Aplicaciones.Abrir(sp);
+                await Task.Delay(3500);
+                Escritorio.PlayPausa();
+                Hecho(T("Spotify", "Spotify"), T("Retomando tu música", "Resuming your music"), "\uE8D6");
+                return;
+            }
+            NoPude(T("No hay música para retomar. Dime qué quieres oír: «pon Bad Bunny».", "Nothing to resume. Tell me what to play."));
+            return;
+        }
         var q = partes.Length > 1 ? partes[1] : "";
         var spotify = Conectada(Proveedor.Spotify);
         var google = Conectada(Proveedor.Google);
@@ -150,6 +165,17 @@ public partial class NotchWindow
                 AgregarMensaje(ajustes.NombreAvatar, "YouTube: " + ex.Message);
             }
             pensando = false;
+        }
+        // Spotify de escritorio sin cuenta conectada: busca y le da play él mismo al primer resultado.
+        if (donde == "spotify" && q.Length > 0 && Aplicaciones.Buscar("spotify", 80) != null)
+        {
+            pensando = true; TextoPiensa.Text = T("Poniéndolo en Spotify…", "Putting it on in Spotify…"); Recalcular();
+            string? puesto = null;
+            try { puesto = await Musica.PonerEnEscritorio(q, Ingles); } catch (Exception ex) { Centro.Registro.Anotar("spotify", ex.Message); }
+            pensando = false;
+            if (puesto != null) { Hecho(T("Sonando en Spotify", "Playing on Spotify"), puesto, "\uE8D6", T($"Listo, suena {puesto}.", $"Playing {puesto}.")); return; }
+            Hecho(T("Spotify", "Spotify"), q, "\uE8D6", T($"Te dejé {q} buscado en Spotify; toca play en el primero.", $"I searched {q} in Spotify; hit play on the first one."));
+            return;
         }
         var app = await Task.Run(() => Musica.Buscar(donde, q));
         Hecho(T("Buscando en ", "Searching ") + app, q, "", T($"Te busco {q} en {app}. Dale play a la que quieras.", $"Looking up {q} on {app}. Hit play on the one you want."));

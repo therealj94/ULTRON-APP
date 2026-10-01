@@ -138,7 +138,8 @@ Check(R("abre la pestaña Insertar") is { Mano: Mano.Pulsar, Valor: "Insertar" }
 Check(R("haz clic en el botón Aceptar") is { Mano: Mano.Pulsar, Valor: "Aceptar" }, "clic boton");
 Check(R("click the Save button") is { Mano: Mano.Pulsar } pz && pz.Valor.Equals("save", StringComparison.OrdinalIgnoreCase), "click en");
 Check(R("qué botones hay") is { Mano: Mano.QueHay }, "que hay");
-Check(R("cierra esta ventana") is { Mano: Mano.Ventana, Valor: "cerrar|", PideConfirmacion: true }, "cerrar ventana confirma");
+Check(R("cierra esta ventana") is { Mano: Mano.Ventana, Valor: "cerrar|", PideConfirmacion: false }, "cerrar una ventana va de una");
+Check(R("ciérrala") is { Mano: Mano.Ventana, Valor: "cerrar|" } && R("cierra chrome") is { Valor: "cerrar|chrome", PideConfirmacion: false } && R("cierra todo") is { PideConfirmacion: true }, "ciérrala y cerrar todo confirma");
 Check(R("cierra word") is { Mano: Mano.Ventana, Valor: "cerrar|word" }, "cerrar app");
 Check(R("minimiza esta ventana") is { Mano: Mano.Ventana, Valor: "minimizar|" }, "minimizar");
 Check(R("cambia a chrome") is { Mano: Mano.Ventana, Valor: "cambiar|chrome", PideConfirmacion: false }, "cambiar ventana");
@@ -330,6 +331,33 @@ Check(Parametros.QuitarNombre("Hey Claudio what time is it", out var resto3) && 
 Check(!Parametros.QuitarNombre("la aurora boreal es bonita", out _) && !Parametros.QuitarNombre("mañana voy a Laura", out _), "no despierta con otra cosa");
 Check(R("deja de escucharme") is { Mano: Mano.Dormir } && R("apágate") is { Mano: Mano.Dormir } && R("stop listening") is { Mano: Mano.Dormir } && R("silénciate") is { Mano: Mano.Dormir }, "dormir");
 Check(R("cállate") is { Mano: Mano.Callar } && R("silencia la computadora") is { Mano: Mano.Silenciar }, "callar y mute siguen igual");
+
+// Lo que el transcriptor inventa en el ruido y el eco de AURA no se atienden
+Check(Fantasma.Es("¡Hasta la próxima!") && Fantasma.Es("Espera un momentito.") && Fantasma.Es("Gracias por ver el video") && Fantasma.Es("Subtítulos realizados por la comunidad de Amara.org"), "fantasmas del transcriptor");
+Check(Fantasma.Es("claro que sí, te lo abro", "¡Claro que sí, te lo abro ahora mismo!"), "eco de lo que dijo AURA");
+Check(!Fantasma.Es("abre el bloc de notas") && !Fantasma.Es("hasta qué hora abre el banco") && !Fantasma.Es("gracias, ahora pon música", null), "lo real sí pasa");
+
+// Las manos que pide el cerebro: la marca no se ve ni se dice, aunque llegue partida
+{
+    var fa = new FiltroAcciones(); var hechas = new List<string>();
+    var vis = fa.Agregar("Listo, la cierro. ⟦ha", o => hechas.Add(o)) + fa.Agregar("cer: cierra spo", o => hechas.Add(o)) + fa.Agregar("tify⟧ ¡ya!", o => hechas.Add(o));
+    Check(vis == "Listo, la cierro.  ¡ya!" && hechas.Count == 1 && hechas[0] == "cierra spotify", "marca partida: " + vis + " / " + string.Join(",", hechas));
+    Check(FiltroAcciones.Quitar("Va. ⟦hacer: pon bad bunny en spotify⟧") == "Va." && new FiltroAcciones().Agregar("⟦cualquier cosa⟧ hola") == " hola", "quitar marca y marca sin hacer");
+    Check(R(new FiltroAcciones() is { } f2 && f2.Agregar("⟦hacer: cierra chrome⟧") == "" ? f2.Ordenes[0] : "") is { Mano: Mano.Ventana, Valor: "cerrar|chrome" }, "la orden del cerebro la ejecutan las reglas");
+}
+
+Check(R("escribe hola") is { Mano: Mano.Escribir, Valor: "hola" } && R("teclea: nos vemos mañana") is { Mano: Mano.Escribir }, "escribir directo: " + R("escribe hola"));
+Check(R("escribe un correo a Juan sobre la junta").Mano != Mano.Escribir && R("write an email to my boss").Mano != Mano.Escribir, "redactar no es teclear");
+
+// Revisión de Laya ligera con frases reales
+Check(await Intencion.Decidir("pon bad bunny") is { Mano: Mano.Musica, Valor: "buscar|bad bunny" }, "pon bad bunny lo pone: " + await Intencion.Decidir("pon bad bunny"));
+Check(R("pon música") is { Mano: Mano.Musica, Valor: "reanudar|" } && R("reproduce algo de música") is { Valor: "reanudar|" }, "pon música retoma");
+Check(R("pausa") is { Mano: Mano.MultimediaPausa } && R("pausa todo") is { Mano: Mano.Pausa }, "pausa sola es la música; pausa todo es todo");
+Check(await Intencion.Decidir("necesito la calculadora") is { Mano: Mano.AbrirApp, Valor: "calculadora" }, "necesito la calculadora: " + await Intencion.Decidir("necesito la calculadora"));
+Check(R("activa el bluetooth") is { Mano: Mano.Atajo, Valor: "config|bluetooth" } && R("apaga el wifi") is { Valor: "config|network-wifi" }, "bluetooth y wifi");
+Check(R("apaga la computadora") is { Mano: Mano.Atajo, Valor: "energia|apagar" } && R("reinicia la compu") is { Valor: "energia|reiniciar" } && R("cierra sesión") is { Valor: "energia|salir" }, "energía: " + R("cierra sesión"));
+Check(R("apaga el micrófono") is { Mano: Mano.Dormir } && R("duerme").Mano != Mano.Atajo && R("apágate") is { Mano: Mano.Dormir }, "apagar el mic no apaga la PC");
+Check(R("pon la alarma a las 7").Mano != Mano.Musica && R("pon el volumen al 50").Mano != Mano.Musica, "pon X que no es música");
 
 // La ligera nunca cambia de avatar, captura, bloquea… por su cuenta (sin reglas ni nodo).
 foreach (var f in new[] { "quién es mejor, claudio o antonio", "cómo se hace una captura de pantalla en windows", "ayer me dijiste que bloqueara la compu" })
