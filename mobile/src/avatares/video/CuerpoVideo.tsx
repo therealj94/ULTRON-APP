@@ -43,6 +43,8 @@ type Props = {
   activo?: boolean;
   /** Saluda al aparecer en la pantalla. */
   saludar?: boolean;
+  /** El video no se pudo usar: quien lo monta puede pasar a otro cuerpo (el 3D) en vez de las fotos. */
+  onFallo?: () => void;
 };
 
 /** Lo que falló en esta sesión no se vuelve a intentar (se queda con las fotos). */
@@ -73,7 +75,7 @@ function archivoDe(mod: number): Promise<string> {
   return p;
 }
 
-export const CuerpoVideo = forwardRef<ControlCuerpo, Props>(function CuerpoVideo({ avatar, camara, estado, ancho, alto, respaldo, activo = true, saludar = false }, ref) {
+export const CuerpoVideo = forwardRef<ControlCuerpo, Props>(function CuerpoVideo({ avatar, camara, estado, ancho, alto, respaldo, activo = true, saludar = false, onFallo }, ref) {
   const clips = CLIPS[avatar];
   /** Los clips de este avatar ya copiados a archivo (null mientras se preparan: se ven las fotos). */
   const [uris, setUris] = useState<Partial<Record<ClipVideo, string>> | null>(null);
@@ -93,9 +95,16 @@ export const CuerpoVideo = forwardRef<ControlCuerpo, Props>(function CuerpoVideo
   const avisado = useRef(-1);
   const [visto, setVisto] = useState(false);
   const [roto, setRoto] = useState(videoRoto);
+  const onFalloRef = useRef(onFallo);
+  onFalloRef.current = onFallo;
   useEffect(() => {
     setUris(null);
-    if (!clips || videoRoto) return;
+    if (!clips) return;
+    if (videoRoto) {
+      // Ya falló antes en esta sesión: que quien lo monta pase directo a su otro cuerpo.
+      onFalloRef.current?.();
+      return;
+    }
     let vivo = true;
     void Promise.all(CLIPS_VIDEO.filter((c) => clips[c] != null).map(async (c) => [c, await archivoDe(clips[c])] as const))
       .then((pares) => vivo && setUris(Object.fromEntries(pares)))
@@ -104,6 +113,7 @@ export const CuerpoVideo = forwardRef<ControlCuerpo, Props>(function CuerpoVideo
         videoRoto = true;
         miga(`avatar en video: no pude preparar los clips (${String(e?.message || e).slice(0, 80)})`);
         setRoto(true);
+        onFalloRef.current?.();
       });
     return () => {
       vivo = false;
@@ -208,8 +218,9 @@ export const CuerpoVideo = forwardRef<ControlCuerpo, Props>(function CuerpoVideo
 
   const alFallar = useCallback((e: string) => {
     videoRoto = true;
-    miga(`avatar en video: vuelve a las fotos (${String(e).slice(0, 80)})`);
+    miga(`avatar en video: no se pudo reproducir (${String(e).slice(0, 80)})`);
     setRoto(true);
+    onFalloRef.current?.();
   }, []);
 
   const encuadre = useMemo(() => encuadrar(ancho, alto, VENTANAS[avatar][camara]), [ancho, alto, avatar, camara]);
