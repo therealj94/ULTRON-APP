@@ -220,7 +220,7 @@ public partial class NotchWindow
         // Sin conversación ni llamada explícita, una frase larguísima (la tele, una charla al lado) no se manda a transcribir:
         // «Oye AURA, …» cabe en 12 segundos.
         bool esperandoNombre = ajustes.Escucha is "siempre" or "palabra" && !llamadaExplicita && propuesta == null
-                               && DateTime.Now - ultimaCharla > (ajustes.Escucha == "siempre" ? TimeSpan.FromMinutes(2) : TimeSpan.FromSeconds(45));
+                               && DateTime.Now - ultimaCharla > (ajustes.Escucha == "siempre" ? TimeSpan.FromMinutes(3) : TimeSpan.FromSeconds(90));
         if (esperandoNombre && !eraInterrupcion && wav.Length > 44 + 12 * 32000)
         {
             if (!microSilenciado && !pausado) EmpezarAEscuchar();
@@ -258,7 +258,7 @@ public partial class NotchWindow
         }
         // Sin conversación en curso, solo se atiende lo que empieza por su nombre: «Oye AURA, abre Excel»
         // (en una frase) o «Oye AURA» sola (contesta «¿sí?» y escucha). En conversación, todo cuenta.
-        bool enCharla = DateTime.Now - ultimaCharla < (ajustes.Escucha == "siempre" ? TimeSpan.FromMinutes(2) : TimeSpan.FromSeconds(45));
+        bool enCharla = DateTime.Now - ultimaCharla < (ajustes.Escucha == "siempre" ? TimeSpan.FromMinutes(3) : TimeSpan.FromSeconds(90));
         if (ajustes.Escucha is "siempre" or "palabra" && !eraInterrupcion && propuesta == null && !llamadaExplicita)
         {
             if (Parametros.QuitarNombre(texto, out var resto))
@@ -287,6 +287,14 @@ public partial class NotchWindow
         llamadaExplicita = false;
         ultimaCharla = DateTime.Now;
         await Procesar(texto, true);
+    }
+
+    /// <summary>Un turno al hilo de la conversación (los últimos 8 intercambios viajan al cerebro).</summary>
+    void Recordar(string dicho, string respuesta)
+    {
+        historial.Add(new Turno("usuario", dicho));
+        historial.Add(new Turno("ultron", respuesta));
+        while (historial.Count > 24) historial.RemoveRange(0, 2);
     }
 
     /// <summary>El oído del servidor (Whisper/Scribe) o, sin él, el dictado de Windows. Si se eligió, siempre el de Windows.</summary>
@@ -362,7 +370,14 @@ public partial class NotchWindow
         catch { pedido = Pedido.Nada; }
         Centro.Registro.Anotar("entender", $"{cronoTurno.ElapsedMilliseconds - antesDeEntender} ms · {pedido.Mano} ({pedido.Origen})");
         if (g != generacion) return;
-        if (pedido.Mano != Mano.Ninguna) { await Hacer(pedido, texto, hablado); return; }
+        if (pedido.Mano != Mano.Ninguna)
+        {
+            await Hacer(pedido, texto, hablado);
+            // Lo que hizo con las manos también es parte de la charla: si después dices «súbele» o «otra de él»,
+            // el cerebro sabe de qué hablan.
+            Recordar(texto, T($"[Hecho en la PC: {pedido.Mano} {pedido.Valor}]", $"[Done on the PC: {pedido.Mano} {pedido.Valor}]"));
+            return;
+        }
         if (await PreguntarArchivo(texto, hablado)) return;
         await Conversar(texto, hablado);
     }
@@ -446,9 +461,7 @@ public partial class NotchWindow
         // Nunca una burbuja vacía: si no llegó nada, se quita.
         if (burbuja != null && string.IsNullOrWhiteSpace(burbuja.Text)) QuitarBurbuja(burbuja);
         ultimaRespuesta = r.Texto;
-        historial.Add(new Turno("usuario", texto));
-        historial.Add(new Turno("ultron", r.Texto.Length > 4000 ? r.Texto[..4000] : r.Texto));
-        while (historial.Count > 20) historial.RemoveRange(0, 2);
+        Recordar(texto, r.Texto.Length > 4000 ? r.Texto[..4000] : r.Texto);
         emocionActual = r.Emocion;
         // Con voz, el altavoz decide cuándo termina (Empezo/Termino): así el notch no parpadea entre piensa y habla.
         // Si ya terminó de sonar todo antes de que el cerebro cerrara el turno, se cierra aquí.

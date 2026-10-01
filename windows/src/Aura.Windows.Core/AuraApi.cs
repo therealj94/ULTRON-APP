@@ -195,7 +195,7 @@ public sealed class AuraApi : IDisposable
         var cuerpo = new Dictionary<string, object?>
         {
             ["message"] = mensaje, ["mode"] = "CONOCER", ["usuario"] = usuario,
-            ["historial"] = historial.TakeLast(10).Select(h => new { rol = h.Rol, texto = h.Texto }).ToArray(),
+            ["historial"] = historial.TakeLast(16).Select(h => new { rol = h.Rol, texto = h.Texto }).ToArray(),
             ["memoria"] = Array.Empty<string>(), ["avatar"] = avatar, ["idioma"] = idioma,
         };
         if (hablado) cuerpo["hablado"] = true;
