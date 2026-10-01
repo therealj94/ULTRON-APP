@@ -7,6 +7,7 @@
  *  · 0.4: el tope general del cuerpo es 1 MB; solo las rutas de foto/PDF/audio suben a 12 MB, y solo
  *         con credencial.
  *  · 0.6: una sesión de Dr Electrum (código temporal o persona solo de Electrum) no abre la mesa.
+ *  · 0.10: la visión no le enseña a nadie la dirección del ojo.
  */
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
@@ -49,6 +50,12 @@ const nodo = http.createServer((req, res) => {
   });
 });
 
+/** El ojo (nodo de visión), de mentira: contesta lo que ve. Su dirección no debe salir en las respuestas. */
+const ojo = http.createServer((req, res) => {
+  req.resume();
+  req.on('end', () => res.setHeader('Content-Type', 'application/json').end(JSON.stringify({ texto: 'Una mesa con papeles.', playwright: true, vision: true })));
+});
+
 const PADRON = ['aura | Persona Aura | aura.prueba@ordenglobal.org | | ultron=lee', 'solo-electrum | Ing. Electrum | ing.electrum@mina.hn | | electrum=escribe'].join('\n');
 const sesion = (correo: string, nombre = 'Prueba') => emitirSesion({ correo, nombre, rol: 'Prueba' }).token;
 /** Una pregunta de verdad (no un saludo): la contesta el 27B, no la charla rápida. */
@@ -60,6 +67,7 @@ let errores = '';
 
 before(async () => {
   await new Promise<void>((r) => nodo.listen(0, '127.0.0.1', r));
+  await new Promise<void>((r) => ojo.listen(0, '127.0.0.1', r));
   proc = spawn(process.execPath, ['--import', import.meta.resolve('tsx'), path.join(RAIZ, 'server.ts')], {
     // En una carpeta aparte: lo que el servidor escriba en data/ (memorias, sesiones) no toca el repo.
     cwd: tmp,
@@ -76,6 +84,8 @@ before(async () => {
       ULTRON_PADRON: PADRON,
       ULTRON_NODO_URL: `http://127.0.0.1:${(nodo.address() as AddressInfo).port}`,
       ULTRON_NODO_SECRETO: 'prueba',
+      ULTRON_OJO_URL: `http://127.0.0.1:${(ojo.address() as AddressInfo).port}`,
+      ULTRON_OJO_CLAVE: 'clave-del-ojo-de-prueba',
     },
     stdio: ['ignore', 'ignore', 'pipe'],
     detached: true,
@@ -98,8 +108,10 @@ after(() => {
   } catch {
     /* ya se fue */
   }
-  nodo.closeAllConnections?.();
-  nodo.close();
+  for (const s of [nodo, ojo]) {
+    s.closeAllConnections?.();
+    s.close();
+  }
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
@@ -176,15 +188,17 @@ test('0.4 un cuerpo grande sin sesión se corta con 413; con sesión, la ruta de
   }
 
   const h = { 'x-ultron-sesion': sesion('aura.prueba@ordenglobal.org') };
-  // Con sesión la visión lo lee y lo intenta ver (aquí no hay ojo ni Gemini: 503 de la ruta, no 413).
+  // Con sesión la visión lo lee y se lo pasa al ojo.
   const v = await turno('/api/vision/analyze', vision, h);
-  assert.notEqual(v.status, 413);
-  assert.ok('via' in ((await v.json()) as any), 'contestó la ruta de la visión');
+  assert.equal(v.status, 200);
+  const jv = (await v.json()) as any;
+  assert.equal(jv.summary, 'Una mesa con papeles.');
+  assert.doesNotMatch(String(jv.via), /https?:|127\.0\.0\.1|:\d+/, '0.10: la respuesta no enseña la dirección del ojo');
   const o = await turno('/api/stt', { audioBase64: audio, mimeType: 'audio/m4a' }, h);
   assert.notEqual(o.status, 413);
   assert.ok('via' in ((await o.json()) as any), 'contestó la ruta del oído');
   // Una ruta que no lleva archivos sigue con el tope general aunque haya sesión.
   assert.equal((await turno('/api/memoria', { hecho: 'x'.repeat(2_000_000) }, h)).status, 413);
-  // Y lo normal, chico, pasa como siempre.
-  assert.notEqual((await turno('/api/vision/analyze', { ...vision, base64Data: 'data:image/jpeg;base64,AAAA' })).status, 413);
+  // Y lo normal, chico, pasa como siempre (también sin sesión: la APK pide etiquetas de la mesa).
+  assert.equal((await turno('/api/vision/analyze', { ...vision, base64Data: 'data:image/jpeg;base64,AAAA' })).status, 200);
 });

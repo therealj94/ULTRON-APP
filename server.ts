@@ -1750,9 +1750,10 @@ app.post('/api/vision/analyze', exigirMesaODesk, limitar(20), async (req, res) =
   if (vistaFallida(vista)) {
     // El porqué (cuota, llave, nodo dormido) ya quedó en el registro; al teléfono, una frase humana.
     console.error(`[AU-RA] /vision/analyze falló (${vista.via}) con ${String(base64Data).length} car.`);
-    return res.status(503).json({ error: `${NO_PUDE_VER} Inténtalo de nuevo en un momento.`, via: vista.via, honesto: true });
+    // `via` sin la dirección del ojo (Fase 0.10): vista.via puede ser «http://<ip-ojo>:8787/ver», y esta ruta contesta sin sesión.
+    return res.status(503).json({ error: `${NO_PUDE_VER} Inténtalo de nuevo en un momento.`, via: ojoQueLeyo(vista.via), honesto: true });
   }
-  return res.json({ success: true, summary: vista.texto, via: vista.via, honesto: true });
+  return res.json({ success: true, summary: vista.texto, via: ojoQueLeyo(vista.via), honesto: true });
 });
 
 
