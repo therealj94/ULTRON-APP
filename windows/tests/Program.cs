@@ -370,5 +370,65 @@ foreach (var f in new[] { "quién es mejor, claudio o antonio", "cómo se hace u
     var d = await Intencion.Decidir(f, null);
     Check(!Intencion.SoloReglasONodo.Contains(d.Mano), "ligera no decide sola: " + f + " → " + d);
 }
+// El oído: el ruido constante del cuarto deja de ser «voz»; la voz de verdad sigue entrando.
+{
+    var rnd = new Random(7);
+    var det = new DetectorVoz();
+    int nFrases = 0, ruidos = 0;
+    // 60 s de ventilador fuerte (RMS ~0.03, por encima del umbral mínimo desde el arranque).
+    for (int i = 0; i < 3000; i++)
+    {
+        var e = det.Bloque(0.03 + (rnd.NextDouble() - 0.5) * 0.004);
+        if (e == EventoVoz.Fin) nFrases++;
+        if (e == EventoVoz.Ruido) ruidos++;
+    }
+    Check(nFrases == 0 && ruidos <= 1, $"ruido constante: ni una frase al transcriptor (frases {nFrases}, ruidos {ruidos})");
+    Check(!det.Hablando && det.Umbral() > 0.03, $"al final el ruido ya no cuenta como voz (umbral {det.Umbral():0.000})");
+    // Con ese ruido de fondo, una frase de 2 s con sílabas y una pausa al final sí entra.
+    var fin = EventoVoz.Nada; bool empezo = false;
+    for (int i = 0; i < 100; i++) { var e = det.Bloque(i % 10 < 7 ? 0.16 : 0.07); empezo |= e == EventoVoz.Empezo; }
+    for (int i = 0; i < 60 && fin == EventoVoz.Nada; i++) fin = det.Bloque(0.03);
+    Check(empezo && fin == EventoVoz.Fin, "la voz sobre el ruido sí entra y termina con la pausa");
+
+    // Cuarto callado: una frase normal de 3 s no sube el umbral a sí misma y termina en la pausa.
+    var q = new DetectorVoz();
+    for (int i = 0; i < 200; i++) q.Bloque(0.003);
+    var ev = new List<EventoVoz>();
+    for (int i = 0; i < 150; i++) ev.Add(q.Bloque(i % 12 < 9 ? 0.05 : 0.02));
+    for (int i = 0; i < 50; i++) ev.Add(q.Bloque(0.003));
+    Check(ev.Count(x => x == EventoVoz.Empezo) == 1 && ev.Count(x => x == EventoVoz.Fin) == 1 && !ev.Contains(EventoVoz.Ruido), "una frase normal, una sola vez: " + string.Join(",", ev.Where(x => x != EventoVoz.Nada)));
+}
+// La conversación en vivo (Fase 1): el protocolo del agente, el canal y lo ya hecho.
+{
+    var ini = System.Text.Json.JsonDocument.Parse(AgenteProtocolo.Inicio("pase-1")).RootElement;
+    Check(ini.GetProperty("type").GetString() == "conversation_initiation_client_data" && ini.GetProperty("dynamic_variables").GetProperty("pase").GetString() == "pase-1", "inicio con el pase como variable");
+    Check(AgenteProtocolo.Audio(new byte[] { 1, 2, 3 }) == "{\"user_audio_chunk\":\"AQID\"}" && AgenteProtocolo.Pong(7) == "{\"type\":\"pong\",\"event_id\":7}", "audio y pong");
+    var hola = AgenteProtocolo.Leer("{\"type\":\"conversation_initiation_metadata\",\"conversation_initiation_metadata_event\":{\"conversation_id\":\"c1\",\"agent_output_audio_format\":\"pcm_22050\",\"user_input_audio_format\":\"pcm_16000\"}}");
+    Check(hola is AgenteListo { ConversacionId: "c1", Salida.Muestreo: 22050, Salida.Ulaw: false, Entrada.Muestreo: 16000 }, "formatos del agente: " + hola);
+    Check(AgenteProtocolo.Leer("{\"type\":\"audio\",\"audio_event\":{\"audio_base_64\":\"AQI=\",\"event_id\":4}}") is AgenteAudio { EventoId: 4, Pcm.Length: 2 }, "audio pcm");
+    Check(AgenteProtocolo.Leer("{\"type\":\"audio\",\"audio_event\":{\"audio_base_64\":\"/w==\",\"event_id\":1}}", new FormatoAudio(8000, true)) is AgenteAudio { Pcm.Length: 2 } a8 && a8.Pcm[0] == 0 && a8.Pcm[1] == 0, "μ-law 0xFF es silencio");
+    Check(AgenteProtocolo.Leer("{\"type\":\"user_transcript\",\"user_transcription_event\":{\"user_transcript\":\" pon bachata \"}}") is AgenteTuDijiste { Texto: "pon bachata" }, "lo que dijiste");
+    Check(AgenteProtocolo.Leer("{\"type\":\"agent_response\",\"agent_response_event\":{\"agent_response\":\"Va.\"}}") is AgenteRespuesta { Texto: "Va." }, "lo que dice");
+    Check(AgenteProtocolo.Leer("{\"type\":\"agent_response_correction\",\"agent_response_correction_event\":{\"original_agent_response\":\"Va, te cuento todo\",\"corrected_agent_response\":\"Va, te\"}}") is AgenteRespuesta { Texto: "Va, te" }, "lo que alcanzó a decir");
+    Check(AgenteProtocolo.Leer("{\"type\":\"interruption\",\"interruption_event\":{\"event_id\":9}}") is AgenteInterrumpido { EventoId: 9 }, "interrupción");
+    Check(AgenteProtocolo.Leer("{\"type\":\"ping\",\"ping_event\":{\"event_id\":3,\"ping_ms\":40}}") is AgentePing { EventoId: 3, Ms: 40 }, "ping");
+    Check(AgenteProtocolo.Leer("{\"type\":\"vad_score\"}") == null && AgenteProtocolo.Leer("no es json") == null && AgenteProtocolo.Leer("{\"type\":\"audio\",\"audio_event\":{\"audio_base_64\":\"%%%\"}}") == null, "lo demás se ignora sin romper");
+    Check(FormatoAudio.Leer("ulaw_8000") is { Muestreo: 8000, Ulaw: true } && FormatoAudio.Leer("raro") == FormatoAudio.Pcm16k, "formatos");
+
+    var sseCanal = ": canal abierto\n\nid: a1\ndata: {\"id\":\"a1\",\"accion\":{\"tipo\":\"atras\"}}\n\nevent: ambiente\ndata: {\"sonido\":null}\n\nevent: pc\ndata: {\"id\":\"p1\",\"orden\":\"cierra spotify\",\"dicho\":\"ciérrame Spotify\"}\n\n: latido\n\nevent: pc\ndata: {\"id\":\"p2\",\"orden\":\"x\"}\n\n";
+    var llegaron = new List<OrdenPc>();
+    await CanalPc.Leer(new StringReader(sseCanal), llegaron.Add, CancellationToken.None);
+    Check(llegaron.Count == 1 && llegaron[0] is { Id: "p1", Orden: "cierra spotify", Dicho: "ciérrame Spotify" }, "del canal solo las órdenes de la PC: " + string.Join(";", llegaron));
+
+    var reloj = new Clock();
+    var hechas = new HechasRecientes(reloj);
+    var local = Intencion.PorReglas("abre la calculadora");
+    hechas.Anotar(local);
+    Check(hechas.Repetida(Intencion.PorReglas("abre la calculadora"), "o1"), "lo que las reglas ya hicieron, el cerebro no lo repite");
+    Check(!hechas.Repetida(Intencion.PorReglas("abre el bloc de notas"), "o2"), "otra cosa sí");
+    Check(hechas.Repetida(Intencion.PorReglas("abre el bloc de notas"), "o2"), "el mismo id dos veces, no");
+    reloj.Now += TimeSpan.FromSeconds(20);
+    Check(!hechas.Repetida(Intencion.PorReglas("abre la calculadora"), "o3"), "pasado un rato, sí se puede otra vez");
+}
 Console.WriteLine($"PASS {count} assertions");
 class Clock : TimeProvider { public DateTimeOffset Now = DateTimeOffset.UtcNow; public override DateTimeOffset GetUtcNow() => Now; }

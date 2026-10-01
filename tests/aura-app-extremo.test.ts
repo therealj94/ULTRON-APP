@@ -534,7 +534,8 @@ test('la llamada del avatar: «llámame» y «ponme un timer» por el camino rá
     assert.equal(llamame.reply, '¡Va, ya te llamo!');
     assert.deepEqual(llamame.acciones.map((e: any) => e.accion), [{ tipo: 'llamame' }]);
     assert.equal(alNodo.length, 0, 'el cerebro no se enteró');
-    assert.ok(await espera(() => tel.acciones().some((a) => a.tipo === 'llamame')), 'la orden llegó al teléfono por su canal');
+    // Con toda la suite corriendo a la vez el canal tarda más de 3 s en entregar (falló así una vez).
+    assert.ok(await espera(() => tel.acciones().some((a) => a.tipo === 'llamame'), 10_000), 'la orden llegó al teléfono por su canal');
     // Un timer: directo, con la hora dicha, y con llamada.
     const timer = await turno('ponme un timer de 10 minutos');
     assert.equal(timer.via, 'app-reglas');
@@ -1177,4 +1178,29 @@ test('una tarea de código que pide paso a paso recibe el «paso a paso» en el 
   const p = alNodo.filter((x) => x.stream).at(-1) || alNodo.at(-1);
   assert.ok(p, 'llegó al 27B');
   assert.match(p!.ultimo.split('HECHOS DE ESTE TURNO')[0], /PASOS OBLIGATORIOS/);
+});
+
+test('Windows en vivo: el cerebro sabe que es la PC, la marca ⟦hacer⟧ no suena y la orden llega al canal del .exe, no al teléfono', { skip: !listo }, async () => {
+  const win = await canal(yo.token, 'win-e2e0000000000');
+  const tel = await canal(yo.token, 'tel-e2e');
+  const antes = contestar;
+  contestar = () => '[EMO: neutral] Va, la cierro.\n⟦hacer: cierra spotify⟧';
+  try {
+    const pase = emitirPase(yo, 'aura', 'es', { aparato: 'win-e2e0000000000', origen: 'windows' }).pase;
+    const r = await voz(pase, [{ role: 'user', content: 'ciérrame eso de Spotify' }]);
+    assert.equal(r.status, 200);
+    assert.ok(!r.dicho.includes('⟦') && !/hacer/i.test(r.dicho), 'la marca no se dice: ' + r.dicho);
+    assert.match(r.dicho, /Va, la cierro/);
+    assert.match(alNodo.at(-1)!.system, /ESTÁS EN AURA PARA WINDOWS/, 'la instrucción de Windows va al cerebro también en la voz');
+    const pc = () => win.texto().split('\n\n').filter((b) => /^event: pc$/m.test(b)).map((b) => JSON.parse(/^data: (\{.*\})$/m.exec(b)![1]));
+    assert.ok(await espera(() => pc().length > 0, 10_000), 'la orden llegó al .exe');
+    assert.equal(pc()[0].orden, 'cierra spotify');
+    assert.equal(pc()[0].dicho, 'ciérrame eso de Spotify');
+    assert.ok(!/^event: pc$/m.test(tel.texto()), 'el teléfono no recibe órdenes de la PC');
+    assert.deepEqual(tel.acciones(), [], 'ni acciones');
+  } finally {
+    contestar = antes;
+    await win.cerrar();
+    await tel.cerrar();
+  }
 });

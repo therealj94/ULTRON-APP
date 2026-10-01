@@ -29,7 +29,16 @@ export const MODELO_ELEVEN = 'eleven_v4_turbo';
 
 /** 96 kb/s: la voz grave conserva el cuerpo y un trozo de 7 s pesa ~85 KB en el teléfono. */
 const FORMATO = 'mp3_44100_96';
-const API = 'https://api.elevenlabs.io/v1';
+/**
+ * Dónde se le habla a ElevenLabs (ELEVEN_API_BASE; por omisión la de siempre). Sirve para probar la
+ * región de EE. UU. (`https://api.us.elevenlabs.io`) con una variable de Render, sin tocar código.
+ */
+export function apiEleven(): string {
+  const v = String(process.env.ELEVEN_API_BASE || '').trim().replace(/\/+$/, '');
+  return /^https:\/\/api(\.[a-z]{2})?\.elevenlabs\.io$/.test(v) ? v : 'https://api.elevenlabs.io';
+}
+
+const API = `${apiEleven()}/v1`;
 
 export function modeloEleven(): string {
   return String(process.env.ELEVENLABS_MODELO || '').trim() || MODELO_ELEVEN;

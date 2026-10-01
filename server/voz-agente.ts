@@ -45,9 +45,10 @@ import { quitarExpresiones } from '../lib/expresiones';
 import { afinarParaBoca, afinarParaBocaIngles } from './habla';
 import { interruptor } from '../lib/interruptores';
 import { firmarDato, gastarCupo, huellaSesion, leerDato, mismoSecreto, secretoDerivado, sesionSigueViva, type Sesion } from './seguridad';
-import { normalizarAvatar, normalizarIdioma, type AvatarVoz, type Idioma } from './eleven';
+import { apiEleven, normalizarAvatar, normalizarIdioma, type AvatarVoz, type Idioma } from './eleven';
 import { modoValido } from './desk';
-import { aparatoValido, empujarAmbiente, lecturaDe, turnoDeRecordatorio, type EventoAmbiente } from '../lib/acciones-app';
+import { aparatoValido, empujarAmbiente, empujarOrdenPc, lecturaDe, turnoDeRecordatorio, type EventoAmbiente } from '../lib/acciones-app';
+import { FiltroOrdenes, quitarMarcas } from '../lib/ordenes-pc';
 import { preguntaSigues, RE_LLAMADA, RE_SIGUES, saludoDeLlamada } from '../lib/manos-app';
 import { nivelDeCorreo, nivelMasEstrecho, nivelValido, type NivelAura } from './nivel';
 import { anotarVoz, fraseTopeVoz, restanteVozMs } from './tope-voz';
@@ -169,13 +170,18 @@ export type Pase = {
   nivel: NivelAura | null;
   /** El pase vence antes de lo normal porque se acaban los minutos de voz del miembro. */
   tope: boolean;
+  /**
+   * La conversación es del .exe de Windows: el cerebro puede pedir manos de la PC («⟦hacer: …⟧»), que
+   * no se dicen y van al canal de ese aparato (empujarOrdenPc). null: el teléfono o la web.
+   */
+  origen: 'windows' | null;
 };
 
 export function emitirPase(
   s: Pick<Sesion, 'correo' | 'nombre' | 'rol' | 'token' | 'at'> & { exp?: number },
   avatar: AvatarVoz,
   idioma: Idioma,
-  o: { modo?: string; cid?: string; ahora?: number; aparato?: string | null; nivel?: NivelAura; topeMs?: number } = {}
+  o: { modo?: string; cid?: string; ahora?: number; aparato?: string | null; nivel?: NivelAura; topeMs?: number; origen?: 'windows' | null } = {}
 ): { pase: string; cid: string; exp: number } {
   const ahora = o.ahora ?? Date.now();
   const cid = o.cid || crypto.randomBytes(12).toString('base64url');
@@ -201,6 +207,7 @@ export function emitirPase(
     ...(ap ? { ap } : {}),
     ...(nv ? { nv } : {}),
     ...(porTope < normal ? { tp: 1 } : {}),
+    ...(o.origen === 'windows' ? { og: 'windows' } : {}),
   });
   return { pase, cid, exp };
 }
@@ -226,6 +233,7 @@ export function leerPase(token: string, ahora = Date.now()): Pase | null {
     aparato: aparatoValido(d.ap),
     nivel: nivelValido(d.nv),
     tope: d.tp === 1,
+    origen: d.og === 'windows' ? 'windows' : null,
   };
 }
 
@@ -285,8 +293,77 @@ type Conversacion = {
    * llega otro turno antes, ese era una frase a medias que ElevenLabs descartó: se descarta.
    */
   porConfirmar?: (() => void) | null;
+  /**
+   * Lo que el último turno va a guardar en la memoria, esperando al siguiente. Si el turno siguiente es
+   * la misma frase más larga («pon una alarma en tres» → «… en treinta minutos»), era la frase a medias
+   * del turno especulativo y se tira; si no (o no llega en ESPERA_MEMORIA_MS), se guarda.
+   */
+  memoriaPendiente?: { mensaje: string; mem: MemoriaTurno; reloj: ReturnType<typeof setTimeout> } | null;
 };
 const conversaciones = new Map<string, Conversacion>();
+
+/** Cuánto espera la memoria de un turno a saber si era una frase a medias. */
+const ESPERA_MEMORIA_MS = 20_000;
+
+/** Lo que un turno guarda en la memoria: espera, se guarda o se tira (y lo que llegue después, igual). */
+export type MemoriaTurno = { fs: (() => void)[]; estado: 'espera' | 'guardada' | 'tirada' };
+
+function correrMemoria(fs: (() => void)[]) {
+  for (const f of fs.splice(0)) {
+    try {
+      f();
+    } catch (e: any) {
+      console.warn('[voz agente] memoria', String(e?.message || e).slice(0, 160));
+    }
+  }
+}
+
+/** Lo que el turno quiere guardar: mientras espera, se junta; después, se guarda o se tira. */
+export function recordarEnTurno(mem: MemoriaTurno, f: () => void) {
+  if (mem.estado === 'espera') mem.fs.push(f);
+  else if (mem.estado === 'guardada') correrMemoria([f]);
+}
+
+/** El turno terminó (confirmado o descartado): su memoria espera al turno siguiente para decidir. */
+export function apartarMemoria(conv: Pick<Conversacion, 'memoriaPendiente'>, mensaje: string, mem: MemoriaTurno) {
+  if (mem.estado !== 'espera' || conv.memoriaPendiente?.mem === mem) return;
+  resolverMemoriaPendiente(conv, '');
+  const reloj = setTimeout(() => {
+    if (conv.memoriaPendiente?.mem === mem) resolverMemoriaPendiente(conv, '');
+  }, ESPERA_MEMORIA_MS);
+  reloj.unref?.();
+  conv.memoriaPendiente = { mensaje: plana(mensaje), mem, reloj };
+}
+
+/**
+ * Si `nuevo` es la frase entera de la que `viejo` era el principio. La última palabra de la frase a
+ * medias puede estar cortada o mal oída («en tres» → «en treinta minutos»): con dos o más palabras,
+ * basta que coincidan las de antes. La misma frase otra vez también cuenta (el turno nuevo la guarda).
+ */
+export function continuaLaFrase(viejo: string, nuevo: string): boolean {
+  const v = plana(viejo).split(' ').filter(Boolean);
+  const n = plana(nuevo).split(' ').filter(Boolean);
+  if (!v.length || n.length < v.length) return false;
+  const fijas = v.length >= 2 ? v.length - 1 : v.length;
+  for (let i = 0; i < fijas; i++) if (v[i] !== n[i]) return false;
+  if (fijas === v.length) return true;
+  const ultima = v[v.length - 1];
+  const suya = n[v.length - 1];
+  return suya.startsWith(ultima) || ultima.startsWith(suya) || suya.slice(0, 2) === ultima.slice(0, 2);
+}
+
+/** Con el turno siguiente (o sin él, al vencer): la frase a medias se tira, un turno de verdad se guarda. */
+export function resolverMemoriaPendiente(conv: Pick<Conversacion, 'memoriaPendiente'>, siguiente: string) {
+  const p = conv.memoriaPendiente;
+  if (!p) return;
+  conv.memoriaPendiente = null;
+  clearTimeout(p.reloj);
+  const nuevo = plana(siguiente);
+  const aMedias = continuaLaFrase(p.mensaje, nuevo);
+  p.mem.estado = aMedias ? 'tirada' : 'guardada';
+  if (aMedias) p.mem.fs.length = 0;
+  else correrMemoria(p.mem.fs);
+}
 
 /**
  * Suelta las conversaciones cerradas o vencidas. Las vencidas por inactividad se anotan como
@@ -522,7 +599,7 @@ export function restoDeReemplazo(dicho: string, nuevo: string): string {
 
 /** Lo que se le pide al cerebro para un turno hablado. */
 export type TurnoVoz = {
-  body: { message: string; mode: string; usuario: string; correo: string; avatar: AvatarVoz; idioma: Idioma; canal: 'mesa'; aparato: string | null };
+  body: { message: string; mode: string; usuario: string; correo: string; avatar: AvatarVoz; idioma: Idioma; canal: 'mesa'; aparato: string | null; origen?: 'windows' };
   /**
    * Quién habla (del pase). NO es una sesión: no abre ninguna otra ruta. `nivel` es el más estrecho
    * entre el firmado en el pase y el que dice hoy el padrón por su correo.
@@ -554,6 +631,8 @@ export type TurnoVoz = {
 export type RetencionAcciones = {
   hacer: (f: () => void) => void;
   alDescartar: (f: () => void) => void;
+  /** Lo que el turno guarda en la memoria (la frase y la respuesta): igual que `hacer`, pero no es acción. */
+  recordar: (f: () => void) => void;
 };
 
 type Deps = {
@@ -580,6 +659,8 @@ type Deps = {
    * pregunta no espera a que el nodo lea miles de fichas. Sin esperar, y si falla no pasa nada.
    */
   calentar?: (correo: string) => void;
+  /** Manda una orden de la PC al .exe de la conversación (empujarOrdenPc; las pruebas espían). */
+  ordenPc?: (correo: string, aparato: string | null, o: { orden: string; dicho: string }) => unknown;
   /** Pone o quita el sonido de fondo en el teléfono de la conversación (empujarAmbiente; las pruebas espían). */
   ambiente?: (correo: string, aparato: string | null, e: EventoAmbiente) => void;
   /** ESPERA_TAREA_MS, SEGUIMIENTO_MS y RELLENO_AGENTE_MS (las pruebas los acortan). */
@@ -622,24 +703,32 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     if (restante !== undefined && restante <= 0) {
       return res.status(429).json({ error: fraseTopeVoz(idioma), codigo: 'TOPE_VOZ', honesto: true });
     }
+    // El .exe de Windows (x-aura-origen) habla por WebSocket (URL firmada de un solo uso) y tiene que
+    // decir qué aparato es: sus órdenes de la PC van solo a su canal, nunca a los teléfonos de la cuenta.
+    const origen = String(req.headers['x-aura-origen'] || '') === 'windows' ? 'windows' : null;
+    const aparato = aparatoValido(req.headers['x-aura-aparato']);
+    if (origen === 'windows' && !aparato) return res.status(400).json({ error: 'Falta el id de este equipo (x-aura-aparato).', honesto: true });
+    const porSocket = req.body?.transporte === 'websocket';
     try {
-      const r = await pedir(`https://api.elevenlabs.io/v1/convai/conversation/token?agent_id=${encodeURIComponent(agente)}`, {
+      const ruta = porSocket ? 'get-signed-url' : 'token';
+      const r = await pedir(`${apiEleven()}/v1/convai/conversation/${ruta}?agent_id=${encodeURIComponent(agente)}`, {
         headers: { 'xi-api-key': key },
         signal: AbortSignal.timeout(10_000),
       });
       const j: any = await r.json().catch(() => ({}));
-      if (!r.ok || !j?.token) {
+      const permiso = porSocket ? (typeof j?.signed_url === 'string' && /^wss:\/\//.test(j.signed_url) ? j.signed_url : '') : j?.token;
+      if (!r.ok || !permiso) {
         // Solo el estado: el cuerpo de un error de ElevenLabs puede traer datos de la cuenta.
         console.warn('[voz agente] token', r.status);
         return res.status(502).json({ error: 'No pude abrir la conversación ahora. Intenta en un momento.', honesto: true });
       }
       // El aparato (x-aura-aparato) va en el pase: lo que pida esta conversación va solo a ese teléfono.
-      const p = emitirPase(s, avatar, idioma, { modo: req.body?.mode ?? req.body?.modo, aparato: aparatoValido(req.headers['x-aura-aparato']), nivel, topeMs: restante });
+      const p = emitirPase(s, avatar, idioma, { modo: req.body?.mode ?? req.body?.modo, aparato, nivel, topeMs: restante, origen });
       const { cerradas } = abrirConversacion(s.correo, p.cid);
       d.calentar?.(s.correo);
       if (cerradas) console.log(`[voz agente] ${cerradas} conversación(es) vieja(s) cerrada(s) por el tope de ${MAX_CONVERSACIONES}`);
       // `restanteMs` (solo miembros): lo que le queda de voz hoy; el teléfono avisa antes de agotarlo.
-      return res.json({ token: j.token, agente, avatar, idioma, pase: p.pase, cid: p.cid, vence: new Date(p.exp).toISOString(), ...(restante !== undefined ? { restanteMs: restante } : {}), honesto: true });
+      return res.json({ ...(porSocket ? { url: permiso } : { token: permiso }), agente, avatar, idioma, pase: p.pase, cid: p.cid, vence: new Date(p.exp).toISOString(), ...(restante !== undefined ? { restanteMs: restante } : {}), honesto: true });
     } catch (e: any) {
       console.warn('[voz agente] token', String(e?.name || 'error'));
       return res.status(502).json({ error: 'No pude abrir la conversación ahora. Intenta en un momento.', honesto: true });
@@ -746,6 +835,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
       conv.porConfirmar();
       conv.porConfirmar = null;
     }
+    resolverMemoriaPendiente(conv, mensaje);
     // Si el turno anterior sigue pensando, ya nadie lo va a oír. Lo que alcanzó a decir es lo último
     // que oyó la persona: con eso se mira si este turno la interrumpió (y si ya había dicho algo, la
     // cortó a la mitad).
@@ -848,6 +938,8 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     /** Las acciones de este turno, esperando a que se confirme (RetencionAcciones). */
     const retenidas: (() => void)[] = [];
     const deshacer: (() => void)[] = [];
+    /** Lo que el turno guarda en la memoria: espera al turno siguiente, pero no alarga la respuesta. */
+    const memoria: MemoriaTurno = { fs: [], estado: 'espera' };
     let accionesPedidas = 0;
     let suerte: 'espera' | 'hecho' | 'descartado' = 'espera';
     /** `suerte` leída de nuevo (la cambian los relojes y el turno siguiente, no este código en línea). */
@@ -868,6 +960,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
       suerte = 'hecho';
       if (conv.porConfirmar === descartarAcciones) conv.porConfirmar = null;
       deshacer.length = 0;
+      apartarMemoria(conv, mensaje, memoria);
       correr(retenidas);
       finRetencion?.(true);
     };
@@ -876,6 +969,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
       suerte = 'descartado';
       if (conv.porConfirmar === descartarAcciones) conv.porConfirmar = null;
       retenidas.length = 0;
+      apartarMemoria(conv, mensaje, memoria);
       correr(deshacer);
       finRetencion?.(false);
     }
@@ -889,6 +983,8 @@ export function montarVozAgente(app: express.Express, d: Deps) {
       alDescartar: (f) => {
         if (suerte === 'espera') deshacer.push(f);
       },
+      // Una frase a medias que se descarta no queda en el hilo: el turno siguiente no la ve dos veces.
+      recordar: (f) => recordarEnTurno(memoria, f),
     };
     let algo = false;
     // Lo que ya se le dio a la voz, en claro: sirve para seguir un «replace» y para saber, en el
@@ -1173,13 +1269,52 @@ export function montarVozAgente(app: express.Express, d: Deps) {
       }
     };
 
+    /*
+     * Windows: el cerebro escribe «⟦hacer: …⟧» para las manos de la PC. La marca no se dice (sale del
+     * texto y de la voz mientras llega) y la orden va al canal de ese .exe cuando el turno se confirma
+     * (`retener.hacer`, como las acciones del teléfono): una frase a medias no cierra ninguna ventana.
+     */
+    const ordenesPc = pase.origen === 'windows' ? { texto: new FiltroOrdenes(), voz: new FiltroOrdenes(), n: 0 } : null;
+    const empujarPc = d.ordenPc ?? empujarOrdenPc;
+    const alOrdenPc = (orden: string) => {
+      ordenesPc!.n++;
+      retener.hacer(() => void empujarPc(pase.correo, pase.aparato, { orden, dicho: mensaje }));
+    };
+    const enviarTurno: TurnoVoz['enviar'] = !ordenesPc
+      ? enviar
+      : (evento, datos) => {
+          if (evento === 'delta' && datos && typeof datos === 'object') {
+            const texto = ordenesPc.texto.agregar(String(datos.text ?? ''), alOrdenPc);
+            const voz = datos.voz == null ? undefined : ordenesPc.voz.agregar(String(datos.voz));
+            if (!texto && !voz) return;
+            return enviar(evento, { ...datos, text: texto, ...(voz !== undefined ? { voz } : {}) });
+          }
+          if (evento === 'done' && datos && typeof datos === 'object') {
+            const limpio = { ...datos, reply: quitarMarcas(String(datos.reply ?? '')), ...(datos.voz != null ? { voz: quitarMarcas(String(datos.voz)) } : {}) };
+            // Solo la orden y nada que decir: «Listo.», no «se me fue el hilo».
+            if (ordenesPc.n && !(Array.isArray(limpio.acciones) && limpio.acciones.length)) limpio.acciones = [{ accion: { tipo: 'pc' } }];
+            return enviar(evento, limpio);
+          }
+          return enviar(evento, datos);
+        };
+
     const t = d
       .turno({
-        body: { message: deRecordatorio ?? mensaje, mode: pase.modo, usuario: pase.nombre, correo: pase.correo, avatar: pase.avatar, idioma: pase.idioma, canal: 'mesa', aparato: pase.aparato },
+        body: {
+          message: deRecordatorio ?? mensaje,
+          mode: pase.modo,
+          usuario: pase.nombre,
+          correo: pase.correo,
+          avatar: pase.avatar,
+          idioma: pase.idioma,
+          canal: 'mesa',
+          aparato: pase.aparato,
+          ...(pase.origen ? { origen: pase.origen } : {}),
+        },
         persona: { correo: pase.correo, nombre: pase.nombre, rol: pase.rol, nivel },
         interrumpida,
         senal,
-        enviar,
+        enviar: enviarTurno,
         retener,
       })
       .then(
