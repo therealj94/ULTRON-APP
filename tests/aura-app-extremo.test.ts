@@ -534,7 +534,8 @@ test('la llamada del avatar: «llámame» y «ponme un timer» por el camino rá
     assert.equal(llamame.reply, '¡Va, ya te llamo!');
     assert.deepEqual(llamame.acciones.map((e: any) => e.accion), [{ tipo: 'llamame' }]);
     assert.equal(alNodo.length, 0, 'el cerebro no se enteró');
-    assert.ok(await espera(() => tel.acciones().some((a) => a.tipo === 'llamame')), 'la orden llegó al teléfono por su canal');
+    // Con toda la suite corriendo a la vez el canal tarda más de 3 s en entregar (falló así una vez).
+    assert.ok(await espera(() => tel.acciones().some((a) => a.tipo === 'llamame'), 10_000), 'la orden llegó al teléfono por su canal');
     // Un timer: directo, con la hora dicha, y con llamada.
     const timer = await turno('ponme un timer de 10 minutos');
     assert.equal(timer.via, 'app-reglas');

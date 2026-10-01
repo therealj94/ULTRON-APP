@@ -370,5 +370,33 @@ foreach (var f in new[] { "quién es mejor, claudio o antonio", "cómo se hace u
     var d = await Intencion.Decidir(f, null);
     Check(!Intencion.SoloReglasONodo.Contains(d.Mano), "ligera no decide sola: " + f + " → " + d);
 }
+// El oído: el ruido constante del cuarto deja de ser «voz»; la voz de verdad sigue entrando.
+{
+    var rnd = new Random(7);
+    var det = new DetectorVoz();
+    int nFrases = 0, ruidos = 0;
+    // 60 s de ventilador fuerte (RMS ~0.03, por encima del umbral mínimo desde el arranque).
+    for (int i = 0; i < 3000; i++)
+    {
+        var e = det.Bloque(0.03 + (rnd.NextDouble() - 0.5) * 0.004);
+        if (e == EventoVoz.Fin) nFrases++;
+        if (e == EventoVoz.Ruido) ruidos++;
+    }
+    Check(nFrases == 0 && ruidos <= 1, $"ruido constante: ni una frase al transcriptor (frases {nFrases}, ruidos {ruidos})");
+    Check(!det.Hablando && det.Umbral() > 0.03, $"al final el ruido ya no cuenta como voz (umbral {det.Umbral():0.000})");
+    // Con ese ruido de fondo, una frase de 2 s con sílabas y una pausa al final sí entra.
+    var fin = EventoVoz.Nada; bool empezo = false;
+    for (int i = 0; i < 100; i++) { var e = det.Bloque(i % 10 < 7 ? 0.16 : 0.07); empezo |= e == EventoVoz.Empezo; }
+    for (int i = 0; i < 60 && fin == EventoVoz.Nada; i++) fin = det.Bloque(0.03);
+    Check(empezo && fin == EventoVoz.Fin, "la voz sobre el ruido sí entra y termina con la pausa");
+
+    // Cuarto callado: una frase normal de 3 s no sube el umbral a sí misma y termina en la pausa.
+    var q = new DetectorVoz();
+    for (int i = 0; i < 200; i++) q.Bloque(0.003);
+    var ev = new List<EventoVoz>();
+    for (int i = 0; i < 150; i++) ev.Add(q.Bloque(i % 12 < 9 ? 0.05 : 0.02));
+    for (int i = 0; i < 50; i++) ev.Add(q.Bloque(0.003));
+    Check(ev.Count(x => x == EventoVoz.Empezo) == 1 && ev.Count(x => x == EventoVoz.Fin) == 1 && !ev.Contains(EventoVoz.Ruido), "una frase normal, una sola vez: " + string.Join(",", ev.Where(x => x != EventoVoz.Nada)));
+}
 Console.WriteLine($"PASS {count} assertions");
 class Clock : TimeProvider { public DateTimeOffset Now = DateTimeOffset.UtcNow; public override DateTimeOffset GetUtcNow() => Now; }

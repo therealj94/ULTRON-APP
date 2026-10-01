@@ -2215,7 +2215,16 @@ function correoDeMemoriaMiembro(body: any): string {
  * Dónde se anota un turno según quién habla: la memoria de la junta (lib/memoria.ts, por persona del
  * padrón) o la personal del miembro (por su correo). Nunca las dos, y nunca la de otro.
  */
-function recordarSegunNivel(body: any, o: { quienMem: string | null; rol: 'user' | 'ultron'; texto: string; canal: CanalMem; esperar?: boolean }): Promise<void> {
+function recordarSegunNivel(
+  body: any,
+  o: { quienMem: string | null; rol: 'user' | 'ultron'; texto: string; canal: CanalMem; esperar?: boolean },
+  retener?: RetencionAcciones
+): Promise<void> {
+  // En la voz el turno puede descartarse (frase a medias): se guarda cuando se confirma, no antes.
+  if (retener) {
+    retener.recordar(() => void recordarSegunNivel(body, o).catch(() => undefined));
+    return Promise.resolve();
+  }
   if (body?.nivel !== 'junta') {
     const correo = correoDeMemoriaMiembro(body);
     return correo ? recordarTurnoMiembro({ correo, rol: o.rol, texto: o.texto, canal: o.canal, esperar: o.esperar }) : Promise.resolve();
@@ -2272,7 +2281,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   const memSt = estadoMemoria();
   if (message) {
     // En la memoria de este proceso ya; la copia a disco y S3 sigue en la cola sin retrasar la respuesta.
-    await aTiempoParaVoz(voz, 'hilo', recordarSegunNivel(body, { quienMem, rol: 'user', texto: message, canal, esperar: false }), undefined);
+    await aTiempoParaVoz(voz, 'hilo', recordarSegunNivel(body, { quienMem, rol: 'user', texto: message, canal, esperar: false }, opciones.retener), undefined);
   }
   const clienteHilo = Array.isArray(body?.historial)
     ? (body.historial as any[]).map((x) => ({
@@ -3189,8 +3198,8 @@ async function ordenDeApp(body: any, opciones: OpcionesTurno = {}): Promise<{ de
   // El turno queda en el hilo como cualquier otro (sin esperar a S3): el de la junta o el del miembro.
   const quienMem = body?.nivel === 'junta' ? quienVerificado(body, body?.sesion || null) : null;
   // En orden (lo de la persona y después lo que dijo AU-RA); hablando, con tope: sigue en segundo plano.
-  const hilo = recordarSegunNivel(body, { quienMem, rol: 'user', texto: message, canal: 'mesa', esperar: false }).then(() =>
-    orden.decir ? recordarSegunNivel(body, { quienMem, rol: 'ultron', texto: orden.decir, canal: 'mesa', esperar: false }) : undefined
+  const hilo = recordarSegunNivel(body, { quienMem, rol: 'user', texto: message, canal: 'mesa', esperar: false }, opciones.retener).then(() =>
+    orden.decir ? recordarSegunNivel(body, { quienMem, rol: 'ultron', texto: orden.decir, canal: 'mesa', esperar: false }, opciones.retener) : undefined
   );
   await aTiempoParaVoz(opciones.voz, 'hilo', hilo, undefined);
   return { decir: orden.decir, acciones: eventos, via: `app-${orden.via}` };
@@ -3323,7 +3332,7 @@ async function correrTurnoInterno(body: any, opciones: OpcionesTurno = {}): Prom
     const app = accionesDelCerebro(out.reply, p, delModelo);
     const e = extraerEmocion(app.texto);
     const final: SalidaTurno = { ...out, reply: quitarExpresiones(e.texto).trim(), voz: e.texto.trim(), emocion: out.emocion || e.emocion, acciones: app.acciones };
-    if (final.reply) await recordarSegunNivel(body, { quienMem, rol: 'ultron', texto: final.reply, canal });
+    if (final.reply) await recordarSegunNivel(body, { quienMem, rol: 'ultron', texto: final.reply, canal }, opciones.retener);
     return final;
   };
   if (p.directo) {
@@ -3590,8 +3599,8 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     if (charla) {
       const quienMem = body?.nivel === 'junta' ? quienVerificado(body, body?.sesion || null) : null;
       const mensaje = String(body?.message || body?.text || '').trim();
-      void recordarSegunNivel(body, { quienMem, rol: 'user', texto: mensaje, canal: 'mesa', esperar: false })
-        .then(() => recordarSegunNivel(body, { quienMem, rol: 'ultron', texto: charla.texto, canal: 'mesa', esperar: false }))
+      void recordarSegunNivel(body, { quienMem, rol: 'user', texto: mensaje, canal: 'mesa', esperar: false }, opciones.retener)
+        .then(() => recordarSegunNivel(body, { quienMem, rol: 'ultron', texto: charla.texto, canal: 'mesa', esperar: false }, opciones.retener))
         .catch(() => {});
       send('tools', { tools: [] });
       send('emocion', { emocion: charla.emocion });
@@ -3621,7 +3630,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     const leido = quitarExpresiones(app.texto).trim();
     reg.cerrar({ respuesta: leido, emocion, via });
     send('done', { reply: leido, voz: app.texto.trim(), emocion, ms: Date.now() - t0, via, acciones: app.acciones, trazaId: reg.id });
-    if (leido && !senal?.aborted) await recordarSegunNivel(body, { quienMem, rol: 'ultron', texto: leido, canal });
+    if (leido && !senal?.aborted) await recordarSegunNivel(body, { quienMem, rol: 'ultron', texto: leido, canal }, opciones.retener);
     salida.fin();
   };
   send('tools', { tools });

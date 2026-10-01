@@ -68,6 +68,8 @@ export class ConversacionEnVivo {
   /** Abre la conversación. Devuelve false (y el porqué en onEstado 'error') si no abrió. */
   async abrir(o: { avatar: string; idioma: 'es' | 'en' }): Promise<boolean> {
     if (this.estado_ === 'conectando' || this.estado_ === 'escuchando' || this.estado_ === 'hablando') return true;
+    // Una sesión que quedó de un error se cuelga antes de abrir otra: nunca dos micrófonos.
+    this.soltarSesion();
     const gen = ++this.gen;
     this.poner(gen, 'conectando');
     let r: { ok: boolean; status: number; json: any };
@@ -94,7 +96,12 @@ export class ConversacionEnVivo {
           const texto = String(m?.message || '').trim();
           if (texto && gen === this.gen) this.d.onMensaje(m.source === 'user' ? 'persona' : 'aura', texto);
         },
-        onError: (mensaje) => this.poner(gen, 'error', String(mensaje || 'La conversación se cortó.')),
+        onError: (mensaje) => {
+          if (gen !== this.gen) return;
+          this.poner(gen, 'error', String(mensaje || 'La conversación se cortó.'));
+          // Con 'error' la mesa vuelve a su micrófono: esta sesión se cuelga ya, no queda abierta al lado.
+          this.soltarSesion();
+        },
         onDisconnect: () => {
           if (gen !== this.gen) return;
           this.avisarCierre(pase);
@@ -102,6 +109,12 @@ export class ConversacionEnVivo {
           this.poner(gen, 'cerrada');
         },
       });
+      if (gen === this.gen && this.estado_ === 'error') {
+        // Falló mientras conectaba (onError antes de tener la sesión): se cuelga, no queda abierta.
+        void Promise.resolve(s.endSession()).catch(() => undefined);
+        this.avisarCierre(pase);
+        return false;
+      }
       if (gen !== this.gen) {
         // Colgaron mientras conectaba: esta sesión ya no es de nadie.
         void Promise.resolve(s.endSession()).catch(() => undefined);
@@ -125,6 +138,17 @@ export class ConversacionEnVivo {
     this.gen++;
     this.estado_ = 'cerrada';
     this.d.onEstado('cerrada');
+    if (s) void Promise.resolve(s.endSession()).catch(() => undefined);
+    this.avisarCierre(pase);
+  }
+
+  /** Cuelga la sesión que haya sin tocar el estado (lo que llegue de ella ya no cuenta). */
+  private soltarSesion() {
+    const s = this.sesion;
+    const pase = this.pase;
+    if (!s && !pase) return;
+    this.sesion = null;
+    this.gen++;
     if (s) void Promise.resolve(s.endSession()).catch(() => undefined);
     this.avisarCierre(pase);
   }
