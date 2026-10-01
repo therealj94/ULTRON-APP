@@ -713,6 +713,9 @@ test('tarea lenta por voz (el modelo pide la web): frase de espera a tiempo, tec
     assert.ok(r.primeraMs < 3_000, `la frase sale antes del corte de ElevenLabs (4 s): ${r.primeraMs} ms`);
     assert.match(r.dicho, /rondaba cuatro dólares la libra\.$/);
     assert.doesNotMatch(r.dicho, /PEDIR_HERRAMIENTA/);
+    // La vuelta con el resultado de la herramienta también se pide a trozos (habla en cuanto hay frase).
+    const ultimas = alNodo.slice(-2);
+    assert.deepEqual(ultimas.map((x) => x.stream), [true, true], 'la vuelta del harness va a trozos');
     assert.ok(await espera(() => tel.ambientes().length >= 2));
     assert.deepEqual(tel.ambientes(), [
       { sonido: 'teclado', on: true },

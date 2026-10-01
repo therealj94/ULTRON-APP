@@ -308,6 +308,10 @@ export async function guardarHechoQuien(opts: {
     quien: opts.junta || !opts.quien ? 'junta' : opts.quien,
     canal: opts.canal || 'mesa',
   };
+  // Ya guardado: no se reescribe (el teléfono manda su memoria entera en cada turno; antes eso era
+  // una escritura a S3 por hecho y por turno, antes de pensar).
+  const lista = item.quien === 'junta' ? a.junta.larga : a.perfiles[item.quien]?.larga || [];
+  if (lista.some((x) => x.hecho === hecho)) return;
   if (item.quien === 'junta') {
     const juntaItem: HechoMem = { ...item, quien: 'junta' };
     a.junta.larga = [juntaItem, ...a.junta.larga.filter((x) => x.hecho !== hecho)].slice(0, MAX_LARGA);
