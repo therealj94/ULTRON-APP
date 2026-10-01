@@ -104,6 +104,21 @@ public partial class NotchWindow
             Contestar(dicho, "feliz");
             return;
         }
+        if (partes[0] == "reanudar")
+        {
+            // Lo que estaba sonando sigue; si no había nada, Spotify se abre y retoma lo último.
+            if (cancion is { Titulo.Length: > 0 }) { if (!await musica.PlayPausa()) Escritorio.PlayPausa(); HechoMusica(T("Música", "Music"), 4); return; }
+            if (Aplicaciones.Buscar("spotify", 80) is { } sp)
+            {
+                Aplicaciones.Abrir(sp);
+                await Task.Delay(3500);
+                Escritorio.PlayPausa();
+                Hecho(T("Spotify", "Spotify"), T("Retomando tu música", "Resuming your music"), "\uE8D6");
+                return;
+            }
+            NoPude(T("No hay música para retomar. Dime qué quieres oír: «pon Bad Bunny».", "Nothing to resume. Tell me what to play."));
+            return;
+        }
         var q = partes.Length > 1 ? partes[1] : "";
         var spotify = Conectada(Proveedor.Spotify);
         var google = Conectada(Proveedor.Google);

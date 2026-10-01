@@ -98,6 +98,25 @@ public partial class NotchWindow
                     var nombre = NombresAtajo.TryGetValue(arg, out var n) ? T(n.Es, n.En) : arg.Replace("+", " + ");
                     Hecho(nombre, "", ""); // sin voz: un atajo no necesita que AURA hable
                     break;
+                case "energia":
+                {
+                    var (titulo, args) = arg switch
+                    {
+                        "apagar" => (T("¿Apago la computadora?", "Shut down the PC?"), "/s /t 30"),
+                        "reiniciar" => (T("¿Reinicio la computadora?", "Restart the PC?"), "/r /t 30"),
+                        "salir" => (T("¿Cierro tu sesión de Windows?", "Sign out of Windows?"), "/l"),
+                        _ => (T("¿Suspendo la computadora?", "Put the PC to sleep?"), ""),
+                    };
+                    Proponer(new Propuesta(titulo, T("Guarda lo que tengas abierto antes de decir que sí.", "Save your work first."), DateTime.Now.AddSeconds(20), () =>
+                    {
+                        if (arg == "suspender") System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("rundll32.exe", "powrprof.dll,SetSuspendState 0,1,0") { UseShellExecute = false, CreateNoWindow = true });
+                        else System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("shutdown.exe", args) { UseShellExecute = false, CreateNoWindow = true });
+                        if (arg is "apagar" or "reiniciar") Avisar(new Aviso(T("En 30 segundos…", "In 30 seconds…"), T("Toca Cancelar para detenerlo.", "Tap Cancel to stop it."), "", "worried", T("Cancelar", "Cancel"),
+                            () => System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("shutdown.exe", "/a") { UseShellExecute = false, CreateNoWindow = true }), 28));
+                        return Task.CompletedTask;
+                    }));
+                    break;
+                }
                 case "config":
                     Manos.Teclado.Configuracion(arg);
                     Hecho(T("Configuración de Windows", "Windows Settings"), arg, "");

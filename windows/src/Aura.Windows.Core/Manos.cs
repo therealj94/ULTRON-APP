@@ -128,6 +128,8 @@ public static class Intencion
             case Mano.AbrirWeb:
             {
                 var o = Parametros.ObjetoDeAbrir(texto);
+                // Laya ya decidió «abrir»: «necesito la calculadora», «quiero usar Excel».
+                if (o == null && Regex.Match(t, @"^(?:necesito|ocupo|quiero|dame|i need|i want)\s+(?:(?:abrir|usar|el|la|los|las|un|una|open|use|the|a)\s+)*(?<o>[a-z0-9 .+-]{2,40})$") is { Success: true } nq) o = nq.Groups["o"].Value.Trim();
                 if (o == null) return Pedido.Nada;
                 if (Parametros.DominioEn(texto) is { } dom) return new(Mano.AbrirWeb, dom, null, origen, p);
                 if (Parametros.Carpeta(o) is { } c) return new(Mano.AbrirCarpeta, c, null, origen, p);
@@ -239,7 +241,7 @@ public static class Parametros
     public static readonly Regex Mute = new(@"^(?:mute|mutea|unmute|silencia (?:la computadora|la compu|el volumen|el sonido)|quita(?:le)? el (?:sonido|audio|mute)|pon(?:le)? (?:en )?mute|mute (?:the )?(?:sound|audio|computer|volume)|turn off the sound)$", O);
     public static readonly Regex Siguiente = new(@"^(?:siguiente (?:cancion|tema|video)|pasa (?:la|esta) cancion|salta (?:esta|la) cancion|cambia (?:de|la) cancion|next (?:song|track)|skip (?:this )?(?:song|track)|skip)$", O);
     public static readonly Regex Anterior = new(@"^(?:(?:pon|pasa a|regresa a|vuelve a|dame|play)\s+)?(?:la |el )?(?:cancion anterior|tema anterior|anterior cancion|previous (?:song|track)|go back a song|the previous (?:song|track))$", O);
-    public static readonly Regex PlayPausa = new(@"^(?:pausa (?:la|el) (?:musica|cancion|video|reproduccion)|para la musica|deten (?:la musica|el video)|dale play|dale a play|dale al play|ponle play|play|reanuda (?:la musica|el video)|continua (?:la cancion|la musica)|pause (?:the )?(?:music|song|video|playback)|resume (?:the )?(?:music|playback)|hit play)$", O);
+    public static readonly Regex PlayPausa = new(@"^(?:pausa|pausala|pausalo|pause|pause it|reanuda|reanudala|continua|resume|pausa (?:la|el) (?:musica|cancion|video|reproduccion)|para la musica|deten (?:la musica|el video)|dale play|dale a play|dale al play|ponle play|play|reanuda (?:la musica|el video)|continua (?:la cancion|la musica)|pause (?:the )?(?:music|song|video|playback)|resume (?:the )?(?:music|playback)|hit play)$", O);
     public static readonly Regex Captura = new(@"^(?:(?:toma(?:me|le)?|haz(?:me)?|saca(?:me|le)?|guarda(?:me)?|captura|take|grab|capture|save|snap|make)\s+(?:(?:una|un|a|la|the)\s+)?(?:foto (?:de|a) la pantalla|captura(?: de pantalla)?|pantallazo|screenshot|screen ?capture|la pantalla|the screen)(?:\s+.*)?|screenshot|pantallazo)$", O);
     public static readonly Regex VerPantalla = new(@"^(?:que ves(?: en (?:mi|la) pantalla)?|mira (?:mi|la) pantalla|lee (?:mi|la) pantalla|que hay en (?:mi|la) pantalla|revisa (?:mi|la) pantalla|analiza (?:mi|la) pantalla|what do you see(?: on (?:my|the) screen)?|look at (?:my|the) screen|read (?:my|the) screen|what is on (?:my|the) screen)$", O);
     public static readonly Regex Escritorio = new(@"^(?:minimiza todo|minimiza todas las ventanas|muestrame el escritorio|ve al escritorio|show (?:the|my) desktop|minimize (?:everything|all windows))$", O);
@@ -610,6 +612,9 @@ public static class Parametros
 
     static readonly Regex QueSuena = new(@"^(?:que (?:esta sonando|suena|cancion es esta|cancion es|cancion esta sonando|musica es esta|estoy escuchando)|quien canta (?:esta cancion|esto)|como se llama esta cancion|what s playing|what is playing|what song is this|who sings this|what am i listening to)$", O);
     static readonly Regex PonMusica = new(@"^(?:pon(?:me)?|reproduce|toca|tocame|busca|play|put on|search)\s+(?:(?:la |el |una |un |a |the |some )?(?:cancion|canciones|musica|tema|song|songs|music|album|playlist|lista)\s+(?:de\s+|del\s+|by\s+)?)?(?<q>.+?)\s+(?:en|on|in)\s+(?<app>spotify|youtube music|youtube|yt music)$", O);
+    static readonly Regex MusicaSinMas = new(@"^(?:pon(?:me)?|reproduce|toca|tocame|play|put on)\s+(?:algo de |un poco de |some |la |el )?(?:musica|music|mi musica|my music)$", O);
+    static readonly Regex PonAlgo = new(@"^(?:pon(?:me)?|reproduce|toca(?:me)?|play|put on)\s+(?<q>.+)$", O);
+    static readonly Regex NoEsMusica = new(@"\b(?:alarma|recordatorio|volumen|brillo|modo|tema|nota|timer|temporizador|pantalla|ventana|mute|pausa|atencion|cuidado|luz|hora|fecha|cursor|escritorio|foco|wifi|bluetooth|reloj|fondo|contrasena|clave|mensaje|correo)\b", O);
     static readonly Regex PonMusicaSinApp = new(@"^(?:pon(?:me)?|reproduce|tocame|play|put on)\s+(?:(?:la |el |una |un |a |the |some )?(?:cancion|canciones|musica|tema|song|songs|music|album|playlist)\s+(?:de\s+|del\s+|by\s+)?)(?<q>.+)$", O);
 
     /// <summary>«que-suena», «spotify|busqueda», «ytmusic|busqueda», «buscar|busqueda» (la app de música de siempre), o null.</summary>
@@ -627,11 +632,19 @@ public static class Parametros
             var app = m.Groups["app"].Value.StartsWith("spotify") ? "spotify" : "ytmusic";
             return app + "|" + (BuscarEnOriginal(texto, q) ?? q);
         }
+        // «pon música», «reproduce algo de música»: lo que estaba sonando (o Spotify) sigue.
+        if (MusicaSinMas.IsMatch(t)) return "reanudar|";
         m = PonMusicaSinApp.Match(t);
         if (m.Success)
         {
             var q = Regex.Replace(m.Groups["q"].Value.Trim(), @"^a\s+", "");
             return q.Length is >= 2 and <= 100 ? "buscar|" + (BuscarEnOriginal(texto, q) ?? q) : null;
+        }
+        // Laya ya sabe que es música: «pon bad bunny», «tócame algo de Shakira» → buscarlo y ponerlo (no «qué suena»).
+        if (laxa && PonAlgo.Match(t) is { Success: true } pa && !NoEsMusica.IsMatch(pa.Groups["q"].Value))
+        {
+            var q = Regex.Replace(pa.Groups["q"].Value.Trim(), @"^(?:algo de|un poco de|a|some)\s+", "");
+            if (q.Length is >= 2 and <= 100) return "buscar|" + (BuscarEnOriginal(texto, q) ?? q);
         }
         return laxa ? "que-suena" : null;
     }
@@ -788,6 +801,17 @@ public static class Parametros
             foreach (var (frase, pagina) in Configuraciones) if (frase.IsMatch(c.Groups["q"].Value)) return "config|" + pagina;
         }
         if (Regex.IsMatch(t, @"^(?:abre (?:la )?configuracion(?: de windows)?|open settings)$")) return "config|";
+        // «activa el bluetooth», «apaga el wifi»: su página de Configuración, con el interruptor a la vista.
+        var radio = Regex.Match(t, @"^(?:activa|desactiva|prende|apaga|enciende|conecta|desconecta|pon|quita|turn on|turn off|enable|disable)\s+(?:el |la |the )?(?<q>bluetooth|wifi|wi fi|modo avion|airplane mode)$");
+        if (radio.Success) return "config|" + (radio.Groups["q"].Value.StartsWith("blue") ? "bluetooth" : radio.Groups["q"].Value.Contains("avi") || radio.Groups["q"].Value.StartsWith("air") ? "network-airplanemode" : "network-wifi");
+        // Apagar, reiniciar, suspender la PC (siempre con confirmación, y con 30 s para arrepentirse).
+        var energia = Regex.Match(t, @"^(?:(?<a>apaga|reinicia|suspende|hiberna|duerme|cierra (?:la )?sesion(?: de windows)?)(?:\s+(?:la |el |mi )?(?:computadora|compu|pc|equipo|laptop|maquina|ordenador))?|(?<a>shut down|restart|reboot|sleep|log off|sign out)(?:\s+(?:the |my )?(?:computer|pc|laptop))?)$");
+        if (energia.Success && Regex.IsMatch(t, @"\b(?:computadora|compu|pc|equipo|laptop|maquina|ordenador|computer|sesion)\b|^(?:shut down|restart|reboot|log off|sign out)$"))
+        {
+            var a = energia.Groups["a"].Value;
+            var cual = a.StartsWith("apaga") || a.StartsWith("shut") ? "apagar" : a.StartsWith("reinicia") || a is "restart" or "reboot" ? "reiniciar" : a.StartsWith("cierra") || a is "log off" or "sign out" ? "salir" : "suspender";
+            return "energia|" + cual;
+        }
         if (Brillo.Match(t) is { Success: true } b)
         {
             if (b.Groups["n"].Success) return "brillo|" + Math.Clamp(int.Parse(b.Groups["n"].Value), 0, 100);
