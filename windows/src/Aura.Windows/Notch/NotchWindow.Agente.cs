@@ -43,6 +43,8 @@ public partial class NotchWindow
     {
         if (AgenteAbierto || abriendoAgente) return;
         if (PuedeAgente && await AbrirAgente()) return;
+        // Si no abrió porque la silenciaste o pausaste mientras conectaba, tampoco se abre el oído de siempre.
+        if (microSilenciado || pausado) return;
         if (!escuchando) { Callar(); EmpezarAEscuchar(); }
     }
 

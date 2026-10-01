@@ -169,7 +169,8 @@ public partial class NotchWindow
     void EmpezarAEscuchar()
     {
         // La conversación en vivo tiene su propio micrófono: el oído de siempre no la duplica.
-        if (pausado || soloRender || AgenteAbierto || abriendoAgente) return;
+        // Silenciada por ti: ningún camino abre el micrófono hasta que lo vuelvas a tocar.
+        if (pausado || microSilenciado || soloRender || AgenteAbierto || abriendoAgente) return;
         oido.ModoInterrupcion = false;
         // «Oye AURA» y «siempre atenta»: el micrófono no se cansa; cada frase se oye y solo se atiende si es para AURA.
         oido.Continuo = ajustes.Escucha is "siempre" or "palabra";
@@ -187,7 +188,7 @@ public partial class NotchWindow
     /// <summary>Mientras AURA habla, el oído queda en modo interrupción (más umbral: su propia voz no la corta).</summary>
     void AbrirOidoParaInterrumpir()
     {
-        if (!ajustes.Interrumpir || pausado || soloRender) return;
+        if (!ajustes.Interrumpir || pausado || microSilenciado || soloRender) return;
         oido.ModoInterrupcion = true;
         oido.Continuo = true;
         oido.Abrir();
