@@ -7,7 +7,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { guionEleven, pausaPorFallo, VOZ_ELECTRUM_ELEVEN, VOCES_ELEVEN, vozEleven, _reiniciarFrenoEleven, elevenListo } from '../server/eleven';
 import { abrirVozEnVivo, expresar, hablar } from '../server/voz';
-import { PROVEEDORES_OIDO, PROVEEDORES_OIDO_ELECTRUM, transcribirAudio } from '../lib/oido';
+import { PROVEEDORES_OIDO, PROVEEDORES_OIDO_ELECTRUM, transcribirAudio, topeScribe, RESERVA_RESPALDO_MS } from '../lib/oido';
+import { presupuesto, PRESUPUESTO_OIDO_MS, MINIMO_UTIL_MS } from '../lib/presupuesto';
 import { voiceboxFalso, conVoicebox, CLAVE_FALSA } from './voicebox-falso';
 
 const preparar = (t: string) => expresar(t, 'neutral', 'speak', { cifras: false });
@@ -208,6 +209,38 @@ test('el oído: Scribe primero en Dr Electrum (vocabulario minero) y en AU-RA (s
       );
     });
   } finally {
+    await vb.cerrar();
+  }
+});
+
+test('si Scribe se cuelga, el respaldo todavía alcanza a oír dentro del presupuesto de /api/stt', async () => {
+  // El tope de Scribe deja sitio al respaldo: con los 15 s de /api/stt, Scribe tiene 10 y quedan 5.
+  assert.equal(topeScribe(presupuesto(PRESUPUESTO_OIDO_MS, () => 0)), PRESUPUESTO_OIDO_MS - RESERVA_RESPALDO_MS);
+  assert.equal(topeScribe(presupuesto(60_000, () => 0)), 15000, 'sin apuro (Telegram): sus 15 s de siempre');
+  assert.equal(topeScribe(presupuesto(3000, () => 0)), MINIMO_UTIL_MS, 'con poco tiempo: nunca menos del mínimo útil');
+  const vb = await voiceboxFalso({ transcripcion: () => ({ texto: 'lo oyó whisper' }) });
+  const real = globalThis.fetch;
+  const antes = process.env.ELEVENLABS_API_KEY;
+  process.env.ELEVENLABS_API_KEY = 'xi-de-prueba';
+  // Scribe no contesta nunca: solo suelta cuando le cortan la señal.
+  globalThis.fetch = (async (entrada: any, init?: any) => {
+    const url = String(entrada?.url || entrada);
+    if (!url.startsWith('https://api.elevenlabs.io/')) return real(entrada, init);
+    return new Promise<Response>((_, rechazar) => init?.signal?.addEventListener('abort', () => rechazar(init.signal.reason)));
+  }) as typeof fetch;
+  try {
+    await conVoicebox(vb.url, CLAVE_FALSA, async () => {
+      const t0 = Date.now();
+      const reloj = presupuesto(4000);
+      const o = await transcribirAudio({ audio: Buffer.alloc(2000, 1), mime: 'audio/webm', language: 'es', presupuesto: reloj });
+      assert.equal(o.via, 'voicebox:whisper', 'Scribe colgado: oye Whisper antes de que se acabe el tiempo');
+      assert.equal(o.texto, 'lo oyó whisper');
+      assert.ok(Date.now() - t0 < 4000, `dentro del presupuesto (${Date.now() - t0} ms)`);
+    });
+  } finally {
+    globalThis.fetch = real;
+    if (antes === undefined) delete process.env.ELEVENLABS_API_KEY;
+    else process.env.ELEVENLABS_API_KEY = antes;
     await vb.cerrar();
   }
 });

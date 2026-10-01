@@ -6,7 +6,7 @@
  */
 
 import { clave } from './boveda';
-import { presupuesto, type Presupuesto } from './presupuesto';
+import { presupuesto, MINIMO_UTIL_MS, type Presupuesto } from './presupuesto';
 import { detectarIdioma, idiomaDeCodigo, type IdiomaTurno } from './idioma-detectar';
 
 /** `idioma`: en qué idioma habló (es/en), cuando se pidió `language: 'auto'`. */
@@ -185,8 +185,15 @@ export const TERMINOS_AURA = [
  * ElevenLabs Scribe v2 (documentación de speech-to-text: `model_id: scribe_v2`, `language_code`, `keyterms`,
  * `tag_audio_events`). Más preciso que Whisper en español con nombres propios y siglas, y con pistas de
  * vocabulario (medido el 1-oct: «Oye Aura, abre Excel y ponme The Verve en Spotify» exacto, 0,74 s).
- * Pide su corte al presupuesto: 15 s o lo que quede.
+ * Pide su corte al presupuesto: 15 s como mucho, pero dejando RESERVA_RESPALDO_MS para que, si se cuelga,
+ * Whisper o Gemini todavía alcancen a oír antes de que el teléfono corte (/api/stt da 15 s en total).
  */
+export const RESERVA_RESPALDO_MS = 5000;
+
+export function topeScribe(reloj: Presupuesto): number {
+  return Math.min(15000, Math.max(MINIMO_UTIL_MS, reloj.queda() - RESERVA_RESPALDO_MS));
+}
+
 async function transcribirEleven(audio: Buffer, mime: string, language: string, reloj: Presupuesto, terminos: readonly string[] = TERMINOS_ELECTRUM): Promise<Escucha> {
   const key = clave('elevenlabs');
   if (!key) return null;
@@ -198,7 +205,7 @@ async function transcribirEleven(audio: Buffer, mime: string, language: string, 
   form.append('tag_audio_events', 'false');
   // Una pista por campo: un arreglo JSON en un solo campo lo rechaza por «caracteres inválidos».
   for (const t of terminos) form.append('keyterms', t);
-  const r = await fetch('https://api.elevenlabs.io/v1/speech-to-text', { method: 'POST', headers: { 'xi-api-key': key }, body: form, signal: reloj.senal(15000) });
+  const r = await fetch('https://api.elevenlabs.io/v1/speech-to-text', { method: 'POST', headers: { 'xi-api-key': key }, body: form, signal: reloj.senal(topeScribe(reloj)) });
   if (!r.ok) {
     console.warn('[stt eleven]', r.status, (await r.text().catch(() => '')).slice(0, 160));
     return null;
