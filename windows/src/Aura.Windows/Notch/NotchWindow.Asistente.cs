@@ -81,7 +81,7 @@ public partial class NotchWindow
         };
         relojRecordatorios.Start();
 
-        oido.Nivel += n => Dispatcher.BeginInvoke(new Action(() => { BarrasEscucha.Nivel = n; if (escuchando) { EscalaAnillo.ScaleX = EscalaAnillo.ScaleY = 1 + n * 0.5; } }));
+        oido.Nivel += n => Dispatcher.BeginInvoke(new Action(() => { BarrasEscucha.Nivel = n; if (escuchando) { EscalaAnillo.ScaleX = EscalaAnillo.ScaleY = 1 + n * 0.18; } }));
         oido.EmpezoAHablar += () => Dispatcher.BeginInvoke(new Action(AlEmpezarAHablar));
         // El momento real en que el oído cerró la frase (no cuando la interfaz lo atiende): el origen del turno.
         oido.Frase += wav => { var fin = System.Diagnostics.Stopwatch.GetTimestamp(); Dispatcher.BeginInvoke(new Action(() => _ = AlTerminarFrase(wav, fin))); };
@@ -98,7 +98,7 @@ public partial class NotchWindow
         }));
         altavoz.Empezo += () => Dispatcher.BeginInvoke(new Action(() => { hablandoAhora = true; pensando = false; AvatarPanel.Estado = "speaking"; EstadoPanel.Text = Ingles ? "Speaking…" : "Hablando…"; AbrirOidoParaInterrumpir(); Recalcular(); }));
         altavoz.Frase += f => Dispatcher.BeginInvoke(new Action(() => Subtitulo.Text = Expresiones.Quitar(f).Trim()));
-        altavoz.Nivel += n => { oido.NivelAltavoz = n; Dispatcher.BeginInvoke(new Action(() => { AvatarHabla.Boca = n; AvatarPanel.Boca = n; BarrasHabla.Nivel = n; if (modo == Modo.Habla) AnimarBrillo(0.2 + n * 0.5); })); };
+        altavoz.Nivel += n => { oido.NivelAltavoz = n; Dispatcher.BeginInvoke(new Action(() => { AvatarHabla.Boca = n; AvatarPanel.Boca = n; BarrasHabla.Nivel = n; if (modo == Modo.Habla) AnimarBrillo(0.45 + n * 0.55); })); };
         altavoz.Termino += () => Dispatcher.BeginInvoke(new Action(() =>
         {
             // Se calló todo sin que sonara una frase útil (solo el relleno, o la voz falló): el turno se cierra igual.
@@ -195,7 +195,8 @@ public partial class NotchWindow
     async Task ComprobarConexion()
     {
         bool ok = api != null && await api.Salud();
-        PuntoEstado.Fill = new SolidColorBrush(pausado ? Color.FromRgb(0xFF, 0x9F, 0x0A) : ok ? Color.FromRgb(0x4C, 0xD9, 0x64) : Color.FromRgb(0x8E, 0x8E, 0x93));
+        // El punzón del estado: cardenillo (conectada), ceniza (en pausa), lacre (sin conexión).
+        PuntoEstado.Fill = (Brush)FindResource(pausado ? "Ceniza" : ok ? "Cardenillo" : "Lacre");
         PuntoEstado.ToolTip = pausado ? "En pausa" : ok ? "Conectada a AU-RA" : "Sin conexión con el servidor";
         if (!ok && api != null) Avisar(new Aviso("Sin conexión", "No alcanzo el servidor AU-RA. Las manos de la computadora siguen funcionando.", "", "worried", Segundos: 6));
     }
@@ -422,7 +423,7 @@ public partial class NotchWindow
         if (soloRender) return;
         // El despertador queda encendido mientras haga falta (no se rehace cada vez: cargar el modelo cuesta).
         if (microSilenciado || pausado || ajustes.Escucha is not ("palabra" or "siempre")) despertador.Apagar();
-        BotonSilencio.Foreground = microSilenciado ? new SolidColorBrush(Color.FromRgb(0xFF, 0x6B, 0x6B)) : (Brush)FindResource("Texto");
+        BotonSilencio.Foreground = (Brush)FindResource(microSilenciado ? "Lacre" : "Texto");
         BotonSilencio.ToolTip = microSilenciado ? T("Micrófono silenciado. Tócalo para que AURA vuelva a escucharte.", "Microphone muted. Tap to let AURA listen again.")
                                                 : T("Silenciar el micrófono: AURA deja de escucharte hasta que lo vuelvas a tocar", "Mute: AURA stops listening until you tap again");
         if (microSilenciado || pausado) { CerrarAgente(); if (!hablandoAhora) CerrarOido(); Recalcular(); return; }
@@ -704,7 +705,7 @@ public partial class NotchWindow
         escribiendo?.Cancel(); destino = null;
         pausado = true;
         BotonPausa.Content = "";
-        PuntoEstado.Fill = new SolidColorBrush(Color.FromRgb(0xFF, 0x9F, 0x0A));
+        PuntoEstado.Fill = (Brush)FindResource("Ceniza");
         EstadoPanel.Text = ajustes.Idioma == "en" ? "Paused" : "En pausa";
         Avisar(new Aviso(ajustes.Idioma == "en" ? "Paused" : "En pausa", ajustes.Idioma == "en" ? "Microphone, voice and actions stopped. Tap the mic to resume." : "Micrófono, voz y acciones detenidos. Toca el micrófono para seguir.", "", "worried", Segundos: 4));
     }
@@ -729,10 +730,14 @@ public partial class NotchWindow
     internal void AplicarAvatar(string id, bool guardar = true)
     {
         ajustes.Avatar = id;
-        var color = id switch { "claudio" => Color.FromRgb(0xF4, 0xAD, 0x72), "antonio" => Color.FromRgb(0x45, 0xC9, 0xDE), "ojos" => Color.FromRgb(0x5C, 0xE1, 0xFF), _ => Color.FromRgb(0xD6, 0xB5, 0x6C) };
-        Application.Current.Resources["Acento"] = new SolidColorBrush(color);
-        Application.Current.Resources["AcentoSuave"] = new SolidColorBrush(Color.FromArgb(0x33, color.R, color.G, color.B));
-        Brillo.Color = color;
+        // Cada avatar, su metal (Contraste: nada de cian ni neón): oro crudo AU-RA, cobre Claudio, plata ANT-ONIO,
+        // platino el Guardián. El «vivo» es su brillo puntual (foco, lo activo): el mismo metal pulido hacia el papel.
+        var color = id switch { "claudio" => Color.FromRgb(0xC2, 0x7A, 0x4C), "antonio" => Color.FromRgb(0xA7, 0xAD, 0xB0), "ojos" => Color.FromRgb(0x9F, 0xB4, 0xB8), _ => Marca.Contraste.OroCrudo };
+        var vivo = id is "aura" or "" ? Marca.Contraste.OroPulido : Marca.Contraste.Mezcla(color, Marca.Contraste.Papel, 0.45);
+        Application.Current.Resources["Acento"] = Marca.Contraste.Pincel(color);
+        Application.Current.Resources["AcentoSuave"] = Marca.Contraste.Pincel(Color.FromArgb(0x1F, color.R, color.G, color.B));
+        Application.Current.Resources["AcentoVivo"] = Marca.Contraste.Pincel(vivo);
+        FiloDelAcento(color);
         foreach (var a in new[] { AvatarChico, AvatarEscucha, AvatarPiensa, AvatarHabla, AvatarAviso, AvatarConfirma, AvatarPanel }) a.Avatar = id;
         AvatarView.Precargar(id);
         NombreChico.Text = NombreHabla.Text = NombrePanel.Text = ajustes.NombreAvatar;

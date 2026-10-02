@@ -1,95 +1,137 @@
-<Application x:Class="Aura.Windows.App" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:n="clr-namespace:Aura.Windows.Notch" ShutdownMode="OnExplicitShutdown">
+<Application x:Class="Aura.Windows.App" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:n="clr-namespace:Aura.Windows.Notch" xmlns:m="clr-namespace:Aura.Windows.Marca" ShutdownMode="OnExplicitShutdown">
  <Application.Resources>
-  <!-- El acento es el del avatar (lo cambia NotchWindow.Acento): dorado AU-RA, naranja Claudio, cian ANT-ONIO y Guardián. -->
-  <SolidColorBrush x:Key="Acento" Color="#D6B56C"/>
-  <SolidColorBrush x:Key="AcentoSuave" Color="#33D6B56C"/>
-  <SolidColorBrush x:Key="Texto" Color="#F5F5F7"/>
-  <SolidColorBrush x:Key="Tenue" Color="#9A9AA2"/>
-  <SolidColorBrush x:Key="Superficie" Color="#131316"/>
-  <SolidColorBrush x:Key="Superficie2" Color="#1C1C21"/>
-  <SolidColorBrush x:Key="Linea" Color="#2A2A30"/>
+  <!-- «Contraste» (windows/marca/DIRECCION.md). El oro es material, no decoración: filos de 1 px, la marca y lo activo.
+       Los mismos valores, para el código, en Marca/Contraste.cs. -->
+  <SolidColorBrush x:Key="Obsidiana" Color="#0D0C0A"/>
+  <SolidColorBrush x:Key="Grafito" Color="#171512"/>
+  <SolidColorBrush x:Key="Grafito2" Color="#221F1A"/>
+  <SolidColorBrush x:Key="OroCrudo" Color="#B8913F"/>
+  <SolidColorBrush x:Key="OroPulido" Color="#E3C77E"/>
+  <SolidColorBrush x:Key="Papel" Color="#ECE5D6"/>
+  <SolidColorBrush x:Key="Ceniza" Color="#8E877A"/>
+  <SolidColorBrush x:Key="Cardenillo" Color="#5E9C8C"/>
+  <SolidColorBrush x:Key="Lacre" Color="#B5482E"/>
+
+  <!-- El acento es el metal del avatar (lo cambia NotchWindow.AplicarAvatar): oro AU-RA, cobre Claudio, plata ANT-ONIO,
+       platino el Guardián. «AcentoVivo» es su brillo puntual (foco, lo activo). -->
+  <SolidColorBrush x:Key="Acento" Color="#B8913F"/>
+  <SolidColorBrush x:Key="AcentoSuave" Color="#1FB8913F"/>
+  <SolidColorBrush x:Key="AcentoVivo" Color="#E3C77E"/>
+  <!-- Nombres de siempre (los usa todo el código nativo), ahora con los tokens. -->
+  <SolidColorBrush x:Key="Texto" Color="#ECE5D6"/>
+  <SolidColorBrush x:Key="Tenue" Color="#8E877A"/>
+  <SolidColorBrush x:Key="Superficie" Color="#171512"/>
+  <SolidColorBrush x:Key="Superficie2" Color="#221F1A"/>
+  <SolidColorBrush x:Key="Linea" Color="#2E2A23"/>
+  <SolidColorBrush x:Key="Pista" Color="#6F695E"/>
+
+  <!-- IBM Plex va dentro del .exe (Fuentes/, OFL). Con Segoe UI detrás por si una fuente no cargara. -->
   <FontFamily x:Key="Iconos">Segoe Fluent Icons, Segoe MDL2 Assets</FontFamily>
-  <FontFamily x:Key="Letra">Segoe UI Variable Text, Segoe UI</FontFamily>
+  <FontFamily x:Key="Letra">./Fuentes/#IBM Plex Sans, Segoe UI</FontFamily>
+  <FontFamily x:Key="LetraRotulo">./Fuentes/#IBM Plex Sans Condensed, Segoe UI</FontFamily>
+  <FontFamily x:Key="LetraMono">./Fuentes/#IBM Plex Mono, Consolas</FontFamily>
+
+  <!-- marca-tinta.svg: el punzón con «AU» calado, una sola tinta (caja de 512). Y el punzón solo (el punto de estado). -->
+  <Geometry x:Key="MarcaTinta">F0 M100 20H412L492 100V412L412 492H100L20 412V100Z M84 376L160 136H214L290 376H238L224 332H150L136 376ZM162 292H212L187 210Z M310 136H358V290Q358 334 380 334Q402 334 402 290V136H450V292Q450 382 380 382Q310 382 310 292Z</Geometry>
+  <Geometry x:Key="Punzon">M100 20H412L492 100V412L412 492H100L20 412V100Z</Geometry>
 
   <Style TargetType="TextBlock"><Setter Property="FontFamily" Value="{StaticResource Letra}"/><Setter Property="Foreground" Value="{StaticResource Texto}"/><Setter Property="FontSize" Value="13"/></Style>
+  <!-- Cifras, horas y atajos: en Mono, como la lectura de un ensayo. -->
+  <Style x:Key="Atajo" TargetType="Run"><Setter Property="FontFamily" Value="{StaticResource LetraMono}"/><Setter Property="Foreground" Value="{StaticResource Tenue}"/></Style>
 
-  <!-- Las descripciones de los botones: oscuras como el notch. Sin esto, el texto blanco global quedaba
+  <!-- Las descripciones de los botones: grafito con filo de 1 px. Sin esto, el texto claro global quedaba
        sobre el fondo blanco de Windows y se veía un recuadro vacío. -->
   <Style TargetType="ToolTip">
-   <Setter Property="Foreground" Value="{StaticResource Texto}"/><Setter Property="FontFamily" Value="{StaticResource Letra}"/><Setter Property="FontSize" Value="12"/>
-   <Setter Property="HasDropShadow" Value="True"/><Setter Property="Placement" Value="Bottom"/><Setter Property="VerticalOffset" Value="6"/>
+   <Setter Property="Foreground" Value="{StaticResource Texto}"/><Setter Property="FontFamily" Value="{StaticResource Letra}"/><Setter Property="FontSize" Value="12.5"/>
+   <Setter Property="HasDropShadow" Value="False"/><Setter Property="Placement" Value="Bottom"/><Setter Property="VerticalOffset" Value="6"/>
    <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ToolTip">
-    <Border Background="#F21C1C21" BorderBrush="{StaticResource Linea}" BorderThickness="1" CornerRadius="10" Padding="10,6" MaxWidth="280">
+    <Border Background="#F7221F1A" BorderBrush="{StaticResource Linea}" BorderThickness="1" CornerRadius="4" Padding="9,5" MaxWidth="280" SnapsToDevicePixels="True">
      <ContentPresenter TextElement.Foreground="{StaticResource Texto}">
-      <ContentPresenter.Resources><Style TargetType="TextBlock"><Setter Property="TextWrapping" Value="Wrap"/><Setter Property="Foreground" Value="{StaticResource Texto}"/></Style></ContentPresenter.Resources>
+      <ContentPresenter.Resources><Style TargetType="TextBlock"><Setter Property="TextWrapping" Value="Wrap"/><Setter Property="Foreground" Value="{StaticResource Texto}"/><Setter Property="FontSize" Value="12.5"/></Style></ContentPresenter.Resources>
      </ContentPresenter>
     </Border></ControlTemplate></Setter.Value></Setter>
   </Style>
 
-  <!-- El foco del teclado (Tab): un anillo redondo y claro alrededor de la píldora. Solo sale al navegar con
-       el teclado, no al hacer clic. -->
+  <!-- El foco del teclado (Tab): un filo de oro pulido a 2 px del control. Solo sale al navegar con el teclado. -->
   <Style x:Key="FocoPildora">
    <Setter Property="Control.Template"><Setter.Value><ControlTemplate>
-    <Border CornerRadius="999" BorderBrush="White" BorderThickness="2" Margin="-3" SnapsToDevicePixels="True"/>
+    <Border CornerRadius="7" BorderBrush="{DynamicResource AcentoVivo}" BorderThickness="1" Margin="-3" SnapsToDevicePixels="True"/>
    </ControlTemplate></Setter.Value></Setter>
   </Style>
 
+  <!-- «Pildora» (el nombre de siempre): ahora una placa de grafito con radio corto y filo de 1 px. -->
   <Style x:Key="Pildora" TargetType="Button">
-   <Setter Property="Foreground" Value="{StaticResource Texto}"/><Setter Property="Background" Value="{StaticResource Superficie2}"/><Setter Property="FontFamily" Value="{StaticResource Letra}"/>
-   <Setter Property="FontSize" Value="13"/><Setter Property="Padding" Value="14,8"/><Setter Property="Margin" Value="0,0,8,8"/><Setter Property="Cursor" Value="Hand"/><Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+   <Setter Property="Foreground" Value="{StaticResource Texto}"/><Setter Property="Background" Value="{StaticResource Superficie2}"/><Setter Property="BorderBrush" Value="{StaticResource Linea}"/><Setter Property="FontFamily" Value="{StaticResource Letra}"/>
+   <Setter Property="FontSize" Value="12.5"/><Setter Property="Padding" Value="12,7"/><Setter Property="Margin" Value="0,0,8,8"/><Setter Property="Cursor" Value="Hand"/><Setter Property="FocusVisualStyle" Value="{x:Null}"/>
    <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
-    <Border x:Name="B" Background="{TemplateBinding Background}" CornerRadius="999" Padding="{TemplateBinding Padding}" BorderThickness="1" BorderBrush="Transparent">
-     <!-- El texto toma el color del botón (#111 sobre el dorado de PildoraAcento): sin esto, el estilo global de
-          TextBlock lo dejaba claro sobre el dorado y no se leía. -->
+    <Border x:Name="B" Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}" BorderThickness="1" BorderBrush="{TemplateBinding BorderBrush}" SnapsToDevicePixels="True">
+     <!-- El texto toma el color del botón: sin esto, el estilo global de TextBlock lo dejaba con el color de siempre. -->
      <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" TextElement.Foreground="{TemplateBinding Foreground}">
       <ContentPresenter.Resources><Style TargetType="TextBlock"><Setter Property="Foreground" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/></Style></ContentPresenter.Resources>
      </ContentPresenter></Border>
     <ControlTemplate.Triggers>
      <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="BorderBrush" Value="{DynamicResource Acento}"/></Trigger>
-     <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="B" Property="BorderBrush" Value="White"/></Trigger>
-     <Trigger Property="IsPressed" Value="True"><Setter TargetName="B" Property="Opacity" Value="0.7"/></Trigger>
+     <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="B" Property="BorderBrush" Value="{DynamicResource AcentoVivo}"/></Trigger>
+     <Trigger Property="IsPressed" Value="True"><Setter TargetName="B" Property="Background" Value="{StaticResource Obsidiana}"/></Trigger>
      <Trigger Property="IsEnabled" Value="False"><Setter TargetName="B" Property="Opacity" Value="0.4"/></Trigger>
     </ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
   </Style>
-  <Style x:Key="PildoraAcento" TargetType="Button" BasedOn="{StaticResource Pildora}"><Setter Property="Background" Value="{DynamicResource Acento}"/><Setter Property="Foreground" Value="#111"/><Setter Property="FontWeight" Value="SemiBold"/></Style>
+  <!-- La acción principal: no un bloque de oro, sino el filo de oro y la letra en oro pulido. -->
+  <Style x:Key="PildoraAcento" TargetType="Button" BasedOn="{StaticResource Pildora}">
+   <Setter Property="Background" Value="{DynamicResource AcentoSuave}"/><Setter Property="BorderBrush" Value="{DynamicResource Acento}"/><Setter Property="Foreground" Value="{DynamicResource AcentoVivo}"/><Setter Property="FontWeight" Value="SemiBold"/>
+  </Style>
 
   <Style x:Key="Icono" TargetType="Button">
-   <Setter Property="Foreground" Value="{StaticResource Texto}"/><Setter Property="Background" Value="Transparent"/><Setter Property="FontFamily" Value="{StaticResource Iconos}"/>
+   <Setter Property="Foreground" Value="{StaticResource Texto}"/><Setter Property="Background" Value="Transparent"/><Setter Property="BorderBrush" Value="Transparent"/><Setter Property="BorderThickness" Value="1"/><Setter Property="FontFamily" Value="{StaticResource Iconos}"/>
    <Setter Property="FontSize" Value="15"/><Setter Property="Width" Value="34"/><Setter Property="Height" Value="34"/><Setter Property="Cursor" Value="Hand"/><Setter Property="FocusVisualStyle" Value="{x:Null}"/>
    <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
-    <Border x:Name="B" Background="{TemplateBinding Background}" CornerRadius="999"><n:Glifo Codigo="{TemplateBinding Content}" Pincel="{TemplateBinding Foreground}" Width="{TemplateBinding FontSize}" Height="{TemplateBinding FontSize}"/></Border>
+    <Border x:Name="B" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="6" SnapsToDevicePixels="True"><n:Glifo Codigo="{TemplateBinding Content}" Pincel="{TemplateBinding Foreground}" Width="{TemplateBinding FontSize}" Height="{TemplateBinding FontSize}"/></Border>
     <ControlTemplate.Triggers>
-     <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Background" Value="#26FFFFFF"/></Trigger>
-     <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="B" Property="Background" Value="#33FFFFFF"/></Trigger>
+     <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Background" Value="#14ECE5D6"/></Trigger>
+     <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="B" Property="BorderBrush" Value="{DynamicResource AcentoVivo}"/></Trigger>
      <Trigger Property="IsPressed" Value="True"><Setter TargetName="B" Property="Opacity" Value="0.6"/></Trigger>
      <Trigger Property="IsEnabled" Value="False"><Setter TargetName="B" Property="Opacity" Value="0.35"/></Trigger>
     </ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
   </Style>
 
-  <!-- Las pestañas: con Tab se ve el anillo de foco (FocoPildora); el texto toma el color de la pestaña
-       (tenue sin elegir, claro elegida o con el ratón encima). -->
+  <!-- Las pestañas: rótulos estampados (condensada, mayúsculas, tracking); la elegida lleva su filo de oro debajo.
+       Con Tab se ve el foco (FocoPildora). -->
   <Style x:Key="Pestana" TargetType="RadioButton">
-   <Setter Property="Foreground" Value="{StaticResource Tenue}"/><Setter Property="FontFamily" Value="{StaticResource Letra}"/><Setter Property="FontSize" Value="13"/><Setter Property="Cursor" Value="Hand"/><Setter Property="FocusVisualStyle" Value="{StaticResource FocoPildora}"/>
+   <Setter Property="Foreground" Value="{StaticResource Tenue}"/><Setter Property="FontFamily" Value="{StaticResource LetraRotulo}"/><Setter Property="FontSize" Value="12.5"/><Setter Property="Cursor" Value="Hand"/><Setter Property="FocusVisualStyle" Value="{StaticResource FocoPildora}"/>
    <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="RadioButton">
-    <Border x:Name="B" CornerRadius="999" Padding="14,6" Background="Transparent">
-     <ContentPresenter HorizontalAlignment="Center" TextElement.Foreground="{TemplateBinding Foreground}">
-      <ContentPresenter.Resources><Style TargetType="TextBlock"><Setter Property="Foreground" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=RadioButton}}"/></Style></ContentPresenter.Resources>
-     </ContentPresenter></Border>
+    <Grid Background="Transparent" Margin="4,0">
+     <m:Rotulo Texto="{Binding Content, RelativeSource={RelativeSource TemplatedParent}}" Tamano="11" Tracking="0.1" Tinta="{TemplateBinding Foreground}" Margin="10,7,10,8" HorizontalAlignment="Center"/>
+     <Rectangle x:Name="Subrayado" Height="1" VerticalAlignment="Bottom" Margin="10,0" Fill="{DynamicResource Acento}" Opacity="0" SnapsToDevicePixels="True"/>
+    </Grid>
     <ControlTemplate.Triggers>
-     <Trigger Property="IsChecked" Value="True"><Setter TargetName="B" Property="Background" Value="{StaticResource Superficie2}"/><Setter Property="Foreground" Value="{StaticResource Texto}"/></Trigger>
+     <Trigger Property="IsChecked" Value="True"><Setter TargetName="Subrayado" Property="Opacity" Value="1"/><Setter Property="Foreground" Value="{StaticResource Texto}"/></Trigger>
      <Trigger Property="IsMouseOver" Value="True"><Setter Property="Foreground" Value="{StaticResource Texto}"/></Trigger>
     </ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
   </Style>
 
   <Style TargetType="TextBox">
-   <Setter Property="Background" Value="Transparent"/><Setter Property="Foreground" Value="{StaticResource Texto}"/><Setter Property="CaretBrush" Value="{DynamicResource Acento}"/>
+   <Setter Property="Background" Value="Transparent"/><Setter Property="Foreground" Value="{StaticResource Texto}"/><Setter Property="CaretBrush" Value="{DynamicResource AcentoVivo}"/>
    <Setter Property="SelectionBrush" Value="{DynamicResource Acento}"/><Setter Property="BorderThickness" Value="0"/><Setter Property="FontFamily" Value="{StaticResource Letra}"/><Setter Property="FontSize" Value="14"/>
   </Style>
   <Style TargetType="CheckBox"><Setter Property="Foreground" Value="{StaticResource Texto}"/><Setter Property="FontFamily" Value="{StaticResource Letra}"/><Setter Property="Margin" Value="0,6"/></Style>
 
+  <!-- Las listas (apps instaladas): sin el azul de selección de Windows; la elegida en grafito con su filo de oro a la izquierda. -->
+  <Style TargetType="ListBoxItem">
+   <Setter Property="Foreground" Value="{StaticResource Texto}"/><Setter Property="FontFamily" Value="{StaticResource Letra}"/><Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ListBoxItem">
+    <Grid Background="Transparent">
+     <Border x:Name="B" CornerRadius="4" Padding="10,5" Background="Transparent" SnapsToDevicePixels="True"><ContentPresenter/></Border>
+     <Rectangle x:Name="Marca" Width="1" HorizontalAlignment="Left" Margin="0,4" Fill="{DynamicResource Acento}" Opacity="0"/>
+    </Grid>
+    <ControlTemplate.Triggers>
+     <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Background" Value="#0FECE5D6"/></Trigger>
+     <Trigger Property="IsSelected" Value="True"><Setter TargetName="B" Property="Background" Value="{StaticResource Superficie2}"/><Setter TargetName="Marca" Property="Opacity" Value="1"/></Trigger>
+    </ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
+  </Style>
+
   <Style TargetType="ScrollBar">
-   <Setter Property="Width" Value="8"/><Setter Property="MinWidth" Value="8"/><Setter Property="Background" Value="Transparent"/>
-   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ScrollBar"><Grid Background="Transparent"><Track x:Name="PART_Track" IsDirectionReversed="True"><Track.Thumb><Thumb><Thumb.Template><ControlTemplate TargetType="Thumb"><Border Background="#44FFFFFF" CornerRadius="4" Margin="2,0"/></ControlTemplate></Thumb.Template></Thumb></Track.Thumb></Track></Grid></ControlTemplate></Setter.Value></Setter>
+   <Setter Property="Width" Value="6"/><Setter Property="MinWidth" Value="6"/><Setter Property="Background" Value="Transparent"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ScrollBar"><Grid Background="Transparent"><Track x:Name="PART_Track" IsDirectionReversed="True"><Track.Thumb><Thumb><Thumb.Template><ControlTemplate TargetType="Thumb"><Border Background="#33ECE5D6" CornerRadius="2" Margin="1,0"/></ControlTemplate></Thumb.Template></Thumb></Track.Thumb></Track></Grid></ControlTemplate></Setter.Value></Setter>
   </Style>
  </Application.Resources>
 </Application>

@@ -471,7 +471,11 @@ public partial class NotchWindow
             var fila = new Grid { Margin = new Thickness(0, 0, 0, 6) };
             fila.ColumnDefinitions.Add(new ColumnDefinition());
             fila.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            fila.Children.Add(new TextBlock { Text = r.Cuando.ToString("ddd HH:mm") + " · " + r.Tarea, TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center });
+            // La hora en Mono (las cifras, alineadas), la tarea en Sans.
+            var renglon = new TextBlock { TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center };
+            renglon.Inlines.Add(new System.Windows.Documents.Run(r.Cuando.ToString("ddd HH:mm")) { Style = (Style)FindResource("Atajo") });
+            renglon.Inlines.Add(new System.Windows.Documents.Run("  " + r.Tarea));
+            fila.Children.Add(renglon);
             var quitar = new Button { Content = "", Style = (Style)FindResource("Icono"), ToolTip = T("Quitar", "Remove") };
             var id = r.Id;
             quitar.Click += (_, _) => { ajustes.Recordatorios.RemoveAll(x => x.Id == id); try { ajustes.Guardar(); } catch { } PintarRecordatorios(); };

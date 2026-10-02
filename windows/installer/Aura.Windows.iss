@@ -43,7 +43,8 @@ Source: "..\artifacts\win-x64\*"; DestDir: "{app}"; Excludes: "*.pdb"; Flags: ig
 [Icons]
 Name: "{group}\AURA"; Filename: "{app}\Aura.Windows.exe"
 Name: "{autodesktop}\AURA"; Filename: "{app}\Aura.Windows.exe"; Tasks: desktopicon
-Name: "{userstartup}\AURA"; Filename: "{app}\Aura.Windows.exe"; Tasks: startup
+; Al entrar a Windows: --inicio (la pantalla de arranque corta, sin esperar a nadie).
+Name: "{userstartup}\AURA"; Filename: "{app}\Aura.Windows.exe"; Parameters: "--inicio"; Tasks: startup
 [Registry]
 ; El enlace ultronfp:// (la vuelta de Genesis ID) lo registra AURA al abrirse; al desinstalar se quita.
 Root: HKCU; Subkey: "Software\Classes\ultronfp"; Flags: uninsdeletekey dontcreatekey
@@ -52,7 +53,8 @@ Root: HKCU; Subkey: "Software\Classes\ultronfp"; Flags: uninsdeletekey dontcreat
 Filename: "{app}\Aura.Windows.exe"; Description: "Abrir AURA"; Flags: nowait postinstall skipifsilent
 ; La actualización por el aire corre el instalador en silencio con /RELANZAR=1: al terminar, AURA vuelve a
 ; abrirse sola. Sin ese parámetro (una instalación silenciosa cualquiera, o la prueba del CI) no se abre.
-Filename: "{app}\Aura.Windows.exe"; Flags: nowait runasoriginaluser; Check: Relanzar
+; --actualizada: vuelve con la pantalla de arranque corta.
+Filename: "{app}\Aura.Windows.exe"; Parameters: "--actualizada"; Flags: nowait runasoriginaluser; Check: Relanzar
 
 [Code]
 function Relanzar(): Boolean;

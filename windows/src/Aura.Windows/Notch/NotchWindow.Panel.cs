@@ -38,7 +38,7 @@ public partial class NotchWindow
         bool mio = quien == "Tú";
         var cuerpo = new TextBlock { Text = texto, TextWrapping = TextWrapping.Wrap, FontSize = 14, LineHeight = 20 };
         var pila = new StackPanel();
-        if (!mio) pila.Children.Add(new TextBlock { Text = quien, FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = (Brush)FindResource("Acento"), Margin = new Thickness(0, 0, 0, 4) });
+        if (!mio) pila.Children.Add(new TextBlock { Text = quien, FontSize = 11, FontWeight = FontWeights.SemiBold, FontFamily = (FontFamily)FindResource("LetraRotulo"), Foreground = (Brush)FindResource("Acento"), Margin = new Thickness(0, 0, 0, 4) });
         pila.Children.Add(cuerpo);
         EspejarBurbuja(quien, cuerpo);
         if (!mio)
@@ -55,8 +55,10 @@ public partial class NotchWindow
         }
         var burbuja = new Border
         {
-            Child = pila, CornerRadius = new CornerRadius(18), Padding = new Thickness(14, 10, 14, 8),
+            // Placas de radio corto con filo de 1 px: la tuya con el metal del avatar, la suya en grafito.
+            Child = pila, CornerRadius = new CornerRadius(6), Padding = new Thickness(14, 10, 14, 8), BorderThickness = new Thickness(1),
             Background = mio ? (Brush)FindResource("AcentoSuave") : (Brush)FindResource("Superficie"),
+            BorderBrush = (Brush)FindResource("Linea"),
             HorizontalAlignment = mio ? HorizontalAlignment.Right : HorizontalAlignment.Left,
             MaxWidth = 440, Margin = new Thickness(mio ? 40 : 0, 6, mio ? 0 : 30, 2),
         };
