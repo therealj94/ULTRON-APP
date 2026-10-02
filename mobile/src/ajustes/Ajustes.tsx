@@ -9,6 +9,11 @@
  *   AURA          «Lo que AURA sabe de ti» (la ruta Perfil), «Lo que sé de ti» (lo que aprendió y lo que quedó
  *                 a medias), «Mi círculo», sus misiones (app/HojasCerebro.tsx), tus correos (ajustes/Correos.tsx)
  *                 y la vibración
+ *   Voz y oído    la voz del avatar y cómo convierte tu voz en texto (el teléfono o la nube)
+ *   La mesa       «comenta lo que ve», los efectos de sonido y, con AU-RA, su cara y cómo te contesta
+ *   Memoria       cuántos hechos guarda de ti y «Olvidar» (pregunta antes; borra aquí y en el servidor)
+ *                 (José, 2-oct: estaban al final del menú de la mesa, en una columna angosta y cortada;
+ *                 usan las mismas acciones de la mesa, que las publica en app/mesaAjustes.ts)
  *   Iniciativa    cuánto te propone AURA por su cuenta: alta · media · baja · apagada (server/iniciativa.ts)
  *   Computadora   quién maneja su computadora en la nube: gratis (modelo propio) o Claude (de pago)
  *   Privacidad    los permisos del teléfono, con su ✔
@@ -16,7 +21,7 @@
  *
  * Todo se guarda en el perfil (lib/perfil.ts): se aplica al momento y viaja al servidor por detrás.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { AppState, StyleSheet, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { APP_VERSION } from '../config';
@@ -40,6 +45,8 @@ import { INFO_PERMISOS, abrirAjustesAlarma, estadoAlarmaExacta, estadosPermisos,
 import { SelectorCumple, VistaAvatar } from '../primeravez/piezas';
 import type { RaizParams } from '../app/rutas';
 import { salirDeLaSesion, useUsuario } from '../app/sesion';
+import { mesaAjustes, suscribirMesa } from '../app/mesaAjustes';
+import type { SttEngine } from '../lib/storage';
 
 /** Lo que corre: la OTA (o el JS de la APK), cuándo se publicó y la huella nativa. */
 function lineaOta(idioma: Idioma): string {
@@ -72,6 +79,8 @@ export function Ajustes({ navigation }: Props) {
   const [permisosOk, setPermisosOk] = useState<number | null>(null);
   const [alarma, setAlarma] = useState<EstadoAlarma | null>(null);
   const { cuentas: correos } = useCuentasCorreo(hoja === 'correos');
+  // Lo de la mesa (voz, oído, comentarios, efectos, memoria, su cara): la mesa está montada debajo.
+  const mesa = useSyncExternalStore(suscribirMesa, mesaAjustes, mesaAjustes);
 
   useEffect(() => {
     if (hoja !== null) return;
@@ -183,6 +192,12 @@ export function Ajustes({ navigation }: Props) {
             <Fila titulo={tr('Vibración', 'Vibration')} detalle={tr('Al tocar botones y al completar algo', 'When tapping buttons and completing things')} icono="tocar" derecha={<Interruptor valor={hapticos} onCambiar={(v) => void fijarHapticos(v)} etiqueta={tr('Vibración', 'Vibration')} />} />
           </Grupo>
         </Aparecer>
+
+        {mesa ? (
+          <Aparecer retraso={165}>
+            <SeccionesMesa mesa={mesa} />
+          </Aparecer>
+        ) : null}
 
         <Aparecer retraso={170}>
           <Grupo titulo={tr('Iniciativa de AURA', 'AURA’s initiative')} pie={pieIniciativa(perfil?.iniciativa ?? 'media')}>
@@ -358,10 +373,100 @@ export function Ajustes({ navigation }: Props) {
   );
 }
 
+/**
+ * Voz y oído, la mesa y la memoria (antes al final del menú de la mesa). Cada cambio llama a lo mismo que
+ * llamaba el menú: se guarda, se aplica en la mesa al instante y, si toca, el avatar lo dice.
+ */
+function SeccionesMesa({ mesa }: { mesa: NonNullable<ReturnType<typeof mesaAjustes>> }) {
+  const { datos, acciones } = mesa;
+  const av = avatarPorId(datos.avatar);
+  return (
+    <View style={{ gap: MEDIDA.espacio.xl }}>
+      <Grupo
+        titulo={tr('Voz y oído', 'Voice and hearing')}
+        pie={datos.sttEngine === 'native' ? tr('Teléfono: el reconocimiento de Google, en vivo y sin gastar datos del servidor.', 'Phone: Google’s recognition, live, without using the server.') : tr('Nube: tu voz se transcribe en el servidor (mejor con ruido o acentos).', 'Cloud: your voice is transcribed on the server (better with noise or accents).')}
+      >
+        <Fila titulo={tr('Voz', 'Voice')} detalle={`${de(av.voz)}. ${tr('Todo se dice en vivo con su voz.', 'Everything is spoken live in its voice.')}`} icono="volumen" />
+        <View style={s.segmento}>
+          <Texto v="chica" color="texto2" style={s.etiquetaSegmento}>
+            {tr('Oído: cómo convierte tu voz en texto', 'Hearing: how your voice becomes text')}
+          </Texto>
+          <Segmentado<SttEngine>
+            opciones={[
+              { id: 'native', texto: tr('Teléfono', 'Phone'), icono: 'telefono' },
+              { id: 'cloud', texto: tr('Nube', 'Cloud'), icono: 'globo' },
+            ]}
+            valor={datos.sttEngine}
+            onCambiar={(e) => e !== datos.sttEngine && acciones.fijarOido(e)}
+          />
+        </View>
+      </Grupo>
+
+      <Grupo titulo={tr(`La mesa · ${de(av.nombre)}`, `The desk · ${de(av.nombre)}`)}>
+        <Fila
+          titulo={tr('Comenta lo que ve', 'Comments on what it sees')}
+          detalle={tr('Observaciones espontáneas de la cámara', 'Spontaneous camera remarks')}
+          icono="ojo"
+          derecha={<Interruptor valor={datos.proactive} onCambiar={(v) => v !== datos.proactive && acciones.alternarComentarios()} etiqueta={tr('Comenta lo que ve', 'Comments on what it sees')} />}
+        />
+        <Fila
+          titulo={tr('Efectos de sonido', 'Sound effects')}
+          detalle={tr('Toques, blaster, sable', 'Taps, blaster, saber')}
+          icono="musica"
+          derecha={<Interruptor valor={datos.sfx} onCambiar={(v) => v !== datos.sfx && acciones.alternarEfectos()} etiqueta={tr('Efectos de sonido', 'Sound effects')} />}
+        />
+        {datos.avatar === 'aura' ? (
+          <View style={s.segmento}>
+            <Texto v="chica" color="texto2" style={s.etiquetaSegmento}>
+              {tr('Su cara', 'Her face')}
+            </Texto>
+            <Segmentado<'anillos' | 'sala'>
+              opciones={[
+                { id: 'anillos', texto: tr('Anillos', 'Rings') },
+                { id: 'sala', texto: tr('Habitación 3D', '3D room') },
+              ]}
+              valor={datos.cara}
+              onCambiar={acciones.fijarCara}
+            />
+            {datos.cara === 'sala' ? (
+              <>
+                <Texto v="chica" color="texto2" style={[s.etiquetaSegmento, { marginTop: MEDIDA.espacio.m }]}>
+                  {tr('Te contesta', 'She answers')}
+                </Texto>
+                <Segmentado<'pie' | 'sentada'>
+                  opciones={[
+                    { id: 'pie', texto: tr('De pie', 'Standing') },
+                    { id: 'sentada', texto: tr('Sentada', 'Sitting') },
+                  ]}
+                  valor={datos.postura}
+                  onCambiar={acciones.fijarPostura}
+                />
+              </>
+            ) : null}
+          </View>
+        ) : null}
+      </Grupo>
+
+      <Grupo
+        titulo={tr('Memoria', 'Memory')}
+        pie={tr('Lo que le pides recordar («recuerda que…»). Olvidar lo borra en este teléfono y en el servidor, y no se puede deshacer.', 'What you ask it to remember (“remember that…”). Forget erases it on this phone and on the server, and can’t be undone.')}
+      >
+        <Fila
+          titulo={tr('Memoria de largo plazo', 'Long-term memory')}
+          icono="libro"
+          valor={datos.memoria ? tr(`${datos.memoria} ${datos.memoria === 1 ? 'hecho' : 'hechos'}`, `${datos.memoria} fact${datos.memoria === 1 ? '' : 's'}`) : tr('Nada guardado', 'Nothing saved')}
+        />
+        <Fila titulo={tr('Olvidar lo que recuerda de ti', 'Forget what it remembers about you')} icono="basura" destructiva chevron={false} onPress={acciones.olvidar} />
+      </Grupo>
+    </View>
+  );
+}
+
 const s = StyleSheet.create({
   perfil: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   foto: { width: 64, height: 64, borderRadius: 32, overflow: 'hidden', borderWidth: 2 },
   segmento: { padding: 10 },
+  etiquetaSegmento: { marginLeft: 4, marginBottom: 8 },
   chips: { flexDirection: 'row', gap: 8, flexWrap: 'wrap', justifyContent: 'center' },
   pie: { alignItems: 'center', gap: 4, paddingTop: MEDIDA.espacio.s },
 });

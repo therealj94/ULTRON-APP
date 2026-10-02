@@ -377,8 +377,9 @@ function buzonFalso() {
   const mensajes: Record<number, Partial<Mensaje>> = {
     1: {
       texto: 'Hola Lola:\n\n¿Nos vemos el lunes a las 10 en la oficina? Llevo los planos.\n\nSaludos,\nAna\n\n-- \nAna Paz | Gerente\nTel 9999-0000\n\nEl dom, 28 sep 2026, Lola escribió:\n> ¿cuándo nos vemos?',
-      paraLista: ['lola@prueba.hn', 'beto@empresa.hn'],
-      cc: ['carla@empresa.hn', 'LOLA@prueba.hn'],
+      paraCorreos: ['lola@prueba.hn', 'beto@empresa.hn'],
+      cc: 'Carla <carla@empresa.hn>, LOLA@prueba.hn',
+      ccCorreos: ['carla@empresa.hn', 'LOLA@prueba.hn'],
       para: 'Lola <lola@prueba.hn>, Beto <beto@empresa.hn>',
       messageId: '<r1@paz.hn>',
       referencias: ['<r0@prueba.hn>'],
@@ -407,7 +408,7 @@ function buzonFalso() {
         const r: any = [...bandeja, notaria].find((x: any) => x.uid === uid);
         const m = mensajes[uid];
         if (!r || !m) return null;
-        return { para: 'Lola <lola@prueba.hn>', paraLista: ['lola@prueba.hn'], cc: [], adjuntos: [], messageId: '', referencias: [], ...r, ...m, ref: `${c.id}:${uid}`, noLeido: false } as Mensaje;
+        return { para: 'Lola <lola@prueba.hn>', paraCorreos: ['lola@prueba.hn'], cc: '', ccCorreos: [], adjuntos: [], messageId: '', referencias: [], ...r, ...m, ref: `${c.id}:${uid}`, noLeido: false } as Mensaje;
       },
       mandar: async (_q: string, _c: unknown, e: Envio) => {
         enviados.push(e);
@@ -500,5 +501,100 @@ test('leer: resuelve la referencia, lee el cuerpo limpio y en trozos, pregunta s
     assert.match(await correrCorreo('lola@x.hn', 'leer el del notario Pérez', 'tel'), /no encuentro ningún correo de «notario perez»/);
   } finally {
     _buzonDePrueba(null);
+  }
+});
+
+/* ------------------------------------------------------------------ las rutas de la app (pestaña Correos) */
+
+test('la app: la bandeja, abrir un correo y mandar SOLO con la confirmación de la pantalla (428 sin ella)', async (t) => {
+  const tls = certificado();
+  if (!tls) return t.skip('sin openssl para el certificado de prueba');
+  const express = (await import('express')).default;
+  const { montarRutasCorreo } = await import('../server/correo');
+  const recibidos: { sobre: string[]; correo: ParsedMail }[] = [];
+  const smtp = new SMTPServer({
+    secure: true, ...tls,
+    onAuth: (a, _s, cb) => cb(a.password === 'clave-buena' ? null : new Error('mala'), { user: a.username }),
+    onRcptTo: (a, _s, cb) => cb(/^nadie@/.test(a.address) ? Object.assign(new Error('no existe'), { responseCode: 550 }) : undefined),
+    onData: (st, s, cb) => void simpleParser(st).then((m) => (recibidos.push({ sobre: s.envelope.rcptTo.map((r) => r.address), correo: m }), cb())),
+  });
+  await new Promise<void>((r) => smtp.listen(0, '127.0.0.1', r));
+  const puertoSmtp = (smtp.server.address() as any).port;
+  // Un puerto donde no contesta ningún IMAP: la bandeja dice qué cuenta no abrió, sin caerse.
+  const libre = await new Promise<number>((r) => { const sv = tlsMod.createServer(tls).listen(0, '127.0.0.1', () => { const p = (sv.address() as any).port; sv.close(() => r(p)); }); });
+  const app = express();
+  app.use(express.json());
+  const pasa: import('express').RequestHandler = (_q, _r, n) => n();
+  montarRutasCorreo(app, { exigirMesa: pasa, limitar: () => pasa, sesionDe: (req) => (req.headers['x-quien'] ? { correo: String(req.headers['x-quien']) } : null) });
+  const srv = app.listen(0, '127.0.0.1');
+  await new Promise<void>((r) => srv.once('listening', () => r()));
+  const base = `http://127.0.0.1:${(srv.address() as any).port}`;
+  const pedir = async (ruta: string, o: { quien?: string; cuerpo?: unknown } = {}) => {
+    const r = await fetch(`${base}${ruta}`, {
+      method: o.cuerpo === undefined ? 'GET' : 'POST',
+      headers: { 'content-type': 'application/json', ...(o.quien ? { 'x-quien': o.quien } : {}) },
+      ...(o.cuerpo === undefined ? {} : { body: JSON.stringify(o.cuerpo) }),
+    });
+    return { status: r.status, j: (await r.json()) as any };
+  };
+  _redLocalEnPruebas(true);
+  _olvidarCorreo();
+  _olvidarCuentas();
+  try {
+    const c = await agregarCuenta('ana@x.hn', 'ana@prueba.hn', { nombre: 'Prueba', imap: { host: '127.0.0.1', puerto: libre, seguro: true }, smtp: { host: '127.0.0.1', puerto: puertoSmtp, seguro: true }, auth: 'clave', usuario: 'correo', guardaEnviados: true }, 'clave-buena');
+    // Sin sesión, nada.
+    assert.equal((await pedir('/api/correo/bandeja')).status, 401);
+    assert.equal((await pedir('/api/correo/enviar', { cuerpo: { confirmado: true } })).status, 401);
+    // Sin cuentas: la bandeja vacía y la lista de cuentas vacía (la app explica cómo conectar una).
+    const vacia = await pedir('/api/correo/bandeja', { quien: 'otro@x.hn' });
+    assert.equal(vacia.status, 200);
+    assert.deepEqual([vacia.j.mensajes, vacia.j.cuentas, vacia.j.errores], [[], [], []]);
+    // Una cuenta que no abre: 200 con el error de ESA cuenta, dicho para entenderlo; nunca la clave.
+    const caida = await pedir('/api/correo/bandeja', { quien: 'ana@x.hn' });
+    assert.equal(caida.status, 200);
+    assert.equal(caida.j.cuentas.length, 1);
+    assert.equal(caida.j.cuentas[0].secreto, undefined, 'la app nunca recibe el secreto');
+    assert.equal(caida.j.errores[0].cuenta, 'ana@prueba.hn');
+    assert.match(caida.j.errores[0].error, /no contestó en el puerto/);
+    assert.equal((await pedir('/api/correo/bandeja?cuenta=nohay', { quien: 'ana@x.hn' })).status, 404);
+    // Abrir: la referencia se valida y tiene que ser de una cuenta SUYA.
+    assert.equal((await pedir('/api/correo/mensaje?ref=../../x', { quien: 'ana@x.hn' })).status, 400);
+    assert.equal((await pedir(`/api/correo/mensaje?ref=${c.id}:7`, { quien: 'otro@x.hn' })).status, 404, 'la cuenta de otra persona no se abre');
+    assert.equal((await pedir(`/api/correo/mensaje?ref=${c.id}:7`, { quien: 'ana@x.hn' })).status, 502, 'el IMAP no contesta: 502 con la razón');
+    // Mandar sin la confirmación de la pantalla: 428 y NO sale nada.
+    const listo = { cuentaId: c.id, para: ['beto@empresa.hn'], asunto: 'Hola', texto: 'Beto, ¿nos vemos el jueves?' };
+    const sinOk = await pedir('/api/correo/enviar', { quien: 'ana@x.hn', cuerpo: listo });
+    assert.equal(sinOk.status, 428);
+    assert.equal(sinOk.j.code, 'confirmacion_requerida');
+    assert.equal((await pedir('/api/correo/enviar', { quien: 'ana@x.hn', cuerpo: { ...listo, confirmado: 'true' } })).status, 428, 'solo vale el true de verdad');
+    assert.equal(recibidos.length, 0);
+    // Lo que no sirve se rechaza antes de tocar el SMTP.
+    assert.equal((await pedir('/api/correo/enviar', { quien: 'ana@x.hn', cuerpo: { ...listo, confirmado: true, para: ['no-es-correo'] } })).status, 400);
+    assert.equal((await pedir('/api/correo/enviar', { quien: 'ana@x.hn', cuerpo: { ...listo, confirmado: true, texto: '   ' } })).status, 400);
+    assert.equal((await pedir('/api/correo/enviar', { quien: 'ana@x.hn', cuerpo: { ...listo, confirmado: true, para: [] } })).status, 400);
+    assert.equal((await pedir('/api/correo/enviar', { quien: 'otro@x.hn', cuerpo: { ...listo, confirmado: true } })).status, 404, 'con la cuenta de otra persona, no');
+    assert.equal(recibidos.length, 0);
+    // Confirmado: sale, en el mismo hilo, con copia, y el asunto sin saltos de línea (sin cabeceras metidas).
+    const ok = await pedir('/api/correo/enviar', {
+      quien: 'ana@x.hn',
+      cuerpo: { ...listo, confirmado: true, para: ['Beto Paz <Beto@Empresa.hn>'], cc: ['carla@empresa.hn', 'beto@empresa.hn'], asunto: 'Re: Factura\r\nBcc: espia@x.hn', enRespuestaA: '<abc@empresa.hn>', referencias: ['<raiz@empresa.hn>', 'basura'] },
+    });
+    assert.equal(ok.status, 200, JSON.stringify(ok.j));
+    assert.deepEqual(ok.j.aceptados.sort(), ['beto@empresa.hn', 'carla@empresa.hn']);
+    assert.equal(recibidos.length, 1);
+    const m = recibidos[0].correo;
+    assert.deepEqual(recibidos[0].sobre.sort(), ['beto@empresa.hn', 'carla@empresa.hn'], 'beto una sola vez; nadie más en el sobre');
+    assert.equal(m.subject, 'Re: Factura Bcc: espia@x.hn');
+    assert.equal(m.inReplyTo, '<abc@empresa.hn>');
+    assert.match(String(m.references), /raiz@empresa\.hn/);
+    assert.match((m.cc as any)?.text || '', /carla@empresa\.hn/);
+    // Todos rechazados: 502 y no dice «enviado».
+    const nada = await pedir('/api/correo/enviar', { quien: 'ana@x.hn', cuerpo: { ...listo, confirmado: true, para: ['nadie@empresa.hn'] } });
+    assert.equal(nada.status, 502);
+    assert.match(nada.j.error, /rechazó nadie@empresa\.hn/);
+  } finally {
+    _redLocalEnPruebas(false);
+    srv.close();
+    await new Promise<void>((r) => smtp.close(() => r()));
   }
 });

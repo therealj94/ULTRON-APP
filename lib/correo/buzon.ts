@@ -34,9 +34,11 @@ export type Resumen = {
 
 export type Mensaje = Omit<Resumen, 'adjuntos'> & {
   para: string;
-  /** Las direcciones de «Para» y «Cc» (para responder a todos). */
-  paraLista: string[];
-  cc: string[];
+  /** Con copia, como texto («Ana <ana@x.hn>, …»); «» si no hay. */
+  cc: string;
+  /** Las direcciones solas de «para» y «cc» (para «responder a todos»). */
+  paraCorreos: string[];
+  ccCorreos: string[];
   texto: string;
   adjuntos: { nombre: string; tipo: string; bytes: number }[];
   messageId: string;
@@ -154,17 +156,19 @@ function textoDe(a: AddressObject | AddressObject[] | undefined): string {
   return (Array.isArray(a) ? a : a ? [a] : []).map((x) => x.text).join(', ');
 }
 
-function direccionesDe(a: AddressObject | AddressObject[] | undefined): string[] {
+/** Solo las direcciones (sin nombres, sin repetir), también las de dentro de un grupo. */
+function correosDe(a: AddressObject | AddressObject[] | undefined): string[] {
   const out: string[] = [];
-  const ir = (vs: any[] | undefined) => {
-    for (const v of vs || []) {
-      if (v?.address) out.push(String(v.address).toLowerCase());
-      if (Array.isArray(v?.group)) ir(v.group);
+  const meter = (vs: AddressObject['value'] = []) => {
+    for (const v of vs) {
+      if (v.address && !out.includes(v.address.toLowerCase())) out.push(v.address.toLowerCase());
+      if (v.group) meter(v.group);
     }
   };
-  for (const x of Array.isArray(a) ? a : a ? [a] : []) ir(x.value);
+  for (const x of Array.isArray(a) ? a : a ? [a] : []) meter(x.value);
   return out;
 }
+
 
 const ENTIDADES: Record<string, string> = {
   nbsp: ' ', amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", aacute: 'á', eacute: 'é', iacute: 'í', oacute: 'ó', uacute: 'ú',
@@ -437,8 +441,9 @@ export async function leer(quien: string, c: CuentaCorreo, uid: number): Promise
         de: de.nombre,
         deCorreo: de.correo,
         para: textoDe(p.to),
-        paraLista: direccionesDe(p.to),
-        cc: direccionesDe(p.cc),
+        cc: textoDe(p.cc),
+        paraCorreos: correosDe(p.to),
+        ccCorreos: correosDe(p.cc),
         asunto: p.subject || '(sin asunto)',
         fecha: new Date(p.date || m.internalDate || Date.now()).toISOString(),
         noLeido: false,

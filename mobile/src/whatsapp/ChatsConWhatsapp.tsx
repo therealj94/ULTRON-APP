@@ -1,15 +1,17 @@
 /**
- * LOS CHATS CON DOS PESTAÑAS: PULSE2CHAT y WhatsApp, una al lado de la otra. Se cambia deslizando de lado
- * o tocando la pestaña (José, 2-oct: «una opción aparte de PULSE2CHAT, slide y cambia»).
+ * LOS CHATS CON SUS PESTAÑAS: PULSE2CHAT, WhatsApp y Correos, una al lado de la otra. Se cambia deslizando
+ * de lado o tocando la pestaña (José, 2-oct: «una opción aparte de PULSE2CHAT, slide y cambia»; y «otra
+ * sección de los correos al par de WhatsApp y PULSE2CHAT»).
  *
- * WhatsApp solo aparece si esta cuenta tiene su WhatsApp (server/whatsapp.ts, WHATSAPP_DUENOS): para
- * cualquier otra persona esto es la lista de PULSE2CHAT de siempre, sin pestañas.
+ * WhatsApp solo aparece si esta cuenta tiene su WhatsApp (server/whatsapp.ts, WHATSAPP_DUENOS). Correos
+ * está para todos (correo/PantallaCorreos.tsx): sin cuentas conectadas explica cómo conectar una.
  */
 import { useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import { useTema } from '../nucleo/tema';
 import { tr } from '../i18n';
 import { PantallaChats } from '../pulse/PantallaChats';
+import { PantallaCorreos } from '../correo/PantallaCorreos';
 import { PantallaWhatsapp } from './PantallaWhatsapp';
 import * as API from './api';
 import { vistaDe, type EstadoWA } from './logica';
@@ -23,12 +25,20 @@ type Props = {
   enWhatsapp?: boolean;
 };
 
+type Pagina = 'pulse' | 'whatsapp' | 'correos';
+
+/** Las páginas que tiene esta cuenta, en orden: PULSE2CHAT, WhatsApp (si lo tiene) y Correos. */
+export function paginasDe(conWhatsapp: boolean): Pagina[] {
+  return conWhatsapp ? ['pulse', 'whatsapp', 'correos'] : ['pulse', 'correos'];
+}
+
 export function ChatsConWhatsapp({ onAbrir, onAtras, enWhatsapp = false }: Props) {
   const p = useTema();
   const { width } = useWindowDimensions();
   const [estado, setEstado] = useState<EstadoWA | null>(null);
-  const [pagina, setPagina] = useState<0 | 1>(0);
-  const [noLeidos, setNoLeidos] = useState(0);
+  const [pagina, setPagina] = useState<Pagina>('pulse');
+  const [noLeidosWA, setNoLeidosWA] = useState(0);
+  const [noLeidosCorreo, setNoLeidosCorreo] = useState(0);
   const deslizador = useRef<ScrollView>(null);
 
   // El permiso lo decide el servidor en una respuesta (permitido: false). Un fallo de red NO es un «no»:
@@ -51,25 +61,30 @@ export function ChatsConWhatsapp({ onAbrir, onAtras, enWhatsapp = false }: Props
   }, []);
 
   const conWhatsapp = !!estado && vistaDe(estado) !== 'oculto';
+  const paginas = paginasDe(conWhatsapp);
+  const indice = Math.max(0, paginas.indexOf(pagina));
 
   useEffect(() => {
-    if (conWhatsapp && enWhatsapp) ir(1, false);
+    if (conWhatsapp && enWhatsapp) ir('whatsapp', false);
   }, [conWhatsapp, enWhatsapp]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Al girar el teléfono cambia el ancho: la página que se veía sigue a la vista.
+  // Al girar el teléfono cambia el ancho, y al aparecer WhatsApp cambian las páginas: la que se veía sigue a la vista.
   useEffect(() => {
-    if (conWhatsapp) deslizador.current?.scrollTo({ x: pagina * width, animated: false });
-  }, [width]); // eslint-disable-line react-hooks/exhaustive-deps
+    deslizador.current?.scrollTo({ x: indice * width, animated: false });
+  }, [width, conWhatsapp]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  function ir(n: 0 | 1, animado = true) {
+  function ir(n: Pagina, animado = true) {
+    const i = paginas.indexOf(n);
+    if (i < 0) return;
     setPagina(n);
-    deslizador.current?.scrollTo({ x: n * width, animated: animado });
+    deslizador.current?.scrollTo({ x: i * width, animated: animado });
   }
 
-  if (!conWhatsapp) return <PantallaChats onAbrir={onAbrir} onAtras={onAtras} />;
-
-  const cambio = <Pestanas p={p} pagina={pagina} noLeidos={noLeidos} onCambiar={(n) => ir(n)} />;
-  const alSoltar = (e: NativeSyntheticEvent<NativeScrollEvent>) => setPagina(Math.round(e.nativeEvent.contentOffset.x / Math.max(1, width)) === 1 ? 1 : 0);
+  const cambio = <Pestanas p={p} paginas={paginas} pagina={pagina} noLeidosWA={noLeidosWA} noLeidosCorreo={noLeidosCorreo} onCambiar={(n) => ir(n)} />;
+  const alSoltar = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const i = Math.round(e.nativeEvent.contentOffset.x / Math.max(1, width));
+    setPagina(paginas[Math.min(paginas.length - 1, Math.max(0, i))]);
+  };
 
   return (
     <ScrollView
@@ -84,35 +99,48 @@ export function ChatsConWhatsapp({ onAbrir, onAtras, enWhatsapp = false }: Props
       <View style={{ width, flex: 1 }}>
         <PantallaChats onAbrir={onAbrir} onAtras={onAtras} cambio={cambio} />
       </View>
+      {conWhatsapp ? (
+        <View style={{ width, flex: 1 }}>
+          <PantallaWhatsapp onAtras={onAtras} cambio={cambio} activa={pagina === 'whatsapp'} estadoInicial={estado} onNoLeidos={setNoLeidosWA} />
+        </View>
+      ) : null}
       <View style={{ width, flex: 1 }}>
-        <PantallaWhatsapp onAtras={onAtras} cambio={cambio} activa={pagina === 1} estadoInicial={estado} onNoLeidos={setNoLeidos} />
+        <PantallaCorreos onAtras={onAtras} cambio={cambio} activa={pagina === 'correos'} onNoLeidos={setNoLeidosCorreo} />
       </View>
     </ScrollView>
   );
 }
 
-function Pestanas({ p, pagina, noLeidos, onCambiar }: { p: ReturnType<typeof useTema>; pagina: 0 | 1; noLeidos: number; onCambiar: (n: 0 | 1) => void }) {
-  const opciones: Array<{ n: 0 | 1; texto: string; punto?: number }> = [
-    { n: 0, texto: 'PULSE2CHAT' },
-    { n: 1, texto: 'WhatsApp', punto: noLeidos },
-  ];
+const VERDE_WA = '#25D366';
+
+function Pestanas({ p, paginas, pagina, noLeidosWA, noLeidosCorreo, onCambiar }: { p: ReturnType<typeof useTema>; paginas: Pagina[]; pagina: Pagina; noLeidosWA: number; noLeidosCorreo: number; onCambiar: (n: Pagina) => void }) {
+  const opciones: Record<Pagina, { texto: string; punto?: number; color?: string; sobre?: string; leer?: string }> = {
+    pulse: { texto: 'PULSE2CHAT' },
+    whatsapp: { texto: 'WhatsApp', punto: noLeidosWA, color: VERDE_WA, sobre: '#062B16', leer: tr(`${noLeidosWA} chats sin leer`, `${noLeidosWA} unread chats`) },
+    correos: { texto: tr('Correos', 'Email'), punto: noLeidosCorreo, leer: tr(`${noLeidosCorreo} correos sin leer`, `${noLeidosCorreo} unread emails`) },
+  };
   return (
     <View style={[st.pista, { backgroundColor: p.superficie }]} accessibilityRole="tablist">
-      {opciones.map((o) => {
-        const activa = pagina === o.n;
+      {paginas.map((n) => {
+        const o = opciones[n];
+        const activa = pagina === n;
+        const fondo = o.color || p.acento;
+        const sobre = o.sobre || p.sobreAcento;
         return (
           <Pressable
-            key={o.n}
-            onPress={() => onCambiar(o.n)}
+            key={n}
+            onPress={() => onCambiar(n)}
             accessibilityRole="tab"
             accessibilityState={{ selected: activa }}
-            accessibilityLabel={o.n === 1 && o.punto ? `${o.texto}, ${tr(`${o.punto} chats sin leer`, `${o.punto} unread chats`)}` : o.texto}
-            style={[st.opcion, activa && { backgroundColor: o.n === 1 ? '#25D366' : p.acento }]}
+            accessibilityLabel={o.punto ? `${o.texto}, ${o.leer}` : o.texto}
+            style={[st.opcion, activa && { backgroundColor: fondo }]}
           >
-            <Text style={[st.texto, { color: activa ? (o.n === 1 ? '#062B16' : p.sobreAcento) : p.texto2 }]}>{o.texto}</Text>
+            <Text style={[st.texto, { color: activa ? sobre : p.texto2 }, paginas.length > 2 && st.textoChico]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+              {o.texto}
+            </Text>
             {o.punto ? (
-              <View style={[st.punto, { backgroundColor: activa ? '#062B16' : '#25D366' }]}>
-                <Text style={[st.puntoTxt, { color: activa ? '#25D366' : '#062B16' }]}>{o.punto > 9 ? '9+' : o.punto}</Text>
+              <View style={[st.punto, { backgroundColor: activa ? sobre : fondo }]}>
+                <Text style={[st.puntoTxt, { color: activa ? fondo : sobre }]}>{o.punto > 9 ? '9+' : o.punto}</Text>
               </View>
             ) : null}
           </Pressable>
@@ -124,8 +152,9 @@ function Pestanas({ p, pagina, noLeidos, onCambiar }: { p: ReturnType<typeof use
 
 const st = StyleSheet.create({
   pista: { flexDirection: 'row', borderRadius: 999, padding: 4 },
-  opcion: { flex: 1, height: 38, borderRadius: 999, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 6 },
-  texto: { fontSize: 14, fontWeight: '800', letterSpacing: 0.3 },
+  opcion: { flex: 1, height: 40, borderRadius: 999, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 6, paddingHorizontal: 6 },
+  texto: { fontSize: 14, fontWeight: '800', letterSpacing: 0.3, flexShrink: 1 },
+  textoChico: { fontSize: 13, letterSpacing: 0.1 },
   punto: { minWidth: 18, height: 18, borderRadius: 9, paddingHorizontal: 4, alignItems: 'center', justifyContent: 'center' },
   puntoTxt: { fontSize: 11, fontWeight: '900' },
 });

@@ -60,14 +60,18 @@ export type MensajeWA = {
   fallo?: string;
 };
 
-/** Qué pantalla toca. «oculto»: esta cuenta no tiene WhatsApp (no se ve ni la pestaña). */
-export type VistaWA = 'oculto' | 'revisando' | 'sin_puente' | 'vincular' | 'listo';
+/**
+ * Qué pantalla toca. «oculto»: esta cuenta no tiene WhatsApp (no se ve ni la pestaña). «caido»: el puente
+ * no contestó (el servidor manda `vinculado: false` con `error`): NO es que se haya desvinculado, así que
+ * no se le pide vincular otra vez (eso la llevaba a escanear un QR con su WhatsApp todavía vinculado).
+ */
+export type VistaWA = 'oculto' | 'revisando' | 'sin_puente' | 'caido' | 'vincular' | 'listo';
 
 export function vistaDe(e: EstadoWA | null): VistaWA {
   if (!e) return 'revisando';
   if (!e.permitido) return 'oculto';
   if (!e.disponible) return 'sin_puente';
-  if (!e.vinculado) return 'vincular';
+  if (!e.vinculado) return e.error ? 'caido' : 'vincular';
   return 'listo';
 }
 
@@ -518,8 +522,57 @@ export function juntar(delPuente: MensajeWA[], locales: MensajeWA[]): MensajeWA[
 /** Cada cuánto se pregunta: rápido con un chat abierto, menos en la lista, y mientras vincula. */
 export function sondeoWA(vista: VistaWA, chatAbierto: boolean): number {
   if (vista === 'vincular') return 3000;
+  if (vista === 'caido') return 10000;
   if (vista !== 'listo') return 15000;
   return chatAbierto ? 3000 : 5000;
+}
+
+/** La lista de chats, con un chat abierto encima, no se ve: se renueva despacio (el chat ya pregunta cada 3 s). */
+export function sondeoListaWA(vista: VistaWA, chatAbierto: boolean): number {
+  return vista === 'listo' && chatAbierto ? 15000 : sondeoWA(vista, false);
+}
+
+/**
+ * Lo que el servidor dice del chat al traer sus mensajes, sobre lo que ya se sabía. Un chat nuevo (de
+ * «Nuevo chat») vuelve vacío (jid «»): no se toca nada. Una foto que ya se sabía no se pierde por un null.
+ */
+export function fusionarInfoChat(actual: ChatWA, delServidor: unknown): ChatWA {
+  const c = (delServidor && typeof delServidor === 'object' ? delServidor : null) as Partial<ChatWA> | null;
+  if (!c || typeof c.jid !== 'string' || !c.jid) return actual;
+  return {
+    ...actual,
+    nombre: (typeof c.nombre === 'string' && c.nombre.trim()) || actual.nombre,
+    numero: (typeof c.numero === 'string' && c.numero) || actual.numero,
+    grupo: actual.grupo || !!c.grupo,
+    foto: typeof c.foto === 'boolean' ? c.foto : actual.foto,
+    jid: actual.jid,
+  };
+}
+
+/** Cuántos mensajes trae cada vuelta (el servidor pide 60 al puente). */
+export const MENSAJES_POR_VUELTA = 60;
+
+/** Los mensajes viejos (cargados al subir) con los recientes de cada vuelta: sin repetir, del más viejo al más nuevo. */
+export function unirMensajes(viejos: MensajeWA[], recientes: MensajeWA[]): MensajeWA[] {
+  const nuevos = new Map(recientes.map((m) => [m.id, m]));
+  return [...viejos.filter((m) => !nuevos.has(m.id)), ...recientes].sort((a, b) => a.hora - b.hora);
+}
+
+/**
+ * Lo que se dice cuando algo de WhatsApp falla (la lista, el chat, enviar, los contactos): claro, sin
+ * «HTTP 502» suelto, con lo que puede hacer.
+ */
+export function mensajeErrorWA(status: number, error: string | undefined, idioma: 'es' | 'en' = 'es'): string {
+  const en = idioma === 'en';
+  const e = String(error || '').trim();
+  if (status === 401) return en ? 'Your session expired. Sign in again.' : 'Tu sesión venció. Vuelve a entrar.';
+  if (status === 403) return en ? 'This account doesn’t have WhatsApp here.' : 'Esta cuenta no tiene WhatsApp aquí.';
+  if (status === 412) return en ? 'Your WhatsApp got unlinked. Link it again from here.' : 'Tu WhatsApp se desvinculó. Vuélvelo a vincular desde aquí.';
+  if (status === 429) return en ? 'Too many tries in a row. Wait a moment.' : 'Demasiados intentos seguidos. Espera un momento.';
+  if (status === 503 || /puente de WhatsApp no contestó/i.test(e)) return en ? 'Your WhatsApp isn’t answering right now. I’ll keep trying.' : 'Tu WhatsApp no contesta ahora mismo. Sigo intentando.';
+  if (!status) return en ? 'No connection. Check your internet.' : 'Sin conexión. Revisa tu internet.';
+  if (e && !/^HTTP \d+$/.test(e)) return capital(e.slice(0, 160));
+  return en ? 'Something went wrong. Try again.' : 'Algo falló. Prueba otra vez.';
 }
 
 /** Un número que WhatsApp acepta para el código: con código de país, sin el «0» del principio. */
@@ -641,9 +694,11 @@ export function mediaReintentable(status: number): boolean {
  * Lo que se dice cuando una foto o un archivo no baja: claro y corto, con lo que puede hacer. El
  * servidor manda su razón («WhatsApp no lo dio (puede haber vencido): …»): se queda la parte humana.
  */
-export function mensajeErrorMedia(status: number, error: string | undefined, idioma: 'es' | 'en' = 'es'): string {
+export function mensajeErrorMedia(status: number, error: string | undefined, idioma: 'es' | 'en' = 'es', tipo?: string): string {
   const en = idioma === 'en';
   if (status === 413) return en ? 'Bigger than 16 MB: open it on your phone.' : 'Pesa más de 16 MB: ábrelo en tu teléfono.';
+  // El puente dice «esa foto…» para todo: una nota de voz o un video se nombran como lo que son.
+  if (status === 410 && tipo && tipo !== 'imagen' && !en) return tipo === 'audio' ? 'Esa nota de voz ya no está en WhatsApp: escúchala en tu teléfono.' : tipo === 'video' ? 'Ese video ya no está en WhatsApp: ábrelo en tu teléfono.' : tipo === 'sticker' ? 'Ese sticker ya no está en WhatsApp.' : 'Ese archivo ya no está en WhatsApp: ábrelo en tu teléfono.';
   if (status === 410) return en ? 'It’s no longer on WhatsApp: open it on your phone.' : String(error || '').trim() ? capital(String(error).trim()) : 'Esa foto ya no está en WhatsApp: ábrela en tu teléfono.';
   if (status === 412) return en ? 'Your WhatsApp isn’t linked.' : 'Tu WhatsApp no está vinculado.';
   if (status === 401) return en ? 'Your session expired. Sign in again.' : 'Tu sesión venció. Vuelve a entrar.';

@@ -31,6 +31,7 @@ import { correoValido, detectarProveedor, type Proveedor } from '../lib/correo/p
 import { plegar } from '../lib/cerebro-comun';
 import { iniciarTarea, marcarPaso, siguiente, tareaDe } from '../lib/tarea-en-curso';
 import type { RetencionAcciones } from './voz-agente';
+import { explicarFallo } from '../lib/correo/buzon';
 
 /* ------------------------------------------------------------------ el buzón (las pruebas ponen uno falso) */
 
@@ -282,7 +283,7 @@ async function leerRef(quien: string, ambito: string, ref: string, o: { siguient
     largo += t.length;
   }
   const quedan = trozos.length - dados.length;
-  const copia = x.cc.length ? `; con copia a ${x.cc.join(', ')}` : '';
+  const copia = x.ccCorreos.length ? `; con copia a ${x.ccCorreos.join(', ')}` : '';
   const adj = x.adjuntos.length ? `Adjuntos: ${x.adjuntos.map((a) => `${a.nombre} (${Math.max(1, Math.round(a.bytes / 1024))} KB)`).join(', ')}.` : 'Sin adjuntos.';
   const cual = u.n ? `CORREO ${u.n} de ${lista.length}` : 'CORREO';
   const avance = u.n ? marcarPaso(quien, ambito, 'correo', u.n - 1, 'hecho').texto : '';
@@ -335,7 +336,7 @@ async function responder(quien: string, ambito: string, ref: string, texto: stri
   const asunto = /^\s*re\s*:/i.test(x.asunto) ? x.asunto : `Re: ${x.asunto}`;
   const mias = (await cuentasDe(quien)).map((c) => c.correo);
   const para = [x.responderA || x.deCorreo].filter(Boolean);
-  const cc = todos ? sinRepetir([...x.paraLista, ...x.cc], [...mias, ...para]) : [];
+  const cc = todos ? sinRepetir([...x.paraCorreos, ...x.ccCorreos], [...mias, ...para]) : [];
   const original = sinCitas(x.texto).slice(0, 2000);
   const cita = original ? `\n\nEl ${fechaHN(x.fecha, Date.now(), { completa: true })}, ${remitente(x.de, x.deCorreo)} escribió:\n${original.split('\n').map((l) => `> ${l}`).join('\n')}` : '';
   const avance = u.n && texto.trim() ? marcarPaso(quien, ambito, 'correo', u.n - 1, 'hecho', 'contestado').texto : '';
@@ -660,6 +661,115 @@ export function montarRutasCorreo(app: express.Express, d: Deps) {
       return res.json({ estado: 'listo', cuenta: publica(c), honesto: true });
     } catch (e) {
       return noGuardado(res, e);
+    }
+  });
+
+  /* ---------------------------------------------------------------- la app: ver, leer y contestar
+   * La pestaña Correos de los chats (mobile/src/correo). Lo que sale por aquí lo escribió la persona en
+   * la pantalla y lo confirmó en un aviso explícito («¿Mandar este correo a …?» → Mandar): la app manda
+   * `confirmado: true` solo después de ese toque. Sin él, nada sale (428). El cerebro no usa estas rutas:
+   * él sigue con su borrador y el «sí» de la persona (resolverBorrador).
+   *
+   *   GET  /api/correo/bandeja?buscar=&cuenta=&n=  → { mensajes, cuentas, errores }  (lo último de la bandeja)
+   *   GET  /api/correo/mensaje?ref=<cuenta>:<uid>  → { mensaje }  (completo; queda leído, como en cualquier programa)
+   *   POST /api/correo/enviar {cuentaId, para[], cc?[], asunto, texto, enRespuestaA?, referencias?, confirmado: true}
+   */
+  const cuentasSeguras = async (q: string): Promise<CuentaCorreo[] | null> => {
+    try {
+      return await cuentasDe(q);
+    } catch {
+      return null;
+    }
+  };
+
+  app.get('/api/correo/bandeja', d.exigirMesa, d.limitar(40), async (req, res) => {
+    const q = quienDe(req);
+    if (!q) return sinSesion(res);
+    res.setHeader('Cache-Control', 'no-store');
+    const todas = await cuentasSeguras(q);
+    if (!todas) return res.status(503).json({ error: 'No pude leer tus cuentas guardadas en este momento. Prueba otra vez en un rato.', honesto: true });
+    const cual = String(req.query.cuenta || '').trim();
+    const cuentas = cual ? todas.filter((c) => c.id === cual) : todas;
+    if (cual && !cuentas.length) return res.status(404).json({ error: 'Esa cuenta ya no está conectada.', honesto: true });
+    const buscar = String(req.query.buscar || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 80);
+    const n = Math.min(50, Math.max(1, Math.floor(Number(req.query.n)) || 25));
+    const errores: { cuentaId: string; cuenta: string; error: string }[] = [];
+    const mensajes: Resumen[] = [];
+    await Promise.all(
+      cuentas.map(async (c) => {
+        try {
+          mensajes.push(...(await listar(q, c, buscar ? { buscar, n } : { n })));
+        } catch (e) {
+          errores.push({ cuentaId: c.id, cuenta: c.correo, error: explicarFallo(e, c.proveedor.imap.host, c.proveedor.imap.puerto, 'leer') });
+        }
+      })
+    );
+    mensajes.sort((a, b) => b.fecha.localeCompare(a.fecha));
+    return res.json({ mensajes: mensajes.slice(0, n * Math.max(1, cuentas.length)), cuentas: todas.map(publica), errores, honesto: true });
+  });
+
+  app.get('/api/correo/mensaje', d.exigirMesa, d.limitar(60), async (req, res) => {
+    const q = quienDe(req);
+    if (!q) return sinSesion(res);
+    res.setHeader('Cache-Control', 'no-store');
+    const ref = String(req.query.ref || '').trim();
+    if (!/^[\w-]{1,80}:\d{1,12}$/.test(ref)) return res.status(400).json({ error: 'Falta el correo que quieres abrir.', honesto: true });
+    const ubic = await cuentaDeRef(q, ref).catch(() => null);
+    if (!ubic) return res.status(404).json({ error: 'Esa cuenta ya no está conectada.', honesto: true });
+    let m: Mensaje | null;
+    try {
+      m = await leer(q, ubic.c, ubic.uid);
+    } catch (e) {
+      return res.status(502).json({ error: explicarFallo(e, ubic.c.proveedor.imap.host, ubic.c.proveedor.imap.puerto, 'leer'), honesto: true });
+    }
+    if (!m) return res.status(404).json({ error: 'Ese correo ya no está en la bandeja (lo movieron o lo borraron).', honesto: true });
+    return res.json({ mensaje: { ...m, cuentaId: ubic.c.id }, honesto: true });
+  });
+
+  /** «a@b.hn, Ana <ana@c.hn>» o una lista → las direcciones solas, sin repetir. Null si alguna no sirve. */
+  const direcciones = (v: unknown): string[] | null => {
+    const crudas = (Array.isArray(v) ? v : typeof v === 'string' ? v.split(/[,;]+/) : []).map((x) => String(x || '').trim()).filter(Boolean);
+    const out: string[] = [];
+    for (const x of crudas) {
+      const dir = (/<([^<>\s]+)>\s*$/.exec(x)?.[1] || x).toLowerCase();
+      if (!correoValido(dir)) return null;
+      if (!out.includes(dir)) out.push(dir);
+    }
+    return out;
+  };
+
+  app.post('/api/correo/enviar', d.exigirMesa, d.limitar(10), async (req, res) => {
+    const q = quienDe(req);
+    if (!q) return sinSesion(res);
+    const b = req.body || {};
+    // Nada sale sin el toque de la persona en el aviso de confirmación de la app.
+    if (b.confirmado !== true) return res.status(428).json({ error: 'Falta tu confirmación: no mandé nada.', code: 'confirmacion_requerida', honesto: true });
+    const todas = await cuentasSeguras(q);
+    if (!todas) return res.status(503).json({ error: 'No pude leer tus cuentas guardadas en este momento; no mandé nada.', honesto: true });
+    const c = todas.find((x) => x.id === String(b.cuentaId || ''));
+    if (!c) return res.status(404).json({ error: 'Esa cuenta ya no está conectada; no mandé nada.', honesto: true });
+    const para = direcciones(b.para);
+    const cc = direcciones(b.cc ?? []);
+    if (!para || !cc) return res.status(400).json({ error: 'Hay una dirección que no es de correo. Revísala.', honesto: true });
+    const ccSolo = cc.filter((x) => !para.includes(x));
+    if (!para.length) return res.status(400).json({ error: 'Falta a quién mandarlo.', honesto: true });
+    if (para.length + ccSolo.length > 20) return res.status(400).json({ error: 'Son demasiadas direcciones (máximo 20).', honesto: true });
+    const asunto = String(b.asunto || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 300) || '(sin asunto)';
+    const texto = String(b.texto || '');
+    if (!texto.trim()) return res.status(400).json({ error: 'El correo va vacío. Escribe algo.', honesto: true });
+    if (texto.length > 50_000) return res.status(400).json({ error: 'El correo es muy largo (máximo 50 000 letras).', honesto: true });
+    const idValido = (x: unknown) => typeof x === 'string' && /^<[^<>\s]{3,500}>$/.test(x.trim());
+    const enRespuestaA = idValido(b.enRespuestaA) ? String(b.enRespuestaA).trim() : undefined;
+    const referencias = enRespuestaA && Array.isArray(b.referencias) ? b.referencias.filter(idValido).map((x: string) => x.trim()).slice(-50) : undefined;
+    try {
+      const r = await mandar(q, c, { para, cc: ccSolo, asunto, texto, enRespuestaA, referencias });
+      if (!r.aceptados.length) return res.status(502).json({ error: `No salió: el servidor rechazó ${r.rechazados.join(', ') || 'las direcciones'}.`, rechazados: r.rechazados, honesto: true });
+      return res.json({ ok: true, desde: c.correo, aceptados: r.aceptados, rechazados: r.rechazados, guardadoEnEnviados: r.guardadoEnEnviados, honesto: true });
+    } catch (e: any) {
+      // El SMTP rechazó a todos (nodemailer lo da como error del sobre): se dice a quién.
+      const rechazados = Array.isArray(e?.rejected) ? e.rejected.map((x: unknown) => (typeof x === 'string' ? x : (x as { address?: string })?.address || '')).filter(Boolean) : [];
+      if (rechazados.length) return res.status(502).json({ error: `No salió: el servidor rechazó ${rechazados.join(', ')}.`, rechazados, honesto: true });
+      return res.status(502).json({ error: `No salió. ${explicarFallo(e, c.proveedor.smtp.host, c.proveedor.smtp.puerto, 'mandar')}`, honesto: true });
     }
   });
 }
