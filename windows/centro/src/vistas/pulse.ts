@@ -139,7 +139,7 @@ async function confirmarSalir() {
 
 /* ── diálogos (velo + tarjeta) ────────────────────────────────────────────────────────────── */
 
-function dialogo(titulo: string, ...contenido: (Node | null)[]): { el: HTMLElement; cerrar: () => void; alCerrar: (f: () => void) => void } {
+export function dialogo(titulo: string, ...contenido: (Node | null)[]): { el: HTMLElement; cerrar: () => void; alCerrar: (f: () => void) => void } {
   const antes = document.activeElement as HTMLElement | null;
   const fin = new Set<() => void>();
   let cerrado = false;
@@ -172,7 +172,7 @@ function dialogo(titulo: string, ...contenido: (Node | null)[]): { el: HTMLEleme
   return { el: tarjeta, cerrar, alCerrar: (f) => fin.add(f) };
 }
 
-function dialogoConfirmar(titulo: string, texto: string, si: string): Promise<boolean> {
+export function dialogoConfirmar(titulo: string, texto: string, si: string): Promise<boolean> {
   return new Promise((listo) => {
     let dicho = false;
     const d = dialogo(
@@ -249,7 +249,7 @@ export async function abrirPagar(correo: string, nombre: string, monto = '', mon
 
 /** La cara de alguien: su foto o sus iniciales, con el punto si está en línea y el anillo si hay sin leer. */
 function cara(p: { nombre: string; foto?: string; enLinea?: boolean }, tam = 44, anillo = false): HTMLElement {
-  const f = h('div', { class: 'foto p2c-cara' + (anillo ? ' anillo' : ''), style: `width:${tam}px;height:${tam}px;font-size:${Math.round(tam * 0.38)}px`, 'aria-hidden': 'true' });
+  const f = h('div', { class: 'foto p2c-cara' + (anillo ? ' p2c-anillo' : ''), style: `width:${tam}px;height:${tam}px;font-size:${Math.round(tam * 0.38)}px`, 'aria-hidden': 'true' });
   if (p.foto && /^(https:|data:image\/)/.test(p.foto)) f.style.backgroundImage = `url("${p.foto.replace(/"/g, '%22')}")`;
   else f.textContent = iniciales(p.nombre);
   return h('div', { class: 'p2c-cara-caja' }, f, p.enLinea ? h('span', { class: 'p2c-enlinea', title: T('En línea', 'Online') }) : null);

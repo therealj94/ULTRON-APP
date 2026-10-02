@@ -51,6 +51,9 @@ public static class PuenteCentro
         "conectar", "desconectar",
         // El recorrido del Centro: la voz de Claudio y ANT-ONIO, y AURA sin oír mientras suena.
         "voz.decir", "recorrido.abierto",
+        // El WhatsApp personal (solo la cuenta dueña; el servidor lo vuelve a mirar): ver, vincular y contestar.
+        "whatsapp.estado", "whatsapp.vincular", "whatsapp.desvincular", "whatsapp.chats", "whatsapp.mensajes",
+        "whatsapp.enviar", "whatsapp.leido", "whatsapp.media",
     };
 
     public static bool MetodoPermitido(string? metodo) => metodo != null && Metodos.Contains(metodo);

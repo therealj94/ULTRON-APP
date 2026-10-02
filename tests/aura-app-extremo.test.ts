@@ -540,7 +540,7 @@ test('la llamada del avatar: «llámame» y «ponme un timer» por el camino rá
     // Un timer: directo, con la hora dicha, y con llamada.
     const timer = await turno('ponme un timer de 10 minutos');
     assert.equal(timer.via, 'app-reglas');
-    assert.match(timer.reply, /^Listo, te llamo en 10 minutos, a las? \d{1,2}:\d{2} [ap]\. m\.$/);
+    assert.match(timer.reply, /^Listo, te llamo en 10 minutos, (mañana )?a las? \d{1,2}:\d{2} [ap]\. m\.$/);
     assert.equal(timer.acciones[0].accion.tipo, 'recordatorio');
     assert.equal(timer.acciones[0].accion.llamada, true);
     assert.equal(alNodo.length, 0);
@@ -550,7 +550,7 @@ test('la llamada del avatar: «llámame» y «ponme un timer» por el camino rá
     // Y en la llamada, un timer también va por el camino rápido (sin cerebro), con la hora dicha.
     alNodo.length = 0;
     const timerVoz = await voz(paseDe(), [{ role: 'user', content: 'ponme un timer de 5 minutos' }]);
-    assert.match(timerVoz.dicho, /^Listo, te llamo en 5 minutos, a las? \d{1,2}:\d{2} [ap]\. m\.$/);
+    assert.match(timerVoz.dicho, /^Listo, te llamo en 5 minutos, (mañana )?a las? \d{1,2}:\d{2} [ap]\. m\.$/);
     assert.equal(alNodo.length, 0, 'sin cerebro también en la llamada');
   } finally {
     await tel.cerrar();

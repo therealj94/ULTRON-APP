@@ -11,7 +11,8 @@
 import { useCallback, useRef } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { PantallaChats, PantallaConversacion } from '../../pulse';
+import { PantallaConversacion } from '../../pulse';
+import { ChatsConWhatsapp } from '../../whatsapp/ChatsConWhatsapp';
 import { emitir, type Eventos } from '../../nucleo/contrato';
 import type { RaizParams } from '../rutas';
 
@@ -34,7 +35,7 @@ function useAvisarAlVolver(aviso: () => Eventos['pantalla']) {
 export function Chats({ navigation }: NativeStackScreenProps<RaizParams, 'Chats'>) {
   useAvisarAlVolver(() => ({ pantalla: 'chats', chatAbierto: null }));
   return (
-    <PantallaChats
+    <ChatsConWhatsapp
       onAbrir={(correo, nombre) => navigation.push('Conversacion', { con: correo, nombre })}
       onAtras={() => (navigation.canGoBack() ? navigation.goBack() : navigation.navigate('Mesa'))}
     />
