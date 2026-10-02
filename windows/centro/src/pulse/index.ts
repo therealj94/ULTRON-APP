@@ -139,6 +139,10 @@ export const motor = crearMotor({
         marcarPulse(true);
       }
     }
+    // El notch sabe si hay una llamada (sonando, llamando, conectando o hablando): la actualización sola espera.
+    if ((antes === 'libre') !== (c.estado === 'libre')) {
+      pedir('notch.llamada', { activa: c.estado !== 'libre' }).catch(() => {});
+    }
     // Un cuento «libre» sin motivo es el de reposo: no hay nada que mostrar.
     llamada.set(c.estado === 'libre' && !c.motivo ? null : { ...c, nombre });
   },

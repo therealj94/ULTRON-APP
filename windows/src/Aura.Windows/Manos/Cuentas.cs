@@ -14,14 +14,18 @@ namespace Aura.Windows.Manos;
 
 /// <summary>
 /// Un buzón, sea por IMAP, Gmail u Outlook: los no leídos y la vigilancia que avisa en el notch de los
-/// NUEVOS (lo que ya estaba al arrancar no se anuncia; se recuerda qué ids ya se vieron).
+/// NUEVOS (lo que ya estaba al arrancar no se anuncia; se recuerda qué ids ya se vieron). El recuerdo es un
+/// cursor POR CUENTA (Core.CursorCorreo) que sobrevive a recrear el buzón; varios nuevos juntos llegan en UN
+/// aviso, y si la revisión vino llena se dice «al menos N» (auditoría 1-oct, H10).
 /// </summary>
 internal abstract class Buzon : IDisposable
 {
+    /// <summary>Cuántos se piden en cada revisión de la vigilancia (si vienen todos nuevos: «al menos» esos).</summary>
+    public const int PorRevision = 20;
     CancellationTokenSource? vigia;
-    readonly HashSet<string> vistos = new();
-    bool primera = true;
-    public event Action<Carta>? Nuevo;
+    CursorCorreo Cursor => CursorCorreo.De(GetType().Name + ":" + Direccion);
+    /// <summary>Lo nuevo de una revisión, junto (y si pudo haber más sin ver: «al menos»).</summary>
+    public event Action<IReadOnlyList<Carta>, bool>? Nuevos;
     public event Action<string>? Fallo;
     public abstract string Direccion { get; }
     public abstract Task<List<Carta>> NoLeidos(int max = 10, CancellationToken ct = default);
@@ -30,7 +34,7 @@ internal abstract class Buzon : IDisposable
     public async Task<int> Probar(CancellationToken ct = default) => (await NoLeidos(50, ct)).Count;
 
     /// <summary>Los ids cambiaron de sentido (IMAP renumeró la bandeja): se vuelve a tomar la foto sin anunciar.</summary>
-    protected void Reiniciar() { lock (vistos) { vistos.Clear(); primera = true; } }
+    protected void Reiniciar() => Cursor.Reiniciar();
 
     /// <summary>Revisa cada minuto y avisa de lo NUEVO.</summary>
     public void Vigilar()
@@ -44,15 +48,9 @@ internal abstract class Buzon : IDisposable
             {
                 try
                 {
-                    var cartas = await NoLeidos(10, cts.Token);
-                    List<Carta> nuevas;
-                    lock (vistos)
-                    {
-                        nuevas = cartas.Where(x => vistos.Add(x.Id)).OrderBy(x => x.Fecha).ToList();
-                        if (primera) { nuevas.Clear(); primera = false; }
-                        if (vistos.Count > 2000) { vistos.Clear(); foreach (var x in cartas) vistos.Add(x.Id); }
-                    }
-                    foreach (var carta in nuevas) Nuevo?.Invoke(carta);
+                    var cartas = await NoLeidos(PorRevision, cts.Token);
+                    var r = Cursor.Revisar(cartas, PorRevision);
+                    if (r.Nuevas.Count > 0) Nuevos?.Invoke(r.Nuevas, r.AlMenos);
                     fallos = 0;
                 }
                 catch (OperationCanceledException) when (cts.IsCancellationRequested) { break; }

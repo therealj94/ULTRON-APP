@@ -16,6 +16,12 @@ namespace Aura.Windows.Manos;
 /// (aura-windows.json: commit, versión y SHA-256). AURA la mira de vez en cuando; si el commit es otro,
 /// baja el instalador, comprueba el SHA-256 y lo deja listo. Instalar = correrlo en silencio (Inno Setup
 /// cierra AURA, reemplaza y la vuelve a abrir). Solo desde el GitHub del proyecto, siempre por HTTPS.
+/// Solo hacia adelante: la versión publicada tiene que ser MAYOR que la que corre (Core.Actualizacion).
+///
+/// TODO (auditoría 1-oct, H07) firma de código: el SHA-256 viene de la misma release que el instalador, así que
+/// detecta corrupción pero no autentica al editor. Cuando haya certificado (secretos AURA_SIGN_PFX y
+/// AURA_SIGN_PFX_PASSWORD; el CI ya firma si existen, ver windows/scripts/sign.ps1), exigir aquí además una firma
+/// Authenticode válida (WinVerifyTrust) con el editor esperado antes de correr el instalador.
 /// </summary>
 internal sealed class Actualizador
 {
@@ -42,6 +48,8 @@ internal sealed class Actualizador
 
     public Ficha? Nueva { get; private set; }
     public bool Lista { get; private set; }
+    /// <summary>El commit de la última ficha rechazada por no ser más nueva (para anotarlo una sola vez).</summary>
+    string rechazada = "";
     readonly SemaphoreSlim uno = new(1, 1);
 
     /// <summary>¿Hay una versión distinta a la mía publicada? Si la hay, la baja y la verifica.</summary>
@@ -61,6 +69,13 @@ internal sealed class Actualizador
             var mio = MiCommit;
             // Sin commit propio (un .exe armado a mano) no se actualiza solo: no sabríamos si es más nuevo.
             if (mio.Length == 0 || f.Commit.StartsWith(mio) || mio.StartsWith(f.Commit)) { Nueva = null; Lista = false; Limpiar(); return null; }
+            // Solo hacia ADELANTE (auditoría 1-oct, H07): una ficha con versión igual, menor o ilegible no se instala
+            // aunque el commit sea otro (una release vieja republicada, un manifiesto equivocado o manipulado).
+            if (!Core.Actualizacion.EsMasNueva(f.Version, MiVersion))
+            {
+                if (rechazada != f.Commit) { rechazada = f.Commit; Centro.Registro.Anotar("actualizar", $"la publicada ({f.Version}) no es más nueva que esta ({MiVersion}): no se instala"); }
+                Nueva = null; Lista = false; Limpiar(); return null;
+            }
             Nueva = f;
             Lista = File.Exists(Instalador) && await Sha(Instalador, ct) == f.Sha256;
             if (!Lista)
@@ -87,6 +102,7 @@ internal sealed class Actualizador
     public bool Instalar()
     {
         if (!Lista || Nueva == null || !File.Exists(Instalador)) return false;
+        if (!Core.Actualizacion.EsMasNueva(Nueva.Version, MiVersion)) { Lista = false; return false; }
         // Se verifica otra vez justo antes de correrlo (nadie lo cambió en el disco mientras esperaba).
         if (Sha(Instalador, default).GetAwaiter().GetResult() != Nueva.Sha256) { Lista = false; return false; }
         Centro.Registro.Anotar("actualizar", "instalando " + Nueva.Version);

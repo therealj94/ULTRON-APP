@@ -86,6 +86,13 @@ internal sealed class Ajustes
     /// no abre, usa la local sola.
     /// </summary>
     public string VozMotor { get; set; } = "agente";
+    // ── Privacidad del registro de diagnóstico (auditoría 1-oct, H13) ──
+    /// <summary>
+    /// «Registro detallado»: aura.log guarda también lo que dijiste y los títulos de órdenes (saneados y
+    /// recortados). Apagado de fábrica: solo metadatos (largos, tiempos, tipos).
+    /// </summary>
+    public bool RegistroDetallado { get; set; }
+
     /// <summary>El id de este equipo para el canal de AURA (no es secreto: elige a qué equipo va una orden).</summary>
     public string Aparato { get; set; } = NuevoAparato();
 

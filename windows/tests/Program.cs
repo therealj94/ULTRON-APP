@@ -591,5 +591,115 @@ Check(R("abre word y excel") is { Mano: Mano.Varias } we && we.Valor.Split(Manos
 Check(R("cierra chrome y luego abre spotify") is { Mano: Mano.Varias } && R("open notepad and then type hello world") is { Mano: Mano.Varias }, "cadena con luego / and then");
 Check(R("escribe pan y leche") is { Mano: Mano.Escribir, Valor: "pan y leche" } && R("busca tom y jerry") is { Mano: Mano.BuscarWeb } && R("ayer abrí word y se trabó").Mano == Mano.Ninguna && R("pon salsa y merengue").Mano != Mano.Varias, "no se parte lo que no son dos órdenes");
 Check(R("presiona control y c") is { Mano: Mano.Atajo, Valor: "teclas|CTRL+C" }, "control y c sigue siendo un atajo: " + R("presiona control y c"));
+// ── Auditoría 1-oct · H13: el registro guarda metadatos; el texto, solo con «Registro detallado» y saneado ──
+Check(RegistroSeguro.Contenido("abre el correo de juan", false) == "22 car.", "registro: por defecto solo el largo");
+var detalle = RegistroSeguro.Contenido("manda a juan.perez@gmail.com el enlace https://x.com/a?token=abc123 y mi tarjeta 4111 1111 1111 1111", true);
+Check(!detalle.Contains("juan.perez") && !detalle.Contains("abc123") && !detalle.Contains("4111") && detalle.Contains("«correo»") && detalle.Contains("https://x.com/a?•••") && detalle.Contains("«número»"), "registro detallado saneado: " + detalle);
+Check(RegistroSeguro.Sanear("llámame al +504 9988-7766") == "llámame al «número»", "teléfono tapado: " + RegistroSeguro.Sanear("llámame al +504 9988-7766"));
+Check(RegistroSeguro.Sanear("primera voz 1945411 ms") == "primera voz 1945411 ms", "una duración no es un dato personal");
+Check(RegistroSeguro.Sanear("Bearer eyJhbGciOi.xyz") == "Bearer •••" && RegistroSeguro.Sanear("clave=hunter2") == "clave=•••", "secretos tapados");
+Check(RegistroSeguro.Sanear(@"no está C:\Users\jordo\AppData\Local\Temp\x.dll") == @"no está %USERPROFILE%\AppData\Local\Temp\x.dll", "carpeta del usuario tapada");
+Check(RegistroSeguro.Sanear("línea\nfalsa") == "línea falsa", "una línea por evento");
+Check(RegistroSeguro.Contenido(new string('a', 300), true).Length <= RegistroSeguro.MaxDetalle + 3, "detalle recortado");
+Check(RegistroSeguro.Sanear("abc ultronfp://vuelta?pase=xyz") == "abc ultronfp://vuelta?•••", "vuelta de la wallet sin el pase");
+// ── H05: la causa de verdad de un fallo de ONNX, completa y saneada ──
+var cadena = MotorOnnx.CadenaDeErrores(new TypeInitializationException("Microsoft.ML.OnnxRuntime.NativeMethods",
+    new DllNotFoundException(@"Unable to load DLL 'onnxruntime' or one of its dependencies: C:\Users\jordo\x (0x8007007E)")));
+Check(cadena.Contains("TypeInitializationException") && cadena.Contains("DllNotFoundException") && cadena.Contains(" ← ") && !cadena.Contains("jordo"), "cadena de errores: " + cadena);
+Check(MotorOnnx.VersionPaquete.StartsWith("1."), "versión de ORT: " + MotorOnnx.VersionPaquete);
+Check(MotorOnnx.RuntimeCpp.Contains("msvcp140_1.dll") && MotorOnnx.RuntimeCpp.Contains("vcruntime140_1.dll"), "piezas del runtime de C++");
+{
+    // El modelo propio carga y corre con el motor que trae AURA (en Linux, el .so del paquete).
+    MotorOnnx.Preparar();
+    var modelos = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "src", "Aura.Windows", "Modelos");
+    using var pc = new PalabraClave(modelos, Path.Combine(modelos, "hey_aura.onnx"));
+    float maxSilencio = 0;
+    for (int i = 0; i < 25; i++) maxSilencio = Math.Max(maxSilencio, pc.Alimentar(new short[PalabraClave.Trozo]));
+    Check(maxSilencio < 0.5f, "silencio no despierta: " + maxSilencio);
+    Check(!MotorOnnx.VersionNativa().StartsWith("no carga"), "ORT nativo: " + MotorOnnx.VersionNativa());
+}
+// ── H06/H07: versión monotónica, sin retrocesos, y no instalar sola con algo en curso ──
+Check(Actualizacion.EsMasNueva("2.0.120", "2.0.119") && Actualizacion.EsMasNueva("2.1.0", "2.0.999"), "más nueva");
+Check(!Actualizacion.EsMasNueva("2.0.119", "2.0.119") && !Actualizacion.EsMasNueva("2.0.99", "2.0.119") && !Actualizacion.EsMasNueva("2.0.119.0", "2.0.119"), "igual o anterior: no (sin retrocesos)");
+Check(!Actualizacion.EsMasNueva("", "2.0.1") && !Actualizacion.EsMasNueva("basura", "2.0.1") && !Actualizacion.EsMasNueva("2.0.5", null), "versión ilegible: no");
+Check(Actualizacion.EsMasNueva("v2.0.120+abc1234", "2.0.119+9a410d4"), "versión con commit");
+var libre = new Actualizacion.Actividad(Inactivo: TimeSpan.FromMinutes(11));
+Check(Actualizacion.MotivoParaEsperar(libre) == null, "libre: instala");
+Check(Actualizacion.MotivoParaEsperar(libre with { Llamada = true }) != null && Actualizacion.MotivoParaEsperar(libre with { Voz = true }) != null
+      && Actualizacion.MotivoParaEsperar(libre with { Acciones = true }) != null && Actualizacion.MotivoParaEsperar(libre with { BorradorSinGuardar = true }) != null
+      && Actualizacion.MotivoParaEsperar(libre with { Confirmacion = true }) != null && Actualizacion.MotivoParaEsperar(libre with { Inactivo = TimeSpan.FromMinutes(3) }) != null, "con algo en curso: espera");
+// ── H08: un turno, un reloj; etapas por separado; cierre en cancelación; anomalías con motivo ──
+{
+    long ahora = 0; long Ms(long ms) => ms * System.Diagnostics.Stopwatch.Frequency / 1000;
+    var lineas = new List<string>();
+    var met = new MetricasVoz(lineas.Add, () => ahora);
+    var t1 = met.Nuevo("frases", "fin de captura");
+    ahora = Ms(1200); met.Marcar(EtapaVoz.SttRecibido);
+    ahora = Ms(1500); met.Marcar(EtapaVoz.Intencion);
+    ahora = Ms(1800); met.Marcar(EtapaVoz.RellenoTts);
+    ahora = Ms(2600); met.Marcar(EtapaVoz.PrimerTexto);
+    ahora = Ms(3300); met.Marcar(EtapaVoz.TtsRecibido); met.Marcar(EtapaVoz.TtsRecibido, Ms(9999));
+    ahora = Ms(3450); met.Marcar(EtapaVoz.InicioReproduccion); met.Cerrar("ok");
+    Check(lineas.Count == 1 && lineas[0].Contains("turno 1") && lineas[0].Contains("stt 1200 ms") && lineas[0].Contains("tts-recibido 3300 ms") && lineas[0].Contains("reproducción 3450 ms") && !lineas[0].Contains("ANOMALÍA"), "turno medido: " + lineas[0]);
+    // Un turno que nunca sonó, y el siguiente empieza 32 minutos después: el nuevo arranca de cero (nunca se reutiliza el reloj).
+    var t2 = met.Nuevo("frases", "fin de captura");
+    ahora += Ms(1_945_000);
+    var t3 = met.Nuevo("texto", "texto escrito");
+    Check(t2.Cerrado && t2.Final == "reemplazado" && t3.Id == 3 && lineas[1].Contains("reemplazado") && lineas[1].Contains("ANOMALÍA"), "el turno abierto se cierra con motivo: " + lineas[1]);
+    ahora += Ms(500); met.Marcar(EtapaVoz.Intencion); met.Cerrar("accion");
+    Check(lineas[2].Contains("intención 500 ms") && lineas[2].Contains("total 500 ms"), "el turno nuevo cuenta desde su origen: " + lineas[2]);
+    met.Nuevo("frases", "fin de captura"); ahora += Ms(300); met.Cerrar("cancelado");
+    Check(lineas[3].Contains("cancelado") && met.Actual == null, "cancelado se cierra");
+    met.Cerrar("otra vez"); Check(lineas.Count == 4, "cerrar dos veces no duplica");
+    var t5 = met.Nuevo("vivo", "transcripción recibida"); met.Marcar(EtapaVoz.InicioReproduccion, turno: 99);
+    Check(t5.MsDe(EtapaVoz.InicioReproduccion) == null, "audio de otro turno no se mezcla");
+    met.Marcar(EtapaVoz.TtsRecibido, ahora + Ms(200)); met.Marcar(EtapaVoz.InicioReproduccion, ahora + Ms(100)); met.Cerrar("ok", ahora + Ms(300));
+    Check(lineas[4].Contains("ANOMALÍA") && lineas[4].Contains("antes que"), "etapas fuera de orden marcadas: " + lineas[4]);
+    met.Nuevo("frases", "fin de captura"); met.Cerrar("ok");
+    Check(lineas[5].Contains("ok sin reproducción"), "ok sin sonido es anomalía");
+    Check(!string.Join("\n", lineas).Contains('«'), "las métricas no llevan texto");
+}
+// ── H09: cola del micrófono acotada (tira lo más viejo), control primero; voz con generación ──
+{
+    var cola = new ColaEnvio<string>(3);
+    Check(cola.Audio("a1") && cola.Audio("a2") && cola.Audio("a3") && !cola.Audio("a4") && cola.Descartados == 1 && cola.ProfundidadAudio == 3, "audio acotado");
+    cola.Control("pong");
+    var orden = new List<string>();
+    for (int i = 0; i < 4; i++) orden.Add(cola.Siguiente(CancellationToken.None).GetAwaiter().GetResult()!);
+    Check(string.Join(",", orden) == "pong,a2,a3,a4", "control primero y se tiró lo más viejo: " + string.Join(",", orden));
+    cola.Audio("b1"); cola.Audio("b2"); Check(cola.VaciarAudio() == 2 && cola.ProfundidadAudio == 0, "vaciar al interrumpir");
+    var espera = cola.Siguiente(CancellationToken.None);
+    // Los timbres de los bloques tirados solo hacen mirar otra vez: sin audio, sigue esperando.
+    Thread.Sleep(50);
+    Check(!espera.IsCompleted, "sin nada, espera");
+    cola.Audio("c1"); Check(espera.Wait(1000) && espera.Result == "c1", "despierta con audio");
+    cola.Completar(); Check(cola.Siguiente(CancellationToken.None).GetAwaiter().GetResult() == null && !cola.Audio("x") && !cola.Control("x"), "cerrada");
+    var boca = new ColaBoca(10);
+    var g0 = boca.Generacion;
+    Check(boca.Agregar(new byte[4], g0) && boca.Agregar(new byte[4], g0) && boca.Agregar(new byte[4], g0) && boca.Pendiente == 8 && boca.BytesDescartados == 4, "voz acotada");
+    Check(boca.Sacar(6)!.Length == 4 && boca.Sacar(2)!.Length == 2 && boca.Pendiente == 2, "sacar por partes");
+    var g1 = boca.Cortar();
+    Check(boca.Pendiente == 0 && !boca.Agregar(new byte[4], g0) && boca.Agregar(new byte[4], g1) && boca.Sacar(100)!.Length == 4 && boca.Sacar(100) == null, "detener tira la voz vieja y la que llegue tarde");
+}
+// ── H10: «al menos N» con tope; una ráfaga se anuncia una vez, con el número correcto ──
+{
+    Carta C(int i) => new($"id{i}", $"Persona {i % 4}", $"Asunto {i}", "", DateTimeOffset.UtcNow.AddMinutes(i));
+    var cur = CursorCorreo.De("prueba:" + Guid.NewGuid());
+    Check(cur.Revisar(Enumerable.Range(0, 5).Select(C).Reverse().ToList(), 20).Nuevas.Count == 0, "primera revisión: no anuncia lo que ya estaba");
+    var r1 = cur.Revisar(Enumerable.Range(0, 6).Select(C).Reverse().ToList(), 20);
+    Check(r1.Nuevas.Count == 1 && r1.Nuevas[0].Id == "id5" && !r1.AlMenos, "una nueva");
+    Check(cur.Revisar(Enumerable.Range(0, 6).Select(C).Reverse().ToList(), 20).Nuevas.Count == 0, "sin repetir");
+    // 25 nuevas entre dos revisiones, con tope 20: un aviso con «al menos 20».
+    var rafaga = cur.Revisar(Enumerable.Range(6, 25).Select(C).Reverse().Take(20).ToList(), 20);
+    Check(rafaga.Nuevas.Count == 20 && rafaga.AlMenos, "ráfaga cortada: al menos");
+    var (tituloRafaga, cuerpoRafaga) = ConteoCorreo.Aviso(rafaga.Nuevas, rafaga.AlMenos, false);
+    Check(tituloRafaga == "Al menos 20 correos nuevos" && cuerpoRafaga.StartsWith("De "), "aviso agrupado: " + tituloRafaga + " · " + cuerpoRafaga);
+    // 7 nuevas sin llenar el tope: número exacto, agrupado.
+    var siete = cur.Revisar(Enumerable.Range(31, 7).Select(C).Concat(Enumerable.Range(20, 13).Select(C)).OrderByDescending(c => c.Fecha).ToList(), 50);
+    Check(siete.Nuevas.Count == 7 && !siete.AlMenos && ConteoCorreo.Aviso(siete.Nuevas, false, false).Titulo == "7 correos nuevos", "siete nuevas: " + siete.Nuevas.Count);
+    Check(CursorCorreo.De("Gmail:a@b.com") == CursorCorreo.De("gmail:A@B.com"), "un cursor por cuenta (sobrevive a recrear el buzón)");
+    Check(ConteoCorreo.Cantidad(50, true, false) == "al menos 50" && ConteoCorreo.Cantidad(7, false, false) == "7" && ConteoCorreo.Titulo(50, true, false) == "50+ sin leer" && ConteoCorreo.Tope(50, 50) && !ConteoCorreo.Tope(7, 50), "conteo honesto");
+    Check(ConteoCorreo.Aviso(new[] { C(1) }, false, false).Titulo == "Correo de Persona 1", "un solo correo: de quién");
+}
 Console.WriteLine($"PASS {count} assertions");
 class Clock : TimeProvider { public DateTimeOffset Now = DateTimeOffset.UtcNow; public override DateTimeOffset GetUtcNow() => Now; }

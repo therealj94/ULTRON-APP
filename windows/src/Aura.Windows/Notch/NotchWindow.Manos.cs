@@ -78,6 +78,7 @@ public partial class NotchWindow
     internal async Task Hacer(Pedido p, string texto, bool hablado)
     {
         if (pausado) return;
+        using var ocupada = AccionEnCurso(); // la actualización sola no se mete a mitad de una acción
         try
         {
             switch (p.Mano)
@@ -228,12 +229,12 @@ public partial class NotchWindow
         // El cerebro no trae cosas que no dijiste (una canción de antes, otra app): solo ordena lo tuyo.
         if (p.Mano != Mano.Ninguna && !FiltroAcciones.Coherente(orden, dicho))
         {
-            Centro.Registro.Anotar("cerebro-manos", $"descartada (no sale de lo dicho): {orden}");
+            Centro.Registro.AnotarDicho("cerebro-manos", "descartada (no sale de lo dicho)", orden);
             // Antes se descartaba callada y la voz ya había dicho que lo hacía.
             NoPude(T($"No hice «{orden}»: no me quedó claro que eso pediste. ¿Me lo repites?", $"I didn't do “{orden}”: I'm not sure that's what you asked. Can you say it again?"));
             return;
         }
-        Centro.Registro.Anotar("cerebro-manos", $"{orden} → {p.Mano}");
+        Centro.Registro.AnotarDicho("cerebro-manos", $"→ {p.Mano}", orden);
         if (p.Mano == Mano.Ninguna) { NoPude(T($"Todavía no sé hacer «{orden}» en esta computadora.", $"I don't know how to do “{orden}” on this PC yet.")); return; }
         try { await Hacer(p, orden, false); }
         catch (Exception ex) { NoPude(ex.Message); }

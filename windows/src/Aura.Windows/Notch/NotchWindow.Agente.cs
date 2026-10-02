@@ -35,7 +35,6 @@ public partial class NotchWindow
     OrdenPc? ordenSaltada;
     string ultimoMotivo = "";
     System.Windows.Controls.TextBlock? burbujaAgente;
-    readonly Stopwatch cronoAgente = new();
     CancellationTokenSource? canal;
 
     bool AgenteAbierto => agente?.Abierto == true;
@@ -110,22 +109,27 @@ public partial class NotchWindow
             burbujaAgente = AgregarMensaje(ajustes.NombreAvatar, visible);
             if (agenteUltimoDicho.Length > 0) { Recordar(agenteUltimoDicho, visible); agenteUltimoDicho = ""; }
         }));
-        a.Hablando += si => Dispatcher.BeginInvoke(new Action(() =>
+        a.Hablando += si =>
         {
-            if (!ReferenceEquals(agente, a)) return;
-            hablandoAhora = si;
-            if (si && cronoAgente.IsRunning)
+            var cuando = Stopwatch.GetTimestamp();
+            Dispatcher.BeginInvoke(new Action(() =>
             {
-                // Desde que ElevenLabs cerró tu frase hasta la primera voz: lo que hay que bajar (meta < 1,5 s).
-                Centro.Registro.Anotar("voz-vivo", $"primera voz a los {cronoAgente.ElapsedMilliseconds} ms de entender tu frase");
-                cronoAgente.Stop();
-            }
-            AvatarPanel.Estado = si ? "speaking" : "listening";
-            EstadoPanel.Text = si ? T("Hablando…", "Speaking…") : T("Te escucho…", "Listening…");
-            if (!si) { AvatarHabla.Boca = AvatarPanel.Boca = 0; agenteUltimaVoz = DateTime.Now; }
-            Recalcular();
-        }));
-        a.Interrumpida += () => Dispatcher.BeginInvoke(new Action(() => { if (ReferenceEquals(agente, a)) Centro.Registro.Anotar("voz-vivo", "me interrumpiste"); }));
+                if (!ReferenceEquals(agente, a)) return;
+                hablandoAhora = si;
+                if (si)
+                {
+                    // En vivo se cuenta DESDE LA TRANSCRIPCIÓN (no incluye tu captura ni el STT de ElevenLabs) y «suena» es
+                    // audio en la cola del altavoz, no una medición acústica. Así queda dicho en la línea del turno.
+                    metricas.Marcar(EtapaVoz.InicioReproduccion, cuando);
+                    metricas.Cerrar("ok", cuando);
+                }
+                AvatarPanel.Estado = si ? "speaking" : "listening";
+                EstadoPanel.Text = si ? T("Hablando…", "Speaking…") : T("Te escucho…", "Listening…");
+                if (!si) { AvatarHabla.Boca = AvatarPanel.Boca = 0; agenteUltimaVoz = DateTime.Now; }
+                Recalcular();
+            }));
+        };
+        a.Interrumpida += () => Dispatcher.BeginInvoke(new Action(() => { if (ReferenceEquals(agente, a)) { Centro.Registro.Anotar("voz-vivo", "me interrumpiste"); metricas.Cerrar("interrumpido"); } }));
         a.NivelMic += n => Dispatcher.BeginInvoke(new Action(() => { if (ReferenceEquals(agente, a) && !hablandoAhora) { BarrasEscucha.Nivel = n; EscalaAnillo.ScaleX = EscalaAnillo.ScaleY = 1 + n * 0.5; } }));
         a.NivelBoca += n => Dispatcher.BeginInvoke(new Action(() => { if (ReferenceEquals(agente, a)) { AvatarHabla.Boca = n; AvatarPanel.Boca = n; BarrasHabla.Nivel = n; } }));
         a.Cerrada += motivo => Dispatcher.BeginInvoke(new Action(() =>
@@ -133,6 +137,8 @@ public partial class NotchWindow
             // Mientras se abre, el fallo lo avisa AbrirAgente (un solo aviso).
             if (!ReferenceEquals(agente, a) || abriendoAgente) return;
             agente = null;
+            metricas.Cerrar(motivo != null ? "fallo (se cortó)" : "cancelado");
+            if (a.MetricasCola.Length > 0) Centro.Registro.Anotar("voz-vivo", a.MetricasCola);
             SoltarPermiso();
             hablandoAhora = false; escuchando = false;
             LuzMic.Opacity = 0; AnilloMic.Opacity = 0; BarrasEscucha.Nivel = 0;
@@ -168,9 +174,10 @@ public partial class NotchWindow
     async Task AlOirEnVivo(string texto)
     {
         agenteUltimaVoz = DateTime.Now;
-        cronoAgente.Restart();
+        // Un turno nuevo con su reloj. Honesto: en vivo solo se ve desde que llega la transcripción.
+        var t = metricas.Nuevo("vivo", "transcripción recibida (sin captura ni STT; voz = audio en cola)");
         agenteUltimoDicho = texto;
-        Centro.Registro.Anotar("oir", $"en vivo · «{(texto.Length > 140 ? texto[..140] + "…" : texto)}»");
+        Centro.Registro.AnotarDicho("oir", $"turno {t.Id} · en vivo", texto);
         AgregarMensaje("Tú", texto);
         if (propuesta != null)
         {
@@ -183,7 +190,8 @@ public partial class NotchWindow
         var frase = Parametros.QuitarNombre(texto, out var sinNombre) && sinNombre.Length > 0 ? sinNombre : texto;
         var p = Intencion.PorReglas(frase);
         if (p.Mano == Mano.Ninguna) return;
-        Centro.Registro.Anotar("entender", $"en vivo · {p.Mano} (reglas)");
+        metricas.Marcar(EtapaVoz.Intencion, turno: t.Id);
+        Centro.Registro.Anotar("entender", $"turno {t.Id} · en vivo · {p.Mano} (reglas)");
         hechasRecientes.Anotar(texto);
         var desde = DateTime.Now;
         resultadoUltimo = null;
@@ -201,7 +209,7 @@ public partial class NotchWindow
         if (ordenSaltada is { } os)
         {
             ordenSaltada = null;
-            Centro.Registro.Anotar("cerebro-manos", "segundo intento con la orden del cerebro: " + os.Orden);
+            Centro.Registro.AnotarDicho("cerebro-manos", "segundo intento con la orden del cerebro", os.Orden);
             await HacerOrdenDelCerebro(os.Orden, os.Dicho, true);
             return;
         }
@@ -224,7 +232,7 @@ public partial class NotchWindow
         if (hechasRecientes.Repetida(o.Id, o.Dicho))
         {
             if (intentoLocal) ordenSaltada = o;
-            Centro.Registro.Anotar("cerebro-manos", $"ya hecha: {o.Orden}");
+            Centro.Registro.AnotarDicho("cerebro-manos", "ya hecha", o.Orden);
             return;
         }
         await HacerOrdenDelCerebro(o.Orden, o.Dicho, true);

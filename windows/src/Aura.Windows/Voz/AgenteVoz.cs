@@ -3,7 +3,6 @@ using System.IO;
 using System.Net.WebSockets;
 using System.Text;
 using System.Threading;
-using System.Threading.Channels;
 using System.Threading.Tasks;
 using Aura.Windows.Core;
 using NAudio.Wave;
@@ -18,16 +17,28 @@ namespace Aura.Windows.Voz;
 ///
 /// Sin cancelación de eco en el micrófono de Windows, mientras AURA habla lo que entra más bajo que su
 /// propia voz se manda como silencio: su voz no la interrumpe; la tuya, más fuerte y cerca, sí.
+///
+/// Colas ACOTADAS (auditoría 1-oct, H09): el micrófono va por una cola de ~1 s que tira lo más viejo si la red
+/// no da abasto (antes, sin límite: con la red lenta se acumulaba audio viejo); la voz que llega espera en una
+/// cola de pocos segundos con generación (ColaBoca) y el reproductor tiene un búfer corto. Al interrumpir o
+/// mandarla callar se tira todo lo pendiente y lo que llegue tarde de esa respuesta: nunca suena audio viejo.
 /// </summary>
 internal sealed class AgenteVoz : IDisposable
 {
     const int MsBloque = 50;
+    /// <summary>Cuánto audio del micrófono puede esperar a la red (20 bloques de 50 ms = 1 s); más, se tira lo más viejo.</summary>
+    const int BloquesEnCola = 20;
+    /// <summary>El búfer del reproductor: corto, para que «detener» no deje nada sonando.</summary>
+    static readonly TimeSpan BuferBoca = TimeSpan.FromSeconds(3);
+    /// <summary>Lo más que espera de la voz antes del reproductor (una respuesta larga que llega más rápido de lo que suena).</summary>
+    const int SegundosEnEspera = 30;
     ClientWebSocket? ws;
     WaveInEvent? mic;
     WaveOutEvent? salida;
     BufferedWaveProvider? boca;
+    ColaBoca? espera;
     CancellationTokenSource? corte;
-    Channel<string>? envios;
+    ColaEnvio<string>? envios;
     Timer? relojBoca;
     FormatoAudio entrada = FormatoAudio.Pcm16k, sale = FormatoAudio.Pcm16k;
     int interrumpidoHasta = -1;
@@ -70,7 +81,7 @@ internal sealed class AgenteVoz : IDisposable
             tope.CancelAfter(TimeSpan.FromSeconds(10));
             await ws.ConnectAsync(new Uri(permiso.Url), tope.Token).ConfigureAwait(false);
         }
-        envios = Channel.CreateUnbounded<string>(new UnboundedChannelOptions { SingleReader = true });
+        envios = new ColaEnvio<string>(BloquesEnCola);
         _ = Task.Run(() => BucleEnvio(c));
         Mandar(AgenteProtocolo.Inicio(permiso.Pase));
         _ = Task.Run(() => BucleRecibir(c));
@@ -86,14 +97,29 @@ internal sealed class AgenteVoz : IDisposable
         }
     }
 
-    /// <summary>Calla lo que está diciendo (sin colgar). Su próxima respuesta vuelve a sonar.</summary>
+    /// <summary>Calla lo que está diciendo YA (sin colgar): se tira lo que suena y lo pendiente. Su próxima respuesta vuelve a sonar.</summary>
     public void CallarVoz()
     {
         callada = true;
-        try { boca?.ClearBuffer(); } catch { }
+        CortarVoz();
     }
 
-    void Mandar(string json) => envios?.Writer.TryWrite(json);
+    /// <summary>Tira la voz pendiente (y la que llegue tarde de esta respuesta) y vacía el reproductor.</summary>
+    void CortarVoz()
+    {
+        // Con el mismo candado que Alimentar: un trozo sacado justo antes no puede volver a entrar después.
+        lock (candadoBoca)
+        {
+            espera?.Cortar();
+            try { boca?.ClearBuffer(); } catch { }
+        }
+    }
+
+    void Mandar(string json) => envios?.Control(json);
+
+    /// <summary>Profundidad de la cola del micrófono (para el registro al cerrar).</summary>
+    public string MetricasCola => envios is { } e ? $"cola mic: máx {e.ProfundidadMaxima}/{e.CapacidadAudio} bloques, {e.Descartados} tirados por viejos; voz tirada por tope: {espera?.BytesDescartados ?? vozTirada} bytes" : "";
+    long vozTirada;
 
     /// <summary>Lo que de verdad pasó en la PC, a la conversación: si <paramref name="hablar"/>, el agente lo dice; si no, lo sabe.</summary>
     public void AvisarPc(string texto, bool hablar) { if (Abierto) Mandar(AgenteProtocolo.AvisoPc(texto, hablar)); }
@@ -102,7 +128,7 @@ internal sealed class AgenteVoz : IDisposable
     {
         try
         {
-            await foreach (var m in envios!.Reader.ReadAllAsync(ct).ConfigureAwait(false))
+            while (await envios!.Siguiente(ct).ConfigureAwait(false) is { } m)
             {
                 if (ws?.State != WebSocketState.Open) break;
                 await ws.SendAsync(Encoding.UTF8.GetBytes(m), WebSocketMessageType.Text, true, ct).ConfigureAwait(false);
@@ -150,13 +176,13 @@ internal sealed class AgenteVoz : IDisposable
                 listo.TrySetResult(l);
                 break;
             case AgenteAudio a when a.EventoId > interrumpidoHasta && !callada:
-                boca?.AddSamples(a.Pcm, 0, a.Pcm.Length);
+                if (espera is { } cola) { cola.Agregar(a.Pcm, cola.Generacion); Alimentar(); }
                 nivelVoz = Math.Max(nivelVoz, Math.Min(1, AgenteProtocolo.Rms(a.Pcm) * 6));
                 break;
             case AgenteInterrumpido i:
                 // Lo que ya estaba en camino de antes de la interrupción no suena.
                 interrumpidoHasta = Math.Max(interrumpidoHasta, i.EventoId);
-                boca?.ClearBuffer();
+                CortarVoz();
                 Interrumpida?.Invoke();
                 break;
             case AgentePing p:
@@ -174,7 +200,9 @@ internal sealed class AgenteVoz : IDisposable
 
     void AbrirBoca()
     {
-        boca = new BufferedWaveProvider(new WaveFormat(sale.Muestreo, 16, 1)) { BufferDuration = TimeSpan.FromSeconds(60), DiscardOnBufferOverflow = true, ReadFully = true };
+        var formato = new WaveFormat(sale.Muestreo, 16, 1);
+        boca = new BufferedWaveProvider(formato) { BufferDuration = BuferBoca, DiscardOnBufferOverflow = true, ReadFully = true };
+        espera = new ColaBoca((long)formato.AverageBytesPerSecond * SegundosEnEspera);
         salida = new WaveOutEvent { DesiredLatency = 120 };
         salida.Init(boca);
         salida.Play();
@@ -183,6 +211,7 @@ internal sealed class AgenteVoz : IDisposable
         {
             try
             {
+                Alimentar();
                 var b = boca; // Terminar lo pone en null desde otro hilo
                 var suena = b != null && b.BufferedDuration > TimeSpan.FromMilliseconds(40);
                 if (suena) ultimoSonido = DateTime.UtcNow;
@@ -193,6 +222,23 @@ internal sealed class AgenteVoz : IDisposable
             catch { /* un tic tardío después de cerrar no tumba nada */ }
         }, null, 80, 80);
     }
+
+    /// <summary>Pasa la voz que espera al reproductor sin pasarse de su búfer corto (desde la red o el reloj de 80 ms).</summary>
+    void Alimentar()
+    {
+        lock (candadoBoca)
+        {
+            var b = boca; var e = espera;
+            if (b == null || e == null) return;
+            var libre = b.BufferLength - b.BufferedBytes;
+            // De a bloques enteros de muestra (2 bytes): nunca medio número.
+            libre -= libre % 2;
+            if (libre <= 0) return;
+            if (e.Sacar(libre) is { Length: > 0 } pcm) b.AddSamples(pcm, 0, pcm.Length);
+        }
+    }
+
+    readonly object candadoBoca = new();
 
     void AbrirMicrofono()
     {
@@ -207,7 +253,8 @@ internal sealed class AgenteVoz : IDisposable
             // más bajo que su voz: silencio (el tiempo sigue corriendo). La tuya, cerca y más fuerte, pasa.
             bool cola = DateTime.UtcNow - ultimoSonido < TimeSpan.FromMilliseconds(500);
             bool tapar = Mudo || ((hablando || cola) && rms < Math.Max(0.05, nivelVoz * 0.12));
-            Mandar(AgenteProtocolo.Audio(tapar ? new byte[e.BytesRecorded] : pcm));
+            // Audio: acotado (si la red no da abasto, se tira lo más viejo); el control (pong, avisos) nunca se tira.
+            envios?.Audio(AgenteProtocolo.Audio(tapar ? new byte[e.BytesRecorded] : pcm));
         };
         mic.RecordingStopped += (_, e) => { if (e.Exception != null) Terminar("El micrófono se detuvo: " + e.Exception.Message); };
         mic.StartRecording();
@@ -217,13 +264,16 @@ internal sealed class AgenteVoz : IDisposable
     void Terminar(string? motivo)
     {
         lock (candado) { if (Interlocked.Exchange(ref terminado, 1) == 1) return; }
-        envios?.Writer.TryComplete();
+        envios?.VaciarAudio();
+        envios?.Completar();
         relojBoca?.Dispose(); relojBoca = null;
         var m = mic; mic = null;
         if (m != null) { try { m.StopRecording(); } catch { } m.Dispose(); }
         var o = salida; salida = null;
         if (o != null) { try { o.Stop(); } catch { } o.Dispose(); }
-        boca = null;
+        vozTirada = espera?.BytesDescartados ?? 0;
+        espera?.Cortar();
+        boca = null; espera = null;
         if (hablando) { hablando = false; Hablando?.Invoke(false); }
         var w = ws;
         if (w != null)

@@ -31,6 +31,8 @@ public sealed class PalabraClave : IDisposable
     /// <param name="modelo">El .onnx de la palabra (hey_aura.onnx).</param>
     public PalabraClave(string carpeta, string modelo)
     {
+        // onnxruntime.dll de la carpeta de AURA, por ruta completa, antes del primer uso (MotorOnnx, H05).
+        MotorOnnx.Preparar();
         var o = new SessionOptions { IntraOpNumThreads = 1, InterOpNumThreads = 1, GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL };
         mel = new InferenceSession(Path.Combine(carpeta, "melspectrogram.onnx"), o);
         emb = new InferenceSession(Path.Combine(carpeta, "embedding_model.onnx"), o);

@@ -238,10 +238,12 @@ public partial class NotchWindow
         if (correo == null && ajustes.CorreoDireccion.Length > 3 && ajustes.CorreoClave.Length > 0) correo = new Correo(ajustes.CorreoDireccion, ajustes.CorreoClave);
         if (correo != null)
         {
-            correo.Nuevo += c => Dispatcher.BeginInvoke(new Action(() =>
+            // Varios nuevos juntos: UN aviso con cuántos (o «al menos» cuántos) y de quiénes, no una ráfaga (H10).
+            correo.Nuevos += (nuevas, alMenos) => Dispatcher.BeginInvoke(new Action(() =>
             {
                 if (!ajustes.AvisarCorreos || pausado) return;
-                Avisar(new Aviso(T("Correo de ", "Email from ") + c.De, c.Asunto, "", "happy", T("Leer", "Read"), () => _ = LeerCorreos("leer", false), 7));
+                var (titulo, cuerpo) = ConteoCorreo.Aviso(nuevas, alMenos, Ingles);
+                Avisar(new Aviso(titulo, cuerpo, "", "happy", T("Leer", "Read"), () => _ = LeerCorreos("leer", false), 7));
             }));
             correo.Fallo += m => Dispatcher.BeginInvoke(new Action(() => Avisar(new Aviso(T("Correo", "Email"), m, "", "worried", Segundos: 8))));
             correo.Vigilar();
@@ -270,12 +272,16 @@ public partial class NotchWindow
         pensando = true; TextoPiensa.Text = T("Revisando tu correo…", "Checking your email…"); Recalcular();
         System.Collections.Generic.List<Carta> cartas;
         var de = que.StartsWith("de|") ? LayaLigera.Normalizar(que[3..]) : null;
-        try { cartas = await correo.NoLeidos(que == "contar" || de != null ? 50 : 8); }
+        // Se piden como mucho 50 (o 8 para leer): si llegan todas, puede haber más; se dice «al menos», nunca un total inventado (H10).
+        int pedidas = que == "contar" || de != null ? 50 : 8;
+        try { cartas = await correo.NoLeidos(pedidas); }
         catch (Exception ex) { NoPude(ex.Message); return; }
         pensando = false;
+        bool alMenos = ConteoCorreo.Tope(cartas.Count, pedidas);
         if (de != null)
         {
             cartas = cartas.Where(c => LayaLigera.Normalizar(c.De).Contains(de, StringComparison.Ordinal)).Take(8).ToList();
+            alMenos = false;
             if (cartas.Count == 0) { Hecho(T("Nada de " + que[3..], "Nothing from " + que[3..]), correo.Direccion, "", T($"No tienes correos sin leer de {que[3..]}.", $"No unread email from {que[3..]}.")); return; }
             que = "leer";
         }
@@ -283,7 +289,8 @@ public partial class NotchWindow
         if (que == "contar")
         {
             var quienes = string.Join(", ", cartas.Take(3).Select(c => c.De));
-            Hecho(T($"{cartas.Count} sin leer", $"{cartas.Count} unread"), quienes, "", T($"Tienes {cartas.Count} correos sin leer; los últimos, de {quienes}.", $"You have {cartas.Count} unread emails; the latest from {quienes}."));
+            var cuantos = ConteoCorreo.Cantidad(cartas.Count, alMenos, Ingles);
+            Hecho(ConteoCorreo.Titulo(cartas.Count, alMenos, Ingles), quienes, "", T($"Tienes {cuantos} correos sin leer de los últimos 14 días; los últimos, de {quienes}.", $"You have {cuantos} unread emails from the last 14 days; the latest from {quienes}."));
             return;
         }
         var lista = string.Join("\n", cartas.Select(c => $"• {c.De}: {c.Asunto}"));
@@ -296,7 +303,7 @@ public partial class NotchWindow
             return;
         }
         var dicho = string.Join(". ", cartas.Take(4).Select(c => T($"De {c.De}: {c.Asunto}", $"From {c.De}: {c.Asunto}")));
-        Hecho(T($"{cartas.Count} sin leer", $"{cartas.Count} unread"), cartas[0].Asunto, "", dicho + ".");
+        Hecho(ConteoCorreo.Titulo(cartas.Count, alMenos, Ingles), cartas[0].Asunto, "", dicho + ".");
     }
 
     async Task LeerAgenda(string que)
