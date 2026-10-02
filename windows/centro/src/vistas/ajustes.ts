@@ -41,20 +41,50 @@ export function vistaAjustes(): HTMLElement {
         : h('p', null, T('No has entrado.', 'Not signed in.')),
       h('p', { class: 'nota' }, T('Tu sesión de AU-RA dura 14 días. Con Genesis ID no se guarda ninguna clave: al vencer, vuelves a entrar con Veta Wallet.', 'Your session lasts 14 days.')));
 
-    // ── Vidrio del notch: 0.55 deja ver el fondo; 1 es el negro sólido de antes. Se guarda al soltar (guardar repinta la vista). ──
+    // ── Transparencia del notch: 0.30 deja ver mucho el fondo; 1 es el negro sólido de antes. Se guarda al soltar (guardar repinta la vista). ──
     const vidrio = (valor: number) => {
-      const cuanto = h('small', { class: 'tenue', style: 'min-width:64px;text-align:right' });
-      const decir = (v: number) => { cuanto.textContent = v >= 1 ? T('Sólido', 'Solid') : T(`Vidrio ${Math.round(((1 - v) / 0.45) * 100)} %`, `Glass ${Math.round(((1 - v) / 0.45) * 100)}%`); };
+      const cuanto = h('small', { class: 'tenue', style: 'min-width:96px;text-align:right' });
+      const decir = (v: number) => { cuanto.textContent = v >= 1 ? T('Sólido', 'Solid') : T(`Transparencia ${Math.round((1 - v) * 100)} %`, `Transparency ${Math.round((1 - v) * 100)}%`); };
       decir(valor);
-      const barra = h('input', { type: 'range', min: '55', max: '100', step: '1', value: String(Math.round(valor * 100)),
-        'aria-label': T('Vidrio del notch', 'Notch glass'), title: T('Izquierda: más transparente · derecha: negro sólido', 'Left: more transparent · right: solid black'),
+      const barra = h('input', { type: 'range', min: '30', max: '100', step: '1', value: String(Math.round(valor * 100)),
+        'aria-label': T('Transparencia del notch', 'Notch transparency'), title: T('Izquierda: más transparente · derecha: negro sólido', 'Left: more transparent · right: solid black'),
         style: 'flex:1;accent-color:var(--acento)',
         on: { input: (ev: Event) => decir(+(ev.target as HTMLInputElement).value / 100), change: (ev: Event) => guardar({ transparencia: +(ev.target as HTMLInputElement).value / 100 }) } });
       return h('div', { class: 'campo', style: 'margin-top:12px' },
-        h('strong', null, T('Vidrio del notch', 'Notch glass')),
-        h('div', { class: 'fila' }, h('small', { class: 'tenue' }, T('Más vidrio', 'More glass')), barra, h('small', { class: 'tenue' }, T('Sólido', 'Solid')), cuanto),
-        h('small', null, T('Qué tanto se ve lo que hay detrás del notch. Todo a la derecha es el negro sólido de antes. Al conversar o leer un aviso se vuelve más opaco para que el texto se lea bien.', 'How much of what’s behind the notch shows through. Far right is the old solid black. It turns more opaque while chatting or showing a notice so text stays readable.')));
+        h('strong', null, T('Transparencia del notch', 'Notch transparency')),
+        h('div', { class: 'fila' }, h('small', { class: 'tenue' }, T('Más transparente', 'More see-through')), barra, h('small', { class: 'tenue' }, T('Sólido', 'Solid')), cuanto),
+        h('small', null, T('Qué tanto se ve lo que hay detrás del notch en reposo, escuchando o con música. Al conversar, leer un aviso o pedir tu «sí» se vuelve casi opaco para que el texto se lea bien.', 'How much shows through the notch at rest, listening or with music. While chatting, showing a notice or asking for your “yes” it turns almost opaque so text stays readable.')));
     };
+
+    // ── Posición del notch: el borde, el lado y el monitor. También se arrastra con el ratón. ──
+    const notch = aj.notch ?? { borde: 'arriba', fraccion: 0.5, monitor: '', menosMovimiento: false };
+    const monitores: { id: string; nombre: string; principal: boolean; actual: boolean }[] = (await pedir('notch.monitores').catch(() => null)) ?? [];
+    const lado = notch.fraccion <= 0.001 ? 'izquierda' : notch.fraccion >= 0.999 ? 'derecha' : Math.abs(notch.fraccion - 0.5) < 0.001 ? 'centro' : 'libre';
+    const mover = (cambio: Record<string, unknown>) => guardar({ notch: { borde: notch.borde, fraccion: notch.fraccion, ...cambio } });
+    const elegirMonitor = monitores.length > 1
+      ? h('div', { class: 'campo' }, h('strong', null, T('Monitor', 'Display')),
+          h('select', { 'aria-label': T('Monitor del notch', 'Notch display'), style: 'background:var(--superficie2);border:1px solid var(--linea);color:var(--texto);border-radius:var(--radio-chico);padding:10px 12px;font:inherit',
+            on: { change: (ev: Event) => guardar({ notch: { monitor: (ev.target as HTMLSelectElement).value } }) } },
+            ...monitores.map((m) => h('option', { value: m.id, selected: m.actual }, m.nombre))),
+          h('small', null, T('También puedes arrastrarlo al otro monitor.', 'You can also drag it to the other display.')))
+      : null;
+    const posicion = h('div', { style: 'margin-top:6px' },
+      h('strong', null, T('Posición del notch', 'Notch position')),
+      eleccion(T('Borde', 'Edge'), [
+        { valor: 'arriba', texto: T('Arriba', 'Top'), explica: T('Pegado al borde de arriba, como el de la cámara.', 'Attached to the top edge, like the camera notch.') },
+        { valor: 'abajo', texto: T('Abajo', 'Bottom'), explica: T('Apoyado encima de la barra de tareas; crece hacia arriba.', 'Resting above the taskbar; it grows upwards.') },
+      ], notch.borde === 'abajo' ? 'abajo' : 'arriba', (v) => mover({ borde: v })),
+      eleccion(T('Lado', 'Side'), [
+        { valor: 'izquierda', texto: T('Izquierda', 'Left'), explica: T('En la esquina izquierda.', 'In the left corner.') },
+        { valor: 'centro', texto: T('Centro', 'Center'), explica: T('Al centro (arriba, con la cámara).', 'Centered (at the top, with the camera).') },
+        { valor: 'derecha', texto: T('Derecha', 'Right'), explica: T('En la esquina derecha.', 'In the right corner.') },
+      ], lado as 'izquierda' | 'centro' | 'derecha', (v) => mover({ fraccion: v === 'izquierda' ? 0 : v === 'derecha' ? 1 : 0.5 })),
+      elegirMonitor,
+      h('div', { class: 'fila', style: 'flex-wrap:wrap;margin-top:4px' },
+        boton(T('Restablecer posición', 'Reset position'), async () => { try { await pedir('notch.restablecer'); } catch (err: any) { avisar(err.message, 'mal', 7000); } },
+          { tipo: 'fantasma', titulo: T('Arriba al centro del monitor principal', 'Top center of the main display') })),
+      h('p', { class: 'nota' }, T('Arrástralo desde la píldora por el borde de la pantalla: al soltarlo se pega a la izquierda, al centro o a la derecha, arriba o abajo. Nunca queda flotando en medio. Doble clic en la píldora: vuelve arriba al centro.', 'Drag it from the pill along the screen edge: it snaps left, center or right, top or bottom. It never floats mid-screen. Double-click the pill to send it back to the top center.')),
+      interruptor(T('Menos movimiento', 'Reduce motion'), T('El avatar se queda quieto (sin mirar al cursor, parpadear ni saltar) y el notch cambia sin animar. Windows también lo activa con «Efectos de animación» apagado.', 'The avatar stays still and the notch changes without animating. Windows “Animation effects” off does this too.'), !!notch.menosMovimiento, (v) => guardar({ notch: { menosMovimiento: v } })));
 
     // ── Avatar e idioma ──
     const avatar = seccion('avatar', T('Avatar, idioma y notch', 'Avatar, language & notch'),
@@ -68,7 +98,8 @@ export function vistaAjustes(): HTMLElement {
         { valor: 'es', texto: 'Español', explica: T('AURA te habla y te escucha en español.', 'Spanish.') },
         { valor: 'en', texto: 'English', explica: T('AURA habla y escucha en inglés.', 'AURA speaks and listens in English.') },
       ], aj.idioma, (v) => guardar({ idioma: v }).then(() => cargar())),
-      vidrio(aj.transparencia ?? 0.72));
+      vidrio(aj.transparencia ?? 0.5),
+      posicion);
 
     // ── Voz y escucha ──
     const voz = seccion('voz', T('Voz y escucha', 'Voice & listening'),

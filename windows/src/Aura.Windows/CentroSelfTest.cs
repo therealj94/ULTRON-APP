@@ -38,7 +38,9 @@ internal static class CentroSelfTest
             "ajustes.leer" => new { avatar = "aura", idioma = "es", escucha = "palabra", manosLibres = true, interrumpir = true, responderConVoz = true, ocultarEnPantallaCompleta = true,
                                    vozDeWindows = false, oidoDeWindows = false, avisosDeApps = true, avisosPrivados = false, avisosEnVoz = false, appsSilenciadas = new[] { "Teams" },
                                    avisarCorreos = true, mostrarMusica = true, correoDireccion = "", agendaUrl = "", tieneClaveCorreo = false, carteraDireccion = "0x6Facc8Df79cEDc6C5065442ce27e915Aa3a26B9B", servidor = "https://aura-fp.onrender.com",
-                                   clientes = new { spotify = "", google = "", microsoft = "" } },
+                                   clientes = new { spotify = "", google = "", microsoft = "" }, transparencia = 0.5,
+                                   notch = new { borde = "arriba", fraccion = 0.5, monitor = "", menosMovimiento = false } },
+            "notch.monitores" => new object[] { new { id = @"\\.\DISPLAY1", nombre = "Pantalla 1 (principal) · 1920×1080", principal = true, actual = true }, new { id = @"\\.\DISPLAY2", nombre = "Pantalla 2 · 2560×1440", principal = false, actual = false } },
             "ajustes.guardar" => true,
             "cartera.saldos" => new { direccion = "0x6Facc8Df79cEDc6C5065442ce27e915Aa3a26B9B", total = 9214.37m, actualizado = "14:05", saldos = new object[] {
                 new { simbolo = "ORIGEN", cantidad = 3200.5m, precio = 2.43m, usd = 7777.2m }, new { simbolo = "AUKA", cantidad = 0.34m, precio = 4167.4m, usd = 1416.9m },

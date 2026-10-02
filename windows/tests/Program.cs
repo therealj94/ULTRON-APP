@@ -591,5 +591,39 @@ Check(R("abre word y excel") is { Mano: Mano.Varias } we && we.Valor.Split(Manos
 Check(R("cierra chrome y luego abre spotify") is { Mano: Mano.Varias } && R("open notepad and then type hello world") is { Mano: Mano.Varias }, "cadena con luego / and then");
 Check(R("escribe pan y leche") is { Mano: Mano.Escribir, Valor: "pan y leche" } && R("busca tom y jerry") is { Mano: Mano.BuscarWeb } && R("ayer abrí word y se trabó").Mano == Mano.Ninguna && R("pon salsa y merengue").Mano != Mano.Varias, "no se parte lo que no son dos órdenes");
 Check(R("presiona control y c") is { Mano: Mano.Atajo, Valor: "teclas|CTRL+C" }, "control y c sigue siendo un atajo: " + R("presiona control y c"));
+// ── El notch se mueve por los bordes: imán, ventana dentro del monitor, panel que no se sale ──
+{
+    // Un monitor de 1920 (y otro a la derecha, de 2560, que empieza en 1920). Ventana 640, píldora 236, orejas 10, margen 8.
+    const double V = 640, P = 236, E = 10, M = 8;
+    Check(PosicionNotch.BordeMasCercano(100, 0, 1080) == BordeNotch.Arriba && PosicionNotch.BordeMasCercano(900, 0, 1080) == BordeNotch.Abajo && PosicionNotch.BordeMasCercano(539, 0, 1080) == BordeNotch.Arriba, "borde más cercano");
+    Check(PosicionNotch.Fraccion(960, 0, 1920, P, E, M) == 0.5 && PosicionNotch.Fraccion(1000, 0, 1920, P, E, M) == 0.5, "imán del centro");
+    Check(PosicionNotch.Fraccion(-500, 0, 1920, P, E, M) == 0 && PosicionNotch.Fraccion(170, 0, 1920, P, E, M) == 0, "imán de la izquierda (y no se sale)");
+    Check(PosicionNotch.Fraccion(5000, 0, 1920, P, E, M) == 1 && PosicionNotch.Fraccion(1760, 0, 1920, P, E, M) == 1, "imán de la derecha");
+    var f = PosicionNotch.Fraccion(500, 0, 1920, P, E, M);
+    Check(f > 0.2 && f < 0.3 && Math.Abs(PosicionNotch.CentroReposo(f, 0, 1920, P, E, M) - 500) < 1e-6, "fracción libre e ida y vuelta: " + f);
+    Check(PosicionNotch.CentroReposo(0, 0, 1920, P, E, M) - P / 2 - E == M && 1920 - PosicionNotch.CentroReposo(1, 0, 1920, P, E, M) - P / 2 - E == M, "extremos: la oreja queda a un margen del canto");
+    Check(PosicionNotch.CentroReposo(0.5, 1920, 4480, P, E, M) == 3200, "segundo monitor: el centro es suyo");
+    Check(PosicionNotch.CentroReposo(double.NaN, 0, 1920, P, E, M) == 960 && PosicionNotch.LeerFraccion(double.PositiveInfinity) == 0.5 && PosicionNotch.LeerFraccion(7) == 1, "fracción rota → centro / límite");
+    // La ventana: centrada sobre la píldora, pero entera dentro de su monitor.
+    Check(PosicionNotch.IzquierdaVentana(960, 0, 1920, V) == 640 && PosicionNotch.IzquierdaVentana(PosicionNotch.CentroReposo(0, 0, 1920, P, E, M), 0, 1920, V) == 0
+        && PosicionNotch.IzquierdaVentana(PosicionNotch.CentroReposo(1, 0, 1920, P, E, M), 0, 1920, V) == 1280 && PosicionNotch.IzquierdaVentana(1930, 1920, 4480, V) == 1920, "ventana dentro del monitor");
+    Check(PosicionNotch.IzquierdaVentana(300, 0, 500, V) == 0, "monitor más angosto que la ventana");
+    // El panel (560) que crece pegado a la izquierda se corre hacia dentro; al centro no se mueve.
+    double cIzq = PosicionNotch.CentroReposo(0, 0, 1920, P, E, M);
+    double cPanel = PosicionNotch.CentroVisible(cIzq, 560, 0, 1920, E, M);
+    Check(cPanel - 280 - E == M && PosicionNotch.CentroVisible(960, 560, 0, 1920, E, M) == 960 && 1920 - PosicionNotch.CentroVisible(PosicionNotch.CentroReposo(1, 0, 1920, P, E, M), 560, 0, 1920, E, M) - 280 - E == M, "panel entero dentro del monitor");
+    double L = PosicionNotch.IzquierdaVentana(cIzq, 0, 1920, V);
+    Check(cPanel - 280 - E >= L && cPanel + 280 + E <= L + V, "el panel cabe en su ventana");
+    // Arriba: pegado al borde del monitor; abajo: apoyado en el área de trabajo (encima de la barra) y crece hacia arriba.
+    Check(PosicionNotch.ArribaVentana(BordeNotch.Arriba, 170, 0, 1032) == 0 && PosicionNotch.ArribaVentana(BordeNotch.Abajo, 170, 0, 1032) == 862 && PosicionNotch.ArribaVentana(BordeNotch.Abajo, 808, 0, 1032) == 224, "arriba o abajo");
+    Check(PosicionNotch.LeerBorde("abajo") == BordeNotch.Abajo && PosicionNotch.LeerBorde("izquierda") == BordeNotch.Arriba && PosicionNotch.LeerBorde(null) == BordeNotch.Arriba && PosicionNotch.Nombre(BordeNotch.Abajo) == "abajo", "borde guardado");
+    Check(LugarNotch.DeFabrica.EsDeFabrica && !new LugarNotch(BordeNotch.Abajo, 0.5).EsDeFabrica && !new LugarNotch(BordeNotch.Arriba, 0).EsDeFabrica, "la cámara solo arriba al centro");
+    // El vidrio: la píldora usa el ajuste; lo que se lee nunca baja de 0.9.
+    Check(VidrioNotch.Leer(0.1) == 0.30 && VidrioNotch.Leer(double.NaN) == 0.5 && VidrioNotch.Leer(2) == 1, "vidrio dentro de límites");
+    Check(VidrioNotch.Opacidad(0.3, CapaVidrio.Reposo) == 0.3 && VidrioNotch.Opacidad(0.5, CapaVidrio.Reposo) == 0.5, "la píldora usa el ajuste");
+    foreach (var c in new[] { CapaVidrio.Lectura, CapaVidrio.Confirmar, CapaVidrio.Panel })
+        Check(VidrioNotch.Opacidad(0.3, c) >= VidrioNotch.MinimoConTexto && VidrioNotch.Opacidad(1, c) == 1, "lo que se lee no se transparenta: " + c);
+    Check(VidrioNotch.Opacidad(0.3, CapaVidrio.ReposoConRaton) >= 0.75 && VidrioNotch.Opacidad(0.3, CapaVidrio.Escucha) < 0.5 && VidrioNotch.Opacidad(1, CapaVidrio.Musica) == 1, "escucha y música siguen siendo vidrio");
+}
 Console.WriteLine($"PASS {count} assertions");
 class Clock : TimeProvider { public DateTimeOffset Now = DateTimeOffset.UtcNow; public override DateTimeOffset GetUtcNow() => Now; }

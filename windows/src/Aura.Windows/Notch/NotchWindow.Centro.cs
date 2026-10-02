@@ -153,6 +153,8 @@ public partial class NotchWindow
             case "secreto.borrar": Secretos.Borrar(Texto(a, "clave")); return true;
             case "notch.timbre": Timbre(Texto(a, "de"), Texto(a, "nombre"), Bool(a, "video") == true); return true;
             case "notch.colgada" or "notch.timbreFin": if (propuesta?.Titulo.StartsWith("📞") == true) { propuesta = null; relojPropuesta?.Stop(); Recalcular(); } return true;
+            case "notch.monitores": return MonitoresParaCentro();
+            case "notch.restablecer": RestablecerPosicion(); AvisarEstadoCentro(); return AjustesParaCentro();
             case "notch.aviso": Avisar(new Aviso(Recortar(Texto(a, "titulo"), 60), Recortar(Texto(a, "cuerpo"), 120), "", "happy", T("Ver", "View"), () => AbrirCentro("pulse"), 6)); return true;
             case "chat.enviar":
             {
@@ -301,6 +303,7 @@ public partial class NotchWindow
         correoDireccion = ajustes.CorreoDireccion, agendaUrl = ajustes.AgendaUrl, tieneClaveCorreo = ajustes.CorreoClave.Length > 0,
         carteraDireccion = ajustes.CarteraDireccion, servidor = ajustes.Servidor,
         clientes = new { spotify = ajustes.SpotifyClientId, google = ajustes.GoogleClientId, microsoft = ajustes.MicrosoftClientId },
+        notch = new { borde = ajustes.NotchBorde, fraccion = ajustes.NotchFraccion, monitor = ajustes.NotchMonitor, menosMovimiento = ajustes.MenosMovimiento },
     };
 
     void GuardarDesdeCentro(JsonElement a)
@@ -333,6 +336,7 @@ public partial class NotchWindow
                 case "mostrarMusica": ajustes.MostrarMusica = p.Value.GetBoolean(); AlCambiarMusica(cancion, false); break;
                 case "transparencia" when p.Value.ValueKind == JsonValueKind.Number && p.Value.TryGetDouble(out var vidrio) && double.IsFinite(vidrio):
                     ajustes.Transparencia = Math.Clamp(vidrio, VidrioMin, VidrioMax); AplicarVidrio(); break;
+                case "notch" when p.Value.ValueKind == JsonValueKind.Object: GuardarNotchDesdeCentro(p.Value); break;
                 case "correoDireccion": ajustes.CorreoDireccion = (p.Value.GetString() ?? "").Trim(); cuentas = true; break;
                 case "correoClave": ajustes.CorreoClave = p.Value.GetString() ?? ""; cuentas = true; break;
                 case "agendaUrl": ajustes.AgendaUrl = (p.Value.GetString() ?? "").Trim(); cuentas = true; break;
@@ -349,6 +353,23 @@ public partial class NotchWindow
         if (avisos) IniciarAvisosApps();
         if (escucha) AplicarEscucha();
         AvisarEstadoCentro();
+    }
+
+    /// <summary>«Posición del notch» del Centro: { borde: arriba|abajo, fraccion: 0..1, monitor: nombre o "", menosMovimiento }.</summary>
+    void GuardarNotchDesdeCentro(JsonElement n)
+    {
+        var borde = n.TryGetProperty("borde", out var b) && b.ValueKind == JsonValueKind.String ? PosicionNotch.LeerBorde(b.GetString()) : lugar.Borde;
+        var fraccion = n.TryGetProperty("fraccion", out var f) && f.ValueKind == JsonValueKind.Number && f.TryGetDouble(out var fv) ? PosicionNotch.LeerFraccion(fv) : lugar.Fraccion;
+        string? monitor = null;
+        if (n.TryGetProperty("monitor", out var m) && m.ValueKind == JsonValueKind.String)
+        {
+            // Solo un monitor que existe (o "" = el principal).
+            var pedido = m.GetString() ?? "";
+            monitor = pedido.Length == 0 || Monitores().Any(x => string.Equals(x.Nombre, pedido, StringComparison.OrdinalIgnoreCase)) ? pedido : null;
+            if (monitor != null && Monitores().FirstOrDefault(x => x.Principal)?.Nombre is { } principal && string.Equals(principal, monitor, StringComparison.OrdinalIgnoreCase)) monitor = "";
+        }
+        if (Bool(n, "menosMovimiento") is { } menos) { ajustes.MenosMovimiento = menos; AvatarView.MenosMovimientoPedido = menos; }
+        MoverNotch(new LugarNotch(borde, fraccion), monitor);
     }
 
     // ───────────── PULSE2CHAT: el relevo desde aquí (sin CORS) ─────────────

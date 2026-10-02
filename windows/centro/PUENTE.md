@@ -17,7 +17,9 @@ En TS: `pedir(metodo, args, ms?)` y `al(evento, fn)` de `src/puente.ts`. Fuera d
 | `entrar.clave` | `{ correo, clave }` | `{ miembro }` (junta / cuentas con clave) |
 | `salir` | — | cierra la sesión en este equipo |
 | `primeraVez.terminar` | — | marca la guía como vista |
-| `ajustes.leer` / `ajustes.guardar` | parcial | ajustes (sin secretos) |
+| `ajustes.leer` / `ajustes.guardar` | parcial | ajustes (sin secretos). `transparencia` 0.30–1; `notch: { borde: "arriba"\|"abajo", fraccion: 0..1, monitor: nombre de Windows o "" (el principal), menosMovimiento }` (cada campo es opcional al guardar) |
+| `notch.monitores` | — | `[{ id, nombre, principal, actual }]`: los monitores conectados y cuál usa el notch |
+| `notch.restablecer` | — | el notch vuelve arriba al centro del monitor principal; devuelve los ajustes |
 | `ventana.recoger` | — | oculta el Centro (AURA sigue en el notch) |
 | `relevo` | `{ ruta, cuerpo, ms? }` | POST a `https://cerebro.ordenscan.com/mensajes{ruta}` desde C# (sin CORS): `{ estado, datos }` (estado HTTP y el JSON). Solo rutas del relevo (`/^\/[a-z0-9/_-]{1,60}$/`) |
 | `relevo.archivo` | `{ id }` | `{ base64, mime }` de `GET /archivo/:id` |

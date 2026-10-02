@@ -160,6 +160,10 @@ public partial class NotchWindow
         bool cambioAvisos = r.AvisosDeApps != ajustes.AvisosDeApps;
         ajustes.AvisosDeApps = r.AvisosDeApps; ajustes.AvisosPrivados = r.AvisosPrivados; ajustes.AvisosEnVoz = r.AvisosEnVoz;
         ajustes.AppsSilenciadas = r.AppsSilenciadas;
+        ajustes.Transparencia = Aura.Windows.Core.VidrioNotch.Leer(r.Transparencia); AplicarVidrio();
+        ajustes.MenosMovimiento = r.MenosMovimiento; AvatarView.MenosMovimientoPedido = r.MenosMovimiento;
+        bool movido = r.NotchBorde != ajustes.NotchBorde || r.NotchFraccion != ajustes.NotchFraccion || r.NotchMonitor != ajustes.NotchMonitor;
+        if (movido) MoverNotch(new Aura.Windows.Core.LugarNotch(Aura.Windows.Core.PosicionNotch.LeerBorde(r.NotchBorde), Aura.Windows.Core.PosicionNotch.LeerFraccion(r.NotchFraccion)), r.NotchMonitor);
         if (cambioCuentas) IniciarCuentas();
         if (cambioAvisos) IniciarAvisosApps();
         if (!ajustes.MostrarMusica) musicaVisible = false;
