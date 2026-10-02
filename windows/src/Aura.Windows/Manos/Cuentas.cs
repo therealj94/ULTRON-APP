@@ -52,6 +52,8 @@ internal abstract class Buzon : IDisposable
                         if (primera) { nuevas.Clear(); primera = false; }
                         if (vistos.Count > 2000) { vistos.Clear(); foreach (var x in cartas) vistos.Add(x.Id); }
                     }
+                    // Detenido mientras leía (salió de la cuenta): no se anuncia nada.
+                    if (cts.IsCancellationRequested) break;
                     foreach (var carta in nuevas) Nuevo?.Invoke(carta);
                     fallos = 0;
                 }
@@ -62,7 +64,8 @@ internal abstract class Buzon : IDisposable
         });
     }
 
-    public virtual void Dispose() => vigia?.Cancel();
+    /// <summary>Se detiene y olvida: sin avisos tardíos ni lo ya visto (era de esa cuenta).</summary>
+    public virtual void Dispose() { vigia?.Cancel(); Nuevo = null; Fallo = null; lock (vistos) vistos.Clear(); }
 }
 
 /// <summary>Gmail u Outlook por su API (con la cuenta conectada en Ajustes → Conexiones).</summary>
@@ -207,6 +210,7 @@ internal sealed class AgendaCuenta : IDisposable
                 try
                 {
                     if (DateTime.Now >= recargar) { await Cargar(cts.Token); recargar = DateTime.Now.AddMinutes(15); fallos = 0; }
+                    if (cts.IsCancellationRequested) break;
                     foreach (var e in eventos.Where(e => !e.TodoElDia && e.Inicio > DateTime.Now && e.Inicio - DateTime.Now <= TimeSpan.FromMinutes(10)))
                         if (avisados.Add(e.Titulo + e.Inicio.Ticks)) Pronto?.Invoke(e);
                 }
@@ -222,5 +226,6 @@ internal sealed class AgendaCuenta : IDisposable
         });
     }
 
-    public void Dispose() { vigia?.Cancel(); http?.Dispose(); }
+    /// <summary>Se detiene y olvida los eventos (eran de esa cuenta).</summary>
+    public void Dispose() { vigia?.Cancel(); Pronto = null; Fallo = null; eventos = new(); http?.Dispose(); }
 }

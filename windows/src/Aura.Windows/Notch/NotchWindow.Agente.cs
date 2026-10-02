@@ -14,7 +14,7 @@ namespace Aura.Windows.Notch;
 /// abre una conversación con el agente de ElevenLabs de su avatar, como la llamada del teléfono. ElevenLabs
 /// oye, decide cuándo terminaste y deja interrumpir; el cerebro es el de AU-RA. Las manos:
 ///  · lo que las reglas de la PC reconocen en lo que dijiste se hace al instante, aquí mismo;
-///  · lo que pide el cerebro («⟦hacer⟧») llega por el canal y pasa por la guarda (FiltroAcciones.Coherente);
+///  · lo que pide el cerebro («⟦hacer⟧») llega por el canal y pasa por la guarda tipada (AutorizarOrden: misma acción, mismo objetivo; lo destructivo con «sí»);
 ///  · lo mismo dos veces en unos segundos no se hace dos veces (HechasRecientes).
 /// Si la conversación no abre (sin sesión, sin red, sin minutos), sigue el oído de siempre (Voz/Oido.cs).
 /// </summary>
@@ -27,6 +27,8 @@ public partial class NotchWindow
     DateTime agenteUltimaVoz = DateTime.MinValue;
     bool abriendoAgente;
     string agenteUltimoDicho = "";
+    /// <summary>Lo último que dijiste en la conversación en vivo (no se borra al contestar): la guarda de órdenes lo usa si el canal no trae lo dicho.</summary>
+    string dichoEnVivo = "";
     readonly HechasRecientes hechasRecientes = new();
     /// <summary>Las reglas lo están intentando con lo que dijiste: un fallo todavía no se le dice al agente (puede venir la orden del cerebro).</summary>
     bool intentoLocal;
@@ -170,6 +172,7 @@ public partial class NotchWindow
         agenteUltimaVoz = DateTime.Now;
         cronoAgente.Restart();
         agenteUltimoDicho = texto;
+        dichoEnVivo = texto;
         Centro.Registro.Anotar("oir", $"en vivo · «{(texto.Length > 140 ? texto[..140] + "…" : texto)}»");
         AgregarMensaje("Tú", texto);
         if (propuesta != null)
@@ -202,7 +205,7 @@ public partial class NotchWindow
         {
             ordenSaltada = null;
             Centro.Registro.Anotar("cerebro-manos", "segundo intento con la orden del cerebro: " + os.Orden);
-            await HacerOrdenDelCerebro(os.Orden, os.Dicho, true);
+            await HacerOrdenDelCerebro(os.Orden, os.Dicho.Length > 0 ? os.Dicho : frase, true);
             return;
         }
         await Task.Delay(TimeSpan.FromSeconds(8));
@@ -227,7 +230,7 @@ public partial class NotchWindow
             Centro.Registro.Anotar("cerebro-manos", $"ya hecha: {o.Orden}");
             return;
         }
-        await HacerOrdenDelCerebro(o.Orden, o.Dicho, true);
+        await HacerOrdenDelCerebro(o.Orden, o.Dicho.Length > 0 ? o.Dicho : dichoEnVivo, true);
     }
 
     /// <summary>

@@ -625,5 +625,93 @@ Check(R("presiona control y c") is { Mano: Mano.Atajo, Valor: "teclas|CTRL+C" },
         Check(VidrioNotch.Opacidad(0.3, c) >= VidrioNotch.MinimoConTexto && VidrioNotch.Opacidad(1, c) == 1, "lo que se lee no se transparenta: " + c);
     Check(VidrioNotch.Opacidad(0.3, CapaVidrio.ReposoConRaton) >= 0.75 && VidrioNotch.Opacidad(0.3, CapaVidrio.Escucha) < 0.5 && VidrioNotch.Opacidad(1, CapaVidrio.Musica) == 1, "escucha y música siguen siendo vidrio");
 }
+
+// ── H01 · el puente del Centro: origen exacto, nunca por prefijo ──
+var origenCentro = PuenteCentro.Origen;
+Check(PuenteCentro.OrigenExacto("https://centro.aura.local/index.html", origenCentro) && PuenteCentro.OrigenExacto("https://centro.aura.local", origenCentro)
+      && PuenteCentro.OrigenExacto("https://CENTRO.aura.local/avatar/aura.html?x=1#y", origenCentro) && PuenteCentro.OrigenExacto("https://centro.aura.local:443/a/@b", origenCentro), "origen propio sí");
+foreach (var ajeno in new[] {
+    "https://centro.aura.local.attacker.invalid", "https://centro.aura.local.attacker.invalid/index.html", "https://centro.aura.local@attacker.invalid",
+    "https://centro.aura.local@attacker.invalid/index.html", "https://user:pass@centro.aura.local/", "https://@centro.aura.local/", "https://:@centro.aura.local/",
+    "https://centro.aura.local:8443/", "https://centro.aura.local:444/index.html", "http://centro.aura.local/", "file://centro.aura.local/index.html",
+    "ftp://centro.aura.local/", "https://xcentro.aura.local/", "https://aura.local/", "https://centro.aura.locals/", "centro.aura.local/index.html",
+    "javascript:alert(1)", "data:text/html,<b>hola</b>", "about:blank", "", " https://centro.aura.local/", "https://centro.aura.local\\@attacker.invalid/",
+    "https://centro.aura.local%2eattacker.invalid/", "https://centro.aura.local./", "blob:https://centro.aura.local/123" })
+    Check(!PuenteCentro.OrigenExacto(ajeno, origenCentro), "origen ajeno rechazado: " + ajeno);
+Check(!PuenteCentro.OrigenExacto(null, origenCentro), "origen nulo");
+Check(PuenteCentro.OrigenExacto("https://aura.windows.local/call.html", new Uri("https://aura.windows.local/")) && !PuenteCentro.OrigenExacto("https://aura.windows.local.evil/call.html", new Uri("https://aura.windows.local/")), "origen de llamadas");
+// Métodos: lista cerrada, sin prefijos.
+Check(PuenteCentro.MetodoPermitido("secreto.leer") && PuenteCentro.MetodoPermitido("spotify.poner") && PuenteCentro.MetodoPermitido("cartera.pagar") && PuenteCentro.MetodoPermitido("estado"), "métodos conocidos");
+foreach (var m in new[] { "spotify.cualquiera", "cartera.", "cartera.firmar", "secreto.listar", "secreto.leerTodo", "Estado", "estado ", "", "__proto__", "relevo.x", "spotify" })
+    Check(!PuenteCentro.MetodoPermitido(m), "método desconocido rechazado: " + m);
+// Secretos: solo las claves de PULSE2CHAT.
+Check(PuenteCentro.ClaveSecretoValida("p2c.cuenta") && PuenteCentro.ClaveSecretoValida("p2c.candado.priv") && PuenteCentro.ClaveSecretoValida("p2c.candado.firma"), "claves de pulse sí");
+foreach (var k in new[] { "", "p2c.", "p2c", "token", "ajustes", "p2c..cuenta", "p2c.cuenta.", "P2C.cuenta", "../ajustes", "p2c/../x", "p2c.cuenta\n", "x.p2c.cuenta", "p2c." + new string('a', 60) })
+    Check(!PuenteCentro.ClaveSecretoValida(k), "clave de secreto rechazada: " + k);
+
+// ── H02 · escribir nunca envía ni ejecuta ──
+foreach (var t in new[] { "hola\n", "hola\r\nadiós", "a\tb", "línea 1\rlínea 2\n\n", "del /q *\n", "x\u2028y", "\t\t\n", "José\u0007\u001b[31m" })
+{
+    var plan = PlanEscritura.Teclas(t);
+    Check(PlanEscritura.Seguro(plan), "plan seguro: " + t);
+    Check(!plan.Any(e => !e.EsUnicode && e.Vk == PlanEscritura.VkTab) && !plan.Any(e => e.EsUnicode && char.IsControl(e.Letra)), "sin Tab ni controles: " + t);
+    // Cada Enter va con Mayús apretada (salto de línea, no enviar).
+    bool mayus = false, enterSolo = false;
+    foreach (var e in plan) { if (e.Vk == PlanEscritura.VkMayus) mayus = !e.Soltar; else if (e.Vk == PlanEscritura.VkEnter && !mayus) enterSolo = true; }
+    Check(!enterSolo && !mayus, "ningún Enter suelto: " + t);
+}
+Check(PlanEscritura.Normalizar("a\tb") == "a    b" && PlanEscritura.Normalizar("a\r\nb\rc") == "a\nb\nc" && PlanEscritura.Normalizar("ok\u0007") == "ok", "normalizar escritura");
+Check(PlanEscritura.Teclas("hola\n").Count(e => e.Vk == PlanEscritura.VkEnter && !e.Soltar) == 1 && PlanEscritura.Teclas("hola").All(e => e.EsUnicode), "un salto = un Mayús+Enter; sin saltos, solo letras");
+Check(!PlanEscritura.Seguro(new[] { new EventoTecla(PlanEscritura.VkEnter, '\0', false), new EventoTecla(PlanEscritura.VkEnter, '\0', true) }), "Enter suelto no es seguro");
+Check(!PlanEscritura.Seguro(new[] { new EventoTecla(PlanEscritura.VkTab, '\0', false) }) && !PlanEscritura.Seguro(new[] { new EventoTecla(0, '\n', false) }), "Tab o salto Unicode no son seguros");
+Check(!PlanEscritura.Seguro(new[] { new EventoTecla(PlanEscritura.VkMayus, '\0', false) }), "Mayús que queda apretada no es seguro");
+// El «sí»: con saltos de línea, largo o sin control verificado.
+Check(!PlanEscritura.RequiereConfirmacion("hola") && !PlanEscritura.RequiereConfirmacion("nos vemos mañana a las 8"), "corto y de una línea va directo");
+Check(PlanEscritura.RequiereConfirmacion("hola\n") && PlanEscritura.RequiereConfirmacion("hola\r\n") && PlanEscritura.RequiereConfirmacion("a\rb") && PlanEscritura.RequiereConfirmacion("ls\n"), "con salto de línea pide el sí");
+Check(PlanEscritura.RequiereConfirmacion(new string('a', PlanEscritura.CortoSinConfirmar + 1)) && !PlanEscritura.RequiereConfirmacion(new string('a', PlanEscritura.CortoSinConfirmar)), "largo pide el sí");
+Check(PlanEscritura.RequiereConfirmacion("hola", focoVerificado: false), "sin control verificado pide el sí");
+Check(PlanEscritura.EsTerminal("cmd") && PlanEscritura.EsTerminal("WindowsTerminal") && PlanEscritura.EsTerminal("pwsh") && !PlanEscritura.EsTerminal("WINWORD") && !PlanEscritura.EsTerminal("notepad"), "terminales");
+// El mismo control: un cambio de foco dentro de la ventana, otro proceso o una contraseña tardía detienen la escritura.
+var foco = new IdentidadFoco(42, new[] { 7, 1, 99 }, "Editor", false);
+Check(IdentidadFoco.Mismo(foco, new IdentidadFoco(42, new[] { 7, 1, 99 }, "Editor", false)), "mismo control");
+Check(!IdentidadFoco.Mismo(foco, new IdentidadFoco(42, new[] { 7, 1, 100 }, "Editor", false)), "otro control de la misma ventana");
+Check(!IdentidadFoco.Mismo(foco, new IdentidadFoco(42, new[] { 7, 1, 99 }, "Buscar", false)) && !IdentidadFoco.Mismo(foco, new IdentidadFoco(43, new[] { 7, 1, 99 }, "Editor", false)), "otro AutomationId u otro proceso");
+Check(!IdentidadFoco.Mismo(foco, new IdentidadFoco(42, new[] { 7, 1, 99 }, "Editor", true)), "el campo se volvió de contraseña");
+Check(!IdentidadFoco.Mismo(foco, null) && !IdentidadFoco.Mismo(null, foco) && !IdentidadFoco.Mismo(new IdentidadFoco(42, Array.Empty<int>(), "", false), new IdentidadFoco(42, Array.Empty<int>(), "", false)), "sin identidad no hay mismo control");
+
+// ── H03 · la orden del cerebro necesita la MISMA acción y el MISMO objetivo ──
+Check(AutorizarOrden.Autorizar("cierra spotify", "cuéntame un chiste") == Veredicto.Rechazar, "chiste → cierra spotify, rechazada");
+Check(AutorizarOrden.Autorizar("cierra spotify", "cuéntame un chiste de spotify") == Veredicto.Rechazar, "nombrar spotify no es pedir cerrarlo");
+Check(AutorizarOrden.Autorizar("abre excel", "abre exel") == Veredicto.Hacer, "abre exel → abre excel");
+Check(AutorizarOrden.Autorizar("pon bachata en spotify", "pon bachata en spotify") == Veredicto.Hacer, "pon bachata → música");
+Check(AutorizarOrden.Autorizar("pon bad bunny en spotify", "ponme algo de Bad Bunny porfa") == Veredicto.Hacer, "música sin decir spotify");
+Check(AutorizarOrden.Autorizar("cierra el bloc de notas", "cierra el bloc de notas") == Veredicto.Hacer, "cerrar lo que dijiste tal cual, sin preguntar");
+Check(AutorizarOrden.Autorizar("cierra spotify", "ciérrame eso de Spotify") == Veredicto.Confirmar, "cerrar con otras palabras: con el sí");
+foreach (var (orden, dicho) in new[] { ("cierra esta ventana", "qué hora es"), ("pon música", "cuéntame un chiste"), ("abre la configuración", "hola, cómo estás"),
+    ("sube el volumen", "gracias"), ("minimiza la ventana", "qué tal el clima"), ("pausa", "cuéntame algo"), ("toma una captura de pantalla", "buenos días") })
+    Check(AutorizarOrden.Autorizar(orden, dicho) == Veredicto.Rechazar, $"orden genérica ausente de lo dicho: {orden} ← {dicho}");
+Check(AutorizarOrden.Autorizar("abre excel", "cierra excel") == Veredicto.Rechazar && AutorizarOrden.Autorizar("cierra excel", "abre excel") == Veredicto.Rechazar, "otra clase de acción, mismo objetivo: no");
+Check(AutorizarOrden.Autorizar("escribe hola", "hola aura") == Veredicto.Rechazar, "escribir sin pedirlo: no");
+Check(AutorizarOrden.Autorizar("escribe nos vemos mañana", "escríbele que nos vemos mañana") == Veredicto.Confirmar, "escribir con otras palabras: con el sí");
+Check(AutorizarOrden.Autorizar("cierra excel", "ciérralo", new[] { "abre excel" }) == Veredicto.Confirmar, "el objetivo puede venir de tu frase anterior");
+Check(AutorizarOrden.Autorizar("cierra excel", "ciérralo") == Veredicto.Rechazar, "sin contexto, «ciérralo» no dice cuál");
+Check(AutorizarOrden.Autorizar("cierra excel", "cuéntame un chiste", new[] { "abre excel" }) == Veredicto.Rechazar, "el contexto no da la acción");
+Check(AutorizarOrden.Autorizar("sube el volumen", "súbele tantito") == Veredicto.Hacer && AutorizarOrden.Autorizar("siguiente canción", "pásale a la siguiente") == Veredicto.Hacer, "lo inofensivo pedido con otras palabras");
+Check(AutorizarOrden.Autorizar("cierra spotify y abre excel", "cierra spotify y abre excel") != Veredicto.Rechazar && AutorizarOrden.Autorizar("cierra spotify y abre excel", "abre excel") == Veredicto.Rechazar, "dos órdenes: cada una tiene que salir de lo dicho");
+Check(AutorizarOrden.Autorizar("cierra spotify", "") == Veredicto.Rechazar && AutorizarOrden.Autorizar("blablá", "abre excel") == Veredicto.Rechazar, "sin dicho o sin mano, nada");
+
+// ── H04 · correo, agenda y conexiones son de UNA identidad AURA ──
+Check(DuenoCuentas.Identidad("tok", " Jose@OrdenGlobal.org ") == "jose@ordenglobal.org" && DuenoCuentas.Identidad("", "jose@ordenglobal.org") == "", "identidad: correo con sesión, nada sin sesión");
+Check(DuenoCuentas.Sirven("jose@ordenglobal.org", "JOSE@ordenglobal.org") && !DuenoCuentas.Sirven("jose@ordenglobal.org", "karla@ordenglobal.org"), "las cuentas de A no sirven a B");
+Check(!DuenoCuentas.Sirven("", "jose@ordenglobal.org") && !DuenoCuentas.Sirven("jose@ordenglobal.org", "") && !DuenoCuentas.Sirven("", ""), "sin dueño o sin sesión, no sirven");
+Check(DuenoCuentas.HayQueLimpiar("a@x.org", "b@x.org") && DuenoCuentas.HayQueLimpiar("", "b@x.org") && !DuenoCuentas.HayQueLimpiar("a@x.org", "A@x.org"), "al entrar otra persona (o sin dueño) se limpia");
+Check(DuenoCuentas.Migrar("", "a@x.org") == "a@x.org" && DuenoCuentas.Migrar("", "") == "" && DuenoCuentas.Migrar("a@x.org", "b@x.org") == "a@x.org", "migrar al arrancar: solo con sesión y sin dueño");
+var genCuentas = new GeneracionCuentas();
+long g0 = genCuentas.Actual;
+Check(DuenoCuentas.PuedeGuardar(g0, genCuentas.Actual, "a@x.org", "a@x.org", true), "renovación vigente se guarda");
+genCuentas.Nueva(); // A salió / entró B
+Check(!genCuentas.Vigente(g0) && !DuenoCuentas.PuedeGuardar(g0, genCuentas.Actual, "a@x.org", "b@x.org", true), "renovación tardía de A no reinserta su cuenta");
+Check(!DuenoCuentas.PuedeGuardar(g0, genCuentas.Actual, "a@x.org", "a@x.org", true), "ni con el mismo dueño si cambió la generación (salió y volvió)");
+Check(!DuenoCuentas.PuedeGuardar(genCuentas.Actual, genCuentas.Actual, "a@x.org", "a@x.org", false) && !DuenoCuentas.PuedeGuardar(genCuentas.Actual, genCuentas.Actual, "", "", true), "desconectada o sin dueño, no se guarda");
 Console.WriteLine($"PASS {count} assertions");
 class Clock : TimeProvider { public DateTimeOffset Now = DateTimeOffset.UtcNow; public override DateTimeOffset GetUtcNow() => Now; }

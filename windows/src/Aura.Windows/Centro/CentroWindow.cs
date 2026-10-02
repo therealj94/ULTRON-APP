@@ -9,6 +9,7 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
+using Aura.Windows.Core;
 
 namespace Aura.Windows.Centro;
 
@@ -20,6 +21,8 @@ namespace Aura.Windows.Centro;
 internal sealed class CentroWindow : Window
 {
     public const string Origen = "https://centro.aura.local";
+    /// <summary>¿Es de la página propia? Origen exacto (esquema, host y puerto), nunca por prefijo.</summary>
+    static bool Propia(string? url) => PuenteCentro.OrigenExacto(url, PuenteCentro.Origen);
     readonly WebView2 web = new() { DefaultBackgroundColor = System.Drawing.Color.FromArgb(255, 10, 10, 12) };
     readonly Func<string, JsonElement, Task<object?>> manejar;
     bool listo, cerrandoDeVerdad;
@@ -63,15 +66,18 @@ internal sealed class CentroWindow : Window
             core.Settings.AreDevToolsEnabled = Debugger.IsAttached;
             core.SetVirtualHostNameToFolderMapping("centro.aura.local", Path.Combine(AppContext.BaseDirectory, "CentroAssets"), CoreWebView2HostResourceAccessKind.DenyCors);
             // Solo la página propia navega aquí; cualquier enlace de afuera se abre en el navegador.
-            core.NavigationStarting += (_, e) => { if (!e.Uri.StartsWith(Origen, StringComparison.OrdinalIgnoreCase)) { e.Cancel = true; AbrirAfuera(e.Uri); } };
+            core.NavigationStarting += (_, e) => { if (!Propia(e.Uri)) { e.Cancel = true; AbrirAfuera(e.Uri); } };
+            // Tampoco dentro de un iframe: la página propia no los usa.
+            core.FrameNavigationStarting += (_, e) => { if (!Propia(e.Uri)) e.Cancel = true; };
             core.NewWindowRequested += (_, e) => { e.Handled = true; AbrirAfuera(e.Uri); };
             // Micrófono y cámara: solo para la página propia (llamadas de PULSE2CHAT). Lo demás, no.
             core.PermissionRequested += (_, e) =>
             {
-                bool propia = e.Uri.StartsWith(Origen, StringComparison.OrdinalIgnoreCase);
+                bool propia = Propia(e.Uri) && Propia(web.CoreWebView2?.Source);
                 e.State = propia && e.PermissionKind is CoreWebView2PermissionKind.Microphone or CoreWebView2PermissionKind.Camera
                     ? CoreWebView2PermissionState.Allow : CoreWebView2PermissionState.Deny;
-                e.SavesInProfile = true;
+                // Se decide cada vez: nada queda guardado en el perfil para otro origen.
+                e.SavesInProfile = false;
             };
             core.WebMessageReceived += (_, e) => _ = Recibir(e);
             core.ProcessFailed += (_, e) => Registro.Anotar("centro", "WebView2 falló: " + e.ProcessFailedKind);
@@ -98,7 +104,8 @@ internal sealed class CentroWindow : Window
 
     async Task Recibir(CoreWebView2WebMessageReceivedEventArgs e)
     {
-        if (!e.Source.StartsWith(Origen, StringComparison.OrdinalIgnoreCase)) return;
+        // Cada mensaje: del origen exacto, y la página principal también lo es (no un marco ajeno).
+        if (!Propia(e.Source) || !Propia(web.CoreWebView2?.Source)) { Registro.Anotar("centro", "mensaje de otro origen, ignorado"); return; }
         int id = 0;
         try
         {
@@ -106,6 +113,7 @@ internal sealed class CentroWindow : Window
             var r = doc.RootElement;
             id = r.GetProperty("id").GetInt32();
             var metodo = r.GetProperty("metodo").GetString() ?? "";
+            if (!PuenteCentro.MetodoPermitido(metodo)) throw new InvalidOperationException("Método desconocido: " + metodo);
             var args = r.TryGetProperty("args", out var a) ? a.Clone() : default;
             var valor = await manejar(metodo, args);
             Responder(new { id, ok = true, valor });
