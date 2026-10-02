@@ -22,9 +22,8 @@ export type DatosMesa = {
   sfx: boolean;
   /** Cuántos hechos guarda la memoria de largo plazo de quien está en la mesa. */
   memoria: number;
-  /** La cara de AU-RA (anillos o la habitación 3D) y cómo contesta en la habitación. */
-  cara: 'anillos' | 'sala';
-  postura: 'pie' | 'sentada';
+  /** La cara de AU-RA: el orbe o los anillos. */
+  cara: 'orbe' | 'anillos';
 };
 
 export type AccionesMesa = {
@@ -33,8 +32,7 @@ export type AccionesMesa = {
   alternarEfectos: () => void;
   /** Pregunta antes (es irreversible) y borra en el teléfono y en el servidor. */
   olvidar: () => void;
-  fijarCara: (c: 'anillos' | 'sala') => void;
-  fijarPostura: (p: 'pie' | 'sentada') => void;
+  fijarCara: (c: 'orbe' | 'anillos') => void;
 };
 
 export type MesaAjustes = { datos: DatosMesa; acciones: AccionesMesa };

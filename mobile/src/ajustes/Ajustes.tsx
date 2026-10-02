@@ -10,7 +10,7 @@
  *                 a medias), «Mi círculo», sus misiones (app/HojasCerebro.tsx), tus correos (ajustes/Correos.tsx)
  *                 y la vibración
  *   Voz y oído    la voz del avatar y cómo convierte tu voz en texto (el teléfono o la nube)
- *   La mesa       «comenta lo que ve», los efectos de sonido y, con AU-RA, su cara y cómo te contesta
+ *   La mesa       «comenta lo que ve», los efectos de sonido y, con AU-RA, su cara (el orbe o los anillos)
  *   Memoria       cuántos hechos guarda de ti y «Olvidar» (pregunta antes; borra aquí y en el servidor)
  *                 (José, 2-oct: estaban al final del menú de la mesa, en una columna angosta y cortada;
  *                 usan las mismas acciones de la mesa, que las publica en app/mesaAjustes.ts)
@@ -425,7 +425,7 @@ function SeccionesMesa({ mesa }: { mesa: NonNullable<ReturnType<typeof mesaAjust
         />
         <Fila
           titulo={tr('Efectos de sonido', 'Sound effects')}
-          detalle={tr('Toques, blaster, sable', 'Taps, blaster, saber')}
+          detalle={tr('Toques, los sonidos del orbe de AURA, blaster, sable', 'Taps, AURA’s orb sounds, blaster, saber')}
           icono="musica"
           derecha={<Interruptor valor={datos.sfx} onCambiar={(v) => v !== datos.sfx && acciones.alternarEfectos()} etiqueta={tr('Efectos de sonido', 'Sound effects')} />}
         />
@@ -434,29 +434,14 @@ function SeccionesMesa({ mesa }: { mesa: NonNullable<ReturnType<typeof mesaAjust
             <Texto v="chica" color="texto2" style={s.etiquetaSegmento}>
               {tr('Su cara', 'Her face')}
             </Texto>
-            <Segmentado<'anillos' | 'sala'>
+            <Segmentado<'orbe' | 'anillos'>
               opciones={[
+                { id: 'orbe', texto: tr('Orbe', 'Orb') },
                 { id: 'anillos', texto: tr('Anillos', 'Rings') },
-                { id: 'sala', texto: tr('Habitación 3D', '3D room') },
               ]}
               valor={datos.cara}
               onCambiar={acciones.fijarCara}
             />
-            {datos.cara === 'sala' ? (
-              <>
-                <Texto v="chica" color="texto2" style={[s.etiquetaSegmento, { marginTop: MEDIDA.espacio.m }]}>
-                  {tr('Te contesta', 'She answers')}
-                </Texto>
-                <Segmentado<'pie' | 'sentada'>
-                  opciones={[
-                    { id: 'pie', texto: tr('De pie', 'Standing') },
-                    { id: 'sentada', texto: tr('Sentada', 'Sitting') },
-                  ]}
-                  valor={datos.postura}
-                  onCambiar={acciones.fijarPostura}
-                />
-              </>
-            ) : null}
           </View>
         ) : null}
       </Grupo>

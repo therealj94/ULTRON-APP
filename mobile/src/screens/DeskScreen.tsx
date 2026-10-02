@@ -6,9 +6,10 @@ import { useCameraPermissions } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
 import { Accelerometer } from 'expo-sensors';
 import { UltronFace, type TouchZone } from '../components/UltronFace';
-import { SalaAura, type PedidoTarea } from '../components/SalaAura';
+import { OrbeAura } from '../components/OrbeAura';
+import type { PedidoCara } from '../cara/CaraSkia';
 import { CaraSegura } from '../cara/CaraSegura';
-import { textoTarea, tareaDeHerramientas, type Postura, type Tarea } from '../lib/tareas';
+import { textoTarea, tareaDeHerramientas, type Tarea } from '../lib/tareas';
 import { T, SOMBRA } from '../tema';
 import { CamaraVision, DORMIDO_PERIODO_MS, SERVIDOR_CADA_MS, SERVIDOR_DORMIDO_MS, type FrameGrabber } from '../components/CamaraVision';
 import { DeskMenu } from '../components/DeskMenu';
@@ -215,15 +216,15 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const [emocion, setEmocion] = useState<Emocion>('neutral');
   /** Sube cada vez que se toca un atajo: Claudio o ANT-ONIO lo señalan. */
   const [senalAtajo, setSenalAtajo] = useState(0);
-  /** AU-RA de cuerpo entero; si la WebView no puede con la sala, vuelve la cara de siempre. */
-  const [conSala, setConSala] = useState(true);
-  /** Su cara: los anillos (Skia) o la habitación 3D. null hasta leer los ajustes, para no parpadear entre las dos. */
-  const [cara, setCara] = useState<'anillos' | 'sala' | null>(null);
+  /** El orbe de AURA; si la WebView no puede con él (sin WebGL, se cae), quedan los anillos. */
+  const [conOrbe, setConOrbe] = useState(true);
+  /** Su cara: el orbe (desde el 2-oct) o los anillos (Skia). null hasta leer los ajustes, para no parpadear. */
+  const [cara, setCara] = useState<'orbe' | 'anillos' | null>(null);
   /** Skia no cargó o no pudo dibujar: se queda la cara de siempre. */
   const [skiaFallo, setSkiaFallo] = useState(false);
-  /** De pie o sentada al contestar; null hasta leer el ajuste guardado (la sala nace ya en su sitio). */
-  const [postura, setPostura] = useState<Postura | null>(null);
-  const [pedido, setPedido] = useState<PedidoTarea | null>(null);
+  const [pedido, setPedido] = useState<PedidoCara | null>(null);
+  /** La frase que está sonando: el orbe la forma con sus partículas. */
+  const [fraseOrbe, setFraseOrbe] = useState<{ texto: string; n: number } | null>(null);
   const [mode, setMode] = useState<Mode>('GUARDIAN');
   const [presence, setPresence] = useState<DeskPresence>('stay');
   const [bubble, setBubble] = useState('');
@@ -516,7 +517,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   // La burbuja y el hilo son para LEER: las expresiones de voz ([risa]…) se oyen, no se enseñan.
   const showBubble = useCallback(
     (text: string) => {
-      setBubble(quitarExpresiones(text).trim());
+      const limpio = quitarExpresiones(text).trim();
+      setBubble(limpio);
+      setFraseOrbe(limpio ? { texto: limpio, n: Date.now() } : null);
       Animated.timing(bubbleOp, { toValue: 1, duration: 180, useNativeDriver: true }).start();
     },
     [bubbleOp]
@@ -1487,26 +1490,22 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   }, [pausarMirada]);
   const onSwipe = useCallback((dir: 'left' | 'right') => setMenuOpen(dir === 'left'), []);
 
-  // La sala solo distingue cabeza y cuerpo: la cabeza es la frente (curiosa) y el cuerpo, cosquillas.
-  const onTocarSala = useCallback((zona: 'cuerpo' | 'cabeza') => onTap(zona === 'cabeza' ? 'forehead' : 'chin', 0, 0), [onTap]);
-  const onDeslizarSala = useCallback((dir: 'arriba' | 'abajo') => setMenuOpen(dir === 'arriba'), []);
-  const onFalloSala = useCallback((motivo: string) => {
-    miga(`sala 3D no disponible: ${motivo}`);
-    setConSala(false);
-  }, []);
-  const cambiarPostura = useCallback((p: Postura) => {
-    setPostura(p);
-    void saveSettings({ postura: p });
+  // El orbe: tocarlo es como tocarle la barbilla (le da cosquillas); deslizar hacia arriba abre el menú.
+  const onTocarOrbe = useCallback(() => onTap('chin', 0, 0), [onTap]);
+  const onDeslizarOrbe = useCallback((dir: 'arriba' | 'abajo') => setMenuOpen(dir === 'arriba'), []);
+  const onFalloOrbe = useCallback((motivo: string) => {
+    miga(`orbe no disponible: ${motivo}`);
+    setConOrbe(false);
   }, []);
   const onFalloSkia = useCallback((motivo: string) => {
     miga(`cara Skia no disponible: ${motivo}`);
     setSkiaFallo(true);
   }, []);
-  const cambiarCara = useCallback((c: 'anillos' | 'sala') => {
+  const cambiarCara = useCallback((c: 'orbe' | 'anillos') => {
     setCara(c);
-    // Volver a elegir la sala es darle otra oportunidad si antes falló.
-    if (c === 'sala') setConSala(true);
-    void saveSettings({ cara: c });
+    // Volver a elegir el orbe es darle otra oportunidad si antes falló.
+    if (c === 'orbe') setConOrbe(true);
+    void saveSettings({ cara: c, caraElegida: true });
   }, []);
 
   useEffect(() => {
@@ -1597,8 +1596,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       const verTutorial = tocaOfrecerRecorrido(s, user.correo);
       setModoMesa(s.modoMesa === 'trabajar' ? 'trabajar' : 'charlar');
       setSettings({ sttEngine: s.sttEngine, proactive: s.proactive, sfx: s.sfx });
-      setPostura(s.postura === 'sentada' ? 'sentada' : 'pie');
-      setCara(s.cara === 'sala' ? 'sala' : 'anillos');
+      // El orbe es su cara desde el 2-oct; los anillos, solo si la persona los eligió después.
+      setCara(s.cara === 'anillos' && s.caraElegida ? 'anillos' : 'orbe');
       setAvatar(s.avatar);
       setAvatarVoz(s.avatar);
       // La bienvenida arranca en vertical, como toda la app; después la mesa sigue al teléfono.
@@ -2223,24 +2222,24 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const cuadroH = horizontal ? altoPantalla : Math.round(Math.min(anchoPantalla * 0.95, altoPantalla * (trabajando ? 0.3 : 0.44)));
   const cajaCara = enCuadro ? { w: cuadroW, h: cuadroH } : undefined;
 
-  // Qué cara se ve. El Guardián: sus ojos celestes de siempre (la cara clásica). AU-RA: los anillos
-  // dorados (Skia) o la sala 3D; si lo elegido falló, la clásica.
-  const vista: 'anillos' | 'sala' | 'clasica' | null =
-    avatarId === 'ojos' ? 'clasica' : cara === null ? null : cara === 'anillos' ? (skiaFallo ? 'clasica' : 'anillos') : conSala ? 'sala' : 'clasica';
-  const enSala = avatarId === 'aura' && vista === 'sala';
+  // Qué cara se ve. El Guardián: sus ojos celestes de siempre (la cara clásica). AU-RA: el orbe (o los
+  // anillos dorados de Skia si los eligió); si lo elegido falló, lo siguiente: orbe → anillos → clásica.
+  const anillosOClasica = skiaFallo ? 'clasica' : 'anillos';
+  const vista: 'orbe' | 'anillos' | 'clasica' | null =
+    avatarId === 'ojos' ? 'clasica' : cara === null ? null : cara === 'orbe' && conOrbe ? 'orbe' : anillosOClasica;
+  const enOrbe = avatarId === 'aura' && vista === 'orbe';
   nivelVisible.current = vista === 'clasica' && !conFotos(avatarId);
   const caraAura =
-    vista === 'sala' && postura ? (
-      <SalaAura
+    vista === 'orbe' ? (
+      <OrbeAura
         face={face}
-        emocion={emocion}
-        postura={postura}
-        pedido={pedido}
+        hablando={status === 'speaking'}
+        frase={fraseOrbe}
+        sonidos={settings.sfx}
         speechLevelSource={suscribirNivelVoz}
-        mirada={{ x: gaze.x, y: gaze.y, activa: verPersona }}
-        onTocar={onTocarSala}
-        onDeslizar={onDeslizarSala}
-        onFallo={onFalloSala}
+        onTocar={onTocarOrbe}
+        onDeslizar={onDeslizarOrbe}
+        onFallo={onFalloOrbe}
       />
     ) : vista === 'anillos' ? (
       <CaraSegura
@@ -2439,18 +2438,17 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     }, 700);
   };
 
-  // Voz, oído, comentarios, efectos, memoria, su cara y su postura se ajustan en Ajustes (José, 2-oct:
+  // Voz, oído, comentarios, efectos, memoria y su cara se ajustan en Ajustes (José, 2-oct:
   // el menú angosto «se mira mal»): la mesa le publica lo que hay y le presta sus mismas acciones.
   useEffect(() => {
     publicarMesa(
-      { avatar: avatarId, sttEngine: settings.sttEngine, proactive: settings.proactive, sfx: settings.sfx, memoria: longMemory.current.length, cara: cara ?? 'anillos', postura: postura || 'pie' },
+      { avatar: avatarId, sttEngine: settings.sttEngine, proactive: settings.proactive, sfx: settings.sfx, memoria: longMemory.current.length, cara: cara ?? 'orbe' },
       {
         fijarOido: (e) => void changeStt(e),
         alternarComentarios: () => void toggleProactive(),
         alternarEfectos: () => void toggleSfx(),
         olvidar: confirmarOlvido,
         fijarCara: cambiarCara,
-        fijarPostura: cambiarPostura,
       }
     );
   });
@@ -2460,7 +2458,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     <View
       ref={enCuadro ? undefined : cuerpoRef}
       onLayout={enCuadro ? undefined : medirCuerpo}
-      style={[styles.root, !enSala && { backgroundColor: esClaudio ? tema.fondo : '#000' }, enCuadro && { flexDirection: horizontal ? 'row' : 'column' }]}
+      style={[styles.root, !enOrbe && { backgroundColor: esClaudio ? tema.fondo : '#000' }, enCuadro && { flexDirection: horizontal ? 'row' : 'column' }]}
     >
       {/* La cámara solo con la mesa a la vista, sin llamada y encendida a pedido (apagada por omisión). */}
       <CamaraVision
@@ -2535,10 +2533,11 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
           </View>
         )}
 
-        {!!bubble && (
+        {/* Con el orbe no hace falta: las palabras las forman sus partículas. */}
+        {!!bubble && !enOrbe && (
           <Animated.View
             pointerEvents="none"
-            style={[styles.bubbleFloat, enSala ? styles.bubbleArriba : { bottom: altoAbajo + 8 }, !horizontal && styles.bubbleVertical, { opacity: bubbleOp }]}
+            style={[styles.bubbleFloat, { bottom: altoAbajo + 8 }, !horizontal && styles.bubbleVertical, { opacity: bubbleOp }]}
           >
             <View style={styles.bubbleCard}>
               <Text numberOfLines={3} style={styles.bubbleText}>
@@ -2701,7 +2700,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
           setMenuOpen(false);
           void handleCommand(`busca ${q}`);
         }}
-        conSala={enSala}
+        conOrbe={enOrbe}
         avatar={avatarId}
         onSetAvatar={(id) => void elegirAvatar(id)}
         caraClasica={vista === 'clasica'}
@@ -2763,7 +2762,6 @@ const styles = StyleSheet.create({
   hudDot: { width: 8, height: 8, borderRadius: 4 },
   hudText: { color: T.texto2, fontSize: 13, fontWeight: '600' },
   bubbleFloat: { position: 'absolute', left: 90, right: 90, alignItems: 'center' },
-  bubbleArriba: { top: 14 },
   bubbleVertical: { left: 16, right: 16 },
   bubbleCard: { backgroundColor: T.panel, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10, maxWidth: 520, ...SOMBRA },
   bubbleText: { color: T.texto, fontSize: 16, lineHeight: 22, textAlign: 'center' },

@@ -295,10 +295,14 @@ prueba('menú de la mesa (José, 2-oct, captura): corto, ancho en vertical, nada
     ['los efectos de sonido', /acciones\.alternarEfectos\(\)/],
     ['la memoria y olvidar', /onPress=\{acciones\.olvidar\}/],
     ['su cara', /onCambiar=\{acciones\.fijarCara\}/],
-    ['cómo contesta', /onCambiar=\{acciones\.fijarPostura\}/],
+    ['el orbe (José, 2-oct) o los anillos', /\{ id: 'orbe', texto: tr\('Orbe', 'Orb'\) \}/],
     ['lo que sé de ti', /abrir\('conocer'\)/],
   ]) assert.match(ajustes, re, `Ajustes tiene ${que}`);
   const desk = fuente('screens/DeskScreen.tsx');
+  // La cara de AURA es el orbe; si la WebView no puede, los anillos (y si tampoco, la clásica): nunca vacía.
+  assert.match(desk, /<OrbeAura[\s\S]*?sonidos=\{settings\.sfx\}[\s\S]*?onFallo=\{onFalloOrbe\}/, 'el orbe con sus sonidos según Ajustes');
+  assert.match(desk, /cara === 'orbe' && conOrbe \? 'orbe' : anillosOClasica/, 'si el orbe falla, los anillos');
+  assert.doesNotMatch(desk, /SalaAura/, 'la habitación 3D ya no está en el teléfono');
   assert.match(desk, /publicarMesa\([\s\S]*?fijarOido: \(e\) => void changeStt\(e\)[\s\S]*?olvidar: confirmarOlvido/, 'la mesa le presta a Ajustes sus mismas acciones');
   assert.match(desk, /case 'ajustes':\s*\/\/[^\n]*\n\s*return emitir\('accion', \{ tipo: 'abrir', pantalla: 'ajustes' \}\)/, '«Más → Ajustes» abre la pantalla de Ajustes');
   // El puente entre la mesa y Ajustes: solo avisa si cambió algo; las acciones siempre las últimas.

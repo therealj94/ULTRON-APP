@@ -95,7 +95,8 @@ type Props = {
   onAbrirHoja?: (h: PantallaCerebro) => void;
   onSearch: (q: string) => void;
   /** Si AU-RA está de cuerpo entero (la sala) o con una cara (anillos o la de respaldo). */
-  conSala: boolean;
+  /** AU-RA se ve como el orbe (src/components/OrbeAura.tsx). */
+  conOrbe: boolean;
   /** El avatar de la mesa (Guardián, AU-RA o Claudio): el menú muestra lo suyo. */
   avatar: AvatarId;
   onSetAvatar: (a: AvatarId) => void;
@@ -403,11 +404,11 @@ export function DeskMenu(p: Props) {
             />
           </View>
 
-          {p.conSala ? (
+          {p.conOrbe ? (
             <Text style={styles.hint}>
               {tr(
-                'Tócale la cabeza y se pone curiosa; el cuerpo le da cosquillas. Toques seguidos: «ya, ya». Desliza hacia arriba sobre ella para abrir este menú. Cuando busca en internet se sienta en su escritorio; si envía algo, lanza un avión de papel. Sacude el teléfono: se asusta.',
-                'Touch her head and she gets curious; her body is ticklish. Several taps: “okay, okay”. Swipe up on her to open this menu. When she searches the web she sits at her desk; when she sends something, she throws a paper plane. Shake the phone: she gets startled.'
+                'Cuando habla, sus partículas forman las palabras. Cambia de color al escucharte, al pensar y al buscar. Tócala: una onda de luz (y le dan cosquillas). Toques seguidos: «ya, ya». Desliza hacia arriba sobre ella para abrir este menú. Sus sonidos se apagan en Ajustes → Efectos de sonido.',
+                'When she talks, her particles form the words. She changes color as she listens, thinks and searches. Touch her: a ripple of light (and it tickles). Several taps: “okay, okay”. Swipe up on her to open this menu. Turn her sounds off in Settings → Sound effects.'
               )}
             </Text>
           ) : esClaudio ? null : !p.caraClasica ? (
