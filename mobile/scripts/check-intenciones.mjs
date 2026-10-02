@@ -109,8 +109,15 @@ check('cuéntame un chiste', 'chiste');
 check('hazme reír', 'chiste');
 check('activa la cámara', 'vision_on');
 check('visión activa', 'vision_on');
-check('qué ves', 'que_ves');
+check('qué ves', (o) => o.tipo === 'que_ves' && !o.foco);
 check('¿qué hay en la mesa?', 'que_ves');
+
+console.log('\n— Lo que se le muestra a la cámara: leer, precio, qué es (lib/vistaCamara.ts) —');
+for (const f of ['léeme esto', 'Aura, lee esto por favor', '¿qué dice este cartel?', 'qué dice aquí', 'léeme la etiqueta', 'me puedes leer esta hoja', 'read this for me']) check(f, (o) => o.tipo === 'que_ves' && o.foco === 'leer');
+for (const f of ['¿cuánto dice el precio?', 'cuánto marca la etiqueta', 'dime el precio de esto', '¿qué precio tiene esto?', "what's the price"]) check(f, (o) => o.tipo === 'que_ves' && o.foco === 'precio');
+for (const f of ['¿qué es esto?', 'qué tengo en la mano', 'qué es lo que te muestro', 'sabes qué es esto', 'what is this']) check(f, (o) => o.tipo === 'que_ves' && o.foco === 'que_es');
+// Lo parecido que NO es la cámara: al cerebro.
+for (const f of ['léeme el mensaje de Ana', 'lee mis mensajes', 'cuánto cuesta el oro', '¿qué es la minería artesanal?', 'qué dice el contrato de la mina sobre regalías', 'cuánto dice el informe que produjimos']) check(f, (o) => o.tipo !== 'que_ves');
 check('qué hora es', 'hora');
 check('hora', 'hora');
 check('qué día es hoy', 'fecha');

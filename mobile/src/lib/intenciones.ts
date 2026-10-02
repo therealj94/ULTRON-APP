@@ -28,7 +28,8 @@ export type Intencion =
   | { tipo: 'olvidar' }
   | { tipo: 'que_recuerdas' }
   | { tipo: 'vision_on' }
-  | { tipo: 'que_ves' }
+  /** Mirar por la cámara; `foco` dice qué: leer, un precio, qué es lo que muestra (sin foco, la escena). */
+  | { tipo: 'que_ves'; foco?: 'leer' | 'precio' | 'que_es' }
   | { tipo: 'blaster' }
   | { tipo: 'sable' }
   | { tipo: 'cantar'; cancion?: string; genero?: string }
@@ -319,10 +320,32 @@ const REGLAS: Regla[] = [
     re: /^((activa|enciende|prende|abre|activar|encender) (la )?(vision|camara)|(vision|camara) (activa|on|encendida)|mirame)$/,
     build: () => ({ tipo: 'vision_on' }),
   },
+  /*
+   * Lo que se le muestra a la cámara (lib/vistaCamara.ts): leer, un precio, qué es. Solo con «esto /
+   * este cartel / la etiqueta…»: «léeme el mensaje de Ana» o «cuánto cuesta el oro» siguen al cerebro.
+   */
+  {
+    id: 'leer_camara',
+    max: 9,
+    re: /^((leeme|lee|lee me|me lees|puedes leer(me)?|me puedes leer) (esto|eso|lo que (dice|tengo|te muestro)( aqui| esto)?|(esta|la) (hoja|nota|etiqueta|carta|receta|pagina|factura)( de aqui)?|(este|el) (cartel|letrero|papel|documento|aviso|rotulo|recibo)( de aqui)?|este texto)|que dice (esto|eso|aqui|ahi|(este|el) (cartel|letrero|papel|documento|aviso|rotulo|recibo)|(esta|la) (etiqueta|hoja|nota|factura))|read (this|it)( for me| to me)?)( por favor| porfa| please)?$/,
+    build: () => ({ tipo: 'que_ves', foco: 'leer' }),
+  },
+  {
+    id: 'precio_camara',
+    max: 9,
+    re: /^(cuanto (dice|marca) (el precio|la etiqueta|esto|eso|aqui|ahi)|(leeme|lee|dime) el precio( de esto| de eso| de aqui)?|cual es el precio (de esto|de eso|que (ves|dice|marca))|que precio (dice|marca|tiene) (esto|eso|aqui|ahi|la etiqueta)|what('?s| is) the price( of this| here)?|how much does (it|this) say)( por favor| porfa| please)?$/,
+    build: () => ({ tipo: 'que_ves', foco: 'precio' }),
+  },
+  {
+    id: 'que_es',
+    max: 9,
+    re: /^(que es (esto|eso)( que tengo( aqui| en la mano)?)?|que es lo que (tengo( aqui| en la mano)?|te (muestro|enseno))|sabes que es esto|que tengo en la mano|que tengo aqui|que te estoy (mostrando|ensenando)|que objeto es (este|esto)|para que sirve esto|what('?s| is) (this|that)|what am i holding)$/,
+    build: () => ({ tipo: 'que_ves', foco: 'que_es' }),
+  },
   {
     id: 'que_ves',
     max: 9,
-    re: /^(que ves( ahora| ahi| aqui)?|que estas viendo|que miras|que hay( aqui| en la mesa| frente a ti| delante| enfrente)|que tengo en la mano|quien esta( aqui| conmigo| en la mesa)?|describe (lo que ves|la escena|la camara|la mesa)|mira (la camara|la mesa)( y dime que ves)?)$/,
+    re: /^(que ves( ahora| ahi| aqui)?|que estas viendo|que miras|que hay( aqui| en la mesa| frente a ti| delante| enfrente)|quien esta( aqui| conmigo| en la mesa)?|describe (lo que ves|la escena|la camara|la mesa)|mira (la camara|la mesa)( y dime que ves)?)$/,
     build: () => ({ tipo: 'que_ves' }),
   },
   {
