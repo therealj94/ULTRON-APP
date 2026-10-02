@@ -347,6 +347,12 @@ prueba('la lista: nunca se cae un chat; buscar por nombre, número o mensaje; ch
   const m = { id: '1', texto: 'a', tipo: 'texto' };
   assert.equal(huellaMensajes([m]), huellaMensajes([{ ...m }]));
   assert.notEqual(huellaMensajes([m]), huellaMensajes([{ ...m, eliminado: true }]));
+  // Codex en #128: una segunda edición del mismo largo, o el nombre del que escribió en un grupo que se
+  // resuelve después, también cambian la huella (si no, la conversación abierta se queda con lo viejo).
+  const ed = { ...m, texto: 'hola', editado: true, nombreDe: '' };
+  assert.notEqual(huellaMensajes([ed]), huellaMensajes([{ ...ed, texto: 'holi' }]));
+  assert.notEqual(huellaMensajes([ed]), huellaMensajes([{ ...ed, nombreDe: 'Beto' }]));
+  assert.notEqual(huellaChats([{ ...cs[0], ultimo: 'nos vemos' }]), huellaChats([{ ...cs[0], ultimo: 'nos vamos' }]), 'el último mensaje, aunque tenga el mismo largo');
 });
 
 let ok = 0;

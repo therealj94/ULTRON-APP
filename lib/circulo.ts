@@ -436,7 +436,9 @@ export async function correrCirculo(dueno: string, arg: string, ambito = '', d: 
     }
     const aviso = cuando ? ` OJO: no puedo programar el envío para más tarde desde el servidor; si dice que sí, sale ahora. Si prefiere que salga a esa hora, ofrécele ponerse un recordatorio en su teléfono para mandarlo.` : '';
     // Permiso permanente para recordatorios (solo lo da José desde su app): sale sin preguntar, con tope.
-    if (esRecordatorio && p.permisos.recordatorios === 'permitido') {
+    // Uno para más tarde («a las 4») no: el servidor no programa envíos y saldría ya; va al borrador con el
+    // aviso (Codex en #128).
+    if (esRecordatorio && !cuando && p.permisos.recordatorios === 'permitido') {
       const ahora = d.ahora ?? Date.now();
       const k = clavePersona(dueno);
       const hoy = (cajones.enCache(k)?.envios || []).filter((e) => e.persona === p.id && ahora - e.t < 86_400_000).length;

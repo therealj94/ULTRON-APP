@@ -119,6 +119,11 @@ test('permiso permanente de recordatorios: solo desde la app; sale sin preguntar
   const enviados: any[] = [];
   const borradores: any[] = [];
   const deps = { whatsappListo: () => true, enviar: async (chat: string, texto: string) => void enviados.push({ chat, texto }), borrador: (_q: string, _a: string, b: any) => (borradores.push(b), 'BORRADOR') };
+  // Codex en #128: un recordatorio para MÁS TARDE no sale ya aunque tenga permiso (el servidor no programa
+  // envíos): queda en borrador, con el aviso de que saldría ahora.
+  const luego = await C.correrCirculo(dueno, 'recordar Luis | Recoger a los niños | a las 4', '', deps);
+  assert.match(luego, /^BORRADOR OJO: no puedo programar el envío para más tarde/);
+  assert.equal(enviados.length, 0, 'no le escribió a Luis ahora');
   for (let i = 0; i < C.MAX_RECORDATORIOS_DIA; i++) assert.match(await C.correrCirculo(dueno, `recordar Luis | Recoger a los niños ${i}`, '', deps), /^RECORDATORIO ENVIADO por WhatsApp a Luis \(su esposo\)/);
   assert.equal(enviados.length, C.MAX_RECORDATORIOS_DIA);
   assert.equal(enviados[0].chat, '50488887777@s.whatsapp.net');

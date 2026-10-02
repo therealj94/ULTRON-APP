@@ -400,14 +400,29 @@ export function colaLimitada(max: number) {
   };
 }
 
-/** Una huella barata de los mensajes: si no cambió, la pantalla no se vuelve a dibujar en cada vuelta. */
-export function huellaMensajes(ms: MensajeWA[]): string {
-  return ms.map((m) => `${m.id}${m.eliminado ? 'x' : ''}${m.editado ? 'e' : ''}${(m.texto || '').length}${m.conMedia ? 'm' : ''}`).join('|');
+/** Un resumen corto de un texto (FNV-1a de 32 bits): cambia si cambia cualquier letra, no solo el largo. */
+function resumen(t: string | undefined): string {
+  let h = 0x811c9dc5;
+  const s = t || '';
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(36);
 }
 
-/** La de la lista de chats. */
+/**
+ * Una huella barata de los mensajes: si no cambió, la pantalla no se vuelve a dibujar en cada vuelta. Lleva
+ * lo que puede cambiar de un mensaje ya mostrado: el texto (una segunda edición del mismo largo) y el nombre
+ * de quien lo mandó (en un grupo se resuelve después). Codex en #128.
+ */
+export function huellaMensajes(ms: MensajeWA[]): string {
+  return ms.map((m) => `${m.id}${m.eliminado ? 'x' : ''}${m.editado ? 'e' : ''}${resumen(m.texto)}${m.conMedia ? 'm' : ''}:${m.nombreDe || ''}`).join('|');
+}
+
+/** La de la lista de chats (con el último mensaje entero resumido, no solo su largo). */
 export function huellaChats(cs: ChatWA[]): string {
-  return cs.map((c) => `${c.jid}${c.hora}${c.noLeidos}${c.nombre || ''}${c.numero || ''}${String(c.foto)}${(c.ultimo || '').length}`).join('|');
+  return cs.map((c) => `${c.jid}${c.hora}${c.noLeidos}${c.nombre || ''}${c.numero || ''}${String(c.foto)}${resumen(c.ultimo)}`).join('|');
 }
 
 /** Junta la lista con lo que el servidor encontró al buscar (chats viejos que no vienen en los 100 recientes), sin repetir. */
