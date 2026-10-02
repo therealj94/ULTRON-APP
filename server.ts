@@ -61,7 +61,8 @@ import { puntoDeCorte } from './lib/trozos';
 import { claveTurno, reclamarTurno, type TurnoGuardado } from './server/turno-unico';
 import { respuestaFija } from './lib/respuestas-fijas';
 import { alAvisarApp, avisosPendientes, confirmarAvisos, encargarTarea, montarRutasComputadora, motorDelPerfil, type MotorNodo } from './server/computadora';
-import { avisosDeEnvio, correrCorreo, montarRutasCorreo, resolverBorrador } from './server/correo';
+import { avisosDeEnvio, correrCorreo, montarRutasCorreo, resolverBorrador, respuestaAlBorrador } from './server/correo';
+import { bloqueTarea, correrTarea, precargarTareas, resolverTareaEnCurso, tareaDe } from './lib/tarea-en-curso';
 import { correrWhatsapp, montarRutasWhatsapp, resolverBorradorWhatsapp, whatsappDisponible, whatsappPermitido } from './server/whatsapp';
 import { accionIniciativa, arrancarIniciativa, bloqueIniciativaTurno, correrMisionTurno, duenoMisiones, montarRutasIniciativa } from './server/iniciativa';
 import { frenarIniciativa, pideDejarDeProponer, type PersonaIniciativa } from './lib/iniciativa';
@@ -2541,6 +2542,18 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   // Lo mismo con un mensaje de WhatsApp que esperaba su «sí» (server/whatsapp.ts).
   const delWhatsapp = duenoComputadora && whatsappPermitido(duenoComputadora) ? await resolverBorradorWhatsapp(duenoComputadora, ambitoTurno, message, opciones.retener) : null;
   if (delWhatsapp) hechos.push(delWhatsapp);
+  // La tarea de varios pasos en curso (lib/tarea-en-curso.ts): si pide otra cosa a mitad, AU-RA pregunta
+  // antes de cambiar; si ya contestó, el servidor la pausa, la sigue o la descarta. Va en los HECHOS hasta
+  // terminarla (en la voz, una línea), y con ella el turno es del modelo grande, no del chico.
+  let conTarea = false;
+  if (duenoComputadora) {
+    await aTiempoParaVoz(voz, 'tarea en curso', precargarTareas(duenoComputadora), undefined);
+    const alBorrador = !!(delCorreo || delWhatsapp) && respuestaAlBorrador(message) !== null;
+    const deLaTarea = await resolverTareaEnCurso(duenoComputadora, ambitoTurno, message, { borradorResuelto: alBorrador, retener: opciones.retener });
+    const bloqueDeTarea = bloqueTarea(duenoComputadora, ambitoTurno, compacto);
+    hechos.push(...[deLaTarea, bloqueDeTarea].filter((x): x is string => !!x));
+    conTarea = !!deLaTarea || (tareaDe(duenoComputadora, ambitoTurno)?.estado ?? 'pausada') !== 'pausada';
+  }
   // Su iniciativa (server/iniciativa.ts): sus misiones abiertas y lo que aún no sabe de su vida, para que
   // AU-RA proponga en la conversación. Y si pide que deje de proponer, se frena el reloj.
   if (duenoComputadora) {
@@ -2564,7 +2577,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   }
   const datos: string[] = [];
   const foto: string | null = null;
-  const tools: string[] = [];
+  const tools: string[] = conTarea ? ['tarea'] : [];
   let decirTaller: string | undefined;
   /** Un cálculo de mina se dice tal cual: parafrasear un número es arruinarlo. */
   let calculoMina: string | null = null;
@@ -3382,6 +3395,7 @@ async function correrHerramientaPedida(
       mision: (arg) => (dueno ? correrMisionTurno(dueno, arg) : Promise.resolve('HARNESS mision: solo con sesión. Pídele que entre con su cuenta.')),
       circulo: (arg) => correrCirculo(dueno, arg, ambito),
       triaje: (arg) => correrTriaje(dueno, arg, ambito),
+      tarea: (arg) => (dueno ? correrTarea(dueno, ambito, arg) : Promise.resolve('HARNESS tarea: solo con sesión. Pídele que entre con su cuenta.')),
     },
     extraerPython(reply),
     nivel

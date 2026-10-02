@@ -21,6 +21,8 @@ voces-prueba/
 # Datos de entrenamiento exportados de las trazas (preguntas reales): nunca al repositorio.
 entrenamiento/salida/
 data/perfiles/
+# La tarea en curso de cada persona (lib/tarea-en-curso.ts): datos privados.
+data/tarea-en-curso/
 windows/src/Aura.Windows/CentroAssets/
 windows/centro/node_modules/
 build-server/
