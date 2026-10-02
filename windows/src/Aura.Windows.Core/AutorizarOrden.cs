@@ -72,7 +72,7 @@ public static class AutorizarOrden
                 yield return ClaseAccion.Ventana;
             if (w is "pon" or "ponme" or "pone" or "poner" or "toca" or "tocame" or "play" or "musica" or "music" or "cancion" or "canciones" or "tema" or "song"
                 or "pausa" or "pausar" or "siguiente" or "anterior" or "sigue" or "continua" or "reanuda" or "resume" or "next" or "previous" or "skip" or "salta"
-                or "rola" or "rolas" or "playlist" or "spotify" or "oir" or "artista" or "album" or "disco" or "bailar" or "listen"
+                or "rola" or "rolas" or "playlist" or "oir" or "artista" or "album" or "disco" or "bailar" or "listen"
                 || w.StartsWith("reprodu", StringComparison.Ordinal) || w.StartsWith("escuch", StringComparison.Ordinal))
                 yield return ClaseAccion.Musica;
             if (w is "volumen" or "volume" or "sube" or "subele" or "subir" or "baja" or "bajale" or "bajar" or "mute" or "louder" or "quieter" || w.StartsWith("silenci", StringComparison.Ordinal))
@@ -106,7 +106,8 @@ public static class AutorizarOrden
 
     /// <summary>
     /// ¿Pidió música de verdad? Por sus reglas o Laya, o por una palabra de música («canción», «escuchar», «rola»,
-    /// «spotify»…). «Pon» solo no cuenta: «pon el volumen al 30» no es pedir una canción.
+    /// «rola»…). «Pon» solo no cuenta («pon el volumen al 30»), ni el nombre de la app («abre Spotify» es abrir la app,
+    /// no pedir que el cerebro elija una canción).
     /// </summary>
     public static bool PidioMusica(string dicho)
     {
@@ -115,7 +116,7 @@ public static class AutorizarOrden
         var ligera = LayaLigera.Predecir(dicho ?? "");
         if (ligera.Seguro && Intencion.DeEtiqueta(ligera.Etiqueta) == Mano.Musica) return true;
         return Palabras(dicho ?? "").Any(w => w is "musica" or "music" or "cancion" or "canciones" or "tema" or "song" or "rola" or "rolas" or "playlist"
-            or "spotify" or "oir" or "artista" or "album" or "disco" or "bailar" or "listen" || w.StartsWith("escuch", StringComparison.Ordinal) || w.StartsWith("reprodu", StringComparison.Ordinal));
+            or "oir" or "artista" or "album" or "disco" or "bailar" or "listen" || w.StartsWith("escuch", StringComparison.Ordinal) || w.StartsWith("reprodu", StringComparison.Ordinal));
     }
 
     /// <summary>Lo que se dice al pedir música sin nombrar qué: ánimo, para qué, cortesía.</summary>

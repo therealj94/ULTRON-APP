@@ -830,6 +830,16 @@ Check(float.IsPositiveInfinity(UmbralesDespertar.MinimoWindows("oye aura", true,
 Check(float.IsPositiveInfinity(UmbralesDespertar.MinimoWindows("aura", false, true)) && UmbralesDespertar.MinimoWindows("oye antonio", false, true) == 0.95f && UmbralesDespertar.MinimoWindows("aura", false, false) == 0.8f && UmbralesDespertar.MinimoWindows("oye aura", false, false) == 0.6f, "música y sin modelo");
 Check(Intencion.ConParametro(Mano.Avatar, "aura", "laya-nodo", 0.9).Mano == Mano.Ninguna && Intencion.ConParametro(Mano.Avatar, "cambia a claudio", "laya-nodo", 0.9) is { Mano: Mano.Avatar, Valor: "claudio" }, "un nombre suelto no cambia el avatar");
 Check(AutorizarOrden.Autorizar("pon bad bunny en spotify", "quiero escuchar algo para trabajar") == Veredicto.Hacer && AutorizarOrden.Autorizar("pon marc anthony en spotify", "ponme una canción bonita") == Veredicto.Hacer, "música pedida: el cerebro elige");
+Check(AutorizarOrden.Autorizar("pon bad bunny en spotify", "abre spotify") != Veredicto.Hacer && !AutorizarOrden.PidioMusica("abre spotify"), "abrir la app no autoriza una canción (Codex en #122)");
+{
+    using var cancelada = new CancellationTokenSource();
+    var lento2 = Intencion.EsperaNodo; Intencion.EsperaNodo = TimeSpan.FromSeconds(5);
+    var t = Intencion.Decidir("qué opinas de la vida", async (_, c) => { await Task.Delay(3000); return null; }, cancelada.Token);
+    cancelada.CancelAfter(100);
+    bool lanzo = false; try { t.GetAwaiter().GetResult(); } catch (OperationCanceledException) { lanzo = true; }
+    Intencion.EsperaNodo = lento2;
+    Check(lanzo, "cancelar mientras espera a Laya se respeta (Codex en #122)");
+}
 Check(AutorizarOrden.Autorizar("pon bad bunny en spotify", "pon el volumen al 30") != Veredicto.Hacer && AutorizarOrden.Autorizar("pon bad bunny en spotify", "cuéntame un chiste") == Veredicto.Rechazar, "sin pedir música, no se pone");
 {
     var lento = Intencion.EsperaNodo; Intencion.EsperaNodo = TimeSpan.FromMilliseconds(200);

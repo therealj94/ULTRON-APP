@@ -210,7 +210,10 @@ public static class Intencion
             try
             {
                 var tarea = nodo(texto, ct);
-                if (await Task.WhenAny(tarea, Task.Delay(EsperaNodo, ct)).ConfigureAwait(false) == tarea) d = await tarea.ConfigureAwait(false);
+                var gano = await Task.WhenAny(tarea, Task.Delay(EsperaNodo, ct)).ConfigureAwait(false);
+                // Cancelado mientras esperaba: se respeta la cancelación (no es un «Laya tardó»).
+                ct.ThrowIfCancellationRequested();
+                if (gano == tarea) d = await tarea.ConfigureAwait(false);
                 else _ = tarea.ContinueWith(t => _ = t.Exception, TaskScheduler.Default);
             }
             catch (OperationCanceledException) { throw; } catch { }
