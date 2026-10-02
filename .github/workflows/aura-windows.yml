@@ -2,9 +2,9 @@ name: AURA Windows
 on:
   push:
     branches: [main, codex/aura-windows-native, ccr-a300ded3-ru9biy]
-    paths: ['windows/**', 'scripts/nodo-t4/laya/modelos/windows/**', 'mobile/assets/avatares/**', 'mobile/assets/sfx/**', 'mobile/assets/recorrido/**', 'mobile/assets/llamada/**', 'mobile/src/avatares/video/guion.ts', 'mobile/src/recorrido/motor.ts', '.github/workflows/aura-windows.yml']
+    paths: ['windows/**', 'src/14-orbe/**', 'scripts/nodo-t4/laya/modelos/windows/**', 'mobile/assets/avatares/**', 'mobile/assets/sfx/**', 'mobile/assets/recorrido/**', 'mobile/assets/llamada/**', 'mobile/src/avatares/video/guion.ts', 'mobile/src/recorrido/motor.ts', '.github/workflows/aura-windows.yml']
   pull_request:
-    paths: ['windows/**', 'mobile/assets/avatares/**', 'mobile/assets/sfx/**', 'mobile/assets/recorrido/**', 'mobile/assets/llamada/**', 'mobile/src/avatares/video/guion.ts', 'mobile/src/recorrido/motor.ts', '.github/workflows/aura-windows.yml']
+    paths: ['windows/**', 'src/14-orbe/**', 'mobile/assets/avatares/**', 'mobile/assets/sfx/**', 'mobile/assets/recorrido/**', 'mobile/assets/llamada/**', 'mobile/src/avatares/video/guion.ts', 'mobile/src/recorrido/motor.ts', '.github/workflows/aura-windows.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -124,6 +124,21 @@ jobs:
         with:
           name: AURA-Windows-centro
           path: windows/artifacts/centro/
+          retention-days: 14
+      # La cara de AU-RA (src/14-orbe/orbe.html, publicada como OrbeAssets/orbe.html): en una ventana transparente como
+      # el notch dice «listo» y forma una frase; si el equipo no puede (sin WebGL), se rinde en 10 s y queda el avatar.
+      - name: AURA's face (particle orb) in a transparent window like the notch, or the classic avatar in time
+        shell: pwsh
+        run: |
+          $process = Start-Process ./windows/artifacts/win-x64/Aura.Windows.exe -ArgumentList '--orbe-self-test', "$env:GITHUB_WORKSPACE/windows/artifacts/orbe" -PassThru
+          if (-not $process.WaitForExit(90000)) { $process.Kill(); throw 'Orb test timeout' }
+          Get-Content ./windows/artifacts/orbe/resultado.json
+          if ($process.ExitCode -ne 0) { throw 'Orb test failed' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: AURA-Windows-orbe
+          path: windows/artifacts/orbe/
           retention-days: 14
       - name: Other apps' notifications in the notch (Windows notification database, read-only)
         shell: pwsh

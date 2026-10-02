@@ -69,7 +69,8 @@
    <Grid x:Name="CapaHabla" IsHitTestVisible="False" Opacity="0">
     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
     <n:AvatarView x:Name="AvatarHabla" Width="58" Height="58" Margin="12,6,0,0" VerticalAlignment="Center" Estado="speaking"/>
-    <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="12,8,10,0">
+    <!-- Con el orbe de AU-RA (NotchWindow.Orbe.cs) la capa entera es su escenario: la frase sale formada con sus partículas y esto se esconde. -->
+    <StackPanel x:Name="TextosHabla" Grid.Column="1" VerticalAlignment="Center" Margin="12,8,10,0">
      <TextBlock x:Name="NombreHabla" Text="AU-RA" FontFamily="{StaticResource LetraRotulo}" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource Acento}"/>
      <TextBlock x:Name="Subtitulo" Text="" FontSize="14" TextWrapping="Wrap" MaxHeight="40" TextTrimming="WordEllipsis" Margin="0,2,0,0"/>
     </StackPanel>

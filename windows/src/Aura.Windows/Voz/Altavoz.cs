@@ -35,6 +35,8 @@ internal sealed class Altavoz : IDisposable
     public event Action<bool, long, long>? Reproduciendo;
     /// <summary>Empieza a sonar esta frase (para el subtítulo).</summary>
     public event Action<string>? Frase;
+    /// <summary>Esta frase ya está abierta para sonar, con lo que dura su audio en segundos (null si no se sabe): el orbe forma sus palabras a ese ritmo.</summary>
+    public event Action<string, double?>? FraseConDuracion;
     /// <summary>Se vació la cola y ya no suena nada.</summary>
     public event Action? Termino;
     public event Action<string>? Fallo;
@@ -77,7 +79,7 @@ internal sealed class Altavoz : IDisposable
                 Reproduciendo?.Invoke(actual.Relleno, actual.Turno, Stopwatch.GetTimestamp());
                 if (!avisado) { avisado = true; Sonando = true; Empezo?.Invoke(); }
             }
-            try { await Sonar(audio, ct, AlSonar).ConfigureAwait(false); }
+            try { await Sonar(audio, siguiente.Texto, ct, AlSonar).ConfigureAwait(false); }
             catch (OperationCanceledException) { }
             catch (Exception ex) { Fallo?.Invoke("No pude reproducir la voz: " + ex.Message); }
         }
@@ -85,10 +87,13 @@ internal sealed class Altavoz : IDisposable
         if (gen == Interlocked.Read(ref generacion)) { Sonando = false; Termino?.Invoke(); }
     }
 
-    async Task Sonar(Core.Audio audio, CancellationToken ct, Action alSonar)
+    async Task Sonar(Core.Audio audio, string texto, CancellationToken ct, Action alSonar)
     {
         using var ms = new MemoryStream(audio.Bytes);
         using WaveStream lector = audio.Tipo.Contains("wav") ? new WaveFileReader(ms) : new StreamMediaFoundationReader(ms);
+        double? dura = null;
+        try { var d = lector.TotalTime.TotalSeconds; if (d > 0 && double.IsFinite(d)) dura = d; } catch { /* sin duración: el orbe reparte por sílabas */ }
+        FraseConDuracion?.Invoke(texto, dura);
         var medidor = new MeteringSampleProvider(lector.ToSampleProvider(), Math.Max(1, lector.WaveFormat.SampleRate / 50));
         int primera = 0;
         medidor.StreamVolume += (_, e) => { if (Interlocked.Exchange(ref primera, 1) == 0) alSonar(); float m = 0; foreach (var v in e.MaxSampleValues) m = Math.Max(m, v); Nivel?.Invoke(Math.Min(1, m * 1.4)); };

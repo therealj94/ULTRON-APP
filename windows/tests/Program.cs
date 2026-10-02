@@ -933,6 +933,70 @@ Check(AutorizarOrden.Autorizar("pon bad bunny en spotify", "pon el volumen al 30
     Check(PoliticaEscucha.OidoContinuo("siempre", false) && PoliticaEscucha.OidoContinuo("palabra", true) && !PoliticaEscucha.OidoContinuo("palabra", false) && !PoliticaEscucha.OidoContinuo("pedir", true), "micrófono abierto: siempre, o palabra con detector local");
     Check(PoliticaEscucha.Charla("siempre") == TimeSpan.FromMinutes(3) && PoliticaEscucha.Charla("palabra") == TimeSpan.FromSeconds(90), "ventanas de charla");
 }
+// ── La cara de AURA: el orbe de partículas (src/14-orbe/orbe.html) en el notch ──
+{
+    Check(ProtocoloOrbe.Cara("listening") == "LISTENING" && ProtocoloOrbe.Cara("thinking") == "THINKING" && ProtocoloOrbe.Cara("speaking") == "SPEAKING"
+          && ProtocoloOrbe.Cara("happy") == "HAPPY" && ProtocoloOrbe.Cara("scan") == "SCAN", "orbe: los estados del notch → caras del orbe");
+    Check(ProtocoloOrbe.Cara("worried") == "IDLE" && ProtocoloOrbe.Cara("idle") == "IDLE" && ProtocoloOrbe.Cara(null) == "IDLE" && ProtocoloOrbe.Cara("<script>") == "IDLE", "orbe: lo demás es reposo");
+    Check(ProtocoloOrbe.Estado("THINKING") == "{\"tipo\":\"estado\",\"face\":\"THINKING\"}", "orbe: estado");
+    Check(ProtocoloOrbe.Boca(0.4567) == "{\"tipo\":\"boca\",\"n\":0.46}" && ProtocoloOrbe.Boca(3) == "{\"tipo\":\"boca\",\"n\":1}"
+          && ProtocoloOrbe.Boca(double.NaN) == "{\"tipo\":\"boca\",\"n\":0}" && ProtocoloOrbe.Boca(-1) == "{\"tipo\":\"boca\",\"n\":0}", "orbe: boca 0..1 con dos decimales");
+    Check(ProtocoloOrbe.Callar() == "{\"tipo\":\"callar\"}" && ProtocoloOrbe.Sonido(false) == "{\"tipo\":\"sonido\",\"activo\":false}", "orbe: callar y sonido");
+    using (var d = System.Text.Json.JsonDocument.Parse(ProtocoloOrbe.Decir("  Hola,\n José   María ", 2.345)!))
+        Check(d.RootElement.GetProperty("tipo").GetString() == "decir" && d.RootElement.GetProperty("texto").GetString() == "Hola, José María"
+              && d.RootElement.GetProperty("dur").GetDouble() == 2.35 && d.RootElement.GetProperty("tts").GetBoolean() == false, "orbe: decir con su duración y SIN voz propia");
+    using (var d = System.Text.Json.JsonDocument.Parse(ProtocoloOrbe.Decir("hola", 0.1)!)) Check(!d.RootElement.TryGetProperty("dur", out _), "orbe: una duración absurda no se manda (reparte por sílabas)");
+    using (var d = System.Text.Json.JsonDocument.Parse(ProtocoloOrbe.Decir("hola", double.PositiveInfinity)!)) Check(!d.RootElement.TryGetProperty("dur", out _), "orbe: duración infinita no");
+    Check(ProtocoloOrbe.Decir("   ") == null && ProtocoloOrbe.Decir(null) == null, "orbe: nada que decir, nada que mandar");
+    using (var d = System.Text.Json.JsonDocument.Parse(ProtocoloOrbe.Decir(string.Join(' ', Enumerable.Repeat("palabra", 200)))!))
+    {
+        var t = d.RootElement.GetProperty("texto").GetString()!;
+        Check(t.Length <= ProtocoloOrbe.MaxTexto + 1 && t.EndsWith("…") && !t.Contains("  ") && t.Split(' ').All(p => p is "palabra" or "palabra…"), "orbe: lo largo se corta en una palabra");
+    }
+    var prep = ProtocoloOrbe.Preparacion(true);
+    Check(prep.StartsWith("window.__orbeOpciones={\"clean\":true,\"tts\":false,\"sfx\":true};") && prep.Contains("window.__orbeMarco=") && prep.Contains("139vh"), "orbe: opciones antes de cargar (sin panel, sin voz propia, efectos)");
+    Check(ProtocoloOrbe.Preparacion(false).Contains("\"sfx\":false"), "orbe: efectos apagados en Ajustes");
+    Check(ProtocoloOrbe.Marco(true) == "window.__orbeMarco&&window.__orbeMarco(true)" && ProtocoloOrbe.Marco(false).EndsWith("(false)"), "orbe: cara o escenario");
+    Check(ProtocoloOrbe.Quietud(true) == "{\"features\":[{\"name\":\"prefers-reduced-motion\",\"value\":\"reduce\"}]}" && ProtocoloOrbe.Quietud(false) == "{\"features\":[]}", "orbe: «menos movimiento» de Ajustes, y quitarlo");
+    Check(ProtocoloOrbe.Leer("{\"tipo\":\"listo\"}").Tipo == TipoMensajeOrbe.Listo, "orbe: listo");
+    Check(ProtocoloOrbe.Leer("{\"tipo\":\"fallo\",\"motivo\":\"sin WebGL\"}") == new MensajeOrbe(TipoMensajeOrbe.Fallo, "sin WebGL")
+          && ProtocoloOrbe.Leer("{\"type\":\"aura-fallo\",\"motivo\":\"contexto WebGL perdido\"}").Tipo == TipoMensajeOrbe.Fallo, "orbe: fallos");
+    Check(ProtocoloOrbe.Leer("{\"tipo\":\"tocar\",\"zona\":\"cuerpo\"}") == new MensajeOrbe(TipoMensajeOrbe.Tocar, "cuerpo")
+          && ProtocoloOrbe.Leer("{\"tipo\":\"deslizar\",\"dir\":\"arriba\"}") == new MensajeOrbe(TipoMensajeOrbe.Deslizar, "arriba")
+          && ProtocoloOrbe.Leer("{\"tipo\":\"deslizar\",\"dir\":\"izquierda\"}").Tipo == TipoMensajeOrbe.Ninguno, "orbe: tocar y deslizar");
+    Check(ProtocoloOrbe.Leer("{\"type\":\"aura-state\",\"state\":\"speaking\"}") == new MensajeOrbe(TipoMensajeOrbe.Estado, "speaking")
+          && ProtocoloOrbe.Leer("{\"type\":\"aura-state\",\"state\":\"x\"}").Tipo == TipoMensajeOrbe.Ninguno
+          && ProtocoloOrbe.Leer("{\"type\":\"aura-end\"}").Tipo == TipoMensajeOrbe.Fin, "orbe: estado y fin de frase");
+    foreach (var raro in new[] { null, "", "[]", "\"listo\"", "{", "{\"tipo\":5}", "{\"type\":\"aura-listo\",\"webgl\":2}", "{\"tipo\":\"otro\"}", "{\"tipo\":\"listo\",\"x\":\"" + new string('a', 5000) + "\"}" })
+        Check(ProtocoloOrbe.Leer(raro).Tipo == TipoMensajeOrbe.Ninguno, "orbe: mensaje raro ignorado: " + (raro?.Length > 40 ? raro[..40] : raro));
+    Check(PuenteCentro.OrigenExacto(ProtocoloOrbe.Pagina, ProtocoloOrbe.Origen) && !PuenteCentro.OrigenExacto("https://orbe.aura.local.otro/orbe.html", ProtocoloOrbe.Origen), "orbe: su origen exacto");
+    Check(ProtocoloOrbe.EsperaListo == TimeSpan.FromSeconds(10), "orbe: 10 s para decir «listo» o vuelve el avatar de siempre");
+    var lim = new LimitadorBoca(); var t0 = TimeSpan.FromSeconds(5);
+    Check(lim.Pasa(0.5, t0, out var b1) && b1 == 0.5, "boca: la primera pasa");
+    Check(!lim.Pasa(0.6, t0 + TimeSpan.FromMilliseconds(10), out _), "boca: no más de ~30 por segundo");
+    Check(lim.Pasa(0.6, t0 + TimeSpan.FromMilliseconds(40), out _) && !lim.Pasa(0.601, t0 + TimeSpan.FromMilliseconds(90), out _), "boca: pasa a su tiempo y solo si cambia");
+    Check(lim.Pasa(0, t0 + TimeSpan.FromMilliseconds(91), out var b0) && b0 == 0, "boca: el silencio pasa siempre");
+    lim.Reiniciar(); Check(lim.Pasa(0, t0 + TimeSpan.FromMilliseconds(92), out _), "boca: tras recargar, se vuelve a contar");
+    // La fuente de verdad es src/14-orbe/orbe.html: el .exe la publica tal cual (enlace en el .csproj, sin copia que
+    // se desfase) y aquí se comprueba que sigue hablando el idioma que el notch usa.
+    string? Arriba(string rel) { for (var d = new DirectoryInfo(AppContext.BaseDirectory); d != null; d = d.Parent) { var p = Path.Combine(d.FullName, rel); if (File.Exists(p)) return p; } return null; }
+    var orbeHtml = Arriba(Path.Combine("src", "14-orbe", "orbe.html"));
+    var proyecto = Arriba(Path.Combine("src", "Aura.Windows", "Aura.Windows.csproj"));
+    Check(orbeHtml != null && proyecto != null, "orbe: están src/14-orbe/orbe.html y el .csproj");
+    if (orbeHtml != null && proyecto != null)
+    {
+        var html = File.ReadAllText(orbeHtml);
+        foreach (var pieza in new[] { "window.__orbeOpciones", "OPC.sfx !== false", "OPC.tts !== false", "window.__aura = handle", "case 'estado': setState(d.face",
+                                      "case 'boca': setLevel(", "case 'decir': say(d.texto", "tts: d.tts === true", "case 'callar': silence()", "case 'sonido': SFX.activar(",
+                                      "notify({tipo:'listo'})", "window.chrome.webview.postMessage(m)", "window.chrome.webview.addEventListener('message'",
+                                      "notify({tipo:'tocar'", "notify({tipo:'deslizar'", "type:'aura-end'", "type:'aura-fallo'", "<div id=\"stage\">", "#stage{position:relative;flex:1",
+                                      "cam.orbYFrac = portrait ? 0.36 : 0.385", "const portrait = CH > CW*1.15", "SCAN:'searching'", "HAPPY:'done'" })
+            Check(html.Contains(pieza), "orbe: la página sigue teniendo «" + pieza + "»");
+        Check(!html.Contains("src=\"http") && !html.Contains("href=\"http"), "orbe: sin dependencias de afuera (la WebView no sale a la red)");
+        var csproj = File.ReadAllText(proyecto);
+        Check(csproj.Contains("Include=\"../../../src/14-orbe/orbe.html\" Link=\"OrbeAssets/orbe.html\""), "orbe: el .exe publica la fuente de verdad como OrbeAssets/orbe.html");
+    }
+}
 Console.WriteLine($"PASS {count} assertions");
 class Clock : TimeProvider { public DateTimeOffset Now = DateTimeOffset.UtcNow; public override DateTimeOffset GetUtcNow() => Now; }
 /// <summary>Un servidor de mentira para AuraApi: guarda los pedidos y contesta lo que se le diga.</summary>

@@ -30,6 +30,7 @@ public partial class App : Application
                 case "--conexiones-self-test": _ = ConexionesSelfTest.Run(salida); return;
                 case "--avisos-self-test": _ = AvisosSelfTest.Run(salida); return;
                 case "--centro-self-test": _ = CentroSelfTest.Run(salida); return;
+                case "--orbe-self-test": _ = OrbeSelfTest.Run(salida); return;
                 case "--anim-self-test": _ = Pruebas.Animacion(salida); return;
                 case "--onnx-self-test": _ = OnnxSelfTest.Run(salida); return;
                 case "--rtc-self-test":

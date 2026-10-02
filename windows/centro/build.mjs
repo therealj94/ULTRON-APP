@@ -27,15 +27,22 @@ cpSync(join(aqui, 'src', 'fuentes', 'OFL-IBM-Plex.txt'), join(salida, 'fuentes',
 const shim = '<meta name="color-scheme" content="dark"><style>:root,html,body{color-scheme:dark;background:transparent!important}</style><script>window.ReactNativeWebView={postMessage:function(s){try{parent.postMessage({avatar3d:JSON.parse(s)},"*")}catch(e){}}};' +
   'addEventListener("message",function(e){if(e.data&&e.data.aAvatar&&window.__aura)window.__aura(e.data.aAvatar)});</script>';
 const origen = join(aqui, '..', '..', 'vendor', 'aura-avatar-suite', 'integration');
-for (const id of ['aura', 'claudio', 'antonio']) {
+// AU-RA ya no usa su modelo 3D (es el orbe, abajo): solo Claudio y ANT-ONIO.
+for (const id of ['claudio', 'antonio']) {
   const f = join(origen, `${id}-embed.html`);
   if (!existsSync(f)) continue;
   const html = readFileSync(f, 'utf8').replace('<body', shim + '<body');
   writeFileSync(join(salida, 'avatar', `${id}.html`), html);
 }
+// La cara de AU-RA: su orbe de partículas (aprobado por José). La fuente de verdad es src/14-orbe/orbe.html; aquí
+// solo se copia tal cual (test/orbe.test.mjs comprueba que la copia armada es idéntica). El notch la publica aparte
+// desde el .csproj (OrbeAssets/orbe.html).
+const orbe = join(aqui, '..', '..', 'src', '14-orbe', 'orbe.html');
+if (!existsSync(orbe)) throw new Error('Falta el orbe de AU-RA: ' + orbe);
+cpSync(orbe, join(salida, 'avatar', 'orbe.html'));
 // La hoja «idle» de cada avatar (la misma del notch) para el respaldo sin WebGL.
 const hojas = join(aqui, '..', 'src', 'Aura.Windows', 'AvatarAssets');
-for (const id of ['aura', 'claudio', 'antonio']) {
+for (const id of ['claudio', 'antonio']) {
   const f = join(hojas, id, 'idle.png');
   if (existsSync(f)) cpSync(f, join(salida, 'avatar', `${id}-idle.png`));
 }

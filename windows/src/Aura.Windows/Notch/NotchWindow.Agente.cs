@@ -114,8 +114,10 @@ public partial class NotchWindow
             if (visible.Length == 0) return;
             Subtitulo.Text = visible;
             ultimaRespuesta = visible;
-            // La corrección (la cortaste a mitad) cambia la burbuja que ya estaba, no agrega otra.
+            // La corrección (la cortaste a mitad) cambia la burbuja que ya estaba, no agrega otra (ni otra frase en el orbe).
             if (r.Correccion && burbujaAgente != null) { burbujaAgente.Text = visible; return; }
+            // El orbe de AU-RA la forma con partículas mientras la dice (sin duración: reparte por sílabas y sigue la voz).
+            if (!r.Correccion) DecirOrbe(visible, null);
             burbujaAgente = AgregarMensaje(ajustes.NombreAvatar, visible);
             if (agenteUltimoDicho.Length > 0) { Recordar(agenteUltimoDicho, visible); agenteUltimoDicho = ""; }
         }));
@@ -142,7 +144,7 @@ public partial class NotchWindow
         };
         a.Interrumpida += () => Dispatcher.BeginInvoke(new Action(() => { if (ReferenceEquals(agente, a)) { Centro.Registro.Anotar("voz-vivo", "me interrumpiste"); metricas.Cerrar("interrumpido"); } }));
         a.NivelMic += n => Dispatcher.BeginInvoke(new Action(() => { if (ReferenceEquals(agente, a) && !hablandoAhora) { BarrasEscucha.Nivel = n; EscalaAnillo.ScaleX = EscalaAnillo.ScaleY = 1 + n * 0.18; } }));
-        a.NivelBoca += n => Dispatcher.BeginInvoke(new Action(() => { if (ReferenceEquals(agente, a)) { AvatarHabla.Boca = n; AvatarPanel.Boca = n; BarrasHabla.Nivel = n; } }));
+        a.NivelBoca += n => Dispatcher.BeginInvoke(new Action(() => { if (ReferenceEquals(agente, a)) { AvatarHabla.Boca = n; AvatarPanel.Boca = n; BarrasHabla.Nivel = n; BocaOrbe(n); } }));
         a.Cerrada += motivo => Dispatcher.BeginInvoke(new Action(() =>
         {
             // Mientras se abre, el fallo lo avisa AbrirAgente (un solo aviso).

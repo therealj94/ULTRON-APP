@@ -376,7 +376,7 @@ public partial class NotchWindow
         carteraDireccion = ajustes.CarteraDireccion, servidor = ajustes.Servidor,
         clientes = new { spotify = ajustes.SpotifyClientId, google = ajustes.GoogleClientId, microsoft = ajustes.MicrosoftClientId },
         notch = new { borde = ajustes.NotchBorde, fraccion = ajustes.NotchFraccion, monitor = ajustes.NotchMonitor, menosMovimiento = ajustes.MenosMovimiento },
-        registroDetallado = ajustes.RegistroDetallado,
+        registroDetallado = ajustes.RegistroDetallado, efectosDeSonido = ajustes.EfectosDeSonido,
     };
 
     void GuardarDesdeCentro(JsonElement a)
@@ -432,6 +432,9 @@ public partial class NotchWindow
                     ajustes.SpotifyClientId = Texto(p.Value, "spotify").Trim(); ajustes.GoogleClientId = Texto(p.Value, "google").Trim();
                     ajustes.MicrosoftClientId = Texto(p.Value, "microsoft").Trim(); if (Texto(p.Value, "googleSecreto") is { Length: > 0 } gs) ajustes.GoogleClientSecret = gs.Trim();
                     cuentas = true; break;
+                // Los efectos de sonido del orbe de AU-RA (y del orbe de la guía del Centro).
+                case "efectosDeSonido" when p.Value.ValueKind is JsonValueKind.True or JsonValueKind.False:
+                    ajustes.EfectosDeSonido = p.Value.GetBoolean(); SonidosOrbe(); break;
                 // Privacidad del registro (H13): el texto de lo dicho entra en aura.log solo si lo pides.
                 case "registroDetallado" when p.Value.ValueKind is JsonValueKind.True or JsonValueKind.False:
                     ajustes.RegistroDetallado = Registro.Detallado = p.Value.GetBoolean();
