@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CLIPS_VIDEO, DirectorVideo, ENFRIAR_GOLPE_MS, GOLPE_ANTES_DE_HABLAR_MS, VENTANAS, encuadrar, esDeFondo, fondoDe, zonaVideo } from '../video/guion.ts';
+import { ASENTAR_FONDO_MS, CLIPS_VIDEO, DirectorVideo, ENFRIAR_GOLPE_MS, GOLPE_ANTES_DE_HABLAR_MS, SOLTAR_HABLA_MS, VENTANAS, encuadrar, esDeFondo, fondoDe, zonaVideo } from '../video/guion.ts';
 import { ESTADO_INICIAL } from '../../avatar3d/tipos.ts';
 import { estadoDesdeMesa } from '../../avatar3d/contrato.ts';
 
@@ -39,15 +39,43 @@ prueba('el fondo sigue al estado: habla > piensa > escucha > reposo', () => {
 });
 
 prueba('con la mesa de verdad: escucha, piensa y habla, en bucle', () => {
-  const { d } = nuevo();
+  const { d, r } = nuevo();
   assert.equal(d.estado(estadoDesdeMesa('IDLE', 'neutral')), null, 'empieza en reposo: nada que cambiar');
-  const e = d.estado(estadoDesdeMesa('LISTENING', 'neutral'));
+  assert.equal(d.estado(estadoDesdeMesa('LISTENING', 'neutral')), null, 'escuchar espera a asentarse');
+  assert.equal(d.msParaFondo(), ASENTAR_FONDO_MS);
+  r.pasar(ASENTAR_FONDO_MS);
+  const e = d.revisar();
   assert.deepEqual([e.clip, e.bucle], ['escucha', true]);
-  assert.equal(d.estado(estadoDesdeMesa('THINKING', 'neutral')).clip, 'piensa');
+  d.estado(estadoDesdeMesa('THINKING', 'neutral'));
+  r.pasar(ASENTAR_FONDO_MS);
+  assert.equal(d.revisar().clip, 'piensa');
   const h = d.estado(estadoDesdeMesa('SPEAKING', 'neutral'));
-  assert.deepEqual([h.clip, h.bucle], ['habla', true]);
+  assert.deepEqual([h.clip, h.bucle], ['habla', true], 'empezar a hablar no espera');
   assert.equal(d.estado(estadoDesdeMesa('SPEAKING', 'neutral')), null, 'el mismo estado no reinicia el clip');
-  assert.equal(d.estado(estadoDesdeMesa('IDLE', 'neutral')).clip, 'reposo');
+  assert.equal(d.estado(estadoDesdeMesa('IDLE', 'neutral')), null, 'dejar de hablar espera más');
+  r.pasar(SOLTAR_HABLA_MS);
+  assert.equal(d.revisar().clip, 'reposo');
+});
+
+prueba('las pausas entre frases no cambian el clip (el parpadeo que vio José el 2-oct)', () => {
+  const { d, r } = nuevo();
+  assert.equal(d.estado(est({ hablando: true })).clip, 'habla');
+  let cambios = 0;
+  // 10 frases con pausas de 300 ms: «hablando» se apaga y se prende.
+  for (let i = 0; i < 10; i++) {
+    if (d.estado(est())) cambios++;
+    r.pasar(300);
+    if (d.revisar()) cambios++;
+    if (d.estado(est({ hablando: true }))) cambios++;
+    r.pasar(1200);
+  }
+  assert.equal(cambios, 0, 'sigue en «habla» toda la respuesta');
+  assert.equal(d.reproduccion.clip, 'habla');
+  d.estado(est());
+  r.pasar(SOLTAR_HABLA_MS - 1);
+  assert.equal(d.revisar(), null);
+  r.pasar(1);
+  assert.equal(d.revisar().clip, 'reposo', 'callado de verdad: vuelve al reposo');
 });
 
 prueba('las emociones del turno hacen su golpe una vez y vuelven al fondo', () => {
