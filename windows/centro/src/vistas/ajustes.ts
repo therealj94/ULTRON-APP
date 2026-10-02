@@ -16,8 +16,34 @@ export function vistaAjustes(): HTMLElement {
     ['conexiones', T('Conexiones', 'Connections')], ['avisos', T('Notificaciones', 'Notifications')], ['cuentas', T('Correo y agenda', 'Email & calendar')],
     ['privacidad', T('Privacidad y diagnóstico', 'Privacy & diagnostics')], ['actualizar', T('Actualizaciones', 'Updates')], ['atajos', T('Atajos', 'Shortcuts')],
   ];
-  const nav = h('div', { class: 'pastillas', style: 'margin-bottom:18px;position:sticky;top:-28px;background:var(--fondo);padding:10px 0;z-index:2' },
-    ...secciones.map(([id, t]) => h('button', { class: 'pastilla', on: { click: () => document.getElementById('aj-' + id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }) } }, t)));
+  // El menú de secciones: se queda arriba y marca la sección que estás leyendo.
+  const pastillas = new Map<string, HTMLButtonElement>();
+  const marcarSeccion = (id: string) => pastillas.forEach((b, k) => {
+    b.classList.toggle('activa', k === id);
+    if (k === id) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current');
+  });
+  const nav = h('nav', { class: 'aj-nav', 'aria-label': T('Secciones de ajustes', 'Settings sections') },
+    ...secciones.map(([id, t]) => {
+      const b = h('button', { class: 'pastilla', on: { click: () => {
+        marcarSeccion(id);
+        const reducir = matchMedia('(prefers-reduced-motion: reduce)').matches;
+        document.getElementById('aj-' + id)?.scrollIntoView({ behavior: reducir ? 'auto' : 'smooth', block: 'start' });
+      } } }, t) as HTMLButtonElement;
+      pastillas.set(id, b);
+      return b;
+    }));
+  let espia: IntersectionObserver | null = null;
+  const espiar = () => {
+    espia?.disconnect();
+    const visibles = new Map<string, number>();
+    espia = new IntersectionObserver((entradas) => {
+      for (const en of entradas) visibles.set(en.target.id.slice(3), en.isIntersecting ? en.boundingClientRect.top : Infinity);
+      let mejor = '', arriba = Infinity;
+      visibles.forEach((top, id) => { if (top < arriba) { arriba = top; mejor = id; } });
+      if (mejor) marcarSeccion(mejor);
+    }, { root: vista.closest('.contenido'), rootMargin: '-80px 0px -55% 0px' });
+    cuerpo.querySelectorAll('.aj-seccion').forEach((el) => espia!.observe(el));
+  };
   const vista = h('div', { class: 'vista' },
     h('div', { class: 'cabeza' }, h('div', null, h('h1', null, T('Ajustes', 'Settings')), h('p', null, T('Todo se guarda al momento. Pasa el ratón sobre cualquier botón para ver qué hace.', 'Changes save instantly. Hover any button to see what it does.')))),
     nav, cuerpo);
@@ -25,7 +51,7 @@ export function vistaAjustes(): HTMLElement {
   const guardar = async (parcial: Aj) => {
     try { await pedir('ajustes.guardar', parcial); } catch (e: any) { avisar(e.message, 'mal', 7000); }
   };
-  const seccion = (id: string, titulo: string, ...hijos: any[]) => h('section', { class: 'tarjeta', id: 'aj-' + id, style: 'scroll-margin-top:60px' }, h('h3', null, titulo), ...hijos);
+  const seccion = (id: string, titulo: string, ...hijos: any[]) => h('section', { class: 'tarjeta aj-seccion', id: 'aj-' + id }, h('h3', null, titulo), ...hijos);
 
   async function pintar() {
     const aj: Aj = await pedir('ajustes.leer');
@@ -35,7 +61,7 @@ export function vistaAjustes(): HTMLElement {
     // ── Cuenta ──
     const cuenta = seccion('cuenta', T('Cuenta', 'Account'),
       e.sesion
-        ? h('div', { class: 'fila' }, h('span', { class: 'foto', style: 'background:var(--acento-suave);color:var(--acento)' }, (e.sesion.nombre || e.sesion.correo).slice(0, 1).toUpperCase()),
+        ? h('div', { class: 'fila' }, h('span', { class: 'foto dorada' }, (e.sesion.nombre || e.sesion.correo).slice(0, 1).toUpperCase()),
             h('div', { style: 'flex:1' }, h('strong', null, e.sesion.nombre || e.sesion.correo), h('br'),
               h('small', { class: 'tenue' }, `${e.sesion.correo} · ${e.sesion.rol || (e.sesion.nivel === 'junta' ? 'Junta' : T('Miembro · Genesis ID', 'Member · Genesis ID'))}`)),
             boton(T('Cerrar AURA por completo', 'Quit AURA'), () => void cerrarAura(), { titulo: T('Cierra el notch, el Centro, la voz y el ícono de la bandeja', 'Closes the notch, the Centro, voice and the tray icon') }),
@@ -222,6 +248,8 @@ export function vistaAjustes(): HTMLElement {
       h('p', { class: 'nota' }, T(`Versión ${e.version}`, `Version ${e.version}`)));
 
     cuerpo.replaceChildren(cuenta, avatar, voz, conexiones, avisos, cuentas, privacidad, actualizar, atajos);
+    // El espía mira dentro de `.contenido`: hasta que la vista está montada no hay dónde mirar.
+    requestAnimationFrame(() => { if (vista.isConnected) espiar(); });
   }
   pintar().catch((e) => cuerpo.replaceChildren(tarjeta(null, h('p', null, e.message))));
   al('estado', () => { if (vista.isConnected) pintar().catch(() => {}); });

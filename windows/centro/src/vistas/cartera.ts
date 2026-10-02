@@ -63,12 +63,12 @@ export function vistaCartera(): HTMLElement {
       const conSaldo = saldos.filter((s) => s.cantidad > 0);
       const sinSaldo = saldos.filter((s) => s.cantidad <= 0);
       const fila = (s: any) => h('div', { class: 'item', style: 'cursor:default' },
-        h('span', { class: 'foto', style: 'background:var(--acento-suave);color:var(--acento);font-size:11px' }, s.simbolo.slice(0, 4)),
+        h('span', { class: 'foto dorada', style: 'font-size:10.5px;letter-spacing:.02em' }, s.simbolo.slice(0, 4)),
         h('div', { style: 'flex:1' }, h('strong', null, s.simbolo), h('br'), h('small', { class: 'tenue' }, s.precio == null ? T('sin precio de mercado', 'no market price') : dinero(s.precio) + ' ' + T('c/u', 'each'))),
-        h('div', { style: 'text-align:right' }, h('strong', null, cantidad(s.cantidad)), h('br'), h('small', { class: 'tenue' }, dinero(s.usd))));
+        h('div', { class: 'monto' }, h('strong', null, cantidad(s.cantidad)), h('br'), h('small', { class: 'tenue' }, dinero(s.usd))));
       cuerpo.replaceChildren(
-        tarjeta(null, h('small', { class: 'tenue' }, T('Valor aproximado', 'Approximate value')), h('div', { class: 'cifra', style: 'margin:6px 0' }, dinero(c.total)),
-          h('small', { class: 'tenue' }, `${c.direccion.slice(0, 8)}…${c.direccion.slice(-6)} · ${T('actualizado', 'updated')} ${c.actualizado}`),
+        h('section', { class: 'tarjeta cartera-total' }, h('span', { class: 'antetitulo' }, T('Valor aproximado', 'Approximate value')), h('div', { class: 'cifra' }, dinero(c.total)),
+          h('small', { class: 'direccion' }, `${c.direccion.slice(0, 8)}…${c.direccion.slice(-6)}`, c.actualizado ? ` · ${T('actualizado', 'updated')} ${c.actualizado}` : ''),
           h('p', { class: 'nota' }, T('Precio de ORIGEN = oro por gramo ÷ 55 (1 ORIGEN = 1/55 g de oro en bóveda). AUKA sigue la onza de oro y AGKA la de plata.', 'ORIGEN price = gold per gram ÷ 55.'))),
         tarjeta(T('Tus monedas', 'Your coins'), h('div', { class: 'lista' }, ...(conSaldo.length ? conSaldo.map(fila) : [h('p', { class: 'tenue' }, T('Todavía no tienes saldo en esta dirección.', 'No balance yet.'))]))),
         ...(sinSaldo.length ? [h('details', { class: 'tarjeta' }, h('summary', { class: 'tenue', style: 'cursor:pointer' }, T(`Otras ${sinSaldo.length} monedas de la red (en cero)`, `${sinSaldo.length} other coins (zero)`)), h('div', { class: 'lista' }, ...sinSaldo.map(fila)))] : []),
