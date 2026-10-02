@@ -40,7 +40,7 @@ func main() {
 	}
 	defer alm.Cerrar()
 	ctx := context.Background()
-	cuenta, err := NuevaCuentaWA(ctx, filepath.Join(datos, "sesion.db"), alm, log)
+	cuenta, err := NuevaCuentaWA(ctx, filepath.Join(datos, "sesion.db"), filepath.Join(datos, "fotos"), alm, log)
 	if err != nil {
 		log.Errorf("whatsapp: %v", err)
 		os.Exit(1)

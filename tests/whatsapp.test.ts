@@ -19,8 +19,8 @@ async function puenteFalso(vinculado = true) {
   const enviados: Array<{ chat: string; texto: string }> = [];
   const pedidos: string[] = [];
   const chats = [
-    { jid: '50499990000@s.whatsapp.net', nombre: 'Beto', grupo: false, noLeidos: 2, hora: ahora, ultimo: '¿Llegas a la reunión?', ultimoMio: false },
-    { jid: '120363@g.us', nombre: 'Familia', grupo: true, noLeidos: 0, hora: ahora - 60_000, ultimo: '📷 Foto', ultimoMio: false, ultimoDe: 'Mamá' },
+    { jid: '50499990000@s.whatsapp.net', nombre: 'Beto', grupo: false, noLeidos: 2, hora: ahora, ultimo: '¿Llegas a la reunión?', ultimoMio: false, numero: '+50499990000', foto: true },
+    { jid: '120363@g.us', nombre: 'Familia', grupo: true, noLeidos: 0, hora: ahora - 60_000, ultimo: '📷 Foto', ultimoMio: false, ultimoDe: 'Mamá', numero: '', foto: null },
   ];
   const mensajes = [
     { id: 'm1', chat: '50499990000@s.whatsapp.net', de: '50499990000@s.whatsapp.net', nombreDe: 'Beto', mio: false, hora: ahora - 30_000, tipo: 'texto', texto: '¿Llegas a la reunión de las tres?' },
@@ -39,8 +39,18 @@ async function puenteFalso(vinculado = true) {
       if (u.pathname === '/vincular') return json(200, JSON.parse(datos || '{}').telefono ? { codigo: 'ABCD-EFGH' } : { qr: 'data:image/png;base64,QR' });
       if (u.pathname === '/chats') {
         const b = (u.searchParams.get('buscar') || '').toLowerCase();
-        return json(200, { chats: chats.filter((c) => !b || c.nombre.toLowerCase().includes(b)) });
+        return json(200, { chats: chats.filter((c) => !b || c.nombre.toLowerCase().includes(b) || c.jid.includes(b)) });
       }
+      if (u.pathname === '/foto') {
+        if (u.searchParams.get('chat') === 'enorme@s.whatsapp.net') {
+          res.writeHead(200, { 'content-type': 'image/jpeg', 'content-length': String(3 * 1024 * 1024) });
+          return res.end();
+        }
+        if (u.searchParams.get('chat') !== '50499990000@s.whatsapp.net') return json(404, { error: 'no tiene foto de perfil' });
+        res.writeHead(200, { 'content-type': 'image/jpeg', 'content-length': '4' });
+        return res.end('FOTO');
+      }
+      if (u.pathname === '/contactos') return json(200, { contactos: [{ jid: '50411112222@s.whatsapp.net', nombre: 'Mamá', numero: '+50411112222' }] });
       if (u.pathname === '/mensajes') return json(200, { chat: chats.find((c) => c.jid === u.searchParams.get('chat')), mensajes: mensajes.filter((m) => m.chat === u.searchParams.get('chat')) });
       if (u.pathname === '/buscar') return json(200, { mensajes: mensajes.filter((m) => m.texto.toLowerCase().includes((u.searchParams.get('q') || '').toLowerCase())) });
       if (u.pathname === '/enviar') {
@@ -141,6 +151,41 @@ test('la app: solo su dueño ve su WhatsApp; chats, mensajes, enviar, leído, fo
     } finally {
       await cerrar();
     }
+  });
+  await p.cerrar();
+});
+
+test('la app: foto de perfil y contactos, solo para su dueño; número de cada chat', async () => {
+  const p = await puenteFalso();
+  await conPuente(p.url, JOSE, async () => {
+    const { como, cerrar } = await appDePrueba();
+    try {
+      const ruta = '/api/whatsapp/foto?chat=50499990000@s.whatsapp.net';
+      assert.equal((await como(null, ruta)).status, 401);
+      assert.equal((await como('intruso@x.hn', ruta)).status, 403, 'otra cuenta no ve las fotos');
+      assert.ok(!p.pedidos.some((x) => x.startsWith('GET /foto')), 'ni llega al puente');
+      const foto = await como(JOSE, ruta);
+      assert.equal(foto.status, 200);
+      assert.equal(foto.headers.get('content-type'), 'image/jpeg');
+      assert.equal(foto.headers.get('cache-control'), 'private, max-age=3600');
+      assert.equal(await foto.text(), 'FOTO');
+      const sin = await como(JOSE, '/api/whatsapp/foto?chat=120363@g.us');
+      assert.equal(sin.status, 404, 'sin foto: 404 tal cual');
+      assert.match((await sin.json()).error, /no tiene foto/);
+      assert.equal((await como(JOSE, '/api/whatsapp/foto')).status, 400);
+      assert.equal((await como(JOSE, '/api/whatsapp/foto?chat=enorme@s.whatsapp.net')).status, 413, 'nada enorme se junta en memoria');
+      const chats = await (await como(JOSE, '/api/whatsapp/chats?limite=250')).json();
+      assert.deepEqual(chats.chats.map((c: any) => [c.numero, c.foto]), [['+50499990000', true], ['', null]]);
+      assert.ok(p.pedidos.includes('GET /chats?limite=250'), 'el límite pasa al puente');
+      const cs = await (await como(JOSE, '/api/whatsapp/contactos?buscar=mam')).json();
+      assert.deepEqual(cs.contactos, [{ jid: '50411112222@s.whatsapp.net', nombre: 'Mamá', numero: '+50411112222' }]);
+      assert.ok(p.pedidos.includes('GET /contactos?limite=100&buscar=mam'));
+      assert.equal((await como('intruso@x.hn', '/api/whatsapp/contactos')).status, 403);
+    } finally {
+      await cerrar();
+    }
+    // El cerebro también encuentra el chat por número.
+    assert.match(await correrWhatsapp(JOSE, 'leer +504 9999-0000', 'tel'), /chat con Beto/);
   });
   await p.cerrar();
 });
