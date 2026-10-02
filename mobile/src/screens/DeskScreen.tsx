@@ -105,6 +105,7 @@ import {
 import type { PantallaCerebro } from '../compa/cerebro';
 import { TarjetaPropuesta } from '../components/TarjetaPropuesta';
 import { HojaCerebro } from '../app/HojasCerebro';
+import { publicarMesa, retirarMesa } from '../app/mesaAjustes';
 
 type Props = {
   user: SessionUser;
@@ -2276,7 +2277,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       case 'misiones':
         return setHojaCerebro('misiones');
       case 'ajustes':
-        return setMenuOpen(true);
+        // La pantalla de Ajustes entera (voz, oído, memoria, su cara, tema, perfil, permisos y sesión).
+        return emitir('accion', { tipo: 'abrir', pantalla: 'ajustes' });
       case 'modo': {
         const n = trabajando ? 'charlar' : 'trabajar';
         setModoMesa(n);
@@ -2317,6 +2319,23 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       }
     }, 700);
   };
+
+  // Voz, oído, comentarios, efectos, memoria, su cara y su postura se ajustan en Ajustes (José, 2-oct:
+  // el menú angosto «se mira mal»): la mesa le publica lo que hay y le presta sus mismas acciones.
+  useEffect(() => {
+    publicarMesa(
+      { avatar: avatarId, sttEngine: settings.sttEngine, proactive: settings.proactive, sfx: settings.sfx, memoria: longMemory.current.length, cara: cara ?? 'anillos', postura: postura || 'pie' },
+      {
+        fijarOido: (e) => void changeStt(e),
+        alternarComentarios: () => void toggleProactive(),
+        alternarEfectos: () => void toggleSfx(),
+        olvidar: confirmarOlvido,
+        fijarCara: cambiarCara,
+        fijarPostura: cambiarPostura,
+      }
+    );
+  });
+  useEffect(() => retirarMesa, []);
 
   return (
     <View
@@ -2552,25 +2571,14 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
           setMenuOpen(false);
           setHojaCerebro(h);
         }}
-        settings={settings}
-        memoryCount={longMemory.current.length}
-        onSetSttEngine={(e) => void changeStt(e)}
-        onToggleProactive={() => void toggleProactive()}
-        onToggleSfx={() => void toggleSfx()}
-        onForget={confirmarOlvido}
         onSearch={(q) => {
           setMenuOpen(false);
           void handleCommand(`busca ${q}`);
         }}
-        onLogout={onLogout}
         conSala={enSala}
-        cara={cara ?? 'anillos'}
-        onSetCara={cambiarCara}
         avatar={avatarId}
         onSetAvatar={(id) => void elegirAvatar(id)}
         caraClasica={vista === 'clasica'}
-        postura={postura || 'pie'}
-        onSetPostura={cambiarPostura}
       />
 
       {eligiendo && (

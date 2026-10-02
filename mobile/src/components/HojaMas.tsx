@@ -15,7 +15,8 @@
  *   · Su computadora    — lo que hace la computadora en la nube del avatar, y encargarle algo
  *                         (ajustes/Computadora.tsx); solo si el servidor la tiene;
  *   · Qué puedo hacer   — el recorrido corto (src/tutorial);
- *   · Ajustes           — el menú completo de la mesa (DeskMenu).
+ *   · Ajustes           — la pantalla de Ajustes (voz, oído, memoria, su cara, tema, perfil, permisos
+ *                         y sesión); el menú corto de la mesa (DeskMenu) sigue en «Escribir».
  * Cada mosaico dice su estado debajo del nombre (p. ej. «Solo ahora · 8 min»).
  *
  * El layout, a prueba de Android (José, Samsung con Android 16: las tarjetas salían apiladas como una

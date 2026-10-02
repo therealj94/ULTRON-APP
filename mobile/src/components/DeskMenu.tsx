@@ -1,11 +1,29 @@
+/**
+ * EL MENÚ DE LA MESA: corto, con lo que se HACE con el avatar (José, 2-oct, con captura: la columna
+ * angosta con voz, oído, memoria y «Olvidar» cortado fuera de la pantalla «se mira mal»).
+ *
+ *   Arriba          con quién está, si hay cerebro, el idioma y «Ajustes» (la pantalla completa)
+ *   Escribir        una orden escrita (es lo que abre «Más → Escribir»)
+ *   Con quién       Guardián · AU-RA · Claudio
+ *   Escuchar / Ver  el micrófono y la cámara
+ *   Lo suyo         atajos, y lo de cada avatar (vigilar, orar, cantar, recordar un hecho…)
+ *   Juntos          misiones y tu círculo
+ *   Investigar, los gestos y el catálogo de lo que sabe hacer
+ *
+ * Lo que es ajuste (la voz, el oído, «comenta lo que ve», los efectos, la memoria y «Olvidar», su cara,
+ * cómo contesta, lo que sabe de ti, cerrar sesión) vive ordenado en Ajustes (ajustes/Ajustes.tsx), que
+ * usa las mismas acciones de la mesa (app/mesaAjustes.ts).
+ *
+ * El panel sale de la derecha: casi todo el ancho en vertical (antes el 64 %: ~250 px en un teléfono),
+ * hasta 440 dp acostado, respetando la muesca y la barra de gestos.
+ */
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Animated, Easing, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, Animated, Easing, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { APP_VERSION, type DeskPresence, type Mode } from '../config';
 import type { Cancion } from '../lib/api';
 import { agrupar, fetchCapacidades, type Capacidad, type CapacidadesPayload } from '../lib/capacidades';
 import { GENEROS } from '../lib/intenciones';
-import type { SttEngine } from '../lib/storage';
-import type { Postura } from '../lib/tareas';
 import { T, SOMBRA } from '../tema';
 import { de, tr, useIdioma, type Bilingue } from '../i18n';
 import { AVATARES, avatarPorId, type AvatarId } from '../avatares/catalogo';
@@ -16,13 +34,18 @@ import type { PantallaCerebro } from '../compa/cerebro';
 /** Una fila del menú que abre una hoja (sus misiones, su círculo, lo que sabe de ti). */
 const FilaHoja = ({ titulo, sub, onPress }: { titulo: string; sub: string; onPress: () => void }) => (
   <Pressable onPress={onPress} style={styles.row} accessibilityRole="button" accessibilityLabel={`${titulo}. ${sub}`}>
-    <View style={{ flex: 1 }}>
+    <View style={styles.textos}>
       <Text style={styles.label}>{titulo}</Text>
       <Text style={styles.sub}>{sub}</Text>
     </View>
-    <Text style={styles.label}>›</Text>
+    <Text style={styles.chevron}>›</Text>
   </Pressable>
 );
+
+/** Ancho del panel: casi todo en vertical, una columna cómoda acostado (nunca la tira angosta de antes). */
+export function anchoPanel(ancho: number): number {
+  return Math.round(Math.min(440, Math.max(ancho * 0.64, Math.min(ancho - 32, 400))));
+}
 
 const MODES: Array<{ id: Mode; label: Bilingue; hint: Bilingue }> = [
   { id: 'GUARDIAN', label: { es: 'Guardián', en: 'Guardian' }, hint: { es: 'vigila', en: 'watches' } },
@@ -67,29 +90,16 @@ type Props = {
   /** Un ejemplo del catálogo o cualquier texto: se manda como orden. */
   onCommand: (text: string) => void;
   onProbarVoz: () => void;
-  /** Sus misiones, lo que sabe de ti o tu círculo (app/HojasCerebro.tsx). Sin él, esas filas no salen. */
+  /** Sus misiones o tu círculo (app/HojasCerebro.tsx). Sin él, esas filas no salen. */
   onAbrirHoja?: (h: PantallaCerebro) => void;
-  settings: { sttEngine: SttEngine; proactive: boolean; sfx: boolean };
-  memoryCount: number;
-  onSetSttEngine: (e: SttEngine) => void;
-  onToggleProactive: () => void;
-  onToggleSfx: () => void;
-  onForget: () => void;
   onSearch: (q: string) => void;
-  onLogout: () => void;
   /** Si AU-RA está de cuerpo entero (la sala) o con una cara (anillos o la de respaldo). */
   conSala: boolean;
-  /** Qué cara eligió: los anillos (Skia) o la habitación 3D. */
-  cara: 'anillos' | 'sala';
-  onSetCara: (c: 'anillos' | 'sala') => void;
   /** El avatar de la mesa (Guardián, AU-RA o Claudio): el menú muestra lo suyo. */
   avatar: AvatarId;
   onSetAvatar: (a: AvatarId) => void;
   /** Se ve la cara clásica (respaldo): solo ella sabe dibujar el blaster y el sable. */
   caraClasica: boolean;
-  /** Cómo contesta: de pie en el centro o sentada en su sillón. */
-  postura: Postura;
-  onSetPostura: (p: Postura) => void;
 };
 
 type CatState = { status: 'idle' | 'loading' | 'ok' | 'fail'; payload: CapacidadesPayload | null; offline: boolean; at: string };
@@ -137,7 +147,8 @@ const Card = ({ c, onCommand }: { c: Capacidad; onCommand: (text: string) => voi
 export function DeskMenu(p: Props) {
   useIdioma();
   const { width } = useWindowDimensions();
-  const panelW = Math.min(460, width * 0.64);
+  const ins = useSafeAreaInsets();
+  const panelW = anchoPanel(width);
   const x = useRef(new Animated.Value(panelW)).current;
   const dim = useRef(new Animated.Value(0)).current;
   const scroll = useRef<ScrollView>(null);
@@ -197,9 +208,9 @@ export function DeskMenu(p: Props) {
         <Pressable style={StyleSheet.absoluteFill} onPress={p.onClose} />
       </Animated.View>
       <Animated.View style={[styles.panel, { width: panelW, transform: [{ translateX: x }] }]}>
-        <ScrollView ref={scroll} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <ScrollView ref={scroll} contentContainerStyle={[styles.content, { paddingTop: ins.top + 16, paddingBottom: ins.bottom + 28, paddingRight: ins.right + 20 }]} keyboardShouldPersistTaps="handled">
           <View style={styles.head}>
-            <View style={{ flex: 1 }}>
+            <View style={styles.textos}>
               <Text style={[styles.kicker, { color: av.tema.acentoTexto }]}>
                 {de(av.nombre).toUpperCase()} · {de(av.oficio)}
               </Text>
@@ -214,6 +225,39 @@ export function DeskMenu(p: Props) {
             <View style={[styles.dot, { backgroundColor: p.online ? T.activo : T.aviso }]} />
             <Text style={[styles.statusText, { flex: 1 }]}>{p.online ? tr('Conectado', 'Connected') : tr('Sin cerebro · modo local', 'No brain · local mode')}</Text>
             <SelectorIdioma acento={av.tema.acento} sobreAcento={av.tema.sobreAcento} />
+          </View>
+
+          {/* Todo lo que es ajuste vive en la pantalla de Ajustes, ordenado y a lo ancho. */}
+          <Pressable
+            onPress={() => {
+              p.onClose();
+              emitir('accion', { tipo: 'abrir', pantalla: 'ajustes' });
+            }}
+            style={[styles.ajustes, { borderColor: av.tema.acento }]}
+            accessibilityRole="button"
+            accessibilityLabel={tr('Abrir Ajustes: voz, oído, memoria, tema, perfil, permisos y sesión', 'Open Settings: voice, hearing, memory, theme, profile, permissions and session')}
+          >
+            <View style={styles.textos}>
+              <Text style={styles.label}>{tr('Ajustes', 'Settings')}</Text>
+              <Text style={styles.sub}>{tr('Voz, oído, memoria, su cara, tema, perfil, permisos y sesión', 'Voice, hearing, memory, her face, theme, profile, permissions and session')}</Text>
+            </View>
+            <Text style={[styles.chevron, { color: av.tema.acentoTexto }]}>›</Text>
+          </Pressable>
+
+          <Text style={styles.section}>{tr('Escribir una orden', 'Type a request')}</Text>
+          <View style={styles.composer}>
+            <TextInput
+              value={p.draft}
+              onChangeText={p.onChangeDraft}
+              placeholder={tr(`Escríbele a ${de(av.nombre)}…`, `Write to ${de(av.nombre)}…`)}
+              placeholderTextColor={T.texto3}
+              style={styles.input}
+              onSubmitEditing={p.onSendDraft}
+              returnKeyType="send"
+            />
+            <Pressable onPress={p.onSendDraft} style={[styles.send, { backgroundColor: av.tema.acento }]} accessibilityRole="button" accessibilityLabel={tr('Enviar la orden', 'Send the request')}>
+              <Text style={[styles.sendText, { color: av.tema.sobreAcento }]}>OK</Text>
+            </Pressable>
           </View>
 
           <Text style={styles.section}>{tr('Con quién hablas', 'Who you’re talking to')}</Text>
@@ -240,14 +284,14 @@ export function DeskMenu(p: Props) {
           ) : null}
 
           <View style={styles.row}>
-            <View>
+            <View style={styles.textos}>
               <Text style={styles.label}>{tr('Escuchar', 'Listen')}</Text>
               <Text style={styles.sub}>{p.micMuted ? tr('silenciado', 'muted') : p.listening ? tr('oyendo · sin palabra clave', 'listening · no wake word') : tr('conectando…', 'connecting…')}</Text>
             </View>
             <Switch value={!p.micMuted} onValueChange={p.onToggleMic} accessibilityLabel={tr('Escuchar', 'Listen')} trackColor={{ true: T.activo, false: T.borde }} thumbColor={T.panel} />
           </View>
           <View style={styles.row}>
-            <View>
+            <View style={styles.textos}>
               <Text style={styles.label}>{tr('Ver', 'See')}</Text>
               <Text style={styles.sub} numberOfLines={1}>
                 {p.visionOn ? (p.objects.length ? p.objects.join(' · ') : tr('cámara activa', 'camera on')) : tr('cámara apagada', 'camera off')}
@@ -293,21 +337,6 @@ export function DeskMenu(p: Props) {
           {/* ---------------- AU-RA: compañera ---------------- */}
           {esAura && (
             <>
-              <Text style={styles.section}>{tr('Su cara', 'Her face')}</Text>
-              <View style={styles.chips}>
-                <Chip on={p.cara === 'anillos'} label={tr('Anillos', 'Rings')} sub={tr('sus ojos de luz', 'her eyes of light')} onPress={() => p.onSetCara('anillos')} />
-                <Chip on={p.cara === 'sala'} label={tr('Habitación 3D', '3D room')} sub={tr('de cuerpo entero', 'full body')} onPress={() => p.onSetCara('sala')} />
-              </View>
-              {p.cara === 'sala' ? (
-                <>
-                  <Text style={styles.section}>{tr('Te contesta', 'She answers')}</Text>
-                  <View style={styles.chips}>
-                    <Chip on={p.postura === 'pie'} label={tr('De pie', 'Standing')} sub={tr('en el centro', 'in the middle')} onPress={() => p.onSetPostura('pie')} />
-                    <Chip on={p.postura === 'sentada'} label={tr('Sentada', 'Sitting')} sub={tr('en su sillón', 'in her armchair')} onPress={() => p.onSetPostura('sentada')} />
-                  </View>
-                </>
-              ) : null}
-
               <Text style={styles.section}>{tr('Recordar un hecho', 'Remember a fact')}</Text>
               <View style={styles.composer}>
                 <TextInput
@@ -372,22 +401,6 @@ export function DeskMenu(p: Props) {
             />
           </View>
 
-          <Text style={styles.section}>{tr('Escribir una orden', 'Type a request')}</Text>
-          <View style={styles.composer}>
-            <TextInput
-              value={p.draft}
-              onChangeText={p.onChangeDraft}
-              placeholder={tr(`Escríbele a ${de(av.nombre)}…`, `Write to ${de(av.nombre)}…`)}
-              placeholderTextColor={T.texto3}
-              style={styles.input}
-              onSubmitEditing={p.onSendDraft}
-              returnKeyType="send"
-            />
-            <Pressable onPress={p.onSendDraft} style={[styles.send, { backgroundColor: av.tema.acento }]} accessibilityRole="button" accessibilityLabel={tr('Enviar la orden', 'Send the request')}>
-              <Text style={[styles.sendText, { color: av.tema.sobreAcento }]}>OK</Text>
-            </Pressable>
-          </View>
-
           {p.conSala ? (
             <Text style={styles.hint}>
               {tr(
@@ -420,7 +433,7 @@ export function DeskMenu(p: Props) {
               accessibilityLabel={tr(`Qué puede hacer ${de(av.nombre)}`, `What ${de(av.nombre)} can do`)}
               accessibilityState={{ expanded: catOpen }}
             >
-              <View style={{ flex: 1 }}>
+              <View style={styles.textos}>
                 <Text style={styles.section}>{tr(`Qué puede hacer ${de(av.nombre)}`, `What ${de(av.nombre)} can do`)}</Text>
                 <Text style={styles.sub}>
                   {cat.status === 'loading'
@@ -470,85 +483,12 @@ export function DeskMenu(p: Props) {
             </View>
           )}
 
-          <Text style={styles.section}>{tr('Ajustes', 'Settings')}</Text>
-          {/* Los Ajustes de la 5.0 (tema, perfil, lo que AURA sabe de ti, permisos) son una pantalla propia. */}
-          <Pressable
-            onPress={() => {
-              p.onClose();
-              emitir('accion', { tipo: 'abrir', pantalla: 'ajustes' });
-            }}
-            style={styles.row}
-            accessibilityRole="button"
-            accessibilityLabel={tr('Abrir Ajustes', 'Open Settings')}
-          >
-            <View>
-              <Text style={styles.label}>{tr('Tema, perfil y permisos', 'Theme, profile and permissions')}</Text>
-              <Text style={styles.sub}>{tr('Oscuro o claro, cómo te digo, lo que sé de ti', 'Dark or light, what I call you, what I know about you')}</Text>
-            </View>
-            <Text style={styles.label}>›</Text>
-          </Pressable>
-          <Text style={styles.label}>{tr('Voz', 'Voice')}</Text>
-          <Text style={styles.sub}>
-            {de(av.voz)}. {tr('Todo se dice en vivo con su voz; ya no hay frases grabadas.', 'Everything is spoken live in its voice; there are no recorded phrases anymore.')}
-          </Text>
-          <Text style={styles.label}>{tr('Oído', 'Hearing')}</Text>
-          <Text style={styles.sub}>{tr('Cómo convierte tu voz en texto.', 'How your voice becomes text.')}</Text>
-          <View style={styles.chips}>
-            <Chip on={p.settings.sttEngine === 'native'} label={tr('Teléfono', 'Phone')} sub={tr('Google · en vivo', 'Google · live')} onPress={() => p.onSetSttEngine('native')} />
-            <Chip on={p.settings.sttEngine === 'cloud'} label={tr('Nube', 'Cloud')} sub={tr('en el servidor', 'on the server')} onPress={() => p.onSetSttEngine('cloud')} />
-          </View>
-          <View style={styles.row}>
-            <View>
-              <Text style={styles.label}>{tr('Comenta lo que ve', 'Comments on what it sees')}</Text>
-              <Text style={styles.sub}>{tr('Observaciones espontáneas de la cámara', 'Spontaneous camera remarks')}</Text>
-            </View>
-            <Switch value={p.settings.proactive} onValueChange={p.onToggleProactive} accessibilityLabel={tr('Comenta lo que ve', 'Comments on what it sees')} trackColor={{ true: T.activo, false: T.borde }} thumbColor={T.panel} />
-          </View>
-          <View style={styles.row}>
-            <View>
-              <Text style={styles.label}>{tr('Efectos de sonido', 'Sound effects')}</Text>
-              <Text style={styles.sub}>{tr('Toques, blaster, sable', 'Taps, blaster, saber')}</Text>
-            </View>
-            <Switch value={p.settings.sfx} onValueChange={p.onToggleSfx} accessibilityLabel={tr('Efectos de sonido', 'Sound effects')} trackColor={{ true: T.activo, false: T.borde }} thumbColor={T.panel} />
-          </View>
-          {p.onAbrirHoja ? (
-            <FilaHoja
-              titulo={tr('Lo que sé de ti', 'What I know about you')}
-              sub={tr('Lo que aprendí al hablar contigo y lo que quedó a medias', 'What I learned talking with you and what was left halfway')}
-              onPress={() => p.onAbrirHoja?.('conocer')}
-            />
-          ) : null}
-          <View style={styles.row}>
-            <View>
-              <Text style={styles.label}>{tr('Memoria de largo plazo', 'Long-term memory')}</Text>
-              <Text style={styles.sub}>{p.memoryCount ? tr(`${p.memoryCount} hechos guardados`, `${p.memoryCount} facts saved`) : tr('nada guardado aún', 'nothing saved yet')}</Text>
-            </View>
-            <Pressable onPress={p.onForget} style={styles.smallBtn} accessibilityRole="button" accessibilityLabel={tr('Olvidar la memoria de largo plazo', 'Forget long-term memory')}>
-              <Text style={styles.smallBtnText}>{tr('Olvidar', 'Forget')}</Text>
-            </Pressable>
-          </View>
-
-          <Pressable onPress={() => confirmarSalida(p.onLogout)} style={styles.logout} accessibilityRole="button">
-            <Text style={styles.logoutText}>{tr('Cerrar sesión', 'Sign out')}</Text>
-          </Pressable>
           <Text style={styles.version}>
             v{APP_VERSION} · {de(av.nombre)}
           </Text>
         </ScrollView>
       </Animated.View>
     </View>
-  );
-}
-
-/** «Cerrar sesión» pregunta antes, con las mismas palabras que Ajustes (un toque suelto no saca a nadie). */
-function confirmarSalida(salir: () => void) {
-  Alert.alert(
-    tr('¿Cerrar sesión?', 'Sign out?'),
-    tr('Tu perfil y lo que AURA sabe de ti se quedan en tu cuenta. El chat se desconecta de este teléfono.', 'Your profile and what AURA knows stay in your account. The chat disconnects from this phone.'),
-    [
-      { text: tr('Cancelar', 'Cancel'), style: 'cancel' },
-      { text: tr('Cerrar sesión', 'Sign out'), style: 'destructive', onPress: salir },
-    ]
   );
 }
 
@@ -562,7 +502,11 @@ const styles = StyleSheet.create({
     borderBottomLeftRadius: 28,
     ...SOMBRA,
   },
-  content: { padding: 20, gap: 12, paddingBottom: 32 },
+  content: { paddingLeft: 20, gap: 12 },
+  /** El texto de una fila ocupa lo que queda y se parte en renglones: nada se sale por la derecha. */
+  textos: { flex: 1, minWidth: 0 },
+  chevron: { color: T.texto2, fontSize: 22, fontWeight: '600', marginLeft: 8 },
+  ajustes: { flexDirection: 'row', alignItems: 'center', minHeight: 64, paddingVertical: 12, paddingHorizontal: 16, backgroundColor: T.panel, borderRadius: 18, borderWidth: 1 },
   head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   kicker: { color: T.principalTexto, letterSpacing: 1.5, fontWeight: '700', fontSize: 12 },
   user: { color: T.texto, fontSize: 22, fontWeight: '700', marginTop: 2 },
@@ -571,9 +515,9 @@ const styles = StyleSheet.create({
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   dot: { width: 8, height: 8, borderRadius: 4 },
   statusText: { color: T.texto2, fontSize: 13 },
-  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 14, backgroundColor: T.panel, borderRadius: 16 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 56, paddingVertical: 10, paddingHorizontal: 14, backgroundColor: T.panel, borderRadius: 16 },
   label: { color: T.texto, fontSize: 15, fontWeight: '600' },
-  sub: { color: T.texto3, fontSize: 12, marginTop: 2, maxWidth: 300 },
+  sub: { color: T.texto3, fontSize: 12.5, lineHeight: 17, marginTop: 2 },
   section: { color: T.texto2, fontSize: 13, fontWeight: '700', marginTop: 8 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   // minHeight 44: el mínimo cómodo para un dedo (antes quedaban en ~36 px).
@@ -589,10 +533,6 @@ const styles = StyleSheet.create({
   send: { minHeight: 44, minWidth: 44, backgroundColor: T.principal, borderRadius: 999, paddingHorizontal: 18, justifyContent: 'center', alignItems: 'center' },
   sendText: { color: T.sobrePrincipal, fontWeight: '700' },
   hint: { color: T.texto3, fontSize: 12, lineHeight: 17, marginTop: 4 },
-  smallBtn: { minHeight: 44, justifyContent: 'center', borderRadius: 999, paddingHorizontal: 16, paddingVertical: 7, backgroundColor: T.avisoFondo },
-  smallBtnText: { color: T.avisoTexto, fontSize: 13, fontWeight: '600' },
-  logout: { alignItems: 'center', paddingVertical: 12, marginTop: 6 },
-  logoutText: { color: T.avisoTexto, fontSize: 14, fontWeight: '600' },
   version: { color: T.texto3, fontSize: 11, textAlign: 'center' },
   orarBtn: { borderRadius: 18, padding: 14, gap: 4, backgroundColor: T.panel, borderWidth: 1, borderColor: T.borde },
   orarText: { color: T.texto, fontSize: 15, fontWeight: '700' },

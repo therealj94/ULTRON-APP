@@ -262,9 +262,63 @@ prueba('mesa: «olvidar» borra también en el servidor; el puntito del Chat lle
   const sinLeer = /export function useSinLeerTotal[\s\S]*?\n\}/.exec(chats)?.[0] || '';
   const ms = Number(/sondear\(refrescarLista, \(\) => ([\d_]+)\)/.exec(sinLeer)?.[1].replace(/_/g, ''));
   assert.ok(ms >= 30_000, `el sondeo del puntito es tranquilo (≥ 30 s; es ${ms} ms)`);
+  // «Cerrar sesión» se mudó a Ajustes (José, 2-oct): ahí pregunta antes con su hoja; el menú ya no saca a nadie.
   const menu = fuente('components/DeskMenu.tsx');
-  assert.doesNotMatch(menu, /onPress=\{p\.onLogout\}/, '«Cerrar sesión» del menú no saca sin preguntar');
-  assert.match(menu, /confirmarSalida\(p\.onLogout\)/);
+  assert.doesNotMatch(menu, /onLogout/, 'el menú de la mesa ya no cierra la sesión');
+  const ajustes = fuente('ajustes/Ajustes.tsx');
+  assert.match(ajustes, /<Fila titulo=\{tr\('Cerrar sesión', 'Sign out'\)\}[^\n]*onPress=\{\(\) => abrir\('salir'\)\}/, 'en Ajustes, «Cerrar sesión» abre la pregunta');
+  assert.match(ajustes, /<Hoja visible=\{hoja === 'salir'\}[\s\S]*?salirDeLaSesion\(\)/, 'y solo su botón saca');
+});
+
+prueba('menú de la mesa (José, 2-oct, captura): corto, ancho en vertical, nada cortado; los ajustes viven en Ajustes', async () => {
+  const menu = fuente('components/DeskMenu.tsx');
+  // Antes: Math.min(460, width * 0.64) → ~250 dp en un teléfono, con «Olvidar» fuera de la pantalla.
+  assert.doesNotMatch(menu, /width \* 0\.64\)/);
+  const ancho = /export function anchoPanel\(ancho: number\): number \{\s*return ([^;]+);/.exec(menu)?.[1];
+  assert.ok(ancho, 'el ancho del panel sale de anchoPanel');
+  const anchoPanel = new Function('ancho', `return ${ancho};`);
+  assert.equal(anchoPanel(392), 360, 'vertical (392 dp): casi todo el ancho');
+  assert.equal(anchoPanel(360), 328);
+  assert.equal(anchoPanel(850), 440, 'acostado: una columna cómoda, no media pantalla');
+  assert.ok(anchoPanel(320) <= 320 - 32, 'nunca más ancho que la pantalla');
+  assert.match(menu, /textos: \{ flex: 1, minWidth: 0 \}/, 'el texto de cada fila se parte en renglones en vez de empujar el botón fuera');
+  assert.doesNotMatch(menu, /maxWidth: 300/);
+  assert.match(menu, /paddingBottom: ins\.bottom \+ 28, paddingRight: ins\.right \+ 20/, 'respeta la barra de gestos y la muesca acostado');
+  assert.match(menu, /emitir\('accion', \{ tipo: 'abrir', pantalla: 'ajustes' \}\)/, '«Ajustes» abre la pantalla completa');
+  // Lo que se fue del menú… sin perder nada: cada opción está en Ajustes con la misma acción de la mesa.
+  for (const fuera of ['onSetSttEngine', 'onToggleProactive', 'onToggleSfx', 'onForget', 'memoryCount', 'onSetCara', 'onSetPostura']) assert.doesNotMatch(menu, new RegExp(fuera), `${fuera} ya no está en el menú`);
+  const ajustes = fuente('ajustes/Ajustes.tsx');
+  for (const [que, re] of [
+    ['la voz', /tr\('Voz', 'Voice'\)/],
+    ['el oído (teléfono o nube)', /acciones\.fijarOido\(e\)/],
+    ['comenta lo que ve', /acciones\.alternarComentarios\(\)/],
+    ['los efectos de sonido', /acciones\.alternarEfectos\(\)/],
+    ['la memoria y olvidar', /onPress=\{acciones\.olvidar\}/],
+    ['su cara', /onCambiar=\{acciones\.fijarCara\}/],
+    ['cómo contesta', /onCambiar=\{acciones\.fijarPostura\}/],
+    ['lo que sé de ti', /abrir\('conocer'\)/],
+  ]) assert.match(ajustes, re, `Ajustes tiene ${que}`);
+  const desk = fuente('screens/DeskScreen.tsx');
+  assert.match(desk, /publicarMesa\([\s\S]*?fijarOido: \(e\) => void changeStt\(e\)[\s\S]*?olvidar: confirmarOlvido/, 'la mesa le presta a Ajustes sus mismas acciones');
+  assert.match(desk, /case 'ajustes':\s*\/\/[^\n]*\n\s*return emitir\('accion', \{ tipo: 'abrir', pantalla: 'ajustes' \}\)/, '«Más → Ajustes» abre la pantalla de Ajustes');
+  // El puente entre la mesa y Ajustes: solo avisa si cambió algo; las acciones siempre las últimas.
+  const { publicarMesa, retirarMesa, mesaAjustes, suscribirMesa } = await import('../../src/app/mesaAjustes.ts');
+  let avisos = 0;
+  const quitar = suscribirMesa(() => avisos++);
+  const datos = { avatar: 'aura', sttEngine: 'native', proactive: true, sfx: true, memoria: 2, cara: 'anillos', postura: 'pie' };
+  let llamadas = 0;
+  publicarMesa(datos, { fijarOido() {}, alternarComentarios() {}, alternarEfectos() {}, olvidar() {}, fijarCara() {}, fijarPostura() {} });
+  publicarMesa({ ...datos }, { fijarOido() {}, alternarComentarios() {}, alternarEfectos() {}, olvidar: () => llamadas++, fijarCara() {}, fijarPostura() {} });
+  assert.equal(avisos, 1, 'redibujar la mesa sin cambios no redibuja Ajustes');
+  mesaAjustes().acciones.olvidar();
+  assert.equal(llamadas, 1, 'pero la acción es la del último dibujo');
+  publicarMesa({ ...datos, memoria: 0 }, mesaAjustes().acciones);
+  assert.equal(avisos, 2);
+  assert.equal(mesaAjustes().datos.memoria, 0);
+  retirarMesa();
+  assert.equal(mesaAjustes(), null, 'sin mesa, Ajustes no dibuja la sección');
+  assert.equal(avisos, 3);
+  quitar();
 });
 
 prueba('app: cada pantalla va dentro de su red de seguridad (LimitePantalla) con «Reintentar»', () => {

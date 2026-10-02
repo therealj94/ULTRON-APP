@@ -67,7 +67,7 @@ export function Fila({ titulo, detalle, icono, colorIcono, valor, derecha, onPre
           {titulo}
         </Texto>
         {!!detalle && (
-          <Texto v="chica" color="texto3" numberOfLines={2}>
+          <Texto v="chica" color="texto3" numberOfLines={3}>
             {detalle}
           </Texto>
         )}
