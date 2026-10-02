@@ -34,7 +34,8 @@ public partial class NotchWindow : Window
     const double AnchoVentana = 640, Oreja = 10, AltoCompacto = 170;
     readonly bool soloRender;
     readonly Resorte ancho = new(236, 260, 25), alto = new(36, 260, 25), radio = new(13, 260, 25);
-    // El brillo también entra y sale suave; sin brillo, el efecto se quita (una sombra invisible también cuesta dibujarla).
+    // «brillo» (el nombre de siempre) es la presencia del filo grabado: entra y sale suave y sigue la voz.
+    // Ya no es un resplandor: es la opacidad de una línea de 1 px (ver NotchWindow.Contraste.cs).
     readonly Resorte brillo = new(0, 200, 28);
     readonly Dictionary<Modo, (FrameworkElement Capa, Resorte Opacidad)> capas = new();
     readonly Stopwatch reloj = Stopwatch.StartNew();
@@ -63,6 +64,7 @@ public partial class NotchWindow : Window
     {
         this.soloRender = soloRender;
         InitializeComponent();
+        PrepararContraste();
         capas[Modo.Reposo] = (CapaReposo, new Resorte(1, 420, 40));
         capas[Modo.Escucha] = (CapaEscucha, new Resorte(0, 420, 40));
         capas[Modo.Piensa] = (CapaPiensa, new Resorte(0, 420, 40));
@@ -165,12 +167,10 @@ public partial class NotchWindow : Window
             op.Objetivo = m == modo ? 1 : 0;
             capa.IsHitTestVisible = m == modo;
         }
-        // En reposo con el ratón encima: su nombre y el micrófono.
-        NombreChico.Opacity = modo == Modo.Reposo && raton ? 1 : 0;
-        MicChico.Opacity = modo == Modo.Reposo && raton ? 1 : 0;
-        BotonCentroChico.Opacity = modo == Modo.Reposo && raton ? 1 : 0;
-        // El micrófono silenciado se ve SIEMPRE (tachado, en rojo): nunca quedas sin saber si te oye.
-        BotonSilencio.Opacity = modo == Modo.Reposo && (raton || microSilenciado) ? 1 : 0;
+        // En reposo con el ratón encima: su nombre, el Centro y el micrófono, escalonados. El micrófono silenciado
+        // se ve SIEMPRE (tachado, en lacre): nunca quedas sin saber si te oye.
+        Templar();
+        AparecerControles();
         PintarMusicaChica();
         // La «cámara» solo arriba al centro (imita el notch de la cámara); la luz del micrófono se ve siempre.
         bool abajo = lugar.Borde == BordeNotch.Abajo;
@@ -180,12 +180,13 @@ public partial class NotchWindow : Window
         double hueco = modo == Modo.Reposo && !raton ? 13 : 14;
         Camara.VerticalAlignment = abajo ? VerticalAlignment.Bottom : VerticalAlignment.Top;
         Camara.Margin = abajo ? new Thickness(0, 0, 0, hueco) : new Thickness(0, hueco, 0, 0);
-        brillo.Objetivo = modo switch { Modo.Escucha => 0.55, Modo.Habla => 0.35, Modo.Confirma => 0.45, Modo.Aviso => 0.3, Modo.Musica => 0.25, _ => 0 };
-        if (soloRender && !pruebaAnimacion) { ancho.Saltar(w); alto.Saltar(h); radio.Saltar(r); brillo.Saltar(brillo.Objetivo); foreach (var (m, (_, op)) in capas) op.Saltar(m == modo ? 1 : 0); Dibujar(); return; }
+        brillo.Objetivo = FiloDeModo();
+        PintarFilo();
+        if (soloRender && !pruebaAnimacion) { BarrasEscucha.Asentar(); BarrasHabla.Asentar(); ancho.Saltar(w); alto.Saltar(h); radio.Saltar(r); brillo.Saltar(brillo.Objetivo); foreach (var (m, (_, op)) in capas) op.Saltar(m == modo ? 1 : 0); Dibujar(); return; }
         if (!animando) { animando = true; ultimo = reloj.Elapsed; CompositionTarget.Rendering += Fotograma; }
     }
 
-    /// <summary>El brillo sigue la voz sin saltos: cambia su objetivo y deja que el resorte lo lleve.</summary>
+    /// <summary>El filo sigue la voz sin saltos: cambia su objetivo y deja que el resorte lo lleve.</summary>
     void AnimarBrillo(double v)
     {
         brillo.Objetivo = Math.Clamp(v, 0, 1);
@@ -243,9 +244,7 @@ public partial class NotchWindow : Window
     void Dibujar()
     {
         double w = ancho.Valor, h = alto.Valor, r = radio.Valor;
-        var b = Math.Clamp(brillo.Valor, 0, 1);
-        if (b < 0.01) { if (Forma.Effect != null) Forma.Effect = null; }
-        else { if (Forma.Effect == null) Forma.Effect = Brillo; Brillo.Opacity = b; }
+        Filo.Opacity = Math.Clamp(brillo.Valor, 0, 1);
         // En su sitio; si crece cerca de un lado del monitor, se corre hacia dentro para quedar entera.
         double x0 = PosicionNotch.CentroVisible(centroVentana, w, limiteIzq, limiteDer, Oreja, MargenBorde) - w / 2;
         bool abajo = lugar.Borde == BordeNotch.Abajo;
@@ -297,6 +296,7 @@ public partial class NotchWindow : Window
         BotonAviso.Visibility = a.Boton != null ? Visibility.Visible : Visibility.Collapsed;
         BotonAviso.Content = a.Boton;
         Recalcular();
+        GolpeDeAviso();
         if (soloRender) return;
         relojAviso = new DispatcherTimer { Interval = TimeSpan.FromSeconds(a.Segundos) };
         relojAviso.Tick += (_, _) => { if (raton && modo == Modo.Aviso) return; SiguienteAviso(); };
@@ -365,13 +365,21 @@ public partial class NotchWindow : Window
         bandeja = new Forms.NotifyIcon { Icon = System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath!) ?? System.Drawing.SystemIcons.Application, Text = "AURA", Visible = true };
         bandeja.MouseClick += (_, e) => { if (e.Button == Forms.MouseButtons.Left) Dispatcher.Invoke(() => AbrirPanel(!panelAbierto)); };
         var menu = new Forms.ContextMenuStrip();
-        menu.Items.Add("Abrir el Centro  (Ctrl+Alt+C)", null, (_, _) => Dispatcher.Invoke(() => AbrirCentro()));
-        menu.Items.Add("Chat rápido en el notch  (Ctrl+Alt+A)", null, (_, _) => Dispatcher.Invoke(() => AbrirPanel(true)));
-        menu.Items.Add("Hablar  (Ctrl+Alt+Espacio)", null, (_, _) => Dispatcher.Invoke(() => Microfono(this, new RoutedEventArgs())));
-        menu.Items.Add("Pausar todo  (Ctrl+Alt+Esc)", null, (_, _) => Dispatcher.Invoke(PausarTodo));
-        menu.Items.Add("Ajustes", null, (_, _) => Dispatcher.Invoke(() => AbrirCentro("ajustes")));
+        // Los atajos van a la derecha, en Plex Mono (los dibuja MenuBandeja); el texto, solo.
+        Forms.ToolStripMenuItem Item(string texto, string atajo, Action hacer)
+        {
+            var i = new Forms.ToolStripMenuItem(texto, null, (_, _) => Dispatcher.Invoke(hacer)) { ShortcutKeyDisplayString = atajo };
+            menu.Items.Add(i);
+            return i;
+        }
+        Item("Abrir el Centro", "Ctrl+Alt+C", () => AbrirCentro());
+        Item("Chat rápido en el notch", "Ctrl+Alt+A", () => AbrirPanel(true));
+        Item("Hablar", "Ctrl+Alt+Espacio", () => Microfono(this, new RoutedEventArgs()));
+        Item("Pausar todo", "Ctrl+Alt+Esc", PausarTodo);
+        Item("Ajustes", "", () => AbrirCentro("ajustes"));
         menu.Items.Add(new Forms.ToolStripSeparator());
-        menu.Items.Add("Cerrar AURA por completo", null, (_, _) => Dispatcher.Invoke(() => SalirDelTodo()));
+        Item("Cerrar AURA por completo", "", () => SalirDelTodo()).Tag = "peligro";
+        MenuBandeja.Vestir(menu);
         bandeja.ContextMenuStrip = menu;
     }
 

@@ -7,6 +7,7 @@ namespace Aura.Windows.Notch;
 /// <summary>
 /// Los íconos del notch dibujados como vectores propios (trazo redondo, 24×24): no dependen de que
 /// Windows tenga Segoe Fluent Icons o MDL2. Se piden con el mismo código de glifo de siempre.
+/// Trazo de grabado (Contraste): ~1,3 px en pantalla sea cual sea el tamaño, canto recto, esquinas vivas.
 /// </summary>
 internal sealed class Glifo : FrameworkElement
 {
@@ -89,7 +90,7 @@ internal sealed class Glifo : FrameworkElement
         double s = System.Math.Min(ActualWidth, ActualHeight) / 24.0;
         dc.PushTransform(new TranslateTransform((ActualWidth - 24 * s) / 2, (ActualHeight - 24 * s) / 2));
         dc.PushTransform(new ScaleTransform(s, s));
-        dc.DrawGeometry(null, new Pen(Pincel, 1.9) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round, LineJoin = PenLineJoin.Round }, g);
+        dc.DrawGeometry(null, new Pen(Pincel, System.Math.Clamp(1.3 / s, 1.4, 2.4)) { StartLineCap = PenLineCap.Square, EndLineCap = PenLineCap.Square, LineJoin = PenLineJoin.Miter, MiterLimit = 4 }, g);
         dc.Pop(); dc.Pop();
     }
 }
