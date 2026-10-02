@@ -1,7 +1,23 @@
+; La versión llega del CI (ISCC /DAppVer=2.0.<build>): la misma del .exe y de aura-windows.json (auditoría 1-oct, H06).
+; A mano, sin /DAppVer, se lee de artifacts\version.txt (lo escribe publish.ps1) y, si no está, 2.0.0.
+#ifndef AppVer
+  #define VerArchivo AddBackslash(SourcePath) + "..\artifacts\version.txt"
+  #if FileExists(VerArchivo)
+    #define AppVer Trim(FileRead(FileOpen(VerArchivo)))
+  #else
+    #define AppVer "2.0.0"
+  #endif
+#endif
 [Setup]
 AppId={{771C9ED5-39B8-4A11-A1DE-606D406422A3}
 AppName=AURA
-AppVersion=2.0.0
+AppVersion={#AppVer}
+AppVerName=AURA {#AppVer}
+VersionInfoVersion={#AppVer}.0
+VersionInfoProductVersion={#AppVer}
+VersionInfoProductTextVersion={#AppVer}
+VersionInfoCompany=Orden Global
+VersionInfoDescription=Instalador de AURA para Windows
 AppPublisher=Orden Global
 DefaultDirName={localappdata}\Programs\AuraWindows
 DefaultGroupName=AURA
@@ -10,7 +26,7 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0.17763
 OutputDir=..\artifacts\installer
-OutputBaseFilename=AURA-Windows-Setup-2.0.0-x64
+OutputBaseFilename=AURA-Windows-Setup-{#AppVer}-x64
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern

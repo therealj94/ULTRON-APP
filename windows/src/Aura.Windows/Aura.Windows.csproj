@@ -20,4 +20,19 @@
   <Content Include="CentroAssets/**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true"/>
   <Content Include="Modelos/**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true"/>
  </ItemGroup>
+ <!--
+  ONNX Runtime (el modelo propio «Hey AURA») va AL LADO del .exe, no dentro (auditoría 1-oct, H05): dentro del
+  .exe de un solo archivo se extraía a %TEMP% y, si eso fallaba o Windows encontraba antes otra copia (la vieja
+  de System32), NativeMethods no arrancaba. Aura.Windows.Core/MotorOnnx.cs lo carga por ruta completa desde aquí.
+  El runtime de Visual C++ que necesita (msvcp140*.dll, vcruntime140*.dll) lo copia publish.ps1 junto a él.
+  Los .lib del paquete (solo sirven para compilar C++) no se publican.
+ -->
+ <Target Name="OnnxAlLadoDelExe" AfterTargets="ComputeResolvedFilesToPublishList" Condition="'$(PublishSingleFile)' == 'true'">
+  <ItemGroup>
+   <ResolvedFileToPublish Condition="$([System.String]::Copy('%(Filename)').StartsWith('onnxruntime')) And '%(Extension)' == '.dll'">
+    <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+   </ResolvedFileToPublish>
+   <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="$([System.String]::Copy('%(Filename)').StartsWith('onnxruntime')) And '%(Extension)' == '.lib'"/>
+  </ItemGroup>
+ </Target>
 </Project>

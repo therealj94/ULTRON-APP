@@ -58,6 +58,8 @@ public partial class NotchWindow
         agenda?.Dispose(); agenda = null;
         foreach (var c in conexiones.Values) c.Dispose();
         conexiones.Clear();
+        // Lo ya visto del correo era de la cuenta anterior: la nueva empieza sin cursor.
+        Aura.Windows.Core.CursorCorreo.OlvidarTodos();
         bool habia = ajustes.Conexiones.Count > 0 || ajustes.CorreoDireccion.Length > 0 || ajustes.CorreoClave.Length > 0 || ajustes.AgendaUrl.Length > 0;
         ajustes.Conexiones.Clear();
         ajustes.CorreoDireccion = ""; ajustes.CorreoClave = ""; ajustes.AgendaUrl = "";

@@ -140,6 +140,13 @@ Una revisión independiente del código 1.0 encontró y se corrigió:
 - Lo probado en CI usa un servidor simulado: no acredita el Qwen, la voz ni el oído de producción, ni un micrófono físico. Eso se prueba en la PC.
 - La escritura directa es para Word y el Bloc de notas (UI Automation, con foco verificado). No hay control universal del escritorio.
 - Laya del nodo necesita que se entrene y se reinicie el servicio en la T4 (no hay acceso desde aquí).
-- Sin firma Authenticode del propietario: SmartScreen puede avisar la primera vez.
+- Sin firma Authenticode del propietario: SmartScreen puede avisar la primera vez. **TODO (auditoría 1-oct, H07)**: con un certificado de firma de código, cargar en GitHub los secretos `AURA_SIGN_PFX` (el .pfx en base64) y `AURA_SIGN_PFX_PASSWORD`: el CI ya firma el .exe y el instalador si existen (`windows/scripts/sign.ps1 -DesdeSecretos`, SHA-256 con sello de tiempo) y, si no, avisa y sigue sin firma. Después, exigir la firma del editor en `Manos/Actualizador.cs` antes de instalar.
+
+## Release, versión y actualización (auditoría 1-oct)
+
+- **Una versión para todo**: el CI fija `AURA_VERSION=2.0.<build>` y la usan el .exe (FileVersion/ProductVersion, con el commit tras el «+»), el instalador (`ISCC /DAppVer`, VersionInfo) y la ficha `aura-windows.json`; el CI falla si no coinciden.
+- **Solo hacia adelante**: AURA se actualiza si la versión publicada es MAYOR que la suya (nunca a una igual o anterior), con el SHA-256 del instalador comprobado al bajar y otra vez justo antes de correrlo. La instalación sola espera mientras haya voz, acciones, algo esperando el «sí», un borrador sin guardar o una llamada (PULSE2CHAT avisa con `notch.llamada`; la ventana de llamadas también cuenta) y 10 min sin usar la PC.
+- **ONNX Runtime al lado del .exe**: `onnxruntime.dll` ya no va dentro del .exe de un solo archivo y viaja con el runtime de Visual C++ (`msvcp140*.dll`, `vcruntime140*.dll`), que necesita y que .NET autocontenido no trae; AURA lo carga por ruta completa desde su carpeta. `--onnx-self-test` carga el modelo propio en el .exe publicado y en el instalado (CI). Si falla, `aura.log` guarda la cadena completa de excepciones (saneada), la versión de ORT y qué piezas faltan.
+- **Registro sin lo que dices**: `aura.log` guarda tiempos, largos y tipos; el texto de lo dicho y de las órdenes, solo con «Registro detallado» (Ajustes → Privacidad, apagado de fábrica), y aun así sin correos, enlaces con parámetros ni números largos. Las métricas de voz son por turno (`[voz-turno]`: id, etapas por separado, cómo terminó y anomalías marcadas); en vivo se cuentan desde la transcripción.
 - Las llamadas usan el servicio aparte de `windows/gateway` (opcional, configurable en Ajustes).
 - `windows/training/` es el candidato anterior de Codex (1/10 en su prueba); queda como historial, reemplazado por Laya «windows» del nodo.

@@ -160,6 +160,8 @@ public partial class NotchWindow
             case "notch.colgada" or "notch.timbreFin": if (propuesta?.Titulo.StartsWith("📞") == true) { propuesta = null; relojPropuesta?.Stop(); Recalcular(); } return true;
             case "notch.monitores": return MonitoresParaCentro();
             case "notch.restablecer": RestablecerPosicion(); AvisarEstadoCentro(); return AjustesParaCentro();
+            // El estado real de la llamada de PULSE2CHAT (sonando, conectando o hablando): la actualización sola espera.
+            case "notch.llamada": llamadaPulse = Bool(a, "activa") == true; return true;
             case "notch.aviso": Avisar(new Aviso(Recortar(Texto(a, "titulo"), 60), Recortar(Texto(a, "cuerpo"), 120), "", "happy", T("Ver", "View"), () => AbrirCentro("pulse"), 6)); return true;
             case "chat.enviar":
             {
@@ -192,6 +194,7 @@ public partial class NotchWindow
     {
         object[] eventos = Array.Empty<object>();
         int? correos = null;
+        bool correosAlMenos = false;
         string[] ultimos = Array.Empty<string>();
         if (agenda != null)
         {
@@ -207,7 +210,7 @@ public partial class NotchWindow
         }
         if (correo != null)
         {
-            try { using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8)); correos = (await correo.NoLeidos(30, cts.Token)).Count; }
+            try { using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8)); correos = (await correo.NoLeidos(30, cts.Token)).Count; correosAlMenos = ConteoCorreo.Tope(correos.Value, 30); }
             catch (Exception ex) when (ex is not OutOfMemoryException) { Registro.Anotar("inicio", "correo: " + ex.Message); }
         }
         if (avisosApps != null)
@@ -215,7 +218,7 @@ public partial class NotchWindow
             try { ultimos = (await Task.Run(() => avisosApps.Recientes(6))).Where(x => !AvisosApps.EsPropia(x.Aumid) && !Silenciada(x.App)).Take(3).Select(x => $"{x.App}: {x.Titulo}").ToArray(); }
             catch (Exception ex) when (ex is not OutOfMemoryException) { Registro.Anotar("inicio", "avisos: " + ex.Message); }
         }
-        return new { eventos, correos, avisos = ultimos };
+        return new { eventos, correos, correosAlMenos, avisos = ultimos };
     }
 
     static string Recortar(string s, int n) => s.Length > n ? s[..n] + "…" : s;
@@ -317,6 +320,7 @@ public partial class NotchWindow
         carteraDireccion = ajustes.CarteraDireccion, servidor = ajustes.Servidor,
         clientes = new { spotify = ajustes.SpotifyClientId, google = ajustes.GoogleClientId, microsoft = ajustes.MicrosoftClientId },
         notch = new { borde = ajustes.NotchBorde, fraccion = ajustes.NotchFraccion, monitor = ajustes.NotchMonitor, menosMovimiento = ajustes.MenosMovimiento },
+        registroDetallado = ajustes.RegistroDetallado,
     };
 
     void GuardarDesdeCentro(JsonElement a)
@@ -359,6 +363,11 @@ public partial class NotchWindow
                     ajustes.SpotifyClientId = Texto(p.Value, "spotify").Trim(); ajustes.GoogleClientId = Texto(p.Value, "google").Trim();
                     ajustes.MicrosoftClientId = Texto(p.Value, "microsoft").Trim(); if (Texto(p.Value, "googleSecreto") is { Length: > 0 } gs) ajustes.GoogleClientSecret = gs.Trim();
                     cuentas = true; break;
+                // Privacidad del registro (H13): el texto de lo dicho entra en aura.log solo si lo pides.
+                case "registroDetallado" when p.Value.ValueKind is JsonValueKind.True or JsonValueKind.False:
+                    ajustes.RegistroDetallado = Registro.Detallado = p.Value.GetBoolean();
+                    Registro.Anotar("ajustes", "registro detallado " + (ajustes.RegistroDetallado ? "encendido" : "apagado"));
+                    break;
             }
         }
         GuardarAjustes();

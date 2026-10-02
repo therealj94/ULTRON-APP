@@ -43,7 +43,7 @@ public static class PuenteCentro
         "estado", "entrar.genesis", "entrar.enlace", "entrar.clave", "salir", "primeraVez.terminar",
         "ajustes.leer", "ajustes.guardar", "ventana.recoger", "ventana.mostrar", "relevo", "relevo.archivo",
         "secreto.leer", "secreto.guardar", "secreto.borrar",
-        "notch.timbre", "notch.colgada", "notch.timbreFin", "notch.aviso",
+        "notch.timbre", "notch.colgada", "notch.timbreFin", "notch.aviso", "notch.monitores", "notch.restablecer", "notch.llamada",
         "chat.enviar", "chat.callar", "chat.hablar", "inicio.dia",
         "diagnostico.leer", "diagnostico.carpeta", "actualizar.estado", "actualizar.buscar", "actualizar.instalar",
         "spotify.estado", "spotify.buscar", "spotify.poner", "spotify.control", "spotify.dispositivos", "spotify.transferir",

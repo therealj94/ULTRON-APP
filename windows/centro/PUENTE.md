@@ -30,6 +30,7 @@ tabla (`PuenteCentro.Metodos`) se rechaza antes de mirar sus argumentos.
 | `secreto.leer` / `secreto.guardar` / `secreto.borrar` | `{ clave, valor? }` | almacén pequeño cifrado con DPAPI (claves de PULSE2CHAT). Solo claves `p2c.…` (`^p2c\.[a-z0-9_-]+(\.[a-z0-9_-]+)*$`, ≤ 60), valor ≤ 16 KB; otra clave se rechaza |
 | `notch.timbre` | `{ de, nombre, video }` | el notch muestra la llamada entrante con Contestar/Rechazar (responde con el evento `llamada.accion`) |
 | `notch.timbreFin` (o `notch.colgada`) | `{ motivo }` | la llamada dejó de sonar (contestó, colgó, otro aparato): el notch quita el timbre |
+| `notch.llamada` | `{ activa }` | hay (o ya no hay) una llamada de PULSE2CHAT sonando o en curso: mientras tanto AURA no se actualiza sola |
 | `notch.aviso` | `{ titulo, cuerpo }` | aviso en el notch (mensaje nuevo, llamada perdida) |
 | `ventana.mostrar` | `{ seccion? }` | trae el Centro al frente (p. ej. al contestar desde el notch) |
 | `chat.enviar` | `{ texto }` | le habla a AURA (igual que el chat del notch); las respuestas llegan por `chat.mensaje` |

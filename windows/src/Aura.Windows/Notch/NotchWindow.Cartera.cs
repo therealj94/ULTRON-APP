@@ -70,7 +70,7 @@ public partial class NotchWindow
                 // AURA solo abre el envío ya llenado en Veta Wallet: allá se revisa y se firma con la contraseña.
                 var monto = CarteraVeta.Monto(Texto(a, "monto")) ?? throw new InvalidOperationException(T("Escribe una cantidad mayor que cero.", "Enter an amount above zero."));
                 var enlace = CarteraVeta.EnlacePagar(Texto(a, "direccion"), monto, Texto(a, "simbolo"));
-                Centro.Registro.Anotar("cartera", $"envío preparado en Veta Wallet: {monto} {Texto(a, "simbolo")}");
+                Centro.Registro.AnotarDicho("cartera", $"envío preparado en Veta Wallet ({Texto(a, "simbolo")})", monto.ToString());
                 System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(enlace) { UseShellExecute = true });
                 long bloque = 0;
                 try { bloque = await Cartera.Bloque(); } catch (Exception ex) when (ex is InvalidOperationException or System.Net.Http.HttpRequestException or TaskCanceledException) { /* se busca desde lo último al vigilar */ }

@@ -42,12 +42,16 @@ public partial class NotchWindow
     /// <summary>«Oye AURA» llegó a media frase: la orden viene en esa misma frase, se deja terminar y se hace.</summary>
     bool despertarAlTerminar;
     DateTime ultimaCharla = DateTime.MinValue;
-    readonly System.Diagnostics.Stopwatch cronoTurno = new();
-    bool primerAudioAnotado;
+    /// <summary>
+    /// Las métricas por turno (auditoría 1-oct, H08): cada turno con id y reloj propios, cada etapa por separado
+    /// y siempre cerrado (ok, cancelado, fallo, silencio…). Solo números en el registro.
+    /// </summary>
+    readonly MetricasVoz metricas = new(l => Centro.Registro.Anotar("voz-turno", l));
 
     void Iniciar()
     {
         ajustes = soloRender ? new Ajustes() : Ajustes.Cargar();
+        Centro.Registro.Detallado = ajustes.RegistroDetallado;
         AplicarAvatar(ajustes.Avatar, false);
         AvisoCuenta.Visibility = string.IsNullOrEmpty(ajustes.Token) ? Visibility.Visible : Visibility.Collapsed;
         if (soloRender) return;
@@ -72,14 +76,28 @@ public partial class NotchWindow
 
         oido.Nivel += n => Dispatcher.BeginInvoke(new Action(() => { BarrasEscucha.Nivel = n; if (escuchando) { EscalaAnillo.ScaleX = EscalaAnillo.ScaleY = 1 + n * 0.5; } }));
         oido.EmpezoAHablar += () => Dispatcher.BeginInvoke(new Action(AlEmpezarAHablar));
-        oido.Frase += wav => Dispatcher.BeginInvoke(new Action(() => _ = AlTerminarFrase(wav)));
+        // El momento real en que el oído cerró la frase (no cuando la interfaz lo atiende): el origen del turno.
+        oido.Frase += wav => { var fin = System.Diagnostics.Stopwatch.GetTimestamp(); Dispatcher.BeginInvoke(new Action(() => _ = AlTerminarFrase(wav, fin))); };
         oido.SeCanso += () => Dispatcher.BeginInvoke(new Action(() => { if (oido.ModoInterrupcion) return; CerrarOido(); if (!hablandoAhora && !pensando) continuo = false; Recalcular(); }));
         oido.Fallo += m => Dispatcher.BeginInvoke(new Action(() => { CerrarOido(); continuo = false; Avisar(new Aviso("Micrófono", m, "", "worried", Segundos: 6)); Recalcular(); }));
 
-        altavoz.Empezo += () => Dispatcher.BeginInvoke(new Action(() => { if (!primerAudioAnotado && cronoTurno.IsRunning) { primerAudioAnotado = true; Centro.Registro.Anotar("hablar", $"primera voz a los {cronoTurno.ElapsedMilliseconds} ms de terminar de oírte"); cronoTurno.Stop(); } hablandoAhora = true; pensando = false; AvatarPanel.Estado = "speaking"; EstadoPanel.Text = Ingles ? "Speaking…" : "Hablando…"; AbrirOidoParaInterrumpir(); Recalcular(); }));
+        // Cuándo llegó el audio TTS y cuándo empezó a sonar de verdad (relleno aparte: no es respuesta). La primera
+        // frase útil que suena cierra el turno como «ok».
+        altavoz.AudioRecibido += (relleno, idTurno, cuando) => Dispatcher.BeginInvoke(new Action(() => metricas.Marcar(relleno ? EtapaVoz.RellenoTts : EtapaVoz.TtsRecibido, cuando, idTurno)));
+        altavoz.Reproduciendo += (relleno, idTurno, cuando) => Dispatcher.BeginInvoke(new Action(() =>
+        {
+            metricas.Marcar(relleno ? EtapaVoz.RellenoSuena : EtapaVoz.InicioReproduccion, cuando, idTurno);
+            if (!relleno) metricas.Cerrar("ok", cuando, idTurno);
+        }));
+        altavoz.Empezo += () => Dispatcher.BeginInvoke(new Action(() => { hablandoAhora = true; pensando = false; AvatarPanel.Estado = "speaking"; EstadoPanel.Text = Ingles ? "Speaking…" : "Hablando…"; AbrirOidoParaInterrumpir(); Recalcular(); }));
         altavoz.Frase += f => Dispatcher.BeginInvoke(new Action(() => Subtitulo.Text = Expresiones.Quitar(f).Trim()));
         altavoz.Nivel += n => { oido.NivelAltavoz = n; Dispatcher.BeginInvoke(new Action(() => { AvatarHabla.Boca = n; AvatarPanel.Boca = n; BarrasHabla.Nivel = n; if (modo == Modo.Habla) AnimarBrillo(0.2 + n * 0.5); })); };
-        altavoz.Termino += () => Dispatcher.BeginInvoke(new Action(AlTerminarDeHablar));
+        altavoz.Termino += () => Dispatcher.BeginInvoke(new Action(() =>
+        {
+            // Se calló todo sin que sonara una frase útil (solo el relleno, o la voz falló): el turno se cierra igual.
+            if (!turnoEnCurso) metricas.Cerrar("sin voz útil");
+            AlTerminarDeHablar();
+        }));
         altavoz.Fallo += m => Dispatcher.BeginInvoke(new Action(() => Avisar(new Aviso("Voz", m, "", "worried"))));
 
         // Su propia voz («…soy AU-RA») no la despierta: mientras suena algo, la palabra de activación no cuenta.
@@ -224,6 +242,7 @@ public partial class NotchWindow
             generacion++;
             turno?.Cancel(); voz?.Cancel();
             altavoz.Detener();
+            metricas.Cerrar("interrumpido");
             hablandoAhora = false; pensando = false; turnoEnCurso = false;
             oido.ModoInterrupcion = false;
         }
@@ -232,7 +251,7 @@ public partial class NotchWindow
         Recalcular();
     }
 
-    async Task AlTerminarFrase(byte[] wav)
+    async Task AlTerminarFrase(byte[] wav, long finCaptura)
     {
         // Si «Oye AURA» llegó a media frase, esta es esa frase: con orden se hace; sola, se abre la conversación.
         bool despertarPedido = despertarAlTerminar;
@@ -255,12 +274,17 @@ public partial class NotchWindow
         long g = ++generacion;
         string texto = "";
         string? error = null;
-        cronoTurno.Restart(); primerAudioAnotado = false;
+        // Un turno NUEVO, con su reloj, desde que el oído cerró la frase (incluye el silencio final del detector).
+        var t = metricas.Nuevo("frases", "fin de captura", finCaptura);
+        metricas.Marcar(EtapaVoz.FinCaptura, finCaptura, t.Id);
         try { texto = await Transcribir(wav); }
-        catch (OperationCanceledException) { return; }
+        catch (OperationCanceledException) { metricas.Cerrar("cancelado", turno: t.Id); return; }
         catch (Exception ex) { error = ex.Message; }
-        if (g != generacion) return;
+        if (g != generacion) { metricas.Cerrar("cancelado", turno: t.Id); return; }
+        metricas.Marcar(EtapaVoz.SttRecibido, turno: t.Id);
         pensando = false;
+        if (error != null) metricas.Cerrar("fallo stt", turno: t.Id);
+        else if (texto.Length == 0) metricas.Cerrar("silencio", turno: t.Id);
         if (error != null) { continuo = false; Avisar(new Aviso(T("No pude oírte", "I couldn't hear you"), error, "", "worried", Segundos: 6)); Recalcular(); return; }
         if (texto.Length == 0 && despertarPedido) { _ = Despertar(); return; }
         if (texto.Length == 0)
@@ -272,12 +296,13 @@ public partial class NotchWindow
             return;
         }
         vaciasSeguidas = 0;
-        // Lo que entendió (solo en el registro de esta PC, que nadie más ve): para afinar el micrófono con datos.
-        Centro.Registro.Anotar("oir", $"{cronoTurno.ElapsedMilliseconds} ms · «{(texto.Length > 140 ? texto[..140] + "…" : texto)}»");
+        // Lo que entendió: en el registro solo su largo; el texto (saneado), solo con «Registro detallado» (H13).
+        Centro.Registro.AnotarDicho("oir", $"turno {t.Id}", texto);
         // «¡Hasta la próxima!», «Gracias por ver»…: el transcriptor inventando en el ruido, o el eco de AURA. No es la persona.
         if (propuesta == null && Fantasma.Es(texto, ultimaRespuesta))
         {
             Centro.Registro.Anotar("oir", "descartado: ruido o eco");
+            metricas.Cerrar("descartado (eco o ruido)", turno: t.Id);
             pensando = false; Recalcular();
             if (!microSilenciado && !pausado && ajustes.Escucha is "siempre" or "palabra") EmpezarAEscuchar();
             return;
@@ -293,7 +318,7 @@ public partial class NotchWindow
                 if (resto.Length == 0)
                 {
                     ultimaCharla = DateTime.Now; pensando = false;
-                    Contestar(T("¿Sí?", "Yes?"), "feliz");
+                    if (!Contestar(T("¿Sí?", "Yes?"), "feliz")) metricas.Cerrar("llamada sin voz", turno: t.Id);
                     if (!hablandoAhora) EmpezarAEscuchar();
                     Recalcular();
                     return;
@@ -302,6 +327,7 @@ public partial class NotchWindow
             }
             else if (!enCharla)
             {
+                metricas.Cerrar("no era para AURA", turno: t.Id);
                 pensando = false; Recalcular();
                 if (!microSilenciado && !pausado) EmpezarAEscuchar();
                 return;
@@ -313,7 +339,7 @@ public partial class NotchWindow
         {
             if (sinNombre.Length > 0) texto = sinNombre;
             // «Oye AURA» sola (la despertó Windows a media frase): la conversación en vivo, como siempre.
-            else if (despertarPedido) { llamadaExplicita = false; ultimaCharla = DateTime.Now; _ = Despertar(); return; }
+            else if (despertarPedido) { metricas.Cerrar("despertar", turno: t.Id); llamadaExplicita = false; ultimaCharla = DateTime.Now; _ = Despertar(); return; }
         }
         llamadaExplicita = false;
         ultimaCharla = DateTime.Now;
@@ -384,27 +410,31 @@ public partial class NotchWindow
     {
         texto = texto.Trim();
         if (texto.Length == 0 || pausado) return;
-        if (!cronoTurno.IsRunning) { cronoTurno.Restart(); primerAudioAnotado = false; }
+        // Escrito (chat del notch o del Centro): un turno propio desde que llegó el texto. Hablado: el de AlTerminarFrase.
+        var t = metricas.Actual is { Cerrado: false } abierto && hablado ? abierto : metricas.Nuevo(hablado ? "frases" : "texto", hablado ? "transcripción" : "texto recibido");
         if (propuesta != null)
         {
             // Solo un «sí» limpio confirma; cualquier «no» en la frase cancela («sí, pero mejor no» no bloquea nada).
             switch (Parametros.Respuesta(texto))
             {
-                case true: await Responder(true); return;
-                case false: await Responder(false); return;
+                case true: await Responder(true); if (!altavoz.Ocupado) metricas.Cerrar("confirmación", turno: t.Id); return;
+                case false: await Responder(false); if (!altavoz.Ocupado) metricas.Cerrar("confirmación", turno: t.Id); return;
             }
         }
         AgregarMensaje("Tú", texto);
         long g = ++generacion;
         Pedido pedido;
-        var antesDeEntender = cronoTurno.ElapsedMilliseconds;
+        var antesDeEntender = System.Diagnostics.Stopwatch.GetTimestamp();
         try { pedido = await Intencion.Decidir(texto, api != null && api.NodoDisponible ? api.Intencion : null); }
         catch { pedido = Pedido.Nada; }
-        Centro.Registro.Anotar("entender", $"{cronoTurno.ElapsedMilliseconds - antesDeEntender} ms · {pedido.Mano} ({pedido.Origen})");
-        if (g != generacion) return;
+        metricas.Marcar(EtapaVoz.Intencion, turno: t.Id);
+        Centro.Registro.Anotar("entender", $"turno {t.Id} · {System.Diagnostics.Stopwatch.GetElapsedTime(antesDeEntender).TotalMilliseconds:0} ms · {pedido.Mano} ({pedido.Origen})");
+        if (g != generacion) { metricas.Cerrar("cancelado", turno: t.Id); return; }
         if (pedido.Mano != Mano.Ninguna)
         {
             await Hacer(pedido, texto, hablado);
+            // Una acción sin voz (o con la voz apagada) también cierra su turno; si dijo algo, lo cierra el altavoz.
+            if (!altavoz.Ocupado) metricas.Cerrar("acción", turno: t.Id);
             // Lo que hizo con las manos también es parte de la charla: si después dices «súbele» o «otra de él»,
             // el cerebro sabe de qué hablan.
             Recordar(texto, T($"[Hecho en la PC: {pedido.Mano} {pedido.Valor}]", $"[Done on the PC: {pedido.Mano} {pedido.Valor}]"));
@@ -421,8 +451,9 @@ public partial class NotchWindow
         if (api == null) { NoPude(T("Conecta AURA en Ajustes para conversar.", "Connect AURA in Settings to chat.")); return null; }
         // Escribirle con la conversación en vivo abierta: se cuelga y contesta por el chat de siempre.
         if (AgenteAbierto) CerrarAgente();
-        Callar(false);
+        Callar(false, conservarTurno: true);
         long g = ++generacion;
+        var idTurno = metricas.Actual?.Id ?? 0;
         var cts = turno = new CancellationTokenSource();
         var vcts = voz = new CancellationTokenSource();
         cortador.Reiniciar();
@@ -446,7 +477,7 @@ public partial class NotchWindow
                 relleno.Stop();
                 if (g != generacion || dichas > 0 || vcts.IsCancellationRequested) return;
                 var frases = Ingles ? new[] { "Let me see…", "One sec…", "Hmm, let me think…" } : new[] { "A ver…", "Dame un segundo…", "Mmm, déjame ver…" };
-                rellenoDicho = Decir(frases[Random.Shared.Next(frases.Length)], "neutral", vcts.Token);
+                rellenoDicho = Decir(frases[Random.Shared.Next(frases.Length)], "neutral", vcts.Token, relleno: true);
             };
             relleno.Start();
         }
@@ -463,6 +494,7 @@ public partial class NotchWindow
                     if (g != generacion) return;
                     trozo = filtro.Agregar(trozo, Orden);
                     if (trozo.Length == 0) return;
+                    metricas.Marcar(EtapaVoz.PrimerTexto, turno: idTurno);
                     if (burbuja != null) burbuja.Text += Expresiones.Quitar(trozo);
                     if (burbuja != null) Desplazar.ScrollToEnd();
                     if (conVoz) foreach (var f in cortador.Agregar(trozo)) { Decir(f, emocion, vcts.Token); dichas++; }
@@ -471,10 +503,11 @@ public partial class NotchWindow
                 alReemplazo: nuevo => Dispatcher.BeginInvoke(new Action(() => { if (g == generacion && burbuja != null) burbuja.Text = FiltroAcciones.Quitar(Expresiones.Quitar(nuevo)); })),
                 ct: cts.Token);
         }
-        catch (OperationCanceledException) { return null; }
+        catch (OperationCanceledException) { metricas.Cerrar("cancelado", turno: idTurno); return null; }
         catch (Exception ex)
         {
             // Cualquier fallo (red, proxy, un servidor cambiado a mitad): nunca queda pegado en «pensando».
+            metricas.Cerrar("fallo cerebro", turno: idTurno);
             if (g != generacion) return null;
             pensando = false; turnoEnCurso = false; continuo = false;
             if (oido.ModoInterrupcion) CerrarOido();
@@ -502,6 +535,7 @@ public partial class NotchWindow
         if (conVoz && (dichas > 0 || rellenoDicho) && !altavoz.Ocupado) AlTerminarDeHablar();
         if (!conVoz || dichas == 0)
         {
+            metricas.Cerrar(conVoz ? "sin respuesta hablada" : "sin voz", turno: idTurno);
             pensando = false;
             if (!redactar && !panelAbierto && r.Texto.Length > 0 && !conVoz) Avisar(new Aviso(ajustes.NombreAvatar, r.Texto, "", EstadoDeEmocion(r.Emocion), "Ver", () => AbrirPanel(true), 8));
             AvatarPanel.Estado = EstadoDeEmocion(r.Emocion);
@@ -515,7 +549,7 @@ public partial class NotchWindow
     /// Pide la voz de una frase (sin esperar) y la pone en la cola del altavoz: la del avatar (ElevenLabs,
     /// en el servidor) o, si se eligió o el servidor no contesta, la de Windows. Devuelve si encoló algo.
     /// </summary>
-    internal bool Decir(string frase, string emocion = "neutral", CancellationToken ct = default)
+    internal bool Decir(string frase, string emocion = "neutral", CancellationToken ct = default, bool relleno = false)
     {
         if (!ajustes.ResponderConVoz || soloRender || string.IsNullOrWhiteSpace(frase)) return false;
         var a = api; var avatar = ajustes.Avatar; var idioma = ajustes.Idioma; bool local = ajustes.VozDeWindows || a == null;
@@ -531,7 +565,7 @@ public partial class NotchWindow
             catch (OperationCanceledException) { return null; }
             catch (Exception ex) { _ = Dispatcher.BeginInvoke(new Action(() => Avisar(new Aviso(T("Voz", "Voice"), ex.Message, "", "worried")))); return null; }
         });
-        altavoz.Encolar(tarea, frase);
+        altavoz.Encolar(tarea, frase, relleno, metricas.Actual?.Id ?? 0);
         return true;
     }
 
@@ -561,12 +595,13 @@ public partial class NotchWindow
         Recalcular();
     }
 
-    /// <summary>Calla la voz y corta el turno en curso.</summary>
-    internal void Callar(bool terminarSesion = false)
+    /// <summary>Calla la voz y corta el turno en curso (y cierra su métrica, salvo <paramref name="conservarTurno"/>: el que empieza a contestar).</summary>
+    internal void Callar(bool terminarSesion = false, bool conservarTurno = false)
     {
         generacion++;
         turno?.Cancel(); voz?.Cancel(); voz = null;
         altavoz.Detener();
+        if (!conservarTurno) metricas.Cerrar("cancelado");
         hablandoAhora = false; pensando = false; turnoEnCurso = false;
         if (terminarSesion) { continuo = false; CerrarAgente(); }
         else agente?.CallarVoz(); // «cállate» con la conversación en vivo: calla esta respuesta, sin colgar

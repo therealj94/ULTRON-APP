@@ -68,7 +68,8 @@ export function vistaInicio(): HTMLElement {
       const d = await pedir<any>('inicio.dia');
       const items: HTMLElement[] = [];
       for (const ev of d?.eventos ?? []) items.push(h('div', { class: 'fila', style: 'margin-bottom:6px' }, h('span', { class: 'etiqueta' }, ev.hora), h('span', null, ev.titulo)));
-      if (d?.correos != null) items.push(h('p', { class: 'tenue', style: 'margin:8px 0 0' }, T(`${d.correos} correos sin leer`, `${d.correos} unread emails`)));
+      // Con tope (se cuentan los últimos 30): «al menos 30», nunca un total que no se contó.
+      if (d?.correos != null) items.push(h('p', { class: 'tenue', style: 'margin:8px 0 0' }, d.correosAlMenos ? T(`Al menos ${d.correos} correos sin leer`, `At least ${d.correos} unread emails`) : T(`${d.correos} correos sin leer`, `${d.correos} unread emails`)));
       if (d?.avisos?.length) items.push(h('p', { class: 'tenue', style: 'margin:4px 0 0' }, T('Últimos avisos: ', 'Latest: ') + d.avisos.join(' · ')));
       diaCuerpo.replaceChildren(...(items.length ? items : [h('p', { class: 'tenue' }, T('Nada pendiente. Conecta Google o Outlook en Ajustes para ver tu agenda y correo.', 'Nothing pending. Connect Google or Outlook in Settings.'))]));
     } catch (err: any) { diaCuerpo.replaceChildren(h('p', { class: 'tenue' }, err.message)); }

@@ -28,9 +28,35 @@ jobs:
           node-version: '22'
       - run: node --test windows/gateway/server.test.mjs
       - run: python windows/training/validate.py
+      # UNA versión para el .exe, el instalador y la ficha aura-windows.json (auditoría 1-oct, H06).
+      - name: Release version
+        shell: pwsh
+        run: '"AURA_VERSION=2.0.$env:GITHUB_RUN_NUMBER" >> $env:GITHUB_ENV'
       - name: Core tests and portable executable
         shell: pwsh
         run: ./windows/scripts/publish.ps1
+      - name: Executable carries the release version
+        shell: pwsh
+        run: |
+          $info = (Get-Item ./windows/artifacts/win-x64/Aura.Windows.exe).VersionInfo
+          Write-Host "FileVersion $($info.FileVersion) · ProductVersion $($info.ProductVersion)"
+          if ($info.FileVersion -ne "$env:AURA_VERSION.0" -or -not $info.ProductVersion.StartsWith("$env:AURA_VERSION+")) { throw "La versión del .exe no es $env:AURA_VERSION" }
+      # Firma de código: lista para cuando haya certificado. Sin los secretos AURA_SIGN_PFX (el .pfx en base64) y
+      # AURA_SIGN_PFX_PASSWORD se salta con un aviso (hoy no hay certificado: el .exe y el instalador salen sin firma).
+      - name: Sign the executable (only if a certificate secret exists)
+        shell: pwsh
+        env:
+          AURA_SIGN_PFX: ${{ secrets.AURA_SIGN_PFX }}
+          AURA_SIGN_PFX_PASSWORD: ${{ secrets.AURA_SIGN_PFX_PASSWORD }}
+        run: ./windows/scripts/sign.ps1 -File ./windows/artifacts/win-x64/Aura.Windows.exe -DesdeSecretos
+      # El .exe PUBLICADO carga ONNX Runtime y corre el modelo propio (no solo las clases del Core): H05.
+      - name: ONNX Runtime loads in the published executable (own wake word model)
+        shell: pwsh
+        run: |
+          $process = Start-Process ./windows/artifacts/win-x64/Aura.Windows.exe -ArgumentList '--onnx-self-test', "$env:GITHUB_WORKSPACE/windows/artifacts/onnx/result.json" -PassThru
+          if (-not $process.WaitForExit(60000)) { $process.Kill(); throw 'ONNX test timeout' }
+          Get-Content ./windows/artifacts/onnx/result.json
+          if ($process.ExitCode -ne 0) { throw 'ONNX Runtime did not load in the published executable' }
       - uses: actions/upload-artifact@v4
         with:
           name: AURA-Windows-x64-preview
@@ -164,8 +190,18 @@ jobs:
         run: |
           $compiler = "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe"
           if (-not (Test-Path $compiler)) { throw 'Inno Setup 6 is required on this runner' }
-          & $compiler windows/installer/Aura.Windows.iss
+          & $compiler "/DAppVer=$env:AURA_VERSION" windows/installer/Aura.Windows.iss
           if ($LASTEXITCODE -ne 0) { throw 'Installer build failed' }
+          $setup = Get-Item ./windows/artifacts/installer/*.exe | Select-Object -First 1
+          if ($setup.VersionInfo.ProductVersion -ne $env:AURA_VERSION) { throw "El instalador dice $($setup.VersionInfo.ProductVersion), el .exe $env:AURA_VERSION" }
+      - name: Sign the installer (only if a certificate secret exists)
+        shell: pwsh
+        env:
+          AURA_SIGN_PFX: ${{ secrets.AURA_SIGN_PFX }}
+          AURA_SIGN_PFX_PASSWORD: ${{ secrets.AURA_SIGN_PFX_PASSWORD }}
+        run: |
+          $setup = Get-Item ./windows/artifacts/installer/*.exe | Select-Object -First 1
+          ./windows/scripts/sign.ps1 -File $setup.FullName -DesdeSecretos
       - name: Install and uninstall smoke test
         shell: pwsh
         run: |
@@ -173,9 +209,16 @@ jobs:
           $setup = Get-Item ./windows/artifacts/installer/*.exe
           $process = Start-Process $setup.FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=$target" -PassThru -Wait
           if ($process.ExitCode -ne 0 -or -not (Test-Path "$target/Aura.Windows.exe") -or -not (Test-Path "$target/CallAssets/call.html")) { throw 'Install failed' }
+          foreach ($pieza in 'onnxruntime.dll', 'msvcp140.dll', 'msvcp140_1.dll', 'vcruntime140.dll', 'vcruntime140_1.dll') { if (-not (Test-Path "$target/$pieza")) { throw "Install is missing $pieza" } }
+          if ((Get-Item "$target/Aura.Windows.exe").VersionInfo.FileVersion -ne "$env:AURA_VERSION.0") { throw 'Installed exe has a different version' }
           $process = Start-Process "$target/Aura.Windows.exe" -ArgumentList '--render-preview', "$env:GITHUB_WORKSPACE/windows/artifacts/installed-design" -PassThru
           if (-not $process.WaitForExit(90000)) { $process.Kill(); throw 'Installed app timeout' }
           if ($process.ExitCode -ne 0) { throw 'Installed app render failed' }
+          # El modelo propio carga también en la copia INSTALADA (la que corre en los equipos de verdad).
+          $process = Start-Process "$target/Aura.Windows.exe" -ArgumentList '--onnx-self-test', "$env:GITHUB_WORKSPACE/windows/artifacts/onnx/installed.json" -PassThru
+          if (-not $process.WaitForExit(60000)) { $process.Kill(); throw 'Installed ONNX test timeout' }
+          Get-Content ./windows/artifacts/onnx/installed.json
+          if ($process.ExitCode -ne 0) { throw 'ONNX Runtime did not load in the installed executable' }
           $process = Start-Process "$target/unins000.exe" -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -PassThru -Wait
           if ($process.ExitCode -ne 0 -or (Test-Path "$target/Aura.Windows.exe")) { throw 'Uninstall failed' }
       - uses: actions/upload-artifact@v4
@@ -195,9 +238,10 @@ jobs:
           Copy-Item $setup.FullName ./windows/artifacts/release/AURA-Windows-Setup-x64.exe
           $hash = (Get-FileHash ./windows/artifacts/release/AURA-Windows-Setup-x64.exe -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  AURA-Windows-Setup-x64.exe" | Set-Content ./windows/artifacts/release/AURA-Windows-Setup-x64.exe.sha256
-          $version = "2.0.$env:GITHUB_RUN_NUMBER"
-          "AURA_VERSION=$version" >> $env:GITHUB_ENV
-          # La ficha que AURA lee para actualizarse sola: si el commit no es el suyo, baja el .exe y comprueba este SHA-256.
+          # La misma versión que el .exe y el instalador (paso «Release version»).
+          $version = $env:AURA_VERSION
+          # La ficha que AURA lee para actualizarse sola: solo si la versión es MAYOR que la suya (nunca retrocede)
+          # baja el instalador y comprueba este SHA-256.
           @{ version = $version; commit = "$env:GITHUB_SHA"; sha256 = $hash } | ConvertTo-Json | Set-Content ./windows/artifacts/release/aura-windows.json
       - name: Publish the installer as a direct download (main only)
         if: github.ref == 'refs/heads/main'
