@@ -939,6 +939,7 @@ Check(AutorizarOrden.Autorizar("pon bad bunny en spotify", "pon el volumen al 30
           && ProtocoloOrbe.Cara("happy") == "HAPPY" && ProtocoloOrbe.Cara("scan") == "SCAN", "orbe: los estados del notch → caras del orbe");
     Check(ProtocoloOrbe.Cara("worried") == "IDLE" && ProtocoloOrbe.Cara("idle") == "IDLE" && ProtocoloOrbe.Cara(null) == "IDLE" && ProtocoloOrbe.Cara("<script>") == "IDLE", "orbe: lo demás es reposo");
     Check(ProtocoloOrbe.Estado("THINKING") == "{\"tipo\":\"estado\",\"face\":\"THINKING\"}", "orbe: estado");
+    Check(ProtocoloOrbe.CaraAviso("happy") == "AVISO" && ProtocoloOrbe.CaraAviso("thinking") == "THINKING" && ProtocoloOrbe.CaraAviso(null) == "IDLE", "orbe: un aviso brilla sin el acorde de listo");
     Check(ProtocoloOrbe.Boca(0.4567) == "{\"tipo\":\"boca\",\"n\":0.46}" && ProtocoloOrbe.Boca(3) == "{\"tipo\":\"boca\",\"n\":1}"
           && ProtocoloOrbe.Boca(double.NaN) == "{\"tipo\":\"boca\",\"n\":0}" && ProtocoloOrbe.Boca(-1) == "{\"tipo\":\"boca\",\"n\":0}", "orbe: boca 0..1 con dos decimales");
     Check(ProtocoloOrbe.Callar() == "{\"tipo\":\"callar\"}" && ProtocoloOrbe.Sonido(false) == "{\"tipo\":\"sonido\",\"activo\":false}", "orbe: callar y sonido");

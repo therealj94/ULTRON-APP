@@ -50,7 +50,7 @@ test('la página sigue hablando el idioma del Centro y del notch', () => {
     "params.has('clean') || !!OPC.clean", "params.get('tts') !== '0'", "params.get('sfx') !== '0'", 'OPC.sfx !== false', 'OPC.tts !== false',
     "!params.has('silent')",
     // lo que se le manda
-    "case 'estado': setState(d.face", "case 'boca': setLevel(", "case 'decir': say(d.texto", 'tts: d.tts === true', "case 'callar': silence()", "case 'sonido': SFX.activar(",
+    "case 'estado': {", "setState(f === 'AVISO' ? 'done' : f)", "if (d.mudo === true || f === 'AVISO') SFX.callarCambio()", "case 'boca': setLevel(", "case 'decir': say(d.texto", 'tts: d.tts === true', "case 'callar': silence()", "case 'sonido': SFX.activar(",
     "addEventListener('message', e => handle(e.data))", 'window.__aura = handle',
     // lo que contesta: al marco de arriba (Centro) y a WebView2 (notch)
     "window.parent.postMessage(m, '*')", 'window.chrome.webview.postMessage(m)', "notify({tipo:'listo'})", "type:'aura-fallo'", "type:'aura-end'",

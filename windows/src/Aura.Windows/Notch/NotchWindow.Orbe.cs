@@ -62,7 +62,7 @@ public partial class NotchWindow
         Modo.Escucha or Modo.Confirma => "LISTENING",
         Modo.Piensa => "THINKING",
         Modo.Habla => "SPEAKING",
-        Modo.Aviso => ProtocoloOrbe.Cara(AvatarAviso.Estado),
+        Modo.Aviso => ProtocoloOrbe.CaraAviso(AvatarAviso.Estado),
         Modo.Panel => ProtocoloOrbe.Cara(AvatarPanel.Estado),
         // Reposo y música: el orbe no se ve (la cara es la marca); queda en reposo, sin sonido de cambio.
         _ => "IDLE",

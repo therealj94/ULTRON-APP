@@ -613,10 +613,12 @@ function setLevel(v){ extLevel = Math.max(0, Math.min(1, +v || 0)); extAt = cloc
    Cortos y bajitos, para acompañar y no tapar la voz ni confundir al oído:
    escucha = dos notas que suben · piensa = un soplo que se recoge · busca = un barrido con tics ·
    habla = chispas al formarse cada palabra (muy suaves) · listo = un acorde brillante · toque = una gota.
-   Se apagan con {tipo:'sonido', activo:false} (Ajustes → Efectos de sonido) o ?sfx=0 / ?mute. */
+   Se apagan con {tipo:'sonido', activo:false} (Ajustes → Efectos de sonido) o ?sfx=0 / ?mute.
+   Un cambio puede ir callado: {tipo:'estado', face, mudo:true} o face 'AVISO' (un aviso cualquiera: el destello
+   de «listo» sin su acorde, para que una notificación no suene como una tarea terminada). */
 const SFX = (() => {
   let ctx = null, out = null, on = OPC.sfx !== false && params.get('sfx') !== '0' && !params.has('mute');
-  let ultPalabra = 0, ultCambio = 0;
+  let ultPalabra = 0, ultCambio = 0, mudoHasta = 0;
   function listo(){
     if (!on) return null;
     try {
@@ -662,8 +664,8 @@ const SFX = (() => {
   };
   return {
     cambio(de, a){
-      if (!on || !SON[a]) return;
       const ahora = performance.now();
+      if (!on || !SON[a] || ahora < mudoHasta) return;
       if (ahora - ultCambio < 160) return;      // un cambio de estado rápido no son dos sonidos encima
       ultCambio = ahora; SON[a]();
     },
@@ -672,6 +674,8 @@ const SFX = (() => {
       const ahora = performance.now(); if (ahora - ultPalabra < 110) return;
       ultPalabra = ahora; nota(2200 + Math.random()*1600, 0, 0.07, 0.006, 'sine');
     },
+    // El próximo cambio de estado (el que se hace ya mismo) va sin sonido.
+    callarCambio(){ mudoHasta = performance.now() + 50; },
     toque(){ nota(880, 0, 0.25, 0.05, 'sine', 440); soplo(0, 0.25, 0.012, 3000, 1200, 3); },
     activar(v){ on = !!v; if (on) listo(); else if (ctx) ctx.suspend().catch(() => {}); },
     despertar(){ if (on) listo(); },
@@ -944,7 +948,12 @@ function handle(d){
     return;
   }
   switch (d.tipo){   // protocolo de la sala de hoy (SalaAura.tsx → window.__aura)
-    case 'estado': setState(d.face || 'IDLE'); break;
+    case 'estado': {
+      const f = d.face || 'IDLE';
+      if (d.mudo === true || f === 'AVISO') SFX.callarCambio();
+      setState(f === 'AVISO' ? 'done' : f);
+      break;
+    }
     case 'boca': setLevel(Number(d.n) || 0); break;
     case 'decir': say(d.texto || d.text || '', {dur: d.dur, tts: d.tts === true}); break;
     case 'callar': silence(); break;

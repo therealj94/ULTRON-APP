@@ -55,6 +55,12 @@ public static class ProtocoloOrbe
         _ => "IDLE",
     };
 
+    /// <summary>
+    /// La cara de un aviso del notch: casi todos salen «happy» (se actualizó, un recordatorio, cambió de avatar,
+    /// la notificación de otra app), así que su destello va sin el acorde de «listo»: «AVISO» es «listo» callado.
+    /// </summary>
+    public static string CaraAviso(string? estado) => Cara(estado) is "HAPPY" ? "AVISO" : Cara(estado);
+
     public static string Estado(string cara) => Json(new { tipo = "estado", face = cara });
 
     /// <summary>0..1: cuánto suena la voz ahora mismo (dos decimales bastan).</summary>
