@@ -290,6 +290,20 @@ export async function rememberFact(hecho: string, usuario: string): Promise<bool
   }
 }
 
+/**
+ * «Olvidar» en el servidor: POST /api/memoria {olvidar:true}. La identidad sale del token de la sesión
+ * (nunca del body), así que solo borra lo de quien está en la mesa. true solo si el servidor confirmó
+ * `olvidado`; con false la mesa dice la verdad (el teléfono olvidó, el servidor todavía no).
+ */
+export async function olvidarMemoriaServidor(usuario: string): Promise<boolean> {
+  try {
+    const r = await api<{ ok?: boolean; olvidado?: boolean }>('/api/memoria', { method: 'POST', body: JSON.stringify({ olvidar: true, usuario }) }, 10_000);
+    return !!r?.olvidado;
+  } catch {
+    return false;
+  }
+}
+
 export type Turn = { rol: 'usuario' | 'ultron'; texto: string };
 
 export type ChatResult = {

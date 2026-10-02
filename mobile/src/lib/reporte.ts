@@ -183,3 +183,14 @@ export function reportarEstado(nota: string) {
   miga(nota);
   enviar({ tipo: 'estado', nota, migas });
 }
+
+/**
+ * Una pantalla se rompió al dibujar y la atrapó su límite (app/LimitePantalla.tsx): la app sigue viva,
+ * pero se manda como error (no fatal) con sus migas, para verlo en los logs igual que uno sin capturar.
+ */
+export function reportarErrorPantalla(pantalla: string, error: unknown) {
+  const e = error as { message?: unknown; stack?: unknown } | null;
+  const texto = String(e?.message || error).slice(0, 360);
+  miga(`pantalla ${pantalla}: se rompió (${texto.slice(0, 80)})`);
+  enviar({ tipo: 'error-js', fatal: false, error: `pantalla ${pantalla}: ${texto}`, stack: String(e?.stack || '').slice(0, 1500), migas });
+}

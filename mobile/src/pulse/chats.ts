@@ -128,6 +128,20 @@ export function useListaQuieta(): EstadoLista {
   return useSyncExternalStore(lista.sub, lista.get, lista.get);
 }
 
+const sinLeerTotal = () => (lista.get().conversaciones || []).reduce((n, c) => n + (c.sinLeer > 0 ? c.sinLeer : 0), 0);
+
+/**
+ * Cuántos mensajes sin leer hay en total (el puntito del botón Chat de la mesa). Sondea la lista con
+ * calma (cada 60 s, solo con la app delante; el mismo `sondear` de más abajo, y `refrescarLista` no se pisa con la
+ * lista abierta) y lee lo que ya trajo cualquiera: abrir un hilo lo apaga en el acto.
+ */
+export function useSinLeerTotal(): number {
+  // Un número (no el estado entero): la mesa solo se redibuja cuando cambia la cuenta.
+  const total = useSyncExternalStore(lista.sub, sinLeerTotal, sinLeerTotal);
+  useEffect(() => sondear(refrescarLista, () => 60_000), []);
+  return total;
+}
+
 /* ── quién está escribiendo ───────────────────────────────────────────────────────────────── */
 
 const escriben = almacen<Record<string, number>>({});

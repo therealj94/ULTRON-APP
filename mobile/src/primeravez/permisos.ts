@@ -157,3 +157,54 @@ export function listo(e: EstadoPermiso): boolean {
 export function abrirAjustesSistema() {
   void Linking.openSettings().catch(() => {});
 }
+
+/* ── «Alarmas y recordatorios» (la alarma exacta) ─────────────────────────────────────────── */
+
+/**
+ * No es un permiso con diálogo: desde Android 12 es un interruptor en los Ajustes del sistema, y en
+ * Android 14 viene APAGADO para las apps nuevas. Sin él los recordatorios usan la alarma inexacta
+ * (compa/recordatorios.ts) y pueden llegar minutos tarde. Se mira y se abre con notifee (ya va en el
+ * APK); sin notifee (un APK viejo, node) cuenta como «no aplica» y la fila no se enseña.
+ */
+export type EstadoAlarma = 'concedido' | 'pendiente' | 'noAplica';
+
+type NotifeeAlarma = {
+  getNotificationSettings?: () => Promise<{ android?: { alarm?: number } }>;
+  openAlarmPermissionSettings?: () => Promise<void>;
+};
+
+function notifeeAlarma(): NotifeeAlarma | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const mod = require('@notifee/react-native');
+    return (mod?.default as NotifeeAlarma) || null;
+  } catch {
+    return null;
+  }
+}
+
+/** La alarma exacta existe desde Android 12 (API 31); antes siempre estaba permitida. */
+export function aplicaAlarma(): boolean {
+  return Platform.OS === 'android' && versionAndroid() >= 31 && !!notifeeAlarma()?.openAlarmPermissionSettings;
+}
+
+export async function estadoAlarmaExacta(): Promise<EstadoAlarma> {
+  if (!aplicaAlarma()) return 'noAplica';
+  try {
+    const s = await notifeeAlarma()?.getNotificationSettings?.();
+    // AndroidNotificationSetting: 1 = permitida, 0 = apagada, -1 = este Android no la tiene.
+    const a = s?.android?.alarm;
+    return a === 1 ? 'concedido' : a === -1 ? 'noAplica' : 'pendiente';
+  } catch {
+    return 'pendiente';
+  }
+}
+
+/** Abre «Alarmas y recordatorios» de esta app en los Ajustes del sistema (al volver se revisa). */
+export async function abrirAjustesAlarma(): Promise<void> {
+  try {
+    await notifeeAlarma()?.openAlarmPermissionSettings?.();
+  } catch {
+    abrirAjustesSistema();
+  }
+}

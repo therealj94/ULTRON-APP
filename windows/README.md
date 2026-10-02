@@ -29,7 +29,8 @@ AU-RA, Claudio y ANT-ONIO son sus **modelos 3D de la app** (`vendor/aura-avatar-
 - **Voz:** cada frase se pide a `/api/tts` apenas cierra, mientras el cerebro sigue escribiendo: la primera palabra suena antes de que termine de pensar.
 - **Interrumpir:** hablarle mientras habla la calla (su propia voz por el altavoz no cuenta: el umbral sube con su nivel).
 - **Manos libres:** al terminar de contestar vuelve a escuchar; si nadie habla en unos segundos, se recoge.
-- **«Oye AURA»** (opcional): gramática de pocas frases con el reconocedor de Windows, sin red.
+- **«Oye AURA»** (modo «palabra», el recomendado): la palabra se reconoce en el equipo, sin red, con el modelo propio (`Modelos/hey_aura.onnx`) y, de respaldo, el reconocedor de Windows. Hasta oírla no sale audio del equipo: solo después (o mientras dura la charla, o con un «sí/no» pendiente) la frase va a `/api/stt`. Si este equipo no puede encender ningún detector local, el micrófono no queda abierto (se habla con Ctrl+Alt+Espacio). «Siempre atenta», en cambio, manda cada frase al servidor y busca el nombre en el texto.
+- **Windows bloqueado:** AURA se pausa sola (micrófono, despertador, voz, conversación en vivo y avisos) y vuelve como estaba al desbloquear.
 
 Atajos: **Ctrl+Alt+Espacio** hablar · **Ctrl+Alt+A** chat · **Ctrl+Alt+W** elegir dónde escribir · **Ctrl+Alt+Esc** pausar todo.
 

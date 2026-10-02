@@ -17,9 +17,10 @@
  */
 import type express from 'express';
 import { listar, leer, mandar, probarCuenta, sinCitas, type Resumen } from '../lib/correo/buzon';
-import { agregarCuenta, cuentasDe, publica, quitarCuenta, type CuentaCorreo } from '../lib/correo/cuentas';
+import { agregarCuenta, cuentasDe, CuentasNoDisponibles, publica, quitarCuenta, type CuentaCorreo } from '../lib/correo/cuentas';
 import { consultarCodigo, microsoftConfigurado, pedirCodigo } from '../lib/correo/microsoft';
 import { correoValido, detectarProveedor, type Proveedor } from '../lib/correo/proveedores';
+import type { RetencionAcciones } from './voz-agente';
 
 /* ------------------------------------------------------------------ la lista numerada y el borrador */
 
@@ -158,17 +159,80 @@ export function respuestaAlBorrador(mensaje: string): 'si' | 'no' | null {
   return null;
 }
 
+/** Lo que un envío confirmado en la voz terminó después de contestar: el próximo turno lo dice. */
+const AVISOS_ENVIO = new Map<string, string[]>();
+
+/** Los resultados de envíos (correo o WhatsApp) que quedaron para este turno. Se entregan una vez. */
+export function avisosDeEnvio(quien: string, ambito = ''): string[] {
+  const k = llave(quien, ambito);
+  const a = AVISOS_ENVIO.get(k) || [];
+  AVISOS_ENVIO.delete(k);
+  return a;
+}
+
+function anotarAvisoEnvio(quien: string, ambito: string, hecho: string) {
+  const k = llave(quien, ambito);
+  AVISOS_ENVIO.set(k, [...(AVISOS_ENVIO.get(k) || []), hecho].slice(-5));
+}
+
 /**
- * Al empezar el turno: si espera un borrador y la persona contestó sí o no, se resuelve AQUÍ (lo manda
- * el servidor, no el modelo) y vuelve el HECHO para que el modelo lo diga. Null si no había nada.
+ * El «sí» o el «no» a un borrador (correo o WhatsApp), con las mismas reglas:
+ * - Vale SOLO el turno siguiente: si la persona dice otra cosa, el borrador se descarta (un «ok» suelto
+ *   de tres turnos después no manda nada).
+ * - En la voz (`retener`), el envío espera a que ElevenLabs confirme el turno: un «sí…» de un turno
+ *   especulativo que seguía con «…pero cámbiale» no manda nada. El resultado llega en el turno siguiente.
  */
-export async function resolverBorrador(quien: string, ambito: string, mensaje: string): Promise<string | null> {
+export async function decidirBorrador(o: {
+  quien: string;
+  ambito: string;
+  mensaje: string;
+  /** Saca el borrador (ya no espera). */
+  quitar: () => void;
+  /** Lo vuelve a poner (el turno de voz se descartó). */
+  reponer: () => void;
+  /** Lo manda y devuelve el HECHO (enviado o el fallo). */
+  enviar: () => Promise<string>;
+  canal: 'CORREO' | 'WHATSAPP';
+  para: string;
+  retener?: RetencionAcciones;
+}): Promise<string | null> {
+  const r = respuestaAlBorrador(o.mensaje);
+  o.quitar();
+  if (!r) return `${o.canal}: había un borrador para ${o.para} esperando su «sí», pero siguió con otra cosa: ya no vale y no se mandó. Si lo quiere mandar, arma uno nuevo y vuelve a preguntar.`;
+  if (r === 'no') return `${o.canal}: no se mandó; el borrador para ${o.para} quedó descartado. Díselo en pocas palabras.`;
+  if (!o.retener) return o.enviar();
+  o.retener.alDescartar(o.reponer);
+  o.retener.hacer(() => {
+    void o.enviar().then(
+      (hecho) => anotarAvisoEnvio(o.quien, o.ambito, hecho),
+      (e) => anotarAvisoEnvio(o.quien, o.ambito, `${o.canal}: NO se pudo mandar (${String(e?.message || e).slice(0, 140)}). Díselo con honestidad.`)
+    );
+  });
+  return `${o.canal}: dijo que sí; se manda a ${o.para} en cuanto termine este turno. Dile que ya lo estás mandando (todavía no digas que llegó; el resultado te llega en el próximo turno).`;
+}
+
+/**
+ * Al empezar el turno: si espera un borrador, se resuelve AQUÍ (lo manda el servidor, no el modelo) y
+ * vuelve el HECHO para que el modelo lo diga. Null si no había nada.
+ */
+export async function resolverBorrador(quien: string, ambito: string, mensaje: string, retener?: RetencionAcciones): Promise<string | null> {
   const b = borradorDe(quien, ambito);
   if (!b) return null;
-  const r = respuestaAlBorrador(mensaje);
-  if (!r) return null;
-  BORRADORES.delete(llave(quien, ambito));
-  if (r === 'no') return `CORREO: no se mandó; el borrador para ${b.para.join(', ')} quedó descartado. Díselo en pocas palabras.`;
+  const k = llave(quien, ambito);
+  return decidirBorrador({
+    quien,
+    ambito,
+    mensaje,
+    retener,
+    canal: 'CORREO',
+    para: b.para.join(', '),
+    quitar: () => BORRADORES.delete(k),
+    reponer: () => BORRADORES.set(k, b),
+    enviar: () => mandarBorrador(quien, b),
+  });
+}
+
+async function mandarBorrador(quien: string, b: Borrador): Promise<string> {
   const c = (await cuentasDe(quien)).find((x) => x.id === b.cuentaId);
   if (!c) return 'CORREO: no lo mandé: esa cuenta ya no está conectada.';
   try {
@@ -228,6 +292,12 @@ const CODIGOS_MS = new Map<string, { codigo: string; correo: string; vence: numb
  *   POST   /api/correo/microsoft/iniciar {correo} → { codigo, url } para microsoft.com/devicelogin
  *   POST   /api/correo/microsoft/consultar      → { estado: pendiente | listo | error }
  */
+/** S3 no dejó leer sus cuentas: no se guardó nada (guardar habría borrado las otras). */
+function noGuardado(res: import('express').Response, e: unknown) {
+  if (e instanceof CuentasNoDisponibles) return res.status(503).json({ error: e.message, honesto: true });
+  return res.status(500).json({ error: `No pude guardar la cuenta (${String((e as any)?.message || e).slice(0, 100)}).`, honesto: true });
+}
+
 export function montarRutasCorreo(app: express.Express, d: Deps) {
   const quienDe = (req: express.Request) => normal(d.sesionDe(req)?.correo || '');
   const sinSesion = (res: express.Response) => res.status(401).json({ error: 'Entra con tu sesión.', code: 'sesion_requerida', honesto: true });
@@ -272,14 +342,22 @@ export function montarRutasCorreo(app: express.Express, d: Deps) {
     if (!clave) return res.status(400).json({ error: 'Falta la clave.', ayuda: p.ayuda, honesto: true });
     const prueba = await probarCuenta(correo, p, { pass: clave });
     if (prueba.ok === false) return res.status(400).json({ error: prueba.error, ayuda: p.ayuda, proveedor: sinSecreto(p), honesto: true });
-    const c = await agregarCuenta(q, correo, { nombre: p.nombre, imap: p.imap, smtp: p.smtp, auth: 'clave', usuario: p.usuario, guardaEnviados: p.guardaEnviados }, clave);
-    return res.json({ cuenta: publica(c), honesto: true });
+    try {
+      const c = await agregarCuenta(q, correo, { nombre: p.nombre, imap: p.imap, smtp: p.smtp, auth: 'clave', usuario: p.usuario, guardaEnviados: p.guardaEnviados }, clave);
+      return res.json({ cuenta: publica(c), honesto: true });
+    } catch (e) {
+      return noGuardado(res, e);
+    }
   });
 
   app.delete('/api/correo/cuentas/:id', d.exigirMesa, d.limitar(20), async (req, res) => {
     const q = quienDe(req);
     if (!q) return sinSesion(res);
-    return (await quitarCuenta(q, req.params.id)) ? res.json({ ok: true, honesto: true }) : res.status(404).json({ error: 'No encuentro esa cuenta.', honesto: true });
+    try {
+      return (await quitarCuenta(q, req.params.id)) ? res.json({ ok: true, honesto: true }) : res.status(404).json({ error: 'No encuentro esa cuenta.', honesto: true });
+    } catch (e) {
+      return noGuardado(res, e);
+    }
   });
 
   app.post('/api/correo/microsoft/iniciar', d.exigirMesa, d.limitar(10), async (req, res) => {
@@ -316,7 +394,11 @@ export function montarRutasCorreo(app: express.Express, d: Deps) {
     const ms = p.auth === 'microsoft' ? p : { ...p, auth: 'microsoft' as const };
     const prueba = await probarCuenta(pend.correo, ms, { accessToken: r.tokens.acceso });
     if (prueba.ok === false) return res.status(400).json({ estado: "error", error: prueba.error, honesto: true });
-    const c = await agregarCuenta(q, pend.correo, { nombre: ms.nombre, imap: ms.imap, smtp: ms.smtp, auth: 'microsoft', usuario: 'correo', guardaEnviados: true }, JSON.stringify(r.tokens));
-    return res.json({ estado: 'listo', cuenta: publica(c), honesto: true });
+    try {
+      const c = await agregarCuenta(q, pend.correo, { nombre: ms.nombre, imap: ms.imap, smtp: ms.smtp, auth: 'microsoft', usuario: 'correo', guardaEnviados: true }, JSON.stringify(r.tokens));
+      return res.json({ estado: 'listo', cuenta: publica(c), honesto: true });
+    } catch (e) {
+      return noGuardado(res, e);
+    }
   });
 }

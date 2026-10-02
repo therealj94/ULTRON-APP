@@ -31,9 +31,10 @@ internal sealed class Despertador : IDisposable
     internal static readonly System.Collections.Generic.HashSet<string> Senuelos = new(StringComparer.OrdinalIgnoreCase) { "oye laura" };
 
     /// <summary>
-    /// Enciende el reconocedor de Windows del idioma (y el de inglés, que entiende mejor «hey aura»). Es un
-    /// ATAJO: aunque no haya ninguno instalado, «Oye AURA» igual funciona por el oído de AURA (la frase que
-    /// empieza con su nombre). Devuelve null o la explicación si no hay reconocedor.
+    /// Enciende el reconocedor de Windows del idioma (y el de inglés, que entiende mejor «hey aura»). Con «Siempre
+    /// atenta» es un ATAJO (el oído de AURA también busca su nombre en la frase transcrita). Con «Oye AURA» es lo ÚNICO
+    /// que despierta (con el modelo propio): si no hay ninguno de los dos (Activo falso), el micrófono no queda abierto,
+    /// porque buscar el nombre en el servidor sería mandar audio (PoliticaEscucha). Devuelve null o la explicación.
     /// </summary>
     public string? Encender(string idioma)
     {

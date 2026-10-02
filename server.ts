@@ -60,7 +60,7 @@ import { puntoDeCorte } from './lib/trozos';
 import { claveTurno, reclamarTurno, type TurnoGuardado } from './server/turno-unico';
 import { respuestaFija } from './lib/respuestas-fijas';
 import { avisosPendientes, confirmarAvisos, encargarTarea, montarRutasComputadora, motorDelPerfil, type MotorNodo } from './server/computadora';
-import { correrCorreo, montarRutasCorreo, resolverBorrador } from './server/correo';
+import { avisosDeEnvio, correrCorreo, montarRutasCorreo, resolverBorrador } from './server/correo';
 import { correrWhatsapp, montarRutasWhatsapp, resolverBorradorWhatsapp, whatsappDisponible, whatsappPermitido } from './server/whatsapp';
 import { fichaManosPrompt } from './lib/manos-ficha';
 import { emitirSesion, borrarSesion, cerrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica, mesaAutorizada, cuerpoHttp, gastarCupo, esperaEntrada, anotarFalloEntrada, anotarExitoEntrada, cargarSesionesCerradas } from './server/seguridad';
@@ -70,7 +70,7 @@ import { despacharTaller, hechosCatalogo } from './lib/taller';
 import { listarTareas } from './lib/tareas';
 import { ejecutarCodigo, ejecutorActivo } from './lib/ejecutor';
 import { construirMensajes, extraerPython } from './lib/qwen';
-import { extraerPedidoHerramienta, quitarLineaPedido, resolverPedido } from './lib/harness';
+import { extraerPedidoHerramienta, herramientaQueSale, neutralizarPedido, quitarLineaPedido, resolverPedido } from './lib/harness';
 import { notaDeVoz, pideNotaDeVoz } from './lib/voz';
 import { iniciarCentinela } from './lib/centinela';
 import { iniciarRevisionCampana } from './lib/campana-respuestas';
@@ -160,7 +160,7 @@ import { clasificarPendientes } from './server/electrum/documentos-laya';
 import { interpretarComando } from './server/electrum/comando-voz';
 import { abrirDialogo, guionDialogo, lineasValidas, partirDialogo, PERSONAJES, segmentosDe } from './server/electrum/dialogo';
 import { catalogoCapacidades, MODOS, GESTOS_TACTILES, VOZ_OFICIAL } from './lib/capacidades';
-import {
+import { memoriaSinLeer,
   cargarMemoria,
   estadoMemoria,
   fotoMemoria,
@@ -1970,9 +1970,13 @@ app.get('/api/memoria', exigirMesa, async (req, res) => {
   }
   await cargarMemoria();
   const s = sesionDe(req);
-  const quien = resolverQuien(req.query, s);
+  // La memoria personal sale SOLO de la sesión firmada: ni `?usuario=` ni `?telegramUserId=` de la URL
+  // (con la clave de mesa se podía leer la de otra persona). Sin sesión, solo lo compartido.
+  const quien = s ? quienVerificado(null, s) : null;
   res.json(fotoMemoria(quien));
 });
+
+const NO_SE_BORRO = { error: 'Lo borré en este servidor, pero no pude borrar la copia guardada; vuelve a pedírmelo en un momento.', code: 'memoria_no_borrada', honesto: true };
 
 /** Escribir u olvidar memoria exige sesión firmada: la identidad sale del token, no del body. */
 app.post('/api/memoria', exigirSesion, limitar(60), async (req, res) => {
@@ -1981,8 +1985,17 @@ app.post('/api/memoria', exigirSesion, limitar(60), async (req, res) => {
   if (nivelDePeticion(req) === 'miembro') {
     const correo = sesionDe(req)!.correo;
     const hechoM = String(req.body?.hecho || '').trim().slice(0, 400);
-    if (req.body?.olvidar) await olvidarMiembro(correo);
-    else if (hechoM) await guardarHechoMiembro(correo, hechoM);
+    if (req.body?.olvidar) {
+      // «Borrado» solo si se borró donde se guarda: si S3 no lo borró, la memoria volvería tras un despliegue.
+      if (!(await olvidarMiembro(correo)).durable) return res.status(503).json(NO_SE_BORRO);
+    } else if (hechoM) {
+      try {
+        await guardarHechoMiembro(correo, hechoM);
+      } catch (e: any) {
+        // S3 no dejó leer su memoria: no se guardó (guardar habría pisado lo suyo).
+        return res.status(503).json({ error: String(e?.message || e).slice(0, 200), code: 'memoria_no_disponible', honesto: true });
+      }
+    }
     else await cargarMiembro(correo);
     return res.json({ ok: true, ...(req.body?.olvidar ? { olvidado: true } : {}), ...fotoMemoriaMiembro(correo) });
   }
@@ -1991,9 +2004,13 @@ app.post('/api/memoria', exigirSesion, limitar(60), async (req, res) => {
   const quien = quienVerificado(req.body, s);
   const hecho = String(req.body?.hecho || '').trim().slice(0, 600);
   const olvido = !!req.body?.olvidar;
+  // Sin leer S3 no se toca nada: «olvidado» sería mentira (la copia guardada seguiría ahí) y un hecho se perdería.
+  if ((olvido || hecho) && memoriaSinLeer()) {
+    return res.status(503).json({ error: 'Ahora mismo no pude leer la memoria guardada; no cambié nada. Prueba otra vez en un momento.', code: 'memoria_no_disponible', honesto: true });
+  }
   if (olvido) {
     if (!quien) return res.status(400).json({ error: 'No supe quién eres de la junta. No borré nada.', honesto: true });
-    await olvidarQuien(quien, !!req.body?.junta && puedeCambiarSistema(quien));
+    if (!(await olvidarQuien(quien, !!req.body?.junta && puedeCambiarSistema(quien))).durable) return res.status(503).json(NO_SE_BORRO);
     return res.json({ ok: true, olvidado: true, quien, honesto: true });
   }
   if (hecho) {
@@ -2481,10 +2498,13 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   if (deLaComputadora) hechos.push(neutralizarMarca(deLaComputadora.hecho));
   // Un correo que esperaba su «sí» o su «no» (server/correo.ts): lo manda (o lo descarta) el servidor, aquí.
   const ambitoTurno = aparatoValido(body?.aparato) || String(body?.origen || (opciones.voz ? 'voz' : canal)).slice(0, 40);
-  const delCorreo = duenoComputadora ? await resolverBorrador(duenoComputadora, ambitoTurno, message) : null;
+  // Lo que un envío confirmado en la voz terminó después de contestar (el resultado real, una vez).
+  if (duenoComputadora) hechos.push(...avisosDeEnvio(duenoComputadora, ambitoTurno));
+  // En la voz el envío espera a que el turno se confirme (opciones.retener): un «sí…» especulativo no manda.
+  const delCorreo = duenoComputadora ? await resolverBorrador(duenoComputadora, ambitoTurno, message, opciones.retener) : null;
   if (delCorreo) hechos.push(delCorreo);
   // Lo mismo con un mensaje de WhatsApp que esperaba su «sí» (server/whatsapp.ts).
-  const delWhatsapp = duenoComputadora && whatsappPermitido(duenoComputadora) ? await resolverBorradorWhatsapp(duenoComputadora, ambitoTurno, message) : null;
+  const delWhatsapp = duenoComputadora && whatsappPermitido(duenoComputadora) ? await resolverBorradorWhatsapp(duenoComputadora, ambitoTurno, message, opciones.retener) : null;
   if (delWhatsapp) hechos.push(delWhatsapp);
   // Fichas de la memoria estructurada de lo que se nombra (empresas, personas, proyectos). En una
   // charla hablada no: es una consulta a la base antes de la primera palabra y no hay nada que buscar.
@@ -2926,7 +2946,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     // Ajustes y cuánto espera el turno: hablando 20 s (la voz da 45 al turno entero) y escribiendo 50 s (el
     // teléfono corta el SSE a los 70). Lo que tarde más llega en el turno siguiente y en la app.
     computadora: duenoComputadora
-      ? { quien: duenoComputadora, motor: motorDelPerfil((await perfilPedido)?.motorComputadora), esperaMs: voz ? 20_000 : 50_000 }
+      ? { quien: duenoComputadora, motor: motorDelPerfil((await perfilPedido)?.motorComputadora, duenoComputadora), esperaMs: voz ? 20_000 : 50_000 }
       : null,
     // Lo que su computadora terminó y va en los hechos: se da por dicho solo si el modelo contesta con ellos.
     avisoComputadora: deLaComputadora ? { quien: duenoComputadora, ids: deLaComputadora.ids } : null,
@@ -3306,12 +3326,26 @@ async function bucleHarness(o: {
 }): Promise<{ reply: string; via: string }> {
   let reply = o.reply;
   let via = `${ULTRON_NODO_URL}/api/chat`;
+  /** Ya se leyó en este turno algo que escribió otra gente en privado (un correo, un WhatsApp). */
+  let ajeno: 'correo' | 'whatsapp' | null = null;
   for (let i = 0; i < 2; i++) {
     // Si la persona ya se fue (o interrumpió), no se corre otra herramienta ni se vuelve a preguntar.
     if (o.senal?.aborted) break;
     const ped = extraerPedidoHerramienta(reply);
     if (!ped) break;
     o.tools.push(ped.herramienta);
+    // Un correo o un WhatsApp puede traer «abre esta dirección…» escrito para el modelo: después de
+    // leerlos, AURA no abre direcciones ni usa su computadora por su cuenta (podría mandar datos privados
+    // en la dirección). Si la persona lo quiere, lo pide ella en el turno siguiente.
+    if (ajeno && herramientaQueSale(ped.herramienta)) {
+      const no = `HARNESS ${ped.herramienta}: no lo corrí: en este turno ya leí un ${ajeno === 'correo' ? 'correo' : 'mensaje de WhatsApp'} (lo escribió otra persona) y no abro direcciones ni uso la computadora por lo que diga. Si la persona lo quiere, que lo pida ella.`;
+      trazaActual()?.paso({ herramienta: ped.herramienta, ok: false, ms: 0, resumen: no, ronda: i + 1 });
+      o.hechos.push(no);
+      const qn = await preguntarQwen(o.system, o.message, o.hechos, o.hilo, o.senal, o.nivel, o.contexto, o.espacio, o.alTexto ? (acc) => o.alTexto!(acc, i + 1) : undefined);
+      reply = qn.ok ? quitarLineaPedido(qn.reply) : quitarLineaPedido(reply);
+      via = qn.ok ? 'harness' : 'harness-parcial';
+      break;
+    }
     try {
       o.alTarea?.(ped.herramienta);
     } catch {
@@ -3320,7 +3354,8 @@ async function bucleHarness(o: {
     const tH = Date.now();
     // Lo que devuelve la herramienta (una página, una búsqueda) no lo escribió el modelo: si trae la
     // marca de acción, se rompe aquí, antes de ir al prompt o de pegarse a la respuesta parcial.
-    const extra = neutralizarMarca(await correrHerramientaPedida(ped, reply, o.mando, o.nivel, o.computadora, o.senal, o.dueno, o.ambito));
+    const extra = neutralizarPedido(neutralizarMarca(await correrHerramientaPedida(ped, reply, o.mando, o.nivel, o.computadora, o.senal, o.dueno, o.ambito)));
+    if (ped.herramienta === 'correo' || ped.herramienta === 'whatsapp') ajeno = ped.herramienta;
     trazaActual()?.paso({
       herramienta: ped.herramienta,
       ok: !/fall[oó]|no abr[ií]|sin resultados|ACCESO: consulta|pedido vac[ií]o/i.test(extra),

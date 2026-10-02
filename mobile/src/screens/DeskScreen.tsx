@@ -14,7 +14,7 @@ import { CamaraVision, DORMIDO_PERIODO_MS, SERVIDOR_CADA_MS, SERVIDOR_DORMIDO_MS
 import { DeskMenu } from '../components/DeskMenu';
 import type { Escena, MotorVision } from '../lib/escena';
 import type { DeskPresence, FaceState, Mode, SessionUser } from '../config';
-import { api, CANCIONES_LOCAL, healthCheck, listCanciones, nuevoIdTurno, rememberFact, turno, turnoStream, type Cancion, type Turn } from '../lib/api';
+import { api, CANCIONES_LOCAL, healthCheck, listCanciones, nuevoIdTurno, olvidarMemoriaServidor, rememberFact, turno, turnoStream, type Cancion, type Turn } from '../lib/api';
 import { faceForEmocion, type Emocion } from '../lib/emocion';
 import { GENEROS, generoPorId, interpretar, type Gag } from '../lib/intenciones';
 import { ayuda, CONOCER_CORE, CONOCER_QUESTIONS, fechaLocal, horaLocal, preguntaConocer } from '../lib/knowledge';
@@ -69,6 +69,7 @@ import { etiquetaCiclo, llamadaActiva, llamadaTerminada } from '../compa/llamada
 import { accionesDelTurno } from '../compa/acciones';
 import { emitir, escuchar } from '../nucleo/contrato';
 import { usePulse } from '../pulse/PulseProvider';
+import { useSinLeerTotal } from '../pulse/chats';
 import { ChatMesa } from '../components/ChatMesa';
 import { ALTO_BARRA, BarraMesa } from '../components/BarraMesa';
 import { HojaMas, type OpcionMas } from '../components/HojaMas';
@@ -144,6 +145,8 @@ function emitirAccionesDelTurno(r: unknown) {
 function Mesa({ user, onLogout, recienElegido = false }: Props) {
   // PULSE2CHAT: el chat y las llamadas entre personas con Genesis ID (ver src/pulse).
   const pulse = usePulse();
+  // El puntito del botón Chat: mensajes sin leer de las conversaciones (sondeo tranquilo, app delante).
+  const chatSinLeer = useSinLeerTotal() > 0;
   // Toda la mesa se redibuja si cambia el idioma (desde el menú), y el oído vuelve a arrancar en
   // el idioma nuevo (el reconocedor del teléfono fija el idioma al empezar a escuchar).
   const idioma = useIdioma();
@@ -622,7 +625,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
    * demás. Es irreversible, así que antes se pregunta.
    */
   const confirmarOlvido = useCallback(() => {
-    Alert.alert(tr('¿Olvidar lo que recuerdo de ti?', 'Forget what I remember about you?'), tr(`Se borran los hechos que guardé en este teléfono para ${user.name}. No se puede deshacer.`, `The facts I saved on this phone for ${user.name} will be erased. This can’t be undone.`), [
+    Alert.alert(tr('¿Olvidar lo que recuerdo de ti?', 'Forget what I remember about you?'), tr(`Se borran los hechos que guardé de ${user.name}, en este teléfono y en el servidor. No se puede deshacer.`, `The facts I saved about ${user.name} will be erased, on this phone and on the server. This can’t be undone.`), [
       { text: tr('Cancelar', 'Cancel'), style: 'cancel' },
       {
         text: tr('Olvidar', 'Forget'),
@@ -631,7 +634,19 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
           void (async () => {
             await clearLongMemory(user);
             longMemory.current = [];
-            await say(tr('Memoria de largo plazo borrada.', 'Long-term memory erased.'), 'CONCERNED', { emocion: 'preocupado' });
+            // El servidor también recuerda (cada hecho se le manda con rememberFact): sin esto, «olvidar»
+            // solo vaciaba la copia del teléfono y la memoria volvía en la próxima respuesta.
+            const servidor = await olvidarMemoriaServidor(user.name);
+            if (servidor) await say(tr('Memoria de largo plazo borrada, aquí y en el servidor.', 'Long-term memory erased, here and on the server.'), 'CONCERNED', { emocion: 'preocupado' });
+            else
+              await say(
+                tr(
+                  'Borré lo que guardaba en este teléfono, pero no pude borrar la copia del servidor. Pídemelo otra vez cuando haya conexión.',
+                  'I erased what I kept on this phone, but couldn’t erase the server copy. Ask me again when there’s a connection.'
+                ),
+                'CONCERNED',
+                { emocion: 'preocupado' }
+              );
           })(),
       },
     ]);
@@ -724,7 +739,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   );
 
   const exitConocer = useCallback(
-    async (line = 'Vale, lo dejamos aquí. Cuando quieras seguimos.') => {
+    async (line = tr('Vale, lo dejamos aquí. Cuando quieras seguimos.', 'Okay, let’s stop here. We can continue whenever you want.')) => {
       conocerIdxRef.current = -1;
       setMode('GUARDIAN');
       modeRef.current = 'GUARDIAN';
@@ -906,15 +921,15 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
             setOnline(true);
             await say(tr('Se me cerró la sesión de la mesa. Entra de nuevo y te oigo.', 'My desk session closed. Sign in again and I’ll hear you.'), 'CONCERNED', { emocion: 'preocupado' });
             Alert.alert(tr('Sesión cerrada', 'Session closed'), tr('Tu sesión de la mesa se cerró. Entra de nuevo para seguir.', 'Your desk session closed. Sign in again to continue.'), [
-              { text: 'Luego', style: 'cancel' },
-              { text: 'Entrar', onPress: onLogout },
+              { text: tr('Luego', 'Later'), style: 'cancel' },
+              { text: tr('Entrar', 'Sign in'), onPress: onLogout },
             ]);
             return;
           }
           setOnline(false);
-          // Sin red de verdad (el teléfono no llega a nada): la frase grabada, que va en el APK y suena sin red.
+          // Sin red de verdad (el teléfono no llega a nada): la frase corta de siempre (lib/frases.ts), que sale de la caché de audio.
           const sinRed = /network|red\b|conexi[oó]n|timeout|abort/i.test(String(out.error || ''));
-          await say(sinRed ? 'Estoy sin conexión ahora mismo.' : 'No alcanzo al cerebro remoto ahora. Sigo contigo con lo básico.', 'CONFUSED', { emocion: 'preocupado' });
+          await say(sinRed ? frase('sinconexion') : tr('No alcanzo al cerebro remoto ahora. Sigo contigo con lo básico.', 'I can’t reach the remote brain right now. I’m still here with the basics.'), 'CONFUSED', { emocion: 'preocupado' });
           return;
         }
         setOnline(true);
@@ -988,8 +1003,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       const coreDone = CONOCER_QUESTIONS.slice(0, CONOCER_CORE).every((q) => answeredIds.includes(q.id));
       await saveConocerProgress({ correo: user.correo, answeredIds, completedCore: coreDone });
       const next = CONOCER_QUESTIONS.findIndex((x) => !answeredIds.includes(x.id));
-      if (coreDone && ci < CONOCER_CORE) return exitConocer('Gracias. Ya te conozco mejor; no repetiré estas preguntas. Si quieres más, di «conocer más».');
-      if (next < 0) return exitConocer('Listo. Ya te conozco mejor.');
+      if (coreDone && ci < CONOCER_CORE)
+        return exitConocer(tr('Gracias. Ya te conozco mejor; no repetiré estas preguntas. Si quieres más, di «conocer más».', 'Thanks. I know you better now; I won’t repeat these questions. If you want more, say “learn more”.'));
+      if (next < 0) return exitConocer(tr('Listo. Ya te conozco mejor.', 'Done. I know you better now.'));
       conocerIdxRef.current = next;
       await say(`${tr('Anotado.', 'Noted.')} ${preguntaConocer(next)}`, 'CURIOUS', { emocion: 'curioso' });
     },
@@ -1100,7 +1116,11 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
             const remoto = rememberFact(line, user.name);
             longMemory.current = (await addLongFact(user, line)).map((f) => f.hecho);
             const ok = await remoto;
-            return void (await say(ok ? 'Anotado. Lo recuerdo.' : 'Anotado aquí en la mesa; al servidor se lo paso cuando haya sesión.', 'HAPPY', { emocion: 'feliz' }));
+            return void (await say(
+              ok ? tr('Anotado. Lo recuerdo.', 'Noted. I’ll remember it.') : tr('Anotado aquí en la mesa; al servidor se lo paso cuando haya sesión.', 'Noted here at the desk; I’ll pass it to the server once there’s a session.'),
+              'HAPPY',
+              { emocion: 'feliz' }
+            ));
           }
           case 'olvidar':
             // Borrar es irreversible y la voz se puede oír mal: se confirma en la pantalla.
@@ -2285,6 +2305,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
           conectando={conversando && estadoConv === 'conectando'}
           onHablar={() => void toggleMute()}
           onChat={() => pulse.abrir()}
+          chatSinLeer={chatSinLeer}
           onMas={() => setMasAbierto(true)}
           onTerminar={toggleConversar}
           // Los atajos de este avatar (su oficio): una fila que se desliza de lado, justo encima de la barra.

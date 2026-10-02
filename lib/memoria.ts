@@ -37,6 +37,14 @@ let loaded = false;
 let lastVia: 's3' | 'disco' = 'disco';
 let lastS3: string = 'aún no sincronizado';
 let writing: Promise<void> = Promise.resolve();
+/**
+ * S3 no se pudo LEER (red, permisos, JSON roto; no un 404): lo que hay en memoria puede ser el disco vacío
+ * de un despliegue nuevo, así que no se sube nada hasta leer S3 de verdad (si no, pisaría la copia buena).
+ * Se vuelve a intentar leer como mucho cada REINTENTO_S3_MS.
+ */
+let s3SinLeer = false;
+let reintentoS3 = 0;
+const REINTENTO_S3_MS = 30_000;
 
 function vacio(): Almacen {
   const perfiles: Record<MiembroId, PerfilMem> = {};
@@ -102,31 +110,57 @@ function escribirDisco(a: Almacen) {
   fs.renameSync(tmp, FILE);
 }
 
+/** Lo de `extra` que `base` no tiene: turnos más nuevos que el último de base y hechos que no estaban. */
+export function juntarAlmacen(base: Almacen, extra: Almacen): Almacen {
+  const ultimo = (xs: { t: number }[]) => xs.reduce((m, x) => Math.max(m, x.t), 0);
+  const hechos = (a: HechoMem[], b: HechoMem[]) => [...b.filter((h) => !a.some((x) => x.hecho === h.hecho)), ...a].slice(0, MAX_LARGA);
+  const out: Almacen = { ...base, perfiles: { ...base.perfiles }, junta: { larga: hechos(base.junta.larga, extra.junta.larga) } };
+  for (const [id, p] of Object.entries(extra.perfiles)) {
+    const b = out.perfiles[id] || { corta: [], larga: [] };
+    const desde = ultimo(b.corta);
+    out.perfiles[id] = { corta: [...b.corta, ...p.corta.filter((x) => x.t > desde)].slice(-MAX_CORTA), larga: hechos(b.larga, p.larga) };
+  }
+  const desdeCambio = ultimo(base.cambios);
+  out.cambios = [...base.cambios, ...extra.cambios.filter((c) => c.t > desdeCambio)].slice(-MAX_CAMBIOS);
+  return out;
+}
+
 export async function cargarMemoria(): Promise<Almacen> {
   if (loaded && cache) return cache;
+  if (s3SinLeer && cache && Date.now() < reintentoS3) return cache;
   const disco = leerDisco();
   if (s3Listo()) {
-    const r = await s3GetJson(S3_KEY);
+    const r = await s3GetJson(S3_KEY).catch((e) => ({ ok: false, json: null, detalle: String(e?.message || e), missing: false }));
     if (r.ok && r.json) {
-      cache = migrar(r.json);
+      const leida = migrar(r.json);
+      // Lo que se anotó mientras S3 no se dejaba leer (turnos, hechos) no se pierde al volver: se junta con
+      // lo leído y se sube. Olvidar en ese rato no se pudo (503), así que juntar nunca revive algo borrado.
+      const pendiente = s3SinLeer && cache ? cache : null;
+      cache = pendiente ? juntarAlmacen(leida, pendiente) : leida;
       lastVia = 's3';
-      lastS3 = 'leído de S3';
+      lastS3 = pendiente ? 'leído de S3 (y junté lo anotado mientras no se podía leer)' : 'leído de S3';
+      s3SinLeer = false;
       escribirDisco(cache);
       loaded = true;
+      if (pendiente) await persistirMemoria();
       return cache;
     }
     if (r.ok && r.missing) {
       cache = disco;
       lastVia = 's3';
       lastS3 = 'S3 vacío; usé disco y voy a crear el objeto';
+      s3SinLeer = false;
       loaded = true;
       await persistirMemoria();
       return cache;
     }
-    cache = disco;
+    // No se pudo leer: se sigue con el disco, pero sin subir nada y volviendo a intentar pronto.
+    cache = cache || disco;
     lastVia = 'disco';
-    lastS3 = r.detalle;
-    loaded = true;
+    lastS3 = `${r.detalle} (no subo nada a S3 hasta poder leerlo)`;
+    s3SinLeer = true;
+    reintentoS3 = Date.now() + REINTENTO_S3_MS;
+    loaded = false;
     return cache;
   }
   cache = disco;
@@ -144,6 +178,10 @@ export async function persistirMemoria(): Promise<{ via: 's3' | 'disco'; detalle
     lastS3 = 'Sin S3. Memoria solo en disco (se pierde al redesplegar).';
     return { via: 'disco', detalle: lastS3 };
   }
+  if (s3SinLeer) {
+    lastVia = 'disco';
+    return { via: 'disco', detalle: lastS3 };
+  }
   const r = await s3PutJson(S3_KEY, cache);
   lastVia = r.ok ? 's3' : 'disco';
   lastS3 = r.ok ? 'guardado en S3' : r.detalle;
@@ -153,6 +191,11 @@ export async function persistirMemoria(): Promise<{ via: 's3' | 'disco'; detalle
 function enqueue(fn: () => Promise<void>) {
   writing = writing.then(fn, fn);
   return writing;
+}
+
+/** S3 no se pudo leer todavía: lo que se cambie ahora no llega a S3 (olvidar no borraría la copia guardada). */
+export function memoriaSinLeer(): boolean {
+  return s3SinLeer;
 }
 
 export function estadoMemoria(): { durable: boolean; via: 's3' | 'disco'; detalle: string; bucket: boolean } {
@@ -323,12 +366,15 @@ export async function guardarHechoQuien(opts: {
   await enqueue(() => persistirMemoria().then(() => undefined));
 }
 
-export async function olvidarQuien(quien: MiembroId, junta = false): Promise<void> {
+/** Olvida. `durable`: false si S3 está configurado y no se pudo borrar ahí (la copia guardada volvería). */
+export async function olvidarQuien(quien: MiembroId, junta = false): Promise<{ durable: boolean }> {
   const a = await cargarMemoria();
   a.perfiles[quien] = { corta: [], larga: [] };
   if (junta) a.junta.larga = vacio().junta.larga;
   cache = a;
-  await enqueue(() => persistirMemoria().then(() => undefined));
+  let via = 'disco' as 's3' | 'disco';
+  await enqueue(() => persistirMemoria().then((r) => void (via = r.via)));
+  return { durable: !s3Listo() || via === 's3' };
 }
 
 export function fotoMemoria(quien: MiembroId | null) {
@@ -392,10 +438,20 @@ export function quienVerificado(body: any, sesion?: { nombre?: string; correo?: 
   return quienEs({ telegramUserId: body?.telegramUserId, telegramChatId: body?.telegramChatId });
 }
 
+/** Tests: como recién arrancado (nada leído todavía). */
+export function _olvidarCargaTest() {
+  cache = null;
+  loaded = false;
+  s3SinLeer = false;
+  reintentoS3 = 0;
+}
+
 /** Tests: reset in-memory cache. */
 export function resetMemoriaTest(store?: Almacen) {
   cache = store || vacio();
   loaded = true;
+  s3SinLeer = false;
+  reintentoS3 = 0;
   lastVia = 'disco';
   lastS3 = 'test';
 }

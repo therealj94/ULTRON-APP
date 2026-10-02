@@ -108,6 +108,8 @@ public partial class NotchWindow : Window
         vigia.Tick += (_, _) => Vigilar();
         vigia.Start();
         Closing += AlCerrar;
+        // Windows bloqueado: AURA deja de oír y de hablar hasta que desbloquees (NotchWindow.Asistente.cs).
+        Microsoft.Win32.SystemEvents.SessionSwitch += AlCambiarSesion;
     }
 
     // ───────────────────────────── forma y animación ─────────────────────────────
@@ -375,7 +377,7 @@ public partial class NotchWindow : Window
         Item("Abrir el Centro", "Ctrl+Alt+C", () => AbrirCentro());
         Item("Chat rápido en el notch", "Ctrl+Alt+A", () => AbrirPanel(true));
         Item("Hablar", "Ctrl+Alt+Espacio", () => Microfono(this, new RoutedEventArgs()));
-        Item("Pausar todo", "Ctrl+Alt+Esc", PausarTodo);
+        Item("Pausar todo", "Ctrl+Alt+Esc", () => PausarTodo());
         Item("Ajustes", "", () => AbrirCentro("ajustes"));
         menu.Items.Add(new Forms.ToolStripSeparator());
         Item("Cerrar AURA por completo", "", () => SalirDelTodo()).Tag = "peligro";
@@ -435,6 +437,7 @@ public partial class NotchWindow : Window
             new System.Threading.Thread(() => { System.Threading.Thread.Sleep(5000); Centro.Registro.Anotar("salir", "la limpieza no terminó en 5 s: salida forzada"); Environment.Exit(0); }) { IsBackground = true }.Start();
         Centro.Registro.Anotar("salir", "cerrando AURA por completo");
         Seguro(() => CompositionTarget.Rendering -= Fotograma);
+        Seguro(() => { if (!soloRender) Microsoft.Win32.SystemEvents.SessionSwitch -= AlCambiarSesion; });
         Seguro(() => { vigia.Stop(); relojAviso?.Stop(); });
         Seguro(() => { if (AgenteAbierto || abriendoAgente) CerrarAgente(); });
         Seguro(Terminar);

@@ -894,6 +894,45 @@ Check(AutorizarOrden.Autorizar("pon bad bunny en spotify", "pon el volumen al 30
     Intencion.EsperaNodo = lento;
     Check(dl.Mano == Mano.Ninguna && crLaya.ElapsedMilliseconds < 1500, "Laya lenta no detiene la frase: " + crLaya.ElapsedMilliseconds + " ms");
 }
+// ── Órdenes del cerebro: se autorizan solo con lo oído EN ESTE EQUIPO y hace un momento (nunca con el «dicho» del servidor) ──
+{
+    var ahora = new DateTime(2026, 10, 2, 12, 0, 0);
+    Check(AutorizarOrden.DichoVigente("abre excel", ahora.AddSeconds(-5), ahora) == "abre excel", "lo oído hace 5 s vale");
+    Check(AutorizarOrden.DichoVigente("abre excel", ahora.AddSeconds(-25), ahora) == "", "lo oído hace 25 s ya no autoriza");
+    Check(AutorizarOrden.DichoVigente("abre excel", DateTime.MinValue, ahora) == "" && AutorizarOrden.DichoVigente("", ahora, ahora) == "" && AutorizarOrden.DichoVigente(null, ahora, ahora) == "", "sin nada oído, nada");
+    Check(AutorizarOrden.DichoVigente("abre excel", ahora.AddSeconds(5), ahora) == "", "un reloj del futuro no cuenta");
+    Check(AutorizarOrden.AutorizarDelCerebro("abre excel", "") == Veredicto.Confirmar, "sin dicho local: al «sí», no se hace sola");
+    Check(AutorizarOrden.AutorizarDelCerebro("cierra spotify", "  ") == Veredicto.Confirmar, "lo destructivo sin dicho local: al «sí»");
+    Check(AutorizarOrden.AutorizarDelCerebro("abre excel", "abre exel") == Veredicto.Hacer, "con lo oído aquí, como antes");
+    Check(AutorizarOrden.AutorizarDelCerebro("cierra spotify", "cuéntame un chiste") == Veredicto.Rechazar, "lo oído aquí no pide eso: rechazada");
+    Check(AutorizarOrden.AutorizarDelCerebro("blablá", "") == Veredicto.Rechazar, "sin mano, nada (ni al «sí»)");
+}
+// ── Teclas que el cerebro nunca pulsa (Win+R, Win+X, Enter); lo que dices tú sigue igual ──
+{
+    bool Prohibida(string orden) => AutorizarOrden.TeclasProhibidasAlCerebro(Intencion.PorReglas(orden));
+    Check(Intencion.PorReglas("presiona windows r") is { Mano: Mano.Atajo, Valor: "teclas|WIN+R" }, "por voz, «presiona windows r» se entiende (lo dices tú)");
+    Check(Prohibida("presiona windows r") && Prohibida("presiona windows x"), "Win+R y Win+X: nunca del cerebro");
+    Check(Prohibida("presiona enter") && Prohibida("dale enter") && Prohibida("presiona control enter") && Prohibida("presiona enter tres veces"), "Enter (solo, en combinación o repetido): nunca del cerebro");
+    Check(Prohibida("abre el bloc de notas y presiona enter"), "Enter escondido en dos órdenes: tampoco");
+    Check(!Prohibida("presiona windows l") && !Prohibida("presiona control s") && !Prohibida("nueva pestaña") && !Prohibida("presiona tab tres veces"), "Win+L, Ctrl+S, Ctrl+T, Tab: sí");
+    Check(!Prohibida("abre excel") && !Prohibida("sube el brillo") && !Prohibida("abre la configuración de wifi"), "lo que no son teclas no se toca");
+    Check(AutorizarOrden.AutorizarDelCerebro("presiona windows r", "presiona windows r") == Veredicto.Rechazar
+          && AutorizarOrden.AutorizarDelCerebro("presiona enter", "presiona enter") == Veredicto.Rechazar
+          && AutorizarOrden.AutorizarDelCerebro("presiona windows x", "") == Veredicto.Rechazar, "teclas prohibidas: rechazadas aunque las hayas dicho");
+    Check(AutorizarOrden.AutorizarDelCerebro("presiona windows l", "presiona windows l") != Veredicto.Rechazar, "Win+L pedido: pasa (con sus confirmaciones)");
+}
+// ── «Oye AURA»: nada sale del equipo hasta que el detector local despierta (o hay charla, llamada o «sí/no») ──
+{
+    var mucho = TimeSpan.FromMinutes(10);
+    Check(!PoliticaEscucha.MandarFrase("palabra", false, false, false, mucho), "palabra: frase cualquiera sin despertar no va al servidor");
+    Check(PoliticaEscucha.MandarFrase("palabra", true, false, false, mucho), "palabra: despertó el detector local → va");
+    Check(PoliticaEscucha.MandarFrase("palabra", false, true, false, mucho), "palabra: llamada con tecla/clic → va");
+    Check(PoliticaEscucha.MandarFrase("palabra", false, false, true, mucho), "palabra: «sí/no» pendiente → va");
+    Check(PoliticaEscucha.MandarFrase("palabra", false, false, false, TimeSpan.FromSeconds(30)) && !PoliticaEscucha.MandarFrase("palabra", false, false, false, TimeSpan.FromSeconds(91)), "palabra: charla en curso 90 s");
+    Check(PoliticaEscucha.MandarFrase("siempre", false, false, false, mucho) && PoliticaEscucha.MandarFrase("pedir", false, false, false, mucho), "siempre y pedir: como antes");
+    Check(PoliticaEscucha.OidoContinuo("siempre", false) && PoliticaEscucha.OidoContinuo("palabra", true) && !PoliticaEscucha.OidoContinuo("palabra", false) && !PoliticaEscucha.OidoContinuo("pedir", true), "micrófono abierto: siempre, o palabra con detector local");
+    Check(PoliticaEscucha.Charla("siempre") == TimeSpan.FromMinutes(3) && PoliticaEscucha.Charla("palabra") == TimeSpan.FromSeconds(90), "ventanas de charla");
+}
 Console.WriteLine($"PASS {count} assertions");
 class Clock : TimeProvider { public DateTimeOffset Now = DateTimeOffset.UtcNow; public override DateTimeOffset GetUtcNow() => Now; }
 /// <summary>Un servidor de mentira para AuraApi: guarda los pedidos y contesta lo que se le diga.</summary>
