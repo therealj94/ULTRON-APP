@@ -26,12 +26,24 @@
     </Border></ControlTemplate></Setter.Value></Setter>
   </Style>
 
+  <!-- El foco del teclado (Tab): un anillo redondo y claro alrededor de la píldora. Solo sale al navegar con
+       el teclado, no al hacer clic. -->
+  <Style x:Key="FocoPildora">
+   <Setter Property="Control.Template"><Setter.Value><ControlTemplate>
+    <Border CornerRadius="999" BorderBrush="White" BorderThickness="2" Margin="-3" SnapsToDevicePixels="True"/>
+   </ControlTemplate></Setter.Value></Setter>
+  </Style>
+
   <Style x:Key="Pildora" TargetType="Button">
    <Setter Property="Foreground" Value="{StaticResource Texto}"/><Setter Property="Background" Value="{StaticResource Superficie2}"/><Setter Property="FontFamily" Value="{StaticResource Letra}"/>
    <Setter Property="FontSize" Value="13"/><Setter Property="Padding" Value="14,8"/><Setter Property="Margin" Value="0,0,8,8"/><Setter Property="Cursor" Value="Hand"/><Setter Property="FocusVisualStyle" Value="{x:Null}"/>
    <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
     <Border x:Name="B" Background="{TemplateBinding Background}" CornerRadius="999" Padding="{TemplateBinding Padding}" BorderThickness="1" BorderBrush="Transparent">
-     <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
+     <!-- El texto toma el color del botón (#111 sobre el dorado de PildoraAcento): sin esto, el estilo global de
+          TextBlock lo dejaba claro sobre el dorado y no se leía. -->
+     <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" TextElement.Foreground="{TemplateBinding Foreground}">
+      <ContentPresenter.Resources><Style TargetType="TextBlock"><Setter Property="Foreground" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/></Style></ContentPresenter.Resources>
+     </ContentPresenter></Border>
     <ControlTemplate.Triggers>
      <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="BorderBrush" Value="{DynamicResource Acento}"/></Trigger>
      <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="B" Property="BorderBrush" Value="White"/></Trigger>
@@ -54,14 +66,18 @@
     </ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
   </Style>
 
+  <!-- Las pestañas: con Tab se ve el anillo de foco (FocoPildora); el texto toma el color de la pestaña
+       (tenue sin elegir, claro elegida o con el ratón encima). -->
   <Style x:Key="Pestana" TargetType="RadioButton">
-   <Setter Property="Foreground" Value="{StaticResource Tenue}"/><Setter Property="FontFamily" Value="{StaticResource Letra}"/><Setter Property="FontSize" Value="13"/><Setter Property="Cursor" Value="Hand"/><Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+   <Setter Property="Foreground" Value="{StaticResource Tenue}"/><Setter Property="FontFamily" Value="{StaticResource Letra}"/><Setter Property="FontSize" Value="13"/><Setter Property="Cursor" Value="Hand"/><Setter Property="FocusVisualStyle" Value="{StaticResource FocoPildora}"/>
    <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="RadioButton">
-    <Border x:Name="B" CornerRadius="999" Padding="14,6" Background="Transparent"><ContentPresenter HorizontalAlignment="Center"/></Border>
+    <Border x:Name="B" CornerRadius="999" Padding="14,6" Background="Transparent">
+     <ContentPresenter HorizontalAlignment="Center" TextElement.Foreground="{TemplateBinding Foreground}">
+      <ContentPresenter.Resources><Style TargetType="TextBlock"><Setter Property="Foreground" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=RadioButton}}"/></Style></ContentPresenter.Resources>
+     </ContentPresenter></Border>
     <ControlTemplate.Triggers>
      <Trigger Property="IsChecked" Value="True"><Setter TargetName="B" Property="Background" Value="{StaticResource Superficie2}"/><Setter Property="Foreground" Value="{StaticResource Texto}"/></Trigger>
      <Trigger Property="IsMouseOver" Value="True"><Setter Property="Foreground" Value="{StaticResource Texto}"/></Trigger>
-     <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="B" Property="BorderBrush" Value="White"/><Setter TargetName="B" Property="BorderThickness" Value="1"/></Trigger>
     </ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
   </Style>
 

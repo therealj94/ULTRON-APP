@@ -139,6 +139,7 @@ public partial class NotchWindow
         if (v.ShowDialog() != true) return;
         // Solo lo que se edita en la ventana: los recordatorios y un token renovado mientras estaba abierta se conservan.
         var r = v.Resultado;
+        var quienAntes = IdentidadAura;
         bool cambioCuenta = r.Correo != ajustes.Correo || r.Servidor != ajustes.Servidor || r.Token != v.TokenAlAbrir;
         ajustes.Servidor = r.Servidor; ajustes.Correo = r.Correo; ajustes.Avatar = r.Avatar; ajustes.Idioma = r.Idioma;
         if (r.Clave.Length > 0 || r.Token.Length == 0) ajustes.Clave = r.Clave;
@@ -160,7 +161,12 @@ public partial class NotchWindow
         bool cambioAvisos = r.AvisosDeApps != ajustes.AvisosDeApps;
         ajustes.AvisosDeApps = r.AvisosDeApps; ajustes.AvisosPrivados = r.AvisosPrivados; ajustes.AvisosEnVoz = r.AvisosEnVoz;
         ajustes.AppsSilenciadas = r.AppsSilenciadas;
-        if (cambioCuentas) IniciarCuentas();
+        ajustes.Transparencia = Aura.Windows.Core.VidrioNotch.Leer(r.Transparencia); AplicarVidrio();
+        ajustes.MenosMovimiento = r.MenosMovimiento; AvatarView.MenosMovimientoPedido = r.MenosMovimiento;
+        bool movido = r.NotchBorde != ajustes.NotchBorde || r.NotchFraccion != ajustes.NotchFraccion || r.NotchMonitor != ajustes.NotchMonitor;
+        if (movido) MoverNotch(new Aura.Windows.Core.LugarNotch(Aura.Windows.Core.PosicionNotch.LeerBorde(r.NotchBorde), Aura.Windows.Core.PosicionNotch.LeerFraccion(r.NotchFraccion)), r.NotchMonitor);
+        // Otra identidad AURA: IniciarCuentas detiene y borra las cuentas de la anterior.
+        if (cambioCuentas || IdentidadAura != quienAntes) IniciarCuentas();
         if (cambioAvisos) IniciarAvisosApps();
         if (!ajustes.MostrarMusica) musicaVisible = false;
         AlCambiarMusica(cancion, false); // mostrar u ocultar la música al momento

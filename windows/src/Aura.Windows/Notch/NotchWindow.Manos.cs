@@ -78,6 +78,7 @@ public partial class NotchWindow
     internal async Task Hacer(Pedido p, string texto, bool hablado)
     {
         if (pausado) return;
+        using var ocupada = AccionEnCurso(); // la actualización sola no se mete a mitad de una acción
         try
         {
             switch (p.Mano)
@@ -225,16 +226,27 @@ public partial class NotchWindow
     async Task HacerOrdenDelCerebro(string orden, string dicho, bool hablado)
     {
         var p = Intencion.PorReglas(orden);
-        // El cerebro no trae cosas que no dijiste (una canción de antes, otra app): solo ordena lo tuyo.
-        if (p.Mano != Mano.Ninguna && !FiltroAcciones.Coherente(orden, dicho))
+        if (p.Mano == Mano.Ninguna) { Centro.Registro.AnotarDicho("cerebro-manos", "→ nada", orden); NoPude(T($"Todavía no sé hacer «{orden}» en esta computadora.", $"I don't know how to do “{orden}” on this PC yet.")); return; }
+        // El cerebro no trae cosas que no dijiste (una canción de antes, otra app, cerrar algo cuando pediste un
+        // chiste): misma clase de acción y mismo objetivo que lo tuyo (o tus frases de hace un momento).
+        var contexto = historial.Where(x => x.Rol == "usuario").Select(x => x.Texto).TakeLast(2).ToList();
+        var veredicto = AutorizarOrden.Autorizar(orden, dicho, contexto);
+        Centro.Registro.Anotar("cerebro-manos", $"→ {p.Mano} · {veredicto}");
+        if (veredicto == Veredicto.Rechazar)
         {
-            Centro.Registro.Anotar("cerebro-manos", $"descartada (no sale de lo dicho): {orden}");
+            Centro.Registro.AnotarDicho("cerebro-manos", "descartada (no sale de lo dicho)", orden);
             // Antes se descartaba callada y la voz ya había dicho que lo hacía.
             NoPude(T($"No hice «{orden}»: no me quedó claro que eso pediste. ¿Me lo repites?", $"I didn't do “{orden}”: I'm not sure that's what you asked. Can you say it again?"));
             return;
         }
-        Centro.Registro.Anotar("cerebro-manos", $"{orden} → {p.Mano}");
-        if (p.Mano == Mano.Ninguna) { NoPude(T($"Todavía no sé hacer «{orden}» en esta computadora.", $"I don't know how to do “{orden}” on this PC yet.")); return; }
+        Centro.Registro.AnotarDicho("cerebro-manos", $"→ {p.Mano}", orden);
+        if (veredicto == Veredicto.Confirmar)
+        {
+            // Cerrar, forzar, escribir… que no dijiste tal cual: primero el «sí».
+            Proponer(new Propuesta(T($"¿Hago «{orden}»?", $"Do “{orden}”?"), T("Me lo pidió la conversación; confírmalo.", "The conversation asked for it; please confirm."),
+                DateTime.Now.AddSeconds(30), () => Hacer(p, orden, false)));
+            return;
+        }
         try { await Hacer(p, orden, false); }
         catch (Exception ex) { NoPude(ex.Message); }
     }
@@ -365,9 +377,18 @@ public partial class NotchWindow
             }
             finally { escribiendo.Dispose(); escribiendo = null; }
         }
-        // Corto y de una línea: se escribe ya (así se usa: «escribe hola»). Largo: se confirma primero.
-        if (texto.Length <= 280 && texto.Split('\n').Length <= 3) { await Escribir(); return; }
-        Proponer(new Propuesta(T("¿Lo escribo en ", "Type it into ") + (sel.Titulo.Length > 0 ? sel.Titulo : sel.App) + "?", texto.Length > 140 ? texto[..140] + "…" : texto, DateTime.Now.AddSeconds(30), Escribir));
+        if (sel.EsTerminal && PlanEscritura.TieneSaltos(texto))
+        {
+            NoPude(T("En una terminal no escribo varias líneas: un salto de línea ejecutaría el comando.", "I won't type several lines into a terminal: a line break would run the command."));
+            return;
+        }
+        // Una línea corta en un control verificado se escribe ya («escribe hola»); nunca aprieta Enter ni Tab.
+        // Con saltos de línea, largo o sin poder fijar el control: primero el «sí» (y se revalida al escribir).
+        if (!PlanEscritura.RequiereConfirmacion(texto, sel.FocoVerificado)) { await Escribir(); return; }
+        var muestra = texto.Replace("\r\n", "\n").Replace('\n', '⏎');
+        Proponer(new Propuesta(T("¿Lo escribo en ", "Type it into ") + (sel.Titulo.Length > 0 ? sel.Titulo : sel.App) + "?",
+            (muestra.Length > 140 ? muestra[..140] + "…" : muestra) + (PlanEscritura.TieneSaltos(texto) ? T(" · los saltos de línea no envían", " · line breaks won't send") : ""),
+            DateTime.Now.AddSeconds(30), Escribir));
     }
 
     /// <summary>Ctrl+Alt+W: esta ventana (Word o Bloc de notas) es el destino de la próxima escritura.</summary>

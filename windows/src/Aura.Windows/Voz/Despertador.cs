@@ -94,6 +94,8 @@ internal sealed class Despertador : IDisposable
         if (!File.Exists(modelo) || !File.Exists(Path.Combine(CarpetaModelos, "melspectrogram.onnx"))) return false;
         try
         {
+            // onnxruntime.dll (y el runtime de C++) de la carpeta de AURA, por ruta completa: nunca otra copia.
+            MotorOnnx.Preparar();
             var pc = new PalabraClave(CarpetaModelos, modelo);
             var mic = new WaveInEvent { WaveFormat = new WaveFormat(PalabraClave.Muestreo, 16, 1), BufferMilliseconds = 80, NumberOfBuffers = 4 };
             mic.DataAvailable += (s, e) =>
@@ -116,13 +118,15 @@ internal sealed class Despertador : IDisposable
             mic.RecordingStopped += (_, e) => { if (e.Exception != null) Centro.Registro.Anotar("despertar", "el micrófono se detuvo: " + e.Exception.Message); };
             propio = pc; micPropio = mic;
             mic.StartRecording();
-            Centro.Registro.Anotar("despertar", "modelo propio «hey aura» (en el equipo, sin red)");
+            Centro.Registro.Anotar("despertar", $"modelo propio «hey aura» (en el equipo, sin red) · ONNX Runtime {MotorOnnx.VersionNativa()} (CPU)"
+                + (MotorOnnx.RutaCargada != null ? " · desde la carpeta de AURA" : " · por la búsqueda de Windows"));
             return true;
         }
         catch (Exception ex)
         {
             ApagarPropio();
-            Centro.Registro.Anotar("despertar", "el modelo propio no arrancó: " + ex.Message + " · sigo con el de Windows");
+            // La cadena COMPLETA (no solo «The type initializer…»), con la versión y qué piezas hay junto a AURA.
+            Centro.Registro.Anotar("despertar", "el modelo propio no arrancó: " + MotorOnnx.Diagnostico(ex) + " · sigo con el de Windows");
             return false;
         }
     }

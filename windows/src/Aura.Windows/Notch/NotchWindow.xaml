@@ -3,7 +3,7 @@
         Background="Transparent" Topmost="True" ShowInTaskbar="False" ShowActivated="False" UseLayoutRounding="True" SnapsToDevicePixels="True"
         FontFamily="{StaticResource Letra}" PreviewKeyDown="Teclas">
  <Canvas x:Name="Raiz">
-  <!-- La silueta: pegada al borde de arriba, con las «orejas» cóncavas y las esquinas de abajo redondas (la geometría la dibuja Forma() cada fotograma).
+  <!-- La silueta: pegada al borde de arriba (o al de abajo, reflejada; se arrastra desde la píldora), con las «orejas» cóncavas y las esquinas de abajo redondas (la geometría la dibuja Forma() cada fotograma).
        El relleno y el borde los pone AplicarVidrio(): vidrio oscuro translúcido, o negro sólido con Transparencia = 1. -->
   <Path x:Name="Forma" Fill="#000000" MouseEnter="EntraRaton" MouseLeave="SaleRaton" MouseLeftButtonUp="ClicForma" MouseRightButtonUp="MenuForma">
    <Path.Stroke><LinearGradientBrush StartPoint="0,0" EndPoint="0,1"><GradientStop Color="#00000000" Offset="0"/><GradientStop Color="#00000000" Offset="0.35"/><GradientStop Color="#2E2E34" Offset="1"/></LinearGradientBrush></Path.Stroke>
@@ -224,10 +224,11 @@
     </Grid>
    </Grid>
 
-   <!-- La cámara del notch, siempre al centro de arriba, como el de la imagen -->
+   <!-- La cámara del notch, al centro, como el de la imagen: solo arriba al centro (movido, quedan ocultos sus puntos).
+        La luz naranja del micrófono se ve siempre, esté donde esté. -->
    <StackPanel x:Name="Camara" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,13,0,0" IsHitTestVisible="False">
-    <Ellipse Width="6" Height="6" Fill="#0B0B10" Stroke="#17171D" StrokeThickness="1" Margin="0,1,14,0"/>
-    <Grid Width="9" Height="9">
+    <Ellipse x:Name="PuntoCamara" Width="6" Height="6" Fill="#0B0B10" Stroke="#17171D" StrokeThickness="1" Margin="0,1,14,0"/>
+    <Grid x:Name="LenteCamara" Width="9" Height="9">
      <Ellipse Fill="#07070C" Stroke="#1A1A22" StrokeThickness="1"/>
      <Ellipse Width="4" Height="4" Margin="3,2,0,0" HorizontalAlignment="Left" VerticalAlignment="Top"><Ellipse.Fill><RadialGradientBrush><GradientStop Color="#7A7CFF" Offset="0"/><GradientStop Color="#20224A" Offset="1"/></RadialGradientBrush></Ellipse.Fill></Ellipse>
     </Grid>

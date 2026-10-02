@@ -47,13 +47,18 @@ internal sealed class Ajustes
     public string AgendaUrl { get; set; } = "";
     /// <summary>Mostrar en el notch lo que suena (Spotify, YouTube Music, el navegador…).</summary>
     public bool MostrarMusica { get; set; } = true;
-    /// <summary>Cuánto tapa el notch lo de atrás: 0.55 (mucho vidrio) a 1 (negro sólido, como antes).</summary>
-    public double Transparencia { get; set; } = 0.72;
+    /// <summary>Cuánto tapa el notch lo de atrás: 0.30 (mucho vidrio) a 1 (negro sólido, como antes). Ver VidrioNotch.</summary>
+    public double Transparencia { get; set; } = VidrioNotch.PorDefecto;
     /// <summary>
     /// Cuentas conectadas con OAuth («spotify», «google», «microsoft»): el token de acceso y el de
     /// renovar, cifrados con DPAPI como todo lo demás. Nunca salen de este equipo.
     /// </summary>
     public Dictionary<string, TokenOauth> Conexiones { get; set; } = new();
+    /// <summary>
+    /// De quién son las conexiones, el correo IMAP y el calendario (el correo AURA, en minúsculas). Si entra otra
+    /// identidad o se sale de la cuenta, se borran (DuenoCuentas).
+    /// </summary>
+    public string DuenoCuentas { get; set; } = "";
     /// <summary>Client ID propios (opcional): si están, ganan a los que da el servidor AU-RA.</summary>
     public string SpotifyClientId { get; set; } = "";
     public string GoogleClientId { get; set; } = "";
@@ -86,8 +91,39 @@ internal sealed class Ajustes
     /// no abre, usa la local sola.
     /// </summary>
     public string VozMotor { get; set; } = "agente";
+    // ── Privacidad del registro de diagnóstico (auditoría 1-oct, H13) ──
+    /// <summary>
+    /// «Registro detallado»: aura.log guarda también lo que dijiste y los títulos de órdenes (saneados y
+    /// recortados). Apagado de fábrica: solo metadatos (largos, tiempos, tipos).
+    /// </summary>
+    public bool RegistroDetallado { get; set; }
+
     /// <summary>El id de este equipo para el canal de AURA (no es secreto: elige a qué equipo va una orden).</summary>
     public string Aparato { get; set; } = NuevoAparato();
+
+    // ── El notch: dónde vive y cuánto vidrio (bloque aparte) ──
+    /// <summary>«arriba» o «abajo»: el borde del monitor al que va pegado.</summary>
+    public string NotchBorde { get; set; } = "arriba";
+    /// <summary>0 = a la izquierda, 0.5 = al centro, 1 = a la derecha.</summary>
+    public double NotchFraccion { get; set; } = 0.5;
+    /// <summary>El monitor (nombre de Windows, «\\.\DISPLAY2»); vacío = el principal.</summary>
+    public string NotchMonitor { get; set; } = "";
+    /// <summary>Menos movimiento: el avatar se queda quieto y el notch no anima (además del ajuste de Windows).</summary>
+    public bool MenosMovimiento { get; set; }
+    /// <summary>Versión de los ajustes del notch: 2 = el vidrio por defecto pasó de 0.72 a 0.5.</summary>
+    public int NotchVersion { get; set; }
+
+    void ValidarNotch()
+    {
+        // Quien nunca tocó el vidrio (seguía en el 0.72 de antes) recibe el nuevo, más transparente.
+        if (NotchVersion < 2 && Math.Abs(Transparencia - 0.72) < 1e-9) Transparencia = VidrioNotch.PorDefecto;
+        NotchVersion = 2;
+        Transparencia = VidrioNotch.Leer(Transparencia);
+        NotchBorde = PosicionNotch.Nombre(PosicionNotch.LeerBorde(NotchBorde));
+        NotchFraccion = PosicionNotch.LeerFraccion(NotchFraccion);
+        NotchMonitor ??= "";
+        if (NotchMonitor.Length > 64) NotchMonitor = "";
+    }
 
     static string NuevoAparato() => "win-" + Guid.NewGuid().ToString("N")[..16];
     static bool AparatoValido(string? a) => a != null && System.Text.RegularExpressions.Regex.IsMatch(a, "^win-[0-9a-f]{16}$");
@@ -105,10 +141,12 @@ internal sealed class Ajustes
             if (a.Avatar is not ("aura" or "claudio" or "antonio" or "ojos")) a.Avatar = "aura";
             if (a.Idioma is not ("es" or "en")) a.Idioma = "es";
             a.Conexiones ??= new();
+            // Cuentas de versiones sin dueño: son de quien ya estaba dentro (sin sesión, de nadie: no se usan).
+            a.DuenoCuentas = Core.DuenoCuentas.Migrar(a.DuenoCuentas, Core.DuenoCuentas.Identidad(a.Token, a.Correo));
             a.AppsSilenciadas ??= new();
             if (a.Escucha is not ("pedir" or "palabra" or "siempre")) a.Escucha = a.PalabraActivacion ? "palabra" : "pedir";
             if (a.VozMotor is not ("agente" or "local")) a.VozMotor = "agente";
-            a.Transparencia = double.IsFinite(a.Transparencia) ? Math.Clamp(a.Transparencia, 0.55, 1) : 0.72;
+            a.ValidarNotch();
             if (!AparatoValido(a.Aparato)) a.Aparato = NuevoAparato();
             return a;
         }

@@ -45,35 +45,12 @@ public sealed class FiltroAcciones
     /// <summary>El texto sin ninguna marca (para el texto final del turno).</summary>
     public static string Quitar(string texto) => Regex.Replace(texto ?? "", @"⟦[^⟧]*⟧?", "").Replace("  ", " ").Trim();
 
-    static readonly HashSet<string> Genericas = new(StringComparer.Ordinal)
-    {
-        "pon", "ponme", "pone", "abre", "abrir", "abreme", "cierra", "cerrar", "cierrala", "minimiza", "maximiza", "restaura", "cambia", "escribe",
-        "busca", "buscar", "toma", "presiona", "sube", "subele", "baja", "bajale", "pausa", "siguiente", "anterior", "reproduce", "toca", "play",
-        "open", "close", "put", "search", "type", "press", "turn", "volume", "song", "music", "window", "the", "and", "with",
-        "cancion", "canciones", "musica", "tema", "spotify", "youtube", "google", "web", "ventana", "esta", "este", "eso", "app", "aplicacion",
-        "volumen", "captura", "pantalla", "configuracion", "modo", "oscuro", "claro", "control", "tecla", "por", "favor", "algo", "sitio",
-        "pagina", "una", "uno", "los", "las", "del", "con", "que", "para", "mas", "menos", "todo", "cuanto", "tengo", "origen",
-    };
-
     /// <summary>
-    /// ¿La orden del cerebro sale de lo que dijo la persona? El cerebro puede ordenar lo que pediste con otras
-    /// palabras («ciérrame eso de Spotify» → «cierra spotify»), pero NO traer cosas que no dijiste: una canción
-    /// de antes («pon bachata» → «pon Queen Bohemian Rhapsody»), otra app, otro texto. Toda palabra concreta de
-    /// la orden (no un verbo ni «spotify», «ventana»…) tiene que estar en lo que dijiste.
+    /// ¿La orden del cerebro sale de lo que dijo la persona? Ya no por parecido de palabras: por autorización
+    /// tipada (<see cref="AutorizarOrden"/>), la misma clase de acción y el mismo objetivo. Verdadero también
+    /// cuando la orden pasaría solo con el «sí».
     /// </summary>
-    public static bool Coherente(string orden, string dicho)
-    {
-        var dichas = LayaLigera.Normalizar(dicho).Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        foreach (var w in LayaLigera.Normalizar(orden).Split(' ', StringSplitOptions.RemoveEmptyEntries))
-        {
-            if (w.Length < 3 || Genericas.Contains(w)) continue;
-            var raiz = w.Length > 5 ? w[..5] : w;
-            bool esta = false;
-            foreach (var d in dichas) if (d.StartsWith(raiz, StringComparison.Ordinal) || w.StartsWith(d.Length > 5 ? d[..5] : d, StringComparison.Ordinal) && d.Length >= 4 || Parecidas(w, d)) { esta = true; break; }
-            if (!esta) return false;
-        }
-        return true;
-    }
+    public static bool Coherente(string orden, string dicho) => AutorizarOrden.Autorizar(orden, dicho) != Veredicto.Rechazar;
 
     /// <summary>
     /// La misma palabra mal oída o mal escrita: «exel» y «excel», «spotifai» y «spotify». El cerebro corrige lo que

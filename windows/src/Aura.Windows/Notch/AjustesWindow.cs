@@ -83,6 +83,32 @@ internal sealed class AjustesWindow : Window
         }
         raiz.Children.Add(idiomas);
 
+        // ── El notch: transparencia y borde (la posición exacta se elige arrastrándolo) ──
+        raiz.Children.Add(Titulo("Notch"));
+        var cuanto = new TextBlock { FontSize = 12, Foreground = (Brush)FindResource("Tenue"), VerticalAlignment = VerticalAlignment.Center, Width = 120, TextAlignment = TextAlignment.Right };
+        void DecirVidrio(double v) => cuanto.Text = v >= 0.995 ? "Sólido" : $"Transparencia {Math.Round((1 - v) * 100)} %";
+        var vidrio = new Slider { Minimum = VidrioNotch.Min, Maximum = VidrioNotch.Max, Value = VidrioNotch.Leer(a.Transparencia), SmallChange = 0.01, LargeChange = 0.1, IsMoveToPointEnabled = true, Width = 300, VerticalAlignment = VerticalAlignment.Center, ToolTip = "Izquierda: más transparente · derecha: negro sólido" };
+        System.Windows.Automation.AutomationProperties.SetName(vidrio, "Transparencia del notch");
+        vidrio.ValueChanged += (_, e) => { a.Transparencia = Math.Round(e.NewValue, 2); DecirVidrio(e.NewValue); };
+        DecirVidrio(vidrio.Value);
+        var filaVidrio = new StackPanel { Orientation = Orientation.Horizontal };
+        filaVidrio.Children.Add(vidrio); filaVidrio.Children.Add(cuanto);
+        raiz.Children.Add(new TextBlock { Text = "Transparencia del notch", FontSize = 13 });
+        raiz.Children.Add(filaVidrio);
+        raiz.Children.Add(Nota("La píldora deja ver lo de atrás; al conversar, avisar o pedir tu «sí» se vuelve casi opaca para que el texto se lea."));
+        var bordes = new WrapPanel { Margin = new Thickness(0, 8, 0, 0) };
+        foreach (var (id, nombre) in new[] { ("arriba", "Arriba"), ("abajo", "Abajo") })
+        {
+            var rb = new RadioButton { Content = nombre, GroupName = "borde", IsChecked = a.NotchBorde == id, Style = (Style)FindResource("Pestana"), Margin = new Thickness(0, 0, 6, 0) };
+            rb.Checked += (_, _) => a.NotchBorde = id;
+            bordes.Children.Add(rb);
+        }
+        var centrar = new Button { Content = "Restablecer posición", Style = (Style)FindResource("Pildora"), ToolTip = "Arriba al centro del monitor principal" };
+        centrar.Click += (_, _) => { a.NotchBorde = "arriba"; a.NotchFraccion = 0.5; a.NotchMonitor = ""; foreach (var x in bordes.Children) if (x is RadioButton r) r.IsChecked = (string)r.Content == "Arriba"; };
+        bordes.Children.Add(centrar);
+        raiz.Children.Add(bordes);
+        raiz.Children.Add(Nota("Arrástralo desde la píldora por el borde de la pantalla (o a otro monitor); al soltarlo se pega a la izquierda, al centro o a la derecha. Doble clic: vuelve arriba al centro."));
+
         raiz.Children.Add(Titulo("Conversación"));
         CheckBox Op(string t, bool v, Action<bool> set) { var c = new CheckBox { Content = t, IsChecked = v }; c.Checked += (_, _) => set(true); c.Unchecked += (_, _) => set(false); raiz.Children.Add(c); return c; }
         Op("Manos libres: al terminar de contestar, vuelve a escucharte", a.ManosLibres, v => a.ManosLibres = v);
@@ -90,6 +116,7 @@ internal sealed class AjustesWindow : Window
         Op("Contestar con voz", a.ResponderConVoz, v => a.ResponderConVoz = v);
         Op("«Oye AURA» la despierta (micrófono atento, con la luz naranja encendida)", a.PalabraActivacion, v => a.PalabraActivacion = v);
         Op("Apartarse con juegos o videos a pantalla completa", a.OcultarEnPantallaCompleta, v => a.OcultarEnPantallaCompleta = v);
+        Op("Menos movimiento (el avatar quieto, sin animaciones)", a.MenosMovimiento, v => a.MenosMovimiento = v);
         raiz.Children.Add(Titulo("Nativo (sin internet)"));
         Op("Hablar siempre con la voz de Windows", a.VozDeWindows, v => a.VozDeWindows = v);
         Op("Oír siempre con el dictado de Windows", a.OidoDeWindows, v => a.OidoDeWindows = v);

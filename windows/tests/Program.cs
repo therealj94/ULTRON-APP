@@ -591,5 +591,238 @@ Check(R("abre word y excel") is { Mano: Mano.Varias } we && we.Valor.Split(Manos
 Check(R("cierra chrome y luego abre spotify") is { Mano: Mano.Varias } && R("open notepad and then type hello world") is { Mano: Mano.Varias }, "cadena con luego / and then");
 Check(R("escribe pan y leche") is { Mano: Mano.Escribir, Valor: "pan y leche" } && R("busca tom y jerry") is { Mano: Mano.BuscarWeb } && R("ayer abrí word y se trabó").Mano == Mano.Ninguna && R("pon salsa y merengue").Mano != Mano.Varias, "no se parte lo que no son dos órdenes");
 Check(R("presiona control y c") is { Mano: Mano.Atajo, Valor: "teclas|CTRL+C" }, "control y c sigue siendo un atajo: " + R("presiona control y c"));
+// ── El notch se mueve por los bordes: imán, ventana dentro del monitor, panel que no se sale ──
+{
+    // Un monitor de 1920 (y otro a la derecha, de 2560, que empieza en 1920). Ventana 640, píldora 236, orejas 10, margen 8.
+    const double V = 640, P = 236, E = 10, M = 8;
+    Check(PosicionNotch.BordeMasCercano(100, 0, 1080) == BordeNotch.Arriba && PosicionNotch.BordeMasCercano(900, 0, 1080) == BordeNotch.Abajo && PosicionNotch.BordeMasCercano(539, 0, 1080) == BordeNotch.Arriba, "borde más cercano");
+    Check(PosicionNotch.Fraccion(960, 0, 1920, P, E, M) == 0.5 && PosicionNotch.Fraccion(1000, 0, 1920, P, E, M) == 0.5, "imán del centro");
+    Check(PosicionNotch.Fraccion(-500, 0, 1920, P, E, M) == 0 && PosicionNotch.Fraccion(170, 0, 1920, P, E, M) == 0, "imán de la izquierda (y no se sale)");
+    Check(PosicionNotch.Fraccion(5000, 0, 1920, P, E, M) == 1 && PosicionNotch.Fraccion(1760, 0, 1920, P, E, M) == 1, "imán de la derecha");
+    var f = PosicionNotch.Fraccion(500, 0, 1920, P, E, M);
+    Check(f > 0.2 && f < 0.3 && Math.Abs(PosicionNotch.CentroReposo(f, 0, 1920, P, E, M) - 500) < 1e-6, "fracción libre e ida y vuelta: " + f);
+    Check(PosicionNotch.CentroReposo(0, 0, 1920, P, E, M) - P / 2 - E == M && 1920 - PosicionNotch.CentroReposo(1, 0, 1920, P, E, M) - P / 2 - E == M, "extremos: la oreja queda a un margen del canto");
+    Check(PosicionNotch.CentroReposo(0.5, 1920, 4480, P, E, M) == 3200, "segundo monitor: el centro es suyo");
+    Check(PosicionNotch.CentroReposo(double.NaN, 0, 1920, P, E, M) == 960 && PosicionNotch.LeerFraccion(double.PositiveInfinity) == 0.5 && PosicionNotch.LeerFraccion(7) == 1, "fracción rota → centro / límite");
+    // La ventana: centrada sobre la píldora, pero entera dentro de su monitor.
+    Check(PosicionNotch.IzquierdaVentana(960, 0, 1920, V) == 640 && PosicionNotch.IzquierdaVentana(PosicionNotch.CentroReposo(0, 0, 1920, P, E, M), 0, 1920, V) == 0
+        && PosicionNotch.IzquierdaVentana(PosicionNotch.CentroReposo(1, 0, 1920, P, E, M), 0, 1920, V) == 1280 && PosicionNotch.IzquierdaVentana(1930, 1920, 4480, V) == 1920, "ventana dentro del monitor");
+    Check(PosicionNotch.IzquierdaVentana(300, 0, 500, V) == 0, "monitor más angosto que la ventana");
+    // El panel (560) que crece pegado a la izquierda se corre hacia dentro; al centro no se mueve.
+    double cIzq = PosicionNotch.CentroReposo(0, 0, 1920, P, E, M);
+    double cPanel = PosicionNotch.CentroVisible(cIzq, 560, 0, 1920, E, M);
+    Check(cPanel - 280 - E == M && PosicionNotch.CentroVisible(960, 560, 0, 1920, E, M) == 960 && 1920 - PosicionNotch.CentroVisible(PosicionNotch.CentroReposo(1, 0, 1920, P, E, M), 560, 0, 1920, E, M) - 280 - E == M, "panel entero dentro del monitor");
+    double L = PosicionNotch.IzquierdaVentana(cIzq, 0, 1920, V);
+    Check(cPanel - 280 - E >= L && cPanel + 280 + E <= L + V, "el panel cabe en su ventana");
+    // Arriba: pegado al borde del monitor; abajo: apoyado en el área de trabajo (encima de la barra) y crece hacia arriba.
+    Check(PosicionNotch.ArribaVentana(BordeNotch.Arriba, 170, 0, 1032) == 0 && PosicionNotch.ArribaVentana(BordeNotch.Abajo, 170, 0, 1032) == 862 && PosicionNotch.ArribaVentana(BordeNotch.Abajo, 808, 0, 1032) == 224, "arriba o abajo");
+    Check(PosicionNotch.LeerBorde("abajo") == BordeNotch.Abajo && PosicionNotch.LeerBorde("izquierda") == BordeNotch.Arriba && PosicionNotch.LeerBorde(null) == BordeNotch.Arriba && PosicionNotch.Nombre(BordeNotch.Abajo) == "abajo", "borde guardado");
+    Check(LugarNotch.DeFabrica.EsDeFabrica && !new LugarNotch(BordeNotch.Abajo, 0.5).EsDeFabrica && !new LugarNotch(BordeNotch.Arriba, 0).EsDeFabrica, "la cámara solo arriba al centro");
+    // El vidrio: la píldora usa el ajuste; lo que se lee nunca baja de 0.9.
+    Check(VidrioNotch.Leer(0.1) == 0.30 && VidrioNotch.Leer(double.NaN) == 0.5 && VidrioNotch.Leer(2) == 1, "vidrio dentro de límites");
+    Check(VidrioNotch.Opacidad(0.3, CapaVidrio.Reposo) == 0.3 && VidrioNotch.Opacidad(0.5, CapaVidrio.Reposo) == 0.5, "la píldora usa el ajuste");
+    foreach (var c in new[] { CapaVidrio.Lectura, CapaVidrio.Confirmar, CapaVidrio.Panel })
+        Check(VidrioNotch.Opacidad(0.3, c) >= VidrioNotch.MinimoConTexto && VidrioNotch.Opacidad(1, c) == 1, "lo que se lee no se transparenta: " + c);
+    Check(VidrioNotch.Opacidad(0.3, CapaVidrio.ReposoConRaton) >= 0.75 && VidrioNotch.Opacidad(0.3, CapaVidrio.Escucha) < 0.5 && VidrioNotch.Opacidad(1, CapaVidrio.Musica) == 1, "escucha y música siguen siendo vidrio");
+}
+
+// ── H01 · el puente del Centro: origen exacto, nunca por prefijo ──
+var origenCentro = PuenteCentro.Origen;
+Check(PuenteCentro.OrigenExacto("https://centro.aura.local/index.html", origenCentro) && PuenteCentro.OrigenExacto("https://centro.aura.local", origenCentro)
+      && PuenteCentro.OrigenExacto("https://CENTRO.aura.local/avatar/aura.html?x=1#y", origenCentro) && PuenteCentro.OrigenExacto("https://centro.aura.local:443/a/@b", origenCentro), "origen propio sí");
+foreach (var ajeno in new[] {
+    "https://centro.aura.local.attacker.invalid", "https://centro.aura.local.attacker.invalid/index.html", "https://centro.aura.local@attacker.invalid",
+    "https://centro.aura.local@attacker.invalid/index.html", "https://user:pass@centro.aura.local/", "https://@centro.aura.local/", "https://:@centro.aura.local/",
+    "https://centro.aura.local:8443/", "https://centro.aura.local:444/index.html", "http://centro.aura.local/", "file://centro.aura.local/index.html",
+    "ftp://centro.aura.local/", "https://xcentro.aura.local/", "https://aura.local/", "https://centro.aura.locals/", "centro.aura.local/index.html",
+    "javascript:alert(1)", "data:text/html,<b>hola</b>", "about:blank", "", " https://centro.aura.local/", "https://centro.aura.local\\@attacker.invalid/",
+    "https://centro.aura.local%2eattacker.invalid/", "https://centro.aura.local./", "blob:https://centro.aura.local/123" })
+    Check(!PuenteCentro.OrigenExacto(ajeno, origenCentro), "origen ajeno rechazado: " + ajeno);
+Check(!PuenteCentro.OrigenExacto(null, origenCentro), "origen nulo");
+Check(PuenteCentro.OrigenExacto("https://aura.windows.local/call.html", new Uri("https://aura.windows.local/")) && !PuenteCentro.OrigenExacto("https://aura.windows.local.evil/call.html", new Uri("https://aura.windows.local/")), "origen de llamadas");
+// Métodos: lista cerrada, sin prefijos.
+Check(PuenteCentro.MetodoPermitido("secreto.leer") && PuenteCentro.MetodoPermitido("spotify.poner") && PuenteCentro.MetodoPermitido("cartera.pagar") && PuenteCentro.MetodoPermitido("estado"), "métodos conocidos");
+foreach (var m in new[] { "spotify.cualquiera", "cartera.", "cartera.firmar", "secreto.listar", "secreto.leerTodo", "Estado", "estado ", "", "__proto__", "relevo.x", "spotify" })
+    Check(!PuenteCentro.MetodoPermitido(m), "método desconocido rechazado: " + m);
+// Secretos: solo las claves de PULSE2CHAT.
+Check(PuenteCentro.ClaveSecretoValida("p2c.cuenta") && PuenteCentro.ClaveSecretoValida("p2c.candado.priv") && PuenteCentro.ClaveSecretoValida("p2c.candado.firma"), "claves de pulse sí");
+foreach (var k in new[] { "", "p2c.", "p2c", "token", "ajustes", "p2c..cuenta", "p2c.cuenta.", "P2C.cuenta", "../ajustes", "p2c/../x", "p2c.cuenta\n", "x.p2c.cuenta", "p2c." + new string('a', 60) })
+    Check(!PuenteCentro.ClaveSecretoValida(k), "clave de secreto rechazada: " + k);
+
+// ── H02 · escribir nunca envía ni ejecuta ──
+foreach (var t in new[] { "hola\n", "hola\r\nadiós", "a\tb", "línea 1\rlínea 2\n\n", "del /q *\n", "x\u2028y", "\t\t\n", "José\u0007\u001b[31m" })
+{
+    var plan = PlanEscritura.Teclas(t);
+    Check(PlanEscritura.Seguro(plan), "plan seguro: " + t);
+    Check(!plan.Any(e => !e.EsUnicode && e.Vk == PlanEscritura.VkTab) && !plan.Any(e => e.EsUnicode && char.IsControl(e.Letra)), "sin Tab ni controles: " + t);
+    // Cada Enter va con Mayús apretada (salto de línea, no enviar).
+    bool mayus = false, enterSolo = false;
+    foreach (var e in plan) { if (e.Vk == PlanEscritura.VkMayus) mayus = !e.Soltar; else if (e.Vk == PlanEscritura.VkEnter && !mayus) enterSolo = true; }
+    Check(!enterSolo && !mayus, "ningún Enter suelto: " + t);
+}
+Check(PlanEscritura.Normalizar("a\tb") == "a    b" && PlanEscritura.Normalizar("a\r\nb\rc") == "a\nb\nc" && PlanEscritura.Normalizar("ok\u0007") == "ok", "normalizar escritura");
+Check(PlanEscritura.Teclas("hola\n").Count(e => e.Vk == PlanEscritura.VkEnter && !e.Soltar) == 1 && PlanEscritura.Teclas("hola").All(e => e.EsUnicode), "un salto = un Mayús+Enter; sin saltos, solo letras");
+Check(!PlanEscritura.Seguro(new[] { new EventoTecla(PlanEscritura.VkEnter, '\0', false), new EventoTecla(PlanEscritura.VkEnter, '\0', true) }), "Enter suelto no es seguro");
+Check(!PlanEscritura.Seguro(new[] { new EventoTecla(PlanEscritura.VkTab, '\0', false) }) && !PlanEscritura.Seguro(new[] { new EventoTecla(0, '\n', false) }), "Tab o salto Unicode no son seguros");
+Check(!PlanEscritura.Seguro(new[] { new EventoTecla(PlanEscritura.VkMayus, '\0', false) }), "Mayús que queda apretada no es seguro");
+// El «sí»: con saltos de línea, largo o sin control verificado.
+Check(!PlanEscritura.RequiereConfirmacion("hola") && !PlanEscritura.RequiereConfirmacion("nos vemos mañana a las 8"), "corto y de una línea va directo");
+Check(PlanEscritura.RequiereConfirmacion("hola\n") && PlanEscritura.RequiereConfirmacion("hola\r\n") && PlanEscritura.RequiereConfirmacion("a\rb") && PlanEscritura.RequiereConfirmacion("ls\n"), "con salto de línea pide el sí");
+Check(PlanEscritura.RequiereConfirmacion(new string('a', PlanEscritura.CortoSinConfirmar + 1)) && !PlanEscritura.RequiereConfirmacion(new string('a', PlanEscritura.CortoSinConfirmar)), "largo pide el sí");
+Check(PlanEscritura.RequiereConfirmacion("hola", focoVerificado: false), "sin control verificado pide el sí");
+Check(PlanEscritura.EsTerminal("cmd") && PlanEscritura.EsTerminal("WindowsTerminal") && PlanEscritura.EsTerminal("pwsh") && !PlanEscritura.EsTerminal("WINWORD") && !PlanEscritura.EsTerminal("notepad"), "terminales");
+// El mismo control: un cambio de foco dentro de la ventana, otro proceso o una contraseña tardía detienen la escritura.
+var foco = new IdentidadFoco(42, new[] { 7, 1, 99 }, "Editor", false);
+Check(IdentidadFoco.Mismo(foco, new IdentidadFoco(42, new[] { 7, 1, 99 }, "Editor", false)), "mismo control");
+Check(!IdentidadFoco.Mismo(foco, new IdentidadFoco(42, new[] { 7, 1, 100 }, "Editor", false)), "otro control de la misma ventana");
+Check(!IdentidadFoco.Mismo(foco, new IdentidadFoco(42, new[] { 7, 1, 99 }, "Buscar", false)) && !IdentidadFoco.Mismo(foco, new IdentidadFoco(43, new[] { 7, 1, 99 }, "Editor", false)), "otro AutomationId u otro proceso");
+Check(!IdentidadFoco.Mismo(foco, new IdentidadFoco(42, new[] { 7, 1, 99 }, "Editor", true)), "el campo se volvió de contraseña");
+Check(!IdentidadFoco.Mismo(foco, null) && !IdentidadFoco.Mismo(null, foco) && !IdentidadFoco.Mismo(new IdentidadFoco(42, Array.Empty<int>(), "", false), new IdentidadFoco(42, Array.Empty<int>(), "", false)), "sin identidad no hay mismo control");
+
+// ── H03 · la orden del cerebro necesita la MISMA acción y el MISMO objetivo ──
+Check(AutorizarOrden.Autorizar("cierra spotify", "cuéntame un chiste") == Veredicto.Rechazar, "chiste → cierra spotify, rechazada");
+Check(AutorizarOrden.Autorizar("cierra spotify", "cuéntame un chiste de spotify") == Veredicto.Rechazar, "nombrar spotify no es pedir cerrarlo");
+Check(AutorizarOrden.Autorizar("abre excel", "abre exel") == Veredicto.Hacer, "abre exel → abre excel");
+Check(AutorizarOrden.Autorizar("pon bachata en spotify", "pon bachata en spotify") == Veredicto.Hacer, "pon bachata → música");
+Check(AutorizarOrden.Autorizar("pon bad bunny en spotify", "ponme algo de Bad Bunny porfa") == Veredicto.Hacer, "música sin decir spotify");
+Check(AutorizarOrden.Autorizar("cierra el bloc de notas", "cierra el bloc de notas") == Veredicto.Hacer, "cerrar lo que dijiste tal cual, sin preguntar");
+Check(AutorizarOrden.Autorizar("cierra spotify", "ciérrame eso de Spotify") == Veredicto.Confirmar, "cerrar con otras palabras: con el sí");
+foreach (var (orden, dicho) in new[] { ("cierra esta ventana", "qué hora es"), ("pon música", "cuéntame un chiste"), ("abre la configuración", "hola, cómo estás"),
+    ("sube el volumen", "gracias"), ("minimiza la ventana", "qué tal el clima"), ("pausa", "cuéntame algo"), ("toma una captura de pantalla", "buenos días") })
+    Check(AutorizarOrden.Autorizar(orden, dicho) == Veredicto.Rechazar, $"orden genérica ausente de lo dicho: {orden} ← {dicho}");
+Check(AutorizarOrden.Autorizar("abre excel", "cierra excel") == Veredicto.Rechazar && AutorizarOrden.Autorizar("cierra excel", "abre excel") == Veredicto.Rechazar, "otra clase de acción, mismo objetivo: no");
+Check(AutorizarOrden.Autorizar("escribe hola", "hola aura") == Veredicto.Rechazar, "escribir sin pedirlo: no");
+Check(AutorizarOrden.Autorizar("escribe nos vemos mañana", "escríbele que nos vemos mañana") == Veredicto.Confirmar, "escribir con otras palabras: con el sí");
+Check(AutorizarOrden.Autorizar("cierra excel", "ciérralo", new[] { "abre excel" }) == Veredicto.Confirmar, "el objetivo puede venir de tu frase anterior");
+Check(AutorizarOrden.Autorizar("cierra excel", "ciérralo") == Veredicto.Rechazar, "sin contexto, «ciérralo» no dice cuál");
+Check(AutorizarOrden.Autorizar("cierra excel", "cuéntame un chiste", new[] { "abre excel" }) == Veredicto.Rechazar, "el contexto no da la acción");
+Check(AutorizarOrden.Autorizar("sube el volumen", "súbele tantito") == Veredicto.Hacer && AutorizarOrden.Autorizar("siguiente canción", "pásale a la siguiente") == Veredicto.Hacer, "lo inofensivo pedido con otras palabras");
+Check(AutorizarOrden.Autorizar("cierra spotify y abre excel", "cierra spotify y abre excel") != Veredicto.Rechazar && AutorizarOrden.Autorizar("cierra spotify y abre excel", "abre excel") == Veredicto.Rechazar, "dos órdenes: cada una tiene que salir de lo dicho");
+Check(AutorizarOrden.Autorizar("cierra spotify", "") == Veredicto.Rechazar && AutorizarOrden.Autorizar("blablá", "abre excel") == Veredicto.Rechazar, "sin dicho o sin mano, nada");
+
+// ── H04 · correo, agenda y conexiones son de UNA identidad AURA ──
+Check(DuenoCuentas.Identidad("tok", " Jose@OrdenGlobal.org ") == "jose@ordenglobal.org" && DuenoCuentas.Identidad("", "jose@ordenglobal.org") == "", "identidad: correo con sesión, nada sin sesión");
+Check(DuenoCuentas.Sirven("jose@ordenglobal.org", "JOSE@ordenglobal.org") && !DuenoCuentas.Sirven("jose@ordenglobal.org", "karla@ordenglobal.org"), "las cuentas de A no sirven a B");
+Check(!DuenoCuentas.Sirven("", "jose@ordenglobal.org") && !DuenoCuentas.Sirven("jose@ordenglobal.org", "") && !DuenoCuentas.Sirven("", ""), "sin dueño o sin sesión, no sirven");
+Check(DuenoCuentas.HayQueLimpiar("a@x.org", "b@x.org") && DuenoCuentas.HayQueLimpiar("", "b@x.org") && !DuenoCuentas.HayQueLimpiar("a@x.org", "A@x.org"), "al entrar otra persona (o sin dueño) se limpia");
+Check(DuenoCuentas.Migrar("", "a@x.org") == "a@x.org" && DuenoCuentas.Migrar("", "") == "" && DuenoCuentas.Migrar("a@x.org", "b@x.org") == "a@x.org", "migrar al arrancar: solo con sesión y sin dueño");
+var genCuentas = new GeneracionCuentas();
+long g0 = genCuentas.Actual;
+Check(DuenoCuentas.PuedeGuardar(g0, genCuentas.Actual, "a@x.org", "a@x.org", true), "renovación vigente se guarda");
+genCuentas.Nueva(); // A salió / entró B
+Check(!genCuentas.Vigente(g0) && !DuenoCuentas.PuedeGuardar(g0, genCuentas.Actual, "a@x.org", "b@x.org", true), "renovación tardía de A no reinserta su cuenta");
+Check(!DuenoCuentas.PuedeGuardar(g0, genCuentas.Actual, "a@x.org", "a@x.org", true), "ni con el mismo dueño si cambió la generación (salió y volvió)");
+Check(!DuenoCuentas.PuedeGuardar(genCuentas.Actual, genCuentas.Actual, "a@x.org", "a@x.org", false) && !DuenoCuentas.PuedeGuardar(genCuentas.Actual, genCuentas.Actual, "", "", true), "desconectada o sin dueño, no se guarda");
+// ── Auditoría 1-oct · H13: el registro guarda metadatos; el texto, solo con «Registro detallado» y saneado ──
+Check(RegistroSeguro.Contenido("abre el correo de juan", false) == "22 car.", "registro: por defecto solo el largo");
+var detalle = RegistroSeguro.Contenido("manda a juan.perez@gmail.com el enlace https://x.com/a?token=abc123 y mi tarjeta 4111 1111 1111 1111", true);
+Check(!detalle.Contains("juan.perez") && !detalle.Contains("abc123") && !detalle.Contains("4111") && detalle.Contains("«correo»") && detalle.Contains("https://x.com/a?•••") && detalle.Contains("«número»"), "registro detallado saneado: " + detalle);
+Check(RegistroSeguro.Sanear("llámame al +504 9988-7766") == "llámame al «número»", "teléfono tapado: " + RegistroSeguro.Sanear("llámame al +504 9988-7766"));
+Check(RegistroSeguro.Sanear("primera voz 1945411 ms") == "primera voz 1945411 ms", "una duración no es un dato personal");
+Check(RegistroSeguro.Sanear("Bearer eyJhbGciOi.xyz") == "Bearer •••" && RegistroSeguro.Sanear("clave=hunter2") == "clave=•••", "secretos tapados");
+Check(RegistroSeguro.Sanear(@"no está C:\Users\jordo\AppData\Local\Temp\x.dll") == @"no está %USERPROFILE%\AppData\Local\Temp\x.dll", "carpeta del usuario tapada");
+Check(RegistroSeguro.Sanear("línea\nfalsa") == "línea falsa", "una línea por evento");
+Check(RegistroSeguro.Contenido(new string('a', 300), true).Length <= RegistroSeguro.MaxDetalle + 3, "detalle recortado");
+Check(RegistroSeguro.Sanear("abc ultronfp://vuelta?pase=xyz") == "abc ultronfp://vuelta?•••", "vuelta de la wallet sin el pase");
+// ── H05: la causa de verdad de un fallo de ONNX, completa y saneada ──
+var cadena = MotorOnnx.CadenaDeErrores(new TypeInitializationException("Microsoft.ML.OnnxRuntime.NativeMethods",
+    new DllNotFoundException(@"Unable to load DLL 'onnxruntime' or one of its dependencies: C:\Users\jordo\x (0x8007007E)")));
+Check(cadena.Contains("TypeInitializationException") && cadena.Contains("DllNotFoundException") && cadena.Contains(" ← ") && !cadena.Contains("jordo"), "cadena de errores: " + cadena);
+Check(MotorOnnx.VersionPaquete.StartsWith("1."), "versión de ORT: " + MotorOnnx.VersionPaquete);
+Check(MotorOnnx.RuntimeCpp.Contains("msvcp140_1.dll") && MotorOnnx.RuntimeCpp.Contains("vcruntime140_1.dll"), "piezas del runtime de C++");
+{
+    // El modelo propio carga y corre con el motor que trae AURA (en Linux, el .so del paquete).
+    MotorOnnx.Preparar();
+    var modelos = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "src", "Aura.Windows", "Modelos");
+    using var pc = new PalabraClave(modelos, Path.Combine(modelos, "hey_aura.onnx"));
+    float maxSilencio = 0;
+    for (int i = 0; i < 25; i++) maxSilencio = Math.Max(maxSilencio, pc.Alimentar(new short[PalabraClave.Trozo]));
+    Check(maxSilencio < 0.5f, "silencio no despierta: " + maxSilencio);
+    Check(!MotorOnnx.VersionNativa().StartsWith("no carga"), "ORT nativo: " + MotorOnnx.VersionNativa());
+}
+// ── H06/H07: versión monotónica, sin retrocesos, y no instalar sola con algo en curso ──
+Check(Actualizacion.EsMasNueva("2.0.120", "2.0.119") && Actualizacion.EsMasNueva("2.1.0", "2.0.999"), "más nueva");
+Check(!Actualizacion.EsMasNueva("2.0.119", "2.0.119") && !Actualizacion.EsMasNueva("2.0.99", "2.0.119") && !Actualizacion.EsMasNueva("2.0.119.0", "2.0.119"), "igual o anterior: no (sin retrocesos)");
+Check(!Actualizacion.EsMasNueva("", "2.0.1") && !Actualizacion.EsMasNueva("basura", "2.0.1") && !Actualizacion.EsMasNueva("2.0.5", null), "versión ilegible: no");
+Check(Actualizacion.EsMasNueva("v2.0.120+abc1234", "2.0.119+9a410d4"), "versión con commit");
+var libre = new Actualizacion.Actividad(Inactivo: TimeSpan.FromMinutes(11));
+Check(Actualizacion.MotivoParaEsperar(libre) == null, "libre: instala");
+Check(Actualizacion.MotivoParaEsperar(libre with { Llamada = true }) != null && Actualizacion.MotivoParaEsperar(libre with { Voz = true }) != null
+      && Actualizacion.MotivoParaEsperar(libre with { Acciones = true }) != null && Actualizacion.MotivoParaEsperar(libre with { BorradorSinGuardar = true }) != null
+      && Actualizacion.MotivoParaEsperar(libre with { Confirmacion = true }) != null && Actualizacion.MotivoParaEsperar(libre with { Inactivo = TimeSpan.FromMinutes(3) }) != null, "con algo en curso: espera");
+// ── H08: un turno, un reloj; etapas por separado; cierre en cancelación; anomalías con motivo ──
+{
+    long ahora = 0; long Ms(long ms) => ms * System.Diagnostics.Stopwatch.Frequency / 1000;
+    var lineas = new List<string>();
+    var met = new MetricasVoz(lineas.Add, () => ahora);
+    var t1 = met.Nuevo("frases", "fin de captura");
+    ahora = Ms(1200); met.Marcar(EtapaVoz.SttRecibido);
+    ahora = Ms(1500); met.Marcar(EtapaVoz.Intencion);
+    ahora = Ms(1800); met.Marcar(EtapaVoz.RellenoTts);
+    ahora = Ms(2600); met.Marcar(EtapaVoz.PrimerTexto);
+    ahora = Ms(3300); met.Marcar(EtapaVoz.TtsRecibido); met.Marcar(EtapaVoz.TtsRecibido, Ms(9999));
+    ahora = Ms(3450); met.Marcar(EtapaVoz.InicioReproduccion); met.Cerrar("ok");
+    Check(lineas.Count == 1 && lineas[0].Contains("turno 1") && lineas[0].Contains("stt 1200 ms") && lineas[0].Contains("tts-recibido 3300 ms") && lineas[0].Contains("reproducción 3450 ms") && !lineas[0].Contains("ANOMALÍA"), "turno medido: " + lineas[0]);
+    // Un turno que nunca sonó, y el siguiente empieza 32 minutos después: el nuevo arranca de cero (nunca se reutiliza el reloj).
+    var t2 = met.Nuevo("frases", "fin de captura");
+    ahora += Ms(1_945_000);
+    var t3 = met.Nuevo("texto", "texto escrito");
+    Check(t2.Cerrado && t2.Final == "reemplazado" && t3.Id == 3 && lineas[1].Contains("reemplazado") && lineas[1].Contains("ANOMALÍA"), "el turno abierto se cierra con motivo: " + lineas[1]);
+    ahora += Ms(500); met.Marcar(EtapaVoz.Intencion); met.Cerrar("accion");
+    Check(lineas[2].Contains("intención 500 ms") && lineas[2].Contains("total 500 ms"), "el turno nuevo cuenta desde su origen: " + lineas[2]);
+    met.Nuevo("frases", "fin de captura"); ahora += Ms(300); met.Cerrar("cancelado");
+    Check(lineas[3].Contains("cancelado") && met.Actual == null, "cancelado se cierra");
+    met.Cerrar("otra vez"); Check(lineas.Count == 4, "cerrar dos veces no duplica");
+    var t5 = met.Nuevo("vivo", "transcripción recibida"); met.Marcar(EtapaVoz.InicioReproduccion, turno: 99);
+    Check(t5.MsDe(EtapaVoz.InicioReproduccion) == null, "audio de otro turno no se mezcla");
+    met.Marcar(EtapaVoz.TtsRecibido, ahora + Ms(200)); met.Marcar(EtapaVoz.InicioReproduccion, ahora + Ms(100)); met.Cerrar("ok", ahora + Ms(300));
+    Check(lineas[4].Contains("ANOMALÍA") && lineas[4].Contains("antes que"), "etapas fuera de orden marcadas: " + lineas[4]);
+    met.Nuevo("frases", "fin de captura"); met.Cerrar("ok");
+    Check(lineas[5].Contains("ok sin reproducción"), "ok sin sonido es anomalía");
+    Check(!string.Join("\n", lineas).Contains('«'), "las métricas no llevan texto");
+}
+// ── H09: cola del micrófono acotada (tira lo más viejo), control primero; voz con generación ──
+{
+    var cola = new ColaEnvio<string>(3);
+    Check(cola.Audio("a1") && cola.Audio("a2") && cola.Audio("a3") && !cola.Audio("a4") && cola.Descartados == 1 && cola.ProfundidadAudio == 3, "audio acotado");
+    cola.Control("pong");
+    var orden = new List<string>();
+    for (int i = 0; i < 4; i++) orden.Add(cola.Siguiente(CancellationToken.None).GetAwaiter().GetResult()!);
+    Check(string.Join(",", orden) == "pong,a2,a3,a4", "control primero y se tiró lo más viejo: " + string.Join(",", orden));
+    cola.Audio("b1"); cola.Audio("b2"); Check(cola.VaciarAudio() == 2 && cola.ProfundidadAudio == 0, "vaciar al interrumpir");
+    var espera = cola.Siguiente(CancellationToken.None);
+    // Los timbres de los bloques tirados solo hacen mirar otra vez: sin audio, sigue esperando.
+    Thread.Sleep(50);
+    Check(!espera.IsCompleted, "sin nada, espera");
+    cola.Audio("c1"); Check(espera.Wait(1000) && espera.Result == "c1", "despierta con audio");
+    cola.Completar(); Check(cola.Siguiente(CancellationToken.None).GetAwaiter().GetResult() == null && !cola.Audio("x") && !cola.Control("x"), "cerrada");
+    var boca = new ColaBoca(10);
+    var gb0 = boca.Generacion;
+    Check(boca.Agregar(new byte[4], gb0) && boca.Agregar(new byte[4], gb0) && boca.Agregar(new byte[4], gb0) && boca.Pendiente == 8 && boca.BytesDescartados == 4, "voz acotada");
+    Check(boca.Sacar(6)!.Length == 4 && boca.Sacar(2)!.Length == 2 && boca.Pendiente == 2, "sacar por partes");
+    var gb1 = boca.Cortar();
+    Check(boca.Pendiente == 0 && !boca.Agregar(new byte[4], gb0) && boca.Agregar(new byte[4], gb1) && boca.Sacar(100)!.Length == 4 && boca.Sacar(100) == null, "detener tira la voz vieja y la que llegue tarde");
+}
+// ── H10: «al menos N» con tope; una ráfaga se anuncia una vez, con el número correcto ──
+{
+    Carta C(int i) => new($"id{i}", $"Persona {i % 4}", $"Asunto {i}", "", DateTimeOffset.UtcNow.AddMinutes(i));
+    var cur = CursorCorreo.De("prueba:" + Guid.NewGuid());
+    Check(cur.Revisar(Enumerable.Range(0, 5).Select(C).Reverse().ToList(), 20).Nuevas.Count == 0, "primera revisión: no anuncia lo que ya estaba");
+    var r1 = cur.Revisar(Enumerable.Range(0, 6).Select(C).Reverse().ToList(), 20);
+    Check(r1.Nuevas.Count == 1 && r1.Nuevas[0].Id == "id5" && !r1.AlMenos, "una nueva");
+    Check(cur.Revisar(Enumerable.Range(0, 6).Select(C).Reverse().ToList(), 20).Nuevas.Count == 0, "sin repetir");
+    // 25 nuevas entre dos revisiones, con tope 20: un aviso con «al menos 20».
+    var rafaga = cur.Revisar(Enumerable.Range(6, 25).Select(C).Reverse().Take(20).ToList(), 20);
+    Check(rafaga.Nuevas.Count == 20 && rafaga.AlMenos, "ráfaga cortada: al menos");
+    var (tituloRafaga, cuerpoRafaga) = ConteoCorreo.Aviso(rafaga.Nuevas, rafaga.AlMenos, false);
+    Check(tituloRafaga == "Al menos 20 correos nuevos" && cuerpoRafaga.StartsWith("De "), "aviso agrupado: " + tituloRafaga + " · " + cuerpoRafaga);
+    // 7 nuevas sin llenar el tope: número exacto, agrupado.
+    var siete = cur.Revisar(Enumerable.Range(31, 7).Select(C).Concat(Enumerable.Range(20, 13).Select(C)).OrderByDescending(c => c.Fecha).ToList(), 50);
+    Check(siete.Nuevas.Count == 7 && !siete.AlMenos && ConteoCorreo.Aviso(siete.Nuevas, false, false).Titulo == "7 correos nuevos", "siete nuevas: " + siete.Nuevas.Count);
+    Check(CursorCorreo.De("Gmail:a@b.com") == CursorCorreo.De("gmail:A@B.com"), "un cursor por cuenta (sobrevive a recrear el buzón)");
+    Check(ConteoCorreo.Cantidad(50, true, false) == "al menos 50" && ConteoCorreo.Cantidad(7, false, false) == "7" && ConteoCorreo.Titulo(50, true, false) == "50+ sin leer" && ConteoCorreo.Tope(50, 50) && !ConteoCorreo.Tope(7, 50), "conteo honesto");
+    Check(ConteoCorreo.Aviso(new[] { C(1) }, false, false).Titulo == "Correo de Persona 1", "un solo correo: de quién");
+}
+Check(new[] { "notch.monitores", "notch.restablecer", "notch.llamada" }.All(PuenteCentro.MetodoPermitido), "el puente deja pasar lo que usan el notch movible y la llamada");
 Console.WriteLine($"PASS {count} assertions");
 class Clock : TimeProvider { public DateTimeOffset Now = DateTimeOffset.UtcNow; public override DateTimeOffset GetUtcNow() => Now; }

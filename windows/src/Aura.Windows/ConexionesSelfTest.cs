@@ -104,9 +104,9 @@ internal static class ConexionesSelfTest
             // 6) El buzón por API avisa solo de lo NUEVO (la primera foto no se anuncia).
             var llegadas = new List<string>();
             var lote = new List<Carta> { new("a", "X", "1", "", DateTimeOffset.Now) };
-            using (var b = new BuzonApi("prueba", (_, _) => Task.FromResult(lote.ToList())))
+            using (var b = new BuzonApi("prueba-" + Guid.NewGuid().ToString("N"), (_, _) => Task.FromResult(lote.ToList())))
             {
-                b.Nuevo += c => { lock (llegadas) llegadas.Add(c.Id); };
+                b.Nuevos += (nuevas, _) => { lock (llegadas) llegadas.AddRange(nuevas.Select(c => c.Id)); };
                 b.Vigilar();
                 await Task.Delay(800);
                 if (llegadas.Count != 0) throw new Exception("anunció lo que ya estaba");
