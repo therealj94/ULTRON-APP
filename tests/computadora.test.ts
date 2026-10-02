@@ -7,6 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
+import type { RequestHandler } from 'express';
 import { encargarTarea, motorDelPerfil, avisosPendientes, confirmarAvisos, pendientesDe, duenoDe, ultimaTareaDe, estadoComputadora, _olvidarEncargos } from '../server/computadora';
 import { extraerPedidoHerramienta, instruccionHarness, resolverPedido } from '../lib/harness';
 import { validarCambios } from '../lib/perfil-persona';
@@ -236,7 +237,7 @@ test('la app: le encarga algo a su computadora, ve los pasos en palabras y solo 
   await conNodo(urlNodo, async () => {
     const app = express();
     app.use(express.json());
-    const pasa: express.RequestHandler = (_q, _r, n) => n();
+    const pasa: RequestHandler = (_q, _r, n) => n();
     montarRutasComputadora(app, { exigirMesa: pasa, limitar: () => pasa, sesionDe: (req) => (req.headers['x-quien'] ? { correo: String(req.headers['x-quien']) } : null), motorDe: async () => 'pago' });
     const srv = app.listen(0, '127.0.0.1');
     await new Promise((r) => srv.once('listening', r));
@@ -275,7 +276,7 @@ test('la app: le encarga algo a su computadora, ve los pasos en palabras y solo 
   await conNodo(null, async () => {
     const app = express();
     app.use(express.json());
-    const pasa: express.RequestHandler = (_q, _r, n) => n();
+    const pasa: RequestHandler = (_q, _r, n) => n();
     montarRutasComputadora(app, { exigirMesa: pasa, limitar: () => pasa, sesionDe: () => ({ correo: 'jose@x.hn' }) });
     const srv = app.listen(0, '127.0.0.1');
     await new Promise((r) => srv.once('listening', r));
