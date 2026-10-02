@@ -60,6 +60,7 @@ import { Chats, Conversacion } from './pantallas/Chats';
 import { OtrasFormas } from './pantallas/OtrasFormas';
 import { abrirConversacion, abrirRuta, nav, pantallaDeRuta, RUTAS_DE_SESION, type RaizParams } from './rutas';
 import { useUsuario } from './sesion';
+import { usePush } from '../push/nativo';
 
 const Pila = createNativeStackNavigator<RaizParams>();
 
@@ -95,6 +96,8 @@ export function AppAura() {
   const tema = useTema();
   useAccionesDeAura();
   const usuario = useUsuario();
+  // Avisos del servidor con la app cerrada (FCM): registra este teléfono al entrar y lo suelta al salir.
+  usePush(usuario?.correo);
   const [ruta, setRuta] = useState<string | undefined>(undefined);
   const enSesion = !!usuario && !!ruta && RUTAS_DE_SESION.includes(ruta);
 

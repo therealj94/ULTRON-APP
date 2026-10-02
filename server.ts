@@ -19,6 +19,7 @@ import { ESPACIO_COMUN, espacioDe } from './lib/espacio-nodo';
 import { cargarMiembro, fotoMemoriaMiembro, guardarHechoMiembro, hiloMiembro, olvidarMiembro, promptMemoriaMiembro, recordarTurnoMiembro } from './lib/memoria-miembro';
 import { montarRutasApp } from './server/app-rutas';
 import { montarRutasCaras } from './server/caras-rutas';
+import { avisarComputadoraPorPush, montarRutasPush, proponerPorPush } from './server/push';
 import { montarRutasWindows, instruccionWindows } from './server/windows-rutas';
 import { leerPerfil, lineaPerfil, perfilEnCache, sembrarDesdeGenesis, type Perfil } from './lib/perfil-persona';
 import {
@@ -1413,7 +1414,13 @@ app.post(['/api/electrum/telegram/webhook', '/api/electrum/telegram/webhook/'], 
 montarRutasComputadora(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req), motorDe: async (correo) => (await leerPerfil(correo).catch(() => null))?.motorComputadora });
 // Lo que hace su computadora llega al teléfono por su canal de acciones: se abre la vista en vivo, se
 // cuentan los avances y el resultado se dice en cuanto termina (server/computadora.ts).
-alAvisarApp((quien, aviso, aparato) => empujarAccion(quien, aviso, { aparato }).entregada);
+alAvisarApp((quien, aviso, aparato) => {
+  const n = empujarAccion(quien, aviso, { aparato }).entregada;
+  // Ningún teléfono suyo escuchando (la app cerrada): el resultado le llega como aviso (FCM, server/push.ts).
+  // Solo en el intento a todos sus teléfonos (sin aparato), para no avisar dos veces.
+  if (!n && !aparato && aviso.fase === 'termina' && aviso.texto) void avisarComputadoraPorPush(quien, aviso.id, aviso.texto).catch(() => undefined);
+  return n;
+});
 montarRutasCorreo(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req) });
 montarRutasWhatsapp(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req) });
 // Lo que AU-RA propone por su cuenta y las misiones de cada persona (server/iniciativa.ts).
@@ -1434,6 +1441,8 @@ montarRutasApp(app, {
 
 // Las caras que conoce AURA, con permiso y por persona (solo números, nunca fotos).
 montarRutasCaras(app, { exigirMesa, limitar, sesionDe });
+// Avisos al teléfono con la app cerrada (FCM): registrar el token, quitarlo, probar y estado (server/push.ts).
+montarRutasPush(app, { exigirMesa, limitar, sesionDe });
 
 // AURA para Windows (el .exe): Laya «windows» del nodo. Cerebro, voz y oído son las rutas de siempre.
 montarRutasWindows(app, { exigirMesa, limitar });
@@ -4454,7 +4463,12 @@ async function startServer() {
       // escuchando, la misma propuesta sale al abrir la app (GET /api/iniciativa).
       arrancarIniciativa({
         personas: () => personasRecientes(),
-        alProponer: (correo, p) => empujarAccion(correo, accionIniciativa(p)).entregada,
+        alProponer: (correo, p) => {
+          const n = empujarAccion(correo, accionIniciativa(p)).entregada;
+          // Con la app cerrada, la propuesta le llega como aviso con «Sí» / «Luego» (FCM, server/push.ts).
+          if (!n) void proponerPorPush(correo, { id: p.id, texto: p.texto, pedido: p.pedido }).catch(() => undefined);
+          return n;
+        },
         nivelDe: (c) => nivelDeCorreo(c),
       });
     }

@@ -1,0 +1,110 @@
+/**
+ * LAS RUTAS DE LOS AVISOS AL TELÉFONO (Firebase Cloud Messaging; la lógica vive en lib/push.ts).
+ *
+ *   POST /api/push/registrar {token, aparato?, plataforma: 'android', app: 'aura'} → { ok, dispositivos, configurado }
+ *   POST /api/push/quitar    {token?, aparato?}                                    → { ok, quitados }
+ *   POST /api/push/probar                                                          → { ok, enviados, fallidos }
+ *        (un `mensaje` de prueba a los teléfonos de la propia sesión; solo la junta)
+ *   GET  /api/push/estado                                                          → { configurado, dispositivos }
+ *
+ * La persona sale SIEMPRE de la sesión firmada (sesionDe), nunca del cuerpo: nadie registra su teléfono
+ * en la cuenta de otro, ni quita, ni prueba, ni cuenta los teléfonos ajenos. Los tokens no vuelven en
+ * ninguna respuesta ni se escriben en un log.
+ *
+ * Los atajos para el resto del servidor (iniciativa, círculo, computadora) se re-exportan de aquí:
+ * llamarPorPush, avisarPush, proponerPorPush, recordarPorPush, avisarComputadoraPorPush, enviarPush.
+ */
+import type express from 'express';
+import { exigirMesa as exigirMesaSeguridad, limitar as limitarSeguridad, sesionDe as sesionDeSeguridad } from './seguridad';
+import { nivelDeCorreo } from './nivel';
+import { aparatoValido } from '../lib/acciones-app';
+import { dispositivosDe, enviarPush, PushNoDisponible, pushConfigurado, quitarToken, registrarToken, tokenValido } from '../lib/push';
+
+export {
+  avisarComputadoraPorPush,
+  avisarConAura,
+  avisarPush,
+  enviarPush,
+  llamarConAura,
+  llamarPorPush,
+  proponerPorPush,
+  pushConfigurado,
+  recordarPorPush,
+  type DatosPush,
+  type ResultadoPush,
+} from '../lib/push';
+
+export type DepsPush = {
+  exigirMesa: express.RequestHandler;
+  limitar: (max: number, ventanaMs?: number, grupo?: string) => express.RequestHandler;
+  sesionDe: (req: express.Request) => { correo: string; nombre?: string } | null;
+  /** Junta o miembro (server/nivel.ts). Pruebas: otro. */
+  nivelDe?: (correo: string) => 'junta' | 'miembro';
+};
+
+const sinSesion = (res: express.Response) => res.status(401).json({ error: 'Entra con tu sesión.', code: 'sesion_requerida', honesto: true });
+const noDisponible = (res: express.Response) =>
+  res.status(503).json({ error: 'Ahora mismo no pude leer tus teléfonos guardados; no cambié nada. Prueba en un momento.', code: 'push_no_disponible', honesto: true });
+
+function correoDe(d: DepsPush, req: express.Request): string {
+  return String(d.sesionDe(req)?.correo || '').trim().toLowerCase();
+}
+
+export function montarRutasPush(app: express.Express, deps: Partial<DepsPush> = {}) {
+  const d: DepsPush = {
+    exigirMesa: deps.exigirMesa || exigirMesaSeguridad,
+    limitar: deps.limitar || limitarSeguridad,
+    sesionDe: deps.sesionDe || sesionDeSeguridad,
+    nivelDe: deps.nivelDe || ((c) => nivelDeCorreo(c)),
+  };
+
+  app.post('/api/push/registrar', d.exigirMesa, d.limitar(20, 60_000, 'push-registrar'), async (req, res) => {
+    const correo = correoDe(d, req);
+    if (!correo) return sinSesion(res);
+    const b = (req.body || {}) as Record<string, unknown>;
+    const token = tokenValido(b.token);
+    if (!token) return res.status(400).json({ error: 'Falta el token de avisos del teléfono.', honesto: true });
+    const aparato = aparatoValido(b.aparato) || aparatoValido(req.headers['x-aura-aparato']) || '';
+    try {
+      const r = await registrarToken(correo, { token, aparato, plataforma: String(b.plataforma || 'android'), app: String(b.app || 'aura') });
+      return res.json({ ok: true, dispositivos: r.dispositivos, durable: r.durable, configurado: pushConfigurado(), honesto: true });
+    } catch (e) {
+      if (e instanceof PushNoDisponible) return noDisponible(res);
+      console.warn('[push] no pude registrar el teléfono', String((e as Error)?.message || e).slice(0, 80));
+      return res.status(500).json({ error: 'No pude registrar este teléfono para avisos.', honesto: true });
+    }
+  });
+
+  app.post('/api/push/quitar', d.exigirMesa, d.limitar(20, 60_000, 'push-quitar'), async (req, res) => {
+    const correo = correoDe(d, req);
+    if (!correo) return sinSesion(res);
+    const b = (req.body || {}) as Record<string, unknown>;
+    const token = tokenValido(b.token) || '';
+    const aparato = aparatoValido(b.aparato) || (token ? '' : aparatoValido(req.headers['x-aura-aparato']) || '');
+    if (!token && !aparato) return res.status(400).json({ error: 'Falta el token o el aparato que quitar.', honesto: true });
+    try {
+      const r = await quitarToken(correo, { token, aparato });
+      return res.json({ ok: true, quitados: r.quitados, durable: r.durable, honesto: true });
+    } catch (e) {
+      if (e instanceof PushNoDisponible) return noDisponible(res);
+      return res.status(500).json({ error: 'No pude quitar este teléfono de los avisos.', honesto: true });
+    }
+  });
+
+  app.post('/api/push/probar', d.exigirMesa, d.limitar(5, 60_000, 'push-probar'), async (req, res) => {
+    const correo = correoDe(d, req);
+    if (!correo) return sinSesion(res);
+    if (d.nivelDe!(correo) !== 'junta') return res.status(403).json({ error: 'La prueba de avisos es de la junta directiva.', code: 'solo_junta', honesto: true });
+    if (!pushConfigurado()) return res.status(503).json({ error: 'Los avisos no están configurados en el servidor (falta FIREBASE_SERVICE_ACCOUNT).', code: 'push_sin_configurar', honesto: true });
+    const r = await enviarPush(correo, { tipo: 'mensaje', titulo: 'AURA', texto: 'Prueba de avisos: si ves esto con la app cerrada, ya te puedo alcanzar.' });
+    return res.status(r.enviados ? 200 : 502).json({ ok: r.enviados > 0, enviados: r.enviados, fallidos: r.fallidos, quitados: r.quitados, ...(r.detalle ? { detalle: r.detalle } : {}), honesto: true });
+  });
+
+  app.get('/api/push/estado', d.exigirMesa, d.limitar(30, 60_000, 'push-estado'), async (req, res) => {
+    const correo = correoDe(d, req);
+    if (!correo) return sinSesion(res);
+    res.setHeader('Cache-Control', 'no-store');
+    const r = await dispositivosDe(correo);
+    return res.json({ configurado: pushConfigurado(), dispositivos: r.ok ? r.dispositivos.length : null, disponible: r.ok, honesto: true });
+  });
+}
