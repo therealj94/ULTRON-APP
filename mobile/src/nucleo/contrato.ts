@@ -29,6 +29,8 @@ export type Encuesta = {
   trabajo?: string;
   /** Pasatiempos, deportes, lo que le gusta. */
   gustos?: string;
+  /** Lo que quiere que AURA haga por él (la primera vez lo elige o lo escribe). */
+  ayuda?: string;
   /** Lo que quiera que AURA sepa y no cupo arriba. */
   otros?: string;
 };

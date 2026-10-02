@@ -34,7 +34,7 @@ import { normalizarPresencia } from '../avatar3d/presencia';
 
 export const MAX_APODO = 40;
 export const MAX_CAMPO_ENCUESTA = 300;
-export const CAMPOS_ENCUESTA = ['vive', 'comida', 'musica', 'familia', 'trabajo', 'gustos', 'otros'] as const;
+export const CAMPOS_ENCUESTA = ['vive', 'comida', 'musica', 'familia', 'trabajo', 'gustos', 'ayuda', 'otros'] as const;
 export type CampoEncuesta = (typeof CAMPOS_ENCUESTA)[number];
 const TEMAS: Tema[] = ['oscuro', 'claro', 'sistema'];
 const DIAS_DEL_MES = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];

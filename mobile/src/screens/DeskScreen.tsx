@@ -75,7 +75,9 @@ import { ALTO_BARRA, BarraMesa } from '../components/BarraMesa';
 import { HojaMas, type OpcionMas } from '../components/HojaMas';
 import { RecorridoApp } from '../recorrido/RecorridoApp';
 import type { PruebaId } from '../recorrido/guion';
-import { conTutorialVisto, tocaTutorial } from '../tutorial/pasos';
+import { conRecorridoVisto, tocaOfrecerRecorrido } from '../tutorial/pasos';
+import { VentanaBienvenida } from '../bienvenida/VentanaBienvenida';
+import { abrirBienvenida } from '../bienvenida/estado';
 import { OidoMesa, VigilanteOido, duenoAudio, motivoFalloVoz, oidoPropio } from '../compa/duenoAudio';
 import { ESPERA_FRASE_MS, estadoDeEspera, fraseDeEstado, vozDeEspera } from '../compa/frasesEstado';
 import { ControlCamara, conPreferencia, pedidoDeCamara, prefiereSiempre, respuestaModoCamara, type EstadoCamara } from '../lib/camaraModo';
@@ -225,6 +227,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   /** Sus misiones, lo que sabe de ti o tu círculo, pedidos desde el menú (app/HojasCerebro.tsx). */
   const [hojaCerebro, setHojaCerebro] = useState<PantallaCerebro | null>(null);
   const [tutorialAbierto, setTutorialAbierto] = useState(false);
+  /** Las preguntas para conocerle están a la vista (bienvenida/): el dictado necesita el micrófono. */
+  const [preguntasAbiertas, setPreguntasAbiertas] = useState(false);
   /**
    * Charlar (el avatar grande, de frente) o Trabajar (el avatar compacto arriba y la conversación
    * escrita debajo, para leer y volver a consultar lo dicho). Se elige en «Más» y se guarda.
@@ -1489,7 +1493,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       setMicMuted(s.micMuted);
       // La cámara arranca apagada salvo que esta persona haya elegido «siempre» (y haya permiso).
       camara.arrancar(prefiereSiempre(s.camaraSiempre, user.correo) && !!camPerm?.granted);
-      const verTutorial = tocaTutorial(s.tutorialVisto, user.correo);
+      // La primera vez (o cuando el recorrido creció): la ventana con «Empezar» / «Después».
+      const verTutorial = tocaOfrecerRecorrido(s, user.correo);
       setModoMesa(s.modoMesa === 'trabajar' ? 'trabajar' : 'charlar');
       setSettings({ sttEngine: s.sttEngine, proactive: s.proactive, sfx: s.sfx });
       setPostura(s.postura === 'sentada' ? 'sentada' : 'pie');
@@ -1527,8 +1532,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       // (Claudio se pone de pie).
       void orientar('libre');
 
-      // La primera vez, el recorrido de qué puede hacer (saltable; se vuelve a abrir desde «Más»).
-      if (alive && verTutorial && mesaVisibleRef.current) setTutorialAbierto(true);
+      // La primera vez, la ventana que ofrece el recorrido (Empezar / Contarte de mí / Después); se vuelve a
+      // abrir desde «Más → Qué puedo hacer».
+      if (alive && verTutorial && mesaVisibleRef.current) abrirBienvenida('primera');
     })();
     return () => {
       alive = false;
@@ -1794,7 +1800,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   // Un solo dueño del audio: la llamada, la conversación en vivo o la mesa (solo si se la ve).
   useEffect(() => {
     // Con el recorrido abierto la mesa suelta el oído: si no, oiría a Claudio y ANT-ONIO y les contestaría.
-    const dueno = duenoAudio({ enLlamada, conversacion: vozOcupa, mesaVisible: mesaVisible && !tutorialAbierto, appActiva, companeraVisible: companeraVisible && !tutorialAbierto });
+    // Igual con las preguntas de la bienvenida a la vista: su dictado usa el micrófono.
+    const tapada = tutorialAbierto || preguntasAbiertas;
+    const dueno = duenoAudio({ enLlamada, conversacion: vozOcupa, mesaVisible: mesaVisible && !tapada, appActiva, companeraVisible: companeraVisible && !tapada });
     const hizo = oidoMesa.current!.aplicar(dueno);
     if (hizo === 'suelta') {
       speakingRef.current = false;
@@ -1809,7 +1817,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       // Se reabrió un reconocedor nuevo: «escuchando» cuando de verdad escuche (el vigilante lo mira).
       setStatus(micMutedRef.current ? 'muted' : oidoEscuchando() ? 'listening' : 'reconnect');
     }
-  }, [enLlamada, vozOcupa, mesaVisible, appActiva, companeraVisible, restFace, tutorialAbierto]);
+  }, [enLlamada, vozOcupa, mesaVisible, appActiva, companeraVisible, restFace, tutorialAbierto, preguntasAbiertas]);
 
   // La voz toma el avatar de la mesa. El permiso de la conversación se pide cuando suena la llamada
   // (VozProvider, `timbre`), no al entrar: eran segundos de GPU del nodo sin ninguna llamada.
@@ -2270,7 +2278,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       case 'avatar':
         return setEligiendo('menu');
       case 'tutorial':
-        return setTutorialAbierto(true);
+        // «Qué puedo hacer»: la ventana con el recorrido y las preguntas para conocerle.
+        return abrirBienvenida('menu');
       case 'computadora':
         return setPcAbierta(true);
       case 'misiones':
@@ -2288,7 +2297,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   /** Se cerró el recorrido (terminado o no): ya lo vio; se vuelve a abrir desde «Más → Qué puedo hacer». */
   const cerrarTutorial = () => {
     setTutorialAbierto(false);
-    void loadSettings().then((s0) => saveSettings({ tutorialVisto: conTutorialVisto(s0.tutorialVisto, user.correo) }));
+    void loadSettings().then((s0) => saveSettings(conRecorridoVisto(s0, user.correo)));
   };
   /**
    * Al final del recorrido eligió probar algo: lo mismo que su botón o su frase en la mesa. Espera a que
@@ -2485,6 +2494,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       <HojaCerebro cual={hojaCerebro} onCerrar={() => setHojaCerebro(null)} />
 
       <RecorridoApp visible={tutorialAbierto} nombre={user.name} idioma={idioma} onCerrar={cerrarTutorial} onProbar={probarDesdeRecorrido} />
+
+      {/* La ventana de bienvenida: ofrece el recorrido y las preguntas para conocerle (bienvenida/). */}
+      <VentanaBienvenida correo={user.correo} nombre={user.name} onRecorrido={() => setTutorialAbierto(true)} onHablando={() => void startConocer(false)} onTapa={setPreguntasAbiertas} />
 
       <DeskMenu
         visible={menuOpen}

@@ -39,6 +39,8 @@ export type Encuesta = {
   familia?: string;
   trabajo?: string;
   gustos?: string;
+  /** Lo que quiere que AURA haga por ella (la primera vez lo elige o lo escribe). */
+  ayuda?: string;
   otros?: string;
 };
 
@@ -54,12 +56,18 @@ export type Perfil = {
   presencia?: PresenciaPerfil;
   motorComputadora?: MotorComputadora;
   iniciativa?: NivelIniciativa;
+  /**
+   * La persona eligió cómo quiere que le digan (lo escribió en la app, lo dijo en una conversación).
+   * Sin esto y sin `completado`, el apodo es el de relleno (su primer nombre o «amigo») y AURA se lo
+   * pregunta (lib/apodo.ts). Lo pone el servidor al guardar un apodo; el teléfono no lo manda.
+   */
+  apodoElegido?: boolean;
   actualizado: number;
 };
 
 export const MAX_APODO = 40;
 export const MAX_CAMPO_ENCUESTA = 300;
-export const CAMPOS_ENCUESTA = ['vive', 'comida', 'musica', 'familia', 'trabajo', 'gustos', 'otros'] as const;
+export const CAMPOS_ENCUESTA = ['vive', 'comida', 'musica', 'familia', 'trabajo', 'gustos', 'ayuda', 'otros'] as const;
 const AVATARES: AvatarPerfil[] = ['ojos', 'aura', 'claudio', 'antonio'];
 const TEMAS: Tema[] = ['oscuro', 'claro', 'sistema'];
 const PRESENCIAS: PresenciaPerfil[] = ['paseo', 'lado', 'completa'];
@@ -211,6 +219,7 @@ function sanear(raw: unknown): Perfil | null {
   });
   if (!v.ok) return null;
   const p = aplicarCambios(perfilInicial({ nombreGenesis: String(r.nombreGenesis || '') }), v.cambios, Number(r.actualizado) || 0);
+  if (r.apodoElegido === true) p.apodoElegido = true;
   return p;
 }
 
@@ -336,6 +345,8 @@ export async function actualizarPerfil(correo: string, cambios: Cambios, base: {
   if (!leido.ok) throw new PerfilNoDisponible();
   const previo = leido.perfil || perfilInicial({ apodo: base.apodo });
   const perfil = aplicarCambios(previo, cambios);
+  // Un apodo que llega a guardarse lo eligió la persona (en la app o diciéndolo): ya no se pregunta.
+  if (cambios.apodo) perfil.apodoElegido = true;
   const { durable } = await guardarPerfil(correo, perfil);
   return { perfil, durable };
 }
@@ -408,7 +419,13 @@ function fechaCumple(mmdd: string, idioma: IdiomaPerfil) {
 export function lineaPerfil(p: Perfil | null | undefined, ahora = new Date()): string {
   if (!p) return '';
   const idioma = p.idioma;
-  const partes: string[] = [`Le dices «${p.apodo}» (así pidió que le llamaras; úsalo al saludar y de vez en cuando, no en cada frase).`];
+  // Sin apodo elegido es el de relleno (su primer nombre o «amigo»): no se dice que lo pidió (lib/apodo.ts lo pregunta).
+  const elegido = p.completado || p.apodoElegido;
+  const partes: string[] = [
+    elegido
+      ? `Le dices «${p.apodo}» (así pidió que le llamaras; úsalo al saludar y de vez en cuando, no en cada frase).`
+      : `Le dices «${p.apodo}» por ahora (es de relleno: todavía no te dijo cómo quiere que le llames).`,
+  ];
   if (p.nombreGenesis) partes.push(`Su nombre completo (de su Genesis ID): ${p.nombreGenesis}.`);
   if (p.cumple) {
     partes.push(
@@ -425,6 +442,7 @@ export function lineaPerfil(p: Perfil | null | undefined, ahora = new Date()): s
     gustos: 'Le gusta',
     comida: 'Comida favorita',
     musica: 'Música que le gusta',
+    ayuda: 'Lo que quiere que hagas por ella',
     otros: 'Además quiso que supieras',
   };
   for (const k of CAMPOS_ENCUESTA) if (e[k]) partes.push(`${etiquetas[k]}: ${e[k]}.`);

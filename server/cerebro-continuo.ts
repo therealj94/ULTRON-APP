@@ -5,6 +5,8 @@
  *   GET    /api/cerebro/abiertos                → lo que quedó a medias (y lo cerrado hace poco)
  *   POST   /api/cerebro/abiertos/:id/cerrar {estado?: 'hecho' | 'descartado'}
  *   GET    /api/cerebro/conocer                 → lo que AU-RA sabe de la persona, por categoría, y lo que falta
+ *   POST   /api/cerebro/conocer {categoria, dato, clave?} → un dato que la persona contó a mano (las
+ *                                                  preguntas de la primera vez en la app): agregarDato
  *   DELETE /api/cerebro/conocer/:id             → olvida un dato
  *   GET    /api/circulo                         → su círculo cercano y qué se puede desde el servidor
  *   POST   /api/circulo {id?, nombre, relacion, canales, permisos?} → agrega (o cambia, con id)
@@ -18,7 +20,7 @@ import type express from 'express';
 import { abiertosDe, cerradosDe, cerrar } from '../lib/abiertos';
 import { CajonNoDisponible, clavePersona } from '../lib/cerebro-comun';
 import { actualizarPersona, agregarPersona, capacidadesCirculo, circuloDe, ErrorCirculo, quitarPersona } from '../lib/circulo';
-import { CATEGORIAS, NOMBRE_CATEGORIA, olvidarDato, queNoSe, queSeDe } from '../lib/conocer-persona';
+import { agregarDato, CATEGORIAS, NOMBRE_CATEGORIA, olvidarDato, queNoSe, queSeDe } from '../lib/conocer-persona';
 import { episodiosDe } from '../lib/episodios';
 import { triar, type FuentesTriaje } from '../lib/triaje';
 import { whatsappPermitido } from './whatsapp';
@@ -99,6 +101,26 @@ export function montarRutasCerebroContinuo(app: express.Express, d: Deps) {
       return res.json({ categorias, total: s.total, faltan: queNoSe(c), honesto: true });
     } catch (e) {
       return fallo(res, e);
+    }
+  });
+
+  // Lo que contó en las preguntas de la primera vez (mobile/src/primeravez): queda como dato «manual»
+  // (el modelo ya no lo cambia) y la persona lo ve, corrige o borra en «Lo que sé de ti».
+  app.post('/api/cerebro/conocer', d.exigirMesa, d.limitar(30), async (req, res) => {
+    const c = quien(req, res);
+    if (!c) return;
+    const categoria = String(req.body?.categoria || '');
+    if (!(CATEGORIAS as readonly string[]).includes(categoria)) return res.status(400).json({ error: `La categoría es ${CATEGORIAS.join(', ')}.`, honesto: true });
+    const dato = typeof req.body?.dato === 'string' ? req.body.dato.trim() : '';
+    if (dato.length < 4 || dato.length > 240) return res.status(400).json({ error: 'El dato va en una frase corta (de 4 a 240 letras).', honesto: true });
+    const clave = typeof req.body?.clave === 'string' && req.body.clave.trim() ? req.body.clave.trim().slice(0, 60) : undefined;
+    try {
+      const r = await agregarDato(c, categoria, dato, clave);
+      return res.json({ dato: r.dato, durable: r.durable, honesto: true });
+    } catch (e) {
+      if (e instanceof CajonNoDisponible) return fallo(res, e);
+      // Un secreto (clave, PIN) o un dato vacío: se dice, no se guarda.
+      return res.status(400).json({ error: String((e as Error)?.message || e).slice(0, 160), honesto: true });
     }
   });
 
