@@ -23,10 +23,20 @@ API (todo con `Authorization: Bearer $COMPUTADORA_CLAVE`, salvo /salud):
 Cada dueño (una huella, nunca el correo) trabaja en un escritorio limpio: si la tarea es de otro dueño que
 la anterior, el contenedor del escritorio se borra y se crea de nuevo (pestañas, historial, descargas y
 documentos del anterior no quedan). Las tareas terminadas se olvidan tras una hora.
-  GET  /tareas/{id}                                      → estado, pasos y respuesta
+  GET  /tareas/{id}                                      → estado, pasos, respuesta y `pregunta` (si espera un sí)
   GET  /tareas/{id}/eventos                              → los mismos pasos en vivo (SSE)
   POST /tareas/{id}/parar
+  POST /tareas/{id}/pausar · /reanudar                   → pausa entre un paso y el siguiente
+  POST /tareas/{id}/confirmar {"si": true|false}         → contesta la pregunta de una acción sensible
+  POST /tareas/{id}/control {"tomar": true|false}        → la persona toma el escritorio (la tarea espera) o lo devuelve
+  POST /tareas/{id}/accion {"tipo": "click"|"escribir"|"tecla"|"scroll", ...}  → lo que hace la persona con el control
+  GET  /tareas/{id}/pantalla                             → la captura de ahora (JPEG), solo mientras esa tarea tiene el escritorio
   GET  /pantalla                                         → la captura de ahora (PNG)
+
+Estados de una tarea: en_cola, trabajando, pausada, confirmar (espera el sí de la persona antes de algo
+sensible: enviar, iniciar sesión, publicar, borrar), control (la persona tiene el escritorio), y los finales
+hecha, parada, sin_pasos, fallo. Pagar o comprar: nunca (la acción no se hace aunque el modelo la pida).
+/salud dice `capacidades` (pausar, confirmar, control): el servidor de AU-RA solo ofrece lo que el nodo sabe.
   POST /vista                                            → {"ruta": "/vista/<llave>/vnc.html?..."} para mirar en vivo
   GET  /vista/permitir                                   → para el forward_auth de Caddy
 """
@@ -36,6 +46,7 @@ import hmac
 import io
 import json
 import os
+import re
 import secrets
 import shlex
 import subprocess
@@ -62,6 +73,12 @@ TAREAS_MAX = int(os.environ.get('TAREAS_MAX', '100'))
 ESPERA_TRAS_ACCION = float(os.environ.get('ESPERA_TRAS_ACCION', '1.2'))
 CLAUDE_CLAVE = os.environ.get('ANTHROPIC_API_KEY', '')
 CLAUDE_MODELO = os.environ.get('CLAUDE_MODELO', 'claude-sonnet-5-5')
+# Cuánto espera el sí de la persona antes de una acción sensible, y cuánto puede durar una pausa o el control.
+ESPERA_CONFIRMACION_S = int(os.environ.get('ESPERA_CONFIRMACION_S', '600'))
+PAUSA_MAX_S = int(os.environ.get('PAUSA_MAX_S', '1800'))
+# Lo que este servicio sabe hacer además de encargar y parar (el servidor de AU-RA lo lee en /salud).
+CAPACIDADES = ['pausar', 'confirmar', 'control']
+ESTADOS_VIVOS = ('en_cola', 'trabajando', 'pausada', 'confirmar', 'control')
 
 cliente = OpenAI(base_url=MODELO_URL, api_key='local', timeout=120)
 app = FastAPI()
@@ -78,10 +95,14 @@ def en_escritorio(comando, entrada=None, timeout=30):
     return r.stdout
 
 
+TAMANO = {'ancho': 1280, 'alto': 800}  # el de la última captura (para los toques de la persona)
+
+
 def captura():
     """PNG de la pantalla entera, y su tamaño (el mismo con que se escalan las coordenadas)."""
     png = en_escritorio('import -window root png:-', timeout=20)
     ancho, alto = Image.open(io.BytesIO(png)).size
+    TAMANO.update(ancho=ancho, alto=alto)
     return png, ancho, alto
 
 
@@ -143,14 +164,79 @@ HERRAMIENTAS = [
     fn('drag', 'Drag from (x1, y1) to (x2, y2)', x1=COORD, y1=COORD, x2=COORD, y2=COORD),
     fn('open_url', 'Open a URL in the web browser', url={'type': 'string'}),
     fn('wait', 'Wait for the screen to settle', seconds={'type': 'number'}),
+    fn('ask_user_confirmation', 'Ask the user for permission before a sensitive action (submitting a form, signing in, '
+       'publishing or sending something, deleting). Wait for the answer before acting.',
+       question={'type': 'string', 'description': 'One short question, in the language of the task, saying exactly what you are about to do'}),
     fn('answer', 'Provide a final answer', content={'type': 'string', 'description': 'The answer content'}),
 ]
 
 SISTEMA = ('You are a computer-use agent working on your own Linux desktop (Ubuntu, Firefox, LibreOffice). '
            'You see the screen through screenshots and act with your tools, one action per step. '
            'Work until the task is really done, then call answer with a short report of what you did and '
-           'what you found, in the same language as the task. If something blocks you (a login, a captcha, '
-           'a payment, a missing permission), stop and say so in answer instead of guessing.')
+           'what you found, in the same language as the task: the concrete result first (the data, the list, '
+           'the comparison) and the addresses (URLs) of the pages where you found it. '
+           'Before anything sensitive (submitting a form, signing in, publishing or sending something, deleting) '
+           'call ask_user_confirmation and wait for the answer; if the user says no, do not do it. '
+           'Never pay, buy, order or type card numbers: that is forbidden even if the task asks for it. '
+           'If something blocks you (a login you have no permission for, a captcha, a payment, a missing '
+           'permission), stop and say so in answer instead of guessing.')
+
+# Pagar o comprar: nunca, aunque el modelo lo pida (el toque no se hace). Lo sensible: con el sí de la persona.
+PAGO = re.compile(r'\b(pagar|comprar|compra ahora|finalizar (la )?compra|realizar (el )?pedido|hacer (el )?pedido|'
+                  r'confirmar (el )?pago|proceder al pago|ir a pagar|a[nñ]adir al carrito|agregar al carrito|donar|'
+                  r'checkout|pay now|pay|buy now|buy|purchase|place (your )?order|add to (cart|bag)|'
+                  r'proceed to checkout|donate)\b', re.I)
+SENSIBLE = re.compile(r'\b(enviar|env[ií]a(r|lo)?|mandar|submit|send|publicar|publica|postear|publish|post|tweet|'
+                      r'borrar|borra|eliminar|elimina|delete|remove|iniciar sesi[oó]n|inicia sesi[oó]n|ingresar|'
+                      r'entrar con|acceder|log ?in|sign ?in|sign ?up|registrar(me|se)?|reg[ií]strate|crear (una )?cuenta|'
+                      r'create (an )?account|confirmar|confirm|guardar cambios|save changes|suscrib[a-z]*|subscribe|'
+                      r'reservar|book now|agendar)\b', re.I)
+COOKIES = re.compile(r'cookie|galleta', re.I)
+TARJETA = re.compile(r'(?:\d[ -]?){13,19}')
+NO_PAGO = ('Not executed: paying, buying, ordering or entering card numbers is forbidden on this computer. '
+           'Do not try again; finish with answer and say that a person has to do that part.')
+NO_DIJO = 'Not executed: the user said NO. Do not do it; continue without it, or finish with answer explaining why.'
+SI_DIJO = 'The user said YES. Go ahead with exactly that action.'
+NOTA_CONTROL = ('Note: the user took control of the desktop for a moment and may have changed what is on the '
+                'screen. Look at the new screenshot and continue the task from where it is now, without starting over.')
+
+
+class Detenida(Exception):
+    """La tarea se cierra como parada con un motivo (nadie contestó, la pausa se pasó del tope)."""
+
+
+def idioma_de(texto):
+    """'en' si la tarea está en inglés; si no, 'es'."""
+    t = f' {str(texto).lower()} '
+    en = sum(t.count(f' {w} ') for w in ('the', 'and', 'what', 'tell', 'me', 'go', 'to', 'find', 'search', 'is', 'of'))
+    es = sum(t.count(f' {w} ') for w in ('el', 'la', 'y', 'de', 'que', 'dime', 'busca', 'entra', 'a', 'en', 'los'))
+    return 'en' if en > es else 'es'
+
+
+def pregunta_para(elemento, idioma='es'):
+    e = ' '.join(str(elemento).split())[:80]
+    return f'I am about to click «{e}». Should I?' if idioma == 'en' else f'Voy a tocar «{e}». ¿Lo hago?'
+
+
+def revisar_accion(t, nombre, a):
+    """Antes de una acción del motor gratis: pagar o comprar, nunca; lo sensible, solo con el sí de la persona.
+    Devuelve None si se puede hacer, o el texto que vuelve al modelo en lugar de hacerla."""
+    if nombre == 'type' and TARJETA.search(str(a.get('text', ''))):
+        return NO_PAGO
+    if nombre not in ('click', 'double_click'):
+        return None
+    elemento = str(a.get('element') or '')
+    if not elemento or COOKIES.search(elemento):
+        return None
+    if PAGO.search(elemento):
+        return NO_PAGO
+    if SENSIBLE.search(elemento) and t.permiso_hasta < len(t.pasos):
+        si = t.pedir_confirmacion(pregunta_para(elemento, idioma_de(t.instruccion)))
+        if si is None:
+            raise Detenida('la pararon mientras esperaba tu sí')
+        if not si:
+            return NO_DIJO
+    return None
 
 
 def a_pixel(v, total):
@@ -227,10 +313,18 @@ def miniatura(png, ancho=480):
 
 # ------------------------------------------------------------------ motor de pago: Claude
 
-SISTEMA_CLAUDE = SISTEMA.replace('call answer with a short report', 'end with a short report') + (
+SISTEMA_CLAUDE = SISTEMA.replace('call answer with a short report', 'end with a short report').replace(
+    'call ask_user_confirmation', 'use the ask_user_confirmation tool') + (
     ' After each step, take a screenshot and check that it worked before moving on. '
     'Prefer keyboard shortcuts for dropdowns and scrollbars.')
 NO_HECHA = 'Not executed: an earlier computer action in this turn failed.'
+# Una herramienta propia junto al toolset: el sí de la persona antes de algo sensible.
+CONFIRMAR_CLAUDE = {'name': 'ask_user_confirmation',
+                    'description': 'Ask the user for permission before a sensitive action (submitting a form, signing in, '
+                                   'publishing or sending something, deleting). Returns YES or NO. Never use it for payments: those are forbidden.',
+                    'input_schema': {'type': 'object', 'properties': {'question': {
+                        'type': 'string', 'description': 'One short question in the language of the task saying exactly what you are about to do'}},
+                        'required': ['question']}}
 
 
 def accion_claude(nombre, a):
@@ -311,24 +405,41 @@ def correr_claude(t):
     ]}]
     with httpx.Client(timeout=180) as http:
         for _ in range(t.max_pasos):
-            if t.parar:
+            if t.parar or not t.esperar_si_pausada():
                 return t.cerrar('parada')
+            if t.notas:
+                mensajes[-1]['content'].extend({'type': 'text', 'text': n} for n in t.notas)
+                t.notas.clear()
             t0 = time.time()
             r = http.post('https://api.anthropic.com/v1/messages', headers={
                 'x-api-key': CLAUDE_CLAVE, 'anthropic-version': '2023-06-01', 'content-type': 'application/json'},
                 json={'model': CLAUDE_MODELO, 'max_tokens': 4096, 'system': SISTEMA_CLAUDE,
-                      'tools': [{'type': 'computer_toolset_20260801'}], 'messages': mensajes})
+                      'tools': [{'type': 'computer_toolset_20260801'}, CONFIRMAR_CLAUDE], 'messages': mensajes})
             if r.status_code != 200:
                 return t.cerrar('fallo', error=f'Claude {r.status_code}: {r.text[:300]}')
             j = r.json()
             ms = round((time.time() - t0) * 1000)
             mensajes.append({'role': 'assistant', 'content': j['content']})
-            usos = [b for b in j['content'] if b.get('type') == 'tool_use' and b.get('toolset_name') == 'computer']
+            usos = [b for b in j['content'] if b.get('type') == 'tool_use'
+                    and (b.get('toolset_name') == 'computer' or b.get('name') == CONFIRMAR_CLAUDE['name'])]
             texto = ' '.join(b.get('text', '') for b in j['content'] if b.get('type') == 'text').strip()
             if not usos:
+                # La captura final va con el resultado (la app la muestra en la tarjeta del final).
+                t.anotar(accion='answer', args={'content': texto[:300]}, ms=ms, miniatura=miniatura(captura()[0]))
                 return t.cerrar('hecha', respuesta=texto or '(sin respuesta)')
             resultados, fallo = [], False
             for b in usos:
+                if b.get('name') == CONFIRMAR_CLAUDE['name']:
+                    res = {'type': 'tool_result', 'tool_use_id': b['id']}
+                    if fallo:
+                        res.update(content=NO_HECHA, is_error=True)
+                    else:
+                        si = t.pedir_confirmacion(str((b.get('input') or {}).get('question', '')))
+                        if si is None:
+                            return t.cerrar('parada')
+                        res['content'] = SI_DIJO if si else NO_DIJO
+                    resultados.append(res)
+                    continue
                 res = {'type': 'tool_result', 'tool_use_id': b['id'], 'toolset_name': 'computer'}
                 if fallo:
                     res.update(content=NO_HECHA, is_error=True)
@@ -368,7 +479,7 @@ DUENO_ACTUAL = {'v': None}
 def olvidar_viejas():
     """Las terminadas hace más de OLVIDAR_TRAS_S se van; y nunca más de TAREAS_MAX en memoria."""
     ahora = time.time()
-    terminadas = sorted((t for t in TAREAS.values() if t.estado not in ('en_cola', 'trabajando')), key=lambda t: t.creada)
+    terminadas = sorted((t for t in TAREAS.values() if t.estado not in ESTADOS_VIVOS), key=lambda t: t.creada)
     for t in terminadas:
         if ahora - t.creada > OLVIDAR_TRAS_S:
             TAREAS.pop(t.id, None)
@@ -395,6 +506,15 @@ class Tarea:
         self.parar = False
         self.creada = time.time()
         self.cambio = threading.Condition()
+        # Pausa, control de la persona y confirmación: se miran entre un paso y el siguiente.
+        self.pausa = False
+        self.control = False
+        self.en_espera = False  # el ciclo está de verdad quieto esperando (la persona ya puede actuar)
+        self.pregunta = None    # la pregunta que espera su sí
+        self.si = None
+        self.permiso_hasta = -1  # tras un sí, los pasos hasta este no vuelven a preguntar
+        self.persona_actuo = False
+        self.notas = []          # lo que se le dice al modelo en el paso siguiente
 
     def anotar(self, **paso):
         with self.cambio:
@@ -406,12 +526,83 @@ class Tarea:
     def cerrar(self, estado, respuesta=None, error=None):
         with self.cambio:
             self.estado, self.respuesta, self.error = estado, respuesta, error
+            self.pausa = self.control = False
+            self.pregunta = None
             self.cambio.notify_all()
+
+    def estado_visible(self):
+        """Lo que se cuenta afuera: mientras trabaja, si espera un sí, si la tiene la persona o si está en pausa."""
+        if self.estado == 'trabajando':
+            if self.pregunta:
+                return 'confirmar'
+            if self.control:
+                return 'control'
+            if self.pausa:
+                return 'pausada'
+        return self.estado
+
+    def avisar(self, **cambios):
+        """Cambia banderas (pausa, control, si, parar) y despierta al ciclo si está esperando."""
+        with self.cambio:
+            for k, v in cambios.items():
+                setattr(self, k, v)
+            self.cambio.notify_all()
+
+    def esperar_si_pausada(self):
+        """Entre un paso y el siguiente: si la pausaron o la persona tiene el control, espera (el escritorio
+        sigue siendo de esta tarea). False si la pararon mientras tanto. Al volver del control, el modelo lo sabe."""
+        if not (self.pausa or self.control):
+            return True
+        hasta = time.time() + PAUSA_MAX_S
+        with self.cambio:
+            self.en_espera = True
+            self.persona_actuo = False
+            self.cambio.notify_all()
+            try:
+                while (self.pausa or self.control) and not self.parar:
+                    queda = hasta - time.time()
+                    if queda <= 0:
+                        raise Detenida('estuvo en pausa demasiado tiempo')
+                    self.cambio.wait(min(queda, 5))
+            finally:
+                self.en_espera = False
+                self.cambio.notify_all()
+        if self.parar:
+            return False
+        if self.persona_actuo:
+            self.notas.append(NOTA_CONTROL)
+        return True
+
+    def pedir_confirmacion(self, pregunta):
+        """Se queda quieta hasta el sí o el no de la persona. True/False; None si la pararon. Sin respuesta
+        en ESPERA_CONFIRMACION_S la tarea se cierra (Detenida): nada sensible se hace sin su sí."""
+        pregunta = ' '.join(str(pregunta or '').split())[:300] or 'Voy a hacer algo sensible. ¿Lo hago?'
+        self.anotar(accion='pedir_confirmacion', args={'pregunta': pregunta})
+        hasta = time.time() + ESPERA_CONFIRMACION_S
+        with self.cambio:
+            self.pregunta, self.si, self.en_espera = pregunta, None, True
+            self.cambio.notify_all()
+            try:
+                while self.si is None and not self.parar and time.time() < hasta:
+                    self.cambio.wait(min(5, max(0.05, hasta - time.time())))
+                si = self.si
+            finally:
+                self.pregunta, self.si, self.en_espera = None, None, False
+                self.cambio.notify_all()
+        if self.parar:
+            return None
+        if si is None:
+            raise Detenida('nadie dijo que sí a tiempo; no hice lo que pedía permiso')
+        self.anotar(accion='confirmacion', args={'si': bool(si)})
+        if si:
+            self.permiso_hasta = len(self.pasos) + 3
+        return bool(si)
 
     def resumen(self, con_miniaturas=False):
         pasos = self.pasos if con_miniaturas else [{k: v for k, v in p.items() if k != 'miniatura'} for p in self.pasos]
-        return {'id': self.id, 'motor': self.motor, 'instruccion': self.instruccion, 'estado': self.estado, 'pasos': pasos,
-                'respuesta': self.respuesta, 'error': self.error, 'segundos': round(time.time() - self.creada, 1)}
+        return {'id': self.id, 'motor': self.motor, 'instruccion': self.instruccion, 'estado': self.estado_visible(), 'pasos': pasos,
+                'respuesta': self.respuesta, 'error': self.error, 'segundos': round(time.time() - self.creada, 1),
+                'pregunta': self.pregunta, 'en_espera': self.en_espera}
 
 
 def correr(t: Tarea):
@@ -429,13 +620,18 @@ def correr(t: Tarea):
         if t.motor == 'claude':
             try:
                 return correr_claude(t)
+            except Detenida as d:
+                return t.cerrar('parada', error=str(d)[:300])
             except Exception as e:
                 return t.cerrar('fallo', error=str(e)[:500])
         mensajes = [{'role': 'system', 'content': SISTEMA}, {'role': 'user', 'content': t.instruccion}]
         try:
             for _ in range(t.max_pasos):
-                if t.parar:
+                if t.parar or not t.esperar_si_pausada():
                     return t.cerrar('parada')
+                for nota in t.notas:
+                    mensajes.append({'role': 'user', 'content': nota})
+                t.notas.clear()
                 png, ancho, alto = captura()
                 mensajes.append(observacion(png))
                 recortar_imagenes(mensajes)
@@ -461,12 +657,23 @@ def correr(t: Tarea):
                 t.anotar(accion=nombre, args=args, ms=ms, pensado=pensado, miniatura=miniatura(png))
                 if nombre == 'answer':
                     return t.cerrar('hecha', respuesta=str(args.get('content', '')))
-                try:
-                    resultado = ejecutar(nombre, args, ancho, alto)
-                except Exception as e:
-                    resultado = f'Error: {e}'
+                if nombre == 'ask_user_confirmation':
+                    si = t.pedir_confirmacion(args.get('question', ''))
+                    if si is None:
+                        return t.cerrar('parada')
+                    mensajes.append({'role': 'tool', 'tool_call_id': llamada.id, 'content': SI_DIJO if si else NO_DIJO})
+                    continue
+                # Pagar o comprar, nunca; lo sensible, con su sí (aunque el modelo no lo haya preguntado).
+                resultado = revisar_accion(t, nombre, args)
+                if resultado is None:
+                    try:
+                        resultado = ejecutar(nombre, args, ancho, alto)
+                    except Exception as e:
+                        resultado = f'Error: {e}'
                 mensajes.append({'role': 'tool', 'tool_call_id': llamada.id, 'content': resultado})
             t.cerrar('sin_pasos', error=f'Se acabaron los {t.max_pasos} pasos sin terminar.')
+        except Detenida as d:
+            t.cerrar('parada', error=str(d)[:300])
         except Exception as e:
             t.cerrar('fallo', error=str(e)[:500])
 
@@ -493,7 +700,7 @@ def salud():
     ocupada = any(t.estado == 'trabajando' for t in TAREAS.values())
     motores = (['holo'] if isinstance(modelos, list) else []) + (['claude'] if CLAUDE_CLAVE else [])
     return {'ok': isinstance(modelos, list) and 'x' in pantalla, 'motores': motores, 'modelos': modelos,
-            'pantalla': pantalla, 'ocupada': ocupada}
+            'pantalla': pantalla, 'ocupada': ocupada, 'capacidades': CAPACIDADES}
 
 
 @app.post('/tareas')
@@ -530,8 +737,120 @@ def ver(id: str, req: Request, miniaturas: int = 0):
 @app.post('/tareas/{id}/parar')
 def parar(id: str, req: Request):
     t = tarea(req, id)
-    t.parar = True
+    t.avisar(parar=True)  # despierta también a la que espera una pausa o un sí
     return {'id': id, 'estado': t.estado}
+
+
+def viva(t):
+    if t.estado not in ESTADOS_VIVOS:
+        raise HTTPException(409, 'la tarea ya terminó')
+    return t
+
+
+async def cuerpo_de(req: Request):
+    try:
+        j = await req.json()
+    except Exception:
+        return {}
+    return j if isinstance(j, dict) else {}
+
+
+@app.post('/tareas/{id}/pausar')
+def pausar(id: str, req: Request):
+    t = viva(tarea(req, id))
+    t.avisar(pausa=True)
+    return {'id': id, 'estado': t.estado_visible()}
+
+
+@app.post('/tareas/{id}/reanudar')
+def reanudar(id: str, req: Request):
+    t = viva(tarea(req, id))
+    t.avisar(pausa=False, control=False)
+    return {'id': id, 'estado': t.estado_visible()}
+
+
+@app.post('/tareas/{id}/confirmar')
+async def confirmar(id: str, req: Request):
+    t = viva(tarea(req, id))
+    si = bool((await cuerpo_de(req)).get('si'))
+    if not t.pregunta:
+        raise HTTPException(409, 'no está esperando ningún sí')
+    t.avisar(si=si)
+    return {'id': id, 'si': si}
+
+
+@app.post('/tareas/{id}/control')
+async def control(id: str, req: Request):
+    t = viva(tarea(req, id))
+    tomar = bool((await cuerpo_de(req)).get('tomar'))
+    if t.pregunta:
+        raise HTTPException(409, 'primero contesta si lo hace o no')
+    t.avisar(control=tomar, pausa=False)
+    return {'id': id, 'estado': t.estado_visible()}
+
+
+TECLAS_PERSONA = {'enter', 'tab', 'escape', 'backspace', 'delete', 'up', 'down', 'left', 'right', 'pageup', 'pagedown',
+                  'home', 'end', 'space', 'ctrl+l', 'ctrl+a', 'ctrl+c', 'ctrl+v', 'ctrl+f', 'alt+left', 'alt+right', 'f5'}
+
+
+def accion_persona(t, cuerpo):
+    """Lo que hace la persona con el control: tocar, escribir, una tecla o bajar. Coordenadas en [0, 1000].
+    Lo que escribe no se guarda en los pasos (puede ser su contraseña: para eso tomó el control)."""
+    tipo = str(cuerpo.get('tipo') or '')
+    ancho, alto = TAMANO['ancho'], TAMANO['alto']
+
+    def coord(k):
+        try:
+            return max(0, min(1000, int(cuerpo.get(k) or 0)))
+        except (TypeError, ValueError):
+            raise HTTPException(400, 'coordenadas en [0, 1000]')
+
+    if tipo == 'click':
+        paso = {'tipo': 'click', 'x': coord('x'), 'y': coord('y')}
+        ejecutar('click', {'x': paso['x'], 'y': paso['y']}, ancho, alto)
+    elif tipo == 'escribir':
+        texto = str(cuerpo.get('texto') or '')[:500]
+        if not texto:
+            raise HTTPException(400, 'falta el texto')
+        paso = {'tipo': 'escribir', 'letras': len(texto), 'enter': bool(cuerpo.get('enter'))}
+        ejecutar('type', {'text': texto, 'press_enter': paso['enter']}, ancho, alto)
+    elif tipo == 'tecla':
+        teclas = str(cuerpo.get('teclas') or '').lower().replace(' ', '')
+        if teclas not in TECLAS_PERSONA:
+            raise HTTPException(400, 'esa tecla no')
+        paso = {'tipo': 'tecla', 'teclas': teclas}
+        ejecutar('key', {'keys': teclas}, ancho, alto)
+    elif tipo == 'scroll':
+        paso = {'tipo': 'scroll', 'direction': 'up' if cuerpo.get('direccion') == 'up' else 'down'}
+        ejecutar('scroll', {'direction': paso['direction'], 'x': 500, 'y': 500}, ancho, alto)
+    else:
+        raise HTTPException(400, 'tipo es click, escribir, tecla o scroll')
+    t.persona_actuo = True
+    t.anotar(accion='persona', args=paso)
+    return paso
+
+
+@app.post('/tareas/{id}/accion')
+async def accion(id: str, req: Request):
+    t = viva(tarea(req, id))
+    cuerpo = await cuerpo_de(req)
+    if not t.control:
+        raise HTTPException(409, 'primero toma el control')
+    if not t.en_espera:
+        raise HTTPException(409, 'un momento: está terminando su último paso')
+    paso = await asyncio.get_running_loop().run_in_executor(None, lambda: accion_persona(t, cuerpo))
+    return {'ok': True, 'paso': paso}
+
+
+@app.get('/tareas/{id}/pantalla')
+def pantalla_tarea(id: str, req: Request):
+    """Lo que se ve ahora, solo mientras ESA tarea tiene el escritorio (nadie mira el de otro dueño)."""
+    t = viva(tarea(req, id))
+    if t.estado == 'en_cola':
+        raise HTTPException(409, 'todavía no empieza')
+    png, _, _ = captura()
+    jpg = base64.b64decode(miniatura(png, 960))
+    return Response(jpg, media_type='image/jpeg', headers={'Cache-Control': 'no-store'})
 
 
 @app.get('/tareas/{id}/eventos')
@@ -539,22 +858,25 @@ async def eventos(id: str, req: Request):
     t = tarea(req, id)
 
     async def flujo():
-        enviados = 0
+        enviados, visto = 0, None
         while True:
             while enviados < len(t.pasos):
                 yield f'event: paso\ndata: {json.dumps(t.pasos[enviados], ensure_ascii=False)}\n\n'
                 enviados += 1
-            if t.estado not in ('en_cola', 'trabajando'):
+            if t.estado not in ESTADOS_VIVOS:
                 yield f'event: fin\ndata: {json.dumps(t.resumen(), ensure_ascii=False)}\n\n'
                 return
-            await asyncio.get_running_loop().run_in_executor(None, lambda: _esperar(t, enviados))
+            if t.estado_visible() != visto:
+                visto = t.estado_visible()
+                yield f'event: estado\ndata: {json.dumps({"estado": visto, "pregunta": t.pregunta}, ensure_ascii=False)}\n\n'
+            await asyncio.get_running_loop().run_in_executor(None, lambda: _esperar(t, enviados, visto))
 
     return StreamingResponse(flujo(), media_type='text/event-stream', headers={'Cache-Control': 'no-cache'})
 
 
-def _esperar(t, enviados):
+def _esperar(t, enviados, visto=None):
     with t.cambio:
-        if len(t.pasos) == enviados and t.estado in ('en_cola', 'trabajando'):
+        if len(t.pasos) == enviados and t.estado in ESTADOS_VIVOS and t.estado_visible() == visto:
             t.cambio.wait(15)
 
 
