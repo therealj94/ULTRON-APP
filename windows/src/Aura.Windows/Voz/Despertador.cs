@@ -62,8 +62,16 @@ internal sealed class Despertador : IDisposable
                     Centro.Registro.Anotar("despertar", $"Windows ({info.Culture.Name}) oyó «{e.Result.Text}» con {e.Result.Confidence:0.00}");
                     // Los señuelos («oye laura») están en la gramática para que SAPI no los confunda con «oye aura»: nunca despiertan.
                     if (Senuelos.Contains(e.Result.Text)) return;
-                    var minimo = UmbralesDespertar.MinimoWindows(e.Result.Text, propio != null, Exigente?.Invoke() == true);
-                    if (e.Result.Confidence >= minimo) Desperto?.Invoke();
+                    bool exigente = Exigente?.Invoke() == true;
+                    // Con el modelo propio cuidando y algo sonando en la PC, Windows no decide: es el que se equivoca
+                    // con las canciones y los videos (1-oct: «oye claudio» 0,83, «hey guardian» 0,86 desde la música).
+                    if (propio != null && exigente) return;
+                    var minimo = UmbralesDespertar.MinimoWindows(e.Result.Text, propio != null, exigente);
+                    if (e.Result.Confidence < minimo) return;
+                    // Una sola espera para todos: el de español y el de inglés oyen el mismo sonido a la vez.
+                    if (DateTime.Now - ultimaVez < TimeSpan.FromSeconds(2)) return;
+                    ultimaVez = DateTime.Now;
+                    Desperto?.Invoke();
                 };
                 m.RecognizeAsync(RecognizeMode.Multiple);
                 if (motor == null) motor = m; else extras.Add(m);
@@ -116,6 +124,7 @@ internal sealed class Despertador : IDisposable
                     if (propio == null) return;
                     try { p = propio.Alimentar(muestras); } catch { return; }
                 }
+                Anotar(p);
                 // Una vez por llamada: la misma palabra da varios trozos seguidos por encima del umbral.
                 // Con música, el modelo propio también pide más: un trozo de 0,97 (las canciones traen palabras parecidas).
                 bool cuenta = confirma.Alimentar(p) && (Exigente?.Invoke() != true || p >= UmbralConMusica);
@@ -124,7 +133,17 @@ internal sealed class Despertador : IDisposable
                 Centro.Registro.Anotar("despertar", $"«Hey AURA» (modelo propio) con {p:0.00}");
                 Desperto?.Invoke();
             };
-            mic.RecordingStopped += (_, e) => { if (e.Exception != null) Centro.Registro.Anotar("despertar", "el micrófono se detuvo: " + e.Exception.Message); };
+            mic.RecordingStopped += (s, e) =>
+            {
+                if (!ReferenceEquals(s, micPropio)) return; // lo apagamos nosotros
+                // Se desconectó el micrófono (audífonos, USB) o Windows lo soltó. Antes el modelo quedaba «encendido»
+                // pero sordo y, como con él Windows no despierta con «aura», «Oye AURA» dejaba de funcionar hasta
+                // reiniciar. Ahora se apaga y se vuelve a encender solo.
+                Centro.Registro.Anotar("despertar", "el micrófono del modelo propio se detuvo" + (e.Exception != null ? ": " + e.Exception.Message : "") + " · lo vuelvo a abrir");
+                ApagarPropio();
+                reintento?.Dispose();
+                reintento = new System.Threading.Timer(_ => { if (!apagado && propio == null) EncenderPropio(); }, null, TimeSpan.FromSeconds(2), System.Threading.Timeout.InfiniteTimeSpan);
+            };
             propio = pc; micPropio = mic;
             mic.StartRecording();
             Centro.Registro.Anotar("despertar", $"modelo propio «hey aura» (en el equipo, sin red) · ONNX Runtime {MotorOnnx.VersionNativa()} (CPU)"
@@ -137,6 +156,31 @@ internal sealed class Despertador : IDisposable
             // La cadena COMPLETA (no solo «The type initializer…»), con la versión y qué piezas hay junto a AURA.
             Centro.Registro.Anotar("despertar", "el modelo propio no arrancó: " + MotorOnnx.Diagnostico(ex) + " · sigo con el de Windows");
             return false;
+        }
+    }
+
+    System.Threading.Timer? reintento;
+    bool apagado;
+    // Los puntajes recientes del modelo (con su hora): para saber si una frase sonó a «hey aura» aunque no despertó.
+    readonly System.Collections.Generic.Queue<(DateTime t, float p)> recientes = new();
+
+    void Anotar(float p)
+    {
+        lock (recientes)
+        {
+            recientes.Enqueue((DateTime.UtcNow, p));
+            while (recientes.Count > 0 && DateTime.UtcNow - recientes.Peek().t > TimeSpan.FromSeconds(30)) recientes.Dequeue();
+        }
+    }
+
+    /// <summary>El puntaje más alto del modelo propio desde `desde` (0 si no hay modelo o no oyó nada parecido).</summary>
+    public float MaxDesde(DateTime desdeUtc)
+    {
+        lock (recientes)
+        {
+            float max = 0;
+            foreach (var (t, p) in recientes) if (t >= desdeUtc && p > max) max = p;
+            return max;
         }
     }
 
@@ -167,5 +211,5 @@ internal sealed class Despertador : IDisposable
         m.Dispose();
     }
 
-    public void Dispose() => Apagar();
+    public void Dispose() { apagado = true; reintento?.Dispose(); Apagar(); }
 }

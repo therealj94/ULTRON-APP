@@ -25,6 +25,11 @@ public partial class NotchWindow
     readonly Oido oido = new();
     readonly Altavoz altavoz = new();
     readonly Despertador despertador = new();
+    /// <summary>¿Suena algo en la PC (cualquier app)? Para que el despertar se ponga exigente con todo, no solo con Spotify.</summary>
+    readonly SonidoDelEquipo sonidoEquipo = new();
+    /// <summary>Cuándo AURA terminó de hablar: el eco de la sala todavía suena un momento y no debe despertarla.</summary>
+    DateTime finVozAura = DateTime.MinValue;
+    static readonly TimeSpan GraciaTrasHablar = TimeSpan.FromMilliseconds(1500);
     readonly CortadorFrases cortador = new();
     readonly List<Turno> historial = new();
     readonly DispatcherTimer relojRecordatorios = new() { Interval = TimeSpan.FromSeconds(5) };
@@ -101,11 +106,16 @@ public partial class NotchWindow
         altavoz.Fallo += m => Dispatcher.BeginInvoke(new Action(() => Avisar(new Aviso("Voz", m, "", "worried"))));
 
         // Con música sonando (se muestre o no la tarjeta), despertar pide más: las canciones dicen «aura», «antonio»…
-        despertador.Exigente = () => cancion is { Sonando: true };
+        // Y con CUALQUIER sonido de la PC (un video en el navegador, un juego, una llamada): antes solo contaba el
+        // reproductor que avisa a Windows, y lo demás despertaba a AURA.
+        sonidoEquipo.Encender();
+        despertador.Exigente = () => cancion is { Sonando: true } || sonidoEquipo.Sonando;
         // Su propia voz («…soy AU-RA») no la despierta: mientras suena algo, la palabra de activación no cuenta.
         despertador.Desperto += () => Dispatcher.BeginInvoke(new Action(() =>
         {
             if (pausado || microSilenciado || pensando || hablandoAhora || altavoz.Ocupado) return;
+            // Recién se calló: lo que oyó es su propia voz rebotando en la sala.
+            if (DateTime.Now - finVozAura < GraciaTrasHablar) { Centro.Registro.Anotar("despertar", "ignorado: AURA acaba de hablar (eco)"); return; }
             Centro.Registro.Anotar("despertar", "Windows oyó «Oye AURA»");
             llamadaExplicita = true; ultimaCharla = DateTime.Now; continuo = ajustes.ManosLibres;
             if (!AgenteAbierto && !abriendoAgente) TextoEscucha.Text = T("Te escucho…", "Listening…");
@@ -254,6 +264,9 @@ public partial class NotchWindow
         Recalcular();
     }
 
+    /// <summary>Con sonido de fondo, lo mínimo que el modelo propio tiene que haber oído para mandar una frase a transcribir.</summary>
+    const float UmbralFraseConSonido = 0.3f;
+
     async Task AlTerminarFrase(byte[] wav, long finCaptura)
     {
         // Si «Oye AURA» llegó a media frase, esta es esa frase: con orden se hace; sola, se abre la conversación.
@@ -271,6 +284,20 @@ public partial class NotchWindow
         {
             if (!microSilenciado && !pausado) EmpezarAEscuchar();
             return;
+        }
+        // Con algo sonando en la PC y el modelo propio cuidando: una frase que ni de lejos sonó a «hey aura» no se
+        // manda a transcribir. Antes TODA frase de la música o del video iba a /api/stt y, si el texto empezaba con
+        // «aura», «claudio» o «antonio», la despertaba (la otra puerta de las activaciones falsas del 1-oct).
+        if (esperandoNombre && !eraInterrupcion && !despertarPedido && despertador.UsaModeloPropio && despertador.Exigente?.Invoke() == true)
+        {
+            var dura = TimeSpan.FromSeconds(Math.Max(0, wav.Length - 44) / 32000.0);
+            var max = despertador.MaxDesde(DateTime.UtcNow - dura - TimeSpan.FromSeconds(1));
+            if (max < UmbralFraseConSonido)
+            {
+                Centro.Registro.Anotar("despertar", $"frase con sonido de fondo sin «hey aura» ({max:0.00}): no la transcribo");
+                if (!microSilenciado && !pausado) EmpezarAEscuchar();
+                return;
+            }
         }
         // Mientras solo se espera el nombre, el notch no cambia a «pensando»: no parpadea con cada ruido.
         if (!esperandoNombre) { pensando = true; TextoPiensa.Text = T("Te entendí, un momento…", "Got it, one moment…"); Recalcular(); }
@@ -586,6 +613,7 @@ public partial class NotchWindow
     void AlTerminarDeHablar()
     {
         hablandoAhora = false;
+        finVozAura = DateTime.Now;
         AvatarHabla.Boca = AvatarPanel.Boca = 0;
         // Entre frases del mismo turno sigue «hablando»: el notch no parpadea mientras llega la siguiente.
         if (turnoEnCurso) { hablandoAhora = true; Recalcular(); return; }
@@ -661,7 +689,7 @@ public partial class NotchWindow
         Seguro(() => Callar(true));
         Seguro(() => canal?.Cancel());
         Seguro(GuardarRecuperacion);
-        Seguro(despertador.Dispose); Seguro(oido.Dispose); Seguro(altavoz.Dispose); Seguro(() => api?.Dispose());
+        Seguro(despertador.Dispose); Seguro(sonidoEquipo.Dispose); Seguro(oido.Dispose); Seguro(altavoz.Dispose); Seguro(() => api?.Dispose());
         Seguro(() => centro?.CerrarDeVerdad());
         Seguro(() => llamadas?.Close());
         Seguro(musica.Dispose); Seguro(() => correo?.Dispose()); Seguro(() => agenda?.Dispose()); Seguro(() => avisosApps?.Dispose());

@@ -119,6 +119,7 @@ public partial class NotchWindow
             {
                 if (!ReferenceEquals(agente, a)) return;
                 hablandoAhora = si;
+                if (!si) finVozAura = DateTime.Now;
                 if (si)
                 {
                     // En vivo se cuenta DESDE LA TRANSCRIPCIÓN (no incluye tu captura ni el STT de ElevenLabs) y «suena» es
