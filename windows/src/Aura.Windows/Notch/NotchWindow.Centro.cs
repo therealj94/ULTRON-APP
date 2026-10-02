@@ -40,6 +40,7 @@ public partial class NotchWindow
         if (soloRender || centro != null || string.IsNullOrEmpty(ajustes.Token)) return;
         centro = new CentroWindow(ManejarCentro) { ShowActivated = false, ShowInTaskbar = false, Left = -32000, Top = -32000, WindowStartupLocation = WindowStartupLocation.Manual };
         centro.Activated += (_, _) => { if (panelAbierto) AbrirPanel(false); };
+        centro.IsVisibleChanged += AlEsconderCentro;
         centro.Listo += () => Dispatcher.BeginInvoke(new Action(() =>
         {
             if (centro == null) return;
@@ -88,6 +89,7 @@ public partial class NotchWindow
             centro = new CentroWindow(ManejarCentro);
             // Con el Centro al frente, el panel del notch se recoge: no lo tapa.
             centro.Activated += (_, _) => { if (panelAbierto) AbrirPanel(false); };
+            centro.IsVisibleChanged += AlEsconderCentro;
             centro.Mostrar(seccion);
             return;
         }
@@ -178,6 +180,8 @@ public partial class NotchWindow
             case "actualizar.estado": return EstadoActualizacion();
             case "actualizar.buscar": await BuscarActualizacion(true); return EstadoActualizacion();
             case "actualizar.instalar": { var motivo = await InstalarAhora(); return new { ok = motivo == null, motivo }; }
+            case "voz.decir": return await VozDelRecorrido(a);
+            case "recorrido.abierto": RecorridoAbierto(Bool(a, "si") == true); return true;
             case "diagnostico.carpeta": Process.Start(new ProcessStartInfo("explorer.exe", "\"" + Registro.Carpeta + "\"") { UseShellExecute = true }); return true;
             case "spotify.estado" or "spotify.buscar" or "spotify.poner" or "spotify.control" or "spotify.dispositivos" or "spotify.transferir":
                 return await ManejarSpotify(metodo, a);
@@ -187,6 +191,52 @@ public partial class NotchWindow
             default:
                 throw new InvalidOperationException("Método desconocido: " + metodo);
         }
+    }
+
+    /// <summary>
+    /// La voz de Claudio o ANT-ONIO en el recorrido del Centro: el audio de /api/tts con su avatar (la página
+    /// no sale a la red). Frases cortas del guion; cualquier otra cosa no se pide.
+    /// </summary>
+    async Task<object?> VozDelRecorrido(JsonElement a)
+    {
+        if (api == null) return null;
+        var texto = Texto(a, "texto").Trim();
+        if (texto.Length == 0 || texto.Length > 400) return null;
+        var avatar = Texto(a, "avatar");
+        if (avatar is not ("claudio" or "antonio" or "aura" or "ojos")) avatar = ajustes.Avatar;
+        var emocion = Texto(a, "emocion");
+        if (!Regex.IsMatch(emocion, "^[a-z]{1,16}$")) emocion = "neutral";
+        var audio = await api.Voz(texto, emocion, avatar, ajustes.Idioma);
+        return new { base64 = Convert.ToBase64String(audio.Bytes), mime = audio.Tipo };
+    }
+
+    bool microPorRecorrido;
+
+    /// <summary>
+    /// Con el recorrido abierto AURA no escucha: el recorrido suena por el altavoz y dice «Oye AURA». Se calla,
+    /// se silencia el micrófono (solo si no lo estaba) y al cerrar vuelve como estaba.
+    /// </summary>
+    internal void RecorridoAbierto(bool si)
+    {
+        if (si)
+        {
+            Callar(true);
+            if (!microSilenciado) { microPorRecorrido = true; microSilenciado = true; continuo = false; CerrarOido(); AplicarEscucha(); }
+            Registro.Anotar("recorrido", "abierto");
+            return;
+        }
+        if (!microPorRecorrido) return;
+        microPorRecorrido = false;
+        if (microSilenciado) { microSilenciado = false; AplicarEscucha(); }
+        Registro.Anotar("recorrido", "cerrado");
+    }
+
+    /// <summary>La ventana del Centro se escondió (la cerraron o se recogió): el recorrido se cierra y AURA vuelve a oír.</summary>
+    void AlEsconderCentro(object? s, DependencyPropertyChangedEventArgs e)
+    {
+        if (centro == null || centro.IsVisible) return;
+        RecorridoAbierto(false);
+        centro.Emitir("ventana.escondida", null);
     }
 
     /// <summary>Para el Inicio del Centro: lo de hoy en la agenda, correos sin leer y los últimos avisos de las apps.</summary>

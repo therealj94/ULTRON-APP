@@ -26,7 +26,8 @@ function marca(texto: string) {
     ...[...texto].map((c, i) => h('span', { style: `animation-delay:${0.25 + i * 0.07}s`, class: 'brillo-texto' }, c === ' ' ? ' ' : c)));
 }
 
-export async function entrada(raiz: HTMLElement): Promise<void> {
+/** Resuelve 'recorrido' si al terminar la guía la persona pidió ver el recorrido. */
+export async function entrada(raiz: HTMLElement): Promise<'recorrido' | 'listo'> {
   const e = estado();
   aplicarAcento(e.avatar);
   const fondo = h('div', { class: 'entrada' });
@@ -46,10 +47,11 @@ export async function entrada(raiz: HTMLElement): Promise<void> {
   await esperar(300);
 
   if (!estado().sesion) await pantallaEntrar(fondo, av);
-  if (estado().primeraVez) await guia(fondo);
+  const fin = estado().primeraVez ? await guia(fondo) : 'listo';
   fondo.style.transition = 'opacity .45s'; fondo.style.opacity = '0';
   await esperar(450);
   fondo.remove();
+  return fin;
 }
 
 async function pantallaEntrar(fondo: HTMLElement, av: ReturnType<typeof avatar3d>) {
@@ -103,24 +105,29 @@ async function pantallaEntrar(fondo: HTMLElement, av: ReturnType<typeof avatar3d
   });
 }
 
-/** La guía de la primera vez: 3 pasos, cada uno con su explicación. */
-async function guia(fondo: HTMLElement) {
+/** La guía de la primera vez: 3 pasos, cada uno con su explicación. Al final, ver el recorrido o ir al notch. */
+async function guia(fondo: HTMLElement): Promise<'recorrido' | 'listo'> {
   const aj = await pedir<any>('ajustes.leer');
   const pasos: (() => HTMLElement)[] = [];
   let i = 0;
-  return new Promise<void>((listo) => {
+  return new Promise<'recorrido' | 'listo'>((listo) => {
+    const terminar = async (como: 'recorrido' | 'listo') => {
+      await pedir('primeraVez.terminar');
+      await cargar();
+      listo(como);
+    };
     const pintar = () => {
       const panel = h('div', { class: 'panel-entrar', style: 'text-align:left' },
         h('div', { class: 'pasos' }, ...pasos.map((_, k) => h('i', { class: k <= i ? 'hecho' : '' }))),
         pasos[i](),
         h('div', { class: 'fila', style: 'margin-top:18px;justify-content:space-between' },
           i > 0 ? boton(T('Atrás', 'Back'), () => { i--; pintar(); }, { tipo: 'fantasma' }) : h('span'),
-          boton(i === pasos.length - 1 ? T('Listo, al notch', 'Done, to the notch') : T('Siguiente', 'Next'), async () => {
-            if (i < pasos.length - 1) { i++; pintar(); return; }
-            await pedir('primeraVez.terminar');
-            await cargar();
-            listo();
-          }, { tipo: 'acento' })));
+          h('div', { class: 'fila' },
+            i === pasos.length - 1 ? boton(T('Listo, al notch', 'Done, to the notch'), () => void terminar('listo'), { tipo: 'fantasma' }) : null,
+            boton(i === pasos.length - 1 ? T('Ver el recorrido', 'Watch the tour') : T('Siguiente', 'Next'), async () => {
+              if (i < pasos.length - 1) { i++; pintar(); return; }
+              await terminar('recorrido');
+            }, { tipo: 'acento', icono: i === pasos.length - 1 ? 'play' : undefined, titulo: i === pasos.length - 1 ? T('Claudio y ANT-ONIO te enseñan todo lo que hace AURA en tu computadora (unos 5 minutos)', 'Claudio and ANT-ONIO show you everything AURA does on your PC (about 5 minutes)') : undefined }))));
       vacio(fondo).appendChild(panel);
     };
     pasos.push(() => {

@@ -131,6 +131,8 @@ export const motor = crearMotor({
     if (c.estado === 'entrando' && antes !== 'entrando' && c.entrante) {
       pedir('notch.timbre', { de: c.entrante.de, nombre, video: c.entrante.video }).catch(() => {});
       marcarPulse(true);
+      // Si el recorrido está abierto, se cierra: AURA vuelve a oír para que «sí» conteste.
+      window.dispatchEvent(new Event('centro:llamada'));
     }
     if (antes === 'entrando' && c.estado !== 'entrando') {
       pedir('notch.timbreFin', { motivo: c.motivo || c.estado }).catch(() => {});

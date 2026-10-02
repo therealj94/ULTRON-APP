@@ -824,5 +824,6 @@ Check(Actualizacion.MotivoParaEsperar(libre with { Llamada = true }) != null && 
     Check(ConteoCorreo.Aviso(new[] { C(1) }, false, false).Titulo == "Correo de Persona 1", "un solo correo: de quién");
 }
 Check(new[] { "notch.monitores", "notch.restablecer", "notch.llamada" }.All(PuenteCentro.MetodoPermitido), "el puente deja pasar lo que usan el notch movible y la llamada");
+Check(new[] { "voz.decir", "recorrido.abierto" }.All(PuenteCentro.MetodoPermitido), "el puente deja pasar la voz y el silencio del recorrido");
 Console.WriteLine($"PASS {count} assertions");
 class Clock : TimeProvider { public DateTimeOffset Now = DateTimeOffset.UtcNow; public override DateTimeOffset GetUtcNow() => Now; }
