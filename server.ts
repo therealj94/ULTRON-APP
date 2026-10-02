@@ -61,6 +61,7 @@ import { claveTurno, reclamarTurno, type TurnoGuardado } from './server/turno-un
 import { respuestaFija } from './lib/respuestas-fijas';
 import { avisosPendientes, confirmarAvisos, encargarTarea, montarRutasComputadora, motorDelPerfil, type MotorNodo } from './server/computadora';
 import { correrCorreo, montarRutasCorreo, resolverBorrador } from './server/correo';
+import { correrWhatsapp, montarRutasWhatsapp, resolverBorradorWhatsapp, whatsappDisponible, whatsappPermitido } from './server/whatsapp';
 import { fichaManosPrompt } from './lib/manos-ficha';
 import { emitirSesion, borrarSesion, cerrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica, mesaAutorizada, cuerpoHttp, gastarCupo, esperaEntrada, anotarFalloEntrada, anotarExitoEntrada, cargarSesionesCerradas } from './server/seguridad';
 import { canales, leerPdf, telegramFoto, telegramVoz } from './lib/canales';
@@ -1386,6 +1387,7 @@ app.post(['/api/electrum/telegram/webhook', '/api/electrum/telegram/webhook/'], 
 /* El perfil de la persona (y la ficha pública de la plataforma), el canal de acciones y el contexto de la app 5.0. */
 montarRutasComputadora(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req), motorDe: async (correo) => (await leerPerfil(correo).catch(() => null))?.motorComputadora });
 montarRutasCorreo(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req) });
+montarRutasWhatsapp(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req) });
 montarRutasApp(app, {
   exigirMesa,
   limitar,
@@ -2464,6 +2466,9 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   const ambitoTurno = aparatoValido(body?.aparato) || String(body?.origen || (opciones.voz ? 'voz' : canal)).slice(0, 40);
   const delCorreo = duenoComputadora ? await resolverBorrador(duenoComputadora, ambitoTurno, message) : null;
   if (delCorreo) hechos.push(delCorreo);
+  // Lo mismo con un mensaje de WhatsApp que esperaba su «sí» (server/whatsapp.ts).
+  const delWhatsapp = duenoComputadora && whatsappPermitido(duenoComputadora) ? await resolverBorradorWhatsapp(duenoComputadora, ambitoTurno, message) : null;
+  if (delWhatsapp) hechos.push(delWhatsapp);
   // Fichas de la memoria estructurada de lo que se nombra (empresas, personas, proyectos). En una
   // charla hablada no: es una consulta a la base antes de la primera palabra y no hay nada que buscar.
   const charlaHablada = !!opciones.voz && clas.tarea === 'conversacion' && !clas.requiereQwen;
@@ -2857,7 +2862,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   // El system no cambia según la frase: el harness va siempre (antes se quitaba en «¿cómo estás?») y el
   // «piensa paso a paso» va en el mensaje del turno cuando la pregunta lo pide.
   const userTurno = mensajeHilo || message;
-  const compuesto = construirMensajes({ personalidad: personalidadSistema, user: userTurno, canal, historial: hilo, nivel, harness: true, cot: false });
+  const conWhatsapp = !!duenoComputadora && whatsappDisponible() && whatsappPermitido(duenoComputadora);
+  const compuesto = construirMensajes({ personalidad: personalidadSistema, user: userTurno, canal, historial: hilo, nivel, harness: true, cot: false, whatsapp: conWhatsapp });
   // También en las tareas de código: el system ya no lo lleva (cot: false), así que va siempre aquí.
   const cotTurno = requiereCot(userTurno);
   if (compuesto.meta.rag) tools.push('rag');
@@ -3177,6 +3183,7 @@ async function correrHerramientaPedida(
           ? (await encargarTarea({ instruccion: tarea, quien: compu.quien, motor: compu.motor, esperaMs: compu.esperaMs, senal })).hecho
           : 'HARNESS computadora: solo la uso para alguien con sesión. Pídele que entre con su cuenta.',
       correo: (arg) => correrCorreo(dueno, arg, ambito),
+      whatsapp: (arg) => correrWhatsapp(dueno, arg, ambito),
     },
     extraerPython(reply),
     nivel

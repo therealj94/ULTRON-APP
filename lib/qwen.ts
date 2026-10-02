@@ -34,6 +34,8 @@ export function construirMensajes(opts: {
   harness?: boolean;
   /** Con quién habla (server/nivel.ts). Un miembro no oye «asistente de la junta» ni ve sistema/ejecutor. */
   nivel?: NivelAura;
+  /** Es el dueño de un WhatsApp conectado (server/whatsapp.ts): se le ofrece la herramienta. */
+  whatsapp?: boolean;
   /**
    * Lo que cambia en cada turno (hora, app, HECHOS: server/prompt-turno.ts piezasDelTurno). Va al FINAL
    * del system, después de las reglas fijas: así el principio es igual turno a turno y el nodo reutiliza
@@ -56,7 +58,7 @@ export function construirMensajes(opts: {
   const parts: string[] = [codigo ? promptHonesto(nivel) : HONESTIDAD_CONVERSACION];
   if (!codigo) parts.push(telegram ? TEXTO_TELEGRAM : VOZ_ESCRITORIO);
   parts.push(String(opts.personalidad || '').trim());
-  if (harness) parts.push(instruccionHarness(nivel));
+  if (harness) parts.push(instruccionHarness(nivel, undefined, !!opts.whatsapp));
   if (cot) parts.push(COT_FORZADO);
   if (fewShot) parts.push(FEW_SHOT_HONESTO);
 
