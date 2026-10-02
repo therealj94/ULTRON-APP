@@ -12,6 +12,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DEMOS, ESCENAS, OPCIONES_FINAL, PRUEBAS, duracionLectura, pasoEn, siguientes, textoDe } from '../guion.ts';
 import { INICIO, lineaDe, progreso, reducir } from '../motor.ts';
+import { COREOGRAFIA, EFECTOS, SONIDOS, achicadoEn, momentoDe } from '../coreografia.ts';
 
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
 const pruebas = [];
@@ -152,6 +153,40 @@ prueba('lo que se prueba al final existe en la mesa', () => {
   assert.deepEqual(OPCIONES_FINAL.map((o) => o.id), [...PRUEBAS]);
   const mesa = fs.readFileSync(path.join(AQUI, '../../screens/DeskScreen.tsx'), 'utf8');
   for (const id of PRUEBAS) assert.ok(new RegExp(`case '${id}'`).test(mesa), `DeskScreen no atiende «${id}»`);
+});
+
+prueba('la coreografía: cada paso de cada escena tiene su momento, y lo que pide existe', () => {
+  for (const e of ESCENAS) {
+    assert.ok(COREOGRAFIA[e.id], `${e.id} sin coreografía`);
+    for (const p of e.pasos) assert.ok(COREOGRAFIA[e.id][p], `${e.id}/${p} sin momento`);
+    for (const p of Object.keys(COREOGRAFIA[e.id])) assert.ok(e.pasos.includes(p), `${e.id}: la coreografía nombra un paso que no existe («${p}»)`);
+  }
+  const efectos = fs.readFileSync(path.join(AQUI, '../escenas/efectos.tsx'), 'utf8');
+  for (const ef of EFECTOS) assert.ok(efectos.includes(`case '${ef}':`), `efectos.tsx no dibuja «${ef}»`);
+  const sonidos = fs.readFileSync(path.join(AQUI, '../sonidos.ts'), 'utf8');
+  for (const so of SONIDOS) {
+    if (so === 'whoosh' || so === 'tap') continue;
+    const m = sonidos.match(new RegExp(`${so}: \\{ src: require\\('([^']+)'\\)`));
+    assert.ok(m, `sonidos.ts no carga «${so}»`);
+    assert.ok(fs.existsSync(path.join(AQUI, '..', m[1])), `falta el archivo de «${so}»: ${m[1]}`);
+  }
+  // Los momentos clave que pidió José: la foto con flash y obturador, la llamada con timbre.
+  assert.deepEqual(momentoDe('camara', 'flash'), { efecto: 'flash', sonido: 'obturador', vibra: 'fuerte' });
+  assert.equal(momentoDe('llamada', 'suena').sonido, 'timbre');
+  assert.equal(momentoDe('nada', 'x').efecto, null);
+});
+
+prueba('el recordatorio: Claudio lo dice y es él quien se achica y vuela a la franja', () => {
+  const rec = ESCENAS.find((e) => e.id === 'recordatorio');
+  const achica = rec.lineas.find((l) => l.paso === 'achica');
+  assert.equal(achica.quien, 'claudio');
+  assert.match(achica.texto.es, /yo me hago chiquito/);
+  assert.equal(achicadoEn('recordatorio', 'achica'), 'claudio');
+  assert.equal(achicadoEn('recordatorio', 'suena'), 'claudio', 'sigue chiquito mientras suena la llamada');
+  assert.equal(achicadoEn('recordatorio', 'pide'), null);
+  assert.equal(achicadoEn('chat', 'lee'), null, 'al salir del recordatorio vuelve');
+  const escena = fs.readFileSync(path.join(AQUI, '../escenas/Recordatorio.tsx'), 'utf8');
+  assert.match(escena, /marcarLugar\?\.\('franja'/, 'la escena marca dónde aterriza');
 });
 
 let ok = 0;

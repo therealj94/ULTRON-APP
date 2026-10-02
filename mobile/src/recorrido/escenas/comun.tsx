@@ -25,6 +25,8 @@ export type PropsEscena = {
   alto: number;
   /** Solo la última escena: eligió qué probar. */
   onElegir?: (id: string) => void;
+  /** Marca dónde está algo en la pantalla (la franja de los chats, adonde vuela Claudio). */
+  marcarLugar?: (nombre: string, r: { x: number; y: number; w: number; h: number }) => void;
 };
 
 export const COLOR = {

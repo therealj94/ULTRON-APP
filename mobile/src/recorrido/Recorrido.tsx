@@ -15,7 +15,9 @@ import { createElement, useCallback, useEffect, useMemo, useReducer, useRef, use
 import { Animated, Easing, Modal, Pressable, StatusBar, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { duracionLectura, ESCENAS, pasoEn, siguientes, textoDe, type Anfitrion, type CaraLinea, type DemoId, type GestoLinea, type PruebaId } from './guion';
 import { escenaDe, INICIO, lineaDe, progreso, reducir, type AccionRecorrido, type EstadoRecorrido } from './motor';
-import { COLOR, Icono, type PropsEscena } from './escenas/comun';
+import { COLOR, Icono, useVaiven, type PropsEscena } from './escenas/comun';
+import { EfectoAnfitrion } from './escenas/efectos';
+import { achicadoEn, momentoDe, type SonidoId, type Vibracion } from './coreografia';
 import Portada from './escenas/Portada';
 import Hablar from './escenas/Hablar';
 import Camara from './escenas/Camara';
@@ -77,12 +79,16 @@ type Props = {
   inicio?: Partial<EstadoRecorrido>;
   /** Espera antes de la primera línea (la mesa suelta su audio al abrirse el recorrido). */
   retrasoMs?: number;
+  /** Los sonidos y la vibración de cada momento (coreografia.ts). */
+  efectos?: { sonar(s: SonidoId): void; vibrar(v: Vibracion): void };
 };
+
+type Rect = { x: number; y: number; w: number; h: number };
 
 const NOMBRE: Record<Anfitrion, string> = { claudio: 'Claudio', antonio: 'ANT-ONIO' };
 const ACENTO: Record<Anfitrion, string> = { claudio: COLOR.claudio, antonio: COLOR.antonio };
 
-export function Recorrido({ visible, nombre, idioma, narrador, cuerpo, onCerrar, onProbar, inicio, retrasoMs = 600 }: Props) {
+export function Recorrido({ visible, nombre, idioma, narrador, cuerpo, onCerrar, onProbar, inicio, retrasoMs = 600, efectos }: Props) {
   const [s, dispatch] = useReducer((e: EstadoRecorrido, a: AccionRecorrido) => reducir(e, a), { ...INICIO, ...inicio });
   const [listo, setListo] = useState(false);
   const [silencio, setSilencio] = useState(false);
@@ -96,6 +102,25 @@ export function Recorrido({ visible, nombre, idioma, narrador, cuerpo, onCerrar,
   const quien = linea.quien;
   const texto = textoDe(linea, idioma, nombre);
   const cerrado = useRef(false);
+  const paso = pasoEn(escena, s.l);
+  const momento = momentoDe(escena.id, paso);
+  const achicado = achicadoEn(escena.id, paso);
+
+  // Cada paso nuevo: su sonido y su vibración (una vez). Cada escena nueva: el golpe del capítulo.
+  const ultimoPaso = useRef('');
+  const ultimaEscena = useRef(-1);
+  useEffect(() => {
+    if (!visible || !listo || s.fase === 'fin') return;
+    if (ultimaEscena.current !== s.e) {
+      ultimaEscena.current = s.e;
+      efectos?.sonar(s.e === 0 ? 'chispa' : 'capitulo');
+    }
+    const clave = `${escena.id}:${paso}`;
+    if (ultimoPaso.current === clave) return;
+    ultimoPaso.current = clave;
+    if (momento.sonido) efectos?.sonar(momento.sonido);
+    if (momento.vibra) efectos?.vibrar(momento.vibra);
+  }, [visible, listo, s.e, paso]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Arranca un momento después de abrirse (deja que la mesa suelte su audio y que entre la pantalla).
   useEffect(() => {
@@ -104,6 +129,8 @@ export function Recorrido({ visible, nombre, idioma, narrador, cuerpo, onCerrar,
       return;
     }
     cerrado.current = false;
+    ultimoPaso.current = '';
+    ultimaEscena.current = -1;
     const id = setTimeout(() => setListo(true), retrasoMs);
     return () => clearTimeout(id);
   }, [visible, retrasoMs]);
@@ -209,12 +236,65 @@ export function Recorrido({ visible, nombre, idioma, narrador, cuerpo, onCerrar,
     Animated.timing(frente, { toValue: quien === 'claudio' ? 0 : 1, duration: 420, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
   }, [quien, frente]);
 
-  // Cada escena entra deslizándose.
+  // Cada escena entra deslizándose, con su título de capítulo y un barrido de luz (cine).
   const entra = useRef(new Animated.Value(1)).current;
+  const titulo = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     entra.setValue(0);
-    Animated.timing(entra, { toValue: 1, duration: 480, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
-  }, [s.e, entra]);
+    titulo.setValue(0);
+    Animated.parallel([
+      Animated.timing(entra, { toValue: 1, duration: 520, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.sequence([
+        Animated.timing(titulo, { toValue: 1, duration: 380, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+        Animated.delay(900),
+        Animated.timing(titulo, { toValue: 2, duration: 460, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
+      ]),
+    ]).start();
+  }, [s.e, entra, titulo]);
+
+  // Cada momento clave del ejemplo da un golpe de cámara: un acercamiento corto que vuelve.
+  const golpe = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    golpe.setValue(1);
+    Animated.spring(golpe, { toValue: 0, useNativeDriver: true, speed: 9, bounciness: 7 }).start();
+  }, [paso, golpe]);
+
+  // El vuelo de Claudio a la franja de los chats: se mide dónde está él y dónde está la franja (la
+  // escena la marca) y se va para allá encogiéndose; al terminar el recordatorio, vuelve.
+  const lugares = useRef<Record<string, Rect>>({});
+  const caja = useRef<Record<Anfitrion, View | null>>({ claudio: null, antonio: null });
+  const vuela = useRef(new Animated.Value(0)).current;
+  const [vuelo, setVuelo] = useState<{ dx: number; dy: number; k: number } | null>(null);
+  /** Al terminar el recordatorio vuelve volando a su lugar (sigue redondito hasta aterrizar). */
+  const [volviendo, setVolviendo] = useState<Anfitrion | null>(null);
+  const enFranja = achicado ?? volviendo;
+  useEffect(() => {
+    if (!achicado) {
+      if (!vuelo) return;
+      setVolviendo('claudio');
+      Animated.spring(vuela, { toValue: 0, useNativeDriver: true, speed: 7, bounciness: 5 }).start(() => {
+        setVolviendo(null);
+        setVuelo(null);
+      });
+      return;
+    }
+    setVolviendo(null);
+    let vivo = true;
+    // La escena mide la franja cuando el golpe de cámara del paso se asienta (~0,5 s): después, vuela.
+    const id = setTimeout(() => {
+      const destino = lugares.current.franja;
+      caja.current[achicado]?.measureInWindow((x, y, w) => {
+        if (!vivo || !destino) return;
+        const lado = Math.min(w, cuerpoH);
+        setVuelo({ dx: destino.x + destino.w / 2 - (x + w / 2), dy: destino.y + destino.h / 2 - (y + lado / 2), k: destino.w / lado });
+        Animated.spring(vuela, { toValue: 1, useNativeDriver: true, speed: 5, bounciness: 7 }).start();
+      });
+    }, 560);
+    return () => {
+      vivo = false;
+      clearTimeout(id);
+    };
+  }, [achicado]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!visible) return null;
 
@@ -240,6 +320,7 @@ export function Recorrido({ visible, nombre, idioma, narrador, cuerpo, onCerrar,
     tocado: s.tocado,
     onToque: () => {
       narrador.callar();
+      efectos?.sonar('tap');
       dispatch({ tipo: 'toque' });
     },
     acento: ACENTO[quien],
@@ -247,25 +328,51 @@ export function Recorrido({ visible, nombre, idioma, narrador, cuerpo, onCerrar,
     ancho: escenarioW,
     alto: escenarioH,
     onElegir: elegir,
+    marcarLugar: (nombreLugar, r) => {
+      lugares.current[nombreLugar] = r;
+    },
   };
 
   const anfitrion = (q: Anfitrion) => {
     const esClaudio = q === 'claudio';
     const alFrente = q === quien;
+    const chiquito = enFranja === q;
     const escala = frente.interpolate({ inputRange: [0, 1], outputRange: esClaudio ? [1, 0.84] : [0.84, 1] });
     const opacidad = frente.interpolate({ inputRange: [0, 1], outputRange: esClaudio ? [1, 0.62] : [0.62, 1] });
     // Se achica desde los pies (no desde el centro): los dos quedan parados en el mismo piso.
     const baja = frente.interpolate({ inputRange: [0, 1], outputRange: esClaudio ? [0, cuerpoH * 0.08] : [cuerpoH * 0.08, 0] });
+    // Chiquito en la franja: un círculo con su video que vuela hasta allá (y nada de achicarse por turno).
+    const lado = Math.min(cuerpoW, cuerpoH);
+    const vueloStyle =
+      chiquito && vuelo
+        ? {
+            transform: [
+              { translateX: vuela.interpolate({ inputRange: [0, 1], outputRange: [0, vuelo.dx] }) },
+              { translateY: vuela.interpolate({ inputRange: [0, 1], outputRange: [0, vuelo.dy] }) },
+              { scale: vuela.interpolate({ inputRange: [0, 1], outputRange: [1, vuelo.k] }) },
+            ],
+          }
+        : null;
     return (
-      <Animated.View key={q} style={[st.anfitrion, { width: cuerpoW, opacity: opacidad, transform: [{ translateY: baja }, { scale: escala }] }]}>
-        <View style={{ width: cuerpoW, height: cuerpoH, overflow: 'hidden', borderRadius: 24 }}>
-          {cuerpo(q, { alFrente, hablando: alFrente && hablando, gesto: gesto && gesto.quien === q ? { nombre: gesto.nombre, n: gesto.n } : null, cara: alFrente ? linea.cara ?? null : null, ancho: cuerpoW, alto: cuerpoH })}
-        </View>
-        <View style={[st.nombre, { borderColor: ACENTO[q] }, alFrente && { backgroundColor: ACENTO[q] }]}>
-          <Text style={[st.nombreTexto, { color: alFrente ? '#111' : ACENTO[q] }]}>{NOMBRE[q]}</Text>
-          {alFrente && hablando ? <Text style={st.hablaTexto}> · {idioma === 'en' ? 'talking' : 'habla'}</Text> : null}
-        </View>
-      </Animated.View>
+      <View key={q} ref={(r) => void (caja.current[q] = r)} collapsable={false} style={{ width: cuerpoW, zIndex: chiquito ? 5 : 1, elevation: chiquito ? 5 : 0 }}>
+        <Animated.View style={[st.anfitrion, { width: cuerpoW }, chiquito ? null : { opacity: opacidad, transform: [{ translateY: baja }, { scale: escala }] }]}>
+          {alFrente && !chiquito ? <Aura color={ACENTO[q]} hablando={hablando} ancho={cuerpoW} alto={cuerpoH} /> : null}
+          <Animated.View style={[chiquito ? { width: lado, height: lado, borderRadius: lado / 2, borderWidth: 3, borderColor: ACENTO[q] } : { width: cuerpoW, height: cuerpoH, borderRadius: 24 }, { overflow: 'hidden' }, vueloStyle]}>
+            {cuerpo(q, { alFrente, hablando: alFrente && hablando, gesto: gesto && gesto.quien === q ? { nombre: gesto.nombre, n: gesto.n } : null, cara: alFrente ? linea.cara ?? null : null, ancho: chiquito ? lado : cuerpoW, alto: chiquito ? lado : cuerpoH })}
+          </Animated.View>
+          {alFrente && !chiquito ? (
+            <View pointerEvents="none" style={[StyleSheet.absoluteFill, { width: cuerpoW, height: cuerpoH }]}>
+              <EfectoAnfitrion key={`${escena.id}:${paso}`} efecto={momento.efecto} ancho={cuerpoW} alto={cuerpoH} acento={ACENTO[q]} />
+            </View>
+          ) : null}
+          {chiquito ? null : (
+            <View style={[st.nombre, { borderColor: ACENTO[q] }, alFrente && { backgroundColor: ACENTO[q] }]}>
+              <Text style={[st.nombreTexto, { color: alFrente ? '#111' : ACENTO[q] }]}>{NOMBRE[q]}</Text>
+              {alFrente && hablando ? <Text style={st.hablaTexto}> · {idioma === 'en' ? 'talking' : 'habla'}</Text> : null}
+            </View>
+          )}
+        </Animated.View>
+      </View>
     );
   };
 
@@ -302,8 +409,17 @@ export function Recorrido({ visible, nombre, idioma, narrador, cuerpo, onCerrar,
 
         <View style={{ flex: 1, flexDirection: horizontal ? 'row-reverse' : 'column' }}>
           {/* El ejemplo de la escena. */}
-          <Animated.View style={{ width: escenarioW, height: escenarioH, opacity: entra, transform: [{ translateX: entra.interpolate({ inputRange: [0, 1], outputRange: [40, 0] }) }] }}>
+          <Animated.View
+            style={{
+              width: escenarioW,
+              height: escenarioH,
+              opacity: entra,
+              transform: [{ translateX: entra.interpolate({ inputRange: [0, 1], outputRange: [40, 0] }) }, { scale: golpe.interpolate({ inputRange: [0, 1], outputRange: [1, 1.035] }) }],
+            }}
+          >
             {createElement(ESCENA[escena.id], { key: escena.id, ...props })}
+            <Barrido avance={entra} ancho={escenarioW} alto={escenarioH} />
+            <Capitulo avance={titulo} numero={s.e + 1} texto={escena.titulo[idioma]} color={ACENTO[quien]} ancho={escenarioW} alto={escenarioH} />
           </Animated.View>
 
           {/* Los dos anfitriones, lo que dice el que habla y la indicación de tocar. */}
@@ -333,6 +449,75 @@ export function Recorrido({ visible, nombre, idioma, narrador, cuerpo, onCerrar,
         </View>
       </View>
     </Modal>
+  );
+}
+
+/** El brillo detrás del que habla: late suave y se aviva cuando su voz suena. */
+function Aura({ color, hablando, ancho, alto }: { color: string; hablando: boolean; ancho: number; alto: number }) {
+  const late = useVaiven(hablando ? 900 : 2400);
+  const lado = Math.min(ancho, alto) * 1.05;
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={{
+        position: 'absolute',
+        left: (ancho - lado) / 2,
+        top: (alto - lado) / 2,
+        width: lado,
+        height: lado,
+        borderRadius: lado / 2,
+        backgroundColor: color,
+        opacity: late.interpolate({ inputRange: [0, 1], outputRange: hablando ? [0.16, 0.34] : [0.08, 0.16] }),
+        transform: [{ scale: late.interpolate({ inputRange: [0, 1], outputRange: [0.92, hablando ? 1.08 : 1.0] }) }],
+      }}
+    />
+  );
+}
+
+/** Un destello de luz que cruza el ejemplo al entrar la escena. */
+function Barrido({ avance, ancho, alto }: { avance: Animated.Value; ancho: number; alto: number }) {
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={{
+        position: 'absolute',
+        top: -alto * 0.25,
+        left: 0,
+        width: ancho * 0.28,
+        height: alto * 1.5,
+        backgroundColor: 'rgba(255,255,255,0.10)',
+        opacity: avance.interpolate({ inputRange: [0, 0.15, 0.85, 1], outputRange: [0, 1, 1, 0] }),
+        transform: [{ translateX: avance.interpolate({ inputRange: [0, 1], outputRange: [-ancho * 0.4, ancho * 1.15] }) }, { rotate: '18deg' }],
+      }}
+    />
+  );
+}
+
+/** El título del capítulo, de cine: bandas negras, el número grande y el nombre; se va solo. */
+function Capitulo({ avance, numero, texto, color, ancho, alto }: { avance: Animated.Value; numero: number; texto: string; color: string; ancho: number; alto: number }) {
+  const banda = Math.round(alto * 0.11);
+  const visible = avance.interpolate({ inputRange: [0, 1, 2], outputRange: [0, 1, 0] });
+  return (
+    <View pointerEvents="none" style={[StyleSheet.absoluteFill, { overflow: 'hidden' }]}>
+      <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(6,7,9,0.72)', opacity: visible }]} />
+      <Animated.View style={{ position: 'absolute', left: 0, right: 0, top: 0, height: banda, backgroundColor: '#000', transform: [{ translateY: avance.interpolate({ inputRange: [0, 1, 2], outputRange: [-banda, 0, -banda] }) }] }} />
+      <Animated.View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: banda, backgroundColor: '#000', transform: [{ translateY: avance.interpolate({ inputRange: [0, 1, 2], outputRange: [banda, 0, banda] }) }] }} />
+      <Animated.View
+        style={{
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          top: alto / 2 - 60,
+          alignItems: 'center',
+          opacity: visible,
+          transform: [{ scale: avance.interpolate({ inputRange: [0, 1, 2], outputRange: [1.25, 1, 0.92] }) }],
+        }}
+      >
+        <Text style={[st.capNumero, { color }]}>{String(numero).padStart(2, '0')}</Text>
+        <View style={[st.capLinea, { backgroundColor: color, width: Math.min(160, ancho * 0.4) }]} />
+        <Text style={st.capTexto}>{texto}</Text>
+      </Animated.View>
+    </View>
   );
 }
 
@@ -429,6 +614,9 @@ const st = StyleSheet.create({
   porDecir: { color: 'rgba(242,238,232,0.38)' },
   indicacion: { position: 'absolute', top: 6, alignSelf: 'center', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 999 },
   indicacionTexto: { color: '#111', fontSize: 14, fontWeight: '800' },
+  capNumero: { fontSize: 64, fontWeight: '900', letterSpacing: 4, textShadowColor: 'rgba(0,0,0,0.6)', textShadowRadius: 12 },
+  capLinea: { height: 3, borderRadius: 2, marginVertical: 6 },
+  capTexto: { color: COLOR.texto, fontSize: 24, fontWeight: '800', letterSpacing: 1 },
   controles: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14 },
   mover: { minHeight: 44, paddingHorizontal: 14, justifyContent: 'center', borderRadius: 22 },
   siguiente: { borderWidth: 1.5 },

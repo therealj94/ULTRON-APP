@@ -135,7 +135,7 @@ export const ESCENAS: readonly Escena[] = [
     lineas: [
       { quien: C, paso: 'pide', texto: { es: 'Ahora, los recordatorios. Le dices: recuérdame a las cinco tomar la pastilla.', en: 'Now, reminders. You say: remind me at five to take my pill.' } },
       { quien: A, paso: 'confirma', gesto: 'gusto', emocion: 'feliz', texto: { es: 'Te repite la hora para confirmar, le dices que sí, y queda guardado.', en: 'She repeats the time to confirm, you say yes, and it’s saved.' } },
-      { quien: C, paso: 'achica', gesto: 'senalar', emocion: 'travieso', texto: { es: 'Y mira dónde se queda: si te vas a tus chats, se hace chiquita arriba, sin estorbar.', en: 'And look where she stays: if you go to your chats, she gets tiny up top, out of the way.' } },
+      { quien: C, paso: 'achica', emocion: 'travieso', texto: { es: 'Y mira: si te vas a tus chats, yo me hago chiquito y me quedo aquí arriba, sin estorbar.', en: 'And look: if you go to your chats, I get tiny and stay right up here, out of the way.' } },
       { quien: A, paso: 'suena', cara: 'sorprendida', emocion: 'sorpresa', texto: { es: 'Y a las cinco en punto, ¡ring! Te llama y te lo dice con su voz, aunque tengas la app cerrada.', en: 'And at five sharp, ring! She calls you and tells you, even with the app closed.' } },
     ],
   },

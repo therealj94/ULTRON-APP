@@ -5,9 +5,10 @@
  *    mientras suena la de ahora (prepararHabla), para que la conversación no tenga huecos;
  *  · el cuerpo: Claudio y ANT-ONIO en su video (avatares/video/CuerpoVideo), los dos vivos a la vez: el
  *    que habla con su clip de hablar y sus gestos, el otro escuchándolo. Debajo, sus fotos de siempre
- *    (ClaudioRetrato) mientras arranca el video o si el teléfono no puede con él.
+ *    (ClaudioRetrato) mientras arranca el video o si el teléfono no puede con él;
+ *  · los efectos: los sonidos del recorrido (sonidos.ts) y la vibración de la app (ui/hapticos).
  */
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { Recorrido, type Narrador, type PropsAnfitrion } from './Recorrido';
 import type { Anfitrion, PruebaId } from './guion';
 import { prepararHabla, speak, stopSpeaking } from '../lib/tts';
@@ -16,6 +17,10 @@ import { CuerpoVideo } from '../avatares/video/CuerpoVideo';
 import { ClaudioRetrato, FOTOS_ANTONIO, FOTOS_CLAUDIO } from '../avatares/ClaudioRetrato';
 import { ESTADO_INICIAL, type EstadoAvatar, type ExpresionAvatar } from '../avatar3d/tipos';
 import type { FaceState } from '../caraTipos';
+import { prepararSonidos, sonar, soltarSonidos } from './sonidos';
+import { vibrar } from '../ui/hapticos';
+
+const efectosApp = { sonar, vibrar };
 
 const narradorApp: Narrador = {
   async hablar(texto, quien, emocion, alSonar) {
@@ -50,6 +55,11 @@ function Cuerpo({ quien, p }: { quien: Anfitrion; p: PropsAnfitrion }) {
 }
 
 export function RecorridoApp({ visible, nombre, idioma, onCerrar, onProbar }: { visible: boolean; nombre: string; idioma: 'es' | 'en'; onCerrar: () => void; onProbar: (id: PruebaId) => void }) {
+  useEffect(() => {
+    if (!visible) return;
+    void prepararSonidos();
+    return () => void soltarSonidos();
+  }, [visible]);
   return (
     <Recorrido
       visible={visible}
@@ -59,6 +69,7 @@ export function RecorridoApp({ visible, nombre, idioma, onCerrar, onProbar }: { 
       cuerpo={(quien, p) => <Cuerpo quien={quien} p={p} />}
       onCerrar={onCerrar}
       onProbar={onProbar}
+      efectos={efectosApp}
     />
   );
 }
