@@ -7,7 +7,7 @@
  *   cd mobile && npx tsx src/compa/pruebas/compa.prueba.mjs
  */
 import assert from 'node:assert/strict';
-import { avisoMesa, estadoEnPalabras, sondeoMs, tareaEnPalabras, trabajando as pcTrabajando, EJEMPLOS_PC } from '../computadora.ts';
+import { avisoMesa, estadoEnPalabras, sondeoMs, tareaEnPalabras, trabajando as pcTrabajando, EJEMPLOS_PC, CompaneroPc, esAccionPc, PAUSA_TRAS_PERSONA_MS, MIN_ENTRE_FRASES_MS, FINAL_ESPERA_MAX_MS, TOPE_TRABAJO_MS } from '../computadora.ts';
 import http from 'node:http';
 import { CONECTAR_MAX_MS, ControlSesion, SORDA_MS, TOPE_RECONEXIONES } from '../sesion.ts';
 import {
@@ -2481,6 +2481,111 @@ prueba('su computadora en la app: estado, pasos en palabras, sondeo y el aviso d
   assert.equal(avisoMesa(hecha, hecha), null, 'no se repite');
   assert.equal(avisoMesa(null, hecha), null, 'una vieja al abrir la app no se anuncia');
   for (const e of EJEMPLOS_PC) assert.ok(e.es.length > 20 && e.en.length > 20 && /\.(org|hn|com)| Google/.test(e.es), 'cada ejemplo dice la página');
+});
+
+prueba('su computadora en vivo: se abre sola, teclea, cuenta avances sin hablar encima y dice el resultado (José, 2-oct)', () => {
+  // Los avisos que manda el servidor (server/computadora.ts) los acepta el puente; lo mal formado, no.
+  assert.ok(esAccionApp({ tipo: 'computadora', fase: 'empieza', id: 'g1' }));
+  assert.ok(esAccionApp({ tipo: 'computadora', fase: 'termina', id: 'g1', ok: true, texto: 'Listo.', boleto: 'abcdEFGH1234' }));
+  assert.ok(!esAccionApp({ tipo: 'computadora', fase: 'bailar', id: 'g1' }));
+  assert.ok(!esAccionApp({ tipo: 'computadora', fase: 'paso', id: 'g 1' }));
+  assert.ok(!esAccionPc({ tipo: 'computadora', fase: 'paso', id: 'g1', texto: '' }));
+  // Las pantallas de más, desde cualquier pantalla.
+  for (const p of ['computadora', 'whatsapp', 'correos']) assert.ok(esAccionApp({ tipo: 'abrir', pantalla: p }), p);
+  assert.ok(!esAccionApp({ tipo: 'abrir', pantalla: 'banco' }));
+
+  let ahora = 1_000_000;
+  const relojes = [];
+  const esperar = (f, ms) => {
+    const r = { f, en: ahora + ms, vivo: true };
+    relojes.push(r);
+    return () => (r.vivo = false);
+  };
+  const avanzar = (ms) => {
+    const fin = ahora + ms;
+    for (;;) {
+      const r = relojes.filter((x) => x.vivo && x.en <= fin).sort((a, b) => a.en - b.en)[0];
+      if (!r) break;
+      ahora = r.en;
+      r.vivo = false;
+      r.f();
+    }
+    ahora = fin;
+  };
+  const vistas = [];
+  const dichos = [];
+  const sonidos = [];
+  let ocupado = false;
+  let enLlamada = false;
+  const c = new CompaneroPc({
+    abrirVista: (id) => vistas.push(id),
+    puedeAbrir: () => !enLlamada,
+    decir: (texto, boleto) => dichos.push({ texto, boleto }),
+    sonido: (on) => sonidos.push(on),
+    ocupado: () => ocupado,
+    esperar,
+    reloj: () => ahora,
+  });
+  c.alAccion({ tipo: 'computadora', fase: 'empieza', id: 'g1' });
+  assert.deepEqual(vistas, ['g1'], 'la vista en vivo se abre sola');
+  assert.deepEqual(sonidos, [true], 'y suena el tecleo');
+  assert.equal(c.trabajando, true);
+  c.alAccion({ tipo: 'computadora', fase: 'paso', id: 'g1', texto: 'Ya entré a bch.hn.', boleto: 'b1b1b1b1b1' });
+  assert.deepEqual(dichos, [{ texto: 'Ya entré a bch.hn.', boleto: 'b1b1b1b1b1' }]);
+  // Otro avance enseguida: no (nunca dos seguidas).
+  avanzar(MIN_ENTRE_FRASES_MS - 1000);
+  c.alAccion({ tipo: 'computadora', fase: 'paso', id: 'g1', texto: 'Estoy leyendo la página.', boleto: 'b2b2b2b2b2' });
+  assert.equal(dichos.length, 1);
+  assert.equal(c.ultimaFrase, 'Estoy leyendo la página.', 'la vista la muestra igual');
+  // La persona habla: los avances esperan.
+  avanzar(5000);
+  c.personaHablo();
+  c.alAccion({ tipo: 'computadora', fase: 'paso', id: 'g1', texto: 'Analizando los resultados…', boleto: 'b3b3b3b3b3' });
+  assert.equal(dichos.length, 1, 'no se le habla encima a la persona');
+  avanzar(PAUSA_TRAS_PERSONA_MS);
+  ocupado = true; // AURA está hablando de otra cosa
+  c.alAccion({ tipo: 'computadora', fase: 'paso', id: 'g1', texto: 'Sigo navegando.', boleto: 'b4b4b4b4b4' });
+  assert.equal(dichos.length, 1, 'ni encima de AURA');
+  ocupado = false;
+  c.alAccion({ tipo: 'computadora', fase: 'paso', id: 'g1', texto: 'Toqué «Tipo de cambio».', boleto: 'b5b5b5b5b5' });
+  assert.equal(dichos.length, 2);
+  // La persona cierra la vista; la misión sigue con otra tarea: no se la vuelve a abrir, pero se cuenta.
+  c.vistaCerrada();
+  avanzar(MIN_ENTRE_FRASES_MS);
+  c.alAccion({ tipo: 'computadora', fase: 'sigue', id: 'g2', texto: 'Me falta un poco; sigo con la misión.', boleto: 'b6b6b6b6b6' });
+  assert.deepEqual(vistas, ['g1'], 'cerró la vista: no se le abre otra vez');
+  assert.equal(c.tareaId, 'g2');
+  assert.equal(dichos.at(-1).texto, 'Me falta un poco; sigo con la misión.');
+  // El resultado: espera a que haya silencio y lo dice; el tecleo se apaga.
+  ocupado = true;
+  c.alAccion({ tipo: 'computadora', fase: 'termina', id: 'g2', ok: true, texto: 'Listo, ya terminé en mi computadora. Compra 24.70.', boleto: 'b7b7b7b7b7' });
+  assert.equal(c.trabajando, false);
+  assert.equal(sonidos.at(-1), false, 'se apaga el tecleo');
+  assert.equal(dichos.at(-1).texto, 'Me falta un poco; sigo con la misión.', 'todavía no: alguien habla');
+  avanzar(2000);
+  ocupado = false;
+  avanzar(600);
+  assert.deepEqual(dichos.at(-1), { texto: 'Listo, ya terminé en mi computadora. Compra 24.70.', boleto: 'b7b7b7b7b7' });
+  // Aunque sigan hablando, al tope se dice igual.
+  ocupado = true;
+  c.alAccion({ tipo: 'computadora', fase: 'termina', id: 'g2', ok: false, texto: 'No alcancé a terminar.', boleto: 'b8b8b8b8b8' });
+  avanzar(FINAL_ESPERA_MAX_MS + 600);
+  assert.equal(dichos.at(-1).texto, 'No alcancé a terminar.');
+  ocupado = false;
+  // Una nueva tarea con una llamada de PULSE2CHAT: no se le abre nada encima.
+  enLlamada = true;
+  c.alAccion({ tipo: 'computadora', fase: 'empieza', id: 'g3' });
+  assert.deepEqual(vistas, ['g1']);
+  // Sin noticias: el tecleo no se queda sonando para siempre.
+  avanzar(TOPE_TRABAJO_MS + 1);
+  assert.equal(c.trabajando, false);
+  assert.equal(sonidos.at(-1), false);
+  // El sondeo ve que terminó aunque el aviso se perdiera; y la misión que siguió sin avisar.
+  c.alAccion({ tipo: 'computadora', fase: 'empieza', id: 'g4' });
+  c.alEstado('g5', true);
+  assert.equal(c.tareaId, 'g5');
+  c.alEstado('g5', false);
+  assert.equal(c.trabajando, false);
 });
 
 for (const [nombre, f] of pruebas) {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { miga, reportarEstado } from '../lib/reporte';
 import { AccessibilityInfo, Alert, AppState, Animated, BackHandler, Linking, PanResponder, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useKeepAwake } from 'expo-keep-awake';
@@ -85,6 +85,7 @@ import { avatarActual } from '../avatares/actual';
 import { orientar } from '../lib/orientacion';
 import { esperarFrame } from '../lib/esperarFrame';
 import { HojaComputadora } from '../ajustes/Computadora';
+import { hojasAhora, suscribirHojas } from '../app/hojas';
 import { avisoMesa, estadoEnPalabras, sondeoMs, trabajando as pcTrabajando, type EstadoPc } from '../compa/computadora';
 
 type Props = {
@@ -199,6 +200,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const [pcAbierta, setPcAbierta] = useState(false);
   const [pcEstado, setPcEstado] = useState<EstadoPc | null>(null);
   const [pcAviso, setPcAviso] = useState<{ texto: string; terminada: boolean } | null>(null);
+  /** La vista en vivo de toda la app (app/ComputadoraEnVivo.tsx) abierta: el aviso de arriba sobra. */
+  const pcVivoAbierta = useSyncExternalStore(suscribirHojas, () => hojasAhora().abierta === 'computadora', () => false);
   const [tutorialAbierto, setTutorialAbierto] = useState(false);
   /**
    * Charlar (el avatar grande, de frente) o Trabajar (el avatar compacto arriba y la conversación
@@ -2339,9 +2342,10 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       <HojaComputadora visible={pcAbierta} onCerrar={() => setPcAbierta(false)} nombreAvatar={de(avatarPorId(avatarId).nombre)} />
 
       {/* Su computadora trabaja (o acaba de terminar): se dice arriba, con «Ver». */}
-      {pcAviso && !pcAbierta && !tutorialAbierto ? (
+      {pcAviso && !pcAbierta && !pcVivoAbierta && !tutorialAbierto ? (
         <Pressable
           onPress={() => {
+            // HojaComputadora abre la vista en vivo de toda la app (o la suya, sin la raíz).
             setPcAbierta(true);
             if (pcAviso.terminada) setPcAviso(null);
           }}

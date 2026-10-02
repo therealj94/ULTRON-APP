@@ -59,7 +59,7 @@ import { quitarExpresiones } from './lib/expresiones';
 import { puntoDeCorte } from './lib/trozos';
 import { claveTurno, reclamarTurno, type TurnoGuardado } from './server/turno-unico';
 import { respuestaFija } from './lib/respuestas-fijas';
-import { avisosPendientes, confirmarAvisos, encargarTarea, montarRutasComputadora, motorDelPerfil, type MotorNodo } from './server/computadora';
+import { alAvisarApp, avisosPendientes, confirmarAvisos, encargarTarea, montarRutasComputadora, motorDelPerfil, type MotorNodo } from './server/computadora';
 import { avisosDeEnvio, correrCorreo, montarRutasCorreo, resolverBorrador } from './server/correo';
 import { correrWhatsapp, montarRutasWhatsapp, resolverBorradorWhatsapp, whatsappDisponible, whatsappPermitido } from './server/whatsapp';
 import { fichaManosPrompt } from './lib/manos-ficha';
@@ -1403,6 +1403,9 @@ app.post(['/api/electrum/telegram/webhook', '/api/electrum/telegram/webhook/'], 
 
 /* El perfil de la persona (y la ficha pública de la plataforma), el canal de acciones y el contexto de la app 5.0. */
 montarRutasComputadora(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req), motorDe: async (correo) => (await leerPerfil(correo).catch(() => null))?.motorComputadora });
+// Lo que hace su computadora llega al teléfono por su canal de acciones: se abre la vista en vivo, se
+// cuentan los avances y el resultado se dice en cuanto termina (server/computadora.ts).
+alAvisarApp((quien, aviso, aparato) => empujarAccion(quien, aviso, { aparato }).entregada);
 montarRutasCorreo(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req) });
 montarRutasWhatsapp(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req) });
 montarRutasApp(app, {
@@ -2946,7 +2949,14 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     // Ajustes y cuánto espera el turno: hablando 20 s (la voz da 45 al turno entero) y escribiendo 50 s (el
     // teléfono corta el SSE a los 70). Lo que tarde más llega en el turno siguiente y en la app.
     computadora: duenoComputadora
-      ? { quien: duenoComputadora, motor: motorDelPerfil((await perfilPedido)?.motorComputadora, duenoComputadora), esperaMs: voz ? 20_000 : 50_000 }
+      ? {
+          quien: duenoComputadora,
+          motor: motorDelPerfil((await perfilPedido)?.motorComputadora, duenoComputadora),
+          esperaMs: voz ? 20_000 : 50_000,
+          // El teléfono del turno: ahí se abre sola la vista en vivo y se narra (sin aparato, todos los suyos).
+          aparato: aparatoValido(body?.aparato),
+          idioma: idiomaTurno,
+        }
       : null,
     // Lo que su computadora terminó y va en los hechos: se da por dicho solo si el modelo contesta con ellos.
     avisoComputadora: deLaComputadora ? { quien: duenoComputadora, ids: deLaComputadora.ids } : null,
@@ -3234,7 +3244,7 @@ async function preguntarQwenATrozos(
  * Corre lo que pidió el modelo. Con un miembro, resolverPedido (lib/harness.ts) no deja pasar
  * `sistema` ni `ejecutor` aunque el modelo los pida: son del taller de la junta.
  */
-type TurnoComputadora = { quien: string; motor: MotorNodo; esperaMs: number } | null | undefined;
+type TurnoComputadora = { quien: string; motor: MotorNodo; esperaMs: number; aparato?: string | null; idioma?: 'es' | 'en' } | null | undefined;
 
 async function correrHerramientaPedida(
   ped: ReturnType<typeof extraerPedidoHerramienta>,
@@ -3282,7 +3292,7 @@ async function correrHerramientaPedida(
       // Sin identidad verificada no hay de quién sea la tarea ni a quién avisarle: no se encarga.
       computadora: async (tarea) =>
         compu
-          ? (await encargarTarea({ instruccion: tarea, quien: compu.quien, motor: compu.motor, esperaMs: compu.esperaMs, senal })).hecho
+          ? (await encargarTarea({ instruccion: tarea, quien: compu.quien, motor: compu.motor, esperaMs: compu.esperaMs, senal, aparato: compu.aparato, idioma: compu.idioma })).hecho
           : 'HARNESS computadora: solo la uso para alguien con sesión. Pídele que entre con su cuenta.',
       correo: (arg) => correrCorreo(dueno, arg, ambito),
       whatsapp: (arg) => correrWhatsapp(dueno, arg, ambito),

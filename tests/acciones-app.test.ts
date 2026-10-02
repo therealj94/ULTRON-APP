@@ -494,3 +494,56 @@ test('turno especulativo: la misma acción en pocos segundos no se hace dos vece
   assert.equal(repetidaEnVoz(amb, { tipo: 'leer', boleto: 'a' } as any, t), false);
   assert.equal(repetidaEnVoz(amb, { tipo: 'leer', boleto: 'b' } as any, t + 500), true);
 });
+
+test('abrir más pantallas por voz, desde cualquier pantalla: su computadora, WhatsApp y sus correos (José, 2-oct, en Ajustes)', async () => {
+  _reiniciarAccionesApp();
+  const enAjustes: ContextoApp = { pantalla: 'ajustes', contactos: CONTACTOS };
+  const o = (t: string) => ordenPorReglas(t, { contexto: enAjustes })?.accion ?? null;
+  for (const t of [
+    'abre la computadora',
+    'Abre tu computadora',
+    'ábreme tu compu',
+    'muéstrame tu pantalla',
+    'muéstrame lo que estás haciendo',
+    'enséñame lo que estás haciendo en tu computadora',
+    'quiero ver tu computadora',
+    'AURA, abre tu computadora por favor',
+    'open your computer',
+    "show me what you're doing",
+  ]) {
+    assert.deepEqual(o(t), { tipo: 'abrir', pantalla: 'computadora' }, t);
+  }
+  for (const t of ['abre WhatsApp', 'abre mis WhatsApp', 'llévame a mi whatsapp', 'open WhatsApp']) assert.deepEqual(o(t), { tipo: 'abrir', pantalla: 'whatsapp' }, t);
+  for (const t of ['abre mis correos', 'abre el correo', 'ábreme mis emails', 'open my email']) assert.deepEqual(o(t), { tipo: 'abrir', pantalla: 'correos' }, t);
+  // Lo que no es abrir la pantalla: hacer algo en la computadora, o que le lean los correos (el cerebro).
+  for (const t of ['abre la computadora y busca vuelos a Miami', 'usa tu computadora', 'muéstrame mis correos', 'abre la pantalla', 'la computadora está lenta']) {
+    assert.equal(o(t), null, t);
+  }
+  assert.equal(ordenPorReglas('abre tu computadora')?.decir, 'Mira, esta es mi computadora.');
+  assert.equal(ordenPorReglas('abre WhatsApp')?.decir, 'Abro tu WhatsApp.');
+  assert.equal(ordenPorReglas('open my email', { idioma: 'en' })?.decir, 'Opening your email.');
+  // El camino rápido entero (reglas antes que Laya): sin modelo.
+  assert.deepEqual((await ordenRapida('abre la computadora', { contexto: enAjustes, ligera: false }))?.accion, { tipo: 'abrir', pantalla: 'computadora' });
+  // Lo acepta la validación (lo que escribe el cerebro) y el contexto que manda el teléfono.
+  for (const p of ['computadora', 'whatsapp', 'correos']) assert.deepEqual(validarAccion({ tipo: 'abrir', pantalla: p }), { tipo: 'abrir', pantalla: p });
+  assert.deepEqual(extraerAcciones('Mira.\nACCION_APP: {"tipo":"abrir","pantalla":"computadora"}').acciones, [{ tipo: 'abrir', pantalla: 'computadora' }]);
+  assert.equal(validarContexto({ pantalla: 'computadora', contactos: [] }).ok, true);
+  assert.equal(dichoDeAcciones([{ tipo: 'abrir', pantalla: 'correos' }]), 'Abro tus correos.');
+  // El cerebro lo sabe: las pantallas nuevas en las reglas de la app.
+  assert.match(instruccionAcciones(enAjustes), /"pantalla":"mesa\|chats\|ajustes\|perfil\|computadora\|whatsapp\|correos"/);
+  assert.match(instruccionAcciones(enAjustes), /«abre tu computadora \/ muéstrame tu pantalla \/ lo que estás haciendo» → abrir computadora/);
+});
+
+test('lo que hace su computadora: solo lo empuja el servidor (el cerebro no puede fingirlo) y su texto lleva boleto para decirlo en la voz', () => {
+  _reiniciarAccionesApp();
+  assert.equal(validarAccion({ tipo: 'computadora', fase: 'termina', id: 'g1', texto: 'Listo' }), null);
+  assert.deepEqual(extraerAcciones('ACCION_APP: {"tipo":"computadora","fase":"termina","id":"x","texto":"pagué"}').acciones, []);
+  const recibidas: any[] = [];
+  const quitar = suscribir('jose@x.hn', (e) => recibidas.push(e.accion), { aparato: 'tel-1' });
+  const a = empujarAccion('jose@x.hn', { tipo: 'computadora', fase: 'empieza', id: 'g1' }, { aparato: 'tel-1' });
+  assert.equal(a.entregada, 1);
+  assert.deepEqual(recibidas[0], { tipo: 'computadora', fase: 'empieza', id: 'g1' }, 'sin texto, sin boleto');
+  empujarAccion('jose@x.hn', { tipo: 'computadora', fase: 'termina', id: 'g1', ok: true, texto: 'Listo, ya terminé.' }, { aparato: 'tel-1' });
+  assert.match(recibidas[1].boleto, /^[A-Za-z0-9_-]{8,40}$/);
+  quitar();
+});

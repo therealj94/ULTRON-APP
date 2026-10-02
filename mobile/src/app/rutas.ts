@@ -19,7 +19,8 @@ export type RaizParams = {
   Mesa: { desdeIntro?: boolean; recienElegido?: boolean } | undefined;
   Ajustes: undefined;
   Perfil: undefined;
-  Chats: undefined;
+  /** `whatsapp`: abrir con la pestaña de WhatsApp (cambia en cada pedido: «abre WhatsApp» otra vez la vuelve a poner). */
+  Chats: { whatsapp?: number } | undefined;
   Conversacion: { con: string; nombre?: string };
 };
 
@@ -52,7 +53,7 @@ export function reiniciarA<R extends NombreRuta>(ruta: R, params?: RaizParams[R]
  * Abre una pantalla de la sesión. Si ya está en la pila, se vuelve a ella (no se apilan dos Ajustes);
  * la mesa es siempre la base.
  */
-export function abrirRuta(ruta: 'Mesa' | 'Ajustes' | 'Perfil' | 'Chats') {
+export function abrirRuta(ruta: 'Mesa' | 'Ajustes' | 'Perfil' | 'Chats', params?: RaizParams['Chats']) {
   if (!nav.isReady()) return;
   const estado = nav.getRootState();
   const nombres = estado?.routes.map((r) => r.name) || [];
@@ -61,10 +62,17 @@ export function abrirRuta(ruta: 'Mesa' | 'Ajustes' | 'Perfil' | 'Chats') {
   if (i >= 0) {
     const sobran = nombres.length - 1 - i;
     if (sobran > 0) nav.dispatch(StackActions.pop(sobran));
+    // Ya estaba: se le pasan los datos nuevos («abre WhatsApp» con los chats abiertos cambia de pestaña).
+    if (params && estado?.routes[i]?.key) nav.dispatch({ ...CommonActions.setParams(params), source: estado.routes[i].key });
     return;
   }
   if (ruta === 'Perfil' && !nombres.includes('Ajustes')) nav.dispatch(StackActions.push('Ajustes'));
-  nav.dispatch(StackActions.push(ruta));
+  nav.dispatch(StackActions.push(ruta, params));
+}
+
+/** «Abre WhatsApp»: los chats con la pestaña de WhatsApp (si la cuenta lo tiene; si no, PULSE2CHAT). */
+export function abrirWhatsapp() {
+  abrirRuta('Chats', { whatsapp: Date.now() });
 }
 
 export function atras(): boolean {
