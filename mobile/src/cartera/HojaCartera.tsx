@@ -169,7 +169,7 @@ export function HojaCartera({ visible, onCerrar }: Props) {
         <View style={{ gap: MEDIDA.espacio.l }}>
           <View style={[s.total, { backgroundColor: tema.acentoFondo, borderColor: tema.borde }]}>
             <Texto v="etiqueta" color="acentoTexto">
-              {tr('Valor con el oro de hoy', 'Value at today’s gold price')}
+              {tr('Valor total aproximado', 'Approximate total value')}
             </Texto>
             {cartera ? (
               <Texto v="heroe" accessibilityLabel={`${dinero(cartera.total)} USD`}>
