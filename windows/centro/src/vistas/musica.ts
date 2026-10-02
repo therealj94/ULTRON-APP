@@ -30,16 +30,20 @@ export function vistaMusica(): HTMLElement {
 
   function pintarSinConexion(local: any) {
     reproductor.replaceChildren(tarjeta(null,
-      local?.titulo ? h('div', { class: 'fila', style: 'margin-bottom:12px' }, h('span', { class: 'foto' }, icono('musica')),
-        h('div', null, h('strong', null, local.titulo), h('br'), h('small', { class: 'tenue' }, `${local.artista || ''} · ${local.app}`))) : null,
-      h('p', null, T('Conecta tu Spotify para ver lo que suena, buscar y poner canciones desde aquí o por voz.', 'Connect Spotify to see what’s playing, search and play.')),
-      h('p', { class: 'nota' }, T('Controlar la música desde otra app es una función de Spotify Premium.', 'Controlling from another app requires Spotify Premium.')),
-      boton(T('Conectar Spotify', 'Connect Spotify'), async (ev) => {
-        const b = ev.currentTarget as HTMLButtonElement; b.disabled = true;
-        avisar(T('Abrí Spotify en tu navegador: acepta y vuelve.', 'Opened Spotify in your browser.'));
-        try { await pedir('conectar', { servicio: 'spotify' }, 330_000); avisar(T('Spotify conectado.', 'Spotify connected.'), 'ok'); cargar(); }
-        catch (e: any) { avisar(e.message, 'mal', 9000); b.disabled = false; }
-      }, { tipo: 'acento', icono: 'musica' })));
+      local?.titulo ? h('div', { class: 'fila', style: 'margin-bottom:var(--e-4);padding-bottom:var(--e-4);border-bottom:1px solid var(--linea-suave)' }, h('span', { class: 'foto' }, icono('musica')),
+        h('div', null, h('small', { class: 'antetitulo' }, T('Suena en tu PC', 'Playing on your PC')), h('br'), h('strong', null, local.titulo), h('br'), h('small', { class: 'tenue' }, `${local.artista || ''} · ${local.app}`))) : null,
+      h('div', { class: 'musica-sin' },
+        h('span', { class: 'foto dorada' }, icono('musica', 28)),
+        h('div', null,
+          h('strong', null, T('Conecta tu Spotify', 'Connect your Spotify')),
+          h('p', { class: 'tenue' }, T('Para ver lo que suena, buscar y poner canciones desde aquí o por voz.', 'To see what’s playing, search and play from here or by voice.')),
+          h('small', { class: 'nota' }, T('Controlar la música desde otra app es una función de Spotify Premium.', 'Controlling from another app requires Spotify Premium.')),
+          h('div', null, boton(T('Conectar Spotify', 'Connect Spotify'), async (ev) => {
+            const b = ev.currentTarget as HTMLButtonElement; b.disabled = true;
+            avisar(T('Abrí Spotify en tu navegador: acepta y vuelve.', 'Opened Spotify in your browser.'));
+            try { await pedir('conectar', { servicio: 'spotify' }, 330_000); avisar(T('Spotify conectado.', 'Spotify connected.'), 'ok'); cargar(); }
+            catch (e: any) { avisar(e.message, 'mal', 9000); b.disabled = false; }
+          }, { tipo: 'acento', icono: 'musica' }))))));
   }
 
   function pintar(s: any) {
@@ -48,18 +52,18 @@ export function vistaMusica(): HTMLElement {
       return;
     }
     base = { ms: s.progresoMs, en: Date.now(), dur: Math.max(1, s.duracionMs), sonando: s.sonando };
-    progresoEl = h('i', { style: 'display:block;height:100%;background:var(--acento);border-radius:3px' });
+    progresoEl = h('i');
     tiempoEl = h('small', { class: 'tenue' });
-    const barra = h('div', { class: 'barra-progreso', title: T('Toca para saltar a ese momento', 'Click to seek'), style: 'height:5px;background:#ffffff18;border-radius:3px;cursor:pointer;margin:14px 0 6px',
+    const barra = h('div', { class: 'barra-progreso', title: T('Toca para saltar a ese momento', 'Click to seek'),
       on: { click: (e: MouseEvent) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); control('posicion:' + Math.round(((e.clientX - r.left) / r.width) * base.dur)); } } }, progresoEl);
     const volumen = h('input', { type: 'range', min: '0', max: '100', value: String(Math.max(0, s.volumen)), 'aria-label': T('Volumen de Spotify', 'Spotify volume'), title: T('Volumen de Spotify', 'Spotify volume'),
-      style: 'width:120px;accent-color:var(--acento)', on: { change: (e: Event) => control('volumen:' + (e.target as HTMLInputElement).value) } });
+      style: 'width:120px', on: { change: (e: Event) => control('volumen:' + (e.target as HTMLInputElement).value) } });
     reproductor.replaceChildren(h('section', { class: 'tarjeta reproductor' },
       h('div', { style: 'display:grid;grid-template-columns:170px 1fr;gap:22px;align-items:center' },
-        s.portada ? h('img', { src: s.portada, alt: T('Portada de ', 'Cover of ') + s.album, style: 'width:170px;height:170px;border-radius:16px;box-shadow:var(--sombra)' }) : h('div', { class: 'foto', style: 'width:170px;height:170px;border-radius:16px' }, icono('musica', 48)),
+        s.portada ? h('img', { class: 'reproductor-portada', src: s.portada, alt: T('Portada de ', 'Cover of ') + s.album }) : h('div', { class: 'foto reproductor-portada' }, icono('musica', 48)),
         h('div', null,
-          h('small', { class: 'tenue' }, T('Sonando en ', 'Playing on ') + (s.dispositivo || 'Spotify')),
-          h('h2', { style: 'font:600 26px/1.2 var(--titulo);margin:6px 0 2px' }, s.titulo),
+          h('small', { class: 'antetitulo' }, T('Sonando en ', 'Playing on ') + (s.dispositivo || 'Spotify')),
+          h('h2', { style: 'font:650 var(--t-2xl)/1.15 var(--titulo);letter-spacing:-.02em;margin:6px 0 4px' }, s.titulo),
           h('p', { class: 'tenue', style: 'margin:0' }, `${s.artista} · ${s.album}`),
           barra, h('div', { class: 'fila', style: 'justify-content:space-between' }, tiempoEl, h('small', { class: 'tenue' }, tiempo(s.duracionMs))),
           h('div', { class: 'fila', style: 'margin-top:10px' },
@@ -67,7 +71,7 @@ export function vistaMusica(): HTMLElement {
             botonIcono(s.sonando ? 'pausa' : 'play', s.sonando ? T('Pausar', 'Pause') : T('Reproducir', 'Play'), () => control(s.sonando ? 'pausa' : 'play'), 'grande acento'),
             botonIcono('siguiente', T('Siguiente canción', 'Next'), () => control('siguiente'), 'grande'),
             h('span', { style: 'flex:1' }),
-            h('span', { class: 'tenue', title: T('Volumen', 'Volume') }, '🔊'), volumen,
+            h('span', { class: 'tenue', title: T('Volumen', 'Volume'), style: 'display:inline-flex' }, icono('volumen')), volumen,
             botonIcono('actualizar', T('Dispositivos: elegir dónde suena', 'Devices: choose where it plays'), dispositivos))))));
     mover();
   }
@@ -84,12 +88,18 @@ export function vistaMusica(): HTMLElement {
     try {
       const d = await pedir<any[]>('spotify.dispositivos');
       if (!d.length) { avisar(T('No hay dispositivos: abre Spotify en la PC o el teléfono.', 'No devices: open Spotify somewhere.'), 'info', 6000); return; }
-      const menu = h('div', { class: 'tarjeta', style: 'position:fixed;right:40px;top:120px;z-index:30;min-width:240px;box-shadow:var(--sombra)' },
+      // Se cierra al elegir, con «Cerrar», con Escape o con un clic afuera.
+      const cerrar = () => { menu.remove(); removeEventListener('keydown', alTeclado); removeEventListener('mousedown', alClicAfuera, true); };
+      const alTeclado = (e: KeyboardEvent) => { if (e.key === 'Escape') cerrar(); };
+      const alClicAfuera = (e: MouseEvent) => { if (!menu.contains(e.target as Node)) cerrar(); };
+      const menu = h('div', { class: 'tarjeta menu-flotante', role: 'dialog', 'aria-label': T('¿Dónde suena?', 'Play on'), style: 'right:40px;top:120px' },
         h('h3', null, T('¿Dónde suena?', 'Play on')),
-        h('div', { class: 'lista' }, ...d.map((x) => h('div', { class: 'item', on: { click: async () => { menu.remove(); try { await pedir('spotify.transferir', { id: x.id }); setTimeout(cargar, 800); } catch (e: any) { avisar(e.message, 'mal'); } } } },
+        h('div', { class: 'lista' }, ...d.map((x) => h('div', { class: 'item', role: 'button', tabindex: '0', on: { click: async () => { cerrar(); try { await pedir('spotify.transferir', { id: x.id }); setTimeout(cargar, 800); } catch (e: any) { avisar(e.message, 'mal'); } } } },
           icono('musica'), h('span', { style: 'flex:1' }, x.nombre), x.activo ? h('span', { class: 'etiqueta ok' }, T('activo', 'active')) : null))),
-        boton(T('Cerrar', 'Close'), () => menu.remove(), { tipo: 'fantasma' }));
+        boton(T('Cerrar', 'Close'), () => cerrar(), { tipo: 'fantasma' }));
       document.body.appendChild(menu);
+      addEventListener('keydown', alTeclado);
+      setTimeout(() => addEventListener('mousedown', alClicAfuera, true));
     } catch (e: any) { avisar(e.message, 'mal'); }
   }
 
@@ -103,7 +113,7 @@ export function vistaMusica(): HTMLElement {
       const tipo = { cancion: T('Canción', 'Song'), artista: T('Artista', 'Artist'), playlist: 'Playlist' } as Record<string, string>;
       resultados.replaceChildren(r.length ? h('div', { class: 'lista' }, ...r.map((x) => h('div', { class: 'item', title: T('Ponerla ahora', 'Play now'), role: 'button', tabindex: '0',
         on: { click: async () => { try { await pedir('spotify.poner', { uri: x.uri }); avisar(T('Poniendo ', 'Playing ') + x.titulo, 'ok'); setTimeout(cargar, 1200); } catch (e: any) { avisar(e.message, 'mal', 7000); } } } },
-        x.imagen ? h('img', { src: x.imagen, alt: '', style: 'width:44px;height:44px;border-radius:8px;object-fit:cover' }) : h('span', { class: 'foto' }, icono('musica')),
+        x.imagen ? h('img', { src: x.imagen, alt: '', style: 'width:44px;height:44px;border-radius:var(--r-xs);object-fit:cover' }) : h('span', { class: 'foto' }, icono('musica')),
         h('div', { style: 'flex:1;min-width:0' }, h('strong', null, x.titulo), h('br'), h('small', { class: 'tenue' }, `${tipo[x.tipo]} · ${x.subtitulo}`)),
         x.duracionMs ? h('small', { class: 'tenue' }, tiempo(x.duracionMs)) : null, icono('play')))) : h('p', { class: 'tenue' }, T('Sin resultados.', 'No results.')));
     } catch (e: any) { resultados.replaceChildren(h('p', { class: 'tenue' }, e.message)); }
