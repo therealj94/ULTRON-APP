@@ -110,6 +110,21 @@ function escribirDisco(a: Almacen) {
   fs.renameSync(tmp, FILE);
 }
 
+/** Lo de `extra` que `base` no tiene: turnos más nuevos que el último de base y hechos que no estaban. */
+export function juntarAlmacen(base: Almacen, extra: Almacen): Almacen {
+  const ultimo = (xs: { t: number }[]) => xs.reduce((m, x) => Math.max(m, x.t), 0);
+  const hechos = (a: HechoMem[], b: HechoMem[]) => [...b.filter((h) => !a.some((x) => x.hecho === h.hecho)), ...a].slice(0, MAX_LARGA);
+  const out: Almacen = { ...base, perfiles: { ...base.perfiles }, junta: { larga: hechos(base.junta.larga, extra.junta.larga) } };
+  for (const [id, p] of Object.entries(extra.perfiles)) {
+    const b = out.perfiles[id] || { corta: [], larga: [] };
+    const desde = ultimo(b.corta);
+    out.perfiles[id] = { corta: [...b.corta, ...p.corta.filter((x) => x.t > desde)].slice(-MAX_CORTA), larga: hechos(b.larga, p.larga) };
+  }
+  const desdeCambio = ultimo(base.cambios);
+  out.cambios = [...base.cambios, ...extra.cambios.filter((c) => c.t > desdeCambio)].slice(-MAX_CAMBIOS);
+  return out;
+}
+
 export async function cargarMemoria(): Promise<Almacen> {
   if (loaded && cache) return cache;
   if (s3SinLeer && cache && Date.now() < reintentoS3) return cache;
@@ -117,12 +132,17 @@ export async function cargarMemoria(): Promise<Almacen> {
   if (s3Listo()) {
     const r = await s3GetJson(S3_KEY).catch((e) => ({ ok: false, json: null, detalle: String(e?.message || e), missing: false }));
     if (r.ok && r.json) {
-      cache = migrar(r.json);
+      const leida = migrar(r.json);
+      // Lo que se anotó mientras S3 no se dejaba leer (turnos, hechos) no se pierde al volver: se junta con
+      // lo leído y se sube. Olvidar en ese rato no se pudo (503), así que juntar nunca revive algo borrado.
+      const pendiente = s3SinLeer && cache ? cache : null;
+      cache = pendiente ? juntarAlmacen(leida, pendiente) : leida;
       lastVia = 's3';
-      lastS3 = 'leído de S3';
+      lastS3 = pendiente ? 'leído de S3 (y junté lo anotado mientras no se podía leer)' : 'leído de S3';
       s3SinLeer = false;
       escribirDisco(cache);
       loaded = true;
+      if (pendiente) await persistirMemoria();
       return cache;
     }
     if (r.ok && r.missing) {
@@ -346,12 +366,15 @@ export async function guardarHechoQuien(opts: {
   await enqueue(() => persistirMemoria().then(() => undefined));
 }
 
-export async function olvidarQuien(quien: MiembroId, junta = false): Promise<void> {
+/** Olvida. `durable`: false si S3 está configurado y no se pudo borrar ahí (la copia guardada volvería). */
+export async function olvidarQuien(quien: MiembroId, junta = false): Promise<{ durable: boolean }> {
   const a = await cargarMemoria();
   a.perfiles[quien] = { corta: [], larga: [] };
   if (junta) a.junta.larga = vacio().junta.larga;
   cache = a;
-  await enqueue(() => persistirMemoria().then(() => undefined));
+  let via = 'disco' as 's3' | 'disco';
+  await enqueue(() => persistirMemoria().then((r) => void (via = r.via)));
+  return { durable: !s3Listo() || via === 's3' };
 }
 
 export function fotoMemoria(quien: MiembroId | null) {

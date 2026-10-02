@@ -1963,6 +1963,8 @@ app.get('/api/memoria', exigirMesa, async (req, res) => {
   res.json(fotoMemoria(quien));
 });
 
+const NO_SE_BORRO = { error: 'Lo borré en este servidor, pero no pude borrar la copia guardada; vuelve a pedírmelo en un momento.', code: 'memoria_no_borrada', honesto: true };
+
 /** Escribir u olvidar memoria exige sesión firmada: la identidad sale del token, no del body. */
 app.post('/api/memoria', exigirSesion, limitar(60), async (req, res) => {
   // Un miembro escribe (u olvida) SU memoria personal, por el correo de su sesión. Nunca la de la
@@ -1970,8 +1972,17 @@ app.post('/api/memoria', exigirSesion, limitar(60), async (req, res) => {
   if (nivelDePeticion(req) === 'miembro') {
     const correo = sesionDe(req)!.correo;
     const hechoM = String(req.body?.hecho || '').trim().slice(0, 400);
-    if (req.body?.olvidar) await olvidarMiembro(correo);
-    else if (hechoM) await guardarHechoMiembro(correo, hechoM);
+    if (req.body?.olvidar) {
+      // «Borrado» solo si se borró donde se guarda: si S3 no lo borró, la memoria volvería tras un despliegue.
+      if (!(await olvidarMiembro(correo)).durable) return res.status(503).json(NO_SE_BORRO);
+    } else if (hechoM) {
+      try {
+        await guardarHechoMiembro(correo, hechoM);
+      } catch (e: any) {
+        // S3 no dejó leer su memoria: no se guardó (guardar habría pisado lo suyo).
+        return res.status(503).json({ error: String(e?.message || e).slice(0, 200), code: 'memoria_no_disponible', honesto: true });
+      }
+    }
     else await cargarMiembro(correo);
     return res.json({ ok: true, ...(req.body?.olvidar ? { olvidado: true } : {}), ...fotoMemoriaMiembro(correo) });
   }
@@ -1986,7 +1997,7 @@ app.post('/api/memoria', exigirSesion, limitar(60), async (req, res) => {
   }
   if (olvido) {
     if (!quien) return res.status(400).json({ error: 'No supe quién eres de la junta. No borré nada.', honesto: true });
-    await olvidarQuien(quien, !!req.body?.junta && puedeCambiarSistema(quien));
+    if (!(await olvidarQuien(quien, !!req.body?.junta && puedeCambiarSistema(quien))).durable) return res.status(503).json(NO_SE_BORRO);
     return res.json({ ok: true, olvidado: true, quien, honesto: true });
   }
   if (hecho) {

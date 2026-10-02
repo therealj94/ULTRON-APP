@@ -134,14 +134,15 @@ export async function cargarMiembro(correo: string): Promise<CajonMiembro> {
   return final;
 }
 
-/** Guarda en orden, un correo a la vez: disco y S3. */
-function guardar(c: string, cajon: CajonMiembro): Promise<void> {
+/** Guarda en orden, un correo a la vez: disco y S3. Resuelve false si S3 está configurado y no guardó. */
+function guardar(c: string, cajon: CajonMiembro): Promise<boolean> {
   const previa = colas.get(c) || Promise.resolve();
   const paso = previa.then(async () => {
     escribirEnDisco(c, cajon);
-    if (!s3Listo()) return;
+    if (!s3Listo()) return true;
     const r = await s3PutJson(claveS3(c), cajon).catch((e) => ({ ok: false, detalle: String(e?.message || e) }));
     if (!r.ok) console.warn('[memoria miembro] S3 no guardó', String((r as any).detalle || '').slice(0, 120));
+    return r.ok;
   });
   const cola = paso.catch(() => undefined);
   colas.set(c, cola);
@@ -198,13 +199,13 @@ export async function guardarHechoMiembro(correo: string, hecho: string): Promis
   await guardar(c, cajon);
 }
 
-/** Borra todo lo del miembro (su hilo y sus hechos). Solo lo suyo. */
-export async function olvidarMiembro(correo: string): Promise<void> {
+/** Borra todo lo del miembro (su hilo y sus hechos). Solo lo suyo. `durable`: false si S3 no lo borró. */
+export async function olvidarMiembro(correo: string): Promise<{ durable: boolean }> {
   const c = correoNormal(correo);
-  if (!c) return;
+  if (!c) return { durable: true };
   const cajon = vacio();
   enCache(c, cajon);
-  await guardar(c, cajon);
+  return { durable: await guardar(c, cajon) };
 }
 
 /** Lo que va al prompt: con quién habla, lo que pidió recordar y su hilo. Nada de nadie más. */

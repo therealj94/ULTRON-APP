@@ -7,8 +7,8 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { _olvidarCargaTest, cargarMemoria, recordarTurno, estadoMemoria } from '../lib/memoria';
-import { guardarHechoMiembro, recordarTurnoMiembro } from '../lib/memoria-miembro';
+import { _olvidarCargaTest, cargarMemoria, juntarAlmacen, olvidarQuien, recordarTurno, estadoMemoria, type Almacen } from '../lib/memoria';
+import { guardarHechoMiembro, olvidarMiembro, recordarTurnoMiembro } from '../lib/memoria-miembro';
 import { _olvidarCuentas, agregarCuenta, CuentasNoDisponibles } from '../lib/correo/cuentas';
 import { decidirBorrador } from '../server/correo';
 import { herramientaQueSale, neutralizarPedido, quitarLineaPedido } from '../lib/harness';
@@ -130,4 +130,33 @@ test('computadora: el motor de pago es de la junta; a un miembro le corre el gra
   assert.equal(motorDelPerfil('pago', 'jose@ordenglobal.org'), 'claude');
   assert.equal(motorDelPerfil('pago', 'alguien-de-la-comunidad@ejemplo.com'), 'holo');
   assert.equal(motorDelPerfil('gratis', 'jose@ordenglobal.org'), 'holo');
+});
+
+test('olvidar: si S3 no lo borró, no se dice «borrado» (la copia guardada volvería)', async () => {
+  await conS3Caido(async () => {
+    assert.equal((await olvidarMiembro(`prueba-olvido-${Date.now()}@ejemplo.com`)).durable, false);
+    _olvidarCargaTest();
+    assert.equal((await olvidarQuien('jose')).durable, false);
+  });
+  _olvidarCargaTest();
+});
+
+test('S3 vuelve: lo anotado mientras no se podía leer se junta con lo guardado, no se pierde', () => {
+  const t0 = 1_000;
+  const base: Almacen = {
+    version: 1,
+    perfiles: { jose: { corta: [{ rol: 'user', texto: 'viejo', t: t0, canal: 'mesa' }], larga: [{ hecho: 'vive en Tegucigalpa', t: t0, quien: 'jose', canal: 'mesa' }] } },
+    junta: { larga: [] },
+    cambios: [],
+  };
+  const durante: Almacen = {
+    version: 1,
+    perfiles: { jose: { corta: [{ rol: 'user', texto: 'nuevo en la caída', t: t0 + 50, canal: 'mesa' }], larga: [{ hecho: 'le gusta el café', t: t0 + 50, quien: 'jose', canal: 'mesa' }] } },
+    junta: { larga: [] },
+    cambios: [],
+  };
+  const j = juntarAlmacen(base, durante);
+  assert.deepEqual(j.perfiles.jose.corta.map((x) => x.texto), ['viejo', 'nuevo en la caída']);
+  assert.deepEqual(j.perfiles.jose.larga.map((x) => x.hecho).sort(), ['le gusta el café', 'vive en Tegucigalpa']);
+  assert.deepEqual(juntarAlmacen(base, base).perfiles.jose.corta.length, 1, 'sin duplicar');
 });
