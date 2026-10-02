@@ -59,6 +59,7 @@ import { quitarExpresiones } from '../lib/expresiones';
 import { ClaudioRetrato, fotosRetrato } from '../avatares/ClaudioRetrato';
 import { ClaudioDePie, FOTOS_ANTONIO_PIE } from '../avatares/ClaudioDePie';
 import { CuerpoMesa } from '../avatar3d/CuerpoMesa';
+import { leeConHerramientas, ponerLee } from '../avatares/video/pistas';
 import { hayModelo3D } from '../avatar3d/AvatarVivo';
 import { hayVideo } from '../avatares/video/clips';
 import { SelectorAvatar } from '../avatares/SelectorAvatar';
@@ -905,6 +906,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
               onDelta: (piece) => {
                 cancelMmm();
                 if (!speaker) {
+                  // Ya contesta: terminó de leer (Claudio y ANT-ONIO en video guardan el teléfono).
+                  ponerLee(false);
                   speaker = new StreamSpeaker({
                     emocion,
                     onAudioStart: () => onAudio(faceForEmocion(emocion)),
@@ -923,6 +926,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
                   hacerTarea(t);
                   setToolHint(textoTarea(t));
                 }
+                // Abrió un correo o un WhatsApp: Claudio y ANT-ONIO en video lo leen en el teléfono.
+                if (leeConHerramientas(tools)) ponerLee(true);
               },
             });
             abortTurno.current = st.abort;
@@ -1004,6 +1009,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         await say(out.voz || out.reply, faceForEmocion(out.emocion), { emocion: out.emocion });
       } finally {
         cancelMmm();
+        ponerLee(false);
         avisarMesa({ pensando: false });
         if (!speakingRef.current) {
           pauseMicForTts(false);
