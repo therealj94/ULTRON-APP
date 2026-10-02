@@ -564,6 +564,12 @@ export function gastarCupo(claveCupo: string, max: number, ventanaMs = 60_000, a
   return true;
 }
 
+/** Devuelve lo último gastado de un cupo (un turno que no llegó a ser turno: la frase a medias del especulativo). */
+export function devolverCupo(claveCupo: string) {
+  const arr = hits.get(`cupo:${claveCupo}`);
+  if (arr?.length) arr.pop();
+}
+
 /* ------------------------------------------------------- intentos de clave por cuenta */
 
 /**

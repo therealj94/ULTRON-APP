@@ -35,6 +35,7 @@ const {
   eventosSSE,
   ETIQUETA_SECRETO_LLM,
   CUPO_TURNOS_MIN,
+  CUPO_PETICIONES_MIN,
   MAX_CONVERSACIONES,
   INACTIVIDAD_MS,
   _conversaciones,
@@ -378,9 +379,51 @@ test('el cupo es por persona: una no gasta el de otra (todas llegan de las misma
     const b = persona();
     const pa = paseDe(a);
     const pb = paseDe(b);
-    for (let i = 0; i < CUPO_TURNOS_MIN; i++) assert.equal((await llm(s.base, pa, msgs)).status, 200);
-    assert.equal((await llm(s.base, pa, msgs)).status, 429, 'la persona A llegó a su tope');
-    assert.equal((await llm(s.base, pb, msgs)).status, 200, 'la persona B sigue hablando');
+    for (let i = 0; i < CUPO_TURNOS_MIN; i++) assert.equal(dichoDe(await (await llm(s.base, pa, msgs)).text()), 'Hola.');
+    // Pasado el tope, una frase y la conversación sigue: un 429 hacía colgar a ElevenLabs (custom_llm_error).
+    const tope = await llm(s.base, pa, msgs);
+    assert.equal(tope.status, 200, 'nunca un error que cuelga la llamada');
+    assert.match(dichoDe(await tope.text()), /segundito/, 'la persona A llegó a su tope y lo oye dicho');
+    assert.equal(dichoDe(await (await llm(s.base, pb, msgs)).text()), 'Hola.', 'la persona B sigue hablando');
+  } finally {
+    await s.cerrar();
+  }
+});
+
+test('las frases a medias del turno especulativo no gastan el cupo (2-oct: 429 a mitad de un monólogo)', async () => {
+  // El cerebro tarda: cada petición nueva reemplaza a la anterior antes de que diga nada.
+  const s = await montar(async (t) => {
+    await dormir(400);
+    if (!t.senal.aborted) t.enviar('done', { reply: 'Va.' });
+  }, { puenteMs: 0 });
+  try {
+    const pa = paseDe(persona());
+    const vivas: Promise<string>[] = [];
+    // Muchas más pausas que el cupo: «poneme la canción», «poneme la canción de…», …
+    for (let i = 0; i < CUPO_TURNOS_MIN + 15; i++) {
+      vivas.push(llm(s.base, pa, [{ role: 'user', content: `poneme la canción ${'de '.repeat(i)}` }]).then((r) => r.text()));
+      await dormir(5);
+    }
+    const ultima = await llm(s.base, pa, [{ role: 'user', content: 'poneme la canción de Bereta' }]);
+    assert.equal(ultima.status, 200);
+    assert.equal(dichoDe(await ultima.text()), 'Va.', 'la frase entera tiene su turno');
+    await Promise.all(vivas);
+  } finally {
+    await s.cerrar();
+  }
+});
+
+test('el freno contra abuso sigue: demasiadas peticiones por minuto sí reciben 429', async () => {
+  const s = await montar(async (t) => t.enviar('done', { reply: 'Hola.' }));
+  try {
+    const pa = paseDe(persona());
+    let ultimo = 0;
+    for (let i = 0; i <= CUPO_PETICIONES_MIN; i++) {
+      const r = await llm(s.base, pa, [{ role: 'user', content: `hola ${i}` }]);
+      ultimo = r.status;
+      await r.text();
+    }
+    assert.equal(ultimo, 429);
   } finally {
     await s.cerrar();
   }

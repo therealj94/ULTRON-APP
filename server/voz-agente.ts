@@ -44,7 +44,7 @@ import { clave } from '../lib/boveda';
 import { quitarExpresiones } from '../lib/expresiones';
 import { afinarParaBoca, afinarParaBocaIngles } from './habla';
 import { interruptor } from '../lib/interruptores';
-import { firmarDato, gastarCupo, huellaSesion, leerDato, mismoSecreto, secretoDerivado, sesionSigueViva, type Sesion } from './seguridad';
+import { devolverCupo, firmarDato, gastarCupo, huellaSesion, leerDato, mismoSecreto, secretoDerivado, sesionSigueViva, type Sesion } from './seguridad';
 import { apiEleven, etiquetaV4, normalizarAvatar, normalizarIdioma, TONO_V4, type AvatarVoz, type Idioma } from './eleven';
 import { modoValido } from './desk';
 import { aparatoValido, empujarAmbiente, empujarOrdenPc, lecturaDe, turnoDeRecordatorio, type EventoAmbiente } from '../lib/acciones-app';
@@ -78,8 +78,17 @@ export const PASE_TTL_MS = 20 * 60_000;
 export const INACTIVIDAD_MS = 5 * 60_000;
 /** Conversaciones vivas por cuenta (varios teléfonos). La más vieja se cierra al abrir otra. */
 export const MAX_CONVERSACIONES = 3;
-/** Turnos por minuto y por persona. Una charla real no pasa de diez o quince. */
-export const CUPO_TURNOS_MIN = 30;
+/**
+ * Turnos por minuto y por persona. Una charla real no pasa de diez o quince, pero con el turno
+ * especulativo ElevenLabs pide una respuesta en CADA pausa: quien habla 40 s seguidos con pausas manda
+ * decenas. Con 30, y contando esas frases a medias, el cupo se acababa a mitad de la frase, el servidor
+ * contestaba 429 y ElevenLabs colgaba con «custom_llm_error» (2-oct, Windows, «poneme la canción…»).
+ * Ahora la frase a medias que otra petición reemplaza (o que ElevenLabs suelta) antes de decir nada
+ * devuelve su lugar, y al pasarse se contesta con una frase, nunca con un error que cuelga.
+ */
+export const CUPO_TURNOS_MIN = 60;
+/** Peticiones por minuto y por persona, contando las frases a medias devueltas: el freno contra abuso. */
+export const CUPO_PETICIONES_MIN = 240;
 /** Lo que puede tardar un turno hablado antes de pedir perdón y soltar a la persona. */
 export const TURNO_VOZ_MS = 45_000;
 /**
@@ -300,6 +309,8 @@ type Conversacion = {
    * del turno especulativo y se tira; si no (o no llega en ESPERA_MEMORIA_MS), se guarda.
    */
   memoriaPendiente?: { mensaje: string; mem: MemoriaTurno; reloj: ReturnType<typeof setTimeout>; inicio: number } | null;
+  /** Devuelve el lugar del cupo del turno en curso si todavía no dijo nada (una sola vez). */
+  devolverTurno?: (() => void) | null;
 };
 const conversaciones = new Map<string, Conversacion>();
 
@@ -753,6 +764,7 @@ const PHRASES = {
   // Solo acciones y nada que decir: que va, no que quedó (la app o la PC la hacen después y avisan si falla).
   listo: { es: 'Va, enseguida.', en: 'Okay, right away.' },
   noLei: { es: 'Perdón, no pude leértelo. Pídemelo otra vez.', en: "Sorry, I couldn't read it to you. Ask me again." },
+  rapido: { es: 'Dame un segundito, que me llegó todo junto. ¿Me lo repites?', en: 'Give me a second, it all came in at once. Can you say it again?' },
 };
 
 export function montarVozAgente(app: express.Express, d: Deps) {
@@ -879,9 +891,23 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     if (!sesionSigueViva({ huella: pase.h, correo: pase.correo, at: pase.sat, exp: pase.sexp }, ahora)) return negar('la sesión de este pase se cerró');
     const conv = tocarConversacion(pase, ahora);
     if (!conv) return negar('conversación cerrada o vencida');
-    if (!gastarCupo(`voz-turnos:${pase.correo.toLowerCase()}`, CUPO_TURNOS_MIN)) {
+    const claveTurnos = `voz-turnos:${pase.correo.toLowerCase()}`;
+    if (!gastarCupo(`voz-peticiones:${pase.correo.toLowerCase()}`, CUPO_PETICIONES_MIN)) {
+      console.warn(`[voz agente] freno de peticiones (${pase.cid.slice(0, 8)}): 429`);
       return res.status(429).json({ error: { message: 'demasiados turnos; espera un momento' } });
     }
+    // Pasado el cupo de turnos, una frase y la conversación sigue: un 429 aquí la colgaba entera.
+    if (!gastarCupo(claveTurnos, CUPO_TURNOS_MIN)) {
+      console.warn(`[voz agente] cupo de turnos lleno (${pase.cid.slice(0, 8)}): se contesta con una frase`);
+      return soloFrase(PHRASES.rapido[pase.idioma]);
+    }
+    let cupoDevuelto = false;
+    const devolverTurno = () => {
+      if (cupoDevuelto) return;
+      cupoDevuelto = true;
+      if (conv.devolverTurno === devolverTurno) conv.devolverTurno = null;
+      devolverCupo(claveTurnos);
+    };
     // El nivel de este turno: el firmado en el pase y el de hoy por el correo; vale el más estrecho.
     const nivel = nivelMasEstrecho(pase.nivel, nivelDe(pase.correo));
     // Lo hablado desde el turno anterior cuenta en los minutos del miembro. Sin minutos, no se piensa.
@@ -901,6 +927,8 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     // ¿Un reintento de ElevenLabs? La misma frase mientras ese turno sigue pensando: se engancha a él.
     const vivo = conv.vivo;
     if (vivo && mensaje && vivo.mensaje === plana(mensaje) && ahora < vivo.hasta && vivo.vigente()) {
+      // Un reintento de la misma frase no es un turno nuevo.
+      devolverCupo(claveTurnos);
       req.socket.setNoDelay?.(true);
       await vivo.enganchar(res);
       return;
@@ -915,6 +943,8 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     // que oyó la persona: con eso se mira si este turno la interrumpió (y si ya había dicho algo, la
     // cortó a la mitad).
     if (conv.enCurso) {
+      // La frase a medias que esta reemplaza antes de decir nada no fue un turno: su lugar vuelve.
+      if (!conv.algoEnCurso) conv.devolverTurno?.();
       conv.enCurso.abort();
       conv.enCurso = null;
       conv.ultimaDicha = conv.dichoEnCurso;
@@ -1010,6 +1040,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
 
     const corte = new AbortController();
     conv.enCurso = corte;
+    conv.devolverTurno = devolverTurno;
     /** Las acciones de este turno, esperando a que se confirme (RetencionAcciones). */
     const retenidas: (() => void)[] = [];
     const deshacer: (() => void)[] = [];
@@ -1088,6 +1119,8 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     };
     /** Nadie lo oye ya: se corta. Lo último que oyó la persona es lo que llegó a alguna petición. */
     const abandonar = () => {
+      // ElevenLabs la soltó sin que dijera nada: era una frase a medias, no un turno.
+      if (!algo) devolverTurno();
       corte.abort();
       descartarAcciones();
       // ElevenLabs cortó mientras hablábamos: la próxima respuesta empieza pidiendo perdón. Si otro
