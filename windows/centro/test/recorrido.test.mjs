@@ -167,4 +167,45 @@ test('el puente: voz.decir y recorrido.abierto los atiende AURA, la prueba del C
     assert.ok(puente.includes('`' + m + '`'), `PUENTE.md: ${m}`);
   }
   assert.ok(puente.includes('`ventana.escondida`'), 'PUENTE.md: ventana.escondida');
+  // La lista cerrada del puente (CentroWindow y ManejarCentro rechazan lo que no está): sin esto, la voz y el
+  // silencio del micrófono nunca llegaban a AURA (Codex en #120).
+  const lista = readFileSync(join(RAIZ, 'windows', 'src', 'Aura.Windows.Core', 'PuenteCentro.cs'), 'utf8');
+  const metodos = lista.slice(lista.indexOf('HashSet<string> Metodos'), lista.indexOf('};', lista.indexOf('HashSet<string> Metodos')));
+  for (const m of ['voz.decir', 'recorrido.abierto']) assert.ok(metodos.includes(`"${m}"`), `PuenteCentro.Metodos: ${m}`);
+});
+
+test('una llamada que empieza a sonar cierra el recorrido (AURA tiene que oír el «sí»)', () => {
+  const pulse = readFileSync(join(CENTRO, 'src', 'pulse', 'index.ts'), 'utf8');
+  const rec = readFileSync(join(R, 'recorrido.ts'), 'utf8');
+  const entrando = pulse.slice(pulse.indexOf("c.estado === 'entrando' && antes !== 'entrando'"), pulse.indexOf("if (antes === 'entrando'"));
+  assert.ok(entrando.includes("dispatchEvent(new Event('centro:llamada'))"), 'PULSE2CHAT avisa al sonar');
+  assert.match(rec, /addEventListener\('centro:llamada', alLlamar\)/);
+  assert.match(rec, /removeEventListener\('centro:llamada', alLlamar\)/);
+});
+
+test('la voz: un audio que llega tarde (saltó, pausó o cerró) no suena', async () => {
+  const N = await armar(join(R, 'voz.ts'));
+  const creados = [];
+  globalThis.cancelAnimationFrame ??= () => {};
+  globalThis.Audio = class {
+    constructor(src) { this.src = src; this.oyentes = {}; this.duration = 1; creados.push(this); }
+    addEventListener(t, f) { (this.oyentes[t] ??= []).push(f); }
+    play() { setTimeout(() => { (this.oyentes.playing || []).forEach((f) => f()); setTimeout(() => (this.oyentes.ended || []).forEach((f) => f()), 5); }, 1); return Promise.resolve(); }
+    pause() {}
+  };
+  const lento = (ms) => () => new Promise((r) => setTimeout(() => r({ base64: Buffer.from('ID3').toString('base64'), mime: 'audio/mpeg' }), ms));
+  // Cerró (callar) mientras venía el audio: no se crea ningún Audio y la frase contesta false.
+  let n = N.narradorAura(lento(30));
+  const a = n.hablar('hola', 'claudio', 'feliz', {});
+  n.callar();
+  assert.equal(await a, false);
+  assert.equal(creados.length, 0);
+  // Saltó a otra frase mientras venía la primera: solo suena la segunda.
+  n = N.narradorAura((t) => lento(t === 'uno' ? 40 : 5)());
+  const uno = n.hablar('uno', 'claudio', 'feliz', {});
+  const dos = n.hablar('dos', 'antonio', 'feliz', {});
+  assert.equal(await dos, true);
+  assert.equal(await uno, false);
+  assert.equal(creados.length, 1);
+  delete globalThis.Audio;
 });

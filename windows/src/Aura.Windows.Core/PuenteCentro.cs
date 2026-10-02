@@ -49,6 +49,8 @@ public static class PuenteCentro
         "spotify.estado", "spotify.buscar", "spotify.poner", "spotify.control", "spotify.dispositivos", "spotify.transferir",
         "cartera.direccion", "cartera.saldos", "cartera.portapapeles", "cartera.pagar", "cartera.buscarEnvio", "cartera.abrirWallet",
         "conectar", "desconectar",
+        // El recorrido del Centro: la voz de Claudio y ANT-ONIO, y AURA sin oír mientras suena.
+        "voz.decir", "recorrido.abierto",
     };
 
     public static bool MetodoPermitido(string? metodo) => metodo != null && Metodos.Contains(metodo);

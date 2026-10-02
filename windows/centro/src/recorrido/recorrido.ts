@@ -400,6 +400,9 @@ function montar(o: OpcionesRecorrido): Promise<void> {
     // Minimizada: en pausa. Escondida (cerró la ventana del Centro): se cierra.
     const alVer = () => { if (document.visibilityState === 'hidden') despachar({ tipo: 'pausa' }); };
     document.addEventListener('visibilitychange', alVer);
+    // Una llamada que empieza a sonar (pulse/index.ts) cierra el recorrido: AURA tiene que oír el «sí».
+    const alLlamar = () => void cerrar();
+    window.addEventListener('centro:llamada', alLlamar);
     // Escondió la ventana, entra una llamada o AURA lleva a una sección: el recorrido se cierra.
     const dejar = [al('ventana.escondida', () => void cerrar()), al('ir', () => void cerrar()), al('llamada.accion', () => void cerrar())];
 
@@ -414,6 +417,7 @@ function montar(o: OpcionesRecorrido): Promise<void> {
         sonidos.callar();
         document.removeEventListener('keydown', tecla);
         document.removeEventListener('visibilitychange', alVer);
+        window.removeEventListener('centro:llamada', alLlamar);
         dejar.forEach((f) => f());
         ro.disconnect();
         delete (window as any).__recorrido;

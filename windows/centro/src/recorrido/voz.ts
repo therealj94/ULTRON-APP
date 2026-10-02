@@ -27,6 +27,9 @@ export function narradorAura(pedido: Pedido = pedirVoz): Narrador {
   let actual: { audio: HTMLAudioElement; fin: (sono: boolean) => void } | null = null;
   let ctx: AudioContext | null = null;
   let raf = 0;
+  // Sube con cada frase pedida y con cada «callar»: un audio que llega tarde (la persona saltó, pausó o
+  // cerró mientras venía) ya no es de este turno y no suena (Codex en #120).
+  let turno = 0;
 
   const llave = (t: string, q: string, e: string) => `${q}|${e}|${t}`;
   function obtener(texto: string, quien: Anfitrion, emocion: string): Promise<string | null> {
@@ -79,8 +82,9 @@ export function narradorAura(pedido: Pedido = pedirVoz): Narrador {
   return {
     async hablar(texto, quien, emocion, al) {
       this.callar();
+      const mio = ++turno;
       const url = await obtener(texto, quien, emocion);
-      if (!url) return false;
+      if (!url || mio !== turno) return false;
       return new Promise<boolean>((resolver) => {
         const audio = new Audio(url);
         let hecho = false;
@@ -104,6 +108,7 @@ export function narradorAura(pedido: Pedido = pedirVoz): Narrador {
       void obtener(texto, quien, emocion);
     },
     callar() {
+      turno++;
       const a = actual;
       actual = null;
       if (!a) return;
