@@ -11,6 +11,7 @@
  * (`esperaMs`); si no alcanza, la tarea sigue y el resultado queda guardado para esa persona: se lo dice
  * en el turno siguiente (`tareaTerminadaPara`) y la app lo puede mirar (`/api/computadora/...`).
  */
+import { nivelDeCorreo } from './nivel';
 import crypto from 'node:crypto';
 import { clave } from '../lib/boveda';
 
@@ -49,8 +50,10 @@ export function computadoraConfigurada(): boolean {
 }
 
 /** Ajustes dice «gratis» o «pago»; el nodo habla de holo o claude. */
-export function motorDelPerfil(motor: string | null | undefined): MotorNodo {
-  return motor === 'pago' ? 'claude' : 'holo';
+export function motorDelPerfil(motor: string | null | undefined, correo?: string): MotorNodo {
+  if (motor !== 'pago') return 'holo';
+  // El de pago (Claude) cuesta por tarea: es de la junta. A un miembro le corre el gratis aunque lo elija.
+  return correo && nivelDeCorreo(correo) === 'miembro' ? 'holo' : 'claude';
 }
 
 async function pedir(ruta: string, init: RequestInit & { ms?: number } = {}): Promise<any> {
@@ -358,7 +361,7 @@ export function montarRutasComputadora(app: import('express').Express, d: DepsRu
     const instruccion = String(req.body?.instruccion || '').replace(/\s+/g, ' ').trim();
     if (instruccion.length < 4) return res.status(400).json({ error: 'Dile qué hacer (una frase con lo que quieres).', honesto: true });
     if (instruccion.length > 600) return res.status(400).json({ error: 'Muy largo: dilo en menos de 600 letras.', honesto: true });
-    const motor = motorDelPerfil(await d.motorDe?.(correo).catch(() => null));
+    const motor = motorDelPerfil(await d.motorDe?.(correo).catch(() => null), correo);
     const r = await encargarTarea({ instruccion, quien: correo, motor, esperaMs: 0 });
     if (!r.id) return res.status(503).json({ error: r.hecho.replace(/^HARNESS computadora:\s*/, '').replace(/\s*(No inventes.*|No la usé.*|dilo con naturalidad\.?)$/i, ''), honesto: true });
     return res.json({ id: r.id, honesto: true });

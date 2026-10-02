@@ -205,4 +205,52 @@ public static class AutorizarOrden
         if (Destructiva(po) && !Literal(po, dicho) && !(po.PideConfirmacion && po.Mano != Mano.Escribir)) return Veredicto.Confirmar;
         return Veredicto.Hacer;
     }
+
+    /// <summary>Cuánto vale lo que se oyó en la conversación en vivo para autorizar una orden del cerebro.</summary>
+    public static readonly TimeSpan VigenciaDicho = TimeSpan.FromSeconds(20);
+
+    /// <summary>
+    /// Lo que la persona dijo EN ESTE EQUIPO (la transcripción en vivo que llegó aquí), solo si es de hace un momento;
+    /// si no, "" (la orden irá al «sí»). Lo «dicho» que trae el canal lo manda el servidor: nunca autoriza nada.
+    /// </summary>
+    public static string DichoVigente(string? dicho, DateTime oidoEn, DateTime ahora) =>
+        !string.IsNullOrWhiteSpace(dicho) && ahora >= oidoEn && ahora - oidoEn <= VigenciaDicho ? dicho! : "";
+
+    /// <summary>
+    /// Teclas que el cerebro nunca pulsa, aunque la persona las haya dicho: Win+R (Ejecutar), Win+X (el menú de
+    /// administración) y cualquier combinación con Enter (envía, acepta o ejecuta lo que haya delante). Win+L (bloquear)
+    /// sí. Lo que TÚ dices por voz no pasa por aquí: solo las órdenes del cerebro.
+    /// </summary>
+    public static bool TeclasProhibidasAlCerebro(Pedido p)
+    {
+        if (p.Mano == Mano.Varias)
+        {
+            foreach (var parte in p.Valor.Split(ManosMas.Separador))
+                if (TeclasProhibidasAlCerebro(Intencion.PorReglas(parte))) return true;
+            return false;
+        }
+        string? combo = p.Mano switch
+        {
+            Mano.Teclas => p.Valor.Split('|')[0],
+            Mano.Atajo when p.Valor.StartsWith("teclas|", StringComparison.Ordinal) => p.Valor["teclas|".Length..],
+            _ => null,
+        };
+        if (combo == null) return false;
+        var teclas = combo.ToUpperInvariant().Split('+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (teclas.Contains("ENTER")) return true;
+        return teclas.Contains("WIN") && (teclas.Contains("R") || teclas.Contains("X"));
+    }
+
+    /// <summary>
+    /// La decisión para una orden del CEREBRO (la conversación en vivo o el chat). `dichoLocal`: solo lo que se oyó o
+    /// escribió en este equipo y de hace un momento (DichoVigente), nunca lo que diga el servidor. Las teclas prohibidas
+    /// no pasan nunca; sin nada dicho aquí, la orden no se hace sola: espera el «sí» (Confirmar).
+    /// </summary>
+    public static Veredicto AutorizarDelCerebro(string orden, string dichoLocal, IEnumerable<string>? contexto = null)
+    {
+        var po = Intencion.PorReglas(orden ?? "");
+        if (po.Mano == Mano.Ninguna || TeclasProhibidasAlCerebro(po)) return Veredicto.Rechazar;
+        if (string.IsNullOrWhiteSpace(dichoLocal)) return Veredicto.Confirmar;
+        return Autorizar(orden!, dichoLocal, contexto);
+    }
 }

@@ -222,15 +222,23 @@ public partial class NotchWindow
     /// <summary>
     /// Una orden que pidió el cerebro («cierra spotify»): pasa por las MISMAS reglas que lo que tú dices, así
     /// que solo puede hacer lo que AURA ya sabe hacer, con sus mismas confirmaciones. Nunca vuelve al cerebro.
+    /// `dicho`: SOLO lo que se oyó o escribió en este equipo hace un momento ("" si nada): sin eso, espera el «sí».
     /// </summary>
     async Task HacerOrdenDelCerebro(string orden, string dicho, bool hablado)
     {
         var p = Intencion.PorReglas(orden);
         if (p.Mano == Mano.Ninguna) { Centro.Registro.AnotarDicho("cerebro-manos", "→ nada", orden); NoPude(T($"Todavía no sé hacer «{orden}» en esta computadora.", $"I don't know how to do “{orden}” on this PC yet.")); return; }
+        // Win+R, Win+X o Enter por orden del cerebro: nunca (abren una puerta o envían algo). Si lo dices tú, sí.
+        if (AutorizarOrden.TeclasProhibidasAlCerebro(p))
+        {
+            Centro.Registro.AnotarDicho("cerebro-manos", "descartada (teclas prohibidas al cerebro)", orden);
+            NoPude(T($"No pulso «{orden}» por orden de la conversación. Si lo quieres, dímelo tú.", $"I won't press “{orden}” because the conversation asked. If you want it, tell me yourself."));
+            return;
+        }
         // El cerebro no trae cosas que no dijiste (una canción de antes, otra app, cerrar algo cuando pediste un
         // chiste): misma clase de acción y mismo objetivo que lo tuyo (o tus frases de hace un momento).
         var contexto = historial.Where(x => x.Rol == "usuario").Select(x => x.Texto).TakeLast(2).ToList();
-        var veredicto = AutorizarOrden.Autorizar(orden, dicho, contexto);
+        var veredicto = AutorizarOrden.AutorizarDelCerebro(orden, dicho, contexto);
         Centro.Registro.Anotar("cerebro-manos", $"→ {p.Mano} · {veredicto}");
         if (veredicto == Veredicto.Rechazar)
         {

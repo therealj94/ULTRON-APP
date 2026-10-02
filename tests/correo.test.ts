@@ -126,11 +126,16 @@ test('escribir deja un borrador; nada sale hasta el «sí»; el «sí» lo manda
     assert.match(b, /BORRADOR \(NO enviado\)/);
     assert.match(b, /Léeselo tal cual/);
     assert.equal(recibidos.length, 0, 'el borrador no sale solo');
-    assert.equal(await resolverBorrador('lola@x.hn', 'tel', 'qué hora es'), null, 'otra cosa no lo manda');
     assert.equal(await resolverBorrador('lola@x.hn', 'web', 'sí'), null, 'un «sí» en otra conversación no manda el borrador del teléfono');
     assert.equal(borradorDe('lola@x.hn', 'web'), null);
     assert.equal(recibidos.length, 0);
     assert.ok(borradorDe('lola@x.hn', 'tel'), 'y sigue esperando');
+    // Otra cosa en el turno siguiente: el borrador ya no vale (auditoría 2-oct: un «ok» de después no manda nada).
+    assert.match((await resolverBorrador('lola@x.hn', 'tel', 'qué hora es'))!, /ya no vale y no se mandó/);
+    assert.equal(borradorDe('lola@x.hn', 'tel'), null, 'descartado');
+    assert.equal(await resolverBorrador('lola@x.hn', 'tel', 'ok'), null, 'y un «ok» después no manda nada');
+    assert.equal(recibidos.length, 0);
+    await correrCorreo('lola@x.hn', 'escribir beto@empresa.hn | Reunión | Beto, ¿nos vemos el jueves a las 3?', 'tel');
     const enviado = await resolverBorrador('lola@x.hn', 'tel', 'Sí, mándalo');
     assert.match(enviado!, /CORREO ENVIADO desde lola@prueba.hn a beto@empresa.hn/);
     assert.equal(recibidos.length, 1);

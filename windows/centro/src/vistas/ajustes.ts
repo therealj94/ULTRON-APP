@@ -104,7 +104,7 @@ export function vistaAjustes(): HTMLElement {
     // ── Voz y escucha ──
     const voz = seccion('voz', T('Voz y escucha', 'Voice & listening'),
       eleccion(T('Cómo te escucha', 'How it listens'), [
-        { valor: 'palabra', texto: T('«Oye AURA»', '“Hey AURA”'), explica: T('Recomendado. Tu PC espera «Oye AURA» (se reconoce en el equipo, sin enviar audio). Luego conversa hasta que te callas.', 'Recommended: your PC waits for “Hey AURA”.') },
+        { valor: 'palabra', texto: T('«Oye AURA»', '“Hey AURA”'), explica: T('Recomendado. Tu PC espera «Oye AURA»: la palabra se reconoce en el equipo y hasta oírla no se envía audio. Después lo que dices va al servidor para entenderlo, mientras conversan.', 'Recommended: your PC waits for “Hey AURA”, recognized on this PC; no audio is sent until it hears it. Then what you say goes to the server while you talk.') },
         { valor: 'siempre', texto: T('Siempre atenta', 'Always attentive'), explica: T('Micrófono abierto: atiende cuando la nombras o mientras conversan. Lo que dices se envía al servidor para entenderlo.', 'Mic open: answers when named.') },
         { valor: 'pedir', texto: T('Solo si lo pido', 'Only when asked'), explica: T('Solo con Ctrl+Alt+Espacio o tocando el micrófono del notch.', 'Only with Ctrl+Alt+Space.') },
       ], aj.escucha, (v) => guardar({ escucha: v })),

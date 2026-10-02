@@ -18,6 +18,9 @@
  * Las pantallas que reemplazan la pila (desde la intro, al entrar, al salir) entran fundiéndose;
  * las que se abren encima (Ajustes, Crea tu Genesis ID), deslizándose desde la derecha.
  *
+ * Cada pantalla va dentro de LimitePantalla: si una se rompe al dibujar, enseña «Reintentar» en su
+ * lugar y lo reporta, sin tumbar la app entera.
+ *
  * Las barras del sistema siguen al tema (iconos claros sobre fondo oscuro y al revés); en la intro y
  * en la mesa se esconden, como antes (la mesa es un escenario de pantalla completa). Al cambiar de
  * ruta se avisa por el bus (`emitir('pantalla', …)`) para que AURA sepa dónde está la persona, y lo
@@ -43,6 +46,7 @@ import { LoQueSabe } from '../ajustes/LoQueSabe';
 import { PrimeraVez } from '../primeravez/PrimeraVez';
 import { useAccionesDeAura } from './acciones';
 import { AvisoActualizacion } from './AvisoActualizacion';
+import { LimitePantalla } from './LimitePantalla';
 import { Bienvenida } from './pantallas/Bienvenida';
 import { CrearGenesis } from './pantallas/CrearGenesis';
 import { Entrar } from './pantallas/Entrar';
@@ -139,6 +143,12 @@ export function AppAura() {
         >
           <Pila.Navigator
             initialRouteName="Intro"
+            // Cada pantalla en su propia red de seguridad: si una se rompe al dibujar, no tumba la app.
+            screenLayout={({ route, navigation, children }) => (
+              <LimitePantalla pantalla={route.name} puedeVolver={() => navigation.canGoBack()} onVolver={() => navigation.goBack()}>
+                {children}
+              </LimitePantalla>
+            )}
             screenOptions={{
               headerShown: false,
               animation: 'slide_from_right',

@@ -51,7 +51,7 @@ public partial class NotchWindow
             }
             // Sola: sin usar la PC hace 10 minutos y sin nada en curso (auditoría 1-oct, H07): ni voz (frase por frase o
             // en vivo), ni acciones, ni algo esperando el «sí», ni un borrador sin guardar, ni una llamada (PULSE2CHAT o
-            // la ventana de llamadas). Si espera, lo vuelve a mirar en 10 minutos.
+            // su timbre en el notch). Si espera, lo vuelve a mirar en 10 minutos.
             var motivo = Core.Actualizacion.MotivoParaEsperar(ActividadActual());
             if (!manual && ajustes.ActualizarSolo && motivo == null) { InstalarActualizacion(); return; }
             if (!manual && ajustes.ActualizarSolo && motivo != null && motivo != esperaAnotada)
@@ -75,7 +75,7 @@ public partial class NotchWindow
     string? esperaAnotada;
     /// <summary>
     /// Hay una llamada de PULSE2CHAT sonando o en curso (el Centro lo dice con «notch.llamada»; el timbre del
-    /// notch también cuenta). La ventana de llamadas propia (CallWindow) abierta también es una llamada.
+    /// notch también cuenta). «Llamadas y video» del panel abre esas mismas llamadas en el Centro.
     /// </summary>
     bool llamadaPulse;
 
@@ -95,7 +95,7 @@ public partial class NotchWindow
         Voz: escuchando || pensando || hablandoAhora || turnoEnCurso || altavoz.Ocupado || AgenteAbierto || abriendoAgente,
         Acciones: escribiendo != null || accionesEnCurso > 0,
         BorradorSinGuardar: borradorSucio && Borrador.Text.Length > 0,
-        Llamada: llamadaPulse || llamadas != null || propuesta?.Titulo.StartsWith("📞") == true,
+        Llamada: llamadaPulse || propuesta?.Titulo.StartsWith("📞") == true,
         Confirmacion: propuesta != null,
         Inactivo: Inactivo());
 

@@ -24,3 +24,30 @@ public static class UmbralesDespertar
     }
 
 }
+
+/// <summary>
+/// Qué audio sale del equipo según la escucha elegida (probado en windows/tests). «Oye AURA» (palabra) promete que
+/// la palabra se reconoce AQUÍ, sin enviar audio: el micrófono puede quedar abierto (para no perder «Oye AURA, abre
+/// Excel» dicho de corrido), pero una frase solo va al servidor a transcribirse si la despertó el detector local
+/// (Voz/Despertador: el modelo propio o el reconocedor de Windows), si se pidió hablar (tecla, clic), mientras hay una
+/// charla en curso o una pregunta esperando el «sí». Sin detector local, «palabra» no deja el micrófono abierto.
+/// «Siempre atenta» manda cada frase (así lo dice Ajustes); «pedir» solo abre el micrófono cuando se pide.
+/// </summary>
+public static class PoliticaEscucha
+{
+    /// <summary>Cuánto dura una charla después de la última frase: con «Oye AURA», 90 s; con «siempre atenta», 3 min.</summary>
+    public static TimeSpan Charla(string escucha) => escucha == "siempre" ? TimeSpan.FromMinutes(3) : TimeSpan.FromSeconds(90);
+
+    /// <summary>¿El micrófono queda abierto esperando? «siempre», sí; «palabra», solo con un detector local encendido.</summary>
+    public static bool OidoContinuo(string escucha, bool detectorLocal) => escucha == "siempre" || escucha == "palabra" && detectorLocal;
+
+    /// <summary>
+    /// ¿Esta frase se puede mandar al servidor a transcribir? Fuera de «palabra», sí (como siempre). Con «palabra»: solo
+    /// si despertó el detector local, se pidió hablar, hay una pregunta esperando el «sí» o hay una charla en curso.
+    /// </summary>
+    public static bool MandarFrase(string escucha, bool despertoLocal, bool llamadaExplicita, bool hayPropuesta, TimeSpan desdeCharla)
+    {
+        if (escucha != "palabra") return true;
+        return despertoLocal || llamadaExplicita || hayPropuesta || desdeCharla < Charla(escucha);
+    }
+}

@@ -54,7 +54,8 @@ async function credencial(quien: string, c: CuentaCorreo): Promise<Credencial> {
   let t = JSON.parse(secreto) as TokensMicrosoft;
   if (Date.now() > t.venceEl - 60_000) {
     t = await renovar(t.renovacion);
-    await actualizarSecreto(quien, c.id, JSON.stringify(t));
+    // El token nuevo sirve para esta vez aunque no se pueda guardar (S3 sin leer): no se corta el correo.
+    await actualizarSecreto(quien, c.id, JSON.stringify(t)).catch((e) => console.warn('[correo] no guardé el token renovado:', String(e?.message || e).slice(0, 120)));
   }
   return { user: usuario, accessToken: t.acceso };
 }

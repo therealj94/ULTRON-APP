@@ -30,6 +30,7 @@ import { conectarChat } from '../lib/genesis';
 import { PantallaLlamada } from './PantallaLlamada';
 import { PulseChat } from './PulseChat';
 import { miga } from '../lib/reporte';
+import { tr } from '../i18n';
 
 type Ctx = {
   cuenta: RELEVO.Cuenta | null;
@@ -180,13 +181,13 @@ export function PulseProvider({
     try {
       const r = await conectarChat();
       if (!r.ok) {
-        setError(r.mensaje || 'No se pudo conectar el chat.');
+        setError(r.mensaje || tr('No se pudo conectar el chat.', 'Couldn’t connect the chat.'));
         return;
       }
       setCuenta(RELEVO.quien());
     } catch (e: any) {
       miga(`chat: no conectó (${String(e?.message || e).slice(0, 80)})`);
-      setError('No se pudo conectar el chat.');
+      setError(tr('No se pudo conectar el chat.', 'Couldn’t connect the chat.'));
     } finally {
       setConectando(false);
     }
