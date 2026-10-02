@@ -295,6 +295,41 @@ prueba('app: «abre tu computadora / WhatsApp / mis correos» desde cualquier pa
   assert.ok(fs.existsSync(path.join(RAIZ, 'mobile/assets/sfx/teclado.mp3')));
 });
 
+prueba('app: su computadora como un agente: captura arriba, plan marcado, tiempo, Detener/Pausar/Tomar el control, su sí, resultado para compartir e historial (José, 2-oct)', () => {
+  const hoja = fuente('ajustes/Computadora.tsx');
+  // De arriba abajo: la captura en vivo va antes que el plan, y el plan antes que los mandos y el final.
+  const en = (re) => {
+    const i = hoja.search(re);
+    assert.ok(i >= 0, `falta ${re}`);
+    return i;
+  };
+  const pantalla = en(/La pantalla en vivo, arriba de todo/);
+  const pregunta = en(/tr\('Necesito tu sí para seguir'/);
+  const plan = en(/tr\('El plan', 'The plan'\)/);
+  const mandos = en(/tr\('Detener', 'Stop'\)/);
+  const final = en(/<TarjetaFinal mision=\{misionDeAhora\}/);
+  assert.ok(pantalla < pregunta && pregunta < plan && plan < mandos && mandos < final, 'captura → su sí → plan → mandos → resultado');
+  assert.match(hoja, /relojMision\(/, 'el tiempo transcurrido');
+  assert.match(hoja, /sobreTarea\('si', 'confirmar', \{ si: true \}\)/, '«Sí, hazlo» manda el sí');
+  assert.match(hoja, /sobreTarea\('no', 'confirmar', \{ si: false \}\)/);
+  assert.match(hoja, /sobreTarea\('pausar', 'pausar'\)/);
+  assert.match(hoja, /sobreTarea\('tomar', 'control', \{ tomar: true \}\)/);
+  assert.match(hoja, /sobreTarea\('devolver', 'control', \{ tomar: false \}\)/);
+  assert.match(hoja, /c\.faltaActualizar \?/, 'con el servicio viejo se explica por qué solo hay Detener');
+  assert.match(hoja, /aCoordenadas\(locationX, locationY, anchoImg, altoImg\)/, 'con el control, tocar la captura hace clic ahí');
+  assert.match(hoja, /Share\.share\(\{ message: textoParaCompartir\(/, 'el resultado se comparte (Share de React Native: sin módulos nativos nuevos)');
+  assert.match(hoja, /Linking\.openURL\(u\)/, 'los enlaces se abren');
+  assert.match(hoja, /\/api\/computadora\/misiones\/\$\{encodeURIComponent\(m\.id\)\}\/seguir/, '«Seguir» una misión a medias');
+  assert.match(hoja, /tr\('Misiones recientes', 'Recent missions'\)/, 'el historial');
+  assert.match(hoja, /sinRespuesta >= FALLOS_PARA_AVISAR/, 'si no llega nada, lo dice (nunca colgada en silencio)');
+  const vivo = fuente('app/ComputadoraEnVivo.tsx');
+  assert.match(vivo, /planInicial=\{companero\.plan\}/);
+  assert.match(vivo, /companero\.alEstado\(s\.actual\.id, trabajando\(s\.actual\.estado\), s\.actual\.estado\)/, 'el sondeo de fondo también ve si quedó quieta');
+  // Sin dependencias nativas nuevas (va por OTA): solo lo que ya trae React Native.
+  const deps = JSON.parse(fs.readFileSync(path.join(RAIZ, 'mobile/package.json'), 'utf8')).dependencies;
+  assert.ok(!deps['expo-clipboard'] && !deps['react-native-share'], 'sin módulos nativos nuevos');
+});
+
 for (const [nombre, f] of pruebas) {
   n += 1;
   try {

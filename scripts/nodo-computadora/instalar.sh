@@ -8,6 +8,10 @@
 #   holo        vLLM + Hcompany/Holo-3.1-9B en :8000 (banderas de la guía de H Company)
 #   escritorio  la demo de computer use de Anthropic: Ubuntu + Firefox + LibreOffice, noVNC en :6080
 #   computadora este servicio (agente.py) en :8100
+#
+# Para actualizar solo el servicio (pausa, su sí, el control: docs/COMPUTADORA.md), basta copiar agente.py a
+# /opt/computadora y `systemctl restart computadora`; volver a correr este script hace lo mismo.
+#   Opcional en /etc/computadora.env: ESPERA_CONFIRMACION_S (600) y PAUSA_MAX_S (1800).
 set -euo pipefail
 AQUI="$(cd "$(dirname "$0")" && pwd)"
 RAIZ=/opt/computadora

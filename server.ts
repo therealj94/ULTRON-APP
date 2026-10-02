@@ -19,7 +19,7 @@ import { ESPACIO_COMUN, espacioDe } from './lib/espacio-nodo';
 import { cargarMiembro, fotoMemoriaMiembro, guardarHechoMiembro, hiloMiembro, olvidarMiembro, promptMemoriaMiembro, recordarTurnoMiembro } from './lib/memoria-miembro';
 import { montarRutasApp } from './server/app-rutas';
 import { montarRutasCaras } from './server/caras-rutas';
-import { avisarComputadoraPorPush, montarRutasPush, proponerPorPush } from './server/push';
+import { avisarComputadoraPorPush, avisarPush, montarRutasPush, proponerPorPush } from './server/push';
 import { montarRutasWindows, instruccionWindows } from './server/windows-rutas';
 import { leerPerfil, lineaPerfil, perfilEnCache, sembrarDesdeGenesis, type Perfil } from './lib/perfil-persona';
 import {
@@ -60,7 +60,17 @@ import { quitarExpresiones } from './lib/expresiones';
 import { puntoDeCorte } from './lib/trozos';
 import { claveTurno, reclamarTurno, type TurnoGuardado } from './server/turno-unico';
 import { respuestaFija } from './lib/respuestas-fijas';
-import { alAvisarApp, avisosPendientes, confirmarAvisos, encargarTarea, montarRutasComputadora, motorDelPerfil, type MotorNodo } from './server/computadora';
+import {
+  alAvisarApp,
+  avisosPendientes,
+  comandoComputadora,
+  confirmarAvisos,
+  encargarTarea,
+  montarRutasComputadora,
+  motorDelPerfil,
+  resolverPreguntaComputadora,
+  type MotorNodo,
+} from './server/computadora';
 import { avisosDeEnvio, correrCorreo, montarRutasCorreo, resolverBorrador } from './server/correo';
 import { correrWhatsapp, montarRutasWhatsapp, resolverBorradorWhatsapp, whatsappDisponible, whatsappPermitido } from './server/whatsapp';
 import { accionIniciativa, arrancarIniciativa, bloqueIniciativaTurno, correrMisionTurno, duenoMisiones, montarRutasIniciativa } from './server/iniciativa';
@@ -1419,6 +1429,9 @@ alAvisarApp((quien, aviso, aparato) => {
   // Ningún teléfono suyo escuchando (la app cerrada): el resultado le llega como aviso (FCM, server/push.ts).
   // Solo en el intento a todos sus teléfonos (sin aparato), para no avisar dos veces.
   if (!n && !aparato && aviso.fase === 'termina' && aviso.texto) void avisarComputadoraPorPush(quien, aviso.id, aviso.texto).catch(() => undefined);
+  // Lo mismo si su computadora espera su sí antes de algo sensible: el aviso abre la vista con los botones.
+  if (!n && !aparato && aviso.fase === 'confirmar' && aviso.pregunta)
+    void avisarPush(quien, { titulo: 'Tu computadora espera tu sí', texto: aviso.pregunta, id: aviso.id, abrir: 'computadora' }).catch(() => undefined);
   return n;
 });
 montarRutasCorreo(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req) });
@@ -2541,6 +2554,10 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   // Lo mismo con un mensaje de WhatsApp que esperaba su «sí» (server/whatsapp.ts).
   const delWhatsapp = duenoComputadora && whatsappPermitido(duenoComputadora) ? await resolverBorradorWhatsapp(duenoComputadora, ambitoTurno, message, opciones.retener) : null;
   if (delWhatsapp) hechos.push(delWhatsapp);
+  // Su computadora se detuvo a pedir su sí (o le ofreció seguir): el «sí» o el «no» lo resuelve el servidor
+  // (server/computadora.ts). Si había un borrador esperando, ese «sí» era para el borrador.
+  const deLaPregunta = duenoComputadora && !delCorreo && !delWhatsapp ? await resolverPreguntaComputadora(duenoComputadora, message, opciones.retener) : null;
+  if (deLaPregunta) hechos.push(deLaPregunta);
   // Su iniciativa (server/iniciativa.ts): sus misiones abiertas y lo que aún no sabe de su vida, para que
   // AU-RA proponga en la conversación. Y si pide que deje de proponer, se frena el reloj.
   if (duenoComputadora) {
@@ -3372,9 +3389,11 @@ async function correrHerramientaPedida(
         return `EJECUTOR (${r.via}): exit ${r.exit_code}. stdout: ${String(r.stdout || '').slice(0, 800) || '(vacío)'} stderr: ${String(r.stderr || r.error || '').slice(0, 400) || '(vacío)'}.`;
       },
       // Sin identidad verificada no hay de quién sea la tarea ni a quién avisarle: no se encarga.
+      // «parar / pausar / seguir» van a su tarea de ahora; lo demás es una misión nueva.
       computadora: async (tarea) =>
         compu
-          ? (await encargarTarea({ instruccion: tarea, quien: compu.quien, motor: compu.motor, esperaMs: compu.esperaMs, senal, aparato: compu.aparato, idioma: compu.idioma })).hecho
+          ? ((await comandoComputadora(compu.quien, tarea)) ??
+            (await encargarTarea({ instruccion: tarea, quien: compu.quien, motor: compu.motor, esperaMs: compu.esperaMs, senal, aparato: compu.aparato, idioma: compu.idioma })).hecho)
           : 'HARNESS computadora: solo la uso para alguien con sesión. Pídele que entre con su cuenta.',
       correo: (arg) => correrCorreo(dueno, arg, ambito),
       whatsapp: (arg) => correrWhatsapp(dueno, arg, ambito),

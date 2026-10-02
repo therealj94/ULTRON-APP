@@ -7,7 +7,30 @@
  *   cd mobile && npx tsx src/compa/pruebas/compa.prueba.mjs
  */
 import assert from 'node:assert/strict';
-import { avisoMesa, estadoEnPalabras, sondeoMs, tareaEnPalabras, trabajando as pcTrabajando, EJEMPLOS_PC, CompaneroPc, esAccionPc, PAUSA_TRAS_PERSONA_MS, MIN_ENTRE_FRASES_MS, FINAL_ESPERA_MAX_MS, TOPE_TRABAJO_MS } from '../computadora.ts';
+import {
+  avisoMesa,
+  estadoEnPalabras,
+  sondeoMs,
+  tareaEnPalabras,
+  trabajando as pcTrabajando,
+  enMarcha as pcEnMarcha,
+  quieta as pcQuieta,
+  EJEMPLOS_PC,
+  CompaneroPc,
+  esAccionPc,
+  PAUSA_TRAS_PERSONA_MS,
+  MIN_ENTRE_FRASES_MS,
+  FINAL_ESPERA_MAX_MS,
+  TOPE_TRABAJO_MS,
+  TOPE_QUIETA_MS,
+  relojMision,
+  marcaPlan,
+  controlesPc,
+  aCoordenadas,
+  textoParaCompartir,
+  finalEnPalabras,
+  haceCuanto,
+} from '../computadora.ts';
 import http from 'node:http';
 import { CONECTAR_MAX_MS, ControlSesion, SORDA_MS, TOPE_RECONEXIONES } from '../sesion.ts';
 import {
@@ -2586,6 +2609,110 @@ prueba('su computadora en vivo: se abre sola, teclea, cuenta avances sin hablar 
   assert.equal(c.tareaId, 'g5');
   c.alEstado('g5', false);
   assert.equal(c.trabajando, false);
+});
+
+prueba('su computadora como un agente: plan, tu sí antes de algo sensible, pausa y control, resultado para compartir (José, 2-oct: «como Grok, el agente de ChatGPT»)', () => {
+  // Los avisos nuevos del servidor: bien formados pasan; lo raro, no.
+  assert.ok(esAccionPc({ tipo: 'computadora', fase: 'empieza', id: 'g1', plan: ['Entrar a bch.hn', 'Darte el resultado'] }));
+  assert.ok(esAccionPc({ tipo: 'computadora', fase: 'confirmar', id: 'g1', pregunta: '¿Envío el formulario?', texto: 'Antes de seguir necesito tu sí.', boleto: 'abcdEFGH1234' }));
+  assert.ok(esAccionPc({ tipo: 'computadora', fase: 'pausa', id: 'g1', estado: 'control' }));
+  assert.ok(esAccionPc({ tipo: 'computadora', fase: 'reanuda', id: 'g1' }));
+  assert.ok(esAccionApp({ tipo: 'computadora', fase: 'confirmar', id: 'g1', pregunta: '¿Lo hago?' }), 'el puente de acciones también los deja pasar');
+  assert.ok(!esAccionPc({ tipo: 'computadora', fase: 'empieza', id: 'g1', plan: [] }));
+  assert.ok(!esAccionPc({ tipo: 'computadora', fase: 'empieza', id: 'g1', plan: ['a', 'b', 'c', 'd', 'e', 'f', 'g'] }));
+  assert.ok(!esAccionPc({ tipo: 'computadora', fase: 'pausa', id: 'g1', estado: 'dormida' }));
+  assert.ok(!esAccionPc({ tipo: 'computadora', fase: 'confirmar', id: 'g1', pregunta: '' }));
+  // Vivas pero quietas: siguen vivas (la vista y la mesa las muestran), pero sin tecleo.
+  for (const e of ['pausada', 'confirmar', 'control']) assert.ok(pcTrabajando(e) && pcQuieta(e) && !pcEnMarcha(e), e);
+  assert.ok(pcEnMarcha('trabajando') && !pcQuieta('trabajando') && !pcTrabajando('parada'));
+  const base = { configurada: true, ok: true, motores: ['holo'], ocupada: true, ultima: 'g1' };
+  const actual = (estado) => ({ ...base, actual: { id: 'g1', estado, pasos: 2, instruccion: 'x', ultimo: null } });
+  assert.equal(estadoEnPalabras(actual('confirmar')).texto, 'Espera tu sí');
+  assert.equal(estadoEnPalabras(actual('pausada')).texto, 'En pausa');
+  assert.equal(estadoEnPalabras(actual('control'), 'en').texto, 'You have control');
+  assert.equal(tareaEnPalabras({ estado: 'confirmar', pasos: [], error: null }), 'Espera tu sí para seguir');
+  assert.deepEqual(avisoMesa(null, actual('confirmar').actual), { texto: 'Su computadora espera tu sí · ver', terminada: false });
+  // El reloj, las marcas del plan, el toque en la pantalla (en [0, 1000]) y cómo terminó.
+  assert.deepEqual([0, 42, 725, 3729].map((x) => relojMision(x)), ['0:00', '0:42', '12:05', '1:02:09']);
+  assert.deepEqual(['hecho', 'actual', 'espera', 'pendiente', 'fallo'].map(marcaPlan), ['✓', '●', 'Ⅱ', '○', '✕']);
+  assert.deepEqual(aCoordenadas(160, 50, 320, 200), { x: 500, y: 250 });
+  assert.deepEqual(aCoordenadas(-5, 999, 320, 200), { x: 0, y: 1000 });
+  assert.equal(finalEnPalabras({ estado: 'hecha', ok: true }), 'Listo');
+  assert.equal(finalEnPalabras({ estado: 'parada', ok: false }), 'Detenida');
+  assert.equal(finalEnPalabras({ estado: 'sin_pasos', ok: false }), 'A medias');
+  assert.equal(haceCuanto(1_000_000, 1_000_000 + 5 * 60_000), 'hace 5 min');
+  // Los mandos: con el servicio nuevo, Pausar / Seguir / Tomar el control / Devolver; con el viejo solo Detener y se explica.
+  const caps = ['pausar', 'confirmar', 'control'];
+  assert.deepEqual(controlesPc(caps, 'trabajando'), { detener: true, pausar: true, seguir: false, tomar: true, devolver: false, contestar: false, faltaActualizar: false });
+  assert.deepEqual(controlesPc(caps, 'pausada'), { detener: true, pausar: false, seguir: true, tomar: true, devolver: false, contestar: false, faltaActualizar: false });
+  assert.deepEqual(controlesPc(caps, 'control'), { detener: true, pausar: false, seguir: false, tomar: false, devolver: true, contestar: false, faltaActualizar: false });
+  assert.equal(controlesPc(caps, 'confirmar').contestar, true);
+  assert.deepEqual(controlesPc([], 'trabajando'), { detener: true, pausar: false, seguir: false, tomar: false, devolver: false, contestar: false, faltaActualizar: true });
+  assert.equal(controlesPc(caps, 'hecha').detener, false, 'terminada: no hay nada que detener');
+  // Compartir: la misión, lo que encontró, los datos que no estaban en el texto y los enlaces.
+  const compartido = textoParaCompartir('Entra a bch.hn y dime el dólar', { ok: true, respuesta: 'Compra: 24.70. Venta: 24.95.', error: null, datos: [{ clave: 'Compra', valor: '24.70' }, { clave: 'Fecha', valor: '2 de octubre' }], enlaces: ['https://www.bch.hn/tipo-de-cambio'] });
+  assert.equal(compartido, '«Entra a bch.hn y dime el dólar»\n\nCompra: 24.70. Venta: 24.95.\n\nFecha: 2 de octubre\n\nhttps://www.bch.hn/tipo-de-cambio\n\n— desde la computadora de AU-RA');
+  assert.match(textoParaCompartir('x', { ok: false, respuesta: null, error: 'sin red', datos: [], enlaces: [] }), /No terminó: sin red\./);
+
+  // El compañero: el plan al empezar (encargada desde la app lo dice), la pregunta abre la vista y calla el
+  // tecleo, el sí la reanuda, la pausa y el control también callan, y quieta no se apaga a los 6 minutos.
+  let ahora = 1_000_000;
+  const relojes = [];
+  const esperar = (f, ms) => {
+    const r = { f, en: ahora + ms, vivo: true };
+    relojes.push(r);
+    return () => (r.vivo = false);
+  };
+  const avanzar = (ms) => {
+    const fin = ahora + ms;
+    for (;;) {
+      const r = relojes.filter((x) => x.vivo && x.en <= fin).sort((a, b) => a.en - b.en)[0];
+      if (!r) break;
+      ahora = r.en;
+      r.vivo = false;
+      r.f();
+    }
+    ahora = fin;
+  };
+  const vistas = [];
+  const dichos = [];
+  const sonidos = [];
+  const c = new CompaneroPc({ abrirVista: (id) => vistas.push(id), puedeAbrir: () => true, decir: (texto, boleto) => dichos.push({ texto, boleto }), sonido: (on) => sonidos.push(on), ocupado: () => false, esperar, reloj: () => ahora });
+  c.alAccion({ tipo: 'computadora', fase: 'empieza', id: 'm1', plan: ['Entrar a sar.gob.hn', 'Llenar el formulario', 'Darte el resultado'], texto: 'Va. Mi plan: entrar a sar.gob.hn, llenar el formulario y darte el resultado.', boleto: 'p1p1p1p1p1' });
+  assert.deepEqual(c.plan, ['Entrar a sar.gob.hn', 'Llenar el formulario', 'Darte el resultado']);
+  assert.deepEqual(dichos.at(-1), { texto: 'Va. Mi plan: entrar a sar.gob.hn, llenar el formulario y darte el resultado.', boleto: 'p1p1p1p1p1' });
+  assert.deepEqual(sonidos, [true]);
+  c.vistaCerrada(); // la cerró… pero una pregunta es para ella: se le abre otra vez
+  c.alAccion({ tipo: 'computadora', fase: 'confirmar', id: 'm1', pregunta: 'Voy a tocar «Enviar». ¿Lo hago?', texto: 'Antes de seguir necesito tu sí. Voy a tocar «Enviar». ¿Lo hago? Dime sí o no.', boleto: 'q1q1q1q1q1' });
+  assert.deepEqual(vistas, ['m1', 'm1'], 'se abre con los botones');
+  assert.equal(c.quieta, 'confirmar');
+  assert.equal(c.pregunta, 'Voy a tocar «Enviar». ¿Lo hago?');
+  assert.equal(sonidos.at(-1), false, 'esperando su sí no suena el tecleo');
+  assert.equal(dichos.at(-1).texto, 'Antes de seguir necesito tu sí. Voy a tocar «Enviar». ¿Lo hago? Dime sí o no.');
+  avanzar(TOPE_TRABAJO_MS + 1000);
+  assert.equal(c.trabajando, true, 'quieta esperando su sí no se da por muerta a los 6 minutos');
+  c.alAccion({ tipo: 'computadora', fase: 'reanuda', id: 'm1' });
+  assert.equal(c.quieta, null);
+  assert.equal(c.pregunta, null, 'se quitan los botones');
+  assert.equal(sonidos.at(-1), true, 'vuelve el tecleo');
+  c.alAccion({ tipo: 'computadora', fase: 'pausa', id: 'm1', estado: 'control', texto: 'Listo, la computadora es tuya.', boleto: 'c1c1c1c1c1' });
+  assert.equal(c.quieta, 'control');
+  assert.equal(sonidos.at(-1), false);
+  assert.equal(dichos.at(-1).texto, 'Listo, la computadora es tuya.', 'AURA lo dice aunque acabe de hablar: lo pidió la persona');
+  c.alAccion({ tipo: 'computadora', fase: 'pausa', id: 'otra', estado: 'pausada' });
+  assert.equal(c.quieta, 'control', 'el aviso de otra tarea no toca esta');
+  // El sondeo ve que volvió a avanzar aunque el «reanuda» se perdiera.
+  c.alEstado('m1', true, 'trabajando');
+  assert.equal(c.quieta, null);
+  assert.equal(sonidos.at(-1), true);
+  c.alEstado('m1', true, 'pausada');
+  assert.equal(c.quieta, 'pausada');
+  avanzar(TOPE_QUIETA_MS + 1000);
+  assert.equal(c.trabajando, false, 'tampoco para siempre: al tope de lo quieto se apaga');
+  // Detener: termina sin texto (lo pidió la persona); todo limpio.
+  c.alAccion({ tipo: 'computadora', fase: 'empieza', id: 'm2' });
+  c.alAccion({ tipo: 'computadora', fase: 'termina', id: 'm2', ok: false });
+  assert.deepEqual({ trabajando: c.trabajando, quieta: c.quieta, pregunta: c.pregunta }, { trabajando: false, quieta: null, pregunta: null });
 });
 
 for (const [nombre, f] of pruebas) {

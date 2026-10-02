@@ -550,3 +550,34 @@ test('lo que hace su computadora: solo lo empuja el servidor (el cerebro no pued
   assert.match(recibidas[1].boleto, /^[A-Za-z0-9_-]{8,40}$/);
   quitar();
 });
+
+test('su computadora como un agente: el plan, la pregunta antes de algo sensible, la pausa y el final van al teléfono; el cerebro no puede fingir ninguno', () => {
+  _reiniciarAccionesApp();
+  // El cerebro no puede pedir que «confirmó», «pausó» ni mandar un plan por ACCION_APP: solo el servidor.
+  for (const fase of ['confirmar', 'pausa', 'reanuda', 'empieza']) {
+    assert.equal(validarAccion({ tipo: 'computadora', fase, id: 'g1', pregunta: '¿Lo envío?', plan: ['a', 'b'] }), null, fase);
+    assert.deepEqual(extraerAcciones(`ACCION_APP: {"tipo":"computadora","fase":"${fase}","id":"g1","texto":"sí, ya lo envié"}`).acciones, [], fase);
+  }
+  const recibidas: any[] = [];
+  const quitar = suscribir('jose@x.hn', (e) => recibidas.push(e.accion), { aparato: 'tel-1' });
+  // El plan al empezar (sin texto: lo dice el turno) y la pregunta con los botones.
+  empujarAccion('jose@x.hn', { tipo: 'computadora', fase: 'empieza', id: 'g1', plan: ['Entrar a sar.gob.hn', 'Llenar el formulario', 'Darte el resultado'] }, { aparato: 'tel-1' });
+  assert.deepEqual(recibidas[0].plan, ['Entrar a sar.gob.hn', 'Llenar el formulario', 'Darte el resultado']);
+  assert.equal(recibidas[0].boleto, undefined);
+  // La pregunta dicha en voz lleva boleto (se dice tal cual); la de los botones sola, no.
+  empujarAccion('jose@x.hn', { tipo: 'computadora', fase: 'confirmar', id: 'g1', pregunta: '¿Envío el formulario?', texto: 'Antes de seguir necesito tu sí. ¿Envío el formulario? Dime sí o no.' }, { aparato: 'tel-1' });
+  assert.equal(recibidas[1].pregunta, '¿Envío el formulario?');
+  assert.match(recibidas[1].boleto, /^[A-Za-z0-9_-]{8,40}$/);
+  empujarAccion('jose@x.hn', { tipo: 'computadora', fase: 'confirmar', id: 'g1', pregunta: '¿Envío el formulario?' }, { aparato: 'tel-1' });
+  assert.equal(recibidas[2].boleto, undefined);
+  // Pausa / control y reanuda; detener termina sin texto (lo pidió la persona); el final con texto, con boleto.
+  empujarAccion('jose@x.hn', { tipo: 'computadora', fase: 'pausa', id: 'g1', estado: 'control', texto: 'Listo, la computadora es tuya.' }, { aparato: 'tel-1' });
+  assert.equal(recibidas[3].estado, 'control');
+  empujarAccion('jose@x.hn', { tipo: 'computadora', fase: 'reanuda', id: 'g1' }, { aparato: 'tel-1' });
+  empujarAccion('jose@x.hn', { tipo: 'computadora', fase: 'termina', id: 'g1', ok: false }, { aparato: 'tel-1' });
+  assert.deepEqual(recibidas[5], { tipo: 'computadora', fase: 'termina', id: 'g1', ok: false });
+  empujarAccion('jose@x.hn', { tipo: 'computadora', fase: 'termina', id: 'g2', ok: true, texto: 'Listo, ya terminé en mi computadora. Compra: 24.70.' }, { aparato: 'tel-1' });
+  assert.match(recibidas[6].boleto, /^[A-Za-z0-9_-]{8,40}$/);
+  assert.deepEqual(recibidas.map((r) => r.fase), ['empieza', 'confirmar', 'confirmar', 'pausa', 'reanuda', 'termina', 'termina']);
+  quitar();
+});
