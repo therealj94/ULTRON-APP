@@ -826,6 +826,51 @@ Check(Actualizacion.MotivoParaEsperar(libre with { Llamada = true }) != null && 
 Check(new[] { "notch.monitores", "notch.restablecer", "notch.llamada" }.All(PuenteCentro.MetodoPermitido), "el puente deja pasar lo que usan el notch movible y la llamada");
 Check(PuenteCentro.MetodoPermitido("app.cerrar") && !PuenteCentro.MetodoPermitido("app.cerrarTodo"), "el puente deja cerrar AURA por completo desde el Centro (solo ese nombre)");
 Check(new[] { "voz.decir", "recorrido.abierto" }.All(PuenteCentro.MetodoPermitido), "el puente deja pasar la voz y el silencio del recorrido");
+// ── WhatsApp personal en el Centro (whatsapp.* del puente → /api/whatsapp/* con la sesión) ──
+Check(new[] { "whatsapp.estado", "whatsapp.vincular", "whatsapp.desvincular", "whatsapp.chats", "whatsapp.mensajes", "whatsapp.enviar", "whatsapp.leido", "whatsapp.media" }.All(PuenteCentro.MetodoPermitido), "el puente deja pasar WhatsApp");
+Check(!PuenteCentro.MetodoPermitido("whatsapp") && !PuenteCentro.MetodoPermitido("whatsapp.borrar") && !PuenteCentro.MetodoPermitido("whatsapp.*"), "ningún otro whatsapp.*");
+Check(PuenteWhatsApp.Chat(" 50499887766@s.whatsapp.net ") == "50499887766@s.whatsapp.net" && PuenteWhatsApp.Chat("120363041122334455@g.us") == "120363041122334455@g.us" && PuenteWhatsApp.Chat("1234567890:12@lid") == "1234567890:12@lid", "chats de WhatsApp");
+foreach (var malo in new[] { "", "   ", "sin-arroba", "a b@s.whatsapp.net", "x@s.whatsapp.net/../../api", "x@s.whatsapp.net?y=1", "../api/ultron@x", "x@S.WHATSAPP.NET", new string('1', 101) + "@s.whatsapp.net" })
+    Check(Throws(() => PuenteWhatsApp.Chat(malo)), "chat rechazado: " + malo);
+Check(PuenteWhatsApp.Texto("hola") == "hola" && PuenteWhatsApp.Texto(new string('x', 4000)).Length == 4000 && PuenteWhatsApp.Texto("  hola\n") == "  hola\n", "texto: tal cual, hasta 4000");
+Check(Throws(() => PuenteWhatsApp.Texto("  \n ")) && Throws(() => PuenteWhatsApp.Texto(null)) && Throws(() => PuenteWhatsApp.Texto(new string('x', 4001))), "texto vacío o de más de 4000: no sale (no se recorta)");
+Check(PuenteWhatsApp.Mensaje("3EB0A1B2C3D4") == "3EB0A1B2C3D4" && Throws(() => PuenteWhatsApp.Mensaje("../x")) && Throws(() => PuenteWhatsApp.Mensaje("")), "id de mensaje");
+Check(PuenteWhatsApp.Telefono("9999-0000") == "50499990000" && PuenteWhatsApp.Telefono("+504 9999 0000") == "50499990000" && PuenteWhatsApp.Telefono("") == null && PuenteWhatsApp.Telefono(null) == null, "número para vincular (8 cifras: Honduras)");
+Check(Throws(() => PuenteWhatsApp.Telefono("1234")) && Throws(() => PuenteWhatsApp.Telefono(new string('9', 16))), "número sin forma");
+Check(PuenteWhatsApp.RutaChats(" karla & co ") == "api/whatsapp/chats?buscar=karla%20%26%20co" && PuenteWhatsApp.RutaChats(null) == "api/whatsapp/chats" && PuenteWhatsApp.RutaChats(new string('a', 90)).Length == "api/whatsapp/chats?buscar=".Length + 60, "ruta de chats (búsqueda ≤ 60)");
+Check(PuenteWhatsApp.RutaMensajes("504@s.whatsapp.net", 0) == "api/whatsapp/mensajes?chat=504%40s.whatsapp.net" && PuenteWhatsApp.RutaMensajes("504@s.whatsapp.net", 1759435500000) == "api/whatsapp/mensajes?chat=504%40s.whatsapp.net&antes=1759435500000", "ruta de mensajes");
+Check(PuenteWhatsApp.RutaMedia("504@s.whatsapp.net", "ABC_1") == "api/whatsapp/media?chat=504%40s.whatsapp.net&id=ABC_1" && Throws(() => PuenteWhatsApp.RutaMedia("504@s.whatsapp.net", "a&b=1")), "ruta de media");
+Check(new[] { "api/whatsapp/estado", "api/whatsapp/chats?buscar=x", "api/whatsapp/media?chat=a&id=b" }.All(PuenteWhatsApp.RutaValida), "rutas de WhatsApp sí");
+foreach (var ajena in new[] { "api/whatsapp/../ultron/salir", "api/ultron/salir", "api/whatsapp/", "api/whatsappx/estado", "api/whatsapp/estado#x", "api/whatsapp/estado x", "/api/whatsapp/estado", "https://otro/api/whatsapp/estado", "" })
+    Check(!PuenteWhatsApp.RutaValida(ajena), "ruta ajena rechazada: " + ajena);
+Check(PuenteWhatsApp.MediaMax == 8 * 1024 * 1024 && PuenteWhatsApp.TextoMax == 4000, "topes");
+{
+    // AuraApi.WhatsApp: con la sesión, solo rutas de WhatsApp, el error del servidor con su texto y la media con tope.
+    var falso = new ManejadorFalso();
+    string? cuerpoVisto = null;
+    falso.Responder = r => { cuerpoVisto = r.Content?.ReadAsStringAsync().Result; return new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = new StringContent("{\"permitido\":true,\"vinculado\":false}") }; };
+    using var apiWa = new AuraApi("https://aura.test", "tok-123", falso);
+    var ew = apiWa.WhatsApp(HttpMethod.Get, "api/whatsapp/estado").GetAwaiter().GetResult();
+    Check(ew.GetProperty("permitido").GetBoolean() && falso.Pedidos[0].RequestUri!.AbsoluteUri == "https://aura.test/api/whatsapp/estado" && falso.Pedidos[0].Headers.GetValues("x-ultron-sesion").Single() == "tok-123", "whatsapp.estado va con la sesión");
+    apiWa.WhatsApp(HttpMethod.Post, "api/whatsapp/enviar", new { chat = "504@s.whatsapp.net", texto = "hola" }).GetAwaiter().GetResult();
+    Check(falso.Pedidos[1].Method == HttpMethod.Post && cuerpoVisto != null && cuerpoVisto.Contains("\"texto\":\"hola\"") && cuerpoVisto.Contains("\"chat\":\"504@s.whatsapp.net\""), "enviar manda chat y texto");
+    Check(Throws(() => apiWa.WhatsApp(HttpMethod.Get, "api/ultron/salir").GetAwaiter().GetResult()) && falso.Pedidos.Count == 2, "otra ruta ni sale");
+    Check(Throws(() => apiWa.WhatsApp(HttpMethod.Delete, "api/whatsapp/estado").GetAwaiter().GetResult()), "solo GET y POST");
+    falso.Responder = r => new HttpResponseMessage(System.Net.HttpStatusCode.Forbidden) { Content = new StringContent("{\"error\":\"Esta cuenta no tiene WhatsApp conectado.\"}") };
+    string? msgWa = null;
+    try { apiWa.WhatsApp(HttpMethod.Get, "api/whatsapp/chats").GetAwaiter().GetResult(); } catch (AuraError ex) { msgWa = ex.Message; }
+    Check(msgWa == "Esta cuenta no tiene WhatsApp conectado.", "el error del servidor llega con su texto: " + msgWa);
+    falso.Responder = r => { var c = new ByteArrayContent(new byte[100]); c.Headers.ContentType = new("image/jpeg"); return new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = c }; };
+    var rutaMedia = PuenteWhatsApp.RutaMedia("504@s.whatsapp.net", "ABC123");
+    var (bytesWa, tipoWa) = apiWa.WhatsAppMedia(rutaMedia, 1000).GetAwaiter().GetResult();
+    Check(bytesWa.Length == 100 && tipoWa == "image/jpeg", "media: bytes y tipo");
+    Check(Throws(() => apiWa.WhatsAppMedia(rutaMedia, 50).GetAwaiter().GetResult()), "media más grande que el tope (declarado)");
+    falso.Responder = r => new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = new StreamContent(new SinLargo(new byte[100])) };
+    Check(Throws(() => apiWa.WhatsAppMedia(rutaMedia, 50).GetAwaiter().GetResult()), "media sin largo declarado: también se corta al leer");
+    Check(Throws(() => apiWa.WhatsAppMedia("api/whatsapp/chats", 50).GetAwaiter().GetResult()), "media solo de /media");
+    using var sinSesion = new AuraApi("https://aura.test", null, falso);
+    Check(Throws(() => sinSesion.WhatsApp(HttpMethod.Get, "api/whatsapp/estado").GetAwaiter().GetResult()), "sin sesión no sale");
+}
 // ── Lo que salió del registro de José (1-oct 22:29–22:46) ──
 Check(float.IsPositiveInfinity(UmbralesDespertar.MinimoWindows("oye aura", true, false)) && float.IsPositiveInfinity(UmbralesDespertar.MinimoWindows("aura", true, false)) && UmbralesDespertar.MinimoWindows("oye claudio", true, false) == 0.9f, "con modelo propio, SAPI no decide «aura»");
 Check(float.IsPositiveInfinity(UmbralesDespertar.MinimoWindows("aura", false, true)) && UmbralesDespertar.MinimoWindows("oye antonio", false, true) == 0.95f && UmbralesDespertar.MinimoWindows("aura", false, false) == 0.8f && UmbralesDespertar.MinimoWindows("oye aura", false, false) == 0.6f, "música y sin modelo");
@@ -851,3 +896,12 @@ Check(AutorizarOrden.Autorizar("pon bad bunny en spotify", "pon el volumen al 30
 }
 Console.WriteLine($"PASS {count} assertions");
 class Clock : TimeProvider { public DateTimeOffset Now = DateTimeOffset.UtcNow; public override DateTimeOffset GetUtcNow() => Now; }
+/// <summary>Un servidor de mentira para AuraApi: guarda los pedidos y contesta lo que se le diga.</summary>
+class ManejadorFalso : HttpMessageHandler
+{
+    public Func<HttpRequestMessage, HttpResponseMessage> Responder = _ => new HttpResponseMessage(System.Net.HttpStatusCode.OK);
+    public List<HttpRequestMessage> Pedidos = new();
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage r, CancellationToken ct) { Pedidos.Add(r); return Task.FromResult(Responder(r)); }
+}
+/// <summary>Un cuerpo que no dice su largo (como uno que llega en trozos).</summary>
+class SinLargo : MemoryStream { public SinLargo(byte[] b) : base(b) { } public override bool CanSeek => false; }

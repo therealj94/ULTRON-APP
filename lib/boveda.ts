@@ -39,6 +39,10 @@ const ENV: Record<string, string[]> = {
   // La computadora de los agentes (scripts/nodo-computadora): https://<ip>.sslip.io/api y su clave.
   computadora_url: ['COMPUTADORA_URL'],
   computadora_clave: ['COMPUTADORA_CLAVE'],
+  // El WhatsApp personal (servicios/whatsapp-puente, servicio privado de Render) y quién lo puede ver.
+  whatsapp_url: ['WHATSAPP_PUENTE_URL'],
+  whatsapp_clave: ['WHATSAPP_PUENTE_CLAVE'],
+  whatsapp_duenos: ['WHATSAPP_DUENOS'],
   // Correo de cada persona: la llave con que se cifran sus claves (si falta, la de la sesión) y la app de
   // Microsoft para entrar a Outlook/Microsoft 365 con OAuth (lib/correo).
   correo_cifrado: ['CORREO_CLAVE_CIFRADO', 'ULTRON_SESION_SECRETO'],

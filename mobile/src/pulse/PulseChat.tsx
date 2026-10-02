@@ -2,7 +2,8 @@
  * PULSE2CHAT en una ventana (Modal): la lista de chats y la conversación de la 5.0, una encima de
  * otra, para quien todavía no las tiene en su navegación (la mesa de los avatares lo abre así).
  *
- * Es solo el envoltorio: todo lo que se ve es `PantallaChats` y `PantallaConversacion`. La
+ * Es solo el envoltorio: todo lo que se ve es `PantallaChats` (con la pestaña de WhatsApp al lado si esta
+ * cuenta lo tiene, whatsapp/ChatsConWhatsapp) y `PantallaConversacion`. La
  * conversación entra deslizándose desde la derecha, «atrás» (el botón, el gesto del sistema o AURA
  * diciendo «vete atrás») vuelve a la lista, y desde la lista cierra la ventana.
  */
@@ -13,7 +14,8 @@ import { SafeAreaProvider, initialWindowMetrics } from 'react-native-safe-area-c
 import { emitir, escuchar } from '../nucleo/contrato';
 import { useTema } from '../nucleo/tema';
 import * as RELEVO from './relevo';
-import { PantallaChats } from './PantallaChats';
+import { ChatsConWhatsapp } from '../whatsapp/ChatsConWhatsapp';
+import { atrasWhatsapp } from '../whatsapp/atras';
 import { PantallaConversacion } from './PantallaConversacion';
 
 type Vista = { tipo: 'lista' } | { tipo: 'hilo'; con: string; nombre?: string };
@@ -34,7 +36,8 @@ export function PulseChat({ visible, conInicial, onCerrar }: { visible: boolean;
     if (!visible) setVista({ tipo: 'lista' });
   }, [visible, conInicial]);
 
-  const atras = () => (vista.tipo === 'hilo' ? setVista({ tipo: 'lista' }) : onCerrar());
+  // Un chat de WhatsApp abierto se cierra primero (en un Modal, «atrás» llega aquí y no a BackHandler).
+  const atras = () => (vista.tipo === 'hilo' ? setVista({ tipo: 'lista' }) : atrasWhatsapp() ? undefined : onCerrar());
   const atrasRef = useRef(atras);
   atrasRef.current = atras;
 
@@ -53,7 +56,7 @@ export function PulseChat({ visible, conInicial, onCerrar }: { visible: boolean;
       {/* Un modal es otra ventana: lleva su propio proveedor de márgenes seguros. */}
       <SafeAreaProvider initialMetrics={initialWindowMetrics}>
         <View style={{ flex: 1, backgroundColor: p.fondo }}>
-          <PantallaChats onAbrir={(con, nombre) => setVista({ tipo: 'hilo', con, nombre })} onAtras={onCerrar} />
+          <ChatsConWhatsapp onAbrir={(con, nombre) => setVista({ tipo: 'hilo', con, nombre })} onAtras={onCerrar} />
           {vista.tipo === 'hilo' ? (
             <Animated.View
               entering={SlideInRight.duration(260)}

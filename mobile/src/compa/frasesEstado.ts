@@ -599,6 +599,8 @@ export const TAREAS: Record<string, Tarea> = {
   computadora: { estado: 'haciendo', sonido: 'teclado', lenta: true },
   /** «Revisa mi correo», «contéstale a Beto»: abre su buzón (server/correo.ts). */
   correo: { estado: 'leyendo', sonido: 'teclado', lenta: true },
+  /** «¿Qué me escribió Beto por WhatsApp?», «contéstale»: su WhatsApp personal (server/whatsapp.ts). */
+  whatsapp: { estado: 'leyendo', sonido: 'teclado', lenta: true },
 };
 
 /** La tarea de una herramienta, o null si no es una tarea (rag, cot, harness, cerebro-*…). */

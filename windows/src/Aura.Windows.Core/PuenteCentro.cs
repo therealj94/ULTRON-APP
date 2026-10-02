@@ -53,6 +53,9 @@ public static class PuenteCentro
         "voz.decir", "recorrido.abierto",
         // Cerrar AURA por completo desde el Centro (la página pide; el notch confirma y sale).
         "app.cerrar",
+        // El WhatsApp personal (solo la cuenta dueña; el servidor lo vuelve a mirar): ver, vincular y contestar.
+        "whatsapp.estado", "whatsapp.vincular", "whatsapp.desvincular", "whatsapp.chats", "whatsapp.mensajes",
+        "whatsapp.enviar", "whatsapp.leido", "whatsapp.media",
     };
 
     public static bool MetodoPermitido(string? metodo) => metodo != null && Metodos.Contains(metodo);

@@ -190,6 +190,10 @@ public partial class NotchWindow
             case "cartera.direccion" or "cartera.saldos" or "cartera.portapapeles" or "cartera.pagar" or "cartera.buscarEnvio" or "cartera.abrirWallet":
                 return await ManejarCartera(metodo, a);
             case "conectar" or "desconectar": return await ManejarConexion(metodo, Texto(a, "servicio"));
+            // El WhatsApp personal (NotchWindow.WhatsApp.cs): /api/whatsapp/* con la sesión, validado antes de salir.
+            case "whatsapp.estado" or "whatsapp.vincular" or "whatsapp.desvincular" or "whatsapp.chats" or "whatsapp.mensajes"
+                or "whatsapp.enviar" or "whatsapp.leido" or "whatsapp.media":
+                return await ManejarWhatsApp(metodo, a);
             default:
                 throw new InvalidOperationException("Método desconocido: " + metodo);
         }

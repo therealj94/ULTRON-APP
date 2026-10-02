@@ -15,7 +15,7 @@ import { autoConectarCartera } from './pulse/pagar';
 import { cerrarAura } from './cerrar';
 import { vistaInicio } from './vistas/inicio';
 import { vistaChat } from './vistas/chat';
-import { vistaPulse } from './vistas/pulse';
+import { vistaMensajeria, mostrarPanel } from './vistas/mensajeria';
 import { vistaMusica } from './vistas/musica';
 import { vistaCartera } from './vistas/cartera';
 import { vistaAjustes } from './vistas/ajustes';
@@ -25,7 +25,8 @@ type Seccion = { id: string; es: string; en: string; icono: string; crear: () =>
 export const SECCIONES: Seccion[] = [
   { id: 'inicio', es: 'Inicio', en: 'Home', icono: 'inicio', crear: vistaInicio },
   { id: 'chat', es: 'Chat', en: 'Chat', icono: 'chat', crear: vistaChat },
-  { id: 'pulse', es: 'PULSE2CHAT', en: 'PULSE2CHAT', icono: 'pulse', crear: vistaPulse },
+  // PULSE2CHAT y, para la cuenta dueña, su WhatsApp personal: misma sección, se cambia arriba (o deslizando).
+  { id: 'pulse', es: 'PULSE2CHAT', en: 'PULSE2CHAT', icono: 'pulse', crear: vistaMensajeria },
   { id: 'musica', es: 'Música', en: 'Music', icono: 'musica', crear: vistaMusica },
   { id: 'cartera', es: 'Cartera', en: 'Wallet', icono: 'cartera', crear: vistaCartera },
   { id: 'ajustes', es: 'Ajustes', en: 'Settings', icono: 'ajustes', crear: vistaAjustes },
@@ -53,6 +54,8 @@ function moverIndicador(sinAnimar = false) {
 
 /** Ir a una sección. Las vistas se crean una vez y se conservan (PULSE2CHAT no pierde la llamada al cambiar). */
 export function ir(id: string) {
+  // «whatsapp» no es una sección propia: vive en la de PULSE2CHAT (vistas/mensajeria.ts; ver irDesdeAfuera).
+  if (id === 'whatsapp') id = 'pulse';
   const s = SECCIONES.find((x) => x.id === id) ?? SECCIONES[0];
   if (actual === s.id) return;
   const antes = SECCIONES.findIndex((x) => x.id === actual);
@@ -118,9 +121,18 @@ export async function recoger() {
   raiz.classList.remove('encoger');
 }
 
-al<string>('ir', (id) => ir(id));
+/**
+ * Lo que pide ir a una sección desde afuera (el notch, la voz, una vista): «pulse» trae además PULSE2CHAT al
+ * frente (una llamada, un mensaje) y «whatsapp» el WhatsApp. El botón de la barra usa `ir` solo: vuelve a lo
+ * último que se eligió arriba.
+ */
+function irDesdeAfuera(id: string) {
+  ir(id);
+  if (id === 'pulse' || id === 'whatsapp') mostrarPanel(id);
+}
+al<string>('ir', (id) => irDesdeAfuera(String(id)));
 // Las vistas piden cambiar de sección o marcar una con un punto (PULSE2CHAT: mensaje o llamada nueva).
-window.addEventListener('centro:ir', (e) => ir(String((e as CustomEvent).detail)));
+window.addEventListener('centro:ir', (e) => irDesdeAfuera(String((e as CustomEvent).detail)));
 // El recorrido de Windows (Claudio y ANT-ONIO): desde Inicio, Ajustes o al terminar la guía.
 export function verRecorrido() {
   const e = estado();

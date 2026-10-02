@@ -36,6 +36,14 @@ tabla (`PuenteCentro.Metodos`) se rechaza antes de mirar sus argumentos.
 | `chat.enviar` | `{ texto }` | le habla a AURA (igual que el chat del notch); las respuestas llegan por `chat.mensaje` |
 | `voz.decir` | `{ texto, avatar, emocion }` | `{ base64, mime }`: el audio de `/api/tts` con la voz de ese avatar (`claudio`, `antonio`, `aura`, `ojos`) en el idioma de AURA. Lo usa el recorrido (Claudio y ANT-ONIO). Frases de hasta 400 letras; sin servidor devuelve `null` y el recorrido se lee |
 | `recorrido.abierto` | `{ si }` | con el recorrido abierto AURA se calla y silencia el micrófono (el recorrido suena por el altavoz y dice «Oye AURA»); al cerrarlo vuelve como estaba (si ya estaba silenciado, sigue igual) |
+| `whatsapp.estado` | — | `{ disponible, permitido, vinculado, conectado?, numero?, nombre?, qr?, codigo?, vinculando?, error? }` de `GET /api/whatsapp/estado` (con la sesión de AU-RA). Con `permitido: false` (otra cuenta) o sin respuesta, la página no muestra WhatsApp en absoluto |
+| `whatsapp.vincular` | `{ telefono? }` | sin número: `{ qr }` (data:image/png para escanear con el teléfono); con número (solo cifras, 10–15; 8 cifras = Honduras, se le pone el 504): `{ codigo }` de 8 letras para «Vincular con número de teléfono» |
+| `whatsapp.desvincular` | — | `{ ok }`: quita este WhatsApp de AURA (y de «Dispositivos vinculados» del teléfono) |
+| `whatsapp.chats` | `{ buscar? }` | `{ chats: [{ jid, nombre, grupo, noLeidos, hora, ultimo, ultimoMio, ultimoDe? }] }` (búsqueda ≤ 60 letras) |
+| `whatsapp.mensajes` | `{ chat, antes? }` | `{ chat, mensajes: [{ id, chat, de, nombreDe, mio, hora, tipo, texto, miniatura?, duracion?, archivo?, conMedia?, eliminado?, editado? }] }`, del más viejo al más nuevo; `antes` (ms) trae lo anterior |
+| `whatsapp.enviar` | `{ chat, texto }` | `{ mensaje }`. La persona lo escribió y tocó Enviar: sale directo. `chat` es un JID (`…@s.whatsapp.net`, `…@g.us`, `…@lid`); `texto` no vacío y ≤ 4000 letras (se rechaza, no se recorta) |
+| `whatsapp.leido` | `{ chat }` | `{ ok }`: marca leído el chat (al abrirlo y cuando llega algo con él a la vista) |
+| `whatsapp.media` | `{ chat, id }` | `{ base64, mime }` de `GET /api/whatsapp/media` (foto, video, nota de voz o documento en grande), con tope de 8 MB: más grande, error con su texto |
 | `spotify.*`, `cartera.*`, `conectar`, `desconectar` | ver `src/vistas/*.ts` | |
 
 ## Eventos
@@ -43,10 +51,20 @@ tabla (`PuenteCentro.Metodos`) se rechaza antes de mirar sus argumentos.
 | Evento | Datos |
 |---|---|
 | `estado` | `Estado` completo cuando cambia algo |
-| `ir` | id de sección a mostrar |
+| `ir` | id de sección a mostrar (`pulse` trae PULSE2CHAT al frente; `whatsapp`, la misma sección con WhatsApp al frente si la cuenta lo tiene) |
 | `llamada.accion` | `{ accion: 'contestar' \| 'rechazar' \| 'colgar' }` desde el notch |
 | `chat.mensaje` | `{ quien, texto, id, parcial? }` |
 | `musica` | lo que suena |
 | `ventana.escondida` | — · la ventana del Centro se escondió (la cerraron o se recogió): el recorrido se cierra |
 | `recorrido` | — · abrir el recorrido de Windows |
 | `salio` | la sesión se cerró |
+
+## WhatsApp personal (`whatsapp.*`)
+
+Solo para la cuenta dueña (`WHATSAPP_DUENOS` en el servidor, `server/whatsapp.ts`). AURA (C#, `NotchWindow.WhatsApp.cs`)
+llama a `/api/whatsapp/*` con la sesión de AU-RA; antes de salir valida con `PuenteWhatsApp` (Core): JID con forma de
+WhatsApp, texto ≤ 4000, id de mensaje, número de 10–15 cifras y solo las rutas de la lista (la página no puede usar el
+puente como cliente HTTP libre). Los errores del servidor (`{error}` con 401/403/503…) llegan como `{ ok: false, error }`
+con su texto y no se anotan en el registro (la página sondea: la lista cada 5 s y la conversación abierta cada 3 s, solo
+a la vista; el estado cada 3 s mientras se vincula). Fuera de WebView2, `src/whatsapp/muestra.ts` contesta con datos
+inventados (`?wa=vinculado` en la dirección empieza ya vinculado).

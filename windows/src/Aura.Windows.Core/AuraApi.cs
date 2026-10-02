@@ -376,6 +376,48 @@ public sealed class AuraApi : IDisposable
         return (Id(raiz, "spotify"), Id(raiz, "google"), Id(raiz, "google", "clientSecret"), Id(raiz, "microsoft"));
     }
 
+    /// <summary>
+    /// El WhatsApp personal (server/whatsapp.ts) con la sesión: el JSON de una ruta de /api/whatsapp/* (solo
+    /// las de <see cref="PuenteWhatsApp.Rutas"/>). Los errores del servidor ({error}) llegan como AuraError con su texto.
+    /// </summary>
+    public async Task<JsonElement> WhatsApp(HttpMethod metodo, string ruta, object? cuerpo = null, TimeSpan? tope = null, CancellationToken ct = default)
+    {
+        if (!PuenteWhatsApp.RutaValida(ruta) || (metodo != HttpMethod.Get && metodo != HttpMethod.Post)) throw new AuraError("Esa ruta de WhatsApp no existe.");
+        if (string.IsNullOrEmpty(Token)) throw new AuraError("Entra con tu cuenta en Ajustes.", HttpStatusCode.Unauthorized);
+        using var r = await Enviar(() => Pedido(metodo, ruta, metodo == HttpMethod.Post ? cuerpo ?? new { } : null), ct, tope ?? TimeSpan.FromSeconds(25)).ConfigureAwait(false);
+        using var j = await Json(r, ct).ConfigureAwait(false);
+        return j.RootElement.Clone();
+    }
+
+    /// <summary>
+    /// Una foto, audio o documento de WhatsApp en grande (GET /api/whatsapp/media): los bytes y su tipo, con
+    /// tope (<paramref name="maximo"/>): si el servidor dice que es más grande, o manda más, se corta y se avisa.
+    /// </summary>
+    public async Task<(byte[] Bytes, string Tipo)> WhatsAppMedia(string ruta, long maximo, CancellationToken ct = default)
+    {
+        if (!PuenteWhatsApp.RutaValida(ruta) || !ruta.StartsWith("api/whatsapp/media?", StringComparison.Ordinal)) throw new AuraError("Esa ruta de WhatsApp no existe.");
+        if (string.IsNullOrEmpty(Token)) throw new AuraError("Entra con tu cuenta en Ajustes.", HttpStatusCode.Unauthorized);
+        using var reloj = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        reloj.CancelAfter(TimeSpan.FromSeconds(60));
+        using var r = await Enviar(() => Pedido(HttpMethod.Get, ruta, null, "*/*"), reloj.Token, TimeSpan.FromSeconds(60), HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
+        if (r.Content.Headers.ContentLength is long largo && largo > maximo) throw new AuraError($"El archivo es muy grande para verlo aquí (más de {maximo / (1024 * 1024)} MB). Ábrelo en tu teléfono.");
+        try
+        {
+            await using var s = await r.Content.ReadAsStreamAsync(reloj.Token).ConfigureAwait(false);
+            using var ms = new MemoryStream();
+            var buf = new byte[81920];
+            int n;
+            while ((n = await s.ReadAsync(buf, reloj.Token).ConfigureAwait(false)) > 0)
+            {
+                if (ms.Length + n > maximo) throw new AuraError($"El archivo es muy grande para verlo aquí (más de {maximo / (1024 * 1024)} MB). Ábrelo en tu teléfono.");
+                ms.Write(buf, 0, n);
+            }
+            return (ms.ToArray(), r.Content.Headers.ContentType?.MediaType ?? "application/octet-stream");
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { throw new AuraError("El servidor AURA tardó demasiado."); }
+        catch (IOException) { throw new AuraError("Se cortó la conexión mientras bajaba el archivo."); }
+    }
+
     public void Dispose() => http.Dispose();
 }
 
