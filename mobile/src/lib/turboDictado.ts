@@ -33,8 +33,13 @@ export type CallbacksDictado = {
   onError?: (motivo: string) => void;
 };
 
-/** Menos que esto no es una frase (y Turbo no acepta cerrar menos de 0,3 s de audio). */
-const MINIMO_TROZOS = 4;
+/**
+ * Turbo no acepta cerrar menos de 0,3 s de audio. Con menos, si Turbo ya entendió algo («sí», «no», un
+ * número), vale lo que entendió; si no, fue un toque sin hablar.
+ */
+const MINIMO_TROZOS = 3;
+/** Lo que se le dice a la persona si su voz no se pudo pasar a texto (sin señal, servidor caído). */
+export const FRASE_SIN_OIDO = 'No pude pasar tu voz a texto: revisa la señal e inténtalo otra vez, o escríbeme.';
 const ABIERTO = 1;
 
 export type ControlDictado = { parar: () => void; cancelar: () => void };
@@ -165,7 +170,7 @@ export async function dictarTurbo(deps: DepsDictado, cb: CallbacksDictado): Prom
   };
 
   const finalDe = async () => {
-    if (trozos.length < MINIMO_TROZOS) return terminar('');
+    if (trozos.length < MINIMO_TROZOS) return terminar(limpiarFinal(parcial));
     let texto: string | null = null;
     if (vivo) {
       texto = await new Promise<string | null>((resolver) => {
@@ -180,10 +185,17 @@ export async function dictarTurbo(deps: DepsDictado, cb: CallbacksDictado): Prom
     }
     let limpio = limpiarFinal(texto || '');
     const wav = () => wavDeTrozos(trozos);
-    if (!limpio) {
-      // Turbo no contestó (o no había conexión): la grabación entera por el servidor.
-      limpio = limpiarFinal((await conTope(deps.transcribirWav(wav(), false), 20_000)) || '');
-    } else if (esFraseDeDinero(limpio)) {
+    if (texto === null) {
+      // Turbo no contestó (o no había conexión): la grabación entera por el servidor. Si eso también
+      // falla (sin señal en el campo), se avisa: un dictado que se apaga sin texto no es silencio.
+      const delServidor = await conTope(deps.transcribirWav(wav(), false), 20_000);
+      if (delServidor === null) {
+        const visto = limpiarFinal(parcial);
+        if (!visto) cb.onError?.(FRASE_SIN_OIDO);
+        return terminar(visto);
+      }
+      limpio = limpiarFinal(delServidor);
+    } else if (limpio && esFraseDeDinero(limpio)) {
       const conf = limpiarFinal((await conTope(deps.transcribirWav(wav(), true), deps.confirmarMs ?? 6_000)) || '');
       if (conf) limpio = conf;
     }

@@ -253,7 +253,11 @@ async function escucharTurbo(cb: {
     {
       onParcial: cb.onParcial,
       onFinal: cb.onFinal,
-      onError: (m) => console.warn('[electrum] dictado turbo:', m),
+      // Micrófono que se cae o voz que no se pudo pasar a texto: la misma alerta que el dictado de siempre.
+      onError: (m) => {
+        console.warn('[electrum] dictado turbo:', m);
+        cb.onError?.(m);
+      },
       onFin: () => {
         enMarcha = false;
         cb.onFin?.();

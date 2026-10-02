@@ -361,7 +361,7 @@ describe('Oído Turbo (teléfono): el motor', () => {
 // ── el dictado de campo de Dr Electrum (apretar, hablar, soltar) ────────────────────────────────
 import { dictarTurbo } from '../mobile/src/lib/turboDictado';
 
-function bancoDictado(opts: { permiso?: boolean; confirmado?: string; respaldo?: string; mic?: boolean } = {}) {
+function bancoDictado(opts: { permiso?: boolean; confirmado?: string; respaldo?: string; mic?: boolean; servidorCaido?: boolean } = {}) {
   const ws: WsFalso[] = [];
   const wavs: { wav: string; confirmar: boolean }[] = [];
   const finales: string[] = [];
@@ -388,16 +388,18 @@ function bancoDictado(opts: { permiso?: boolean; confirmado?: string; respaldo?:
     },
     transcribirWav: async (wav: string, confirmar: boolean) => {
       wavs.push({ wav, confirmar });
+      if (opts.servidorCaido) throw new Error('sin red');
       return confirmar ? (opts.confirmado ?? '') : (opts.respaldo ?? 'lo del respaldo');
     },
     esperaFinalMs: 60,
     confirmarMs: 200,
   };
-  const cb = { onFinal: (t: string) => finales.push(t), onParcial: (t: string) => parciales.push(t), onFin: () => fines++ };
+  const errores: string[] = [];
+  const cb = { onFinal: (t: string) => finales.push(t), onParcial: (t: string) => parciales.push(t), onFin: () => fines++, onError: (m: string) => errores.push(m) };
   const hablar = (k: number) => {
     for (let i = 0; i < k; i++) alTrozo?.({ audio: Buffer.alloc(3200, i + 1).toString('base64'), db: -20 });
   };
-  return { deps, cb, ws, wavs, finales, parciales, fines: () => fines, hablar, abierto: () => abierto };
+  return { deps, cb, ws, wavs, finales, parciales, errores, fines: () => fines, hablar, abierto: () => abierto };
 }
 
 describe('Oído Turbo (teléfono): dictado de campo de Dr Electrum', () => {
@@ -474,6 +476,42 @@ describe('Oído Turbo (teléfono): dictado de campo de Dr Electrum', () => {
     assert.deepEqual(b2.finales, []);
     assert.equal(b2.wavs.length, 0);
     assert.equal(b2.fines(), 1);
+  });
+
+  it('un «sí» cortito que Turbo ya entendió no se tira', async () => {
+    const b = bancoDictado();
+    const c = await dictarTurbo(b.deps, b.cb);
+    b.hablar(2);
+    await espera();
+    b.ws[0].decir({ message_type: 'partial_transcript', text: 'Sí.' });
+    c!.parar();
+    await espera(20);
+    assert.deepEqual(b.finales, ['Sí.']);
+    assert.equal(b.wavs.length, 0);
+  });
+
+  it('sin Turbo y sin servidor (sin señal): avisa en vez de apagarse callado', async () => {
+    const b = bancoDictado({ permiso: false, servidorCaido: true });
+    const c = await dictarTurbo(b.deps, b.cb);
+    b.hablar(10);
+    await espera();
+    c!.parar();
+    await espera(20);
+    assert.deepEqual(b.finales, []);
+    assert.equal(b.errores.length, 1);
+    assert.match(b.errores[0], /señal/);
+    assert.equal(b.fines(), 1);
+  });
+
+  it('el servidor contesta que no había voz: silencio, sin alerta', async () => {
+    const b = bancoDictado({ permiso: false, respaldo: '' });
+    const c = await dictarTurbo(b.deps, b.cb);
+    b.hablar(10);
+    await espera();
+    c!.parar();
+    await espera(20);
+    assert.deepEqual(b.finales, []);
+    assert.deepEqual(b.errores, []);
   });
 
   it('sin micrófono crudo devuelve null (sigue el reconocedor del teléfono)', async () => {
