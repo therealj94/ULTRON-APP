@@ -74,6 +74,11 @@ export function PantallaCorreos({ cambio, onAtras, activa, onNoLeidos }: Props) 
   const [abierto, setAbierto] = useState<string | null>(null);
   const [redactar, setRedactar] = useState<BorradorCorreo | null>(null);
   const [conectar, setConectar] = useState(false);
+  // La hoja de cuentas se monta la primera vez que se abre (montada pregunta sus cuentas al servidor).
+  const [hojaUsada, setHojaUsada] = useState(false);
+  useEffect(() => {
+    if (conectar) setHojaUsada(true);
+  }, [conectar]);
   const [aviso, setAviso] = useState('');
   const ultima = useRef(0);
   const enVuelo = useRef(false);
@@ -350,13 +355,15 @@ export function PantallaCorreos({ cambio, onAtras, activa, onNoLeidos }: Props) 
       {abierto ? <LeerCorreo refCorreo={abierto} hilo={hiloAbierto} variasCuentas={variasCuentas} idioma={idioma} onCerrar={cerrarCorreo} onAbrir={setAbierto} onLeido={alLeido} onResponder={responder} /> : null}
       {redactar ? <RedactarCorreo inicial={redactar} cuentas={cuentas} idioma={idioma} onCerrar={cerrarRedactar} onEnviado={enviado} /> : null}
 
-      <HojaCorreos
-        visible={conectar}
-        onCerrar={() => {
-          setConectar(false);
-          void refrescar();
-        }}
-      />
+      {conectar || hojaUsada ? (
+        <HojaCorreos
+          visible={conectar}
+          onCerrar={() => {
+            setConectar(false);
+            void refrescar();
+          }}
+        />
+      ) : null}
     </View>
   );
 }
