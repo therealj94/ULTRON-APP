@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { miga, reportarEstado } from '../lib/reporte';
-import { AccessibilityInfo, Alert, AppState, Animated, BackHandler, Linking, PanResponder, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { AccessibilityInfo, Alert, AppState, Animated, BackHandler, Linking, PanResponder, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useKeepAwake } from 'expo-keep-awake';
 import { useCameraPermissions } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
@@ -14,7 +14,7 @@ import { CamaraVision, DORMIDO_PERIODO_MS, SERVIDOR_CADA_MS, SERVIDOR_DORMIDO_MS
 import { DeskMenu } from '../components/DeskMenu';
 import type { Escena, MotorVision } from '../lib/escena';
 import type { DeskPresence, FaceState, Mode, SessionUser } from '../config';
-import { CANCIONES_LOCAL, healthCheck, listCanciones, nuevoIdTurno, rememberFact, turno, turnoStream, type Cancion, type Turn } from '../lib/api';
+import { api, CANCIONES_LOCAL, healthCheck, listCanciones, nuevoIdTurno, rememberFact, turno, turnoStream, type Cancion, type Turn } from '../lib/api';
 import { faceForEmocion, type Emocion } from '../lib/emocion';
 import { GENEROS, generoPorId, interpretar, type Gag } from '../lib/intenciones';
 import { ayuda, CONOCER_CORE, CONOCER_QUESTIONS, fechaLocal, horaLocal, preguntaConocer } from '../lib/knowledge';
@@ -83,6 +83,8 @@ import { useCaras, type ApiCaras } from '../caras/useCaras';
 import { avatarActual } from '../avatares/actual';
 import { orientar } from '../lib/orientacion';
 import { esperarFrame } from '../lib/esperarFrame';
+import { HojaComputadora } from '../ajustes/Computadora';
+import { avisoMesa, estadoEnPalabras, sondeoMs, trabajando as pcTrabajando, type EstadoPc } from '../compa/computadora';
 
 type Props = {
   user: SessionUser;
@@ -190,6 +192,10 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   /** Se preguntó «¿solo ahora o siempre?» y se espera la respuesta. */
   const esperaModoCamara = useRef(false);
   const [masAbierto, setMasAbierto] = useState(false);
+  /** Su computadora en la nube (ajustes/Computadora.tsx): la hoja, su estado y el aviso de la mesa. */
+  const [pcAbierta, setPcAbierta] = useState(false);
+  const [pcEstado, setPcEstado] = useState<EstadoPc | null>(null);
+  const [pcAviso, setPcAviso] = useState<{ texto: string; terminada: boolean } | null>(null);
   const [tutorialAbierto, setTutorialAbierto] = useState(false);
   /**
    * Charlar (el avatar grande, de frente) o Trabajar (el avatar compacto arriba y la conversación
@@ -275,6 +281,46 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
    * la pila no gasta batería ni reinicia un micrófono que es de otro).
    */
   const mesaActiva = mesaVisible && appActiva;
+
+  // Su computadora: se pregunta despacio (rápido mientras trabaja) con la mesa a la vista. Mientras
+  // trabaja, la mesa lo dice arriba con «Ver»; al terminar, «terminó · ver el resultado» un rato.
+  // Sin computadora en el servidor, se deja de preguntar.
+  useEffect(() => {
+    if (!mesaActiva) return;
+    let vivo = true;
+    let reloj: ReturnType<typeof setTimeout>;
+    let antes: EstadoPc['actual'] = null;
+    let quitarAviso: ReturnType<typeof setTimeout> | undefined;
+    const vuelta = async () => {
+      let s: EstadoPc | null = null;
+      try {
+        s = await api<EstadoPc>('/api/computadora', { method: 'GET' }, 12_000);
+      } catch {
+        s = null;
+      }
+      if (!vivo) return;
+      if (s) {
+        setPcEstado(s);
+        const aviso = avisoMesa(antes, s.actual, idiomaActual() === 'en' ? 'en' : 'es');
+        if (aviso) {
+          setPcAviso(aviso);
+          clearTimeout(quitarAviso);
+          if (aviso.terminada) quitarAviso = setTimeout(() => vivo && setPcAviso(null), 45_000);
+        } else if (!s.actual || !pcTrabajando(s.actual.estado)) {
+          setPcAviso((a) => (a?.terminada ? a : null));
+        }
+        antes = s.actual;
+        if (!s.configurada) return;
+      }
+      reloj = setTimeout(vuelta, sondeoMs(s?.actual?.estado, false));
+    };
+    void vuelta();
+    return () => {
+      vivo = false;
+      clearTimeout(reloj);
+      clearTimeout(quitarAviso);
+    };
+  }, [mesaActiva]);
   /**
    * La compañera se ve (los chats, Ajustes o el perfil encima de la mesa; chiquita, al lado o a
    * pantalla completa): entonces el oído de la mesa sigue abierto y ella atiende (compa/duenoAudio.ts).
@@ -2095,6 +2141,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         return setEligiendo('menu');
       case 'tutorial':
         return setTutorialAbierto(true);
+      case 'computadora':
+        return setPcAbierta(true);
       case 'ajustes':
         return setMenuOpen(true);
       case 'modo': {
@@ -2263,7 +2311,29 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         estadoCaras={caras.estadoTexto}
         trabajando={trabajando}
         conChat={enCuadro}
+        estadoComputadora={pcEstado?.configurada ? estadoEnPalabras(pcEstado, idiomaActual() === 'en' ? 'en' : 'es').texto : null}
+        computadoraTrabajando={pcTrabajando(pcEstado?.actual?.estado)}
       />
+
+      <HojaComputadora visible={pcAbierta} onCerrar={() => setPcAbierta(false)} nombreAvatar={de(avatarPorId(avatarId).nombre)} />
+
+      {/* Su computadora trabaja (o acaba de terminar): se dice arriba, con «Ver». */}
+      {pcAviso && !pcAbierta && !tutorialAbierto ? (
+        <Pressable
+          onPress={() => {
+            setPcAbierta(true);
+            if (pcAviso.terminada) setPcAviso(null);
+          }}
+          accessibilityRole="button"
+          accessibilityLabel={pcAviso.texto}
+          style={[styles.avisoPc, { borderColor: tema.acento }]}
+        >
+          <Text style={styles.avisoPcTexto} numberOfLines={1}>
+            🖥 {pcAviso.texto}
+          </Text>
+          <Text style={[styles.avisoPcVer, { color: tema.acento }]}>{tr('Ver', 'See')}</Text>
+        </Pressable>
+      ) : null}
 
       <RecorridoApp visible={tutorialAbierto} nombre={user.name} idioma={idioma} onCerrar={cerrarTutorial} onProbar={probarDesdeRecorrido} />
 
@@ -2370,6 +2440,24 @@ function saludoPorHora(ahora = new Date()): string {
 }
 
 const styles = StyleSheet.create({
+  avisoPc: {
+    position: 'absolute',
+    top: 54,
+    alignSelf: 'center',
+    maxWidth: '92%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1.5,
+    backgroundColor: 'rgba(18,19,22,0.92)',
+    zIndex: 40,
+    elevation: 8,
+  },
+  avisoPcTexto: { color: '#F2EEE8', fontSize: 13.5, fontWeight: '700', flexShrink: 1 },
+  avisoPcVer: { fontSize: 13.5, fontWeight: '900' },
   root: { flex: 1, backgroundColor: T.fondo2 },
   cuadro: { overflow: 'hidden', backgroundColor: '#000', position: 'relative' },
   hud: {

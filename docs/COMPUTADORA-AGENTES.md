@@ -30,7 +30,18 @@ Instalación en el nodo: `sudo COMPUTADORA_CLAVE=... DOMINIO=54-85-85-77.sslip.i
   - Si no, dice que la está haciendo, sigue mirando la tarea y la cuenta en el turno siguiente, una sola vez.
 - Solo para alguien con sesión: la tarea es de esa persona, y solo ella la ve.
 - Ajustes del teléfono → «Su computadora»: Gratis (Holo) o Claude (`computer_toolset_20260801`, de pago). Si se elige Claude y el nodo no tiene `ANTHROPIC_API_KEY`, la tarea la hace la gratis y se dice.
-- App: `GET /api/computadora`, `GET /api/computadora/tareas/:id` (con la captura de cada paso) y `POST /api/computadora/tareas/:id/parar`.
+- App (2-oct, José: «no logro ver lo que hace ni cómo usarla»):
+  - **Más → Su computadora** y **Ajustes → Su computadora → Ver lo que hace** (`mobile/src/ajustes/Computadora.tsx`).
+    - Muestra lo que está viendo: la captura del último paso, renovada cada 2,5 s mientras trabaja.
+    - Cada paso en palabras («Abrió es.wikipedia.org», «Escribió “Morazán” y dio Enter»); al tocar uno se ve su captura.
+    - El resultado, el botón «Parar» y «¿Qué quieres que haga?» con ejemplos.
+  - En la mesa, mientras trabaja, un aviso arriba «Su computadora · Escribió…» con «Ver»; al terminar, «terminó · ver el resultado».
+  - Rutas:
+    - `GET /api/computadora`: estado y `actual`, su última tarea en corto.
+    - `POST /api/computadora/tareas {instruccion}`: encargar desde la app sin esperar; si termina sin que la mire, el avatar lo cuenta en el turno siguiente.
+    - `GET /api/computadora/tareas/:id[?paso=n]`: la captura solo del último paso, o del paso pedido (todas juntas pesaban casi 1 MB), y cada paso con su `texto`.
+    - `POST /api/computadora/tareas/:id/parar`.
+  - Prueba real (2-oct): «Entra a es.wikipedia.org, busca Francisco Morazán y dime en qué fecha nació». La hizo en 12 pasos y 100 s y contestó bien (3 de octubre de 1792).
 
 ## Seguridad
 

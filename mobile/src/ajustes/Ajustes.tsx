@@ -30,6 +30,7 @@ import { fuenteDisplay } from '../ui/tipografia';
 import { armarCumple, leerCumple } from '../primeravez/flujo';
 import { ListaPermisos } from '../primeravez/ListaPermisos';
 import { HojaCorreos, useCuentasCorreo } from './Correos';
+import { HojaComputadora } from './Computadora';
 import { INFO_PERMISOS, estadosPermisos, listo } from '../primeravez/permisos';
 import { SelectorCumple, VistaAvatar } from '../primeravez/piezas';
 import type { RaizParams } from '../app/rutas';
@@ -45,7 +46,7 @@ function lineaOta(idioma: Idioma): string {
 }
 
 type Props = NativeStackScreenProps<RaizParams, 'Ajustes'>;
-type HojaAbierta = 'apodo' | 'avatar' | 'cumple' | 'permisos' | 'salir' | 'correos' | null;
+type HojaAbierta = 'apodo' | 'avatar' | 'cumple' | 'permisos' | 'salir' | 'correos' | 'computadora' | null;
 
 export function Ajustes({ navigation }: Props) {
   const idioma = useIdioma();
@@ -175,6 +176,12 @@ export function Ajustes({ navigation }: Props) {
                 onCambiar={(m) => guardarPerfil({ motorComputadora: m })}
               />
             </View>
+            <Fila
+              titulo={tr('Ver lo que hace', 'See what it does')}
+              detalle={tr('Paso a paso, y encargarle algo', 'Step by step, and give it a task')}
+              icono="enlace"
+              onPress={() => abrir('computadora')}
+            />
           </Grupo>
         </Aparecer>
 
@@ -273,6 +280,7 @@ export function Ajustes({ navigation }: Props) {
       </Hoja>
 
       <HojaCorreos visible={hoja === 'correos'} onCerrar={() => setHoja(null)} />
+      <HojaComputadora visible={hoja === 'computadora'} onCerrar={() => setHoja(null)} nombreAvatar={de(avatar.nombre)} />
 
       <Hoja visible={hoja === 'permisos'} onCerrar={() => setHoja(null)} titulo={tr('Permisos', 'Permissions')} subtitulo={tr('Toca un permiso para darlo. Si lo bloqueaste, te llevo a los ajustes del teléfono.', 'Tap one to allow it. If you blocked it, I’ll take you to your phone settings.')}>
         <ListaPermisos />
