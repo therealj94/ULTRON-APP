@@ -21,6 +21,12 @@ internal sealed class Despertador : IDisposable
 
     readonly System.Collections.Generic.List<SpeechRecognitionEngine> extras = new();
 
+    /// <summary>
+    /// Verdadero mientras suena música (o algo que no es la persona): Windows oye «aura», «claudio» o «antonio» en
+    /// las canciones y en el altavoz (1-oct 22:35–22:39: una activación falsa cada pocos segundos). Ahí se exige más.
+    /// </summary>
+    public Func<bool>? Exigente { get; set; }
+
     /// <summary>Frases de la gramática que existen solo para absorber lo que se parece a su nombre: no despiertan.</summary>
     internal static readonly System.Collections.Generic.HashSet<string> Senuelos = new(StringComparer.OrdinalIgnoreCase) { "oye laura" };
 
@@ -56,8 +62,7 @@ internal sealed class Despertador : IDisposable
                     Centro.Registro.Anotar("despertar", $"Windows ({info.Culture.Name}) oyó «{e.Result.Text}» con {e.Result.Confidence:0.00}");
                     // Los señuelos («oye laura») están en la gramática para que SAPI no los confunda con «oye aura»: nunca despiertan.
                     if (Senuelos.Contains(e.Result.Text)) return;
-                    // «aura» sola pide más seguridad (se parece a otras palabras); con «oye/hey» basta menos.
-                    var minimo = e.Result.Text == "aura" ? 0.75f : 0.55f;
+                    var minimo = UmbralesDespertar.MinimoWindows(e.Result.Text, propio != null, Exigente?.Invoke() == true);
                     if (e.Result.Confidence >= minimo) Desperto?.Invoke();
                 };
                 m.RecognizeAsync(RecognizeMode.Multiple);
@@ -77,6 +82,8 @@ internal sealed class Despertador : IDisposable
     /// 0,75 sostenido dos trozos seguidos (o 0,9 de una): ConfirmaPalabra, en Aura.Windows.Core, probado.
     /// </summary>
     public const float Umbral = ConfirmaPalabra.Umbral;
+    /// <summary>Con música sonando: un trozo así de seguro.</summary>
+    public const float UmbralConMusica = 0.97f;
     readonly ConfirmaPalabra confirma = new();
     PalabraClave? propio;
     WaveInEvent? micPropio;
@@ -110,7 +117,9 @@ internal sealed class Despertador : IDisposable
                     try { p = propio.Alimentar(muestras); } catch { return; }
                 }
                 // Una vez por llamada: la misma palabra da varios trozos seguidos por encima del umbral.
-                if (!confirma.Alimentar(p) || DateTime.Now - ultimaVez < TimeSpan.FromSeconds(2)) return;
+                // Con música, el modelo propio también pide más: un trozo de 0,97 (las canciones traen palabras parecidas).
+                bool cuenta = confirma.Alimentar(p) && (Exigente?.Invoke() != true || p >= UmbralConMusica);
+                if (!cuenta || DateTime.Now - ultimaVez < TimeSpan.FromSeconds(2)) return;
                 ultimaVez = DateTime.Now;
                 Centro.Registro.Anotar("despertar", $"«Hey AURA» (modelo propio) con {p:0.00}");
                 Desperto?.Invoke();

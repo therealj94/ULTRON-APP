@@ -35,7 +35,7 @@ export function vistaInicio(): HTMLElement {
         h('div', { class: 'fila', style: 'flex-wrap:wrap' },
           boton(T('Hablar ahora', 'Talk now'), () => pedir('chat.hablar'), { tipo: 'acento', icono: 'mic', titulo: T('AURA te escucha (Ctrl+Alt+Espacio)', 'AURA listens') }),
           boton(T('Escribirle', 'Type to her'), () => ir('chat'), { icono: 'chat' }),
-          boton(T('Ver lo que sé hacer', 'See what I can do'), () => window.dispatchEvent(new Event('centro:recorrido')), { tipo: 'fantasma', icono: 'play', titulo: T('El recorrido con Claudio y ANT-ONIO: todo lo que hace AURA en tu computadora', 'The tour with Claudio and ANT-ONIO') }))),
+          boton(T('Ver el recorrido', 'Watch the tour'), () => window.dispatchEvent(new Event('centro:recorrido')), { icono: 'play', titulo: T('El recorrido con Claudio y ANT-ONIO: todo lo que hace AURA en tu computadora', 'The tour with Claudio and ANT-ONIO') }))),
       h('div', { style: 'height:260px' }, av.el)),
     h('div', { class: 'rejilla', style: 'margin-bottom:14px' },
       acceso('pulse', 'PULSE2CHAT', T('Chats, llamadas y videollamadas', 'Chats, calls, video'), () => ir('pulse')),

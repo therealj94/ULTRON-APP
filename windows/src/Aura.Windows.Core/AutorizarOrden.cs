@@ -72,6 +72,7 @@ public static class AutorizarOrden
                 yield return ClaseAccion.Ventana;
             if (w is "pon" or "ponme" or "pone" or "poner" or "toca" or "tocame" or "play" or "musica" or "music" or "cancion" or "canciones" or "tema" or "song"
                 or "pausa" or "pausar" or "siguiente" or "anterior" or "sigue" or "continua" or "reanuda" or "resume" or "next" or "previous" or "skip" or "salta"
+                or "rola" or "rolas" or "playlist" or "oir" or "artista" or "album" or "disco" or "bailar" or "listen"
                 || w.StartsWith("reprodu", StringComparison.Ordinal) || w.StartsWith("escuch", StringComparison.Ordinal))
                 yield return ClaseAccion.Musica;
             if (w is "volumen" or "volume" or "sube" or "subele" or "subir" or "baja" or "bajale" or "bajar" or "mute" or "louder" or "quieter" || w.StartsWith("silenci", StringComparison.Ordinal))
@@ -102,6 +103,35 @@ public static class AutorizarOrden
         var musica = Clase(p) == ClaseAccion.Musica;
         return Palabras(orden).Where(w => w.Length >= 3 && !NoObjetivo.Contains(w) && !(musica && Reproductores.Contains(w))).Distinct().ToList();
     }
+
+    /// <summary>
+    /// ¿Pidió música de verdad? Por sus reglas o Laya, o por una palabra de música («canción», «escuchar», «rola»,
+    /// «rola»…). «Pon» solo no cuenta («pon el volumen al 30»), ni el nombre de la app («abre Spotify» es abrir la app,
+    /// no pedir que el cerebro elija una canción).
+    /// </summary>
+    public static bool PidioMusica(string dicho)
+    {
+        var pd = Intencion.PorReglas(dicho ?? "");
+        if (pd.Mano != Mano.Varias && Clase(pd) == ClaseAccion.Musica) return true;
+        var ligera = LayaLigera.Predecir(dicho ?? "");
+        if (ligera.Seguro && Intencion.DeEtiqueta(ligera.Etiqueta) == Mano.Musica) return true;
+        return Palabras(dicho ?? "").Any(w => w is "musica" or "music" or "cancion" or "canciones" or "tema" or "song" or "rola" or "rolas" or "playlist"
+            or "oir" or "artista" or "album" or "disco" or "bailar" or "listen" || w.StartsWith("escuch", StringComparison.Ordinal) || w.StartsWith("reprodu", StringComparison.Ordinal));
+    }
+
+    /// <summary>Lo que se dice al pedir música sin nombrar qué: ánimo, para qué, cortesía.</summary>
+    static readonly HashSet<string> MusicaGeneral = new(StringComparer.Ordinal)
+    {
+        "algo", "alguna", "alguno", "una", "unas", "uno", "unos", "para", "por", "favor", "porfa", "porfavor", "quiero", "quisiera", "ponme", "pon", "poner",
+        "toca", "tocame", "reproduce", "escuchar", "escucha", "oir", "musica", "music", "cancion", "canciones", "tema", "temas", "song", "songs", "rola", "rolas",
+        "playlist", "lista", "spotify", "youtube", "bonita", "bonito", "buena", "bueno", "linda", "tranquila", "relajante", "suave", "alegre", "animada",
+        "romantica", "triste", "movida", "trabajar", "estudiar", "concentrarme", "concentrar", "dormir", "relajarme", "bailar", "manejar", "cocinar",
+        "fondo", "ambiente", "mientras", "trabajo", "ahora", "otra", "otro", "mas", "something", "some", "play", "listen", "nice", "chill", "while",
+    };
+
+    /// <summary>¿Nombró qué quiere oír (un artista, un género, una canción)? Entonces el cerebro no lo cambia por otra cosa.</summary>
+    public static bool NombraMusica(string dicho) =>
+        Palabras(dicho ?? "").Any(w => w.Length >= 3 && !NoObjetivo.Contains(w) && !MusicaGeneral.Contains(w) && !w.StartsWith("escuch", StringComparison.Ordinal) && !w.StartsWith("reprodu", StringComparison.Ordinal));
 
     /// <summary>Las clases de acción que expresó la persona: sus reglas, Laya ligera (si está segura) y sus verbos.</summary>
     public static HashSet<ClaseAccion> ClasesPedidas(string dicho)
@@ -162,7 +192,12 @@ public static class AutorizarOrden
             if (v1 == Veredicto.Rechazar || v2 == Veredicto.Rechazar) return Veredicto.Rechazar;
             return v1 == Veredicto.Confirmar || v2 == Veredicto.Confirmar ? Veredicto.Confirmar : Veredicto.Hacer;
         }
-        if (!MismaClase(po, dicho, ClasesPedidas(dicho))) return Veredicto.Rechazar;
+        var pedidas = ClasesPedidas(dicho);
+        if (!MismaClase(po, dicho, pedidas)) return Veredicto.Rechazar;
+        // Música que pediste («ponme algo para trabajar», «quiero oír a Marc Anthony»): el cerebro elige la canción y
+        // no hace falta que repita tus palabras. No mueve nada que no se deshaga (1-oct 22:38: «pon … en spotify» del
+        // cerebro se rechazó porque el artista no salía tal cual, y hubo que pedirlo dos veces).
+        if (Clase(po) == ClaseAccion.Musica && PidioMusica(dicho) && !NombraMusica(dicho)) return Veredicto.Hacer;
         var dichas = Palabras(dicho).ToList();
         if (contexto != null) foreach (var c in contexto.TakeLast(4)) dichas.AddRange(Palabras(c));
         foreach (var w in Objetivo(orden!, po)) if (!Aparece(w, dichas)) return Veredicto.Rechazar;

@@ -63,7 +63,10 @@ function armazon() {
     botones.set(s.id, b);
     lateral.appendChild(b);
   }
+  // El recorrido, siempre a la vista: un botón propio en la barra, encima del de volver al notch.
   lateral.appendChild(h('div', { class: 'abajo' },
+    h('button', { class: 'nav nav-recorrido', title: T('Ver el recorrido: Claudio y ANT-ONIO te enseñan todo lo que hace AURA', 'Watch the tour: Claudio and ANT-ONIO show you everything AURA does'),
+      'aria-label': T('Ver el recorrido', 'Watch the tour'), on: { click: () => window.dispatchEvent(new Event('centro:recorrido')) } }, icono('play', 22)),
     h('button', { class: 'nav', title: T('Volver al notch (AURA sigue contigo arriba)', 'Back to the notch'), 'aria-label': T('Volver al notch', 'Back to the notch'),
       on: { click: () => recoger() } }, icono('notch', 22))));
   contenido = h('main', { class: 'contenido' });
