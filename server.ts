@@ -103,7 +103,7 @@ import { etiquetasDeVista, focoDePregunta, focoValido, vistaAHechos } from './li
 import { presupuesto, PRESUPUESTO_OIDO_MS, PRESUPUESTO_VISION_MS } from './lib/presupuesto';
 import { destinoPublico } from './lib/red-publica';
 import { extraerPdf, dataUrlDeImagen, bufferDeCualquier } from './lib/leer-pdf';
-import { transcribirAudio, permisoTurbo, PROVEEDORES_OIDO_CONFIRMAR } from './lib/oido';
+import { transcribirAudio, permisoTurbo, PROVEEDORES_OIDO_CONFIRMAR, PROVEEDORES_OIDO_ELECTRUM_CONFIRMAR, TERMINOS_ELECTRUM } from './lib/oido';
 import { COT_FORZADO, esTareaDeCodigo, requiereCot } from './lib/prompts/cot';
 import { extraerEmocion, normalizarEmocion, type Emocion } from './lib/emocion';
 import { cabeceraAlineacion } from './lib/alineacion';
@@ -1200,12 +1200,25 @@ app.post('/api/electrum/comando', exigirPlataforma('electrum'), limitar(120), as
   }
 });
 
+/**
+ * Dictado de campo de Dr Electrum con Turbo en vivo: token de un solo uso y la dirección del WebSocket
+ * con las pistas del oficio y el idioma automático (español o inglés, lo que se hable).
+ */
+app.post('/api/electrum/turbo/permiso', exigirPlataforma('electrum'), limitar(40), async (_req, res) => {
+  const permiso = await permisoTurbo('auto', undefined, TERMINOS_ELECTRUM);
+  if (!permiso) return res.status(503).json({ error: 'El oído en vivo no está disponible ahora.', honesto: true });
+  res.setHeader('Cache-Control', 'no-store');
+  return res.json({ ...permiso, honesto: true });
+});
+
 app.post('/api/electrum/oir', exigirPlataforma('electrum'), limitar(40), async (req, res) => {
   const audio = bufferDeCualquier(req.body?.audio);
   if (!audio || audio.length < 400) return res.status(400).json({ error: 'No me llegó audio.', honesto: true });
   try {
     // Español o inglés, lo que se hable: el transcriptor lo detecta y la respuesta sigue ese idioma.
-    const oido = await transcribirAudio({ audio, mime: String(req.body?.mime || 'audio/webm'), language: 'auto', plataforma: 'electrum' });
+    // `confirmar`: lo que el teléfono ya oyó en vivo con Turbo y trae cifras o dinero; directo con Scribe v2.
+    const confirmar = req.body?.confirmar === true;
+    const oido = await transcribirAudio({ audio, mime: String(req.body?.mime || 'audio/webm'), language: 'auto', plataforma: 'electrum', ...(confirmar ? { proveedores: PROVEEDORES_OIDO_ELECTRUM_CONFIRMAR() } : {}) });
     if (!oido.texto) return res.status(200).json({ texto: '', detalle: oido.detalle, via: oido.via, honesto: true });
     return res.json({ texto: oido.texto, via: oido.via, idioma: oido.idioma || 'es', honesto: true });
   } catch (e: any) {

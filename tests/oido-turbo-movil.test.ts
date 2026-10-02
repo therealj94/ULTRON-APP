@@ -357,3 +357,165 @@ describe('Oído Turbo (teléfono): el motor', () => {
     assert.equal(b.motor.escuchando(), false);
   });
 });
+
+// ── el dictado de campo de Dr Electrum (apretar, hablar, soltar) ────────────────────────────────
+import { dictarTurbo } from '../mobile/src/lib/turboDictado';
+
+function bancoDictado(opts: { permiso?: boolean; confirmado?: string; respaldo?: string; mic?: boolean; servidorCaido?: boolean } = {}) {
+  const ws: WsFalso[] = [];
+  const wavs: { wav: string; confirmar: boolean }[] = [];
+  const finales: string[] = [];
+  const parciales: string[] = [];
+  let fines = 0;
+  let alTrozo: ((t: TrozoAudio) => void) | null = null;
+  let abierto = false;
+  const deps = {
+    abrirMic: async (cb: (t: TrozoAudio) => void) => {
+      if (opts.mic === false) return null;
+      alTrozo = cb;
+      abierto = true;
+      return () => {
+        abierto = false;
+        alTrozo = null;
+      };
+    },
+    permiso: async () => (opts.permiso === false ? null : { url: 'wss://falso/electrum' }),
+    crearWs: (url: string) => {
+      const w = new WsFalso(url);
+      ws.push(w);
+      setTimeout(() => w.abrir(), 1);
+      return w;
+    },
+    transcribirWav: async (wav: string, confirmar: boolean) => {
+      wavs.push({ wav, confirmar });
+      if (opts.servidorCaido) throw new Error('sin red');
+      return confirmar ? (opts.confirmado ?? '') : (opts.respaldo ?? 'lo del respaldo');
+    },
+    esperaFinalMs: 60,
+    confirmarMs: 200,
+  };
+  const errores: string[] = [];
+  const cb = { onFinal: (t: string) => finales.push(t), onParcial: (t: string) => parciales.push(t), onFin: () => fines++, onError: (m: string) => errores.push(m) };
+  const hablar = (k: number) => {
+    for (let i = 0; i < k; i++) alTrozo?.({ audio: Buffer.alloc(3200, i + 1).toString('base64'), db: -20 });
+  };
+  return { deps, cb, ws, wavs, finales, parciales, errores, fines: () => fines, hablar, abierto: () => abierto };
+}
+
+describe('Oído Turbo (teléfono): dictado de campo de Dr Electrum', () => {
+  it('lo dicho va en vivo, los parciales caen en la caja y al soltar llega el texto final', async () => {
+    const b = bancoDictado();
+    const c = await dictarTurbo(b.deps, b.cb);
+    assert.ok(c);
+    b.hablar(8);
+    await espera();
+    assert.equal(b.ws[0].enviados.length, 8, 'lo dicho antes de conectar esperó en la cola');
+    b.ws[0].decir({ message_type: 'partial_transcript', text: 'muéstrame la concesión' });
+    assert.deepEqual(b.parciales, ['muéstrame la concesión']);
+    c!.parar();
+    assert.equal(b.abierto(), false, 'al soltar se cierra el micrófono');
+    await espera();
+    assert.equal(b.ws[0].commits, 1);
+    b.ws[0].decir({ message_type: 'committed_transcript', text: 'Muéstrame la concesión Quebrada Seca.' });
+    await espera();
+    assert.deepEqual(b.finales, ['Muéstrame la concesión Quebrada Seca.']);
+    assert.equal(b.fines(), 1);
+    assert.equal(b.wavs.length, 0);
+  });
+
+  it('con cifras se confirma con Scribe v2', async () => {
+    const b = bancoDictado({ confirmado: '¿Qué traslapes tiene Concordia seis?' });
+    const c = await dictarTurbo(b.deps, b.cb);
+    b.hablar(10);
+    await espera();
+    c!.parar();
+    await espera();
+    b.ws[0].decir({ message_type: 'committed_transcript', text: '¿Qué traslapes tiene Concordia 6?' });
+    await espera(20);
+    assert.deepEqual(b.finales, ['¿Qué traslapes tiene Concordia seis?']);
+    assert.equal(b.wavs[0].confirmar, true);
+    assert.equal(pcmDeWav(Buffer.from(b.wavs[0].wav, 'base64'))!.pcm.length, 10 * 3200, 'la grabación entera');
+  });
+
+  it('sin token del servidor, la grabación entera va por /api/electrum/oir', async () => {
+    const b = bancoDictado({ permiso: false, respaldo: 'Revisa el expediente' });
+    const c = await dictarTurbo(b.deps, b.cb);
+    b.hablar(10);
+    await espera();
+    c!.parar();
+    await espera(20);
+    assert.equal(b.ws.length, 0);
+    assert.deepEqual(b.finales, ['Revisa el expediente']);
+    assert.equal(b.wavs[0].confirmar, false);
+  });
+
+  it('Turbo no contesta al soltar: va por el servidor', async () => {
+    const b = bancoDictado({ respaldo: 'Revisa el expediente' });
+    const c = await dictarTurbo(b.deps, b.cb);
+    b.hablar(10);
+    await espera();
+    c!.parar();
+    await espera(120);
+    assert.deepEqual(b.finales, ['Revisa el expediente']);
+  });
+
+  it('cancelar tira lo dicho; un toque sin hablar no manda nada', async () => {
+    const b = bancoDictado();
+    const c = await dictarTurbo(b.deps, b.cb);
+    b.hablar(10);
+    await espera();
+    c!.cancelar();
+    await espera(20);
+    assert.deepEqual(b.finales, []);
+    assert.equal(b.fines(), 1);
+    const b2 = bancoDictado();
+    const c2 = await dictarTurbo(b2.deps, b2.cb);
+    b2.hablar(1);
+    c2!.parar();
+    await espera(20);
+    assert.deepEqual(b2.finales, []);
+    assert.equal(b2.wavs.length, 0);
+    assert.equal(b2.fines(), 1);
+  });
+
+  it('un «sí» cortito que Turbo ya entendió no se tira', async () => {
+    const b = bancoDictado();
+    const c = await dictarTurbo(b.deps, b.cb);
+    b.hablar(2);
+    await espera();
+    b.ws[0].decir({ message_type: 'partial_transcript', text: 'Sí.' });
+    c!.parar();
+    await espera(20);
+    assert.deepEqual(b.finales, ['Sí.']);
+    assert.equal(b.wavs.length, 0);
+  });
+
+  it('sin Turbo y sin servidor (sin señal): avisa en vez de apagarse callado', async () => {
+    const b = bancoDictado({ permiso: false, servidorCaido: true });
+    const c = await dictarTurbo(b.deps, b.cb);
+    b.hablar(10);
+    await espera();
+    c!.parar();
+    await espera(20);
+    assert.deepEqual(b.finales, []);
+    assert.equal(b.errores.length, 1);
+    assert.match(b.errores[0], /señal/);
+    assert.equal(b.fines(), 1);
+  });
+
+  it('el servidor contesta que no había voz: silencio, sin alerta', async () => {
+    const b = bancoDictado({ permiso: false, respaldo: '' });
+    const c = await dictarTurbo(b.deps, b.cb);
+    b.hablar(10);
+    await espera();
+    c!.parar();
+    await espera(20);
+    assert.deepEqual(b.finales, []);
+    assert.deepEqual(b.errores, []);
+  });
+
+  it('sin micrófono crudo devuelve null (sigue el reconocedor del teléfono)', async () => {
+    const b = bancoDictado({ mic: false });
+    assert.equal(await dictarTurbo(b.deps, b.cb), null);
+  });
+});
