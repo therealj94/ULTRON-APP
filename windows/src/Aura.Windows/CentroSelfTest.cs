@@ -54,11 +54,22 @@ internal static class CentroSelfTest
             // Sin servidor en la prueba: el recorrido sigue en modo lectura (los subtítulos con su tiempo).
             "voz.decir" => null,
             "diagnostico.leer" => "2026-10-01 14:00:00 [inicio] prueba",
+            // El WhatsApp personal (la cuenta de la prueba es la dueña): ya vinculado, dos chats y una conversación.
+            "whatsapp.estado" => new { disponible = true, permitido = true, vinculado = true, conectado = true, numero = "50499990000", nombre = "José" },
+            "whatsapp.chats" => new { chats = new object[] {
+                new { jid = "50499887766@s.whatsapp.net", nombre = "Karla", grupo = false, noLeidos = 2, hora = Ahora() - 240_000, ultimo = "¿Ya saliste de la junta?", ultimoMio = false },
+                new { jid = "120363041122334455@g.us", nombre = "Junta Orden Global", grupo = true, noLeidos = 0, hora = Ahora() - 2_100_000, ultimo = "Mañana a las 9", ultimoMio = false, ultimoDe = "Mario Zelaya" } } },
+            "whatsapp.mensajes" => new { chat = "50499887766@s.whatsapp.net", mensajes = new object[] {
+                new { id = "k1", chat = "50499887766@s.whatsapp.net", de = "50499887766@s.whatsapp.net", nombreDe = "Karla", mio = false, hora = Ahora() - 3_600_000, tipo = "audio", texto = "", duracion = 12, conMedia = true },
+                new { id = "k2", chat = "50499887766@s.whatsapp.net", de = "", nombreDe = "", mio = true, hora = Ahora() - 3_500_000, tipo = "texto", texto = "Ya casi termino", editado = true },
+                new { id = "k3", chat = "50499887766@s.whatsapp.net", de = "50499887766@s.whatsapp.net", nombreDe = "Karla", mio = false, hora = Ahora() - 240_000, tipo = "texto", texto = "¿Ya saliste de la junta?" } } },
+            "whatsapp.leido" => new { ok = true },
             _ => null,
         };
     }
 
     static T Hecho<T>(Action a, T v) { a(); return v; }
+    static long Ahora() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
     public static async Task Run(string carpeta)
     {
@@ -99,6 +110,16 @@ internal static class CentroSelfTest
                 if (hay != "true") faltan.Add(secciones[i]);
                 await w.Fotografiar(Path.Combine(carpeta, $"{i + 3:00}-{secciones[i]}.png"));
             }
+            // WhatsApp (junto a PULSE2CHAT, arriba se cambia): la lista y una conversación.
+            w.Emitir("ir", "whatsapp");
+            await Task.Delay(2500);
+            if (await w.Ejecutar("!!document.querySelector('.wa-vista:not([hidden]) .p2c-fila')") != "true") faltan.Add("whatsapp");
+            await w.Fotografiar(Path.Combine(carpeta, "09a-whatsapp.png"));
+            await w.Ejecutar("document.querySelector('.wa-vista .p2c-fila')?.click()");
+            await Task.Delay(1500);
+            await w.Fotografiar(Path.Combine(carpeta, "09b-whatsapp-conversacion.png"));
+            w.Emitir("ir", "pulse");
+            await Task.Delay(800);
             // Chat: una respuesta que llega mientras se escribe.
             w.Emitir("ir", "chat");
             w.Emitir("chat.mensaje", new { id = 1, quien = "Tú", texto = "¿Cuánto ORIGEN tengo?", mio = true });

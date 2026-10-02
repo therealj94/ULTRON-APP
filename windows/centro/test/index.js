@@ -3,3 +3,4 @@
 import './candado.test.mjs';
 import './llamada.test.mjs';
 import './recorrido.test.mjs';
+import './whatsapp.test.mjs';
