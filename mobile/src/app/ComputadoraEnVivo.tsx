@@ -28,6 +28,7 @@ import { useVozOpcional } from '../compa/VozProvider';
 import { ecoMesa, mensajeVoz, nivelOido } from '../compa/canales';
 import { CompaneroPc, esAccionPc, trabajando, type EstadoPc } from '../compa/computadora';
 import { tecleoPc } from '../compa/computadoraSonido';
+import { ponerTeclea } from '../avatares/video/pistas';
 import { HojaComputadoraVivo } from '../ajustes/Computadora';
 import { HojaCorreos } from '../ajustes/Correos';
 import { abrirHoja, anunciarAnfitrion, cerrarHoja, hojasAhora, suscribirHojas } from './hojas';
@@ -84,6 +85,16 @@ export function ComputadoraEnVivo() {
 
   // La raíz dibuja las hojas: la mesa y Ajustes ya no dibujan la suya (HojaComputadora solo la abre).
   useEffect(() => anunciarAnfitrion(), []);
+
+  // Mientras su computadora trabaja, Claudio y ANT-ONIO en video teclean (avatares/video/pistas.ts).
+  useEffect(() => {
+    const off = companero.suscribir(() => ponerTeclea(companero.trabajando));
+    ponerTeclea(companero.trabajando);
+    return () => {
+      off();
+      ponerTeclea(false);
+    };
+  }, [companero]);
 
   // Los avisos de su computadora; la persona hablando; el sonido de la conversación; la app detrás.
   useEffect(() => {
