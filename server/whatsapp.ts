@@ -22,7 +22,8 @@
 import type express from 'express';
 import { clave } from '../lib/boveda';
 import { personaPorCorreoExacto } from '../lib/acceso';
-import { respuestaAlBorrador } from './correo';
+import { decidirBorrador } from './correo';
+import type { RetencionAcciones } from './voz-agente';
 
 export type ChatWA = { jid: string; nombre: string; grupo: boolean; noLeidos: number; hora: number; ultimo: string; ultimoMio: boolean; ultimoDe?: string };
 export type MensajeWA = { id: string; chat: string; de: string; nombreDe: string; mio: boolean; hora: number; tipo: string; texto: string; miniatura?: string; duracion?: number; archivo?: string; conMedia?: boolean; eliminado?: boolean; editado?: boolean };
@@ -188,20 +189,29 @@ export function borradorWhatsappDe(quien: string, ambito = ''): Borrador | null 
 }
 
 /** Al empezar el turno: el «sí» o el «no» al borrador de WhatsApp lo resuelve el servidor (no el modelo). */
-export async function resolverBorradorWhatsapp(quien: string, ambito: string, mensaje: string): Promise<string | null> {
+export async function resolverBorradorWhatsapp(quien: string, ambito: string, mensaje: string, retener?: RetencionAcciones): Promise<string | null> {
   const b = borradorWhatsappDe(quien, ambito);
   if (!b) return null;
-  const r = respuestaAlBorrador(mensaje);
-  if (!r) return null;
-  BORRADORES.delete(llave(quien, ambito));
-  if (r === 'no') return `WHATSAPP: no se mandó; el borrador para ${b.nombre} quedó descartado. Díselo en pocas palabras.`;
-  if (!whatsappPermitido(quien)) return 'WHATSAPP: no lo mandé: esta cuenta ya no tiene su WhatsApp.';
-  try {
-    await enviarWA(b.chat, b.texto);
-    return `WHATSAPP ENVIADO a ${b.nombre}: «${b.texto.slice(0, 200)}». Díselo en una frase.`;
-  } catch (e: any) {
-    return `WHATSAPP: NO se pudo mandar (${String(e?.message || e).slice(0, 140)}). Díselo con honestidad.`;
-  }
+  const k = llave(quien, ambito);
+  return decidirBorrador({
+    quien,
+    ambito,
+    mensaje,
+    retener,
+    canal: 'WHATSAPP',
+    para: b.nombre,
+    quitar: () => BORRADORES.delete(k),
+    reponer: () => BORRADORES.set(k, b),
+    enviar: async () => {
+      if (!whatsappPermitido(quien)) return 'WHATSAPP: no lo mandé: esta cuenta ya no tiene su WhatsApp.';
+      try {
+        await enviarWA(b.chat, b.texto);
+        return `WHATSAPP ENVIADO a ${b.nombre}: «${b.texto.slice(0, 200)}». Díselo en una frase.`;
+      } catch (e: any) {
+        return `WHATSAPP: NO se pudo mandar (${String(e?.message || e).slice(0, 140)}). Díselo con honestidad.`;
+      }
+    },
+  });
 }
 
 /** El runner del harness: «revisar», «buscar x», «leer 2|Beto», «responder 2|Beto | texto». */

@@ -86,15 +86,28 @@ export function pedidoPermitido(ped: PedidoHerramienta, nivel: NivelAura): strin
 
 const RE = /^\s*PEDIR_HERRAMIENTA:\s*(web|sistema|ejecutor|leer|computadora|correo|whatsapp)\s*(.*)$/im;
 
+/** Lo que saca datos del turno hacia afuera por su cuenta: abrir una dirección o usar la computadora. */
+export function herramientaQueSale(h: string): boolean {
+  return h === 'leer' || h === 'computadora';
+}
+
+/** El resultado de una herramienta no puede pedir otra: su línea PEDIR_HERRAMIENTA se rompe (la escribió otro). */
+export function neutralizarPedido(texto: string): string {
+  return String(texto ?? '').replace(/PEDIR_HERRAMIENTA/gi, (m) => m.replace('_', '-'));
+}
+
 export function extraerPedidoHerramienta(texto: string): PedidoHerramienta | null {
   const m = String(texto || '').match(RE);
   if (!m) return null;
   return { herramienta: m[1].toLowerCase() as HerramientaHarness, arg: String(m[2] || '').trim() };
 }
 
+/** Todas las líneas de pedido (el modelo a veces escribe dos): ninguna se lee ni se dice. */
+const RE_TODAS = new RegExp(RE.source, 'gim');
+
 export function quitarLineaPedido(texto: string): string {
   return String(texto || '')
-    .replace(RE, '')
+    .replace(RE_TODAS, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }

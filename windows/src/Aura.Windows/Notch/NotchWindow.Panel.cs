@@ -16,7 +16,6 @@ public partial class NotchWindow
 {
     string borradorGuardado = "";
     bool borradorSucio;
-    CallWindow? llamadas;
     static string RutaRecuperacion => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AuraWindows", "draft.bin");
 
     internal void AbrirPanel(bool si)
@@ -123,9 +122,14 @@ public partial class NotchWindow
         catch (Exception ex) { Avisar(new Aviso(T("No se pudo", "Couldn't do it"), ex.Message, "", "worried")); }
     }
 
+    /// <summary>
+    /// «Llamadas y video»: las llamadas de verdad son las de PULSE2CHAT, en el Centro. La CallWindow vieja (CallWindow.cs)
+    /// dependía de un gateway en http://127.0.0.1:8787 que no se instala; queda solo para su prueba (--rtc-self-test).
+    /// </summary>
     void AbrirLlamadas(object s, RoutedEventArgs e)
     {
-        try { if (llamadas == null) { llamadas = new CallWindow(); llamadas.Closed += (_, _) => llamadas = null; } llamadas.Show(); llamadas.Activate(); }
+        e.Handled = true;
+        try { AbrirCentro("pulse"); }
         catch (Exception ex) { Avisar(new Aviso(T("Llamadas", "Calls"), ex.Message, "", "worried")); }
     }
 

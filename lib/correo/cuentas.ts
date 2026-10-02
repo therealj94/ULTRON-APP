@@ -79,21 +79,38 @@ function aDisco(quien: string, cuentas: CuentaCorreo[]) {
   }
 }
 
-export async function cuentasDe(quien: string): Promise<CuentaCorreo[]> {
+/** S3 no se pudo leer para esta persona: sus cuentas se ven vacías, pero no se puede guardar encima. */
+export class CuentasNoDisponibles extends Error {}
+
+async function leerCuentas(quien: string): Promise<{ cuentas: CuentaCorreo[]; leidas: boolean }> {
   const q = normal(quien);
-  if (!q) return [];
+  if (!q) return { cuentas: [], leidas: true };
   const enCache = cache.get(q);
-  if (enCache) return enCache;
+  if (enCache) return { cuentas: enCache, leidas: true };
   let cuentas = deDisco(q);
   if (!cuentas && s3Listo()) {
     const r = await s3GetJson(claveS3(q)).catch(() => null);
     if (r?.ok && Array.isArray(r.json?.cuentas)) {
       cuentas = r.json.cuentas;
       aDisco(q, cuentas!);
+    } else if (!r?.ok) {
+      // Ni el 404 de «no tiene cuentas»: un fallo. No se guarda en la caché, para volver a preguntar.
+      return { cuentas: [], leidas: false };
     }
   }
   cache.set(q, cuentas ?? []);
-  return cuentas ?? [];
+  return { cuentas: cuentas ?? [], leidas: true };
+}
+
+export async function cuentasDe(quien: string): Promise<CuentaCorreo[]> {
+  return (await leerCuentas(quien)).cuentas;
+}
+
+/** Para cambiar la lista: si S3 no se pudo leer, se para aquí (guardar pisaría sus otras cuentas). */
+async function cuentasParaCambiar(quien: string): Promise<CuentaCorreo[]> {
+  const r = await leerCuentas(quien);
+  if (!r.leidas) throw new CuentasNoDisponibles('No pude leer tus cuentas guardadas en este momento; no cambié nada. Prueba otra vez en un rato.');
+  return r.cuentas;
 }
 
 async function guardar(quien: string, cuentas: CuentaCorreo[]) {
@@ -108,7 +125,7 @@ async function guardar(quien: string, cuentas: CuentaCorreo[]) {
 
 /** Agrega (o reemplaza, si ya estaba esa dirección) una cuenta ya probada. */
 export async function agregarCuenta(quien: string, correo: string, proveedor: CuentaCorreo['proveedor'], secretoEnClaro: string): Promise<CuentaCorreo> {
-  const cuentas = await cuentasDe(quien);
+  const cuentas = await cuentasParaCambiar(quien);
   const c: CuentaCorreo = {
     id: crypto.randomBytes(6).toString('hex'),
     correo: correo.trim().toLowerCase(),
@@ -121,7 +138,7 @@ export async function agregarCuenta(quien: string, correo: string, proveedor: Cu
 }
 
 export async function quitarCuenta(quien: string, id: string): Promise<boolean> {
-  const cuentas = await cuentasDe(quien);
+  const cuentas = await cuentasParaCambiar(quien);
   const quedan = cuentas.filter((c) => c.id !== id);
   if (quedan.length === cuentas.length) return false;
   await guardar(quien, quedan);
@@ -130,7 +147,7 @@ export async function quitarCuenta(quien: string, id: string): Promise<boolean> 
 
 /** Cambia el secreto guardado (Microsoft renueva el token de renovación). */
 export async function actualizarSecreto(quien: string, id: string, secretoEnClaro: string) {
-  const cuentas = await cuentasDe(quien);
+  const cuentas = await cuentasParaCambiar(quien);
   await guardar(
     quien,
     cuentas.map((c) => (c.id === id ? { ...c, secreto: cifrar(secretoEnClaro) } : c))

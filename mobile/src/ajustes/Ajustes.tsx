@@ -14,7 +14,7 @@
  * Todo se guarda en el perfil (lib/perfil.ts): se aplica al momento y viaja al servidor por detrás.
  */
 import { useEffect, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { AppState, StyleSheet, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { APP_VERSION } from '../config';
 import { versionInstalada } from '../lib/ota';
@@ -31,7 +31,7 @@ import { armarCumple, leerCumple } from '../primeravez/flujo';
 import { ListaPermisos } from '../primeravez/ListaPermisos';
 import { HojaCorreos, useCuentasCorreo } from './Correos';
 import { HojaComputadora } from './Computadora';
-import { INFO_PERMISOS, estadosPermisos, listo } from '../primeravez/permisos';
+import { INFO_PERMISOS, abrirAjustesAlarma, estadoAlarmaExacta, estadosPermisos, listo, type EstadoAlarma } from '../primeravez/permisos';
 import { SelectorCumple, VistaAvatar } from '../primeravez/piezas';
 import type { RaizParams } from '../app/rutas';
 import { salirDeLaSesion, useUsuario } from '../app/sesion';
@@ -57,13 +57,23 @@ export function Ajustes({ navigation }: Props) {
   const [apodo, setApodo] = useState(perfil?.apodo || '');
   const [cumple, setCumple] = useState<{ mes: number | null; dia: number | null }>({ mes: null, dia: null });
   const [permisosOk, setPermisosOk] = useState<number | null>(null);
+  const [alarma, setAlarma] = useState<EstadoAlarma | null>(null);
   const { cuentas: correos } = useCuentasCorreo(hoja === 'correos');
 
   useEffect(() => {
     if (hoja !== null) return;
     // Al cerrar la hoja de permisos (o al abrir Ajustes), cuántos están concedidos.
     void estadosPermisos().then((e) => setPermisosOk(INFO_PERMISOS.filter((p) => listo(e[p.id])).length));
+    void estadoAlarmaExacta().then(setAlarma);
   }, [hoja]);
+
+  // «Alarmas y recordatorios» se cambia en los Ajustes del sistema: al volver a la app se mira otra vez.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (st) => {
+      if (st === 'active') void estadoAlarmaExacta().then(setAlarma);
+    });
+    return () => sub.remove();
+  }, []);
 
   const abrir = (h: HojaAbierta) => {
     if (h === 'apodo') setApodo(perfil?.apodo || '');
@@ -193,6 +203,15 @@ export function Ajustes({ navigation }: Props) {
               valor={permisosOk === null ? '' : tr(`${permisosOk} de ${INFO_PERMISOS.length}`, `${permisosOk} of ${INFO_PERMISOS.length}`)}
               onPress={() => abrir('permisos')}
             />
+            {alarma && alarma !== 'noAplica' ? (
+              <Fila
+                titulo={tr('Alarmas y recordatorios', 'Alarms & reminders')}
+                detalle={tr('Para que tus recordatorios suenen a la hora exacta', 'So your reminders ring right on time')}
+                icono="reloj"
+                valor={alarma === 'concedido' ? tr('Permitido', 'Allowed') : tr('Apagado', 'Off')}
+                onPress={() => void abrirAjustesAlarma()}
+              />
+            ) : null}
           </Grupo>
         </Aparecer>
 

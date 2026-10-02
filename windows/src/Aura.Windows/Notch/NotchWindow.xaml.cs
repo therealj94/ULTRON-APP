@@ -106,6 +106,8 @@ public partial class NotchWindow : Window
         vigia.Tick += (_, _) => Vigilar();
         vigia.Start();
         Closing += AlCerrar;
+        // Windows bloqueado: AURA deja de oír y de hablar hasta que desbloquees (NotchWindow.Asistente.cs).
+        Microsoft.Win32.SystemEvents.SessionSwitch += AlCambiarSesion;
     }
 
     // ───────────────────────────── forma y animación ─────────────────────────────
@@ -406,6 +408,7 @@ public partial class NotchWindow : Window
     {
         if (!GuardarAntesDeSalir()) { e.Cancel = true; return; }
         CompositionTarget.Rendering -= Fotograma;
+        if (!soloRender) Microsoft.Win32.SystemEvents.SessionSwitch -= AlCambiarSesion;
         vigia.Stop(); relojAviso?.Stop();
         Terminar();
         if (fuente != null) { for (int i = 1; i <= 5; i++) UnregisterHotKey(fuente.Handle, i); fuente.RemoveHook(Gancho); }

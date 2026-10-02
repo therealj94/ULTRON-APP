@@ -6,7 +6,9 @@
  *     el «sí» de la persona presentada (con plazo) y el permiso por persona (src/caras/caras.ts);
  *   · el recorrido de primera vez: solo capacidades que existen (cada paso nombra archivos reales) y
  *     «no volver a mostrar» por persona (src/tutorial/pasos.ts; el recorrido en sí: src/recorrido);
- *   · el contraste de los textos del tema (A17): cada token de texto ≥ 4,5:1 sobre cada fondo.
+ *   · el contraste de los textos del tema (A17): cada token de texto ≥ 4,5:1 sobre cada fondo;
+ *   · costuras leídas del código: «olvidar» también en el servidor, el puntito del Chat, salir con
+ *     confirmación y la red de seguridad de cada pantalla (app/LimitePantalla.tsx).
  *
  *   cd mobile && npx tsx pruebas/mesa/mesa.prueba.mjs
  */
@@ -242,6 +244,35 @@ prueba('contraste: texto, texto2 y texto3 ≥ 4,5:1 sobre cada fondo, en claro y
   assert.deepEqual(malas, []);
   const peor = filas.reduce((m, f) => (f[1] < m[1] ? f : m));
   console.log(`      (${filas.length} combinaciones; la más baja: ${peor[0]} ${peor[1].toFixed(2)}:1)`);
+});
+
+/* ── costuras de la mesa (leídas del código: estos módulos cargan React Native) ───────────── */
+
+const fuente = (archivo) => fs.readFileSync(path.join(RAIZ, 'mobile/src', archivo), 'utf8');
+
+prueba('mesa: «olvidar» borra también en el servidor; el puntito del Chat llega a la barra; salir pregunta', () => {
+  const desk = fuente('screens/DeskScreen.tsx');
+  const olvido = /const confirmarOlvido = useCallback\(([\s\S]*?)\n  \}, \[/.exec(desk)?.[1] || '';
+  assert.match(olvido, /clearLongMemory\(user\)/, 'borra la copia del teléfono');
+  assert.match(olvido, /olvidarMemoriaServidor\(/, 'y pide al servidor que olvide');
+  assert.match(olvido, /no pude borrar la copia del servidor/, 'si el servidor no confirmó, lo dice');
+  assert.match(fuente('lib/api.ts'), /olvidar: true/, 'POST /api/memoria {olvidar:true}');
+  assert.match(desk, /<BarraMesa[\s\S]*?chatSinLeer=\{chatSinLeer\}/, 'la mesa le pasa el puntito a la barra');
+  const chats = fuente('pulse/chats.ts');
+  const sinLeer = /export function useSinLeerTotal[\s\S]*?\n\}/.exec(chats)?.[0] || '';
+  const ms = Number(/sondear\(refrescarLista, \(\) => ([\d_]+)\)/.exec(sinLeer)?.[1].replace(/_/g, ''));
+  assert.ok(ms >= 30_000, `el sondeo del puntito es tranquilo (≥ 30 s; es ${ms} ms)`);
+  const menu = fuente('components/DeskMenu.tsx');
+  assert.doesNotMatch(menu, /onPress=\{p\.onLogout\}/, '«Cerrar sesión» del menú no saca sin preguntar');
+  assert.match(menu, /confirmarSalida\(p\.onLogout\)/);
+});
+
+prueba('app: cada pantalla va dentro de su red de seguridad (LimitePantalla) con «Reintentar»', () => {
+  assert.match(fuente('app/AppAura.tsx'), /screenLayout=\{[\s\S]*?<LimitePantalla/);
+  const limite = fuente('app/LimitePantalla.tsx');
+  assert.match(limite, /getDerivedStateFromError/);
+  assert.match(limite, /reportarErrorPantalla\(/);
+  assert.match(limite, /tr\('Reintentar', 'Try again'\)/);
 });
 
 for (const [nombre, f] of pruebas) {

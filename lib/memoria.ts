@@ -37,6 +37,14 @@ let loaded = false;
 let lastVia: 's3' | 'disco' = 'disco';
 let lastS3: string = 'aún no sincronizado';
 let writing: Promise<void> = Promise.resolve();
+/**
+ * S3 no se pudo LEER (red, permisos, JSON roto; no un 404): lo que hay en memoria puede ser el disco vacío
+ * de un despliegue nuevo, así que no se sube nada hasta leer S3 de verdad (si no, pisaría la copia buena).
+ * Se vuelve a intentar leer como mucho cada REINTENTO_S3_MS.
+ */
+let s3SinLeer = false;
+let reintentoS3 = 0;
+const REINTENTO_S3_MS = 30_000;
 
 function vacio(): Almacen {
   const perfiles: Record<MiembroId, PerfilMem> = {};
@@ -104,13 +112,15 @@ function escribirDisco(a: Almacen) {
 
 export async function cargarMemoria(): Promise<Almacen> {
   if (loaded && cache) return cache;
+  if (s3SinLeer && cache && Date.now() < reintentoS3) return cache;
   const disco = leerDisco();
   if (s3Listo()) {
-    const r = await s3GetJson(S3_KEY);
+    const r = await s3GetJson(S3_KEY).catch((e) => ({ ok: false, json: null, detalle: String(e?.message || e), missing: false }));
     if (r.ok && r.json) {
       cache = migrar(r.json);
       lastVia = 's3';
       lastS3 = 'leído de S3';
+      s3SinLeer = false;
       escribirDisco(cache);
       loaded = true;
       return cache;
@@ -119,14 +129,18 @@ export async function cargarMemoria(): Promise<Almacen> {
       cache = disco;
       lastVia = 's3';
       lastS3 = 'S3 vacío; usé disco y voy a crear el objeto';
+      s3SinLeer = false;
       loaded = true;
       await persistirMemoria();
       return cache;
     }
-    cache = disco;
+    // No se pudo leer: se sigue con el disco, pero sin subir nada y volviendo a intentar pronto.
+    cache = cache || disco;
     lastVia = 'disco';
-    lastS3 = r.detalle;
-    loaded = true;
+    lastS3 = `${r.detalle} (no subo nada a S3 hasta poder leerlo)`;
+    s3SinLeer = true;
+    reintentoS3 = Date.now() + REINTENTO_S3_MS;
+    loaded = false;
     return cache;
   }
   cache = disco;
@@ -144,6 +158,10 @@ export async function persistirMemoria(): Promise<{ via: 's3' | 'disco'; detalle
     lastS3 = 'Sin S3. Memoria solo en disco (se pierde al redesplegar).';
     return { via: 'disco', detalle: lastS3 };
   }
+  if (s3SinLeer) {
+    lastVia = 'disco';
+    return { via: 'disco', detalle: lastS3 };
+  }
   const r = await s3PutJson(S3_KEY, cache);
   lastVia = r.ok ? 's3' : 'disco';
   lastS3 = r.ok ? 'guardado en S3' : r.detalle;
@@ -153,6 +171,11 @@ export async function persistirMemoria(): Promise<{ via: 's3' | 'disco'; detalle
 function enqueue(fn: () => Promise<void>) {
   writing = writing.then(fn, fn);
   return writing;
+}
+
+/** S3 no se pudo leer todavía: lo que se cambie ahora no llega a S3 (olvidar no borraría la copia guardada). */
+export function memoriaSinLeer(): boolean {
+  return s3SinLeer;
 }
 
 export function estadoMemoria(): { durable: boolean; via: 's3' | 'disco'; detalle: string; bucket: boolean } {
@@ -392,10 +415,20 @@ export function quienVerificado(body: any, sesion?: { nombre?: string; correo?: 
   return quienEs({ telegramUserId: body?.telegramUserId, telegramChatId: body?.telegramChatId });
 }
 
+/** Tests: como recién arrancado (nada leído todavía). */
+export function _olvidarCargaTest() {
+  cache = null;
+  loaded = false;
+  s3SinLeer = false;
+  reintentoS3 = 0;
+}
+
 /** Tests: reset in-memory cache. */
 export function resetMemoriaTest(store?: Almacen) {
   cache = store || vacio();
   loaded = true;
+  s3SinLeer = false;
+  reintentoS3 = 0;
   lastVia = 'disco';
   lastS3 = 'test';
 }

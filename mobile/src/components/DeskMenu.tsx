@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, Easing, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, Alert, Animated, Easing, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { APP_VERSION, type DeskPresence, type Mode } from '../config';
 import type { Cancion } from '../lib/api';
 import { agrupar, fetchCapacidades, type Capacidad, type CapacidadesPayload } from '../lib/capacidades';
@@ -498,7 +498,7 @@ export function DeskMenu(p: Props) {
             </Pressable>
           </View>
 
-          <Pressable onPress={p.onLogout} style={styles.logout} accessibilityRole="button">
+          <Pressable onPress={() => confirmarSalida(p.onLogout)} style={styles.logout} accessibilityRole="button">
             <Text style={styles.logoutText}>{tr('Cerrar sesión', 'Sign out')}</Text>
           </Pressable>
           <Text style={styles.version}>
@@ -507,6 +507,18 @@ export function DeskMenu(p: Props) {
         </ScrollView>
       </Animated.View>
     </View>
+  );
+}
+
+/** «Cerrar sesión» pregunta antes, con las mismas palabras que Ajustes (un toque suelto no saca a nadie). */
+function confirmarSalida(salir: () => void) {
+  Alert.alert(
+    tr('¿Cerrar sesión?', 'Sign out?'),
+    tr('Tu perfil y lo que AURA sabe de ti se quedan en tu cuenta. El chat se desconecta de este teléfono.', 'Your profile and what AURA knows stay in your account. The chat disconnects from this phone.'),
+    [
+      { text: tr('Cancelar', 'Cancel'), style: 'cancel' },
+      { text: tr('Cerrar sesión', 'Sign out'), style: 'destructive', onPress: salir },
+    ]
   );
 }
 

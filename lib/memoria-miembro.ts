@@ -100,6 +100,12 @@ function enCache(c: string, cajon: CajonMiembro) {
 }
 
 /**
+ * Cajones que se devolvieron vacíos porque S3 no se pudo leer: no se guardan nunca (si se guardaran, el
+ * turno nuevo pisaría en S3 toda la memoria buena de esa persona).
+ */
+const sinLeer = new WeakSet<CajonMiembro>();
+
+/**
  * El cajón de un correo: caché, disco, S3. Si S3 no contesta, se sigue con lo que haya (vacío) sin
  * guardarlo en la caché, para que el próximo turno vuelva a preguntar. Nunca lanza.
  */
@@ -118,7 +124,9 @@ export async function cargarMiembro(correo: string): Promise<CajonMiembro> {
       cajon = sanear(r.json);
       escribirEnDisco(c, cajon);
     } else if (!r.ok) {
-      return vacio();
+      const v = vacio();
+      sinLeer.add(v);
+      return v;
     }
   }
   const final = cajon || vacio();
@@ -157,6 +165,11 @@ export async function recordarTurnoMiembro(o: { correo: string; rol: 'user' | 'u
   const texto = String(o.texto || '').trim().slice(0, 4000);
   if (!c || !texto) return;
   const cajon = await cargarMiembro(c);
+  // S3 no se pudo leer: este turno no se anota (mejor perder un turno que borrar toda su memoria).
+  if (sinLeer.has(cajon)) {
+    console.warn('[memoria miembro] S3 no se pudo leer; no anoto el turno para no pisar su memoria');
+    return;
+  }
   const t = Date.now();
   cajon.corta = [...cajon.corta, { rol: o.rol, texto, t, canal: o.canal || 'mesa' }].slice(-MAX_CORTA_MIEMBRO);
   if (o.rol === 'user' && esHechoDeMiembro(texto)) {
@@ -177,6 +190,7 @@ export async function guardarHechoMiembro(correo: string, hecho: string): Promis
   const h = String(hecho || '').trim().slice(0, 400);
   if (!c || !h) return;
   const cajon = await cargarMiembro(c);
+  if (sinLeer.has(cajon)) throw new Error('No pude leer tu memoria guardada en este momento; no guardé nada. Prueba otra vez en un rato.');
   // Ya guardado: no se reescribe (lib/memoria.ts guardarHechoQuien, el mismo motivo).
   if (cajon.larga.some((x) => x.hecho === h)) return;
   cajon.larga = [{ hecho: h, t: Date.now() }, ...cajon.larga.filter((x) => x.hecho !== h)].slice(0, MAX_LARGA_MIEMBRO);

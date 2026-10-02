@@ -27,8 +27,13 @@ public partial class NotchWindow
     DateTime agenteUltimaVoz = DateTime.MinValue;
     bool abriendoAgente;
     string agenteUltimoDicho = "";
-    /// <summary>Lo último que dijiste en la conversación en vivo (no se borra al contestar): la guarda de órdenes lo usa si el canal no trae lo dicho.</summary>
+    /// <summary>
+    /// Lo último que dijiste en la conversación en vivo (no se borra al contestar) y cuándo llegó aquí: lo ÚNICO con
+    /// lo que se autoriza una orden del cerebro que llega por el canal, y solo si es de hace un momento
+    /// (AutorizarOrden.DichoVigente). Lo «dicho» que trae el canal lo manda el servidor: sirve para no repetir, no para autorizar.
+    /// </summary>
     string dichoEnVivo = "";
+    DateTime dichoEnVivoEn = DateTime.MinValue;
     readonly HechasRecientes hechasRecientes = new();
     /// <summary>Las reglas lo están intentando con lo que dijiste: un fallo todavía no se le dice al agente (puede venir la orden del cerebro).</summary>
     bool intentoLocal;
@@ -181,6 +186,7 @@ public partial class NotchWindow
         var t = metricas.Nuevo("vivo", "transcripción recibida (sin captura ni STT; voz = audio en cola)");
         agenteUltimoDicho = texto;
         dichoEnVivo = texto;
+        dichoEnVivoEn = DateTime.Now;
         Centro.Registro.AnotarDicho("oir", $"turno {t.Id} · en vivo", texto);
         AgregarMensaje("Tú", texto);
         if (propuesta != null)
@@ -214,7 +220,8 @@ public partial class NotchWindow
         {
             ordenSaltada = null;
             Centro.Registro.AnotarDicho("cerebro-manos", "segundo intento con la orden del cerebro", os.Orden);
-            await HacerOrdenDelCerebro(os.Orden, os.Dicho.Length > 0 ? os.Dicho : frase, true);
+            // Se autoriza con lo que se oyó aquí (frase), nunca con lo que trae el canal.
+            await HacerOrdenDelCerebro(os.Orden, frase, true);
             return;
         }
         await Task.Delay(TimeSpan.FromSeconds(8));
@@ -239,7 +246,10 @@ public partial class NotchWindow
             Centro.Registro.AnotarDicho("cerebro-manos", "ya hecha", o.Orden);
             return;
         }
-        await HacerOrdenDelCerebro(o.Orden, o.Dicho.Length > 0 ? o.Dicho : dichoEnVivo, true);
+        // La autorización sale SOLO de lo que se oyó en este equipo hace un momento: o.Dicho viene del servidor (un
+        // servidor comprometido o un token robado podría mandar una orden con su propio «dicho» y autorizarse sola).
+        // Sin nada oído aquí, la orden espera el «sí».
+        await HacerOrdenDelCerebro(o.Orden, AutorizarOrden.DichoVigente(dichoEnVivo, dichoEnVivoEn, DateTime.Now), true);
     }
 
     /// <summary>
