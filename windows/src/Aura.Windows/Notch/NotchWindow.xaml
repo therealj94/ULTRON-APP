@@ -20,7 +20,12 @@
    <Grid x:Name="CapaReposo" IsHitTestVisible="False">
     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
     <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0,0,0">
-     <n:AvatarView x:Name="AvatarChico" Width="30" Height="30"/>
+     <!-- En reposo la cara de AURA es su marca (el punzón AU), no el personaje: el avatar aparece cuando escucha,
+          piensa o habla. AvatarChico queda (lo usa el código) pero no se ve. -->
+     <n:AvatarView x:Name="AvatarChico" Width="30" Height="30" Visibility="Collapsed"/>
+     <Path x:Name="MarcaReposo" Data="{x:Static m:Contraste.Tinta}" Stretch="Uniform" Width="19" Height="19" Margin="6,0,0,0" VerticalAlignment="Center" SnapsToDevicePixels="True" AutomationProperties.Name="AURA">
+      <Path.Fill><LinearGradientBrush StartPoint="0,0" EndPoint="1,1"><GradientStop Color="#EDD596" Offset="0"/><GradientStop Color="#C99D48" Offset="0.4"/><GradientStop Color="#9A7230" Offset="0.75"/><GradientStop Color="#D6B262" Offset="1"/></LinearGradientBrush></Path.Fill>
+     </Path>
      <TextBlock x:Name="NombreChico" Text="AU-RA" FontFamily="{StaticResource LetraRotulo}" FontWeight="SemiBold" FontSize="12.5" VerticalAlignment="Center" Margin="8,0,0,0" Opacity="0"/>
     </StackPanel>
     <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,10,0">
