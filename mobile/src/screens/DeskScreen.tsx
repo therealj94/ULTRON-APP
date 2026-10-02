@@ -14,7 +14,7 @@ import { CamaraVision, DORMIDO_PERIODO_MS, SERVIDOR_CADA_MS, SERVIDOR_DORMIDO_MS
 import { DeskMenu } from '../components/DeskMenu';
 import type { Escena, MotorVision } from '../lib/escena';
 import type { DeskPresence, FaceState, Mode, SessionUser } from '../config';
-import { api, CANCIONES_LOCAL, healthCheck, listCanciones, nuevoIdTurno, olvidarMemoriaServidor, rememberFact, turno, turnoStream, type Cancion, type Turn } from '../lib/api';
+import { api, CANCIONES_LOCAL, healthCheck, listCanciones, nuevoIdTurno, olvidarMemoriaServidor, rememberFact, turno, turnoStream, verCamara, type Cancion, type Turn } from '../lib/api';
 import { faceForEmocion, type Emocion } from '../lib/emocion';
 import { GENEROS, generoPorId, interpretar, type Gag } from '../lib/intenciones';
 import { ayuda, CONOCER_CORE, CONOCER_QUESTIONS, fechaLocal, horaLocal, preguntaConocer } from '../lib/knowledge';
@@ -84,6 +84,8 @@ import { useCaras, type ApiCaras } from '../caras/useCaras';
 import { avatarActual } from '../avatares/actual';
 import { orientar } from '../lib/orientacion';
 import { esperarFrame } from '../lib/esperarFrame';
+import { COMENTARIOS, Comentarista, resumenVista, type FocoVision, type VistaCamara } from '../lib/vistaCamara';
+import { VisorCamara, type EstadoVisor } from '../components/VisorCamara';
 import { HojaComputadora } from '../ajustes/Computadora';
 import { hojasAhora, suscribirHojas } from '../app/hojas';
 import { avisoMesa, estadoEnPalabras, sondeoMs, trabajando as pcTrabajando, type EstadoPc } from '../compa/computadora';
@@ -138,6 +140,28 @@ const GAG_EMOCION: Record<string, Emocion> = {
 
 /** Gag → una expresión corta antes de las líneas, dicha en vivo por el avatar. */
 const GAG_FRASE: Record<string, FraseId> = { sad: 'triste', angry: 'molesto', startle: 'sorpresa', yawn: 'bostezo', laugh: 'risacorta' };
+
+/** Lo que se le pide al cerebro según lo que se quiere ver (la vista ya va como hecho en el turno). */
+const PEDIDO_VISTA: Record<FocoVision, [string, string]> = {
+  escena: [
+    'Dime en dos frases qué ves por la cámara: quién está (sin identificar a nadie por su cara), qué hace, qué objetos hay y dónde.',
+    'Tell me in two sentences what you see through the camera: who is there (without identifying anyone by their face), what they are doing, what objects there are and where.',
+  ],
+  leer: [
+    'Léeme el texto que se ve en la cámara, tal cual y en orden. Si no se lee bien, dímelo y pídeme que lo acerque.',
+    'Read me the text you see in the camera, exactly and in order. If it is not legible, tell me and ask me to bring it closer.',
+  ],
+  precio: [
+    '¿Qué precio se ve en la cámara? Dime la cifra con su moneda y a qué corresponde. Si no se lee, dímelo.',
+    'What price do you see in the camera? Tell me the amount with its currency and what it is for. If it is not legible, tell me.',
+  ],
+  que_es: [
+    '¿Qué es lo que te muestro en la cámara? Dime qué es y para qué sirve, en dos frases.',
+    'What am I showing you in the camera? Tell me what it is and what it is for, in two sentences.',
+  ],
+};
+/** «Lo que vi» se queda este rato después de contestar (o hasta tocarlo). */
+const VISOR_MS = 20_000;
 
 const haptic = (kind: 'light' | 'medium' = 'light') =>
   Haptics.impactAsync(kind === 'light' ? Haptics.ImpactFeedbackStyle.Light : Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
@@ -234,6 +258,11 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const [altoAbajo, setAltoAbajo] = useState(ALTO_BARRA + 58);
   const [gaze, setGaze] = useState({ x: 0, y: 0 });
   const [objects, setObjects] = useState<string[]>([]);
+  /** «Lo que vi» (components/VisorCamara.tsx): la foto mirada con lo reconocido; null = cerrado. */
+  const [visor, setVisor] = useState<EstadoVisor | null>(null);
+  const cerrarVisorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** La vista de la cámara visible para apuntar («léeme esto», «¿qué es esto?») mientras mira. */
+  const [previaCamara, setPreviaCamara] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   /** El selector de avatar abierto desde el menú (al entrar se elige en App, antes de la mesa). */
   const [eligiendo, setEligiendo] = useState<'menu' | null>(null);
@@ -371,8 +400,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const personSeenAt = useRef(0);
   const conocerIdxRef = useRef(-1);
   const objectsRef = useRef<string[]>([]);
-  const sceneRef = useRef('');
-  const lastSceneRemark = useRef(0);
+  /** «Comenta lo que ve» sin repetirse: novedad de verdad, tope por hora, calma (lib/vistaCamara.ts). */
+  const comentarista = useRef(new Comentarista()).current;
   const lastUserAt = useRef(Date.now());
   const historial = useRef<Turn[]>([]);
   const longMemory = useRef<string[]>([]);
@@ -560,8 +589,11 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   useEffect(() => camara.suscribir((e) => {
     setEstadoCamara(e);
     setVisionOn(e.modo !== 'apagada');
-    if (e.modo === 'apagada') setObjects([]);
-  }), [camara]);
+    if (e.modo === 'apagada') {
+      setObjects([]);
+      comentarista.reiniciar();
+    }
+  }), [camara, comentarista]);
   // «Solo ahora» vence sola; y al irse de la mesa se apaga (la cámara no mira detrás de los chats).
   useEffect(() => {
     const t = setInterval(() => {
@@ -795,7 +827,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   }, [say]);
 
   const askBrain = useCallback(
-    async (cmd: string, opts?: { image?: string }) => {
+    async (cmd: string, opts?: { image?: string; visto?: string; foco?: FocoVision }) => {
       setFace('THINKING');
       setStatus('thinking');
       avisarMesa({ pensando: true });
@@ -808,6 +840,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         historial: historial.current,
         memoria: longMemory.current,
         image: opts?.image,
+        visto: opts?.visto,
+        foco: opts?.foco,
         escena: escenaReciente(),
         hablado: ultimoHablado.current,
         // Uno por frase y el mismo en los reintentos de abajo: el servidor no corre la frase dos veces.
@@ -972,25 +1006,89 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     [escenaReciente, hacerTarea, idleStatus, logUltron, onAudio, say, settle, showBubble, user.correo, user.name]
   );
 
-  const whatDoYouSee = useCallback(async () => {
-    let frame = grabFrame.current ? await grabFrame.current() : null;
-    if (!frame) {
-      // La cámara arranca apagada: si pide «¿qué ves?», se prende SOLO AHORA para mirar (lo pidió) y se
-      // dice; mientras enfoca, la línea de estado dice «mirando». Antes contestaba «aún no identifico
-      // nada» sin prenderla (José, 2-oct: «una foto… no lo hace»).
-      if (!camara.encendida()) {
-        if (!(await encenderCamara('temporal'))) return void (await say(tr('Necesito permiso de cámara para verte.', 'I need camera permission to see you.'), 'CONCERNED', { emocion: 'preocupado' }));
-        await say(tr('Prendo la cámara un momento. Déjame ver…', 'Turning the camera on for a moment. Let me look…'), 'SCAN');
+  /* ---------- «Lo que vi» (components/VisorCamara.tsx): se abre al mirar a pedido y se cierra solo ---------- */
+  const cerrarVisor = useCallback(() => {
+    if (cerrarVisorTimer.current) clearTimeout(cerrarVisorTimer.current);
+    cerrarVisorTimer.current = null;
+    setVisor(null);
+  }, []);
+  const cerrarVisorEn = useCallback((ms: number) => {
+    if (cerrarVisorTimer.current) clearTimeout(cerrarVisorTimer.current);
+    cerrarVisorTimer.current = setTimeout(() => {
+      cerrarVisorTimer.current = null;
+      setVisor(null);
+    }, ms);
+  }, []);
+  // Cámara apagada o fuera de la mesa: la foto se suelta (no se guarda en ningún lado).
+  useEffect(() => {
+    if (visionOn && mesaVisible) return;
+    setPreviaCamara(false);
+    cerrarVisor();
+  }, [visionOn, mesaVisible, cerrarVisor]);
+  useEffect(() => () => void (cerrarVisorTimer.current && clearTimeout(cerrarVisorTimer.current)), []);
+
+  /**
+   * «¿Qué ves?», «léeme esto», «¿cuánto dice el precio?», «¿qué es esto?». Una foto (con más calidad si
+   * hay que leer), el servidor la mira CON ORDEN según el foco (/api/vision/analyze estructurado) y el
+   * turno recibe lo visto como texto: la foto sube una sola vez. Mientras, «Lo que vi» muestra la foto
+   * con lo reconocido. Para leer o reconocer algo, la vista de la cámara se ve un momento para apuntar.
+   */
+  const whatDoYouSee = useCallback(async (foco: FocoVision = 'escena') => {
+    const apuntar = foco !== 'escena';
+    const calidad = foco === 'leer' || foco === 'precio' ? 'leer' : 'normal';
+    const tomar = () => {
+      const g = grabFrame.current;
+      return g ? () => g({ calidad }) : null;
+    };
+    let frame: string | null = null;
+    if (apuntar) setPreviaCamara(true);
+    try {
+      // Con la cámara ya prendida y algo que mostrar: un momento para ponerlo delante y que enfoque.
+      if (apuntar && grabFrame.current) await new Promise((r) => setTimeout(r, 900));
+      frame = grabFrame.current ? await grabFrame.current({ calidad }) : null;
+      if (!frame) {
+        // La cámara arranca apagada: si pide «¿qué ves?», se prende SOLO AHORA para mirar (lo pidió) y se
+        // dice; mientras enfoca, la línea de estado dice «mirando». Antes contestaba «aún no identifico
+        // nada» sin prenderla (José, 2-oct: «una foto… no lo hace»).
+        if (!camara.encendida()) {
+          if (!(await encenderCamara('temporal'))) return void (await say(tr('Necesito permiso de cámara para verte.', 'I need camera permission to see you.'), 'CONCERNED', { emocion: 'preocupado' }));
+          await say(
+            apuntar ? tr('Prendo la cámara un momento. Ponlo frente a la pantalla…', 'Turning the camera on for a moment. Hold it up to the screen…') : tr('Prendo la cámara un momento. Déjame ver…', 'Turning the camera on for a moment. Let me look…'),
+            'SCAN'
+          );
+        }
+        setToolHint(tr('mirando con la cámara', 'looking with the camera'));
+        try {
+          frame = await esperarFrame(tomar, { maxMs: 7000 });
+        } finally {
+          setToolHint('');
+        }
       }
+    } finally {
+      setPreviaCamara(false);
+    }
+    if (frame) {
+      const [es, en] = PEDIDO_VISTA[foco];
+      setVisor({ foto: frame, vista: null, foco, mirando: true });
+      setFace('SCAN');
       setToolHint(tr('mirando con la cámara', 'looking with the camera'));
+      let r: Awaited<ReturnType<typeof verCamara>> = null;
       try {
-        frame = await esperarFrame(() => grabFrame.current, { maxMs: 7000 });
+        r = await verCamara(frame, foco);
       } finally {
         setToolHint('');
       }
-    }
-    if (frame) {
-      await askBrain(tr('Mira la cámara y dime en dos frases qué ves: quién está, qué hace y qué objetos hay.', 'Look at the camera and tell me in two sentences what you see: who is there, what they are doing and what objects there are.'), { image: `data:image/jpeg;base64,${frame}` });
+      if (r) {
+        setVisor({ foto: frame, vista: r.vista, foco, mirando: false });
+        if (r.etiquetas.length) setObjects(r.etiquetas);
+        // Con la vista ya armada, el turno lleva el texto; con un servidor anterior (sin modo
+        // estructurado), el camino de siempre: la foto en el turno.
+        await askBrain(tr(es, en), r.estructurada && r.visto ? { visto: r.visto, foco } : { image: `data:image/jpeg;base64,${frame}`, foco });
+        cerrarVisorEn(VISOR_MS);
+        return;
+      }
+      cerrarVisor();
+      await say(tr('Ahora mismo no me está entrando bien la imagen. Dame un segundo y vuelve a preguntarme.', 'The picture isn’t coming through right now. Give me a second and ask me again.'), 'CONFUSED', { emocion: 'preocupado' });
       return;
     }
     // Sin frame: lo que la detección local ya sabe (persona, lado, gesto) y las etiquetas del servidor.
@@ -1002,7 +1100,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       return;
     }
     await say(objs.length ? `${tr('Veo', 'I see')}: ${objs.join(', ')}.` : tr('La cámara no me dio imagen todavía. Apúntala hacia ti y pregúntame otra vez «¿qué ves?».', 'The camera hasn’t given me a picture yet. Point it at yourself and ask me again “what do you see?”.'), 'SCAN');
-  }, [askBrain, camara, encenderCamara, escenaFresca, say]);
+  }, [askBrain, camara, cerrarVisor, cerrarVisorEn, encenderCamara, escenaFresca, say]);
 
   const runGag = useCallback(
     async (gag: Gag) => {
@@ -1059,6 +1157,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       }
       handling.current = true;
       lastUserAt.current = Date.now();
+      comentarista.usuarioHablo();
       await stopSpeaking();
       historial.current = [...historial.current, { rol: 'usuario' as const, texto: cmd }].slice(-12);
       setMensajes((m) => [...m, { rol: 'usuario' as const, texto: cmd }].slice(-80));
@@ -1160,7 +1259,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
             // Lo atiende la cámara de arriba (pregunta solo ahora o siempre).
             return;
           case 'que_ves':
-            return void (await whatDoYouSee());
+            return void (await whatDoYouSee(intent.foco));
           case 'blaster':
             return void (await fireBlaster(tr('¡Blaster listo! Pium, pium, pium.', 'Blaster ready! Pew, pew, pew.')));
           case 'sable':
@@ -1595,33 +1694,42 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     return () => clearInterval(id);
   }, [mesaActiva]);
 
-  // Comentario proactivo: si la escena cambia y hay calma, el cerebro mira un frame y comenta (máx. 1 cada 2 min).
-  const onScene = useCallback(
-    (_summary: string, labels: string[]) => {
-      if (conversandoRef.current) return;
-      const prev = sceneRef.current;
-      const cur = labels.join(',');
-      sceneRef.current = cur;
-      const now = Date.now();
-      const calm = proactiveRef.current && !handling.current && !speakingRef.current && presenceRef.current === 'stay' && now - lastUserAt.current > 25_000;
-      const novel = !!prev && cur !== prev && labels.filter((l) => !prev.includes(l)).length >= 2;
-      if (!calm || !novel || now - lastSceneRemark.current < 120_000 || !grabFrame.current) return;
-      lastSceneRemark.current = now;
+  /*
+   * «Comenta lo que ve» (lib/vistaCamara.ts Comentarista): con cada vista de la cámara decide si hay
+   * algo NUEVO de verdad (texto, lo que te acerca, otro lugar, objetos que no estaban en los últimos
+   * 15 min), si hay calma (nadie hablando ni recién hablado, sin llamada) y si toca (≥ 3 min entre
+   * comentarios, más si no le contestas; tope 6 por hora). El turno lleva lo visto como texto: antes
+   * tomaba OTRA foto y el servidor la volvía a mirar. Si la persona habla mientras, se calla el comentario;
+   * y no dice dos veces lo mismo.
+   */
+  const onVista = useCallback(
+    (v: VistaCamara) => {
+      const d = comentarista.observar(v, {
+        activo: proactiveRef.current,
+        ocupada: conversandoRef.current || handling.current || speakingRef.current,
+        presente: presenceRef.current === 'stay',
+      });
+      if (!d.comentar || Date.now() - lastUserAt.current < COMENTARIOS.calmaMs) return;
+      const inicio = Date.now();
       void (async () => {
-        const frame = await grabFrame.current?.();
-        if (!frame || handling.current || speakingRef.current) return;
         handling.current = true;
         try {
           const r = await turno({
-            message: 'Comenta en UNA frase corta y natural algo nuevo o útil que veas en la cámara (persona, gesto, objeto). Si no hay nada que valga la pena, responde solo: nada.',
+            message: `Comenta en UNA frase corta y natural lo nuevo que ves por la cámara (${d.novedad.cosas.slice(0, 4).join(', ')}). No describas todo ni repitas lo que ya comentaste. Si no vale la pena, responde solo: nada.`,
             mode: modeRef.current,
             userName: user.name,
             correo: user.correo,
             historial: [],
-            image: `data:image/jpeg;base64,${frame}`,
+            visto: resumenVista(v),
+            foco: 'escena',
           });
           const reply = (r.reply || '').trim();
-          if (reply && !/^nada\b/i.test(reply)) await say(reply, faceForEmocion(r.emocion), { emocion: r.emocion });
+          // Habló mientras se pensaba, o ya lo dijo: mejor callar que interrumpir o repetirse.
+          const interrumpe = lastUserAt.current > inicio || !!pending.current || conversandoRef.current;
+          if (reply && !/^nada\b/i.test(reply) && !interrumpe && !comentarista.repetido(reply)) {
+            comentarista.dicho(reply);
+            await say(reply, faceForEmocion(r.emocion), { emocion: r.emocion });
+          } else comentarista.intentado();
         } finally {
           handling.current = false;
           const next = pending.current;
@@ -1630,7 +1738,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         }
       })();
     },
-    [handleCommand, say, user.correo, user.name]
+    [comentarista, handleCommand, say, user.correo, user.name]
   );
 
   /**
@@ -1772,6 +1880,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         if (!m) return;
         if (m.rol === 'usuario') {
           lastUserAt.current = Date.now();
+          comentarista.usuarioHablo();
           historial.current = [...historial.current, { rol: 'usuario' as const, texto: m.texto }].slice(-12);
           setMensajes((l) => [...l, { rol: 'usuario' as const, texto: m.texto }].slice(-80));
           // La cámara por voz también en la conversación en vivo: ahí no se pregunta «¿solo ahora o
@@ -1941,6 +2050,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     if (conversandoRef.current) {
       if (!voz.enviarTexto(t)) return false;
       lastUserAt.current = Date.now();
+      comentarista.usuarioHablo();
       historial.current = [...historial.current, { rol: 'usuario' as const, texto: t }].slice(-12);
       setMensajes((l) => [...l, { rol: 'usuario' as const, texto: t }].slice(-80));
       return true;
@@ -2332,7 +2442,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         onEscena={onEscena}
         onGaze={onGazeCam}
         onObjects={onObjectsStable}
-        onScene={onScene}
+        onVista={onVista}
+        observar={settings.proactive}
+        previa={previaCamara}
         onMotor={setVisionMotor}
       />
       {enCuadro ? (
@@ -2483,6 +2595,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       ) : null}
 
       <HojaCerebro cual={hojaCerebro} onCerrar={() => setHojaCerebro(null)} />
+
+      {visor ? <VisorCamara estado={visor} onCerrar={cerrarVisor} /> : null}
 
       <RecorridoApp visible={tutorialAbierto} nombre={user.name} idioma={idioma} onCerrar={cerrarTutorial} onProbar={probarDesdeRecorrido} />
 

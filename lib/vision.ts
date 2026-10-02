@@ -6,8 +6,15 @@
 import { clave } from './boveda';
 import { destinoPublico } from './red-publica';
 import { presupuesto, type Presupuesto } from './presupuesto';
+import { parsearVista, promptEstructurado, vistaVacia, type FocoVision, type VistaEstructurada } from './vision-estructurada';
 
 export type Vista = { texto: string; via: string; foto?: Buffer };
+
+/** Pedir JSON (vista estructurada): Gemini lo fuerza con `responseMimeType` y el tope de texto sube. */
+type OpcionesOjo = { json?: boolean };
+/** Un JSON con el texto de un documento entero no cabe en los 2200 de una descripción. */
+const TOPE_TEXTO = 2200;
+const TOPE_JSON = 7000;
 
 function dataUrlAPartes(raw: string): { mime: string; b64: string } {
   // El tipo puede traer parámetros («image/jpeg;name=x»): se ignoran, pero no rompen el corte.
@@ -48,7 +55,7 @@ export const NO_PUDE_VER = 'No pude ver la imagen ahora mismo.';
 /** Sin cliente esperando (Telegram, cargas): lo que sumaban los dos topes de siempre. */
 const PRESUPUESTO_SIN_APURO_MS = 56_000;
 
-async function verConOjo(imagen: string, prompt: string, reloj: Presupuesto): Promise<Vista | null> {
+async function verConOjo(imagen: string, prompt: string, reloj: Presupuesto, o: OpcionesOjo = {}): Promise<Vista | null> {
   const url = clave('ojo_url').replace(/\/$/, '');
   const claveOjo = clave('ojo_clave');
   if (!url || !claveOjo) return null;
@@ -65,10 +72,10 @@ async function verConOjo(imagen: string, prompt: string, reloj: Presupuesto): Pr
   const j: any = await r.json().catch(() => ({}));
   const texto = String(j.texto || j.descripcion || j.summary || '').trim();
   if (!texto) return null;
-  return { texto: texto.slice(0, 2200), via: `${url}/ver` };
+  return { texto: texto.slice(0, o.json ? TOPE_JSON : TOPE_TEXTO), via: `${url}/ver` };
 }
 
-async function verConGemini(imagen: string, prompt: string, reloj: Presupuesto): Promise<Vista | null> {
+async function verConGemini(imagen: string, prompt: string, reloj: Presupuesto, o: OpcionesOjo = {}): Promise<Vista | null> {
   const key = clave('gemini');
   if (!key) return null;
   const { mime, b64 } = dataUrlAPartes(imagen);
@@ -85,6 +92,8 @@ async function verConGemini(imagen: string, prompt: string, reloj: Presupuesto):
             parts: [{ inline_data: { mime_type: mime, data: b64 } }, { text: prompt }],
           },
         ],
+        // Con JSON pedido, Gemini lo devuelve sin ``` ni prosa; temperatura baja para que lea, no adorne.
+        ...(o.json ? { generationConfig: { responseMimeType: 'application/json', temperature: 0.2 } } : {}),
       }),
       signal: reloj.senal(28000),
     }
@@ -101,7 +110,7 @@ async function verConGemini(imagen: string, prompt: string, reloj: Presupuesto):
     console.warn('[vision gemini]', model, 'contestó sin texto', String(j?.promptFeedback?.blockReason || j?.candidates?.[0]?.finishReason || '').slice(0, 60));
     return null;
   }
-  return { texto: texto.slice(0, 2200), via: `gemini:${model}` };
+  return { texto: texto.slice(0, o.json ? TOPE_JSON : TOPE_TEXTO), via: `gemini:${model}` };
 }
 
 /**
@@ -112,7 +121,7 @@ export function vistaFallida(v: Vista): boolean {
   return v.via === 'ninguno' || v.via === 'error' || v.via === 'tiempo';
 }
 
-export async function verImagen(imagen: string, prompt?: string, opts: { presupuesto?: Presupuesto } = {}): Promise<Vista> {
+export async function verImagen(imagen: string, prompt?: string, opts: { presupuesto?: Presupuesto; json?: boolean } = {}): Promise<Vista> {
   const p = prompt || 'Describe solo lo visible: personas, gestos, objetos, texto y números. No inventes.';
   const reloj = opts.presupuesto || presupuesto(PRESUPUESTO_SIN_APURO_MS);
   const ojoListo = !!(clave('ojo_url') && clave('ojo_clave'));
@@ -132,13 +141,37 @@ export async function verImagen(imagen: string, prompt?: string, opts: { presupu
       return { texto: NO_PUDE_VER, via: 'tiempo' };
     }
     try {
-      const vista = await ver(imagen, p, reloj);
+      const vista = await ver(imagen, p, reloj, { json: opts.json });
       if (vista) return vista;
     } catch (e: any) {
       console.warn(`[vision] ${nombre} falló:`, String(e?.message || e).slice(0, 120));
     }
   }
   return { texto: NO_PUDE_VER, via: reloj.alcanza() ? 'error' : 'tiempo' };
+}
+
+/**
+ * ¿Las cajas de este ojo se pueden dibujar? Gemini aprendió a señalar con `box_2d` en 0-1000; del nodo
+ * propio no se sabe qué modelo corre, así que sus cajas solo se pintan si se declara con
+ * ULTRON_OJO_CAJAS=1. Sin eso sirven para decir «a la izquierda», no para dibujar.
+ */
+export function cajasConfiablesDe(via: string): boolean {
+  if (via.startsWith('gemini:')) return true;
+  return /\/ver$/.test(via) && process.env.ULTRON_OJO_CAJAS === '1';
+}
+
+export type VistaVista = { vista: VistaEstructurada | null; via: string; fallo: boolean };
+
+/**
+ * Ver con orden (lib/vision-estructurada.ts): el pedido según la pregunta, JSON y su parseo. `fallo`
+ * si no hubo ojo o no devolvió nada útil; `vista` null en ese caso.
+ */
+export async function verEstructurado(imagen: string, foco: FocoVision = 'escena', opts: { presupuesto?: Presupuesto } = {}): Promise<VistaVista> {
+  const v = await verImagen(imagen, promptEstructurado(foco), { presupuesto: opts.presupuesto, json: true });
+  if (vistaFallida(v)) return { vista: null, via: v.via, fallo: true };
+  const vista = parsearVista(v.texto, { cajasConfiables: cajasConfiablesDe(v.via) });
+  if (vistaVacia(vista)) return { vista: null, via: v.via, fallo: true };
+  return { vista, via: v.via, fallo: false };
 }
 
 export async function capturaPagina(url: string): Promise<{ url: string; texto: string; titulo?: string; foto?: Buffer }> {

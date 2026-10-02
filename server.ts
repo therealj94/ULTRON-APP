@@ -84,7 +84,8 @@ import { notaDeVoz, pideNotaDeVoz } from './lib/voz';
 import { iniciarCentinela } from './lib/centinela';
 import { iniciarRevisionCampana } from './lib/campana-respuestas';
 import { clave, fotoBoveda, guardarCaja } from './lib/boveda';
-import { capturaPagina, verImagen, vistaFallida, NO_PUDE_VER } from './lib/vision';
+import { capturaPagina, verEstructurado, verImagen, vistaFallida, NO_PUDE_VER } from './lib/vision';
+import { etiquetasDeVista, focoDePregunta, focoValido, vistaAHechos } from './lib/vision-estructurada';
 import { presupuesto, PRESUPUESTO_OIDO_MS, PRESUPUESTO_VISION_MS } from './lib/presupuesto';
 import { destinoPublico } from './lib/red-publica';
 import { extraerPdf, dataUrlDeImagen, bufferDeCualquier } from './lib/leer-pdf';
@@ -1864,6 +1865,18 @@ app.post('/api/vision/analyze', exigirMesaODesk, limitar(20), async (req, res) =
     const summary = [leido.texto, ...visiones].filter(Boolean).join('\n\n') || leido.detalle;
     return res.json({ success: !!leido.texto || vistas > 0, summary, detalle: leido.detalle, via: 'pdf-leer', honesto: true });
   }
+  // La cámara de la app (desde la actualización de la cámara): vista estructurada con el pedido fijo del
+  // servidor según el foco (lib/vision-estructurada.ts). No lleva prompt libre, así que vale sin sesión.
+  if (req.body?.modo === 'estructurado') {
+    const foco = focoValido(req.body?.foco) || 'escena';
+    const r = await verEstructurado(String(base64Data), foco, { presupuesto: reloj });
+    if (r.fallo || !r.vista) {
+      console.error(`[AU-RA] /vision/analyze estructurado falló (${r.via}) con ${String(base64Data).length} car.`);
+      return res.status(503).json({ error: `${NO_PUDE_VER} Inténtalo de nuevo en un momento.`, via: ojoQueLeyo(r.via), honesto: true });
+    }
+    // `summary` es el hecho listo para el turno (la app lo manda como `visto`): la foto no viaja dos veces.
+    return res.json({ success: true, summary: vistaAHechos(r.vista, foco), vista: r.vista, etiquetas: etiquetasDeVista(r.vista), foco, via: ojoQueLeyo(r.via), honesto: true });
+  }
   const vista = await verImagen(String(base64Data), prompt || 'Describe con precisión lo que se ve. Si hay precios o números, cópialos. No inventes.', { presupuesto: reloj });
   if (vistaFallida(vista)) {
     // El porqué (cuota, llave, nodo dormido) ya quedó en el registro; al teléfono, una frase humana.
@@ -2740,27 +2753,40 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
       tools.push('escena');
     }
     const image = body?.image;
+    // Lo que la cámara de la app ya vio con orden (/api/vision/analyze modo estructurado): el hecho
+    // viene hecho y la foto no se vuelve a subir ni a analizar. Es texto del propio teléfono de quien
+    // pregunta: se acota y se le quitan las marcas de acción, como a la escena.
+    const visto = typeof body?.visto === 'string' ? neutralizarMarca(body.visto.replace(/\s+/g, ' ').trim().slice(0, 2600)) : '';
+    if (visto && !image) {
+      hechos.push(`VISION (la cámara del teléfono, ahora mismo): ${visto}`);
+      tools.push('vision');
+    }
     // Preguntan qué ve y no llegó ni foto ni escena de la cámara: se le da la verdad al modelo. Sin
     // esto inventaba causas («el ojo está ciego porque la clave de acceso no existe en los
     // registros», 29-sep) que asustan y no son ciertas.
-    if (preguntaPorVer && !image && !escena) {
+    if (preguntaPorVer && !image && !escena && !visto) {
       hechos.push('VISION: en este turno no llegó imagen de la cámara. Si te preguntan qué ves, dilo simple («ahora mismo no me está entrando imagen de la cámara; revisa que esté activada en el menú») y no inventes causas técnicas: nada de claves, registros, nodos ni errores.');
       tools.push('vision');
     }
     if (image) {
       avisarTarea('vision');
-      const vista = await verImagen(String(image));
+      // El pedido según la pregunta («léeme esto», «¿cuánto dice el precio?», «¿qué es esto?», «¿qué
+      // ves?») y con orden (lib/vision-estructurada.ts): antes era siempre «describe lo visible», y un
+      // cartel o un precio salían resumidos en vez de leídos.
+      const foco = focoValido(body?.foco) || focoDePregunta(message) || 'escena';
+      const r = await verEstructurado(String(image), foco);
       // Un fallo de visión NO se le pasa crudo al modelo: lo parafraseaba como «la cámara me muestra un
       // error técnico», que no le dice nada a nadie. Se le da la frase que tiene que decir.
-      if (vistaFallida(vista)) {
-        console.error(`[AU-RA] vision falló (${vista.via}) con ${String(image).length} car.`);
+      if (r.fallo || !r.vista) {
+        console.error(`[AU-RA] vision falló (${r.via}) con ${String(image).length} car.`);
         hechos.push('VISION: la cámara no devolvió imagen esta vez. Dilo simple y humano («ahora mismo no me está entrando imagen, dame un segundo»); no hables de errores técnicos ni de nodos.');
       } else {
-        console.log(`[AU-RA] vision ok (${String(image).length} car., ${vista.via})`);
-        hechos.push(`VISION (${vista.via}): ${vista.texto}`);
+        console.log(`[AU-RA] vision ok (${String(image).length} car., ${r.via}, ${foco}, ${r.vista.formato})`);
+        // El texto leído de un cartel o una hoja es de quien lo escribió, no de la persona: sin marcas de acción.
+        hechos.push(`VISION (${ojoQueLeyo(r.via)}): ${neutralizarMarca(vistaAHechos(r.vista, foco))}`);
       }
       tools.push('vision');
-    } else if (/\b(qu[eé] ves|qu[eé] hay aqu[ií]|le[eé] (la |esta )?imagen|foto)\b/.test(q) && !quiereCaptura && !body?.documento && !body?.pdf && !escena) {
+    } else if (/\b(qu[eé] ves|qu[eé] hay aqu[ií]|le[eé] (la |esta )?imagen|foto)\b/.test(q) && !quiereCaptura && !body?.documento && !body?.pdf && !escena && !visto) {
       hechos.push('VISION: no llegó frame ni escena. Di que ahora mismo no ves (cámara apagada) y ofrece encenderla.');
     }
     const doc = body?.documento || body?.pdf;
@@ -3526,7 +3552,8 @@ function anotarHerramientasAura(reg: ReturnType<typeof iniciarTraza>, tools: str
 async function ordenDeApp(body: any, opciones: OpcionesTurno = {}): Promise<{ decir: string; acciones: EventoAccion[]; via: string } | null> {
   const correo = body?.canal !== 'telegram' && body?.sesion?.correo ? String(body.sesion.correo).toLowerCase() : '';
   const message = String(body?.message || body?.text || '').trim();
-  if (!correo || !message || body?.image || body?.documento || body?.pdf) return null;
+  // Con lo que vio la cámara (`visto`) tampoco: «léeme el texto…» no es «lee mis mensajes».
+  if (!correo || !message || body?.image || body?.visto || body?.documento || body?.pdf) return null;
   // Solo si el turno viene de la app (cabecera x-aura-origen) o de la voz: no de la web de la mesa.
   if (!turnoDeLaApp(body, opciones)) return null;
   // Contexto, borrador y propuesta: los de ESTE aparato (dos teléfonos de la misma cuenta no se cruzan).
@@ -3960,7 +3987,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
    * es solo eso, contesta el banco del avatar en el acto, con su nombre y una etiqueta de voz que va con
    * lo que dice. Escrito o hablado, en la app, la web, Windows y la llamada. El hilo se anota sin esperar.
    */
-  if (!body?.image) {
+  if (!body?.image && !body?.visto) {
     // Cómo se le dice: su apodo si el perfil ya está en memoria (sin ir a buscarlo), si no su nombre.
     const correoCharla = body?.sesion?.correo ? String(body.sesion.correo).toLowerCase() : '';
     const apodo = correoCharla ? perfilEnCache(correoCharla)?.apodo : '';
