@@ -65,7 +65,7 @@ prueba('los dos idiomas, frases cortas y esperas con indicación', () => {
     }
   }
   const conToque = ESCENAS.filter((e) => e.lineas.some((l) => l.espera)).map((e) => e.id);
-  assert.deepEqual(conToque, ['camara', 'llamada', 'chat', 'final'], 'se toca: la foto, contestar, «sí, envíalo» y qué probar');
+  assert.deepEqual(conToque, ['mesa', 'camara', 'llamada', 'chat', 'whatsapp', 'propuestas', 'final'], 'se toca: «Más», la foto, contestar, «sí, envíalo», la pestaña de WhatsApp, «Sí, hazlo» y qué probar');
   const ultima = ESCENAS.at(-1).lineas.at(-1);
   assert.equal(ultima.espera.ms, 0, 'la última espera a que elija (no se cierra sola)');
 });
@@ -91,9 +91,10 @@ prueba('el motor: habla, espera el toque, y sigue solo si nadie toca', () => {
   assert.ok(s.vuelta > v0, 'la línea nueva tiene su vuelta');
   assert.equal(reducir(s, { tipo: 'termino', vuelta: v0 }), s, 'un «terminó» viejo no hace nada');
   // A la cámara: la línea 1 espera el toque.
-  s = reducir(s, { tipo: 'ir', e: 2 });
+  const eCam = ESCENAS.findIndex((x) => x.id === 'camara');
+  s = reducir(s, { tipo: 'ir', e: eCam });
   s = reducir(s, { tipo: 'termino', vuelta: s.vuelta });
-  assert.deepEqual([s.e, s.l, s.fase], [2, 1, 'habla']);
+  assert.deepEqual([s.e, s.l, s.fase], [eCam, 1, 'habla']);
   s = reducir(s, { tipo: 'termino', vuelta: s.vuelta });
   assert.equal(s.fase, 'espera', 'terminó de hablar: espera la foto');
   const tocado = reducir(s, { tipo: 'toque' });
@@ -104,7 +105,7 @@ prueba('el motor: habla, espera el toque, y sigue solo si nadie toca', () => {
 });
 
 prueba('tocar mientras todavía habla adelanta la espera', () => {
-  let s = reducir(INICIO, { tipo: 'ir', e: 2 });
+  let s = reducir(INICIO, { tipo: 'ir', e: ESCENAS.findIndex((x) => x.id === 'camara') });
   s = reducir(s, { tipo: 'termino', vuelta: s.vuelta });
   assert.equal(s.fase, 'habla');
   assert.equal(reducir(s, { tipo: 'toque' }).l, 2);
@@ -141,7 +142,9 @@ prueba('recorrerlo entero sin tocar nada llega a elegir', () => {
   }
   assert.deepEqual([s.e, s.fase], [ESCENAS.length - 1, 'espera']);
   const total = ESCENAS.reduce((n, e) => n + e.lineas.reduce((m, l) => m + duracionLectura(l.texto.es) + (l.espera?.ms || 0), 0), 0);
-  assert.ok(total > 150_000 && total < 330_000, `dura entre 2½ y 5½ minutos sin voz (${Math.round(total / 1000)} s)`);
+  // La versión 2 explica todo y dónde tocar (José: «que explique todo detallado»): más larga, pero se pausa,
+  // se salta por capítulos y se repite.
+  assert.ok(total > 300_000 && total < 600_000, `dura entre 5 y 10 minutos sin voz (${Math.round(total / 1000)} s)`);
 });
 
 prueba('preparar lo que sigue cruza de escena', () => {
@@ -268,6 +271,83 @@ prueba('probar «foto» prende la cámara y espera la imagen; «recordatorio» g
   const t0 = Date.now();
   assert.equal(await esperarFrame(() => () => new Promise(() => {}), { maxMs: 300, cadaMs: 100 }), null, 'una foto colgada no la cuelga');
   assert.ok(Date.now() - t0 < 1500, `se rindió en ${Date.now() - t0} ms`);
+});
+
+prueba('cubre todo lo que hay hoy en la app (José: «hemos agregado cosas… que explique todo detallado»)', () => {
+  const ids = ESCENAS.map((e) => e.id);
+  for (const id of ['mesa', 'hablar', 'llamada', 'chat', 'whatsapp', 'correo', 'computadora', 'conocer', 'propuestas', 'avisos', 'camara', 'recordatorio', 'ajustes'])
+    assert.ok(ids.includes(id), `falta la escena «${id}»`);
+  const todo = ESCENAS.flatMap((e) => e.lineas.map((l) => l.texto.es)).join(' ');
+  for (const [que, re] of [
+    ['los tres botones', /Chat[\s\S]*Más/],
+    ['hablar sin palabra clave', /sin palabra clave/],
+    ['«llámame» y el botón', /«Que te llame»/],
+    ['PULSE2CHAT', /PULSE2CHAT/],
+    ['la pestaña de Correos al lado de WhatsApp', /pestaña Correos, al lado de WhatsApp/],
+    ['vincular WhatsApp', /Dispositivos vinculados/],
+    ['conectar el correo', /contraseña de aplicación/],
+    ['su computadora en vivo', /Su computadora/],
+    ['Misiones', /Misiones/],
+    ['Lo que sé de ti', /«Lo que sé de ti»/],
+    ['Mi círculo', /«Mi círculo»/],
+    ['la tarjeta Sí/Luego/No', /«Sí, hazlo», «Luego» o «No»/],
+    ['el nivel de iniciativa', /«Iniciativa de AURA»/],
+    ['avisos con la app cerrada', /app cerrada/],
+    ['el permiso de avisos', /Permisos del teléfono, Avisos/],
+    ['la cámara y «comenta lo que ve»', /«Comenta lo que ve»/],
+    ['recordatorios', /recuérdame/],
+    ['Ajustes', /abre ajustes/],
+  ])
+    assert.match(todo, re, `el recorrido no explica ${que}`);
+});
+
+prueba('las escenas nuevas señalan dónde tocar (José: «señalando dónde tocar»)', () => {
+  for (const id of ['mesa', 'avisos', 'whatsapp', 'conocer', 'propuestas', 'ajustes']) {
+    const f = fs.readFileSync(path.join(AQUI, '..', 'escenas', `${id[0].toUpperCase()}${id.slice(1)}.tsx`), 'utf8');
+    assert.match(f, /<Senala |<Toca /, `${id} no señala nada`);
+    // Cada paso que pide su guion lo sabe dibujar (su ORDEN es el de los pasos).
+    const orden = f.match(/const ORDEN = \[([^\]]+)\]/)?.[1].match(/'([a-z]+)'/g)?.map((x) => x.slice(1, -1));
+    assert.deepEqual(orden, [...ESCENAS.find((e) => e.id === id).pasos], `${id}: los pasos de la escena y del guion no coinciden`);
+  }
+  const guia = fs.readFileSync(path.join(AQUI, '../escenas/guia.tsx'), 'utf8');
+  assert.match(guia, /👆/, 'la manito que señala');
+});
+
+prueba('dice lo mismo que AURA sabe del menú (lib/menu-app.ts, la fuente única)', () => {
+  const menu = fs.readFileSync(path.resolve(AQUI, '../../../../lib/menu-app.ts'), 'utf8');
+  const todo = ESCENAS.flatMap((e) => e.lineas.map((l) => l.texto.es)).join(' ');
+  for (const nombre of ['Dispositivos vinculados', 'Con un código', 'Tus correos', 'contraseña de aplicación', 'Entrar con Microsoft', 'Iniciativa de AURA', 'Permisos del teléfono', 'Alarmas y recordatorios', 'Lo que sé de ti', 'Mi círculo', 'Su computadora', 'Comenta lo que ve', 'Que te llame'])
+    assert.ok(menu.includes(nombre) && todo.includes(nombre), `«${nombre}» tiene que decirse igual en el recorrido y en el menú`);
+});
+
+prueba('la ventana: Empezar / Después, saltable y repetible (tutorial/pasos.ts)', async () => {
+  const P = await import('../../tutorial/pasos.ts');
+  assert.equal(P.tocaOfrecerRecorrido({}, 'Ana@X.com'), true, 'la primera vez se ofrece');
+  assert.equal(P.tocaOfrecerRecorrido({}, ''), false, 'sin persona, no');
+  // Quien vio el recorrido viejo (la marca de siempre) lo vuelve a ver ofrecido una vez: creció.
+  assert.equal(P.versionVista({ tutorialVisto: { 'ana@x.com': true } }, 'ana@x.com'), 1);
+  assert.equal(P.tocaOfrecerRecorrido({ tutorialVisto: { 'ana@x.com': true } }, 'ana@x.com'), true);
+  const visto = P.conRecorridoVisto({}, 'Ana@x.com');
+  assert.deepEqual(visto, { recorridoVisto: { 'ana@x.com': P.VERSION_RECORRIDO }, tutorialVisto: { 'ana@x.com': true } });
+  assert.equal(P.tocaOfrecerRecorrido(visto, 'ana@x.com'), false, 'visto: ya no sale solo');
+  // «Después» se cuenta: vuelve hasta MAX_POSPONER veces, después ya no sale sola.
+  let m = {};
+  for (let k = 0; k < P.MAX_POSPONER; k++) {
+    assert.equal(P.tocaOfrecerRecorrido(m, 'ana@x.com'), true, `vez ${k + 1}`);
+    m = { ...m, ...P.conRecorridoPospuesto(m, 'ana@x.com') };
+  }
+  assert.equal(P.tocaOfrecerRecorrido(m, 'ana@x.com'), false);
+  assert.equal(P.tocaOfrecerRecorrido(m, 'beto@x.com'), true, 'cada quien lo suyo');
+  // La mesa: la primera vez abre la VENTANA (no el recorrido de golpe) y «Qué puedo hacer» también.
+  const mesa = fs.readFileSync(path.join(AQUI, '../../screens/DeskScreen.tsx'), 'utf8');
+  assert.match(mesa, /tocaOfrecerRecorrido\(s, user\.correo\)/);
+  assert.match(mesa, /abrirBienvenida\('primera'\)/);
+  assert.match(mesa, /case 'tutorial':[\s\S]{0,120}abrirBienvenida\('menu'\)/);
+  assert.match(mesa, /<VentanaBienvenida /);
+  assert.match(mesa, /saveSettings\(conRecorridoVisto\(s0, user\.correo\)\)/, 'al cerrarlo (terminado o no) queda visto');
+  const ventana = fs.readFileSync(path.join(AQUI, '../../bienvenida/VentanaBienvenida.tsx'), 'utf8');
+  for (const b of ['Empezar el recorrido', 'Después', 'Contarte de mí']) assert.ok(ventana.includes(b), `la ventana no tiene «${b}»`);
+  assert.match(ventana, /conRecorridoPospuesto/, '«Después» se cuenta');
 });
 
 let ok = 0;

@@ -13,6 +13,12 @@
  * Solo funciones que EXISTEN (cada escena dice de dónde sale, como tutorial/pasos.ts). Los ejemplos
  * son de mentira y se ven como tales (nadie confunde el oro del ejemplo con el de hoy).
  *
+ * José (2-oct, versión 2: «hemos agregado cosas… que explique todo detallado… señalando dónde tocar»):
+ * la mesa y sus tres botones, los avisos con la app cerrada, WhatsApp, la pestaña de Correos, lo que sé de
+ * ti, Mi círculo, Misiones, las propuestas de AURA con su nivel de iniciativa y Ajustes. Las escenas nuevas
+ * enseñan la pantalla de verdad en miniatura y señalan dónde se toca (escenas/guia.tsx). Lo mismo que
+ * AURA sabe del menú para guiar a alguien (lib/menu-app.ts en el servidor).
+ *
  * Sin React Native: lo prueba Node (pruebas/recorrido.prueba.mjs).
  */
 import type { Bilingue } from '../i18n';
@@ -38,7 +44,7 @@ export type Linea = {
   espera?: { etiqueta: Bilingue; ms: number };
 };
 
-export const DEMOS = ['portada', 'hablar', 'camara', 'llamada', 'recordatorio', 'chat', 'correo', 'internet', 'computadora', 'memoria', 'avatares', 'final'] as const;
+export const DEMOS = ['portada', 'mesa', 'hablar', 'camara', 'llamada', 'recordatorio', 'avisos', 'chat', 'whatsapp', 'correo', 'internet', 'computadora', 'memoria', 'conocer', 'propuestas', 'avatares', 'ajustes', 'final'] as const;
 export type DemoId = (typeof DEMOS)[number];
 
 export type Escena = {
@@ -79,6 +85,25 @@ export const ESCENAS: readonly Escena[] = [
     ],
   },
   {
+    id: 'mesa',
+    titulo: { es: 'La mesa', en: 'The desk' },
+    fuente: 'components/BarraMesa.tsx (Chat · Hablar · Más) · components/HojaMas.tsx (la hoja «Más»)',
+    pasos: ['barra', 'hablar', 'chat', 'mas', 'hoja'],
+    lineas: [
+      { quien: A, paso: 'barra', gesto: 'senalar', texto: { es: 'Empecemos por la mesa, la pantalla principal. Abajo hay solo tres botones.', en: 'Let’s start with the desk, the main screen. There are just three buttons at the bottom.' } },
+      { quien: C, paso: 'hablar', emocion: 'curioso', texto: { es: 'El grande del centro es Hablar: AU-RA te oye siempre, sin palabra clave. Un toque la silencia; otro, y vuelve.', en: 'The big one in the middle is Talk: AU-RA always hears you, no wake word. One tap mutes her; another brings her back.' } },
+      { quien: A, paso: 'chat', gesto: 'senalar', texto: { es: 'El de la izquierda es Chat: tus conversaciones de PULSE2CHAT, tu WhatsApp y tus correos.', en: 'The one on the left is Chat: your PULSE2CHAT conversations, your WhatsApp and your email.' } },
+      {
+        quien: C,
+        paso: 'mas',
+        gesto: 'senalar',
+        texto: { es: 'Y el de la derecha, Más, guarda todo lo demás. Anda, tócalo.', en: 'And the one on the right, More, holds everything else. Go on, tap it.' },
+        espera: { etiqueta: { es: 'Toca «Más»', en: 'Tap “More”' }, ms: 6500 },
+      },
+      { quien: A, paso: 'hoja', emocion: 'feliz', texto: { es: 'Aquí está todo: que te llame, escribir, la cámara, tus misiones, su computadora, este recorrido y Ajustes.', en: 'Everything’s here: call me, type, the camera, your missions, her computer, this tour and Settings.' } },
+    ],
+  },
+  {
     id: 'hablar',
     titulo: { es: 'Háblale', en: 'Talk to her' },
     fuente: 'screens/DeskScreen (oído siempre abierto, intención callar) · components/ModoConversacion',
@@ -107,6 +132,7 @@ export const ESCENAS: readonly Escena[] = [
       { quien: C, paso: 'flash', cara: 'sorprendida', emocion: 'sorpresa', texto: { es: '¡Flash! Listo.', en: 'Flash! Done.' } },
       { quien: A, paso: 'analiza', cara: 'piensa', emocion: 'pensando', texto: { es: 'Ahora la analiza…', en: 'Now she analyzes it…' } },
       { quien: C, paso: 'resultado', emocion: 'feliz', texto: { es: 'Una taza de café, una laptop, una planta y un cuaderno. Te dice qué ve, te lee un papel y reconoce a quien le presentes, con tu permiso.', en: 'A cup of coffee, a laptop, a plant and a notebook. She tells you what she sees, reads a paper for you and recognizes people you introduce, with your permission.' } },
+      { quien: A, gesto: 'senalar', texto: { es: 'La enciendes en Más, Cámara: apagada, solo ahora o siempre. Y si quieres que comente sola lo que ve, en Más, Ajustes: «Comenta lo que ve».', en: 'Turn it on in More, Camera: off, just now or always. And if you want her to comment on what she sees, go to More, Settings: “Comments on what it sees”.' } },
     ],
   },
   {
@@ -125,6 +151,7 @@ export const ESCENAS: readonly Escena[] = [
       { quien: A, paso: 'encurso', gesto: 'saludar', emocion: 'feliz', texto: { es: '¡Aló! Aquí seguimos hablando, de corrido, sin tocar nada.', en: 'Hello! Here we keep talking, hands-free, without tapping anything.' } },
       { quien: C, texto: { es: 'Puedes caminar o cocinar, y la conversación sigue hasta que cuelgues.', en: 'You can walk or cook, and the conversation goes on until you hang up.' } },
       { quien: A, paso: 'cuelga', texto: { es: 'Y cuando terminas, cuelgas y listo.', en: 'And when you’re done, hang up and that’s it.' } },
+      { quien: C, gesto: 'senalar', texto: { es: 'También tienes el botón en Más: «Que te llame». Y en la llamada, el botón rojo cuelga.', en: 'There’s also a button in More: “Have her call you”. And during the call, the red button hangs up.' } },
     ],
   },
   {
@@ -140,12 +167,23 @@ export const ESCENAS: readonly Escena[] = [
     ],
   },
   {
+    id: 'avisos',
+    titulo: { es: 'Con la app cerrada', en: 'With the app closed' },
+    fuente: 'src/push/nativo.ts (avisos de Firebase con la app cerrada) · primeravez/permisos.ts · ajustes/Ajustes.tsx (Privacidad)',
+    pasos: ['llega', 'responde', 'permiso'],
+    lineas: [
+      { quien: C, paso: 'llega', cara: 'sorprendida', emocion: 'sorpresa', texto: { es: 'Aunque tengas la app cerrada, AU-RA te escribe: te llega un aviso como este.', en: 'Even with the app closed, AU-RA reaches you: you get a notification like this.' } },
+      { quien: A, paso: 'responde', gesto: 'senalar', texto: { es: 'Le contestas desde el aviso mismo: sí o luego. Y si es una llamada, contestas y te habla.', en: 'You answer right from the notification: yes or later. And if it’s a call, you pick up and she talks.' } },
+      { quien: C, paso: 'permiso', gesto: 'senalar', texto: { es: 'Para que lleguen: Ajustes, Privacidad, Permisos del teléfono, Avisos. Y «Alarmas y recordatorios», para la hora exacta.', en: 'For them to arrive: Settings, Privacy, Phone permissions, Notifications. And “Alarms & reminders”, to be right on time.' } },
+    ],
+  },
+  {
     id: 'chat',
     titulo: { es: 'Tus mensajes', en: 'Your messages' },
     fuente: 'pulse/* (PULSE2CHAT) · lib/manos-app.ts (leer, buscar) · lib/acciones-app.ts (redactar, enviar solo tras el «sí»)',
     pasos: ['lee', 'borrador', 'enviado'],
     lineas: [
-      { quien: A, paso: 'lee', texto: { es: 'También te ayuda con tus mensajes de PULSE2CHAT. Pregúntale: ¿qué me dijo Beto?', en: 'She also helps with your PULSE2CHAT messages. Ask her: what did Beto say?' } },
+      { quien: A, paso: 'lee', texto: { es: 'Tus mensajes de PULSE2CHAT están en el botón Chat. Y ella te ayuda: pregúntale, ¿qué me dijo Beto?', en: 'Your PULSE2CHAT messages are under the Chat button. And she helps: ask her, what did Beto say?' } },
       { quien: C, emocion: 'curioso', texto: { es: 'Te lo lee: ¿llegas a la reunión de las tres?', en: 'She reads it to you: are you coming to the three o’clock meeting?' } },
       {
         quien: A,
@@ -157,15 +195,34 @@ export const ESCENAS: readonly Escena[] = [
     ],
   },
   {
+    id: 'whatsapp',
+    titulo: { es: 'Tu WhatsApp', en: 'Your WhatsApp' },
+    fuente: 'src/whatsapp/ChatsConWhatsapp.tsx (las pestañas) · src/whatsapp/PantallaWhatsapp.tsx (vincular con un código) · server/whatsapp.ts',
+    pasos: ['pestanas', 'vincular', 'codigo', 'listo'],
+    lineas: [
+      {
+        quien: A,
+        paso: 'pestanas',
+        gesto: 'senalar',
+        texto: { es: 'Arriba de tus chats hay pestañas: PULSE2CHAT, WhatsApp y Correos. Deslizas de lado o tocas una. Toca WhatsApp.', en: 'Above your chats there are tabs: PULSE2CHAT, WhatsApp and Email. Swipe sideways or tap one. Tap WhatsApp.' },
+        espera: { etiqueta: { es: 'Toca la pestaña WhatsApp', en: 'Tap the WhatsApp tab' }, ms: 6500 },
+      },
+      { quien: C, paso: 'vincular', texto: { es: 'La primera vez se vincula: tocas «Con un código» y escribes tu número con el código de país.', en: 'The first time you link it: tap “With a code” and type your number with the country code.' } },
+      { quien: A, paso: 'codigo', gesto: 'senalar', texto: { es: 'En tu WhatsApp: los tres puntitos, Dispositivos vinculados, Vincular con el número de teléfono, y escribes el código.', en: 'In your WhatsApp: the three dots, Linked devices, Link with phone number instead, and type the code.' } },
+      { quien: C, paso: 'listo', gesto: 'gusto', emocion: 'feliz', texto: { es: '¡Y listo! Te lee tus WhatsApp, busca en ellos y contesta solo cuando le dices que sí.', en: 'And done! She reads your WhatsApp, searches it and replies only when you say yes.' } },
+    ],
+  },
+  {
     id: 'correo',
     titulo: { es: 'Tus correos', en: 'Your email' },
-    fuente: 'server/correo.ts (revisar, buscar, leer, responder; borrador y «sí») · ajustes/Correos.tsx',
+    fuente: 'server/correo.ts (revisar, buscar, leer, responder; borrador y «sí») · ajustes/Correos.tsx (conectar) · la pestaña Correos de los chats',
     pasos: ['bandeja', 'lee', 'responde', 'conectar'],
     lineas: [
       { quien: C, paso: 'bandeja', emocion: 'orgullo', texto: { es: 'Y tus correos, aunque no sean de Gmail: Outlook, Yahoo o el de tu empresa.', en: 'And your email, even if it isn’t Gmail: Outlook, Yahoo or your company’s.' } },
       { quien: A, paso: 'lee', gesto: 'senalar', texto: { es: 'Te dice cuáles son nuevos, te los lee y te ayuda a contestar.', en: 'She tells you which ones are new, reads them and helps you reply.' } },
       { quien: C, paso: 'responde', texto: { es: 'Igual que con los mensajes: te lee la respuesta y solo la manda con tu sí.', en: 'Same as messages: she reads you the reply and only sends it with your yes.' } },
-      { quien: A, paso: 'conectar', texto: { es: 'Se conectan en Ajustes, en «Tus correos».', en: 'You connect them in Settings, under “Your email”.' } },
+      { quien: A, paso: 'conectar', texto: { es: 'Están en la pestaña Correos, al lado de WhatsApp. Se conectan en Ajustes, «Tus correos»: tu dirección y una contraseña de aplicación.', en: 'They’re in the Email tab, next to WhatsApp. You connect them in Settings, “Your email”: your address and an app password.' } },
+      { quien: C, emocion: 'feliz', texto: { es: 'Si es Outlook o Hotmail, tocas «Entrar con Microsoft» y escribes un código en su página. Así de fácil.', en: 'If it’s Outlook or Hotmail, tap “Sign in with Microsoft” and type a code on their page. That easy.' } },
     ],
   },
   {
@@ -187,6 +244,7 @@ export const ESCENAS: readonly Escena[] = [
       { quien: C, paso: 'abre', cara: 'sorprendida', emocion: 'sorpresa', texto: { es: 'Y ahora lo más loco: AU-RA tiene su propia computadora en la nube.', en: 'And now the craziest part: AU-RA has her own computer in the cloud.' } },
       { quien: A, paso: 'cursor', gesto: 'senalar', texto: { es: 'Entra a páginas, busca, hace clic y escribe por ti, mientras tú haces otra cosa.', en: 'She opens pages, searches, clicks and types for you, while you do something else.' } },
       { quien: C, paso: 'listo', cara: 'encantada', emocion: 'risa', texto: { es: 'Y cuando termina, te avisa con lo que encontró.', en: 'And when she’s done, she tells you what she found.' } },
+      { quien: A, gesto: 'senalar', texto: { es: 'La ves en vivo en Más, «Su computadora», o le dices «abre tu computadora». En Ajustes eliges Gratis o Claude.', en: 'Watch it live in More, “Their computer”, or say “open your computer”. In Settings you pick Free or Claude.' } },
     ],
   },
   {
@@ -200,6 +258,34 @@ export const ESCENAS: readonly Escena[] = [
     ],
   },
   {
+    id: 'conocer',
+    titulo: { es: 'Te conoce', en: 'She knows you' },
+    fuente: 'ajustes/LoQueSeDeTi.tsx · ajustes/Circulo.tsx · ajustes/Misiones.tsx (src/app/HojasCerebro.tsx)',
+    pasos: ['sabe', 'circulo', 'misiones'],
+    lineas: [
+      { quien: A, paso: 'sabe', gesto: 'senalar', texto: { es: 'Lo que va aprendiendo de ti lo ves en Ajustes, «Lo que sé de ti». Puedes corregir o borrar cualquier dato.', en: 'What she learns about you is in Settings, “What I know about you”. You can fix or erase anything.' } },
+      { quien: C, paso: 'circulo', emocion: 'feliz', texto: { es: 'En «Mi círculo» pones a tu gente: tu familia, tus amigos. Y dices qué puede hacer AU-RA por ellos.', en: 'In “My circle” you add your people: family, friends. And you say what AU-RA can do for them.' } },
+      { quien: A, paso: 'misiones', gesto: 'senalar', texto: { es: 'Y en Más, Misiones: tus metas. Te ayuda a cumplirlas paso a paso y te pregunta cómo vas.', en: 'And in More, Missions: your goals. She helps you reach them step by step and checks in.' } },
+    ],
+  },
+  {
+    id: 'propuestas',
+    titulo: { es: 'Te propone', en: 'She suggests' },
+    fuente: 'components/TarjetaPropuesta.tsx (Sí, hazlo · Luego · No) · compa/iniciativa.ts · server/iniciativa.ts',
+    pasos: ['tarjeta', 'responde', 'nivel'],
+    lineas: [
+      { quien: C, paso: 'tarjeta', cara: 'sorprendida', emocion: 'sorpresa', texto: { es: 'Y lo mejor: no tienes que pedirle todo. A veces ella te propone algo, con una tarjeta arriba.', en: 'And the best part: you don’t have to ask for everything. Sometimes she suggests something, with a card on top.' } },
+      {
+        quien: A,
+        paso: 'responde',
+        gesto: 'senalar',
+        texto: { es: 'Tú decides: «Sí, hazlo», «Luego» o «No». Prueba: toca «Sí, hazlo».', en: 'You decide: “Yes, do it”, “Later” or “No”. Try it: tap “Yes, do it”.' },
+        espera: { etiqueta: { es: 'Toca «Sí, hazlo»', en: 'Tap “Yes, do it”' }, ms: 6500 },
+      },
+      { quien: C, paso: 'nivel', texto: { es: '¿Mucho o poco? En Ajustes, «Iniciativa de AURA»: alta, media, baja o apagada. Y nunca de noche.', en: 'A lot or a little? In Settings, “AURA’s initiative”: high, medium, low or off. And never at night.' } },
+    ],
+  },
+  {
     id: 'avatares',
     titulo: { es: 'Elige con quién', en: 'Pick who' },
     fuente: 'avatares/catalogo.ts · avatares/SelectorAvatar · tts.ts (oración y canto de AU-RA)',
@@ -209,6 +295,19 @@ export const ESCENAS: readonly Escena[] = [
       { quien: A, paso: 'aura', emocion: 'feliz', texto: { es: '…AU-RA, que te organiza el día, ora contigo y hasta te canta…', en: '…AU-RA, who organizes your day, prays with you and even sings…' } },
       { quien: C, paso: 'claudio', gesto: 'gusto', emocion: 'orgullo', texto: { es: '…yo, para ideas y redes sociales…', en: '…me, for ideas and social media…' } },
       { quien: A, paso: 'antonio', gesto: 'saludar', emocion: 'orgullo', texto: { es: '…y yo, para resolver pendientes y planes. Un solo cerebro, cuatro personalidades.', en: '…and me, to get to-dos and plans done. One brain, four personalities.' } },
+    ],
+  },
+  {
+    id: 'ajustes',
+    titulo: { es: 'Ajustes', en: 'Settings' },
+    fuente: 'ajustes/Ajustes.tsx · lib/menu-app.ts (lo que AURA sabe del menú para guiarte)',
+    pasos: ['abre', 'perfil', 'aura', 'privacidad', 'pide'],
+    lineas: [
+      { quien: C, paso: 'abre', gesto: 'senalar', texto: { es: 'Por último, Ajustes: tocas Más y luego Ajustes. O le dices «abre ajustes».', en: 'Last, Settings: tap More and then Settings. Or say “open settings”.' } },
+      { quien: A, paso: 'perfil', texto: { es: 'Arriba, tu perfil: cómo te dice, tu avatar y tu cumpleaños. Luego el tema, oscuro o claro, y el idioma.', en: 'At the top, your profile: what she calls you, your avatar and your birthday. Then the theme, dark or light, and the language.' } },
+      { quien: C, paso: 'aura', texto: { es: 'En AURA: lo que sabe de ti, tu círculo, tus misiones y tus correos. Abajo, la iniciativa y su computadora.', en: 'Under AURA: what she knows about you, your circle, your missions and your email. Below, initiative and her computer.' } },
+      { quien: A, paso: 'privacidad', texto: { es: 'En Privacidad, los permisos del teléfono y las alarmas. Y al final, cerrar sesión.', en: 'Under Privacy, phone permissions and alarms. And at the end, sign out.' } },
+      { quien: C, paso: 'pide', gesto: 'gusto', emocion: 'feliz', texto: { es: '¿Te perdiste? Pregúntale «¿cómo conecto mi correo?» o «¿dónde cambio el idioma?»: te guía paso a paso y te lleva.', en: 'Lost? Ask her “how do I connect my email?” or “where do I change the language?”: she guides you step by step and takes you there.' } },
     ],
   },
   {

@@ -84,6 +84,10 @@ export type AppSettings = {
   carasActivas: Record<string, number>;
   /** Quién ya vio (o saltó para siempre) el recorrido de primera vez (por correo). */
   tutorialVisto: Record<string, boolean>;
+  /** Qué versión del recorrido vio cada quien (por correo; tutorial/pasos.ts VERSION_RECORRIDO). */
+  recorridoVisto: Record<string, number>;
+  /** Cuántas veces dijo «Después» a la ventana del recorrido (por correo): pasado el tope ya no se ofrece sola. */
+  recorridoPospuesto: Record<string, number>;
   /** La mesa para charlar (avatar grande) o para trabajar (avatar compacto + la conversación escrita). */
   modoMesa: 'charlar' | 'trabajar';
   /**
@@ -114,6 +118,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   camaraSiempre: {},
   carasActivas: {},
   tutorialVisto: {},
+  recorridoVisto: {},
+  recorridoPospuesto: {},
   modoMesa: 'charlar',
   vozLlamada: true,
 };

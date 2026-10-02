@@ -73,6 +73,8 @@ import { bloqueConocer } from './lib/conocer-persona';
 import { correrCirculo, precargarCirculo } from './lib/circulo';
 import { correrTriaje } from './lib/triaje';
 import { fichaManosPrompt } from './lib/manos-ficha';
+import { fichaMenuPrompt } from './lib/menu-app';
+import { conApodoDelTurno, lineaApodoPendiente } from './lib/apodo';
 import { emitirSesion, borrarSesion, cerrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica, mesaAutorizada, cuerpoHttp, gastarCupo, esperaEntrada, anotarFalloEntrada, anotarExitoEntrada, cargarSesionesCerradas } from './server/seguridad';
 import { canales, leerPdf, telegramFoto, telegramVoz } from './lib/canales';
 import { catalogoCanales, fotoSistema } from './lib/sistema';
@@ -2902,15 +2904,19 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     );
   }
   // Cómo le decimos: el apodo que eligió en su perfil manda sobre el nombre del padrón.
-  const perfilPersona = await perfilPedido;
+  // Si en este mensaje dijo cómo quiere que le llamen, se guarda y ya lo usa este turno (lib/apodo.ts).
+  const perfilPersona = await conApodoDelTurno(correoApp, message, hilo, await perfilPedido);
   const comoLeDecimos = perfilPersona?.apodo || (quien ? nombreDe(quien) : nombre) || undefined;
-  const bloquePerfil = lineaPerfil(perfilPersona);
+  // Sin apodo elegido, AURA se lo pregunta (una vez, con naturalidad) y lo recuerda.
+  const bloquePerfil = [lineaPerfil(perfilPersona), correoApp ? lineaApodoPendiente(perfilPersona, idiomaTurno === 'en' ? 'en' : 'es', { nombre }) : ''].filter(Boolean).join('\n');
   // Las reglas de la app van en el system (iguales turno a turno, el nodo no las relee); en el mensaje
   // del turno, solo lo de este momento: dónde está, sus contactos, lo que espera su «sí», la hora.
   // Qué puede hacer en ESTA plataforma (lib/manos-ficha.ts): lo ofrece sin miedo y nunca ofrece lo que aquí no hace.
   const idiomaManos = idiomaTurno === 'en' ? 'en' : 'es';
   const manosAqui = fichaManosPrompt(body?.origen === 'windows' ? 'windows' : turnoDeLaApp(body, opciones) ? 'app' : 'web', idiomaManos);
-  const reglasApp = [manosAqui, conApp ? reglasAcciones(contextoApp) : body?.origen === 'windows' ? instruccionWindows(idiomaManos) : ''].filter(Boolean).join('\n');
+  // Dónde está cada cosa en la app del teléfono (lib/menu-app.ts), para guiar paso a paso: corto en la voz.
+  const menuAqui = turnoDeLaApp(body, opciones) ? fichaMenuPrompt(idiomaManos, { compacto, conAbrir: conApp }) : '';
+  const reglasApp = [manosAqui, menuAqui, conApp ? reglasAcciones(contextoApp) : body?.origen === 'windows' ? instruccionWindows(idiomaManos) : ''].filter(Boolean).join('\n');
   const bloqueApp = conApp
     ? estadoAcciones(contextoApp, { pendiente: pendienteDe(ambito), propuesta: propuestaDe(ambito), ultimoLeido: ultimoLeidoDe(correoApp) })
     : '';

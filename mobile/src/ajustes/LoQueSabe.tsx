@@ -30,6 +30,7 @@ const ETIQUETAS: Record<Pregunta['campo'], { es: string; en: string }> = {
   familia: { es: 'Tu familia', en: 'Your family' },
   trabajo: { es: 'A qué te dedicas', en: 'What you do' },
   gustos: { es: 'Lo que te gusta', en: 'What you enjoy' },
+  ayuda: { es: 'Lo que quieres que AURA haga por ti', en: 'What you want AURA to do for you' },
 };
 
 /** La hoja para editar una respuesta: chips (varios) + texto libre. */
