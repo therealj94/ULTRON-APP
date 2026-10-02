@@ -30,6 +30,7 @@ import { AVATARES, avatarPorId, type AvatarId } from '../avatares/catalogo';
 import { SelectorIdioma } from '../ui/SelectorIdioma';
 import { emitir } from '../nucleo/contrato';
 import type { PantallaCerebro } from '../compa/cerebro';
+import { abrirCartera } from '../cartera/estado';
 
 /** Una fila del menú que abre una hoja (sus misiones, su círculo, lo que sabe de ti). */
 const FilaHoja = ({ titulo, sub, onPress }: { titulo: string; sub: string; onPress: () => void }) => (
@@ -280,6 +281,7 @@ export function DeskMenu(p: Props) {
               <Text style={styles.section}>{tr('Lo que hacemos juntos', 'What we do together')}</Text>
               <FilaHoja titulo={tr('Misiones', 'Missions')} sub={tr('Tus metas, paso a paso', 'Your goals, step by step')} onPress={() => p.onAbrirHoja?.('misiones')} />
               <FilaHoja titulo={tr('Mi círculo', 'My circle')} sub={tr('Tu gente cercana y sus recordatorios', 'Your close people and their reminders')} onPress={() => p.onAbrirHoja?.('circulo')} />
+              <FilaHoja titulo={tr('Cartera', 'Wallet')} sub={tr('Tus saldos de Veta Wallet (solo lectura)', 'Your Veta Wallet balances (read-only)')} onPress={abrirCartera} />
             </>
           ) : null}
 

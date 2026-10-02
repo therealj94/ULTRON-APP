@@ -48,6 +48,8 @@ export const FICHA: Record<PlataformaManos, readonly Mano[]> = {
     { de: 'redactar', es: 'escribir y mandar mensajes por ti', en: 'write and send messages for you', ejemplo: { es: '«dile a Beto que ya voy»', en: '“tell Beto I’m on my way”' } },
     { de: 'leer', es: 'leerte tus mensajes', en: 'read your messages to you', ejemplo: { es: '«¿qué me escribió Ana?»', en: '“what did Ana write me?”' } },
     { de: 'buscar', es: 'buscar en tus chats', en: 'search your chats', ejemplo: { es: '«busca la dirección que me mandaron»', en: '“find the address they sent me”' } },
+    { de: 'cartera', es: 'decirte cuánto tienes en tu Veta Wallet', en: 'tell you what’s in your Veta Wallet', ejemplo: { es: '«¿cuánto tengo en mi wallet?»', en: '“how much is in my wallet?”' } },
+    { de: 'pagar', es: 'dejarte listo un envío de ORIGEN por PULSE2CHAT para que lo firmes en Veta Wallet', en: 'prepare an ORIGEN payment over PULSE2CHAT for you to sign in Veta Wallet', ejemplo: { es: '«mándale 5 ORIGEN a Ana»', en: '“send Ana 5 ORIGEN”' } },
     { de: 'web', es: 'buscar en internet', en: 'search the web' },
     { de: 'vision', es: 'ver por la cámara y decirte qué hay', en: 'see through the camera and tell you what’s there' },
     { de: 'metales', es: 'darte el precio del oro', en: 'give you gold and silver prices' },

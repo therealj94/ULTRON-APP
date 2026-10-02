@@ -7,7 +7,7 @@ import type { NivelAura } from './perfiles/tipos';
 import { clave } from './boveda';
 import { INSTRUCCION_MISIONES } from './misiones';
 
-export type HerramientaHarness = 'web' | 'sistema' | 'ejecutor' | 'leer' | 'computadora' | 'correo' | 'whatsapp' | 'mision' | 'circulo' | 'triaje' | 'tarea';
+export type HerramientaHarness = 'web' | 'sistema' | 'ejecutor' | 'leer' | 'computadora' | 'correo' | 'whatsapp' | 'mision' | 'circulo' | 'triaje' | 'tarea' | 'cartera';
 
 export type PedidoHerramienta = { herramienta: HerramientaHarness; arg: string };
 
@@ -89,6 +89,12 @@ PEDIR_HERRAMIENTA: triaje whatsapp
 PEDIR_HERRAMIENTA: triaje correo
 Revisa sus mensajes (WhatsApp y correo), los ordena por importancia (urgente, importante, normal, se puede ignorar) y sugiere respuestas cortas. Úsalo cuando pida «revisa mis mensajes», «¿qué tengo pendiente?», «¿algo importante?». Las respuestas sugeridas son borradores: nada se manda sin su «sí».`.trim();
 
+/** Su Veta Wallet (lib/cartera.ts): solo LEE saldos de la cadena con la dirección pública que conectó en la app. */
+export const INSTRUCCION_CARTERA = `
+PEDIR_HERRAMIENTA: cartera
+PEDIR_HERRAMIENTA: cartera <token, p. ej. ORIGEN>
+«¿Cuánto tengo en mi wallet?», «¿cuánto ORIGEN tengo?»: lee sus saldos de Veta Wallet (solo lectura). Nunca mueves dinero ni pides contraseñas: «mándale 5 ORIGEN a Ana» lo prepara la app para que ella lo revise y lo firme en Veta Wallet.`.trim();
+
 export function correoDisponible(): boolean {
   return !!clave('correo_cifrado');
 }
@@ -112,6 +118,7 @@ export function instruccionHarness(nivel: NivelAura = 'junta', conComputadora = 
     conSesion ? INSTRUCCION_MISIONES : '',
     conSesion ? INSTRUCCION_CIRCULO : '',
     conSesion && conWhatsapp ? INSTRUCCION_TRIAJE : '',
+    conSesion ? INSTRUCCION_CARTERA : '',
   ]
     .filter(Boolean)
     .join('\n');
@@ -128,7 +135,7 @@ export function pedidoPermitido(ped: PedidoHerramienta, nivel: NivelAura): strin
   return null;
 }
 
-const RE = /^\s*PEDIR_HERRAMIENTA:\s*(web|sistema|ejecutor|leer|computadora|correo|whatsapp|mision|circulo|triaje|tarea)\s*(.*)$/im;
+const RE = /^\s*PEDIR_HERRAMIENTA:\s*(web|sistema|ejecutor|leer|computadora|correo|whatsapp|mision|circulo|triaje|tarea|cartera)\s*(.*)$/im;
 
 /** Lo que saca datos del turno hacia afuera por su cuenta: abrir una dirección o usar la computadora. */
 export function herramientaQueSale(h: string): boolean {
@@ -177,6 +184,8 @@ export async function resolverPedido(
     triaje?: (arg: string) => Promise<string>;
     /** La tarea de varios pasos en curso (lib/tarea-en-curso.ts). */
     tarea?: (arg: string) => Promise<string>;
+    /** Sus saldos de Veta Wallet, solo lectura (lib/cartera.ts). */
+    cartera?: (arg: string) => Promise<string>;
   },
   codigoDelTurno = '',
   /** Con quién habla: con un miembro, `sistema` y `ejecutor` no llegan a sus runners. */
@@ -213,6 +222,10 @@ export async function resolverPedido(
   if (ped.herramienta === 'tarea') {
     if (!runners.tarea) return 'HARNESS tarea: no está disponible aquí. No la usé.';
     return runners.tarea(ped.arg.trim() || 'ver');
+  }
+  if (ped.herramienta === 'cartera') {
+    if (!runners.cartera) return 'HARNESS cartera: no está disponible aquí. No la usé.';
+    return runners.cartera(ped.arg.trim());
   }
   if (ped.herramienta === 'computadora') {
     const tarea = ped.arg.trim();

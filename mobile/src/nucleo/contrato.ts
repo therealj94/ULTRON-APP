@@ -125,12 +125,19 @@ export type AccionApp =
   /** Quita un recordatorio (por el id que el teléfono contó en su contexto). Solo tras el «sí». */
   | { tipo: 'cancelar_recordatorio'; id: string }
   /** «Llámame»: el avatar llama a la persona, ya (la pantalla «te está llamando»; compa/llamadaCiclo.ts). */
-  | { tipo: 'llamame' };
+  | { tipo: 'llamame' }
+  /** «¿Cuánto tengo en mi wallet?»: abre la hoja Cartera (cartera/HojasCartera.tsx). Solo lectura. */
+  | { tipo: 'cartera' }
+  /**
+   * «Mándale 5 ORIGEN a Ana»: abre su chat y la hoja de enviar, LLENADA. La persona revisa, confirma y firma
+   * en Veta Wallet con su contraseña: AURA nunca paga sola (cartera/HojaPagar.tsx).
+   */
+  | { tipo: 'pagar'; con: string; monto?: string; moneda?: string };
 
 export type CampoPerfil = 'apodo' | 'cumple' | keyof Encuesta;
 
 /** Las manos que este teléfono sabe hacer: van en el contexto para que el servidor las ofrezca. */
-export const MANOS_APP = ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame'] as const;
+export const MANOS_APP = ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame', 'cartera', 'pagar'] as const;
 export type Mano = (typeof MANOS_APP)[number];
 
 /** Un recordatorio puesto en el teléfono (lo cuenta en el contexto para decirlo y cancelarlo por voz). */
