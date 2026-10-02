@@ -14,7 +14,17 @@ export async function esperarFrame(
   for (;;) {
     const f = tomar();
     if (f) {
-      const foto = await f().catch(() => null);
+      // La foto también tiene tope: una cámara que nunca contesta no deja la espera colgada (ni la
+      // mesa ocupada) más allá de `maxMs` (Codex en #121).
+      const queda = Math.max(0, fin - ahora());
+      let reloj: ReturnType<typeof setTimeout> | undefined;
+      const foto = await Promise.race([
+        f().catch(() => null),
+        new Promise<null>((r) => {
+          reloj = setTimeout(() => r(null), queda);
+        }),
+      ]);
+      clearTimeout(reloj);
       if (foto) return foto;
     }
     if (ahora() + cadaMs > fin) return null;

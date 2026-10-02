@@ -264,6 +264,10 @@ prueba('probar «foto» prende la cámara y espera la imagen; «recordatorio» g
   assert.ok(t <= 2000, 'no espera de más');
   t = 0;
   assert.equal(await esperarFrame(() => async () => { throw new Error('ocupada'); }, { maxMs: 1000, cadaMs: 350, dormir, ahora }), null, 'un error de la cámara no lo rompe');
+  // Una cámara que nunca contesta: se rinde a tiempo (reloj de verdad, 300 ms).
+  const t0 = Date.now();
+  assert.equal(await esperarFrame(() => () => new Promise(() => {}), { maxMs: 300, cadaMs: 100 }), null, 'una foto colgada no la cuelga');
+  assert.ok(Date.now() - t0 < 1500, `se rindió en ${Date.now() - t0} ms`);
 });
 
 let ok = 0;
