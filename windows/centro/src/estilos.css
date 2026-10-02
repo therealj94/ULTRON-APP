@@ -576,7 +576,8 @@ div.reproductor-portada { display: grid; place-items: center; background: var(--
 .acerca dl dt { display: inline; text-transform: uppercase; letter-spacing: .12em; }
 .acerca dl dd { display: inline; margin: 0 0 0 6px; color: var(--papel-2); }
 
-/* ── avatar de respaldo (sin WebGL): el primer cuadro de su hoja, o los ojos del Guardián ── */
+/* ── avatar de respaldo (sin WebGL): el orbe quieto de AU-RA, el primer cuadro de su hoja, o los ojos del Guardián ── */
+.orbe-quieto { width: 100%; height: 100%; background: radial-gradient(circle at 50% 50%, #fff8e8 0, #e8c98e 6%, rgba(120,160,255,.35) 24%, rgba(40,60,120,.12) 40%, transparent 52%); }
 .avatar-hoja { width: 100%; height: 100%; background-repeat: no-repeat; background-size: 600% 400%; background-position: 0 0; }
 .ojos { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; gap: 18%; }
 .ojos i { width: 14%; aspect-ratio: 1; border-radius: 50%; background: var(--cardenillo); animation: parpadea 5s infinite; }

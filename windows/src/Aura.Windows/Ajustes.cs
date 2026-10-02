@@ -110,6 +110,8 @@ internal sealed class Ajustes
     public string NotchMonitor { get; set; } = "";
     /// <summary>Menos movimiento: el avatar se queda quieto y el notch no anima (además del ajuste de Windows).</summary>
     public bool MenosMovimiento { get; set; }
+    /// <summary>Los efectos de sonido del orbe de AU-RA (escucha, piensa, habla, listo, toque): cortos y bajitos. Encendidos de fábrica.</summary>
+    public bool EfectosDeSonido { get; set; } = true;
     /// <summary>Versión de los ajustes del notch: 2 = el vidrio por defecto pasó de 0.72 a 0.5.</summary>
     public int NotchVersion { get; set; }
 

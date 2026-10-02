@@ -22,6 +22,9 @@
   <Content Include="CallAssets/**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true"/>
   <Content Include="CentroAssets/**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true"/>
   <Content Include="Modelos/**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true"/>
+  <!-- La cara de AURA: el orbe que aprobó José. Se publica LA FUENTE DE VERDAD (src/14-orbe/orbe.html), sin copia en
+       windows/ que se pueda desfasar; tests/Program.cs comprueba este enlace y el idioma que el notch le habla. -->
+  <Content Include="../../../src/14-orbe/orbe.html" Link="OrbeAssets/orbe.html" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true"/>
  </ItemGroup>
  <!--
   ONNX Runtime (el modelo propio «Hey AURA») va AL LADO del .exe, no dentro (auditoría 1-oct, H05): dentro del

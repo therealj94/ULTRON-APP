@@ -116,7 +116,9 @@ public partial class NotchWindow
         }));
         altavoz.Empezo += () => Dispatcher.BeginInvoke(new Action(() => { hablandoAhora = true; pensando = false; AvatarPanel.Estado = "speaking"; EstadoPanel.Text = Ingles ? "Speaking…" : "Hablando…"; AbrirOidoParaInterrumpir(); Recalcular(); }));
         altavoz.Frase += f => Dispatcher.BeginInvoke(new Action(() => Subtitulo.Text = Expresiones.Quitar(f).Trim()));
-        altavoz.Nivel += n => { oido.NivelAltavoz = n; Dispatcher.BeginInvoke(new Action(() => { AvatarHabla.Boca = n; AvatarPanel.Boca = n; BarrasHabla.Nivel = n; if (modo == Modo.Habla) AnimarBrillo(0.45 + n * 0.55); })); };
+        // El orbe de AU-RA forma con partículas la frase que va a sonar, al ritmo de su audio (la voz es la de Windows).
+        altavoz.FraseConDuracion += (f, dura) => Dispatcher.BeginInvoke(new Action(() => DecirOrbe(Expresiones.Quitar(f).Trim(), dura)));
+        altavoz.Nivel += n => { oido.NivelAltavoz = n; Dispatcher.BeginInvoke(new Action(() => { AvatarHabla.Boca = n; AvatarPanel.Boca = n; BarrasHabla.Nivel = n; BocaOrbe(n); if (modo == Modo.Habla) AnimarBrillo(0.45 + n * 0.55); })); };
         altavoz.Termino += () => Dispatcher.BeginInvoke(new Action(() =>
         {
             // Se calló todo sin que sonara una frase útil (solo el relleno, o la voz falló): el turno se cierra igual.
@@ -836,6 +838,8 @@ public partial class NotchWindow
         AvatarView.Precargar(id);
         NombreChico.Text = NombreHabla.Text = NombrePanel.Text = ajustes.NombreAvatar;
         if (guardar && !soloRender) { try { ajustes.Guardar(); } catch { } }
+        // AU-RA es el orbe; Claudio, ANT-ONIO y el Guardián, su cara de siempre (y el alto de «habla» cambia con eso).
+        if (orbePreparado) { CrearOrbeSiToca(); Aplicar(); }
     }
 
     void Terminar()
@@ -845,6 +849,7 @@ public partial class NotchWindow
         Seguro(() => canal?.Cancel());
         Seguro(GuardarRecuperacion);
         Seguro(despertador.Dispose); Seguro(sonidoEquipo.Dispose); Seguro(oido.Dispose); Seguro(altavoz.Dispose); Seguro(() => api?.Dispose());
+        Seguro(() => orbe?.Dispose());
         Seguro(() => centro?.CerrarDeVerdad());
         Seguro(musica.Dispose); Seguro(() => correo?.Dispose()); Seguro(() => agenda?.Dispose()); Seguro(() => avisosApps?.Dispose());
         Seguro(relojProgreso.Stop); Seguro(relojRecordatorios.Stop);
