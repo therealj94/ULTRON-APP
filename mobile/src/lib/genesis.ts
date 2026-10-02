@@ -7,8 +7,17 @@
  *   1. Si el teléfono tiene la app Orden Global: `vetawallet://sso?destino=aura&reto=…&estado=…&vuelta=…`.
  *      La app muestra «AU-RA quiere usar tu Genesis ID», la persona toca «Permitir» y vuelve aquí
  *      con `…/sso?pase=…&estado=…` (o `error=…&estado=…`).
- *   2. Si no la tiene: la web de Veta Wallet (`#sso-aura`) en una pestaña segura del sistema, con el
- *      mismo consentimiento y la misma vuelta.
+ *   2. Si no la tiene: NO se salta sola a ningún lado. Vuelve `SIN_WALLET` y la pantalla dice qué
+ *      pasa, con «Instalar Orden Global», «Usar Veta Wallet en la web» (`{ web: true }`: la web de la
+ *      wallet, `#sso-aura`, en una pestaña segura, con el mismo consentimiento y la misma vuelta) y
+ *      «Entrar con mi correo».
+ *
+ * SIN GENESIS ID. La wallet nueva no devuelve a la persona con las manos vacías: le ofrece sacar su
+ * Genesis ID ahí mismo y GUARDA EL PEDIDO media hora (su `AURA_VIVE_MS`). Al terminar el trámite
+ * sigue al «Permitir» y vuelve aquí con el pase de ESTE pedido (mismo reto, mismo estado). Por eso
+ * el pedido de aquí vive lo mismo (VIDA_PEDIDO_MS) y la vuelta se atiende aunque llegue tarde:
+ *   · con AU-RA cerrada, `retomarSiVolvio` (arranque en frío);
+ *   · con AU-RA abierta y ya sin espera, `escucharVueltaTardia` (lo pone la pantalla de entrar).
  *
  * LA VUELTA. En Android se pide `vuelta=https://aura-fp.onrender.com/sso`: un App Link verificado
  * (app.config.js + /.well-known/assetlinks.json del servidor), que Android solo le entrega a ESTA app.
@@ -49,7 +58,13 @@ const VUELTAS = [VUELTA_WEB, VUELTA_ESQUEMA];
 const vueltaPedida = () => (Platform.OS === 'android' ? VUELTA_WEB : VUELTA_ESQUEMA);
 /** Lo que se espera un enlace de vuelta después de que la persona regresa a AU-RA sin él. */
 const GRACIA_MS = 1500;
-const VIDA_PEDIDO_MS = 10 * 60_000;
+/**
+ * Lo que vive un pedido a la wallet: lo mismo que lo guarda la wallet (AURA_VIVE_MS de la app Orden
+ * Global), porque sacar el Genesis ID —documento, selfie— cabe en media hora y no en diez minutos.
+ * Es solo cuánto se acepta una vuelta con este `estado`; el pase sigue siendo de un uso, con destino
+ * y con reto, y vence en Genesis a su hora.
+ */
+export const VIDA_PEDIDO_MS = 30 * 60_000;
 /** Lo que la entrada espera al relevo del chat después de que AU-RA ya aceptó (ver completar). */
 const TOPE_CHAT_MS = 12_000;
 
@@ -60,6 +75,25 @@ export type DatosGenesis = { nombre?: string | null; cumple?: string | null };
 export type ResultadoGenesis =
   | { ok: true; miembro: Miembro; chat: boolean; genesis?: DatosGenesis }
   | { ok: false; codigo: string; mensaje: string; gid?: string };
+/** `web`: ir directo a la web de Veta Wallet (quien no tiene la app y eligió la web). */
+export type OpcionesEntrada = { web?: boolean };
+
+/**
+ * Cuántas entradas hay en curso (de pedir el pase a terminar de canjearlo). Con alguna, la vuelta que
+ * llegue es suya y no de la tardía: así un mismo pase nunca se canjea dos veces desde aquí.
+ */
+let enCurso = 0;
+/** Una vuelta tardía a la vez (la https y la `ultronfp://` pueden llegar las dos). */
+let canjeandoTardia = false;
+/** Corre `f` contando como entrada en curso. */
+async function enCursoMientras<T>(f: () => Promise<T>): Promise<T> {
+  enCurso++;
+  try {
+    return await f();
+  } finally {
+    enCurso = Math.max(0, enCurso - 1);
+  }
+}
 
 const azarB64 = (n: number) => aB64(Crypto.getRandomBytes(n));
 
@@ -189,24 +223,40 @@ function esperarVuelta(ms: number, estadoPedido: string): { promesa: Promise<str
 
 const dormir = (ms: number) => new Promise<null>((r) => setTimeout(() => r(null), ms));
 
-/** Pide el pase a la wallet (app o web) y devuelve el enlace de vuelta, o null si no volvió. */
-async function pedirPase(reto: string, estado: string): Promise<string | null> {
+/**
+ * Lo que pasó al pedir el pase: el enlace de vuelta (o null), si la app Orden Global llegó a abrirse
+ * (entonces puede seguir guardando el pedido: la vuelta puede llegar tarde) y si no está instalada.
+ */
+type Pedido = { url: string | null; appAbierta: boolean; sinApp: boolean };
+
+/** Pide el pase a la wallet (app o, si se pide, web) y devuelve el enlace de vuelta, o null si no volvió. */
+async function pedirPase(reto: string, estado: string, o: { web?: boolean } = {}): Promise<Pedido> {
   const vuelta = vueltaPedida();
   const q =
     `reto=${encodeURIComponent(reto)}&estado=${encodeURIComponent(estado)}` +
     // La wallet vuelve a `ultronfp://sso` si no se le dice nada: solo se manda cuando es la https.
     (vuelta === VUELTA_ESQUEMA ? '' : `&vuelta=${encodeURIComponent(vuelta)}`);
-  // 1. La app Orden Global. Si no está instalada, openURL falla y se sigue con la web.
-  const espera = esperarVuelta(5 * 60_000, estado);
-  try {
-    await Linking.openURL(`vetawallet://sso?destino=aura&${q}`);
+  let appAbierta = false;
+  if (!o.web) {
+    /*
+     * 1. La app Orden Global. Si no está instalada, openURL falla. La espera dura lo que vive el
+     *    pedido: mientras la persona saca su Genesis ID en la wallet, AU-RA espera en segundo plano
+     *    (antes eran cinco minutos y, vencidos, se abría la web por detrás de la wallet).
+     */
+    const espera = esperarVuelta(VIDA_PEDIDO_MS, estado);
+    try {
+      await Linking.openURL(`vetawallet://sso?destino=aura&${q}`);
+      appAbierta = true;
+    } catch {
+      // No está la app. La espera se suelta YA —antes quedaban sus oyentes de Linking y de AppState
+      // vivos, y el de AppState podía «terminar» la de la web al volver—.
+      espera.cancelar();
+      return { url: null, appAbierta: false, sinApp: true };
+    }
     const url = await espera.promesa;
-    if (url) return url;
-    // Volvió sin pase: la app Orden Global no lo dio. Se sigue por la web, con el MISMO reto.
-  } catch {
-    // No está la app: la web. La espera se suelta YA —antes quedaban sus oyentes de Linking y de
-    // AppState vivos cinco minutos, y el de AppState podía «terminar» la de la web al volver—.
-    espera.cancelar();
+    if (url) return { url, appAbierta, sinApp: false };
+    // Volvió sin pase: una app Orden Global de antes, que no sabe de `destino=aura`, o la persona
+    // volvió a mano. Se sigue por la web, con el MISMO reto y el mismo estado.
   }
   /*
    * 2. La web de la wallet, en una pestaña segura del sistema, con la vuelta https como redirect.
@@ -229,10 +279,11 @@ async function pedirPase(reto: string, estado: string): Promise<string | null> {
     () => null
   );
   try {
-    return await Promise.race([
+    const url = await Promise.race([
       propia.promesa.then((u) => u ?? sesion),
       sesion.then((u) => u ?? Promise.race([propia.promesa, dormir(GRACIA_MS)])),
     ]);
+    return { url, appAbierta, sinApp: false };
   } finally {
     propia.cancelar();
   }
@@ -339,25 +390,75 @@ async function completar(url: string, p: Pendiente): Promise<ResultadoGenesis> {
 }
 
 /** Todo el viaje: reto, wallet, vuelta y canje. */
-export async function entrarConGenesis(): Promise<ResultadoGenesis> {
+export function entrarConGenesis(o: OpcionesEntrada = {}): Promise<ResultadoGenesis> {
+  return enCursoMientras(() => entrar(o));
+}
+
+async function entrar(o: OpcionesEntrada): Promise<ResultadoGenesis> {
   const { verificador, reto } = nuevoReto();
   const p: Pendiente = { verificador, estado: azarB64(12), en: Date.now() };
   await guardarPendiente(p);
-  const url = await pedirPase(reto, p.estado);
-  if (!url) {
-    // Sin vuelta no queda nada que retomar: el pedido pendiente se borra (si no, un arranque en frío
-    // posterior lo encontraba y esperaba una respuesta que ya no iba a llegar).
+  const { url, appAbierta, sinApp } = await pedirPase(reto, p.estado, { web: o.web });
+  if (sinApp) {
+    // Sin la app no hay quién guarde el pedido: se borra, y la pantalla ofrece instalarla, la web o el correo.
     await olvidarPendiente();
+    return {
+      ok: false,
+      codigo: 'SIN_WALLET',
+      mensaje: tr(
+        'No encontramos la app Orden Global (tu Veta Wallet) en este teléfono.',
+        'We couldn’t find the Orden Global app (your Veta Wallet) on this phone.'
+      ),
+    };
+  }
+  if (!url) {
+    /*
+     * Sin vuelta. Si la app Orden Global llegó a abrirse, el pedido se QUEDA: la wallet puede tenerlo
+     * guardado mientras la persona saca su Genesis ID y devolverlo después (escucharVueltaTardia, o
+     * retomarSiVolvio si AU-RA ya no está abierta). Vence solo (VIDA_PEDIDO_MS) y el próximo intento lo
+     * reemplaza. Si solo hubo web, no lo guarda nadie: se borra.
+     */
+    if (!appAbierta) await olvidarPendiente();
     return { ok: false, codigo: 'SIN_VUELTA', mensaje: tr('No volvió la respuesta de la wallet.', 'The wallet’s response didn’t come back.') };
   }
   return completar(url, p);
 }
 
 /**
+ * La vuelta que llega TARDE, con AU-RA abierta y sin nadie esperando: la wallet guardó el pedido
+ * mientras la persona sacaba su Genesis ID y ahora vuelve con el pase (o con `error=`). Si el enlace es
+ * una vuelta y su `estado` es el del pedido guardado (vivo), se canjea igual que a tiempo; si no, nada.
+ * Devuelve cómo dejar de escuchar. Lo pone la pantalla de entrar mientras está montada.
+ */
+export function escucharVueltaTardia(alVolver: (r: ResultadoGenesis) => void): () => void {
+  const sub = Linking.addEventListener('url', ({ url }) => {
+    void (async () => {
+      const v = leerVuelta(url);
+      if (!v || !v.estado || enCurso > 0 || canjeandoTardia) return;
+      canjeandoTardia = true;
+      try {
+        const p = await leerPendiente();
+        if (!p || p.estado !== v.estado || enCurso > 0) return;
+        alVolver(await enCursoMientras(() => completar(url, p)));
+      } catch {
+        /* una vuelta rota no tumba al oyente */
+      } finally {
+        canjeandoTardia = false;
+      }
+    })();
+  });
+  return () => sub.remove();
+}
+
+/**
  * Si Android cerró AU-RA mientras la persona estaba en la wallet, la app arranca DE NUEVO con el
  * enlace de vuelta. Esto lo recoge y termina la entrada.
  */
-export async function retomarSiVolvio(): Promise<ResultadoGenesis | null> {
+export function retomarSiVolvio(): Promise<ResultadoGenesis | null> {
+  return enCursoMientras(retomar);
+}
+
+async function retomar(): Promise<ResultadoGenesis | null> {
   if (inicialConsumido) return null;
   const url = await Linking.getInitialURL().catch(() => null);
   if (!leerVuelta(url)) return null;
@@ -368,11 +469,17 @@ export async function retomarSiVolvio(): Promise<ResultadoGenesis | null> {
 }
 
 /** Solo el chat: para quien ya está dentro de AU-RA y quiere conectar PULSE2CHAT. */
-export async function conectarChat(): Promise<{ ok: boolean; mensaje?: string }> {
+export function conectarChat(): Promise<{ ok: boolean; mensaje?: string }> {
+  return enCursoMientras(conectar);
+}
+
+async function conectar(): Promise<{ ok: boolean; mensaje?: string }> {
   const { verificador, reto } = nuevoReto();
   const p: Pendiente = { verificador, estado: azarB64(12), en: Date.now() };
   await guardarPendiente(p);
-  const url = await pedirPase(reto, p.estado);
+  // Quien ya está dentro de AU-RA: si no hay app, la web (como siempre para el chat).
+  let { url, sinApp } = await pedirPase(reto, p.estado);
+  if (sinApp) url = (await pedirPase(reto, p.estado, { web: true })).url;
   const v = leerVuelta(url);
   await olvidarPendiente();
   if (!v || v.estado !== p.estado) return { ok: false, mensaje: tr('La wallet no devolvió el pase.', 'The wallet didn’t return the pass.') };

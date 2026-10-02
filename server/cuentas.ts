@@ -306,6 +306,27 @@ export async function fijarClave(correo: string, clave: string, nombre = ''): Pr
   return desde;
 }
 
+/**
+ * La cuenta de un MIEMBRO de la comunidad que entró con su Genesis ID (server/genesis.ts). Sin acceso a
+ * ninguna plataforma (`acceso` vacío): así no entra al padrón (recargarCuentas solo sube las que tienen
+ * acceso) y sigue siendo miembro, nunca junta. Sirve para que la persona exista en la base —con su
+ * nombre de Genesis y el GID de donde salió en `aprobada_por`— y para poder suspenderla
+ * (`estado = 'suspendida'` le cierra también la entrada con Genesis).
+ *
+ * Si la cuenta ya existía no se toca nada salvo un nombre vacío: ni su acceso, ni su estado, ni su clave.
+ * Devuelve true si la abrió ahora.
+ */
+export async function asegurarCuentaMiembro(correo: string, nombre: string, gid: string): Promise<boolean> {
+  const [f] = await q<{ nueva: boolean }>(
+    `INSERT INTO cuentas.cuenta (correo, nombre, aprobada_por) VALUES ($1, $2, $3)
+     ON CONFLICT (correo) DO UPDATE SET
+       nombre = CASE WHEN cuentas.cuenta.nombre = '' THEN EXCLUDED.nombre ELSE cuentas.cuenta.nombre END
+     RETURNING (xmax = 0) AS nueva`,
+    [correo, String(nombre || '').slice(0, 120), `genesis:${gid}`]
+  );
+  return !!f?.nueva;
+}
+
 /** ¿La cuenta de este correo está suspendida? (sin cuenta, no). */
 export async function cuentaSuspendida(correo: string): Promise<boolean> {
   const [f] = await q(`SELECT estado FROM cuentas.cuenta WHERE correo = $1`, [correo]);

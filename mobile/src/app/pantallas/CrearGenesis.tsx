@@ -4,9 +4,14 @@
  * Tres pasos, cada uno en su tarjeta con su número dorado:
  *   1. Abre Orden Global (la app de la wallet) o la web de Veta Wallet
  *   2. Regístrate y verifica tu identidad (documento y selfie): así nace tu Genesis ID
- *   3. Vuelve aquí y toca «Entrar con Genesis ID»
+ *   3. Al terminar, la wallet te trae de vuelta a AURA y entras solo
  *
- * «Abrir la app Orden Global» usa `vetawallet://genesis`, el enlace con que la app abre su
+ * «Crear mi Genesis ID» (el botón principal) NO abre la verificación suelta: vuelve a «Entrar» y pide
+ * el pase (`reintentar`). La wallet ve que no hay Genesis ID, ofrece sacarlo ahí mismo con el pedido
+ * de AU-RA guardado y, al terminar, sigue al «Permitir» y vuelve aquí con el pase: la entrada se
+ * completa sola (docs/ENTRAR-GENESIS.md, caso b). «Ya tengo mi Genesis ID» hace lo mismo.
+ *
+ * «Abrir la app Orden Global» (secundario) usa `vetawallet://genesis`, el enlace con que la app abre su
  * verificación de identidad (si no hay sesión, la app lo guarda y lo atiende en cuanto la persona se
  * registra o entra). Si la app no está instalada, se abre su página en Google Play. «Registrarme en
  * la web» abre Veta Wallet en `/#verificar`, la misma verificación en la web (sin sesión, pasa antes
@@ -30,6 +35,15 @@ export const ENLACE_APP_GENESIS = 'vetawallet://genesis';
 export const PAQUETE_ORDEN_GLOBAL = 'com.ordenglobal.app';
 export const WEB_REGISTRO_GENESIS = 'https://app.vetawallet.com/#verificar';
 
+/** La ficha de Orden Global en Google Play (la tienda si está; si no, la página web de la tienda). */
+export async function abrirTiendaOrdenGlobal() {
+  try {
+    await Linking.openURL(`market://details?id=${PAQUETE_ORDEN_GLOBAL}`);
+  } catch {
+    await WebBrowser.openBrowserAsync(`https://play.google.com/store/apps/details?id=${PAQUETE_ORDEN_GLOBAL}`).catch(() => {});
+  }
+}
+
 /** La app Orden Global en su verificación; si no está instalada, su ficha en Google Play. */
 export async function abrirAppOrdenGlobal() {
   try {
@@ -38,11 +52,7 @@ export async function abrirAppOrdenGlobal() {
   } catch {
     /* no está instalada: la tienda */
   }
-  try {
-    await Linking.openURL(`market://details?id=${PAQUETE_ORDEN_GLOBAL}`);
-  } catch {
-    await WebBrowser.openBrowserAsync(`https://play.google.com/store/apps/details?id=${PAQUETE_ORDEN_GLOBAL}`).catch(() => {});
-  }
+  await abrirTiendaOrdenGlobal();
 }
 
 export async function abrirWebRegistro() {
@@ -93,8 +103,8 @@ export function CrearGenesis({ navigation, route }: Props) {
               <Icono nombre="info" tam={18} color={tema.acentoTexto} />
               <Texto v="chica" color="texto" style={{ flex: 1 }}>
                 {tr(
-                  'Tu wallet todavía no tiene un Genesis ID. Créalo con estos tres pasos y vuelve a entrar.',
-                  'Your wallet doesn’t have a Genesis ID yet. Create one with these three steps and sign in again.'
+                  'Tu wallet todavía no tiene un Genesis ID. Créalo en tu wallet: al terminar te trae de vuelta y entras solo.',
+                  'Your wallet doesn’t have a Genesis ID yet. Create it in your wallet: when you’re done it brings you back and you’re in.'
                 )}
               </Texto>
             </View>
@@ -118,13 +128,23 @@ export function CrearGenesis({ navigation, route }: Props) {
           n={3}
           icono="huella"
           retraso={180}
-          titulo={tr('Vuelve y entra', 'Come back and sign in')}
-          texto={tr('Toca «Entrar con Genesis ID» y tu wallet confirma que eres tú.', 'Tap “Sign in with Genesis ID” and your wallet confirms it’s you.')}
+          titulo={tr('Vuelves solo a AURA', 'You’re brought back to AURA')}
+          texto={tr(
+            'Al terminar, tu wallet te pide permiso y te trae de vuelta: entras sin hacer nada más. Si no vuelve sola, toca «Ya tengo mi Genesis ID».',
+            'When you finish, your wallet asks for permission and brings you back: you’re in. If it doesn’t come back by itself, tap “I already have my Genesis ID”.'
+          )}
         />
         <Aparecer retraso={260} style={{ gap: MEDIDA.espacio.m, marginTop: MEDIDA.espacio.m }}>
-          <Boton titulo={tr('Abrir la app Orden Global', 'Open the Orden Global app')} icono="wallet" onPress={() => void abrirAppOrdenGlobal()} />
+          {/* Por la puerta de AU-RA: la wallet guarda el pedido mientras se crea el Genesis ID y vuelve sola. */}
+          <Boton
+            titulo={tr('Crear mi Genesis ID', 'Create my Genesis ID')}
+            icono="huella"
+            onPress={() => navigation.navigate('Entrar', { reintentar: Date.now() })}
+            etiqueta={tr('Crear mi Genesis ID en mi wallet y volver a AURA', 'Create my Genesis ID in my wallet and come back to AURA')}
+          />
+          <Boton titulo={tr('Abrir la app Orden Global', 'Open the Orden Global app')} icono="wallet" variante="secundario" onPress={() => void abrirAppOrdenGlobal()} />
           <Boton titulo={tr('Registrarme en la web', 'Sign up on the web')} icono="globo" variante="secundario" onPress={() => void abrirWebRegistro()} />
-          <Boton titulo={tr('Ya tengo mi Genesis ID', 'I already have my Genesis ID')} variante="fantasma" onPress={() => navigation.goBack()} />
+          <Boton titulo={tr('Ya tengo mi Genesis ID', 'I already have my Genesis ID')} variante="fantasma" onPress={() => navigation.navigate('Entrar', { reintentar: Date.now() })} />
         </Aparecer>
       </View>
     </PantallaConCabecera>

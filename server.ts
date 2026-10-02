@@ -150,7 +150,7 @@ import {
   registrarWebhookElectrum,
 } from './server/electrum/telegram';
 import { identidadDe, exigirPlataforma, esInvitado, plataformaAutorizada, sesionAbreAura, esDeComunidad } from './server/seguridad';
-import { cuentaDe, cuentasDisponibles, crearSolicitud, entrarConCuenta, cuentaSuspendida, mantenerCuentasAlDia } from './server/cuentas';
+import { asegurarCuentaMiembro, cuentaDe, cuentasDisponibles, crearSolicitud, entrarConCuenta, cuentaSuspendida, mantenerCuentasAlDia } from './server/cuentas';
 import { aprobadores, montarRutasCuentas, plantilla } from './server/cuentas-rutas';
 import { montarRutasGenesis } from './server/genesis';
 import { montarEnlacesApp } from './server/enlaces-app';
@@ -1709,7 +1709,9 @@ montarRutasCuentas(app, {
 
 /*
  * Entrar con Genesis ID (solo AU-RA: Dr Electrum tiene su propia puerta). Genesis prueba QUIÉN es
- * la persona; si entra lo decide el padrón. Ver server/genesis.ts.
+ * la persona; el padrón decide si es junta. Quien no está en el padrón entra como miembro y se le
+ * abre su cuenta de miembro (AURA_GENESIS_ABIERTO=0 vuelve a la puerta cerrada). Ver server/genesis.ts
+ * y docs/ENTRAR-GENESIS.md.
  */
 if (!ES_ELECTRUM) {
   // La vuelta de la wallet por https (App Links) y su declaración para Android: server/enlaces-app.ts.
@@ -1723,6 +1725,10 @@ if (!ES_ELECTRUM) {
     nombreYRol: nombreYRolDe,
     emitirSesion,
     sembrarPerfil: (correo, g) => sembrarDesdeGenesis(correo, { nombreGenesis: g.nombreGenesis, cumple: g.cumple || undefined, apodo: g.apodo }),
+    registrarMiembro: async ({ correo, nombre, gid }) => {
+      if (!cuentasDisponibles()) return;
+      if (await asegurarCuentaMiembro(correo, nombre, gid)) console.log(`[genesis] cuenta de miembro abierta para ${gid}`);
+    },
     pedirAcceso: async ({ nombre, correo, motivo }) => {
       if (!cuentasDisponibles()) return false;
       const s = await crearSolicitud({ nombre, correo, motivo, plataforma: PLATAFORMA });
