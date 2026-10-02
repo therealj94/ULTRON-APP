@@ -83,7 +83,11 @@ internal static class CentroSelfTest
             await w.Ejecutar("(()=>{const i=document.querySelectorAll('.panel-entrar input');i[0].value='jose@ordenglobal.org';i[1].value='x';document.querySelector('.panel-entrar form').requestSubmit();})()");
             await Task.Delay(2500);
             await w.Fotografiar(Path.Combine(carpeta, "02-guia.png"));
-            for (int i = 0; i < 3; i++) { await w.Ejecutar("[...document.querySelectorAll('.panel-entrar .btn.acento')].pop().click()"); await Task.Delay(1200); }
+            for (int i = 0; i < 2; i++) { await w.Ejecutar("[...document.querySelectorAll('.panel-entrar .btn.acento')].pop().click()"); await Task.Delay(1200); }
+            // El último paso de la guía ofrece «Ver el recorrido» (dorado) o «Listo, al notch»: aquí, al notch; el
+            // recorrido se abre más abajo, a su hora, para no correr con sus videos encima de cada sección.
+            await w.Ejecutar("[...document.querySelectorAll('.panel-entrar .btn')].find(b=>b.textContent.includes('Listo')).click()");
+            await Task.Delay(1200);
             await Task.Delay(2000);
             var secciones = new[] { "inicio", "chat", "pulse", "musica", "cartera", "ajustes" };
             var faltan = new List<string>();
