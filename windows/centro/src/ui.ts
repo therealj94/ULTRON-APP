@@ -32,6 +32,7 @@ function agregar(el: Node, hijos: Hijo[]) {
 /** Íconos de trazo (24×24), los mismos del notch. */
 const TRAZOS: Record<string, string> = {
   inicio: 'M3 11 12 4l9 7v9h-6v-6H9v6H3Z',
+  apagar: 'M12 3v9 M6.3 6.3a8 8 0 1 0 11.4 0',
   chat: 'M4 5h16v11h-9l-5 4v-4H4Z',
   pulse: 'M3 12h4l2-5 4 10 2-5h6',
   musica: 'M9 18V5l11-2v13 M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z M20 16a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z',
@@ -53,6 +54,12 @@ const TRAZOS: Record<string, string> = {
   enlace: 'M10 14a4 4 0 0 0 6 0l3-3a4 4 0 0 0-6-6l-1 1 M14 10a4 4 0 0 0-6 0l-3 3a4 4 0 0 0 6 6l1-1',
   actualizar: 'M20 11a8 8 0 1 0-2 5 M20 4v7h-7',
   mas: 'M12 5v14 M5 12h14',
+  callar: 'M4 9h4l5-4v14l-5-4H4Z M16 9l5 6 M21 9l-5 6',
+  volumen: 'M4 9h4l5-4v14l-5-4H4Z M16.5 8.5a5 5 0 0 1 0 7 M19 6a8.5 8.5 0 0 1 0 12',
+  flecha: 'M9 6l6 6-6 6',
+  avanzar: 'M4 12h15 M13 6l6 6-6 6',
+  info: 'M12 3a9 9 0 1 0 .01 0Z M12 11v6 M12 7.5v.5',
+  alerta: 'M12 3a9 9 0 1 0 .01 0Z M12 7v6 M12 16.5v.5',
 };
 
 export function icono(nombre: keyof typeof TRAZOS | string, tam = 18): SVGSVGElement {
@@ -101,12 +108,29 @@ export function eleccion<T extends string>(titulo: string, opciones: { valor: T;
 }
 
 let zonaAvisos: HTMLElement | null = null;
-/** Un aviso breve abajo a la derecha (lo que en el notch sería una isla). */
+const ICONO_AVISO = { ok: 'ok', mal: 'alerta', info: 'info' } as const;
+const RÓTULO_AVISO = { ok: ['HECHO', 'DONE'], mal: ['NO SE PUDO', 'FAILED'], info: ['AVISO', 'NOTE'] } as const;
+/**
+ * Un aviso breve abajo a la derecha (lo que en el notch sería una isla): una tira de grafito que llega con
+ * un golpe, su rótulo en Mono según el tipo, un filo de 1 px que se consume mientras dura, y se quita antes
+ * con un clic.
+ */
 export function avisar(texto: string, tipo: 'ok' | 'mal' | 'info' = 'info', ms = 4200) {
   zonaAvisos ??= document.body.appendChild(h('div', { class: 'avisos', role: 'status', 'aria-live': 'polite' }));
-  const a = h('div', { class: `aviso ${tipo}` }, texto);
+  let fuera = false;
+  const quitar = () => {
+    if (fuera) return;
+    fuera = true;
+    a.classList.add('sale');
+    setTimeout(() => a.remove(), 260);
+  };
+  const a = h('div', { class: `aviso ${tipo}`, style: `--ms:${ms}ms`, on: { click: quitar } },
+    h('span', { class: 'aviso-ico' }, icono(ICONO_AVISO[tipo], 16)),
+    h('span', { class: 'aviso-tipo' }, document.documentElement.lang === 'en' ? RÓTULO_AVISO[tipo][1] : RÓTULO_AVISO[tipo][0]),
+    h('span', { class: 'aviso-texto' }, texto),
+    h('i', { class: 'aviso-tiempo', 'aria-hidden': 'true' }));
   zonaAvisos.appendChild(a);
-  setTimeout(() => { a.classList.add('sale'); setTimeout(() => a.remove(), 400); }, ms);
+  setTimeout(quitar, ms);
 }
 
 export function vacio(el: HTMLElement) { while (el.firstChild) el.removeChild(el.firstChild); return el; }

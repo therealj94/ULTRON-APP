@@ -201,6 +201,17 @@ public sealed class AuraApi : IDisposable
         return new PermisoAgente(url, S("pase"), S("cid"), restante);
     }
 
+    /// <summary>
+    /// Avisa que la persona va a hablar: el cerebro deja leído su contexto y el primer turno no espera 4–8 s
+    /// (POST /api/cerebro/calentar). Nunca lanza: si falla, el turno simplemente tarda lo de antes.
+    /// </summary>
+    public async Task Calentar(CancellationToken ct = default)
+    {
+        if (string.IsNullOrEmpty(Token)) return;
+        try { using var r = await Enviar(() => Pedido(HttpMethod.Post, "api/cerebro/calentar", new { }), ct, TimeSpan.FromSeconds(8)).ConfigureAwait(false); }
+        catch (Exception) { }
+    }
+
     /// <summary>Cuelga: el pase deja de valer ya (no a los cinco minutos).</summary>
     public async Task CerrarAgente(string pase, CancellationToken ct = default)
     {

@@ -146,8 +146,19 @@ internal static class Sistema
         }
     }
 
-    static readonly string[] Ejecutables = { ".exe", ".msi", ".bat", ".cmd", ".ps1", ".vbs", ".js", ".jse", ".wsf", ".scr", ".com", ".lnk", ".jar", ".hta", ".cpl", ".msc", ".reg", ".appx", ".msix" };
-    public static bool EsEjecutable(string ruta) => Ejecutables.Contains(Path.GetExtension(ruta).ToLowerInvariant());
+    /// <summary>
+    /// Lo que se abre sin preguntar: documentos, imágenes, audio y video comunes. Antes era al revés (una lista de
+    /// ejecutables) y se colaban .url, .iso, .vhd, .appinstaller, .settingcontent-ms, .chm, .docm, .py…: una página
+    /// deja «factura.iso» en Descargas y «abre lo último que descargué» lo abría sin preguntar (revisión 2-oct).
+    /// </summary>
+    static readonly HashSet<string> SinPreguntar = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".pdf", ".txt", ".md", ".csv", ".rtf", ".docx", ".xlsx", ".pptx", ".odt", ".ods", ".odp",
+        ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".heic", ".svg",
+        ".mp3", ".wav", ".m4a", ".flac", ".ogg", ".mp4", ".mov", ".mkv", ".webm", ".avi",
+    };
+    /// <summary>Todo lo que no es un documento común (programas, instaladores, accesos, imágenes de disco, macros) espera el «sí».</summary>
+    public static bool PideConfirmar(string ruta) => !SinPreguntar.Contains(Path.GetExtension(ruta));
 
     static IEnumerable<string> Carpetas() => new[]
     {

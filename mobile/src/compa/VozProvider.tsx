@@ -138,6 +138,14 @@ export function vozOcupaMicrofono(v: VistaSesion): boolean {
 const pedirPermiso = (avatar: AvatarId, idioma: 'es' | 'en') =>
   api<{ token: string; pase: string; cid?: string }>('/api/voz/agente', { method: 'POST', body: JSON.stringify({ avatar, idioma }) }, 15_000);
 
+/**
+ * Va a hablar (abrió la app o volvió a ella): el cerebro deja leído su contexto y el primer turno no espera 4–8 s.
+ * El servidor decide si hace falta (con un turno reciente no hace nada; una vez por minuto como mucho). Desde el
+ * 2-oct el precalentado ya no se pierde: antes las sondas de otros servicios le borraban el espacio a la persona y
+ * cada vuelta a la app costaba ~8 s de GPU para nada; por eso se había quitado de aquí.
+ */
+const precalentarCerebro = () => void api('/api/cerebro/calentar', { method: 'POST', body: '{}' }, 8_000).catch(() => undefined);
+
 /** Se cerró una conversación: el servidor suelta lo suyo (opcional, sin esperar; si falla, vence solo). */
 const avisarCierre = (pase: string) =>
   void api('/api/voz/agente/cerrar', { method: 'POST', body: JSON.stringify({ pase }) }, 8_000).catch(() => undefined);
@@ -407,8 +415,7 @@ export function VozProvider({ children, conCompanera = true }: Props) {
           miga('voz: volvió del segundo plano a tiempo; la llamada sigue');
           return;
         }
-        // Sin precalentar aquí: cada vuelta a la app eran ~8 s de la GPU del nodo sin ninguna llamada
-        // (y podía demorar el primer turno de la mesa). Se precalienta solo cuando suena (`timbre`).
+        precalentarCerebro();
         puenteRef.current?.arrancar();
       } else if (st === 'background' && !detras) {
         detras = setTimeout(() => {

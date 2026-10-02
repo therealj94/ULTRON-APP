@@ -25,6 +25,12 @@ public partial class NotchWindow
     readonly Oido oido = new();
     readonly Altavoz altavoz = new();
     readonly Despertador despertador = new();
+    /// <summary>¿Suena algo en la PC (cualquier app)? Para que el despertar se ponga exigente con todo, no solo con Spotify.</summary>
+    readonly SonidoDelEquipo sonidoEquipo = new();
+    /// <summary>Cuándo AURA terminó de hablar: el eco de la sala todavía suena un momento y no debe despertarla.</summary>
+    DateTime finVozAura = DateTime.MinValue;
+    DateTime ultimoAvisoMic = DateTime.MinValue;
+    static readonly TimeSpan GraciaTrasHablar = TimeSpan.FromMilliseconds(1500);
     readonly CortadorFrases cortador = new();
     readonly List<Turno> historial = new();
     readonly DispatcherTimer relojRecordatorios = new() { Interval = TimeSpan.FromSeconds(5) };
@@ -71,18 +77,34 @@ public partial class NotchWindow
         {
             RevisarRecordatorios();
             RevisarAgente();
+            // Usando la PC (teclado o mouse en los últimos 2 min): el cerebro se mantiene caliente, cada 4 min.
+            if (Inactivo() < TimeSpan.FromMinutes(2) && DateTime.Now - ultimoPrecalentar > TimeSpan.FromMinutes(4)) PrecalentarCerebro("en uso");
             // «Siempre atenta»: si algo cerró el micrófono (un aviso, una acción), vuelve a escuchar sola.
             if (OidoSiempreAbierto && !microSilenciado && !pausado && !escuchando && !hablandoAhora && !pensando && propuesta == null && !soloRender)
             { continuo = true; EmpezarAEscuchar(); }
         };
         relojRecordatorios.Start();
 
-        oido.Nivel += n => Dispatcher.BeginInvoke(new Action(() => { BarrasEscucha.Nivel = n; if (escuchando) { EscalaAnillo.ScaleX = EscalaAnillo.ScaleY = 1 + n * 0.5; } }));
+        oido.Nivel += n => Dispatcher.BeginInvoke(new Action(() => { BarrasEscucha.Nivel = n; if (escuchando) { EscalaAnillo.ScaleX = EscalaAnillo.ScaleY = 1 + n * 0.18; } }));
         oido.EmpezoAHablar += () => Dispatcher.BeginInvoke(new Action(AlEmpezarAHablar));
         // El momento real en que el oído cerró la frase (no cuando la interfaz lo atiende): el origen del turno.
         oido.Frase += wav => { var fin = System.Diagnostics.Stopwatch.GetTimestamp(); Dispatcher.BeginInvoke(new Action(() => _ = AlTerminarFrase(wav, fin))); };
         oido.SeCanso += () => Dispatcher.BeginInvoke(new Action(() => { if (oido.ModoInterrupcion) return; CerrarOido(); if (!hablandoAhora && !pensando) continuo = false; Recalcular(); }));
-        oido.Fallo += m => Dispatcher.BeginInvoke(new Action(() => { CerrarOido(); continuo = false; Avisar(new Aviso("Micrófono", m, "", "worried", Segundos: 6)); Recalcular(); }));
+        // Un micrófono que falla cada vez que se reabre (cada 5 s) avisaba cada 5 s: ahora una vez por minuto.
+        oido.Fallo += m => Dispatcher.BeginInvoke(new Action(() =>
+        {
+            CerrarOido(); continuo = false;
+            if (DateTime.Now - ultimoAvisoMic > TimeSpan.FromMinutes(1)) { ultimoAvisoMic = DateTime.Now; Avisar(new Aviso("Micrófono", m, "", "worried", Segundos: 6)); }
+            Centro.Registro.Anotar("oir", "el micrófono falló: " + m);
+            Recalcular();
+        }));
+        oido.MicMudoDelSistema += () => Dispatcher.BeginInvoke(new Action(() =>
+        {
+            Centro.Registro.Anotar("oir", "el micrófono entrega solo silencio (¿permiso de Windows?)");
+            if (DateTime.Now - ultimoAvisoMic < TimeSpan.FromMinutes(10)) return;
+            ultimoAvisoMic = DateTime.Now;
+            Avisar(new Aviso(T("No te oigo", "I can't hear you"), T("Windows no le da el micrófono a AURA. Revisa Configuración → Privacidad → Micrófono → «Permitir que las aplicaciones de escritorio accedan».", "Windows isn't giving AURA the microphone. Check Settings → Privacy → Microphone."), "", "worried", T("Abrir", "Open"), () => { try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("ms-settings:privacy-microphone") { UseShellExecute = true }); } catch { } }, 12));
+        }));
 
         // Cuándo llegó el audio TTS y cuándo empezó a sonar de verdad (relleno aparte: no es respuesta). La primera
         // frase útil que suena cierra el turno como «ok».
@@ -94,7 +116,7 @@ public partial class NotchWindow
         }));
         altavoz.Empezo += () => Dispatcher.BeginInvoke(new Action(() => { hablandoAhora = true; pensando = false; AvatarPanel.Estado = "speaking"; EstadoPanel.Text = Ingles ? "Speaking…" : "Hablando…"; AbrirOidoParaInterrumpir(); Recalcular(); }));
         altavoz.Frase += f => Dispatcher.BeginInvoke(new Action(() => Subtitulo.Text = Expresiones.Quitar(f).Trim()));
-        altavoz.Nivel += n => { oido.NivelAltavoz = n; Dispatcher.BeginInvoke(new Action(() => { AvatarHabla.Boca = n; AvatarPanel.Boca = n; BarrasHabla.Nivel = n; if (modo == Modo.Habla) AnimarBrillo(0.2 + n * 0.5); })); };
+        altavoz.Nivel += n => { oido.NivelAltavoz = n; Dispatcher.BeginInvoke(new Action(() => { AvatarHabla.Boca = n; AvatarPanel.Boca = n; BarrasHabla.Nivel = n; if (modo == Modo.Habla) AnimarBrillo(0.45 + n * 0.55); })); };
         altavoz.Termino += () => Dispatcher.BeginInvoke(new Action(() =>
         {
             // Se calló todo sin que sonara una frase útil (solo el relleno, o la voz falló): el turno se cierra igual.
@@ -104,12 +126,20 @@ public partial class NotchWindow
         altavoz.Fallo += m => Dispatcher.BeginInvoke(new Action(() => Avisar(new Aviso("Voz", m, "", "worried"))));
 
         // Con música sonando (se muestre o no la tarjeta), despertar pide más: las canciones dicen «aura», «antonio»…
-        despertador.Exigente = () => cancion is { Sonando: true };
+        // Y con CUALQUIER sonido de la PC (un video en el navegador, un juego, una llamada): antes solo contaba el
+        // reproductor que avisa a Windows, y lo demás despertaba a AURA.
+        sonidoEquipo.Encender();
+        // Laya ligera decodifica sus pesos la primera vez que se usa (~350 KB): se hace ya, no en el primer «pon música».
+        _ = Task.Run(() => { try { LayaLigera.Predecir("hola"); } catch { } });
+        despertador.Exigente = () => cancion is { Sonando: true } || sonidoEquipo.Sonando;
         // Su propia voz («…soy AU-RA») no la despierta: mientras suena algo, la palabra de activación no cuenta.
         despertador.Desperto += () => Dispatcher.BeginInvoke(new Action(() =>
         {
             if (pausado || microSilenciado || pensando || hablandoAhora || altavoz.Ocupado) return;
+            // Recién se calló: lo que oyó es su propia voz rebotando en la sala.
+            if (DateTime.Now - finVozAura < GraciaTrasHablar) { Centro.Registro.Anotar("despertar", "ignorado: AURA acaba de hablar (eco)"); return; }
             Centro.Registro.Anotar("despertar", "Windows oyó «Oye AURA»");
+            PrecalentarCerebro("despertar");
             llamadaExplicita = true; ultimaCharla = DateTime.Now; continuo = ajustes.ManosLibres;
             if (!AgenteAbierto && !abriendoAgente) TextoEscucha.Text = T("Te escucho…", "Listening…");
             // «Oye AURA, abre Excel» de corrido: Windows la despierta a media frase. Antes se abría la conversación
@@ -147,9 +177,14 @@ public partial class NotchWindow
     {
         CerrarAgente();
         api?.Dispose();
+        // La caída pendiente sale recién ahora: al servidor que eligió la persona, no al de fábrica.
+        Centro.Diagnostico.Servidor = ajustes.Servidor;
+        Centro.Diagnostico.MandarCaidaPendiente();
         try { api = new AuraApi(ajustes.Servidor, string.IsNullOrEmpty(ajustes.Token) ? null : ajustes.Token) { Renovar = RenovarSesion, Aparato = ajustes.Aparato }; }
         catch (AuraError ex) { api = null; Avisar(new Aviso("Revisa el servidor", ex.Message, "", "worried")); }
         IniciarCanal();
+        GrabarRellenos();
+        PrecalentarCerebro("arranque");
     }
 
     /// <summary>
@@ -178,7 +213,8 @@ public partial class NotchWindow
     async Task ComprobarConexion()
     {
         bool ok = api != null && await api.Salud();
-        PuntoEstado.Fill = new SolidColorBrush(pausado ? Color.FromRgb(0xFF, 0x9F, 0x0A) : ok ? Color.FromRgb(0x4C, 0xD9, 0x64) : Color.FromRgb(0x8E, 0x8E, 0x93));
+        // El punzón del estado: cardenillo (conectada), ceniza (en pausa), lacre (sin conexión).
+        PuntoEstado.Fill = (Brush)FindResource(pausado ? "Ceniza" : ok ? "Cardenillo" : "Lacre");
         PuntoEstado.ToolTip = pausado ? "En pausa" : ok ? "Conectada a AU-RA" : "Sin conexión con el servidor";
         if (!ok && api != null) Avisar(new Aviso("Sin conexión", "No alcanzo el servidor AU-RA. Las manos de la computadora siguen funcionando.", "", "worried", Segundos: 6));
     }
@@ -192,6 +228,7 @@ public partial class NotchWindow
         // Con la conversación en vivo abierta, el micrófono del notch la cuelga.
         if (AgenteAbierto) { CerrarAgente(); return; }
         if (abriendoAgente) return;
+        PrecalentarCerebro("micrófono");
         llamadaExplicita = true; ultimaCharla = DateTime.Now;
         if (escuchando && !hablandoAhora) { CerrarOido(); continuo = false; Recalcular(); return; }
         Callar();
@@ -257,6 +294,9 @@ public partial class NotchWindow
         Recalcular();
     }
 
+    /// <summary>Con sonido de fondo, lo mínimo que el modelo propio tiene que haber oído para mandar una frase a transcribir.</summary>
+    const float UmbralFraseConSonido = 0.3f;
+
     async Task AlTerminarFrase(byte[] wav, long finCaptura)
     {
         // Si «Oye AURA» llegó a media frase, esta es esa frase: con orden se hace; sola, se abre la conversación.
@@ -283,6 +323,20 @@ public partial class NotchWindow
         {
             if (OidoSiempreAbierto && !microSilenciado && !pausado) EmpezarAEscuchar();
             return;
+        }
+        // Con algo sonando en la PC y el modelo propio cuidando: una frase que ni de lejos sonó a «hey aura» no se
+        // manda a transcribir. Antes TODA frase de la música o del video iba a /api/stt y, si el texto empezaba con
+        // «aura», «claudio» o «antonio», la despertaba (la otra puerta de las activaciones falsas del 1-oct).
+        if (esperandoNombre && !eraInterrupcion && !despertarPedido && despertador.UsaModeloPropio && despertador.Exigente?.Invoke() == true)
+        {
+            var dura = TimeSpan.FromSeconds(Math.Max(0, wav.Length - 44) / 32000.0);
+            var max = despertador.MaxDesde(DateTime.UtcNow - dura - TimeSpan.FromSeconds(1));
+            if (max < UmbralFraseConSonido)
+            {
+                Centro.Registro.Anotar("despertar", $"frase con sonido de fondo sin «hey aura» ({max:0.00}): no la transcribo");
+                if (!microSilenciado && !pausado) EmpezarAEscuchar();
+                return;
+            }
         }
         // Mientras solo se espera el nombre, el notch no cambia a «pensando»: no parpadea con cada ruido.
         if (!esperandoNombre) { pensando = true; TextoPiensa.Text = T("Te entendí, un momento…", "Got it, one moment…"); Recalcular(); }
@@ -397,7 +451,7 @@ public partial class NotchWindow
         if (soloRender) return;
         // El despertador queda encendido mientras haga falta (no se rehace cada vez: cargar el modelo cuesta).
         if (microSilenciado || pausado || ajustes.Escucha is not ("palabra" or "siempre")) despertador.Apagar();
-        BotonSilencio.Foreground = microSilenciado ? new SolidColorBrush(Color.FromRgb(0xFF, 0x6B, 0x6B)) : (Brush)FindResource("Texto");
+        BotonSilencio.Foreground = (Brush)FindResource(microSilenciado ? "Lacre" : "Texto");
         BotonSilencio.ToolTip = microSilenciado ? T("Micrófono silenciado. Tócalo para que AURA vuelva a escucharte.", "Microphone muted. Tap to let AURA listen again.")
                                                 : T("Silenciar el micrófono: AURA deja de escucharte hasta que lo vuelvas a tocar", "Mute: AURA stops listening until you tap again");
         if (microSilenciado || pausado) { CerrarAgente(); if (!hablandoAhora) CerrarOido(); Recalcular(); return; }
@@ -492,17 +546,19 @@ public partial class NotchWindow
         int dichas = 0;
         Respuesta? r = null;
         bool rellenoDicho = false;
-        // El cerebro tarda (a veces 8–10 s hasta la primera palabra): si a los 1,8 s no ha dicho nada, AURA dice
-        // algo corto para que se sepa que está en eso. Una sola vez por turno, solo con voz y si la hablaste.
+        // El cerebro tarda: si a los 1,2 s no ha dicho nada, AURA dice algo corto (ya grabado: suena al instante) para
+        // que se sepa que está en eso; y si a los 7 s sigue sin nada, un «ya casi» (antes: uno solo a los 1,8 s, que
+        // además esperaba su propia voz, y después silencio hasta 15 s). Solo con voz y si la hablaste.
         if (conVoz && hablado)
         {
-            var relleno = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1800) };
+            var relleno = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1200) };
+            int vuelta = 0;
             relleno.Tick += (_, _) =>
             {
-                relleno.Stop();
-                if (g != generacion || dichas > 0 || vcts.IsCancellationRequested) return;
-                var frases = Ingles ? new[] { "Let me see…", "One sec…", "Hmm, let me think…" } : new[] { "A ver…", "Dame un segundo…", "Mmm, déjame ver…" };
-                rellenoDicho = Decir(frases[Random.Shared.Next(frases.Length)], "neutral", vcts.Token, relleno: true);
+                if (g != generacion || dichas > 0 || vcts.IsCancellationRequested) { relleno.Stop(); return; }
+                var frases = vuelta == 0 ? FrasesRelleno(Ingles) : FrasesSeguimiento(Ingles);
+                rellenoDicho |= Decir(frases[Random.Shared.Next(frases.Length)], "neutral", vcts.Token, relleno: true);
+                if (++vuelta >= 2) relleno.Stop(); else relleno.Interval = TimeSpan.FromMilliseconds(5800);
             };
             relleno.Start();
         }
@@ -574,10 +630,54 @@ public partial class NotchWindow
     /// Pide la voz de una frase (sin esperar) y la pone en la cola del altavoz: la del avatar (ElevenLabs,
     /// en el servidor) o, si se eligió o el servidor no contesta, la de Windows. Devuelve si encoló algo.
     /// </summary>
+    static string[] FrasesRelleno(bool en) => en ? new[] { "Let me see…", "One sec…", "Hmm, let me think…" } : new[] { "A ver…", "Dame un segundo…", "Mmm, déjame ver…" };
+    static string[] FrasesSeguimiento(bool en) => en ? new[] { "Almost there…", "Just a moment more…" } : new[] { "Ya casi lo tengo…", "Un momentito más…" };
+
+    /// <summary>Las frases de espera ya grabadas con la voz del avatar (avatar|idioma|frase): suenan sin esperar al servidor.</summary>
+    readonly System.Collections.Concurrent.ConcurrentDictionary<string, Audio> rellenosGrabados = new();
+
+    /// <summary>Graba de antemano las frases de espera del avatar e idioma actuales (en segundo plano; si falla, se piden al momento).</summary>
+    DateTime ultimoPrecalentar = DateTime.MinValue;
+
+    /// <summary>
+    /// La persona muestra que va a hablar (abre AURA, la despierta, toca el micrófono, abre el chat, o lleva un rato
+    /// usando la PC): el cerebro deja leído su contexto y el primer turno no espera 4–8 s. El servidor decide si hace
+    /// falta (con un turno reciente no hace nada); aquí, una vez por minuto como mucho.
+    /// </summary>
+    void PrecalentarCerebro(string motivo)
+    {
+        var a = api;
+        if (a == null || string.IsNullOrEmpty(ajustes.Token) || soloRender || DateTime.Now - ultimoPrecalentar < TimeSpan.FromMinutes(1)) return;
+        ultimoPrecalentar = DateTime.Now;
+        _ = a.Calentar();
+    }
+
+    void GrabarRellenos()
+    {
+        var a = api; if (a == null || ajustes.VozDeWindows || !ajustes.ResponderConVoz || soloRender) return;
+        var avatar = ajustes.Avatar; var idioma = ajustes.Idioma; bool en = idioma == "en";
+        _ = Task.Run(async () =>
+        {
+            foreach (var f in FrasesRelleno(en).Concat(FrasesSeguimiento(en)))
+            {
+                var k = $"{avatar}|{idioma}|{f}";
+                if (rellenosGrabados.ContainsKey(k)) continue;
+                try { rellenosGrabados[k] = await a.Voz(f, "neutral", avatar, idioma, CancellationToken.None); } catch { return; }
+            }
+        });
+    }
+
     internal bool Decir(string frase, string emocion = "neutral", CancellationToken ct = default, bool relleno = false)
     {
         if (!ajustes.ResponderConVoz || soloRender || string.IsNullOrWhiteSpace(frase)) return false;
         var a = api; var avatar = ajustes.Avatar; var idioma = ajustes.Idioma; bool local = ajustes.VozDeWindows || a == null;
+        if (relleno && !local && rellenosGrabados.TryGetValue($"{avatar}|{idioma}|{frase}", out var grabado))
+        {
+            altavoz.Encolar(Task.FromResult<Audio?>(grabado), frase, relleno, metricas.Actual?.Id ?? 0);
+            return true;
+        }
+        // Cambió el avatar o el idioma: se graban las de ahora para la próxima.
+        if (relleno && !local) GrabarRellenos();
         var tarea = Task.Run(async () =>
         {
             if (!local)
@@ -610,6 +710,7 @@ public partial class NotchWindow
     void AlTerminarDeHablar()
     {
         hablandoAhora = false;
+        finVozAura = DateTime.Now;
         AvatarHabla.Boca = AvatarPanel.Boca = 0;
         // Entre frases del mismo turno sigue «hablando»: el notch no parpadea mientras llega la siguiente.
         if (turnoEnCurso) { hablandoAhora = true; Recalcular(); return; }
@@ -644,7 +745,7 @@ public partial class NotchWindow
         escribiendo?.Cancel(); destino = null;
         pausado = true;
         BotonPausa.Content = "";
-        PuntoEstado.Fill = new SolidColorBrush(Color.FromRgb(0xFF, 0x9F, 0x0A));
+        PuntoEstado.Fill = (Brush)FindResource("Ceniza");
         EstadoPanel.Text = ajustes.Idioma == "en" ? "Paused" : "En pausa";
         if (avisar) Avisar(new Aviso(ajustes.Idioma == "en" ? "Paused" : "En pausa", ajustes.Idioma == "en" ? "Microphone, voice and actions stopped. Tap the mic to resume." : "Micrófono, voz y acciones detenidos. Toca el micrófono para seguir.", "", "worried", Segundos: 4));
     }
@@ -723,10 +824,14 @@ public partial class NotchWindow
     internal void AplicarAvatar(string id, bool guardar = true)
     {
         ajustes.Avatar = id;
-        var color = id switch { "claudio" => Color.FromRgb(0xF4, 0xAD, 0x72), "antonio" => Color.FromRgb(0x45, 0xC9, 0xDE), "ojos" => Color.FromRgb(0x5C, 0xE1, 0xFF), _ => Color.FromRgb(0xD6, 0xB5, 0x6C) };
-        Application.Current.Resources["Acento"] = new SolidColorBrush(color);
-        Application.Current.Resources["AcentoSuave"] = new SolidColorBrush(Color.FromArgb(0x33, color.R, color.G, color.B));
-        Brillo.Color = color;
+        // Cada avatar, su metal (Contraste: nada de cian ni neón): oro crudo AU-RA, cobre Claudio, plata ANT-ONIO,
+        // platino el Guardián. El «vivo» es su brillo puntual (foco, lo activo): el mismo metal pulido hacia el papel.
+        var color = id switch { "claudio" => Color.FromRgb(0xC2, 0x7A, 0x4C), "antonio" => Color.FromRgb(0xA7, 0xAD, 0xB0), "ojos" => Color.FromRgb(0x9F, 0xB4, 0xB8), _ => Marca.Contraste.OroCrudo };
+        var vivo = id is "aura" or "" ? Marca.Contraste.OroPulido : Marca.Contraste.Mezcla(color, Marca.Contraste.Papel, 0.45);
+        Application.Current.Resources["Acento"] = Marca.Contraste.Pincel(color);
+        Application.Current.Resources["AcentoSuave"] = Marca.Contraste.Pincel(Color.FromArgb(0x1F, color.R, color.G, color.B));
+        Application.Current.Resources["AcentoVivo"] = Marca.Contraste.Pincel(vivo);
+        FiloDelAcento(color);
         foreach (var a in new[] { AvatarChico, AvatarEscucha, AvatarPiensa, AvatarHabla, AvatarAviso, AvatarConfirma, AvatarPanel }) a.Avatar = id;
         AvatarView.Precargar(id);
         NombreChico.Text = NombreHabla.Text = NombrePanel.Text = ajustes.NombreAvatar;
@@ -735,12 +840,13 @@ public partial class NotchWindow
 
     void Terminar()
     {
-        Callar(true);
-        canal?.Cancel();
-        GuardarRecuperacion();
-        despertador.Dispose(); oido.Dispose(); altavoz.Dispose(); api?.Dispose();
-        centro?.CerrarDeVerdad();
-        musica.Dispose(); correo?.Dispose(); agenda?.Dispose(); avisosApps?.Dispose(); relojProgreso.Stop();
-        relojRecordatorios.Stop();
+        // Cada uno por separado: uno que falle no deja a los demás abiertos (ni el proceso vivo).
+        Seguro(() => Callar(true));
+        Seguro(() => canal?.Cancel());
+        Seguro(GuardarRecuperacion);
+        Seguro(despertador.Dispose); Seguro(sonidoEquipo.Dispose); Seguro(oido.Dispose); Seguro(altavoz.Dispose); Seguro(() => api?.Dispose());
+        Seguro(() => centro?.CerrarDeVerdad());
+        Seguro(musica.Dispose); Seguro(() => correo?.Dispose()); Seguro(() => agenda?.Dispose()); Seguro(() => avisosApps?.Dispose());
+        Seguro(relojProgreso.Stop); Seguro(relojRecordatorios.Stop);
     }
 }

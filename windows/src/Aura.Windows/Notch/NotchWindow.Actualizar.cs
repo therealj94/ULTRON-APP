@@ -30,6 +30,15 @@ public partial class NotchWindow
     void IniciarActualizaciones()
     {
         if (soloRender) return;
+        // ¿Venimos de una actualización? Se dice cómo terminó (y llega al servidor, para verlo sin pedir el log).
+        if (Actualizador.ResultadoUltimaInstalacion() is { } r)
+        {
+            Centro.Registro.Anotar("actualizar", (r.ok ? "instalada: " : "falló: ") + r.detalle);
+            Centro.Diagnostico.Reportar("estado", (r.ok ? "actualización instalada: " : "actualización FALLÓ: ") + r.detalle);
+            Avisar(r.ok
+                ? new Aviso(T("AURA se actualizó", "AURA updated"), T($"Ya tienes la versión {Actualizador.MiVersion}.", $"You're on {Actualizador.MiVersion}."), "", "happy", Segundos: 5)
+                : new Aviso(T("La actualización no se instaló", "The update didn't install"), T("Lo intento otra vez en un momento.", "I'll try again shortly."), "", "worried", T("Reintentar", "Retry"), () => InstalarActualizacion(), 10));
+        }
         relojActualizar.Tick += async (_, _) =>
         {
             relojActualizar.Interval = actualizador.Lista ? TimeSpan.FromMinutes(10) : TimeSpan.FromHours(6);
@@ -120,14 +129,10 @@ public partial class NotchWindow
             if (!actualizador.Instalar()) return T("El instalador bajado no pasó la verificación; lo vuelvo a bajar en la próxima búsqueda.", "The downloaded installer failed verification.");
             actualizando = true;
             Avisar(new Aviso(T("Actualizando AURA…", "Updating AURA…"), T("Me cierro y vuelvo sola en unos segundos.", "Closing and coming back in a few seconds."), "\uE895", "happy", Segundos: 3));
-            // Salir sin preguntar por el borrador (queda guardado y se recupera al volver) y sin depender de nadie.
+            // Salir del todo sin preguntar por el borrador (queda guardado y se recupera al volver). SalirDelTodo
+            // termina el proceso aunque la limpieza se trabe: el instalador espera ese momento para copiar.
             await Task.Delay(1500);
-            borradorSucio = false;
-            Close();
-            // Si algo impidiera cerrar, igual se sale: el instalador no puede reemplazar un AURA abierto.
-            await Task.Delay(4000);
-            Centro.Registro.Anotar("actualizar", "salida forzada para que el instalador siga");
-            Environment.Exit(0);
+            SalirDelTodo(sinPreguntar: true);
             return null;
         }
         catch (Exception ex)

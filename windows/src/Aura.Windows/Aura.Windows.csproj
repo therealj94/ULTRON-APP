@@ -16,6 +16,9 @@
  </ItemGroup>
  <ItemGroup>
   <Resource Include="AvatarAssets/**/*.png"/>
+  <!-- IBM Plex (SIL OFL 1.1) va dentro del .exe; la licencia viaja al lado, como pide la OFL. -->
+  <Resource Include="Fuentes/*.ttf"/>
+  <Content Include="Fuentes/OFL-IBM-Plex.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true"/>
   <Content Include="CallAssets/**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true"/>
   <Content Include="CentroAssets/**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true"/>
   <Content Include="Modelos/**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true"/>

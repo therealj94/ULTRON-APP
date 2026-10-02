@@ -16,9 +16,12 @@ await build({
   entryPoints: [join(aqui, 'src', 'main.ts')],
   bundle: true, format: 'iife', target: 'es2022', minify: !vigilar, sourcemap: vigilar ? 'inline' : false,
   outfile: join(salida, 'centro.js'), legalComments: 'none',
-  loader: { '.css': 'css' },
+  // Las fuentes IBM Plex (src/fuentes, copiadas de windows/marca/fuentes) viajan con el Centro: la CSP solo
+  // deja cargar fuentes propias (font-src 'self'). estilos.css las pide con rutas relativas.
+  loader: { '.css': 'css', '.woff2': 'file' }, assetNames: 'fuentes/[name]',
 });
 cpSync(join(aqui, 'public'), salida, { recursive: true });
+cpSync(join(aqui, 'src', 'fuentes', 'OFL-IBM-Plex.txt'), join(salida, 'fuentes', 'OFL-IBM-Plex.txt'));
 
 // Mismo color-scheme que la página: si no coinciden, Chromium pinta el iframe sobre un fondo blanco opaco.
 const shim = '<meta name="color-scheme" content="dark"><style>:root,html,body{color-scheme:dark;background:transparent!important}</style><script>window.ReactNativeWebView={postMessage:function(s){try{parent.postMessage({avatar3d:JSON.parse(s)},"*")}catch(e){}}};' +

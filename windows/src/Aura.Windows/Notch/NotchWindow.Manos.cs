@@ -345,8 +345,8 @@ public partial class NotchWindow
         if (f == null) { NoPude(valor == "ultimo-descargado" ? T("No hay descargas.", "There are no downloads.") : T($"No encontré un archivo «{valor}» en Descargas, Escritorio ni Documentos.", $"I couldn't find a file “{valor}” in Downloads, Desktop or Documents.")); return; }
         var archivo = f;
         void Abre() { Process.Start(new ProcessStartInfo(archivo.FullName) { UseShellExecute = true }); Hecho(T("Abriendo ", "Opening ") + archivo.Name, archivo.DirectoryName ?? "", "\uE8A5", T("Ahí está.", "Here it is.")); }
-        if (Sistema.EsEjecutable(archivo.FullName))
-            Proponer(new Propuesta(T($"¿Abro «{archivo.Name}»?", $"Open “{archivo.Name}”?"), T("Es un programa o instalador: ábrelo solo si confías en él.", "It's a program or installer: open it only if you trust it."), DateTime.Now.AddSeconds(30), () => { Abre(); return System.Threading.Tasks.Task.CompletedTask; }));
+        if (Sistema.PideConfirmar(archivo.FullName))
+            Proponer(new Propuesta(T($"¿Abro «{archivo.Name}»?", $"Open “{archivo.Name}”?"), T("No es un documento común (puede ser un programa, un acceso o un instalador): ábrelo solo si confías en él.", "It's not a common document (it may be a program, shortcut or installer): open it only if you trust it."), DateTime.Now.AddSeconds(30), () => { Abre(); return System.Threading.Tasks.Task.CompletedTask; }));
         else Abre();
     }
 
@@ -479,7 +479,11 @@ public partial class NotchWindow
             var fila = new Grid { Margin = new Thickness(0, 0, 0, 6) };
             fila.ColumnDefinitions.Add(new ColumnDefinition());
             fila.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            fila.Children.Add(new TextBlock { Text = r.Cuando.ToString("ddd HH:mm") + " · " + r.Tarea, TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center });
+            // La hora en Mono (las cifras, alineadas), la tarea en Sans.
+            var renglon = new TextBlock { TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center };
+            renglon.Inlines.Add(new System.Windows.Documents.Run(r.Cuando.ToString("ddd HH:mm")) { Style = (Style)FindResource("Atajo") });
+            renglon.Inlines.Add(new System.Windows.Documents.Run("  " + r.Tarea));
+            fila.Children.Add(renglon);
             var quitar = new Button { Content = "", Style = (Style)FindResource("Icono"), ToolTip = T("Quitar", "Remove") };
             var id = r.Id;
             quitar.Click += (_, _) => { ajustes.Recordatorios.RemoveAll(x => x.Id == id); try { ajustes.Guardar(); } catch { } PintarRecordatorios(); };
