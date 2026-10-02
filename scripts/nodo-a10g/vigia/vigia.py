@@ -175,7 +175,8 @@ class Nodo:
                     return None
                 return codigo == 200
             if capa == 'genera':
-                pedido = json.dumps({'prompt': 'Hola', 'n_predict': 1, 'cache_prompt': False}).encode()
+                # En el espacio comun (3): sin id_slot, llama-server usaba el menos usado y le borraba lo leido a una persona.
+                pedido = json.dumps({'prompt': 'Hola', 'n_predict': 1, 'cache_prompt': False, 'id_slot': 3}).encode()
                 codigo, cuerpo = self._http('http://127.0.0.1:8080/completion', pedido, plazo=90)
                 return codigo == 200 and b'content' in cuerpo
             if capa == 'puente':
