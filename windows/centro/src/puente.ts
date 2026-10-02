@@ -77,6 +77,7 @@ async function muestra(metodo: string, args: any): Promise<unknown> {
       estadoMuestra.sesion = { nombre: 'José', correo: 'jose@ordenglobal.org', rol: 'Junta Directiva · Orden Global', nivel: 'junta' };
       return { miembro: estadoMuestra.sesion };
     case 'salir': estadoMuestra.sesion = null; return true;
+    case 'app.cerrar': return true;
     case 'ajustes.leer': return { avatar: 'aura', idioma: 'es', escucha: 'palabra', responderConVoz: true, interrumpir: true, avisosDeApps: true };
     case 'ajustes.guardar': Object.assign(estadoMuestra, args ?? {}); return true;
     case 'primeraVez.terminar': estadoMuestra.primeraVez = false; return true;

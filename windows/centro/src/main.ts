@@ -12,6 +12,7 @@ import { conectarConPase, iniciarPulse } from './pulse';
 import './pulseVoz';
 import * as RELEVO from './pulse/relevo';
 import { autoConectarCartera } from './pulse/pagar';
+import { cerrarAura } from './cerrar';
 import { vistaInicio } from './vistas/inicio';
 import { vistaChat } from './vistas/chat';
 import { vistaPulse } from './vistas/pulse';
@@ -68,7 +69,10 @@ function armazon() {
     h('button', { class: 'nav nav-recorrido', title: T('Ver el recorrido: Claudio y ANT-ONIO te enseñan todo lo que hace AURA', 'Watch the tour: Claudio and ANT-ONIO show you everything AURA does'),
       'aria-label': T('Ver el recorrido', 'Watch the tour'), on: { click: () => window.dispatchEvent(new Event('centro:recorrido')) } }, icono('play', 22)),
     h('button', { class: 'nav', title: T('Volver al notch (AURA sigue contigo arriba)', 'Back to the notch'), 'aria-label': T('Volver al notch', 'Back to the notch'),
-      on: { click: () => recoger() } }, icono('notch', 22))));
+      on: { click: () => recoger() } }, icono('notch', 22)),
+    // Cerrar AURA del todo (notch, Centro, voz y bandeja): antes solo estaba escondido en el menú de la bandeja.
+    h('button', { class: 'nav nav-apagar', title: T('Cerrar AURA por completo', 'Quit AURA completely'), 'aria-label': T('Cerrar AURA por completo', 'Quit AURA completely'),
+      on: { click: () => cerrarAura() } }, icono('apagar', 22))));
   contenido = h('main', { class: 'contenido' });
   vacio(raiz).appendChild(h('div', { class: 'app' }, lateral, contenido));
   let inicial = 'inicio';

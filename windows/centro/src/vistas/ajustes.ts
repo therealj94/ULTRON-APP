@@ -5,6 +5,7 @@
 import { h, boton, tarjeta, interruptor, eleccion, avisar, icono } from '../ui';
 import { pedir, al } from '../puente';
 import { estado, cargar, aplicarAcento, T } from '../estado';
+import { cerrarAura } from '../cerrar';
 
 type Aj = Record<string, any>;
 
@@ -37,6 +38,7 @@ export function vistaAjustes(): HTMLElement {
         ? h('div', { class: 'fila' }, h('span', { class: 'foto', style: 'background:var(--acento-suave);color:var(--acento)' }, (e.sesion.nombre || e.sesion.correo).slice(0, 1).toUpperCase()),
             h('div', { style: 'flex:1' }, h('strong', null, e.sesion.nombre || e.sesion.correo), h('br'),
               h('small', { class: 'tenue' }, `${e.sesion.correo} · ${e.sesion.rol || (e.sesion.nivel === 'junta' ? 'Junta' : T('Miembro · Genesis ID', 'Member · Genesis ID'))}`)),
+            boton(T('Cerrar AURA por completo', 'Quit AURA'), () => void cerrarAura(), { titulo: T('Cierra el notch, el Centro, la voz y el ícono de la bandeja', 'Closes the notch, the Centro, voice and the tray icon') }),
             boton(T('Salir de la cuenta', 'Sign out'), async () => { if (confirm(T('¿Salir de AU-RA en esta computadora? Se borran de aquí tu sesión y las llaves de PULSE2CHAT.', 'Sign out of AU-RA on this computer?'))) await pedir('salir'); }, { tipo: 'peligro', titulo: T('Cierra la sesión en esta PC (la cuenta sigue existiendo)', 'Signs out on this PC') }))
         : h('p', null, T('No has entrado.', 'Not signed in.')),
       h('p', { class: 'nota' }, T('Tu sesión de AU-RA dura 14 días. Con Genesis ID no se guarda ninguna clave: al vencer, vuelves a entrar con Veta Wallet.', 'Your session lasts 14 days.')));

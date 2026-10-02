@@ -1,3 +1,4 @@
+using System.Linq;
 using System;
 using System.IO;
 using System.Threading;
@@ -52,6 +53,7 @@ public partial class App : Application
         }
         Centro.Protocolo.Registrar();
         VigilarFallos();
+        Centro.Diagnostico.MandarCaidaPendiente();
         var notch = new NotchWindow();
         MainWindow = notch;
         Centro.Protocolo.Llego += p => notch.Dispatcher.BeginInvoke(new Action(() => notch.PedidoExterno(p)));
@@ -70,18 +72,27 @@ public partial class App : Application
         DispatcherUnhandledException += (_, e) =>
         {
             Centro.Registro.Anotar("fallo", "en la ventana (sigo): " + Core.RegistroSeguro.Sanear(e.Exception.ToString()));
+            Centro.Diagnostico.Reportar("error-js", "fallo en la ventana (AURA siguió)", Resumen(e.Exception));
             e.Handled = true;
         };
         AppDomain.CurrentDomain.UnhandledException += (_, e) =>
         {
             Centro.Registro.Anotar("fallo", "se cayó: " + Core.RegistroSeguro.Sanear(e.ExceptionObject?.ToString() ?? "?"));
-            if (e.IsTerminating) Relanzar();
+            if (e.IsTerminating) { Centro.Diagnostico.DejarCaida(e.ExceptionObject is Exception x ? Resumen(x) : "?"); Relanzar(); }
         };
         System.Threading.Tasks.TaskScheduler.UnobservedTaskException += (_, e) =>
         {
             Centro.Registro.Anotar("fallo", "tarea sin atender: " + Core.RegistroSeguro.Sanear(e.Exception.GetBaseException().Message));
             e.SetObserved();
         };
+    }
+
+    /// <summary>Tipo, mensaje y dónde (las primeras líneas de la pila): lo justo para encontrarlo, sin datos.</summary>
+    static string Resumen(Exception ex)
+    {
+        var b = ex.GetBaseException();
+        var pila = string.Join(" | ", (b.StackTrace ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Take(4));
+        return $"{b.GetType().Name}: {b.Message} @ {pila}";
     }
 
     static void Relanzar()

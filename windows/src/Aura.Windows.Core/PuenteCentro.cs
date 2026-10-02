@@ -51,6 +51,8 @@ public static class PuenteCentro
         "conectar", "desconectar",
         // El recorrido del Centro: la voz de Claudio y ANT-ONIO, y AURA sin oír mientras suena.
         "voz.decir", "recorrido.abierto",
+        // Cerrar AURA por completo desde el Centro (la página pide; el notch confirma y sale).
+        "app.cerrar",
     };
 
     public static bool MetodoPermitido(string? metodo) => metodo != null && Metodos.Contains(metodo);

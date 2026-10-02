@@ -182,6 +182,8 @@ public partial class NotchWindow
             case "actualizar.instalar": { var motivo = await InstalarAhora(); return new { ok = motivo == null, motivo }; }
             case "voz.decir": return await VozDelRecorrido(a);
             case "recorrido.abierto": RecorridoAbierto(Bool(a, "si") == true); return true;
+            // Se contesta primero y se sale después: la página no queda esperando una respuesta que nunca llega.
+            case "app.cerrar": _ = Dispatcher.BeginInvoke(new Action(() => SalirDelTodo()), System.Windows.Threading.DispatcherPriority.Background); return true;
             case "diagnostico.carpeta": Process.Start(new ProcessStartInfo("explorer.exe", "\"" + Registro.Carpeta + "\"") { UseShellExecute = true }); return true;
             case "spotify.estado" or "spotify.buscar" or "spotify.poner" or "spotify.control" or "spotify.dispositivos" or "spotify.transferir":
                 return await ManejarSpotify(metodo, a);

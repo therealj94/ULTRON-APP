@@ -144,6 +144,7 @@ public partial class NotchWindow
     {
         CerrarAgente();
         api?.Dispose();
+        Centro.Diagnostico.Servidor = ajustes.Servidor;
         try { api = new AuraApi(ajustes.Servidor, string.IsNullOrEmpty(ajustes.Token) ? null : ajustes.Token) { Renovar = RenovarSesion, Aparato = ajustes.Aparato }; }
         catch (AuraError ex) { api = null; Avisar(new Aviso("Revisa el servidor", ex.Message, "", "worried")); }
         IniciarCanal();
@@ -656,12 +657,14 @@ public partial class NotchWindow
 
     void Terminar()
     {
-        Callar(true);
-        canal?.Cancel();
-        GuardarRecuperacion();
-        despertador.Dispose(); oido.Dispose(); altavoz.Dispose(); api?.Dispose();
-        centro?.CerrarDeVerdad();
-        musica.Dispose(); correo?.Dispose(); agenda?.Dispose(); avisosApps?.Dispose(); relojProgreso.Stop();
-        relojRecordatorios.Stop();
+        // Cada uno por separado: uno que falle no deja a los demás abiertos (ni el proceso vivo).
+        Seguro(() => Callar(true));
+        Seguro(() => canal?.Cancel());
+        Seguro(GuardarRecuperacion);
+        Seguro(despertador.Dispose); Seguro(oido.Dispose); Seguro(altavoz.Dispose); Seguro(() => api?.Dispose());
+        Seguro(() => centro?.CerrarDeVerdad());
+        Seguro(() => llamadas?.Close());
+        Seguro(musica.Dispose); Seguro(() => correo?.Dispose()); Seguro(() => agenda?.Dispose()); Seguro(() => avisosApps?.Dispose());
+        Seguro(relojProgreso.Stop); Seguro(relojRecordatorios.Stop);
     }
 }

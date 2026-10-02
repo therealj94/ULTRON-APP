@@ -371,7 +371,7 @@ public partial class NotchWindow : Window
         menu.Items.Add("Pausar todo  (Ctrl+Alt+Esc)", null, (_, _) => Dispatcher.Invoke(PausarTodo));
         menu.Items.Add("Ajustes", null, (_, _) => Dispatcher.Invoke(() => AbrirCentro("ajustes")));
         menu.Items.Add(new Forms.ToolStripSeparator());
-        menu.Items.Add("Salir", null, (_, _) => Dispatcher.Invoke(Close));
+        menu.Items.Add("Cerrar AURA por completo", null, (_, _) => Dispatcher.Invoke(() => SalirDelTodo()));
         bandeja.ContextMenuStrip = menu;
     }
 
@@ -402,15 +402,44 @@ public partial class NotchWindow : Window
         Raiz.IsHitTestVisible = si;
     }
 
+    /// <summary>
+    /// Cerrar AURA de verdad (bandeja, notch y Centro: «Cerrar AURA por completo»). Antes «Salir» podía dejar el
+    /// proceso vivo y escondido: si un paso de la limpieza fallaba, el cierre se cortaba ahí, o un hilo de audio o
+    /// de red seguía corriendo; y como AURA es una sola, volver a abrirla no hacía nada (le pasaba el pedido a la
+    /// que quedó escondida). Ahora cada paso va por separado y, si en 5 s el proceso no terminó, se termina igual.
+    /// </summary>
+    internal void SalirDelTodo(bool sinPreguntar = false)
+    {
+        if (sinPreguntar) borradorSucio = false;
+        saliendo = true;
+        Close();
+    }
+
+    bool saliendo, cerrado;
+
     void AlCerrar(object? s, CancelEventArgs e)
     {
-        if (!GuardarAntesDeSalir()) { e.Cancel = true; return; }
-        CompositionTarget.Rendering -= Fotograma;
-        vigia.Stop(); relojAviso?.Stop();
-        Terminar();
-        if (fuente != null) { for (int i = 1; i <= 5; i++) UnregisterHotKey(fuente.Handle, i); fuente.RemoveHook(Gancho); }
-        if (bandeja != null) { bandeja.Visible = false; bandeja.Dispose(); }
+        if (cerrado) return;
+        if (!GuardarAntesDeSalir()) { e.Cancel = true; saliendo = false; return; }
+        cerrado = true;
+        // El reloj de seguridad va primero: pase lo que pase en la limpieza, el proceso termina.
+        if (!soloRender)
+            new System.Threading.Thread(() => { System.Threading.Thread.Sleep(5000); Centro.Registro.Anotar("salir", "la limpieza no terminó en 5 s: salida forzada"); Environment.Exit(0); }) { IsBackground = true }.Start();
+        Centro.Registro.Anotar("salir", "cerrando AURA por completo");
+        Seguro(() => CompositionTarget.Rendering -= Fotograma);
+        Seguro(() => { vigia.Stop(); relojAviso?.Stop(); });
+        Seguro(() => { if (AgenteAbierto || abriendoAgente) CerrarAgente(); });
+        Seguro(Terminar);
+        Seguro(() => { if (fuente != null) { for (int i = 1; i <= 5; i++) UnregisterHotKey(fuente.Handle, i); fuente.RemoveHook(Gancho); } });
+        Seguro(() => { if (bandeja != null) { bandeja.Visible = false; bandeja.Dispose(); } });
         // En las pruebas del CI la que termina es la prueba (con su resultado escrito), no la ventana.
         if (!soloRender) Application.Current.Shutdown();
+    }
+
+    /// <summary>Un paso de la limpieza al cerrar: si falla se anota y se sigue con el siguiente.</summary>
+    static void Seguro(Action paso)
+    {
+        try { paso(); }
+        catch (Exception ex) { Centro.Registro.Anotar("salir", "un paso falló (sigo): " + ex.GetBaseException().Message); }
     }
 }

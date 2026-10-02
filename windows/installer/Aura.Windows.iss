@@ -59,3 +59,25 @@ function Relanzar(): Boolean;
 begin
   Result := WizardSilent() and (ExpandConstant('{param:RELANZAR|0}') = '1');
 end;
+
+{ Actualización por el aire (/RELANZAR=1, y /ESPERAR=1 desde 2-oct): AURA arranca este instalador y en
+  seguida se cierra. Antes de copiar nada se espera, hasta 30 s, a que suelte su candado (el mutex
+  Local\Aura.Windows.Notch, que se libera cuando el proceso termina del todo). Antes se copiaba con AURA
+  todavía abierta, los archivos estaban en uso y la instalación silenciosa abortaba sin avisar. También
+  sirve con las AURA viejas, que solo pasan /RELANZAR=1. }
+function InitializeSetup(): Boolean;
+var
+  i: Integer;
+begin
+  Result := True;
+  if WizardSilent() and ((ExpandConstant('{param:RELANZAR|0}') = '1') or (ExpandConstant('{param:ESPERAR|0}') = '1')) then
+  begin
+    i := 0;
+    while CheckForMutexes('Local\Aura.Windows.Notch') and (i < 120) do
+    begin
+      Sleep(250);
+      i := i + 1;
+    end;
+    Log(Format('Espera a que AURA se cierre: %d ms (todavía abierta: %d)', [i * 250, Ord(CheckForMutexes('Local\Aura.Windows.Notch'))]));
+  end;
+end;

@@ -29,6 +29,7 @@ button { font: inherit; color: inherit; }
 .nav-recorrido { color: var(--acento); background: var(--acento-suave, rgba(214,181,108,.14)); animation: pulso-recorrido 2.4s ease-in-out infinite; }
 @keyframes pulso-recorrido { 50% { box-shadow: 0 0 0 6px rgba(214,181,108,.12); } }
 @media (prefers-reduced-motion: reduce) { .nav-recorrido { animation: none; } }
+.nav-apagar:hover { color: #ff6b6b; background: rgba(255,107,107,.12); }
 .nav.activo::before { content: ""; position: absolute; left: -12px; top: 14px; bottom: 14px; width: 3px; border-radius: 3px; background: var(--acento); }
 .nav .punto { position: absolute; top: 10px; right: 10px; width: 8px; height: 8px; border-radius: 50%; background: var(--acento); box-shadow: 0 0 0 2px var(--superficie); }
 .nav-etiqueta { font-size: 10px; margin-top: -2px; color: var(--tenue); }

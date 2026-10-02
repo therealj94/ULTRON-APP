@@ -32,6 +32,7 @@ function agregar(el: Node, hijos: Hijo[]) {
 /** Íconos de trazo (24×24), los mismos del notch. */
 const TRAZOS: Record<string, string> = {
   inicio: 'M3 11 12 4l9 7v9h-6v-6H9v6H3Z',
+  apagar: 'M12 3v9 M6.3 6.3a8 8 0 1 0 11.4 0',
   chat: 'M4 5h16v11h-9l-5 4v-4H4Z',
   pulse: 'M3 12h4l2-5 4 10 2-5h6',
   musica: 'M9 18V5l11-2v13 M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z M20 16a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z',

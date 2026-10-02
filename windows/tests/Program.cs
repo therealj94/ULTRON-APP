@@ -824,6 +824,7 @@ Check(Actualizacion.MotivoParaEsperar(libre with { Llamada = true }) != null && 
     Check(ConteoCorreo.Aviso(new[] { C(1) }, false, false).Titulo == "Correo de Persona 1", "un solo correo: de quién");
 }
 Check(new[] { "notch.monitores", "notch.restablecer", "notch.llamada" }.All(PuenteCentro.MetodoPermitido), "el puente deja pasar lo que usan el notch movible y la llamada");
+Check(PuenteCentro.MetodoPermitido("app.cerrar") && !PuenteCentro.MetodoPermitido("app.cerrarTodo"), "el puente deja cerrar AURA por completo desde el Centro (solo ese nombre)");
 Check(new[] { "voz.decir", "recorrido.abierto" }.All(PuenteCentro.MetodoPermitido), "el puente deja pasar la voz y el silencio del recorrido");
 // ── Lo que salió del registro de José (1-oct 22:29–22:46) ──
 Check(float.IsPositiveInfinity(UmbralesDespertar.MinimoWindows("oye aura", true, false)) && float.IsPositiveInfinity(UmbralesDespertar.MinimoWindows("aura", true, false)) && UmbralesDespertar.MinimoWindows("oye claudio", true, false) == 0.9f, "con modelo propio, SAPI no decide «aura»");
