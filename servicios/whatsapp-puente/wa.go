@@ -190,6 +190,14 @@ func (c *CuentaWA) Desvincular() error {
 		}
 	}
 	cli.Disconnect()
+	// Sin red (o si WhatsApp no contestó al logout) las llaves del aparato siguen en sesion.db y al
+	// reiniciar se volvería a conectar solo: se borran aquí. Si no se pueden borrar, no se dice que se
+	// desvinculó (Codex en #123).
+	if cli.Store.ID != nil {
+		if err := cli.Store.Delete(ctx); err != nil {
+			return fmt.Errorf("no pude borrar la sesión guardada: %w", err)
+		}
+	}
 	c.mu.Lock()
 	c.usar(c.contenedor.NewDevice())
 	c.vinculando, c.qr, c.codigo = false, "", ""
@@ -282,6 +290,10 @@ func (c *CuentaWA) Media(chat, id string) ([]byte, string, error) {
 		d, tipo = msg.GetStickerMessage(), msg.GetStickerMessage().GetMimetype()
 	default:
 		return nil, "", errors.New("ese mensaje no tiene archivo")
+	}
+	// Se baja entero a memoria (y el servidor lo vuelve a juntar): uno enorme no se baja (Codex en #123).
+	if t, ok := d.(interface{ GetFileLength() uint64 }); ok && t.GetFileLength() > MaxMedia {
+		return nil, "", ErrMediaGrande
 	}
 	c.mu.Lock()
 	cli := c.cli

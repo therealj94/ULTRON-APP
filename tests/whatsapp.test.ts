@@ -50,8 +50,14 @@ async function puenteFalso(vinculado = true) {
       }
       if (u.pathname === '/leido') return json(200, { ok: true });
       if (u.pathname === '/media') {
+        if (u.searchParams.get('id') === 'sin-largo') {
+          // Sin Content-Length (por partes): el servidor no lo junta en memoria.
+          res.writeHead(200, { 'content-type': 'video/mp4' });
+          res.write('MP4');
+          return res.end();
+        }
         if (u.searchParams.get('id') !== 'foto') return json(404, { error: 'ese mensaje no tiene archivo' });
-        res.writeHead(200, { 'content-type': 'image/jpeg' });
+        res.writeHead(200, { 'content-type': 'image/jpeg', 'content-length': '3' });
         return res.end('JPG');
       }
       return json(404, { error: 'no' });
@@ -126,6 +132,7 @@ test('la app: solo su dueño ve su WhatsApp; chats, mensajes, enviar, leído, fo
       assert.equal(foto.headers.get('content-type'), 'image/jpeg');
       assert.equal(await foto.text(), 'JPG');
       assert.equal((await como(JOSE, '/api/whatsapp/media?chat=c&id=otra')).status, 404);
+      assert.equal((await como(JOSE, '/api/whatsapp/media?chat=c&id=sin-largo')).status, 413);
       const cod = await (await como(JOSE, '/api/whatsapp/vincular', { method: 'POST', body: JSON.stringify({ telefono: '+504 9999-8888' }) })).json();
       assert.equal(cod.codigo, 'ABCD-EFGH');
       assert.ok(p.pedidos.includes('POST /vincular'));

@@ -37,17 +37,22 @@ type Cuenta interface {
 }
 
 type EstadoCuenta struct {
-	Vinculado bool   `json:"vinculado"`
-	Conectado bool   `json:"conectado"`
-	Numero    string `json:"numero,omitempty"`
-	Nombre    string `json:"nombre,omitempty"`
-	QR        string `json:"qr,omitempty"`
-	Codigo    string `json:"codigo,omitempty"`
-	Vinculando bool  `json:"vinculando"`
+	Vinculado  bool   `json:"vinculado"`
+	Conectado  bool   `json:"conectado"`
+	Numero     string `json:"numero,omitempty"`
+	Nombre     string `json:"nombre,omitempty"`
+	QR         string `json:"qr,omitempty"`
+	Codigo     string `json:"codigo,omitempty"`
+	Vinculando bool   `json:"vinculando"`
 }
 
 var ErrYaVinculado = errors.New("ya hay un WhatsApp vinculado: desvincúlalo primero")
 var ErrSinVincular = errors.New("no hay un WhatsApp vinculado")
+
+// Lo más grande que se baja de un mensaje (fotos, audios, videos cortos, documentos normales).
+const MaxMedia = 16 << 20
+
+var ErrMediaGrande = errors.New("ese archivo pesa más de 16 MB: ábrelo en tu teléfono")
 
 type API struct {
 	clave   string
@@ -106,7 +111,9 @@ func (a *API) Rutas() http.Handler {
 	}))
 	m.HandleFunc("POST /enviar", a.con(a.enviar))
 	m.HandleFunc("POST /leido", a.con(func(w http.ResponseWriter, r *http.Request) {
-		var c struct{ Chat string `json:"chat"` }
+		var c struct {
+			Chat string `json:"chat"`
+		}
 		if json.NewDecoder(r.Body).Decode(&c) != nil || c.Chat == "" {
 			fallo(w, 400, errors.New("falta el chat"))
 			return
@@ -119,11 +126,16 @@ func (a *API) Rutas() http.Handler {
 	}))
 	m.HandleFunc("GET /media", a.con(func(w http.ResponseWriter, r *http.Request) {
 		datos, tipo, err := a.cuenta.Media(r.URL.Query().Get("chat"), r.URL.Query().Get("id"))
+		if errors.Is(err, ErrMediaGrande) {
+			fallo(w, 413, err)
+			return
+		}
 		if err != nil {
 			fallo(w, 404, err)
 			return
 		}
 		w.Header().Set("Content-Type", tipo)
+		w.Header().Set("Content-Length", strconv.Itoa(len(datos)))
 		w.Header().Set("Cache-Control", "private, max-age=3600")
 		w.Write(datos)
 	}))
@@ -131,7 +143,9 @@ func (a *API) Rutas() http.Handler {
 }
 
 func (a *API) vincular(w http.ResponseWriter, r *http.Request) {
-	var c struct{ Telefono string `json:"telefono"` }
+	var c struct {
+		Telefono string `json:"telefono"`
+	}
 	_ = json.NewDecoder(r.Body).Decode(&c)
 	if c.Telefono != "" {
 		tel := soloDigitos(c.Telefono)

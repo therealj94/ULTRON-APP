@@ -99,6 +99,9 @@ prueba('las dos entradas de chats llevan la pestaña de WhatsApp; otra cuenta ve
   const envoltorio = leer('whatsapp/ChatsConWhatsapp.tsx');
   assert.match(envoltorio, /if \(!conWhatsapp\) return <PantallaChats onAbrir=\{onAbrir\} onAtras=\{onAtras\} \/>;/);
   assert.match(envoltorio, /pagingEnabled/, 'se cambia deslizando');
+  assert.doesNotMatch(envoltorio, /\.catch\(\(\) => vivo && setEstado\(\{ disponible: false, permitido: false/, 'un fallo de red no esconde WhatsApp');
+  assert.match(envoltorio, /setTimeout\(\(\) => preguntar\(intento \+ 1\)/, 'si falla la red, vuelve a preguntar');
+  assert.match(envoltorio, /clearTimeout\(espera\)/, 'al salir no queda un reintento colgado');
   const pantalla = leer('whatsapp/PantallaWhatsapp.tsx');
   assert.match(pantalla, /Vincular con el número de teléfono/, 'el código sirve en el mismo teléfono');
   assert.match(pantalla, /API\.leidoWA/, 'abrir un chat lo marca leído');

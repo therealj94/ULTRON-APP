@@ -144,13 +144,16 @@ type cuentaFalsa struct {
 	alm      *Almacen
 }
 
-func (c *cuentaFalsa) Estado() EstadoCuenta            { return c.estado }
-func (c *cuentaFalsa) VincularQR() (string, error)     { return "data:image/png;base64,QR", nil }
-func (c *cuentaFalsa) Desvincular() error              { c.estado = EstadoCuenta{}; return c.alm.Borrar() }
-func (c *cuentaFalsa) MarcarLeido(chat string) error   { c.leidos = append(c.leidos, chat); return nil }
+func (c *cuentaFalsa) Estado() EstadoCuenta          { return c.estado }
+func (c *cuentaFalsa) VincularQR() (string, error)   { return "data:image/png;base64,QR", nil }
+func (c *cuentaFalsa) Desvincular() error            { c.estado = EstadoCuenta{}; return c.alm.Borrar() }
+func (c *cuentaFalsa) MarcarLeido(chat string) error { c.leidos = append(c.leidos, chat); return nil }
 func (c *cuentaFalsa) Media(chat, id string) ([]byte, string, error) {
 	if id == "foto" {
 		return []byte("JPG"), "image/jpeg", nil
+	}
+	if id == "video-enorme" {
+		return nil, "", ErrMediaGrande
 	}
 	return nil, "", errors.New("ese mensaje no tiene archivo")
 }
@@ -264,6 +267,12 @@ func TestAPI(t *testing.T) {
 	h.ServeHTTP(w, r)
 	if w.Code != 200 || w.Header().Get("Content-Type") != "image/jpeg" || w.Body.String() != "JPG" {
 		t.Fatalf("media: %d %s", w.Code, w.Header().Get("Content-Type"))
+	}
+	if w.Header().Get("Content-Length") != "3" {
+		t.Fatalf("media sin Content-Length: %q", w.Header().Get("Content-Length"))
+	}
+	if c, _ := pedir(t, h, "GET", "/media?chat=c&id=video-enorme", claveDePrueba, nil); c != 413 {
+		t.Fatalf("un archivo enorme no se baja: %d", c)
 	}
 	if c, _ := pedir(t, h, "POST", "/desvincular", claveDePrueba, nil); c != 200 {
 		t.Fatal("desvincular")

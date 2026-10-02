@@ -14,6 +14,8 @@ import { PantallaWhatsapp } from './PantallaWhatsapp';
 import * as API from './api';
 import { vistaDe, type EstadoWA } from './logica';
 
+const REINTENTOS_MS = [3_000, 10_000, 30_000, 60_000];
+
 type Props = {
   onAbrir: (correo: string, nombre: string) => void;
   onAtras?: () => void;
@@ -29,13 +31,22 @@ export function ChatsConWhatsapp({ onAbrir, onAtras, enWhatsapp = false }: Props
   const [noLeidos, setNoLeidos] = useState(0);
   const deslizador = useRef<ScrollView>(null);
 
+  // El permiso lo decide el servidor en una respuesta (permitido: false). Un fallo de red NO es un «no»:
+  // mientras tanto se ve PULSE2CHAT y se vuelve a preguntar (Codex en #123).
   useEffect(() => {
     let vivo = true;
-    void API.estadoWA()
-      .then((e) => vivo && setEstado(e))
-      .catch(() => vivo && setEstado({ disponible: false, permitido: false, vinculado: false }));
+    let espera: ReturnType<typeof setTimeout> | undefined;
+    const preguntar = (intento: number) => {
+      void API.estadoWA()
+        .then((e) => vivo && setEstado(e))
+        .catch(() => {
+          if (vivo) espera = setTimeout(() => preguntar(intento + 1), REINTENTOS_MS[Math.min(intento, REINTENTOS_MS.length - 1)]);
+        });
+    };
+    preguntar(0);
     return () => {
       vivo = false;
+      if (espera) clearTimeout(espera);
     };
   }, []);
 

@@ -339,6 +339,9 @@ export function montarRutasWhatsapp(app: express.Express, d: Deps) {
     }
   });
 
+  /** Igual que el puente (servicios/whatsapp-puente, MaxMedia). */
+  const MAX_MEDIA = 16 * 1024 * 1024;
+
   app.get('/api/whatsapp/media', d.exigirMesa, d.limitar(60), async (req, res) => {
     if (!puede(req, res)) return;
     const c = conf();
@@ -350,6 +353,12 @@ export function montarRutasWhatsapp(app: express.Express, d: Deps) {
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
         return res.status(r.status === 401 ? 503 : r.status).json({ error: String((j as any)?.error || `HTTP ${r.status}`).slice(0, 160), honesto: true });
+      }
+      // El puente ya no baja nada de más de 16 MB; si igual viniera algo más grande (o sin tamaño), no se junta en memoria.
+      const largo = Number(r.headers.get('content-length') || NaN);
+      if (!Number.isFinite(largo) || largo > MAX_MEDIA) {
+        void r.body?.cancel().catch(() => {});
+        return res.status(413).json({ error: 'Ese archivo pesa más de 16 MB: ábrelo en tu teléfono.', honesto: true });
       }
       res.setHeader('Content-Type', r.headers.get('content-type') || 'application/octet-stream');
       res.setHeader('Cache-Control', 'private, max-age=3600');

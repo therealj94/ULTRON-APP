@@ -24,20 +24,20 @@ type Chat struct {
 }
 
 type Mensaje struct {
-	ID         string `json:"id"`
-	Chat       string `json:"chat"`
-	De         string `json:"de"`
-	NombreDe   string `json:"nombreDe"`
-	Mio        bool   `json:"mio"`
-	Hora       int64  `json:"hora"`
-	Tipo       string `json:"tipo"`
-	Texto      string `json:"texto"`
-	Miniatura  string `json:"miniatura,omitempty"`
-	Duracion   int    `json:"duracion,omitempty"`
-	Archivo    string `json:"archivo,omitempty"`
-	ConMedia   bool   `json:"conMedia,omitempty"`
-	Eliminado  bool   `json:"eliminado,omitempty"`
-	Editado    bool   `json:"editado,omitempty"`
+	ID        string `json:"id"`
+	Chat      string `json:"chat"`
+	De        string `json:"de"`
+	NombreDe  string `json:"nombreDe"`
+	Mio       bool   `json:"mio"`
+	Hora      int64  `json:"hora"`
+	Tipo      string `json:"tipo"`
+	Texto     string `json:"texto"`
+	Miniatura string `json:"miniatura,omitempty"`
+	Duracion  int    `json:"duracion,omitempty"`
+	Archivo   string `json:"archivo,omitempty"`
+	ConMedia  bool   `json:"conMedia,omitempty"`
+	Eliminado bool   `json:"eliminado,omitempty"`
+	Editado   bool   `json:"editado,omitempty"`
 }
 
 func AbrirAlmacen(ruta string) (*Almacen, error) {
