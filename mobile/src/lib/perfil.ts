@@ -26,7 +26,7 @@ import { saveSettings } from './storage';
 import { setAvatarVoz } from './tts';
 import { normalizarAvatarId, type AvatarId } from '../avatares/catalogo';
 import { fijarIdioma, idiomaActual, normalizarIdioma } from '../i18n';
-import { emitir, RUTA_PERFIL, type Encuesta, type Perfil, type Tema } from '../nucleo/contrato';
+import { emitir, NIVELES_INICIATIVA, RUTA_PERFIL, type Encuesta, type NivelIniciativa, type Perfil, type Tema } from '../nucleo/contrato';
 import { fijarTema, temaElegido } from '../nucleo/tema';
 import { normalizarPresencia } from '../avatar3d/presencia';
 
@@ -119,6 +119,7 @@ export function normalizarPerfil(raw: unknown): Perfil | null {
   const pr = normalizarPresencia(r.presencia);
   if (pr) p.presencia = pr;
   if (r.motorComputadora === 'gratis' || r.motorComputadora === 'pago') p.motorComputadora = r.motorComputadora;
+  if (NIVELES_INICIATIVA.includes(r.iniciativa as NivelIniciativa)) p.iniciativa = r.iniciativa as NivelIniciativa;
   return p;
 }
 
@@ -142,6 +143,7 @@ export function aplicarCambios(base: Perfil, c: Partial<Perfil>, ahora: number):
     if (pr) p.presencia = pr;
   }
   if (c.motorComputadora === 'gratis' || c.motorComputadora === 'pago') p.motorComputadora = c.motorComputadora;
+  if (c.iniciativa !== undefined && NIVELES_INICIATIVA.includes(c.iniciativa)) p.iniciativa = c.iniciativa;
   if (c.nombreGenesis !== undefined && !base.nombreGenesis) {
     const ng = textoLimpio(c.nombreGenesis, 120);
     if (ng) p.nombreGenesis = ng;
@@ -175,6 +177,7 @@ export function cuerpoPut(p: Perfil, cambios: Partial<Perfil>): Record<string, u
   if (cambios.completado !== undefined) b.completado = p.completado;
   if (cambios.presencia !== undefined && p.presencia) b.presencia = p.presencia;
   if (cambios.motorComputadora !== undefined && p.motorComputadora) b.motorComputadora = p.motorComputadora;
+  if (cambios.iniciativa !== undefined && p.iniciativa) b.iniciativa = p.iniciativa;
   if (cambios.cumple !== undefined) b.cumple = p.cumple || '';
   if (cambios.encuesta !== undefined) {
     const e: Record<string, string> = {};

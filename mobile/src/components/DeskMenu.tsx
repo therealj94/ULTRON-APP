@@ -11,6 +11,18 @@ import { de, tr, useIdioma, type Bilingue } from '../i18n';
 import { AVATARES, avatarPorId, type AvatarId } from '../avatares/catalogo';
 import { SelectorIdioma } from '../ui/SelectorIdioma';
 import { emitir } from '../nucleo/contrato';
+import type { PantallaCerebro } from '../compa/cerebro';
+
+/** Una fila del menú que abre una hoja (sus misiones, su círculo, lo que sabe de ti). */
+const FilaHoja = ({ titulo, sub, onPress }: { titulo: string; sub: string; onPress: () => void }) => (
+  <Pressable onPress={onPress} style={styles.row} accessibilityRole="button" accessibilityLabel={`${titulo}. ${sub}`}>
+    <View style={{ flex: 1 }}>
+      <Text style={styles.label}>{titulo}</Text>
+      <Text style={styles.sub}>{sub}</Text>
+    </View>
+    <Text style={styles.label}>›</Text>
+  </Pressable>
+);
 
 const MODES: Array<{ id: Mode; label: Bilingue; hint: Bilingue }> = [
   { id: 'GUARDIAN', label: { es: 'Guardián', en: 'Guardian' }, hint: { es: 'vigila', en: 'watches' } },
@@ -55,6 +67,8 @@ type Props = {
   /** Un ejemplo del catálogo o cualquier texto: se manda como orden. */
   onCommand: (text: string) => void;
   onProbarVoz: () => void;
+  /** Sus misiones, lo que sabe de ti o tu círculo (app/HojasCerebro.tsx). Sin él, esas filas no salen. */
+  onAbrirHoja?: (h: PantallaCerebro) => void;
   settings: { sttEngine: SttEngine; proactive: boolean; sfx: boolean };
   memoryCount: number;
   onSetSttEngine: (e: SttEngine) => void;
@@ -215,6 +229,15 @@ export function DeskMenu(p: Props) {
               <Chip key={a.id} label={de(a.etiqueta)} onPress={() => p.onCommand(de(a.pedido))} />
             ))}
           </View>
+
+          {/* Lo que AURA lleva de ti: las metas que te ayuda a cumplir y tu gente cercana. */}
+          {p.onAbrirHoja ? (
+            <>
+              <Text style={styles.section}>{tr('Lo que hacemos juntos', 'What we do together')}</Text>
+              <FilaHoja titulo={tr('Misiones', 'Missions')} sub={tr('Tus metas, paso a paso', 'Your goals, step by step')} onPress={() => p.onAbrirHoja?.('misiones')} />
+              <FilaHoja titulo={tr('Mi círculo', 'My circle')} sub={tr('Tu gente cercana y sus recordatorios', 'Your close people and their reminders')} onPress={() => p.onAbrirHoja?.('circulo')} />
+            </>
+          ) : null}
 
           <View style={styles.row}>
             <View>
@@ -488,6 +511,13 @@ export function DeskMenu(p: Props) {
             </View>
             <Switch value={p.settings.sfx} onValueChange={p.onToggleSfx} accessibilityLabel={tr('Efectos de sonido', 'Sound effects')} trackColor={{ true: T.activo, false: T.borde }} thumbColor={T.panel} />
           </View>
+          {p.onAbrirHoja ? (
+            <FilaHoja
+              titulo={tr('Lo que sé de ti', 'What I know about you')}
+              sub={tr('Lo que aprendí al hablar contigo y lo que quedó a medias', 'What I learned talking with you and what was left halfway')}
+              onPress={() => p.onAbrirHoja?.('conocer')}
+            />
+          ) : null}
           <View style={styles.row}>
             <View>
               <Text style={styles.label}>{tr('Memoria de largo plazo', 'Long-term memory')}</Text>

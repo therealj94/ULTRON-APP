@@ -91,7 +91,7 @@ Sin `todas`: las abiertas (activas y pausadas), numeradas como las nombra AURA (
 `PUT /api/perfil` con `{ "iniciativa": "alta" | "media" | "baja" | "apagada" }` (lo valida
 `lib/perfil-persona.ts`); `GET /api/perfil` lo devuelve (sin el campo: `media`).
 
-### Empuje (pendiente de conectar)
+### Empuje (conectado en server.ts: arrancarIniciativa → empujarAccion)
 
 El reloj (`arrancarIniciativa`) entrega cada propuesta NUEVA a `alProponer(correo, propuesta)`. Acción
 propuesta para el canal de acciones del teléfono (lib/acciones-app.ts, como `AccionComputadora`: solo la

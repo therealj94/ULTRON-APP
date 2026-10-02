@@ -35,6 +35,14 @@ export type Encuesta = {
 
 export type MotorComputadora = 'gratis' | 'pago';
 
+/**
+ * Cuánta iniciativa quiere de AURA (server/iniciativa.ts, lib/perfil-persona.ts): con qué frecuencia le
+ * propone cosas sin que se lo pida. alta: cada 2 h (hasta 6 al día) · media: cada 4 h (hasta 3) · baja: 1
+ * al día · apagada: nunca. Sin valor, media.
+ */
+export type NivelIniciativa = 'alta' | 'media' | 'baja' | 'apagada';
+export const NIVELES_INICIATIVA: readonly NivelIniciativa[] = ['alta', 'media', 'baja', 'apagada'];
+
 export type Perfil = {
   /** Cómo quiere que le digan («José», «Jefe», «Pepe»). */
   apodo: string;
@@ -58,6 +66,8 @@ export type Perfil = {
    * (de pago). Sin valor, gratis.
    */
   motorComputadora?: MotorComputadora;
+  /** Cuánto le propone AURA por su cuenta (NivelIniciativa). Sin valor, media. */
+  iniciativa?: NivelIniciativa;
   /** Milisegundos. */
   actualizado: number;
 };

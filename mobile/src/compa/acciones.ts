@@ -20,6 +20,8 @@ import type { AccionApp, Ambiente, Contexto, Eventos, Pantalla, RecordatorioPues
 import { EVENTO_AMBIENTE, MANOS_APP, RUTA_ACCIONES } from '../nucleo/contrato';
 import { LectorSse, jsonDe } from './sse';
 import { esAccionPc, PANTALLAS_MAS } from './computadora';
+import { esAccionIniciativa } from './iniciativa';
+import { PANTALLAS_CEREBRO } from './cerebro';
 
 /** Lo que se usa de un XMLHttpRequest (el de React Native o uno falso en las pruebas). */
 export type XhrMin = {
@@ -41,8 +43,13 @@ const temporizador: Temporizador = (f, ms) => {
   return () => clearTimeout(t);
 };
 
-// Las del contrato y las de más (su computadora, WhatsApp y sus correos: compa/computadora.ts).
-const PANTALLAS: readonly string[] = ['mesa', 'chats', 'ajustes', 'perfil', ...PANTALLAS_MAS] satisfies readonly (Pantalla | (typeof PANTALLAS_MAS)[number])[];
+// Las del contrato y las de más (su computadora, WhatsApp y sus correos: compa/computadora.ts; sus misiones,
+// lo que sabe de ti y tu círculo: compa/cerebro.ts).
+const PANTALLAS: readonly string[] = ['mesa', 'chats', 'ajustes', 'perfil', ...PANTALLAS_MAS, ...PANTALLAS_CEREBRO] satisfies readonly (
+  | Pantalla
+  | (typeof PANTALLAS_MAS)[number]
+  | (typeof PANTALLAS_CEREBRO)[number]
+)[];
 const TEMAS = ['oscuro', 'claro', 'sistema'];
 const AVATARES = ['ojos', 'aura', 'claudio', 'antonio'];
 const CAMPOS_PERFIL = ['apodo', 'cumple', 'vive', 'comida', 'musica', 'familia', 'trabajo', 'gustos', 'otros'];
@@ -93,6 +100,9 @@ export function esAccionApp(a: any): a is AccionApp {
     // Lo que hace su computadora en la nube (server/computadora.ts): abrir la vista, avances y el final.
     case 'computadora':
       return esAccionPc(a);
+    // Lo que AURA propone por su cuenta (server/iniciativa.ts): la tarjeta de la mesa (compa/iniciativa.ts).
+    case 'iniciativa':
+      return esAccionIniciativa(a);
     default:
       return false;
   }

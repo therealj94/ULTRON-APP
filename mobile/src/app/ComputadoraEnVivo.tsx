@@ -12,6 +12,8 @@
  *    la conversación tal cual, con el boleto; sin ella, con la voz de la mesa), sin hablarle encima a
  *    nadie (compa/computadora.ts, CompaneroPc).
  * Mientras trabaja se pregunta despacio por su estado: si un aviso se perdió, el tecleo no se queda sonando.
+ *
+ * Al lado, las hojas de lo que AURA lleva de ti (app/HojasCerebro.tsx): misiones, lo que sabe de ti y tu círculo.
  */
 import { useEffect, useRef, useSyncExternalStore } from 'react';
 import { AppState } from 'react-native';
@@ -29,6 +31,7 @@ import { tecleoPc } from '../compa/computadoraSonido';
 import { HojaComputadoraVivo } from '../ajustes/Computadora';
 import { HojaCorreos } from '../ajustes/Correos';
 import { abrirHoja, anunciarAnfitrion, cerrarHoja, hojasAhora, suscribirHojas } from './hojas';
+import { HojasCerebro } from './HojasCerebro';
 
 /** La voz de la persona por encima de esto es que está hablando (el anillo que late). */
 const NIVEL_HABLA = 0.15;
@@ -156,6 +159,8 @@ export function ComputadoraEnVivo() {
         alEstado={(id, ahora) => companero.alEstado(id, ahora)}
       />
       <HojaCorreos visible={hojas.abierta === 'correos'} onCerrar={cerrarHoja} />
+      {/* Sus misiones, lo que sabe de ti y tu círculo (app/HojasCerebro.tsx), también desde cualquier pantalla. */}
+      <HojasCerebro />
     </>
   );
 }

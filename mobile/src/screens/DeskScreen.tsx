@@ -87,6 +87,24 @@ import { esperarFrame } from '../lib/esperarFrame';
 import { HojaComputadora } from '../ajustes/Computadora';
 import { hojasAhora, suscribirHojas } from '../app/hojas';
 import { avisoMesa, estadoEnPalabras, sondeoMs, trabajando as pcTrabajando, type EstadoPc } from '../compa/computadora';
+import {
+  PRIMER_SONDEO_MS,
+  SONDEO_INICIATIVA_MS,
+  TOPE_SONDEO_MS,
+  cuerpoRespuesta,
+  esAccionIniciativa,
+  pedidoAMandar,
+  propuestaDeAccion,
+  propuestaDeServidor,
+  propuestas,
+  tocaSondear,
+  type ResultadoOferta,
+  type ResultadoRespuesta,
+  type RespuestaBoton,
+} from '../compa/iniciativa';
+import type { PantallaCerebro } from '../compa/cerebro';
+import { TarjetaPropuesta } from '../components/TarjetaPropuesta';
+import { HojaCerebro } from '../app/HojasCerebro';
 
 type Props = {
   user: SessionUser;
@@ -202,6 +220,10 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const [pcAviso, setPcAviso] = useState<{ texto: string; terminada: boolean } | null>(null);
   /** La vista en vivo de toda la app (app/ComputadoraEnVivo.tsx) abierta: el aviso de arriba sobra. */
   const pcVivoAbierta = useSyncExternalStore(suscribirHojas, () => hojasAhora().abierta === 'computadora', () => false);
+  /** Lo que AURA propone por su cuenta (compa/iniciativa.ts): la tarjeta de arriba, una a la vez. */
+  const propuesta = useSyncExternalStore(propuestas.suscribir, propuestas.ahora, propuestas.ahora);
+  /** Sus misiones, lo que sabe de ti o tu círculo, pedidos desde el menú (app/HojasCerebro.tsx). */
+  const [hojaCerebro, setHojaCerebro] = useState<PantallaCerebro | null>(null);
   const [tutorialAbierto, setTutorialAbierto] = useState(false);
   /**
    * Charlar (el avatar grande, de frente) o Trabajar (el avatar compacto arriba y la conversación
@@ -1911,21 +1933,106 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     );
   };
 
-  const sendDraft = () => {
-    const t = draft.trim();
-    if (!t) return;
-    // Conversando, lo escrito va a la conversación (la mesa no contesta encima, M3).
+  /**
+   * Un turno de la persona escrito (o el «Sí» de una propuesta de AURA): conversando, va a la conversación
+   * (la mesa no contesta encima, M3); si no, lo contesta la mesa. false si la conversación no lo aceptó.
+   */
+  const mandarTurno = (t: string): boolean => {
     if (conversandoRef.current) {
-      if (!voz.enviarTexto(t)) return;
-      setDraft('');
+      if (!voz.enviarTexto(t)) return false;
       lastUserAt.current = Date.now();
       historial.current = [...historial.current, { rol: 'usuario' as const, texto: t }].slice(-12);
       setMensajes((l) => [...l, { rol: 'usuario' as const, texto: t }].slice(-80));
-      return;
+      return true;
     }
-    setDraft('');
-    setMenuOpen(false);
     void handleCommand(t);
+    return true;
+  };
+  const mandarTurnoRef = useRef(mandarTurno);
+  mandarTurnoRef.current = mandarTurno;
+
+  const sendDraft = () => {
+    const t = draft.trim();
+    if (!t) return;
+    const conversandoAhora = conversandoRef.current;
+    if (!mandarTurno(t)) return;
+    setDraft('');
+    if (!conversandoAhora) setMenuOpen(false);
+  };
+
+  /* ── lo que AURA propone por su cuenta (compa/iniciativa.ts, server/iniciativa.ts) ──────────── */
+
+  useEffect(() => {
+    propuestas.paraPersona(user.correo);
+  }, [user.correo]);
+
+  /** Llegó una nueva: con la mesa a la vista, un toque suave. En una conversación de voz (o hablando), en silencio. */
+  const avisarPropuesta = useCallback((r: ResultadoOferta) => {
+    if (r === 'nueva' && mesaVisibleRef.current && !conversandoRef.current && !speakingRef.current) void haptic('light');
+  }, []);
+
+  // Empujada por el servidor en el canal de acciones (la misma que el GET: no se duplica).
+  useEffect(
+    () =>
+      escuchar('accion', (a) => {
+        if (esAccionIniciativa(a)) avisarPropuesta(propuestas.ofrecer(propuestaDeAccion(a)));
+      }),
+    [avisarPropuesta]
+  );
+
+  // Al abrir la app y cada ~20 min con ella delante: ¿hay una propuesta? (si quedó pendiente, sale otra vez).
+  useEffect(() => {
+    if (!appActiva) return;
+    let vivo = true;
+    let reloj: ReturnType<typeof setTimeout>;
+    const vuelta = async () => {
+      if (!vivo) return;
+      propuestas.limpiarCaducada();
+      if (tocaSondear(propuestas.ultimoSondeo, Date.now())) {
+        propuestas.ultimoSondeo = Date.now();
+        try {
+          const p = propuestaDeServidor(await api('/api/iniciativa', { method: 'GET' }, TOPE_SONDEO_MS));
+          if (vivo && p) avisarPropuesta(propuestas.ofrecer(p));
+        } catch {
+          /* sin red o sin la ruta todavía: la próxima vuelta */
+        }
+      }
+      if (vivo) reloj = setTimeout(vuelta, SONDEO_INICIATIVA_MS);
+    };
+    const ultimo = propuestas.ultimoSondeo;
+    reloj = setTimeout(vuelta, ultimo ? Math.max(1000, ultimo + SONDEO_INICIATIVA_MS - Date.now()) : PRIMER_SONDEO_MS);
+    return () => {
+      vivo = false;
+      clearTimeout(reloj);
+    };
+  }, [appActiva, avisarPropuesta]);
+
+  /**
+   * Tocó «Sí, hazlo», «Luego» o «No»: la tarjeta se cierra ya y la respuesta viaja por detrás. Con «Sí», el
+   * pedido que devuelve el servidor se manda como turno normal (AURA lo hace con sus manos).
+   */
+  const responderPropuesta = (r: RespuestaBoton) => {
+    const p = propuestas.ahora();
+    if (!p || !propuestas.responder(p.id)) return;
+    void haptic('light');
+    void (async () => {
+      let res: ResultadoRespuesta;
+      try {
+        const d = await api<{ pedido?: string | null }>('/api/iniciativa/responder', { method: 'POST', body: JSON.stringify(cuerpoRespuesta(p.id, r)) }, 15_000);
+        res = { ok: true, pedido: d?.pedido ?? null };
+      } catch (e: any) {
+        res = { ok: false, status: Number(e?.status) || undefined };
+      }
+      const pedido = pedidoAMandar(r, p, res);
+      if (pedido) {
+        mandarTurnoRef.current(pedido);
+        return;
+      }
+      if (r === 'si' && !res.ok && !conversandoRef.current) {
+        miga('iniciativa: la propuesta ya no estaba pendiente');
+        void say(tr('Esa idea ya no estaba vigente. Si todavía la quieres, dímela y lo hago.', 'That idea had expired. If you still want it, tell me and I’ll do it.'), 'IDLE');
+      }
+    })();
   };
 
   const onObjectsStable = useCallback((labels: string[]) => setObjects(labels), []);
@@ -2166,6 +2273,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         return setTutorialAbierto(true);
       case 'computadora':
         return setPcAbierta(true);
+      case 'misiones':
+        return setHojaCerebro('misiones');
       case 'ajustes':
         return setMenuOpen(true);
       case 'modo': {
@@ -2360,6 +2469,21 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         </Pressable>
       ) : null}
 
+      {/* Lo que AURA propone por su cuenta: arriba (debajo del aviso de su computadora), sin tapar al avatar.
+          En una conversación de voz se queda a la vista, sin sonar: no interrumpe. */}
+      {propuesta && mesaVisible && !tutorialAbierto && !eligiendo && !menuOpen && !masAbierto ? (
+        <TarjetaPropuesta
+          propuesta={propuesta}
+          nombreAvatar={de(avatarPorId(avatarId).nombre)}
+          tema={tema}
+          idioma={idiomaActual() === 'en' ? 'en' : 'es'}
+          onResponder={responderPropuesta}
+          arriba={pcAviso && !pcAbierta && !pcVivoAbierta ? 100 : 54}
+        />
+      ) : null}
+
+      <HojaCerebro cual={hojaCerebro} onCerrar={() => setHojaCerebro(null)} />
+
       <RecorridoApp visible={tutorialAbierto} nombre={user.name} idioma={idioma} onCerrar={cerrarTutorial} onProbar={probarDesdeRecorrido} />
 
       <DeskMenu
@@ -2424,6 +2548,10 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
           void handleCommand(t);
         }}
         onProbarVoz={probarVoz}
+        onAbrirHoja={(h) => {
+          setMenuOpen(false);
+          setHojaCerebro(h);
+        }}
         settings={settings}
         memoryCount={longMemory.current.length}
         onSetSttEngine={(e) => void changeStt(e)}

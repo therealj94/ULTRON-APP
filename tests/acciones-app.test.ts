@@ -515,6 +515,9 @@ test('abrir más pantallas por voz, desde cualquier pantalla: su computadora, Wh
   }
   for (const t of ['abre WhatsApp', 'abre mis WhatsApp', 'llévame a mi whatsapp', 'open WhatsApp']) assert.deepEqual(o(t), { tipo: 'abrir', pantalla: 'whatsapp' }, t);
   for (const t of ['abre mis correos', 'abre el correo', 'ábreme mis emails', 'open my email']) assert.deepEqual(o(t), { tipo: 'abrir', pantalla: 'correos' }, t);
+  // Sus misiones y su círculo (hojas de toda la app): «abre mis misiones», «abre mi círculo».
+  for (const t of ['abre mis misiones', 'llévame a mis metas', 'open my missions']) assert.deepEqual(o(t), { tipo: 'abrir', pantalla: 'misiones' }, t);
+  for (const t of ['abre mi círculo', 'abre mi circulo cercano', 'open my circle']) assert.deepEqual(o(t), { tipo: 'abrir', pantalla: 'circulo' }, t);
   // Lo que no es abrir la pantalla: hacer algo en la computadora, o que le lean los correos (el cerebro).
   for (const t of ['abre la computadora y busca vuelos a Miami', 'usa tu computadora', 'muéstrame mis correos', 'abre la pantalla', 'la computadora está lenta']) {
     assert.equal(o(t), null, t);
@@ -525,12 +528,12 @@ test('abrir más pantallas por voz, desde cualquier pantalla: su computadora, Wh
   // El camino rápido entero (reglas antes que Laya): sin modelo.
   assert.deepEqual((await ordenRapida('abre la computadora', { contexto: enAjustes, ligera: false }))?.accion, { tipo: 'abrir', pantalla: 'computadora' });
   // Lo acepta la validación (lo que escribe el cerebro) y el contexto que manda el teléfono.
-  for (const p of ['computadora', 'whatsapp', 'correos']) assert.deepEqual(validarAccion({ tipo: 'abrir', pantalla: p }), { tipo: 'abrir', pantalla: p });
+  for (const p of ['computadora', 'whatsapp', 'correos', 'misiones', 'conocer', 'circulo']) assert.deepEqual(validarAccion({ tipo: 'abrir', pantalla: p }), { tipo: 'abrir', pantalla: p });
   assert.deepEqual(extraerAcciones('Mira.\nACCION_APP: {"tipo":"abrir","pantalla":"computadora"}').acciones, [{ tipo: 'abrir', pantalla: 'computadora' }]);
   assert.equal(validarContexto({ pantalla: 'computadora', contactos: [] }).ok, true);
   assert.equal(dichoDeAcciones([{ tipo: 'abrir', pantalla: 'correos' }]), 'Abro tus correos.');
   // El cerebro lo sabe: las pantallas nuevas en las reglas de la app.
-  assert.match(instruccionAcciones(enAjustes), /"pantalla":"mesa\|chats\|ajustes\|perfil\|computadora\|whatsapp\|correos"/);
+  assert.match(instruccionAcciones(enAjustes), /"pantalla":"mesa\|chats\|ajustes\|perfil\|computadora\|whatsapp\|correos\|misiones\|conocer\|circulo"/);
   assert.match(instruccionAcciones(enAjustes), /«abre tu computadora \/ muéstrame tu pantalla \/ lo que estás haciendo» → abrir computadora/);
 });
 

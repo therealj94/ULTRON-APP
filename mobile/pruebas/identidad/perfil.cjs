@@ -86,5 +86,15 @@ const tic = () => new Promise((r) => setTimeout(r, 0));
   ok('A→B→A: la operación vieja de A no pisa la sesión nueva de A', PERFIL.perfilActual()?.apodo === 'A de hoy', PERFIL.perfilActual()?.apodo);
   PERFIL.soltarPerfil();
 
+  /* ── la iniciativa de AURA (Ajustes → «Iniciativa de AURA»): viaja en el PUT como motorComputadora ─ */
+  const base = PERFIL.normalizarPerfil({ apodo: 'J', avatar: 'aura', tema: 'oscuro', idioma: 'es', encuesta: {}, completado: true, actualizado: 1, iniciativa: 'baja' });
+  ok('iniciativa: el perfil del servidor la trae', base?.iniciativa === 'baja', base?.iniciativa);
+  ok('iniciativa: un valor que no existe se ignora', PERFIL.normalizarPerfil({ ...base, iniciativa: 'muchísima' })?.iniciativa === undefined);
+  const alta = PERFIL.aplicarCambios(base, { iniciativa: 'alta' }, 2);
+  ok('iniciativa: cambiarla se aplica', alta.iniciativa === 'alta', alta.iniciativa);
+  ok('iniciativa: el PUT la manda', JSON.stringify(PERFIL.cuerpoPut(alta, { iniciativa: 'alta' })) === '{"iniciativa":"alta"}', JSON.stringify(PERFIL.cuerpoPut(alta, { iniciativa: 'alta' })));
+  ok('iniciativa: un cambio de otra cosa no la manda', !('iniciativa' in PERFIL.cuerpoPut(alta, { tema: 'claro' })));
+  ok('iniciativa: «apagada» también vale', PERFIL.aplicarCambios(base, { iniciativa: 'apagada' }, 3).iniciativa === 'apagada');
+
   fin();
 })();

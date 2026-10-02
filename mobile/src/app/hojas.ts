@@ -4,9 +4,13 @@
  * esté (son Modal): así «abre tu computadora» dicho en Ajustes, en los chats o en la mesa la abre igual,
  * y una tarea que empieza la abre sola (José, 2-oct).
  *
+ * También lo de AURA (José, 2-oct: «que me proponga, que quiera cumplir misiones, que me conozca»): sus
+ * misiones, lo que sabe de ti (con lo que quedó a medias) y tu círculo. Las dibuja app/HojasCerebro.tsx,
+ * dentro de la misma raíz; se abren desde el menú de la mesa, desde Ajustes o con «abrir».
+ *
  * Sin React Native: un dato de módulo con oyentes (useSyncExternalStore en la vista).
  */
-export type HojaGlobal = 'computadora' | 'correos';
+export type HojaGlobal = 'computadora' | 'correos' | 'misiones' | 'conocer' | 'circulo';
 type EstadoHojas = { abierta: HojaGlobal | null; tareaId: string | null };
 
 let estado: EstadoHojas = { abierta: null, tareaId: null };
