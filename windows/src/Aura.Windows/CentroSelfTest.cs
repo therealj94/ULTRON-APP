@@ -50,7 +50,9 @@ internal static class CentroSelfTest
             "inicio.dia" => new { eventos = new object[] { new { hora = "3:00 PM", titulo = "Junta directiva" }, new { hora = "5:30 PM", titulo = "Llamada con Maple" } }, correos = 4, avisos = new[] { "WhatsApp: Karla", "Teams: Reunión" } },
             "relevo" => new { estado = 503, datos = (object?)null },
             "secreto.leer" => null,
-            "secreto.guardar" or "secreto.borrar" or "notch.aviso" or "ventana.mostrar" => true,
+            "secreto.guardar" or "secreto.borrar" or "notch.aviso" or "ventana.mostrar" or "recorrido.abierto" => true,
+            // Sin servidor en la prueba: el recorrido sigue en modo lectura (los subtítulos con su tiempo).
+            "voz.decir" => null,
             "diagnostico.leer" => "2026-10-01 14:00:00 [inicio] prueba",
             _ => null,
         };
@@ -105,6 +107,30 @@ internal static class CentroSelfTest
             await w.Ejecutar("(()=>{const i=document.querySelector('input[type=search]');i.value='bad bunny';i.form.requestSubmit();})()");
             await Task.Delay(1500);
             await w.Fotografiar(Path.Combine(carpeta, "10-musica-busqueda.png"));
+            // El recorrido (Claudio y ANT-ONIO): abre, cada escena clave, el final con sus opciones, y cierra.
+            await w.Ejecutar("window.dispatchEvent(new Event('centro:recorrido'))");
+            await Task.Delay(4000);
+            if (await w.Ejecutar("!!document.querySelector('.recorrido')") != "true") faltan.Add("recorrido");
+            await w.Fotografiar(Path.Combine(carpeta, "11-recorrido-portada.png"));
+            var escenas = new[] { (1, "notch"), (3, "escribir"), (8, "pulse"), (9, "centro"), (10, "privacidad") };
+            for (int i = 0; i < escenas.Length; i++)
+            {
+                await w.Ejecutar($"window.__recorrido.ir({escenas[i].Item1})");
+                await Task.Delay(4200);
+                await w.Fotografiar(Path.Combine(carpeta, $"{12 + i}-recorrido-{escenas[i].Item2}.png"));
+            }
+            // Los videos de Claudio y ANT-ONIO tienen que estar dibujando (H.264 en WebView2).
+            r["recorrido_video"] = JsonSerializer.Deserialize<JsonElement>(await w.Ejecutar("JSON.stringify(window.__recorrido.video())"));
+            r["recorrido_videos"] = JsonSerializer.Deserialize<string>(await w.Ejecutar("JSON.stringify([...document.querySelectorAll('.recorrido video')].map(v=>v.src.split('/').pop()+' rs'+v.readyState+' '+v.videoWidth+'x'+v.videoHeight+(v.error?' error'+v.error.code:'')).join(' | '))"));
+            await w.Ejecutar("window.__recorrido.ir(11)");
+            await Task.Delay(4000);
+            await w.Ejecutar("window.__recorrido.siguiente()");
+            await Task.Delay(1500);
+            await w.Fotografiar(Path.Combine(carpeta, "17-recorrido-final.png"));
+            r["recorrido_fin"] = JsonSerializer.Deserialize<JsonElement>(await w.Ejecutar("JSON.stringify(window.__recorrido.estado())"));
+            await w.Ejecutar("window.__recorrido.cerrar()");
+            await Task.Delay(1200);
+            if (await w.Ejecutar("!document.querySelector('.recorrido') && !document.body.classList.contains('con-recorrido')") != "true") faltan.Add("recorrido-cerrar");
             var errs = await w.Ejecutar("JSON.stringify(window.__errores||[])");
             r["secciones"] = secciones;
             r["faltan"] = faltan;

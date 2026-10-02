@@ -18,6 +18,7 @@ import { vistaPulse } from './vistas/pulse';
 import { vistaMusica } from './vistas/musica';
 import { vistaCartera } from './vistas/cartera';
 import { vistaAjustes } from './vistas/ajustes';
+import { abrirRecorrido } from './recorrido/recorrido';
 
 type Seccion = { id: string; es: string; en: string; icono: string; crear: () => HTMLElement };
 export const SECCIONES: Seccion[] = [
@@ -83,6 +84,13 @@ export async function recoger() {
 al<string>('ir', (id) => ir(id));
 // Las vistas piden cambiar de sección o marcar una con un punto (PULSE2CHAT: mensaje o llamada nueva).
 window.addEventListener('centro:ir', (e) => ir(String((e as CustomEvent).detail)));
+// El recorrido de Windows (Claudio y ANT-ONIO): desde Inicio, Ajustes o al terminar la guía.
+export function verRecorrido() {
+  const e = estado();
+  return abrirRecorrido({ nombre: e.sesion?.nombre ?? '', idioma: e.idioma === 'en' ? 'en' : 'es' });
+}
+window.addEventListener('centro:recorrido', () => void verRecorrido());
+al('recorrido', () => void verRecorrido());
 window.addEventListener('centro:marcar', (e) => { const d = (e as CustomEvent).detail ?? {}; marcar(String(d.id), !!d.si); });
 // El mismo pase de Genesis abre PULSE2CHAT (una vez) al entrar.
 alEntrarConPase.fn = (pase, verificador, nombre, correo) => conectarConPase(pase, verificador, nombre, correo);
@@ -90,8 +98,9 @@ al('salio', () => location.reload());
 
 (async () => {
   await cargar();
-  if (!estado().sesion || estado().primeraVez) await entrada(raiz);
+  const conRecorrido = !estado().sesion || estado().primeraVez ? (await entrada(raiz)) === 'recorrido' : false;
   armazon();
+  if (conRecorrido) void verRecorrido();
   // PULSE2CHAT escucha siempre (llamadas y mensajes llegan aunque no estés en su sección).
   iniciarPulse(estado().sesion?.correo).then(() => autoConectarCartera()).catch(() => null);
   // La cartera se conecta sola con la dirección de tu ficha de PULSE2CHAT (la misma cuenta de Veta Wallet).

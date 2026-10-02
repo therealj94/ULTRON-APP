@@ -216,6 +216,7 @@ export function vistaAjustes(): HTMLElement {
     const atajos = seccion('atajos', T('Atajos', 'Shortcuts'),
       tecla('Ctrl+Alt+Espacio', T('Hablarle', 'Talk')), tecla('Ctrl+Alt+C', T('Abrir este Centro', 'Open this Center')), tecla('Ctrl+Alt+A', T('Chat rápido en el notch', 'Quick chat in the notch')),
       tecla('Ctrl+Alt+W', T('Elegir la ventana donde escribirá', 'Pick the window to type into')), tecla('Ctrl+Alt+Esc', T('Pausar todo (micrófono, voz y acciones)', 'Pause everything')),
+      h('div', { style: 'margin-top:12px' }, boton(T('Ver el recorrido', 'Watch the tour'), () => window.dispatchEvent(new Event('centro:recorrido')), { icono: 'play', titulo: T('Claudio y ANT-ONIO te enseñan todo lo que hace AURA en tu computadora', 'Claudio and ANT-ONIO show you everything AURA does on your PC') })),
       h('p', { class: 'nota' }, T(`Versión ${e.version}`, `Version ${e.version}`)));
 
     cuerpo.replaceChildren(cuenta, avatar, voz, conexiones, avisos, cuentas, privacidad, actualizar, atajos);

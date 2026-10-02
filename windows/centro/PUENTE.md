@@ -34,6 +34,8 @@ tabla (`PuenteCentro.Metodos`) se rechaza antes de mirar sus argumentos.
 | `notch.aviso` | `{ titulo, cuerpo }` | aviso en el notch (mensaje nuevo, llamada perdida) |
 | `ventana.mostrar` | `{ seccion? }` | trae el Centro al frente (p. ej. al contestar desde el notch) |
 | `chat.enviar` | `{ texto }` | le habla a AURA (igual que el chat del notch); las respuestas llegan por `chat.mensaje` |
+| `voz.decir` | `{ texto, avatar, emocion }` | `{ base64, mime }`: el audio de `/api/tts` con la voz de ese avatar (`claudio`, `antonio`, `aura`, `ojos`) en el idioma de AURA. Lo usa el recorrido (Claudio y ANT-ONIO). Frases de hasta 400 letras; sin servidor devuelve `null` y el recorrido se lee |
+| `recorrido.abierto` | `{ si }` | con el recorrido abierto AURA se calla y silencia el micrófono (el recorrido suena por el altavoz y dice «Oye AURA»); al cerrarlo vuelve como estaba (si ya estaba silenciado, sigue igual) |
 | `spotify.*`, `cartera.*`, `conectar`, `desconectar` | ver `src/vistas/*.ts` | |
 
 ## Eventos
@@ -45,4 +47,6 @@ tabla (`PuenteCentro.Metodos`) se rechaza antes de mirar sus argumentos.
 | `llamada.accion` | `{ accion: 'contestar' \| 'rechazar' \| 'colgar' }` desde el notch |
 | `chat.mensaje` | `{ quien, texto, id, parcial? }` |
 | `musica` | lo que suena |
+| `ventana.escondida` | — · la ventana del Centro se escondió (la cerraron o se recogió): el recorrido se cierra |
+| `recorrido` | — · abrir el recorrido de Windows |
 | `salio` | la sesión se cerró |

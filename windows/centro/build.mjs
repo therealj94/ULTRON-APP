@@ -36,4 +36,19 @@ for (const id of ['aura', 'claudio', 'antonio']) {
   const f = join(hojas, id, 'idle.png');
   if (existsSync(f)) cpSync(f, join(salida, 'avatar', `${id}-idle.png`));
 }
+// El recorrido (src/recorrido): los clips de Claudio y ANT-ONIO, sus fotos y los sonidos, los MISMOS
+// archivos de la app del teléfono (no se duplican en el repo; viajan en el instalador).
+const movil = join(aqui, '..', '..', 'mobile', 'assets');
+const CLIPS = ['reposo', 'escucha', 'habla', 'piensa', 'risa', 'saluda', 'senala', 'sorpresa'];
+const SONIDOS = { 'whoosh.mp3': 'sfx', 'tap.mp3': 'sfx', 'teclado.mp3': 'sfx', 'papel.mp3': 'sfx', 'chispa.wav': 'recorrido', 'capitulo.wav': 'recorrido', 'timbre.wav': 'llamada' };
+mkdirSync(join(salida, 'recorrido', 'video'), { recursive: true });
+mkdirSync(join(salida, 'recorrido', 'sonidos'), { recursive: true });
+const faltan = [];
+const copiar = (de, a) => (existsSync(de) ? cpSync(de, a) : faltan.push(de));
+for (const q of ['claudio', 'antonio']) {
+  for (const c of CLIPS) copiar(join(movil, 'avatares', 'video', `${q}-${c}.mp4`), join(salida, 'recorrido', 'video', `${q}-${c}.mp4`));
+  copiar(join(movil, 'avatares', q, 'base.webp'), join(salida, 'recorrido', `${q}.webp`));
+}
+for (const [f, carpeta] of Object.entries(SONIDOS)) copiar(join(movil, carpeta, f), join(salida, 'recorrido', 'sonidos', f));
+if (faltan.length) throw new Error('Faltan archivos del recorrido:\n' + faltan.join('\n'));
 console.log('Centro armado en', salida);

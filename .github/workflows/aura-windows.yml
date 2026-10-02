@@ -2,9 +2,9 @@ name: AURA Windows
 on:
   push:
     branches: [main, codex/aura-windows-native, ccr-a300ded3-ru9biy]
-    paths: ['windows/**', 'scripts/nodo-t4/laya/modelos/windows/**', '.github/workflows/aura-windows.yml']
+    paths: ['windows/**', 'scripts/nodo-t4/laya/modelos/windows/**', 'mobile/assets/avatares/**', 'mobile/assets/sfx/**', 'mobile/assets/recorrido/**', 'mobile/assets/llamada/**', 'mobile/src/avatares/video/guion.ts', 'mobile/src/recorrido/motor.ts', '.github/workflows/aura-windows.yml']
   pull_request:
-    paths: ['windows/**', '.github/workflows/aura-windows.yml']
+    paths: ['windows/**', 'mobile/assets/avatares/**', 'mobile/assets/sfx/**', 'mobile/assets/recorrido/**', 'mobile/assets/llamada/**', 'mobile/src/avatares/video/guion.ts', 'mobile/src/recorrido/motor.ts', '.github/workflows/aura-windows.yml']
   workflow_dispatch:
 permissions:
   contents: read
