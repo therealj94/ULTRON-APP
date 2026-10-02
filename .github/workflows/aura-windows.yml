@@ -43,7 +43,10 @@ jobs:
           if ($info.FileVersion -ne "$env:AURA_VERSION.0" -or -not $info.ProductVersion.StartsWith("$env:AURA_VERSION+")) { throw "La versión del .exe no es $env:AURA_VERSION" }
       # Firma de código: lista para cuando haya certificado. Sin los secretos AURA_SIGN_PFX (el .pfx en base64) y
       # AURA_SIGN_PFX_PASSWORD se salta con un aviso (hoy no hay certificado: el .exe y el instalador salen sin firma).
+      # Se firma solo en los push a main; conviene además guardar los secretos en un entorno protegido de GitHub.
       - name: Sign the executable (only if a certificate secret exists)
+        # Solo en main por push: un PR (aunque sea del mismo repo) nunca recibe el certificado ni corre su sign.ps1 con él.
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: pwsh
         env:
           AURA_SIGN_PFX: ${{ secrets.AURA_SIGN_PFX }}
@@ -197,6 +200,8 @@ jobs:
           $verSetup = "$($setup.VersionInfo.ProductVersion)".Trim()
           if ($verSetup -ne $env:AURA_VERSION) { throw "El instalador dice '$verSetup', el .exe '$env:AURA_VERSION'" }
       - name: Sign the installer (only if a certificate secret exists)
+        # Solo en main por push: un PR (aunque sea del mismo repo) nunca recibe el certificado ni corre su sign.ps1 con él.
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: pwsh
         env:
           AURA_SIGN_PFX: ${{ secrets.AURA_SIGN_PFX }}
