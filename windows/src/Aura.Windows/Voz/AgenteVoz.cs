@@ -69,7 +69,7 @@ internal sealed class AgenteVoz : IDisposable
     public event Action<string?>? Cerrada;
 
     /// <summary>Conecta, manda el pase y espera a que el agente diga sus formatos de audio (o falla).</summary>
-    public async Task Abrir(PermisoAgente permiso, CancellationToken ct)
+    public async Task Abrir(PermisoAgente permiso, CancellationToken ct, Func<byte[]?>? previo = null)
     {
         if (ws != null) throw new InvalidOperationException("La conversación ya está abierta.");
         corte = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -93,9 +93,16 @@ internal sealed class AgenteVoz : IDisposable
         {
             if (terminado == 1 || c.IsCancellationRequested) throw new OperationCanceledException("La conversación se cerró al abrir.");
             AbrirBoca();
+            // Lo que dijiste mientras conectaba (el micrófono del despertador lo guardó): va antes que el micrófono en vivo.
+            if (previo?.Invoke() is { Length: > 0 } pcm && entrada.Muestreo == PalabraClave.Muestreo)
+                for (int i = 0; i < pcm.Length; i += TrozoPrevio)
+                    envios?.Audio(AgenteProtocolo.Audio(new ReadOnlySpan<byte>(pcm, i, Math.Min(TrozoPrevio, pcm.Length - i))));
             AbrirMicrofono();
         }
     }
+
+    /// <summary>De a 250 ms (16 kHz, 16 bits): pocos trozos, para no desbordar la cola del micrófono.</summary>
+    const int TrozoPrevio = PalabraClave.Muestreo * 2 / 4;
 
     /// <summary>Calla lo que está diciendo YA (sin colgar): se tira lo que suena y lo pendiente. Su próxima respuesta vuelve a sonar.</summary>
     public void CallarVoz()

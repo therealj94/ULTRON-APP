@@ -74,7 +74,9 @@ public partial class NotchWindow
             if (!PuedeAgente) { SoltarPermiso(); return false; }
             CablearAgente(nuevo);
             agente = nuevo;
-            await nuevo.Abrir(permisoAgente, CancellationToken.None);
+            // Desde medio segundo antes de pedir la conversación: lo dicho mientras conecta no se pierde.
+            var desdeUtc = DateTime.UtcNow - crono.Elapsed - TimeSpan.FromMilliseconds(500);
+            await nuevo.Abrir(permisoAgente, CancellationToken.None, () => despertador.AudioDesde(desdeUtc));
             if (!PuedeAgente || !ReferenceEquals(agente, nuevo)) { agente = null; nuevo.Cerrar(); SoltarPermiso(); return false; }
             agenteUltimaVoz = DateTime.Now;
             escuchando = true;

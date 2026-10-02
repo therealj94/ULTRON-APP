@@ -118,6 +118,7 @@ internal sealed class Despertador : IDisposable
                 if (!ReferenceEquals(s, micPropio) || propio == null) return;
                 var muestras = new short[e.BytesRecorded / 2];
                 Buffer.BlockCopy(e.Buffer, 0, muestras, 0, muestras.Length * 2);
+                Guardar(e.Buffer, e.BytesRecorded);
                 float p;
                 lock (candadoPropio)
                 {
@@ -161,6 +162,42 @@ internal sealed class Despertador : IDisposable
 
     System.Threading.Timer? reintento;
     bool apagado;
+
+    // ───────────── lo último que oyó (para no perder lo dicho mientras se abre la voz en vivo) ─────────────
+    // 3 s de audio del micrófono del modelo propio (16 kHz, 16 bits, mono), en anillo, con la hora de cada trozo.
+    const int SegundosAnillo = 3;
+    readonly System.Collections.Generic.Queue<(DateTime t, byte[] pcm)> anillo = new();
+    int bytesAnillo;
+
+    void Guardar(byte[] buf, int n)
+    {
+        var copia = new byte[n];
+        Buffer.BlockCopy(buf, 0, copia, 0, n);
+        lock (anillo)
+        {
+            anillo.Enqueue((DateTime.UtcNow, copia));
+            bytesAnillo += n;
+            while (bytesAnillo > SegundosAnillo * PalabraClave.Muestreo * 2 && anillo.Count > 0) bytesAnillo -= anillo.Dequeue().pcm.Length;
+        }
+    }
+
+    /// <summary>
+    /// El audio que oyó el micrófono desde `desdeUtc` (16 kHz, 16 bits, mono), o null sin modelo propio. «Oye AURA,
+    /// pon música» de corrido: mientras la voz en vivo conecta (~1 s) nadie escuchaba y «pon música» se perdía.
+    /// </summary>
+    public byte[]? AudioDesde(DateTime desdeUtc)
+    {
+        if (propio == null) return null;
+        lock (anillo)
+        {
+            var trozos = anillo.Where(x => x.t >= desdeUtc).Select(x => x.pcm).ToList();
+            if (trozos.Count == 0) return null;
+            var todo = new byte[trozos.Sum(x => x.Length)];
+            int i = 0;
+            foreach (var x in trozos) { Buffer.BlockCopy(x, 0, todo, i, x.Length); i += x.Length; }
+            return todo;
+        }
+    }
     // Los puntajes recientes del modelo (con su hora): para saber si una frase sonó a «hey aura» aunque no despertó.
     readonly System.Collections.Generic.Queue<(DateTime t, float p)> recientes = new();
 

@@ -109,6 +109,8 @@ public partial class NotchWindow
         // Y con CUALQUIER sonido de la PC (un video en el navegador, un juego, una llamada): antes solo contaba el
         // reproductor que avisa a Windows, y lo demás despertaba a AURA.
         sonidoEquipo.Encender();
+        // Laya ligera decodifica sus pesos la primera vez que se usa (~350 KB): se hace ya, no en el primer «pon música».
+        _ = Task.Run(() => { try { LayaLigera.Predecir("hola"); } catch { } });
         despertador.Exigente = () => cancion is { Sonando: true } || sonidoEquipo.Sonando;
         // Su propia voz («…soy AU-RA») no la despierta: mientras suena algo, la palabra de activación no cuenta.
         despertador.Desperto += () => Dispatcher.BeginInvoke(new Action(() =>
@@ -160,6 +162,7 @@ public partial class NotchWindow
         try { api = new AuraApi(ajustes.Servidor, string.IsNullOrEmpty(ajustes.Token) ? null : ajustes.Token) { Renovar = RenovarSesion, Aparato = ajustes.Aparato }; }
         catch (AuraError ex) { api = null; Avisar(new Aviso("Revisa el servidor", ex.Message, "", "worried")); }
         IniciarCanal();
+        GrabarRellenos();
     }
 
     /// <summary>
@@ -499,17 +502,19 @@ public partial class NotchWindow
         int dichas = 0;
         Respuesta? r = null;
         bool rellenoDicho = false;
-        // El cerebro tarda (a veces 8–10 s hasta la primera palabra): si a los 1,8 s no ha dicho nada, AURA dice
-        // algo corto para que se sepa que está en eso. Una sola vez por turno, solo con voz y si la hablaste.
+        // El cerebro tarda: si a los 1,2 s no ha dicho nada, AURA dice algo corto (ya grabado: suena al instante) para
+        // que se sepa que está en eso; y si a los 7 s sigue sin nada, un «ya casi» (antes: uno solo a los 1,8 s, que
+        // además esperaba su propia voz, y después silencio hasta 15 s). Solo con voz y si la hablaste.
         if (conVoz && hablado)
         {
-            var relleno = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1800) };
+            var relleno = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1200) };
+            int vuelta = 0;
             relleno.Tick += (_, _) =>
             {
-                relleno.Stop();
-                if (g != generacion || dichas > 0 || vcts.IsCancellationRequested) return;
-                var frases = Ingles ? new[] { "Let me see…", "One sec…", "Hmm, let me think…" } : new[] { "A ver…", "Dame un segundo…", "Mmm, déjame ver…" };
-                rellenoDicho = Decir(frases[Random.Shared.Next(frases.Length)], "neutral", vcts.Token, relleno: true);
+                if (g != generacion || dichas > 0 || vcts.IsCancellationRequested) { relleno.Stop(); return; }
+                var frases = vuelta == 0 ? FrasesRelleno(Ingles) : FrasesSeguimiento(Ingles);
+                rellenoDicho |= Decir(frases[Random.Shared.Next(frases.Length)], "neutral", vcts.Token, relleno: true);
+                if (++vuelta >= 2) relleno.Stop(); else relleno.Interval = TimeSpan.FromMilliseconds(5800);
             };
             relleno.Start();
         }
@@ -581,10 +586,39 @@ public partial class NotchWindow
     /// Pide la voz de una frase (sin esperar) y la pone en la cola del altavoz: la del avatar (ElevenLabs,
     /// en el servidor) o, si se eligió o el servidor no contesta, la de Windows. Devuelve si encoló algo.
     /// </summary>
+    static string[] FrasesRelleno(bool en) => en ? new[] { "Let me see…", "One sec…", "Hmm, let me think…" } : new[] { "A ver…", "Dame un segundo…", "Mmm, déjame ver…" };
+    static string[] FrasesSeguimiento(bool en) => en ? new[] { "Almost there…", "Just a moment more…" } : new[] { "Ya casi lo tengo…", "Un momentito más…" };
+
+    /// <summary>Las frases de espera ya grabadas con la voz del avatar (avatar|idioma|frase): suenan sin esperar al servidor.</summary>
+    readonly System.Collections.Concurrent.ConcurrentDictionary<string, Audio> rellenosGrabados = new();
+
+    /// <summary>Graba de antemano las frases de espera del avatar e idioma actuales (en segundo plano; si falla, se piden al momento).</summary>
+    void GrabarRellenos()
+    {
+        var a = api; if (a == null || ajustes.VozDeWindows || !ajustes.ResponderConVoz || soloRender) return;
+        var avatar = ajustes.Avatar; var idioma = ajustes.Idioma; bool en = idioma == "en";
+        _ = Task.Run(async () =>
+        {
+            foreach (var f in FrasesRelleno(en).Concat(FrasesSeguimiento(en)))
+            {
+                var k = $"{avatar}|{idioma}|{f}";
+                if (rellenosGrabados.ContainsKey(k)) continue;
+                try { rellenosGrabados[k] = await a.Voz(f, "neutral", avatar, idioma, CancellationToken.None); } catch { return; }
+            }
+        });
+    }
+
     internal bool Decir(string frase, string emocion = "neutral", CancellationToken ct = default, bool relleno = false)
     {
         if (!ajustes.ResponderConVoz || soloRender || string.IsNullOrWhiteSpace(frase)) return false;
         var a = api; var avatar = ajustes.Avatar; var idioma = ajustes.Idioma; bool local = ajustes.VozDeWindows || a == null;
+        if (relleno && !local && rellenosGrabados.TryGetValue($"{avatar}|{idioma}|{frase}", out var grabado))
+        {
+            altavoz.Encolar(Task.FromResult<Audio?>(grabado), frase, relleno, metricas.Actual?.Id ?? 0);
+            return true;
+        }
+        // Cambió el avatar o el idioma: se graban las de ahora para la próxima.
+        if (relleno && !local) GrabarRellenos();
         var tarea = Task.Run(async () =>
         {
             if (!local)
