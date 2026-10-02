@@ -11,7 +11,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DEMOS, ESCENAS, OPCIONES_FINAL, PRUEBAS, duracionLectura, pasoEn, siguientes, textoDe } from '../guion.ts';
-import { INICIO, lineaDe, progreso, reducir } from '../motor.ts';
+import { ESPERA_VOZ_MS, INICIO, lineaDe, pasoVisible, progreso, reducir } from '../motor.ts';
+import { esperarFrame } from '../../lib/esperarFrame.ts';
 import { COREOGRAFIA, EFECTOS, SONIDOS, achicadoEn, momentoDe } from '../coreografia.ts';
 
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
@@ -199,10 +200,76 @@ prueba('cada vez que se abre empieza de cero (cerrado no se queda montado con el
   assert.deepEqual([INICIO.e, INICIO.l, INICIO.fase], [0, 0, 'habla']);
 });
 
+prueba('el ejemplo se mueve cuando suena la voz de su línea, no antes (José, 2-oct: «no lo hace fluido»)', () => {
+  const ir = (id, l) => ({ ...INICIO, e: ESCENAS.findIndex((x) => x.id === id), l, vuelta: 10 + l });
+  // La foto: en «flash» la escena sigue abierta hasta que suena la línea del flash.
+  const cam = ESCENAS.find((x) => x.id === 'camara');
+  const lFlash = cam.lineas.findIndex((l) => l.paso === 'flash');
+  const s = ir('camara', lFlash);
+  assert.equal(pasoVisible(s, 0), pasoEn(cam, lFlash - 1), 'antes de la voz: el paso de la línea anterior');
+  assert.equal(pasoVisible(s, s.vuelta), 'flash', 'con la voz sonando: su paso');
+  assert.equal(pasoVisible({ ...s, tocado: true }, 0), 'flash', 'un toque responde al momento');
+  assert.equal(pasoVisible({ ...s, fase: 'espera' }, 0), 'flash', 'en la espera del toque ya se ve');
+  // Al entrar a una escena se ve su primer paso de una (lo cubre la entrada del capítulo).
+  for (const e of ESCENAS) assert.equal(pasoVisible(ir(e.id, 0), 0), e.pasos[0], `${e.id} entra en su primer paso`);
+  // Claudio se achica cuando dice «me hago chiquito», no antes.
+  const rec = ESCENAS.find((x) => x.id === 'recordatorio');
+  const lAchica = rec.lineas.findIndex((l) => l.paso === 'achica');
+  const sr = ir('recordatorio', lAchica);
+  assert.equal(achicadoEn('recordatorio', pasoVisible(sr, 0)), null);
+  assert.equal(achicadoEn('recordatorio', pasoVisible(sr, sr.vuelta)), 'claudio');
+  assert.ok(ESPERA_VOZ_MS >= 800 && ESPERA_VOZ_MS <= 2000, 'si la voz tarda, el ejemplo no se queda esperando para siempre');
+});
+
+prueba('Claudio no desaparece al volver de la franja: nada de estilos animados que se quitan ni hilo nativo en el vuelo', () => {
+  const vista = fs.readFileSync(path.join(AQUI, '../Recorrido.tsx'), 'utf8');
+  assert.doesNotMatch(vista, /chiquito \? null : \{ opacity/, 'el estilo del turno ya no se quita al achicarse');
+  assert.doesNotMatch(vista, /chiquito && vuelo\s*\?\s*\{/, 'el estilo del vuelo está siempre');
+  const anims = [...vista.matchAll(/Animated\.(?:spring|timing)\((frente|vuela),[^;]*?useNativeDriver: (true|false)/g)];
+  assert.equal(anims.length, 3, 'el turno, la ida y la vuelta');
+  for (const m of anims) assert.equal(m[2], 'false', `${m[1]} no va por el hilo nativo`);
+  assert.match(vista, /setAterrizajes\(\(n\) => n \+ 1\)/, 'al aterrizar, su cuadro se monta de nuevo');
+  assert.match(vista, /cuadro-\$\{aterrizajes\}/);
+});
+
+prueba('se ve qué está pasando: preparando la voz, sin voz, en pausa y la cuenta de la espera', () => {
+  const vista = fs.readFileSync(path.join(AQUI, '../Recorrido.tsx'), 'utf8');
+  assert.match(vista, /preparando: \{ es: 'preparando la voz'/);
+  assert.match(vista, /leyendo: \{ es: 'sin voz ahora · léelo'/);
+  assert.match(vista, /<EnPausa /);
+  assert.match(vista, /o sigo solo en \$\{segundos\} s/);
+  // Todas las esperas siguen solas (con su cuenta), menos la del final: ahí se elige qué probar.
+  for (const e of ESCENAS) for (const l of e.lineas) if (l.espera && e.id !== 'final') assert.ok(l.espera.ms > 0, `${e.id}: la espera sigue sola (con cuenta)`);
+});
+
+prueba('probar «foto» prende la cámara y espera la imagen; «recordatorio» guía al momento', async () => {
+  const mesa = fs.readFileSync(path.join(AQUI, '../../screens/DeskScreen.tsx'), 'utf8');
+  const ver = mesa.slice(mesa.indexOf('const whatDoYouSee'), mesa.indexOf('const runGag'));
+  assert.match(ver, /encenderCamara\('temporal'\)/, '«¿qué ves?» con la cámara apagada la prende solo ahora');
+  assert.match(ver, /esperarFrame\(/);
+  assert.match(ver, /setToolHint\(tr\('mirando con la cámara'/, 'mientras enfoca dice «mirando»');
+  const probar = mesa.slice(mesa.indexOf('const probarDesdeRecorrido'), mesa.indexOf('const probarDesdeRecorrido') + 1800);
+  assert.match(probar, /case 'recordatorio':[\s\S]*?recuérdame a las cinco/);
+  // esperarFrame: sin cámara lista sigue preguntando; con foto buena la devuelve; sin foto, se rinde a tiempo.
+  let t = 0;
+  const dormir = async (ms) => void (t += ms);
+  const ahora = () => t;
+  let lista = null;
+  let pedidas = 0;
+  const foto = await esperarFrame(() => lista, { maxMs: 7000, cadaMs: 350, dormir, ahora: () => { if (t >= 1000 && !lista) lista = async () => (++pedidas < 2 ? null : 'b64'); return ahora(); } });
+  assert.equal(foto, 'b64');
+  assert.ok(t >= 1000 && t < 7000);
+  t = 0;
+  assert.equal(await esperarFrame(() => null, { maxMs: 2000, cadaMs: 350, dormir, ahora }), null);
+  assert.ok(t <= 2000, 'no espera de más');
+  t = 0;
+  assert.equal(await esperarFrame(() => async () => { throw new Error('ocupada'); }, { maxMs: 1000, cadaMs: 350, dormir, ahora }), null, 'un error de la cámara no lo rompe');
+});
+
 let ok = 0;
 for (const [nombre, f] of pruebas) {
   try {
-    f();
+    await f();
     ok++;
     console.log(`ok - ${nombre}`);
   } catch (e) {

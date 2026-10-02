@@ -82,6 +82,7 @@ import { marcoMesa, useMesaVisible, useModoPresencia } from '../avatar3d/usePres
 import { useCaras, type ApiCaras } from '../caras/useCaras';
 import { avatarActual } from '../avatares/actual';
 import { orientar } from '../lib/orientacion';
+import { esperarFrame } from '../lib/esperarFrame';
 
 type Props = {
   user: SessionUser;
@@ -886,7 +887,22 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   );
 
   const whatDoYouSee = useCallback(async () => {
-    const frame = grabFrame.current ? await grabFrame.current() : null;
+    let frame = grabFrame.current ? await grabFrame.current() : null;
+    if (!frame) {
+      // La cámara arranca apagada: si pide «¿qué ves?», se prende SOLO AHORA para mirar (lo pidió) y se
+      // dice; mientras enfoca, la línea de estado dice «mirando». Antes contestaba «aún no identifico
+      // nada» sin prenderla (José, 2-oct: «una foto… no lo hace»).
+      if (!camara.encendida()) {
+        if (!(await encenderCamara('temporal'))) return void (await say(tr('Necesito permiso de cámara para verte.', 'I need camera permission to see you.'), 'CONCERNED', { emocion: 'preocupado' }));
+        await say(tr('Prendo la cámara un momento. Déjame ver…', 'Turning the camera on for a moment. Let me look…'), 'SCAN');
+      }
+      setToolHint(tr('mirando con la cámara', 'looking with the camera'));
+      try {
+        frame = await esperarFrame(() => grabFrame.current, { maxMs: 7000 });
+      } finally {
+        setToolHint('');
+      }
+    }
     if (frame) {
       await askBrain(tr('Mira la cámara y dime en dos frases qué ves: quién está, qué hace y qué objetos hay.', 'Look at the camera and tell me in two sentences what you see: who is there, what they are doing and what objects there are.'), { image: `data:image/jpeg;base64,${frame}` });
       return;
@@ -899,8 +915,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       await say(`${e.descripcion}${mesa.length ? ` ${tr('En la mesa', 'On the desk')}: ${mesa.join(', ')}.` : ''}`, 'SCAN');
       return;
     }
-    await say(objs.length ? `${tr('Veo', 'I see')}: ${objs.join(', ')}.` : tr('Aún no identifico nada. Dame un momento con la cámara.', 'I can’t identify anything yet. Give me a moment with the camera.'), 'SCAN');
-  }, [askBrain, escenaFresca, say]);
+    await say(objs.length ? `${tr('Veo', 'I see')}: ${objs.join(', ')}.` : tr('La cámara no me dio imagen todavía. Apúntala hacia ti y pregúntame otra vez «¿qué ves?».', 'The camera hasn’t given me a picture yet. Point it at yourself and ask me again “what do you see?”.'), 'SCAN');
+  }, [askBrain, camara, encenderCamara, escenaFresca, say]);
 
   const runGag = useCallback(
     async (gag: Gag) => {
@@ -2104,11 +2120,18 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         case 'hablar':
           return void say(tr('Te escucho: dime lo que quieras.', 'I’m listening: tell me anything.'), 'HAPPY', { emocion: 'feliz' });
         case 'camara':
+          // Prende la cámara si hace falta, espera la foto y dice lo que ve (whatDoYouSee).
           return void handleCommand('qué ves');
         case 'llamame':
           return toggleConversar();
         case 'recordatorio':
-          return void handleCommand(tr('Quiero que me pongas un recordatorio', 'I want you to set me a reminder'));
+          // Al momento y con un ejemplo, sin esperar al servidor: el oído queda abierto y la frase que
+          // diga ya trae el qué y la hora (el servidor lo repite y pide el «sí», como en el recorrido).
+          return void say(
+            tr('¡Va! Dime qué te recuerdo y a qué hora. Por ejemplo: «recuérdame a las cinco tomar la pastilla».', 'Sure! Tell me what to remind you about and when. For example: “remind me at five to take my pill”.'),
+            'HAPPY',
+            { emocion: 'feliz' }
+          );
         case 'chat':
           return pulse.abrir();
       }

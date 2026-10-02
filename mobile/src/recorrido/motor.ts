@@ -8,7 +8,7 @@
  *
  * Sin React Native: lo prueba Node (pruebas/recorrido.prueba.mjs).
  */
-import { ESCENAS, type Escena, type Linea } from './guion';
+import { ESCENAS, pasoEn, type Escena, type Linea } from './guion';
 
 export type Fase = 'habla' | 'espera' | 'fin';
 
@@ -97,4 +97,23 @@ export function progreso(s: EstadoRecorrido, escenas: readonly Escena[] = ESCENA
   const total = escenas.reduce((n, e) => n + e.lineas.length, 0);
   const hechas = escenas.slice(0, s.e).reduce((n, e) => n + e.lineas.length, 0) + s.l;
   return total ? hechas / total : 0;
+}
+
+/**
+ * Cuánto espera el ejemplo a la voz de su línea antes de moverse igual (la voz tarda: red lenta).
+ * Con la voz preparada de antemano suena en menos de medio segundo.
+ */
+export const ESPERA_VOZ_MS = 1200;
+
+/**
+ * El paso que SE VE en el ejemplo. La animación de una línea arranca cuando su voz empieza a sonar
+ * (`soltado` es la vuelta cuya voz ya sonó, o cuya espera venció), no cuando la línea empieza: antes
+ * el ejemplo se adelantaba a lo que decían y se sentía a destiempo (José, 2-oct: «no lo hace fluido»).
+ * Mientras tanto se queda en el paso de la línea anterior. Un toque responde al momento, y en la
+ * espera del toque ya sonó todo.
+ */
+export function pasoVisible(s: EstadoRecorrido, soltado: number, escenas: readonly Escena[] = ESCENAS): string {
+  const e = escenaDe(s, escenas);
+  const ya = soltado === s.vuelta || s.tocado || s.fase !== 'habla';
+  return pasoEn(e, ya ? s.l : s.l - 1);
 }

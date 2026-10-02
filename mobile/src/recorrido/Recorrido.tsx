@@ -13,8 +13,8 @@
  */
 import { createElement, useCallback, useEffect, useMemo, useReducer, useRef, useState, type ComponentType, type ReactNode } from 'react';
 import { Animated, Easing, Modal, Pressable, StatusBar, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
-import { duracionLectura, ESCENAS, pasoEn, siguientes, textoDe, type Anfitrion, type CaraLinea, type DemoId, type GestoLinea, type PruebaId } from './guion';
-import { escenaDe, INICIO, lineaDe, progreso, reducir, type AccionRecorrido, type EstadoRecorrido } from './motor';
+import { duracionLectura, ESCENAS, siguientes, textoDe, type Anfitrion, type CaraLinea, type DemoId, type GestoLinea, type PruebaId } from './guion';
+import { escenaDe, ESPERA_VOZ_MS, INICIO, lineaDe, pasoVisible, progreso, reducir, type AccionRecorrido, type EstadoRecorrido } from './motor';
 import { COLOR, Icono, useVaiven, type PropsEscena } from './escenas/comun';
 import { EfectoAnfitrion } from './escenas/efectos';
 import { achicadoEn, momentoDe, type SonidoId, type Vibracion } from './coreografia';
@@ -94,6 +94,14 @@ export function Recorrido({ visible, nombre, idioma, narrador, cuerpo, onCerrar,
   const [silencio, setSilencio] = useState(false);
   const [hablando, setHablando] = useState(false);
   const [desde, setDesde] = useState(0);
+  /** La voz de la línea tarda en llegar (más de un momento): se dice «preparando la voz». */
+  const [preparando, setPreparando] = useState(false);
+  /** La voz no pudo sonar (sin red): la línea se lee. Se dice, para que no parezca trabado. */
+  const [leyendo, setLeyendo] = useState(false);
+  /** La vuelta cuya voz ya empezó a sonar: desde ahí se ve el paso de su línea (motor.pasoVisible). */
+  const [soltado, setSoltado] = useState(0);
+  /** Cuándo empezó la espera del toque (para la cuenta de «sigo solo en…»). */
+  const [esperaDesde, setEsperaDesde] = useState(0);
   const [gesto, setGesto] = useState<{ quien: Anfitrion; nombre: GestoLinea; n: number } | null>(null);
   const { width: W, height: H } = useWindowDimensions();
   const horizontal = W > H;
@@ -102,7 +110,8 @@ export function Recorrido({ visible, nombre, idioma, narrador, cuerpo, onCerrar,
   const quien = linea.quien;
   const texto = textoDe(linea, idioma, nombre);
   const cerrado = useRef(false);
-  const paso = pasoEn(escena, s.l);
+  // El ejemplo se mueve cuando la voz de la línea empieza, no antes (motor.pasoVisible).
+  const paso = pasoVisible(s, soltado);
   const momento = momentoDe(escena.id, paso);
   const achicado = achicadoEn(escena.id, paso);
 
@@ -148,8 +157,11 @@ export function Recorrido({ visible, nombre, idioma, narrador, cuerpo, onCerrar,
     const vuelta = s.vuelta;
     let vivo = true;
     let reloj: ReturnType<typeof setTimeout> | undefined;
+    setPreparando(false);
+    setLeyendo(false);
     if (s.fase === 'espera') {
       setHablando(false);
+      setEsperaDesde(Date.now());
       const ms = linea.espera?.ms ?? 0;
       if (ms > 0) reloj = setTimeout(() => dispatch({ tipo: 'esperaVencio', vuelta }), ms);
       return () => clearTimeout(reloj);
@@ -163,29 +175,49 @@ export function Recorrido({ visible, nombre, idioma, narrador, cuerpo, onCerrar,
     const leer = (ms: number) => {
       setHablando(true);
       setDesde(Date.now());
+      setSoltado(vuelta);
       reloj = setTimeout(() => vivo && dispatch({ tipo: 'termino', vuelta }), ms);
     };
     setHablando(false);
+    let aviso: ReturnType<typeof setTimeout> | undefined;
+    let tope: ReturnType<typeof setTimeout> | undefined;
     if (silencio) leer(duracionLectura(texto));
     else {
       const t0 = Date.now();
+      let sonando = false;
+      // Si la voz tarda, se avisa («preparando la voz») y, pasado el tope, el ejemplo se mueve igual.
+      aviso = setTimeout(() => vivo && !sonando && setPreparando(true), 450);
+      tope = setTimeout(() => vivo && setSoltado(vuelta), ESPERA_VOZ_MS);
       void narrador
         .hablar(texto, quien, linea.emocion || 'neutral', () => {
           if (!vivo) return;
+          sonando = true;
+          clearTimeout(aviso);
+          clearTimeout(tope);
+          setPreparando(false);
           setHablando(true);
           setDesde(Date.now());
+          setSoltado(vuelta);
         })
         .then((sono) => {
           if (!vivo) return;
+          clearTimeout(aviso);
+          clearTimeout(tope);
+          setPreparando(false);
           setHablando(false);
           // Sonó: una pausa corta de conversación y sigue. No sonó (sin red): se lee lo que falte.
           if (sono) reloj = setTimeout(() => vivo && dispatch({ tipo: 'termino', vuelta }), 280);
-          else leer(Math.max(600, duracionLectura(texto) - (Date.now() - t0)));
+          else {
+            setLeyendo(true);
+            leer(Math.max(600, duracionLectura(texto) - (Date.now() - t0)));
+          }
         });
     }
     return () => {
       vivo = false;
       clearTimeout(reloj);
+      clearTimeout(aviso);
+      clearTimeout(tope);
     };
   }, [visible, listo, s.vuelta, s.fase, s.pausado, silencio]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -217,12 +249,14 @@ export function Recorrido({ visible, nombre, idioma, narrador, cuerpo, onCerrar,
     else {
       narrador.callar();
       setHablando(false);
+      setPreparando(false);
       dispatch({ tipo: 'pausa' });
     }
   };
   const mover = (tipo: 'siguiente' | 'anterior') => {
     narrador.callar();
     setHablando(false);
+    setPreparando(false);
     dispatch({ tipo });
   };
   const toggleSilencio = () => {
@@ -230,10 +264,13 @@ export function Recorrido({ visible, nombre, idioma, narrador, cuerpo, onCerrar,
     setSilencio((v) => !v);
   };
 
-  // El que habla, al frente: los dos cuerpos se agrandan o se achican con suavidad.
+  // El que habla, al frente: los dos cuerpos se agrandan o se achican con suavidad. Va por JS, no por
+  // el hilo nativo, igual que el vuelo de abajo: en Android, quitarle a una vista un estilo que movía
+  // el hilo nativo la dejaba con el último valor puesto (y el estilo del cuerpo cambia al volverse
+  // chiquito). Son dos vistas: no pesa.
   const frente = useRef(new Animated.Value(quien === 'claudio' ? 0 : 1)).current;
   useEffect(() => {
-    Animated.timing(frente, { toValue: quien === 'claudio' ? 0 : 1, duration: 420, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+    Animated.timing(frente, { toValue: quien === 'claudio' ? 0 : 1, duration: 420, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
   }, [quien, frente]);
 
   // Cada escena entra deslizándose, con su título de capítulo y un barrido de luz (cine).
@@ -261,10 +298,16 @@ export function Recorrido({ visible, nombre, idioma, narrador, cuerpo, onCerrar,
 
   // El vuelo de Claudio a la franja de los chats: se mide dónde está él y dónde está la franja (la
   // escena la marca) y se va para allá encogiéndose; al terminar el recordatorio, vuelve.
+  //
+  // Antes el vuelo iba por el hilo nativo y su estilo se ponía y se quitaba: al aterrizar, en el
+  // teléfono de José, Claudio se quedaba invisible y solo se veía su nombre (2-oct, «Tus mensajes»).
+  // Ahora va por JS, el estilo está siempre (en reposo: sin mover ni encoger) y al aterrizar su
+  // cuadro se monta de nuevo (`aterrizajes`): su video arranca limpio, con sus fotos debajo mientras.
   const lugares = useRef<Record<string, Rect>>({});
   const caja = useRef<Record<Anfitrion, View | null>>({ claudio: null, antonio: null });
   const vuela = useRef(new Animated.Value(0)).current;
   const [vuelo, setVuelo] = useState<{ dx: number; dy: number; k: number } | null>(null);
+  const [aterrizajes, setAterrizajes] = useState(0);
   /** Al terminar el recordatorio vuelve volando a su lugar (sigue redondito hasta aterrizar). */
   const [volviendo, setVolviendo] = useState<Anfitrion | null>(null);
   const enFranja = achicado ?? volviendo;
@@ -272,9 +315,11 @@ export function Recorrido({ visible, nombre, idioma, narrador, cuerpo, onCerrar,
     if (!achicado) {
       if (!vuelo) return;
       setVolviendo('claudio');
-      Animated.spring(vuela, { toValue: 0, useNativeDriver: true, speed: 7, bounciness: 5 }).start(() => {
+      Animated.spring(vuela, { toValue: 0, useNativeDriver: false, speed: 7, bounciness: 5 }).start(() => {
+        vuela.setValue(0);
         setVolviendo(null);
         setVuelo(null);
+        setAterrizajes((n) => n + 1);
       });
       return;
     }
@@ -287,7 +332,7 @@ export function Recorrido({ visible, nombre, idioma, narrador, cuerpo, onCerrar,
         if (!vivo || !destino) return;
         const lado = Math.min(w, cuerpoH);
         setVuelo({ dx: destino.x + destino.w / 2 - (x + w / 2), dy: destino.y + destino.h / 2 - (y + lado / 2), k: destino.w / lado });
-        Animated.spring(vuela, { toValue: 1, useNativeDriver: true, speed: 5, bounciness: 7 }).start();
+        Animated.spring(vuela, { toValue: 1, useNativeDriver: false, speed: 5, bounciness: 7 }).start();
       });
     }, 560);
     return () => {
@@ -315,7 +360,7 @@ export function Recorrido({ visible, nombre, idioma, narrador, cuerpo, onCerrar,
 
   const esperando = s.fase === 'espera';
   const props: PropsEscena = {
-    paso: pasoEn(escena, s.l),
+    paso,
     esperando,
     tocado: s.tocado,
     onToque: () => {
@@ -343,21 +388,24 @@ export function Recorrido({ visible, nombre, idioma, narrador, cuerpo, onCerrar,
     const baja = frente.interpolate({ inputRange: [0, 1], outputRange: esClaudio ? [0, cuerpoH * 0.08] : [cuerpoH * 0.08, 0] });
     // Chiquito en la franja: un círculo con su video que vuela hasta allá (y nada de achicarse por turno).
     const lado = Math.min(cuerpoW, cuerpoH);
-    const vueloStyle =
-      chiquito && vuelo
-        ? {
-            transform: [
-              { translateX: vuela.interpolate({ inputRange: [0, 1], outputRange: [0, vuelo.dx] }) },
-              { translateY: vuela.interpolate({ inputRange: [0, 1], outputRange: [0, vuelo.dy] }) },
-              { scale: vuela.interpolate({ inputRange: [0, 1], outputRange: [1, vuelo.k] }) },
-            ],
-          }
-        : null;
+    // Los estilos están SIEMPRE (en reposo valen «sin mover»): nunca se quita un estilo animado.
+    const v = chiquito && vuelo ? vuelo : null;
+    const vueloStyle = {
+      transform: [
+        { translateX: v ? vuela.interpolate({ inputRange: [0, 1], outputRange: [0, v.dx] }) : 0 },
+        { translateY: v ? vuela.interpolate({ inputRange: [0, 1], outputRange: [0, v.dy] }) : 0 },
+        { scale: v ? vuela.interpolate({ inputRange: [0, 1], outputRange: [1, v.k] }) : 1 },
+      ],
+    };
+    const turnoStyle = chiquito ? { opacity: 1, transform: [{ translateY: 0 }, { scale: 1 }] } : { opacity: opacidad, transform: [{ translateY: baja }, { scale: escala }] };
     return (
       <View key={q} ref={(r) => void (caja.current[q] = r)} collapsable={false} style={{ width: cuerpoW, zIndex: chiquito ? 5 : 1, elevation: chiquito ? 5 : 0 }}>
-        <Animated.View style={[st.anfitrion, { width: cuerpoW }, chiquito ? null : { opacity: opacidad, transform: [{ translateY: baja }, { scale: escala }] }]}>
+        <Animated.View style={[st.anfitrion, { width: cuerpoW }, turnoStyle]}>
           {alFrente && !chiquito ? <Aura color={ACENTO[q]} hablando={hablando} ancho={cuerpoW} alto={cuerpoH} /> : null}
-          <Animated.View style={[chiquito ? { width: lado, height: lado, borderRadius: lado / 2, borderWidth: 3, borderColor: ACENTO[q] } : { width: cuerpoW, height: cuerpoH, borderRadius: 24 }, { overflow: 'hidden' }, vueloStyle]}>
+          <Animated.View
+            key={esClaudio ? `cuadro-${aterrizajes}` : 'cuadro'}
+            style={[chiquito ? { width: lado, height: lado, borderRadius: lado / 2, borderWidth: 3, borderColor: ACENTO[q] } : { width: cuerpoW, height: cuerpoH, borderRadius: 24 }, { overflow: 'hidden' }, vueloStyle]}
+          >
             {cuerpo(q, { alFrente, hablando: alFrente && hablando, gesto: gesto && gesto.quien === q ? { nombre: gesto.nombre, n: gesto.n } : null, cara: alFrente ? linea.cara ?? null : null, ancho: chiquito ? lado : cuerpoW, alto: chiquito ? lado : cuerpoH })}
           </Animated.View>
           {alFrente && !chiquito ? (
@@ -369,6 +417,7 @@ export function Recorrido({ visible, nombre, idioma, narrador, cuerpo, onCerrar,
             <View style={[st.nombre, { borderColor: ACENTO[q] }, alFrente && { backgroundColor: ACENTO[q] }]}>
               <Text style={[st.nombreTexto, { color: alFrente ? '#111' : ACENTO[q] }]}>{NOMBRE[q]}</Text>
               {alFrente && hablando ? <Text style={st.hablaTexto}> · {idioma === 'en' ? 'talking' : 'habla'}</Text> : null}
+              {alFrente && preparando ? <Text style={st.hablaTexto}> · …</Text> : null}
             </View>
           )}
         </Animated.View>
@@ -420,6 +469,7 @@ export function Recorrido({ visible, nombre, idioma, narrador, cuerpo, onCerrar,
             {createElement(ESCENA[escena.id], { key: escena.id, ...props })}
             <Barrido avance={entra} ancho={escenarioW} alto={escenarioH} />
             <Capitulo avance={titulo} numero={s.e + 1} texto={escena.titulo[idioma]} color={ACENTO[quien]} ancho={escenarioW} alto={escenarioH} />
+            {s.pausado ? <EnPausa idioma={idioma} onSeguir={pausar} /> : null}
           </Animated.View>
 
           {/* Los dos anfitriones, lo que dice el que habla y la indicación de tocar. */}
@@ -428,8 +478,8 @@ export function Recorrido({ visible, nombre, idioma, narrador, cuerpo, onCerrar,
               {anfitrion('claudio')}
               {anfitrion('antonio')}
             </View>
-            <Subtitulo texto={texto} quien={quien} hablando={hablando} desde={desde} pausado={s.pausado} alto={subtituloH} />
-            {esperando && linea.espera ? <Indicacion texto={linea.espera.etiqueta[idioma]} color={ACENTO[quien]} /> : null}
+            <Subtitulo texto={texto} quien={quien} hablando={hablando} desde={desde} pausado={s.pausado} alto={subtituloH} estado={s.pausado ? 'pausa' : preparando ? 'preparando' : leyendo ? 'leyendo' : null} idioma={idioma} />
+            {esperando && linea.espera && !s.pausado ? <Indicacion texto={linea.espera.etiqueta[idioma]} color={ACENTO[quien]} ms={linea.espera.ms} desde={esperaDesde} idioma={idioma} /> : null}
           </View>
         </View>
 
@@ -535,7 +585,15 @@ function Boton({ etiqueta, onPress, children }: { etiqueta: string; onPress: () 
  */
 const SUBTITULO_H = 134;
 
-function Subtitulo({ texto, quien, hablando, desde, pausado, alto }: { texto: string; quien: Anfitrion; hablando: boolean; desde: number; pausado: boolean; alto: number }) {
+/** Lo que está pasando con la voz, dicho junto al nombre: así nunca parece trabado. */
+type EstadoVoz = 'preparando' | 'leyendo' | 'pausa' | null;
+const ESTADO_VOZ: Record<Exclude<EstadoVoz, null>, { es: string; en: string }> = {
+  preparando: { es: 'preparando la voz', en: 'getting the voice ready' },
+  leyendo: { es: 'sin voz ahora · léelo', en: 'no voice right now · read it' },
+  pausa: { es: 'en pausa', en: 'paused' },
+};
+
+function Subtitulo({ texto, quien, hablando, desde, pausado, alto, estado, idioma }: { texto: string; quien: Anfitrion; hablando: boolean; desde: number; pausado: boolean; alto: number; estado: EstadoVoz; idioma: 'es' | 'en' }) {
   const palabras = useMemo(() => texto.split(/(\s+)/), [texto]);
   const [ahora, setAhora] = useState(Date.now());
   useEffect(() => {
@@ -554,7 +612,11 @@ function Subtitulo({ texto, quien, hablando, desde, pausado, alto }: { texto: st
   }, [texto, aparece]);
   return (
     <Animated.View style={[st.subtitulo, { height: alto, borderColor: ACENTO[quien], opacity: aparece, transform: [{ translateY: aparece.interpolate({ inputRange: [0, 1], outputRange: [8, 0] }) }] }]}>
-      <Text style={[st.quien, { color: ACENTO[quien] }]}>{NOMBRE[quien]}</Text>
+      <View style={st.quienFila}>
+        <Text style={[st.quien, { color: ACENTO[quien] }]}>{NOMBRE[quien]}</Text>
+        {estado ? <Text style={st.estadoVoz}>· {ESTADO_VOZ[estado][idioma]}</Text> : null}
+        {estado === 'preparando' ? <Puntos color={ACENTO[quien]} /> : null}
+      </View>
       {/* La letra se ajusta al largo de la frase: siempre cabe entera en el cuadro. */}
       <Text style={[st.dice, texto.length > 140 ? st.diceLarga : texto.length > 90 ? st.diceMedia : null]} accessibilityLiveRegion="polite">
         {palabras.map((p, k) => {
@@ -571,9 +633,20 @@ function Subtitulo({ texto, quien, hablando, desde, pausado, alto }: { texto: st
   );
 }
 
-/** «Toca el botón…»: late mientras espera. */
-function Indicacion({ texto, color }: { texto: string; color: string }) {
+/**
+ * «Toca el botón…»: late mientras espera, con la cuenta de cuándo sigue solo (una barra que se vacía
+ * y los segundos): así se sabe que no se trabó, que está esperando el toque.
+ */
+function Indicacion({ texto, color, ms, desde, idioma }: { texto: string; color: string; ms: number; desde: number; idioma: 'es' | 'en' }) {
   const v = useRef(new Animated.Value(0)).current;
+  const [ahora, setAhora] = useState(Date.now());
+  useEffect(() => {
+    if (ms <= 0) return;
+    const id = setInterval(() => setAhora(Date.now()), 250);
+    return () => clearInterval(id);
+  }, [ms]);
+  const queda = ms > 0 ? Math.max(0, ms - (ahora - desde)) : 0;
+  const segundos = Math.ceil(queda / 1000);
   useEffect(() => {
     const loop = Animated.loop(
       Animated.sequence([
@@ -587,7 +660,47 @@ function Indicacion({ texto, color }: { texto: string; color: string }) {
   return (
     <Animated.View style={[st.indicacion, { backgroundColor: color, transform: [{ scale: v.interpolate({ inputRange: [0, 1], outputRange: [1, 1.05] }) }] }]}>
       <Text style={st.indicacionTexto}>👆 {texto}</Text>
+      {ms > 0 ? (
+        <>
+          <Text style={st.indicacionCuenta}>{idioma === 'en' ? `or I’ll go on in ${segundos} s` : `o sigo solo en ${segundos} s`}</Text>
+          <View style={st.indicacionBarra}>
+            <View style={[st.indicacionLleno, { width: `${Math.round((queda / ms) * 100)}%` }]} />
+          </View>
+        </>
+      ) : null}
     </Animated.View>
+  );
+}
+
+/** En pausa: el ejemplo se oscurece y lo dice (con el botón para seguir), para que no parezca trabado. */
+function EnPausa({ idioma, onSeguir }: { idioma: 'es' | 'en'; onSeguir: () => void }) {
+  return (
+    <Pressable onPress={onSeguir} accessibilityRole="button" accessibilityLabel={idioma === 'en' ? 'Resume' : 'Seguir'} style={[StyleSheet.absoluteFill, st.pausa]}>
+      <View style={st.pausaBoton}>
+        <Text style={st.pausaGlifo}>▶</Text>
+      </View>
+      <Text style={st.pausaTexto}>{idioma === 'en' ? 'Paused · tap to resume' : 'En pausa · toca para seguir'}</Text>
+    </Pressable>
+  );
+}
+
+/** Tres puntos que laten en fila: está en eso. */
+function Puntos({ color }: { color: string }) {
+  const v = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(Animated.timing(v, { toValue: 3, duration: 1100, easing: Easing.linear, useNativeDriver: true }));
+    loop.start();
+    return () => loop.stop();
+  }, [v]);
+  return (
+    <View style={st.puntosVoz}>
+      {[0, 1, 2].map((k) => (
+        <Animated.View
+          key={k}
+          style={[st.puntoVoz, { backgroundColor: color, opacity: v.interpolate({ inputRange: [0, k, k + 0.5, k + 1, 3], outputRange: [0.25, 0.25, 1, 0.25, 0.25], extrapolate: 'clamp' }) }]}
+        />
+      ))}
+    </View>
   );
 }
 
@@ -607,13 +720,24 @@ const st = StyleSheet.create({
   nombreTexto: { fontSize: 13, fontWeight: '900', letterSpacing: 0.5 },
   hablaTexto: { color: '#111', fontSize: 12, fontWeight: '700' },
   subtitulo: { marginHorizontal: 14, marginTop: 8, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 18, borderWidth: 1.5, backgroundColor: 'rgba(18,19,22,0.92)' },
-  quien: { fontSize: 11, fontWeight: '900', letterSpacing: 1, marginBottom: 2 },
+  quienFila: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 },
+  quien: { fontSize: 11, fontWeight: '900', letterSpacing: 1 },
+  estadoVoz: { color: COLOR.texto2, fontSize: 11, fontWeight: '700' },
+  puntosVoz: { flexDirection: 'row', gap: 3, alignItems: 'center' },
+  puntoVoz: { width: 5, height: 5, borderRadius: 3 },
   dice: { color: COLOR.texto, fontSize: 17, lineHeight: 23, fontWeight: '600' },
   diceMedia: { fontSize: 15.5, lineHeight: 21 },
   diceLarga: { fontSize: 14, lineHeight: 19 },
   porDecir: { color: 'rgba(242,238,232,0.38)' },
   indicacion: { position: 'absolute', top: 6, alignSelf: 'center', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 999 },
-  indicacionTexto: { color: '#111', fontSize: 14, fontWeight: '800' },
+  indicacionTexto: { color: '#111', fontSize: 14, fontWeight: '800', textAlign: 'center' },
+  indicacionCuenta: { color: 'rgba(17,17,17,0.72)', fontSize: 11.5, fontWeight: '700', textAlign: 'center', marginTop: 1 },
+  indicacionBarra: { height: 3, borderRadius: 2, marginTop: 5, backgroundColor: 'rgba(17,17,17,0.18)', overflow: 'hidden' },
+  indicacionLleno: { height: 3, borderRadius: 2, backgroundColor: 'rgba(17,17,17,0.7)' },
+  pausa: { backgroundColor: 'rgba(6,7,9,0.62)', alignItems: 'center', justifyContent: 'center', gap: 10 },
+  pausaBoton: { width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.14)', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.35)' },
+  pausaGlifo: { color: COLOR.texto, fontSize: 24, fontWeight: '900', marginLeft: 4 },
+  pausaTexto: { color: COLOR.texto, fontSize: 15, fontWeight: '800' },
   capNumero: { fontSize: 64, fontWeight: '900', letterSpacing: 4, textShadowColor: 'rgba(0,0,0,0.6)', textShadowRadius: 12 },
   capLinea: { height: 3, borderRadius: 2, marginVertical: 6 },
   capTexto: { color: COLOR.texto, fontSize: 24, fontWeight: '800', letterSpacing: 1 },
