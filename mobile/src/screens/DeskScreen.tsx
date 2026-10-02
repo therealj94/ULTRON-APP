@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { miga, reportarEstado } from '../lib/reporte';
-import { AccessibilityInfo, Alert, AppState, Animated, BackHandler, Linking, PanResponder, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { AccessibilityInfo, Alert, AppState, Animated, BackHandler, Linking, PanResponder, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useKeepAwake } from 'expo-keep-awake';
 import { useCameraPermissions } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
@@ -14,7 +14,7 @@ import { CamaraVision, DORMIDO_PERIODO_MS, SERVIDOR_CADA_MS, SERVIDOR_DORMIDO_MS
 import { DeskMenu } from '../components/DeskMenu';
 import type { Escena, MotorVision } from '../lib/escena';
 import type { DeskPresence, FaceState, Mode, SessionUser } from '../config';
-import { CANCIONES_LOCAL, healthCheck, listCanciones, nuevoIdTurno, rememberFact, turno, turnoStream, type Cancion, type Turn } from '../lib/api';
+import { api, CANCIONES_LOCAL, healthCheck, listCanciones, nuevoIdTurno, rememberFact, turno, turnoStream, type Cancion, type Turn } from '../lib/api';
 import { faceForEmocion, type Emocion } from '../lib/emocion';
 import { GENEROS, generoPorId, interpretar, type Gag } from '../lib/intenciones';
 import { ayuda, CONOCER_CORE, CONOCER_QUESTIONS, fechaLocal, horaLocal, preguntaConocer } from '../lib/knowledge';
@@ -82,6 +82,9 @@ import { marcoMesa, useMesaVisible, useModoPresencia } from '../avatar3d/usePres
 import { useCaras, type ApiCaras } from '../caras/useCaras';
 import { avatarActual } from '../avatares/actual';
 import { orientar } from '../lib/orientacion';
+import { esperarFrame } from '../lib/esperarFrame';
+import { HojaComputadora } from '../ajustes/Computadora';
+import { avisoMesa, estadoEnPalabras, sondeoMs, trabajando as pcTrabajando, type EstadoPc } from '../compa/computadora';
 
 type Props = {
   user: SessionUser;
@@ -189,6 +192,10 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   /** Se preguntó «¿solo ahora o siempre?» y se espera la respuesta. */
   const esperaModoCamara = useRef(false);
   const [masAbierto, setMasAbierto] = useState(false);
+  /** Su computadora en la nube (ajustes/Computadora.tsx): la hoja, su estado y el aviso de la mesa. */
+  const [pcAbierta, setPcAbierta] = useState(false);
+  const [pcEstado, setPcEstado] = useState<EstadoPc | null>(null);
+  const [pcAviso, setPcAviso] = useState<{ texto: string; terminada: boolean } | null>(null);
   const [tutorialAbierto, setTutorialAbierto] = useState(false);
   /**
    * Charlar (el avatar grande, de frente) o Trabajar (el avatar compacto arriba y la conversación
@@ -274,6 +281,46 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
    * la pila no gasta batería ni reinicia un micrófono que es de otro).
    */
   const mesaActiva = mesaVisible && appActiva;
+
+  // Su computadora: se pregunta despacio (rápido mientras trabaja) con la mesa a la vista. Mientras
+  // trabaja, la mesa lo dice arriba con «Ver»; al terminar, «terminó · ver el resultado» un rato.
+  // Sin computadora en el servidor, se deja de preguntar.
+  useEffect(() => {
+    if (!mesaActiva) return;
+    let vivo = true;
+    let reloj: ReturnType<typeof setTimeout>;
+    let antes: EstadoPc['actual'] = null;
+    let quitarAviso: ReturnType<typeof setTimeout> | undefined;
+    const vuelta = async () => {
+      let s: EstadoPc | null = null;
+      try {
+        s = await api<EstadoPc>('/api/computadora', { method: 'GET' }, 12_000);
+      } catch {
+        s = null;
+      }
+      if (!vivo) return;
+      if (s) {
+        setPcEstado(s);
+        const aviso = avisoMesa(antes, s.actual, idiomaActual() === 'en' ? 'en' : 'es');
+        if (aviso) {
+          setPcAviso(aviso);
+          clearTimeout(quitarAviso);
+          if (aviso.terminada) quitarAviso = setTimeout(() => vivo && setPcAviso(null), 45_000);
+        } else if (!s.actual || !pcTrabajando(s.actual.estado)) {
+          setPcAviso((a) => (a?.terminada ? a : null));
+        }
+        antes = s.actual;
+        if (!s.configurada) return;
+      }
+      reloj = setTimeout(vuelta, sondeoMs(s?.actual?.estado, false));
+    };
+    void vuelta();
+    return () => {
+      vivo = false;
+      clearTimeout(reloj);
+      clearTimeout(quitarAviso);
+    };
+  }, [mesaActiva]);
   /**
    * La compañera se ve (los chats, Ajustes o el perfil encima de la mesa; chiquita, al lado o a
    * pantalla completa): entonces el oído de la mesa sigue abierto y ella atiende (compa/duenoAudio.ts).
@@ -886,7 +933,22 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   );
 
   const whatDoYouSee = useCallback(async () => {
-    const frame = grabFrame.current ? await grabFrame.current() : null;
+    let frame = grabFrame.current ? await grabFrame.current() : null;
+    if (!frame) {
+      // La cámara arranca apagada: si pide «¿qué ves?», se prende SOLO AHORA para mirar (lo pidió) y se
+      // dice; mientras enfoca, la línea de estado dice «mirando». Antes contestaba «aún no identifico
+      // nada» sin prenderla (José, 2-oct: «una foto… no lo hace»).
+      if (!camara.encendida()) {
+        if (!(await encenderCamara('temporal'))) return void (await say(tr('Necesito permiso de cámara para verte.', 'I need camera permission to see you.'), 'CONCERNED', { emocion: 'preocupado' }));
+        await say(tr('Prendo la cámara un momento. Déjame ver…', 'Turning the camera on for a moment. Let me look…'), 'SCAN');
+      }
+      setToolHint(tr('mirando con la cámara', 'looking with the camera'));
+      try {
+        frame = await esperarFrame(() => grabFrame.current, { maxMs: 7000 });
+      } finally {
+        setToolHint('');
+      }
+    }
     if (frame) {
       await askBrain(tr('Mira la cámara y dime en dos frases qué ves: quién está, qué hace y qué objetos hay.', 'Look at the camera and tell me in two sentences what you see: who is there, what they are doing and what objects there are.'), { image: `data:image/jpeg;base64,${frame}` });
       return;
@@ -899,8 +961,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       await say(`${e.descripcion}${mesa.length ? ` ${tr('En la mesa', 'On the desk')}: ${mesa.join(', ')}.` : ''}`, 'SCAN');
       return;
     }
-    await say(objs.length ? `${tr('Veo', 'I see')}: ${objs.join(', ')}.` : tr('Aún no identifico nada. Dame un momento con la cámara.', 'I can’t identify anything yet. Give me a moment with the camera.'), 'SCAN');
-  }, [askBrain, escenaFresca, say]);
+    await say(objs.length ? `${tr('Veo', 'I see')}: ${objs.join(', ')}.` : tr('La cámara no me dio imagen todavía. Apúntala hacia ti y pregúntame otra vez «¿qué ves?».', 'The camera hasn’t given me a picture yet. Point it at yourself and ask me again “what do you see?”.'), 'SCAN');
+  }, [askBrain, camara, encenderCamara, escenaFresca, say]);
 
   const runGag = useCallback(
     async (gag: Gag) => {
@@ -2079,6 +2141,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         return setEligiendo('menu');
       case 'tutorial':
         return setTutorialAbierto(true);
+      case 'computadora':
+        return setPcAbierta(true);
       case 'ajustes':
         return setMenuOpen(true);
       case 'modo': {
@@ -2104,11 +2168,18 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         case 'hablar':
           return void say(tr('Te escucho: dime lo que quieras.', 'I’m listening: tell me anything.'), 'HAPPY', { emocion: 'feliz' });
         case 'camara':
+          // Prende la cámara si hace falta, espera la foto y dice lo que ve (whatDoYouSee).
           return void handleCommand('qué ves');
         case 'llamame':
           return toggleConversar();
         case 'recordatorio':
-          return void handleCommand(tr('Quiero que me pongas un recordatorio', 'I want you to set me a reminder'));
+          // Al momento y con un ejemplo, sin esperar al servidor: el oído queda abierto y la frase que
+          // diga ya trae el qué y la hora (el servidor lo repite y pide el «sí», como en el recorrido).
+          return void say(
+            tr('¡Va! Dime qué te recuerdo y a qué hora. Por ejemplo: «recuérdame a las cinco tomar la pastilla».', 'Sure! Tell me what to remind you about and when. For example: “remind me at five to take my pill”.'),
+            'HAPPY',
+            { emocion: 'feliz' }
+          );
         case 'chat':
           return pulse.abrir();
       }
@@ -2240,7 +2311,29 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         estadoCaras={caras.estadoTexto}
         trabajando={trabajando}
         conChat={enCuadro}
+        estadoComputadora={pcEstado?.configurada ? estadoEnPalabras(pcEstado, idiomaActual() === 'en' ? 'en' : 'es').texto : null}
+        computadoraTrabajando={pcTrabajando(pcEstado?.actual?.estado)}
       />
+
+      <HojaComputadora visible={pcAbierta} onCerrar={() => setPcAbierta(false)} nombreAvatar={de(avatarPorId(avatarId).nombre)} />
+
+      {/* Su computadora trabaja (o acaba de terminar): se dice arriba, con «Ver». */}
+      {pcAviso && !pcAbierta && !tutorialAbierto ? (
+        <Pressable
+          onPress={() => {
+            setPcAbierta(true);
+            if (pcAviso.terminada) setPcAviso(null);
+          }}
+          accessibilityRole="button"
+          accessibilityLabel={pcAviso.texto}
+          style={[styles.avisoPc, { borderColor: tema.acento }]}
+        >
+          <Text style={styles.avisoPcTexto} numberOfLines={1}>
+            🖥 {pcAviso.texto}
+          </Text>
+          <Text style={[styles.avisoPcVer, { color: tema.acento }]}>{tr('Ver', 'See')}</Text>
+        </Pressable>
+      ) : null}
 
       <RecorridoApp visible={tutorialAbierto} nombre={user.name} idioma={idioma} onCerrar={cerrarTutorial} onProbar={probarDesdeRecorrido} />
 
@@ -2347,6 +2440,24 @@ function saludoPorHora(ahora = new Date()): string {
 }
 
 const styles = StyleSheet.create({
+  avisoPc: {
+    position: 'absolute',
+    top: 54,
+    alignSelf: 'center',
+    maxWidth: '92%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1.5,
+    backgroundColor: 'rgba(18,19,22,0.92)',
+    zIndex: 40,
+    elevation: 8,
+  },
+  avisoPcTexto: { color: '#F2EEE8', fontSize: 13.5, fontWeight: '700', flexShrink: 1 },
+  avisoPcVer: { fontSize: 13.5, fontWeight: '900' },
   root: { flex: 1, backgroundColor: T.fondo2 },
   cuadro: { overflow: 'hidden', backgroundColor: '#000', position: 'relative' },
   hud: {

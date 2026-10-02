@@ -251,6 +251,19 @@ function esperar(ms: number, senal?: AbortSignal): Promise<void> {
   });
 }
 
+/** Su última tarea, en corto (sin capturas): para el aviso de la mesa «tu computadora está trabajando». */
+export async function resumenUltima(quien: string): Promise<{ id: string; estado: EstadoTarea; pasos: number; instruccion: string; ultimo: string | null } | null> {
+  const id = ultimaTareaDe(quien);
+  if (!id) return null;
+  try {
+    const t = await verTarea(id, false, 5000);
+    const u = t.pasos[t.pasos.length - 1];
+    return { id, estado: t.estado, pasos: t.pasos.length, instruccion: t.instruccion.slice(0, 200), ultimo: u ? pasoEnPalabras(u) : null };
+  } catch {
+    return null;
+  }
+}
+
 /** Pruebas: olvidar los encargos. */
 export function _olvidarEncargos() {
   ENCARGOS.clear();
@@ -264,7 +277,57 @@ type DepsRutas = {
   exigirMesa: import('express').RequestHandler;
   limitar: (max: number, ventanaMs?: number, grupo?: string) => import('express').RequestHandler;
   sesionDe: (req: import('express').Request) => { correo: string } | null;
+  /** Qué motor eligió en Ajustes («gratis» o «pago»); sin perfil, gratis. */
+  motorDe?: (correo: string) => Promise<string | null | undefined>;
 };
+
+/**
+ * La tarea para la app: con la captura SOLO del último paso (lo que la computadora está viendo ahora),
+ * o la del paso que se pidió (`paso`). Todas juntas pesaban casi 1 MB en cada consulta.
+ */
+export function tareaParaApp(t: Tarea, paso?: number): Tarea {
+  // Sin `paso`: el último paso con captura («escritorio_limpio» no trae): lo más reciente que vio.
+  const mostrar = Number.isFinite(paso) ? Number(paso) : ([...t.pasos].reverse().find((p) => p.miniatura)?.n ?? -1);
+  return { ...t, pasos: t.pasos.map((p) => (p.n === mostrar ? p : { ...p, miniatura: undefined })) };
+}
+
+/** Lo que dice cada paso, en palabras de persona (la app lo muestra en la lista de pasos). */
+export function pasoEnPalabras(p: Pick<PasoTarea, 'accion' | 'args'>, idioma: 'es' | 'en' = 'es'): string {
+  const a = (p.args || {}) as Record<string, any>;
+  const en = idioma === 'en';
+  const corto = (x: unknown, n = 60) => {
+    const t = String(x ?? '').replace(/\s+/g, ' ').trim();
+    return t.length > n ? `${t.slice(0, n - 1)}…` : t;
+  };
+  switch (p.accion) {
+    case 'escritorio_limpio':
+      return en ? 'Started a clean desktop' : 'Abrió un escritorio limpio';
+    case 'open_url':
+      return en ? `Opened ${corto(a.url)}` : `Abrió ${corto(a.url)}`;
+    case 'click':
+      return a.element ? (en ? `Clicked «${corto(a.element, 40)}»` : `Tocó «${corto(a.element, 40)}»`) : en ? 'Clicked' : 'Hizo clic';
+    case 'double_click':
+      return en ? 'Double-clicked' : 'Hizo doble clic';
+    case 'right_click':
+      return en ? 'Right-clicked' : 'Hizo clic derecho';
+    case 'type':
+      return en ? `Typed «${corto(a.text, 50)}»${a.press_enter ? ' and pressed Enter' : ''}` : `Escribió «${corto(a.text, 50)}»${a.press_enter ? ' y dio Enter' : ''}`;
+    case 'key':
+      return en ? `Pressed ${corto(a.keys, 30)}` : `Presionó ${corto(a.keys, 30)}`;
+    case 'scroll':
+      return a.direction === 'up' ? (en ? 'Scrolled up' : 'Subió en la página') : en ? 'Scrolled down' : 'Bajó en la página';
+    case 'drag':
+      return en ? 'Dragged' : 'Arrastró';
+    case 'wait':
+      return en ? 'Waited for the page' : 'Esperó a que cargara';
+    case 'answer':
+      return en ? 'Finished and reported' : 'Terminó y dio el resultado';
+    case 'nada':
+      return en ? 'Looked at the screen' : 'Miró la pantalla';
+    default:
+      return corto(p.accion, 40);
+  }
+}
 
 /**
  * Lo que la app muestra de su computadora: si está, qué motores ofrece, su última tarea con las
@@ -277,21 +340,40 @@ export function montarRutasComputadora(app: import('express').Express, d: DepsRu
   const correoDe = (req: import('express').Request) => String(d.sesionDe(req)?.correo || '').toLowerCase();
   const sinSesion = (res: import('express').Response) => res.status(401).json({ error: 'Entra con tu sesión.', code: 'sesion_requerida', honesto: true });
 
-  app.get('/api/computadora', d.exigirMesa, d.limitar(30), async (req, res) => {
+  app.get('/api/computadora', d.exigirMesa, d.limitar(40), async (req, res) => {
     const correo = correoDe(req);
     if (!correo) return sinSesion(res);
-    const estado = await estadoComputadora();
+    const [estado, actual] = await Promise.all([estadoComputadora(), resumenUltima(correo)]);
     res.setHeader('Cache-Control', 'no-store');
-    return res.json({ ...estado, ultima: ultimaTareaDe(correo), pendientes: pendientesDe(correo), honesto: true });
+    return res.json({ ...estado, ultima: ultimaTareaDe(correo), actual, pendientes: pendientesDe(correo), honesto: true });
   });
 
-  app.get('/api/computadora/tareas/:id', d.exigirMesa, d.limitar(60), async (req, res) => {
+  /**
+   * La persona le encarga algo a su computadora desde la app (sin pasar por la conversación). No espera:
+   * la app mira los pasos en vivo, y si termina sin que la mire, el avatar se lo cuenta en el turno siguiente.
+   */
+  app.post('/api/computadora/tareas', d.exigirMesa, d.limitar(8), async (req, res) => {
+    const correo = correoDe(req);
+    if (!correo) return sinSesion(res);
+    const instruccion = String(req.body?.instruccion || '').replace(/\s+/g, ' ').trim();
+    if (instruccion.length < 4) return res.status(400).json({ error: 'Dile qué hacer (una frase con lo que quieres).', honesto: true });
+    if (instruccion.length > 600) return res.status(400).json({ error: 'Muy largo: dilo en menos de 600 letras.', honesto: true });
+    const motor = motorDelPerfil(await d.motorDe?.(correo).catch(() => null));
+    const r = await encargarTarea({ instruccion, quien: correo, motor, esperaMs: 0 });
+    if (!r.id) return res.status(503).json({ error: r.hecho.replace(/^HARNESS computadora:\s*/, '').replace(/\s*(No inventes.*|No la usé.*|dilo con naturalidad\.?)$/i, ''), honesto: true });
+    return res.json({ id: r.id, honesto: true });
+  });
+
+  app.get('/api/computadora/tareas/:id', d.exigirMesa, d.limitar(90), async (req, res) => {
     const correo = correoDe(req);
     if (!correo) return sinSesion(res);
     if (duenoDe(req.params.id) !== correo) return res.status(404).json({ error: 'No encuentro esa tarea.', honesto: true });
     try {
       res.setHeader('Cache-Control', 'no-store');
-      return res.json({ tarea: await verTarea(req.params.id, true), honesto: true });
+      const paso = req.query.paso != null ? Number(req.query.paso) : undefined;
+      const t = tareaParaApp(await verTarea(req.params.id, true), paso);
+      const idioma = req.query.idioma === 'en' ? 'en' : 'es';
+      return res.json({ tarea: { ...t, pasos: t.pasos.map((p) => ({ ...p, texto: pasoEnPalabras(p, idioma) })) }, honesto: true });
     } catch (e: any) {
       return res.status(502).json({ error: `La computadora no contestó (${String(e?.message || e).slice(0, 80)}).`, honesto: true });
     }

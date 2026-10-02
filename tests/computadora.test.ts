@@ -7,6 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
+import type { RequestHandler } from 'express';
 import { encargarTarea, motorDelPerfil, avisosPendientes, confirmarAvisos, pendientesDe, duenoDe, ultimaTareaDe, estadoComputadora, _olvidarEncargos } from '../server/computadora';
 import { extraerPedidoHerramienta, instruccionHarness, resolverPedido } from '../lib/harness';
 import { validarCambios } from '../lib/perfil-persona';
@@ -205,5 +206,88 @@ test('Ajustes: gratis o pago, y la ficha de manos solo la ofrece si está config
   await conNodo('https://ejemplo.invalid', async () => {
     assert.ok(manosDe('app').some((m) => m.de === 'computadora'));
     assert.match(fichaManosPrompt('web'), /usar mi propia computadora en la nube/);
+  });
+});
+
+test('la app: le encarga algo a su computadora, ve los pasos en palabras y solo la captura de ahora; nadie más la ve (José, 2-oct)', async () => {
+  const express = (await import('express')).default;
+  const { montarRutasComputadora, pasoEnPalabras } = await import('../server/computadora');
+  // Nodo con capturas: cada paso trae su miniatura (como agente.py con ?miniaturas=1).
+  const vistos: string[] = [];
+  const nodo = http.createServer((req, res) => {
+    let datos = '';
+    req.on('data', (c) => (datos += c));
+    req.on('end', () => {
+      vistos.push(`${req.method} ${req.url}`);
+      const json = (code: number, j: unknown) => (res.writeHead(code, { 'content-type': 'application/json' }), res.end(JSON.stringify(j)));
+      if (req.url === '/salud') return json(200, { ok: true, motores: ['holo'], ocupada: true });
+      if (req.headers.authorization !== `Bearer ${CLAVE}`) return json(401, { detail: 'clave' });
+      if (req.method === 'POST' && req.url === '/tareas') return json(200, { id: 'tx1', estado: 'en_cola', eco: JSON.parse(datos) });
+      const con = /miniaturas=1/.test(req.url || '');
+      const pasos = [
+        { n: 1, t: 1, accion: 'escritorio_limpio' },
+        { n: 2, t: 4, accion: 'open_url', args: { url: 'es.wikipedia.org' }, ...(con ? { miniatura: 'AAA' } : {}) },
+        { n: 3, t: 9, accion: 'type', args: { text: 'Francisco Morazán', press_enter: true }, ...(con ? { miniatura: 'BBB' } : {}) },
+      ];
+      return json(200, { id: 'tx1', motor: 'holo', instruccion: 'Busca a Morazán', estado: 'trabajando', pasos, respuesta: null, error: null, segundos: 9 });
+    });
+  });
+  await new Promise<void>((r) => nodo.listen(0, '127.0.0.1', r));
+  const urlNodo = `http://127.0.0.1:${(nodo.address() as AddressInfo).port}`;
+  await conNodo(urlNodo, async () => {
+    const app = express();
+    app.use(express.json());
+    const pasa: RequestHandler = (_q, _r, n) => n();
+    montarRutasComputadora(app, { exigirMesa: pasa, limitar: () => pasa, sesionDe: (req) => (req.headers['x-quien'] ? { correo: String(req.headers['x-quien']) } : null), motorDe: async () => 'pago' });
+    const srv = app.listen(0, '127.0.0.1');
+    await new Promise((r) => srv.once('listening', r));
+    const base = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
+    const como = (quien: string | null, ruta: string, init: RequestInit = {}) =>
+      fetch(`${base}${ruta}`, { ...init, headers: { 'content-type': 'application/json', ...(quien ? { 'x-quien': quien } : {}) } }).then(async (r) => ({ code: r.status, j: await r.json() }));
+    try {
+      assert.equal((await como(null, '/api/computadora/tareas', { method: 'POST', body: '{"instruccion":"hola mundo"}' })).code, 401);
+      assert.equal((await como('jose@x.hn', '/api/computadora/tareas', { method: 'POST', body: '{"instruccion":"a"}' })).code, 400);
+      const r = await como('jose@x.hn', '/api/computadora/tareas', { method: 'POST', body: JSON.stringify({ instruccion: 'Entra a es.wikipedia.org y dime cuándo nació Morazán' }) });
+      assert.equal(r.code, 200);
+      assert.equal(r.j.id, 'tx1');
+      // El motor sale de Ajustes («pago» → claude) y el nodo recibe la huella, no el correo.
+      const alta = vistos.find((v) => v === 'POST /tareas');
+      assert.ok(alta);
+      const t = await como('jose@x.hn', '/api/computadora/tareas/tx1');
+      assert.equal(t.code, 200);
+      assert.deepEqual(t.j.tarea.pasos.map((p: any) => p.texto), ['Abrió un escritorio limpio', 'Abrió es.wikipedia.org', 'Escribió «Francisco Morazán» y dio Enter']);
+      assert.deepEqual(t.j.tarea.pasos.map((p: any) => p.miniatura ?? null), [null, null, 'BBB'], 'solo la captura de lo que ve ahora');
+      const p2 = await como('jose@x.hn', '/api/computadora/tareas/tx1?paso=2');
+      assert.deepEqual(p2.j.tarea.pasos.map((p: any) => p.miniatura ?? null), [null, 'AAA', null], 'o la del paso que tocó');
+      assert.equal((await como('otra@x.hn', '/api/computadora/tareas/tx1')).code, 404, 'otra persona no la ve');
+      const e = await como('jose@x.hn', '/api/computadora');
+      assert.equal(e.j.ultima, 'tx1');
+      assert.equal(e.j.actual.estado, 'trabajando');
+      assert.equal(e.j.actual.ultimo, 'Escribió «Francisco Morazán» y dio Enter');
+      assert.equal((await como('otra@x.hn', '/api/computadora')).j.actual, null);
+      assert.equal(pasoEnPalabras({ accion: 'click', args: { element: 'Buscar' } }), 'Tocó «Buscar»');
+      assert.equal(pasoEnPalabras({ accion: 'scroll', args: { direction: 'down' } }, 'en'), 'Scrolled down');
+    } finally {
+      await new Promise<void>((r) => srv.close(() => r()));
+    }
+  });
+  await new Promise<void>((r) => nodo.close(() => r()));
+  // Sin computadora configurada: lo dice claro (503), sin el texto interno del harness.
+  await conNodo(null, async () => {
+    const app = express();
+    app.use(express.json());
+    const pasa: RequestHandler = (_q, _r, n) => n();
+    montarRutasComputadora(app, { exigirMesa: pasa, limitar: () => pasa, sesionDe: () => ({ correo: 'jose@x.hn' }) });
+    const srv = app.listen(0, '127.0.0.1');
+    await new Promise((r) => srv.once('listening', r));
+    try {
+      const r = await fetch(`http://127.0.0.1:${(srv.address() as AddressInfo).port}/api/computadora/tareas`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"instruccion":"abre google"}' });
+      const j = await r.json();
+      assert.equal(r.status, 503);
+      assert.match(j.error, /no está configurada/);
+      assert.doesNotMatch(j.error, /HARNESS|dilo con naturalidad/);
+    } finally {
+      await new Promise<void>((r) => srv.close(() => r()));
+    }
   });
 });

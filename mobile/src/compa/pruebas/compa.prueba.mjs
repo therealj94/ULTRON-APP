@@ -7,6 +7,7 @@
  *   cd mobile && npx tsx src/compa/pruebas/compa.prueba.mjs
  */
 import assert from 'node:assert/strict';
+import { avisoMesa, estadoEnPalabras, sondeoMs, tareaEnPalabras, trabajando as pcTrabajando, EJEMPLOS_PC } from '../computadora.ts';
 import http from 'node:http';
 import { CONECTAR_MAX_MS, ControlSesion, SORDA_MS, TOPE_RECONEXIONES } from '../sesion.ts';
 import {
@@ -2455,6 +2456,31 @@ prueba('voz de la mesa: si la conversación falla (también conectando) la mesa 
   assert.equal(voz.alNativo.length, 1, 'el recordatorio lo dice la mesa');
   assert.equal(voz.alNativo[0].texto, RECL.texto);
   assert.equal(voz.alNativo[0].mesaPodiaHablar, true, 'cuando lo pide el ciclo, la mesa ya tiene voz');
+});
+
+prueba('su computadora en la app: estado, pasos en palabras, sondeo y el aviso de la mesa (José, 2-oct)', () => {
+  const base = { configurada: true, ok: true, motores: ['holo'], ocupada: false, ultima: null, actual: null };
+  assert.equal(estadoEnPalabras(null).tono, 'espera');
+  assert.match(estadoEnPalabras({ ...base, configurada: false }).texto, /no está conectada/);
+  assert.match(estadoEnPalabras({ ...base, ok: false }).texto, /No contesta/);
+  assert.equal(estadoEnPalabras(base).texto, 'Lista para trabajar');
+  const trabajandoYa = { id: 't1', estado: 'trabajando', pasos: 3, instruccion: 'x', ultimo: 'Abrió es.wikipedia.org' };
+  assert.equal(estadoEnPalabras({ ...base, actual: trabajandoYa }).tono, 'trabaja');
+  assert.ok(pcTrabajando('en_cola') && pcTrabajando('trabajando') && !pcTrabajando('hecha'));
+  assert.ok(sondeoMs('trabajando', true) < sondeoMs('hecha', true), 'mientras trabaja se renueva rápido');
+  assert.ok(sondeoMs('hecha', false) >= 15000, 'sin trabajo, la mesa pregunta despacio');
+  const pasos = [{ n: 1, t: 1, accion: 'escritorio_limpio', texto: 'Abrió un escritorio limpio' }, { n: 2, t: 5, accion: 'open_url', texto: 'Abrió es.wikipedia.org' }];
+  assert.equal(tareaEnPalabras({ estado: 'trabajando', pasos, error: null }), 'Paso 1 · Abrió es.wikipedia.org');
+  assert.equal(tareaEnPalabras({ estado: 'hecha', pasos: [...pasos, { n: 3, t: 9, accion: 'answer' }], error: null }), 'Lista en 1 pasos');
+  assert.equal(tareaEnPalabras({ estado: 'fallo', pasos, error: 'sin red' }), 'Falló: sin red');
+  // El aviso de la mesa: mientras trabaja dice en qué va; al terminar, «terminó» una vez; antes de nada, nada.
+  assert.equal(avisoMesa(null, null), null);
+  assert.deepEqual(avisoMesa(null, trabajandoYa), { texto: 'Su computadora · Abrió es.wikipedia.org', terminada: false });
+  const hecha = { ...trabajandoYa, estado: 'hecha' };
+  assert.deepEqual(avisoMesa(trabajandoYa, hecha), { texto: 'Su computadora terminó · ver el resultado', terminada: true });
+  assert.equal(avisoMesa(hecha, hecha), null, 'no se repite');
+  assert.equal(avisoMesa(null, hecha), null, 'una vieja al abrir la app no se anuncia');
+  for (const e of EJEMPLOS_PC) assert.ok(e.es.length > 20 && e.en.length > 20 && /\.(org|hn|com)| Google/.test(e.es), 'cada ejemplo dice la página');
 });
 
 for (const [nombre, f] of pruebas) {

@@ -1384,7 +1384,7 @@ app.post(['/api/electrum/telegram/webhook', '/api/electrum/telegram/webhook/'], 
 });
 
 /* El perfil de la persona (y la ficha pública de la plataforma), el canal de acciones y el contexto de la app 5.0. */
-montarRutasComputadora(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req) });
+montarRutasComputadora(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req), motorDe: async (correo) => (await leerPerfil(correo).catch(() => null))?.motorComputadora });
 montarRutasCorreo(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req) });
 montarRutasApp(app, {
   exigirMesa,

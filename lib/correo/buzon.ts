@@ -94,21 +94,45 @@ async function smtpPara(prov: Pick<Proveedor, 'smtp'>, cred: Credencial) {
   });
 }
 
-/** Antes de guardar una cuenta: ¿entra a leer y a mandar? Devuelve el error tal como lo dijo el servidor. */
+/**
+ * El fallo de la prueba, dicho para que la persona sepa QUÉ hacer. Antes salía el texto crudo del
+ * servidor («Command failed», «535 5.7.8») y, en el teléfono de José (2-oct, ordenglobal.org), no
+ * se entendía si era la clave o el servidor. Al final va el detalle técnico entre paréntesis.
+ */
+export function explicarFallo(e: any, host: string, puerto: number, que: 'leer' | 'mandar'): string {
+  const crudo = String(e?.responseText || e?.response || e?.message || e || '').replace(/\s+/g, ' ').slice(0, 120);
+  const codigo = String(e?.code || '');
+  const todo = `${codigo} ${e?.serverResponseCode || ''} ${crudo}`;
+  const detalle = crudo ? ` (${crudo})` : '';
+  if (e?.authenticationFailed || codigo === 'EAUTH' || e?.responseCode === 535 || /AUTHENTICATIONFAILED|authentication failed|invalid credentials|incorrect (password|username)|login failed|\b535\b/i.test(todo)) {
+    return `${host} no aceptó la clave. Revisa que sea la contraseña de ese correo (la misma con la que entras al webmail); si tiene verificación en dos pasos, crea una contraseña de aplicación.${detalle}`;
+  }
+  if (/CERT|SELF_SIGNED|UNABLE_TO_VERIFY|altname|certificate/i.test(todo)) {
+    return `El certificado de seguridad de ${host} no es válido para ese nombre, y así no mando tu clave. Pídele a quien administra tu dominio el nombre exacto del servidor de correo (en cPanel sale en «Configurar cliente de correo»).${detalle}`;
+  }
+  if (/ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(todo)) return `No existe el servidor ${host}. Revisa cómo se escribe.${detalle}`;
+  if (/servidor interno bloqueado/.test(todo)) return `${host} es una dirección interna: solo se conectan servidores de internet.`;
+  if (/ECONNREFUSED|ETIMEDOUT|ETIMEOUT|ECONNRESET|ESOCKET|EHOSTUNREACH|timeout|timed out|closed/i.test(todo)) {
+    return `${host} no contestó en el puerto ${puerto}${que === 'leer' ? ' (para leer suele ser 993)' : ' (para mandar suele ser 465 o 587)'}. Revisa el servidor y el puerto.${detalle}`;
+  }
+  return `No pude ${que === 'leer' ? 'entrar a leer' : 'mandar'} en ${host}:${detalle || ' sin detalle del servidor.'}`;
+}
+
+/** Antes de guardar una cuenta: ¿entra a leer y a mandar? Si no, dice por qué (explicarFallo). */
 export async function probarCuenta(correo: string, prov: Pick<Proveedor, 'imap' | 'smtp' | 'usuario'>, secreto: { pass?: string; accessToken?: string }): Promise<{ ok: true } | { ok: false; error: string }> {
   const cred = { user: prov.usuario === 'local' ? correo.split('@')[0] : correo, ...secreto };
   try {
     const c = await imapPara(prov, cred);
     await c.logout().catch(() => {});
   } catch (e: any) {
-    return { ok: false, error: `No pude entrar a leer (${prov.imap.host}): ${String(e?.responseText || e?.message || e).slice(0, 160)}` };
+    return { ok: false, error: `No pude entrar a leer. ${explicarFallo(e, prov.imap.host, prov.imap.puerto, 'leer')}` };
   }
   try {
     const t = await smtpPara(prov, cred);
     await t.verify();
     t.close();
   } catch (e: any) {
-    return { ok: false, error: `Entré a leer, pero no a mandar (${prov.smtp.host}): ${String(e?.response || e?.message || e).slice(0, 160)}` };
+    return { ok: false, error: `Entré a leer, pero no a mandar. ${explicarFallo(e, prov.smtp.host, prov.smtp.puerto, 'mandar')}` };
   }
   return { ok: true };
 }

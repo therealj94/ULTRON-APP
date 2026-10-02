@@ -37,7 +37,8 @@ export const INSTRUCCION_HARNESS_MIEMBRO = INSTRUCCION_HARNESS.split('\n')
  */
 export const INSTRUCCION_COMPUTADORA = `
 PEDIR_HERRAMIENTA: computadora <la tarea entera en una frase, con todos los datos que hagan falta>
-Tienes tu propia computadora en la nube (Ubuntu con Firefox y LibreOffice). Úsala cuando haya que HACER algo en páginas: entrar a un sitio y buscar dentro, comparar varias páginas, llenar un formulario, sacar datos de una tabla, o cuando te digan «usa tu computadora». Para una pregunta que una búsqueda contesta, usa web. Nunca la uses para pagar, comprar ni poner contraseñas.`.trim();
+Tienes tu propia computadora en la nube (Ubuntu con Firefox y LibreOffice). Úsala cuando haya que HACER algo en páginas: entrar a un sitio y buscar dentro, comparar varias páginas, llenar un formulario, sacar datos de una tabla, o cuando te digan «usa tu computadora», «abre la página…» o «entra a…». Para una pregunta que una búsqueda contesta, usa web. Nunca la uses para pagar, comprar ni poner contraseñas.
+Cómo pedirla bien: la tarea la lee otro agente que NO oyó la conversación, así que escríbela completa y concreta: qué página (con su dirección si la sabes), qué buscar o hacer, y qué traer de vuelta. Ejemplo: «PEDIR_HERRAMIENTA: computadora Entra a es.wikipedia.org, busca Francisco Morazán y dime en qué fecha nació». No digas que no puedes usar una computadora ni que no tienes manos: sí la tienes. Tarda uno o dos minutos: dile que ya la estás usando y que puede mirarla en vivo en la app, en «Más → Su computadora».`.trim();
 
 /** Su correo (server/correo.ts): revisar, buscar, leer y contestar. Nada se manda sin su «sí». */
 export const INSTRUCCION_CORREO = `
