@@ -987,7 +987,7 @@ Check(AutorizarOrden.Autorizar("pon bad bunny en spotify", "pon el volumen al 30
     if (orbeHtml != null && proyecto != null)
     {
         var html = File.ReadAllText(orbeHtml);
-        foreach (var pieza in new[] { "window.__orbeOpciones", "OPC.sfx !== false", "OPC.tts !== false", "window.__aura = handle", "case 'estado': setState(d.face",
+        foreach (var pieza in new[] { "window.__orbeOpciones", "OPC.sfx !== false", "OPC.tts !== false", "window.__aura = handle", "case 'estado': {", "setState(f === 'AVISO' ? 'done' : f)", "SFX.callarCambio()",
                                       "case 'boca': setLevel(", "case 'decir': say(d.texto", "tts: d.tts === true", "case 'callar': silence()", "case 'sonido': SFX.activar(",
                                       "notify({tipo:'listo'})", "window.chrome.webview.postMessage(m)", "window.chrome.webview.addEventListener('message'",
                                       "notify({tipo:'tocar'", "notify({tipo:'deslizar'", "type:'aura-end'", "type:'aura-fallo'", "<div id=\"stage\">", "#stage{position:relative;flex:1",
