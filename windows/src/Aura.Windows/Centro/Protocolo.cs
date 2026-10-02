@@ -41,7 +41,8 @@ internal static class Protocolo
     {
         try
         {
-            using var c = new NamedPipeClientStream(".", Tubo, PipeDirection.Out);
+            // Solo a la tubería de ESTE usuario: en una PC compartida, otro podría crearla antes y recibir la vuelta de Genesis ID.
+            using var c = new NamedPipeClientStream(".", Tubo, PipeDirection.Out, PipeOptions.CurrentUserOnly);
             c.Connect(2500);
             var b = Encoding.UTF8.GetBytes(pedido.Length > 8000 ? pedido[..8000] : pedido);
             c.Write(b, 0, b.Length);

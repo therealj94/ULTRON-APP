@@ -29,6 +29,8 @@ public partial class NotchWindow
     string agenteUltimoDicho = "";
     /// <summary>Lo último que dijiste en la conversación en vivo (no se borra al contestar): la guarda de órdenes lo usa si el canal no trae lo dicho.</summary>
     string dichoEnVivo = "";
+    /// <summary>Cuándo se oyó `dichoEnVivo` en esta PC: una orden del canal sin algo dicho hace poco no se hace.</summary>
+    DateTime dichoEnVivoEn = DateTime.MinValue;
     readonly HechasRecientes hechasRecientes = new();
     /// <summary>Las reglas lo están intentando con lo que dijiste: un fallo todavía no se le dice al agente (puede venir la orden del cerebro).</summary>
     bool intentoLocal;
@@ -182,6 +184,7 @@ public partial class NotchWindow
         var t = metricas.Nuevo("vivo", "transcripción recibida (sin captura ni STT; voz = audio en cola)");
         agenteUltimoDicho = texto;
         dichoEnVivo = texto;
+        dichoEnVivoEn = DateTime.Now;
         Centro.Registro.AnotarDicho("oir", $"turno {t.Id} · en vivo", texto);
         AgregarMensaje("Tú", texto);
         if (propuesta != null)
@@ -215,7 +218,7 @@ public partial class NotchWindow
         {
             ordenSaltada = null;
             Centro.Registro.AnotarDicho("cerebro-manos", "segundo intento con la orden del cerebro", os.Orden);
-            await HacerOrdenDelCerebro(os.Orden, os.Dicho.Length > 0 ? os.Dicho : frase, true);
+            await HacerOrdenDelCerebro(os.Orden, frase, true);
             return;
         }
         await Task.Delay(TimeSpan.FromSeconds(8));
@@ -229,6 +232,8 @@ public partial class NotchWindow
         if (agente is { Abierto: true } a) a.AvisarPc(texto, hablar);
     }
 
+    static readonly TimeSpan VentanaOrdenCanal = TimeSpan.FromSeconds(60);
+
     /// <summary>Una orden del cerebro que llegó por el canal (la conversación en vivo): guarda y repetidas.</summary>
     async Task OrdenDelCanal(OrdenPc o)
     {
@@ -240,7 +245,16 @@ public partial class NotchWindow
             Centro.Registro.AnotarDicho("cerebro-manos", "ya hecha", o.Orden);
             return;
         }
-        await HacerOrdenDelCerebro(o.Orden, o.Dicho.Length > 0 ? o.Dicho : dichoEnVivo, true);
+        // La guarda (AutorizarOrden) compara la orden con lo que DIJISTE, oído en ESTA PC (la transcripción que llega
+        // de ElevenLabs al .exe), nunca con el «dicho» que trae el servidor: quien controlara el servidor o tuviera el
+        // token podía mandar la orden con su propio «dicho» idéntico y saltarse el «sí». Y solo con algo dicho hace
+        // poco en la conversación en vivo: el canal queda abierto toda la sesión (revisión de seguridad 2-oct).
+        if (dichoEnVivo.Length == 0 || DateTime.Now - dichoEnVivoEn > VentanaOrdenCanal)
+        {
+            Centro.Registro.AnotarDicho("cerebro-manos", "orden del canal sin nada dicho hace poco en esta PC: descartada", o.Orden);
+            return;
+        }
+        await HacerOrdenDelCerebro(o.Orden, dichoEnVivo, true);
     }
 
     /// <summary>

@@ -69,6 +69,8 @@ internal sealed class CentroWindow : Window
             core.NavigationStarting += (_, e) => { if (!Propia(e.Uri)) { e.Cancel = true; AbrirAfuera(e.Uri); } };
             // Tampoco dentro de un iframe: la página propia no los usa.
             core.FrameNavigationStarting += (_, e) => { if (!Propia(e.Uri)) e.Cancel = true; };
+            // Nada se descarga desde el Centro (como en la ventana de llamadas).
+            core.DownloadStarting += (_, e) => e.Cancel = true;
             core.NewWindowRequested += (_, e) => { e.Handled = true; AbrirAfuera(e.Uri); };
             // Micrófono y cámara: solo para la página propia (llamadas de PULSE2CHAT). Lo demás, no.
             core.PermissionRequested += (_, e) =>

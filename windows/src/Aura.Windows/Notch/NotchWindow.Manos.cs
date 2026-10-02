@@ -337,8 +337,8 @@ public partial class NotchWindow
         if (f == null) { NoPude(valor == "ultimo-descargado" ? T("No hay descargas.", "There are no downloads.") : T($"No encontré un archivo «{valor}» en Descargas, Escritorio ni Documentos.", $"I couldn't find a file “{valor}” in Downloads, Desktop or Documents.")); return; }
         var archivo = f;
         void Abre() { Process.Start(new ProcessStartInfo(archivo.FullName) { UseShellExecute = true }); Hecho(T("Abriendo ", "Opening ") + archivo.Name, archivo.DirectoryName ?? "", "\uE8A5", T("Ahí está.", "Here it is.")); }
-        if (Sistema.EsEjecutable(archivo.FullName))
-            Proponer(new Propuesta(T($"¿Abro «{archivo.Name}»?", $"Open “{archivo.Name}”?"), T("Es un programa o instalador: ábrelo solo si confías en él.", "It's a program or installer: open it only if you trust it."), DateTime.Now.AddSeconds(30), () => { Abre(); return System.Threading.Tasks.Task.CompletedTask; }));
+        if (Sistema.PideConfirmar(archivo.FullName))
+            Proponer(new Propuesta(T($"¿Abro «{archivo.Name}»?", $"Open “{archivo.Name}”?"), T("No es un documento común (puede ser un programa, un acceso o un instalador): ábrelo solo si confías en él.", "It's not a common document (it may be a program, shortcut or installer): open it only if you trust it."), DateTime.Now.AddSeconds(30), () => { Abre(); return System.Threading.Tasks.Task.CompletedTask; }));
         else Abre();
     }
 

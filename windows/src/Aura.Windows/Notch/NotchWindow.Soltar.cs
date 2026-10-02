@@ -103,8 +103,13 @@ public partial class NotchWindow
         using var zip = ZipFile.OpenRead(ruta);
         var doc = zip.GetEntry("word/document.xml");
         if (doc == null) return "";
+        // Un .docx es un zip: chico en el disco puede inflarse a gigas (zip bomb). Se leen 8 MB como mucho.
+        const int Tope = 8_000_000;
+        if (doc.Length > Tope * 4L) return "";
         using var r = new StreamReader(doc.Open());
-        var xml = r.ReadToEnd();
+        var buf = new char[Tope];
+        int n = r.ReadBlock(buf, 0, Tope);
+        var xml = new string(buf, 0, n);
         xml = Regex.Replace(xml, "</w:p>", "\n");
         xml = Regex.Replace(xml, "<w:tab/>", "\t");
         var sb = new StringBuilder(System.Net.WebUtility.HtmlDecode(Regex.Replace(xml, "<[^>]+>", "")));
