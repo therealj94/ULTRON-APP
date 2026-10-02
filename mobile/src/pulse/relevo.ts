@@ -196,6 +196,7 @@ export async function recuperar(duenoAura: string = correoCuenta()): Promise<Cue
 
 /** Sale del chat en este teléfono: corta la escucha, olvida la cuenta y todo lo abierto en memoria. */
 export async function salir() {
+  await quitarAvisos().catch(() => undefined);
   for (const f of [...antesDeSalirHacer]) {
     try {
       f();
@@ -226,6 +227,24 @@ export async function salir() {
 }
 
 export const quien = () => yo;
+
+/*
+ * LOS AVISOS DEL CHAT CON LA APP CERRADA. El relevo no tiene la cuenta de Firebase de AU-RA: se le apunta
+ * una referencia firmada por el servidor de AU-RA (pulse/avisosRelevo.ts la pide) y, cuando llega un
+ * mensaje, el relevo se la devuelve a AU-RA, que avisa a este teléfono. Ni una palabra del mensaje viaja.
+ */
+let refAvisos = '';
+export async function apuntarAvisos(ref: string): Promise<void> {
+  if (!yo || !ref) return;
+  await pedir('/suscribir', firmado({ aura: ref, aparato: await miAparato() }));
+  refAvisos = ref;
+}
+export async function quitarAvisos(): Promise<void> {
+  if (!yo || !refAvisos) return;
+  const ref = refAvisos;
+  refAvisos = '';
+  await pedir('/desuscribir', firmado({ aura: ref })).catch(() => undefined);
+}
 
 /* ── las llaves de los aparatos ───────────────────────────────────────────────────────────── */
 

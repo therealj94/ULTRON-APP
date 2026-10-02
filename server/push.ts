@@ -18,7 +18,7 @@ import type express from 'express';
 import { exigirMesa as exigirMesaSeguridad, limitar as limitarSeguridad, sesionDe as sesionDeSeguridad } from './seguridad';
 import { nivelDeCorreo } from './nivel';
 import { aparatoValido } from '../lib/acciones-app';
-import { dispositivosDe, enviarPush, PushNoDisponible, pushConfigurado, quitarToken, registrarToken, tokenValido } from '../lib/push';
+import { avisarPush, claveRelevoValida, correoDeRef, dispositivosDe, enviarPush, PushNoDisponible, pushConfigurado, quitarToken, refRelevo, registrarToken, tokenValido } from '../lib/push';
 
 export {
   avisarComputadoraPorPush,
@@ -98,6 +98,45 @@ export function montarRutasPush(app: express.Express, deps: Partial<DepsPush> = 
     if (!pushConfigurado()) return res.status(503).json({ error: 'Los avisos no están configurados en el servidor (falta FIREBASE_SERVICE_ACCOUNT).', code: 'push_sin_configurar', honesto: true });
     const r = await enviarPush(correo, { tipo: 'mensaje', titulo: 'AURA', texto: 'Prueba de avisos: si ves esto con la app cerrada, ya te puedo alcanzar.' });
     return res.status(r.enviados ? 200 : 502).json({ ok: r.enviados > 0, enviados: r.enviados, fallidos: r.fallidos, quitados: r.quitados, ...(r.detalle ? { detalle: r.detalle } : {}), honesto: true });
+  });
+
+  /*
+   * PULSE2CHAT: la referencia que la app apunta en el relevo del chat (con su sesión del chat) para que,
+   * cuando le llegue un mensaje, el relevo nos avise y le mandemos el aviso a sus teléfonos.
+   */
+  app.get('/api/push/relevo/ref', d.exigirMesa, d.limitar(20, 60_000, 'push-relevo-ref'), (req, res) => {
+    const correo = correoDe(d, req);
+    if (!correo) return sinSesion(res);
+    const ref = refRelevo(correo);
+    if (!ref) return res.status(503).json({ error: 'Los avisos del chat no están configurados en el servidor.', code: 'relevo_sin_configurar', honesto: true });
+    res.setHeader('Cache-Control', 'no-store');
+    return res.json({ ref, honesto: true });
+  });
+
+  /*
+   * El relevo del chat nos avisa: «a esta referencia le llegó algo». Sin sesión (es otro servidor), con la
+   * clave compartida. Ni una palabra del mensaje viaja. 410 si esa persona ya no tiene teléfonos
+   * registrados (el relevo poda la suscripción; la app la vuelve a poner al entrar). Un mensaje por
+   * persona cada 8 s como mucho: una ráfaga en un grupo no son veinte avisos.
+   */
+  const ultimoAvisoChat = new Map<string, number>();
+  app.post('/api/push/relevo', d.limitar(240, 60_000, 'push-relevo'), async (req, res) => {
+    if (!claveRelevoValida(req.headers.authorization)) return res.status(401).json({ error: 'clave incorrecta' });
+    const correo = correoDeRef(req.body?.ref);
+    if (!correo) return res.status(404).json({ error: 'referencia desconocida' });
+    const llamada = req.body?.tipo === 'llamada';
+    const ahora = Date.now();
+    if (!llamada && ahora - (ultimoAvisoChat.get(correo) || 0) < 8_000) return res.json({ ok: true, agrupado: true });
+    ultimoAvisoChat.set(correo, ahora);
+    if (ultimoAvisoChat.size > 5000) ultimoAvisoChat.delete(ultimoAvisoChat.keys().next().value as string);
+    const tel = await dispositivosDe(correo);
+    if (tel.ok && !tel.dispositivos.length) return res.status(410).json({ error: 'sin teléfonos' });
+    const r = await avisarPush(correo, {
+      titulo: 'PULSE2CHAT',
+      texto: llamada ? 'Te están llamando en PULSE2CHAT' : 'Tienes un mensaje nuevo en PULSE2CHAT',
+      abrir: 'chats',
+    });
+    return res.json({ ok: r.enviados > 0, enviados: r.enviados });
   });
 
   app.get('/api/push/estado', d.exigirMesa, d.limitar(30, 60_000, 'push-estado'), async (req, res) => {
