@@ -19,7 +19,7 @@ export function vistaMusica(): HTMLElement {
   let base = { ms: 0, en: Date.now(), dur: 1, sonando: false };
 
   const vista = h('div', { class: 'vista' },
-    h('div', { class: 'cabeza' }, h('div', null, h('h1', null, T('Música', 'Music')), h('p', null, T('Tu Spotify desde aquí, o por voz: «pon Bad Bunny en Spotify».', 'Your Spotify here, or by voice.')))),
+    h('div', { class: 'cabeza' }, h('div', null, h('h1', null, T('Música', 'Music')), h('p', null, T('Tu Spotify desde aquí, o por voz: «pon Bad Bunny en Spotify».', 'Your Spotify here, or by voice: “play Bad Bunny on Spotify”.')))),
     reproductor,
     tarjeta(T('Buscar', 'Search'), h('form', { on: { submit: (e: Event) => { e.preventDefault(); hacerBusqueda(); } } }, buscar), resultados));
 
@@ -53,7 +53,7 @@ export function vistaMusica(): HTMLElement {
     }
     base = { ms: s.progresoMs, en: Date.now(), dur: Math.max(1, s.duracionMs), sonando: s.sonando };
     progresoEl = h('i');
-    tiempoEl = h('small', { class: 'tenue' });
+    tiempoEl = h('small', { class: 'tenue mono' });
     const barra = h('div', { class: 'barra-progreso', title: T('Toca para saltar a ese momento', 'Click to seek'),
       on: { click: (e: MouseEvent) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); control('posicion:' + Math.round(((e.clientX - r.left) / r.width) * base.dur)); } } }, progresoEl);
     const volumen = h('input', { type: 'range', min: '0', max: '100', value: String(Math.max(0, s.volumen)), 'aria-label': T('Volumen de Spotify', 'Spotify volume'), title: T('Volumen de Spotify', 'Spotify volume'),
@@ -63,9 +63,9 @@ export function vistaMusica(): HTMLElement {
         s.portada ? h('img', { class: 'reproductor-portada', src: s.portada, alt: T('Portada de ', 'Cover of ') + s.album }) : h('div', { class: 'foto reproductor-portada' }, icono('musica', 48)),
         h('div', null,
           h('small', { class: 'antetitulo' }, T('Sonando en ', 'Playing on ') + (s.dispositivo || 'Spotify')),
-          h('h2', { style: 'font:650 var(--t-2xl)/1.15 var(--titulo);letter-spacing:-.02em;margin:6px 0 4px' }, s.titulo),
+          h('h2', null, s.titulo),
           h('p', { class: 'tenue', style: 'margin:0' }, `${s.artista} · ${s.album}`),
-          barra, h('div', { class: 'fila', style: 'justify-content:space-between' }, tiempoEl, h('small', { class: 'tenue' }, tiempo(s.duracionMs))),
+          barra, h('div', { class: 'fila', style: 'justify-content:space-between' }, tiempoEl, h('small', { class: 'tenue mono' }, tiempo(s.duracionMs))),
           h('div', { class: 'fila', style: 'margin-top:10px' },
             botonIcono('anterior', T('Canción anterior', 'Previous'), () => control('anterior'), 'grande'),
             botonIcono(s.sonando ? 'pausa' : 'play', s.sonando ? T('Pausar', 'Pause') : T('Reproducir', 'Play'), () => control(s.sonando ? 'pausa' : 'play'), 'grande acento'),

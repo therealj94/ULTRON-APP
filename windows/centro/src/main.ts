@@ -20,6 +20,7 @@ import { vistaMusica } from './vistas/musica';
 import { vistaCartera } from './vistas/cartera';
 import { vistaAjustes } from './vistas/ajustes';
 import { abrirRecorrido } from './recorrido/recorrido';
+import { punzon, wordmark } from './marca';
 
 type Seccion = { id: string; es: string; en: string; icono: string; crear: () => HTMLElement };
 export const SECCIONES: Seccion[] = [
@@ -40,14 +41,15 @@ const botones = new Map<string, HTMLButtonElement>();
 const vistas = new Map<string, HTMLElement>();
 
 /**
- * La placa del menú: una sola pieza que se desliza (solo `transform`) hasta la sección activa, con su
- * filo dorado. `sinAnimar` la pone en su sitio sin viaje (al abrir, o si cambia el tamaño de la ventana).
+ * La placa del menú: una sola pieza que se desliza (solo `transform`, con la curva del golpe: llega y se
+ * asienta, sin rebote) hasta la sección activa, con su filo de oro. `sinAnimar` la pone en su sitio sin viaje (al abrir, o si cambia el tamaño de la ventana).
  */
 function moverIndicador(sinAnimar = false) {
   const b = botones.get(actual);
   if (!b || !indicador) return;
   indicador.classList.toggle('quieto', sinAnimar);
-  indicador.style.transform = `translate(${b.offsetLeft}px, ${b.offsetTop}px)`;
+  indicador.style.transform = `translateY(${b.offsetTop}px)`;
+  indicador.style.height = b.offsetHeight + 'px';
   indicador.style.opacity = '1';
   if (sinAnimar) requestAnimationFrame(() => requestAnimationFrame(() => indicador.classList.remove('quieto')));
 }
@@ -82,29 +84,36 @@ export function marcar(id: string, si: boolean) {
   if (si) b.appendChild(h('span', { class: 'punto' }));
 }
 
-/** Un botón de la barra que es solo ícono: su nombre (y para qué sirve) sale en una etiqueta al lado. */
-function botonUtil(clase: string, nombre: string, explica: string, ico: string, alClic: () => void) {
-  return h('button', { class: `nav util ${clase}`, 'aria-label': nombre, on: { click: alClic } }, icono(ico, 20),
+/**
+ * Un botón de la barra de abajo. Su nombre (y para qué sirve) sale en una etiqueta al lado; `rotulo` lo
+ * escribe además en el botón (el recorrido, que tiene que verse).
+ */
+function botonUtil(clase: string, nombre: string, explica: string, ico: string, alClic: () => void, rotulo?: string) {
+  return h('button', { class: `nav util ${clase}`, 'aria-label': nombre, on: { click: alClic } }, icono(ico, rotulo ? 16 : 19),
+    rotulo ? h('span', { class: 'nav-texto', 'aria-hidden': 'true' }, rotulo) : null,
     h('span', { class: 'tip', 'aria-hidden': 'true' }, h('strong', null, nombre), explica ? h('small', null, explica) : null));
 }
 
 function armazon() {
   indicador = h('span', { class: 'indicador', 'aria-hidden': 'true' });
+  // Arriba, la marca: el punzón (versión chica) y «AU·RA FP».
   const lateral = h('nav', { class: 'lateral', 'aria-label': T('Secciones', 'Sections') },
-    h('div', { class: 'marca', role: 'img', 'aria-label': 'AURA' }, h('span', null, 'A')), indicador);
+    h('div', { class: 'marca', role: 'img', 'aria-label': 'AU·RA FP' }, punzon(34, { chica: true }), wordmark()), indicador);
   for (const s of SECCIONES) {
     const b = h('button', { class: 'nav', 'aria-label': T(s.es, s.en), on: { click: () => ir(s.id) } },
-      icono(s.icono, 21), h('span', { class: 'nav-texto' + (T(s.es, s.en).length > 8 ? ' largo' : '') }, T(s.es, s.en))) as HTMLButtonElement;
+      icono(s.icono, 18), h('span', { class: 'nav-texto' }, T(s.es, s.en))) as HTMLButtonElement;
     botones.set(s.id, b);
     lateral.appendChild(b);
   }
-  // El recorrido, siempre a la vista: un botón propio en la barra, encima del de volver al notch.
+  // El recorrido, siempre a la vista (▶ dorado, con su rótulo); debajo, volver al notch, apagar y la versión.
   lateral.appendChild(h('div', { class: 'abajo' },
     botonUtil('nav-recorrido', T('Ver el recorrido', 'Watch the tour'), T('Claudio y ANT-ONIO te enseñan todo lo que hace AURA', 'Claudio and ANT-ONIO show you everything AURA does'),
-      'play', () => window.dispatchEvent(new Event('centro:recorrido'))),
-    botonUtil('', T('Volver al notch', 'Back to the notch'), T('AURA sigue contigo arriba', 'AURA stays with you up top'), 'notch', () => void recoger()),
-    // Cerrar AURA del todo (notch, Centro, voz y bandeja): antes solo estaba escondido en el menú de la bandeja.
-    botonUtil('nav-apagar', T('Cerrar AURA por completo', 'Quit AURA completely'), T('Notch, voz y bandeja', 'Notch, voice and tray'), 'apagar', () => void cerrarAura())));
+      'play', () => window.dispatchEvent(new Event('centro:recorrido')), T('Recorrido', 'Tour')),
+    h('div', { class: 'abajo-fila' },
+      botonUtil('', T('Volver al notch', 'Back to the notch'), T('AURA sigue contigo arriba', 'AURA stays with you up top'), 'notch', () => void recoger()),
+      // Cerrar AURA del todo (notch, Centro, voz y bandeja): antes solo estaba escondido en el menú de la bandeja.
+      botonUtil('nav-apagar', T('Cerrar AURA por completo', 'Quit AURA completely'), T('Notch, voz y bandeja', 'Notch, voice and tray'), 'apagar', () => void cerrarAura()),
+      /^v?\d/.test(estado().version ?? '') ? h('span', { class: 'version', title: T('Versión de AURA', 'AURA version') }, 'v' + estado().version.replace(/^v/, '')) : null)));
   contenido = h('main', { class: 'contenido' });
   vacio(raiz).appendChild(h('div', { class: 'app' }, lateral, contenido));
   let inicial = 'inicio';

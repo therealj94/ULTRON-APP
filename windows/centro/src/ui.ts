@@ -57,6 +57,7 @@ const TRAZOS: Record<string, string> = {
   callar: 'M4 9h4l5-4v14l-5-4H4Z M16 9l5 6 M21 9l-5 6',
   volumen: 'M4 9h4l5-4v14l-5-4H4Z M16.5 8.5a5 5 0 0 1 0 7 M19 6a8.5 8.5 0 0 1 0 12',
   flecha: 'M9 6l6 6-6 6',
+  avanzar: 'M4 12h15 M13 6l6 6-6 6',
   info: 'M12 3a9 9 0 1 0 .01 0Z M12 11v6 M12 7.5v.5',
   alerta: 'M12 3a9 9 0 1 0 .01 0Z M12 7v6 M12 16.5v.5',
 };
@@ -108,9 +109,11 @@ export function eleccion<T extends string>(titulo: string, opciones: { valor: T;
 
 let zonaAvisos: HTMLElement | null = null;
 const ICONO_AVISO = { ok: 'ok', mal: 'alerta', info: 'info' } as const;
+const RÓTULO_AVISO = { ok: ['HECHO', 'DONE'], mal: ['NO SE PUDO', 'FAILED'], info: ['AVISO', 'NOTE'] } as const;
 /**
- * Un aviso breve abajo a la derecha (lo que en el notch sería una isla): ícono según el tipo, una línea
- * fina que se consume mientras dura, y se quita antes con un clic.
+ * Un aviso breve abajo a la derecha (lo que en el notch sería una isla): una tira de grafito que llega con
+ * un golpe, su rótulo en Mono según el tipo, un filo de 1 px que se consume mientras dura, y se quita antes
+ * con un clic.
  */
 export function avisar(texto: string, tipo: 'ok' | 'mal' | 'info' = 'info', ms = 4200) {
   zonaAvisos ??= document.body.appendChild(h('div', { class: 'avisos', role: 'status', 'aria-live': 'polite' }));
@@ -123,6 +126,7 @@ export function avisar(texto: string, tipo: 'ok' | 'mal' | 'info' = 'info', ms =
   };
   const a = h('div', { class: `aviso ${tipo}`, style: `--ms:${ms}ms`, on: { click: quitar } },
     h('span', { class: 'aviso-ico' }, icono(ICONO_AVISO[tipo], 16)),
+    h('span', { class: 'aviso-tipo' }, document.documentElement.lang === 'en' ? RÓTULO_AVISO[tipo][1] : RÓTULO_AVISO[tipo][0]),
     h('span', { class: 'aviso-texto' }, texto),
     h('i', { class: 'aviso-tiempo', 'aria-hidden': 'true' }));
   zonaAvisos.appendChild(a);
