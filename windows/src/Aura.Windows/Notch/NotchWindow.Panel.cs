@@ -21,6 +21,7 @@ public partial class NotchWindow
 
     internal void AbrirPanel(bool si)
     {
+        if (si) PrecalentarCerebro("chat");
         if (panelAbierto == si) return;
         panelAbierto = si;
         if (!si) GuardarRecuperacion();

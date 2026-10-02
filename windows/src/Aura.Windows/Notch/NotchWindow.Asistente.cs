@@ -73,6 +73,8 @@ public partial class NotchWindow
         {
             RevisarRecordatorios();
             RevisarAgente();
+            // Usando la PC (teclado o mouse en los últimos 2 min): el cerebro se mantiene caliente, cada 4 min.
+            if (Inactivo() < TimeSpan.FromMinutes(2) && DateTime.Now - ultimoPrecalentar > TimeSpan.FromMinutes(4)) PrecalentarCerebro("en uso");
             // «Siempre atenta»: si algo cerró el micrófono (un aviso, una acción), vuelve a escuchar sola.
             if (ajustes.Escucha is "siempre" or "palabra" && !microSilenciado && !pausado && !escuchando && !hablandoAhora && !pensando && propuesta == null && !soloRender)
             { continuo = true; EmpezarAEscuchar(); }
@@ -119,6 +121,7 @@ public partial class NotchWindow
             // Recién se calló: lo que oyó es su propia voz rebotando en la sala.
             if (DateTime.Now - finVozAura < GraciaTrasHablar) { Centro.Registro.Anotar("despertar", "ignorado: AURA acaba de hablar (eco)"); return; }
             Centro.Registro.Anotar("despertar", "Windows oyó «Oye AURA»");
+            PrecalentarCerebro("despertar");
             llamadaExplicita = true; ultimaCharla = DateTime.Now; continuo = ajustes.ManosLibres;
             if (!AgenteAbierto && !abriendoAgente) TextoEscucha.Text = T("Te escucho…", "Listening…");
             // «Oye AURA, abre Excel» de corrido: Windows la despierta a media frase. Antes se abría la conversación
@@ -163,6 +166,7 @@ public partial class NotchWindow
         catch (AuraError ex) { api = null; Avisar(new Aviso("Revisa el servidor", ex.Message, "", "worried")); }
         IniciarCanal();
         GrabarRellenos();
+        PrecalentarCerebro("arranque");
     }
 
     /// <summary>
@@ -205,6 +209,7 @@ public partial class NotchWindow
         // Con la conversación en vivo abierta, el micrófono del notch la cuelga.
         if (AgenteAbierto) { CerrarAgente(); return; }
         if (abriendoAgente) return;
+        PrecalentarCerebro("micrófono");
         llamadaExplicita = true; ultimaCharla = DateTime.Now;
         if (escuchando && !hablandoAhora) { CerrarOido(); continuo = false; Recalcular(); return; }
         Callar();
@@ -593,6 +598,21 @@ public partial class NotchWindow
     readonly System.Collections.Concurrent.ConcurrentDictionary<string, Audio> rellenosGrabados = new();
 
     /// <summary>Graba de antemano las frases de espera del avatar e idioma actuales (en segundo plano; si falla, se piden al momento).</summary>
+    DateTime ultimoPrecalentar = DateTime.MinValue;
+
+    /// <summary>
+    /// La persona muestra que va a hablar (abre AURA, la despierta, toca el micrófono, abre el chat, o lleva un rato
+    /// usando la PC): el cerebro deja leído su contexto y el primer turno no espera 4–8 s. El servidor decide si hace
+    /// falta (con un turno reciente no hace nada); aquí, una vez por minuto como mucho.
+    /// </summary>
+    void PrecalentarCerebro(string motivo)
+    {
+        var a = api;
+        if (a == null || string.IsNullOrEmpty(ajustes.Token) || soloRender || DateTime.Now - ultimoPrecalentar < TimeSpan.FromMinutes(1)) return;
+        ultimoPrecalentar = DateTime.Now;
+        _ = a.Calentar();
+    }
+
     void GrabarRellenos()
     {
         var a = api; if (a == null || ajustes.VozDeWindows || !ajustes.ResponderConVoz || soloRender) return;
