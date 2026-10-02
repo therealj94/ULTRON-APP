@@ -1,3 +1,4 @@
+using System.Linq;
 using System;
 using System.IO;
 using System.Threading;
@@ -52,10 +53,31 @@ public partial class App : Application
         }
         Centro.Protocolo.Registrar();
         VigilarFallos();
+        // La pantalla de arranque, en su propio hilo, antes de preparar el notch: aparece al instante y el notch se
+        // arma detrás sin esperarla. Nunca tras una caída ni con un pedido (la vuelta del navegador, «abrir el Centro»);
+        // la corta al entrar a Windows (--inicio, el acceso del instalador) o al volver de una actualización.
+        Arranque.Arranque? arranque = null;
+        if (!trasFallo && pedido == null)
+        {
+            bool corta = Array.IndexOf(e.Args, "--inicio") >= 0 || Array.IndexOf(e.Args, "--actualizada") >= 0;
+            try { arranque = Arranque.Arranque.Mostrar(corta ? Arranque.TipoArranque.Corto : Arranque.TipoArranque.Completo); }
+            catch (Exception ex) { Centro.Registro.Anotar("arranque", "sin pantalla de arranque: " + ex.Message); }
+        }
         var notch = new NotchWindow();
         MainWindow = notch;
         Centro.Protocolo.Llego += p => notch.Dispatcher.BeginInvoke(new Action(() => notch.PedidoExterno(p)));
         Centro.Protocolo.Escuchar(fin.Token);
+        if (arranque != null)
+        {
+            notch.Esconder();
+            // Ya colocado, el notch le dice a la placa hacia dónde encogerse.
+            notch.Loaded += (_, _) => notch.Dispatcher.BeginInvoke(new Action(() => { var (c, abajo) = notch.PuntoDeArranque(); arranque.FijarDestino(c, abajo); }), System.Windows.Threading.DispatcherPriority.Loaded);
+            arranque.AlTerminar(() => notch.Dispatcher.BeginInvoke(new Action(notch.Revelar)));
+            // Por si la pantalla de arranque no llegara a avisar: el notch aparece igual.
+            var reserva = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(4.5) };
+            reserva.Tick += (_, _) => { reserva.Stop(); notch.Revelar(); };
+            reserva.Start();
+        }
         notch.Show();
         if (pedido != null) notch.Dispatcher.BeginInvoke(new Action(() => notch.PedidoExterno(pedido)), System.Windows.Threading.DispatcherPriority.ApplicationIdle);
     }
@@ -70,18 +92,27 @@ public partial class App : Application
         DispatcherUnhandledException += (_, e) =>
         {
             Centro.Registro.Anotar("fallo", "en la ventana (sigo): " + Core.RegistroSeguro.Sanear(e.Exception.ToString()));
+            Centro.Diagnostico.Reportar("error-js", "fallo en la ventana (AURA siguió)", Resumen(e.Exception));
             e.Handled = true;
         };
         AppDomain.CurrentDomain.UnhandledException += (_, e) =>
         {
             Centro.Registro.Anotar("fallo", "se cayó: " + Core.RegistroSeguro.Sanear(e.ExceptionObject?.ToString() ?? "?"));
-            if (e.IsTerminating) Relanzar();
+            if (e.IsTerminating) { Centro.Diagnostico.DejarCaida(e.ExceptionObject is Exception x ? Resumen(x) : "?"); Relanzar(); }
         };
         System.Threading.Tasks.TaskScheduler.UnobservedTaskException += (_, e) =>
         {
             Centro.Registro.Anotar("fallo", "tarea sin atender: " + Core.RegistroSeguro.Sanear(e.Exception.GetBaseException().Message));
             e.SetObserved();
         };
+    }
+
+    /// <summary>Tipo, mensaje y dónde (las primeras líneas de la pila): lo justo para encontrarlo, sin datos.</summary>
+    static string Resumen(Exception ex)
+    {
+        var b = ex.GetBaseException();
+        var pila = string.Join(" | ", (b.StackTrace ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Take(4));
+        return $"{b.GetType().Name}: {b.Message} @ {pila}";
     }
 
     static void Relanzar()

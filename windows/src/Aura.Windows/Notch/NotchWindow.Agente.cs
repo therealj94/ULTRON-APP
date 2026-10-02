@@ -77,7 +77,9 @@ public partial class NotchWindow
             if (!PuedeAgente) { SoltarPermiso(); return false; }
             CablearAgente(nuevo);
             agente = nuevo;
-            await nuevo.Abrir(permisoAgente, CancellationToken.None);
+            // Desde medio segundo antes de pedir la conversación: lo dicho mientras conecta no se pierde.
+            var desdeUtc = DateTime.UtcNow - crono.Elapsed - TimeSpan.FromMilliseconds(500);
+            await nuevo.Abrir(permisoAgente, CancellationToken.None, () => despertador.AudioDesde(desdeUtc));
             if (!PuedeAgente || !ReferenceEquals(agente, nuevo)) { agente = null; nuevo.Cerrar(); SoltarPermiso(); return false; }
             agenteUltimaVoz = DateTime.Now;
             escuchando = true;
@@ -124,6 +126,7 @@ public partial class NotchWindow
             {
                 if (!ReferenceEquals(agente, a)) return;
                 hablandoAhora = si;
+                if (!si) finVozAura = DateTime.Now;
                 if (si)
                 {
                     // En vivo se cuenta DESDE LA TRANSCRIPCIÓN (no incluye tu captura ni el STT de ElevenLabs) y «suena» es
@@ -138,7 +141,7 @@ public partial class NotchWindow
             }));
         };
         a.Interrumpida += () => Dispatcher.BeginInvoke(new Action(() => { if (ReferenceEquals(agente, a)) { Centro.Registro.Anotar("voz-vivo", "me interrumpiste"); metricas.Cerrar("interrumpido"); } }));
-        a.NivelMic += n => Dispatcher.BeginInvoke(new Action(() => { if (ReferenceEquals(agente, a) && !hablandoAhora) { BarrasEscucha.Nivel = n; EscalaAnillo.ScaleX = EscalaAnillo.ScaleY = 1 + n * 0.5; } }));
+        a.NivelMic += n => Dispatcher.BeginInvoke(new Action(() => { if (ReferenceEquals(agente, a) && !hablandoAhora) { BarrasEscucha.Nivel = n; EscalaAnillo.ScaleX = EscalaAnillo.ScaleY = 1 + n * 0.18; } }));
         a.NivelBoca += n => Dispatcher.BeginInvoke(new Action(() => { if (ReferenceEquals(agente, a)) { AvatarHabla.Boca = n; AvatarPanel.Boca = n; BarrasHabla.Nivel = n; } }));
         a.Cerrada += motivo => Dispatcher.BeginInvoke(new Action(() =>
         {

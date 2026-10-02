@@ -5,6 +5,8 @@
 import { h, boton, tarjeta, interruptor, eleccion, avisar, icono } from '../ui';
 import { pedir, al } from '../puente';
 import { estado, cargar, aplicarAcento, T } from '../estado';
+import { cerrarAura } from '../cerrar';
+import { punzon, wordmark, firma } from '../marca';
 
 type Aj = Record<string, any>;
 
@@ -15,16 +17,46 @@ export function vistaAjustes(): HTMLElement {
     ['conexiones', T('Conexiones', 'Connections')], ['avisos', T('Notificaciones', 'Notifications')], ['cuentas', T('Correo y agenda', 'Email & calendar')],
     ['privacidad', T('Privacidad y diagnóstico', 'Privacy & diagnostics')], ['actualizar', T('Actualizaciones', 'Updates')], ['atajos', T('Atajos', 'Shortcuts')],
   ];
-  const nav = h('div', { class: 'pastillas', style: 'margin-bottom:18px;position:sticky;top:-28px;background:var(--fondo);padding:10px 0;z-index:2' },
-    ...secciones.map(([id, t]) => h('button', { class: 'pastilla', on: { click: () => document.getElementById('aj-' + id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }) } }, t)));
+  // El menú de secciones: se queda arriba y marca la sección que estás leyendo.
+  const pastillas = new Map<string, HTMLButtonElement>();
+  const marcarSeccion = (id: string) => pastillas.forEach((b, k) => {
+    b.classList.toggle('activa', k === id);
+    if (k === id) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current');
+  });
+  const nav = h('nav', { class: 'aj-nav', 'aria-label': T('Secciones de ajustes', 'Settings sections') },
+    ...secciones.map(([id, t]) => {
+      const b = h('button', { class: 'pastilla', on: { click: () => {
+        marcarSeccion(id);
+        const reducir = matchMedia('(prefers-reduced-motion: reduce)').matches;
+        document.getElementById('aj-' + id)?.scrollIntoView({ behavior: reducir ? 'auto' : 'smooth', block: 'start' });
+      } } }, t) as HTMLButtonElement;
+      pastillas.set(id, b);
+      return b;
+    }));
+  let espia: IntersectionObserver | null = null;
+  const espiar = () => {
+    espia?.disconnect();
+    const visibles = new Map<string, number>();
+    espia = new IntersectionObserver((entradas) => {
+      for (const en of entradas) visibles.set(en.target.id.slice(3), en.isIntersecting ? en.boundingClientRect.top : Infinity);
+      let mejor = '', arriba = Infinity;
+      visibles.forEach((top, id) => { if (top < arriba) { arriba = top; mejor = id; } });
+      if (mejor) marcarSeccion(mejor);
+    }, { root: vista.closest('.contenido'), rootMargin: '-80px 0px -55% 0px' });
+    cuerpo.querySelectorAll('.aj-seccion').forEach((el) => espia!.observe(el));
+  };
   const vista = h('div', { class: 'vista' },
-    h('div', { class: 'cabeza' }, h('div', null, h('h1', null, T('Ajustes', 'Settings')), h('p', null, T('Todo se guarda al momento. Pasa el ratón sobre cualquier botón para ver qué hace.', 'Changes save instantly. Hover any button to see what it does.')))),
+    h('div', { class: 'cabeza' }, h('div', null, h('h1', null, T('Ajustes', 'Settings')), h('p', null, T('Todo se guarda al momento, sin botón «Guardar». Pasa el ratón sobre cualquier botón para ver qué hace.', 'Changes save instantly. Hover any button to see what it does.')))),
     nav, cuerpo);
 
   const guardar = async (parcial: Aj) => {
     try { await pedir('ajustes.guardar', parcial); } catch (e: any) { avisar(e.message, 'mal', 7000); }
   };
-  const seccion = (id: string, titulo: string, ...hijos: any[]) => h('section', { class: 'tarjeta', id: 'aj-' + id, style: 'scroll-margin-top:60px' }, h('h3', null, titulo), ...hijos);
+  // Cada sección con su número (en Mono, como el folio de un certificado) y su rótulo.
+  const seccion = (id: string, titulo: string, ...hijos: any[]) => {
+    const n = Math.max(0, secciones.findIndex(([k]) => k === id)) + 1;
+    return h('section', { class: 'tarjeta aj-seccion', id: 'aj-' + id }, h('h3', null, h('span', { class: 'n', 'aria-hidden': 'true' }, String(n).padStart(2, '0')), titulo), ...hijos);
+  };
 
   async function pintar() {
     const aj: Aj = await pedir('ajustes.leer');
@@ -34,21 +66,22 @@ export function vistaAjustes(): HTMLElement {
     // ── Cuenta ──
     const cuenta = seccion('cuenta', T('Cuenta', 'Account'),
       e.sesion
-        ? h('div', { class: 'fila' }, h('span', { class: 'foto', style: 'background:var(--acento-suave);color:var(--acento)' }, (e.sesion.nombre || e.sesion.correo).slice(0, 1).toUpperCase()),
+        ? h('div', { class: 'fila', style: 'flex-wrap:wrap' }, h('span', { class: 'sello', style: 'min-width:40px;height:40px' }, (e.sesion.nombre || e.sesion.correo).split(' ').map((x: string) => x[0]).slice(0, 2).join('').toUpperCase()),
             h('div', { style: 'flex:1' }, h('strong', null, e.sesion.nombre || e.sesion.correo), h('br'),
               h('small', { class: 'tenue' }, `${e.sesion.correo} · ${e.sesion.rol || (e.sesion.nivel === 'junta' ? 'Junta' : T('Miembro · Genesis ID', 'Member · Genesis ID'))}`)),
+            boton(T('Cerrar AURA por completo', 'Quit AURA'), () => void cerrarAura(), { titulo: T('Cierra el notch, el Centro, la voz y el ícono de la bandeja', 'Closes the notch, the Centro, voice and the tray icon') }),
             boton(T('Salir de la cuenta', 'Sign out'), async () => { if (confirm(T('¿Salir de AU-RA en esta computadora? Se borran de aquí tu sesión y las llaves de PULSE2CHAT.', 'Sign out of AU-RA on this computer?'))) await pedir('salir'); }, { tipo: 'peligro', titulo: T('Cierra la sesión en esta PC (la cuenta sigue existiendo)', 'Signs out on this PC') }))
         : h('p', null, T('No has entrado.', 'Not signed in.')),
       h('p', { class: 'nota' }, T('Tu sesión de AU-RA dura 14 días. Con Genesis ID no se guarda ninguna clave: al vencer, vuelves a entrar con Veta Wallet.', 'Your session lasts 14 days.')));
 
     // ── Transparencia del notch: 0.30 deja ver mucho el fondo; 1 es el negro sólido de antes. Se guarda al soltar (guardar repinta la vista). ──
     const vidrio = (valor: number) => {
-      const cuanto = h('small', { class: 'tenue', style: 'min-width:96px;text-align:right' });
+      const cuanto = h('small', { class: 'tenue mono', style: 'min-width:120px;text-align:right' });
       const decir = (v: number) => { cuanto.textContent = v >= 1 ? T('Sólido', 'Solid') : T(`Transparencia ${Math.round((1 - v) * 100)} %`, `Transparency ${Math.round((1 - v) * 100)}%`); };
       decir(valor);
       const barra = h('input', { type: 'range', min: '30', max: '100', step: '1', value: String(Math.round(valor * 100)),
         'aria-label': T('Transparencia del notch', 'Notch transparency'), title: T('Izquierda: más transparente · derecha: negro sólido', 'Left: more transparent · right: solid black'),
-        style: 'flex:1;accent-color:var(--acento)',
+        style: 'flex:1',
         on: { input: (ev: Event) => decir(+(ev.target as HTMLInputElement).value / 100), change: (ev: Event) => guardar({ transparencia: +(ev.target as HTMLInputElement).value / 100 }) } });
       return h('div', { class: 'campo', style: 'margin-top:12px' },
         h('strong', null, T('Transparencia del notch', 'Notch transparency')),
@@ -63,7 +96,7 @@ export function vistaAjustes(): HTMLElement {
     const mover = (cambio: Record<string, unknown>) => guardar({ notch: { borde: notch.borde, fraccion: notch.fraccion, ...cambio } });
     const elegirMonitor = monitores.length > 1
       ? h('div', { class: 'campo' }, h('strong', null, T('Monitor', 'Display')),
-          h('select', { 'aria-label': T('Monitor del notch', 'Notch display'), style: 'background:var(--superficie2);border:1px solid var(--linea);color:var(--texto);border-radius:var(--radio-chico);padding:10px 12px;font:inherit',
+          h('select', { 'aria-label': T('Monitor del notch', 'Notch display'),
             on: { change: (ev: Event) => guardar({ notch: { monitor: (ev.target as HTMLSelectElement).value } }) } },
             ...monitores.map((m) => h('option', { value: m.id, selected: m.actual }, m.nombre))),
           h('small', null, T('También puedes arrastrarlo al otro monitor.', 'You can also drag it to the other display.')))
@@ -89,9 +122,9 @@ export function vistaAjustes(): HTMLElement {
     // ── Avatar e idioma ──
     const avatar = seccion('avatar', T('Avatar, idioma y notch', 'Avatar, language & notch'),
       eleccion(T('Avatar', 'Avatar'), [
-        { valor: 'aura', texto: 'AU-RA', explica: T('Cálida y precisa. Acento dorado.', 'Warm and precise.') },
-        { valor: 'claudio', texto: 'Claudio', explica: T('Creativo: ideas, marketing y contenido. Acento naranja.', 'Creative.') },
-        { valor: 'antonio', texto: 'ANT-ONIO', explica: T('Directo y técnico. Acento cian.', 'Direct and technical.') },
+        { valor: 'aura', texto: 'AU-RA', explica: T('Cálida y precisa.', 'Warm and precise.') },
+        { valor: 'claudio', texto: 'Claudio', explica: T('Creativo: ideas, marketing y contenido.', 'Creative.') },
+        { valor: 'antonio', texto: 'ANT-ONIO', explica: T('Directo y técnico.', 'Direct and technical.') },
         { valor: 'ojos', texto: 'Guardián', explica: T('Sereno; seguridad y cuidado del espacio.', 'Calm guardian.') },
       ], aj.avatar, (v) => { aplicarAcento(v); guardar({ avatar: v }); }),
       eleccion(T('Idioma', 'Language'), [
@@ -131,7 +164,7 @@ export function vistaAjustes(): HTMLElement {
         } catch (err: any) { avisar(err.message, 'mal', 10_000); b.disabled = false; }
       }, { tipo: cuentaTxt ? 'fantasma' : 'acento', titulo: para });
       return h('div', { class: 'opcion', style: 'cursor:default' },
-        h('span', { class: 'foto', style: 'background:var(--superficie2)' }, icono(ico, 20)),
+        h('span', { class: 'foto dorada' }, icono(ico, 18)),
         h('div', { class: 'opcion-texto' }, h('strong', null, nombre, ' ', cuentaTxt ? h('span', { class: 'etiqueta ok' }, T('conectado', 'connected')) : null),
           h('small', null, cuentaTxt && cuentaTxt !== 'conectado' ? `${cuentaTxt} · ${para}` : para)), b);
     };
@@ -170,7 +203,7 @@ export function vistaAjustes(): HTMLElement {
       campo(T('Calendario (dirección iCal secreta)', 'Calendar (secret iCal address)'), T('Google Calendar → Configuración del calendario → «Dirección secreta en formato iCal».', 'Google Calendar → Settings → Secret iCal address.'), { type: 'text', value: aj.agendaUrl ?? '', spellcheck: 'false' }, 'agendaUrl'));
 
     // ── Privacidad y diagnóstico ──
-    const registro = h('pre', { style: 'display:none;max-height:260px;overflow:auto;background:var(--superficie2);padding:12px;border-radius:12px;font-size:11.5px;white-space:pre-wrap' });
+    const registro = h('pre', { class: 'aj-registro' });
     const privacidad = seccion('privacidad', T('Privacidad y diagnóstico', 'Privacy & diagnostics'),
       h('ul', { class: 'nota', style: 'line-height:1.8;padding-left:18px' },
         h('li', null, T('La pantalla se lee en tu PC (UI Automation y OCR de Windows): al cerebro va solo texto, nunca imágenes.', 'Screen is read locally.')),
@@ -212,14 +245,22 @@ export function vistaAjustes(): HTMLElement {
         instalar));
 
     // ── Atajos ──
-    const tecla = (k: string, que: string) => h('div', { class: 'fila', style: 'justify-content:space-between;padding:6px 0;border-top:1px solid var(--linea)' }, h('span', null, que), h('span', { class: 'etiqueta' }, k));
+    const tecla = (k: string, que: string) => h('div', { class: 'atajo' }, h('span', null, que), h('kbd', null, k));
     const atajos = seccion('atajos', T('Atajos', 'Shortcuts'),
       tecla('Ctrl+Alt+Espacio', T('Hablarle', 'Talk')), tecla('Ctrl+Alt+C', T('Abrir este Centro', 'Open this Center')), tecla('Ctrl+Alt+A', T('Chat rápido en el notch', 'Quick chat in the notch')),
       tecla('Ctrl+Alt+W', T('Elegir la ventana donde escribirá', 'Pick the window to type into')), tecla('Ctrl+Alt+Esc', T('Pausar todo (micrófono, voz y acciones)', 'Pause everything')),
-      h('div', { style: 'margin-top:12px' }, boton(T('Ver el recorrido', 'Watch the tour'), () => window.dispatchEvent(new Event('centro:recorrido')), { icono: 'play', titulo: T('Claudio y ANT-ONIO te enseñan todo lo que hace AURA en tu computadora', 'Claudio and ANT-ONIO show you everything AURA does on your PC') })),
-      h('p', { class: 'nota' }, T(`Versión ${e.version}`, `Version ${e.version}`)));
+      h('div', { style: 'margin-top:16px' }, boton(T('Ver el recorrido', 'Watch the tour'), () => window.dispatchEvent(new Event('centro:recorrido')), { icono: 'play', titulo: T('Claudio y ANT-ONIO te enseñan todo lo que hace AURA en tu computadora', 'Claudio and ANT-ONIO show you everything AURA does on your PC') })),
+      // Acerca de: la marca, la versión y la firma.
+      h('div', { class: 'acerca' },
+        punzon(44, { chica: true }),
+        h('div', null, wordmark(), h('dl', null,
+          h('div', null, h('dt', null, T('Versión', 'Version')), h('dd', null, e.version)),
+          act?.commit ? h('div', null, h('dt', null, 'Commit'), h('dd', null, act.commit)) : null)),
+        firma()));
 
     cuerpo.replaceChildren(cuenta, avatar, voz, conexiones, avisos, cuentas, privacidad, actualizar, atajos);
+    // El espía mira dentro de `.contenido`: hasta que la vista está montada no hay dónde mirar.
+    requestAnimationFrame(() => { if (vista.isConnected) espiar(); });
   }
   pintar().catch((e) => cuerpo.replaceChildren(tarjeta(null, h('p', null, e.message))));
   al('estado', () => { if (vista.isConnected) pintar().catch(() => {}); });

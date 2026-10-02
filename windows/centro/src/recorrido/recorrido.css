@@ -2,7 +2,7 @@
 body.con-recorrido #app { display: none; }
 .recorrido {
   position: fixed; inset: 0; z-index: 90; display: grid; grid-template-rows: auto 1fr auto; overflow: hidden;
-  background: radial-gradient(ellipse at 50% 42%, #191a20 0%, #0b0b0e 58%, #050506 100%); color: var(--texto);
+  background: radial-gradient(ellipse 120% 90% at 50% 45%, transparent 55%, rgba(0, 0, 0, .55) 100%), var(--obsidiana); color: var(--texto);
   opacity: 0; transition: opacity .38s ease; --col: clamp(130px, 16.5vw, 236px);
 }
 .recorrido.visible { opacity: 1; }
@@ -10,13 +10,13 @@ body.con-recorrido #app { display: none; }
 
 /* ── arriba ── */
 .r-arriba { display: flex; align-items: center; gap: 16px; padding: 14px 20px 6px; position: relative; z-index: 6; }
-.r-marca { font: 600 12px var(--titulo); letter-spacing: .14em; text-transform: uppercase; color: var(--tenue); white-space: nowrap; }
-.r-etiqueta { font: 600 14px var(--titulo); white-space: nowrap; min-width: 170px; }
+.r-marca { font: 600 12.5px var(--rotulo); letter-spacing: .14em; text-transform: uppercase; color: var(--tenue); white-space: nowrap; }
+.r-etiqueta { font: 500 14px var(--letra); white-space: nowrap; min-width: 170px; }
 .r-segmentos { flex: 1; display: flex; gap: 5px; }
 .r-seg { flex: 1; height: 16px; border: 0; padding: 6px 0; background: transparent; cursor: pointer; }
-.r-seg::before { content: ""; display: block; height: 4px; border-radius: 4px; background: #ffffff1c; }
-.r-seg i { display: block; height: 4px; margin-top: -4px; border-radius: 4px; width: 0; background: var(--acento); transition: width .5s ease; }
-.r-seg:hover::before { background: #ffffff38; }
+.r-seg::before { content: ""; display: block; height: 1px; background: var(--filo-2); }
+.r-seg i { display: block; height: 1px; margin-top: -1px; width: 0; background: var(--oro-crudo); transition: width .5s var(--golpe); }
+.r-seg:hover::before { background: var(--filo-oro); }
 .r-cerrar { flex: none; }
 
 /* ── en medio: anfitriones y escenario ── */

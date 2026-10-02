@@ -824,6 +824,7 @@ Check(Actualizacion.MotivoParaEsperar(libre with { Llamada = true }) != null && 
     Check(ConteoCorreo.Aviso(new[] { C(1) }, false, false).Titulo == "Correo de Persona 1", "un solo correo: de quién");
 }
 Check(new[] { "notch.monitores", "notch.restablecer", "notch.llamada" }.All(PuenteCentro.MetodoPermitido), "el puente deja pasar lo que usan el notch movible y la llamada");
+Check(PuenteCentro.MetodoPermitido("app.cerrar") && !PuenteCentro.MetodoPermitido("app.cerrarTodo"), "el puente deja cerrar AURA por completo desde el Centro (solo ese nombre)");
 Check(new[] { "voz.decir", "recorrido.abierto" }.All(PuenteCentro.MetodoPermitido), "el puente deja pasar la voz y el silencio del recorrido");
 // ── WhatsApp personal en el Centro (whatsapp.* del puente → /api/whatsapp/* con la sesión) ──
 Check(new[] { "whatsapp.estado", "whatsapp.vincular", "whatsapp.desvincular", "whatsapp.chats", "whatsapp.mensajes", "whatsapp.enviar", "whatsapp.leido", "whatsapp.media" }.All(PuenteCentro.MetodoPermitido), "el puente deja pasar WhatsApp");

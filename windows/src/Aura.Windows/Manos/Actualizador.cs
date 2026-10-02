@@ -106,8 +106,40 @@ internal sealed class Actualizador
         // Se verifica otra vez justo antes de correrlo (nadie lo cambió en el disco mientras esperaba).
         if (Sha(Instalador, default).GetAwaiter().GetResult() != Nueva.Sha256) { Lista = false; return false; }
         Centro.Registro.Anotar("actualizar", "instalando " + Nueva.Version);
-        Process.Start(new ProcessStartInfo(Instalador, "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /RELANZAR=1") { UseShellExecute = true });
+        try { File.WriteAllText(Esperada, Nueva.Version); File.Delete(LogInstalacion); } catch { }
+        // /ESPERAR=1: el instalador espera a que esta AURA suelte su candado (se cierra del todo) antes de copiar.
+        // Antes arrancaba con AURA todavía abierta, Inno encontraba sus archivos en uso y en modo silencioso
+        // abortaba sin decir nada (2-oct: «no actualiza desde la app»). /LOG deja cómo terminó para leerlo al volver.
+        var psi = new ProcessStartInfo(Instalador) { UseShellExecute = false };
+        foreach (var a in new[] { "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS", "/FORCECLOSEAPPLICATIONS", "/RELANZAR=1", "/ESPERAR=1", "/LOG=" + LogInstalacion })
+            psi.ArgumentList.Add(a);
+        Process.Start(psi);
         return true;
+    }
+
+    /// <summary>Cómo terminó la última instalación (lo escribe Inno con /LOG). Fuera de la carpeta que se limpia.</summary>
+    public static string LogInstalacion => Path.Combine(Centro.Registro.Carpeta, "ultima-instalacion.log");
+    /// <summary>La versión que se estaba instalando: al volver se compara con la que corre.</summary>
+    static string Esperada => Path.Combine(Centro.Registro.Carpeta, "instalando-version.txt");
+
+    /// <summary>
+    /// Al abrir: si había una instalación en marcha, dice cómo terminó (null si no había ninguna). Con la versión
+    /// esperada corriendo, salió bien; si no, el motivo sale del log de Inno.
+    /// </summary>
+    public static (bool ok, string detalle)? ResultadoUltimaInstalacion()
+    {
+        try
+        {
+            if (!File.Exists(Esperada)) return null;
+            var esperada = File.ReadAllText(Esperada).Trim();
+            File.Delete(Esperada);
+            if (!Core.Actualizacion.EsMasNueva(esperada, MiVersion)) return (true, $"quedó {MiVersion}");
+            var log = File.Exists(LogInstalacion) ? File.ReadAllLines(LogInstalacion) : Array.Empty<string>();
+            var motivo = log.LastOrDefault(l => l.Contains("rror", StringComparison.Ordinal) || l.Contains("abort", StringComparison.OrdinalIgnoreCase) || l.Contains("failed", StringComparison.OrdinalIgnoreCase))
+                         ?? (log.Length == 0 ? "el instalador no dejó registro (no arrancó)" : log[^1]);
+            return (false, $"seguía {MiVersion}, se esperaba {esperada}: {motivo.Trim()}");
+        }
+        catch (Exception ex) { return (false, "no pude leer el resultado: " + ex.Message); }
     }
 
     /// <summary>Borra instaladores viejos (ya instalados) para no ocupar disco.</summary>

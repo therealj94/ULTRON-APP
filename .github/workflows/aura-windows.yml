@@ -13,8 +13,10 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 35
     # Solo el paso final (publicar el instalador desde main) escribe: crea o actualiza la release «aura-windows».
+    # Solo lectura (revisión de seguridad 2-oct): las pruebas, npm, NuGet y Python corren sin poder escribir en el
+    # repo ni en la release. Publicar lo hace el trabajo «publicar», aparte, solo en main y solo con el resultado.
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -250,23 +252,12 @@ jobs:
           # La ficha que AURA lee para actualizarse sola: solo si la versión es MAYOR que la suya (nunca retrocede)
           # baja el instalador y comprueba este SHA-256.
           @{ version = $version; commit = "$env:GITHUB_SHA"; sha256 = $hash } | ConvertTo-Json | Set-Content ./windows/artifacts/release/aura-windows.json
-      - name: Publish the installer as a direct download (main only)
-        if: github.ref == 'refs/heads/main'
-        uses: softprops/action-gh-release@v2
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         with:
-          tag_name: aura-windows
-          name: AURA para Windows
-          make_latest: false
-          body: |
-            **AURA para Windows ${{ env.AURA_VERSION }}** — instalador para tu usuario (no pide administrador).
-
-            Descarga: [AURA-Windows-Setup-x64.exe](https://github.com/therealj94/ULTRON-APP/releases/download/aura-windows/AURA-Windows-Setup-x64.exe)
-
-            Commit `${{ github.sha }}`, con todas las pruebas del CI de Windows en verde. Windows puede decir «Windows protegió tu PC» porque el instalador aún no está firmado: «Más información» → «Ejecutar de todas formas».
-          files: |
-            windows/artifacts/release/AURA-Windows-Setup-x64.exe
-            windows/artifacts/release/AURA-Windows-Setup-x64.exe.sha256
-            windows/artifacts/release/aura-windows.json
+          name: aura-windows-release
+          path: windows/artifacts/release/
+          retention-days: 3
       - name: Prepare verified installer transfer parts
         shell: pwsh
         run: ./windows/scripts/package-delivery.ps1
@@ -294,3 +285,38 @@ jobs:
           path: windows/artifacts/delivery/part-04/
           if-no-files-found: ignore
           retention-days: 14
+
+  # Publica la descarga directa y la ficha que AURA lee para actualizarse sola. Es el ÚNICO trabajo con permiso de
+  # escritura: no compila ni corre nada del repo, solo sube lo que «native» armó y probó (con todo en verde).
+  # Con `gh` (viene en el runner) en vez de una acción de terceros con el token de escritura.
+  publicar:
+    needs: native
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: aura-windows-release
+          path: release
+      - name: Publish the installer as a direct download (main only)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          ver=$(python3 -c "import json;print(json.load(open('release/aura-windows.json', encoding='utf-8-sig'))['version'])")
+          notas="**AURA para Windows ${ver}** — instalador para tu usuario (no pide administrador).
+
+          Descarga: [AURA-Windows-Setup-x64.exe](https://github.com/${GH_REPO}/releases/download/aura-windows/AURA-Windows-Setup-x64.exe)
+
+          Commit \`${GITHUB_SHA}\`, con todas las pruebas del CI de Windows en verde. Windows puede decir «Windows protegió tu PC» porque el instalador aún no está firmado: «Más información» → «Ejecutar de todas formas»."
+          if ! gh release view aura-windows >/dev/null 2>&1; then
+            gh release create aura-windows --title "AURA para Windows" --notes "$notas" --latest=false
+          fi
+          # Primero el instalador y su SHA; la ficha al final: AURA nunca lee una ficha que apunte a un instalador que no está.
+          gh release upload aura-windows release/AURA-Windows-Setup-x64.exe release/AURA-Windows-Setup-x64.exe.sha256 --clobber
+          gh release upload aura-windows release/aura-windows.json --clobber
+          gh release edit aura-windows --title "AURA para Windows" --notes "$notas" --latest=false

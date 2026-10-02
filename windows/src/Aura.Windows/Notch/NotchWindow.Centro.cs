@@ -182,6 +182,8 @@ public partial class NotchWindow
             case "actualizar.instalar": { var motivo = await InstalarAhora(); return new { ok = motivo == null, motivo }; }
             case "voz.decir": return await VozDelRecorrido(a);
             case "recorrido.abierto": RecorridoAbierto(Bool(a, "si") == true); return true;
+            // Se contesta primero y se sale después: la página no queda esperando una respuesta que nunca llega.
+            case "app.cerrar": _ = Dispatcher.BeginInvoke(new Action(() => SalirDelTodo()), System.Windows.Threading.DispatcherPriority.Background); return true;
             case "diagnostico.carpeta": Process.Start(new ProcessStartInfo("explorer.exe", "\"" + Registro.Carpeta + "\"") { UseShellExecute = true }); return true;
             case "spotify.estado" or "spotify.buscar" or "spotify.poner" or "spotify.control" or "spotify.dispositivos" or "spotify.transferir":
                 return await ManejarSpotify(metodo, a);
@@ -412,7 +414,20 @@ public partial class NotchWindow
                 case "correoClave": ajustes.CorreoClave = p.Value.GetString() ?? ""; cuentas = true; break;
                 case "agendaUrl": ajustes.AgendaUrl = (p.Value.GetString() ?? "").Trim(); cuentas = true; break;
                 case "carteraDireccion": ajustes.CarteraDireccion = Manos.Cartera.ValidarDireccion(p.Value.GetString() ?? ""); break;
-                case "servidor": ajustes.Servidor = AuraApi.Validar(p.Value.GetString() ?? "").AbsoluteUri.TrimEnd('/'); CrearApi(); break;
+                case "servidor":
+                {
+                    // Otro servidor recibiría tu sesión, tu clave guardada y el canal de las manos: la página sola no
+                    // lo decide (revisión de seguridad 2-oct). Pregunta la ventana nativa y, si cambia, se cierra la sesión.
+                    var nuevo = AuraApi.Validar(p.Value.GetString() ?? "").AbsoluteUri.TrimEnd('/');
+                    if (string.Equals(nuevo, ajustes.Servidor.TrimEnd('/'), StringComparison.OrdinalIgnoreCase)) break;
+                    var host = new Uri(nuevo).Host;
+                    if (MessageBox.Show(this, T($"¿Conectar AURA al servidor «{host}»?\n\nPor seguridad se cierra tu sesión en esta PC y tendrás que entrar de nuevo. Hazlo solo si Orden Global te lo indicó.",
+                                               $"Connect AURA to the server “{host}”?\n\nFor security you'll be signed out on this PC."), "AURA", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) break;
+                    Registro.Anotar("ajustes", "servidor cambiado a " + host + ": sesión cerrada");
+                    ajustes.Token = ""; ajustes.Clave = "";
+                    ajustes.Servidor = nuevo; CrearApi();
+                    break;
+                }
                 case "clientes" when p.Value.ValueKind == JsonValueKind.Object:
                     ajustes.SpotifyClientId = Texto(p.Value, "spotify").Trim(); ajustes.GoogleClientId = Texto(p.Value, "google").Trim();
                     ajustes.MicrosoftClientId = Texto(p.Value, "microsoft").Trim(); if (Texto(p.Value, "googleSecreto") is { Length: > 0 } gs) ajustes.GoogleClientSecret = gs.Trim();
