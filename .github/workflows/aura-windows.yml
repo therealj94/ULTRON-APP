@@ -193,7 +193,9 @@ jobs:
           & $compiler "/DAppVer=$env:AURA_VERSION" windows/installer/Aura.Windows.iss
           if ($LASTEXITCODE -ne 0) { throw 'Installer build failed' }
           $setup = Get-Item ./windows/artifacts/installer/*.exe | Select-Object -First 1
-          if ($setup.VersionInfo.ProductVersion -ne $env:AURA_VERSION) { throw "El instalador dice $($setup.VersionInfo.ProductVersion), el .exe $env:AURA_VERSION" }
+          # Inno Setup rellena ProductVersion con espacios a la derecha: se compara sin ellos.
+          $verSetup = "$($setup.VersionInfo.ProductVersion)".Trim()
+          if ($verSetup -ne $env:AURA_VERSION) { throw "El instalador dice '$verSetup', el .exe '$env:AURA_VERSION'" }
       - name: Sign the installer (only if a certificate secret exists)
         shell: pwsh
         env:
