@@ -2,13 +2,19 @@
  * EL CUERPO EN VIDEO de Claudio y ANT-ONIO: sus clips animados (clips.ts), elegidos por el guion
  * (guion.ts) con el mismo estado que recibe el cuerpo 3D (EstadoAvatar).
  *
- * Dos capas de video, una encima de otra: el clip nuevo arranca en la capa de atrás, invisible, y
- * cuando ya tiene su primer cuadro se funde encima (220 ms) y la de adelante se descarga. Como todos
- * los clips empiezan y terminan en la misma pose, el cambio no se nota. Un golpe (risa, saludo…)
- * avisa un poco antes de terminar para que el fondo que sigue ya esté listo cuando acaba.
+ * Dos capas de video, una encima de otra: el clip nuevo arranca en la otra capa, invisible, y cuando
+ * ya está DIBUJANDO cuadros se cambia sin que la imagen baje nunca: si la capa nueva va arriba, se funde
+ * encima de la vieja (que sigue entera debajo); si va abajo, se prende entera detrás y la vieja se
+ * desvanece encima. Antes las dos se cruzaban a la vez (a la mitad, las dos a 0,5 dejaban ver el fondo:
+ * un bajón de luz en cada cambio) y, si el clip nuevo tardaba, se fundía igual una capa todavía negra.
+ * Eso, más un cambio de clip en cada pausa entre frases (guion.ts lo frena ahora), era el «parpadea
+ * bien raro» que vio José el 2-oct. Como todos los clips empiezan y terminan en la misma pose, el
+ * cambio no se nota. Un golpe (risa, saludo…) avisa un poco antes de terminar para que el fondo que
+ * sigue ya esté listo cuando acaba.
  *
- * El respaldo (las fotos de siempre) se ve debajo mientras arranca el primer clip, y se queda solo si
- * el video falla o el cuerpo está tapado (activo = false: sin decodificadores gastando batería).
+ * El respaldo (las fotos de siempre) se ve debajo hasta que el primer clip terminó de aparecer, y se
+ * queda solo si el video falla o el cuerpo está tapado (activo = false: sin decodificadores gastando
+ * batería).
  * Los bordes se funden con el color de fondo del avatar, para que no se vea un rectángulo.
  */
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -26,8 +32,13 @@ import { CLIPS_VIDEO, DirectorVideo, encuadrar, VENTANAS, zonaVideo, type ClipVi
 
 /** Cuánto dura el fundido entre clips. */
 const FUNDIDO_MS = 220;
-/** Si el clip nuevo no da su primer cuadro en esto, se funde igual (nunca se queda trabado). */
-const ESPERA_MAX_MS = 700;
+/**
+ * Último recurso: si el clip nuevo no avisa que dibuja en esto (ni por onReadyForDisplay ni porque su
+ * posición avanza), se cambia igual para no quedarse trabado en un clip que ya no toca.
+ */
+const ESPERA_MAX_MS = 2500;
+/** La posición avanzó esto: el reproductor ya está dibujando cuadros (algunos Android no avisan de otra forma). */
+const DIBUJANDO_MS = 60;
 /** Un golpe avisa que terminó esto antes del final, para que el fondo que sigue ya esté cargado. */
 const ANTES_DEL_FIN_MS = 320;
 
@@ -129,25 +140,39 @@ export const CuerpoVideo = forwardRef<ControlCuerpo, Props>(function CuerpoVideo
 
   useEffect(() => () => relojes.current.forEach(clearTimeout), []);
 
+  /** Las reproducciones que ya se fundieron (los avisos de que dibuja llegan muchas veces). */
+  const fundidas = useRef(new Set<number>());
+
   const fundir = useCallback(
-    (capa: 0 | 1) => {
+    (capa: 0 | 1, n: number) => {
+      if (fundidas.current.has(n)) return;
       if (pendiente.current !== capa && frente.current === capa) {
-        // La primera capa: aparece sobre el respaldo.
+        // La primera capa: aparece sobre el respaldo, que se quita cuando ya terminó de aparecer.
+        fundidas.current.add(n);
         op[capa].value = withTiming(1, { duration: FUNDIDO_MS });
-        setVisto(true);
+        relojes.current.push(setTimeout(() => setVisto(true), FUNDIDO_MS + 40));
         return;
       }
-      if (pendiente.current !== capa) return;
+      if (pendiente.current !== capa || esperaN.current !== n) return;
+      fundidas.current.add(n);
       pendiente.current = null;
+      esperaN.current = -1;
       const vieja = frente.current;
       frente.current = capa;
-      op[capa].value = withTiming(1, { duration: FUNDIDO_MS });
-      op[vieja].value = withTiming(0, { duration: FUNDIDO_MS });
-      setVisto(true);
+      if (capa > vieja) {
+        // La nueva va arriba: se funde encima de la vieja, que sigue entera debajo.
+        op[capa].value = withTiming(1, { duration: FUNDIDO_MS });
+      } else {
+        // La nueva va abajo: se prende entera detrás y la vieja se desvanece encima.
+        op[capa].value = 1;
+        op[vieja].value = withTiming(0, { duration: FUNDIDO_MS });
+      }
       relojes.current.push(
         setTimeout(() => {
+          if (frente.current === vieja || pendiente.current === vieja) return;
+          op[vieja].value = 0;
           // Ya no se ve: se descarga (salvo que en el camino se haya vuelto a usar).
-          if (frente.current !== vieja && pendiente.current !== vieja) setCapas((c) => (vieja === 0 ? [null, c[1]] : [c[0], null]));
+          setCapas((c) => (vieja === 0 ? [null, c[1]] : [c[0], null]));
         }, FUNDIDO_MS + 60)
       );
     },
@@ -169,7 +194,7 @@ export const CuerpoVideo = forwardRef<ControlCuerpo, Props>(function CuerpoVideo
       op[atras].value = 0;
       esperaN.current = r.n;
       setCapas((c) => (atras === 0 ? [r, c[1]] : [c[0], r]));
-      relojes.current.push(setTimeout(() => esperaN.current === r.n && fundir(atras), ESPERA_MAX_MS));
+      relojes.current.push(setTimeout(() => esperaN.current === r.n && fundir(atras, r.n), ESPERA_MAX_MS));
     },
     [fundir, op]
   );
@@ -188,6 +213,8 @@ export const CuerpoVideo = forwardRef<ControlCuerpo, Props>(function CuerpoVideo
     esperaN.current = -1;
     avisado.current = -1;
     frente.current = 0;
+    // Al volver se monta de nuevo: tiene que poder fundirse otra vez aunque sea la misma reproducción.
+    fundidas.current.clear();
     setCapas([r, null]);
     setVisto(false);
   }, [activo, op0, op1]);
@@ -200,21 +227,25 @@ export const CuerpoVideo = forwardRef<ControlCuerpo, Props>(function CuerpoVideo
     poner(d.estado(estado));
     if (relojHabla.current) clearTimeout(relojHabla.current);
     relojHabla.current = null;
-    const falta = d.msParaHablar();
+    // Lo mismo si un fondo nuevo se está asentando (dejó de hablar: espera a ver si fue solo una pausa).
+    const falta = d.msParaHablar() ?? d.msParaFondo();
     if (falta !== null) relojHabla.current = setTimeout(() => poner(d.revisar()), falta + 20);
   }, [estado, poner]);
   useEffect(() => () => void (relojHabla.current && clearTimeout(relojHabla.current)), []);
 
   const alEstado = useCallback(
-    (r: Reproduccion, s: AVPlaybackStatus) => {
-      if (!s.isLoaded || r.bucle || avisado.current === r.n) return;
+    (capa: 0 | 1, r: Reproduccion, s: AVPlaybackStatus) => {
+      if (!s.isLoaded) return;
+      // Ya avanza: está dibujando cuadros (respaldo de onReadyForDisplay, que no todos los Android mandan).
+      if (s.positionMillis >= DIBUJANDO_MS) fundir(capa, r.n);
+      if (r.bucle || avisado.current === r.n) return;
       const dura = s.durationMillis ?? 0;
       if (s.didJustFinish || (dura > 0 && s.positionMillis >= dura - ANTES_DEL_FIN_MS)) {
         avisado.current = r.n;
         poner(director.current!.termino(r.n));
       }
     },
-    [poner]
+    [poner, fundir]
   );
 
   const alFallar = useCallback((e: string) => {
@@ -245,8 +276,8 @@ export const CuerpoVideo = forwardRef<ControlCuerpo, Props>(function CuerpoVideo
           isLooping={r.bucle}
           isMuted
           progressUpdateIntervalMillis={100}
-          onReadyForDisplay={() => fundir(i)}
-          onPlaybackStatusUpdate={(s) => alEstado(r, s)}
+          onReadyForDisplay={() => fundir(i, r.n)}
+          onPlaybackStatusUpdate={(s) => alEstado(i, r, s)}
           onError={alFallar}
         />
       </Animated.View>

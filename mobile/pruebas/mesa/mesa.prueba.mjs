@@ -5,7 +5,7 @@
  *   · reconocer caras con permiso: comparar vectores, entender «conóceme / te presento a / olvida a»,
  *     el «sí» de la persona presentada (con plazo) y el permiso por persona (src/caras/caras.ts);
  *   · el recorrido de primera vez: solo capacidades que existen (cada paso nombra archivos reales) y
- *     «no volver a mostrar» por persona (src/tutorial/pasos.ts);
+ *     «no volver a mostrar» por persona (src/tutorial/pasos.ts; el recorrido en sí: src/recorrido);
  *   · el contraste de los textos del tema (A17): cada token de texto ≥ 4,5:1 sobre cada fondo.
  *
  *   cd mobile && npx tsx pruebas/mesa/mesa.prueba.mjs
@@ -31,7 +31,7 @@ import {
   promediar,
   vectorValido,
 } from '../../src/caras/caras.ts';
-import { conTutorialVisto, pasosTutorial, tocaTutorial } from '../../src/tutorial/pasos.ts';
+import { conTutorialVisto, tocaTutorial } from '../../src/tutorial/pasos.ts';
 
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
 const RAIZ = path.resolve(AQUI, '../../..');
@@ -206,24 +206,6 @@ prueba('hoja «Más» (José, Samsung Android 16: tarjetas apiladas como baraja)
   assert.match(src, /<ScrollView[^>]*style=\{st\.desplazable\}[^>]*contentContainerStyle=\{st\.rejilla\}/, '…dentro de un ScrollView (lo que no cabe se desplaza)');
   assert.match(src, /<Text style=\{st\.titulo\}>\{m\.titulo\}<\/Text>/, 'el título no se corta (numberOfLines solo en el subtítulo)');
   assert.match(src, /width:\s*ancho\s*\}/, 'cada celda es una fracción del ancho real de la rejilla');
-});
-
-prueba('recorrido: cada paso nombra de dónde sale y esos archivos EXISTEN (nada inventado)', () => {
-  const pasos = pasosTutorial('Claudio');
-  assert.ok(pasos.length >= 6 && pasos.length <= 9, 'corto');
-  const ids = pasos.map((p) => p.id);
-  for (const id of ['hablar', 'envivo', 'chat', 'manos', 'recordatorios', 'internet', 'camara', 'avatar']) assert.ok(ids.includes(id), `enseña «${id}»`);
-  for (const p of pasos) {
-    assert.ok(p.titulo && p.texto.length > 20, p.id);
-    const rutas = [...p.fuente.matchAll(/((?:src|lib|server|screens|components|compa|pulse|avatares|caras|tutorial)\/[\w./-]+|\blib\/[\w.-]+)/g)].map((m) => m[1]);
-    assert.ok(rutas.length, `${p.id}: nombra su fuente`);
-    for (const r of rutas) {
-      const limpio = r.replace(/\/\*$/, '').replace(/\.$/, '');
-      const candidatos = [path.join(RAIZ, limpio), path.join(RAIZ, 'mobile', limpio), path.join(RAIZ, 'mobile/src', limpio), path.join(RAIZ, 'mobile/src', `${limpio}.ts`), path.join(RAIZ, 'mobile/src', `${limpio}.tsx`), path.join(RAIZ, `${limpio}.ts`)];
-      assert.ok(candidatos.some((c) => fs.existsSync(c)), `${p.id}: «${limpio}» existe`);
-    }
-  }
-  assert.match(pasos.find((p) => p.id === 'camara').texto, /números, no fotos/);
 });
 
 prueba('recorrido: una vez por persona; «no volver a mostrar» no se lo quita a otra cuenta', () => {

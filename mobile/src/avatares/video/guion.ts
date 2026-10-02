@@ -58,6 +58,14 @@ export type Reproduccion = { clip: ClipVideo; bucle: boolean; n: number };
 export const ENFRIAR_GOLPE_MS = 8000;
 /** Si empieza a hablar con un golpe en pantalla, se le deja terminar el gesto hasta esto; luego habla. */
 export const GOLPE_ANTES_DE_HABLAR_MS = 1800;
+/**
+ * Un fondo nuevo tiene que durar esto antes de cambiar de clip. La voz suelta «hablando» entre frase y
+ * frase (y la mesa pasa por escucha → piensa en un instante): sin esta espera, cada pausa era un fundido
+ * habla → reposo → habla, y eso es lo que se veía como un parpadeo (José, 2-oct: «Claudio parpadea
+ * bien raro»). Empezar a hablar no espera: la boca tiene que moverse con la primera sílaba.
+ */
+export const SOLTAR_HABLA_MS = 750;
+export const ASENTAR_FONDO_MS = 300;
 
 type Opciones = {
   /** Los clips que hay para este avatar (si falta uno de fondo, se ve el reposo). */
@@ -79,6 +87,9 @@ export class DirectorVideo {
   private desde = 0;
   private estadoVisto: EstadoAvatar | null = null;
   private ultimoGolpe = new Map<ClipVideo, number>();
+  /** El fondo que pidió el estado y todavía no se puso (esperando que se asiente), y desde cuándo. */
+  private fondoPedido: ClipVideo | null = null;
+  private pedidoDesde = 0;
 
   constructor(o: Opciones) {
     this.hay = new Set(o.hay);
@@ -93,6 +104,7 @@ export class DirectorVideo {
   }
 
   private poner(clip: ClipVideo, bucle: boolean): Reproduccion {
+    this.fondoPedido = null;
     this.actual = { clip, bucle, n: this.actual.n + 1 };
     this.desde = this.ahora();
     if (!bucle) this.ultimoGolpe.set(clip, this.desde);
@@ -131,7 +143,33 @@ export class DirectorVideo {
       if (fondo === 'habla' && this.ahora() - this.desde >= GOLPE_ANTES_DE_HABLAR_MS) return this.poner('habla', true);
       return null;
     }
-    return fondo === this.actual.clip ? null : this.poner(fondo, true);
+    return this.pedirFondo(fondo);
+  }
+
+  /** Cuánto tiene que durar este cambio de fondo antes de hacerse. */
+  private esperaPara(fondo: ClipVideo): number {
+    if (fondo === 'habla') return 0;
+    return this.actual.clip === 'habla' ? SOLTAR_HABLA_MS : ASENTAR_FONDO_MS;
+  }
+
+  /** El estado pide este fondo: se pone si ya se asentó; si no, queda pedido (la vista pone un reloj). */
+  private pedirFondo(fondo: ClipVideo): Reproduccion | null {
+    if (fondo === this.actual.clip) {
+      // Volvió antes de que se cumpliera la espera (una pausa entre frases): nada que cambiar.
+      this.fondoPedido = null;
+      return null;
+    }
+    if (this.fondoPedido !== fondo) {
+      this.fondoPedido = fondo;
+      this.pedidoDesde = this.ahora();
+    }
+    return this.ahora() - this.pedidoDesde >= this.esperaPara(fondo) ? this.poner(fondo, true) : null;
+  }
+
+  /** Si hay un fondo pedido que se está asentando: cuánto falta (ms). La vista pone un reloj y llama a `revisar()`. */
+  msParaFondo(): number | null {
+    if (!this.actual.bucle || !this.fondoPedido) return null;
+    return Math.max(0, this.esperaPara(this.fondoPedido) - (this.ahora() - this.pedidoDesde));
   }
 
   /**
@@ -147,7 +185,10 @@ export class DirectorVideo {
   /** Vuelve a mirar el último estado (el reloj de `msParaHablar` se cumplió). */
   revisar(): Reproduccion | null {
     const falta = this.msParaHablar();
-    return falta === 0 ? this.poner('habla', true) : null;
+    if (falta === 0) return this.poner('habla', true);
+    const fondo = this.fondoPedido;
+    if (fondo && this.msParaFondo() === 0) return this.poner(fondo, true);
+    return null;
   }
 
   /** El golpe `n` terminó (o está por terminar): vuelve al fondo que toca ahora. */

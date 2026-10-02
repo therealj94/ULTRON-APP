@@ -269,10 +269,11 @@ function vecinosLimpios(v?: VecinosVoz): { previo?: string; siguiente?: string }
   return { ...(previo ? { previo } : {}), ...(siguiente ? { siguiente } : {}) };
 }
 
-async function fetchSource(text: string, perf: Perf, emocion: Emocion, privado = false, vecinos?: VecinosVoz): Promise<AVPlaybackSource | null> {
+async function fetchSource(text: string, perf: Perf, emocion: Emocion, privado = false, vecinos?: VecinosVoz, voz?: AvatarId): Promise<AVPlaybackSource | null> {
   // Con la conversación en vivo nadie la va a oír: ni se le pide al servidor (cuesta voz).
   if (callaPorConversacion) return null;
-  const avatar = avatarActual();
+  // `voz`: habla otro que el avatar de la mesa (los anfitriones del recorrido, recorrido/).
+  const avatar = voz || avatarActual();
   const idioma = idiomaActual();
   if (privado) {
     // Lo que se lee de un chat cifrado: por POST (el texto no va en la URL), `privado` (el servidor no
@@ -579,15 +580,27 @@ export async function speakPrayer(opts?: SpeakCallbacks & { tema?: string; onPre
 }
 
 /** Calienta la caché de audio con frases que se van a decir pronto (saludos, «un momento»). */
-export async function prefetchPhrases(phrases: string[], emocion: Emocion = 'neutral') {
+export async function prefetchPhrases(phrases: string[], emocion: Emocion = 'neutral', voz?: AvatarId) {
   const queue = phrases.map(cleanForSpeech).filter(Boolean);
   const worker = async () => {
     while (queue.length) {
       const p = queue.shift()!;
-      await fetchSource(p, 'speak', emocion).catch(() => null);
+      await fetchSource(p, 'speak', emocion, false, undefined, voz).catch(() => null);
     }
   };
   await Promise.all([worker(), worker()]);
+}
+
+/**
+ * Deja listo el audio de un texto entero, partido igual que lo parte `speak` (con sus vecinos, que son
+ * parte de la clave de la caché): cuando llegue su turno suena sin esperar al servidor. Lo usa el
+ * recorrido para preparar la frase que sigue mientras suena la de ahora.
+ */
+export async function prepararHabla(text: string, o?: { emocion?: Emocion; voz?: AvatarId }): Promise<void> {
+  const clean = cleanForSpeech(text);
+  if (!clean || callaPorConversacion) return;
+  const frases = splitSentences(clean);
+  await Promise.all(frases.map((f, i) => fetchSource(f, 'speak', o?.emocion || 'neutral', false, { previo: frases[i - 1], siguiente: frases[i + 1] }, o?.voz).catch(() => null)));
 }
 
 export async function speak(
@@ -597,6 +610,8 @@ export async function speak(
     emocion?: Emocion;
     /** Texto de un chat de la persona (una lectura): sin caché ni aquí ni en el servidor. */
     privado?: boolean;
+    /** Con la voz de este avatar en vez del de la mesa (los anfitriones del recorrido). */
+    voz?: AvatarId;
   }
 ): Promise<boolean> {
   const clean = cleanForSpeech(text);
@@ -618,7 +633,7 @@ export async function speak(
   const AHEAD = 2;
   const sources: Array<Promise<AVPlaybackSource | null>> = [];
   const launch = (i: number) => {
-    if (i < sentences.length && !sources[i]) sources[i] = fetchSource(sentences[i], perf, emocion, !!opts?.privado, { previo: sentences[i - 1], siguiente: sentences[i + 1] });
+    if (i < sentences.length && !sources[i]) sources[i] = fetchSource(sentences[i], perf, emocion, !!opts?.privado, { previo: sentences[i - 1], siguiente: sentences[i + 1] }, opts?.voz);
   };
   for (let i = 0; i < Math.min(AHEAD + 1, sentences.length); i++) launch(i);
 

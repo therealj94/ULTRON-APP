@@ -72,7 +72,8 @@ import { usePulse } from '../pulse/PulseProvider';
 import { ChatMesa } from '../components/ChatMesa';
 import { ALTO_BARRA, BarraMesa } from '../components/BarraMesa';
 import { HojaMas, type OpcionMas } from '../components/HojaMas';
-import { Tutorial } from '../tutorial/Tutorial';
+import { RecorridoApp } from '../recorrido/RecorridoApp';
+import type { PruebaId } from '../recorrido/guion';
 import { conTutorialVisto, tocaTutorial } from '../tutorial/pasos';
 import { OidoMesa, VigilanteOido, duenoAudio, motivoFalloVoz, oidoPropio } from '../compa/duenoAudio';
 import { ESPERA_FRASE_MS, estadoDeEspera, fraseDeEstado, vozDeEspera } from '../compa/frasesEstado';
@@ -1685,7 +1686,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
 
   // Un solo dueño del audio: la llamada, la conversación en vivo o la mesa (solo si se la ve).
   useEffect(() => {
-    const dueno = duenoAudio({ enLlamada, conversacion: vozOcupa, mesaVisible, appActiva, companeraVisible });
+    // Con el recorrido abierto la mesa suelta el oído: si no, oiría a Claudio y ANT-ONIO y les contestaría.
+    const dueno = duenoAudio({ enLlamada, conversacion: vozOcupa, mesaVisible: mesaVisible && !tutorialAbierto, appActiva, companeraVisible: companeraVisible && !tutorialAbierto });
     const hizo = oidoMesa.current!.aplicar(dueno);
     if (hizo === 'suelta') {
       speakingRef.current = false;
@@ -1700,7 +1702,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       // Se reabrió un reconocedor nuevo: «escuchando» cuando de verdad escuche (el vigilante lo mira).
       setStatus(micMutedRef.current ? 'muted' : oidoEscuchando() ? 'listening' : 'reconnect');
     }
-  }, [enLlamada, vozOcupa, mesaVisible, appActiva, companeraVisible, restFace]);
+  }, [enLlamada, vozOcupa, mesaVisible, appActiva, companeraVisible, restFace, tutorialAbierto]);
 
   // La voz toma el avatar de la mesa. El permiso de la conversación se pide cuando suena la llamada
   // (VozProvider, `timbre`), no al entrar: eran segundos de GPU del nodo sin ninguna llamada.
@@ -2006,7 +2008,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         respaldo={fotosCara}
         onTap={() => onTap('face', 0, 0)}
         onLongPress={onLongPress}
-        activo={mesaActiva && !(llamadaActiva(voz.ciclo) && !voz.llamada.minimizada)}
+        activo={mesaActiva && !tutorialAbierto && !(llamadaActiva(voz.ciclo) && !voz.llamada.minimizada)}
         senal={senalAtajo}
       />
     ) : (
@@ -2087,10 +2089,30 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       }
     }
   };
-  const cerrarTutorial = (noVolver: boolean) => {
+  /** Se cerró el recorrido (terminado o no): ya lo vio; se vuelve a abrir desde «Más → Qué puedo hacer». */
+  const cerrarTutorial = () => {
     setTutorialAbierto(false);
-    if (!noVolver) return;
     void loadSettings().then((s0) => saveSettings({ tutorialVisto: conTutorialVisto(s0.tutorialVisto, user.correo) }));
+  };
+  /**
+   * Al final del recorrido eligió probar algo: lo mismo que su botón o su frase en la mesa. Espera a que
+   * el recorrido se cierre y la mesa recupere el oído y la voz (si no, la mesa todavía no puede hablar).
+   */
+  const probarDesdeRecorrido = (id: PruebaId) => {
+    setTimeout(() => {
+      switch (id) {
+        case 'hablar':
+          return void say(tr('Te escucho: dime lo que quieras.', 'I’m listening: tell me anything.'), 'HAPPY', { emocion: 'feliz' });
+        case 'camara':
+          return void handleCommand('qué ves');
+        case 'llamame':
+          return toggleConversar();
+        case 'recordatorio':
+          return void handleCommand(tr('Quiero que me pongas un recordatorio', 'I want you to set me a reminder'));
+        case 'chat':
+          return pulse.abrir();
+      }
+    }, 700);
   };
 
   return (
@@ -2220,7 +2242,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         conChat={enCuadro}
       />
 
-      <Tutorial visible={tutorialAbierto} nombreAvatar={de(avatarPorId(avatarId).nombre)} tema={tema} onCerrar={cerrarTutorial} />
+      <RecorridoApp visible={tutorialAbierto} nombre={user.name} idioma={idioma} onCerrar={cerrarTutorial} onProbar={probarDesdeRecorrido} />
 
       <DeskMenu
         visible={menuOpen}
