@@ -104,7 +104,20 @@ export const MENU_APP: readonly LugarApp[] = [
     ],
     abrir: 'correos',
     corto: { es: 'Correos: conectar en Ajustes → «Tus correos» (contraseña de aplicación; Outlook: «Entrar con Microsoft»)', en: 'Email: connect in Settings → “Your email” (app password; Outlook: “Sign in with Microsoft”)' },
-    fuente: ['mobile/src/ajustes/Correos.tsx', 'server/correo.ts'],
+    fuente: ['mobile/src/ajustes/Correos.tsx', 'mobile/src/correo/PantallaCorreos.tsx', 'server/correo.ts'],
+  },
+  {
+    id: 'cartera',
+    nombre: { es: 'Veta Wallet (cartera)', en: 'Veta Wallet (wallet)' },
+    donde: { es: 'Ajustes → AURA → «Veta Wallet», o el menú de la mesa → Cartera, o decir «enséñame mi wallet»; para pagar: en un chat de PULSE2CHAT, la moneda de arriba («Enviar dinero») o «mándale 5 ORIGEN a Ana»', en: 'Settings → AURA → “Veta Wallet”, or the desk menu → Wallet, or say “show me my wallet”; to pay: in a PULSE2CHAT chat, the coin at the top (“Send money”) or “send Ana 5 ORIGEN”' },
+    que: { es: 'sus saldos de Veta Wallet (tokens y ORIGEN), solo lectura: AURA nunca mueve su dinero. Al pagar, AURA prepara el envío y la persona lo firma en Veta Wallet con su contraseña de siempre; luego sale el comprobante en el chat («Verificado en la cadena»)', en: 'their Veta Wallet balances (tokens and ORIGEN), read-only: AURA never moves their money. To pay, AURA prepares it and they sign in Veta Wallet with their usual password; then the receipt shows in the chat (“Verified on chain”)' },
+    pasos: [
+      { es: 'si tiene PULSE2CHAT, se conecta sola con su cuenta; si no, «Conecta tu cartera en 2 pasos»', en: 'with PULSE2CHAT it connects by itself from their account; otherwise “Connect your wallet in 2 steps”' },
+      { es: 'en Veta Wallet: Recibir → Copiar dirección, y pegarla en «Tu dirección de Veta Wallet» → Guardar', en: 'in Veta Wallet: Receive → Copy address, and paste it in “Your Veta Wallet address” → Save' },
+      { es: 'pagar: abrir el chat de la persona, tocar la moneda, elegir moneda y cantidad, revisar y confirmar; firma en Veta Wallet y vuelve sola', en: 'pay: open that person’s chat, tap the coin, pick coin and amount, review and confirm; sign in Veta Wallet and it comes back by itself' },
+    ],
+    corto: { es: 'Cartera: Ajustes → «Veta Wallet» (solo saldos); pagar en un chat → la moneda, se firma en Veta Wallet', en: 'Wallet: Settings → “Veta Wallet” (balances only); pay in a chat → the coin, signed in Veta Wallet' },
+    fuente: ['mobile/src/cartera/HojaCartera.tsx', 'mobile/src/cartera/HojaPagar.tsx', 'lib/cartera.ts'],
   },
   {
     id: 'computadora',
@@ -179,8 +192,8 @@ export const MENU_APP: readonly LugarApp[] = [
     nombre: { es: 'Ajustes', en: 'Settings' },
     donde: { es: 'Más → Ajustes, o decir «abre ajustes»', en: 'More → Settings, or say “open settings”' },
     que: {
-      es: 'Tu perfil (Apodo, Avatar, Cumpleaños) · Apariencia (Oscuro, Claro, Sistema) · Idioma (Español, English) · AURA (Lo que AURA sabe de ti, Lo que sé de ti, Mi círculo, Misiones, Tus correos, Vibración) · Iniciativa de AURA · Su computadora · Privacidad (Permisos del teléfono, Alarmas y recordatorios) · lo de la mesa (voz, oído, «Comenta lo que ve», memoria, su cara) · Cerrar sesión',
-      en: 'Your profile (Nickname, Avatar, Birthday) · Appearance (Dark, Light, System) · Language · AURA (What AURA knows about you, What I know about you, My circle, Missions, Your email, Vibration) · AURA’s initiative · Their computer · Privacy (Phone permissions, Alarms & reminders) · desk options (voice, hearing, “Comments on what it sees”, memory, her face) · Sign out',
+      es: 'Tu perfil (Apodo, Avatar, Cumpleaños) · Apariencia (Oscuro, Claro, Sistema) · Idioma (Español, English) · AURA (Lo que AURA sabe de ti, Lo que sé de ti, Mi círculo, Misiones, Tus correos, Veta Wallet, Repetir el recorrido, Vibración) · Voz y oído · La mesa («Comenta lo que ve», Efectos de sonido, su cara) · Memoria (Memoria de largo plazo, Olvidar lo que recuerda de ti) · Iniciativa de AURA · Su computadora · Privacidad (Permisos del teléfono, Alarmas y recordatorios) · Cerrar sesión',
+      en: 'Your profile (Nickname, Avatar, Birthday) · Appearance (Dark, Light, System) · Language · AURA (What AURA knows about you, What I know about you, My circle, Missions, Your email, Veta Wallet, Replay the tour, Vibration) · Voice and hearing · The desk (“Comments on what it sees”, Sound effects, her face) · Memory (Long-term memory, Forget what it remembers about you) · AURA’s initiative · Their computer · Privacy (Phone permissions, Alarms & reminders) · Sign out',
     },
     abrir: 'ajustes',
     corto: { es: 'Ajustes: Más → Ajustes o «abre ajustes»', en: 'Settings: More → Settings or “open settings”' },
@@ -205,7 +218,7 @@ export const MENU_APP: readonly LugarApp[] = [
   {
     id: 'recorrido',
     nombre: { es: 'Recorrido', en: 'Tour' },
-    donde: { es: 'Más → «Qué puedo hacer»', en: 'More → “What I can do”' },
+    donde: { es: 'Más → «Qué puedo hacer», o Ajustes → AURA → «Repetir el recorrido»', en: 'More → “What I can do”, or Settings → AURA → “Replay the tour”' },
     que: { es: 'el recorrido de todo lo que hace AURA y las preguntas para conocerle (por voz, eligiendo o escribiendo)', en: 'the tour of everything AURA does and the questions to get to know them (by voice, picking or typing)' },
     corto: { es: 'Recorrido: Más → «Qué puedo hacer»', en: 'Tour: More → “What I can do”' },
     fuente: ['mobile/src/recorrido/guion.ts', 'mobile/src/bienvenida/VentanaBienvenida.tsx'],

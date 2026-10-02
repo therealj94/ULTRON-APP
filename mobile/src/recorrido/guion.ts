@@ -44,7 +44,7 @@ export type Linea = {
   espera?: { etiqueta: Bilingue; ms: number };
 };
 
-export const DEMOS = ['portada', 'mesa', 'hablar', 'camara', 'llamada', 'recordatorio', 'avisos', 'chat', 'whatsapp', 'correo', 'internet', 'computadora', 'memoria', 'conocer', 'propuestas', 'avatares', 'ajustes', 'final'] as const;
+export const DEMOS = ['portada', 'mesa', 'hablar', 'camara', 'llamada', 'recordatorio', 'avisos', 'chat', 'whatsapp', 'correo', 'cartera', 'internet', 'computadora', 'memoria', 'conocer', 'propuestas', 'avatares', 'ajustes', 'final'] as const;
 export type DemoId = (typeof DEMOS)[number];
 
 export type Escena = {
@@ -223,6 +223,19 @@ export const ESCENAS: readonly Escena[] = [
       { quien: C, paso: 'responde', texto: { es: 'Igual que con los mensajes: te lee la respuesta y solo la manda con tu sí.', en: 'Same as messages: she reads you the reply and only sends it with your yes.' } },
       { quien: A, paso: 'conectar', texto: { es: 'Están en la pestaña Correos, al lado de WhatsApp. Se conectan en Ajustes, «Tus correos»: tu dirección y una contraseña de aplicación.', en: 'They’re in the Email tab, next to WhatsApp. You connect them in Settings, “Your email”: your address and an app password.' } },
       { quien: C, emocion: 'feliz', texto: { es: 'Si es Outlook o Hotmail, tocas «Entrar con Microsoft» y escribes un código en su página. Así de fácil.', en: 'If it’s Outlook or Hotmail, tap “Sign in with Microsoft” and type a code on their page. That easy.' } },
+    ],
+  },
+  {
+    id: 'cartera',
+    titulo: { es: 'Tu Veta Wallet', en: 'Your Veta Wallet' },
+    fuente: 'cartera/HojaCartera.tsx (saldos, solo lectura) · cartera/HojaPagar.tsx (Enviar dinero desde un chat) · cartera/TarjetaPago.tsx (comprobante en la cadena) · lib/cartera.ts',
+    pasos: ['saldos', 'pagar', 'firma', 'comprobante'],
+    lineas: [
+      { quien: A, paso: 'saldos', gesto: 'senalar', texto: { es: 'Si tienes Veta Wallet, AU-RA ve tus saldos: tus tokens y tu ORIGEN. Solo los mira; nunca mueve tu dinero.', en: 'If you have Veta Wallet, AU-RA sees your balances: your tokens and your ORIGEN. She only looks; she never moves your money.' } },
+      { quien: C, paso: 'saldos', texto: { es: 'Está en Ajustes, «Veta Wallet». O pregúntale: ¿cuánto tengo en mi wallet?', en: 'It’s in Settings, “Veta Wallet”. Or ask her: how much do I have in my wallet?' } },
+      { quien: A, paso: 'pagar', gesto: 'senalar', texto: { es: 'Y pagas por PULSE2CHAT: en el chat de la persona tocas la moneda de arriba, «Enviar dinero». O le dices «mándale 5 ORIGEN a Ana».', en: 'And you pay through PULSE2CHAT: in that person’s chat tap the coin at the top, “Send money”. Or say “send Ana 5 ORIGEN”.' } },
+      { quien: C, paso: 'firma', cara: 'sorprendida', emocion: 'sorpresa', texto: { es: 'AU-RA lo deja listo, pero tú lo firmas en Veta Wallet, con tu misma contraseña de siempre.', en: 'AU-RA gets it ready, but you sign it in Veta Wallet, with your usual password.' } },
+      { quien: A, paso: 'comprobante', gesto: 'gusto', emocion: 'feliz', texto: { es: 'Al volver, en el chat queda el comprobante: «Verificado en la cadena». Así de seguro.', en: 'When you come back, the receipt is in the chat: “Verified on chain”. That safe.' } },
     ],
   },
   {

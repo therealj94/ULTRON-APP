@@ -28,6 +28,7 @@ import Avisos from './escenas/Avisos';
 import Chat from './escenas/Chat';
 import Whatsapp from './escenas/Whatsapp';
 import Correo from './escenas/Correo';
+import Cartera from './escenas/Cartera';
 import Internet from './escenas/Internet';
 import Computadora from './escenas/Computadora';
 import Memoria from './escenas/Memoria';
@@ -48,6 +49,7 @@ const ESCENA: Record<DemoId, ComponentType<PropsEscena>> = {
   chat: Chat,
   whatsapp: Whatsapp,
   correo: Correo,
+  cartera: Cartera,
   internet: Internet,
   computadora: Computadora,
   memoria: Memoria,

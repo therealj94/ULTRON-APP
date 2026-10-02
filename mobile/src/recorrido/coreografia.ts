@@ -80,6 +80,12 @@ export const COREOGRAFIA: Record<DemoId, Record<string, Momento>> = {
     responde: { efecto: 'avion', sonido: 'whoosh', vibra: 'exito' },
     conectar: { efecto: 'engrane', sonido: 'tap' },
   },
+  cartera: {
+    saldos: { efecto: 'chispas', sonido: 'chispa' },
+    pagar: { efecto: 'avion', sonido: 'tap' },
+    firma: { efecto: 'engrane', sonido: 'teclado' },
+    comprobante: { efecto: 'check', sonido: 'chispa', vibra: 'exito' },
+  },
   internet: {
     busca: { efecto: 'lupa', sonido: 'teclado' },
     resultado: { efecto: 'globo', sonido: 'chispa' },

@@ -46,6 +46,9 @@ import { SelectorCumple, VistaAvatar } from '../primeravez/piezas';
 import type { RaizParams } from '../app/rutas';
 import { salirDeLaSesion, useUsuario } from '../app/sesion';
 import { mesaAjustes, suscribirMesa } from '../app/mesaAjustes';
+import { abrirRuta } from '../app/rutas';
+import { abrirBienvenida } from '../bienvenida/estado';
+import { abrirCartera } from '../cartera/estado';
 import type { SttEngine } from '../lib/storage';
 
 /** Lo que corre: la OTA (o el JS de la APK), cuándo se publicó y la huella nativa. */
@@ -188,6 +191,17 @@ export function Ajustes({ navigation }: Props) {
               icono="correo"
               valor={correos === null ? '' : String(correos.length)}
               onPress={() => abrir('correos')}
+            />
+            <Fila titulo={tr('Veta Wallet', 'Veta Wallet')} detalle={tr('Tus saldos (solo lectura); pagas desde un chat y firmas en Veta Wallet', 'Your balances (read-only); pay from a chat and sign in Veta Wallet')} icono="wallet" onPress={abrirCartera} />
+            <Fila
+              titulo={tr('Repetir el recorrido', 'Replay the tour')}
+              detalle={tr('Claudio y ANT-ONIO te enseñan todo otra vez, y las preguntas para conocerte', 'Claudio and ANT-ONIO show you everything again, plus the get-to-know-you questions')}
+              icono="ayudaCirculo"
+              onPress={() => {
+                // La ventana la dibuja la mesa: primero se vuelve a ella y luego se abre.
+                abrirRuta('Mesa');
+                setTimeout(() => abrirBienvenida('menu'), 350);
+              }}
             />
             <Fila titulo={tr('Vibración', 'Vibration')} detalle={tr('Al tocar botones y al completar algo', 'When tapping buttons and completing things')} icono="tocar" derecha={<Interruptor valor={hapticos} onCambiar={(v) => void fijarHapticos(v)} etiqueta={tr('Vibración', 'Vibration')} />} />
           </Grupo>
