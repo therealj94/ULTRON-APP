@@ -304,7 +304,7 @@ async function probeJson(url: string, headers: Record<string, string> = {}, time
   }
 }
 
-type Salud = { qwen: boolean; ojo: boolean; vision: boolean; voz: boolean; fp: boolean; at: number; raw?: any };
+type Salud = { qwen: boolean; ojo: boolean; vision: boolean; voz: boolean; fp: boolean; whatsapp?: boolean; at: number; raw?: any };
 let saludCache: Salud | null = null;
 
 /** La medición en curso: dos peticiones a la vez esperan la misma, no lanzan cuatro sondeos cada una. */
@@ -337,13 +337,15 @@ async function saludRapida(): Promise<Salud> {
 }
 
 async function medirSaludYa(): Promise<Salud> {
-  const [fp, nodo, ojo, voz] = await Promise.all([
+  const [fp, nodo, ojo, voz, wa] = await Promise.all([
     probeJson(`${ULTRON_REMOTE_URL}/salud`),
     saludNodo(),
     ULTRON_OJO_URL
       ? probeJson(`${ULTRON_OJO_URL}/salud`, { 'X-Ojo-Clave': ULTRON_OJO_CLAVE })
       : Promise.resolve({ ok: false, status: 0, json: null, text: 'ULTRON_OJO_URL vacío' }),
     saludVoz(),
+    // El puente de WhatsApp (red privada de Render): solo si vive; nada de la cuenta.
+    whatsappDisponible() ? probeJson(`${clave('whatsapp_url').replace(/\/+$/, '')}/salud`) : Promise.resolve({ ok: false, status: 0, json: null, text: '' }),
   ]);
   saludCache = {
     qwen: !!(nodo.ok && nodo.json),
@@ -351,6 +353,7 @@ async function medirSaludYa(): Promise<Salud> {
     vision: !!(ojo.ok && ojo.json?.vision) || !!clave('gemini'),
     voz: voz.ok,
     fp: !!fp.ok,
+    whatsapp: !!(wa.ok && wa.json?.ok),
     at: Date.now(),
     raw: { fp, nodo, ojo, voz },
   };
@@ -398,6 +401,7 @@ app.get('/api/health', async (req, res) => {
       voicebox: estadoVoz().voicebox,
       voz: VOZ_OFICIAL.nombre,
       geminiFallback: !!clave('gemini'),
+      whatsapp: { configurado: whatsappDisponible(), vivo: !!s.whatsapp },
     });
   }
   res.json({
