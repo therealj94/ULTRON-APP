@@ -116,7 +116,7 @@ internal static class CentroSelfTest
             for (int i = 0; i < escenas.Length; i++)
             {
                 await w.Ejecutar($"window.__recorrido.ir({escenas[i].Item1})");
-                await Task.Delay(4200);
+                await Task.Delay(3600);
                 await w.Fotografiar(Path.Combine(carpeta, $"{12 + i}-recorrido-{escenas[i].Item2}.png"));
             }
             // Los videos de Claudio y ANT-ONIO tienen que estar dibujando (H.264 en WebView2).
