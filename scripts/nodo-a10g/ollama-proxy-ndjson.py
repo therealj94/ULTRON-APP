@@ -9,6 +9,17 @@ MODEL = "/opt/models/orcarouter_Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
 # conocimiento minero y la instruccion de herramientas (que va al final), y contestaba de memoria
 # sin consultar nunca el catastro. El system va entero; lo que se recorta es la conversacion vieja.
 MAX_CHARS = int(os.environ.get("PROXY_MAX_CHARS", "60000"))
+# 2-oct: el espacio (slot) COMUN, el ultimo de los 4 de llama-server. Todo pedido que no dice en que espacio va
+# (Dr Electrum, el ULTRON viejo de Render con su chat de prueba cada 3 min, cualquier sonda) cae AQUI. Antes
+# llama-server lo ponia en el espacio menos usado y le borraba lo leido a una persona: el turno siguiente de
+# esa persona releia ~7 700 fichas desde cero (8 s antes de la primera palabra; medido en el log del nodo).
+ESPACIO_COMUN = int(os.environ.get("PROXY_ESPACIO_COMUN", "3"))
+
+def espacio_de(valor):
+    """El espacio pedido (0..15) o, si no viene o no es valido, el comun."""
+    if isinstance(valor, int) and not isinstance(valor, bool) and 0 <= valor < 16:
+        return valor
+    return ESPACIO_COMUN
 
 def linea(content, done, extra=None, tools=None):
     msg = {"role": "assistant", "content": content or ""}
@@ -85,9 +96,7 @@ def chat():
     }
     # 1-oct: el espacio (slot) de cada persona. Lo leido de ella queda en ESE espacio y un reintento
     # cae ahi mismo (espera la lectura en curso y la reutiliza) en vez de releer todo en otro.
-    slot = op.get("id_slot")
-    if isinstance(slot, int) and not isinstance(slot, bool) and 0 <= slot < 16:
-        payload["id_slot"] = slot
+    payload["id_slot"] = espacio_de(op.get("id_slot"))
     # Las herramientas NO se mandan a llama: quien llama las describe en el system (formato Hermes)
     # y lee las <tool_call> del texto. Mandarlas ademas las duplicaba en el prompt.
     def generate():
@@ -175,9 +184,7 @@ def precalentar():
                 return jsonify({"ok": False, "error": "no encontre el system en la plantilla"}), 500
             prefijo = plantilla[: fin + len("<|im_end|>\n")]
         cuerpo = {"prompt": prefijo, "n_predict": 0, "cache_prompt": True}
-        slot = data.get("id_slot")
-        if isinstance(slot, int) and not isinstance(slot, bool) and 0 <= slot < 16:
-            cuerpo["id_slot"] = slot
+        cuerpo["id_slot"] = espacio_de(data.get("id_slot"))
         r = requests.post(LLAMA + "/completion", json=cuerpo, timeout=90).json()
         tm = r.get("timings") or {}
         return jsonify({"ok": True, "leidas": tm.get("prompt_n"), "reusadas": tm.get("cache_n"), "ms": int((time.time() - t0) * 1000)})

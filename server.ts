@@ -144,7 +144,7 @@ import { montarRutasArea } from './server/electrum/area';
 import { iniciarAlertas } from './server/electrum/alertas';
 import { montarRutasTimelapse } from './server/electrum/timelapse';
 import { anotar as anotarBitacora, asegurarBiblioteca } from './server/electrum/biblioteca';
-import { expedientesListo, guardarExpediente } from './lib/s3';
+import { expedientesListo, guardarExpediente, s3GetJson, s3Listo, s3PutJson } from './lib/s3';
 import { createHash, randomBytes } from 'node:crypto';
 import { personaPorCorreoExacto, puedeEntrar } from './lib/acceso';
 import { puedeEscribir } from './lib/acceso';
@@ -446,6 +446,19 @@ const nodoListo = crearComprobadorListo(async () => {
     return { listo: false, ms: Date.now() - t0, motivo: String(e?.message || e).slice(0, 160) };
   }
 });
+/**
+ * PRECALENTAR ANTES DE HABLAR (Windows y la app). En cuanto la persona muestra que va a hablar —abre la app,
+ * despierta el notch, toca el micrófono, dice «Oye AURA»—, el cliente avisa y el cerebro deja leído su contexto
+ * en su espacio: el primer turno lee solo lo nuevo (~0,5 s) en vez de todo (4–8 s). Con un turno reciente no
+ * hace nada (ya está caliente); una vez por minuto por persona como mucho (calentarCerebro).
+ */
+app.post('/api/cerebro/calentar', exigirMesaODesk, limitar(12, 60_000, 'calentar'), async (req, res) => {
+  const s = sesionDe(req);
+  if (!s?.correo) return res.status(401).json({ error: 'sesión requerida', honesto: true });
+  const estado = await calentarCerebroYa(s.correo).catch(() => 'error');
+  return res.json({ ok: true, estado, honesto: true });
+});
+
 app.get('/api/nodo/listo', limitar(60), async (_req, res) => {
   if (!ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) {
     return res.json({ listo: false, motivo: 'sin nodo', honesto: true });
@@ -2990,6 +3003,54 @@ const ultimoSistemaQwen = new Map<string, string>();
 const ultimoPrefijoQwen = new Map<string, { system: string; mensajes: { role: string; content: string }[] }>();
 const calentadoEn = new Map<string, number>();
 export const CALENTAR_CADA_MS = 60_000;
+/** Cuándo habló cada persona con el 27B por última vez (correo|voz): con un turno reciente su espacio ya está caliente. */
+const ultimoTurnoQwen = new Map<string, number>();
+/**
+ * Qué prompt tiene cada espacio del nodo ahora (correo o correo|voz; '' = otro o desconocido). Un turno escrito
+ * después de uno de voz, u otra persona que toma el espacio, lo cambian: entonces la voz ya NO está caliente
+ * aunque su último turno sea reciente (Codex en #126).
+ */
+const duenoEspacio = new Map<number, string>();
+function anotarEspacio(espacio: number | undefined, clave: string) {
+  if (!Number.isInteger(espacio)) return;
+  duenoEspacio.set(espacio as number, clave);
+  if (clave) ultimoTurnoQwen.set(clave, Date.now());
+}
+/** Con un turno así de reciente no se precalienta: el espacio ya tiene todo y un precalentado lo haría esperar. */
+export const CALIENTE_TRAS_TURNO_MS = 3 * 60_000;
+
+/*
+ * LO QUE SE PRECALIENTA SOBREVIVE A UN DESPLIEGUE. Antes vivía solo en la memoria de este proceso: después de
+ * cada despliegue en Render (varios al día) el primer turno de cada persona era frío (4–8 s leyendo todo). Se
+ * guarda en S3 (ultron/calentar/<huella del correo>.json, la parte de la memoria que este servidor ya puede
+ * escribir) un rato después de cada turno, y se lee de vuelta cuando hace falta precalentar.
+ */
+const clavePrecalentar = (k: string) => `ultron/calentar/${createHash('sha256').update(k).digest('hex').slice(0, 32)}.json`;
+const guardadoPendiente = new Map<string, ReturnType<typeof setTimeout>>();
+function guardarPrecalentar(k: string) {
+  if (!s3Listo()) return;
+  clearTimeout(guardadoPendiente.get(k));
+  guardadoPendiente.set(
+    k,
+    setTimeout(() => {
+      guardadoPendiente.delete(k);
+      const system = ultimoSistemaQwen.get(k);
+      if (!system) return;
+      const prefijo = ultimoPrefijoQwen.get(k);
+      void s3PutJson(clavePrecalentar(k), { system, mensajes: prefijo?.system === system ? prefijo.mensajes : [], t: Date.now() }).catch(() => undefined);
+    }, 20_000)
+  );
+}
+async function cargarPrecalentar(k: string): Promise<boolean> {
+  if (ultimoSistemaQwen.has(k) || !s3Listo()) return ultimoSistemaQwen.has(k);
+  const r = await s3GetJson(clavePrecalentar(k)).catch(() => null);
+  const j = r?.ok ? r.json : null;
+  if (!j || typeof j.system !== 'string' || !j.system) return false;
+  if (ultimoSistemaQwen.has(k)) return true; // llegó un turno mientras se leía: vale el suyo
+  ultimoSistemaQwen.set(k, j.system);
+  if (Array.isArray(j.mensajes)) ultimoPrefijoQwen.set(k, { system: j.system, mensajes: j.mensajes });
+  return true;
+}
 
 /** De quién es el fijo que se congela: el correo de la sesión, o el miembro de la junta sin correo. */
 function claveFijo(correo: string | null | undefined, quienMem: string | null | undefined): string {
@@ -2998,20 +3059,34 @@ function claveFijo(correo: string | null | undefined, quienMem: string | null | 
 }
 
 function calentarCerebro(correo: string) {
+  void calentarCerebroYa(correo);
+}
+
+/** Devuelve por qué no hizo falta (o no se pudo) precalentar, o 'precalentando'. */
+async function calentarCerebroYa(correo: string): Promise<string> {
   const c = String(correo || '').toLowerCase();
   // La llamada habla con el system corto de la voz: se calienta ESE (el del chat escrito no le sirve).
   const k = `${c}|voz`;
+  if (!c || !ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) return 'sin cerebro';
+  // Habló hace poco: su espacio ya tiene todo (y precalentar ahora podría hacer esperar su próximo turno).
+  const espacio = espacioDe(claveFijo(c, null));
+  if (duenoEspacio.get(espacio) === k && Date.now() - (ultimoTurnoQwen.get(k) || 0) < CALIENTE_TRAS_TURNO_MS) return 'ya caliente';
+  if (!(await cargarPrecalentar(k))) return 'sin turno previo';
   const system = ultimoSistemaQwen.get(k);
-  if (!system || !ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) return;
+  if (!system) return 'sin turno previo';
   // El primer turno de la llamada usa el mismo fijo con el que se precalienta (si la firma no cambió).
   renovarFijo(`${claveFijo(c, null)}|voz`);
   const ahora = Date.now();
-  if (ahora - (calentadoEn.get(c) || 0) < CALENTAR_CADA_MS) return;
+  if (ahora - (calentadoEn.get(c) || 0) < CALENTAR_CADA_MS) return 'precalentado hace poco';
   calentadoEn.set(c, ahora);
   // En SU espacio y con lo último que se le mandó (system + historial): el primer turno de la llamada
   // solo lee lo nuevo. Solo el system (precalentarSistema sin historial) recortaba lo leído del espacio.
   const prefijo = ultimoPrefijoQwen.get(k);
-  void precalentarSistema(system, 0, { espacio: espacioDe(claveFijo(c, null)), mensajes: prefijo?.system === system ? prefijo.mensajes : undefined });
+  void precalentarSistema(system, 0, { espacio, mensajes: prefijo?.system === system ? prefijo.mensajes : undefined }).then((r) => {
+    // Quedó leído el prompt de la voz en su espacio (sin marcarlo como turno: el próximo precalentado igual puede pasar).
+    if (r?.ok) duenoEspacio.set(espacio, k);
+  });
+  return 'precalentando';
 }
 
 /** Cómo se presenta lo que dice la persona: «Junta:» a la junta, «Miembro:» a un miembro de la comunidad. */
@@ -3052,6 +3127,8 @@ async function preguntarQwen(
   }
   if (alTexto) return preguntarQwenATrozos(mensajesQwen(system, message, hechos, hilo, nivel, contexto), espacio, alTexto, senal);
   try {
+    // Otro prompt en el espacio: lo que hubiera precalentado deja de contar como caliente.
+    anotarEspacio(espacio, '');
     const r = await fetchNodo(`${ULTRON_NODO_URL}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-ultron-secreto': ULTRON_NODO_SECRETO },
@@ -3078,6 +3155,7 @@ async function preguntarQwenATrozos(
   senal?: AbortSignal
 ): Promise<{ ok: boolean; reply: string; error?: string }> {
   try {
+    anotarEspacio(espacio, '');
     const r = await fetchNodo(`${ULTRON_NODO_URL}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-ultron-secreto': ULTRON_NODO_SECRETO },
@@ -3828,7 +3906,10 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     const c = `${String(p.correoApp).toLowerCase()}${p.compacto ? '|voz' : ''}`;
     ultimoSistemaQwen.set(c, system);
     ultimoPrefijoQwen.set(c, { system, mensajes: mensajesQwen(system, message, hechos, hilo, p.nivel, p.contexto).slice(1, -1) });
+    guardarPrecalentar(c);
   }
+  // De quién queda el espacio con este turno (aunque sea sin cuenta): el precalentado lo mira (Codex en #126).
+  const claveEspacio = p.correoApp ? `${String(p.correoApp).toLowerCase()}${p.compacto ? '|voz' : ''}` : '';
   try {
     const r = await fetchNodo(`${ULTRON_NODO_URL}/api/chat`, {
       method: 'POST',
@@ -3836,6 +3917,8 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       body: JSON.stringify({ model: ULTRON_NODO_MODELO, stream: true, messages: mensajesQwen(system, message, hechos, hilo, p.nivel, p.contexto), options: { id_slot: p.espacio } }),
       signal: conTope(senal, 60000),
     });
+    // Solo un pedido que el nodo aceptó deja el espacio caliente (Codex en #126): si falló, el precalentado sigue valiendo.
+    anotarEspacio(p.espacio, r.ok && r.body ? claveEspacio : '');
     if (!r.ok || !r.body) {
       await r.body?.cancel().catch(() => {});
       const reply = sinCerebro(p.datos);

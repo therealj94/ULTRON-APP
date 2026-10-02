@@ -172,6 +172,17 @@ test('hallazgo de Codex en #104: un correo fuera del padrón SIN sesión de comu
   assert.equal((await turno('/api/voz/agente', { avatar: 'aura' }, { 'x-ultron-sesion': token })).status, 401);
 });
 
+test('precalentar antes de hablar: sin sesión 401; con sesión contesta y, sin turno previo, no toca el nodo', async () => {
+  assert.equal((await turno('/api/cerebro/calentar', {})).status, 401);
+  const antes = alNodo.length;
+  const r = await turno('/api/cerebro/calentar', {}, { 'x-ultron-sesion': sesion('calentar.prueba@ordenglobal.org') });
+  assert.equal(r.status, 200);
+  const j: any = await r.json();
+  assert.equal(j.ok, true);
+  assert.equal(j.estado, 'sin turno previo');
+  assert.equal(alNodo.length, antes, 'sin nada que precalentar, el nodo no se entera');
+});
+
 test('/api/ultron/sesion: una sesión que ya no abre la mesa no se presenta como viva (401)', async () => {
   const sin = emitirSesion({ correo: 'sacada2.del.padron@ejemplo.org', nombre: 'Sacada', rol: 'Prueba' }).token;
   assert.equal((await fetch(`${BASE}/api/ultron/sesion`, { headers: { 'x-ultron-sesion': sin } })).status, 401);
