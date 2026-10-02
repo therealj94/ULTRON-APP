@@ -18,7 +18,7 @@ import { MEDIDA, useTema } from '../nucleo/tema';
 import { Boton, Campo, Chip, Hoja, Icono, Texto, vibrar } from '../ui';
 import { direccionDe, miCartera, type MiCartera } from './conexion';
 import { abrirCartera, abrirEnvioEnWallet, useVigia, vigia } from './estado';
-import { cortar, EXPLORADOR_TX, MONEDAS, montoValido, simbolo, type Envio } from './logica';
+import { COMISION_USD, cortar, EXPLORADOR_TX, MONEDAS, montoValido, simbolo, type Envio } from './logica';
 import { leerSaldos, type Cartera } from './red';
 import { TOPE_VIGIA_MS } from './vigia';
 
@@ -323,6 +323,12 @@ function Resumen({ tema, nombre, direccion, monto, moneda, desde }: { tema: Retu
           {tr('Desde tu cartera:', 'From your wallet:')} {cortar(desde)}
         </Texto>
       ) : null}
+      <Texto v="mini" color="texto3">
+        {tr(
+          `Comisión de Veta Wallet: ${COMISION_USD.toFixed(2)} USD por envío (se cobra en ORIGEN), más el gas de la red.`,
+          `Veta Wallet fee: ${COMISION_USD.toFixed(2)} USD per payment (charged in ORIGEN), plus network gas.`
+        )}
+      </Texto>
     </View>
   );
 }

@@ -169,7 +169,7 @@ export function HojaCartera({ visible, onCerrar }: Props) {
         <View style={{ gap: MEDIDA.espacio.l }}>
           <View style={[s.total, { backgroundColor: tema.acentoFondo, borderColor: tema.borde }]}>
             <Texto v="etiqueta" color="acentoTexto">
-              {tr('Valor aproximado', 'Approximate value')}
+              {tr('Valor con el oro de hoy', 'Value at today’s gold price')}
             </Texto>
             {cartera ? (
               <Texto v="heroe" accessibilityLabel={`${dinero(cartera.total)} USD`}>
@@ -228,8 +228,8 @@ export function HojaCartera({ visible, onCerrar }: Props) {
           </View>
           <Texto v="mini" color="texto3">
             {tr(
-              'Para enviar dinero a alguien, ábrelo en su chat → «Enviar dinero»: la dirección sale de su ficha y lo firmas en Veta Wallet con tu contraseña. Precio de ORIGEN = oro por gramo ÷ 55 (1 ORIGEN = 1/55 g de oro); AUKA sigue la onza de oro y AGKA la de plata. Es una referencia, no una cotización.',
-              'To send money to someone, open their chat → “Send money”: the address comes from their profile and you sign it in Veta Wallet with your password. ORIGEN price = gold per gram ÷ 55; AUKA follows the gold ounce and AGKA the silver ounce. A reference, not a quote.',
+              'Para enviar dinero a alguien, ábrelo en su chat → «Enviar dinero»: la dirección sale de su ficha y lo firmas en Veta Wallet con tu contraseña. Precio de ORIGEN = 1 gramo de oro ÷ 55, en dólares; AUKA sigue la onza de oro y AGKA la de plata. Cada envío lleva la comisión de Veta Wallet: 0,01 USD, cobrada en ORIGEN.',
+              'To send money to someone, open their chat → “Send money”: the address comes from their profile and you sign it in Veta Wallet with your password. ORIGEN price = 1 gram of gold ÷ 55, in dollars; AUKA follows the gold ounce and AGKA the silver ounce. Each payment carries the Veta Wallet fee: 0.01 USD, charged in ORIGEN.',
             )}
           </Texto>
           {quitar ? (
