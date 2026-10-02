@@ -52,6 +52,11 @@ public partial class NotchWindow
             Centro.Registro.Anotar("conexion", clave + " desconectada");
             return true;
         }
+        // Las conexiones son de la identidad AURA que está dentro: sin sesión no se conecta nada.
+        if (IdentidadAura.Length == 0 || !CuentasSirven)
+            throw new InvalidOperationException(T("Primero entra con tu cuenta AU-RA: las conexiones quedan atadas a ella.", "Sign in to AU-RA first: connections are tied to your account."));
+        long gen = generacionCuentas.Actual;
+        var dueno = ajustes.DuenoCuentas;
         // El Client ID: el propio (Avanzado) o el que puso el servidor AU-RA en Render.
         if (Servicios.Config(ajustes, prov) == null)
         {
@@ -88,6 +93,12 @@ public partial class NotchWindow
         {
             Centro.Registro.Anotar("conexion", $"{clave} falló: {ex.Message}");
             throw new InvalidOperationException(Explicar(prov, ex.Message));
+        }
+        // Mientras se autorizaba en el navegador pudo salir o entrar otra persona: esa conexión ya no es de nadie aquí.
+        if (!DuenoCuentas.PuedeGuardar(gen, generacionCuentas.Actual, dueno, ajustes.DuenoCuentas, true))
+        {
+            Centro.Registro.Anotar("conexion", $"{clave} descartada: cambió la cuenta AURA mientras se conectaba");
+            throw new InvalidOperationException(T("Cambió la cuenta de AURA mientras conectabas; no guardé esa conexión.", "The AURA account changed while connecting; that connection wasn't saved."));
         }
         ajustes.Conexiones[clave] = token;
         GuardarAjustes(); IniciarCuentas(); AvisarEstadoCentro();

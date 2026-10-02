@@ -30,7 +30,7 @@ internal sealed class CallWindow : Window {
     core.SetVirtualHostNameToFolderMapping("aura.windows.local",Path.Combine(AppContext.BaseDirectory,"CallAssets"),CoreWebView2HostResourceAccessKind.DenyCors);
     core.NavigationStarting+=(_,e)=>{if(e.Uri!=Origin+"call.html")e.Cancel=true;};
     core.NewWindowRequested+=(_,e)=>e.Handled=true;core.DownloadStarting+=(_,e)=>e.Cancel=true;
-    core.PermissionRequested+=(_,e)=>{e.State=CoreWebView2PermissionState.Deny;if(!selfTest&&e.Uri.StartsWith(Origin,StringComparison.Ordinal)&&e.PermissionKind is CoreWebView2PermissionKind.Microphone or CoreWebView2PermissionKind.Camera){e.State=MessageBox.Show(this,$"¿Permitir {e.PermissionKind} para esta llamada?","AURA · Permiso",MessageBoxButton.YesNo,MessageBoxImage.Question)==MessageBoxResult.Yes?CoreWebView2PermissionState.Allow:CoreWebView2PermissionState.Deny;}e.SavesInProfile=false;};
+    core.PermissionRequested+=(_,e)=>{e.State=CoreWebView2PermissionState.Deny;if(!selfTest&&Aura.Windows.Core.PuenteCentro.OrigenExacto(e.Uri,new Uri(Origin))&&e.PermissionKind is CoreWebView2PermissionKind.Microphone or CoreWebView2PermissionKind.Camera){e.State=MessageBox.Show(this,$"¿Permitir {e.PermissionKind} para esta llamada?","AURA · Permiso",MessageBoxButton.YesNo,MessageBoxImage.Question)==MessageBoxResult.Yes?CoreWebView2PermissionState.Allow:CoreWebView2PermissionState.Deny;}e.SavesInProfile=false;};
     core.WebMessageReceived+=async(_,e)=>{
      if(e.Source!=Origin+"call.html"||closed||e.WebMessageAsJson.Length>262144)return;
      try{using var doc=JsonDocument.Parse(e.WebMessageAsJson);var m=doc.RootElement;string? kind=m.GetProperty("kind").GetString();

@@ -232,6 +232,11 @@ public partial class NotchWindow
     {
         correo?.Dispose(); correo = null;
         agenda?.Dispose(); agenda = null;
+        // Las cuentas son de una identidad AURA: sin sesión no corre nada; de otra persona, se borran.
+        var quien = IdentidadAura;
+        if (quien.Length == 0) { foreach (var c in conexiones.Values) c.Dispose(); conexiones.Clear(); return; }
+        if (DuenoCuentas.HayQueLimpiar(ajustes.DuenoCuentas, quien)) { LimpiarCuentas(quien); return; }
+        long gen = generacionCuentas.Actual;
         CrearConexiones();
         var (buzonApi, agendaApi) = FuentesDeCuentas();
         correo = buzonApi;
@@ -240,10 +245,10 @@ public partial class NotchWindow
         {
             correo.Nuevo += c => Dispatcher.BeginInvoke(new Action(() =>
             {
-                if (!ajustes.AvisarCorreos || pausado) return;
+                if (!generacionCuentas.Vigente(gen) || !ajustes.AvisarCorreos || pausado) return;
                 Avisar(new Aviso(T("Correo de ", "Email from ") + c.De, c.Asunto, "", "happy", T("Leer", "Read"), () => _ = LeerCorreos("leer", false), 7));
             }));
-            correo.Fallo += m => Dispatcher.BeginInvoke(new Action(() => Avisar(new Aviso(T("Correo", "Email"), m, "", "worried", Segundos: 8))));
+            correo.Fallo += m => Dispatcher.BeginInvoke(new Action(() => { if (generacionCuentas.Vigente(gen)) Avisar(new Aviso(T("Correo", "Email"), m, "", "worried", Segundos: 8)); }));
             correo.Vigilar();
         }
         if (agendaApi != null || ajustes.AgendaUrl.Length > 8)
@@ -253,7 +258,7 @@ public partial class NotchWindow
                 agenda = agendaApi ?? new AgendaCuenta(ajustes.AgendaUrl);
                 agenda.Pronto += ev => Dispatcher.BeginInvoke(new Action(() =>
                 {
-                    if (pausado) return;
+                    if (!generacionCuentas.Vigente(gen) || pausado) return;
                     var min = Math.Max(1, (int)Math.Round((ev.Inicio - DateTime.Now).TotalMinutes));
                     Avisar(new Aviso(T($"En {min} min: ", $"In {min} min: ") + ev.Titulo, ev.Lugar.Length > 0 ? ev.Lugar : ev.Inicio.ToString("h:mm tt"), "", "happy", Segundos: 12));
                     Contestar(T($"En {min} minutos tienes {ev.Titulo}.", $"In {min} minutes you have {ev.Titulo}."));

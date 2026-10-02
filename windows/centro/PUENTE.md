@@ -7,6 +7,10 @@ La página (`centro/src`) habla con el .exe (`src/Aura.Windows/Centro/`) por `wi
 
 En TS: `pedir(metodo, args, ms?)` y `al(evento, fn)` de `src/puente.ts`. Fuera de WebView2 responde con datos de muestra.
 
+Seguridad: AURA solo acepta mensajes, navegación y permisos (micrófono/cámara) del origen EXACTO `https://centro.aura.local`
+(esquema, host y puerto; sin usuario; nunca por prefijo: `PuenteCentro.OrigenExacto`). Un método que no esté en la
+tabla (`PuenteCentro.Metodos`) se rechaza antes de mirar sus argumentos.
+
 ## Métodos
 
 | Método | Args | Devuelve |
@@ -21,7 +25,7 @@ En TS: `pedir(metodo, args, ms?)` y `al(evento, fn)` de `src/puente.ts`. Fuera d
 | `ventana.recoger` | — | oculta el Centro (AURA sigue en el notch) |
 | `relevo` | `{ ruta, cuerpo, ms? }` | POST a `https://cerebro.ordenscan.com/mensajes{ruta}` desde C# (sin CORS): `{ estado, datos }` (estado HTTP y el JSON). Solo rutas del relevo (`/^\/[a-z0-9/_-]{1,60}$/`) |
 | `relevo.archivo` | `{ id }` | `{ base64, mime }` de `GET /archivo/:id` |
-| `secreto.leer` / `secreto.guardar` / `secreto.borrar` | `{ clave, valor? }` | almacén pequeño cifrado con DPAPI (claves de PULSE2CHAT). Claves `^[a-z0-9._-]{1,60}$`, valor ≤ 16 KB |
+| `secreto.leer` / `secreto.guardar` / `secreto.borrar` | `{ clave, valor? }` | almacén pequeño cifrado con DPAPI (claves de PULSE2CHAT). Solo claves `p2c.…` (`^p2c\.[a-z0-9_-]+(\.[a-z0-9_-]+)*$`, ≤ 60), valor ≤ 16 KB; otra clave se rechaza |
 | `notch.timbre` | `{ de, nombre, video }` | el notch muestra la llamada entrante con Contestar/Rechazar (responde con el evento `llamada.accion`) |
 | `notch.timbreFin` (o `notch.colgada`) | `{ motivo }` | la llamada dejó de sonar (contestó, colgó, otro aparato): el notch quita el timbre |
 | `notch.aviso` | `{ titulo, cuerpo }` | aviso en el notch (mensaje nuevo, llamada perdida) |

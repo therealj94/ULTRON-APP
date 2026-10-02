@@ -54,6 +54,11 @@ internal sealed class Ajustes
     /// renovar, cifrados con DPAPI como todo lo demás. Nunca salen de este equipo.
     /// </summary>
     public Dictionary<string, TokenOauth> Conexiones { get; set; } = new();
+    /// <summary>
+    /// De quién son las conexiones, el correo IMAP y el calendario (el correo AURA, en minúsculas). Si entra otra
+    /// identidad o se sale de la cuenta, se borran (DuenoCuentas).
+    /// </summary>
+    public string DuenoCuentas { get; set; } = "";
     /// <summary>Client ID propios (opcional): si están, ganan a los que da el servidor AU-RA.</summary>
     public string SpotifyClientId { get; set; } = "";
     public string GoogleClientId { get; set; } = "";
@@ -105,6 +110,8 @@ internal sealed class Ajustes
             if (a.Avatar is not ("aura" or "claudio" or "antonio" or "ojos")) a.Avatar = "aura";
             if (a.Idioma is not ("es" or "en")) a.Idioma = "es";
             a.Conexiones ??= new();
+            // Cuentas de versiones sin dueño: son de quien ya estaba dentro (sin sesión, de nadie: no se usan).
+            a.DuenoCuentas = Core.DuenoCuentas.Migrar(a.DuenoCuentas, Core.DuenoCuentas.Identidad(a.Token, a.Correo));
             a.AppsSilenciadas ??= new();
             if (a.Escucha is not ("pedir" or "palabra" or "siempre")) a.Escucha = a.PalabraActivacion ? "palabra" : "pedir";
             if (a.VozMotor is not ("agente" or "local")) a.VozMotor = "agente";

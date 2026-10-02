@@ -139,6 +139,7 @@ public partial class NotchWindow
         if (v.ShowDialog() != true) return;
         // Solo lo que se edita en la ventana: los recordatorios y un token renovado mientras estaba abierta se conservan.
         var r = v.Resultado;
+        var quienAntes = IdentidadAura;
         bool cambioCuenta = r.Correo != ajustes.Correo || r.Servidor != ajustes.Servidor || r.Token != v.TokenAlAbrir;
         ajustes.Servidor = r.Servidor; ajustes.Correo = r.Correo; ajustes.Avatar = r.Avatar; ajustes.Idioma = r.Idioma;
         if (r.Clave.Length > 0 || r.Token.Length == 0) ajustes.Clave = r.Clave;
@@ -160,7 +161,8 @@ public partial class NotchWindow
         bool cambioAvisos = r.AvisosDeApps != ajustes.AvisosDeApps;
         ajustes.AvisosDeApps = r.AvisosDeApps; ajustes.AvisosPrivados = r.AvisosPrivados; ajustes.AvisosEnVoz = r.AvisosEnVoz;
         ajustes.AppsSilenciadas = r.AppsSilenciadas;
-        if (cambioCuentas) IniciarCuentas();
+        // Otra identidad AURA: IniciarCuentas detiene y borra las cuentas de la anterior.
+        if (cambioCuentas || IdentidadAura != quienAntes) IniciarCuentas();
         if (cambioAvisos) IniciarAvisosApps();
         if (!ajustes.MostrarMusica) musicaVisible = false;
         AlCambiarMusica(cancion, false); // mostrar u ocultar la música al momento
