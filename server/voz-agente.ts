@@ -897,7 +897,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
       return res.status(429).json({ error: { message: 'demasiados turnos; espera un momento' } });
     }
     // Pasado el cupo de turnos, una frase y la conversación sigue: un 429 aquí la colgaba entera.
-    if (!gastarCupo(claveTurnos, CUPO_TURNOS_MIN)) {
+    if (!gastarCupo(claveTurnos, CUPO_TURNOS_MIN, 60_000, ahora)) {
       console.warn(`[voz agente] cupo de turnos lleno (${pase.cid.slice(0, 8)}): se contesta con una frase`);
       return soloFrase(PHRASES.rapido[pase.idioma]);
     }
@@ -906,7 +906,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
       if (cupoDevuelto) return;
       cupoDevuelto = true;
       if (conv.devolverTurno === devolverTurno) conv.devolverTurno = null;
-      devolverCupo(claveTurnos);
+      devolverCupo(claveTurnos, ahora);
     };
     // El nivel de este turno: el firmado en el pase y el de hoy por el correo; vale el más estrecho.
     const nivel = nivelMasEstrecho(pase.nivel, nivelDe(pase.correo));
@@ -928,7 +928,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     const vivo = conv.vivo;
     if (vivo && mensaje && vivo.mensaje === plana(mensaje) && ahora < vivo.hasta && vivo.vigente()) {
       // Un reintento de la misma frase no es un turno nuevo.
-      devolverCupo(claveTurnos);
+      devolverCupo(claveTurnos, ahora);
       req.socket.setNoDelay?.(true);
       await vivo.enganchar(res);
       return;

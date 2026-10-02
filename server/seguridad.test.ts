@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { urlPublica, mesaAutorizada, mesaDeskAutorizada, emitirSesion, sesionDe, _olvidarCacheSesiones } from './seguridad';
+import { devolverCupo, gastarCupo, urlPublica, mesaAutorizada, mesaDeskAutorizada, emitirSesion, sesionDe, _olvidarCacheSesiones } from './seguridad';
 import { limpiarParaVoz } from './desk';
 
 test('bloquea metadata AWS y localhost', async () => {
@@ -79,4 +79,15 @@ test('oír, ver y la voz abiertos con rate limit; ni turnos ni nada que cambie e
   else process.env.NODE_ENV = prevN;
   if (prevK === undefined) delete process.env.ULTRON_MESA_CLAVE;
   else process.env.ULTRON_MESA_CLAVE = prevK;
+});
+
+test('devolverCupo quita la entrada de ESE turno, no la última (Codex en #124)', () => {
+  const k = `prueba-cupo-${Math.random()}`;
+  const t0 = 1_000_000;
+  assert.equal(gastarCupo(k, 2, 60_000, t0), true); // la frase a medias, al principio de la ventana
+  assert.equal(gastarCupo(k, 2, 60_000, t0 + 50_000), true); // un turno de verdad, al final
+  devolverCupo(k, t0); // se descarta la frase a medias
+  // Pasado el minuto de la primera, el turno de verdad SIGUE contando: queda un solo lugar.
+  assert.equal(gastarCupo(k, 2, 60_000, t0 + 61_000), true);
+  assert.equal(gastarCupo(k, 2, 60_000, t0 + 61_001), false, 'con pop() se quitaba el de verdad y aquí había lugar de más');
 });
