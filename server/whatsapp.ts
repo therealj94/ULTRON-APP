@@ -203,6 +203,15 @@ async function responder(quien: string, ambito: string, ref: string, texto: stri
   return guardarBorrador(quien, ambito, { chat: c.jid, nombre: c.nombre || c.jid, texto: texto.trim(), creado: Date.now() });
 }
 
+/**
+ * Un borrador para un chat que ya se sabe (lib/circulo.ts: «recuérdale a mi esposa…»). El mismo borrador
+ * de siempre: el servidor lo manda solo si el turno siguiente es un «sí» claro (resolverBorradorWhatsapp).
+ * `chat`: el jid («50499990000@s.whatsapp.net»). Devuelve el HECHO para el modelo.
+ */
+export function borradorWhatsappPara(quien: string, ambito: string, b: { chat: string; nombre: string; texto: string }): string {
+  return guardarBorrador(quien, ambito, { chat: String(b.chat || ''), nombre: String(b.nombre || b.chat || ''), texto: String(b.texto || '').trim(), creado: Date.now() });
+}
+
 export function borradorWhatsappDe(quien: string, ambito = ''): Borrador | null {
   const b = BORRADORES.get(llave(quien, ambito));
   if (!b) return null;
