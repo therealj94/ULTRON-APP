@@ -36,6 +36,8 @@ export function construirMensajes(opts: {
   nivel?: NivelAura;
   /** Es el dueño de un WhatsApp conectado (server/whatsapp.ts): se le ofrece la herramienta. */
   whatsapp?: boolean;
+  /** El turno es de alguien con sesión: se le ofrecen sus misiones y su círculo (lib/harness.ts). */
+  sesion?: boolean;
   /**
    * Lo que cambia en cada turno (hora, app, HECHOS: server/prompt-turno.ts piezasDelTurno). Va al FINAL
    * del system, después de las reglas fijas: así el principio es igual turno a turno y el nodo reutiliza
@@ -58,7 +60,7 @@ export function construirMensajes(opts: {
   const parts: string[] = [codigo ? promptHonesto(nivel) : HONESTIDAD_CONVERSACION];
   if (!codigo) parts.push(telegram ? TEXTO_TELEGRAM : VOZ_ESCRITORIO);
   parts.push(String(opts.personalidad || '').trim());
-  if (harness) parts.push(instruccionHarness(nivel, undefined, !!opts.whatsapp));
+  if (harness) parts.push(instruccionHarness(nivel, undefined, !!opts.whatsapp, !!opts.sesion));
   if (cot) parts.push(COT_FORZADO);
   if (fewShot) parts.push(FEW_SHOT_HONESTO);
 

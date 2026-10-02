@@ -362,13 +362,7 @@ function textoLlamada(p: MiembroCirculo, dueno: string): string {
 /* ------------------------------------------------------------------ la herramienta del cerebro */
 
 /** Lo que el cerebro sabe pedir (lib/harness.ts). */
-export const INSTRUCCION_CIRCULO = `
-PEDIR_HERRAMIENTA: circulo listar
-PEDIR_HERRAMIENTA: circulo recordar <persona: su nombre o «mi esposa»> | <el recordatorio, ya redactado para esa persona> | <cuándo, opcional>
-PEDIR_HERRAMIENTA: circulo escribir <persona> | <el mensaje, ya redactado en su voz>
-PEDIR_HERRAMIENTA: circulo agregar <nombre> | <relación: esposa, hijo, socio…> | <su WhatsApp o teléfono>
-PEDIR_HERRAMIENTA: circulo llamar <persona>
-Su círculo cercano (familia, socios). Recordar y escribir solo dejan un BORRADOR de WhatsApp: léeselo y pregúntale si lo mandas; el servidor lo manda cuando diga que sí. Nunca digas que salió si no te llegó «ENVIADO». Llamar y PULSE2CHAT los hace la app del teléfono, no tú desde aquí.`.trim();
+export { INSTRUCCION_CIRCULO } from './harness';
 
 type DepsCirculo = {
   whatsappListo?: (dueno: string) => boolean;

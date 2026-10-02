@@ -86,7 +86,25 @@ export type AccionApp =
   /** Las manos nuevas (llamar, leer, buscar, idioma, perfil, recordatorios): lib/manos-app.ts. */
   | AccionMano
   /** Lo que hace su computadora en la nube (server/computadora.ts). Solo la empuja el servidor. */
-  | AccionComputadora;
+  | AccionComputadora
+  /** Lo que AU-RA propone por su cuenta (server/iniciativa.ts). Solo la empuja el servidor. */
+  | AccionIniciativa;
+
+/**
+ * UNA PROPUESTA DE AU-RA, SIN QUE NADIE LE PIDIERA NADA (server/iniciativa.ts la empuja; el modelo NO puede
+ * pedirla: `validarAccion` no la conoce). La app la muestra como tarjeta con «Sí» / «Luego» / «No» y
+ * contesta con POST /api/iniciativa/responder; con «Sí», `pedido` es lo que AU-RA hace (un turno normal).
+ */
+export type AccionIniciativa = {
+  tipo: 'iniciativa';
+  id: string;
+  texto: string;
+  pedido: string;
+  clase: string;
+  prioridad: number;
+  creada: number;
+  misionId?: string;
+};
 
 /**
  * SU COMPUTADORA, EN VIVO EN EL TELÉFONO (server/computadora.ts la empuja; el modelo NO puede pedirla con

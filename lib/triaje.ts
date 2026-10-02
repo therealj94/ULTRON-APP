@@ -396,11 +396,7 @@ export function resumenTriaje(p: Record<Importancia, Clasificada[]>, o: { errore
 
 /* ------------------------------------------------------------------ la herramienta del cerebro */
 
-export const INSTRUCCION_TRIAJE = `
-PEDIR_HERRAMIENTA: triaje revisar
-PEDIR_HERRAMIENTA: triaje whatsapp
-PEDIR_HERRAMIENTA: triaje correo
-Revisa sus mensajes (WhatsApp y correo), los ordena por importancia (urgente, importante, normal, se puede ignorar) y sugiere respuestas cortas. Úsalo cuando pida «revisa mis mensajes», «¿qué tengo pendiente?», «¿algo importante?». Las respuestas sugeridas son borradores: nada se manda sin su «sí».`.trim();
+export { INSTRUCCION_TRIAJE } from './harness';
 
 /** El runner del harness: «revisar» (todo), «whatsapp», «correo». */
 export async function correrTriaje(dueno: string, arg: string, _ambito = '', fuentes?: FuentesTriaje): Promise<string> {
