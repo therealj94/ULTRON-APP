@@ -27,6 +27,9 @@ export const ESQUEMA_WALLET = 'vetawallet://';
 /** A dónde vuelve la wallet después de firmar (la única vuelta que acepta para un pago de AU-RA). */
 export const VUELTA_PAGO = 'ultronfp://pago';
 const GRAMOS_ONZA = 31.1035;
+/** La comisión de Veta Wallet por transacción: 0,01 dólares, cobrada en ORIGEN al precio del oro (José, 2-oct;
+ * veta-wallet-backend lib/comision.js). No es el precio del ORIGEN, que es 1 gramo de oro ÷ 55. */
+export const COMISION_USD = 0.01;
 
 export type Token = { simbolo: string; contrato: string | null };
 

@@ -33,8 +33,8 @@ export async function correrCartera(dueno: string, arg: string, o: { pedir?: Ped
   try {
     const c = await leerSaldos(direccion, { pedir: o.pedir });
     const dicho = decirSaldos(c.saldos, solo, o.idioma || perfil?.idioma || 'es');
-    const precio = c.conPrecio ? 'Valor aproximado con el oro de hoy (ORIGEN = oro por gramo ÷ 55); es una referencia, no una cotización.' : 'Sin precio del oro ahora: di las cantidades sin dólares.';
-    return `HARNESS cartera (Veta Wallet ${direccion.slice(0, 8)}…${direccion.slice(-6)}, leída de la cadena de Orden Global, solo lectura): ${dicho} ${precio} Dilo con naturalidad; si quiere ver el detalle, ofrécele abrir su Cartera en la app. Para mandar dinero se prepara en la app y se firma en Veta Wallet: tú nunca mueves dinero.`;
+    const precio = c.conPrecio ? 'Valor con el oro de hoy: el precio de ORIGEN es 1 gramo de oro ÷ 55, en dólares.' : 'Sin precio del oro ahora: di las cantidades sin dólares.';
+    return `HARNESS cartera (Veta Wallet ${direccion.slice(0, 8)}…${direccion.slice(-6)}, leída de la cadena de Orden Global, solo lectura): ${dicho} ${precio} Dilo con naturalidad; si quiere ver el detalle, ofrécele abrir su Cartera en la app. Para mandar dinero se prepara en la app y se firma en Veta Wallet: tú nunca mueves dinero. Cada envío lleva la comisión de Veta Wallet, 0,01 dólares (cobrada en ORIGEN), más el gas de la red.`;
   } catch (e: any) {
     return `HARNESS cartera: la red de Orden Global no contestó (${String(e?.message || e).slice(0, 120)}). No inventes saldos: dile que lo intentas en un momento o que lo vea en su Cartera de la app.`;
   }

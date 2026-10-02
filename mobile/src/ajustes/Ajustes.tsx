@@ -398,7 +398,13 @@ function SeccionesMesa({ mesa }: { mesa: NonNullable<ReturnType<typeof mesaAjust
     <View style={{ gap: MEDIDA.espacio.xl }}>
       <Grupo
         titulo={tr('Voz y oído', 'Voice and hearing')}
-        pie={datos.sttEngine === 'native' ? tr('Teléfono: el reconocimiento de Google, en vivo y sin gastar datos del servidor.', 'Phone: Google’s recognition, live, without using the server.') : tr('Nube: tu voz se transcribe en el servidor (mejor con ruido o acentos).', 'Cloud: your voice is transcribed on the server (better with noise or accents).')}
+        pie={
+          datos.sttEngine === 'turbo'
+            ? tr('Turbo: tu voz va en vivo a Scribe v2 Realtime Turbo mientras hablas; lo de dinero se confirma antes de actuar.', 'Turbo: your voice streams live to Scribe v2 Realtime Turbo as you speak; money requests are double-checked first.')
+            : datos.sttEngine === 'native'
+              ? tr('Teléfono: el reconocimiento de Google, en vivo y sin gastar datos del servidor.', 'Phone: Google’s recognition, live, without using the server.')
+              : tr('Nube: tu voz se graba y se transcribe en el servidor al terminar la frase.', 'Cloud: your voice is recorded and transcribed on the server when you finish.')
+        }
       >
         <Fila titulo={tr('Voz', 'Voice')} detalle={`${de(av.voz)}. ${tr('Todo se dice en vivo con su voz.', 'Everything is spoken live in its voice.')}`} icono="volumen" />
         <View style={s.segmento}>
@@ -407,6 +413,7 @@ function SeccionesMesa({ mesa }: { mesa: NonNullable<ReturnType<typeof mesaAjust
           </Texto>
           <Segmentado<SttEngine>
             opciones={[
+              { id: 'turbo', texto: 'Turbo', icono: 'chispas' },
               { id: 'native', texto: tr('Teléfono', 'Phone'), icono: 'telefono' },
               { id: 'cloud', texto: tr('Nube', 'Cloud'), icono: 'globo' },
             ]}

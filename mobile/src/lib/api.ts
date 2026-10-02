@@ -568,6 +568,36 @@ export async function transcribe(opts: { base64: string; mime: string }): Promis
   return String(data.text || '').trim();
 }
 
+/**
+ * Un WAV (base64) al oído del servidor. `confirmar`: frase de dinero que Turbo ya oyó en vivo; el
+ * servidor la vuelve a oír directo con Scribe v2 (sin pasar otra vez por Turbo).
+ */
+export async function transcribirWav(wavB64: string, confirmar = false, timeoutMs = 16_000): Promise<string> {
+  const data = await api<{ text?: string }>(
+    '/api/stt',
+    {
+      method: 'POST',
+      body: JSON.stringify({ audioBase64: `data:audio/wav;base64,${wavB64}`, mimeType: 'audio/wav', language: idiomaActual(), ...(confirmar ? { confirmar: true } : {}) }),
+    },
+    timeoutMs
+  );
+  return String(data.text || '').trim();
+}
+
+/**
+ * Permiso para oír en vivo con Scribe v2 Realtime Turbo: el servidor pide a ElevenLabs un token de un
+ * solo uso (la clave nunca llega al teléfono) y devuelve la dirección del WebSocket lista, con el
+ * modelo, el idioma y las pistas de vocabulario de AU-RA. null si el servidor no lo da.
+ */
+export async function pedirPermisoTurbo(): Promise<{ url: string; modelo: string } | null> {
+  try {
+    const d = await api<{ url?: string; modelo?: string }>('/api/stt/turbo/permiso', { method: 'POST', body: JSON.stringify({ language: idiomaActual() }) }, 8_000);
+    return d?.url && /^wss:\/\//.test(d.url) ? { url: d.url, modelo: String(d.modelo || '') } : null;
+  } catch {
+    return null;
+  }
+}
+
 export type RespuestaVista = {
   vista: VistaCamara | null;
   /** El hecho listo para el turno (vacío si el servidor es anterior y no lo arma). */

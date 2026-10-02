@@ -103,7 +103,7 @@ import { etiquetasDeVista, focoDePregunta, focoValido, vistaAHechos } from './li
 import { presupuesto, PRESUPUESTO_OIDO_MS, PRESUPUESTO_VISION_MS } from './lib/presupuesto';
 import { destinoPublico } from './lib/red-publica';
 import { extraerPdf, dataUrlDeImagen, bufferDeCualquier } from './lib/leer-pdf';
-import { transcribirAudio } from './lib/oido';
+import { transcribirAudio, permisoTurbo, PROVEEDORES_OIDO_CONFIRMAR } from './lib/oido';
 import { COT_FORZADO, esTareaDeCodigo, requiereCot } from './lib/prompts/cot';
 import { extraerEmocion, normalizarEmocion, type Emocion } from './lib/emocion';
 import { cabeceraAlineacion } from './lib/alineacion';
@@ -2260,6 +2260,17 @@ app.post('/api/cantar', exigirMesaODesk, limitar(12), async (req, res) => {
 });
 
 
+/**
+ * Oído Turbo del teléfono: un token de un solo uso de ElevenLabs y la dirección del WebSocket lista. El
+ * teléfono manda su micrófono en vivo directo a Scribe v2 Realtime Turbo (sin pasar el audio por aquí).
+ */
+app.post('/api/stt/turbo/permiso', exigirMesaODesk, limitar(40), async (req, res) => {
+  const permiso = await permisoTurbo(String(req.body?.language || 'es'));
+  if (!permiso) return res.status(503).json({ error: 'El oído en vivo no está disponible ahora.', honesto: true });
+  res.setHeader('Cache-Control', 'no-store');
+  return res.json({ ...permiso, honesto: true });
+});
+
 app.post('/api/stt', exigirMesaODesk, limitar(60), async (req, res) => {
   const t0 = Date.now();
   // El teléfono corta a los 16 s (transcribe): pasado eso, cada proveedor más es una factura sin oyente.
@@ -2268,7 +2279,9 @@ app.post('/api/stt', exigirMesaODesk, limitar(60), async (req, res) => {
   if (!raw || raw.length < 80) return res.status(400).json({ error: 'audio vacío', honesto: true });
   const { mime, buffer } = decodeDataUrl(raw, String(req.body?.mimeType || req.body?.mime || 'audio/m4a'));
   if (buffer.length < 1200) return res.json({ text: '', model: 'vacio', ms: Date.now() - t0, honesto: true });
-  const oido = await transcribirAudio({ audio: buffer, mime, language: String(req.body?.language || 'es'), presupuesto: reloj });
+  // `confirmar`: frase de dinero que el teléfono ya oyó en vivo con Turbo; se vuelve a oír con Scribe v2.
+  const confirmar = req.body?.confirmar === true;
+  const oido = await transcribirAudio({ audio: buffer, mime, language: String(req.body?.language || 'es'), presupuesto: reloj, ...(confirmar ? { proveedores: PROVEEDORES_OIDO_CONFIRMAR() } : {}) });
   if (oido.texto) {
     return res.json({ text: oido.texto, via: oido.via, ms: Date.now() - t0, bytes: buffer.length, honesto: true });
   }

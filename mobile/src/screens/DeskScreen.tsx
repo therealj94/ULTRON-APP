@@ -296,7 +296,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const [toolHint, setToolHint] = useState('');
   const [winkSide, setWinkSide] = useState<'L' | 'R'>('L');
   const [canciones, setCanciones] = useState<Cancion[]>(CANCIONES_LOCAL);
-  const [settings, setSettings] = useState<Pick<AppSettings, 'sttEngine' | 'proactive' | 'sfx'>>({ sttEngine: 'native', proactive: true, sfx: true });
+  const [settings, setSettings] = useState<Pick<AppSettings, 'sttEngine' | 'proactive' | 'sfx'>>({ sttEngine: 'turbo', proactive: true, sfx: true });
   const [camPerm, requestCam] = useCameraPermissions();
   /** 0 nadie · 0.5 alguien delante · 1 alguien mirando la pantalla (la cara se ilumina). */
   const [atencion, setAtencion] = useState(0);
@@ -2025,9 +2025,16 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
 
   const changeStt = async (e: SttEngine) => {
     setSettings((p) => ({ ...p, sttEngine: e }));
-    await saveSettings({ sttEngine: e });
+    await saveSettings({ sttEngine: e, oidoElegido: true });
     await setSttEngine(e);
-    await say(e === 'native' ? 'Oído: reconocimiento del teléfono.' : 'Oído: transcripción en la nube.', 'IDLE');
+    await say(
+      e === 'turbo'
+        ? tr('Oído Turbo: te oigo en vivo.', 'Turbo hearing: listening live.')
+        : e === 'native'
+          ? tr('Oído: reconocimiento del teléfono.', 'Hearing: phone recognition.')
+          : tr('Oído: transcripción en la nube.', 'Hearing: cloud transcription.'),
+      'IDLE'
+    );
   };
   const toggleProactive = async () => {
     const next = !settings.proactive;
