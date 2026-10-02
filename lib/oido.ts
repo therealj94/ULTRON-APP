@@ -220,6 +220,116 @@ async function transcribirEleven(audio: Buffer, mime: string, language: string, 
   return { texto: texto.slice(0, 4000), via: 'elevenlabs:scribe', idioma: typeof j.language_code === 'string' ? j.language_code : undefined };
 }
 
+/**
+ * El WAV que llega (AURA para Windows manda WAV 16 kHz mono de 16 bits): si es PCM que el tiempo real de
+ * Scribe acepta, dónde empiezan las muestras y a qué frecuencia. `null` para cualquier otra cosa (m4a del
+ * teléfono, ogg de Telegram, WAV en otro formato): eso sigue por Scribe v2 por lotes.
+ */
+const FRECUENCIAS_TURBO = new Set([8000, 16000, 22050, 24000, 44100, 48000]);
+export function pcmDeWav(audio: Buffer): { pcm: Buffer; frecuencia: number } | null {
+  if (audio.length < 44 || audio.toString('ascii', 0, 4) !== 'RIFF' || audio.toString('ascii', 8, 12) !== 'WAVE') return null;
+  let formato: { tipo: number; canales: number; frecuencia: number; bits: number } | null = null;
+  for (let i = 12; i + 8 <= audio.length; ) {
+    const id = audio.toString('ascii', i, i + 4);
+    const largo = audio.readUInt32LE(i + 4);
+    const cuerpo = i + 8;
+    if (id === 'fmt ' && cuerpo + 16 <= audio.length) {
+      formato = { tipo: audio.readUInt16LE(cuerpo), canales: audio.readUInt16LE(cuerpo + 2), frecuencia: audio.readUInt32LE(cuerpo + 4), bits: audio.readUInt16LE(cuerpo + 14) };
+    } else if (id === 'data') {
+      if (!formato || formato.tipo !== 1 || formato.canales !== 1 || formato.bits !== 16 || !FRECUENCIAS_TURBO.has(formato.frecuencia)) return null;
+      // Hay grabadoras que dejan el largo en 0 o en 0xFFFFFFFF mientras graban: se toma lo que haya.
+      const fin = largo && cuerpo + largo <= audio.length ? cuerpo + largo : audio.length;
+      const pcm = audio.subarray(cuerpo, fin - ((fin - cuerpo) % 2));
+      return pcm.length ? { pcm, frecuencia: formato.frecuencia } : null;
+    }
+    i = cuerpo + largo + (largo % 2);
+  }
+  return null;
+}
+
+/**
+ * Frases de dinero: con estas no se actúa sobre lo que oyó Turbo (José, 2-oct: «Turbo + confirmar dinero»).
+ * En la prueba del 2-oct Turbo escribió «100 dólares» cuando se dijo «cien lempiras»: un monto o una moneda
+ * mal oídos son un pago equivocado, así que se vuelven a oír con Scribe v2, que acertó 17 de 18.
+ */
+export const FRASE_DE_DINERO =
+  /\b(pag[aáoeu]\w*|envi[aáeé]\w*|env[ií]\w*|m[aá]nd\w*|transfi?er\w*|deposit\w*|cobr\w*|presta\w*|origen|auka|agka|veta|wallet|cartera|billetera|saldo|d[oó]lar\w*|lempira\w*|usd|pesos?|plata|dinero|monto|precio|cuesta|cu[aá]nto|pay\w*|send\w*|transfer\w*|dollars?|money|balance|price|cost|how much)\b|\$|\d/i;
+export function esFraseDeDinero(texto: string): boolean {
+  return FRASE_DE_DINERO.test(texto);
+}
+
+/**
+ * Scribe v2 Realtime Turbo (José, 2-oct: «cambia a Scribe v2 Realtime Turbo… en todos menos Dr Electrum»):
+ * el WAV ya grabado se manda de golpe por el WebSocket de tiempo real y se cierra con un commit manual.
+ * Medido el 2-oct con 18 frases: ~0,2 s contra ~0,6 s de Scribe v2 por lotes, pero 11 de 18 exactas contra
+ * 17 (sobre todo números: «cien» → «100»). Por eso lo de dinero se confirma con Scribe v2 antes de actuar.
+ * Devuelve `null` si el audio no es WAV PCM o si Turbo falla: la cadena sigue con Scribe v2 por lotes.
+ */
+export const MODELO_TURBO = 'scribe_v2_realtime_turbo';
+
+function oirTurbo(pcm: Buffer, frecuencia: number, language: string, terminos: readonly string[], tope: number, key: string): Promise<{ texto: string; idioma?: string } | null> {
+  const q = new URLSearchParams({ model_id: process.env.ELEVENLABS_STT_TURBO || MODELO_TURBO, audio_format: `pcm_${frecuencia}`, commit_strategy: 'manual' });
+  if (language !== 'auto') q.set('language_code', language);
+  for (const t of terminos) q.append('keyterms', t);
+  return new Promise((resolver) => {
+    let hecho = false;
+    // El WebSocket de Node 22 acepta cabeceras como segundo argumento (no está en los tipos del DOM).
+    const ws = new (WebSocket as any)(`wss://api.elevenlabs.io/v1/speech-to-text/realtime?${q}`, { headers: { 'xi-api-key': key } }) as WebSocket;
+    const terminar = (r: { texto: string; idioma?: string } | null, aviso?: string) => {
+      if (hecho) return;
+      hecho = true;
+      clearTimeout(reloj);
+      if (aviso) console.warn('[stt turbo]', aviso.slice(0, 160));
+      try {
+        ws.close();
+      } catch {}
+      resolver(r);
+    };
+    const reloj = setTimeout(() => terminar(null, `sin transcripción en ${tope} ms`), tope);
+    ws.onerror = () => terminar(null, 'error del WebSocket');
+    ws.onclose = (e) => terminar(null, `cerrado antes de transcribir (${e.code})`);
+    ws.onmessage = (e) => {
+      let j: any;
+      try {
+        j = JSON.parse(String(e.data));
+      } catch {
+        return;
+      }
+      if (j.message_type === 'session_started') {
+        // Trozos de 0,1 s, todos seguidos: el audio ya está grabado, no hay que esperar al ritmo real.
+        const trozo = Math.max(2, Math.round(frecuencia / 10) * 2);
+        for (let i = 0; i < pcm.length; i += trozo) {
+          const ultimo = i + trozo >= pcm.length;
+          ws.send(JSON.stringify({ message_type: 'input_audio_chunk', audio_base_64: pcm.subarray(i, i + trozo).toString('base64'), commit: ultimo, sample_rate: frecuencia }));
+        }
+      } else if (j.message_type === 'committed_transcript' || j.message_type === 'committed_transcript_with_timestamps') {
+        // A veces envuelve la frase entre comillas («"Remind me…".»): se quitan.
+        const texto = String(j.text || '').trim().replace(/^["“«]\s*(.*?)\s*["”»]\.?$/s, '$1').trim();
+        terminar({ texto, idioma: typeof j.language_code === 'string' ? j.language_code : undefined });
+      } else if (/error|exceeded|limited/i.test(String(j.message_type))) {
+        terminar(null, `${j.message_type} ${j.error || j.message || ''}`);
+      }
+    };
+  });
+}
+
+async function transcribirTurbo(audio: Buffer, mime: string, language: string, reloj: Presupuesto, terminos: readonly string[] = TERMINOS_AURA): Promise<Escucha> {
+  const key = clave('elevenlabs');
+  if (!key || !/^audio\/(x-)?wav$|^audio\/wave$/.test(mime) || typeof WebSocket !== 'function') return null;
+  const wav = pcmDeWav(audio);
+  if (!wav) return null;
+  // Turbo es el rápido: si no contesta en la mitad del tiempo que queda, Scribe v2 por lotes todavía alcanza.
+  const turbo = await oirTurbo(wav.pcm, wav.frecuencia, language, terminos, Math.min(8000, Math.max(MINIMO_UTIL_MS, Math.floor(topeScribe(reloj) / 2))), key);
+  if (!turbo) return null;
+  if (turbo.texto.length < 2 || STT_BASURA.test(turbo.texto)) return { texto: '', via: 'elevenlabs:scribe-turbo' };
+  if (esFraseDeDinero(turbo.texto) && reloj.alcanza()) {
+    const confirmada = await transcribirEleven(audio, mime, language, reloj, terminos).catch(() => null);
+    if (confirmada?.texto) return { ...confirmada, via: 'elevenlabs:scribe-turbo+confirmado' };
+    console.warn('[stt turbo] frase de dinero sin confirmar con Scribe v2: se usa la de Turbo');
+  }
+  return { texto: turbo.texto.slice(0, 4000), via: 'elevenlabs:scribe-turbo', idioma: turbo.idioma };
+}
+
 /** Los respaldos: el Whisper propio (si sigue configurado) y Gemini. */
 const RESPALDOS_OIDO: ProveedorOido[] = [
   { nombre: 'voicebox', listo: () => !!(clave('voicebox_url') && clave('voicebox_clave')), oir: transcribirVoicebox },
@@ -229,13 +339,17 @@ const RESPALDOS_OIDO: ProveedorOido[] = [
 /**
  * AU-RA y sus avatares (teléfono, web, Windows frase por frase, Telegram): Scribe primero, con las pistas de
  * AU-RA (José, 1-oct: «cámbialo a Scribe primero… en todos los avatares»). Antes era Whisper primero.
+ * Desde el 2-oct, lo que llega en WAV (Windows) pasa antes por Scribe v2 Realtime Turbo; el resto (m4a del
+ * teléfono, ogg de Telegram) no lo puede mandar al tiempo real sin convertirlo y sigue por Scribe v2.
  */
 export const PROVEEDORES_OIDO: ProveedorOido[] = [
+  { nombre: 'elevenlabs-turbo', listo: () => !!clave('elevenlabs'), oir: (a, m, l, r) => transcribirTurbo(a, m, l, r, TERMINOS_AURA) },
   { nombre: 'elevenlabs', listo: () => !!clave('elevenlabs'), oir: (a, m, l, r) => transcribirEleven(a, m, l, r, TERMINOS_AURA) },
   ...RESPALDOS_OIDO,
 ];
 
-/** Dr Electrum: Scribe primero con las pistas del oficio; los mismos respaldos. */
+/** Dr Electrum: Scribe primero con las pistas del oficio; los mismos respaldos. Sin Turbo (José, 2-oct:
+ * «en todos menos Dr Electrum hasta que yo te diga»). */
 export const PROVEEDORES_OIDO_ELECTRUM: ProveedorOido[] = [
   { nombre: 'elevenlabs', listo: () => !!clave('elevenlabs'), oir: (a, m, l, r) => transcribirEleven(a, m, l, r, TERMINOS_ELECTRUM) },
   ...RESPALDOS_OIDO,
