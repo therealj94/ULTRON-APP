@@ -21,6 +21,7 @@
  */
 import type express from 'express';
 import { clave } from '../lib/boveda';
+import { personaPorCorreoExacto } from '../lib/acceso';
 import { respuestaAlBorrador } from './correo';
 
 export type ChatWA = { jid: string; nombre: string; grupo: boolean; noLeidos: number; hora: number; ultimo: string; ultimoMio: boolean; ultimoDe?: string };
@@ -37,15 +38,17 @@ export function whatsappDisponible(): boolean {
   return !!c.url && !!c.clave;
 }
 
-/** Las cuentas de AU-RA que pueden ver este WhatsApp (WHATSAPP_DUENOS, separadas por coma). */
+/**
+ * Quién puede ver este WhatsApp (WHATSAPP_DUENOS, separados por coma): un correo de AU-RA, o el id de una
+ * persona del padrón (p. ej. «jose»: vale con cualquiera de sus correos).
+ */
 export function whatsappPermitido(correo: string): boolean {
   const q = normal(correo);
   if (!q) return false;
-  return clave('whatsapp_duenos')
-    .split(/[,;\s]+/)
-    .map(normal)
-    .filter(Boolean)
-    .includes(q);
+  const duenos = clave('whatsapp_duenos').split(/[,;\s]+/).map(normal).filter(Boolean);
+  if (duenos.includes(q)) return true;
+  const persona = personaPorCorreoExacto(q);
+  return !!persona && duenos.includes(normal(persona.id));
 }
 
 export class ErrorPuente extends Error {

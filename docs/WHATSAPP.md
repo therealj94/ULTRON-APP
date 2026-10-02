@@ -47,7 +47,7 @@ Para desvincular: en la app (⋮ → Desvincular) o desde el teléfono. En ambos
 | whatsapp-puente | `DATOS` (`/data`), `PORT` (`8080`) | Disco y puerto. |
 | servidor AU-RA | `WHATSAPP_PUENTE_URL` | `http://<nombre interno del servicio>:8080` (red privada de Render). |
 | servidor AU-RA | `WHATSAPP_PUENTE_CLAVE` | La clave del puente. |
-| servidor AU-RA | `WHATSAPP_DUENOS` | Correos de AU-RA que pueden ver este WhatsApp, separados por coma. |
+| servidor AU-RA | `WHATSAPP_DUENOS` | Quién puede ver este WhatsApp, separado por coma: correos de AU-RA o el id de una persona del padrón (`jose` vale con cualquiera de sus correos). |
 
 ## Riesgos que José aceptó
 

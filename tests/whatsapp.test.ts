@@ -226,4 +226,11 @@ test('el harness: pide «whatsapp …» y la instrucción solo va para su dueño
     assert.ok(!whatsappPermitido('c@x.hn'));
     assert.ok(!whatsappPermitido(''));
   });
+  // Por persona del padrón: «jose» vale con cualquiera de sus correos; otra persona no.
+  await conPuente(null, 'jose', async () => {
+    assert.ok(whatsappPermitido('j.ordonez@ordenglobal.org'));
+    assert.ok(whatsappPermitido('jose@ordenglobal.org'));
+    assert.ok(!whatsappPermitido('m.ordonez@ordenglobal.org'));
+    assert.ok(!whatsappPermitido('jose@otro.hn'));
+  });
 });
