@@ -12,6 +12,9 @@
  *    la conversación tal cual, con el boleto; sin ella, con la voz de la mesa), sin hablarle encima a
  *    nadie (compa/computadora.ts, CompaneroPc).
  * Mientras trabaja se pregunta despacio por su estado: si un aviso se perdió, el tecleo no se queda sonando.
+ * Como un agente (José, 2-oct: «copiemos cómo lo hacen Grok, el agente de ChatGPT»): el plan llega con
+ * `empieza` y la vista lo marca; si pide su sí antes de algo sensible (`confirmar`) la vista se abre con
+ * los botones y AURA lo pregunta en voz; en pausa o con el control en sus manos, el tecleo calla.
  *
  * Al lado, las hojas de lo que AURA lleva de ti (app/HojasCerebro.tsx): misiones, lo que sabe de ti y tu círculo.
  */
@@ -28,6 +31,7 @@ import { useVozOpcional } from '../compa/VozProvider';
 import { ecoMesa, mensajeVoz, nivelOido } from '../compa/canales';
 import { CompaneroPc, esAccionPc, trabajando, type EstadoPc } from '../compa/computadora';
 import { tecleoPc } from '../compa/computadoraSonido';
+import { ponerTeclea } from '../avatares/video/pistas';
 import { HojaComputadoraVivo } from '../ajustes/Computadora';
 import { HojaCorreos } from '../ajustes/Correos';
 import { abrirHoja, anunciarAnfitrion, cerrarHoja, hojasAhora, suscribirHojas } from './hojas';
@@ -77,13 +81,23 @@ export function ComputadoraEnVivo() {
   const companero = comp.current;
   const estadoComp = useSyncExternalStore(
     (f) => companero.suscribir(f),
-    () => `${companero.tareaId}|${companero.trabajando}|${companero.ultimaFrase}`,
+    () => `${companero.tareaId}|${companero.trabajando}|${companero.ultimaFrase}|${companero.quieta}|${companero.pregunta}|${companero.plan.join('|')}`,
     () => ''
   );
   void estadoComp;
 
   // La raíz dibuja las hojas: la mesa y Ajustes ya no dibujan la suya (HojaComputadora solo la abre).
   useEffect(() => anunciarAnfitrion(), []);
+
+  // Mientras su computadora trabaja, Claudio y ANT-ONIO en video teclean (avatares/video/pistas.ts).
+  useEffect(() => {
+    const off = companero.suscribir(() => ponerTeclea(companero.trabajando));
+    ponerTeclea(companero.trabajando);
+    return () => {
+      off();
+      ponerTeclea(false);
+    };
+  }, [companero]);
 
   // Los avisos de su computadora; la persona hablando; el sonido de la conversación; la app detrás.
   useEffect(() => {
@@ -131,7 +145,7 @@ export function ComputadoraEnVivo() {
       if (hojasAhora().abierta !== 'computadora') {
         try {
           const s = await api<EstadoPc>('/api/computadora', { method: 'GET' }, 12_000);
-          if (vivo && s.actual) companero.alEstado(s.actual.id, trabajando(s.actual.estado));
+          if (vivo && s.actual) companero.alEstado(s.actual.id, trabajando(s.actual.estado), s.actual.estado);
         } catch {
           /* la próxima vuelta */
         }
@@ -156,7 +170,9 @@ export function ComputadoraEnVivo() {
         nombreAvatar={nombreAvatar}
         tareaId={companero.tareaId || hojas.tareaId}
         frase={companero.ultimaFrase}
-        alEstado={(id, ahora) => companero.alEstado(id, ahora)}
+        planInicial={companero.plan}
+        pregunta={companero.pregunta}
+        alEstado={(id, ahora, estado) => companero.alEstado(id, ahora, estado)}
       />
       <HojaCorreos visible={hojas.abierta === 'correos'} onCerrar={cerrarHoja} />
       {/* Sus misiones, lo que sabe de ti y tu círculo (app/HojasCerebro.tsx), también desde cualquier pantalla. */}

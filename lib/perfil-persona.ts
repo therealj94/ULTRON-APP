@@ -39,6 +39,8 @@ export type Encuesta = {
   familia?: string;
   trabajo?: string;
   gustos?: string;
+  /** Lo que quiere que AURA haga por ella (la primera vez lo elige o lo escribe). */
+  ayuda?: string;
   otros?: string;
 };
 
@@ -54,12 +56,24 @@ export type Perfil = {
   presencia?: PresenciaPerfil;
   motorComputadora?: MotorComputadora;
   iniciativa?: NivelIniciativa;
+  /**
+   * La persona eligió cómo quiere que le digan (lo escribió en la app, lo dijo en una conversación).
+   * Sin esto y sin `completado`, el apodo es el de relleno (su primer nombre o «amigo») y AURA se lo
+   * pregunta (lib/apodo.ts). Lo pone el servidor al guardar un apodo; el teléfono no lo manda.
+   */
+  apodoElegido?: boolean;
+  /**
+   * La dirección PÚBLICA de su Veta Wallet (0x + 40 hex): con ella AURA solo LEE saldos («¿cuánto tengo en
+   * mi wallet?», lib/cartera.ts). La pone la app (cartera/conexion.ts): sale de su ficha de PULSE2CHAT o la
+   * pega la persona. Nunca una contraseña ni una llave.
+   */
+  cartera?: string;
   actualizado: number;
 };
 
 export const MAX_APODO = 40;
 export const MAX_CAMPO_ENCUESTA = 300;
-export const CAMPOS_ENCUESTA = ['vive', 'comida', 'musica', 'familia', 'trabajo', 'gustos', 'otros'] as const;
+export const CAMPOS_ENCUESTA = ['vive', 'comida', 'musica', 'familia', 'trabajo', 'gustos', 'ayuda', 'otros'] as const;
 const AVATARES: AvatarPerfil[] = ['ojos', 'aura', 'claudio', 'antonio'];
 const TEMAS: Tema[] = ['oscuro', 'claro', 'sistema'];
 const PRESENCIAS: PresenciaPerfil[] = ['paseo', 'lado', 'completa'];
@@ -72,6 +86,12 @@ export function iniciativaDe(p: Pick<Perfil, 'iniciativa'> | null | undefined): 
   return p?.iniciativa && NIVELES_INICIATIVA.includes(p.iniciativa) ? p.iniciativa : INICIATIVA_POR_OMISION;
 }
 const DIAS_DEL_MES = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+/** Una dirección de Veta Wallet de verdad (0x seguida de 40 cifras hexadecimales), o null. */
+export function carteraValida(v: unknown): string | null {
+  const t = String(v ?? '').trim();
+  return /^0x[0-9a-fA-F]{40}$/.test(t) ? t : null;
+}
 
 /** Texto limpio de una línea: sin caracteres de control ni saltos (van al prompt), recortado. */
 function textoLimpio(v: unknown, max: number): string {
@@ -146,6 +166,15 @@ export function validarCambios(cuerpo: unknown): { ok: true; cambios: Cambios } 
     if (!NIVELES_INICIATIVA.includes(b.iniciativa as NivelIniciativa)) return { ok: false, error: 'La iniciativa es alta, media, baja o apagada.' };
     c.iniciativa = b.iniciativa as NivelIniciativa;
   }
+  if (b.cartera !== undefined) {
+    // Vacío o null = desconectar la cartera: se borra.
+    if (b.cartera === null || b.cartera === '') c.cartera = '';
+    else {
+      const d = carteraValida(b.cartera);
+      if (!d) return { ok: false, error: 'La cartera es una dirección de Veta Wallet: 0x seguida de 40 letras y números.' };
+      c.cartera = d;
+    }
+  }
   if (b.encuesta !== undefined) {
     if (!b.encuesta || typeof b.encuesta !== 'object' || Array.isArray(b.encuesta)) return { ok: false, error: 'La encuesta tiene que ser un objeto.' };
     const e = b.encuesta as Record<string, unknown>;
@@ -177,8 +206,12 @@ export function perfilInicial(o: { apodo?: string; nombreGenesis?: string; cumpl
 
 /** Aplica cambios validados. La encuesta se mezcla campo por campo; un campo vacío se borra. */
 export function aplicarCambios(base: Perfil, c: Cambios, ahora = Date.now()): Perfil {
-  const { encuesta, cumple, ...resto } = c;
+  const { encuesta, cumple, cartera, ...resto } = c;
   const p: Perfil = { ...base, ...resto, encuesta: { ...base.encuesta }, actualizado: ahora };
+  if (cartera !== undefined) {
+    if (cartera) p.cartera = cartera;
+    else delete p.cartera;
+  }
   if (encuesta) {
     for (const [k, v] of Object.entries(encuesta)) {
       if (v) (p.encuesta as Record<string, string>)[k] = v;
@@ -208,9 +241,11 @@ function sanear(raw: unknown): Perfil | null {
     presencia: PRESENCIAS.includes(r.presencia as PresenciaPerfil) ? r.presencia : undefined,
     motorComputadora: MOTORES.includes(r.motorComputadora as MotorComputadora) ? r.motorComputadora : undefined,
     iniciativa: NIVELES_INICIATIVA.includes(r.iniciativa as NivelIniciativa) ? r.iniciativa : undefined,
+    cartera: carteraValida(r.cartera) || undefined,
   });
   if (!v.ok) return null;
   const p = aplicarCambios(perfilInicial({ nombreGenesis: String(r.nombreGenesis || '') }), v.cambios, Number(r.actualizado) || 0);
+  if (r.apodoElegido === true) p.apodoElegido = true;
   return p;
 }
 
@@ -336,6 +371,8 @@ export async function actualizarPerfil(correo: string, cambios: Cambios, base: {
   if (!leido.ok) throw new PerfilNoDisponible();
   const previo = leido.perfil || perfilInicial({ apodo: base.apodo });
   const perfil = aplicarCambios(previo, cambios);
+  // Un apodo que llega a guardarse lo eligió la persona (en la app o diciéndolo): ya no se pregunta.
+  if (cambios.apodo) perfil.apodoElegido = true;
   const { durable } = await guardarPerfil(correo, perfil);
   return { perfil, durable };
 }
@@ -408,7 +445,13 @@ function fechaCumple(mmdd: string, idioma: IdiomaPerfil) {
 export function lineaPerfil(p: Perfil | null | undefined, ahora = new Date()): string {
   if (!p) return '';
   const idioma = p.idioma;
-  const partes: string[] = [`Le dices «${p.apodo}» (así pidió que le llamaras; úsalo al saludar y de vez en cuando, no en cada frase).`];
+  // Sin apodo elegido es el de relleno (su primer nombre o «amigo»): no se dice que lo pidió (lib/apodo.ts lo pregunta).
+  const elegido = p.completado || p.apodoElegido;
+  const partes: string[] = [
+    elegido
+      ? `Le dices «${p.apodo}» (así pidió que le llamaras; úsalo al saludar y de vez en cuando, no en cada frase).`
+      : `Le dices «${p.apodo}» por ahora (es de relleno: todavía no te dijo cómo quiere que le llames).`,
+  ];
   if (p.nombreGenesis) partes.push(`Su nombre completo (de su Genesis ID): ${p.nombreGenesis}.`);
   if (p.cumple) {
     partes.push(
@@ -425,6 +468,7 @@ export function lineaPerfil(p: Perfil | null | undefined, ahora = new Date()): s
     gustos: 'Le gusta',
     comida: 'Comida favorita',
     musica: 'Música que le gusta',
+    ayuda: 'Lo que quiere que hagas por ella',
     otros: 'Además quiso que supieras',
   };
   for (const k of CAMPOS_ENCUESTA) if (e[k]) partes.push(`${etiquetas[k]}: ${e[k]}.`);

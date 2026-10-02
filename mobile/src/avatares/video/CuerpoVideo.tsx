@@ -28,6 +28,7 @@ import { avatarPorId } from '../catalogo';
 import type { ControlCuerpo } from '../../avatar3d/AvatarVivo';
 import type { Camara, EstadoAvatar } from '../../avatar3d/tipos';
 import { CLIPS } from './clips';
+import { pistasVideo, suscribirPistas } from './pistas';
 import { CLIPS_VIDEO, DirectorVideo, encuadrar, VENTANAS, zonaVideo, type ClipVideo, type Reproduccion } from './guion';
 
 /** Cuánto dura el fundido entre clips. */
@@ -95,6 +96,8 @@ export const CuerpoVideo = forwardRef<ControlCuerpo, Props>(function CuerpoVideo
   const director = useRef<DirectorVideo | null>(null);
   if (!director.current) {
     director.current = new DirectorVideo({ hay: clips ? CLIPS_VIDEO.filter((c) => clips[c] != null) : [], reducido });
+    // Lo que ya está pasando (su computadora trabajando, leyendo); un golpe viejo no se hace.
+    director.current.pistas({ ...pistasVideo.ultimo(), golpe: null });
   }
   const [capas, setCapas] = useState<[Reproduccion | null, Reproduccion | null]>(() => {
     const d = director.current!;
@@ -219,19 +222,33 @@ export const CuerpoVideo = forwardRef<ControlCuerpo, Props>(function CuerpoVideo
     setVisto(false);
   }, [activo, op0, op1]);
 
-  // Cada estado nuevo: el guion decide si cambia de clip. Si empezó a hablar en medio de un golpe,
-  // un reloj lo pasa a «habla» cuando el golpe cumple su tiempo mínimo (no hay otro estado que lo avise).
-  const relojHabla = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    const d = director.current!;
-    poner(d.estado(estado));
-    if (relojHabla.current) clearTimeout(relojHabla.current);
-    relojHabla.current = null;
-    // Lo mismo si un fondo nuevo se está asentando (dejó de hablar: espera a ver si fue solo una pausa).
-    const falta = d.msParaHablar() ?? d.msParaFondo();
-    if (falta !== null) relojHabla.current = setTimeout(() => poner(d.revisar()), falta + 20);
-  }, [estado, poner]);
-  useEffect(() => () => void (relojHabla.current && clearTimeout(relojHabla.current)), []);
+  // Cada estado nuevo y cada pista (pistas.ts: su computadora, la lectura, los golpes por lo que dijo o
+  // pasó): el guion decide si cambia de clip. Además avisa cuándo tiene que volver a mirar sin que llegue
+  // nada nuevo: empezó a hablar en medio de un golpe (pasa a «habla» cuando el golpe cumple su tiempo
+  // mínimo), un fondo nuevo se está asentando (dejó de hablar: ¿fue solo una pausa?) o toca ponerse a
+  // esperar o dejar de esperar. Un solo reloj, que se rearma después de cada cambio.
+  const reloj = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const armar = useRef(() => {});
+  armar.current = () => {
+    if (reloj.current) clearTimeout(reloj.current);
+    reloj.current = null;
+    const falta = director.current!.msParaRevisar();
+    if (falta !== null)
+      reloj.current = setTimeout(() => {
+        poner(director.current!.revisar());
+        armar.current();
+      }, falta + 20);
+  };
+  const decidir = useCallback(
+    (r: Reproduccion | null) => {
+      poner(r);
+      armar.current();
+    },
+    [poner]
+  );
+  useEffect(() => decidir(director.current!.estado(estado)), [estado, decidir]);
+  useEffect(() => suscribirPistas((p) => decidir(director.current!.pistas(p))), [decidir]);
+  useEffect(() => () => void (reloj.current && clearTimeout(reloj.current)), []);
 
   const alEstado = useCallback(
     (capa: 0 | 1, r: Reproduccion, s: AVPlaybackStatus) => {
@@ -242,10 +259,10 @@ export const CuerpoVideo = forwardRef<ControlCuerpo, Props>(function CuerpoVideo
       const dura = s.durationMillis ?? 0;
       if (s.didJustFinish || (dura > 0 && s.positionMillis >= dura - ANTES_DEL_FIN_MS)) {
         avisado.current = r.n;
-        poner(director.current!.termino(r.n));
+        decidir(director.current!.termino(r.n));
       }
     },
-    [poner, fundir]
+    [decidir, fundir]
   );
 
   const alFallar = useCallback((e: string) => {

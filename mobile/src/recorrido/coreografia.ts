@@ -28,6 +28,13 @@ export const COREOGRAFIA: Record<DemoId, Record<string, Momento>> = {
     antonio: { efecto: 'chispas', sonido: 'tap' },
     iconos: { efecto: 'confeti', sonido: 'chispa' },
   },
+  mesa: {
+    barra: { efecto: 'chispas', sonido: 'tap' },
+    hablar: { efecto: 'ondas' },
+    chat: { efecto: 'burbujas', sonido: 'tap' },
+    mas: { efecto: null, sonido: 'tap' },
+    hoja: { efecto: 'chispas', sonido: 'whoosh', vibra: 'suave' },
+  },
   hablar: {
     mic: { efecto: 'ondas' },
     pregunta: { efecto: 'ondas', sonido: 'teclado' },
@@ -51,16 +58,33 @@ export const COREOGRAFIA: Record<DemoId, Record<string, Momento>> = {
     achica: { efecto: null, sonido: 'whoosh', vibra: 'suave' },
     suena: { efecto: 'telefono', sonido: 'timbre', vibra: 'aviso' },
   },
+  avisos: {
+    llega: { efecto: 'telefono', sonido: 'timbre', vibra: 'aviso' },
+    responde: { efecto: 'check', sonido: 'chispa', vibra: 'exito' },
+    permiso: { efecto: 'engrane', sonido: 'tap' },
+  },
   chat: {
     lee: { efecto: 'burbujas' },
     borrador: { efecto: 'lapiz', sonido: 'lapiz' },
     enviado: { efecto: 'avion', sonido: 'whoosh', vibra: 'exito' },
+  },
+  whatsapp: {
+    pestanas: { efecto: 'burbujas', sonido: 'tap' },
+    vincular: { efecto: 'lapiz', sonido: 'teclado' },
+    codigo: { efecto: 'engrane', sonido: 'teclado' },
+    listo: { efecto: 'check', sonido: 'chispa', vibra: 'exito' },
   },
   correo: {
     bandeja: { efecto: 'sobres', sonido: 'papel' },
     lee: { efecto: 'sobres' },
     responde: { efecto: 'avion', sonido: 'whoosh', vibra: 'exito' },
     conectar: { efecto: 'engrane', sonido: 'tap' },
+  },
+  cartera: {
+    saldos: { efecto: 'chispas', sonido: 'chispa' },
+    pagar: { efecto: 'avion', sonido: 'tap' },
+    firma: { efecto: 'engrane', sonido: 'teclado' },
+    comprobante: { efecto: 'check', sonido: 'chispa', vibra: 'exito' },
   },
   internet: {
     busca: { efecto: 'lupa', sonido: 'teclado' },
@@ -75,11 +99,28 @@ export const COREOGRAFIA: Record<DemoId, Record<string, Momento>> = {
     guarda: { efecto: 'cerebro', sonido: 'chispa' },
     recuerda: { efecto: 'cerebro' },
   },
+  conocer: {
+    sabe: { efecto: 'cerebro', sonido: 'chispa' },
+    circulo: { efecto: 'chispas', sonido: 'tap' },
+    misiones: { efecto: 'check', sonido: 'chispa' },
+  },
+  propuestas: {
+    tarjeta: { efecto: 'chispas', sonido: 'whoosh' },
+    responde: { efecto: 'check', sonido: 'chispa', vibra: 'exito' },
+    nivel: { efecto: 'engrane', sonido: 'tap' },
+  },
   avatares: {
     ojos: { efecto: 'chispas', sonido: 'tap' },
     aura: { efecto: 'chispas', sonido: 'tap' },
     claudio: { efecto: 'chispas', sonido: 'tap' },
     antonio: { efecto: 'chispas', sonido: 'tap' },
+  },
+  ajustes: {
+    abre: { efecto: 'engrane', sonido: 'whoosh' },
+    perfil: { efecto: 'chispas', sonido: 'tap' },
+    aura: { efecto: 'cerebro', sonido: 'tap' },
+    privacidad: { efecto: 'engrane', sonido: 'tap' },
+    pide: { efecto: 'burbujas', sonido: 'chispa' },
   },
   final: {
     fin: { efecto: 'confeti', sonido: 'chispa', vibra: 'exito' },

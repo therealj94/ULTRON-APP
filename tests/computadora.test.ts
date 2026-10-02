@@ -352,7 +352,7 @@ type AvisoVisto = { quien: string; aparato: string | null; aviso: AvisoApp };
 async function conAvisos<T>(fn: (vistos: AvisoVisto[]) => Promise<T>, llega: (a: AvisoApp) => number = () => 1): Promise<T> {
   const vistos: AvisoVisto[] = [];
   const antes = { ...TIEMPOS_SEGUIR };
-  Object.assign(TIEMPOS_SEGUIR, { sondeoMs: 60, silencioTrasTurnoMs: 0, narrarCadaMs: 0, trabajandoCadaMs: 10_000 });
+  Object.assign(TIEMPOS_SEGUIR, { sondeoMs: 60, silencioTrasTurnoMs: 0, narrarCadaMs: 0, trabajandoCadaMs: 10_000, fallosAntesDeAvisar: 3, sinRespuestaMs: 1500, reintentoMs: 50 });
   alAvisarApp((quien, aviso, aparato) => {
     vistos.push({ quien, aparato, aviso });
     return llega(aviso);
@@ -378,7 +378,12 @@ test('al empezar, el teléfono del turno abre la vista en vivo; si terminó en e
       conAvisos(async (vistos) => {
         const r = await encargarTarea({ instruccion: 'Entra a bch.hn y dime el dólar', quien: 'jose@x.hn', motor: 'holo', esperaMs: 10_000, aparato: 'tel-1' });
         assert.match(r.hecho, /Compra 24\.70/);
-        assert.deepEqual(vistos[0], { quien: 'jose@x.hn', aparato: 'tel-1', aviso: { tipo: 'computadora', fase: 'empieza', id: r.id! } });
+        // Abre la vista con el plan de la misión (armado de la instrucción: el cerebro no mandó uno), sin decirlo: lo dice el turno.
+        assert.deepEqual(vistos[0], {
+          quien: 'jose@x.hn',
+          aparato: 'tel-1',
+          aviso: { tipo: 'computadora', fase: 'empieza', id: r.id!, plan: ['Entrar a bch.hn', 'Leer lo que muestra la página', 'Darte el resultado'] },
+        });
         const fin = vistos.find((v) => v.aviso.fase === 'termina');
         assert.ok(fin, 'el teléfono se entera de que terminó');
         assert.equal(fin!.aviso.texto, undefined, 'sin texto: ya lo dice el turno');
@@ -520,4 +525,527 @@ test('el cerebro: la instrucción pide la misión completa, que mire la pantalla
   assert.match(ins, /Ya la estoy usando, mira la pantalla/);
   assert.match(ins, /Nunca digas que no puedes usar una computadora/);
   assert.match(ins, /Nunca la uses para pagar, comprar ni poner contraseñas/);
+  // Como un agente: el plan va en el pedido, lo sensible espera su sí y por voz se para, pausa o sigue.
+  assert.match(ins, /PLAN: <paso 1> \| <paso 2> \| <paso 3>/);
+  assert.match(ins, /de 3 a 6 pasos cortos separados por «\|»/);
+  assert.match(ins, /tu computadora se detiene y pide su sí/);
+  assert.match(ins, /Pagar o comprar: nunca/);
+  assert.match(ins, /PEDIR_HERRAMIENTA: computadora parar/);
+});
+
+/* ------------------------------------------------------------------ como un agente (José, 2-oct: «copiemos cómo lo hacen Grok, el agente de ChatGPT») */
+
+/**
+ * Un nodo como el agente.py NUEVO (con `capacidades`): estados quietos (pausada, confirmar, control), el sí,
+ * el control de la persona y la pantalla de ahora. `guion(t)` cambia la tarea en cada consulta; el resto de
+ * rutas cambian la tarea como lo haría el nodo de verdad. `caido` hace que las consultas fallen.
+ */
+type TareaFalsa = { id: string; n: number; instruccion: string; consultas: number; estado: string; pasos: any[]; respuesta: string | null; error: string | null; pregunta: string | null; si?: boolean };
+async function nodoAgente(o: { caps?: string[]; guion: (t: TareaFalsa) => void; altasQueFallan?: number; altaCodigo?: number }) {
+  const tareas = new Map<string, TareaFalsa>();
+  const pedidos: Array<{ ruta: string; cuerpo: any }> = [];
+  const estado = { caido: false, perdida: false, altasQueFallan: o.altasQueFallan ?? 0 };
+  const srv = http.createServer((req, res) => {
+    let datos = '';
+    req.on('data', (c) => (datos += c));
+    req.on('end', () => {
+      const json = (code: number, j: unknown) => (res.writeHead(code, { 'content-type': 'application/json' }), res.end(JSON.stringify(j)));
+      const cuerpo = datos ? JSON.parse(datos) : null;
+      pedidos.push({ ruta: `${req.method} ${req.url}`, cuerpo });
+      if (req.url === '/salud') return json(200, { ok: true, motores: ['holo'], ocupada: false, ...(o.caps ? { capacidades: o.caps } : {}) });
+      if (req.headers.authorization !== `Bearer ${CLAVE}`) return json(401, { detail: 'clave' });
+      if (req.method === 'POST' && req.url === '/tareas') {
+        if (estado.altasQueFallan > 0) {
+          estado.altasQueFallan--;
+          return json(o.altaCodigo ?? 503, { detail: 'ocupado arrancando' });
+        }
+        const id = `a${tareas.size + 1}`;
+        tareas.set(id, { id, n: tareas.size + 1, instruccion: cuerpo.instruccion, consultas: 0, estado: 'trabajando', pasos: [], respuesta: null, error: null, pregunta: null });
+        return json(200, { id, estado: 'en_cola' });
+      }
+      const m = req.url!.match(/^\/tareas\/(\w+)(?:\/(\w+))?/);
+      const t = m && tareas.get(m[1]);
+      if (estado.caido) return res.destroy();
+      if (!t || estado.perdida) return json(404, { detail: 'no existe' });
+      const accion = m![2];
+      const viva = !['hecha', 'parada', 'sin_pasos', 'fallo'].includes(t.estado);
+      if (req.method === 'GET' && !accion) {
+        t.consultas++;
+        o.guion(t);
+        return json(200, { id: t.id, motor: 'holo', instruccion: t.instruccion, estado: t.estado, pasos: t.pasos, respuesta: t.respuesta, error: t.error, segundos: 20, pregunta: t.pregunta });
+      }
+      if (!o.caps && accion !== 'parar') return json(404, { detail: 'Not Found' });
+      if (accion === 'parar') {
+        t.estado = 'parada';
+        return json(200, { id: t.id });
+      }
+      if (!viva) return json(409, { detail: 'la tarea ya terminó' });
+      if (accion === 'pausar') t.estado = 'pausada';
+      else if (accion === 'reanudar') t.estado = 'trabajando';
+      else if (accion === 'control') t.estado = cuerpo?.tomar ? 'control' : 'trabajando';
+      else if (accion === 'confirmar') {
+        if (t.estado !== 'confirmar') return json(409, { detail: 'no está esperando ningún sí' });
+        t.si = !!cuerpo.si;
+        t.estado = 'trabajando';
+        t.pregunta = null;
+        t.pasos.push({ n: t.pasos.length + 1, t: 9, accion: 'confirmacion', args: { si: t.si } });
+      } else if (accion === 'accion') {
+        if (t.estado !== 'control') return json(409, { detail: 'primero toma el control' });
+        t.pasos.push({ n: t.pasos.length + 1, t: 9, accion: 'persona', args: { tipo: cuerpo.tipo } });
+      } else if (accion === 'pantalla') {
+        res.writeHead(200, { 'content-type': 'image/jpeg' });
+        return res.end(Buffer.from('JPEGDATA'));
+      }
+      return json(200, { id: t.id, estado: t.estado });
+    });
+  });
+  await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+  const url = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
+  return { url, pedidos, tareas, estado, cerrar: () => new Promise<void>((r) => (srv.closeAllConnections?.(), srv.close(() => r()))) };
+}
+
+/** Las rutas de la app sobre un express de prueba (cada quien por `x-quien`). */
+async function conRutas<T>(fn: (como: (quien: string | null, ruta: string, init?: RequestInit) => Promise<{ code: number; j: any }>) => Promise<T>): Promise<T> {
+  const express = (await import('express')).default;
+  const { montarRutasComputadora } = await import('../server/computadora');
+  const app = express();
+  app.use(express.json());
+  const pasa: RequestHandler = (_q, _r, n) => n();
+  montarRutasComputadora(app, { exigirMesa: pasa, limitar: () => pasa, sesionDe: (req) => (req.headers['x-quien'] ? { correo: String(req.headers['x-quien']) } : null) });
+  const srv = app.listen(0, '127.0.0.1');
+  await new Promise((r) => srv.once('listening', r));
+  const base = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
+  const como = (quien: string | null, ruta: string, init: RequestInit = {}) =>
+    fetch(`${base}${ruta}`, { ...init, headers: { 'content-type': 'application/json', ...(quien ? { 'x-quien': quien } : {}) } }).then(async (r) => ({ code: r.status, j: await r.json() }));
+  try {
+    return await fn(como);
+  } finally {
+    await new Promise<void>((r) => srv.close(() => r()));
+  }
+}
+
+const CAPS = ['pausar', 'confirmar', 'control'];
+
+test('el plan: lo escribe el cerebro («… PLAN: a | b | c») o se arma de la instrucción; se marca con lo que hace', async () => {
+  const { separarPlan, planDeMision, avanzarPlan, estadoDelPlan, tipoDePlan } = await import('../server/computadora');
+  assert.deepEqual(separarPlan('Entra a bch.hn y dime el dólar PLAN: Entrar a bch.hn | Buscar el tipo de cambio | Darte compra y venta'), {
+    mision: 'Entra a bch.hn y dime el dólar',
+    plan: ['Entrar a bch.hn', 'Buscar el tipo de cambio', 'Darte compra y venta'],
+  });
+  assert.deepEqual(separarPlan('Busca vuelos. PLAN: 1) Abrir Google; 2) Buscar vuelos; 3) Darte el resultado').plan, ['Abrir Google', 'Buscar vuelos', 'Darte el resultado']);
+  assert.deepEqual(separarPlan('Entra a bch.hn y dime el plan de ahorro'), { mision: 'Entra a bch.hn y dime el plan de ahorro', plan: null }, '«plan» en minúscula es parte de la misión');
+  assert.equal(separarPlan('Entra a x.hn PLAN: solo uno').plan, null, 'un paso no es plan');
+  assert.deepEqual(planDeMision('Entra a es.wikipedia.org, busca Francisco Morazán y dime en qué fecha nació'), ['Entrar a es.wikipedia.org', 'Buscar lo que pediste', 'Leer lo que muestra la página', 'Darte el resultado']);
+  assert.deepEqual(planDeMision('Entra a sar.gob.hn, llena el formulario de contacto y envíalo'), ['Entrar a sar.gob.hn', 'Llenar el formulario', 'Pedirte el sí antes de lo delicado', 'Darte el resultado']);
+  assert.deepEqual(planDeMision('Search Google for the weather in Tegucigalpa', 'en'), ['Open Google', 'Search for what you asked', 'Read what the page shows', 'Give you the result']);
+  for (const p of [planDeMision('x'), planDeMision('Compara precios de laptops en amazon.com y walmart.com, busca la más barata, llena el carrito y envía el pedido')]) assert.ok(p.length >= 3 && p.length <= 6, p.join(' | '));
+  assert.deepEqual(['Entrar a bch.hn', 'Buscar el tipo de cambio', 'Leer la tabla', 'Pedirte el sí antes de lo delicado', 'Darte el resultado', 'Comparar precios'].map(tipoDePlan), ['abrir', 'buscar', 'leer', 'confirmar', 'resultado', 'leer']);
+  const plan = ['Entrar a es.wikipedia.org', 'Buscar Morazán', 'Leer su fecha de nacimiento', 'Darte el resultado'];
+  const pasos = (...a: string[]) => a.map((accion) => ({ accion }));
+  assert.equal(avanzarPlan(plan, pasos('escritorio_limpio', 'open_url')), 0, 'abrió: va en el primero');
+  assert.equal(avanzarPlan(plan, pasos('open_url', 'click', 'type')), 1, 'escribió en el buscador: el segundo');
+  assert.equal(avanzarPlan(plan, pasos('open_url', 'type', 'scroll', 'scroll')), 2, 'leyendo: el tercero');
+  assert.equal(avanzarPlan(plan, pasos('open_url', 'type', 'scroll', 'scroll', 'scroll', 'click', 'scroll')), 2, 'sin la respuesta no llega al último');
+  assert.equal(avanzarPlan(plan, pasos('open_url', 'answer')), 3);
+  assert.equal(avanzarPlan(plan, pasos('open_url'), 2), 2, 'nunca retrocede');
+  assert.deepEqual(estadoDelPlan({ plan, indice: 1 }, 'trabajando').map((p) => p.estado), ['hecho', 'actual', 'pendiente', 'pendiente']);
+  assert.deepEqual(estadoDelPlan({ plan, indice: 1 }, 'confirmar').map((p) => p.estado), ['hecho', 'espera', 'pendiente', 'pendiente'], 'quieta: en espera');
+  const fin = (ok: boolean) => ({ estado: ok ? 'hecha' : 'sin_pasos', ok, texto: '', respuesta: null, error: null, enlaces: [], datos: [], captura: null, segundos: 1, pasos: 1 }) as any;
+  assert.deepEqual(estadoDelPlan({ plan, indice: 2, final: fin(true) }).map((p) => p.estado), ['hecho', 'hecho', 'hecho', 'hecho']);
+  assert.deepEqual(estadoDelPlan({ plan, indice: 2, final: fin(false) }).map((p) => p.estado), ['hecho', 'hecho', 'fallo', 'pendiente']);
+});
+
+test('la misión con plan del cerebro: el nodo recibe solo la misión, la app ve el plan marcarse, y el final queda en una tarjeta con datos, enlaces y captura; con historial', async () => {
+  const { datosDe, enlacesDe, historialDe, fraseDePlan } = await import('../server/computadora');
+  const nodo = await nodoAgente({
+    caps: CAPS,
+    guion: (t) => {
+      if (t.consultas === 1) t.pasos = [{ n: 1, t: 1, accion: 'open_url', args: { url: 'bch.hn' }, miniatura: 'M1' }];
+      if (t.consultas === 3) t.pasos.push({ n: 2, t: 4, accion: 'type', args: { text: 'tipo de cambio', press_enter: true }, miniatura: 'M2' });
+      if (t.consultas >= 6) {
+        t.pasos.push({ n: 3, t: 9, accion: 'answer', args: {}, miniatura: 'FINAL' });
+        t.estado = 'hecha';
+        t.respuesta = 'Compra: 24.70\nVenta: 24.95\nFuente: https://www.bch.hn/tipo-de-cambio.';
+      }
+    },
+  });
+  try {
+    await conNodo(nodo.url, () =>
+      conAvisos(async (vistos) =>
+        conRutas(async (como) => {
+          const r = await encargarTarea({
+            instruccion: 'Entra a bch.hn, busca el tipo de cambio y dime compra y venta PLAN: Entrar a bch.hn | Buscar el tipo de cambio | Darte compra y venta',
+            quien: 'jose@x.hn',
+            motor: 'holo',
+            esperaMs: 0,
+            aparato: 'tel-1',
+          });
+          assert.equal(nodo.pedidos.find((p) => p.ruta === 'POST /tareas')!.cuerpo.instruccion, 'Entra a bch.hn, busca el tipo de cambio y dime compra y venta', 'al nodo no le va el plan');
+          assert.doesNotMatch(r.hecho, /Tu plan/, 'el plan lo escribió el cerebro: ya lo dijo');
+          assert.deepEqual(vistos[0].aviso.plan, ['Entrar a bch.hn', 'Buscar el tipo de cambio', 'Darte compra y venta']);
+          // La app: el plan va marcándose (el primer paso actual, luego hecho), con el tiempo transcurrido.
+          const v1 = await como('jose@x.hn', `/api/computadora/tareas/${r.id}`);
+          assert.equal(v1.code, 200);
+          assert.deepEqual(v1.j.mision.plan.map((p: any) => p.estado), ['actual', 'pendiente', 'pendiente']);
+          assert.equal(typeof v1.j.mision.transcurrido, 'number');
+          await hasta(() => (nodo.tareas.get(r.id!)?.consultas ?? 0) >= 3);
+          const v2 = await como('jose@x.hn', `/api/computadora/tareas/${r.id}`);
+          assert.deepEqual(v2.j.mision.plan.map((p: any) => p.estado), ['hecho', 'actual', 'pendiente']);
+          await hasta(() => vistos.some((v) => v.aviso.fase === 'termina'));
+          const fin = (await como('jose@x.hn', `/api/computadora/tareas/${r.id}`)).j.mision;
+          assert.deepEqual(fin.plan.map((p: any) => p.estado), ['hecho', 'hecho', 'hecho']);
+          assert.equal(fin.final.ok, true);
+          assert.equal(fin.final.captura, 'FINAL', 'la captura final');
+          assert.deepEqual(fin.final.datos, [
+            { clave: 'Compra', valor: '24.70' },
+            { clave: 'Venta', valor: '24.95' },
+          ]);
+          assert.deepEqual(fin.final.enlaces, ['https://www.bch.hn/tipo-de-cambio', 'https://bch.hn']);
+          assert.match(fin.final.texto, /^Listo, ya terminé en mi computadora\. Compra: 24\.70/);
+          // El historial: la misión, la más nueva primero; y el nodo puede olvidarla: la tarjeta sigue.
+          const h = (await como('jose@x.hn', '/api/computadora')).j.historial;
+          assert.equal(h.length, 1);
+          assert.deepEqual({ id: h[0].id, ok: h[0].ok, estado: h[0].estado }, { id: r.id, ok: true, estado: 'hecha' });
+          assert.deepEqual(historialDe('otra@x.hn'), []);
+          nodo.estado.perdida = true;
+          const olvidada = await como('jose@x.hn', `/api/computadora/tareas/${r.id}`);
+          assert.equal(olvidada.code, 200);
+          assert.equal(olvidada.j.tarea.respuesta, nodo.tareas.get(r.id!)!.respuesta);
+          assert.equal((await como('jose@x.hn', `/api/computadora/misiones/${r.id}`)).j.mision.final.ok, true);
+          assert.equal((await como('otra@x.hn', `/api/computadora/misiones/${r.id}`)).code, 404, 'cada quien sus misiones');
+        })
+      )
+    );
+  } finally {
+    await nodo.cerrar();
+  }
+  assert.deepEqual(datosDe('No encontré vuelos directos. El más barato: 300 dólares.'), [{ clave: 'El más barato', valor: '300 dólares' }]);
+  assert.deepEqual(enlacesDe({ respuesta: 'Ver https://a.hn/x, y https://a.hn/x.', pasos: [{ n: 1, t: 1, accion: 'open_url', args: { url: 'https://a.hn/x/' } }] }), ['https://a.hn/x']);
+  assert.equal(fraseDePlan(['Entrar a bch.hn', 'Leer lo que muestra la página', 'Darte el resultado']), 'Va. Mi plan: entrar a bch.hn, leer lo que muestra la página y darte el resultado.');
+});
+
+test('desde la app: encargar dice el plan en voz al empezar; sin plan del cerebro, el turno lo dice', async () => {
+  const nodo = await nodoAgente({ caps: CAPS, guion: () => undefined });
+  try {
+    await conNodo(nodo.url, () =>
+      conAvisos(async (vistos) => {
+        const r = await conRutas((como) => como('jose@x.hn', '/api/computadora/tareas', { method: 'POST', body: JSON.stringify({ instruccion: 'Entra a bch.hn y dime el precio del dólar' }) }));
+        assert.equal(r.code, 200);
+        assert.deepEqual(r.j.mision.plan.map((p: any) => p.texto), ['Entrar a bch.hn', 'Leer lo que muestra la página', 'Darte el resultado']);
+        assert.equal(vistos[0].aviso.texto, 'Va. Mi plan: entrar a bch.hn, leer lo que muestra la página y darte el resultado.');
+        const t = await encargarTarea({ instruccion: 'Busca en Google el clima de mañana', quien: 'ana@x.hn', motor: 'holo', esperaMs: 0 });
+        assert.match(t.hecho, /Tu plan: Abrir Google → Buscar lo que pediste → Leer lo que muestra la página → Darte el resultado; díselo en una frase corta\./);
+        assert.equal(vistos.at(-1)!.aviso.texto, undefined, 'en el turno el plan lo dice el cerebro');
+      })
+    );
+  } finally {
+    await nodo.cerrar();
+  }
+});
+
+test('confirmación: antes de algo sensible pausa y pregunta en la app y en voz; el «sí» de la conversación la reanuda (y un «no» no lo hace)', async () => {
+  const { resolverPreguntaComputadora, respuestaSiNo } = await import('../server/computadora');
+  const nodo = await nodoAgente({
+    caps: CAPS,
+    guion: (t) => {
+      if (t.consultas === 2 && t.si === undefined) {
+        t.estado = 'confirmar';
+        t.pregunta = 'Voy a tocar «Enviar formulario». ¿Lo hago?';
+        t.pasos = [{ n: 1, t: 3, accion: 'pedir_confirmacion', args: { pregunta: t.pregunta } }];
+      }
+      if (t.si !== undefined && t.consultas > 4) {
+        t.estado = 'hecha';
+        t.respuesta = t.si ? 'Envié el formulario.' : 'No lo envié porque dijiste que no.';
+      }
+    },
+  });
+  try {
+    await conNodo(nodo.url, () =>
+      conAvisos(async (vistos) => {
+        await encargarTarea({ instruccion: 'Entra a sar.gob.hn, llena el formulario de contacto y envíalo', quien: 'jose@x.hn', motor: 'holo', esperaMs: 0, aparato: 'tel-1' });
+        await hasta(() => vistos.some((v) => v.aviso.fase === 'confirmar'));
+        const p = vistos.find((v) => v.aviso.fase === 'confirmar')!;
+        assert.equal(p.aviso.pregunta, 'Voy a tocar «Enviar formulario». ¿Lo hago?', 'los botones de la app');
+        assert.equal(p.aviso.texto, 'Antes de seguir necesito tu sí. Voy a tocar «Enviar formulario». ¿Lo hago? Dime sí o no.', 'y AURA lo dice');
+        await new Promise((r) => setTimeout(r, 300));
+        assert.equal(vistos.filter((v) => v.aviso.fase === 'confirmar').length, 1, 'se pregunta una vez, no en cada consulta');
+        assert.ok(!vistos.some((v) => v.aviso.fase === 'paso' && v.aviso.texto === 'Sigo trabajando en mi computadora.'), 'esperando no se narra');
+        // Otra cosa no es respuesta: la pregunta sigue esperando.
+        assert.equal(await resolverPreguntaComputadora('jose@x.hn', '¿y cuánto falta?'), null);
+        assert.equal(await resolverPreguntaComputadora('otra@x.hn', 'sí'), null, 'el sí de otra persona no vale');
+        const h = await resolverPreguntaComputadora('jose@x.hn', '¡Sí, dale!');
+        assert.match(h!, /^COMPUTADORA: dijo que sí a «Voy a tocar «Enviar formulario»/);
+        assert.deepEqual(nodo.pedidos.find((x) => /\/confirmar$/.test(x.ruta))!.cuerpo, { si: true });
+        assert.equal(await resolverPreguntaComputadora('jose@x.hn', 'sí'), null, 'ya contestada: un segundo «sí» no hace nada');
+        await hasta(() => vistos.some((v) => v.aviso.fase === 'termina'));
+        assert.match(vistos.find((v) => v.aviso.fase === 'termina')!.aviso.texto!, /Envié el formulario/);
+        assert.ok(vistos.some((v) => v.aviso.fase === 'reanuda'), 'el teléfono sabe que siguió (quita los botones y vuelve el tecleo)');
+      })
+    );
+    // En la voz (turno especulativo) la respuesta espera a que el turno se confirme.
+    await conNodo(nodo.url, () =>
+      conAvisos(async (vistos) => {
+        await encargarTarea({ instruccion: 'Entra a x.hn y publica el comentario', quien: 'ana@x.hn', motor: 'holo', esperaMs: 0 });
+        await hasta(() => vistos.some((v) => v.aviso.fase === 'confirmar'));
+        let hacer: (() => void) | null = null;
+        const h = await resolverPreguntaComputadora('ana@x.hn', 'no', { hacer: (f) => (hacer = f), alDescartar: () => undefined });
+        assert.match(h!, /dijo que no/);
+        const antes = nodo.pedidos.filter((x) => /\/confirmar$/.test(x.ruta)).length;
+        hacer!();
+        await hasta(() => nodo.pedidos.filter((x) => /\/confirmar$/.test(x.ruta)).length > antes);
+        assert.deepEqual(nodo.pedidos.filter((x) => /\/confirmar$/.test(x.ruta)).at(-1)!.cuerpo, { si: false });
+      })
+    );
+  } finally {
+    await nodo.cerrar();
+  }
+  assert.deepEqual(['sí', 'Sí, hazlo', 'dale', 'ok', 'yes go ahead', 'no', 'mejor no', 'no lo hagas', 'sí pero cámbiale el asunto', '¿qué preguntó?'].map(respuestaSiNo), ['si', 'si', 'si', 'si', 'si', 'no', 'no', 'no', null, null]);
+});
+
+test('confirmación en el turno: si pregunta mientras el turno espera, lo dice el turno y la app pone los botones; también por la app', async () => {
+  const nodo = await nodoAgente({
+    caps: CAPS,
+    guion: (t) => {
+      if (t.si === undefined) {
+        t.estado = 'confirmar';
+        t.pregunta = '¿Inicio sesión con la cuenta de prueba?';
+      } else if (t.consultas > 3) {
+        t.estado = 'hecha';
+        t.respuesta = 'Listo.';
+      }
+    },
+  });
+  try {
+    await conNodo(nodo.url, () =>
+      conAvisos(async (vistos) =>
+        conRutas(async (como) => {
+          const r = await encargarTarea({ instruccion: 'Entra a x.hn e inicia sesión', quien: 'jose@x.hn', motor: 'holo', esperaMs: 10_000 });
+          assert.match(r.hecho, /se detuvo a pedir permiso antes de algo sensible: «¿Inicio sesión con la cuenta de prueba\?»/);
+          assert.match(r.hecho, /Pregúntale con esas palabras si lo haces \(sí o no\)/);
+          const p = vistos.find((v) => v.aviso.fase === 'confirmar')!;
+          assert.equal(p.aviso.texto, undefined, 'la dice el turno');
+          assert.equal(p.aviso.pregunta, '¿Inicio sesión con la cuenta de prueba?');
+          const v = await como('jose@x.hn', `/api/computadora/tareas/${r.id}`);
+          assert.equal(v.j.mision.pregunta, '¿Inicio sesión con la cuenta de prueba?');
+          assert.equal(v.j.mision.plan.find((x: any) => x.estado === 'espera')?.texto, 'Entrar a x.hn', 'el paso de ahora queda en espera');
+          assert.equal((await como('jose@x.hn', `/api/computadora/tareas/${r.id}/confirmar`, { method: 'POST', body: '{}' })).code, 400, 'sí o no, nada más');
+          assert.equal((await como('otra@x.hn', `/api/computadora/tareas/${r.id}/confirmar`, { method: 'POST', body: '{"si":true}' })).code, 404);
+          const c = await como('jose@x.hn', `/api/computadora/tareas/${r.id}/confirmar`, { method: 'POST', body: '{"si":true}' });
+          assert.equal(c.code, 200);
+          assert.equal(c.j.si, true);
+          assert.equal((await como('jose@x.hn', `/api/computadora/tareas/${r.id}/confirmar`, { method: 'POST', body: '{"si":true}' })).code, 409, 'ya no espera');
+          await hasta(() => vistos.some((x) => x.aviso.fase === 'termina'));
+        })
+      )
+    );
+  } finally {
+    await nodo.cerrar();
+  }
+});
+
+test('detener, pausar y tomar el control: con el nodo nuevo se hace y se avisa; con el viejo solo Detener y se dice por qué', async () => {
+  const nodo = await nodoAgente({ caps: CAPS, guion: (t) => void (t.pasos = [{ n: 1, t: 1, accion: 'open_url', args: { url: 'x.hn' } }]) });
+  try {
+    await conNodo(nodo.url, () =>
+      conAvisos(async (vistos) =>
+        conRutas(async (como) => {
+          const r = await encargarTarea({ instruccion: 'Entra a x.hn y lee las noticias', quien: 'jose@x.hn', motor: 'holo', esperaMs: 0 });
+          const ruta = (a: string) => `/api/computadora/tareas/${r.id}/${a}`;
+          assert.equal((await como('jose@x.hn', '/api/computadora')).j.capacidades.join(','), 'pausar,confirmar,control');
+          assert.equal((await como('jose@x.hn', ruta('pausar'), { method: 'POST', body: '{}' })).code, 200);
+          await hasta(() => vistos.some((v) => v.aviso.fase === 'pausa'));
+          assert.deepEqual(
+            { estado: vistos.find((v) => v.aviso.fase === 'pausa')!.aviso.estado, texto: vistos.find((v) => v.aviso.fase === 'pausa')!.aviso.texto },
+            { estado: 'pausada', texto: 'Listo, pausé mi computadora. Me dices cuándo sigo.' }
+          );
+          assert.equal((await como('jose@x.hn', ruta('control'), { method: 'POST', body: '{"tomar":true}' })).code, 200);
+          await hasta(() => vistos.some((v) => v.aviso.estado === 'control'));
+          assert.match(vistos.find((v) => v.aviso.estado === 'control')!.aviso.texto!, /la computadora es tuya/);
+          // Con el control: tocar (en [0, 1000]), escribir, una tecla; lo raro no pasa. Y la pantalla de ahora.
+          assert.equal((await como('jose@x.hn', ruta('accion'), { method: 'POST', body: '{"tipo":"click","x":500,"y":300}' })).code, 200);
+          assert.equal((await como('jose@x.hn', ruta('accion'), { method: 'POST', body: '{"tipo":"click","x":5000,"y":300}' })).code, 400);
+          assert.equal((await como('jose@x.hn', ruta('accion'), { method: 'POST', body: '{"tipo":"borrar_disco"}' })).code, 400);
+          assert.equal((await como('otra@x.hn', ruta('accion'), { method: 'POST', body: '{"tipo":"click","x":1,"y":1}' })).code, 404);
+          const pant = await como('jose@x.hn', ruta('pantalla'));
+          assert.equal(Buffer.from(pant.j.imagen, 'base64').toString(), 'JPEGDATA');
+          assert.equal((await como('jose@x.hn', ruta('control'), { method: 'POST', body: '{"tomar":false}' })).code, 200);
+          await hasta(() => vistos.some((v) => v.aviso.fase === 'reanuda'));
+          assert.equal(vistos.find((v) => v.aviso.fase === 'reanuda')!.aviso.texto, 'Gracias, sigo desde donde la dejaste.');
+          // Detener: el nodo la para; la tarjeta queda (sin decir nada: lo pidió la persona) y el plan marca dónde quedó.
+          assert.equal((await como('jose@x.hn', ruta('parar'), { method: 'POST', body: '{}' })).code, 200);
+          await hasta(() => vistos.some((v) => v.aviso.fase === 'termina'));
+          const fin = vistos.find((v) => v.aviso.fase === 'termina')!.aviso;
+          assert.deepEqual({ ok: fin.ok, texto: fin.texto }, { ok: false, texto: undefined });
+          const m = (await como('jose@x.hn', `/api/computadora/misiones/${r.id}`)).j.mision;
+          assert.equal(m.final.estado, 'parada');
+          assert.deepEqual(m.plan.map((p: any) => p.estado), ['fallo', 'pendiente', 'pendiente']);
+          assert.equal((await como('jose@x.hn', ruta('pausar'), { method: 'POST', body: '{}' })).code, 409, 'una terminada no se pausa');
+        })
+      )
+    );
+  } finally {
+    await nodo.cerrar();
+  }
+  // El agente.py de antes (sin capacidades): pausar y el control no existen; se dice claro, y Detener sí.
+  const viejo = await nodoAgente({ guion: () => undefined });
+  try {
+    await conNodo(viejo.url, () =>
+      conAvisos(async () =>
+        conRutas(async (como) => {
+          const r = await encargarTarea({ instruccion: 'Entra a x.hn y lee', quien: 'jose@x.hn', motor: 'holo', esperaMs: 0 });
+          const p = await como('jose@x.hn', `/api/computadora/tareas/${r.id}/pausar`, { method: 'POST', body: '{}' });
+          assert.equal(p.code, 501);
+          assert.match(p.j.error, /todavía no sabe pausar: falta actualizar su servicio.*Puedo detenerla/);
+          assert.equal((await como('jose@x.hn', `/api/computadora/tareas/${r.id}/control`, { method: 'POST', body: '{"tomar":true}' })).code, 501);
+          assert.deepEqual((await como('jose@x.hn', '/api/computadora')).j.capacidades, []);
+          assert.equal((await como('jose@x.hn', `/api/computadora/tareas/${r.id}/parar`, { method: 'POST', body: '{}' })).code, 200);
+          const { comandoComputadora } = await import('../server/computadora');
+          assert.match((await comandoComputadora('jose@x.hn', 'pausar'))!, /todavía no sabe pausar/);
+        })
+      )
+    );
+  } finally {
+    await viejo.cerrar();
+  }
+});
+
+test('por voz: «para / pausa / sigue tu computadora» van a su tarea de ahora; lo demás es una misión nueva', async () => {
+  const { comandoComputadora } = await import('../server/computadora');
+  const nodo = await nodoAgente({ caps: CAPS, guion: () => undefined });
+  try {
+    await conNodo(nodo.url, () =>
+      conAvisos(async () => {
+        assert.match((await comandoComputadora('jose@x.hn', 'parar'))!, /no hay ninguna tarea suya/);
+        assert.equal(await comandoComputadora('jose@x.hn', 'Entra a bch.hn y dime el dólar'), null, 'una misión: no es un comando');
+        const r = await encargarTarea({ instruccion: 'Entra a x.hn y lee', quien: 'jose@x.hn', motor: 'holo', esperaMs: 0 });
+        assert.match((await comandoComputadora('jose@x.hn', 'pausa'))!, /la pausé/);
+        assert.equal(nodo.tareas.get(r.id!)!.estado, 'pausada');
+        assert.match((await comandoComputadora('jose@x.hn', 'sigue'))!, /siguió donde estaba/);
+        assert.equal(nodo.tareas.get(r.id!)!.estado, 'trabajando');
+        assert.match((await comandoComputadora('jose@x.hn', 'Detente.'))!, /^HARNESS computadora: paré «Entra a x\.hn y lee»/);
+        assert.equal(nodo.tareas.get(r.id!)!.estado, 'parada');
+      })
+    );
+  } finally {
+    await nodo.cerrar();
+  }
+});
+
+test('robustez: encargar se reintenta si el nodo no contesta (un 4xx no); si deja de contestar se dice y se cierra honesto; a medias se ofrece seguir y el «sí» sigue', async () => {
+  const { resolverPreguntaComputadora } = await import('../server/computadora');
+  // Arrancando (503 una vez): el segundo intento entra.
+  const lento = await nodoAgente({ caps: CAPS, guion: () => undefined, altasQueFallan: 1 });
+  try {
+    await conNodo(lento.url, () =>
+      conAvisos(async () => {
+        const r = await encargarTarea({ instruccion: 'Entra a x.hn y lee', quien: 'jose@x.hn', motor: 'holo', esperaMs: 0 });
+        assert.ok(r.id, 'el segundo intento entró');
+        assert.equal(lento.pedidos.filter((p) => p.ruta === 'POST /tareas').length, 2);
+      })
+    );
+  } finally {
+    await lento.cerrar();
+  }
+  const caido = await nodoAgente({ caps: CAPS, guion: () => undefined, altasQueFallan: 5 });
+  try {
+    await conNodo(caido.url, () =>
+      conAvisos(async () => {
+        const r = await encargarTarea({ instruccion: 'Entra a x.hn y lee', quien: 'jose@x.hn', motor: 'holo', esperaMs: 0 });
+        assert.equal(r.id, null);
+        assert.match(r.hecho, /no pude encargarla \(no contestó tras dos intentos/);
+        assert.match(r.hecho, /Dilo con honestidad y ofrece intentarlo en un momento/);
+      })
+    );
+  } finally {
+    await caido.cerrar();
+  }
+  const noQuiere = await nodoAgente({ caps: CAPS, guion: () => undefined, altasQueFallan: 5, altaCodigo: 400 });
+  try {
+    await conNodo(noQuiere.url, () =>
+      conAvisos(async () => {
+        await encargarTarea({ instruccion: 'Entra a x.hn y lee', quien: 'jose@x.hn', motor: 'holo', esperaMs: 0 });
+        assert.equal(noQuiere.pedidos.filter((p) => p.ruta === 'POST /tareas').length, 1, 'un 400 no se reintenta');
+      })
+    );
+  } finally {
+    await noQuiere.cerrar();
+  }
+  // Deja de contestar a media tarea: «sigo intentando» una vez y, al tope, un final honesto con «¿sigo?».
+  const muere = await nodoAgente({ caps: CAPS, guion: (t) => void (t.pasos = [{ n: 1, t: 1, accion: 'open_url', args: { url: 'x.hn' } }]) });
+  try {
+    await conNodo(muere.url, () =>
+      conAvisos(async (vistos) =>
+        conRutas(async (como) => {
+          const r = await encargarTarea({ instruccion: 'Entra a x.hn y lee las noticias', quien: 'jose@x.hn', motor: 'holo', esperaMs: 0, aparato: 'tel-1' });
+          await hasta(() => (muere.tareas.get(r.id!)?.consultas ?? 0) >= 2);
+          muere.estado.caido = true;
+          await hasta(() => vistos.some((v) => v.aviso.texto === 'Mi computadora no me contesta; sigo intentando.'));
+          await hasta(() => vistos.some((v) => v.aviso.fase === 'termina'), 6000);
+          const fin = vistos.find((v) => v.aviso.fase === 'termina')!.aviso;
+          assert.equal(fin.ok, false);
+          assert.match(fin.texto!, /^Mi computadora falló: dejó de contestarme a mitad de la tarea; no sé si alcanzó a terminar\.$/);
+          assert.equal(vistos.filter((v) => v.aviso.texto === 'Mi computadora no me contesta; sigo intentando.').length, 1, 'se dice una vez');
+          const m = (await como('jose@x.hn', `/api/computadora/misiones/${r.id}`)).j.mision;
+          assert.equal(m.puedeSeguir, true);
+          // Vuelve el nodo y la persona dice «sí, sigue»: otra tarea desde donde quedó.
+          muere.estado.caido = false;
+          const h = await resolverPreguntaComputadora('jose@x.hn', 'sí, sigue');
+          assert.match(h!, /dijo que sí; tu computadora sigue con «Entra a x\.hn y lee las noticias» desde donde quedó/);
+          const altas = muere.pedidos.filter((p) => p.ruta === 'POST /tareas');
+          assert.equal(altas.length, 2);
+          assert.match(altas[1].cuerpo.instruccion, /^Sigue con esta misión desde donde está la pantalla ahora/);
+          assert.ok(vistos.some((v) => v.aviso.fase === 'sigue'));
+          assert.equal((await como('jose@x.hn', '/api/computadora')).j.historial.length, 1, 'la misma misión, no otra');
+        })
+      )
+    );
+  } finally {
+    await muere.cerrar();
+  }
+  // El nodo se reinició y ya no tiene la tarea (404): se cierra enseguida, sin esperar el tope.
+  const reinicia = await nodoAgente({ caps: CAPS, guion: () => undefined });
+  try {
+    await conNodo(reinicia.url, () =>
+      conAvisos(async (vistos) => {
+        await encargarTarea({ instruccion: 'Entra a x.hn y lee', quien: 'jose@x.hn', motor: 'holo', esperaMs: 0 });
+        reinicia.estado.perdida = true;
+        await hasta(() => vistos.some((v) => v.aviso.fase === 'termina'), 1200);
+        assert.match(vistos.find((v) => v.aviso.fase === 'termina')!.aviso.texto!, /se reinició y perdió la tarea/);
+      })
+    );
+  } finally {
+    await reinicia.cerrar();
+  }
+});
+
+test('a medias por tiempo: tras las continuaciones se ofrece seguir, el botón «Seguir» de la app la sigue, y «no» la deja', async () => {
+  const { resolverPreguntaComputadora } = await import('../server/computadora');
+  const nodo = await nodoAgente({ caps: CAPS, guion: (t) => void ((t.estado = 'sin_pasos'), (t.error = 'Se acabaron los 25 pasos sin terminar.')) });
+  try {
+    await conNodo(nodo.url, () =>
+      conAvisos(async (vistos) =>
+        conRutas(async (como) => {
+          const r = await encargarTarea({ instruccion: 'Compara vuelos a Miami', quien: 'jose@x.hn', motor: 'holo', esperaMs: 0 });
+          await hasta(() => vistos.some((v) => v.aviso.fase === 'termina'));
+          assert.match(vistos.find((v) => v.aviso.fase === 'termina')!.aviso.texto!, /¿Sigo\?$/);
+          // La lectura del propio teléfono no cuenta; hablar de otra cosa sí: el «¿sigo?» deja de valer para un «sí» suelto.
+          assert.equal(await resolverPreguntaComputadora('jose@x.hn', '[[lectura:abcdEFGH1234]] No alcancé a terminar'), null);
+          assert.equal(await resolverPreguntaComputadora('jose@x.hn', '¿qué hora es?'), null);
+          assert.equal(await resolverPreguntaComputadora('jose@x.hn', 'sí'), null, 'ese «sí» era para otra cosa');
+          assert.equal(nodo.pedidos.filter((p) => p.ruta === 'POST /tareas').length, 4, 'no se siguió sola');
+          // El botón «Seguir» de la tarjeta sí vale (lo tocó la persona).
+          assert.equal((await como('jose@x.hn', `/api/computadora/misiones/${r.id}`)).j.mision.puedeSeguir, true);
+          assert.equal((await como('otra@x.hn', `/api/computadora/misiones/${r.id}/seguir`, { method: 'POST', body: '{}' })).code, 404);
+          const s = await como('jose@x.hn', `/api/computadora/misiones/${r.id}/seguir`, { method: 'POST', body: '{}' });
+          assert.equal(s.code, 200);
+          assert.equal(vistos.find((v) => v.aviso.fase === 'sigue' && v.aviso.texto === 'Va, sigo desde donde me quedé.')?.aviso.id, s.j.id);
+          await hasta(() => vistos.filter((v) => v.aviso.fase === 'termina').length >= 2);
+          assert.equal(await resolverPreguntaComputadora('jose@x.hn', 'no'), 'COMPUTADORA: no quiere que sigas con «Compara vuelos a Miami». Dile que está bien, que ahí queda.');
+          assert.equal(await resolverPreguntaComputadora('jose@x.hn', 'sí'), null, 'ya no se ofrece');
+        })
+      )
+    );
+  } finally {
+    await nodo.cerrar();
+  }
 });

@@ -90,6 +90,8 @@ public partial class NotchWindow : Window
         Iniciar();
         CargarLugar();
         if (soloRender) { Aplicar(); Dibujar(); return; }
+        // La cara de AU-RA: el orbe de partículas (NotchWindow.Orbe.cs). Si no llega a estar listo, el avatar de siempre.
+        PrepararOrbe();
 
         SourceInitialized += (_, _) =>
         {
@@ -122,7 +124,8 @@ public partial class NotchWindow : Window
         Modo.Musica => (450, 94, 28),
         Modo.Escucha => (360, 58, 21),
         Modo.Piensa => (340, 58, 21),
-        Modo.Habla => (470, 80, 26),
+        // Con el orbe, «habla» abre su escenario: el orbe arriba y la frase formada con sus partículas debajo.
+        Modo.Habla => OrbeVisible ? (470, AltoEscenario, 30) : (470, 80, 26),
         Modo.Aviso => (450, 84, 28),
         Modo.Confirma => (480, 118, 28),
         Modo.Panel => (560, AltoPanel, 30),
@@ -138,7 +141,9 @@ public partial class NotchWindow : Window
         if (propuesta != null) return Modo.Confirma;
         if (panelAbierto) return Modo.Panel;
         if (avisoActual != null) return Modo.Aviso;
-        if (escuchando) return Modo.Escucha;
+        // En la conversación en vivo el micrófono queda abierto todo el rato: con el orbe, mientras AURA contesta se ve que
+        // habla (su escenario, con las palabras); con los demás avatares, como siempre, la capa de escucha.
+        if (escuchando && !(hablandoAhora && AgenteAbierto && OrbeVisible)) return Modo.Escucha;
         if (pensando) return Modo.Piensa;
         if (hablandoAhora) return Modo.Habla;
         if (musicaVisible) return Modo.Musica;
@@ -184,6 +189,9 @@ public partial class NotchWindow : Window
         Camara.Margin = abajo ? new Thickness(0, 0, 0, hueco) : new Thickness(0, hueco, 0, 0);
         brillo.Objetivo = FiloDeModo();
         PintarFilo();
+        // Una capa más alta que la ventana compacta (el escenario del orbe): la ventana crece antes de animar.
+        if (!soloRender && !panelAbierto && h + 48 > Height) FijarAlto(h + 48);
+        ActualizarOrbe();
         if (soloRender && !pruebaAnimacion) { BarrasEscucha.Asentar(); BarrasHabla.Asentar(); ancho.Saltar(w); alto.Saltar(h); radio.Saltar(r); brillo.Saltar(brillo.Objetivo); foreach (var (m, (_, op)) in capas) op.Saltar(m == modo ? 1 : 0); Dibujar(); return; }
         if (!animando) { animando = true; ultimo = reloj.Elapsed; CompositionTarget.Rendering += Fotograma; }
     }
@@ -212,7 +220,8 @@ public partial class NotchWindow : Window
         {
             CompositionTarget.Rendering -= Fotograma; animando = false;
             medidor?.Pausa(); // el tiempo quieto no es un fotograma lento
-            if (!panelAbierto && Height > AltoCompacto + 1) FijarAlto(AltoCompacto);
+            double queda = Math.Max(AltoCompacto, alto.Objetivo + 48);
+            if (!panelAbierto && Height > queda + 1) FijarAlto(queda);
         }
     }
 
@@ -265,6 +274,7 @@ public partial class NotchWindow : Window
             capa.Visibility = op.Valor < 0.01 && m != modo ? Visibility.Hidden : Visibility.Visible;
             ((TranslateTransform)capa.RenderTransform).Y = MenosMovimiento ? 0 : (1 - Math.Clamp(op.Valor, 0, 1)) * (m == modo ? entra : sale);
         }
+        ColocarOrbe();
     }
 
     /// <summary>

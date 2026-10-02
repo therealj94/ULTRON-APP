@@ -97,6 +97,11 @@ export function esAccionApp(a: any): a is AccionApp {
       return typeof a.id === 'string' && /^aura-rec-[a-z0-9-]{1,80}$/.test(a.id);
     case 'llamame':
       return true;
+    // La cartera (cartera/HojasCartera.tsx): abrir la hoja, o la de enviar llenada (se firma en Veta Wallet).
+    case 'cartera':
+      return true;
+    case 'pagar':
+      return txt(a.con, 254) && (a.monto === undefined || txt(a.monto, 40)) && (a.moneda === undefined || txt(a.moneda, 16));
     // Lo que hace su computadora en la nube (server/computadora.ts): abrir la vista, avances y el final.
     case 'computadora':
       return esAccionPc(a);

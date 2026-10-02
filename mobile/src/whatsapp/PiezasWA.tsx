@@ -124,9 +124,15 @@ function BurbujaWABase({ f, w, oscuro, anchoMax, idioma, onFoto, onVideo, onRein
   ) : null;
   const lado = { alignItems: m.mio ? ('flex-end' as const) : ('flex-start' as const), marginTop: f.pegadaArriba ? 2 : 8, paddingLeft: m.mio ? 48 : 8, paddingRight: m.mio ? 8 : 48 };
   const fallo = m.fallo ? (
-    <Pressable onPress={() => onReintentar(m.texto)} accessibilityRole="button" accessibilityLabel={tr('No se envió. Tocar para reintentar', 'Not sent. Tap to retry')} style={st.fallo} hitSlop={8}>
+    <Pressable onPress={() => onReintentar(m.texto)} accessibilityRole="button" accessibilityLabel={tr(`No se envió: ${m.fallo}. Tocar para reintentar`, `Not sent: ${m.fallo}. Tap to retry`)} style={st.fallo} hitSlop={8}>
       <IconoWA nombre="alerta" tam={14} color={w.aviso} />
-      <Text style={{ color: w.aviso, fontSize: 12.5, marginLeft: 4 }}>{tr('No se envió · Toca para reintentar', 'Not sent · Tap to retry')}</Text>
+      <View style={{ marginLeft: 4, flexShrink: 1, alignItems: 'flex-end' }}>
+        <Text style={{ color: w.aviso, fontSize: 12.5 }}>{tr('No se envió · Toca para reintentar', 'Not sent · Tap to retry')}</Text>
+        {/* Por qué (el puente no contesta, se desvinculó, sin conexión…): sin esto solo se veía «no se envió». */}
+        <Text style={{ color: w.aviso, fontSize: 11.5, opacity: 0.85 }} numberOfLines={2}>
+          {m.fallo}
+        </Text>
+      </View>
     </Pressable>
   ) : null;
 

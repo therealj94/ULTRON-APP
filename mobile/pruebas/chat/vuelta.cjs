@@ -74,6 +74,77 @@ async function porLaApp(vuelta) {
   rn.url.forEach((f) => f({ url: `${WEB}?pase=PASE&estado=${est}` }));
   ok('…y la buena de después entra', (await p).ok === true);
 
+  console.log('\nCaso c · sin la app Orden Global: SIN_WALLET, sin saltar a ningún lado\n');
+  rn.openURL = async () => {
+    throw new Error('no app');
+  };
+  let webAbierta = 0;
+  globalThis.__wb = async () => {
+    webAbierta++;
+    return { type: 'dismiss' };
+  };
+  r = await GENESIS.entrarConGenesis();
+  ok('sin la app → SIN_WALLET con mensaje', r.ok === false && r.codigo === 'SIN_WALLET' && /Orden Global/.test(r.mensaje), JSON.stringify(r));
+  ok('no se abre la web sola (la persona elige: instalar, web o correo)', webAbierta === 0);
+  ok('el pedido se borra: sin app no lo guarda nadie', pendiente() === null);
+  ok('no quedan oyentes', oyentes() === 0, String(oyentes()));
+  // «Usar Veta Wallet en la web»: directo a la web, sin volver a probar la app.
+  let probóApp = false;
+  rn.openURL = async () => {
+    probóApp = true;
+    throw new Error('no app');
+  };
+  globalThis.__wb = async (url) => ({ type: 'success', url: `${WEB}?pase=PASE&estado=${new URLSearchParams(url.split('?')[1]).get('estado')}` });
+  r = await GENESIS.entrarConGenesis({ web: true });
+  ok('{ web: true } entra por la web sin tocar la app', r.ok === true && !probóApp, JSON.stringify(r));
+
+  console.log('\nCaso b · la wallet guarda el pedido mientras se saca el Genesis ID y vuelve TARDE\n');
+  ok('el pedido vive media hora, como en la wallet (AURA_VIVE_MS)', GENESIS.VIDA_PEDIDO_MS === 30 * 60_000, String(GENESIS.VIDA_PEDIDO_MS));
+  // La persona va a la wallet, no tiene Genesis ID, empieza a sacarlo y vuelve a AU-RA a mano (sin pase).
+  rn.openURL = async () => {};
+  globalThis.__wb = async () => ({ type: 'dismiss' });
+  const pb = GENESIS.entrarConGenesis();
+  await espera(30);
+  const estB = pendiente().estado;
+  rn.app.forEach((f) => f('background'));
+  rn.app.forEach((f) => f('active'));
+  r = await pb;
+  ok('volvió sin pase → SIN_VUELTA', r.codigo === 'SIN_VUELTA', JSON.stringify(r));
+  ok('…pero el pedido QUEDA: la app Orden Global se abrió y puede tenerlo guardado', pendiente()?.estado === estB);
+  ok('no quedan esperas abiertas', oyentes() === 0, String(oyentes()));
+  // Ya con su Genesis ID, la wallet vuelve con el pase de ESTE pedido; AU-RA está abierta en «Entrar».
+  const tardias = [];
+  const soltar = GENESIS.escucharVueltaTardia((x) => tardias.push(x));
+  rn.url.forEach((f) => f({ url: `${WEB}?pase=AJENO&estado=otro-estado-cualquiera` }));
+  await espera(30);
+  ok('una vuelta tardía con otro estado no hace nada', tardias.length === 0 && pendiente()?.estado === estB);
+  rn.url.forEach((f) => f({ url: `${WEB}?pase=PASE&estado=${estB}` }));
+  await espera(50);
+  ok('la vuelta tardía con el estado del pedido entra sola', tardias.length === 1 && tardias[0].ok === true && tardias[0].miembro?.gid === 'GEN-AAAA-BBBB-C', JSON.stringify(tardias));
+  ok('…y gasta el pedido (no se canjea dos veces)', pendiente() === null);
+  rn.url.forEach((f) => f({ url: `ultronfp://sso?pase=PASE&estado=${estB}` }));
+  await espera(30);
+  ok('la misma vuelta repetida (https + ultronfp) no entra otra vez', tardias.length === 1);
+  // Con una espera abierta, la vuelta es de la espera: la tardía no la toca (no hay doble canje).
+  const pd = GENESIS.entrarConGenesis();
+  await espera(30);
+  const estD = pendiente().estado;
+  rn.url.forEach((f) => f({ url: `${WEB}?pase=PASE&estado=${estD}` }));
+  r = await pd;
+  await espera(30);
+  ok('a tiempo entra por la espera, y la tardía no canjea encima', r.ok === true && tardias.length === 1, JSON.stringify(tardias));
+  // La wallet devuelve el error del alta (en revisión): llega como cualquier vuelta.
+  const pg = GENESIS.entrarConGenesis();
+  await espera(30);
+  const estG = pendiente().estado;
+  rn.app.forEach((f) => f('background'));
+  rn.app.forEach((f) => f('active'));
+  await pg;
+  rn.url.forEach((f) => f({ url: `${WEB}?error=gid-pendiente&estado=${estG}` }));
+  await espera(50);
+  ok('si el Genesis ID quedó en revisión, la vuelta tardía trae GID_PENDIENTE', tardias.length === 2 && tardias[1].codigo === 'GID_PENDIENTE', JSON.stringify(tardias[1]));
+  soltar();
+  ok('al soltar la escucha no queda oyente', oyentes() === 0, String(oyentes()));
   console.log('\nWeb de la wallet · la pestaña segura con redirect https\n');
   rn.openURL = async () => {
     throw new Error('no app');
@@ -83,7 +154,7 @@ async function porLaApp(vuelta) {
     abierta = { url, redirect };
     return { type: 'success', url: `${WEB}?pase=PASE&estado=${new URLSearchParams(url.split('?')[1]).get('estado')}` };
   };
-  r = await GENESIS.entrarConGenesis();
+  r = await GENESIS.entrarConGenesis({ web: true });
   ok('openAuthSessionAsync recibe como redirect la URL https', abierta?.redirect === WEB, JSON.stringify(abierta));
   ok('la web también lleva vuelta=https', new URLSearchParams(abierta.url.split('?')[1]).get('vuelta') === WEB, abierta.url);
   ok('la vuelta https de la pestaña entra', r.ok === true, JSON.stringify(r));
@@ -93,7 +164,7 @@ async function porLaApp(vuelta) {
   // intent:// → llega ultronfp://…, que la pestaña (que espera la https) no reconoce. Entra igual.
   let cerrarPestana = null;
   globalThis.__wb = () => new Promise((listo) => (cerrarPestana = () => listo({ type: 'dismiss' })));
-  const pw = GENESIS.entrarConGenesis();
+  const pw = GENESIS.entrarConGenesis({ web: true });
   await espera(30);
   rn.url.forEach((f) => f({ url: `ultronfp://sso?pase=PASE&estado=${pendiente().estado}` }));
   r = await pw;
@@ -104,7 +175,7 @@ async function porLaApp(vuelta) {
 
   // La pestaña se cierra y el enlace llega detrás del cierre (dentro de la gracia): entra igual.
   globalThis.__wb = async () => ({ type: 'dismiss' });
-  const pt = GENESIS.entrarConGenesis();
+  const pt = GENESIS.entrarConGenesis({ web: true });
   await espera(200);
   rn.url.forEach((f) => f({ url: `${WEB}?pase=PASE&estado=${pendiente().estado}` }));
   r = await pt;
@@ -116,7 +187,7 @@ async function porLaApp(vuelta) {
     abierta = { url, redirect };
     return { type: 'success', url: `ultronfp://sso?pase=PASE&estado=${new URLSearchParams(url.split('?')[1]).get('estado')}` };
   };
-  r = await GENESIS.entrarConGenesis();
+  r = await GENESIS.entrarConGenesis({ web: true });
   ok('en iOS el redirect es ultronfp://sso y no se manda vuelta', abierta.redirect === 'ultronfp://sso' && !abierta.url.includes('vuelta='), JSON.stringify(abierta));
   ok('…y entra', r.ok === true);
   rn.os = undefined;
@@ -168,10 +239,10 @@ async function porLaApp(vuelta) {
 
   console.log('\nArranque en frío y chat\n');
   const { verificador } = GENESIS.nuevoReto();
-  ss.m.set('aura.genesis.pendiente', JSON.stringify({ verificador, estado: 'EST-FRIO', en: Date.now() }));
+  ss.m.set('aura.genesis.pendiente', JSON.stringify({ verificador, estado: 'EST-FRIO', en: Date.now() - 25 * 60_000 }));
   rn.inicial = `${WEB}?pase=PASE&estado=EST-FRIO`;
   r = await GENESIS.retomarSiVolvio();
-  ok('el arranque en frío retoma la vuelta https', r && r.ok === true, JSON.stringify(r));
+  ok('el arranque en frío retoma la vuelta https, aun con un pedido de 25 min (sacó el Genesis ID en la wallet)', r && r.ok === true, JSON.stringify(r));
   rn.inicial = null;
 
   rn.openURL = async () => {};

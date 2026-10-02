@@ -47,6 +47,9 @@ const TRAZOS = {
   ayuda: 'M3.5 12 A8.5 8.5 0 1 0 20.5 12 A8.5 8.5 0 1 0 3.5 12 Z M9.6 9.5 A2.5 2.5 0 1 1 12 12 V13.5 M12 16.6 V16.8',
   ajustes: 'M4 7 H14 M18 7 H20 M16 5 V9 M4 17 H8 M12 17 H20 M10 15 V19',
   cambiar: 'M7 7 H18 L15 4 M17 17 H6 L9 20',
+  // «Enviar dinero» en la conversación (cartera/HojaPagar.tsx): una moneda con su signo.
+  dinero:
+    'M3.5 12 A8.5 8.5 0 1 0 20.5 12 A8.5 8.5 0 1 0 3.5 12 Z M14.8 9.2 C14.3 8.3 13.3 7.8 12 7.8 C10.3 7.8 9.3 8.7 9.3 9.9 C9.3 12.6 14.8 11.2 14.8 14.1 C14.8 15.3 13.7 16.2 12 16.2 C10.6 16.2 9.6 15.6 9.1 14.7 M12 6.2 V7.8 M12 16.2 V17.8',
 } as const;
 
 export type NombreIcono = keyof typeof TRAZOS;

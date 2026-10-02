@@ -27,6 +27,7 @@ import {
   etiquetaMedia,
   filasWA,
   formaDe,
+  fusionarInfoChat,
   horaLista,
   horaWA,
   huellaChats,
@@ -35,6 +36,8 @@ import {
   juntar,
   juntarChats,
   mensajeErrorMedia,
+  mensajeErrorWA,
+  MENSAJES_POR_VUELTA,
   nombreChat,
   nombrePersona,
   normalizarChats,
@@ -43,12 +46,14 @@ import {
   previa,
   previaTexto,
   previaWA,
+  sondeoListaWA,
   sondeoWA,
   subtituloChat,
   telefonoBonito,
   telefonoValido,
   textoBurbuja,
   totalNoLeidos,
+  unirMensajes,
   vistaDe,
 } from '../logica.ts';
 import { atrasWhatsapp, registrarAtras } from '../atras.ts';
@@ -139,7 +144,10 @@ prueba('las dos entradas de chats llevan la pestaña de WhatsApp; otra cuenta ve
   assert.match(leer('pulse/PulseChat.tsx'), /atrasWhatsapp\(\)/);
   assert.match(leer('app/pantallas/Chats.tsx'), /<ChatsConWhatsapp/);
   const envoltorio = leer('whatsapp/ChatsConWhatsapp.tsx');
-  assert.match(envoltorio, /if \(!conWhatsapp\) return <PantallaChats onAbrir=\{onAbrir\} onAtras=\{onAtras\} \/>;/);
+  // Otra cuenta: PULSE2CHAT y Correos (José, 2-oct), sin la página ni la pestaña de WhatsApp.
+  assert.match(envoltorio, /conWhatsapp \? \['pulse', 'whatsapp', 'correos'\] : \['pulse', 'correos'\]/);
+  assert.match(envoltorio, /\{conWhatsapp \? \(\s*<View style=\{\{ width, flex: 1 \}\}>\s*<PantallaWhatsapp /, 'la página de WhatsApp solo con permiso');
+  assert.match(envoltorio, /<PantallaChats onAbrir=\{onAbrir\} onAtras=\{onAtras\} cambio=\{cambio\} \/>/);
   assert.match(envoltorio, /pagingEnabled/, 'se cambia deslizando');
   assert.doesNotMatch(envoltorio, /\.catch\(\(\) => vivo && setEstado\(\{ disponible: false, permitido: false/, 'un fallo de red no esconde WhatsApp');
   assert.match(envoltorio, /setTimeout\(\(\) => preguntar\(intento \+ 1\)/, 'si falla la red, vuelve a preguntar');
@@ -353,6 +361,84 @@ prueba('la lista: nunca se cae un chat; buscar por nombre, número o mensaje; ch
   assert.notEqual(huellaMensajes([ed]), huellaMensajes([{ ...ed, texto: 'holi' }]));
   assert.notEqual(huellaMensajes([ed]), huellaMensajes([{ ...ed, nombreDe: 'Beto' }]));
   assert.notEqual(huellaChats([{ ...cs[0], ultimo: 'nos vemos' }]), huellaChats([{ ...cs[0], ultimo: 'nos vamos' }]), 'el último mensaje, aunque tenga el mismo largo');
+});
+
+/* ── de punta a punta contra el contrato del puente (2-oct, «WhatsApp funcionando al 100») ── */
+
+prueba('puente caído NO es «desvinculado»: no pide vincular otra vez, sigue mostrando lo último y reintenta', () => {
+  // server/whatsapp.ts: si el puente no contesta, /api/whatsapp/estado manda vinculado:false CON error.
+  const servidor = fs.readFileSync(path.join(AQUI, '..', '..', '..', '..', 'server', 'whatsapp.ts'), 'utf8');
+  assert.match(servidor, /vinculado: false, error: String\(e\?\.message \|\| e\)/, 'el contrato: el fallo del puente llega como vinculado:false con error');
+  assert.equal(vistaDe({ disponible: true, permitido: true, vinculado: false, error: 'El puente de WhatsApp no contestó (timeout).' }), 'caido');
+  assert.equal(vistaDe({ disponible: true, permitido: true, vinculado: false }), 'vincular', 'sin error sí es que no está vinculado');
+  assert.equal(sondeoWA('caido', false), 10000, 'reintenta solo, sin martillar');
+  const pantalla = fs.readFileSync(path.join(AQUI, '..', 'PantallaWhatsapp.tsx'), 'utf8');
+  assert.match(pantalla, /vista === 'caido' && !conLista \? \(/, 'sin chats guardados: «tu WhatsApp no contesta» con reintentar');
+  assert.match(pantalla, /const conLista = vista === 'listo' \|\| \(vista === 'caido' && !!chats\?\.length\)/, 'con chats: se siguen viendo');
+  assert.match(pantalla, /if \(v === 'vincular'\) \{[\s\S]*?setChats\([\s\S]*?setAbierto\(null\)/, 'desvinculado de verdad: se limpia la lista y se cierra el chat abierto');
+});
+
+prueba('la lista tapada por un chat se renueva despacio; el chat abierto, rápido', () => {
+  assert.equal(sondeoListaWA('listo', true), 15000);
+  assert.equal(sondeoListaWA('listo', false), sondeoWA('listo', false));
+  assert.equal(sondeoListaWA('vincular', true), 3000, 'mientras vincula, rápido igual');
+  assert.match(fs.readFileSync(path.join(AQUI, '..', 'PantallaWhatsapp.tsx'), 'utf8'), /sondeoListaWA\(vistaRef\.current, !!abiertoRef\.current\)/);
+});
+
+prueba('abrir un chat: lo que dice el servidor del chat no borra lo que ya se sabía (un chat nuevo vuelve vacío)', () => {
+  const actual = { jid: '50499998888@s.whatsapp.net', nombre: 'Beto', grupo: false, noLeidos: 2, hora: 9, ultimo: 'hola', ultimoMio: false, numero: '+50499998888', foto: true };
+  // El puente, para un chat que no tiene guardado, manda el Chat vacío: jid «», foto null.
+  assert.equal(fusionarInfoChat(actual, { jid: '', nombre: '', grupo: false, noLeidos: 0, hora: 0, ultimo: '', numero: '', foto: null }), actual);
+  assert.equal(fusionarInfoChat(actual, null), actual);
+  const f = fusionarInfoChat(actual, { jid: '1@lid', nombre: 'Beto Paz', numero: '', foto: null, grupo: false });
+  assert.equal(f.jid, actual.jid, 'el jid con que se abrió no cambia');
+  assert.equal(f.nombre, 'Beto Paz', 'el nombre nuevo sí');
+  assert.equal(f.numero, '+50499998888', 'un número vacío no borra el que había');
+  assert.equal(f.foto, true, 'un null no borra que tiene foto');
+  assert.equal(fusionarInfoChat(actual, { jid: 'x', foto: false }).foto, false, 'si ahora no tiene foto, se sabe');
+  assert.equal(fusionarInfoChat({ ...actual, grupo: false }, { jid: 'g@g.us', grupo: true }).grupo, true);
+  assert.match(fs.readFileSync(path.join(AQUI, '..', 'ConversacionWA.tsx'), 'utf8'), /setInfo\(\(c\) => fusionarInfoChat\(c, r\.chat\)\)/);
+});
+
+prueba('subir en un chat trae los mensajes anteriores (?antes=), sin repetir ni desordenar', () => {
+  const m = (id, hora) => ({ id, hora, chat: 'c', de: '', nombreDe: '', mio: false, tipo: 'texto', texto: id });
+  const viejos = [m('a', 1), m('b', 2), m('c', 3)];
+  const recientes = [m('c', 3), m('d', 4)];
+  assert.deepEqual(unirMensajes(viejos, recientes).map((x) => x.id), ['a', 'b', 'c', 'd']);
+  assert.deepEqual(unirMensajes([], recientes).map((x) => x.id), ['c', 'd']);
+  // Una edición que llega en la vuelta reciente gana sobre la copia vieja.
+  assert.equal(unirMensajes([m('c', 3)], [{ ...m('c', 3), texto: 'editado' }]).find((x) => x.id === 'c').texto, 'editado');
+  assert.equal(MENSAJES_POR_VUELTA, 60, 'lo mismo que pide el servidor al puente');
+  const chat = fs.readFileSync(path.join(AQUI, '..', 'ConversacionWA.tsx'), 'utf8');
+  assert.match(chat, /onEndReached=\{\(\) => void cargarViejos\(\)\}/, 'la lista va invertida: el «final» es arriba');
+  assert.match(chat, /API\.mensajesWA\(chat\.jid, masViejo\)/);
+  assert.match(fs.readFileSync(path.join(AQUI, '..', 'api.ts'), 'utf8'), /&antes=\$\{Math\.floor\(antes\)\}/);
+  const servidor = fs.readFileSync(path.join(AQUI, '..', '..', '..', '..', 'server', 'whatsapp.ts'), 'utf8');
+  assert.match(servidor, /mensajesWA\(chat, 60, Number\(req\.query\.antes\) \|\| 0\)/, 'el servidor pasa `antes` al puente');
+});
+
+prueba('los errores dichos para la persona: puente caído, desvinculado (412), sesión, sin red', () => {
+  assert.match(mensajeErrorWA(503, 'El puente de WhatsApp no contestó (timeout).'), /no contesta ahora/);
+  assert.match(mensajeErrorWA(502, 'El puente de WhatsApp no contestó (fetch failed).'), /no contesta ahora/);
+  assert.match(mensajeErrorWA(412, 'no hay un WhatsApp vinculado'), /se desvinculó/);
+  assert.match(mensajeErrorWA(401, ''), /sesión/);
+  assert.match(mensajeErrorWA(0, 'Aborted'), /Sin conexión/);
+  assert.equal(mensajeErrorWA(400, 'el mensaje es muy largo (máximo 4000 letras)'), 'El mensaje es muy largo (máximo 4000 letras)');
+  assert.match(mensajeErrorWA(500, 'HTTP 500'), /Algo falló/);
+  assert.match(mensajeErrorWA(412, '', 'en'), /unlinked/);
+  // El mensaje que no salió dice por qué (antes solo «No se envió»).
+  const piezas = fs.readFileSync(path.join(AQUI, '..', 'PiezasWA.tsx'), 'utf8');
+  assert.match(piezas, /\{m\.fallo\}/);
+  assert.match(fs.readFileSync(path.join(AQUI, '..', 'ConversacionWA.tsx'), 'utf8'), /fallo: mensajeErrorWA\(/);
+});
+
+prueba('una nota de voz o un video que ya no están (410) se nombran como lo que son', () => {
+  assert.match(mensajeErrorMedia(410, 'esa foto ya no está en WhatsApp; ábrela en tu teléfono', 'es', 'audio'), /^Esa nota de voz ya no está/);
+  assert.match(mensajeErrorMedia(410, '', 'es', 'video'), /^Ese video ya no está/);
+  assert.match(mensajeErrorMedia(410, '', 'es', 'documento'), /^Ese archivo ya no está/);
+  assert.equal(mensajeErrorMedia(410, 'esa foto ya no está en WhatsApp; ábrela en tu teléfono', 'es', 'imagen'), 'Esa foto ya no está en WhatsApp; ábrela en tu teléfono');
+  assert.match(mensajeErrorMedia(412, '', 'es', 'audio'), /no está vinculado/, '412: no se reintenta');
+  assert.match(fs.readFileSync(path.join(AQUI, '..', 'medios.ts'), 'utf8'), /mensajeErrorMedia\(status, e\?\.message, .*?, m\.tipo\)/);
 });
 
 let ok = 0;

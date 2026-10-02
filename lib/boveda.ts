@@ -49,6 +49,8 @@ const ENV: Record<string, string[]> = {
   ms_client_id: ['MS_CLIENT_ID'],
   // Los avisos al teléfono con la app cerrada (lib/push.ts): el JSON entero de la cuenta de servicio de Firebase.
   firebase_cuenta: ['FIREBASE_SERVICE_ACCOUNT'],
+  // El relevo de PULSE2CHAT avisa a AU-RA de un mensaje nuevo (server/push.ts /api/push/relevo): clave compartida.
+  push_relevo: ['PUSH_RELEVO_CLAVE'],
 };
 
 export function clave(id: string): string {

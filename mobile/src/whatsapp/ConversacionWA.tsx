@@ -6,6 +6,7 @@
  *   · Lo que escribe y manda sale directo (es su «sí»); aparece en el acto y, si no sale, se queda con
  *     «toca para reintentar».
  *   · Abrirlo lo marca leído (también en su teléfono), y lo que llega estando a la vista también.
+ *   · Trae los últimos 60; al subir hasta arriba trae los 60 anteriores (`antes`), y así.
  *   · Llamar: WhatsApp no deja llamar desde un dispositivo vinculado, así que el teléfono y la cámara
  *     abren SU app de WhatsApp en ese contacto (se explica una vez).
  */
@@ -19,7 +20,27 @@ import * as API from './api';
 import { registrarAtras } from './atras';
 import { IconoWA } from './IconoWA';
 import { AvatarWA, BurbujaWA, VisorFoto, VisorVideo } from './PiezasWA';
-import { digitosLlamada, enlacesWhatsapp, etiquetaDiaWA, filasWA, horaWA, huellaMensajes, juntar, nombreChat, nombrePersona, paletaWA, sondeoWA, subtituloChat, type ChatWA, type FilaWA, type MensajeWA } from './logica';
+import {
+  MENSAJES_POR_VUELTA,
+  digitosLlamada,
+  enlacesWhatsapp,
+  etiquetaDiaWA,
+  filasWA,
+  fusionarInfoChat,
+  horaWA,
+  huellaMensajes,
+  juntar,
+  mensajeErrorWA,
+  nombreChat,
+  nombrePersona,
+  paletaWA,
+  sondeoWA,
+  subtituloChat,
+  unirMensajes,
+  type ChatWA,
+  type FilaWA,
+  type MensajeWA,
+} from './logica';
 
 const CLAVE_LLAMADAS = 'whatsapp.llamadas.explicado';
 let llamadasExplicadas = false;
@@ -73,7 +94,11 @@ export function ConversacionWA({ chat, onAtras }: { chat: ChatWA; onAtras: () =>
   const [foto, setFoto] = useState<{ uri: string; titulo: string; detalle: string } | null>(null);
   const [video, setVideo] = useState<string | null>(null);
   const [info, setInfo] = useState<ChatWA>(chat);
+  const [viejos, setViejos] = useState<MensajeWA[]>([]);
+  const [cargandoViejos, setCargandoViejos] = useState(false);
+  const [sinMasViejos, setSinMasViejos] = useState(false);
   const ultimoAjeno = useRef('');
+  const primera = useRef(true);
   const huella = useRef('');
 
   const nombre = nombreChat(info, idioma);
@@ -108,8 +133,13 @@ export function ConversacionWA({ chat, onAtras }: { chat: ChatWA; onAtras: () =>
           huella.current = h;
           setMensajes(r.mensajes);
         } else setMensajes((ms) => ms ?? r.mensajes);
-        // El servidor puede traer el nombre o el número que la lista no tenía.
-        if (r.chat && typeof r.chat === 'object') setInfo((c) => ({ ...c, ...r.chat, jid: c.jid, nombre: r.chat.nombre || c.nombre, numero: r.chat.numero || c.numero, grupo: c.grupo || !!r.chat.grupo }));
+        // Menos de una vuelta entera la primera vez: no hay nada más viejo que pedir.
+        if (primera.current) {
+          primera.current = false;
+          if (r.mensajes.length < MENSAJES_POR_VUELTA) setSinMasViejos(true);
+        }
+        // El servidor puede traer el nombre, el número o si tiene foto (un chat nuevo vuelve vacío: no se toca).
+        setInfo((c) => fusionarInfoChat(c, r.chat));
         setError('');
         // Llegó algo nuevo de la otra persona estando a la vista: queda leído (también en su teléfono).
         const ajeno = [...r.mensajes].reverse().find((m) => !m.mio);
@@ -121,7 +151,7 @@ export function ConversacionWA({ chat, onAtras }: { chat: ChatWA; onAtras: () =>
         if (vivo) {
           // Un chat nuevo (desde «Nuevo chat») todavía no tiene mensajes: se ve vacío, listo para escribir.
           setMensajes((ms) => ms ?? []);
-          if (e?.status !== 404) setError(e?.message || tr('No pude traer los mensajes.', 'I couldn’t get the messages.'));
+          if (e?.status !== 404) setError(mensajeErrorWA(Number(e?.status) || 0, e?.message, idiomaActual() === 'en' ? 'en' : 'es'));
         }
       }
       if (vivo) reloj = setTimeout(vuelta, sondeoWA('listo', true));
@@ -133,7 +163,24 @@ export function ConversacionWA({ chat, onAtras }: { chat: ChatWA; onAtras: () =>
     };
   }, [chat.jid]);
 
-  const todos = useMemo(() => juntar(mensajes || [], locales), [mensajes, locales]);
+  const todos = useMemo(() => juntar(unirMensajes(viejos, mensajes || []), locales), [viejos, mensajes, locales]);
+
+  /** Subió hasta arriba: los 60 anteriores al más viejo que se ve. */
+  const cargarViejos = useCallback(async () => {
+    if (cargandoViejos || sinMasViejos || !mensajes?.length) return;
+    const masViejo = unirMensajes(viejos, mensajes)[0]?.hora || 0;
+    if (!masViejo) return;
+    setCargandoViejos(true);
+    try {
+      const r = await API.mensajesWA(chat.jid, masViejo);
+      if (r.mensajes.length < MENSAJES_POR_VUELTA) setSinMasViejos(true);
+      if (r.mensajes.length) setViejos((v) => unirMensajes(r.mensajes, v));
+    } catch {
+      /* se vuelve a intentar al subir otra vez */
+    } finally {
+      setCargandoViejos(false);
+    }
+  }, [cargandoViejos, sinMasViejos, mensajes, viejos, chat.jid]);
   // La lista va invertida (lo nuevo abajo, sin saltos al llegar fotos): las filas, de la más nueva a la más vieja.
   const filas = useMemo(() => filasWA(todos, !!info.grupo).reverse(), [todos, info.grupo]);
 
@@ -148,7 +195,7 @@ export function ConversacionWA({ chat, onAtras }: { chat: ChatWA; onAtras: () =>
         setLocales((l) => l.filter((x) => x.id !== local.id));
         if (m) setMensajes((ms) => (ms && !ms.some((x) => x.id === m.id) ? [...ms, m] : ms));
       } catch (e: any) {
-        setLocales((l) => l.map((x) => (x.id === local.id ? { ...x, enviando: false, fallo: e?.message || tr('No salió', 'Not sent') } : x)));
+        setLocales((l) => l.map((x) => (x.id === local.id ? { ...x, enviando: false, fallo: mensajeErrorWA(Number(e?.status) || 0, e?.message, idiomaActual() === 'en' ? 'en' : 'es') } : x)));
       }
     },
     [chat.jid]
@@ -227,6 +274,9 @@ export function ConversacionWA({ chat, onAtras }: { chat: ChatWA; onAtras: () =>
           keyboardShouldPersistTaps="handled"
           initialNumToRender={18}
           windowSize={9}
+          onEndReached={() => void cargarViejos()}
+          onEndReachedThreshold={0.4}
+          ListFooterComponent={cargandoViejos ? <ActivityIndicator color={w.enviar} style={{ marginVertical: 12 }} /> : null}
           renderItem={({ item: f }: { item: FilaWA }) =>
             f.tipo === 'dia' ? (
               <View style={[s.chip, { backgroundColor: w.chip }, !p.oscuro && s.sombraChip]}>

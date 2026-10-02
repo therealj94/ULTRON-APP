@@ -11,7 +11,7 @@ Silueta negra pegada al borde de arriba, con las «orejas» cóncavas y las esqu
 | Reposo | 236 × 36: el avatar chiquito, la cámara y el punto de conexión. Con el ratón encima crece y muestra su nombre y el micrófono. |
 | Escucha | Barras que siguen tu voz, brillo del color del avatar y la **luz naranja** de micrófono abierto. |
 | Piensa | Lo que dijiste y tres puntos en ola. |
-| Habla | El avatar moviendo la boca con el **nivel real del audio**, el subtítulo de la frase que suena y las barras de su voz. |
+| Habla | El avatar moviendo la boca con el **nivel real del audio**, el subtítulo de la frase que suena y las barras de su voz. Con AU-RA, su **orbe** arriba y la frase que suena formada con sus partículas debajo (el notch crece a 470 × 200 mientras habla). |
 | Aviso | Notificaciones en cola: recordatorios, «abriendo Excel», capturas, respuestas con el chat cerrado. |
 | Confirma | Lo que no se deshace solo (escribir en otra ventana, bloquear) espera tu «sí» por voz o con el botón, 30 s. |
 | Panel | El chat completo, las acciones y el borrador. |
@@ -20,7 +20,9 @@ Con un juego o video a pantalla completa se aparta. Con «reducir movimiento» d
 
 ## Avatares
 
-AU-RA, Claudio y ANT-ONIO son sus **modelos 3D de la app** (`vendor/aura-avatar-suite`) renderizados a hojas de 24 fotogramas por estado: reposo, escucha, piensa, feliz, preocupado y tres aperturas de boca (`scripts/render-avatares.cjs`). El Guardián son sus ojos celestes, dibujados en vivo. Al cambiar de avatar cambian el color, la cara y la voz (la elige el servidor por avatar, igual que en la app).
+Claudio y ANT-ONIO son sus **modelos 3D de la app** (`vendor/aura-avatar-suite`) renderizados a hojas de 24 fotogramas por estado: reposo, escucha, piensa, feliz, preocupado y tres aperturas de boca (`scripts/render-avatares.cjs`). El Guardián son sus ojos celestes, dibujados en vivo. Al cambiar de avatar cambian el color, la cara y la voz (la elige el servidor por avatar, igual que en la app).
+
+**La cara de AU-RA es su orbe de partículas** (aprobado por José): `src/14-orbe/orbe.html` es la fuente de verdad y el `.csproj` la publica tal cual como `OrbeAssets/orbe.html` (sin copia en `windows/`; el Centro la copia al armarse). En el notch va en una WebView2 de composición (la normal no se dibuja en una ventana transparente), una sola que se pone sobre la cara de la capa que se ve y se funde con ella (`Notch/OrbeView.cs`, `NotchWindow.Orbe.cs`; el protocolo, puro y probado, en `Aura.Windows.Core/ProtocoloOrbe.cs`). La mueve el estado real (escucha, piensa, habla, feliz), el nivel real del altavoz (o de la conversación en vivo) y el texto de cada frase con lo que dura su audio: el orbe **no habla** (la voz es la de siempre), solo forma las palabras. Efectos de sonido: Ajustes → «Efectos de sonido» (encendidos de fábrica); «Menos movimiento» también lo calma. Si no hay WebView2 Runtime, falla WebGL o no dice «listo» en 10 s, el notch sigue con el avatar de antes (las hojas de AU-RA siguen en `AvatarAssets/aura` para eso). `--orbe-self-test` lo prueba en el CI con el .exe publicado.
 
 ## Voz
 
@@ -130,7 +132,7 @@ Instalar `AURA-Windows-Setup-1.0.0-x64.exe` (por usuario, sin permisos de admini
 
 ## Compilar y probar
 
-- Núcleo (corre en cualquier sistema): `dotnet run --project windows/tests/Aura.Windows.Tests.csproj` — 198 comprobaciones (incluye el lector iCal): reglas, casos de la auditoría, horas de recordatorio, confirmaciones, Laya ligera C# = Python, SSE, cortador de frases, resorte.
+- Núcleo (corre en cualquier sistema): `dotnet run --project windows/tests/Aura.Windows.Tests.csproj` — 198 comprobaciones (incluye el lector iCal): reglas, casos de la auditoría, horas de recordatorio, confirmaciones, Laya ligera C# = Python, SSE, cortador de frases, resorte, y el protocolo del orbe con su contrato contra `src/14-orbe/orbe.html` (si la página cambia lo que el notch le habla, falla).
 - App: `./windows/scripts/publish.ps1` en Windows con .NET 10 (también compila en Linux con `EnableWindowsTargeting`, sin poder ejecutarse).
 - CI (`.github/workflows/aura-windows.yml`, Windows): pruebas, .exe, **capturas reales de cada estado del notch**, conversación completa contra un servidor AU-RA simulado (`gateway/fixture-aura.mjs`), **prueba nativa** (UI Automation leyendo el Bloc de notas, OCR de Windows, controles por nombre, ventanas, información del equipo, voz de Windows), llamadas, escritura real en el Bloc de notas, instalador, instalar y desinstalar.
 

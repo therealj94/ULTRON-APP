@@ -14,6 +14,8 @@ Cada avatar de AU-RA tiene su propia computadora en la nube: un escritorio Ubunt
 
 Instalación en el nodo: `sudo COMPUTADORA_CLAVE=... DOMINIO=54-85-85-77.sslip.io bash scripts/nodo-computadora/instalar.sh`.
 
+Plan visible, su sí antes de algo sensible, pausar, tomar el control, tarjeta del resultado e historial (2-oct, «como el agente de ChatGPT»): ver [COMPUTADORA.md](COMPUTADORA.md), con los pasos para desplegar el `agente.py` nuevo.
+
 ## Lo medido (1-oct-2026)
 
 - **Holo-3.1-9B en BF16 no cabe en la L4.** Los pesos ocupan 18,2 GB y la caché KV pedía 4,1 GB más (CUDA out of memory). En FP8 (nativo en la L4), el modelo ocupa 10,8 GB y quedan unos 200 000 tokens de caché.

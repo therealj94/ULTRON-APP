@@ -105,6 +105,7 @@ export function resumen(ultimo: Mensaje | null | undefined, yo?: string): string
   if (ultimo.borrado) return prefijo + tr('Mensaje borrado', 'Message deleted');
   if (ultimo.cerrado) return prefijo + tr('Cifrado para otro de tus aparatos', 'Encrypted for another of your devices');
   if (ultimo.tipo === 'imagen') return prefijo + (ultimo.texto ? '📷 ' + recortar(ultimo.texto, 70) : '📷 ' + tr('Foto', 'Photo'));
+  if (ultimo.tipo === 'pago') return prefijo + tr(`Envío de ${ultimo.monto || '?'} ${ultimo.moneda || 'ORIGEN'}`, `Payment of ${ultimo.monto || '?'} ${ultimo.moneda || 'ORIGEN'}`);
   return prefijo + recortar(ultimo.texto, 90);
 }
 

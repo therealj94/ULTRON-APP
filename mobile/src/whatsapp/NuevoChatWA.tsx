@@ -11,7 +11,7 @@ import * as API from './api';
 import { registrarAtras } from './atras';
 import { IconoWA } from './IconoWA';
 import { AvatarWA } from './PiezasWA';
-import { nombreChat, soloDigitos, telefonoBonito, telefonoValido, type ContactoWA, type PaletaWA } from './logica';
+import { mensajeErrorWA, nombreChat, soloDigitos, telefonoBonito, telefonoValido, type ContactoWA, type PaletaWA } from './logica';
 
 type Props = { w: PaletaWA; idioma: 'es' | 'en'; onElegir: (k: ContactoWA) => void; onCerrar: () => void };
 
@@ -39,7 +39,7 @@ export function NuevoChatWA({ w, idioma, onElegir, onCerrar }: Props) {
       .catch((e: any) => {
         if (!vivo) return;
         setTodos([]);
-        setError(e?.message || tr('No pude traer tus contactos.', 'I couldn’t get your contacts.'));
+        setError(mensajeErrorWA(Number(e?.status) || 0, e?.message || tr('No pude traer tus contactos.', 'I couldn’t get your contacts.'), idioma));
       });
     return () => {
       vivo = false;

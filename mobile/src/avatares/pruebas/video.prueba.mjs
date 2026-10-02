@@ -1,8 +1,9 @@
 /**
  * Pruebas en Node del cuerpo en video de Claudio y ANT-ONIO (sin teléfono):
  *   el guion (qué clip toca con cada estado, los golpes de una vez, su enfriamiento, cuándo vuelve al
- *   fondo, «reducir movimiento»), el encuadre (la franja de la cara se ve entera y sin huecos), la zona
- *   del toque, y que los 18 clips existen, son livianos y están en clips.ts.
+ *   fondo, «reducir movimiento»), las pistas (su computadora teclea, lee un mensaje, la espera, los golpes
+ *   por lo que dijo o pasó), el encuadre (la franja de la cara se ve entera y sin huecos), la zona del
+ *   toque, y que los 34 clips existen, son livianos y están en clips.ts.
  *
  *   cd mobile && npx tsx src/avatares/pruebas/video.prueba.mjs
  */
@@ -10,9 +11,31 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ASENTAR_FONDO_MS, CLIPS_VIDEO, DirectorVideo, ENFRIAR_GOLPE_MS, GOLPE_ANTES_DE_HABLAR_MS, SOLTAR_HABLA_MS, VENTANAS, encuadrar, esDeFondo, fondoDe, zonaVideo } from '../video/guion.ts';
+import {
+  ASENTAR_FONDO_MS,
+  CLIPS_VIDEO,
+  DirectorVideo,
+  ENFRIAR_GOLPE_MS,
+  ESPERA_DURA_MS,
+  ESPERA_TRAS_MS,
+  GOLPE_ANTES_DE_HABLAR_MS,
+  GOLPE_VIGENTE_MS,
+  SOLTAR_HABLA_MS,
+  VENTANAS,
+  encuadrar,
+  esDeFondo,
+  fondoDe,
+  zonaVideo,
+} from '../video/guion.ts';
+import { createRequire } from 'node:module';
 import { ESTADO_INICIAL } from '../../avatar3d/tipos.ts';
 import { estadoDesdeMesa } from '../../avatar3d/contrato.ts';
+// Las pistas escuchan canales y el bus, que son datos de módulo: se toman de la MISMA copia que lee
+// pistas.ts (tsx las carga como CommonJS; un import de ESM aquí sería otra copia).
+const requerir = createRequire(import.meta.url);
+const { FRASE_ENTRE_MS, golpeDeFrase, leeConHerramientas, pedirGolpe, pistasVideo, ponerLee, ponerTeclea, relojPistas, suscribirPistas } = requerir('../video/pistas.ts');
+const { emitir } = requerir('../../nucleo/contrato.ts');
+const { avisarMesa, mensajeVoz } = requerir('../../compa/canales.ts');
 
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
 const pruebas = [];
@@ -34,8 +57,198 @@ prueba('el fondo sigue al estado: habla > piensa > escucha > reposo', () => {
   assert.equal(fondoDe(est({ escuchando: true, pensando: true })), 'piensa');
   assert.equal(fondoDe(est({ expresion: 'piensa' })), 'piensa');
   assert.equal(fondoDe(est({ escuchando: true, pensando: true, hablando: true })), 'habla');
-  for (const c of ['reposo', 'escucha', 'habla', 'piensa']) assert.ok(esDeFondo(c));
-  for (const c of ['risa', 'saluda', 'senala', 'sorpresa', 'triste']) assert.ok(!esDeFondo(c));
+  for (const c of ['reposo', 'escucha', 'habla', 'piensa', 'teclea', 'lee', 'espera']) assert.ok(esDeFondo(c));
+  for (const c of ['risa', 'saluda', 'senala', 'sorpresa', 'triste', 'celebra', 'asiente', 'niega', 'duda', 'despide']) assert.ok(!esDeFondo(c));
+  assert.equal(CLIPS_VIDEO.length, 17);
+});
+
+prueba('la actividad: habla > lee > piensa > teclea > escucha > reposo', () => {
+  const pc = { teclea: true, lee: false };
+  const leyendo = { teclea: true, lee: true };
+  assert.equal(fondoDe(est(), pc), 'teclea', 'su computadora trabaja: teclea');
+  assert.equal(fondoDe(est({ escuchando: true }), pc), 'teclea', 'con la conversación abierta, también');
+  assert.equal(fondoDe(est({ pensando: true }), pc), 'piensa', 'si le preguntan algo, piensa primero');
+  assert.equal(fondoDe(est({ pensando: true }), leyendo), 'lee', 'leyendo un correo mientras el cerebro piensa');
+  assert.equal(fondoDe(est({ hablando: true }), leyendo), 'habla', 'hablar gana siempre');
+  assert.equal(fondoDe(est({ pensando: true }), leyendo, (c) => c !== 'lee'), 'piensa', 'sin el clip de leer: piensa');
+});
+
+prueba('su computadora trabaja: teclea en bucle; al terminar, vuelve a lo de antes', () => {
+  const { d, r } = nuevo();
+  d.estado(est({ escuchando: true }));
+  r.pasar(ASENTAR_FONDO_MS);
+  assert.equal(d.revisar().clip, 'escucha');
+  assert.equal(d.pistas({ teclea: true, lee: false, golpe: null }), null, 'se asienta como cualquier fondo');
+  r.pasar(ASENTAR_FONDO_MS);
+  const t = d.revisar();
+  assert.deepEqual([t.clip, t.bucle], ['teclea', true]);
+  assert.equal(d.estado(est({ escuchando: true, hablando: true })).clip, 'habla', 'habla encima sin esperar');
+  d.estado(est({ escuchando: true }));
+  r.pasar(SOLTAR_HABLA_MS);
+  assert.equal(d.revisar().clip, 'teclea', 'callado, sigue tecleando');
+  d.pistas({ teclea: false, lee: false, golpe: null });
+  r.pasar(ASENTAR_FONDO_MS);
+  assert.equal(d.revisar().clip, 'escucha');
+});
+
+prueba('leer un mensaje gana a pensar y se va cuando contesta', () => {
+  const { d, r } = nuevo();
+  d.estado(est({ pensando: true }));
+  r.pasar(ASENTAR_FONDO_MS);
+  assert.equal(d.revisar().clip, 'piensa');
+  d.pistas({ teclea: false, lee: true, golpe: null });
+  r.pasar(ASENTAR_FONDO_MS);
+  assert.equal(d.revisar().clip, 'lee');
+  assert.equal(d.estado(est({ hablando: true })).clip, 'habla');
+});
+
+prueba('los golpes de las pistas: una vez, vigentes, con enfriamiento y sin repetir el mismo pedido', () => {
+  const { d, r } = nuevo();
+  const g = (clip, n, en = r.ahora()) => ({ teclea: false, lee: false, golpe: { clip, n, en } });
+  const a = d.pistas(g('asiente', 1));
+  assert.deepEqual([a.clip, a.bucle], ['asiente', false]);
+  assert.equal(d.pistas(g('asiente', 1)), null, 'el mismo pedido no se repite');
+  r.pasar(5000);
+  assert.equal(d.termino(a.n).clip, 'reposo', 'terminado, vuelve al fondo');
+  assert.equal(d.pistas(g('asiente', 2)), null, 'a los 5 s no asiente otra vez');
+  r.pasar(ENFRIAR_GOLPE_MS);
+  assert.equal(d.pistas(g('asiente', 3)).clip, 'asiente', 'enfriado, sí');
+  r.pasar(5000);
+  d.termino(d.reproduccion.n);
+  assert.equal(d.pistas(g('despide', 4, r.ahora() - GOLPE_VIGENTE_MS - 1)), null, 'un pedido viejo no se hace');
+  assert.equal(d.pistas(g('teclea', 5)), null, 'un fondo no es un golpe');
+  for (const c of ['celebra', 'niega', 'duda', 'despide']) {
+    const o = nuevo();
+    assert.equal(o.d.pistas({ teclea: false, lee: false, golpe: { clip: c, n: 1, en: o.r.ahora() } }).clip, c);
+  }
+});
+
+prueba('un golpe de las pistas mientras habla: lo deja hasta 1,8 s y pasa a hablar; «reducir movimiento» no lo hace', () => {
+  const { d, r } = nuevo();
+  d.estado(est({ hablando: true }));
+  assert.equal(d.pistas({ teclea: false, lee: false, golpe: { clip: 'asiente', n: 1, en: r.ahora() } }).clip, 'asiente', '«¡Listo!»: asiente');
+  assert.equal(d.msParaHablar(), GOLPE_ANTES_DE_HABLAR_MS);
+  assert.equal(d.msParaRevisar(), GOLPE_ANTES_DE_HABLAR_MS);
+  r.pasar(GOLPE_ANTES_DE_HABLAR_MS);
+  assert.equal(d.revisar().clip, 'habla');
+  const q = nuevo({ reducido: true });
+  assert.equal(q.d.pistas({ teclea: false, lee: false, golpe: { clip: 'celebra', n: 1, en: q.r.ahora() } }), null);
+  assert.equal(q.d.pistas({ teclea: true, lee: false, golpe: null }), null);
+  q.r.pasar(ASENTAR_FONDO_MS);
+  assert.equal(q.d.revisar().clip, 'teclea', 'los fondos sí');
+});
+
+prueba('un rato sin nada que hacer: espera (mira alrededor) y vuelve al reposo; dormido no espera', () => {
+  const { d, r } = nuevo();
+  d.estado(est());
+  assert.equal(d.msParaEspera(), ESPERA_TRAS_MS);
+  assert.equal(d.msParaRevisar(), ESPERA_TRAS_MS);
+  r.pasar(ESPERA_TRAS_MS - 1);
+  assert.equal(d.revisar(), null);
+  r.pasar(1);
+  const e = d.revisar();
+  assert.deepEqual([e.clip, e.bucle], ['espera', true]);
+  assert.equal(d.estado(est()), null, 'el mismo reposo no la corta');
+  assert.equal(d.msParaEspera(), ESPERA_DURA_MS);
+  r.pasar(ESPERA_DURA_MS);
+  assert.equal(d.revisar().clip, 'reposo');
+  assert.equal(d.msParaEspera(), ESPERA_TRAS_MS, 'y otra vez a contar');
+  // Esperando, lo llaman: escucha.
+  r.pasar(ESPERA_TRAS_MS);
+  d.revisar();
+  assert.equal(d.reproduccion.clip, 'espera');
+  d.estado(est({ escuchando: true }));
+  r.pasar(ASENTAR_FONDO_MS);
+  assert.equal(d.revisar().clip, 'escucha');
+  assert.equal(d.msParaEspera(), null, 'escuchando no espera');
+  // Dormido (silenciado): reposo quieto, sin espera; si estaba esperando, vuelve al reposo.
+  const z = nuevo();
+  z.d.estado(est({ silenciado: true }));
+  assert.equal(z.d.msParaEspera(), null);
+  const w = nuevo();
+  w.d.estado(est());
+  w.r.pasar(ESPERA_TRAS_MS);
+  w.d.revisar();
+  w.d.estado(est({ silenciado: true }));
+  w.r.pasar(ASENTAR_FONDO_MS);
+  assert.equal(w.d.revisar().clip, 'reposo', 'se durmió: deja de esperar');
+  // Sin el clip, nunca.
+  const sin = new DirectorVideo({ hay: ['reposo', 'habla'], ahora: reloj().ahora });
+  sin.estado(est());
+  assert.equal(sin.msParaEspera(), null);
+});
+
+prueba('lo que dijo → el golpe: despide, niega, duda, celebra, asiente (y casi siempre nada)', () => {
+  const casos = {
+    despide: ['¡Adiós, José!', 'Bueno, nos vemos.', 'Hasta luego.', 'Que descanses, José.', 'Ok, cuídate mucho.', 'Goodbye!'],
+    niega: ['No puedo abrir eso desde aquí.', 'Lo siento, no tengo acceso a tu banco.', 'No.', 'Me temo que no.', 'Sorry, I can’t do that.', "I can't do that."],
+    duda: ['No te entendí bien, ¿me lo repetís?', '¿Cuál de los dos?', '¿A qué te referís?', 'Which one?'],
+    celebra: ['¡Lo logramos!', '¡Misión cumplida!', '¡Felicidades, José!', '¡Excelente noticia!'],
+    asiente: ['¡Listo!', 'Sí, ya te lo mando.', 'Sí.', 'Claro que sí.', 'Ya lo envié.', 'Hecho, quedó anotado.', 'Perfecto.', 'Done.'],
+  };
+  for (const [clip, frases] of Object.entries(casos)) for (const f of frases) assert.equal(golpeDeFrase(f), clip, `«${f}»`);
+  for (const f of ['Hoy hace calor en Tegucigalpa.', 'No te preocupes, ya lo reviso.', 'Siempre es bueno descansar.', 'Claro, te explico cómo funciona.', '', '[EMO:feliz]']) {
+    assert.equal(golpeDeFrase(f), null, `«${f}» no pide golpe`);
+  }
+  assert.equal(golpeDeFrase('[EMO:feliz] ¡Listo!'), 'asiente', 'sin las etiquetas');
+  assert.ok(leeConHerramientas(['rag', 'correo']) && leeConHerramientas(['WhatsApp']) && !leeConHerramientas(['web']) && !leeConHerramientas(null));
+});
+
+prueba('las pistas de la app: frases, «hecho», enviado, su computadora, el sonido de hojas y colgar', async () => {
+  const r = reloj(5_000_000);
+  relojPistas(r.ahora);
+  const vistos = [];
+  const off = suscribirPistas((p) => vistos.push(p));
+  const ultimoGolpe = () => pistasVideo.ultimo().golpe?.clip;
+  try {
+    mensajeVoz.emitir({ rol: 'ultron', texto: '¡Listo! Ya quedó.', emocion: 'feliz', en: 1 });
+    assert.equal(ultimoGolpe(), 'asiente', 'su frase en la conversación');
+    const n = pistasVideo.ultimo().golpe.n;
+    mensajeVoz.emitir({ rol: 'ultron', texto: 'Hasta luego.', emocion: 'neutral', en: 2 });
+    assert.equal(pistasVideo.ultimo().golpe.n, n, 'otra frase enseguida no encadena otro golpe');
+    mensajeVoz.emitir({ rol: 'usuario', texto: 'Adiós.', emocion: 'neutral', en: 3 });
+    r.pasar(FRASE_ENTRE_MS);
+    mensajeVoz.emitir({ rol: 'usuario', texto: 'Adiós.', emocion: 'neutral', en: 4 });
+    assert.equal(pistasVideo.ultimo().golpe.n, n, 'lo que dice la persona no cuenta');
+    avisarMesa({ texto: 'No puedo hacer eso, José.', emocion: 'preocupado' });
+    assert.equal(ultimoGolpe(), 'niega', 'su frase en la mesa');
+    r.pasar(FRASE_ENTRE_MS);
+    avisarMesa({ emocion: 'orgullo' });
+    assert.equal(ultimoGolpe(), 'celebra', 'la emoción «orgullo»');
+    emitir('hecho', { accion: { tipo: 'atras' }, ok: true });
+    assert.equal(ultimoGolpe(), 'asiente', '«hecho» bien: asiente');
+    emitir('hecho', { accion: { tipo: 'atras' }, ok: false });
+    assert.equal(ultimoGolpe(), 'niega', '«hecho» mal: niega');
+    emitir('enviado', { para: 'beto@x.hn' });
+    assert.equal(ultimoGolpe(), 'asiente');
+    emitir('accion', { tipo: 'computadora', fase: 'termina', id: 't1', ok: true });
+    assert.equal(ultimoGolpe(), 'celebra', 'su computadora terminó bien');
+    emitir('accion', { tipo: 'computadora', fase: 'termina', id: 't2', ok: false });
+    assert.equal(ultimoGolpe(), 'niega');
+    pedirGolpe('despide');
+    assert.equal(ultimoGolpe(), 'despide', 'colgó (VozProvider lo pide así)');
+    emitir('ambiente', { sonido: 'papel', on: true });
+    assert.equal(pistasVideo.ultimo().lee, true, 'hojas de papel: lee');
+    emitir('ambiente', { sonido: null, on: false });
+    assert.equal(pistasVideo.ultimo().lee, false);
+    emitir('ambiente', { sonido: 'teclado', on: true });
+    assert.equal(pistasVideo.ultimo().lee, false, 'el tecleo de buscar no es leer');
+    ponerTeclea(true);
+    assert.equal(pistasVideo.ultimo().teclea, true);
+    ponerTeclea(false);
+    ponerLee(true, 30);
+    assert.equal(pistasVideo.ultimo().lee, true);
+    await new Promise((f) => setTimeout(f, 60));
+    assert.equal(pistasVideo.ultimo().lee, false, 'se apaga solo');
+    assert.ok(vistos.length > 5, 'el cuerpo las recibe');
+  } finally {
+    off();
+    relojPistas();
+  }
+  // Sin nadie escuchando, las fuentes se sueltan.
+  const g = pistasVideo.ultimo().golpe.n;
+  emitir('hecho', { accion: { tipo: 'atras' }, ok: true });
+  assert.equal(pistasVideo.ultimo().golpe.n, g);
 });
 
 prueba('con la mesa de verdad: escucha, piensa y habla, en bucle', () => {
@@ -201,7 +414,7 @@ prueba('el toque: arriba de la barbilla es la cabeza; abajo, el cuerpo', () => {
   assert.equal(zonaVideo(e.top + 0.41 * e.height, e, 'antonio'), 'cabeza', 'la cabeza de ANT-ONIO es más grande');
 });
 
-prueba('los 18 clips existen, son livianos y clips.ts los pide todos', () => {
+prueba('los 34 clips existen, son livianos y clips.ts los pide todos', () => {
   const dir = path.resolve(AQUI, '../../../assets/avatares/video');
   const fuente = fs.readFileSync(path.resolve(AQUI, '../video/clips.ts'), 'utf8');
   let total = 0;
@@ -218,7 +431,8 @@ prueba('los 18 clips existen, son livianos y clips.ts los pide todos', () => {
       assert.ok(cabeza.indexOf('moov') > 0 && (cabeza.indexOf('mdat') < 0 || cabeza.indexOf('moov') < cabeza.indexOf('mdat')), `${a}-${c}: faststart`);
     }
   }
-  assert.ok(total < 8 * 1024 * 1024, `los 18 pesan ${(total / 1048576).toFixed(1)} MB`);
+  assert.equal(fs.readdirSync(dir).filter((f) => f.endsWith('.mp4')).length, 34, 'ni uno de más');
+  assert.ok(total < 12 * 1024 * 1024, `los 34 pesan ${(total / 1048576).toFixed(1)} MB`);
 });
 
 prueba('en la APK el clip se reproduce desde un archivo (expo-asset), nunca desde el require crudo', () => {

@@ -71,6 +71,7 @@ import { loadVozHoy, saveVozHoy } from '../lib/storage';
 import { avatarPorId } from '../avatares/catalogo';
 import { de } from '../i18n';
 import { senalVoz } from '../avatar3d/senalVoz';
+import { pedirGolpe } from '../avatares/video/pistas';
 
 export type ApiVoz = {
   vista: VistaSesion;
@@ -718,6 +719,11 @@ export function VozProvider({ children, conCompanera = true }: Props) {
     const b = bordesApp || initialWindowMetrics?.insets || { top: 0, bottom: 0, left: 0, right: 0 };
     return minimizada ? { ...b, top: b.top + ALTO_PILDORA } : b;
   }, [bordesApp, minimizada]);
+
+  // Colgó la llamada del avatar: mientras se ve «Llamada terminada», Claudio y ANT-ONIO en video se despiden.
+  useEffect(() => {
+    if (estadoCiclo === 'colgada') pedirGolpe('despide');
+  }, [estadoCiclo]);
 
   return (
     <VozCtx.Provider value={valor}>

@@ -114,11 +114,25 @@ export type AccionIniciativa = {
  *  · empieza: una tarea arrancó → la app abre la vista en vivo (captura y pasos) y pone el tecleo bajito;
  *  · paso:    va avanzando → `texto` es una frase corta para decir («Ya entré a bch.hn.»);
  *  · sigue:   la tarea no alcanzó y la misión sigue con otra (otro `id`);
+ *  · confirmar: se detuvo antes de algo sensible (enviar, iniciar sesión, publicar, borrar) → `pregunta`
+ *               para los botones Sí / No, y `texto` para decirla (si no la dijo ya el turno);
+ *  · pausa:   la pausaron o la persona tomó el control (`estado`); reanuda: siguió;
  *  · termina: terminó → `texto` es el resultado para decir (si no lo dijo ya el turno) y `ok`.
+ * `plan` (en empieza) es la lista corta de la misión que la app va marcando.
  * Con `texto`, `boleto` (lo pone empujarAccion) deja decirlo tal cual en la conversación de voz (lecturaDe).
  */
-export type FaseComputadora = 'empieza' | 'paso' | 'sigue' | 'termina';
-export type AccionComputadora = { tipo: 'computadora'; fase: FaseComputadora; id: string; texto?: string; ok?: boolean; boleto?: string };
+export type FaseComputadora = 'empieza' | 'paso' | 'sigue' | 'confirmar' | 'pausa' | 'reanuda' | 'termina';
+export type AccionComputadora = {
+  tipo: 'computadora';
+  fase: FaseComputadora;
+  id: string;
+  texto?: string;
+  ok?: boolean;
+  boleto?: string;
+  plan?: string[];
+  pregunta?: string;
+  estado?: 'pausada' | 'control';
+};
 
 export type Contacto = { correo: string; nombre: string };
 export type ContextoApp = {
@@ -1411,6 +1425,14 @@ export function prepararAcciones(
     }
     if (a.tipo === 'buscar') {
       out.push({ tipo: 'buscar', q: a.q });
+      continue;
+    }
+    if (a.tipo === 'pagar') {
+      // Solo a alguien de sus contactos, sin dudas: con dos parecidos (o ninguno) el cerebro debió preguntar.
+      // Y aun así no se paga nada: la app abre el envío llenado y la persona lo firma en Veta Wallet.
+      const r = resolverContacto(a.con, contactos);
+      if (r.tipo !== 'uno') continue;
+      out.push({ ...a, con: r.contacto.correo });
       continue;
     }
     if (a.tipo === 'enviar') {

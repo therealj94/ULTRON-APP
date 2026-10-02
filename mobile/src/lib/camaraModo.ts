@@ -26,7 +26,11 @@ export type ModoCamara = 'apagada' | 'temporal' | 'siempre';
 export const LOCAL_CON_PERSONA_MS = 330;
 export const LOCAL_SIN_PERSONA_MS = 1000;
 export const LOCAL_DORMIDA_MS = 2500;
-/** Con ML Kit: cada cuánto se le pregunta al servidor qué hay en la mesa. */
+/**
+ * Con ML Kit: cada cuánto se le pregunta al servidor qué hay en la mesa, como MÁXIMO. Desde la mejora de
+ * la cámara la subida real la decide lib/vistaCamara.ts (intervaloServidor): ninguna sin «Comenta lo que
+ * ve», y más espaciada si la escena no cambia. `trabajoPorMinuto` da el peor caso.
+ */
 export const SERVIDOR_CON_PERSONA_MS = 20_000;
 export const SERVIDOR_SIN_PERSONA_MS = 60_000;
 

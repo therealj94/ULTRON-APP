@@ -65,10 +65,10 @@ export type AppSettings = {
   proactive: boolean;
   /** Efectos de sonido al tocar. */
   sfx: boolean;
-  /** Cómo contesta AU-RA en la sala: de pie en el centro o sentada en su sillón. */
-  postura: 'pie' | 'sentada';
-  /** Su cara: los anillos (Skia, la de siempre desde el 25-sep) o la habitación 3D. */
-  cara: 'anillos' | 'sala';
+  /** Su cara: el orbe de partículas (desde el 2-oct) o los anillos (Skia). «sala» quedó de antes: es el orbe. */
+  cara: 'orbe' | 'anillos' | 'sala';
+  /** La persona eligió su cara en Ajustes (los «anillos» guardados por omisión antes del orbe no cuentan). */
+  caraElegida?: boolean;
   /** Con quién se habla en la mesa: el Guardián (ojos celestes), AU-RA (la dorada) o Claudio. Se elige al entrar. */
   avatar: AvatarId;
   /** Ya eligió avatar alguna vez. */
@@ -84,6 +84,10 @@ export type AppSettings = {
   carasActivas: Record<string, number>;
   /** Quién ya vio (o saltó para siempre) el recorrido de primera vez (por correo). */
   tutorialVisto: Record<string, boolean>;
+  /** Qué versión del recorrido vio cada quien (por correo; tutorial/pasos.ts VERSION_RECORRIDO). */
+  recorridoVisto: Record<string, number>;
+  /** Cuántas veces dijo «Después» a la ventana del recorrido (por correo): pasado el tope ya no se ofrece sola. */
+  recorridoPospuesto: Record<string, number>;
   /** La mesa para charlar (avatar grande) o para trabajar (avatar compacto + la conversación escrita). */
   modoMesa: 'charlar' | 'trabajar';
   /**
@@ -106,14 +110,15 @@ const DEFAULT_SETTINGS: AppSettings = {
   sttEngine: 'native',
   proactive: true,
   sfx: true,
-  postura: 'pie',
-  cara: 'anillos',
+  cara: 'orbe',
   avatar: 'aura',
   avatarElegido: false,
   idioma: 'es',
   camaraSiempre: {},
   carasActivas: {},
   tutorialVisto: {},
+  recorridoVisto: {},
+  recorridoPospuesto: {},
   modoMesa: 'charlar',
   vozLlamada: true,
 };

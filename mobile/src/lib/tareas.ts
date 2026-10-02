@@ -2,11 +2,10 @@
  * Qué hace AU-RA con el cuerpo según las herramientas que corrió el turno.
  *
  * Copia de `tareaDeHerramientas` de src/11-sala/tareas.ts (Metro no importa fuera de mobile/).
- * tests/sala-movil.test.ts comprueba que las dos dan lo mismo para cada herramienta.
+ * tests/tareas-movil.test.ts comprueba que las dos dan lo mismo para cada herramienta.
  */
 import { idiomaActual } from '../i18n';
 export type Tarea = 'buscar' | 'enviar' | 'anotar' | 'oro' | 'leer' | 'mirar';
-export type Postura = 'pie' | 'sentada';
 
 /** Lo que más se ve gana: enviar es lo último que pasa y lo que se pidió; buscar es lo que más tarda. */
 const REGLAS: Array<[Tarea, RegExp]> = [

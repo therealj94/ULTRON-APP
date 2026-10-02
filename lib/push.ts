@@ -399,6 +399,56 @@ export function avisarPush(correo: string, o: { titulo?: string; texto: string; 
   return avisarConAura(correo, o.titulo || 'AURA', o.texto, { id: o.id, abrir: o.abrir });
 }
 
+/*
+ * LOS AVISOS DE PULSE2CHAT.
+ *
+ * El relevo del chat (cerebro.ordenscan.com/mensajes) no tiene la cuenta de Firebase ni debe tenerla. La
+ * app le apunta, con su sesión del chat, una «referencia» que firma AU-RA (`refRelevo`): el correo de la
+ * persona de AU-RA y una firma HMAC. Cuando le llega un mensaje, el relevo POSTea esa referencia a
+ * /api/push/relevo con la clave compartida (PUSH_RELEVO_CLAVE), y AU-RA manda el aviso a sus teléfonos.
+ * Ni una palabra del mensaje viaja: solo «hay algo» (la promesa del relevo).
+ */
+function claveRef(): Buffer | null {
+  const k = clave('push_relevo');
+  return k ? crypto.createHash('sha256').update(`ref-relevo|${k}`).digest() : null;
+}
+
+/** La referencia que la app le da al relevo para que avise a ESTA persona. null sin clave configurada. */
+export function refRelevo(correo: string): string | null {
+  const k = claveRef();
+  const c = String(correo || '').trim().toLowerCase();
+  if (!k || !c.includes('@')) return null;
+  const firma = b64url(crypto.createHmac('sha256', k).update(c).digest()).slice(0, 32);
+  return `${b64url(c)}.${firma}`;
+}
+
+/** De quién es una referencia, si la firma es buena. null si no. */
+export function correoDeRef(ref: unknown): string | null {
+  const m = /^([A-Za-z0-9_-]{4,200})\.([A-Za-z0-9_-]{32})$/.exec(String(ref || ''));
+  if (!m) return null;
+  let correo = '';
+  try {
+    correo = Buffer.from(m[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+  } catch {
+    return null;
+  }
+  const esperada = refRelevo(correo);
+  if (!esperada) return null;
+  const a = Buffer.from(esperada);
+  const b = Buffer.from(String(ref));
+  return a.length === b.length && crypto.timingSafeEqual(a, b) ? correo : null;
+}
+
+/** ¿Esta cabecera Authorization trae la clave compartida con el relevo? Comparación en tiempo constante. */
+export function claveRelevoValida(autorizacion: unknown): boolean {
+  const k = clave('push_relevo');
+  const m = /^Bearer\s+(.+)$/i.exec(String(autorizacion || '').trim());
+  if (!k || !m) return false;
+  const a = crypto.createHash('sha256').update(m[1]).digest();
+  const b = crypto.createHash('sha256').update(k).digest();
+  return crypto.timingSafeEqual(a, b);
+}
+
 /** Solo pruebas: olvida la caché de la cuenta, del token de acceso y de los teléfonos. */
 export function _olvidarPush() {
   cuentaLeida = null;

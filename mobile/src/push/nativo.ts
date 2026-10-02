@@ -32,6 +32,7 @@ import { emitir } from '../nucleo/contrato';
 import { accionesDelTurno } from '../compa/acciones';
 import { notifeeReal } from '../compa/recordatoriosNativo';
 import { sumarManejadorDeFondo } from '../pulse/servicioLlamada';
+import { iniciarAvisosRelevo } from '../pulse/avisosRelevo';
 import { abrirRuta, rutaActual, RUTAS_DE_SESION } from '../app/rutas';
 import { abrirHoja, hayAnfitrion } from '../app/hojas';
 import { usuarioActual } from '../app/sesion';
@@ -234,8 +235,12 @@ async function hacer(x: Pendiente, correo: string) {
     if (d.tipo === 'mensaje') decir(textoAlAbrir(d));
     return;
   }
-  if (d.tipo === 'mensaje' && d.abrir === 'chats') abrirRuta('Chats');
-  else if (d.tipo === 'mensaje' && d.abrir === 'ajustes') abrirRuta('Ajustes');
+  if (d.tipo === 'mensaje' && d.abrir === 'chats') {
+    // Un mensaje del chat: se abren los chats y ahí se lee. AURA no anuncia «tienes un mensaje».
+    abrirRuta('Chats');
+    return;
+  }
+  if (d.tipo === 'mensaje' && d.abrir === 'ajustes') abrirRuta('Ajustes');
   else abrirRuta('Mesa');
   decir(textoAlAbrir(d));
 }
@@ -385,6 +390,8 @@ export function usePush(correo: string | null | undefined) {
       return;
     }
     void (antes && antes !== c ? salirPush() : Promise.resolve()).then(() => registrarPush(c));
+    // Los avisos del chat (PULSE2CHAT) llegan por el mismo camino (pulse/avisosRelevo.ts).
+    iniciarAvisosRelevo();
     const gen = generacionCuenta();
     let offToken = () => {};
     const f = mensajeria();

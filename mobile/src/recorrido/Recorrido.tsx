@@ -19,30 +19,44 @@ import { COLOR, Icono, useVaiven, type PropsEscena } from './escenas/comun';
 import { EfectoAnfitrion } from './escenas/efectos';
 import { achicadoEn, momentoDe, type SonidoId, type Vibracion } from './coreografia';
 import Portada from './escenas/Portada';
+import Mesa from './escenas/Mesa';
 import Hablar from './escenas/Hablar';
 import Camara from './escenas/Camara';
 import Llamada from './escenas/Llamada';
 import Recordatorio from './escenas/Recordatorio';
+import Avisos from './escenas/Avisos';
 import Chat from './escenas/Chat';
+import Whatsapp from './escenas/Whatsapp';
 import Correo from './escenas/Correo';
+import Cartera from './escenas/Cartera';
 import Internet from './escenas/Internet';
 import Computadora from './escenas/Computadora';
 import Memoria from './escenas/Memoria';
+import Conocer from './escenas/Conocer';
+import Propuestas from './escenas/Propuestas';
 import Avatares from './escenas/Avatares';
+import Ajustes from './escenas/Ajustes';
 import Final from './escenas/Final';
 
 const ESCENA: Record<DemoId, ComponentType<PropsEscena>> = {
   portada: Portada,
+  mesa: Mesa,
   hablar: Hablar,
   camara: Camara,
   llamada: Llamada,
   recordatorio: Recordatorio,
+  avisos: Avisos,
   chat: Chat,
+  whatsapp: Whatsapp,
   correo: Correo,
+  cartera: Cartera,
   internet: Internet,
   computadora: Computadora,
   memoria: Memoria,
+  conocer: Conocer,
+  propuestas: Propuestas,
   avatares: Avatares,
+  ajustes: Ajustes,
   final: Final,
 };
 
@@ -490,7 +504,7 @@ export function Recorrido({ visible, nombre, idioma, narrador, cuerpo, onCerrar,
           </Pressable>
           <View style={st.puntos}>
             {ESCENAS.map((e, k) => (
-              <View key={e.id} style={[st.punto, k === s.e && { width: 16, backgroundColor: ACENTO[quien] }, k < s.e && { backgroundColor: COLOR.texto3 }]} />
+              <View key={e.id} style={[st.punto, k === s.e && { width: 12, backgroundColor: ACENTO[quien] }, k < s.e && { backgroundColor: COLOR.texto3 }]} />
             ))}
           </View>
           <Pressable onPress={() => mover('siguiente')} style={[st.mover, st.siguiente, { borderColor: ACENTO[quien] }]} accessibilityRole="button" accessibilityLabel={idioma === 'en' ? 'Next' : 'Siguiente'} hitSlop={8}>
@@ -745,6 +759,7 @@ const st = StyleSheet.create({
   mover: { minHeight: 44, paddingHorizontal: 14, justifyContent: 'center', borderRadius: 22 },
   siguiente: { borderWidth: 1.5 },
   moverTexto: { color: COLOR.texto2, fontSize: 15, fontWeight: '800' },
-  puntos: { flexDirection: 'row', gap: 5, alignItems: 'center' },
-  punto: { width: 6, height: 6, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.18)' },
+  // 18 capítulos: los puntos se achican para caber entre «Atrás» y «Siguiente» en un teléfono angosto.
+  puntos: { flexDirection: 'row', gap: 3, alignItems: 'center', flexShrink: 1, flexWrap: 'wrap', justifyContent: 'center' },
+  punto: { width: 5, height: 5, borderRadius: 2.5, backgroundColor: 'rgba(255,255,255,0.18)' },
 });

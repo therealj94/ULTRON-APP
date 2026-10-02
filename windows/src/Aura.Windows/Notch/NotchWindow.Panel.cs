@@ -170,6 +170,7 @@ public partial class NotchWindow
         ajustes.AppsSilenciadas = r.AppsSilenciadas;
         ajustes.Transparencia = Aura.Windows.Core.VidrioNotch.Leer(r.Transparencia); AplicarVidrio();
         ajustes.MenosMovimiento = r.MenosMovimiento; AvatarView.MenosMovimientoPedido = r.MenosMovimiento;
+        ajustes.EfectosDeSonido = r.EfectosDeSonido; SonidosOrbe();
         bool movido = r.NotchBorde != ajustes.NotchBorde || r.NotchFraccion != ajustes.NotchFraccion || r.NotchMonitor != ajustes.NotchMonitor;
         if (movido) MoverNotch(new Aura.Windows.Core.LugarNotch(Aura.Windows.Core.PosicionNotch.LeerBorde(r.NotchBorde), Aura.Windows.Core.PosicionNotch.LeerFraccion(r.NotchFraccion)), r.NotchMonitor);
         // Otra identidad AURA: IniciarCuentas detiene y borra las cuentas de la anterior.

@@ -19,7 +19,7 @@ import { ESPACIO_COMUN, espacioDe } from './lib/espacio-nodo';
 import { cargarMiembro, fotoMemoriaMiembro, guardarHechoMiembro, hiloMiembro, olvidarMiembro, promptMemoriaMiembro, recordarTurnoMiembro } from './lib/memoria-miembro';
 import { montarRutasApp } from './server/app-rutas';
 import { montarRutasCaras } from './server/caras-rutas';
-import { avisarComputadoraPorPush, montarRutasPush, proponerPorPush } from './server/push';
+import { avisarComputadoraPorPush, avisarPush, montarRutasPush, proponerPorPush } from './server/push';
 import { montarRutasWindows, instruccionWindows } from './server/windows-rutas';
 import { leerPerfil, lineaPerfil, perfilEnCache, sembrarDesdeGenesis, type Perfil } from './lib/perfil-persona';
 import {
@@ -60,8 +60,19 @@ import { quitarExpresiones } from './lib/expresiones';
 import { puntoDeCorte } from './lib/trozos';
 import { claveTurno, reclamarTurno, type TurnoGuardado } from './server/turno-unico';
 import { respuestaFija } from './lib/respuestas-fijas';
-import { alAvisarApp, avisosPendientes, confirmarAvisos, encargarTarea, montarRutasComputadora, motorDelPerfil, type MotorNodo } from './server/computadora';
-import { avisosDeEnvio, correrCorreo, montarRutasCorreo, resolverBorrador } from './server/correo';
+import {
+  alAvisarApp,
+  avisosPendientes,
+  comandoComputadora,
+  confirmarAvisos,
+  encargarTarea,
+  montarRutasComputadora,
+  motorDelPerfil,
+  resolverPreguntaComputadora,
+  type MotorNodo,
+} from './server/computadora';
+import { avisosDeEnvio, correrCorreo, montarRutasCorreo, resolverBorrador, respuestaAlBorrador } from './server/correo';
+import { bloqueTarea, correrTarea, precargarTareas, resolverTareaEnCurso, tareaDe } from './lib/tarea-en-curso';
 import { correrWhatsapp, montarRutasWhatsapp, resolverBorradorWhatsapp, whatsappDisponible, whatsappPermitido } from './server/whatsapp';
 import { accionIniciativa, arrancarIniciativa, bloqueIniciativaTurno, correrMisionTurno, duenoMisiones, montarRutasIniciativa } from './server/iniciativa';
 import { frenarIniciativa, pideDejarDeProponer, type PersonaIniciativa } from './lib/iniciativa';
@@ -72,6 +83,8 @@ import { bloqueConocer } from './lib/conocer-persona';
 import { correrCirculo, precargarCirculo } from './lib/circulo';
 import { correrTriaje } from './lib/triaje';
 import { fichaManosPrompt } from './lib/manos-ficha';
+import { fichaMenuPrompt } from './lib/menu-app';
+import { conApodoDelTurno, lineaApodoPendiente } from './lib/apodo';
 import { emitirSesion, borrarSesion, cerrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica, mesaAutorizada, cuerpoHttp, gastarCupo, esperaEntrada, anotarFalloEntrada, anotarExitoEntrada, cargarSesionesCerradas } from './server/seguridad';
 import { canales, leerPdf, telegramFoto, telegramVoz } from './lib/canales';
 import { catalogoCanales, fotoSistema } from './lib/sistema';
@@ -80,11 +93,13 @@ import { listarTareas } from './lib/tareas';
 import { ejecutarCodigo, ejecutorActivo } from './lib/ejecutor';
 import { construirMensajes, extraerPython } from './lib/qwen';
 import { extraerPedidoHerramienta, herramientaQueSale, neutralizarPedido, quitarLineaPedido, resolverPedido } from './lib/harness';
+import { correrCartera } from './lib/cartera';
 import { notaDeVoz, pideNotaDeVoz } from './lib/voz';
 import { iniciarCentinela } from './lib/centinela';
 import { iniciarRevisionCampana } from './lib/campana-respuestas';
 import { clave, fotoBoveda, guardarCaja } from './lib/boveda';
-import { capturaPagina, verImagen, vistaFallida, NO_PUDE_VER } from './lib/vision';
+import { capturaPagina, verEstructurado, verImagen, vistaFallida, NO_PUDE_VER } from './lib/vision';
+import { etiquetasDeVista, focoDePregunta, focoValido, vistaAHechos } from './lib/vision-estructurada';
 import { presupuesto, PRESUPUESTO_OIDO_MS, PRESUPUESTO_VISION_MS } from './lib/presupuesto';
 import { destinoPublico } from './lib/red-publica';
 import { extraerPdf, dataUrlDeImagen, bufferDeCualquier } from './lib/leer-pdf';
@@ -135,7 +150,7 @@ import {
   registrarWebhookElectrum,
 } from './server/electrum/telegram';
 import { identidadDe, exigirPlataforma, esInvitado, plataformaAutorizada, sesionAbreAura, esDeComunidad } from './server/seguridad';
-import { cuentaDe, cuentasDisponibles, crearSolicitud, entrarConCuenta, cuentaSuspendida, mantenerCuentasAlDia } from './server/cuentas';
+import { asegurarCuentaMiembro, cuentaDe, cuentasDisponibles, crearSolicitud, entrarConCuenta, cuentaSuspendida, mantenerCuentasAlDia } from './server/cuentas';
 import { aprobadores, montarRutasCuentas, plantilla } from './server/cuentas-rutas';
 import { montarRutasGenesis } from './server/genesis';
 import { montarEnlacesApp } from './server/enlaces-app';
@@ -1419,6 +1434,9 @@ alAvisarApp((quien, aviso, aparato) => {
   // Ningún teléfono suyo escuchando (la app cerrada): el resultado le llega como aviso (FCM, server/push.ts).
   // Solo en el intento a todos sus teléfonos (sin aparato), para no avisar dos veces.
   if (!n && !aparato && aviso.fase === 'termina' && aviso.texto) void avisarComputadoraPorPush(quien, aviso.id, aviso.texto).catch(() => undefined);
+  // Lo mismo si su computadora espera su sí antes de algo sensible: el aviso abre la vista con los botones.
+  if (!n && !aparato && aviso.fase === 'confirmar' && aviso.pregunta)
+    void avisarPush(quien, { titulo: 'Tu computadora espera tu sí', texto: aviso.pregunta, id: aviso.id, abrir: 'computadora' }).catch(() => undefined);
   return n;
 });
 montarRutasCorreo(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req) });
@@ -1691,7 +1709,9 @@ montarRutasCuentas(app, {
 
 /*
  * Entrar con Genesis ID (solo AU-RA: Dr Electrum tiene su propia puerta). Genesis prueba QUIÉN es
- * la persona; si entra lo decide el padrón. Ver server/genesis.ts.
+ * la persona; el padrón decide si es junta. Quien no está en el padrón entra como miembro y se le
+ * abre su cuenta de miembro (AURA_GENESIS_ABIERTO=0 vuelve a la puerta cerrada). Ver server/genesis.ts
+ * y docs/ENTRAR-GENESIS.md.
  */
 if (!ES_ELECTRUM) {
   // La vuelta de la wallet por https (App Links) y su declaración para Android: server/enlaces-app.ts.
@@ -1705,6 +1725,10 @@ if (!ES_ELECTRUM) {
     nombreYRol: nombreYRolDe,
     emitirSesion,
     sembrarPerfil: (correo, g) => sembrarDesdeGenesis(correo, { nombreGenesis: g.nombreGenesis, cumple: g.cumple || undefined, apodo: g.apodo }),
+    registrarMiembro: async ({ correo, nombre, gid }) => {
+      if (!cuentasDisponibles()) return;
+      if (await asegurarCuentaMiembro(correo, nombre, gid)) console.log(`[genesis] cuenta de miembro abierta para ${gid}`);
+    },
     pedirAcceso: async ({ nombre, correo, motivo }) => {
       if (!cuentasDisponibles()) return false;
       const s = await crearSolicitud({ nombre, correo, motivo, plataforma: PLATAFORMA });
@@ -1863,6 +1887,18 @@ app.post('/api/vision/analyze', exigirMesaODesk, limitar(20), async (req, res) =
     }
     const summary = [leido.texto, ...visiones].filter(Boolean).join('\n\n') || leido.detalle;
     return res.json({ success: !!leido.texto || vistas > 0, summary, detalle: leido.detalle, via: 'pdf-leer', honesto: true });
+  }
+  // La cámara de la app (desde la actualización de la cámara): vista estructurada con el pedido fijo del
+  // servidor según el foco (lib/vision-estructurada.ts). No lleva prompt libre, así que vale sin sesión.
+  if (req.body?.modo === 'estructurado') {
+    const foco = focoValido(req.body?.foco) || 'escena';
+    const r = await verEstructurado(String(base64Data), foco, { presupuesto: reloj });
+    if (r.fallo || !r.vista) {
+      console.error(`[AU-RA] /vision/analyze estructurado falló (${r.via}) con ${String(base64Data).length} car.`);
+      return res.status(503).json({ error: `${NO_PUDE_VER} Inténtalo de nuevo en un momento.`, via: ojoQueLeyo(r.via), honesto: true });
+    }
+    // `summary` es el hecho listo para el turno (la app lo manda como `visto`): la foto no viaja dos veces.
+    return res.json({ success: true, summary: vistaAHechos(r.vista, foco), vista: r.vista, etiquetas: etiquetasDeVista(r.vista), foco, via: ojoQueLeyo(r.via), honesto: true });
   }
   const vista = await verImagen(String(base64Data), prompt || 'Describe con precisión lo que se ve. Si hay precios o números, cópialos. No inventes.', { presupuesto: reloj });
   if (vistaFallida(vista)) {
@@ -2541,6 +2577,23 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   // Lo mismo con un mensaje de WhatsApp que esperaba su «sí» (server/whatsapp.ts).
   const delWhatsapp = duenoComputadora && whatsappPermitido(duenoComputadora) ? await resolverBorradorWhatsapp(duenoComputadora, ambitoTurno, message, opciones.retener) : null;
   if (delWhatsapp) hechos.push(delWhatsapp);
+  // Su computadora se detuvo a pedir su sí (o le ofreció seguir): el «sí» o el «no» lo resuelve el servidor
+  // (server/computadora.ts). Si había un borrador esperando, ese «sí» era para el borrador.
+  const deLaPregunta = duenoComputadora && !delCorreo && !delWhatsapp ? await resolverPreguntaComputadora(duenoComputadora, message, opciones.retener) : null;
+  if (deLaPregunta) hechos.push(deLaPregunta);
+
+  // La tarea de varios pasos en curso (lib/tarea-en-curso.ts): si pide otra cosa a mitad, AU-RA pregunta
+  // antes de cambiar; si ya contestó, el servidor la pausa, la sigue o la descarta. Va en los HECHOS hasta
+  // terminarla (en la voz, una línea), y con ella el turno es del modelo grande, no del chico.
+  let conTarea = false;
+  if (duenoComputadora) {
+    await aTiempoParaVoz(voz, 'tarea en curso', precargarTareas(duenoComputadora), undefined);
+    const alBorrador = !!(delCorreo || delWhatsapp) && respuestaAlBorrador(message) !== null;
+    const deLaTarea = await resolverTareaEnCurso(duenoComputadora, ambitoTurno, message, { borradorResuelto: alBorrador || !!deLaPregunta, retener: opciones.retener });
+    const bloqueDeTarea = bloqueTarea(duenoComputadora, ambitoTurno, compacto);
+    hechos.push(...[deLaTarea, bloqueDeTarea].filter((x): x is string => !!x));
+    conTarea = !!deLaTarea || (tareaDe(duenoComputadora, ambitoTurno)?.estado ?? 'pausada') !== 'pausada';
+  }
   // Su iniciativa (server/iniciativa.ts): sus misiones abiertas y lo que aún no sabe de su vida, para que
   // AU-RA proponga en la conversación. Y si pide que deje de proponer, se frena el reloj.
   if (duenoComputadora) {
@@ -2564,7 +2617,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   }
   const datos: string[] = [];
   const foto: string | null = null;
-  const tools: string[] = [];
+  const tools: string[] = conTarea ? ['tarea'] : [];
   let decirTaller: string | undefined;
   /** Un cálculo de mina se dice tal cual: parafrasear un número es arruinarlo. */
   let calculoMina: string | null = null;
@@ -2740,27 +2793,40 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
       tools.push('escena');
     }
     const image = body?.image;
+    // Lo que la cámara de la app ya vio con orden (/api/vision/analyze modo estructurado): el hecho
+    // viene hecho y la foto no se vuelve a subir ni a analizar. Es texto del propio teléfono de quien
+    // pregunta: se acota y se le quitan las marcas de acción, como a la escena.
+    const visto = typeof body?.visto === 'string' ? neutralizarMarca(body.visto.replace(/\s+/g, ' ').trim().slice(0, 2600)) : '';
+    if (visto && !image) {
+      hechos.push(`VISION (la cámara del teléfono, ahora mismo): ${visto}`);
+      tools.push('vision');
+    }
     // Preguntan qué ve y no llegó ni foto ni escena de la cámara: se le da la verdad al modelo. Sin
     // esto inventaba causas («el ojo está ciego porque la clave de acceso no existe en los
     // registros», 29-sep) que asustan y no son ciertas.
-    if (preguntaPorVer && !image && !escena) {
+    if (preguntaPorVer && !image && !escena && !visto) {
       hechos.push('VISION: en este turno no llegó imagen de la cámara. Si te preguntan qué ves, dilo simple («ahora mismo no me está entrando imagen de la cámara; revisa que esté activada en el menú») y no inventes causas técnicas: nada de claves, registros, nodos ni errores.');
       tools.push('vision');
     }
     if (image) {
       avisarTarea('vision');
-      const vista = await verImagen(String(image));
+      // El pedido según la pregunta («léeme esto», «¿cuánto dice el precio?», «¿qué es esto?», «¿qué
+      // ves?») y con orden (lib/vision-estructurada.ts): antes era siempre «describe lo visible», y un
+      // cartel o un precio salían resumidos en vez de leídos.
+      const foco = focoValido(body?.foco) || focoDePregunta(message) || 'escena';
+      const r = await verEstructurado(String(image), foco);
       // Un fallo de visión NO se le pasa crudo al modelo: lo parafraseaba como «la cámara me muestra un
       // error técnico», que no le dice nada a nadie. Se le da la frase que tiene que decir.
-      if (vistaFallida(vista)) {
-        console.error(`[AU-RA] vision falló (${vista.via}) con ${String(image).length} car.`);
+      if (r.fallo || !r.vista) {
+        console.error(`[AU-RA] vision falló (${r.via}) con ${String(image).length} car.`);
         hechos.push('VISION: la cámara no devolvió imagen esta vez. Dilo simple y humano («ahora mismo no me está entrando imagen, dame un segundo»); no hables de errores técnicos ni de nodos.');
       } else {
-        console.log(`[AU-RA] vision ok (${String(image).length} car., ${vista.via})`);
-        hechos.push(`VISION (${vista.via}): ${vista.texto}`);
+        console.log(`[AU-RA] vision ok (${String(image).length} car., ${r.via}, ${foco}, ${r.vista.formato})`);
+        // El texto leído de un cartel o una hoja es de quien lo escribió, no de la persona: sin marcas de acción.
+        hechos.push(`VISION (${ojoQueLeyo(r.via)}): ${neutralizarMarca(vistaAHechos(r.vista, foco))}`);
       }
       tools.push('vision');
-    } else if (/\b(qu[eé] ves|qu[eé] hay aqu[ií]|le[eé] (la |esta )?imagen|foto)\b/.test(q) && !quiereCaptura && !body?.documento && !body?.pdf && !escena) {
+    } else if (/\b(qu[eé] ves|qu[eé] hay aqu[ií]|le[eé] (la |esta )?imagen|foto)\b/.test(q) && !quiereCaptura && !body?.documento && !body?.pdf && !escena && !visto) {
       hechos.push('VISION: no llegó frame ni escena. Di que ahora mismo no ves (cámara apagada) y ofrece encenderla.');
     }
     const doc = body?.documento || body?.pdf;
@@ -2889,15 +2955,19 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     );
   }
   // Cómo le decimos: el apodo que eligió en su perfil manda sobre el nombre del padrón.
-  const perfilPersona = await perfilPedido;
+  // Si en este mensaje dijo cómo quiere que le llamen, se guarda y ya lo usa este turno (lib/apodo.ts).
+  const perfilPersona = await conApodoDelTurno(correoApp, message, hilo, await perfilPedido);
   const comoLeDecimos = perfilPersona?.apodo || (quien ? nombreDe(quien) : nombre) || undefined;
-  const bloquePerfil = lineaPerfil(perfilPersona);
+  // Sin apodo elegido, AURA se lo pregunta (una vez, con naturalidad) y lo recuerda.
+  const bloquePerfil = [lineaPerfil(perfilPersona), correoApp ? lineaApodoPendiente(perfilPersona, idiomaTurno === 'en' ? 'en' : 'es', { nombre }) : ''].filter(Boolean).join('\n');
   // Las reglas de la app van en el system (iguales turno a turno, el nodo no las relee); en el mensaje
   // del turno, solo lo de este momento: dónde está, sus contactos, lo que espera su «sí», la hora.
   // Qué puede hacer en ESTA plataforma (lib/manos-ficha.ts): lo ofrece sin miedo y nunca ofrece lo que aquí no hace.
   const idiomaManos = idiomaTurno === 'en' ? 'en' : 'es';
   const manosAqui = fichaManosPrompt(body?.origen === 'windows' ? 'windows' : turnoDeLaApp(body, opciones) ? 'app' : 'web', idiomaManos);
-  const reglasApp = [manosAqui, conApp ? reglasAcciones(contextoApp) : body?.origen === 'windows' ? instruccionWindows(idiomaManos) : ''].filter(Boolean).join('\n');
+  // Dónde está cada cosa en la app del teléfono (lib/menu-app.ts), para guiar paso a paso: corto en la voz.
+  const menuAqui = turnoDeLaApp(body, opciones) ? fichaMenuPrompt(idiomaManos, { compacto, conAbrir: conApp }) : '';
+  const reglasApp = [manosAqui, menuAqui, conApp ? reglasAcciones(contextoApp) : body?.origen === 'windows' ? instruccionWindows(idiomaManos) : ''].filter(Boolean).join('\n');
   const bloqueApp = conApp
     ? estadoAcciones(contextoApp, { pendiente: pendienteDe(ambito), propuesta: propuestaDe(ambito), ultimoLeido: ultimoLeidoDe(correoApp) })
     : '';
@@ -3372,9 +3442,11 @@ async function correrHerramientaPedida(
         return `EJECUTOR (${r.via}): exit ${r.exit_code}. stdout: ${String(r.stdout || '').slice(0, 800) || '(vacío)'} stderr: ${String(r.stderr || r.error || '').slice(0, 400) || '(vacío)'}.`;
       },
       // Sin identidad verificada no hay de quién sea la tarea ni a quién avisarle: no se encarga.
+      // «parar / pausar / seguir» van a su tarea de ahora; lo demás es una misión nueva.
       computadora: async (tarea) =>
         compu
-          ? (await encargarTarea({ instruccion: tarea, quien: compu.quien, motor: compu.motor, esperaMs: compu.esperaMs, senal, aparato: compu.aparato, idioma: compu.idioma })).hecho
+          ? ((await comandoComputadora(compu.quien, tarea)) ??
+            (await encargarTarea({ instruccion: tarea, quien: compu.quien, motor: compu.motor, esperaMs: compu.esperaMs, senal, aparato: compu.aparato, idioma: compu.idioma })).hecho)
           : 'HARNESS computadora: solo la uso para alguien con sesión. Pídele que entre con su cuenta.',
       correo: (arg) => correrCorreo(dueno, arg, ambito),
       whatsapp: (arg) => correrWhatsapp(dueno, arg, ambito),
@@ -3382,6 +3454,9 @@ async function correrHerramientaPedida(
       mision: (arg) => (dueno ? correrMisionTurno(dueno, arg) : Promise.resolve('HARNESS mision: solo con sesión. Pídele que entre con su cuenta.')),
       circulo: (arg) => correrCirculo(dueno, arg, ambito),
       triaje: (arg) => correrTriaje(dueno, arg, ambito),
+      tarea: (arg) => (dueno ? correrTarea(dueno, ambito, arg) : Promise.resolve('HARNESS tarea: solo con sesión. Pídele que entre con su cuenta.')),
+      // Sus saldos de Veta Wallet (solo lectura, con la dirección pública que conectó en la app).
+      cartera: (arg) => correrCartera(dueno, arg),
     },
     extraerPython(reply),
     nivel
@@ -3526,7 +3601,8 @@ function anotarHerramientasAura(reg: ReturnType<typeof iniciarTraza>, tools: str
 async function ordenDeApp(body: any, opciones: OpcionesTurno = {}): Promise<{ decir: string; acciones: EventoAccion[]; via: string } | null> {
   const correo = body?.canal !== 'telegram' && body?.sesion?.correo ? String(body.sesion.correo).toLowerCase() : '';
   const message = String(body?.message || body?.text || '').trim();
-  if (!correo || !message || body?.image || body?.documento || body?.pdf) return null;
+  // Con lo que vio la cámara (`visto`) tampoco: «léeme el texto…» no es «lee mis mensajes».
+  if (!correo || !message || body?.image || body?.visto || body?.documento || body?.pdf) return null;
   // Solo si el turno viene de la app (cabecera x-aura-origen) o de la voz: no de la web de la mesa.
   if (!turnoDeLaApp(body, opciones)) return null;
   // Contexto, borrador y propuesta: los de ESTE aparato (dos teléfonos de la misma cuenta no se cruzan).
@@ -3960,7 +4036,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
    * es solo eso, contesta el banco del avatar en el acto, con su nombre y una etiqueta de voz que va con
    * lo que dice. Escrito o hablado, en la app, la web, Windows y la llamada. El hilo se anota sin esperar.
    */
-  if (!body?.image) {
+  if (!body?.image && !body?.visto) {
     // Cómo se le dice: su apodo si el perfil ya está en memoria (sin ir a buscarlo), si no su nombre.
     const correoCharla = body?.sesion?.correo ? String(body.sesion.correo).toLowerCase() : '';
     const apodo = correoCharla ? perfilEnCache(correoCharla)?.apodo : '';

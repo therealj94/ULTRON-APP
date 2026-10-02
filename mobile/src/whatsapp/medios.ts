@@ -221,7 +221,7 @@ export function useMediaWA(m: MensajeWA, auto: boolean): EstadoMedia & { cargar:
       return uri;
     } catch (e: any) {
       const status = Number(e?.status) || 0;
-      if (vivo.current) setSt({ uri: null, cargando: false, error: mensajeErrorMedia(status, e?.message, idiomaActual() === 'en' ? 'en' : 'es'), status });
+      if (vivo.current) setSt({ uri: null, cargando: false, error: mensajeErrorMedia(status, e?.message, idiomaActual() === 'en' ? 'en' : 'es', m.tipo), status });
       return null;
     }
   }, [clave, m.conMedia]); // eslint-disable-line react-hooks/exhaustive-deps

@@ -15,6 +15,7 @@ import { cabecerasAparato } from './aparato';
 import { generacionCuenta, sigueVigente } from './cuenta';
 import { avatarActual } from '../avatares/actual';
 import { idiomaActual } from '../i18n';
+import { etiquetasDeVista, vistaDeEtiquetas, vistaDeRespuesta, type FocoVision, type VistaCamara } from './vistaCamara';
 
 /** Tope de una renovación del token: una que nunca contesta no puede retener las peticiones. */
 export const TOPE_RENOVAR_MS = 10_000;
@@ -330,6 +331,12 @@ type TurnoOpts = {
   image?: string;
   /** Descripción de la escena que ya interpretó la cámara local (quién está, qué hace). El servidor la usa como hecho «ESCENA (cámara local): …». */
   escena?: string;
+  /**
+   * Lo que la cámara ya vio con orden (`verCamara`, el `summary` del servidor): va como hecho y la foto
+   * no se vuelve a subir. `foco` dice qué se pidió (leer, precio, qué es, escena).
+   */
+  visto?: string;
+  foco?: FocoVision;
   /** Lo dijo en voz alta (el oído de la mesa): el servidor no espera a internet más de lo que espera la voz. */
   hablado?: boolean;
   /**
@@ -361,6 +368,8 @@ function turnoBody(opts: TurnoOpts) {
     memoria: opts.memoria || [],
     ...(opts.image ? { image: opts.image } : {}),
     ...(escena ? { escena } : {}),
+    ...(opts.visto ? { visto: opts.visto.slice(0, 2600) } : {}),
+    ...(opts.foco ? { foco: opts.foco } : {}),
     ...(opts.hablado ? { hablado: true } : {}),
     ...(opts.soloRapido ? { soloRapido: true } : {}),
     ...(opts.idTurno ? { idTurno: opts.idTurno } : {}),
@@ -557,6 +566,45 @@ export async function transcribe(opts: { base64: string; mime: string }): Promis
     16_000
   );
   return String(data.text || '').trim();
+}
+
+export type RespuestaVista = {
+  vista: VistaCamara | null;
+  /** El hecho listo para el turno (vacío si el servidor es anterior y no lo arma). */
+  visto: string;
+  etiquetas: string[];
+  /** false: el servidor no conoce el modo estructurado (contestó prosa); `vista` sale de las etiquetas. */
+  estructurada: boolean;
+};
+
+const LISTA_VIEJA =
+  'Responde SOLO con una lista corta en español, separada por comas, de lo visible (máximo 6): persona, objetos, gestos evidentes (ej: persona, taza, teléfono, saluda). Sin frases.';
+
+/**
+ * Ver con orden (POST /api/vision/analyze, modo «estructurado»): escena, objetos con caja, texto leído,
+ * precios, según `foco`. El pedido al modelo lo arma el servidor. null si no se pudo ver.
+ */
+export async function verCamara(base64Jpeg: string, foco: FocoVision = 'escena', timeoutMs = 35_000): Promise<RespuestaVista | null> {
+  try {
+    const data = await api<{ summary?: string; vista?: unknown; etiquetas?: unknown }>(
+      '/api/vision/analyze',
+      {
+        method: 'POST',
+        // `prompt` solo lo usa un servidor anterior (sin modo estructurado): así devuelve la lista de
+        // siempre y no prosa partida en «objetos». El servidor nuevo arma su propio pedido y lo ignora.
+        body: JSON.stringify({ mediaType: 'image/jpeg', fileName: 'desk.jpg', base64Data: `data:image/jpeg;base64,${base64Jpeg}`, modo: 'estructurado', foco, prompt: LISTA_VIEJA }),
+      },
+      timeoutMs
+    );
+    const summary = String(data.summary || '').trim();
+    const vista = vistaDeRespuesta(data.vista);
+    if (vista) return { vista, visto: summary, etiquetas: etiquetasDeVista(vista), estructurada: true };
+    if (!summary) return null;
+    const vieja = vistaDeEtiquetas(summary);
+    return { vista: vieja, visto: '', etiquetas: vieja ? etiquetasDeVista(vieja) : [], estructurada: false };
+  } catch {
+    return null;
+  }
 }
 
 export async function describeImage(base64Jpeg: string, prompt: string): Promise<string> {

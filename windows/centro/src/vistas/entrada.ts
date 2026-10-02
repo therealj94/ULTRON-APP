@@ -157,7 +157,8 @@ async function guia(fondo: HTMLElement): Promise<'recorrido' | 'listo'> {
       vacio(fondo).appendChild(h('div', { class: 'guia' }, panel));
     };
     pasos.push(() => {
-      const av = avatar3d(aj.avatar, 'avatar3d grande');
+      // AU-RA es su orbe de partículas; sus efectos de sonido, según Ajustes (encendidos de fábrica).
+      const av = avatar3d(aj.avatar, 'avatar3d grande', { sonidos: aj.efectosDeSonido !== false });
       const caja = h('div', { class: 'guia-avatar' }, av.el);
       return h('div', null, h('h2', null, T('Elige quién te acompaña', 'Pick your companion')), caja,
         eleccion(T('Avatar', 'Avatar'), [

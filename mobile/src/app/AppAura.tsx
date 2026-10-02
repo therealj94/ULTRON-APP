@@ -50,6 +50,7 @@ import { PrimeraVez } from '../primeravez/PrimeraVez';
 import { useAccionesDeAura } from './acciones';
 import { AvisoActualizacion } from './AvisoActualizacion';
 import { ComputadoraEnVivo } from './ComputadoraEnVivo';
+import { HojasCartera } from '../cartera/HojasCartera';
 import { LimitePantalla } from './LimitePantalla';
 import { Bienvenida } from './pantallas/Bienvenida';
 import { CrearGenesis } from './pantallas/CrearGenesis';
@@ -182,6 +183,8 @@ export function AppAura() {
         {enSesion && <AvisoActualizacion />}
         {/* Su computadora en vivo (se abre sola al empezar una tarea) y sus correos, encima de cualquier pantalla. */}
         {enSesion && <ComputadoraEnVivo />}
+        {/* Su cartera de Veta Wallet y «Enviar dinero» (cartera/): se abren desde un chat, el menú o por voz. */}
+        {enSesion && <HojasCartera />}
         </VozProvider>
         </PulseProvider>
       </SafeAreaProvider>

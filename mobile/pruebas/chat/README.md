@@ -16,7 +16,7 @@ mentira). No tocan la red de fuera.
 | `rendimiento.cjs` | A6: lo ya abierto no se descifra otra vez; sin peticiones solapadas; nada en segundo plano |
 | `nombre.cjs` | M1: el alta no pisa el nombre del chat; la cuenta nueva toma el de Genesis |
 | `sso.cjs` | M2, B1, B2: enlaces rotos, prefijo exacto, enlace inicial gastado al salir, nada colgado |
-| `vuelta.cjs` | La vuelta de la wallet por https (App Link) y por `ultronfp://`, el redirect https de la pestaña segura, la vuelta por intent de la página /sso y los códigos de error del contrato con la wallet |
+| `vuelta.cjs` | La vuelta de la wallet por https (App Link) y por `ultronfp://`, el redirect https de la pestaña segura, la vuelta por intent de la página /sso, los códigos de error del contrato con la wallet, sin la app (`SIN_WALLET`, sin saltar a la web) y la vuelta TARDÍA cuando la wallet guardó el pedido mientras se sacaba el Genesis ID |
 | `cifrado.cjs` | B3, B4, B6, B7 y `azar.ts`: aparato impostor, tope de fotos, foto sin destinatario, emoji partido, >1024 bytes al azar |
 | `senal.cjs` | `senalar` rechaza con el motivo real (403/413/429/400/401/red), en orden |
 | `voz.cjs` | el contrato: `redactar`/`enviar`/`descartar` por el bus y `resolverContacto` |

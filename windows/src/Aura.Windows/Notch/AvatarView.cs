@@ -51,8 +51,11 @@ internal sealed class AvatarView : FrameworkElement
     public string Estado
     {
         get => estado;
-        set { if (estado == value) return; estado = value; InvalidateVisual(); }
+        set { if (estado == value) return; estado = value; InvalidateVisual(); EstadoCambio?.Invoke(); }
     }
+
+    /// <summary>Cambió <see cref="Estado"/> (el orbe de AU-RA lo sigue: NotchWindow.Orbe.cs).</summary>
+    public event Action? EstadoCambio;
 
     /// <summary>0..1: cuánto suena la voz ahora mismo.</summary>
     public double Boca { get => boca; set => boca = Math.Clamp(value, 0, 1); }

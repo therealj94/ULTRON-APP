@@ -55,8 +55,8 @@ internal sealed class CentroWindow : Window
     {
         try
         {
-            var perfil = Path.Combine(Registro.Carpeta, "Centro");
-            var entorno = await CoreWebView2Environment.CreateAsync(null, perfil, new CoreWebView2EnvironmentOptions("--autoplay-policy=no-user-gesture-required"));
+            // El mismo entorno (perfil «Centro») que el orbe del notch: un solo grupo de procesos de Edge.
+            var entorno = await EntornoWeb.Compartido();
             await web.EnsureCoreWebView2Async(entorno);
             var core = web.CoreWebView2;
             core.Settings.AreHostObjectsAllowed = false;

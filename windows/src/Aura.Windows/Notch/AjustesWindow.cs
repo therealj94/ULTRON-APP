@@ -117,6 +117,7 @@ internal sealed class AjustesWindow : Window
         Op("«Oye AURA» la despierta (micrófono atento, con la luz naranja encendida)", a.PalabraActivacion, v => a.PalabraActivacion = v);
         Op("Apartarse con juegos o videos a pantalla completa", a.OcultarEnPantallaCompleta, v => a.OcultarEnPantallaCompleta = v);
         Op("Menos movimiento (el avatar quieto, sin animaciones)", a.MenosMovimiento, v => a.MenosMovimiento = v);
+        Op("Efectos de sonido del orbe de AU-RA (cortos y bajitos)", a.EfectosDeSonido, v => a.EfectosDeSonido = v);
         raiz.Children.Add(Titulo("Nativo (sin internet)"));
         Op("Hablar siempre con la voz de Windows", a.VozDeWindows, v => a.VozDeWindows = v);
         Op("Oír siempre con el dictado de Windows", a.OidoDeWindows, v => a.OidoDeWindows = v);

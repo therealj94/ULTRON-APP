@@ -7,7 +7,8 @@
  *
  * Se guarda sobre la marcha: cada «Siguiente» escribe en el perfil lo de ese paso (lib/perfil.ts: al
  * instante en el teléfono y después en el servidor, sin esperar), y el número de paso queda anotado
- * en el teléfono; si Android cierra la app a la mitad, se retoma donde se quedó. Al final se marca
+ * en el teléfono; si Android cierra la app a la mitad, se retoma donde se quedó. Cada respuesta de la
+ * encuesta (y el apodo) va también a «lo que sé de ti» (bienvenida/conocer.ts). Al final se marca
  * `completado`, se deja el avatar elegido en los ajustes que lee la mesa, y a la mesa, que lo
  * presenta con su voz.
  */
@@ -21,18 +22,20 @@ import { tr, useIdioma } from '../i18n';
 import { guardarPerfil, usePerfil } from '../lib/perfil';
 import { saveSettings } from '../lib/storage';
 import { setAvatarVoz, stopSpeaking } from '../lib/tts';
-import type { Perfil } from '../nucleo/contrato';
 import { MEDIDA, useTema } from '../nucleo/tema';
 import { BarraProgreso, Boton, BotonRedondo, vibrar } from '../ui';
 import type { RaizParams } from '../app/rutas';
 import { reiniciarA } from '../app/rutas';
 import { marcarRecienElegido, useUsuario } from '../app/sesion';
-import { PASOS, anterior, borradorDesde, cambiosDe, preguntaDe, progreso, puedeSeguir, siguiente, type Borrador, type PasoId } from './flujo';
+import { PASOS, anterior, borradorDesde, cambiosDe, cambiosDelPaso, preguntaDe, progreso, puedeSeguir, siguiente, type Borrador, type PasoId } from './flujo';
+import { anotarEnConocer } from '../bienvenida/conocer';
 import { PasoApodo } from './pasos/PasoApodo';
 import { PasoAura } from './pasos/PasoAura';
 import { PasoAvatar } from './pasos/PasoAvatar';
 import { LluviaConfeti, PasoFiesta } from './pasos/PasoFiesta';
 import { PasoGenesis } from './pasos/PasoGenesis';
+import { PasoIdioma } from './pasos/PasoIdioma';
+import { PasoIniciativa } from './pasos/PasoIniciativa';
 import { PasoPermisos } from './pasos/PasoPermisos';
 import { PasoPregunta } from './pasos/PasoPregunta';
 import { PasoTema } from './pasos/PasoTema';
@@ -40,22 +43,12 @@ import type { PropsPaso } from './pasos/tipos';
 
 type Props = NativeStackScreenProps<RaizParams, 'PrimeraVez'>;
 
-const CLAVE_PASO = (correo: string) => `aura.primeravez.paso.v1:${correo.trim().toLowerCase()}`;
-
-/** Lo que cada paso escribe en el perfil al seguir. */
-function cambiosDelPaso(paso: PasoId, b: Borrador): Partial<Perfil> | null {
-  if (paso === 'genesis') return b.cumple ? { cumple: b.cumple } : null;
-  if (paso === 'apodo') return { apodo: b.apodo.trim() };
-  if (paso === 'avatar') return { avatar: b.avatar };
-  if (paso === 'tema') return { tema: b.tema };
-  const q = preguntaDe(paso);
-  if (q) return { encuesta: { [q.campo]: b.encuesta[q.campo] || '' } };
-  return null;
-}
+// v2: llegaron el idioma, «qué quieres que haga por ti» y la iniciativa (los números de paso cambiaron).
+const CLAVE_PASO = (correo: string) => `aura.primeravez.paso.v2:${correo.trim().toLowerCase()}`;
 
 /** Los pasos que se pueden saltar con el botón de arriba (lo demás se sigue con «Siguiente»). */
 function saltable(paso: PasoId): boolean {
-  return paso.startsWith('encuesta:') || paso === 'permisos' || paso === 'aura';
+  return paso.startsWith('encuesta:') || paso === 'permisos' || paso === 'aura' || paso === 'iniciativa';
 }
 
 export function PrimeraVez(_: Props) {
@@ -139,6 +132,8 @@ export function PrimeraVez(_: Props) {
     if (paso === 'fiesta') return void terminar();
     const c = cambiosDelPaso(paso, b);
     if (c) guardarPerfil(c);
+    // También en «lo que sé de ti» (sin esperar; si falla, el perfil ya lo tiene).
+    void anotarEnConocer(paso, b);
     vibrar('seleccion');
     ir(siguiente(i), 1);
   }, [paso, b, i, ir, terminar]);
@@ -161,7 +156,10 @@ export function PrimeraVez(_: Props) {
     ir(siguiente(i), 1);
   };
 
-  /** Las preguntas de la encuesta, de una vez: lo ya contestado se queda y se sigue en los permisos. */
+  /**
+   * Las preguntas de la encuesta, de una vez: lo ya contestado se queda y se sigue en la iniciativa. Lo
+   * saltado se retoma desde la mesa (Más → Qué puedo hacer → «Contarte de mí»).
+   */
   const saltarEncuesta = () => {
     const q = preguntaDe(paso);
     if (q) {
@@ -170,7 +168,7 @@ export function PrimeraVez(_: Props) {
       setB((x) => ({ ...x, encuesta: e }));
     }
     vibrar('seleccion');
-    ir(Math.max(i + 1, PASOS.indexOf('permisos')), 1);
+    ir(Math.max(i + 1, PASOS.indexOf('iniciativa')), 1);
   };
 
   useEffect(() => {
@@ -183,6 +181,8 @@ export function PrimeraVez(_: Props) {
   const contenido =
     paso === 'genesis' ? (
       <PasoGenesis {...props} />
+    ) : paso === 'idioma' ? (
+      <PasoIdioma {...props} />
     ) : paso === 'apodo' ? (
       <PasoApodo {...props} />
     ) : paso === 'avatar' ? (
@@ -193,6 +193,8 @@ export function PrimeraVez(_: Props) {
       <PasoAura {...props} />
     ) : q ? (
       <PasoPregunta key={q.campo} {...props} pregunta={q} />
+    ) : paso === 'iniciativa' ? (
+      <PasoIniciativa {...props} />
     ) : paso === 'permisos' ? (
       <PasoPermisos {...props} />
     ) : (
