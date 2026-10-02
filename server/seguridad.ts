@@ -564,6 +564,17 @@ export function gastarCupo(claveCupo: string, max: number, ventanaMs = 60_000, a
   return true;
 }
 
+/**
+ * Devuelve el lugar que se gastó en `marca` (el `ahora` con que se llamó a gastarCupo): un turno que no
+ * llegó a ser turno, la frase a medias del especulativo. Se quita ESA entrada y no la última: si después
+ * llegó otra, la de la persona sigue contando y la vieja no se queda ocupando la ventana.
+ */
+export function devolverCupo(claveCupo: string, marca: number) {
+  const arr = hits.get(`cupo:${claveCupo}`);
+  const i = arr ? arr.indexOf(marca) : -1;
+  if (i >= 0) arr!.splice(i, 1);
+}
+
 /* ------------------------------------------------------- intentos de clave por cuenta */
 
 /**
