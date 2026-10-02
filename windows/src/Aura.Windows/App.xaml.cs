@@ -53,7 +53,6 @@ public partial class App : Application
         }
         Centro.Protocolo.Registrar();
         VigilarFallos();
-        Centro.Diagnostico.MandarCaidaPendiente();
         var notch = new NotchWindow();
         MainWindow = notch;
         Centro.Protocolo.Llego += p => notch.Dispatcher.BeginInvoke(new Action(() => notch.PedidoExterno(p)));

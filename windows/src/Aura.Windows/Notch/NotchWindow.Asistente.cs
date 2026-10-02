@@ -154,7 +154,9 @@ public partial class NotchWindow
     {
         CerrarAgente();
         api?.Dispose();
+        // La caída pendiente sale recién ahora: al servidor que eligió la persona, no al de fábrica.
         Centro.Diagnostico.Servidor = ajustes.Servidor;
+        Centro.Diagnostico.MandarCaidaPendiente();
         try { api = new AuraApi(ajustes.Servidor, string.IsNullOrEmpty(ajustes.Token) ? null : ajustes.Token) { Renovar = RenovarSesion, Aparato = ajustes.Aparato }; }
         catch (AuraError ex) { api = null; Avisar(new Aviso("Revisa el servidor", ex.Message, "", "worried")); }
         IniciarCanal();

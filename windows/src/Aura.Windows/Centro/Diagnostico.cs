@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Aura.Windows.Core;
 
@@ -34,7 +35,8 @@ internal static class Diagnostico
         _ = Mandar(tipo, nota, error);
     }
 
-    static async Task Mandar(string tipo, string nota, string? error)
+    /// <summary>Devuelve true si el servidor lo recibió.</summary>
+    static async Task<bool> Mandar(string tipo, string nota, string? error)
     {
         try
         {
@@ -48,11 +50,14 @@ internal static class Diagnostico
                 sesion = corrida,
                 nota = RegistroSeguro.Sanear(nota),
                 error = error == null ? null : RegistroSeguro.Sanear(error),
+                // El servidor escribe «CRASH. Murió en: …» con este campo para las caídas.
+                murio_en = tipo == "crash-previo" && error != null ? RegistroSeguro.Sanear(error) : null,
                 migas = Array.Empty<string>(),
             };
             using var r = await http.PostAsJsonAsync(new Uri(baseUri, "/api/diag"), cuerpo).ConfigureAwait(false);
+            return r.IsSuccessStatusCode;
         }
-        catch { /* sin red: queda en el aura.log */ }
+        catch { return false; /* sin red: queda en el aura.log */ }
     }
 
     /// <summary>La caída que va a matar el proceso: se escribe ya (no hay tiempo de mandarla).</summary>
@@ -61,16 +66,24 @@ internal static class Diagnostico
         try { File.WriteAllText(Pendiente, RegistroSeguro.Sanear(resumen.Length > 600 ? resumen[..600] : resumen)); } catch { }
     }
 
-    /// <summary>Al abrir: si la vez anterior se cayó, se manda ahora.</summary>
+    static int mandandoPendiente;
+
+    /// <summary>
+    /// Al abrir (ya con el servidor configurado en `Servidor`): si la vez anterior se cayó, se manda ahora. El
+    /// archivo se borra solo cuando el servidor lo recibió: sin red, se reintenta en el próximo arranque.
+    /// </summary>
     public static void MandarCaidaPendiente()
     {
-        try
+        if (Interlocked.Exchange(ref mandandoPendiente, 1) == 1) return;
+        _ = Task.Run(async () =>
         {
-            if (!File.Exists(Pendiente)) return;
-            var texto = File.ReadAllText(Pendiente);
-            File.Delete(Pendiente);
-            Reportar("crash-previo", "AURA Windows se cayó la vez anterior", texto);
-        }
-        catch { }
+            try
+            {
+                if (!File.Exists(Pendiente)) return;
+                var texto = File.ReadAllText(Pendiente);
+                if (await Mandar("crash-previo", "AURA Windows se cayó la vez anterior", texto).ConfigureAwait(false)) File.Delete(Pendiente);
+            }
+            catch { }
+        });
     }
 }
