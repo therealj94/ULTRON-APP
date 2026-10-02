@@ -19,8 +19,9 @@ export const chatsWA = (buscar = '', limite = 200) =>
 export const contactosWA = (buscar = '', limite = 300) =>
   api<{ contactos: ContactoWA[] }>(`/api/whatsapp/contactos?limite=${limite}${buscar ? `&buscar=${encodeURIComponent(buscar)}` : ''}`, { method: 'GET' }, 15_000).then((r) => normalizarContactos(r?.contactos));
 
-export const mensajesWA = (chat: string) =>
-  api<{ chat: ChatWA; mensajes: MensajeWA[] }>(`/api/whatsapp/mensajes?chat=${encodeURIComponent(chat)}`, { method: 'GET' }, 15_000).then((r) => ({
+/** Los últimos 60 de un chat; con `antes` (una hora en ms), los 60 anteriores a esa (para subir en la conversación). */
+export const mensajesWA = (chat: string, antes = 0) =>
+  api<{ chat: ChatWA; mensajes: MensajeWA[] }>(`/api/whatsapp/mensajes?chat=${encodeURIComponent(chat)}${antes > 0 ? `&antes=${Math.floor(antes)}` : ''}`, { method: 'GET' }, 15_000).then((r) => ({
     ...r,
     mensajes: (Array.isArray(r?.mensajes) ? r.mensajes : []).filter((m) => m && m.id).map((m) => ({ ...m, texto: typeof m.texto === 'string' ? m.texto : '' })),
   }));

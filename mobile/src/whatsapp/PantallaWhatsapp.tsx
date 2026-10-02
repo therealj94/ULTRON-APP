@@ -8,7 +8,11 @@
  *     la vista previa con el icono de lo que llegó (foto, nota de voz, documento…), la hora a la derecha
  *     («Ayer», la fecha) y el globo verde de sin leer. Buscar mira también los chats viejos del servidor.
  *   · Cada chat se abre encima (whatsapp/ConversacionWA.tsx).
- *   · Se renueva solo mientras está a la vista (cada 5 s la lista, cada 3 s el chat abierto).
+ *   · Se renueva solo mientras está a la vista (cada 5 s la lista, cada 3 s el chat abierto; la lista,
+ *     tapada por un chat, cada 15 s).
+ *   · Si el puente no contesta (el servidor dice `vinculado: false` con `error`) NO se pide vincular otra
+ *     vez: se dice que no contesta, se sigue viendo lo último que llegó y se reintenta solo. Si de verdad
+ *     se desvinculó (desde el teléfono), se limpia la lista y se ofrece vincular.
  */
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ActivityIndicator, Alert, FlatList, Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -27,11 +31,12 @@ import {
   horaLista,
   huellaChats,
   juntarChats,
+  mensajeErrorWA,
   nombreChat,
   paletaWA,
   previaTexto,
   previaWA,
-  sondeoWA,
+  sondeoListaWA,
   telefonoBonito,
   telefonoValido,
   vistaDe,
@@ -89,7 +94,19 @@ export function PantallaWhatsapp({ cambio, onAtras, activa, estadoInicial = null
     try {
       const e = await API.estadoWA();
       setEstado(e);
-      if (vistaDe(e) === 'listo') {
+      const v = vistaDe(e);
+      if (v === 'vincular') {
+        // Se desvinculó (desde el teléfono o venció): lo de antes ya no vale.
+        huella.current = '';
+        setChats((cs) => (cs === null ? cs : null));
+        setAbierto(null);
+        onNoLeidos?.(0);
+      }
+      if (v === 'caido') {
+        setError(mensajeErrorWA(503, e.error, idiomaActual() === 'en' ? 'en' : 'es'));
+        return;
+      }
+      if (v === 'listo') {
         const cs = await API.chatsWA();
         const h = huellaChats(cs);
         if (h !== huella.current) {
@@ -100,7 +117,7 @@ export function PantallaWhatsapp({ cambio, onAtras, activa, estadoInicial = null
       }
       setError('');
     } catch (e: any) {
-      setError(e?.message || tr('No pude abrir tu WhatsApp.', 'I couldn’t open your WhatsApp.'));
+      setError(mensajeErrorWA(Number(e?.status) || 0, e?.message, idiomaActual() === 'en' ? 'en' : 'es'));
     }
   }, [onNoLeidos]);
 
@@ -115,7 +132,7 @@ export function PantallaWhatsapp({ cambio, onAtras, activa, estadoInicial = null
     let reloj: ReturnType<typeof setTimeout>;
     const vuelta = async () => {
       await leer();
-      if (vivo) reloj = setTimeout(vuelta, sondeoWA(vistaRef.current, !!abiertoRef.current));
+      if (vivo) reloj = setTimeout(vuelta, sondeoListaWA(vistaRef.current, !!abiertoRef.current));
     };
     void vuelta();
     return () => {
@@ -158,7 +175,7 @@ export function PantallaWhatsapp({ cambio, onAtras, activa, estadoInicial = null
               huella.current = '';
               void leer();
             })
-            .catch((e: any) => setError(e?.message || '')),
+            .catch((e: any) => setError(mensajeErrorWA(Number(e?.status) || 0, e?.message, idiomaActual() === 'en' ? 'en' : 'es'))),
       },
     ]);
 
@@ -176,12 +193,14 @@ export function PantallaWhatsapp({ cambio, onAtras, activa, estadoInicial = null
     void leer();
   }, [leer]);
 
+  // El puente no contesta pero ya había chats: se siguen viendo (con el aviso arriba) en vez de una pantalla vacía.
+  const conLista = vista === 'listo' || (vista === 'caido' && !!chats?.length);
   const numero = telefonoBonito(estado?.numero) || estado?.numero || '';
-  const detalle = vista === 'listo' ? [numero, estado?.conectado === false ? tr('reconectando…', 'reconnecting…') : ''].filter(Boolean).join(' · ') : tr('Tu WhatsApp personal', 'Your personal WhatsApp');
+  const detalle = vista === 'caido' ? tr('sin conexión con tu WhatsApp', 'not connected to your WhatsApp') : vista === 'listo' ? [numero, estado?.conectado === false ? tr('reconectando…', 'reconnecting…') : ''].filter(Boolean).join(' · ') : tr('Tu WhatsApp personal', 'Your personal WhatsApp');
 
   return (
-    <View style={{ flex: 1, backgroundColor: vista === 'listo' ? w.fondo : p.fondo }}>
-      <View style={[s.cabecera, { backgroundColor: w.cabecera, paddingTop: ins.top + MEDIDA.espacio.s }]}>
+    <View style={{ flex: 1, backgroundColor: conLista ? w.fondo : p.fondo }}>
+      <View style={[s.cabecera, { backgroundColor: w.cabecera, paddingTop: ins.top + MEDIDA.espacio.s, paddingLeft: ins.left + MEDIDA.espacio.m, paddingRight: ins.right + MEDIDA.espacio.m }]}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           {onAtras ? (
             <Pressable onPress={onAtras} accessibilityRole="button" accessibilityLabel={tr('Volver', 'Back')} hitSlop={8} style={s.botonCab}>
@@ -207,7 +226,7 @@ export function PantallaWhatsapp({ cambio, onAtras, activa, estadoInicial = null
         {cambio ? <View style={{ marginTop: MEDIDA.espacio.m }}>{cambio}</View> : null}
       </View>
 
-      {vista === 'listo' ? (
+      {conLista ? (
         <View style={[s.buscador, { backgroundColor: w.buscador }]}>
           <IconoWA nombre="buscar" tam={18} color={w.pista} />
           <TextInput
@@ -228,7 +247,7 @@ export function PantallaWhatsapp({ cambio, onAtras, activa, estadoInicial = null
         </View>
       ) : null}
 
-      {!!error && vista !== 'vincular' ? (
+      {!!error && vista !== 'vincular' && !(vista === 'caido' && !conLista) ? (
         <View style={[s.banda, { backgroundColor: w.avisoFondo }]}>
           <Text style={{ color: w.aviso, fontSize: 13 }}>{error}</Text>
         </View>
@@ -236,6 +255,12 @@ export function PantallaWhatsapp({ cambio, onAtras, activa, estadoInicial = null
 
       {vista === 'revisando' ? (
         <ActivityIndicator color={w.globo} style={{ marginTop: 48 }} />
+      ) : vista === 'caido' && !conLista ? (
+        <Aviso p={p} titulo={tr('Tu WhatsApp no contesta', 'Your WhatsApp isn’t answering')} texto={tr('Sigue vinculado: es la conexión con el servidor. Reintento solo cada pocos segundos; no hace falta vincular otra vez.', 'It’s still linked: it’s the connection to the server. I retry on my own every few seconds; no need to link again.')}>
+          <Pressable onPress={() => void leer()} accessibilityRole="button" style={[s.botonGrande, { paddingHorizontal: 32, marginTop: 8 }]}>
+            <Text style={s.botonGrandeTxt}>{tr('Reintentar ahora', 'Retry now')}</Text>
+          </Pressable>
+        </Aviso>
       ) : vista === 'sin_puente' || vista === 'oculto' ? (
         <Aviso p={p} titulo={tr('WhatsApp se está conectando', 'WhatsApp is connecting')} texto={tr('El servidor todavía no tiene tu WhatsApp listo. Vuelve en un rato.', 'The server doesn’t have your WhatsApp ready yet. Come back in a while.')} />
       ) : vista === 'vincular' ? (
@@ -251,18 +276,18 @@ export function PantallaWhatsapp({ cambio, onAtras, activa, estadoInicial = null
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
           initialNumToRender={14}
-          contentContainerStyle={{ paddingBottom: ins.bottom + 96 }}
+          contentContainerStyle={{ paddingBottom: ins.bottom + 96, paddingLeft: ins.left, paddingRight: ins.right }}
           ListEmptyComponent={<Text style={{ color: w.previa, textAlign: 'center', marginTop: 32, fontSize: 15 }}>{tr(`Ningún chat con «${q.trim()}»`, `No chats matching “${q.trim()}”`)}</Text>}
           renderItem={({ item }) => <FilaChat c={item} w={w} idioma={idioma} onAbrir={setAbierto} />}
         />
       )}
 
-      {vista === 'listo' && chats !== null && !abierto && !nuevo ? (
+      {conLista && chats !== null && !abierto && !nuevo ? (
         <Pressable
           onPress={() => setNuevo(true)}
           accessibilityRole="button"
           accessibilityLabel={tr('Nuevo chat', 'New chat')}
-          style={({ pressed }) => [s.nuevo, { bottom: ins.bottom + 20, backgroundColor: '#00A884', opacity: pressed ? 0.85 : 1 }]}
+          style={({ pressed }) => [s.nuevo, { bottom: ins.bottom + 20, right: ins.right + 16, backgroundColor: '#00A884', opacity: pressed ? 0.85 : 1 }]}
         >
           <IconoWA nombre="nuevoChat" tam={26} color={p.oscuro ? '#111B21' : '#FFFFFF'} />
         </Pressable>
@@ -431,12 +456,13 @@ function Pasos({ p, pasos }: { p: Paleta; pasos: string[] }) {
   );
 }
 
-function Aviso({ p, titulo, texto }: { p: Paleta; titulo: string; texto: string }) {
+function Aviso({ p, titulo, texto, children }: { p: Paleta; titulo: string; texto: string; children?: ReactNode }) {
   return (
     <View style={{ padding: MEDIDA.espacio.xxl, alignItems: 'center', gap: 8 }}>
       <Icono nombre="burbujas" tam={44} color="#00A884" grosor={1.6} />
       <Text style={{ color: p.texto, fontSize: 18, fontWeight: '700', textAlign: 'center' }}>{titulo}</Text>
       <Text style={{ color: p.texto2, fontSize: 15, lineHeight: 21, textAlign: 'center' }}>{texto}</Text>
+      {children}
     </View>
   );
 }
