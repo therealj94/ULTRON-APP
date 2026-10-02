@@ -40,6 +40,9 @@ internal sealed class Oido : IDisposable
     public event Action<byte[]>? Frase;
     public event Action? SeCanso;
     public event Action<string>? Fallo;
+    /// <summary>El micrófono entrega solo ceros (permiso de Windows apagado, micrófono muteado por hardware).</summary>
+    public event Action? MicMudoDelSistema;
+    int bloquesCero;
 
     public void Abrir()
     {
@@ -61,7 +64,7 @@ internal sealed class Oido : IDisposable
         }
     }
 
-    void Reiniciar() { lock (frase) { frase.Clear(); previo.Clear(); det.Reiniciar(); } }
+    void Reiniciar() { bloquesCero = 0; lock (frase) { frase.Clear(); previo.Clear(); det.Reiniciar(); } }
 
     public void Cerrar()
     {
@@ -80,6 +83,10 @@ internal sealed class Oido : IDisposable
         for (int i = 0; i < e.BytesRecorded - 1; i += 2) { double v = BitConverter.ToInt16(e.Buffer, i) / 32768.0; suma += v * v; }
         double rms = n > 0 ? Math.Sqrt(suma / n) : 0;
         Nivel?.Invoke(Math.Min(1, rms * 9));
+        // Silencio DIGITAL total (ceros exactos) durante 4 s: Windows le negó el micrófono a las apps de escritorio
+        // (Privacidad → Micrófono) y entrega ceros sin dar error. Antes AURA quedaba «escuchando» sorda, sin avisar.
+        if (suma == 0) { if ((bloquesCero += 1) == 4000 / MsBloque) MicMudoDelSistema?.Invoke(); }
+        else bloquesCero = 0;
         var bloque = new byte[e.BytesRecorded];
         Buffer.BlockCopy(e.Buffer, 0, bloque, 0, e.BytesRecorded);
         byte[]? lista = null; bool empezo = false, canso = false;

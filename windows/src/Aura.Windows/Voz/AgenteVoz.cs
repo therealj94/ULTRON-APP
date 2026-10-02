@@ -211,6 +211,9 @@ internal sealed class AgenteVoz : IDisposable
         boca = new BufferedWaveProvider(formato) { BufferDuration = BuferBoca, DiscardOnBufferOverflow = true, ReadFully = true };
         espera = new ColaBoca((long)formato.AverageBytesPerSecond * SegundosEnEspera);
         salida = new WaveOutEvent { DesiredLatency = 120 };
+        // Se desconectaron los parlantes o audífonos: antes la conversación seguía abierta y AURA quedaba muda.
+        var esta = salida;
+        salida.PlaybackStopped += (_, e) => { if (e.Exception != null && ReferenceEquals(esta, salida)) Terminar("La salida de audio se detuvo: " + e.Exception.Message); };
         salida.Init(boca);
         salida.Play();
         // Cada 80 ms: ¿suena algo? y el nivel para la boca del avatar (baja solo entre trozos).

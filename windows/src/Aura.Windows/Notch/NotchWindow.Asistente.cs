@@ -29,6 +29,7 @@ public partial class NotchWindow
     readonly SonidoDelEquipo sonidoEquipo = new();
     /// <summary>Cuándo AURA terminó de hablar: el eco de la sala todavía suena un momento y no debe despertarla.</summary>
     DateTime finVozAura = DateTime.MinValue;
+    DateTime ultimoAvisoMic = DateTime.MinValue;
     static readonly TimeSpan GraciaTrasHablar = TimeSpan.FromMilliseconds(1500);
     readonly CortadorFrases cortador = new();
     readonly List<Turno> historial = new();
@@ -86,7 +87,21 @@ public partial class NotchWindow
         // El momento real en que el oído cerró la frase (no cuando la interfaz lo atiende): el origen del turno.
         oido.Frase += wav => { var fin = System.Diagnostics.Stopwatch.GetTimestamp(); Dispatcher.BeginInvoke(new Action(() => _ = AlTerminarFrase(wav, fin))); };
         oido.SeCanso += () => Dispatcher.BeginInvoke(new Action(() => { if (oido.ModoInterrupcion) return; CerrarOido(); if (!hablandoAhora && !pensando) continuo = false; Recalcular(); }));
-        oido.Fallo += m => Dispatcher.BeginInvoke(new Action(() => { CerrarOido(); continuo = false; Avisar(new Aviso("Micrófono", m, "", "worried", Segundos: 6)); Recalcular(); }));
+        // Un micrófono que falla cada vez que se reabre (cada 5 s) avisaba cada 5 s: ahora una vez por minuto.
+        oido.Fallo += m => Dispatcher.BeginInvoke(new Action(() =>
+        {
+            CerrarOido(); continuo = false;
+            if (DateTime.Now - ultimoAvisoMic > TimeSpan.FromMinutes(1)) { ultimoAvisoMic = DateTime.Now; Avisar(new Aviso("Micrófono", m, "", "worried", Segundos: 6)); }
+            Centro.Registro.Anotar("oir", "el micrófono falló: " + m);
+            Recalcular();
+        }));
+        oido.MicMudoDelSistema += () => Dispatcher.BeginInvoke(new Action(() =>
+        {
+            Centro.Registro.Anotar("oir", "el micrófono entrega solo silencio (¿permiso de Windows?)");
+            if (DateTime.Now - ultimoAvisoMic < TimeSpan.FromMinutes(10)) return;
+            ultimoAvisoMic = DateTime.Now;
+            Avisar(new Aviso(T("No te oigo", "I can't hear you"), T("Windows no le da el micrófono a AURA. Revisa Configuración → Privacidad → Micrófono → «Permitir que las aplicaciones de escritorio accedan».", "Windows isn't giving AURA the microphone. Check Settings → Privacy → Microphone."), "", "worried", T("Abrir", "Open"), () => { try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("ms-settings:privacy-microphone") { UseShellExecute = true }); } catch { } }, 12));
+        }));
 
         // Cuándo llegó el audio TTS y cuándo empezó a sonar de verdad (relleno aparte: no es respuesta). La primera
         // frase útil que suena cierra el turno como «ok».
