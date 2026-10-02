@@ -189,6 +189,16 @@ prueba('el recordatorio: Claudio lo dice y es él quien se achica y vuela a la f
   assert.match(escena, /marcarLugar\?\.\('franja'/, 'la escena marca dónde aterriza');
 });
 
+prueba('cada vez que se abre empieza de cero (cerrado no se queda montado con el estado viejo)', () => {
+  const app = fs.readFileSync(path.join(AQUI, '../RecorridoApp.tsx'), 'utf8');
+  assert.match(app, /if \(!visible\) return null;/);
+  // Y abierto de nuevo, el motor arranca en la bienvenida aunque la vez anterior terminara.
+  let s = reducir(INICIO, { tipo: 'ir', e: ESCENAS.length - 1 });
+  s = reducir(reducir(s, { tipo: 'siguiente' }), { tipo: 'siguiente' });
+  assert.equal(s.fase, 'fin');
+  assert.deepEqual([INICIO.e, INICIO.l, INICIO.fase], [0, 0, 'habla']);
+});
+
 let ok = 0;
 for (const [nombre, f] of pruebas) {
   try {

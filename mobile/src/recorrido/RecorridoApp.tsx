@@ -60,6 +60,9 @@ export function RecorridoApp({ visible, nombre, idioma, onCerrar, onProbar }: { 
     void prepararSonidos();
     return () => void soltarSonidos();
   }, [visible]);
+  // Cerrado no se monta: cada vez que se abre empieza de cero (desde «Más → Qué puedo hacer» también),
+  // y nunca arrastra el «terminó» de la vez anterior (Codex en #118).
+  if (!visible) return null;
   return (
     <Recorrido
       visible={visible}
