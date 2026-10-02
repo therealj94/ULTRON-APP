@@ -24,10 +24,11 @@ const alias = {
       'expo-av': path.join(SHIMS, 'expo-av.js'),
       'expo-file-system/legacy': path.join(SHIMS, 'expo-file-system.js'),
       'expo-constants': path.join(SHIMS, 'expo-constants.js'),
+      expo: path.join(SHIMS, 'expo.js'),
     };
     b.onResolve({ filter: /.*/ }, (a) => {
       if (mapa[a.path]) return { path: mapa[a.path] };
-      if (a.path === './api' && (a.importer.endsWith(`speechCloud.ts`) || a.importer.endsWith(`tts.ts`))) return { path: path.join(SHIMS, 'api.js') };
+      if (a.path === './api' && (a.importer.endsWith(`speechCloud.ts`) || a.importer.endsWith(`speechTurbo.ts`) || a.importer.endsWith(`tts.ts`))) return { path: path.join(SHIMS, 'api.js') };
       return null;
     });
   },

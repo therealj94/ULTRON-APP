@@ -53,14 +53,16 @@ export async function saveVozHoy(v: VozHoy) {
 const RASTROS_VIEJOS = ['ultron_fp_chat_log_v2', 'ultron_fp_person_memory_v2'];
 
 export type SavedCreds = { correo: string; clave: string; name?: string };
-export type SttEngine = 'native' | 'cloud';
+export type SttEngine = 'turbo' | 'native' | 'cloud';
 export type AppSettings = {
   voiceId: string;
   micMuted: boolean;
   visionEnabled: boolean;
   gazeEnabled: boolean;
-  /** Oído: reconocimiento del sistema en el teléfono o grabación + Whisper en el servidor propio. */
+  /** Oído: Scribe v2 Realtime Turbo en vivo, el reconocimiento del teléfono o grabación + Scribe en el servidor. */
   sttEngine: SttEngine;
+  /** La persona eligió el oído en Ajustes (un «native» guardado por omisión antes de Turbo no cuenta). */
+  oidoElegido?: boolean;
   /** Comentarios espontáneos de lo que ve la cámara. */
   proactive: boolean;
   /** Efectos de sonido al tocar. */
@@ -107,7 +109,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   micMuted: false,
   visionEnabled: true,
   gazeEnabled: true,
-  sttEngine: 'native',
+  sttEngine: 'turbo',
   proactive: true,
   sfx: true,
   cara: 'orbe',
@@ -181,6 +183,8 @@ export async function loadSettings(): Promise<AppSettings> {
     s.voiceId = 'ultron';
     s.avatar = normalizarAvatarId(s.avatar);
     s.idioma = normalizarIdioma(s.idioma);
+    // Desde el 2-oct el oído es Turbo (José: «la mejor versión de todas»), salvo que la persona haya elegido otro.
+    if (!s.oidoElegido) s.sttEngine = 'turbo';
     return s;
   } catch {
     return DEFAULT_SETTINGS;

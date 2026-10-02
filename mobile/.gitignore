@@ -1,6 +1,6 @@
 node_modules
 .expo
 dist
-android
+/android
 ios
 out

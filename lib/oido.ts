@@ -330,6 +330,33 @@ async function transcribirTurbo(audio: Buffer, mime: string, language: string, r
   return { texto: turbo.texto.slice(0, 4000), via: 'elevenlabs:scribe-turbo', idioma: turbo.idioma };
 }
 
+/**
+ * El teléfono oye en vivo con Turbo (mobile/src/lib/turboMotor.ts): abre el WebSocket de tiempo real
+ * directo a ElevenLabs con un token de UN SOLO USO que pide el servidor (documentación: POST
+ * /v1/single-use-token/realtime_scribe; la clave nunca sale del servidor). La dirección va armada aquí
+ * con el modelo, el formato del micrófono crudo, el idioma, el cierre manual y las pistas de AU-RA.
+ */
+export async function permisoTurbo(language: string, reloj: Presupuesto = presupuesto(6000)): Promise<{ url: string; modelo: string } | null> {
+  const key = clave('elevenlabs');
+  if (!key) return null;
+  const r = await fetch('https://api.elevenlabs.io/v1/single-use-token/realtime_scribe', { method: 'POST', headers: { 'xi-api-key': key }, signal: reloj.senal(5000) }).catch(() => null);
+  if (!r?.ok) {
+    console.warn('[stt turbo] sin token de un solo uso', r?.status, r ? (await r.text().catch(() => '')).slice(0, 160) : '');
+    return null;
+  }
+  const j: any = await r.json().catch(() => null);
+  if (typeof j?.token !== 'string' || !j.token) return null;
+  const modelo = process.env.ELEVENLABS_STT_TURBO || MODELO_TURBO;
+  const q = new URLSearchParams({ model_id: modelo, audio_format: 'pcm_16000', commit_strategy: 'manual', token: j.token });
+  const idioma = (language || 'es').slice(0, 2).toLowerCase();
+  if (idioma === 'es' || idioma === 'en') q.set('language_code', idioma);
+  for (const t of TERMINOS_AURA) q.append('keyterms', t);
+  return { url: `wss://api.elevenlabs.io/v1/speech-to-text/realtime?${q}`, modelo };
+}
+
+/** Confirmar una frase de dinero que el teléfono ya oyó con Turbo: directo con Scribe v2, sin Turbo. */
+export const PROVEEDORES_OIDO_CONFIRMAR = (): ProveedorOido[] => PROVEEDORES_OIDO.filter((p) => p.nombre !== 'elevenlabs-turbo');
+
 /** Los respaldos: el Whisper propio (si sigue configurado) y Gemini. */
 const RESPALDOS_OIDO: ProveedorOido[] = [
   { nombre: 'voicebox', listo: () => !!(clave('voicebox_url') && clave('voicebox_clave')), oir: transcribirVoicebox },
