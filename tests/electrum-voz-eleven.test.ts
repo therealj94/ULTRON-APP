@@ -173,7 +173,8 @@ test('AU-RA FP habla con ElevenLabs: la voz del avatar y del idioma elegidos; Vo
 });
 
 test('el oído: Scribe primero en Dr Electrum (vocabulario minero) y en AU-RA (sus apps y avatares), Whisper de respaldo', async () => {
-  assert.deepEqual(PROVEEDORES_OIDO_ELECTRUM.map((p) => p.nombre), ['elevenlabs', 'voicebox', 'gemini']);
+  // Turbo primero para lo que llega en WAV (José, 2-oct); este audio es webm, así que oye Scribe v2.
+  assert.deepEqual(PROVEEDORES_OIDO_ELECTRUM.map((p) => p.nombre), ['elevenlabs-turbo', 'elevenlabs', 'voicebox', 'gemini']);
   // AU-RA también: Scribe primero (José, 1-oct); y antes, Turbo para lo que llega en WAV (José, 2-oct).
   assert.deepEqual(PROVEEDORES_OIDO.map((p) => p.nombre), ['elevenlabs-turbo', 'elevenlabs', 'voicebox', 'gemini']);
   const vb = await voiceboxFalso({ transcripcion: () => ({ texto: 'lo oyó whisper' }) });

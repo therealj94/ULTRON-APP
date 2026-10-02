@@ -167,6 +167,15 @@ export const TERMINOS_ELECTRUM = [
   'DXF',
   'UTM',
   'Decreto 109-2019',
+  'MiAmbiente',
+  'ICF',
+  'NAD27',
+  'WGS84',
+  'Juticalpa',
+  'Catacamas',
+  'Tegucigalpa',
+  'Don Chema',
+  'Tatiana',
 ];
 
 /**
@@ -336,7 +345,11 @@ async function transcribirTurbo(audio: Buffer, mime: string, language: string, r
  * /v1/single-use-token/realtime_scribe; la clave nunca sale del servidor). La dirección va armada aquí
  * con el modelo, el formato del micrófono crudo, el idioma, el cierre manual y las pistas de AU-RA.
  */
-export async function permisoTurbo(language: string, reloj: Presupuesto = presupuesto(6000)): Promise<{ url: string; modelo: string } | null> {
+export async function permisoTurbo(
+  language: string,
+  reloj: Presupuesto = presupuesto(6000),
+  terminos: readonly string[] = TERMINOS_AURA
+): Promise<{ url: string; modelo: string } | null> {
   const key = clave('elevenlabs');
   if (!key) return null;
   const r = await fetch('https://api.elevenlabs.io/v1/single-use-token/realtime_scribe', { method: 'POST', headers: { 'xi-api-key': key }, signal: reloj.senal(5000) }).catch(() => null);
@@ -350,12 +363,14 @@ export async function permisoTurbo(language: string, reloj: Presupuesto = presup
   const q = new URLSearchParams({ model_id: modelo, audio_format: 'pcm_16000', commit_strategy: 'manual', token: j.token });
   const idioma = (language || 'es').slice(0, 2).toLowerCase();
   if (idioma === 'es' || idioma === 'en') q.set('language_code', idioma);
-  for (const t of TERMINOS_AURA) q.append('keyterms', t);
+  for (const t of terminos) q.append('keyterms', t);
   return { url: `wss://api.elevenlabs.io/v1/speech-to-text/realtime?${q}`, modelo };
 }
 
 /** Confirmar una frase de dinero que el teléfono ya oyó con Turbo: directo con Scribe v2, sin Turbo. */
 export const PROVEEDORES_OIDO_CONFIRMAR = (): ProveedorOido[] => PROVEEDORES_OIDO.filter((p) => p.nombre !== 'elevenlabs-turbo');
+/** Lo mismo para Dr Electrum (las pistas del oficio). */
+export const PROVEEDORES_OIDO_ELECTRUM_CONFIRMAR = (): ProveedorOido[] => PROVEEDORES_OIDO_ELECTRUM.filter((p) => p.nombre !== 'elevenlabs-turbo');
 
 /** Los respaldos: el Whisper propio (si sigue configurado) y Gemini. */
 const RESPALDOS_OIDO: ProveedorOido[] = [
@@ -375,9 +390,13 @@ export const PROVEEDORES_OIDO: ProveedorOido[] = [
   ...RESPALDOS_OIDO,
 ];
 
-/** Dr Electrum: Scribe primero con las pistas del oficio; los mismos respaldos. Sin Turbo (José, 2-oct:
- * «en todos menos Dr Electrum hasta que yo te diga»). */
+/**
+ * Dr Electrum: Turbo primero para lo que llega en WAV (la web graba cada frase en WAV de 16 kHz) con las
+ * pistas del oficio (José, 2-oct: «Dr Electrum ya puedes conectarlo Turbo»); después Scribe v2 por
+ * lotes con las mismas pistas, y los mismos respaldos. Lo de dinero se confirma igual que en AU-RA.
+ */
 export const PROVEEDORES_OIDO_ELECTRUM: ProveedorOido[] = [
+  { nombre: 'elevenlabs-turbo', listo: () => !!clave('elevenlabs'), oir: (a, m, l, r) => transcribirTurbo(a, m, l, r, TERMINOS_ELECTRUM) },
   { nombre: 'elevenlabs', listo: () => !!clave('elevenlabs'), oir: (a, m, l, r) => transcribirEleven(a, m, l, r, TERMINOS_ELECTRUM) },
   ...RESPALDOS_OIDO,
 ];

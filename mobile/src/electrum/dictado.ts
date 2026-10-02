@@ -18,9 +18,20 @@
  *
  * Los nombres del oficio van en `contextualStrings`: sin eso «Quebrada Seca» sale «quebrada seca»
  * con suerte, e «INHGEOMIN» no sale nunca.
+ *
+ * DESDE EL 2-OCT (José: «Dr Electrum ya puedes conectarlo Turbo»): con la APK que trae el micrófono
+ * crudo, el dictado va EN VIVO a Scribe v2 Realtime Turbo (lib/turboDictado.ts) con las pistas del
+ * oficio del servidor; cifras y montos se confirman con Scribe v2. Sin ese micrófono (una APK anterior,
+ * iOS) o si no abre, sigue el reconocedor del teléfono de siempre. El texto sigue cayendo en la caja
+ * sin mandarse.
  */
 import { ExpoSpeechRecognitionModule } from 'expo-speech-recognition';
+import { PermissionsAndroid, Platform } from 'react-native';
+import { abrirMicCrudo, micCrudoDisponible } from '../lib/auraMic';
 import { nativeIsWanted, nativePause } from '../lib/speechNative';
+import { dictarTurbo } from '../lib/turboDictado';
+import type { WsTurbo } from '../lib/turboMotor';
+import { oirWav, permisoTurbo } from './api';
 import { fraseDeDictado } from './frases';
 
 export type Escucha = {
@@ -93,6 +104,8 @@ export async function escuchar(cb: {
   // aquí mientras el primero esperaba el diálogo, y arrancaban dos reconocedores.
   if (enMarcha) return null;
   enMarcha = true;
+  const turbo = await escucharTurbo(cb);
+  if (turbo) return turbo;
   if (!dictadoDisponible()) {
     enMarcha = false;
     cb.onError?.('Este teléfono no trae reconocimiento de voz. Escribime.');
@@ -205,4 +218,47 @@ export async function escuchar(cb: {
       }
     },
   };
+}
+
+/** El micrófono para el dictado Turbo (el permiso del sistema, el mismo que pide AU-RA). */
+async function permisoMicrofono(): Promise<boolean> {
+  if (Platform.OS !== 'android') return false;
+  try {
+    const r = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
+    return r === PermissionsAndroid.RESULTS.GRANTED;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * El dictado con Turbo en vivo. null si este teléfono no lo puede hacer (sin micrófono crudo, sin
+ * permiso o el micrófono no abre): entonces sigue el reconocedor del teléfono. `enMarcha` ya está en
+ * true al llegar aquí; si devuelve algo, lo suelta al terminar.
+ */
+async function escucharTurbo(cb: {
+  onParcial?: (texto: string) => void;
+  onFinal?: (texto: string) => void;
+  onFin?: () => void;
+  onError?: (motivo: string) => void;
+}): Promise<Escucha | null> {
+  if (!micCrudoDisponible() || !(await permisoMicrofono())) return null;
+  const control = await dictarTurbo(
+    {
+      abrirMic: abrirMicCrudo,
+      permiso: permisoTurbo,
+      crearWs: (url) => new WebSocket(url) as unknown as WsTurbo,
+      transcribirWav: (wav, confirmar) => oirWav(wav, confirmar),
+    },
+    {
+      onParcial: cb.onParcial,
+      onFinal: cb.onFinal,
+      onError: (m) => console.warn('[electrum] dictado turbo:', m),
+      onFin: () => {
+        enMarcha = false;
+        cb.onFin?.();
+      },
+    }
+  );
+  return control;
 }

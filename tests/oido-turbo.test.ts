@@ -115,10 +115,11 @@ describe('Oído Turbo: frases de dinero', () => {
 });
 
 describe('Oído Turbo: la cadena', () => {
-  it('AU-RA tiene Turbo primero y Dr Electrum no lo tiene', () => {
+  it('AU-RA y Dr Electrum tienen Turbo primero (José, 2-oct: «Dr Electrum ya puedes conectarlo Turbo»)', () => {
     assert.equal(PROVEEDORES_OIDO[0].nombre, 'elevenlabs-turbo');
     assert.equal(PROVEEDORES_OIDO[1].nombre, 'elevenlabs');
-    assert.ok(!PROVEEDORES_OIDO_ELECTRUM.some((p) => /turbo/.test(p.nombre)), 'Electrum sigue sin Turbo');
+    assert.equal(PROVEEDORES_OIDO_ELECTRUM[0].nombre, 'elevenlabs-turbo');
+    assert.equal(PROVEEDORES_OIDO_ELECTRUM[1].nombre, 'elevenlabs');
   });
 
   it('un WAV va por Turbo, con el modelo, el formato, el idioma y las pistas de AU-RA', async () => {
@@ -160,10 +161,14 @@ describe('Oído Turbo: la cadena', () => {
     assert.equal(r.via, 'elevenlabs:scribe');
   });
 
-  it('Dr Electrum con WAV sigue por Scribe v2 por lotes', async () => {
-    const r = await transcribirAudio({ audio: wav(16000), mime: 'audio/wav', language: 'es', plataforma: 'electrum' });
-    assert.equal(urlsTurbo.length, 0);
-    assert.equal(r.via, 'elevenlabs:scribe');
+  it('Dr Electrum con WAV va por Turbo con las pistas del oficio y el idioma automático', async () => {
+    dichoTurbo = 'Muéstrame la concesión Quebrada Seca en INHGEOMIN';
+    const r = await transcribirAudio({ audio: wav(16000), mime: 'audio/wav', language: 'auto', plataforma: 'electrum' });
+    assert.equal(r.via, 'elevenlabs:scribe-turbo');
+    const u = new URL(urlsTurbo[0]);
+    assert.ok(u.searchParams.getAll('keyterms').includes('INHGEOMIN'));
+    assert.ok(!u.searchParams.getAll('keyterms').includes('Spotify'));
+    assert.equal(u.searchParams.has('language_code'), false, 'idioma automático: español o inglés');
   });
 
   it('Turbo sin voz es silencio, no un fallo: no se cobra otra transcripción', async () => {
