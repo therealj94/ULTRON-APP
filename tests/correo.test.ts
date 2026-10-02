@@ -16,7 +16,9 @@ import { SMTPServer } from 'smtp-server';
 import { simpleParser, type ParsedMail } from 'mailparser';
 import { detectarProveedor, leerAutoconfig } from '../lib/correo/proveedores';
 import { agregarCuenta, cifrar, cuentasDe, descifrar, _olvidarCuentas } from '../lib/correo/cuentas';
-import { _redLocalEnPruebas, sinCitas, htmlATexto } from '../lib/correo/buzon';
+import { _redLocalEnPruebas, explicarFallo, probarCuenta, sinCitas, htmlATexto } from '../lib/correo/buzon';
+import tlsMod from 'node:tls';
+import nodemailer from 'nodemailer';
 import { borradorDe, correrCorreo, resolverBorrador, respuestaAlBorrador, _olvidarCorreo } from '../server/correo';
 import { ipPublicaDe } from '../lib/red-publica';
 import { extraerPedidoHerramienta, instruccionHarness } from '../lib/harness';
@@ -198,5 +200,77 @@ test('con un IMAP de verdad (Dovecot local): revisar, buscar, leer, contestar y 
   } finally {
     _redLocalEnPruebas(false);
     await new Promise<void>((r) => smtp.close(() => r()));
+  }
+});
+
+/** Un IMAP falso (TLS) que rechaza toda clave como lo hace Dovecot/cPanel: «NO [AUTHENTICATIONFAILED]». */
+function imapQueRechaza(tls: { key: Buffer; cert: Buffer }) {
+  const abiertos = new Set<tlsMod.TLSSocket>();
+  const sv = tlsMod.createServer(tls, (so) => {
+    abiertos.add(so);
+    so.on('close', () => abiertos.delete(so));
+    let resto = '';
+    let esperaSasl = '';
+    so.write('* OK [CAPABILITY IMAP4rev1 AUTH=PLAIN] listo\r\n');
+    so.on('data', (d) => {
+      resto += d.toString();
+      let i;
+      while ((i = resto.indexOf('\r\n')) >= 0) {
+        const linea = resto.slice(0, i);
+        resto = resto.slice(i + 2);
+        if (esperaSasl) {
+          so.write(`${esperaSasl} NO [AUTHENTICATIONFAILED] Authentication failed.\r\n`);
+          esperaSasl = '';
+          continue;
+        }
+        const [tag, cmd = ''] = linea.split(' ');
+        const c = cmd.toUpperCase();
+        if (c === 'CAPABILITY') so.write(`* CAPABILITY IMAP4rev1 AUTH=PLAIN\r\n${tag} OK listo\r\n`);
+        else if (c === 'AUTHENTICATE' && linea.split(' ').length <= 3) { esperaSasl = tag; so.write('+ \r\n'); }
+        else if (c === 'LOGIN' || c === 'AUTHENTICATE') so.write(`${tag} NO [AUTHENTICATIONFAILED] Authentication failed.\r\n`);
+        else if (c === 'LOGOUT') { so.write(`* BYE\r\n${tag} OK adios\r\n`); so.end(); }
+        else so.write(`${tag} OK listo\r\n`);
+      }
+    });
+    so.on('error', () => {});
+  });
+  return Object.assign(sv, { cerrarTodo: () => { for (const so of abiertos) so.destroy(); sv.close(); } });
+}
+
+test('la prueba de la cuenta dice QUÉ pasó: la clave, el servidor que no contesta o el certificado (José, 2-oct)', async (t) => {
+  const tls = certificado();
+  if (!tls) return t.skip('sin openssl para el certificado de prueba');
+  _redLocalEnPruebas(true);
+  // 1) IMAP que rechaza la clave (de verdad, por TLS): dice que es la clave y qué hacer.
+  const imap = imapQueRechaza(tls);
+  await new Promise<void>((r) => imap.listen(0, '127.0.0.1', r));
+  const pImap = (imap.address() as any).port;
+  // 2) Un puerto donde nadie contesta.
+  const libre = await new Promise<number>((r) => { const sv = tlsMod.createServer(tls).listen(0, '127.0.0.1', () => { const p = (sv.address() as any).port; sv.close(() => r(p)); }); });
+  // 3) SMTP que rechaza la clave (smtp-server): el error real de nodemailer.
+  const smtp = new SMTPServer({ secure: true, ...tls, onAuth: (_a, _s, cb) => cb(new Error('Invalid username or password')) });
+  await new Promise<void>((r) => smtp.listen(0, '127.0.0.1', r));
+  const pSmtp = (smtp.server.address() as any).port;
+  try {
+    const r1 = await probarCuenta('j.ordonez@ordenglobal.org', { imap: { host: '127.0.0.1', puerto: pImap, seguro: true }, smtp: { host: '127.0.0.1', puerto: pSmtp, seguro: true }, usuario: 'correo' }, { pass: 'mala' });
+    assert.equal(r1.ok, false);
+    assert.match((r1 as any).error, /^No pude entrar a leer\. 127\.0\.0\.1 no aceptó la clave\..*contraseña de aplicación/);
+    const r2 = await probarCuenta('a@b.hn', { imap: { host: '127.0.0.1', puerto: libre, seguro: true }, smtp: { host: '127.0.0.1', puerto: pSmtp, seguro: true }, usuario: 'correo' }, { pass: 'x' });
+    assert.match((r2 as any).error, new RegExp(`no contestó en el puerto ${libre} \\(para leer suele ser 993\\)`));
+    const tr = nodemailer.createTransport({ host: '127.0.0.1', port: pSmtp, secure: true, tls: { rejectUnauthorized: false }, auth: { user: 'a@b.hn', pass: 'mala' } });
+    const e = await tr.verify().then(() => null, (x) => x);
+    tr.close();
+    assert.ok(e, 'el SMTP rechazó la clave');
+    assert.match(explicarFallo(e, 'mail.ordenglobal.org', 465, 'mandar'), /^mail\.ordenglobal\.org no aceptó la clave/);
+    // Certificado de otro nombre (lo que pasa con un hosting que no tiene el de mail.<dominio>): no manda la clave.
+    const tc = await new Promise<any>((r) => { const so = tlsMod.connect({ host: '127.0.0.1', port: pImap, servername: 'mail.ordenglobal.org' }, () => r(null)); so.on('error', r); });
+    assert.ok(tc, 'el certificado propio no vale');
+    assert.match(explicarFallo(Object.assign(new Error("Hostname/IP does not match certificate's altnames"), { code: 'ERR_TLS_CERT_ALTNAME_INVALID' }), 'mail.x.hn', 993, 'leer'), /certificado de seguridad de mail\.x\.hn no es válido.*Configurar cliente de correo/);
+    assert.match(explicarFallo(tc, 'mail.x.hn', 993, 'leer'), /certificado de seguridad/);
+    assert.match(explicarFallo(Object.assign(new Error('getaddrinfo ENOTFOUND mail.nohay.hn'), { code: 'ENOTFOUND' }), 'mail.nohay.hn', 993, 'leer'), /No existe el servidor mail\.nohay\.hn/);
+  } finally {
+    imap.cerrarTodo();
+    await new Promise<void>((r) => smtp.close(() => r()));
+    _redLocalEnPruebas(false);
   }
 });

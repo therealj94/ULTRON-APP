@@ -24,7 +24,7 @@
  * sin ella se ve igual.
  */
 import { useMemo } from 'react';
-import { ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { tr } from '../i18n';
 import { MEDIDA, useTema, type Paleta } from '../nucleo/tema';
 import { Hoja } from '../ui/Hoja';
@@ -87,7 +87,8 @@ export function HojaMas(p: Props) {
   const ancho = `${100 / columnas}%` as const;
   return (
     <Hoja visible={p.visible} onCerrar={p.onCerrar} titulo={tr('Más', 'More')}>
-      <ScrollView style={st.desplazable} contentContainerStyle={st.rejilla} showsVerticalScrollIndicator={false} bounces={false} keyboardShouldPersistTaps="handled">
+      {/* La hoja ya se recorre con el dedo (ui/Hoja): la rejilla va plana, sin otro desplazable adentro. */}
+      <View style={[st.desplazable, st.rejilla]}>
         {mosaicos.map((m) => (
           <View key={m.id} style={[st.celda, { width: ancho }]}>
             <Tocable
@@ -108,7 +109,7 @@ export function HojaMas(p: Props) {
             </Tocable>
           </View>
         ))}
-      </ScrollView>
+      </View>
     </Hoja>
   );
 }

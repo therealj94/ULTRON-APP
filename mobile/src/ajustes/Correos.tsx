@@ -6,6 +6,9 @@
  *   · Outlook, Hotmail y Microsoft 365 no aceptan contraseñas: te da un código para microsoft.com/devicelogin.
  *   · Antes de guardar, el servidor prueba que puede leer Y mandar; si no, dice por qué.
  *   · La clave se guarda cifrada en el servidor; aquí no se queda.
+ *   · Servidores a mano: vienen ESCRITOS con lo que el servidor adivinó (mail.<dominio>, 993 y 465),
+ *     no en gris de ejemplo. Antes la casilla parecía llena pero estaba vacía y «Conectar» no se
+ *     activaba; y el error quedaba fuera de la hoja (José, 2-oct, ordenglobal.org).
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Linking, StyleSheet, View } from 'react-native';
@@ -100,8 +103,8 @@ export function HojaCorreos({ visible, onCerrar }: { visible: boolean; onCerrar:
     } catch (e: any) {
       vibrar('aviso');
       setError(e?.message || tr('No pude conectarlo.', 'I couldn’t connect it.'));
-      // Un hosting que la base no conoce: ofrecer escribir los servidores a mano.
-      if (prov?.fuente === 'adivinado') setManual(true);
+      // Un hosting que la base no conoce: ofrecer escribir los servidores a mano (ya escritos).
+      if (prov?.fuente === 'adivinado') aMano();
     } finally {
       setOcupado(false);
     }
@@ -154,6 +157,16 @@ export function HojaCorreos({ visible, onCerrar }: { visible: boolean; onCerrar:
   };
 
   const esMs = prov?.auth === 'microsoft';
+
+  /** Escribir los servidores a mano, empezando con los que adivinó el servidor (se pueden cambiar). */
+  const aMano = (p: Proveedor | null = prov) => {
+    setManual(true);
+    if (!p) return;
+    setImapHost((h) => h || p.imap.host);
+    setSmtpHost((h) => h || p.smtp.host);
+    setImapPuerto((x) => x || '993');
+    setSmtpPuerto((x) => x || '465');
+  };
 
   return (
     <Hoja
@@ -229,11 +242,22 @@ export function HojaCorreos({ visible, onCerrar }: { visible: boolean; onCerrar:
                     <Campo etiqueta={tr('Clave (o contraseña de aplicación)', 'Password (or app password)')} clave value={clave} onChangeText={setClave} autoCapitalize="none" autoCorrect={false} />
                     {manual && (
                       <>
+                        <Texto v="mini" color="texto3">
+                          {tr(
+                            `Ya puse lo de casi todo hosting (cPanel): ${prov.imap.host}, puertos 993 y 465, y como usuario tu correo completo. Cámbialo solo si quien administra tu dominio te dio otros datos.`,
+                            `I filled in what most hosting uses (cPanel): ${prov.imap.host}, ports 993 and 465, and your full address as the user. Change it only if whoever runs your domain gave you other details.`
+                          )}
+                        </Texto>
                         <Campo etiqueta={tr('Servidor de entrada (IMAP)', 'Incoming server (IMAP)')} value={imapHost} onChangeText={setImapHost} autoCapitalize="none" placeholder={prov.imap.host} />
                         <Campo etiqueta={tr('Puerto de entrada', 'Incoming port')} value={imapPuerto} onChangeText={(t) => setImapPuerto(t.replace(/\D/g, '').slice(0, 5))} keyboardType="number-pad" placeholder="993" />
                         <Campo etiqueta={tr('Servidor de salida (SMTP)', 'Outgoing server (SMTP)')} value={smtpHost} onChangeText={setSmtpHost} autoCapitalize="none" placeholder={prov.smtp.host} />
                         <Campo etiqueta={tr('Puerto de salida', 'Outgoing port')} value={smtpPuerto} onChangeText={(t) => setSmtpPuerto(t.replace(/\D/g, '').slice(0, 5))} keyboardType="number-pad" placeholder="465" />
                       </>
+                    )}
+                    {!!error && (
+                      <Texto v="chica" color="error">
+                        {error}
+                      </Texto>
                     )}
                     <Boton
                       titulo={tr('Conectar', 'Connect')}
@@ -242,13 +266,16 @@ export function HojaCorreos({ visible, onCerrar }: { visible: boolean; onCerrar:
                       deshabilitado={!clave || (manual && (!imapHost.trim() || !smtpHost.trim()))}
                       onPress={() => void conectar()}
                     />
+                    {!manual && prov.fuente === 'adivinado' && (
+                      <Boton titulo={tr('Ver o cambiar los servidores', 'See or change the servers')} variante="fantasma" tam="chico" onPress={() => aMano()} />
+                    )}
                   </>
                 )}
               </>
             )}
           </View>
         )}
-        {!!error && (
+        {!!error && (codigo || !prov || esMs) && (
           <Texto v="chica" color="error">
             {error}
           </Texto>
