@@ -226,12 +226,12 @@ public partial class NotchWindow
     async Task HacerOrdenDelCerebro(string orden, string dicho, bool hablado)
     {
         var p = Intencion.PorReglas(orden);
-        if (p.Mano == Mano.Ninguna) { Centro.Registro.Anotar("cerebro-manos", $"{orden} → nada"); NoPude(T($"Todavía no sé hacer «{orden}» en esta computadora.", $"I don't know how to do “{orden}” on this PC yet.")); return; }
+        if (p.Mano == Mano.Ninguna) { Centro.Registro.AnotarDicho("cerebro-manos", "→ nada", orden); NoPude(T($"Todavía no sé hacer «{orden}» en esta computadora.", $"I don't know how to do “{orden}” on this PC yet.")); return; }
         // El cerebro no trae cosas que no dijiste (una canción de antes, otra app, cerrar algo cuando pediste un
         // chiste): misma clase de acción y mismo objetivo que lo tuyo (o tus frases de hace un momento).
         var contexto = historial.Where(x => x.Rol == "usuario").Select(x => x.Texto).TakeLast(2).ToList();
         var veredicto = AutorizarOrden.Autorizar(orden, dicho, contexto);
-        Centro.Registro.Anotar("cerebro-manos", $"{orden} → {p.Mano} · {veredicto}");
+        Centro.Registro.Anotar("cerebro-manos", $"→ {p.Mano} · {veredicto}");
         if (veredicto == Veredicto.Rechazar)
         {
             Centro.Registro.AnotarDicho("cerebro-manos", "descartada (no sale de lo dicho)", orden);
@@ -240,7 +240,6 @@ public partial class NotchWindow
             return;
         }
         Centro.Registro.AnotarDicho("cerebro-manos", $"→ {p.Mano}", orden);
-        if (p.Mano == Mano.Ninguna) { NoPude(T($"Todavía no sé hacer «{orden}» en esta computadora.", $"I don't know how to do “{orden}” on this PC yet.")); return; }
         if (veredicto == Veredicto.Confirmar)
         {
             // Cerrar, forzar, escribir… que no dijiste tal cual: primero el «sí».
