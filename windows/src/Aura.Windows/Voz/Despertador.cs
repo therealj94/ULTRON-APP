@@ -142,8 +142,7 @@ internal sealed class Despertador : IDisposable
                 // reiniciar. Ahora se apaga y se vuelve a encender solo.
                 Centro.Registro.Anotar("despertar", "el micrófono del modelo propio se detuvo" + (e.Exception != null ? ": " + e.Exception.Message : "") + " · lo vuelvo a abrir");
                 ApagarPropio();
-                reintento?.Dispose();
-                reintento = new System.Threading.Timer(_ => { if (!apagado && propio == null) EncenderPropio(); }, null, TimeSpan.FromSeconds(2), System.Threading.Timeout.InfiniteTimeSpan);
+                ReintentarPropio(1);
             };
             propio = pc; micPropio = mic;
             mic.StartRecording();
@@ -162,6 +161,22 @@ internal sealed class Despertador : IDisposable
 
     System.Threading.Timer? reintento;
     bool apagado;
+
+    /// <summary>
+    /// Vuelve a encender el modelo propio cada vez más espaciado (2, 4, 8… hasta 60 s) mientras el micrófono siga sin
+    /// aparecer: un solo intento a los 2 s lo dejaba apagado para siempre si el aparato tardaba más (Codex en #125).
+    /// </summary>
+    void ReintentarPropio(int intento)
+    {
+        reintento?.Dispose();
+        var espera = TimeSpan.FromSeconds(Math.Min(60, 2 * Math.Pow(2, intento - 1)));
+        reintento = new System.Threading.Timer(_ =>
+        {
+            if (apagado || propio != null) return;
+            if (!EncenderPropio()) ReintentarPropio(intento + 1);
+            else Centro.Registro.Anotar("despertar", $"el modelo propio volvió (intento {intento})");
+        }, null, espera, System.Threading.Timeout.InfiniteTimeSpan);
+    }
 
     // ───────────── lo último que oyó (para no perder lo dicho mientras se abre la voz en vivo) ─────────────
     // 3 s de audio del micrófono del modelo propio (16 kHz, 16 bits, mono), en anillo, con la hora de cada trozo.
