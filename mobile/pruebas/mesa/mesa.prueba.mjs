@@ -275,6 +275,26 @@ prueba('app: cada pantalla va dentro de su red de seguridad (LimitePantalla) con
   assert.match(limite, /tr\('Reintentar', 'Try again'\)/);
 });
 
+prueba('app: «abre tu computadora / WhatsApp / mis correos» desde cualquier pantalla, y la vista en vivo se abre sola (José, 2-oct)', () => {
+  const raiz = fuente('app/AppAura.tsx');
+  assert.match(raiz, /\{enSesion && <ComputadoraEnVivo \/>\}/, 'la raíz dibuja la vista en vivo encima de cualquier pantalla');
+  const acciones = fuente('app/acciones.ts');
+  assert.match(acciones, /mas === 'computadora' \|\| mas === 'correos'[\s\S]*?abrirHoja\(mas\)/, 'computadora y correos: las hojas de toda la app');
+  assert.match(acciones, /mas === 'whatsapp'[\s\S]*?abrirWhatsapp\(\)/, 'WhatsApp: los chats con su pestaña');
+  assert.match(fuente('app/rutas.ts'), /abrirRuta\('Chats', \{ whatsapp: Date\.now\(\) \}\)/);
+  assert.match(fuente('app/pantallas/Chats.tsx'), /enWhatsapp=\{enWhatsapp\}/, 'la ruta le pasa la pestaña a los chats');
+  const vivo = fuente('app/ComputadoraEnVivo.tsx');
+  assert.match(vivo, /esAccionPc\(a\)\) companero\.alAccion\(a\)/, 'los avisos de su computadora llegan al compañero');
+  assert.match(vivo, /emitir\('lectura'/, 'lo dice con la voz de AURA (lectura con boleto o la voz de la mesa)');
+  assert.match(vivo, /<HojaCorreos visible=\{hojas\.abierta === 'correos'\}/);
+  // La mesa y Ajustes no dibujan otra: HojaComputadora solo abre la de toda la app.
+  const hoja = fuente('ajustes/Computadora.tsx');
+  assert.match(hoja, /export function HojaComputadora\([\s\S]*?abrirHoja\('computadora'\)/);
+  // Solo lo que ya trae la app: el tecleo es el mismo archivo del sonido de la conversación.
+  assert.match(fuente('compa/computadoraSonido.ts'), /require\('\.\.\/\.\.\/assets\/sfx\/teclado\.mp3'\)/);
+  assert.ok(fs.existsSync(path.join(RAIZ, 'mobile/assets/sfx/teclado.mp3')));
+});
+
 for (const [nombre, f] of pruebas) {
   n += 1;
   try {

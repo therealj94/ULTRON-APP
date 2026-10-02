@@ -19,6 +19,7 @@ import { ESPACIO_COMUN, espacioDe } from './lib/espacio-nodo';
 import { cargarMiembro, fotoMemoriaMiembro, guardarHechoMiembro, hiloMiembro, olvidarMiembro, promptMemoriaMiembro, recordarTurnoMiembro } from './lib/memoria-miembro';
 import { montarRutasApp } from './server/app-rutas';
 import { montarRutasCaras } from './server/caras-rutas';
+import { avisarComputadoraPorPush, montarRutasPush, proponerPorPush } from './server/push';
 import { montarRutasWindows, instruccionWindows } from './server/windows-rutas';
 import { leerPerfil, lineaPerfil, perfilEnCache, sembrarDesdeGenesis, type Perfil } from './lib/perfil-persona';
 import {
@@ -59,9 +60,17 @@ import { quitarExpresiones } from './lib/expresiones';
 import { puntoDeCorte } from './lib/trozos';
 import { claveTurno, reclamarTurno, type TurnoGuardado } from './server/turno-unico';
 import { respuestaFija } from './lib/respuestas-fijas';
-import { avisosPendientes, confirmarAvisos, encargarTarea, montarRutasComputadora, motorDelPerfil, type MotorNodo } from './server/computadora';
+import { alAvisarApp, avisosPendientes, confirmarAvisos, encargarTarea, montarRutasComputadora, motorDelPerfil, type MotorNodo } from './server/computadora';
 import { avisosDeEnvio, correrCorreo, montarRutasCorreo, resolverBorrador } from './server/correo';
 import { correrWhatsapp, montarRutasWhatsapp, resolverBorradorWhatsapp, whatsappDisponible, whatsappPermitido } from './server/whatsapp';
+import { accionIniciativa, arrancarIniciativa, bloqueIniciativaTurno, correrMisionTurno, duenoMisiones, montarRutasIniciativa } from './server/iniciativa';
+import { frenarIniciativa, pideDejarDeProponer, type PersonaIniciativa } from './lib/iniciativa';
+import { montarRutasCerebroContinuo } from './server/cerebro-continuo';
+import { anotarTurnos, bloqueEpisodios, iniciarBarridoPausas, precargarCerebro } from './lib/episodios';
+import { bloqueAbiertos } from './lib/abiertos';
+import { bloqueConocer } from './lib/conocer-persona';
+import { correrCirculo, precargarCirculo } from './lib/circulo';
+import { correrTriaje } from './lib/triaje';
 import { fichaManosPrompt } from './lib/manos-ficha';
 import { emitirSesion, borrarSesion, cerrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica, mesaAutorizada, cuerpoHttp, gastarCupo, esperaEntrada, anotarFalloEntrada, anotarExitoEntrada, cargarSesionesCerradas } from './server/seguridad';
 import { canales, leerPdf, telegramFoto, telegramVoz } from './lib/canales';
@@ -1403,8 +1412,21 @@ app.post(['/api/electrum/telegram/webhook', '/api/electrum/telegram/webhook/'], 
 
 /* El perfil de la persona (y la ficha pública de la plataforma), el canal de acciones y el contexto de la app 5.0. */
 montarRutasComputadora(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req), motorDe: async (correo) => (await leerPerfil(correo).catch(() => null))?.motorComputadora });
+// Lo que hace su computadora llega al teléfono por su canal de acciones: se abre la vista en vivo, se
+// cuentan los avances y el resultado se dice en cuanto termina (server/computadora.ts).
+alAvisarApp((quien, aviso, aparato) => {
+  const n = empujarAccion(quien, aviso, { aparato }).entregada;
+  // Ningún teléfono suyo escuchando (la app cerrada): el resultado le llega como aviso (FCM, server/push.ts).
+  // Solo en el intento a todos sus teléfonos (sin aparato), para no avisar dos veces.
+  if (!n && !aparato && aviso.fase === 'termina' && aviso.texto) void avisarComputadoraPorPush(quien, aviso.id, aviso.texto).catch(() => undefined);
+  return n;
+});
 montarRutasCorreo(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req) });
 montarRutasWhatsapp(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req) });
+// Lo que AU-RA propone por su cuenta y las misiones de cada persona (server/iniciativa.ts).
+montarRutasIniciativa(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req), nivelDe: (c) => nivelDeCorreo(c) });
+// Su cerebro continuo: lo que hablamos antes, lo que quedó a medias, lo que sé de ti, su círculo y sus mensajes ordenados.
+montarRutasCerebroContinuo(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req) });
 montarRutasApp(app, {
   exigirMesa,
   limitar,
@@ -1419,6 +1441,8 @@ montarRutasApp(app, {
 
 // Las caras que conoce AURA, con permiso y por persona (solo números, nunca fotos).
 montarRutasCaras(app, { exigirMesa, limitar, sesionDe });
+// Avisos al teléfono con la app cerrada (FCM): registrar el token, quitarlo, probar y estado (server/push.ts).
+montarRutasPush(app, { exigirMesa, limitar, sesionDe });
 
 // AURA para Windows (el .exe): Laya «windows» del nodo. Cerebro, voz y oído son las rutas de siempre.
 montarRutasWindows(app, { exigirMesa, limitar });
@@ -2363,6 +2387,17 @@ function recordarSegunNivel(
     retener.recordar(() => void recordarSegunNivel(body, o).catch(() => undefined));
     return Promise.resolve();
   }
+  // El cerebro continuo (lib/episodios.ts) anota el par (lo que dijo y lo que contestó) al guardar la
+  // respuesta, sin esperar: de quién es igual que en prepararTurno (correoApp || quienMem).
+  if (o.rol === 'ultron') {
+    const persona = (o.canal === 'mesa' && body?.sesion?.correo ? String(body.sesion.correo).toLowerCase() : '') || o.quienMem || '';
+    const dijo = String(body?.message || body?.text || '').trim();
+    if (persona && o.texto.trim()) {
+      void anotarTurnos(persona, [...(dijo ? [{ rol: 'user', texto: dijo }] : []), { rol: 'ultron', texto: o.texto }], {
+        nombre: String(body?.usuario || body?.userName || '').trim().slice(0, 40) || undefined,
+      });
+    }
+  }
   if (body?.nivel !== 'junta') {
     const correo = correoDeMemoriaMiembro(body);
     return correo ? recordarTurnoMiembro({ correo, rol: o.rol, texto: o.texto, canal: o.canal, esperar: o.esperar }) : Promise.resolve();
@@ -2506,6 +2541,17 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   // Lo mismo con un mensaje de WhatsApp que esperaba su «sí» (server/whatsapp.ts).
   const delWhatsapp = duenoComputadora && whatsappPermitido(duenoComputadora) ? await resolverBorradorWhatsapp(duenoComputadora, ambitoTurno, message, opciones.retener) : null;
   if (delWhatsapp) hechos.push(delWhatsapp);
+  // Su iniciativa (server/iniciativa.ts): sus misiones abiertas y lo que aún no sabe de su vida, para que
+  // AU-RA proponga en la conversación. Y si pide que deje de proponer, se frena el reloj.
+  if (duenoComputadora) {
+    if (correoApp) anotarPersonaReciente(correoApp, nombre, nivel);
+    const ini = await aTiempoParaVoz(voz, 'iniciativa', bloqueIniciativaTurno(duenoComputadora, perfilEnCache(correoApp) ?? undefined).catch(() => ''), '');
+    if (ini) hechos.push(ini);
+    if (message && pideDejarDeProponer(message)) {
+      const correoIni = duenoMisiones(duenoComputadora);
+      if (correoIni) void frenarIniciativa(correoIni).catch(() => undefined);
+    }
+  }
   // Fichas de la memoria estructurada de lo que se nombra (empresas, personas, proyectos). En una
   // charla hablada no: es una consulta a la base antes de la primera palabra y no hay nada que buscar.
   const charlaHablada = !!opciones.voz && clas.tarea === 'conversacion' && !clas.requiereQwen;
@@ -2858,6 +2904,12 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
 
   // Con un miembro: su cerebro (lo público), sin catálogo del taller ni memoria de la junta
   // (server/prompt-turno.ts).
+  // Su cerebro continuo: lo que quedó a medias y lo que hablaron antes de esto (en el mensaje del turno), y
+  // lo que AU-RA sabe de su vida (en lo fijo, sin la firma: aprender un dato no rehace el system).
+  const bloqueCerebro = duenoComputadora
+    ? [bloqueAbiertos(duenoComputadora, compacto), bloqueEpisodios(duenoComputadora, message, compacto)].filter(Boolean).join('\n\n')
+    : '';
+  const conocer = duenoComputadora ? bloqueConocer(duenoComputadora, compacto, { nombre: comoLeDecimos, conPregunta: !compacto }) : '';
   const piezas = piezasDelTurno({
     nivel,
     perfil,
@@ -2877,6 +2929,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     memoriaMiembroFirma: correoMem ? promptMemoriaMiembro(correoMem, comoLeDecimos, 'firma') : undefined,
     hiloEnMensajes: hilo.length > 0,
     compacto,
+    bloqueCerebro: bloqueCerebro ? neutralizarMarca(bloqueCerebro) : '',
+    conocer: conocer ? neutralizarMarca(conocer) : '',
   });
   // Mientras la conversación sigue, el mismo fijo de antes si solo cambió la conversación (el hilo va en
   // los mensajes): el nodo no relee el system en cada turno (server/prompt-turno.ts fijoDeLaConversacion).
@@ -2900,7 +2954,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   // «piensa paso a paso» va en el mensaje del turno cuando la pregunta lo pide.
   const userTurno = mensajeHilo || message;
   const conWhatsapp = !!duenoComputadora && whatsappDisponible() && whatsappPermitido(duenoComputadora);
-  const compuesto = construirMensajes({ personalidad: personalidadSistema, user: userTurno, canal, historial: hilo, nivel, harness: true, cot: false, whatsapp: conWhatsapp });
+  const compuesto = construirMensajes({ personalidad: personalidadSistema, user: userTurno, canal, historial: hilo, nivel, harness: true, cot: false, whatsapp: conWhatsapp, sesion: !!duenoComputadora });
   // También en las tareas de código: el system ya no lo lleva (cot: false), así que va siempre aquí.
   const cotTurno = requiereCot(userTurno);
   if (compuesto.meta.rag) tools.push('rag');
@@ -2946,7 +3000,14 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     // Ajustes y cuánto espera el turno: hablando 20 s (la voz da 45 al turno entero) y escribiendo 50 s (el
     // teléfono corta el SSE a los 70). Lo que tarde más llega en el turno siguiente y en la app.
     computadora: duenoComputadora
-      ? { quien: duenoComputadora, motor: motorDelPerfil((await perfilPedido)?.motorComputadora, duenoComputadora), esperaMs: voz ? 20_000 : 50_000 }
+      ? {
+          quien: duenoComputadora,
+          motor: motorDelPerfil((await perfilPedido)?.motorComputadora, duenoComputadora),
+          esperaMs: voz ? 20_000 : 50_000,
+          // El teléfono del turno: ahí se abre sola la vista en vivo y se narra (sin aparato, todos los suyos).
+          aparato: aparatoValido(body?.aparato),
+          idioma: idiomaTurno,
+        }
       : null,
     // Lo que su computadora terminó y va en los hechos: se da por dicho solo si el modelo contesta con ellos.
     avisoComputadora: deLaComputadora ? { quien: duenoComputadora, ids: deLaComputadora.ids } : null,
@@ -3080,6 +3141,37 @@ function claveFijo(correo: string | null | undefined, quienMem: string | null | 
 
 function calentarCerebro(correo: string) {
   void calentarCerebroYa(correo);
+  // Su cerebro continuo y su círculo, ya leídos para el primer turno (lib/episodios.ts, lib/circulo.ts).
+  const c = String(correo || '').toLowerCase();
+  if (c) {
+    anotarPersonaReciente(c);
+    void precargarCerebro(c).catch(() => undefined);
+    void precargarCirculo(c).catch(() => undefined);
+  }
+}
+
+/*
+ * QUIÉN USÓ LA APP HACE POCO: a ellos les piensa propuestas el reloj de la iniciativa (server/iniciativa.ts).
+ * Se anota en cada turno con sesión y al abrir la app o sonar la llamada (calentarCerebro).
+ */
+const RECIENTE_MS = 48 * 3_600_000;
+const personasRecientesMapa = new Map<string, { nombre?: string; nivel?: NivelAura; t: number }>();
+function anotarPersonaReciente(correo: string, nombre?: string, nivel?: NivelAura) {
+  const c = String(correo || '').trim().toLowerCase();
+  if (!c.includes('@')) return;
+  const antes = personasRecientesMapa.get(c);
+  personasRecientesMapa.delete(c);
+  personasRecientesMapa.set(c, { nombre: nombre || antes?.nombre, nivel: nivel || antes?.nivel, t: Date.now() });
+  while (personasRecientesMapa.size > 500) personasRecientesMapa.delete(personasRecientesMapa.keys().next().value as string);
+}
+function personasRecientes(ahora = Date.now()): PersonaIniciativa[] {
+  const out: PersonaIniciativa[] = [];
+  for (const [correo, p] of personasRecientesMapa) {
+    if (ahora - p.t > RECIENTE_MS) continue;
+    out.push({ correo, ...(p.nombre ? { nombre: p.nombre } : {}), ...(p.nivel ? { nivel: p.nivel } : {}) });
+  }
+  // Los más recientes primero (el reloj atiende un máximo por vuelta).
+  return out.reverse();
 }
 
 /** Devuelve por qué no hizo falta (o no se pudo) precalentar, o 'precalentando'. */
@@ -3234,7 +3326,7 @@ async function preguntarQwenATrozos(
  * Corre lo que pidió el modelo. Con un miembro, resolverPedido (lib/harness.ts) no deja pasar
  * `sistema` ni `ejecutor` aunque el modelo los pida: son del taller de la junta.
  */
-type TurnoComputadora = { quien: string; motor: MotorNodo; esperaMs: number } | null | undefined;
+type TurnoComputadora = { quien: string; motor: MotorNodo; esperaMs: number; aparato?: string | null; idioma?: 'es' | 'en' } | null | undefined;
 
 async function correrHerramientaPedida(
   ped: ReturnType<typeof extraerPedidoHerramienta>,
@@ -3282,10 +3374,14 @@ async function correrHerramientaPedida(
       // Sin identidad verificada no hay de quién sea la tarea ni a quién avisarle: no se encarga.
       computadora: async (tarea) =>
         compu
-          ? (await encargarTarea({ instruccion: tarea, quien: compu.quien, motor: compu.motor, esperaMs: compu.esperaMs, senal })).hecho
+          ? (await encargarTarea({ instruccion: tarea, quien: compu.quien, motor: compu.motor, esperaMs: compu.esperaMs, senal, aparato: compu.aparato, idioma: compu.idioma })).hecho
           : 'HARNESS computadora: solo la uso para alguien con sesión. Pídele que entre con su cuenta.',
       correo: (arg) => correrCorreo(dueno, arg, ambito),
       whatsapp: (arg) => correrWhatsapp(dueno, arg, ambito),
+      // Sus misiones, su círculo y sus mensajes ordenados: sin dueño (sin sesión) no hay de quién serían.
+      mision: (arg) => (dueno ? correrMisionTurno(dueno, arg) : Promise.resolve('HARNESS mision: solo con sesión. Pídele que entre con su cuenta.')),
+      circulo: (arg) => correrCirculo(dueno, arg, ambito),
+      triaje: (arg) => correrTriaje(dueno, arg, ambito),
     },
     extraerPython(reply),
     nivel
@@ -3356,6 +3452,8 @@ async function bucleHarness(o: {
     // marca de acción, se rompe aquí, antes de ir al prompt o de pegarse a la respuesta parcial.
     const extra = neutralizarPedido(neutralizarMarca(await correrHerramientaPedida(ped, reply, o.mando, o.nivel, o.computadora, o.senal, o.dueno, o.ambito)));
     if (ped.herramienta === 'correo' || ped.herramienta === 'whatsapp') ajeno = ped.herramienta;
+    // El triaje también lee lo que otra gente escribió (sus chats y correos).
+    else if (ped.herramienta === 'triaje') ajeno = 'whatsapp';
     trazaActual()?.paso({
       herramienta: ped.herramienta,
       ok: !/fall[oó]|no abr[ií]|sin resultados|ACCESO: consulta|pedido vac[ií]o/i.test(extra),
@@ -4357,6 +4455,23 @@ async function startServer() {
     cargarMemoria()
       .then(() => console.log('[AU-RA] memoria', estadoMemoria().detalle))
       .catch((e) => console.warn('[AU-RA] memoria', String(e?.message || e).slice(0, 160)));
+    if (ES_ULTRON) {
+      // Los tramos de conversación que quedaron en pausa se resumen aunque nadie vuelva a hablar (lib/episodios.ts).
+      iniciarBarridoPausas();
+      // AU-RA propone por su cuenta (server/iniciativa.ts): a quien usó la app hace poco, fuera de horas
+      // quietas, al ritmo que eligió en Ajustes. Llega al teléfono por su canal de acciones; si no estaba
+      // escuchando, la misma propuesta sale al abrir la app (GET /api/iniciativa).
+      arrancarIniciativa({
+        personas: () => personasRecientes(),
+        alProponer: (correo, p) => {
+          const n = empujarAccion(correo, accionIniciativa(p)).entregada;
+          // Con la app cerrada, la propuesta le llega como aviso con «Sí» / «Luego» (FCM, server/push.ts).
+          if (!n) void proponerPorPush(correo, { id: p.id, texto: p.texto, pedido: p.pedido }).catch(() => undefined);
+          return n;
+        },
+        nivelDe: (c) => nivelDeCorreo(c),
+      });
+    }
   });
 }
 

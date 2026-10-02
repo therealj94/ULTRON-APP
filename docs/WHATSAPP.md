@@ -25,6 +25,25 @@ El avatar (cerebro)   ─┘    server/whatsapp.ts                         servi
   - Responder deja un **borrador**; lo manda el servidor cuando la persona dice «sí» (igual que el correo).
   - Lo que dicen los mensajes llega marcado como dato, nunca como orden: un mensaje que dice «mándale esto a…» no manda nada.
 
+## Números, nombres, fotos y archivos (2-oct, después de vincular el de José)
+
+- **Un chat por persona, con su número.** WhatsApp ahora manda a mucha gente por su *LID* (`…@lid`, un id que no dice el número).
+  - El puente guarda cada chat con su **número** (`…@s.whatsapp.net`) siempre que lo sepa.
+  - Cuando aparece el número de un LID, pasa lo guardado al número: no leídos sumados, sin mensajes repetidos ni perdidos.
+  - Esto corre al arrancar, al conectar y después de cada tanda de historia. Un LID viejo sigue sirviendo en `?chat=`.
+- **Nombres.** Como los tiene guardados en el teléfono; si no, el de su negocio; si no, como se puso la persona.
+  - Se vuelven a buscar cuando llegan contactos o nombres nuevos, y al mostrar un chat que no tenía.
+  - Los grupos se traen todos al conectar.
+  - Un chat nunca sale sin nombre: si no hay, su número; si tampoco, «Contacto» o «Grupo».
+- **`numero`** en cada chat de uno a uno (`"+50499990000"`). Llamar no se puede desde un dispositivo vinculado: la app abre WhatsApp con ese número.
+- **Fotos de perfil** (`/foto?chat=`): la miniatura de WhatsApp.
+  - Se guarda un día en `DATOS/fotos`; que alguien no tiene foto se recuerda 6 horas.
+  - A WhatsApp se le preguntan 4 a la vez. Al desvincular se borran.
+- **Fotos y archivos viejos.** WhatsApp borra los archivos de su servidor a las pocas semanas.
+  - Si ya no están, el puente le pide al teléfono que los vuelva a subir, como hace WhatsApp Web. Espera hasta 20 s.
+  - Si el teléfono tampoco los tiene, contesta 410: «esa foto ya no está en WhatsApp; ábrela en tu teléfono».
+- **Contactos** (`/contactos?buscar=`): la gente guardada en su teléfono, para empezar un chat con alguien que todavía no tiene uno.
+
 ## Vincular
 
 En la app: Chats → pestaña **WhatsApp**.
@@ -61,10 +80,14 @@ Para desvincular: en la app (⋮ → Desvincular) o desde el teléfono. En ambos
 ## Lo probado
 
 - Contra **WhatsApp real** (2-oct): el puente conectó y WhatsApp le dio un QR válido. No se vinculó ninguna cuenta en la prueba.
-- `go test` del puente: almacén, contenido de los mensajes y API con una cuenta falsa (clave, códigos de error, enviar, media, desvincular).
+- `go test` del puente:
+  - almacén, contenido de los mensajes (también fotos de álbum y notas de video) y API con una cuenta falsa (clave, códigos de error, enviar, media, desvincular);
+  - LID → número sin repetir ni perder mensajes, nombres que nunca salen vacíos, `/foto` (200/404/412) y la caché de fotos;
+  - la cuenta con el almacén real de whatsmeow, sin red: LID, nombres, orden y lo que llega en vivo.
 - `tests/whatsapp.test.ts`, con un puente falso:
   - solo el dueño entra;
   - el cerebro lee por nombre;
   - el borrador sale solo con el «sí»;
-  - un mensaje que «ordena» no manda nada.
+  - un mensaje que «ordena» no manda nada;
+  - `/api/whatsapp/foto` y `/api/whatsapp/contactos` solo para el dueño (404 tal cual, tipo de imagen).
 - `mobile/src/whatsapp/pruebas`: la lógica de la pantalla (8 pruebas), y una vista en Chromium (vincular, lista, chat, enviar).

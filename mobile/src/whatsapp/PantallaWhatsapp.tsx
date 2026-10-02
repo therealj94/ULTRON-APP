@@ -3,24 +3,46 @@
  *
  *   · Sin vincular: «con un código» (sirve en este mismo teléfono: WhatsApp → Dispositivos vinculados →
  *     Vincular con el número de teléfono) o «con QR» (para escanearlo desde otro teléfono o la PC).
- *   · Vinculado: los chats como en WhatsApp (sin leer arriba en negrita, grupos, buscar) y cada chat con
- *     sus burbujas, fotos (la miniatura; tocarla abre la foto entera), notas de voz y documentos
- *     nombrados, y la caja para escribir. Lo que escribe y manda sale directo (es su «sí»).
+ *   · Vinculado: la lista como en WhatsApp (José, 2-oct: «todo es como texto plano… no parece WhatsApp»):
+ *     cabecera verde, la foto de perfil de cada chat (o sus iniciales, o el icono de grupo), el nombre,
+ *     la vista previa con el icono de lo que llegó (foto, nota de voz, documento…), la hora a la derecha
+ *     («Ayer», la fecha) y el globo verde de sin leer. Buscar mira también los chats viejos del servidor.
+ *   · Cada chat se abre encima (whatsapp/ConversacionWA.tsx).
  *   · Se renueva solo mientras está a la vista (cada 5 s la lista, cada 3 s el chat abierto).
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ActivityIndicator, Alert, BackHandler, FlatList, Image, KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { ActivityIndicator, Alert, FlatList, Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MEDIDA, useTema, type Paleta } from '../nucleo/tema';
 import { idiomaActual, tr, useIdioma } from '../i18n';
-import { Avatar } from '../pulse/ui/Avatar';
-import { BotonEnviar } from '../pulse/ui/BotonEnviar';
 import { Icono } from '../pulse/ui/Icono';
-import { Tocable } from '../pulse/ui/Tocable';
-import { cuandoLista, etiquetaDia, hora } from '../pulse/ui/formato';
 import * as API from './api';
-import { registrarAtras } from './atras';
-import { etiquetaMedia, filasWA, juntar, nombreChat, previa, sondeoWA, telefonoValido, textoBurbuja, vistaDe, type ChatWA, type EstadoWA, type FilaWA, type MensajeWA } from './logica';
+import { ConversacionWA } from './ConversacionWA';
+import { IconoWA, type NombreIconoWA } from './IconoWA';
+import { NuevoChatWA } from './NuevoChatWA';
+import { AvatarWA } from './PiezasWA';
+import {
+  chatDeContacto,
+  coincide,
+  horaLista,
+  huellaChats,
+  juntarChats,
+  nombreChat,
+  paletaWA,
+  previaTexto,
+  previaWA,
+  sondeoWA,
+  telefonoBonito,
+  telefonoValido,
+  vistaDe,
+  type ChatWA,
+  type ContactoWA,
+  type EstadoWA,
+  type IconoPrevia,
+  type PaletaWA,
+} from './logica';
+
+export { ConversacionWA } from './ConversacionWA';
 
 type Props = {
   /** El cambio PULSE2CHAT ↔ WhatsApp (va debajo del título). */
@@ -34,17 +56,33 @@ type Props = {
   onNoLeidos?: (n: number) => void;
 };
 
+const ICONO_PREVIA: Record<IconoPrevia, NombreIconoWA> = {
+  foto: 'camara',
+  video: 'video',
+  audio: 'microfono',
+  documento: 'documento',
+  sticker: 'sticker',
+  ubicacion: 'ubicacion',
+  contacto: 'contacto',
+  encuesta: 'encuesta',
+  eliminado: 'prohibido',
+};
+
 export function PantallaWhatsapp({ cambio, onAtras, activa, estadoInicial = null, onNoLeidos }: Props) {
   useIdioma();
   const p = useTema();
+  const w = useMemo(() => paletaWA(p.oscuro), [p.oscuro]);
   const s = useMemo(() => estilos(p), [p]);
   const ins = useSafeAreaInsets();
   const idioma = idiomaActual() === 'en' ? 'en' : 'es';
   const [estado, setEstado] = useState<EstadoWA | null>(estadoInicial);
   const [chats, setChats] = useState<ChatWA[] | null>(null);
+  const [encontrados, setEncontrados] = useState<ChatWA[]>([]);
   const [error, setError] = useState('');
   const [q, setQ] = useState('');
   const [abierto, setAbierto] = useState<ChatWA | null>(null);
+  const [nuevo, setNuevo] = useState(false);
+  const huella = useRef('');
   const vista = vistaDe(estado);
 
   const leer = useCallback(async () => {
@@ -53,7 +91,11 @@ export function PantallaWhatsapp({ cambio, onAtras, activa, estadoInicial = null
       setEstado(e);
       if (vistaDe(e) === 'listo') {
         const cs = await API.chatsWA();
-        setChats(cs);
+        const h = huellaChats(cs);
+        if (h !== huella.current) {
+          huella.current = h;
+          setChats(cs);
+        } else setChats((v) => v ?? cs);
         onNoLeidos?.(cs.filter((c) => c.noLeidos > 0).length);
       }
       setError('');
@@ -61,6 +103,11 @@ export function PantallaWhatsapp({ cambio, onAtras, activa, estadoInicial = null
       setError(e?.message || tr('No pude abrir tu WhatsApp.', 'I couldn’t open your WhatsApp.'));
     }
   }, [onNoLeidos]);
+
+  const vistaRef = useRef(vista);
+  vistaRef.current = vista;
+  const abiertoRef = useRef(abierto);
+  abiertoRef.current = abierto;
 
   useEffect(() => {
     if (!activa) return;
@@ -76,15 +123,27 @@ export function PantallaWhatsapp({ cambio, onAtras, activa, estadoInicial = null
       clearTimeout(reloj);
     };
   }, [activa, leer]);
-  const vistaRef = useRef(vista);
-  vistaRef.current = vista;
-  const abiertoRef = useRef(abierto);
-  abiertoRef.current = abierto;
 
-  const filtrados = useMemo(() => {
-    const t = q.trim().toLowerCase();
-    return (chats || []).filter((c) => !t || nombreChat(c).toLowerCase().includes(t) || c.ultimo.toLowerCase().includes(t));
-  }, [chats, q]);
+  // Buscar también en el servidor: trae chats viejos que no vienen entre los recientes.
+  useEffect(() => {
+    const t = q.trim();
+    if (t.length < 2 || vista !== 'listo') {
+      setEncontrados([]);
+      return;
+    }
+    let vivo = true;
+    const espera = setTimeout(() => {
+      void API.chatsWA(t)
+        .then((cs) => vivo && setEncontrados(cs))
+        .catch(() => {});
+    }, 400);
+    return () => {
+      vivo = false;
+      clearTimeout(espera);
+    };
+  }, [q, vista]);
+
+  const filtrados = useMemo(() => juntarChats(chats || [], encontrados).filter((c) => coincide(c, q)), [chats, encontrados, q]);
 
   const desvincular = () =>
     Alert.alert(tr('¿Desvincular WhatsApp?', 'Unlink WhatsApp?'), tr('AU-RA deja de ver tus chats y se borra lo que tenía guardado. Tu WhatsApp del teléfono no cambia.', 'AU-RA stops seeing your chats and what it stored is erased. WhatsApp on your phone doesn’t change.'), [
@@ -96,56 +155,93 @@ export function PantallaWhatsapp({ cambio, onAtras, activa, estadoInicial = null
           void API.desvincularWA()
             .then(() => {
               setChats(null);
+              huella.current = '';
               void leer();
             })
             .catch((e: any) => setError(e?.message || '')),
       },
     ]);
 
+  const cerrarNuevo = useCallback(() => setNuevo(false), []);
+  const elegirContacto = useCallback(
+    (k: ContactoWA) => {
+      setNuevo(false);
+      setAbierto(chatDeContacto(k, chats || []));
+    },
+    [chats]
+  );
+
+  const cerrarChat = useCallback(() => {
+    setAbierto(null);
+    void leer();
+  }, [leer]);
+
+  const numero = telefonoBonito(estado?.numero) || estado?.numero || '';
+  const detalle = vista === 'listo' ? [numero, estado?.conectado === false ? tr('reconectando…', 'reconnecting…') : ''].filter(Boolean).join(' · ') : tr('Tu WhatsApp personal', 'Your personal WhatsApp');
+
   return (
-    <View style={{ flex: 1, backgroundColor: p.fondo }}>
-      <View style={[s.cabecera, { paddingTop: ins.top + MEDIDA.espacio.s }]}>
+    <View style={{ flex: 1, backgroundColor: vista === 'listo' ? w.fondo : p.fondo }}>
+      <View style={[s.cabecera, { backgroundColor: w.cabecera, paddingTop: ins.top + MEDIDA.espacio.s }]}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           {onAtras ? (
-            <Tocable onPress={onAtras} etiqueta={tr('Volver', 'Back')} hitSlop={8} style={s.botonCab}>
-              <Icono nombre="atras" color={p.texto} tam={24} grosor={2} />
-            </Tocable>
+            <Pressable onPress={onAtras} accessibilityRole="button" accessibilityLabel={tr('Volver', 'Back')} hitSlop={8} style={s.botonCab}>
+              <IconoWA nombre="atras" color={w.sobreCabecera} tam={24} grosor={2.2} />
+            </Pressable>
           ) : null}
           <View style={{ flex: 1, marginLeft: onAtras ? MEDIDA.espacio.xs : MEDIDA.espacio.s }}>
-            <Text style={s.titulo}>WhatsApp</Text>
-            <Text style={[s.detalle, { marginTop: 2 }]} numberOfLines={1}>
-              {vista === 'listo' ? `${estado?.numero || ''}${estado?.conectado === false ? ` · ${tr('reconectando…', 'reconnecting…')}` : ''}` : tr('Tu WhatsApp personal', 'Your personal WhatsApp')}
+            <Text style={[s.titulo, { color: w.sobreCabecera }]} accessibilityRole="header">
+              WhatsApp
             </Text>
+            {detalle ? (
+              <Text style={{ color: w.sobreCabecera2, fontSize: 13, marginTop: 1 }} numberOfLines={1}>
+                {detalle}
+              </Text>
+            ) : null}
           </View>
           {vista === 'listo' ? (
-            <Tocable onPress={desvincular} etiqueta={tr('Desvincular WhatsApp', 'Unlink WhatsApp')} hitSlop={8} style={s.botonCab}>
-              <Icono nombre="puntos" color={p.texto2} tam={22} grosor={2} />
-            </Tocable>
+            <Pressable onPress={desvincular} accessibilityRole="button" accessibilityLabel={tr('Más opciones: desvincular WhatsApp', 'More options: unlink WhatsApp')} hitSlop={8} style={s.botonCab}>
+              <IconoWA nombre="puntos" color={w.sobreCabecera} tam={22} lleno />
+            </Pressable>
           ) : null}
         </View>
         {cambio ? <View style={{ marginTop: MEDIDA.espacio.m }}>{cambio}</View> : null}
-        {vista === 'listo' ? (
-          <View style={s.buscador}>
-            <Icono nombre="buscar" tam={18} color={p.texto3} grosor={2} />
-            <TextInput value={q} onChangeText={setQ} placeholder={tr('Buscar chats', 'Search chats')} placeholderTextColor={p.texto3} autoCorrect={false} style={s.buscadorTxt} accessibilityLabel={tr('Buscar', 'Search')} />
-          </View>
-        ) : null}
       </View>
 
+      {vista === 'listo' ? (
+        <View style={[s.buscador, { backgroundColor: w.buscador }]}>
+          <IconoWA nombre="buscar" tam={18} color={w.pista} />
+          <TextInput
+            value={q}
+            onChangeText={setQ}
+            placeholder={tr('Buscar un chat o un número', 'Search a chat or a number')}
+            placeholderTextColor={w.pista}
+            autoCorrect={false}
+            style={[s.buscadorTxt, { color: w.nombre }]}
+            accessibilityLabel={tr('Buscar chats', 'Search chats')}
+            returnKeyType="search"
+          />
+          {q ? (
+            <Pressable onPress={() => setQ('')} accessibilityRole="button" accessibilityLabel={tr('Borrar la búsqueda', 'Clear search')} hitSlop={10} style={{ padding: 4 }}>
+              <IconoWA nombre="cerrar" tam={16} color={w.pista} />
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
+
       {!!error && vista !== 'vincular' ? (
-        <View style={s.banda}>
-          <Text style={s.bandaTxt}>{error}</Text>
+        <View style={[s.banda, { backgroundColor: w.avisoFondo }]}>
+          <Text style={{ color: w.aviso, fontSize: 13 }}>{error}</Text>
         </View>
       ) : null}
 
       {vista === 'revisando' ? (
-        <ActivityIndicator color={p.acento} style={{ marginTop: 48 }} />
+        <ActivityIndicator color={w.globo} style={{ marginTop: 48 }} />
       ) : vista === 'sin_puente' || vista === 'oculto' ? (
         <Aviso p={p} titulo={tr('WhatsApp se está conectando', 'WhatsApp is connecting')} texto={tr('El servidor todavía no tiene tu WhatsApp listo. Vuelve en un rato.', 'The server doesn’t have your WhatsApp ready yet. Come back in a while.')} />
       ) : vista === 'vincular' ? (
         <Vincular p={p} estado={estado} onCambio={leer} />
       ) : chats === null ? (
-        <ActivityIndicator color={p.acento} style={{ marginTop: 48 }} />
+        <ActivityIndicator color={w.globo} style={{ marginTop: 48 }} />
       ) : !chats.length ? (
         <Aviso p={p} titulo={tr('Trayendo tus chats…', 'Bringing your chats…')} texto={tr('Al vincular, WhatsApp manda tus conversaciones recientes. Tarda unos minutos la primera vez.', 'When you link, WhatsApp sends your recent conversations. It takes a few minutes the first time.')} />
       ) : (
@@ -154,51 +250,89 @@ export function PantallaWhatsapp({ cambio, onAtras, activa, estadoInicial = null
           keyExtractor={(c) => c.jid}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
-          contentContainerStyle={{ paddingBottom: ins.bottom + 24 }}
-          renderItem={({ item: c }) => {
-            const sinLeer = c.noLeidos > 0;
-            return (
-              <Tocable onPress={() => setAbierto(c)} hundir={0.985} ripple={p.acentoFondo} etiqueta={nombreChat(c)} style={s.fila}>
-                <Avatar nombre={nombreChat(c)} anillo={sinLeer} />
-                <View style={s.filaCuerpo}>
-                  <View style={s.filaArriba}>
-                    <Text style={[s.nombre, { flex: 1 }, sinLeer && { fontWeight: '800' }]} numberOfLines={1}>
-                      {nombreChat(c)}
-                      {c.grupo ? <Text style={s.grupo}>  {tr('grupo', 'group')}</Text> : null}
-                    </Text>
-                    <Text style={[s.hora, sinLeer && { color: p.acentoTexto, fontWeight: '700' }]}>{cuandoLista(c.hora)}</Text>
-                  </View>
-                  <View style={s.filaAbajo}>
-                    <Text style={[s.detalle, { flex: 1 }, sinLeer && { color: p.texto }]} numberOfLines={1}>
-                      {previa(c, idioma)}
-                    </Text>
-                    {sinLeer ? (
-                      <View style={s.globo}>
-                        <Text style={s.globoTxt}>{c.noLeidos > 99 ? '99+' : c.noLeidos}</Text>
-                      </View>
-                    ) : null}
-                  </View>
-                </View>
-              </Tocable>
-            );
-          }}
+          initialNumToRender={14}
+          contentContainerStyle={{ paddingBottom: ins.bottom + 96 }}
+          ListEmptyComponent={<Text style={{ color: w.previa, textAlign: 'center', marginTop: 32, fontSize: 15 }}>{tr(`Ningún chat con «${q.trim()}»`, `No chats matching “${q.trim()}”`)}</Text>}
+          renderItem={({ item }) => <FilaChat c={item} w={w} idioma={idioma} onAbrir={setAbierto} />}
         />
       )}
 
+      {vista === 'listo' && chats !== null && !abierto && !nuevo ? (
+        <Pressable
+          onPress={() => setNuevo(true)}
+          accessibilityRole="button"
+          accessibilityLabel={tr('Nuevo chat', 'New chat')}
+          style={({ pressed }) => [s.nuevo, { bottom: ins.bottom + 20, backgroundColor: '#00A884', opacity: pressed ? 0.85 : 1 }]}
+        >
+          <IconoWA nombre="nuevoChat" tam={26} color={p.oscuro ? '#111B21' : '#FFFFFF'} />
+        </Pressable>
+      ) : null}
+
+      {nuevo ? <NuevoChatWA w={w} idioma={idioma} onElegir={elegirContacto} onCerrar={cerrarNuevo} /> : null}
+
       {abierto ? (
-        <View style={[StyleSheet.absoluteFill, { backgroundColor: p.fondo }]}>
-          <ConversacionWA
-            chat={abierto}
-            onAtras={() => {
-              setAbierto(null);
-              void leer();
-            }}
-          />
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: w.chat }]}>
+          <ConversacionWA key={abierto.jid} chat={abierto} onAtras={cerrarChat} />
         </View>
       ) : null}
     </View>
   );
 }
+
+/* ── una fila de la lista ─────────────────────────────────────────────────────────────────── */
+
+const FilaChat = memo(function FilaChat({ c, w, idioma, onAbrir }: { c: ChatWA; w: PaletaWA; idioma: 'es' | 'en'; onAbrir: (c: ChatWA) => void }) {
+  const nombre = nombreChat(c, idioma);
+  const sinLeer = c.noLeidos > 0;
+  const v = previaWA(c, idioma);
+  const cuando = horaLista(c.hora, Date.now(), idioma);
+  const etiqueta = [nombre, c.grupo ? tr('grupo', 'group') : '', sinLeer ? tr(`${c.noLeidos} sin leer`, `${c.noLeidos} unread`) : '', previaTexto(c, idioma), cuando].filter(Boolean).join(', ');
+  return (
+    <Pressable onPress={() => onAbrir(c)} android_ripple={{ color: w.separador }} accessibilityRole="button" accessibilityLabel={etiqueta} style={({ pressed }) => [st.fila, pressed && { backgroundColor: w.buscador }]}>
+      <AvatarWA jid={c.jid} nombre={nombre} grupo={!!c.grupo} tam={50} w={w} tiene={c.foto ?? null} />
+      <View style={[st.cuerpo, { borderBottomColor: w.separador }]}>
+        <View style={st.arriba}>
+          <Text style={[st.nombre, { color: w.nombre }]} numberOfLines={1}>
+            {nombre}
+          </Text>
+          <Text style={[st.hora, { color: sinLeer ? w.horaSinLeer : w.hora }, sinLeer && { fontWeight: '600' }]}>{cuando}</Text>
+        </View>
+        <View style={st.abajo}>
+          <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', minWidth: 0 }}>
+            {v.quien ? (
+              <Text style={[st.previa, { color: w.previa, flexShrink: 0, marginRight: 4 }]} numberOfLines={1}>
+                {v.quien}:
+              </Text>
+            ) : null}
+            {v.icono ? <IconoWA nombre={ICONO_PREVIA[v.icono]} tam={16} color={w.previa} grosor={2} style={{ marginRight: 3 }} /> : null}
+            <Text style={[st.previa, { color: w.previa, flex: 1 }, v.icono === 'eliminado' && { fontStyle: 'italic' }, sinLeer && { color: w.nombre }]} numberOfLines={1}>
+              {v.texto}
+            </Text>
+          </View>
+          {sinLeer ? (
+            <View style={[st.globo, { backgroundColor: w.globo }]}>
+              <Text style={[st.globoTxt, { color: w.sobreGlobo }]} allowFontScaling={false}>
+                {c.noLeidos > 999 ? '999+' : c.noLeidos}
+              </Text>
+            </View>
+          ) : null}
+        </View>
+      </View>
+    </Pressable>
+  );
+});
+
+const st = StyleSheet.create({
+  fila: { flexDirection: 'row', alignItems: 'center', paddingLeft: 16, minHeight: 72 },
+  cuerpo: { flex: 1, marginLeft: 14, paddingRight: 16, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, alignSelf: 'stretch', justifyContent: 'center' },
+  arriba: { flexDirection: 'row', alignItems: 'center' },
+  nombre: { flex: 1, fontSize: 17, fontWeight: '600', marginRight: 8 },
+  hora: { fontSize: 12 },
+  abajo: { flexDirection: 'row', alignItems: 'center', marginTop: 3 },
+  previa: { fontSize: 14.5 },
+  globo: { minWidth: 21, height: 21, borderRadius: 11, paddingHorizontal: 6, alignItems: 'center', justifyContent: 'center', marginLeft: 8 },
+  globoTxt: { fontSize: 12, fontWeight: '700' },
+});
 
 /* ── vincular ─────────────────────────────────────────────────────────────────────────────── */
 
@@ -246,8 +380,8 @@ function Vincular({ p, estado, onCambio }: { p: Paleta; estado: EstadoWA | null;
       </Text>
       <View style={s.segmento}>
         {(['codigo', 'qr'] as const).map((m) => (
-          <Pressable key={m} onPress={() => setModo(m)} style={[s.segOpcion, modo === m && { backgroundColor: p.acento }]} accessibilityRole="button">
-            <Text style={[s.segTxt, modo === m && { color: p.sobreAcento }]}>{m === 'codigo' ? tr('Con un código', 'With a code') : tr('Con QR', 'With QR')}</Text>
+          <Pressable key={m} onPress={() => setModo(m)} style={[s.segOpcion, modo === m && { backgroundColor: '#00A884' }]} accessibilityRole="button">
+            <Text style={[s.segTxt, modo === m && { color: '#FFFFFF' }]}>{m === 'codigo' ? tr('Con un código', 'With a code') : tr('Con QR', 'With QR')}</Text>
           </Pressable>
         ))}
       </View>
@@ -275,7 +409,7 @@ function Vincular({ p, estado, onCambio }: { p: Paleta; estado: EstadoWA | null;
       {!!error && <Text style={{ color: p.aviso, fontSize: 14 }}>{error}</Text>}
       {(modo === 'codigo' && !codigoVivo) || (modo === 'qr' && !qrVivo) ? (
         <Pressable onPress={() => void pedir()} disabled={ocupado} style={[s.botonGrande, ocupado && { opacity: 0.6 }]} accessibilityRole="button">
-          {ocupado ? <ActivityIndicator color={p.sobreAcento} /> : <Text style={s.botonGrandeTxt}>{modo === 'codigo' ? tr('Pedir el código', 'Get the code') : tr('Mostrar el QR', 'Show the QR')}</Text>}
+          {ocupado ? <ActivityIndicator color="#FFFFFF" /> : <Text style={s.botonGrandeTxt}>{modo === 'codigo' ? tr('Pedir el código', 'Get the code') : tr('Mostrar el QR', 'Show the QR')}</Text>}
         </Pressable>
       ) : null}
       <Text style={[s.detalle, { fontSize: 12, color: p.texto3 }]}>
@@ -300,229 +434,31 @@ function Pasos({ p, pasos }: { p: Paleta; pasos: string[] }) {
 function Aviso({ p, titulo, texto }: { p: Paleta; titulo: string; texto: string }) {
   return (
     <View style={{ padding: MEDIDA.espacio.xxl, alignItems: 'center', gap: 8 }}>
-      <Icono nombre="burbujas" tam={44} color={p.acentoTexto} grosor={1.6} />
+      <Icono nombre="burbujas" tam={44} color="#00A884" grosor={1.6} />
       <Text style={{ color: p.texto, fontSize: 18, fontWeight: '700', textAlign: 'center' }}>{titulo}</Text>
       <Text style={{ color: p.texto2, fontSize: 15, lineHeight: 21, textAlign: 'center' }}>{texto}</Text>
     </View>
   );
 }
 
-/* ── la conversación ──────────────────────────────────────────────────────────────────────── */
-
-export function ConversacionWA({ chat, onAtras }: { chat: ChatWA; onAtras: () => void }) {
-  const p = useTema();
-  const s = useMemo(() => estilos(p), [p]);
-  const ins = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
-  const idioma = idiomaActual() === 'en' ? 'en' : 'es';
-  const [mensajes, setMensajes] = useState<MensajeWA[] | null>(null);
-  const [locales, setLocales] = useState<MensajeWA[]>([]);
-  const [texto, setTexto] = useState('');
-  const [error, setError] = useState('');
-  const [foto, setFoto] = useState<{ uri: string; headers: Record<string, string> } | null>(null);
-  const lista = useRef<FlatList<FilaWA>>(null);
-  const ultimoAjeno = useRef('');
-
-  // «Atrás» cierra el chat (en el Modal de los chats y en la pila de pantallas).
-  useEffect(() => {
-    const quitar = registrarAtras(() => (foto ? (setFoto(null), true) : (onAtras(), true)));
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => (foto ? (setFoto(null), true) : (onAtras(), true)));
-    return () => {
-      quitar();
-      sub.remove();
-    };
-  }, [onAtras, foto]);
-
-  useEffect(() => {
-    let vivo = true;
-    let reloj: ReturnType<typeof setTimeout>;
-    const vuelta = async () => {
-      try {
-        const r = await API.mensajesWA(chat.jid);
-        if (!vivo) return;
-        setMensajes(r.mensajes);
-        setError('');
-        // Llegó algo nuevo de la otra persona estando a la vista: queda leído (también en su teléfono).
-        const ajeno = [...r.mensajes].reverse().find((m) => !m.mio);
-        if (ajeno && ajeno.id !== ultimoAjeno.current) {
-          ultimoAjeno.current = ajeno.id;
-          void API.leidoWA(chat.jid).catch(() => {});
-        }
-      } catch (e: any) {
-        if (vivo) setError(e?.message || tr('No pude traer los mensajes.', 'I couldn’t get the messages.'));
-      }
-      if (vivo) reloj = setTimeout(vuelta, sondeoWA('listo', true));
-    };
-    void vuelta();
-    return () => {
-      vivo = false;
-      clearTimeout(reloj);
-    };
-  }, [chat.jid]);
-
-  const todos = useMemo(() => juntar(mensajes || [], locales), [mensajes, locales]);
-  const filas = useMemo(() => filasWA(todos, chat.grupo), [todos, chat.grupo]);
-
-  const enviar = async (contenido = texto) => {
-    const t = contenido.trim();
-    if (!t) return;
-    setTexto('');
-    const local: MensajeWA = { id: `local-${Date.now()}`, chat: chat.jid, de: '', nombreDe: '', mio: true, hora: Date.now(), tipo: 'texto', texto: t, enviando: true };
-    setLocales((l) => [...l.filter((x) => x.texto !== t || !x.fallo), local]);
-    try {
-      const m = await API.enviarWA(chat.jid, t);
-      setLocales((l) => l.filter((x) => x.id !== local.id));
-      setMensajes((ms) => (ms && !ms.some((x) => x.id === m.id) ? [...ms, m] : ms));
-    } catch (e: any) {
-      setLocales((l) => l.map((x) => (x.id === local.id ? { ...x, enviando: false, fallo: e?.message || tr('No salió', 'Not sent') } : x)));
-    }
-  };
-
-  const verFoto = async (m: MensajeWA) => {
-    if (!m.conMedia || m.tipo !== 'imagen') return;
-    setFoto(await API.fuenteMedia(m.chat, m.id));
-  };
-
-  const anchoMax = Math.min(width * 0.78, 520);
-
-  return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-      <View style={[s.cabeceraChat, { paddingTop: ins.top + MEDIDA.espacio.xs }]}>
-        <Tocable onPress={onAtras} etiqueta={tr('Volver', 'Back')} hitSlop={8} style={s.botonCab}>
-          <Icono nombre="atras" color={p.texto} tam={24} grosor={2} />
-        </Tocable>
-        <Avatar nombre={nombreChat(chat)} tam={38} />
-        <View style={{ flex: 1, marginLeft: MEDIDA.espacio.s }}>
-          <Text style={s.nombre} numberOfLines={1}>
-            {nombreChat(chat)}
-          </Text>
-          <Text style={[s.detalle, { marginTop: 0 }]} numberOfLines={1}>
-            {chat.grupo ? tr('Grupo de WhatsApp', 'WhatsApp group') : 'WhatsApp'}
-          </Text>
-        </View>
-      </View>
-      {!!error && (
-        <View style={s.banda}>
-          <Text style={s.bandaTxt}>{error}</Text>
-        </View>
-      )}
-      {mensajes === null ? (
-        <ActivityIndicator color={p.acento} style={{ marginTop: 48, flex: 1 }} />
-      ) : (
-        <FlatList
-          ref={lista}
-          data={filas}
-          keyExtractor={(f) => f.clave}
-          style={{ flex: 1 }}
-          contentContainerStyle={{ paddingHorizontal: MEDIDA.espacio.m, paddingVertical: MEDIDA.espacio.m }}
-          onContentSizeChange={() => lista.current?.scrollToEnd({ animated: false })}
-          renderItem={({ item: f }) =>
-            f.tipo === 'dia' ? (
-              <View style={s.dia}>
-                <Text style={s.diaTxt}>{etiquetaDia(f.ms)}</Text>
-              </View>
-            ) : (
-              <BurbujaWA f={f} p={p} anchoMax={anchoMax} idioma={idioma} onFoto={verFoto} onReintentar={(t) => void enviar(t)} />
-            )
-          }
-        />
-      )}
-      <View style={[s.redactor, { paddingBottom: ins.bottom + MEDIDA.espacio.s }]}>
-        <TextInput
-          value={texto}
-          onChangeText={setTexto}
-          placeholder={tr('Mensaje', 'Message')}
-          placeholderTextColor={p.texto3}
-          multiline
-          maxLength={4000}
-          style={s.caja}
-          accessibilityLabel={tr('Escribe un mensaje de WhatsApp', 'Type a WhatsApp message')}
-        />
-        <BotonEnviar activo={!!texto.trim()} onEnviar={() => void enviar()} />
-      </View>
-      <Modal visible={!!foto} transparent animationType="fade" onRequestClose={() => setFoto(null)}>
-        <Pressable style={s.visor} onPress={() => setFoto(null)} accessibilityRole="button" accessibilityLabel={tr('Cerrar la foto', 'Close the photo')}>
-          {foto ? <Image source={foto} style={{ width: '100%', height: '80%' }} resizeMode="contain" /> : null}
-        </Pressable>
-      </Modal>
-    </KeyboardAvoidingView>
-  );
-}
-
-function BurbujaWA({ f, p, anchoMax, idioma, onFoto, onReintentar }: { f: Extract<FilaWA, { tipo: 'msg' }>; p: Paleta; anchoMax: number; idioma: 'es' | 'en'; onFoto: (m: MensajeWA) => void; onReintentar: (t: string) => void }) {
-  const s = useMemo(() => estilos(p), [p]);
-  const m = f.m;
-  const etiqueta = m.eliminado ? null : etiquetaMedia(m, idioma);
-  const cuerpo = textoBurbuja(m);
-  return (
-    <View style={{ alignItems: m.mio ? 'flex-end' : 'flex-start', marginTop: f.pegadaArriba ? 2 : MEDIDA.espacio.s }}>
-      <View style={[s.burbuja, { maxWidth: anchoMax, backgroundColor: m.mio ? p.burbujaMia : p.burbujaOtro }, m.fallo && { borderWidth: 1, borderColor: p.aviso }]}>
-        {f.conNombre ? <Text style={s.burbujaNombre}>{m.nombreDe || tr('Alguien', 'Someone')}</Text> : null}
-        {m.miniatura && !m.eliminado ? (
-          <Pressable onPress={() => onFoto(m)} accessibilityRole="imagebutton" accessibilityLabel={tr('Ver la foto', 'See the photo')}>
-            <Image source={{ uri: `data:image/jpeg;base64,${m.miniatura}` }} style={{ width: Math.min(anchoMax - 20, 260), height: Math.min(anchoMax - 20, 260) * 0.75, borderRadius: 10, marginBottom: 4 }} resizeMode="cover" />
-          </Pressable>
-        ) : null}
-        {m.eliminado ? <Text style={[s.burbujaTxt, { fontStyle: 'italic', color: m.mio ? p.textoMia : p.texto3 }]}>🚫 {tr('Mensaje eliminado', 'Message deleted')}</Text> : null}
-        {etiqueta ? <Text style={[s.burbujaTxt, { color: m.mio ? p.textoMia : p.textoOtro, fontWeight: '600' }]}>{etiqueta}</Text> : null}
-        {cuerpo ? (
-          <Text style={[s.burbujaTxt, { color: m.mio ? p.textoMia : p.textoOtro }]} selectable>
-            {cuerpo}
-          </Text>
-        ) : null}
-        <Text style={[s.burbujaHora, { color: m.mio ? p.textoMia : p.texto3 }]}>
-          {m.editado ? `${tr('editado', 'edited')} · ` : ''}
-          {m.enviando ? tr('enviando…', 'sending…') : hora(m.hora)}
-        </Text>
-      </View>
-      {m.fallo ? (
-        <Pressable onPress={() => onReintentar(m.texto)} accessibilityRole="button">
-          <Text style={{ color: p.aviso, fontSize: 12, marginTop: 2 }}>
-            {m.fallo} · {tr('tocar para reintentar', 'tap to retry')}
-          </Text>
-        </Pressable>
-      ) : null}
-    </View>
-  );
-}
-
 function estilos(p: Paleta) {
   return StyleSheet.create({
-    cabecera: { paddingHorizontal: MEDIDA.espacio.l, paddingBottom: MEDIDA.espacio.s, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: p.borde },
-    cabeceraChat: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: MEDIDA.espacio.s, paddingBottom: MEDIDA.espacio.s, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: p.borde },
+    cabecera: { paddingHorizontal: MEDIDA.espacio.m, paddingBottom: MEDIDA.espacio.m },
     botonCab: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-    titulo: { color: p.texto, fontSize: MEDIDA.letra.titulo, fontWeight: '800' },
+    titulo: { fontSize: 22, fontWeight: '700' },
     detalle: { color: p.texto2, fontSize: MEDIDA.letra.chica + 1, marginTop: 2 },
-    buscador: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: MEDIDA.espacio.m, paddingHorizontal: 14, height: 44, borderRadius: 22, backgroundColor: p.superficie },
-    buscadorTxt: { flex: 1, color: p.texto, fontSize: MEDIDA.letra.cuerpo },
-    banda: { backgroundColor: p.avisoFondo, paddingVertical: 8, paddingHorizontal: MEDIDA.espacio.l },
-    bandaTxt: { color: p.aviso, fontSize: 13 },
-    fila: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: MEDIDA.espacio.l, paddingVertical: 10 },
-    filaCuerpo: { flex: 1, marginLeft: MEDIDA.espacio.m },
-    filaArriba: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-    filaAbajo: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 },
-    nombre: { color: p.texto, fontSize: MEDIDA.letra.cuerpo + 1, fontWeight: '600' },
-    grupo: { color: p.texto3, fontSize: 12, fontWeight: '600' },
-    hora: { color: p.texto3, fontSize: 12 },
-    globo: { minWidth: 22, height: 22, borderRadius: 11, paddingHorizontal: 6, backgroundColor: p.acento, alignItems: 'center', justifyContent: 'center' },
-    globoTxt: { color: p.sobreAcento, fontSize: 12, fontWeight: '800' },
+    buscador: { flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 12, marginTop: 10, marginBottom: 4, paddingHorizontal: 14, height: 44, borderRadius: 22 },
+    buscadorTxt: { flex: 1, fontSize: 16, paddingVertical: 0 },
+    banda: { paddingVertical: 8, paddingHorizontal: MEDIDA.espacio.l },
     vTitulo: { color: p.texto, fontSize: 22, fontWeight: '800' },
     segmento: { flexDirection: 'row', backgroundColor: p.superficie, borderRadius: 999, padding: 4 },
-    segOpcion: { flex: 1, height: 40, borderRadius: 999, alignItems: 'center', justifyContent: 'center' },
+    segOpcion: { flex: 1, height: 44, borderRadius: 999, alignItems: 'center', justifyContent: 'center' },
     segTxt: { color: p.texto, fontWeight: '700', fontSize: 14 },
     tarjeta: { backgroundColor: p.superficie, borderRadius: 18, padding: MEDIDA.espacio.l, gap: 8 },
     codigo: { color: p.texto, fontSize: 34, fontWeight: '900', letterSpacing: 4, textAlign: 'center', marginVertical: 6 },
     campo: { height: 52, borderRadius: 16, borderWidth: 1, borderColor: p.borde, backgroundColor: p.superficie, color: p.texto, fontSize: 18, paddingHorizontal: 14 },
-    botonGrande: { height: 52, borderRadius: 26, backgroundColor: p.acento, alignItems: 'center', justifyContent: 'center' },
-    botonGrandeTxt: { color: p.sobreAcento, fontWeight: '800', fontSize: 16 },
-    dia: { alignSelf: 'center', backgroundColor: p.superficie, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 4, marginVertical: MEDIDA.espacio.s },
-    diaTxt: { color: p.texto2, fontSize: 12, fontWeight: '700' },
-    burbuja: { borderRadius: 16, paddingHorizontal: 12, paddingVertical: 7 },
-    burbujaNombre: { color: p.acentoTexto, fontSize: 12.5, fontWeight: '800', marginBottom: 2 },
-    burbujaTxt: { fontSize: MEDIDA.letra.cuerpo, lineHeight: 21 },
-    burbujaHora: { fontSize: 11, alignSelf: 'flex-end', marginTop: 2, opacity: 0.8 },
-    redactor: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingHorizontal: MEDIDA.espacio.m, paddingTop: MEDIDA.espacio.s, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: p.borde },
-    caja: { flex: 1, minHeight: 46, maxHeight: 140, borderRadius: 23, backgroundColor: p.superficie, color: p.texto, fontSize: MEDIDA.letra.cuerpo, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 12 },
-    visor: { flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', alignItems: 'center', justifyContent: 'center' },
+    botonGrande: { height: 52, borderRadius: 26, backgroundColor: '#00A884', alignItems: 'center', justifyContent: 'center' },
+    botonGrandeTxt: { color: '#FFFFFF', fontWeight: '800', fontSize: 16 },
+    nuevo: { position: 'absolute', right: 16, width: 56, height: 56, borderRadius: 16, alignItems: 'center', justifyContent: 'center', elevation: 4, shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 4, shadowOffset: { width: 0, height: 2 } },
   });
 }

@@ -2,7 +2,10 @@
  * LO QUE AURA LE PIDE A LA CARCASA, por el bus del contrato (`escuchar('accion')`):
  *
  *   atras       → vuelve a la pantalla anterior (en la mesa no hay más atrás: se dice que no)
- *   abrir       → mesa, ajustes, perfil o la lista de chats
+ *   abrir       → mesa, ajustes, perfil o la lista de chats; y desde cualquier pantalla, la vista en vivo
+ *                 de su computadora, los chats con la pestaña de WhatsApp o sus correos (las hojas de
+ *                 toda la app: app/hojas.ts, las dibuja app/ComputadoraEnVivo.tsx); también sus misiones,
+ *                 lo que sabe de ti y tu círculo (misiones, conocer, circulo: app/HojasCerebro.tsx)
  *   tema        → lo guarda en el perfil (se aplica al instante en toda la app)
  *   avatar      → lo guarda en el perfil y cambia la voz (`setAvatarVoz`)
  *   abrir_chat  → la conversación con esa persona (por correo o por nombre, con `resolverContacto`)
@@ -14,20 +17,23 @@
  *                 completa): se guarda en el perfil y la ven la compañera, el panel y la pantalla completa
  *
  * Las demás acciones (redactar, enviar, descartar, silencio, llamar, leer, buscar) son del chat y de
- * la compañera: aquí no se tocan. Cada acción atendida se contesta con `emitir('hecho', …)` para que
+ * la compañera: aquí no se tocan. La `iniciativa` (lo que AURA propone sola) la atiende la mesa (su tarjeta). Cada acción atendida se contesta con `emitir('hecho', …)` para que
  * AURA diga «listo» o «no pude».
  */
 import { useEffect } from 'react';
 import { setAvatarVoz } from '../lib/tts';
 import { cumpleValido, guardarPerfil } from '../lib/perfil';
-import { emitir, escuchar, type AccionApp, type Perfil } from '../nucleo/contrato';
+import { emitir, escuchar, type AccionApp, type Pantalla, type Perfil } from '../nucleo/contrato';
 import { cancelarRecordatorio, programarRecordatorio } from '../compa/recordatorios';
 // Carga también los manejadores de la llamada de AURA (tienen que existir desde el arranque).
 import { depsRecordatorios } from '../compa/recordatoriosNativo';
 import { tr } from '../i18n';
 import { resolverContacto } from '../pulse/relevo';
 import { fijarPresencia } from '../avatar3d/usePresencia';
-import { abrirConversacion, abrirRuta, atras, rutaActual } from './rutas';
+import { abrirConversacion, abrirRuta, abrirWhatsapp, atras, rutaActual } from './rutas';
+import { abrirHoja, hayAnfitrion } from './hojas';
+import type { PantallaMas } from '../compa/computadora';
+import { esPantallaCerebro, type PantallaCerebro } from '../compa/cerebro';
 import { usuarioActual } from './sesion';
 
 /* ── el oyente del bus ────────────────────────────────────────────────────────────────────── */
@@ -58,6 +64,23 @@ export function atenderAccion(a: AccionApp) {
     }
     case 'abrir': {
       if (!conSesion) return hecho(a, false, 'sin sesión');
+      // Las de más (el contrato todavía no las nombra): su computadora, WhatsApp y sus correos.
+      const mas = a.pantalla as Pantalla | PantallaMas | PantallaCerebro;
+      // Lo de AURA (sus misiones, lo que sabe de ti, tu círculo): hojas de toda la app, como su computadora.
+      if (esPantallaCerebro(mas)) {
+        if (!hayAnfitrion()) return hecho(a, false, tr('Ábrelo desde el menú de la mesa.', 'Open it from the desk menu.'));
+        abrirHoja(mas);
+        return hecho(a, true);
+      }
+      if (mas === 'computadora' || mas === 'correos') {
+        if (!hayAnfitrion()) return hecho(a, false, tr('Ábrela desde «Más» en la mesa.', 'Open it from “More” on the desk.'));
+        abrirHoja(mas);
+        return hecho(a, true);
+      }
+      if (mas === 'whatsapp') {
+        abrirWhatsapp();
+        return hecho(a, true);
+      }
       if (a.pantalla === 'chats') {
         abrirRuta('Chats');
         return hecho(a, true);

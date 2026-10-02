@@ -55,6 +55,16 @@ export type PiezasTurno = {
    * en modo «firma» (sin la conversación mediana): unas 2 500 fichas en vez de 5 000–7 000.
    */
   compacto?: boolean;
+  /**
+   * Lo que quedó a medias y las conversaciones de antes que vienen al caso (lib/abiertos.ts,
+   * lib/episodios.ts): cambia con la consulta, va en el mensaje del turno.
+   */
+  bloqueCerebro?: string;
+  /**
+   * Lo que AU-RA sabe de la persona (lib/conocer-persona.ts): va en lo fijo pero NO en la firma, así
+   * aprender un dato no rehace el system a media conversación (entra cuando se rehace el fijo).
+   */
+  conocer?: string;
 };
 
 /** Lo del cerebro que va en el system corto de la voz: los encabezados y párrafos, sin las líneas de hecho. */
@@ -89,7 +99,7 @@ export function piezasDelTurno(p: PiezasTurno, hora?: Date): { fijo: string; fir
   const recuerdos = miembro
     ? 'No finjas recuerdos: solo lo que está en la memoria de esta persona y en el hilo. Nunca hables de lo que dijeron otras personas.'
     : `No finjas recuerdos: solo la memoria de ${p.quien ? nombreDe(p.quien) : 'quien no identifiqué'} y los hechos de junta. No recites la conversación privada del otro.`;
-  const personalidad = buildPersonality({ nombre: p.nombre, canal: p.canal, modo: p.modo, mando: p.mando, nivel: p.nivel, perfil, conHora: false });
+  const personalidad = buildPersonality({ nombre: p.nombre, canal: p.canal, modo: p.modo, mando: p.mando, nivel: p.nivel, perfil, conHora: false, compacto: p.compacto });
   const cabeza = p.compacto
     ? `${personalidad}
 
@@ -113,7 +123,7 @@ ${miembro ? '' : `${hechosCatalogo()}\n`}`;
       ? p.memoriaMiembro
       : promptMemoria(p.quienMem, { nivel: p.nivel, nombre: p.nombre, hilo: p.hiloEnMensajes ? 'mediano' : 'todo' });
   const app = p.reglasApp?.trim() ? `\n\n${p.reglasApp.trim()}` : '';
-  const fijo = `${cabeza}${memoria}${app}`;
+  const fijo = `${cabeza}${memoria}${p.conocer?.trim() ? `\n\n${p.conocer.trim()}` : ''}${app}`;
   // Lo fijo sin la conversación ni lo guardado solo: si esto no cambió, el system de antes sigue valiendo
   // (fijoDeLaConversacion).
   const firma = `${cabeza}${memoriaFirma}${app}`;
@@ -123,6 +133,7 @@ ${miembro ? '' : `${hechosCatalogo()}\n`}`;
   const contexto = [
     lineaAhora(hora),
     p.bloquePerfil || '',
+    p.bloqueCerebro || '',
     `Modo de mesa pedido: ${p.modo}.${p.canal === 'mesa' && p.lineaAvatar ? `\n${p.lineaAvatar}` : ''}`,
     agente,
     p.bloqueApp || '',

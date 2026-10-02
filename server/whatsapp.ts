@@ -9,11 +9,15 @@
  *   GET  /api/whatsapp/estado            disponible, permitido, vinculado, el QR o el código mientras vincula
  *   POST /api/whatsapp/vincular {telefono?}
  *   POST /api/whatsapp/desvincular
- *   GET  /api/whatsapp/chats?buscar=
+ *   GET  /api/whatsapp/chats?buscar=&limite=   cada chat con `numero` ("+504…" o "") y `foto` (true/false/null)
  *   GET  /api/whatsapp/mensajes?chat=&antes=
  *   POST /api/whatsapp/enviar {chat, texto}
  *   POST /api/whatsapp/leido {chat}
- *   GET  /api/whatsapp/media?chat=&id=
+ *   GET  /api/whatsapp/media?chat=&id=        410 si WhatsApp ya lo borró y el teléfono no lo volvió a subir
+ *   GET  /api/whatsapp/foto?chat=             la foto de perfil (JPEG chico); 404 si no tiene
+ *   GET  /api/whatsapp/contactos?buscar=      la gente guardada en su teléfono (para empezar un chat)
+ *
+ * Llamar no se puede (WhatsApp no deja hacerlo a un dispositivo vinculado): la app abre WhatsApp con `numero`.
  *
  * El cerebro (lib/harness.ts), igual que el correo: revisar, buscar, leer y responder. Responder deja un
  * BORRADOR; lo manda el servidor cuando el turno siguiente es un «sí» claro. Lo que dicen los mensajes
@@ -25,7 +29,21 @@ import { personaPorCorreoExacto } from '../lib/acceso';
 import { decidirBorrador } from './correo';
 import type { RetencionAcciones } from './voz-agente';
 
-export type ChatWA = { jid: string; nombre: string; grupo: boolean; noLeidos: number; hora: number; ultimo: string; ultimoMio: boolean; ultimoDe?: string };
+export type ChatWA = {
+  jid: string;
+  nombre: string;
+  grupo: boolean;
+  noLeidos: number;
+  hora: number;
+  ultimo: string;
+  ultimoMio: boolean;
+  ultimoDe?: string;
+  /** "+50499990000" en un chat de uno a uno si se sabe; "" en grupos. */
+  numero?: string;
+  /** ¿Tiene foto de perfil? null: todavía no se sabe (pedirla igual). */
+  foto?: boolean | null;
+};
+export type ContactoWA = { jid: string; nombre: string; numero: string };
 export type MensajeWA = { id: string; chat: string; de: string; nombreDe: string; mio: boolean; hora: number; tipo: string; texto: string; miniatura?: string; duracion?: number; archivo?: string; conMedia?: boolean; eliminado?: boolean; editado?: boolean };
 
 const normal = (s: string) => String(s || '').trim().toLowerCase();
@@ -114,7 +132,7 @@ async function chatDeRef(quien: string, ambito: string, ref: string): Promise<Ch
   const r = ref.trim();
   const n = Number(r);
   const lista = LISTAS.get(llave(quien, ambito)) || [];
-  if (Number.isInteger(n) && n > 0) return lista[n - 1] || null;
+  if (Number.isInteger(n) && n > 0 && r.length <= 3) return lista[n - 1] || null;
   // «el grupo de la familia» → «familia»: se quitan las palabras de relleno del principio, todas.
   let limpio = sinTildes(r);
   for (let antes = ''; antes !== limpio; ) {
@@ -123,6 +141,13 @@ async function chatDeRef(quien: string, ambito: string, ref: string): Promise<Ch
   }
   const q = limpio;
   if (!q) return null;
+  // Por número («el 9999-0000», «+504 9999 0000»): el chat cuyo número termina así.
+  const digitos = q.replace(/\D/g, '');
+  if (digitos.length >= 7 && digitos.length >= q.replace(/\s/g, '').length - 2) {
+    const porNumero = (cs: ChatWA[]) => cs.find((c) => !!c.numero && c.numero.replace(/\D/g, '').endsWith(digitos)) || null;
+    const c = porNumero(lista) || porNumero(await chatsWA(digitos, 5).catch(() => []));
+    if (c) return c;
+  }
   // Primero en la última lista que se le leyó; si no está, en todos sus chats.
   const hallar = (cs: ChatWA[]) => cs.find((c) => sinTildes(c.nombre) === q) || cs.find((c) => sinTildes(c.nombre).includes(q)) || null;
   return hallar(lista) || hallar(await chatsWA('', 200).catch(() => [])) || (await chatsWA(q, 5).catch(() => []))[0] || null;
@@ -176,6 +201,15 @@ async function responder(quien: string, ambito: string, ref: string, texto: stri
   const c = await chatDeRef(quien, ambito, ref);
   if (!c) return `WHATSAPP: no encuentro el chat «${ref}». Pídele el nombre como lo tiene guardado.`;
   return guardarBorrador(quien, ambito, { chat: c.jid, nombre: c.nombre || c.jid, texto: texto.trim(), creado: Date.now() });
+}
+
+/**
+ * Un borrador para un chat que ya se sabe (lib/circulo.ts: «recuérdale a mi esposa…»). El mismo borrador
+ * de siempre: el servidor lo manda solo si el turno siguiente es un «sí» claro (resolverBorradorWhatsapp).
+ * `chat`: el jid («50499990000@s.whatsapp.net»). Devuelve el HECHO para el modelo.
+ */
+export function borradorWhatsappPara(quien: string, ambito: string, b: { chat: string; nombre: string; texto: string }): string {
+  return guardarBorrador(quien, ambito, { chat: String(b.chat || ''), nombre: String(b.nombre || b.chat || ''), texto: String(b.texto || '').trim(), creado: Date.now() });
 }
 
 export function borradorWhatsappDe(quien: string, ambito = ''): Borrador | null {
@@ -305,8 +339,9 @@ export function montarRutasWhatsapp(app: express.Express, d: Deps) {
 
   app.get('/api/whatsapp/chats', d.exigirMesa, d.limitar(120), async (req, res) => {
     if (!puede(req, res)) return;
+    const limite = Math.min(300, Math.max(1, Math.floor(Number(req.query.limite)) || 100));
     try {
-      return res.json({ chats: await chatsWA(String(req.query.buscar || '').slice(0, 60), 100), honesto: true });
+      return res.json({ chats: await chatsWA(String(req.query.buscar || '').slice(0, 60), limite), honesto: true });
     } catch (e) {
       return responderError(res, e);
     }
@@ -349,32 +384,56 @@ export function montarRutasWhatsapp(app: express.Express, d: Deps) {
     }
   });
 
-  /** Igual que el puente (servicios/whatsapp-puente, MaxMedia). */
+  /** Igual que el puente (servicios/whatsapp-puente, MaxMedia y MaxFoto). */
   const MAX_MEDIA = 16 * 1024 * 1024;
+  const MAX_FOTO = 2 * 1024 * 1024;
 
-  app.get('/api/whatsapp/media', d.exigirMesa, d.limitar(60), async (req, res) => {
-    if (!puede(req, res)) return;
+  /** Pasa un archivo del puente tal cual (con su tipo), sin juntar en memoria nada sin tamaño o más grande que `max`. */
+  async function pasarArchivo(res: express.Response, ruta: string, o: { max: number; ms: number; grande: string; tipo: string }) {
     const c = conf();
     try {
-      const r = await fetch(`${c.url}/media?chat=${encodeURIComponent(String(req.query.chat || ''))}&id=${encodeURIComponent(String(req.query.id || ''))}`, {
-        headers: { authorization: `Bearer ${c.clave}` },
-        signal: AbortSignal.timeout(50_000),
-      });
+      const r = await fetch(`${c.url}${ruta}`, { headers: { authorization: `Bearer ${c.clave}` }, signal: AbortSignal.timeout(o.ms) });
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
         return res.status(r.status === 401 ? 503 : r.status).json({ error: String((j as any)?.error || `HTTP ${r.status}`).slice(0, 160), honesto: true });
       }
-      // El puente ya no baja nada de más de 16 MB; si igual viniera algo más grande (o sin tamaño), no se junta en memoria.
       const largo = Number(r.headers.get('content-length') || NaN);
-      if (!Number.isFinite(largo) || largo > MAX_MEDIA) {
+      if (!Number.isFinite(largo) || largo > o.max) {
         void r.body?.cancel().catch(() => {});
-        return res.status(413).json({ error: 'Ese archivo pesa más de 16 MB: ábrelo en tu teléfono.', honesto: true });
+        return res.status(413).json({ error: o.grande, honesto: true });
       }
-      res.setHeader('Content-Type', r.headers.get('content-type') || 'application/octet-stream');
+      res.setHeader('Content-Type', r.headers.get('content-type') || o.tipo);
       res.setHeader('Cache-Control', 'private, max-age=3600');
       return res.end(Buffer.from(await r.arrayBuffer()));
     } catch (e) {
       return responderError(res, new ErrorPuente(`El puente de WhatsApp no contestó (${String((e as any)?.message || e).slice(0, 80)}).`, 503));
+    }
+  }
+
+  // Si el archivo ya venció en WhatsApp, el puente se lo pide al teléfono y espera (hasta ~80 s en total).
+  app.get('/api/whatsapp/media', d.exigirMesa, d.limitar(60), async (req, res) => {
+    if (!puede(req, res)) return;
+    const ruta = `/media?chat=${encodeURIComponent(String(req.query.chat || ''))}&id=${encodeURIComponent(String(req.query.id || ''))}`;
+    return pasarArchivo(res, ruta, { max: MAX_MEDIA, ms: 90_000, grande: 'Ese archivo pesa más de 16 MB: ábrelo en tu teléfono.', tipo: 'application/octet-stream' });
+  });
+
+  // La lista pide muchas a la vez: el límite es amplio (el puente las guarda un día y pregunta pocas a la vez).
+  app.get('/api/whatsapp/foto', d.exigirMesa, d.limitar(600), async (req, res) => {
+    if (!puede(req, res)) return;
+    const chat = String(req.query.chat || '').slice(0, 120);
+    if (!chat) return res.status(400).json({ error: 'Falta el chat.', honesto: true });
+    return pasarArchivo(res, `/foto?chat=${encodeURIComponent(chat)}`, { max: MAX_FOTO, ms: 30_000, grande: 'Esa foto pesa demasiado.', tipo: 'image/jpeg' });
+  });
+
+  app.get('/api/whatsapp/contactos', d.exigirMesa, d.limitar(60), async (req, res) => {
+    if (!puede(req, res)) return;
+    const buscar = String(req.query.buscar || '').slice(0, 60);
+    const limite = Math.min(500, Math.max(1, Math.floor(Number(req.query.limite)) || 100));
+    try {
+      const j = await pedir<{ contactos: ContactoWA[] }>(`/contactos?limite=${limite}${buscar ? `&buscar=${encodeURIComponent(buscar)}` : ''}`);
+      return res.json({ contactos: j.contactos, honesto: true });
+    } catch (e) {
+      return responderError(res, e);
     }
   });
 }

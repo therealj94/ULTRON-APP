@@ -16,8 +16,38 @@ type ContenidoMsg struct {
 	Archivo   string
 }
 
-// Devuelve el contenido y, para fotos, videos, audios, documentos y stickers, el mensaje crudo.
+// Lo que whatsmeow no desenvuelve: las fotos de un álbum (associatedChild), las menciones al grupo y los
+// sobres que pudieran quedar (efímero, ver una vez, documento con pie…). Sin esto, la foto de un álbum ni
+// aparecía.
+func Desenvolver(m *waE2E.Message) *waE2E.Message {
+	for i := 0; m != nil && i < 8; i++ {
+		var dentro *waE2E.FutureProofMessage
+		for _, f := range []*waE2E.FutureProofMessage{
+			m.GetAssociatedChildMessage(), m.GetGroupMentionedMessage(), m.GetEphemeralMessage(), m.GetViewOnceMessage(),
+			m.GetViewOnceMessageV2(), m.GetViewOnceMessageV2Extension(), m.GetDocumentWithCaptionMessage(), m.GetEditedMessage(),
+			m.GetBotInvokeMessage(), m.GetLottieStickerMessage(), m.GetSpoilerMessage(), m.GetBotForwardedMessage(),
+		} {
+			if f.GetMessage() != nil {
+				dentro = f
+				break
+			}
+		}
+		if dentro == nil {
+			if d := m.GetDeviceSentMessage().GetMessage(); d != nil {
+				m = d
+				continue
+			}
+			return m
+		}
+		m = dentro.GetMessage()
+	}
+	return m
+}
+
+// Devuelve el contenido y, para fotos, videos, audios, documentos y stickers, el mensaje crudo (ya
+// desenvuelto: lo que se guarda es el mensaje que trae el archivo).
 func Contenido(m *waE2E.Message) (ContenidoMsg, []byte) {
+	m = Desenvolver(m)
 	if m == nil {
 		return ContenidoMsg{}, nil
 	}
@@ -36,6 +66,11 @@ func Contenido(m *waE2E.Message) (ContenidoMsg, []byte) {
 	case m.GetVideoMessage() != nil:
 		x := m.GetVideoMessage()
 		return ContenidoMsg{Tipo: "video", Texto: x.GetCaption(), Miniatura: x.GetJPEGThumbnail(), Duracion: int(x.GetSeconds())}, crudo()
+	case m.GetPtvMessage() != nil:
+		// Video redondo («nota de video»): se guarda como un video normal para poder bajarlo.
+		x := m.GetPtvMessage()
+		b, _ := proto.Marshal(&waE2E.Message{VideoMessage: x})
+		return ContenidoMsg{Tipo: "video", Texto: x.GetCaption(), Miniatura: x.GetJPEGThumbnail(), Duracion: int(x.GetSeconds())}, b
 	case m.GetAudioMessage() != nil:
 		x := m.GetAudioMessage()
 		return ContenidoMsg{Tipo: "audio", Duracion: int(x.GetSeconds())}, crudo()

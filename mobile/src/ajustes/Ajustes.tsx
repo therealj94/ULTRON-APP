@@ -6,7 +6,10 @@
  *   Tu perfil     apodo, avatar (con su vista viva), cumpleaños
  *   Apariencia    Oscuro · Claro · Sistema (cambia al instante)
  *   Idioma        Español · English (la interfaz, la voz y las respuestas)
- *   AURA          «Lo que AURA sabe de ti» (la ruta Perfil), tus correos (ajustes/Correos.tsx) y la vibración
+ *   AURA          «Lo que AURA sabe de ti» (la ruta Perfil), «Lo que sé de ti» (lo que aprendió y lo que quedó
+ *                 a medias), «Mi círculo», sus misiones (app/HojasCerebro.tsx), tus correos (ajustes/Correos.tsx)
+ *                 y la vibración
+ *   Iniciativa    cuánto te propone AURA por su cuenta: alta · media · baja · apagada (server/iniciativa.ts)
  *   Computadora   quién maneja su computadora en la nube: gratis (modelo propio) o Claude (de pago)
  *   Privacidad    los permisos del teléfono, con su ✔
  *   Cerrar sesión (con confirmación) y la versión
@@ -21,7 +24,7 @@ import { versionInstalada } from '../lib/ota';
 import { de, tr, useIdioma, type Idioma } from '../i18n';
 import { cumpleLegible, estadoPerfil, guardarPerfil, perfilSincronizado, usePerfil } from '../lib/perfil';
 import { setAvatarVoz } from '../lib/tts';
-import type { MotorComputadora, Tema } from '../nucleo/contrato';
+import type { MotorComputadora, NivelIniciativa, Tema } from '../nucleo/contrato';
 import { MEDIDA } from '../nucleo/tema';
 import { AVATARES, avatarPorId, type AvatarId } from '../avatares/catalogo';
 import { MiniAvatar } from '../avatares/MiniAvatar';
@@ -31,6 +34,8 @@ import { armarCumple, leerCumple } from '../primeravez/flujo';
 import { ListaPermisos } from '../primeravez/ListaPermisos';
 import { HojaCorreos, useCuentasCorreo } from './Correos';
 import { HojaComputadora } from './Computadora';
+import { HojaCerebro } from '../app/HojasCerebro';
+import type { PantallaCerebro } from '../compa/cerebro';
 import { INFO_PERMISOS, abrirAjustesAlarma, estadoAlarmaExacta, estadosPermisos, listo, type EstadoAlarma } from '../primeravez/permisos';
 import { SelectorCumple, VistaAvatar } from '../primeravez/piezas';
 import type { RaizParams } from '../app/rutas';
@@ -46,7 +51,15 @@ function lineaOta(idioma: Idioma): string {
 }
 
 type Props = NativeStackScreenProps<RaizParams, 'Ajustes'>;
-type HojaAbierta = 'apodo' | 'avatar' | 'cumple' | 'permisos' | 'salir' | 'correos' | 'computadora' | null;
+type HojaAbierta = 'apodo' | 'avatar' | 'cumple' | 'permisos' | 'salir' | 'correos' | 'computadora' | PantallaCerebro | null;
+
+/** Lo que se lee debajo de «Iniciativa de AURA», según el nivel elegido. */
+function pieIniciativa(n: NivelIniciativa): string {
+  if (n === 'alta') return tr('Te propone cosas cada dos horas (hasta 6 al día). Nunca de noche.', 'She suggests things every two hours (up to 6 a day). Never at night.');
+  if (n === 'baja') return tr('Una propuesta al día, como mucho.', 'At most one suggestion a day.');
+  if (n === 'apagada') return tr('No te propone nada por su cuenta: solo contesta lo que le pidas.', 'She won’t suggest anything on her own: she only answers what you ask.');
+  return tr('Te propone cosas cada cuatro horas (hasta 3 al día). Nunca de noche; si le dices que no, espera más.', 'She suggests things every four hours (up to 3 a day). Never at night; if you say no, she waits longer.');
+}
 
 export function Ajustes({ navigation }: Props) {
   const idioma = useIdioma();
@@ -157,6 +170,9 @@ export function Ajustes({ navigation }: Props) {
         <Aparecer retraso={160}>
           <Grupo titulo="AURA">
             <Fila titulo={tr('Lo que AURA sabe de ti', 'What AURA knows about you')} detalle={tr('Lo que le contaste: verlo, cambiarlo o borrarlo', 'What you told her: see, change or erase it')} icono="corazon" onPress={() => navigation.navigate('Perfil')} />
+            <Fila titulo={tr('Lo que sé de ti', 'What I know about you')} detalle={tr('Lo que aprendió al hablar contigo y lo que quedó a medias', 'What she learned talking with you and what was left halfway')} icono="chispas" onPress={() => abrir('conocer')} />
+            <Fila titulo={tr('Mi círculo', 'My circle')} detalle={tr('Tu gente cercana y qué puede hacer AURA por ellos', 'Your close people and what AURA can do for them')} icono="familia" onPress={() => abrir('circulo')} />
+            <Fila titulo={tr('Misiones', 'Missions')} detalle={tr('Las metas que AURA te ayuda a cumplir', 'The goals AURA helps you reach')} icono="estrella" onPress={() => abrir('misiones')} />
             <Fila
               titulo={tr('Tus correos', 'Your email')}
               detalle={tr('Para que AURA los revise y te ayude a contestar', 'So AURA can check them and help you reply')}
@@ -165,6 +181,23 @@ export function Ajustes({ navigation }: Props) {
               onPress={() => abrir('correos')}
             />
             <Fila titulo={tr('Vibración', 'Vibration')} detalle={tr('Al tocar botones y al completar algo', 'When tapping buttons and completing things')} icono="tocar" derecha={<Interruptor valor={hapticos} onCambiar={(v) => void fijarHapticos(v)} etiqueta={tr('Vibración', 'Vibration')} />} />
+          </Grupo>
+        </Aparecer>
+
+        <Aparecer retraso={170}>
+          <Grupo titulo={tr('Iniciativa de AURA', 'AURA’s initiative')} pie={pieIniciativa(perfil?.iniciativa ?? 'media')}>
+            <View style={s.segmento}>
+              <Segmentado<NivelIniciativa>
+                opciones={[
+                  { id: 'alta', texto: tr('Alta', 'High') },
+                  { id: 'media', texto: tr('Media', 'Medium') },
+                  { id: 'baja', texto: tr('Baja', 'Low') },
+                  { id: 'apagada', texto: tr('Apagada', 'Off') },
+                ]}
+                valor={perfil?.iniciativa ?? 'media'}
+                onCambiar={(n) => guardarPerfil({ iniciativa: n })}
+              />
+            </View>
           </Grupo>
         </Aparecer>
 
@@ -300,6 +333,7 @@ export function Ajustes({ navigation }: Props) {
 
       <HojaCorreos visible={hoja === 'correos'} onCerrar={() => setHoja(null)} />
       <HojaComputadora visible={hoja === 'computadora'} onCerrar={() => setHoja(null)} nombreAvatar={de(avatar.nombre)} />
+      <HojaCerebro cual={hoja === 'misiones' || hoja === 'conocer' || hoja === 'circulo' ? hoja : null} onCerrar={() => setHoja(null)} />
 
       <Hoja visible={hoja === 'permisos'} onCerrar={() => setHoja(null)} titulo={tr('Permisos', 'Permissions')} subtitulo={tr('Toca un permiso para darlo. Si lo bloqueaste, te llevo a los ajustes del teléfono.', 'Tap one to allow it. If you blocked it, I’ll take you to your phone settings.')}>
         <ListaPermisos />

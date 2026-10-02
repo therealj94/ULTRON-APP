@@ -20,6 +20,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import type { AddressInfo } from 'node:net';
+import { SISTEMA_TRAMO } from '../lib/episodios';
+import { SISTEMA_ABIERTOS } from '../lib/abiertos';
+import { SISTEMA_CONOCER } from '../lib/conocer-persona';
+import { SISTEMA_PROPUESTAS } from '../lib/iniciativa';
 
 const RAIZ = process.cwd();
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'aura-extremo-'));
@@ -35,6 +39,9 @@ const { hoyMMDD } = await import('../lib/perfil-persona');
 
 type Pedido = { system: string; soloSystem: string; ultimo: string; stream: boolean; todo: { role: string; content: string }[]; espacio?: number };
 const alNodo: Pedido[] = [];
+/** Lo que el servidor le pidió al nodo en segundo plano (cerebro continuo, iniciativa): no son turnos. */
+const alFondo: string[] = [];
+const DE_FONDO = [SISTEMA_TRAMO, SISTEMA_ABIERTOS, SISTEMA_CONOCER, SISTEMA_PROPUESTAS];
 /** Qué contesta el 27B según lo que dijo la persona (el texto después de «Junta: »). */
 let contestar: (dicho: string) => string = () => '[EMO: neutral] Claro. Te cuento lo que sé.';
 let primerTokenMs = 0;
@@ -56,6 +63,12 @@ const nodo = http.createServer((req, res) => {
     const dicho = ultimo.split('\n\nJunta: ').pop() || '';
     // `system` es todo lo que el modelo recibe como instrucciones: el system (lo fijo) y el contexto del
     // turno, que va en el mensaje de la persona (server/prompt-turno.ts, para que el nodo reutilice lo leído).
+    // Lo que AU-RA piensa en segundo plano (resumir un tramo, lo que quedó a medias, lo que aprendió de la
+    // persona, sus propuestas) va al espacio común del nodo y no es un turno: se cuenta aparte.
+    if (DE_FONDO.some((x) => String(msgs[0]?.content || '') === x)) {
+      alFondo.push(String(msgs[0]?.content || '').slice(0, 40));
+      return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ message: { content: '{}' } }));
+    }
     alNodo.push({ system: `${String(msgs[0]?.content || '')}\n${ultimo}`, soloSystem: String(msgs[0]?.content || ''), ultimo, stream: !!j.stream, todo: msgs.map((m: any) => ({ role: String(m.role), content: String(m.content) })), espacio: j.options?.id_slot });
     const respuesta = contestar(dicho);
     if (!j.stream) return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ message: { content: respuesta } }));

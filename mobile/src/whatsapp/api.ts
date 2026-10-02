@@ -2,9 +2,7 @@
  * Las llamadas de la app a su WhatsApp (server/whatsapp.ts → el puente privado). Todas con la sesión.
  */
 import { api } from '../lib/api';
-import { loadMesaToken } from '../lib/storage';
-import { API_BASE } from '../config';
-import type { ChatWA, EstadoWA, MensajeWA } from './logica';
+import { normalizarChats, normalizarContactos, type ChatWA, type ContactoWA, type EstadoWA, type MensajeWA } from './logica';
 
 export const estadoWA = () => api<EstadoWA>('/api/whatsapp/estado', { method: 'GET' }, 12_000);
 
@@ -13,22 +11,27 @@ export const vincularWA = (telefono?: string) =>
 
 export const desvincularWA = () => api('/api/whatsapp/desvincular', { method: 'POST', body: '{}' }, 20_000);
 
-export const chatsWA = (buscar = '') =>
-  api<{ chats: ChatWA[] }>(`/api/whatsapp/chats${buscar ? `?buscar=${encodeURIComponent(buscar)}` : ''}`, { method: 'GET' }, 15_000).then((r) => r.chats);
+/** Los chats, el más reciente primero (hasta 200; buscar también encuentra los más viejos y por número). */
+export const chatsWA = (buscar = '', limite = 200) =>
+  api<{ chats: ChatWA[] }>(`/api/whatsapp/chats?limite=${limite}${buscar ? `&buscar=${encodeURIComponent(buscar)}` : ''}`, { method: 'GET' }, 15_000).then((r) => normalizarChats(r?.chats));
+
+/** Los contactos guardados en su teléfono (para «Nuevo chat»), por nombre. */
+export const contactosWA = (buscar = '', limite = 300) =>
+  api<{ contactos: ContactoWA[] }>(`/api/whatsapp/contactos?limite=${limite}${buscar ? `&buscar=${encodeURIComponent(buscar)}` : ''}`, { method: 'GET' }, 15_000).then((r) => normalizarContactos(r?.contactos));
 
 export const mensajesWA = (chat: string) =>
-  api<{ chat: ChatWA; mensajes: MensajeWA[] }>(`/api/whatsapp/mensajes?chat=${encodeURIComponent(chat)}`, { method: 'GET' }, 15_000);
+  api<{ chat: ChatWA; mensajes: MensajeWA[] }>(`/api/whatsapp/mensajes?chat=${encodeURIComponent(chat)}`, { method: 'GET' }, 15_000).then((r) => ({
+    ...r,
+    mensajes: (Array.isArray(r?.mensajes) ? r.mensajes : []).filter((m) => m && m.id).map((m) => ({ ...m, texto: typeof m.texto === 'string' ? m.texto : '' })),
+  }));
 
 export const enviarWA = (chat: string, texto: string) =>
   api<{ mensaje: MensajeWA }>('/api/whatsapp/enviar', { method: 'POST', body: JSON.stringify({ chat, texto }) }, 40_000).then((r) => r.mensaje);
 
 export const leidoWA = (chat: string) => api('/api/whatsapp/leido', { method: 'POST', body: JSON.stringify({ chat }) }, 15_000);
 
-/** La foto entera (o el archivo) de un mensaje: la dirección y la cabecera de la sesión para <Image>. */
-export async function fuenteMedia(chat: string, id: string): Promise<{ uri: string; headers: Record<string, string> }> {
-  const token = await loadMesaToken();
-  return {
-    uri: `${API_BASE}/api/whatsapp/media?chat=${encodeURIComponent(chat)}&id=${encodeURIComponent(id)}`,
-    headers: token ? { 'x-ultron-sesion': token } : {},
-  };
-}
+/** La foto entera, el audio o el archivo de un mensaje (lo baja whatsapp/medios.ts con la sesión). */
+export const rutaMedia = (chat: string, id: string) => `/api/whatsapp/media?chat=${encodeURIComponent(chat)}&id=${encodeURIComponent(id)}`;
+
+/** La foto de perfil de un chat (image/jpeg; 404 si no tiene). */
+export const rutaFoto = (chat: string) => `/api/whatsapp/foto?chat=${encodeURIComponent(chat)}`;

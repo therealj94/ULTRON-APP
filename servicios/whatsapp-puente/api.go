@@ -12,7 +12,12 @@ package main
 //	GET  /buscar?q=&limite=              en el texto de todos los chats
 //	POST /enviar {chat, texto}           lo manda (el servidor solo lo llama con el «sí» de la persona)
 //	POST /leido {chat}                   marca el chat como leído (también en su teléfono)
-//	GET  /media?chat=&id=                la foto o el archivo de un mensaje
+//	GET  /media?chat=&id=                la foto o el archivo de un mensaje (410 si ya no está en WhatsApp)
+//	GET  /foto?chat=                     la foto de perfil del chat (JPEG chico; 404 si no tiene)
+//	GET  /contactos?buscar=&limite=      la gente guardada en el teléfono (para empezar un chat)
+//
+// Los chats van con su id canónica: el número (…@s.whatsapp.net) siempre que se sepa, aunque WhatsApp los
+// mande por LID (…@lid). Un LID viejo que ya se pasó al número sigue sirviendo en ?chat=.
 
 import (
 	"crypto/subtle"
@@ -34,6 +39,18 @@ type Cuenta interface {
 	Enviar(chat, texto string) (Mensaje, error)
 	MarcarLeido(chat string) error
 	Media(chat, id string) ([]byte, string, error)
+	// La foto de perfil (ErrSinFoto si no tiene) y si ya se sabe sin preguntar (nil: no se sabe).
+	Foto(chat string) ([]byte, error)
+	FotoConocida(chat string) *bool
+	// El nombre de un chat o de una persona con lo que ya se sabe (sin red); vacío si no se sabe.
+	Nombre(jid string) string
+	Contactos(buscar string, limite int) ([]Contacto, error)
+}
+
+type Contacto struct {
+	JID    string `json:"jid"`
+	Nombre string `json:"nombre"`
+	Numero string `json:"numero"`
 }
 
 type EstadoCuenta struct {
@@ -53,6 +70,9 @@ var ErrSinVincular = errors.New("no hay un WhatsApp vinculado")
 const MaxMedia = 16 << 20
 
 var ErrMediaGrande = errors.New("ese archivo pesa más de 16 MB: ábrelo en tu teléfono")
+
+// WhatsApp ya lo borró de su servidor y el teléfono no lo volvió a subir.
+var ErrMediaVencida = errors.New("esa foto ya no está en WhatsApp; ábrela en tu teléfono")
 
 type API struct {
 	clave   string
@@ -78,6 +98,9 @@ func (a *API) Rutas() http.Handler {
 			fallo(w, 500, err)
 			return
 		}
+		for i := range chats {
+			a.completar(&chats[i])
+		}
 		escribir(w, 200, map[string]any{"chats": chats})
 	}))
 	m.HandleFunc("GET /mensajes", a.con(func(w http.ResponseWriter, r *http.Request) {
@@ -93,7 +116,28 @@ func (a *API) Rutas() http.Handler {
 			fallo(w, 500, err)
 			return
 		}
-		c, _ := a.almacen.Chat(chat)
+		c, ok := a.almacen.Chat(chat)
+		if ok {
+			a.completar(&c)
+		}
+		// Quién mandó cada uno: si se guardó sin nombre (o con el número), se busca otra vez.
+		nombres := map[string]string{}
+		for i := range ms {
+			m := &ms[i]
+			if m.Mio || tieneNombre(m.NombreDe) {
+				continue
+			}
+			n, visto := nombres[m.De]
+			if !visto {
+				n = a.cuenta.Nombre(m.De)
+				nombres[m.De] = n
+			}
+			if tieneNombre(n) {
+				m.NombreDe = n
+			} else if m.NombreDe == "" {
+				m.NombreDe = numeroDe(m.De)
+			}
+		}
 		escribir(w, 200, map[string]any{"chat": c, "mensajes": ms})
 	}))
 	m.HandleFunc("GET /buscar", a.con(func(w http.ResponseWriter, r *http.Request) {
@@ -130,6 +174,14 @@ func (a *API) Rutas() http.Handler {
 			fallo(w, 413, err)
 			return
 		}
+		if errors.Is(err, ErrMediaVencida) {
+			fallo(w, 410, err)
+			return
+		}
+		if errors.Is(err, ErrSinVincular) {
+			fallo(w, 412, err)
+			return
+		}
 		if err != nil {
 			fallo(w, 404, err)
 			return
@@ -139,7 +191,55 @@ func (a *API) Rutas() http.Handler {
 		w.Header().Set("Cache-Control", "private, max-age=3600")
 		w.Write(datos)
 	}))
+	m.HandleFunc("GET /foto", a.con(func(w http.ResponseWriter, r *http.Request) {
+		chat := r.URL.Query().Get("chat")
+		if chat == "" {
+			fallo(w, 400, errors.New("falta el chat"))
+			return
+		}
+		datos, err := a.cuenta.Foto(chat)
+		switch {
+		case errors.Is(err, ErrSinFoto):
+			fallo(w, 404, err)
+			return
+		case err != nil:
+			fallo(w, codigoDe(err), err)
+			return
+		}
+		w.Header().Set("Content-Type", "image/jpeg")
+		w.Header().Set("Content-Length", strconv.Itoa(len(datos)))
+		w.Header().Set("Cache-Control", "private, max-age=3600")
+		w.Write(datos)
+	}))
+	m.HandleFunc("GET /contactos", a.con(func(w http.ResponseWriter, r *http.Request) {
+		cs, err := a.cuenta.Contactos(r.URL.Query().Get("buscar"), entre(r.URL.Query().Get("limite"), 100, 1, 500))
+		if err != nil {
+			fallo(w, codigoDe(err), err)
+			return
+		}
+		escribir(w, 200, map[string]any{"contactos": cs})
+	}))
 	return m
+}
+
+// Antes de mostrar un chat: si no tiene nombre de verdad se busca otra vez (y se guarda si apareció);
+// nunca sale sin nombre. También el de quien mandó lo último en un grupo, y si ya se sabe si tiene foto.
+func (a *API) completar(c *Chat) {
+	if !tieneNombre(c.Nombre) {
+		if n := a.cuenta.Nombre(c.JID); tieneNombre(n) {
+			c.Nombre = n
+			_, _ = a.almacen.MejorarNombre(c.JID, n)
+		}
+	}
+	c.Nombre = nombreVisible(*c)
+	if c.Grupo && !c.UltimoMio && c.ultimoDeJID != "" && !tieneNombre(c.UltimoDe) {
+		if n := a.cuenta.Nombre(c.ultimoDeJID); tieneNombre(n) {
+			c.UltimoDe = n
+		} else if c.UltimoDe == "" {
+			c.UltimoDe = numeroDe(c.ultimoDeJID)
+		}
+	}
+	c.Foto = a.cuenta.FotoConocida(c.JID)
 }
 
 func (a *API) vincular(w http.ResponseWriter, r *http.Request) {

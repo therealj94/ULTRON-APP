@@ -47,6 +47,8 @@ const ENV: Record<string, string[]> = {
   // Microsoft para entrar a Outlook/Microsoft 365 con OAuth (lib/correo).
   correo_cifrado: ['CORREO_CLAVE_CIFRADO', 'ULTRON_SESION_SECRETO'],
   ms_client_id: ['MS_CLIENT_ID'],
+  // Los avisos al teléfono con la app cerrada (lib/push.ts): el JSON entero de la cuenta de servicio de Firebase.
+  firebase_cuenta: ['FIREBASE_SERVICE_ACCOUNT'],
 };
 
 export function clave(id: string): string {

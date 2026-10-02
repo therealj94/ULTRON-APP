@@ -11,6 +11,7 @@
  *   · Avatar            — cambiar con quién hablas;
  *   · Modo trabajo      — el avatar compacto y la conversación escrita debajo, para leer y volver a
  *                         consultar lo dicho (y «Modo charla» para volver al avatar grande);
+ *   · Misiones          — las metas que AURA te ayuda a cumplir (ajustes/Misiones.tsx);
  *   · Su computadora    — lo que hace la computadora en la nube del avatar, y encargarle algo
  *                         (ajustes/Computadora.tsx); solo si el servidor la tiene;
  *   · Qué puedo hacer   — el recorrido corto (src/tutorial);
@@ -33,7 +34,7 @@ import { Hoja } from '../ui/Hoja';
 import { Icono, type NombreIcono } from '../pulse/ui/Icono';
 import { Tocable } from '../pulse/ui/Tocable';
 
-export type OpcionMas = 'chat' | 'envivo' | 'escribir' | 'camara' | 'caras' | 'avatar' | 'modo' | 'computadora' | 'tutorial' | 'ajustes';
+export type OpcionMas = 'chat' | 'envivo' | 'escribir' | 'camara' | 'caras' | 'avatar' | 'modo' | 'misiones' | 'computadora' | 'tutorial' | 'ajustes';
 
 type Props = {
   visible: boolean;
@@ -84,6 +85,7 @@ export function HojaMas(p: Props) {
       sub: p.trabajando ? tr('El avatar grande otra vez', 'The big avatar again') : tr('Avatar chico y lo escrito', 'Small avatar, written chat'),
       activo: p.trabajando,
     },
+    { id: 'misiones', icono: 'palomita', titulo: tr('Misiones', 'Missions'), sub: tr('Tus metas, paso a paso', 'Your goals, step by step') },
     ...(p.estadoComputadora != null
       ? [{ id: 'computadora' as const, icono: 'pantalla' as const, titulo: tr('Su computadora', 'Their computer'), sub: p.estadoComputadora, activo: !!p.computadoraTrabajando }]
       : []),

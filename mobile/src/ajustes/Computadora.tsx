@@ -10,6 +10,11 @@
  *
  * Solo se miran capturas: nadie puede tomar el control del escritorio desde aquí (por seguridad la
  * vista en vivo con control no se publica). Cada persona ve solo sus encargos.
+ *
+ * Desde el 2-oct (José: «abrió la página y se quedó ahí») la hoja es UNA para toda la app
+ * (app/ComputadoraEnVivo.tsx la dibuja encima de cualquier pantalla): se abre sola cuando una tarea
+ * empieza, sigue la tarea que le dicen (`tareaId`, también la que sigue la misión) y muestra arriba lo
+ * último que AURA contó («Ya entré a bch.hn.»). `HojaComputadora` (la de la mesa y Ajustes) solo la abre.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Image, Pressable, StyleSheet, View, useWindowDimensions } from 'react-native';
@@ -18,8 +23,40 @@ import { tr, idiomaActual } from '../i18n';
 import { MEDIDA, useTema } from '../nucleo/tema';
 import { Boton, Campo, Hoja, Texto, vibrar } from '../ui';
 import { EJEMPLOS_PC, estadoEnPalabras, sondeoMs, tareaEnPalabras, trabajando, type EstadoPc, type TareaPc } from '../compa/computadora';
+import { abrirHoja, hayAnfitrion } from '../app/hojas';
 
-export function HojaComputadora({ visible, onCerrar, nombreAvatar }: { visible: boolean; onCerrar: () => void; nombreAvatar: string }) {
+type PropsHoja = { visible: boolean; onCerrar: () => void; nombreAvatar: string };
+
+/**
+ * La de la mesa y Ajustes: abre la hoja de toda la app (una sola, la que se abre sola al empezar una
+ * tarea) y suelta la suya. Sin la raíz que la dibuja (una pantalla suelta), dibuja la propia como antes.
+ */
+export function HojaComputadora({ visible, onCerrar, nombreAvatar }: PropsHoja) {
+  const global = hayAnfitrion();
+  useEffect(() => {
+    if (!visible || !global) return;
+    abrirHoja('computadora');
+    onCerrar();
+  }, [visible, global]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (global) return null;
+  return <HojaComputadoraVivo visible={visible} onCerrar={onCerrar} nombreAvatar={nombreAvatar} />;
+}
+
+export function HojaComputadoraVivo({
+  visible,
+  onCerrar,
+  nombreAvatar,
+  tareaId = null,
+  frase = '',
+  alEstado,
+}: PropsHoja & {
+  /** Lo que ve de la tarea (para que el tecleo se apague si terminó y el aviso se perdió). */
+  alEstado?: (id: string, trabajandoAhora: boolean) => void;
+  /** La tarea que hay que mostrar (la que acaba de empezar o la que sigue la misión). */
+  tareaId?: string | null;
+  /** Lo último que AURA contó de lo que hace. */
+  frase?: string;
+}) {
   const tema = useTema();
   const { width } = useWindowDimensions();
   const idioma = idiomaActual() === 'en' ? 'en' : 'es';
@@ -33,12 +70,15 @@ export function HojaComputadora({ visible, onCerrar, nombreAvatar }: { visible: 
   const idRef = useRef<string | null>(null);
   const tareaRef = useRef(tarea);
   tareaRef.current = tarea;
+  const alEstadoRef = useRef(alEstado);
+  alEstadoRef.current = alEstado;
 
   const leerTarea = useCallback(
     async (id: string) => {
       try {
         const r = await api<{ tarea: TareaPc }>(`/api/computadora/tareas/${encodeURIComponent(id)}?idioma=${idioma}`, { method: 'GET' }, 12_000);
         if (idRef.current === id) setTarea(r.tarea);
+        alEstadoRef.current?.(id, trabajando(r.tarea.estado));
       } catch {
         /* la próxima vuelta lo intenta otra vez */
       }
@@ -80,6 +120,15 @@ export function HojaComputadora({ visible, onCerrar, nombreAvatar }: { visible: 
     };
   }, [visible, leerEstado, leerTarea]);
 
+  // Le dicen qué tarea seguir (empezó una, o la misión siguió con otra): se muestra ya, sin esperar al sondeo.
+  useEffect(() => {
+    if (!visible || !tareaId || tareaId === idRef.current) return;
+    idRef.current = tareaId;
+    setVerPaso(null);
+    setTarea((t) => (t?.id === tareaId ? t : { id: tareaId, instruccion: t?.instruccion || '', estado: 'en_cola', pasos: [], respuesta: null, error: null, segundos: 0 }));
+    void leerTarea(tareaId);
+  }, [visible, tareaId, leerTarea]);
+
   useEffect(() => {
     if (!visible) {
       setVerPaso(null);
@@ -107,7 +156,7 @@ export function HojaComputadora({ visible, onCerrar, nombreAvatar }: { visible: 
     setError('');
     setEnviando(true);
     try {
-      const r = await api<{ id: string }>('/api/computadora/tareas', { method: 'POST', body: JSON.stringify({ instruccion: t }) }, 20_000);
+      const r = await api<{ id: string }>('/api/computadora/tareas', { method: 'POST', body: JSON.stringify({ instruccion: t, idioma }) }, 20_000);
       vibrar('exito');
       idRef.current = r.id;
       setVerPaso(null);
@@ -159,13 +208,21 @@ export function HojaComputadora({ visible, onCerrar, nombreAvatar }: { visible: 
             {linea.texto}
           </Texto>
         </View>
+        {sigue && frase ? (
+          <View style={[s.frase, { backgroundColor: tema.acentoFondo }]}>
+            <ActivityIndicator size="small" color={tema.acento} />
+            <Texto v="chica" style={{ flex: 1 }}>
+              {nombreAvatar}: «{frase}»
+            </Texto>
+          </View>
+        ) : null}
 
         {tarea ? (
           <View style={[s.tarjeta, { borderColor: tema.borde, backgroundColor: tema.superficie }]}>
             <Texto v="mini" color="texto3">
               {sigue ? tr('ENCARGO EN CURSO', 'TASK IN PROGRESS') : tr('ÚLTIMO ENCARGO', 'LAST TASK')}
             </Texto>
-            <Texto v="cuerpo">«{tarea.instruccion}»</Texto>
+            {tarea.instruccion ? <Texto v="cuerpo">«{tarea.instruccion}»</Texto> : null}
             <View style={s.fila}>
               {sigue ? <ActivityIndicator size="small" color={tema.acento} /> : null}
               <Texto v="chica" color={tarea.estado === 'fallo' || tarea.estado === 'sin_pasos' ? 'aviso' : 'texto2'} style={{ flex: 1 }}>
@@ -291,4 +348,5 @@ const s = StyleSheet.create({
   paso: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6, paddingHorizontal: 6, borderRadius: 8 },
   pasoN: { width: 18, textAlign: 'right' },
   ejemplo: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 7 },
+  frase: { flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 8 },
 });

@@ -61,7 +61,14 @@ export type { AccionMano, Mano, Propuesta, RecordatorioApp } from './manos-app';
 export { turnoDeRecordatorio } from './manos-app';
 export { dichoDePropuesta, preguntaDePropuesta } from './manos-app';
 
-export type Pantalla = 'mesa' | 'chats' | 'ajustes' | 'perfil';
+/**
+ * Las pantallas que «abrir» sabe abrir. `computadora` es la vista en vivo de su computadora en la nube
+ * (mobile/src/ajustes/Computadora.tsx), `whatsapp` los chats con la pestaña de WhatsApp y `correos` sus
+ * buzones (mobile/src/ajustes/Correos.tsx). José (2-oct), en Ajustes: «abre la computadora» y AURA no sabía.
+ * `misiones`, `conocer` (lo que AU-RA sabe de la persona y lo que quedó a medias) y `circulo` (su familia y
+ * socios) son hojas de toda la app (mobile/src/app/HojasCerebro.tsx).
+ */
+export type Pantalla = 'mesa' | 'chats' | 'ajustes' | 'perfil' | 'computadora' | 'whatsapp' | 'correos' | 'misiones' | 'conocer' | 'circulo';
 export type TemaApp = 'oscuro' | 'claro' | 'sistema';
 export type AvatarApp = 'ojos' | 'aura' | 'claudio' | 'antonio';
 /** Cómo está AURA en el teléfono: chiquita caminando, al lado de los chats o a pantalla completa. */
@@ -79,7 +86,39 @@ export type AccionApp =
   | { tipo: 'silencio'; valor: boolean }
   | { tipo: 'presencia'; valor: PresenciaApp }
   /** Las manos nuevas (llamar, leer, buscar, idioma, perfil, recordatorios): lib/manos-app.ts. */
-  | AccionMano;
+  | AccionMano
+  /** Lo que hace su computadora en la nube (server/computadora.ts). Solo la empuja el servidor. */
+  | AccionComputadora
+  /** Lo que AU-RA propone por su cuenta (server/iniciativa.ts). Solo la empuja el servidor. */
+  | AccionIniciativa;
+
+/**
+ * UNA PROPUESTA DE AU-RA, SIN QUE NADIE LE PIDIERA NADA (server/iniciativa.ts la empuja; el modelo NO puede
+ * pedirla: `validarAccion` no la conoce). La app la muestra como tarjeta con «Sí» / «Luego» / «No» y
+ * contesta con POST /api/iniciativa/responder; con «Sí», `pedido` es lo que AU-RA hace (un turno normal).
+ */
+export type AccionIniciativa = {
+  tipo: 'iniciativa';
+  id: string;
+  texto: string;
+  pedido: string;
+  clase: string;
+  prioridad: number;
+  creada: number;
+  misionId?: string;
+};
+
+/**
+ * SU COMPUTADORA, EN VIVO EN EL TELÉFONO (server/computadora.ts la empuja; el modelo NO puede pedirla con
+ * ACCION_APP: `validarAccion` no la conoce):
+ *  · empieza: una tarea arrancó → la app abre la vista en vivo (captura y pasos) y pone el tecleo bajito;
+ *  · paso:    va avanzando → `texto` es una frase corta para decir («Ya entré a bch.hn.»);
+ *  · sigue:   la tarea no alcanzó y la misión sigue con otra (otro `id`);
+ *  · termina: terminó → `texto` es el resultado para decir (si no lo dijo ya el turno) y `ok`.
+ * Con `texto`, `boleto` (lo pone empujarAccion) deja decirlo tal cual en la conversación de voz (lecturaDe).
+ */
+export type FaseComputadora = 'empieza' | 'paso' | 'sigue' | 'termina';
+export type AccionComputadora = { tipo: 'computadora'; fase: FaseComputadora; id: string; texto?: string; ok?: boolean; boleto?: string };
 
 export type Contacto = { correo: string; nombre: string };
 export type ContextoApp = {
@@ -93,7 +132,7 @@ export type ContextoApp = {
   recordatorios?: RecordatorioApp[];
 };
 
-const PANTALLAS: Pantalla[] = ['mesa', 'chats', 'ajustes', 'perfil'];
+const PANTALLAS: Pantalla[] = ['mesa', 'chats', 'ajustes', 'perfil', 'computadora', 'whatsapp', 'correos', 'misiones', 'conocer', 'circulo'];
 const TEMAS: TemaApp[] = ['oscuro', 'claro', 'sistema'];
 const AVATARES: AvatarApp[] = ['ojos', 'aura', 'claudio', 'antonio'];
 const PRESENCIAS: PresenciaApp[] = ['paseo', 'lado', 'completa'];
@@ -287,8 +326,9 @@ export function empujarOrdenPc(correo: string, aparato: string | null | undefine
  * cuántos canales llegó.
  */
 export function empujarAccion(correo: string, accion: AccionApp, o: { aparato?: string | null; id?: string } = {}): { evento: EventoAccion; entregada: number } {
-  // Leer y buscar llevan un boleto de un solo uso: con él vuelve la lectura del teléfono (lecturaDe).
-  if (accion.tipo === 'leer' || accion.tipo === 'buscar') accion = { ...accion, boleto: anotarLectura(correo) };
+  // Leer y buscar llevan un boleto de un solo uso: con él vuelve la lectura del teléfono (lecturaDe). Lo
+  // que dice su computadora (un avance, el resultado) también: así se dice tal cual en la voz.
+  if (accion.tipo === 'leer' || accion.tipo === 'buscar' || (accion.tipo === 'computadora' && accion.texto)) accion = { ...accion, boleto: anotarLectura(correo) };
   const evento: EventoAccion = { id: o.id || nuevoIdAccion(), accion };
   const aparato = aparatoValido(o.aparato);
   // Lo que espera el «sí» es de ESTE aparato (ámbito), no de la cuenta entera.
@@ -387,7 +427,7 @@ function contacto(x: unknown): Contacto | null {
 export function validarContexto(cuerpo: unknown): { ok: true; contexto: ContextoApp } | { ok: false; error: string } {
   if (!cuerpo || typeof cuerpo !== 'object' || Array.isArray(cuerpo)) return { ok: false, error: 'El contexto tiene que ser un objeto.' };
   const b = cuerpo as Record<string, unknown>;
-  if (!PANTALLAS.includes(b.pantalla as Pantalla)) return { ok: false, error: 'pantalla es mesa, chats, ajustes o perfil.' };
+  if (!PANTALLAS.includes(b.pantalla as Pantalla)) return { ok: false, error: 'pantalla es mesa, chats, ajustes, perfil, computadora, whatsapp, correos, misiones, conocer o circulo.' };
   if (b.contactos !== undefined && !Array.isArray(b.contactos)) return { ok: false, error: 'contactos es una lista.' };
   const vistos = new Set<string>();
   const contactos: Contacto[] = [];
@@ -759,8 +799,8 @@ export function reglasAcciones(ctx: ContextoApp | null): string {
   const lineas = [
     'APP (puedes manejar la app de la persona): para hacer algo en su teléfono, escribe al final de tu respuesta UNA línea sola por acción, así:',
     'ACCION_APP: {"tipo":"atras"}',
-    'Las acciones: {"tipo":"atras"} · {"tipo":"abrir","pantalla":"mesa|chats|ajustes|perfil"} · {"tipo":"tema","valor":"oscuro|claro|sistema"} · {"tipo":"avatar","valor":"ojos|aura|claudio"} · {"tipo":"abrir_chat","con":"<nombre>"} · {"tipo":"redactar","para":"<nombre>","texto":"<mensaje>"} · {"tipo":"enviar","para":"<nombre>"} · {"tipo":"descartar"} · {"tipo":"silencio","valor":true} · {"tipo":"presencia","valor":"completa|lado|paseo"}.',
-    'Cuándo: «vete atrás / regresa» → atras. «abre ajustes / los chats / la mesa / mi perfil» → abrir. «ponlo oscuro / claro» → tema. «cambia a Claudio / a AU-RA / al Guardián» → avatar (Guardián = ojos). «cállate / silencio» → silencio. «ponte a pantalla completa / en grande» → presencia completa; «ponte al lado (del chat)» → presencia lado; «ponte chiquita / vuelve a caminar» → presencia paseo.',
+    'Las acciones: {"tipo":"atras"} · {"tipo":"abrir","pantalla":"mesa|chats|ajustes|perfil|computadora|whatsapp|correos|misiones|conocer|circulo"} · {"tipo":"tema","valor":"oscuro|claro|sistema"} · {"tipo":"avatar","valor":"ojos|aura|claudio"} · {"tipo":"abrir_chat","con":"<nombre>"} · {"tipo":"redactar","para":"<nombre>","texto":"<mensaje>"} · {"tipo":"enviar","para":"<nombre>"} · {"tipo":"descartar"} · {"tipo":"silencio","valor":true} · {"tipo":"presencia","valor":"completa|lado|paseo"}.',
+    'Cuándo: «vete atrás / regresa» → atras. «abre ajustes / los chats / la mesa / mi perfil» → abrir. «abre tu computadora / muéstrame tu pantalla / lo que estás haciendo» → abrir computadora (la ves en vivo); «abre WhatsApp / mis WhatsApp» → abrir whatsapp; «abre mis correos» → abrir correos; «abre mis misiones» → abrir misiones; «qué has aprendido de mí / qué quedó pendiente» → abrir conocer; «abre mi círculo / mi familia en la app» → abrir circulo. Funciona desde cualquier pantalla. Si además piden HACER algo en páginas («usa tu computadora y busca…»), eso es PEDIR_HERRAMIENTA computadora: la pantalla se abre sola. «ponlo oscuro / claro» → tema. «cambia a Claudio / a AU-RA / al Guardián» → avatar (Guardián = ojos). «cállate / silencio» → silencio. «ponte a pantalla completa / en grande» → presencia completa; «ponte al lado (del chat)» → presencia lado; «ponte chiquita / vuelve a caminar» → presencia paseo.',
     '«Escríbele a X que …»: busca a X en CONTACTOS (por nombre o parentesco: «mi mamá» es el contacto que se llama así). Si está, redactar con el mensaje escrito como lo escribiría la persona (en primera persona: «dile que llego tarde» → «Llego tarde»), y DI el borrador en voz alta: «Le escribo a Beto: “Llego tarde”. ¿Lo envío?». Si no está o hay dos parecidos, NO redactes: pregunta a quién.',
     'Enviar SOLO si la persona lo confirma de forma explícita («sí», «envíalo», «mándalo») en el turno siguiente a oír el borrador: entonces enviar y di «¡Listo, enviado!». Aunque la orden de redactar diga «y mándalo», primero redacta y pregunta; nunca redactar y enviar en la misma respuesta. «Bórralo / no lo mandes» → descartar. Nunca envíes por tu cuenta.',
     'La línea ACCION_APP no se lee ni se dice: la hace la app. No expliques la línea ni la menciones.',
@@ -826,11 +866,25 @@ const PANTALLA_DE: Array<[RegExp, Pantalla]> = [
   [/^(el |mi |the |my )?(perfil|profile)$/, 'perfil'],
   // «Lo que sabe de mí» (la pantalla de Perfil): «abre lo que sabes de mí», «muéstrame qué sabes de mí».
   [/^(lo )?que (sabes|sabe|conoces) de mi$|^what you know about me$/, 'perfil'],
+  // Su computadora en la nube, en vivo: «abre la computadora», «muéstrame tu pantalla», «lo que estás haciendo».
+  [/^(la |tu |su |mi |the |your |my )?(computadora|compu|computer|pc)( en la nube)?$/, 'computadora'],
+  [/^(tu |su |your )(pantalla|screen|escritorio|desktop)$/, 'computadora'],
+  [/^(lo )?que (estas|esta) haciendo( en (tu|la) (computadora|compu))?$|^lo que haces$|^what (youre|you re|you are) doing$/, 'computadora'],
+  // Los chats con la pestaña de WhatsApp: «abre WhatsApp», «mis WhatsApp».
+  [/^(el |mi |mis |los |the |my )?(whatsapp|whatsapps|wasap|wasaps|guasap|whats app)$/, 'whatsapp'],
+  // Sus buzones (Correos): «abre mis correos». «Muéstrame mis correos» no: eso es leerlos (el cerebro).
+  [/^(el |mi |mis |los |tus |the |my )?(correos?|correo electronico|emails?|e mails?|mails?|buzones|inbox)$/, 'correos'],
+  // Sus misiones (metas que AU-RA acompaña) y su círculo (familia, socios): «abre mis misiones», «abre mi círculo».
+  [/^(las |mis |tus |the |my )?(misiones|metas|missions|goals)$/, 'misiones'],
+  [/^(el |mi |tu |the |my )?(circulo|circulo cercano|circle|inner circle)$/, 'circulo'],
 ];
 
+/** Con estos verbos se pide VER algo (que se lo lean), no abrir la pantalla de los buzones. */
+const RE_VERBO_VER = /^(muestrame|ensename|show|show me)$/;
+
 const DICHOS: Record<'es' | 'en', Record<string, string>> = {
-  es: { completa: 'Aquí estoy, de frente.', lado: 'Me pongo a tu lado.', paseo: 'Me hago chiquita.', atras: 'Listo.', ajustes: 'Abro ajustes.', chats: 'Abro tus chats.', mesa: 'Vamos a la mesa.', perfil: 'Abro tu perfil.', oscuro: 'Listo, en oscuro.', claro: 'Listo, en claro.', sistema: 'Listo, como el sistema.', ojos: 'Te paso con el Guardián.', aura: 'Aquí AU-RA.', claudio: '¡Va! Te paso con Claudio.', antonio: '¡Va! Te paso con ANT-ONIO.', silencio: 'Va.', habla: 'Aquí estoy.', enviar: '¡Listo, enviado!', descartar: 'Listo, lo borré.' },
-  en: { completa: 'Here I am, full screen.', lado: "I'll stay by your side.", paseo: "I'll make myself small.", atras: 'Done.', ajustes: 'Opening settings.', chats: 'Opening your chats.', mesa: 'Back to the desk.', perfil: 'Opening your profile.', oscuro: 'Done, dark it is.', claro: 'Done, light it is.', sistema: 'Done, following the system.', ojos: 'Switching you to the Guardian.', aura: 'AU-RA here.', claudio: 'Sure! Switching you to Claudio.', antonio: 'Sure! Switching you to ANT-ONIO.', silencio: 'Okay.', habla: "I'm here.", enviar: 'Done, sent!', descartar: 'Okay, I deleted it.' },
+  es: { completa: 'Aquí estoy, de frente.', lado: 'Me pongo a tu lado.', paseo: 'Me hago chiquita.', atras: 'Listo.', ajustes: 'Abro ajustes.', chats: 'Abro tus chats.', mesa: 'Vamos a la mesa.', perfil: 'Abro tu perfil.', computadora: 'Mira, esta es mi computadora.', whatsapp: 'Abro tu WhatsApp.', correos: 'Abro tus correos.', misiones: 'Aquí están tus misiones.', conocer: 'Esto es lo que sé de ti.', circulo: 'Abro tu círculo.', oscuro: 'Listo, en oscuro.', claro: 'Listo, en claro.', sistema: 'Listo, como el sistema.', ojos: 'Te paso con el Guardián.', aura: 'Aquí AU-RA.', claudio: '¡Va! Te paso con Claudio.', antonio: '¡Va! Te paso con ANT-ONIO.', silencio: 'Va.', habla: 'Aquí estoy.', enviar: '¡Listo, enviado!', descartar: 'Listo, lo borré.' },
+  en: { completa: 'Here I am, full screen.', lado: "I'll stay by your side.", paseo: "I'll make myself small.", atras: 'Done.', ajustes: 'Opening settings.', chats: 'Opening your chats.', mesa: 'Back to the desk.', perfil: 'Opening your profile.', computadora: 'Look, this is my computer.', whatsapp: 'Opening your WhatsApp.', correos: 'Opening your email.', misiones: 'Here are your missions.', conocer: 'This is what I know about you.', circulo: 'Opening your circle.', oscuro: 'Done, dark it is.', claro: 'Done, light it is.', sistema: 'Done, following the system.', ojos: 'Switching you to the Guardian.', aura: 'AU-RA here.', claudio: 'Sure! Switching you to Claudio.', antonio: 'Sure! Switching you to ANT-ONIO.', silencio: 'Okay.', habla: "I'm here.", enviar: 'Done, sent!', descartar: 'Okay, I deleted it.' },
 };
 
 /**
@@ -939,8 +993,11 @@ function reglasDeSiempre(q: string, o: { idioma?: 'es' | 'en'; contexto?: Contex
   const abrir = /^(abre|abreme|abrir|ve a|vete a|ir a|llevame a|muestrame|ensename|entra a|pon|open|go to|show me|show|take me to) (.+)$/.exec(q);
   if (abrir) {
     const p = PANTALLA_DE.find(([re]) => re.test(abrir[2]))?.[1];
-    if (p) return hecho({ tipo: 'abrir', pantalla: p }, d[p]);
+    if (p && !(p === 'correos' && RE_VERBO_VER.test(abrir[1]))) return hecho({ tipo: 'abrir', pantalla: p }, d[p]);
   }
+  // «Quiero ver tu computadora», «déjame ver lo que estás haciendo»: solo su computadora (lo demás, Laya).
+  const ver = /^(quiero ver|dejame ver|let me see) (.+)$/.exec(q);
+  if (ver && PANTALLA_DE.find(([re]) => re.test(ver[2]))?.[1] === 'computadora') return hecho({ tipo: 'abrir', pantalla: 'computadora' }, d.computadora);
 
   const tema =
     /^(?:(pon(?:lo|la|me|le)?|cambia(?:lo|la)?|activa|usa|switch|make it|set it|turn on) )?(?:(?:a|al|en|to) )?(?:(?:el|la) )?(?:(modo|tema|theme|mode) )?(oscuro|negro|noche|dark|claro|blanco|dia|light|sistema|automatico|auto|system)(?: (mode|theme))?$/.exec(q);

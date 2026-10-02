@@ -26,6 +26,11 @@ export type IdiomaPerfil = 'es' | 'en';
 export type PresenciaPerfil = 'paseo' | 'lado' | 'completa';
 /** Quién maneja la computadora del agente: el modelo abierto propio (gratis) o Claude (de pago). */
 export type MotorComputadora = 'gratis' | 'pago';
+/**
+ * Cuánta iniciativa quiere de AURA (lib/iniciativa.ts): con qué frecuencia le propone cosas sin que se
+ * lo pida. Sin elegir, 'media' (iniciativaDe).
+ */
+export type NivelIniciativa = 'alta' | 'media' | 'baja' | 'apagada';
 
 export type Encuesta = {
   vive?: string;
@@ -48,6 +53,7 @@ export type Perfil = {
   completado: boolean;
   presencia?: PresenciaPerfil;
   motorComputadora?: MotorComputadora;
+  iniciativa?: NivelIniciativa;
   actualizado: number;
 };
 
@@ -58,6 +64,13 @@ const AVATARES: AvatarPerfil[] = ['ojos', 'aura', 'claudio', 'antonio'];
 const TEMAS: Tema[] = ['oscuro', 'claro', 'sistema'];
 const PRESENCIAS: PresenciaPerfil[] = ['paseo', 'lado', 'completa'];
 const MOTORES: MotorComputadora[] = ['gratis', 'pago'];
+export const NIVELES_INICIATIVA: readonly NivelIniciativa[] = ['alta', 'media', 'baja', 'apagada'];
+export const INICIATIVA_POR_OMISION: NivelIniciativa = 'media';
+
+/** La iniciativa que eligió (o la de por omisión, 'media'). */
+export function iniciativaDe(p: Pick<Perfil, 'iniciativa'> | null | undefined): NivelIniciativa {
+  return p?.iniciativa && NIVELES_INICIATIVA.includes(p.iniciativa) ? p.iniciativa : INICIATIVA_POR_OMISION;
+}
 const DIAS_DEL_MES = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
 /** Texto limpio de una línea: sin caracteres de control ni saltos (van al prompt), recortado. */
@@ -129,6 +142,10 @@ export function validarCambios(cuerpo: unknown): { ok: true; cambios: Cambios } 
     if (!MOTORES.includes(b.motorComputadora as MotorComputadora)) return { ok: false, error: 'La computadora es gratis o pago.' };
     c.motorComputadora = b.motorComputadora as MotorComputadora;
   }
+  if (b.iniciativa !== undefined) {
+    if (!NIVELES_INICIATIVA.includes(b.iniciativa as NivelIniciativa)) return { ok: false, error: 'La iniciativa es alta, media, baja o apagada.' };
+    c.iniciativa = b.iniciativa as NivelIniciativa;
+  }
   if (b.encuesta !== undefined) {
     if (!b.encuesta || typeof b.encuesta !== 'object' || Array.isArray(b.encuesta)) return { ok: false, error: 'La encuesta tiene que ser un objeto.' };
     const e = b.encuesta as Record<string, unknown>;
@@ -190,6 +207,7 @@ function sanear(raw: unknown): Perfil | null {
     // Un valor viejo o raro no invalida el perfil entero: se queda sin presencia (paseo).
     presencia: PRESENCIAS.includes(r.presencia as PresenciaPerfil) ? r.presencia : undefined,
     motorComputadora: MOTORES.includes(r.motorComputadora as MotorComputadora) ? r.motorComputadora : undefined,
+    iniciativa: NIVELES_INICIATIVA.includes(r.iniciativa as NivelIniciativa) ? r.iniciativa : undefined,
   });
   if (!v.ok) return null;
   const p = aplicarCambios(perfilInicial({ nombreGenesis: String(r.nombreGenesis || '') }), v.cambios, Number(r.actualizado) || 0);
