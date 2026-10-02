@@ -8,7 +8,49 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { duracionTexto, etiquetaMedia, filasWA, juntar, nombreChat, previa, sondeoWA, telefonoValido, textoBurbuja, totalNoLeidos, vistaDe } from '../logica.ts';
+import {
+  archivoCache,
+  archivoFoto,
+  chatDeContacto,
+  mediaReintentable,
+  normalizarContactos,
+  coincide,
+  colaLimitada,
+  colorAvatar,
+  colorNombre,
+  digitosDeJid,
+  digitosLlamada,
+  duracionTexto,
+  enlacesWhatsapp,
+  etiquetaConDuracion,
+  etiquetaDiaWA,
+  etiquetaMedia,
+  filasWA,
+  formaDe,
+  horaLista,
+  horaWA,
+  huellaChats,
+  huellaMensajes,
+  inicialesWA,
+  juntar,
+  juntarChats,
+  mensajeErrorMedia,
+  nombreChat,
+  nombrePersona,
+  normalizarChats,
+  numeroChat,
+  paletaWA,
+  previa,
+  previaTexto,
+  previaWA,
+  sondeoWA,
+  subtituloChat,
+  telefonoBonito,
+  telefonoValido,
+  textoBurbuja,
+  totalNoLeidos,
+  vistaDe,
+} from '../logica.ts';
 import { atrasWhatsapp, registrarAtras } from '../atras.ts';
 
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
@@ -39,7 +81,7 @@ prueba('cada mensaje dicho como en WhatsApp', () => {
 });
 
 prueba('la lista: nombres, vista previa y sin leer', () => {
-  assert.equal(nombreChat({ nombre: '', jid: '50499990000@s.whatsapp.net' }), '+50499990000');
+  assert.equal(nombreChat({ nombre: '', jid: '50499990000@s.whatsapp.net' }), '+504 9999-0000', 'el número, bonito');
   assert.equal(nombreChat({ nombre: 'Beto', jid: 'x' }), 'Beto');
   assert.equal(previa({ ultimoMio: true, grupo: false, ultimo: 'Sí llego' }), 'Tú: Sí llego');
   assert.equal(previa({ ultimoMio: false, grupo: true, ultimoDe: 'Mamá', ultimo: '📷 Foto' }), 'Mamá: 📷 Foto');
@@ -104,7 +146,207 @@ prueba('las dos entradas de chats llevan la pestaña de WhatsApp; otra cuenta ve
   assert.match(envoltorio, /clearTimeout\(espera\)/, 'al salir no queda un reintento colgado');
   const pantalla = leer('whatsapp/PantallaWhatsapp.tsx');
   assert.match(pantalla, /Vincular con el número de teléfono/, 'el código sirve en el mismo teléfono');
-  assert.match(pantalla, /API\.leidoWA/, 'abrir un chat lo marca leído');
+  const chat = leer('whatsapp/ConversacionWA.tsx');
+  assert.match(chat, /API\.leidoWA/, 'abrir un chat lo marca leído');
+  assert.match(chat, /registrarAtras\(/, '«atrás» cierra el chat (y antes la foto o el video)');
+  assert.match(chat, /sondeoWA\('listo', true\)/, 'el chat abierto se renueva rápido');
+});
+
+prueba('las fotos se bajan con la sesión renovable, no con <Image headers> (la causa de que no cargaran)', () => {
+  const leer = (r) => fs.readFileSync(path.join(AQUI, '..', '..', r), 'utf8');
+  const todo = ['whatsapp/PantallaWhatsapp.tsx', 'whatsapp/ConversacionWA.tsx', 'whatsapp/PiezasWA.tsx', 'whatsapp/api.ts'].map(leer).join('\n');
+  assert.doesNotMatch(todo, /headers:\s*token|source=\{foto\}|fuenteMedia/, 'ya no se pasa el token a <Image> (vence y la foto queda en blanco)');
+  const medios = leer('whatsapp/medios.ts');
+  assert.match(medios, /r\.status === 401 && intento === 0 && \(await renovarSesion\(\)\)/, 'ante un 401 renueva la sesión y reintenta una vez');
+  assert.match(medios, /api\('\/api\/whatsapp\/estado'/, 'renueva como api() (con la clave guardada)');
+  assert.match(medios, /colaLimitada\(4\)/, 'las fotos de perfil salen de a cuatro');
+  assert.match(medios, /cacheDirectory/, 'se guardan en el caché del teléfono');
+  const piezas = leer('whatsapp/PiezasWA.tsx');
+  assert.match(piezas, /useMediaWA\(m, !!m\.conMedia\)/, 'la foto se baja sola aunque no traiga miniatura');
+  assert.match(piezas, /blurRadius/, 'la miniatura borrosa mientras baja la foto');
+});
+
+prueba('números y nombres: nunca vacío, nunca un «@lid» disfrazado de número', () => {
+  assert.equal(telefonoBonito('50499998888'), '+504 9999-8888');
+  assert.equal(telefonoBonito('+1 305 555 1234'), '+1 305-555-1234');
+  assert.equal(telefonoBonito('34612345678'), '+34 612 34 56 78');
+  assert.equal(telefonoBonito('hola'), '');
+  assert.equal(digitosDeJid('50499998888:12@s.whatsapp.net'), '50499998888', 'sin el aparato');
+  assert.equal(digitosDeJid('123456789012345@lid'), '', 'un @lid no es un número de teléfono');
+  assert.equal(digitosDeJid('120363000000@g.us'), '');
+  assert.equal(nombreChat({ nombre: '', jid: '123456789012345@lid' }), 'Contacto', 'sin número ni nombre: «Contacto», no un número falso');
+  assert.equal(nombreChat({ nombre: '', jid: '123456789012345@lid', numero: '+504 9999-8888' }), '+504 9999-8888', 'el número que manda el servidor');
+  assert.equal(nombreChat({ nombre: '   ', jid: '120363000000@g.us', grupo: true }), 'Grupo');
+  assert.equal(nombreChat({ nombre: '', jid: '' }), 'Contacto');
+  assert.equal(nombreChat({ nombre: '', jid: '' }, 'en'), 'Contact');
+  assert.equal(nombreChat({ nombre: '50499998888', jid: '50499998888@s.whatsapp.net' }), '+504 9999-8888', 'un nombre que es un número se ve bonito');
+  assert.equal(nombreChat({ nombre: 'Familia 2026', jid: 'x@g.us', grupo: true }), 'Familia 2026');
+  assert.equal(nombrePersona(''), 'Alguien');
+  assert.equal(nombrePersona('50499998888'), '+504 9999-8888');
+  assert.equal(numeroChat({ jid: '50499998888@s.whatsapp.net', grupo: false }), '50499998888');
+  assert.equal(numeroChat({ jid: 'x@g.us', grupo: true, numero: '+504 1' }), '', 'los grupos no tienen número');
+  assert.equal(subtituloChat({ nombre: 'Beto', jid: '50499998888@s.whatsapp.net', grupo: false }), '+504 9999-8888', 'el número debajo del nombre');
+  assert.equal(subtituloChat({ nombre: '', jid: '50499998888@s.whatsapp.net', grupo: false }), '', 'si el nombre ya es el número, no se repite');
+  assert.equal(subtituloChat({ nombre: 'Familia', jid: 'x@g.us', grupo: true }), 'grupo');
+  for (const c of normalizarChats([{ jid: 'a@lid' }, { jid: 'b@g.us', nombre: null }, { jid: '50499998888@s.whatsapp.net', ultimo: null }])) assert.ok(nombreChat(c).length > 0, `nombre para ${c.jid}`);
+});
+
+prueba('llamar abre su app de WhatsApp en ese contacto (whatsmeow no llama)', () => {
+  assert.equal(digitosLlamada({ jid: '50499998888@s.whatsapp.net', grupo: false }), '50499998888');
+  assert.equal(digitosLlamada({ jid: 'x@lid', grupo: false, numero: '+504 9999-8888' }), '50499998888');
+  assert.equal(digitosLlamada({ jid: 'x@g.us', grupo: true }), null, 'en grupos no hay botón');
+  assert.equal(digitosLlamada({ jid: 'x@lid', grupo: false }), null, 'sin número no hay botón');
+  assert.deepEqual(enlacesWhatsapp('50499998888'), { app: 'whatsapp://send?phone=50499998888', web: 'https://wa.me/50499998888' });
+  const chat = fs.readFileSync(path.join(AQUI, '..', 'ConversacionWA.tsx'), 'utf8');
+  assert.match(chat, /Las llamadas se hacen en tu app de WhatsApp/, 'se explica una vez');
+  assert.match(chat, /\{digitos \? \(/, 'sin número (o en grupo) no hay botones de llamar');
+});
+
+prueba('las horas como WhatsApp: hoy la hora, «Ayer», si no la fecha; los días del chat', () => {
+  const ahora = new Date(2026, 9, 2, 18, 30).getTime();
+  assert.equal(horaWA(new Date(2026, 9, 2, 9, 5).getTime()), '09:05');
+  assert.equal(horaLista(new Date(2026, 9, 2, 14, 5).getTime(), ahora), '14:05');
+  assert.equal(horaLista(new Date(2026, 9, 1, 23, 59).getTime(), ahora), 'Ayer');
+  assert.equal(horaLista(new Date(2026, 9, 1, 23, 59).getTime(), ahora, 'en'), 'Yesterday');
+  assert.equal(horaLista(new Date(2026, 8, 28, 10, 0).getTime(), ahora), '28/09/26');
+  assert.equal(horaLista(0, ahora), '');
+  assert.equal(etiquetaDiaWA(new Date(2026, 9, 2, 1, 0).getTime(), ahora), 'Hoy');
+  assert.equal(etiquetaDiaWA(new Date(2026, 9, 1, 1, 0).getTime(), ahora), 'Ayer');
+  assert.equal(etiquetaDiaWA(new Date(2026, 8, 28, 1, 0).getTime(), ahora), 'Lunes', 'esta semana, el día');
+  assert.equal(etiquetaDiaWA(new Date(2026, 8, 2, 1, 0).getTime(), ahora), '2 de septiembre');
+  assert.equal(etiquetaDiaWA(new Date(2025, 11, 24, 1, 0).getTime(), ahora), '24 de diciembre de 2025');
+});
+
+prueba('la vista previa con su icono (foto, nota de voz, documento, sticker)', () => {
+  assert.deepEqual(previaWA({ ultimo: '📷 Foto', ultimoMio: false, grupo: false }), { quien: '', icono: 'foto', texto: 'Foto' });
+  assert.deepEqual(previaWA({ ultimo: '📷 Foto · la casa', ultimoMio: false, grupo: true, ultimoDe: 'Mamá' }), { quien: 'Mamá', icono: 'foto', texto: 'la casa' });
+  assert.deepEqual(previaWA({ ultimo: '🎤 Nota de voz', ultimoMio: true, grupo: false }), { quien: 'Tú', icono: 'audio', texto: 'Nota de voz' });
+  assert.deepEqual(previaWA({ ultimo: '📄 Documento · contrato', ultimoMio: false, grupo: false }), { quien: '', icono: 'documento', texto: 'contrato' });
+  assert.equal(previaWA({ ultimo: 'Sticker', ultimoMio: false, grupo: false }).icono, 'sticker');
+  assert.deepEqual(previaWA({ ultimo: '🚫 Mensaje eliminado', ultimoMio: true, grupo: false }), { quien: '', icono: 'eliminado', texto: 'Se eliminó este mensaje' });
+  assert.deepEqual(previaWA({ ultimo: 'hola\n¿cómo vas?', ultimoMio: false, grupo: false }), { quien: '', icono: null, texto: 'hola ¿cómo vas?' });
+  assert.equal(previaWA({ ultimo: '🎤 Nota de voz', ultimoMio: false, grupo: false }, 'en').texto, 'Voice note');
+  assert.equal(previaWA({ ultimo: 'x', ultimoMio: false, grupo: true, ultimoDe: '50499998888' }).quien, '+504 9999-8888');
+  assert.equal(previaTexto({ ultimo: '📷 Foto', ultimoMio: true, grupo: false }), 'Tú: Foto');
+  assert.equal(previaWA({ ultimo: undefined, ultimoMio: false, grupo: false }).texto, '', 'sin último mensaje no se cae');
+  assert.equal(etiquetaConDuracion('audio', 12), 'Nota de voz 0:12');
+  assert.equal(etiquetaConDuracion('video', 65, 'en'), 'Video 1:05');
+});
+
+prueba('el círculo sin foto: iniciales y un color fijo por chat', () => {
+  assert.equal(inicialesWA('María José López'), 'ML');
+  assert.equal(inicialesWA('beto'), 'B');
+  assert.equal(inicialesWA('🙂 Ana'), 'A', 'los emojis no son iniciales');
+  assert.equal(inicialesWA('+504 9999-8888'), '', 'un número lleva la silueta');
+  assert.equal(inicialesWA(''), '');
+  assert.equal(colorAvatar('a@s.whatsapp.net'), colorAvatar('a@s.whatsapp.net'));
+  assert.match(colorAvatar('x'), /^#[0-9A-F]{6}$/i);
+  assert.notEqual(colorNombre('a', true), undefined);
+  assert.match(colorNombre('b', false), /^#[0-9A-F]{6}$/i);
+});
+
+prueba('los colores de WhatsApp en claro y oscuro', () => {
+  const claro = paletaWA(false);
+  const oscuro = paletaWA(true);
+  assert.equal(claro.cabecera, '#008069');
+  assert.equal(oscuro.cabecera, '#1F2C34');
+  assert.equal(claro.chat, '#EFEAE2');
+  assert.equal(oscuro.chat, '#0B141A');
+  assert.equal(claro.mia, '#D9FDD3');
+  assert.equal(oscuro.mia, '#005C4B');
+  assert.equal(claro.otra, '#FFFFFF');
+  assert.equal(oscuro.otra, '#202C33');
+  assert.equal(claro.globo, '#25D366');
+});
+
+prueba('cada mensaje con su forma, y el caché con nombres de archivo seguros', () => {
+  assert.equal(formaDe({ tipo: 'imagen' }), 'imagen');
+  assert.equal(formaDe({ tipo: 'sticker' }), 'sticker');
+  assert.equal(formaDe({ tipo: 'texto', eliminado: true }), 'eliminado');
+  assert.equal(formaDe({ tipo: 'ubicacion' }), 'otro');
+  assert.equal(formaDe({ tipo: '' }), 'texto');
+  assert.equal(archivoCache('504@s.whatsapp.net', '3EB0:AB/..', 'imagen'), 'm-504_s.whatsapp.net-3EB0_AB_...jpg');
+  assert.equal(archivoCache('c', 'i', 'documento', 'contrato.PDF'), 'm-c-i.pdf');
+  assert.equal(archivoCache('c', 'i', 'audio'), 'm-c-i.ogg');
+  assert.ok(!/[/@:]/.test(archivoFoto('504@s.whatsapp.net:1')));
+});
+
+prueba('lo que se dice cuando una foto no baja', () => {
+  assert.match(mensajeErrorMedia(413, ''), /16 MB/);
+  assert.match(mensajeErrorMedia(404, 'WhatsApp no lo dio (puede haber vencido): 410 gone'), /ya no lo tiene/);
+  assert.match(mensajeErrorMedia(0, ''), /Sin conexión/);
+  assert.match(mensajeErrorMedia(401, ''), /sesión/);
+  assert.equal(mensajeErrorMedia(502, 'El puente de WhatsApp no contestó (timeout).'), 'El puente de WhatsApp no contestó (timeout).');
+  assert.match(mensajeErrorMedia(500, 'HTTP 500'), /No se pudo cargar/);
+});
+
+prueba('«Nuevo chat»: los contactos del teléfono abren su conversación (la que ya existe, si la hay)', () => {
+  const ks = normalizarContactos([{ jid: '50499998888@s.whatsapp.net', nombre: 'Beto', numero: '+504 9999-8888' }, { nombre: 'sin jid' }, { jid: '50433332222@s.whatsapp.net' }]);
+  assert.equal(ks.length, 2);
+  assert.deepEqual(ks[1], { jid: '50433332222@s.whatsapp.net', nombre: '', numero: '' });
+  assert.equal(normalizarContactos(undefined).length, 0);
+  const chats = normalizarChats([{ jid: '1@lid', nombre: 'Beto', numero: '+504 9999-8888', hora: 9, ultimo: 'hola' }]);
+  assert.equal(chatDeContacto(ks[0], chats).jid, '1@lid', 'si ya hay chat con ese número, se abre ese');
+  const nuevo = chatDeContacto(ks[1], chats);
+  assert.equal(nuevo.jid, '50433332222@s.whatsapp.net');
+  assert.equal(nuevo.grupo, false);
+  assert.equal(nombreChat(nuevo), '+504 3333-2222', 'sin nombre: su número');
+  const lista = fs.readFileSync(path.join(AQUI, '..', 'PantallaWhatsapp.tsx'), 'utf8');
+  assert.match(lista, /<NuevoChatWA /, 'el botón «Nuevo chat» abre los contactos');
+  assert.match(fs.readFileSync(path.join(AQUI, '..', 'api.ts'), 'utf8'), /\/api\/whatsapp\/contactos/);
+});
+
+prueba('una foto que ya no está (410) se dice sin «reintentar»; las viejas pueden tardar', () => {
+  assert.equal(mensajeErrorMedia(410, 'esa foto ya no está en WhatsApp; ábrela en tu teléfono'), 'Esa foto ya no está en WhatsApp; ábrela en tu teléfono');
+  assert.match(mensajeErrorMedia(410, ''), /ya no está en WhatsApp/);
+  assert.equal(mediaReintentable(410), false);
+  assert.equal(mediaReintentable(413), false);
+  assert.equal(mediaReintentable(412), false);
+  assert.equal(mediaReintentable(502), true);
+  assert.equal(mediaReintentable(0), true);
+  assert.match(fs.readFileSync(path.join(AQUI, '..', 'medios.ts'), 'utf8'), /MEDIA_TOPE_MS = 90_000/, 'el puente puede tardar ~80 s en traer una foto vieja');
+});
+
+prueba('la fila de espera: a lo más N a la vez, y lo último pedido va primero', async () => {
+  const cola = colaLimitada(2);
+  let activas = 0;
+  let maximo = 0;
+  const orden = [];
+  const tarea = (n) => () =>
+    new Promise((listo) => {
+      activas++;
+      maximo = Math.max(maximo, activas);
+      orden.push(n);
+      setTimeout(() => {
+        activas--;
+        listo(n);
+      }, 5);
+    });
+  const r = await Promise.all([1, 2, 3, 4, 5].map((n) => cola(tarea(n))));
+  assert.deepEqual(r, [1, 2, 3, 4, 5]);
+  assert.equal(maximo, 2);
+  assert.deepEqual(orden, [1, 2, 5, 4, 3], 'con la fila llena, lo recién mostrado va primero');
+  await assert.rejects(cola(() => Promise.reject(new Error('x'))));
+  assert.equal(await cola(async () => 'sigue'), 'sigue', 'un fallo no traba la fila');
+});
+
+prueba('la lista: nunca se cae un chat; buscar por nombre, número o mensaje; chats viejos del servidor', () => {
+  const cs = normalizarChats([{ jid: '50499998888@s.whatsapp.net', nombre: 'Beto', ultimo: 'nos vemos', hora: 5 }, { jid: 'a@lid' }, { nombre: 'sin jid' }, null, { jid: 'g@g.us', noLeidos: '3' }]);
+  assert.equal(cs.length, 3, 'solo se descarta lo que no tiene jid');
+  assert.equal(cs[1].ultimo, '');
+  assert.equal(cs[2].grupo, true);
+  assert.equal(cs[2].noLeidos, 3);
+  assert.equal(normalizarChats(null).length, 0);
+  assert.ok(coincide(cs[0], 'beto'));
+  assert.ok(coincide(cs[0], '9999 8888'), 'por número, con espacios');
+  assert.ok(coincide(cs[0], 'vemos'));
+  assert.ok(!coincide(cs[0], 'zzz'));
+  assert.ok(coincide(cs[1], ''));
+  assert.deepEqual(juntarChats([cs[0]], [cs[0], cs[1]]).map((c) => c.jid), [cs[0].jid, cs[1].jid]);
+  assert.notEqual(huellaChats([cs[0]]), huellaChats([{ ...cs[0], noLeidos: 1 }]));
+  const m = { id: '1', texto: 'a', tipo: 'texto' };
+  assert.equal(huellaMensajes([m]), huellaMensajes([{ ...m }]));
+  assert.notEqual(huellaMensajes([m]), huellaMensajes([{ ...m, eliminado: true }]));
 });
 
 let ok = 0;
