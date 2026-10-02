@@ -30,6 +30,11 @@ export type Resumen = {
 
 export type Mensaje = Resumen & {
   para: string;
+  /** Con copia, como texto («Ana <ana@x.hn>, …»); «» si no hay. */
+  cc: string;
+  /** Las direcciones solas de «para» y «cc» (para «responder a todos»). */
+  paraCorreos: string[];
+  ccCorreos: string[];
   texto: string;
   adjuntos: { nombre: string; tipo: string; bytes: number }[];
   messageId: string;
@@ -147,6 +152,19 @@ function textoDe(a: AddressObject | AddressObject[] | undefined): string {
   return (Array.isArray(a) ? a : a ? [a] : []).map((x) => x.text).join(', ');
 }
 
+/** Solo las direcciones (sin nombres, sin repetir), también las de dentro de un grupo. */
+function correosDe(a: AddressObject | AddressObject[] | undefined): string[] {
+  const out: string[] = [];
+  const meter = (vs: AddressObject['value'] = []) => {
+    for (const v of vs) {
+      if (v.address && !out.includes(v.address.toLowerCase())) out.push(v.address.toLowerCase());
+      if (v.group) meter(v.group);
+    }
+  };
+  for (const x of Array.isArray(a) ? a : a ? [a] : []) meter(x.value);
+  return out;
+}
+
 /** HTML a texto legible (cuando el correo no trae parte de texto). */
 export function htmlATexto(html: string): string {
   return String(html || '')
@@ -225,6 +243,9 @@ export async function leer(quien: string, c: CuentaCorreo, uid: number): Promise
         de: de.nombre,
         deCorreo: de.correo,
         para: textoDe(p.to),
+        cc: textoDe(p.cc),
+        paraCorreos: correosDe(p.to),
+        ccCorreos: correosDe(p.cc),
         asunto: p.subject || '(sin asunto)',
         fecha: new Date(p.date || m.internalDate || Date.now()).toISOString(),
         noLeido: false,
@@ -242,7 +263,7 @@ export async function leer(quien: string, c: CuentaCorreo, uid: number): Promise
   }
 }
 
-export type Envio = { para: string[]; asunto: string; texto: string; enRespuestaA?: string; referencias?: string[] };
+export type Envio = { para: string[]; cc?: string[]; asunto: string; texto: string; enRespuestaA?: string; referencias?: string[] };
 
 /**
  * Manda un correo. Se arma una sola vez (MailComposer) para mandar por SMTP y, si el proveedor no lo
@@ -253,6 +274,7 @@ export async function mandar(quien: string, c: CuentaCorreo, e: Envio): Promise<
   const correo = {
     from: c.correo,
     to: e.para.join(', '),
+    ...(e.cc?.length ? { cc: e.cc.join(', ') } : {}),
     subject: e.asunto,
     text: e.texto,
     ...(e.enRespuestaA ? { inReplyTo: e.enRespuestaA, references: [...(e.referencias || []), e.enRespuestaA].join(' ') } : {}),
@@ -263,7 +285,7 @@ export async function mandar(quien: string, c: CuentaCorreo, e: Envio): Promise<
   let aceptados: string[] = [];
   let rechazados: string[] = [];
   try {
-    const r = await t.sendMail({ envelope: { from: c.correo, to: e.para }, raw: crudo });
+    const r = await t.sendMail({ envelope: { from: c.correo, to: [...e.para, ...(e.cc || [])] }, raw: crudo });
     messageId = r.messageId || '';
     const dir = (x: unknown) => (typeof x === 'string' ? x : (x as { address?: string })?.address || '');
     aceptados = (r.accepted || []).map(dir).filter(Boolean);
