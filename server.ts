@@ -2995,6 +2995,17 @@ const calentadoEn = new Map<string, number>();
 export const CALENTAR_CADA_MS = 60_000;
 /** Cuándo habló cada persona con el 27B por última vez (correo|voz): con un turno reciente su espacio ya está caliente. */
 const ultimoTurnoQwen = new Map<string, number>();
+/**
+ * Qué prompt tiene cada espacio del nodo ahora (correo o correo|voz; '' = otro o desconocido). Un turno escrito
+ * después de uno de voz, u otra persona que toma el espacio, lo cambian: entonces la voz ya NO está caliente
+ * aunque su último turno sea reciente (Codex en #126).
+ */
+const duenoEspacio = new Map<number, string>();
+function anotarEspacio(espacio: number | undefined, clave: string) {
+  if (!Number.isInteger(espacio)) return;
+  duenoEspacio.set(espacio as number, clave);
+  if (clave) ultimoTurnoQwen.set(clave, Date.now());
+}
 /** Con un turno así de reciente no se precalienta: el espacio ya tiene todo y un precalentado lo haría esperar. */
 export const CALIENTE_TRAS_TURNO_MS = 3 * 60_000;
 
@@ -3048,7 +3059,8 @@ async function calentarCerebroYa(correo: string): Promise<string> {
   const k = `${c}|voz`;
   if (!c || !ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) return 'sin cerebro';
   // Habló hace poco: su espacio ya tiene todo (y precalentar ahora podría hacer esperar su próximo turno).
-  if (Date.now() - (ultimoTurnoQwen.get(k) || 0) < CALIENTE_TRAS_TURNO_MS) return 'ya caliente';
+  const espacio = espacioDe(claveFijo(c, null));
+  if (duenoEspacio.get(espacio) === k && Date.now() - (ultimoTurnoQwen.get(k) || 0) < CALIENTE_TRAS_TURNO_MS) return 'ya caliente';
   if (!(await cargarPrecalentar(k))) return 'sin turno previo';
   const system = ultimoSistemaQwen.get(k);
   if (!system) return 'sin turno previo';
@@ -3060,7 +3072,10 @@ async function calentarCerebroYa(correo: string): Promise<string> {
   // En SU espacio y con lo último que se le mandó (system + historial): el primer turno de la llamada
   // solo lee lo nuevo. Solo el system (precalentarSistema sin historial) recortaba lo leído del espacio.
   const prefijo = ultimoPrefijoQwen.get(k);
-  void precalentarSistema(system, 0, { espacio: espacioDe(claveFijo(c, null)), mensajes: prefijo?.system === system ? prefijo.mensajes : undefined });
+  void precalentarSistema(system, 0, { espacio, mensajes: prefijo?.system === system ? prefijo.mensajes : undefined }).then((r) => {
+    // Quedó leído el prompt de la voz en su espacio (sin marcarlo como turno: el próximo precalentado igual puede pasar).
+    if (r?.ok) duenoEspacio.set(espacio, k);
+  });
   return 'precalentando';
 }
 
@@ -3102,6 +3117,8 @@ async function preguntarQwen(
   }
   if (alTexto) return preguntarQwenATrozos(mensajesQwen(system, message, hechos, hilo, nivel, contexto), espacio, alTexto, senal);
   try {
+    // Otro prompt en el espacio: lo que hubiera precalentado deja de contar como caliente.
+    anotarEspacio(espacio, '');
     const r = await fetchNodo(`${ULTRON_NODO_URL}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-ultron-secreto': ULTRON_NODO_SECRETO },
@@ -3128,6 +3145,7 @@ async function preguntarQwenATrozos(
   senal?: AbortSignal
 ): Promise<{ ok: boolean; reply: string; error?: string }> {
   try {
+    anotarEspacio(espacio, '');
     const r = await fetchNodo(`${ULTRON_NODO_URL}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-ultron-secreto': ULTRON_NODO_SECRETO },
@@ -3877,9 +3895,10 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     const c = `${String(p.correoApp).toLowerCase()}${p.compacto ? '|voz' : ''}`;
     ultimoSistemaQwen.set(c, system);
     ultimoPrefijoQwen.set(c, { system, mensajes: mensajesQwen(system, message, hechos, hilo, p.nivel, p.contexto).slice(1, -1) });
-    ultimoTurnoQwen.set(c, Date.now());
     guardarPrecalentar(c);
   }
+  // De quién queda el espacio con este turno (aunque sea sin cuenta): el precalentado lo mira (Codex en #126).
+  const claveEspacio = p.correoApp ? `${String(p.correoApp).toLowerCase()}${p.compacto ? '|voz' : ''}` : '';
   try {
     const r = await fetchNodo(`${ULTRON_NODO_URL}/api/chat`, {
       method: 'POST',
@@ -3887,6 +3906,8 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       body: JSON.stringify({ model: ULTRON_NODO_MODELO, stream: true, messages: mensajesQwen(system, message, hechos, hilo, p.nivel, p.contexto), options: { id_slot: p.espacio } }),
       signal: conTope(senal, 60000),
     });
+    // Solo un pedido que el nodo aceptó deja el espacio caliente (Codex en #126): si falló, el precalentado sigue valiendo.
+    anotarEspacio(p.espacio, r.ok && r.body ? claveEspacio : '');
     if (!r.ok || !r.body) {
       await r.body?.cancel().catch(() => {});
       const reply = sinCerebro(p.datos);
