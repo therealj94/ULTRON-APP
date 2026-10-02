@@ -12,7 +12,8 @@ import type { Pantalla } from '../nucleo/contrato';
 export type RaizParams = {
   Intro: undefined;
   Bienvenida: { desdeIntro?: boolean } | undefined;
-  Entrar: { desdeIntro?: boolean; aviso?: string; codigo?: string } | undefined;
+  /** `reintentar`: pedir el pase al llegar (cambia en cada pedido, como `Chats.whatsapp`). */
+  Entrar: { desdeIntro?: boolean; aviso?: string; codigo?: string; reintentar?: number } | undefined;
   CrearGenesis: { motivo?: 'sin-gid' } | undefined;
   OtrasFormas: undefined;
   PrimeraVez: { desdeIntro?: boolean } | undefined;

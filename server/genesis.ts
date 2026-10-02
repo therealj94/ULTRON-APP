@@ -9,14 +9,18 @@
  *     quedara con el enlace de vuelta (`ultronfp://sso?pase=…`), el pase no le serviría.
  *
  * Genesis dice de quién es (GID, correo de la identidad, nombre verificado). Eso PRUEBA quién es la
- * persona; no decide si entra. Entrar sigue siendo cosa del padrón, que decide José:
+ * persona. Quién entra y con qué nivel lo decide José, y decidió que AU-RA es de la comunidad:
  *
- *   · está en el padrón con acceso a AU-RA → entra, sin contraseña;
- *   · no está → queda una solicitud de acceso con su GID verificado, para aprobar desde el panel
- *     de siempre. Aprobada, la próxima vez entra con el mismo botón;
- *   · AURA_GENESIS_ABIERTO=1 → cualquier identidad verificada entra (lo decide José, no el código).
- *     Quien entra así sin estar en el padrón es MIEMBRO de la comunidad, no junta (server/nivel.ts):
- *     rol «Miembro · Genesis ID», cerebro público, sin taller ni Telegram de la organización.
+ *   · está en el padrón con acceso a AU-RA → entra como siempre (junta o aprobado), sin contraseña;
+ *   · no está en el padrón → entra como MIEMBRO de la comunidad, nunca como junta (server/nivel.ts):
+ *     rol «Miembro · Genesis ID», cerebro público, sin taller ni Telegram de la organización. La
+ *     primera vez se le abre su cuenta de miembro (sin acceso en el padrón, con el nombre que dio
+ *     Genesis) y su perfil con el apodo del primer nombre;
+ *   · el padrón lo conoce pero lo deja fuera de AU-RA (p. ej. solo tiene Dr Electrum) → no entra:
+ *     queda una solicitud de acceso con su GID verificado, como antes. Una sesión de miembro no le
+ *     abriría la mesa (seguridad.sesionAbreAura), así que no se le emite una que no sirve;
+ *   · AURA_GENESIS_ABIERTO=0 → vuelve la puerta cerrada de antes: fuera del padrón solo se deja la
+ *     solicitud para aprobar desde el panel.
  *
  * La clave de la app `aura` en Genesis vive en GENESIS_API_KEY_AURA (o GENESIS_API_KEY) y no sale
  * de aquí: con ella solo se puede preguntar si un pase HECHO PARA AU-RA vale.
@@ -31,7 +35,13 @@ const clave = () => String(process.env.GENESIS_API_KEY_AURA || process.env.GENES
 export const genesisConfigurado = () => Boolean(clave());
 /** Dónde saca el pase quien no tiene la app Orden Global: la web de Veta Wallet. */
 export const walletWeb = () => (process.env.AURA_WALLET_WEB || 'https://app.vetawallet.com').replace(/\/+$/, '');
-export const genesisAbierto = () => process.env.AURA_GENESIS_ABIERTO === '1';
+/**
+ * ¿Entra como miembro cualquier Genesis ID verificado que no está en el padrón? Sí, salvo que
+ * AURA_GENESIS_ABIERTO diga que no (`0`, `false`, `no`). Antes era al revés (había que poner `1`), y
+ * quien no estaba en el padrón se quedaba en «tu acceso está en revisión» aunque su identidad fuera
+ * buena: la prueba de la comunidad no pasaba de la puerta.
+ */
+export const genesisAbierto = () => !/^(0|false|no|cerrado)$/i.test(String(process.env.AURA_GENESIS_ABIERTO ?? '').trim());
 
 /**
  * `nombre` es el primer nombre para saludar; `nombreCompleto`, el legal tal cual lo dio Genesis; y
@@ -107,8 +117,17 @@ export type DepsGenesis = {
   tieneAcceso: (correo: string) => boolean;
   nombreYRol: (correo: string, nombre?: string) => { nombre: string; rol: string };
   emitirSesion: (u: { correo: string; nombre: string; rol: string }, o?: { comunidad?: boolean }) => { token: string };
-  /** ¿Entra como miembro de la comunidad (fuera del padrón)? Su sesión lo lleva firmado (seguridad.sesionAbreAura). */
+  /**
+   * ¿Puede entrar como miembro de la comunidad? Sí cuando el padrón NO lo conoce (seguridad.esDeComunidad);
+   * quien el padrón conoce y deja fuera de AU-RA, no. Su sesión lo lleva firmado (seguridad.sesionAbreAura).
+   */
   deComunidad?: (correo: string) => boolean;
+  /**
+   * Abre (o deja como está) la cuenta de miembro: correo, nombre de Genesis y el GID de donde salió, sin
+   * acceso en el padrón —así sigue siendo miembro—. Si la cuenta ya existía no se toca nada. Un fallo
+   * aquí no impide entrar: la sesión de miembro no depende de la fila.
+   */
+  registrarMiembro?: (m: { correo: string; nombre: string; gid: string }) => Promise<unknown>;
   /** ¿La cuenta está suspendida? Una suspendida no entra por Genesis. */
   suspendida?: (correo: string) => Promise<boolean>;
   /** Deja la solicitud de acceso para que la apruebe José. Devuelve false si no se pudo guardar. */
@@ -160,7 +179,10 @@ export function montarRutasGenesis(app: Express, d: DepsGenesis) {
     if (d.suspendida && (await d.suspendida(correo).catch(() => false))) {
       return res.status(403).json({ ok: false, codigo: 'SUSPENDIDA', error: 'Esta cuenta está suspendida.' });
     }
-    if (!d.tieneAcceso(correo) && !genesisAbierto()) {
+    const enPadron = d.tieneAcceso(correo);
+    // Miembro: fuera del padrón, con la puerta abierta, y que el padrón no lo tenga apartado de AU-RA.
+    const comoMiembro = !enPadron && genesisAbierto() && (d.deComunidad ? d.deComunidad(correo) : true);
+    if (!enPadron && !comoMiembro) {
       const guardada = await d
         .pedirAcceso({
           nombre: v.nombre || correo.split('@')[0],
@@ -179,20 +201,36 @@ export function montarRutasGenesis(app: Express, d: DepsGenesis) {
       });
     }
     const { nombre, rol } = d.nombreYRol(correo, v.nombre);
-    const s = d.emitirSesion({ correo, nombre, rol }, { comunidad: d.deComunidad?.(correo) ?? false });
-    console.log(`[genesis] ${v.gid} entró a AU-RA`);
+    const s = d.emitirSesion({ correo, nombre, rol }, { comunidad: comoMiembro });
+    console.log(`[genesis] ${v.gid} entró a AU-RA${comoMiembro ? ' como miembro' : ''}`);
+    /* La cuenta de miembro y el perfil, a la vez y con el mismo tope: los dos escriben fuera (Postgres y
+       S3) y la persona no espera a ninguno más de ESPERA_SEMBRAR_MS. Lo que no termine sigue solo. */
+    const tareas: Promise<unknown>[] = [];
+    if (comoMiembro && d.registrarMiembro) {
+      tareas.push(
+        Promise.resolve()
+          .then(() => d.registrarMiembro!({ correo, nombre: v.nombreCompleto || nombre, gid: v.gid }))
+          .catch((e: any) => console.warn('[genesis] no pude abrir la cuenta de miembro', String(e?.message || e).slice(0, 120)))
+      );
+    }
     if (d.sembrarPerfil) {
-      const sembrado = Promise.resolve()
-        .then(() => d.sembrarPerfil!(correo, { nombreGenesis: v.nombreCompleto, cumple: v.cumple, apodo: nombre }))
-        .catch((e: any) => console.warn('[genesis] no pude sembrar el perfil', String(e?.message || e).slice(0, 120)));
+      tareas.push(
+        Promise.resolve()
+          .then(() => d.sembrarPerfil!(correo, { nombreGenesis: v.nombreCompleto, cumple: v.cumple, apodo: nombre }))
+          .catch((e: any) => console.warn('[genesis] no pude sembrar el perfil', String(e?.message || e).slice(0, 120)))
+      );
+    }
+    if (tareas.length) {
       let reloj: ReturnType<typeof setTimeout> | undefined;
-      await Promise.race([sembrado, new Promise<void>((r) => (reloj = setTimeout(r, d.esperaSembrarMs ?? ESPERA_SEMBRAR_MS)))]);
+      await Promise.race([Promise.all(tareas), new Promise<void>((r) => (reloj = setTimeout(r, d.esperaSembrarMs ?? ESPERA_SEMBRAR_MS)))]);
       clearTimeout(reloj);
     }
     return res.json({
       ok: true,
       token: s.token,
       miembro: { nombre, correo, rol, gid: v.gid },
+      // Solo informa a la pantalla; el servidor recalcula el nivel en cada petición (server/nivel.ts).
+      nivel: comoMiembro ? 'miembro' : 'junta',
       genesis: { nombre: v.nombreCompleto || null, cumple: v.cumple },
       por: 'genesis',
     });

@@ -1,7 +1,7 @@
 /**
  * PERFIL GENESIS PARA MIEMBROS — AU-RA como asistente personal de la comunidad de Orden Global.
  *
- * Con AURA_GENESIS_ABIERTO=1 entra a AU-RA cualquiera con Genesis ID verificado. Quien NO está en el
+ * Entra a AU-RA cualquiera con Genesis ID verificado (salvo AURA_GENESIS_ABIERTO=0). Quien NO está en el
  * padrón habla con este perfil (el servidor lo elige por nivel: server/nivel.ts y perfilPara en
  * ./index.ts), nunca con el de la junta:
  *

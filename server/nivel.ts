@@ -1,7 +1,7 @@
 /**
  * EL NIVEL DE UNA SESIÓN EN AU-RA: junta o miembro.
  *
- * Con AURA_GENESIS_ABIERTO=1 entra a AU-RA toda persona con Genesis ID verificado. Eso no la hace de
+ * Entra a AU-RA toda persona con Genesis ID verificado (salvo AURA_GENESIS_ABIERTO=0). Eso no la hace de
  * la junta. Aquí se decide, en UN solo sitio y siempre en el servidor, con qué AU-RA habla cada quien:
  *
  *   · `junta`   — está en el padrón de AU-RA (lib/acceso.ts: `puedeEntrar(identificar({ correo }))`)
