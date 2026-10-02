@@ -80,6 +80,7 @@ import { listarTareas } from './lib/tareas';
 import { ejecutarCodigo, ejecutorActivo } from './lib/ejecutor';
 import { construirMensajes, extraerPython } from './lib/qwen';
 import { extraerPedidoHerramienta, herramientaQueSale, neutralizarPedido, quitarLineaPedido, resolverPedido } from './lib/harness';
+import { correrCartera } from './lib/cartera';
 import { notaDeVoz, pideNotaDeVoz } from './lib/voz';
 import { iniciarCentinela } from './lib/centinela';
 import { iniciarRevisionCampana } from './lib/campana-respuestas';
@@ -3382,6 +3383,8 @@ async function correrHerramientaPedida(
       mision: (arg) => (dueno ? correrMisionTurno(dueno, arg) : Promise.resolve('HARNESS mision: solo con sesión. Pídele que entre con su cuenta.')),
       circulo: (arg) => correrCirculo(dueno, arg, ambito),
       triaje: (arg) => correrTriaje(dueno, arg, ambito),
+      // Sus saldos de Veta Wallet (solo lectura, con la dirección pública que conectó en la app).
+      cartera: (arg) => correrCartera(dueno, arg),
     },
     extraerPython(reply),
     nivel

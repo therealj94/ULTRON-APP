@@ -51,6 +51,7 @@ import { Icono } from './ui/Icono';
 import { Tocable } from './ui/Tocable';
 import { filasDelHilo, type Fila } from './ui/formato';
 import { AuraAlLado, BotonAuraAlLado } from '../avatar3d/DockAura';
+import { abrirPagar } from '../cartera/estado';
 
 export type PropsPantallaConversacion = {
   /** Correo de la otra persona. */
@@ -255,6 +256,18 @@ export function PantallaConversacion({ con, nombre, onAtras }: PropsPantallaConv
           </View>
         </Pressable>
         <BotonAuraAlLado color={p.texto2} colorActivo={p.acentoTexto} />
+        {/* Enviar dinero (cartera/HojaPagar.tsx): la dirección sale de su ficha y se firma en Veta Wallet. */}
+        <Tocable
+          onPress={() => {
+            Keyboard.dismiss();
+            abrirPagar({ correo, nombre: nombreVisto });
+          }}
+          etiqueta={tr('Enviar dinero', 'Send money')}
+          hitSlop={4}
+          style={s.botonCab}
+        >
+          <Icono nombre="dinero" color={p.acentoTexto} tam={23} grosor={1.9} />
+        </Tocable>
         <Tocable onPress={() => llamar(true)} deshabilitado={ocupado} etiqueta={tr('Videollamada', 'Video call')} hitSlop={4} style={s.botonCab}>
           <Icono nombre="video" color={p.acentoTexto} tam={24} grosor={1.9} />
         </Tocable>

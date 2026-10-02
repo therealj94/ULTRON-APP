@@ -35,7 +35,7 @@ import type { ContextoApp, Contacto, Resolucion } from './acciones-app';
 
 /* ------------------------------------------------------------------ las formas */
 
-export const MANOS = ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame'] as const;
+export const MANOS = ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame', 'cartera', 'pagar'] as const;
 export type Mano = (typeof MANOS)[number];
 
 export const CAMPOS_PERFIL = ['apodo', 'cumple', 'vive', 'trabajo', 'familia', 'gustos', 'comida', 'musica', 'otros'] as const;
@@ -60,7 +60,14 @@ export type AccionMano =
   /** Quita un recordatorio del teléfono (por su id, de los que contó en el contexto). Tras el «sí». */
   | { tipo: 'cancelar_recordatorio'; id: string }
   /** El avatar llama a la persona: en su teléfono suena la llamada entrante («llámame»). Sin «sí»: lo pidió ella. */
-  | { tipo: 'llamame' };
+  | { tipo: 'llamame' }
+  /** Abre su Cartera de Veta Wallet en la app (solo lectura). */
+  | { tipo: 'cartera' }
+  /**
+   * Abre en la app el envío a un contacto, LLENADO (mobile/src/cartera/HojaPagar.tsx). No mueve nada: la
+   * persona lo revisa, lo confirma y lo firma en Veta Wallet con su contraseña. Por eso no espera un «sí» aquí.
+   */
+  | { tipo: 'pagar'; con: string; monto?: string; moneda?: string };
 
 /** Lo que espera el «sí» del turno siguiente (el borrador de un mensaje va aparte, en acciones-app). */
 export type Propuesta =
@@ -145,6 +152,16 @@ export function validarMano(a: Record<string, unknown>, ahora = Date.now()): Acc
     }
     case 'llamame':
       return { tipo: 'llamame' };
+    case 'cartera':
+      return { tipo: 'cartera' };
+    case 'pagar': {
+      const con = linea(a.con, 254);
+      if (!con) return null;
+      // Solo la forma: la app vuelve a validar la cantidad (montoValido) y la moneda antes de mostrarlas.
+      const monto = linea(a.monto, 40).replace(/[^0-9.,]/g, '');
+      const moneda = linea(a.moneda, 16).toUpperCase().replace(/[^A-Z]/g, '');
+      return { tipo: 'pagar', con, ...(monto ? { monto } : {}), ...(moneda ? { moneda } : {}) };
+    }
     default:
       return undefined;
   }
@@ -915,6 +932,10 @@ export function dichoDeMano(a: AccionMano, idioma: IdiomaApp = 'es'): string {
       return en ? 'Done, I cancelled it.' : 'Listo, lo cancelé.';
     case 'llamame':
       return en ? 'Sure, calling you now!' : '¡Va, ya te llamo!';
+    case 'cartera':
+      return en ? 'Here’s your wallet.' : 'Aquí está tu cartera.';
+    case 'pagar':
+      return en ? 'I opened it filled in: check it and sign it in Veta Wallet.' : 'Te lo dejé listo: revísalo y fírmalo en Veta Wallet.';
   }
 }
 
@@ -966,6 +987,12 @@ export function reglasManos(ctx: ContextoApp | null): string[] {
   else if (puede('recordatorio'))
     l.push(
       `· Recordatorio: {"tipo":"recordatorio","texto":"Llamar a mi mamá","cuando":"AAAA-MM-DDTHH:MM"} (hora de Honduras). «recuérdame a las 5 llamar a mi mamá», «avísame en media hora que saque la ropa». Como llamar: escribe la línea y PREGUNTA con la hora exacta («¿Te recuerdo "Llamar a mi mamá" hoy a las 5:00 de la tarde?»); se pone solo con su «sí». La hora de ahora: AHORA en Honduras, abajo.`
+    );
+  if (puede('cartera'))
+    l.push('· Cartera: {"tipo":"cartera"} abre su Cartera de Veta Wallet en la app («enséñame mi wallet»). Para decir cuánto tiene, pide la herramienta cartera.');
+  if (puede('pagar'))
+    l.push(
+      '· Pagar: {"tipo":"pagar","con":"<nombre>","monto":"5","moneda":"ORIGEN"} cuando pida mandarle dinero a alguien de CONTACTOS («mándale 5 ORIGEN a Ana»). Solo abre el envío LLENADO en la app: ella lo revisa y lo firma en Veta Wallet con su contraseña. Tú NUNCA pagas ni pides contraseñas ni direcciones (la dirección sale de su ficha). Di «Te lo dejé listo: revísalo y fírmalo en Veta Wallet». Sin monto o moneda clara, pregunta.'
     );
   if (puede('recordatorio_llamada') && !puede('llamame'))
     l.push(

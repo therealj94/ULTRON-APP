@@ -1413,6 +1413,14 @@ export function prepararAcciones(
       out.push({ tipo: 'buscar', q: a.q });
       continue;
     }
+    if (a.tipo === 'pagar') {
+      // Solo a alguien de sus contactos, sin dudas: con dos parecidos (o ninguno) el cerebro debió preguntar.
+      // Y aun así no se paga nada: la app abre el envío llenado y la persona lo firma en Veta Wallet.
+      const r = resolverContacto(a.con, contactos);
+      if (r.tipo !== 'uno') continue;
+      out.push({ ...a, con: r.contacto.correo });
+      continue;
+    }
     if (a.tipo === 'enviar') {
       if (enviado || !o.pendiente || conRedactar || !confirmaEnvio(o.mensaje)) continue;
       enviado = true;
