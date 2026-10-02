@@ -59,6 +59,7 @@ public partial class NotchWindow
     {
         if (api == null) return false;
         abriendoAgente = true;
+        agenteUltimaVoz = DateTime.Now;
         CerrarOido();
         Callar();
         TextoEscucha.Text = T("Conectando…", "Connecting…"); EstadoPanel.Text = TextoEscucha.Text; Recalcular();
@@ -281,7 +282,9 @@ public partial class NotchWindow
     /// <summary>Cada 5 s (relojRecordatorios): sin hablar un rato, la conversación en vivo se cuelga sola (cuesta por minuto).</summary>
     void RevisarAgente()
     {
-        if (!AgenteAbierto || hablandoAhora) return;
+        // Mientras se abre una conversación nueva no se mide el silencio: su reloj todavía es el de la anterior
+        // (1-oct 22:39: «nadie habló: cuelgo» colgó la conversación que se acababa de abrir).
+        if (!AgenteAbierto || hablandoAhora || abriendoAgente) return;
         var ventana = ajustes.Escucha == "siempre" ? TimeSpan.FromMinutes(3) : TimeSpan.FromSeconds(60);
         if (DateTime.Now - agenteUltimaVoz > ventana) { Centro.Registro.Anotar("voz-vivo", "nadie habló: cuelgo"); CerrarAgente(); }
     }

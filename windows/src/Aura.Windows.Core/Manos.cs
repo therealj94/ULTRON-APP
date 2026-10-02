@@ -155,7 +155,9 @@ public static class Intencion
             case Mano.Recordar:
                 return Parametros.Tiempo(t) is { } cuando ? new(mano, Parametros.TareaDeRecordatorio(texto), cuando, origen, p) : Pedido.Nada;
             case Mano.Avatar:
-                return Parametros.Avatar(t) is { } a ? new(mano, a, null, origen, p) : Pedido.Nada;
+                // Solo con un pedido de cambio («cambia a Claudio»): un nombre suelto («aura») no cambia el avatar
+                // (1-oct 22:38: Laya del nodo tomó «aura» como Avatar y lo cambió sin pedirlo).
+                return Parametros.CambioAvatar.IsMatch(t) && Parametros.Avatar(t) is { } a ? new(mano, a, null, origen, p) : Pedido.Nada;
             case Mano.Pulsar:
                 return Parametros.Control(texto, true) is { } c2 ? new(mano, c2, null, origen, p) : Pedido.Nada;
             case Mano.Ventana:
@@ -186,6 +188,9 @@ public static class Intencion
     public static readonly HashSet<Mano> SoloReglasONodo = new()
     { Mano.Avatar, Mano.Captura, Mano.Bloquear, Mano.Escribir, Mano.Pulsar, Mano.Ventana, Mano.Pausa, Mano.Escritorio, Mano.Silenciar };
 
+    /// <summary>Lo más que se espera a Laya del nodo antes de seguir sin ella.</summary>
+    public static TimeSpan EsperaNodo = TimeSpan.FromMilliseconds(1200);
+
     /// <summary>La decisión completa. `nodo` es opcional (sin conexión o sin sesión, null).</summary>
     public static async Task<Pedido> Decidir(string texto, Func<string, CancellationToken, Task<DecisionNodo?>>? nodo = null, CancellationToken ct = default)
     {
@@ -201,7 +206,14 @@ public static class Intencion
         if (nodo != null)
         {
             DecisionNodo? d = null;
-            try { d = await nodo(texto, ct).ConfigureAwait(false); } catch (OperationCanceledException) { throw; } catch { }
+            // Laya es un atajo: si en 1,2 s no contestó, la frase sigue sin ella (1-oct: «entender» tardó 4,3 s).
+            try
+            {
+                var tarea = nodo(texto, ct);
+                if (await Task.WhenAny(tarea, Task.Delay(EsperaNodo, ct)).ConfigureAwait(false) == tarea) d = await tarea.ConfigureAwait(false);
+                else _ = tarea.ContinueWith(t => _ = t.Exception, TaskScheduler.Default);
+            }
+            catch (OperationCanceledException) { throw; } catch { }
             if (d is { Seguro: true })
             {
                 var p = ConParametro(DeEtiqueta(d.Etiqueta), texto, "laya-nodo", d.P);

@@ -825,5 +825,18 @@ Check(Actualizacion.MotivoParaEsperar(libre with { Llamada = true }) != null && 
 }
 Check(new[] { "notch.monitores", "notch.restablecer", "notch.llamada" }.All(PuenteCentro.MetodoPermitido), "el puente deja pasar lo que usan el notch movible y la llamada");
 Check(new[] { "voz.decir", "recorrido.abierto" }.All(PuenteCentro.MetodoPermitido), "el puente deja pasar la voz y el silencio del recorrido");
+// ── Lo que salió del registro de José (1-oct 22:29–22:46) ──
+Check(float.IsPositiveInfinity(UmbralesDespertar.MinimoWindows("oye aura", true, false)) && float.IsPositiveInfinity(UmbralesDespertar.MinimoWindows("aura", true, false)) && UmbralesDespertar.MinimoWindows("oye claudio", true, false) == 0.9f, "con modelo propio, SAPI no decide «aura»");
+Check(float.IsPositiveInfinity(UmbralesDespertar.MinimoWindows("aura", false, true)) && UmbralesDespertar.MinimoWindows("oye antonio", false, true) == 0.95f && UmbralesDespertar.MinimoWindows("aura", false, false) == 0.8f && UmbralesDespertar.MinimoWindows("oye aura", false, false) == 0.6f, "música y sin modelo");
+Check(Intencion.ConParametro(Mano.Avatar, "aura", "laya-nodo", 0.9).Mano == Mano.Ninguna && Intencion.ConParametro(Mano.Avatar, "cambia a claudio", "laya-nodo", 0.9) is { Mano: Mano.Avatar, Valor: "claudio" }, "un nombre suelto no cambia el avatar");
+Check(AutorizarOrden.Autorizar("pon bad bunny en spotify", "quiero escuchar algo para trabajar") == Veredicto.Hacer && AutorizarOrden.Autorizar("pon marc anthony en spotify", "ponme una canción bonita") == Veredicto.Hacer, "música pedida: el cerebro elige");
+Check(AutorizarOrden.Autorizar("pon bad bunny en spotify", "pon el volumen al 30") != Veredicto.Hacer && AutorizarOrden.Autorizar("pon bad bunny en spotify", "cuéntame un chiste") == Veredicto.Rechazar, "sin pedir música, no se pone");
+{
+    var lento = Intencion.EsperaNodo; Intencion.EsperaNodo = TimeSpan.FromMilliseconds(200);
+    var crLaya = System.Diagnostics.Stopwatch.StartNew();
+    var dl = Intencion.Decidir("qué opinas de la vida", async (t, ct) => { await Task.Delay(3000); return new DecisionNodo("win_abrir_app", 0.99, true); }).GetAwaiter().GetResult();
+    Intencion.EsperaNodo = lento;
+    Check(dl.Mano == Mano.Ninguna && crLaya.ElapsedMilliseconds < 1500, "Laya lenta no detiene la frase: " + crLaya.ElapsedMilliseconds + " ms");
+}
 Console.WriteLine($"PASS {count} assertions");
 class Clock : TimeProvider { public DateTimeOffset Now = DateTimeOffset.UtcNow; public override DateTimeOffset GetUtcNow() => Now; }

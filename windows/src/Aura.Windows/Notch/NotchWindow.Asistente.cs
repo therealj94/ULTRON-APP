@@ -100,6 +100,8 @@ public partial class NotchWindow
         }));
         altavoz.Fallo += m => Dispatcher.BeginInvoke(new Action(() => Avisar(new Aviso("Voz", m, "", "worried"))));
 
+        // Con música sonando (se muestre o no la tarjeta), despertar pide más: las canciones dicen «aura», «antonio»…
+        despertador.Exigente = () => cancion is { Sonando: true };
         // Su propia voz («…soy AU-RA») no la despierta: mientras suena algo, la palabra de activación no cuenta.
         despertador.Desperto += () => Dispatcher.BeginInvoke(new Action(() =>
         {
