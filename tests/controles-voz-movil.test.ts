@@ -15,7 +15,6 @@ import assert from 'node:assert/strict';
 import { MANOS } from '../lib/manos-app';
 import { MANOS_APP } from '../mobile/src/nucleo/contrato';
 import { accionDeControlMesa, aplicarAccionControl, controlDeAccion, controlarTareaPc, estadoControlesDe, type ApiMin } from '../mobile/src/compa/controles';
-import { interpretar } from '../mobile/src/lib/intenciones';
 
 test('el contrato del teléfono: declara `controles` (la misma lista que el servidor) y valida las acciones nuevas', async () => {
   // El puente de acciones se carga sin que tsc de la raíz lo siga (es código de la app, con su tsconfig estricto).
@@ -125,7 +124,10 @@ test('lo que está vivo, para la mesa y el servidor: audio, tarea, llamada y tur
   assert.deepEqual(estadoControlesDe({ hablando: false, cola: 0, tarea: null, ciclo: 'colgada', pensando: false }), { audio: false, tarea: false, llamada: false, turno: false });
 });
 
-test('la mesa: callar sigue callando; colgar y la tarea son controles; con audio y tarea, «para» pregunta', () => {
+test('la mesa: callar sigue callando; colgar y la tarea son controles; con audio y tarea, «para» pregunta', async () => {
+  // Como el puente de acciones: tsc de la raíz no lo sigue (sus tipos vienen de la app, con expo-constants).
+  const rutaIntenciones = '../mobile/src/lib/intenciones';
+  const { interpretar } = (await import(rutaIntenciones)) as { interpretar: (t: string, ctx?: Record<string, unknown>) => { tipo: string; [k: string]: unknown } };
   for (const f of ['cállate', 'para', 'para ya', 'basta', 'silencio', 'silencio por favor', 'shh', 'stop', 'alto', 'ya cállate', 'cállate ya']) {
     assert.equal(interpretar(f).tipo, 'callar', f);
   }
