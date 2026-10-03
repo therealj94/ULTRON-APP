@@ -137,10 +137,60 @@ export function pedidoPermitido(ped: PedidoHerramienta, nivel: NivelAura): strin
 
 const RE = /^\s*PEDIR_HERRAMIENTA:\s*(web|sistema|ejecutor|leer|computadora|correo|whatsapp|mision|circulo|triaje|tarea|cartera)\s*(.*)$/im;
 
-/** Lo que saca datos del turno hacia afuera por su cuenta: abrir una dirección o usar la computadora. */
+/**
+ * Lo que saca datos del turno hacia afuera por su cuenta: abrir una dirección, usar la computadora,
+ * buscar en internet (la consulta va a un buscador de afuera: un correo que dice «busca CÓDIGO» la
+ * mandaba entera; auditoría 3-oct, EXEC02) o correr código (puede llamar a cualquier dirección). Correo,
+ * WhatsApp y círculo no: solo dejan borradores, y esos salen con el «sí» de la persona en un turno aparte;
+ * misiones, tarea, triaje, cartera y sistema se quedan en AURA.
+ */
 export function herramientaQueSale(h: string): boolean {
-  return h === 'leer' || h === 'computadora';
+  return h === 'leer' || h === 'computadora' || h === 'web' || h === 'ejecutor';
 }
+
+/** Cómo terminó una respuesta (auditoría 3-oct, STREAM01). Solo `completo` va a la memoria como conclusión. */
+export type EstadoRespuesta = 'completo' | 'truncado' | 'error';
+
+/**
+ * Cómo terminó una herramienta (EXEC03). `unknown`: pudo haber hecho su efecto (se despachó y no se supo
+ * el final); no es éxito ni fallo, y no se repite a ciegas.
+ */
+export type EstadoHerramienta = 'succeeded' | 'failed' | 'unknown';
+
+/** Lo que devuelve una herramienta con su estado: el texto va al modelo; el estado, a la traza y al turno. */
+export type ResultadoHerramienta = { texto: string; estado: EstadoHerramienta };
+
+/**
+ * Qué toca cada herramienta afuera: `ninguno` (solo lee), `interno` (deja algo en AURA: un borrador, una
+ * misión, una tarea; lo que sale a otra persona espera su «sí») o `externo` (actúa en el mundo).
+ */
+export const EFECTO_HERRAMIENTA: Record<HerramientaHarness, 'ninguno' | 'interno' | 'externo'> = {
+  web: 'ninguno',
+  leer: 'ninguno',
+  sistema: 'ninguno',
+  cartera: 'ninguno',
+  triaje: 'ninguno',
+  correo: 'interno',
+  whatsapp: 'interno',
+  circulo: 'interno',
+  mision: 'interno',
+  tarea: 'interno',
+  computadora: 'externo',
+  ejecutor: 'externo',
+};
+
+/**
+ * El estado de lo que devolvió un runner. Si trae el suyo (un recibo), ese manda. Un texto suelto no es un
+ * recibo: de una lectura o de algo interno es su resultado (corrió y contestó); de algo que actúa afuera
+ * no dice si pasó, y queda `unknown`. Nunca se adivina por las palabras del texto.
+ */
+function conEstado(h: HerramientaHarness, r: string | ResultadoHerramienta): ResultadoHerramienta {
+  if (typeof r === 'object' && r && typeof r.texto === 'string') return r;
+  return { texto: String(r ?? ''), estado: EFECTO_HERRAMIENTA[h] === 'externo' ? 'unknown' : 'succeeded' };
+}
+
+/** Lo que el harness mismo no dejó correr: un fallo sabido, sin efecto. */
+const noCorrio = (texto: string): ResultadoHerramienta => ({ texto, estado: 'failed' });
 
 /** El resultado de una herramienta no puede pedir otra: su línea PEDIR_HERRAMIENTA se rompe (la escribió otro). */
 export function neutralizarPedido(texto: string): string {
@@ -163,83 +213,271 @@ export function quitarLineaPedido(texto: string): string {
     .trim();
 }
 
+/** Lo que contesta un runner: el texto de siempre o, si lo sabe, el texto con su estado (un recibo). */
+type Contesta = Promise<string | ResultadoHerramienta>;
+
+export type RunnersHarness = {
+  web: (q: string) => Contesta;
+  sistema: () => Contesta;
+  leer: (url: string) => Contesta;
+  ejecutor: (codigo: string) => Contesta;
+  /** La computadora del agente (server/computadora.ts). Sin ella, el pedido se contesta como no disponible. */
+  computadora?: (tarea: string) => Contesta;
+  /** Su correo (server/correo.ts). */
+  correo?: (arg: string) => Contesta;
+  /** Su WhatsApp personal (server/whatsapp.ts). */
+  whatsapp?: (arg: string) => Contesta;
+  /** Sus misiones (lib/misiones.ts). */
+  mision?: (arg: string) => Contesta;
+  /** Su círculo cercano (lib/circulo.ts). */
+  circulo?: (arg: string) => Contesta;
+  /** Sus mensajes ordenados por importancia (lib/triaje.ts). */
+  triaje?: (arg: string) => Contesta;
+  /** La tarea de varios pasos en curso (lib/tarea-en-curso.ts). */
+  tarea?: (arg: string) => Contesta;
+  /** Sus saldos de Veta Wallet, solo lectura (lib/cartera.ts). */
+  cartera?: (arg: string) => Contesta;
+};
+
+/** El texto de lo que devolvió la herramienta (el de siempre). Para el estado, resolverPedidoConEstado. */
 export async function resolverPedido(
   ped: PedidoHerramienta,
-  runners: {
-    web: (q: string) => Promise<string>;
-    sistema: () => Promise<string>;
-    leer: (url: string) => Promise<string>;
-    ejecutor: (codigo: string) => Promise<string>;
-    /** La computadora del agente (server/computadora.ts). Sin ella, el pedido se contesta como no disponible. */
-    computadora?: (tarea: string) => Promise<string>;
-    /** Su correo (server/correo.ts). */
-    correo?: (arg: string) => Promise<string>;
-    /** Su WhatsApp personal (server/whatsapp.ts). */
-    whatsapp?: (arg: string) => Promise<string>;
-    /** Sus misiones (lib/misiones.ts). */
-    mision?: (arg: string) => Promise<string>;
-    /** Su círculo cercano (lib/circulo.ts). */
-    circulo?: (arg: string) => Promise<string>;
-    /** Sus mensajes ordenados por importancia (lib/triaje.ts). */
-    triaje?: (arg: string) => Promise<string>;
-    /** La tarea de varios pasos en curso (lib/tarea-en-curso.ts). */
-    tarea?: (arg: string) => Promise<string>;
-    /** Sus saldos de Veta Wallet, solo lectura (lib/cartera.ts). */
-    cartera?: (arg: string) => Promise<string>;
-  },
+  runners: RunnersHarness,
   codigoDelTurno = '',
   /** Con quién habla: con un miembro, `sistema` y `ejecutor` no llegan a sus runners. */
   nivel: NivelAura = 'junta'
 ): Promise<string> {
+  return (await resolverPedidoConEstado(ped, runners, codigoDelTurno, nivel)).texto;
+}
+
+/**
+ * Corre el pedido y devuelve su texto con su estado (EXEC03). Si el runner lanza, el turno no se cae: una
+ * lectura queda `failed`; algo con efecto queda `unknown` (pudo haberse hecho antes del error o del tope) y
+ * el texto le dice al modelo que no lo repita ni lo dé por hecho.
+ */
+export async function resolverPedidoConEstado(
+  ped: PedidoHerramienta,
+  runners: RunnersHarness,
+  codigoDelTurno = '',
+  nivel: NivelAura = 'junta'
+): Promise<ResultadoHerramienta> {
   const no = pedidoPermitido(ped, nivel);
-  if (no) return no;
+  if (no) return noCorrio(no);
+  const correr = async (f: () => Contesta): Promise<ResultadoHerramienta> => {
+    try {
+      return conEstado(ped.herramienta, await f());
+    } catch (e: any) {
+      const porque = String(e?.message || e).slice(0, 160);
+      if (EFECTO_HERRAMIENTA[ped.herramienta] === 'ninguno') return { texto: `HARNESS ${ped.herramienta}: falló (${porque}). No inventes el resultado.`, estado: 'failed' };
+      return {
+        texto: `HARNESS ${ped.herramienta}: se encargó pero no supe el final (${porque}). No sé si se hizo: no lo repitas ni digas que quedó hecho; dilo así y ofrece revisarlo.`,
+        estado: 'unknown',
+      };
+    }
+  };
   if (ped.herramienta === 'web') {
     const q = ped.arg.trim();
-    if (!q) return 'HARNESS web: consulta vacía. No busqué.';
-    return runners.web(q);
+    if (!q) return noCorrio('HARNESS web: consulta vacía. No busqué.');
+    return correr(() => runners.web(q));
   }
-  if (ped.herramienta === 'sistema') return runners.sistema();
+  if (ped.herramienta === 'sistema') return correr(() => runners.sistema());
   if (ped.herramienta === 'correo') {
-    if (!runners.correo) return 'HARNESS correo: no está disponible aquí. No lo usé.';
-    return runners.correo(ped.arg.trim() || 'revisar');
+    if (!runners.correo) return noCorrio('HARNESS correo: no está disponible aquí. No lo usé.');
+    return correr(() => runners.correo!(ped.arg.trim() || 'revisar'));
   }
   if (ped.herramienta === 'whatsapp') {
-    if (!runners.whatsapp) return 'HARNESS whatsapp: no está disponible aquí. No lo usé.';
-    return runners.whatsapp(ped.arg.trim() || 'revisar');
+    if (!runners.whatsapp) return noCorrio('HARNESS whatsapp: no está disponible aquí. No lo usé.');
+    return correr(() => runners.whatsapp!(ped.arg.trim() || 'revisar'));
   }
   if (ped.herramienta === 'mision') {
-    if (!runners.mision) return 'HARNESS mision: no está disponible aquí. No la usé.';
-    return runners.mision(ped.arg.trim() || 'listar');
+    if (!runners.mision) return noCorrio('HARNESS mision: no está disponible aquí. No la usé.');
+    return correr(() => runners.mision!(ped.arg.trim() || 'listar'));
   }
   if (ped.herramienta === 'circulo') {
-    if (!runners.circulo) return 'HARNESS circulo: no está disponible aquí. No lo usé.';
-    return runners.circulo(ped.arg.trim() || 'listar');
+    if (!runners.circulo) return noCorrio('HARNESS circulo: no está disponible aquí. No lo usé.');
+    return correr(() => runners.circulo!(ped.arg.trim() || 'listar'));
   }
   if (ped.herramienta === 'triaje') {
-    if (!runners.triaje) return 'HARNESS triaje: no está disponible aquí. No lo usé.';
-    return runners.triaje(ped.arg.trim() || 'revisar');
+    if (!runners.triaje) return noCorrio('HARNESS triaje: no está disponible aquí. No lo usé.');
+    return correr(() => runners.triaje!(ped.arg.trim() || 'revisar'));
   }
   if (ped.herramienta === 'tarea') {
-    if (!runners.tarea) return 'HARNESS tarea: no está disponible aquí. No la usé.';
-    return runners.tarea(ped.arg.trim() || 'ver');
+    if (!runners.tarea) return noCorrio('HARNESS tarea: no está disponible aquí. No la usé.');
+    return correr(() => runners.tarea!(ped.arg.trim() || 'ver'));
   }
   if (ped.herramienta === 'cartera') {
-    if (!runners.cartera) return 'HARNESS cartera: no está disponible aquí. No la usé.';
-    return runners.cartera(ped.arg.trim());
+    if (!runners.cartera) return noCorrio('HARNESS cartera: no está disponible aquí. No la usé.');
+    return correr(() => runners.cartera!(ped.arg.trim()));
   }
   if (ped.herramienta === 'computadora') {
     const tarea = ped.arg.trim();
-    if (!tarea) return 'HARNESS computadora: no vino la tarea. No encargué nada.';
-    if (!runners.computadora) return 'HARNESS computadora: no está disponible aquí. No la usé.';
-    return runners.computadora(tarea);
+    if (!tarea) return noCorrio('HARNESS computadora: no vino la tarea. No encargué nada.');
+    if (!runners.computadora) return noCorrio('HARNESS computadora: no está disponible aquí. No la usé.');
+    return correr(() => runners.computadora!(tarea));
   }
   if (ped.herramienta === 'leer') {
     let url = ped.arg.trim();
     if (/^github\.com\//i.test(url)) url = 'https://' + url;
-    if (!/^https?:\/\//i.test(url)) return 'HARNESS leer: URL inválida. No abrí nada.';
-    return runners.leer(url);
+    if (!/^https?:\/\//i.test(url)) return noCorrio('HARNESS leer: URL inválida. No abrí nada.');
+    return correr(() => runners.leer(url));
   }
   const py = codigoDelTurno.trim() || ped.arg.trim();
-  if (!py) return 'HARNESS ejecutor: no vino código. No corrí nada.';
-  return runners.ejecutor(py);
+  if (!py) return noCorrio('HARNESS ejecutor: no vino código. No corrí nada.');
+  return correr(() => runners.ejecutor(py));
+}
+
+/* ------------------------------------------------------------------ el bucle */
+
+/** Lo que contesta una vuelta del modelo después de una herramienta, con quién la escribió. */
+export type VueltaHarness = { ok: boolean; reply: string; error?: string; modelo?: string; proveedor?: string };
+
+/** Una herramienta del turno, con su estado (va a la traza). */
+export type PasoHarness = { herramienta: HerramientaHarness; estado: EstadoHerramienta; ms: number; resumen: string; ronda: number };
+
+export type SalidaHarness = {
+  reply: string;
+  /** `harness` si una vuelta contestó; `harness-parcial` si no; null si no se pidió herramienta. */
+  via: 'harness' | 'harness-parcial' | null;
+  estado: EstadoRespuesta;
+  /** Por qué no quedó completo (para la traza y el `done`). */
+  motivo?: string;
+  pasos: PasoHarness[];
+  /** Quién escribió la última vuelta que contestó (sin vuelta: el que pidió la herramienta). */
+  modelo?: string;
+  proveedor?: string;
+};
+
+/** Por debajo de esto no se empieza una herramienta: no queda tiempo para correrla y contarla. */
+export const MINIMO_HERRAMIENTA_MS = 4_000;
+
+/**
+ * El bucle del harness, sin red: dos vueltas como mucho. Quien llama le da cómo correr la herramienta
+ * (`correr`), quién escribe cada vuelta (`preguntar`; si no contesta, `respaldo`) y el reloj del turno.
+ * Garantías (auditoría 3-oct):
+ *  · después de leer lo que escribió otra gente (correo, WhatsApp, triaje) no se abre, no se busca y no se
+ *    usa la computadora por su cuenta (EXEC02);
+ *  · cada herramienta corre una sola vez: si la redacción falla, el turno cierra con lo que trajo y estado
+ *    `error`, sin repetirla (STREAM01);
+ *  · el estado de cada herramienta es el suyo, no el que sugieren sus palabras (EXEC03);
+ *  · sin tiempo en el reloj del turno no se empieza otra herramienta (EXEC04).
+ */
+export async function correrBucleHarness(o: {
+  reply: string;
+  hechos: string[];
+  tools: string[];
+  senal?: AbortSignal;
+  reloj?: { alcanza(minimoMs?: number): boolean };
+  correr: (ped: PedidoHerramienta, reply: string) => Promise<ResultadoHerramienta>;
+  preguntar?: (hechos: string[], alTexto?: (acumulado: string) => void) => Promise<VueltaHarness>;
+  respaldo: (hechos: string[], alTexto?: (acumulado: string) => void) => Promise<VueltaHarness>;
+  /** Se va a correr esta herramienta (la voz dice «déjame buscarlo…»). */
+  alTarea?: (herramienta: string) => void;
+  /** La respuesta de cada vuelta a trozos (`ronda` empieza en 1). */
+  alTexto?: (acumulado: string, ronda: number) => void;
+  /** Cada herramienta, al terminar (la traza). */
+  alPaso?: (p: PasoHarness) => void;
+  /** Lo que se le quita al resultado antes del prompt (la marca de acción de la app). */
+  limpiar?: (texto: string) => string;
+}): Promise<SalidaHarness> {
+  let reply = o.reply;
+  let via: SalidaHarness['via'] = null;
+  let estado: EstadoRespuesta = 'completo';
+  let motivo: string | undefined;
+  let modelo: string | undefined;
+  let proveedor: string | undefined;
+  const pasos: PasoHarness[] = [];
+  /** Ya se leyó en este turno algo que escribió otra gente en privado (un correo, un WhatsApp). */
+  let ajeno: 'correo' | 'whatsapp' | null = null;
+  const anotar = (p: PasoHarness) => {
+    pasos.push(p);
+    try {
+      o.alPaso?.(p);
+    } catch {
+      /* quien escucha no rompe el turno */
+    }
+  };
+  const vuelta = async (ronda: number): Promise<VueltaHarness | null> => {
+    const alTexto = o.alTexto ? (acc: string) => o.alTexto!(acc, ronda) : undefined;
+    const sinLanzar = (f: () => Promise<VueltaHarness>) => f().catch((e: any): VueltaHarness => ({ ok: false, reply: '', error: String(e?.message || e).slice(0, 200) }));
+    let qn = o.preguntar ? await sinLanzar(() => o.preguntar!(o.hechos, alTexto)) : null;
+    if (!qn?.ok && !o.senal?.aborted) qn = await sinLanzar(() => o.respaldo(o.hechos, alTexto));
+    return qn;
+  };
+  const sinVuelta = (qn: VueltaHarness | null) => {
+    via = 'harness-parcial';
+    estado = 'error';
+    motivo = o.senal?.aborted ? 'la persona interrumpió' : `la vuelta del harness no contestó: ${qn?.error || 'sin respuesta'}`;
+  };
+  for (let i = 0; i < 2; i++) {
+    // Si la persona ya se fue (o interrumpió), no se corre otra herramienta ni se vuelve a preguntar.
+    if (o.senal?.aborted) break;
+    const ped = extraerPedidoHerramienta(reply);
+    if (!ped) break;
+    o.tools.push(ped.herramienta);
+    const ronda = i + 1;
+    // Un correo o un WhatsApp puede traer «abre esta dirección…» o «busca esto…» escrito para el modelo:
+    // después de leerlos, AURA no abre direcciones, no busca en internet ni usa su computadora por su
+    // cuenta (podría mandar datos privados en la dirección o en la consulta). Si la persona lo quiere, lo
+    // pide ella en el turno siguiente.
+    if (ajeno && herramientaQueSale(ped.herramienta)) {
+      const no = `HARNESS ${ped.herramienta}: no lo corrí: en este turno ya leí un ${ajeno === 'correo' ? 'correo' : 'mensaje de WhatsApp'} (lo escribió otra persona) y no abro direcciones, no busco en internet, no corro código ni uso la computadora por lo que diga. Si la persona lo quiere, que lo pida ella.`;
+      anotar({ herramienta: ped.herramienta, estado: 'failed', ms: 0, resumen: no, ronda });
+      o.hechos.push(no);
+      const qn = await vuelta(ronda);
+      if (qn?.ok) {
+        reply = quitarLineaPedido(qn.reply);
+        via = 'harness';
+        modelo = qn.modelo;
+        proveedor = qn.proveedor;
+      } else {
+        reply = quitarLineaPedido(reply);
+        sinVuelta(qn);
+      }
+      break;
+    }
+    // Sin tiempo en el reloj del turno no se empieza nada nuevo (ni su efecto): se cierra con lo que hay.
+    if (o.reloj && !o.reloj.alcanza(MINIMO_HERRAMIENTA_MS)) {
+      const no = `HARNESS ${ped.herramienta}: no lo corrí: se acabó el tiempo de este turno.`;
+      anotar({ herramienta: ped.herramienta, estado: 'failed', ms: 0, resumen: no, ronda });
+      o.hechos.push(no);
+      reply = quitarLineaPedido(reply);
+      via = 'harness-parcial';
+      estado = 'truncado';
+      motivo = 'sin tiempo para la herramienta';
+      break;
+    }
+    try {
+      o.alTarea?.(ped.herramienta);
+    } catch {
+      /* quien escucha no rompe el turno */
+    }
+    const tH = Date.now();
+    let r: ResultadoHerramienta;
+    try {
+      r = await o.correr(ped, reply);
+    } catch (e: any) {
+      // Quien corre ya devuelve el estado; si aun así lanza, no se sabe si alcanzó a hacer algo.
+      r = { texto: `HARNESS ${ped.herramienta}: no supe el final (${String(e?.message || e).slice(0, 160)}). No lo repitas ni lo des por hecho.`, estado: EFECTO_HERRAMIENTA[ped.herramienta] === 'ninguno' ? 'failed' : 'unknown' };
+    }
+    // Lo que devuelve la herramienta (una página, una búsqueda) no lo escribió el modelo: si trae la marca de
+    // acción o una línea de pedido, se rompe aquí, antes de ir al prompt o de pegarse a la respuesta parcial.
+    const extra = neutralizarPedido(o.limpiar ? o.limpiar(r.texto) : r.texto);
+    if (ped.herramienta === 'correo' || ped.herramienta === 'whatsapp') ajeno = ped.herramienta;
+    // El triaje también lee lo que otra gente escribió (sus chats y correos).
+    else if (ped.herramienta === 'triaje') ajeno = 'whatsapp';
+    anotar({ herramienta: ped.herramienta, estado: r.estado, ms: Date.now() - tH, resumen: extra, ronda });
+    o.hechos.push(extra);
+    const qn = await vuelta(ronda);
+    if (!qn || !qn.ok) {
+      // La herramienta ya corrió: su hecho queda a la vista y el turno cierra sin repetirla.
+      reply = quitarLineaPedido(reply) + (extra ? `\n\n${extra}` : '');
+      sinVuelta(qn);
+      break;
+    }
+    reply = qn.reply;
+    via = 'harness';
+    modelo = qn.modelo;
+    proveedor = qn.proveedor;
+  }
+  return { reply: quitarLineaPedido(reply), via, estado, ...(motivo ? { motivo } : {}), pasos, ...(modelo ? { modelo } : {}), ...(proveedor ? { proveedor } : {}) };
 }

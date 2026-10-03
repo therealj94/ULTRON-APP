@@ -185,3 +185,111 @@ test('se corta a media respuesta: lo dicho sale y DESPUÉS el error (el servidor
     (BedrockRuntimeClient.prototype as any).send = original;
   }
 });
+
+/** Bedrock falso: cada modelo contesta con su guion de eventos (SDK falso; nada sale de la máquina). */
+async function conBedrockFalso(guion: (modelo: string) => any[], f: (modelos: string[]) => Promise<void>) {
+  const { BedrockRuntimeClient } = await import('@aws-sdk/client-bedrock-runtime');
+  const original = BedrockRuntimeClient.prototype.send;
+  const modelos: string[] = [];
+  (BedrockRuntimeClient.prototype as any).send = async function (cmd: any) {
+    modelos.push(cmd.input.modelId);
+    const evs = guion(cmd.input.modelId);
+    return {
+      stream: (async function* () {
+        for (const ev of evs) yield ev;
+      })(),
+    };
+  };
+  try {
+    await f(modelos);
+  } finally {
+    (BedrockRuntimeClient.prototype as any).send = original;
+  }
+}
+
+test('STREAM02: el mismo texto con tres finales distintos da tres estados distintos (end_turn, max_tokens, sin messageStop)', async () => {
+  const { hablarConManos } = await import('../lib/cerebro-rapido');
+  const texto = { contentBlockDelta: { delta: { text: '[EMO: neutral] La planta va bien este mes.' } } };
+  const correr = async () => {
+    let fin: any = null;
+    let dicho = '';
+    let error: unknown = null;
+    try {
+      for await (const p of hablarConManos([{ role: 'user', content: 'cómo va la planta' }], [])) {
+        if ('texto' in p) dicho += p.texto;
+        if ('fin' in p) fin = p.fin;
+      }
+    } catch (e) {
+      error = e;
+    }
+    return { fin, dicho, error };
+  };
+  await conBedrockFalso(
+    () => [texto, { contentBlockStop: {} }, { messageStop: { stopReason: 'end_turn' } }],
+    async () => {
+      const r = await correr();
+      assert.equal(r.error, null);
+      assert.deepEqual(r.fin, { motivo: 'end_turn', estado: 'completo' });
+    }
+  );
+  await conBedrockFalso(
+    () => [texto, { messageStop: { stopReason: 'max_tokens' } }],
+    async (modelos) => {
+      const r = await correr();
+      assert.equal(r.error, null, 'se cortó por largo, no por fallo: lo dicho queda');
+      assert.deepEqual(r.fin, { motivo: 'max_tokens', estado: 'truncado' }, 'max_tokens no es una respuesta terminada');
+      assert.equal(modelos.length, 1, 'con algo ya dicho no se repite con el de respaldo');
+    }
+  );
+  await conBedrockFalso(
+    () => [texto],
+    async (modelos) => {
+      const r = await correr();
+      assert.match(String((r.error as Error)?.message), /sin messageStop/, 'un EOF sin cierre es un corte, no un end_turn');
+      assert.equal(r.fin, null);
+      assert.match(r.dicho, /La planta va bien/);
+      assert.equal(modelos.length, 1);
+    }
+  );
+});
+
+test('STREAM02: antes de la primera frase, un EOF sin cierre o un max_tokens pasa al de respaldo (el fallback se conserva)', async () => {
+  const { hablarConManos } = await import('../lib/cerebro-rapido');
+  for (const malo of [[], [{ contentBlockDelta: { delta: { text: '[EMO: neutral]' } } }, { messageStop: { stopReason: 'max_tokens' } }]]) {
+    await conBedrockFalso(
+      (modelo) => (modelo === 'zai.glm-5' ? malo : [{ contentBlockDelta: { delta: { text: 'Hola, aquí estoy.' } } }, { messageStop: { stopReason: 'end_turn' } }]),
+      async (modelos) => {
+        let dicho = '';
+        let fin: any = null;
+        let quien = '';
+        for await (const p of hablarConManos([{ role: 'user', content: 'hola' }], [])) {
+          if ('texto' in p) dicho += p.texto;
+          if ('fin' in p) fin = p.fin;
+          if ('modelo' in p) quien = p.modelo;
+        }
+        assert.deepEqual(modelos, ['zai.glm-5', 'moonshotai.kimi-k2.5']);
+        assert.equal(quien, 'moonshotai.kimi-k2.5', 'el modelo que contestó de verdad');
+        assert.match(dicho, /Hola, aquí estoy\.$/, 'contestó el de respaldo');
+        assert.equal(fin?.estado, 'completo');
+      }
+    );
+  }
+});
+
+test('STREAM02: una herramienta pedida con tool_use cierra como completa', async () => {
+  const { hablarConManos } = await import('../lib/cerebro-rapido');
+  await conBedrockFalso(
+    () => [
+      { contentBlockStart: { start: { toolUse: { name: 'llamar', toolUseId: 't1' } } } },
+      { contentBlockDelta: { delta: { toolUse: { input: '{"a":"Beto"}' } } } },
+      { contentBlockStop: {} },
+      { messageStop: { stopReason: 'tool_use' } },
+    ],
+    async () => {
+      const piezas: any[] = [];
+      for await (const p of hablarConManos([{ role: 'user', content: 'llama a Beto' }], [])) piezas.push(p);
+      assert.deepEqual(piezas.find((p) => 'herramienta' in p)?.herramienta, { nombre: 'llamar', input: { a: 'Beto' } });
+      assert.deepEqual(piezas.at(-1), { fin: { motivo: 'tool_use', estado: 'completo' } });
+    }
+  );
+});

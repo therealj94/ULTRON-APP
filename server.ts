@@ -93,7 +93,7 @@ import { despacharTaller, hechosCatalogo } from './lib/taller';
 import { listarTareas } from './lib/tareas';
 import { ejecutarCodigo, ejecutorActivo } from './lib/ejecutor';
 import { construirMensajes, extraerPython } from './lib/qwen';
-import { computadoraDisponible, correoDisponible, extraerPedidoHerramienta, herramientaQueSale, neutralizarPedido, quitarLineaPedido, resolverPedido } from './lib/harness';
+import { computadoraDisponible, correoDisponible, correrBucleHarness, extraerPedidoHerramienta, MINIMO_HERRAMIENTA_MS, quitarLineaPedido, resolverPedidoConEstado, type EstadoRespuesta, type ResultadoHerramienta, type VueltaHarness } from './lib/harness';
 import { herramientasDelTurno, lineaDeHerramienta, notaDeCumplir, prometeSinHacer, reglasDeManos, topeDeVoz, type ManosDelTurno } from './lib/cerebro-manos';
 import { correrCartera } from './lib/cartera';
 import { notaDeVoz, pideNotaDeVoz } from './lib/voz';
@@ -102,7 +102,7 @@ import { iniciarRevisionCampana } from './lib/campana-respuestas';
 import { clave, fotoBoveda, guardarCaja } from './lib/boveda';
 import { capturaPagina, verEstructurado, verImagen, vistaFallida, NO_PUDE_VER } from './lib/vision';
 import { etiquetasDeVista, focoDePregunta, focoValido, vistaAHechos } from './lib/vision-estructurada';
-import { presupuesto, PRESUPUESTO_OIDO_MS, PRESUPUESTO_VISION_MS } from './lib/presupuesto';
+import { presupuesto, PRESUPUESTO_OIDO_MS, PRESUPUESTO_TURNO_MS, PRESUPUESTO_VISION_MS, type Presupuesto } from './lib/presupuesto';
 import { destinoPublico } from './lib/red-publica';
 import { extraerPdf, dataUrlDeImagen, bufferDeCualquier } from './lib/leer-pdf';
 import { transcribirAudio, permisoTurbo, PROVEEDORES_OIDO_CONFIRMAR, PROVEEDORES_OIDO_ELECTRUM_CONFIRMAR, TERMINOS_ELECTRUM } from './lib/oido';
@@ -2006,23 +2006,45 @@ async function permisoDeSistema(herramienta: string, o: { quien: string | null; 
   return d.veredicto === 'permitir' ? null : textoDeDecision({ herramienta }, d);
 }
 
-function juntarOllama(raw: string) {
-  let acc = '';
-  for (const line of raw.split('\n')) {
-    const s = line.trim();
-    if (!s) continue;
-    try {
-      const j = JSON.parse(s);
-      acc += j.message?.content || j.content || j.response || '';
-      if (j.done && acc) return acc;
-    } catch { /* skip */ }
+/** Una línea del NDJSON del nodo: su trozo, si es la última (`done`) y si terminó con error. Null si no es JSON. */
+function lineaNodo(l: string): { trozo: string; done: boolean; error: string; j: any } | null {
+  const s = l.trim();
+  if (!s) return null;
+  try {
+    const j = JSON.parse(s);
+    // `done_reason: "error"`: el proxy de la A10G terminó con error (scripts/nodo-a10g/ollama-proxy-ndjson.py).
+    const error = j.error || j.done_reason === 'error' ? String(j.error || 'el nodo terminó con error').slice(0, 200) : '';
+    return { trozo: String(j.message?.content || j.content || j.response || ''), done: !!j.done, error, j };
+  } catch {
+    return null;
   }
+}
+
+/**
+ * La respuesta entera del nodo (`stream: false`), con cómo terminó (auditoría 3-oct, STREAM01). Un JSON
+ * completo es su propio final; en NDJSON hace falta la línea `done`, y la última línea cuenta aunque no
+ * traiga salto. Antes, una respuesta vacía devolvía el JSON crudo como si fuera lo que dijo el modelo.
+ */
+function leerNodo(raw: string): { texto: string; error: string } {
   try {
     const j = JSON.parse(raw);
-    return j.message?.content || j.content || j.reply || raw;
+    const l = lineaNodo(JSON.stringify(j))!;
+    return { texto: l.trozo || String(j.reply || ''), error: l.error };
   } catch {
-    return raw;
+    /* NDJSON */
   }
+  let texto = '';
+  let error = '';
+  let terminado = false;
+  for (const linea of raw.split('\n')) {
+    const l = lineaNodo(linea);
+    if (!l) continue;
+    texto += l.trozo;
+    if (l.error) error = l.error;
+    if (l.done) terminado = true;
+  }
+  if (!error && texto && !terminado) error = 'el nodo cerró sin terminar la respuesta';
+  return { texto, error };
 }
 
 
@@ -3394,7 +3416,7 @@ async function preguntarQwen(
    * en la voz habla en cuanto hay una frase, en vez de esperar la respuesta entera).
    */
   alTexto?: (acumulado: string) => void
-): Promise<{ ok: boolean; reply: string; error?: string }> {
+): Promise<VueltaHarness> {
   if (!ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) {
     return { ok: false, reply: '', error: 'Qwen no configurado' };
   }
@@ -3409,12 +3431,15 @@ async function preguntarQwen(
       signal: conTope(senal, 60000),
     });
     const raw = await r.text();
-    const reply = String(juntarOllama(raw) || '').trim();
+    const leido = leerNodo(raw);
+    const reply = leido.texto.trim();
     const tk = tokensOllama(raw);
     trazaActual()?.tokens(tk.entrada, tk.salida);
     trazaActual()?.modelo(ULTRON_NODO_MODELO);
+    // Con error o sin terminar no es una respuesta buena, aunque traiga texto (STREAM01).
+    if (leido.error) return { ok: false, reply, error: leido.error };
     if (!r.ok || !reply) return { ok: false, reply: '', error: 'Qwen no contestó' };
-    return { ok: true, reply };
+    return { ok: true, reply, modelo: ULTRON_NODO_MODELO, proveedor: 'nodo' };
   } catch (err: any) {
     return { ok: false, reply: '', error: String(err?.message || err).slice(0, 200) };
   }
@@ -3426,7 +3451,7 @@ async function preguntarQwenATrozos(
   espacio: number,
   alTexto: (acumulado: string) => void,
   senal?: AbortSignal
-): Promise<{ ok: boolean; reply: string; error?: string }> {
+): Promise<VueltaHarness> {
   try {
     anotarEspacio(espacio, '');
     const r = await fetchNodo(`${ULTRON_NODO_URL}/api/chat`, {
@@ -3442,26 +3467,24 @@ async function preguntarQwenATrozos(
     let acumulado = '';
     /** El nodo terminó con error (`done_reason: "error"`, scripts/nodo-a10g/ollama-proxy-ndjson.py). */
     let errorNodo = '';
-    const linea = (l: string) => {
-      if (!l.trim()) return;
-      try {
-        const j = JSON.parse(l);
-        if (j.error || j.done_reason === 'error') errorNodo = String(j.error || 'el nodo terminó con error').slice(0, 200);
-        const trozo = j.message?.content || j.response || '';
-        if (trozo) {
-          acumulado += trozo;
-          try {
-            alTexto(acumulado);
-          } catch {
-            /* quien escucha no rompe la vuelta */
-          }
+    /** Llegó la línea `done`: sin ella, el stream se cortó (STREAM01). */
+    let terminado = false;
+    const linea = (raw: string) => {
+      const l = lineaNodo(raw);
+      if (!l) return;
+      if (l.error) errorNodo = l.error;
+      if (l.trozo) {
+        acumulado += l.trozo;
+        try {
+          alTexto(acumulado);
+        } catch {
+          /* quien escucha no rompe la vuelta */
         }
-        if (j.done) {
-          trazaActual()?.tokens(j.prompt_eval_count, j.eval_count);
-          trazaActual()?.lectura(j.prompt_eval_count, j.prompt_cache_count);
-        }
-      } catch {
-        /* línea parcial */
+      }
+      if (l.done) {
+        terminado = true;
+        trazaActual()?.tokens(l.j.prompt_eval_count, l.j.eval_count);
+        trazaActual()?.lectura(l.j.prompt_eval_count, l.j.prompt_cache_count);
       }
     };
     try {
@@ -3482,7 +3505,9 @@ async function preguntarQwenATrozos(
     // Media respuesta y después un error no es una respuesta buena (auditoría de Codex del 3-oct, VOZ 003).
     if (errorNodo) return { ok: false, reply, error: errorNodo };
     if (!reply) return { ok: false, reply: '', error: 'Qwen no contestó' };
-    return { ok: true, reply };
+    // Ni un stream que se acaba sin `done` (auditoría 3-oct, STREAM01).
+    if (!terminado) return { ok: false, reply, error: 'el nodo cerró el stream sin «done»' };
+    return { ok: true, reply, modelo: ULTRON_NODO_MODELO, proveedor: 'nodo' };
   } catch (err: any) {
     return { ok: false, reply: '', error: String(err?.message || err).slice(0, 200) };
   }
@@ -3494,7 +3519,7 @@ function opcionesManos(m: ManosDelTurno) {
 }
 
 /** Lo que el harness usa para volver a preguntar después de una herramienta (por omisión, Qwen del nodo). */
-type PreguntarVuelta = (hechos: string[], alTexto?: (acumulado: string) => void) => Promise<{ ok: boolean; reply: string; error?: string }>;
+type PreguntarVuelta = (hechos: string[], alTexto?: (acumulado: string) => void) => Promise<VueltaHarness>;
 
 /**
  * La vuelta del harness con el cerebro con manos: el mismo system y las mismas herramientas, con lo que devolvió
@@ -3514,6 +3539,9 @@ function preguntarConManos(
 ): PreguntarVuelta {
   return async (hechos, alTexto) => {
     let acumulado = '';
+    let modelo = '';
+    /** Bedrock dijo que la dejó a medias (max_tokens, un filtro): no es una vuelta completa (STREAM02). */
+    let truncada = '';
     const avisar = () => {
       try {
         alTexto?.(acumulado);
@@ -3524,7 +3552,12 @@ function preguntarConManos(
     try {
       for await (const pieza of hablarConManos(mensajesManos(systemManos, message, hechos, hilo, contexto), herramientas, senal)) {
         if ('modelo' in pieza) {
+          modelo = pieza.modelo;
           trazaActual()?.modelo(pieza.modelo);
+          continue;
+        }
+        if ('fin' in pieza) {
+          if (pieza.fin.estado !== 'completo') truncada = `${modelo || 'Bedrock'} la dejó a medias (${pieza.fin.motivo})`;
           continue;
         }
         if ('texto' in pieza) acumulado += pieza.texto;
@@ -3541,7 +3574,9 @@ function preguntarConManos(
       return { ok: false, reply: acumulado.trim(), error: String(e?.message || e).slice(0, 200) };
     }
     const reply = acumulado.trim();
-    return reply ? { ok: true, reply } : { ok: false, reply: '', error: 'el cerebro con manos no contestó' };
+    // A medias tampoco pasa por buena: el harness le pregunta a Qwen, como con un corte.
+    if (truncada) return { ok: false, reply, error: truncada };
+    return reply ? { ok: true, reply, modelo, proveedor: 'bedrock' } : { ok: false, reply: '', error: 'el cerebro con manos no contestó' };
   };
 }
 
@@ -3560,47 +3595,58 @@ async function correrHerramientaPedida(
   senal?: AbortSignal,
   dueno = '',
   ambito = ''
-): Promise<string> {
-  if (!ped) return 'HARNESS: pedido vacío.';
-  return resolverPedido(
+): Promise<ResultadoHerramienta> {
+  if (!ped) return { texto: 'HARNESS: pedido vacío.', estado: 'failed' };
+  // Cada runner que sabe cómo terminó lo dice con su estado (EXEC03); antes se adivinaba por las palabras
+  // del texto con una expresión regular.
+  const fallo = (texto: string): ResultadoHerramienta => ({ texto, estado: 'failed' });
+  return resolverPedidoConEstado(
     ped,
     {
       web: async (q) => {
         const hits = await buscarWeb(q, 5);
-        if (!hits.length) return `HARNESS web "${q}": sin resultados.`;
+        if (!hits.length) return fallo(`HARNESS web "${q}": sin resultados.`);
         const first = hits.find((h) => /^https?:\/\/[^/]+\/.+/.test(h.url));
         let texto = '';
         if (first) {
           const pub = await urlPublica(first.url);
           if (pub.ok !== false) texto = await leerPagina(pub.url, 1200);
         }
-        return (
-          `HARNESS web "${q}":\n` +
-          hits.map((h, i) => `${i + 1}. ${h.title} — ${h.snippet} [${h.url}]`).join('\n') +
-          (first && texto ? `\nPRIMERA FUENTE (${first.url}): ${texto}` : '')
-        );
+        return {
+          texto:
+            `HARNESS web "${q}":\n` +
+            hits.map((h, i) => `${i + 1}. ${h.title} — ${h.snippet} [${h.url}]`).join('\n') +
+            (first && texto ? `\nPRIMERA FUENTE (${first.url}): ${texto}` : ''),
+          estado: 'succeeded',
+        };
       },
-      sistema: async () => (await fotoSistema()).resumen,
+      sistema: async () => ({ texto: (await fotoSistema()).resumen, estado: 'succeeded' }),
       leer: async (url) => {
         const pub = await urlPublica(url);
-        if (pub.ok === false) return `HARNESS leer: ${pub.error}. No abrí.`;
+        if (pub.ok === false) return fallo(`HARNESS leer: ${pub.error}. No abrí.`);
         const texto = await leerPagina(pub.url, 1600);
-        return texto ? `HARNESS leer (${pub.url}): ${texto}` : `HARNESS leer (${pub.url}): página vacía o no HTML.`;
+        return texto ? { texto: `HARNESS leer (${pub.url}): ${texto}`, estado: 'succeeded' } : fallo(`HARNESS leer (${pub.url}): página vacía o no HTML.`);
       },
       ejecutor: async (codigo) => {
-        if (!mando) return 'ACCESO: consulta. No ejecuto código ni cambio el sistema. José o Medardo con sesión sí pueden.';
+        if (!mando) return fallo('ACCESO: consulta. No ejecuto código ni cambio el sistema. José o Medardo con sesión sí pueden.');
         const no = await permisoDeSistema('ejecutor', { quien: trazaActual()?.t.quien ?? null, mando, prueba: 'sesion', args: { codigo } });
-        if (no) return no;
+        if (no) return fallo(no);
         const r = await ejecutarCodigo(codigo);
-        return `EJECUTOR (${r.via}): exit ${r.exit_code}. stdout: ${String(r.stdout || '').slice(0, 800) || '(vacío)'} stderr: ${String(r.stderr || r.error || '').slice(0, 400) || '(vacío)'}.`;
+        return {
+          texto: `EJECUTOR (${r.via}): exit ${r.exit_code}. stdout: ${String(r.stdout || '').slice(0, 800) || '(vacío)'} stderr: ${String(r.stderr || r.error || '').slice(0, 400) || '(vacío)'}.`,
+          estado: r.ok ? 'succeeded' : 'failed',
+        };
       },
       // Sin identidad verificada no hay de quién sea la tarea ni a quién avisarle: no se encarga.
-      // «parar / pausar / seguir» van a su tarea de ahora; lo demás es una misión nueva.
-      computadora: async (tarea) =>
-        compu
-          ? ((await comandoComputadora(compu.quien, tarea)) ??
-            (await encargarTarea({ instruccion: tarea, quien: compu.quien, motor: compu.motor, esperaMs: compu.esperaMs, senal, aparato: compu.aparato, idioma: compu.idioma })).hecho)
-          : 'HARNESS computadora: solo la uso para alguien con sesión. Pídele que entre con su cuenta.',
+      // «parar / pausar / seguir» van a su tarea de ahora; lo demás es una misión nueva. Hecha = recibo;
+      // sin encargo = fallo; encargada y sin final (sigue, se paró, falló a medias) = pudo haber hecho algo.
+      computadora: async (tarea) => {
+        if (!compu) return fallo('HARNESS computadora: solo la uso para alguien con sesión. Pídele que entre con su cuenta.');
+        const orden = await comandoComputadora(compu.quien, tarea);
+        if (orden !== null) return orden;
+        const r = await encargarTarea({ instruccion: tarea, quien: compu.quien, motor: compu.motor, esperaMs: compu.esperaMs, senal, aparato: compu.aparato, idioma: compu.idioma });
+        return { texto: r.hecho, estado: !r.id ? 'failed' : r.tarea?.estado === 'hecha' ? 'succeeded' : 'unknown' };
+      },
       correo: (arg) => correrCorreo(dueno, arg, ambito),
       whatsapp: (arg) => correrWhatsapp(dueno, arg, ambito),
       // Sus misiones, su círculo y sus mensajes ordenados: sin dueño (sin sesión) no hay de quién serían.
@@ -3620,6 +3666,9 @@ async function correrHerramientaPedida(
 function conTope(senal: AbortSignal | undefined, ms: number): AbortSignal {
   return senal ? AbortSignal.any([senal, AbortSignal.timeout(ms)]) : AbortSignal.timeout(ms);
 }
+
+/** Lo que se le deja a la vuelta que cuenta el resultado: la espera de una herramienta no se lo come (EXEC04). */
+const RESERVA_VUELTA_MS = 12_000;
 
 /** Bucle harness compartido por /api/turno y /api/turno/stream. Máximo dos vueltas. */
 async function bucleHarness(o: {
@@ -3649,65 +3698,36 @@ async function bucleHarness(o: {
   ambito?: string;
   /** Quién escribe cada vuelta (el cerebro con manos); si no contesta, Qwen del nodo. */
   preguntar?: PreguntarVuelta;
-}): Promise<{ reply: string; via: string }> {
-  let reply = o.reply;
-  let via = `${ULTRON_NODO_URL}/api/chat`;
-  /** Ya se leyó en este turno algo que escribió otra gente en privado (un correo, un WhatsApp). */
-  let ajeno: 'correo' | 'whatsapp' | null = null;
-  for (let i = 0; i < 2; i++) {
-    // Si la persona ya se fue (o interrumpió), no se corre otra herramienta ni se vuelve a preguntar.
-    if (o.senal?.aborted) break;
-    const ped = extraerPedidoHerramienta(reply);
-    if (!ped) break;
-    o.tools.push(ped.herramienta);
-    // Un correo o un WhatsApp puede traer «abre esta dirección…» escrito para el modelo: después de
-    // leerlos, AURA no abre direcciones ni usa su computadora por su cuenta (podría mandar datos privados
-    // en la dirección). Si la persona lo quiere, lo pide ella en el turno siguiente.
-    if (ajeno && herramientaQueSale(ped.herramienta)) {
-      const no = `HARNESS ${ped.herramienta}: no lo corrí: en este turno ya leí un ${ajeno === 'correo' ? 'correo' : 'mensaje de WhatsApp'} (lo escribió otra persona) y no abro direcciones ni uso la computadora por lo que diga. Si la persona lo quiere, que lo pida ella.`;
-      trazaActual()?.paso({ herramienta: ped.herramienta, ok: false, ms: 0, resumen: no, ronda: i + 1 });
-      o.hechos.push(no);
-      const alTextoNo = o.alTexto ? (acc: string) => o.alTexto!(acc, i + 1) : undefined;
-      let qn = o.preguntar ? await o.preguntar(o.hechos, alTextoNo) : null;
-      if (!qn?.ok && !o.senal?.aborted) qn = await preguntarQwen(o.system, o.message, o.hechos, o.hilo, o.senal, o.nivel, o.contexto, o.espacio, alTextoNo);
-      reply = qn?.ok ? quitarLineaPedido(qn.reply) : quitarLineaPedido(reply);
-      via = qn?.ok ? 'harness' : 'harness-parcial';
-      break;
-    }
-    try {
-      o.alTarea?.(ped.herramienta);
-    } catch {
-      /* quien escucha no rompe el turno */
-    }
-    const tH = Date.now();
-    // Lo que devuelve la herramienta (una página, una búsqueda) no lo escribió el modelo: si trae la
-    // marca de acción, se rompe aquí, antes de ir al prompt o de pegarse a la respuesta parcial.
-    const extra = neutralizarPedido(neutralizarMarca(await correrHerramientaPedida(ped, reply, o.mando, o.nivel, o.computadora, o.senal, o.dueno, o.ambito)));
-    if (ped.herramienta === 'correo' || ped.herramienta === 'whatsapp') ajeno = ped.herramienta;
-    // El triaje también lee lo que otra gente escribió (sus chats y correos).
-    else if (ped.herramienta === 'triaje') ajeno = 'whatsapp';
-    trazaActual()?.paso({
-      herramienta: ped.herramienta,
-      // Lo que la herramienta cuenta como fallo en su texto no se anota como éxito (auditoría de Codex del 3-oct).
-      ok: !/fall[oó]|no abr[ií]|sin resultados|ACCESO: consulta|pedido vac[ií]o|no se pudo|no pude|no lo corr[ií]|no disponible|no (fue|est[aá]) (enviad|conectad)|\berror\b/i.test(extra),
-      ms: Date.now() - tH,
-      resumen: extra,
-      ronda: i + 1,
-    });
-    o.hechos.push(extra);
-    const ronda = i + 1;
-    const alTextoRonda = o.alTexto ? (acc: string) => o.alTexto!(acc, ronda) : undefined;
-    let qn = o.preguntar ? await o.preguntar(o.hechos, alTextoRonda) : null;
-    if (!qn?.ok && !o.senal?.aborted) qn = await preguntarQwen(o.system, o.message, o.hechos, o.hilo, o.senal, o.nivel, o.contexto, o.espacio, alTextoRonda);
-    if (!qn || !qn.ok) {
-      reply = quitarLineaPedido(reply) + (extra ? `\n\n${extra}` : '');
-      via = 'harness-parcial';
-      break;
-    }
-    reply = qn.reply;
-    via = 'harness';
-  }
-  return { reply: quitarLineaPedido(reply), via };
+  /** El reloj del turno entero (lib/presupuesto.ts): sin tiempo no se empieza otra herramienta (EXEC04). */
+  reloj?: Presupuesto;
+}): Promise<{ reply: string; via: string; estado: EstadoRespuesta; motivo?: string; modelo?: string; proveedor?: string; herramientas: number }> {
+  // El bucle vive en lib/harness.ts (correrBucleHarness, probado sin red); aquí van sus piezas de verdad.
+  const h = await correrBucleHarness({
+    reply: o.reply,
+    hechos: o.hechos,
+    tools: o.tools,
+    senal: o.senal,
+    reloj: o.reloj,
+    // La espera de su computadora no se lleva el tiempo de contar el resultado.
+    correr: (ped, reply) => {
+      const compu = o.computadora && o.reloj ? { ...o.computadora, esperaMs: Math.max(0, Math.min(o.computadora.esperaMs, o.reloj.queda() - RESERVA_VUELTA_MS)) } : o.computadora;
+      return correrHerramientaPedida(ped, reply, o.mando, o.nivel, compu, o.senal, o.dueno, o.ambito);
+    },
+    preguntar: o.preguntar,
+    respaldo: (hechos, alTexto) => preguntarQwen(o.system, o.message, hechos, o.hilo, o.reloj ? o.reloj.senalCon(o.senal) : o.senal, o.nivel, o.contexto, o.espacio, alTexto),
+    alTarea: o.alTarea,
+    alTexto: o.alTexto,
+    alPaso: (p) => trazaActual()?.paso({ herramienta: p.herramienta, ok: p.estado === 'succeeded', estado: p.estado, ms: p.ms, resumen: p.resumen, ronda: p.ronda }),
+    limpiar: neutralizarMarca,
+  });
+  return {
+    reply: h.reply,
+    via: h.via ?? `${ULTRON_NODO_URL}/api/chat`,
+    estado: h.estado,
+    ...(h.motivo ? { motivo: h.motivo } : {}),
+    ...(h.modelo ? { modelo: h.modelo, proveedor: h.proveedor } : {}),
+    herramientas: h.pasos.length,
+  };
 }
 
 type SalidaTurno = {
@@ -3728,16 +3748,41 @@ type SalidaTurno = {
   acciones: EventoAccion[];
   honesto: true;
   error?: string;
+  /** Cómo terminó (auditoría 3-oct, STREAM01): lo que no es `completo` no va a la memoria y sale `parcial`. */
+  estado?: EstadoRespuesta;
+  motivo?: string;
+  /** Quién escribió la respuesta de verdad (EXEC04): no se adivina por `via`. */
+  modelo?: string;
+  proveedor?: string;
 };
+
+/** Cómo cerró un turno: `completo`, o a medias con su motivo (STREAM01). */
+type Cierre = { estado: EstadoRespuesta; motivo?: string };
+const COMPLETO: Cierre = { estado: 'completo' };
+
+/**
+ * Quién contestó, según lo que se sabe del turno (EXEC04). Con el modelo real de la vuelta, ese; si no, por
+ * dónde salió: Bedrock trae su modelo en la `via`; el modelo chico y las herramientas son lo suyo.
+ */
+function quienContesto(via: string, modelo?: string | null, proveedor?: string | null): { modelo: string; proveedor: string } {
+  if (modelo) return { modelo, proveedor: proveedor || (via.startsWith('bedrock:') ? 'bedrock' : 'nodo') };
+  if (via.startsWith('bedrock:')) return { modelo: via.slice('bedrock:'.length), proveedor: 'bedrock' };
+  if (via === 'modelo-chico') return { modelo: process.env.MODELO_CHICO_NOMBRE || 'chico', proveedor: 'modelo-chico' };
+  if (via === 'taller' || via.includes('gold') || via.startsWith('app-')) return { modelo: 'tools', proveedor: 'herramientas' };
+  if (/^(tools|respuesta-fija|calculo-mina|solo-rapido)/.test(via)) return { modelo: 'tools', proveedor: 'herramientas' };
+  return { modelo: ULTRON_NODO_MODELO, proveedor: 'nodo' };
+}
 
 /**
  * Lo que dice AU-RA cuando algo se rompe por dentro. Nunca «Qwen caído» ni «message vacío»: eso es
  * del log, no de la persona (y la voz lo leía en voz alta).
  */
-const FRASE_FALLO: Record<'vacio' | 'cerebro' | 'caido', Record<'es' | 'en', string>> = {
+const FRASE_FALLO: Record<'vacio' | 'cerebro' | 'caido' | 'enCurso', Record<'es' | 'en', string>> = {
   vacio: { es: 'No te escuché bien. ¿Me lo repites?', en: "I didn't catch that. Could you say it again?" },
   cerebro: { es: 'Ahora mismo no alcanzo mi cerebro. Dame un momento y vuelve a preguntarme.', en: "I can't reach my brain right now. Give me a moment and ask me again." },
   caido: { es: 'Se me cayó el hilo de lo que pensaba. ¿Me lo repites?', en: 'I lost my train of thought. Could you say that again?' },
+  // Un reintento mientras el mismo turno sigue corriendo (server/turno-unico.ts, EXEC01).
+  enCurso: { es: 'Sigo con eso que me pediste. Dame un momento y pregúntame otra vez.', en: "I'm still working on that. Give me a moment and ask me again." },
 };
 
 /**
@@ -3941,6 +3986,8 @@ async function correrTurno(body: any, opciones: OpcionesTurno = {}): Promise<Sal
 
 async function correrTurnoInterno(body: any, opciones: OpcionesTurno = {}): Promise<SalidaTurno> {
   const t00 = Date.now();
+  // Un solo reloj para el turno entero (EXEC04): cada llamada y cada herramienta mira lo que queda.
+  const reloj = presupuesto(PRESUPUESTO_TURNO_MS);
   empezarTurnoDeCuenta(body, opciones);
   const rapida = await ordenDeApp(body, opciones);
   if (rapida) {
@@ -3952,11 +3999,14 @@ async function correrTurnoInterno(body: any, opciones: OpcionesTurno = {}): Prom
   const { t0, mode, tools, system, message, quien, quienMem, canal, hilo, mando } = p;
   const hechos = [...p.hechos];
   // `delModelo`: la respuesta la escribió el modelo grande (solo de ella salen acciones para la app).
+  // Lo que no terminó completo (un error, una vuelta que no contestó) no se guarda en su memoria como
+  // conclusión (STREAM01): sale marcado `parcial` con su estado.
   const guardar = async (out: Omit<SalidaTurno, 'emocion' | 'voz' | 'acciones'> & { emocion?: Emocion }, delModelo = false): Promise<SalidaTurno> => {
     const app = accionesDelCerebro(out.reply, p, delModelo);
     const e = extraerEmocion(app.texto);
-    const final: SalidaTurno = { ...out, reply: quitarExpresiones(e.texto).trim(), voz: e.texto.trim(), emocion: out.emocion || e.emocion, acciones: app.acciones };
-    if (final.reply) await recordarSegunNivel(body, { quienMem, rol: 'ultron', texto: final.reply, canal }, opciones.retener);
+    const estado: EstadoRespuesta = out.estado ?? (out.error ? 'error' : 'completo');
+    const final: SalidaTurno = { ...out, estado, reply: quitarExpresiones(e.texto).trim(), voz: e.texto.trim(), emocion: out.emocion || e.emocion, acciones: app.acciones };
+    if (final.reply && estado === 'completo') await recordarSegunNivel(body, { quienMem, rol: 'ultron', texto: final.reply, canal }, opciones.retener);
     return final;
   };
   if (p.directo) {
@@ -3969,14 +4019,16 @@ async function correrTurnoInterno(body: any, opciones: OpcionesTurno = {}): Prom
   if (!ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) {
     return guardar({ ...base, reply: sinCerebro(p.datos), emocion: 'preocupado', via: 'tools-only', mode, ms: Date.now() - t0, herramientas: tools });
   }
-  const q1 = await preguntarQwen(system, message, hechos, hilo, p.senal, p.nivel, p.contexto, p.espacio);
+  const q1 = await preguntarQwen(system, message, hechos, hilo, reloj.senalCon(p.senal), p.nivel, p.contexto, p.espacio);
   if (!q1.ok) {
     return guardar({ ...base, reply: sinCerebro(p.datos), emocion: 'preocupado', via: 'tools-fallback', mode, ms: Date.now() - t0, herramientas: tools, error: q1.error });
   }
   if (p.avisoComputadora) confirmarAvisos(p.avisoComputadora.quien, p.avisoComputadora.ids);
-  const h = await bucleHarness({ reply: q1.reply, system, message, hechos, hilo, tools, mando, senal: p.senal, nivel: p.nivel, contexto: p.contexto, espacio: p.espacio, computadora: p.computadora, dueno: p.dueno, ambito: p.ambito });
+  const h = await bucleHarness({ reply: q1.reply, system, message, hechos, hilo, tools, mando, senal: p.senal, nivel: p.nivel, contexto: p.contexto, espacio: p.espacio, computadora: p.computadora, dueno: p.dueno, ambito: p.ambito, reloj });
   let reply = h.reply;
   let via = h.via;
+  let cierre: Cierre = h.estado === 'completo' ? COMPLETO : { estado: h.estado, motivo: h.motivo };
+  const quien1 = quienContesto(via, h.modelo || q1.modelo, h.proveedor || q1.proveedor);
 
   // Código que escribió el modelo solo se ejecuta si lo pidió alguien con mando y lo pidió explícitamente.
   const py = extraerPython(reply);
@@ -3985,22 +4037,25 @@ async function correrTurnoInterno(body: any, opciones: OpcionesTurno = {}): Prom
       ? await permisoDeSistema('ejecutor', { quien, mando, prueba: p.prueba, args: { codigo: py } })
       : 'no aplica';
   if (noEjecutor && noEjecutor !== 'no aplica') hechos.push(noEjecutor);
-  if (py && !noEjecutor) {
+  // Sin tiempo en el reloj del turno no se corre código nuevo (EXEC04).
+  if (py && !noEjecutor && !reloj.alcanza(MINIMO_HERRAMIENTA_MS)) cierre = { estado: 'truncado', motivo: 'sin tiempo para el ejecutor' };
+  else if (py && !noEjecutor) {
     tools.push('ejecutor');
     const r = await ejecutarCodigo(py);
     // Lo que imprime el código no lo escribió el modelo: sin marca de acción.
     const hecho = neutralizarMarca(`EJECUTOR (${r.via}): exit ${r.exit_code}. stdout: ${String(r.stdout || '').slice(0, 800) || '(vacío)'} stderr: ${String(r.stderr || r.error || '').slice(0, 400) || '(vacío)'}.`);
     hechos.push(hecho);
     if (!r.ok) {
-      const qn = await preguntarQwen(system, `${message}\n\nEl ejecutor falló. Corrige el código. No afirmes que funciona.`, hechos, hilo, p.senal, p.nivel, p.contexto, p.espacio);
+      const qn = await preguntarQwen(system, `${message}\n\nEl ejecutor falló. Corrige el código. No afirmes que funciona.`, hechos, hilo, reloj.senalCon(p.senal), p.nivel, p.contexto, p.espacio);
       reply = qn.ok ? quitarLineaPedido(qn.reply) : `${quitarLineaPedido(reply)}\n\n${hecho}`;
+      if (!qn.ok) cierre = { estado: 'error', motivo: `la corrección no contestó: ${qn.error || 'sin respuesta'}` };
     } else {
       reply = `${quitarLineaPedido(reply)}\n\n${hecho}`;
     }
     via = 'harness-ejecutor';
   }
 
-  return guardar({ ...base, reply, via, mode, ms: Date.now() - t0, herramientas: tools }, true);
+  return guardar({ ...base, reply, via, mode, ms: Date.now() - t0, herramientas: tools, estado: cierre.estado, ...(cierre.motivo ? { motivo: cierre.motivo } : {}), ...quien1 }, true);
 }
 
 /**
@@ -4018,7 +4073,9 @@ function jsonDelTurno(g: TurnoGuardado, extra: Record<string, unknown> = {}) {
     reply: g.reply,
     voz: g.voz,
     emocion: g.emocion,
-    modelo: g.via === 'modelo-chico' ? process.env.MODELO_CHICO_NOMBRE || 'chico' : g.via === 'taller' || g.via.includes('gold') || g.via.startsWith('app-') ? 'tools' : ULTRON_NODO_MODELO,
+    // El modelo de verdad del turno (EXEC04); un turno guardado sin él (de antes), como siempre.
+    modelo: g.modelo || (g.via === 'modelo-chico' ? process.env.MODELO_CHICO_NOMBRE || 'chico' : g.via === 'taller' || g.via.includes('gold') || g.via.startsWith('app-') ? 'tools' : ULTRON_NODO_MODELO),
+    proveedor: g.proveedor || quienContesto(g.via, g.modelo).proveedor,
     via: g.via,
     mode: g.mode,
     ms: g.ms,
@@ -4027,7 +4084,8 @@ function jsonDelTurno(g: TurnoGuardado, extra: Record<string, unknown> = {}) {
     foto: null as string | null,
     acciones: g.acciones,
     trazaId: g.trazaId,
-    ...(g.parcial ? { parcial: true } : {}),
+    estado: g.estado || (g.parcial ? 'error' : 'completo'),
+    ...(g.parcial ? { parcial: true, ...(g.motivo ? { motivo: g.motivo } : {}) } : {}),
     ...extra,
     honesto: true,
   };
@@ -4038,6 +4096,8 @@ app.post('/api/turno', exigirMesaODesk, limitar(60), cupoDeMiembro, async (req, 
   // Un reintento de la app con el mismo `idTurno`: la misma respuesta, sin correr otro turno.
   const unico = await reclamarTurno(claveDelTurno(req, body));
   if ('previo' in unico) return res.json(jsonDelTurno(unico.previo, { repetido: true }));
+  // El mismo turno sigue corriendo en otra petición: no se corre otro (EXEC01). La app lo trata como un error.
+  if ('enCurso' in unico) return res.status(409).json({ error: FRASE_FALLO.enCurso[normalizarIdioma(req.body?.idioma)], codigo: 'en-curso', enCurso: true, honesto: true });
   let out: Awaited<ReturnType<typeof correrTurno>>;
   try {
     out = await correrTurno(body);
@@ -4048,7 +4108,21 @@ app.post('/api/turno', exigirMesaODesk, limitar(60), cupoDeMiembro, async (req, 
     return res.status(500).json({ error: FRASE_FALLO.caido[normalizarIdioma(req.body?.idioma)], honesto: true });
   }
   // Una respuesta con error (el cerebro no contestó) no se repite: el reintento es para probar otra vez.
-  const g: TurnoGuardado = { reply: out.reply, voz: out.voz, emocion: out.emocion, via: out.via, mode: out.mode, ms: out.ms, herramientas: out.herramientas, acciones: out.acciones, trazaId: out.trazaId };
+  const parcial = !!out.estado && out.estado !== 'completo';
+  const g: TurnoGuardado = {
+    reply: out.reply,
+    voz: out.voz,
+    emocion: out.emocion,
+    via: out.via,
+    mode: out.mode,
+    ms: out.ms,
+    herramientas: out.herramientas,
+    acciones: out.acciones,
+    trazaId: out.trazaId,
+    ...(out.estado ? { estado: out.estado } : {}),
+    ...(parcial ? { parcial: true, ...(out.motivo ? { motivo: out.motivo } : {}) } : {}),
+    ...(out.modelo ? { modelo: out.modelo, proveedor: out.proveedor } : {}),
+  };
   unico.terminar(out.reply && !out.error ? g : null);
   if (out.error && !out.reply) {
     const code = out.error === 'message vacío' ? 400 : out.error.includes('configurado') ? 503 : 502;
@@ -4067,6 +4141,11 @@ type SalidaEnVivo = {
   enviar: (evento: string, datos: unknown) => void;
   /** El turno terminó (el SSE cierra la respuesta; la voz no hace nada: cierra ella). */
   fin: () => void;
+  /**
+   * El `done` de un turno que corrió una herramienta y cuya salida ya se cortó (la persona se fue): no se
+   * envía a nadie, pero quien guarda los reintentos lo conserva para no correrla otra vez.
+   */
+  resultado?: (datos: unknown) => void;
 };
 
 /** El turno en vivo con su traza. Lo usan el SSE y la voz. Nunca lanza: avisa con un `error`. */
@@ -4137,7 +4216,26 @@ app.post('/api/turno/stream', exigirMesaODesk, limitar(60), cupoDeMiembro, async
     escribir('tools', { tools: g.herramientas });
     escribir('emocion', { emocion: g.emocion });
     if (g.voz || g.reply) escribir('delta', { text: g.reply, voz: g.voz || g.reply });
-    escribir('done', { reply: g.reply, voz: g.voz, emocion: g.emocion, ms: g.ms, via: g.via, acciones: g.acciones, trazaId: g.trazaId, repetido: true, ...(g.parcial ? { parcial: true } : {}) });
+    // El reintento conserva el estado, el motivo y quién contestó (EXEC04): no se vuelven a adivinar.
+    escribir('done', {
+      reply: g.reply,
+      voz: g.voz,
+      emocion: g.emocion,
+      ms: g.ms,
+      via: g.via,
+      acciones: g.acciones,
+      trazaId: g.trazaId,
+      repetido: true,
+      estado: g.estado || (g.parcial ? 'error' : 'completo'),
+      ...(g.parcial ? { parcial: true, ...(g.motivo ? { motivo: g.motivo } : {}) } : {}),
+      ...(g.modelo ? { modelo: g.modelo, proveedor: g.proveedor } : {}),
+    });
+    return res.end();
+  }
+  // El mismo turno sigue corriendo en otra petición y no terminó mientras esta esperaba: no se corre otro
+  // (EXEC01: antes, a los 75 s, este reintento se volvía un segundo dueño y podía repetir lo que hacía).
+  if ('enCurso' in unico) {
+    escribir('error', { error: FRASE_FALLO.enCurso[normalizarIdioma(req.body?.idioma)], codigo: 'en-curso', enCurso: true });
     return res.end();
   }
   // Lo que se guarda para un reintento: las herramientas y el `done` (sin `done`, no hubo respuesta).
@@ -4146,7 +4244,20 @@ app.post('/api/turno/stream', exigirMesaODesk, limitar(60), cupoDeMiembro, async
   const terminar = () =>
     unico.terminar(
       hecho && (hecho.reply || hecho.voz)
-        ? { reply: String(hecho.reply || ''), voz: String(hecho.voz || hecho.reply || ''), emocion: String(hecho.emocion || 'neutral'), via: String(hecho.via || ''), mode: String((body as Record<string, unknown>).mode || 'GUARDIAN'), ms: hecho.ms, herramientas, acciones: hecho.acciones, trazaId: hecho.trazaId, ...(hecho.parcial === true ? { parcial: true } : {}) }
+        ? {
+            reply: String(hecho.reply || ''),
+            voz: String(hecho.voz || hecho.reply || ''),
+            emocion: String(hecho.emocion || 'neutral'),
+            via: String(hecho.via || ''),
+            mode: String((body as Record<string, unknown>).mode || 'GUARDIAN'),
+            ms: hecho.ms,
+            herramientas,
+            acciones: hecho.acciones,
+            trazaId: hecho.trazaId,
+            ...(hecho.estado ? { estado: hecho.estado } : {}),
+            ...(hecho.parcial === true ? { parcial: true, ...(hecho.motivo ? { motivo: String(hecho.motivo) } : {}) } : {}),
+            ...(hecho.modelo ? { modelo: String(hecho.modelo), proveedor: String(hecho.proveedor || '') } : {}),
+          }
         : null
     );
   const salida: SalidaEnVivo = {
@@ -4154,6 +4265,11 @@ app.post('/api/turno/stream', exigirMesaODesk, limitar(60), cupoDeMiembro, async
       if (evento === 'tools') herramientas = Array.isArray((datos as any)?.tools) ? (datos as any).tools : [];
       if (evento === 'done') hecho = datos;
       escribir(evento, datos);
+    },
+    // El cierre de un turno que ya corrió una herramienta, aunque la persona se haya ido: el reintento lo
+    // recibe (marcado parcial) en vez de correr la herramienta otra vez (STREAM01).
+    resultado: (datos) => {
+      hecho = datos;
     },
     fin: () => {
       terminar();
@@ -4176,6 +4292,8 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
   const reg = trazaActual()!;
   const senal = opciones.senal;
   const idioma = normalizarIdioma(body?.idioma);
+  // Un solo reloj para el turno entero (EXEC04): las llamadas al cerebro y las herramientas miran lo que queda.
+  const reloj = presupuesto(PRESUPUESTO_TURNO_MS);
   const send = (event: string, data: unknown) => {
     if (!senal?.aborted) salida.enviar(event, data);
   };
@@ -4251,17 +4369,37 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
   const { t0, tools, system, message, quienMem, canal, hilo, mando } = p;
   const hechos = [...p.hechos];
   // `delModelo`: el texto es del modelo grande (el stream o su harness); solo de él salen acciones.
-  // `parcial`: el cerebro se cortó con error a media respuesta (VOZ 003): se avisa en el `done`, la traza
-  // queda con el error y la frase a medias no se guarda en su memoria como si fuera una respuesta.
-  const terminar = async (texto: string, via: string, emocion: Emocion, delModelo = false, parcial: string | null = null) => {
+  // `cierre`: cómo terminó (auditoría 3-oct, STREAM01). Si no es `completo` (el cerebro se cortó con error,
+  // el stream se acabó sin `done`, Bedrock la dejó a medias, la vuelta del harness no contestó) se avisa en
+  // el `done` (`parcial`, `estado`, `motivo`), la traza queda con el motivo y la respuesta no se guarda en su
+  // memoria como conclusión. `quien`: el modelo y el proveedor que la escribieron de verdad (EXEC04).
+  // `corrioHerramienta`: si la persona ya se fue, el `done` igual se guarda para su reintento (no la repite).
+  const terminar = async (texto: string, via: string, emocion: Emocion, delModelo = false, cierre: Cierre = COMPLETO, quien?: { modelo?: string; proveedor?: string }, corrioHerramienta = false) => {
     const app = accionesDelCerebro(texto, p, delModelo);
     // El modelo contestó solo con la acción: la frase de esa acción sale también como texto (la voz
     // la dice; antes decía «Se me fue el hilo…»).
     if (app.sustituido) soltar('delta', app.texto);
     anotarHerramientasAura(reg, tools);
     const leido = quitarExpresiones(app.texto).trim();
-    reg.cerrar({ respuesta: leido, emocion, via, ...(parcial ? { error: parcial } : {}) });
-    send('done', { reply: leido, voz: app.texto.trim(), emocion, ms: Date.now() - t0, via, acciones: app.acciones, trazaId: reg.id, ...(parcial ? { parcial: true } : {}) });
+    const fin: Cierre = senal?.aborted && cierre.estado === 'completo' ? { estado: 'error', motivo: 'la persona interrumpió' } : cierre;
+    const parcial = fin.estado !== 'completo';
+    const autor = quienContesto(via, quien?.modelo, quien?.proveedor);
+    reg.cerrar({ respuesta: leido, emocion, via, ...(parcial ? { error: fin.motivo || fin.estado } : {}) });
+    const datos = {
+      reply: leido,
+      voz: app.texto.trim(),
+      emocion,
+      ms: Date.now() - t0,
+      via,
+      acciones: app.acciones,
+      trazaId: reg.id,
+      estado: fin.estado,
+      ...(parcial ? { parcial: true, ...(fin.motivo ? { motivo: fin.motivo } : {}) } : {}),
+      modelo: autor.modelo,
+      proveedor: autor.proveedor,
+    };
+    send('done', datos);
+    if (senal?.aborted && corrioHerramienta) salida.resultado?.(datos);
     if (leido && !parcial && !senal?.aborted) await recordarSegunNivel(body, { quienMem, rol: 'ultron', texto: leido, canal }, opciones.retener);
     salida.fin();
   };
@@ -4375,6 +4513,10 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     let errorNodo = '';
     /** Bedrock se cortó DESPUÉS de decir algo o de pedir una mano: tampoco se cierra como respuesta completa. */
     let errorManos = '';
+    /** Bedrock terminó, pero por max_tokens o un filtro, no por decisión del modelo (STREAM02). */
+    let truncadoManos = '';
+    /** El nodo mandó su línea `done`: sin ella, el stream se cortó (STREAM01). */
+    let terminoNodo = false;
     let usoManos = false;
     const herramientasManos = p.systemManos ? herramientasDelTurno(p.manosTurno) : [];
     const usarManos = !!p.systemManos && !p.foto && !/```/.test(message) && cerebroRapidoActivo();
@@ -4387,6 +4529,11 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
             porRapido = true;
             modeloManos = pieza.modelo;
             reg.modelo(pieza.modelo);
+            continue;
+          }
+          // max_tokens, un filtro o la ventana llena: lo dicho queda, pero no es una respuesta terminada (STREAM02).
+          if ('fin' in pieza) {
+            if (pieza.fin.estado !== 'completo') truncadoManos = `${modeloManos || 'Bedrock'} la dejó a medias (${pieza.fin.motivo})`;
             continue;
           }
           reg.marca('nodo');
@@ -4444,7 +4591,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-ultron-secreto': ULTRON_NODO_SECRETO },
         body: JSON.stringify({ model: ULTRON_NODO_MODELO, stream: true, messages: mensajesQwen(system, message, hechos, hilo, p.nivel, p.contexto), options: { id_slot: p.espacio } }),
-        signal: conTope(senal, 60000),
+        signal: reloj.senalCon(senal, 60000),
       });
       // Solo un pedido que el nodo aceptó deja el espacio caliente (Codex en #126): si falló, el precalentado sigue valiendo.
       anotarEspacio(p.espacio, r.ok && r.body ? claveEspacio : '');
@@ -4463,6 +4610,21 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       reg.modelo(ULTRON_NODO_MODELO);
       const reader = (r.body as any).getReader();
       const dec = new TextDecoder();
+      const linea = (raw: string) => {
+        const l = lineaNodo(raw);
+        if (!l) return;
+        if (l.error) errorNodo = l.error;
+        if (l.trozo) {
+          reg.marca('nodo');
+          procesar(l.trozo);
+        }
+        if (l.done) {
+          terminoNodo = true;
+          reg.tokens(l.j.prompt_eval_count, l.j.eval_count);
+          // El proxy del nodo dice cuántas fichas del prompt ya estaban leídas (caché del espacio).
+          reg.lectura(l.j.prompt_eval_count, l.j.prompt_cache_count);
+        }
+      };
       try {
         while (true) {
           const { done, value } = await reader.read();
@@ -4470,55 +4632,48 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
           buf += dec.decode(value, { stream: true });
           const lines = buf.split('\n');
           buf = lines.pop() || '';
-          for (const line of lines) {
-            const l = line.trim();
-            if (!l) continue;
-            try {
-              const j = JSON.parse(l);
-              if (j.error || j.done_reason === 'error') errorNodo = String(j.error || 'el nodo terminó con error').slice(0, 200);
-              const piece = j.message?.content || j.response || '';
-              if (piece) {
-                reg.marca('nodo');
-                procesar(piece);
-              }
-              if (j.done) {
-                reg.tokens(j.prompt_eval_count, j.eval_count);
-                // El proxy del nodo dice cuántas fichas del prompt ya estaban leídas (caché del espacio).
-                reg.lectura(j.prompt_eval_count, j.prompt_cache_count);
-              }
-            } catch {
-              /* línea parcial */
-            }
-          }
+          for (const line of lines) linea(line);
         }
+      } catch (e: any) {
+        // Se cortó la lectura sin que la persona se fuera (red, el reloj del turno): lo dicho no se pierde,
+        // se cierra como corte (abajo).
+        if (senal?.aborted) throw e;
+        errorNodo = `se cortó el stream del nodo: ${String(e?.name || '')} ${String(e?.message || e).slice(0, 120)}`.trim();
       } finally {
         // Cortado o terminado, el lector se suelta: la conexión al nodo no queda colgada.
         await reader.cancel().catch(() => {});
       }
+      // La última línea cuenta aunque no traiga salto: ahí suele venir el error o el `done` (STREAM01).
+      linea(buf + dec.decode());
+      buf = '';
+      if (!terminoNodo && !errorNodo && !senal?.aborted) errorNodo = 'el nodo cerró el stream sin «done»';
     }
     if (errorNodo) {
       console.warn('[AU-RA] turno en vivo: el nodo terminó con error', errorNodo);
+      // Lo que alcanzó a decir. Con una línea de pedido o una frase retenida («ya lo mandé» sin confirmar),
+      // solo lo ya soltado: la línea pudo quedar cortada (no se corre una herramienta con medio argumento)
+      // y lo retenido no se dice.
+      const cortado = pedido || retenido;
+      const dicho = cortado ? cuerpo.slice(0, enviado) : extraerAcciones(extraerEmocion(full).texto).texto;
       // Sin nada dicho: es un fallo, no una respuesta vacía (antes salía `done` como si hubiera contestado).
-      if (!extraerAcciones(extraerEmocion(full).texto).texto.trim() && !pedido) {
+      if (!dicho.trim()) {
         send('error', { error: FRASE_FALLO.cerebro[idioma], codigo: 'cerebro' });
         reg.cerrar({ error: `Qwen terminó con error: ${errorNodo}` });
         return salida.fin();
       }
       // Ya dijo algo y se cortó: lo dicho queda dicho, pero se cierra como parcial y se le dice con honradez
       // que se cortó (Codex en #137: antes salía como respuesta completa y entraba a su memoria).
-      if (!pedido) {
-        const aviso = idioma === 'en' ? ' I got cut off there. Want me to try again?' : ' Se me cortó la respuesta. ¿Te la repito?';
-        const dicho = extraerAcciones(extraerEmocion(full).texto).texto;
-        if (dicho.length > enviado) soltar('delta', dicho.slice(enviado));
-        soltar('delta', aviso);
-        return terminar(`${extraerEmocion(full).texto}${aviso}`, `${ULTRON_NODO_URL}/api/chat`, emocion ?? 'preocupado', false, `Qwen terminó con error: ${errorNodo}`);
-      }
+      const aviso = idioma === 'en' ? ' I got cut off there. Want me to try again?' : ' Se me cortó la respuesta. ¿Te la repito?';
+      if (dicho.length > enviado) soltar('delta', dicho.slice(enviado));
+      soltar('delta', aviso);
+      return terminar(`${cortado ? dicho : extraerEmocion(full).texto}${aviso}`, `${ULTRON_NODO_URL}/api/chat`, emocion ?? 'preocupado', false, { estado: 'error', motivo: `Qwen terminó con error: ${errorNodo}` }, { modelo: ULTRON_NODO_MODELO, proveedor: 'nodo' });
     }
     // El cerebro con manos se cortó después de empezar (Codex, 3-oct): lo dicho queda dicho, con el aviso honrado
     // si había frase, y el turno se cierra como parcial (traza con el error, sin memoria). Una mano que alcanzó a
     // pedir completa (la herramienta llega entera o no llega) sí se cumple.
-    if (errorManos && !pedido) {
-      console.warn('[cerebro manos] se cortó a media respuesta:', errorManos);
+    const corteManos = errorManos || truncadoManos;
+    if (corteManos && !pedido) {
+      console.warn('[cerebro manos] se cortó a media respuesta:', corteManos);
       // Retenido («ya lo mandé» sin confirmar): eso no se dice ni se cumple; solo lo ya dicho y el aviso.
       const dicho = retenido ? cuerpo.slice(0, enviado) : extraerAcciones(extraerEmocion(full).texto).texto;
       const aviso = dicho.trim() || retenido ? (idioma === 'en' ? ' I got cut off there. Want me to try again?' : ' Se me cortó la respuesta. ¿Te la repito?') : '';
@@ -4526,21 +4681,12 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       if (aviso) soltar('delta', aviso);
       const emo = emocion ?? (aviso ? 'preocupado' : extraerEmocion(full).emocion);
       const texto = retenido ? `${dicho}${aviso}` : `${extraerEmocion(full).texto}${aviso}`;
-      return terminar(texto, `bedrock:${modeloManos || modeloRapido()}`, emo, usoManos && !retenido, errorManos);
+      return terminar(texto, `bedrock:${modeloManos || modeloRapido()}`, emo, usoManos && !retenido, { estado: errorManos ? 'error' : 'truncado', motivo: corteManos }, { modelo: modeloManos || modeloRapido(), proveedor: 'bedrock' });
     }
     // El modelo contestó con los hechos: lo que terminó su computadora ya quedó dicho.
     if (full.trim() && !senal?.aborted && p.avisoComputadora) confirmarAvisos(p.avisoComputadora.quien, p.avisoComputadora.ids);
     // Sin precalentar aquí: el espacio de la persona ya guarda TODO lo leído en este turno (system e
     // historial). Precalentar solo el system lo recortaba y el turno siguiente releía el historial.
-    if (buf.trim()) {
-      try {
-        const j = JSON.parse(buf.trim());
-        const piece = j.message?.content || j.response || '';
-        if (piece) procesar(piece);
-      } catch {
-        /* */
-      }
-    }
     if (emocion === null) {
       emocion = extraerEmocion(full).emocion;
       send('emocion', { emocion });
@@ -4548,6 +4694,9 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     // Las marcas ACCION_APP se quitan igual que en el streaming, para que las posiciones coincidan.
     let reply = extraerEmocion(full).texto;
     let via = porRapido ? `bedrock:${modeloManos || modeloRapido()}` : `${ULTRON_NODO_URL}/api/chat`;
+    let cierre: Cierre = COMPLETO;
+    let autor: { modelo?: string; proveedor?: string } = porRapido ? { modelo: modeloManos || modeloRapido(), proveedor: 'bedrock' } : { modelo: ULTRON_NODO_MODELO, proveedor: 'nodo' };
+    let corrioHerramienta = false;
     if (pedido) {
       /*
        * La vuelta del harness también habla en cuanto hay una frase (antes se generaba entera en silencio
@@ -4580,13 +4729,16 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
         dichoH = nuevo;
       };
       // La vuelta del harness la escribe el mismo cerebro que pidió la herramienta (con sus manos).
-      const preguntar = porRapido ? preguntarConManos(p.systemManos, herramientasManos, opcionesManos(p.manosTurno), message, hilo, p.nivel, p.contexto, senal) : undefined;
-      const h = await bucleHarness({ reply, system, message, hechos, hilo, tools, mando, senal, nivel: p.nivel, contexto: p.contexto, espacio: p.espacio, alTarea: opciones.alTarea, alTexto, computadora: p.computadora, dueno: p.dueno, ambito: p.ambito, preguntar });
+      const preguntar = porRapido ? preguntarConManos(p.systemManos, herramientasManos, opcionesManos(p.manosTurno), message, hilo, p.nivel, p.contexto, reloj.senalCon(senal)) : undefined;
+      const h = await bucleHarness({ reply, system, message, hechos, hilo, tools, mando, senal, nivel: p.nivel, contexto: p.contexto, espacio: p.espacio, alTarea: opciones.alTarea, alTexto, computadora: p.computadora, dueno: p.dueno, ambito: p.ambito, preguntar, reloj });
       const e = extraerEmocion(h.reply);
       emocion = e.emocion;
       send('emocion', { emocion });
       reply = e.texto;
       via = h.via;
+      if (h.estado !== 'completo') cierre = { estado: h.estado, motivo: h.motivo };
+      if (h.modelo) autor = { modelo: h.modelo, proveedor: h.proveedor };
+      corrioHerramienta = h.herramientas > 0;
       const decible = extraerAcciones(reply).texto;
       if (topado && dichoH && decible.startsWith(dichoH)) enviado = decible.length;
       else if (dichoH) {
@@ -4607,7 +4759,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     // Topado en voz: lo que faltaba no se dice (queda en el texto de la respuesta, para leerlo).
     if (topado) console.log(`[voz] tope: dijo ${enviado} de ${decible.length} caracteres`);
     else if (decible.length > enviado) soltar('delta', decible.slice(enviado));
-    return terminar(reply, via, emocion, delModelo);
+    return terminar(reply, via, emocion, delModelo, cierre, delModelo ? autor : undefined, corrioHerramienta);
   } catch (err: any) {
     if (senal?.aborted) {
       // La persona interrumpió o se fue: no hay a quién avisarle.
