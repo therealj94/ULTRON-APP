@@ -64,6 +64,17 @@ export function esInterrupcionReal(parcial: string, dichos: readonly string[] = 
   return propias.length >= 2 && propias.length * 2 >= ps.length;
 }
 
+/**
+ * Para los logs, sin el texto (lo dicho puede ser privado: salud, dinero…): cuántas palabras oyó el oído,
+ * cuántas no eran eco de AU-RA y si había un freno («espera», «para»).
+ */
+export function cuentaInterrupcion(parcial: string, dichos: readonly string[] = []): { palabras: number; nuevas: number; freno: boolean } {
+  const ps = palabras(parcial);
+  const eco = ecoDe(dichos);
+  const nuevas = ps.filter((p) => !esEco(p, eco));
+  return { palabras: ps.length, nuevas: nuevas.length, freno: nuevas.some((p) => FRENOS.has(p)) };
+}
+
 /** ¿Es solo eco o solo muletillas? (una frase así, oída mientras AU-RA hablaba, no es un pedido). */
 export function soloEcoOMuletilla(texto: string, dichos: readonly string[] = []): boolean {
   const ps = palabras(texto);

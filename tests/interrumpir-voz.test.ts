@@ -10,7 +10,7 @@
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { RegistroVoz, esInterrupcionReal, palabras, quitarEco, recortarFrase, soloEcoOMuletilla } from '../mobile/src/lib/interrupcion';
+import { RegistroVoz, cuentaInterrupcion, esInterrupcionReal, palabras, quitarEco, recortarFrase, soloEcoOMuletilla } from '../mobile/src/lib/interrupcion';
 import { MotorTurbo, type TrozoAudio, type WsTurbo } from '../mobile/src/lib/turboMotor';
 import { esInterrupcion } from '../src/03-voz/useOido';
 import { conAcuse, hechoInterrumpida, oidoAlInterrumpir } from '../lib/interrumpida';
@@ -60,6 +60,11 @@ describe('Interrumpir: ¿es la persona, su eco o un «ajá»?', () => {
     assert.equal(quitarEco('el de San Pedro', [DICE]), 'el de San Pedro', 'una sola palabra al comienzo puede ser suya: no se toca');
     assert.equal(quitarEco('grados con lluvias', [DICE]), 'grados con lluvias', 'si no queda nada suyo, va como llegó');
     assert.equal(quitarEco('pon música', []), 'pon música');
+  });
+
+  it('para los logs, solo conteos (nunca lo dicho)', () => {
+    assert.deepEqual(cuentaInterrupcion('el clima espera mejor San Pedro', [DICE]), { palabras: 6, nuevas: 4, freno: true });
+    assert.deepEqual(cuentaInterrupcion('', [DICE]), { palabras: 0, nuevas: 0, freno: false });
   });
 
   it('palabras: sin tildes ni signos', () => {
@@ -346,6 +351,29 @@ describe('Interrumpir: el oído Turbo sigue abierto mientras AU-RA habla', () =>
     b.motor.setOirEncima(true);
     await espera();
     assert.deepEqual(b.aperturas, [false, true]);
+  });
+});
+
+describe('Oído: cuánto tarda cada frase (para los logs)', () => {
+  it('mide lo que habló y lo que tardó la frase en salir desde que calló', async () => {
+    const b = banco();
+    const medidas: any[] = [];
+    b.motor.setCallbacks({ onFinal: (t) => b.finales.push(t), onMedida: (m) => medidas.push(m) });
+    b.motor.activar();
+    await espera();
+    b.silencio(10);
+    b.voz(12);
+    await espera();
+    const w = b.ws[0];
+    w.decir({ message_type: 'partial_transcript', text: 'abre Excel' });
+    b.silencio(5);
+    w.decir({ message_type: 'committed_transcript', text: 'Abre Excel.' });
+    await espera();
+    assert.deepEqual(b.finales, ['Abre Excel.']);
+    assert.equal(medidas.length, 1);
+    assert.equal(medidas[0].via, 'vivo');
+    assert.equal(medidas[0].vozMs, 1100, 'de la primera a la última voz: 12 trozos de 0,1 s');
+    assert.equal(medidas[0].trasCallarMs, 500, 'los 0,5 s de silencio que cierran la frase');
   });
 });
 
