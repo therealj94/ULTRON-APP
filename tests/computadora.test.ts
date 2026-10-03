@@ -540,11 +540,18 @@ test('el cerebro: la instrucción pide la misión completa, que mire la pantalla
  * el control de la persona y la pantalla de ahora. `guion(t)` cambia la tarea en cada consulta; el resto de
  * rutas cambian la tarea como lo haría el nodo de verdad. `caido` hace que las consultas fallen.
  */
-type TareaFalsa = { id: string; n: number; instruccion: string; consultas: number; estado: string; pasos: any[]; respuesta: string | null; error: string | null; pregunta: string | null; si?: boolean };
-async function nodoAgente(o: { caps?: string[]; guion: (t: TareaFalsa) => void; altasQueFallan?: number; altaCodigo?: number }) {
+type TareaFalsa = { id: string; n: number; instruccion: string; consultas: number; estado: string; pasos: any[]; respuesta: string | null; error: string | null; pregunta: string | null; pregunta_id?: string | null; si?: boolean };
+/**
+ * Como el agente.py de ahora: cada pregunta trae su `pregunta_id` y el sí tiene que nombrarla (otra: 409); el
+ * mismo `request_id` del mismo dueño es la misma tarea; `respuestasPerdidas` crea la tarea pero corta la
+ * respuesta (el servidor no se entera y reintenta).
+ */
+async function nodoAgente(o: { caps?: string[]; guion: (t: TareaFalsa) => void; altasQueFallan?: number; altaCodigo?: number; respuestasPerdidas?: number }) {
   const tareas = new Map<string, TareaFalsa>();
+  const porPedido = new Map<string, string>();
   const pedidos: Array<{ ruta: string; cuerpo: any }> = [];
-  const estado = { caido: false, perdida: false, altasQueFallan: o.altasQueFallan ?? 0 };
+  const estado = { caido: false, perdida: false, altasQueFallan: o.altasQueFallan ?? 0, respuestasPerdidas: o.respuestasPerdidas ?? 0 };
+  let preguntas = 0;
   const srv = http.createServer((req, res) => {
     let datos = '';
     req.on('data', (c) => (datos += c));
@@ -559,8 +566,15 @@ async function nodoAgente(o: { caps?: string[]; guion: (t: TareaFalsa) => void; 
           estado.altasQueFallan--;
           return json(o.altaCodigo ?? 503, { detail: 'ocupado arrancando' });
         }
+        const llave = cuerpo.request_id ? `${cuerpo.dueno}|${cuerpo.request_id}` : '';
+        if (llave && porPedido.has(llave)) return json(200, { id: porPedido.get(llave), estado: 'trabajando', repetida: true });
         const id = `a${tareas.size + 1}`;
         tareas.set(id, { id, n: tareas.size + 1, instruccion: cuerpo.instruccion, consultas: 0, estado: 'trabajando', pasos: [], respuesta: null, error: null, pregunta: null });
+        if (llave) porPedido.set(llave, id);
+        if (estado.respuestasPerdidas > 0) {
+          estado.respuestasPerdidas--;
+          return res.destroy();
+        }
         return json(200, { id, estado: 'en_cola' });
       }
       const m = req.url!.match(/^\/tareas\/(\w+)(?:\/(\w+))?/);
@@ -571,8 +585,11 @@ async function nodoAgente(o: { caps?: string[]; guion: (t: TareaFalsa) => void; 
       const viva = !['hecha', 'parada', 'sin_pasos', 'fallo'].includes(t.estado);
       if (req.method === 'GET' && !accion) {
         t.consultas++;
+        const antes = t.pregunta;
         o.guion(t);
-        return json(200, { id: t.id, motor: 'holo', instruccion: t.instruccion, estado: t.estado, pasos: t.pasos, respuesta: t.respuesta, error: t.error, segundos: 20, pregunta: t.pregunta });
+        if (t.pregunta && (t.pregunta !== antes || !t.pregunta_id)) t.pregunta_id = `p${++preguntas}`;
+        if (!t.pregunta) t.pregunta_id = null;
+        return json(200, { id: t.id, motor: 'holo', instruccion: t.instruccion, estado: t.estado, pasos: t.pasos, respuesta: t.respuesta, error: t.error, segundos: 20, pregunta: t.pregunta, pregunta_id: t.pregunta_id ?? null });
       }
       if (!o.caps && accion !== 'parar') return json(404, { detail: 'Not Found' });
       if (accion === 'parar') {
@@ -585,9 +602,11 @@ async function nodoAgente(o: { caps?: string[]; guion: (t: TareaFalsa) => void; 
       else if (accion === 'control') t.estado = cuerpo?.tomar ? 'control' : 'trabajando';
       else if (accion === 'confirmar') {
         if (t.estado !== 'confirmar') return json(409, { detail: 'no está esperando ningún sí' });
+        if (!cuerpo.pregunta_id || cuerpo.pregunta_id !== t.pregunta_id) return json(409, { detail: 'esa respuesta era para otra pregunta; mira la de ahora' });
         t.si = !!cuerpo.si;
         t.estado = 'trabajando';
         t.pregunta = null;
+        t.pregunta_id = null;
         t.pasos.push({ n: t.pasos.length + 1, t: 9, accion: 'confirmacion', args: { si: t.si } });
       } else if (accion === 'accion') {
         if (t.estado !== 'control') return json(409, { detail: 'primero toma el control' });
@@ -651,8 +670,19 @@ test('el plan: lo escribe el cerebro («… PLAN: a | b | c») o se arma de la i
   assert.deepEqual(estadoDelPlan({ plan, indice: 1 }, 'trabajando').map((p) => p.estado), ['hecho', 'actual', 'pendiente', 'pendiente']);
   assert.deepEqual(estadoDelPlan({ plan, indice: 1 }, 'confirmar').map((p) => p.estado), ['hecho', 'espera', 'pendiente', 'pendiente'], 'quieta: en espera');
   const fin = (ok: boolean) => ({ estado: ok ? 'hecha' : 'sin_pasos', ok, texto: '', respuesta: null, error: null, enlaces: [], datos: [], captura: null, segundos: 1, pasos: 1 }) as any;
-  assert.deepEqual(estadoDelPlan({ plan, indice: 2, final: fin(true) }).map((p) => p.estado), ['hecho', 'hecho', 'hecho', 'hecho']);
+  // Auditoría 3-oct (PC05): un final «ok» no marca hecho lo que no tiene recibo (antes marcaba los cuatro).
+  assert.deepEqual(estadoDelPlan({ plan, indice: 2, final: fin(true) }).map((p) => p.estado), ['hecho', 'hecho', 'pendiente', 'pendiente']);
+  const r = (n: number) => ({ tarea: 't1', n });
+  assert.deepEqual(estadoDelPlan({ plan, indice: 3, final: fin(true), recibos: { 0: r(1), 1: r(2), 2: r(4), 3: r(5) } }).map((p) => p.estado), ['hecho', 'hecho', 'hecho', 'hecho']);
+  assert.deepEqual(estadoDelPlan({ plan, indice: 3, final: fin(true), recibos: { 0: r(1), 3: r(5) } }).map((p) => p.estado), ['hecho', 'pendiente', 'pendiente', 'hecho'], 'lo que se saltó no se marca');
+  assert.deepEqual(estadoDelPlan({ plan, indice: 3, final: fin(true), recibos: { 0: r(1), 3: r(5) } })[3].recibo, r(5), 'cada hecho lleva su recibo');
   assert.deepEqual(estadoDelPlan({ plan, indice: 2, final: fin(false) }).map((p) => p.estado), ['hecho', 'hecho', 'fallo', 'pendiente']);
+  assert.deepEqual(estadoDelPlan({ plan, indice: 2, final: fin(false), recibos: { 0: r(1) } }).map((p) => p.estado), ['hecho', 'pendiente', 'fallo', 'pendiente']);
+  assert.deepEqual(estadoDelPlan({ plan, indice: 2, recibos: { 0: r(1) } }, 'trabajando').map((p) => p.estado), ['hecho', 'pendiente', 'actual', 'pendiente']);
+  // Un paso que el nodo no hizo (lo negó, lo pararon) no mueve el plan.
+  assert.equal(avanzarPlan(plan, [{ accion: 'open_url' }, { accion: 'type', hecho: false }]), 0);
+  const { recibosDelPlan } = await import('../server/computadora');
+  assert.deepEqual(recibosDelPlan(plan, [{ n: 1, accion: 'open_url' }, { n: 2, accion: 'scroll' }, { n: 3, accion: 'answer' }]), { indice: 3, recibos: [{ j: 0, n: 1 }, { j: 2, n: 2 }, { j: 3, n: 3 }] });
 });
 
 test('la misión con plan del cerebro: el nodo recibe solo la misión, la app ve el plan marcarse, y el final queda en una tarjeta con datos, enlaces y captura; con historial', async () => {
@@ -775,7 +805,7 @@ test('confirmación: antes de algo sensible pausa y pregunta en la app y en voz;
         assert.equal(await resolverPreguntaComputadora('otra@x.hn', 'sí'), null, 'el sí de otra persona no vale');
         const h = await resolverPreguntaComputadora('jose@x.hn', '¡Sí, dale!');
         assert.match(h!, /^COMPUTADORA: dijo que sí a «Voy a tocar «Enviar formulario»/);
-        assert.deepEqual(nodo.pedidos.find((x) => /\/confirmar$/.test(x.ruta))!.cuerpo, { si: true });
+        assert.deepEqual(nodo.pedidos.find((x) => /\/confirmar$/.test(x.ruta))!.cuerpo, { si: true, pregunta_id: 'p1' }, 'el sí nombra la pregunta que contesta');
         assert.equal(await resolverPreguntaComputadora('jose@x.hn', 'sí'), null, 'ya contestada: un segundo «sí» no hace nada');
         await hasta(() => vistos.some((v) => v.aviso.fase === 'termina'));
         assert.match(vistos.find((v) => v.aviso.fase === 'termina')!.aviso.texto!, /Envié el formulario/);
@@ -793,7 +823,7 @@ test('confirmación: antes de algo sensible pausa y pregunta en la app y en voz;
         const antes = nodo.pedidos.filter((x) => /\/confirmar$/.test(x.ruta)).length;
         hacer!();
         await hasta(() => nodo.pedidos.filter((x) => /\/confirmar$/.test(x.ruta)).length > antes);
-        assert.deepEqual(nodo.pedidos.filter((x) => /\/confirmar$/.test(x.ruta)).at(-1)!.cuerpo, { si: false });
+        assert.deepEqual(nodo.pedidos.filter((x) => /\/confirmar$/.test(x.ruta)).at(-1)!.cuerpo.si, false);
       })
     );
   } finally {
@@ -1060,4 +1090,123 @@ test('sí/no a su computadora: una negación en cualquier parte no es un sí; lo
   // Auditoría 3-oct (PC02/COM01): lo que viene después del sí lo frena; «para» en medio es preposición.
   for (const t of ['sí espera', 'ok cancela', 'dale, para', 'sí, alto', 'ok wait', 'sí, espérate']) assert.equal(respuestaSiNo(t), null, t);
   for (const t of ['sí, para mañana', 'dale, sigue']) assert.equal(respuestaSiNo(t), 'si', t);
+});
+
+test('el sí nombra su pregunta: uno que llega tarde no contesta la siguiente, ni por voz ni por la app (auditoría 3-oct, PC01)', async () => {
+  const { resolverPreguntaComputadora } = await import('../server/computadora');
+  // Primero pregunta por iniciar sesión; después (ya contestada esa en la app) por borrar.
+  const nodo = await nodoAgente({
+    caps: CAPS,
+    guion: (t) => {
+      if (t.consultas === 2) {
+        t.estado = 'confirmar';
+        t.pregunta = '¿Inicio sesión con la cuenta de prueba?';
+      }
+    },
+  });
+  try {
+    await conNodo(nodo.url, () =>
+      conAvisos(async (vistos) =>
+        conRutas(async (como) => {
+          const r = await encargarTarea({ instruccion: 'Entra a x.hn, inicia sesión y borra el borrador viejo', quien: 'jose@x.hn', motor: 'holo', esperaMs: 0 });
+          await hasta(() => vistos.some((v) => v.aviso.fase === 'confirmar'));
+          const v = await como('jose@x.hn', `/api/computadora/tareas/${r.id}`);
+          assert.equal(v.j.mision.preguntaId, 'p1', 'la app sabe qué pregunta está contestando');
+          // Por voz dice «sí» a la del login, pero el turno todavía no se confirma (la acción espera)…
+          let hacer: (() => void) | null = null;
+          assert.match((await resolverPreguntaComputadora('jose@x.hn', 'sí', { hacer: (f) => (hacer = f), alDescartar: () => undefined }))!, /dijo que sí/);
+          // …mientras, la contestó en la app y la computadora ya pregunta otra cosa.
+          const t = nodo.tareas.get(r.id!)!;
+          t.estado = 'confirmar';
+          t.pregunta = 'Voy a tocar «Eliminar cuenta». ¿Lo hago?';
+          t.pregunta_id = 'p9';
+          hacer!();
+          await hasta(() => nodo.pedidos.filter((x) => /\/confirmar$/.test(x.ruta)).length >= 1);
+          await new Promise((res) => setTimeout(res, 100));
+          assert.equal(nodo.pedidos.filter((x) => /\/confirmar$/.test(x.ruta))[0].cuerpo.pregunta_id, 'p1');
+          assert.equal(t.si, undefined, 'el sí del login NO contestó la de borrar');
+          assert.equal(t.estado, 'confirmar');
+          // La app con la pregunta vieja: 409 y no se contesta; con la de ahora, sí.
+          assert.equal((await como('jose@x.hn', `/api/computadora/tareas/${r.id}/confirmar`, { method: 'POST', body: JSON.stringify({ si: true, preguntaId: 'p1' }) })).code, 409);
+          assert.equal(t.si, undefined);
+          const ok = await como('jose@x.hn', `/api/computadora/tareas/${r.id}/confirmar`, { method: 'POST', body: JSON.stringify({ si: false, preguntaId: 'p9' }) });
+          assert.equal(ok.code, 200);
+          assert.equal(t.si, false);
+        })
+      )
+    );
+  } finally {
+    await nodo.cerrar();
+  }
+});
+
+test('encargar una vez: la respuesta perdida y el reintento dan UNA tarea; la app repetida también (auditoría 3-oct, PC04)', async () => {
+  const nodo = await nodoAgente({ caps: CAPS, guion: () => undefined, respuestasPerdidas: 1 });
+  try {
+    await conNodo(nodo.url, () =>
+      conAvisos(async () =>
+        conRutas(async (como) => {
+          const r = await encargarTarea({ instruccion: 'Entra a x.hn y lee', quien: 'jose@x.hn', motor: 'holo', esperaMs: 0 });
+          const altas = nodo.pedidos.filter((p) => p.ruta === 'POST /tareas');
+          assert.equal(altas.length, 2, 'el primer intento perdió la respuesta: se reintentó');
+          assert.ok(altas[0].cuerpo.request_id, 'con un id de pedido');
+          assert.equal(altas[1].cuerpo.request_id, altas[0].cuerpo.request_id, 'el mismo en el reintento');
+          assert.equal(nodo.tareas.size, 1, 'el nodo lanzó UNA tarea');
+          assert.equal(r.id, 'a1');
+          assert.equal((await como('jose@x.hn', '/api/computadora')).j.historial.length, 1, 'una misión');
+          // Desde la app: el mismo requestId dos veces (doble toque, reintento del teléfono) es la misma misión.
+          const cuerpo = JSON.stringify({ instruccion: 'Entra a bch.hn y dime el dólar', requestId: 'tel-pedido-0001' });
+          const [a, b] = await Promise.all([
+            como('jose@x.hn', '/api/computadora/tareas', { method: 'POST', body: cuerpo }),
+            como('jose@x.hn', '/api/computadora/tareas', { method: 'POST', body: cuerpo }),
+          ]);
+          assert.equal(a.code, 200);
+          assert.equal(b.j.id, a.j.id);
+          assert.equal(nodo.tareas.size, 2);
+          assert.equal((await como('jose@x.hn', '/api/computadora/tareas', { method: 'POST', body: cuerpo })).j.id, a.j.id, 'y después también');
+          assert.equal(nodo.tareas.size, 2);
+          // Otra persona con el mismo requestId: lo suyo.
+          const otra = await como('ana@x.hn', '/api/computadora/tareas', { method: 'POST', body: cuerpo });
+          assert.notEqual(otra.j.id, a.j.id);
+          assert.equal(nodo.tareas.size, 3);
+        })
+      )
+    );
+  } finally {
+    await nodo.cerrar();
+  }
+});
+
+test('la app ve qué versión del estado es y un paso que no se hizo no cuenta (auditoría 3-oct, PC05)', async () => {
+  const nodo = await nodoAgente({
+    caps: CAPS,
+    guion: (t) => {
+      t.pasos = [
+        { n: 1, t: 1, accion: 'open_url', args: { url: 'x.hn' }, hecho: true },
+        { n: 2, t: 2, accion: 'click', args: { element: 'Pagar ahora' }, hecho: false },
+      ];
+    },
+  });
+  try {
+    await conNodo(nodo.url, () =>
+      conAvisos(async () =>
+        conRutas(async (como) => {
+          const { pasoEnPalabras } = await import('../server/computadora');
+          const r = await encargarTarea({ instruccion: 'Entra a x.hn y lee las noticias', quien: 'jose@x.hn', motor: 'holo', esperaMs: 0 });
+          const v1 = await como('jose@x.hn', `/api/computadora/tareas/${r.id}`);
+          const v2 = await como('jose@x.hn', `/api/computadora/tareas/${r.id}`);
+          assert.equal(typeof v1.j.version, 'number');
+          assert.ok(v2.j.version > v1.j.version, 'cada respuesta, una versión mayor: la app descarta la vieja que llega tarde');
+          assert.equal(v2.j.mision.version, v2.j.version);
+          assert.ok((await como('jose@x.hn', '/api/computadora')).j.version > v2.j.version);
+          assert.equal(v2.j.tarea.pasos[1].texto, 'Tocó «Pagar ahora» (no se hizo)');
+          assert.deepEqual(v2.j.mision.plan.map((p: any) => p.estado), ['actual', 'pendiente', 'pendiente']);
+          assert.deepEqual(v2.j.mision.plan[0].recibo, { tarea: r.id, n: 1 }, 'el paso de ahora ya tiene su recibo');
+          assert.equal(pasoEnPalabras({ accion: 'click', args: { element: 'Enviar' }, hecho: false }, 'en'), 'Clicked «Enviar» (not done)');
+        })
+      )
+    );
+  } finally {
+    await nodo.cerrar();
+  }
 });

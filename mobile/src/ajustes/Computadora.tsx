@@ -34,8 +34,11 @@ import {
   finalEnPalabras,
   haceCuanto,
   marcaPlan,
+  nuevoPedidoPc,
   relojMision,
+  respuestaPc,
   sondeoMs,
+  VistaPc,
   tareaEnPalabras,
   textoParaCompartir,
   trabajando,
@@ -109,7 +112,13 @@ export function HojaComputadoraVivo({
   const [todosLosPasos, setTodosLosPasos] = useState(false);
   /** Una misión del historial abierta (su tarjeta del final). */
   const [delHistorial, setDelHistorial] = useState<MisionPc | null>(null);
-  const idRef = useRef<string | null>(null);
+  /**
+   * Qué tarea se mira y qué respuesta todavía vale (época de la vista y versión del estado): una lectura que
+   * salió antes de elegir otra tarea, o más vieja que la última pintada, no se pinta (auditoría 3-oct, PC05).
+   */
+  const vista = useRef(new VistaPc()).current;
+  /** El encargo en camino y su id: si se reintenta el mismo texto, va con el mismo id (el servidor no lanza dos). */
+  const pedidoRef = useRef<{ texto: string; id: string } | null>(null);
   const tareaRef = useRef(tarea);
   tareaRef.current = tarea;
   const alEstadoRef = useRef(alEstado);
@@ -117,9 +126,10 @@ export function HojaComputadoraVivo({
 
   const leerTarea = useCallback(
     async (id: string) => {
+      const boleto = vista.boleto();
       try {
-        const r = await api<{ tarea: TareaPc; mision: MisionPc | null }>(`/api/computadora/tareas/${encodeURIComponent(id)}?idioma=${idioma}`, { method: 'GET' }, 12_000);
-        if (idRef.current === id) {
+        const r = await api<{ tarea: TareaPc; mision: MisionPc | null; version?: number }>(`/api/computadora/tareas/${encodeURIComponent(id)}?idioma=${idioma}`, { method: 'GET' }, 12_000);
+        if (vista.acepta(boleto, id, r.version)) {
           setTarea(r.tarea);
           if (r.mision) {
             setMision(r.mision);
@@ -133,16 +143,19 @@ export function HojaComputadoraVivo({
         setSinRespuesta((n) => n + 1);
       }
     },
-    [idioma]
+    [idioma, vista]
   );
 
   const leerEstado = useCallback(async () => {
+    const boleto = vista.boleto();
     try {
       const s = await api<EstadoPc>('/api/computadora', { method: 'GET' }, 12_000);
+      if (!vista.aceptaEstado(s.version)) return s;
       setEstado(s);
       const id = s.actual?.id || s.ultima;
-      if (id && id !== idRef.current) {
-        idRef.current = id;
+      // Solo si nadie eligió otra tarea mientras esta lectura iba (antes un estado viejo volvía a la anterior).
+      if (id && id !== vista.id && vista.puedeCambiar(boleto)) {
+        vista.elegir(id);
         setMision((m) => (m && m.tareaId === id ? m : null));
         void leerTarea(id);
       }
@@ -151,7 +164,7 @@ export function HojaComputadoraVivo({
       setEstado((x) => x ?? { configurada: true, ok: false, motores: [], ocupada: false, ultima: null, actual: null, detalle: String(e?.message || '') });
       return null;
     }
-  }, [leerTarea]);
+  }, [leerTarea, vista]);
 
   // Abierta: estado y encargo; mientras trabaja se renueva rápido (se ve avanzar), si no, despacio.
   useEffect(() => {
@@ -163,7 +176,7 @@ export function HojaComputadoraVivo({
       const s = await leerEstado();
       // También cuando el servidor ya la ve terminada y aquí sigue «trabajando»: una última lectura para cerrarla
       // (auditoría, 3-oct: el reloj y Detener se quedaban para siempre).
-      if (idRef.current && (trabajando(tareaRef.current?.estado) || trabajando(s?.actual?.estado))) await leerTarea(idRef.current);
+      if (vista.id && (trabajando(tareaRef.current?.estado) || trabajando(s?.actual?.estado))) await leerTarea(vista.id);
       if (vivo) reloj = setTimeout(vuelta, sondeoMs(s?.actual?.estado ?? tareaRef.current?.estado, true));
     };
     void vuelta();
@@ -171,19 +184,19 @@ export function HojaComputadoraVivo({
       vivo = false;
       clearTimeout(reloj);
     };
-  }, [visible, leerEstado, leerTarea]);
+  }, [visible, leerEstado, leerTarea, vista]);
 
   // Le dicen qué tarea seguir (empezó una, o la misión siguió con otra): se muestra ya, sin esperar al sondeo.
   useEffect(() => {
-    if (!visible || !tareaId || tareaId === idRef.current) return;
-    idRef.current = tareaId;
+    if (!visible || !tareaId || tareaId === vista.id) return;
+    vista.elegir(tareaId);
     setVerPaso(null);
     setDelHistorial(null);
     // Otra misión: la de antes no se mezcla (mientras llega, el plan es el del aviso de empezar).
     setMision((m) => (m && m.tareaId === tareaId ? m : null));
     setTarea((t) => (t?.id === tareaId ? t : { id: tareaId, instruccion: t?.instruccion || '', estado: 'en_cola', pasos: [], respuesta: null, error: null, segundos: 0 }));
     void leerTarea(tareaId);
-  }, [visible, tareaId, leerTarea]);
+  }, [visible, tareaId, leerTarea, vista]);
 
   useEffect(() => {
     if (!visible) {
@@ -248,10 +261,13 @@ export function HojaComputadoraVivo({
     if (t.length < 4) return;
     setError('');
     setEnviando(true);
+    // El mismo texto que no alcanzó a contestar (se cortó la red) vuelve con el mismo id: la misma misión.
+    if (pedidoRef.current?.texto !== t) pedidoRef.current = { texto: t, id: nuevoPedidoPc() };
     try {
-      const r = await api<{ id: string; mision: MisionPc | null }>('/api/computadora/tareas', { method: 'POST', body: JSON.stringify({ instruccion: t, idioma }) }, 20_000);
+      const r = await api<{ id: string; mision: MisionPc | null }>('/api/computadora/tareas', { method: 'POST', body: JSON.stringify({ instruccion: t, idioma, requestId: pedidoRef.current.id }) }, 20_000);
       vibrar('exito');
-      idRef.current = r.id;
+      pedidoRef.current = null;
+      vista.elegir(r.id);
       setVerPaso(null);
       setDelHistorial(null);
       setTarea({ id: r.id, instruccion: t, estado: 'en_cola', pasos: [], respuesta: null, error: null, segundos: 0 });
@@ -301,7 +317,7 @@ export function HojaComputadoraVivo({
     setOcupado('seguir');
     try {
       const r = await api<{ id: string }>(`/api/computadora/misiones/${encodeURIComponent(m.id)}/seguir`, { method: 'POST', body: '{}' }, 20_000);
-      idRef.current = r.id;
+      vista.elegir(r.id);
       setDelHistorial(null);
       setTarea({ id: r.id, instruccion: m.instruccion, estado: 'en_cola', pasos: [], respuesta: null, error: null, segundos: 0 });
       void leerTarea(r.id);
@@ -452,8 +468,8 @@ export function HojaComputadoraVivo({
                 <Texto v="chicaFuerte">{tr('Necesito tu sí para seguir', 'I need your OK to go on')}</Texto>
                 <Texto v="cuerpo">{pregunta}</Texto>
                 <View style={s.filaBotones}>
-                  <Boton titulo={tr('Sí, hazlo', 'Yes, do it')} tam="chico" cargando={ocupado === 'si'} onPress={() => void sobreTarea('si', 'confirmar', { si: true })} style={{ flex: 1 }} />
-                  <Boton titulo={tr('No', 'No')} tam="chico" variante="secundario" cargando={ocupado === 'no'} onPress={() => void sobreTarea('no', 'confirmar', { si: false })} style={{ flex: 1 }} />
+                  <Boton titulo={tr('Sí, hazlo', 'Yes, do it')} tam="chico" cargando={ocupado === 'si'} onPress={() => void sobreTarea('si', 'confirmar', respuestaPc(true, misionDeAhora, tarea))} style={{ flex: 1 }} />
+                  <Boton titulo={tr('No', 'No')} tam="chico" variante="secundario" cargando={ocupado === 'no'} onPress={() => void sobreTarea('no', 'confirmar', respuestaPc(false, misionDeAhora, tarea))} style={{ flex: 1 }} />
                 </View>
                 <Texto v="mini" color="texto3">
                   {tr('También puedes decírmelo en voz. Pagar o comprar no lo hago nunca.', 'You can also say it out loud. I never pay or buy.')}

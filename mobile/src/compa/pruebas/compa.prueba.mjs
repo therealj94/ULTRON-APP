@@ -30,6 +30,9 @@ import {
   textoParaCompartir,
   finalEnPalabras,
   haceCuanto,
+  VistaPc,
+  nuevoPedidoPc,
+  respuestaPc,
 } from '../computadora.ts';
 import http from 'node:http';
 import { ABRIR_MAX_MS, CONECTAR_MAX_MS, ControlSesion, ESPERA_PERMISO_MS, PENSANDO_MAX_MS, PERMISO_MAX_MS, SIN_MUESTRAS_MS, SORDA_MS, TOPE_RECONEXIONES } from '../sesion.ts';
@@ -2845,6 +2848,39 @@ prueba('su computadora en vivo: se abre sola, teclea, cuenta avances sin hablar 
   assert.equal(c.tareaId, 'g5');
   c.alEstado('g5', false);
   assert.equal(c.trabajando, false);
+});
+
+prueba('su computadora: una respuesta vieja no vuelve a la tarea de antes, el sí nombra su pregunta y encargar lleva su id (auditoría 3-oct, PC05/PC01/PC04)', () => {
+  const v = new VistaPc();
+  // Mira la tarea t1; sale un GET de t1 (y uno del estado general).
+  v.elegir('t1');
+  const deT1 = v.boleto();
+  const estadoViejo = v.boleto();
+  // Mientras iban, encarga otra: la vista pasa a t2.
+  assert.equal(v.elegir('t2'), true);
+  assert.equal(v.acepta(deT1, 't1', 10), false, 'la respuesta de t1 ya no se pinta');
+  assert.equal(v.puedeCambiar(estadoViejo), false, 'el estado viejo (ultima: t1) no cambia la tarea elegida');
+  assert.equal(v.id, 't2');
+  // Las de t2: la más nueva gana aunque llegue primero; la vieja que llega tarde no la pisa.
+  const a = v.boleto();
+  const b = v.boleto();
+  assert.equal(v.acepta(b, 't2', 200), true);
+  assert.equal(v.acepta(a, 't2', 100), false, 'versión menor: llegó tarde');
+  assert.equal(v.acepta(v.boleto(), 't2', 300), true);
+  assert.equal(v.acepta(v.boleto(), 't2'), true, 'un servidor sin versión: se pinta como antes');
+  assert.equal(v.elegir('t2'), false, 'elegir la misma no cambia la época');
+  // El estado general: también por versión.
+  assert.equal(v.aceptaEstado(50), true);
+  assert.equal(v.aceptaEstado(40), false);
+  assert.equal(v.aceptaEstado(undefined), true);
+  // El sí lleva la pregunta que vio (la de la misión; si no, la de la tarea).
+  assert.deepEqual(respuestaPc(true, { preguntaId: 'p2' }, { pregunta_id: 'p1' }), { si: true, preguntaId: 'p2' });
+  assert.deepEqual(respuestaPc(false, null, { pregunta_id: 'p1' }), { si: false, preguntaId: 'p1' });
+  assert.deepEqual(respuestaPc(true, null, null), { si: true });
+  // Cada encargo, su id (el servidor lo acepta: letras, números y . _ : -; de 8 a 80).
+  const p1 = nuevoPedidoPc();
+  assert.match(p1, /^[A-Za-z0-9._:-]{8,80}$/);
+  assert.notEqual(nuevoPedidoPc(), p1);
 });
 
 prueba('su computadora como un agente: plan, tu sí antes de algo sensible, pausa y control, resultado para compartir (José, 2-oct: «como Grok, el agente de ChatGPT»)', () => {
