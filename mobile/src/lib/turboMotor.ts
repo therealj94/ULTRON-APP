@@ -482,10 +482,14 @@ export class MotorTurbo {
     this.programarInactivo();
   }
 
-  /** Una frase tragada cuya respuesta no llegó: se olvida sin dar la conexión por mala. */
+  /**
+   * Una frase tragada cuya respuesta no llegó a tiempo: esa conexión se cierra (sin contarla como fallo).
+   * Si solo se olvidara, su texto podía llegar tarde y tomarse por el comienzo (o el lugar) de la frase
+   * siguiente de la persona: la voz de AU-RA entregada como pedido (revisión de Codex en #133).
+   */
   private vencioTragada(p: { trozos: string[] }) {
-    const i = this.pendientes.indexOf(p as any);
-    if (i >= 0) this.pendientes.splice(i, 1);
+    if (this.pendientes.indexOf(p as any) < 0) return;
+    this.tirarWs(false);
   }
 
   // ── el en vivo con Turbo ──────────────────────────────────────────────────────────────────────

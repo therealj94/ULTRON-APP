@@ -13,7 +13,7 @@ import { describe, it } from 'node:test';
 import { RegistroVoz, esInterrupcionReal, palabras, quitarEco, recortarFrase, soloEcoOMuletilla } from '../mobile/src/lib/interrupcion';
 import { MotorTurbo, type TrozoAudio, type WsTurbo } from '../mobile/src/lib/turboMotor';
 import { esInterrupcion } from '../src/03-voz/useOido';
-import { hechoInterrumpida, oidoAlInterrumpir } from '../lib/interrumpida';
+import { conAcuse, hechoInterrumpida, oidoAlInterrumpir } from '../lib/interrumpida';
 import { oidoDeLaAnterior, perdonEnVoz } from '../server/voz-agente';
 
 const espera = (ms = 5) => new Promise((r) => setTimeout(r, ms));
@@ -298,6 +298,32 @@ describe('Interrumpir: el oído Turbo sigue abierto mientras AU-RA habla', () =>
     assert.equal(b.abierto(), true);
   });
 
+  it('el texto del eco tarda más que la espera: esa conexión se cierra y no se cuela en la frase siguiente', async () => {
+    const b = banco();
+    b.motor.setOirEncima(true);
+    b.motor.activar();
+    await espera();
+    b.silencio(10);
+    b.motor.pausar(true);
+    b.voz(8, -14);
+    await espera();
+    const viejo = b.ws[0];
+    b.motor.pausar(false);
+    assert.equal(viejo.commits, 1);
+    await espera(90); // pasa esperaFinalMs (60) sin respuesta de Turbo
+    assert.equal(viejo.cerrado, true, 'la conexión con el eco pendiente se cierra');
+    // Llega tarde el texto del eco por la conexión vieja: ya no la escucha nadie.
+    viejo.decir({ message_type: 'committed_transcript', text: 'por la tarde' });
+    b.voz(8);
+    await espera();
+    const nuevo = b.ws.at(-1)!;
+    assert.notEqual(nuevo, viejo, 'la frase de la persona va por una conexión nueva');
+    b.silencio(7);
+    nuevo.decir({ message_type: 'committed_transcript', text: 'Pon música.' });
+    await espera();
+    assert.deepEqual(b.finales, ['Pon música.'], 'sin «por la tarde» delante');
+  });
+
   it('sin «interrumpir hablando»: como antes, el micrófono se cierra mientras ella habla', async () => {
     const b = banco();
     b.motor.setOirEncima(false);
@@ -341,6 +367,13 @@ describe('Interrumpir: el cerebro sabe dónde quedó', () => {
     assert.match(es, /sin pedir perdón/);
     assert.match(hechoInterrumpida('es', ''), /antes de la primera palabra/);
     assert.match(hechoInterrumpida('en', 'It is hot'), /no apologies/);
+  });
+
+  it('lo que sale sin el modelo (cálculo, precio) también abre con el acuse, después de su etiqueta', () => {
+    assert.equal(conAcuse('El oro está a 4 100 dólares.'), 'Va. El oro está a 4 100 dólares.');
+    assert.equal(conAcuse('[feliz] Listo, son 30 gramos.'), '[feliz] Va. Listo, son 30 gramos.');
+    assert.equal(conAcuse('It is 30 grams.', 'en'), 'Okay. It is 30 grams.');
+    assert.equal(conAcuse(''), '');
   });
 
   it('la conversación en vivo: lo que oyó de la anterior, y el perdón solo si era larga', () => {

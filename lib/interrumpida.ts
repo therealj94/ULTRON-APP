@@ -24,6 +24,17 @@ export function oidoAlInterrumpir(body: unknown): string | null {
   return oido.replace(/\s+/g, ' ').replace(/[«»"]/g, '').trim().slice(-TOPE_OIDO);
 }
 
+/**
+ * Una respuesta que sale sin pasar por el modelo (un cálculo, un precio, el taller) tras una
+ * interrupción: lleva el mismo acuse corto delante (después de la etiqueta de emoción, si trae una).
+ */
+export function conAcuse(texto: string, idioma: Idioma = 'es'): string {
+  const acuse = idioma === 'en' ? 'Okay. ' : 'Va. ';
+  const m = /^(\s*\[[^\]]+\]\s*)?([\s\S]*)$/.exec(String(texto || ''))!;
+  if (!m[2].trim()) return texto;
+  return `${m[1] || ''}${acuse}${m[2].replace(/^\s+/, '')}`;
+}
+
 /** El hecho para el cerebro: la persona la cortó y su voz NO dijo nada todavía. */
 export function hechoInterrumpida(idioma: Idioma, oido: string): string {
   if (idioma === 'en') {

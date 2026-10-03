@@ -427,6 +427,11 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
    * próximo pedido para que el cerebro sepa dónde quedó y conteste «Va, dime» en vez de repetirse.
    */
   const interrumpida = useRef<string | null>(null);
+  /**
+   * La marca de arriba, tomada por el pedido que sigue a la interrupción (y solo por ese): si ese pedido
+   * no llega al cerebro, la marca no queda pegada para uno posterior (revisión de Codex en #133).
+   */
+  const interrumpidaTurno = useRef<string | null>(null);
   const bubbleOp = useRef(new Animated.Value(0)).current;
   /** Última escena de la cámara local (descripción en español para el cerebro). */
   const escenaRef = useRef<Escena | null>(null);
@@ -862,10 +867,10 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         hablado: ultimoHablado.current,
         // Uno por frase y el mismo en los reintentos de abajo: el servidor no corre la frase dos veces.
         idTurno: nuevoIdTurno(),
-        ...(interrumpida.current !== null ? { interrumpido: { oido: interrumpida.current } } : {}),
+        ...(interrumpidaTurno.current !== null ? { interrumpido: { oido: interrumpidaTurno.current } } : {}),
       };
       ultimoHablado.current = false;
-      interrumpida.current = null;
+      interrumpidaTurno.current = null;
       let emocion: Emocion = 'neutral';
       let reacted = false;
       // Un solo relleno y solo si el cerebro de verdad tarda (ESPERA_FRASE_MS, ~2,5 s; inmediato con
@@ -1175,6 +1180,11 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
           oidoMesa.current?.vozCortada();
           speakingRef.current = false;
           setToolHint('');
+          // Le habló encima para callarla: como una persona, un «está bien» corto y a escuchar.
+          if (interrumpida.current !== null) {
+            interrumpida.current = null;
+            void say(tr('Está bien.', 'Okay.'), 'IDLE');
+          }
           return;
         }
         pending.current = cmd;
@@ -1185,6 +1195,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       comentarista.usuarioHablo();
       await stopSpeaking();
       registroVoz.nuevoTurno();
+      interrumpidaTurno.current = interrumpida.current;
+      interrumpida.current = null;
       historial.current = [...historial.current, { rol: 'usuario' as const, texto: cmd }].slice(-12);
       setMensajes((m) => [...m, { rol: 'usuario' as const, texto: cmd }].slice(-80));
 
@@ -1240,6 +1252,11 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
             await stopSpeaking();
             oidoMesa.current?.vozCortada();
             settle();
+            // Le habló encima para callarla: un «está bien» corto (José: «que me diga ok, está bien»).
+            if (interrumpidaTurno.current !== null) {
+              interrumpidaTurno.current = null;
+              return void (await say(tr('Está bien.', 'Okay.'), 'IDLE'));
+            }
             return;
           case 'modo':
             setMode(intent.modo);

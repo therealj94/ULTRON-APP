@@ -105,7 +105,7 @@ import { presupuesto, PRESUPUESTO_OIDO_MS, PRESUPUESTO_VISION_MS } from './lib/p
 import { destinoPublico } from './lib/red-publica';
 import { extraerPdf, dataUrlDeImagen, bufferDeCualquier } from './lib/leer-pdf';
 import { transcribirAudio, permisoTurbo, PROVEEDORES_OIDO_CONFIRMAR, PROVEEDORES_OIDO_ELECTRUM_CONFIRMAR, TERMINOS_ELECTRUM } from './lib/oido';
-import { hechoInterrumpida, oidoAlInterrumpir } from './lib/interrumpida';
+import { conAcuse, hechoInterrumpida, oidoAlInterrumpir } from './lib/interrumpida';
 import { COT_FORZADO, esTareaDeCodigo, requiereCot } from './lib/prompts/cot';
 import { extraerEmocion, normalizarEmocion, type Emocion } from './lib/emocion';
 import { cabeceraAlineacion } from './lib/alineacion';
@@ -2978,10 +2978,12 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   // Un cálculo sale palabra por palabra como lo armó la plataforma, salvo que pidan explicación.
   const soloCalculo = calculoMina && !/por qu[eé]|explic|c[oó]mo se (calcula|saca)|f[oó]rmula|analiz|opin/.test(q) ? calculoMina : null;
   // En inglés no hay atajo: esos textos están armados en español, y el modelo los dice en el idioma pedido.
-  const directo = normalizarIdioma(body?.idioma) === 'en' ? null : decirTaller || soloCalculo || (soloDato ? neutralizarMarca(datos.join(' ')) : null);
-
   // La persona le habló encima en la mesa (teléfono o web): la voz se calló sin decir nada (lib/interrumpida.ts).
   const oidoCortada = opciones.interrumpida ? null : oidoAlInterrumpir(body);
+  const directoSolo = normalizarIdioma(body?.idioma) === 'en' ? null : decirTaller || soloCalculo || (soloDato ? neutralizarMarca(datos.join(' ')) : null);
+  // Lo que sale sin el modelo también abre con el acuse corto si la acababan de interrumpir (revisión de Codex en #133).
+  const directo = directoSolo && oidoCortada !== null ? conAcuse(directoSolo) : directoSolo;
+
   if (oidoCortada !== null) hechos.push(hechoInterrumpida(idiomaTurno === 'en' ? 'en' : 'es', oidoCortada));
   if (opciones.interrumpida) {
     hechos.push(

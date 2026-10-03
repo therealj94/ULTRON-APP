@@ -213,6 +213,8 @@ export default function App() {
   const registroVoz = useRef(new RegistroVoz()).current;
   /** La persona le habló encima a la respuesta anterior: lo que alcanzó a oír (viaja con el pedido siguiente). */
   const interrumpidaRef = useRef<string | null>(null);
+  /** La marca de arriba, tomada por el pedido que sigue (y solo por ese): no queda pegada para otro posterior. */
+  const interrumpidaTurnoRef = useRef<string | null>(null);
   /** La conversación en vivo está abierta (se actualiza en cada render, abajo). */
   const vivoAbiertaRef = useRef(false);
   const decir = useCallback(
@@ -469,8 +471,8 @@ export default function App() {
     async (cmd: string, o: { imagen?: string; accionId?: string } = {}) => {
       const hablado = habladoRef.current;
       habladoRef.current = false;
-      const cortada = interrumpidaRef.current;
-      interrumpidaRef.current = null;
+      const cortada = interrumpidaTurnoRef.current;
+      interrumpidaTurnoRef.current = null;
       registroVoz.nuevoTurno();
       turnoEnCurso.current?.abort();
       const ac = new AbortController();
@@ -627,12 +629,20 @@ export default function App() {
       const cmd = raw.trim();
       if (!cmd) return;
       ultimaInteraccion.current = Date.now();
+      // Si la acababan de interrumpir, la marca es de este pedido (pensar la toma) y de ningún otro.
+      interrumpidaTurnoRef.current = interrumpidaRef.current;
+      interrumpidaRef.current = null;
       const it = detectarIntencion(cmd);
       switch (it.tipo) {
         case 'callar':
           callarTodo();
           // «Callate» con un turno en camino: lo que falte por llegar tampoco se dice.
           turnoCallado.current = turnoEnCurso.current;
+          // Le habló encima para callarla: un «está bien» corto, como una persona (José, 3-oct).
+          if (interrumpidaTurnoRef.current !== null) {
+            interrumpidaTurnoRef.current = null;
+            decir('Está bien.', { emocion: 'neutral' });
+          }
           return;
         case 'recordar':
           hacerTarea('anotar');
