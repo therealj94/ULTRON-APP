@@ -82,6 +82,8 @@ export function crearCajones<T>(o: {
   /** Variable de entorno con la carpeta del disco (las pruebas la apuntan a un temporal). */
   dirEnv: string;
   dirPorOmision: string;
+  /** Si `dirEnv` no está: otra carpeta (vacío = la de `data/<dirPorOmision>`). */
+  carpetaPorOmision?: () => string;
   vacio: () => T;
   sanear: (raw: unknown) => T;
   maxEnCache?: number;
@@ -89,7 +91,7 @@ export function crearCajones<T>(o: {
   const cache = new Map<string, T>();
   const colas = new Map<string, Promise<unknown>>();
   const maxCache = o.maxEnCache ?? 1000;
-  const carpeta = () => process.env[o.dirEnv] || path.join(process.cwd(), 'data', o.dirPorOmision);
+  const carpeta = () => process.env[o.dirEnv] || o.carpetaPorOmision?.() || path.join(process.cwd(), 'data', o.dirPorOmision);
   const archivo = (clave: string) => path.join(carpeta(), `${huellaDe(o.nombre, clave)}.json`);
   const claveS3 = (clave: string) => `ultron/${o.prefijoS3}/${huellaDe(o.nombre, clave)}.json`;
 

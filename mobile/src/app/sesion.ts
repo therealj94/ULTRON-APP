@@ -61,6 +61,22 @@ export function tomarRecienElegido(): boolean {
   return r;
 }
 
+/**
+ * LA PRIMERA PETICIÓN (AUR11, el miniresultado de la primera vez): la deja la primera vez al terminar y la
+ * mesa la toma UNA vez al abrirse, escrita en su caja para que la persona la revise y la mande.
+ */
+let primeraPeticion = '';
+
+export function marcarPrimeraPeticion(texto: string) {
+  primeraPeticion = String(texto || '').trim().slice(0, 600);
+}
+
+export function tomarPrimeraPeticion(): string {
+  const t = primeraPeticion;
+  primeraPeticion = '';
+  return t;
+}
+
 /* ── la bienvenida se ve una vez por teléfono ─────────────────────────────────────────────── */
 
 const CLAVE_BIENVENIDA = 'aura.bienvenida.vista.v1';
@@ -156,5 +172,6 @@ export function salirDeLaSesion() {
   // El chat es de esta persona: al salir se olvida la llave del relevo en este teléfono.
   void salirDelChat();
   recienElegido = false;
+  primeraPeticion = '';
   reiniciarA('Entrar');
 }

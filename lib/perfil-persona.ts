@@ -13,11 +13,17 @@
  *   · S3 (`ULTRON_MEMORIA_BUCKET`, `ultron/perfiles/<huella>.json`), la copia que sobrevive a un
  *     redespliegue de Render. Sin S3 funciona igual, solo que no es duradero.
  * El nombre del archivo es una huella del correo: un listado del cubo no enseña correos.
+ *
+ * Lo BORRADO no vuelve (AUR11, lib/supresiones.ts): cada respuesta guarda cuándo se puso (`marcas`, reloj
+ * del servidor) y al leer se quita la que cubra una marca de supresión posterior. Así un respaldo restaurado
+ * o un perfil de antes (sin marcas) no enseñan lo que la persona borró después. Lo que llega de un teléfono
+ * con una copia vieja lo filtra lib/olvido.ts antes de escribir.
  */
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { s3GetJson, s3Listo, s3PutJson } from './s3';
+import { campoSuprimido, tumbasDe, type Tumba } from './supresiones';
 
 export type Tema = 'oscuro' | 'claro' | 'sistema';
 export type AvatarPerfil = 'ojos' | 'aura' | 'claudio' | 'antonio';
@@ -68,6 +74,11 @@ export type Perfil = {
    * pega la persona. Nunca una contraseña ni una llave.
    */
   cartera?: string;
+  /**
+   * Cuándo se puso cada respuesta (reloj del servidor): `{'encuesta.vive': 1700000000000, cumple: …}`. Lo
+   * pone el servidor; un perfil de antes no lo tiene (y entonces cualquier marca de supresión gana).
+   */
+  marcas?: Record<string, number>;
   actualizado: number;
 };
 
@@ -208,21 +219,62 @@ export function perfilInicial(o: { apodo?: string; nombreGenesis?: string; cumpl
 export function aplicarCambios(base: Perfil, c: Cambios, ahora = Date.now()): Perfil {
   const { encuesta, cumple, cartera, ...resto } = c;
   const p: Perfil = { ...base, ...resto, encuesta: { ...base.encuesta }, actualizado: ahora };
+  const marcas: Record<string, number> = { ...(base.marcas || {}) };
+  const marcar = (campo: string, puesto: boolean, cambio: boolean) => {
+    if (!puesto) delete marcas[campo];
+    else if (cambio || !marcas[campo]) marcas[campo] = ahora;
+  };
   if (cartera !== undefined) {
     if (cartera) p.cartera = cartera;
     else delete p.cartera;
   }
   if (encuesta) {
     for (const [k, v] of Object.entries(encuesta)) {
+      const antes = (base.encuesta as Record<string, string | undefined>)[k];
       if (v) (p.encuesta as Record<string, string>)[k] = v;
       else delete (p.encuesta as Record<string, string>)[k];
+      marcar(`encuesta.${k}`, !!v, !!v && v !== antes);
     }
   }
   if (cumple !== undefined) {
     if (cumple) p.cumple = cumple;
     else delete p.cumple;
+    marcar('cumple', !!cumple, !!cumple && cumple !== base.cumple);
   }
+  if (Object.keys(marcas).length) p.marcas = marcas;
+  else delete p.marcas;
   return p;
+}
+
+/** Los campos con marca: las respuestas de la encuesta y el cumpleaños. */
+const CAMPOS_CON_MARCA = new Set([...CAMPOS_ENCUESTA.map((k) => `encuesta.${k}`), 'cumple']);
+
+function marcasValidas(raw: unknown): Record<string, number> | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const m: Record<string, number> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) if (CAMPOS_CON_MARCA.has(k) && Number(v) > 0) m[k] = Number(v);
+  return Object.keys(m).length ? m : undefined;
+}
+
+/**
+ * El perfil sin las respuestas que cubre una marca de supresión posterior a cuando se pusieron (un respaldo
+ * restaurado, un perfil de antes de las marcas). Devuelve el mismo objeto si no hay nada que quitar.
+ */
+export function sinSuprimidos(p: Perfil, tumbas: readonly Tumba[]): Perfil {
+  if (!tumbas.length) return p;
+  let r: Perfil | null = null;
+  for (const k of CAMPOS_ENCUESTA) {
+    if (!p.encuesta[k] || !campoSuprimido(tumbas, `encuesta.${k}`, p.marcas?.[`encuesta.${k}`])) continue;
+    r ??= { ...p, encuesta: { ...p.encuesta }, ...(p.marcas ? { marcas: { ...p.marcas } } : {}) };
+    delete r.encuesta[k];
+    if (r.marcas) delete r.marcas[`encuesta.${k}`];
+  }
+  if (p.cumple && campoSuprimido(tumbas, 'cumple', p.marcas?.cumple)) {
+    r ??= { ...p, encuesta: { ...p.encuesta }, ...(p.marcas ? { marcas: { ...p.marcas } } : {}) };
+    delete r.cumple;
+    if (r.marcas) delete r.marcas.cumple;
+  }
+  return r || p;
 }
 
 /** Lo que se lee de disco o de S3 pasa por la misma validación que lo que llega del teléfono. */
@@ -246,6 +298,10 @@ function sanear(raw: unknown): Perfil | null {
   if (!v.ok) return null;
   const p = aplicarCambios(perfilInicial({ nombreGenesis: String(r.nombreGenesis || '') }), v.cambios, Number(r.actualizado) || 0);
   if (r.apodoElegido === true) p.apodoElegido = true;
+  // Las marcas son las guardadas (no la hora de esta lectura); un perfil de antes no tiene.
+  delete p.marcas;
+  const m = marcasValidas(r.marcas);
+  if (m) p.marcas = m;
   return p;
 }
 
@@ -313,7 +369,19 @@ export function almacenDurable(): boolean {
 export async function leerPerfilSeguro(correo: string): Promise<{ ok: true; perfil: Perfil | null } | { ok: false }> {
   const c = correoNormal(correo);
   if (!c) return { ok: true, perfil: null };
-  if (cache.has(c)) return { ok: true, perfil: cache.get(c) ?? null };
+  // Las marcas de supresión primero: sin ellas no se sabe qué está borrado, y no se enseña nada (falla cerrado).
+  let tumbas: Tumba[];
+  try {
+    tumbas = await tumbasDe(c);
+  } catch {
+    return { ok: false };
+  }
+  if (cache.has(c)) {
+    const enCache = cache.get(c) ?? null;
+    const limpio = enCache ? sinSuprimidos(enCache, tumbas) : null;
+    if (limpio !== enCache) cache.set(c, limpio);
+    return { ok: true, perfil: limpio };
+  }
   let p = leerDeDisco(c);
   if (!p && s3Listo()) {
     const r = await s3GetJson(claveS3(c)).catch(() => ({ ok: false, json: null }) as { ok: boolean; json: unknown });
@@ -325,6 +393,7 @@ export async function leerPerfilSeguro(correo: string): Promise<{ ok: true; perf
       return { ok: false };
     }
   }
+  if (p) p = sinSuprimidos(p, tumbas);
   cache.set(c, p);
   return { ok: true, perfil: p };
 }

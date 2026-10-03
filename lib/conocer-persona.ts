@@ -15,8 +15,19 @@
  * para que AU-RA pregunte, una cosa a la vez.
  *
  * Caché, disco y S3 (`ultron/conocer/<huella>.json`), sin pisar S3 tras no poder leerlo.
+ *
+ * PROCEDENCIA (documento maestro, sección 13 «Contexto gobernable»; AUR11): cada dato guarda de dónde salió
+ * (`origen`: una conversación, la primera vez, Ajustes o la app), cuándo (`desde`, `actualizado`,
+ * `corregido`), su `alcance` (general: AURA lo usa; limitado: se guarda y se ve, pero no entra en el prompt)
+ * y si la persona lo dijo o AURA lo dedujo (`explicito`). Lo guardado antes de esto se migra al leerlo.
+ *
+ * Lo BORRADO no vuelve: toda lectura y toda escritura pasan por las marcas de supresión (lib/supresiones.ts):
+ * un dato cubierto por una marca no se lee, no entra en el prompt y no se vuelve a aprender de una copia
+ * vieja (un tramo de antes, un teléfono que estuvo offline). Sin poder leer las marcas, no se lee nada.
+ * El borrado y la corrección que tocan varios almacenes los orquesta lib/olvido.ts.
  */
 import { bloqueConTope, clavePersona, CajonNoDisponible, crearCajones, esSecreto, extraerJson, linea, nuevoId, parecido, plegar, preguntarModelo } from './cerebro-comun';
+import { datoSuprimido, precargarSupresiones, relojSupresiones, tumbasDe, tumbasEnCache, type Tumba } from './supresiones';
 
 export const CATEGORIAS = ['familia', 'trabajo', 'metas', 'gustos', 'salud', 'rutinas', 'fechas', 'personas', 'otros'] as const;
 export type Categoria = (typeof CATEGORIAS)[number];
@@ -33,6 +44,12 @@ export const NOMBRE_CATEGORIA: Record<Categoria, string> = {
   otros: 'Otros',
 };
 
+/** De dónde salió un dato: lo oyó conversando, lo contó en la primera vez, lo escribió en Ajustes, o la app (antes de distinguirlo). */
+export type Origen = 'conversacion' | 'primeravez' | 'ajustes' | 'app';
+export const ORIGENES: readonly Origen[] = ['conversacion', 'primeravez', 'ajustes', 'app'];
+/** general: AURA lo usa en cualquier conversación; limitado: se guarda y se ve, pero no entra en el prompt. */
+export type Alcance = 'general' | 'limitado';
+
 export type Dato = {
   id: string;
   categoria: Categoria;
@@ -47,29 +64,59 @@ export type Dato = {
   desde: number;
   visto: number;
   veces: number;
+  origen: Origen;
+  /** true: la persona lo dijo o lo escribió; false: AURA lo dedujo (el modelo). */
+  explicito: boolean;
+  alcance: Alcance;
+  /** La última vez que cambió (su texto, su alcance, una corrección). */
+  actualizado: number;
+  /** Cuándo lo corrigió la persona, si lo corrigió. */
+  corregido?: number;
 };
 
-type CajonConocer = { version: 1; datos: Dato[]; preguntado: Record<string, number> };
+/**
+ * `ediciones` sube con cada corrección o cambio de alcance hecho por la persona: entra en la firma del
+ * system congelado (server/prompt-turno.ts), así corregir se nota en el turno siguiente y aprender algo no.
+ */
+type CajonConocer = { version: 1; datos: Dato[]; preguntado: Record<string, number>; ediciones: number };
 
 export const MAX_DATOS = 220;
 
-export type DatoNuevo = { categoria: string; dato: string; clave?: string; confianza?: number };
+export type DatoNuevo = {
+  categoria: string;
+  dato: string;
+  clave?: string;
+  confianza?: number;
+  explicito?: boolean;
+  origen?: Origen;
+  /** Cuándo se dijo (el turno de la conversación, el cambio en el teléfono). Lo dicho antes de un borrado no vuelve. */
+  dicho?: number;
+};
 
 function sanearDato(x: any): Dato | null {
   const dato = linea(x?.dato, 240);
   if (!dato || esSecreto(dato)) return null;
   const categoria: Categoria = (CATEGORIAS as readonly string[]).includes(x?.categoria) ? x.categoria : 'otros';
   const desde = Number(x?.desde) || 0;
+  const fuente: Dato['fuente'] = x?.fuente === 'modelo' || x?.fuente === 'manual' ? x.fuente : 'reglas';
+  const visto = Number(x?.visto) || desde;
   return {
     id: String(x?.id || nuevoId('dt')).slice(0, 40),
     categoria,
     dato,
     ...(x?.clave ? { clave: plegar(linea(x.clave, 60)) } : {}),
     confianza: Math.max(0, Math.min(1, Number(x?.confianza) || 0.5)),
-    fuente: x?.fuente === 'modelo' || x?.fuente === 'manual' ? x.fuente : 'reglas',
+    fuente,
     desde,
-    visto: Number(x?.visto) || desde,
+    visto,
     veces: Math.max(1, Math.min(999, Number(x?.veces) || 1)),
+    // Lo guardado antes de la procedencia se migra: lo manual vino de la app; lo demás, de conversar. Las
+    // reglas copian una frase literal de la persona (explícito); el modelo deduce (inferido).
+    origen: (ORIGENES as readonly string[]).includes(x?.origen) ? x.origen : fuente === 'manual' ? 'app' : 'conversacion',
+    explicito: typeof x?.explicito === 'boolean' ? x.explicito : fuente !== 'modelo',
+    alcance: x?.alcance === 'limitado' ? 'limitado' : 'general',
+    actualizado: Number(x?.actualizado) || visto,
+    ...(Number(x?.corregido) ? { corregido: Number(x.corregido) } : {}),
   };
 }
 
@@ -78,7 +125,7 @@ const cajones = crearCajones<CajonConocer>({
   prefijoS3: 'conocer',
   dirEnv: 'ULTRON_CONOCER_DIR',
   dirPorOmision: 'conocer',
-  vacio: () => ({ version: 1, datos: [], preguntado: {} }),
+  vacio: () => ({ version: 1, datos: [], preguntado: {}, ediciones: 0 }),
   sanear: (raw: any) => {
     const preguntado: Record<string, number> = {};
     for (const [k, v] of Object.entries(raw?.preguntado && typeof raw.preguntado === 'object' ? raw.preguntado : {})) {
@@ -88,6 +135,7 @@ const cajones = crearCajones<CajonConocer>({
       version: 1,
       datos: (Array.isArray(raw?.datos) ? raw.datos : []).map(sanearDato).filter(Boolean).slice(0, MAX_DATOS) as Dato[],
       preguntado,
+      ediciones: Math.max(0, Number(raw?.ediciones) || 0),
     };
   },
 });
@@ -149,14 +197,21 @@ export function datosPorReglas(turnos: { rol: string; texto: string }[]): DatoNu
 
 /* ------------------------------------------------------------------ juntar */
 
+const categoriaDe = (x: string): Categoria => ((CATEGORIAS as readonly string[]).includes(x) ? (x as Categoria) : 'otros');
+
+/** El dato que ya existe y es «el mismo» (misma clave, o casi el mismo texto en la categoría). */
+function mismoDato(c: CajonConocer, categoria: Categoria, clave: string | undefined, dato: string): Dato | undefined {
+  return (clave && c.datos.find((d) => d.categoria === categoria && d.clave === clave)) || c.datos.find((d) => d.categoria === categoria && parecido(d.dato, dato) >= 0.7);
+}
+
 function juntarUno(c: CajonConocer, n: DatoNuevo, fuente: Dato['fuente'], ahora: number): Dato | null {
   const dato = linea(n.dato, 240);
   if (!dato || dato.length < 4 || esSecreto(dato)) return null;
-  const categoria: Categoria = (CATEGORIAS as readonly string[]).includes(n.categoria) ? (n.categoria as Categoria) : 'otros';
+  const categoria = categoriaDe(n.categoria);
   const clave = n.clave ? plegar(linea(n.clave, 60)) : undefined;
   const confianza = Math.max(0.1, Math.min(1, Number(n.confianza) || (fuente === 'manual' ? 1 : 0.6)));
   // El mismo dato con otra versión («su esposa se llama Ana» → «Ana María»): gana lo más nuevo.
-  const mismo = (clave && c.datos.find((d) => d.categoria === categoria && d.clave === clave)) || c.datos.find((d) => d.categoria === categoria && parecido(d.dato, dato) >= 0.7);
+  const mismo = mismoDato(c, categoria, clave, dato);
   if (mismo) {
     // Lo que la persona escribió a mano no lo cambia el modelo.
     if (mismo.fuente === 'manual' && fuente !== 'manual') {
@@ -164,14 +219,32 @@ function juntarUno(c: CajonConocer, n: DatoNuevo, fuente: Dato['fuente'], ahora:
       mismo.veces += 1;
       return mismo;
     }
+    if (mismo.dato !== dato) mismo.actualizado = ahora;
     mismo.dato = dato;
     mismo.visto = ahora;
     mismo.veces += 1;
     mismo.confianza = Math.min(1, Math.max(mismo.confianza, confianza) + 0.05);
     if (fuente === 'manual' || fuente === 'modelo') mismo.fuente = fuente;
+    // Lo que la persona dice o escribe vuelve explícito lo que antes se dedujo (nunca al revés).
+    if (fuente !== 'modelo' || n.explicito) mismo.explicito = true;
+    if (fuente === 'manual' && n.origen) mismo.origen = n.origen;
     return mismo;
   }
-  const nuevo: Dato = { id: nuevoId('dt'), categoria, dato, ...(clave ? { clave } : {}), confianza, fuente, desde: ahora, visto: ahora, veces: 1 };
+  const nuevo: Dato = {
+    id: nuevoId('dt'),
+    categoria,
+    dato,
+    ...(clave ? { clave } : {}),
+    confianza,
+    fuente,
+    desde: ahora,
+    visto: ahora,
+    veces: 1,
+    origen: n.origen ?? (fuente === 'manual' ? 'app' : 'conversacion'),
+    explicito: n.explicito ?? fuente !== 'modelo',
+    alcance: 'general',
+    actualizado: ahora,
+  };
   c.datos.unshift(nuevo);
   if (c.datos.length > MAX_DATOS) {
     // Se va el de menos peso (poca confianza, visto hace mucho), nunca uno escrito a mano.
@@ -184,15 +257,37 @@ function juntarUno(c: CajonConocer, n: DatoNuevo, fuente: Dato['fuente'], ahora:
   return nuevo;
 }
 
-/** Suma lo aprendido. Nunca lanza: si no se pudo leer lo guardado, no anota nada. */
-export async function incorporarDatos(persona: string, nuevos: DatoNuevo[], o: { fuente?: Dato['fuente']; ahora?: number } = {}): Promise<{ agregados: number; guardado: boolean }> {
+/** ¿Este dato guardado está cubierto por una marca de supresión? (lo guardado se fecha por `desde`) */
+const suprimido = (tumbas: readonly Tumba[], d: Dato) => datoSuprimido(tumbas, { id: d.id, categoria: d.categoria, clave: d.clave, dato: d.dato, t: d.desde });
+
+/** Quita del cajón lo que cubren las marcas (una copia vieja restaurada, un borrado a medias). Cuántos quitó. */
+function purgar(c: CajonConocer, tumbas: readonly Tumba[]): number {
+  if (!tumbas.length) return 0;
+  const antes = c.datos.length;
+  c.datos = c.datos.filter((d) => !suprimido(tumbas, d));
+  return antes - c.datos.length;
+}
+
+/** Los datos vivos (sin lo suprimido). */
+const vivos = (datos: Dato[], tumbas: readonly Tumba[]) => (tumbas.length ? datos.filter((d) => !suprimido(tumbas, d)) : datos);
+
+/**
+ * Suma lo aprendido. Nunca lanza: si no se pudo leer lo guardado (o las marcas), no anota nada. `dicho`: cuándo
+ * se dijo (por omisión, `ahora`): lo dicho antes de un borrado que lo cubre no se vuelve a aprender.
+ */
+export async function incorporarDatos(persona: string, nuevos: DatoNuevo[], o: { fuente?: Dato['fuente']; ahora?: number; dicho?: number } = {}): Promise<{ agregados: number; guardado: boolean }> {
   const clave = clavePersona(persona);
   if (!clave || !nuevos.length) return { agregados: 0, guardado: true };
   const ahora = o.ahora ?? Date.now();
   try {
+    const tumbas = await tumbasDe(clave);
+    const t = o.dicho ?? ahora;
+    const entran = nuevos.filter((n) => !datoSuprimido(tumbas, { categoria: categoriaDe(n.categoria), clave: n.clave, dato: String(n.dato || ''), t: n.dicho ?? t }, { entrante: true }));
+    if (!entran.length) return { agregados: 0, guardado: true };
     const { resultado } = await cajones.modificar(clave, (c) => {
+      purgar(c, tumbas);
       let agregados = 0;
-      for (const n of nuevos.slice(0, 20)) {
+      for (const n of entran.slice(0, 20)) {
         const antes = c.datos.length;
         if (juntarUno(c, n, o.fuente || 'reglas', ahora) && c.datos.length > antes) agregados++;
       }
@@ -205,32 +300,121 @@ export async function incorporarDatos(persona: string, nuevos: DatoNuevo[], o: {
   }
 }
 
-/** Un dato puesto a mano por la persona. Lanza CajonNoDisponible si no se pudo leer; Error si es un secreto. */
-export async function agregarDato(persona: string, categoria: string, dato: string, clave?: string): Promise<{ dato: Dato; durable: boolean }> {
+/** Lo que llega ya fue borrado y es de antes del borrado (un teléfono que estuvo offline): no se guarda. */
+export class DatoSuprimido extends Error {
+  constructor() {
+    super('Ese dato lo borraste después de esta copia: no lo vuelvo a guardar.');
+    this.name = 'DatoSuprimido';
+  }
+}
+
+/**
+ * Un dato puesto a mano por la persona. `anterior`: el texto que tenía si ya existía con otro (contestar otra
+ * vez una pregunta es corregirla: lib/olvido.ts invalida los derivados). `dicho`: cuándo lo escribió (por
+ * omisión, ahora). Lanza CajonNoDisponible si no se pudo leer, DatoSuprimido si es una copia de antes de un
+ * borrado, Error si es un secreto.
+ */
+export async function agregarDato(
+  persona: string,
+  categoria: string,
+  dato: string,
+  clave?: string,
+  o: { origen?: Origen; dicho?: number } = {}
+): Promise<{ dato: Dato; durable: boolean; anterior?: string }> {
   const c = clavePersona(persona);
   if (!c) throw new Error('Sin persona no hay dónde guardarlo.');
   if (esSecreto(dato)) throw new Error('Eso parece una clave o un dato secreto: no lo guardo.');
-  const { resultado, durable } = await cajones.modificar(c, (x) => juntarUno(x, { categoria, dato, clave, confianza: 1 }, 'manual', Date.now()));
+  const tumbas = await tumbasDe(c);
+  const ahora = Date.now();
+  if (datoSuprimido(tumbas, { categoria: categoriaDe(categoria), clave, dato, t: o.dicho ?? ahora }, { entrante: true })) throw new DatoSuprimido();
+  const { resultado, durable } = await cajones.modificar(c, (x) => {
+    purgar(x, tumbas);
+    const texto = linea(dato, 240);
+    const previo = mismoDato(x, categoriaDe(categoria), clave ? plegar(linea(clave, 60)) : undefined, texto);
+    const anterior = previo && previo.dato !== texto ? previo.dato : undefined;
+    const d = juntarUno(x, { categoria, dato, clave, confianza: 1, origen: o.origen, explicito: true }, 'manual', ahora);
+    if (d && anterior) x.ediciones += 1;
+    return d ? { dato: { ...d }, anterior } : null;
+  });
   if (!resultado) throw new Error('Ese dato vino vacío.');
-  return { dato: { ...resultado }, durable };
+  return { dato: resultado.dato, durable, ...(resultado.anterior ? { anterior: resultado.anterior } : {}) };
 }
 
-/** Corrige el texto de un dato (pasa a ser «manual»: el modelo ya no lo cambia). Null si no existe. */
-export async function corregirDato(persona: string, id: string, dato: string): Promise<{ dato: Dato | null; durable: boolean }> {
+/**
+ * Corrige el texto de un dato (pasa a ser «manual» y explícito: el modelo ya no lo cambia). `anterior`: el
+ * texto que tenía. Null si no existe (o está suprimido). Lanza CajonNoDisponible si no se pudo leer.
+ */
+export async function corregirDato(persona: string, id: string, dato: string): Promise<{ dato: Dato | null; durable: boolean; anterior?: string }> {
   const c = clavePersona(persona);
   const texto = linea(dato, 240);
   if (!c || !texto) return { dato: null, durable: false };
   if (esSecreto(texto)) throw new Error('Eso parece una clave o un dato secreto: no lo guardo.');
+  const tumbas = await tumbasDe(c);
   const { resultado, durable } = await cajones.modificar(c, (x) => {
+    purgar(x, tumbas);
     const d = x.datos.find((y) => y.id === String(id));
     if (!d) return null;
+    const anterior = d.dato;
+    const ahora = Date.now();
     d.dato = texto;
     d.fuente = 'manual';
     d.confianza = 1;
-    d.visto = Date.now();
+    d.explicito = true;
+    d.visto = ahora;
+    d.actualizado = ahora;
+    d.corregido = ahora;
+    x.ediciones += 1;
+    return { dato: { ...d }, anterior };
+  });
+  return { dato: resultado?.dato ?? null, durable, ...(resultado ? { anterior: resultado.anterior } : {}) };
+}
+
+/** Cambia el alcance de un dato (limitado: AURA no lo usa en el prompt). Null si no existe. */
+export async function limitarDato(persona: string, id: string, alcance: Alcance): Promise<{ dato: Dato | null; durable: boolean }> {
+  const c = clavePersona(persona);
+  if (!c) return { dato: null, durable: false };
+  const tumbas = await tumbasDe(c);
+  const { resultado, durable } = await cajones.modificar(c, (x) => {
+    purgar(x, tumbas);
+    const d = x.datos.find((y) => y.id === String(id));
+    if (!d) return null;
+    if (d.alcance !== alcance) {
+      d.alcance = alcance;
+      d.actualizado = Date.now();
+      x.ediciones += 1;
+    }
     return { ...d };
   });
   return { dato: resultado, durable };
+}
+
+/** Los datos vivos que cubre un borrado por id, por clave común o todos (para armar la marca antes de borrar). */
+export async function datosQueCubre(persona: string, o: { ids?: string[]; claves?: ClaveDato[]; todo?: boolean }): Promise<Dato[]> {
+  const c = clavePersona(persona);
+  const [l, tumbas] = await Promise.all([cajones.leer(c), tumbasDe(c)]);
+  if (!l.ok) throw new CajonNoDisponible('lo que sé de ti');
+  const ids = new Set((o.ids || []).map(String));
+  const claves = (o.claves || []).map((k) => ({ categoria: String(k.categoria), clave: plegar(linea(k.clave, 60)) }));
+  return vivos(l.valor.datos, tumbas).filter((d) => o.todo || ids.has(d.id) || claves.some((k) => k.categoria === d.categoria && d.clave === k.clave));
+}
+
+/**
+ * Aplica las marcas al almacén: quita lo que cubren (la parte «conocer» de un borrado, o lo que trajo de
+ * vuelta una restauración). Siempre escribe, para dar un recibo de verdad. Lanza CajonNoDisponible si no se
+ * pudo leer.
+ */
+export async function purgarConocer(persona: string): Promise<{ borrados: number; durable: boolean }> {
+  const c = clavePersona(persona);
+  if (!c) return { borrados: 0, durable: false };
+  const tumbas = await tumbasDe(c);
+  const { resultado, durable } = await cajones.modificar(c, (x) => purgar(x, tumbas));
+  return { borrados: Number(resultado) || 0, durable };
+}
+
+/** Para la firma del system congelado: cambia con cada borrado (el reloj de las marcas) y cada corrección. */
+export function firmaConocer(persona: string): string {
+  const clave = clavePersona(persona);
+  return `${relojSupresiones(clave)}:${cajones.enCache(clave)?.ediciones ?? 0}`;
 }
 
 /** Borra un dato. `borrado`: false si no existía. Lanza CajonNoDisponible si no se pudo leer. */
@@ -295,21 +479,39 @@ function agrupar(datos: Dato[]): LoQueSe {
   return { porCategoria, total: datos.length };
 }
 
-/** Lo que AU-RA sabe de la persona, por categoría. Lanza CajonNoDisponible si no se pudo leer. */
+/**
+ * Lo que AU-RA sabe de la persona, por categoría (sin lo suprimido). Lanza CajonNoDisponible si no se pudo
+ * leer lo guardado o las marcas: sin marcas no se sabe qué está borrado, y no se enseña nada.
+ */
 export async function queSeDe(persona: string): Promise<LoQueSe> {
-  const l = await cajones.leer(clavePersona(persona));
+  const c = clavePersona(persona);
+  const [l, tumbas] = await Promise.all([cajones.leer(c), tumbasDe(c)]);
   if (!l.ok) throw new CajonNoDisponible('lo que sé de ti');
-  return agrupar(l.valor.datos);
+  return agrupar(vivos(l.valor.datos, tumbas));
+}
+
+/**
+ * Los datos vivos que ya están en la caché, sin esperar. Sin las marcas en caché, null (se cargan para la
+ * próxima): mejor no saber que enseñar algo borrado.
+ */
+function vivosEnCache(persona: string): Dato[] | null {
+  const clave = clavePersona(persona);
+  const c = cajones.enCache(clave);
+  const tumbas = tumbasEnCache(clave);
+  if (!tumbas && clave) void precargarSupresiones(clave);
+  if (!c || !tumbas) return null;
+  return vivos(c.datos, tumbas);
 }
 
 /** Los datos que ya están en la caché (sin esperar), los más seguros primero. */
 export function datosConocidos(persona: string): Dato[] {
-  const c = cajones.enCache(clavePersona(persona));
-  return c ? [...c.datos].sort((a, b) => b.confianza - a.confianza || b.visto - a.visto) : [];
+  const ds = vivosEnCache(persona);
+  return ds ? [...ds].sort((a, b) => b.confianza - a.confianza || b.visto - a.visto) : [];
 }
 
 export function precargarConocer(persona: string): Promise<void> {
-  return cajones.leer(clavePersona(persona)).then(
+  const clave = clavePersona(persona);
+  return Promise.all([cajones.leer(clave), precargarSupresiones(clave)]).then(
     () => undefined,
     () => undefined
   );
@@ -349,8 +551,8 @@ export function huecos(datos: Dato[]): Hueco[] {
 
 /** Lo que falta saber de la persona (de la caché; vacío si no se cargó). */
 export function queNoSe(persona: string): Hueco[] {
-  const c = cajones.enCache(clavePersona(persona));
-  return c ? huecos(c.datos) : [];
+  const ds = vivosEnCache(persona);
+  return ds ? huecos(ds) : [];
 }
 
 /** No se repite la misma pregunta en estos días. */
@@ -359,8 +561,9 @@ export const DIAS_SIN_REPETIR_PREGUNTA = 4;
 /** La pregunta que toca hacer ahora (una sola), o null. No repite una hecha hace menos de DIAS_SIN_REPETIR_PREGUNTA. */
 export function preguntaPendiente(persona: string, ahora = Date.now()): Hueco | null {
   const c = cajones.enCache(clavePersona(persona));
-  if (!c) return null;
-  return huecos(c.datos).find((h) => ahora - (c.preguntado[h.clave] || 0) > DIAS_SIN_REPETIR_PREGUNTA * 86_400_000) || null;
+  const ds = vivosEnCache(persona);
+  if (!c || !ds) return null;
+  return huecos(ds).find((h) => ahora - (c.preguntado[h.clave] || 0) > DIAS_SIN_REPETIR_PREGUNTA * 86_400_000) || null;
 }
 
 /** Anota que ya se le preguntó esto (para no repetirlo). Nunca lanza. */
@@ -390,13 +593,18 @@ export function bloqueConocer(persona: string, compacto = false, o: { nombre?: s
   const c = cajones.enCache(clave);
   // Sin caché: se carga para el próximo turno (el de ahora no espera a S3).
   if (!c && clave) void cajones.leer(clave).catch(() => undefined);
-  if (!c || !c.datos.length) {
+  // Sin las marcas de supresión en caché tampoco: no se arriesga a decir algo borrado.
+  const ds = vivosEnCache(persona);
+  if (c && !ds) return '';
+  // Lo limitado se guarda y se ve en la app, pero AURA no lo usa.
+  const usables = (ds || []).filter((d) => d.alcance !== 'limitado');
+  if (!c || !usables.length) {
     if (compacto || !o.conPregunta) return '';
     const p = preguntaPendiente(persona, o.ahora);
     return p ? `TODAVÍA NO LA CONOCES BIEN: si hay una pausa natural, pregúntale UNA cosa (no ahora si está ocupada): «${p.pregunta}»` : '';
   }
   const max = compacto ? TOPE_CONOCER.compacto : TOPE_CONOCER.normal;
-  const g = agrupar(c.datos.filter((d) => d.confianza >= (compacto ? 0.6 : 0.4)));
+  const g = agrupar(usables.filter((d) => d.confianza >= (compacto ? 0.6 : 0.4)));
   const quien = linea(o.nombre || '', 40) || 'ESTA PERSONA';
   const enc = compacto
     ? `LO QUE SABES DE ${quien.toUpperCase()} (úsalo con naturalidad, no lo recites):`

@@ -115,6 +115,7 @@ import type { PantallaCerebro } from '../compa/cerebro';
 import { TarjetaPropuesta } from '../components/TarjetaPropuesta';
 import { HojaCerebro } from '../app/HojasCerebro';
 import { publicarMesa, retirarMesa } from '../app/mesaAjustes';
+import { tomarPrimeraPeticion } from '../app/sesion';
 import { useBorradorMesa } from '../lib/borradorMesa';
 
 type Props = {
@@ -234,7 +235,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const [presence, setPresence] = useState<DeskPresence>('stay');
   const [bubble, setBubble] = useState('');
   const [status, setStatus] = useState<'boot' | 'listening' | 'muted' | 'thinking' | 'speaking' | 'orando' | 'reconnect' | 'offline'>('boot');
-  const [draft, setDraft] = useState('');
+  // La primera vez deja escrita la primera petición (AUR11, el miniresultado): la persona la revisa y la manda.
+  const [draft, setDraft] = useState(() => tomarPrimeraPeticion());
   // Lo escrito sobrevive a una actualización por aire (UI01, 3-oct).
   useBorradorMesa(draft, setDraft);
   const [listening, setListening] = useState(false);

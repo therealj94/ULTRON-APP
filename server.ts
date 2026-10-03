@@ -80,7 +80,7 @@ import { frenarIniciativa, pideApagarIniciativa, pideDejarDeProponer, type Perso
 import { montarRutasCerebroContinuo } from './server/cerebro-continuo';
 import { anotarTurnos, bloqueEpisodios, iniciarBarridoPausas, precargarCerebro } from './lib/episodios';
 import { bloqueAbiertos } from './lib/abiertos';
-import { bloqueConocer } from './lib/conocer-persona';
+import { bloqueConocer, firmaConocer } from './lib/conocer-persona';
 import { correrCirculoConEstado, precargarCirculo } from './lib/circulo';
 import { correrTriajeConEstado } from './lib/triaje';
 import { fichaManosPrompt } from './lib/manos-ficha';
@@ -3080,6 +3080,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     compacto,
     bloqueCerebro: bloqueCerebro ? neutralizarMarca(bloqueCerebro) : '',
     conocer: conocer ? neutralizarMarca(conocer) : '',
+    // Corregir, limitar o borrar algo de lo que sabe rehace el system congelado (aprender algo no).
+    conocerFirma: duenoComputadora ? firmaConocer(duenoComputadora) : undefined,
   };
   const piezas = piezasDelTurno(argsPiezas);
   // Mientras la conversación sigue, el mismo fijo de antes si solo cambió la conversación (el hilo va en

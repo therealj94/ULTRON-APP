@@ -39,6 +39,7 @@ import {
 import { datosConocidos, datosPorReglas, incorporarDatos, interpretarDatos, precargarConocer, type DatoNuevo } from './conocer-persona';
 import { redactar } from './cognitivo/base';
 import { coseno, embeddingsConfigurados, fundirPorRango, vectorDe, vectorizar } from './cognitivo/embeddings';
+import { limpiarTexto, precargarSupresiones, terminosVigentes, tumbasDe, tumbasEnCache, type Tumba } from './supresiones';
 
 export type TurnoEp = { rol: 'user' | 'ultron'; texto: string; t: number };
 
@@ -129,6 +130,66 @@ const tramoCaj = crearCajones<CajonTramo>({
     ultimoT: Number(raw?.ultimoT) || 0,
   }),
 });
+
+/* ------------------------------------------------------------------ lo borrado no se resume ni se lee (AUR11) */
+
+/**
+ * El episodio sin las palabras de lo que la persona borró o corrigió DESPUÉS de que empezara ese tramo
+ * (lib/supresiones.ts): «Contó que vive en Tela» → «Contó que vive en [olvidado]». Lo de después de un
+ * borrado (lo volvió a contar) no se toca. El mismo objeto si no hay nada que tapar.
+ */
+export function limpiarEpisodio(e: Episodio, tumbas: readonly Tumba[]): Episodio {
+  const ts = terminosVigentes(tumbas, e.desde);
+  if (!ts.length) return e;
+  const l = (s: string) => limpiarTexto(s, ts);
+  const nuevo: Episodio = { ...e, resumen: l(e.resumen), temas: e.temas.map(l), personas: e.personas.map(l), abiertos: e.abiertos.map(l) };
+  return JSON.stringify(nuevo) === JSON.stringify(e) ? e : nuevo;
+}
+
+const limpiarTurno = (t: TurnoEp, tumbas: readonly Tumba[]): TurnoEp => {
+  const ts = terminosVigentes(tumbas, t.t);
+  return ts.length ? { ...t, texto: limpiarTexto(t.texto, ts) } : t;
+};
+
+/**
+ * Aplica las marcas a los derivados de texto: los resúmenes guardados, el tramo en curso y lo que espera
+ * resumen en memoria; y tira los vectores de lo que cambió (el índice se rehace con el texto nuevo). Siempre
+ * escribe, para dar un recibo de verdad. Lanza CajonNoDisponible si no se pudo leer.
+ */
+export async function purgarEpisodios(persona: string): Promise<{ cambiados: number; durable: boolean }> {
+  const clave = clavePersona(persona);
+  if (!clave) return { cambiados: 0, durable: false };
+  const tumbas = await tumbasDe(clave);
+  const eps = await episodiosCaj.modificar(clave, (c) => {
+    let n = 0;
+    c.episodios = c.episodios.map((e) => {
+      const l = limpiarEpisodio(e, tumbas);
+      if (l !== e) {
+        n++;
+        vectores.delete(e.id);
+      }
+      return l;
+    });
+    return n;
+  });
+  const tramo = await tramoCaj.modificar(clave, (c) => {
+    c.turnos = c.turnos.map((t) => limpiarTurno(t, tumbas));
+  });
+  const espera = enEspera.get(clave);
+  if (espera) enEspera.set(clave, espera.map((t) => limpiarTurno(t, tumbas)));
+  const cola = porResumir.get(clave);
+  if (cola) porResumir.set(clave, cola.map((tr) => tr.map((t) => limpiarTurno(t, tumbas))));
+  return { cambiados: eps.resultado, durable: eps.durable && tramo.durable };
+}
+
+/** Los episodios de la caché, limpios; null si las marcas todavía no están en caché (se cargan). */
+function episodiosVivosEnCache(clave: string): Episodio[] | null {
+  const caj = episodiosCaj.enCache(clave);
+  const tumbas = tumbasEnCache(clave);
+  if (!tumbas && clave) void precargarSupresiones(clave);
+  if (!caj || !tumbas) return null;
+  return caj.episodios.map((e) => limpiarEpisodio(e, tumbas));
+}
 
 /* ------------------------------------------------------------------ anotar (nunca frena el turno) */
 
@@ -359,17 +420,22 @@ async function resumirYGuardar(clave: string, tramo: TurnoEp[]): Promise<Episodi
         via: 'modelo',
       }
     : episodioPorReglas(tramo, nombre);
+  // Un tramo de antes de un borrado (se resume tarde, o se reintentó) no trae de vuelta lo borrado: el
+  // resumen sale limpio y lo aprendido lleva la hora del tramo (lib/supresiones.ts). Si las marcas no se
+  // dejan leer, lanza y el tramo se reintenta entero.
+  const tumbas = await tumbasDe(clave);
+  const limpio = limpiarEpisodio(ep, tumbas);
   // Primero el episodio (si S3 no deja, lanza y el tramo se reintenta entero).
   await episodiosCaj.modificar(clave, (c) => {
-    if (!c.episodios.some((e) => e.desde === ep.desde && e.hasta === ep.hasta)) c.episodios.push(ep);
+    if (!c.episodios.some((e) => e.desde === limpio.desde && e.hasta === limpio.hasta)) c.episodios.push(limpio);
     c.episodios.sort((a, b) => a.hasta - b.hasta);
     compactar(c);
   });
   if (r) {
     await incorporarAbiertos(clave, r.abiertos.filter((a) => TIPOS_ABIERTO.includes(a.tipo)), { fuente: 'modelo', hechos: r.hechos });
-    await incorporarDatos(clave, r.datos, { fuente: 'modelo' });
+    await incorporarDatos(clave, r.datos, { fuente: 'modelo', dicho: limpio.hasta });
   }
-  return ep;
+  return limpio;
 }
 
 /* ------------------------------------------------------------------ compactar los meses viejos */
@@ -488,7 +554,7 @@ export function puntuarPorPalabras(eps: Episodio[], consulta: string, ahora = Da
 
 /** Los episodios en la caché (sin esperar). */
 export function episodiosEnCache(persona: string): Episodio[] {
-  return episodiosCaj.enCache(clavePersona(persona))?.episodios || [];
+  return episodiosVivosEnCache(clavePersona(persona)) || [];
 }
 
 /** Lo que tiene que ver con `consulta`, solo por palabras y de la caché (para el turno, sin esperar a nada). */
@@ -508,9 +574,10 @@ const MAX_VECTORES = 5000;
  * vectores (o si tardan), solo palabras. Lanza CajonNoDisponible si no se pudo leer lo guardado.
  */
 export async function episodiosRelevantes(persona: string, consulta: string, k = 3, o: { ahora?: number; ms?: number } = {}): Promise<Episodio[]> {
-  const l = await episodiosCaj.leer(clavePersona(persona));
+  const clave = clavePersona(persona);
+  const [l, tumbas] = await Promise.all([episodiosCaj.leer(clave), tumbasDe(clave)]);
   if (!l.ok) throw new CajonNoDisponible('lo que hablamos antes');
-  const eps = l.valor.episodios;
+  const eps = l.valor.episodios.map((e) => limpiarEpisodio(e, tumbas));
   const ahora = o.ahora ?? Date.now();
   const porPalabras = puntuarPorPalabras(eps, consulta, ahora).map((x) => x.ep);
   if (!embeddingsConfigurados() || !consulta.trim() || !eps.length) return porPalabras.slice(0, k);
@@ -558,8 +625,9 @@ export function bloqueEpisodios(persona: string, consulta: string, compacto = fa
     void episodiosCaj.leer(clave).catch(() => undefined);
     return '';
   }
-  const eps = caj.episodios;
-  if (!eps.length) return '';
+  // Sin las marcas de supresión en caché, nada (se cargan para el próximo turno): no se arriesga lo borrado.
+  const eps = episodiosVivosEnCache(clave);
+  if (!eps?.length) return '';
   const ultimo = eps[eps.length - 1];
   const relevantes = episodiosRelevantesYa(clave, consulta, compacto ? 2 : 4, ahora).filter((e) => e.id !== ultimo.id);
   const corto = (e: Episodio) => {
@@ -591,9 +659,13 @@ export function precargarCerebro(persona: string): Promise<void> {
 
 /** Para la pantalla: los últimos episodios (más nuevos primero). Lanza CajonNoDisponible si no se pudo leer. */
 export async function episodiosDe(persona: string, n = 30): Promise<Episodio[]> {
-  const l = await episodiosCaj.leer(clavePersona(persona));
+  const clave = clavePersona(persona);
+  const [l, tumbas] = await Promise.all([episodiosCaj.leer(clave), tumbasDe(clave)]);
   if (!l.ok) throw new CajonNoDisponible('lo que hablamos antes');
-  return l.valor.episodios.slice(-n).reverse();
+  return l.valor.episodios
+    .slice(-n)
+    .reverse()
+    .map((e) => limpiarEpisodio(e, tumbas));
 }
 
 /** Solo pruebas: como tras un redespliegue (sin caché ni colas; el disco sigue). */

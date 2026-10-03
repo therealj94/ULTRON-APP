@@ -76,7 +76,13 @@ En `server.ts`, con la persona del turno: `const personaCerebro = duenoComputado
 
 - `GET /api/cerebro/episodios?n=`
 - `GET /api/cerebro/abiertos`, y `POST /api/cerebro/abiertos/:id/cerrar {estado?: 'hecho'|'descartado'}`
-- `GET /api/cerebro/conocer`, que devuelve `{ categorias: [{id, nombre, datos}], total, faltan }`, y `DELETE /api/cerebro/conocer/:id`
+- `GET /api/cerebro/conocer`, que devuelve `{ categorias: [{id, nombre, datos}], total, faltan }`, y `DELETE /api/cerebro/conocer/:id`.
+  Cada dato trae su procedencia (`origen`, `explicito`, `alcance`, `desde`, `actualizado`, `corregido`).
+  `PATCH /api/cerebro/conocer/:id {dato?, alcance?}` corrige (y sus usos activos: perfil, resúmenes, system
+  congelado) o limita. Borrar (`DELETE`, `POST …/olvidar`, vaciar una respuesta del perfil) escribe primero
+  una marca de supresión (`lib/supresiones.ts`) y procesa cada almacén (`lib/olvido.ts`); el recibo dice
+  `confirmado` o `pendiente`, y una copia vieja (teléfono offline, tramo de antes, respaldo restaurado) no
+  resucita lo borrado.
 - `GET /api/circulo`, que devuelve `{ personas, puede }`; `POST /api/circulo`, que agrega, o cambia si trae `id`; y `DELETE /api/circulo/:id`.
   El permiso `permisos.recordatorios: 'permitido'` solo se puede dar aquí, José desde su app. La herramienta no puede.
 - `GET /api/triaje?canal=todo|whatsapp|correo`, solo para quien cumple `whatsappPermitido`.

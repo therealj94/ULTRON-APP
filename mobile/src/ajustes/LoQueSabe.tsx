@@ -119,9 +119,10 @@ export function LoQueSabe({ navigation }: Props) {
 
   const guardarCampo = (campo: keyof Encuesta, v: string) => {
     guardarPerfil({ encuesta: { [campo]: v } });
-    // Corregir también corrige su copia en «lo que sé de ti» (misma clave común: se reemplaza, no se repite).
+    // Corregir también corrige su copia en «lo que sé de ti» (misma clave común: se reemplaza, no se repite), y
+    // el servidor corrige sus usos activos: los resúmenes que decían lo viejo y el system congelado (AUR11).
     const d = campo !== 'otros' ? datoConocerDe(campo, v) : null;
-    if (d) void api('/api/cerebro/conocer', { method: 'POST', body: JSON.stringify(d) }, 10_000).catch(() => undefined);
+    if (d) void api('/api/cerebro/conocer', { method: 'POST', body: JSON.stringify({ ...d, origen: 'ajustes', dicho: Date.now() }) }, 10_000).catch(() => undefined);
     vibrar('exito');
     setEditando(null);
   };

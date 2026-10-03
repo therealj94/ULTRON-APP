@@ -161,5 +161,85 @@ const tic = () => new Promise((r) => setTimeout(r, 0));
     }
   }
 
+  /* ── AUR11: las marcas de supresión del servidor prevalecen sobre la copia de este teléfono ── */
+  //  El servidor marca cada respuesta borrada con la hora de su marca (`supresiones`) y rechaza lo que llega
+  //  sin hora o con una hora de antes (`suprimidos`). El teléfono: no reenvía lo que el servidor borró, suelta
+  //  su copia vieja (de la cola y de la caché) y manda cada cambio nuevo con su hora (`hechoEn`).
+  {
+    const MARCA = 5_000;
+    const base = { apodo: 'Gabi', avatar: 'aura', tema: 'oscuro', idioma: 'es', completado: true };
+    let servidor = { ...base, encuesta: { musica: 'Jazz' }, actualizado: 200 };
+    let caido = false;
+    const puts = [];
+    globalThis.__api = async (_r, init) => {
+      if (caido) throw Object.assign(new Error('sin red'), { status: 0 });
+      if (init?.method === 'PUT') {
+        const b = JSON.parse(init.body);
+        puts.push(b);
+        // Como el servidor (lib/olvido.ts): «vive» está marcado; sin hora posterior a la marca, no entra.
+        const suprimidos = [];
+        const enc = { ...servidor.encuesta };
+        for (const [k, v] of Object.entries(b.encuesta || {})) {
+          if (k === 'vive' && v && v !== enc.vive && !((b.hechoEn || {})['encuesta.vive'] > MARCA)) {
+            suprimidos.push('encuesta.vive');
+            continue;
+          }
+          if (v) enc[k] = v;
+          else delete enc[k];
+        }
+        servidor = { ...servidor, encuesta: enc, actualizado: servidor.actualizado + 1 };
+        return { perfil: servidor, durable: true, suprimidos, supresiones: { 'encuesta.vive': MARCA } };
+      }
+      return { perfil: servidor, durable: true, disponible: true, supresiones: { 'encuesta.vive': MARCA } };
+    };
+
+    // G: offline, este teléfono tenía en la cola un cambio de «vive» hecho ANTES del borrado en otro.
+    as.m.set('aura.perfil.v1:g@prueba.local', JSON.stringify({ ...base, encuesta: { vive: 'Tela', musica: 'Jazz' }, actualizado: 100 }));
+    as.m.set('aura.perfil.pendiente.v1:g@prueba.local', JSON.stringify({ encuesta: { vive: 'Tela' } }));
+    as.m.set('aura.perfil.pendiente.en.v1:g@prueba.local', JSON.stringify({ 'encuesta.vive': 1_000 }));
+    await PERFIL.cargarPerfil('g@prueba.local', { nombre: 'G' });
+    await tic();
+    await tic();
+    ok('AUR11: la cola vieja (cambio de antes del borrado) no resucita «vive» en el servidor', !servidor.encuesta.vive && !puts.some((p) => p.encuesta?.vive === 'Tela' && (p.hechoEn || {})['encuesta.vive'] > MARCA), JSON.stringify(puts));
+    ok('…ni se queda en este teléfono', !PERFIL.perfilActual().encuesta.vive, JSON.stringify(PERFIL.perfilActual().encuesta));
+    ok('…y no queda pendiente para siempre', !PERFIL.estadoPerfil().pendiente, String(as.m.get('aura.perfil.pendiente.v1:g@prueba.local')));
+    // Un cambio NUEVO, después del borrado: sale con su hora y vale.
+    PERFIL.guardarPerfil({ encuesta: { vive: 'Tocoa' } });
+    await tic();
+    await PERFIL.enviarPendiente();
+    const ult = puts.at(-1);
+    ok('AUR11: un cambio nuevo sale con su hora (hechoEn) y el servidor lo acepta', ult?.encuesta?.vive === 'Tocoa' && ult.hechoEn?.['encuesta.vive'] > MARCA && servidor.encuesta.vive === 'Tocoa', JSON.stringify(ult));
+    ok('…solo con la hora de lo que cambió (no de toda la encuesta)', Object.keys(ult?.hechoEn || {}).join() === 'encuesta.vive', JSON.stringify(ult?.hechoEn));
+    ok('…y aquí se queda', PERFIL.perfilActual().encuesta.vive === 'Tocoa');
+    PERFIL.soltarPerfil();
+
+    // H: instalación de antes (nunca vio el servidor: sin «visto») y caché con «vive»: antes se tomaba por un
+    // hueco del servidor y se reenviaba. Con la marca, no.
+    servidor = { ...base, encuesta: { musica: 'Jazz' }, actualizado: 300 };
+    puts.length = 0;
+    as.m.set('aura.perfil.v1:h@prueba.local', JSON.stringify({ ...base, encuesta: { vive: 'Tela', musica: 'Jazz' }, actualizado: 100 }));
+    const ph = await PERFIL.cargarPerfil('h@prueba.local', { nombre: 'H' });
+    await tic();
+    await tic();
+    ok('AUR11: una instalación vieja no reenvía como «hueco» lo que el servidor borró', !puts.some((p) => p.encuesta?.vive), JSON.stringify(puts));
+    ok('…y lo suelta aquí', !ph.encuesta.vive && ph.encuesta.musica === 'Jazz', JSON.stringify(ph.encuesta));
+    PERFIL.soltarPerfil();
+
+    // I: sin red al abrir (sin GET), con un cambio pendiente de una versión vieja de la app (sin hora). Al volver
+    // la red, el servidor lo rechaza (`suprimidos`): se suelta, no se reintenta para siempre.
+    servidor = { ...base, encuesta: { musica: 'Jazz' }, actualizado: 400 };
+    puts.length = 0;
+    as.m.set('aura.perfil.v1:i@prueba.local', JSON.stringify({ ...base, encuesta: { vive: 'Tela', musica: 'Jazz' }, actualizado: 100 }));
+    as.m.set('aura.perfil.pendiente.v1:i@prueba.local', JSON.stringify({ encuesta: { vive: 'Tela' } }));
+    caido = true;
+    await PERFIL.cargarPerfil('i@prueba.local', { nombre: 'I' });
+    caido = false;
+    await PERFIL.enviarPendiente();
+    await tic();
+    ok('AUR11: un PUT rechazado por la marca suelta la copia vieja', !PERFIL.perfilActual().encuesta.vive && !servidor.encuesta.vive, JSON.stringify(PERFIL.perfilActual().encuesta));
+    ok('…y la cola queda vacía (sin reintentos eternos)', !PERFIL.estadoPerfil().pendiente);
+    PERFIL.soltarPerfil();
+  }
+
   fin();
 })();
