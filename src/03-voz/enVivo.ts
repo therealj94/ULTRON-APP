@@ -12,7 +12,11 @@
  *  · Al colgar se avisa a /api/voz/agente/cerrar: el pase deja de valer ya, no a los cinco minutos.
  *
  * Sin React ni el SDK adentro: los recibe (`abrirSesion`, `pedir`), así se prueba en Node.
+ *
+ * Mientras conecta o está abierta cuenta como trabajo activo (10-infra/trabajoActivo.ts; AUR14): la PWA no
+ * aplica una versión nueva encima de la llamada; al colgar avisa y la recarga pendiente sigue.
  */
+import { avisarTrabajoLibre, registrarTrabajoActivo } from '../10-infra/trabajoActivo';
 
 export type EstadoEnVivo = 'cerrada' | 'conectando' | 'escuchando' | 'hablando' | 'error';
 
@@ -80,7 +84,15 @@ export class ConversacionEnVivo {
   /** Los plazos de la apertura en curso (null: no hay ninguna conectando). */
   private plazo: Plazos | null = null;
 
+  /** Ya se anotó como trabajo activo (una vez por conversación). */
+  private registrada = false;
+
   constructor(private d: DepsEnVivo) {}
+
+  /** ¿Está ocupada (conectando o abierta)? Una recarga ahora cortaría la llamada. */
+  ocupada(): boolean {
+    return this.estado_ === 'conectando' || this.estado_ === 'escuchando' || this.estado_ === 'hablando';
+  }
 
   /** Los plazos de la apertura `gen`: el total corre desde ya; cada fase pone el suyo. */
   private plazos(gen: number): Plazos {
@@ -131,11 +143,16 @@ export class ConversacionEnVivo {
     if (gen !== this.gen) return;
     this.estado_ = e;
     this.d.onEstado(e, detalle);
+    if (!this.ocupada()) avisarTrabajoLibre();
   }
 
   /** Abre la conversación. Devuelve false (y el porqué en onEstado 'error') si no abrió. */
   async abrir(o: { avatar: string; idioma: 'es' | 'en' }): Promise<boolean> {
     if (this.estado_ === 'conectando' || this.estado_ === 'escuchando' || this.estado_ === 'hablando') return true;
+    if (!this.registrada) {
+      this.registrada = true;
+      registrarTrabajoActivo('voz-en-vivo', () => this.ocupada());
+    }
     // Una sesión que quedó de un error se cuelga antes de abrir otra: nunca dos micrófonos.
     this.soltarSesion();
     const gen = ++this.gen;
@@ -224,6 +241,7 @@ export class ConversacionEnVivo {
     this.d.onEstado('cerrada');
     if (s) void Promise.resolve(s.endSession()).catch(() => undefined);
     this.avisarCierre(pase);
+    avisarTrabajoLibre();
   }
 
   /**

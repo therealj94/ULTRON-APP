@@ -66,7 +66,8 @@ import { registrarTrabajoActivo } from '../lib/barreraOta';
 import { escucharCuenta } from '../pulse/relevo';
 import { contactosParaAura } from './contactos';
 import { ecoMesa, interrupcionVoz, mensajeVoz, nivelOido } from './canales';
-import { CicloLlamada, MENSAJE_SIGUES, avisoMinutos, diaHonduras, llamadaActiva, seguirVozMesa, type EfectoCiclo, type EstadoCiclo, type OrigenLlamada } from './llamadaCiclo';
+import { CicloLlamada, MENSAJE_SIGUES, avisoMinutos, diaHonduras, llamadaActiva, mandarAlAgente, seguirVozMesa, type EfectoCiclo, type EstadoCiclo, type OrigenLlamada } from './llamadaCiclo';
+import { aplicarAccionControl, puertosTelefono } from './controles';
 import { loadVozHoy, saveVozHoy } from '../lib/storage';
 import { avatarPorId } from '../avatares/catalogo';
 import { de } from '../i18n';
@@ -181,6 +182,8 @@ export function VozProvider({ children, conCompanera = true }: Props) {
   if (!pre.current) pre.current = new Precalentador(pedirPermiso);
   const precalentador = pre.current;
   const controles = useRef<ControlesSesion | null>(null);
+  /** Los reintentos de mensajes de la llamada en curso: se cancelan al colgar (AUR10). */
+  const reintentos = useRef<Array<() => void>>([]);
   // El sonido de fondo de las tareas lentas: solo con la conversación abierta, sin silencio, la app
   // delante y los sonidos de la app activados.
   const amb = useRef<AmbienteConversacion | null>(null);
@@ -254,6 +257,8 @@ export function VozProvider({ children, conCompanera = true }: Props) {
           case 'cerrar':
             // Con el registro de toda la llamada: si se cortó sola, en el servidor se ve por qué.
             reportarEstado(`llamada del avatar: cuelga (${ef.motivo})`);
+            // Lo que esperaba reintentarse en esta llamada ya no sale (AUR10: cero timers de la llamada al colgar).
+            for (const cancelar of reintentos.current.splice(0)) cancelar();
             control.terminar();
             // Y otra vez a los 5 s: si el oído de la mesa no volvió a tomar el micrófono, se ve en el
             // servidor (1-oct: «el micrófono dejó de escuchar» después de una llamada que falló).
@@ -266,14 +271,24 @@ export function VozProvider({ children, conCompanera = true }: Props) {
           case 'decirEnLlamada':
           case 'sigues': {
             const texto = ef.tipo === 'sigues' ? MENSAJE_SIGUES : ef.texto;
-            if (controles.current?.enviarTexto(texto)) break;
-            // Recién conectada, el control puede tardar un instante: se reintenta una vez.
-            setTimeout(() => {
-              if (controles.current?.enviarTexto(texto)) return;
-              miga(`llamada del avatar: no se pudo mandar ${texto.slice(0, 20)}`);
-              const rec = /^\[\[recordatorio\]\]\s*(.+)$/.exec(texto);
-              if (rec) decirConLaMesa(tr(`Te llamo para recordarte: ${rec[1]}`, `I'm calling to remind you: ${rec[1]}`));
-            }, 600);
+            // Recién conectada, el control puede tardar un instante: se reintenta una vez, y SOLO en esta
+            // misma sesión (AUR10: si en medio se colgó y se abrió otra, el texto viejo no entra en la nueva).
+            const gen = control.vista().gen;
+            const cancelar = mandarAlAgente(texto, {
+              enviar: (t) => !!controles.current?.enviarTexto(t),
+              vigente: () => control.vista().gen === gen && control.vista().montada,
+              esperar: (f, ms) => {
+                const t = setTimeout(f, ms);
+                return () => clearTimeout(t);
+              },
+              alFallar: (t) => {
+                miga(`llamada del avatar: no se pudo mandar ${t.slice(0, 20)}`);
+                const rec = /^\[\[recordatorio\]\]\s*(.+)$/.exec(t);
+                if (rec) decirConLaMesa(tr(`Te llamo para recordarte: ${rec[1]}`, `I'm calling to remind you: ${rec[1]}`));
+              },
+            });
+            reintentos.current.push(cancelar);
+            if (reintentos.current.length > 8) reintentos.current.shift();
             break;
           }
           case 'avisoTope':
@@ -442,6 +457,30 @@ export function VozProvider({ children, conCompanera = true }: Props) {
       if (a.tipo === 'llamame') {
         const ok = llamameRef.current();
         emitir('hecho', { accion: a, ok, ...(ok ? {} : { detalle: tr('Ahora no puedo llamarte: hay otra llamada.', "I can't call you right now: there's another call.") }) });
+        return;
+      }
+      // AUR10: los controles separados, cada uno con su efecto (compa/controles.ts). Detener el audio no
+      // silencia el micrófono ni cancela la tarea; colgar no toca la tarea; cancelar la tarea no cuelga.
+      if (a.tipo === 'detener_audio' || a.tipo === 'colgar' || a.tipo === 'tarea') {
+        const enLlamada = () => llamadaActiva(ciclo.estado()) || control.vista().montada;
+        const puertos = puertosTelefono({
+          pararVozMesa: () => stopSpeaking(),
+          cerrarBoca: () => senalVoz.cortar(),
+          soltarPausaMicrofono: () => pauseMicForTts(false),
+          enLlamada,
+          colgar: () => {
+            const e = ciclo.estado();
+            const ef = e === 'sonando' ? ciclo.rechazar() : ciclo.colgar();
+            if (!ef.length) return { ok: false, detalle: tr('No hay ninguna llamada que colgar.', 'There is no call to hang up.') };
+            ejecutar(ef);
+            return { ok: true };
+          },
+          api: (ruta, init, ms) => api(ruta, init, ms),
+        });
+        void aplicarAccionControl(a, puertos).then((r) => {
+          miga(`voz: control ${a.tipo}${a.tipo === 'tarea' ? `/${a.que}` : ''} → ${r.ok ? 'hecho' : `no (${String(r.detalle || '').slice(0, 60)})`}`);
+          emitir('hecho', { accion: a, ok: r.ok, ...(r.detalle ? { detalle: r.detalle } : {}) });
+        });
         return;
       }
       if (a.tipo !== 'silencio') return;
@@ -635,10 +674,12 @@ export function VozProvider({ children, conCompanera = true }: Props) {
     [control]
   );
   const alNiveles = useCallback(
-    (salida: number, entrada: number, cruda?: number) => {
+    (salida: number, entrada: number, cruda?: number, gen?: number) => {
+      // AUR10: lo de una sesión vieja (su reloj que todavía late) no mueve la boca, el anillo ni la vigilancia.
+      if (gen !== undefined && gen !== control.vista().gen) return;
       nivelExterno(salida);
       nivelOido.emitir(entrada);
-      control.entrada(entrada, cruda);
+      control.entrada(entrada, cruda, gen);
     },
     [control]
   );
@@ -652,8 +693,9 @@ export function VozProvider({ children, conCompanera = true }: Props) {
   const permiso = useCallback(async () => {
     const v = control.vista();
     const p = await precalentador.tomar(v.avatar, v.idioma, v.intento > 0);
-    // Los minutos que le quedan hoy (miembros): el ciclo avisa antes de agotarlos.
-    ciclo.fijarTope(typeof p.restanteMs === 'number' ? p.restanteMs : null);
+    // Los minutos que le quedan hoy (miembros): el ciclo avisa antes de agotarlos. Un permiso que vuelve
+    // cuando su sesión ya no es la vigente no fija nada (AUR10: lo tardío no toca la llamada de ahora).
+    if (control.vista().gen === v.gen) ciclo.fijarTope(typeof p.restanteMs === 'number' ? p.restanteMs : null);
     return p;
   }, [control, precalentador, ciclo]);
 

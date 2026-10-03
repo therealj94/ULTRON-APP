@@ -61,6 +61,8 @@ function cargarSw(redFalla = { valor: false }) {
         },
         put: async (req: any, r: Response) => void c.set(new URL(typeof req === 'string' ? req : req.url, 'https://aura.test').pathname, r),
         match: async (req: any) => c.get(new URL(typeof req === 'string' ? req : req.url, 'https://aura.test').pathname),
+        keys: async () => [...c.keys()].map((p) => new Request(`https://aura.test${p}`)),
+        delete: async (req: any) => c.delete(new URL(typeof req === 'string' ? req : req.url, 'https://aura.test').pathname),
       };
     },
     match: async (req: any) => {
@@ -188,4 +190,28 @@ test('manifest e index para el icono del iPhone: standalone, id estable, iconos 
   assert.match(html, /<link rel="apple-touch-icon" href="\/apple-touch-icon.png"/);
   assert.match(html, /<meta name="apple-mobile-web-app-title" content="AU-RA"/);
   assert.doesNotMatch(fs.readFileSync(path.join(raiz, 'electrum.html'), 'utf8'), /sw\.js|serviceWorker/, 'Electrum no registra el service worker de AU-RA');
+});
+
+/*
+ * AUR14 · purga por logout: al salir de la cuenta el worker borra todo caché que pudiera tener algo de ella
+ * (el seudónimo de los avisos, cualquier caché de AU-RA que no sea el shell de ESTA versión, y del shell lo
+ * que no sea el shell); la clave del shell es por versión. Lo que no es de AU-RA no se toca.
+ */
+test('purga por logout: el worker borra lo de la cuenta y deja solo el shell público de esta versión', async () => {
+  const sw = cargarSw();
+  await sw.esperar('install');
+  const shell = [...sw.cajas.keys()].find((n) => n.startsWith('aura-shell-'))!;
+  assert.match(shell, /^aura-shell-[0-9a-f]{16}$/, 'la clave del shell es por versión (la huella del build)');
+  sw.cajas.get(shell)!.set('/assets/lazy-777.js', new Response('perezoso'));
+  sw.cajas.set('aura-cuenta', new Map([['/__aura_para', new Response('u0123456789abcdef')]]));
+  sw.cajas.set('aura-shell-viejo', new Map([['/', new Response('viejo')]]));
+  sw.cajas.set('otra-cosa', new Map([['/x', new Response('x')]]));
+  const respuestas: any[] = [];
+  await sw.esperar('message', { data: { tipo: 'purgar' }, ports: [{ postMessage: (m: any) => respuestas.push(m) }] });
+  assert.ok(!sw.cajas.has('aura-cuenta'), 'el seudónimo de la cuenta se fue');
+  assert.ok(!sw.cajas.has('aura-shell-viejo'), 'un shell de otra versión se fue');
+  assert.ok(sw.cajas.has('otra-cosa'), 'lo que no es de AU-RA no se toca');
+  assert.deepEqual([...sw.cajas.get(shell)!.keys()].sort(), [...listaPrecache(bundle)!].sort(), 'del shell queda exactamente el precache');
+  assert.deepEqual(JSON.parse(JSON.stringify(respuestas)), [{ purgado: true }], 'avisa a la página que terminó');
+  assert.equal(sw.saltos(), 0, 'purgar no activa una versión que espera');
 });

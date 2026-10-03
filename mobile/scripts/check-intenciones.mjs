@@ -14,11 +14,13 @@ import { pathToFileURL } from 'node:url';
 import ts from 'typescript';
 
 const root = path.resolve(new URL('..', import.meta.url).pathname);
-const src = fs.readFileSync(path.join(root, 'src', 'lib', 'intenciones.ts'), 'utf8');
-const js = ts.transpileModule(src, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 } }).outputText;
+const transpilar = (nombre) =>
+  ts.transpileModule(fs.readFileSync(path.join(root, 'src', 'lib', `${nombre}.ts`), 'utf8'), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 } }).outputText;
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'intenciones-'));
 const file = path.join(tmp, 'intenciones.mjs');
-fs.writeFileSync(file, js);
+// Callar y los controles los decide lib/controlesVoz.ts (AUR10): va al lado, con su extensión.
+fs.writeFileSync(path.join(tmp, 'controlesVoz.mjs'), transpilar('controlesVoz'));
+fs.writeFileSync(file, transpilar('intenciones').replace(/from '\.\/controlesVoz'/g, "from './controlesVoz.mjs'"));
 const { interpretar } = await import(pathToFileURL(file).href);
 
 let fails = 0;

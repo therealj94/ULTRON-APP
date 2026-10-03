@@ -49,6 +49,9 @@ import {
   propuestaAnterior,
   propuestaDe,
   soltarPropuesta,
+  aclaracionAnterior,
+  anotarAclaracion,
+  soltarAclaracion,
   ultimoLeidoDe,
   type AccionApp,
   type ContextoApp,
@@ -91,6 +94,7 @@ import {
   pausarTarea,
   reanudarTarea,
   resolverPreguntaComputadora,
+  tareaVivaDe,
   vistaMision,
   type MotorNodo,
 } from './server/computadora';
@@ -3997,6 +4001,10 @@ async function ordenDeApp(body: any, opciones: OpcionesTurno = {}): Promise<{ de
     contexto,
     pendiente: pendienteDe(amb),
     propuesta: propuestaAnterior(amb),
+    // AUR10: lo que está vivo para leer «para» / «basta» a secas (con audio Y tarea se pregunta) y la pregunta
+    // del turno anterior. Quien le habla a AU-RA la tiene hablando o por hablar: el audio cuenta como vivo.
+    estadoControles: { audio: true, tarea: tareaVivaDe(correo), llamada: !!opciones.voz },
+    aclaracion: aclaracionAnterior(amb),
     esCharla: esCharlaTrivial,
     esperaLayaMs: opciones.voz ? Math.min(250, TOPE_PASO_VOZ_MS) : undefined,
   });
@@ -4009,14 +4017,16 @@ async function ordenDeApp(body: any, opciones: OpcionesTurno = {}): Promise<{ de
   // Llamar y recordar se preguntan primero: la propuesta espera el «sí» del turno siguiente.
   // El evento (con su id) va por el canal del aparato y el MISMO va en la respuesta del turno: la
   // app deduplica por id y no hace la acción dos veces (Beto recibió dos mensajes, 29-sep).
-  const eventos = empujarDelTurno(correo, orden.accion ? [orden.accion] : [], {
+  const eventos = empujarDelTurno(correo, [...(orden.accion ? [orden.accion] : []), ...(orden.mas || [])], {
     aparato: aparatoValido(body?.aparato),
     retener: opciones.retener,
     antes:
-      orden.propuesta || orden.soltarPropuesta
+      orden.propuesta || orden.soltarPropuesta || orden.aclaracion || orden.soltarAclaracion
         ? () => {
             if (orden.propuesta) anotarPropuesta(amb, orden.propuesta);
             if (orden.soltarPropuesta) soltarPropuesta(amb);
+            if (orden.soltarAclaracion) soltarAclaracion(amb);
+            if (orden.aclaracion) anotarAclaracion(amb, orden.aclaracion);
           }
         : undefined,
   });

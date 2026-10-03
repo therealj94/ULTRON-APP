@@ -1210,7 +1210,8 @@ prueba('manos: el contexto le dice al servidor qué manos sabe hacer este teléf
   const enviados = [];
   const ctx = new ContextoApp({ enviar: async (c) => enviados.push(c), contactos: async () => [], escuchar: () => () => {}, esperar: (f) => (f(), () => {}) });
   const c = await ctx.enviarAhora(true);
-  assert.deepEqual([...c.manos], ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame', 'cartera', 'pagar']);
+  // `controles` (AUR10): los controles de voz separados (detener audio, colgar, la tarea).
+  assert.deepEqual([...c.manos], ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame', 'cartera', 'pagar', 'controles']);
   assert.deepEqual([...c.manos], [...MANOS_APP]);
 });
 

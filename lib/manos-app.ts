@@ -35,7 +35,12 @@ import type { ContextoApp, Contacto, Resolucion } from './acciones-app';
 
 /* ------------------------------------------------------------------ las formas */
 
-export const MANOS = ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame', 'cartera', 'pagar'] as const;
+/**
+ * `controles` (AUR10): el teléfono sabe los controles de voz separados (lib/controles-voz.ts): detener el
+ * audio, colgar y la tarea (pausar, seguir, cancelar, tomar el control). Sin ella, «cállate» sigue siendo
+ * `silencio` (lo que entiende un APK viejo).
+ */
+export const MANOS = ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame', 'cartera', 'pagar', 'controles'] as const;
 export type Mano = (typeof MANOS)[number];
 
 export const CAMPOS_PERFIL = ['apodo', 'cumple', 'vive', 'trabajo', 'familia', 'gustos', 'comida', 'musica', 'otros'] as const;
@@ -184,6 +189,7 @@ export function esMano(tipo: string): tipo is Mano {
 /** La mano que hace falta para una acción (cancelar un recordatorio es de «recordatorio»; con llamada, de «recordatorio_llamada»), o null si es de las de siempre. */
 export function manoDe(a: { tipo: string; llamada?: boolean }): Mano | null {
   if (a.tipo === 'cancelar_recordatorio') return 'recordatorio';
+  if (a.tipo === 'detener_audio' || a.tipo === 'colgar' || a.tipo === 'tarea') return 'controles';
   if (a.tipo === 'recordatorio' && a.llamada) return 'recordatorio_llamada';
   return esMano(a.tipo) ? a.tipo : null;
 }

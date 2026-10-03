@@ -25,7 +25,7 @@
  */
 import { createHash } from 'node:crypto';
 import type { Express, Response } from 'express';
-import { depositarVuelta, esIntentoWeb } from './sso-web';
+import { depositarVuelta, esIntentoWeb, fueIntentoWeb } from './sso-web';
 
 export const PAQUETE_AURA = 'link.ordenglobal.ultronfp';
 const ESQUEMA_AURA = 'ultronfp';
@@ -144,14 +144,22 @@ export function paginaSso(v: Vuelta | null): string {
  * La página de /sso cuando la entrada empezó en la WEB (server/sso-web.ts; IOS01): la vuelta ya quedó en
  * el servidor, atada a su intento. Nada de la query aparece aquí, ni siquiera en un enlace: «Volver a
  * AU-RA» lleva a la raíz y la web recoge la vuelta con su verificador.
+ *
+ * AUR14: se sirve en /sso/listo, DESPUÉS de un 303 desde /sso: la dirección con el pase no queda en la
+ * barra ni en el historial de esa pestaña. `usada`: la misma vuelta abierta otra vez (ya se recogió).
  */
-export function paginaSsoWeb(v: Vuelta): string {
-  const cuerpo = v.pase
-    ? `<h1>Listo: tu wallet respondió</h1>
+export function paginaSsoWeb(v: Vuelta | 'usada'): string {
+  const cuerpo =
+    v === 'usada'
+      ? `<h1>Esta vuelta ya se usó</h1>
+<p>Tu entrada con Genesis ID ya se recogió (o venció). Volvé a AU-RA: si ya entraste, seguís dentro.</p>
+<a class="boton" href="/">Volver a AU-RA</a>`
+      : v.pase
+        ? `<h1>Listo: tu wallet respondió</h1>
 <p>Volvé a AU-RA para terminar de entrar con tu Genesis ID.</p>
 <a class="boton" href="/">Volver a AU-RA</a>
 <p class="nota">Si empezaste desde el ícono de AU-RA en tu iPhone, volvé a ese ícono: termina solo. Este enlace vence en unos minutos.</p>`
-    : `<h1>La entrada no se completó</h1>
+        : `<h1>La entrada no se completó</h1>
 <p>Tu wallet no terminó de dar el permiso. Volvé a AU-RA para ver qué pasó y probar otra vez.</p>
 <a class="boton" href="/">Volver a AU-RA</a>`;
   return pagina(cuerpo);
@@ -196,20 +204,34 @@ export function montarEnlacesApp(app: Express) {
     res.status(200).type('application/json').send(JSON.stringify(declaracionAssetLinks(huellas)));
   });
 
-  app.get('/sso', (req, res) => {
+  const cabeceras = (res: Response) => {
     sinCache(res);
     res.setHeader('Content-Security-Policy', CSP);
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('X-Robots-Tag', 'noindex, nofollow');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
+  };
+
+  app.get('/sso', (req, res) => {
+    cabeceras(res);
     const v = vueltaValida(req.originalUrl || req.url || '');
     // La entrada empezó en la web (iPhone, escritorio): la vuelta se queda en el servidor, atada a su
-    // intento, y la web la recoge con su verificador. Sin intento web, lo de siempre (Android).
+    // intento, y la web la recoge con su verificador. Y se REDIRIGE (303) a una dirección sin nada (AUR14):
+    // el pase no queda en la barra, el historial ni lo que se comparta de la página. La vuelta repetida de
+    // un intento ya recogido va a la página neutra. Sin intento web, lo de siempre (Android).
     if (v && esIntentoWeb(v.estado)) {
       depositarVuelta(v);
-      return res.status(200).type('html').send(paginaSsoWeb(v));
+      return res.redirect(303, v.pase ? '/sso/listo' : '/sso/listo?r=no');
     }
+    if (v && fueIntentoWeb(v.estado)) return res.redirect(303, '/sso/listo?r=usada');
     res.status(v ? 200 : 400).type('html').send(paginaSso(v));
+  });
+
+  // La página de la vuelta web, sin nada de la vuelta en su dirección (`r` dice solo cómo terminó).
+  app.get('/sso/listo', (req, res) => {
+    cabeceras(res);
+    const r = typeof req.query.r === 'string' ? req.query.r : '';
+    res.status(200).type('html').send(paginaSsoWeb(r === 'usada' ? 'usada' : r === 'no' ? { error: 'no' } : { pase: 'si' }));
   });
 }

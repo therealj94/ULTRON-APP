@@ -586,6 +586,17 @@ export function ultimaTareaDe(quien: string): string | null {
   return ULTIMA.get(quien) ?? null;
 }
 
+/**
+ * ¿Tiene ahora una tarea viva en su computadora (encargada y todavía sin cerrar)? Solo lee lo que hay en
+ * memoria, sin preguntar al nodo: el camino rápido de la voz (AUR10) lo usa para saber si «para» a secas
+ * puede querer decir parar la tarea (y entonces pregunta) o solo callar.
+ */
+export function tareaVivaDe(quien: string): boolean {
+  const id = ultimaTareaDe(String(quien || '').toLowerCase()) ?? ultimaTareaDe(quien);
+  const e = id ? ENCARGOS.get(id) : null;
+  return !!e && !e.cerrada && !e.terminada;
+}
+
 export function pendientesDe(quien: string): string[] {
   return [...(PENDIENTES.get(quien) ?? [])];
 }

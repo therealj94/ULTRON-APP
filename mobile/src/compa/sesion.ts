@@ -230,10 +230,12 @@ export class ControlSesion {
 
   /**
    * El volumen del micrófono de la conversación (0..1, ~20 Hz). `cruda`: el valor tal cual lo da el SDK
-   * (sin escalar); si no cambia, no llegó una muestra nueva.
+   * (sin escalar); si no cambia, no llegó una muestra nueva. `gen`: de qué sesión es (AUR10): el reloj de
+   * una sesión vieja que todavía late no le dice a la nueva que oye (taparía «sorda» y «sin muestras»).
    */
-  entrada(nivel: number, cruda?: number) {
+  entrada(nivel: number, cruda?: number, gen?: number) {
     if (!this.v.montada) return;
+    if (gen !== undefined && gen !== this.v.gen) return;
     if (nivel > UMBRAL_ENTRADA) this.oyoAlgo = true;
     if (cruda === undefined) return;
     this.conMuestras = true;
