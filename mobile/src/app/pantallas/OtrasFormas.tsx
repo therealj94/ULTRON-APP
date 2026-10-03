@@ -10,5 +10,5 @@ import { entrarCon } from '../sesion';
 type Props = NativeStackScreenProps<RaizParams, 'OtrasFormas'>;
 
 export function OtrasFormas({ navigation }: Props) {
-  return <LoginScreen onAuthenticated={(u) => void entrarCon(u)} onAtras={() => navigation.goBack()} />;
+  return <LoginScreen onAuthenticated={(u, intento) => void entrarCon(u, null, intento)} onAtras={() => navigation.goBack()} />;
 }

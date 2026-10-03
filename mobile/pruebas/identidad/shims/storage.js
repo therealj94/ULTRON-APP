@@ -6,4 +6,7 @@ exports.saveMesaToken = async (t) => {
 };
 exports.loadCreds = async () => m.creds;
 exports.loadSession = async () => m.sesion || null;
+exports.saveSession = async (s) => {
+  m.sesion = s || null;
+};
 exports.saveSettings = async () => {};

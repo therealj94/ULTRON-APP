@@ -145,7 +145,7 @@ export function Intro(_: Props) {
     else if (vuelta && vuelta.ok) {
       const g = vuelta as ResultadoGenesis & { genesis?: Compartido };
       const u: SessionUser = { name: vuelta.miembro.nombre, role: vuelta.miembro.rol, correo: vuelta.miembro.correo };
-      destino.current = () => void entrarCon(u, g.genesis || null);
+      destino.current = () => void entrarCon(u, g.genesis || null, vuelta?.ok ? vuelta.intento : null);
     } else if (vuelta && !vuelta.ok && vuelta.codigo !== 'CANCELADO') {
       const m = vuelta.codigo === 'PENDIENTE' ? tr('Tu acceso está en revisión.', 'Your access is under review.') : vuelta.mensaje;
       const codigo = vuelta.codigo;
