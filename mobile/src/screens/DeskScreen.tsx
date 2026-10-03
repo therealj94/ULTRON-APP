@@ -115,6 +115,7 @@ import type { PantallaCerebro } from '../compa/cerebro';
 import { TarjetaPropuesta } from '../components/TarjetaPropuesta';
 import { HojaCerebro } from '../app/HojasCerebro';
 import { publicarMesa, retirarMesa } from '../app/mesaAjustes';
+import { useBorradorMesa } from '../lib/borradorMesa';
 
 type Props = {
   user: SessionUser;
@@ -234,6 +235,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const [bubble, setBubble] = useState('');
   const [status, setStatus] = useState<'boot' | 'listening' | 'muted' | 'thinking' | 'speaking' | 'orando' | 'reconnect' | 'offline'>('boot');
   const [draft, setDraft] = useState('');
+  // Lo escrito sobrevive a una actualización por aire (UI01, 3-oct).
+  useBorradorMesa(draft, setDraft);
   const [listening, setListening] = useState(false);
   const [level, setLevel] = useState(0);
   /** El volumen del micrófono solo lo dibuja la cara clásica: con las otras no se re-renderiza por él. */
