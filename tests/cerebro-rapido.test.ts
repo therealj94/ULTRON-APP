@@ -4,7 +4,8 @@
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { aBedrock, cerebroRapidoActivo, esPaso, esSoloConversacion, podriaSerPaso, MODELO_RAPIDO_OMISION } from '../lib/cerebro-rapido';
+import { aBedrock, anotarExitoRapido, anotarFalloRapido, cerebroRapidoActivo, esPaso, esSoloConversacion, podriaSerPaso, FALLOS_PARA_APAGAR, MODELO_RAPIDO_OMISION } from '../lib/cerebro-rapido';
+import { resetInterruptoresTest } from '../lib/cognitivo/interruptor';
 
 describe('Cerebro rápido: qué turnos van por aquí', () => {
   it('preguntas y charla sí', () => {
@@ -97,6 +98,29 @@ describe('Cerebro rápido: cuándo está activo', () => {
     assert.equal(cerebroRapidoActivo({ AWS_ACCESS_KEY_ID: 'a', AWS_SECRET_ACCESS_KEY: 'b' } as any), true);
     assert.equal(cerebroRapidoActivo({ AWS_ACCESS_KEY_ID: 'a', AWS_SECRET_ACCESS_KEY: 'b', CEREBRO_VOZ: 'qwen' } as any), false);
     assert.equal(cerebroRapidoActivo({} as any), false, 'sin credenciales (las pruebas y el CI): Qwen');
+  });
+
+  it('también con un perfil, un rol de ECS/EC2 o una identidad web (la cadena del SDK)', () => {
+    assert.equal(cerebroRapidoActivo({ AWS_PROFILE: 'jose' } as any), true);
+    assert.equal(cerebroRapidoActivo({ AWS_CONTAINER_CREDENTIALS_RELATIVE_URI: '/v2/x' } as any), true);
+    assert.equal(cerebroRapidoActivo({ AWS_WEB_IDENTITY_TOKEN_FILE: '/t' } as any), true);
+  });
+
+  it('se apaga al tercer fallo seguido, no al primero; un éxito pone la cuenta en cero', () => {
+    resetInterruptoresTest();
+    const env = { AWS_ACCESS_KEY_ID: 'a', AWS_SECRET_ACCESS_KEY: 'b' } as any;
+    assert.equal(FALLOS_PARA_APAGAR, 3);
+    anotarFalloRapido();
+    anotarFalloRapido();
+    assert.equal(cerebroRapidoActivo(env), true, 'dos tropiezos no lo apagan');
+    anotarExitoRapido();
+    anotarFalloRapido();
+    anotarFalloRapido();
+    assert.equal(cerebroRapidoActivo(env), true, 'tras un éxito la cuenta empezó de nuevo');
+    anotarFalloRapido();
+    assert.equal(cerebroRapidoActivo(env), false, 'al tercero seguido, se apaga un rato');
+    resetInterruptoresTest();
+    assert.equal(cerebroRapidoActivo(env), true);
   });
 
   it('por omisión, el que se midió mejor (Qwen3 235B en Bedrock)', () => {

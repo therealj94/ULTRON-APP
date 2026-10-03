@@ -42,11 +42,40 @@ export function modeloRapido(): string {
   return conf().modelo;
 }
 
-/** ¿Se usa en este servidor? (modo, credenciales y que no esté en pausa por fallos). */
+/**
+ * ¿Se usa en este servidor? (modo, que haya de dónde sacar credenciales de AWS y que no esté en pausa
+ * por fallos). Las credenciales pueden venir de las variables, de un perfil, de un rol de ECS/EC2 o de
+ * una identidad web (la cadena normal del SDK; revisión de Codex en #135); sin ninguna de esas pistas
+ * (las pruebas, un servidor local sin AWS) no se intenta.
+ */
 export function cerebroRapidoActivo(env: NodeJS.ProcessEnv = process.env): boolean {
   if (String(env.CEREBRO_VOZ || 'nova').toLowerCase() === 'qwen') return false;
-  if (!env.AWS_ACCESS_KEY_ID || !env.AWS_SECRET_ACCESS_KEY) return false;
-  return disponible('cerebro_rapido');
+  const hayCredenciales =
+    !!(env.AWS_ACCESS_KEY_ID && env.AWS_SECRET_ACCESS_KEY) ||
+    !!env.AWS_PROFILE ||
+    !!env.AWS_WEB_IDENTITY_TOKEN_FILE ||
+    !!env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI ||
+    !!env.AWS_CONTAINER_CREDENTIALS_FULL_URI ||
+    String(env.CEREBRO_VOZ || '').toLowerCase() === 'nova';
+  return hayCredenciales && disponible('cerebro_rapido');
+}
+
+/**
+ * Fallos seguidos de Bedrock: el cortacircuitos se abre al tercero, no al primero (un tropiezo de red
+ * no apaga la voz rápida para todos; revisión de Codex en #135). Un éxito lo pone en cero.
+ */
+export const FALLOS_PARA_APAGAR = 3;
+let fallosSeguidos = 0;
+export function anotarFalloRapido(): void {
+  fallosSeguidos++;
+  if (fallosSeguidos >= FALLOS_PARA_APAGAR) {
+    fallosSeguidos = 0;
+    anotarFallo('cerebro_rapido');
+  }
+}
+export function anotarExitoRapido(): void {
+  fallosSeguidos = 0;
+  anotarExito('cerebro_rapido');
 }
 
 let cliente: BedrockRuntimeClient | null = null;
@@ -121,9 +150,9 @@ export async function* hablarRapido(mensajes: MensajeChat[], senal?: AbortSignal
         throw new Error(String((ev.internalServerException || ev.modelStreamErrorException || ev.throttlingException || ev.validationException || ev.serviceUnavailableException)?.message || 'error de Bedrock'));
       }
     }
-    anotarExito('cerebro_rapido');
+    anotarExitoRapido();
   } catch (e) {
-    if (!senal?.aborted) anotarFallo('cerebro_rapido');
+    if (!senal?.aborted) anotarFalloRapido();
     throw e;
   } finally {
     clearTimeout(vence);
