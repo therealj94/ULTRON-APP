@@ -144,7 +144,10 @@ function config(avatar: AvatarVoz, idioma: Idioma, secretId: string, modeloTts: 
       asr: { provider: 'scribe_realtime', quality: 'high', keywords: PALABRAS_ASR },
       turn: {
         turn_model: 'turn_v3',
-        turn_eagerness: 'normal',
+        // «Rápido» (José, 3-oct, con permiso): en sus llamadas el agente esperó 3,7 s para decidir que había
+        // terminado, y una vez no lo decidió nunca (11 s de silencio hasta colgar). turn_v3 sigue mirando
+        // el sentido de la frase; con «eager» no espera de más.
+        turn_eagerness: 'eager',
         // Turno especulativo (José, 1-oct): la respuesta se pide en la pausa. Las acciones esperan a que
         // el turno se confirme (server/voz-agente.ts, RetencionAcciones): una frase a medias no hace nada.
         speculative_turn: true,
@@ -162,6 +165,9 @@ function config(avatar: AvatarVoz, idioma: Idioma, secretId: string, modeloTts: 
           max_soft_timeouts_per_generation: 1,
         },
       },
+      // Las voces y el ruido de fondo (la tele, otra persona) no cuentan como si la persona siguiera hablando
+      // (José, 3-oct: la frase que nunca se cerró).
+      vad: { background_voice_detection: true },
       // Lo mismo que dura un pase (PASE_TTL_MS en server/voz-agente.ts): más allá, la voz solo se despide.
       conversation: { max_duration_seconds: Math.floor(PASE_TTL_MS / 1000) },
     },
