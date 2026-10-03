@@ -4022,6 +4022,7 @@ function jsonDelTurno(g: TurnoGuardado, extra: Record<string, unknown> = {}) {
     foto: null as string | null,
     acciones: g.acciones,
     trazaId: g.trazaId,
+    ...(g.parcial ? { parcial: true } : {}),
     ...extra,
     honesto: true,
   };
@@ -4131,7 +4132,7 @@ app.post('/api/turno/stream', exigirMesaODesk, limitar(60), cupoDeMiembro, async
     escribir('tools', { tools: g.herramientas });
     escribir('emocion', { emocion: g.emocion });
     if (g.voz || g.reply) escribir('delta', { text: g.reply, voz: g.voz || g.reply });
-    escribir('done', { reply: g.reply, voz: g.voz, emocion: g.emocion, ms: g.ms, via: g.via, acciones: g.acciones, trazaId: g.trazaId, repetido: true });
+    escribir('done', { reply: g.reply, voz: g.voz, emocion: g.emocion, ms: g.ms, via: g.via, acciones: g.acciones, trazaId: g.trazaId, repetido: true, ...(g.parcial ? { parcial: true } : {}) });
     return res.end();
   }
   // Lo que se guarda para un reintento: las herramientas y el `done` (sin `done`, no hubo respuesta).
@@ -4140,7 +4141,7 @@ app.post('/api/turno/stream', exigirMesaODesk, limitar(60), cupoDeMiembro, async
   const terminar = () =>
     unico.terminar(
       hecho && (hecho.reply || hecho.voz)
-        ? { reply: String(hecho.reply || ''), voz: String(hecho.voz || hecho.reply || ''), emocion: String(hecho.emocion || 'neutral'), via: String(hecho.via || ''), mode: String((body as Record<string, unknown>).mode || 'GUARDIAN'), ms: hecho.ms, herramientas, acciones: hecho.acciones, trazaId: hecho.trazaId }
+        ? { reply: String(hecho.reply || ''), voz: String(hecho.voz || hecho.reply || ''), emocion: String(hecho.emocion || 'neutral'), via: String(hecho.via || ''), mode: String((body as Record<string, unknown>).mode || 'GUARDIAN'), ms: hecho.ms, herramientas, acciones: hecho.acciones, trazaId: hecho.trazaId, ...(hecho.parcial === true ? { parcial: true } : {}) }
         : null
     );
   const salida: SalidaEnVivo = {

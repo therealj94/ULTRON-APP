@@ -586,7 +586,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   }, []);
 
   const say = useCallback(
-    async (text: string, nextFace?: FaceState, opts?: { performance?: 'speak' | 'sing'; emocion?: Emocion }) => {
+    async (text: string, nextFace?: FaceState, opts?: { performance?: 'speak' | 'sing'; emocion?: Emocion; parcial?: boolean }) => {
       const emocion = opts?.emocion || 'neutral';
       const performance = opts?.performance || 'speak';
       if (emocion !== 'neutral') setEmocion(emocion);
@@ -595,7 +595,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       // En la conversación fluida o en una llamada la mesa no habla: se lee, no se oye (M3; un solo
       // dueño del audio). Tapada por los chats sí, si el audio es de la compañera: ella lo dice.
       if (conversandoRef.current || enLlamadaRef.current || !oidoMesa.current?.puedeHablar()) return;
-      logUltron(text);
+      logUltron(text, !!opts?.parcial);
       avisarMesa({ emocion, texto: quitarExpresiones(text).trim() });
       speakingRef.current = true;
       setFace(f);
@@ -981,7 +981,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
               setOnline(true);
               logUltron(result.reply, !!result.parcial);
               const spoke = (speaker as StreamSpeaker | null)?.hasSpoken;
-              if (!spoke) await say(result.voz || result.reply, faceForEmocion(result.emocion), { emocion: result.emocion });
+              if (!spoke) await say(result.voz || result.reply, faceForEmocion(result.emocion), { emocion: result.emocion, parcial: !!result.parcial });
               else settle();
               applyMode(result.mode);
               return;
@@ -1038,7 +1038,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         }
         setOnline(true);
         applyMode(out.mode);
-        await say(out.voz || out.reply, faceForEmocion(out.emocion), { emocion: out.emocion });
+        if (out.parcial) miga(`mesa: respuesta cortada (${out.via || 'json'})`);
+        await say(out.voz || out.reply, faceForEmocion(out.emocion), { emocion: out.emocion, parcial: !!out.parcial });
       } finally {
         cancelMmm();
         ponerLee(false);

@@ -1272,3 +1272,29 @@ test('voz: una respuesta larga no se dice entera; termina en una frase completa 
     contestar = antes;
   }
 });
+
+test('reintento del mismo turno cortado: la repetición sigue marcada como parcial (Codex en #138)', { skip: !listo }, async () => {
+  const antes = contestar;
+  contestar = () => '[EMO: neutral] La planta de beneficio va avanzando y este mes@@ERROR';
+  try {
+    const idTurno = `parcial${Date.now()}`;
+    const pedir = async () => {
+      const r = await fetch(`${BASE}/api/turno/stream`, { method: 'POST', headers: hTurno({ web: true }), body: JSON.stringify({ message: 'cuéntame cómo va la planta de beneficio este mes', idTurno }) });
+      return (await r.text())
+        .split('\n\n')
+        .map((b) => ({ ev: /^event: (\w+)/m.exec(b)?.[1], data: /^data: (.*)$/m.exec(b)?.[1] }))
+        .filter((e) => e.ev === 'done' && e.data)
+        .map((e) => JSON.parse(e.data!))[0];
+    };
+    const primero = await pedir();
+    assert.equal(primero?.parcial, true, JSON.stringify(primero));
+    const otra = await pedir();
+    assert.equal(otra?.repetido, true, 'salió de lo guardado, sin correr otro turno');
+    assert.equal(otra?.parcial, true, 'y sigue marcado como cortado');
+    // Por JSON (el respaldo del teléfono) con el mismo id: también.
+    const j = await (await fetch(`${BASE}/api/turno`, { method: 'POST', headers: hTurno({ web: true }), body: JSON.stringify({ message: 'cuéntame cómo va la planta de beneficio este mes', idTurno }) })).json();
+    assert.equal(j.parcial, true, JSON.stringify(j));
+  } finally {
+    contestar = antes;
+  }
+});

@@ -79,8 +79,9 @@ export const UMBRAL_ENTRADA = 0.0005;
  * Ya le llegaba audio y de pronto el micrófono deja de mandar muestras (Codex, 3-oct: la llamada seguía
  * diciendo «escuchando» sin oír nada). El volumen que da el SDK no cae a 0: se CONGELA en el último valor
  * (nativeVolume.ts solo lo cambia con cada cuadro de audio). Un micrófono vivo cambia ese valor varias
- * veces por segundo aunque haya silencio (ruido de fondo); congelado este rato, sin que el avatar hable,
- * se reconecta la conversación (el reintento de siempre, con tope y con la última frase).
+ * veces por segundo, o da 0 exacto en silencio con supresión de ruido (eso cuenta como vivo); un valor
+ * distinto de 0 que no cambia en este rato, sin que el avatar hable, es que se congeló: se reconecta
+ * la conversación (el reintento de siempre, con tope y con la última frase).
  */
 export const SIN_MUESTRAS_MS = 12_000;
 /**
@@ -181,7 +182,10 @@ export class ControlSesion {
     if (nivel > UMBRAL_ENTRADA) this.oyoAlgo = true;
     if (cruda === undefined) return;
     this.conMuestras = true;
-    if (cruda !== this.ultimaCruda) {
+    // Un 0 exacto repetido es silencio de verdad con supresión de ruido (Codex en #138): no se puede
+    // distinguir de un micrófono parado, así que cuenta como vivo. Congelado es un valor DISTINTO de 0 que
+    // no cambia nada: ningún micrófono vivo repite el mismo RMS cuadro tras cuadro.
+    if (cruda === 0 || cruda !== this.ultimaCruda) {
       this.ultimaCruda = cruda;
       this.ultimaMuestra = this.reloj();
     }

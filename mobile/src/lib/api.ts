@@ -397,7 +397,7 @@ export async function turno(opts: TurnoOpts): Promise<ChatResult> {
     const pelado = pelarEtiqueta(String(data.reply || ''));
     const emocion = data.emocion ? normalizarEmocion(data.emocion) : pelado.emocion || 'neutral';
     const voz = data.voz ? pelarEtiqueta(String(data.voz)).texto.trim() : undefined;
-    return { reply: quitarExpresiones(pelado.texto).trim(), voz, emocion, mode: data.mode, ms: data.ms, via: data.via, error: data.error, acciones: data.acciones };
+    return { reply: quitarExpresiones(pelado.texto).trim(), voz, emocion, mode: data.mode, ms: data.ms, via: data.via, error: data.error, acciones: data.acciones, ...(data.parcial === true ? { parcial: true } : {}) };
   } catch (e: any) {
     return { reply: '', emocion: 'neutral', error: e?.message || 'Sin conexión al cerebro' };
   }

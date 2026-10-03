@@ -20,6 +20,8 @@ export type TurnoGuardado = {
   herramientas: string[];
   acciones?: unknown;
   trazaId?: string;
+  /** El cerebro se cortó a media respuesta: un reintento lo repite marcado igual (Codex en #138). */
+  parcial?: boolean;
 };
 
 type Entrada = { promesa: Promise<TurnoGuardado | null>; hecho: boolean; ts: number };

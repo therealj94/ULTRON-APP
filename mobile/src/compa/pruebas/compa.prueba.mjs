@@ -1753,6 +1753,12 @@ prueba('llamada: el micrófono deja de mandar muestras a media llamada → no si
     c.entrada(0.004, 0.002 + (t % 7) * 1e-5);
   }
   assert.equal(c.revisar(), 'nada', 'micrófono vivo y callado: no es fallo');
+  // Supresión de ruido: en silencio da 0 exacto cuadro tras cuadro. Eso es silencio, no un micrófono parado (Codex en #138).
+  for (let t = 0; t < SIN_MUESTRAS_MS * 2; t += 50) {
+    ahora += 50;
+    c.entrada(0, 0);
+  }
+  assert.equal(c.revisar(), 'nada', 'ceros exactos en silencio: no reconecta');
   // Se congela: el SDK repite el último valor (no cae a 0).
   const gen = c.vista().gen;
   for (let t = 0; t < SIN_MUESTRAS_MS - 500; t += 50) {

@@ -46,6 +46,12 @@ let ultimaVidaAt = 0;
 let plazoDesde = Date.now();
 /** `end` que todavía van a llegar por los `abort()` pedidos (uno por cada uno). */
 let finesPendientes = 0;
+/**
+ * Silenció y la sesión del reconocedor se abortó: sus eventos pueden llegar tarde, incluso después de
+ * reabrir. Hasta que ARRANCA una sesión nueva (`start`), ningún resultado es de esta conversación (Codex en
+ * #138: mirar solo `wanted` dejaba pasar el final viejo si se reabría rápido).
+ */
+let sesionCortada = false;
 let lastPartial = '';
 let lastFinalAt = 0;
 let lastFinalText = '';
@@ -109,6 +115,7 @@ function attach() {
   const M = ExpoSpeechRecognitionModule;
   subs.push(
     M.addListener('start', () => {
+      sesionCortada = false;
       vida();
       starting = false;
       consecutiveFails = 0;
@@ -132,8 +139,8 @@ function attach() {
   subs.push(
     M.addListener('result', (e: any) => {
       vida();
-      // Silenciado: el final tardío de la sesión abortada no es un turno (Codex, 3-oct).
-      if (paused || !wanted) return;
+      // Silenciado, o de la sesión que se abortó al silenciar: no es un turno (Codex, 3-oct y #138).
+      if (paused || !wanted || sesionCortada) return;
       const text = String(e?.results?.[0]?.transcript || '').trim();
       if (!text) return;
       if (e?.isFinal) {
@@ -175,6 +182,8 @@ function attach() {
       lastEventAt = Date.now();
       if (finesPendientes > 0) {
         finesPendientes -= 1;
+        // Terminó la sesión abortada: ya no puede mandar resultados.
+        sesionCortada = false;
         // El `end` de un abort() viejo: si ya se pidió otro arranque (o ya arrancó), no es de él.
         if (starting || running) return;
       }
@@ -270,12 +279,15 @@ export async function nativeEnable() {
 
 export async function nativeMute() {
   wanted = false;
+  sesionCortada = true;
   await stop(true);
 }
 
 export async function nativeUnmute() {
   if (!wanted) darPlazo();
   wanted = true;
+  // Red de seguridad: un teléfono que no avisa ni `start` ni `end` no se queda sordo.
+  if (sesionCortada) setTimeout(() => (sesionCortada = false), 3_000);
   await start();
 }
 
