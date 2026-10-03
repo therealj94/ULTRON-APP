@@ -53,9 +53,9 @@ test('empieza por el objetivo; lo de antes sigue (apodo, avatar, tema, encuesta,
   assert.match(pv, /Puedes empezar sin conectar ninguna cuenta/);
 });
 
-test('sin objetivo: ni restricción, ni conexión, ni permisos, ni miniresultado (nada que no haga falta)', () => {
+test('sin objetivo: ni restricción, ni permisos, ni miniresultado; conectar se ofrece (saltable, José 3-oct)', () => {
   const plan = pasosDelPlan(borradorDesde(null, 'Ana'));
-  assert.deepEqual(plan, ['objetivo', 'genesis', 'idioma', 'apodo', 'avatar', 'tema', 'aura', ...ENCUESTA, 'iniciativa', 'fiesta']);
+  assert.deepEqual(plan, ['objetivo', 'conectar', 'genesis', 'idioma', 'apodo', 'avatar', 'tema', 'aura', ...ENCUESTA, 'iniciativa', 'fiesta']);
   assert.deepEqual(permisosDelPlan(borradorDesde(null, 'Ana')), []);
 });
 
@@ -69,16 +69,17 @@ test('cada objetivo pide UNA restricción (la que cambia el resultado) y solo la
   const comparar = OBJETIVOS.find((o) => o.id === 'comparar')!;
   assert.match(comparar.restriccion.pregunta.es, /presupuesto|uso/i, 'R1: para comparar, presupuesto y uso');
   const plan = (objetivo: string) => pasosDelPlan({ ...borradorDesde(null, 'Ana'), objetivo });
-  assert.deepEqual(plan('comparar').slice(0, 3), ['objetivo', 'restriccion', 'listo'], 'comparar no pide cuentas');
-  assert.ok(!plan('comparar').includes('conectar') && !plan('comparar').includes('permisos'));
+  assert.deepEqual(plan('comparar').slice(0, 4), ['objetivo', 'restriccion', 'conectar', 'listo'], 'comparar no exige cuentas: conectar se ofrece y se salta');
+  // Conectar se ofrece siempre (José, 3-oct), saltable; los permisos, solo si el objetivo los necesita.
+  assert.ok(plan('comparar').includes('conectar') && !plan('comparar').includes('permisos'));
   assert.deepEqual(plan('correo').slice(0, 4), ['objetivo', 'restriccion', 'conectar', 'listo'], 'revisar el correo sí pide la cuenta, ahí mismo');
   assert.ok(plan('whatsapp').includes('conectar'));
-  assert.ok(plan('recordar').includes('permisos') && !plan('recordar').includes('conectar'), 'un recordatorio necesita los avisos');
+  assert.ok(plan('recordar').includes('permisos'), 'un recordatorio necesita los avisos');
   assert.deepEqual(permisosDelPlan({ ...borradorDesde(null, 'Ana'), objetivo: 'recordar' }), ['android.permission.POST_NOTIFICATIONS']);
   assert.ok(plan('recordar').indexOf('permisos') > plan('recordar').indexOf('iniciativa'));
   // Escrito con sus palabras (sin elegir una opción): también vale.
   const libre = pasosDelPlan({ ...borradorDesde(null, 'Ana'), objetivoTexto: 'Ordenar las facturas del mes' });
-  assert.deepEqual(libre.slice(0, 3), ['objetivo', 'restriccion', 'listo']);
+  assert.deepEqual(libre.slice(0, 4), ['objetivo', 'restriccion', 'conectar', 'listo']);
   assert.equal(objetivoDe({ ...borradorDesde(null, 'Ana'), objetivo: 'inventado' }), null);
 });
 
@@ -141,7 +142,7 @@ test('quien iba a mitad retoma donde estaba: el nombre (v3) y el número viejo (
   const plan = pasosDelPlan(borradorDesde(null, 'Ana'));
   assert.equal(pasoRetomado(plan, 'encuesta:familia', null), 'encuesta:familia');
   assert.equal(pasoRetomado(plan, null, PASOS_V2.indexOf('encuesta:vive')), 'encuesta:vive', 'v2: el número de antes');
-  assert.equal(pasoRetomado(plan, 'conectar', null), 'encuesta:trabajo', 'iba en «conectar» (ya no hace falta): sigue donde seguía antes');
+  assert.equal(pasoRetomado(plan, 'conectar', null), 'conectar', 'iba en «conectar»: sigue ahí (se ofrece siempre)');
   assert.equal(pasoRetomado(plan, 'permisos', null), 'fiesta');
   assert.equal(pasoRetomado(plan, 'genesis', null), 'objetivo', 'en el primer paso de antes: empieza por el objetivo');
   assert.equal(pasoRetomado(plan, null, 0), 'objetivo');

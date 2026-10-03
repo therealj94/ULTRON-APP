@@ -389,15 +389,16 @@ export function permisosDelPlan(b: Pick<Borrador, 'objetivo'>): PermisoObjetivo[
 }
 
 /**
- * Los pasos de ESTA persona, en orden: sin objetivo no hay restricción ni miniresultado; la conexión y los
- * permisos solo si el objetivo los necesita.
+ * Los pasos de ESTA persona, en orden: sin objetivo no hay restricción ni miniresultado; los permisos solo si
+ * el objetivo los necesita. Conectar WhatsApp y correo se OFRECE siempre (José, 3-oct: «desde el principio
+ * … conectar WhatsApp y el correo cuando alguien entra la primera vez»), siempre saltable: el documento maestro
+ * pide que se pueda empezar sin conectar nada, no que se esconda.
  */
 export function pasosDelPlan(b: Pick<Borrador, 'objetivo' | 'objetivoTexto' | 'restriccion'>): PasoId[] {
   const o = objetivoDe(b);
   const conPeticion = !!peticionInicial(b, 'es');
   return PASOS.filter((p) => {
     if (p === 'restriccion' || p === 'listo') return conPeticion;
-    if (p === 'conectar') return !!o?.conexion;
     if (p === 'permisos') return !!o?.permisos?.length;
     return true;
   });

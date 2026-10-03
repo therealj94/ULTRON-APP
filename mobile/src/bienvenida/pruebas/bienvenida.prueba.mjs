@@ -48,14 +48,15 @@ prueba('pregunta todo lo que ocupa, en orden: idioma, apodo, a qué se dedica, d
   assert.equal(new Set(PASOS).size, PASOS.length);
 });
 
-prueba('conectar el correo y el WhatsApp cuando hace falta, con instrucciones; Orden Global solo con correo y contraseña', () => {
+prueba('conectar el correo y el WhatsApp desde la primera vez (saltable), con instrucciones; Orden Global solo con correo y contraseña', () => {
   const i = (p) => PASOS.indexOf(p);
   // AUR11 (documento maestro, sección 14): la cuenta se pide justo cuando el objetivo la necesita, antes del
   // primer resultado y de la encuesta (y solo entonces: flujo.ts pasosDelPlan; tests/primeravez-objetivo.test.ts).
   assert.ok(i('conectar') === i('restriccion') + 1, 'justo después de la restricción del objetivo, antes del miniresultado');
   assert.ok(i('conectar') < i('encuesta:trabajo'));
   assert.ok(pasosDelPlan({ ...borradorDesde(null, 'Ana'), objetivo: 'correo' }).includes('conectar'), 'revisar el correo la pide');
-  assert.ok(!pasosDelPlan(borradorDesde(null, 'Ana')).includes('conectar'), 'sin objetivo que la necesite, no');
+  // José (3-oct): «desde el principio… conectar WhatsApp y el correo». Se ofrece siempre, saltable.
+  assert.ok(pasosDelPlan(borradorDesde(null, 'Ana')).includes('conectar'), 'se ofrece siempre, aunque el objetivo no la pida');
   assert.equal(cambiosDelPaso('conectar', borradorDesde(null, 'Ana')), null, 'no escribe en el perfil (lo guarda el servidor)');
   assert.ok(esCorreoOrdenGlobal('j.ordonez@ordenglobal.org') && esCorreoOrdenGlobal('  Ana@OrdenGlobal.ORG '));
   for (const no of ['ana@gmail.com', 'ana@ordenglobal.org.hn', 'ana@mail-ordenglobal.org', 'ordenglobal.org', '']) assert.ok(!esCorreoOrdenGlobal(no), no);
