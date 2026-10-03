@@ -195,7 +195,9 @@ export async function dictarTurbo(deps: DepsDictado, cb: CallbacksDictado): Prom
         return terminar(visto);
       }
       limpio = limpiarFinal(delServidor);
-    } else if (limpio && esFraseDeDinero(limpio)) {
+    // En el dictado de campo de Dr Electrum las CIFRAS importan (concesiones, coordenadas): se confirman
+    // todas, no solo las de dinero (la mesa de AU-RA ya no confirma cualquier número).
+    } else if (limpio && (esFraseDeDinero(limpio) || /\d/.test(limpio))) {
       const conf = limpiarFinal((await conTope(deps.transcribirWav(wav(), true), deps.confirmarMs ?? 6_000)) || '');
       if (conf) limpio = conf;
     }

@@ -400,6 +400,13 @@ type PlayMeta = { text?: string | null; kind?: EnvelopeKind };
  * (un poco adelantado, ADELANTO_MS, por lo que tarda en llegar a la pantalla), abriendo rápido y
  * cerrando suave. Sin ellos: la envolvente por sílabas del texto (si cuadra con la duración) o libre.
  */
+/**
+ * Cómo se suelta la espera de la frase que suena ahora. stopSpeaking la llama: parar el sonido no dispara
+ * su final natural, y sin esto el turno quedaba esperando al guard (hasta 25 s) con la voz ya callada y la
+ * siguiente pregunta en cola (auditoría de Codex del 3-oct, VOZ 001).
+ */
+let soltarActual: (() => void) | null = null;
+
 function playPrepared(sound: Audio.Sound, my: number, maxMs = 25_000, meta: PlayMeta = {}): Promise<void> {
   return new Promise<void>((resolve) => {
     let done = false;
@@ -440,12 +447,14 @@ function playPrepared(sound: Audio.Sound, my: number, maxMs = 25_000, meta: Play
       emitLevel(0);
       if (guard) clearTimeout(guard);
       if (current === sound) current = null;
+      if (soltarActual === end) soltarActual = null;
       void sound.unloadAsync().catch(() => {});
       resolve();
     };
     const fraccion = () => (duracion > 0 ? reloj.posicion(Date.now()) / duracion : NaN);
     if (my !== gen) return end();
     current = sound;
+    soltarActual = end;
     fraccionActual = fraccion;
     if (meta.text && kind !== 'sing') registroVoz.empezo(meta.text);
     sound.setOnPlaybackStatusUpdate((st) => {
@@ -475,6 +484,8 @@ export async function stopSpeaking() {
   // La boca se cierra ya, no cuando el reproductor termine de parar.
   senalVoz.formaReproducida(null);
   emitLevel(0);
+  const soltar = soltarActual;
+  soltarActual = null;
   if (s) {
     try {
       await s.stopAsync();
@@ -483,6 +494,8 @@ export async function stopSpeaking() {
       /* */
     }
   }
+  // La espera de esa frase se suelta ya (quien hablaba sigue con el turno siguiente), no al guard.
+  soltar?.();
 }
 
 function beginSpeak() {

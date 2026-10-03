@@ -255,7 +255,7 @@ export function HojaCorreos({ visible, onCerrar }: { visible: boolean; onCerrar:
                       </>
                     )}
                     {!!error && (
-                      <Texto v="chica" color="error">
+                      <Texto v="chica" color="aviso">
                         {error}
                       </Texto>
                     )}
@@ -276,7 +276,7 @@ export function HojaCorreos({ visible, onCerrar }: { visible: boolean; onCerrar:
           </View>
         )}
         {!!error && (codigo || !prov || esMs) && (
-          <Texto v="chica" color="error">
+          <Texto v="chica" color="aviso">
             {error}
           </Texto>
         )}

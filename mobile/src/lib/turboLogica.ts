@@ -74,10 +74,12 @@ export function silencioParaCerrar(parcial: string): number {
 
 /**
  * Frases de dinero: se vuelven a oír con Scribe v2 antes de actuar (José, 2-oct: «Turbo + confirmar
- * dinero»). La misma expresión que lib/oido.ts del servidor (una prueba lo comprueba).
+ * dinero»). La misma expresión que lib/oido.ts del servidor (una prueba lo comprueba). Solo lo que mueve
+ * o nombra dinero: antes cualquier número o «cuánto» («dime 2 ideas», «¿cuánto mide la Luna?») pagaba otra
+ * transcripción de hasta 6 s (auditoría de Codex del 3-oct).
  */
 export const FRASE_DE_DINERO =
-  /\b(pag[aáoeu]\w*|envi[aáeé]\w*|env[ií]\w*|m[aá]nd\w*|transfi?er\w*|deposit\w*|cobr\w*|presta\w*|origen|auka|agka|veta|wallet|cartera|billetera|saldo|d[oó]lar\w*|lempira\w*|usd|pesos?|plata|dinero|monto|precio|cuesta|cu[aá]nto|pay\w*|send\w*|transfer\w*|dollars?|money|balance|price|cost|how much)\b|\$|\d/i;
+  /\b(origen|auka|agka|veta|wallet|cartera|billetera|saldo|d[oó]lar\w*|lempira\w*|usd|pesos?|plata|dinero|monto|money|balance|dollars?|pag[aáoeu]\w*|pay\w*|transfi?er\w*|deposit\w*|cobr\w*|presta\w*)\b|\$|\b(envi[aáeé]\w*|env[ií]\w*|m[aá]nd\w*|send\w*)\b[^.?!]*\d/i;
 
 export function esFraseDeDinero(texto: string): boolean {
   return FRASE_DE_DINERO.test(texto);

@@ -418,10 +418,16 @@ app.get('/api/health', async (req, res) => {
   const autorizado = mesaAutorizada(req);
   const s = autorizado ? await medirSalud(true) : await saludRapida();
   const raw = s.raw || {};
+  // Qué código corre y con qué cerebro (auditoría de Codex del 3-oct, AUD 001): cada reporte se puede atribuir
+  // a una revisión concreta. RENDER_GIT_COMMIT lo pone Render en cada despliegue.
+  const commit = String(process.env.RENDER_GIT_COMMIT || '').slice(0, 7) || null;
+  const cerebroVoz = { activo: cerebroRapidoActivo(), modelo: modeloRapido() };
   if (!autorizado) {
     return res.json({
       ok: true,
       version: '4.0',
+      commit,
+      cerebroVoz,
       qwen: { vivo: s.qwen },
       fp: { vivo: s.fp },
       ojo: { vivo: s.ojo, playwright: s.ojo, vision: !!raw.ojo?.json?.vision },
@@ -435,6 +441,8 @@ app.get('/api/health', async (req, res) => {
   res.json({
     ok: true,
     version: '4.0',
+    commit,
+    cerebroVoz,
     launch: false,
     cerebro: ULTRON_REMOTE_URL,
     qwen: { url: ULTRON_NODO_URL || null, vivo: s.qwen, modelo: raw.nodo?.json?.modelo || null, rutaChat: '/api/chat' },
@@ -3427,10 +3435,13 @@ async function preguntarQwenATrozos(
     const dec = new TextDecoder();
     let buf = '';
     let acumulado = '';
+    /** El nodo terminó con error (`done_reason: "error"`, scripts/nodo-a10g/ollama-proxy-ndjson.py). */
+    let errorNodo = '';
     const linea = (l: string) => {
       if (!l.trim()) return;
       try {
         const j = JSON.parse(l);
+        if (j.error || j.done_reason === 'error') errorNodo = String(j.error || 'el nodo terminó con error').slice(0, 200);
         const trozo = j.message?.content || j.response || '';
         if (trozo) {
           acumulado += trozo;
@@ -3463,6 +3474,8 @@ async function preguntarQwenATrozos(
     linea(buf);
     trazaActual()?.modelo(ULTRON_NODO_MODELO);
     const reply = acumulado.trim();
+    // Media respuesta y después un error no es una respuesta buena (auditoría de Codex del 3-oct, VOZ 003).
+    if (errorNodo) return { ok: false, reply, error: errorNodo };
     if (!reply) return { ok: false, reply: '', error: 'Qwen no contestó' };
     return { ok: true, reply };
   } catch (err: any) {
@@ -3668,7 +3681,8 @@ async function bucleHarness(o: {
     else if (ped.herramienta === 'triaje') ajeno = 'whatsapp';
     trazaActual()?.paso({
       herramienta: ped.herramienta,
-      ok: !/fall[oó]|no abr[ií]|sin resultados|ACCESO: consulta|pedido vac[ií]o/i.test(extra),
+      // Lo que la herramienta cuenta como fallo en su texto no se anota como éxito (auditoría de Codex del 3-oct).
+      ok: !/fall[oó]|no abr[ií]|sin resultados|ACCESO: consulta|pedido vac[ií]o|no se pudo|no pude|no lo corr[ií]|no disponible|no (fue|est[aá]) (enviad|conectad)|\berror\b/i.test(extra),
       ms: Date.now() - tH,
       resumen: extra,
       ronda: i + 1,
@@ -4229,16 +4243,18 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
   const { t0, tools, system, message, quienMem, canal, hilo, mando } = p;
   const hechos = [...p.hechos];
   // `delModelo`: el texto es del modelo grande (el stream o su harness); solo de él salen acciones.
-  const terminar = async (texto: string, via: string, emocion: Emocion, delModelo = false) => {
+  // `parcial`: el cerebro se cortó con error a media respuesta (VOZ 003): se avisa en el `done`, la traza
+  // queda con el error y la frase a medias no se guarda en su memoria como si fuera una respuesta.
+  const terminar = async (texto: string, via: string, emocion: Emocion, delModelo = false, parcial: string | null = null) => {
     const app = accionesDelCerebro(texto, p, delModelo);
     // El modelo contestó solo con la acción: la frase de esa acción sale también como texto (la voz
     // la dice; antes decía «Se me fue el hilo…»).
     if (app.sustituido) soltar('delta', app.texto);
     anotarHerramientasAura(reg, tools);
     const leido = quitarExpresiones(app.texto).trim();
-    reg.cerrar({ respuesta: leido, emocion, via });
-    send('done', { reply: leido, voz: app.texto.trim(), emocion, ms: Date.now() - t0, via, acciones: app.acciones, trazaId: reg.id });
-    if (leido && !senal?.aborted) await recordarSegunNivel(body, { quienMem, rol: 'ultron', texto: leido, canal }, opciones.retener);
+    reg.cerrar({ respuesta: leido, emocion, via, ...(parcial ? { error: parcial } : {}) });
+    send('done', { reply: leido, voz: app.texto.trim(), emocion, ms: Date.now() - t0, via, acciones: app.acciones, trazaId: reg.id, ...(parcial ? { parcial: true } : {}) });
+    if (leido && !parcial && !senal?.aborted) await recordarSegunNivel(body, { quienMem, rol: 'ultron', texto: leido, canal }, opciones.retener);
     salida.fin();
   };
   send('tools', { tools });
@@ -4340,6 +4356,8 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
      */
     let porRapido = false;
     let modeloManos = '';
+    /** El nodo terminó con error a media respuesta (VOZ 003): no se cierra como si hubiera contestado bien. */
+    let errorNodo = '';
     let usoManos = false;
     const herramientasManos = p.systemManos ? herramientasDelTurno(p.manosTurno) : [];
     const usarManos = !!p.systemManos && !p.foto && !/```/.test(message) && cerebroRapidoActivo();
@@ -4435,6 +4453,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
             if (!l) continue;
             try {
               const j = JSON.parse(l);
+              if (j.error || j.done_reason === 'error') errorNodo = String(j.error || 'el nodo terminó con error').slice(0, 200);
               const piece = j.message?.content || j.response || '';
               if (piece) {
                 reg.marca('nodo');
@@ -4453,6 +4472,24 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       } finally {
         // Cortado o terminado, el lector se suelta: la conexión al nodo no queda colgada.
         await reader.cancel().catch(() => {});
+      }
+    }
+    if (errorNodo) {
+      console.warn('[AU-RA] turno en vivo: el nodo terminó con error', errorNodo);
+      // Sin nada dicho: es un fallo, no una respuesta vacía (antes salía `done` como si hubiera contestado).
+      if (!extraerAcciones(extraerEmocion(full).texto).texto.trim() && !pedido) {
+        send('error', { error: FRASE_FALLO.cerebro[idioma], codigo: 'cerebro' });
+        reg.cerrar({ error: `Qwen terminó con error: ${errorNodo}` });
+        return salida.fin();
+      }
+      // Ya dijo algo y se cortó: lo dicho queda dicho, pero se cierra como parcial y se le dice con honradez
+      // que se cortó (Codex en #137: antes salía como respuesta completa y entraba a su memoria).
+      if (!pedido) {
+        const aviso = idioma === 'en' ? ' I got cut off there. Want me to try again?' : ' Se me cortó la respuesta. ¿Te la repito?';
+        const dicho = extraerAcciones(extraerEmocion(full).texto).texto;
+        if (dicho.length > enviado) soltar('delta', dicho.slice(enviado));
+        soltar('delta', aviso);
+        return terminar(`${extraerEmocion(full).texto}${aviso}`, `${ULTRON_NODO_URL}/api/chat`, emocion ?? 'preocupado', false, `Qwen terminó con error: ${errorNodo}`);
       }
     }
     // El modelo contestó con los hechos: lo que terminó su computadora ya quedó dicho.
