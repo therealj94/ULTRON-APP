@@ -246,6 +246,41 @@ prueba('contraste: texto, texto2 y texto3 ≥ 4,5:1 sobre cada fondo, en claro y
   console.log(`      (${filas.length} combinaciones; la más baja: ${peor[0]} ${peor[1].toFixed(2)}:1)`);
 });
 
+prueba('contraste (UI01, 3-oct): la letra sobre el oro (botón, burbuja mía, etiquetas) ≥ 4,5:1 en claro y en oscuro', () => {
+  // Antes, en claro: blanco sobre #B8913F = 2,93:1. Ahora la letra sobre el oro es la tinta del tema.
+  const filas = [];
+  for (const [nombre, p] of [['claro', CLARO], ['oscuro', OSCURO]]) {
+    filas.push([`${nombre}.sobreAcento/acento`, contraste(p.sobreAcento, p.acento)]);
+    filas.push([`${nombre}.textoMia/burbujaMia`, contraste(p.textoMia, p.burbujaMia)]);
+  }
+  // El botón principal es un degradado de oro (ui/Boton.tsx, oroDe): la letra se lee en cada parada.
+  const boton = fs.readFileSync(path.join(RAIZ, 'mobile/src/ui/Boton.tsx'), 'utf8');
+  const oro = /return oscuro \? \[([^\]]+)\] : \[([^\]]+)\];/.exec(boton);
+  assert.ok(oro, 'oroDe sigue en ui/Boton.tsx');
+  const paradas = (s) => [...s.matchAll(/'(#[0-9A-Fa-f]{6})'/g)].map((m) => m[1]);
+  for (const c of paradas(oro[1])) filas.push([`oscuro.sobreAcento/oro ${c}`, contraste(OSCURO.sobreAcento, c)]);
+  for (const c of paradas(oro[2])) filas.push([`claro.sobreAcento/oro ${c}`, contraste(CLARO.sobreAcento, c)]);
+  const malas = filas.filter(([, c]) => c < 4.5).map(([k, c]) => `${k} ${c.toFixed(2)}`);
+  assert.deepEqual(malas, []);
+  // Y nadie pinta blanco a mano encima del acento (lo que se arregla en el token no se rompe en una pantalla).
+  const sospechosas = [];
+  const recorrer = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const f = path.join(d, e.name);
+      if (e.isDirectory()) {
+        if (e.name !== 'pruebas' && e.name !== 'node_modules') recorrer(f);
+      } else if (/\.tsx$/.test(e.name)) {
+        const src = fs.readFileSync(f, 'utf8');
+        for (const linea of src.split('\n')) {
+          if (/backgroundColor: (tema|t|P|p)\.(acento|burbujaMia)\b/.test(linea) && /color: '#(fff|FFF|ffffff|FFFFFF)'/.test(linea)) sospechosas.push(path.relative(RAIZ, f));
+        }
+      }
+    }
+  };
+  recorrer(path.join(RAIZ, 'mobile/src'));
+  assert.deepEqual(sospechosas, []);
+});
+
 /* ── costuras de la mesa (leídas del código: estos módulos cargan React Native) ───────────── */
 
 const fuente = (archivo) => fs.readFileSync(path.join(RAIZ, 'mobile/src', archivo), 'utf8');

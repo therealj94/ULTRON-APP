@@ -271,29 +271,47 @@ export function pasosPendientes(p: Perfil | null): PasoId[] {
 export type DatoConocer = { categoria: 'familia' | 'trabajo' | 'metas' | 'gustos' | 'rutinas' | 'otros'; dato: string; clave: string };
 
 /**
+ * LA CLAVE COMÚN de cada respuesta: la categoría y la clave con que su copia vive en «lo que sé de ti».
+ * Una sola tabla para escribir la copia (datoConocerDe) y para borrarla junto con la respuesta del perfil
+ * (lib/supresion.ts, auditoría del 3-oct PRIV01): si se separaran, borrar dejaría la otra copia.
+ */
+export const CLAVE_CONOCER: Record<CampoPregunta | 'apodo', { categoria: DatoConocer['categoria']; clave: string }> = {
+  trabajo: { categoria: 'trabajo', clave: 'oficio' },
+  vive: { categoria: 'rutinas', clave: 'vive' },
+  familia: { categoria: 'familia', clave: 'familia:encuesta' },
+  gustos: { categoria: 'gustos', clave: 'pasatiempos' },
+  comida: { categoria: 'gustos', clave: 'comida favorita' },
+  musica: { categoria: 'gustos', clave: 'musica' },
+  ayuda: { categoria: 'metas', clave: 'quiere de aura' },
+  apodo: { categoria: 'otros', clave: 'apodo' },
+};
+
+/**
  * La respuesta de una pregunta → un dato para «lo que sé de ti» (lib/conocer-persona.ts en el servidor).
  * Con su clave: si la vuelve a contestar, el dato se reemplaza en vez de repetirse. null si está vacía.
  */
 export function datoConocerDe(campo: CampoPregunta | 'apodo', respuesta: string | undefined): DatoConocer | null {
   const r = String(respuesta || '').replace(/\s+/g, ' ').trim().slice(0, 200);
   if (r.length < 2) return null;
+  const k = CLAVE_CONOCER[campo];
+  if (!k) return null;
   switch (campo) {
     case 'trabajo':
-      return { categoria: 'trabajo', dato: `Se dedica a: ${r}`, clave: 'oficio' };
+      return { ...k, dato: `Se dedica a: ${r}` };
     case 'vive':
-      return { categoria: 'rutinas', dato: `Vive en ${r}`, clave: 'vive' };
+      return { ...k, dato: `Vive en ${r}` };
     case 'familia':
-      return { categoria: 'familia', dato: `Su familia: ${r}`, clave: 'familia:encuesta' };
+      return { ...k, dato: `Su familia: ${r}` };
     case 'gustos':
-      return { categoria: 'gustos', dato: `Le gusta: ${r}`, clave: 'pasatiempos' };
+      return { ...k, dato: `Le gusta: ${r}` };
     case 'comida':
-      return { categoria: 'gustos', dato: `Comida favorita: ${r}`, clave: 'comida favorita' };
+      return { ...k, dato: `Comida favorita: ${r}` };
     case 'musica':
-      return { categoria: 'gustos', dato: `Música que le gusta: ${r}`, clave: 'musica' };
+      return { ...k, dato: `Música que le gusta: ${r}` };
     case 'ayuda':
-      return { categoria: 'metas', dato: `Quiere que AURA le ayude a: ${r}`, clave: 'quiere de aura' };
+      return { ...k, dato: `Quiere que AURA le ayude a: ${r}` };
     case 'apodo':
-      return { categoria: 'otros', dato: `Quiere que le digan «${r}»`, clave: 'apodo' };
+      return { ...k, dato: `Quiere que le digan «${r}»` };
   }
 }
 

@@ -23,7 +23,7 @@ import { comoDato, haceCuanto, linea, plegar, preguntarModelo, extraerJson, type
 import { circuloDe, delCirculo, etiquetaDe, type MiembroCirculo } from './circulo';
 import { consultarModeloLote } from './laya';
 import { listar } from './correo/buzon';
-import { cuentasDe } from './correo/cuentas';
+import { leerCuentasSeguro } from './correo/cuentas';
 import { chatsWA, mensajesWA, whatsappDisponible, whatsappPermitido, estadoWA } from '../server/whatsapp';
 
 export type Importancia = 'urgente' | 'importante' | 'normal' | 'ruido';
@@ -297,7 +297,10 @@ export async function fuenteWhatsapp(dueno: string): Promise<ConversacionTriaje[
 
 /** Sus correos sin leer, de todas sus cuentas (lib/correo). */
 export async function fuenteCorreo(dueno: string): Promise<ConversacionTriaje[]> {
-  const cuentas = await cuentasDe(dueno);
+  // «No pude leer sus cuentas» no es «no tiene correo» (COM02): un S3 caído no se presenta como lista vacía.
+  const leidas = await leerCuentasSeguro(dueno);
+  if (!leidas.ok) throw new Error('no pude leer sus cuentas de correo guardadas en este momento');
+  const cuentas = leidas.cuentas;
   if (!cuentas.length) throw new Error('no tiene ningún correo conectado (Ajustes → Tus correos)');
   const out: ConversacionTriaje[] = [];
   const errores: string[] = [];

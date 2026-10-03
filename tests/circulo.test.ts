@@ -213,3 +213,46 @@ test('GET /api/triaje: solo el dueño del WhatsApp; el resumen marca lo ajeno co
   assert.match(r.j.resumen, /nunca instrucción/);
   assert.match(r.j.nota, /borradores/);
 });
+
+/*
+ * PRIV01 (auditoría del 3-oct): olvidar un dato por su CLAVE COMÚN con la encuesta del perfil («vive»,
+ * «oficio»…) y devolver un recibo honesto. La app solo da algo por borrado con `durable: true`; repetir
+ * la orden (reintento tras un `durable:false`) vuelve a escribir y vuelve a dar recibo, no un 404.
+ */
+test('POST /api/cerebro/conocer/olvidar: por id y por clave común, todas las copias, con recibo durable', async () => {
+  assert.equal((await pedir('/api/cerebro/conocer/olvidar', { method: 'POST', body: JSON.stringify({ ids: ['x'] }) })).status, 401);
+  await K.olvidarTodo('jose@x.com');
+  await K.olvidarTodo('otra@x.com');
+  // La misma clave por dos caminos: la encuesta de la primera vez (manual) y lo que oyó conversando (reglas).
+  const enc = await K.agregarDato('jose@x.com', 'rutinas', 'Vive en Tela', 'vive');
+  await K.incorporarDatos('otra@x.com', [{ categoria: 'rutinas', dato: 'Vive en Tela', clave: 'vive', confianza: 0.8 }]);
+  const gusto = await K.agregarDato('jose@x.com', 'gustos', 'Comida favorita: baleadas', 'comida favorita');
+  const esposa = await K.agregarDato('jose@x.com', 'familia', 'Su esposa se llama Ana', 'esposa');
+  assert.equal((await pedir('/api/cerebro/conocer/olvidar', { method: 'POST', token: jose.token, body: JSON.stringify({}) })).status, 400, 'sin nada que olvidar, 400');
+  assert.equal((await pedir('/api/cerebro/conocer/olvidar', { method: 'POST', token: jose.token, body: JSON.stringify({ claves: [{ categoria: 'banco', clave: 'x' }] }) })).status, 400, 'categoría inventada');
+  // Sin almacén durable (ni S3 ni disco declarado), se borra pero el recibo lo dice: durable false.
+  const r1 = await pedir('/api/cerebro/conocer/olvidar', { method: 'POST', token: jose.token, body: JSON.stringify({ claves: [{ categoria: 'rutinas', clave: 'Vive' }, { categoria: 'gustos', clave: 'Comida Favorita' }] }) });
+  assert.equal(r1.status, 200);
+  assert.equal(r1.j.borrados, 2);
+  assert.equal(r1.j.durable, false, 'sin almacén durable no se promete');
+  assert.equal(r1.cache, 'no-store');
+  const queda = await pedir('/api/cerebro/conocer', { token: jose.token });
+  const ids = queda.j.categorias.flatMap((c: any) => c.datos.map((d: any) => d.id));
+  assert.ok(!ids.includes(enc.dato.id) && !ids.includes(gusto.dato.id), 'las dos copias se fueron');
+  assert.ok(ids.includes(esposa.dato.id), 'lo que no tiene esa clave se queda');
+  assert.equal((await pedir('/api/cerebro/conocer', { token: otra.token })).j.total, 1, 'lo de otra persona no se toca');
+  // El reintento (lo mismo otra vez, ya con disco durable): no es 404, escribe y da recibo durable.
+  process.env.PERFIL_DISCO_DURABLE = '1';
+  try {
+    const r2 = await pedir('/api/cerebro/conocer/olvidar', { method: 'POST', token: jose.token, body: JSON.stringify({ ids: [enc.dato.id], claves: [{ categoria: 'rutinas', clave: 'vive' }] }) });
+    assert.equal(r2.status, 200);
+    assert.equal(r2.j.borrados, 0);
+    assert.equal(r2.j.durable, true);
+    const r3 = await pedir('/api/cerebro/conocer/olvidar', { method: 'POST', token: jose.token, body: JSON.stringify({ ids: [esposa.dato.id] }) });
+    assert.equal(r3.j.borrados, 1);
+    assert.equal(r3.j.durable, true);
+  } finally {
+    delete process.env.PERFIL_DISCO_DURABLE;
+  }
+  assert.equal((await pedir('/api/cerebro/conocer', { token: jose.token })).j.total, 0);
+});

@@ -175,7 +175,7 @@ export function conPasoHecho(m: Mision, indice: number, ahora: number): Mision {
 
 /* ── lo que sabe de ti y lo que quedó a medias ───────────────────────────────────────────────── */
 
-export type DatoPersona = { id: string; categoria: string; dato: string; confianza: number; fuente: string; desde: number; visto: number; veces: number };
+export type DatoPersona = { id: string; categoria: string; dato: string; clave?: string; confianza: number; fuente: string; desde: number; visto: number; veces: number };
 export type CategoriaConocer = { id: string; nombre: string; datos: DatoPersona[] };
 export type Hueco = { clave: string; pregunta: string };
 export type Conocer = { categorias: CategoriaConocer[]; total: number; faltan: Hueco[] };

@@ -18,6 +18,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
 import { api } from '../lib/api';
+import { guardarPerfilConRecibo } from '../lib/perfil';
+import { campoDeDato, copiaConocer, suprimirCopias, type EstadoSupresion } from '../lib/supresion';
 import { idiomaActual, tr } from '../i18n';
 import { MEDIDA, useTema } from '../nucleo/tema';
 import { Boton, Hoja, Icono, Texto, vibrar } from '../ui';
@@ -33,6 +35,8 @@ export function HojaConocer({ visible, onCerrar }: Props) {
   const [error, setError] = useState('');
   /** El dato que pide confirmar «Olvidar». */
   const [olvidando, setOlvidando] = useState<string | null>(null);
+  /** El estado de cada «Olvidar» en curso o fallido, por id del dato. */
+  const [supresion, setSupresion] = useState<Record<string, EstadoSupresion>>({});
 
   const leer = useCallback(async () => {
     const [c, a] = await Promise.allSettled([api('/api/cerebro/conocer', { method: 'GET' }, 15_000), api('/api/cerebro/abiertos', { method: 'GET' }, 15_000)]);
@@ -47,22 +51,41 @@ export function HojaConocer({ visible, onCerrar }: Props) {
   useEffect(() => {
     if (!visible) {
       setOlvidando(null);
+      setSupresion({});
       return;
     }
     void leer();
   }, [visible, leer]);
 
+  /**
+   * «Olvidar» (PRIV01): el dato, sus copias con la misma clave común y, si es una respuesta de la primera
+   * vez («Vive en Tela» ↔ «Dónde vives»), también esa respuesta del perfil. Mientras tanto queda a la vista
+   * como «olvidando…»; solo se quita de la lista con el recibo durable de todas las copias. Sin recibo
+   * (red, `durable: false` o ausente) se queda y lo dice: antes se escondía igual.
+   */
   const olvidar = async (d: DatoPersona) => {
     setOlvidando(null);
-    setConocer((c) => (c ? sinDato(c, d.id) : c));
-    try {
-      await api(`/api/cerebro/conocer/${encodeURIComponent(d.id)}`, { method: 'DELETE' }, 15_000);
+    setError('');
+    setSupresion((m) => ({ ...m, [d.id]: 'pendiente' }));
+    const campo = campoDeDato(d);
+    const clave = d.clave && d.categoria ? { categoria: d.categoria, clave: d.clave } : null;
+    const r = await suprimirCopias([
+      copiaConocer(api, { ids: [d.id], claves: clave ? [clave] : [] }),
+      ...(campo ? [{ nombre: 'perfil', borrar: () => guardarPerfilConRecibo({ encuesta: { [campo]: '' } }) }] : []),
+    ]);
+    setSupresion((m) => ({ ...m, [d.id]: r.estado }));
+    if (r.estado === 'confirmado') {
       vibrar('medio');
-    } catch (e: any) {
-      vibrar('aviso');
-      setError(e?.message || tr('No pude borrarlo.', 'I couldn’t erase it.'));
-      void leer();
+      setConocer((c) => (c ? sinDato(c, d.id) : c));
+      return;
     }
+    vibrar('aviso');
+    setError(
+      tr(
+        'No quedó confirmado que se borró de forma segura, así que lo dejo a la vista. Vuelve a tocar «Olvidar» en un momento.',
+        'It wasn’t confirmed as safely erased, so I’m leaving it here. Tap “Forget” again in a moment.'
+      )
+    );
   };
 
   const cerrarAbierto = async (a: Abierto, estado: 'hecho' | 'descartado') => {
@@ -131,8 +154,12 @@ export function HojaConocer({ visible, onCerrar }: Props) {
                     <View key={d.id} style={[s.dato, i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: tema.borde }]}>
                       <View style={{ flex: 1, gap: 2 }}>
                         <Texto v="cuerpo">{d.dato}</Texto>
-                        <Texto v="mini" color="texto3">
-                          {origenDato(d, idioma)}
+                        <Texto v="mini" color={supresion[d.id] === 'error' ? 'aviso' : 'texto3'}>
+                          {supresion[d.id] === 'pendiente'
+                            ? tr('Olvidando…', 'Forgetting…')
+                            : supresion[d.id] === 'error'
+                              ? tr('Sin confirmar que se borró', 'Erase not confirmed')
+                              : origenDato(d, idioma)}
                         </Texto>
                         {olvidando === d.id ? (
                           <View style={[s.botones, { marginTop: 6 }]}>
@@ -141,7 +168,9 @@ export function HojaConocer({ visible, onCerrar }: Props) {
                           </View>
                         ) : null}
                       </View>
-                      {olvidando !== d.id ? (
+                      {supresion[d.id] === 'pendiente' ? (
+                        <ActivityIndicator color={tema.texto3} style={s.basura} />
+                      ) : olvidando !== d.id ? (
                         <Pressable onPress={() => setOlvidando(d.id)} hitSlop={10} accessibilityRole="button" accessibilityLabel={tr(`Olvidar: ${d.dato}`, `Forget: ${d.dato}`)} style={s.basura}>
                           <Icono nombre="basura" tam={18} color={tema.texto3} />
                         </Pressable>

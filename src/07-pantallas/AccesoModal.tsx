@@ -2,7 +2,8 @@ import { Dialogo } from './Dialogo';
 import React, { useEffect, useState } from 'react';
 import { ShieldCheck, ShieldAlert, X, Lock, Mail, KeyRound, Globe, Loader2, LogOut } from 'lucide-react';
 import { playSfx } from '../03-voz/audio';
-import { guardarTokenMesa, headersMesa } from '../10-infra/sesionCliente';
+import { enIconoInstalado, guardarTokenMesa, headersMesa } from '../10-infra/sesionCliente';
+import { iniciarEntradaGenesis } from '../10-infra/genesisWeb';
 import { CambiarClave, OlvideClave, PanelSolicitudes, PonerClave, SolicitarAcceso, solicitudesPendientes, type EnlaceUrl, type Tema } from '../cuentas/Cuentas';
 
 /** Las pantallas de cuentas con los colores de la sala de AU-RA. */
@@ -63,6 +64,9 @@ export const AccesoModal: React.FC<Props> = ({ isOpen, enlace = null, usuario, s
   const [remoto, setRemoto] = useState<'?' | 'ok' | 'off'>('?');
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState('');
+  /** ¿Se ofrece «Entrar con Genesis ID»? (el servidor lo tiene configurado; IOS01). */
+  const [conGenesis, setConGenesis] = useState(false);
+  const [yendoAGenesis, setYendoAGenesis] = useState(false);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -72,6 +76,10 @@ export const AccesoModal: React.FC<Props> = ({ isOpen, enlace = null, usuario, s
     fetch('/api/ultron/salud')
       .then((r) => setRemoto(r.ok ? 'ok' : 'off'))
       .catch(() => setRemoto('off'));
+    fetch('/api/genesis/config')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((c) => setConGenesis(!!c?.disponible))
+      .catch(() => setConGenesis(false));
   }, [isOpen]);
 
   if (!isOpen) return null;
@@ -108,6 +116,19 @@ export const AccesoModal: React.FC<Props> = ({ isOpen, enlace = null, usuario, s
       setEnviando(false);
       setError('No alcancé el servidor de la mesa.');
     }
+  };
+
+  /** A la wallet con el pedido; al volver, App.tsx recoge la sesión (10-infra/genesisWeb.ts). */
+  const entrarConGenesis = async () => {
+    setError('');
+    setYendoAGenesis(true);
+    const r = await iniciarEntradaGenesis();
+    if (r.ok === false) {
+      setYendoAGenesis(false);
+      setError(r.mensaje);
+      return;
+    }
+    window.location.assign(r.ir);
   };
 
   const salir = async () => {
@@ -220,6 +241,17 @@ export const AccesoModal: React.FC<Props> = ({ isOpen, enlace = null, usuario, s
               {enviando ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <KeyRound className="w-3.5 h-3.5" />}
               <span>{enviando ? 'Entrando…' : 'Entrar'}</span>
             </button>
+            {conGenesis && (
+              <button type="button" onClick={() => void entrarConGenesis()} disabled={yendoAGenesis} className={`${TEMA_AURA.secundario} flex items-center justify-center gap-2`}>
+                {yendoAGenesis ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}
+                <span>{yendoAGenesis ? 'Abriendo tu wallet…' : 'Entrar con Genesis ID'}</span>
+              </button>
+            )}
+            {enIconoInstalado() && (
+              <p className="px-1 text-[12px] leading-snug text-(--aura-tinta-2)">
+                El ícono de AU-RA guarda su propia sesión: si entraste en el navegador, entrá aquí una vez y queda guardada.
+              </p>
+            )}
             <div className="flex items-center justify-between px-1 text-[13px]">
               <button type="button" onClick={() => { setVista('olvide'); setError(''); }} className="text-(--aura-tinta-2) hover:text-(--aura-tinta) cursor-pointer">
                 ¿Olvidaste tu contraseña?

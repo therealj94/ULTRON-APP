@@ -47,7 +47,18 @@ type Deps = {
 
 const sinSesion = (res: express.Response) => res.status(401).json({ error: 'Entra con tu sesión.', code: 'sesion_requerida', honesto: true });
 
+/**
+ * El interruptor del service worker de la web (IOS02): encendido salvo AURA_SW=0/false/no/apagado. La web
+ * lo mira al arrancar; apagado, da de baja su worker y borra sus cachés (src/10-infra/pwa.ts).
+ */
+export const swEncendido = () => !/^(0|false|no|apagado)$/i.test(String(process.env.AURA_SW ?? '').trim());
+
 export function montarRutasApp(app: express.Express, d: Deps) {
+  app.get('/api/pwa', (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    return res.json({ sw: swEncendido(), honesto: true });
+  });
+
   /*
    * GET /api/perfil era (y sigue siendo, para la web) la ficha pública de la plataforma. Ahora además
    * trae el perfil de la persona si viene con sesión. Un token que no vale es un 401 —el teléfono

@@ -17,7 +17,10 @@ import { opinarTurno, pedirTurnoStream } from './04-cerebro/turno';
 import { detectarIntencion } from './04-cerebro/intenciones';
 import { grabFrame, achicarFoto } from './04-cerebro/grabFrame';
 import { fijarCuentaMemoria, guardarHecho, olvidarTodo } from './09-estado/memoria';
-import { headersMesa } from './10-infra/sesionCliente';
+import { guardarTokenMesa, headersMesa } from './10-infra/sesionCliente';
+import { escucharVueltaGenesis } from './10-infra/genesisWeb';
+import { aplicarVersionNueva, registrarPwa } from './10-infra/pwa';
+import { AvisoVersion } from './07-pantallas/AvisoVersion';
 import { cargarPerfil, perfil as perfilActual } from './perfil';
 import type { Emocion } from '../lib/emocion';
 import { quitarExpresiones } from '../lib/expresiones';
@@ -338,6 +341,33 @@ export default function App() {
       vivo = false;
     };
   }, []);
+
+  // La PWA (10-infra/pwa.ts; IOS02): el service worker del build y el aviso de versión nueva, que se
+  // aplica solo cuando la persona toca «Recargar».
+  const [versionNueva, setVersionNueva] = useState(false);
+  useEffect(() => {
+    void registrarPwa(() => setVersionNueva(true));
+  }, []);
+
+  // La vuelta de «Entrar con Genesis ID» desde la web (10-infra/genesisWeb.ts; IOS01): al volver a la
+  // pestaña o al icono del iPhone, se recoge la sesión del intento que empezó AQUÍ. Sin entrada a medias,
+  // no hace nada.
+  useEffect(
+    () =>
+      escucharVueltaGenesis((r) => {
+        if (r.tipo === 'error') {
+          decir(r.mensaje, { emocion: 'neutral' });
+          return;
+        }
+        guardarTokenMesa(r.token);
+        const nombre = r.miembro.nombre || (r.miembro.correo || '').split('@')[0];
+        setUsuario({ name: nombre, role: r.miembro.rol || 'Miembro · Genesis ID', authenticated: true });
+        fijarCuentaMemoria(r.miembro.correo);
+        decir(saludoDe(nombre).id, { emocion: 'feliz' });
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  );
 
   // Calentar Qwen; al primer «listo», saludo grabado (cero red).
   useEffect(() => {
@@ -1282,6 +1312,8 @@ export default function App() {
             );
           }}
         />
+
+        <AvisoVersion visible={versionNueva} onRecargar={aplicarVersionNueva} onLuego={() => setVersionNueva(false)} />
 
         <AccesoModal
           isOpen={accesoOpen}
