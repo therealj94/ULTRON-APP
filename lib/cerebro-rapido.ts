@@ -171,6 +171,8 @@ export async function* hablarRapido(mensajes: MensajeChat[], senal?: AbortSignal
  * Con CEREBRO_VOZ_RESPALDO=no, ninguno (pasa directo al Qwen 27B del nodo).
  */
 export const MODELO_RESPALDO_OMISION = 'moonshotai.kimi-k2.5';
+/** Sin un trozo nuevo durante esto, a media respuesta, se corta (el Qwen del nodo contesta si aún no se dijo nada). */
+const INACTIVIDAD_MS = 8_000;
 function modeloRespaldo(): string | null {
   const v = String(process.env.CEREBRO_VOZ_RESPALDO ?? MODELO_RESPALDO_OMISION).trim();
   return !v || v === 'no' ? null : v;
@@ -196,12 +198,21 @@ export async function* hablarConManos(mensajes: MensajeChat[], herramientas: Too
     const alCortar = () => corte.abort();
     senal?.addEventListener('abort', alCortar, { once: true });
     const vence = setTimeout(() => corte.abort(new Error('sin primera señal a tiempo')), c.primeraMs);
+    // Ya con algo útil, un silencio largo a media respuesta también corta (antes solo se vigilaba la primera
+    // señal; auditoría de Codex del 3-oct).
+    let quieto: ReturnType<typeof setTimeout> | null = null;
+    const vigilar = () => {
+      if (quieto) clearTimeout(quieto);
+      quieto = setTimeout(() => corte.abort(new Error('se quedó callado a media respuesta')), INACTIVIDAD_MS);
+    };
     let alguna = false;
+    let escrito = '';
     const marcar = () => {
       if (!alguna) {
         alguna = true;
         clearTimeout(vence);
       }
+      vigilar();
     };
     try {
       const r = await bedrock().send(
@@ -227,7 +238,10 @@ export async function* hablarConManos(mensajes: MensajeChat[], herramientas: Too
         const d = ev.contentBlockDelta?.delta;
         if (d?.toolUse?.input && actual) actual.json += d.toolUse.input;
         if (d?.text) {
-          if (d.text.trim()) marcar();
+          // La etiqueta de ánimo sola («[EMO: neutral]») no es una respuesta: no cuenta como primera señal.
+          escrito += d.text;
+          if (escrito.replace(/\[[^\]]*\]?/g, '').trim()) marcar();
+          else if (alguna) vigilar();
           if (!dijoModelo) {
             dijoModelo = true;
             yield { modelo };
@@ -260,6 +274,7 @@ export async function* hablarConManos(mensajes: MensajeChat[], herramientas: Too
       }
     } finally {
       clearTimeout(vence);
+      if (quieto) clearTimeout(quieto);
       senal?.removeEventListener('abort', alCortar);
     }
   }

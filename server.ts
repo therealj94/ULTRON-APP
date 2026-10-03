@@ -3470,6 +3470,11 @@ async function preguntarQwenATrozos(
   }
 }
 
+/** Cómo se traducen las manos de este teléfono: recordatorios con llamada y «llámame ya» según lo que declaró. */
+function opcionesManos(m: ManosDelTurno) {
+  return { conLlamada: m.manos.includes('llamame') || m.manos.includes('recordatorio_llamada'), llamarAhora: m.manos.includes('llamame') };
+}
+
 /** Lo que el harness usa para volver a preguntar después de una herramienta (por omisión, Qwen del nodo). */
 type PreguntarVuelta = (hechos: string[], alTexto?: (acumulado: string) => void) => Promise<{ ok: boolean; reply: string; error?: string }>;
 
@@ -3482,7 +3487,7 @@ type PreguntarVuelta = (hechos: string[], alTexto?: (acumulado: string) => void)
 function preguntarConManos(
   systemManos: string,
   herramientas: ReturnType<typeof herramientasDelTurno>,
-  conLlamada: boolean,
+  opciones: ReturnType<typeof opcionesManos>,
   message: string,
   hilo: MsgHilo[],
   nivel: NivelAura,
@@ -3506,7 +3511,7 @@ function preguntarConManos(
         }
         if ('texto' in pieza) acumulado += pieza.texto;
         else {
-          const linea = lineaDeHerramienta(pieza.herramienta.nombre, pieza.herramienta.input, Date.now(), { conLlamada });
+          const linea = lineaDeHerramienta(pieza.herramienta.nombre, pieza.herramienta.input, Date.now(), opciones);
           if (!linea) continue;
           acumulado += `\n${linea}\n`;
         }
@@ -4350,7 +4355,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
           reg.marca('nodo');
           if ('texto' in pieza) procesar(pieza.texto);
           else {
-            const linea = lineaDeHerramienta(pieza.herramienta.nombre, pieza.herramienta.input, Date.now(), { conLlamada: p.manosTurno.manos.includes('llamame') });
+            const linea = lineaDeHerramienta(pieza.herramienta.nombre, pieza.herramienta.input, Date.now(), opcionesManos(p.manosTurno));
             if (linea) {
               usoManos = true;
               procesar(`\n${linea}\n`);
@@ -4371,7 +4376,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
           let cumplida = false;
           for await (const pieza of hablarConManos(vuelta, herramientasManos, senal)) {
             if (!('herramienta' in pieza)) continue;
-            const linea = lineaDeHerramienta(pieza.herramienta.nombre, pieza.herramienta.input, Date.now(), { conLlamada: p.manosTurno.manos.includes('llamame') });
+            const linea = lineaDeHerramienta(pieza.herramienta.nombre, pieza.herramienta.input, Date.now(), opcionesManos(p.manosTurno));
             if (!linea) continue;
             cumplida = usoManos = true;
             procesar(`\n${linea}\n`);
@@ -4379,7 +4384,14 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
           console.log(`[cerebro manos] prometió sin herramienta; ${cumplida ? 'la usó al pedírsela' : 'no había herramienta que usar'}`);
         }
       } catch (e: any) {
-        // Sin Bedrock (permiso, red, tarde): si ya había dicho algo se queda con eso; si no, Qwen.
+        // Sin Bedrock (permiso, red, tarde, cortado a media respuesta): si ya se DIJO algo o se pidió una mano,
+        // se queda con eso; si solo llegó la etiqueta de ánimo o media frase sin decir, se descarta y contesta
+        // Qwen (auditoría de Codex del 3-oct: un trozo sin decir no puede impedir el respaldo ni pasar por éxito).
+        if (!senal?.aborted && porRapido && enviado === 0 && !usoManos && !pedido && !retenido) {
+          porRapido = false;
+          full = '';
+          cuerpo = '';
+        }
         if (!porRapido && !senal?.aborted) console.warn('[cerebro manos] no contestó; sigue Qwen:', String(e?.name || ''), String(e?.message || e).slice(0, 160));
       }
       if (senal?.aborted) {
@@ -4490,7 +4502,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
         dichoH = nuevo;
       };
       // La vuelta del harness la escribe el mismo cerebro que pidió la herramienta (con sus manos).
-      const preguntar = porRapido ? preguntarConManos(p.systemManos, herramientasManos, p.manosTurno.manos.includes('llamame'), message, hilo, p.nivel, p.contexto, senal) : undefined;
+      const preguntar = porRapido ? preguntarConManos(p.systemManos, herramientasManos, opcionesManos(p.manosTurno), message, hilo, p.nivel, p.contexto, senal) : undefined;
       const h = await bucleHarness({ reply, system, message, hechos, hilo, tools, mando, senal, nivel: p.nivel, contexto: p.contexto, espacio: p.espacio, alTarea: opciones.alTarea, alTexto, computadora: p.computadora, dueno: p.dueno, ambito: p.ambito, preguntar });
       const e = extraerEmocion(h.reply);
       emocion = e.emocion;

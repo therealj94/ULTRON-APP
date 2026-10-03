@@ -74,7 +74,7 @@ export function herramientasDelTurno(d: ManosDelTurno): Tool[] {
         ['contacto']
       )
     );
-  if (mano('llamame') || mano('recordatorio_llamada'))
+  if (mano('llamame'))
     t.push(
       tool(
         'llamarme',
@@ -83,6 +83,20 @@ export function herramientasDelTurno(d: ManosDelTurno): Tool[] {
           en_segundos: { type: 'integer', description: 'Dentro de cuántos segundos. Omitido o 0 = ahora mismo.' },
           motivo: str('Para qué, si lo dijo («lo del banco»). Es lo que le dirás al llamar.'),
         }
+      )
+    );
+  else if (mano('recordatorio_llamada'))
+    // Un teléfono que no sabe recibir la llamada al instante (sin la mano «llamame»): solo dentro de un rato
+    // (revisión de Codex en #136: «ahora» se volvía una acción que ese teléfono rechaza).
+    t.push(
+      tool(
+        'llamarme',
+        'Que TÚ llames a la persona DENTRO DE UN RATO («llámame en diez minutos», «márcame a las 5 para lo del banco»). Este teléfono no puede recibir tu llamada al instante: si pide «llámame ya», dile que en este teléfono solo puedes llamarle dentro de un rato y ofrécele en un minuto.',
+        {
+          en_segundos: { type: 'integer', description: 'Dentro de cuántos segundos (al menos 30).' },
+          motivo: str('Para qué, si lo dijo. Es lo que le dirás al llamar.'),
+        },
+        ['en_segundos']
       )
     );
   if (mano('recordatorio'))
@@ -256,9 +270,11 @@ const pedido = (herramienta: string, arg = '') => `PEDIR_HERRAMIENTA: ${herramie
  * La línea de siempre para una llamada a una herramienta (o null si vino mal: sin lo imprescindible).
  * `ahora` es para «llámame en 30 segundos».
  */
-export function lineaDeHerramienta(nombre: string, input: Record<string, any> = {}, ahora = Date.now(), o: { conLlamada?: boolean } = {}): string | null {
-  // Con la mano «llamame», los recordatorios suenan como llamada de AU-RA; sin ella, aviso normal.
+export function lineaDeHerramienta(nombre: string, input: Record<string, any> = {}, ahora = Date.now(), o: { conLlamada?: boolean; llamarAhora?: boolean } = {}): string | null {
+  // Con la mano «llamame» (o «recordatorio_llamada»), los recordatorios suenan como llamada de AU-RA; sin
+  // ellas, aviso normal. «Ahora mismo» solo con «llamame».
   const conLlamada = o.conLlamada !== false;
+  const llamarAhora = o.llamarAhora !== false;
   const i = input && typeof input === 'object' ? input : {};
   switch (nombre) {
     case 'abrir_pantalla':
@@ -288,7 +304,7 @@ export function lineaDeHerramienta(nombre: string, input: Record<string, any> = 
     }
     case 'llamarme': {
       const s = Math.round(Number(i.en_segundos) || 0);
-      if (s <= 0) return accionApp({ tipo: 'llamame' });
+      if (s <= 0 && llamarAhora) return accionApp({ tipo: 'llamame' });
       // Lo más pronto que el teléfono acepta (RECORDATORIO_MIN_MS) aunque pida menos: «en 10 segundos» → en cuanto se pueda.
       const cuando = ahora + Math.max(s * 1000, RECORDATORIO_MIN_MS + 2_000);
       return accionApp({ tipo: 'recordatorio', texto: limpio(i.motivo, 140) || 'Te llamo como me pediste', cuando, llamada: true });

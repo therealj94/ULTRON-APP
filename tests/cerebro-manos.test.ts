@@ -117,3 +117,37 @@ test('«ahí te llamo» sin herramienta se nota (para pedírsela); una respuesta
   for (const t of ['[EMO:neutral] La inflación es cuando suben los precios.', 'Bien, ¿y vos cómo andás?', '¿Qué tal una sopa de pollo?', 'El oro está a cuatro mil dólares la onza.', 'Una sopa te caería bien. ¿Te busco recetas?', '¿Quieres que te llame mañana?'])
     assert.equal(prometeSinHacer(t), false, t);
 });
+
+test('la etiqueta de ánimo sola no cuenta como respuesta: si después se calla, se corta y pasa al de respaldo', async () => {
+  process.env.CEREBRO_VOZ_PRIMERA_MS = '60';
+  const { BedrockRuntimeClient } = await import('@aws-sdk/client-bedrock-runtime');
+  const { hablarConManos } = await import('../lib/cerebro-rapido');
+  const original = BedrockRuntimeClient.prototype.send;
+  const modelos: string[] = [];
+  (BedrockRuntimeClient.prototype as any).send = async function (cmd: any, o: { abortSignal?: AbortSignal } = {}) {
+    modelos.push(cmd.input.modelId);
+    return {
+      stream: (async function* () {
+        yield { contentBlockDelta: { delta: { text: '[EMO: neutral]' } } };
+        await new Promise((r, no) => {
+          const t = setTimeout(r, 1000);
+          o.abortSignal?.addEventListener('abort', () => (clearTimeout(t), no(new Error('cortado'))));
+        });
+        yield { contentBlockDelta: { delta: { text: ' tarde' } } };
+      })(),
+    };
+  };
+  try {
+    const t0 = Date.now();
+    await assert.rejects(async () => {
+      for await (const _ of hablarConManos([{ role: 'user', content: 'hola' }], [])) {
+        /* nada */
+      }
+    });
+    assert.ok(Date.now() - t0 < 900, 'no esperó al trozo tardío');
+    assert.equal(modelos.length, 2, 'probó el principal y el de respaldo');
+  } finally {
+    (BedrockRuntimeClient.prototype as any).send = original;
+    delete process.env.CEREBRO_VOZ_PRIMERA_MS;
+  }
+});

@@ -380,7 +380,7 @@ const PROPIAS: Record<AvatarFrase, Partial<Record<EstadoFrase, Lista>>> = {
       en: ['Let me check calmly…', 'Let me check closely…', 'Checking, then I’ll tell you…', 'Let’s see what it says…', 'Checking it properly…', 'Going over the details…', 'One moment, looking…', 'Checking it now…'],
     },
     buscando: {
-      es: ['Déjame buscarlo…', 'Lo busco y te digo…', 'A ver qué encuentro…', 'Buscando el dato…', 'Ya lo busco…', 'Un momento, lo averiguo…', 'A ver qué hay por ahí…', 'Buscando, ya casi…'],
+      es: ['Déjame buscarlo…', 'Lo busco y te digo…', 'A ver qué encuentro…', 'Buscando el dato…', 'Ya lo busco…', 'Un momento, lo averiguo…', 'Olfateando la respuesta…', 'Buscando, ya casi…'],
       en: ['Let me look it up…', 'I’ll look and tell you…', 'Let’s see what I find…', 'Looking for it…', 'Searching now…', 'One moment, finding out…', 'Let me see what’s out there…', 'Searching, almost…'],
     },
     calculando: {
