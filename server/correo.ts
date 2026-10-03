@@ -24,6 +24,7 @@
  * mandar nada aunque el modelo se lo creyera: hace falta el «sí» de la persona al borrador que oyó.
  */
 import type express from 'express';
+import crypto from 'node:crypto';
 import { enTrozos, leer, limpiarCuerpo, listar, mandar, probarCuenta, sinCitas, type Mensaje, type Resumen } from '../lib/correo/buzon';
 import { agregarCuenta, cuentasDe, CuentasNoDisponibles, publica, quitarCuenta, type CuentaCorreo } from '../lib/correo/cuentas';
 import { consultarCodigo, microsoftConfigurado, pedirCodigo } from '../lib/correo/microsoft';
@@ -60,7 +61,13 @@ type Borrador = {
   referencias?: string[];
   creado: number;
 };
-const BORRADORES = new Map<string, Borrador>();
+/**
+ * Lo que se le agrega al guardarlo (auditoría 3-oct, COM01): de quién es, hasta cuándo vale y cuál intento es.
+ * El «sí» manda ESE borrador, de ESA persona, desde ESA cuenta, y solo si no venció cuando por fin sale.
+ */
+type BorradorGuardado = Borrador & VigenciaBorrador;
+export type VigenciaBorrador = { dueno: string; vence: number; intento: string };
+const BORRADORES = new Map<string, BorradorGuardado>();
 /** Un borrador que nadie confirmó en este rato se olvida: un «sí» de mañana no manda lo de hoy. */
 const BORRADOR_VIVE_MS = 15 * 60_000;
 /** El correo que está leyendo: «sigue» trae el trozo siguiente y «contéstale» le contesta a este. */
@@ -365,7 +372,7 @@ async function escribir(quien: string, ambito: string, para: string, asunto: str
 
 function guardarBorrador(quien: string, ambito: string, b: Borrador, nota = ''): string {
   if (!b.texto.trim()) return 'CORREO: el borrador vino vacío. Pregúntale qué quiere decir.';
-  BORRADORES.set(llave(quien, ambito), b);
+  BORRADORES.set(llave(quien, ambito), { ...b, ...vigenciaNueva(quien, b.creado, BORRADOR_VIVE_MS) });
   return (
     `BORRADOR (NO enviado) desde ${b.desde} para ${b.para.join(', ')}${b.cc?.length ? ` (con copia a ${b.cc.join(', ')})` : ''} — «${b.asunto}»:\n${b.texto}\n` +
     (nota ? `${nota}\n` : '') +
@@ -374,14 +381,29 @@ function guardarBorrador(quien: string, ambito: string, b: Borrador, nota = ''):
 }
 
 /** Pruebas y la app: el borrador que espera su «sí». */
-export function borradorDe(quien: string, ambito = ''): Borrador | null {
+export function borradorDe(quien: string, ambito = ''): BorradorGuardado | null {
   const b = BORRADORES.get(llave(quien, ambito));
   if (!b) return null;
-  if (Date.now() - b.creado > BORRADOR_VIVE_MS) {
+  if (motivoBorrador(b, quien)) {
     BORRADORES.delete(llave(quien, ambito));
     return null;
   }
   return b;
+}
+
+/** De quién es un borrador nuevo, hasta cuándo vale y su id de intento (correo y WhatsApp). */
+export function vigenciaNueva(quien: string, creado: number, viveMs: number): VigenciaBorrador {
+  return { dueno: normal(quien), vence: creado + viveMs, intento: crypto.randomUUID() };
+}
+
+/**
+ * ¿El borrador todavía se puede mandar ahora, por esta persona? null si sí; si no, por qué. Se mira al leer el
+ * «sí» y otra vez justo antes de mandarlo (en la voz el envío espera a que el turno se confirme).
+ */
+export function motivoBorrador(b: Pick<VigenciaBorrador, 'dueno' | 'vence'>, quien: string, ahora = Date.now()): string | null {
+  if (!b.dueno || b.dueno !== normal(quien)) return 'ese borrador era de otra sesión';
+  if (!(ahora <= b.vence)) return 'el borrador venció (pasó mucho rato desde que se le leyó)';
+  return null;
 }
 
 // Se comparan sin tildes («sí» → «si»): `\b` de las expresiones de JavaScript no ve la «í» como letra.
@@ -446,15 +468,25 @@ export async function decidirBorrador(o: {
   canal: 'CORREO' | 'WHATSAPP';
   para: string;
   retener?: RetencionAcciones;
+  /**
+   * ¿Todavía se puede mandar AHORA? null si sí; si no, por qué (venció, es de otra sesión). Se mira justo antes
+   * de mandar: en la voz eso puede ser un rato después del «sí» (auditoría 3-oct, COM01).
+   */
+  vigente?: () => string | null;
 }): Promise<string | null> {
   const r = respuestaAlBorrador(o.mensaje);
   o.quitar();
   if (!r) return `${o.canal}: había un borrador para ${o.para} esperando su «sí», pero siguió con otra cosa: ya no vale y no se mandó. Si lo quiere mandar, arma uno nuevo y vuelve a preguntar.`;
   if (r === 'no') return `${o.canal}: no se mandó; el borrador para ${o.para} quedó descartado. Díselo en pocas palabras.`;
-  if (!o.retener) return o.enviar();
+  const enviarSiVale = async () => {
+    const motivo = o.vigente?.();
+    if (motivo) return `${o.canal}: NO se mandó: ${motivo}. Díselo con honestidad; si lo quiere mandar, arma uno nuevo y vuelve a preguntar.`;
+    return o.enviar();
+  };
+  if (!o.retener) return enviarSiVale();
   o.retener.alDescartar(o.reponer);
   o.retener.hacer(() => {
-    void o.enviar().then(
+    void enviarSiVale().then(
       (hecho) => anotarAvisoEnvio(o.quien, o.ambito, hecho),
       (e) => anotarAvisoEnvio(o.quien, o.ambito, `${o.canal}: NO se pudo mandar (${String(e?.message || e).slice(0, 140)}). Díselo con honestidad.`)
     );
@@ -478,7 +510,11 @@ export async function resolverBorrador(quien: string, ambito: string, mensaje: s
     canal: 'CORREO',
     para: b.para.join(', '),
     quitar: () => BORRADORES.delete(k),
-    reponer: () => BORRADORES.set(k, b),
+    // Un turno de voz descartado lo repone, pero nunca encima de otro borrador que se armó después.
+    reponer: () => {
+      if (!BORRADORES.has(k) && !motivoBorrador(b, quien)) BORRADORES.set(k, b);
+    },
+    vigente: () => motivoBorrador(b, quien),
     enviar: () => mandarBorrador(quien, b),
   });
 }
@@ -486,6 +522,8 @@ export async function resolverBorrador(quien: string, ambito: string, mensaje: s
 async function mandarBorrador(quien: string, b: Borrador): Promise<string> {
   const c = (await cuentasDe(quien)).find((x) => x.id === b.cuentaId);
   if (!c) return 'CORREO: no lo mandé: esa cuenta ya no está conectada.';
+  // La misma cuenta que se le leyó («desde lola@…»): si cambió de dirección, no sale por otra.
+  if (normal(c.correo) !== normal(b.desde)) return `CORREO: no lo mandé: se armó desde ${b.desde} y esa cuenta ya no es la misma.`;
   try {
     const r2 = await buzon.mandar(quien, c, { para: b.para, cc: b.cc, asunto: b.asunto, texto: `${b.texto}${b.cita || ''}`, enRespuestaA: b.enRespuestaA, referencias: b.referencias });
     // El SMTP puede aceptar unas direcciones y rechazar otras sin fallar: se dice exactamente a quién llegó.

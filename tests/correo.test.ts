@@ -19,7 +19,7 @@ import { agregarCuenta, cifrar, cuentasDe, descifrar, _olvidarCuentas } from '..
 import { _redLocalEnPruebas, explicarFallo, probarCuenta, sinCitas, htmlATexto, limpiarCuerpo, enTrozos, decodificarParte, partesDe, extractoDe, type Envio, type Mensaje, type Resumen } from '../lib/correo/buzon';
 import tlsMod from 'node:tls';
 import nodemailer from 'nodemailer';
-import { borradorDe, correrCorreo, elegirCorreo, fechaHN, resolverBorrador, respuestaAlBorrador, _buzonDePrueba, _olvidarCorreo } from '../server/correo';
+import { avisosDeEnvio, borradorDe, correrCorreo, elegirCorreo, fechaHN, resolverBorrador, respuestaAlBorrador, _buzonDePrueba, _olvidarCorreo } from '../server/correo';
 import { ipPublicaDe } from '../lib/red-publica';
 import { extraerPedidoHerramienta, instruccionHarness } from '../lib/harness';
 import { tareaDe, _olvidarTareas } from '../lib/tarea-en-curso';
@@ -107,6 +107,58 @@ test('«sí» y «no» al borrador: solo frases cortas y claras', () => {
   for (const t of ['sí espera', 'ok cancela', 'dale, para', 'sí, cancélalo', 'listo, alto']) assert.equal(respuestaAlBorrador(t), null, t);
   for (const t of ['mándalo para el lunes', 'sí, envíalo para Juan']) assert.equal(respuestaAlBorrador(t), 'si', t);
   for (const t of ['sí pero cámbiale el saludo', 'qué hora es', 'sí, y además dime cuántos correos tengo sin leer hoy']) assert.equal(respuestaAlBorrador(t), null, t);
+});
+
+test('el borrador va atado a su dueño, su cuenta, su intento y su vencimiento: un «sí» no manda uno vencido ni ajeno (auditoría 3-oct, COM01)', async () => {
+  const mandados: Envio[] = [];
+  _buzonDePrueba({ mandar: async (_q, _c, e) => (mandados.push(e), { aceptados: e.para, rechazados: [], guardadoEnEnviados: false }) as any });
+  _olvidarCorreo();
+  _olvidarCuentas();
+  const realAhora = Date.now;
+  try {
+    await agregarCuenta('mia@x.hn', 'mia@prueba.hn', { nombre: 'Prueba', imap: { host: '127.0.0.1', puerto: 993, seguro: true }, smtp: { host: '127.0.0.1', puerto: 465, seguro: true }, auth: 'clave', usuario: 'correo', guardaEnviados: false }, 'clave');
+    const retener = () => {
+      const r: { hacer: (() => void) | null; descartar: (() => void) | null } = { hacer: null, descartar: null };
+      return { r, opciones: { hacer: (f: () => void) => (r.hacer = f), alDescartar: (f: () => void) => (r.descartar = f) } };
+    };
+    // Otra persona en el mismo teléfono: su «sí» no manda el borrador de Mía.
+    await correrCorreo('mia@x.hn', 'escribir beto@empresa.hn | Hola | ¿nos vemos?', 'tel');
+    assert.equal(await resolverBorrador('ana@x.hn', 'tel', 'sí'), null);
+    assert.ok(borradorDe('mia@x.hn', 'tel'));
+    // En la voz: dijo «sí», pero el turno se confirma cuando el borrador ya venció: no sale.
+    const v = retener();
+    assert.match((await resolverBorrador('mia@x.hn', 'tel', 'sí', v.opciones as any))!, /se manda a beto@empresa\.hn en cuanto termine este turno/);
+    Date.now = () => realAhora() + 16 * 60_000;
+    v.r.hacer!();
+    await new Promise((res) => setTimeout(res, 50));
+    Date.now = realAhora;
+    assert.equal(mandados.length, 0, 'vencido: no se manda');
+    assert.match(avisosDeEnvio('mia@x.hn', 'tel').join(' '), /NO se mandó: el borrador venció/);
+    // Dijo «sí» en un turno que luego se descartó, y mientras se armó OTRO borrador: el viejo no pisa al nuevo.
+    await correrCorreo('mia@x.hn', 'escribir beto@empresa.hn | Viejo | el de antes', 'tel');
+    const d = retener();
+    await resolverBorrador('mia@x.hn', 'tel', 'sí', d.opciones as any);
+    await correrCorreo('mia@x.hn', 'escribir carla@empresa.hn | Nuevo | el de ahora', 'tel');
+    d.r.descartar!();
+    assert.equal(borradorDe('mia@x.hn', 'tel')!.asunto, 'Nuevo', 'el que espera es el último que se le leyó');
+    // La cuenta con que se armó ya no está (cambió de cuenta): un «sí» no lo manda por otra.
+    _olvidarCuentas();
+    const { quitarCuenta } = await import('../lib/correo/cuentas');
+    for (const c of await cuentasDe('mia@x.hn')) await quitarCuenta('mia@x.hn', c.id);
+    await agregarCuenta('mia@x.hn', 'otra@prueba.hn', { nombre: 'Prueba', imap: { host: '127.0.0.1', puerto: 993, seguro: true }, smtp: { host: '127.0.0.1', puerto: 465, seguro: true }, auth: 'clave', usuario: 'correo', guardaEnviados: false }, 'clave');
+    assert.match((await resolverBorrador('mia@x.hn', 'tel', 'sí'))!, /NO lo mandé|no lo mandé/i);
+    assert.equal(mandados.length, 0);
+    // Lo legítimo sigue: un borrador nuevo con la cuenta de ahora y un «sí» claro sale.
+    await correrCorreo('mia@x.hn', 'escribir beto@empresa.hn | Hola | ya está', 'tel');
+    assert.match((await resolverBorrador('mia@x.hn', 'tel', 'sí, mándalo'))!, /CORREO ENVIADO desde otra@prueba\.hn a beto@empresa\.hn/);
+    assert.equal(mandados.length, 1);
+  } finally {
+    Date.now = realAhora;
+    _buzonDePrueba(null);
+    _olvidarCorreo();
+    const { quitarCuenta } = await import('../lib/correo/cuentas');
+    for (const c of await cuentasDe('mia@x.hn')) await quitarCuenta('mia@x.hn', c.id);
+  }
 });
 
 test('el cerebro pide «correo …» y la instrucción le dice que nada sale sin el sí', () => {

@@ -63,10 +63,14 @@ class Base(unittest.TestCase):
         self.hechas = []
         self.ejecutar_real = agente.ejecutar
         agente.ejecutar = lambda nombre, a, ancho, alto: self.hechas.append((nombre, dict(a))) or 'Done.'
+        # Sin las esperas a que la pantalla se asiente (no hay pantalla).
+        self.asentar_real = getattr(agente, 'asentar', None)
+        agente.asentar = lambda *a, **k: None
 
     def tearDown(self):
         agente.ESPERA_CONFIRMACION_S, agente.PAUSA_MAX_S = self.antes
         agente.ejecutar = self.ejecutar_real
+        agente.asentar = self.asentar_real
 
     def tarea(self, instruccion='Entra a sar.gob.hn y llena el formulario'):
         t = agente.Tarea(instruccion, 10)
@@ -85,11 +89,15 @@ class RevisarAccion(Base):
 
     def test_lo_normal_pasa_y_las_cookies_no_preguntan(self):
         t = self.tarea()
+        self.assertIsNone(agente.revisar_accion(t, 'type', {'text': 'Francisco Morazán', 'press_enter': True}))
         self.assertIsNone(agente.revisar_accion(t, 'click', {'element': 'Enlace «Tipo de cambio»'}))
         self.assertIsNone(agente.revisar_accion(t, 'click', {'element': 'Aceptar cookies'}))
-        self.assertIsNone(agente.revisar_accion(t, 'click', {'element': 'Accept all cookies and submit'}))
-        self.assertIsNone(agente.revisar_accion(t, 'type', {'text': 'Francisco Morazán', 'press_enter': True}))
         self.assertIsNone(agente.revisar_accion(t, 'scroll', {'direction': 'down'}))
+        self.assertEqual([p['accion'] for p in t.pasos], [], 'nada de esto pregunta')
+        # Auditoría 3-oct (PC02): lo sensible se mira ANTES que las cookies; antes «Accept all cookies and submit»
+        # pasaba sin preguntar por decir «cookies».
+        contestar_cuando_pregunte(t, False)
+        self.assertEqual(agente.revisar_accion(t, 'click', {'element': 'Accept all cookies and submit'}), agente.NO_DIJO)
 
     def test_lo_sensible_pide_el_si(self):
         t = self.tarea()
@@ -340,6 +348,303 @@ class CicloGratis(Base):
         agente.correr(t)
         self.assertEqual(t.estado, 'parada')
         self.assertEqual(self.hechas, [])
+
+
+class Pedido:
+    """Un Request de mentira para los endpoints (solo el cuerpo)."""
+    headers = {}
+
+    def __init__(self, cuerpo):
+        self.cuerpo = cuerpo
+
+    async def json(self):
+        return self.cuerpo
+
+
+class ConEndpoints(Base):
+    def setUp(self):
+        super().setUp()
+        self.exigir_real = agente.exigir
+        agente.exigir = lambda req: None
+
+    def tearDown(self):
+        agente.exigir = self.exigir_real
+        super().tearDown()
+
+
+class PermisoLigado(ConEndpoints):
+    """Auditoría 3-oct (PC01): el sí vale para lo que se preguntó, una vez, en esta época y por un rato."""
+
+    def test_un_si_para_iniciar_sesion_no_autoriza_borrar(self):
+        t = self.tarea()
+        contestar_cuando_pregunte(t, True)
+        self.assertTrue(t.pedir_confirmacion('¿Inicio sesión con la cuenta de prueba?'))
+        contestar_cuando_pregunte(t, False)
+        self.assertEqual(agente.revisar_accion(t, 'click', {'element': 'Botón «Eliminar cuenta»'}), agente.NO_DIJO,
+                         'aprobar el login no aprueba borrar: pregunta otra vez')
+        self.assertEqual(t.pasos[-2]['args']['pregunta'], 'Voy a tocar «Botón «Eliminar cuenta»». ¿Lo hago?')
+        # Y el permiso del login ya no está (se usa o se pierde).
+        contestar_cuando_pregunte(t, False)
+        self.assertEqual(agente.revisar_accion(t, 'click', {'element': 'Iniciar sesión'}), agente.NO_DIJO)
+
+    def test_el_si_vale_para_esa_clase_una_vez_y_vence(self):
+        t = self.tarea()
+        contestar_cuando_pregunte(t, True)
+        t.pedir_confirmacion('¿Inicio sesión?')
+        self.assertIsNone(agente.revisar_accion(t, 'click', {'element': 'Botón Iniciar sesión'}), 'la que se preguntó')
+        contestar_cuando_pregunte(t, False)
+        self.assertEqual(agente.revisar_accion(t, 'click', {'element': 'Botón Iniciar sesión'}), agente.NO_DIJO, 'una sola vez')
+        antes = agente.PERMISO_VALE_S
+        agente.PERMISO_VALE_S = 0.05
+        try:
+            contestar_cuando_pregunte(t, True)
+            t.pedir_confirmacion('¿Envío el formulario?')
+            time.sleep(0.1)
+            contestar_cuando_pregunte(t, False)
+            self.assertEqual(agente.revisar_accion(t, 'click', {'element': 'Enviar'}), agente.NO_DIJO, 'vencido: pregunta otra vez')
+        finally:
+            agente.PERMISO_VALE_S = antes
+
+    def test_el_permiso_muere_si_la_pausan_o_toman_el_control(self):
+        t = self.tarea()
+        contestar_cuando_pregunte(t, True)
+        t.pedir_confirmacion('¿Publico el comentario?')
+        t.avisar(pausa=True)
+        t.avisar(pausa=False)
+        contestar_cuando_pregunte(t, False)
+        self.assertEqual(agente.revisar_accion(t, 'click', {'element': 'Publicar'}), agente.NO_DIJO, 'otra época: otro permiso')
+
+    def test_una_respuesta_vieja_no_contesta_la_pregunta_nueva(self):
+        import asyncio
+        t = self.tarea()
+        agente.TAREAS[t.id] = t
+        resultado = {}
+        try:
+            def esperar_pregunta(anterior=None):
+                fin = time.time() + 2
+                while time.time() < fin and (not t.pregunta_id or t.pregunta_id == anterior):
+                    time.sleep(0.01)
+                return t.pregunta_id
+
+            h = threading.Thread(target=lambda: resultado.update(a=t.pedir_confirmacion('¿Inicio sesión?')), daemon=True)
+            h.start()
+            pa = esperar_pregunta()
+            self.assertEqual(t.resumen()['pregunta_id'], pa, 'la app y el servidor ven qué pregunta es')
+            self.assertEqual(asyncio.run(agente.confirmar(t.id, Pedido({'si': True, 'pregunta_id': pa}))), {'id': t.id, 'si': True})
+            h.join(1)
+            self.assertTrue(resultado['a'])
+            h = threading.Thread(target=lambda: resultado.update(b=t.pedir_confirmacion('¿Borro el archivo?')), daemon=True)
+            h.start()
+            pb = esperar_pregunta(pa)
+            self.assertNotEqual(pa, pb)
+            # El «sí» que iba para la primera llega tarde: no contesta la segunda.
+            with self.assertRaises(agente.HTTPException) as e:
+                asyncio.run(agente.confirmar(t.id, Pedido({'si': True, 'pregunta_id': pa})))
+            self.assertEqual(e.exception.status_code, 409)
+            with self.assertRaises(agente.HTTPException):
+                asyncio.run(agente.confirmar(t.id, Pedido({'si': True})))  # sin decir a cuál: tampoco
+            self.assertFalse(t.contestar(pa, True))
+            self.assertEqual(t.estado_visible(), 'confirmar', 'la segunda sigue esperando')
+            self.assertTrue(t.contestar(pb, False))
+            h.join(1)
+            self.assertFalse(resultado['b'])
+        finally:
+            agente.TAREAS.pop(t.id, None)
+
+
+class GuardasDeEfecto(Base):
+    """Auditoría 3-oct (PC02): lo que hace una tecla o un botón genérico no lo dice su nombre."""
+
+    def test_tab_y_enter_no_se_cuelan(self):
+        t = self.tarea()
+        self.assertIsNone(agente.revisar_accion(t, 'click', {'element': 'Campo de búsqueda'}))
+        self.assertIsNone(agente.revisar_accion(t, 'key', {'keys': 'tab'}))
+        self.assertEqual(agente.revisar_accion(t, 'key', {'keys': 'Return'}), agente.NO_FOCO, 'tras Tab no se sabe qué hay enfocado')
+        self.assertEqual(agente.revisar_accion(t, 'key', {'keys': 'space'}), agente.NO_FOCO)
+        self.assertEqual(agente.revisar_accion(t, 'type', {'text': 'hola', 'press_enter': True}), agente.NO_FOCO)
+        # Tocar el elemento de verdad lo vuelve a saber.
+        self.assertIsNone(agente.revisar_accion(t, 'click', {'element': 'Campo de búsqueda'}))
+        self.assertIsNone(agente.revisar_accion(t, 'key', {'keys': 'enter'}))
+
+    def test_espacio_y_salto_de_linea_valen_como_enter(self):
+        t = self.tarea()
+        t.ultimo_elemento = 'Botón Eliminar cuenta'
+        contestar_cuando_pregunte(t, False)
+        self.assertEqual(agente.revisar_accion(t, 'key', {'keys': 'space'}), agente.NO_DIJO, 'Espacio activa el botón enfocado')
+        contestar_cuando_pregunte(t, False)
+        self.assertEqual(agente.revisar_accion(t, 'type', {'text': 'listo\n'}), agente.NO_DIJO, 'un salto de línea es un Enter')
+        t.ultimo_elemento = 'Botón Comprar'
+        self.assertEqual(agente.revisar_accion(t, 'key', {'keys': 'space'}), agente.NO_PAGO)
+
+    def test_un_boton_generico_pregunta(self):
+        t = self.tarea('Go to example.com and tell me what is on the page')
+        for elemento in ('Blue «Continue» button', 'Botón «Aceptar» del diálogo', 'OK', 'Botón «Sí»'):
+            contestar_cuando_pregunte(t, False)
+            self.assertEqual(agente.revisar_accion(t, 'click', {'element': elemento}), agente.NO_DIJO, elemento)
+        # Lo de leer sigue sin preguntar.
+        for elemento in ('Enlace «Noticias»', 'Siguiente página de resultados', 'Campo de búsqueda'):
+            self.assertIsNone(agente.revisar_accion(t, 'click', {'element': elemento}), elemento)
+
+    def test_cookies_legitimas_pasan_y_mezcladas_no(self):
+        t = self.tarea()
+        for elemento in ('Aceptar cookies', 'Accept all cookies', 'Green «Accept all cookies» button at the bottom of the banner',
+                         'Confirm my cookie choices', 'Rechazar las cookies opcionales', 'Continue without accepting cookies'):
+            self.assertIsNone(agente.revisar_accion(t, 'click', {'element': elemento}), elemento)
+        self.assertEqual([p['accion'] for p in t.pasos], [], 'ninguna preguntó')
+        for elemento in ('Aceptar cookies y enviar', 'Accept cookies and sign in', 'Cookies: delete my account'):
+            contestar_cuando_pregunte(t, False)
+            self.assertEqual(agente.revisar_accion(t, 'click', {'element': elemento}), agente.NO_DIJO, elemento)
+        self.assertEqual(agente.revisar_accion(t, 'click', {'element': 'Aceptar cookies y pagar'}), agente.NO_PAGO)
+
+    def test_enter_en_la_contrasena_es_iniciar_sesion(self):
+        t = self.tarea()
+        self.assertIsNone(agente.revisar_accion(t, 'click', {'element': 'Campo «Contraseña»'}))
+        contestar_cuando_pregunte(t, False)
+        self.assertEqual(agente.revisar_accion(t, 'type', {'text': 'x', 'press_enter': True}), agente.NO_DIJO)
+
+
+class Carreras(Base):
+    """Auditoría 3-oct (PC03): la persona y el modelo nunca tocan a la vez; lo invalidado no toca."""
+
+    def test_devolver_espera_que_termine_lo_que_hace_la_persona(self):
+        t = self.tarea()
+        t.avisar(control=True)
+        t.en_espera = True
+        suelta = threading.Event()
+        log = []
+
+        def lento(nombre, a, ancho, alto):
+            log.append(f'persona-{nombre}')
+            suelta.wait(2)
+            log.append('persona-termina')
+            return 'Done.'
+        agente.ejecutar = lento
+        threading.Thread(target=lambda: agente.accion_persona(t, {'tipo': 'escribir', 'texto': 'mi clave'}), daemon=True).start()
+        fin = time.time() + 2
+        while not log and time.time() < fin:
+            time.sleep(0.01)
+        epoca_vieja = t.epoca
+        h = threading.Thread(target=lambda: (agente.cambiar_control(t, False), log.append('devuelta')), daemon=True)
+        h.start()
+        time.sleep(0.15)
+        self.assertNotIn('devuelta', log, 'devolver espera a que termine de escribir')
+        self.assertTrue(t.control)
+        suelta.set()
+        h.join(2)
+        self.assertEqual(log, ['persona-type', 'persona-termina', 'devuelta'])
+        self.assertFalse(t.control)
+        # Lo que el modelo decidió antes de devolver (otra época) no toca; lo de ahora, sí.
+        agente.ejecutar = lambda nombre, a, ancho, alto: log.append(f'modelo-{nombre}') or 'Done.'
+        self.assertEqual(agente.efecto_modelo(t, epoca_vieja, lambda: agente.ejecutar('click', {}, 1, 1)), (agente.NO_PAUSA, False))
+        self.assertEqual(agente.efecto_modelo(t, t.epoca, lambda: agente.ejecutar('click', {}, 1, 1)), ('Done.', True))
+        self.assertEqual(log[-1], 'modelo-click')
+
+    def test_parar_entre_la_revision_y_el_efecto_no_deja_el_clic(self):
+        t, _ = CicloGratis.correr_con(self, [('click', {'element': 'Enlace «Noticias»', 'x': 10, 'y': 10})])
+        revisar = agente.revisar_accion
+
+        def y_paran(t2, nombre, a):
+            r = revisar(t2, nombre, a)
+            t2.avisar(parar=True)  # Detener llega justo después de la revisión
+            return r
+        agente.revisar_accion = y_paran
+        try:
+            agente.correr(t)
+        finally:
+            agente.revisar_accion = revisar
+        self.assertEqual(t.estado, 'parada')
+        self.assertEqual(self.hechas, [], 'la última revisión va pegada al efecto')
+        self.assertIs(t.pasos[-1].get('hecho'), False, 'el paso dice que no se hizo')
+
+    def test_pausar_y_seguir_mientras_piensa_no_deja_la_jugada(self):
+        t, vistos = CicloGratis.correr_con(self, [('click', {'element': 'Enlace «Noticias»', 'x': 10, 'y': 10}),
+                                                  ('answer', {'content': 'Listo.'})])
+        crear = agente.cliente.chat.completions.create
+        veces = []
+
+        def pensando(**k):
+            r = crear(**k)
+            if not veces:
+                t.avisar(pausa=True)   # pausa y sigue mientras el modelo pensaba: miraba otra pantalla
+                t.avisar(pausa=False)
+            veces.append(1)
+            return r
+        agente.cliente.chat.completions.create = pensando
+        agente.correr(t)
+        self.assertEqual(t.estado, 'hecha')
+        self.assertEqual(self.hechas, [], 'la jugada de antes de la pausa no se hizo')
+        self.assertEqual([m for m in vistos[1] if m.get('role') == 'tool'][-1]['content'], agente.NO_PAUSA)
+
+    def test_claude_pausado_mientras_piensa_no_hace_nada(self):
+        t, _ = CicloGratis.correr_con(self, [])
+        t.motor = 'claude'
+        hechas = []
+        antes = (agente.accion_claude, getattr(agente.httpx, 'Client', None))
+        agente.accion_claude = lambda nombre, a: hechas.append(nombre) or 'OK'
+
+        class Cliente:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def post(self, *a, **k):
+                t.avisar(pausa=True)  # la pausan mientras Claude piensa
+                threading.Timer(0.1, lambda: t.avisar(parar=True)).start()
+                bloques = [{'type': 'tool_use', 'id': 'u1', 'name': 'left_click', 'toolset_name': 'computer', 'input': {'coordinate': [1, 1]}},
+                           {'type': 'tool_use', 'id': 'u2', 'name': 'type', 'toolset_name': 'computer', 'input': {'text': 'hola'}}]
+                return types.SimpleNamespace(status_code=200, json=lambda: {'content': bloques}, text='')
+        agente.httpx.Client = lambda **k: Cliente()
+        try:
+            agente.correr(t)
+        finally:
+            agente.accion_claude = antes[0]
+            if antes[1] is None:
+                del agente.httpx.Client
+            else:
+                agente.httpx.Client = antes[1]
+        self.assertEqual(t.estado, 'parada')
+        self.assertEqual(hechas, [], 'en pausa, Claude no toca aunque ya lo hubiera decidido')
+
+
+class CrearUnaVez(ConEndpoints):
+    """Auditoría 3-oct (PC04): el mismo pedido repetido (respuesta perdida, reintento) es UNA tarea."""
+
+    def setUp(self):
+        super().setUp()
+        self.lanzar_real = agente.lanzar
+        self.lanzadas = []
+        agente.lanzar = lambda t: self.lanzadas.append(t.id)
+
+    def tearDown(self):
+        agente.lanzar = self.lanzar_real
+        for i in self.lanzadas:
+            agente.TAREAS.pop(i, None)
+        agente.PEDIDOS.clear()
+        super().tearDown()
+
+    def test_el_mismo_pedido_da_la_misma_tarea(self):
+        import asyncio
+        cuerpo = {'instruccion': 'Entra a bch.hn y dime el dólar', 'dueno': 'huella-a', 'request_id': 'pedido-123'}
+        a = asyncio.run(agente.crear(Pedido(dict(cuerpo))))
+        b = asyncio.run(agente.crear(Pedido(dict(cuerpo))))
+        self.assertEqual(a['id'], b['id'])
+        self.assertTrue(b.get('repetida'))
+        self.assertEqual(self.lanzadas, [a['id']], 'se lanzó una sola vez')
+        # Otro dueño con el mismo id de pedido: otra tarea (la llave lleva al dueño).
+        c = asyncio.run(agente.crear(Pedido({**cuerpo, 'dueno': 'huella-b'})))
+        self.assertNotEqual(c['id'], a['id'])
+        # Sin request_id (servidor de antes): como siempre, cada pedido es una tarea.
+        d = asyncio.run(agente.crear(Pedido({'instruccion': 'Entra a x.hn y lee', 'dueno': 'huella-a'})))
+        e = asyncio.run(agente.crear(Pedido({'instruccion': 'Entra a x.hn y lee', 'dueno': 'huella-a'})))
+        self.assertNotEqual(d['id'], e['id'])
+        # Si la tarea ya se olvidó, repetir el pedido no la vuelve a lanzar a ciegas.
+        agente.TAREAS.pop(a['id'], None)
+        with self.assertRaises(agente.HTTPException) as err:
+            asyncio.run(agente.crear(Pedido(dict(cuerpo))))
+        self.assertEqual(err.exception.status_code, 409)
+        self.assertEqual(len(self.lanzadas), 4)
 
 
 if __name__ == '__main__':

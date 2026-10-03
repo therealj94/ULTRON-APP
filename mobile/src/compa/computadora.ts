@@ -19,8 +19,9 @@
  */
 export type EstadoTareaPc = 'en_cola' | 'trabajando' | 'pausada' | 'confirmar' | 'control' | 'hecha' | 'parada' | 'sin_pasos' | 'fallo';
 
-export type PasoPc = { n: number; t: number; accion: string; texto?: string; miniatura?: string | null };
-export type TareaPc = { id: string; instruccion: string; estado: EstadoTareaPc; pasos: PasoPc[]; respuesta: string | null; error: string | null; segundos: number; pregunta?: string | null };
+/** `hecho`: false si la computadora dice que ese paso no se hizo (lo negó, la pararon). */
+export type PasoPc = { n: number; t: number; accion: string; texto?: string; miniatura?: string | null; hecho?: boolean };
+export type TareaPc = { id: string; instruccion: string; estado: EstadoTareaPc; pasos: PasoPc[]; respuesta: string | null; error: string | null; segundos: number; pregunta?: string | null; pregunta_id?: string | null };
 export type ResumenPc = { id: string; estado: EstadoTareaPc; pasos: number; instruccion: string; ultimo: string | null };
 /** Una misión de su historial (server/computadora.ts, historialDe). */
 export type ItemHistorialPc = { id: string; tareaId: string; instruccion: string; estado: EstadoTareaPc; ok: boolean | null; inicio: number; segundos: number; resultado: string | null };
@@ -36,6 +37,8 @@ export type EstadoPc = {
   /** Lo que sabe su servicio además de detener (un servicio viejo: nada). */
   capacidades?: CapacidadPc[];
   historial?: ItemHistorialPc[];
+  /** La versión del estado (crece con cada respuesta del servidor): la vieja que llega tarde no se pinta. */
+  version?: number;
 };
 /** Cómo va cada paso del plan, y la tarjeta del final (server/computadora.ts, vistaMision). */
 export type EstadoPlanPc = 'hecho' | 'actual' | 'espera' | 'pendiente' | 'fallo';
@@ -54,15 +57,79 @@ export type FinalPc = {
 export type MisionPc = {
   id: string;
   instruccion: string;
-  plan: { texto: string; estado: EstadoPlanPc }[];
+  /** Un paso sale «hecho» solo con su `recibo` (el paso de la computadora que lo hizo). */
+  plan: { texto: string; estado: EstadoPlanPc; recibo?: { tarea: string; n: number } }[];
   inicio: number;
   transcurrido: number;
   vuelta: number;
   tareaId: string;
   pregunta: string | null;
+  /** Cuál pregunta es: el sí la nombra (si ya cambió, el servidor no la contesta). */
+  preguntaId?: string | null;
   final: FinalPc | null;
   puedeSeguir: boolean;
+  version?: number;
 };
+
+/**
+ * Qué tarea mira la hoja y qué respuesta todavía vale (auditoría 3-oct, PC05: un GET viejo volvía a poner la
+ * tarea de antes). Elegir otra tarea sube la ÉPOCA de la vista; una respuesta pedida en otra época, de otra
+ * tarea o con una versión menor que la última vista de esa tarea no se pinta. El estado general solo cambia la
+ * tarea elegida si nadie eligió otra mientras iba.
+ */
+export class VistaPc {
+  epoca = 0;
+  id: string | null = null;
+  private versiones = new Map<string, number>();
+  private versionEstado = 0;
+
+  /** Otra tarea: true si de verdad cambió (y con ella la época). */
+  elegir(id: string | null): boolean {
+    if (id === this.id) return false;
+    this.id = id;
+    this.epoca += 1;
+    return true;
+  }
+
+  /** Lo que se guarda al pedir, para saber al volver si la respuesta sigue valiendo. */
+  boleto(): { epoca: number; id: string | null } {
+    return { epoca: this.epoca, id: this.id };
+  }
+
+  /** ¿Se pinta la respuesta de la tarea `id` (con su `version`, si el servidor la manda) pedida con `b`? */
+  acepta(b: { epoca: number }, id: string, version?: number): boolean {
+    if (b.epoca !== this.epoca || id !== this.id) return false;
+    if (typeof version === 'number' && Number.isFinite(version)) {
+      if (version < (this.versiones.get(id) ?? 0)) return false;
+      this.versiones.set(id, version);
+    }
+    return true;
+  }
+
+  /** El estado general (`/api/computadora`) puede elegir otra tarea solo si la vista no cambió mientras iba. */
+  puedeCambiar(b: { epoca: number }): boolean {
+    return b.epoca === this.epoca;
+  }
+
+  /** El estado general, por su versión: el viejo que llega tarde no pisa al nuevo. */
+  aceptaEstado(version?: number): boolean {
+    if (typeof version !== 'number' || !Number.isFinite(version)) return true;
+    if (version < this.versionEstado) return false;
+    this.versionEstado = version;
+    return true;
+  }
+}
+
+/** El cuerpo del sí o el no: con la pregunta que vio en la pantalla (la de la misión; si no, la de la tarea). */
+export function respuestaPc(si: boolean, mision: Pick<MisionPc, 'preguntaId'> | null | undefined, tarea: Pick<TareaPc, 'pregunta_id'> | null | undefined): { si: boolean; preguntaId?: string } {
+  const preguntaId = mision?.preguntaId || tarea?.pregunta_id || null;
+  return preguntaId ? { si, preguntaId } : { si };
+}
+
+/** El id de un encargo: el mismo si se reintenta, para que el servidor no lance dos misiones (auditoría 3-oct, PC04). */
+export function nuevoPedidoPc(): string {
+  return `pc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
 
 /** Viva: no terminó (trabajando, en fila, en pausa, esperando tu sí o contigo al mando). */
 export const trabajando = (e: EstadoTareaPc | null | undefined) => e === 'en_cola' || e === 'trabajando' || e === 'pausada' || e === 'confirmar' || e === 'control';
