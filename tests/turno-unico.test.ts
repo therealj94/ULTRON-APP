@@ -1,7 +1,29 @@
 /** Una frase, un turno (server/turno-unico.ts): los reintentos de la app no corren otro turno. */
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { claveTurno, idTurnoValido, reclamarTurno, _olvidarTurnos, _cuantosTurnos, MAX_TURNOS, type TurnoGuardado } from '../server/turno-unico';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {
+  claveTurno,
+  crearTurnosUnicos,
+  efectoDelTurno,
+  enTurnoUnico,
+  idTurnoValido,
+  reclamarTurno,
+  _olvidarTurnos,
+  _cuantosTurnos,
+  MAX_TURNOS,
+  type TurnoGuardado,
+} from '../server/turno-unico';
+import { almacenEnMemoria, almacenS3, claveDe, type RegistroLease } from '../lib/durable';
+import { conS3Falso } from './s3-condicional-falso';
+
+// Lo durable de los turnos va a una carpeta de prueba (sin S3 configurado, el disco local).
+const dirDurable = fs.mkdtempSync(path.join(os.tmpdir(), 'turno-durable-'));
+process.env.ULTRON_DURABLE_DIR = dirDurable;
+process.env.ULTRON_MEMORIA_BUCKET = '';
+after(() => fs.rmSync(dirDurable, { recursive: true, force: true }));
 
 const respuesta = (reply = 'Listo, ya está.'): TurnoGuardado => ({ reply, voz: reply, emocion: 'neutral', via: 'qwen', herramientas: [], acciones: [] });
 
@@ -104,4 +126,178 @@ test('tamaño acotado', async () => {
     if ('terminar' in r) r.terminar(respuesta());
   }
   assert.ok(_cuantosTurnos() <= MAX_TURNOS);
+});
+
+/* ------------------------------------------------------------------ AUR06: reinicio y otra réplica */
+
+test('AUR06 repro: tras un reinicio (el Map se pierde), el mismo idTurno NO corre otra vez mientras el primero sigue', async () => {
+  _olvidarTurnos();
+  const clave = claveTurno('majo@orden.org', 'reinicio-0001');
+  const primero = await reclamarTurno(clave);
+  assert.ok('terminar' in primero, 'el primero corre');
+  // «Reinicio»: el proceso nuevo no tiene el Map. Antes, aquí el reintento recibía `terminar` y corría el turno dos veces.
+  _olvidarTurnos();
+  const segundo = await reclamarTurno(clave, 40);
+  assert.ok(!('terminar' in segundo), 'el reintento tras el reinicio no corre otro turno');
+});
+
+test('AUR06 repro: un turno que ya contestó, tras un reinicio, el reintento recibe la misma respuesta', async () => {
+  _olvidarTurnos();
+  const clave = claveTurno('majo@orden.org', 'reinicio-0002');
+  const primero = await reclamarTurno(clave);
+  assert.ok('terminar' in primero);
+  await primero.terminar(respuesta('Le escribí a Beto.'));
+  _olvidarTurnos();
+  const segundo = await reclamarTurno(clave, 40);
+  assert.ok('previo' in segundo, 'repite, no corre');
+  assert.equal(segundo.previo.reply, 'Le escribí a Beto.');
+});
+
+/** Dos «réplicas» (o un proceso viejo y uno nuevo) sobre el mismo almacén, con un reloj que se puede adelantar (`reloj.t += ms`). */
+function replicas(almacen = almacenEnMemoria() as ReturnType<typeof almacenEnMemoria> | ReturnType<typeof almacenS3>) {
+  const reloj = { t: 0 };
+  const cfg = { almacen: () => almacen, leaseMs: 1_000, renovarMs: 60_000, sondeoMs: 5, ahora: () => Date.now() + reloj.t };
+  return { reloj, A: crearTurnosUnicos({ ...cfg, proceso: 'replica-A' }), B: crearTurnosUnicos({ ...cfg, proceso: 'replica-B' }), almacen };
+}
+
+test('AUR06: dos réplicas (S3 con If-None-Match) reciben el mismo idTurno a la vez: un solo turno corre; la otra repite su respuesta', async () => {
+  await conS3Falso(async () => {
+    const { A, B } = replicas(almacenS3());
+    const clave = claveTurno('majo@orden.org', 'replica-0001');
+    const [ra, rb] = await Promise.all([A.reclamarTurno(clave, 2_000), B.reclamarTurno(clave, 2_000)].map(async (p, i) => {
+      const r = await p;
+      // El que gana corre «el turno» y contesta después de un rato.
+      if ('terminar' in r) setTimeout(() => void r.terminar(respuesta(`Lo hizo la réplica ${i ? 'B' : 'A'}.`)), 30);
+      return r;
+    }));
+    const corrieron = [ra, rb].filter((r) => 'terminar' in r).length;
+    assert.equal(corrieron, 1, 'solo una réplica corre el turno');
+    const otra = [ra, rb].find((r) => !('terminar' in r))!;
+    assert.ok('previo' in otra, 'la otra esperó (sondeando el registro) y repite la respuesta');
+    assert.match(otra.previo.reply, /^Lo hizo la réplica [AB]\.$/);
+  });
+});
+
+test('AUR06: el dueño muere SIN haber despachado nada: al vencer su lease, el siguiente corre el turno (es seguro)', async () => {
+  const { A, B, reloj } = replicas();
+  const clave = claveTurno('majo@orden.org', 'muere-sin-efecto');
+  const a = await A.reclamarTurno(clave);
+  assert.ok('terminar' in a);
+  A.olvidar(); // se murió: no renueva
+  const antes = await B.reclamarTurno(clave, 20);
+  assert.ok('enCurso' in antes, 'mientras su lease vale, nadie más lo corre');
+  reloj.t += 1_500;
+  const b = await B.reclamarTurno(clave, 20);
+  assert.ok('terminar' in b, 'vencido y sin efectos: se puede correr otra vez');
+  await b.terminar(respuesta('Ahora sí.'));
+  // El viejo que despierta tarde ya no pisa nada: su efecto y su final no valen.
+  assert.equal(await a.terminar.efecto('correo'), false);
+  await a.terminar(respuesta('Respuesta vieja.'));
+  const c = await A.reclamarTurno(clave, 20);
+  assert.ok('previo' in c && c.previo.reply === 'Ahora sí.');
+});
+
+test('AUR06: el dueño muere DESPUÉS de despachar un efecto: el siguiente NO lo re-ejecuta, recibe «desconocido»', async () => {
+  const { A, B, reloj } = replicas();
+  const clave = claveTurno('majo@orden.org', 'muere-con-efecto');
+  const a = await A.reclamarTurno(clave);
+  assert.ok('terminar' in a);
+  assert.equal(await a.terminar.efecto('computadora'), true, 'quedó persistido antes de actuar');
+  A.olvidar();
+  reloj.t += 1_500;
+  const b = await B.reclamarTurno(clave, 20);
+  assert.ok('desconocido' in b, 'no se corre a ciegas');
+  assert.deepEqual(b.desconocido.efectos, ['computadora']);
+  const otra = await B.reclamarTurno(clave, 20);
+  assert.ok('desconocido' in otra, 'se queda incierto: tampoco el siguiente reintento lo corre');
+});
+
+test('AUR06 fencing: si otro tomó el turno (el dueño se colgó y su lease venció), el viejo no despacha efectos', async () => {
+  const { A, B, reloj } = replicas();
+  const clave = claveTurno('majo@orden.org', 'colgado-0001');
+  const a = await A.reclamarTurno(clave);
+  assert.ok('terminar' in a);
+  reloj.t += 1_500; // A sigue vivo pero se colgó sin renovar
+  const b = await B.reclamarTurno(clave, 20);
+  assert.ok('terminar' in b, 'B lo toma (A no había despachado nada)');
+  assert.equal(await a.terminar.efecto('whatsapp'), false, 'el token viejo ya no inicia operaciones');
+  assert.equal(await b.terminar.efecto('whatsapp'), true);
+});
+
+test('AUR06: el lease se renueva mientras el turno corre (un turno largo no se le escapa a su dueño)', async () => {
+  const almacen = almacenEnMemoria();
+  const T = crearTurnosUnicos({ almacen: () => almacen, leaseMs: 200, renovarMs: 20, sondeoMs: 5, proceso: 'largo' });
+  const otro = crearTurnosUnicos({ almacen: () => almacen, leaseMs: 200, renovarMs: 20, sondeoMs: 5, proceso: 'otro' });
+  const clave = claveTurno('majo@orden.org', 'largo-00001');
+  const a = await T.reclamarTurno(clave);
+  assert.ok('terminar' in a);
+  await new Promise((r) => setTimeout(r, 450));
+  const b = await otro.reclamarTurno(clave, 30);
+  assert.ok('enCurso' in b, 'pasado el lease original, sigue siendo del primero (lo renovó)');
+  await a.terminar(respuesta('Terminé el largo.'));
+  const c = await otro.reclamarTurno(clave, 30);
+  assert.ok('previo' in c && c.previo.reply === 'Terminé el largo.');
+  T.olvidar();
+  otro.olvidar();
+});
+
+test('AUR06: terminar sin respuesta libera el turno también para otra réplica', async () => {
+  const { A, B } = replicas();
+  const clave = claveTurno('majo@orden.org', 'libre-00001');
+  const a = await A.reclamarTurno(clave);
+  assert.ok('terminar' in a);
+  await a.terminar(null);
+  const b = await B.reclamarTurno(clave, 20);
+  assert.ok('terminar' in b, 'para eso reintenta');
+});
+
+test('AUR06: claves por persona: el mismo idTurno de otra persona es otro turno, también en el almacén', async () => {
+  const { A, B } = replicas();
+  const a = await A.reclamarTurno(claveTurno('a@x.org', 'compartido-1'));
+  const b = await B.reclamarTurno(claveTurno('b@x.org', 'compartido-1'));
+  assert.ok('terminar' in a && 'terminar' in b);
+});
+
+test('AUR06: con el almacén caído al reclamar, el turno corre como antes (solo el cerrojo del proceso)', async () => {
+  await conS3Falso(async (s3) => {
+    s3.escribe.ok = false;
+    const T = crearTurnosUnicos({ almacen: () => almacenS3(), proceso: 'caido' });
+    const clave = claveTurno('majo@orden.org', 'caido-00001');
+    const a = await T.reclamarTurno(clave);
+    assert.ok('terminar' in a && a.terminar.durable === false);
+    const b = await T.reclamarTurno(clave, 20);
+    assert.ok('enCurso' in b, 'el cerrojo en vivo sigue funcionando');
+  });
+});
+
+test('AUR06: efectoDelTurno ve el turno en curso (AsyncLocalStorage); fuera de un turno con id, siempre true', async () => {
+  const { A, B, reloj } = replicas();
+  assert.equal(await efectoDelTurno('web'), true);
+  const clave = claveTurno('majo@orden.org', 'contexto-001');
+  const a = await A.reclamarTurno(clave);
+  assert.ok('terminar' in a);
+  const dentro = await enTurnoUnico(a.terminar, async () => {
+    await new Promise((r) => setTimeout(r, 1));
+    return efectoDelTurno('mision');
+  });
+  assert.equal(dentro, true);
+  A.olvidar();
+  reloj.t += 1_500;
+  const b = await B.reclamarTurno(clave, 20);
+  assert.ok('desconocido' in b && b.desconocido.efectos[0] === 'mision', 'lo despachado desde dentro quedó persistido');
+});
+
+test('AUR06: lo durable del turno va bajo turnos/<huella>/<idTurno> (sin el correo) y lleva token de fencing', async () => {
+  const { A, almacen } = replicas();
+  const clave = claveTurno('Majo@Orden.org', 'forma-00001');
+  const a = await A.reclamarTurno(clave);
+  assert.ok('terminar' in a);
+  const k = claveDe('turnos', 'majo@orden.org', 'forma-00001');
+  const guardado = JSON.parse((almacen as ReturnType<typeof almacenEnMemoria>).objetos.get(k)!);
+  assert.equal(guardado.estado, 'en-curso');
+  assert.equal(guardado.token, 1);
+  assert.equal(guardado.titular, 'replica-A');
+  assert.ok(!k.includes('majo'));
+  const _tipo: RegistroLease | null = null;
+  void _tipo;
 });

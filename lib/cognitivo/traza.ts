@@ -28,6 +28,8 @@ export type Paso = {
   ronda?: number;
   /** Cómo terminó (auditoría 3-oct, EXEC03): `unknown` = pudo haber hecho su efecto; `ok` es solo succeeded. */
   estado?: 'succeeded' | 'failed' | 'unknown';
+  /** Su recibo (AUR07), sin la referencia (puede ser un número o una dirección): qué efecto, de quién, por qué no. */
+  recibo?: { efecto?: string; proveedor?: string; codigo?: string; durable?: boolean; incompleto?: boolean };
 };
 
 export type DecisionRegistrada = {

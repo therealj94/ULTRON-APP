@@ -21,6 +21,7 @@
  */
 import { agregarAbierto, cerrar as cerrarAbierto } from './abiertos';
 import { clavePersona, crearCajones, linea, nuevoId, palabras, plegar } from './cerebro-comun';
+import { exito, fallo, type ResultadoHerramienta } from './recibo-herramienta';
 
 export type TipoTarea = 'correo' | 'whatsapp' | 'otra';
 export type EstadoPaso = 'pendiente' | 'hecho' | 'saltado';
@@ -533,10 +534,18 @@ export function bloqueTarea(persona: string, ambito = '', compacto = false): str
 /** Su instrucción para el harness (va con sesión): vive en lib/harness.ts, como la del círculo. */
 export { INSTRUCCION_TAREA } from './harness';
 
-/** El runner del harness: «empezar t | p1 | p2», «hecho 3», «saltar 3», «pausar», «terminar», «descartar», «retomar», «ver». */
+/** El runner del harness: «empezar t | p1 | p2», «hecho 3», «saltar 3», «pausar», «terminar», «descartar», «retomar», «ver». Solo el texto. */
 export async function correrTarea(persona: string, ambito: string, arg: string): Promise<string> {
+  return (await correrTareaConEstado(persona, ambito, arg)).texto;
+}
+
+/** Lo que cambia la tarea queda en AURA (no sale a nadie). */
+const CAMBIO = { efecto: 'guardado' as const, proveedor: 'tarea' };
+
+/** El runner con su estado y su recibo (AUR07): lo que no se pudo es `failed` con su código; un cambio, `guardado`. */
+export async function correrTareaConEstado(persona: string, ambito: string, arg: string): Promise<ResultadoHerramienta> {
   const clave = clavePersona(persona);
-  if (!clave) return 'TAREA: solo con sesión. Pídele que entre con su cuenta.';
+  if (!clave) return fallo('TAREA: solo con sesión. Pídele que entre con su cuenta.', 'sin-sesion');
   await precargarTareas(persona);
   const [cabeza, ...partes] = String(arg || '').split('|').map((x) => x.trim());
   const m = cabeza.match(/^(\S+)\s*(.*)$/s);
@@ -545,32 +554,35 @@ export async function correrTarea(persona: string, ambito: string, arg: string):
   const t = tareaDe(persona, ambito);
   if (/^(empezar|empieza|crear|crea|nueva|iniciar)$/.test(verbo)) {
     const pasos = partes.flatMap((p) => p.split(/\s*;\s*/)).filter(Boolean);
-    if (!resto || pasos.length < 2) return 'TAREA: para empezarla hacen falta qué es y al menos dos pasos («tarea empezar <qué> | <paso 1> | <paso 2>»).';
+    if (!resto || pasos.length < 2) return fallo('TAREA: para empezarla hacen falta qué es y al menos dos pasos («tarea empezar <qué> | <paso 1> | <paso 2>»).', 'falta-dato');
     const n = iniciarTarea(persona, ambito, { tipo: 'otra', titulo: resto, pasos });
-    if (!n) return 'TAREA: no la pude crear.';
-    return `TAREA EMPEZADA: «${n.titulo}», ${n.pasos.length} pasos: ${n.pasos.map((p, i) => `${i + 1}. ${p.etiqueta}`).join(' · ')}. Empieza por el 1.`;
+    if (!n) return fallo('TAREA: no la pude crear.', 'rechazado');
+    return exito(`TAREA EMPEZADA: «${n.titulo}», ${n.pasos.length} pasos: ${n.pasos.map((p, i) => `${i + 1}. ${p.etiqueta}`).join(' · ')}. Empieza por el 1.`, { ...CAMBIO, referencia: n.id });
   }
-  if (!t) return 'TAREA: no hay ninguna tarea en curso en esta conversación.';
-  if (/^(ver|estado|listar)$/.test(verbo)) return bloqueTarea(persona, ambito) || 'TAREA: no hay ninguna tarea en curso.';
+  if (!t) return fallo('TAREA: no hay ninguna tarea en curso en esta conversación.', 'no-encontrado');
+  if (/^(ver|estado|listar)$/.test(verbo)) {
+    const b = bloqueTarea(persona, ambito);
+    return b ? exito(b, { efecto: 'ninguno', proveedor: 'tarea' }) : fallo('TAREA: no hay ninguna tarea en curso.', 'no-encontrado');
+  }
   if (/^(hecho|hecha|listo|avanzar|avanza|saltar|salta)$/.test(verbo)) {
     const n = parseInt(resto, 10);
     const i = Number.isInteger(n) && n > 0 ? n - 1 : t.actual >= 0 && t.pasos[t.actual]?.estado === 'pendiente' ? t.actual : siguiente(t);
-    if (i < 0 || !t.pasos[i]) return `TAREA: no hay un paso ${resto || ''} en «${t.titulo}».`;
+    if (i < 0 || !t.pasos[i]) return fallo(`TAREA: no hay un paso ${resto || ''} en «${t.titulo}».`, 'no-encontrado');
     const av = marcarPaso(persona, ambito, t.tipo, i, /^salta/.test(verbo) ? 'saltado' : 'hecho');
-    return av.texto || 'TAREA: no la encontré.';
+    return av.texto ? exito(av.texto, { ...CAMBIO, referencia: t.id }) : fallo('TAREA: no la encontré.', 'no-encontrado');
   }
   if (/^(pausar|pausa|despues|luego)$/.test(verbo)) {
     pausar(persona, t);
-    return `TAREA EN PAUSA: «${t.titulo}» (${pasosHechos(t)} de ${t.pasos.length}); quedó en lo que quedó a medias para retomarla.`;
+    return exito(`TAREA EN PAUSA: «${t.titulo}» (${pasosHechos(t)} de ${t.pasos.length}); quedó en lo que quedó a medias para retomarla.`, { ...CAMBIO, referencia: t.id });
   }
-  if (/^(terminar|termina|cerrar|cierra|terminada)$/.test(verbo)) return cerrarTarea(clave, t, 'hecho');
-  if (/^(descartar|descarta|cancelar|cancela)$/.test(verbo)) return cerrarTarea(clave, t, 'descartado');
+  if (/^(terminar|termina|cerrar|cierra|terminada)$/.test(verbo)) return exito(cerrarTarea(clave, t, 'hecho'), { ...CAMBIO, referencia: t.id });
+  if (/^(descartar|descarta|cancelar|cancela)$/.test(verbo)) return exito(cerrarTarea(clave, t, 'descartado'), { ...CAMBIO, referencia: t.id });
   if (/^(retomar|retoma|seguir|sigue|continuar)$/.test(verbo)) {
     retomar(persona, t);
     const sig = siguiente(t);
-    return `TAREA RETOMADA: «${t.titulo}» — ${progreso(t)}.${sig >= 0 ? ` Sigue con el ${sig + 1}: ${linea(t.pasos[sig].etiqueta, 120)}.` : ''}`;
+    return exito(`TAREA RETOMADA: «${t.titulo}» — ${progreso(t)}.${sig >= 0 ? ` Sigue con el ${sig + 1}: ${linea(t.pasos[sig].etiqueta, 120)}.` : ''}`, { ...CAMBIO, referencia: t.id });
   }
-  return `TAREA: no entiendo «${verbo}». Usa empezar, hecho, saltar, pausar, terminar, descartar o retomar.`;
+  return fallo(`TAREA: no entiendo «${verbo}». Usa empezar, hecho, saltar, pausar, terminar, descartar o retomar.`, 'no-entiendo');
 }
 
 /** Solo pruebas. */

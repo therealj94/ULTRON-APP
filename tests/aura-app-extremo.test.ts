@@ -1153,6 +1153,28 @@ test('una frase, un turno: los reintentos de la app con el mismo idTurno no vuel
   assert.equal(alCerebro(), 3);
 });
 
+test('AUR06: un turno que corría un proceso caído DESPUÉS de despachar algo no se re-ejecuta: se contesta «reconciliando»', { skip: !listo }, async () => {
+  // Lo que dejaría un proceso que murió a mitad de turno, en el almacén durable de este servidor (sin S3: su disco).
+  const { claveDe } = await import('../lib/durable');
+  const idTurno = `caido-${Date.now().toString(36)}`;
+  const k = claveDe('turnos', 'majo.prueba@ordenglobal.org', idTurno);
+  const archivo = path.join(tmp, 'data', 'durable', `${k}.json`);
+  fs.mkdirSync(path.dirname(archivo), { recursive: true });
+  const t = Date.now() - 120_000;
+  fs.writeFileSync(archivo, JSON.stringify({ v: 1, estado: 'en-curso', titular: 'proceso-muerto', token: 1, vence: t + 45_000, efectos: ['correo'], t, actualizado: t }));
+  contestar = () => '[EMO: neutral] Esto no debería decirse.';
+  const frase = 'mándale el correo a Beto, versión caída';
+  alNodo.length = 0;
+  const j = await turno(frase, { idTurno });
+  assert.equal(j.reconciliando, true);
+  assert.equal(j.estado, 'error');
+  assert.match(j.reply, /No sé si alcancé a terminar/);
+  const sse = await (await fetch(`${BASE}/api/turno/stream`, { method: 'POST', headers: hTurno(), body: JSON.stringify({ message: frase, idTurno }) })).text();
+  assert.match(sse, /"reconciliando":true/);
+  assert.equal(alNodo.filter((x) => x.ultimo.includes('versión caída')).length, 0, 'el turno no se volvió a correr');
+  assert.equal(JSON.parse(fs.readFileSync(archivo, 'utf8')).estado, 'desconocido');
+});
+
 // Al final: deja memoria y la foto del fijo de la persona (cambia el hilo de las pruebas de después).
 test('en una llamada con frases de todo tipo, cada turno manda el mismo prompt de antes más lo nuevo (el nodo no relee)', { skip: !listo }, async () => {
   // 1-oct, llamada de José: el nodo releía ~2 100 fichas por turno. El system cambiaba según la frase:

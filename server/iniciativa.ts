@@ -33,7 +33,7 @@ import {
   type RespuestaPropuesta,
   type ResultadoSiguiente,
 } from '../lib/iniciativa';
-import { AlmacenNoDisponible, avanzarMision, bloqueMisiones, cerrarMision, correrMision, crearMision, leerMisiones, listarMisiones, validarNuevaMision, type EstadoMision, type Mision } from '../lib/misiones';
+import { AlmacenNoDisponible, avanzarMision, bloqueMisiones, cerrarMision, correrMision, correrMisionConEstado, crearMision, leerMisiones, listarMisiones, validarNuevaMision, type EstadoMision, type Mision } from '../lib/misiones';
 
 /** Cuántas cosas sin leer tiene en sus canales (server.ts lo sabe; aquí no se importan correo ni WhatsApp). */
 export type Contadores = { correoSinLeer?: number; whatsappSinLeer?: number };
@@ -75,6 +75,11 @@ export function duenoMisiones(dueno: string): string {
 /** El runner del harness para el turno: `mision: (arg) => correrMisionTurno(dueno, arg)`. */
 export function correrMisionTurno(dueno: string, arg: string): Promise<string> {
   return correrMision(duenoMisiones(dueno), arg);
+}
+
+/** Lo mismo con su estado y su recibo (AUR07): `mision: (arg) => correrMisionTurnoConEstado(dueno, arg)`. */
+export function correrMisionTurnoConEstado(dueno: string, arg: string) {
+  return correrMisionConEstado(duenoMisiones(dueno), arg);
 }
 
 /**

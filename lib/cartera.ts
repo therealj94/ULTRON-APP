@@ -12,6 +12,7 @@
 import { leerPerfil } from './perfil-persona';
 import { decirSaldos, simbolo } from '../mobile/src/cartera/logica';
 import { leerSaldos, type Pedidor } from '../mobile/src/cartera/red';
+import { exito, fallo, type ResultadoHerramienta } from './recibo-herramienta';
 
 /** Sin dirección no se adivina: se le dice cómo conectarla. */
 export const SIN_CARTERA =
@@ -22,10 +23,18 @@ export const SIN_CARTERA =
  * quién sea la cartera). Nunca lanza: lo que pasa vuelve como HECHO para el modelo.
  */
 export async function correrCartera(dueno: string, arg: string, o: { pedir?: Pedidor; idioma?: 'es' | 'en' } = {}): Promise<string> {
-  if (!dueno) return 'HARNESS cartera: solo con sesión. Pídele que entre con su cuenta.';
+  return (await correrCarteraConEstado(dueno, arg, o)).texto;
+}
+
+/**
+ * El runner con su estado y su recibo (AUR07): solo lectura (efecto `ninguno`). Sin cartera conectada, o con la
+ * red sin contestar, es `failed`: nunca un saldo inventado. Sin precio del oro, los saldos van `incompleto`.
+ */
+export async function correrCarteraConEstado(dueno: string, arg: string, o: { pedir?: Pedidor; idioma?: 'es' | 'en' } = {}): Promise<ResultadoHerramienta> {
+  if (!dueno) return fallo('HARNESS cartera: solo con sesión. Pídele que entre con su cuenta.', 'sin-sesion');
   const perfil = await leerPerfil(dueno).catch(() => null);
   const direccion = perfil?.cartera;
-  if (!direccion) return SIN_CARTERA;
+  if (!direccion) return fallo(SIN_CARTERA, 'no-disponible');
   const pedido = String(arg || '')
     .trim()
     .split(/\s+/)[0];
@@ -34,8 +43,12 @@ export async function correrCartera(dueno: string, arg: string, o: { pedir?: Ped
     const c = await leerSaldos(direccion, { pedir: o.pedir });
     const dicho = decirSaldos(c.saldos, solo, o.idioma || perfil?.idioma || 'es');
     const precio = c.conPrecio ? 'Valor con el oro de hoy: el precio de ORIGEN es 1 gramo de oro ÷ 55, en dólares.' : 'Sin precio del oro ahora: di las cantidades sin dólares.';
-    return `HARNESS cartera (Veta Wallet ${direccion.slice(0, 8)}…${direccion.slice(-6)}, leída de la cadena de Orden Global, solo lectura): ${dicho} ${precio} Dilo con naturalidad; si quiere ver el detalle, ofrécele abrir su Cartera en la app. Para mandar dinero se prepara en la app y se firma en Veta Wallet: tú nunca mueves dinero. Cada envío lleva la comisión de Veta Wallet, 0,01 dólares (cobrada en ORIGEN), más el gas de la red.`;
+    return exito(
+      `HARNESS cartera (Veta Wallet ${direccion.slice(0, 8)}…${direccion.slice(-6)}, leída de la cadena de Orden Global, solo lectura): ${dicho} ${precio} Dilo con naturalidad; si quiere ver el detalle, ofrécele abrir su Cartera en la app. Para mandar dinero se prepara en la app y se firma en Veta Wallet: tú nunca mueves dinero. Cada envío lleva la comisión de Veta Wallet, 0,01 dólares (cobrada en ORIGEN), más el gas de la red.`,
+      // Los saldos son de ese momento: sin precio del oro, el valor en dólares falta (no se memoriza como hecho).
+      { efecto: 'ninguno', proveedor: 'cadena-orden-global', referencia: direccion, ...(c.conPrecio ? {} : { incompleto: true }) }
+    );
   } catch (e: any) {
-    return `HARNESS cartera: la red de Orden Global no contestó (${String(e?.message || e).slice(0, 120)}). No inventes saldos: dile que lo intentas en un momento o que lo vea en su Cartera de la app.`;
+    return fallo(`HARNESS cartera: la red de Orden Global no contestó (${String(e?.message || e).slice(0, 120)}). No inventes saldos: dile que lo intentas en un momento o que lo vea en su Cartera de la app.`, 'proveedor');
   }
 }
