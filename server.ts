@@ -4243,16 +4243,18 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
   const { t0, tools, system, message, quienMem, canal, hilo, mando } = p;
   const hechos = [...p.hechos];
   // `delModelo`: el texto es del modelo grande (el stream o su harness); solo de él salen acciones.
-  const terminar = async (texto: string, via: string, emocion: Emocion, delModelo = false) => {
+  // `parcial`: el cerebro se cortó con error a media respuesta (VOZ 003): se avisa en el `done`, la traza
+  // queda con el error y la frase a medias no se guarda en su memoria como si fuera una respuesta.
+  const terminar = async (texto: string, via: string, emocion: Emocion, delModelo = false, parcial: string | null = null) => {
     const app = accionesDelCerebro(texto, p, delModelo);
     // El modelo contestó solo con la acción: la frase de esa acción sale también como texto (la voz
     // la dice; antes decía «Se me fue el hilo…»).
     if (app.sustituido) soltar('delta', app.texto);
     anotarHerramientasAura(reg, tools);
     const leido = quitarExpresiones(app.texto).trim();
-    reg.cerrar({ respuesta: leido, emocion, via });
-    send('done', { reply: leido, voz: app.texto.trim(), emocion, ms: Date.now() - t0, via, acciones: app.acciones, trazaId: reg.id });
-    if (leido && !senal?.aborted) await recordarSegunNivel(body, { quienMem, rol: 'ultron', texto: leido, canal }, opciones.retener);
+    reg.cerrar({ respuesta: leido, emocion, via, ...(parcial ? { error: parcial } : {}) });
+    send('done', { reply: leido, voz: app.texto.trim(), emocion, ms: Date.now() - t0, via, acciones: app.acciones, trazaId: reg.id, ...(parcial ? { parcial: true } : {}) });
+    if (leido && !parcial && !senal?.aborted) await recordarSegunNivel(body, { quienMem, rol: 'ultron', texto: leido, canal }, opciones.retener);
     salida.fin();
   };
   send('tools', { tools });
@@ -4479,6 +4481,15 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
         send('error', { error: FRASE_FALLO.cerebro[idioma], codigo: 'cerebro' });
         reg.cerrar({ error: `Qwen terminó con error: ${errorNodo}` });
         return salida.fin();
+      }
+      // Ya dijo algo y se cortó: lo dicho queda dicho, pero se cierra como parcial y se le dice con honradez
+      // que se cortó (Codex en #137: antes salía como respuesta completa y entraba a su memoria).
+      if (!pedido) {
+        const aviso = idioma === 'en' ? ' I got cut off there. Want me to try again?' : ' Se me cortó la respuesta. ¿Te la repito?';
+        const dicho = extraerAcciones(extraerEmocion(full).texto).texto;
+        if (dicho.length > enviado) soltar('delta', dicho.slice(enviado));
+        soltar('delta', aviso);
+        return terminar(`${extraerEmocion(full).texto}${aviso}`, `${ULTRON_NODO_URL}/api/chat`, emocion ?? 'preocupado', false, `Qwen terminó con error: ${errorNodo}`);
       }
     }
     // El modelo contestó con los hechos: lo que terminó su computadora ya quedó dicho.

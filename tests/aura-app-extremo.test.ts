@@ -1241,3 +1241,14 @@ test('el nodo termina con error sin haber dicho nada: el turno es un error, no u
   assert.ok(!evs.some((e) => e.ev === 'done'), 'no se cierra como si hubiera contestado');
   contestar = () => '[EMO: neutral] Claro. Te cuento lo que sé.';
 });
+
+test('el nodo se corta con error a media frase: lo dicho queda, pero el turno cierra como parcial y lo dice (Codex en #137)', { skip: !listo }, async () => {
+  contestar = () => '[EMO: neutral] La planta de beneficio va avanzando y este mes@@ERROR';
+  const evs = await turnoStream('cuéntame con calma cómo va la planta de beneficio este mes, con todo el detalle', { web: true });
+  const done = evs.find((e) => e.ev === 'done');
+  assert.ok(done, JSON.stringify(evs.map((e) => e.ev)));
+  assert.equal(done!.data.parcial, true);
+  assert.match(done!.data.reply, /Se me cortó la respuesta/);
+  assert.deepEqual(done!.data.acciones, [], 'de una respuesta cortada no sale ninguna acción');
+  contestar = () => '[EMO: neutral] Claro. Te cuento lo que sé.';
+});

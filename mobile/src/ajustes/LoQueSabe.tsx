@@ -77,7 +77,6 @@ export function LoQueSabe({ navigation }: Props) {
   const [errorBorrar, setErrorBorrar] = useState<string | null>(null);
   const enc = perfil?.encuesta || {};
   const pregunta = editando && editando.campo !== 'otros' ? PREGUNTAS.find((p) => p.campo === editando.campo) || null : null;
-  const hayAlgo = Object.values(enc).some(Boolean);
 
   const guardarCampo = (campo: keyof Encuesta, v: string) => {
     guardarPerfil({ encuesta: { [campo]: v } });
@@ -110,11 +109,10 @@ export function LoQueSabe({ navigation }: Props) {
           </Grupo>
         </Aparecer>
 
-        {hayAlgo && (
-          <Aparecer retraso={120}>
-            <Boton titulo={tr('Borrar todo lo que te conté', 'Erase everything I told you')} icono="basura" variante="peligro" onPress={() => setBorrarTodo(true)} />
-          </Aparecer>
-        )}
+        {/* Siempre a mano: aunque la encuesta esté vacía, AURA puede haber aprendido cosas conversando. */}
+        <Aparecer retraso={120}>
+          <Boton titulo={tr('Borrar todo lo que te conté', 'Erase everything I told you')} icono="basura" variante="peligro" onPress={() => setBorrarTodo(true)} />
+        </Aparecer>
       </View>
 
       <Hoja
@@ -154,17 +152,24 @@ export function LoQueSabe({ navigation }: Props) {
             icono="basura"
             variante="peligro"
             onPress={async () => {
-              // Todo de verdad: la encuesta entera (también «ayuda») y lo que AURA aprendió conversando, que
-              // también entra en lo que sabe de ti (auditoría de Codex del 3-oct, PRI 001).
+              // Todo de verdad: lo que AURA aprendió conversando (que también entra en lo que sabe de ti) y la
+              // encuesta entera, también «ayuda» (auditoría de Codex del 3-oct, PRI 001). Primero lo del
+              // servidor: si no quedó guardado de verdad (durable), no se cierra ni se vacía la encuesta, así el
+              // botón sigue aquí para volver a intentarlo (Codex en #137).
+              let r: { durable?: boolean } | null = null;
+              try {
+                r = await api<{ durable?: boolean }>('/api/cerebro/conocer', { method: 'DELETE' }, 15_000);
+              } catch {
+                r = null;
+              }
+              if (!r || r.durable === false) {
+                setErrorBorrar(tr('No alcancé a borrar de forma segura lo que aprendí conversando. No cerré nada: vuelve a intentarlo en un momento.', 'I couldn’t safely erase what I learned from our chats. Nothing was closed: try again in a moment.'));
+                return;
+              }
               guardarPerfil({ encuesta: { vive: '', comida: '', musica: '', familia: '', trabajo: '', gustos: '', ayuda: '', otros: '' } });
               vibrar('medio');
-              try {
-                await api('/api/cerebro/conocer', { method: 'DELETE' }, 15_000);
-                setErrorBorrar(null);
-                setBorrarTodo(false);
-              } catch {
-                setErrorBorrar(tr('Borré tus respuestas, pero no alcancé a borrar lo que aprendí conversando. Vuelve a intentarlo en un momento.', 'I erased your answers, but couldn’t erase what I learned from our chats. Try again in a moment.'));
-              }
+              setErrorBorrar(null);
+              setBorrarTodo(false);
             }}
           />
           <Boton titulo={tr('Cancelar', 'Cancel')} variante="secundario" onPress={() => setBorrarTodo(false)} />
