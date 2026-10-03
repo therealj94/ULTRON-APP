@@ -39,9 +39,13 @@ type Props = {
 
 const APorPresionar = Animated.createAnimatedComponent(Pressable);
 
-/** El oro del botón principal en cada tema (claro: más hondo, para que el texto blanco se lea). */
+/**
+ * El oro del botón principal en cada tema. La letra es `sobreAcento` (oscura en los dos): en claro el
+ * degradado va del acento hacia arriba, no más hondo, para que esa letra se lea en toda la cara (≥ 4,5:1
+ * en cada parada; UI01, 3-oct: antes blanco sobre #B8913F daba 2,93:1). Prueba: pruebas/mesa.
+ */
 export function oroDe(oscuro: boolean): [string, string, string] {
-  return oscuro ? ['#EDD496', '#D6B56C', '#BA964A'] : ['#CFA956', '#B8913F', '#9A782F'];
+  return oscuro ? ['#EDD496', '#D6B56C', '#BA964A'] : ['#DDBE72', '#CBA552', '#B8913F'];
 }
 
 export function Boton({ titulo, onPress, variante = 'principal', cargando, textoCargando, deshabilitado, icono, iconoDerecha, tam = 'normal', style, etiqueta }: Props) {

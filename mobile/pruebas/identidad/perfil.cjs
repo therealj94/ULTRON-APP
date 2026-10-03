@@ -96,5 +96,70 @@ const tic = () => new Promise((r) => setTimeout(r, 0));
   ok('iniciativa: un cambio de otra cosa no la manda', !('iniciativa' in PERFIL.cuerpoPut(alta, { tema: 'claro' })));
   ok('iniciativa: «apagada» también vale', PERFIL.aplicarCambios(base, { iniciativa: 'apagada' }, 3).iniciativa === 'apagada');
 
+  /* ── PRIV01: borrar una respuesta espera su recibo durable ─────────────────────────── */
+  //  Antes «Borrar todo» y «Borrar esta respuesta» mandaban el PUT sin esperar: la pantalla se cerraba
+  //  aunque el servidor no lo hubiera guardado. `guardarPerfilConRecibo` dice true SOLO con durable:true.
+  {
+    let durableP = false;
+    let caido = false;
+    const putsP = [];
+    let servidorP = { apodo: 'Dani', avatar: 'aura', tema: 'oscuro', idioma: 'es', encuesta: { vive: 'Tela', comida: 'Baleadas' }, completado: true, actualizado: 100 };
+    globalThis.__api = async (_r, init) => {
+      if (caido) throw Object.assign(new Error('sin red'), { status: 0 });
+      if (init?.method === 'PUT') {
+        const b = JSON.parse(init.body);
+        putsP.push(b);
+        if (b.encuesta) servidorP = { ...servidorP, encuesta: Object.fromEntries(Object.entries(b.encuesta).filter(([, v]) => v)), actualizado: servidorP.actualizado + 1 };
+        return { perfil: servidorP, durable: durableP };
+      }
+      return { perfil: servidorP, durable: durableP, disponible: true };
+    };
+    if (!PERFIL.guardarPerfilConRecibo) {
+      ok('PRIV01: hay guardarPerfilConRecibo en lib/perfil', false);
+    } else {
+      await PERFIL.cargarPerfil('d@prueba.local', { nombre: 'D' });
+      caido = true;
+      ok('PRIV01: sin red, borrar NO se confirma', (await PERFIL.guardarPerfilConRecibo({ encuesta: { vive: '' } })) === false);
+      ok('…pero en este teléfono ya no está y queda pendiente para reenviar', !PERFIL.perfilActual().encuesta.vive && PERFIL.estadoPerfil().pendiente === true);
+      caido = false;
+      ok('PRIV01: con durable:false, tampoco se confirma', (await PERFIL.guardarPerfilConRecibo({ encuesta: { vive: '' } })) === false);
+      durableP = true;
+      ok('PRIV01: con durable:true, sí', (await PERFIL.guardarPerfilConRecibo({ encuesta: { vive: '' } })) === true, JSON.stringify(putsP.at(-1)));
+      ok('…y el PUT mandó el campo vacío a propósito', putsP.at(-1)?.encuesta?.vive === '');
+      // Mientras viaja un envío, otro cambio: el recibo del segundo espera al suyo (no se da por bueno el primero).
+      const a = PERFIL.guardarPerfilConRecibo({ encuesta: { comida: '' } });
+      const b = PERFIL.guardarPerfilConRecibo({ encuesta: { musica: '' } });
+      ok('PRIV01: dos borrados seguidos, cada uno con su recibo', (await a) === true && (await b) === true && !PERFIL.estadoPerfil().pendiente);
+      PERFIL.soltarPerfil();
+
+      /* ── PRIV01: lo borrado en OTRO teléfono no resucita desde la caché de este ──────── */
+      // Este teléfono vio el perfil en su versión 100 (con vive). El otro lo borró: el servidor (durable)
+      // está en la 105 sin vive. Antes el hueco se tomaba por «el servidor lo perdió» y se reenviaba.
+      as.m.set('aura.perfil.v1:e@prueba.local', JSON.stringify({ apodo: 'Eli', avatar: 'aura', tema: 'oscuro', idioma: 'es', encuesta: { vive: 'Tela', musica: 'Jazz' }, completado: true, actualizado: 100 }));
+      as.m.set('aura.perfil.servidor.v1:e@prueba.local', '100');
+      putsP.length = 0;
+      servidorP = { apodo: 'Eli', avatar: 'aura', tema: 'oscuro', idioma: 'es', encuesta: { musica: 'Jazz' }, completado: true, actualizado: 105 };
+      durableP = true;
+      const pe = await PERFIL.cargarPerfil('e@prueba.local', { nombre: 'E' });
+      await tic();
+      await tic();
+      ok('PRIV01: lo borrado en otro teléfono NO se reenvía desde la caché', !putsP.some((p) => p.encuesta?.vive), JSON.stringify(putsP));
+      ok('…y aquí también desaparece', !pe.encuesta.vive && pe.encuesta.musica === 'Jazz', JSON.stringify(pe.encuesta));
+      PERFIL.soltarPerfil();
+
+      // Lo de siempre se conserva: un servidor que PERDIÓ lo guardado (sin almacén durable) sí recibe los huecos.
+      as.m.set('aura.perfil.v1:f@prueba.local', JSON.stringify({ apodo: 'Fer', avatar: 'aura', tema: 'oscuro', idioma: 'es', encuesta: { vive: 'Tela' }, completado: true, actualizado: 100 }));
+      as.m.set('aura.perfil.servidor.v1:f@prueba.local', '100');
+      putsP.length = 0;
+      servidorP = { apodo: 'Fer', avatar: 'aura', tema: 'oscuro', idioma: 'es', encuesta: {}, completado: false, actualizado: 200 };
+      durableP = false;
+      await PERFIL.cargarPerfil('f@prueba.local', { nombre: 'F' });
+      await tic();
+      await tic();
+      ok('servidor sin almacén durable que volvió vacío: lo de este teléfono se le reenvía (como antes)', putsP.some((p) => p.encuesta?.vive === 'Tela'), JSON.stringify(putsP));
+      PERFIL.soltarPerfil();
+    }
+  }
+
   fin();
 })();

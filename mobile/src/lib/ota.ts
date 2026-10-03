@@ -22,7 +22,7 @@ import { miga } from './reporte';
 import { escuchar } from '../nucleo/contrato';
 import { ecoMesa, mensajeVoz } from '../compa/canales';
 import { VARIANTE } from '../variante';
-import { QUIETO_TRAS_TRABAJO_MS, decidirAplicar, marcarActividad, motivosParaNoRecargar, necesitaApkNueva, registrarTrabajoActivo, type Momento } from './barreraOta';
+import { QUIETO_TRAS_TRABAJO_MS, decidirAplicar, marcarActividad, motivosParaNoRecargar, necesitaApkNueva, prepararRecarga, registrarTrabajoActivo, type Momento } from './barreraOta';
 
 /** Entre preguntas con la app delante. */
 const ENTRE_BUSQUEDAS_MS = 15 * 60_000;
@@ -92,9 +92,16 @@ function recargar(por: string) {
   if (recargando) return;
   recargando = true;
   miga(`ota: aplicando la actualización descargada (${por})`);
-  void Updates.reloadAsync().catch(() => {
-    recargando = false;
-  });
+  // Antes, lo que cada frente no quiere perder (el borrador del chat, al llavero; UI01). Con tope: nunca
+  // cuelga la recarga.
+  void prepararRecarga()
+    .then((r) => {
+      if (r.fallaron.length) miga(`ota: no se guardó antes de recargar (${r.fallaron.join(', ')})`);
+      return Updates.reloadAsync();
+    })
+    .catch(() => {
+      recargando = false;
+    });
 }
 
 /** El botón «Reiniciar»: recarga si nada lo impide; si no, devuelve por qué no (vacío = recargando). */
