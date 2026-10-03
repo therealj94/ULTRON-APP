@@ -159,6 +159,11 @@ export class MotorTurbo {
 
   /** Las frases salen en orden aunque una espere la confirmación de dinero. */
   private cadena: Promise<void> = Promise.resolve();
+  /**
+   * Generación del oído: sube al silenciar o reiniciar. Una frase que estaba esperando su confirmación o el
+   * respaldo por /api/stt y vuelve después de reabrir el micrófono ya no se entrega (Codex, 3-oct).
+   */
+  private gen = 0;
 
   constructor(private readonly deps: DepsTurbo) {
     this.t = { ...TIEMPOS, ...(deps.tiempos || {}) };
@@ -177,6 +182,7 @@ export class MotorTurbo {
   }
 
   silenciar() {
+    this.gen++;
     this.quiere = false;
     this.pararMic();
     this.olvidarFrase();
@@ -249,6 +255,7 @@ export class MotorTurbo {
   }
 
   reiniciar() {
+    this.gen++;
     this.pararMic();
     this.olvidarFrase();
     this.fallosMic = 0;
@@ -713,10 +720,11 @@ export class MotorTurbo {
 
   // ── entregar la frase ─────────────────────────────────────────────────────────────────────────
   private entregar(textoTurbo: string, trozos: string[], m?: Medida) {
+    const g = this.gen;
     this.cadena = this.cadena
       .then(async () => {
         let texto = limpiarFinal(textoTurbo);
-        if (!texto) return;
+        if (!texto || g !== this.gen) return;
         let via: 'vivo' | 'confirmada' = 'vivo';
         if (esFraseDeDinero(texto) && trozos.length) {
           const confirmado = await this.conTope(this.deps.transcribirWav(wavDeTrozos(trozos), true), this.t.confirmarMs);
@@ -724,7 +732,7 @@ export class MotorTurbo {
           if (limpio) texto = limpio;
           via = 'confirmada';
         }
-        if (this.quiere && !this.pausado) {
+        if (g === this.gen && this.quiere && !this.pausado) {
           this.medir(m, via);
           this.cb.onFinal?.(texto);
         }
@@ -735,10 +743,12 @@ export class MotorTurbo {
   /** La frase entera por /api/stt (el servidor la oye con Turbo y, si es de dinero, la confirma). */
   private respaldo(trozos: string[], m?: Medida) {
     if (trozos.length < 3) return;
+    const g = this.gen;
     this.cadena = this.cadena
       .then(async () => {
+        if (g !== this.gen) return;
         const texto = limpiarFinal((await this.conTope(this.deps.transcribirWav(wavDeTrozos(trozos), false), 16_000)) || '');
-        if (texto && this.quiere && !this.pausado) {
+        if (texto && g === this.gen && this.quiere && !this.pausado) {
           this.medir(m, 'respaldo');
           this.cb.onFinal?.(texto);
         }

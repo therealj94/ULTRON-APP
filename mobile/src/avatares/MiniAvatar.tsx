@@ -2,7 +2,8 @@
  * El retrato chico de cada avatar, para la entrada, la bienvenida y el menú.
  *
  *  · Guardián: dos anillos celestes con su pupila, sobre negro (como su cara en la mesa).
- *  · AU-RA: los mismos anillos en dorado, sobre grafito.
+ *  · AU-RA: su orbe de partículas, el de la mesa (José, 3-oct: «la imagen debe cambiar de Aura con la
+ *    que es»). Es una foto del orbe real (src/14-orbe/orbe.html) sacada en Chromium.
  *  · Claudio y ANT-ONIO: su foto (la de ANT-ONIO sale de su modelo 3D).
  */
 import { Image, StyleSheet, View } from 'react-native';
@@ -26,8 +27,17 @@ function Ojos({ color, fondo, lado }: { color: string; fondo: string; lado: numb
   );
 }
 
+const ORBE_AURA = require('../../assets/avatares/aura/orbe.webp');
+
 export function MiniAvatar({ id, lado }: { id: AvatarId; lado: number }) {
   const a = avatarPorId(id);
+  if (id === 'aura') {
+    return (
+      <View style={[s.caja, { backgroundColor: '#05070C' }]}>
+        <Image source={ORBE_AURA} resizeMode="contain" style={s.img} accessibilityIgnoresInvertColors />
+      </View>
+    );
+  }
   const fotos = fotosRetrato(id);
   if (fotos) {
     return (

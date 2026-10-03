@@ -15,7 +15,9 @@
  * no, Claudio y ANT-ONIO se ven con sus fotos (las de ANT-ONIO salen de su modelo) y AU-RA con su
  * figurita.
  *
- * Guardián y AU-RA, en vertical, se hacen un cuadro arriba con el chat abajo.
+ * Todos van a pantalla completa, de pie y acostados (José, 3-oct: «aura y guardián deben ser full screen…
+ * tantas cosas en la pantalla le quitan experiencia»). El chat con la cara en un cuadro queda para
+ * «Modo trabajar» (Más), que lo elige quien quiere leer.
  *
  * Vive aparte (sin React Native) para que las pruebas y el almacenamiento lo lean sin arrastrar
  * componentes.
@@ -80,7 +82,7 @@ export const AVATARES: readonly Avatar[] = [
   {
     id: 'aura',
     nombre: { es: 'AU-RA', en: 'AU-RA' },
-    descripcion: { es: 'Los ojos dorados. Cálida y cercana.', en: 'The golden eyes. Warm and close.' },
+    descripcion: { es: 'Un orbe de luz que forma palabras. Cálida y cercana.', en: 'An orb of light that shapes words. Warm and close.' },
     oficio: { es: 'Tu compañera personal', en: 'Your personal companion' },
     voz: { es: 'Voz de mujer, cálida', en: 'Warm female voice' },
     presentacion: { es: 'Aquí estoy. Soy AU-RA, tu compañera. ¿Qué hacemos hoy?', en: 'Here I am. I’m AU-RA, your companion. What are we doing today?' },
@@ -152,6 +154,5 @@ export type Distribucion = {
 /** Cómo se reparte la pantalla para este avatar en esta orientación. */
 export function distribucion(id: AvatarId, horizontal: boolean): Distribucion {
   if (conFotos(id)) return { tipo: 'completa', chat: 'flota', pose: horizontal ? 'retrato' : 'pie' };
-  if (horizontal) return { tipo: 'completa', chat: 'flota', pose: null };
-  return { tipo: 'cuadro', chat: 'abajo', pose: null };
+  return { tipo: 'completa', chat: 'flota', pose: null };
 }

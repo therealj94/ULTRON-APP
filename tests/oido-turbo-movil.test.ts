@@ -96,7 +96,7 @@ class WsFalso implements WsTurbo {
   }
 }
 
-function banco(opts: { permiso?: boolean; abreWs?: boolean; mic?: 'bien' | 'falla'; confirmado?: string; respaldo?: string } = {}) {
+function banco(opts: { permiso?: boolean; abreWs?: boolean; mic?: 'bien' | 'falla'; confirmado?: string; respaldo?: string; demoraWav?: number } = {}) {
   let reloj = 1_000_000;
   const ws: WsFalso[] = [];
   const llamadasWav: { wav: string; confirmar: boolean }[] = [];
@@ -129,6 +129,7 @@ function banco(opts: { permiso?: boolean; abreWs?: boolean; mic?: 'bien' | 'fall
     },
     transcribirWav: async (wav, confirmar) => {
       llamadasWav.push({ wav, confirmar });
+      if (opts.demoraWav) await new Promise((r) => setTimeout(r, opts.demoraWav));
       return confirmar ? (opts.confirmado ?? '') : (opts.respaldo ?? 'texto del respaldo');
     },
     tiempos: { esperaFinalMs: 60, confirmarMs: 200, inactivoMs: 10_000 },
@@ -273,6 +274,30 @@ describe('Oído Turbo (teléfono): el motor', () => {
     assert.equal(b.ws.length, 0);
     assert.deepEqual(b.finales, ['Abre Excel']);
     assert.equal(b.llamadasWav[0].confirmar, false);
+  });
+
+  it('silenciar y reabrir mientras una frase vieja está en /api/stt: esa frase ya no entra como turno (Codex, 3-oct)', async () => {
+    const b = banco({ permiso: false, respaldo: 'Lo de antes de silenciar', demoraWav: 60 });
+    b.motor.activar();
+    await espera();
+    b.silencio(3);
+    b.voz(8);
+    await espera();
+    b.silencio(8);
+    await espera(15);
+    assert.equal(b.llamadasWav.length, 1, 'la frase salió por /api/stt (todavía sin respuesta)');
+    assert.deepEqual(b.finales, []);
+    b.motor.silenciar();
+    b.motor.activar();
+    await espera(150);
+    assert.deepEqual(b.finales, [], 'llegó después de reabrir: era de antes, se tira');
+    // Lo que se dice DESPUÉS de reabrir sí entra.
+    b.silencio(3);
+    b.voz(8);
+    await espera();
+    b.silencio(8);
+    await espera(150);
+    assert.deepEqual(b.finales, ['Lo de antes de silenciar'], 'la frase nueva (mismo texto del falso) sí llega');
   });
 
   it('si Turbo no contesta a tiempo, la frase va por /api/stt y esa conexión se cierra', async () => {

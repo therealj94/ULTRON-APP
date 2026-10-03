@@ -94,7 +94,7 @@ import { listarTareas } from './lib/tareas';
 import { ejecutarCodigo, ejecutorActivo } from './lib/ejecutor';
 import { construirMensajes, extraerPython } from './lib/qwen';
 import { computadoraDisponible, correoDisponible, extraerPedidoHerramienta, herramientaQueSale, neutralizarPedido, quitarLineaPedido, resolverPedido } from './lib/harness';
-import { herramientasDelTurno, lineaDeHerramienta, notaDeCumplir, prometeSinHacer, reglasDeManos, type ManosDelTurno } from './lib/cerebro-manos';
+import { herramientasDelTurno, lineaDeHerramienta, notaDeCumplir, prometeSinHacer, reglasDeManos, topeDeVoz, type ManosDelTurno } from './lib/cerebro-manos';
 import { correrCartera } from './lib/cartera';
 import { notaDeVoz, pideNotaDeVoz } from './lib/voz';
 import { iniciarCentinela } from './lib/centinela';
@@ -3531,7 +3531,9 @@ function preguntarConManos(
         avisar();
       }
     } catch (e: any) {
-      if (!acumulado.trim()) return { ok: false, reply: '', error: String(e?.message || e).slice(0, 200) };
+      // Cortado a media vuelta: lo que alcanzó a decir NO pasa por respuesta buena (auditoría de Codex, 3-oct);
+      // con ok false el harness le pregunta a Qwen y lo dicho se reemplaza.
+      return { ok: false, reply: acumulado.trim(), error: String(e?.message || e).slice(0, 200) };
     }
     const reply = acumulado.trim();
     return reply ? { ok: true, reply } : { ok: false, reply: '', error: 'el cerebro con manos no contestó' };
@@ -4304,6 +4306,9 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     // La herramienta que pidió el modelo, avisada en cuanto se lee su nombre (antes de que termine de
     // escribir y mucho antes de correrla): la voz sabe YA que va a tardar.
     let tareaAvisada = false;
+    // En voz, lo que se dice tiene tope (lib/cerebro-manos.ts topeDeVoz): pasado, se termina en la frase y no sigue.
+    const topeVoz = topeDeVoz(message, !!opciones.voz);
+    let topado = false;
     const avisarPedido = (texto: string) => {
       if (tareaAvisada || !opciones.alTarea) return;
       const ped = extraerPedidoHerramienta(texto);
@@ -4341,6 +4346,10 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
         return;
       }
       if (corte > enviado) {
+        if (topeVoz && enviado >= topeVoz) {
+          topado = true;
+          return;
+        }
         soltar('delta', cuerpo.slice(enviado, corte + 1));
         enviado = corte + 1;
       }
@@ -4358,10 +4367,14 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     let modeloManos = '';
     /** El nodo terminó con error a media respuesta (VOZ 003): no se cierra como si hubiera contestado bien. */
     let errorNodo = '';
+    /** Bedrock se cortó DESPUÉS de decir algo o de pedir una mano: tampoco se cierra como respuesta completa. */
+    let errorManos = '';
     let usoManos = false;
     const herramientasManos = p.systemManos ? herramientasDelTurno(p.manosTurno) : [];
     const usarManos = !!p.systemManos && !p.foto && !/```/.test(message) && cerebroRapidoActivo();
     if (usarManos) {
+      // La re-pregunta de «prometió y no lo hizo» va después de una respuesta ya completa: si esa falla, no es corte.
+      let enRepregunta = false;
       try {
         for await (const pieza of hablarConManos(mensajesManos(p.systemManos, message, hechos, hilo, p.contexto), herramientasManos, senal)) {
           if ('modelo' in pieza) {
@@ -4392,6 +4405,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
             { role: 'user', content: notaDeCumplir(idioma) },
           ];
           let cumplida = false;
+          enRepregunta = true;
           for await (const pieza of hablarConManos(vuelta, herramientasManos, senal)) {
             if (!('herramienta' in pieza)) continue;
             const linea = lineaDeHerramienta(pieza.herramienta.nombre, pieza.herramienta.input, Date.now(), opcionesManos(p.manosTurno));
@@ -4409,6 +4423,8 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
           porRapido = false;
           full = '';
           cuerpo = '';
+        } else if (porRapido && !senal?.aborted && !enRepregunta) {
+          errorManos = `${modeloManos || 'Bedrock'} se cortó a media respuesta: ${String(e?.name || '')} ${String(e?.message || e).slice(0, 160)}`.trim();
         }
         if (!porRapido && !senal?.aborted) console.warn('[cerebro manos] no contestó; sigue Qwen:', String(e?.name || ''), String(e?.message || e).slice(0, 160));
       }
@@ -4492,6 +4508,20 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
         return terminar(`${extraerEmocion(full).texto}${aviso}`, `${ULTRON_NODO_URL}/api/chat`, emocion ?? 'preocupado', false, `Qwen terminó con error: ${errorNodo}`);
       }
     }
+    // El cerebro con manos se cortó después de empezar (Codex, 3-oct): lo dicho queda dicho, con el aviso honrado
+    // si había frase, y el turno se cierra como parcial (traza con el error, sin memoria). Una mano que alcanzó a
+    // pedir completa (la herramienta llega entera o no llega) sí se cumple.
+    if (errorManos && !pedido) {
+      console.warn('[cerebro manos] se cortó a media respuesta:', errorManos);
+      // Retenido («ya lo mandé» sin confirmar): eso no se dice ni se cumple; solo lo ya dicho y el aviso.
+      const dicho = retenido ? cuerpo.slice(0, enviado) : extraerAcciones(extraerEmocion(full).texto).texto;
+      const aviso = dicho.trim() || retenido ? (idioma === 'en' ? ' I got cut off there. Want me to try again?' : ' Se me cortó la respuesta. ¿Te la repito?') : '';
+      if (dicho.length > enviado) soltar('delta', dicho.slice(enviado));
+      if (aviso) soltar('delta', aviso);
+      const emo = emocion ?? (aviso ? 'preocupado' : extraerEmocion(full).emocion);
+      const texto = retenido ? `${dicho}${aviso}` : `${extraerEmocion(full).texto}${aviso}`;
+      return terminar(texto, `bedrock:${modeloManos || modeloRapido()}`, emo, usoManos && !retenido, errorManos);
+    }
     // El modelo contestó con los hechos: lo que terminó su computadora ya quedó dicho.
     if (full.trim() && !senal?.aborted && p.avisoComputadora) confirmarAvisos(p.avisoComputadora.quien, p.avisoComputadora.ids);
     // Sin precalentar aquí: el espacio de la persona ya guarda TODO lo leído en este turno (system e
@@ -4531,6 +4561,11 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
         if (/PEDIR_HERRAMIENTA/i.test(t)) return;
         const corte = puntoDeCorte(t, dichoH.length);
         if (corte + 1 <= dichoH.length) return;
+        // Leyendo un resultado en voz es donde más se alarga: el mismo tope.
+        if (topeVoz && dichoH.length >= topeVoz) {
+          topado = true;
+          return;
+        }
         const nuevo = t.slice(0, corte + 1);
         if (dichoH) soltar('delta', nuevo.slice(dichoH.length));
         else if (base && !nuevo.startsWith(base)) soltar('replace', nuevo);
@@ -4547,7 +4582,8 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       reply = e.texto;
       via = h.via;
       const decible = extraerAcciones(reply).texto;
-      if (dichoH) {
+      if (topado && dichoH && decible.startsWith(dichoH)) enviado = decible.length;
+      else if (dichoH) {
         if (decible.startsWith(dichoH)) enviado = dichoH.length;
         else {
           soltar('replace', decible);
@@ -4562,7 +4598,9 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     const delModelo = !!reply;
     if (!reply) reply = sinCerebro(p.datos);
     const decible = delModelo ? extraerAcciones(reply).texto : reply;
-    if (decible.length > enviado) soltar('delta', decible.slice(enviado));
+    // Topado en voz: lo que faltaba no se dice (queda en el texto de la respuesta, para leerlo).
+    if (topado) console.log(`[voz] tope: dijo ${enviado} de ${decible.length} caracteres`);
+    else if (decible.length > enviado) soltar('delta', decible.slice(enviado));
     return terminar(reply, via, emocion, delModelo);
   } catch (err: any) {
     if (senal?.aborted) {

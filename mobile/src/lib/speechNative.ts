@@ -132,7 +132,8 @@ function attach() {
   subs.push(
     M.addListener('result', (e: any) => {
       vida();
-      if (paused) return;
+      // Silenciado: el final tardío de la sesión abortada no es un turno (Codex, 3-oct).
+      if (paused || !wanted) return;
       const text = String(e?.results?.[0]?.transcript || '').trim();
       if (!text) return;
       if (e?.isFinal) {

@@ -398,7 +398,10 @@ export function VozProvider({ children, conCompanera = true }: Props) {
     // pueden quedarse con el micrófono (nadie más escucharía). Fallan y el oído del teléfono vuelve.
     const vigia = setInterval(() => {
       const r = control.revisar();
-      if (r !== 'nada') miga(`voz: ${r === 'sorda' ? 'abierta pero sin audio del micrófono' : 'no conectó a tiempo'}; el audio vuelve al oído del teléfono`);
+      if (r === 'sin-muestras') {
+        miga('voz: el micrófono dejó de mandar audio a media llamada; reconecto');
+        reportarEstado('voz: micrófono congelado en la llamada (reconecta)');
+      } else if (r !== 'nada') miga(`voz: ${r === 'sorda' ? 'abierta pero sin audio del micrófono' : 'no conectó a tiempo'}; el audio vuelve al oído del teléfono`);
     }, 1_000);
     /*
      * Segundo plano de verdad, no un parpadeo. En Android, cualquier ventana del sistema por encima (el
@@ -627,10 +630,10 @@ export function VozProvider({ children, conCompanera = true }: Props) {
     [control]
   );
   const alNiveles = useCallback(
-    (salida: number, entrada: number) => {
+    (salida: number, entrada: number, cruda?: number) => {
       nivelExterno(salida);
       nivelOido.emitir(entrada);
-      control.entrada(entrada);
+      control.entrada(entrada, cruda);
     },
     [control]
   );

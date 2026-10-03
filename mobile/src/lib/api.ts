@@ -319,6 +319,11 @@ export type ChatResult = {
   error?: string;
   /** Lo que AURA pidió hacer en la app (AccionApp del contrato); la mesa lo pasa al bus. */
   acciones?: unknown;
+  /**
+   * El cerebro se cortó a media respuesta (el `done` trae `parcial: true`, o el stream venció con texto):
+   * lo dicho se queda, pero no es una respuesta completa (auditoría de Codex, 3-oct).
+   */
+  parcial?: boolean;
 };
 
 type TurnoOpts = {
@@ -477,8 +482,9 @@ export function turnoStream(opts: TurnoOpts, h: StreamHandlers): { promise: Prom
             ms: data.ms,
             via: data.via,
             acciones: data.acciones,
+            ...(data.parcial === true ? { parcial: true } : {}),
           };
-        } else if (ev === 'error') done = { reply: quitarExpresiones(full), voz: full, emocion: emocion || 'neutral', error: String(data.error || 'error') };
+        } else if (ev === 'error') done = { reply: quitarExpresiones(full), voz: full, emocion: emocion || 'neutral', error: String(data.error || 'error'), ...(full.trim() ? { parcial: true } : {}) };
       }
     };
     xhr.open('POST', `${API_BASE}/api/turno/stream`);
@@ -499,7 +505,7 @@ export function turnoStream(opts: TurnoOpts, h: StreamHandlers): { promise: Prom
     xhr.onerror = () => fail(new Error('red'));
     // Cancelar (el usuario dijo «callar») rechaza ya, sin depender de cómo cierre el XHR al abortarlo.
     cancelar = () => fail(new Error('cancelado'));
-    xhr.ontimeout = () => (full ? finish({ reply: quitarExpresiones(full).trim(), voz: full.trim(), emocion: emocion || 'neutral', error: 'timeout' }) : fail(new Error('timeout')));
+    xhr.ontimeout = () => (full ? finish({ reply: quitarExpresiones(full).trim(), voz: full.trim(), emocion: emocion || 'neutral', error: 'timeout', parcial: true }) : fail(new Error('timeout')));
     const payload = turnoBody(opts);
     void Promise.all([loadMesaToken(), cabecerasAparato(true).catch(() => ({}) as Record<string, string>)]).then(([t, extra]) => {
       if (settled) return;

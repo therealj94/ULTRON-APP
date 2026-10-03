@@ -55,6 +55,8 @@ export type Opciones = {
   conectarMaxMs?: number;
   /** Abierta y sin silencio, sin nada del micrófono en este rato: no le llega la voz (SORDA_MS). */
   sordaMs?: number;
+  /** Ya oía y las muestras del micrófono dejaron de llegar este rato (SIN_MUESTRAS_MS). */
+  sinMuestrasMs?: number;
 };
 
 export const SILENCIO_CIERRA_MS = 3 * 60_000;
@@ -73,6 +75,14 @@ export const CONECTAR_MAX_MS = 12_000;
 export const SORDA_MS = 15_000;
 /** Un micrófono vivo nunca da un cero perfecto (ruido de fondo): por debajo de esto es que no llega nada. */
 export const UMBRAL_ENTRADA = 0.0005;
+/**
+ * Ya le llegaba audio y de pronto el micrófono deja de mandar muestras (Codex, 3-oct: la llamada seguía
+ * diciendo «escuchando» sin oír nada). El volumen que da el SDK no cae a 0: se CONGELA en el último valor
+ * (nativeVolume.ts solo lo cambia con cada cuadro de audio). Un micrófono vivo cambia ese valor varias
+ * veces por segundo aunque haya silencio (ruido de fondo); congelado este rato, sin que el avatar hable,
+ * se reconecta la conversación (el reintento de siempre, con tope y con la última frase).
+ */
+export const SIN_MUESTRAS_MS = 12_000;
 /**
  * Lo más que se reconecta por error una misma conversación (desde que se abre hasta que se cierra). El
  * `intento` vuelve a 0 al conectar (así un reintento con permiso nuevo vale para cada apertura), y
@@ -103,6 +113,12 @@ export class ControlSesion {
   private oyendoDesde = -1;
   /** Le llegó algo del micrófono (o una frase de la persona) en esta generación. */
   private oyoAlgo = false;
+  private sinMuestrasMs: number;
+  /** El valor crudo del micrófono la última vez, y cuándo cambió por última vez (una muestra nueva). */
+  private ultimaCruda = Number.NaN;
+  private ultimaMuestra = 0;
+  /** Quien abre la sesión manda el valor crudo: solo así se puede saber si se congeló. */
+  private conMuestras = false;
 
   constructor(avatar: AvatarId, idioma: Idioma, o: Opciones = {}) {
     this.reloj = o.reloj || Date.now;
@@ -111,6 +127,7 @@ export class ControlSesion {
     this.topeReconexiones = o.reconexiones ?? TOPE_RECONEXIONES;
     this.conectarMaxMs = o.conectarMaxMs ?? CONECTAR_MAX_MS;
     this.sordaMs = o.sordaMs ?? SORDA_MS;
+    this.sinMuestrasMs = o.sinMuestrasMs ?? SIN_MUESTRAS_MS;
     this.v = { gen: 0, montada: false, estado: 'cerrada', silenciada: false, dormida: false, suspendida: false, avatar, idioma, intento: 0 };
   }
 
@@ -142,21 +159,39 @@ export class ControlSesion {
     if (n.gen !== antes.gen) {
       this.oyoAlgo = false;
       this.oyendoDesde = -1;
+      this.conMuestras = false;
+      this.ultimaCruda = Number.NaN;
     }
     if (n.montada && n.estado === 'conectando' && (n.gen !== antes.gen || antes.estado !== 'conectando' || !antes.montada)) this.conectandoDesde = ahora;
     const oyendo = n.montada && !n.silenciada && (n.estado === 'escuchando' || n.estado === 'hablando');
     if (!oyendo) this.oyendoDesde = -1;
-    else if (this.oyendoDesde < 0) this.oyendoDesde = ahora;
+    else if (this.oyendoDesde < 0) {
+      this.oyendoDesde = ahora;
+      // Recién abierto o recién des-silenciado: el reloj de las muestras empieza aquí.
+      this.ultimaMuestra = ahora;
+    }
   }
 
-  /** El volumen del micrófono de la conversación (0..1, ~20 Hz). */
-  entrada(nivel: number) {
-    if (nivel > UMBRAL_ENTRADA && this.v.montada) this.oyoAlgo = true;
+  /**
+   * El volumen del micrófono de la conversación (0..1, ~20 Hz). `cruda`: el valor tal cual lo da el SDK
+   * (sin escalar); si no cambia, no llegó una muestra nueva.
+   */
+  entrada(nivel: number, cruda?: number) {
+    if (!this.v.montada) return;
+    if (nivel > UMBRAL_ENTRADA) this.oyoAlgo = true;
+    if (cruda === undefined) return;
+    this.conMuestras = true;
+    if (cruda !== this.ultimaCruda) {
+      this.ultimaCruda = cruda;
+      this.ultimaMuestra = this.reloj();
+    }
   }
 
   /** La conversación entendió una frase de la persona: le llega la voz. */
   oyoFrase() {
-    if (this.v.montada) this.oyoAlgo = true;
+    if (!this.v.montada) return;
+    this.oyoAlgo = true;
+    this.ultimaMuestra = this.reloj();
   }
 
   /**
@@ -164,7 +199,7 @@ export class ControlSesion {
    * llegue nada del micrófono, cuentan como un fallo al abrir (reintento y, si tampoco, se suelta el
    * audio). Devuelve lo que hizo.
    */
-  revisar(): 'nada' | 'no-conecto' | 'sorda' {
+  revisar(): 'nada' | 'no-conecto' | 'sorda' | 'sin-muestras' {
     const v = this.v;
     if (!v.montada || v.suspendida) return 'nada';
     const ahora = this.reloj();
@@ -177,6 +212,13 @@ export class ControlSesion {
       // teléfono en el acto (y se le dice por qué).
       this.poner({ montada: false, estado: 'error', silenciada: false, intento: 0, detalle: 'no llegó audio del micrófono' });
       return 'sorda';
+    }
+    // Oía y dejó de llegar audio: ya no dice «escuchando» a nadie. Se reconecta (reintento con tope y con
+    // la última frase); si tampoco, falla como siempre y el oído del teléfono vuelve.
+    if (this.conMuestras && this.oyoAlgo && v.estado === 'escuchando' && this.oyendoDesde >= 0 && ahora - this.ultimaMuestra >= this.sinMuestrasMs) {
+      this.ultimaMuestra = ahora;
+      this.alEstado(v.gen, 'error', 'el micrófono dejó de mandar audio');
+      return 'sin-muestras';
     }
     return 'nada';
   }

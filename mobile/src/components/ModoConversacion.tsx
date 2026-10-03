@@ -65,8 +65,11 @@ type Props = {
   onMensaje: (gen: number, rol: 'usuario' | 'ultron', texto: string) => void;
   /** Le hablaron encima y se calló. */
   onInterrupcion: (gen: number) => void;
-  /** Volúmenes a ~20 Hz: su voz (0..1, la boca) y la de la persona (0..1, el anillo que late). */
-  onNiveles: (salida: number, entrada: number) => void;
+  /**
+   * Volúmenes a ~20 Hz: su voz (0..1, la boca) y la de la persona (0..1, el anillo que late). `cruda`: el
+   * valor del micrófono tal cual lo da el SDK (se congela si dejan de llegar muestras; sin sesión, undefined).
+   */
+  onNiveles: (salida: number, entrada: number, cruda?: number) => void;
   controles: MutableRefObject<ControlesSesion | null>;
   /** El audio del teléfono: lo toma, lo soltó, o se pidió cerrar (y se soltará en seguida). */
   onAudio?: (gen: number, que: 'toma' | 'suelta' | 'cerrando') => void;
@@ -235,9 +238,13 @@ function Sesion({ gen, silenciada, permiso, onEstado, onMensaje, onInterrupcion,
         nivel = setInterval(() => {
           let salida = 0;
           let entrada = 0;
+          let cruda: number | undefined;
           try {
             salida = Math.min(1, convRef.current.getOutputVolume() * 1.6);
-            entrada = silencio.current ? 0 : Math.min(1, convRef.current.getInputVolume() * 2);
+            if (!silencio.current) {
+              cruda = convRef.current.getInputVolume();
+              entrada = Math.min(1, (cruda || 0) * 2);
+            }
           } catch {
             /* sin sesión todavía */
           }
@@ -269,7 +276,7 @@ function Sesion({ gen, silenciada, permiso, onEstado, onMensaje, onInterrupcion,
           antes = ahora;
           if (silencio.current) boca.cortar();
           const abre = silencio.current ? 0 : boca.seguir(salida, dt);
-          cbs.current.onNiveles(abre, entrada);
+          cbs.current.onNiveles(abre, entrada, cruda);
         }, PASO_BOCA_MS);
       } catch (e: any) {
         soltarAudio();
