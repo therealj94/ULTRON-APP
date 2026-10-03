@@ -6,6 +6,7 @@
 import type { NivelAura } from './perfiles/tipos';
 import { clave } from './boveda';
 import { INSTRUCCION_MISIONES } from './misiones';
+import { exito, fallo, incierto, resultadoMemorizable, type EstadoHerramienta, type ReciboHerramienta, type ResultadoHerramienta } from './recibo-herramienta';
 
 export type HerramientaHarness = 'web' | 'sistema' | 'ejecutor' | 'leer' | 'computadora' | 'correo' | 'whatsapp' | 'mision' | 'circulo' | 'triaje' | 'tarea' | 'cartera';
 
@@ -151,14 +152,9 @@ export function herramientaQueSale(h: string): boolean {
 /** Cómo terminó una respuesta (auditoría 3-oct, STREAM01). Solo `completo` va a la memoria como conclusión. */
 export type EstadoRespuesta = 'completo' | 'truncado' | 'error';
 
-/**
- * Cómo terminó una herramienta (EXEC03). `unknown`: pudo haber hecho su efecto (se despachó y no se supo
- * el final); no es éxito ni fallo, y no se repite a ciegas.
- */
-export type EstadoHerramienta = 'succeeded' | 'failed' | 'unknown';
-
-/** Lo que devuelve una herramienta con su estado: el texto va al modelo; el estado, a la traza y al turno. */
-export type ResultadoHerramienta = { texto: string; estado: EstadoHerramienta };
+// Estado y recibo de cada herramienta (AUR07): viven en lib/recibo-herramienta.ts para que los runners los
+// usen sin importar el harness entero (lib/misiones ↔ lib/harness se importan entre sí).
+export { exito, fallo, incierto, resultadoMemorizable, type EstadoHerramienta, type ReciboHerramienta, type ResultadoHerramienta };
 
 /**
  * Qué toca cada herramienta afuera: `ninguno` (solo lee), `interno` (deja algo en AURA: un borrador, una
@@ -190,7 +186,7 @@ function conEstado(h: HerramientaHarness, r: string | ResultadoHerramienta): Res
 }
 
 /** Lo que el harness mismo no dejó correr: un fallo sabido, sin efecto. */
-const noCorrio = (texto: string): ResultadoHerramienta => ({ texto, estado: 'failed' });
+const noCorrio = (texto: string, codigo = 'no-disponible'): ResultadoHerramienta => fallo(texto, codigo);
 
 /** El resultado de una herramienta no puede pedir otra: su línea PEDIR_HERRAMIENTA se rompe (la escribió otro). */
 export function neutralizarPedido(texto: string): string {
@@ -268,11 +264,8 @@ export async function resolverPedidoConEstado(
       return conEstado(ped.herramienta, await f());
     } catch (e: any) {
       const porque = String(e?.message || e).slice(0, 160);
-      if (EFECTO_HERRAMIENTA[ped.herramienta] === 'ninguno') return { texto: `HARNESS ${ped.herramienta}: falló (${porque}). No inventes el resultado.`, estado: 'failed' };
-      return {
-        texto: `HARNESS ${ped.herramienta}: se encargó pero no supe el final (${porque}). No sé si se hizo: no lo repitas ni digas que quedó hecho; dilo así y ofrece revisarlo.`,
-        estado: 'unknown',
-      };
+      if (EFECTO_HERRAMIENTA[ped.herramienta] === 'ninguno') return fallo(`HARNESS ${ped.herramienta}: falló (${porque}). No inventes el resultado.`, 'excepcion');
+      return incierto(`HARNESS ${ped.herramienta}: se encargó pero no supe el final (${porque}). No sé si se hizo: no lo repitas ni digas que quedó hecho; dilo así y ofrece revisarlo.`, { codigo: 'excepcion' });
     }
   };
   if (ped.herramienta === 'web') {
@@ -331,8 +324,8 @@ export async function resolverPedidoConEstado(
 /** Lo que contesta una vuelta del modelo después de una herramienta, con quién la escribió. */
 export type VueltaHarness = { ok: boolean; reply: string; error?: string; modelo?: string; proveedor?: string };
 
-/** Una herramienta del turno, con su estado (va a la traza). */
-export type PasoHarness = { herramienta: HerramientaHarness; estado: EstadoHerramienta; ms: number; resumen: string; ronda: number };
+/** Una herramienta del turno, con su estado y su recibo (va a la traza). */
+export type PasoHarness = { herramienta: HerramientaHarness; estado: EstadoHerramienta; ms: number; resumen: string; ronda: number; recibo?: ReciboHerramienta };
 
 export type SalidaHarness = {
   reply: string;
@@ -342,6 +335,12 @@ export type SalidaHarness = {
   /** Por qué no quedó completo (para la traza y el `done`). */
   motivo?: string;
   pasos: PasoHarness[];
+  /**
+   * ¿La respuesta puede ir a la memoria como conclusión? Solo si el turno quedó `completo` y cada herramienta
+   * terminó en éxito con datos completos (AUR07). Un fallo, un `unknown` o datos parciales se cuentan, pero no
+   * se recuerdan como hechos.
+   */
+  memorizable: boolean;
   /** Quién escribió la última vuelta que contestó (sin vuelta: el que pidió la herramienta). */
   modelo?: string;
   proveedor?: string;
@@ -378,6 +377,11 @@ export async function correrBucleHarness(o: {
   alPaso?: (p: PasoHarness) => void;
   /** Lo que se le quita al resultado antes del prompt (la marca de acción de la app). */
   limpiar?: (texto: string) => string;
+  /**
+   * Antes de correr una herramienta con efecto (`interno` o `externo`): persiste que se despacha y dice si este
+   * proceso sigue siendo el dueño del turno (server/turno-unico.ts `efectoDelTurno`, AUR06). false = NO se corre.
+   */
+  antesDeEfecto?: (herramienta: HerramientaHarness) => Promise<boolean>;
 }): Promise<SalidaHarness> {
   let reply = o.reply;
   let via: SalidaHarness['via'] = null;
@@ -446,6 +450,21 @@ export async function correrBucleHarness(o: {
       motivo = 'sin tiempo para la herramienta';
       break;
     }
+    // Persistir antes de actuar (AUR06): si no quedó guardado que se despacha, o el turno ya es de otro
+    // proceso (fencing), la herramienta con efecto no corre.
+    if (o.antesDeEfecto && EFECTO_HERRAMIENTA[ped.herramienta] !== 'ninguno') {
+      const sigue = await o.antesDeEfecto(ped.herramienta).catch(() => false);
+      if (!sigue) {
+        const no = `HARNESS ${ped.herramienta}: no lo corrí: no pude dejar registrado este turno (o ya lo atiende otro proceso del servidor). No se hizo nada.`;
+        anotar({ herramienta: ped.herramienta, estado: 'failed', ms: 0, resumen: no, ronda, recibo: { efecto: 'ninguno', codigo: 'turno-ajeno' } });
+        o.hechos.push(no);
+        reply = quitarLineaPedido(reply);
+        via = 'harness-parcial';
+        estado = 'error';
+        motivo = 'el turno no quedó registrado para despachar la herramienta';
+        break;
+      }
+    }
     try {
       o.alTarea?.(ped.herramienta);
     } catch {
@@ -457,7 +476,8 @@ export async function correrBucleHarness(o: {
       r = await o.correr(ped, reply);
     } catch (e: any) {
       // Quien corre ya devuelve el estado; si aun así lanza, no se sabe si alcanzó a hacer algo.
-      r = { texto: `HARNESS ${ped.herramienta}: no supe el final (${String(e?.message || e).slice(0, 160)}). No lo repitas ni lo des por hecho.`, estado: EFECTO_HERRAMIENTA[ped.herramienta] === 'ninguno' ? 'failed' : 'unknown' };
+      const texto = `HARNESS ${ped.herramienta}: no supe el final (${String(e?.message || e).slice(0, 160)}). No lo repitas ni lo des por hecho.`;
+      r = EFECTO_HERRAMIENTA[ped.herramienta] === 'ninguno' ? fallo(texto, 'excepcion') : incierto(texto, { codigo: 'excepcion' });
     }
     // Lo que devuelve la herramienta (una página, una búsqueda) no lo escribió el modelo: si trae la marca de
     // acción o una línea de pedido, se rompe aquí, antes de ir al prompt o de pegarse a la respuesta parcial.
@@ -465,7 +485,7 @@ export async function correrBucleHarness(o: {
     if (ped.herramienta === 'correo' || ped.herramienta === 'whatsapp') ajeno = ped.herramienta;
     // El triaje también lee lo que otra gente escribió (sus chats y correos).
     else if (ped.herramienta === 'triaje') ajeno = 'whatsapp';
-    anotar({ herramienta: ped.herramienta, estado: r.estado, ms: Date.now() - tH, resumen: extra, ronda });
+    anotar({ herramienta: ped.herramienta, estado: r.estado, ms: Date.now() - tH, resumen: extra, ronda, ...(r.recibo ? { recibo: r.recibo } : {}) });
     o.hechos.push(extra);
     const qn = await vuelta(ronda);
     if (!qn || !qn.ok) {
@@ -479,5 +499,6 @@ export async function correrBucleHarness(o: {
     modelo = qn.modelo;
     proveedor = qn.proveedor;
   }
-  return { reply: quitarLineaPedido(reply), via, estado, ...(motivo ? { motivo } : {}), pasos, ...(modelo ? { modelo } : {}), ...(proveedor ? { proveedor } : {}) };
+  const memorizable = estado === 'completo' && pasos.every((p) => resultadoMemorizable(p));
+  return { reply: quitarLineaPedido(reply), via, estado, ...(motivo ? { motivo } : {}), pasos, memorizable, ...(modelo ? { modelo } : {}), ...(proveedor ? { proveedor } : {}) };
 }

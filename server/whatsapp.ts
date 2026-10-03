@@ -29,6 +29,7 @@ import { personaPorCorreoExacto } from '../lib/acceso';
 import { decidirBorrador, fechaHN, motivoBorrador, vigenciaNueva, type VigenciaBorrador } from './correo';
 import { iniciarTarea, marcarPaso } from '../lib/tarea-en-curso';
 import type { RetencionAcciones } from './voz-agente';
+import { exito, fallo, type ResultadoHerramienta } from '../lib/recibo-herramienta';
 
 export type ChatWA = {
   jid: string;
@@ -205,12 +206,12 @@ function lineaChat(c: ChatWA, i: number): string {
   return `${i + 1}. ${c.nombre || c.jid}${c.grupo ? ' (grupo)' : ''}${c.noLeidos ? ` — ${c.noLeidos} sin leer` : ''} — ${quien}«${c.ultimo.slice(0, 120)}» (${hora(c.hora)})`;
 }
 
-async function revisar(quien: string, ambito: string): Promise<string> {
+async function revisar(quien: string, ambito: string): Promise<ResultadoHerramienta> {
   const chats = await chatsWA('', 40);
   const sinLeer = chats.filter((c) => c.noLeidos > 0);
   const lista = (sinLeer.length ? sinLeer : chats).slice(0, 10);
   LISTAS.set(llave(quien, ambito), lista);
-  if (!lista.length) return 'WHATSAPP: no hay chats todavía (si acaba de vincularlo, la historia tarda unos minutos en llegar).';
+  if (!lista.length) return exito('WHATSAPP: no hay chats todavía (si acaba de vincularlo, la historia tarda unos minutos en llegar).', { efecto: 'ninguno', proveedor: 'whatsapp' });
   const que = sinLeer.length ? `${sinLeer.length} con mensajes sin leer` : 'nada sin leer; los más recientes';
   // Varios chats sin leer: una tarea de varios pasos que se lleva hasta el final (lib/tarea-en-curso.ts).
   let tarea = '';
@@ -218,17 +219,23 @@ async function revisar(quien: string, ambito: string): Promise<string> {
     const t = iniciarTarea(quien, ambito, { tipo: 'whatsapp', titulo: `revisar los ${lista.length} chats con mensajes sin leer`, pasos: lista.map((c) => `${c.nombre || c.jid}${c.grupo ? ' (grupo)' : ''}`) });
     if (t) tarea = `\nTAREA EN CURSO: «${t.titulo}». Llévalos uno por uno hasta el último (o hasta que diga que ya).`;
   }
-  return `WHATSAPP (${que}; horas de Honduras):\n${lista.map(lineaChat).join('\n')}\nCÓMO DECIRLO: de quién son y cuántos sin leer, con su número; pregúntale cuál le lees primero. Para abrir uno: whatsapp leer <número o nombre>.\n${AVISO_AJENO}${tarea}`;
+  return exito(
+    `WHATSAPP (${que}; horas de Honduras):\n${lista.map(lineaChat).join('\n')}\nCÓMO DECIRLO: de quién son y cuántos sin leer, con su número; pregúntale cuál le lees primero. Para abrir uno: whatsapp leer <número o nombre>.\n${AVISO_AJENO}${tarea}`,
+    { efecto: 'ninguno', proveedor: 'whatsapp' }
+  );
 }
 
-async function buscar(quien: string, ambito: string, texto: string): Promise<string> {
+async function buscar(quien: string, ambito: string, texto: string): Promise<ResultadoHerramienta> {
   const j = await pedir<{ mensajes: MensajeWA[] }>(`/buscar?q=${encodeURIComponent(texto)}&limite=12`);
-  if (!j.mensajes.length) return `WHATSAPP: nada con «${texto}».`;
+  if (!j.mensajes.length) return exito(`WHATSAPP: nada con «${texto}».`, { efecto: 'ninguno', proveedor: 'whatsapp' });
   const chats = await chatsWA('', 100);
   const nombre = (jid: string) => chats.find((c) => c.jid === jid)?.nombre || jid;
-  return `WHATSAPP (buscando «${texto}»):\n${j.mensajes
-    .map((m) => `· ${nombre(m.chat)} — ${m.mio ? 'tú' : m.nombreDe || 'ellos'} (${hora(m.hora)}): «${m.texto.slice(0, 200)}»`)
-    .join('\n')}\n${AVISO_AJENO}`;
+  return exito(
+    `WHATSAPP (buscando «${texto}»):\n${j.mensajes
+      .map((m) => `· ${nombre(m.chat)} — ${m.mio ? 'tú' : m.nombreDe || 'ellos'} (${hora(m.hora)}): «${m.texto.slice(0, 200)}»`)
+      .join('\n')}\n${AVISO_AJENO}`,
+    { efecto: 'ninguno', proveedor: 'whatsapp' }
+  );
 }
 
 function lineaMensaje(m: MensajeWA, c: ChatWA): string {
@@ -237,9 +244,9 @@ function lineaMensaje(m: MensajeWA, c: ChatWA): string {
   return `${quien} (${hora(m.hora)}): ${m.eliminado ? '[eliminado]' : `${tipo}${m.texto}`}${m.editado ? ' (editado)' : ''}`;
 }
 
-async function leer(quien: string, ambito: string, ref: string): Promise<string> {
+async function leer(quien: string, ambito: string, ref: string): Promise<ResultadoHerramienta> {
   const c = await chatDeRef(quien, ambito, ref);
-  if (typeof c === 'string') return c;
+  if (typeof c === 'string') return fallo(c, 'referencia');
   const { mensajes } = await mensajesWA(c.jid, 15);
   const ordenados = [...mensajes].sort((a, b) => a.hora - b.hora);
   // Los últimos `noLeidos` que no son suyos son lo nuevo: van aparte, para leerle eso primero.
@@ -249,7 +256,7 @@ async function leer(quien: string, ambito: string, ref: string): Promise<string>
   const lista = LISTAS.get(llave(quien, ambito)) || [];
   const i = lista.findIndex((x) => x.jid === c.jid);
   const avance = i >= 0 ? marcarPaso(quien, ambito, 'whatsapp', i, 'hecho').texto : '';
-  return [
+  const texto = [
     `WHATSAPP — chat con ${c.nombre || c.jid}${c.grupo ? ' (grupo)' : ''}${c.numero ? ` (${c.numero})` : ''}, los últimos ${ordenados.length}; horas de Honduras.`,
     nuevos.length ? `LO NUEVO (${nuevos.length} sin leer):\n${nuevos.map((m) => lineaMensaje(m, c)).join('\n')}` : 'No hay nada sin leer en este chat.',
     antes.length ? `${nuevos.length ? 'ANTES (para el contexto)' : 'LOS ÚLTIMOS'}:\n${antes.map((m) => lineaMensaje(m, c)).join('\n')}` : '',
@@ -259,22 +266,31 @@ async function leer(quien: string, ambito: string, ref: string): Promise<string>
   ]
     .filter(Boolean)
     .join('\n');
+  return exito(texto, { efecto: 'ninguno', proveedor: 'whatsapp', referencia: c.jid });
 }
 
-function guardarBorrador(quien: string, ambito: string, b: Borrador): string {
-  if (!b.texto.trim()) return 'WHATSAPP: el borrador vino vacío. Pregúntale qué quiere decir.';
-  BORRADORES.set(llave(quien, ambito), { ...b, ...vigenciaNueva(quien, b.creado, BORRADOR_VIVE_MS) });
-  return `BORRADOR DE WHATSAPP (NO enviado) para ${b.nombre}:\n${b.texto}\nLéeselo tal cual y pregúntale si lo mandas. Solo se manda si dice que sí; si quiere cambios, haz otro borrador.`;
+/** El borrador queda esperando su «sí»: recibo `borrador` con su id de intento (nada salió todavía). */
+function guardarBorrador(quien: string, ambito: string, b: Borrador): ResultadoHerramienta {
+  if (!b.texto.trim()) return fallo('WHATSAPP: el borrador vino vacío. Pregúntale qué quiere decir.', 'falta-dato');
+  const vigencia = vigenciaNueva(quien, b.creado, BORRADOR_VIVE_MS);
+  BORRADORES.set(llave(quien, ambito), { ...b, ...vigencia });
+  return exito(`BORRADOR DE WHATSAPP (NO enviado) para ${b.nombre}:\n${b.texto}\nLéeselo tal cual y pregúntale si lo mandas. Solo se manda si dice que sí; si quiere cambios, haz otro borrador.`, {
+    efecto: 'borrador',
+    proveedor: 'whatsapp',
+    referencia: vigencia.intento,
+    durable: false,
+  });
 }
 
-async function responder(quien: string, ambito: string, ref: string, texto: string): Promise<string> {
+async function responder(quien: string, ambito: string, ref: string, texto: string): Promise<ResultadoHerramienta> {
   const c = await chatDeRef(quien, ambito, ref);
-  if (typeof c === 'string') return c.replace('Revisa primero (whatsapp revisar) o dime el nombre', 'Pídele el nombre');
+  if (typeof c === 'string') return fallo(c.replace('Revisa primero (whatsapp revisar) o dime el nombre', 'Pídele el nombre'), 'referencia');
   const lista = LISTAS.get(llave(quien, ambito)) || [];
   const i = lista.findIndex((x) => x.jid === c.jid);
-  const avance = i >= 0 && texto.trim() ? marcarPaso(quien, ambito, 'whatsapp', i, 'hecho', 'contestado').texto : '';
   const borrador = guardarBorrador(quien, ambito, { chat: c.jid, nombre: c.nombre || c.jid, texto: texto.trim(), creado: Date.now() });
-  return avance ? `${borrador}\n${avance}` : borrador;
+  // El paso queda «contestado» solo si el borrador quedó.
+  const avance = i >= 0 && borrador.estado === 'succeeded' ? marcarPaso(quien, ambito, 'whatsapp', i, 'hecho', 'contestado').texto : '';
+  return avance ? { ...borrador, texto: `${borrador.texto}\n${avance}` } : borrador;
 }
 
 /**
@@ -283,6 +299,11 @@ async function responder(quien: string, ambito: string, ref: string, texto: stri
  * `chat`: el jid («50499990000@s.whatsapp.net»). Devuelve el HECHO para el modelo.
  */
 export function borradorWhatsappPara(quien: string, ambito: string, b: { chat: string; nombre: string; texto: string }): string {
+  return borradorWhatsappParaConEstado(quien, ambito, b).texto;
+}
+
+/** Lo mismo, con su estado y su recibo (`borrador` con el id de intento). */
+export function borradorWhatsappParaConEstado(quien: string, ambito: string, b: { chat: string; nombre: string; texto: string }): ResultadoHerramienta {
   return guardarBorrador(quien, ambito, { chat: String(b.chat || ''), nombre: String(b.nombre || b.chat || ''), texto: String(b.texto || '').trim(), creado: Date.now() });
 }
 
@@ -327,28 +348,34 @@ export async function resolverBorradorWhatsapp(quien: string, ambito: string, me
   });
 }
 
-/** El runner del harness: «revisar», «buscar x», «leer 2|Beto», «responder 2|Beto | texto». */
+/** El runner del harness: «revisar», «buscar x», «leer 2|Beto», «responder 2|Beto | texto». Solo el texto. */
 export async function correrWhatsapp(quien: string, arg: string, ambito = ''): Promise<string> {
-  if (!quien) return 'WHATSAPP: solo con sesión. Pídele que entre con su cuenta.';
-  if (!whatsappDisponible()) return 'WHATSAPP: no está conectado en este servidor. No lo usé; dilo con naturalidad.';
-  if (!whatsappPermitido(quien)) return 'WHATSAPP: esta cuenta no tiene WhatsApp conectado aquí. No lo usé.';
+  return (await correrWhatsappConEstado(quien, arg, ambito)).texto;
+}
+
+/** El runner con su estado y su recibo (AUR07): lo que no se hizo es `failed` con su código; un borrador, recibo `borrador`. */
+export async function correrWhatsappConEstado(quien: string, arg: string, ambito = ''): Promise<ResultadoHerramienta> {
+  if (!quien) return fallo('WHATSAPP: solo con sesión. Pídele que entre con su cuenta.', 'sin-sesion');
+  if (!whatsappDisponible()) return fallo('WHATSAPP: no está conectado en este servidor. No lo usé; dilo con naturalidad.', 'no-disponible');
+  if (!whatsappPermitido(quien)) return fallo('WHATSAPP: esta cuenta no tiene WhatsApp conectado aquí. No lo usé.', 'no-disponible');
   const [cabeza, ...partes] = String(arg || '').split('|').map((x) => x.trim());
   const m = cabeza.match(/^(\S+)\s*(.*)$/s);
   const verbo = (m?.[1] || 'revisar').toLowerCase();
   const resto = (m?.[2] || '').trim();
   try {
     const e = await estadoWA();
-    if (!e.vinculado) return 'WHATSAPP: todavía no está vinculado. Dile que lo vincule en sus chats → WhatsApp (con el código o el QR). No inventes mensajes.';
+    if (!e.vinculado) return fallo('WHATSAPP: todavía no está vinculado. Dile que lo vincule en sus chats → WhatsApp (con el código o el QR). No inventes mensajes.', 'no-disponible');
     if (/^(revisar|revisa|nuevos|chats)$/.test(verbo)) return await revisar(quien, ambito);
-    if (/^(buscar|busca)$/.test(verbo)) return resto.length >= 2 ? await buscar(quien, ambito, resto) : 'WHATSAPP: ¿qué busco? Falta el texto.';
-    if (/^(leer|lee|abrir|abre)$/.test(verbo)) return resto ? await leer(quien, ambito, resto) : 'WHATSAPP: ¿cuál chat? Dime el número o el nombre.';
+    if (/^(buscar|busca)$/.test(verbo)) return resto.length >= 2 ? await buscar(quien, ambito, resto) : fallo('WHATSAPP: ¿qué busco? Falta el texto.', 'falta-dato');
+    if (/^(leer|lee|abrir|abre)$/.test(verbo)) return resto ? await leer(quien, ambito, resto) : fallo('WHATSAPP: ¿cuál chat? Dime el número o el nombre.', 'falta-dato');
     if (/^(responder|responde|contestar|contesta|escribir|escribe|escribele|mandar|manda|mandale|enviar|envia|enviale)$/.test(sinTildes(verbo))) {
-      if (!resto) return 'WHATSAPP: ¿a quién? Dime el número o el nombre.';
+      if (!resto) return fallo('WHATSAPP: ¿a quién? Dime el número o el nombre.', 'falta-dato');
       return await responder(quien, ambito, resto, partes.join(' | '));
     }
-    return `WHATSAPP: no entiendo «${verbo}». Usa revisar, buscar, leer o responder.`;
+    return fallo(`WHATSAPP: no entiendo «${verbo}». Usa revisar, buscar, leer o responder.`, 'no-entiendo');
   } catch (e: any) {
-    return `WHATSAPP: falló (${String(e?.message || e).slice(0, 140)}).`;
+    // Lo que lanza aquí (el puente, sus chats) pasa antes de dejar un borrador: no hubo efecto.
+    return fallo(`WHATSAPP: falló (${String(e?.message || e).slice(0, 140)}).`, 'excepcion');
   }
 }
 

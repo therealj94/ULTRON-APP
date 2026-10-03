@@ -26,3 +26,5 @@ data/tarea-en-curso/
 windows/src/Aura.Windows/CentroAssets/
 windows/centro/node_modules/
 build-server/
+# Lo durable sin S3 (lib/durable.ts: turnos, operaciones, leases): estado local, nunca al repositorio.
+data/durable/

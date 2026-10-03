@@ -33,6 +33,7 @@ import { plegar } from '../lib/cerebro-comun';
 import { iniciarTarea, marcarPaso, siguiente, tareaDe } from '../lib/tarea-en-curso';
 import type { RetencionAcciones } from './voz-agente';
 import { explicarFallo } from '../lib/correo/buzon';
+import { exito, fallo, type ResultadoHerramienta } from '../lib/recibo-herramienta';
 
 /* ------------------------------------------------------------------ el buzón (las pruebas ponen uno falso) */
 
@@ -132,9 +133,9 @@ async function cuentaDeRef(quien: string, ref: string): Promise<{ c: CuentaCorre
 }
 
 /** Revisar (los no leídos de todas sus cuentas) o buscar. Numera para que después diga «lee el 2». */
-async function revisar(quien: string, ambito: string, buscar?: string): Promise<string> {
+async function revisar(quien: string, ambito: string, buscar?: string): Promise<ResultadoHerramienta> {
   const cuentas = await cuentasDe(quien);
-  if (!cuentas.length) return SIN_CUENTAS;
+  if (!cuentas.length) return fallo(SIN_CUENTAS, 'sin-cuentas');
   const errores: string[] = [];
   const todos: Resumen[] = [];
   await Promise.all(
@@ -152,9 +153,13 @@ async function revisar(quien: string, ambito: string, buscar?: string): Promise<
   LISTAS.set(k, lista);
   LECTURAS.delete(k);
   const varias = cuentas.length > 1;
-  const fallo = errores.length ? `\nNo pude abrir: ${errores.join('; ')}. Díselo.` : '';
+  const noAbrio = errores.length ? `\nNo pude abrir: ${errores.join('; ')}. Díselo.` : '';
   const que = buscar ? `buscando «${buscar}»` : 'sin leer';
-  if (!lista.length) return `CORREO (${que}, ${cuentas.length} ${cuentas.length === 1 ? 'cuenta' : 'cuentas'}): nada.${fallo}`;
+  // Ninguna cuenta abrió: no es «no hay nada», es que no se pudo mirar (AUR07).
+  if (errores.length === cuentas.length) return fallo(`CORREO: no pude abrir ninguna de sus cuentas (${errores.join('; ')}). No sé si tiene correos nuevos; díselo así, sin inventar.`, 'proveedor');
+  // Con alguna cuenta que no abrió, lo que se trae es parcial: sirve para contestar, no para memorizar.
+  const recibo = { efecto: 'ninguno' as const, proveedor: 'imap', ...(errores.length ? { incompleto: true } : {}) };
+  if (!lista.length) return exito(`CORREO (${que}, ${cuentas.length} ${cuentas.length === 1 ? 'cuenta' : 'cuentas'}): nada.${noAbrio}`, recibo);
   const hayMas = todos.length > lista.length ? ` (hay más; estos son los ${lista.length} más nuevos)` : '';
   const lineas = lista.map((m, i) => lineaCorreo(m, i, { variasCuentas: varias, marcarNoLeidos: !!buscar })).join('\n');
   // Varios sin leer: es una tarea de varios pasos, y se lleva hasta el final.
@@ -163,11 +168,12 @@ async function revisar(quien: string, ambito: string, buscar?: string): Promise<
     const t = iniciarTarea(quien, ambito, { tipo: 'correo', titulo: `revisar los ${lista.length} correos sin leer`, pasos: lista.map((m) => `${m.de || m.deCorreo} — «${m.asunto}»`) });
     if (t) tarea = `\nTAREA EN CURSO: «${t.titulo}». Llévalos en orden, uno por uno, hasta el último (o hasta que diga que ya).`;
   }
-  return (
-    `CORREO (${que}: ${lista.length}${hayMas}; del más nuevo al más viejo; horas de Honduras):\n${lineas}${fallo}\n` +
-    'CÓMO DECIRLO: cuántos son y de quién, cada uno con su número, remitente (el nombre; la dirección solo si no hay nombre o si la pide) y asunto, sin leer los extractos enteros. ' +
-    'Luego pregúntale por cuál empiezas (o empieza por el 1). Para abrir uno: correo leer <número, remitente o asunto>.' +
-    tarea
+  return exito(
+    `CORREO (${que}: ${lista.length}${hayMas}; del más nuevo al más viejo; horas de Honduras):\n${lineas}${noAbrio}\n` +
+      'CÓMO DECIRLO: cuántos son y de quién, cada uno con su número, remitente (el nombre; la dirección solo si no hay nombre o si la pide) y asunto, sin leer los extractos enteros. ' +
+      'Luego pregúntale por cuál empiezas (o empieza por el 1). Para abrir uno: correo leer <número, remitente o asunto>.' +
+      tarea,
+    recibo
   );
 }
 
@@ -264,18 +270,18 @@ async function ubicar(quien: string, ambito: string, ref: string, o: { siguiente
 }
 
 /** Abre el correo y lo deja listo para leer: cuerpo limpio en trozos, adjuntos con nombre. */
-async function leerRef(quien: string, ambito: string, ref: string, o: { siguiente?: boolean } = {}): Promise<string> {
+async function leerRef(quien: string, ambito: string, ref: string, o: { siguiente?: boolean } = {}): Promise<ResultadoHerramienta> {
   const u = await ubicar(quien, ambito, ref, o);
-  if ('hecho' in u) return u.hecho;
+  if ('hecho' in u) return fallo(u.hecho, 'referencia');
   const ubic = await cuentaDeRef(quien, u.ref);
-  if (!ubic) return 'CORREO: esa cuenta ya no está conectada.';
+  if (!ubic) return fallo('CORREO: esa cuenta ya no está conectada.', 'no-disponible');
   let x: Mensaje | null;
   try {
     x = await buzon.leer(quien, ubic.c, ubic.uid);
   } catch (e: any) {
-    return `CORREO: no pude abrirlo (${String(e?.responseText || e?.message || e).slice(0, 120)}).`;
+    return fallo(`CORREO: no pude abrirlo (${String(e?.responseText || e?.message || e).slice(0, 120)}).`, 'proveedor');
   }
-  if (!x) return 'CORREO: ese correo ya no está en la bandeja.';
+  if (!x) return fallo('CORREO: ese correo ya no está en la bandeja.', 'no-encontrado');
   const k = llave(quien, ambito);
   const lista = LISTAS.get(k) || [];
   const cuerpo = limpiarCuerpo(x.texto);
@@ -294,7 +300,7 @@ async function leerRef(quien: string, ambito: string, ref: string, o: { siguient
   const adj = x.adjuntos.length ? `Adjuntos: ${x.adjuntos.map((a) => `${a.nombre} (${Math.max(1, Math.round(a.bytes / 1024))} KB)`).join(', ')}.` : 'Sin adjuntos.';
   const cual = u.n ? `CORREO ${u.n} de ${lista.length}` : 'CORREO';
   const avance = u.n ? marcarPaso(quien, ambito, 'correo', u.n - 1, 'hecho').texto : '';
-  return [
+  const texto = [
     `${cual} — de ${remitente(x.de, x.deCorreo)}, para ${x.para || 'ti'}${copia} — «${x.asunto}» — ${fechaHN(x.fecha)} (hora de Honduras).`,
     adj,
     cuerpo ? `TEXTO (limpio: sin firma ni lo citado de correos anteriores${trozos.length > 1 ? `; en ${trozos.length} trozos` : ''}):\n${dados.join('\n')}` : 'TEXTO: no trae texto (solo el asunto' + (x.adjuntos.length ? ' y los adjuntos' : '') + ').',
@@ -306,21 +312,25 @@ async function leerRef(quien: string, ambito: string, ref: string, o: { siguient
   ]
     .filter(Boolean)
     .join('\n');
+  return exito(texto, { efecto: 'ninguno', proveedor: 'imap', referencia: u.ref });
 }
 
 /** «Sigue»: el trozo siguiente del correo que está leyendo. */
-function seguirLectura(quien: string, ambito: string): string {
+function seguirLectura(quien: string, ambito: string): ResultadoHerramienta {
   const lec = LECTURAS.get(llave(quien, ambito));
-  if (!lec) return 'CORREO: no estoy leyendo ninguno ahora. Pregúntale cuál quiere que le lea.';
+  if (!lec) return fallo('CORREO: no estoy leyendo ninguno ahora. Pregúntale cuál quiere que le lea.', 'falta-dato');
   if (lec.dado >= lec.trozos.length) {
     const t = tareaDe(quien, ambito);
     const sig = t && t.tipo === 'correo' ? siguiente(t) : -1;
-    return `CORREO: ese correo (de ${lec.de || lec.deCorreo}, «${lec.asunto}») ya se leyó entero. Pregúntale si le contesta${sig >= 0 ? ` o sigues con el ${sig + 1}` : ''}.`;
+    return exito(`CORREO: ese correo (de ${lec.de || lec.deCorreo}, «${lec.asunto}») ya se leyó entero. Pregúntale si le contesta${sig >= 0 ? ` o sigues con el ${sig + 1}` : ''}.`, { efecto: 'ninguno', referencia: lec.ref });
   }
   const i = lec.dado;
   lec.dado += 1;
   const quedan = lec.trozos.length - lec.dado;
-  return `CORREO (sigue el de ${lec.de || lec.deCorreo}, «${lec.asunto}») — trozo ${i + 1} de ${lec.trozos.length}:\n${lec.trozos[i]}\n${quedan ? `(Quedan ${quedan}; pregunta si sigues.)` : '(Es el final del correo: pregúntale si le contesta o sigues con el siguiente.)'}\n${AVISO_AJENO}`;
+  return exito(
+    `CORREO (sigue el de ${lec.de || lec.deCorreo}, «${lec.asunto}») — trozo ${i + 1} de ${lec.trozos.length}:\n${lec.trozos[i]}\n${quedan ? `(Quedan ${quedan}; pregunta si sigues.)` : '(Es el final del correo: pregúntale si le contesta o sigues con el siguiente.)'}\n${AVISO_AJENO}`,
+    { efecto: 'ninguno', referencia: lec.ref }
+  );
 }
 
 /** Las direcciones sin repetir ni las suyas. */
@@ -333,32 +343,33 @@ function sinRepetir(xs: string[], fuera: string[]): string[] {
   return out;
 }
 
-async function responder(quien: string, ambito: string, ref: string, texto: string, todos = false): Promise<string> {
+async function responder(quien: string, ambito: string, ref: string, texto: string, todos = false): Promise<ResultadoHerramienta> {
   const u = await ubicar(quien, ambito, ref);
-  if ('hecho' in u) return u.hecho;
+  if ('hecho' in u) return fallo(u.hecho, 'referencia');
   const ubic = await cuentaDeRef(quien, u.ref);
-  if (!ubic) return 'CORREO: esa cuenta ya no está conectada.';
+  if (!ubic) return fallo('CORREO: esa cuenta ya no está conectada.', 'no-disponible');
   const x = await buzon.leer(quien, ubic.c, ubic.uid).catch(() => null);
-  if (!x) return 'CORREO: no pude abrir ese correo para contestarlo.';
+  if (!x) return fallo('CORREO: no pude abrir ese correo para contestarlo.', 'proveedor');
   const asunto = /^\s*re\s*:/i.test(x.asunto) ? x.asunto : `Re: ${x.asunto}`;
   const mias = (await cuentasDe(quien)).map((c) => c.correo);
   const para = [x.responderA || x.deCorreo].filter(Boolean);
   const cc = todos ? sinRepetir([...x.paraCorreos, ...x.ccCorreos], [...mias, ...para]) : [];
   const original = sinCitas(x.texto).slice(0, 2000);
   const cita = original ? `\n\nEl ${fechaHN(x.fecha, Date.now(), { completa: true })}, ${remitente(x.de, x.deCorreo)} escribió:\n${original.split('\n').map((l) => `> ${l}`).join('\n')}` : '';
-  const avance = u.n && texto.trim() ? marcarPaso(quien, ambito, 'correo', u.n - 1, 'hecho', 'contestado').texto : '';
   const borrador = guardarBorrador(
     quien,
     ambito,
     { cuentaId: ubic.c.id, desde: ubic.c.correo, para, cc, asunto, texto, cita, enRespuestaA: x.messageId || undefined, referencias: x.referencias, creado: Date.now() },
     `Va como respuesta a ${x.de || x.deCorreo} en el mismo hilo${todos ? (cc.length ? ', a todos los del correo' : ' (no había nadie más en el correo: solo a quien lo mandó)') : ''}, con su correo citado debajo.`
   );
-  return avance ? `${borrador}\n${avance}` : borrador;
+  // El paso queda «contestado» solo si el borrador quedó (uno vacío no contesta nada).
+  const avance = borrador.estado === 'succeeded' && u.n ? marcarPaso(quien, ambito, 'correo', u.n - 1, 'hecho', 'contestado').texto : '';
+  return avance ? { ...borrador, texto: `${borrador.texto}\n${avance}` } : borrador;
 }
 
-async function escribir(quien: string, ambito: string, para: string, asunto: string, texto: string): Promise<string> {
+async function escribir(quien: string, ambito: string, para: string, asunto: string, texto: string): Promise<ResultadoHerramienta> {
   const cuentas = await cuentasDe(quien);
-  if (!cuentas.length) return SIN_CUENTAS;
+  if (!cuentas.length) return fallo(SIN_CUENTAS, 'sin-cuentas');
   let destinos = para.split(/[,;\s]+/).filter(Boolean);
   if (destinos.length && !destinos.every(correoValido)) {
     // «escríbele a Ana»: si es alguien de la lista, su dirección.
@@ -366,17 +377,20 @@ async function escribir(quien: string, ambito: string, para: string, asunto: str
     const e = elegirCorreo(lista, para);
     if (e.tipo === 'uno' && correoValido(lista[e.i].deCorreo)) destinos = [lista[e.i].deCorreo];
   }
-  if (!destinos.length || !destinos.every(correoValido)) return `CORREO: «${para}» no es una dirección de correo. Pídele la dirección exacta.`;
+  if (!destinos.length || !destinos.every(correoValido)) return fallo(`CORREO: «${para}» no es una dirección de correo. Pídele la dirección exacta.`, 'falta-dato');
   return guardarBorrador(quien, ambito, { cuentaId: cuentas[0].id, desde: cuentas[0].correo, para: destinos, asunto: asunto || '(sin asunto)', texto, creado: Date.now() });
 }
 
-function guardarBorrador(quien: string, ambito: string, b: Borrador, nota = ''): string {
-  if (!b.texto.trim()) return 'CORREO: el borrador vino vacío. Pregúntale qué quiere decir.';
-  BORRADORES.set(llave(quien, ambito), { ...b, ...vigenciaNueva(quien, b.creado, BORRADOR_VIVE_MS) });
-  return (
+/** El borrador queda esperando su «sí»: el recibo es `borrador` con su id de intento (nada salió todavía). */
+function guardarBorrador(quien: string, ambito: string, b: Borrador, nota = ''): ResultadoHerramienta {
+  if (!b.texto.trim()) return fallo('CORREO: el borrador vino vacío. Pregúntale qué quiere decir.', 'falta-dato');
+  const vigencia = vigenciaNueva(quien, b.creado, BORRADOR_VIVE_MS);
+  BORRADORES.set(llave(quien, ambito), { ...b, ...vigencia });
+  return exito(
     `BORRADOR (NO enviado) desde ${b.desde} para ${b.para.join(', ')}${b.cc?.length ? ` (con copia a ${b.cc.join(', ')})` : ''} — «${b.asunto}»:\n${b.texto}\n` +
-    (nota ? `${nota}\n` : '') +
-    'Léeselo tal cual y pregúntale si lo mandas. Solo se manda si dice que sí; si quiere cambios, haz otro borrador.'
+      (nota ? `${nota}\n` : '') +
+      'Léeselo tal cual y pregúntale si lo mandas. Solo se manda si dice que sí; si quiere cambios, haz otro borrador.',
+    { efecto: 'borrador', proveedor: 'smtp', referencia: vigencia.intento, durable: false }
   );
 }
 
@@ -538,25 +552,34 @@ async function mandarBorrador(quien: string, b: Borrador): Promise<string> {
 /**
  * El runner del harness: «revisar», «buscar x», «leer 3|Ana|el último de Ana», «seguir», «siguiente»,
  * «saltar 3», «responder 3|Ana| | texto», «responder-todos … | texto», «escribir a@b | asunto | texto».
+ * Solo el texto (el de siempre); el estado y el recibo, con correrCorreoConEstado.
  */
 export async function correrCorreo(quien: string, arg: string, ambito = ''): Promise<string> {
-  if (!quien) return 'CORREO: solo con sesión. Pídele que entre con su cuenta.';
+  return (await correrCorreoConEstado(quien, arg, ambito)).texto;
+}
+
+/**
+ * El runner con su estado y su recibo (AUR07): lo que no se pudo hacer es `failed` (con su código), un
+ * borrador es `succeeded` con recibo `borrador` (nada salió), lo leído con alguna cuenta caída va `incompleto`.
+ */
+export async function correrCorreoConEstado(quien: string, arg: string, ambito = ''): Promise<ResultadoHerramienta> {
+  if (!quien) return fallo('CORREO: solo con sesión. Pídele que entre con su cuenta.', 'sin-sesion');
   const [cabeza, ...partes] = String(arg || '').split('|').map((x) => x.trim());
   const m = cabeza.match(/^(\S+)\s*(.*)$/s);
   const verbo = plegar(m?.[1] || 'revisar');
   let resto = (m?.[2] || '').trim();
   try {
     if (/^(revisar|revisa|nuevos|bandeja)$/.test(verbo)) return await revisar(quien, ambito);
-    if (/^(buscar|busca)$/.test(verbo)) return resto ? await revisar(quien, ambito, resto) : 'CORREO: ¿qué busco? Falta el texto.';
+    if (/^(buscar|busca)$/.test(verbo)) return resto ? await revisar(quien, ambito, resto) : fallo('CORREO: ¿qué busco? Falta el texto.', 'falta-dato');
     // Sin decir cuál: el siguiente que falta (de la tarea, o el primero de la lista).
     if (/^(leer|lee|leeme|abrir|abre)$/.test(verbo)) return await leerRef(quien, ambito, resto, { siguiente: !resto });
     if (/^(siguiente|proximo|otro)$/.test(verbo)) return await leerRef(quien, ambito, '', { siguiente: true });
     if (/^(seguir|sigue|continuar|continua|mas)$/.test(verbo)) return seguirLectura(quien, ambito);
     if (/^(saltar|salta|omitir)$/.test(verbo)) {
       const u = await ubicar(quien, ambito, resto);
-      if ('hecho' in u) return u.hecho;
-      if (!u.n) return 'CORREO: ese no está en la lista de la tarea.';
-      return marcarPaso(quien, ambito, 'correo', u.n - 1, 'saltado').texto || `CORREO: salté el ${u.n}.`;
+      if ('hecho' in u) return fallo(u.hecho, 'referencia');
+      if (!u.n) return fallo('CORREO: ese no está en la lista de la tarea.', 'no-encontrado');
+      return exito(marcarPaso(quien, ambito, 'correo', u.n - 1, 'saltado').texto || `CORREO: salté el ${u.n}.`, { efecto: 'guardado', durable: false });
     }
     const aTodos = /^(responder|responde|contestar|contesta)[-_]?(a)?[-_]?todos$/.test(verbo) || /^a?\s*todos\b/i.test(resto);
     if (aTodos || /^(responder|responde|contestar|contesta)$/.test(verbo)) {
@@ -567,9 +590,10 @@ export async function correrCorreo(quien: string, arg: string, ambito = ''): Pro
       const [asunto = '', ...texto] = partes;
       return await escribir(quien, ambito, resto, asunto, texto.join(' | '));
     }
-    return `CORREO: no entiendo «${verbo}». Usa revisar, buscar, leer, seguir, siguiente, saltar, responder, responder-todos o escribir.`;
+    return fallo(`CORREO: no entiendo «${verbo}». Usa revisar, buscar, leer, seguir, siguiente, saltar, responder, responder-todos o escribir.`, 'no-entiendo');
   } catch (e: any) {
-    return `CORREO: falló (${String(e?.message || e).slice(0, 140)}).`;
+    // Lo que lanza aquí (leer sus cuentas, el IMAP) pasa antes de dejar un borrador: no hubo efecto.
+    return fallo(`CORREO: falló (${String(e?.message || e).slice(0, 140)}).`, 'excepcion');
   }
 }
 
