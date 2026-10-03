@@ -32,6 +32,7 @@ import { cortar, EXPLORADOR_TX, type Saldo } from './logica';
 import { distribucion, EXPLORADOR_DIRECCION, type Movimiento } from './movimientos';
 import { codigoQR } from './qr';
 import { useMiCartera, type EstadoMiCartera } from './useMiCartera';
+import { SeccionTarjeta } from './veta/SeccionTarjeta';
 import type { EstadoVigia } from './vigia';
 
 type Props = {
@@ -179,6 +180,9 @@ export function PantallaCartera({ onAtras, cambio, activa }: Props) {
 
             {panel === 'enviar' ? <Enviar /> : null}
             {panel === 'recibir' ? <Recibir direccion={w.mia.direccion} /> : null}
+
+            {/* La tarjeta Visa de Veta Wallet, con tu cuenta (veta/SeccionTarjeta.tsx). */}
+            <SeccionTarjeta activa={activa} />
 
             {!!w.error && (
               <View style={[s.aviso, { backgroundColor: p.avisoFondo }]}>
