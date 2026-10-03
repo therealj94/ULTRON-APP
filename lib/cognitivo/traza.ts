@@ -26,6 +26,8 @@ export type Paso = {
   /** Los argumentos, ya tapados. Sirven para reproducir la llamada. */
   args?: Record<string, unknown>;
   ronda?: number;
+  /** Cómo terminó (auditoría 3-oct, EXEC03): `unknown` = pudo haber hecho su efecto; `ok` es solo succeeded. */
+  estado?: 'succeeded' | 'failed' | 'unknown';
 };
 
 export type DecisionRegistrada = {

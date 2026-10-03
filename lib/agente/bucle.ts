@@ -60,7 +60,13 @@ export const PRESUPUESTO: Presupuesto = { rondas: 4, llamadas: 10, ms: 45_000 };
 export type Traza = {
   ronda: number;
   llamada: Llamada;
+  /** true solo si terminó bien (`estado` succeeded). */
   ok: boolean;
+  /**
+   * Cómo terminó (auditoría 3-oct, EXEC03): `unknown` si una herramienta con efecto venció su tope o la
+   * cancelaron después de despacharse: pudo haberse hecho. No es éxito ni fallo.
+   */
+  estado: 'succeeded' | 'failed' | 'unknown';
   ms: number;
   resumen: string;
 };
@@ -235,7 +241,8 @@ export async function correrAgente(opts: {
 
       const h = porNombre.get(l.nombre)!;
       const inicio = Date.now();
-      let resultado;
+      let resultado: Respuesta['resultado'];
+      let estado: Traza['estado'] = 'failed';
 
       const v = validar(h.esquema, l.argumentos);
       if (v.ok === false) {
@@ -265,27 +272,42 @@ export async function correrAgente(opts: {
         if (dec && dec.veredicto !== 'permitir') {
           resultado = { ok: false, texto: textoDeDecision({ herramienta: h.nombre }, dec) };
         } else {
+          // La herramienta recibe su propia señal: se corta si quien preguntaba se fue Y si vence su tope
+          // (EXEC03: antes se dejaba de esperar y ella seguía, sin enterarse, haciendo su efecto).
+          const cancelar = new AbortController();
+          const alIrse = () => cancelar.abort(opts.senal?.reason);
+          opts.senal?.addEventListener('abort', alIrse, { once: true });
           try {
             // Su tope, pero nunca más de lo que le queda al turno (auditoría H08): una herramienta
             // de 20 s lanzada a 45 s de un turno de 50 ya no puede llevarse el turno a 65.
             const queda = Math.max(1_000, p.ms - (Date.now() - t0));
-            resultado = await conTope(h.ejecutar(v.args, { ...opts.ctx, senal: opts.senal }), Math.min(h.msMaximo ?? 20_000, queda), h.nombre, opts.senal);
+            resultado = await conTope(h.ejecutar(v.args, { ...opts.ctx, senal: cancelar.signal }), Math.min(h.msMaximo ?? 20_000, queda), h.nombre, opts.senal, cancelar);
+            estado = resultado.ok ? 'succeeded' : 'failed';
           } catch (e: any) {
-            resultado = { ok: false, texto: `«${h.nombre}» falló: ${String(e?.message || e).slice(0, 180)}` };
+            const porque = String(e?.message || e).slice(0, 180);
+            if (e instanceof SinEsperar && efecto !== 'lectura') {
+              // Ya se despachó: dejar de esperar no la deshace ni prueba que fallara. No se sabe.
+              estado = 'unknown';
+              resultado = { ok: false, texto: `«${h.nombre}» se despachó pero no supe el final (${porque}). No sé si se hizo: no lo repitas ni digas que quedó hecho; dilo así.` };
+            } else {
+              resultado = { ok: false, texto: `«${h.nombre}» falló: ${porque}` };
+            }
+          } finally {
+            opts.senal?.removeEventListener('abort', alIrse);
           }
         }
       }
 
       const ms = Date.now() - inicio;
       usadas++;
-      const t: Traza = { ronda, llamada: l, ok: resultado.ok, ms, resumen: resumir(resultado.texto) };
+      const t: Traza = { ronda, llamada: l, ok: estado === 'succeeded', estado, ms, resumen: resumir(resultado.texto) };
       traza.push(t);
       hechas.set(huella, { llamada: l, resultado, ms });
       if (resultado.ui) {
         ui.push({ herramienta: l.nombre, ...resultado.ui });
       }
       opts.alVivo?.(t, resultado.ui);
-      trazaActual()?.paso({ herramienta: l.nombre, ok: resultado.ok, ms, resumen: resultado.texto, args: l.argumentos, ronda });
+      trazaActual()?.paso({ herramienta: l.nombre, ok: t.ok, estado, ms, resumen: resultado.texto, args: l.argumentos, ronda });
 
       mensajes.push({ role: 'tool', tool_name: l.nombre, tool_call_id: l.id, content: resultado.texto });
     }
@@ -308,15 +330,26 @@ const CIERRE_ESTRICTO =
 const MS_REINTENTO_CIERRE = 8_000;
 
 /**
+ * Se dejó de esperar a la herramienta (venció su tope o quien preguntaba se fue) sin que ella contestara.
+ * Distinto de que fallara: si tenía efecto, puede haberlo hecho igual (EXEC03).
+ */
+export class SinEsperar extends Error {}
+
+/**
  * Una herramienta colgada no puede colgar el turno entero. El reloj se limpia al terminar (antes
  * quedaba vivo hasta su tope aunque la herramienta hubiera contestado), y si quien preguntaba se
- * va, se deja de esperar en el acto (auditoría H09).
+ * va, se deja de esperar en el acto (auditoría H09). Con `cancelar`, al dejar de esperar también se le
+ * avisa a la herramienta que pare (su señal), en vez de solo darle la espalda.
  */
-export function conTope<T>(promesa: Promise<T>, ms: number, nombre: string, senal?: AbortSignal): Promise<T> {
+export function conTope<T>(promesa: Promise<T>, ms: number, nombre: string, senal?: AbortSignal, cancelar?: AbortController): Promise<T> {
   return new Promise<T>((resolver, rechazar) => {
-    if (senal?.aborted) return rechazar(new Error(`«${nombre}» cancelada: quien preguntaba se fue`));
-    const reloj = setTimeout(() => rechazar(new Error(`«${nombre}» tardó más de ${Math.round(ms / 1000)} segundos`)), ms);
-    const cortar = () => rechazar(new Error(`«${nombre}» cancelada: quien preguntaba se fue`));
+    const soltar = (motivo: string) => {
+      cancelar?.abort(new DOMException(motivo, 'TimeoutError'));
+      rechazar(new SinEsperar(motivo));
+    };
+    if (senal?.aborted) return soltar(`«${nombre}» cancelada: quien preguntaba se fue`);
+    const reloj = setTimeout(() => soltar(`«${nombre}» tardó más de ${Math.round(ms / 1000)} segundos`), ms);
+    const cortar = () => soltar(`«${nombre}» cancelada: quien preguntaba se fue`);
     senal?.addEventListener('abort', cortar, { once: true });
     promesa.then(resolver, rechazar).finally(() => {
       clearTimeout(reloj);

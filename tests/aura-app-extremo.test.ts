@@ -80,6 +80,18 @@ const nodo = http.createServer((req, res) => {
       if (antes) res.write(JSON.stringify({ message: { content: antes }, done: false }) + '\n');
       return res.end(JSON.stringify({ message: { content: '' }, done: true, done_reason: 'error', error: 'HTTP 503' }) + '\n');
     }
+    // «…@@ERRORSINLF»: igual, pero la línea del error llega sin salto de línea final (auditoría 3-oct, STREAM01).
+    if (respuesta.endsWith('@@ERRORSINLF')) {
+      const antes = respuesta.slice(0, -'@@ERRORSINLF'.length);
+      if (antes) res.write(JSON.stringify({ message: { content: antes }, done: false }) + '\n');
+      return res.end(JSON.stringify({ message: { content: '' }, done: true, done_reason: 'error', error: 'HTTP 503' }));
+    }
+    // «…@@EOF»: manda lo de antes y cierra sin la línea `done` (el proxy se cayó a media respuesta).
+    if (respuesta.endsWith('@@EOF')) {
+      const antes = respuesta.slice(0, -'@@EOF'.length);
+      if (antes) res.write(JSON.stringify({ message: { content: antes }, done: false }) + '\n');
+      return res.end();
+    }
     for (const t of respuesta.match(/.{1,6}/gs) || []) {
       if (res.destroyed) return;
       res.write(JSON.stringify({ message: { content: t }, done: false }) + '\n');
@@ -1294,6 +1306,114 @@ test('reintento del mismo turno cortado: la repetición sigue marcada como parci
     // Por JSON (el respaldo del teléfono) con el mismo id: también.
     const j = await (await fetch(`${BASE}/api/turno`, { method: 'POST', headers: hTurno({ web: true }), body: JSON.stringify({ message: 'cuéntame cómo va la planta de beneficio este mes', idTurno }) })).json();
     assert.equal(j.parcial, true, JSON.stringify(j));
+  } finally {
+    contestar = antes;
+  }
+});
+
+/* ------------------------------------------------------------------ integridad del turno (auditoría 3-oct) */
+
+/** Lo que quedó en la memoria corta de la persona (la junta: /api/memoria con su sesión). */
+const memoriaCorta = async () => ((await (await fetch(`${BASE}/api/memoria`, { headers: h() })).json()).privada?.corta || []).map((x: any) => String(x.texto || ''));
+
+test('STREAM01: un turno completo sí queda en su memoria, con estado completo y el modelo que contestó', { skip: !listo }, async () => {
+  const antes = contestar;
+  contestar = () => '[EMO: neutral] La planta de beneficio terminó la losa del molino esta semana.';
+  try {
+    const evs = await turnoStream('cuéntame qué pasó esta semana en la planta de beneficio, control de memoria', { web: true });
+    const done = evs.find((e) => e.ev === 'done')!.data;
+    assert.equal(done.estado, 'completo');
+    assert.ok(!done.parcial);
+    assert.equal(done.proveedor, 'nodo');
+    assert.ok(done.modelo, 'el modelo de verdad va en el done');
+    assert.ok((await memoriaCorta()).some((t: string) => /terminó la losa del molino/.test(t)), 'control: lo completo sí se guarda');
+  } finally {
+    contestar = antes;
+  }
+});
+
+test('STREAM01: el error del nodo sin salto de línea final no se pierde: parcial, con aviso y fuera de la memoria', { skip: !listo }, async () => {
+  const antes = contestar;
+  contestar = () => '[EMO: neutral] El molino número dos se detuvo porque@@ERRORSINLF';
+  try {
+    const evs = await turnoStream('cuéntame con calma qué pasa con el molino de la planta, error sin salto', { web: true });
+    const done = evs.find((e) => e.ev === 'done');
+    assert.ok(done, JSON.stringify(evs.map((e) => e.ev)));
+    assert.equal(done!.data.parcial, true, 'antes salía como respuesta completa');
+    assert.equal(done!.data.estado, 'error');
+    assert.match(done!.data.reply, /Se me cortó la respuesta/);
+    assert.ok(!(await memoriaCorta()).some((t: string) => /se detuvo porque/.test(t)), 'lo cortado no se guarda como conclusión');
+  } finally {
+    contestar = antes;
+  }
+});
+
+test('STREAM01: un stream que se acaba sin `done` no es una respuesta terminada', { skip: !listo }, async () => {
+  const antes = contestar;
+  contestar = () => '[EMO: neutral] La producción de oro de septiembre fue de@@EOF';
+  try {
+    const evs = await turnoStream('cuéntame cuánto oro salió en septiembre de la planta, eof sin done', { web: true });
+    const done = evs.find((e) => e.ev === 'done');
+    assert.ok(done, JSON.stringify(evs.map((e) => e.ev)));
+    assert.equal(done!.data.parcial, true);
+    assert.equal(done!.data.estado, 'error');
+    assert.ok(!(await memoriaCorta()).some((t: string) => /septiembre fue de/.test(t)));
+    // Sin haber dicho nada y sin `done`: es un error, no una respuesta vacía.
+    contestar = () => '[EMO: neutral]@@EOF';
+    const vacio = await turnoStream('cuéntame cuánto oro salió en octubre de la planta, eof vacío', { web: true });
+    assert.ok(vacio.some((e) => e.ev === 'error'), JSON.stringify(vacio.map((e) => e.ev)));
+    assert.ok(!vacio.some((e) => e.ev === 'done'));
+  } finally {
+    contestar = antes;
+  }
+});
+
+test('STREAM01: la herramienta corrió y la redacción falló: parcial, fuera de la memoria, y el reintento no la repite', { skip: !listo }, async () => {
+  const antes = contestar;
+  let vueltas = 0;
+  // Primera llamada: pide la herramienta. La vuelta del harness: el nodo se cae sin decir nada.
+  contestar = () => (vueltas++ === 0 ? '[EMO: neutral] Déjame ver tu tarea.\nPEDIR_HERRAMIENTA: tarea ver' : '[EMO: neutral]@@ERROR');
+  try {
+    const frase = 'revisa en qué va mi tarea de ahora, redacción que falla';
+    const idTurno = `redaccion${Date.now()}`;
+    const pedir = async () => {
+      const r = await fetch(`${BASE}/api/turno/stream`, { method: 'POST', headers: hTurno({ web: true }), body: JSON.stringify({ message: frase, idTurno }) });
+      return (await r.text())
+        .split('\n\n')
+        .map((b) => ({ ev: /^event: (\w+)/m.exec(b)?.[1], data: /^data: (.*)$/m.exec(b)?.[1] }))
+        .filter((e) => e.ev === 'done' && e.data)
+        .map((e) => JSON.parse(e.data!))[0];
+    };
+    alNodo.length = 0;
+    const primero = await pedir();
+    assert.ok(primero, 'cierra con lo que trajo la herramienta');
+    assert.equal(primero.via, 'harness-parcial');
+    assert.equal(primero.parcial, true);
+    assert.equal(primero.estado, 'error');
+    assert.match(primero.reply, /Déjame ver tu tarea/);
+    const alCerebro = alNodo.filter((x) => x.ultimo.includes('redacción que falla')).length;
+    assert.equal(alCerebro, 2, 'el turno y una vuelta del harness');
+    assert.ok(!(await memoriaCorta()).some((t: string) => /Déjame ver tu tarea/.test(t)), 'no es una conclusión');
+    const otra = await pedir();
+    assert.equal(otra?.repetido, true, 'el reintento recibe lo de antes');
+    assert.equal(otra?.parcial, true);
+    assert.equal(alNodo.filter((x) => x.ultimo.includes('redacción que falla')).length, 2, 'ni el cerebro ni la herramienta corrieron otra vez');
+  } finally {
+    contestar = antes;
+  }
+});
+
+test('STREAM01 y EXEC04 por JSON: la redacción fallida sale parcial con su estado y el modelo real', { skip: !listo }, async () => {
+  const antes = contestar;
+  let vueltas = 0;
+  contestar = () => (vueltas++ === 0 ? '[EMO: neutral] Te reviso la tarea.\nPEDIR_HERRAMIENTA: tarea ver' : '');
+  try {
+    const j = await turno('revisa en qué va mi tarea de ahora, por json con redacción que falla', {}, { web: true });
+    assert.equal(j.via, 'harness-parcial', JSON.stringify(j));
+    assert.equal(j.parcial, true);
+    assert.equal(j.estado, 'error');
+    assert.equal(j.proveedor, 'nodo');
+    assert.ok(!(await memoriaCorta()).some((t: string) => /Te reviso la tarea/.test(t)));
   } finally {
     contestar = antes;
   }

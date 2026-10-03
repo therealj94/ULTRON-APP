@@ -62,7 +62,19 @@ export function revisarClasificacion(e: EsperaClasificacion, c: { tarea: string;
   return f;
 }
 
-export type Salida = { texto: string; herramientas: string[]; panel?: string; ms?: number; error?: string };
+export type Salida = {
+  texto: string;
+  herramientas: string[];
+  panel?: string;
+  ms?: number;
+  error?: string;
+  /** El turno se cortó (el `done` o el JSON traen `parcial: true`). */
+  parcial?: boolean;
+  /** Cómo terminó la respuesta (lib/harness.ts EstadoRespuesta): solo `completo` puede aprobar. */
+  estado?: 'completo' | 'truncado' | 'error';
+  /** Los recibos de cada herramienta, si el servidor los da: con ellos, «la usó» exige que terminara bien. */
+  pasos?: { herramienta: string; estado: 'succeeded' | 'failed' | 'unknown' }[];
+};
 
 export type Resultado = { id: string; area: string; ok: boolean; fallos: string[]; ms?: number };
 
@@ -82,16 +94,24 @@ export function cargarCasos(archivo: string): Caso[] {
 
 const re = (s: string) => new RegExp(s, 'i');
 
-/** Revisa una respuesta de verdad contra lo que el caso espera. */
+/**
+ * Revisa una respuesta de verdad contra lo que el caso espera. El texto solo no basta (auditoría 3-oct,
+ * EXEC03): un error terminal, una respuesta cortada o una herramienta sin recibo hacen fallar el caso
+ * aunque el texto diga lo esperado.
+ */
 export function revisarRespuesta(c: Caso, s: Salida): Resultado {
   const f: string[] = [];
   const e = c.espera;
   const texto = s.texto || '';
-  if (s.error && !texto) f.push(`error: ${s.error}`);
+  if (s.error) f.push(`error: ${s.error}`);
+  if (s.parcial || (s.estado && s.estado !== 'completo')) f.push(`respuesta incompleta (${s.estado || 'parcial'})`);
   for (const x of e.contiene || []) if (!re(x).test(texto)) f.push(`no menciona /${x}/`);
   if (e.alguno?.length && !e.alguno.some((x) => re(x).test(texto))) f.push(`no menciona ninguno de ${e.alguno.map((x) => `/${x}/`).join(' ')}`);
   for (const x of e.no_contiene || []) if (re(x).test(texto)) f.push(`dijo lo que no debía: /${x}/`);
-  for (const h of e.herramientas || []) if (!s.herramientas.includes(h)) f.push(`no usó ${h} (usó: ${s.herramientas.join(', ') || 'nada'})`);
+  for (const h of e.herramientas || []) {
+    if (!s.herramientas.includes(h)) f.push(`no usó ${h} (usó: ${s.herramientas.join(', ') || 'nada'})`);
+    else if (s.pasos && !s.pasos.some((p) => p.herramienta === h && p.estado === 'succeeded')) f.push(`${h} sin recibo de que terminó bien (${s.pasos.filter((p) => p.herramienta === h).map((p) => p.estado).join(', ') || 'sin paso'})`);
+  }
   for (const h of e.sin_herramientas || []) if (s.herramientas.includes(h)) f.push(`usó ${h} y no debía`);
   if (e.agente && s.panel !== undefined && !quitarAcentos(s.panel).includes(quitarAcentos(NOMBRE_AGENTE[e.agente] || e.agente))) f.push(`contestó ${s.panel || 'nadie'} y tocaba ${e.agente}`);
   if (e.max_palabras && texto.split(/\s+/).filter(Boolean).length > e.max_palabras) f.push(`muy largo (${texto.split(/\s+/).length} palabras, tope ${e.max_palabras})`);

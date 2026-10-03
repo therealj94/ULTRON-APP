@@ -10,12 +10,28 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { presupuesto, MINIMO_UTIL_MS, PRESUPUESTO_OIDO_MS, PRESUPUESTO_VISION_MS } from '../lib/presupuesto';
+import { presupuesto, MINIMO_UTIL_MS, PRESUPUESTO_OIDO_MS, PRESUPUESTO_TURNO_MS, PRESUPUESTO_VISION_MS } from '../lib/presupuesto';
 import { oirEnCadena, transcribirAudio, type ProveedorOido, type Escucha } from '../lib/oido';
 import { guardarCaja } from '../lib/boveda';
 import { voiceboxFalso, conVoicebox, CLAVE_FALSA } from './voicebox-falso';
 
 /* ------------------------------------------------------------------ el reloj */
+
+test('EXEC04: un turno tiene un solo reloj; cada llamada se corta por su tope, el turno o la persona, lo primero', async () => {
+  assert.ok(PRESUPUESTO_TURNO_MS < 70_000, 'cabe antes de que el teléfono corte (70 s)');
+  let t = 0;
+  const p = presupuesto(10_000, () => t);
+  const persona = new AbortController();
+  assert.equal(p.senalCon(persona.signal, 60_000).aborted, false);
+  persona.abort();
+  assert.equal(p.senalCon(persona.signal, 60_000).aborted, true, 'si la persona se fue, la llamada no sale');
+  t = 10_000;
+  assert.equal(p.senalCon(undefined, 60_000).aborted, true, 'sin tiempo en el turno, tampoco');
+  const q = presupuesto(60);
+  const s = q.senalCon(new AbortController().signal, 60_000);
+  await new Promise((r) => setTimeout(r, 120));
+  assert.equal(s.aborted, true, 'cortó el reloj del turno, no los 60 s de la llamada');
+});
 
 test('el presupuesto cuenta hacia abajo y nunca da negativo', () => {
   let t = 1_000;
