@@ -448,3 +448,102 @@ test('manos cartera y pagar: forma estricta, solo a un contacto sin dudas, y la 
   assert.match(reglas, /NUNCA pagas ni pides contraseñas/);
   assert.match(reglas, /"tipo":"cartera"/);
 });
+
+/* ── la pestaña Veta Wallet: movimientos, distribución y QR para recibir ─────────────────── */
+
+import crypto from 'node:crypto';
+import { historialDe, leerHistorial, distribucion, _olvidarHistorial, EXPLORADOR_API } from '../mobile/src/cartera/movimientos';
+import { codigoQR, capacidad } from '../mobile/src/cartera/qr';
+
+const HX1 = '0x' + 'a'.repeat(64);
+const HX2 = '0x' + 'b'.repeat(64);
+const HX3 = '0x' + 'c'.repeat(64);
+const OTRO = '0x2222222222222222222222222222222222222222';
+
+test('movimientos: lo que entró y salió, del más nuevo al más viejo, sin repetidos ni basura (OrdenScan)', () => {
+  const j = {
+    transactions: [
+      { hash: HX1, from: OTRO, to: YO.toUpperCase().replace('0X', '0x'), value: '20', symbol: 'ORIGEN', timestamp: '1790000000', blockNumber: '100' },
+      { hash: HX2, from: YO, to: OTRO, value: '0.35', symbol: 'AUKA', timestamp: '1790033715', blockNumber: '233251' },
+      { hash: HX2, from: YO, to: OTRO, value: '0.35', symbol: 'AUKA', timestamp: '1790033715', blockNumber: '233251' },
+      { hash: HX3, from: YO, to: YO, value: '1', symbol: 'ONDK', timestamp: '1790000500', blockNumber: '150' },
+      { hash: HX3, from: OTRO, to: ANA, value: '9', symbol: 'ONDK', blockNumber: '160' },
+      { hash: 'no', from: YO, to: OTRO, value: '1', symbol: 'AGKA' },
+      { hash: '0x' + 'd'.repeat(64), from: YO, to: null, value: '1', symbol: 'CONTRACT' },
+      { hash: '0x' + 'e'.repeat(64), from: YO, to: OTRO, value: '0', symbol: 'AGKA' },
+    ],
+    tokensBalance: { AUKA: { name: 'Gold Kapital' }, AGKA: { name: 'AGKA' } },
+    identidad: { verificada: true, gid: 'GEN-X' },
+  };
+  const h = historialDe(j, YO, 5);
+  assert.deepEqual(h.movimientos.map((m) => [m.tipo, m.simbolo, m.monto, m.bloque]), [
+    ['salida', 'AUKA', 0.35, 233251],
+    ['propio', 'ONDK', 1, 150],
+    ['entrada', 'ORIGEN', 20, 100],
+  ]);
+  assert.equal(h.movimientos[0].otra, OTRO);
+  assert.equal(h.movimientos[2].otra, OTRO, 'en una entrada, la otra es quien envió');
+  assert.equal(h.movimientos[0].fecha, 1790033715000);
+  assert.deepEqual(h.nombres, { AUKA: 'Gold Kapital' }, 'un nombre igual al símbolo no se repite');
+  assert.equal(h.verificada, true);
+  assert.deepEqual(historialDe(null, YO).movimientos, []);
+  assert.equal(historialDe({ identidad: { verificada: false } }, YO).verificada, false);
+});
+
+test('movimientos: se piden a OrdenScan por dirección, un minuto en memoria, y un fallo se dice', async () => {
+  _olvidarHistorial();
+  const urls: string[] = [];
+  const pedir: Pedidor = async (url) => {
+    urls.push(url);
+    return { ok: true, status: 200, json: async () => ({ transactions: [{ hash: HX1, from: OTRO, to: YO, value: '2', symbol: 'ORIGEN', blockNumber: '9' }] }) };
+  };
+  const a = await leerHistorial(YO, { pedir, ahora: 1000 });
+  assert.equal(a.movimientos.length, 1);
+  assert.equal(urls[0], `${EXPLORADOR_API}/address/${YO.toLowerCase()}`);
+  await leerHistorial(YO, { pedir, ahora: 30_000 });
+  assert.equal(urls.length, 1, 'dentro del minuto no se vuelve a pedir');
+  await leerHistorial(YO, { pedir, ahora: 30_000, forzar: true });
+  assert.equal(urls.length, 2);
+  _olvidarHistorial();
+  await assert.rejects(leerHistorial(YO, { pedir: async () => ({ ok: false, status: 503, json: async () => ({}) }) }), /OrdenScan no contestó \(503\)/);
+  await assert.rejects(leerHistorial('no-es', { pedir }), /dirección/);
+});
+
+test('distribución: las 4 monedas que más valen y «otras», en partes del total', () => {
+  const d = distribucion([
+    { simbolo: 'AUKA', usd: 50 },
+    { simbolo: 'ORIGEN', usd: 20 },
+    { simbolo: 'ONDK', usd: 10 },
+    { simbolo: 'AGKA', usd: 10 },
+    { simbolo: 'MNKA', usd: 6 },
+    { simbolo: 'IBS', usd: 4 },
+    { simbolo: 'SOL', usd: null },
+    { simbolo: 'LOVE', usd: 0 },
+  ]);
+  assert.deepEqual(d.map((x) => x.simbolo), ['AUKA', 'ORIGEN', 'ONDK', 'AGKA', 'OTRAS']);
+  assert.equal(Math.round(d.reduce((a, x) => a + x.parte, 0) * 1000), 1000);
+  assert.equal(d[0].parte, 0.5);
+  assert.deepEqual(distribucion([{ simbolo: 'X', usd: null }]), []);
+});
+
+test('QR para recibir: la matriz que el lector de OpenCV leyó bien (huella fija), buscadores y tamaño', () => {
+  const huella = (m: boolean[][]) => crypto.createHash('sha256').update(m.map((f) => f.map((v) => (v ? '1' : '0')).join('')).join('\n')).digest('hex');
+  const dir = codigoQR('0x746268404cc9ca2ef0ac344f02b236db232c3ad8')!;
+  assert.equal(dir.length, 29, 'una dirección cabe en la versión 3 (29×29)');
+  assert.equal(huella(dir), '844fa284bed48bb317056a103e1bd2a3115f44ce9c36296aee27334006b9f6f2');
+  const largo = codigoQR('Mi dirección de Veta Wallet: 0x746268404cc9ca2ef0ac344f02b236db232c3ad8 — red Orden Global, ñ á é')!;
+  assert.equal(largo.length, 41, 'UTF-8 con acentos, versión 6');
+  assert.equal(huella(largo), '883aa102e320390c2212c920292dcd81ec3a2e335a303a3d60e0f2fe515229f2');
+  // Los tres buscadores (7×7 con borde oscuro y centro 3×3) en sus esquinas.
+  const n = dir.length;
+  for (const [x0, y0] of [[0, 0], [n - 7, 0], [0, n - 7]]) {
+    for (let i = 0; i < 7; i++) {
+      assert.ok(dir[y0][x0 + i] && dir[y0 + 6][x0 + i] && dir[y0 + i][x0] && dir[y0 + i][x0 + 6], 'borde del buscador');
+    }
+    assert.ok(dir[y0 + 3][x0 + 3] && !dir[y0 + 1][x0 + 1]);
+  }
+  assert.equal(capacidad(3), 42);
+  assert.equal(capacidad(10), 213);
+  assert.equal(codigoQR('x'.repeat(213))!.length, 57, 'la 10 llena');
+  assert.equal(codigoQR('x'.repeat(214)), null, 'lo que no cabe no se dibuja a medias');
+});

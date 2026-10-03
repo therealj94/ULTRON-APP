@@ -13,16 +13,16 @@
  * Los precios son los de AURA para Windows (Cartera.cs): ORIGEN = oro por gramo ÷ 55, AUKA la onza de oro,
  * AGKA la de plata, y los fijos de la wallet para los demás. Sin precio real se dice «sin precio».
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
-import { localeActual, tr } from '../i18n';
+import { tr } from '../i18n';
 import { MEDIDA, useTema } from '../nucleo/tema';
 import * as RELEVO from '../pulse/relevo';
 import { Boton, Campo, Texto, vibrar } from '../ui';
-import { conectarAMano, desconectar, miCartera, type MiCartera } from './conexion';
 import { abrirVetaWallet } from './estado';
+import { cantidad, dinero, hora } from './formato';
 import { cortar, type Saldo } from './logica';
-import { leerSaldos, type Cartera } from './red';
+import { useMiCartera, type EstadoMiCartera } from './useMiCartera';
 
 type Props = {
   /** A la vista (la hoja abierta, o la pestaña elegida): solo así se lee la red. */
@@ -31,132 +31,25 @@ type Props = {
   onDireccion?: (d: string | null) => void;
 };
 
-const dinero = (n: number | null) => {
-  if (n == null) return '—';
-  try {
-    return n.toLocaleString(localeActual(), { style: 'currency', currency: 'USD', maximumFractionDigits: n < 1 ? 4 : 2 });
-  } catch {
-    return `US$ ${n.toFixed(2)}`;
-  }
-};
-const cantidad = (n: number) => {
-  try {
-    return n.toLocaleString(localeActual(), { maximumFractionDigits: n < 1 ? 6 : 4 });
-  } catch {
-    return String(n);
-  }
-};
-const hora = (ms: number) => {
-  try {
-    return new Date(ms).toLocaleTimeString(localeActual(), { hour: '2-digit', minute: '2-digit' });
-  } catch {
-    return '';
-  }
-};
-
 export function CuerpoCartera({ activo, onDireccion }: Props) {
   const tema = useTema();
-  const [mia, setMia] = useState<MiCartera | null | undefined>(undefined);
-  const [cartera, setCartera] = useState<Cartera | null>(null);
-  const [cargando, setCargando] = useState(false);
-  const [error, setError] = useState('');
+  const w = useMiCartera(activo, { onDireccion });
+  const { mia, cartera, cargando, error } = w;
   const [editar, setEditar] = useState(false);
-  const [pegada, setPegada] = useState('');
-  const [errorForm, setErrorForm] = useState('');
   const [verCeros, setVerCeros] = useState(false);
   const [quitar, setQuitar] = useState(false);
-
-  const leer = useCallback(async (d: string, forzar: boolean) => {
-    setCargando(true);
-    try {
-      setCartera(await leerSaldos(d, { forzar }));
-      setError('');
-    } catch (e: any) {
-      setError(e?.message || tr('No pude leer tu cartera ahora.', 'I couldn’t read your wallet right now.'));
-    } finally {
-      setCargando(false);
-    }
-  }, []);
-
-  const conectar = useCallback(
-    async (revisar: boolean) => {
-      const c = await miCartera({ revisar }).catch(() => null);
-      setMia(c);
-      onDireccion?.(c?.direccion || null);
-      if (c) void leer(c.direccion, revisar);
-    },
-    [leer],
-  );
 
   useEffect(() => {
     if (!activo) {
       setEditar(false);
       setQuitar(false);
-      setErrorForm('');
-      return;
     }
-    void conectar(true);
-  }, [activo, conectar]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const guardar = async () => {
-    try {
-      const c = await conectarAMano(pegada);
-      vibrar('exito');
-      setMia(c);
-      onDireccion?.(c.direccion);
-      setEditar(false);
-      setPegada('');
-      setErrorForm('');
-      void leer(c.direccion, true);
-    } catch (e: any) {
-      vibrar('aviso');
-      setErrorForm(e?.message || tr('Esa no es una dirección.', 'That’s not an address.'));
-    }
-  };
+  }, [activo]);
 
   const conSaldo = (cartera?.saldos || []).filter((s) => (s.cantidad ?? 0) > 0);
   const enCero = (cartera?.saldos || []).filter((s) => s.cantidad === 0);
   const sinLeer = (cartera?.saldos || []).filter((s) => s.cantidad == null);
-  const chat = !!RELEVO.quien();
-
-  const formulario = (
-    <View style={{ gap: MEDIDA.espacio.m }}>
-      <Texto v="cuerpoFuerte">{tr('Conecta tu cartera en 2 pasos', 'Connect your wallet in 2 steps')}</Texto>
-      <Paso n="01">
-        {chat
-          ? tr(
-              'Tu cuenta de PULSE2CHAT todavía no muestra tu dirección: abre Veta Wallet y entra una vez con tu cuenta (es la misma contraseña). Después toca «Buscar otra vez».',
-              'Your PULSE2CHAT account doesn’t show your address yet: open Veta Wallet and sign in once (same password). Then tap “Look again”.',
-            )
-          : tr(
-              'Conecta PULSE2CHAT (en Chats) y tu cartera aparece sola: el chat y Veta Wallet son la misma cuenta. O abre Veta Wallet y sigue con el paso 2.',
-              'Connect PULSE2CHAT (in Chats) and your wallet appears by itself: the chat and Veta Wallet are the same account. Or open Veta Wallet and go to step 2.',
-            )}
-      </Paso>
-      <Paso n="02">{tr('En Veta Wallet ve a Recibir → Copiar dirección, y pégala aquí abajo.', 'In Veta Wallet go to Receive → Copy address, and paste it below.')}</Paso>
-      <Campo
-        etiqueta={tr('Tu dirección de Veta Wallet', 'Your Veta Wallet address')}
-        value={pegada}
-        onChangeText={(t) => setPegada(t.slice(0, 200))}
-        placeholder="0x…"
-        autoCapitalize="none"
-        autoCorrect={false}
-        error={errorForm || undefined}
-      />
-      <Texto v="mini" color="texto3">
-        {tr(
-          'La dirección es pública (como un número de cuenta para recibir): con ella AURA solo puede VER saldos, nunca mover dinero. Nunca te pediré tu contraseña.',
-          'The address is public (like an account number to receive): with it AURA can only SEE balances, never move money. I’ll never ask for your password.',
-        )}
-      </Texto>
-      <Boton titulo={tr('Guardar', 'Save')} icono="check" deshabilitado={!pegada.trim()} onPress={() => void guardar()} />
-      <View style={s.fila}>
-        <Boton titulo={tr('Abrir Veta Wallet', 'Open Veta Wallet')} icono="enlace" variante="secundario" tam="chico" style={{ flex: 1 }} onPress={() => void abrirVetaWallet()} />
-        {chat ? <Boton titulo={tr('Buscar otra vez', 'Look again')} icono="wallet" variante="secundario" tam="chico" style={{ flex: 1 }} onPress={() => void conectar(true)} /> : null}
-      </View>
-      {mia && editar ? <Boton titulo={tr('Volver', 'Back')} variante="fantasma" onPress={() => setEditar(false)} /> : null}
-    </View>
-  );
+  const formulario = <ConectarCartera w={w} onListo={() => setEditar(false)} onVolver={mia && editar ? () => setEditar(false) : undefined} />;
 
   return (
     <>
@@ -164,7 +57,7 @@ export function CuerpoCartera({ activo, onDireccion }: Props) {
         <View style={{ alignItems: 'center', gap: MEDIDA.espacio.s, paddingVertical: MEDIDA.espacio.xl }}>
           <ActivityIndicator color={tema.acento} />
           <Texto v="chica" color="texto2">
-            {chat ? tr('Conectando tu cartera con tu cuenta de PULSE2CHAT…', 'Connecting your wallet from your PULSE2CHAT account…') : tr('Buscando tu cartera…', 'Looking for your wallet…')}
+            {RELEVO.quien() ? tr('Conectando tu cartera con tu cuenta de PULSE2CHAT…', 'Connecting your wallet from your PULSE2CHAT account…') : tr('Buscando tu cartera…', 'Looking for your wallet…')}
           </Texto>
         </View>
       ) : !mia || editar ? (
@@ -227,7 +120,7 @@ export function CuerpoCartera({ activo, onDireccion }: Props) {
           ) : null}
 
           <View style={s.fila}>
-            <Boton titulo={tr('Actualizar', 'Refresh')} icono="flecha" variante="secundario" tam="chico" cargando={cargando} style={{ flex: 1 }} onPress={() => void leer(mia.direccion, true)} />
+            <Boton titulo={tr('Actualizar', 'Refresh')} icono="flecha" variante="secundario" tam="chico" cargando={cargando} style={{ flex: 1 }} onPress={w.actualizar} />
             <Boton titulo={tr('Abrir Veta Wallet', 'Open Veta Wallet')} icono="enlace" tam="chico" style={{ flex: 1 }} onPress={() => void abrirVetaWallet()} />
           </View>
           <Texto v="mini" color="texto3">
@@ -248,12 +141,7 @@ export function CuerpoCartera({ activo, onDireccion }: Props) {
                   tam="chico"
                   style={{ flex: 1 }}
                   onPress={() => {
-                    void desconectar().then(() => {
-                      setMia(null);
-                      onDireccion?.(null);
-                      setCartera(null);
-                      setQuitar(false);
-                    });
+                    void w.quitar().then(() => setQuitar(false));
                   }}
                 />
                 <Boton titulo={tr('No', 'No')} variante="secundario" tam="chico" style={{ flex: 1 }} onPress={() => setQuitar(false)} />
@@ -268,6 +156,66 @@ export function CuerpoCartera({ activo, onDireccion }: Props) {
         </View>
       )}
     </>
+  );
+}
+
+/**
+ * Conectar la cartera en 2 pasos (sin dirección todavía, o para cambiarla). La dirección es pública: con ella
+ * solo se VEN saldos. Lo usan la hoja y la pestaña Veta Wallet.
+ */
+export function ConectarCartera({ w, onListo, onVolver }: { w: EstadoMiCartera; onListo?: () => void; onVolver?: () => void }) {
+  const [pegada, setPegada] = useState('');
+  const [errorForm, setErrorForm] = useState('');
+  const chat = !!RELEVO.quien();
+  const guardar = async () => {
+    try {
+      await w.guardarDireccion(pegada);
+      vibrar('exito');
+      setPegada('');
+      setErrorForm('');
+      onListo?.();
+    } catch (e: any) {
+      vibrar('aviso');
+      setErrorForm(e?.message || tr('Esa no es una dirección.', 'That’s not an address.'));
+    }
+  };
+  return (
+    <View style={{ gap: MEDIDA.espacio.m }}>
+      <Texto v="cuerpoFuerte">{tr('Conecta tu cartera en 2 pasos', 'Connect your wallet in 2 steps')}</Texto>
+      <Paso n="01">
+        {chat
+          ? tr(
+              'Tu cuenta de PULSE2CHAT todavía no muestra tu dirección: abre Veta Wallet y entra una vez con tu cuenta (es la misma contraseña). Después toca «Buscar otra vez».',
+              'Your PULSE2CHAT account doesn’t show your address yet: open Veta Wallet and sign in once (same password). Then tap “Look again”.',
+            )
+          : tr(
+              'Conecta PULSE2CHAT (en Chats) y tu cartera aparece sola: el chat y Veta Wallet son la misma cuenta. O abre Veta Wallet y sigue con el paso 2.',
+              'Connect PULSE2CHAT (in Chats) and your wallet appears by itself: the chat and Veta Wallet are the same account. Or open Veta Wallet and go to step 2.',
+            )}
+      </Paso>
+      <Paso n="02">{tr('En Veta Wallet ve a Recibir → Copiar dirección, y pégala aquí abajo.', 'In Veta Wallet go to Receive → Copy address, and paste it below.')}</Paso>
+      <Campo
+        etiqueta={tr('Tu dirección de Veta Wallet', 'Your Veta Wallet address')}
+        value={pegada}
+        onChangeText={(t) => setPegada(t.slice(0, 200))}
+        placeholder="0x…"
+        autoCapitalize="none"
+        autoCorrect={false}
+        error={errorForm || undefined}
+      />
+      <Texto v="mini" color="texto3">
+        {tr(
+          'La dirección es pública (como un número de cuenta para recibir): con ella AURA solo puede VER saldos, nunca mover dinero. Nunca te pediré tu contraseña.',
+          'The address is public (like an account number to receive): with it AURA can only SEE balances, never move money. I’ll never ask for your password.',
+        )}
+      </Texto>
+      <Boton titulo={tr('Guardar', 'Save')} icono="check" deshabilitado={!pegada.trim()} onPress={() => void guardar()} />
+      <View style={s.fila}>
+        <Boton titulo={tr('Abrir Veta Wallet', 'Open Veta Wallet')} icono="enlace" variante="secundario" tam="chico" style={{ flex: 1 }} onPress={() => void abrirVetaWallet()} />
+        {chat ? <Boton titulo={tr('Buscar otra vez', 'Look again')} icono="wallet" variante="secundario" tam="chico" style={{ flex: 1 }} onPress={w.buscarOtraVez} /> : null}
+      </View>
+      {onVolver ? <Boton titulo={tr('Volver', 'Back')} variante="fantasma" onPress={onVolver} /> : null}
+    </View>
   );
 }
 
