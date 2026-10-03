@@ -11,6 +11,7 @@ import { cortarFrases } from './03-voz/frases';
 import { onLip, desbloquearAudio, audioDesbloqueado } from './03-voz/player';
 import { clipDeEmocion, clipDeTexto, saludoDe, saludoHora, siguienteChiste } from './03-voz/banco';
 import { useOido } from './03-voz/useOido';
+import { RegistroVoz } from '../mobile/src/lib/interrupcion';
 import { ConversacionEnVivo, type EstadoEnVivo } from './03-voz/enVivo';
 import { opinarTurno, pedirTurnoStream } from './04-cerebro/turno';
 import { detectarIntencion } from './04-cerebro/intenciones';
@@ -208,6 +209,12 @@ export default function App() {
 
   // ---- HABLAR: una sola función. Emoción → cara + voz.
   const hablando = useRef<Dicho | null>(null);
+  /** Lo que va diciendo la voz, frase por frase: el oído no toma su eco por la persona y, si la cortan, se sabe qué oyó. */
+  const registroVoz = useRef(new RegistroVoz()).current;
+  /** La persona le habló encima a la respuesta anterior: lo que alcanzó a oír (viaja con el pedido siguiente). */
+  const interrumpidaRef = useRef<string | null>(null);
+  /** La marca de arriba, tomada por el pedido que sigue (y solo por ese): no queda pegada para otro posterior. */
+  const interrumpidaTurnoRef = useRef<string | null>(null);
   /** La conversación en vivo está abierta (se actualiza en cada render, abajo). */
   const vivoAbiertaRef = useRef(false);
   const decir = useCallback(
@@ -230,6 +237,7 @@ export default function App() {
       const caraHabla: FaceState = d.clip?.cara || (e === 'canto' ? 'SING' : e === 'oracion' ? 'PRAY' : e === 'risa' ? 'LAUGH' : 'SPEAKING');
       d.inicio.then(() => {
         if (hablando.current !== d) return;
+        registroVoz.empezo(d.clip?.texto || quitarExpresiones(t).trim());
         setFace(caraHabla);
         // La burbuja muestra lo que se OYE: si fue un clip del banco, su texto humano, nunca el id interno;
         // si fue la voz, el texto sin sus expresiones ([risa] se oye, no se lee).
@@ -238,6 +246,7 @@ export default function App() {
       });
       d.fin.then(() => {
         if (hablando.current !== d) return;
+        registroVoz.termino();
         hablando.current = null;
         setFace(o.caraFinal || (e === 'triste' ? 'SAD' : e === 'cansado' ? 'TIRED' : 'IDLE'));
         if (o.caraFinal || e === 'triste' || e === 'cansado') setTimeout(() => setFace((c) => (c === 'IDLE' ? c : 'IDLE')), 2400);
@@ -269,6 +278,7 @@ export default function App() {
   }, [decir, hacerTarea]);
 
   const callarTodo = useCallback(() => {
+    registroVoz.callo();
     callar();
     hablando.current = null;
     colaRef.current = [];
@@ -461,6 +471,9 @@ export default function App() {
     async (cmd: string, o: { imagen?: string; accionId?: string } = {}) => {
       const hablado = habladoRef.current;
       habladoRef.current = false;
+      const cortada = interrumpidaTurnoRef.current;
+      interrumpidaTurnoRef.current = null;
+      registroVoz.nuevoTurno();
       turnoEnCurso.current?.abort();
       const ac = new AbortController();
       turnoEnCurso.current = ac;
@@ -515,6 +528,7 @@ export default function App() {
             // Solo si es reciente: una escena vieja como hecho es peor que ninguna.
             escena: Date.now() - escenaRef.current.ts < 12000 ? escenaRef.current.texto : undefined,
             hablado,
+            interrumpido: cortada !== null ? { oido: cortada } : undefined,
             signal: ac.signal,
           },
           {
@@ -615,12 +629,20 @@ export default function App() {
       const cmd = raw.trim();
       if (!cmd) return;
       ultimaInteraccion.current = Date.now();
+      // Si la acababan de interrumpir, la marca es de este pedido (pensar la toma) y de ningún otro.
+      interrumpidaTurnoRef.current = interrumpidaRef.current;
+      interrumpidaRef.current = null;
       const it = detectarIntencion(cmd);
       switch (it.tipo) {
         case 'callar':
           callarTodo();
           // «Callate» con un turno en camino: lo que falte por llegar tampoco se dice.
           turnoCallado.current = turnoEnCurso.current;
+          // Le habló encima para callarla: un «está bien» corto, como una persona (José, 3-oct).
+          if (interrumpidaTurnoRef.current !== null) {
+            interrumpidaTurnoRef.current = null;
+            decir('Está bien.', { emocion: 'neutral' });
+          }
           return;
         case 'recordar':
           hacerTarea('anotar');
@@ -822,6 +844,8 @@ export default function App() {
   // ---- OÍDO continuo con barge-in.
   useOido({
     activo: micEnabled && !isBooting && !vivoAbierta,
+    dichos: () => registroVoz.dichos(),
+    hablando: () => !!hablando.current || registroVoz.hablando(),
     onFinal: (t) => {
       setOyendo('');
       pedir(t, true);
@@ -833,8 +857,10 @@ export default function App() {
       oyendoTimer.current = setTimeout(() => setOyendo(''), 2500);
       setFace((f) => (f === 'SLEEPING' ? f : 'LISTENING'));
     },
+    // Le habló encima: se calla YA y anota lo que la persona alcanzó a oír (el cerebro retoma de ahí).
     onBargeIn: () => {
       if (hablando.current || colaRef.current.length) {
+        interrumpidaRef.current = registroVoz.cortar();
         callarTodo();
         turnoCallado.current = turnoEnCurso.current;
       }

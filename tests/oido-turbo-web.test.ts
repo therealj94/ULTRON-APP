@@ -26,9 +26,11 @@ describe('Oído Turbo (web)', () => {
     assert.ok(Math.abs(trozoDeMuestras(seno).db - -9) < 0.5, 'un seno a media escala da ~-9 dBFS');
   });
 
-  it('hablarle encima: hace falta entender dos palabras (un «eh» o el eco de una sílaba no corta su voz)', () => {
+  it('hablarle encima: dos palabras suyas o un «espera»/«oye» (un «eh» o una sílaba no corta su voz)', () => {
     assert.equal(esInterrupcion('eh'), false);
-    assert.equal(esInterrupcion('Oye.'), false);
+    // Desde el 3-oct (como ChatGPT): «oye» sola corta; las muletillas no (tests/interrumpir-voz.test.ts).
+    assert.equal(esInterrupcion('Oye.'), true);
+    assert.equal(esInterrupcion('sí, claro'), false);
     assert.equal(esInterrupcion('¿Me-'), false);
     assert.equal(esInterrupcion('Oye, Aura'), true);
     assert.equal(esInterrupcion('espera un momento'), true);

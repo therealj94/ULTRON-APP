@@ -36,6 +36,8 @@ export type PeticionTurno = {
   escena?: string;
   /** Lo dijo en voz alta (el oído de la web): el servidor le pone los topes de la voz. */
   hablado?: boolean;
+  /** Le habló encima a la respuesta anterior: lo que alcanzó a oír (lib/interrumpida.ts en el servidor). */
+  interrumpido?: { oido: string };
 };
 
 function cuerpo(opts: PeticionTurno) {
@@ -51,6 +53,7 @@ function cuerpo(opts: PeticionTurno) {
     correo: opts.correo,
     escena: opts.escena || undefined,
     hablado: opts.hablado ? true : undefined,
+    interrumpido: opts.interrumpido ? { oido: String(opts.interrumpido.oido || '').slice(-400) } : undefined,
   });
 }
 

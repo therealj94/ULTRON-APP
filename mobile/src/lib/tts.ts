@@ -34,6 +34,7 @@ import { avatarActual, fijarAvatar } from '../avatares/actual';
 import { senalVoz } from '../avatar3d/senalVoz';
 import { ADELANTO_MS, BocaAlineada, Envolvente, PASO_BOCA_MS, RelojReproduccion, leerAlineacion, type AlineacionAudio } from '../avatar3d/sincronia';
 import { idiomaActual } from '../i18n';
+import { RegistroVoz } from './interrupcion';
 
 type Perf = 'speak' | 'sing';
 
@@ -48,6 +49,21 @@ export type SpeakCallbacks = {
 
 let current: Audio.Sound | null = null;
 let gen = 0;
+
+/**
+ * Lo que va diciendo la voz, frase por frase (lib/interrupcion.ts): el oído lo usa para no confundir
+ * el eco de AU-RA con la persona, y al interrumpirla se sabe qué alcanzó a oír.
+ */
+export const registroVoz = new RegistroVoz();
+/** Cuánto va (0..1) de la frase que suena ahora, por la posición real del audio. */
+let fraccionActual: (() => number) | null = null;
+export function fraccionSonando(): number | undefined {
+  try {
+    return fraccionActual?.() ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /** Los tiempos por letra de cada audio descargado (por su ruta en el teléfono) y de cada sonido preparado. */
 const alineaciones = new Map<string, AlineacionAudio>();
@@ -412,10 +428,14 @@ function playPrepared(sound: Audio.Sound, my: number, maxMs = 25_000, meta: Play
       }
       emitLevel((env || (env = envolventeLibre(kind)))(pos));
     }, alineada ? PASO_BOCA_MS : 50);
+    let duracion = 0;
     const end = () => {
       if (done) return;
       done = true;
       clearInterval(tick);
+      if (fraccionActual === fraccion) fraccionActual = null;
+      // Sonó entera (no la cortaron): cuenta como oída.
+      if (my === gen && meta.text) registroVoz.termino();
       senalVoz.formaReproducida(null);
       emitLevel(0);
       if (guard) clearTimeout(guard);
@@ -423,14 +443,18 @@ function playPrepared(sound: Audio.Sound, my: number, maxMs = 25_000, meta: Play
       void sound.unloadAsync().catch(() => {});
       resolve();
     };
+    const fraccion = () => (duracion > 0 ? reloj.posicion(Date.now()) / duracion : NaN);
     if (my !== gen) return end();
     current = sound;
+    fraccionActual = fraccion;
+    if (meta.text && kind !== 'sing') registroVoz.empezo(meta.text);
     sound.setOnPlaybackStatusUpdate((st) => {
       if (!st.isLoaded) {
         if ((st as any).error) end();
         return;
       }
       reloj.aviso(st.positionMillis || 0, Date.now(), st.isPlaying);
+      if (st.durationMillis) duracion = st.durationMillis;
       if (st.durationMillis && !guard) {
         guard = setTimeout(end, st.durationMillis + 1500);
         env = envolventeDeTexto(meta.text, st.durationMillis, kind);
@@ -446,6 +470,8 @@ export async function stopSpeaking() {
   gen += 1;
   const s = current;
   current = null;
+  fraccionActual = null;
+  registroVoz.callo();
   // La boca se cierra ya, no cuando el reproductor termine de parar.
   senalVoz.formaReproducida(null);
   emitLevel(0);

@@ -350,6 +350,11 @@ type TurnoOpts = {
    * (server/turno-unico.ts). Sin él, una frase podía ser tres turnos: el hilo repetido y las acciones dos veces.
    */
   idTurno?: string;
+  /**
+   * La persona le habló encima a la respuesta anterior y AU-RA se calló (lib/interrupcion.ts): lo que
+   * alcanzó a oír. El servidor abre con un acuse corto («Va, dime») en vez de repetirse (lib/interrumpida.ts).
+   */
+  interrumpido?: { oido: string };
 };
 
 /** Un id para el turno de una frase (sin módulos nativos: no tiene que ser criptográfico, solo no repetirse). */
@@ -373,6 +378,7 @@ function turnoBody(opts: TurnoOpts) {
     ...(opts.hablado ? { hablado: true } : {}),
     ...(opts.soloRapido ? { soloRapido: true } : {}),
     ...(opts.idTurno ? { idTurno: opts.idTurno } : {}),
+    ...(opts.interrumpido ? { interrumpido: { oido: String(opts.interrumpido.oido || '').slice(-400) } } : {}),
     // Con quién habla la persona y en qué idioma: el cerebro contesta como ese avatar y en esa lengua.
     avatar: avatarActual(),
     idioma: idiomaActual(),

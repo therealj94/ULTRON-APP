@@ -67,6 +67,11 @@ export type AppSettings = {
   proactive: boolean;
   /** Efectos de sonido al tocar. */
   sfx: boolean;
+  /**
+   * Hablarle encima (José, 3-oct: «como ChatGPT con voz»): con el oído Turbo, el micrófono sigue abierto
+   * mientras AU-RA habla (con cancelación de eco) y si la persona la interrumpe, se calla y la escucha.
+   */
+  interrumpir: boolean;
   /** Su cara: el orbe de partículas (desde el 2-oct) o los anillos (Skia). «sala» quedó de antes: es el orbe. */
   cara: 'orbe' | 'anillos' | 'sala';
   /** La persona eligió su cara en Ajustes (los «anillos» guardados por omisión antes del orbe no cuentan). */
@@ -112,6 +117,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   sttEngine: 'turbo',
   proactive: true,
   sfx: true,
+  interrumpir: true,
   cara: 'orbe',
   avatar: 'aura',
   avatarElegido: false,
