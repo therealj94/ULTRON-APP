@@ -23,6 +23,8 @@ type Props = {
   frase: { texto: string; n: number } | null;
   /** Efectos de sonido (Ajustes → La mesa). */
   sonidos: boolean;
+  /** Lo que la app tapa arriba (su estado) y abajo (la barra), en dp: el orbe y sus palabras van en el resto. */
+  margen?: { arriba: number; abajo: number };
   /** Nivel de la voz (0..1, ~20 Hz); devuelve cómo desuscribirse. */
   speechLevelSource: (cb: (level01: number) => void) => () => void;
   onTocar: () => void;
@@ -42,21 +44,21 @@ const FONDO = '#05070C';
  * pero en Android con html propio ese guion llega tarde y el orbe salía con su panel de prueba entero
  * (José, 3-oct: «REPOSO, ESCUCHA… WEBGL2 · 60 FPS» en la mesa). Así no depende de la WebView.
  */
-export function orbeConOpciones(html: string, sonidos: boolean): string {
-  const guion = `<script>window.__orbeOpciones=${JSON.stringify({ clean: true, tts: false, sfx: sonidos })};</script>`;
+export function orbeConOpciones(html: string, sonidos: boolean, margen?: { arriba: number; abajo: number }): string {
+  const guion = `<script>window.__orbeOpciones=${JSON.stringify({ clean: true, tts: false, sfx: sonidos, ...(margen ? { margen } : {}) })};</script>`;
   return html.includes('<head>') ? html.replace('<head>', `<head>${guion}`) : guion + html;
 }
 
-export function OrbeAura({ face, hablando, frase, sonidos, speechLevelSource, onTocar, onDeslizar, onFallo }: Props) {
+export function OrbeAura({ face, hablando, frase, sonidos, margen, speechLevelSource, onTocar, onDeslizar, onFallo }: Props) {
   const web = useRef<WebView>(null);
   const lista = useRef(false);
   const caida = useRef(false);
-  const ultimo = useRef({ face, hablando, sonidos, frase });
-  ultimo.current = { face, hablando, sonidos, frase };
+  const ultimo = useRef({ face, hablando, sonidos, frase, margen });
+  ultimo.current = { face, hablando, sonidos, frase, margen };
   const cb = useRef({ onTocar, onDeslizar, onFallo });
   cb.current = { onTocar, onDeslizar, onFallo };
   // Una sola vez: cambiar los sonidos después va por el puente («sonido»), sin recargar el orbe.
-  const html = useMemo(() => orbeConOpciones(ORBE_HTML, ultimo.current.sonidos), []);
+  const html = useMemo(() => orbeConOpciones(ORBE_HTML, ultimo.current.sonidos, ultimo.current.margen), []);
 
   const enviar = useCallback((m: object) => {
     if (!lista.current || caida.current) return;
@@ -86,6 +88,9 @@ export function OrbeAura({ face, hablando, frase, sonidos, speechLevelSource, on
     if (frase?.texto) enviar({ tipo: 'decir', texto: frase.texto });
   }, [enviar, frase?.n, frase?.texto]);
   useEffect(() => enviar({ tipo: 'sonido', activo: sonidos }), [enviar, sonidos]);
+  useEffect(() => {
+    if (margen) enviar({ tipo: 'margen', arriba: Math.round(margen.arriba), abajo: Math.round(margen.abajo) });
+  }, [enviar, margen?.arriba, margen?.abajo]);
 
   // El ritmo de las palabras y el brillo van con la voz real: se manda si cambió lo bastante.
   useEffect(() => {
@@ -114,6 +119,7 @@ export function OrbeAura({ face, hablando, frase, sonidos, speechLevelSource, on
           lista.current = true;
           const u = ultimo.current;
           enviar({ tipo: 'sonido', activo: u.sonidos });
+          if (u.margen) enviar({ tipo: 'margen', arriba: Math.round(u.margen.arriba), abajo: Math.round(u.margen.abajo) });
           enviar({ tipo: 'estado', face: u.hablando ? 'SPEAKING' : u.face });
           if (u.hablando && u.frase?.texto) enviar({ tipo: 'decir', texto: u.frase.texto });
           return;

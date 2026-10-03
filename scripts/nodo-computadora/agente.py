@@ -218,24 +218,55 @@ def pregunta_para(elemento, idioma='es'):
     return f'I am about to click «{e}». Should I?' if idioma == 'en' else f'Voy a tocar «{e}». ¿Lo hago?'
 
 
+def _pide_enter(nombre, a):
+    """La acción manda un Enter (tecla, o escribir y Enter): puede enviar lo que esté enfocado."""
+    if nombre == 'key':
+        return bool(re.search(r'(^|\+)(enter|return)$', str(a.get('keys') or a.get('key') or '').lower().replace(' ', '')))
+    return nombre == 'type' and bool(a.get('press_enter'))
+
+
+def _sensible(t, elemento, idioma):
+    """Lo sensible, con un sí para ESTA acción: un sí previo (ask_user_confirmation) vale para una sola, no
+    para los pasos que sigan (auditoría, 3-oct: antes un sí abría una ventana de tres pasos para cualquier cosa)."""
+    if t.permiso_unico:
+        t.permiso_unico = False
+        return None
+    si = t.pedir_confirmacion(pregunta_para(elemento, idioma))
+    if si is None:
+        raise Detenida('la pararon mientras esperaba tu sí')
+    # El sí de aquí es para esta acción, que se hace ahora: no deja permiso para la siguiente.
+    t.permiso_unico = False
+    return None if si else NO_DIJO
+
+
 def revisar_accion(t, nombre, a):
     """Antes de una acción del motor gratis: pagar o comprar, nunca; lo sensible, solo con el sí de la persona.
     Devuelve None si se puede hacer, o el texto que vuelve al modelo en lugar de hacerla."""
     if nombre == 'type' and TARJETA.search(str(a.get('text', ''))):
         return NO_PAGO
-    if nombre not in ('click', 'double_click'):
+    idioma = idioma_de(t.instruccion)
+    if _pide_enter(nombre, a):
+        # Un Enter envía lo que esté enfocado: vale lo mismo que tocar el último elemento que se tocó (antes el
+        # Enter se saltaba la revisión: «Comprar» enfocado + Enter compraba).
+        ultimo = t.ultimo_elemento
+        if ultimo and PAGO.search(ultimo):
+            return NO_PAGO
+        if ultimo and SENSIBLE.search(ultimo) and not COOKIES.search(ultimo):
+            return _sensible(t, f'Enter en «{ultimo}»' if idioma == 'es' else f'Enter on «{ultimo}»', idioma)
+        return None
+    if nombre not in ('click', 'double_click', 'right_click'):
         return None
     elemento = str(a.get('element') or '')
-    if not elemento or COOKIES.search(elemento):
+    t.ultimo_elemento = elemento
+    if not elemento:
         return None
+    # Pagar primero: «Aceptar cookies y comprar» no se salva por decir «cookies».
     if PAGO.search(elemento):
         return NO_PAGO
-    if SENSIBLE.search(elemento) and t.permiso_hasta < len(t.pasos):
-        si = t.pedir_confirmacion(pregunta_para(elemento, idioma_de(t.instruccion)))
-        if si is None:
-            raise Detenida('la pararon mientras esperaba tu sí')
-        if not si:
-            return NO_DIJO
+    if COOKIES.search(elemento):
+        return None
+    if SENSIBLE.search(elemento):
+        return _sensible(t, elemento, idioma)
     return None
 
 
@@ -427,8 +458,12 @@ def correr_claude(t):
                 # La captura final va con el resultado (la app la muestra en la tarjeta del final).
                 t.anotar(accion='answer', args={'content': texto[:300]}, ms=ms, miniatura=miniatura(captura()[0]))
                 return t.cerrar('hecha', respuesta=texto or '(sin respuesta)')
+            # `fallo`: algo salió mal o la persona dijo NO: lo que sigue en el mismo lote ya no se hace
+            # (auditoría, 3-oct: tras un NO, las acciones siguientes del lote corrían igual).
             resultados, fallo = [], False
             for b in usos:
+                if t.parar:
+                    return t.cerrar('parada')
                 if b.get('name') == CONFIRMAR_CLAUDE['name']:
                     res = {'type': 'tool_result', 'tool_use_id': b['id']}
                     if fallo:
@@ -438,11 +473,18 @@ def correr_claude(t):
                         if si is None:
                             return t.cerrar('parada')
                         res['content'] = SI_DIJO if si else NO_DIJO
+                        if not si:
+                            fallo = True
                     resultados.append(res)
                     continue
                 res = {'type': 'tool_result', 'tool_use_id': b['id'], 'toolset_name': 'computer'}
+                entrada = b.get('input') or {}
                 if fallo:
                     res.update(content=NO_HECHA, is_error=True)
+                elif TARJETA.search(str(entrada.get('text', ''))):
+                    # Números de tarjeta: nunca, tampoco con Claude.
+                    res.update(content=NO_PAGO, is_error=True)
+                    fallo = True
                 else:
                     try:
                         res['content'] = accion_claude(b['name'], b.get('input') or {})
@@ -472,6 +514,10 @@ def correr_claude(t):
 
 TAREAS = {}
 TURNO = threading.Lock()  # un escritorio: una tarea a la vez, las demás esperan su turno
+# Reiniciar el escritorio y lo que hace la persona a mano no se cruzan: una acción admitida antes de parar no
+# cae en el escritorio del dueño siguiente, ni se entrega su pantalla mientras se reinicia (auditoría, 3-oct).
+ESCRITORIO_LOCK = threading.Lock()
+REINICIANDO = {'v': False}
 # De quién fue la última tarea en el escritorio. None al arrancar: la primera tarea también estrena escritorio.
 DUENO_ACTUAL = {'v': None}
 
@@ -512,7 +558,8 @@ class Tarea:
         self.en_espera = False  # el ciclo está de verdad quieto esperando (la persona ya puede actuar)
         self.pregunta = None    # la pregunta que espera su sí
         self.si = None
-        self.permiso_hasta = -1  # tras un sí, los pasos hasta este no vuelven a preguntar
+        self.permiso_unico = False  # el sí a una pregunta del modelo vale para UNA acción sensible, la siguiente
+        self.ultimo_elemento = ''   # lo último que tocó: un Enter después vale lo mismo que tocarlo
         self.persona_actuo = False
         self.notas = []          # lo que se le dice al modelo en el paso siguiente
 
@@ -594,8 +641,7 @@ class Tarea:
         if si is None:
             raise Detenida('nadie dijo que sí a tiempo; no hice lo que pedía permiso')
         self.anotar(accion='confirmacion', args={'si': bool(si)})
-        if si:
-            self.permiso_hasta = len(self.pasos) + 3
+        self.permiso_unico = bool(si)
         return bool(si)
 
     def resumen(self, con_miniaturas=False):
@@ -609,13 +655,22 @@ def correr(t: Tarea):
     with TURNO:
         if t.parar:
             return t.cerrar('parada')
-        t.estado = 'trabajando'
+        limpio = False
         if DUENO_ACTUAL['v'] != t.dueno:
-            try:
-                escritorio_nuevo()
-            except Exception as e:
-                return t.cerrar('fallo', error=str(e)[:500])
-            DUENO_ACTUAL['v'] = t.dueno
+            with ESCRITORIO_LOCK:
+                REINICIANDO['v'] = True
+                try:
+                    escritorio_nuevo()
+                except Exception as e:
+                    return t.cerrar('fallo', error=str(e)[:500])
+                finally:
+                    REINICIANDO['v'] = False
+                DUENO_ACTUAL['v'] = t.dueno
+                limpio = True
+        # «trabajando» solo con SU escritorio ya listo: antes se marcaba antes del reinicio y la pantalla del
+        # dueño anterior se podía pedir en ese rato.
+        t.estado = 'trabajando'
+        if limpio:
             t.anotar(accion='escritorio_limpio')
         if t.motor == 'claude':
             try:
@@ -655,6 +710,14 @@ def correr(t: Tarea):
                 nombre = llamada.function.name
                 pensado = (getattr(msg, 'reasoning', None) or getattr(msg, 'reasoning_content', None) or '')[-400:]
                 t.anotar(accion=nombre, args=args, ms=ms, pensado=pensado, miniatura=miniatura(png))
+                # Lo pararon (o pausaron) MIENTRAS pensaba: lo que decidió ya no se hace (auditoría, 3-oct: el
+                # clic salía igual). En pausa, al seguir mira la pantalla de nuevo en lugar de usar esta jugada.
+                if t.parar:
+                    return t.cerrar('parada')
+                if t.pausa or t.control:
+                    mensajes.append({'role': 'tool', 'tool_call_id': llamada.id,
+                                     'content': 'Not executed: the user paused you. Look at the screen again before acting.'})
+                    continue
                 if nombre == 'answer':
                     return t.cerrar('hecha', respuesta=str(args.get('content', '')))
                 if nombre == 'ask_user_confirmation':
@@ -805,6 +868,15 @@ def accion_persona(t, cuerpo):
         except (TypeError, ValueError):
             raise HTTPException(400, 'coordenadas en [0, 1000]')
 
+    # Se revisa otra vez justo antes de tocar, con el escritorio tomado: la acción pudo esperar en la cola y,
+    # mientras, pararon la tarea o el escritorio cambió de dueño.
+    with ESCRITORIO_LOCK:
+        if t.parar or not t.control or REINICIANDO['v'] or DUENO_ACTUAL['v'] != t.dueno:
+            raise HTTPException(409, 'la tarea ya no tiene el escritorio')
+        return _accion_persona(t, cuerpo, tipo, ancho, alto, coord)
+
+
+def _accion_persona(t, cuerpo, tipo, ancho, alto, coord):
     if tipo == 'click':
         paso = {'tipo': 'click', 'x': coord('x'), 'y': coord('y')}
         ejecutar('click', {'x': paso['x'], 'y': paso['y']}, ancho, alto)
@@ -848,6 +920,9 @@ def pantalla_tarea(id: str, req: Request):
     t = viva(tarea(req, id))
     if t.estado == 'en_cola':
         raise HTTPException(409, 'todavía no empieza')
+    # Nunca la pantalla de otro dueño (ni la del anterior mientras se reinicia).
+    if REINICIANDO['v'] or DUENO_ACTUAL['v'] != t.dueno:
+        raise HTTPException(409, 'preparando su escritorio')
     png, _, _ = captura()
     jpg = base64.b64decode(miniatura(png, 960))
     return Response(jpg, media_type='image/jpeg', headers={'Cache-Control': 'no-store'})

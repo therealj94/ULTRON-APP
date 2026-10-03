@@ -4,7 +4,8 @@
  * mismo que components/HojaMas.tsx).
  */
 import { Animated, StyleSheet, Text, View } from 'react-native';
-import { COLOR, Icono, Ojos, Ondas, Pantallita, t, Toca, useAparece, type PropsEscena } from './comun';
+import { COLOR, Icono, Ondas, Pantallita, t, Toca, useAparece, type PropsEscena } from './comun';
+import { OrbeMini } from '../../avatar3d/OrbeMini';
 import { BotonBarra, Senala } from './guia';
 import type { NombreIcono } from '../../ui/iconos';
 
@@ -32,7 +33,7 @@ export default function Mesa({ paso, esperando, onToque, ancho, alto, idioma, ac
         <Text style={st.etiqueta}>{t(idioma, 'LA MESA', 'THE DESK')}</Text>
       </View>
       <View style={st.centro}>
-        <Ojos color={COLOR.aura} tam={84} />
+        <OrbeMini lado={84} />
         {i === 1 ? (
           <View style={{ marginTop: 12 }}>
             <Ondas activo color={COLOR.aura} />

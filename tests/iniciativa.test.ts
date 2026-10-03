@@ -379,3 +379,22 @@ test('la personalidad sirve con iniciativa, con frenos; la voz lleva la versión
   assert.match(miembro, /TU ROL: su asistente personal, que se involucra/);
   assert.ok(!miembro.includes('TU ROL: sirves a la junta'));
 });
+
+test('«luego» pospone de verdad: ese rato nada, y después vuelve LA MISMA idea primero (auditoría, 3-oct)', async () => {
+  const c = correo();
+  const modelo = async () => buenas;
+  const persona = { correo: c, nombre: 'José' };
+  const r1 = await ini.siguientePropuesta(persona, { ahora: MANANA, modelo });
+  assert.ok(r1.propuesta);
+  const luego = await ini.responderPropuesta(c, r1.propuesta!.id, 'luego', MANANA + 60_000);
+  assert.equal(luego.ok, true);
+  assert.equal((await ini.siguientePropuesta(persona, { ahora: MANANA + H, modelo })).motivo, 'luego', 'una hora después, todavía no');
+  // Pasado el «luego» (y el ritmo normal entre propuestas), vuelve.
+  const otra = await ini.siguientePropuesta(persona, { ahora: MANANA + 5 * H, modelo });
+  assert.equal(otra.propuesta?.texto, r1.propuesta!.texto, 'la pospuesta vuelve, no se pierde como repetida');
+});
+
+test('«desactiva las propuestas» las apaga; «deja de proponer» solo frena', () => {
+  for (const t of ['Desactiva las propuestas', 'apaga tus sugerencias', 'ya no quiero propuestas', 'quítame las recomendaciones']) assert.equal(ini.pideApagarIniciativa(t), true, t);
+  for (const t of ['deja de proponer por hoy', 'apaga la luz', 'quiero propuestas de negocio']) assert.equal(ini.pideApagarIniciativa(t), false, t);
+});

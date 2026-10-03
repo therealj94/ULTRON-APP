@@ -72,7 +72,7 @@ export function HojaMas(p: Props) {
       id: 'envivo',
       icono: 'llamar',
       titulo: p.conversando ? tr('Colgar', 'Hang up') : tr(`Que ${p.nombreAvatar} te llame`, `Have ${p.nombreAvatar} call you`),
-      sub: p.conversando ? tr(`En llamada con ${p.nombreAvatar}`, `On a call with ${p.nombreAvatar}`) : tr('Suena como una llamada y hablan de corrido', 'Rings like a call, then you talk hands-free'),
+      sub: p.conversando ? tr(`En llamada con ${p.nombreAvatar}`, `On a call with ${p.nombreAvatar}`) : tr('Se abre al instante y hablan de corrido', 'Opens right away and you talk hands-free'),
       activo: p.conversando,
     },
     { id: 'escribir', icono: 'teclado', titulo: tr('Escribir', 'Type'), sub: tr('El teclado y el menú', 'Keyboard and menu') },

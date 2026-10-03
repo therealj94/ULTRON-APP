@@ -161,7 +161,9 @@ export function HojaComputadoraVivo({
     const vuelta = async () => {
       if (!vivo) return;
       const s = await leerEstado();
-      if (idRef.current && trabajando(s?.actual?.estado ?? tareaRef.current?.estado)) await leerTarea(idRef.current);
+      // También cuando el servidor ya la ve terminada y aquí sigue «trabajando»: una última lectura para cerrarla
+      // (auditoría, 3-oct: el reloj y Detener se quedaban para siempre).
+      if (idRef.current && (trabajando(tareaRef.current?.estado) || trabajando(s?.actual?.estado))) await leerTarea(idRef.current);
       if (vivo) reloj = setTimeout(vuelta, sondeoMs(s?.actual?.estado ?? tareaRef.current?.estado, true));
     };
     void vuelta();
@@ -267,7 +269,8 @@ export function HojaComputadoraVivo({
 
   /** Un botón sobre la tarea (detener, pausar, seguir, control, sí/no): con su «cargando» y el error dicho claro. */
   const sobreTarea = async (que: string, ruta: string, cuerpo: unknown = {}) => {
-    if (!tarea || ocupado) return;
+    // Detener nunca espera a otro botón: si «Sí» o «Pausar» siguen en camino, se manda igual (auditoría, 3-oct).
+    if (!tarea || (ocupado && que !== 'parar') || ocupado === 'parar') return;
     setError('');
     setOcupado(que);
     try {
@@ -350,6 +353,12 @@ export function HojaComputadoraVivo({
     <Hoja
       visible={visible}
       onCerrar={onCerrar}
+      // Detener siempre a la vista, fijo abajo, aunque la hoja sea larga (antes quedaba debajo de la captura y el plan).
+      pie={
+        tarea && sigue ? (
+          <Boton titulo={tr('Detener la tarea', 'Stop the task')} variante="peligro" cargando={ocupado === 'parar'} onPress={() => void sobreTarea('parar', 'parar')} />
+        ) : undefined
+      }
       titulo={tr('Su computadora', 'Their computer')}
       subtitulo={tr(
         `${nombreAvatar} tiene su propia computadora en la nube (con Firefox) para hacer cosas en páginas por ti. Aquí ves su plan y lo que hace, paso a paso.`,
@@ -521,7 +530,6 @@ export function HojaComputadoraVivo({
                   {c.tomar ? <Boton titulo={tr('Tomar el control', 'Take control')} tam="chico" variante="secundario" cargando={ocupado === 'tomar'} onPress={() => void sobreTarea('tomar', 'control', { tomar: true })} style={{ flex: 1 }} /> : null}
                   {c.devolver ? <Boton titulo={tr('Devolver', 'Give back')} tam="chico" cargando={ocupado === 'devolver'} onPress={() => void sobreTarea('devolver', 'control', { tomar: false })} style={{ flex: 1 }} /> : null}
                 </View>
-                <Boton titulo={tr('Detener', 'Stop')} tam="chico" variante="peligro" cargando={ocupado === 'parar'} onPress={() => void sobreTarea('parar', 'parar')} />
                 {c.faltaActualizar ? (
                   <Texto v="mini" color="texto3">
                     {tr(

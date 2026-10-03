@@ -218,7 +218,7 @@ export function PantallaWhatsapp({ cambio, onAtras, activa, estadoInicial = null
             ) : null}
           </View>
           {vista === 'listo' ? (
-            <Pressable onPress={desvincular} accessibilityRole="button" accessibilityLabel={tr('Más opciones: desvincular WhatsApp', 'More options: unlink WhatsApp')} hitSlop={8} style={s.botonCab}>
+            <Pressable onPress={desvincular} accessibilityRole="button" accessibilityLabel={tr('Desvincular WhatsApp de AURA', 'Unlink WhatsApp from AURA')} hitSlop={8} style={s.botonCab}>
               <IconoWA nombre="puntos" color={w.sobreCabecera} tam={22} lleno />
             </Pressable>
           ) : null}
@@ -361,7 +361,7 @@ const st = StyleSheet.create({
 
 /* ── vincular ─────────────────────────────────────────────────────────────────────────────── */
 
-function Vincular({ p, estado, onCambio }: { p: Paleta; estado: EstadoWA | null; onCambio: () => void }) {
+export function Vincular({ p, estado, onCambio }: { p: Paleta; estado: EstadoWA | null; onCambio: () => void }) {
   const s = useMemo(() => estilos(p), [p]);
   const [modo, setModo] = useState<'codigo' | 'qr'>('codigo');
   const [tel, setTel] = useState('');

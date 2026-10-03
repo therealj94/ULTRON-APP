@@ -79,7 +79,24 @@ const ZOHO: Omit<Proveedor, 'fuente'> = {
   guardaEnviados: false,
 };
 
+/**
+ * El correo de la casa (José, 3-oct: «si es de ordenglobal ya sabes cómo conectarlo, solo que se ponga correo
+ * y contraseña»). Su MX es el propio dominio y mail.ordenglobal.org es el mismo servidor: el que ya lee la
+ * revisión diaria (lib/campana-respuestas.ts). Sin esto se adivinaba igual, pero decía «adivinado» y abría
+ * los servidores a mano.
+ */
+const ORDEN_GLOBAL: Omit<Proveedor, 'fuente'> = {
+  nombre: 'Orden Global',
+  imap: { host: 'mail.ordenglobal.org', puerto: 993, seguro: true },
+  smtp: { host: 'mail.ordenglobal.org', puerto: 465, seguro: true },
+  auth: 'clave',
+  usuario: 'correo',
+  ayuda: 'Correo de Orden Global: solo tu dirección y la contraseña de tu correo. Los servidores ya los sé.',
+  guardaEnviados: false,
+};
+
 const CONOCIDOS: Record<string, Omit<Proveedor, 'fuente'>> = {
+  'ordenglobal.org': ORDEN_GLOBAL,
   'gmail.com': GMAIL,
   'googlemail.com': GMAIL,
   'outlook.com': MICROSOFT,

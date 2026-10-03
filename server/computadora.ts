@@ -812,10 +812,20 @@ export function respuestaSiNo(mensaje: string): 'si' | 'no' | null {
     .trim();
   if (!t || t.split(' ').length > 6) return null;
   if (/(^|\s)(pero|cambia|cambiale|corrige|en vez|instead|but)(\s|$)/.test(t)) return null;
-  if (/^(no|nop|nel|nunca|mejor no|negativo|cancela|cancelalo|detente|para|paralo|no lo hagas|nope|dont|don t|stop|cancel)(\s|$)/.test(t)) return 'no';
-  if (/^(si|sip|claro|dale|va|ok|okay|okey|hazlo|adelante|de acuerdo|esta bien|correcto|confirmo|sigue|siguele|continua|yes|yeah|yep|sure|go ahead|do it|continue|keep going)(\s|$)/.test(t)) return 'si';
+  const resto = t.replace(/^\S+\s?/, '');
+  if (/^(no|nop|nel|nunca|mejor no|negativo|cancela|cancelalo|detente|para|paralo|no lo hagas|nope|dont|don t|stop|cancel)(\s|$)/.test(t)) {
+    // «no, sí mándalo»: se contradice; se vuelve a preguntar en lugar de adivinar.
+    return AFIRMA.test(resto) ? null : 'no';
+  }
+  if (/^(si|sip|claro|dale|va pues|ok|okay|okey|hazlo|adelante|de acuerdo|esta bien|correcto|confirmo|sigue|siguele|continua|yes|yeah|yep|sure|go ahead|do it|continue|keep going)(\s|$)/.test(t) || t === 'va') {
+    // «claro que no», «sí, no lo hagas»: una negación en cualquier parte NO es un sí (auditoría, 3-oct:
+    // solo se miraba la primera palabra). Ante la duda, se pregunta otra vez.
+    return NEGACION.test(t) ? null : 'si';
+  }
   return null;
 }
+const NEGACION = /(^|\s)(no|nunca|jamas|tampoco|ni|nada|dont|don t|not|never)(\s|$)/;
+const AFIRMA = /(^|\s)(si|sip|claro|dale|ok|okay|okey|hazlo|adelante|confirmo|mandalo|envialo|sigue|yes|sure)(\s|$)/;
 
 /* ------------------------------------------------------------------ seguir la tarea hasta el final */
 

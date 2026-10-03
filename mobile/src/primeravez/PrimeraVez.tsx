@@ -32,6 +32,7 @@ import { anotarEnConocer } from '../bienvenida/conocer';
 import { PasoApodo } from './pasos/PasoApodo';
 import { PasoAura } from './pasos/PasoAura';
 import { PasoAvatar } from './pasos/PasoAvatar';
+import { PasoConectar } from './pasos/PasoConectar';
 import { LluviaConfeti, PasoFiesta } from './pasos/PasoFiesta';
 import { PasoGenesis } from './pasos/PasoGenesis';
 import { PasoIdioma } from './pasos/PasoIdioma';
@@ -43,12 +44,16 @@ import type { PropsPaso } from './pasos/tipos';
 
 type Props = NativeStackScreenProps<RaizParams, 'PrimeraVez'>;
 
-// v2: llegaron el idioma, «qué quieres que haga por ti» y la iniciativa (los números de paso cambiaron).
-const CLAVE_PASO = (correo: string) => `aura.primeravez.paso.v2:${correo.trim().toLowerCase()}`;
+// v3: se guarda el NOMBRE del paso (no su número): al llegar «conectar» los números se corrieron, y así un
+// paso nuevo no vuelve a mandar a nadie a otra pregunta. v2 (número) se lee una vez como respaldo.
+const CLAVE_PASO = (correo: string) => `aura.primeravez.paso.v3:${correo.trim().toLowerCase()}`;
+const CLAVE_PASO_V2 = (correo: string) => `aura.primeravez.paso.v2:${correo.trim().toLowerCase()}`;
+/** Los pasos de la v2, para traducir un número viejo a su nombre. */
+const PASOS_V2 = PASOS.filter((p) => p !== 'conectar');
 
 /** Los pasos que se pueden saltar con el botón de arriba (lo demás se sigue con «Siguiente»). */
 function saltable(paso: PasoId): boolean {
-  return paso.startsWith('encuesta:') || paso === 'permisos' || paso === 'aura' || paso === 'iniciativa';
+  return paso.startsWith('encuesta:') || paso === 'permisos' || paso === 'aura' || paso === 'conectar' || paso === 'iniciativa';
 }
 
 export function PrimeraVez(_: Props) {
@@ -69,12 +74,16 @@ export function PrimeraVez(_: Props) {
   // Retomar donde se quedó (si Android cerró la app a la mitad).
   useEffect(() => {
     if (!usuario) return;
-    void AsyncStorage.getItem(CLAVE_PASO(usuario.correo))
-      .then((v) => {
-        const n = Number(v);
-        if (Number.isInteger(n) && n > 0 && n < PASOS.length) setI(n);
-      })
-      .catch(() => {});
+    void (async () => {
+      const v3 = await AsyncStorage.getItem(CLAVE_PASO(usuario.correo));
+      let nombre = v3 as PasoId | null;
+      if (!nombre) {
+        const n = Number(await AsyncStorage.getItem(CLAVE_PASO_V2(usuario.correo)));
+        if (Number.isInteger(n) && n > 0 && n < PASOS_V2.length) nombre = PASOS_V2[n];
+      }
+      const n = nombre ? PASOS.indexOf(nombre) : -1;
+      if (n > 0) setI(n);
+    })().catch(() => {});
   }, [usuario]);
 
   // Si el perfil llega del servidor después de montar (nombre y cumple de Genesis), se completan los huecos.
@@ -106,7 +115,7 @@ export function PrimeraVez(_: Props) {
       setDir(d);
       setI(n);
       scroll.current?.scrollTo({ y: 0, animated: false });
-      if (usuario) void AsyncStorage.setItem(CLAVE_PASO(usuario.correo), String(n)).catch(() => {});
+      if (usuario) void AsyncStorage.setItem(CLAVE_PASO(usuario.correo), PASOS[n]).catch(() => {});
     },
     [usuario]
   );
@@ -119,7 +128,7 @@ export function PrimeraVez(_: Props) {
     setAvatarVoz(b.avatar);
     // La mesa lee el avatar y el idioma de los ajustes del teléfono al abrirse: que ya estén.
     await saveSettings({ avatar: b.avatar, avatarElegido: true }).catch(() => {});
-    if (usuario) await AsyncStorage.removeItem(CLAVE_PASO(usuario.correo)).catch(() => {});
+    if (usuario) await AsyncStorage.multiRemove([CLAVE_PASO(usuario.correo), CLAVE_PASO_V2(usuario.correo)]).catch(() => {});
     marcarRecienElegido(true);
     reiniciarA('Mesa', { recienElegido: true });
   }, [b, terminando, usuario]);
@@ -191,6 +200,8 @@ export function PrimeraVez(_: Props) {
       <PasoTema {...props} />
     ) : paso === 'aura' ? (
       <PasoAura {...props} />
+    ) : paso === 'conectar' ? (
+      <PasoConectar {...props} />
     ) : q ? (
       <PasoPregunta key={q.campo} {...props} pregunta={q} />
     ) : paso === 'iniciativa' ? (

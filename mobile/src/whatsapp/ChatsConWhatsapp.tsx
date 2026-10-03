@@ -1,10 +1,11 @@
 /**
- * LOS CHATS CON SUS PESTAÑAS: PULSE2CHAT, WhatsApp y Correos, una al lado de la otra. Se cambia deslizando
+ * LOS CHATS CON SUS PESTAÑAS: PULSE2CHAT, WhatsApp, Correos y Veta Wallet, una al lado de la otra. Se cambia deslizando
  * de lado o tocando la pestaña (José, 2-oct: «una opción aparte de PULSE2CHAT, slide y cambia»; y «otra
  * sección de los correos al par de WhatsApp y PULSE2CHAT»).
  *
  * WhatsApp solo aparece si esta cuenta tiene su WhatsApp (server/whatsapp.ts, WHATSAPP_DUENOS). Correos
- * está para todos (correo/PantallaCorreos.tsx): sin cuentas conectadas explica cómo conectar una.
+ * está para todos (correo/PantallaCorreos.tsx): sin cuentas conectadas explica cómo conectar una. Veta
+ * Wallet también (cartera/PantallaCartera.tsx; José, 3-oct): saldos, enviar, recibir y abrir la wallet.
  */
 import { useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
@@ -12,6 +13,7 @@ import { useTema } from '../nucleo/tema';
 import { tr } from '../i18n';
 import { PantallaChats } from '../pulse/PantallaChats';
 import { PantallaCorreos } from '../correo/PantallaCorreos';
+import { PantallaCartera } from '../cartera/PantallaCartera';
 import { PantallaWhatsapp } from './PantallaWhatsapp';
 import * as API from './api';
 import { vistaDe, type EstadoWA } from './logica';
@@ -25,11 +27,11 @@ type Props = {
   enWhatsapp?: boolean;
 };
 
-type Pagina = 'pulse' | 'whatsapp' | 'correos';
+type Pagina = 'pulse' | 'whatsapp' | 'correos' | 'cartera';
 
-/** Las páginas que tiene esta cuenta, en orden: PULSE2CHAT, WhatsApp (si lo tiene) y Correos. */
+/** Las páginas que tiene esta cuenta, en orden: PULSE2CHAT, WhatsApp (si lo tiene), Correos y Veta Wallet. */
 export function paginasDe(conWhatsapp: boolean): Pagina[] {
-  return conWhatsapp ? ['pulse', 'whatsapp', 'correos'] : ['pulse', 'correos'];
+  return conWhatsapp ? ['pulse', 'whatsapp', 'correos', 'cartera'] : ['pulse', 'correos', 'cartera'];
 }
 
 export function ChatsConWhatsapp({ onAbrir, onAtras, enWhatsapp = false }: Props) {
@@ -107,6 +109,9 @@ export function ChatsConWhatsapp({ onAbrir, onAtras, enWhatsapp = false }: Props
       <View style={{ width, flex: 1 }}>
         <PantallaCorreos onAtras={onAtras} cambio={cambio} activa={pagina === 'correos'} onNoLeidos={setNoLeidosCorreo} />
       </View>
+      <View style={{ width, flex: 1 }}>
+        <PantallaCartera onAtras={onAtras} cambio={cambio} activa={pagina === 'cartera'} />
+      </View>
     </ScrollView>
   );
 }
@@ -118,6 +123,7 @@ function Pestanas({ p, paginas, pagina, noLeidosWA, noLeidosCorreo, onCambiar }:
     pulse: { texto: 'PULSE2CHAT' },
     whatsapp: { texto: 'WhatsApp', punto: noLeidosWA, color: VERDE_WA, sobre: '#062B16', leer: tr(`${noLeidosWA} chats sin leer`, `${noLeidosWA} unread chats`) },
     correos: { texto: tr('Correos', 'Email'), punto: noLeidosCorreo, leer: tr(`${noLeidosCorreo} correos sin leer`, `${noLeidosCorreo} unread emails`) },
+    cartera: { texto: 'Veta Wallet' },
   };
   return (
     <View style={[st.pista, { backgroundColor: p.superficie }]} accessibilityRole="tablist">
@@ -135,7 +141,7 @@ function Pestanas({ p, paginas, pagina, noLeidosWA, noLeidosCorreo, onCambiar }:
             accessibilityLabel={o.punto ? `${o.texto}, ${o.leer}` : o.texto}
             style={[st.opcion, activa && { backgroundColor: fondo }]}
           >
-            <Text style={[st.texto, { color: activa ? sobre : p.texto2 }, paginas.length > 2 && st.textoChico]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+            <Text style={[st.texto, { color: activa ? sobre : p.texto2 }, paginas.length > 2 && st.textoChico, paginas.length > 3 && st.textoMini]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
               {o.texto}
             </Text>
             {o.punto ? (
@@ -152,9 +158,11 @@ function Pestanas({ p, paginas, pagina, noLeidosWA, noLeidosCorreo, onCambiar }:
 
 const st = StyleSheet.create({
   pista: { flexDirection: 'row', borderRadius: 999, padding: 4 },
-  opcion: { flex: 1, height: 40, borderRadius: 999, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 6, paddingHorizontal: 6 },
+  opcion: { flex: 1, height: 40, borderRadius: 999, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 4, paddingHorizontal: 4 },
   texto: { fontSize: 14, fontWeight: '800', letterSpacing: 0.3, flexShrink: 1 },
   textoChico: { fontSize: 13, letterSpacing: 0.1 },
+  // Cuatro pestañas en un teléfono angosto: un poco más chicas para que quepan sin cortarse.
+  textoMini: { fontSize: 12, letterSpacing: 0 },
   punto: { minWidth: 18, height: 18, borderRadius: 9, paddingHorizontal: 4, alignItems: 'center', justifyContent: 'center' },
   puntoTxt: { fontSize: 11, fontWeight: '900' },
 });

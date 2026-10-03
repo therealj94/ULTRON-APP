@@ -9,6 +9,8 @@
  *   avatar   → Guardián, AU-RA o Claudio, con su vista viva
  *   tema     → Oscuro, Claro o Sistema, aplicado al instante
  *   aura     → AURA se presenta (lo que sabe hacer)
+ *   conectar → su WhatsApp y su correo, con instrucciones (José, 3-oct: «desde el principio… conectar
+ *              WhatsApp y el correo»). El de Orden Global: solo correo y contraseña
  *   encuesta → una pregunta por tarjeta: a qué se dedica, dónde vive, familia, gustos, comida, música
  *              y qué quiere que AURA haga por él. Cada una con opciones de un toque, «Otro (escribir)»
  *              y «Responder hablando» (el dictado del teléfono, bienvenida/dictado.ts)
@@ -159,9 +161,17 @@ export const PREGUNTAS: readonly Pregunta[] = [
   },
 ];
 
-export type PasoId = 'genesis' | 'idioma' | 'apodo' | 'avatar' | 'tema' | 'aura' | `encuesta:${CampoPregunta}` | 'iniciativa' | 'permisos' | 'fiesta';
+export type PasoId = 'genesis' | 'idioma' | 'apodo' | 'avatar' | 'tema' | 'aura' | 'conectar' | `encuesta:${CampoPregunta}` | 'iniciativa' | 'permisos' | 'fiesta';
 
-export const PASOS: readonly PasoId[] = ['genesis', 'idioma', 'apodo', 'avatar', 'tema', 'aura', ...PREGUNTAS.map((p) => `encuesta:${p.campo}` as const), 'iniciativa', 'permisos', 'fiesta'];
+export const PASOS: readonly PasoId[] = ['genesis', 'idioma', 'apodo', 'avatar', 'tema', 'aura', 'conectar', ...PREGUNTAS.map((p) => `encuesta:${p.campo}` as const), 'iniciativa', 'permisos', 'fiesta'];
+
+/**
+ * ¿Correo de Orden Global? El servidor ya conoce sus servidores (lib/correo/proveedores.ts): basta la
+ * dirección y la contraseña, sin «contraseña de aplicación» ni servidores a mano.
+ */
+export function esCorreoOrdenGlobal(correo: string): boolean {
+  return /^[^\s@]+@ordenglobal\.org$/i.test(String(correo || '').trim());
+}
 
 /** Cuánta iniciativa: lo que se elige en la primera vez (y en Ajustes → Iniciativa de AURA). */
 export const OPCIONES_INICIATIVA: readonly { id: NivelIniciativa; titulo: Bilingue; detalle: Bilingue }[] = [

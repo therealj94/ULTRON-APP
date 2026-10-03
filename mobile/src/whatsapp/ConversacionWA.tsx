@@ -238,10 +238,9 @@ export function ConversacionWA({ chat, onAtras }: { chat: ChatWA; onAtras: () =>
         </View>
         {digitos ? (
           <>
-            <Pressable onPress={() => void abrirEnWhatsapp(digitos, nombre)} accessibilityRole="button" accessibilityLabel={tr(`Videollamada con ${nombre} en WhatsApp`, `Video call ${nombre} on WhatsApp`)} style={s.boton} hitSlop={2}>
-              <IconoWA nombre="video" tam={24} color={w.sobreCabecera} grosor={2} />
-            </Pressable>
-            <Pressable onPress={() => void abrirEnWhatsapp(digitos, nombre)} accessibilityRole="button" accessibilityLabel={tr(`Llamar a ${nombre} en WhatsApp`, `Call ${nombre} on WhatsApp`)} style={s.boton} hitSlop={2}>
+            {/* Llamar o videollamar se hace en la app de WhatsApp: un solo botón que lo dice (antes eran dos
+                que hacían lo mismo: abrir el chat allá). */}
+            <Pressable onPress={() => void abrirEnWhatsapp(digitos, nombre)} accessibilityRole="button" accessibilityLabel={tr(`Llamar a ${nombre}: se abre en WhatsApp`, `Call ${nombre}: opens in WhatsApp`)} style={s.boton} hitSlop={2}>
               <IconoWA nombre="llamar" tam={22} color={w.sobreCabecera} />
             </Pressable>
           </>

@@ -399,10 +399,14 @@ export function respuestaAlBorrador(mensaje: string): 'si' | 'no' | null {
     .trim();
   if (!t || t.split(' ').length > 6) return null;
   if (/(^|\s)(pero|cambia|cambiale|corrige|agrega|quita|en vez)(\s|$)/.test(t)) return null;
-  if (NO.test(t)) return 'no';
-  if (SI.test(t)) return 'si';
+  // Una respuesta que se contradice no decide nada: «claro que no» y «sí, no lo mandes» antes salían como
+  // un sí y el borrador se MANDABA (auditoría, 3-oct: solo se miraba la primera palabra). Se pregunta otra vez.
+  if (NO.test(t)) return SI_EN_MEDIO.test(t.replace(/^\S+\s?/, '')) ? null : 'no';
+  if (SI.test(t)) return NEGACION_EN_MEDIO.test(t) ? null : 'si';
   return null;
 }
+const NEGACION_EN_MEDIO = /(^|\s)(no|nunca|jamas|tampoco|ni|nada)(\s|$)/;
+const SI_EN_MEDIO = /(^|\s)(si+|sip|dale|claro|ok(ay)?|hazlo|adelante|envia(lo|la)?|manda(lo|la)?)(\s|$)/;
 
 /** Lo que un envío confirmado en la voz terminó después de contestar: el próximo turno lo dice. */
 const AVISOS_ENVIO = new Map<string, string[]>();

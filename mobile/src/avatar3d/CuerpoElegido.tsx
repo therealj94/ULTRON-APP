@@ -1,5 +1,5 @@
 /**
- * EL CUERPO QUE TOCA: el video de Claudio y ANT-ONIO (avatares/video) si el avatar lo tiene, y el 3D
+ * EL CUERPO QUE TOCA: AU-RA, su orbe (OrbeMini); el video de Claudio y ANT-ONIO (avatares/video) si lo tiene, y el 3D
  * (AvatarVivo) solo para los que no tienen video o si el video falla en este teléfono.
  *
  * José (1-oct): «cuando salta a la versión 3D Claudio parpadea raro y no mueve su boca». El acople al
@@ -12,6 +12,7 @@ import { AvatarVivo, type ControlCuerpo } from './AvatarVivo';
 import type { PropsCuerpo } from './contrato';
 import { CuerpoVideo } from '../avatares/video/CuerpoVideo';
 import { hayVideo } from '../avatares/video/clips';
+import { OrbeMini } from './OrbeMini';
 
 type Props = PropsCuerpo & {
   /** Lo que se ve si no hay ni video ni 3D (las fotos o la figura 2D). */
@@ -23,6 +24,8 @@ type Props = PropsCuerpo & {
 
 export const CuerpoElegido = forwardRef<ControlCuerpo, Props>(function CuerpoElegido({ avatar, camara, estado, ancho, alto, fpsMax, respaldo, activo = true, saludar = false }, ref) {
   const [sinVideo, setSinVideo] = useState(false);
+  // AU-RA es su orbe (José, 3-oct: «en chat sigue saliendo el aura viejo»): ni el robot 3D ni la figurita dorada.
+  if (avatar === 'aura') return <OrbeMini lado={Math.min(ancho, alto)} estado={estado} activo={activo} />;
   if (hayVideo(avatar) && !sinVideo) {
     return <CuerpoVideo ref={ref} avatar={avatar} camara={camara} estado={estado} ancho={ancho} alto={alto} respaldo={respaldo} activo={activo} saludar={saludar} onFallo={() => setSinVideo(true)} />;
   }

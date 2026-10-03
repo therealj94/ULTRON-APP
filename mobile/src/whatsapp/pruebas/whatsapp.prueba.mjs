@@ -145,7 +145,7 @@ prueba('las dos entradas de chats llevan la pestaña de WhatsApp; otra cuenta ve
   assert.match(leer('app/pantallas/Chats.tsx'), /<ChatsConWhatsapp/);
   const envoltorio = leer('whatsapp/ChatsConWhatsapp.tsx');
   // Otra cuenta: PULSE2CHAT y Correos (José, 2-oct), sin la página ni la pestaña de WhatsApp.
-  assert.match(envoltorio, /conWhatsapp \? \['pulse', 'whatsapp', 'correos'\] : \['pulse', 'correos'\]/);
+  assert.match(envoltorio, /conWhatsapp \? \['pulse', 'whatsapp', 'correos', 'cartera'\] : \['pulse', 'correos', 'cartera'\]/);
   assert.match(envoltorio, /\{conWhatsapp \? \(\s*<View style=\{\{ width, flex: 1 \}\}>\s*<PantallaWhatsapp /, 'la página de WhatsApp solo con permiso');
   assert.match(envoltorio, /<PantallaChats onAbrir=\{onAbrir\} onAtras=\{onAtras\} cambio=\{cambio\} \/>/);
   assert.match(envoltorio, /pagingEnabled/, 'se cambia deslizando');
