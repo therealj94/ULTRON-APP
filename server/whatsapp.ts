@@ -335,7 +335,7 @@ export async function correrWhatsapp(quien: string, arg: string, ambito = ''): P
     if (/^(revisar|revisa|nuevos|chats)$/.test(verbo)) return await revisar(quien, ambito);
     if (/^(buscar|busca)$/.test(verbo)) return resto.length >= 2 ? await buscar(quien, ambito, resto) : 'WHATSAPP: ¿qué busco? Falta el texto.';
     if (/^(leer|lee|abrir|abre)$/.test(verbo)) return resto ? await leer(quien, ambito, resto) : 'WHATSAPP: ¿cuál chat? Dime el número o el nombre.';
-    if (/^(responder|responde|contestar|contesta|escribir|escribe|mandar)$/.test(verbo)) {
+    if (/^(responder|responde|contestar|contesta|escribir|escribe|escribele|mandar|manda|mandale|enviar|envia|enviale)$/.test(sinTildes(verbo))) {
       if (!resto) return 'WHATSAPP: ¿a quién? Dime el número o el nombre.';
       return await responder(quien, ambito, resto, partes.join(' | '));
     }

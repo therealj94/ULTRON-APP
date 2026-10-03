@@ -42,6 +42,7 @@ import {
   oyentesDe,
   ordenRapida,
   pendienteAnterior,
+  DA_POR_HECHO,
   pendienteDe,
   prepararAcciones,
   preguntaDePropuesta,
@@ -2607,6 +2608,11 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   // (server/computadora.ts). Si había un borrador esperando, ese «sí» era para el borrador.
   const deLaPregunta = duenoComputadora && !delCorreo && !delWhatsapp ? await resolverPreguntaComputadora(duenoComputadora, message, opciones.retener) : null;
   if (deLaPregunta) hechos.push(deLaPregunta);
+  // Un «sí» que no tiene a qué contestar (el borrador venció, el servidor se reinició o nunca se armó): que
+  // el modelo no lo tome por un envío y diga «enviado» por el historial (José, 3-oct).
+  if (!delCorreo && !delWhatsapp && !deLaPregunta && respuestaAlBorrador(message) === 'si' && !(correoApp && pendienteAnterior(ambitoApp(correoApp, body?.aparato)))) {
+    hechos.push('HECHO: si su «sí» era para mandar un mensaje o un correo: ahora no hay ningún borrador esperando (venció o no se armó). NO se mandó nada. No digas que se envió: pregúntale qué quiere mandar y a quién.');
+  }
 
   // La tarea de varios pasos en curso (lib/tarea-en-curso.ts): si pide otra cosa a mitad, AU-RA pregunta
   // antes de cambiar; si ya contestó, el servidor la pausa, la sigue o la descarta. Va en los HECHOS hasta
@@ -3755,6 +3761,24 @@ function accionesDelCerebro(
     retener: p.retener,
     despues: propuesta ? () => anotarPropuesta(amb, propuesta) : undefined,
   });
+  // El modelo pidió enviar y el servidor no lo dejó salir (el borrador venció, o el «sí» no fue claro):
+  // nunca se deja la frase de «enviado» sola. Se dice por qué no salió (José, 3-oct: «no podemos decir que
+  // hace algo y no lo hace»).
+  const pidioEnviar = acciones.some((a) => a.tipo === 'enviar');
+  const salioEnvio = listas.some((a) => a.tipo === 'enviar');
+  if (pidioEnviar && !salioEnvio) {
+    const hayBorrador = !!pendienteAnterior(amb);
+    const aviso =
+      p.idioma === 'en'
+        ? hayBorrador
+          ? "I haven't sent it yet: say «send it» and I'll send it."
+          : "I didn't send anything: that draft expired. Tell me again what to send and to whom."
+        : hayBorrador
+          ? 'Todavía no lo mandé: dime «envíalo» y lo mando.'
+          : 'No mandé nada: ese borrador ya venció. Dime otra vez qué mando y a quién.';
+    const sinPromesa = limpio.replace(/[¡!]?\s*(listo,?\s*)?(ya\s+)?(est[aá]\s+)?(enviad[oa]|mandad[oa])\s*[!.]?|va,?\s*lo\s+mando\.?/gi, '').trim();
+    return { texto: `${sinPromesa} ${aviso}`.trim(), acciones: eventos, sustituido: true };
+  }
   const mudo = !extraerEmocion(limpio).texto.trim();
   // El modelo escribió solo la línea: se dice la frase de la acción o, si era una propuesta, la pregunta.
   // Una llamada o un recordatorio que se cumplió: con el nombre y la hora que la persona confirmó.
@@ -4175,6 +4199,8 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     let enviado = 0;
     let emocion: Emocion | null = null;
     let pedido = false;
+    /** Se vio una frase que da algo por hecho: desde ahí no se suelta nada hasta saber si pide herramienta. */
+    let retenido = false;
     // La herramienta que pidió el modelo, avisada en cuanto se lee su nombre (antes de que termine de
     // escribir y mucho antes de correrla): la voz sabe YA que va a tardar.
     let tareaAvisada = false;
@@ -4205,8 +4231,15 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
         avisarPedido(cuerpo);
         return;
       }
+      // Una frase que da algo por hecho («ya lo mandé», «listo, enviado») no se dice mientras el turno
+      // puede todavía pedir la herramienta: lo dice el resultado real. Se retiene hasta el final.
+      if (retenido) return;
       // Soltar solo hasta la última frase cerrada; lo que queda puede ser una línea de pedido.
       const corte = puntoDeCorte(cuerpo, enviado);
+      if (corte > enviado && DA_POR_HECHO.test(cuerpo.slice(enviado, corte + 1))) {
+        retenido = true;
+        return;
+      }
       if (corte > enviado) {
         soltar('delta', cuerpo.slice(enviado, corte + 1));
         enviado = corte + 1;

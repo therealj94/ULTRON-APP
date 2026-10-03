@@ -720,6 +720,9 @@ const RE_TOKEN = /ACCI[OÓ]N_APP/i;
  * por los pendientes, y en voz la marca se decía. Aquí la marca se rompe (ACCION_APP → ACCION-APP)
  * antes de componer ese texto con nada, y ya no la reconoce ninguna de las expresiones de arriba.
  */
+/** «Ya lo mandé», «listo, enviado», «ya quedó»: frases que dan algo por hecho (no se dicen antes del resultado). */
+export const DA_POR_HECHO = /\b(enviad[oa]s?|mandad[oa]s?|ya\s+(te\s+|se\s+)?(lo|la|le|los|les)\s+(mand[eé]|envi[eé]|escrib[ií])|ya\s+qued[oó]|listo,?\s+(ya\s+)?(est[aá]|qued[oó]|se\s+(mand|envi)))/i;
+
 export function neutralizarMarca(texto: string): string {
   return String(texto ?? '').replace(/ACCI[OÓ]N_APP/gi, (m) => m.replace('_', '-'));
 }
@@ -816,7 +819,8 @@ export function reglasAcciones(ctx: ContextoApp | null): string {
     'Las acciones: {"tipo":"atras"} · {"tipo":"abrir","pantalla":"mesa|chats|ajustes|perfil|computadora|whatsapp|correos|misiones|conocer|circulo"} · {"tipo":"tema","valor":"oscuro|claro|sistema"} · {"tipo":"avatar","valor":"ojos|aura|claudio"} · {"tipo":"abrir_chat","con":"<nombre>"} · {"tipo":"redactar","para":"<nombre>","texto":"<mensaje>"} · {"tipo":"enviar","para":"<nombre>"} · {"tipo":"descartar"} · {"tipo":"silencio","valor":true} · {"tipo":"presencia","valor":"completa|lado|paseo"}.',
     'Cuándo: «vete atrás / regresa» → atras. «abre ajustes / los chats / la mesa / mi perfil» → abrir. «abre tu computadora / muéstrame tu pantalla / lo que estás haciendo» → abrir computadora (la ves en vivo); «abre WhatsApp / mis WhatsApp» → abrir whatsapp; «abre mis correos» → abrir correos; «abre mis misiones» → abrir misiones; «qué has aprendido de mí / qué quedó pendiente» → abrir conocer; «abre mi círculo / mi familia en la app» → abrir circulo. Funciona desde cualquier pantalla. Si además piden HACER algo en páginas («usa tu computadora y busca…»), eso es PEDIR_HERRAMIENTA computadora: la pantalla se abre sola. «ponlo oscuro / claro» → tema. «cambia a Claudio / a AU-RA / al Guardián» → avatar (Guardián = ojos). «cállate / silencio» → silencio. «ponte a pantalla completa / en grande» → presencia completa; «ponte al lado (del chat)» → presencia lado; «ponte chiquita / vuelve a caminar» → presencia paseo.',
     '«Escríbele a X que …»: busca a X en CONTACTOS (por nombre o parentesco: «mi mamá» es el contacto que se llama así). Si está, redactar con el mensaje escrito como lo escribiría la persona (en primera persona: «dile que llego tarde» → «Llego tarde»), y DI el borrador en voz alta: «Le escribo a Beto: “Llego tarde”. ¿Lo envío?». Si no está o hay dos parecidos, NO redactes: pregunta a quién.',
-    'Enviar SOLO si la persona lo confirma de forma explícita («sí», «envíalo», «mándalo») en el turno siguiente a oír el borrador: entonces enviar y di «¡Listo, enviado!». Aunque la orden de redactar diga «y mándalo», primero redacta y pregunta; nunca redactar y enviar en la misma respuesta. «Bórralo / no lo mandes» → descartar. Nunca envíes por tu cuenta.',
+    'Enviar SOLO si la persona lo confirma de forma explícita («sí», «envíalo», «mándalo») en el turno siguiente a oír el borrador: entonces enviar y di «Va, lo mando.» (nunca «enviado» ni «listo»: la app avisa cuando de verdad salió). Aunque la orden de redactar diga «y mándalo», primero redacta y pregunta; nunca redactar y enviar en la misma respuesta. «Bórralo / no lo mandes» → descartar. Nunca envíes por tu cuenta.',
+    'redactar y enviar son los chats de AU-RA (PULSE2CHAT), NO WhatsApp. Si piden WhatsApp («mándale un WhatsApp a…»): eso es PEDIR_HERRAMIENTA whatsapp responder si lo tienes; si no lo tienes, di que su WhatsApp no está conectado aquí y ofrece mandarlo por los chats de AU-RA. Nunca digas que mandaste un WhatsApp con redactar.',
     'La línea ACCION_APP no se lee ni se dice: la hace la app. No expliques la línea ni la menciones.',
   ];
   lineas.push(...reglasManos(ctx));
@@ -897,8 +901,8 @@ const PANTALLA_DE: Array<[RegExp, Pantalla]> = [
 const RE_VERBO_VER = /^(muestrame|ensename|show|show me)$/;
 
 const DICHOS: Record<'es' | 'en', Record<string, string>> = {
-  es: { completa: 'Aquí estoy, de frente.', lado: 'Me pongo a tu lado.', paseo: 'Me hago chiquita.', atras: 'Listo.', ajustes: 'Abro ajustes.', chats: 'Abro tus chats.', mesa: 'Vamos a la mesa.', perfil: 'Abro tu perfil.', computadora: 'Mira, esta es mi computadora.', whatsapp: 'Abro tu WhatsApp.', correos: 'Abro tus correos.', misiones: 'Aquí están tus misiones.', conocer: 'Esto es lo que sé de ti.', circulo: 'Abro tu círculo.', oscuro: 'Listo, en oscuro.', claro: 'Listo, en claro.', sistema: 'Listo, como el sistema.', ojos: 'Te paso con el Guardián.', aura: 'Aquí AU-RA.', claudio: '¡Va! Te paso con Claudio.', antonio: '¡Va! Te paso con ANT-ONIO.', silencio: 'Va.', habla: 'Aquí estoy.', enviar: '¡Listo, enviado!', descartar: 'Listo, lo borré.' },
-  en: { completa: 'Here I am, full screen.', lado: "I'll stay by your side.", paseo: "I'll make myself small.", atras: 'Done.', ajustes: 'Opening settings.', chats: 'Opening your chats.', mesa: 'Back to the desk.', perfil: 'Opening your profile.', computadora: 'Look, this is my computer.', whatsapp: 'Opening your WhatsApp.', correos: 'Opening your email.', misiones: 'Here are your missions.', conocer: 'This is what I know about you.', circulo: 'Opening your circle.', oscuro: 'Done, dark it is.', claro: 'Done, light it is.', sistema: 'Done, following the system.', ojos: 'Switching you to the Guardian.', aura: 'AU-RA here.', claudio: 'Sure! Switching you to Claudio.', antonio: 'Sure! Switching you to ANT-ONIO.', silencio: 'Okay.', habla: "I'm here.", enviar: 'Done, sent!', descartar: 'Okay, I deleted it.' },
+  es: { completa: 'Aquí estoy, de frente.', lado: 'Me pongo a tu lado.', paseo: 'Me hago chiquita.', atras: 'Listo.', ajustes: 'Abro ajustes.', chats: 'Abro tus chats.', mesa: 'Vamos a la mesa.', perfil: 'Abro tu perfil.', computadora: 'Mira, esta es mi computadora.', whatsapp: 'Abro tu WhatsApp.', correos: 'Abro tus correos.', misiones: 'Aquí están tus misiones.', conocer: 'Esto es lo que sé de ti.', circulo: 'Abro tu círculo.', oscuro: 'Listo, en oscuro.', claro: 'Listo, en claro.', sistema: 'Listo, como el sistema.', ojos: 'Te paso con el Guardián.', aura: 'Aquí AU-RA.', claudio: '¡Va! Te paso con Claudio.', antonio: '¡Va! Te paso con ANT-ONIO.', silencio: 'Va.', habla: 'Aquí estoy.', enviar: 'Va, lo mando.', descartar: 'Listo, lo borré.' },
+  en: { completa: 'Here I am, full screen.', lado: "I'll stay by your side.", paseo: "I'll make myself small.", atras: 'Done.', ajustes: 'Opening settings.', chats: 'Opening your chats.', mesa: 'Back to the desk.', perfil: 'Opening your profile.', computadora: 'Look, this is my computer.', whatsapp: 'Opening your WhatsApp.', correos: 'Opening your email.', misiones: 'Here are your missions.', conocer: 'This is what I know about you.', circulo: 'Opening your circle.', oscuro: 'Done, dark it is.', claro: 'Done, light it is.', sistema: 'Done, following the system.', ojos: 'Switching you to the Guardian.', aura: 'AU-RA here.', claudio: 'Sure! Switching you to Claudio.', antonio: 'Sure! Switching you to ANT-ONIO.', silencio: 'Okay.', habla: "I'm here.", enviar: 'Okay, sending it.', descartar: 'Okay, I deleted it.' },
 };
 
 /**
@@ -1439,7 +1443,12 @@ export function prepararAcciones(
       if (enviado || !o.pendiente || conRedactar || !confirmaEnvio(o.mensaje)) continue;
       enviado = true;
       out.push({ tipo: 'enviar', para: o.pendiente.para });
-    } else if (a.tipo === 'redactar') out.push({ ...a, para: aCorreo(a.para) });
+    } else if (a.tipo === 'redactar') {
+      // Con la lista de contactos a la vista, un borrador para alguien que no está (o con dos parecidos)
+      // no sale: el teléfono diría «no encuentro a X» y el «sí» siguiente no mandaría nada.
+      if (contactos.length && resolverContacto(a.para, contactos).tipo !== 'uno') continue;
+      out.push({ ...a, para: aCorreo(a.para) });
+    }
     else if (a.tipo === 'abrir_chat') out.push({ ...a, con: aCorreo(a.con) });
     else out.push(a);
   }
