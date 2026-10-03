@@ -109,8 +109,8 @@ export function lineaApodoPendiente(p: Perfil | null | undefined, idioma: 'es' |
   if (!apodoPendiente(p)) return '';
   const nombre = String(o.nombre || p?.nombreGenesis || '').trim().split(/\s+/)[0] || '';
   if (idioma === 'en')
-    return `YOU DON'T KNOW YET WHAT THEY WANT TO BE CALLED: in this conversation ask once, naturally, early on, "What would you like me to call you?"${nombre ? ` (you can offer "${nombre}" or a nickname)` : ''}. When they tell you, confirm it ("Got it, I'll call you … from now on") and always use it. If they'd rather not say, don't insist.`;
-  return `AÚN NO SABES CÓMO QUIERE QUE LE LLAMES: en esta conversación pregúntale una vez, con naturalidad y al principio, «¿Cómo quieres que te llame?»${nombre ? ` (puedes ofrecerle «${nombre}» o un apodo)` : ''}. Cuando te lo diga, confírmalo («Listo, desde ahora te digo …») y úsalo siempre. Si no quiere decirlo, no insistas.`;
+    return `YOU DON'T KNOW YET WHAT THEY WANT TO BE CALLED: in this conversation ask once, naturally, early on, "What would you like me to call you?"${nombre ? ` (you can offer "${nombre}" or a nickname)` : ''}, but only after doing what they asked in this turn (never instead of it: if they asked for something, do it first and ask at the end, or in another turn). When they tell you, confirm it ("Got it, I'll call you … from now on") and always use it. If they'd rather not say, don't insist.`;
+  return `AÚN NO SABES CÓMO QUIERE QUE LE LLAMES: en esta conversación pregúntale una vez, con naturalidad y al principio, «¿Cómo quieres que te llame?»${nombre ? ` (puedes ofrecerle «${nombre}» o un apodo)` : ''}, pero solo después de hacer lo que te pidió en este turno (nunca en lugar de eso: si te pidió algo, hazlo y pregúntalo al final o en otro turno). Cuando te lo diga, confírmalo («Listo, desde ahora te digo …») y úsalo siempre. Si no quiere decirlo, no insistas.`;
 }
 
 /** Lo último que dijo AURA en el hilo (para saber si acaba de preguntar). */

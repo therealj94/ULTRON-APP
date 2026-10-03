@@ -88,7 +88,9 @@ test('un tramo de 16 turnos se resume con el modelo y reparte lo que quedó a me
   assert.ok(!JSON.stringify(s).includes('Perro123'), 'una contraseña nunca se guarda');
   const b = E.bloqueEpisodios('jose@x.com', 'y el cemento?', false);
   assert.match(b, /^LO QUE HABLAMOS ANTES/);
-  assert.match(b, /La última vez \(hoy\): José preguntó por el precio del cemento/);
+  // «hoy» o «ayer» según la hora (el tramo empezó hace 2 h: entre las 12 y las 2 de la madrugada de Honduras ya es «ayer»).
+  const { haceCuanto } = await import('../lib/cerebro-comun');
+  assert.match(b, new RegExp(`La última vez \\(${haceCuanto(eps[0].hasta)}\\): José preguntó por el precio del cemento`));
 });
 
 test('sin modelo: el tramo se resume con reglas (no se pierde) y lo pendiente sale por reglas', async () => {

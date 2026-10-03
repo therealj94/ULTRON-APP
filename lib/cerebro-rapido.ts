@@ -1,32 +1,35 @@
 /**
- * EL CEREBRO RÁPIDO DE LA VOZ (José, 3-oct: «ChatGPT y Grok son fluidos y nosotros, con lo mejor, tan
- * lento… le cuesta responder rápido preguntas sencillas»).
+ * EL CEREBRO RÁPIDO Y CON MANOS DE AU-RA (José, 3-oct: «ChatGPT y Grok son fluidos y nosotros, con lo mejor,
+ * tan lento…» y «le pedí que me llamara y no hizo la llamada… que haga bien sus manos»).
  *
- * Medido en las llamadas de José (ElevenLabs y los logs `[voz] turno`): el oído tarda 0,03–0,05 s y la
- * voz 0,08 s; el que tardaba era el cerebro, el Qwen 27B en una sola A10G: 1,5–2,3 s hasta la primera
- * palabra en preguntas normales.
+ * Medido en las llamadas de José (ElevenLabs y los logs `[voz] turno`): el oído tarda 0,03–0,05 s y la voz
+ * 0,08 s; el que tardaba era el cerebro, el Qwen 27B en una sola A10G: 1,5–2,3 s en charla y 3–10 s en
+ * acciones, con las manos escritas como líneas de texto que tenía que recordar de memoria.
  *
- * Probado el 3-oct en Bedrock (cuenta de AWS de José, us-west-2) con el prompt REAL de un turno hablado
- * (~5 600 fichas; scripts/voz/evaluar-cerebro-rapido.ts): Nova 2 Lite 0,5 s pero se equivoca en datos
- * («febrero bisiesto tiene 30 días»); Qwen3 Next 0,65 s pero inventa (el precio del oro, un partido);
- * Qwen3 235B 0,77 s (0,5–0,95) y acierta, y si le falta un dato de hoy lo dice. Por omisión, ese.
+ * Ahora el turno de la app, la voz y la mesa lo piensa un modelo de Bedrock con las manos como HERRAMIENTAS
+ * de verdad (hablarConManos + lib/cerebro-manos.ts). Elegido con datos (scripts/voz/banco-cerebros.ts, con
+ * el prompt real de AU-RA y los pedidos de José, la llamada del 3-oct incluida): GLM-5, 13–14 de 14, 0,8 s
+ * a la primera reacción. Si no contesta a tiempo o falla antes de decir nada, el de respaldo (Kimi K2.5); si
+ * tampoco, el Qwen 27B del nodo como siempre. Tres fallos seguidos lo apagan un rato
+ * (lib/cognitivo/interruptor.ts). Se apaga del todo con CEREBRO_VOZ=qwen; el modelo se cambia con
+ * CEREBRO_VOZ_MODELO y el respaldo con CEREBRO_VOZ_RESPALDO (variables del servidor, sin desplegar código).
  *
- * Ninguno hace las ACCIONES tan bien como nuestro Qwen ya afinado (WhatsApp, «llámame», recordatorios),
- * así que por aquí van solo los turnos hablados que son conversación (esSoloConversacion); los que piden
- * hacer algo siguen con Qwen. Escribe con el MISMO prompt y mensajes que Qwen y su texto pasa por el
- * mismo camino (server.ts turnoEnVivo, `procesar`). Si le piden hacer algo igual, contesta «PASO» y el
- * turno lo toma Qwen: nunca dice que hizo algo sin hacerlo.
+ * hablarRapido, esSoloConversacion y PASO son del camino anterior (solo charla, sin manos): siguen aquí para
+ * la prueba de arranque y sus pruebas.
  *
- * Si Bedrock falla, no tiene permiso o no da la primera palabra a tiempo, contesta Qwen como siempre; tres
- * fallos seguidos lo apagan un rato (lib/cognitivo/interruptor.ts). Se apaga del todo con CEREBRO_VOZ=qwen
- * y se cambia el modelo con CEREBRO_VOZ_MODELO (variables del servidor, sin desplegar código).
- *
- * Usa las credenciales de AWS que el servidor ya tiene (las de S3).
+ * Usa las credenciales de AWS que el servidor ya tiene (las de S3, con permiso solo para estos modelos).
  */
-import { BedrockRuntimeClient, ConverseStreamCommand, type Message, type SystemContentBlock } from '@aws-sdk/client-bedrock-runtime';
+import { BedrockRuntimeClient, ConverseStreamCommand, type Message, type SystemContentBlock, type Tool } from '@aws-sdk/client-bedrock-runtime';
 import { anotarExito, anotarFallo, disponible } from './cognitivo/interruptor';
 
-export const MODELO_RAPIDO_OMISION = 'qwen.qwen3-235b-a22b-2507-v1:0';
+/**
+ * GLM-5 (Z.ai) en Bedrock. Medido el 3-oct con el prompt REAL de AU-RA y los pedidos de José
+ * (scripts/voz/banco-cerebros.ts con SISTEMA_DE): GLM-5 14/14, 13/14 y 13/14 en tres corridas, 0,8 s a la
+ * primera reacción; Kimi K2.5 9–10/14; DeepSeek 3.2 11/14 pero se le escapa su formato interno en el texto;
+ * Qwen3 235B solo 5/14 con el prompt real (con uno corto, 13/14: el prompt largo lo hace hablar sin usar
+ * las manos).
+ */
+export const MODELO_RAPIDO_OMISION = 'zai.glm-5';
 
 function conf() {
   return {
@@ -158,6 +161,125 @@ export async function* hablarRapido(mensajes: MensajeChat[], senal?: AbortSignal
     clearTimeout(vence);
     senal?.removeEventListener('abort', alCortar);
   }
+}
+
+/* ------------------------------------------------------------------ el cerebro con manos */
+
+/**
+ * El de respaldo cuando el principal no contesta a tiempo o falla: otro proveedor dentro de Bedrock
+ * (medido el 3-oct con scripts/voz/banco-cerebros.ts: Kimi K2.5 13/14 con el prompt corto, 9–10/14 con el real).
+ * Con CEREBRO_VOZ_RESPALDO=no, ninguno (pasa directo al Qwen 27B del nodo).
+ */
+export const MODELO_RESPALDO_OMISION = 'moonshotai.kimi-k2.5';
+/** Sin un trozo nuevo durante esto, a media respuesta, se corta (el Qwen del nodo contesta si aún no se dijo nada). */
+const INACTIVIDAD_MS = 8_000;
+function modeloRespaldo(): string | null {
+  const v = String(process.env.CEREBRO_VOZ_RESPALDO ?? MODELO_RESPALDO_OMISION).trim();
+  return !v || v === 'no' ? null : v;
+}
+
+/** Lo que va saliendo del cerebro con manos: texto para decir, o una herramienta que pidió (ya completa). */
+export type PiezaManos = { texto: string } | { herramienta: { nombre: string; input: Record<string, unknown> } } | { modelo: string };
+
+/**
+ * Un turno con las manos como herramientas (lib/cerebro-manos.ts), a trozos: el texto en cuanto sale y cada
+ * herramienta cuando terminó de escribirse. Primero el modelo principal; si no da la primera señal a tiempo o
+ * falla ANTES de decir nada, el de respaldo. Lanza si ninguno pudo (quien llama sigue con el Qwen del nodo).
+ * El primer evento es `{ modelo }`: cuál contestó.
+ */
+export async function* hablarConManos(mensajes: MensajeChat[], herramientas: Tool[], senal?: AbortSignal, o: { maxTokens?: number } = {}): AsyncGenerator<PiezaManos> {
+  const c = conf();
+  const { system, messages } = aBedrock(mensajes);
+  if (!messages.length) throw new Error('sin mensaje de la persona');
+  const modelos = [c.modelo, modeloRespaldo()].filter((m, i, a): m is string => !!m && a.indexOf(m) === i);
+  let ultimoError: unknown = null;
+  for (const modelo of modelos) {
+    const corte = new AbortController();
+    const alCortar = () => corte.abort();
+    senal?.addEventListener('abort', alCortar, { once: true });
+    const vence = setTimeout(() => corte.abort(new Error('sin primera señal a tiempo')), c.primeraMs);
+    // Ya con algo útil, un silencio largo a media respuesta también corta (antes solo se vigilaba la primera
+    // señal; auditoría de Codex del 3-oct).
+    let quieto: ReturnType<typeof setTimeout> | null = null;
+    const vigilar = () => {
+      if (quieto) clearTimeout(quieto);
+      quieto = setTimeout(() => corte.abort(new Error('se quedó callado a media respuesta')), INACTIVIDAD_MS);
+    };
+    let alguna = false;
+    let escrito = '';
+    const marcar = () => {
+      if (!alguna) {
+        alguna = true;
+        clearTimeout(vence);
+      }
+      vigilar();
+    };
+    try {
+      const r = await bedrock().send(
+        new ConverseStreamCommand({
+          modelId: modelo,
+          system,
+          messages,
+          ...(herramientas.length ? { toolConfig: { tools: herramientas } } : {}),
+          inferenceConfig: { maxTokens: o.maxTokens ?? 900, temperature: 0.5 },
+        }),
+        { abortSignal: corte.signal }
+      );
+      let actual: { nombre: string; json: string } | null = null;
+      let dijoModelo = false;
+      for await (const ev of r.stream || []) {
+        const err = ev.internalServerException || ev.modelStreamErrorException || ev.throttlingException || ev.validationException || ev.serviceUnavailableException;
+        if (err) throw new Error(String(err.message || 'error de Bedrock'));
+        const inicio = ev.contentBlockStart?.start?.toolUse;
+        if (inicio) {
+          marcar();
+          actual = { nombre: String(inicio.name || ''), json: '' };
+        }
+        const d = ev.contentBlockDelta?.delta;
+        if (d?.toolUse?.input && actual) actual.json += d.toolUse.input;
+        if (d?.text) {
+          // La etiqueta de ánimo sola («[EMO: neutral]») no es una respuesta: no cuenta como primera señal.
+          escrito += d.text;
+          if (escrito.replace(/\[[^\]]*\]?/g, '').trim()) marcar();
+          else if (alguna) vigilar();
+          if (!dijoModelo) {
+            dijoModelo = true;
+            yield { modelo };
+          }
+          yield { texto: d.text };
+        }
+        if (ev.contentBlockStop && actual) {
+          let input: Record<string, unknown> = {};
+          try {
+            input = actual.json.trim() ? JSON.parse(actual.json) : {};
+          } catch {
+            input = {};
+          }
+          if (!dijoModelo) {
+            dijoModelo = true;
+            yield { modelo };
+          }
+          yield { herramienta: { nombre: actual.nombre, input } };
+          actual = null;
+        }
+      }
+      anotarExitoRapido();
+      return;
+    } catch (e) {
+      ultimoError = e;
+      // Ya dijo algo: no se repite con otro (se oiría dos veces). Quien llama se queda con lo dicho.
+      if (alguna || senal?.aborted) {
+        if (!senal?.aborted) anotarFalloRapido();
+        throw e;
+      }
+    } finally {
+      clearTimeout(vence);
+      if (quieto) clearTimeout(quieto);
+      senal?.removeEventListener('abort', alCortar);
+    }
+  }
+  if (!senal?.aborted) anotarFalloRapido();
+  throw ultimoError instanceof Error ? ultimoError : new Error('el cerebro con manos no contestó');
 }
 
 /** Prueba de arranque (una sola, barata): ¿contesta Bedrock con estas credenciales? Para los logs. */

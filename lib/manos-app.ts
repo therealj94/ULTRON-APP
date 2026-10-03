@@ -85,7 +85,12 @@ export const MAX_CAMPO = 300;
 export const MAX_RECORDATORIO = 140;
 export const MAX_BUSQUEDA = 80;
 /** Un recordatorio vale desde dentro de un minuto hasta dentro de un año. */
-export const RECORDATORIO_MIN_MS = 60_000;
+/**
+ * Lo más pronto que se pone un recordatorio o una llamada de AU-RA: «llámame en 30 segundos» (José,
+ * 3-oct; antes el mínimo era un minuto y AU-RA contestaba «eso es un recordatorio»). El teléfono pide
+ * 20 s por delante (mobile/src/compa/recordatorios.ts MARGEN_MS): 25 s deja margen para la red.
+ */
+export const RECORDATORIO_MIN_MS = 25_000;
 export const RECORDATORIO_MAX_MS = 366 * 24 * 3600_000;
 
 const linea = (v: unknown, max: number) =>
@@ -846,15 +851,28 @@ function deIntentos(intentos: Array<[RegExp, 'hora' | 'dentro']>, q: string, ori
 /* ------------------------------------------------------------------ la confirmación de una propuesta */
 
 /**
+ * ¿El mensaje ENTERO es un «sí» de los que se dicen en Honduras? («ok», «okey», «dale», «va», «sale»,
+ * «órale», «de una», «claro», «perfecto», «de acuerdo», con «pues», «ya» o «porfa» al final). Solo cuenta
+ * como respuesta a la pregunta del turno anterior («¿Le marco a Beto?», «¿Lo envío?»): un «ok» suelto a
+ * media frase no confirma nada. «ajá» y «mhm» no están: es lo que uno dice para que sepan que escucha.
+ * José, 3-oct: contestó «Okey» a «¿Te llamo?» y AU-RA no lo tomó como un sí.
+ */
+export function esAfirmacionSola(mensaje: string): boolean {
+  const q = plegar(String(mensaje || '').toLowerCase()).replace(/[^a-z0-9ñ\s]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return /^(ok|okey|okay|oki|okis|okidoki|dale|va|vaya pues|sale|orale|de una|claro|claro que si|perfecto|de acuerdo|correcto|esta bien|hagale|hazle|si|sip|yes|yep|yeah|sure|go ahead)( (ok|okey|dale|va|pues|ya|porfa|por favor|please|entonces|claro|perfecto|gracias))*$/.test(q);
+}
+
+/**
  * ¿Este mensaje confirma la propuesta? Las mismas exigencias que el «sí» de un borrador: un «sí» que
- * ABRE la frase, o el verbo explícito («llámale», «ponlo»). Un «no», «espera», «pero», «mejor» u
- * «otra» en cualquier parte lo deja sin hacer: «sí, pero llama a Ana» no es permiso para llamar a Beto.
- * Las afirmaciones débiles («ok», «dale», «va») no confirman nada.
+ * ABRE la frase, el verbo explícito («llámale», «ponlo»), o un «ok / okey / dale / va» que es TODO el
+ * mensaje (esAfirmacionSola). Un «no», «espera», «pero», «mejor» u «otra» en cualquier parte lo deja sin
+ * hacer: «sí, pero llama a Ana» no es permiso para llamar a Beto.
  */
 export function confirmaPropuesta(tipo: Propuesta['tipo'], mensaje: string): boolean {
   const crudo = String(mensaje || '').trim().toLowerCase();
   const q = plegar(crudo).replace(/[^a-z0-9ñ\s]+/g, ' ').replace(/\s+/g, ' ').trim();
   if (!q) return false;
+  if (esAfirmacionSola(crudo)) return true;
   // Para cancelar un recordatorio, «cancélalo» / «bórralo» es el «sí».
   if (tipo === 'cancelar_recordatorio') {
     if (/\b(no|nop|nel|todavia|aun|espera|esperate|pero|mejor|otra|otro|dejalo|don ?t|not|wait|but|instead|keep)\b/.test(q)) return false;
@@ -1022,10 +1040,10 @@ export function estadoManos(ctx: ContextoApp | null, o: { propuesta?: Propuesta 
     const p = o.propuesta;
     l.push(
       p.tipo === 'llamar'
-        ? `ESPERA SU «SÍ»: ${p.video ? 'videollamada' : 'llamada'} a ${p.nombre}. Si dice «sí», repite la línea de llamar; si dice que no, no la escribas.`
+        ? `ESPERA SU «SÍ»: ${p.video ? 'videollamada' : 'llamada'} a ${p.nombre}. Si dice que sí («sí», «ok», «okey», «dale», «va»), vuelve a pedir la misma llamada; si dice que no, no.`
         : p.tipo === 'cancelar_recordatorio'
-          ? `ESPERA SU «SÍ»: cancelar el recordatorio «${p.texto}» (${p.id}). Si dice «sí», repite la línea; si no, no la escribas.`
-          : `ESPERA SU «SÍ»: recordatorio${p.llamada ? ' con llamada' : ''} «${p.texto}» ${horaLegible(p.cuando, ahora)}. Si dice «sí», repite la línea; si cambia la hora, escríbela con la hora nueva y vuelve a preguntar.`
+          ? `ESPERA SU «SÍ»: cancelar el recordatorio «${p.texto}» (${p.id}). Si dice que sí, vuelve a pedirlo igual; si no, no.`
+          : `ESPERA SU «SÍ»: recordatorio${p.llamada ? ' con llamada' : ''} «${p.texto}» ${horaLegible(p.cuando, ahora)}. Si dice que sí, vuelve a pedirlo igual; si cambia la hora, pídelo con la hora nueva y vuelve a preguntar.`
     );
   }
   return l;

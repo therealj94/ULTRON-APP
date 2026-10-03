@@ -123,7 +123,7 @@ describe('Cerebro rápido: cuándo está activo', () => {
     assert.equal(cerebroRapidoActivo(env), true);
   });
 
-  it('por omisión, el que se midió mejor (Qwen3 235B en Bedrock)', () => {
-    assert.equal(MODELO_RAPIDO_OMISION, 'qwen.qwen3-235b-a22b-2507-v1:0');
+  it('por omisión, el que se midió mejor con el prompt real y las manos (GLM-5 en Bedrock)', () => {
+    assert.equal(MODELO_RAPIDO_OMISION, 'zai.glm-5');
   });
 });
