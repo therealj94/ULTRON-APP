@@ -6,7 +6,8 @@
 #
 # Deja tres piezas, todas escuchando solo en 127.0.0.1 (Caddy publica lo necesario con TLS):
 #   holo        vLLM + Hcompany/Holo-3.1-9B en :8000 (banderas de la guía de H Company)
-#   escritorio  la demo de computer use de Anthropic: Ubuntu + Firefox + LibreOffice, noVNC en :6080
+#   escritorio  la demo de computer use de Anthropic: Ubuntu + Firefox + LibreOffice, sin ningún puerto publicado
+#               (su noVNC no se usa: la persona ve y maneja el escritorio por agente.py, con el árbitro; AUR09)
 #   computadora este servicio (agente.py) en :8100
 #
 # Para actualizar solo el servicio (pausa, su sí, el control: docs/COMPUTADORA.md), basta copiar agente.py a
@@ -42,7 +43,7 @@ docker run -d --name holo --restart unless-stopped --gpus all --ipc=host \
 # 3. El escritorio, a 1280x800 (la pantalla de los ejemplos de Holo y de las recomendadas por Claude).
 docker rm -f escritorio >/dev/null 2>&1 || true
 docker run -d --name escritorio --restart unless-stopped -e WIDTH=1280 -e HEIGHT=800 \
-  -p 127.0.0.1:6080:6080 --shm-size 2g "$ESCRITORIO_IMAGEN"
+  --shm-size 2g "$ESCRITORIO_IMAGEN"
 
 # 4. El servicio de tareas.
 install -m 644 "$AQUI/agente.py" "$RAIZ/agente.py"

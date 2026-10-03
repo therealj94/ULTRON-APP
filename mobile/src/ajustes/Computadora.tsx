@@ -35,6 +35,7 @@ import {
   haceCuanto,
   marcaPlan,
   nuevoPedidoPc,
+  puedeVerPantallaPc,
   relojMision,
   respuestaPc,
   sondeoMs,
@@ -49,6 +50,7 @@ import {
   type TareaPc,
 } from '../compa/computadora';
 import { abrirHoja, hayAnfitrion } from '../app/hojas';
+import { abrirVisor } from '../app/visor';
 
 type PropsHoja = { visible: boolean; onCerrar: () => void; nombreAvatar: string };
 
@@ -451,6 +453,22 @@ export function HojaComputadoraVivo({
                 </View>
               ) : null}
             </Pressable>
+
+            {/* El visor a pantalla completa (app/VisorComputadora.tsx): verla y usarla de verdad. Cerrarlo vuelve al
+                chat sin tocar la tarea; reabrirlo encuentra la misma sesión. AURA nunca lo abre sola. */}
+            {puedeVerPantallaPc(estado?.capacidades, tarea.estado) ? (
+              <Boton
+                titulo={tr('Pantalla completa', 'Full screen')}
+                tam="chico"
+                variante="secundario"
+                onPress={() => {
+                  const id = tarea.id;
+                  onCerrar();
+                  // La hoja termina de irse antes de abrir el visor (iOS no presenta un Modal mientras otro se va).
+                  setTimeout(() => abrirVisor(id), 320);
+                }}
+              />
+            ) : null}
 
             {sinRespuesta >= FALLOS_PARA_AVISAR && sigue ? (
               <Texto v="chica" color="aviso">

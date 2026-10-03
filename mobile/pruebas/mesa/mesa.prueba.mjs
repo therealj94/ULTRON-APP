@@ -34,6 +34,7 @@ import {
   vectorValido,
 } from '../../src/caras/caras.ts';
 import { conTutorialVisto, tocaTutorial } from '../../src/tutorial/pasos.ts';
+import { abrirVisor, cerrarVisor, guardarVista, seguirEnVisor, sesionDe as sesionDelVisor, visorAhora, vistaGuardada } from '../../src/app/visor.ts';
 
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
 const RAIZ = path.resolve(AQUI, '../../..');
@@ -426,6 +427,51 @@ prueba('app: su computadora como un agente: captura arriba, plan marcado, tiempo
   // Sin dependencias nativas nuevas (va por OTA): solo lo que ya trae React Native.
   const deps = JSON.parse(fs.readFileSync(path.join(RAIZ, 'mobile/package.json'), 'utf8')).dependencies;
   assert.ok(!deps['expo-clipboard'] && !deps['react-native-share'], 'sin módulos nativos nuevos');
+});
+
+prueba('su computadora a pantalla completa (AUR09): visor propio desde la tarea, vuelve al chat sin cancelarla, misma sesión al reabrir, AURA no lo abre sola', () => {
+  const visor = fuente('app/VisorComputadora.tsx');
+  // Una pantalla propia (un Modal a pantalla completa con rotación), no el fullscreen de toda la app.
+  assert.match(visor, /<Modal visible animationType="fade"[^>]*supportedOrientations=/);
+  assert.doesNotMatch(visor, /StatusBar\.setHidden|setStatusBarHidden|NavigationBar\.setVisibilityAsync|lockAsync/, 'no toca la pantalla de toda la app ni la orientación');
+  for (const t of ['AURA controla', 'Solicitando control', 'Tú controlas', 'Sin conexión']) assert.ok(visor.includes(`'${t}`), `el indicador «${t}»`);
+  for (const t of ["'Tomar el control'", "'Devolver'", "'Pausar'", "'Cancelar'", "'Ajustar'", "'Linux · Firefox'", "'🔒 Segura'"]) assert.ok(visor.includes(t), `en la barra: ${t}`);
+  // Una sola capa de coordenadas (lib/entradaRemota.ts), y la de antes ya no.
+  assert.match(visor, /aLogico\(T, frame, g\.x, g\.y\)/);
+  assert.doesNotMatch(visor, /aCoordenadas\(/);
+  // Entrada segura: campo de contraseña; salir con una imagen pedida ahora.
+  assert.match(visor, /secureTextEntry=\{seguro\}/);
+  assert.match(visor, /frameSeq: seq/);
+  // Volver al chat suelta lo pulsado y no cancela nada.
+  assert.match(visor, /const cerrar = \(\) => \{[\s\S]*?soltarTodo\(\)[\s\S]*?cerrarVisor\(\);/);
+  assert.doesNotMatch(visor.match(/const cerrar = \(\) => \{[\s\S]*?\n  \};/)[0], /parar/, 'cerrar no detiene la tarea');
+  // AURA no roba el foco: con el visor abierto la hoja no se abre sola, y el compañero nunca abre el visor.
+  const vivo = fuente('app/ComputadoraEnVivo.tsx');
+  assert.match(vivo, /puedeAbrir: \(\) => !vozRef\.current\?\.vista\.suspendida && !visorAbierto\(\)/);
+  assert.match(vivo, /<VisorComputadora tareaSeguida=\{companero\.tareaId\} \/>/);
+  assert.doesNotMatch(fuente('compa/computadora.ts'), /abrirVisor/);
+  assert.match(fuente('ajustes/Computadora.tsx'), /setTimeout\(\(\) => abrirVisor\(id\), 320\)/, 'se abre desde la tarea (tras irse la hoja)');
+  // La sesión sobrevive a cerrar y reabrir: el mismo cliente, el mismo control y el mismo encuadre.
+  const envio = async () => ({ secuencia: 1, estado: 'hecha', ts: 0, frame_seq: 1, epoca: 1 });
+  abrirVisor('tarea-v1');
+  const s1 = sesionDelVisor('tarea-v1', envio);
+  s1.alControl(5);
+  guardarVista('tarea-v1', { zoom: 2, centro: { x: 300, y: 200 } });
+  cerrarVisor();
+  assert.equal(visorAhora().abierto, false);
+  abrirVisor('tarea-v1');
+  const s2 = sesionDelVisor('tarea-v1', envio);
+  assert.equal(s2, s1, 'la misma sesión');
+  assert.equal(s2.epoca, 5, 'con su control');
+  assert.deepEqual(vistaGuardada('tarea-v1'), { zoom: 2, centro: { x: 300, y: 200 } });
+  seguirEnVisor('tarea-v2');
+  assert.equal(visorAhora().tareaId, 'tarea-v2', 'la misión siguió: el visor abierto la sigue');
+  cerrarVisor();
+  seguirEnVisor('tarea-v3');
+  assert.equal(visorAhora().abierto, false, 'cerrado, no se abre solo');
+  // Sin dependencias nuevas: solo React Native, safe-area (ya estaba) y lo nuestro.
+  const imports = [...visor.matchAll(/from '([^']+)'/g)].map((m) => m[1]).filter((m) => !m.startsWith('.'));
+  assert.deepEqual([...new Set(imports)].sort(), ['react', 'react-native', 'react-native-safe-area-context']);
 });
 
 for (const [nombre, f] of pruebas) {

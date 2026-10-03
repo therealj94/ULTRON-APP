@@ -992,5 +992,309 @@ class CrearUnaVez(ConEndpoints):
         self.assertEqual(len(self.lanzadas), 4)
 
 
+class Respuesta:
+    """Un Response de mentira que guarda lo que se le dio (para leer las cabeceras del frame)."""
+
+    def __init__(self, contenido=b'', media_type=None, headers=None, status_code=200):
+        self.contenido, self.media_type, self.headers, self.status_code = contenido, media_type, headers or {}, status_code
+
+
+class ConEscritorio(ConEndpoints):
+    """Un escritorio de mentira: xdotool solo se anota, la pantalla mide 1280x800 y el frame va por la revisión 3."""
+
+    def setUp(self):
+        super().setUp()
+        self.xdo = []
+        self.reales = (agente.xdotool, agente.captura, agente.miniatura, agente.Response, agente.JSONResponse,
+                       dict(agente.FRAME), dict(agente.TAMANO), agente.ENTRADAS_RAFAGA, agente.ENTRADAS_POR_S)
+        agente.xdotool = lambda *a: self.xdo.append(tuple(str(x) for x in a))
+        self.capturas = []
+        self.t = None
+
+        def captura():
+            self.capturas.append((threading.current_thread().name, bool(self.t and self.t.seguro)))
+            return b'png', agente.TAMANO['ancho'], agente.TAMANO['alto']
+        agente.captura = captura
+        agente.miniatura = lambda png, ancho=480: 'TUlOSQ=='
+        agente.Response = Respuesta
+        agente.JSONResponse = lambda contenido, status_code=200: Respuesta(contenido, status_code=status_code)
+        agente.FRAME.update(seq=10, ts=time.time(), ancho=1280, alto=800, rev=3)
+        agente.TAMANO.update(ancho=1280, alto=800)
+
+    def tearDown(self):
+        (agente.xdotool, agente.captura, agente.miniatura, agente.Response, agente.JSONResponse, frame, tamano,
+         agente.ENTRADAS_RAFAGA, agente.ENTRADAS_POR_S) = self.reales
+        agente.FRAME.clear()
+        agente.FRAME.update(frame)
+        agente.TAMANO.update(tamano)
+        agente.TAREAS.clear()
+        super().tearDown()
+
+    def con_control(self, cliente='cliente-uno'):
+        t = self.tarea()
+        self.t = t
+        agente.TAREAS[t.id] = t
+        r = agente.cambiar_control(t, True, cliente=cliente)
+        t.en_espera = True  # el ciclo quieto esperando (como en esperar_si_pausada)
+        return t, r['epoca']
+
+    def entrada(self, t, epoca, seq, tipo, payload=None, cliente='cliente-uno', rev=3):
+        e = agente.validar_entrada({'remoteSessionId': t.id, 'clientId': cliente, 'controlEpoch': epoca,
+                                    'inputSequence': seq, 'viewportRevision': rev, 'type': tipo,
+                                    'payload': payload or {}}, t.id)
+        return agente.aplicar_entrada(t, e)
+
+    def codigo(self, f):
+        with self.assertRaises(agente.HTTPException) as e:
+            f()
+        return e.exception.status_code, str(e.exception.detail).split(':')[0]
+
+
+class ContratoEntradas(ConEscritorio):
+    """AUR09: cada entrada lleva sesión, cliente, época, secuencia y viewport; se confirma una por una y lo viejo,
+    lo repetido, lo de otra época, otro cliente u otro viewport no toca el escritorio."""
+
+    def test_un_toque_es_un_clic_en_pixeles_logicos_con_su_ack(self):
+        t, epoca = self.con_control()
+        ack = self.entrada(t, epoca, 1, 'pointer', {'accion': 'click', 'x': 640, 'y': 400})
+        self.assertEqual(self.xdo, [('mousemove', '--sync', '640', '400', 'click', '1')])
+        self.assertEqual((ack['secuencia'], ack['estado'], ack['frame_seq'], ack['epoca']), (1, 'hecha', 10, epoca))
+        self.assertFalse(ack.get('duplicada'))
+        self.assertEqual(t.pasos[-1], {**t.pasos[-1], 'accion': 'persona', 'args': {'tipo': 'pointer', 'accion': 'click'}})
+
+    def test_repetido_no_se_hace_dos_veces_y_lo_viejo_se_rechaza(self):
+        t, epoca = self.con_control()
+        self.entrada(t, epoca, 1, 'pointer', {'x': 10, 'y': 10})
+        otra = self.entrada(t, epoca, 1, 'pointer', {'x': 10, 'y': 10})
+        self.assertTrue(otra['duplicada'], 'el mismo ACK, sin tocar otra vez')
+        self.assertEqual(len(self.xdo), 1)
+        self.entrada(t, epoca, 5, 'scroll', {'x': 10, 'y': 10, 'dy': 2})
+        self.assertEqual(self.codigo(lambda: self.entrada(t, epoca, 4, 'pointer', {'x': 10, 'y': 10})), (409, 'secuencia_vieja'))
+        self.assertEqual(len(self.xdo), 2)
+
+    def test_tras_reconectar_lo_sin_confirmar_no_se_reproduce(self):
+        t, epoca = self.con_control()
+        self.entrada(t, epoca, 1, 'text_commit', {'texto': 'hola'})
+        # Se cortó la red antes del ACK: el teléfono no reenvía, y si un reintento ciego llega, el nodo no lo repite.
+        self.assertTrue(self.entrada(t, epoca, 1, 'text_commit', {'texto': 'hola'})['duplicada'])
+        self.entrada(t, epoca, 2, 'release_all')
+        self.assertEqual([x[0] for x in self.xdo], ['type'])
+        self.assertTrue(self.soltadas, 'al reconectar se sueltan teclas y botones')
+
+    def test_epoca_revocada_otro_cliente_y_la_toma_desde_otra_sesion(self):
+        t, epoca = self.con_control()
+        self.assertEqual(self.codigo(lambda: self.entrada(t, epoca - 1, 1, 'pointer', {'x': 1, 'y': 1})), (409, 'epoca_revocada'))
+        self.assertEqual(self.codigo(lambda: self.entrada(t, epoca, 1, 'pointer', {'x': 1, 'y': 1}, cliente='cliente-dos')), (409, 'cliente'))
+        antes = len(self.soltadas)
+        r = agente.cambiar_control(t, True, cliente='cliente-dos')  # otro teléfono de la misma persona recupera el control
+        self.assertGreater(r['epoca'], epoca)
+        self.assertEqual(r['fase'], 'quiescent')
+        self.assertGreater(len(self.soltadas), antes, 'al cambiar de dueño del control se sueltan teclas')
+        self.assertEqual(self.codigo(lambda: self.entrada(t, epoca, 2, 'pointer', {'x': 1, 'y': 1})), (409, 'cliente'), 'el cliente viejo queda cercado')
+        self.entrada(t, r['epoca'], 1, 'pointer', {'x': 1, 'y': 1}, cliente='cliente-dos')
+        self.assertEqual(len(self.xdo), 1)
+        # Devolver solo lo hace quien lo tiene (o la persona sin decir cliente: la voz, la app de antes).
+        self.assertEqual(self.codigo(lambda: agente.cambiar_control(t, False, cliente='cliente-uno')), (409, 'cliente'))
+        self.assertEqual(self.codigo(lambda: agente.cambiar_control(t, True, cliente='cliente-dos', epoca_esperada=r['epoca'] + 7)), (409, 'epoca_cambio'))
+
+    def test_coordenadas_de_otro_viewport_no_tocan(self):
+        t, epoca = self.con_control()
+        self.assertEqual(self.codigo(lambda: self.entrada(t, epoca, 1, 'pointer', {'x': 10, 'y': 10}, rev=2)), (409, 'viewport'))
+        self.assertEqual(self.codigo(lambda: self.entrada(t, epoca, 2, 'pointer', {'x': 1280, 'y': 10})), (409, 'viewport'))
+        agente.TAMANO.update(ancho=1920, alto=1080)  # el escritorio cambió de tamaño y la persona no lo ha visto
+        self.assertEqual(self.codigo(lambda: self.entrada(t, epoca, 3, 'scroll', {'x': 10, 'y': 10, 'dy': 1})), (409, 'viewport'))
+        self.entrada(t, epoca, 4, 'key', {'tecla': 'tab'})  # una tecla no lleva coordenadas
+        self.assertEqual(self.xdo, [('key', '--clearmodifiers', 'Tab')])
+
+    def test_arrastre_scroll_teclas_combinaciones_y_texto(self):
+        t, epoca = self.con_control()
+        n = iter(range(1, 100))
+        self.entrada(t, epoca, next(n), 'pointer', {'accion': 'arrastre', 'x': 100, 'y': 100, 'x2': 300, 'y2': 200})
+        self.assertIn('mousedown', self.xdo[-1])
+        self.assertIn('mouseup', self.xdo[-1])
+        self.entrada(t, epoca, next(n), 'pointer', {'accion': 'doble', 'x': 5, 'y': 6})
+        self.assertEqual(self.xdo[-1], ('mousemove', '--sync', '5', '6', 'click', '--repeat', '2', '--delay', '120', '1'))
+        self.entrada(t, epoca, next(n), 'pointer', {'accion': 'derecho', 'x': 5, 'y': 6})
+        self.assertEqual(self.xdo[-1][-1], '3')
+        self.entrada(t, epoca, next(n), 'pointer', {'accion': 'click', 'x': 5, 'y': 6, 'mods': ['shift']})
+        self.assertEqual(self.xdo[-1], ('mousemove', '--sync', '5', '6', 'keydown', 'shift', 'click', '1', 'keyup', 'shift'))
+        self.entrada(t, epoca, next(n), 'scroll', {'x': 640, 'y': 400, 'dy': 3})
+        self.assertEqual(self.xdo[-1], ('mousemove', '--sync', '640', '400', 'click', '--repeat', '3', '5'))
+        self.entrada(t, epoca, next(n), 'scroll', {'x': 640, 'y': 400, 'dy': -2})
+        self.assertEqual(self.xdo[-1][-1], '4')
+        for tecla, mods, xdo in (('enter', [], 'Return'), ('escape', [], 'Escape'), ('backspace', [], 'BackSpace'),
+                                 ('delete', [], 'Delete'), ('left', [], 'Left'), ('c', ['ctrl'], 'ctrl+c'),
+                                 ('tab', ['shift'], 'shift+Tab'), ('left', ['alt'], 'alt+Left'), ('z', ['ctrl', 'shift'], 'ctrl+shift+z')):
+            self.entrada(t, epoca, next(n), 'key', {'tecla': tecla, 'mods': mods})
+            self.assertEqual(self.xdo[-1], ('key', '--clearmodifiers', xdo), tecla)
+        texto = 'Árbol, ñandú y café 😀👨‍👩‍👧'
+        self.entrada(t, epoca, next(n), 'text_commit', {'texto': texto})
+        self.assertEqual(self.xdo[-1], ('type', '--delay', '12', '--', texto))
+        # Acentos que llegan descompuestos (e + ´) se escriben compuestos: una sola letra.
+        self.entrada(t, epoca, next(n), 'text_commit', {'texto': 'café'})
+        self.assertEqual(self.xdo[-1][-1], 'café')
+        hechas = len(self.xdo)
+        for malo in ({'type': 'key', 'payload': {'tecla': 'c'}},                       # una letra va como texto
+                     {'type': 'key', 'payload': {'tecla': 'delete', 'mods': ['ctrl', 'alt']}},
+                     {'type': 'key', 'payload': {'tecla': 'super'}},
+                     {'type': 'key', 'payload': {'tecla': 'q', 'mods': ['ctrl']}},
+                     {'type': 'text_commit', 'payload': {'texto': 'dos\nlíneas'}},
+                     {'type': 'text_commit', 'payload': {'texto': 'x' * 501}},
+                     {'type': 'text_commit', 'payload': {'texto': ''}},
+                     {'type': 'scroll', 'payload': {'x': 1, 'y': 1, 'dy': 0}},
+                     {'type': 'pointer', 'payload': {'accion': 'arrastre', 'x': 1, 'y': 1}},
+                     {'type': 'pointer', 'payload': {'x': -1, 'y': 1}},
+                     {'type': 'pointer', 'payload': {'x': 1.5, 'y': 1}},
+                     {'type': 'borrar_disco', 'payload': {}}):
+            cuerpo = {'remoteSessionId': t.id, 'clientId': 'cliente-uno', 'controlEpoch': epoca, 'inputSequence': 99,
+                      'viewportRevision': 3, **malo}
+            self.assertEqual(self.codigo(lambda: agente.validar_entrada(cuerpo, t.id)), (400, 'entrada_invalida'), malo)
+        base = {'clientId': 'cliente-uno', 'controlEpoch': epoca, 'inputSequence': 99, 'viewportRevision': 3, 'type': 'release_all', 'payload': {}}
+        self.assertEqual(self.codigo(lambda: agente.validar_entrada({**base, 'remoteSessionId': 'otra'}, t.id))[0], 400)
+        self.assertEqual(self.codigo(lambda: agente.validar_entrada({**base, 'remoteSessionId': t.id, 'inputSequence': True}, t.id))[0], 400)
+        self.assertEqual(len(self.xdo), hechas, 'nada de eso tocó el escritorio')
+
+    def test_un_error_a_medias_suelta_teclas_y_queda_incierto(self):
+        t, epoca = self.con_control()
+
+        def rota(*a):
+            raise RuntimeError('xdotool se cortó')
+        agente.xdotool = rota
+        antes = len(self.soltadas)
+        self.assertEqual(self.codigo(lambda: self.entrada(t, epoca, 1, 'key', {'tecla': 'c', 'mods': ['ctrl']})), (502, 'incierta'))
+        self.assertGreater(len(self.soltadas), antes)
+        self.assertEqual(t.ultima_op['estado'], 'incierta')
+
+    def test_la_app_de_antes_no_entra_si_el_control_es_de_un_cliente(self):
+        t, _ = self.con_control()
+        with self.assertRaises(agente.HTTPException) as e:
+            agente.accion_persona(t, {'tipo': 'click', 'x': 1, 'y': 1})
+        self.assertEqual(e.exception.status_code, 409)
+        # Sin cliente (la app de antes tomó el control): la acción de antes sigue funcionando.
+        t2 = self.tarea()
+        agente.cambiar_control(t2, True)
+        t2.en_espera = True
+        agente.accion_persona(t2, {'tipo': 'click', 'x': 500, 'y': 500})
+        self.assertEqual(self.hechas, [('click', {'x': 500, 'y': 500})])
+
+    def test_tasa_y_sin_control(self):
+        agente.ENTRADAS_RAFAGA, agente.ENTRADAS_POR_S = 3, 0.001
+        t, epoca = self.con_control()
+        for s in (1, 2, 3):
+            self.entrada(t, epoca, s, 'key', {'tecla': 'tab'})
+        self.assertEqual(self.codigo(lambda: self.entrada(t, epoca, 4, 'key', {'tecla': 'tab'})), (429, 'tasa'))
+        agente.cambiar_control(t, False, cliente='cliente-uno')
+        self.assertEqual(self.codigo(lambda: self.entrada(t, epoca, 5, 'key', {'tecla': 'tab'}))[0], 409)
+        self.assertEqual(len(self.xdo), 3)
+
+    def test_pausar_con_el_control_no_le_quita_el_control(self):
+        t, epoca = self.con_control()
+        agente.pausar(t.id, None)
+        self.assertEqual(t.epoca, epoca, 'pausar con la persona al mando no cambia la época de su control')
+        self.entrada(t, epoca, 1, 'key', {'tecla': 'tab'})
+        self.assertEqual(len(self.xdo), 1)
+
+
+class FrameYFrescura(ConEscritorio):
+    def test_cada_captura_dice_su_secuencia_hora_tamano_y_viewport(self):
+        t, _ = self.con_control()
+        a = agente.pantalla_tarea(t.id, None)
+        b = agente.pantalla_tarea(t.id, None)
+        self.assertEqual(a.media_type, 'image/jpeg')
+        self.assertEqual(int(b.headers['X-Frame-Seq']), int(a.headers['X-Frame-Seq']) + 1)
+        self.assertEqual((a.headers['X-Frame-Ancho'], a.headers['X-Frame-Alto'], a.headers['X-Viewport-Rev']), ('1280', '800', '3'))
+        self.assertLessEqual(abs(float(a.headers['X-Frame-Ts']) - time.time()), 2)
+        self.assertEqual(a.headers['X-Control-Epoca'], str(t.epoca))
+        self.assertEqual(a.headers['Cache-Control'], 'no-store')
+        self.assertEqual(a.headers['X-Privado'], '0')
+        agente.TAMANO.update(ancho=1024, alto=768)
+        c = agente.pantalla_tarea(t.id, None)
+        self.assertEqual((c.headers['X-Frame-Ancho'], c.headers['X-Viewport-Rev']), ('1024', '4'), 'otro tamaño: otra revisión')
+
+    def test_novnc_cerrado_y_sin_puerto(self):
+        import asyncio
+        with self.assertRaises(agente.HTTPException) as e:
+            asyncio.run(agente.vista(Pedido({'tomar_control': True})))
+        self.assertEqual(e.exception.status_code, 410)
+        agente.VISTAS['una-llave'] = time.time() + 999  # una llave vieja que hubiera quedado
+        r = agente.permitir(types.SimpleNamespace(headers={'x-forwarded-uri': '/vista/una-llave/vnc.html'}))
+        self.assertEqual(r.status_code, 403, 'ninguna llave abre noVNC: no hay entradas por fuera del árbitro')
+        aqui = os.path.dirname(os.path.abspath(__file__))
+        for archivo in ('agente.py', 'instalar.sh'):
+            with open(os.path.join(aqui, archivo), encoding='utf-8') as f:
+                self.assertNotIn('6080:6080', f.read(), f'{archivo} no publica el puerto de noVNC')
+
+
+class EntradaSegura(ConEscritorio):
+    """AUR09: con la entrada segura el agente no toca ni mira; lo del intervalo no se guarda ni le llega al modelo
+    después, y se sale solo con una pantalla nueva y devolviendo el control a propósito."""
+
+    SECRETO = 'Clave-Sintetica-9f3Q!'
+
+    def test_secreto_sintetico_no_aparece_en_pasos_contexto_ni_capturas(self):
+        t, vistos = CicloGratis.correr_con(self, [('open_url', {'url': 'banco.hn'}), ('answer', {'content': 'Listo: entré.'})])
+        agente.captura = self.captura_espia(t)
+        agente.TAREAS[t.id] = t
+        self.t = t
+        crear = agente.cliente.chat.completions.create
+        hecho = {}
+
+        def pensando(**k):
+            resp = crear(**k)
+            if 'r' not in hecho:
+                hecho['r'] = agente.cambiar_control(t, True, cliente='cliente-uno')  # toma el control mientras piensa
+                threading.Thread(target=persona, daemon=True, name='persona').start()
+            return resp
+
+        def persona():
+            r = hecho['r']
+            fin = time.time() + 3
+            while not t.en_espera and time.time() < fin:
+                time.sleep(0.005)
+            agente.cambiar_seguro(t, True, cliente='cliente-uno')
+            hecho['estado_seguro'] = t.resumen()['seguro']
+            self.entrada(t, r['epoca'], 1, 'pointer', {'x': 300, 'y': 200})
+            self.entrada(t, r['epoca'], 2, 'text_commit', {'texto': self.SECRETO})
+            # Salir sin mirar la pantalla de ahora no vale; devolver el control en modo seguro tampoco.
+            hecho['sin_frame'] = self.codigo(lambda: agente.cambiar_seguro(t, False, cliente='cliente-uno', frame_seq=agente.FRAME['seq']))
+            hecho['devolver'] = self.codigo(lambda: agente.cambiar_control(t, False, cliente='cliente-uno'))
+            hecho['reanudar'] = self.codigo(lambda: agente.reanudar(t.id, None))
+            hecho['global'] = self.codigo(lambda: agente.pantalla(None))
+            vista = agente.pantalla_tarea(t.id, None)  # la persona ve su pantalla (privada: no se guarda)
+            hecho['privado'] = vista.headers['X-Privado']
+            agente.cambiar_seguro(t, False, cliente='cliente-uno', frame_seq=int(vista.headers['X-Frame-Seq']))
+            agente.cambiar_control(t, False, cliente='cliente-uno')
+        agente.cliente.chat.completions.create = pensando
+        agente.correr(t)
+        self.assertEqual(t.estado, 'hecha')
+        self.assertTrue(hecho['estado_seguro'])
+        self.assertEqual(hecho['sin_frame'], (409, 'frame_viejo'))
+        self.assertEqual(hecho['devolver'], (409, 'seguro'))
+        self.assertEqual(hecho['reanudar'], (409, 'seguro'))
+        self.assertEqual(hecho['global'][0], 423)
+        self.assertEqual(hecho['privado'], '1')
+        # Lo del modelo nunca se capturó en modo seguro; la única captura privada fue la que vio la persona.
+        self.assertEqual([c for c in self.capturas if c[1] and c[0] != 'persona'], [])
+        self.assertEqual(len([c for c in self.capturas if c[1]]), 1)
+        # El secreto no está en los pasos, el resumen, las notas ni en nada de lo que vio el modelo.
+        todo = repr(t.resumen(True)) + repr(t.notas) + repr(vistos) + repr(t.escrito)
+        self.assertNotIn(self.SECRETO, todo)
+        self.assertNotIn(str(len(self.SECRETO)), repr([p.get('args') for p in t.pasos if p['accion'] == 'persona']), 'ni su largo')
+        self.assertIn(('type', '--delay', '12', '--', self.SECRETO), self.xdo, 'sí se escribió en la computadora')
+        acciones = [p['accion'] for p in t.pasos]
+        self.assertIn('modo_seguro', acciones)
+        self.assertFalse([p for p in t.pasos if p['accion'] == 'persona' and p.get('t') is not None and p['args'].get('tipo') == 'texto'],
+                         'lo de la persona en modo seguro no se anota')
+        # Al volver, el modelo sabe que hubo algo privado (sin el contenido) y mira una pantalla nueva.
+        ultima = vistos[-1]
+        self.assertTrue(any(agente.NOTA_SEGURO == m.get('content') for m in ultima))
+
+    def captura_espia(self, t):
+        def captura():
+            self.capturas.append((threading.current_thread().name, bool(t.seguro)))
+            return b'png', 1280, 800
+        return captura
+
+
 if __name__ == '__main__':
     unittest.main()
