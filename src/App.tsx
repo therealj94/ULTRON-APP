@@ -18,6 +18,7 @@ import { detectarIntencion } from './04-cerebro/intenciones';
 import { grabFrame, achicarFoto } from './04-cerebro/grabFrame';
 import { fijarCuentaMemoria, guardarHecho, olvidarTodo } from './09-estado/memoria';
 import { guardarTokenMesa, headersMesa } from './10-infra/sesionCliente';
+import { ejecutarControl, interpretarControl, puertosWeb, respuestaAclaracion, type ControlVoz } from './03-voz/controles';
 import { escucharVueltaGenesis } from './10-infra/genesisWeb';
 import { aplicarVersionNueva, registrarPwa } from './10-infra/pwa';
 import { AvisoVersion } from './07-pantallas/AvisoVersion';
@@ -533,6 +534,8 @@ export default function App() {
    * el próximo turno trae otro AbortController.
    */
   const turnoCallado = useRef<AbortController | null>(null);
+  /** AUR10: «¿Qué paro…?» quedó preguntado; la respuesta del turno siguiente decide. */
+  const aclaracionWeb = useRef<ControlVoz[] | null>(null);
   /** El turno que viene lo dijo en voz alta (el oído), no lo escribió: el servidor le pone los topes de la voz. */
   const habladoRef = useRef(false);
   const pensar = useCallback(
@@ -703,6 +706,47 @@ export default function App() {
       // Si la acababan de interrumpir, la marca es de este pedido (pensar la toma) y de ningún otro.
       interrumpidaTurnoRef.current = interrumpidaRef.current;
       interrumpidaRef.current = null;
+      // Los controles de voz (AUR10): parar la voz, colgar la conversación en vivo o pausar/cancelar la tarea son
+      // cosas distintas; cada uno toca solo lo suyo. «Para» a secas con más de una cosa viva pregunta cuál.
+      const correrControles = (cs: ControlVoz[]) => {
+        for (const c of cs) {
+          if (c === 'detener_audio' || c === 'interrumpir') {
+            callarTodo();
+            turnoCallado.current = turnoEnCurso.current;
+            continue;
+          }
+          void ejecutarControl(
+            c,
+            puertosWeb({
+              callar: callarTodo,
+              cortarTurno: () => {
+                turnoCallado.current = turnoEnCurso.current;
+              },
+              enVivo: vivoRef.current,
+              pedir: async (ruta, init) => {
+                const r = await fetch(ruta, { method: init?.method || 'GET', headers: { 'Content-Type': 'application/json', ...headersMesa() }, body: init?.body });
+                return { ok: r.ok, status: r.status, json: await r.json().catch(() => null) };
+              },
+            })
+          ).then((r) => {
+            if (!r.ok && r.detalle) decir(r.detalle, { emocion: 'neutral' });
+          });
+        }
+      };
+      if (aclaracionWeb.current) {
+        const opciones = aclaracionWeb.current;
+        aclaracionWeb.current = null;
+        const r = respuestaAclaracion(cmd, opciones);
+        if (r === 'ninguno') return void decir('Va, sigo.', { emocion: 'neutral' });
+        if (r) return void correrControles(r);
+      }
+      const ctl = interpretarControl(cmd, { audio: !!hablando.current || colaRef.current.length > 0, llamada: !!vivoRef.current?.ocupada() });
+      if (ctl?.tipo === 'aclarar') {
+        aclaracionWeb.current = ctl.opciones;
+        return void decir(ctl.pregunta, { emocion: 'neutral' });
+      }
+      // «Cállate» sigue por el `callar` de siempre (con su «está bien» si la interrumpió).
+      if (ctl && ctl.control !== 'detener_audio') return void correrControles([ctl.control]);
       const it = detectarIntencion(cmd);
       switch (it.tipo) {
         case 'callar':

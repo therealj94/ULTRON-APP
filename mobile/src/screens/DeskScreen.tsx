@@ -73,6 +73,8 @@ import { avisarMesa, mensajeVoz, nivelOido, oidoTelefono, sueloCompa } from '../
 import { etiquetaCiclo, llamadaActiva, llamadaTerminada } from '../compa/llamadaCiclo';
 import { accionesDelTurno } from '../compa/acciones';
 import { emitir, escuchar } from '../nucleo/contrato';
+import { accionDeControlMesa, estadoControlesDe } from '../compa/controles';
+import { respuestaAclaracion, type ControlVoz } from '../lib/controlesVoz';
 import { usePulse } from '../pulse/PulseProvider';
 import { useSinLeerTotal } from '../pulse/chats';
 import { ChatMesa } from '../components/ChatMesa';
@@ -260,6 +262,10 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   /** Su computadora en la nube (ajustes/Computadora.tsx): la hoja, su estado y el aviso de la mesa. */
   const [pcAbierta, setPcAbierta] = useState(false);
   const [pcEstado, setPcEstado] = useState<EstadoPc | null>(null);
+  const pcEstadoRef = useRef<EstadoPc | null>(null);
+  pcEstadoRef.current = pcEstado;
+  /** AUR10: «para» a secas con voz y tarea vivas preguntó qué parar; la respuesta del turno siguiente decide. */
+  const aclaracionMesa = useRef<ControlVoz[] | null>(null);
   const [pcAviso, setPcAviso] = useState<{ texto: string; terminada: boolean } | null>(null);
   /** La vista en vivo de toda la app (app/ComputadoraEnVivo.tsx) abierta: el aviso de arriba sobra. */
   const pcVivoAbierta = useSyncExternalStore(suscribirHojas, () => hojasAhora().abierta === 'computadora', () => false);
@@ -1272,6 +1278,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       fraseOidaEn.current = oidaEn;
       lastUserAt.current = Date.now();
       comentarista.usuarioHablo();
+      // Lo que estaba vivo ANTES de cortar la voz: «para» decide sobre eso (AUR10).
+      const controlesAntes = estadoControlesDe({ hablando: speakingRef.current, cola: 0, tarea: pcEstadoRef.current?.actual?.estado, ciclo: vozRef.current.ciclo, pensando: false });
       await stopSpeaking();
       registroVoz.nuevoTurno();
       interrumpidaTurno.current = interrumpida.current;
@@ -1280,16 +1288,27 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       setMensajes((m) => [...m, { rol: 'usuario' as const, texto: cmd }].slice(-80));
 
       const enConocer = modeRef.current === 'CONOCER' && conocerIdxRef.current >= 0 && conocerIdxRef.current < CONOCER_QUESTIONS.length;
-      const intent = interpretar(cmd, { dormido: presenceRef.current === 'sleep', enConocer });
+      const intent = interpretar(cmd, { dormido: presenceRef.current === 'sleep', enConocer, ...controlesAntes });
 
       try {
+        // La respuesta a «¿Qué paro: mi voz, la tarea o las dos?» (AUR10): cada control toca solo lo suyo.
+        if (aclaracionMesa.current) {
+          const opciones = aclaracionMesa.current;
+          aclaracionMesa.current = null;
+          const r = respuestaAclaracion(cmd, opciones);
+          if (r === 'ninguno') return void (await say(tr('Va, sigo.', "Okay, I'll keep going."), 'IDLE'));
+          if (r) {
+            for (const c of r) emitir('accion', accionDeControlMesa(c));
+            return;
+          }
+        }
         if (presenceRef.current === 'sleep') {
           setPresence('stay');
           presenceRef.current = 'stay';
           if (intent.tipo === 'despertar') return void (await say(tr('Despierto. Te escucho.', 'Awake. I’m listening.'), 'HAPPY', { emocion: 'feliz' }));
         }
         // En la entrevista todo es respuesta salvo salir / callar / dormir / menú / sesión.
-        if (enConocer && !['conocer_salir', 'callar', 'dormir', 'logout', 'menu', 'catalogo'].includes(intent.tipo)) return void (await answerConocer(cmd));
+        if (enConocer && !['conocer_salir', 'callar', 'dormir', 'logout', 'menu', 'catalogo', 'control', 'aclarar'].includes(intent.tipo)) return void (await answerConocer(cmd));
 
         // La respuesta a «¿solo ahora o siempre?» (la cámara).
         if (esperaModoCamara.current) {
@@ -1316,6 +1335,12 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         }
 
         switch (intent.tipo) {
+          case 'control':
+            emitir('accion', accionDeControlMesa(intent.control));
+            return;
+          case 'aclarar':
+            aclaracionMesa.current = intent.opciones;
+            return void (await say(intent.pregunta, 'CURIOUS', { emocion: 'curioso' }));
           case 'despertar':
             return void (await say(tr('Aquí estoy.', 'I’m here.'), 'HAPPY', { emocion: 'feliz' }));
           case 'llamame':
