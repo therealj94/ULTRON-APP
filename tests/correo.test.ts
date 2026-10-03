@@ -31,6 +31,8 @@ process.env.ULTRON_CORREO_DIR = DIR;
 // La tarea en curso y lo que quedó a medias, en un temporal (nunca en data/ del repositorio).
 process.env.ULTRON_TAREA_CURSO_DIR = path.join(DIR, 'tarea-en-curso');
 process.env.ULTRON_ABIERTOS_DIR = path.join(DIR, 'abiertos');
+// El registro durable de los envíos (lib/durable.ts sin S3), también en el temporal.
+process.env.ULTRON_DURABLE_DIR = path.join(DIR, 'durable');
 
 /** Un certificado propio para los servidores locales de la prueba. */
 function certificado() {

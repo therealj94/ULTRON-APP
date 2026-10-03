@@ -19,6 +19,27 @@
 import crypto from 'node:crypto';
 import { clave } from './boveda';
 import { AlmacenNoDisponible, cajonPorCorreo } from './misiones';
+import { claveDe, huellaDueno, leerDurable, modificarDurable } from './durable';
+
+/*
+ * DE QUIÉN ES CADA APARATO AHORA (AUR13; lo usan este archivo y lib/push.ts). Marca: un hash del token o del endpoint
+ * → un hash del dueño, en lib/durable.ts (ni el token ni el correo en claro). Ver lib/push.ts.
+ */
+export async function marcarDuenoAparato(claveIndice: string, correo: string): Promise<void> {
+  await modificarDurable(claveIndice, () => ({ dueno: huellaDueno(correo), t: Date.now() })).catch((e) => console.warn('[push] no pude marcar de quién es el aparato:', String(e?.message || e).slice(0, 80)));
+}
+
+/** ¿Este aparato está marcado como de OTRA persona? false si es suyo, no tiene marca o no se pudo leer. */
+export async function aparatoDeOtro(claveIndice: string, correo: string): Promise<boolean> {
+  try {
+    const l = await leerDurable<{ dueno?: string }>(claveIndice);
+    return !!(l.ok && l.valor?.dueno && l.valor.dueno !== huellaDueno(correo));
+  } catch {
+    return false;
+  }
+}
+
+const claveDuenoEndpoint = (endpoint: string) => claveDe('push/dueno-web', 'aura-push', crypto.createHash('sha256').update(`endpoint:${endpoint}`).digest('hex').slice(0, 40));
 
 export const MAX_SUSCRIPCIONES = 5;
 /** El contenido cifrado entra en un solo registro de 4096 (RFC 8291 §4): se acota antes. */
@@ -123,7 +144,18 @@ export async function suscribirWeb(correo: string, sus: unknown, aparato = '', a
     c.suscripciones = c.suscripciones.slice(0, MAX_SUSCRIPCIONES);
     return c.suscripciones.length;
   });
+  // Desde ahora este navegador es de quien se suscribió: la cuenta que lo tenía antes ya no le manda avisos (AUR13).
+  await marcarDuenoAparato(claveDuenoEndpoint(v.endpoint), correo);
   return { suscripciones: resultado, durable };
+}
+
+/** Solo pruebas: mete una suscripción en la caja de alguien SIN marcar de quién es (como una vieja que no se pudo quitar). */
+export async function _meterSinDueno(correo: string, sus: unknown, aparato = ''): Promise<void> {
+  const v = suscripcionValida(sus, aparato);
+  if (!v) throw new Error('suscripción');
+  await almacen.modificar(correo, (c) => {
+    c.suscripciones = [v, ...c.suscripciones.filter((x) => x.endpoint !== v.endpoint)].slice(0, MAX_SUSCRIPCIONES);
+  });
 }
 
 /** Quita la suscripción de este navegador (por endpoint o por aparato). */
@@ -184,7 +216,15 @@ export function jwtVapid(endpoint: string, v: { privada: crypto.KeyObject; conta
 /* ------------------------------------------------------------------ el aviso */
 
 export type AvisoWeb = { tipo: string; titulo: string; texto: string; id?: string; abrir?: string; para: string; enviado: number };
-export type ResultadoWeb = { enviados: number; fallidos: number; quitados: number; configurado: boolean; detalle?: string };
+/**
+ * AUR13: un 201 del servicio de avisos es ACEPTADO (lo guarda para el aparato), no «entregado»: el servicio no avisa
+ * si el navegador lo mostró. `aceptados` = `enviados` (el nombre de siempre); `entrega` nunca es «entregado».
+ */
+export type ResultadoWeb = { enviados: number; aceptados: number; entrega: 'aceptado' | 'fallido' | 'sin-destino' | 'sin-configurar'; fallidos: number; quitados: number; configurado: boolean; detalle?: string };
+
+function conEntregaWeb(r: Omit<ResultadoWeb, 'aceptados' | 'entrega'>): ResultadoWeb {
+  return { ...r, aceptados: r.enviados, entrega: !r.configurado ? 'sin-configurar' : r.enviados > 0 ? 'aceptado' : r.fallidos > 0 ? 'fallido' : 'sin-destino' };
+}
 
 async function conTope(url: string, init: RequestInit, ms = 10_000): Promise<Response> {
   const ac = new AbortController();
@@ -201,11 +241,22 @@ async function conTope(url: string, init: RequestInit, ms = 10_000): Promise<Res
  * `ttlS`: cuánto lo guarda el servicio si el aparato está apagado. `urgente`: llamada (Urgency: high).
  */
 export async function enviarPushWeb(correo: string, aviso: AvisoWeb, o: { ttlS: number; urgente?: boolean; ahora?: () => number }): Promise<ResultadoWeb> {
+  return conEntregaWeb(await enviarPushWebCuenta(correo, aviso, o));
+}
+
+async function enviarPushWebCuenta(correo: string, aviso: AvisoWeb, o: { ttlS: number; urgente?: boolean; ahora?: () => number }): Promise<Omit<ResultadoWeb, 'aceptados' | 'entrega'>> {
   const v = vapid();
   if (!v) return { enviados: 0, fallidos: 0, quitados: 0, configurado: false, detalle: 'sin VAPID' };
-  const leidas = await suscripcionesDe(correo);
-  if (!leidas.ok) return { enviados: 0, fallidos: 0, quitados: 0, configurado: true, detalle: 'no pude leer sus navegadores' };
-  if (!leidas.suscripciones.length) return { enviados: 0, fallidos: 0, quitados: 0, configurado: true, detalle: 'sin navegadores suscritos' };
+  const todas = await suscripcionesDe(correo);
+  if (!todas.ok) return { enviados: 0, fallidos: 0, quitados: 0, configurado: true, detalle: 'no pude leer sus navegadores' };
+  // AUR13: un navegador que ahora es de otra cuenta no recibe lo de esta (y se poda de aquí, con las muertas).
+  const ajenos: string[] = [];
+  await Promise.all(todas.suscripciones.map(async (s) => (await aparatoDeOtro(claveDuenoEndpoint(s.endpoint), correo)) && ajenos.push(s.endpoint)));
+  const leidas = { suscripciones: todas.suscripciones.filter((s) => !ajenos.includes(s.endpoint)) };
+  if (!leidas.suscripciones.length) {
+    const quitados = ajenos.length ? await podar(correo, ajenos) : 0;
+    return { enviados: 0, fallidos: 0, quitados, configurado: true, detalle: ajenos.length ? 'sus navegadores ahora son de otra cuenta' : 'sin navegadores suscritos' };
+  }
   const contenido = Buffer.from(
     JSON.stringify({
       ...aviso,
@@ -243,22 +294,24 @@ export async function enviarPushWeb(correo: string, aviso: AvisoWeb, o: { ttlS: 
       }
     })
   );
-  let quitados = 0;
-  if (muertos.length) {
-    try {
-      quitados = (
-        await almacen.modificar(correo, (c) => {
-          const antes = c.suscripciones.length;
-          c.suscripciones = c.suscripciones.filter((x) => !muertos.includes(x.endpoint));
-          return antes - c.suscripciones.length;
-        })
-      ).resultado;
-    } catch {
-      /* S3 caído: se borran en el próximo aviso */
-    }
-  }
+  const quitados = muertos.length || ajenos.length ? await podar(correo, [...muertos, ...ajenos]) : 0;
   if (fallidos) console.warn(`[push-web] ${aviso.tipo}: ${enviados} enviados, ${fallidos} fallidos (${[...detalles].join('; ').slice(0, 120)})${quitados ? `, ${quitados} suscripción(es) muerta(s) quitada(s)` : ''}`);
   return { enviados, fallidos, quitados, configurado: true, ...(detalles.size ? { detalle: [...detalles].join('; ').slice(0, 200) } : {}) };
+}
+
+/** Quita esas suscripciones de la caja de la persona (muertas o de otra cuenta). S3 caído: en el próximo aviso. */
+async function podar(correo: string, endpoints: string[]): Promise<number> {
+  try {
+    return (
+      await almacen.modificar(correo, (c) => {
+        const antes = c.suscripciones.length;
+        c.suscripciones = c.suscripciones.filter((x) => !endpoints.includes(x.endpoint));
+        return antes - c.suscripciones.length;
+      })
+    ).resultado;
+  } catch {
+    return 0;
+  }
 }
 
 /** Solo pruebas. */

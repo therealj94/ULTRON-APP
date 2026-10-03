@@ -19,6 +19,7 @@ process.env.ULTRON_PUSH_DIR = path.join(dir, 'push');
 process.env.ULTRON_SESIONES_CERRADAS_ARCHIVO = path.join(dir, 'cerradas.json');
 process.env.ULTRON_SESION_SECRETO = 'secreto-de-prueba-largo-para-los-avisos-del-chat';
 process.env.ULTRON_MEMORIA_BUCKET = '';
+process.env.ULTRON_DURABLE_DIR = path.join(dir, 'durable');
 process.env.PUSH_RELEVO_CLAVE = 'clave-compartida-de-prueba-con-el-relevo';
 delete process.env.FIREBASE_SERVICE_ACCOUNT;
 
@@ -71,4 +72,26 @@ test('el relevo: sin la clave 401, referencia mala 404, persona sin teléfonos 4
   assert.equal((await r2.json()).agrupado, true, 'el segundo mensaje en 8 s no es otro aviso');
   const r3 = await relevo({ ref: refB, tipo: 'llamada' });
   assert.notEqual((await r3.json()).agrupado, true, 'una llamada siempre avisa');
+});
+
+test('AUR13: el relevo que repite el mismo evento (mismo id) no manda otro aviso; sin id, como siempre', async () => {
+  const refC = P.refRelevo('carla@ejemplo.com');
+  await P.registrarToken('carla@ejemplo.com', { token: 'token-fcm-de-prueba-carla-0123456789', aparato: 'tel-c', plataforma: 'android', app: 'aura' });
+  const r1 = await relevo({ ref: refC, tipo: 'llamada', id: 'evento-77' });
+  assert.equal(r1.status, 200);
+  assert.notEqual((await r1.json()).repetido, true);
+  const r2 = await relevo({ ref: refC, tipo: 'llamada', id: 'evento-77' });
+  assert.equal(r2.status, 200);
+  assert.equal((await r2.json()).repetido, true, 'el mismo evento entregado dos veces es un solo aviso');
+  const r3 = await relevo({ ref: refC, tipo: 'llamada', id: 'evento-78' });
+  assert.notEqual((await r3.json()).repetido, true, 'otro evento sí avisa');
+});
+
+test('AUR13: primeraVezEvento deduplica por fuente + dueño + id (no entre personas ni por texto)', async () => {
+  const { primeraVezEvento } = await import('../lib/envios');
+  assert.equal(await primeraVezEvento('telegram', 'bot', '1001'), true);
+  assert.equal(await primeraVezEvento('telegram', 'bot', '1001'), false, 'la misma entrega repetida');
+  assert.equal(await primeraVezEvento('telegram', 'otro-bot', '1001'), true, 'otro dueño, otro evento');
+  assert.equal(await primeraVezEvento('relevo', 'bot', '1001'), true, 'otra fuente, otro evento');
+  assert.equal(await primeraVezEvento('telegram', 'bot', ''), true, 'sin id no se deduplica (no se pierde nada)');
 });

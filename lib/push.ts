@@ -28,7 +28,8 @@
 import crypto from 'node:crypto';
 import { clave } from './boveda';
 import { AlmacenNoDisponible, cajonPorCorreo } from './misiones';
-import { enviarPushWeb } from './push-web';
+import { aparatoDeOtro, enviarPushWeb, marcarDuenoAparato } from './push-web';
+import { claveDe } from './durable';
 
 /* ------------------------------------------------------------------ tipos */
 
@@ -40,7 +41,30 @@ export type Dispositivo = { token: string; aparato: string; plataforma: Platafor
 type CajonPush = { version: 1; dispositivos: Dispositivo[] };
 
 export type DatosPush = { tipo: TipoPush; id?: string } & Record<string, unknown>;
-export type ResultadoPush = { enviados: number; fallidos: number; quitados: number; configurado: boolean; detalle?: string };
+/**
+ * Lo que pasó con un aviso. AUR13: Firebase y los servicios de Web Push solo dicen que lo ACEPTARON (lo guardan
+ * para el aparato); no avisan si el teléfono lo mostró. Por eso `aceptados` (= `enviados`, el nombre de siempre) y
+ * `entrega` nunca es «entregado»: `aceptado`, `fallido`, `sin-destino` (no hay aparatos) o `sin-configurar`.
+ */
+export type EntregaPush = 'aceptado' | 'fallido' | 'sin-destino' | 'sin-configurar';
+export type ResultadoPush = { enviados: number; aceptados: number; entrega: EntregaPush; fallidos: number; quitados: number; configurado: boolean; detalle?: string };
+
+/** Completa `aceptados` y `entrega` a partir de lo contado (un solo lugar decide cómo se dice). */
+export function conEntrega<T extends { enviados: number; fallidos: number; configurado: boolean }>(r: T): T & { aceptados: number; entrega: EntregaPush } {
+  const entrega: EntregaPush = !r.configurado ? 'sin-configurar' : r.enviados > 0 ? 'aceptado' : r.fallidos > 0 ? 'fallido' : 'sin-destino';
+  return { ...r, aceptados: r.enviados, entrega };
+}
+
+/*
+ * DE QUIÉN ES CADA TELÉFONO AHORA (AUR13: «cuenta cambiada no recibe avisos ajenos»). El mismo aparato (y su token
+ * de Firebase) puede pasar de una cuenta a otra: Ana sale sin que su token se borre y entra Beto. El token queda
+ * guardado en las dos cuentas y, sin esto, los avisos de Ana seguían llegando a un teléfono que ya es de Beto (el
+ * teléfono los esconde por `para`, pero no deberían ni salir). Al registrar, el token queda marcado como de quien lo
+ * registró (en lib/durable.ts: un hash del token → un hash del dueño; ni el token ni el correo en claro). Al mandar,
+ * un token marcado como de otra persona no se usa y se poda de esa cuenta vieja. Los tokens sin marca (anteriores a
+ * esto) siguen como estaban. Si el almacén no contesta, se manda como siempre (la caja de la persona manda).
+ */
+const claveDuenoToken = (token: string) => claveDe('push/dueno-token', 'aura-push', crypto.createHash('sha256').update(`token:${token}`).digest('hex').slice(0, 40));
 
 export const MAX_DISPOSITIVOS = 5;
 /** Lo que vive un aviso en FCM si el teléfono está apagado. La llamada, un minuto: una llamada vieja no suena. */
@@ -214,7 +238,19 @@ export async function registrarToken(
     c.dispositivos = c.dispositivos.slice(0, MAX_DISPOSITIVOS);
     return c.dispositivos.length;
   });
+  // Desde ahora este teléfono es de quien lo registró: la cuenta que lo tenía antes ya no le manda avisos (AUR13).
+  await marcarDuenoAparato(claveDuenoToken(token), correo);
   return { dispositivos: resultado, durable };
+}
+
+/** Solo pruebas: mete un teléfono en la caja de alguien SIN marcar de quién es (como uno viejo que no se pudo quitar). */
+export async function _meterSinDueno(correo: string, d: { token: string; aparato?: string }): Promise<void> {
+  const token = tokenValido(d.token);
+  if (!token) throw new Error('token');
+  await almacen.modificar(correo, (c) => {
+    const nuevo: Dispositivo = { token, aparato: d.aparato || '', plataforma: 'android', app: 'aura', fecha: Date.now() };
+    c.dispositivos = [nuevo, ...c.dispositivos.filter((x) => x.token !== token)].slice(0, MAX_DISPOSITIVOS);
+  });
 }
 
 /** Quita un teléfono por token o por aparato (al salir de la sesión). Lanza AlmacenNoDisponible si no se pudo leer. */
@@ -301,15 +337,15 @@ async function mandarUno(proyecto: string, accessToken: string, token: string, d
 export async function enviarPush(correo: string, datos: DatosPush, o: { ttlS?: number; app?: string; ahora?: () => number } = {}): Promise<ResultadoPush> {
   const app = o.app || 'aura';
   const [fcm, web] = await Promise.all([enviarPushFcm(correo, datos, o), app === 'aura' ? enviarComoWeb(correo, datos, o) : Promise.resolve(null)]);
-  if (!web || !web.configurado || web.enviados + web.fallidos === 0) return fcm;
+  if (!web || !web.configurado || web.enviados + web.fallidos === 0) return conEntrega(fcm);
   const detalle = [fcm.detalle, web.detalle && `web: ${web.detalle}`].filter(Boolean).join('; ').slice(0, 200);
-  return {
+  return conEntrega({
     enviados: fcm.enviados + web.enviados,
     fallidos: fcm.fallidos + web.fallidos,
     quitados: fcm.quitados + web.quitados,
     configurado: true,
     ...(detalle ? { detalle } : {}),
-  };
+  });
 }
 
 /** Lo mismo, dicho para un navegador: título y una línea, y adónde lleva el toque. */
@@ -330,6 +366,10 @@ function enviarComoWeb(correo: string, datos: DatosPush, o: { ttlS?: number; aho
 
 /** Firebase: solo datos, a los teléfonos registrados de esa app. */
 async function enviarPushFcm(correo: string, datos: DatosPush, o: { ttlS?: number; app?: string; ahora?: () => number } = {}): Promise<ResultadoPush> {
+  return conEntrega(await enviarPushFcmCuenta(correo, datos, o));
+}
+
+async function enviarPushFcmCuenta(correo: string, datos: DatosPush, o: { ttlS?: number; app?: string; ahora?: () => number } = {}): Promise<Omit<ResultadoPush, 'aceptados' | 'entrega'>> {
   const ahora = o.ahora || Date.now;
   const c = cuentaServicio();
   if (!c) return { enviados: 0, fallidos: 0, quitados: 0, configurado: false, detalle: 'sin FIREBASE_SERVICE_ACCOUNT' };
@@ -342,15 +382,33 @@ async function enviarPushFcm(correo: string, datos: DatosPush, o: { ttlS?: numbe
   const leidos = await dispositivosDe(correo);
   if (!leidos.ok) return { enviados: 0, fallidos: 0, quitados: 0, configurado: true, detalle: 'no pude leer sus teléfonos' };
   const app = o.app || 'aura';
-  const destinos = leidos.dispositivos.filter((d) => d.app === app);
-  if (!destinos.length) return { enviados: 0, fallidos: 0, quitados: 0, configurado: true, detalle: 'sin teléfonos registrados' };
+  const deLaApp = leidos.dispositivos.filter((d) => d.app === app);
+  // AUR13: un teléfono que ahora es de otra cuenta no recibe lo de esta (y se poda de aquí).
+  const ajenos = new Set<string>();
+  await Promise.all(deLaApp.map(async (d) => (await aparatoDeOtro(claveDuenoToken(d.token), correo)) && ajenos.add(d.token)));
+  const destinos = deLaApp.filter((d) => !ajenos.has(d.token));
+  let podados = 0;
+  if (ajenos.size) {
+    try {
+      podados = (
+        await almacen.modificar(correo, (cj) => {
+          const antes = cj.dispositivos.length;
+          cj.dispositivos = cj.dispositivos.filter((x) => !ajenos.has(x.token));
+          return antes - cj.dispositivos.length;
+        })
+      ).resultado;
+    } catch {
+      /* S3 caído: igual no se le mandó; se poda en el próximo aviso */
+    }
+  }
+  if (!destinos.length) return { enviados: 0, fallidos: 0, quitados: podados, configurado: true, detalle: ajenos.size ? 'sus teléfonos ahora son de otra cuenta' : 'sin teléfonos registrados' };
   const ttl = Math.max(0, Math.min(28 * 86400, Math.round(o.ttlS ?? (datos.tipo === 'llamada' ? TTL_LLAMADA_S : TTL_NORMAL_S))));
   let token: string;
   try {
     token = await tokenDeAcceso(ahora);
   } catch (e: any) {
     console.warn('[push] sin token de acceso', String(e?.message || e).slice(0, 120));
-    return { enviados: 0, fallidos: destinos.length, quitados: 0, configurado: true, detalle: 'sin token de acceso de FCM' };
+    return { enviados: 0, fallidos: destinos.length, quitados: podados, configurado: true, detalle: 'sin token de acceso de FCM' };
   }
   let enviados = 0;
   let fallidos = 0;
@@ -376,10 +434,10 @@ async function enviarPushFcm(correo: string, datos: DatosPush, o: { ttlS?: numbe
       }
     })
   );
-  let quitados = 0;
+  let quitados = podados;
   if (muertos.length) {
     try {
-      quitados = (
+      quitados += (
         await almacen.modificar(correo, (cj) => {
           const antes = cj.dispositivos.length;
           cj.dispositivos = cj.dispositivos.filter((x) => !muertos.includes(x.token));
