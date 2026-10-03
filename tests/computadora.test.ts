@@ -540,13 +540,26 @@ test('el cerebro: la instrucción pide la misión completa, que mire la pantalla
  * el control de la persona y la pantalla de ahora. `guion(t)` cambia la tarea en cada consulta; el resto de
  * rutas cambian la tarea como lo haría el nodo de verdad. `caido` hace que las consultas fallen.
  */
-type TareaFalsa = { id: string; n: number; instruccion: string; consultas: number; estado: string; pasos: any[]; respuesta: string | null; error: string | null; pregunta: string | null; pregunta_id?: string | null; si?: boolean };
+type TareaFalsa = { id: string; n: number; instruccion: string; consultas: number; estado: string; pasos: any[]; respuesta: string | null; error: string | null; pregunta: string | null; pregunta_id?: string | null; propuesta?: string | null; si?: boolean };
 /**
  * Como el agente.py de ahora: cada pregunta trae su `pregunta_id` y el sí tiene que nombrarla (otra: 409); el
  * mismo `request_id` del mismo dueño es la misma tarea; `respuestasPerdidas` crea la tarea pero corta la
- * respuesta (el servidor no se entera y reintenta).
+ * respuesta (el servidor no se entera y reintenta). Opcionales: `conPropuesta` (el agente.py de AUR02: cada
+ * pregunta trae la huella de su propuesta y el sí puede nombrarla), `sinRevisar` (un nodo que no revisa a qué
+ * pregunta va el sí: lo tiene que revisar el servidor), `parada` (lo que contesta parar: quiescent o draining) y
+ * `demora` (ms que tarda una consulta; la respuesta es la foto de cuando llegó).
  */
-async function nodoAgente(o: { caps?: string[]; guion: (t: TareaFalsa) => void; altasQueFallan?: number; altaCodigo?: number; respuestasPerdidas?: number }) {
+async function nodoAgente(o: {
+  caps?: string[];
+  guion: (t: TareaFalsa) => void;
+  altasQueFallan?: number;
+  altaCodigo?: number;
+  respuestasPerdidas?: number;
+  conPropuesta?: boolean;
+  sinRevisar?: boolean;
+  parada?: 'quiescent' | 'draining';
+  demora?: (t: TareaFalsa, url: string) => number;
+}) {
   const tareas = new Map<string, TareaFalsa>();
   const porPedido = new Map<string, string>();
   const pedidos: Array<{ ruta: string; cuerpo: any }> = [];
@@ -587,14 +600,21 @@ async function nodoAgente(o: { caps?: string[]; guion: (t: TareaFalsa) => void; 
         t.consultas++;
         const antes = t.pregunta;
         o.guion(t);
-        if (t.pregunta && (t.pregunta !== antes || !t.pregunta_id)) t.pregunta_id = `p${++preguntas}`;
-        if (!t.pregunta) t.pregunta_id = null;
-        return json(200, { id: t.id, motor: 'holo', instruccion: t.instruccion, estado: t.estado, pasos: t.pasos, respuesta: t.respuesta, error: t.error, segundos: 20, pregunta: t.pregunta, pregunta_id: t.pregunta_id ?? null });
+        if (t.pregunta && (t.pregunta !== antes || !t.pregunta_id)) {
+          t.pregunta_id = `p${++preguntas}`;
+          if (o.conPropuesta) t.propuesta = `h${preguntas}`;
+        }
+        if (!t.pregunta) t.pregunta_id = t.propuesta = null;
+        const foto = { id: t.id, motor: 'holo', instruccion: t.instruccion, estado: t.estado, pasos: [...t.pasos], respuesta: t.respuesta, error: t.error, segundos: 20, pregunta: t.pregunta, pregunta_id: t.pregunta_id ?? null, ...(o.conPropuesta ? { propuesta: t.propuesta ?? null } : {}) };
+        const ms = o.demora?.(t, req.url!) ?? 0;
+        if (ms > 0) return void setTimeout(() => json(200, foto), ms);
+        return json(200, foto);
       }
       if (!o.caps && accion !== 'parar') return json(404, { detail: 'Not Found' });
       if (accion === 'parar') {
+        if (o.parada === 'draining') return json(200, { id: t.id, estado: t.estado, parada: { id: 'pd1', fase: 'draining', en_vuelo: { accion: 'click', estado: 'en_vuelo' } } });
         t.estado = 'parada';
-        return json(200, { id: t.id });
+        return json(200, { id: t.id, ...(o.parada ? { estado: 'parada', parada: { id: 'pd1', fase: 'quiescent', en_vuelo: null } } : {}) });
       }
       if (!viva) return json(409, { detail: 'la tarea ya terminó' });
       if (accion === 'pausar') t.estado = 'pausada';
@@ -602,7 +622,8 @@ async function nodoAgente(o: { caps?: string[]; guion: (t: TareaFalsa) => void; 
       else if (accion === 'control') t.estado = cuerpo?.tomar ? 'control' : 'trabajando';
       else if (accion === 'confirmar') {
         if (t.estado !== 'confirmar') return json(409, { detail: 'no está esperando ningún sí' });
-        if (!cuerpo.pregunta_id || cuerpo.pregunta_id !== t.pregunta_id) return json(409, { detail: 'esa respuesta era para otra pregunta; mira la de ahora' });
+        if (!o.sinRevisar && (!cuerpo.pregunta_id || cuerpo.pregunta_id !== t.pregunta_id)) return json(409, { detail: 'esa respuesta era para otra pregunta; mira la de ahora' });
+        if (!o.sinRevisar && cuerpo.propuesta && cuerpo.propuesta !== t.propuesta) return json(409, { detail: 'esa respuesta era para otra propuesta' });
         t.si = !!cuerpo.si;
         t.estado = 'trabajando';
         t.pregunta = null;
@@ -1208,5 +1229,132 @@ test('la app ve qué versión del estado es y un paso que no se hizo no cuenta (
     );
   } finally {
     await nodo.cerrar();
+  }
+});
+
+test('el sí es de la pregunta de ESA tarea: un id de otra tarea no aprueba aunque el nodo no lo revise, y la propuesta mostrada viaja al nodo (AUR02)', async () => {
+  // Cada tarea pregunta algo distinto; el nodo de mentira NO revisa a qué pregunta va el sí (lo tiene que revisar el servidor).
+  const nodo = await nodoAgente({
+    caps: CAPS,
+    conPropuesta: true,
+    sinRevisar: true,
+    guion: (t) => {
+      if (t.si === undefined && t.consultas >= 1) {
+        t.estado = 'confirmar';
+        t.pregunta = t.n === 1 ? '¿Envío el borrador X a ana@example.test?' : '¿Envío el borrador Y a bruno@example.test?';
+      }
+    },
+  });
+  try {
+    await conNodo(nodo.url, () =>
+      conAvisos(async (vistos) =>
+        conRutas(async (como) => {
+          const a = await encargarTarea({ instruccion: 'Entra al correo y envía el borrador X a ana@example.test', quien: 'jose@x.hn', motor: 'holo', esperaMs: 0 });
+          const b = await encargarTarea({ instruccion: 'Entra al correo y envía el borrador Y a bruno@example.test', quien: 'jose@x.hn', motor: 'holo', esperaMs: 0 });
+          await hasta(() => vistos.filter((v) => v.aviso.fase === 'confirmar').length >= 2);
+          const pa = (await como('jose@x.hn', `/api/computadora/tareas/${a.id}`)).j.mision.preguntaId;
+          const pb = (await como('jose@x.hn', `/api/computadora/tareas/${b.id}`)).j.mision.preguntaId;
+          assert.ok(pa && pb && pa !== pb);
+          const confirmarDe = (id: string | null) => nodo.pedidos.filter((x) => x.ruta === `POST /tareas/${id}/confirmar`);
+          // El sí de la pregunta de Ana mandado a la tarea de Bruno (id manipulado): no se aprueba ni llega al nodo.
+          const mal = await como('jose@x.hn', `/api/computadora/tareas/${b.id}/confirmar`, { method: 'POST', body: JSON.stringify({ si: true, preguntaId: pa }) });
+          assert.equal(mal.code, 409);
+          assert.equal(confirmarDe(b.id).length, 0, 'el servidor no la manda');
+          assert.equal(nodo.tareas.get(b.id!)!.si, undefined);
+          // Otra persona: ni la ve.
+          assert.equal((await como('ana@x.hn', `/api/computadora/tareas/${a.id}/confirmar`, { method: 'POST', body: JSON.stringify({ si: true, preguntaId: pa }) })).code, 404);
+          // La de verdad: el nodo recibe la pregunta y la propuesta que se mostró.
+          const propuesta = nodo.tareas.get(a.id!)!.propuesta;
+          assert.ok(propuesta);
+          const ok = await como('jose@x.hn', `/api/computadora/tareas/${a.id}/confirmar`, { method: 'POST', body: JSON.stringify({ si: true, preguntaId: pa }) });
+          assert.equal(ok.code, 200);
+          assert.deepEqual(confirmarDe(a.id).at(-1)!.cuerpo, { si: true, pregunta_id: pa, propuesta });
+        })
+      )
+    );
+  } finally {
+    await nodo.cerrar();
+  }
+});
+
+test('detener: «paré» solo cuando la computadora quedó quieta; si un toque ya salió, se dice que está terminando (AUR03)', async () => {
+  const { comandoComputadora } = await import('../server/computadora');
+  for (const fase of ['draining', 'quiescent'] as const) {
+    const nodo = await nodoAgente({ caps: CAPS, parada: fase, guion: () => undefined });
+    try {
+      await conNodo(nodo.url, () =>
+        conAvisos(async () =>
+          conRutas(async (como) => {
+            const r = await encargarTarea({ instruccion: 'Entra a x.hn y lee', quien: 'jose@x.hn', motor: 'holo', esperaMs: 0 });
+            const h = (await comandoComputadora('jose@x.hn', 'para'))!;
+            if (fase === 'draining') {
+              assert.doesNotMatch(h, /paré/);
+              assert.match(h, /está terminando una acción que ya había empezado/);
+            } else assert.match(h, /^HARNESS computadora: paré/);
+            const p = await como('jose@x.hn', `/api/computadora/tareas/${r.id}/parar`, { method: 'POST', body: '{}' });
+            assert.equal(p.code, 200);
+            assert.equal(p.j.fase, fase, 'la app sabe si ya está detenida o terminando');
+          })
+        )
+      );
+    } finally {
+      await nodo.cerrar();
+    }
+  }
+});
+
+test('una consulta que sale antes del final y llega después no reabre hecha→pausada ni avisa lo viejo (AUR04)', async () => {
+  const lento = { activo: false };
+  const nodo = await nodoAgente({ caps: CAPS, guion: () => undefined, demora: (_t, url) => (lento.activo && url.includes('miniaturas=1') ? 500 : 0) });
+  try {
+    await conNodo(nodo.url, () =>
+      conAvisos(async (vistos) =>
+        conRutas(async (como) => {
+          const r = await encargarTarea({ instruccion: 'Entra a x.hn y lee las noticias', quien: 'jose@x.hn', motor: 'holo', esperaMs: 0 });
+          const t = nodo.tareas.get(r.id!)!;
+          t.estado = 'pausada';
+          await hasta(() => vistos.some((v) => v.aviso.fase === 'pausa'));
+          // La app pide la tarea (el nodo la ve pausada, pero la respuesta tarda)…
+          lento.activo = true;
+          const tardia = como('jose@x.hn', `/api/computadora/tareas/${r.id}`);
+          await new Promise((res) => setTimeout(res, 60));
+          // …y mientras, termina y el seguimiento la cierra.
+          t.estado = 'hecha';
+          t.respuesta = 'Listo: tres noticias.';
+          await hasta(() => vistos.some((v) => v.aviso.fase === 'termina'));
+          const avisosAlCerrar = vistos.length;
+          const v = await tardia;
+          assert.equal(v.j.tarea.estado, 'hecha', 'la respuesta vieja no vuelve a poner «pausada»');
+          assert.equal(v.j.mision.final.estado, 'hecha');
+          await new Promise((res) => setTimeout(res, 200));
+          assert.equal(vistos.length, avisosAlCerrar, 'nada viejo se avisa después del final');
+        })
+      )
+    );
+  } finally {
+    await nodo.cerrar();
+  }
+});
+
+test('el seguimiento: su consulta sale, la tarea se cierra mientras tanto, y la respuesta vieja no avisa nada (AUR04)', async () => {
+  const tarde = { activo: false };
+  const nodo2 = await nodoAgente({ caps: CAPS, guion: () => undefined, demora: (_t, url) => (tarde.activo && !url.includes('miniaturas') ? 400 : 0) });
+  try {
+    await conNodo(nodo2.url, () =>
+      conAvisos(async (vistos) => {
+        const r = await encargarTarea({ instruccion: 'Entra a x.hn y lee', quien: 'jose@x.hn', motor: 'holo', esperaMs: 0 });
+        const t = nodo2.tareas.get(r.id!)!;
+        await hasta(() => t.consultas >= 1);
+        tarde.activo = true;
+        t.estado = 'pausada';
+        const antes = t.consultas;
+        await hasta(() => t.consultas > antes);
+        _olvidarEncargos();
+        await new Promise((res) => setTimeout(res, 600));
+        assert.ok(!vistos.some((v) => v.aviso.fase === 'pausa'), 'la consulta vieja no avisa una pausa de una tarea ya cerrada');
+      })
+    );
+  } finally {
+    await nodo2.cerrar();
   }
 });

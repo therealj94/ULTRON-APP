@@ -82,6 +82,8 @@ export class VistaPc {
   id: string | null = null;
   private versiones = new Map<string, number>();
   private versionEstado = 0;
+  /** Las tareas que ya se vieron terminar: un final no se reabre (AUR04). */
+  private terminadas = new Set<string>();
 
   /** Otra tarea: true si de verdad cambió (y con ella la época). */
   elegir(id: string | null): boolean {
@@ -96,14 +98,25 @@ export class VistaPc {
     return { epoca: this.epoca, id: this.id };
   }
 
-  /** ¿Se pinta la respuesta de la tarea `id` (con su `version`, si el servidor la manda) pedida con `b`? */
-  acepta(b: { epoca: number }, id: string, version?: number): boolean {
+  /**
+   * ¿Se pinta la respuesta de la tarea `id` (con su `version`, si el servidor la manda, y su `estado`) pedida con
+   * `b`? Una vez vista terminada, un estado vivo de esa tarea ya no se pinta aunque traiga versión mayor (salió
+   * antes del final y llegó después: «hecha» no vuelve a «pausada»).
+   */
+  acepta(b: { epoca: number }, id: string, version?: number, estado?: EstadoTareaPc | null): boolean {
     if (b.epoca !== this.epoca || id !== this.id) return false;
+    if (estado && trabajando(estado) && this.terminadas.has(id)) return false;
     if (typeof version === 'number' && Number.isFinite(version)) {
       if (version < (this.versiones.get(id) ?? 0)) return false;
       this.versiones.set(id, version);
     }
+    if (estado && !trabajando(estado)) this.terminadas.add(id);
     return true;
+  }
+
+  /** ¿Ya se vio terminar esta tarea? */
+  terminada(id: string): boolean {
+    return this.terminadas.has(id);
   }
 
   /** El estado general (`/api/computadora`) puede elegir otra tarea solo si la vista no cambió mientras iba. */

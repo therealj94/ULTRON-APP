@@ -71,8 +71,15 @@ El servidor lee `capacidades` en `GET /salud` del nodo y solo ofrece lo que el n
 | Captura final con el motor de pago | no | sí (paso `answer` con miniatura) |
 
 Límites honestos:
-- Con el motor de pago (Claude), los clics no traen la descripción del elemento. Ahí la confirmación depende de que Claude use la herramienta (se le pide en el prompt del sistema), y la regla de no pagar es la del prompt.
+- Con el motor de pago (Claude), los clics no traen la descripción del elemento. Ahí la confirmación depende de que Claude use la herramienta (se le pide en el prompt del sistema), y la regla de no pagar es la del prompt. El permiso ligado a la operación exacta (abajo) cubre al motor gratis.
 - El historial vive en la memoria del servidor de AU-RA: se pierde si el servidor se reinicia.
+
+### Permiso exacto, parar con quietud y finales que no se reabren (AUR02, AUR03, AUR04)
+
+- **Permiso exacto (motor gratis):** el sí se liga a la operación canónica (acción, elemento, destinatarios —correos, @usuarios, teléfonos—, importes, la huella del texto escrito en la página desde que se abrió y el dominio), más tarea, dueño, época, `pregunta_id` y caducidad. Queda reservado y se canjea una vez, dentro del candado del escritorio, recalculando la operación en el punto del efecto: un sí de «enviar a Ana» no envía a Bruno, cambiar el texto o el importe pide otra decisión (que dice lo que cambió), dos workers o un replay no lo canjean dos veces, y un efecto que se corta a medias queda `incierto` (no libera el sí para otro destino; repetirlo se pregunta diciendo que quizá ya se hizo). Cada pregunta trae `propuesta` (huella de lo mostrado); el servidor revisa que el `preguntaId` sea el de ESA tarea y la devuelve con el sí.
+- **Parar / tomar / devolver en tres estados:** `fenced` (ningún despacho nuevo) → `draining` (un toque ya despachado termina) → `quiescent` (nada en vuelo bajo la época revocada). `/parar` y `/control` esperan como mucho `ESPERA_QUIETUD_S` (5 s) y, si no alcanzó, contestan `draining` con un id (`GET /tareas/{id}/parada/{pid}`); se completan solos al terminar el toque. La tarea queda `parada` solo con quietud; al tomar o devolver el control y al parar se sueltan teclas y botones del ratón. Lo ya despachado queda con su recibo (`hecho` o `incierto`), no como deshecho.
+- **Finales:** en el nodo y en el servidor un final no se reabre; una consulta que salió antes del final y llega después no cambia nada ni se avisa.
+- **Compatibilidad:** el nodo nuevo no exige campos nuevos (sin `propuesta` acepta el sí por `pregunta_id`, como antes). El servidor nuevo con el nodo viejo: sin `parada`/`fase` en la respuesta dice «paré» como antes. Orden recomendado: servidor y nodo juntos; si no, primero el servidor (espera 12 s en parar/control, más que los 5 s del nodo; el servidor viejo espera 8 s).
 
 ## Desplegar el servicio nuevo en la instancia
 
@@ -93,6 +100,8 @@ También vale correr de nuevo `instalar.sh`, que copia `agente.py` y reinicia el
 Variables opcionales en `/etc/computadora.env`:
 - `ESPERA_CONFIRMACION_S`: cuánto espera su sí. Por omisión, 600.
 - `PAUSA_MAX_S`: cuánto puede durar una pausa o el control. Por omisión, 1800.
+- `PERMISO_VALE_S`: cuánto vale un sí antes de canjearse. Por omisión, 120.
+- `ESPERA_QUIETUD_S`: lo más que parar, pausar o tomar/devolver el control esperan al toque en vuelo antes de contestar `draining`. Por omisión, 5.
 
 ## Pruebas
 
