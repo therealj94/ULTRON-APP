@@ -375,6 +375,8 @@ export type ReciboOperacion = {
   proveedor?: string;
   referencia?: string;
   detalle?: string;
+  /** AUR13 (lib/envios.ts): aceptado por el proveedor / entregado si consta / fallido / incierto. Opcional. */
+  entrega?: 'aceptado' | 'entregado' | 'fallido' | 'incierto';
   observado: number;
 };
 export type Operacion = {

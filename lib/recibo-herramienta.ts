@@ -32,6 +32,16 @@ export type ReciboHerramienta = {
   durable?: boolean;
   incompleto?: boolean;
   codigo?: string;
+  /**
+   * AUR13: lo que se sabe de la ENTREGA de un envío (correo, WhatsApp, aviso): `aceptado` (el proveedor lo tomó;
+   * no prueba que llegó ni que lo leyeron), `entregado` (solo si el proveedor lo confirma), `fallido` (no salió) o
+   * `incierto` (pudo haber salido; se reconcilia, no se repite a ciegas).
+   */
+  entrega?: 'aceptado' | 'entregado' | 'fallido' | 'incierto';
+  /** AUR13: el operationId del registro durable (lib/envios.ts), estable por borrador aprobado. */
+  operacion?: string;
+  /** AUR13: la operación ya existía (reintento, otra réplica): no se volvió a hacer. */
+  repetido?: boolean;
 };
 
 /** Lo que devuelve una herramienta con su estado: el texto va al modelo; el estado y el recibo, a la traza y al turno. */

@@ -24,6 +24,8 @@ process.env.ULTRON_PUSH_DIR = path.join(dir, 'push');
 process.env.ULTRON_SESIONES_CERRADAS_ARCHIVO = path.join(dir, 'cerradas.json');
 process.env.ULTRON_SESION_SECRETO = 'secreto-de-prueba-largo-para-los-avisos-de-aura';
 process.env.ULTRON_MEMORIA_BUCKET = '';
+// De quién es cada token (AUR13) va al registro durable (lib/durable.ts sin S3): también en el temporal.
+process.env.ULTRON_DURABLE_DIR = path.join(dir, 'durable');
 delete process.env.FIREBASE_SERVICE_ACCOUNT;
 after(() => fs.rmSync(dir, { recursive: true, force: true }));
 
@@ -387,6 +389,63 @@ test('rutas: «probar» es de la junta y solo llega a los teléfonos de la propi
   r = await post('/api/push/probar', jose.token, {});
   assert.equal(r.status, 503);
   assert.equal((await estado(jose.token)).configurado, false);
+});
+
+/* ── AUR13: aceptado no es entregado; la cuenta cambiada no recibe avisos ajenos ──────── */
+
+test('AUR13: un push aceptado por Firebase se cuenta como «aceptado», nunca como «entregado» (resultado y ruta de prueba)', async () => {
+  conCuenta();
+  const c = correo();
+  await P.registrarToken(c, { token: tok('acept'), aparato: 'tel-acept' });
+  const r = await P.enviarPush(c, { tipo: 'mensaje', texto: 'hola' });
+  assert.equal(r.aceptados, 1);
+  assert.equal(r.entrega, 'aceptado');
+  assert.doesNotMatch(JSON.stringify(r), /entregad/i);
+  respuestaFcm = () => ({ status: 503, json: { error: { status: 'UNAVAILABLE' } } });
+  const f = await P.enviarPush(c, { tipo: 'mensaje', texto: 'hola' });
+  assert.deepEqual([f.aceptados, f.entrega], [0, 'fallido']);
+  respuestaFcm = () => ({ status: 200, json: { name: 'projects/aura-fp/messages/1' } });
+  const sin = await P.enviarPush(correo(), { tipo: 'mensaje', texto: 'hola' });
+  assert.equal(sin.entrega, 'sin-destino');
+  // La ruta de prueba de la junta lo dice igual.
+  await P.registrarToken('jose.push@ordenglobal.org', { token: tok('jose-tel'), aparato: 'tel-jose' });
+  const pr = await post('/api/push/probar', jose.token, {});
+  const j = (await pr.json()) as any;
+  assert.equal(j.aceptados, 1);
+  assert.equal(j.entrega, 'aceptado');
+  assert.match(j.nota, /no confirma que el teléfono lo mostró/);
+  assert.doesNotMatch(JSON.stringify(j), /entregad/i);
+});
+
+test('AUR13: el teléfono que pasa de una cuenta a otra deja de recibir los avisos de la primera (Firebase)', async () => {
+  conCuenta();
+  const ana = correo();
+  const beto = correo();
+  const T = tok('compartido');
+  await P.registrarToken(ana, { token: T, aparato: 'tel-compartido' });
+  // En el mismo teléfono entra Beto (Ana no alcanzó a quitar su token al salir).
+  await P.registrarToken(beto, { token: T, aparato: 'tel-compartido' });
+  envios = [];
+  const r = await P.enviarPush(ana, { tipo: 'mensaje', texto: 'Lo privado de Ana' });
+  assert.equal(envios.filter((e) => e.token === T).length, 0, 'lo de Ana no llega al teléfono que ahora es de Beto');
+  assert.equal(r.aceptados, 0);
+  // La marca guarda solo hashes (ni token ni correo): la cuenta vieja se poda al primer aviso que intenta.
+  const dAna = await P.dispositivosDe(ana);
+  assert.ok(dAna.ok && !dAna.dispositivos.some((d) => d.token === T), 'el token ya no está en la cuenta de Ana');
+  await P.enviarPush(beto, { tipo: 'mensaje', texto: 'Lo de Beto' });
+  assert.deepEqual(envios.map((e) => e.token), [T]);
+  // Y aunque la cuenta vieja todavía lo tuviera guardado (no se pudo quitar), al mandar se mira de quién es ahora.
+  await P._meterSinDueno(ana, { token: T, aparato: 'tel-compartido' });
+  envios = [];
+  await P.enviarPush(ana, { tipo: 'mensaje', texto: 'Lo privado de Ana' });
+  assert.equal(envios.length, 0, 'el guardado viejo no gana al dueño actual del token');
+  const dAna2 = await P.dispositivosDe(ana);
+  assert.ok(dAna2.ok && !dAna2.dispositivos.some((d) => d.token === T), 'y se poda de la cuenta vieja');
+  // Si Ana vuelve a entrar en ese teléfono, vuelve a ser suyo (y Beto deja de recibir ahí).
+  await P.registrarToken(ana, { token: T, aparato: 'tel-compartido' });
+  envios = [];
+  await P.enviarPush(beto, { tipo: 'mensaje', texto: 'Lo de Beto' });
+  assert.equal(envios.length, 0);
 });
 
 /* ── el teléfono: qué hace con cada aviso (mobile/src/push/logica.ts, puro) ────────────── */

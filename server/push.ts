@@ -23,6 +23,7 @@ import { nivelDeCorreo } from './nivel';
 import { aparatoValido } from '../lib/acciones-app';
 import { avisarPush, claveRelevoValida, correoDeRef, dispositivosDe, enviarPush, PushNoDisponible, pushConfigurado, quitarToken, refRelevo, registrarToken, tokenValido } from '../lib/push';
 import { desuscribirWeb, pushWebConfigurado, PushWebNoDisponible, suscribirWeb, suscripcionesDe, vapid } from '../lib/push-web';
+import { primeraVezEvento } from '../lib/envios';
 
 export {
   avisarComputadoraPorPush,
@@ -101,7 +102,18 @@ export function montarRutasPush(app: express.Express, deps: Partial<DepsPush> = 
     if (d.nivelDe!(correo) !== 'junta') return res.status(403).json({ error: 'La prueba de avisos es de la junta directiva.', code: 'solo_junta', honesto: true });
     if (!pushConfigurado() && !pushWebConfigurado()) return res.status(503).json({ error: 'Los avisos no están configurados en el servidor (falta FIREBASE_SERVICE_ACCOUNT o el par VAPID).', code: 'push_sin_configurar', honesto: true });
     const r = await enviarPush(correo, { tipo: 'mensaje', titulo: 'AURA', texto: 'Prueba de avisos: si ves esto con la app cerrada, ya te puedo alcanzar.' });
-    return res.status(r.enviados ? 200 : 502).json({ ok: r.enviados > 0, enviados: r.enviados, fallidos: r.fallidos, quitados: r.quitados, ...(r.detalle ? { detalle: r.detalle } : {}), honesto: true });
+    // AUR13: Firebase / Web Push solo dicen que lo aceptaron; si el teléfono lo mostró, solo lo sabe quien lo mira.
+    return res.status(r.enviados ? 200 : 502).json({
+      ok: r.enviados > 0,
+      enviados: r.enviados,
+      aceptados: r.aceptados,
+      entrega: r.entrega,
+      nota: 'Aceptado por el servicio de avisos (Firebase o Web Push): no confirma que el teléfono lo mostró.',
+      fallidos: r.fallidos,
+      quitados: r.quitados,
+      ...(r.detalle ? { detalle: r.detalle } : {}),
+      honesto: true,
+    });
   });
 
   /*
@@ -128,6 +140,9 @@ export function montarRutasPush(app: express.Express, deps: Partial<DepsPush> = 
     if (!claveRelevoValida(req.headers.authorization)) return res.status(401).json({ error: 'clave incorrecta' });
     const correo = correoDeRef(req.body?.ref);
     if (!correo) return res.status(404).json({ error: 'referencia desconocida' });
+    // AUR13: el relevo que reentrega el MISMO evento (mismo `id`) no es otro aviso. Sin id, como siempre.
+    const idEvento = typeof req.body?.id === 'string' || typeof req.body?.id === 'number' ? String(req.body.id).slice(0, 120) : '';
+    if (idEvento && !(await primeraVezEvento('relevo', correo, idEvento))) return res.json({ ok: true, repetido: true });
     const llamada = req.body?.tipo === 'llamada';
     const ahora = Date.now();
     if (!llamada && ahora - (ultimoAvisoChat.get(correo) || 0) < 8_000) return res.json({ ok: true, agrupado: true });
@@ -140,7 +155,7 @@ export function montarRutasPush(app: express.Express, deps: Partial<DepsPush> = 
       texto: llamada ? 'Te están llamando en PULSE2CHAT' : 'Tienes un mensaje nuevo en PULSE2CHAT',
       abrir: 'chats',
     });
-    return res.json({ ok: r.enviados > 0, enviados: r.enviados });
+    return res.json({ ok: r.enviados > 0, enviados: r.enviados, aceptados: r.aceptados, entrega: r.entrega });
   });
 
   app.get('/api/push/estado', d.exigirMesa, d.limitar(30, 60_000, 'push-estado'), async (req, res) => {

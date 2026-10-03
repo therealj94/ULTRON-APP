@@ -19,6 +19,8 @@ import path from 'node:path';
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'push-web-'));
 process.env.ULTRON_PUSH_WEB_DIR = dir;
 process.env.ULTRON_PUSH_DIR = path.join(dir, 'fcm');
+// De quién es cada suscripción (AUR13) va al registro durable (lib/durable.ts sin S3): también en el temporal.
+process.env.ULTRON_DURABLE_DIR = path.join(dir, 'durable');
 after(() => fs.rmSync(dir, { recursive: true, force: true }));
 for (const k of ['ULTRON_MEMORIA_BUCKET', 'FIREBASE_SERVICE_ACCOUNT']) delete process.env[k];
 
@@ -225,6 +227,35 @@ test('rutas: la llave pública sin sesión; suscribir y quitar SOLO con la sesi�
       assert.equal((await q.json()).quitados, 1);
     } finally {
       srv.close();
+    }
+  });
+});
+
+test('AUR13: el navegador que pasa de una cuenta a otra deja de recibir los avisos de la primera; aceptado no es entregado', async () => {
+  await conVapid(async () => {
+    W._olvidarPushWeb();
+    const n = navegador('https://web.push.apple.com/compartido');
+    await W.suscribirWeb('dora@x.hn', n.sus, 'ipad-casa');
+    // En el mismo navegador entra Eli (Dora no alcanzó a quitar la suscripción).
+    await W.suscribirWeb('eli@x.hn', n.sus, 'ipad-casa');
+    const s = conServicio(() => 201);
+    try {
+      const r = await W.enviarPushWeb('dora@x.hn', { tipo: 'mensaje', titulo: 'AURA', texto: 'Lo privado de Dora', para: P.seudonimoDe('dora@x.hn'), enviado: Date.now() }, { ttlS: 60 });
+      assert.equal(s.llegados.length, 0, 'lo de Dora no llega al navegador que ahora es de Eli');
+      assert.equal(r.aceptados, 0);
+      const d = await W.suscripcionesDe('dora@x.hn');
+      assert.ok(d.ok && d.suscripciones.length === 0, 'y la suscripción se podó de la cuenta de Dora');
+      // Aunque la cuenta vieja todavía lo tuviera guardado, al mandar se mira de quién es ahora.
+      await W._meterSinDueno('dora@x.hn', n.sus, 'ipad-casa');
+      await W.enviarPushWeb('dora@x.hn', { tipo: 'mensaje', titulo: 'AURA', texto: 'Lo privado de Dora', para: P.seudonimoDe('dora@x.hn'), enviado: Date.now() }, { ttlS: 60 });
+      assert.equal(s.llegados.length, 0);
+      const e = await W.enviarPushWeb('eli@x.hn', { tipo: 'mensaje', titulo: 'AURA', texto: 'Lo de Eli', para: P.seudonimoDe('eli@x.hn'), enviado: Date.now() }, { ttlS: 60 });
+      assert.equal(s.llegados.length, 1);
+      // 201 del servicio = aceptado (no «entregado»: el servicio no avisa si el aparato lo mostró).
+      assert.deepEqual([e.aceptados, e.entrega], [1, 'aceptado']);
+      assert.doesNotMatch(JSON.stringify(e), /entregad/i);
+    } finally {
+      s.soltar();
     }
   });
 });

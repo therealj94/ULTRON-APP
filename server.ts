@@ -60,6 +60,7 @@ import { redirigirADominio } from './server/dominio';
 import { quitarExpresiones } from './lib/expresiones';
 import { puntoDeCorte } from './lib/trozos';
 import { claveTurno, efectoDelTurno, enTurnoUnico, reclamarTurno, type TurnoGuardado } from './server/turno-unico';
+import { primeraVezEvento } from './lib/envios';
 import { respuestaFija } from './lib/respuestas-fijas';
 import {
   alAvisarApp,
@@ -4938,6 +4939,10 @@ app.post(['/api/telegram/webhook', '/api/telegram/webhook/'], limitar(40), async
   if (!telegramWebhookSecretOk(req.headers['x-telegram-bot-api-secret-token'])) {
     return res.status(401).json({ ok: false, honesto: true });
   }
+  // AUR13: Telegram reentrega el mismo update si no recibió el 200 a tiempo: el mismo update_id (de este bot) se
+  // procesa una vez. Sin update_id, o si el almacén no contesta, se procesa (perder un mensaje es peor).
+  const botId = clave('telegram_token').split(':')[0] || 'bot';
+  if (!(await primeraVezEvento('telegram', `bot-${botId}`, String(req.body?.update_id ?? '')))) return res.json({ ok: true, repetido: true, honesto: true });
   res.json({ ok: true, honesto: true });
   try {
     await procesarTelegram(req.body);

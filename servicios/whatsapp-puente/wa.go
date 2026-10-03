@@ -238,7 +238,7 @@ func (c *CuentaWA) cliente() *whatsmeow.Client {
 	return c.cli
 }
 
-func (c *CuentaWA) Enviar(chat, texto string) (Mensaje, error) {
+func (c *CuentaWA) Enviar(chat, texto, id string) (Mensaje, error) {
 	cli := c.cliente()
 	if !cli.IsLoggedIn() {
 		return Mensaje{}, ErrSinVincular
@@ -251,7 +251,12 @@ func (c *CuentaWA) Enviar(chat, texto string) (Mensaje, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	// Al número o al LID, da igual: whatsmeow busca el LID del número si hace falta.
-	r, err := cli.SendMessage(ctx, jid, &waE2E.Message{Conversation: proto.String(texto)})
+	// Con el id que pide AU-RA (AUR13), el mensaje lleva ese id en WhatsApp: se puede reconciliar y no se duplica.
+	var extra []whatsmeow.SendRequestExtra
+	if id != "" {
+		extra = append(extra, whatsmeow.SendRequestExtra{ID: types.MessageID(id)})
+	}
+	r, err := cli.SendMessage(ctx, jid, &waE2E.Message{Conversation: proto.String(texto)}, extra...)
 	if err != nil {
 		return Mensaje{}, fmt.Errorf("WhatsApp no lo mandó: %w", err)
 	}

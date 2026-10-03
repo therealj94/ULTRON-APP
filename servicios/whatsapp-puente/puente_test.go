@@ -366,6 +366,7 @@ func TestCacheFotos(t *testing.T) {
 type cuentaFalsa struct {
 	estado   EstadoCuenta
 	enviados []string
+	ids      []string
 	leidos   []string
 	errEnvio error
 	alm      *Almacen
@@ -422,12 +423,19 @@ func (c *cuentaFalsa) VincularCodigo(tel string) (string, error) {
 	}
 	return "ABCD-EFGH", nil
 }
-func (c *cuentaFalsa) Enviar(chat, texto string) (Mensaje, error) {
+func (c *cuentaFalsa) Enviar(chat, texto, id string) (Mensaje, error) {
 	if c.errEnvio != nil {
 		return Mensaje{}, c.errEnvio
 	}
 	c.enviados = append(c.enviados, chat+"|"+texto)
-	return Mensaje{ID: "E1", Chat: chat, Mio: true, Texto: texto, Tipo: "texto", Hora: ahoraMs()}, nil
+	c.ids = append(c.ids, id)
+	if id == "" {
+		id = "E1"
+	}
+	m := Mensaje{ID: id, Chat: chat, Mio: true, Texto: texto, Tipo: "texto", Hora: ahoraMs()}
+	// Como la de verdad: lo mandado queda en el almacén.
+	_, _ = c.alm.GuardarMensaje(m, nil, nil)
+	return m, nil
 }
 
 const claveDePrueba = "clave-de-prueba-de-24-caracteres"
@@ -512,6 +520,25 @@ func TestAPI(t *testing.T) {
 	}
 	if c, _ := pedir(t, h, "POST", "/enviar", claveDePrueba, map[string]string{"chat": "x", "texto": strings.Repeat("a", 4001)}); c != 400 {
 		t.Fatal("enviar muy largo")
+	}
+	// AUR13: con el id estable de la operación, el mismo mensaje no sale dos veces y se puede buscar por id.
+	id := "3EB0ABCDEF0123456789AB"
+	c, j = pedir(t, h, "POST", "/enviar", claveDePrueba, map[string]string{"chat": "504@s.whatsapp.net", "texto": "Una sola vez", "id": id})
+	if c != 200 || len(cuenta.enviados) != 2 || cuenta.ids[len(cuenta.ids)-1] != id {
+		t.Fatalf("enviar con id: %d %v %v", c, j, cuenta.ids)
+	}
+	c, j = pedir(t, h, "POST", "/enviar", claveDePrueba, map[string]string{"chat": "504@s.whatsapp.net", "texto": "Una sola vez", "id": id})
+	if c != 200 || len(cuenta.enviados) != 2 || j["repetido"] != true {
+		t.Fatalf("el mismo id no sale otra vez: %d %v %v", c, j, cuenta.enviados)
+	}
+	if c, j := pedir(t, h, "GET", "/mensaje?id="+id, claveDePrueba, nil); c != 200 || j["mensaje"].(map[string]any)["id"] != id {
+		t.Fatalf("buscar por id: %d %v", c, j)
+	}
+	if c, _ := pedir(t, h, "GET", "/mensaje?id=3EB0FFFFFFFFFFFFFFFFFF", claveDePrueba, nil); c != 404 {
+		t.Fatal("un id que no se mandó: 404")
+	}
+	if c, _ := pedir(t, h, "POST", "/enviar", claveDePrueba, map[string]string{"chat": "504@s.whatsapp.net", "texto": "x", "id": "../../malo"}); c != 400 {
+		t.Fatal("un id con otra forma se rechaza")
 	}
 	cuenta.errEnvio = ErrSinVincular
 	if c, _ := pedir(t, h, "POST", "/enviar", claveDePrueba, map[string]string{"chat": "x", "texto": "hola"}); c != 412 {

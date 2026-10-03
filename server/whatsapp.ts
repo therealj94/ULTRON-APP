@@ -26,10 +26,12 @@
 import type express from 'express';
 import { clave } from '../lib/boveda';
 import { personaPorCorreoExacto } from '../lib/acceso';
-import { decidirBorrador, fechaHN, motivoBorrador, vigenciaNueva, type VigenciaBorrador } from './correo';
+import crypto from 'node:crypto';
+import { decidirBorradorConEstado, fechaHN, motivoBorrador, vigenciaNueva, type VigenciaBorrador } from './correo';
 import { iniciarTarea, marcarPaso } from '../lib/tarea-en-curso';
 import type { RetencionAcciones } from './voz-agente';
-import { exito, fallo, type ResultadoHerramienta } from '../lib/recibo-herramienta';
+import { exito, fallo, incierto, type ResultadoHerramienta } from '../lib/recibo-herramienta';
+import { enviarUnaVez, huellaAprobacion, idMensajeWADeOperacion, operacionDeBorrador, type Reconciliacion, type ResultadoEnvio, type SalidaEnvio } from '../lib/envios';
 
 export type ChatWA = {
   jid: string;
@@ -75,10 +77,19 @@ export function whatsappPermitido(correo: string): boolean {
 export class ErrorPuente extends Error {
   constructor(
     msg: string,
-    public status: number
+    public status: number,
+    /** AUR13: el puente no contestó (caído o tardó): si era un envío, pudo haber salido igual. */
+    public sinRespuesta = false
   ) {
     super(msg);
   }
+}
+
+/** Cuánto se espera al puente al enviar (WhatsApp tarda en confirmar). Las pruebas lo acortan. */
+const TOPES = { enviarMs: 35_000 };
+/** Solo pruebas: topes cortos (`null` vuelve a los de siempre). */
+export function _topesWhatsappDePrueba(t: { enviarMs?: number } | null) {
+  TOPES.enviarMs = t?.enviarMs ?? 35_000;
 }
 
 async function pedir<T = any>(ruta: string, init: RequestInit & { ms?: number } = {}): Promise<T> {
@@ -91,9 +102,15 @@ async function pedir<T = any>(ruta: string, init: RequestInit & { ms?: number } 
       signal: AbortSignal.timeout(init.ms ?? 20_000),
     });
   } catch (e: any) {
-    throw new ErrorPuente(`El puente de WhatsApp no contestó (${String(e?.message || e).slice(0, 80)}).`, 503);
+    throw new ErrorPuente(`El puente de WhatsApp no contestó (${String(e?.message || e).slice(0, 80)}).`, 503, true);
   }
-  const texto = await r.text();
+  let texto = '';
+  try {
+    texto = await r.text();
+  } catch (e: any) {
+    // Contestó la cabecera pero el cuerpo se cortó: no se sabe qué decía.
+    throw new ErrorPuente(`El puente de WhatsApp no terminó de contestar (${String(e?.message || e).slice(0, 80)}).`, 503, true);
+  }
   let j: any = null;
   try {
     j = texto ? JSON.parse(texto) : null;
@@ -108,14 +125,48 @@ export const estadoWA = () => pedir<{ vinculado: boolean; conectado: boolean; nu
 export const chatsWA = (buscar = '', limite = 60) => pedir<{ chats: ChatWA[] }>(`/chats?limite=${limite}${buscar ? `&buscar=${encodeURIComponent(buscar)}` : ''}`).then((j) => j.chats);
 export const mensajesWA = (chat: string, limite = 60, antes = 0) =>
   pedir<{ chat: ChatWA; mensajes: MensajeWA[] }>(`/mensajes?chat=${encodeURIComponent(chat)}&limite=${limite}${antes ? `&antes=${antes}` : ''}`);
-export const enviarWA = (chat: string, texto: string) => pedir<{ mensaje: MensajeWA }>('/enviar', { method: 'POST', body: JSON.stringify({ chat, texto }), ms: 35_000 }).then((j) => j.mensaje);
+export const enviarWA = (chat: string, texto: string, id?: string) => enviarWAConRecibo(chat, texto, id).then((j) => j.mensaje);
+
+/**
+ * Envía con el id estable de la operación (AUR13): el puente lo usa como id del mensaje de WhatsApp y, si ya lo
+ * mandó, no lo manda otra vez (`repetido`). Un puente viejo ignora el id (y devuelve el suyo).
+ */
+export const enviarWAConRecibo = (chat: string, texto: string, id?: string) =>
+  pedir<{ mensaje: MensajeWA; repetido?: boolean }>('/enviar', { method: 'POST', body: JSON.stringify({ chat, texto, ...(id ? { id } : {}) }), ms: TOPES.enviarMs });
+
+/** Un mensaje propio por su id (para reconciliar un envío incierto). null si el puente no lo tiene (o es un puente viejo). */
+export async function mensajeWAPorId(id: string): Promise<MensajeWA | null> {
+  try {
+    return (await pedir<{ mensaje: MensajeWA }>(`/mensaje?id=${encodeURIComponent(id)}`, { ms: 10_000 })).mensaje || null;
+  } catch (e) {
+    if (e instanceof ErrorPuente && e.status === 404) return null;
+    throw e;
+  }
+}
 
 /* ------------------------------------------------------------------ las manos del cerebro */
 
 const LISTAS = new Map<string, ChatWA[]>();
-type Borrador = { chat: string; nombre: string; texto: string; creado: number };
-/** Guardado con su dueño, su vencimiento y su intento: el «sí» manda ESE mensaje a ESE chat (auditoría 3-oct, COM01). */
-type BorradorGuardado = Borrador & VigenciaBorrador;
+type Borrador = {
+  chat: string;
+  nombre: string;
+  texto: string;
+  creado: number;
+  /** AUR13: el número de la cuenta de WhatsApp vinculada cuando se armó (la cuenta remitente). */
+  cuenta?: string;
+};
+/**
+ * Guardado con su dueño, su vencimiento y su intento: el «sí» manda ESE mensaje a ESE chat (auditoría 3-oct, COM01)
+ * desde ESA cuenta (AUR13: `huella` de chat, texto y cuenta; `repeticionAceptada` como en el correo).
+ */
+type BorradorGuardado = Borrador & VigenciaBorrador & { huella: string; repeticionAceptada?: string };
+
+const digitos = (s: string | undefined) => String(s || '').replace(/\D/g, '');
+
+/** La huella de un mensaje (AUR13, sección 10): el chat, el texto y la cuenta remitente. */
+export function huellaWhatsapp(b: Pick<Borrador, 'chat' | 'texto' | 'cuenta'>): string {
+  return huellaAprobacion('whatsapp', { chat: String(b.chat || '').trim().toLowerCase(), texto: String(b.texto || '').trim(), cuenta: digitos(b.cuenta) });
+}
 const BORRADORES = new Map<string, BorradorGuardado>();
 const BORRADOR_VIVE_MS = 15 * 60_000;
 const llave = (quien: string, ambito = '') => `${normal(quien)}|${String(ambito || 'general').slice(0, 80)}`;
@@ -206,12 +257,17 @@ function lineaChat(c: ChatWA, i: number): string {
   return `${i + 1}. ${c.nombre || c.jid}${c.grupo ? ' (grupo)' : ''}${c.noLeidos ? ` — ${c.noLeidos} sin leer` : ''} — ${quien}«${c.ultimo.slice(0, 120)}» (${hora(c.hora)})`;
 }
 
+/** Cuántos chats se le piden al puente al revisar (los más recientes). */
+const CHATS_REVISAR = 40;
+
 async function revisar(quien: string, ambito: string): Promise<ResultadoHerramienta> {
-  const chats = await chatsWA('', 40);
+  const chats = await chatsWA('', CHATS_REVISAR);
   const sinLeer = chats.filter((c) => c.noLeidos > 0);
   const lista = (sinLeer.length ? sinLeer : chats).slice(0, 10);
   LISTAS.set(llave(quien, ambito), lista);
   if (!lista.length) return exito('WHATSAPP: no hay chats todavía (si acaba de vincularlo, la historia tarda unos minutos en llegar).', { efecto: 'ninguno', proveedor: 'whatsapp' });
+  // Cobertura honesta (AUR13): cuántos chats se miraron, nunca «todos tus mensajes».
+  const cobertura = `COBERTURA: miré los ${chats.length} chats más recientes que da el puente${chats.length >= CHATS_REVISAR ? ' (puede haber más, más viejos)' : ''}. No digas que revisaste todo su WhatsApp.`;
   const que = sinLeer.length ? `${sinLeer.length} con mensajes sin leer` : 'nada sin leer; los más recientes';
   // Varios chats sin leer: una tarea de varios pasos que se lleva hasta el final (lib/tarea-en-curso.ts).
   let tarea = '';
@@ -220,21 +276,22 @@ async function revisar(quien: string, ambito: string): Promise<ResultadoHerramie
     if (t) tarea = `\nTAREA EN CURSO: «${t.titulo}». Llévalos uno por uno hasta el último (o hasta que diga que ya).`;
   }
   return exito(
-    `WHATSAPP (${que}; horas de Honduras):\n${lista.map(lineaChat).join('\n')}\nCÓMO DECIRLO: de quién son y cuántos sin leer, con su número; pregúntale cuál le lees primero. Para abrir uno: whatsapp leer <número o nombre>.\n${AVISO_AJENO}${tarea}`,
-    { efecto: 'ninguno', proveedor: 'whatsapp' }
+    `WHATSAPP (${que}; horas de Honduras):\n${lista.map(lineaChat).join('\n')}\n${cobertura}\nCÓMO DECIRLO: de quién son y cuántos sin leer, con su número; pregúntale cuál le lees primero. Para abrir uno: whatsapp leer <número o nombre>.\n${AVISO_AJENO}${tarea}`,
+    { efecto: 'ninguno', proveedor: 'whatsapp', ...(chats.length >= CHATS_REVISAR ? { incompleto: true } : {}) }
   );
 }
 
 async function buscar(quien: string, ambito: string, texto: string): Promise<ResultadoHerramienta> {
   const j = await pedir<{ mensajes: MensajeWA[] }>(`/buscar?q=${encodeURIComponent(texto)}&limite=12`);
-  if (!j.mensajes.length) return exito(`WHATSAPP: nada con «${texto}».`, { efecto: 'ninguno', proveedor: 'whatsapp' });
+  if (!j.mensajes.length) return exito(`WHATSAPP: nada con «${texto}» (en lo que el puente tiene guardado).`, { efecto: 'ninguno', proveedor: 'whatsapp' });
   const chats = await chatsWA('', 100);
   const nombre = (jid: string) => chats.find((c) => c.jid === jid)?.nombre || jid;
+  const tope = j.mensajes.length >= 12;
   return exito(
     `WHATSAPP (buscando «${texto}»):\n${j.mensajes
       .map((m) => `· ${nombre(m.chat)} — ${m.mio ? 'tú' : m.nombreDe || 'ellos'} (${hora(m.hora)}): «${m.texto.slice(0, 200)}»`)
-      .join('\n')}\n${AVISO_AJENO}`,
-    { efecto: 'ninguno', proveedor: 'whatsapp' }
+      .join('\n')}\nCOBERTURA: ${tope ? 'las 12 coincidencias más recientes; puede haber más' : `${j.mensajes.length} coincidencias`} en lo que el puente tiene guardado.\n${AVISO_AJENO}`,
+    { efecto: 'ninguno', proveedor: 'whatsapp', ...(tope ? { incompleto: true } : {}) }
   );
 }
 
@@ -273,7 +330,7 @@ async function leer(quien: string, ambito: string, ref: string): Promise<Resulta
 function guardarBorrador(quien: string, ambito: string, b: Borrador): ResultadoHerramienta {
   if (!b.texto.trim()) return fallo('WHATSAPP: el borrador vino vacío. Pregúntale qué quiere decir.', 'falta-dato');
   const vigencia = vigenciaNueva(quien, b.creado, BORRADOR_VIVE_MS);
-  BORRADORES.set(llave(quien, ambito), { ...b, ...vigencia });
+  BORRADORES.set(llave(quien, ambito), { ...b, ...vigencia, huella: huellaWhatsapp(b) });
   return exito(`BORRADOR DE WHATSAPP (NO enviado) para ${b.nombre}:\n${b.texto}\nLéeselo tal cual y pregúntale si lo mandas. Solo se manda si dice que sí; si quiere cambios, haz otro borrador.`, {
     efecto: 'borrador',
     proveedor: 'whatsapp',
@@ -282,12 +339,12 @@ function guardarBorrador(quien: string, ambito: string, b: Borrador): ResultadoH
   });
 }
 
-async function responder(quien: string, ambito: string, ref: string, texto: string): Promise<ResultadoHerramienta> {
+async function responder(quien: string, ambito: string, ref: string, texto: string, cuenta?: string): Promise<ResultadoHerramienta> {
   const c = await chatDeRef(quien, ambito, ref);
   if (typeof c === 'string') return fallo(c.replace('Revisa primero (whatsapp revisar) o dime el nombre', 'Pídele el nombre'), 'referencia');
   const lista = LISTAS.get(llave(quien, ambito)) || [];
   const i = lista.findIndex((x) => x.jid === c.jid);
-  const borrador = guardarBorrador(quien, ambito, { chat: c.jid, nombre: c.nombre || c.jid, texto: texto.trim(), creado: Date.now() });
+  const borrador = guardarBorrador(quien, ambito, { chat: c.jid, nombre: c.nombre || c.jid, texto: texto.trim(), creado: Date.now(), ...(cuenta ? { cuenta } : {}) });
   // El paso queda «contestado» solo si el borrador quedó.
   const avance = i >= 0 && borrador.estado === 'succeeded' ? marcarPaso(quien, ambito, 'whatsapp', i, 'hecho', 'contestado').texto : '';
   return avance ? { ...borrador, texto: `${borrador.texto}\n${avance}` } : borrador;
@@ -319,10 +376,15 @@ export function borradorWhatsappDe(quien: string, ambito = ''): BorradorGuardado
 
 /** Al empezar el turno: el «sí» o el «no» al borrador de WhatsApp lo resuelve el servidor (no el modelo). */
 export async function resolverBorradorWhatsapp(quien: string, ambito: string, mensaje: string, retener?: RetencionAcciones): Promise<string | null> {
+  return (await resolverBorradorWhatsappConEstado(quien, ambito, mensaje, retener))?.texto ?? null;
+}
+
+/** Lo mismo, con el estado y el recibo del envío (AUR13: aceptado / fallido / incierto, con su operationId). */
+export async function resolverBorradorWhatsappConEstado(quien: string, ambito: string, mensaje: string, retener?: RetencionAcciones): Promise<ResultadoHerramienta | null> {
   const b = borradorWhatsappDe(quien, ambito);
   if (!b) return null;
   const k = llave(quien, ambito);
-  return decidirBorrador({
+  return decidirBorradorConEstado({
     quien,
     ambito,
     mensaje,
@@ -334,18 +396,127 @@ export async function resolverBorradorWhatsapp(quien: string, ambito: string, me
     reponer: () => {
       if (!BORRADORES.has(k) && !motivoBorrador(b, quien)) BORRADORES.set(k, b);
     },
-    // Justo antes de mandar (en la voz, un rato después del «sí»): que no haya vencido ni sea de otra sesión.
-    vigente: () => motivoBorrador(b, quien),
-    enviar: async () => {
-      if (!whatsappPermitido(quien)) return 'WHATSAPP: no lo mandé: esta cuenta ya no tiene su WhatsApp.';
+    // Justo antes de mandar (en la voz, un rato después del «sí»): que no haya vencido ni sea de otra sesión, ni que el
+    // plan haya cambiado a otro borrador (AUR13, sección 10: el «sí» era para el de antes).
+    vigente: () => {
+      const motivo = motivoBorrador(b, quien);
+      if (motivo) return motivo;
+      const actual = BORRADORES.get(k);
+      if (actual && actual.intento !== b.intento) return `después de su «sí» el borrador cambió (ahora va para ${actual.nombre}). Ese nuevo espera su propia decisión: léeselo y pregúntale`;
+      return null;
+    },
+    enviar: () => enviarBorradorWhatsappAprobado(quien, b, { ambito }),
+  });
+}
+
+type DatosEnvioWA = { status?: number };
+
+/** ¿El error del puente prueba que NO salió? Un 4xx (o la clave mala) sí; sin respuesta o un 5xx: incierto. */
+function clasificarErrorPuente(e: any): SalidaEnvio<DatosEnvioWA> {
+  const detalle = String(e?.message || e).slice(0, 140);
+  if (e instanceof ErrorPuente && !e.sinRespuesta) {
+    // `pedir` convierte el 401 del puente (clave mala) en 503: el puente no hizo nada.
+    if ((e.status >= 400 && e.status < 500) || (e.status === 503 && !/no contest/.test(e.message))) return { estado: 'failed', detalle, datos: { status: e.status } };
+  }
+  return { estado: 'unknown', detalle, datos: { status: e instanceof ErrorPuente ? e.status : 0 } };
+}
+
+/**
+ * Reconciliar un envío incierto de WhatsApp: el mensaje con el id de la operación (el puente nuevo lo guarda con ese
+ * id); si el puente es viejo (ignora el id), un mensaje propio con el mismo texto en ese chat, de la última media hora.
+ */
+async function reconciliarWA(op: string, chat: string, texto: string): Promise<Reconciliacion> {
+  const id = idMensajeWADeOperacion(op);
+  const porId = await mensajeWAPorId(id).catch(() => null);
+  if (porId && porId.mio) return { encontrado: true, referencia: id, detalle: 'está en el chat' };
+  const { mensajes } = await mensajesWA(chat, 40);
+  const desde = Date.now() - 30 * 60_000;
+  const m = mensajes.find((x) => x.mio && (x.id === id || (String(x.texto || '').trim() === texto.trim() && x.hora >= desde)));
+  return m ? { encontrado: true, referencia: m.id, detalle: 'está en el chat' } : { encontrado: false };
+}
+
+/** El texto y el recibo de un envío de WhatsApp, según lo que pasó (AUR13: decir solo lo que consta). */
+function hechoDeEnvioWA(b: BorradorGuardado, r: ResultadoEnvio<DatosEnvioWA>): ResultadoHerramienta {
+  const recibo = { proveedor: 'whatsapp', referencia: r.referencia, operacion: r.operacion, ...(r.repetido ? { repetido: true } : {}) };
+  const corto = b.texto.slice(0, 200);
+  const aceptado = 'ENTREGA: aceptado por WhatsApp (salió de su cuenta); no consta todavía que le llegó ni que lo leyó. Díselo en una frase (que salió; no digas que ya le llegó).';
+  if (r.motivo === 'aprobacion-no-coincide') return fallo('WHATSAPP: NO se mandó: esa aprobación era para otro mensaje (otro chat, texto o cuenta). Hace falta su decisión otra vez.', 'aprobacion');
+  if (r.motivo === 'almacen') return fallo('WHATSAPP: NO lo mandé: no pude dejar registrado el envío antes de mandarlo (así no se arriesga a salir dos veces). Dile que lo intente en un momento.', 'almacen');
+  if (r.motivo === 'repeticion-incierta') {
+    return fallo(
+      `WHATSAPP: NO lo mandé todavía: un mensaje igual a ${b.nombre} de hace un rato quedó sin confirmar — no sé si salió — y no lo encuentro en el chat. ` +
+        'Para no mandarlo dos veces, pregúntale: si dice «sí» otra vez, lo mando de nuevo (podría llegarle repetido); si dice «no», queda así.',
+      'confirmar-repeticion'
+    );
+  }
+  if (r.estado === 'succeeded') {
+    const conf = { ...recibo, efecto: 'confirmado' as const, entrega: r.entrega || ('aceptado' as const) };
+    if (r.repetido && r.reconciliado) return exito(`WHATSAPP ENVIADO a ${b.nombre}: «${corto}»: ya había salido (lo encontré en el chat), así que no lo volví a mandar. ${aceptado}`, conf);
+    if (r.repetido) return exito(`WHATSAPP ENVIADO a ${b.nombre}: «${corto}»: ya había salido antes (es el mismo borrador aprobado), así que no lo volví a mandar. ${aceptado}`, conf);
+    if (r.reconciliado) return exito(`WHATSAPP ENVIADO a ${b.nombre}: «${corto}». El puente no contestó a tiempo, pero lo comprobé: el mensaje está en el chat. ${aceptado}`, conf);
+    return exito(`WHATSAPP ENVIADO a ${b.nombre}: «${corto}». ${aceptado}`, conf);
+  }
+  if (r.estado === 'unknown') {
+    return incierto(
+      `WHATSAPP: No he podido confirmar el envío a ${b.nombre} («${corto}»). El puente no contestó a tiempo: pudo haber salido o no, y no lo encuentro en el chat. ` +
+        'No lo volví a mandar (para no duplicarlo). Díselo así, con esas palabras; que lo revise en su WhatsApp. Si pide mandarlo otra vez, primero lo vuelvo a buscar.',
+      { ...recibo, entrega: 'incierto' }
+    );
+  }
+  return { texto: `WHATSAPP: NO se pudo mandar (${String(r.detalle || 'sin detalle').slice(0, 140)}). No salió; díselo con honestidad.`, estado: 'failed', recibo: { ...recibo, efecto: 'ninguno', entrega: 'fallido', codigo: 'proveedor' } };
+}
+
+/**
+ * Manda un borrador de WhatsApp ya aprobado (AUR13), una sola vez, por el registro de operaciones (lib/envios.ts):
+ * operationId del borrador, id de mensaje derivado (el puente no lo manda dos veces), revalidación de lo aprobado
+ * (huella, cuenta vinculada) en el punto de efecto y reconciliación por ese id si queda incierto. Exportado para
+ * las pruebas (otra réplica con la misma copia). Con `ambito`, un borrador alterado vuelve como decisión nueva.
+ */
+export async function enviarBorradorWhatsappAprobado(quien: string, b: BorradorGuardado, o: { ambito?: string } = {}): Promise<ResultadoHerramienta> {
+  if (!whatsappPermitido(quien)) return fallo('WHATSAPP: no lo mandé: esta cuenta ya no tiene su WhatsApp.', 'no-disponible');
+  if (!b.huella || huellaWhatsapp(b) !== b.huella) {
+    const k = o.ambito !== undefined ? llave(quien, o.ambito) : '';
+    if (k && !BORRADORES.has(k)) {
+      const { dueno: _d, vence: _v, intento: _i, huella: _h, repeticionAceptada: _r, ...plano } = b;
+      BORRADORES.set(k, { ...plano, ...vigenciaNueva(quien, Date.now(), BORRADOR_VIVE_MS), huella: huellaWhatsapp(b) });
+    }
+    return fallo(`WHATSAPP: NO se mandó: lo que iba a salir ya no es lo que aprobó (cambió el chat, el texto o la cuenta; ahora sería para ${b.nombre}: «${b.texto.slice(0, 120)}»). Hace falta su decisión otra vez: léeselo y pregúntale si lo mandas.`, 'aprobacion');
+  }
+  // La cuenta remitente: la que estaba vinculada cuando se le leyó el borrador.
+  let est: Awaited<ReturnType<typeof estadoWA>>;
+  try {
+    est = await estadoWA();
+  } catch (e: any) {
+    return fallo(`WHATSAPP: NO lo mandé: no pude comprobar su WhatsApp (${String(e?.message || e).slice(0, 100)}). Dile que lo intente en un momento.`, 'proveedor');
+  }
+  if (!est.vinculado) return fallo('WHATSAPP: NO lo mandé: su WhatsApp ya no está vinculado. Dile que lo vuelva a vincular.', 'no-disponible');
+  if (b.cuenta && est.numero && digitos(b.cuenta) !== digitos(est.numero)) {
+    return fallo(`WHATSAPP: NO se mandó: la cuenta de WhatsApp vinculada cambió (el borrador se armó con ${b.cuenta} y ahora está ${est.numero}). Si lo quiere mandar desde la nueva, arma otro borrador y pregúntale.`, 'cuenta-cambiada');
+  }
+  const operacion = operacionDeBorrador('whatsapp', b.intento);
+  const id = idMensajeWADeOperacion(operacion);
+  const r = await enviarUnaVez<DatosEnvioWA>({
+    canal: 'whatsapp',
+    dueno: quien,
+    operacion,
+    huella: b.huella,
+    contenido: b.huella,
+    repeticionAceptada: b.repeticionAceptada,
+    efecto: async () => {
       try {
-        await enviarWA(b.chat, b.texto);
-        return `WHATSAPP ENVIADO a ${b.nombre}: «${b.texto.slice(0, 200)}». Díselo en una frase.`;
-      } catch (e: any) {
-        return `WHATSAPP: NO se pudo mandar (${String(e?.message || e).slice(0, 140)}). Díselo con honestidad.`;
+        const j = await enviarWAConRecibo(b.chat, b.texto, id);
+        return { estado: 'succeeded', entrega: 'aceptado', referencia: j.mensaje?.id || id };
+      } catch (e) {
+        return clasificarErrorPuente(e);
       }
     },
+    reconciliar: (op) => reconciliarWA(op, b.chat, b.texto),
   });
+  if (r.motivo === 'repeticion-incierta' && o.ambito !== undefined) {
+    const k = llave(quien, o.ambito);
+    if (!BORRADORES.has(k) && !motivoBorrador(b, quien)) BORRADORES.set(k, { ...b, repeticionAceptada: r.previa });
+  }
+  return hechoDeEnvioWA(b, r);
 }
 
 /** El runner del harness: «revisar», «buscar x», «leer 2|Beto», «responder 2|Beto | texto». Solo el texto. */
@@ -370,7 +541,8 @@ export async function correrWhatsappConEstado(quien: string, arg: string, ambito
     if (/^(leer|lee|abrir|abre)$/.test(verbo)) return resto ? await leer(quien, ambito, resto) : fallo('WHATSAPP: ¿cuál chat? Dime el número o el nombre.', 'falta-dato');
     if (/^(responder|responde|contestar|contesta|escribir|escribe|escribele|mandar|manda|mandale|enviar|envia|enviale)$/.test(sinTildes(verbo))) {
       if (!resto) return fallo('WHATSAPP: ¿a quién? Dime el número o el nombre.', 'falta-dato');
-      return await responder(quien, ambito, resto, partes.join(' | '));
+      // La cuenta vinculada ahora (el número): el «sí» autoriza mandar desde ESTA (AUR13).
+      return await responder(quien, ambito, resto, partes.join(' | '), e.numero);
     }
     return fallo(`WHATSAPP: no entiendo «${verbo}». Usa revisar, buscar, leer o responder.`, 'no-entiendo');
   } catch (e: any) {
@@ -471,11 +643,38 @@ export function montarRutasWhatsapp(app: express.Express, d: Deps) {
     const texto = String(req.body?.texto || '');
     if (!chat || !texto.trim()) return res.status(400).json({ error: 'Falta el chat o el texto.', honesto: true });
     if (texto.length > 4000) return res.status(400).json({ error: 'El mensaje es muy largo (máximo 4000 letras).', honesto: true });
-    try {
-      return res.json({ mensaje: await enviarWA(chat, texto), honesto: true });
-    } catch (e) {
-      return responderError(res, e);
-    }
+    /*
+     * AUR13: también por el registro durable. `idEnvio` (opcional, uno por toque) hace que un reintento del mismo
+     * toque no salga dos veces; el mismo id con otro chat o texto no se canjea (409). Un timeout es «incierto» (202).
+     */
+    const quien = correoDe(req);
+    const idEnvio = typeof req.body?.idEnvio === 'string' && /^[A-Za-z0-9_-]{8,80}$/.test(req.body.idEnvio) ? req.body.idEnvio : crypto.randomUUID();
+    const operacion = `envio-whatsapp-app-${idEnvio}`;
+    const id = idMensajeWADeOperacion(operacion);
+    let mensaje: MensajeWA | undefined;
+    const r = await enviarUnaVez<DatosEnvioWA>({
+      canal: 'whatsapp',
+      dueno: quien,
+      operacion,
+      huella: huellaWhatsapp({ chat, texto }),
+      efecto: async () => {
+        try {
+          const j = await enviarWAConRecibo(chat, texto, id);
+          mensaje = j.mensaje;
+          return { estado: 'succeeded', entrega: 'aceptado', referencia: j.mensaje?.id || id };
+        } catch (e) {
+          return clasificarErrorPuente(e);
+        }
+      },
+      reconciliar: (op) => reconciliarWA(op, chat, texto),
+    });
+    const comun = { operacion: r.operacion, honesto: true };
+    if (r.motivo === 'aprobacion-no-coincide') return res.status(409).json({ error: 'Ese toque era para otro mensaje (otro chat o texto): no mandé nada. Confírmalo otra vez.', code: 'confirmacion_de_otro_envio', ...comun });
+    if (r.motivo === 'almacen') return res.status(503).json({ error: 'No pude registrar el envío antes de mandarlo; no mandé nada. Prueba en un momento.', ...comun });
+    if (r.estado === 'succeeded') return res.json({ ...(mensaje ? { mensaje } : {}), entrega: r.entrega, ...(r.repetido ? { repetido: true } : {}), ...comun });
+    if (r.estado === 'unknown') return res.status(202).json({ ok: false, estado: 'incierto', error: 'No he podido confirmar el envío: el puente de WhatsApp no contestó a tiempo y no lo encuentro en el chat. No lo volví a mandar; revísalo en tu WhatsApp.', ...comun });
+    const status = Number(r.datos?.status) || 502;
+    return res.status(status >= 400 && status < 600 ? status : 502).json({ error: String(r.detalle || 'No salió.').slice(0, 200), ...comun });
   });
 
   app.post('/api/whatsapp/leido', d.exigirMesa, d.limitar(120), async (req, res) => {

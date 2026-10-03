@@ -368,7 +368,13 @@ export function partesDe(est: NodoEstructura | undefined): { texto: { parte: str
  * Los de la bandeja de entrada de una cuenta: los no leídos (o los últimos), del más nuevo al más viejo.
  * Con `extractos`, cada uno trae también el principio de su texto y sus adjuntos (sin marcarlo leído).
  */
-export async function listar(quien: string, c: CuentaCorreo, o: { soloNoLeidos?: boolean; buscar?: string; n?: number; extractos?: boolean } = {}): Promise<Resumen[]> {
+/**
+ * Cuánto se miró (AUR13, cobertura honesta): `total` los que encajan en la bandeja de entrada, `revisados` los que se
+ * trajeron. Quien llama pasa el objeto y `listar` lo llena; así dice «miré los 13 más recientes de 40», no «todo».
+ */
+export type Cobertura = { total?: number; revisados?: number };
+
+export async function listar(quien: string, c: CuentaCorreo, o: { soloNoLeidos?: boolean; buscar?: string; n?: number; extractos?: boolean; cobertura?: Cobertura } = {}): Promise<Resumen[]> {
   const cliente = await imapPara(c.proveedor, await credencial(quien, c));
   try {
     const candado = await cliente.getMailboxLock('INBOX', { readOnly: true });
@@ -377,6 +383,7 @@ export async function listar(quien: string, c: CuentaCorreo, o: { soloNoLeidos?:
       const consulta = t ? { or: [{ from: t }, { subject: t }, { body: t }] } : o.soloNoLeidos ? { seen: false } : { all: true };
       const uids = ((await cliente.search(consulta, { uid: true })) || []) as number[];
       const ultimos = uids.slice(-(o.n ?? 10)).reverse();
+      if (o.cobertura) Object.assign(o.cobertura, { total: uids.length, revisados: ultimos.length });
       if (!ultimos.length) return [];
       const msgs = await cliente.fetchAll(ultimos.join(','), { uid: true, envelope: true, flags: true, internalDate: true, bodyStructure: !!o.extractos }, { uid: true });
       const lista: Resumen[] = [];
@@ -462,24 +469,55 @@ export async function leer(quien: string, c: CuentaCorreo, uid: number): Promise
   }
 }
 
-export type Envio = { para: string[]; cc?: string[]; asunto: string; texto: string; enRespuestaA?: string; referencias?: string[] };
+export type Envio = {
+  para: string[];
+  cc?: string[];
+  asunto: string;
+  texto: string;
+  enRespuestaA?: string;
+  referencias?: string[];
+  /** AUR13: el Message-ID que pone AURA (derivado de la operación, lib/envios.ts): con él se reconcilia en Enviados. */
+  messageId?: string;
+  /** AUR13: el operationId del registro durable (no viaja en el correo; para la traza y las pruebas). */
+  operacion?: string;
+};
+
+/** Un fallo ANTES de hablar con el SMTP (la clave, el token, la dirección del servidor): seguro que no salió nada. */
+export class FalloAntesDeMandar extends Error {
+  antesDeMandar = true;
+  constructor(public causa: unknown) {
+    super(String((causa as any)?.message || causa));
+    // Lo que explicarFallo mira para decirlo bien (la clave, el certificado, el servidor).
+    for (const k of ['code', 'command', 'responseCode', 'response', 'responseText', 'authenticationFailed', 'serverResponseCode']) {
+      if ((causa as any)?.[k] !== undefined) (this as any)[k] = (causa as any)[k];
+    }
+  }
+}
 
 /**
  * Manda un correo. Se arma una sola vez (MailComposer) para mandar por SMTP y, si el proveedor no lo
  * hace solo, guardar esa misma copia en «Enviados» por IMAP.
  */
 export async function mandar(quien: string, c: CuentaCorreo, e: Envio): Promise<{ messageId: string; guardadoEnEnviados: boolean; aceptados: string[]; rechazados: string[] }> {
-  const cred = await credencial(quien, c);
-  const correo = {
-    from: c.correo,
-    to: e.para.join(', '),
-    ...(e.cc?.length ? { cc: e.cc.join(', ') } : {}),
-    subject: e.asunto,
-    text: e.texto,
-    ...(e.enRespuestaA ? { inReplyTo: e.enRespuestaA, references: [...(e.referencias || []), e.enRespuestaA].join(' ') } : {}),
-  };
-  const crudo = await new MailComposer(correo).compile().build();
-  const t = await smtpPara(c.proveedor, cred);
+  let cred: Credencial;
+  let crudo: Buffer;
+  let t: Awaited<ReturnType<typeof smtpPara>>;
+  try {
+    cred = await credencial(quien, c);
+    const correo = {
+      from: c.correo,
+      to: e.para.join(', '),
+      ...(e.cc?.length ? { cc: e.cc.join(', ') } : {}),
+      subject: e.asunto,
+      text: e.texto,
+      ...(e.messageId ? { messageId: e.messageId } : {}),
+      ...(e.enRespuestaA ? { inReplyTo: e.enRespuestaA, references: [...(e.referencias || []), e.enRespuestaA].join(' ') } : {}),
+    };
+    crudo = await new MailComposer(correo).compile().build();
+    t = await smtpPara(c.proveedor, cred);
+  } catch (err) {
+    throw new FalloAntesDeMandar(err);
+  }
   let messageId = '';
   let aceptados: string[] = [];
   let rechazados: string[] = [];
@@ -509,4 +547,29 @@ export async function mandar(quien: string, c: CuentaCorreo, e: Envio): Promise<
     }
   }
   return { messageId, guardadoEnEnviados: guardado, aceptados, rechazados };
+}
+
+/**
+ * AUR13, reconciliar un envío incierto: ¿está en «Enviados» el correo con este Message-ID? `encontrado` lo prueba;
+ * `no-encontrado` NO prueba que no salió (el proveedor puede no guardar copia, o tardar); `sin-carpeta` si la cuenta
+ * no tiene carpeta de enviados. Lanza si no se pudo mirar (quien llama lo trata como «no consta»).
+ */
+export async function buscarEnviado(quien: string, c: CuentaCorreo, messageId: string): Promise<'encontrado' | 'no-encontrado' | 'sin-carpeta'> {
+  const id = String(messageId || '').trim();
+  if (!/^<[^<>\s]{3,500}>$/.test(id)) return 'no-encontrado';
+  const cliente = await imapPara(c.proveedor, await credencial(quien, c));
+  try {
+    const carpetas = await cliente.list();
+    const enviados = carpetas.find((f) => f.specialUse === '\\Sent')?.path || carpetas.find((f) => /^(sent|enviados|sent items|elementos enviados)$/i.test(f.name))?.path;
+    if (!enviados) return 'sin-carpeta';
+    const candado = await cliente.getMailboxLock(enviados, { readOnly: true });
+    try {
+      const uids = ((await cliente.search({ header: { 'message-id': id } }, { uid: true })) || []) as number[];
+      return uids.length ? 'encontrado' : 'no-encontrado';
+    } finally {
+      candado.release();
+    }
+  } finally {
+    await cliente.logout().catch(() => {});
+  }
 }
