@@ -587,10 +587,16 @@ test('las manos: llamar espera el «sí»; leer vuelve por la voz con su boleto 
     assert.equal(pide.reply, '¿Llamo a Mamá?');
     assert.deepEqual(pide.acciones, [], 'nada sale hacia el teléfono todavía');
     assert.equal(pide.via, 'app-reglas');
-    // Un «dale» no es un «sí»: no se marca (y la propuesta se suelta con ese turno).
+    // «Okey» a «¿Llamo a Mamá?» es un sí (José, 3-oct): se marca, sin el 27B.
+    alNodo.length = 0;
+    const okey = await turno('Okey.');
+    assert.deepEqual(okey.acciones.map((e: any) => e.accion), [{ tipo: 'llamar', con: 'mama@x.com', video: false }]);
+    assert.equal(alNodo.length, 0);
+    // Algo que no es un sí («ok, pero espera») no marca (y la propuesta se suelta con ese turno).
+    await turno('llama a mi mamá');
     contestar = () => '[EMO: neutral] ¿Entonces le marco?';
-    const dale = await turno('dale');
-    assert.deepEqual(dale.acciones, []);
+    const duda = await turno('ok, pero espera');
+    assert.deepEqual(duda.acciones, []);
     // Pedido otra vez, y ahora «sí»: se marca a Mamá, sin el 27B.
     await turno('llama a mi mamá');
     alNodo.length = 0;
