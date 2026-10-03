@@ -2714,7 +2714,12 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   // Un «sí» que no tiene a qué contestar (el borrador venció, el servidor se reinició o nunca se armó): que
   // el modelo no lo tome por un envío y diga «enviado» por el historial (José, 3-oct).
   if (turnoVigente && !delCorreo && !delWhatsapp && !deLaPregunta && respuestaAlBorrador(message) === 'si' && !(correoApp && pendienteAnterior(ambitoApp(correoApp, body?.aparato)))) {
-    hechos.push('HECHO: si su «sí» era para mandar un mensaje o un correo: ahora no hay ningún borrador esperando (venció o no se armó). NO se mandó nada. No digas que se envió: pregúntale qué quiere mandar y a quién.');
+    const apartado = duenoComputadora && (borradorDe(duenoComputadora, ambitoTurno)?.soloPanel || borradorWhatsappDe(duenoComputadora, ambitoTurno)?.soloPanel);
+    hechos.push(
+      apartado
+        ? 'HECHO: si su «sí» era para el borrador de antes: ese ya no se resuelve por el chat (siguió con otra cosa en medio). NO se mandó nada. Está en su panel de tareas, por si lo quiere aprobar ahí; o arma uno nuevo y vuelve a preguntar. No digas que se envió.'
+        : 'HECHO: si su «sí» era para mandar un mensaje o un correo: ahora no hay ningún borrador esperando (venció o no se armó). NO se mandó nada. No digas que se envió: pregúntale qué quiere mandar y a quién.'
+    );
   }
 
   // La tarea de varios pasos en curso (lib/tarea-en-curso.ts): si pide otra cosa a mitad, AU-RA pregunta
@@ -3785,7 +3790,7 @@ async function resolverBorradorDesdePanel(correo: string, canal: 'correo' | 'wha
   const b = canal === 'correo' ? borradorDe(correo, ambito) : borradorWhatsappDe(correo, ambito);
   if (!b || b.intento !== intento) return { estado: 'stale', resumen: 'El borrador ya no era el aprobado; no se envió nada.' };
   if (canal === 'whatsapp' && !whatsappPermitido(correo)) return { estado: 'failed', resumen: 'WHATSAPP: no lo mandé: esta cuenta ya no tiene su WhatsApp.' };
-  const hecho = canal === 'correo' ? await resolverBorrador(correo, ambito, respuesta) : await resolverBorradorWhatsapp(correo, ambito, respuesta);
+  const hecho = canal === 'correo' ? await resolverBorrador(correo, ambito, respuesta, undefined, { desdePanel: true }) : await resolverBorradorWhatsapp(correo, ambito, respuesta, undefined, { desdePanel: true });
   if (hecho === null) return { estado: 'stale', resumen: 'El borrador ya no estaba esperando; no se envió nada.' };
   return { estado: respuesta === 'no' ? 'failed' : clasificarEnvio(hecho), resumen: hecho };
 }

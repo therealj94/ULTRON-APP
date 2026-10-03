@@ -272,7 +272,10 @@ test('el cerebro: revisa, lee por nombre, deja borrador y solo con el «sí» se
     assert.equal(p.enviados.length, 0, 'el borrador no sale solo');
     // Un «sí» en otra conversación no lo manda; un «sí, pero…» tampoco (y ese borrador ya no vale: va uno nuevo).
     assert.equal(await resolverBorradorWhatsapp(JOSE, 'web', 'sí'), null);
-    assert.match((await resolverBorradorWhatsapp(JOSE, 'tel', 'sí, pero cámbiale la hora'))!, /ya no vale y no se mandó/);
+    assert.match((await resolverBorradorWhatsapp(JOSE, 'tel', 'sí, pero cámbiale la hora'))!, /NO se mandó\. Queda en su panel de tareas/);
+    assert.equal(borradorWhatsappDe(JOSE, 'tel')?.soloPanel, true, 'espera al panel (AUR08)…');
+    assert.equal(await resolverBorradorWhatsapp(JOSE, 'tel', 'sí'), null, '…pero el chat ya no lo manda');
+    assert.match((await resolverBorradorWhatsapp(JOSE, 'tel', 'no', undefined, { desdePanel: true }))!, /no se mandó/, '«Rechazar» del panel lo descarta');
     assert.equal(borradorWhatsappDe(JOSE, 'tel'), null);
     assert.equal(p.enviados.length, 0);
     await correrWhatsapp(JOSE, 'responder 1 | Sí llego a las tres', 'tel');

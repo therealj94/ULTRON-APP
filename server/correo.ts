@@ -73,6 +73,11 @@ type BorradorGuardado = Borrador &
     huella: string;
     /** AUR13: la operación igual de antes, sin confirmar, cuyo riesgo de repetir ya aceptó con un segundo «sí». */
     repeticionAceptada?: string;
+    /**
+     * AUR08: siguió con otra cosa sin decidir. El borrador no se tira: espera la decisión del panel de tareas
+     * hasta que venza, pero el chat ya no lo resuelve (un «sí» suelto de después no lo manda).
+     */
+    soloPanel?: boolean;
   };
 export type VigenciaBorrador = { dueno: string; vence: number; intento: string };
 const BORRADORES = new Map<string, BorradorGuardado>();
@@ -504,8 +509,9 @@ function anotarAvisoEnvio(quien: string, ambito: string, hecho: string) {
 
 /**
  * El «sí» o el «no» a un borrador (correo o WhatsApp), con las mismas reglas:
- * - Vale SOLO el turno siguiente: si la persona dice otra cosa, el borrador se descarta (un «ok» suelto
- *   de tres turnos después no manda nada).
+ * - En el chat vale SOLO el turno siguiente: si la persona dice otra cosa, el chat ya no lo resuelve (un «ok»
+ *   suelto de tres turnos después no manda nada). El borrador sigue esperando en el panel de tareas hasta
+ *   que venza (AUR08): «Aprobar» ahí lo manda, con las mismas comprobaciones.
  * - En la voz (`retener`), el envío espera a que ElevenLabs confirme el turno: un «sí…» de un turno
  *   especulativo que seguía con «…pero cámbiale» no manda nada. El resultado llega en el turno siguiente.
  */
@@ -515,6 +521,11 @@ type OpcionesDecidir = {
   mensaje: string;
   /** Saca el borrador (ya no espera). */
   quitar: () => void;
+  /**
+   * AUR08: siguió con otra cosa. Si está, el borrador se aparta para el panel (espera hasta que venza; el chat ya
+   * no lo resuelve) en vez de tirarse.
+   */
+  apartar?: () => void;
   /** Lo vuelve a poner (el turno de voz se descartó). */
   reponer: () => void;
   canal: 'CORREO' | 'WHATSAPP';
@@ -537,6 +548,13 @@ type OpcionesDecidir = {
  */
 export async function decidirBorradorConEstado(o: OpcionesDecidir & { enviar: () => Promise<ResultadoHerramienta> }): Promise<ResultadoHerramienta> {
   const r = respuestaAlBorrador(o.mensaje);
+  if (!r && o.apartar) {
+    o.apartar();
+    return fallo(
+      `${o.canal}: había un borrador para ${o.para} esperando su «sí», pero siguió con otra cosa: NO se mandó. Queda en su panel de tareas hasta que venza, por si lo quiere aprobar ahí; un «sí» suelto en el chat ya no lo manda. Si lo quiere mandar ahora, arma uno nuevo y vuelve a preguntar.`,
+      'apartado'
+    );
+  }
   o.quitar();
   if (!r) return fallo(`${o.canal}: había un borrador para ${o.para} esperando su «sí», pero siguió con otra cosa: ya no vale y no se mandó. Si lo quiere mandar, arma uno nuevo y vuelve a preguntar.`, 'descartado');
   if (r === 'no') return exito(`${o.canal}: no se mandó; el borrador para ${o.para} quedó descartado. Díselo en pocas palabras.`, { efecto: 'ninguno', codigo: 'descartado' });
@@ -570,14 +588,20 @@ export async function decidirBorrador(o: OpcionesDecidir & { enviar: () => Promi
  * Al empezar el turno: si espera un borrador, se resuelve AQUÍ (lo manda el servidor, no el modelo) y
  * vuelve el HECHO para que el modelo lo diga. Null si no había nada.
  */
-export async function resolverBorrador(quien: string, ambito: string, mensaje: string, retener?: RetencionAcciones): Promise<string | null> {
-  return (await resolverBorradorConEstado(quien, ambito, mensaje, retener))?.texto ?? null;
+export async function resolverBorrador(quien: string, ambito: string, mensaje: string, retener?: RetencionAcciones, como?: ComoResolver): Promise<string | null> {
+  return (await resolverBorradorConEstado(quien, ambito, mensaje, retener, como))?.texto ?? null;
 }
 
+/**
+ * De dónde viene la decisión. `desdePanel`: «Aprobar»/«Rechazar» del panel, que también resuelve un borrador
+ * apartado (AUR08); sin él (el chat), un borrador apartado no se toca y otra cosa lo aparta en vez de tirarlo.
+ */
+export type ComoResolver = { desdePanel?: boolean };
+
 /** Lo mismo, con el estado y el recibo del envío (AUR13: aceptado / fallido / incierto, con su operationId). */
-export async function resolverBorradorConEstado(quien: string, ambito: string, mensaje: string, retener?: RetencionAcciones): Promise<ResultadoHerramienta | null> {
+export async function resolverBorradorConEstado(quien: string, ambito: string, mensaje: string, retener?: RetencionAcciones, como: ComoResolver = {}): Promise<ResultadoHerramienta | null> {
   const b = borradorDe(quien, ambito);
-  if (!b) return null;
+  if (!b || (b.soloPanel && !como.desdePanel)) return null;
   const k = llave(quien, ambito);
   return decidirBorradorConEstado({
     quien,
@@ -587,6 +611,7 @@ export async function resolverBorradorConEstado(quien: string, ambito: string, m
     canal: 'CORREO',
     para: b.para.join(', '),
     quitar: () => BORRADORES.delete(k),
+    ...(como.desdePanel ? {} : { apartar: () => void (b.soloPanel = true) }),
     // Un turno de voz descartado lo repone, pero nunca encima de otro borrador que se armó después.
     reponer: () => {
       if (!BORRADORES.has(k) && !motivoBorrador(b, quien)) BORRADORES.set(k, b);

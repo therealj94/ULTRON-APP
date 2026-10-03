@@ -27,7 +27,7 @@ import type express from 'express';
 import { clave } from '../lib/boveda';
 import { personaPorCorreoExacto } from '../lib/acceso';
 import crypto from 'node:crypto';
-import { decidirBorradorConEstado, fechaHN, motivoBorrador, vigenciaNueva, type VigenciaBorrador } from './correo';
+import { decidirBorradorConEstado, fechaHN, motivoBorrador, vigenciaNueva, type ComoResolver, type VigenciaBorrador } from './correo';
 import { iniciarTarea, marcarPaso } from '../lib/tarea-en-curso';
 import type { RetencionAcciones } from './voz-agente';
 import { exito, fallo, incierto, type ResultadoHerramienta } from '../lib/recibo-herramienta';
@@ -159,7 +159,8 @@ type Borrador = {
  * Guardado con su dueño, su vencimiento y su intento: el «sí» manda ESE mensaje a ESE chat (auditoría 3-oct, COM01)
  * desde ESA cuenta (AUR13: `huella` de chat, texto y cuenta; `repeticionAceptada` como en el correo).
  */
-type BorradorGuardado = Borrador & VigenciaBorrador & { huella: string; repeticionAceptada?: string };
+/** `soloPanel` (AUR08): siguió con otra cosa; espera la decisión del panel hasta que venza y el chat ya no lo resuelve. */
+type BorradorGuardado = Borrador & VigenciaBorrador & { huella: string; repeticionAceptada?: string; soloPanel?: boolean };
 
 const digitos = (s: string | undefined) => String(s || '').replace(/\D/g, '');
 
@@ -375,14 +376,14 @@ export function borradorWhatsappDe(quien: string, ambito = ''): BorradorGuardado
 }
 
 /** Al empezar el turno: el «sí» o el «no» al borrador de WhatsApp lo resuelve el servidor (no el modelo). */
-export async function resolverBorradorWhatsapp(quien: string, ambito: string, mensaje: string, retener?: RetencionAcciones): Promise<string | null> {
-  return (await resolverBorradorWhatsappConEstado(quien, ambito, mensaje, retener))?.texto ?? null;
+export async function resolverBorradorWhatsapp(quien: string, ambito: string, mensaje: string, retener?: RetencionAcciones, como?: ComoResolver): Promise<string | null> {
+  return (await resolverBorradorWhatsappConEstado(quien, ambito, mensaje, retener, como))?.texto ?? null;
 }
 
 /** Lo mismo, con el estado y el recibo del envío (AUR13: aceptado / fallido / incierto, con su operationId). */
-export async function resolverBorradorWhatsappConEstado(quien: string, ambito: string, mensaje: string, retener?: RetencionAcciones): Promise<ResultadoHerramienta | null> {
+export async function resolverBorradorWhatsappConEstado(quien: string, ambito: string, mensaje: string, retener?: RetencionAcciones, como: ComoResolver = {}): Promise<ResultadoHerramienta | null> {
   const b = borradorWhatsappDe(quien, ambito);
-  if (!b) return null;
+  if (!b || (b.soloPanel && !como.desdePanel)) return null;
   const k = llave(quien, ambito);
   return decidirBorradorConEstado({
     quien,
@@ -392,6 +393,7 @@ export async function resolverBorradorWhatsappConEstado(quien: string, ambito: s
     canal: 'WHATSAPP',
     para: b.nombre,
     quitar: () => BORRADORES.delete(k),
+    ...(como.desdePanel ? {} : { apartar: () => void (b.soloPanel = true) }),
     // Un turno de voz descartado lo repone, pero nunca encima de otro borrador (quizá a otro chat) armado después.
     reponer: () => {
       if (!BORRADORES.has(k) && !motivoBorrador(b, quien)) BORRADORES.set(k, b);

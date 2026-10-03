@@ -674,12 +674,18 @@ test('el «sí» o el «no» del chat cierran la decisión del borrador (sin dob
   await cerrarDecisionPorChat(yo, 'int-si', 'si', 'CORREO ENVIADO desde yo@ejemplo.com a ana@ejemplo.com — «Fechas».');
   const b = await abrirDecisionDeBorrador(yo, 'telefono', borrador('int-no'));
   await cerrarDecisionPorChat(yo, 'int-no', 'no', 'CORREO: no se mandó; el borrador quedó descartado.');
-  const h = arnes();
+  // AUR08: siguió con otra cosa: el borrador espera al panel hasta que venza, así que la decisión sigue abierta.
+  const c = await abrirDecisionDeBorrador(yo, 'telefono', borrador('int-otro'));
+  await cerrarDecisionPorChat(yo, 'int-otro', null, 'CORREO: había un borrador… NO se mandó. Queda en su panel de tareas…');
+  // El borrador apartado sigue vigente (server/correo.ts lo guarda con `soloPanel` hasta que vence).
+  const h = arnes({ vigente: () => 'int-otro' });
   try {
     const ta = (await h.pedir(`/api/trabajos/${a!.id}`, yo)).json.tarea;
     const tb = (await h.pedir(`/api/trabajos/${b!.id}`, yo)).json.tarea;
+    const tc = (await h.pedir(`/api/trabajos/${c!.id}`, yo)).json.tarea;
     assert.equal(ta.state, 'completed');
     assert.equal(tb.state, 'cancelled');
+    assert.equal(tc.state, 'awaiting_approval', 'otra cosa en el chat no cierra la decisión del panel');
     // Ya decidida en el chat: el panel no la ejecuta otra vez.
     assert.equal((await h.pedir(`/api/trabajos/${a!.id}/decisiones`, yo, { decisionId: 'x', expectedVersion: ta.version, opcion: 'aprobar' })).status, 409);
     assert.equal(h.ll.enviar, 0);

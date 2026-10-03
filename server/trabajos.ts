@@ -341,12 +341,12 @@ function cambioDeEnvio(reg: RegistroTarea, estado: 'succeeded' | 'failed' | 'unk
 
 /**
  * El «sí» o el «no» al borrador llegó por el chat (server.ts, al empezar el turno): la decisión se cierra
- * con lo que pasó, para que el panel no la ofrezca otra vez. `respuesta` null: siguió con otra cosa y el
- * borrador dejó de valer.
+ * con lo que pasó, para que el panel no la ofrezca otra vez. `respuesta` null: siguió con otra cosa; el
+ * borrador sigue esperando en el panel hasta que venza (AUR08), así que la decisión queda abierta.
  */
 export async function cerrarDecisionPorChat(duenoCorreo: string, intento: string, respuesta: 'si' | 'no' | null, hecho: string | null): Promise<void> {
   const dueno = conCorreo(duenoCorreo);
-  if (!dueno || !intento) return;
+  if (!dueno || !intento || respuesta === null) return;
   const id = await tareaDePedido(dueno, `borrador-${intento}`).catch(() => null);
   if (!id) return;
   const ahora = Date.now();
@@ -366,7 +366,7 @@ export async function cerrarDecisionPorChat(duenoCorreo: string, intento: string
       pasoActual: null,
       decision: null,
       ...(respuesta === 'no' ? { resolver: { id: d.id, opcion: 'rechazar' as OpcionId, t: ahora } } : {}),
-      resultado: { id: `${reg.id}:resultado`, resumen: respuesta === 'no' ? 'No se envió: lo rechazaste en el chat.' : 'No se envió: seguiste con otra cosa y el borrador dejó de valer.', evidencias: [], parcial: [], pendiente: [], t: ahora },
+      resultado: { id: `${reg.id}:resultado`, resumen: 'No se envió: lo rechazaste en el chat.', evidencias: [], parcial: [], pendiente: [], t: ahora },
     };
   }).catch(() => null);
   if (c && c.ok) anotar(c.tarea);

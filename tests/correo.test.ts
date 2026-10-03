@@ -200,10 +200,12 @@ test('escribir deja un borrador; nada sale hasta el «sí»; el «sí» lo manda
     assert.equal(borradorDe('lola@x.hn', 'web'), null);
     assert.equal(recibidos.length, 0);
     assert.ok(borradorDe('lola@x.hn', 'tel'), 'y sigue esperando');
-    // Otra cosa en el turno siguiente: el borrador ya no vale (auditoría 2-oct: un «ok» de después no manda nada).
-    assert.match((await resolverBorrador('lola@x.hn', 'tel', 'qué hora es'))!, /ya no vale y no se mandó/);
-    assert.equal(borradorDe('lola@x.hn', 'tel'), null, 'descartado');
+    // Otra cosa en el turno siguiente: el chat ya no lo resuelve (auditoría 2-oct: un «ok» de después no manda nada),
+    // pero el borrador espera la decisión del panel hasta que venza (AUR08).
+    assert.match((await resolverBorrador('lola@x.hn', 'tel', 'qué hora es'))!, /NO se mandó\. Queda en su panel de tareas/);
+    assert.equal(borradorDe('lola@x.hn', 'tel')?.soloPanel, true, 'apartado para el panel, no tirado');
     assert.equal(await resolverBorrador('lola@x.hn', 'tel', 'ok'), null, 'y un «ok» después no manda nada');
+    assert.equal(await resolverBorrador('lola@x.hn', 'tel', 'sí'), null, 'ni un «sí» suelto');
     assert.equal(recibidos.length, 0);
     await correrCorreo('lola@x.hn', 'escribir beto@empresa.hn | Reunión | Beto, ¿nos vemos el jueves a las 3?', 'tel');
     const enviado = await resolverBorrador('lola@x.hn', 'tel', 'Sí, mándalo');
@@ -229,6 +231,16 @@ test('escribir deja un borrador; nada sale hasta el «sí»; el «sí» lo manda
     assert.doesNotMatch(nada, /CORREO ENVIADO/);
     assert.match(nada, /NO se (pudo )?mand(ó|ar)/);
     assert.equal(recibidos.length, 2);
+    // AUR08: el borrador apartado (siguió con otra cosa) lo manda «Aprobar» del panel, y una sola vez.
+    await correrCorreo('lola@x.hn', 'escribir beto@empresa.hn | Panel | lo apruebo desde el panel', 'tel');
+    assert.match((await resolverBorrador('lola@x.hn', 'tel', 'y el clima?'))!, /Queda en su panel de tareas/);
+    assert.equal(await resolverBorrador('lola@x.hn', 'tel', 'sí'), null);
+    assert.equal(recibidos.length, 2, 'el chat no lo mandó');
+    assert.match((await resolverBorrador('lola@x.hn', 'tel', 'sí', undefined, { desdePanel: true }))!, /CORREO ENVIADO desde lola@prueba.hn a beto@empresa.hn — «Panel»/);
+    assert.equal(recibidos.length, 3);
+    assert.equal(borradorDe('lola@x.hn', 'tel'), null, 'mandado: ya no espera');
+    assert.equal(await resolverBorrador('lola@x.hn', 'tel', 'sí', undefined, { desdePanel: true }), null, 'un segundo «Aprobar» no manda nada');
+    assert.equal(recibidos.length, 3);
     assert.match(await correrCorreo('otra@x.hn', 'revisar'), /no tiene ningún correo conectado/, 'sin cuentas, lo dice');
     assert.match(await correrCorreo('', 'revisar'), /solo con sesión/);
   } finally {
