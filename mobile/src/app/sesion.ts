@@ -82,10 +82,11 @@ export async function marcarBienvenidaVista() {
 /**
  * Tras verificar quién es (Genesis o clave): guarda la sesión, carga su perfil (sin esperar más de
  * unos segundos al servidor) y lleva a la primera vez o a la mesa.
- * `intento`: el de esa entrada (lib/intentoEntrada.ts). Si ya no es el último —«atrás», u otra entrada
- * empezó después—, no guarda ni fija a nadie, y suelta el token que ese intento alcanzó a guardar.
+ * `intento`: el de esa entrada (lib/intentoEntrada.ts), obligatorio (auditoría AUR15). Si ya no es el
+ * último —«atrás», u otra entrada empezó después—, no guarda ni fija a nadie, y suelta el token que ese
+ * intento alcanzó a guardar.
  */
-export async function entrarCon(u: SessionUser, compartido?: Compartido | null, intento?: Intento | null) {
+export async function entrarCon(u: SessionUser, compartido: Compartido | null, intento: Intento) {
   const s = { ...u, correo: u.correo.trim().toLowerCase() };
   const entro = await confirmarIntento(intento, async (e) => {
     await olvidarClaveAjena(s.correo);
