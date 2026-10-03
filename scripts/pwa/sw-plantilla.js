@@ -9,7 +9,10 @@
  *     y no guarda respuestas no-store o privadas. No pone nada en cola para mandarlo «cuando vuelva la red»;
  *   · una versión nueva se instala y ESPERA: la web avisa «Hay una versión nueva · Recargar» y solo con ese
  *     toque (mensaje `activar`) toma el control. Al activarse borra los cachés viejos de AU-RA;
- *   · sin push: Web Push en iOS es otro trabajo (canal, consentimiento, baja por cuenta) y no se promete.
+ *   · avisos con la app cerrada (Web Push; en iPhone, solo la AU-RA instalada): el contenido llega cifrado
+ *     para este navegador (lib/push-web.ts) y se enseña SOLO si es de la cuenta que está en este navegador
+ *     (src/10-infra/avisosWeb.ts deja su seudónimo en el caché «aura-cuenta»); si no, un aviso genérico sin
+ *     texto. Al tocarlo se abre AU-RA (o se enfoca la que ya estaba abierta).
  *
  * El build (scripts/pwa/vite-sw.ts) rellena VERSION y PRECACHE; el interruptor está en GET /api/pwa (la web
  * lo mira al arrancar y, apagado, da de baja este worker y borra sus cachés). Lo prueba tests/pwa-sw.test.ts.
@@ -84,5 +87,57 @@ self.addEventListener('fetch', (e) => {
           return r;
         })
     )
+  );
+});
+
+/* ── avisos con la app cerrada ────────────────────────────────────────────────────────────── */
+
+/** De quién es este navegador ('' = nadie). Lo deja la página al entrar (src/10-infra/avisosWeb.ts). */
+function cuentaDeEsteNavegador() {
+  return caches
+    .open('aura-cuenta')
+    .then((c) => c.match('/__aura_para'))
+    .then((r) => (r ? r.text() : ''))
+    .catch(() => '');
+}
+
+self.addEventListener('push', (e) => {
+  let d = {};
+  try {
+    d = e.data ? e.data.json() : {};
+  } catch (err) {
+    d = {};
+  }
+  e.waitUntil(
+    cuentaDeEsteNavegador().then((para) => {
+      // Siempre se enseña algo (iOS retira el permiso a quien recibe avisos sin enseñarlos), pero el texto
+      // solo si el aviso es de la cuenta que está aquí.
+      const suyo = !!para && d.para === para;
+      const titulo = suyo ? String(d.titulo || 'AURA').slice(0, 80) : 'AURA';
+      const cuerpo = suyo ? String(d.texto || '').slice(0, 400) : 'Tienes algo nuevo en AU-RA.';
+      return self.registration.showNotification(titulo, {
+        body: cuerpo,
+        icon: '/icon-192.png',
+        badge: '/icon-192.png',
+        tag: suyo && d.id ? String(d.id) : 'aura',
+        renotify: d.tipo === 'llamada',
+        requireInteraction: d.tipo === 'llamada',
+        data: { abrir: suyo ? String(d.abrir || 'mesa') : 'mesa' },
+      });
+    })
+  );
+});
+
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const abrir = (e.notification.data && e.notification.data.abrir) || 'mesa';
+  const destino = abrir === 'mesa' ? '/' : '/?abrir=' + encodeURIComponent(abrir);
+  e.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((ventanas) => {
+      for (const v of ventanas) {
+        if (new URL(v.url).origin === self.location.origin && 'focus' in v) return v.focus();
+      }
+      return self.clients.openWindow(destino);
+    })
   );
 });
