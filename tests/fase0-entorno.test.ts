@@ -9,11 +9,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { modoDesarrollo } from '../lib/entorno';
-import { mesaAutorizada, plataformaAutorizada } from '../server/seguridad';
+import { llaveFijaElectrumPermitida, mesaAutorizada, plataformaAutorizada } from '../server/seguridad';
 import { nivelDePeticion } from '../server/nivel';
 import { basePublica } from '../server/mcp-oauth';
 
-const VARS = ['NODE_ENV', 'AURA_DEV', 'ULTRON_MESA_CLAVE', 'ELECTRUM_CLAVE', 'URL_PUBLICA'] as const;
+const VARS = ['NODE_ENV', 'AURA_DEV', 'ULTRON_MESA_CLAVE', 'ELECTRUM_CLAVE', 'ELECTRUM_LLAVE_FIJA', 'URL_PUBLICA'] as const;
 
 function conEntorno<T>(cambios: Partial<Record<(typeof VARS)[number], string | undefined>>, fn: () => T): T {
   const antes = Object.fromEntries(VARS.map((k) => [k, process.env[k]]));
@@ -68,3 +68,24 @@ test('con llave puesta no hay hueco ni en desarrollo', () =>
     assert.equal(nivelDePeticion(anonimo()), 'miembro');
     assert.equal(plataformaAutorizada(anonimo(), 'electrum'), false);
   }));
+
+const conLlave = (llave: string) => ({ ...anonimo(), headers: { host: 'aura.ejemplo', 'x-electrum-llave': llave } }) as any;
+
+test('SEC01: en producción la llave fija de Dr Electrum ya no abre; para probar, los códigos DE-', () => {
+  const LLAVE = 'llave-demo-electrum-1234567890';
+  conEntorno({ NODE_ENV: 'production', ELECTRUM_CLAVE: LLAVE }, () => {
+    assert.equal(llaveFijaElectrumPermitida(), false);
+    assert.equal(plataformaAutorizada(conLlave(LLAVE), 'electrum'), false, 'la llave correcta no abre los datos reales');
+    assert.equal(plataformaAutorizada(anonimo(), 'electrum'), false);
+  });
+  conEntorno({ NODE_ENV: 'production', AURA_DEV: '1', ELECTRUM_CLAVE: LLAVE }, () => {
+    assert.equal(plataformaAutorizada(conLlave(LLAVE), 'electrum'), false, 'un AURA_DEV olvidado no la reabre');
+  });
+  conEntorno({ NODE_ENV: 'production', ELECTRUM_CLAVE: LLAVE, ELECTRUM_LLAVE_FIJA: '1' }, () => {
+    assert.equal(plataformaAutorizada(conLlave(LLAVE), 'electrum'), true, 'solo si se pide a propósito');
+    assert.equal(plataformaAutorizada(conLlave('otra-llave-cualquiera-123456'), 'electrum'), false);
+  });
+  conEntorno({ AURA_DEV: '1', ELECTRUM_CLAVE: LLAVE }, () => {
+    assert.equal(plataformaAutorizada(conLlave(LLAVE), 'electrum'), true, 'en desarrollo sigue sirviendo');
+  });
+});

@@ -325,6 +325,8 @@ test('servidor: los visitantes de la demo no se ven entre sí', { skip: HAY_BINA
       PORT: String(puerto),
       PLATAFORMA: 'electrum',
       ELECTRUM_CLAVE: 'llave-de-la-demo',
+      // La llave fija ya no abre en producción sin pedirlo (SEC01): esta prueba es justo de ese modo.
+      ELECTRUM_LLAVE_FIJA: '1',
       ULTRON_SESION_SECRETO: 'llave-de-sesion-de-la-prueba-0123456789',
       ULTRON_NODO_URL: process.env.ULTRON_NODO_URL,
       ULTRON_NODO_SECRETO: 'prueba',

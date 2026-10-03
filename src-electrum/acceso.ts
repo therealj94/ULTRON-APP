@@ -138,7 +138,7 @@ export function headersElectrum(): Record<string, string> {
 
 /** Lo que se le dice a alguien al que el servidor no le abre. Sin jerga y sin culparlo. */
 export const SIN_PUERTA =
-  'Dr Electrum FP es privado y esta sesión no tiene acceso. Entrá con tu correo, o pedí el enlace con llave si venís a ver la demostración.';
+  'Dr Electrum FP es privado y esta sesión no tiene acceso. Entrá con tu correo, o con el código de prueba que te dio José.';
 
 /** Guarda el token de sesión que devuelve AU-RA al entrar. Lo comparten las dos plataformas. */
 export function guardarSesion(token: string): Donde {

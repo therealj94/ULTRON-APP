@@ -100,6 +100,8 @@ test('salud: Laya a todos por encima, el detalle solo a quien manda', { skip: fs
       PLATAFORMA: '',
       ELECTRUM_DB_URL: '',
       ELECTRUM_CLAVE: 'llave-de-la-demo',
+      // La llave fija ya no abre en producción sin pedirlo (SEC01): esta prueba es justo de ese modo.
+      ELECTRUM_LLAVE_FIJA: '1',
       ULTRON_SESION_SECRETO: secreto,
       ULTRON_MEMORIA_BUCKET: '',
       AWS_ACCESS_KEY_ID: '',
