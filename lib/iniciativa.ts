@@ -303,16 +303,20 @@ function recientes(h: EntradaHistorial[], ahora: number): EntradaHistorial[] {
   return h.filter((x) => ahora - x.t < DIAS_SIN_REPETIR * DIA_MS);
 }
 
-/** ¿Ya se propuso esta idea en los últimos DIAS_SIN_REPETIR días? */
+/** ¿Ya se propuso esta idea en los últimos DIAS_SIN_REPETIR días? Una que dijo «luego» no cuenta: se pospuso. */
 export function yaPropuesta(p: Pick<Propuesta, 'texto' | 'tipo' | 'campo' | 'misionId'>, historial: EntradaHistorial[], ahora = Date.now()): boolean {
   return recientes(historial, ahora).some(
     (h) =>
-      h.texto === p.texto ||
+      h.respuesta !== 'luego' &&
+      (h.texto === p.texto ||
       parecido(h.texto, p.texto) >= UMBRAL_REPETIDA ||
       (!!p.campo && h.campo === p.campo) ||
-      (!!p.misionId && h.misionId === p.misionId && h.tipo === p.tipo)
+      (!!p.misionId && h.misionId === p.misionId && h.tipo === p.tipo))
   );
 }
+
+/** «Luego» es posponer de verdad (auditoría, 3-oct): ese rato no propone nada y la idea vuelve primero. */
+export const LUEGO_MS = 2 * 60 * 60 * 1000;
 
 export function quitarRepetidas(ps: Propuesta[], historial: EntradaHistorial[], ahora = Date.now()): Propuesta[] {
   return ps.filter((p) => !yaPropuesta(p, historial, ahora));
@@ -415,6 +419,8 @@ export type EstadoIniciativa = {
   /** El día de Honduras («AAAA-MM-DD») y cuántas se entregaron ese día. */
   dia: string;
   hoy: number;
+  /** «Luego»: hasta cuándo no propone nada (la idea pospuesta vuelve primero después). */
+  luegoHasta?: number;
 };
 
 function sanearPropuesta(x: any): Propuesta | null {
@@ -457,6 +463,7 @@ function sanearEstado(x: any): EstadoIniciativa {
     backoff: [1, 2, 4, 8].includes(b) ? b : 1,
     dia: /^\d{4}-\d{2}-\d{2}$/.test(String(x?.dia || '')) ? String(x.dia) : '',
     hoy: Math.max(0, Math.floor(Number(x?.hoy) || 0)),
+    ...(Number(x?.luegoHasta) > 0 ? { luegoHasta: Number(x.luegoHasta) } : {}),
   };
 }
 
@@ -481,9 +488,10 @@ export async function leerEstadoIniciativa(correo: string) {
 /**
  * ¿Toca proponer ahora? Puro: con el estado, el ajuste y la hora. No mira si hay una pendiente.
  */
-export function tocaProponer(e: Pick<EstadoIniciativa, 'ultima' | 'backoff' | 'dia' | 'hoy'>, nivel: NivelIniciativa = INICIATIVA_POR_OMISION, ahora = Date.now()): { toca: boolean; motivo: string; desde?: number } {
+export function tocaProponer(e: Pick<EstadoIniciativa, 'ultima' | 'backoff' | 'dia' | 'hoy' | 'luegoHasta'>, nivel: NivelIniciativa = INICIATIVA_POR_OMISION, ahora = Date.now()): { toca: boolean; motivo: string; desde?: number } {
   if (nivel === 'apagada') return { toca: false, motivo: 'apagada' };
   if (enHorasQuietas(ahora)) return { toca: false, motivo: 'horas_quietas' };
+  if (e.luegoHasta && ahora < e.luegoHasta) return { toca: false, motivo: 'luego', desde: e.luegoHasta };
   const ritmo = RITMO[nivel] || RITMO.media;
   const { dia } = horaHonduras(ahora);
   if (e.dia === dia && e.hoy >= ritmo.maxDia) return { toca: false, motivo: 'tope_del_dia' };
@@ -567,7 +575,11 @@ export async function responderPropuesta(correo: string, id: string, respuesta: 
       h.tr = ahora;
     }
     if (respuesta === 'si') e.backoff = 1;
-    else if (respuesta === 'no') {
+    else if (respuesta === 'luego') {
+      // Pospuesta: vuelve la primera de la cola cuando pase el rato (antes se perdía: quedaba como repetida).
+      e.luegoHasta = ahora + LUEGO_MS;
+      e.cola = [{ ...p, creada: ahora, entregada: undefined }, ...e.cola.filter((q) => q.id !== p.id)].slice(0, 5);
+    } else if (respuesta === 'no') {
       e.backoff = Math.min(BACKOFF_MAX, (e.backoff || 1) * 2);
       // Lo de la cola del mismo tipo tampoco: si no quiso, no se insiste con lo mismo.
       e.cola = e.cola.filter((q) => q.tipo !== p.tipo);
@@ -595,6 +607,19 @@ export async function frenarIniciativa(correo: string, ahora = Date.now()): Prom
     }
     e.ultima = ahora;
   });
+}
+
+/**
+ * ¿Pide APAGARLAS? («desactiva las propuestas», «apaga las sugerencias», «ya no quiero propuestas»). Eso no
+ * es bajar el ritmo: se apaga su ajuste de iniciativa (auditoría, 3-oct: solo se frenaba y el próximo sí
+ * la volvía a encender). Se vuelve a prender en Ajustes o pidiéndolo.
+ */
+export function pideApagarIniciativa(texto: string): boolean {
+  const t = String(texto || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  return (
+    /\b(desactiva|desactivame|apaga|apagame|quita|quitame|elimina)\s+(las\s+|tus\s+)?(propuestas|sugerencias|iniciativa|recomendaciones)\b/.test(t) ||
+    /\bya\s+no\s+quiero\s+(propuestas|sugerencias|recomendaciones|que\s+me\s+(propongas|sugieras))\b/.test(t)
+  );
 }
 
 /** ¿Pide que deje de proponerle cosas? («deja de proponer», «no me propongas más», «ya no me sugieras»). */

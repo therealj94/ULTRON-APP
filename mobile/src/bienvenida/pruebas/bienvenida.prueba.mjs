@@ -25,6 +25,7 @@ import {
   pasosPendientes,
   armarRespuesta,
   apodoDeDictado,
+  esCorreoOrdenGlobal,
 } from '../../primeravez/flujo.ts';
 import { anotarEnConocer } from '../conocer.ts';
 import { abrirBienvenida, abrirPreguntas, bienvenidaAhora, cerrarBienvenida, suscribirBienvenida } from '../estado.ts';
@@ -42,6 +43,26 @@ prueba('pregunta todo lo que ocupa, en orden: idioma, apodo, a qué se dedica, d
   assert.ok(i('encuesta:ayuda') < i('iniciativa') && i('iniciativa') < i('permisos'));
   assert.equal(PASOS.at(-1), 'fiesta');
   assert.equal(new Set(PASOS).size, PASOS.length);
+});
+
+prueba('al principio: conectar el correo y el WhatsApp, con instrucciones; Orden Global solo con correo y contraseña', () => {
+  const i = (p) => PASOS.indexOf(p);
+  assert.ok(i('conectar') === i('aura') + 1, 'justo después de que AURA se presenta, antes de la encuesta');
+  assert.ok(i('conectar') < i('encuesta:trabajo'));
+  assert.equal(cambiosDelPaso('conectar', borradorDesde(null, 'Ana')), null, 'no escribe en el perfil (lo guarda el servidor)');
+  assert.ok(esCorreoOrdenGlobal('j.ordonez@ordenglobal.org') && esCorreoOrdenGlobal('  Ana@OrdenGlobal.ORG '));
+  for (const no of ['ana@gmail.com', 'ana@ordenglobal.org.hn', 'ana@mail-ordenglobal.org', 'ordenglobal.org', '']) assert.ok(!esCorreoOrdenGlobal(no), no);
+  const pc = leer('primeravez/pasos/PasoConectar.tsx');
+  assert.match(pc, /'\/api\/correo\/cuentas'/, 'conecta de verdad (el servidor prueba leer y mandar)');
+  assert.match(pc, /esCorreoOrdenGlobal\(correo\)/, 'Orden Global: sin preguntar al servidor qué contraseña va');
+  assert.match(pc, /<HojaCorreos/, 'Outlook y servidores a mano: la hoja completa');
+  assert.match(pc, /<Vincular p=\{tema\}/, 'WhatsApp: el mismo vincular de la pestaña');
+  assert.match(pc, /vista === 'oculto'\) return null/, 'sin WhatsApp habilitado, no se ofrece');
+  assert.match(pc, /setInterval\(\(\) => void leer\(\), 4000\)/, 've solo cuando queda vinculado');
+  assert.match(pc, /clearInterval/, 'y deja de preguntar al salir del paso');
+  const pv = leer('primeravez/PrimeraVez.tsx');
+  assert.match(pv, /paso === 'conectar' \? \(\s*<PasoConectar/, 'se dibuja');
+  assert.match(pv, /paso === 'conectar' \|\| paso === 'iniciativa'/, 'se puede saltar');
 });
 
 prueba('cada pregunta tiene opciones de selección múltiple en los dos idiomas, un ejemplo para «Otro» y su porqué', () => {
@@ -149,7 +170,8 @@ prueba('saltable y retomable: lo que falta se ofrece después, y la primera vez 
   const lleno = { ...perfil, encuesta: Object.fromEntries(PREGUNTAS.map((q) => [q.campo, 'x'])) };
   assert.deepEqual(pasosPendientes(lleno), []);
   const pv = leer('primeravez/PrimeraVez.tsx');
-  assert.match(pv, /aura\.primeravez\.paso\.v2:/, 'la clave del paso cambió con los pasos nuevos (no retoma en el que no es)');
+  assert.match(pv, /aura\.primeravez\.paso\.v3:/, 'se guarda el nombre del paso (no retoma en el que no es)');
+  assert.match(pv, /PASOS\.filter\(\(p\) => p !== 'conectar'\)/, 'un número viejo (v2) se traduce con los pasos de antes');
   assert.match(pv, /paso === 'iniciativa'/, 'la iniciativa se puede saltar');
   assert.match(pv, /PASOS\.indexOf\('iniciativa'\)/, '«Saltar todas» sigue en la iniciativa');
 });

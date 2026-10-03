@@ -234,7 +234,7 @@ export function HojaCorreos({ visible, onCerrar }: { visible: boolean; onCerrar:
                     <Boton titulo={tr('Entrar con Microsoft', 'Sign in with Microsoft')} cargando={ocupado} onPress={() => void conMicrosoft()} />
                   ) : (
                     <Texto v="chica" color="aviso">
-                      {tr('Outlook todavía no está habilitado en el servidor. Pronto.', 'Outlook isn’t enabled on the server yet. Soon.')}
+                      {tr('Outlook con Microsoft no está activado en este servidor. Mientras tanto, conéctalo con «Otro» y una contraseña de aplicación de Outlook.', 'Outlook with Microsoft isn’t enabled on this server. Meanwhile, connect it with “Other” and an Outlook app password.')}
                     </Texto>
                   )
                 ) : (

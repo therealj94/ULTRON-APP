@@ -542,6 +542,9 @@ let W = 2, H = 2, CW = 1, CH = 1, DPR = 1;
 let tScene = null, tB1 = null, tB1b = null, tB2 = null, tB2b = null;
 const FOV = 30*Math.PI/180, TANF = Math.tan(FOV/2);
 const cam = {D: 5, y: 0, wpp: 0.01, zText: 0.55, orbYFrac: 0.4, rPx: 100};
+/* Lo que la app tapa arriba (su estado) y abajo (la barra): el orbe y sus palabras se acomodan en el resto,
+   así nada de la app queda encima de lo que dice (José, 3-oct: «lo que dice y lo que digo se pegan»). */
+const MARGEN = {arriba: Math.max(0, +(OPC.margen && OPC.margen.arriba) || 0), abajo: Math.max(0, +(OPC.margen && OPC.margen.abajo) || 0)};
 function resize(){
   CW = Math.max(1, canvas.clientWidth); CH = Math.max(1, canvas.clientHeight);
   DPR = Math.min(LADDER[qi].dpr, window.devicePixelRatio || 1);
@@ -554,8 +557,11 @@ function resize(){
   tB2 = makeTarget(w8, h8, BLOOMFMT); tB2b = makeTarget(w8, h8, BLOOMFMT);
   // encuadre: el orbe arriba, las palabras debajo
   const portrait = CH > CW*1.15;
-  cam.orbYFrac = portrait ? 0.36 : 0.385;
-  cam.rPx = Math.min(CH*(portrait?0.215:0.255), CW*0.335);
+  // El alto que de verdad se ve (sin lo que tapa la app). Sin márgenes, el encuadre de siempre.
+  const arriba = Math.min(MARGEN.arriba, CH*0.3), abajo = Math.min(MARGEN.abajo, CH*0.45);
+  const UH = Math.max(CH*0.3, CH - arriba - abajo);
+  cam.orbYFrac = (arriba + UH*(portrait ? 0.36 : 0.385)) / CH;
+  cam.rPx = Math.min(UH*(portrait?0.215:0.255), CW*0.335);
   const k = cam.rPx*2*TANF/CH;
   cam.D = Math.sqrt(1 + 1/(k*k));
   cam.y = -(0.5-cam.orbYFrac)*2*cam.D*TANF;
@@ -781,8 +787,10 @@ function buildSpeech(text, opts){
 function worldOfLine(v){ // v = renglón visible (0 arriba, 1 abajo) → y del mundo
   const F = speech_F(), lh = F*1.42;
   const orbBottom = CH*cam.orbYFrac + cam.rPx*1.32;
-  const room = CH - orbBottom;
-  const topPx = orbBottom + Math.max(F*0.9, (room - lh*2)*0.30) + F*0.5;
+  const fondo = CH - Math.min(MARGEN.abajo, CH*0.45);
+  const room = fondo - orbBottom;
+  // Los dos renglones caben siempre por encima de lo que tapa la app.
+  const topPx = Math.min(orbBottom + Math.max(F*0.9, (room - lh*2)*0.30) + F*0.5, fondo - lh*1.5 - F*0.2);
   const yPx = topPx + v*lh;
   return cam.y + (CH*0.5 - yPx)*cam.wpp;
 }
@@ -958,6 +966,11 @@ function handle(d){
     case 'decir': say(d.texto || d.text || '', {dur: d.dur, tts: d.tts === true}); break;
     case 'callar': silence(); break;
     case 'sonido': SFX.activar(d.activo !== false); break;
+    case 'margen': {
+      const a = Math.max(0, +d.arriba || 0), b = Math.max(0, +d.abajo || 0);
+      if (a !== MARGEN.arriba || b !== MARGEN.abajo){ MARGEN.arriba = a; MARGEN.abajo = b; resize(); }
+      break;
+    }
   }
 }
 addEventListener('message', e => handle(e.data));

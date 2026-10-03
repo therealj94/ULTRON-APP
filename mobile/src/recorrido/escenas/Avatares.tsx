@@ -3,6 +3,7 @@
  */
 import { Animated, Image, StyleSheet, Text, View } from 'react-native';
 import { COLOR, Entra, Ojos, t, useAparece, type PropsEscena } from './comun';
+import { OrbeMini } from '../../avatar3d/OrbeMini';
 
 const FOTOS = {
   claudio: require('../../../assets/avatares/claudio/base.webp'),
@@ -35,6 +36,8 @@ function Tarjeta({ a, elegida, ancho, idioma, k }: { a: (typeof AVATARES)[number
         <View style={[st.cara, { width: lado, height: lado, borderRadius: lado / 2 }]}>
           {a.id === 'claudio' || a.id === 'antonio' ? (
             <Image source={FOTOS[a.id]} style={{ width: lado * 1.25, height: lado * 1.25, marginTop: lado * 0.04 }} resizeMode="contain" />
+          ) : a.id === 'aura' ? (
+            <OrbeMini lado={lado} />
           ) : (
             <Ojos color={a.color} tam={lado} />
           )}

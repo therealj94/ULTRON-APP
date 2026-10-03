@@ -54,8 +54,8 @@ test('la página sigue hablando el idioma del Centro y del notch', () => {
     "addEventListener('message', e => handle(e.data))", 'window.__aura = handle',
     // lo que contesta: al marco de arriba (Centro) y a WebView2 (notch)
     "window.parent.postMessage(m, '*')", 'window.chrome.webview.postMessage(m)', "notify({tipo:'listo'})", "type:'aura-fallo'", "type:'aura-end'",
-    // el marco «cara» del notch depende de cómo encuadra
-    '<div id="stage">', 'cam.orbYFrac = portrait ? 0.36 : 0.385',
+    // el marco «cara» del notch depende de cómo encuadra: sin margen (Windows no lo manda) el orbe sigue al 36 %
+    '<div id="stage">', 'cam.orbYFrac = (arriba + UH*(portrait ? 0.36 : 0.385)) / CH', 'MARGEN = {arriba: Math.max(0, +(OPC.margen && OPC.margen.arriba) || 0)',
   ]) assert.ok(html.includes(pieza), `la página tiene «${pieza}»`);
   assert.doesNotMatch(html, /(src|href)="https?:/, 'sin nada de afuera: ni la WebView del notch ni la CSP del Centro lo dejarían cargar');
 });

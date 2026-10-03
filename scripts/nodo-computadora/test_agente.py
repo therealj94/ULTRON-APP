@@ -71,6 +71,7 @@ class Base(unittest.TestCase):
     def tarea(self, instruccion='Entra a sar.gob.hn y llena el formulario'):
         t = agente.Tarea(instruccion, 10)
         t.estado = 'trabajando'
+        agente.DUENO_ACTUAL['v'] = t.dueno  # tiene el escritorio, como cuando corre
         return t
 
 
@@ -96,9 +97,30 @@ class RevisarAccion(Base):
         self.assertIsNone(agente.revisar_accion(t, 'click', {'element': 'Botón Enviar formulario'}))
         self.assertEqual([p['accion'] for p in t.pasos], ['pedir_confirmacion', 'confirmacion'])
         self.assertEqual(t.pasos[0]['args']['pregunta'], 'Voy a tocar «Botón Enviar formulario». ¿Lo hago?')
-        # Tras el sí, el toque siguiente no vuelve a preguntar.
-        self.assertIsNone(agente.revisar_accion(t, 'click', {'element': 'Enviar'}))
-        self.assertEqual(len(t.pasos), 2)
+        # El sí era para ESE toque: el siguiente sensible vuelve a preguntar (auditoría, 3-oct: antes un sí
+        # abría tres pasos para cualquier cosa).
+        contestar_cuando_pregunte(t, False)
+        self.assertEqual(agente.revisar_accion(t, 'click', {'element': 'Enviar'}), agente.NO_DIJO)
+        self.assertEqual([p['accion'] for p in t.pasos], ['pedir_confirmacion', 'confirmacion', 'pedir_confirmacion', 'confirmacion'])
+
+    def test_el_si_del_modelo_vale_para_una_sola_accion(self):
+        t = self.tarea()
+        contestar_cuando_pregunte(t, True)
+        self.assertTrue(t.pedir_confirmacion('¿Envío el formulario?'))
+        self.assertIsNone(agente.revisar_accion(t, 'click', {'element': 'Enviar'}), 'la primera, con el sí que dio')
+        contestar_cuando_pregunte(t, False)
+        self.assertEqual(agente.revisar_accion(t, 'click', {'element': 'Publicar'}), agente.NO_DIJO, 'la segunda pregunta otra vez')
+
+    def test_enter_sobre_algo_sensible_o_de_pago_no_se_salta_la_revision(self):
+        t = self.tarea()
+        self.assertIsNone(agente.revisar_accion(t, 'click', {'element': 'Campo de búsqueda'}))
+        self.assertIsNone(agente.revisar_accion(t, 'key', {'keys': 'enter'}), 'Enter en una búsqueda: normal')
+        self.assertEqual(agente.revisar_accion(t, 'click', {'element': 'Aceptar cookies y comprar ahora'}), agente.NO_PAGO, 'pagar se mira antes que las cookies')
+        t.ultimo_elemento = 'Botón Comprar'
+        self.assertEqual(agente.revisar_accion(t, 'key', {'keys': 'Return'}), agente.NO_PAGO)
+        t.ultimo_elemento = 'Botón Enviar'
+        contestar_cuando_pregunte(t, False)
+        self.assertEqual(agente.revisar_accion(t, 'type', {'text': 'hola', 'press_enter': True}), agente.NO_DIJO)
 
     def test_un_no_no_se_hace(self):
         t = self.tarea('Go to example.com and tell me what is on the page')
@@ -117,7 +139,7 @@ class Confirmacion(Base):
         r = t.resumen()
         self.assertEqual(r['estado'], 'trabajando')
         self.assertIsNone(r['pregunta'])
-        self.assertGreater(t.permiso_hasta, len(t.pasos) - 1)
+        self.assertTrue(t.permiso_unico, 'el sí deja permiso para UNA acción sensible')
 
     def test_mientras_espera_se_ve_confirmar_con_la_pregunta(self):
         t = self.tarea()
@@ -148,6 +170,48 @@ class Confirmacion(Base):
 
 
 class PausaYControl(Base):
+    def test_una_accion_a_mano_que_llega_tarde_no_toca_otro_escritorio(self):
+        t = self.tarea()
+        t.control = True
+        agente.DUENO_ACTUAL['v'] = 'otra-persona'
+        with self.assertRaises(agente.HTTPException):
+            agente.accion_persona(t, {'tipo': 'click', 'x': 10, 'y': 10})
+        agente.DUENO_ACTUAL['v'] = t.dueno
+        t.parar = True
+        with self.assertRaises(agente.HTTPException):
+            agente.accion_persona(t, {'tipo': 'click', 'x': 10, 'y': 10})
+        self.assertEqual(self.hechas, [], 'nada se tocó')
+
+    def test_la_pantalla_se_captura_con_el_candado_y_nunca_durante_un_reinicio(self):
+        t = self.tarea()
+        antes = (agente.exigir, agente.captura, agente.miniatura, agente.ESPERA_ESCRITORIO_S)
+        visto = []
+        agente.exigir = lambda req: None
+        agente.captura = lambda: visto.append(agente.ESCRITORIO_LOCK.locked()) or (b'png', 10, 10)
+        agente.miniatura = lambda png, ancho: 'eA=='
+        agente.ESPERA_ESCRITORIO_S = 0.05
+        agente.TAREAS[t.id] = t
+        try:
+            agente.ESCRITORIO_LOCK.acquire()  # otro dueño: su escritorio se está preparando
+            try:
+                with self.assertRaises(agente.HTTPException) as e:
+                    agente.pantalla_tarea(t.id, None)
+                self.assertEqual(e.exception.status_code, 409)
+            finally:
+                agente.ESCRITORIO_LOCK.release()
+            self.assertEqual(visto, [], 'durante el reinicio no se captura nada')
+            agente.pantalla_tarea(t.id, None)
+            self.assertEqual(visto, [True], 'la captura va dentro del candado')
+            self.assertFalse(agente.ESCRITORIO_LOCK.locked(), 'y lo suelta')
+            agente.DUENO_ACTUAL['v'] = 'otra-persona'
+            with self.assertRaises(agente.HTTPException):
+                agente.pantalla_tarea(t.id, None)
+            self.assertEqual(len(visto), 1)
+            self.assertFalse(agente.ESCRITORIO_LOCK.locked(), 'también lo suelta al negar')
+        finally:
+            agente.exigir, agente.captura, agente.miniatura, agente.ESPERA_ESCRITORIO_S = antes
+            agente.TAREAS.pop(t.id, None)
+
     def test_pausa_y_reanuda(self):
         t = self.tarea()
         t.avisar(pausa=True)
@@ -177,6 +241,7 @@ class PausaYControl(Base):
 
     def test_teclas_permitidas_y_tipos(self):
         t = self.tarea()
+        t.control = True
         agente.accion_persona(t, {'tipo': 'tecla', 'teclas': 'Enter'})
         agente.accion_persona(t, {'tipo': 'scroll', 'direccion': 'up'})
         with self.assertRaises(agente.HTTPException):
@@ -243,6 +308,19 @@ class CicloGratis(Base):
         self.assertEqual(acciones, ['open_url', 'click', 'click', 'pedir_confirmacion', 'confirmacion', 'answer'])
         herramienta = [m for m in vistos[2] if m.get('role') == 'tool'][-1]
         self.assertEqual(herramienta['content'], agente.NO_PAGO)
+
+    def test_detener_mientras_piensa_no_deja_pasar_el_clic(self):
+        t, _ = self.correr_con([('click', {'element': 'Enlace «Noticias»', 'x': 10, 'y': 10})])
+        crear = agente.cliente.chat.completions.create
+
+        def pensando(**k):
+            r = crear(**k)
+            t.avisar(parar=True)  # la persona tocó Detener mientras el modelo pensaba
+            return r
+        agente.cliente.chat.completions.create = pensando
+        agente.correr(t)
+        self.assertEqual(t.estado, 'parada')
+        self.assertEqual(self.hechas, [], 'lo que decidió mientras la paraban no se hizo (auditoría, 3-oct)')
 
     def test_la_herramienta_de_confirmar_y_un_no(self):
         t, vistos = self.correr_con([

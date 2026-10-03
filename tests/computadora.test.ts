@@ -1049,3 +1049,12 @@ test('a medias por tiempo: tras las continuaciones se ofrece seguir, el botón �
     await nodo.cerrar();
   }
 });
+
+test('sí/no a su computadora: una negación en cualquier parte no es un sí; lo que se contradice vuelve a preguntar (auditoría, 3-oct)', async () => {
+  const { respuestaSiNo } = await import('../server/computadora');
+  for (const t of ['claro que no', 'sí, no lo hagas', 'dale, no', 'ok pero no']) assert.equal(respuestaSiNo(t), null, t);
+  assert.equal(respuestaSiNo('no, sí mándalo'), null, 'se contradice: se pregunta otra vez');
+  assert.equal(respuestaSiNo('va a llover'), null, '«va» al principio de otra frase no es un sí');
+  for (const t of ['sí', 'dale', 'va', 'ok', 'claro', 'adelante']) assert.equal(respuestaSiNo(t), 'si', t);
+  for (const t of ['no', 'mejor no', 'no lo hagas', 'cancela']) assert.equal(respuestaSiNo(t), 'no', t);
+});

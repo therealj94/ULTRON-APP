@@ -21,7 +21,7 @@ import { montarRutasApp } from './server/app-rutas';
 import { montarRutasCaras } from './server/caras-rutas';
 import { avisarComputadoraPorPush, avisarPush, montarRutasPush, proponerPorPush } from './server/push';
 import { montarRutasWindows, instruccionWindows } from './server/windows-rutas';
-import { leerPerfil, lineaPerfil, perfilEnCache, sembrarDesdeGenesis, type Perfil } from './lib/perfil-persona';
+import { actualizarPerfil, leerPerfil, lineaPerfil, perfilEnCache, sembrarDesdeGenesis, type Perfil } from './lib/perfil-persona';
 import {
   abrirTurnoApp,
   ambitoApp,
@@ -76,7 +76,7 @@ import { avisosDeEnvio, correrCorreo, montarRutasCorreo, resolverBorrador, respu
 import { bloqueTarea, correrTarea, precargarTareas, resolverTareaEnCurso, tareaDe } from './lib/tarea-en-curso';
 import { correrWhatsapp, montarRutasWhatsapp, resolverBorradorWhatsapp, whatsappDisponible, whatsappPermitido } from './server/whatsapp';
 import { accionIniciativa, arrancarIniciativa, bloqueIniciativaTurno, correrMisionTurno, duenoMisiones, montarRutasIniciativa } from './server/iniciativa';
-import { frenarIniciativa, pideDejarDeProponer, type PersonaIniciativa } from './lib/iniciativa';
+import { frenarIniciativa, pideApagarIniciativa, pideDejarDeProponer, type PersonaIniciativa } from './lib/iniciativa';
 import { montarRutasCerebroContinuo } from './server/cerebro-continuo';
 import { anotarTurnos, bloqueEpisodios, iniciarBarridoPausas, precargarCerebro } from './lib/episodios';
 import { bloqueAbiertos } from './lib/abiertos';
@@ -2643,9 +2643,14 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     if (correoApp) anotarPersonaReciente(correoApp, nombre, nivel);
     const ini = await aTiempoParaVoz(voz, 'iniciativa', bloqueIniciativaTurno(duenoComputadora, perfilEnCache(correoApp) ?? undefined).catch(() => ''), '');
     if (ini) hechos.push(ini);
-    if (message && pideDejarDeProponer(message)) {
+    if (message && (pideDejarDeProponer(message) || pideApagarIniciativa(message))) {
       const correoIni = duenoMisiones(duenoComputadora);
       if (correoIni) void frenarIniciativa(correoIni).catch(() => undefined);
+      // «Desactiva las propuestas»: apagadas de verdad en su perfil (se prenden en Ajustes o pidiéndolo).
+      if (correoIni && pideApagarIniciativa(message)) {
+        void actualizarPerfil(correoIni, { iniciativa: 'apagada' }).catch((e) => console.warn('[iniciativa] no pude apagarla:', String(e?.message || e).slice(0, 120)));
+        hechos.push('INICIATIVA: la persona pidió apagar tus propuestas y ya quedaron APAGADAS en su perfil. Confírmaselo en una frase y dile que las vuelve a prender en Ajustes o pidiéndotelo.');
+      }
     }
   }
   // Fichas de la memoria estructurada de lo que se nombra (empresas, personas, proyectos). En una

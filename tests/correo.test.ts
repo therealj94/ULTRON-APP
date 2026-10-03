@@ -55,6 +55,12 @@ test('detectar: conocidos, la base de Thunderbird, el MX de Google/Microsoft y e
   const sinRed = { traer: async () => null, mx: async () => [] };
   assert.equal((await detectarProveedor('a@gmail.com', sinRed))?.imap.host, 'imap.gmail.com');
   assert.equal((await detectarProveedor('a@hotmail.com', sinRed))?.auth, 'microsoft', 'Outlook ya no acepta contraseñas');
+  // Orden Global: conocido, solo correo y contraseña (sin servidores a mano ni «adivinado»).
+  const og = await detectarProveedor('Ana@OrdenGlobal.org', sinRed);
+  assert.equal(og?.nombre, 'Orden Global');
+  assert.equal(og?.fuente, 'conocido');
+  assert.equal(og?.auth, 'clave');
+  assert.deepEqual([og?.imap.host, og?.imap.puerto, og?.smtp.host, og?.smtp.puerto], ['mail.ordenglobal.org', 993, 'mail.ordenglobal.org', 465]);
   const isp = await detectarProveedor('a@raro.com', { traer: async (u) => (u.includes('thunderbird') ? XML_YAHOO : null), mx: async () => [] });
   assert.equal(isp?.fuente, 'ispdb');
   assert.deepEqual(isp?.imap, { host: 'imap.mail.yahoo.com', puerto: 993, seguro: true }, 'nunca el IMAP sin cifrar');
@@ -62,8 +68,8 @@ test('detectar: conocidos, la base de Thunderbird, el MX de Google/Microsoft y e
   assert.equal(gw?.nombre, 'Google Workspace');
   const m365 = await detectarProveedor('a@unah.edu.hn', { traer: async () => null, mx: async () => ['unah-edu-hn.mail.protection.outlook.com'] });
   assert.equal(m365?.auth, 'microsoft');
-  const propio = await detectarProveedor('a@ordenglobal.org', sinRed);
-  assert.equal(propio?.imap.host, 'mail.ordenglobal.org');
+  const propio = await detectarProveedor('a@mineraelsol.hn', sinRed);
+  assert.equal(propio?.imap.host, 'mail.mineraelsol.hn');
   assert.equal(propio?.fuente, 'adivinado');
   assert.equal(await detectarProveedor('no-es-correo', sinRed), null);
   assert.equal(leerAutoconfig('<x/>'), null);
@@ -95,6 +101,8 @@ test('la clave se guarda cifrada y no se puede alterar', async () => {
 test('«sí» y «no» al borrador: solo frases cortas y claras', () => {
   for (const t of ['sí', 'Sí, mándalo', 'dale', 'mándalo', 'ok', 'envíalo por favor', 'perfecto']) assert.equal(respuestaAlBorrador(t), 'si', t);
   for (const t of ['no', 'mejor no', 'cancélalo', 'espera']) assert.equal(respuestaAlBorrador(t), 'no', t);
+  // Auditoría, 3-oct: antes «claro que no» y «sí, no lo mandes» MANDABAN el borrador (solo se miraba la primera palabra).
+  for (const t of ['claro que no', 'sí, no lo mandes', 'dale, no', 'no, sí mándalo']) assert.equal(respuestaAlBorrador(t), null, t);
   for (const t of ['sí pero cámbiale el saludo', 'qué hora es', 'sí, y además dime cuántos correos tengo sin leer hoy']) assert.equal(respuestaAlBorrador(t), null, t);
 });
 

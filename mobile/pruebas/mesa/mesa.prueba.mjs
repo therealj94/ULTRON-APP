@@ -364,9 +364,13 @@ prueba('app: su computadora como un agente: captura arriba, plan marcado, tiempo
   const pantalla = en(/La pantalla en vivo, arriba de todo/);
   const pregunta = en(/tr\('Necesito tu sí para seguir'/);
   const plan = en(/tr\('El plan', 'The plan'\)/);
-  const mandos = en(/tr\('Detener', 'Stop'\)/);
+  const mandos = en(/tr\('Pausar', 'Pause'\)/);
   const final = en(/<TarjetaFinal mision=\{misionDeAhora\}/);
   assert.ok(pantalla < pregunta && pregunta < plan && plan < mandos && mandos < final, 'captura → su sí → plan → mandos → resultado');
+  // Detener: fijo abajo (el pie de la hoja, fuera del desplazamiento) y nunca bloqueado por otro botón en camino
+  // (auditoría, 3-oct: quedaba debajo de todo y la guarda de «ocupado» lo ignoraba).
+  assert.match(hoja, /pie=\{\s*tarea && sigue \?\s*\(\s*<Boton titulo=\{tr\('Detener la tarea', 'Stop the task'\)\}/);
+  assert.match(hoja, /\(ocupado && que !== 'parar'\)/);
   assert.match(hoja, /relojMision\(/, 'el tiempo transcurrido');
   assert.match(hoja, /sobreTarea\('si', 'confirmar', \{ si: true \}\)/, '«Sí, hazlo» manda el sí');
   assert.match(hoja, /sobreTarea\('no', 'confirmar', \{ si: false \}\)/);
