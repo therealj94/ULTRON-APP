@@ -4,7 +4,8 @@
  * propuestas quiere: Ajustes → Iniciativa de AURA (Alta, Media, Baja, Apagada).
  */
 import { Animated, StyleSheet, Text, View } from 'react-native';
-import { COLOR, Entra, Ojos, Pantallita, t, Toca, useAparece, type PropsEscena } from './comun';
+import { COLOR, Entra, Pantallita, t, Toca, useAparece, type PropsEscena } from './comun';
+import { OrbeMini } from '../../avatar3d/OrbeMini';
 import { Camino, Senala } from './guia';
 
 const ORDEN = ['tarjeta', 'responde', 'nivel'];
@@ -62,7 +63,7 @@ export default function Propuestas({ paso, esperando, tocado, onToque, ancho, al
         )}
       </Animated.View>
       <View style={st.centro}>
-        <Ojos color={COLOR.aura} tam={70} />
+        <OrbeMini lado={70} />
       </View>
     </Pantallita>
   );

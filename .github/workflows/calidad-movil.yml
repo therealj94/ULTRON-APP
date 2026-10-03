@@ -97,6 +97,7 @@ jobs:
           sh pruebas/identidad/todas.sh
           sh pruebas/costuras/todas.sh
           sh pruebas/chat/todas.sh
+          sh pruebas/veta/todas.sh
           node pruebas/llamadas/pruebas.js
           npx tsx src/compa/pruebas/compa.prueba.mjs
           npx tsx src/avatar3d/pruebas/avatar3d.prueba.mjs

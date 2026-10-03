@@ -8,6 +8,8 @@
  *   POST   /api/cerebro/conocer {categoria, dato, clave?} → un dato que la persona contó a mano (las
  *                                                  preguntas de la primera vez en la app): agregarDato
  *   DELETE /api/cerebro/conocer/:id             → olvida un dato
+ *   POST   /api/cerebro/conocer/olvidar {ids?, claves?: [{categoria, clave}]} → olvida por id y por clave
+ *                                                  común (todas las copias); { borrados, durable }
  *   GET    /api/circulo                         → su círculo cercano y qué se puede desde el servidor
  *   POST   /api/circulo {id?, nombre, relacion, canales, permisos?} → agrega (o cambia, con id)
  *   DELETE /api/circulo/:id
@@ -20,7 +22,7 @@ import type express from 'express';
 import { abiertosDe, cerradosDe, cerrar } from '../lib/abiertos';
 import { CajonNoDisponible, clavePersona } from '../lib/cerebro-comun';
 import { actualizarPersona, agregarPersona, capacidadesCirculo, circuloDe, ErrorCirculo, quitarPersona } from '../lib/circulo';
-import { agregarDato, CATEGORIAS, NOMBRE_CATEGORIA, olvidarDato, olvidarTodo, queNoSe, queSeDe } from '../lib/conocer-persona';
+import { agregarDato, CATEGORIAS, NOMBRE_CATEGORIA, olvidarDato, olvidarPorClaves, olvidarTodo, queNoSe, queSeDe } from '../lib/conocer-persona';
 import { episodiosDe } from '../lib/episodios';
 import { triar, type FuentesTriaje } from '../lib/triaje';
 import { whatsappPermitido } from './whatsapp';
@@ -130,6 +132,24 @@ export function montarRutasCerebroContinuo(app: express.Express, d: Deps) {
     if (!c) return;
     try {
       const r = await olvidarTodo(c);
+      return res.json({ ok: true, borrados: r.borrados, durable: r.durable, honesto: true });
+    } catch (e) {
+      return fallo(res, e);
+    }
+  });
+
+  // Olvidar por id y por clave común (PRIV01): la app borra a la vez la respuesta del perfil y su copia
+  // aquí, y solo lo da por hecho con `durable: true`. Repetirlo no es un 404: vuelve a escribir y a dar recibo.
+  app.post('/api/cerebro/conocer/olvidar', d.exigirMesa, d.limitar(60), async (req, res) => {
+    const c = quien(req, res);
+    if (!c) return;
+    const ids = (Array.isArray(req.body?.ids) ? req.body.ids : []).filter((x: unknown) => typeof x === 'string' && x).slice(0, 50);
+    const crudas = Array.isArray(req.body?.claves) ? req.body.claves.slice(0, 20) : [];
+    const claves = crudas.filter((k: any) => k && typeof k.clave === 'string' && k.clave.trim() && (CATEGORIAS as readonly string[]).includes(k.categoria));
+    if (claves.length !== crudas.length) return res.status(400).json({ error: `Cada clave lleva su categoría (${CATEGORIAS.join(', ')}) y su clave.`, honesto: true });
+    if (!ids.length && !claves.length) return res.status(400).json({ error: 'No dijiste qué olvidar.', honesto: true });
+    try {
+      const r = await olvidarPorClaves(c, { ids, claves });
       return res.json({ ok: true, borrados: r.borrados, durable: r.durable, honesto: true });
     } catch (e) {
       return fallo(res, e);

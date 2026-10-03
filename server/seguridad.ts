@@ -670,12 +670,33 @@ function claveDemo(plataforma: Plataforma): string {
   return String(process.env.ULTRON_MESA_CLAVE || '').trim();
 }
 
+/**
+ * ¿La llave FIJA de Dr Electrum abre? (auditoría 3-oct, SEC01). Dr Electrum es solo de la junta y sus
+ * datos son reales: una llave que no vence ni se revoca y se pasa de mano en mano no abre nada en
+ * producción, y no hay variable que la reactive (una puerta que se puede volver a abrir sigue siendo
+ * una puerta). Para que alguien lo PRUEBE están los códigos `DE-…` que crea el aprobador (1, 5 o 24 h,
+ * revocables, con el nombre de la persona: server/cuentas.ts), que entran como sesión del padrón y
+ * vencen solos. La llave fija queda solo para desarrollo (AURA_DEV=1 / NODE_ENV=test).
+ */
+export function llaveFijaElectrumPermitida(env: NodeJS.ProcessEnv = process.env): boolean {
+  return modoDesarrollo(env);
+}
+
+let avisadoLlaveFija = false;
+
 export function plataformaAutorizada(req: Request, plataforma: Plataforma): boolean {
   if (nivelDe(identidadDe(req), plataforma)) return true;
 
   const clave = claveDemo(plataforma);
   const got = String(req.headers['x-ultron-llave'] || req.headers[plataforma === 'electrum' ? 'x-electrum-llave' : 'x-ultron-mesa'] || '');
-  if (clave && got && secretosIguales(clave, got)) return true;
+  if (clave && got && secretosIguales(clave, got)) {
+    if (plataforma !== 'electrum' || llaveFijaElectrumPermitida()) return true;
+    if (!avisadoLlaveFija) {
+      avisadoLlaveFija = true;
+      console.warn('[Electrum] alguien trajo la llave fija y en producción ya no abre: para probar, un código DE-.');
+    }
+    return false;
+  }
 
   // En modo desarrollo (AURA_DEV=1 o NODE_ENV=test, lib/entorno.ts) y sin llave puesta, se abre: es
   // lo que deja correr las pruebas y el QA de Playwright. Sin esa marca no hay hueco, con llave o sin ella.
@@ -699,7 +720,7 @@ export function exigirPlataforma(plataforma: Plataforma) {
     return res.status(401).json({
       error:
         plataforma === 'electrum'
-          ? 'Dr Electrum FP es privado. Entrá con tu sesión o con la llave de la demostración.'
+          ? 'Dr Electrum FP es privado. Entrá con tu sesión o con el código de prueba que te dio José.'
           : 'AU-RA es privado. Entra con sesión de junta.',
       code: 'sesion_requerida',
       plataforma,

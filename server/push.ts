@@ -5,7 +5,10 @@
  *   POST /api/push/quitar    {token?, aparato?}                                    → { ok, quitados }
  *   POST /api/push/probar                                                          → { ok, enviados, fallidos }
  *        (un `mensaje` de prueba a los teléfonos de la propia sesión; solo la junta)
- *   GET  /api/push/estado                                                          → { configurado, dispositivos }
+ *   GET  /api/push/estado                                                          → { configurado, dispositivos, web }
+ *   GET  /api/push/web/clave                                   → { publica } (la llave VAPID; null sin configurar)
+ *   POST /api/push/web/suscribir {suscripcion, aparato?}       → { ok, suscripciones }   (la web instalada: iPhone)
+ *   POST /api/push/web/quitar    {endpoint?, aparato?}         → { ok, quitados }
  *
  * La persona sale SIEMPRE de la sesión firmada (sesionDe), nunca del cuerpo: nadie registra su teléfono
  * en la cuenta de otro, ni quita, ni prueba, ni cuenta los teléfonos ajenos. Los tokens no vuelven en
@@ -19,6 +22,7 @@ import { exigirMesa as exigirMesaSeguridad, limitar as limitarSeguridad, sesionD
 import { nivelDeCorreo } from './nivel';
 import { aparatoValido } from '../lib/acciones-app';
 import { avisarPush, claveRelevoValida, correoDeRef, dispositivosDe, enviarPush, PushNoDisponible, pushConfigurado, quitarToken, refRelevo, registrarToken, tokenValido } from '../lib/push';
+import { desuscribirWeb, pushWebConfigurado, PushWebNoDisponible, suscribirWeb, suscripcionesDe, vapid } from '../lib/push-web';
 
 export {
   avisarComputadoraPorPush,
@@ -95,7 +99,7 @@ export function montarRutasPush(app: express.Express, deps: Partial<DepsPush> = 
     const correo = correoDe(d, req);
     if (!correo) return sinSesion(res);
     if (d.nivelDe!(correo) !== 'junta') return res.status(403).json({ error: 'La prueba de avisos es de la junta directiva.', code: 'solo_junta', honesto: true });
-    if (!pushConfigurado()) return res.status(503).json({ error: 'Los avisos no están configurados en el servidor (falta FIREBASE_SERVICE_ACCOUNT).', code: 'push_sin_configurar', honesto: true });
+    if (!pushConfigurado() && !pushWebConfigurado()) return res.status(503).json({ error: 'Los avisos no están configurados en el servidor (falta FIREBASE_SERVICE_ACCOUNT o el par VAPID).', code: 'push_sin_configurar', honesto: true });
     const r = await enviarPush(correo, { tipo: 'mensaje', titulo: 'AURA', texto: 'Prueba de avisos: si ves esto con la app cerrada, ya te puedo alcanzar.' });
     return res.status(r.enviados ? 200 : 502).json({ ok: r.enviados > 0, enviados: r.enviados, fallidos: r.fallidos, quitados: r.quitados, ...(r.detalle ? { detalle: r.detalle } : {}), honesto: true });
   });
@@ -129,8 +133,8 @@ export function montarRutasPush(app: express.Express, deps: Partial<DepsPush> = 
     if (!llamada && ahora - (ultimoAvisoChat.get(correo) || 0) < 8_000) return res.json({ ok: true, agrupado: true });
     ultimoAvisoChat.set(correo, ahora);
     if (ultimoAvisoChat.size > 5000) ultimoAvisoChat.delete(ultimoAvisoChat.keys().next().value as string);
-    const tel = await dispositivosDe(correo);
-    if (tel.ok && !tel.dispositivos.length) return res.status(410).json({ error: 'sin teléfonos' });
+    const [tel, web] = await Promise.all([dispositivosDe(correo), suscripcionesDe(correo)]);
+    if (tel.ok && !tel.dispositivos.length && web.ok && !web.suscripciones.length) return res.status(410).json({ error: 'sin teléfonos' });
     const r = await avisarPush(correo, {
       titulo: 'PULSE2CHAT',
       texto: llamada ? 'Te están llamando en PULSE2CHAT' : 'Tienes un mensaje nuevo en PULSE2CHAT',
@@ -143,7 +147,52 @@ export function montarRutasPush(app: express.Express, deps: Partial<DepsPush> = 
     const correo = correoDe(d, req);
     if (!correo) return sinSesion(res);
     res.setHeader('Cache-Control', 'no-store');
-    const r = await dispositivosDe(correo);
-    return res.json({ configurado: pushConfigurado(), dispositivos: r.ok ? r.dispositivos.length : null, disponible: r.ok, honesto: true });
+    const [r, w] = await Promise.all([dispositivosDe(correo), suscripcionesDe(correo)]);
+    return res.json({
+      configurado: pushConfigurado(),
+      dispositivos: r.ok ? r.dispositivos.length : null,
+      disponible: r.ok,
+      web: { configurado: pushWebConfigurado(), suscripciones: w.ok ? w.suscripciones.length : null },
+      honesto: true,
+    });
+  });
+
+  /*
+   * AVISOS EN LA WEB INSTALADA (el iPhone: iOS 16.4+ con AU-RA en la pantalla de inicio). La llave pública
+   * VAPID no es secreta (el navegador la necesita para suscribirse); la suscripción se guarda por el correo
+   * de la SESIÓN y solo si es de un servicio de avisos conocido (lib/push-web.ts).
+   */
+  app.get('/api/push/web/clave', d.limitar(30, 60_000, 'push-web-clave'), (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    return res.json({ publica: vapid()?.publica || null, honesto: true });
+  });
+
+  app.post('/api/push/web/suscribir', d.exigirMesa, d.limitar(20, 60_000, 'push-web-suscribir'), async (req, res) => {
+    const correo = correoDe(d, req);
+    if (!correo) return sinSesion(res);
+    if (!pushWebConfigurado()) return res.status(503).json({ error: 'Los avisos en la web no están configurados en el servidor.', code: 'push_web_sin_configurar', honesto: true });
+    const aparato = aparatoValido(req.body?.aparato) || aparatoValido(req.headers['x-aura-aparato']) || '';
+    try {
+      const r = await suscribirWeb(correo, req.body?.suscripcion, aparato);
+      return res.json({ ok: true, suscripciones: r.suscripciones, durable: r.durable, honesto: true });
+    } catch (e) {
+      if (e instanceof PushWebNoDisponible) return noDisponible(res);
+      return res.status(400).json({ error: String((e as Error)?.message || 'No pude guardar la suscripción.').slice(0, 160), honesto: true });
+    }
+  });
+
+  app.post('/api/push/web/quitar', d.exigirMesa, d.limitar(20, 60_000, 'push-web-quitar'), async (req, res) => {
+    const correo = correoDe(d, req);
+    if (!correo) return sinSesion(res);
+    const aparato = aparatoValido(req.body?.aparato) || '';
+    const endpoint = String(req.body?.endpoint || '');
+    if (!endpoint && !aparato) return res.status(400).json({ error: 'Falta qué navegador quitar.', honesto: true });
+    try {
+      const r = await desuscribirWeb(correo, { endpoint, aparato });
+      return res.json({ ok: true, quitados: r.quitados, durable: r.durable, honesto: true });
+    } catch (e) {
+      if (e instanceof PushWebNoDisponible) return noDisponible(res);
+      return res.status(500).json({ error: 'No pude quitar este navegador de los avisos.', honesto: true });
+    }
   });
 }

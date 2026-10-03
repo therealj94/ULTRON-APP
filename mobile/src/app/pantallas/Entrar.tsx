@@ -172,12 +172,18 @@ export function Entrar({ navigation, route }: Props) {
   const alVolver = async (r: ResultadoGenesis) => {
     if (!vivo.current) return;
     if (estadoRef.current.tipo === 'exito') return;
+    // Otra entrada la reemplazó (lib/intentoEntrada.ts): esta no tiene nada que decir; solo deja de esperar.
+    if (!r.ok && r.codigo === 'VENCIDO') {
+      if (estadoRef.current.tipo === 'esperando') setEstado({ tipo: 'listo' });
+      return;
+    }
     if (r.ok) {
       vibrar('exito');
       setEstado({ tipo: 'exito', nombre: r.miembro.nombre });
       // Lo que Genesis compartió (nombre completo y cumpleaños) viaja a la primera vez.
       const compartido = (r as ResultadoGenesis & { genesis?: Compartido }).genesis || null;
-      setTimeout(() => void entrarCon({ name: r.miembro.nombre, role: r.miembro.rol, correo: r.miembro.correo }, compartido), 850);
+      // Con su intento: si en estos 850 ms empezó otra entrada, esta no fija a nadie.
+      setTimeout(() => void entrarCon({ name: r.miembro.nombre, role: r.miembro.rol, correo: r.miembro.correo }, compartido, r.intento), 850);
       return;
     }
     if (r.codigo === 'CANCELADO') return setEstado({ tipo: 'listo' });

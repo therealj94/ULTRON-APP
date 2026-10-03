@@ -199,11 +199,15 @@ export function juntarCambios(a: Partial<Perfil>, b: Partial<Perfil>): Partial<P
  * encuesta y el «completado». Un servidor sin almacenamiento durable (Render sin S3) puede volver
  * vacío después de un redespliegue, y contestar un PUT con un perfil recién sembrado: eso no puede
  * borrar lo que la persona contó. Lo que falta allá se vuelve a mandar. Borrar algo se hace desde
- * aquí (se manda vacío a propósito), así que un hueco del servidor nunca es una orden de borrar.
+ * aquí (se manda vacío a propósito), así que un hueco del servidor nunca es una orden de borrar…
+ *
+ * …salvo que el servidor MANDE (`servidorManda`, auditoría del 3-oct PRIV01): su almacén es durable y su
+ * perfil es más nuevo que el último que vio este teléfono (las dos horas son del reloj del servidor). Ahí
+ * el hueco es lo que se borró desde otro teléfono o la web, y reenviarlo desde esta caché lo resucitaba.
  */
-export function huecosDelServidor(local: Perfil | null, servidor: Perfil | null): Partial<Perfil> {
+export function huecosDelServidor(local: Perfil | null, servidor: Perfil | null, o: { servidorManda?: boolean } = {}): Partial<Perfil> {
   const h: Partial<Perfil> = {};
-  if (!local || !servidor) return h;
+  if (!local || !servidor || o.servidorManda) return h;
   if (local.apodo && !servidor.apodo) h.apodo = local.apodo;
   if (local.cumple && !servidor.cumple) h.cumple = local.cumple;
   if (local.completado && !servidor.completado) h.completado = true;
@@ -218,7 +222,7 @@ export function huecosDelServidor(local: Perfil | null, servidor: Perfil | null)
  * cambiarse desde la web u otro teléfono), pero lo que aquí se sabe y allá falta se conserva
  * (`huecosDelServidor`), y los cambios pendientes de este teléfono van encima de todo.
  */
-export function fusionar(local: Perfil | null, servidor: Perfil | null, pendiente: Partial<Perfil> | null): Perfil | null {
+export function fusionar(local: Perfil | null, servidor: Perfil | null, pendiente: Partial<Perfil> | null, o: { servidorManda?: boolean } = {}): Perfil | null {
   if (!servidor) return local;
   if (!local) return servidor;
   let base = servidor;
@@ -226,7 +230,7 @@ export function fusionar(local: Perfil | null, servidor: Perfil | null, pendient
   // Cómo tener a AURA es de este teléfono mientras el servidor no lo guarde: un servidor que todavía no
   // conoce el campo no lo borra (ni se le reenvía para siempre, como a un hueco).
   if (!base.presencia && local.presencia) base = { ...base, presencia: local.presencia };
-  const cambios = juntarCambios(huecosDelServidor(local, servidor), pendiente || {});
+  const cambios = juntarCambios(huecosDelServidor(local, servidor, o), pendiente || {});
   if (!Object.keys(cambios).length) return base;
   return aplicarCambios(base, cambios, Math.max(local.actualizado, servidor.actualizado));
 }
@@ -235,6 +239,8 @@ export function fusionar(local: Perfil | null, servidor: Perfil | null, pendient
 
 const CLAVE = (correo: string) => `aura.perfil.v1:${correo.trim().toLowerCase()}`;
 const CLAVE_PENDIENTE = (correo: string) => `aura.perfil.pendiente.v1:${correo.trim().toLowerCase()}`;
+/** El `actualizado` (reloj del servidor) del último perfil que este teléfono recibió del servidor. */
+const CLAVE_SERVIDOR = (correo: string) => `aura.perfil.servidor.v1:${correo.trim().toLowerCase()}`;
 
 let dueno = '';
 /**
@@ -248,6 +254,10 @@ let pendiente: Partial<Perfil> | null = null;
 let reintento: ReturnType<typeof setTimeout> | null = null;
 let espera = 4_000;
 let enviando: Promise<void> | null = null;
+/** El último lote que contestó el servidor y si quedó durable (para el recibo de `guardarPerfilConRecibo`). */
+let ultimoRecibo: { lote: Partial<Perfil>; durable: boolean } | null = null;
+/** El `actualizado` del último perfil recibido del servidor (0 = todavía ninguno en este teléfono). */
+let vistoServidor = 0;
 /**
  * Dónde está lo último de esta persona:
  *   local     → solo en este teléfono (todavía no contestó el servidor);
@@ -332,12 +342,15 @@ async function guardarLocal() {
   if (!dueno) return;
   const clave = CLAVE(dueno);
   const clavePendiente = CLAVE_PENDIENTE(dueno);
+  const claveServidor = CLAVE_SERVIDOR(dueno);
   const perfil = JSON.stringify(actual);
   const lote = pendiente ? JSON.stringify(pendiente) : null;
+  const visto = vistoServidor;
   try {
     await AsyncStorage.setItem(clave, perfil);
     if (lote) await AsyncStorage.setItem(clavePendiente, lote);
     else await AsyncStorage.removeItem(clavePendiente);
+    if (visto) await AsyncStorage.setItem(claveServidor, String(visto));
   } catch {
     /* sin almacenamiento, vive en memoria hasta que se pueda */
   }
@@ -353,55 +366,88 @@ function programarReintento() {
 }
 
 /**
- * Manda lo pendiente. Un fallo (404, 5xx, sin red) lo deja para después, sin avisar a nadie. El lote
- * sale de la cola SOLO con recibo durable del servidor (`durable: true`); con `durable: false` el
- * servidor lo tiene pero puede perderlo, y se reintenta (el PUT es idempotente: mismos valores).
- * Devuelve true si quedó durable.
+ * ¿Manda el servidor sobre los huecos? Solo si dijo que su almacén es durable y su perfil es más nuevo que
+ * el último que vio este teléfono (ver `huecosDelServidor`). Sin nada visto todavía (una instalación que
+ * viene de antes de esto), no: se sigue como siempre.
  */
-export async function enviarPendiente(): Promise<boolean> {
-  if (enviando) {
-    await enviando;
-    return !pendiente && estado === 'durable';
-  }
-  if (!pendiente || !actual || !dueno) return !pendiente && estado === 'durable';
+function servidorManda(servidor: Perfil | null, durable: boolean): boolean {
+  return durable && !!servidor && vistoServidor > 0 && servidor.actualizado > vistoServidor;
+}
+
+/** Lo visto del servidor (su `actualizado`), para la próxima vez. */
+function anotarVisto(servidor: Perfil | null) {
+  if (servidor && servidor.actualizado > vistoServidor) vistoServidor = servidor.actualizado;
+}
+
+/** Manda UN lote (lo pendiente de ahora) y devuelve qué se mandó y si quedó durable; null si falló. */
+function enviarLote(): Promise<{ lote: Partial<Perfil>; durable: boolean } | null> {
+  if (!pendiente || !actual || !dueno) return Promise.resolve(null);
   const gen = generacion;
   const lote = pendiente;
   const cuerpo = cuerpoPut(actual, lote);
-  let ok = false;
-  enviando = (async () => {
+  let res: { lote: Partial<Perfil>; durable: boolean } | null = null;
+  const p = (async () => {
     try {
       const r = await api<{ perfil?: unknown; durable?: boolean }>(RUTA_PERFIL, { method: 'PUT', body: JSON.stringify(cuerpo) }, 12_000);
       if (gen !== generacion) return;
       const durable = r?.durable === true;
-      ok = durable;
+      res = { lote, durable };
+      ultimoRecibo = res;
       estado = durable ? 'durable' : 'recibido';
       if (durable) espera = 4_000;
       // Lo que se cambió mientras viajaba este lote sigue pendiente; el lote mismo, solo si no quedó durable.
       if (durable) pendiente = pendiente === lote ? null : pendiente;
       const delServidor = normalizarPerfil(r?.perfil);
-      const huecos = huecosDelServidor(actual, delServidor);
+      const manda = servidorManda(delServidor, durable);
+      const huecos = huecosDelServidor(actual, delServidor, { servidorManda: manda });
       if (Object.keys(huecos).length) pendiente = juntarCambios(huecos, pendiente || {});
       if (delServidor && actual) {
         // El servidor devuelve el perfil entero: se toma su `actualizado` y lo que puso él (nombreGenesis).
-        const junto = fusionar(actual, delServidor, pendiente);
+        const junto = fusionar(actual, delServidor, pendiente, { servidorManda: manda });
         if (junto) poner({ ...junto, actualizado: Math.max(junto.actualizado, actual.actualizado) });
       }
+      anotarVisto(delServidor);
       await guardarLocal();
     } catch (e: any) {
       // 400 = el servidor no acepta ese valor: no se reintenta lo mismo para siempre.
       if (e?.status === 400 && gen === generacion) {
+        ultimoRecibo = { lote, durable: false };
         pendiente = pendiente === lote ? null : pendiente;
         await guardarLocal();
       }
     }
   })();
-  try {
-    await enviando;
-  } finally {
-    enviando = null;
-  }
+  enviando = p;
+  return p
+    .finally(() => {
+      if (enviando === p) enviando = null;
+    })
+    .then(() => res);
+}
+
+/**
+ * Manda lo pendiente. Un fallo (404, 5xx, sin red) lo deja para después, sin avisar a nadie. El lote
+ * sale de la cola SOLO con recibo durable del servidor (`durable: true`); con `durable: false` el
+ * servidor lo tiene pero puede perderlo, y se reintenta (el PUT es idempotente: mismos valores).
+ * Si ya va un envío, se espera, y lo que quedó pendiente detrás de él sale después.
+ * Devuelve true si quedó durable.
+ */
+export async function enviarPendiente(): Promise<boolean> {
+  while (enviando) await enviando;
+  if (!pendiente || !actual || !dueno) return !pendiente && estado === 'durable';
+  const r = await enviarLote();
   if (pendiente) programarReintento();
-  return ok;
+  return !!r?.durable;
+}
+
+/** ¿El lote lleva estos cambios, con estos mismos valores? */
+function loteCubre(lote: Partial<Perfil>, cambios: Partial<Perfil>): boolean {
+  for (const k of Object.keys(cambios) as (keyof Perfil)[]) {
+    if (k === 'encuesta') {
+      for (const [campo, v] of Object.entries(cambios.encuesta || {})) if ((lote.encuesta as Record<string, unknown> | undefined)?.[campo] !== v) return false;
+    } else if (lote[k] !== cambios[k]) return false;
+  }
+  return true;
 }
 
 /**
@@ -422,6 +468,8 @@ export async function cargarPerfil(
     pendiente = null;
     estado = 'local';
     espera = 4_000;
+    ultimoRecibo = null;
+    vistoServidor = 0;
     if (reintento) clearTimeout(reintento);
     reintento = null;
   }
@@ -430,14 +478,17 @@ export async function cargarPerfil(
   const vigente = () => gen === generacion && dueno === c;
   let local: Perfil | null = null;
   let pen: unknown = null;
+  let visto = 0;
   try {
     local = normalizarPerfil(JSON.parse((await AsyncStorage.getItem(CLAVE(c))) || 'null'));
     pen = JSON.parse((await AsyncStorage.getItem(CLAVE_PENDIENTE(c))) || 'null');
+    visto = Number(await AsyncStorage.getItem(CLAVE_SERVIDOR(c))) || 0;
   } catch {
     local = null;
   }
   // La lectura local llegó tarde (ya está otra persona, o esta misma en otra sesión): no se aplica.
   if (!vigente()) return (actual ?? perfilInicial({ ahora: Date.now() })) as Perfil;
+  if (visto > vistoServidor) vistoServidor = visto;
   pendiente = pen && typeof pen === 'object' ? juntarCambios(pen as Partial<Perfil>, pendiente || {}) : pendiente;
   if (local) poner(local);
 
@@ -452,11 +503,14 @@ export async function cargarPerfil(
       // no queda nada por mandar.
       if (estado !== 'durable') estado = r?.durable === true ? 'durable' : 'recibido';
       const servidor = normalizarPerfil(r?.perfil);
-      // Lo que el servidor perdió (o nunca recibió) se le vuelve a mandar.
-      const huecos = huecosDelServidor(actual, servidor);
+      // Lo que el servidor perdió (o nunca recibió) se le vuelve a mandar; lo que se borró en otro
+      // teléfono (servidor durable y más nuevo que lo visto aquí) no.
+      const manda = servidorManda(servidor, r?.durable === true);
+      const huecos = huecosDelServidor(actual, servidor, { servidorManda: manda });
       if (Object.keys(huecos).length) pendiente = juntarCambios(huecos, pendiente || {});
-      const junto = fusionar(actual, servidor, pendiente);
+      const junto = fusionar(actual, servidor, pendiente, { servidorManda: manda });
       if (junto) poner(junto);
+      anotarVisto(servidor);
     } catch {
       /* 404, 5xx o sin red: se sigue con lo local */
     }
@@ -495,6 +549,13 @@ export async function cargarPerfil(
  * nuevo sin esperar a la red. Sin perfil cargado (no hay sesión) solo aplica tema/idioma/avatar.
  */
 export function guardarPerfil(cambios: Partial<Perfil>): Perfil | null {
+  const nuevo = aplicarYEncolar(cambios);
+  if (nuevo) void guardarLocal().then(() => enviarPendiente());
+  return nuevo;
+}
+
+/** Aplica aquí y encola para el servidor. Sin perfil cargado solo aplica tema/idioma/avatar (null). */
+function aplicarYEncolar(cambios: Partial<Perfil>): Perfil | null {
   if (!actual) {
     if (cambios.tema) fijarTema(cambios.tema);
     if (cambios.idioma) fijarIdioma(cambios.idioma);
@@ -504,8 +565,33 @@ export function guardarPerfil(cambios: Partial<Perfil>): Perfil | null {
   const nuevo = aplicarCambios(actual, cambios, Math.max(Date.now(), actual.actualizado + 1));
   pendiente = juntarCambios(pendiente || {}, cambios);
   poner(nuevo);
-  void guardarLocal().then(() => enviarPendiente());
   return nuevo;
+}
+
+/**
+ * Como `guardarPerfil`, pero ESPERA el recibo: true solo si el servidor confirmó que ESTOS cambios quedaron
+ * en almacenamiento durable (auditoría del 3-oct, PRIV01: un borrado no se confirma en pantalla sin eso).
+ * Aquí se aplica al momento igual; sin recibo (red caída, `durable: false`, 404, 5xx) queda pendiente y se
+ * reintenta solo. Nunca lanza.
+ */
+export async function guardarPerfilConRecibo(cambios: Partial<Perfil>): Promise<boolean> {
+  if (!aplicarYEncolar(cambios)) return false;
+  const gen = generacion;
+  try {
+    await guardarLocal();
+    // Hasta tres vueltas: un envío que ya iba (y no llevaba esto) se espera, y después sale lo nuestro.
+    for (let i = 0; i < 3; i++) {
+      while (enviando) await enviando;
+      if (gen !== generacion) return false;
+      if (!pendiente) return !!ultimoRecibo && ultimoRecibo.durable && loteCubre(ultimoRecibo.lote, cambios);
+      const r = await enviarLote();
+      if (gen !== generacion || !r) return false;
+      if (loteCubre(r.lote, cambios)) return r.durable;
+    }
+    return false;
+  } finally {
+    if (gen === generacion && pendiente) programarReintento();
+  }
 }
 
 /** Al volver la app a primer plano: si algo quedó sin mandar, otra vez. */
@@ -525,5 +611,7 @@ export function soltarPerfil() {
   actual = null;
   pendiente = null;
   estado = 'local';
+  ultimoRecibo = null;
+  vistoServidor = 0;
   avisar();
 }

@@ -43,6 +43,10 @@ const ENV: Record<string, string[]> = {
   whatsapp_url: ['WHATSAPP_PUENTE_URL'],
   whatsapp_clave: ['WHATSAPP_PUENTE_CLAVE'],
   whatsapp_duenos: ['WHATSAPP_DUENOS'],
+  // Avisos web (la AU-RA instalada en un iPhone): el par VAPID P-256 en base64url (lib/push-web.ts).
+  webpush_publica: ['WEB_PUSH_VAPID_PUBLICA'],
+  webpush_privada: ['WEB_PUSH_VAPID_PRIVADA'],
+  webpush_contacto: ['WEB_PUSH_CONTACTO'],
   // Correo de cada persona: la llave con que se cifran sus claves (si falta, la de la sesión) y la app de
   // Microsoft para entrar a Outlook/Microsoft 365 con OAuth (lib/correo).
   correo_cifrado: ['CORREO_CLAVE_CIFRADO', 'ULTRON_SESION_SECRETO'],

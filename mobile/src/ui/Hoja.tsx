@@ -30,9 +30,11 @@ type Props = {
   titulo?: string;
   subtitulo?: string;
   children: ReactNode;
+  /** Lo que queda fijo abajo, fuera del desplazamiento (un mando que siempre se debe poder tocar: Detener). */
+  pie?: ReactNode;
 };
 
-export function Hoja({ visible, onCerrar, titulo, subtitulo, children }: Props) {
+export function Hoja({ visible, onCerrar, titulo, subtitulo, children, pie }: Props) {
   const tema = useTema();
   const ins = useSafeAreaInsets();
   const { height, width } = useWindowDimensions();
@@ -125,13 +127,14 @@ export function Hoja({ visible, onCerrar, titulo, subtitulo, children }: Props) 
             </GestureDetector>
             <ScrollView
               style={s.contenido}
-              contentContainerStyle={{ paddingHorizontal: MEDIDA.espacio.xl, paddingBottom: ins.bottom + MEDIDA.espacio.xl + teclado }}
+              contentContainerStyle={{ paddingHorizontal: MEDIDA.espacio.xl, paddingBottom: (pie ? MEDIDA.espacio.l : ins.bottom + MEDIDA.espacio.xl) + teclado }}
               keyboardShouldPersistTaps="handled"
               keyboardDismissMode="none"
               showsVerticalScrollIndicator
             >
               {children}
             </ScrollView>
+            {pie ? <View style={[s.pie, { borderTopColor: tema.borde, paddingBottom: ins.bottom + MEDIDA.espacio.m }]}>{pie}</View> : null}
           </Animated.View>
         </KeyboardAvoidingView>
       </GestureHandlerRootView>
@@ -146,4 +149,5 @@ const s = StyleSheet.create({
   contenido: { flexGrow: 0, flexShrink: 1 },
   asa: { width: 40, height: 5, borderRadius: 3, alignSelf: 'center', marginBottom: 14, opacity: 0.9 },
   cabeza: { gap: 6, marginBottom: MEDIDA.espacio.l },
+  pie: { paddingHorizontal: MEDIDA.espacio.xl, paddingTop: MEDIDA.espacio.m, borderTopWidth: StyleSheet.hairlineWidth },
 });

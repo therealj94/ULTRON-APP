@@ -26,6 +26,7 @@
  * de aquí: con ella solo se puede preguntar si un pase HECHO PARA AU-RA vale.
  */
 import type { Express, RequestHandler } from 'express';
+import { recogerVuelta, registrarIntentoWeb, VIDA_INTENTO_MS } from './sso-web';
 
 const RETO = /^[A-Za-z0-9_-]{43}$/;
 const GID = /^GEN-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]$/;
@@ -169,15 +170,50 @@ export function montarRutasGenesis(app: Express, d: DepsGenesis) {
     if (!pase || pase.length > 4096 || verificador.length < 43 || verificador.length > 128) {
       return res.status(400).json({ ok: false, error: 'Falta el pase de Genesis ID.', codigo: 'SIN_PASE' });
     }
+    const r = await entrarConPase(pase, verificador, 'desde la app AU-RA FP');
+    return res.status(r.status).json(r.body);
+  });
+
+  /*
+   * ENTRAR DESDE LA WEB (Safari, el icono del iPhone, escritorio; auditoría del 3-oct, IOS01). La web
+   * registra su intento (estado + huella del verificador) antes de ir a la wallet; la vuelta a /sso queda
+   * depositada en el servidor (server/sso-web.ts) y la web la recoge aquí con su verificador: un canje, con
+   * plazo, atado al intento. Nunca hay un token de sesión en una URL.
+   */
+  app.post('/api/genesis/web/intento', d.limitar(20, 15 * 60_000, 'genesis-web'), (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const estado = String(req.body?.estado || '');
+    const reto = String(req.body?.reto || '');
+    if (!registrarIntentoWeb(estado, reto)) return res.status(400).json({ ok: false, error: 'El pedido de entrada no es válido. Probá otra vez.', codigo: 'INTENTO_INVALIDO' });
+    return res.json({ ok: true, venceEn: Math.round(VIDA_INTENTO_MS / 1000) });
+  });
+
+  // La web pregunta cada pocos segundos mientras espera: el tope es amplio, el canje sigue siendo uno.
+  app.post('/api/genesis/web/recoger', d.limitar(240, 15 * 60_000, 'genesis-web-recoger'), async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const estado = String(req.body?.estado || '');
+    const verificador = String(req.body?.verificador || '');
+    if (verificador.length < 43 || verificador.length > 128) return res.status(400).json({ ok: false, error: 'Falta el verificador.', codigo: 'SIN_VERIFICADOR' });
+    const r = recogerVuelta(estado, verificador);
+    if (r.estado === 'pendiente') return res.status(202).json({ ok: false, estado: 'pendiente' });
+    if (r.estado === 'desconocido') return res.status(410).json({ ok: false, estado: 'vencido', codigo: 'VENCIDO', error: 'Esta entrada venció o ya se usó. Tocá «Entrar con Genesis ID» otra vez.' });
+    if (r.estado === 'reto') return res.status(403).json({ ok: false, estado: 'error', codigo: 'RETO', error: 'Esta entrada no la empezó este navegador.' });
+    if (r.estado === 'error') return res.status(400).json({ ok: false, estado: 'error', codigo: r.error, error: 'Tu wallet no completó la entrada.' });
+    const e = await entrarConPase(r.pase, verificador, 'desde la web de AU-RA FP');
+    return res.status(e.status).json(e.body);
+  });
+
+  /** El canje del pase (la app y la web): la misma decisión de siempre, con su estado HTTP y su cuerpo. */
+  async function entrarConPase(pase: string, verificador: string, desde: string): Promise<{ status: number; body: Record<string, unknown> }> {
     const v = await verificarPase(pase, verificador, d.fetch);
     if ('codigo' in v) {
       if (v.estado === 503) console.error(`[genesis] ${v.codigo}${v.detalle ? `: ${v.detalle}` : ''}`);
-      return res.status(v.estado).json({ ok: false, error: MENSAJE[v.codigo], codigo: v.codigo });
+      return { status: v.estado, body: { ok: false, error: MENSAJE[v.codigo], codigo: v.codigo } };
     }
     const correo = d.normalizarCorreo(v.correo);
     // Una cuenta suspendida no entra por Genesis (con Genesis abierto entraba como miembro).
     if (d.suspendida && (await d.suspendida(correo).catch(() => false))) {
-      return res.status(403).json({ ok: false, codigo: 'SUSPENDIDA', error: 'Esta cuenta está suspendida.' });
+      return { status: 403, body: { ok: false, codigo: 'SUSPENDIDA', error: 'Esta cuenta está suspendida.' } };
     }
     const enPadron = d.tieneAcceso(correo);
     // Miembro: fuera del padrón, con la puerta abierta, y que el padrón no lo tenga apartado de AU-RA.
@@ -187,18 +223,21 @@ export function montarRutasGenesis(app: Express, d: DepsGenesis) {
         .pedirAcceso({
           nombre: v.nombre || correo.split('@')[0],
           correo,
-          motivo: `Entró con Genesis ID verificado (${v.gid}) desde la app AU-RA FP.`,
+          motivo: `Entró con Genesis ID verificado (${v.gid}) ${desde}.`,
         })
         .catch(() => false);
       console.warn(`[genesis] ${v.gid} verificado pero sin acceso a AU-RA; solicitud ${guardada ? 'guardada' : 'NO guardada'}`);
-      return res.status(403).json({
-        ok: false,
-        codigo: 'PENDIENTE',
-        gid: v.gid,
-        error: guardada
-          ? 'Tu Genesis ID es válido. Tu acceso a AU-RA quedó pedido: cuando lo aprueben, entrás con este mismo botón.'
-          : 'Tu Genesis ID es válido, pero todavía no tenés acceso a AU-RA. Pedilo desde «Solicitar acceso».',
-      });
+      return {
+        status: 403,
+        body: {
+          ok: false,
+          codigo: 'PENDIENTE',
+          gid: v.gid,
+          error: guardada
+            ? 'Tu Genesis ID es válido. Tu acceso a AU-RA quedó pedido: cuando lo aprueben, entrás con este mismo botón.'
+            : 'Tu Genesis ID es válido, pero todavía no tenés acceso a AU-RA. Pedilo desde «Solicitar acceso».',
+        },
+      };
     }
     const { nombre, rol } = d.nombreYRol(correo, v.nombre);
     const s = d.emitirSesion({ correo, nombre, rol }, { comunidad: comoMiembro });
@@ -225,16 +264,19 @@ export function montarRutasGenesis(app: Express, d: DepsGenesis) {
       await Promise.race([Promise.all(tareas), new Promise<void>((r) => (reloj = setTimeout(r, d.esperaSembrarMs ?? ESPERA_SEMBRAR_MS)))]);
       clearTimeout(reloj);
     }
-    return res.json({
-      ok: true,
-      token: s.token,
-      miembro: { nombre, correo, rol, gid: v.gid },
-      // Solo informa a la pantalla; el servidor recalcula el nivel en cada petición (server/nivel.ts).
-      nivel: comoMiembro ? 'miembro' : 'junta',
-      genesis: { nombre: v.nombreCompleto || null, cumple: v.cumple },
-      por: 'genesis',
-    });
-  });
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        token: s.token,
+        miembro: { nombre, correo, rol, gid: v.gid },
+        // Solo informa a la pantalla; el servidor recalcula el nivel en cada petición (server/nivel.ts).
+        nivel: comoMiembro ? 'miembro' : 'junta',
+        genesis: { nombre: v.nombreCompleto || null, cumple: v.cumple },
+        por: 'genesis',
+      },
+    };
+  }
 }
 
 /** Solo para pruebas: la forma que tiene que tener un reto. */

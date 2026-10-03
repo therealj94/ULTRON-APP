@@ -55,10 +55,13 @@ async function preguntar(c: Caso): Promise<Salida> {
     const r = await fetch(`${URL_BASE}${ruta}`, { method: 'POST', headers: cabeceras(), body: JSON.stringify(cuerpo), signal: AbortSignal.timeout(ESPERA_MS) });
     const j: any = await r.json().catch(() => ({}));
     const ms = Date.now() - t0;
+    // El error, el corte y los recibos van a la revisión: un texto convincente no basta (EXEC03).
     if (PLATAFORMA === 'electrum') {
-      return { texto: String(j.texto || ''), herramientas: (j.traza || []).map((t: any) => t.herramienta), panel: String(j.panel || ''), ms, error: r.ok ? undefined : j.error || `HTTP ${r.status}` };
+      const traza: any[] = Array.isArray(j.traza) ? j.traza : [];
+      const pasos = traza.map((t) => ({ herramienta: String(t.herramienta), estado: t.estado || (t.ok ? 'succeeded' : 'failed') }));
+      return { texto: String(j.texto || ''), herramientas: traza.map((t) => t.herramienta), panel: String(j.panel || ''), ms, error: r.ok ? undefined : j.error || `HTTP ${r.status}`, pasos };
     }
-    return { texto: String(j.reply || ''), herramientas: j.herramientas || [], ms, error: r.ok ? undefined : j.error || `HTTP ${r.status}` };
+    return { texto: String(j.reply || ''), herramientas: j.herramientas || [], ms, error: r.ok ? undefined : j.error || `HTTP ${r.status}`, parcial: j.parcial === true, ...(j.estado ? { estado: j.estado } : {}) };
   } catch (e: any) {
     return { texto: '', herramientas: [], ms: Date.now() - t0, error: String(e?.message || e) };
   }

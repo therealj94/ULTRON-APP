@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { miga, reportarEstado } from '../lib/reporte';
+import { guardarPerfil } from '../lib/perfil';
 import { AccessibilityInfo, Alert, AppState, Animated, BackHandler, Linking, PanResponder, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useKeepAwake } from 'expo-keep-awake';
 import { useCameraPermissions } from 'expo-camera';
@@ -114,6 +115,7 @@ import type { PantallaCerebro } from '../compa/cerebro';
 import { TarjetaPropuesta } from '../components/TarjetaPropuesta';
 import { HojaCerebro } from '../app/HojasCerebro';
 import { publicarMesa, retirarMesa } from '../app/mesaAjustes';
+import { useBorradorMesa } from '../lib/borradorMesa';
 
 type Props = {
   user: SessionUser;
@@ -233,6 +235,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const [bubble, setBubble] = useState('');
   const [status, setStatus] = useState<'boot' | 'listening' | 'muted' | 'thinking' | 'speaking' | 'orando' | 'reconnect' | 'offline'>('boot');
   const [draft, setDraft] = useState('');
+  // Lo escrito sobrevive a una actualización por aire (UI01, 3-oct).
+  useBorradorMesa(draft, setDraft);
   const [listening, setListening] = useState(false);
   const [level, setLevel] = useState(0);
   /** El volumen del micrófono solo lo dibuja la cara clásica: con las otras no se re-renderiza por él. */
@@ -295,6 +299,16 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const [irritation, setIrritation] = useState(0);
   const [online, setOnline] = useState(true);
   const [partial, setPartial] = useState('');
+  /**
+   * Lo último que dijo la persona (la frase ya entendida), unos segundos a la vista arriba a la derecha:
+   * su lado de la conversación, aparte del de su avatar (abajo), para que nunca se encimen (José, 3-oct).
+   */
+  const [dicho, setDicho] = useState<{ texto: string; n: number } | null>(null);
+  useEffect(() => {
+    if (!dicho) return;
+    const t = setTimeout(() => setDicho(null), 4_500);
+    return () => clearTimeout(t);
+  }, [dicho]);
   const [toolHint, setToolHint] = useState('');
   const [winkSide, setWinkSide] = useState<'L' | 'R'>('L');
   const [canciones, setCanciones] = useState<Cancion[]>(CANCIONES_LOCAL);
@@ -319,6 +333,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const conversando = voz.vista.montada;
   const convSilencio = voz.vista.silenciada;
   const estadoConv = voz.vista.estado;
+  /** La conversación entendió a la persona y el agente todavía no contesta (sesion.ts, CALL04). */
+  const convPensando = voz.vista.pensando;
   /**
    * La llamada del avatar tiene el micrófono (suena, conecta o se habla; o la sesión dormida por un
    * silencio largo): la mesa no oye ni habla sola (M3). Al colgar, el oído de la mesa vuelve.
@@ -748,6 +764,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   /** AU-RA canta: POST /api/cantar. Cara SING, mic pausado, sin rellenos. */
   const sing = useCallback(
     async (req: SongRequest, titulo: string) => {
+      // Nunca encima de la conversación en vivo o de una llamada (sonaban las dos a la vez).
+      if (conversandoRef.current || enLlamadaRef.current) return void showBubble(tr('Termina la conversación en vivo y te la canto.', 'End the live conversation and I’ll sing it.'));
       // El repertorio está grabado con la voz de AU-RA: los otros avatares no lo cantan con la de ella.
       if ('id' in req && avatarActual() !== 'aura') {
         await say(
@@ -783,6 +801,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   /** Oración del día: POST /api/orar. Cara PRAY, mic pausado, sin rellenos, HUD «orando». */
   const pray = useCallback(
     async (tema?: string) => {
+      if (conversandoRef.current || enLlamadaRef.current) return void showBubble(tr('Termina la conversación en vivo y oramos.', 'End the live conversation and we’ll pray.'));
       showBubble(tema ? `Oración por ${tema}` : 'Oración por el día');
       logUltron(tema ? `(ora por ${tema})` : '(ora por el día)');
       speakingRef.current = true;
@@ -920,6 +939,23 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         // 1) Streaming: la cara reacciona con `emocion` antes del primer delta y habla por oraciones.
         if (!opts?.image) {
           let speaker: StreamSpeaker | null = null;
+          /** El locutor del turno: nace con el primer texto (delta o replace). */
+          const locutor = (): StreamSpeaker => {
+            if (!speaker) {
+              // Ya contesta: terminó de leer (Claudio y ANT-ONIO en video guardan el teléfono).
+              ponerLee(false);
+              speaker = new StreamSpeaker({
+                emocion,
+                onAudioStart: () => onAudio(faceForEmocion(emocion)),
+                onSentence: (sentence) => {
+                  showBubble(sentence);
+                  // Con la mesa tapada lo dice la compañera: su globito lee lo mismo que suena.
+                  avisarMesa({ texto: quitarExpresiones(sentence).trim(), emocion });
+                },
+              });
+            }
+            return speaker;
+          };
           try {
             const st = turnoStream(base, {
               onEmocion: (e) => {
@@ -934,20 +970,14 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
               },
               onDelta: (piece) => {
                 cancelMmm();
-                if (!speaker) {
-                  // Ya contesta: terminó de leer (Claudio y ANT-ONIO en video guardan el teléfono).
-                  ponerLee(false);
-                  speaker = new StreamSpeaker({
-                    emocion,
-                    onAudioStart: () => onAudio(faceForEmocion(emocion)),
-                    onSentence: (sentence) => {
-                      showBubble(sentence);
-                      // Con la mesa tapada lo dice la compañera: su globito lee lo mismo que suena.
-                      avisarMesa({ texto: quitarExpresiones(sentence).trim(), emocion });
-                    },
-                  });
-                }
-                speaker.push(piece);
+                locutor().push(piece);
+              },
+              // El servidor corrigió lo dicho (auditoría del 3-oct, VOICE02): lo que no sonó del texto
+              // viejo se tira y se dice solo lo que falta de lo corregido; si ya sonó algo distinto, con
+              // «Corrijo:» delante. El hilo guarda la respuesta corregida (el `done` la trae entera).
+              onReplace: (texto) => {
+                cancelMmm();
+                locutor().reemplazar(texto, tr('Corrijo:', 'Correction:'));
               },
               onTools: (tools) => {
                 const t = tareaDeHerramientas(tools);
@@ -960,13 +990,27 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
               },
             });
             abortTurno.current = st.abort;
-            const result = await st.promise.finally(() => {
+            let result = await st.promise.finally(() => {
               abortTurno.current = null;
             });
             cancelMmm();
             if (turnoCancelado.current) {
               if (speaker) (speaker as StreamSpeaker).cancel();
               return;
+            }
+            // El stream se cerró sin `done` (auditoría del 3-oct, VOICE01): lo dicho no es la respuesta
+            // entera. Con el MISMO idTurno, el JSON devuelve ese turno ya corrido (server/turno-unico.ts),
+            // sin repetir sus herramientas; de lo que trae se dice solo lo que falta detrás de lo oído.
+            if (result.cierre === 'eof' && Date.now() - t0Turno < 30_000) {
+              const recuperado = await turno(base);
+              if (turnoCancelado.current) {
+                if (speaker) (speaker as StreamSpeaker).cancel();
+                return;
+              }
+              if (recuperado.reply && !recuperado.error) {
+                if (speaker) (speaker as StreamSpeaker).reemplazar(recuperado.voz || recuperado.reply, tr('Corrijo:', 'Correction:'));
+                result = { ...recuperado, idTurno: result.idTurno };
+              }
             }
             emitirAccionesDelTurno(result);
             if (speaker) {
@@ -1607,6 +1651,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     (text: string) => {
       // Con el micrófono silenciado nada de lo oído es un turno (una frase vieja que llegó tarde, Codex 3-oct).
       if (micMutedRef.current) return void miga('oído: frase tirada (llegó con el micrófono silenciado)');
+      setDicho({ texto: text.trim(), n: Date.now() });
       ultimoHablado.current = true;
       void handleCommand(text, Date.now());
     },
@@ -1913,6 +1958,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     setAvatar(id);
     setAvatarVoz(id);
     await saveSettings({ avatar: id, avatarElegido: true });
+    // También a su perfil, como el selector y Ajustes: si no, el perfil seguía con el avatar viejo y la
+    // próxima sincronización lo devolvía solo (inventario de botones, 3-oct).
+    guardarPerfil({ avatar: id });
     if (!conversandoRef.current) void say(de(avatarPorId(id).presentacion), 'HAPPY', { emocion: 'feliz' });
   };
 
@@ -1955,6 +2003,10 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     } else if (estadoConv === 'hablando') {
       setFace('SPEAKING');
       setStatus('speaking');
+    } else if (estadoConv === 'escuchando' && convPensando) {
+      // Ya la entendió y el agente prepara la respuesta: no se pinta «escuchando» (el micrófono sigue abierto).
+      setFace('THINKING');
+      setStatus('thinking');
     } else if (estadoConv === 'escuchando') {
       setFace('LISTENING');
       setStatus('listening');
@@ -1964,7 +2016,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       setStatus('thinking');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conversando, convSilencio, estadoConv]);
+  }, [conversando, convSilencio, estadoConv, convPensando]);
 
   // Lo que se dice en la conversación va al chat y a la burbuja de la mesa; lo tuyo cuenta como actividad.
   useEffect(
@@ -1976,6 +2028,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
           comentarista.usuarioHablo();
           historial.current = [...historial.current, { rol: 'usuario' as const, texto: m.texto }].slice(-12);
           setMensajes((l) => [...l, { rol: 'usuario' as const, texto: m.texto }].slice(-80));
+          setDicho({ texto: m.texto.trim(), n: Date.now() });
           // La cámara por voz también en la conversación en vivo: ahí no se pregunta «¿solo ahora o
           // siempre?» (contesta el agente), así que es «solo ahora»; el agente se entera de lo que pasó.
           const pc = pedidoDeCamara(m.texto);
@@ -2337,6 +2390,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const caraAura =
     vista === 'orbe' ? (
       <OrbeAura
+        // Arriba, el estado (y lo que dice la persona); abajo, la barra con su sugerencia: ahí no escribe.
+        margen={{ arriba: 56, abajo: altoAbajo + 12 }}
         face={face}
         hablando={status === 'speaking'}
         frase={fraseOrbe}
@@ -2436,7 +2491,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const acciones = avatarPorId(avatarId).acciones;
   // Calma en la mesa: le oye sin que nadie hable ni piense, sin frase a medias ni nada abierto encima.
   const calmaMesa =
-    (status === 'listening' || status === 'muted') && !partial && !bubble && !toolHint && !conversando && !propuesta && !masAbierto && !menuOpen && !tutorialAbierto && !eligiendo;
+    (status === 'listening' || status === 'muted') && !partial && !dicho && !bubble && !toolHint && !conversando && !propuesta && !masAbierto && !menuOpen && !tutorialAbierto && !eligiendo;
   /*
    * Colgó la llamada del avatar con la mesa delante: el avatar grande vuelve ENTRANDO desde un lado y
    * se acomoda en su lugar (en los chats lo hace la compañera, caminando). Con «reducir movimiento», no.
@@ -2468,7 +2523,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const onAccion = (pedido: string) => {
     void haptic('light');
     setSenalAtajo((n) => n + 1);
-    void handleCommand(pedido);
+    // En la conversación en vivo lo oye el agente (antes iba a la mesa, que está callada en vivo).
+    mandarTurnoRef.current(pedido);
   };
 
   // Dónde está el cuerpo grande en la ventana: la compañera sale de ahí al dejar la mesa (y vuelve).
@@ -2634,17 +2690,22 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
           </Text>
         </View>
 
-        {!!partial && (
-          <View pointerEvents="none" style={[styles.partialWrap, { bottom: altoAbajo + 8 }]}>
-            <Text numberOfLines={2} style={styles.partialText}>
-              {partial}
-            </Text>
+        {/* Lo que dice la persona: arriba a la derecha, como su lado de un chat (mientras habla, en cursiva;
+            ya entendido, unos segundos). Lo del avatar va abajo: nunca se encima uno con otro. */}
+        {!!(partial || dicho?.texto) && (
+          <View pointerEvents="none" style={[styles.dichoWrap, propuesta && mesaVisible ? { top: 132 } : null]}>
+            <View style={[styles.dichoCard, { borderColor: tema.acentoFondo }]}>
+              <Text style={[styles.dichoQuien, { color: tema.acentoTexto }]}>{tr('Tú', 'You')}</Text>
+              <Text numberOfLines={3} style={[styles.dichoText, !!partial && styles.dichoParcial]}>
+                {partial || dicho?.texto}
+              </Text>
+            </View>
           </View>
         )}
 
-        {/* También con el orbe (Codex, 3-oct): sus partículas forman las palabras y se deshacen; el subtítulo
-            deja la frase quieta para leerla. */}
-        {!!bubble && (
+        {/* Con el orbe no: sus partículas YA son el subtítulo (van por encima de la barra, con su margen); dos
+            textos con lo mismo se encimaban (José, 3-oct). Con los otros avatares, la frase abajo. */}
+        {!!bubble && !enOrbe && (
           <Animated.View
             pointerEvents="none"
             style={[styles.bubbleFloat, { bottom: altoAbajo + 8 }, !horizontal && styles.bubbleVertical, { opacity: bubbleOp }]}
@@ -2760,7 +2821,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         onSetMode={(m) => {
           setMenuOpen(false);
           if (m === 'CONOCER') void startConocer(false);
-          else void handleCommand(`modo ${m.toLowerCase()}`);
+          else mandarTurnoRef.current(`modo ${m.toLowerCase()}`);
         }}
         onSetPresence={(p) => {
           setMenuOpen(false);
@@ -2783,24 +2844,24 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         onSingSong={(id) => {
           setMenuOpen(false);
           const c = canciones.find((s) => s.id === id);
-          void handleCommand(c?.pedir || `canta ${id}`);
+          mandarTurnoRef.current(c?.pedir || `canta ${id}`);
         }}
         onSingGenre={(g) => {
           setMenuOpen(false);
-          void handleCommand(`canta ${g}`);
+          mandarTurnoRef.current(`canta ${g}`);
         }}
         onOrar={() => {
           setMenuOpen(false);
-          void handleCommand('ora por el día');
+          mandarTurnoRef.current('ora por el día');
         }}
         onWhatDoYouSee={() => {
           setMenuOpen(false);
-          void handleCommand('qué ves');
+          mandarTurnoRef.current('qué ves');
         }}
-        onRemember={(f) => void handleCommand(`recuerda que ${f}`)}
+        onRemember={(f) => mandarTurnoRef.current(`recuerda que ${f}`)}
         onCommand={(t) => {
           setMenuOpen(false);
-          void handleCommand(t);
+          mandarTurnoRef.current(t);
         }}
         onProbarVoz={probarVoz}
         onAbrirHoja={(h) => {
@@ -2809,7 +2870,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         }}
         onSearch={(q) => {
           setMenuOpen(false);
-          void handleCommand(`busca ${q}`);
+          mandarTurnoRef.current(`busca ${q}`);
         }}
         conOrbe={enOrbe}
         avatar={avatarId}
@@ -2876,8 +2937,12 @@ const styles = StyleSheet.create({
   bubbleVertical: { left: 16, right: 16 },
   bubbleCard: { backgroundColor: T.panel, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10, maxWidth: 520, ...SOMBRA },
   bubbleText: { color: T.texto, fontSize: 16, lineHeight: 22, textAlign: 'center' },
-  partialWrap: { position: 'absolute', left: 24, right: 24, alignItems: 'center' },
-  partialText: { color: T.texto2, fontSize: 14, fontStyle: 'italic', textAlign: 'center', backgroundColor: 'rgba(52,54,58,0.9)', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 4, overflow: 'hidden' },
+  // Lo que dice la persona: arriba a la derecha, debajo del estado.
+  dichoWrap: { position: 'absolute', top: 54, right: 14, left: 64, alignItems: 'flex-end', zIndex: 30 },
+  dichoCard: { maxWidth: 420, backgroundColor: 'rgba(28,29,32,0.86)', borderRadius: 16, borderTopRightRadius: 4, borderWidth: 1, paddingHorizontal: 12, paddingVertical: 7 },
+  dichoQuien: { fontSize: 11, fontWeight: '800', letterSpacing: 0.4, marginBottom: 1, textAlign: 'right' },
+  dichoText: { color: T.texto, fontSize: 14.5, lineHeight: 19, textAlign: 'right' },
+  dichoParcial: { color: T.texto2, fontStyle: 'italic' },
   // El borde derecho abre el menú; no llega a la barra (ahí está «Más»).
   edgeZone: { position: 'absolute', right: 0, top: 0, bottom: ALTO_BARRA + 64, width: 44, justifyContent: 'center', alignItems: 'flex-end' },
   edgeHint: { width: 5, height: 84, borderTopLeftRadius: 4, borderBottomLeftRadius: 4, backgroundColor: 'rgba(214,181,108,0.35)' },

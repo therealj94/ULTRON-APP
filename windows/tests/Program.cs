@@ -991,7 +991,7 @@ Check(AutorizarOrden.Autorizar("pon bad bunny en spotify", "pon el volumen al 30
                                       "case 'boca': setLevel(", "case 'decir': say(d.texto", "tts: d.tts === true", "case 'callar': silence()", "case 'sonido': SFX.activar(",
                                       "notify({tipo:'listo'})", "window.chrome.webview.postMessage(m)", "window.chrome.webview.addEventListener('message'",
                                       "notify({tipo:'tocar'", "notify({tipo:'deslizar'", "type:'aura-end'", "type:'aura-fallo'", "<div id=\"stage\">", "#stage{position:relative;flex:1",
-                                      "cam.orbYFrac = portrait ? 0.36 : 0.385", "const portrait = CH > CW*1.15", "SCAN:'searching'", "HAPPY:'done'" })
+                                      "cam.orbYFrac = (arriba + UH*(portrait ? 0.36 : 0.385)) / CH", "MARGEN = {arriba: Math.max(0, +(OPC.margen && OPC.margen.arriba) || 0)", "const portrait = CH > CW*1.15", "SCAN:'searching'", "HAPPY:'done'" })
             Check(html.Contains(pieza), "orbe: la página sigue teniendo «" + pieza + "»");
         Check(!html.Contains("src=\"http") && !html.Contains("href=\"http"), "orbe: sin dependencias de afuera (la WebView no sale a la red)");
         var csproj = File.ReadAllText(proyecto);

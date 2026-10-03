@@ -61,12 +61,40 @@ test('si el turno anterior terminó sin respuesta, el reintento corre uno nuevo 
   assert.ok('previo' in tercero && tercero.previo.reply === 'Ahora sí.');
 });
 
-test('un turno colgado no deja al reintento esperando para siempre', async () => {
+test('un turno colgado no deja al reintento esperando para siempre: recibe «en curso», no otro turno', async () => {
   _olvidarTurnos();
   const clave = claveTurno('majo@orden.org', 'frase-0004');
   await reclamarTurno(clave);
   const r = await reclamarTurno(clave, 30);
-  assert.ok('terminar' in r);
+  assert.ok('enCurso' in r, 'no espera para siempre, pero tampoco corre otro');
+});
+
+test('EXEC01: cansarse de esperar no da la propiedad: el original sigue siendo el único dueño y su respuesta es la que vale', async () => {
+  _olvidarTurnos();
+  const clave = claveTurno('majo@orden.org', 'frase-0005');
+  const primero = await reclamarTurno(clave);
+  assert.ok('terminar' in primero);
+  // Dos reintentos que se cansan de esperar (tiempo acelerado): ninguno se vuelve ejecutor.
+  const [a, b] = await Promise.all([reclamarTurno(clave, 20), reclamarTurno(clave, 25)]);
+  assert.ok('enCurso' in a && 'enCurso' in b, 'ninguno corre el turno otra vez');
+  // El original termina después: su respuesta es la que reciben los reintentos que llegan luego.
+  primero.terminar(respuesta('Le mandé el WhatsApp a Beto.'));
+  const c = await reclamarTurno(clave, 20);
+  assert.ok('previo' in c && c.previo.reply === 'Le mandé el WhatsApp a Beto.');
+  assert.equal(_cuantosTurnos(), 1);
+});
+
+test('EXEC01: un turno en curso no se poda por tamaño (otro dueño podría entrar)', async () => {
+  _olvidarTurnos();
+  const clave = claveTurno('majo@orden.org', 'frase-largo-1');
+  const primero = await reclamarTurno(clave);
+  assert.ok('terminar' in primero);
+  for (let i = 0; i < MAX_TURNOS + 20; i++) {
+    const r = await reclamarTurno(claveTurno('majo@orden.org', `otra-${String(i).padStart(6, '0')}`));
+    if ('terminar' in r) r.terminar(respuesta());
+  }
+  const r = await reclamarTurno(clave, 10);
+  assert.ok('enCurso' in r, 'sigue siendo del primero');
 });
 
 test('tamaño acotado', async () => {

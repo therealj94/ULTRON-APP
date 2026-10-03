@@ -45,7 +45,8 @@ import crypto from 'node:crypto';
 import { clave } from '../lib/boveda';
 
 export type MotorNodo = 'holo' | 'claude';
-export type PasoTarea = { n: number; t: number; accion: string; args?: Record<string, unknown>; ms?: number; miniatura?: string | null };
+/** `hecho`: el recibo del nodo (agente.py nuevo): false si la acción no se hizo (la negó, la pararon, otra época). */
+export type PasoTarea = { n: number; t: number; accion: string; args?: Record<string, unknown>; ms?: number; miniatura?: string | null; hecho?: boolean };
 /**
  * Los estados del nodo. `pausada`, `confirmar` (espera el sí de la persona) y `control` (la persona tiene el
  * escritorio) solo los da el agente.py nuevo: siguen vivos, pero quietos.
@@ -62,6 +63,8 @@ export type Tarea = {
   segundos: number;
   /** Lo que pregunta antes de algo sensible (solo en `confirmar`). */
   pregunta?: string | null;
+  /** Cuál pregunta es (agente.py nuevo): el sí la nombra y otra no se contesta con él (auditoría 3-oct, PC01). */
+  pregunta_id?: string | null;
 };
 
 const TERMINADA = new Set<EstadoTarea>(['hecha', 'parada', 'sin_pasos', 'fallo']);
@@ -173,8 +176,9 @@ export async function pausarTarea(id: string): Promise<void> {
 export async function reanudarTarea(id: string): Promise<void> {
   await pedir(`/tareas/${encodeURIComponent(id)}/reanudar`, { method: 'POST', ms: 8000 });
 }
-export async function confirmarTarea(id: string, si: boolean): Promise<void> {
-  await pedir(`/tareas/${encodeURIComponent(id)}/confirmar`, { method: 'POST', body: JSON.stringify({ si }), ms: 8000 });
+/** El sí o el no a UNA pregunta (`preguntaId`): si la computadora ya pregunta otra cosa, el nodo dice 409. */
+export async function confirmarTarea(id: string, si: boolean, preguntaId?: string | null): Promise<void> {
+  await pedir(`/tareas/${encodeURIComponent(id)}/confirmar`, { method: 'POST', body: JSON.stringify({ si, ...(preguntaId ? { pregunta_id: preguntaId } : {}) }), ms: 8000 });
 }
 export async function controlTarea(id: string, tomar: boolean): Promise<void> {
   await pedir(`/tareas/${encodeURIComponent(id)}/control`, { method: 'POST', body: JSON.stringify({ tomar }), ms: 8000 });
@@ -253,15 +257,16 @@ type Encargo = {
   fallos: number;
   primerFallo: number;
   avisadoSinRespuesta?: boolean;
-  /** La última pregunta que ya contestó (y cuándo): una consulta atrasada no la vuelve a preguntar. */
-  contestada?: { texto: string; en: number };
+  /** La última pregunta que ya contestó (cuál y cuándo): una consulta atrasada no la vuelve a preguntar. */
+  contestada?: { texto: string; id: string | null; en: number };
   /** Hasta cuándo se la sigue (se alarga mientras está quieta: pausa, control o esperando su sí). */
   limite: number;
 };
 
 /** Cómo va cada paso del plan en la app. */
 export type EstadoPlan = 'hecho' | 'actual' | 'espera' | 'pendiente' | 'fallo';
-export type PasoPlan = { texto: string; estado: EstadoPlan };
+/** `recibo`: el paso del nodo que lo hizo (tarea y número). Sin recibo, un paso nunca sale «hecho». */
+export type PasoPlan = { texto: string; estado: EstadoPlan; recibo?: { tarea: string; n: number } };
 /** La tarjeta del final: lo que se dice, lo que encontró, datos y enlaces sueltos, y la captura final. */
 export type FinalMision = {
   estado: EstadoTarea;
@@ -291,10 +296,12 @@ type Mision = {
   tareas: string[];
   /** El paso del plan en que va (nunca retrocede). */
   indice: number;
+  /** El recibo de cada paso del plan que el nodo de verdad hizo (auditoría 3-oct, PC05): el plan propuesto y lo hecho son cosas distintas. */
+  recibos: Record<number, { tarea: string; n: number }>;
   fin?: number;
   final?: FinalMision;
-  /** Lo que su computadora le preguntó y todavía no contesta. */
-  pregunta?: { tareaId: string; texto: string; desde: number } | null;
+  /** Lo que su computadora le preguntó y todavía no contesta (`id`: cuál, si el nodo lo dice). */
+  pregunta?: { tareaId: string; texto: string; desde: number; id: string | null } | null;
   /** Se quedó a medias y se le ofreció seguir: su «sí» la sigue (hasta aquí vale). */
   ofreceSeguir?: number;
   /** Cuántas veces la persona dijo «sigue» después de un final a medias. */
@@ -529,48 +536,72 @@ const COMPATIBLE: Record<TipoPaso, TipoPlan[]> = {
 /**
  * En qué paso del plan va, desde `desde`, según lo que hizo el nodo: cada acción mueve el plan al paso
  * más cercano que le corresponde (mirando hasta dos adelante); el último («darte el resultado») solo con
- * la respuesta. Nunca retrocede.
+ * la respuesta. Nunca retrocede. `recibos`: cada paso del plan al que llegó una acción de verdad (con el
+ * número de esa acción); los que se saltaron no tienen recibo. Lo que el nodo dice que no hizo (`hecho:
+ * false`) no mueve nada.
  */
-export function avanzarPlan(plan: readonly string[], pasos: readonly Pick<PasoTarea, 'accion'>[], desde = 0): number {
+export function recibosDelPlan(plan: readonly string[], pasos: readonly (Pick<PasoTarea, 'accion' | 'hecho'> & { n?: number })[], desde = 0): { indice: number; recibos: { j: number; n: number }[] } {
   const ultimo = plan.length - 1;
-  if (ultimo < 0) return 0;
+  if (ultimo < 0) return { indice: 0, recibos: [] };
   const tipos = plan.map(tipoDePlan);
   const tope = tipos[ultimo] === 'resultado' ? ultimo - 1 : ultimo;
   let i = Math.max(0, Math.min(desde, ultimo));
-  for (const p of pasos) {
+  const recibos: { j: number; n: number }[] = [];
+  const anotar = (j: number, n: number) => {
+    if (!recibos.some((r) => r.j === j)) recibos.push({ j, n });
+  };
+  pasos.forEach((p, k) => {
+    if (p.hecho === false) return;
     const tp = tipoDePaso(p.accion);
-    if (!tp) continue;
+    if (!tp) return;
+    const n = Number.isFinite(p.n) ? Number(p.n) : k + 1;
     if (tp === 'resultado') {
       i = ultimo;
-      continue;
+      anotar(ultimo, n);
+      return;
     }
     for (let j = i; j <= Math.min(i + 2, tope); j++) {
       if (COMPATIBLE[tp].includes(tipos[j])) {
         i = j;
+        anotar(j, n);
         break;
       }
     }
-  }
-  return i;
+  });
+  return { indice: i, recibos };
 }
 
-/** El plan para la app: cada paso hecho, el actual (o en espera si está quieta), pendiente o el que falló. */
-export function estadoDelPlan(m: Pick<Mision, 'plan' | 'indice' | 'final'>, estado?: EstadoTarea | null): PasoPlan[] {
+export function avanzarPlan(plan: readonly string[], pasos: readonly Pick<PasoTarea, 'accion' | 'hecho'>[], desde = 0): number {
+  return recibosDelPlan(plan, pasos, desde).indice;
+}
+
+/**
+ * El plan para la app: hecho SOLO con su recibo (auditoría 3-oct, PC05: un final «ok» marcaba todos los pasos
+ * aunque nada los mostrara), el actual (o en espera si está quieta), pendiente o el que falló. Sin `recibos`
+ * (quien llama sin ellos) vale lo de antes del paso de ahora, nunca lo de después.
+ */
+export function estadoDelPlan(m: Pick<Mision, 'plan' | 'indice' | 'final'> & { recibos?: Mision['recibos'] }, estado?: EstadoTarea | null): PasoPlan[] {
   return m.plan.map((texto, j) => {
+    const recibo = m.recibos ? m.recibos[j] : undefined;
+    const conRecibo = m.recibos ? !!recibo : j < m.indice;
     let e: EstadoPlan;
-    if (m.final) e = m.final.ok ? 'hecho' : j < m.indice ? 'hecho' : j === m.indice ? 'fallo' : 'pendiente';
-    else e = j < m.indice ? 'hecho' : j === m.indice ? (estado && QUIETA.has(estado) ? 'espera' : 'actual') : 'pendiente';
-    return { texto, estado: e };
+    if (m.final?.ok) e = conRecibo ? 'hecho' : 'pendiente';
+    else if (m.final) e = j === m.indice ? 'fallo' : j < m.indice && conRecibo ? 'hecho' : 'pendiente';
+    else e = j === m.indice ? (estado && QUIETA.has(estado) ? 'espera' : 'actual') : j < m.indice && conRecibo ? 'hecho' : 'pendiente';
+    return recibo ? { texto, estado: e, recibo } : { texto, estado: e };
   });
 }
 
 function moverPlan(e: Encargo, t: Pick<Tarea, 'pasos'>) {
-  e.mision.indice = Math.max(e.mision.indice, avanzarPlan(e.mision.plan, t.pasos, e.indiceAlEmpezar));
+  const m = e.mision;
+  const r = recibosDelPlan(m.plan, t.pasos, e.indiceAlEmpezar);
+  for (const { j, n } of r.recibos) if (!m.recibos[j]) m.recibos[j] = { tarea: e.id, n };
+  m.indice = Math.max(m.indice, r.indice);
 }
 
 /* ------------------------------------------------------------------ el final: la tarjeta que se comparte */
 
-const pasosUtiles = (t: Pick<Tarea, 'pasos'>) => t.pasos.filter((p) => !['answer', 'escritorio_limpio', 'pedir_confirmacion', 'confirmacion', 'persona'].includes(p.accion)).length;
+const pasosUtiles = (t: Pick<Tarea, 'pasos'>) => t.pasos.filter((p) => p.hecho !== false && !['answer', 'escritorio_limpio', 'pedir_confirmacion', 'confirmacion', 'persona'].includes(p.accion)).length;
 
 /** Las direcciones del resultado y las páginas que abrió (sin repetir, hasta 5). */
 export function enlacesDe(t: Pick<Tarea, 'respuesta' | 'pasos'>): string[] {
@@ -630,9 +661,22 @@ function cerrarMision(e: Encargo, t: Tarea) {
       .catch(() => undefined);
 }
 
-/** Lo que la app muestra de una misión: el plan marcado, el tiempo, la pregunta pendiente y el final. */
-export function vistaMision(m: Mision, estado?: EstadoTarea | null, pregunta?: string | null) {
+/**
+ * La versión del estado que se le da a la app: crece con cada respuesta (y entre reinicios del servidor, porque
+ * va con la hora). La app descarta una respuesta con una versión menor que la última que ya vio de esa misión:
+ * un GET viejo que llega tarde no vuelve a poner lo de antes (auditoría 3-oct, PC05).
+ */
+let versionAnterior = 0;
+export function versionDeEstado(): number {
+  versionAnterior = Math.max(versionAnterior + 1, Date.now() * 1000);
+  return versionAnterior;
+}
+
+/** Lo que la app muestra de una misión: el plan marcado, el tiempo, la pregunta pendiente (y cuál es) y el final. */
+export function vistaMision(m: Mision, estado?: EstadoTarea | null, pregunta?: string | null, preguntaId?: string | null, version = versionDeEstado()) {
+  const enConfirmar = estado === 'confirmar';
   return {
+    version,
     id: m.id,
     instruccion: m.instruccion,
     plan: estadoDelPlan(m, estado),
@@ -641,7 +685,9 @@ export function vistaMision(m: Mision, estado?: EstadoTarea | null, pregunta?: s
     transcurrido: Math.round(((m.fin ?? Date.now()) - m.inicio) / 1000),
     vuelta: Math.max(0, m.tareas.length - 1),
     tareaId: m.tareas[m.tareas.length - 1] ?? m.id,
-    pregunta: m.pregunta?.texto ?? (estado === 'confirmar' ? pregunta || null : null),
+    pregunta: m.pregunta?.texto ?? (enConfirmar ? pregunta || null : null),
+    /** Cuál pregunta es: la app la manda con su sí (si ya cambió, el servidor dice 409 y no la contesta). */
+    preguntaId: m.pregunta ? m.pregunta.id : enConfirmar ? preguntaId || null : null,
     final: m.final ?? null,
     // El botón «Seguir»: quedó a medias (no la paró la persona) y quedan rondas.
     puedeSeguir: !!m.final && !m.final.ok && m.final.estado !== 'parada' && m.rondas < MAX_RONDAS,
@@ -812,10 +858,22 @@ export function respuestaSiNo(mensaje: string): 'si' | 'no' | null {
     .trim();
   if (!t || t.split(' ').length > 6) return null;
   if (/(^|\s)(pero|cambia|cambiale|corrige|en vez|instead|but)(\s|$)/.test(t)) return null;
-  if (/^(no|nop|nel|nunca|mejor no|negativo|cancela|cancelalo|detente|para|paralo|no lo hagas|nope|dont|don t|stop|cancel)(\s|$)/.test(t)) return 'no';
-  if (/^(si|sip|claro|dale|va|ok|okay|okey|hazlo|adelante|de acuerdo|esta bien|correcto|confirmo|sigue|siguele|continua|yes|yeah|yep|sure|go ahead|do it|continue|keep going)(\s|$)/.test(t)) return 'si';
+  const resto = t.replace(/^\S+\s?/, '');
+  if (/^(no|nop|nel|nunca|mejor no|negativo|cancela|cancelalo|detente|para|paralo|no lo hagas|nope|dont|don t|stop|cancel)(\s|$)/.test(t)) {
+    // «no, sí mándalo»: se contradice; se vuelve a preguntar en lugar de adivinar.
+    return AFIRMA.test(resto) ? null : 'no';
+  }
+  if (/^(si|sip|claro|dale|va pues|ok|okay|okey|hazlo|adelante|de acuerdo|esta bien|correcto|confirmo|sigue|siguele|continua|yes|yeah|yep|sure|go ahead|do it|continue|keep going)(\s|$)/.test(t) || t === 'va') {
+    // «claro que no», «sí, no lo hagas»: una negación en cualquier parte NO es un sí (auditoría, 3-oct:
+    // solo se miraba la primera palabra). Ante la duda, se pregunta otra vez.
+    return NEGACION.test(t) ? null : 'si';
+  }
   return null;
 }
+// También «espera», «cancela», «alto»… dichos después del sí (auditoría 3-oct, PC02: «sí espera» y «ok
+// cancela» salían como sí). «para» solo al final («dale, para»): en medio es preposición («sí, para mañana»).
+const NEGACION = /(^|\s)(no|nunca|jamas|tampoco|ni|nada|dont|don t|not|never|espera|esperate|cancela|cancelalo|paralo|alto|detente|stop|wait|cancel|hold on)(\s|$)|(^|\s)para$/;
+const AFIRMA = /(^|\s)(si|sip|claro|dale|ok|okay|okey|hazlo|adelante|confirmo|mandalo|envialo|sigue|yes|sure)(\s|$)/;
 
 /* ------------------------------------------------------------------ seguir la tarea hasta el final */
 
@@ -904,10 +962,12 @@ function alCambiarEstado(e: Encargo, t: Tarea, enTurno: boolean) {
   const m = e.mision;
   const en = e.idioma === 'en';
   if (t.estado === 'confirmar' && t.pregunta) {
-    if (m.pregunta?.tareaId === e.id && m.pregunta.texto === t.pregunta) return;
+    const id = t.pregunta_id || null;
+    // La misma pregunta (por su id; con el nodo de antes, por su texto) no se vuelve a avisar.
+    if (m.pregunta?.tareaId === e.id && (id ? m.pregunta.id === id : m.pregunta.texto === t.pregunta)) return;
     // Una consulta que salió antes de que llegara su respuesta: esa pregunta ya está contestada.
-    if (e.contestada?.texto === t.pregunta && Date.now() - e.contestada.en < 10_000) return;
-    m.pregunta = { tareaId: e.id, texto: t.pregunta, desde: Date.now() };
+    if (id ? e.contestada?.id === id : e.contestada?.texto === t.pregunta && Date.now() - e.contestada.en < 10_000) return;
+    m.pregunta = { tareaId: e.id, texto: t.pregunta, desde: Date.now(), id };
     avisarApp(e, { tipo: 'computadora', fase: 'confirmar', id: e.id, pregunta: t.pregunta, ...(enTurno ? {} : { texto: fraseDePregunta(t.pregunta, e.idioma) }) }, true);
     return;
   }
@@ -935,7 +995,7 @@ function alCambiarEstado(e: Encargo, t: Tarea, enTurno: boolean) {
 function narrar(e: Encargo, t: Tarea, ahora = Date.now()) {
   if (!e.soltada || ahora - e.soltada < TIEMPOS_SEGUIR.silencioTrasTurnoMs) return;
   if (ahora - e.ultimaVoz < TIEMPOS_SEGUIR.narrarCadaMs || e.dichas >= MAX_FRASES) return;
-  const utiles = t.pasos.filter((p) => !['escritorio_limpio', 'answer', 'pedir_confirmacion', 'confirmacion', 'persona'].includes(p.accion));
+  const utiles = t.pasos.filter((p) => p.hecho !== false && !['escritorio_limpio', 'answer', 'pedir_confirmacion', 'confirmacion', 'persona'].includes(p.accion));
   const nuevo = utiles.length ? utiles[utiles.length - 1] : null;
   let texto = '';
   if (nuevo && nuevo.n > e.narrado) {
@@ -1015,8 +1075,19 @@ async function crearEncargo(o: {
   /** La misión de la que es parte; sin ella, esta tarea empieza una (con este plan). */
   mision?: Mision;
   plan?: { pasos: string[]; delCerebro: boolean };
+  /**
+   * El id de este pedido (el mismo en el reintento): el nodo devuelve la misma tarea si ya la había creado y
+   * la respuesta se perdió, en lugar de lanzar otra (auditoría 3-oct, PC04).
+   */
+  pedido?: string;
 }): Promise<Encargo> {
-  const creada: { id: string } = await pedir('/tareas', { method: 'POST', body: JSON.stringify({ instruccion: o.paraNodo, motor: o.motor, max_pasos: o.maxPasos, dueno: huellaDe(o.quien) }) });
+  const creada: { id: string } = await pedir('/tareas', {
+    method: 'POST',
+    body: JSON.stringify({ instruccion: o.paraNodo, motor: o.motor, max_pasos: o.maxPasos, dueno: huellaDe(o.quien), ...(o.pedido ? { request_id: o.pedido } : {}) }),
+  });
+  // Ya la conocía (el nodo dijo que era la misma de un pedido anterior): no se anota ni se sigue dos veces.
+  const yaEra = ENCARGOS.get(creada.id);
+  if (yaEra && yaEra.quien === o.quien) return yaEra;
   const ahora = Date.now();
   const m: Mision = o.mision ?? {
     id: creada.id,
@@ -1027,6 +1098,7 @@ async function crearEncargo(o: {
     inicio: ahora,
     tareas: [],
     indice: 0,
+    recibos: {},
     rondas: 0,
     pasosPrevios: 0,
     idioma: o.idioma,
@@ -1063,15 +1135,20 @@ async function crearEncargo(o: {
   return e;
 }
 
-/** Encargar, con un segundo intento si el nodo no contestó (un 4xx es un no de verdad: no se insiste). */
+/**
+ * Encargar, con un segundo intento si el nodo no contestó (un 4xx es un no de verdad: no se insiste). Los dos
+ * intentos llevan el MISMO id de pedido: si el primero sí llegó y solo se perdió la respuesta, el nodo devuelve
+ * esa tarea y no lanza otra.
+ */
 async function crearConReintento(o: Parameters<typeof crearEncargo>[0]): Promise<Encargo> {
+  const conPedido = { ...o, pedido: o.pedido || crypto.randomUUID() };
   try {
-    return await crearEncargo(o);
+    return await crearEncargo(conPedido);
   } catch (err) {
     if (!reintentable(err)) throw err;
     await esperar(TIEMPOS_SEGUIR.reintentoMs);
     try {
-      return await crearEncargo(o);
+      return await crearEncargo(conPedido);
     } catch (err2: any) {
       throw new ErrorNodo(`no contestó tras dos intentos: ${String(err2?.message || err2).slice(0, 100)}`, err2?.status);
     }
@@ -1104,6 +1181,8 @@ export async function encargarTarea(o: {
   idioma?: 'es' | 'en';
   /** Encargada desde la app (sin turno): el teléfono dice el plan en voz al empezar. */
   decirPlan?: boolean;
+  /** El id del pedido de la app (`requestId`): repetido, el nodo devuelve la misma tarea. */
+  pedido?: string;
 }): Promise<{ hecho: string; id: string | null; tarea: Tarea | null }> {
   if (!computadoraConfigurada()) {
     return { hecho: 'HARNESS computadora: no está configurada en este servidor. No la usé; dilo con naturalidad.', id: null, tarea: null };
@@ -1115,7 +1194,7 @@ export async function encargarTarea(o: {
   const plan = { pasos: separado.plan ?? planDeMision(instruccion, idioma), delCerebro: !!separado.plan };
   let e: Encargo;
   let nota = '';
-  const base = { instruccion, paraNodo: prepararMision(instruccion, idioma), quien: o.quien, aparato: o.aparato ?? null, idioma, maxPasos: o.maxPasos ?? 25, vuelta: 0, plan };
+  const base = { instruccion, paraNodo: prepararMision(instruccion, idioma), quien: o.quien, aparato: o.aparato ?? null, idioma, maxPasos: o.maxPasos ?? 25, vuelta: 0, plan, pedido: o.pedido };
   try {
     try {
       e = await crearConReintento({ ...base, motor: o.motor });
@@ -1215,10 +1294,10 @@ function misionQueOfreceSeguir(quien: string): Mision | null {
 }
 
 /** Ya contestó su sí o su no: el teléfono quita los botones y vuelve el tecleo enseguida (sin esperar al sondeo). */
-function alResponder(tareaId: string) {
+function alResponder(tareaId: string, preguntaId?: string | null) {
   const e = ENCARGOS.get(tareaId);
   if (!e || e.cerrada) return;
-  e.contestada = { texto: e.mision.pregunta?.texto ?? '', en: Date.now() };
+  e.contestada = { texto: e.mision.pregunta?.texto ?? '', id: preguntaId ?? e.mision.pregunta?.id ?? null, en: Date.now() };
   e.mision.pregunta = null;
   e.ultimoEstado = 'trabajando';
   avisarApp(e, { tipo: 'computadora', fase: 'reanuda', id: e.id });
@@ -1249,7 +1328,9 @@ export async function resolverPreguntaComputadora(quien: string, mensaje: string
   if (m) {
     const p = m.pregunta!;
     m.pregunta = null;
-    const hacer = () => confirmarTarea(p.tareaId, r === 'si').then(() => alResponder(p.tareaId));
+    // El sí va atado a ESTA pregunta: si cuando por fin sale (la voz espera a que el turno se confirme) la
+    // computadora ya pregunta otra cosa, el nodo no la contesta con él (auditoría 3-oct, PC01).
+    const hacer = () => confirmarTarea(p.tareaId, r === 'si', p.id).then(() => alResponder(p.tareaId, p.id));
     if (retener) {
       retener.alDescartar(() => {
         m.pregunta = p;
@@ -1413,8 +1494,13 @@ export function tareaParaApp(t: Tarea, paso?: number): Tarea {
   return { ...t, pasos: t.pasos.map((p) => (p.n === mostrar ? p : { ...p, miniatura: undefined })) };
 }
 
-/** Lo que dice cada paso, en palabras de persona (la app lo muestra en la lista de pasos). */
-export function pasoEnPalabras(p: Pick<PasoTarea, 'accion' | 'args'>, idioma: 'es' | 'en' = 'es'): string {
+/** Lo que dice cada paso, en palabras de persona (la app lo muestra en la lista de pasos). Lo que no se hizo, lo dice. */
+export function pasoEnPalabras(p: Pick<PasoTarea, 'accion' | 'args' | 'hecho'>, idioma: 'es' | 'en' = 'es'): string {
+  const texto = pasoEnPalabrasSolo(p, idioma);
+  return p.hecho === false ? `${texto} ${idioma === 'en' ? '(not done)' : '(no se hizo)'}` : texto;
+}
+
+function pasoEnPalabrasSolo(p: Pick<PasoTarea, 'accion' | 'args'>, idioma: 'es' | 'en'): string {
   const a = (p.args || {}) as Record<string, any>;
   const en = idioma === 'en';
   const corto = (x: unknown, n = 60) => {
@@ -1520,8 +1606,16 @@ export function montarRutasComputadora(app: import('express').Express, d: DepsRu
     if (!correo) return sinSesion(res);
     const [estado, actual] = await Promise.all([estadoComputadora(), resumenUltima(correo)]);
     res.setHeader('Cache-Control', 'no-store');
-    return res.json({ ...estado, ultima: ultimaTareaDe(correo), actual, pendientes: pendientesDe(correo), historial: historialDe(correo), honesto: true });
+    return res.json({ ...estado, ultima: ultimaTareaDe(correo), actual, pendientes: pendientesDe(correo), historial: historialDe(correo), version: versionDeEstado(), honesto: true });
   });
+
+  /**
+   * Los encargos de la app por su `requestId` (de quién + id): un doble toque o un reintento del teléfono
+   * devuelve la misma misión en lugar de lanzar otra (auditoría 3-oct, PC04). Si falló, se olvida: el reintento
+   * llega al nodo con el mismo id y el nodo devuelve la tarea si la alcanzó a crear.
+   */
+  const pedidosApp = new Map<string, { en: number; r: Promise<{ code: number; j: any }> }>();
+  const PEDIDO_APP_VALE_MS = 10 * 60_000;
 
   /**
    * La persona le encarga algo a su computadora desde la app (sin pasar por la conversación). No espera:
@@ -1537,9 +1631,28 @@ export function montarRutasComputadora(app: import('express').Express, d: DepsRu
     // El teléfono que la pidió (el mismo id de aparato que usa el canal de acciones): ahí se narra y se avisa.
     const aparato = String(req.headers['x-aura-aparato'] || '').trim();
     const idioma = req.body?.idioma === 'en' ? 'en' : 'es';
-    const r = await encargarTarea({ instruccion, quien: correo, motor, esperaMs: 0, aparato: /^[A-Za-z0-9._:-]{1,128}$/.test(aparato) ? aparato : null, idioma, decirPlan: true });
-    if (!r.id) return res.status(503).json({ error: r.hecho.replace(/^HARNESS computadora:\s*/, '').replace(/\s*(Dilo con honestidad.*|No inventes.*|No la usé.*|dilo con naturalidad\.?)$/i, ''), honesto: true });
-    return res.json({ id: r.id, mision: misionDeTarea(r.id) ? vistaMision(misionDeTarea(r.id)!) : null, honesto: true });
+    const pedido = typeof req.body?.requestId === 'string' && /^[A-Za-z0-9._:-]{8,80}$/.test(req.body.requestId) ? String(req.body.requestId) : '';
+    const hacer = async (): Promise<{ code: number; j: any }> => {
+      const r = await encargarTarea({ instruccion, quien: correo, motor, esperaMs: 0, aparato: /^[A-Za-z0-9._:-]{1,128}$/.test(aparato) ? aparato : null, idioma, decirPlan: true, pedido: pedido ? `app:${pedido}` : undefined });
+      if (!r.id) return { code: 503, j: { error: r.hecho.replace(/^HARNESS computadora:\s*/, '').replace(/\s*(Dilo con honestidad.*|No inventes.*|No la usé.*|dilo con naturalidad\.?)$/i, ''), honesto: true } };
+      return { code: 200, j: { id: r.id, mision: misionDeTarea(r.id) ? vistaMision(misionDeTarea(r.id)!) : null, honesto: true } };
+    };
+    if (!pedido) {
+      const r = await hacer();
+      return res.status(r.code).json(r.j);
+    }
+    const llave = `${correo}|${pedido}`;
+    for (const [k, v] of pedidosApp) if (Date.now() - v.en > PEDIDO_APP_VALE_MS) pedidosApp.delete(k);
+    let previo = pedidosApp.get(llave);
+    if (!previo) {
+      previo = { en: Date.now(), r: hacer() };
+      pedidosApp.set(llave, previo);
+    }
+    const r = await previo.r.catch((e: any) => ({ code: 502, j: { error: String(e?.message || e).slice(0, 120), honesto: true } }));
+    if (r.code !== 200 && pedidosApp.get(llave) === previo) pedidosApp.delete(llave);
+    // La misma misión, con su estado de ahora (no el del primer pedido).
+    const m = r.code === 200 ? misionDeTarea(r.j.id) : null;
+    return res.status(r.code).json(m ? { ...r.j, mision: vistaMision(m) } : r.j);
   });
 
   app.get('/api/computadora/tareas/:id', d.exigirMesa, d.limitar(90), async (req, res) => {
@@ -1556,19 +1669,24 @@ export function montarRutasComputadora(app: import('express').Express, d: DepsRu
       const t = tareaParaApp({ ...crudo, instruccion: misionDe(req.params.id) || crudo.instruccion }, paso);
       const e = ENCARGOS.get(req.params.id);
       if (e && !TERMINADA.has(crudo.estado)) moverPlan(e, crudo);
+      const version = versionDeEstado();
       return res.json({
         tarea: { ...t, pasos: t.pasos.map((p) => ({ ...p, texto: pasoEnPalabras(p, idioma) })) },
-        mision: m ? vistaMision(m, crudo.estado, crudo.pregunta) : null,
+        mision: m ? vistaMision(m, crudo.estado, crudo.pregunta, crudo.pregunta_id, version) : null,
+        version,
         honesto: true,
       });
     } catch (e: any) {
       // El nodo ya la olvidó (pasó una hora) o no contesta: si la misión terminó, su tarjeta sigue aquí.
-      if (m?.final)
+      if (m?.final) {
+        const version = versionDeEstado();
         return res.json({
           tarea: { id: req.params.id, motor: m.motor, instruccion: m.instruccion, estado: m.final.estado, pasos: [], respuesta: m.final.respuesta, error: m.final.error, segundos: m.final.segundos },
-          mision: vistaMision(m),
+          mision: vistaMision(m, null, null, null, version),
+          version,
           honesto: true,
         });
+      }
       return res.status(502).json({ error: `La computadora no contestó (${String(e?.message || e).slice(0, 80)}).`, mision: m ? vistaMision(m) : null, honesto: true });
     }
   });
@@ -1582,8 +1700,16 @@ export function montarRutasComputadora(app: import('express').Express, d: DepsRu
     d.limitar(20),
     sobreTarea('No le llegó tu respuesta', 'confirmar', async (id, req) => {
       if (typeof req.body?.si !== 'boolean') throw Object.assign(new Error('Di sí o no.'), { codigo: 400 });
-      await confirmarTarea(id, req.body.si);
-      alResponder(id);
+      // El sí va atado a la pregunta que vio en la pantalla (`preguntaId`, la app nueva). La app de antes no lo
+      // manda: vale la pregunta que este servidor le mostró; si no conoce ninguna, la que el nodo tiene ahora.
+      let preguntaId: string | null = typeof req.body?.preguntaId === 'string' && req.body.preguntaId ? String(req.body.preguntaId).slice(0, 64) : null;
+      if (!preguntaId) {
+        const m = misionDeTarea(id);
+        preguntaId = m?.pregunta?.tareaId === id ? m.pregunta.id : null;
+        if (!preguntaId) preguntaId = (await verTarea(id, false, 8000).catch(() => null))?.pregunta_id ?? null;
+      }
+      await confirmarTarea(id, req.body.si, preguntaId);
+      alResponder(id, preguntaId);
       return { si: req.body.si };
     })
   );
@@ -1616,7 +1742,8 @@ export function montarRutasComputadora(app: import('express').Express, d: DepsRu
     const m = MISIONES.get(req.params.id);
     if (!m || m.quien !== correo) return noEsSuya(res);
     res.setHeader('Cache-Control', 'no-store');
-    return res.json({ mision: vistaMision(m), honesto: true });
+    const version = versionDeEstado();
+    return res.json({ mision: vistaMision(m, null, null, null, version), version, honesto: true });
   });
 
   app.post('/api/computadora/misiones/:id/seguir', d.exigirMesa, d.limitar(8), async (req, res) => {

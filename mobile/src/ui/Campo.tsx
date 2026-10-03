@@ -1,7 +1,8 @@
 /**
  * Campo de texto con etiqueta, al estilo de Android: la etiqueta arriba, el borde se enciende en
  * dorado al escribir (con una transición, no de golpe), el error va debajo del campo y no en un aviso
- * que tapa la pantalla, y la clave se puede mostrar. Con `autoComplete` el gestor de contraseñas del
+ * que tapa la pantalla, y la clave se puede mostrar con el ojito (José, 3-oct: «en todo lado se ponga
+ * password salga el ojito para ver la contraseña»). Con `autoComplete` el gestor de contraseñas del
  * teléfono ofrece lo guardado. `grande` es el campo protagonista de una pantalla (el apodo).
  */
 import { forwardRef, useEffect, useState } from 'react';
@@ -9,6 +10,7 @@ import { Pressable, StyleSheet, TextInput, View, type TextInputProps } from 'rea
 import Animated, { interpolateColor, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { tr } from '../i18n';
 import { MEDIDA, useTema } from '../nucleo/tema';
+import { Icono } from './Icono';
 import { Texto } from './Texto';
 import { estiloLetra } from './tipografia';
 
@@ -59,9 +61,7 @@ export const Campo = forwardRef<TextInput, Props>(function Campo({ etiqueta, err
         />
         {clave && (
           <Pressable onPress={() => setVer((v) => !v)} hitSlop={10} accessibilityRole="button" accessibilityLabel={ver ? tr('Ocultar clave', 'Hide password') : tr('Mostrar clave', 'Show password')} style={s.ojo}>
-            <Texto v="chicaFuerte" color="acentoTexto">
-              {ver ? tr('Ocultar', 'Hide') : tr('Mostrar', 'Show')}
-            </Texto>
+            <Icono nombre={ver ? 'ojoTachado' : 'ojo'} tam={21} color={foco ? tema.acentoTexto : tema.texto2} />
           </Pressable>
         )}
       </Animated.View>

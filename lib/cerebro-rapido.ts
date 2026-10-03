@@ -178,8 +178,19 @@ function modeloRespaldo(): string | null {
   return !v || v === 'no' ? null : v;
 }
 
-/** Lo que va saliendo del cerebro con manos: texto para decir, o una herramienta que pidió (ya completa). */
-export type PiezaManos = { texto: string } | { herramienta: { nombre: string; input: Record<string, unknown> } } | { modelo: string };
+/**
+ * Cómo terminó una respuesta de Bedrock (auditoría 3-oct, STREAM02): `completo` solo con un messageStop de
+ * fin normal (end_turn, tool_use, stop_sequence). max_tokens, un filtro o la ventana llena la dejaron a
+ * medias: `truncado`, con su motivo tal cual. Un stream que se acaba sin messageStop no llega aquí: lanza.
+ */
+export type FinManos = { motivo: string; estado: 'completo' | 'truncado' };
+const FIN_NORMAL = new Set(['end_turn', 'tool_use', 'stop_sequence']);
+
+/**
+ * Lo que va saliendo del cerebro con manos: texto para decir, una herramienta que pidió (ya completa), cuál
+ * modelo contesta (`modelo`, al empezar) y cómo terminó (`fin`, siempre lo último).
+ */
+export type PiezaManos = { texto: string } | { herramienta: { nombre: string; input: Record<string, unknown> } } | { modelo: string } | { fin: FinManos };
 
 /**
  * Un turno con las manos como herramientas (lib/cerebro-manos.ts), a trozos: el texto en cuanto sale y cada
@@ -227,9 +238,12 @@ export async function* hablarConManos(mensajes: MensajeChat[], herramientas: Too
       );
       let actual: { nombre: string; json: string } | null = null;
       let dijoModelo = false;
+      /** El motivo del messageStop. Sin él, el stream se cortó: no es un end_turn. */
+      let motivo = '';
       for await (const ev of r.stream || []) {
         const err = ev.internalServerException || ev.modelStreamErrorException || ev.throttlingException || ev.validationException || ev.serviceUnavailableException;
         if (err) throw new Error(String(err.message || 'error de Bedrock'));
+        if (ev.messageStop) motivo = String(ev.messageStop.stopReason || 'sin motivo');
         const inicio = ev.contentBlockStart?.start?.toolUse;
         if (inicio) {
           marcar();
@@ -263,7 +277,15 @@ export async function* hablarConManos(mensajes: MensajeChat[], herramientas: Too
           actual = null;
         }
       }
+      // Se acabó el stream sin messageStop: se cortó (antes se anotaba como un end_turn). Antes de la primera
+      // señal, pasa al de respaldo; con algo ya dicho, quien llama lo cierra como parcial.
+      if (!motivo) throw new Error('Bedrock cerró el stream sin messageStop');
+      const fin: FinManos = { motivo, estado: FIN_NORMAL.has(motivo) ? 'completo' : 'truncado' };
+      // Truncado sin haber dicho nada útil (solo la etiqueta de ánimo, o una herramienta a medio escribir): como
+      // un fallo antes de la primera frase, prueba el de respaldo.
+      if (fin.estado === 'truncado' && !alguna) throw new Error(`Bedrock terminó sin contestar (${motivo})`);
       anotarExitoRapido();
+      yield { fin };
       return;
     } catch (e) {
       ultimoError = e;

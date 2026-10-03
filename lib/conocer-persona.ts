@@ -245,6 +245,30 @@ export async function olvidarDato(persona: string, id: string): Promise<{ borrad
   return { borrado: resultado, durable };
 }
 
+/** Un dato por su clave común: la categoría y la clave («rutinas»/«vive»), como las arma la app. */
+export type ClaveDato = { categoria: string; clave: string };
+
+/**
+ * Olvida por id y por CLAVE COMÚN, de una vez (auditoría del 3-oct, PRIV01). La respuesta «Dónde vives»
+ * del perfil y el «Vive en Tela» que AURA oyó conversando son el mismo dato: borrar uno y dejar el otro
+ * era borrar a medias. Con la clave se van todas las copias de esa categoría.
+ *
+ * Siempre escribe (aunque no quede nada que quitar): así un reintento tras un `durable: false` vuelve a dar
+ * un recibo de verdad en vez de un 404. Lanza CajonNoDisponible si no se pudo leer lo guardado.
+ */
+export async function olvidarPorClaves(persona: string, o: { ids?: string[]; claves?: ClaveDato[] }): Promise<{ borrados: number; durable: boolean }> {
+  const c = clavePersona(persona);
+  if (!c) return { borrados: 0, durable: false };
+  const ids = new Set((o.ids || []).map((x) => String(x).slice(0, 40)));
+  const claves = (o.claves || []).map((k) => ({ categoria: String(k.categoria), clave: plegar(linea(k.clave, 60)) })).filter((k) => k.clave);
+  const { resultado, durable } = await cajones.modificar(c, (x) => {
+    const antes = x.datos.length;
+    x.datos = x.datos.filter((d) => !ids.has(d.id) && !claves.some((k) => k.categoria === d.categoria && d.clave === k.clave));
+    return antes - x.datos.length;
+  });
+  return { borrados: Number(resultado) || 0, durable };
+}
+
 /**
  * Olvida TODO lo que aprendió de la persona (el «Borrar todo lo que te conté» de la app). Antes ese botón
  * solo vaciaba la encuesta y lo aprendido seguía en el prompt (auditoría de Codex del 3-oct, PRI 001).

@@ -13,6 +13,7 @@ import { logoutRemote } from '../lib/api';
 import { cargarPerfil, soltarPerfil } from '../lib/perfil';
 import { borrarRastrosViejos, getFingerprintUnlock, loadCreds, saveCreds, saveMesaToken, saveSession } from '../lib/storage';
 import { fijarCuenta, generacionCuenta, sigueVigente } from '../lib/cuenta';
+import { confirmarIntento, type Intento } from '../lib/intentoEntrada';
 import { salir as salirDelChat } from '../pulse/relevo';
 import { miga } from '../lib/reporte';
 import { reiniciarA } from './rutas';
@@ -81,13 +82,25 @@ export async function marcarBienvenidaVista() {
 /**
  * Tras verificar quién es (Genesis o clave): guarda la sesión, carga su perfil (sin esperar más de
  * unos segundos al servidor) y lleva a la primera vez o a la mesa.
+ * `intento`: el de esa entrada (lib/intentoEntrada.ts). Si ya no es el último —«atrás», u otra entrada
+ * empezó después—, no guarda ni fija a nadie, y suelta el token que ese intento alcanzó a guardar.
  */
-export async function entrarCon(u: SessionUser, compartido?: Compartido | null) {
-  miga('entró: cargando perfil');
+export async function entrarCon(u: SessionUser, compartido?: Compartido | null, intento?: Intento | null) {
   const s = { ...u, correo: u.correo.trim().toLowerCase() };
-  await olvidarClaveAjena(s.correo);
-  await saveSession(s).catch(() => {});
-  fijarUsuario(s);
+  const entro = await confirmarIntento(intento, async (e) => {
+    await olvidarClaveAjena(s.correo);
+    if (!e.sigue()) return false;
+    await e.sesion(s).catch(() => {});
+    if (!e.sigue()) return false;
+    // Fijar a la persona abre su generación: desde aquí, cualquier intento anterior ya no escribe.
+    fijarUsuario(s);
+    return true;
+  });
+  if (!entro) {
+    miga('entrada vencida: otra la reemplazó');
+    return;
+  }
+  miga('entró: cargando perfil');
   const gen = generacionCuenta();
   const p = await cargarPerfil(s.correo, { nombre: s.name, genesis: compartido || null, topeMs: 6_000 });
   // Si mientras cargaba el perfil salió (o entró otra persona), esta entrada ya no navega.

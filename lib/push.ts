@@ -28,6 +28,7 @@
 import crypto from 'node:crypto';
 import { clave } from './boveda';
 import { AlmacenNoDisponible, cajonPorCorreo } from './misiones';
+import { enviarPushWeb } from './push-web';
 
 /* ------------------------------------------------------------------ tipos */
 
@@ -293,10 +294,42 @@ async function mandarUno(proyecto: string, accessToken: string, token: string, d
 }
 
 /**
- * Manda un aviso (solo datos) a todos los teléfonos de la persona. Nunca lanza: lo que pase se cuenta.
- * `app` filtra por app ('aura' por omisión).
+ * Manda un aviso a todos los aparatos de la persona: sus teléfonos (Firebase, solo datos) y, para AU-RA,
+ * también la web instalada (Web Push, lib/push-web.ts: el iPhone). Nunca lanza: lo que pase se cuenta.
+ * `app` filtra por app ('aura' por omisión). Sin navegadores suscritos, el resultado es el de Firebase tal cual.
  */
 export async function enviarPush(correo: string, datos: DatosPush, o: { ttlS?: number; app?: string; ahora?: () => number } = {}): Promise<ResultadoPush> {
+  const app = o.app || 'aura';
+  const [fcm, web] = await Promise.all([enviarPushFcm(correo, datos, o), app === 'aura' ? enviarComoWeb(correo, datos, o) : Promise.resolve(null)]);
+  if (!web || !web.configurado || web.enviados + web.fallidos === 0) return fcm;
+  const detalle = [fcm.detalle, web.detalle && `web: ${web.detalle}`].filter(Boolean).join('; ').slice(0, 200);
+  return {
+    enviados: fcm.enviados + web.enviados,
+    fallidos: fcm.fallidos + web.fallidos,
+    quitados: fcm.quitados + web.quitados,
+    configurado: true,
+    ...(detalle ? { detalle } : {}),
+  };
+}
+
+/** Lo mismo, dicho para un navegador: título y una línea, y adónde lleva el toque. */
+function enviarComoWeb(correo: string, datos: DatosPush, o: { ttlS?: number; ahora?: () => number }) {
+  if (!TIPOS_PUSH.includes(datos?.tipo)) return Promise.resolve(null);
+  const txt = (v: unknown) => String(v ?? '').replace(/\s+/g, ' ').trim();
+  const titulos: Record<TipoPush, string> = { llamada: 'AURA te llama', mensaje: txt(datos.titulo) || 'AURA', propuesta: 'AURA te propone algo', recordatorio: 'Recordatorio', computadora: 'Tu computadora' };
+  const texto = datos.tipo === 'llamada' ? txt(datos.motivo) || 'Quiere hablar contigo.' : txt(datos.texto);
+  const abrir = txt(datos.abrir) || (datos.tipo === 'computadora' ? 'computadora' : 'mesa');
+  const ahora = (o.ahora || Date.now)();
+  const id = /^[A-Za-z0-9_.:-]{1,80}$/.test(String(datos.id || '')) ? String(datos.id) : nuevoId();
+  return enviarPushWeb(
+    correo,
+    { tipo: datos.tipo, titulo: titulos[datos.tipo], texto, id, abrir, para: seudonimoDe(correo), enviado: ahora },
+    { ttlS: o.ttlS ?? (datos.tipo === 'llamada' ? TTL_LLAMADA_S : TTL_NORMAL_S), urgente: datos.tipo === 'llamada', ahora: o.ahora }
+  );
+}
+
+/** Firebase: solo datos, a los teléfonos registrados de esa app. */
+async function enviarPushFcm(correo: string, datos: DatosPush, o: { ttlS?: number; app?: string; ahora?: () => number } = {}): Promise<ResultadoPush> {
   const ahora = o.ahora || Date.now;
   const c = cuentaServicio();
   if (!c) return { enviados: 0, fallidos: 0, quitados: 0, configurado: false, detalle: 'sin FIREBASE_SERVICE_ACCOUNT' };

@@ -61,6 +61,7 @@ import { zona2D } from '../avatar3d/mapeo';
 import { cuerposAparte, marcoMesa, useModoPresencia } from '../avatar3d/usePresencia';
 import { haciaMarco, transicionMesa, type ModoVisible } from '../avatar3d/presencia';
 import { AvatarVivo } from '../avatar3d/AvatarVivo';
+import { OrbeMini } from '../avatar3d/OrbeMini';
 import { CuerpoVideo } from '../avatares/video/CuerpoVideo';
 import { hayVideo } from '../avatares/video/clips';
 
@@ -350,8 +351,8 @@ export function Companera() {
   // La voz (estado de la sesión), lo que dice, las interrupciones y lo que hace la mesa.
   const v = voz.vista;
   useEffect(() => {
-    despachar({ tipo: 'voz', voz: { estado: v.estado, silenciada: v.silenciada, dormida: v.dormida, suspendida: v.suspendida } });
-  }, [despachar, v.estado, v.silenciada, v.dormida, v.suspendida]);
+    despachar({ tipo: 'voz', voz: { estado: v.estado, silenciada: v.silenciada, dormida: v.dormida, suspendida: v.suspendida, pensando: v.pensando } });
+  }, [despachar, v.estado, v.silenciada, v.dormida, v.suspendida, v.pensando]);
   // La llamada del avatar: mientras suena o se habla, la compañera no está (la llamada es su presencia).
   useEffect(() => {
     despachar({ tipo: 'ciclo', estado: voz.ciclo });
@@ -768,7 +769,12 @@ export function Companera() {
           accessibilityLabel={tr('AURA, tu compañera', 'AURA, your companion')}
           accessibilityHint={tr('Toca para saludarla; dile «llámame» y te llama; mantén para moverla', 'Tap to say hi; say "call me" and she calls you; hold to move her')}
         >
-          {hayVideo(avatar) && !sinVideo ? (
+          {avatar === 'aura' ? (
+            // AU-RA: su orbe, como en la mesa (antes el robot 3D o la figurita dorada).
+            <View pointerEvents="none" style={[s.retrato, { width: lado, height: lado, borderRadius: lado / 2, left: M.cx - lado / 2, top: M.cy - lado / 2, backgroundColor: 'transparent' }]}>
+              <OrbeMini lado={lado} estado={estadoCuerpo} activo={!oculta && !apartada} />
+            </View>
+          ) : hayVideo(avatar) && !sinVideo ? (
             <View pointerEvents="none" style={[s.retrato, { width: lado, height: lado, borderRadius: lado / 2, left: M.cx - lado / 2, top: M.cy - lado / 2, backgroundColor: estilo.cuerpo }]}>
               <CuerpoVideo
                 avatar={avatar}

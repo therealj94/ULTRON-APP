@@ -100,6 +100,8 @@ test('salud: Laya a todos por encima, el detalle solo a quien manda', { skip: fs
       PLATAFORMA: '',
       ELECTRUM_DB_URL: '',
       ELECTRUM_CLAVE: 'llave-de-la-demo',
+      // Aunque esté puesta, en producción ninguna variable reabre la llave fija (SEC01).
+      ELECTRUM_LLAVE_FIJA: '1',
       ULTRON_SESION_SECRETO: secreto,
       ULTRON_MEMORIA_BUCKET: '',
       AWS_ACCESS_KEY_ID: '',
@@ -123,8 +125,9 @@ test('salud: Laya a todos por encima, el detalle solo a quien manda', { skip: fs
   }
   assert.ok(listo, 'el servidor no levantó');
 
-  const demo: any = await (await fetch(`${base}/api/electrum/salud`, { headers: { 'x-electrum-llave': 'llave-de-la-demo' } })).json();
-  assert.deepEqual(demo.laya, { configurado: true, vivo: true }, 'a la llave de la demo, solo si está y si contesta');
+  // La llave fija de la demo ya no abre nada en producción (SEC01): ni siquiera la salud.
+  const demo = await fetch(`${base}/api/electrum/salud`, { headers: { 'x-electrum-llave': 'llave-de-la-demo' } });
+  assert.equal(demo.status, 401, 'la llave fija no abre en producción');
 
   // José manda en Electrum en el padrón de arranque: una sesión firmada con el secreto del servidor.
   const at = Date.now();

@@ -202,7 +202,8 @@ export function DeskMenu(p: Props) {
   const av = avatarPorId(p.avatar);
   const esOjos = p.avatar === 'ojos';
   const esAura = p.avatar === 'aura';
-  const esClaudio = p.avatar === 'claudio';
+  // Claudio y ANT-ONIO se ven con fotos/video: los gestos de los ojos no les aplican.
+  const esClaudio = p.avatar === 'claudio' || p.avatar === 'antonio';
 
   return (
     <View style={styles.wrap} pointerEvents="box-none">
@@ -282,7 +283,10 @@ export function DeskMenu(p: Props) {
               <Text style={styles.section}>{tr('Lo que hacemos juntos', 'What we do together')}</Text>
               <FilaHoja titulo={tr('Misiones', 'Missions')} sub={tr('Tus metas, paso a paso', 'Your goals, step by step')} onPress={() => p.onAbrirHoja?.('misiones')} />
               <FilaHoja titulo={tr('Mi círculo', 'My circle')} sub={tr('Tu gente cercana y sus recordatorios', 'Your close people and their reminders')} onPress={() => p.onAbrirHoja?.('circulo')} />
-              <FilaHoja titulo={tr('Cartera', 'Wallet')} sub={tr('Tus saldos de Veta Wallet (solo lectura)', 'Your Veta Wallet balances (read-only)')} onPress={abrirCartera} />
+              <FilaHoja titulo={tr('Cartera', 'Wallet')} sub={tr('Tus saldos de Veta Wallet (solo lectura)', 'Your Veta Wallet balances (read-only)')} onPress={() => {
+                  p.onClose();
+                  abrirCartera();
+                }} />
             </>
           ) : null}
 
@@ -379,7 +383,15 @@ export function DeskMenu(p: Props) {
           )}
 
           {/* ---------------- Claudio: marketing ---------------- */}
-          {esClaudio && (
+          {p.avatar === 'antonio' && (
+            <Text style={styles.hint}>
+              {tr(
+                'ANT-ONIO es tu aliado para resolver: pídele un plan paso a paso, ordenar tus pendientes, un resumen o cómo hacer algo en Veta Wallet, Genesis ID o PULSE2CHAT. Acostado lo ves de retrato; con el teléfono derecho, de cuerpo entero.',
+                'ANT-ONIO is your ally to get things done: ask for a step-by-step plan, sorting your to-dos, a summary or how to do something in Veta Wallet, Genesis ID or PULSE2CHAT. Lay the phone down for his portrait; hold it upright to see him full body.'
+              )}
+            </Text>
+          )}
+          {p.avatar === 'claudio' && (
             <Text style={styles.hint}>
               {tr(
                 'Claudio piensa en marketing: pídele ideas de contenido, textos para redes, eslóganes, guiones de video o un plan de campaña. Dale el producto y el público, y te lo deja listo para publicar. Acostado lo ves de retrato; con el teléfono derecho, de cuerpo entero.',

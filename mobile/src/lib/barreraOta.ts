@@ -111,8 +111,47 @@ export function necesitaApkNueva(o: { instalado: string | null; publicado: strin
   return o.canal === 'production' && !!o.instalado && /^[0-9a-f]{40}$/.test(publicado) && publicado !== o.instalado;
 }
 
+/*
+ * ANTES DE RECARGAR (auditoría del 3-oct, UI01). Un borrador olvidado deja de frenar la recarga a los diez
+ * minutos; para que no se pierda, cada frente puede guardar lo suyo justo antes (el chat: sus borradores
+ * en el llavero, pulse/borradores.ts) y recuperarlo al volver.
+ */
+const antesDe = new Map<string, () => Promise<void> | void>();
+
+/** Un frente dice qué guardar antes de recargar. Devuelve cómo borrarse. */
+export function antesDeRecargar(nombre: string, guardar: () => Promise<void> | void): () => void {
+  antesDe.set(nombre, guardar);
+  return () => {
+    if (antesDe.get(nombre) === guardar) antesDe.delete(nombre);
+  };
+}
+
+/**
+ * Corre todo lo registrado con `antesDeRecargar`, a la vez y con tope: uno que falla o no termina no
+ * cuelga la recarga (se nombra en `fallaron`). Nunca lanza.
+ */
+export async function prepararRecarga(topeMs = 1500): Promise<{ fallaron: string[] }> {
+  const fallaron: string[] = [];
+  await Promise.all(
+    [...antesDe].map(async ([nombre, guardar]) => {
+      let reloj: ReturnType<typeof setTimeout> | undefined;
+      const tope = new Promise<'tope'>((r) => (reloj = setTimeout(() => r('tope'), topeMs)));
+      try {
+        const r = await Promise.race([Promise.resolve().then(guardar).then(() => 'ok' as const), tope]);
+        if (r === 'tope') fallaron.push(nombre);
+      } catch {
+        fallaron.push(nombre);
+      } finally {
+        clearTimeout(reloj);
+      }
+    })
+  );
+  return { fallaron };
+}
+
 /** Solo pruebas. */
 export function _reiniciarBarreraOta() {
+  antesDe.clear();
   trabajos.clear();
   llamadaDesde = 0;
   vozDesde = 0;

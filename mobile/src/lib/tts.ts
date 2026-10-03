@@ -35,6 +35,7 @@ import { senalVoz } from '../avatar3d/senalVoz';
 import { ADELANTO_MS, BocaAlineada, Envolvente, PASO_BOCA_MS, RelojReproduccion, leerAlineacion, type AlineacionAudio } from '../avatar3d/sincronia';
 import { idiomaActual } from '../i18n';
 import { RegistroVoz } from './interrupcion';
+import { faltaDecir } from './reemplazoVoz';
 
 type Perf = 'speak' | 'sing';
 
@@ -728,8 +729,15 @@ const RE_COMA_PRIMERA = new RegExp(`^([\\s\\S]{${COMA_PRIMERA - 1},}?[^\\d\\s][,
  */
 export class StreamSpeaker {
   private buf = '';
-  /** Las frases por decir, cada una con la que se dijo antes (su `previo`: entonación y tono). */
-  private queue: Array<{ texto: string; previo: string }> = [];
+  /**
+   * Las frases por decir, cada una con la que se dijo antes (su `previo`: entonación y tono) y la versión
+   * del texto a la que pertenecen (`reemplazar` la sube: lo de una versión vieja ya no suena).
+   */
+  private queue: Array<{ texto: string; previo: string; v: number }> = [];
+  /** La versión del texto: sube con cada `replace` del servidor. */
+  private version = 0;
+  /** Las frases que ya empezaron a sonar, en orden: lo que la persona ya oyó. */
+  private oido: string[] = [];
   private pumping = false;
   private closed = false;
   private my: number;
@@ -796,6 +804,28 @@ export class StreamSpeaker {
     this.resolveDone();
   }
 
+  /**
+   * El servidor corrigió lo dicho (`replace`, con el texto ENTERO hasta ahí; auditoría del 3-oct VOICE02).
+   * Lo que todavía no sonó del texto viejo se tira —la cola, el trozo a medias y el audio ya preparado—;
+   * la frase que está sonando termina (no se corta a media palabra). De lo corregido se dice solo lo que
+   * falta (lib/reemplazoVoz.ts): si lo oído coincide, sigue donde iba; si no, desde la frase que difiere,
+   * con `aviso` delante («Corrijo:») para que se entienda que corrige.
+   */
+  reemplazar(texto: string, aviso = '') {
+    if (this.closed) return;
+    this.version++;
+    this.queue = [];
+    this.buf = '';
+    if (this.nextPrepared) {
+      void this.nextPrepared.then((s) => s?.unloadAsync().catch(() => {}));
+      this.nextPrepared = null;
+    }
+    // La entonación sigue a lo último que de verdad sonó, no a lo que se tiró.
+    this.ultima = this.oido[this.oido.length - 1] || '';
+    const { decir, corrige } = faltaDecir(this.oido.join(' '), cleanForSpeech(texto));
+    if (decir) this.push(corrige && aviso ? `${aviso} ${decir}` : decir);
+  }
+
   get hasSpoken() {
     return this.spoke;
   }
@@ -816,7 +846,7 @@ export class StreamSpeaker {
   }
 
   private enqueue(sentence: string) {
-    this.queue.push({ texto: sentence, previo: this.ultima });
+    this.queue.push({ texto: sentence, previo: this.ultima, v: this.version });
     void this.source(sentence, this.ultima);
     this.ultima = sentence;
     if (!this.pumping) void this.pump();
@@ -827,7 +857,7 @@ export class StreamSpeaker {
     try {
       if (!this.spoke) await lastSpeak.catch(() => {});
       while (this.queue.length && this.my === gen) {
-        const { texto: sentence, previo } = this.queue.shift()!;
+        const { texto: sentence, previo, v } = this.queue.shift()!;
         const sound = this.nextPrepared
           ? await this.nextPrepared
           : await (async () => {
@@ -838,6 +868,11 @@ export class StreamSpeaker {
         if (this.my !== gen) {
           if (sound) void sound.unloadAsync().catch(() => {});
           break;
+        }
+        // Mientras se preparaba, el servidor corrigió el texto: esta frase ya no va.
+        if (v !== this.version) {
+          if (sound) void sound.unloadAsync().catch(() => {});
+          continue;
         }
         if (this.queue[0]) {
           const nxt = this.queue[0];
@@ -851,6 +886,7 @@ export class StreamSpeaker {
           this.spoke = true;
           this.opts.onAudioStart?.();
         }
+        this.oido.push(sentence);
         this.opts.onSentence?.(sentence);
         await playPrepared(sound, this.my, 25_000, { text: sentence, kind: this.opts.emocion === 'oracion' ? 'pray' : 'speak' });
       }

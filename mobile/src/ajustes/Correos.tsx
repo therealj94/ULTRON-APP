@@ -24,23 +24,27 @@ type Proveedor = { nombre: string; auth: 'clave' | 'microsoft'; ayuda: string; f
 export function useCuentasCorreo(abierta: boolean) {
   const [cuentas, setCuentas] = useState<Cuenta[] | null>(null);
   const [microsoft, setMicrosoft] = useState(false);
+  /** No se pudo leer la lista: NO es «no tienes correos» (auditoría 3-oct, COM02). */
+  const [sinLeer, setSinLeer] = useState(false);
   const refrescar = useCallback(async () => {
     try {
       const r = await api<{ cuentas: Cuenta[]; microsoft: boolean }>('/api/correo/cuentas', { method: 'GET' }, 10_000);
       setCuentas(r.cuentas);
       setMicrosoft(!!r.microsoft);
+      setSinLeer(false);
     } catch {
-      setCuentas((c) => c ?? []);
+      // Lo que ya se sabía se queda; si nunca se supo, sigue «sin saber» (null), no una lista vacía.
+      setSinLeer(true);
     }
   }, []);
   useEffect(() => {
     void refrescar();
   }, [abierta, refrescar]);
-  return { cuentas, microsoft, refrescar };
+  return { cuentas, microsoft, sinLeer, refrescar };
 }
 
 export function HojaCorreos({ visible, onCerrar }: { visible: boolean; onCerrar: () => void }) {
-  const { cuentas, microsoft, refrescar } = useCuentasCorreo(visible);
+  const { cuentas, microsoft, sinLeer, refrescar } = useCuentasCorreo(visible);
   const [correo, setCorreo] = useState('');
   const [clave, setClave] = useState('');
   const [prov, setProv] = useState<Proveedor | null>(null);
@@ -176,6 +180,11 @@ export function HojaCorreos({ visible, onCerrar }: { visible: boolean; onCerrar:
       subtitulo={tr('AURA los revisa y te ayuda a contestar. Nunca manda nada sin que le digas que sí.', 'AURA checks them and helps you reply. She never sends anything until you say yes.')}
     >
       <View style={{ gap: MEDIDA.espacio.l }}>
+        {sinLeer && (
+          <Texto v="chica" color="texto2">
+            {tr('No pude leer tus correos guardados ahora mismo. Si ya conectaste uno, sigue ahí: prueba otra vez en un rato antes de volver a conectarlo.', 'I couldn’t read your saved email accounts right now. If you connected one, it’s still there: try again in a bit before connecting it again.')}
+          </Texto>
+        )}
         {!!cuentas?.length && (
           <View style={{ gap: MEDIDA.espacio.s }}>
             {cuentas.map((c) => (
@@ -234,7 +243,7 @@ export function HojaCorreos({ visible, onCerrar }: { visible: boolean; onCerrar:
                     <Boton titulo={tr('Entrar con Microsoft', 'Sign in with Microsoft')} cargando={ocupado} onPress={() => void conMicrosoft()} />
                   ) : (
                     <Texto v="chica" color="aviso">
-                      {tr('Outlook todavía no está habilitado en el servidor. Pronto.', 'Outlook isn’t enabled on the server yet. Soon.')}
+                      {tr('Outlook con Microsoft no está activado en este servidor. Mientras tanto, conéctalo con «Otro» y una contraseña de aplicación de Outlook.', 'Outlook with Microsoft isn’t enabled on this server. Meanwhile, connect it with “Other” and an Outlook app password.')}
                     </Texto>
                   )
                 ) : (

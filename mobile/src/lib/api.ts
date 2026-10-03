@@ -5,6 +5,8 @@
  * Toda llamada pasa por api(): manda la cabecera de sesión y, si el servidor responde 401, renueva el
  * token con las credenciales guardadas y reintenta una vez. También dice qué teléfono es
  * (`x-aura-aparato`, ver aparato.ts); los turnos, además, que salen de la app (`x-aura-origen: app`).
+ * Cada petición es de la sesión que la armó (su generación, lib/cuenta.ts): si la persona cambia
+ * mientras viaja, ni se reintenta ni se renueva el token por ella (auditoría del 3-oct, AUTH01).
  */
 import { API_BASE } from '../config';
 import type { Mode, SessionUser } from '../config';
@@ -13,6 +15,7 @@ import { loadCreds, loadMesaToken, loadSession, saveMesaToken } from './storage'
 import { quitarExpresiones } from './expresiones';
 import { cabecerasAparato } from './aparato';
 import { generacionCuenta, sigueVigente } from './cuenta';
+import { guardarTokenDeEntrada, vencida, type Intento } from './intentoEntrada';
 import { avatarActual } from '../avatares/actual';
 import { idiomaActual } from '../i18n';
 import { etiquetasDeVista, vistaDeEtiquetas, vistaDeRespuesta, type FocoVision, type VistaCamara } from './vistaCamara';
@@ -26,9 +29,11 @@ let refreshing: { gen: number; p: Promise<boolean> } | null = null;
  * Renueva el token con la clave guardada de QUIEN está dentro. Una sola renovación en vuelo por
  * generación de la sesión (lib/cuenta.ts): si la persona cambia mientras viaja, la respuesta vieja
  * NO se guarda (sería un token ajeno), y la renovación de la persona nueva es otra.
+ * `gen`: la sesión por la que se pide. Una petición de A cuyo 401 llega con B dentro no renueva el
+ * token de B (con la clave de B) para reintentar el cuerpo de A.
  */
-async function renovarSesion(): Promise<boolean> {
-  const gen = generacionCuenta();
+async function renovarSesion(gen = generacionCuenta()): Promise<boolean> {
+  if (!sigueVigente(gen)) return false;
   if (refreshing && refreshing.gen === gen) return refreshing.p;
   const p = (async () => {
     const [creds, sesion] = await Promise.all([loadCreds(), loadSession()]);
@@ -97,17 +102,24 @@ function hastaElLimite(p: Promise<boolean>, limite: number): Promise<boolean> {
 /**
  * Una petición al backend. `timeoutMs` es el tope TOTAL (reintento de 429 y renovación incluidos):
  * reintentar no vuelve a empezar la cuenta.
+ *
+ * Es de la sesión que había al llamar (su generación): el cuerpo lo armó esa persona. Si antes de
+ * mandarla —la primera vez o en un reintento— salió o entró otra (también A→B→A: es otra sesión), no
+ * sale y falla con `vencida` (lib/intentoEntrada.ts). Antes un 429 o un 401 de A podía volver a salir
+ * con el token de B y el cuerpo de A.
  */
 export async function api<T = any>(path: string, init?: RequestInit, timeoutMs = 30_000, retry401 = true): Promise<T> {
-  return pedirApi<T>(path, init, Date.now() + timeoutMs, retry401);
+  return pedirApi<T>(path, init, Date.now() + timeoutMs, retry401, generacionCuenta());
 }
 
-async function pedirApi<T>(path: string, init: RequestInit | undefined, limite: number, reintentar: boolean): Promise<T> {
+async function pedirApi<T>(path: string, init: RequestInit | undefined, limite: number, reintentar: boolean, gen: number): Promise<T> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), Math.max(1, limite - Date.now()));
   try {
     const token = await loadMesaToken();
     const aparato = await cabecerasAparato().catch(() => ({}));
+    // Justo antes de transmitir: ¿sigue dentro la sesión que armó este cuerpo?
+    if (!sigueVigente(gen)) throw vencida();
     const res = await fetch(`${API_BASE}${path}`, {
       ...init,
       signal: ctrl.signal,
@@ -125,13 +137,17 @@ async function pedirApi<T>(path: string, init: RequestInit | undefined, limite: 
         const espera = esperaDe429(res);
         if (Date.now() + espera < limite) {
           await new Promise((r) => setTimeout(r, espera));
-          return pedirApi<T>(path, init, limite, false);
+          // El reintento vuelve a mirar la sesión antes de salir (arriba): si cambió, no sale.
+          return pedirApi<T>(path, init, limite, false, gen);
         }
       }
       if (reintentar && esSesionCaida(res.status, data) && !path.includes('/entrar')) {
+        // Un 401 de una sesión que ya no está no renueva a la de ahora: la respuesta era de la otra.
+        if (!sigueVigente(gen)) throw vencida();
         // La renovación también cuenta contra el tope total: una que no contesta no retiene la petición.
-        const ok = await hastaElLimite(renovarSesion(), limite);
-        if (ok && Date.now() < limite) return pedirApi<T>(path, init, limite, false);
+        const ok = await hastaElLimite(renovarSesion(gen), limite);
+        if (ok && Date.now() < limite) return pedirApi<T>(path, init, limite, false, gen);
+        if (!sigueVigente(gen)) throw vencida();
       }
       const err = new Error((data as any).error || `HTTP ${res.status}`);
       (err as any).status = res.status;
@@ -208,21 +224,31 @@ export async function healthCheck() {
   }
 }
 
-export async function loginBiometric(user: SessionUser, timeoutMs = 12_000) {
+/**
+ * El token de una entrada se guarda solo si su intento sigue siendo el último (lib/intentoEntrada.ts):
+ * un login de A que contesta después del de B, o después de «atrás», no lo pisa y falla con `vencida`.
+ * Sin intento, como antes.
+ */
+async function guardarTokenDe(token: string | undefined, intento?: Intento | null) {
+  if (!token) return;
+  if (!(await guardarTokenDeEntrada(token, intento))) throw vencida();
+}
+
+export async function loginBiometric(user: SessionUser, timeoutMs = 12_000, intento?: Intento | null) {
   const data = await api<{ user?: { nombre?: string; rol?: string; correo?: string }; token?: string }>('/api/ultron/biometric-login', {
     method: 'POST',
     body: JSON.stringify({ biometricType: 'desk_access', userName: user.name, role: user.role, correo: user.correo }),
   }, timeoutMs);
-  if (data.token) await saveMesaToken(data.token);
+  await guardarTokenDe(data.token, intento);
   return data;
 }
 
-export async function loginClave(correo: string, clave: string) {
+export async function loginClave(correo: string, clave: string, intento?: Intento | null) {
   const data = await api<{ miembro?: { nombre?: string; rol?: string; correo?: string }; token?: string }>('/api/ultron/entrar', {
     method: 'POST',
     body: JSON.stringify({ correo: String(correo).trim().toLowerCase(), clave }),
   }, 15_000);
-  if (data.token) await saveMesaToken(data.token);
+  await guardarTokenDe(data.token, intento);
   return data;
 }
 
@@ -324,6 +350,14 @@ export type ChatResult = {
    * lo dicho se queda, pero no es una respuesta completa (auditoría de Codex, 3-oct).
    */
   parcial?: boolean;
+  /**
+   * Solo el turno en stream: cómo terminó. `done` (el servidor lo cerró), `error` (mandó un error),
+   * `eof` (la conexión se cerró sin ninguno de los dos: lo dicho llega con `parcial`) o `timeout`.
+   * Un cierre que no sea `done` nunca es una respuesta completa (auditoría del 3-oct, VOICE01).
+   */
+  cierre?: 'done' | 'error' | 'eof' | 'timeout';
+  /** El idTurno con que se pidió: con él, un reintento por JSON recupera ESE turno sin correr otro. */
+  idTurno?: string;
 };
 
 type TurnoOpts = {
@@ -408,16 +442,30 @@ export type StreamHandlers = {
   onEmocion?: (e: Emocion) => void;
   /** Trozo para DECIR (con expresiones): quien lo enseñe, que se las quite. */
   onDelta: (piece: string) => void;
+  /**
+   * El servidor corrigió lo dicho hasta aquí (`replace`): llega el texto ENTERO que reemplaza a todos los
+   * deltas anteriores (para decir, con expresiones), y los deltas que sigan van detrás de él. Quien
+   * enseña o dice la respuesta la corrige (auditoría del 3-oct, VOICE02).
+   */
+  onReplace?: (texto: string) => void;
   onTools?: (tools: string[]) => void;
 };
 
 /**
  * Turno en streaming (SSE por XHR: fetch de React Native no expone el body en trozos).
- * Eventos: `emocion` {emocion} · `delta` {text} · `tools` {tools[]} · `done` {reply, emocion, ms, via} · `error`.
+ * Eventos: `emocion` {emocion} · `delta` {text, voz} · `replace` {text, voz} · `tools` {tools[]} ·
+ * `done` {reply, emocion, ms, via} · `error`.
  * Si el servidor no soporta stream (404/5xx) lanza para que el caller use turno().
+ *
+ * Cómo terminó va en `cierre`: solo `done` es una respuesta completa. Un `error`, un plazo vencido o
+ * una conexión que se cierra sin `done` (un 200 cortado por el camino) devuelven lo dicho con
+ * `parcial: true` y su idTurno; sin nada dicho, lanzan. Antes el cierre sin `done` salía como éxito.
  */
 export function turnoStream(opts: TurnoOpts, h: StreamHandlers): { promise: Promise<ChatResult>; abort: () => void } {
   const xhr = new XMLHttpRequest();
+  // La sesión que armó este turno (AUTH01): si cambia antes de mandarlo, no sale.
+  const gen = generacionCuenta();
+  const idTurno = opts.idTurno ? { idTurno: opts.idTurno } : {};
   let seen = 0;
   let full = '';
   let emocion: Emocion | null = null;
@@ -441,74 +489,94 @@ export function turnoStream(opts: TurnoOpts, h: StreamHandlers): { promise: Prom
       emocion = normalizarEmocion(raw);
       h.onEmocion?.(emocion);
     };
-    const consume = () => {
+    /** El texto para decir de un `delta` o un `replace` (el primero, sin la etiqueta de un servidor viejo). */
+    const textoDe = (data: any): string => {
+      let piece = String(data.voz || data.text);
+      if (firstDelta) {
+        // defensa: servidor viejo que no quitó la etiqueta inicial
+        const pelado = pelarEtiqueta(piece);
+        if (pelado.emocion) setEmocion(pelado.emocion);
+        piece = pelado.texto;
+        firstDelta = false;
+      }
+      return piece;
+    };
+    const bloque = (b: string) => {
+      const ev = b.match(/^event: (\w+)/m)?.[1];
+      const dataLine = b.match(/^data: (.*)$/m)?.[1];
+      if (!ev || dataLine === undefined) return;
+      let data: any = {};
+      try {
+        data = JSON.parse(dataLine);
+      } catch {
+        return;
+      }
+      if (ev === 'emocion') setEmocion(data.emocion);
+      else if (ev === 'delta' && (data.voz || data.text)) {
+        const piece = textoDe(data);
+        if (!piece) return;
+        full += piece;
+        h.onDelta(piece);
+      } else if (ev === 'replace' && (data.voz || data.text)) {
+        // Lo corregido reemplaza TODO lo dicho: el texto de la respuesta sigue desde aquí.
+        const corregido = textoDe(data);
+        if (!corregido) return;
+        full = corregido;
+        h.onReplace?.(full);
+      } else if (ev === 'tools' && Array.isArray(data.tools)) h.onTools?.(data.tools);
+      else if (ev === 'done') {
+        if (data.emocion) setEmocion(data.emocion);
+        done = {
+          reply: quitarExpresiones(pelarEtiqueta(String(data.reply || full)).texto),
+          voz: pelarEtiqueta(String(data.voz || data.reply || full)).texto,
+          emocion: emocion || 'neutral',
+          ms: data.ms,
+          via: data.via,
+          acciones: data.acciones,
+          ...(data.parcial === true ? { parcial: true } : {}),
+          cierre: 'done',
+        };
+      } else if (ev === 'error') done = { reply: quitarExpresiones(full), voz: full, emocion: emocion || 'neutral', error: String(data.error || 'error'), ...(full.trim() ? { parcial: true } : {}), cierre: 'error' };
+    };
+    /** `final`: la conexión ya cerró, así que el último bloque (sin línea en blanco detrás) también cuenta. */
+    const consume = (final = false) => {
       const text = xhr.responseText || '';
       if (text.length <= seen) return;
       const chunk = text.slice(seen);
       const blocks = chunk.split('\n\n');
-      // el último bloque puede estar incompleto: se conserva
-      seen += chunk.length - blocks[blocks.length - 1].length;
-      blocks.pop();
-      for (const b of blocks) {
-        const ev = b.match(/^event: (\w+)/m)?.[1];
-        const dataLine = b.match(/^data: (.*)$/m)?.[1];
-        if (!ev || dataLine === undefined) continue;
-        let data: any = {};
-        try {
-          data = JSON.parse(dataLine);
-        } catch {
-          continue;
-        }
-        if (ev === 'emocion') setEmocion(data.emocion);
-        else if (ev === 'delta' && (data.voz || data.text)) {
-          let piece = String(data.voz || data.text);
-          if (firstDelta) {
-            // defensa: servidor viejo que no quitó la etiqueta inicial
-            const pelado = pelarEtiqueta(piece);
-            if (pelado.emocion) setEmocion(pelado.emocion);
-            piece = pelado.texto;
-            firstDelta = false;
-            if (!piece) continue;
-          }
-          full += piece;
-          h.onDelta(piece);
-        } else if (ev === 'tools' && Array.isArray(data.tools)) h.onTools?.(data.tools);
-        else if (ev === 'done') {
-          if (data.emocion) setEmocion(data.emocion);
-          done = {
-            reply: quitarExpresiones(pelarEtiqueta(String(data.reply || full)).texto),
-            voz: pelarEtiqueta(String(data.voz || data.reply || full)).texto,
-            emocion: emocion || 'neutral',
-            ms: data.ms,
-            via: data.via,
-            acciones: data.acciones,
-            ...(data.parcial === true ? { parcial: true } : {}),
-          };
-        } else if (ev === 'error') done = { reply: quitarExpresiones(full), voz: full, emocion: emocion || 'neutral', error: String(data.error || 'error'), ...(full.trim() ? { parcial: true } : {}) };
-      }
+      // el último bloque puede estar incompleto: se conserva (salvo al cerrar)
+      const resto = final ? '' : blocks[blocks.length - 1];
+      seen += chunk.length - resto.length;
+      if (!final) blocks.pop();
+      for (const b of blocks) bloque(b);
     };
     xhr.open('POST', `${API_BASE}/api/turno/stream`);
     xhr.setRequestHeader('Content-Type', 'application/json');
     xhr.setRequestHeader('Accept', 'text/event-stream');
     xhr.timeout = opts.image ? 75_000 : 70_000;
-    xhr.onprogress = consume;
+    xhr.onprogress = () => consume();
     xhr.onreadystatechange = () => {
       if (xhr.readyState !== 4) return;
       if (xhr.status === 429) return fail(new Error('HTTP 429'));
       if (xhr.status < 200 || xhr.status >= 300) return fail(new Error(`HTTP ${xhr.status}`));
-      consume();
+      consume(true);
       const reply = String((done && done.reply) || quitarExpresiones(full)).trim();
       const voz = String((done && done.voz) || full).trim() || reply;
-      if (!reply && !voz) return fail(new Error('stream vacío'));
-      finish(done ? { ...done, reply, voz, emocion: emocion || done.emocion } : { reply, voz, emocion: emocion || 'neutral' });
+      if (!reply && !voz) return fail(new Error((done && done.error) || 'stream vacío'));
+      if (done) return finish({ ...done, reply, voz, emocion: emocion || done.emocion, ...idTurno });
+      // Se cerró sin `done` ni `error`: lo dicho se queda, pero NO es la respuesta entera.
+      finish({ reply, voz, emocion: emocion || 'neutral', error: 'el turno se cortó sin terminar', parcial: true, cierre: 'eof', ...idTurno });
     };
     xhr.onerror = () => fail(new Error('red'));
     // Cancelar (el usuario dijo «callar») rechaza ya, sin depender de cómo cierre el XHR al abortarlo.
     cancelar = () => fail(new Error('cancelado'));
-    xhr.ontimeout = () => (full ? finish({ reply: quitarExpresiones(full).trim(), voz: full.trim(), emocion: emocion || 'neutral', error: 'timeout', parcial: true }) : fail(new Error('timeout')));
+    xhr.ontimeout = () =>
+      full ? finish({ reply: quitarExpresiones(full).trim(), voz: full.trim(), emocion: emocion || 'neutral', error: 'timeout', parcial: true, cierre: 'timeout', ...idTurno }) : fail(new Error('timeout'));
     const payload = turnoBody(opts);
     void Promise.all([loadMesaToken(), cabecerasAparato(true).catch(() => ({}) as Record<string, string>)]).then(([t, extra]) => {
       if (settled) return;
+      // Salió o entró otra persona mientras se preparaba: el turno de la anterior no sale.
+      if (!sigueVigente(gen)) return fail(vencida());
       if (t) xhr.setRequestHeader('x-ultron-sesion', t);
       for (const [k, v] of Object.entries(extra)) xhr.setRequestHeader(k, v);
       xhr.send(payload);

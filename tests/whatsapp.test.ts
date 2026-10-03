@@ -296,6 +296,45 @@ test('el cerebro: revisa, lee por nombre, deja borrador y solo con el «sí» se
   }).finally(() => sin.cerrar());
 });
 
+test('el borrador de WhatsApp va atado a su dueño, su destino y su vencimiento: un «sí» tarde o ajeno no lo manda (auditoría 3-oct, COM01)', async () => {
+  const { avisosDeEnvio } = await import('../server/correo');
+  const p = await puenteFalso();
+  const realAhora = Date.now;
+  await conPuente(p.url, JOSE, async () => {
+    const retener = () => {
+      const r: { hacer: (() => void) | null; descartar: (() => void) | null } = { hacer: null, descartar: null };
+      return { r, opciones: { hacer: (f: () => void) => (r.hacer = f), alDescartar: (f: () => void) => (r.descartar = f) } };
+    };
+    await correrWhatsapp(JOSE, 'responder Beto | Llego a las tres', 'tel');
+    // Otra sesión en el mismo teléfono: su «sí» no manda lo de José.
+    assert.equal(await resolverBorradorWhatsapp('intruso@x.hn', 'tel', 'sí'), null);
+    assert.ok(borradorWhatsappDe(JOSE, 'tel'));
+    // En la voz, el turno se confirma cuando el borrador ya venció: no sale.
+    const v = retener();
+    assert.match((await resolverBorradorWhatsapp(JOSE, 'tel', 'sí', v.opciones as any))!, /se manda a Beto en cuanto termine este turno/);
+    Date.now = () => realAhora() + 16 * 60_000;
+    v.r.hacer!();
+    await new Promise((res) => setTimeout(res, 50));
+    Date.now = realAhora;
+    assert.equal(p.enviados.length, 0, 'vencido: no se manda');
+    assert.match(avisosDeEnvio(JOSE, 'tel').join(' '), /NO se mandó: el borrador venció/);
+    // Un turno descartado no repone el borrador viejo encima del nuevo (otro destino).
+    await correrWhatsapp(JOSE, 'responder Beto | el de antes', 'tel');
+    const d = retener();
+    await resolverBorradorWhatsapp(JOSE, 'tel', 'sí', d.opciones as any);
+    await correrWhatsapp(JOSE, 'responder Lucía | el de ahora', 'tel');
+    d.r.descartar!();
+    assert.equal(borradorWhatsappDe(JOSE, 'tel')!.nombre, 'Lucía Reyes', 'espera el último que se le leyó, con su destino');
+    // Y el legítimo sale, al destino que se le leyó.
+    assert.match((await resolverBorradorWhatsapp(JOSE, 'tel', 'sí'))!, /WHATSAPP ENVIADO a Lucía Reyes/);
+    assert.deepEqual(p.enviados, [{ chat: '50433334444@s.whatsapp.net', texto: 'el de ahora' }]);
+  })
+    .finally(() => {
+      Date.now = realAhora;
+    })
+    .finally(() => p.cerrar());
+});
+
 test('el harness: pide «whatsapp …» y la instrucción solo va para su dueño', async () => {
   const ped = extraerPedidoHerramienta('Claro.\nPEDIR_HERRAMIENTA: whatsapp leer Beto');
   assert.deepEqual(ped, { herramienta: 'whatsapp', arg: 'leer Beto' });

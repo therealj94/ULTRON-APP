@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist build-server server.js",
     "lint": "tsc --noEmit",
+    "vapid": "tsx -e \"import('./lib/push-web').then((m) => console.log(JSON.stringify(m.crearParVapid())))\"",
     "test": "CEREBRO_VOZ=qwen tsx --test --test-concurrency=1 server/seguridad.test.ts tests/*.test.ts",
     "avatar3d": "node scripts/avatar3d-movil.mjs && tsx scripts/avatar3d-assets.mjs --fotos"
   },

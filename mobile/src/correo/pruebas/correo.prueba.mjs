@@ -237,7 +237,7 @@ prueba('qué se ve y los errores dichos para la persona', () => {
 prueba('la pantalla: tercera pestaña de los chats, y nada sale sin el «Mandar» del aviso', () => {
   const pestañas = leer('whatsapp/ChatsConWhatsapp.tsx');
   assert.match(pestañas, /<PantallaCorreos /, 'la pestaña Correos está en los chats');
-  assert.match(pestañas, /conWhatsapp \? \['pulse', 'whatsapp', 'correos'\] : \['pulse', 'correos'\]/, 'WhatsApp solo si la cuenta lo tiene; Correos para todos');
+  assert.match(pestañas, /conWhatsapp \? \['pulse', 'whatsapp', 'correos', 'cartera'\] : \['pulse', 'correos', 'cartera'\]/, 'WhatsApp solo si la cuenta lo tiene; Correos para todos');
   const api = leer('correo/api.ts');
   assert.match(api, /confirmado: true/);
   const redactar = leer('correo/RedactarCorreo.tsx');

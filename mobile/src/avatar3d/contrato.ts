@@ -63,9 +63,9 @@ export function estadoDesdeAnimo(a: Animo, ahora: number, x: ExtraEstado = {}): 
   return {
     expresion: expresion(a, ahora),
     hablando: hablando(a),
-    escuchando: !dormida && a.voz.estado === 'escuchando',
+    escuchando: !dormida && a.voz.estado === 'escuchando' && !a.voz.pensando,
     silenciado: dormida,
-    pensando: a.mesa.pensando || a.voz.estado === 'conectando',
+    pensando: a.mesa.pensando || a.voz.estado === 'conectando' || !!a.voz.pensando,
     caminando: !!x.caminando,
     dir: x.dir === -1 ? -1 : 1,
     mirar: x.mirar || { x: 0, y: 0, activa: false },

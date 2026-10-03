@@ -82,5 +82,30 @@ const { ok, fin } = require('../chat/comun.cjs');
   ok('O5: lo publicado no es una huella (una página de error), no', B.necesitaApkNueva({ instalado: h1, publicado: '<html>Not Found</html>', canal: 'production' }) === false);
   ok('O5: sin huella instalada (desarrollo), no', B.necesitaApkNueva({ instalado: null, publicado: h2, canal: 'production' }) === false);
 
+  /* ── O6 (UI01, 3-oct): antes de recargar, cada frente guarda lo suyo (el borrador del chat) ── */
+  if (!B.antesDeRecargar || !B.prepararRecarga) {
+    ok('O6: hay antesDeRecargar y prepararRecarga en lib/barreraOta', false);
+    return fin();
+  }
+  B._reiniciarBarreraOta();
+  const guardados = [];
+  const quitarA = B.antesDeRecargar('borrador-chat', async () => {
+    await new Promise((r) => setTimeout(r, 5));
+    guardados.push('borrador');
+  });
+  const quitarB = B.antesDeRecargar('roto', async () => {
+    throw new Error('llavero lleno');
+  });
+  const quitarC = B.antesDeRecargar('lento', () => new Promise(() => {}));
+  const t1 = Date.now();
+  const r = await B.prepararRecarga(200);
+  ok('O6: el borrador se guardó antes de recargar', guardados.includes('borrador'), JSON.stringify(guardados));
+  ok('O6: uno que falla no tapa a los demás, y se dice cuál', r.fallaron.includes('roto') && !r.fallaron.includes('borrador-chat'), JSON.stringify(r));
+  ok('O6: uno que no termina no cuelga la recarga (tope)', Date.now() - t1 < 1500 && r.fallaron.includes('lento'), `${Date.now() - t1} ms`);
+  quitarA();
+  quitarB();
+  quitarC();
+  ok('O6: sin nadie registrado, nada que esperar', (await B.prepararRecarga(50)).fallaron.length === 0);
+
   fin();
 })();

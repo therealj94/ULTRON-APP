@@ -85,6 +85,9 @@ export const vigia = new VigiaPago({
   },
 });
 
+// Al salir de la cuenta, el pago que se miraba no sigue publicando en nombre de nadie (auditoría WAL02).
+RELEVO.alSalir(() => vigia.soltar());
+
 export function useVigia(): EstadoVigia {
   return useSyncExternalStore(
     (f) => vigia.suscribir(f),

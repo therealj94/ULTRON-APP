@@ -62,7 +62,9 @@ export class VigiaPago {
   private e: EstadoVigia = { fase: 'libre', pago: null };
   private oyentes = new Set<() => void>();
   private cancelarTimer: (() => void) | null = null;
-  private mirando = false;
+  /** La vuelta que está mirando (0 = ninguna): la de una cuenta anterior no apaga la de la nueva. */
+  private mirando = 0;
+  private vueltas = 0;
   private usados: string[] = [];
   private generacion = 0;
 
@@ -203,6 +205,21 @@ export class VigiaPago {
     this.persistir();
   }
 
+  /**
+   * Se cerró la sesión (auditoría WAL02): el vigía deja de mirar y de publicar YA, sin tocar lo guardado (el
+   * pago a medias lleva el correo de su dueño y solo se retoma si esa persona vuelve a entrar). Subir la
+   * generación tira lo que esté en vuelo: una búsqueda o un comprobante de la cuenta anterior no se publica
+   * ni se pinta bajo la siguiente.
+   */
+  soltar() {
+    this.generacion++;
+    this.cancelarTimer?.();
+    this.cancelarTimer = null;
+    this.mirando = 0;
+    this.usados = [];
+    this.fijar({ fase: 'libre', pago: null });
+  }
+
   /** Vuelve a «libre» (la hoja se cerró después de terminar). Un pago en curso no se suelta así. */
   olvidar() {
     if (this.ocupado()) return;
@@ -221,7 +238,7 @@ export class VigiaPago {
       this.persistir();
       return;
     }
-    this.mirando = true;
+    const vuelta = (this.mirando = ++this.vueltas);
     try {
       const r = await this.deps.buscar({ desde: p.mia, para: p.direccion, simbolo: p.moneda, monto: p.monto }, p.siguiente);
       if (gen !== this.generacion || this.e.fase !== 'esperando') return;
@@ -240,7 +257,7 @@ export class VigiaPago {
     } catch {
       /* sin red un momento: se vuelve a mirar */
     } finally {
-      this.mirando = false;
+      if (this.mirando === vuelta) this.mirando = 0;
     }
     if (gen === this.generacion && this.e.fase === 'esperando') this.timer(CADA_MS, () => void this.mirar());
   }

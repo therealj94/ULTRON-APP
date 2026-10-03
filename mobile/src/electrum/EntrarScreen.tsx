@@ -16,6 +16,7 @@ import { entrar, guardarLlave, guardarSesion, porQueNoAbre, probarPuerta } from 
 import { fraseDeError } from './frases';
 import { useBordes } from './useBordes';
 import { BotonAnimado } from './BotonAnimado';
+import { Icono } from '../ui/Icono';
 
 // Los textos de ayuda que se escriben en las cajas: el gris de antes (#5E7078) daba 4:1 sobre
 // negro, por debajo de lo legible. Este da 5:1.
@@ -31,6 +32,7 @@ export function EntrarScreen({ onDentro, motivo = '' }: { onDentro: () => void; 
   const [modo, setModo] = useState<Modo>('correo');
   const [correo, setCorreo] = useState('');
   const [clave, setClave] = useState('');
+  const [verClave, setVerClave] = useState(false);
   const [llave, setLlave] = useState('');
   const [yendo, setYendo] = useState(false);
   // Se lee en el acto: el estado tarda un pintado en deshabilitar el botón, y la tecla «ir» del
@@ -159,22 +161,28 @@ export function EntrarScreen({ onDentro, motivo = '' }: { onDentro: () => void; 
               onSubmitEditing={() => cajaClave.current?.focus()}
               style={s.campo}
             />
-            <TextInput
-              ref={cajaClave}
-              value={clave}
-              onChangeText={setClave}
-              placeholder="clave"
-              placeholderTextColor={PISTA}
-              accessibilityLabel="Clave"
-              secureTextEntry
-              autoCapitalize="none"
-              autoCorrect={false}
-              autoComplete="current-password"
-              textContentType="password"
-              returnKeyType="go"
-              onSubmitEditing={() => void intentar()}
-              style={s.campo}
-            />
+            <View style={{ justifyContent: 'center' }}>
+              <TextInput
+                ref={cajaClave}
+                value={clave}
+                onChangeText={setClave}
+                placeholder="clave"
+                placeholderTextColor={PISTA}
+                accessibilityLabel="Clave"
+                secureTextEntry={!verClave}
+                autoCapitalize="none"
+                autoCorrect={false}
+                autoComplete="current-password"
+                textContentType="password"
+                returnKeyType="go"
+                onSubmitEditing={() => void intentar()}
+                style={[s.campo, { paddingRight: 48 }]}
+              />
+              {/* El ojito: ver lo que se escribió (José, 3-oct). */}
+              <Pressable onPress={() => setVerClave((v) => !v)} hitSlop={10} accessibilityRole="button" accessibilityLabel={verClave ? 'Ocultar clave' : 'Mostrar clave'} style={s.ojo}>
+                <Icono nombre={verClave ? 'ojoTachado' : 'ojo'} tam={20} color={PISTA} />
+              </Pressable>
+            </View>
           </>
         ) : (
           <>
@@ -235,6 +243,7 @@ const s = StyleSheet.create({
   pestanaOn: { backgroundColor: ACENTO, borderColor: ACENTO },
   pestanaTexto: { color: '#9FB0B8', fontSize: 12, letterSpacing: 1.4, fontWeight: '700' },
   campos: { width: '100%', gap: 9 },
+  ojo: { position: 'absolute', right: 4, width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   campo: { backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, color: '#E7EEF2', fontSize: 15 },
   aviso: { color: '#8FA3B0', fontSize: 12, lineHeight: 18 },
   fallo: { color: '#D9705A', fontSize: 13, lineHeight: 19 },

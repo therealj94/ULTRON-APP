@@ -17,7 +17,12 @@ import { opinarTurno, pedirTurnoStream } from './04-cerebro/turno';
 import { detectarIntencion } from './04-cerebro/intenciones';
 import { grabFrame, achicarFoto } from './04-cerebro/grabFrame';
 import { fijarCuentaMemoria, guardarHecho, olvidarTodo } from './09-estado/memoria';
-import { headersMesa } from './10-infra/sesionCliente';
+import { guardarTokenMesa, headersMesa } from './10-infra/sesionCliente';
+import { escucharVueltaGenesis } from './10-infra/genesisWeb';
+import { aplicarVersionNueva, registrarPwa } from './10-infra/pwa';
+import { AvisoVersion } from './07-pantallas/AvisoVersion';
+import { AvisoNotificaciones } from './07-pantallas/AvisoNotificaciones';
+import { activarAvisos, avisosLuego, cuentaDeAvisos, ofrecerAvisos } from './10-infra/avisosWeb';
 import { cargarPerfil, perfil as perfilActual } from './perfil';
 import type { Emocion } from '../lib/emocion';
 import { quitarExpresiones } from '../lib/expresiones';
@@ -316,7 +321,7 @@ export default function App() {
         if (vivo && d.authenticated && d.user) {
           setUsuario({ name: d.user.nombre || '', role: d.user.rol || 'Junta Directiva · Orden Global', authenticated: true });
           // La memoria larga de este navegador es POR CUENTA (09-estado/memoria.ts).
-          fijarCuentaMemoria(d.user.correo);
+          fijarCuenta(d.user.correo);
         }
       })
       .catch(() => {});
@@ -338,6 +343,55 @@ export default function App() {
       vivo = false;
     };
   }, []);
+
+  // La PWA (10-infra/pwa.ts; IOS02): el service worker del build y el aviso de versión nueva, que se
+  // aplica solo cuando la persona toca «Recargar».
+  const [versionNueva, setVersionNueva] = useState(false);
+  useEffect(() => {
+    void registrarPwa(() => setVersionNueva(true));
+  }, []);
+
+  // De quién es este navegador: la memoria larga es POR CUENTA (09-estado/memoria.ts) y los avisos con la
+  // app cerrada también (10-infra/avisosWeb.ts: al salir se dan de baja; IOS02).
+  const correoCuenta = useRef('');
+  const [ofreceAvisos, setOfreceAvisos] = useState(false);
+  const [activandoAvisos, setActivandoAvisos] = useState(false);
+  function fijarCuenta(correo: string | null | undefined) {
+    fijarCuentaMemoria(correo);
+    correoCuenta.current = String(correo || '').trim().toLowerCase();
+    void cuentaDeAvisos(correoCuenta.current || null);
+    setOfreceAvisos(!!correoCuenta.current && ofrecerAvisos());
+  }
+  const activarLosAvisos = async () => {
+    if (!correoCuenta.current || activandoAvisos) return;
+    setActivandoAvisos(true);
+    const r = await activarAvisos(correoCuenta.current);
+    setActivandoAvisos(false);
+    setOfreceAvisos(false);
+    if (r === 'activados') decir('Listo: te aviso aunque AU-RA esté cerrada.', { emocion: 'feliz' });
+    else if (r === 'denegado') decir('Sin permiso no te puedo avisar con la app cerrada. Lo puedes activar en Ajustes del teléfono.', { emocion: 'neutral' });
+    else decir('No pude activar los avisos ahora. Prueba más tarde.', { emocion: 'neutral' });
+  };
+
+  // La vuelta de «Entrar con Genesis ID» desde la web (10-infra/genesisWeb.ts; IOS01): al volver a la
+  // pestaña o al icono del iPhone, se recoge la sesión del intento que empezó AQUÍ. Sin entrada a medias,
+  // no hace nada.
+  useEffect(
+    () =>
+      escucharVueltaGenesis((r) => {
+        if (r.tipo === 'error') {
+          decir(r.mensaje, { emocion: 'neutral' });
+          return;
+        }
+        guardarTokenMesa(r.token);
+        const nombre = r.miembro.nombre || (r.miembro.correo || '').split('@')[0];
+        setUsuario({ name: nombre, role: r.miembro.rol || 'Miembro · Genesis ID', authenticated: true });
+        fijarCuenta(r.miembro.correo);
+        decir(saludoDe(nombre).id, { emocion: 'feliz' });
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  );
 
   // Calentar Qwen; al primer «listo», saludo grabado (cero red).
   useEffect(() => {
@@ -1283,6 +1337,17 @@ export default function App() {
           }}
         />
 
+        <AvisoVersion visible={versionNueva} onRecargar={aplicarVersionNueva} onLuego={() => setVersionNueva(false)} />
+        <AvisoNotificaciones
+          visible={ofreceAvisos && usuario.authenticated && !versionNueva}
+          ocupado={activandoAvisos}
+          onActivar={() => void activarLosAvisos()}
+          onLuego={() => {
+            avisosLuego();
+            setOfreceAvisos(false);
+          }}
+        />
+
         <AccesoModal
           isOpen={accesoOpen}
           enlace={enlaceCorreo}
@@ -1291,13 +1356,13 @@ export default function App() {
           onClose={() => setAccesoOpen(false)}
           onAuthSuccess={(name, role, correo) => {
             setUsuario({ name, role, authenticated: true });
-            fijarCuentaMemoria(correo);
+            fijarCuenta(correo);
             decir(saludoDe(name).id, { emocion: 'feliz' });
           }}
           onLogout={() => {
             setUsuario({ name: '', role: 'Junta Directiva · Orden Global', authenticated: false });
             // La memoria larga de esta cuenta deja de leerse (queda en su cajón para su vuelta).
-            fijarCuentaMemoria(null);
+            fijarCuenta(null);
             // Tableta compartida: quien entre después no hereda la conversación ni las fotos.
             historialRef.current = [];
             pendienteGenesis.current = '';

@@ -20,6 +20,11 @@ export type Presupuesto = {
   senal(topeMs?: number): AbortSignal;
   /** El tope de esa llamada en ms, con la misma regla que `senal` (para registrarlo o pasarlo). */
   tope(topeMs?: number): number;
+  /**
+   * La señal de `senal(topeMs)` sumada a otra (la persona que se fue o interrumpió): se corta con la que
+   * llegue primero. Así cada llamada de un turno respeta el mismo reloj, además del suyo.
+   */
+  senalCon(otra: AbortSignal | undefined, topeMs?: number): AbortSignal;
 };
 
 /** Por debajo de esto no se empieza una llamada: no le da tiempo a contestar y se paga igual. */
@@ -32,21 +37,29 @@ export const MINIMO_UTIL_MS = 1500;
  */
 export const PRESUPUESTO_OIDO_MS = 15_000;
 export const PRESUPUESTO_VISION_MS = 33_000;
+/**
+ * Un turno de AU-RA entero (auditoría 3-oct, EXEC04): el teléfono corta el turno a los 70 s. Antes cada
+ * pieza tenía su tope (Bedrock, cada llamada a Qwen de 60 s, la herramienta, la vuelta) y nadie miraba el
+ * total: con dos vueltas el turno podía seguir minutos para nadie y empezar efectos que ya nadie esperaba.
+ */
+export const PRESUPUESTO_TURNO_MS = 68_000;
 
 /** Reloj inyectable: las pruebas no pueden esperar quince segundos de verdad. */
 export function presupuesto(ms: number, reloj: () => number = Date.now): Presupuesto {
   const fin = reloj() + Math.max(0, Number(ms) || 0);
   const queda = () => Math.max(0, fin - reloj());
   const tope = (topeMs?: number) => Math.min(queda(), topeMs && topeMs > 0 ? topeMs : Infinity);
+  const senal = (topeMs?: number) => {
+    const ms = tope(topeMs);
+    // Sin tiempo, la señal nace cortada: la llamada ni sale.
+    if (ms <= 0) return AbortSignal.abort(new DOMException('Se acabó el tiempo de la petición.', 'TimeoutError'));
+    return AbortSignal.timeout(ms);
+  };
   return {
     queda,
     alcanza: (minimoMs = MINIMO_UTIL_MS) => queda() >= minimoMs,
     tope,
-    senal: (topeMs?: number) => {
-      const ms = tope(topeMs);
-      // Sin tiempo, la señal nace cortada: la llamada ni sale.
-      if (ms <= 0) return AbortSignal.abort(new DOMException('Se acabó el tiempo de la petición.', 'TimeoutError'));
-      return AbortSignal.timeout(ms);
-    },
+    senal,
+    senalCon: (otra, topeMs) => (otra ? AbortSignal.any([otra, senal(topeMs)]) : senal(topeMs)),
   };
 }
