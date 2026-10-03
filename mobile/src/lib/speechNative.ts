@@ -47,11 +47,22 @@ let plazoDesde = Date.now();
 /** `end` que todavía van a llegar por los `abort()` pedidos (uno por cada uno). */
 let finesPendientes = 0;
 /**
- * Silenció y la sesión del reconocedor se abortó: sus eventos pueden llegar tarde, incluso después de
- * reabrir. Hasta que ARRANCA una sesión nueva (`start`), ningún resultado es de esta conversación (Codex en
- * #138: mirar solo `wanted` dejaba pasar el final viejo si se reabría rápido).
+ * La sesión del reconocedor se abortó (silenciar, la pausa mientras AU-RA habla, reiniciar, reabrir,
+ * destruir): sus eventos pueden llegar tarde, incluso después de soltar la pausa o de reabrir. Hasta que
+ * ARRANCA una sesión nueva (`start`) o llega el `end` del último abort(), ningún resultado es de esta
+ * conversación (Codex en #138: mirar solo `wanted` dejaba pasar el final viejo si se reabría rápido; y la
+ * auditoría del 3-oct, VOICE03: mirar solo `paused` lo dejaba pasar al soltar la pausa de la voz antes del
+ * arranque nuevo). Todo abort() corta la sesión (`cortarSesion`), no solo el de silenciar.
  */
 let sesionCortada = false;
+/**
+ * Cada corte tiene su número: la red de seguridad (un teléfono que no avisa ni `start` ni `end`) suelta
+ * solo el corte que la armó; uno que llegue tarde no puede soltar un corte más nuevo.
+ */
+let corte = 0;
+let redCorte: ReturnType<typeof setTimeout> | null = null;
+/** Lo que espera la red de seguridad desde que se vuelve a pedir oír tras un corte. */
+export const RED_CORTE_MS = 3_000;
 let lastPartial = '';
 let lastFinalAt = 0;
 let lastFinalText = '';
@@ -102,6 +113,39 @@ function emitListening(on: boolean) {
   cb.onListeningChange?.(on);
 }
 
+/** Un abort(): lo que esa sesión mande desde ahora no es un turno. */
+function cortarSesion() {
+  sesionCortada = true;
+  corte += 1;
+  if (redCorte) {
+    clearTimeout(redCorte);
+    redCorte = null;
+  }
+}
+
+/** La sesión nueva arrancó (o terminó la abortada): sus resultados vuelven a contar. */
+function soltarCorte() {
+  sesionCortada = false;
+  if (redCorte) {
+    clearTimeout(redCorte);
+    redCorte = null;
+  }
+}
+
+/**
+ * Se vuelve a pedir oír tras un corte: si el teléfono no avisa ni `start` ni `end`, el corte se suelta
+ * solo pasado RED_CORTE_MS (si no, el oído quedaría sordo para siempre). Versionado: si mientras tanto
+ * hubo otro corte, este reloj ya no es de nadie.
+ */
+function armarRedCorte() {
+  if (!sesionCortada || redCorte) return;
+  const mio = corte;
+  redCorte = setTimeout(() => {
+    redCorte = null;
+    if (mio === corte) sesionCortada = false;
+  }, RED_CORTE_MS);
+}
+
 function scheduleRestart(delay: number) {
   if (restartTimer) clearTimeout(restartTimer);
   restartTimer = setTimeout(() => {
@@ -115,7 +159,7 @@ function attach() {
   const M = ExpoSpeechRecognitionModule;
   subs.push(
     M.addListener('start', () => {
-      sesionCortada = false;
+      soltarCorte();
       vida();
       starting = false;
       consecutiveFails = 0;
@@ -139,7 +183,8 @@ function attach() {
   subs.push(
     M.addListener('result', (e: any) => {
       vida();
-      // Silenciado, o de la sesión que se abortó al silenciar: no es un turno (Codex, 3-oct y #138).
+      // Silenciado, pausado, o de una sesión abortada (antes del `start` de la nueva): no es un turno
+      // (Codex, 3-oct y #138; VOICE03).
       if (paused || !wanted || sesionCortada) return;
       const text = String(e?.results?.[0]?.transcript || '').trim();
       if (!text) return;
@@ -182,8 +227,9 @@ function attach() {
       lastEventAt = Date.now();
       if (finesPendientes > 0) {
         finesPendientes -= 1;
-        // Terminó la sesión abortada: ya no puede mandar resultados.
-        sesionCortada = false;
+        // Terminó la última sesión abortada: ya no puede mandar resultados. Con otro abort() en camino,
+        // todavía no (su sesión puede seguir mandando).
+        if (finesPendientes === 0) soltarCorte();
         // El `end` de un abort() viejo: si ya se pidió otro arranque (o ya arrancó), no es de él.
         if (starting || running) return;
       }
@@ -208,6 +254,7 @@ function detach() {
 async function start() {
   if (!wanted || paused || starting || running || noDisponible()) return;
   starting = true;
+  armarRedCorte();
   attach();
   try {
     ExpoSpeechRecognitionModule.start({
@@ -254,6 +301,7 @@ async function stop(abort = true) {
   }
   try {
     if (abort) {
+      cortarSesion();
       ExpoSpeechRecognitionModule.abort();
       finesPendientes += 1;
     } else ExpoSpeechRecognitionModule.stop();
@@ -279,15 +327,13 @@ export async function nativeEnable() {
 
 export async function nativeMute() {
   wanted = false;
-  sesionCortada = true;
   await stop(true);
 }
 
 export async function nativeUnmute() {
   if (!wanted) darPlazo();
   wanted = true;
-  // Red de seguridad: un teléfono que no avisa ni `start` ni `end` no se queda sordo.
-  if (sesionCortada) setTimeout(() => (sesionCortada = false), 3_000);
+  // La red de seguridad (un teléfono que no avisa ni `start` ni `end`) la arma `start()`.
   await start();
 }
 

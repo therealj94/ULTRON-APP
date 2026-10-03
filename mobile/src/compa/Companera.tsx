@@ -351,8 +351,8 @@ export function Companera() {
   // La voz (estado de la sesión), lo que dice, las interrupciones y lo que hace la mesa.
   const v = voz.vista;
   useEffect(() => {
-    despachar({ tipo: 'voz', voz: { estado: v.estado, silenciada: v.silenciada, dormida: v.dormida, suspendida: v.suspendida } });
-  }, [despachar, v.estado, v.silenciada, v.dormida, v.suspendida]);
+    despachar({ tipo: 'voz', voz: { estado: v.estado, silenciada: v.silenciada, dormida: v.dormida, suspendida: v.suspendida, pensando: v.pensando } });
+  }, [despachar, v.estado, v.silenciada, v.dormida, v.suspendida, v.pensando]);
   // La llamada del avatar: mientras suena o se habla, la compañera no está (la llamada es su presencia).
   useEffect(() => {
     despachar({ tipo: 'ciclo', estado: voz.ciclo });

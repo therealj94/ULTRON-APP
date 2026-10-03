@@ -13,7 +13,9 @@ import {
   SILENCIO_LARGO_MS,
   aBase64,
   deBase64,
+  datoSensibleDeDinero,
   esFraseDeDinero,
+  fraseSinVerificar,
   limpiarFinal,
   silencioParaCerrar,
   wavDeTrozos,
@@ -96,13 +98,14 @@ class WsFalso implements WsTurbo {
   }
 }
 
-function banco(opts: { permiso?: boolean; abreWs?: boolean; mic?: 'bien' | 'falla'; confirmado?: string; respaldo?: string; demoraWav?: number } = {}) {
+function banco(opts: { permiso?: boolean; abreWs?: boolean; mic?: 'bien' | 'falla'; confirmado?: string; respaldo?: string; demoraWav?: number; confirmarFalla?: boolean } = {}) {
   let reloj = 1_000_000;
   const ws: WsFalso[] = [];
   const llamadasWav: { wav: string; confirmar: boolean }[] = [];
   const finales: string[] = [];
   const parciales: string[] = [];
   const eventos: string[] = [];
+  const vias: string[] = [];
   let alTrozo: ((t: TrozoAudio) => void) | null = null;
   let micAbierto = false;
   let permisos = 0;
@@ -130,6 +133,7 @@ function banco(opts: { permiso?: boolean; abreWs?: boolean; mic?: 'bien' | 'fall
     transcribirWav: async (wav, confirmar) => {
       llamadasWav.push({ wav, confirmar });
       if (opts.demoraWav) await new Promise((r) => setTimeout(r, opts.demoraWav));
+      if (confirmar && opts.confirmarFalla) throw new Error('HTTP 502');
       return confirmar ? (opts.confirmado ?? '') : (opts.respaldo ?? 'texto del respaldo');
     },
     tiempos: { esperaFinalMs: 60, confirmarMs: 200, inactivoMs: 10_000 },
@@ -140,6 +144,7 @@ function banco(opts: { permiso?: boolean; abreWs?: boolean; mic?: 'bien' | 'fall
     onSpeechStart: () => eventos.push('voz'),
     onUnavailable: (m) => eventos.push(`no:${m}`),
     onListeningChange: (on) => eventos.push(on ? 'oye' : 'no-oye'),
+    onMedida: (m) => vias.push(m.via),
   });
   /** Un trozo de 0,1 s: voz (-20 dBFS) o silencio (-75). Cada trozo trae su número en los bytes. */
   let n = 0;
@@ -159,7 +164,7 @@ function banco(opts: { permiso?: boolean; abreWs?: boolean; mic?: 'bien' | 'fall
     n++;
     alTrozo?.({ audio: Buffer.alloc(3200, n & 255).toString('base64'), db });
   };
-  return { motor, ws, llamadasWav, finales, parciales, eventos, trozo, trozoDb, silencio, voz, abierto: () => micAbierto, permisos: () => permisos, avanzar: (ms: number) => (reloj += ms) };
+  return { motor, ws, llamadasWav, finales, parciales, eventos, vias, trozo, trozoDb, silencio, voz, abierto: () => micAbierto, permisos: () => permisos, avanzar: (ms: number) => (reloj += ms) };
 }
 
 describe('Oído Turbo (teléfono): el motor', () => {
@@ -202,6 +207,7 @@ describe('Oído Turbo (teléfono): el motor', () => {
     b.ws[0].decir({ message_type: 'committed_transcript', text: 'Págale 100 dólares a Ana.' });
     await espera(20);
     assert.deepEqual(b.finales, ['Págale cien lempiras a Ana.']);
+    assert.deepEqual(b.vias, ['corroborada'], 'Scribe v2 devolvió la frase: corroborada');
     assert.equal(b.llamadasWav.length, 1);
     assert.equal(b.llamadasWav[0].confirmar, true);
     const pcm = pcmDeWav(Buffer.from(b.llamadasWav[0].wav, 'base64'))!.pcm;
@@ -209,16 +215,53 @@ describe('Oído Turbo (teléfono): el motor', () => {
     assert.equal(pcm.length, (6 + 15 + 7) * 3200);
   });
 
-  it('si Scribe v2 no confirma a tiempo, va lo que oyó Turbo', async () => {
-    const b = banco({ confirmado: '' });
+  // VOICE04 (auditoría del 3-oct): una segunda transcripción vacía conservaba lo que oyó Turbo y lo
+  // marcaba «confirmada». Vacío, error o sin respuesta a tiempo no corroboran nada: un monto o un
+  // destinatario dudosos no salen como orden, salen pidiendo que se confirmen.
+  const fraseDinero = async (b: ReturnType<typeof banco>, turbo: string) => {
     b.motor.activar();
     await espera();
     b.voz(10);
     await espera();
     b.silencio(8);
-    b.ws[0].decir({ message_type: 'committed_transcript', text: 'Mándale 5 ORIGEN a Ana' });
+    b.ws[0].decir({ message_type: 'committed_transcript', text: turbo });
     await espera(20);
-    assert.deepEqual(b.finales, ['Mándale 5 ORIGEN a Ana']);
+  };
+
+  it('Scribe v2 devuelve vacío: no corrobora; el monto y el destinatario salen pidiendo confirmación', async () => {
+    const b = banco({ confirmado: '' });
+    await fraseDinero(b, 'Mándale 5 ORIGEN a Ana');
+    assert.deepEqual(b.vias, ['no_corroborada'], 'nunca «confirmada» con una verificación vacía');
+    assert.equal(b.finales.length, 1, 'la frase no se pierde');
+    assert.notEqual(b.finales[0], 'Mándale 5 ORIGEN a Ana', 'la orden no sale como si estuviera verificada');
+    assert.equal(b.finales[0], fraseSinVerificar('Mándale 5 ORIGEN a Ana'));
+    assert.match(b.finales[0], /monto/);
+  });
+
+  it('Scribe v2 no contesta a tiempo: timeout, y también pide confirmar', async () => {
+    const b = banco({ confirmado: 'Mándale 50 ORIGEN a Ana', demoraWav: 400 });
+    await fraseDinero(b, 'Mándale 5 ORIGEN a Ana');
+    await espera(450);
+    assert.deepEqual(b.vias, ['timeout']);
+    assert.deepEqual(b.finales, [fraseSinVerificar('Mándale 5 ORIGEN a Ana')], 'lo que llegue tarde no cambia nada');
+  });
+
+  it('la verificación falla (error del servidor): cuenta como sin respuesta, no como confirmada', async () => {
+    const b = banco({ confirmarFalla: true });
+    await fraseDinero(b, 'Págale 100 dólares a Beto');
+    assert.deepEqual(b.vias, ['timeout']);
+    assert.deepEqual(b.finales, [fraseSinVerificar('Págale 100 dólares a Beto')]);
+  });
+
+  it('una pregunta de dinero sin monto ni destinatario sigue tal cual aunque no se corrobore', async () => {
+    const b = banco({ confirmado: '' });
+    await fraseDinero(b, '¿Cuánto tengo de saldo?');
+    assert.deepEqual(b.vias, ['no_corroborada']);
+    assert.deepEqual(b.finales, ['¿Cuánto tengo de saldo?']);
+    assert.equal(datoSensibleDeDinero('¿Cuánto tengo de saldo?'), false);
+    assert.equal(datoSensibleDeDinero('Págale a Ana'), true, 'a quién va el dinero es dato sensible');
+    assert.equal(datoSensibleDeDinero('manda cien lempiras'), true, 'un monto dicho con palabras también');
+    assert.equal(datoSensibleDeDinero('¿cuánto vale el oro en dólares?'), false);
   });
 
   it('se quedó en «y»: espera a que siga y no corta la frase', async () => {

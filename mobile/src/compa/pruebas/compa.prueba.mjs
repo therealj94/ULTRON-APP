@@ -32,7 +32,7 @@ import {
   haceCuanto,
 } from '../computadora.ts';
 import http from 'node:http';
-import { CONECTAR_MAX_MS, ControlSesion, SIN_MUESTRAS_MS, SORDA_MS, TOPE_RECONEXIONES } from '../sesion.ts';
+import { ABRIR_MAX_MS, CONECTAR_MAX_MS, ControlSesion, ESPERA_PERMISO_MS, PENSANDO_MAX_MS, PERMISO_MAX_MS, SIN_MUESTRAS_MS, SORDA_MS, TOPE_RECONEXIONES } from '../sesion.ts';
 import {
   CicloLlamada,
   ESPERA_SIGUES_MS,
@@ -1696,15 +1696,17 @@ prueba('al colgar la llamada del avatar, la mesa reabre su oído cuando la voz s
 prueba('conversación en vivo: «Conectando…» sin tope o abierta sin audio del micrófono ya no se quedan con el micrófono', () => {
   let ahora = 0;
   const c = new ControlSesion('claudio', 'es', { reloj: () => ahora, reintentos: 1 });
-  // Doble toque en los chats: abre y se queda «conectando» (la conexión no termina nunca).
+  // Doble toque en los chats: abre, llega el permiso y se queda «conectando» (el WebRTC no termina nunca).
   c.despertarOSilenciar();
   assert.equal(c.vista().estado, 'conectando');
+  c.permisoListo(c.vista().gen);
   ahora += CONECTAR_MAX_MS - 1;
   assert.equal(c.revisar(), 'nada');
   ahora += 1;
   assert.equal(c.revisar(), 'no-conecto');
   assert.equal(c.vista().montada, true, 'primero el reintento (permiso nuevo)');
   assert.equal(c.vista().intento, 1);
+  c.permisoListo(c.vista().gen);
   ahora += CONECTAR_MAX_MS;
   assert.equal(c.revisar(), 'no-conecto');
   assert.equal(c.vista().montada, false, 'tampoco: suelta el audio (el oído del teléfono vuelve)');
@@ -1793,6 +1795,187 @@ prueba('llamada: el micrófono deja de mandar muestras a media llamada → no si
   assert.equal(d.revisar(), 'nada');
   // Si tampoco vuelve tras reconectar, falla como siempre y se dice por qué (no «permiso»).
   assert.match(motivoFalloVoz('el micrófono dejó de mandar audio'), /dejó de mandarme audio/);
+});
+
+prueba('CALL01: silencio desde el inicio (lecturas frescas en cero) no es «sorda»; una pista congelada falla y se recupera con tope', () => {
+  let ahora = 1_000;
+  const c = new ControlSesion('aura', 'es', { reloj: () => ahora });
+  c.iniciar();
+  c.permisoListo(c.vista().gen);
+  c.alEstado(c.vista().gen, 'escuchando');
+  // 400 lecturas nuevas del SDK a 20 Hz (20 s), todas en 0 exacto: la persona no ha dicho nada todavía y la
+  // supresión de ruido da cero. Antes, a los ~16 s: «sorda» (se adivinaba por la amplitud).
+  for (let i = 0; i < 400; i++) {
+    ahora += 50;
+    c.entrada(0, 0);
+    assert.equal(c.revisar(), 'nada', `lectura ${i}: un cero fresco es silencio, no un micrófono muerto`);
+  }
+  assert.equal(c.vista().montada, true);
+  assert.equal(c.vista().estado, 'escuchando');
+  // Congelada desde el principio: el SDK repite el mismo valor (distinto de 0) y la persona no ha hablado.
+  // No es amplitud (es casi nada) sino que no llegan cuadros: falla y reconecta.
+  const d = new ControlSesion('aura', 'es', { reloj: () => ahora });
+  d.iniciar();
+  d.permisoListo(d.vista().gen);
+  d.alEstado(d.vista().gen, 'escuchando');
+  const congelada = () => {
+    let r = 'nada';
+    for (let t = 0; t < SIN_MUESTRAS_MS + 2_000 && r === 'nada'; t += 50) {
+      ahora += 50;
+      d.entrada(0.0002, 0.0001);
+      r = d.revisar();
+    }
+    return r;
+  };
+  const g0 = d.vista().gen;
+  assert.equal(congelada(), 'sin-muestras');
+  assert.equal(d.vista().gen, g0 + 1, 'se reconecta (una generación nueva)');
+  assert.equal(d.vista().montada, true);
+  assert.equal(d.vista().estado, 'conectando');
+  // Se recupera con límites: reconecta hasta TOPE_RECONEXIONES y, si sigue congelada, suelta el micrófono.
+  for (let k = 1; k <= TOPE_RECONEXIONES; k++) {
+    d.permisoListo(d.vista().gen);
+    d.alEstado(d.vista().gen, 'escuchando');
+    assert.equal(congelada(), 'sin-muestras');
+  }
+  assert.equal(d.vista().montada, false, 'pasado el tope no reconecta más: el oído del teléfono vuelve');
+  assert.equal(d.vista().estado, 'error');
+  assert.match(motivoFalloVoz(d.vista().detalle), /dejó de mandarme audio/);
+  // Y una pista que vuelve a mandar cuadros tras reconectar ya no falla.
+  const e = new ControlSesion('aura', 'es', { reloj: () => ahora });
+  e.iniciar();
+  e.permisoListo(e.vista().gen);
+  e.alEstado(e.vista().gen, 'escuchando');
+  for (let t = 0; t < SIN_MUESTRAS_MS * 2; t += 50) {
+    ahora += 50;
+    e.entrada(0.004, 0.002 + ((t / 50) % 5) * 1e-5);
+  }
+  assert.equal(e.revisar(), 'nada');
+});
+
+prueba('CALL02: permiso y conexión con plazo por fase y tope total (permiso tardío válido, cancelado, red lenta, conexión colgada)', () => {
+  let ahora = 0;
+  const nueva = () => {
+    const c = new ControlSesion('aura', 'es', { reloj: () => ahora, reintentos: 1 });
+    c.iniciar();
+    return c;
+  };
+  assert.ok(ESPERA_PERMISO_MS > PERMISO_MAX_MS, 'la petición del permiso avisa primero con su propio timeout');
+  assert.ok(ABRIR_MAX_MS < ESPERA_PERMISO_MS + CONECTAR_MAX_MS, 'el tope total acota la suma de las fases');
+  // 1) Permiso tardío pero válido (14 s: dentro de los 15 s de la petición). Antes el controlador lo daba
+  //    por fallido a los 12 s y el permiso que llegaba se tiraba.
+  let c = nueva();
+  let g = c.vista().gen;
+  ahora += 14_000;
+  assert.equal(c.revisar(), 'nada', 'esperando el permiso cuenta su plazo, no los 12 s de conectar');
+  c.permisoListo(g);
+  ahora += 6_000;
+  assert.equal(c.revisar(), 'nada', 'conectar tiene su propio plazo desde que llegó el permiso');
+  c.alEstado(g, 'escuchando');
+  assert.equal(c.vista().estado, 'escuchando');
+  assert.equal(c.vista().gen, g, 'la misma generación: no se reintentó');
+  // 2) Red lenta: el permiso a los 3 s y el WebRTC tarda casi todo su plazo.
+  c = nueva();
+  g = c.vista().gen;
+  ahora += 3_000;
+  c.permisoListo(g);
+  ahora += CONECTAR_MAX_MS - 100;
+  assert.equal(c.revisar(), 'nada');
+  c.alEstado(g, 'escuchando');
+  assert.equal(c.vista().estado, 'escuchando');
+  // 3) Conexión colgada: con el permiso en la mano, el WebRTC no termina nunca.
+  c = nueva();
+  g = c.vista().gen;
+  ahora += 1_000;
+  c.permisoListo(g);
+  ahora += CONECTAR_MAX_MS - 1;
+  assert.equal(c.revisar(), 'nada');
+  ahora += 1;
+  assert.equal(c.revisar(), 'no-conecto');
+  assert.equal(c.vista().gen, g + 1, 'reintento con permiso nuevo');
+  assert.equal(c.vista().estado, 'conectando');
+  // El permiso que la generación vieja recibe tarde no cambia la fase de la nueva.
+  c.permisoListo(g);
+  ahora += ESPERA_PERMISO_MS - 1;
+  assert.equal(c.revisar(), 'nada', 'la nueva sigue esperando SU permiso');
+  ahora += 1;
+  assert.equal(c.revisar(), 'no-conecto');
+  assert.equal(c.vista().montada, false, 'tampoco: suelta el audio');
+  assert.match(motivoFalloVoz(c.vista().detalle), /tardó demasiado en conectar/, 'no se confunde con el permiso del micrófono');
+  // 4) El permiso no llega nunca: la petición tiene su timeout (15 s); el controlador es el respaldo.
+  c = nueva();
+  ahora += PERMISO_MAX_MS;
+  assert.equal(c.revisar(), 'nada', 'se le deja a la petición avisar con su propio error');
+  ahora += ESPERA_PERMISO_MS - PERMISO_MAX_MS;
+  assert.equal(c.revisar(), 'no-conecto');
+  // 5) Tope total: el permiso al límite y la conexión colgada no suman 15 + 12 s.
+  c = nueva();
+  g = c.vista().gen;
+  ahora += ESPERA_PERMISO_MS - 500;
+  c.permisoListo(g);
+  ahora += ABRIR_MAX_MS - (ESPERA_PERMISO_MS - 500) - 1;
+  assert.equal(c.revisar(), 'nada');
+  ahora += 1;
+  assert.equal(c.revisar(), 'no-conecto', 'el plazo total manda aunque la fase de conectar no haya vencido');
+  // 6) Cancelado: cuelga mientras espera el permiso; lo que llegue tarde no abre ni falla nada.
+  c = nueva();
+  g = c.vista().gen;
+  ahora += 2_000;
+  c.terminar();
+  c.permisoListo(g);
+  c.alEstado(g, 'escuchando');
+  ahora += ABRIR_MAX_MS * 2;
+  assert.equal(c.revisar(), 'nada');
+  assert.equal(c.vista().montada, false);
+  assert.equal(c.vista().estado, 'cerrada');
+});
+
+prueba('CALL04: transcripción aceptada y respuesta pendiente → «pensando» (con tope), sin tocar quién tiene el micrófono', () => {
+  let ahora = 0;
+  const c = new ControlSesion('aura', 'es', { reloj: () => ahora });
+  c.iniciar();
+  const g = c.vista().gen;
+  c.permisoListo(g);
+  c.alEstado(g, 'escuchando');
+  assert.equal(c.vista().pensando, false);
+  // ElevenLabs entregó lo que dijo la persona: hasta que el agente conteste, piensa.
+  c.oyoFrase();
+  assert.equal(c.vista().pensando, true);
+  assert.equal(c.vista().estado, 'escuchando', 'el estado de la sesión (y con él el micrófono) no cambia');
+  assert.equal(c.vista().montada, true);
+  assert.equal(c.vista().montada && !c.vista().silenciada, true, 'el micrófono sigue siendo de la conversación (vozOcupaMicrofono)');
+  c.alEstado(g, 'hablando');
+  assert.equal(c.vista().pensando, false, 'empezó a hablar: ya no piensa');
+  c.alEstado(g, 'escuchando');
+  assert.equal(c.vista().pensando, false, 'terminar de hablar no es pensar');
+  // Contestó con texto sin audio (o el modo «speaking» no llegó): su mensaje también cierra la espera.
+  c.oyoFrase();
+  c.respondio();
+  assert.equal(c.vista().pensando, false);
+  // Con tope: si nunca contesta, no se queda pensando para siempre.
+  c.oyoFrase();
+  ahora += PENSANDO_MAX_MS - 1;
+  c.revisar();
+  assert.equal(c.vista().pensando, true);
+  ahora += 1;
+  c.revisar();
+  assert.equal(c.vista().pensando, false, 'pasado el tope vuelve a «escuchando»');
+  assert.equal(c.vista().estado, 'escuchando');
+  // Silenciar, colgar o reconectar la terminan.
+  c.oyoFrase();
+  c.silenciar(true);
+  assert.equal(c.vista().pensando, false);
+  c.silenciar(false);
+  c.oyoFrase();
+  c.alEstado(g, 'error', 'Server error');
+  assert.equal(c.vista().pensando, false, 'reconectando no piensa');
+  c.terminar();
+  c.oyoFrase();
+  assert.equal(c.vista().pensando, false, 'sin sesión no hay nada que pensar');
+  // La compañera lo pinta: piensa (no «escucha») mientras espera la respuesta, y escucha cuando no.
+  const vozDe = (pensando) => ({ estado: 'escuchando', silenciada: false, dormida: false, suspendida: false, pensando });
+  assert.equal(expresion(reducir(ANIMO_INICIAL, { tipo: 'voz', voz: vozDe(true) }, 0).animo, 0), 'piensa');
+  assert.equal(expresion(reducir(ANIMO_INICIAL, { tipo: 'voz', voz: vozDe(false) }, 0).animo, 0), 'escucha');
 });
 
 prueba('fallo de la conversación en vivo → el micrófono de la mesa vuelve de verdad (la pausa colgada se suelta)', () => {

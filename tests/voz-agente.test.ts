@@ -46,6 +46,7 @@ const {
   resolverMemoriaPendiente,
   EtiquetasVoz,
   perdonEnVoz,
+  oidoDeLaAnterior,
 } = await import('../server/voz-agente');
 const { secretoDerivado, emitirSesion, borrarSesion, soltarSesion, sesionDe, fijarClaveCambiadaEn } = await import('../server/seguridad');
 type TurnoVoz = import('../server/voz-agente').TurnoVoz;
@@ -162,6 +163,39 @@ test('¿la respuesta anterior quedó cortada? Se compara lo que dijimos con lo q
   assert.equal(asistenteTruncado(hist('Otra cosa completamente distinta'), dicha), false, 'no es la nuestra: no se adivina');
   assert.equal(asistenteTruncado([{ role: 'user', content: 'hola' }], dicha), false, 'sin respuesta anterior');
   assert.equal(asistenteTruncado(hist('El oro'), ''), false, 'sin saber qué dijimos, no se afirma nada');
+});
+
+test('CALL03: un mensaje de herramienta entre la respuesta y la persona no cambia el tramo que se oyó', () => {
+  const dicha = 'El oro está a tres mil cuatrocientos dólares la onza, y subió un poco esta semana.';
+  const persona1 = { role: 'user', content: '¿Cómo va el oro?' };
+  const persona2 = { role: 'user', content: 'Espera, ¿y la plata?' };
+  const recorte = { role: 'assistant', content: 'El oro está a tres mil...' };
+  const sinTool = [persona1, recorte, persona2];
+  // La respuesta pidió una herramienta y su resultado quedó en medio (antes se daba por oída entera).
+  const conTool = [
+    persona1,
+    { ...recorte, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'end_call', arguments: '{}' } }] },
+    { role: 'tool', tool_call_id: 'call_1', content: '{"ok":true}' },
+    persona2,
+  ];
+  // La llamada a la herramienta en su propio mensaje (sin texto), después del recorte.
+  const partido = [
+    persona1,
+    recorte,
+    { role: 'assistant', content: null, tool_calls: [{ id: 'call_2', type: 'function', function: { name: 'language_detection', arguments: '{}' } }] },
+    { role: 'tool', tool_call_id: 'call_2', content: 'es' },
+    persona2,
+  ];
+  for (const [nombre, h] of [['sin herramienta', sinTool], ['herramienta en medio', conTool], ['herramienta aparte', partido]] as const) {
+    assert.equal(asistenteTruncado(h, dicha), true, `${nombre}: la cortaron`);
+    assert.equal(oidoDeLaAnterior(h, dicha), 'El oro está a tres mil', `${nombre}: lo oído es el recorte de ElevenLabs, no el texto completo`);
+    assert.equal(perdonEnVoz(h, dicha), false, `${nombre}: oyó poco, sin perdón en voz`);
+  }
+  // Completo y audible por separado: sin el mensaje de ElevenLabs vale lo que llegó a la voz, nunca lo generado.
+  const anterior = { id: 'chatcmpl-1', completo: dicha, audible: 'El oro está a tres mil cuatrocientos' };
+  assert.equal(oidoDeLaAnterior([persona2], anterior), 'El oro está a tres mil cuatrocientos');
+  assert.equal(asistenteTruncado(conTool, anterior), true, 'el recorte se compara con lo generado entero');
+  assert.equal(oidoDeLaAnterior(conTool, anterior), 'El oro está a tres mil');
 });
 
 test('eventosSSE: lee eventos a trozos y suelta el lector al abortar', async () => {
@@ -522,6 +556,54 @@ test('si la persona interrumpe (ElevenLabs cierra), la señal del turno de adent
     assert.equal(dichoDe(await r3.text()), 'La plata está a cuarenta.');
     assert.equal(s.vistos[2].interrumpida, false);
     assert.equal((s.vistos[2].body as any).interrumpido, undefined);
+  } finally {
+    await s.cerrar();
+  }
+});
+
+test('CALL03 en la ruta: con un mensaje de herramienta en medio, el cerebro recibe solo lo que se oyó y la conversación guarda completo y audible por separado', async () => {
+  let turno = 0;
+  const s = await montar(async (t) => {
+    turno++;
+    if (turno === 1) {
+      t.enviar('delta', { text: 'Empiezo a explicar algo largo. ', voz: 'Empiezo a explicar algo largo. ' });
+      await new Promise<void>((resolve) => {
+        const iv = setInterval(() => t.enviar('delta', { text: 'más ', voz: 'más ' }), 30);
+        t.senal.addEventListener('abort', () => {
+          clearInterval(iv);
+          resolve();
+        });
+      });
+      return;
+    }
+    t.enviar('delta', { text: 'La plata está a cuarenta.', voz: 'La plata está a cuarenta.' });
+    t.enviar('done', { reply: 'La plata está a cuarenta.' });
+  }, { graciaReintentoMs: 100 });
+  try {
+    const yo = persona();
+    const pase = paseDe(yo, 'aura', 'es');
+    const ctrl = new AbortController();
+    const r = await llm(s.base, pase, [{ role: 'user', content: 'Explícame algo largo' }], {}, ctrl.signal);
+    const lector = r.body!.getReader();
+    await lector.read();
+    await lector.read();
+    await new Promise((r2) => setTimeout(r2, 100));
+    ctrl.abort();
+    await new Promise((r2) => setTimeout(r2, 350));
+    const conv = [..._conversaciones().values()].find((c) => c.correo === yo.correo)!;
+    // Lo que el servidor generó y lo que llegó a la voz se guardan aparte, del mismo turno.
+    assert.ok(conv.anterior.id, 'el turno se identifica por su id');
+    assert.ok(conv.anterior.completo.startsWith('Empiezo a explicar algo largo.'));
+    assert.ok(conv.anterior.audible.length <= conv.anterior.completo.length);
+    const r2 = await llm(s.base, pase, [
+      { role: 'user', content: 'Explícame algo largo' },
+      { role: 'assistant', content: 'Empiezo a explicar', tool_calls: [{ id: 'call_9', type: 'function', function: { name: 'skip_turn', arguments: '{}' } }] },
+      { role: 'tool', tool_call_id: 'call_9', content: 'ok' },
+      { role: 'user', content: '¿Y la plata?' },
+    ]);
+    assert.equal(dichoDe(await r2.text()), 'La plata está a cuarenta.');
+    // Antes: con la herramienta en medio se mandaba como «oído» todo lo que había salido hacia la voz.
+    assert.deepEqual((s.vistos[1].body as any).interrumpido, { oido: 'Empiezo a explicar' });
   } finally {
     await s.cerrar();
   }

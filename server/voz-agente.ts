@@ -266,14 +266,31 @@ export function paseVencido(token: string, ahora = Date.now()): { idioma: Idioma
 
 /* ------------------------------------------------------------------ las conversaciones vivas */
 
+/**
+ * Un turno hablado (CALL03, auditoría del 3-oct): su id (el de la respuesta en formato OpenAI), lo que el
+ * cerebro generó entero y lo que de verdad llegó a la voz. Son cosas distintas: se genera más rápido de lo
+ * que se dice, y si la persona corta, lo oído es solo el principio. Antes había un solo texto y, según por
+ * dónde terminara el turno, se guardaba uno u otro.
+ */
+export type DichoTurno = { id: string; completo: string; audible: string };
+/** Un turno que se dijo entero (lo audible es todo lo generado). */
+export function dichoEntero(id: string, texto: string): DichoTurno {
+  return { id, completo: texto, audible: texto };
+}
+/** Lo de antes era un texto suelto: vale como generado y oído a la vez. */
+const comoDicho = (d: DichoTurno | string): DichoTurno => (typeof d === 'string' ? dichoEntero('', d) : d);
+
 type Conversacion = {
   cid: string;
   correo: string;
   abierta: number;
   ultimo: number;
   cerrada: boolean;
-  /** Lo que se le dio a la voz en el último turno, y si ElevenLabs lo cortó a la mitad. */
-  ultimaDicha: string;
+  /**
+   * El último turno hablado, por su id: lo que generó entero y lo que llegó a la voz (CALL03), y si
+   * ElevenLabs lo cortó a la mitad.
+   */
+  anterior: DichoTurno;
   cortada: boolean;
   turnos: number;
   /** El turno que está pensando ahora (si llega otro, este ya no lo oye nadie). */
@@ -286,9 +303,12 @@ type Conversacion = {
   vivo?: { mensaje: string; hasta: number; vigente: () => boolean; enganchar: (r: express.Response) => Promise<void> } | null;
   /**
    * Lo que el turno en curso ya le dio a la voz. Si llega otro turno antes de que termine, esto pasa
-   * a ser `ultimaDicha` (antes quedaba la del turno anterior y la interrupción no se notaba).
+   * a ser lo audible de `anterior` (antes quedaba la del turno anterior y la interrupción no se notaba).
    */
   dichoEnCurso: string;
+  /** El id del turno en curso y todo lo que lleva generado (aunque no haya llegado a la voz). */
+  idEnCurso: string;
+  completoEnCurso: string;
   /** Si el turno en curso ya dijo algo propio (el «perdón» del principio no cuenta). */
   algoEnCurso: boolean;
   /** Hasta cuándo ya se contó el tiempo de esta conversación en el tope de voz. */
@@ -456,7 +476,7 @@ export function abrirConversacion(correo: string, cid: string, ahora = Date.now(
     conversaciones.delete(vieja.cid);
     cerradas++;
   }
-  conversaciones.set(cid, { cid, correo: c, abierta: ahora, ultimo: ahora, cerrada: false, ultimaDicha: '', cortada: false, turnos: 0, enCurso: null, dichoEnCurso: '', algoEnCurso: false, medido: ahora, ambiente: null });
+  conversaciones.set(cid, { cid, correo: c, abierta: ahora, ultimo: ahora, cerrada: false, anterior: dichoEntero('', ''), cortada: false, turnos: 0, enCurso: null, dichoEnCurso: '', idEnCurso: '', completoEnCurso: '', algoEnCurso: false, medido: ahora, ambiente: null });
   return { cerradas };
 }
 
@@ -538,6 +558,35 @@ function textoDe(content: unknown): string {
 const aplanar = (s: string) => s.replace(/\s+/g, ' ').trim();
 
 /**
+ * La respuesta del asistente a la que contesta la persona ahora: el último mensaje de asistente CON TEXTO
+ * antes de lo que acaba de decir. Lo que ElevenLabs intercala de ese mismo turno no la tapa (CALL03): la
+ * llamada a una herramienta (un mensaje de asistente sin texto, solo `tool_calls`) y su resultado (`tool`,
+ * que la nombra por `tool_call_id`). Antes se miraba solo el mensaje de justo antes de la persona y, con
+ * una herramienta en medio, se perdía el recorte y se daba por oído todo lo que se había mandado.
+ */
+function respuestaAnterior(messages: unknown): { content: unknown } | null {
+  const lista = Array.isArray(messages) ? messages : [];
+  let i = lista.length - 1;
+  while (i >= 0 && (lista[i] as any)?.role === 'user') i--;
+  /** Las llamadas a herramientas que aparecen como resultado: tienen que ser de un asistente de este turno. */
+  const llamadas = new Set<string>();
+  for (; i >= 0; i--) {
+    const m: any = lista[i];
+    if (m?.role === 'tool' || m?.role === 'function') {
+      if (m.tool_call_id) llamadas.add(String(m.tool_call_id));
+      continue;
+    }
+    if (m?.role !== 'assistant') return null;
+    const ids: string[] = Array.isArray(m.tool_calls) ? m.tool_calls.map((t: any) => String(t?.id || '')) : [];
+    // Con texto, o vacía sin herramientas (la cortaron antes de decir nada): esa es la respuesta.
+    if (textoDe(m.content) || !ids.length) return m;
+    // Sin texto y con herramientas: la llamada a una herramienta de este mismo turno; se sigue hacia atrás.
+    if (llamadas.size && !ids.some((x) => llamadas.has(x))) return null;
+  }
+  return null;
+}
+
+/**
  * ¿La respuesta anterior quedó cortada? La página del «LLM propio» no dice cómo llega una
  * interrupción; lo que sí documenta ElevenLabs (eventos del cliente, `agent_response_correction`)
  * es que al interrumpir recorta la respuesta del agente a lo que alcanzó a decir
@@ -549,14 +598,11 @@ const aplanar = (s: string) => s.replace(/\s+/g, ' ').trim();
  * principio del nuestro (con o sin los «...» del recorte), la persona la interrumpió. La otra señal
  * es directa: ElevenLabs cerró la petición mientras la voz todavía recibía texto (`conv.cortada`).
  */
-export function asistenteTruncado(messages: unknown, ultimaDicha: string): boolean {
-  const nuestra = aplanar(quitarExpresiones(ultimaDicha || ''));
+export function asistenteTruncado(messages: unknown, anterior: DichoTurno | string): boolean {
+  const nuestra = aplanar(quitarExpresiones(comoDicho(anterior).completo || ''));
   if (nuestra.length < 12) return false;
-  const lista = Array.isArray(messages) ? messages : [];
-  let i = lista.length - 1;
-  while (i >= 0 && (lista[i] as any)?.role === 'user') i--;
-  const m: any = lista[i];
-  if (!m || m.role !== 'assistant') return false;
+  const m = respuestaAnterior(messages);
+  if (!m) return false;
   // Sin etiquetas de audio: las frases de espera pueden llevar una («[thoughtful] …») y ElevenLabs la devuelve.
   const suya = aplanar(quitarExpresiones(textoDe(m.content))).replace(/(\.{3}|…|—|-)$/, '').trim();
   if (!suya) return true;
@@ -572,20 +618,21 @@ export const PERDON_DESDE_CARACTERES = 120;
 /**
  * Cuánto OYÓ la persona de la respuesta anterior: el último mensaje de asistente que manda ElevenLabs
  * ya viene recortado a lo que alcanzó a decir (asistenteTruncado). Lo que el servidor mandó
- * (`ultimaDicha`) puede ser mucho más (se genera más rápido de lo que se dice), así que solo vale si
+ * (lo `audible` del turno anterior) puede ser mucho más (se genera más rápido de lo que se dice), así que solo vale si
  * ElevenLabs no trae ese mensaje (revisión de Codex en #111).
  */
-export function perdonEnVoz(messages: unknown, ultimaDicha: string): boolean {
-  return oidoDeLaAnterior(messages, ultimaDicha).length >= PERDON_DESDE_CARACTERES;
+export function perdonEnVoz(messages: unknown, anterior: DichoTurno | string): boolean {
+  return oidoDeLaAnterior(messages, anterior).length >= PERDON_DESDE_CARACTERES;
 }
 
-/** Lo que la persona oyó de la respuesta anterior, sin etiquetas de audio ni los «...» del recorte. */
-export function oidoDeLaAnterior(messages: unknown, ultimaDicha: string): string {
-  const lista = Array.isArray(messages) ? messages : [];
-  let i = lista.length - 1;
-  while (i >= 0 && (lista[i] as any)?.role === 'user') i--;
-  const m: any = lista[i];
-  const oido = m && m.role === 'assistant' ? textoDe(m.content) : ultimaDicha || '';
+/**
+ * Lo que la persona oyó de la respuesta anterior, sin etiquetas de audio ni los «...» del recorte: el
+ * recorte de ElevenLabs si viene en el historial (aunque haya una herramienta en medio) y, si no, lo que
+ * llegó a la voz (`audible`), nunca todo lo generado.
+ */
+export function oidoDeLaAnterior(messages: unknown, anterior: DichoTurno | string): string {
+  const m = respuestaAnterior(messages);
+  const oido = m ? textoDe(m.content) : comoDicho(anterior).audible || '';
   return aplanar(quitarExpresiones(oido)).replace(/(\.{3}|…|—|-)$/, '').trim();
 }
 
@@ -952,12 +999,14 @@ export function montarVozAgente(app: express.Express, d: Deps) {
       if (!conv.algoEnCurso) conv.devolverTurno?.();
       conv.enCurso.abort();
       conv.enCurso = null;
-      conv.ultimaDicha = conv.dichoEnCurso;
+      conv.anterior = { id: conv.idEnCurso, completo: conv.completoEnCurso || conv.dichoEnCurso, audible: conv.dichoEnCurso };
       if (conv.algoEnCurso) conv.cortada = true;
     }
     conv.dichoEnCurso = '';
+    conv.completoEnCurso = '';
+    conv.idEnCurso = id;
     conv.algoEnCurso = false;
-    const interrumpida = !reconexion && !!mensaje && (conv.cortada || asistenteTruncado(req.body?.messages, conv.ultimaDicha));
+    const interrumpida = !reconexion && !!mensaje && (conv.cortada || asistenteTruncado(req.body?.messages, conv.anterior));
     conv.cortada = false;
     conv.turnos++;
     // Un turno nuevo (la lectura que volvió del teléfono, o la persona que habló) quita el sonido de
@@ -1001,7 +1050,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     // Se reconectó sin frase que retomar: el perdón y que la repita, al instante y sin cerebro.
     if (reconexion && !reconexion.frase) {
       escribir(trozoOpenAI(id, modelo, reconexion.perdon));
-      conv.ultimaDicha = reconexion.perdon;
+      conv.anterior = dichoEntero(id, reconexion.perdon);
       escribir(trozoOpenAI(id, modelo, null, 'stop'));
       return cerrar();
     }
@@ -1019,7 +1068,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     if (lectura) {
       const texto = lectura.ok ? quitarExpresiones(lectura.texto).trim() || PHRASES.noLei[pase.idioma] : PHRASES.noLei[pase.idioma];
       escribir(trozoOpenAI(id, modelo, texto));
-      conv.ultimaDicha = texto;
+      conv.anterior = dichoEntero(id, texto);
       escribir(trozoOpenAI(id, modelo, null, 'stop'));
       return cerrar();
     }
@@ -1032,7 +1081,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     if (RE_LLAMADA.test(mensaje) || RE_SIGUES.test(mensaje)) {
       const texto = RE_LLAMADA.test(mensaje) ? saludoDeLlamada(pase.idioma, conv.turnos) : preguntaSigues(pase.idioma);
       escribir(trozoOpenAI(id, modelo, texto));
-      conv.ultimaDicha = texto;
+      conv.anterior = dichoEntero(id, texto);
       escribir(trozoOpenAI(id, modelo, null, 'stop'));
       return cerrar();
     }
@@ -1114,6 +1163,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
       dicho += t;
       ultimoEn = Date.now();
       if (!primeroEn) primeroEn = ultimoEn;
+      if (conv.enCurso === corte) conv.completoEnCurso = dicho;
       if (!salidas.size) return;
       oido = dicho.length;
       if (conv.enCurso === corte) {
@@ -1132,7 +1182,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
       // turno ya tomó la conversación, él ya anotó lo que este dijo (y ya usó el «cortada»).
       if (conv.enCurso === corte) {
         if (oido > 0 && algo) conv.cortada = true;
-        conv.ultimaDicha = dicho.slice(0, oido);
+        conv.anterior = { id, completo: dicho, audible: dicho.slice(0, oido) };
         conv.enCurso = null;
       }
     };
@@ -1169,7 +1219,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
           if (dicho) r.write(trozoOpenAI(id, modelo, dicho));
           if (terminado) {
             oido = dicho.length;
-            conv.ultimaDicha = dicho;
+            conv.anterior = dichoEntero(id, dicho);
             conv.cortada = false;
             if (conv.vivo === vivoDeEste) conv.vivo = null;
             // El reintento se lleva la respuesta entera: ese turno sí se oyó.
@@ -1196,8 +1246,8 @@ export function montarVozAgente(app: express.Express, d: Deps) {
 
     // El perdón en voz, solo si cortó algo largo; si no, el cerebro abre con un acuse corto («Va, dime»):
     // va como `interrumpido` en el cuerpo, igual que desde la mesa (lib/interrumpida.ts).
-    const perdonDicho = !reconexion && interrumpida && perdonEnVoz(req.body?.messages, conv.ultimaDicha);
-    const oidoAntes = interrumpida && !perdonDicho ? oidoDeLaAnterior(req.body?.messages, conv.ultimaDicha) : null;
+    const perdonDicho = !reconexion && interrumpida && perdonEnVoz(req.body?.messages, conv.anterior);
+    const oidoAntes = interrumpida && !perdonDicho ? oidoDeLaAnterior(req.body?.messages, conv.anterior) : null;
     if (reconexion || perdonDicho) {
       decir(reconexion ? reconexion.perdon : perdonDe(pase.idioma, conv.turnos));
       // El perdón no cuenta como «ya dijo algo»: si el cerebro falla, igual se explica.
@@ -1505,7 +1555,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     ambiente(null);
     if (corte.signal.aborted) {
       // La persona interrumpió (o llegó otro turno de esta conversación, que ya tomó lo que este dijo
-      // como `ultimaDicha`): nadie espera esto. Si la petición sigue abierta, se cierra bien para que
+      // como `anterior`): nadie espera esto. Si la petición sigue abierta, se cierra bien para que
       // ElevenLabs no quede esperando.
       descartarAcciones();
       escribir(trozoOpenAI(id, modelo, null, 'stop'));
@@ -1547,7 +1597,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
       }
     }
     if (salidas.size) {
-      conv.ultimaDicha = dicho;
+      conv.anterior = dichoEntero(id, dicho);
       if (conv.vivo === vivoDeEste) conv.vivo = null;
       confirmarAcciones();
     } else if (suerteAhora() === 'descartado') {
@@ -1555,7 +1605,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     } else {
       // Terminó mientras nadie oía: si el reintento llega en un momento, se lleva la respuesta entera.
       // Si no llega, la persona oyó solo el principio: la próxima respuesta empieza pidiendo perdón.
-      conv.ultimaDicha = dicho.slice(0, oido);
+      conv.anterior = { id, completo: dicho, audible: dicho.slice(0, oido) };
       if (oido > 0 && oido < dicho.length) conv.cortada = true;
       vivoDeEste.hasta = Date.now() + (d.graciaReintentoMs ?? interruptor('graciaReintentoMs'));
     }
