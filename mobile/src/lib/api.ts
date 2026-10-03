@@ -369,6 +369,8 @@ export type ChatResult = {
   cierre?: 'done' | 'error' | 'eof' | 'timeout';
   /** El idTurno con que se pidió: con él, un reintento por JSON recupera ESE turno sin correr otro. */
   idTurno?: string;
+  /** Las tareas durables que el turno creó o cambió (AUR08, lib/trabajos.ts `refsDeTurno`). Un servidor viejo no las manda. */
+  tareas?: unknown[];
 };
 
 type TurnoOpts = {
@@ -442,7 +444,7 @@ export async function turno(opts: TurnoOpts): Promise<ChatResult> {
     const pelado = pelarEtiqueta(String(data.reply || ''));
     const emocion = data.emocion ? normalizarEmocion(data.emocion) : pelado.emocion || 'neutral';
     const voz = data.voz ? pelarEtiqueta(String(data.voz)).texto.trim() : undefined;
-    return { reply: quitarExpresiones(pelado.texto).trim(), voz, emocion, mode: data.mode, ms: data.ms, via: data.via, error: data.error, acciones: data.acciones, ...(data.parcial === true ? { parcial: true } : {}) };
+    return { reply: quitarExpresiones(pelado.texto).trim(), voz, emocion, mode: data.mode, ms: data.ms, via: data.via, error: data.error, acciones: data.acciones, ...(data.parcial === true ? { parcial: true } : {}), ...(Array.isArray(data.tareas) ? { tareas: data.tareas } : {}) };
   } catch (e: any) {
     return { reply: '', emocion: 'neutral', error: e?.message || 'Sin conexión al cerebro' };
   }
@@ -545,6 +547,7 @@ export function turnoStream(opts: TurnoOpts, h: StreamHandlers): { promise: Prom
           via: data.via,
           acciones: data.acciones,
           ...(data.parcial === true ? { parcial: true } : {}),
+          ...(Array.isArray(data.tareas) ? { tareas: data.tareas } : {}),
           cierre: 'done',
         };
       } else if (ev === 'error') done = { reply: quitarExpresiones(full), voz: full, emocion: emocion || 'neutral', error: String(data.error || 'error'), ...(full.trim() ? { parcial: true } : {}), cierre: 'error' };

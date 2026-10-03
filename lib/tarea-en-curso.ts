@@ -486,6 +486,59 @@ function retomar(persona: string, t: Tarea, efecto: Efecto = alMomento) {
   if (clave) persistir(clave);
 }
 
+/* ------------------------------------------------------------------ el panel de tareas (AUR08) */
+
+/**
+ * Las tareas de la persona en TODAS sus conversaciones (una por ámbito), para el panel de tareas
+ * (server/trabajos.ts las adapta a TaskSnapshot con su mismo id). Aplica las mismas reglas que `tareaDe`
+ * (la que nadie tocó se pausa sola; la pausada vieja se olvida). Copias: el panel no cambia nada por leer.
+ */
+export function tareasDePersona(persona: string, ahora = Date.now()): Tarea[] {
+  const clave = clavePersona(persona);
+  if (!clave) return [];
+  const xs = MEM.get(clave);
+  if (!xs) {
+    void precargarTareas(persona);
+    return [];
+  }
+  return [...new Set(xs.map((t) => t.ambito))].flatMap((amb) => {
+    const t = tareaDe(persona, amb, ahora);
+    return t ? [JSON.parse(JSON.stringify(t)) as Tarea] : [];
+  });
+}
+
+export type AccionPanel = 'pausar' | 'seguir' | 'descartar' | 'retomar';
+
+/**
+ * Lo que la persona decide desde el panel sobre una tarea, por su id. Con `version` (su `actualizado`, la
+ * versión que vio), si la tarea cambió desde entonces NO se aplica (una decisión vieja no decide nada).
+ * Devuelve la tarea como quedó (null si se cerró).
+ */
+export function accionTareaPorId(persona: string, id: string, accion: AccionPanel, version?: number): { ok: true; tarea: Tarea | null } | { ok: false; motivo: 'no-existe' | 'version'; tarea?: Tarea } {
+  const clave = clavePersona(persona);
+  const t = clave ? MEM.get(clave)?.find((x) => x.id === id) : undefined;
+  if (!clave || !t) return { ok: false, motivo: 'no-existe' };
+  const copia = () => JSON.parse(JSON.stringify(t)) as Tarea;
+  if (version !== undefined && version !== t.actualizado) return { ok: false, motivo: 'version', tarea: copia() };
+  const antes = t.actualizado;
+  if (accion === 'descartar') {
+    cerrarTarea(clave, t, 'descartado');
+    return { ok: true, tarea: null };
+  }
+  if (accion === 'pausar') pausar(persona, t);
+  else if (accion === 'retomar' || t.estado === 'pausada') retomar(persona, t);
+  else {
+    // «Terminarla primero»: lo que pidió a mitad queda para cuando termine (como en el chat).
+    t.estado = 'activa';
+    if (t.pedidoNuevo) t.despues = t.pedidoNuevo;
+    delete t.pedidoNuevo;
+  }
+  // La versión siempre se mueve (dos cambios en el mismo milisegundo no pueden parecer el mismo).
+  t.actualizado = Math.max(Date.now(), antes + 1);
+  persistir(clave);
+  return { ok: true, tarea: copia() };
+}
+
 /* ------------------------------------------------------------------ el bloque del turno */
 
 export const TOPE_TAREA = { compacto: 260, normal: 900 };

@@ -22,6 +22,8 @@ export type Turno = {
   honesto?: boolean;
   /** La traza de este turno en el servidor: para decir «me sirvió / no me sirvió». */
   trazaId?: string;
+  /** Las tareas durables que el turno creó o cambió (AUR08). Un servidor viejo no las manda. */
+  tareas?: unknown[];
 };
 
 export type PeticionTurno = {
@@ -125,6 +127,7 @@ export async function pedirTurnoStream(opts: PeticionTurno, ev: EventosTurno = {
         ms: data?.ms,
         via: data?.via,
         trazaId: data?.trazaId,
+        ...(Array.isArray(data?.tareas) ? { tareas: data.tareas } : {}),
         honesto: true,
       };
     } else if (evento === 'error') {
