@@ -82,6 +82,9 @@ test('el resultado solo es «hecho» si el canal lo confirmó', () => {
   assert.equal(resultadoDe('').estado, 'sin-confirmar', 'sin respuesta no se sabe si se hizo');
   assert.equal(resultadoDe('', 'interrumpido').estado, 'sin-confirmar');
   assert.equal(resultadoDe('', 'sesión requerida').estado, 'fallida');
+  // «enviado» con un «no» delante no es un recibo (auditoría de Codex del 3-oct).
+  for (const t of ['El mensaje no fue enviado.', 'No se pudo enviar el WhatsApp.', 'Falló el envío: el número no existe.', 'Error al llamar.', 'La llamada fue rechazada.'])
+    assert.equal(resultadoDe(t).estado, 'fallida', t);
 });
 
 test('la tarjeta pendiente tiene Confirmar y Cancelar; la resuelta, su resultado y ya no los botones', () => {

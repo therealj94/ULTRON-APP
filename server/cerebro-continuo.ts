@@ -20,7 +20,7 @@ import type express from 'express';
 import { abiertosDe, cerradosDe, cerrar } from '../lib/abiertos';
 import { CajonNoDisponible, clavePersona } from '../lib/cerebro-comun';
 import { actualizarPersona, agregarPersona, capacidadesCirculo, circuloDe, ErrorCirculo, quitarPersona } from '../lib/circulo';
-import { agregarDato, CATEGORIAS, NOMBRE_CATEGORIA, olvidarDato, queNoSe, queSeDe } from '../lib/conocer-persona';
+import { agregarDato, CATEGORIAS, NOMBRE_CATEGORIA, olvidarDato, olvidarTodo, queNoSe, queSeDe } from '../lib/conocer-persona';
 import { episodiosDe } from '../lib/episodios';
 import { triar, type FuentesTriaje } from '../lib/triaje';
 import { whatsappPermitido } from './whatsapp';
@@ -121,6 +121,18 @@ export function montarRutasCerebroContinuo(app: express.Express, d: Deps) {
       if (e instanceof CajonNoDisponible) return fallo(res, e);
       // Un secreto (clave, PIN) o un dato vacío: se dice, no se guarda.
       return res.status(400).json({ error: String((e as Error)?.message || e).slice(0, 160), honesto: true });
+    }
+  });
+
+  // Todo lo aprendido de la persona, de una vez (el «Borrar todo lo que te conté» de la app).
+  app.delete('/api/cerebro/conocer', d.exigirMesa, d.limitar(10), async (req, res) => {
+    const c = quien(req, res);
+    if (!c) return;
+    try {
+      const r = await olvidarTodo(c);
+      return res.json({ ok: true, borrados: r.borrados, durable: r.durable, honesto: true });
+    } catch (e) {
+      return fallo(res, e);
     }
   });
 

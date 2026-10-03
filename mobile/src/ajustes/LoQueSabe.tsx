@@ -12,6 +12,7 @@ import { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { de, tr, useIdioma } from '../i18n';
+import { api } from '../lib/api';
 import { cumpleLegible, guardarPerfil, usePerfil } from '../lib/perfil';
 import type { Encuesta } from '../nucleo/contrato';
 import { MEDIDA, useTema } from '../nucleo/tema';
@@ -73,6 +74,7 @@ export function LoQueSabe({ navigation }: Props) {
   const perfil = usePerfil();
   const [editando, setEditando] = useState<Editando>(null);
   const [borrarTodo, setBorrarTodo] = useState(false);
+  const [errorBorrar, setErrorBorrar] = useState<string | null>(null);
   const enc = perfil?.encuesta || {};
   const pregunta = editando && editando.campo !== 'otros' ? PREGUNTAS.find((p) => p.campo === editando.campo) || null : null;
   const hayAlgo = Object.values(enc).some(Boolean);
@@ -142,14 +144,27 @@ export function LoQueSabe({ navigation }: Props) {
           <Texto v="chica" color="texto3">
             {tr('No se puede deshacer.', 'This can’t be undone.')}
           </Texto>
+          {!!errorBorrar && (
+            <Texto v="chica" color="aviso">
+              {errorBorrar}
+            </Texto>
+          )}
           <Boton
             titulo={tr('Borrar todo', 'Erase all')}
             icono="basura"
             variante="peligro"
-            onPress={() => {
-              guardarPerfil({ encuesta: { vive: '', comida: '', musica: '', familia: '', trabajo: '', gustos: '', otros: '' } });
+            onPress={async () => {
+              // Todo de verdad: la encuesta entera (también «ayuda») y lo que AURA aprendió conversando, que
+              // también entra en lo que sabe de ti (auditoría de Codex del 3-oct, PRI 001).
+              guardarPerfil({ encuesta: { vive: '', comida: '', musica: '', familia: '', trabajo: '', gustos: '', ayuda: '', otros: '' } });
               vibrar('medio');
-              setBorrarTodo(false);
+              try {
+                await api('/api/cerebro/conocer', { method: 'DELETE' }, 15_000);
+                setErrorBorrar(null);
+                setBorrarTodo(false);
+              } catch {
+                setErrorBorrar(tr('Borré tus respuestas, pero no alcancé a borrar lo que aprendí conversando. Vuelve a intentarlo en un momento.', 'I erased your answers, but couldn’t erase what I learned from our chats. Try again in a moment.'));
+              }
             }}
           />
           <Boton titulo={tr('Cancelar', 'Cancel')} variante="secundario" onPress={() => setBorrarTodo(false)} />

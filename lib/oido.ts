@@ -262,7 +262,7 @@ export function pcmDeWav(audio: Buffer): { pcm: Buffer; frecuencia: number } | n
  * mal oídos son un pago equivocado, así que se vuelven a oír con Scribe v2, que acertó 17 de 18.
  */
 export const FRASE_DE_DINERO =
-  /\b(pag[aáoeu]\w*|envi[aáeé]\w*|env[ií]\w*|m[aá]nd\w*|transfi?er\w*|deposit\w*|cobr\w*|presta\w*|origen|auka|agka|veta|wallet|cartera|billetera|saldo|d[oó]lar\w*|lempira\w*|usd|pesos?|plata|dinero|monto|precio|cuesta|cu[aá]nto|pay\w*|send\w*|transfer\w*|dollars?|money|balance|price|cost|how much)\b|\$|\d/i;
+  /\b(origen|auka|agka|veta|wallet|cartera|billetera|saldo|d[oó]lar\w*|lempira\w*|usd|pesos?|plata|dinero|monto|money|balance|dollars?|pag[aáoeu]\w*|pay\w*|transfi?er\w*|deposit\w*|cobr\w*|presta\w*)\b|\$|\b(envi[aáeé]\w*|env[ií]\w*|m[aá]nd\w*|send\w*)\b[^.?!]*\d/i;
 export function esFraseDeDinero(texto: string): boolean {
   return FRASE_DE_DINERO.test(texto);
 }

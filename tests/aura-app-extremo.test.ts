@@ -74,6 +74,12 @@ const nodo = http.createServer((req, res) => {
     if (!j.stream) return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ message: { content: respuesta } }));
     res.writeHead(200, { 'content-type': 'application/x-ndjson' });
     await new Promise((r) => setTimeout(r, primerTokenMs));
+    // «…@@ERROR»: el nodo manda lo de antes y termina con error (como el proxy de la A10G cuando falla).
+    if (respuesta.endsWith('@@ERROR')) {
+      const antes = respuesta.slice(0, -'@@ERROR'.length);
+      if (antes) res.write(JSON.stringify({ message: { content: antes }, done: false }) + '\n');
+      return res.end(JSON.stringify({ message: { content: '' }, done: true, done_reason: 'error', error: 'HTTP 503' }) + '\n');
+    }
     for (const t of respuesta.match(/.{1,6}/gs) || []) {
       if (res.destroyed) return;
       res.write(JSON.stringify({ message: { content: t }, done: false }) + '\n');
@@ -1226,4 +1232,12 @@ test('Windows en vivo: el cerebro sabe que es la PC, la marca ⟦hacer⟧ no sue
     await win.cerrar();
     await tel.cerrar();
   }
+});
+
+test('el nodo termina con error sin haber dicho nada: el turno es un error, no una respuesta vacía (VOZ 003)', { skip: !listo }, async () => {
+  contestar = () => '[EMO: neutral]@@ERROR';
+  const evs = await turnoStream('explícame con calma cómo va el proyecto de la planta este mes, con detalle', { web: true });
+  assert.ok(evs.some((e) => e.ev === 'error'), JSON.stringify(evs.map((e) => e.ev)));
+  assert.ok(!evs.some((e) => e.ev === 'done'), 'no se cierra como si hubiera contestado');
+  contestar = () => '[EMO: neutral] Claro. Te cuento lo que sé.';
 });

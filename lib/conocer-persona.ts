@@ -245,6 +245,21 @@ export async function olvidarDato(persona: string, id: string): Promise<{ borrad
   return { borrado: resultado, durable };
 }
 
+/**
+ * Olvida TODO lo que aprendió de la persona (el «Borrar todo lo que te conté» de la app). Antes ese botón
+ * solo vaciaba la encuesta y lo aprendido seguía en el prompt (auditoría de Codex del 3-oct, PRI 001).
+ */
+export async function olvidarTodo(persona: string): Promise<{ borrados: number; durable: boolean }> {
+  const c = clavePersona(persona);
+  if (!c) return { borrados: 0, durable: false };
+  const { resultado, durable } = await cajones.modificar(c, (x) => {
+    const n = x.datos.length;
+    x.datos = [];
+    return n;
+  });
+  return { borrados: Number(resultado) || 0, durable };
+}
+
 export type LoQueSe = { porCategoria: Record<Categoria, Dato[]>; total: number };
 
 function agrupar(datos: Dato[]): LoQueSe {

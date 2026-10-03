@@ -109,7 +109,7 @@ describe('Oído Turbo: frases de dinero', () => {
   for (const f of ['Págale cien lempiras a Ana', 'envíale 5 ORIGEN a mi mamá', 'Mándale plata a Beto', 'transfiere 20 dólares', '¿Cuánto tengo en la cartera?', 'manda 3 AUKA', 'paga la luz', 'Send 10 USD', 'Remind me to pay the Orden Global invoice']) {
     it(`«${f}» se confirma`, () => assert.equal(esFraseDeDinero(f), true));
   }
-  for (const f of ['abre Excel', 'pon The Verve en Spotify', 'apaga la música', 'abre la página de noticias', 'recuérdame llamar a mi hermana']) {
+  for (const f of ['abre Excel', 'pon The Verve en Spotify', 'apaga la música', 'abre la página de noticias', 'recuérdame llamar a mi hermana', 'Dime 2 ideas para la cena', '¿Cuánto mide la Luna?', 'Mándale un mensaje a mi mamá', 'Llámame en 30 segundos', 'pon una alarma a las 5']) {
     it(`«${f}» no`, () => assert.equal(esFraseDeDinero(f), false));
   }
 });

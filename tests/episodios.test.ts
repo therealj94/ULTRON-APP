@@ -281,3 +281,14 @@ test('conocer con el modelo (falso) y sin él', async () => {
   assert.equal(r2.via, 'reglas');
   assert.equal(r2.datos[0].dato, 'Su hijo se llama Mateo');
 });
+
+test('«Borrar todo lo que te conté» olvida todo lo aprendido de esa persona y nada de otra (PRI 001)', async () => {
+  await C.incorporarDatos('borra@x.com', [{ categoria: 'familia', dato: 'Su hija se llama Lucía', clave: 'hija' }, { categoria: 'rutinas', dato: 'Vive en La Ceiba', clave: 'vive' }], { fuente: 'modelo' });
+  await C.incorporarDatos('queda@x.com', [{ categoria: 'familia', dato: 'Su hermano se llama Pedro', clave: 'hermano' }], { fuente: 'modelo' });
+  assert.ok((await C.queSeDe('borra@x.com')).total >= 2);
+  const r = await C.olvidarTodo('borra@x.com');
+  assert.ok(r.borrados >= 2);
+  assert.equal((await C.queSeDe('borra@x.com')).total, 0);
+  assert.equal(C.bloqueConocer('borra@x.com').includes('Lucía'), false, 'ya no entra al prompt');
+  assert.equal((await C.queSeDe('queda@x.com')).total, 1, 'lo de otra persona no se toca');
+});
