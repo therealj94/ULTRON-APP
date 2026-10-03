@@ -65,6 +65,11 @@ export type CallbacksTurbo = {
    */
   onPartialEncima?: (texto: string) => void;
   onLevel?: (nivel01: number) => void;
+  /**
+   * Cuánto tardó una frase (para los logs del teléfono): `vozMs` lo que habló la persona, `trasCallarMs`
+   * desde que dejó de hablar hasta que la frase salió, y por dónde salió (en vivo, confirmada o respaldo).
+   */
+  onMedida?: (m: { vozMs: number; trasCallarMs: number; via: 'vivo' | 'confirmada' | 'respaldo' }) => void;
   onFinal?: (texto: string) => void;
   onListeningChange?: (on: boolean) => void;
   onError?: (motivo: string) => void;
@@ -100,6 +105,9 @@ export const TIEMPOS = {
 };
 
 const ABIERTO = 1;
+
+/** Cuándo calló la persona y cuánto habló (para medir lo que tarda la frase en salir). */
+type Medida = { calloEn: number; vozMs: number };
 
 export class MotorTurbo {
   private cb: CallbacksTurbo = {};
@@ -141,7 +149,7 @@ export class MotorTurbo {
   private conectando = false;
   private cola: string[] = [];
   /** Frases cerradas que esperan su texto. `tragar`: no es de la persona (eco oído encima): no se entrega. */
-  private pendientes: { trozos: string[]; vence: ReturnType<typeof setTimeout>; tragar?: boolean }[] = [];
+  private pendientes: { trozos: string[]; vence: ReturnType<typeof setTimeout>; tragar?: boolean; m?: Medida }[] = [];
   private inactivo: ReturnType<typeof setTimeout> | null = null;
   private fallosVivo = 0;
   private sinVivoHasta = 0;
@@ -447,6 +455,7 @@ export class MotorTurbo {
     if (this.encima) return this.tragarFrase();
     this.enVoz = false;
     const trozos = this.trozosFrase;
+    const m: Medida = { calloEn: this.ultimaVozEn, vozMs: Math.max(0, this.ultimaVozEn - this.vozDesde) };
     this.trozosFrase = [];
     this.prerollo = [];
     this.parcial = '';
@@ -454,11 +463,12 @@ export class MotorTurbo {
       this.enviarAudio(SILENCIO_COMMIT_B64, true);
       const p = {
         trozos,
+        m,
         vence: setTimeout(() => this.vencioFinal(p), this.t.esperaFinalMs),
       };
       this.pendientes.push(p);
     } else {
-      this.respaldo(trozos);
+      this.respaldo(trozos, m);
     }
     this.programarInactivo();
   }
@@ -603,7 +613,7 @@ export class MotorTurbo {
       }
       const todo = `${this.prefijo}${texto}`;
       this.prefijo = '';
-      this.entregar(todo, p.trozos);
+      this.entregar(todo, p.trozos, p.m);
       return;
     }
     if (/error|exceeded|limited|throttl/i.test(tipo)) {
@@ -638,7 +648,7 @@ export class MotorTurbo {
     this.pendientes = [];
     for (const p of pendientes) {
       clearTimeout(p.vence);
-      this.respaldo(p.trozos);
+      this.respaldo(p.trozos, p.m);
     }
     if (contarFallo) this.contarFalloVivo();
     // A media frase: se reconecta y se vuelve a mandar todo lo que va de la frase.
@@ -658,7 +668,7 @@ export class MotorTurbo {
     this.pendientes = [];
     for (const p of pendientes) {
       clearTimeout(p.vence);
-      this.respaldo(p.trozos);
+      this.respaldo(p.trozos, p.m);
     }
   }
 
@@ -702,30 +712,47 @@ export class MotorTurbo {
   }
 
   // ── entregar la frase ─────────────────────────────────────────────────────────────────────────
-  private entregar(textoTurbo: string, trozos: string[]) {
+  private entregar(textoTurbo: string, trozos: string[], m?: Medida) {
     this.cadena = this.cadena
       .then(async () => {
         let texto = limpiarFinal(textoTurbo);
         if (!texto) return;
+        let via: 'vivo' | 'confirmada' = 'vivo';
         if (esFraseDeDinero(texto) && trozos.length) {
           const confirmado = await this.conTope(this.deps.transcribirWav(wavDeTrozos(trozos), true), this.t.confirmarMs);
           const limpio = limpiarFinal(confirmado || '');
           if (limpio) texto = limpio;
+          via = 'confirmada';
         }
-        if (this.quiere && !this.pausado) this.cb.onFinal?.(texto);
+        if (this.quiere && !this.pausado) {
+          this.medir(m, via);
+          this.cb.onFinal?.(texto);
+        }
       })
       .catch(() => {});
   }
 
   /** La frase entera por /api/stt (el servidor la oye con Turbo y, si es de dinero, la confirma). */
-  private respaldo(trozos: string[]) {
+  private respaldo(trozos: string[], m?: Medida) {
     if (trozos.length < 3) return;
     this.cadena = this.cadena
       .then(async () => {
         const texto = limpiarFinal((await this.conTope(this.deps.transcribirWav(wavDeTrozos(trozos), false), 16_000)) || '');
-        if (texto && this.quiere && !this.pausado) this.cb.onFinal?.(texto);
+        if (texto && this.quiere && !this.pausado) {
+          this.medir(m, 'respaldo');
+          this.cb.onFinal?.(texto);
+        }
       })
       .catch(() => {});
+  }
+
+  private medir(m: Medida | undefined, via: 'vivo' | 'confirmada' | 'respaldo') {
+    if (!m) return;
+    try {
+      this.cb.onMedida?.({ vozMs: m.vozMs, trasCallarMs: Math.max(0, this.ahora() - m.calloEn), via });
+    } catch {
+      /* medir nunca rompe la frase */
+    }
   }
 
   private conTope<T>(p: Promise<T>, ms: number): Promise<T | null> {

@@ -298,7 +298,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const [toolHint, setToolHint] = useState('');
   const [winkSide, setWinkSide] = useState<'L' | 'R'>('L');
   const [canciones, setCanciones] = useState<Cancion[]>(CANCIONES_LOCAL);
-  const [settings, setSettings] = useState<Pick<AppSettings, 'sttEngine' | 'proactive' | 'sfx' | 'interrumpir'>>({ sttEngine: 'turbo', proactive: true, sfx: true, interrumpir: true });
+  const [settings, setSettings] = useState<Pick<AppSettings, 'sttEngine' | 'proactive' | 'sfx' | 'interrumpir'>>({ sttEngine: 'turbo', proactive: true, sfx: true, interrumpir: false });
   const [camPerm, requestCam] = useCameraPermissions();
   /** 0 nadie · 0.5 alguien delante · 1 alguien mirando la pantalla (la cara se ilumina). */
   const [atencion, setAtencion] = useState(0);
@@ -432,6 +432,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
    * no llega al cerebro, la marca no queda pegada para uno posterior (revisión de Codex en #133).
    */
   const interrumpidaTurno = useRef<string | null>(null);
+  /** Cuándo entregó el oído la última frase (para medir cuánto tarda la respuesta en sonar). */
+  const fraseOidaEn = useRef(0);
+  const turnosHablados = useRef(0);
   const bubbleOp = useRef(new Animated.Value(0)).current;
   /** Última escena de la cámara local (descripción en español para el cerebro). */
   const escenaRef = useRef<Escena | null>(null);
@@ -563,6 +566,14 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   }, [idleStatus, restFace]);
 
   const onAudio = useCallback((f: FaceState) => {
+    // Cuánto tardó en contestar con voz desde que el oído entregó la frase (José, 3-oct: «tarda mucho»).
+    // Cada pocos turnos hablados se mandan las migas: así se ve en los logs del servidor sin esperar un error.
+    if (fraseOidaEn.current) {
+      miga(`mesa: contestó con voz ${Date.now() - fraseOidaEn.current} ms después de la frase`);
+      fraseOidaEn.current = 0;
+      turnosHablados.current += 1;
+      if (turnosHablados.current === 3 || turnosHablados.current % 8 === 0) reportarEstado(`voz: ${turnosHablados.current} turnos hablados`);
+    }
     pauseMicForTts(true);
     speakingRef.current = true;
     avisarMesa({ hablando: true, pensando: false });
@@ -1605,6 +1616,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       },
       onFinal: (t) => {
         setPartial('');
+        fraseOidaEn.current = Date.now();
         onSpeechFinal(t);
       },
       // Le hablaron encima (lib/speech.ts ya decidió que no es su eco ni un «ajá»): se calla YA, como una
@@ -1655,8 +1667,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       // La primera vez (o cuando el recorrido creció): la ventana con «Empezar» / «Después».
       const verTutorial = tocaOfrecerRecorrido(s, user.correo);
       setModoMesa(s.modoMesa === 'trabajar' ? 'trabajar' : 'charlar');
-      setSettings({ sttEngine: s.sttEngine, proactive: s.proactive, sfx: s.sfx, interrumpir: s.interrumpir !== false });
-      setOirEncima(s.interrumpir !== false);
+      setSettings({ sttEngine: s.sttEngine, proactive: s.proactive, sfx: s.sfx, interrumpir: s.interrumpir === true });
+      setOirEncima(s.interrumpir === true);
       // El orbe es su cara desde el 2-oct; los anillos, solo si la persona los eligió después.
       setCara(s.cara === 'anillos' && s.caraElegida ? 'anillos' : 'orbe');
       setAvatar(s.avatar);
@@ -2095,7 +2107,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     const next = !settings.interrumpir;
     setSettings((p) => ({ ...p, interrumpir: next }));
     setOirEncima(next);
-    await saveSettings({ interrumpir: next });
+    await saveSettings({ interrumpir: next, interrumpirElegido: true });
   };
   const toggleProactive = async () => {
     const next = !settings.proactive;

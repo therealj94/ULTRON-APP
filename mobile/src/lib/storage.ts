@@ -72,6 +72,12 @@ export type AppSettings = {
    * mientras AU-RA habla (con cancelación de eco) y si la persona la interrumpe, se calla y la escucha.
    */
   interrumpir: boolean;
+  /**
+   * La persona lo eligió en Ajustes. Sin esto vale «no»: el 3-oct (OTA de la mañana) quedó «sí» por
+   * omisión y en el Samsung de José fue peor (su eco la cortaba a las ~20 letras y el micrófono en modo
+   * llamada tardaba en oír). Ese «sí» guardado sin elegirlo no cuenta.
+   */
+  interrumpirElegido?: boolean;
   /** Su cara: el orbe de partículas (desde el 2-oct) o los anillos (Skia). «sala» quedó de antes: es el orbe. */
   cara: 'orbe' | 'anillos' | 'sala';
   /** La persona eligió su cara en Ajustes (los «anillos» guardados por omisión antes del orbe no cuentan). */
@@ -117,7 +123,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   sttEngine: 'turbo',
   proactive: true,
   sfx: true,
-  interrumpir: true,
+  interrumpir: false,
   cara: 'orbe',
   avatar: 'aura',
   avatarElegido: false,
@@ -191,6 +197,7 @@ export async function loadSettings(): Promise<AppSettings> {
     s.idioma = normalizarIdioma(s.idioma);
     // Desde el 2-oct el oído es Turbo (José: «la mejor versión de todas»), salvo que la persona haya elegido otro.
     if (!s.oidoElegido) s.sttEngine = 'turbo';
+    if (!s.interrumpirElegido) s.interrumpir = false;
     return s;
   } catch {
     return DEFAULT_SETTINGS;

@@ -349,6 +349,29 @@ describe('Interrumpir: el oído Turbo sigue abierto mientras AU-RA habla', () =>
   });
 });
 
+describe('Oído: cuánto tarda cada frase (para los logs)', () => {
+  it('mide lo que habló y lo que tardó la frase en salir desde que calló', async () => {
+    const b = banco();
+    const medidas: any[] = [];
+    b.motor.setCallbacks({ onFinal: (t) => b.finales.push(t), onMedida: (m) => medidas.push(m) });
+    b.motor.activar();
+    await espera();
+    b.silencio(10);
+    b.voz(12);
+    await espera();
+    const w = b.ws[0];
+    w.decir({ message_type: 'partial_transcript', text: 'abre Excel' });
+    b.silencio(5);
+    w.decir({ message_type: 'committed_transcript', text: 'Abre Excel.' });
+    await espera();
+    assert.deepEqual(b.finales, ['Abre Excel.']);
+    assert.equal(medidas.length, 1);
+    assert.equal(medidas[0].via, 'vivo');
+    assert.equal(medidas[0].vozMs, 1100, 'de la primera a la última voz: 12 trozos de 0,1 s');
+    assert.equal(medidas[0].trasCallarMs, 500, 'los 0,5 s de silencio que cierran la frase');
+  });
+});
+
 describe('Interrumpir: el cerebro sabe dónde quedó', () => {
   it('lee lo que oyó del cuerpo del turno (y no se lo cree entero)', () => {
     assert.equal(oidoAlInterrumpir({}), null);

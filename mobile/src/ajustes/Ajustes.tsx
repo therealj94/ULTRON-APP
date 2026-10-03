@@ -425,7 +425,7 @@ function SeccionesMesa({ mesa }: { mesa: NonNullable<ReturnType<typeof mesaAjust
           titulo={tr('Interrumpir hablando', 'Interrupt by talking')}
           detalle={
             datos.sttEngine === 'turbo'
-              ? tr('Háblale encima y se calla para escucharte, como una persona. Un «ajá» no la corta.', 'Talk over it and it stops to listen, like a person. An “uh-huh” won’t cut it off.')
+              ? tr('En prueba: háblale encima y se calla para escucharte. Si se corta sola o tarda en oírte, apágalo.', 'Experimental: talk over it and it stops to listen. If it cuts itself off or hears you late, turn it off.')
               : tr('Funciona con el oído Turbo.', 'Works with Turbo hearing.')
           }
           icono="microfono"

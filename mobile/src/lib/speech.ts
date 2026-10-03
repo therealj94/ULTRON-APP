@@ -15,6 +15,7 @@ import * as native from './speechNative';
 import * as turbo from './speechTurbo';
 import { esInterrupcionReal, quitarEco } from './interrupcion';
 import { registroVoz } from './tts';
+import { miga } from './reporte';
 
 export type SttEngine = 'turbo' | 'native' | 'cloud';
 
@@ -39,10 +40,10 @@ export type SpeechCallbacks = {
 };
 
 /**
- * Hablarle encima (Ajustes, sí por omisión): con Turbo el micrófono sigue abierto mientras AU-RA habla,
+ * Hablarle encima (Ajustes, NO por omisión desde el 3-oct: en el Samsung de José su eco la cortaba): con Turbo el micrófono sigue abierto mientras AU-RA habla,
  * con la cancelación de eco del teléfono, y si la persona la interrumpe se calla y la escucha.
  */
-let oirEncima = true;
+let oirEncima = false;
 /** Lo que AU-RA decía cuando la interrumpieron: la frase de la persona puede empezar con ese eco. */
 let ecoAlCortar: string[] | null = null;
 
@@ -113,6 +114,8 @@ function wire() {
       const dichos = registroVoz.dichos();
       if (!esInterrupcionReal(t, dichos) || !turbo.turboTomarTurno()) return;
       ecoAlCortar = dichos;
+      // Para ver en los logs si fue la persona o su eco: lo que oyó y lo que ella decía.
+      miga(`oído: la cortó «${t.slice(0, 50)}» (decía «${(dichos[dichos.length - 1] || '').slice(0, 50)}»)`);
       callbacks.onBargeIn?.(t);
       callbacks.onPartial?.(quitarEco(t, dichos));
     },
@@ -122,6 +125,7 @@ function wire() {
       const texto = eco ? quitarEco(t, eco) : t;
       if (texto) callbacks.onFinal?.(texto);
     },
+    onMedida: (m) => miga(`oído: frase de ${(m.vozMs / 1000).toFixed(1)} s lista ${m.trasCallarMs} ms tras callar (${m.via})`),
     onSpeechStart: () => {
       // Una frase nueva oída sin interrupción de por medio ya no lleva el eco de antes.
       if (!turbo.turboOyendoEncima()) ecoAlCortar = null;
