@@ -475,7 +475,9 @@ function FilaMovimiento({ m, oculto, primera }: { m: Movimiento; oculto: boolean
 function Enviar() {
   const p = useTema();
   const [q, setQ] = useState('');
-  const contactos = useMemo(() => RELEVO.contactosConocidos(), []);
+  // Se rehace cuando PULSE2CHAT conoce a alguien más (las charlas terminan de cargar, o se agrega un contacto).
+  const [contactos, setContactos] = useState(() => RELEVO.contactosConocidos());
+  useEffect(() => RELEVO.escucharConocidos(() => setContactos(RELEVO.contactosConocidos())), []);
   const lista = useMemo(() => {
     const n = RELEVO.normalizar(q);
     return (n ? contactos.filter((c) => RELEVO.normalizar(`${c.nombre} ${c.correo}`).includes(n)) : contactos).slice(0, 30);

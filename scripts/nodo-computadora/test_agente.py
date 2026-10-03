@@ -182,6 +182,36 @@ class PausaYControl(Base):
             agente.accion_persona(t, {'tipo': 'click', 'x': 10, 'y': 10})
         self.assertEqual(self.hechas, [], 'nada se tocó')
 
+    def test_la_pantalla_se_captura_con_el_candado_y_nunca_durante_un_reinicio(self):
+        t = self.tarea()
+        antes = (agente.exigir, agente.captura, agente.miniatura, agente.ESPERA_ESCRITORIO_S)
+        visto = []
+        agente.exigir = lambda req: None
+        agente.captura = lambda: visto.append(agente.ESCRITORIO_LOCK.locked()) or (b'png', 10, 10)
+        agente.miniatura = lambda png, ancho: 'eA=='
+        agente.ESPERA_ESCRITORIO_S = 0.05
+        agente.TAREAS[t.id] = t
+        try:
+            agente.ESCRITORIO_LOCK.acquire()  # otro dueño: su escritorio se está preparando
+            try:
+                with self.assertRaises(agente.HTTPException) as e:
+                    agente.pantalla_tarea(t.id, None)
+                self.assertEqual(e.exception.status_code, 409)
+            finally:
+                agente.ESCRITORIO_LOCK.release()
+            self.assertEqual(visto, [], 'durante el reinicio no se captura nada')
+            agente.pantalla_tarea(t.id, None)
+            self.assertEqual(visto, [True], 'la captura va dentro del candado')
+            self.assertFalse(agente.ESCRITORIO_LOCK.locked(), 'y lo suelta')
+            agente.DUENO_ACTUAL['v'] = 'otra-persona'
+            with self.assertRaises(agente.HTTPException):
+                agente.pantalla_tarea(t.id, None)
+            self.assertEqual(len(visto), 1)
+            self.assertFalse(agente.ESCRITORIO_LOCK.locked(), 'también lo suelta al negar')
+        finally:
+            agente.exigir, agente.captura, agente.miniatura, agente.ESPERA_ESCRITORIO_S = antes
+            agente.TAREAS.pop(t.id, None)
+
     def test_pausa_y_reanuda(self):
         t = self.tarea()
         t.avisar(pausa=True)

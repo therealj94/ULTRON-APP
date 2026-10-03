@@ -518,6 +518,8 @@ TURNO = threading.Lock()  # un escritorio: una tarea a la vez, las demás espera
 # cae en el escritorio del dueño siguiente, ni se entrega su pantalla mientras se reinicia (auditoría, 3-oct).
 ESCRITORIO_LOCK = threading.Lock()
 REINICIANDO = {'v': False}
+# Lo más que una captura espera al candado del escritorio (si se está reiniciando, mejor 409 y que vuelva a pedir).
+ESPERA_ESCRITORIO_S = 2.0
 # De quién fue la última tarea en el escritorio. None al arrancar: la primera tarea también estrena escritorio.
 DUENO_ACTUAL = {'v': None}
 
@@ -920,10 +922,17 @@ def pantalla_tarea(id: str, req: Request):
     t = viva(tarea(req, id))
     if t.estado == 'en_cola':
         raise HTTPException(409, 'todavía no empieza')
-    # Nunca la pantalla de otro dueño (ni la del anterior mientras se reinicia).
-    if REINICIANDO['v'] or DUENO_ACTUAL['v'] != t.dueno:
+    # Nunca la pantalla de otro dueño (ni la del anterior mientras se reinicia). El mismo candado que el reinicio
+    # en correr(): la revisión del dueño y la captura van juntas, sin que un reinicio se cuele en medio. Si el
+    # escritorio se está preparando, no se espera: 409 y el teléfono vuelve a pedir.
+    if not ESCRITORIO_LOCK.acquire(timeout=ESPERA_ESCRITORIO_S):
         raise HTTPException(409, 'preparando su escritorio')
-    png, _, _ = captura()
+    try:
+        if REINICIANDO['v'] or DUENO_ACTUAL['v'] != t.dueno:
+            raise HTTPException(409, 'preparando su escritorio')
+        png, _, _ = captura()
+    finally:
+        ESCRITORIO_LOCK.release()
     jpg = base64.b64decode(miniatura(png, 960))
     return Response(jpg, media_type='image/jpeg', headers={'Cache-Control': 'no-store'})
 
