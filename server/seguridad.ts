@@ -671,14 +671,15 @@ function claveDemo(plataforma: Plataforma): string {
 }
 
 /**
- * ¿La llave FIJA de Dr Electrum abre? (auditoría 3-oct, SEC01). Dr Electrum es de la junta y sus datos
- * son reales: una llave que no vence ni se revoca y se pasa de mano en mano no puede abrirlos en
- * producción. Para que alguien lo PRUEBE están los códigos `DE-…` (1, 5 o 24 h, revocables, con el
- * nombre de la persona: server/cuentas.ts), que entran como sesión y vencen solos. La llave fija queda
- * para desarrollo, o en producción solo si se pide a propósito con `ELECTRUM_LLAVE_FIJA=1`.
+ * ¿La llave FIJA de Dr Electrum abre? (auditoría 3-oct, SEC01). Dr Electrum es solo de la junta y sus
+ * datos son reales: una llave que no vence ni se revoca y se pasa de mano en mano no abre nada en
+ * producción, y no hay variable que la reactive (una puerta que se puede volver a abrir sigue siendo
+ * una puerta). Para que alguien lo PRUEBE están los códigos `DE-…` que crea el aprobador (1, 5 o 24 h,
+ * revocables, con el nombre de la persona: server/cuentas.ts), que entran como sesión del padrón y
+ * vencen solos. La llave fija queda solo para desarrollo (AURA_DEV=1 / NODE_ENV=test).
  */
 export function llaveFijaElectrumPermitida(env: NodeJS.ProcessEnv = process.env): boolean {
-  return modoDesarrollo(env) || env.ELECTRUM_LLAVE_FIJA === '1';
+  return modoDesarrollo(env);
 }
 
 let avisadoLlaveFija = false;
@@ -692,7 +693,7 @@ export function plataformaAutorizada(req: Request, plataforma: Plataforma): bool
     if (plataforma !== 'electrum' || llaveFijaElectrumPermitida()) return true;
     if (!avisadoLlaveFija) {
       avisadoLlaveFija = true;
-      console.warn('[Electrum] alguien trajo la llave fija y en producción ya no abre: para probar, un código DE- (ELECTRUM_LLAVE_FIJA=1 la reactiva).');
+      console.warn('[Electrum] alguien trajo la llave fija y en producción ya no abre: para probar, un código DE-.');
     }
     return false;
   }

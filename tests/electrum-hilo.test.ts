@@ -311,11 +311,10 @@ const SERVIDOR = path.join(process.cwd(), 'build-server', 'server.cjs');
 const HAY_BINARIO = fs.existsSync(SERVIDOR);
 
 /**
- * Lo mismo, de punta a punta: dos visitantes con la llave de la demo contra el binario, y el nodo de
- * mentira de arriba mirando qué historial le llega al modelo en cada turno. Es la única forma de
- * saber que TODAS las rutas (turno, turno en vivo y el borrado) usan la misma llave de hilo.
+ * De punta a punta contra el binario de producción: la llave fija de la demo ya no abre ninguna ruta
+ * (turno, turno en vivo, borrado) y el nodo de mentira de arriba confirma que nada llegó al modelo.
  */
-test('servidor: los visitantes de la demo no se ven entre sí', { skip: HAY_BINARIO ? false : 'sin build-server/server.cjs: correr `npm run build` antes' }, async (t) => {
+test('servidor de producción: la llave fija de la demo ya no abre Dr Electrum (SEC01)', { skip: HAY_BINARIO ? false : 'sin build-server/server.cjs: correr `npm run build` antes' }, async (t) => {
   const puerto = 7840 + Math.floor(Math.random() * 40);
   const base = `http://127.0.0.1:${puerto}`;
   const proc: ChildProcess = spawn('node', [SERVIDOR], {
@@ -325,7 +324,7 @@ test('servidor: los visitantes de la demo no se ven entre sí', { skip: HAY_BINA
       PORT: String(puerto),
       PLATAFORMA: 'electrum',
       ELECTRUM_CLAVE: 'llave-de-la-demo',
-      // La llave fija ya no abre en producción sin pedirlo (SEC01): esta prueba es justo de ese modo.
+      // Aunque alguien deje esta variable puesta: en producción no hay forma de reabrir la llave.
       ELECTRUM_LLAVE_FIJA: '1',
       ULTRON_SESION_SECRETO: 'llave-de-sesion-de-la-prueba-0123456789',
       ULTRON_NODO_URL: process.env.ULTRON_NODO_URL,
@@ -357,34 +356,19 @@ test('servidor: los visitantes de la demo no se ven entre sí', { skip: HAY_BINA
   }
   assert.ok(listo, 'el servidor no levantó');
 
-  const cabeceras = (agente: string) => ({ 'Content-Type': 'application/json', 'x-electrum-llave': 'llave-de-la-demo', 'User-Agent': agente });
-  const ANA = 'Mozilla/5.0 (iPhone) visitante-ana';
-  const BETO = 'Mozilla/5.0 (Windows) visitante-beto';
-  /** Un turno y lo que el modelo recibió en él (todo lo que le llegó al nodo, junto). */
-  const turno = async (agente: string, mensaje: string, ruta = '/api/electrum/turno') => {
+  // Antes aquí se probaba que dos visitantes con la llave no se veían entre sí. En producción ya no hay
+  // visitantes sin sesión: la llave fija no abre (los que prueban entran con un código DE-, que es una
+  // sesión con nombre). El aislamiento por visitante sigue probado arriba, sin servidor.
+  const cabeceras = { 'Content-Type': 'application/json', 'x-electrum-llave': 'llave-de-la-demo', 'User-Agent': 'Mozilla/5.0 visitante' };
+  for (const ruta of ['/api/electrum/turno', '/api/electrum/turno/stream']) {
     NODO.length = 0;
-    const r = await fetch(`${base}${ruta}`, { method: 'POST', headers: cabeceras(agente), body: JSON.stringify({ mensaje }) });
-    assert.equal(r.status, 200, `${ruta} contestó ${r.status}`);
-    await r.text();
-    return JSON.stringify(NODO);
-  };
-
-  await t.test('lo que pregunta Ana no le llega como contexto a Beto', async () => {
-    await turno(ANA, 'soy Ana y miro el expediente Quebrada Seca');
-    const vioBeto = await turno(BETO, '¿qué concesiones hay en Danlí?');
-    assert.ok(!vioBeto.includes('Quebrada Seca'), 'el modelo de Beto no recibió la conversación de Ana');
-    const vioAna = await turno(ANA, '¿y cuándo vence?', '/api/electrum/turno/stream');
-    assert.ok(vioAna.includes('Quebrada Seca'), 'el turno en vivo de Ana sí trae su propio hilo');
-  });
-
-  await t.test('el borrado de Ana solo borra lo de Ana', async () => {
-    const r = await fetch(`${base}/api/electrum/hilo`, { method: 'DELETE', headers: cabeceras(ANA) });
-    assert.equal(r.status, 200);
-    const vioAna = await turno(ANA, '¿de qué hablábamos?');
-    assert.ok(!vioAna.includes('Quebrada Seca'), 'el hilo de Ana quedó limpio');
-    const vioBeto = await turno(BETO, '¿y la segunda?');
-    assert.ok(vioBeto.includes('Danlí'), 'el de Beto sigue entero');
-  });
+    const r = await fetch(`${base}${ruta}`, { method: 'POST', headers: cabeceras, body: JSON.stringify({ mensaje: '¿qué concesiones hay en Danlí?' }) });
+    assert.equal(r.status, 401, `${ruta} con la llave fija contestó ${r.status}`);
+    assert.equal((await r.json()).code, 'sesion_requerida');
+    assert.equal(NODO.length, 0, 'ni una palabra llegó al modelo');
+  }
+  const borrar = await fetch(`${base}/api/electrum/hilo`, { method: 'DELETE', headers: cabeceras });
+  assert.equal(borrar.status, 401);
 });
 
 test('si preguntan qué dice un informe, los trozos de ESE informe llegan pegados a la pregunta', async (t) => {

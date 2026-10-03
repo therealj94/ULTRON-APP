@@ -82,8 +82,7 @@ test('SEC01: en producción la llave fija de Dr Electrum ya no abre; para probar
     assert.equal(plataformaAutorizada(conLlave(LLAVE), 'electrum'), false, 'un AURA_DEV olvidado no la reabre');
   });
   conEntorno({ NODE_ENV: 'production', ELECTRUM_CLAVE: LLAVE, ELECTRUM_LLAVE_FIJA: '1' }, () => {
-    assert.equal(plataformaAutorizada(conLlave(LLAVE), 'electrum'), true, 'solo si se pide a propósito');
-    assert.equal(plataformaAutorizada(conLlave('otra-llave-cualquiera-123456'), 'electrum'), false);
+    assert.equal(plataformaAutorizada(conLlave(LLAVE), 'electrum'), false, 'ninguna variable la reabre en producción');
   });
   conEntorno({ AURA_DEV: '1', ELECTRUM_CLAVE: LLAVE }, () => {
     assert.equal(plataformaAutorizada(conLlave(LLAVE), 'electrum'), true, 'en desarrollo sigue sirviendo');

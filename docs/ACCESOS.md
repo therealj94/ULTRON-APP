@@ -157,6 +157,6 @@ Para que alguien pruebe Dr Electrum sin cuenta. El aprobador (`CUENTAS_APROBADOR
 - Solo en Dr Electrum: en AU-RA cualquier sesión abre la mesa de la junta, y los dos servicios
   firman con secretos distintos, así que una sesión de invitado de Electrum no vale en AU-RA.
 - La llave de demostración fija (`ELECTRUM_CLAVE`) ya **no abre en producción** (auditoría 3-oct,
-  SEC01: no vence ni se revoca, y los datos de Electrum son reales). Probar es con código. Solo
-  sirve en desarrollo, o en producción si se pone a propósito `ELECTRUM_LLAVE_FIJA=1`. Lo que tiene
-  forma de código entra como código en el mismo campo.
+  SEC01: no vence ni se revoca, y los datos de Electrum son reales), y ninguna variable la reactiva.
+  Probar es con código. Solo sirve en desarrollo. Lo que tiene forma de código entra como código en
+  el mismo campo.
