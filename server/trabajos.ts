@@ -666,15 +666,35 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
         ack = aplicado ? 'aplicado' : 'recibido';
         cambio = aplicado ? { estado: 'paused', pasoActual: 'En pausa: no hago nada hasta que la reanudes.' } : { estado: 'pausing', pasoActual: 'Pidiendo la pausa a tu computadora…' };
       } else if (control === 'reanudar') {
-        if (pcId && d.computadora?.reanudar) await d.computadora.reanudar(dueno, pcId).catch(() => undefined);
+        // Si su computadora no la reanuda (caída, sin esa capacidad), no se finge: sigue en pausa.
+        if (pcId && d.computadora?.reanudar) {
+          try {
+            await d.computadora.reanudar(dueno, pcId);
+          } catch {
+            return res.status(409).json({ error: 'Tu computadora no pudo reanudarla ahora; sigue en pausa.', codigo: 'no-reanudable', tarea: vistaTarea(reg, t0), honesto: true });
+          }
+        }
         cambio = { estado: reg.antesDePausa && !esTerminal(reg.antesDePausa) && reg.antesDePausa !== 'pausing' ? reg.antesDePausa : 'running', pasoActual: 'Reanudada' };
       } else {
-        // Cancelar impide efectos futuros; lo que ya pasó queda en el resultado (invariante 8).
-        if (pcId && d.computadora?.parar) await d.computadora.parar(dueno, pcId).catch(() => undefined);
+        // Cancelar impide efectos futuros; lo que ya pasó queda en el resultado (invariante 8). Con su
+        // computadora, la parada la confirma el nodo: si no pudo, no se finge; si una acción ya despachada
+        // sigue corriendo (`draining`/`fenced`), queda `cancelling` y la reconciliación la cierra con lo que pase.
+        let faseParada: string | null = null;
+        if (pcId && d.computadora?.parar) {
+          try {
+            const r = (await d.computadora.parar(dueno, pcId)) as { fase?: string | null } | undefined;
+            faseParada = r?.fase ?? null;
+          } catch {
+            return res.status(409).json({ error: 'Tu computadora no pudo pararla ahora; sigue trabajando.', codigo: 'no-cancelable', tarea: vistaTarea(reg, t0), honesto: true });
+          }
+        }
         const vinc = reg.decision?.vinculo?.tipo === 'borrador' ? reg.decision.vinculo : null;
         if (vinc && d.borradores?.vigente(dueno, vinc.canal, vinc.ambito)?.intento === vinc.intento) await d.borradores.descartar(dueno, vinc.canal, vinc.ambito, vinc.intento).catch(() => undefined);
         const hechas = reg.resueltas.filter((x) => x.operacion);
-        cambio = {
+        if (faseParada && faseParada !== 'quiescent') {
+          ack = 'recibido';
+          cambio = { estado: 'cancelling', pasoActual: 'Parando en tu computadora: espero a que termine lo que ya estaba haciendo.' };
+        } else cambio = {
           estado: 'cancelled',
           pasoActual: null,
           resultado: {

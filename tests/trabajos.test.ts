@@ -251,7 +251,7 @@ test('adaptador de la tarea en curso: mismo id, progreso con denominador real y 
 
 type Llamadas = { enviar: number; descartar: number; accionesTc: string[]; pausarPc: string[]; pararPc: string[] };
 
-function arnes(o: { salida?: SalidaEnvio; tc?: TareaEnCursoMin[]; misiones?: MisionComputadoraMin[]; vigente?: (canal: string, ambito: string) => string | null; ahora?: () => number; pausarPc?: () => Promise<unknown> } = {}) {
+function arnes(o: { salida?: SalidaEnvio; tc?: TareaEnCursoMin[]; misiones?: MisionComputadoraMin[]; vigente?: (canal: string, ambito: string) => string | null; ahora?: () => number; pausarPc?: () => Promise<unknown>; pararPc?: () => Promise<unknown>; reanudarPc?: () => Promise<unknown> } = {}) {
   const ll: Llamadas = { enviar: 0, descartar: 0, accionesTc: [], pausarPc: [], pararPc: [] };
   const pasa = ((_q: express.Request, _s: express.Response, nx: express.NextFunction) => nx()) as express.RequestHandler;
   const deps: DepsTrabajos = {
@@ -275,7 +275,11 @@ function arnes(o: { salida?: SalidaEnvio; tc?: TareaEnCursoMin[]; misiones?: Mis
         ll.pausarPc.push(id);
         return o.pausarPc ? o.pausarPc() : undefined;
       },
-      parar: async (_c, id) => void ll.pararPc.push(id),
+      parar: async (_c, id) => {
+        ll.pararPc.push(id);
+        return o.pararPc ? o.pararPc() : undefined;
+      },
+      reanudar: async () => (o.reanudarPc ? o.reanudarPc() : undefined),
     },
     borradores: {
       vigente: (_c, canal, ambito) => {
@@ -691,6 +695,60 @@ test('el «sí» o el «no» del chat cierran la decisión del borrador (sin dob
     assert.equal(h.ll.enviar, 0);
   } finally {
     h.cerrar();
+  }
+});
+
+test('cancelar y reanudar con su computadora: no se finge lo que el nodo no confirmó', async () => {
+  _usarAlmacenDurable(almacenEnMemoria());
+  const yo = correo();
+  const mision = (id: string): MisionComputadoraMin => ({ id, tareaId: id, instruccion: 'x', estado: 'trabajando', ok: null, inicio: T0, segundos: 5, resultado: null });
+  const r1 = await abrirEncargoComputadora(yo, 'web', 'Llena el formulario del banco');
+  await cerrarEncargoComputadora(yo, r1, { misionId: 'mis_c1', estado: 'unknown' });
+  // El nodo no pudo parar: sigue trabajando y se dice.
+  const no = arnes({ misiones: [mision('mis_c1')], pararPc: () => Promise.reject(new Error('nodo caído')) });
+  try {
+    const r = await no.pedir(`/api/trabajos/${r1!.id}/cancelar`, yo, {});
+    assert.equal(r.status, 409);
+    assert.equal(r.json.codigo, 'no-cancelable');
+    assert.equal(r.json.tarea.state, 'running', 'no se dice «cancelada» si no paró');
+  } finally {
+    no.cerrar();
+  }
+  // Una acción ya despachada sigue corriendo: «cancelling» hasta que la misión termine.
+  const tarda = arnes({ misiones: [mision('mis_c1')], pararPc: async () => ({ fase: 'draining' }) });
+  try {
+    const r = await tarda.pedir(`/api/trabajos/${r1!.id}/cancelar`, yo, {});
+    assert.equal(r.status, 200);
+    assert.equal(r.json.ack, 'recibido');
+    assert.equal(r.json.tarea.state, 'cancelling');
+    assert.equal(r.json.tarea.terminal, false, 'todavía no promete que no pasa nada más');
+    assert.equal((await tarda.pedir(`/api/trabajos/${r1!.id}`, yo)).json.tarea.state, 'cancelling', 'la misión sigue: no vuelve a «running»');
+  } finally {
+    tarda.cerrar();
+  }
+  const parada = arnes({ misiones: [{ ...mision('mis_c1'), estado: 'parada', ok: false }] });
+  try {
+    assert.equal((await parada.pedir(`/api/trabajos/${r1!.id}`, yo)).json.tarea.state, 'cancelled', 'el nodo confirmó la parada');
+  } finally {
+    parada.cerrar();
+  }
+  // Reanudar: si el nodo no la reanuda, sigue en pausa.
+  const r2 = await abrirEncargoComputadora(yo, 'web', 'Ordena las fotos del viaje');
+  await cerrarEncargoComputadora(yo, r2, { misionId: 'mis_c2', estado: 'unknown' });
+  const pausa = arnes({ misiones: [mision('mis_c2')], pausarPc: async () => ({ fase: 'quiescent' }) });
+  try {
+    assert.equal((await pausa.pedir(`/api/trabajos/${r2!.id}/pausar`, yo, {})).json.tarea.state, 'paused');
+  } finally {
+    pausa.cerrar();
+  }
+  const noReanuda = arnes({ misiones: [{ ...mision('mis_c2'), estado: 'pausada' }], reanudarPc: () => Promise.reject(new Error('nodo caído')) });
+  try {
+    const r = await noReanuda.pedir(`/api/trabajos/${r2!.id}/reanudar`, yo, {});
+    assert.equal(r.status, 409);
+    assert.equal(r.json.codigo, 'no-reanudable');
+    assert.equal(r.json.tarea.state, 'paused', 'no se dice «reanudada»');
+  } finally {
+    noReanuda.cerrar();
   }
 });
 

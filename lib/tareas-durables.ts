@@ -781,6 +781,8 @@ export function reconciliarConComputadora(reg: RegistroTarea, m: MisionComputado
   }
   // Pidió la pausa y el nodo todavía está vaciando la barrera: sigue «pausing» hasta que el nodo diga «pausada».
   if (reg.estado === 'pausing' && (estado === 'running' || estado === 'queued')) return null;
+  // Pidió cancelar y lo ya despachado sigue corriendo: queda «cancelling» hasta que la misión termine (arriba).
+  if (reg.estado === 'cancelling') return null;
   const paso = m.pregunta ? `Espera tu sí en la computadora: ${texto(m.pregunta, 140)}` : actual ? texto(actual.texto, 160) : reg.pasoActual ?? null;
   if (estado === reg.estado && paso === (reg.pasoActual ?? null) && JSON.stringify(prog) === JSON.stringify(reg.progreso ?? null)) return null;
   if (!transicionValida(reg.estado, estado)) return null;

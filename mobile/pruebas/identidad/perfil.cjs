@@ -241,5 +241,44 @@ const tic = () => new Promise((r) => setTimeout(r, 0));
     PERFIL.soltarPerfil();
   }
 
+  /* ── El reloj del teléfono va atrasado respecto al del servidor (Codex, PR 140) ── */
+  //  Borró «vive» y lo vuelve a escribir: la marca del servidor queda DESPUÉS de la hora del teléfono. Como este
+  //  teléfono ya vio la marca, su cambio nuevo va después de ella y vale (no se toma por una copia vieja).
+  {
+    const MARCA = Date.now() + 10 * 60_000;
+    const base = { apodo: 'Jo', avatar: 'aura', tema: 'oscuro', idioma: 'es', completado: true };
+    let servidor = { ...base, encuesta: { musica: 'Jazz' }, actualizado: 500 };
+    const puts = [];
+    globalThis.__api = async (_r, init) => {
+      if (init?.method === 'PUT') {
+        const b = JSON.parse(init.body);
+        puts.push(b);
+        const suprimidos = [];
+        const enc = { ...servidor.encuesta };
+        for (const [k, v] of Object.entries(b.encuesta || {})) {
+          if (k === 'vive' && v && v !== enc.vive && !((b.hechoEn || {})['encuesta.vive'] > MARCA)) {
+            suprimidos.push('encuesta.vive');
+            continue;
+          }
+          if (v) enc[k] = v;
+          else delete enc[k];
+        }
+        servidor = { ...servidor, encuesta: enc, actualizado: servidor.actualizado + 1 };
+        return { perfil: servidor, durable: true, suprimidos, supresiones: { 'encuesta.vive': MARCA } };
+      }
+      return { perfil: servidor, durable: true, disponible: true, supresiones: { 'encuesta.vive': MARCA } };
+    };
+    await PERFIL.cargarPerfil('j@prueba.local', { nombre: 'J' });
+    await tic();
+    PERFIL.guardarPerfil({ encuesta: { vive: 'Tocoa' } });
+    await tic();
+    await PERFIL.enviarPendiente();
+    const ult = puts.at(-1);
+    ok('reloj atrasado: el cambio de después de ver la marca sale con hora posterior a ella', ult?.hechoEn?.['encuesta.vive'] > MARCA, JSON.stringify(ult));
+    ok('…el servidor lo acepta', servidor.encuesta.vive === 'Tocoa', JSON.stringify(servidor.encuesta));
+    ok('…y aquí no se suelta', PERFIL.perfilActual().encuesta.vive === 'Tocoa', JSON.stringify(PERFIL.perfilActual().encuesta));
+    PERFIL.soltarPerfil();
+  }
+
   fin();
 })();

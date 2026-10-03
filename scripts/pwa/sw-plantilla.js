@@ -173,7 +173,12 @@ self.addEventListener('notificationclick', (e) => {
   e.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((ventanas) => {
       for (const v of ventanas) {
-        if (new URL(v.url).origin === self.location.origin && 'focus' in v) return v.focus();
+        if (new URL(v.url).origin === self.location.origin && 'focus' in v) {
+          // Ya abierta: se le dice a qué pantalla ir (src/10-infra/abrirDesdeAviso.ts) en vez de navegarla,
+          // que recargaría la app y cortaría una conversación en vivo.
+          if ('postMessage' in v) v.postMessage({ tipo: 'aura-abrir', abrir });
+          return v.focus();
+        }
       }
       return self.clients.openWindow(destino);
     })

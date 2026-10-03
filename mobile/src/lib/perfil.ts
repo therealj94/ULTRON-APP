@@ -254,6 +254,15 @@ export function hechoEnDe(lote: Partial<Perfil>, horas: HorasPendientes): HorasP
   return r;
 }
 
+/**
+ * La hora de un cambio hecho AQUÍ ahora. Si este teléfono ya vio la marca de ese campo, el cambio es posterior al
+ * borrado por definición: va después de la marca aunque el reloj del teléfono vaya atrasado respecto al del
+ * servidor (Codex, PR 140). Lo que se cambió antes de enterarse de la marca conserva su hora y sigue cayendo.
+ */
+export function horaDeCambio(campo: string, ahora: number, sup: Supresiones): number {
+  return Math.max(ahora, (sup[campo] || 0) + 1);
+}
+
 /** ¿Este campo de lo pendiente es una copia vieja? (lo cubre una marca y no se cambió aquí DESPUÉS de ella) */
 const viejo = (campo: string, sup: Supresiones, horas: HorasPendientes) => !!sup[campo] && !(horas[campo] > sup[campo]);
 
@@ -664,7 +673,7 @@ function aplicarYEncolar(cambios: Partial<Perfil>): Perfil | null {
   const nuevo = aplicarCambios(actual, cambios, Math.max(Date.now(), actual.actualizado + 1));
   pendiente = juntarCambios(pendiente || {}, cambios);
   const ahora = Date.now();
-  for (const c of camposDe(cambios)) horas[c] = ahora;
+  for (const c of camposDe(cambios)) horas[c] = horaDeCambio(c, ahora, supresiones);
   poner(nuevo);
   return nuevo;
 }

@@ -18,6 +18,7 @@ import { detectarIntencion } from './04-cerebro/intenciones';
 import { grabFrame, achicarFoto } from './04-cerebro/grabFrame';
 import { fijarCuentaMemoria, guardarHecho, olvidarTodo } from './09-estado/memoria';
 import { guardarTokenMesa, headersMesa } from './10-infra/sesionCliente';
+import { escucharAvisosTocados } from './10-infra/abrirDesdeAviso';
 import { ejecutarControl, interpretarControl, puertosWeb, respuestaAclaracion, type ControlVoz } from './03-voz/controles';
 import { escucharVueltaGenesis } from './10-infra/genesisWeb';
 import { aplicarVersionNueva, registrarPwa } from './10-infra/pwa';
@@ -188,6 +189,8 @@ export default function App() {
     return () => clearTimeout(t);
   }, [opinion]);
   const bubbleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Un aviso tocado lleva a su pantalla («computadora» → trabajar), también con la ventana ya abierta.
+  useEffect(() => escucharAvisosTocados((d) => setModoMesa(d)), []);
 
   useEffect(() => {
     onLip(setLipLevel);
