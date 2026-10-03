@@ -330,6 +330,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const conversando = voz.vista.montada;
   const convSilencio = voz.vista.silenciada;
   const estadoConv = voz.vista.estado;
+  /** La conversación entendió a la persona y el agente todavía no contesta (sesion.ts, CALL04). */
+  const convPensando = voz.vista.pensando;
   /**
    * La llamada del avatar tiene el micrófono (suena, conecta o se habla; o la sesión dormida por un
    * silencio largo): la mesa no oye ni habla sola (M3). Al colgar, el oído de la mesa vuelve.
@@ -1998,6 +2000,10 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     } else if (estadoConv === 'hablando') {
       setFace('SPEAKING');
       setStatus('speaking');
+    } else if (estadoConv === 'escuchando' && convPensando) {
+      // Ya la entendió y el agente prepara la respuesta: no se pinta «escuchando» (el micrófono sigue abierto).
+      setFace('THINKING');
+      setStatus('thinking');
     } else if (estadoConv === 'escuchando') {
       setFace('LISTENING');
       setStatus('listening');
@@ -2007,7 +2013,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       setStatus('thinking');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conversando, convSilencio, estadoConv]);
+  }, [conversando, convSilencio, estadoConv, convPensando]);
 
   // Lo que se dice en la conversación va al chat y a la burbuja de la mesa; lo tuyo cuenta como actividad.
   useEffect(

@@ -18,6 +18,8 @@ Object.assign(mundo, {
   listoMs: mundo.listoMs ?? 80,
   webrtcTieneMic: false,
   fallaAlArrancar: null,
+  // Un teléfono que no avisa ni `start` ni el `end` de un abort() (la red de seguridad del oído).
+  sinAvisos: false,
   arranques: 0,
   abortos: 0,
   eventos: [],
@@ -39,16 +41,22 @@ function destruir(s) {
   if (s.vol) clearInterval(s.vol);
 }
 
-function teardown() {
+function teardown(avisar = true) {
   const s = speech;
   speech = null;
   if (s) destruir(s);
-  emitir('end', null);
+  if (avisar) emitir('end', null);
 }
 
 /** ¿Hay un reconocedor escuchando de verdad (listo, y el micrófono le da audio)? */
 mundo.nativoOye = () => !!speech && speech.estado === 'ACTIVE' && !mundo.webrtcTieneMic;
 mundo.nativoActivo = () => !!speech && speech.estado === 'ACTIVE';
+
+/**
+ * El final que un reconocedor ya abortado tenía en camino: el puente de React Native lo entrega tarde,
+ * cuando ya se soltó la pausa o se reabrió (y antes del `start` del reconocedor nuevo).
+ */
+mundo.finalViejo = (texto) => emitir('result', { isFinal: true, results: [{ transcript: texto }] });
 
 /** La persona dice algo: si el reconocedor oye, parciales y el final. Devuelve si lo oyó. */
 mundo.oirNativo = (texto) => {
@@ -91,7 +99,7 @@ module.exports = {
             return;
           }
           s.estado = 'ACTIVE';
-          emitir('start', null);
+          if (!mundo.sinAvisos) emitir('start', null);
           s.vol = setInterval(() => {
             if (s.vivo) emitir('volumechange', { value: mundo.webrtcTieneMic ? -2 : 0.5 });
           }, 120);
@@ -100,7 +108,7 @@ module.exports = {
     },
     abort() {
       mundo.abortos += 1;
-      post(teardown);
+      post(() => teardown(!mundo.sinAvisos));
     },
     stop() {
       post(teardown);

@@ -22,7 +22,9 @@
  */
 import {
   SILENCIO_COMMIT_B64,
+  datoSensibleDeDinero,
   esFraseDeDinero,
+  fraseSinVerificar,
   limpiarFinal,
   nivelDeDb,
   ruidoInicial,
@@ -31,7 +33,11 @@ import {
   silencioParaCerrar,
   umbralVoz,
   wavDeTrozos,
+  type Corroboracion,
 } from './turboLogica';
+
+/** Por dónde salió una frase: en vivo, por la segunda escucha de dinero (con su resultado) o por el respaldo. */
+export type ViaFrase = 'vivo' | Corroboracion | 'respaldo';
 
 export type TrozoAudio = { audio: string; db: number };
 
@@ -67,9 +73,10 @@ export type CallbacksTurbo = {
   onLevel?: (nivel01: number) => void;
   /**
    * Cuánto tardó una frase (para los logs del teléfono): `vozMs` lo que habló la persona, `trasCallarMs`
-   * desde que dejó de hablar hasta que la frase salió, y por dónde salió (en vivo, confirmada o respaldo).
+   * desde que dejó de hablar hasta que la frase salió, y por dónde salió (en vivo, la segunda escucha de
+   * dinero —corroborada, no corroborada o sin respuesta a tiempo— o el respaldo).
    */
-  onMedida?: (m: { vozMs: number; trasCallarMs: number; via: 'vivo' | 'confirmada' | 'respaldo' }) => void;
+  onMedida?: (m: { vozMs: number; trasCallarMs: number; via: ViaFrase }) => void;
   onFinal?: (texto: string) => void;
   onListeningChange?: (on: boolean) => void;
   onError?: (motivo: string) => void;
@@ -725,12 +732,19 @@ export class MotorTurbo {
       .then(async () => {
         let texto = limpiarFinal(textoTurbo);
         if (!texto || g !== this.gen) return;
-        let via: 'vivo' | 'confirmada' = 'vivo';
+        let via: ViaFrase = 'vivo';
         if (esFraseDeDinero(texto) && trozos.length) {
+          // null: no contestó a tiempo o falló. '' (o basura): contestó sin la frase. Ninguno corrobora lo
+          // que oyó Turbo (VOICE04): un monto o un destinatario dudosos salen pidiendo confirmación.
           const confirmado = await this.conTope(this.deps.transcribirWav(wavDeTrozos(trozos), true), this.t.confirmarMs);
           const limpio = limpiarFinal(confirmado || '');
-          if (limpio) texto = limpio;
-          via = 'confirmada';
+          if (limpio) {
+            texto = limpio;
+            via = 'corroborada';
+          } else {
+            via = confirmado === null ? 'timeout' : 'no_corroborada';
+            if (datoSensibleDeDinero(texto)) texto = fraseSinVerificar(texto);
+          }
         }
         if (g === this.gen && this.quiere && !this.pausado) {
           this.medir(m, via);
@@ -756,7 +770,7 @@ export class MotorTurbo {
       .catch(() => {});
   }
 
-  private medir(m: Medida | undefined, via: 'vivo' | 'confirmada' | 'respaldo') {
+  private medir(m: Medida | undefined, via: ViaFrase) {
     if (!m) return;
     try {
       this.cb.onMedida?.({ vozMs: m.vozMs, trasCallarMs: Math.max(0, this.ahora() - m.calloEn), via });

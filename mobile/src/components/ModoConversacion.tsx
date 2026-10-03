@@ -75,6 +75,11 @@ type Props = {
   onAudio?: (gen: number, que: 'toma' | 'suelta' | 'cerrando') => void;
   /** Terminó una sesión que se pidió abrir: su pase, para avisarle al servidor. Una vez por sesión. */
   onFin?: (gen: number, pase: string) => void;
+  /**
+   * Llegó el permiso y empieza a conectar el WebRTC: «conectando» son dos esperas con plazos distintos
+   * (compa/sesion.ts, CALL02), y el control tiene que saber en cuál está.
+   */
+  onPermiso?: (gen: number) => void;
 };
 
 export function ModoConversacion(p: Props) {
@@ -88,12 +93,12 @@ export function ModoConversacion(p: Props) {
 /** Sin volumen real de la salida más de esto mientras habla, la boca sigue una envolvente de habla (lipsync.ts). */
 const SIN_VOLUMEN_MS = 600;
 
-function Sesion({ gen, silenciada, permiso, onEstado, onMensaje, onInterrupcion, onNiveles, controles, onAudio, onFin }: Props) {
+function Sesion({ gen, silenciada, permiso, onEstado, onMensaje, onInterrupcion, onNiveles, controles, onAudio, onFin, onPermiso }: Props) {
   const conv = useConversation();
   /** Cuándo llegó lo último que ElevenLabs oyó de la persona (para la miga de cuánto tardó en hablar). */
   const oidoEn = useRef(0);
-  const cbs = useRef({ onEstado, onMensaje, onInterrupcion, onNiveles, permiso, onAudio, onFin });
-  cbs.current = { onEstado, onMensaje, onInterrupcion, onNiveles, permiso, onAudio, onFin };
+  const cbs = useRef({ onEstado, onMensaje, onInterrupcion, onNiveles, permiso, onAudio, onFin, onPermiso });
+  cbs.current = { onEstado, onMensaje, onInterrupcion, onNiveles, permiso, onAudio, onFin, onPermiso };
   const abierta = useRef(false);
   const hablando = useRef(false);
   const silencio = useRef(silenciada);
@@ -171,6 +176,7 @@ function Sesion({ gen, silenciada, permiso, onEstado, onMensaje, onInterrupcion,
       try {
         const r = await cbs.current.permiso();
         if (!vivo) return;
+        cbs.current.onPermiso?.(gen);
         audio = 'tomado';
         pase = r.pase;
         cbs.current.onAudio?.(gen, 'toma');

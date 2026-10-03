@@ -85,6 +85,32 @@ export function esFraseDeDinero(texto: string): boolean {
   return FRASE_DE_DINERO.test(texto);
 }
 
+/**
+ * Lo que dejó la segunda escucha de una frase de dinero (VOICE04, auditoría del 3-oct): Scribe v2 devolvió
+ * la frase (`corroborada`), devolvió vacío (`no_corroborada`), o no contestó a tiempo o falló (`timeout`).
+ * Antes los tres salían como «confirmada» y lo que oyó Turbo se usaba igual: un vacío no confirma nada.
+ */
+export type Corroboracion = 'corroborada' | 'no_corroborada' | 'timeout';
+
+/**
+ * ¿La frase lleva un dato que MUEVE dinero: un monto (cifra o número dicho) o a quién va (pagar, enviar,
+ * transferir…)? «¿Cuánto tengo de saldo?» no; «mándale 5 ORIGEN a Ana» o «págale a Beto», sí.
+ */
+const DATO_SENSIBLE =
+  /\d|\$|\b(un[oa]?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|dieci\w+|veinte|veinti\w+|treinta|cuarenta|cincuenta|sesenta|setenta|ochenta|noventa|cien|ciento|\w+cientos|quinientos|mil|mill[oó]n|millones|medio|media|one|two|three|four|five|six|seven|eight|nine|ten|twenty|thirty|forty|fifty|hundred|thousand|million)\b|\b(p[aá]g\w*|pay\w*|transfi?er\w*|deposit\w*|cobr\w*|presta\w*|envi[aáeé]\w*|env[ií]\w*|m[aá]nd\w*|send\w*)\b/i;
+export function datoSensibleDeDinero(texto: string): boolean {
+  return DATO_SENSIBLE.test(texto);
+}
+
+/**
+ * Una frase de dinero con monto o destinatario que la segunda escucha NO corroboró: no sale como una orden
+ * verificada. Sale entera (nunca se pierde) y pidiendo que AU-RA confirme el monto y a quién antes de
+ * hacer nada; nada aquí autoriza un pago.
+ */
+export function fraseSinVerificar(texto: string): string {
+  return `«${texto}» (sin verificar: confirma conmigo el monto y a quién antes de hacer nada)`;
+}
+
 /** Lo que Turbo a veces devuelve sin voz de verdad. */
 const BASURA = /^(subt[ií]tulos.*|gracias por ver.*|suscr[ií]bete.*|\.+|…|music|\[.*\]|\(.*\))$/i;
 

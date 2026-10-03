@@ -50,7 +50,7 @@ import { avatarActual } from '../avatares/actual';
 import type { AvatarId } from '../avatares/catalogo';
 import { emitir, escuchar, RUTA_CONTEXTO, RUTA_PERFIL, type Contexto } from '../nucleo/contrato';
 import { ModoConversacion, type ControlesSesion } from '../components/ModoConversacion';
-import { ControlSesion, type EstadoVoz, type VistaSesion } from './sesion';
+import { ControlSesion, PERMISO_MAX_MS, type EstadoVoz, type VistaSesion } from './sesion';
 import { Precalentador } from './permiso';
 import { coordinarLlamadas } from './llamada';
 import { ContextoApp, PuenteAcciones, decirLectura, type XhrMin } from './acciones';
@@ -136,8 +136,9 @@ export function vozOcupaMicrofono(v: VistaSesion): boolean {
   return v.montada || v.dormida;
 }
 
+/** El plazo de la petición es el de la fase «permiso» del control (sesion.ts): los dos dicen lo mismo. */
 const pedirPermiso = (avatar: AvatarId, idioma: 'es' | 'en') =>
-  api<{ token: string; pase: string; cid?: string }>('/api/voz/agente', { method: 'POST', body: JSON.stringify({ avatar, idioma }) }, 15_000);
+  api<{ token: string; pase: string; cid?: string }>('/api/voz/agente', { method: 'POST', body: JSON.stringify({ avatar, idioma }) }, PERMISO_MAX_MS);
 
 /**
  * Va a hablar (abrió la app o volvió a ella): el cerebro deja leído su contexto y el primer turno no espera 4–8 s.
@@ -616,7 +617,11 @@ export function VozProvider({ children, conCompanera = true }: Props) {
         control.oyoFrase();
         ejecutar(ciclo.turnoUsuario(limpio));
         ambiente.parar('persona');
-      } else ambiente.alHablaAvatar(texto);
+      } else {
+        // Contestó: ya no piensa (aunque el «speaking» no llegue, p. ej. silenciada).
+        control.respondio();
+        ambiente.alHablaAvatar(texto);
+      }
       mensajeVoz.emitir({ rol, texto: limpio, emocion: rol === 'ultron' ? emocionDeTexto(texto) : 'neutral', en: Date.now() });
     },
     [control, ciclo, ejecutar, ambiente]
@@ -643,6 +648,7 @@ export function VozProvider({ children, conCompanera = true }: Props) {
     else audioVoz.cerrando(gen);
   }, []);
   const alFin = useCallback((_gen: number, pase: string) => avisarCierre(pase), []);
+  const alPermiso = useCallback((gen: number) => control.permisoListo(gen), [control]);
   const permiso = useCallback(async () => {
     const v = control.vista();
     const p = await precalentador.tomar(v.avatar, v.idioma, v.intento > 0);
@@ -743,6 +749,7 @@ export function VozProvider({ children, conCompanera = true }: Props) {
           onNiveles={alNiveles}
           onAudio={alAudio}
           onFin={alFin}
+          onPermiso={alPermiso}
           controles={controles}
         />
       ) : null}
