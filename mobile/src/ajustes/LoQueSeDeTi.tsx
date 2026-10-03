@@ -6,12 +6,15 @@
  *
  *   · Quedó a medias   lo que AURA prometió, lo que dijiste que harías, preguntas sin resolver, borradores
  *                      sin mandar: «Hecho» o «Descartar».
- *   · Por categoría    familia, trabajo, metas, gustos, salud, rutinas, fechas, personas: cada dato con
- *                      «Olvidar» (se borra en el servidor; AURA deja de saberlo).
+ *   · Por categoría    familia, trabajo, metas, gustos, salud, rutinas, fechas, personas: cada dato con su
+ *                      PROCEDENCIA (AUR11: quién lo dijo o si AURA lo dedujo, de dónde salió, cuándo, y si
+ *                      AURA lo usa) y, al tocarlo, «Corregir» y «No usarlo / Usarlo»; y «Olvidar» (se borra
+ *                      en el servidor, en todas sus copias; AURA deja de saberlo).
  *   · Lo que aún no sé las preguntas que AURA te irá haciendo, una a la vez.
  *
- * El servidor todavía no tiene una ruta para corregir un dato: se corrige diciéndoselo a AURA («mi esposa
- * se llama Ana, no Ane») o se olvida aquí.
+ * Corregir va al servidor (PATCH /api/cerebro/conocer/:id), que cambia también sus usos activos: la
+ * respuesta del perfil que lo repite, los resúmenes de conversaciones que decían lo viejo y el system de la
+ * conversación en curso. Limitar lo deja guardado y a la vista, pero AURA no lo usa.
  *
  * Una hoja de toda la app (app/hojas.ts → app/HojasCerebro.tsx).
  */
@@ -22,8 +25,8 @@ import { guardarPerfilConRecibo } from '../lib/perfil';
 import { campoDeDato, copiaConocer, suprimirCopias, type EstadoSupresion } from '../lib/supresion';
 import { idiomaActual, tr } from '../i18n';
 import { MEDIDA, useTema } from '../nucleo/tema';
-import { Boton, Hoja, Icono, Texto, vibrar } from '../ui';
-import { abiertosDe, conocerDe, etiquetaAbierto, ordenarAbiertos, origenDato, sinDato, type Abierto, type Conocer, type DatoPersona } from '../compa/cerebro';
+import { Boton, Campo, Hoja, Icono, Texto, vibrar } from '../ui';
+import { abiertosDe, conDato, conocerDe, etiquetaAbierto, ordenarAbiertos, procedenciaDato, sinDato, type Abierto, type Conocer, type DatoPersona } from '../compa/cerebro';
 
 type Props = { visible: boolean; onCerrar: () => void };
 
@@ -37,6 +40,10 @@ export function HojaConocer({ visible, onCerrar }: Props) {
   const [olvidando, setOlvidando] = useState<string | null>(null);
   /** El estado de cada «Olvidar» en curso o fallido, por id del dato. */
   const [supresion, setSupresion] = useState<Record<string, EstadoSupresion>>({});
+  /** El dato abierto (con «Corregir» y «No usarlo»), y el texto que se está corrigiendo. */
+  const [abierto, setAbierto] = useState<string | null>(null);
+  const [corrigiendo, setCorrigiendo] = useState<{ id: string; texto: string } | null>(null);
+  const [guardando, setGuardando] = useState<string | null>(null);
 
   const leer = useCallback(async () => {
     const [c, a] = await Promise.allSettled([api('/api/cerebro/conocer', { method: 'GET' }, 15_000), api('/api/cerebro/abiertos', { method: 'GET' }, 15_000)]);
@@ -52,6 +59,8 @@ export function HojaConocer({ visible, onCerrar }: Props) {
     if (!visible) {
       setOlvidando(null);
       setSupresion({});
+      setAbierto(null);
+      setCorrigiendo(null);
       return;
     }
     void leer();
@@ -87,6 +96,29 @@ export function HojaConocer({ visible, onCerrar }: Props) {
       )
     );
   };
+
+  /**
+   * Corregir o limitar (AUR11): va al servidor, que también cambia los usos activos del dato (el perfil, los
+   * resúmenes, el system de la conversación). La vista cambia con lo que conteste; sin recibo durable lo dice.
+   */
+  const cambiarDato = async (d: DatoPersona, cuerpo: { dato: string } | { alcance: 'general' | 'limitado' }) => {
+    setGuardando(d.id);
+    setError('');
+    try {
+      const r = await api<{ dato?: DatoPersona; durable?: boolean }>(`/api/cerebro/conocer/${encodeURIComponent(d.id)}`, { method: 'PATCH', body: JSON.stringify(cuerpo) }, 15_000);
+      if (r?.dato) setConocer((c) => (c ? conDato(c, r.dato!) : c));
+      setCorrigiendo(null);
+      vibrar(r?.durable === true ? 'exito' : 'aviso');
+      if (r?.durable !== true) setError(tr('Quedó cambiado, pero el servidor todavía no confirmó que lo guardó de forma segura.', 'It’s changed, but the server hasn’t confirmed it was saved safely yet.'));
+    } catch (e: any) {
+      vibrar('aviso');
+      setError(e?.message || tr('No se pudo guardar.', 'It couldn’t be saved.'));
+    } finally {
+      setGuardando(null);
+    }
+  };
+  const corregirDato = (d: DatoPersona, texto: string) => void cambiarDato(d, { dato: texto.trim() });
+  const limitarDato = (d: DatoPersona) => void cambiarDato(d, { alcance: d.alcance === 'limitado' ? 'general' : 'limitado' });
 
   const cerrarAbierto = async (a: Abierto, estado: 'hecho' | 'descartado') => {
     setAbiertos((l) => (l || []).filter((x) => x.id !== a.id));
@@ -153,14 +185,45 @@ export function HojaConocer({ visible, onCerrar }: Props) {
                   {k.datos.map((d, i) => (
                     <View key={d.id} style={[s.dato, i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: tema.borde }]}>
                       <View style={{ flex: 1, gap: 2 }}>
-                        <Texto v="cuerpo">{d.dato}</Texto>
-                        <Texto v="mini" color={supresion[d.id] === 'error' ? 'aviso' : 'texto3'}>
-                          {supresion[d.id] === 'pendiente'
-                            ? tr('Olvidando…', 'Forgetting…')
-                            : supresion[d.id] === 'error'
-                              ? tr('Sin confirmar que se borró', 'Erase not confirmed')
-                              : origenDato(d, idioma)}
-                        </Texto>
+                        <Pressable
+                          onPress={() => setAbierto((x) => (x === d.id ? null : d.id))}
+                          accessibilityRole="button"
+                          accessibilityLabel={tr(`${d.dato}. ${procedenciaDato(d, idioma)}. Toca para corregirlo o limitarlo.`, `${d.dato}. ${procedenciaDato(d, idioma)}. Tap to fix or limit it.`)}
+                          style={{ gap: 2 }}
+                        >
+                          <Texto v="cuerpo" color={d.alcance === 'limitado' ? 'texto3' : undefined}>
+                            {d.dato}
+                          </Texto>
+                          <Texto v="mini" color={supresion[d.id] === 'error' ? 'aviso' : 'texto3'}>
+                            {supresion[d.id] === 'pendiente'
+                              ? tr('Olvidando…', 'Forgetting…')
+                              : supresion[d.id] === 'error'
+                                ? tr('Sin confirmar que se borró', 'Erase not confirmed')
+                                : procedenciaDato(d, idioma)}
+                          </Texto>
+                        </Pressable>
+                        {corrigiendo?.id === d.id ? (
+                          <View style={{ gap: 6, marginTop: 6 }}>
+                            <Campo etiqueta={tr('Corregido', 'Corrected')} value={corrigiendo.texto} onChangeText={(t) => setCorrigiendo({ id: d.id, texto: t.slice(0, 240) })} autoCapitalize="sentences" autoCorrect />
+                            <View style={s.botones}>
+                              <Boton titulo={tr('Guardar', 'Save')} icono="check" tam="chico" style={{ flex: 1 }} cargando={guardando === d.id} deshabilitado={corrigiendo.texto.trim().length < 4 || corrigiendo.texto.trim() === d.dato} onPress={() => corregirDato(d, corrigiendo.texto)} />
+                              <Boton titulo={tr('Cancelar', 'Cancel')} variante="secundario" tam="chico" style={{ flex: 1 }} onPress={() => setCorrigiendo(null)} />
+                            </View>
+                          </View>
+                        ) : abierto === d.id && olvidando !== d.id ? (
+                          <View style={[s.botones, { marginTop: 6 }]}>
+                            <Boton titulo={tr('Corregir', 'Fix')} icono="lapiz" variante="secundario" tam="chico" style={{ flex: 1 }} onPress={() => setCorrigiendo({ id: d.id, texto: d.dato })} />
+                            <Boton
+                              titulo={d.alcance === 'limitado' ? tr('Usarlo', 'Use it') : tr('No usarlo', 'Don’t use it')}
+                              icono={d.alcance === 'limitado' ? 'ojo' : 'ojoTachado'}
+                              variante="fantasma"
+                              tam="chico"
+                              style={{ flex: 1 }}
+                              cargando={guardando === d.id}
+                              onPress={() => limitarDato(d)}
+                            />
+                          </View>
+                        ) : null}
                         {olvidando === d.id ? (
                           <View style={[s.botones, { marginTop: 6 }]}>
                             <Boton titulo={tr('Olvidarlo', 'Forget it')} icono="basura" variante="peligro" tam="chico" style={{ flex: 1 }} onPress={() => void olvidar(d)} />
@@ -199,7 +262,10 @@ export function HojaConocer({ visible, onCerrar }: Props) {
           ) : null}
 
           <Texto v="mini" color="texto3">
-            {tr('¿Algo está mal? Díselo a AURA («mi esposa se llama Ana, no Ane») y ella lo corrige, o bórralo aquí.', 'Something wrong? Tell AURA (“my wife’s name is Ana, not Ane”) and she’ll fix it, or erase it here.')}
+            {tr(
+              '¿Algo está mal? Tócalo para corregirlo (AURA deja de usar lo viejo en todos lados) o para que no lo use; o bórralo con el bote.',
+              'Something wrong? Tap it to fix it (AURA stops using the old version everywhere) or so she doesn’t use it; or erase it with the bin.'
+            )}
           </Texto>
           {!!error && (
             <Texto v="chica" color="aviso">

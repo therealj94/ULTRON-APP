@@ -8,7 +8,11 @@
  */
 import { datoConocerDe, preguntaDe, type Borrador, type PasoId } from '../primeravez/flujo';
 
-type Enviar = (cuerpo: { categoria: string; dato: string; clave: string }) => Promise<unknown>;
+/**
+ * Con su procedencia (AUR11): `origen` (de dónde salió) y `dicho` (cuándo lo contestó; una copia de antes de
+ * que la persona lo borrara no vuelve).
+ */
+type Enviar = (cuerpo: { categoria: string; dato: string; clave: string; origen: 'primeravez'; dicho: number }) => Promise<unknown>;
 
 // lib/api se carga al usarlo (trae el almacenamiento del teléfono): las pruebas en Node inyectan `enviar`.
 const enviarPorApi: Enviar = async (cuerpo) => {
@@ -22,7 +26,7 @@ export async function anotarEnConocer(paso: PasoId, b: Borrador, enviar: Enviar 
   const d = q ? datoConocerDe(q.campo, b.encuesta[q.campo]) : paso === 'apodo' ? datoConocerDe('apodo', b.apodo) : null;
   if (!d) return false;
   try {
-    await enviar(d);
+    await enviar({ ...d, origen: 'primeravez', dicho: Date.now() });
     return true;
   } catch {
     return false;

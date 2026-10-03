@@ -7,9 +7,16 @@
  *   GET    /api/cerebro/conocer                 → lo que AU-RA sabe de la persona, por categoría, y lo que falta
  *   POST   /api/cerebro/conocer {categoria, dato, clave?} → un dato que la persona contó a mano (las
  *                                                  preguntas de la primera vez en la app): agregarDato
+ *                                                  (+ `origen`: primeravez | ajustes, y `dicho`: cuándo lo
+ *                                                  escribió; una copia de antes de un borrado es un 409 `suprimido`)
+ *   PATCH  /api/cerebro/conocer/:id {dato?, alcance?: 'general'|'limitado'} → corrige (y sus usos activos:
+ *                                                  perfil, resúmenes, system congelado) o limita un dato
  *   DELETE /api/cerebro/conocer/:id             → olvida un dato
  *   POST   /api/cerebro/conocer/olvidar {ids?, claves?: [{categoria, clave}]} → olvida por id y por clave
- *                                                  común (todas las copias); { borrados, durable }
+ *                                                  común (todas las copias); { borrados, durable, recibo }
+ *
+ * Borrar y corregir pasan por lib/olvido.ts: la marca de supresión se escribe ANTES de tocar los almacenes
+ * y el recibo dice qué quedó (confirmado o pendiente; lo pendiente se reanuda).
  *   GET    /api/circulo                         → su círculo cercano y qué se puede desde el servidor
  *   POST   /api/circulo {id?, nombre, relacion, canales, permisos?} → agrega (o cambia, con id)
  *   DELETE /api/circulo/:id
@@ -22,8 +29,10 @@ import type express from 'express';
 import { abiertosDe, cerradosDe, cerrar } from '../lib/abiertos';
 import { CajonNoDisponible, clavePersona } from '../lib/cerebro-comun';
 import { actualizarPersona, agregarPersona, capacidadesCirculo, circuloDe, ErrorCirculo, quitarPersona } from '../lib/circulo';
-import { agregarDato, CATEGORIAS, NOMBRE_CATEGORIA, olvidarDato, olvidarPorClaves, olvidarTodo, queNoSe, queSeDe } from '../lib/conocer-persona';
+import { CATEGORIAS, datosQueCubre, DatoSuprimido, NOMBRE_CATEGORIA, queNoSe, queSeDe } from '../lib/conocer-persona';
 import { episodiosDe } from '../lib/episodios';
+import { anotarDatoManual, corregir, limitar, reanudarSupresiones, suprimir, suprimirTodo } from '../lib/olvido';
+import { PerfilNoDisponible } from '../lib/perfil-persona';
 import { triar, type FuentesTriaje } from '../lib/triaje';
 import { whatsappPermitido } from './whatsapp';
 
@@ -54,6 +63,7 @@ export function montarRutasCerebroContinuo(app: express.Express, d: Deps) {
   };
   const fallo = (res: express.Response, e: unknown) => {
     if (e instanceof CajonNoDisponible) return res.status(503).json({ error: e.message, code: 'no_disponible', honesto: true });
+    if (e instanceof PerfilNoDisponible) return res.status(503).json({ error: 'No pude leer tu perfil guardado en este momento; no borré nada a medias. Prueba otra vez en un rato.', code: 'no_disponible', honesto: true });
     if (e instanceof ErrorCirculo) return res.status(400).json({ error: e.message, honesto: true });
     return res.status(500).json({ error: `Falló (${String((e as any)?.message || e).slice(0, 120)}).`, honesto: true });
   };
@@ -98,6 +108,9 @@ export function montarRutasCerebroContinuo(app: express.Express, d: Deps) {
     const c = quien(req, res);
     if (!c) return;
     try {
+      // Un borrado que quedó a medias (un almacén sin recibo, un reinicio) se termina por detrás; la lectura
+      // ya filtra con su marca.
+      void reanudarSupresiones(c);
       const s = await queSeDe(c);
       const categorias = CATEGORIAS.map((k) => ({ id: k, nombre: NOMBRE_CATEGORIA[k], datos: s.porCategoria[k] }));
       return res.json({ categorias, total: s.total, faltan: queNoSe(c), honesto: true });
@@ -116,11 +129,15 @@ export function montarRutasCerebroContinuo(app: express.Express, d: Deps) {
     const dato = typeof req.body?.dato === 'string' ? req.body.dato.trim() : '';
     if (dato.length < 4 || dato.length > 240) return res.status(400).json({ error: 'El dato va en una frase corta (de 4 a 240 letras).', honesto: true });
     const clave = typeof req.body?.clave === 'string' && req.body.clave.trim() ? req.body.clave.trim().slice(0, 60) : undefined;
+    const origen = req.body?.origen === 'primeravez' || req.body?.origen === 'ajustes' ? req.body.origen : undefined;
+    const dicho = Number(req.body?.dicho) > 0 ? Number(req.body.dicho) : undefined;
     try {
-      const r = await agregarDato(c, categoria, dato, clave);
+      const r = await anotarDatoManual(c, { categoria, dato, clave, origen, dicho });
       return res.json({ dato: r.dato, durable: r.durable, honesto: true });
     } catch (e) {
-      if (e instanceof CajonNoDisponible) return fallo(res, e);
+      if (e instanceof CajonNoDisponible || e instanceof PerfilNoDisponible) return fallo(res, e);
+      // Una copia de antes de un borrado (un teléfono que estuvo offline): la marca gana.
+      if (e instanceof DatoSuprimido) return res.status(409).json({ error: e.message, code: 'suprimido', honesto: true });
       // Un secreto (clave, PIN) o un dato vacío: se dice, no se guarda.
       return res.status(400).json({ error: String((e as Error)?.message || e).slice(0, 160), honesto: true });
     }
@@ -131,8 +148,8 @@ export function montarRutasCerebroContinuo(app: express.Express, d: Deps) {
     const c = quien(req, res);
     if (!c) return;
     try {
-      const r = await olvidarTodo(c);
-      return res.json({ ok: true, borrados: r.borrados, durable: r.durable, honesto: true });
+      const r = await suprimirTodo(c);
+      return res.json({ ok: true, borrados: r.borrados, durable: r.durable, recibo: r.recibo, honesto: true });
     } catch (e) {
       return fallo(res, e);
     }
@@ -149,10 +166,35 @@ export function montarRutasCerebroContinuo(app: express.Express, d: Deps) {
     if (claves.length !== crudas.length) return res.status(400).json({ error: `Cada clave lleva su categoría (${CATEGORIAS.join(', ')}) y su clave.`, honesto: true });
     if (!ids.length && !claves.length) return res.status(400).json({ error: 'No dijiste qué olvidar.', honesto: true });
     try {
-      const r = await olvidarPorClaves(c, { ids, claves });
-      return res.json({ ok: true, borrados: r.borrados, durable: r.durable, honesto: true });
+      const r = await suprimir(c, { ids, claves });
+      return res.json({ ok: true, borrados: r.borrados, durable: r.durable, recibo: r.recibo, honesto: true });
     } catch (e) {
       return fallo(res, e);
+    }
+  });
+
+  // Corregir el texto (y sus usos activos) o limitar que AURA lo use.
+  app.patch('/api/cerebro/conocer/:id', d.exigirMesa, d.limitar(60), async (req, res) => {
+    const c = quien(req, res);
+    if (!c) return;
+    const id = String(req.params.id || '').slice(0, 40);
+    const dato = typeof req.body?.dato === 'string' ? req.body.dato.trim() : undefined;
+    const alcance = req.body?.alcance;
+    if (dato === undefined && alcance === undefined) return res.status(400).json({ error: 'Dime el dato corregido o su alcance.', honesto: true });
+    if (dato !== undefined && (dato.length < 4 || dato.length > 240)) return res.status(400).json({ error: 'El dato va en una frase corta (de 4 a 240 letras).', honesto: true });
+    if (alcance !== undefined && alcance !== 'general' && alcance !== 'limitado') return res.status(400).json({ error: 'El alcance es general o limitado.', honesto: true });
+    try {
+      let r: { dato: unknown; durable: boolean } = { dato: null, durable: true };
+      if (dato !== undefined) r = await corregir(c, id, dato);
+      if (alcance !== undefined && (dato === undefined || r.dato)) {
+        const l = await limitar(c, id, alcance);
+        r = { dato: l.dato, durable: r.durable && l.durable };
+      }
+      if (!r.dato) return res.status(404).json({ error: 'No encuentro ese dato.', honesto: true });
+      return res.json({ dato: r.dato, durable: r.durable, honesto: true });
+    } catch (e) {
+      if (e instanceof CajonNoDisponible) return fallo(res, e);
+      return res.status(400).json({ error: String((e as Error)?.message || e).slice(0, 160), honesto: true });
     }
   });
 
@@ -160,9 +202,10 @@ export function montarRutasCerebroContinuo(app: express.Express, d: Deps) {
     const c = quien(req, res);
     if (!c) return;
     try {
-      const r = await olvidarDato(c, String(req.params.id || '').slice(0, 40));
-      if (!r.borrado) return res.status(404).json({ error: 'No encuentro ese dato.', honesto: true });
-      return res.json({ ok: true, durable: r.durable, honesto: true });
+      const id = String(req.params.id || '').slice(0, 40);
+      if (!(await datosQueCubre(c, { ids: [id] })).length) return res.status(404).json({ error: 'No encuentro ese dato.', honesto: true });
+      const r = await suprimir(c, { ids: [id] });
+      return res.json({ ok: true, durable: r.durable, recibo: r.recibo, honesto: true });
     } catch (e) {
       return fallo(res, e);
     }

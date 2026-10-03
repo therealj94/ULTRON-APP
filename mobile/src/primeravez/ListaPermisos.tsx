@@ -11,7 +11,7 @@ import { tr } from '../i18n';
 import { MEDIDA, useTema } from '../nucleo/tema';
 import { Aparecer, Boton, BotonCheck, Icono, Tarjeta, Texto, vibrar } from '../ui';
 import {
-  INFO_PERMISOS,
+  INFO_PERMISOS as TODOS_PERMISOS,
   abrirAjustesAlarma,
   abrirAjustesSistema,
   estadoAlarmaExacta,
@@ -24,8 +24,10 @@ import {
   type IdPermiso,
 } from './permisos';
 
-export function ListaPermisos({ conBotonTodo = true }: { conBotonTodo?: boolean }) {
+/** `solo`: muestra solo esos permisos (la primera vez pide lo que hace falta para el objetivo, AUR11). */
+export function ListaPermisos({ conBotonTodo = true, solo }: { conBotonTodo?: boolean; solo?: readonly IdPermiso[] }) {
   const tema = useTema();
+  const INFO_PERMISOS = solo ? TODOS_PERMISOS.filter((p) => solo.includes(p.id)) : TODOS_PERMISOS;
   const [estados, setEstados] = useState<Partial<Record<IdPermiso, EstadoPermiso>>>({});
   const [pidiendo, setPidiendo] = useState<IdPermiso | 'todos' | null>(null);
   const [alarma, setAlarma] = useState<EstadoAlarma | null>(null);
