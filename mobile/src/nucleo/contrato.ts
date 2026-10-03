@@ -132,12 +132,22 @@ export type AccionApp =
    * «Mándale 5 ORIGEN a Ana»: abre su chat y la hoja de enviar, LLENADA. La persona revisa, confirma y firma
    * en Veta Wallet con su contraseña: AURA nunca paga sola (cartera/HojaPagar.tsx).
    */
-  | { tipo: 'pagar'; con: string; monto?: string; moneda?: string };
+  | { tipo: 'pagar'; con: string; monto?: string; moneda?: string }
+  /*
+   * LOS CONTROLES DE VOZ SEPARADOS (AUR10, lib/controlesVoz.ts; mano `controles`), cada uno con UN efecto.
+   * Los decide el servidor con lo que dijo la persona (el modelo no los puede pedir):
+   */
+  /** «Cállate», «para de hablar»: para lo que suena y su cola. No silencia el micrófono ni cancela la tarea. */
+  | { tipo: 'detener_audio' }
+  /** «Cuelga»: cierra la llamada del avatar y sus recursos. La tarea de su computadora sigue como estaba. */
+  | { tipo: 'colgar' }
+  /** «Cancela / pausa / sigue con la tarea», «tomo el control»: su computadora. No cuelga. */
+  | { tipo: 'tarea'; que: 'pausar' | 'reanudar' | 'cancelar' | 'tomar' };
 
 export type CampoPerfil = 'apodo' | 'cumple' | keyof Encuesta;
 
 /** Las manos que este teléfono sabe hacer: van en el contexto para que el servidor las ofrezca. */
-export const MANOS_APP = ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame', 'cartera', 'pagar'] as const;
+export const MANOS_APP = ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame', 'cartera', 'pagar', 'controles'] as const;
 export type Mano = (typeof MANOS_APP)[number];
 
 /** Un recordatorio puesto en el teléfono (lo cuenta en el contexto para decirlo y cancelarlo por voz). */

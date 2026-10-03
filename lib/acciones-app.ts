@@ -56,8 +56,10 @@ import {
   type Propuesta,
   type RecordatorioApp,
 } from './manos-app';
+import { controlExplicito, dichoDeControl, interpretarControl, respuestaAclaracion, type ControlVoz, type EstadoControles, type QueTarea } from './controles-voz';
 
 export type { AccionMano, Mano, Propuesta, RecordatorioApp } from './manos-app';
+export type { ControlVoz, EstadoControles } from './controles-voz';
 export { turnoDeRecordatorio } from './manos-app';
 export { dichoDePropuesta, preguntaDePropuesta } from './manos-app';
 
@@ -90,7 +92,19 @@ export type AccionApp =
   /** Lo que hace su computadora en la nube (server/computadora.ts). Solo la empuja el servidor. */
   | AccionComputadora
   /** Lo que AU-RA propone por su cuenta (server/iniciativa.ts). Solo la empuja el servidor. */
-  | AccionIniciativa;
+  | AccionIniciativa
+  /** Los controles de voz separados (AUR10). Solo los decide el camino rápido, con lo que dijo la persona. */
+  | AccionControl;
+
+/**
+ * LOS CONTROLES DE VOZ QUE HACE EL TELÉFONO (AUR10, lib/controles-voz.ts), cada uno con UN efecto:
+ *  · detener_audio: para lo que suena y su cola (no silencia el micrófono, no cancela la tarea);
+ *  · colgar: cierra la llamada y sus recursos (la tarea sigue como estaba);
+ *  · tarea: pausar, seguir, cancelar o tomar el control de su computadora (no cuelga).
+ * Silenciar o volver a abrir el micrófono sigue siendo `silencio`. Solo a un teléfono con la mano
+ * `controles`; el modelo NO puede pedirlos (`validarAccion` no los conoce): salen de lo que dijo la persona.
+ */
+export type AccionControl = { tipo: 'detener_audio' } | { tipo: 'colgar' } | { tipo: 'tarea'; que: QueTarea };
 
 /**
  * UNA PROPUESTA DE AU-RA, SIN QUE NADIE LE PIDIERA NADA (server/iniciativa.ts la empuja; el modelo NO puede
@@ -515,6 +529,8 @@ export function abrirTurnoApp(correo: string): number {
   if (p && p.turno !== n - 1) pendientes.delete(k);
   const pr = propuestas.get(k);
   if (pr && pr.turno !== n - 1) propuestas.delete(k);
+  const ac = aclaraciones.get(k);
+  if (ac && ac.turno !== n - 1) aclaraciones.delete(k);
   return n;
 }
 
@@ -597,6 +613,35 @@ export function soltarPropuesta(correo: string) {
   propuestas.delete(clave(correo));
 }
 
+/* ------------------------------------------------------------------ la pregunta de los controles (AUR10) */
+
+/**
+ * «¿Qué paro: mi voz, la tarea o las dos?»: la pregunta espera la respuesta del turno SIGUIENTE, con las
+ * mismas reglas que la propuesta (cualquier otro turno la suelta, tres minutos de tope). Lo que se hace
+ * con la respuesta son SUS opciones (lo que estaba vivo al preguntar), no lo que diga el modelo.
+ */
+type AclaracionGuardada = { opciones: ControlVoz[]; t: number; turno: number };
+const aclaraciones = new Map<string, AclaracionGuardada>();
+
+export function anotarAclaracion(correo: string, opciones: ControlVoz[], ahora = Date.now()) {
+  aclaraciones.set(clave(correo), { opciones: [...opciones], t: ahora, turno: turnoAppActual(correo) });
+}
+
+/** La pregunta que la persona YA OYÓ (de un turno anterior, vigente), o null. */
+export function aclaracionAnterior(correo: string, ahora = Date.now()): ControlVoz[] | null {
+  const v = aclaraciones.get(clave(correo));
+  if (!v) return null;
+  if (ahora - v.t > PENDIENTE_TTL_MS || v.turno < turnoAppActual(correo) - 1) {
+    aclaraciones.delete(clave(correo));
+    return null;
+  }
+  return v.turno < turnoAppActual(correo) ? [...v.opciones] : null;
+}
+
+export function soltarAclaracion(correo: string) {
+  aclaraciones.delete(clave(correo));
+}
+
 /* ------------------------------------------------------------------ las lecturas del teléfono */
 
 /**
@@ -652,6 +697,7 @@ export function _reiniciarAccionesApp() {
   turnosApp.clear();
   hechasVoz.clear();
   propuestas.clear();
+  aclaraciones.clear();
   lecturas.clear();
   registro.clear();
   ultimosLeidos.clear();
@@ -865,6 +911,15 @@ export type OrdenRapida = {
   soltarPropuesta?: boolean;
   /** Solo hay que contestar (qué recordatorios tiene), sin acción ni propuesta. */
   soloDecir?: boolean;
+  /**
+   * AUR10: la frase no dice el alcance («para» con audio y tarea vivos): no se hace nada, se pregunta
+   * (`decir`) y estas opciones esperan la respuesta del turno siguiente (anotarAclaracion).
+   */
+  aclaracion?: ControlVoz[];
+  /** La respuesta llegó (o se desistió): la pregunta se suelta. */
+  soltarAclaracion?: boolean;
+  /** Otras acciones del mismo turno, después de `accion` («las dos»: callar y cancelar la tarea). */
+  mas?: AccionApp[];
 };
 
 /** Sin acentos, sin signos, sin el «AURA,» del principio ni el «por favor» del final. */
@@ -922,6 +977,12 @@ export function dichoDeAcciones(acciones: AccionApp[], idioma?: 'es' | 'en'): st
       return d[a.valor];
     case 'silencio':
       return a.valor ? d.silencio : d.habla;
+    case 'detener_audio':
+      return d.silencio;
+    case 'colgar':
+      return dichoDeControl('colgar', en ? 'en' : 'es');
+    case 'tarea':
+      return dichoDeControl(CONTROL_DE_TAREA[a.que], en ? 'en' : 'es');
     case 'presencia':
       return d[a.valor];
     case 'enviar':
@@ -945,12 +1006,25 @@ export function dichoDeAcciones(acciones: AccionApp[], idioma?: 'es' | 'en'): st
  */
 export function ordenPorReglas(
   texto: string,
-  o: { idioma?: 'es' | 'en'; contexto?: ContextoApp | null; pendiente?: { para: string; texto: string } | null; propuesta?: Propuesta | null; ahora?: number } = {}
+  o: OpcionesReglas = {}
 ): OrdenRapida | null {
   const q = frase(texto);
   if (!q) return null;
   const idioma = o.idioma === 'en' ? 'en' : 'es';
   const ahora = o.ahora ?? Date.now();
+  // AUR10: la pregunta «¿qué paro: mi voz, la tarea o las dos?» del turno anterior. Su respuesta decide;
+  // otra frase cualquiera sigue su camino (y el turno siguiente soltará la pregunta).
+  if (o.aclaracion?.length && puedeMano(o.contexto, 'controles')) {
+    const r = respuestaAclaracion(texto, o.aclaracion);
+    if (r === 'ninguno') return { accion: null, decir: idioma === 'en' ? "Okay, I'll keep going." : 'Va, sigo.', via: 'reglas', soloDecir: true, soltarAclaracion: true };
+    if (r) {
+      const acciones = r.map((c) => accionDeControl(c, o.contexto)).filter((a): a is AccionApp => !!a);
+      if (acciones.length) {
+        const ult = r[r.length - 1];
+        return { accion: acciones[0], ...(acciones.length > 1 ? { mas: acciones.slice(1) } : {}), decir: dichoDeControl(ult, idioma), via: 'reglas', soltarAclaracion: true };
+      }
+    }
+  }
   // La propuesta que espera (llamar, recordar), de un turno anterior: «sí» / «llámale» la cumple,
   // «no» la suelta. Otra frase cualquiera sigue su camino (y el turno siguiente la soltará).
   if (o.propuesta) {
@@ -978,8 +1052,47 @@ export function ordenPorReglas(
   return m.tipo === 'propuesta' ? { accion: null, decir: m.decir, via: 'reglas', propuesta: m.propuesta } : { accion: m.accion, decir: m.decir, via: 'reglas' };
 }
 
+type OpcionesReglas = {
+  idioma?: 'es' | 'en';
+  contexto?: ContextoApp | null;
+  pendiente?: { para: string; texto: string } | null;
+  propuesta?: Propuesta | null;
+  ahora?: number;
+  /** AUR10: lo que está vivo (audio, tarea, llamada, turno) para leer «para» / «basta» a secas. */
+  estadoControles?: EstadoControles;
+  /** AUR10: las opciones de la pregunta del turno anterior (aclaracionAnterior). */
+  aclaracion?: ControlVoz[] | null;
+};
+
+const CONTROL_DE_TAREA: Record<QueTarea, ControlVoz> = { pausar: 'pausar_tarea', reanudar: 'reanudar_tarea', cancelar: 'cancelar_tarea', tomar: 'tomar_control' };
+
+/**
+ * El control, como acción para el teléfono (AUR10). Con la mano `controles`, cada uno con su efecto; sin
+ * ella (un APK viejo) solo lo que ya entendía: silenciar / volver a hablar. null: ese teléfono no lo sabe.
+ */
+function accionDeControl(c: ControlVoz, ctx: ContextoApp | null | undefined): AccionApp | null {
+  if (c === 'silenciar_mic') return { tipo: 'silencio', valor: true };
+  if (c === 'activar_mic') return { tipo: 'silencio', valor: false };
+  if (!puedeMano(ctx, 'controles')) return null;
+  switch (c) {
+    case 'detener_audio':
+    case 'interrumpir':
+      return { tipo: 'detener_audio' };
+    case 'colgar':
+      return { tipo: 'colgar' };
+    case 'pausar_tarea':
+      return { tipo: 'tarea', que: 'pausar' };
+    case 'reanudar_tarea':
+      return { tipo: 'tarea', que: 'reanudar' };
+    case 'cancelar_tarea':
+      return { tipo: 'tarea', que: 'cancelar' };
+    case 'tomar_control':
+      return { tipo: 'tarea', que: 'tomar' };
+  }
+}
+
 /** Las órdenes simples de siempre (borrador, atrás, abrir, tema, avatar, silencio), sobre la frase ya limpia. */
-function reglasDeSiempre(q: string, o: { idioma?: 'es' | 'en'; contexto?: ContextoApp | null; pendiente?: { para: string; texto: string } | null }): OrdenRapida | null {
+function reglasDeSiempre(q: string, o: OpcionesReglas): OrdenRapida | null {
   const d = DICHOS[o.idioma === 'en' ? 'en' : 'es'];
   const hecho = (accion: AccionApp, decir: string): OrdenRapida => ({ accion, decir, via: 'reglas' });
 
@@ -1036,6 +1149,18 @@ function reglasDeSiempre(q: string, o: { idioma?: 'es' | 'en'; contexto?: Contex
     return hecho({ tipo: 'avatar', valor }, d[valor]);
   }
 
+  // AUR10: el teléfono que sabe los controles separados recibe UN efecto por frase (lib/controles-voz.ts):
+  // «cállate» calla lo que suena (no silencia el micrófono), «cuelga» cuelga, «cancela la tarea» la
+  // cancela; «para» a secas con audio y tarea vivos se pregunta.
+  if (puedeMano(o.contexto, 'controles')) {
+    const c = interpretarControl(q, o.estadoControles || {}, o.idioma === 'en' ? 'en' : 'es');
+    if (c?.tipo === 'aclarar') return { accion: null, decir: c.pregunta, via: 'reglas', soloDecir: true, aclaracion: c.opciones };
+    if (c) {
+      const a = accionDeControl(c.control, o.contexto);
+      if (a) return hecho(a, a.tipo === 'silencio' ? (a.valor ? d.silencio : d.habla) : a.tipo === 'detener_audio' ? d.silencio : dichoDeControl(c.control, o.idioma === 'en' ? 'en' : 'es'));
+    }
+  }
+  // Un APK viejo: lo de siempre.
   if (/^(callate|calla|silencio|shh+|chito|deja de hablar|deja de escuchar|no hables|shut up|be quiet|quiet|stop talking|hush|mute|silence)( (un|por un|el) (rato|ratito|momento|segundo))?$/.test(q)) {
     return hecho({ tipo: 'silencio', valor: true }, d.silencio);
   }
@@ -1102,8 +1227,12 @@ export function ordenDeEtiqueta(
       return n <= PALABRAS_SIN_PARAMETRO && !RE_CONTRA_ATRAS.test(q) ? hecho({ tipo: 'atras' }, d.atras) : null;
     // Laya ligera además tiene que ver la palabra (un «callar» sin nada de callar es un salto del
     // clasificador); el Laya del nodo, que entiende más, solo no puede tener lo contrario.
-    case 'app_callar':
-      return n <= PALABRAS_SIN_PARAMETRO && (via !== 'ligera' || RE_CALLAR.test(q)) && !RE_HABLAR.test(q) ? hecho({ tipo: 'silencio', valor: true }, d.silencio) : null;
+    case 'app_callar': {
+      if (!(n <= PALABRAS_SIN_PARAMETRO && (via !== 'ligera' || RE_CALLAR.test(q)) && !RE_HABLAR.test(q))) return null;
+      // AUR10: con la mano `controles`, callar es detener lo que suena; solo una frase del micrófono lo silencia.
+      if (puedeMano(o.contexto, 'controles') && controlExplicito(q) !== 'silenciar_mic') return hecho({ tipo: 'detener_audio' }, d.silencio);
+      return hecho({ tipo: 'silencio', valor: true }, d.silencio);
+    }
     case 'app_hablar':
       return n <= PALABRAS_SIN_PARAMETRO && (via !== 'ligera' || RE_HABLAR.test(q)) && !RE_CALLAR_YA.test(q) ? hecho({ tipo: 'silencio', valor: false }, d.habla) : null;
     case 'app_abrir': {
@@ -1307,6 +1436,9 @@ export async function ordenRapida(
     /** false: sin Laya ligera (las pruebas del Laya del nodo; ULTRON_LAYA_LIGERA=0 hace lo mismo). */
     ligera?: boolean;
     ahora?: number;
+    /** AUR10: lo que está vivo y la pregunta del turno anterior (ver ordenPorReglas). */
+    estadoControles?: EstadoControles;
+    aclaracion?: ControlVoz[] | null;
   } = {}
 ): Promise<OrdenRapida | null> {
   const r = ordenPorReglas(texto, o);

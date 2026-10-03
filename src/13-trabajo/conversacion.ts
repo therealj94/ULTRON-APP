@@ -9,6 +9,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AccionSensible } from './accionSensible';
+import { avisarTrabajoLibre, registrarTrabajoActivo } from '../10-infra/trabajoActivo';
 
 export type EstadoTurno = 'pensando' | 'usando' | 'respondiendo' | 'lista' | 'error' | 'interrumpida';
 export type EstadoAccion = 'propuesta' | 'enviando' | 'hecha' | 'fallida' | 'espera' | 'sin-confirmar' | 'cancelada';
@@ -96,6 +97,14 @@ function almacenDeSesion(): Storage | null {
 const recortar = (t: string) => String(t || '').slice(0, MAX_TEXTO);
 
 /**
+ * ¿Hay una decisión abierta (una tarjeta esperando su «confirmar» o un envío sin resultado)? Mientras la
+ * haya, la PWA no aplica una versión nueva encima (AUR14, 10-infra/trabajoActivo.ts).
+ */
+export function hayDecisionAbierta(xs: readonly Entrada[]): boolean {
+  return xs.some((x) => x.tipo === 'accion' && (x.estado === 'propuesta' || x.estado === 'enviando'));
+}
+
+/**
  * `cuenta`: el nombre de quien tiene la sesión, o null sin sesión. Al cambiar, se borra lo guardado
  * de la cuenta anterior y se carga lo de la nueva (que solo existe si recargó la página).
  */
@@ -115,6 +124,14 @@ export function useConversacion(cuenta: string | null) {
   }, [cuenta]);
 
   useEffect(() => guardar(cuentaRef.current, entradas), [entradas]);
+
+  // Una decisión a medias no se corta con una recarga de versión (AUR14): cuenta como trabajo activo.
+  const entradasRef = useRef(entradas);
+  entradasRef.current = entradas;
+  useEffect(() => registrarTrabajoActivo('decision', () => hayDecisionAbierta(entradasRef.current)), []);
+  useEffect(() => {
+    if (!hayDecisionAbierta(entradas)) avisarTrabajoLibre();
+  }, [entradas]);
 
   const agregar = useCallback((e: Entrada) => {
     setEntradas((xs) => [...xs, e].slice(-MAX_ENTRADAS));

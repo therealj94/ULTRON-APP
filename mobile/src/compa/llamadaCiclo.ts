@@ -182,6 +182,34 @@ export function seguirVozMesa(
   };
 }
 
+/** Lo que espera la sesión recién conectada antes de reintentar un mensaje (el control tarda un instante). */
+export const REINTENTO_MENSAJE_MS = 600;
+
+/**
+ * Manda un texto al agente (el motivo de la llamada, «¿sigues ahí?», la reconexión) y, si el control
+ * todavía no está, lo reintenta UNA vez. AUR10: el reintento solo sale si la sesión sigue siendo la misma
+ * (`vigente`); si en medio se colgó y se abrió otra, el texto viejo NO entra en la llamada nueva (cuenta
+ * como no entregado: `alFallar`). Devuelve cómo cancelar el reintento (al colgar: cero timers vivos).
+ */
+export function mandarAlAgente(
+  texto: string,
+  d: { enviar: (t: string) => boolean; vigente: () => boolean; esperar: (f: () => void, ms: number) => () => void; alFallar: (t: string) => void },
+  reintentoMs = REINTENTO_MENSAJE_MS
+): () => void {
+  if (d.vigente() && d.enviar(texto)) return () => undefined;
+  let hecho = false;
+  const cancelar = d.esperar(() => {
+    if (hecho) return;
+    hecho = true;
+    if (d.vigente() && d.enviar(texto)) return;
+    d.alFallar(texto);
+  }, reintentoMs);
+  return () => {
+    hecho = true;
+    cancelar();
+  };
+}
+
 /** ¿Terminó hace nada (se ve «Llamada terminada» un momento)? */
 export function llamadaTerminada(e: EstadoCiclo): boolean {
   return e === 'colgada' || e === 'perdida' || e === 'rechazada';

@@ -6,9 +6,13 @@
  *    («encantado» no canta, «experiencia» no ríe, «ahora» no da la hora, «para mañana…» no calla).
  *  - Los gags (cantar, reír, guiñar, ponerse triste…) solo se aceptan si la frase es corta
  *    (< 6 palabras) y EMPIEZA por el verbo. Cualquier otra cosa va al cerebro.
- *  - Sin dependencias de runtime (solo tipos): scripts/check-intenciones.mjs lo ejecuta en Node.
+ *  - Callar, colgar, la tarea y el micrófono los lee el intérprete de controles (AUR10, lib/controlesVoz.ts):
+ *    el mismo que usan el servidor y la web, así «cállate» significa lo mismo en todas partes.
+ *  - Sin dependencias de runtime salvo lib/controlesVoz.ts (puro): scripts/check-intenciones.mjs lo
+ *    ejecuta en Node.
  */
 import type { FaceState, Mode } from '../config';
+import { interpretarControl, type ControlVoz, type EstadoControles } from './controlesVoz';
 
 export type Gag = { id: string; face: FaceState; lines: string[]; lineGapMs?: number };
 
@@ -42,9 +46,20 @@ export type Intencion =
   | { tipo: 'hora' }
   | { tipo: 'fecha' }
   | { tipo: 'ayuda' }
+  /**
+   * AUR10: un control con su efecto (colgar, la tarea, el micrófono). Detener el audio sigue siendo
+   * `callar` (lo de siempre). Quien no lo maneje lo manda al cerebro: el servidor lo resuelve igual.
+   */
+  | { tipo: 'control'; control: ControlVoz }
+  /** AUR10: «para» a secas con audio y tarea vivos: se pregunta (`pregunta`) en vez de adivinar. */
+  | { tipo: 'aclarar'; opciones: ControlVoz[]; pregunta: string }
   | { tipo: 'cerebro' };
 
-export type Contexto = { dormido?: boolean; enConocer?: boolean };
+/**
+ * `audio`, `tarea`, `llamada`, `turno`: lo que está vivo (AUR10), para leer «para» / «basta» a secas. Sin
+ * ellos, «para» calla (lo de siempre).
+ */
+export type Contexto = { dormido?: boolean; enConocer?: boolean } & EstadoControles;
 
 /** Palabras máximas para aceptar un gag. */
 const GAG_MAX = 5;
@@ -229,8 +244,19 @@ type Regla = {
   /** solo aplica en este contexto */
   cuando?: (ctx: Contexto) => boolean;
   re: RegExp;
-  build: (m: RegExpMatchArray, q: string, raw: string) => Intencion | null;
+  build: (m: RegExpMatchArray, q: string, raw: string, ctx: Contexto) => Intencion | null;
 };
+
+/** La frase como control (AUR10): callar, un control con su efecto, la pregunta, o null (sigue la tabla). */
+function intencionDeControl(raw: string, ctx: Contexto): Intencion | null {
+  const r = interpretarControl(raw, { audio: ctx.audio, tarea: ctx.tarea, llamada: ctx.llamada, turno: ctx.turno });
+  if (!r) return null;
+  if (r.tipo === 'aclarar') return { tipo: 'aclarar', opciones: r.opciones, pregunta: r.pregunta };
+  if (r.control === 'detener_audio') return { tipo: 'callar' };
+  // «Olvídalo», «cambia de tema»: en la mesa los contesta el cerebro (cambiar de tema no es callarse).
+  if (r.control === 'interrumpir') return null;
+  return { tipo: 'control', control: r.control };
+}
 
 const REGLAS: Regla[] = [
   {
@@ -247,10 +273,12 @@ const REGLAS: Regla[] = [
     build: () => ({ tipo: 'dormir' }),
   },
   {
+    // Callar y los demás controles (AUR10): los decide lib/controlesVoz.ts (frases ancladas; «para mañana…»
+    // no calla). Antes una lista propia de once frases; ahora la misma que el servidor y la web.
     id: 'callar',
-    max: 3,
-    re: /^(callate|silencio|basta|shh+|para|para ya|ya callate|callate ya|silencio por favor|stop|alto)$/,
-    build: () => ({ tipo: 'callar' }),
+    max: 8,
+    re: /\S/,
+    build: (_m, _q, raw, ctx) => intencionDeControl(raw, ctx),
   },
   {
     // La misma frase que reconoce el servidor (lib/manos-app.ts, RE_LLAMAME), aquí para que suene YA:
@@ -437,6 +465,10 @@ const REGLAS: Regla[] = [
   },
 ];
 
+// Las expresiones del intérprete de controles se compilan al cargar, no en la primera frase que se dice:
+// la mesa responde «llámame» o «hola» en menos de 5 ms también la primera vez.
+interpretarControl('calentar');
+
 export function interpretar(raw: string, ctx: Contexto = {}): Intencion {
   const q = normalizar(raw);
   if (!q) return { tipo: 'cerebro' };
@@ -446,7 +478,7 @@ export function interpretar(raw: string, ctx: Contexto = {}): Intencion {
     if (r.max !== undefined && n > r.max) continue;
     const m = q.match(r.re);
     if (!m) continue;
-    const out = r.build(m, q, raw);
+    const out = r.build(m, q, raw, ctx);
     if (out) return out;
   }
   if (n <= GAG_MAX) {

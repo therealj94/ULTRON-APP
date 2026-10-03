@@ -10,7 +10,11 @@
  * cabecera), así que no abre la puerta a peticiones de otros sitios (CSRF). Secure + SameSite=Strict +
  * Path=/ y la vida de la sesión (catorce días). Fuera de iOS no se escribe: Android, escritorio y Windows
  * siguen exactamente como antes.
+ *
+ * Salir (token vacío) purga además lo de la cuenta en este navegador (10-infra/purgaPwa.ts; AUR14): cachés
+ * del service worker que pudieran ser suyas, la memoria local por cuenta, la conversación de la pestaña.
  */
+import { purgarCuentaPwa } from './purgaPwa';
 const KEY = 'ultron_sesion_token';
 /** La cookie espejo de iOS. */
 export const COOKIE_ESPEJO = 'aura_sesion_ios';
@@ -96,6 +100,7 @@ function leerEspejo(): string {
 
 export function guardarTokenMesa(token: string) {
   escribirEspejo(token);
+  if (!token) void purgarCuentaPwa().catch(() => undefined);
   const s = store();
   if (!s) return;
   try {

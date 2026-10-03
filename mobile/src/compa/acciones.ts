@@ -108,6 +108,12 @@ export function esAccionApp(a: any): a is AccionApp {
     // Lo que AURA propone por su cuenta (server/iniciativa.ts): la tarjeta de la mesa (compa/iniciativa.ts).
     case 'iniciativa':
       return esAccionIniciativa(a);
+    // Los controles de voz separados (AUR10, compa/controles.ts): cada uno con un solo efecto.
+    case 'detener_audio':
+    case 'colgar':
+      return true;
+    case 'tarea':
+      return a.que === 'pausar' || a.que === 'reanudar' || a.que === 'cancelar' || a.que === 'tomar';
     default:
       return false;
   }

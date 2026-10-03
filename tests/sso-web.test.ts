@@ -101,7 +101,15 @@ test('de punta a punta: intento → wallet → /sso deposita (sin intent ni pase
     assert.equal(i.cache, 'no-store');
     assert.equal((await s.post('/api/genesis/web/recoger', { estado: a.estado, verificador: a.verificador })).status, 202, 'todavía pendiente');
 
-    const r = await fetch(`${s.base}/sso?pase=PASE.web_1&estado=${a.estado}`, { redirect: 'manual' });
+    // AUR14: /sso deposita y REDIRIGE (303) a una dirección sin nada: el pase no queda en la barra, en el
+    // historial de la pestaña ni en lo que se comparta de la página.
+    const r0 = await fetch(`${s.base}/sso?pase=PASE.web_1&estado=${a.estado}`, { redirect: 'manual' });
+    assert.equal(r0.status, 303);
+    assert.equal(r0.headers.get('location'), '/sso/listo');
+    assert.match(r0.headers.get('cache-control') || '', /no-store/);
+    assert.equal(r0.headers.get('referrer-policy'), 'no-referrer');
+    assert.doesNotMatch(await r0.text(), /PASE\.web_1/);
+    const r = await fetch(`${s.base}/sso/listo`, { redirect: 'manual' });
     assert.equal(r.status, 200);
     assert.match(r.headers.get('cache-control') || '', /no-store/);
     assert.match(r.headers.get('content-security-policy') || '', /default-src 'none'/);
@@ -123,7 +131,9 @@ test('de punta a punta: intento → wallet → /sso deposita (sin intent ni pase
     // La wallet canceló: se recoge el código para que la web lo explique.
     const b = nuevo();
     await s.post('/api/genesis/web/intento', { estado: b.estado, reto: b.reto });
-    await fetch(`${s.base}/sso?error=cancelado&estado=${b.estado}`);
+    const rc = await fetch(`${s.base}/sso?error=cancelado&estado=${b.estado}`, { redirect: 'manual' });
+    assert.deepEqual([rc.status, rc.headers.get('location')], [303, '/sso/listo?r=no']);
+    assert.match(await (await fetch(`${s.base}/sso/listo?r=no`)).text(), /no se completó/);
     const e = await s.post('/api/genesis/web/recoger', { estado: b.estado, verificador: b.verificador });
     assert.equal(e.status, 400);
     assert.equal(e.body.codigo, 'cancelado');
@@ -140,5 +150,64 @@ test('Android intacto: un estado que no es de un intento web sigue con su intent
     assert.ok(html.includes('href="intent://sso?pase=PASE.abc_123&amp;estado=EST0abcd1234#Intent;scheme=ultronfp;package=link.ordenglobal.ultronfp;end"'));
   } finally {
     await s.cerrar();
+  }
+});
+
+/*
+ * AUR14 · el callback abierto en otro contexto (Safari vs el icono instalado, o la misma vuelta dos veces) no
+ * duplica la cuenta ni deja el pase en ningún lado: un depósito, un canje, una sesión; la repetición de la
+ * vuelta (del historial, un segundo toque) lleva a una página neutra, nunca a la de Android con el pase en
+ * un enlace; y nada del pase sale por los registros del servidor.
+ */
+test('callback en otro contexto: un canje, una sesión, y la vuelta repetida no enseña el pase', async () => {
+  process.env.GENESIS_API_KEY_AURA = 'clave-aura';
+  _olvidarIntentosWeb();
+  const registros: string[] = [];
+  const originales = { log: console.log, info: console.info, warn: console.warn, error: console.error };
+  for (const k of ['log', 'info', 'warn', 'error'] as const) (console as any)[k] = (...xs: unknown[]) => registros.push(xs.map(String).join(' '));
+  const s = await servidor();
+  try {
+    // El icono instalado empezó la entrada (tiene el verificador); la wallet vuelve en Safari (otro almacén).
+    const icono = nuevo();
+    await s.post('/api/genesis/web/intento', { estado: icono.estado, reto: icono.reto });
+    const url = `${s.base}/sso?pase=PASE.ios_9&estado=${icono.estado}`;
+    const enSafari = await fetch(url, { redirect: 'manual' });
+    assert.deepEqual([enSafari.status, enSafari.headers.get('location')], [303, '/sso/listo']);
+    // Safari no tiene el verificador: no puede canjear (y la web de Safari no tiene entrada a medias que retomar).
+    assert.equal((await s.post('/api/genesis/web/recoger', { estado: icono.estado, verificador: nuevo().verificador })).status, 403);
+    // La misma vuelta otra vez antes del canje (otro toque): no pisa el depósito.
+    const otraVez = await fetch(url, { redirect: 'manual' });
+    assert.equal(otraVez.status, 303);
+    // El icono canjea: UNA sesión.
+    const ok = await s.post('/api/genesis/web/recoger', { estado: icono.estado, verificador: icono.verificador });
+    assert.equal(ok.status, 200);
+    assert.equal(s.pedidas.filter((p) => p.token === 'PASE.ios_9').length, 1, 'un solo canje con Genesis');
+    assert.equal((await s.post('/api/genesis/web/recoger', { estado: icono.estado, verificador: icono.verificador })).status, 410, 'ni el mismo contexto canjea dos veces');
+    // La vuelta repetida DESPUÉS del canje (del historial de Safari): página neutra, nunca la de Android con el pase.
+    const repetida = await fetch(url, { redirect: 'manual' });
+    assert.deepEqual([repetida.status, repetida.headers.get('location')], [303, '/sso/listo?r=usada']);
+    const neutra = await (await fetch(`${s.base}/sso/listo?r=usada`)).text();
+    assert.doesNotMatch(neutra, /intent:\/\/|PASE\.ios_9/);
+    assert.match(neutra, /ya se usó/);
+    assert.ok(!registros.some((l) => l.includes('PASE.ios_9')), 'el pase no sale en los registros');
+  } finally {
+    Object.assign(console, originales);
+    await s.cerrar();
+  }
+});
+
+test('la web: un contexto sin entrada a medias no pregunta al servidor ni toma la sesión de otro', async () => {
+  const g = globalThis as any;
+  const antes = g.localStorage;
+  const m = new Map<string, string>();
+  g.localStorage = { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v), removeItem: (k: string) => void m.delete(k) };
+  try {
+    const { retomarEntradaGenesis } = await import('../src/10-infra/genesisWeb');
+    let pedidas = 0;
+    const r = await retomarEntradaGenesis((async () => (pedidas++, new Response('{}'))) as any);
+    assert.deepEqual(r, { tipo: 'nada' });
+    assert.equal(pedidas, 0);
+  } finally {
+    g.localStorage = antes;
   }
 });
