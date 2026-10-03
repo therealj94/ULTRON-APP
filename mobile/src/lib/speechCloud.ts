@@ -179,12 +179,21 @@ async function discard(uri: string | null) {
   }
 }
 
+/**
+ * Generación del oído: sube al silenciar o destruir. Una frase grabada antes de silenciar que vuelve de
+ * /api/stt después de reabrir ya no es de esta conversación y se tira (auditoría de Codex, 3-oct: entraba
+ * como turno nuevo porque solo se miraba si el micrófono estaba abierto AL LLEGAR el texto).
+ */
+let generacion = 0;
+
 function queueTranscription(uri: string) {
+  const gen = generacion;
   transcribeChain = transcribeChain
     .then(async () => {
+      if (gen !== generacion) return void (await discard(uri));
       const text = await transcribeFile(uri);
       await discard(uri);
-      if (text && wanted && !paused) callbacks.onFinal?.(text);
+      if (text && gen === generacion && wanted && !paused) callbacks.onFinal?.(text);
     })
     .catch(() => {
       void discard(uri);
@@ -276,6 +285,7 @@ export async function enableAlwaysOnMic() {
 
 export async function muteMic() {
   wanted = false;
+  generacion++;
   await discard(await stopRecording());
   callbacks.onListeningChange?.(false);
 }
@@ -340,6 +350,7 @@ export async function restartMic() {
 export async function destroySpeech() {
   loopAlive = false;
   wanted = false;
+  generacion++;
   await discard(await stopRecording());
   callbacks = {};
 }

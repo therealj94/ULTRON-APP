@@ -432,3 +432,18 @@ export function notaDeCumplir(idioma: 'es' | 'en' = 'es'): string {
     ? 'SYSTEM NOTE: in your previous answer you said you were doing something (calling, leaving a message ready, setting a reminder, opening, searching…) but you did NOT use any tool, so nothing happened. Use NOW the tool that does exactly what you said. Do not write text. If you truly promised nothing, answer only: NADA'
     : 'NOTA DEL SISTEMA: en tu respuesta anterior dijiste que hacías algo (llamar, dejar un mensaje listo, poner un recordatorio, abrir, buscar…) pero NO usaste ninguna herramienta, así que no pasó nada: no hay llamada, ni borrador, ni recordatorio. Usa AHORA la herramienta que hace exactamente lo que dijiste (por ejemplo: «te llamo en 30 segundos» → llamarme; «¿lo envío?» de un mensaje → chat_aura redactar o whatsapp responder). No escribas texto. Si de verdad no prometiste nada, responde solo: NADA';
 }
+
+/**
+ * EL TOPE DE LO QUE SE DICE EN VOZ (José, 3-oct: «habla y le tengo que interrumpir»; en la llamada de ese
+ * día una respuesta sonó 26 segundos). La regla del prompt pide una o dos frases, pero leyendo resultados el
+ * cerebro se alarga. En voz, cuando lo ya dicho llega a este largo, termina en la frase completa y no sigue
+ * (unos 12–18 s de voz). Si la persona pidió algo largo a propósito (un cuento, que le lea algo, paso a
+ * paso, una oración, una canción), no hay tope. Escrito, tampoco. Devuelve 0 si no hay tope.
+ */
+export const TOPE_VOZ_CHARS = 220;
+const PIDE_LARGO =
+  /\b(cu[eé]nta(me)?|un cuento|una historia|l[eé]e(me|lo|la|los|las)?|lee\b|l[eé]eme|expl[ií]ca(me)?\s.*(detalle|a fondo|completo)|en detalle|a fondo|paso a paso|todos los pasos|la lista completa|res[uú]me(me|n)?\s.*(todo|completo)|ora\b|oremos|oraci[oó]n|reza|c[aá]nta(me|nos)?|poema|tell me a story|read (it|me|this)|step by step|in detail|pray|sing)\b/i;
+export function topeDeVoz(mensaje: string, voz: boolean): number {
+  if (!voz) return 0;
+  return PIDE_LARGO.test(String(mensaje || '')) ? 0 : TOPE_VOZ_CHARS;
+}

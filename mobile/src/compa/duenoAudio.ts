@@ -338,6 +338,7 @@ export function motivoFalloVoz(detalle?: string, en = false): string {
   if (/\b429\b|demasiad|too many|tope|cupo/.test(d)) return t('se acabaron los minutos de voz por ahora; prueba en un rato', 'voice minutes are used up for now; try again later');
   if (/\b503\b|no est[aá] (disponible|lista)|unavailable/.test(d)) return t('la conversación en vivo no está disponible ahora', 'live conversation isn’t available right now');
   if (/\b502\b|no pude abrir/.test(d)) return t('el servicio de voz no respondió; intenta en un momento', 'the voice service didn’t answer; try again in a moment');
+  if (/dej[oó] de mandar audio/.test(d)) return t('tu micrófono dejó de mandarme audio a media llamada', 'your microphone stopped sending me audio mid-call');
   if (/no lleg[oó] audio/.test(d)) return t('no me llegaba tu voz por la conversación en vivo', 'your voice wasn’t reaching the live conversation');
   if (/no conect[oó] a tiempo/.test(d)) return t('tardó demasiado en conectar', 'it took too long to connect');
   if (/permis|permission|micr[oó]fono|microphone|not-allowed/.test(d)) return t('no tengo permiso del micrófono', 'I don’t have microphone permission');

@@ -4,7 +4,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { herramientasDelTurno, lineaDeHerramienta, reglasDeManos, type ManosDelTurno } from '../lib/cerebro-manos';
+import { herramientasDelTurno, lineaDeHerramienta, reglasDeManos, topeDeVoz, TOPE_VOZ_CHARS, type ManosDelTurno } from '../lib/cerebro-manos';
 import { extraerAcciones, validarAccion } from '../lib/acciones-app';
 import { extraerPedidoHerramienta } from '../lib/harness';
 import { confirmaPropuesta, esAfirmacionSola, RECORDATORIO_MIN_MS } from '../lib/manos-app';
@@ -149,5 +149,39 @@ test('la etiqueta de ánimo sola no cuenta como respuesta: si después se calla,
   } finally {
     (BedrockRuntimeClient.prototype as any).send = original;
     delete process.env.CEREBRO_VOZ_PRIMERA_MS;
+  }
+});
+
+test('tope de voz: en voz hay tope salvo que pida algo largo; escrito, nunca', () => {
+  assert.equal(topeDeVoz('cómo va la planta', true), TOPE_VOZ_CHARS);
+  assert.equal(topeDeVoz('cómo va la planta', false), 0);
+  for (const largo of ['cuéntame un cuento', 'léeme el correo de Ana', 'explícame paso a paso cómo pagar', 'ora conmigo', 'cántame algo', 'dímelo en detalle', 'tell me a story']) {
+    assert.equal(topeDeVoz(largo, true), 0, largo);
+  }
+});
+
+test('se corta a media respuesta: lo dicho sale y DESPUÉS el error (el servidor lo cierra como parcial, no como completo)', async () => {
+  const { BedrockRuntimeClient } = await import('@aws-sdk/client-bedrock-runtime');
+  const { hablarConManos } = await import('../lib/cerebro-rapido');
+  const original = BedrockRuntimeClient.prototype.send;
+  const modelos: string[] = [];
+  (BedrockRuntimeClient.prototype as any).send = async function (cmd: any) {
+    modelos.push(cmd.input.modelId);
+    return {
+      stream: (async function* () {
+        yield { contentBlockDelta: { delta: { text: '[EMO: neutral] La planta va bien. Este mes' } } };
+        throw new Error('ModelStreamErrorException: se cayó el stream');
+      })(),
+    };
+  };
+  try {
+    let texto = '';
+    await assert.rejects(async () => {
+      for await (const p of hablarConManos([{ role: 'user', content: 'cómo va la planta' }], [])) if ('texto' in p) texto += p.texto;
+    }, /se cayó el stream/);
+    assert.match(texto, /La planta va bien\. Este mes/, 'lo dicho alcanzó a salir');
+    assert.equal(modelos.length, 1, 'con algo ya dicho no se salta al de respaldo (se repetiría)');
+  } finally {
+    (BedrockRuntimeClient.prototype as any).send = original;
   }
 });

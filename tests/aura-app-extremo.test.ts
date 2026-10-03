@@ -1252,3 +1252,49 @@ test('el nodo se corta con error a media frase: lo dicho queda, pero el turno ci
   assert.deepEqual(done!.data.acciones, [], 'de una respuesta cortada no sale ninguna acción');
   contestar = () => '[EMO: neutral] Claro. Te cuento lo que sé.';
 });
+
+test('voz: una respuesta larga no se dice entera; termina en una frase completa (José, 3-oct: «le tengo que interrumpir»)', { skip: !listo }, async () => {
+  const antes = contestar;
+  const largo =
+    '[EMO: neutral] La planta va bien este mes. Se terminó la losa del molino y llegaron las bombas nuevas. El equipo de mantenimiento revisó las bandas transportadoras. La próxima semana empiezan las pruebas en seco del circuito. Después vienen las pruebas con mineral, si el clima ayuda. El presupuesto sigue dentro de lo previsto y el cronograma tiene dos semanas de holgura. También se contrató un supervisor nuevo para el turno de noche.';
+  contestar = () => largo;
+  try {
+    const v = await voz(paseDe(), [{ role: 'user', content: 'cómo va la planta de beneficio este mes' }]);
+    assert.equal(v.status, 200);
+    const dicho = v.dicho.trim();
+    assert.ok(dicho.length >= 120, `dijo algo de verdad: «${dicho}»`);
+    assert.ok(dicho.length < 340, `no lo dijo entero (${dicho.length} caracteres): «${dicho}»`);
+    assert.match(dicho, /[.!?]$/, 'termina en una frase completa, no a media palabra');
+    // Si pide algo largo a propósito (que le lea / le cuente con detalle), no hay tope.
+    const entero = await voz(paseDe(), [{ role: 'user', content: 'léeme todo lo que sabes de la planta, en detalle' }]);
+    assert.ok(entero.dicho.trim().length > 340, `pidió el detalle: va entero (${entero.dicho.trim().length})`);
+  } finally {
+    contestar = antes;
+  }
+});
+
+test('reintento del mismo turno cortado: la repetición sigue marcada como parcial (Codex en #138)', { skip: !listo }, async () => {
+  const antes = contestar;
+  contestar = () => '[EMO: neutral] La planta de beneficio va avanzando y este mes@@ERROR';
+  try {
+    const idTurno = `parcial${Date.now()}`;
+    const pedir = async () => {
+      const r = await fetch(`${BASE}/api/turno/stream`, { method: 'POST', headers: hTurno({ web: true }), body: JSON.stringify({ message: 'cuéntame cómo va la planta de beneficio este mes', idTurno }) });
+      return (await r.text())
+        .split('\n\n')
+        .map((b) => ({ ev: /^event: (\w+)/m.exec(b)?.[1], data: /^data: (.*)$/m.exec(b)?.[1] }))
+        .filter((e) => e.ev === 'done' && e.data)
+        .map((e) => JSON.parse(e.data!))[0];
+    };
+    const primero = await pedir();
+    assert.equal(primero?.parcial, true, JSON.stringify(primero));
+    const otra = await pedir();
+    assert.equal(otra?.repetido, true, 'salió de lo guardado, sin correr otro turno');
+    assert.equal(otra?.parcial, true, 'y sigue marcado como cortado');
+    // Por JSON (el respaldo del teléfono) con el mismo id: también.
+    const j = await (await fetch(`${BASE}/api/turno`, { method: 'POST', headers: hTurno({ web: true }), body: JSON.stringify({ message: 'cuéntame cómo va la planta de beneficio este mes', idTurno }) })).json();
+    assert.equal(j.parcial, true, JSON.stringify(j));
+  } finally {
+    contestar = antes;
+  }
+});

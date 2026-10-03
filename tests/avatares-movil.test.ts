@@ -44,10 +44,12 @@ test('cada avatar tiene su interfaz: color propio, oficio y atajos en los dos id
   assert.match(avatarPorId('antonio').oficio.es, /resolver/);
 });
 
-test('pantalla: Guardián y AU-RA, completa acostados y cuadro derechos; Claudio y ANT-ONIO completos siempre, de pie si está derecho', () => {
+test('pantalla: todos a pantalla completa; Claudio y ANT-ONIO de pie si está derecho', () => {
   assert.deepEqual(distribucion('aura', true), { tipo: 'completa', chat: 'flota', pose: null });
-  assert.deepEqual(distribucion('aura', false), { tipo: 'cuadro', chat: 'abajo', pose: null });
-  assert.deepEqual(distribucion('ojos', false), { tipo: 'cuadro', chat: 'abajo', pose: null });
+  // José, 3-oct: AU-RA y el Guardián a pantalla completa también de pie (el chat en cuadro, solo trabajando).
+  assert.deepEqual(distribucion('aura', false), { tipo: 'completa', chat: 'flota', pose: null });
+  assert.deepEqual(distribucion('ojos', false), { tipo: 'completa', chat: 'flota', pose: null });
+  assert.deepEqual(distribucion('ojos', true), { tipo: 'completa', chat: 'flota', pose: null });
   assert.deepEqual(distribucion('claudio', true), { tipo: 'completa', chat: 'flota', pose: 'retrato' });
   assert.deepEqual(distribucion('claudio', false), { tipo: 'completa', chat: 'flota', pose: 'pie' });
   assert.deepEqual(distribucion('antonio', true), { tipo: 'completa', chat: 'flota', pose: 'retrato' });

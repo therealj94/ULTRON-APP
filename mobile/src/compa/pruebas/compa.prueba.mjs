@@ -32,7 +32,7 @@ import {
   haceCuanto,
 } from '../computadora.ts';
 import http from 'node:http';
-import { CONECTAR_MAX_MS, ControlSesion, SORDA_MS, TOPE_RECONEXIONES } from '../sesion.ts';
+import { CONECTAR_MAX_MS, ControlSesion, SIN_MUESTRAS_MS, SORDA_MS, TOPE_RECONEXIONES } from '../sesion.ts';
 import {
   CicloLlamada,
   ESPERA_SIGUES_MS,
@@ -1740,6 +1740,59 @@ prueba('conversación en vivo: «Conectando…» sin tope o abierta sin audio de
   c.silenciar(true);
   ahora += SORDA_MS * 3;
   assert.equal(c.revisar(), 'nada');
+});
+
+prueba('llamada: el micrófono deja de mandar muestras a media llamada → no sigue «escuchando», reconecta (Codex, 3-oct)', () => {
+  let ahora = 1_000;
+  const c = new ControlSesion('aura', 'es', { reloj: () => ahora });
+  c.iniciar();
+  c.alEstado(c.vista().gen, 'escuchando');
+  // Vivo: el valor crudo cambia con cada cuadro (ruido de fondo), aunque la persona calle.
+  for (let t = 0; t < SIN_MUESTRAS_MS * 2; t += 50) {
+    ahora += 50;
+    c.entrada(0.004, 0.002 + (t % 7) * 1e-5);
+  }
+  assert.equal(c.revisar(), 'nada', 'micrófono vivo y callado: no es fallo');
+  // Supresión de ruido: en silencio da 0 exacto cuadro tras cuadro. Eso es silencio, no un micrófono parado (Codex en #138).
+  for (let t = 0; t < SIN_MUESTRAS_MS * 2; t += 50) {
+    ahora += 50;
+    c.entrada(0, 0);
+  }
+  assert.equal(c.revisar(), 'nada', 'ceros exactos en silencio: no reconecta');
+  // Se congela: el SDK repite el último valor (no cae a 0).
+  const gen = c.vista().gen;
+  for (let t = 0; t < SIN_MUESTRAS_MS - 500; t += 50) {
+    ahora += 50;
+    c.entrada(0.004, 0.00207);
+  }
+  assert.equal(c.revisar(), 'nada', 'todavía no');
+  ahora += 600;
+  c.entrada(0.004, 0.00207);
+  assert.equal(c.revisar(), 'sin-muestras');
+  assert.equal(c.vista().estado, 'conectando', 'ya no dice «escuchando»: reconecta');
+  assert.equal(c.vista().gen, gen + 1);
+  assert.equal(c.vista().montada, true);
+  // Mientras el avatar habla no se juzga (el valor puede quedarse quieto con el eco cancelado).
+  c.alEstado(c.vista().gen, 'escuchando');
+  c.entrada(0.004, 0.001);
+  c.alEstado(c.vista().gen, 'hablando');
+  ahora += SIN_MUESTRAS_MS * 2;
+  c.entrada(0.004, 0.001);
+  assert.equal(c.revisar(), 'nada');
+  // Silenciada a propósito: tampoco (el micrófono lo cortó ella).
+  c.alEstado(c.vista().gen, 'escuchando');
+  c.silenciar(true);
+  ahora += SIN_MUESTRAS_MS * 2;
+  assert.equal(c.revisar(), 'nada');
+  // Sin valor crudo (quien abre no lo manda) no se puede juzgar: no se inventa un fallo.
+  const d = new ControlSesion('aura', 'es', { reloj: () => ahora });
+  d.iniciar();
+  d.alEstado(d.vista().gen, 'escuchando');
+  d.entrada(0.01);
+  ahora += SIN_MUESTRAS_MS * 3;
+  assert.equal(d.revisar(), 'nada');
+  // Si tampoco vuelve tras reconectar, falla como siempre y se dice por qué (no «permiso»).
+  assert.match(motivoFalloVoz('el micrófono dejó de mandar audio'), /dejó de mandarme audio/);
 });
 
 prueba('fallo de la conversación en vivo → el micrófono de la mesa vuelve de verdad (la pausa colgada se suelta)', () => {

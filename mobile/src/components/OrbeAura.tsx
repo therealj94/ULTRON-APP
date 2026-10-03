@@ -9,7 +9,7 @@
  * no tiene WebGL, se cae o no dice «listo» a tiempo, avisa con `onFallo` y la mesa pone los anillos:
  * nunca pantalla vacía.
  */
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import type { FaceState } from '../config';
@@ -36,6 +36,17 @@ const ESPERA_LISTO_MS = 10_000;
 const BOCA_CADA_MS = 66;
 const FONDO = '#05070C';
 
+/**
+ * El orbe con sus opciones ya puestas DENTRO de la página: sin barra ni panel de prueba, sin voz propia
+ * (habla el teléfono) y con sus sonidos según Ajustes. Antes iban por `injectedJavaScriptBeforeContentLoaded`,
+ * pero en Android con html propio ese guion llega tarde y el orbe salía con su panel de prueba entero
+ * (José, 3-oct: «REPOSO, ESCUCHA… WEBGL2 · 60 FPS» en la mesa). Así no depende de la WebView.
+ */
+export function orbeConOpciones(html: string, sonidos: boolean): string {
+  const guion = `<script>window.__orbeOpciones=${JSON.stringify({ clean: true, tts: false, sfx: sonidos })};</script>`;
+  return html.includes('<head>') ? html.replace('<head>', `<head>${guion}`) : guion + html;
+}
+
 export function OrbeAura({ face, hablando, frase, sonidos, speechLevelSource, onTocar, onDeslizar, onFallo }: Props) {
   const web = useRef<WebView>(null);
   const lista = useRef(false);
@@ -44,6 +55,8 @@ export function OrbeAura({ face, hablando, frase, sonidos, speechLevelSource, on
   ultimo.current = { face, hablando, sonidos, frase };
   const cb = useRef({ onTocar, onDeslizar, onFallo });
   cb.current = { onTocar, onDeslizar, onFallo };
+  // Una sola vez: cambiar los sonidos después va por el puente («sonido»), sin recargar el orbe.
+  const html = useMemo(() => orbeConOpciones(ORBE_HTML, ultimo.current.sonidos), []);
 
   const enviar = useCallback((m: object) => {
     if (!lista.current || caida.current) return;
@@ -120,10 +133,8 @@ export function OrbeAura({ face, hablando, frase, sonidos, speechLevelSource, on
     <View style={StyleSheet.absoluteFill}>
       <WebView
         ref={web}
-        source={{ html: ORBE_HTML }}
+        source={{ html }}
         originWhitelist={['*']}
-        // Sin barra ni panel de prueba, sin voz propia (habla el teléfono) y con sus sonidos según Ajustes.
-        injectedJavaScriptBeforeContentLoaded={`window.__orbeOpciones=${JSON.stringify({ clean: true, tts: false, sfx: sonidos })};true;`}
         onMessage={alMensaje}
         onError={(e) => fallar(`WebView: ${e.nativeEvent.description}`)}
         onRenderProcessGone={() => fallar('se cerró el proceso de la WebView')}

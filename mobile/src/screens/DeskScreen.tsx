@@ -66,7 +66,7 @@ import { hayModelo3D } from '../avatar3d/AvatarVivo';
 import { hayVideo } from '../avatares/video/clips';
 import { SelectorAvatar } from '../avatares/SelectorAvatar';
 import { avatarPorId, conFotos, distribucion, type AvatarId } from '../avatares/catalogo';
-import { AccionesAvatar } from '../components/AccionesAvatar';
+import { SugerenciaMesa } from '../components/SugerenciaMesa';
 import { VozProvider, esperarAudioLibre, useVoz, useVozOpcional, vozOcupaMicrofono } from '../compa/VozProvider';
 import { avisarMesa, mensajeVoz, nivelOido, oidoTelefono, sueloCompa } from '../compa/canales';
 import { etiquetaCiclo, llamadaActiva, llamadaTerminada } from '../compa/llamadaCiclo';
@@ -552,9 +552,11 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     return () => clearTimeout(t);
   }, [bubble, bubbleOp]);
 
-  const logUltron = useCallback((text: string) => {
+  const logUltron = useCallback((text: string, parcial = false) => {
     const texto = quitarExpresiones(text).trim();
-    historial.current = [...historial.current, { rol: 'ultron' as const, texto }].slice(-12);
+    // Cortada a media respuesta: el cerebro del turno siguiente lo sabe (no la toma por completa).
+    const paraHilo = parcial && texto ? `${texto} [respuesta cortada por un fallo; no terminó]` : texto;
+    historial.current = [...historial.current, { rol: 'ultron' as const, texto: paraHilo }].slice(-12);
     if (texto) setMensajes((m) => [...m, { rol: 'ultron' as const, texto }].slice(-80));
   }, []);
 
@@ -584,7 +586,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   }, []);
 
   const say = useCallback(
-    async (text: string, nextFace?: FaceState, opts?: { performance?: 'speak' | 'sing'; emocion?: Emocion }) => {
+    async (text: string, nextFace?: FaceState, opts?: { performance?: 'speak' | 'sing'; emocion?: Emocion; parcial?: boolean }) => {
       const emocion = opts?.emocion || 'neutral';
       const performance = opts?.performance || 'speak';
       if (emocion !== 'neutral') setEmocion(emocion);
@@ -593,7 +595,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       // En la conversación fluida o en una llamada la mesa no habla: se lee, no se oye (M3; un solo
       // dueño del audio). Tapada por los chats sí, si el audio es de la compañera: ella lo dice.
       if (conversandoRef.current || enLlamadaRef.current || !oidoMesa.current?.puedeHablar()) return;
-      logUltron(text);
+      logUltron(text, !!opts?.parcial);
       avisarMesa({ emocion, texto: quitarExpresiones(text).trim() });
       speakingRef.current = true;
       setFace(f);
@@ -974,11 +976,12 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
             // La interrumpieron mientras decía el final: lo que oyó la persona ya quedó en el hilo.
             if (turnoCancelado.current) return;
             setToolHint('');
+            if (result.parcial) miga(`mesa: respuesta cortada (${result.error || result.via || 'el cerebro se cortó'})`);
             if (result.reply) {
               setOnline(true);
-              logUltron(result.reply);
+              logUltron(result.reply, !!result.parcial);
               const spoke = (speaker as StreamSpeaker | null)?.hasSpoken;
-              if (!spoke) await say(result.voz || result.reply, faceForEmocion(result.emocion), { emocion: result.emocion });
+              if (!spoke) await say(result.voz || result.reply, faceForEmocion(result.emocion), { emocion: result.emocion, parcial: !!result.parcial });
               else settle();
               applyMode(result.mode);
               return;
@@ -1035,7 +1038,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         }
         setOnline(true);
         applyMode(out.mode);
-        await say(out.voz || out.reply, faceForEmocion(out.emocion), { emocion: out.emocion });
+        if (out.parcial) miga(`mesa: respuesta cortada (${out.via || 'json'})`);
+        await say(out.voz || out.reply, faceForEmocion(out.emocion), { emocion: out.emocion, parcial: !!out.parcial });
       } finally {
         cancelMmm();
         ponerLee(false);
@@ -1201,8 +1205,10 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
           }
           return;
         }
-        pending.current = cmd;
-        pendienteOidaEn.current = oidaEn;
+        // Habló otra vez mientras pensaba: se juntan, no se pisan (Codex, 3-oct: la tercera frase borraba la
+        // segunda sin rastro). El cerebro recibe las dos en orden, como las dijo.
+        pending.current = pending.current ? `${pending.current} ${cmd}` : cmd;
+        pendienteOidaEn.current = oidaEn || pendienteOidaEn.current;
         return;
       }
       handling.current = true;
@@ -1599,6 +1605,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
    */
   const onSpeechFinal = useCallback(
     (text: string) => {
+      // Con el micrófono silenciado nada de lo oído es un turno (una frase vieja que llegó tarde, Codex 3-oct).
+      if (micMutedRef.current) return void miga('oído: frase tirada (llegó con el micrófono silenciado)');
       ultimoHablado.current = true;
       void handleCommand(text, Date.now());
     },
@@ -2067,6 +2075,11 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     if (!micMutedRef.current) {
       await muteMic();
       micMutedRef.current = true;
+      // Lo dicho y aún en espera (no empezado) era de antes de silenciar: no sale después al reabrir.
+      if (pending.current && pendienteOidaEn.current) {
+        pending.current = null;
+        pendienteOidaEn.current = 0;
+      }
       setMicMuted(true);
       setStatus('muted');
       await saveSettings({ micMuted: true });
@@ -2421,6 +2434,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   );
   const esClaudio = conFotos(avatarId);
   const acciones = avatarPorId(avatarId).acciones;
+  // Calma en la mesa: le oye sin que nadie hable ni piense, sin frase a medias ni nada abierto encima.
+  const calmaMesa =
+    (status === 'listening' || status === 'muted') && !partial && !bubble && !toolHint && !conversando && !propuesta && !masAbierto && !menuOpen && !tutorialAbierto && !eligiendo;
   /*
    * Colgó la llamada del avatar con la mesa delante: el avatar grande vuelve ENTRANDO desde un lado y
    * se acomoda en su lugar (en los chats lo hace la compañera, caminando). Con «reducir movimiento», no.
@@ -2626,8 +2642,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
           </View>
         )}
 
-        {/* Con el orbe no hace falta: las palabras las forman sus partículas. */}
-        {!!bubble && !enOrbe && (
+        {/* También con el orbe (Codex, 3-oct): sus partículas forman las palabras y se deshacen; el subtítulo
+            deja la frase quieta para leerla. */}
+        {!!bubble && (
           <Animated.View
             pointerEvents="none"
             style={[styles.bubbleFloat, { bottom: altoAbajo + 8 }, !horizontal && styles.bubbleVertical, { opacity: bubbleOp }]}
@@ -2652,8 +2669,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
           chatSinLeer={chatSinLeer}
           onMas={() => setMasAbierto(true)}
           onTerminar={toggleConversar}
-          // Los atajos de este avatar (su oficio): una fila que se desliza de lado, justo encima de la barra.
-          encima={<AccionesAvatar acciones={acciones} tema={tema} onAccion={onAccion} llamame={llamadaActiva(voz.ciclo) ? undefined : { etiqueta: tr('Llámame', 'Call me'), onPress: toggleConversar }} />}
+          // Una sugerencia de su oficio a la vez, solo con calma (José, 3-oct: nada de montón de botones).
+          // «Llámame» y lo demás siguen en Más.
+          encima={<SugerenciaMesa acciones={acciones} tema={tema} calma={calmaMesa} onAccion={onAccion} />}
           onAlto={setAltoAbajo}
         />
 
