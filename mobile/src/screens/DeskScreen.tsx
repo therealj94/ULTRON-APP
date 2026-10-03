@@ -934,6 +934,23 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         // 1) Streaming: la cara reacciona con `emocion` antes del primer delta y habla por oraciones.
         if (!opts?.image) {
           let speaker: StreamSpeaker | null = null;
+          /** El locutor del turno: nace con el primer texto (delta o replace). */
+          const locutor = (): StreamSpeaker => {
+            if (!speaker) {
+              // Ya contesta: terminó de leer (Claudio y ANT-ONIO en video guardan el teléfono).
+              ponerLee(false);
+              speaker = new StreamSpeaker({
+                emocion,
+                onAudioStart: () => onAudio(faceForEmocion(emocion)),
+                onSentence: (sentence) => {
+                  showBubble(sentence);
+                  // Con la mesa tapada lo dice la compañera: su globito lee lo mismo que suena.
+                  avisarMesa({ texto: quitarExpresiones(sentence).trim(), emocion });
+                },
+              });
+            }
+            return speaker;
+          };
           try {
             const st = turnoStream(base, {
               onEmocion: (e) => {
@@ -948,20 +965,14 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
               },
               onDelta: (piece) => {
                 cancelMmm();
-                if (!speaker) {
-                  // Ya contesta: terminó de leer (Claudio y ANT-ONIO en video guardan el teléfono).
-                  ponerLee(false);
-                  speaker = new StreamSpeaker({
-                    emocion,
-                    onAudioStart: () => onAudio(faceForEmocion(emocion)),
-                    onSentence: (sentence) => {
-                      showBubble(sentence);
-                      // Con la mesa tapada lo dice la compañera: su globito lee lo mismo que suena.
-                      avisarMesa({ texto: quitarExpresiones(sentence).trim(), emocion });
-                    },
-                  });
-                }
-                speaker.push(piece);
+                locutor().push(piece);
+              },
+              // El servidor corrigió lo dicho (auditoría del 3-oct, VOICE02): lo que no sonó del texto
+              // viejo se tira y se dice solo lo que falta de lo corregido; si ya sonó algo distinto, con
+              // «Corrijo:» delante. El hilo guarda la respuesta corregida (el `done` la trae entera).
+              onReplace: (texto) => {
+                cancelMmm();
+                locutor().reemplazar(texto, tr('Corrijo:', 'Correction:'));
               },
               onTools: (tools) => {
                 const t = tareaDeHerramientas(tools);
@@ -974,13 +985,27 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
               },
             });
             abortTurno.current = st.abort;
-            const result = await st.promise.finally(() => {
+            let result = await st.promise.finally(() => {
               abortTurno.current = null;
             });
             cancelMmm();
             if (turnoCancelado.current) {
               if (speaker) (speaker as StreamSpeaker).cancel();
               return;
+            }
+            // El stream se cerró sin `done` (auditoría del 3-oct, VOICE01): lo dicho no es la respuesta
+            // entera. Con el MISMO idTurno, el JSON devuelve ese turno ya corrido (server/turno-unico.ts),
+            // sin repetir sus herramientas; de lo que trae se dice solo lo que falta detrás de lo oído.
+            if (result.cierre === 'eof' && Date.now() - t0Turno < 30_000) {
+              const recuperado = await turno(base);
+              if (turnoCancelado.current) {
+                if (speaker) (speaker as StreamSpeaker).cancel();
+                return;
+              }
+              if (recuperado.reply && !recuperado.error) {
+                if (speaker) (speaker as StreamSpeaker).reemplazar(recuperado.voz || recuperado.reply, tr('Corrijo:', 'Correction:'));
+                result = { ...recuperado, idTurno: result.idTurno };
+              }
             }
             emitirAccionesDelTurno(result);
             if (speaker) {

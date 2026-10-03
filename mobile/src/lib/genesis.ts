@@ -33,6 +33,11 @@
  *
  * El mismo pase abre la sesión de AU-RA (el servidor) y el chat PULSE2CHAT (el relevo): cada uno lo
  * gasta una vez.
+ *
+ * CADA ENTRADA ES UN INTENTO (lib/intentoEntrada.ts, auditoría del 3-oct AUTH03). Su token solo se guarda
+ * si sigue siendo el último intento de entrar: una vuelta que llega después de que la persona eligió
+ * otra forma (la clave, otra vez Genesis) no pisa a la nueva, ni gasta el pase. La vuelta tardía es del
+ * intento que dejó el pedido guardado.
  */
 import { AppState, Linking, Platform } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
@@ -41,7 +46,7 @@ import * as Crypto from 'expo-crypto';
 import { sha256 } from '@noble/hashes/sha2';
 import { api } from './api';
 import { tr } from '../i18n';
-import { saveMesaToken } from './storage';
+import { empezarIntento, esVencida, guardarTokenDeEntrada, intentoVigente, type Intento } from './intentoEntrada';
 import { aB64 } from '../pulse/candado';
 import * as RELEVO from '../pulse/relevo';
 
@@ -72,8 +77,13 @@ type Pendiente = { verificador: string; estado: string; en: number };
 export type Miembro = { nombre: string; correo: string; rol: string; gid: string };
 /** Lo que Genesis ID compartió con permiso de la persona (la primera vez lo muestra con ✔). */
 export type DatosGenesis = { nombre?: string | null; cumple?: string | null };
+/**
+ * `intento`: el de esta entrada; quien la termina (app/sesion.ts entrarCon) lo pasa para que una entrada
+ * que ya no es la última no fije a nadie. `VENCIDO`: otra entrada empezó (o «atrás») antes de que esta
+ * guardara: la pantalla no dice nada.
+ */
 export type ResultadoGenesis =
-  | { ok: true; miembro: Miembro; chat: boolean; genesis?: DatosGenesis }
+  | { ok: true; miembro: Miembro; chat: boolean; genesis?: DatosGenesis; intento?: Intento }
   | { ok: false; codigo: string; mensaje: string; gid?: string };
 /** `web`: ir directo a la web de Veta Wallet (quien no tiene la app y eligió la web). */
 export type OpcionesEntrada = { web?: boolean };
@@ -161,11 +171,25 @@ const olvidarPendiente = () => SecureStore.deleteItemAsync(CAJON).catch(() => {}
  */
 let inicialConsumido = false;
 
+/**
+ * El intento que dejó guardado el pedido de ahora (en este arranque). Su vuelta tardía solo entra si ese
+ * intento sigue siendo el último: si después la persona entró por otro lado (o lo intentó), no la pisa.
+ * null: el pedido es de un arranque anterior (o no hay): su vuelta abre un intento propio, como antes.
+ */
+let intentoDelPedido: Intento | null = null;
+
 /** Al salir: se olvida el pedido a medias y el enlace inicial queda gastado. */
 export function olvidarEntrada() {
   inicialConsumido = true;
+  intentoDelPedido = null;
   void olvidarPendiente();
 }
+
+const vencido = (): { ok: false; codigo: string; mensaje: string } => ({
+  ok: false,
+  codigo: 'VENCIDO',
+  mensaje: tr('Esa entrada ya no es la de ahora.', 'That sign-in is no longer the current one.'),
+});
 // El relevo avisa al salir de la cuenta (App.tsx llama a `salir` del relevo al cerrar sesión).
 RELEVO.alSalir(olvidarEntrada);
 
@@ -360,22 +384,28 @@ function errorDelServidor(e: any): { ok: false; codigo: string; mensaje: string;
   return { ok: false, codigo: cuerpo.codigo || String(status), mensaje: cuerpo.error || e?.message || tr('No pude entrar con Genesis ID.', 'I couldn’t sign in with Genesis ID.'), gid: cuerpo.gid };
 }
 
-/** Canjea la vuelta: sesión de AU-RA y, con el mismo pase, el chat (sin tocar el nombre del chat). */
-async function completar(url: string, p: Pendiente): Promise<ResultadoGenesis> {
+/**
+ * Canjea la vuelta: sesión de AU-RA y, con el mismo pase, el chat (sin tocar el nombre del chat). Si el
+ * intento ya no es el último, ni se canjea el pase ni se guarda el token (`VENCIDO`).
+ */
+async function completar(url: string, p: Pendiente, intento: Intento): Promise<ResultadoGenesis> {
   const v = leerVuelta(url);
   if (!v || v.estado !== p.estado) {
     return { ok: false, codigo: 'ESTADO', mensaje: tr('Esa respuesta no es de este inicio de sesión. Probá de nuevo.', 'That response isn’t from this sign-in. Try again.') };
   }
+  if (!intentoVigente(intento)) return vencido();
   await olvidarPendiente();
   if (v.error || !v.pase) return { ok: false, ...errorDeWallet(v.error || '') };
   let data: { token?: string; miembro?: Miembro; genesis?: DatosGenesis };
   try {
     data = await api('/api/genesis/entrar', { method: 'POST', body: JSON.stringify({ pase: v.pase, verificador: p.verificador }) }, 20_000, false);
   } catch (e: any) {
+    if (esVencida(e) || !intentoVigente(intento)) return vencido();
     return errorDelServidor(e);
   }
   if (!data?.token || !data.miembro) return { ok: false, codigo: 'FALLO', mensaje: tr('No pude entrar con Genesis ID.', 'I couldn’t sign in with Genesis ID.') };
-  await saveMesaToken(data.token);
+  // Solo si sigue siendo el último intento de entrar (otro empezó mientras se canjeaba: no lo pisa).
+  if (!(await guardarTokenDeEntrada(data.token, intento))) return vencido();
   // El chat con el MISMO pase (el relevo lo gasta por su lado). Si falla, AU-RA entra igual y el
   // chat ofrece conectarse después. Con tope: AU-RA ya aceptó, y un relevo lento dejaba el botón
   // girando hasta un minuto. Si contesta después del tope, la cuenta del chat queda guardada igual
@@ -386,15 +416,17 @@ async function completar(url: string, p: Pendiente): Promise<ResultadoGenesis> {
     () => false
   );
   const chat = await Promise.race([alta, new Promise<boolean>((r) => setTimeout(() => r(false), TOPE_CHAT_MS))]);
-  return { ok: true, miembro: data.miembro, chat, ...(data.genesis ? { genesis: data.genesis } : {}) };
+  return { ok: true, miembro: data.miembro, chat, ...(data.genesis ? { genesis: data.genesis } : {}), intento };
 }
 
-/** Todo el viaje: reto, wallet, vuelta y canje. */
+/** Todo el viaje: reto, wallet, vuelta y canje. Es un intento de entrar nuevo: vence a los anteriores. */
 export function entrarConGenesis(o: OpcionesEntrada = {}): Promise<ResultadoGenesis> {
   return enCursoMientras(() => entrar(o));
 }
 
 async function entrar(o: OpcionesEntrada): Promise<ResultadoGenesis> {
+  const intento = empezarIntento();
+  intentoDelPedido = intento;
   const { verificador, reto } = nuevoReto();
   const p: Pendiente = { verificador, estado: azarB64(12), en: Date.now() };
   await guardarPendiente(p);
@@ -421,7 +453,7 @@ async function entrar(o: OpcionesEntrada): Promise<ResultadoGenesis> {
     if (!appAbierta) await olvidarPendiente();
     return { ok: false, codigo: 'SIN_VUELTA', mensaje: tr('No volvió la respuesta de la wallet.', 'The wallet’s response didn’t come back.') };
   }
-  return completar(url, p);
+  return completar(url, p, intento);
 }
 
 /**
@@ -439,7 +471,11 @@ export function escucharVueltaTardia(alVolver: (r: ResultadoGenesis) => void): (
       try {
         const p = await leerPendiente();
         if (!p || p.estado !== v.estado || enCurso > 0) return;
-        alVolver(await enCursoMientras(() => completar(url, p)));
+        // Es del intento que dejó el pedido: si la persona ya entró (o lo intentó) por otro lado, esta
+        // vuelta no la pisa ni gasta el pase. Un pedido de un arranque anterior abre su propio intento.
+        const intento = intentoDelPedido ?? empezarIntento();
+        if (!intentoVigente(intento)) return;
+        alVolver(await enCursoMientras(() => completar(url, p, intento)));
       } catch {
         /* una vuelta rota no tumba al oyente */
       } finally {
@@ -465,7 +501,8 @@ async function retomar(): Promise<ResultadoGenesis | null> {
   inicialConsumido = true;
   const p = await leerPendiente();
   if (!p) return null;
-  return completar(url as string, p);
+  // Arranque en frío: nadie más está entrando; es un intento nuevo.
+  return completar(url as string, p, empezarIntento());
 }
 
 /** Solo el chat: para quien ya está dentro de AU-RA y quiere conectar PULSE2CHAT. */
@@ -476,6 +513,8 @@ export function conectarChat(): Promise<{ ok: boolean; mensaje?: string }> {
 async function conectar(): Promise<{ ok: boolean; mensaje?: string }> {
   const { verificador, reto } = nuevoReto();
   const p: Pendiente = { verificador, estado: azarB64(12), en: Date.now() };
+  // Este pedido es del chat, no de una entrada: su vuelta no es la tardía de nadie.
+  intentoDelPedido = null;
   await guardarPendiente(p);
   // Quien ya está dentro de AU-RA: si no hay app, la web (como siempre para el chat).
   let { url, sinApp } = await pedirPase(reto, p.estado);
