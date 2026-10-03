@@ -39,6 +39,7 @@ import { armarCumple, leerCumple } from '../primeravez/flujo';
 import { ListaPermisos } from '../primeravez/ListaPermisos';
 import { HojaCorreos, useCuentasCorreo } from './Correos';
 import { HojaComputadora } from './Computadora';
+import { HojaAvisos } from './Avisos';
 import { HojaCerebro } from '../app/HojasCerebro';
 import type { PantallaCerebro } from '../compa/cerebro';
 import { INFO_PERMISOS, abrirAjustesAlarma, estadoAlarmaExacta, estadosPermisos, listo, type EstadoAlarma } from '../primeravez/permisos';
@@ -61,7 +62,7 @@ function lineaOta(idioma: Idioma): string {
 }
 
 type Props = NativeStackScreenProps<RaizParams, 'Ajustes'>;
-type HojaAbierta = 'apodo' | 'avatar' | 'cumple' | 'permisos' | 'salir' | 'correos' | 'computadora' | PantallaCerebro | null;
+type HojaAbierta = 'apodo' | 'avatar' | 'cumple' | 'permisos' | 'salir' | 'correos' | 'computadora' | 'avisos' | PantallaCerebro | null;
 
 /** Lo que se lee debajo de «Iniciativa de AURA», según el nivel elegido. */
 function pieIniciativa(n: NivelIniciativa): string {
@@ -227,6 +228,7 @@ export function Ajustes({ navigation }: Props) {
                 onCambiar={(n) => guardarPerfil({ iniciativa: n })}
               />
             </View>
+            <Fila titulo={tr('Tus avisos', 'Your notifications')} detalle={tr('Horario, canal, cuántos y de qué', 'Schedule, channel, how many and about what')} icono="campana" onPress={() => abrir('avisos')} />
           </Grupo>
         </Aparecer>
 
@@ -361,6 +363,7 @@ export function Ajustes({ navigation }: Props) {
       </Hoja>
 
       <HojaCorreos visible={hoja === 'correos'} onCerrar={() => setHoja(null)} />
+      <HojaAvisos visible={hoja === 'avisos'} onCerrar={() => setHoja(null)} />
       <HojaComputadora visible={hoja === 'computadora'} onCerrar={() => setHoja(null)} nombreAvatar={de(avatar.nombre)} />
       <HojaCerebro cual={hoja === 'misiones' || hoja === 'conocer' || hoja === 'circulo' ? hoja : null} onCerrar={() => setHoja(null)} />
 

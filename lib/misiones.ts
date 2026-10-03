@@ -19,6 +19,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { s3GetJson, s3Listo, s3PutJson } from './s3';
+import { fechaValida, finDelDiaLocal, ZONA_POR_OMISION, zonaValida } from './zona-horaria';
 
 /* ------------------------------------------------------------------ cajón seguro por correo */
 
@@ -157,8 +158,10 @@ export type Mision = {
   notas: NotaMision[];
   creada: number;
   actualizada: number;
-  /** Para cuándo (ms). */
+  /** Para cuándo: un INSTANTE absoluto (ms, UTC). Cambiar la zona de la persona no lo mueve. */
   vence?: number;
+  /** La zona IANA en la que se dijo la fecha (para mostrarla como se dijo; lib/zona-horaria.ts). */
+  zona?: string;
 };
 type CajonMisiones = { version: 1; misiones: Mision[] };
 
@@ -212,6 +215,8 @@ function sanearMision(x: any): Mision | null {
   const porque = textoLinea(x?.porque, MAX_OBJETIVO);
   if (porque) m.porque = porque;
   if (Number.isFinite(Number(x?.vence)) && Number(x.vence) > 0) m.vence = Number(x.vence);
+  const zona = zonaValida(x?.zona);
+  if (zona) m.zona = zona;
   return m;
 }
 
@@ -270,8 +275,14 @@ export async function listarMisiones(correo: string, o: { todas?: boolean } = {}
 
 export type NuevaMision = { titulo: string; objetivo?: string; porque?: string; pasos?: string[]; vence?: number | string | null };
 
-/** Valida lo que llega del teléfono o del modelo. Un error se dice, no se adivina. */
-export function validarNuevaMision(b: unknown): { ok: true; datos: NuevaMision } | { ok: false; error: string } {
+/**
+ * Valida lo que llega del teléfono o del modelo. Un error se dice, no se adivina.
+ *
+ * Una fecha sin hora («2026-12-01») es el FINAL de ese día en la zona de la persona (`o.zona`, Honduras
+ * por omisión), guardado como instante absoluto. Antes era Date.parse → medianoche UTC = el 30 a las 18:00
+ * en Honduras: la misión salía «vencida» un día antes. Con hora y zona (ISO completo), el instante tal cual.
+ */
+export function validarNuevaMision(b: unknown, o: { zona?: string } = {}): { ok: true; datos: NuevaMision } | { ok: false; error: string } {
   if (!b || typeof b !== 'object' || Array.isArray(b)) return { ok: false, error: 'La misión tiene que ser un objeto.' };
   const x = b as Record<string, unknown>;
   const titulo = textoLinea(x.titulo, MAX_TITULO);
@@ -279,15 +290,17 @@ export function validarNuevaMision(b: unknown): { ok: true; datos: NuevaMision }
   const pasos = (Array.isArray(x.pasos) ? x.pasos : typeof x.pasos === 'string' ? x.pasos.split(/[;\n]/) : []).map((p) => textoLinea(p, MAX_PASO)).filter(Boolean).slice(0, MAX_PASOS);
   let vence: number | undefined;
   if (x.vence !== undefined && x.vence !== null && x.vence !== '') {
-    const v = typeof x.vence === 'number' ? x.vence : Date.parse(String(x.vence));
+    const soloFecha = typeof x.vence === 'string' ? fechaValida(x.vence) : null;
+    const v = typeof x.vence === 'number' ? x.vence : soloFecha ? finDelDiaLocal(soloFecha, zonaValida(o.zona) || ZONA_POR_OMISION) : Date.parse(String(x.vence));
     if (!Number.isFinite(v) || v <= 0) return { ok: false, error: 'La fecha de la misión no se entiende (usa AAAA-MM-DD).' };
     vence = v;
   }
   return { ok: true, datos: { titulo, objetivo: textoLinea(x.objetivo, MAX_OBJETIVO), porque: textoLinea(x.porque, MAX_OBJETIVO), pasos, vence } };
 }
 
-export async function crearMision(correo: string, d: NuevaMision, ahora = Date.now()): Promise<{ mision: Mision; numero: number; durable: boolean }> {
-  const v = validarNuevaMision(d);
+export async function crearMision(correo: string, d: NuevaMision, ahora = Date.now(), o: { zona?: string } = {}): Promise<{ mision: Mision; numero: number; durable: boolean }> {
+  const v = validarNuevaMision(d, o);
+  const zona = zonaValida(o.zona);
   if (!v.ok) throw new Error((v as { error: string }).error);
   const datos = v.datos;
   const { resultado, durable } = await almacen.modificar(correo, (c) => {
@@ -309,7 +322,10 @@ export async function crearMision(correo: string, d: NuevaMision, ahora = Date.n
       actualizada: ahora,
     };
     if (datos.porque) m.porque = datos.porque;
-    if (datos.vence) m.vence = Number(datos.vence);
+    if (datos.vence) {
+      m.vence = Number(datos.vence);
+      if (zona) m.zona = zona;
+    }
     c.misiones.push(m);
     c.misiones = recortar(c.misiones);
     return { mision: m, numero: abiertas(c.misiones).indexOf(m) + 1 };
