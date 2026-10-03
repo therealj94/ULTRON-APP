@@ -199,6 +199,7 @@ export function almacenEnMemoria(): AlmacenDurable & { objetos: Map<string, stri
 let forzado: AlmacenDurable | null = null;
 let s3Unico: AlmacenDurable | null = null;
 let discoUnico: AlmacenDurable | null = null;
+let memoriaPruebas: AlmacenDurable | null = null;
 let avisado = false;
 
 /**
@@ -207,6 +208,9 @@ let avisado = false;
  */
 export function almacenDurable(): AlmacenDurable {
   if (forzado) return forzado;
+  // Bajo el corredor de pruebas (node --test) y sin S3: memoria del proceso. En disco, una corrida heredaba lo
+  // que dejó la anterior (el mismo idTurno o requestId de un fixture devolvía la respuesta vieja).
+  if (process.env.NODE_TEST_CONTEXT && !s3Listo()) return (memoriaPruebas ||= almacenEnMemoria());
   if (s3Listo()) return (s3Unico ||= almacenS3());
   if (!avisado && process.env.NODE_ENV === 'production') {
     avisado = true;

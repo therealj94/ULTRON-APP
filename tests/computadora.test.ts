@@ -1220,6 +1220,36 @@ test('encargar una vez: la respuesta perdida y el reintento dan UNA tarea; la ap
   }
 });
 
+test('el mismo pedido de la app tras un reinicio (o en otra réplica) da la MISMA tarea: lo durable lo recuerda (AUR06)', async () => {
+  const { _usarAlmacenDurable, almacenEnMemoria } = await import('../lib/durable');
+  const almacen = almacenEnMemoria();
+  _usarAlmacenDurable(almacen);
+  const nodo = await nodoAgente({ caps: CAPS, guion: () => undefined });
+  try {
+    await conNodo(nodo.url, () =>
+      conAvisos(async () => {
+        const cuerpo = JSON.stringify({ instruccion: 'Entra a bch.hn y dime el dólar', requestId: 'tel-reinicio-0001' });
+        const primera = await conRutas((como) => como('jose@x.hn', '/api/computadora/tareas', { method: 'POST', body: cuerpo }));
+        assert.equal(primera.code, 200);
+        const altas = () => nodo.pedidos.filter((p) => p.ruta === 'POST /tareas').length;
+        const antes = altas();
+        // «Reinicio»: rutas montadas de nuevo (el Map de pedidos vacío) con el registro durable intacto.
+        const otra = await conRutas((como) => como('jose@x.hn', '/api/computadora/tareas', { method: 'POST', body: cuerpo }));
+        assert.equal(otra.code, 200);
+        assert.equal(otra.j.id, primera.j.id, 'la misma tarea');
+        assert.equal(otra.j.repetido, true);
+        assert.equal(altas(), antes, 'ni un pedido nuevo al nodo');
+        // Otra persona con el mismo requestId no ve la de José.
+        const ana = await conRutas((como) => como('ana@x.hn', '/api/computadora/tareas', { method: 'POST', body: cuerpo }));
+        assert.notEqual(ana.j.id, primera.j.id);
+      })
+    );
+  } finally {
+    _usarAlmacenDurable(null);
+    await nodo.cerrar();
+  }
+});
+
 test('la app ve qué versión del estado es y un paso que no se hizo no cuenta (auditoría 3-oct, PC05)', async () => {
   const nodo = await nodoAgente({
     caps: CAPS,

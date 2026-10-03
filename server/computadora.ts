@@ -43,6 +43,7 @@
 import { nivelDeCorreo } from './nivel';
 import crypto from 'node:crypto';
 import { clave } from '../lib/boveda';
+import { claveDe, crearUnaVez, leerDurable } from '../lib/durable';
 
 export type MotorNodo = 'holo' | 'claude';
 /**
@@ -1905,6 +1906,18 @@ export function montarRutasComputadora(app: import('express').Express, d: DepsRu
     }
     const llave = `${correo}|${pedido}`;
     for (const [k, v] of pedidosApp) if (Date.now() - v.en > PEDIDO_APP_VALE_MS) pedidosApp.delete(k);
+    // Lo durable primero (auditoría maestra, AUR06): si este pedido ya creó su tarea —en otra réplica o antes de
+    // un reinicio, cuando el Map de aquí ya no lo sabe—, se devuelve esa y no se lanza otra.
+    const claveDurable = claveDe('computadora-pedidos', correo, pedido);
+    if (!pedidosApp.has(llave)) {
+      const visto = await leerDurable<{ id?: string }>(claveDurable).catch(() => null);
+      const idVisto = visto?.ok ? String(visto.valor?.id || '') : '';
+      if (idVisto && duenoDe(idVisto) !== null && duenoDe(idVisto) !== correo) return noEsSuya(res);
+      if (idVisto) {
+        const m = misionDeTarea(idVisto);
+        return res.json({ id: idVisto, mision: m ? vistaMision(m) : null, repetido: true, honesto: true });
+      }
+    }
     let previo = pedidosApp.get(llave);
     if (!previo) {
       previo = { en: Date.now(), r: hacer() };
@@ -1912,6 +1925,13 @@ export function montarRutasComputadora(app: import('express').Express, d: DepsRu
     }
     const r = await previo.r.catch((e: any) => ({ code: 502, j: { error: String(e?.message || e).slice(0, 120), honesto: true } }));
     if (r.code !== 200 && pedidosApp.get(llave) === previo) pedidosApp.delete(llave);
+    // Anotado de forma durable: un reintento tras un reinicio o en otra réplica recibe esta misma tarea. Si otra
+    // réplica la anotó antes (el nodo dedupe por request_id, así que es la misma), manda la primera.
+    if (r.code === 200 && r.j?.id) {
+      const c = await crearUnaVez(claveDurable, { id: String(r.j.id), en: Date.now() }).catch(() => null);
+      if (c?.ok && !c.creado && c.valor?.id && c.valor.id !== r.j.id) r.j.id = String(c.valor.id);
+      if (!c?.ok) console.warn('[computadora] no pude anotar el pedido de forma durable; queda solo en memoria');
+    }
     // La misma misión, con su estado de ahora (no el del primer pedido).
     const m = r.code === 200 ? misionDeTarea(r.j.id) : null;
     return res.status(r.code).json(m ? { ...r.j, mision: vistaMision(m) } : r.j);

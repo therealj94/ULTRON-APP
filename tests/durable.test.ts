@@ -228,12 +228,21 @@ test('claves por dueño: limpias, sin texto suelto, y el mismo id de dos persona
   assert.throws(() => claveDe('turnos', '', 'x'), /dueño/);
 });
 
-test('sin S3 configurado, el almacén por omisión es el disco (no multi-réplica); con S3, S3', async () => {
+test('sin S3 configurado, el almacén por omisión es el disco (no multi-réplica; en pruebas, memoria); con S3, S3', async () => {
   const antes = process.env.ULTRON_MEMORIA_BUCKET;
+  const contexto = process.env.NODE_TEST_CONTEXT;
   process.env.ULTRON_MEMORIA_BUCKET = '';
-  assert.equal(almacenDurable().tipo, 'disco');
-  assert.equal(almacenDurable().multiReplica, false);
-  process.env.ULTRON_MEMORIA_BUCKET = antes || '';
+  // Bajo el corredor de pruebas va a memoria (una corrida no hereda lo de la anterior)…
+  assert.equal(almacenDurable().tipo, 'memoria');
+  // …y fuera de él (el servidor de verdad), al disco.
+  delete process.env.NODE_TEST_CONTEXT;
+  try {
+    assert.equal(almacenDurable().tipo, 'disco');
+    assert.equal(almacenDurable().multiReplica, false);
+  } finally {
+    if (contexto !== undefined) process.env.NODE_TEST_CONTEXT = contexto;
+    process.env.ULTRON_MEMORIA_BUCKET = antes || '';
+  }
   await conS3Falso(async () => {
     assert.equal(almacenDurable().tipo, 's3');
     assert.equal(almacenDurable().multiReplica, true);
