@@ -3,7 +3,7 @@
  * cerebro detrás por /api/voz/llm), como el modo voz de ChatGPT. La persona habla y AU-RA contesta
  * de corrido, la interrumpe cuando quiere y no hay un turno de «dictar → esperar → leer frase a frase».
  *
- * El micrófono de siempre (useOido: reconocimiento del navegador + voz frase por frase) sigue siendo el
+ * El micrófono de siempre (useOido: Scribe v2 Realtime Turbo en vivo, o el reconocimiento del navegador de respaldo, + voz frase por frase) sigue siendo el
  * respaldo: si la conversación no abre (sin sesión, sin minutos, sin red), la mesa vuelve a él.
  *
  *  · El permiso es de un solo uso y lo pide el servidor con la sesión de la mesa (/api/voz/agente):

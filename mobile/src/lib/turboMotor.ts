@@ -25,7 +25,9 @@ import {
   esFraseDeDinero,
   limpiarFinal,
   nivelDeDb,
+  ruidoInicial,
   seguirRuido,
+  VENTANA_RUIDO_TROZOS,
   silencioParaCerrar,
   umbralVoz,
   wavDeTrozos,
@@ -82,6 +84,10 @@ export const TIEMPOS = {
   pausaVivoMs: 5 * 60_000,
   /** Sin trozos del micrófono este rato (queriendo oír): está colgado. */
   micMudoMs: 3_000,
+  /** «Oyendo» este rato sin que Turbo entienda una palabra (con el en vivo andando): era ruido, no voz. */
+  ruidoSinTextoMs: 4_000,
+  /** Turbo ya entendió algo y su texto no cambia en este rato: la persona terminó de hablar. */
+  textoQuietoMs: 2_000,
 };
 
 const ABIERTO = 1;
@@ -101,6 +107,8 @@ export class MotorTurbo {
   private micDesde = 0;
 
   private ruido = -60;
+  /** Los volúmenes de los últimos ~3 s: su mínimo es el ruido de fondo. Vacío = micrófono recién abierto. */
+  private historial: number[] = [];
   private ultimoNivel = -1;
   private prerollo: string[] = [];
   private enVoz = false;
@@ -108,6 +116,8 @@ export class MotorTurbo {
   private ultimaVozEn = 0;
   private trozosFrase: string[] = [];
   private parcial = '';
+  /** Cuándo cambió por última vez lo que Turbo va entendiendo. */
+  private parcialEn = 0;
   /** Lo que Turbo cerró por su cuenta a media frase (frases larguísimas): va delante de la siguiente. */
   private prefijo = '';
 
@@ -157,7 +167,6 @@ export class MotorTurbo {
       this.pararMic();
       this.olvidarFrase();
     } else {
-      if (this.ruido < -58) this.ruido = -52;
       void this.arrancarMic();
     }
   }
@@ -232,6 +241,7 @@ export class MotorTurbo {
     }
     this.cerrarMic = cerrar;
     this.fallosMic = 0;
+    this.historial = [];
     this.ultimoTrozoEn = this.ahora();
     this.cb.onListeningChange?.(true);
   }
@@ -276,6 +286,10 @@ export class MotorTurbo {
     const ahora = this.ahora();
     this.ultimoTrozoEn = ahora;
     const db = typeof t.db === 'number' && Number.isFinite(t.db) ? t.db : -100;
+    if (!this.historial.length) this.ruido = ruidoInicial(db);
+    this.historial.push(db);
+    if (this.historial.length > VENTANA_RUIDO_TROZOS) this.historial.shift();
+    this.ruido = seguirRuido(this.ruido, this.historial);
     const hayVoz = db >= umbralVoz(this.ruido);
     const nivel = nivelDeDb(db, this.ruido);
     if (Math.abs(nivel - this.ultimoNivel) > 0.08 || (nivel === 0 && this.ultimoNivel !== 0)) {
@@ -285,7 +299,6 @@ export class MotorTurbo {
 
     if (!this.enVoz) {
       if (hayVoz) return this.empezarFrase(t.audio, ahora);
-      this.ruido = seguirRuido(this.ruido, db);
       this.prerollo.push(t.audio);
       if (this.prerollo.length > this.t.prerolloTrozos) this.prerollo.shift();
       return;
@@ -294,6 +307,17 @@ export class MotorTurbo {
     this.trozosFrase.push(t.audio);
     this.enviarAudio(t.audio, false);
     if (hayVoz) this.ultimaVozEn = ahora;
+    // Turbo oye en vivo y en todo este rato no entendió ni una palabra: era ruido (un ventilador, la tele
+    // lejos). Se tira la frase y el ruido de fondo sube a lo que suena ahora, para no volver a caer.
+    if (!this.parcial.trim() && this.wsAbierto && ahora - this.vozDesde >= this.t.ruidoSinTextoMs) {
+      this.ruido = Math.max(this.ruido, db, ...this.historial.slice(-5));
+      return this.descartarFrase();
+    }
+    // Turbo ya entendió algo y no ha cambiado su texto en un rato: la persona terminó, aunque el volumen
+    // (ruido de fondo, eco) siga pareciendo voz. Los parciales llegan cada ~1 s mientras se habla.
+    if (this.parcial.trim() && this.wsAbierto && ahora - this.parcialEn >= this.t.textoQuietoMs && ahora - this.ultimaVozEn < this.t.textoQuietoMs) {
+      return this.cerrarFrase();
+    }
     if (ahora - this.vozDesde >= this.t.maximoFraseMs) return this.cerrarFrase();
     if (ahora - this.ultimaVozEn >= silencioParaCerrar(this.parcial)) {
       if (this.parcial.trim() || this.ultimaVozEn - this.vozDesde >= this.t.minimoFraseMs) this.cerrarFrase();
@@ -450,6 +474,7 @@ export class MotorTurbo {
       const texto = String(j.text || '').trim();
       if (this.enVoz && !this.pausado && texto && texto !== this.parcial) {
         this.parcial = texto;
+        this.parcialEn = this.ahora();
         this.cb.onPartial?.(texto);
       }
       return;

@@ -59,7 +59,14 @@ async function puenteFalso(vinculado = true, otros: { chats?: any[]; mensajes?: 
         res.writeHead(200, { 'content-type': 'image/jpeg', 'content-length': '4' });
         return res.end('FOTO');
       }
-      if (u.pathname === '/contactos') return json(200, { contactos: [{ jid: '50411112222@s.whatsapp.net', nombre: 'Mamá', numero: '+50411112222' }] });
+      if (u.pathname === '/contactos') {
+        const b = sinT(u.searchParams.get('buscar') || '');
+        const todos = [
+          { jid: '50411112222@s.whatsapp.net', nombre: 'Mamá', numero: '+50411112222' },
+          { jid: '50433334444@s.whatsapp.net', nombre: 'Lucía Reyes', numero: '+50433334444' },
+        ];
+        return json(200, { contactos: b ? todos.filter((k) => sinT(k.nombre).includes(b)) : todos.slice(0, 1) });
+      }
       if (u.pathname === '/mensajes') return json(200, { chat: chats.find((c) => c.jid === u.searchParams.get('chat')), mensajes: mensajes.filter((m) => m.chat === u.searchParams.get('chat')) });
       if (u.pathname === '/buscar') return json(200, { mensajes: mensajes.filter((m) => m.texto.toLowerCase().includes((u.searchParams.get('q') || '').toLowerCase())) });
       if (u.pathname === '/enviar') {
@@ -84,6 +91,10 @@ async function puenteFalso(vinculado = true, otros: { chats?: any[]; mensajes?: 
   });
   await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
   return { url: `http://127.0.0.1:${(srv.address() as AddressInfo).port}`, enviados, pedidos, cerrar: () => new Promise<void>((r) => srv.close(() => r())) };
+}
+
+function sinT(s: string) {
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 }
 
 async function conPuente<T>(url: string | null, duenos: string, fn: () => Promise<T>): Promise<T> {
@@ -268,7 +279,16 @@ test('el cerebro: revisa, lee por nombre, deja borrador y solo con el «sí» se
     await correrWhatsapp(JOSE, 'responder Beto | otra cosa', 'tel');
     assert.match((await resolverBorradorWhatsapp(JOSE, 'tel', 'no'))!, /no se mandó/);
     assert.equal(p.enviados.length, 1);
-    assert.match(await correrWhatsapp(JOSE, 'leer Nadie Así', 'tel'), /no encuentro el chat/);
+    assert.match(await correrWhatsapp(JOSE, 'leer Nadie Así', 'tel'), /no encuentro a «Nadie Así»/);
+    // Mandarle a alguien de sus contactos con quien no hay chat todavía (José, 2-oct): borrador y, con el «sí», sale.
+    const nuevo = await correrWhatsapp(JOSE, 'responder Lucía | Ya voy en camino', 'tel');
+    assert.match(nuevo, /BORRADOR DE WHATSAPP \(NO enviado\) para Lucía Reyes/);
+    assert.match((await resolverBorradorWhatsapp(JOSE, 'tel', 'sí'))!, /WHATSAPP ENVIADO a Lucía Reyes/);
+    assert.deepEqual(p.enviados.at(-1), { chat: '50433334444@s.whatsapp.net', texto: 'Ya voy en camino' });
+    // Y a un número que no está en ningún lado: 8 dígitos = Honduras.
+    await correrWhatsapp(JOSE, 'responder 9876-5432 | Hola, soy José', 'tel');
+    assert.match((await resolverBorradorWhatsapp(JOSE, 'tel', 'sí, mándalo'))!, /WHATSAPP ENVIADO a \+50498765432/);
+    assert.deepEqual(p.enviados.at(-1), { chat: '50498765432@s.whatsapp.net', texto: 'Hola, soy José' });
   }).finally(() => p.cerrar());
   const sin = await puenteFalso(false);
   await conPuente(sin.url, JOSE, async () => {

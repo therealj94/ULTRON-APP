@@ -4,9 +4,12 @@
  * El motor que lo usa es speechTurbo.ts.
  */
 
-/** Umbral de voz: 12 dB sobre el ruido de fondo, nunca más permisivo que -52 dBFS ni más estricto que -28. */
+/**
+ * Umbral de voz: 10 dB sobre el ruido de fondo, nunca más permisivo que -55 dBFS ni más estricto que -18
+ * (antes el tope era -28: en un cuarto con ventilador o tele a -30 el ruido mismo ya «era voz»).
+ */
 export function umbralVoz(ruido: number): number {
-  return Math.min(-28, Math.max(-52, ruido + 12));
+  return Math.min(-18, Math.max(-55, ruido + 10));
 }
 
 /** Nivel 0..1 para la cara (el anillo late con la voz de la persona). */
@@ -14,9 +17,30 @@ export function nivelDeDb(db: number, ruido: number): number {
   return Math.max(0, Math.min(1, (db - (umbralVoz(ruido) - 10)) / 40));
 }
 
-/** El ruido de fondo se sigue solo cuando no hay voz (media móvil lenta). */
-export function seguirRuido(ruido: number, db: number): number {
-  return ruido * 0.92 + Math.max(-90, db) * 0.08;
+/**
+ * El ruido de fondo, con el MÍNIMO de los últimos ~3 s (José, 2-oct: «el micrófono se queda encendido a
+ * pesar que nadie dice nada»). Antes solo se seguía mientras no había voz: con un ventilador a -45 dBFS
+ * el ruido ya pasaba el umbral, el oído creía que alguien hablaba, dejaba de medir el ruido y la frase
+ * quedaba abierta hasta el tope de 15 s, una y otra vez. El mínimo se mide SIEMPRE: hasta hablando hay
+ * pausas entre palabras, y ahí se ve el ruido de verdad. Baja enseguida y sube despacio.
+ */
+export const VENTANA_RUIDO_TROZOS = 30;
+export function seguirRuido(ruido: number, historial: readonly number[]): number {
+  // Los trozos de silencio digital (ceros exactos: el micrófono abriendo, otra app que lo tomó) no dicen
+  // nada del cuarto: con ellos el «mínimo» caía a -90 y el ruido de verdad volvía a parecer voz.
+  const reales = historial.filter((d) => d > SILENCIO_DIGITAL_DB).sort((a, b) => a - b);
+  if (!reales.length) return ruido;
+  // El 10 % más bajo, no el mínimo absoluto: un trozo raro no mueve el umbral.
+  const bajo = reales[Math.floor(reales.length * 0.1)];
+  return bajo < ruido ? bajo : ruido + (bajo - ruido) * 0.03;
+}
+
+/** Por debajo de esto es silencio digital (ceros), no un cuarto callado (un micrófono real nunca baja tanto). */
+export const SILENCIO_DIGITAL_DB = -85;
+
+/** El primer trozo al abrir el micrófono fija el ruido de partida (un cuarto ruidoso no arranca «oyendo»). */
+export function ruidoInicial(db: number): number {
+  return db <= SILENCIO_DIGITAL_DB ? -60 : Math.min(db, -40);
 }
 
 /** Palabras con las que una frase no termina: si lo último que oyó es una de estas, espera más. */

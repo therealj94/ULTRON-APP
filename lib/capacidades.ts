@@ -208,7 +208,7 @@ export function catalogoCapacidades(n: EstadoNodos, perfil: PerfilCerebro = perf
       id: 'oido',
       grupo: 'voz',
       titulo: 'Oír y transcribir',
-      detalle: 'Escucha continua; podés interrumpirla hablando. En la web transcribe el reconocimiento de voz del navegador (en Chrome y Edge, un servicio de Google o Microsoft). Las notas de voz de Telegram las transcribe Whisper en el servidor de voz de AU-RA (Voicebox) o, si no contesta, Gemini de Google.',
+      detalle: 'Escucha continua; podés interrumpirla hablando. En la web y en el teléfono tu voz va en vivo a ElevenLabs (Scribe v2 Realtime Turbo) mientras hablás; lo de dinero se vuelve a oír con Scribe v2 antes de actuar. Si el navegador no deja abrir el micrófono así, transcribe el reconocimiento de voz del navegador (en Chrome y Edge, un servicio de Google o Microsoft). Las notas de voz de Telegram las transcribe Scribe en el servidor de AU-RA.',
       ejemplos: ['(hablá cuando la luz esté cian)'],
       vivo: n.oido,
       falta: n.oido ? undefined : 'VOICEBOX_URL + VOICEBOX_CLAVE o GEMINI_API_KEY',

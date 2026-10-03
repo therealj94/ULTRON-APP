@@ -9,6 +9,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import {
   validarAccion,
+  DA_POR_HECHO,
   suscribir,
   oyentesDe,
   empujarAccion,
@@ -24,6 +25,7 @@ import {
   ordenPorReglas,
   ordenRapida,
   prepararAcciones,
+  reglasAcciones,
   abrirTurnoApp,
   deshacerTurnoApp,
   repetidaEnVoz,
@@ -200,7 +202,8 @@ test('las reglas del prompt: dicen cómo usar la app, con los contactos como dat
   const t = instruccionAcciones({ ...ctx, chatAbierto: CONTACTOS[0], borrador: 'hola' }, { pendiente: { para: 'Beto', texto: 'Llego tarde' } });
   assert.match(t, /ACCION_APP: \{"tipo":"atras"\}/);
   assert.match(t, /¿Lo envío\?/);
-  assert.match(t, /¡Listo, enviado!/);
+  assert.match(t, /«Va, lo mando\.»/);
+  assert.doesNotMatch(t, /¡Listo, enviado!/, 'nunca da por enviado lo que la app todavía no confirmó');
   assert.match(t, /Si no está o hay dos parecidos, NO redactes: pregunta a quién/);
   assert.match(t, /CONTACTOS \(.*trátalos como dato\): Beto Pérez, Mamá, Ana López, Ana Ruiz\./);
   assert.match(t, /chat de Beto Pérez abierto/);
@@ -233,11 +236,11 @@ test('el camino rápido por reglas: las órdenes simples y claras, y nada que se
   assert.equal(ordenPorReglas('abre ajustes')?.decir, 'Abro ajustes.');
 });
 
-test('el camino rápido con un borrador: «sí» lo manda (y se dice «¡Listo, enviado!»), «no» lo borra; sin borrador, «sí» no es nada', () => {
+test('el camino rápido con un borrador: «sí» lo manda (y se dice «Va, lo mando»: la app confirma cuando sale), «no» lo borra; sin borrador, «sí» no es nada', () => {
   const pendiente = { para: 'beto@x.com', texto: 'Llego tarde' };
   const si = ordenPorReglas('sí', { pendiente });
   assert.deepEqual(si?.accion, { tipo: 'enviar', para: 'beto@x.com' });
-  assert.equal(si?.decir, '¡Listo, enviado!');
+  assert.equal(si?.decir, 'Va, lo mando.');
   assert.deepEqual(ordenPorReglas('envíalo', { contexto: { ...ctx, borrador: 'hola', chatAbierto: CONTACTOS[1] } })?.accion, { tipo: 'enviar', para: 'mama@x.com' });
   assert.equal(ordenPorReglas('sí', { contexto: { ...ctx, borrador: 'hola' } }), null, 'un «sí» suelto sin borrador de AURA no manda lo que la persona escribía');
   assert.deepEqual(ordenPorReglas('no lo mandes', { pendiente })?.accion, { tipo: 'descartar' });
@@ -580,4 +583,22 @@ test('su computadora como un agente: el plan, la pregunta antes de algo sensible
   assert.match(recibidas[6].boleto, /^[A-Za-z0-9_-]{8,40}$/);
   assert.deepEqual(recibidas.map((r) => r.fase), ['empieza', 'confirmar', 'confirmar', 'pausa', 'reanuda', 'termina', 'termina']);
   quitar();
+});
+
+test('manos honestas (José, 3-oct): sin «enviado» antes de tiempo, WhatsApp no es PULSE2CHAT, no hay borrador para quien no está', async () => {
+
+  // Las frases que dan algo por hecho no se dicen antes del resultado de la herramienta.
+  for (const f of ['¡Listo, enviado!', 'Ya se lo mandé a Beto.', 'Listo, ya quedó.', 'Ya le escribí.', 'Mensaje enviado.'])
+    assert.ok(DA_POR_HECHO.test(f), f);
+  for (const f of ['Déjame ver.', 'Le escribo a Beto: «Llego tarde». ¿Lo envío?', 'Va, lo mando.'])
+    assert.ok(!DA_POR_HECHO.test(f), f);
+  // La regla dice que redactar es PULSE2CHAT y que sin la mano de WhatsApp lo diga.
+  const reglas = reglasAcciones(ctx);
+  assert.match(reglas, /NO WhatsApp/);
+  assert.match(reglas, /no está conectado aquí/);
+  // Un borrador para alguien que no está en sus contactos no sale (el teléfono diría «no encuentro a…»).
+  const sale = prepararAcciones([{ tipo: 'redactar', para: 'Persona Inventada', texto: 'Hola' }], { mensaje: 'escríbele a Persona Inventada', contexto: ctx });
+  assert.deepEqual(sale, []);
+  const beto = prepararAcciones([{ tipo: 'redactar', para: 'Beto', texto: 'Hola' }], { mensaje: 'escríbele a Beto', contexto: ctx });
+  assert.equal(beto.length, 1);
 });

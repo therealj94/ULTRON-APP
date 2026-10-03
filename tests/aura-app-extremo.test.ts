@@ -7,7 +7,7 @@
  *  · la voz corre sin mando: «redespliega» se contesta con la negativa, sin tocar nada;
  *  · las acciones: el camino rápido («vete atrás», y Laya «comando») no despierta al 27B y la acción
  *    llega al canal SSE del teléfono; «escríbele a Beto…» sale del cerebro como ACCION_APP, nunca se
- *    lee, va en `acciones` del `done` con el correo de Beto, y el «sí» la envía con «¡Listo, enviado!»;
+ *    lee, va en `acciones` del `done` con el correo de Beto, y el «sí» la envía con «Va, lo mando.» (el teléfono confirma cuando sale);
  *  · la interrupción: si ElevenLabs corta a mitad, el turno siguiente empieza con un perdón y el
  *    cerebro sabe que lo interrumpieron (no vuelve a pedir perdón);
  *  · la latencia hasta la primera palabra, con cifras (se imprimen en la salida de la prueba).
@@ -417,12 +417,12 @@ test('acciones: el camino rápido va al canal del teléfono sin el 27B; «escrí
     const sinSi = await turno('cámbialo mejor, que llego a las ocho de la noche');
     assert.deepEqual(sinSi.acciones, []);
 
-    // El «sí» manda el borrador pendiente, sin el 27B, y se dice «¡Listo, enviado!».
+    // El «sí» manda el borrador pendiente, sin el 27B, y se dice «Va, lo mando.» (el teléfono confirma cuando sale).
     contestar = () => '[EMO: neutral] Le escribo a Beto: “Llego tarde”. ¿Lo envío?\nACCION_APP: {"tipo":"redactar","para":"Beto","texto":"Llego tarde"}';
     await turno('escríbele a Beto que llego tarde');
     alNodo.length = 0;
     const si = await turno('sí');
-    assert.equal(si.reply, '¡Listo, enviado!');
+    assert.equal(si.reply, 'Va, lo mando.');
     assert.deepEqual(si.acciones.map((e: any) => e.accion), [{ tipo: 'enviar', para: 'beto@x.com' }]);
     assert.equal(alNodo.length, 0);
     assert.ok(await espera(() => tel.acciones().some((a) => a.tipo === 'enviar')));
