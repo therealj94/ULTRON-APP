@@ -160,3 +160,30 @@ test('triaje: si no se pudieron leer sus cuentas no dice «no tiene ningún corr
     await assert.rejects(() => fuenteCorreo('fede@x.hn'), (e: any) => !/no tiene ningún correo/.test(String(e?.message)) && /no pude leer/i.test(String(e?.message)));
   });
 });
+
+test('la ruta GET /api/correo/cuentas contesta 503 si no pudo leer (no una lista vacía)', async () => {
+  const express = (await import('express')).default;
+  const { montarRutasCorreo } = await import('../server/correo');
+  const app = express();
+  app.use(express.json());
+  const pasa = (_q: any, _r: any, n: any) => n();
+  montarRutasCorreo(app, { exigirMesa: pasa, limitar: () => pasa, sesionDe: () => ({ correo: 'ruta@x.hn' }) } as any);
+  const srv = app.listen(0);
+  const base = `http://127.0.0.1:${(srv.address() as any).port}`;
+  try {
+    await conS3(async (s3) => {
+      reiniciar();
+      s3.lee.ok = false;
+      const r = await fetch(`${base}/api/correo/cuentas`);
+      assert.equal(r.status, 503, 'S3 caído no es «no tienes cuentas»');
+      assert.equal((await r.json()).code, 'cuentas_no_disponibles');
+      s3.lee.ok = true;
+      reiniciar();
+      const ok = await fetch(`${base}/api/correo/cuentas`);
+      assert.equal(ok.status, 200);
+      assert.deepEqual((await ok.json()).cuentas, [], 'sin cuentas de verdad: lista vacía');
+    });
+  } finally {
+    srv.close();
+  }
+});

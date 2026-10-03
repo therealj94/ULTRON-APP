@@ -26,7 +26,7 @@
 import type express from 'express';
 import crypto from 'node:crypto';
 import { enTrozos, leer, limpiarCuerpo, listar, mandar, probarCuenta, sinCitas, type Mensaje, type Resumen } from '../lib/correo/buzon';
-import { agregarCuenta, cuentasDe, CuentasNoDisponibles, publica, quitarCuenta, type CuentaCorreo } from '../lib/correo/cuentas';
+import { agregarCuenta, cuentasDe, CuentasNoDisponibles, leerCuentasSeguro, publica, quitarCuenta, type CuentaCorreo } from '../lib/correo/cuentas';
 import { consultarCodigo, microsoftConfigurado, pedirCodigo } from '../lib/correo/microsoft';
 import { correoValido, detectarProveedor, type Proveedor } from '../lib/correo/proveedores';
 import { plegar } from '../lib/cerebro-comun';
@@ -613,7 +613,11 @@ export function montarRutasCorreo(app: express.Express, d: Deps) {
     const q = quienDe(req);
     if (!q) return sinSesion(res);
     res.setHeader('Cache-Control', 'no-store');
-    return res.json({ cuentas: (await cuentasDe(q)).map(publica), microsoft: microsoftConfigurado(), honesto: true });
+    // «No pude leer» no es «no tienes cuentas» (auditoría 3-oct, COM02): con S3 caído la app decía que no
+    // había ninguna y la persona volvía a conectarlas encima.
+    const r = await leerCuentasSeguro(q);
+    if (!r.ok) return res.status(503).json({ error: 'No pude leer tus cuentas guardadas en este momento. Prueba otra vez en un rato.', code: 'cuentas_no_disponibles', honesto: true });
+    return res.json({ cuentas: r.cuentas.map(publica), microsoft: microsoftConfigurado(), honesto: true });
   });
 
   app.post('/api/correo/detectar', d.exigirMesa, d.limitar(20), async (req, res) => {
