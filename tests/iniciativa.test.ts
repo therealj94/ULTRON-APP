@@ -17,6 +17,7 @@ process.env.ULTRON_INICIATIVA_DIR = path.join(dir, 'iniciativa');
 process.env.ULTRON_MISIONES_DIR = path.join(dir, 'misiones');
 process.env.ULTRON_PERFILES_DIR = path.join(dir, 'perfiles');
 process.env.ULTRON_MEMORIA_MIEMBROS_DIR = path.join(dir, 'memoria-miembros');
+process.env.ULTRON_AVISOS_DIR = path.join(dir, 'avisos');
 process.env.ULTRON_MEMORIA_BUCKET = '';
 after(() => fs.rmSync(dir, { recursive: true, force: true }));
 
@@ -397,4 +398,262 @@ test('«luego» pospone de verdad: ese rato nada, y después vuelve LA MISMA ide
 test('«desactiva las propuestas» las apaga; «deja de proponer» solo frena', () => {
   for (const t of ['Desactiva las propuestas', 'apaga tus sugerencias', 'ya no quiero propuestas', 'quítame las recomendaciones']) assert.equal(ini.pideApagarIniciativa(t), true, t);
   for (const t of ['deja de proponer por hoy', 'apaga la luz', 'quiero propuestas de negocio']) assert.equal(ini.pideApagarIniciativa(t), false, t);
+});
+
+/* ------------------------------------------------------------------ AUR12: evidencia, revalidación, zona y avisos */
+
+const { cerrarMision, leerMisiones: leerMs } = await import('../lib/misiones');
+const av = await import('../lib/avisos');
+
+async function misionesDe(c: string) {
+  const r = await leerMs(c);
+  return r.ok ? r.misiones : [];
+}
+
+test('cada propuesta guarda su evidencia: por qué ahora, fuente vigente, siguiente paso seguro, permiso y caducidad', async () => {
+  const c = correo();
+  await crearMision(c, { titulo: 'Vender el carro', pasos: ['Tomar fotos'], vence: MANANA + 12 * H }, MANANA - DIA);
+  const misiones = await misionesDe(c);
+  const p = await ini.pensarPropuestas({ correo: c }, { ahora: MANANA, misiones, correoSinLeer: 3, modelo: null });
+  const seg = p.propuestas.find((x) => x.tipo === 'seguimiento')!;
+  assert.ok(seg.evidencia, 'trae evidencia');
+  assert.equal(seg.evidencia!.fuente.tipo, 'mision');
+  assert.equal(seg.evidencia!.fuente.id, misiones[0].id);
+  assert.equal(seg.evidencia!.fuente.version, misiones[0].actualizada, 'la versión de la fuente que se vio');
+  assert.equal(seg.evidencia!.fuente.motivo, 'por_vencer');
+  assert.equal(seg.evidencia!.urgente, true, 'vence pronto: candidata a urgente (solo si la clase está elegida)');
+  assert.match(seg.evidencia!.porQue, /vence/);
+  assert.ok(seg.evidencia!.paso.length > 5);
+  assert.equal(seg.evidencia!.permiso, 'ninguno');
+  assert.ok(seg.evidencia!.caduca > MANANA && seg.evidencia!.caduca <= MANANA + DIA);
+  const correoP = p.propuestas.find((x) => /correos sin leer/.test(x.texto));
+  assert.equal(correoP?.evidencia?.fuente.tipo, 'correo');
+  assert.equal(correoP?.evidencia?.permiso, 'leer_correo');
+  // Las del modelo también: fuente «modelo» y caducan al día.
+  const m = await ini.pensarPropuestas({ correo: c }, { ahora: TARDE, modelo: async () => buenas });
+  assert.ok(m.propuestas.every((x) => x.evidencia && x.evidencia.fuente.tipo === 'modelo' && x.evidencia.caduca === TARDE + ini.CADUCA_COLA_MS));
+});
+
+test('la iniciativa prepara, no envía: una propuesta cuyo pedido manda algo a un tercero se descarta', () => {
+  const raw = JSON.stringify([
+    { texto: '¿Quieres que le mande el correo a Pedro con la cotización?', tipo: 'ayuda', pedido: 'Sí, mándale el correo a Pedro con la cotización.', prioridad: 1 },
+    { texto: '¿Te preparo un borrador para Pedro con la cotización?', tipo: 'ayuda', pedido: 'Sí, prepárame un borrador para Pedro con la cotización.', prioridad: 2 },
+    { texto: '¿Publico tu anuncio del carro en Facebook?', tipo: 'ayuda', pedido: 'Sí, publica mi anuncio del carro en Facebook.', prioridad: 2 },
+  ]);
+  const ps = ini.sanearPropuestas(raw, TARDE);
+  assert.deepEqual(ps.map((p) => p.texto), ['¿Te preparo un borrador para Pedro con la cotización?']);
+  assert.equal(ps[0].evidencia?.permiso, 'confirmar_envio', 'el envío del borrador, si llega, pide su confirmación aparte');
+});
+
+test('revalidar: caducada, misión cerrada o avanzada, fuente que no se pudo leer, correo ya leído, dato ya conocido', () => {
+  const t = TARDE;
+  const mision = { id: 'm_aaaaaa', titulo: 'Vender el carro', objetivo: 'x', pasos: [], proximoPaso: '', estado: 'activa' as const, notas: [], creada: t - 9 * DIA, actualizada: t - 5 * DIA };
+  const p = {
+    id: 'p_abcdef',
+    texto: '¿Cómo vas con «Vender el carro»?',
+    tipo: 'seguimiento' as const,
+    pedido: 'Sí, ayúdame.',
+    prioridad: 1,
+    creada: t,
+    misionId: 'm_aaaaaa',
+    evidencia: { porQue: 'sin avance', fuente: { tipo: 'mision' as const, id: 'm_aaaaaa', version: t - 5 * DIA, motivo: 'estancada', visto: t }, paso: 'preparar', permiso: 'ninguno' as const, caduca: t + DIA },
+  };
+  assert.deepEqual(ini.revalidarPropuesta(p, { misiones: [mision] }, t + H), { vigente: true });
+  assert.deepEqual(ini.revalidarPropuesta(p, { misiones: [mision] }, t + DIA), { vigente: false, motivo: 'caducada' });
+  assert.deepEqual(ini.revalidarPropuesta(p, { misiones: [{ ...mision, estado: 'hecha' }] }, t + H), { vigente: false, motivo: 'resuelta' });
+  assert.deepEqual(ini.revalidarPropuesta(p, { misiones: [] }, t + H), { vigente: false, motivo: 'resuelta' }, 'ya no existe');
+  assert.deepEqual(ini.revalidarPropuesta(p, { misiones: [{ ...mision, actualizada: t + 30 * 60_000 }] }, t + H), { vigente: false, motivo: 'resuelta' }, 'avanzó: ya no está estancada');
+  assert.deepEqual(ini.revalidarPropuesta(p, { misiones: null }, t + H), { vigente: false, motivo: 'fuente_desconectada' }, 'no se pudo leer: no se inventa que sigue igual');
+  const pc = { ...p, misionId: undefined, tipo: 'ayuda' as const, evidencia: { ...p.evidencia, fuente: { tipo: 'correo' as const, visto: t } } };
+  assert.deepEqual(ini.revalidarPropuesta(pc, { correoSinLeer: 2 }, t + H), { vigente: true });
+  assert.deepEqual(ini.revalidarPropuesta(pc, { correoSinLeer: 0 }, t + H), { vigente: false, motivo: 'resuelta' });
+  assert.deepEqual(ini.revalidarPropuesta(pc, { correoSinLeer: null }, t + H), { vigente: false, motivo: 'fuente_desconectada' });
+  const pk = { ...p, misionId: undefined, tipo: 'conocer' as const, campo: 'musica', evidencia: { ...p.evidencia, fuente: { tipo: 'perfil' as const, id: 'musica', visto: t } } };
+  assert.deepEqual(ini.revalidarPropuesta(pk, { perfil: perfilInicial({ apodo: 'X' }) }, t + H), { vigente: true });
+  assert.deepEqual(ini.revalidarPropuesta(pk, { perfil: { ...perfilInicial({ apodo: 'X' }), encuesta: { musica: 'boleros' } } as any }, t + H), { vigente: false, motivo: 'resuelta' });
+  // Una propuesta guardada antes de la evidencia (estado viejo): caduca al día de creada.
+  const vieja = { id: 'p_fedcba', texto: 'Idea vieja', tipo: 'ayuda' as const, pedido: 'Sí.', prioridad: 2, creada: t };
+  assert.deepEqual(ini.revalidarPropuesta(vieja, {}, t + H), { vigente: true });
+  assert.deepEqual(ini.revalidarPropuesta(vieja, {}, t + DIA + 1), { vigente: false, motivo: 'caducada' });
+});
+
+test('REPRO: lo pospuesto con «luego» NO vuelve si mientras tanto la misión se cerró', async () => {
+  const c = correo();
+  await crearMision(c, { titulo: 'Vender el carro', pasos: ['Tomar fotos'] }, MANANA - 5 * DIA);
+  const persona = { correo: c };
+  const r1 = await ini.siguientePropuesta(persona, { ahora: MANANA, misiones: await misionesDe(c), modelo: null });
+  assert.equal(r1.propuesta?.tipo, 'seguimiento');
+  await ini.responderPropuesta(c, r1.propuesta!.id, 'luego', MANANA + 60_000);
+  const ms = await misionesDe(c);
+  await cerrarMision(c, ms[0].id, 'hecha', MANANA + H);
+  const r2 = await ini.siguientePropuesta(persona, { ahora: MANANA + 5 * H, misiones: await misionesDe(c), modelo: null });
+  assert.notEqual(r2.propuesta?.misionId, ms[0].id, 'el asunto resuelto no se propone');
+  assert.ok(!/Vender el carro/.test(r2.propuesta?.texto || ''));
+});
+
+test('REPRO: la cola no entrega «tienes N correos sin leer» cuando ya los leyó', async () => {
+  const c = correo();
+  const persona = { correo: c };
+  // Una misión estancada sale primero; la del correo queda en la cola.
+  await crearMision(c, { titulo: 'Vender el carro', pasos: ['Tomar fotos'] }, TARDE - 5 * DIA);
+  const r1 = await ini.siguientePropuesta(persona, { ahora: TARDE, misiones: await misionesDe(c), correoSinLeer: 4, modelo: null, nivelIniciativa: 'alta' });
+  assert.equal(r1.propuesta?.tipo, 'seguimiento');
+  const est = await ini.leerEstadoIniciativa(c);
+  assert.ok(est.ok && est.estado.cola[0] && /correos sin leer/.test(est.estado.cola[0].texto), 'la idea del correo espera en la cola');
+  await ini.responderPropuesta(c, r1.propuesta!.id, 'si', TARDE + 60_000);
+  // Dos horas después (ritmo alta), ya los leyó: 0 sin leer.
+  const r2 = await ini.siguientePropuesta(persona, { ahora: TARDE + 2 * H + 60_000, misiones: await misionesDe(c), correoSinLeer: 0, modelo: null, nivelIniciativa: 'alta' });
+  assert.ok(!/correos sin leer/.test(r2.propuesta?.texto || ''), String(r2.propuesta?.texto));
+});
+
+test('«luego» con fecha explícita: esa idea no vuelve antes, las demás sí; una fecha pasada no vale', async () => {
+  const c = correo();
+  const persona = { correo: c };
+  const modelo = async () => buenas;
+  const r1 = await ini.siguientePropuesta(persona, { ahora: MANANA, modelo, nivelIniciativa: 'alta' });
+  const hasta = MANANA + 3 * DIA;
+  const l = await ini.responderPropuesta(c, r1.propuesta!.id, 'luego', MANANA + 60_000, { hasta });
+  assert.equal(l.ok, true);
+  assert.equal(l.hasta, hasta);
+  const r2 = await ini.siguientePropuesta(persona, { ahora: MANANA + 3 * H, modelo, nivelIniciativa: 'alta' });
+  assert.ok(r2.propuesta && r2.propuesta.id !== r1.propuesta!.id, 'otra idea sí puede salir');
+  await ini.responderPropuesta(c, r2.propuesta!.id, 'si', MANANA + 3 * H + 60_000);
+  const r3 = await ini.siguientePropuesta(persona, { ahora: hasta + 60_000, modelo, nivelIniciativa: 'alta' });
+  assert.equal(r3.propuesta?.texto, r1.propuesta!.texto, 'pasada la fecha, vuelve (revalidada)');
+  const c2 = correo();
+  const r4 = await ini.siguientePropuesta({ correo: c2 }, { ahora: TARDE, modelo: null });
+  await assert.rejects(() => ini.responderPropuesta(c2, r4.propuesta!.id, 'luego', TARDE, { hasta: TARDE - H }), /fecha/);
+});
+
+test('horas quietas y días en la zona de la persona (America/New_York con horario de verano)', () => {
+  const julio = Date.parse('2026-07-15T11:30:00Z'); // 07:30 EDT · 05:30 Honduras
+  assert.equal(ini.enHorasQuietas(julio), true, 'Honduras por omisión');
+  assert.equal(ini.enHorasQuietas(julio, { zona: 'America/New_York' }), false);
+  assert.equal(ini.enHorasQuietas(Date.parse('2026-12-15T11:30:00Z'), { zona: 'America/New_York' }), true, '06:30 EST');
+  const e = { ultima: 0, backoff: 1, dia: '', hoy: 0 };
+  assert.equal(ini.tocaProponer(e, 'media', julio, { zona: 'America/New_York' }).toca, true);
+  assert.equal(ini.tocaProponer(e, 'media', julio).motivo, 'horas_quietas');
+  // El tope del día cuenta el día de SU zona.
+  const t = Date.parse('2026-07-15T13:00:00Z'); // 09:00 EDT del 15
+  assert.equal(ini.tocaProponer({ ultima: t - 21 * H, backoff: 1, dia: '2026-07-14', hoy: 1 }, 'baja', t, { zona: 'America/New_York' }).toca, true);
+  assert.equal(ini.tocaProponer({ ultima: t - 21 * H, backoff: 1, dia: '2026-07-15', hoy: 1 }, 'baja', t, { zona: 'America/New_York' }).motivo, 'tope_del_dia');
+});
+
+test('fuente desconectada: se avisa UNA vez del bloqueo y no se finge seguir revisándola', async () => {
+  const c = correo();
+  const persona = { correo: c };
+  const r1 = await ini.siguientePropuesta(persona, { ahora: TARDE, desconectadas: ['correo'], correoSinLeer: null, modelo: null, nivelIniciativa: 'alta' });
+  assert.equal(r1.propuesta?.evidencia?.fuente.tipo, 'bloqueo');
+  assert.match(r1.propuesta!.texto, /correo/);
+  assert.ok(!/sin leer/.test(r1.propuesta!.texto), 'no inventa cuántos hay');
+  await ini.responderPropuesta(c, r1.propuesta!.id, 'no', TARDE + 60_000);
+  for (const h of [20, 44, 68]) {
+    const r = await ini.siguientePropuesta(persona, { ahora: TARDE + h * H, desconectadas: ['correo'], correoSinLeer: null, modelo: null, nivelIniciativa: 'alta' });
+    assert.notEqual(r.propuesta?.evidencia?.fuente.tipo, 'bloqueo', `a las ${h} h no se repite`);
+    if (r.propuesta) await ini.responderPropuesta(c, r.propuesta.id, 'si', TARDE + h * H + 60_000);
+  }
+  // Reconectado y vuelto a caer: es otro bloqueo, se avisa otra vez.
+  const rec = await ini.siguientePropuesta(persona, { ahora: TARDE + 92 * H, correoSinLeer: 0, modelo: null, nivelIniciativa: 'alta' });
+  if (rec.propuesta) await ini.responderPropuesta(c, rec.propuesta.id, 'si', TARDE + 92 * H + 60_000);
+  const otra = await ini.siguientePropuesta(persona, { ahora: TARDE + 116 * H, desconectadas: ['correo'], correoSinLeer: null, modelo: null, nivelIniciativa: 'alta' });
+  assert.equal(otra.propuesta?.evidencia?.fuente.tipo, 'bloqueo');
+});
+
+test('el reloj usa la zona de CADA persona: en Nueva York ya es de día aunque en Honduras sean horas quietas', async () => {
+  const ny = correo();
+  const hn = correo();
+  await av.cambiarPreferencias(ny, { zona: 'America/New_York' }, Date.parse('2026-07-14T15:00:00Z'));
+  const entregas: string[] = [];
+  const r = arrancarIniciativa({ personas: () => [{ correo: ny }, { correo: hn }], alProponer: (c) => (entregas.push(c), 1), modelo: null, reloj: () => Date.parse('2026-07-15T11:30:00Z'), cadaMs: 10 * 60_000, sello: av.selloLocal({ dir: null }) });
+  try {
+    assert.equal(await r.vuelta(), 1);
+    assert.deepEqual(entregas, [ny]);
+  } finally {
+    r.parar();
+  }
+});
+
+test('dos relojes (dos réplicas) a la vez sobre el mismo almacén: UNA entrega por propuesta', async () => {
+  const a = correo();
+  const sellos = path.join(dir, 'sellos-reloj');
+  const entregas: string[] = [];
+  const mk = () =>
+    arrancarIniciativa({ personas: () => [{ correo: a }], entregadores: { app: (_c, aviso) => (entregas.push(aviso.propuesta.id), 1) }, modelo: null, reloj: () => TARDE, cadaMs: 10 * 60_000, sello: av.selloLocal({ dir: sellos }) });
+  const r1 = mk();
+  const r2 = mk();
+  try {
+    await Promise.all([r1.vuelta(), r2.vuelta(), r1.vuelta()]);
+    assert.equal(entregas.length, 1, JSON.stringify(entregas));
+  } finally {
+    r1.parar();
+    r2.parar();
+  }
+});
+
+test('el reloj: una propuesta entregada en la app e ignorada no se persigue por push', async () => {
+  const a = correo();
+  let ahora = TARDE;
+  const log: string[] = [];
+  const app = { vale: 1 };
+  const r = arrancarIniciativa({
+    personas: () => [{ correo: a }],
+    entregadores: { app: (_c, x) => (log.push(`app:${x.propuesta.id}`), app.vale), push: (_c, x) => (log.push(`push:${x.propuesta.id}`), 1) },
+    modelo: null,
+    reloj: () => ahora,
+    cadaMs: 10 * 60_000,
+    sello: av.selloLocal({ dir: null }),
+  });
+  try {
+    await r.vuelta();
+    assert.equal(log.length, 1);
+    assert.match(log[0], /^app:/);
+    const primera = log[0].slice(4);
+    // La app deja de escuchar; el reloj vuelve a pasar varias veces el mismo día.
+    app.vale = 0;
+    for (const m of [30, 60, 90]) {
+      ahora = TARDE + m * 60_000;
+      await r.vuelta();
+    }
+    assert.ok(!log.includes(`push:${primera}`), 'ignorar no autoriza otro canal');
+  } finally {
+    r.parar();
+  }
+});
+
+test('rutas de avisos: preferencias de la sesión, cambios validados, posponer con fecha y «no sobre esta clase»', async () => {
+  const a = correo();
+  const app = express();
+  app.use(express.json());
+  const pasa = ((_q: express.Request, _s: express.Response, nx: express.NextFunction) => nx()) as express.RequestHandler;
+  montarRutasIniciativa(app, { exigirMesa: pasa, limitar: () => pasa, sesionDe: (req) => (req.headers['x-quien'] ? { correo: String(req.headers['x-quien']) } : null), modelo: null, reloj: () => TARDE });
+  const srv = app.listen(0, '127.0.0.1');
+  await new Promise((r) => srv.once('listening', r));
+  const base = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
+  const pedir = (ruta: string, quien: string | null, cuerpo?: unknown) =>
+    fetch(`${base}${ruta}`, { method: cuerpo ? 'POST' : 'GET', headers: { 'content-type': 'application/json', ...(quien ? { 'x-quien': quien } : {}) }, body: cuerpo ? JSON.stringify(cuerpo) : undefined });
+  try {
+    assert.equal((await pedir('/api/avisos/preferencias', null)).status, 401);
+    const g = await (await pedir('/api/avisos/preferencias', a)).json();
+    assert.equal(g.preferencias.maxDia, 1);
+    assert.equal(g.preferencias.zona, 'America/Tegucigalpa');
+    assert.equal((await pedir('/api/avisos/preferencias', a, { zona: 'Marte/Base' })).status, 400);
+    const c = await (await pedir('/api/avisos/preferencias', a, { zona: 'America/New_York', canales: ['app'], menosAvisos: true })).json();
+    assert.equal(c.preferencias.zona, 'America/New_York');
+    assert.deepEqual(c.preferencias.canales, ['app']);
+    assert.ok(c.preferencias.cadaDias > 1, '«menos avisos»');
+    const pos = await (await pedir('/api/avisos/posponer', a, { fecha: '2026-10-10', hora: '09:00' })).json();
+    assert.equal(pos.pospuestoHasta, Date.parse('2026-10-10T13:00:00Z'), '09:00 EDT de su zona');
+    assert.equal((await pedir('/api/avisos/posponer', a, { fecha: '2020-01-01' })).status, 400, 'una fecha pasada no vale');
+    // «No sobre esta clase» desde la tarjeta de la propuesta.
+    await pedir('/api/avisos/preferencias', a, { pospuestoHasta: null, zona: 'America/Tegucigalpa' });
+    const p = await (await pedir('/api/iniciativa', a)).json();
+    assert.ok(p.propuesta?.id);
+    assert.ok(p.propuesta.porQue && p.propuesta.paso && p.propuesta.caduca, 'la app puede «ver la propuesta» con su evidencia');
+    const no = await (await pedir('/api/iniciativa/responder', a, { id: p.propuesta.id, respuesta: 'no', silenciar: 'clase' })).json();
+    assert.equal(no.ok, true);
+    const g2 = await (await pedir('/api/avisos/preferencias', a)).json();
+    assert.ok(g2.preferencias.clasesApagadas.includes(p.propuesta.tipo));
+  } finally {
+    srv.close();
+  }
 });

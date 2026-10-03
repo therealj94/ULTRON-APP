@@ -23,6 +23,8 @@ entrenamiento/salida/
 data/perfiles/
 # La tarea en curso de cada persona (lib/tarea-en-curso.ts): datos privados.
 data/tarea-en-curso/
+# Preferencias de avisos, outbox y sellos de entrega de cada persona (lib/avisos.ts): datos privados.
+data/avisos/
 windows/src/Aura.Windows/CentroAssets/
 windows/centro/node_modules/
 build-server/

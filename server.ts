@@ -19,7 +19,7 @@ import { ESPACIO_COMUN, espacioDe } from './lib/espacio-nodo';
 import { cargarMiembro, fotoMemoriaMiembro, guardarHechoMiembro, hiloMiembro, olvidarMiembro, promptMemoriaMiembro, recordarTurnoMiembro } from './lib/memoria-miembro';
 import { montarRutasApp } from './server/app-rutas';
 import { montarRutasCaras } from './server/caras-rutas';
-import { avisarComputadoraPorPush, avisarPush, montarRutasPush, proponerPorPush } from './server/push';
+import { avisarComputadoraPorPush, avisarPush, llamarPorPush, montarRutasPush, proponerPorPush } from './server/push';
 import { montarRutasWindows, instruccionWindows } from './server/windows-rutas';
 import { actualizarPerfil, leerPerfil, lineaPerfil, perfilEnCache, sembrarDesdeGenesis, type Perfil } from './lib/perfil-persona';
 import {
@@ -5060,16 +5060,18 @@ async function startServer() {
     if (ES_ULTRON) {
       // Los tramos de conversación que quedaron en pausa se resumen aunque nadie vuelva a hablar (lib/episodios.ts).
       iniciarBarridoPausas();
-      // AU-RA propone por su cuenta (server/iniciativa.ts): a quien usó la app hace poco, fuera de horas
-      // quietas, al ritmo que eligió en Ajustes. Llega al teléfono por su canal de acciones; si no estaba
-      // escuchando, la misma propuesta sale al abrir la app (GET /api/iniciativa).
+      // AU-RA propone por su cuenta (server/iniciativa.ts): a quien usó la app hace poco, fuera de SUS horas
+      // quietas, al ritmo que eligió en Ajustes. El aviso pasa por su outbox (lib/avisos.ts): se revalida
+      // justo antes, respeta su canal y su presupuesto (por omisión uno no urgente al día) y sale UNA vez.
+      // Canales en orden: el de acciones de la app; si no estaba escuchando (0), push (FCM / Web Push).
+      // La llamada solo para las clases urgentes que ella eligió Y si activó «llamada para urgentes».
+      // Si no sale, la misma propuesta aparece al abrir la app (GET /api/iniciativa).
       arrancarIniciativa({
         personas: () => personasRecientes(),
-        alProponer: (correo, p) => {
-          const n = empujarAccion(correo, accionIniciativa(p)).entregada;
-          // Con la app cerrada, la propuesta le llega como aviso con «Sí» / «Luego» (FCM, server/push.ts).
-          if (!n) void proponerPorPush(correo, { id: p.id, texto: p.texto, pedido: p.pedido }).catch(() => undefined);
-          return n;
+        entregadores: {
+          app: (correo, a) => empujarAccion(correo, accionIniciativa(a.propuesta)).entregada,
+          push: async (correo, a) => (await proponerPorPush(correo, { id: a.propuesta.id, texto: a.propuesta.texto, pedido: a.propuesta.pedido }).catch(() => ({ enviados: 0 }))).enviados,
+          llamada: async (correo, a) => (await llamarPorPush(correo, { motivo: a.propuesta.texto, id: a.propuesta.id }).catch(() => ({ enviados: 0 }))).enviados,
         },
         nivelDe: (c) => nivelDeCorreo(c),
       });

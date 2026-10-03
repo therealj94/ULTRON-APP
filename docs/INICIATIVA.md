@@ -152,3 +152,62 @@ no estaba escuchando, la misma propuesta sigue pendiente y sale en el próximo `
    ```
 
    Telegram como respaldo, solo al chat PRIVADO de la persona (su id del padrón), nunca al de la organización.
+
+   Desde AUR12 el reloj recibe `entregadores` por canal (`app`, `push`, `llamada`) en vez de `alProponer`
+   (que sigue valiendo como canal `app`), y despacha por la outbox de abajo.
+
+## AUR12: evidencia, revalidación, zona, canal y presupuesto
+
+| Pieza | Dónde | Qué hace |
+|---|---|---|
+| Evidencia | `lib/iniciativa.ts` (`Propuesta.evidencia`) | Por qué ayudaría ahora, fuente y su versión (p. ej. `actualizada` de la misión), siguiente paso seguro, permiso (`ninguno` · `leer_correo` · `leer_whatsapp` · `confirmar_envio`) y caducidad. |
+| Revalidar | `revalidarPropuesta` (puro) y `server/iniciativa.ts revalidarAhora` | Antes de entregar (cola, «luego», pendiente, outbox): caducada, asunto resuelto (misión cerrada, con todos sus pasos hechos o que avanzó; correo ya leído; dato ya conocido) o fuente que no se pudo leer → no sale. |
+| Zona | `lib/zona-horaria.ts` | Zona IANA por persona; horas quietas y «día» locales; horario de verano (hueco de primavera avanza, hora repetida toma la primera). Un instante guardado (vencimiento, posponer) no se reinterpreta al cambiar de zona. Una fecha `AAAA-MM-DD` es el final de ese día en su zona. |
+| Avisos | `lib/avisos.ts` | Preferencias, decisión de contacto (pura), outbox deduplicada, sello. |
+| Evaluación | `evals/iniciativa-avisos.json`, `scripts/evals/iniciativa.ts`, `tests/iniciativa-eval.test.ts` | Situaciones sintéticas y métricas (precisión, omisiones, acciones no autorizadas = 0, duplicados, frecuencia). |
+
+**Prepara, no envía.** Una propuesta cuyo `pedido` mande, publique, comparta, responda o llame a otro se
+descarta (`sanearPropuestas`); preparar un borrador sí vale (permiso `confirmar_envio`: el envío pide su
+confirmación aparte). Todo aviso va a la persona dueña y a nadie más.
+
+**Por omisión** (configurable en Ajustes → «Tus avisos»): zona `America/Tegucigalpa`, quietas 21:00–07:00,
+canales `app` → `push`, como mucho **un aviso no urgente al día**, ninguna clase urgente, sin llamada,
+«Luego» = en 2 h. Si no hay novedad, no se contacta.
+
+**Deduplicar entre canales.** Una propuesta se entrega UNA vez. El siguiente canal solo se prueba si el
+anterior no alcanzó a nadie (la app no escuchaba); entregada e ignorada no se persigue por otro canal. Verla
+al abrir la app (`GET /api/iniciativa`) cuenta como entregada por el chat y no gasta presupuesto.
+
+**Controles.** «Menos avisos» (uno cada 3 días), «no sobre este tema» / «no sobre esta clase» (también desde
+`POST /api/iniciativa/responder` con `silenciar: "tema" | "clase"`), posponer con fecha
+(`POST /api/avisos/posponer {fecha, hora}` en su zona), horario, canal y apagado. Apagar cancela lo
+encolado de esa clase y lo retira de la pendiente y la cola de la iniciativa (`podarIniciativa`).
+«Luego» aplica una fecha explícita (`{respuesta: "luego", fecha, hora}` o `hasta`) o su preferencia.
+
+### Rutas nuevas
+
+- `GET /api/avisos/preferencias` → `{ preferencias, clases, canales, porOmision }`.
+- `POST /api/avisos/preferencias` con cualquiera de `zona`, `quietas {desde, hasta}`, `canales`, `maxDia`,
+  `cadaDias`, `menosAvisos`, `urgentes`, `llamadaUrgente`, `clasesApagadas`, `temasSilenciados`,
+  `silenciarTema`, `pospuestoHasta` (ms o null), `luego`, `apagado` → `{ preferencias, cancelados, retiradas }`.
+- `POST /api/avisos/posponer` `{fecha, hora?}` | `{hasta}` | `{quitar: true}` → `{ pospuestoHasta }`.
+- `GET /api/iniciativa` ahora trae también `clase`, `porQue`, `paso`, `permiso` y `caduca` (para «ver la propuesta»).
+
+### La outbox y el punto de enganche con lo durable
+
+Cada aviso es una fila en el cajón de la persona (`ultron/avisos/<huella>.json`): `pendiente → reservado →
+entregado | sin_alcance`, u `omitido` (revalidación, presupuesto, duplicado), `cancelado` (apagado) o
+`incierto` (una reserva que nadie cerró en 5 min: no se reenvía; mejor un aviso de menos que dos). El
+despacho revalida fuera del candado, decide y reserva en un solo paso del cajón y, antes de entregar,
+reclama el **sello** `aviso:<huella>:<propuesta>`.
+
+`SelloEntrega` (`reclamar(clave, ahora)` → true solo al primero; `reclamada(clave)`) es **el punto de
+enganche**. Hoy `selloLocal()` usa memoria y un archivo por clave creado con O_EXCL (`<ULTRON_AVISOS_DIR>/sellos`),
+que protege dos vueltas del reloj y dos procesos sobre el mismo disco. Para réplicas en máquinas distintas se
+implementa la misma interfaz sobre el almacén durable (clave única / idempotency key) y se pasa como `sello`
+a `arrancarIniciativa` y `procesarOutbox`; nada más cambia.
+
+Lo que no cubre todavía: la tarjeta de la mesa no muestra «ver por qué» ni «no sobre esto» (el servidor ya
+lo acepta); el correo como canal de avisos y los contadores de correo/WhatsApp no están conectados en
+server.ts (el reloj solo usa app, push y la llamada opcional); la tasa de rechazo y la utilidad real piden
+un piloto consentido con revisión humana.
