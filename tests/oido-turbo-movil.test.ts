@@ -153,7 +153,12 @@ function banco(opts: { permiso?: boolean; abreWs?: boolean; mic?: 'bien' | 'fall
   const voz = (k: number) => {
     for (let i = 0; i < k; i++) trozo(true);
   };
-  return { motor, ws, llamadasWav, finales, parciales, eventos, trozo, silencio, voz, abierto: () => micAbierto, permisos: () => permisos, avanzar: (ms: number) => (reloj += ms) };
+  const trozoDb = (db: number) => {
+    reloj += 100;
+    n++;
+    alTrozo?.({ audio: Buffer.alloc(3200, n & 255).toString('base64'), db });
+  };
+  return { motor, ws, llamadasWav, finales, parciales, eventos, trozo, trozoDb, silencio, voz, abierto: () => micAbierto, permisos: () => permisos, avanzar: (ms: number) => (reloj += ms) };
 }
 
 describe('Oído Turbo (teléfono): el motor', () => {
@@ -343,6 +348,68 @@ describe('Oído Turbo (teléfono): el motor', () => {
     b.motor.activar();
     await espera(1600);
     assert.ok(b.eventos.some((e) => e.startsWith('no:')));
+  });
+
+  it('cuarto con ventilador o tele (-45 dBFS) sin que nadie hable: no «oye» nada (José, 2-oct)', async () => {
+    const b = banco();
+    b.motor.activar();
+    await espera();
+    for (let i = 0; i < 200; i++) b.trozoDb(-45 + (i % 5) - 2);
+    assert.equal(b.eventos.filter((e) => e === 'voz').length, 0, 'el ruido de fondo no es voz');
+    assert.equal(b.ws.length, 0, 'ni se abre el WebSocket');
+  });
+
+  it('voz sobre ese ruido: la detecta y la cierra a tiempo (no a los 15 s)', async () => {
+    const b = banco();
+    b.motor.activar();
+    await espera();
+    for (let i = 0; i < 20; i++) b.trozoDb(-45);
+    for (let i = 0; i < 12; i++) b.trozoDb(i % 4 === 3 ? -40 : -22); // voz con pausas entre palabras
+    await espera();
+    assert.equal(b.eventos.filter((e) => e === 'voz').length, 1);
+    for (let i = 0; i < 7; i++) b.trozoDb(-45);
+    assert.equal(b.ws[0].commits, 1, 'cerró a los ~0,65 s de silencio, con el ruido de fondo sonando');
+  });
+
+  it('ceros del micrófono (silencio digital) entre ruido de fondo: no bajan el umbral ni dejan la frase abierta', async () => {
+    const b = banco();
+    b.motor.activar();
+    await espera();
+    for (let i = 0; i < 10; i++) b.trozoDb(-45);
+    for (let i = 0; i < 10; i++) b.trozoDb(-20);
+    await espera();
+    for (let i = 0; i < 3; i++) b.trozoDb(-100);
+    for (let i = 0; i < 10; i++) b.trozoDb(-45);
+    assert.equal(b.ws[0].commits, 1, 'la frase se cerró');
+    for (let i = 0; i < 50; i++) b.trozoDb(-45);
+    assert.equal(b.eventos.filter((e) => e === 'voz').length, 1, 'y el ruido no abre otra');
+  });
+
+  it('el texto de Turbo deja de cambiar: la frase se cierra aunque el volumen siga alto (eco, ruido)', async () => {
+    const b = banco();
+    b.motor.activar();
+    await espera();
+    b.voz(5);
+    await espera();
+    b.ws[0].decir({ message_type: 'partial_transcript', text: 'pon música' });
+    b.voz(15); // 1,5 s más de «voz» que Turbo no entiende como palabras nuevas
+    assert.equal(b.ws[0].commits, 0);
+    b.voz(6);
+    assert.equal(b.ws[0].commits, 1, 'a los 2 s sin texto nuevo, cierra');
+  });
+
+  it('se enciende la tele a mitad: a lo mucho una falsa alarma de 4 s y después nada', async () => {
+    const b = banco();
+    b.motor.activar();
+    await espera();
+    for (let i = 0; i < 20; i++) b.trozoDb(-70);
+    for (let i = 0; i < 60; i++) b.trozoDb(-38 + (i % 3)); // la tele: 6 s, Turbo no entiende palabras
+    await espera();
+    for (let i = 0; i < 150; i++) b.trozoDb(-38 + (i % 3));
+    await espera();
+    assert.ok(b.eventos.filter((e) => e === 'voz').length <= 1, `falsas alarmas: ${b.eventos.filter((e) => e === 'voz').length}`);
+    assert.equal(b.finales.length, 0);
+    assert.equal(b.ws[0]?.commits ?? 0, 0, 'el ruido no se manda a transcribir');
   });
 
   it('silenciar cierra todo', async () => {

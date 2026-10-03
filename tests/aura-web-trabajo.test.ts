@@ -145,5 +145,6 @@ test('el catálogo no promete absolutos («no inventa», «nadie más lo ve»)',
   assert.doesNotMatch(textos, /no inventa/i);
   assert.doesNotMatch(textos, /nadie m[aá]s lo ve/i);
   assert.match(textos, /Puede equivocarse/);
-  assert.match(textos, /reconocimiento de voz del navegador/, 'la web dice quién transcribe de verdad');
+  assert.match(textos, /Scribe v2 Realtime Turbo/, 'la web dice quién transcribe de verdad');
+  assert.match(textos, /reconocimiento de voz del navegador/, 'y cuál es el respaldo');
 });

@@ -166,13 +166,29 @@ async function buscarChat(quien: string, ambito: string, ref: string): Promise<H
   const enTodos = hallar(await chatsWA('', 200).catch(() => []));
   if (enTodos) return enTodos;
   const del = (await chatsWA(q, 5).catch(() => []))[0];
-  return del ? { chat: del } : null;
+  if (del) return { chat: del };
+  // Sin chat todavía (José, 2-oct: «le dije enviar mensaje por WhatsApp y no lo hizo»): antes aquí se
+  // rendía con «no encuentro el chat». Ahora busca en los contactos guardados de su teléfono, para
+  // empezar uno nuevo, y si lo dicho es un número lo usa tal cual (8 dígitos = Honduras, +504).
+  const contactos = await pedir<{ contactos: ContactoWA[] }>(`/contactos?limite=8&buscar=${encodeURIComponent(q)}`)
+    .then((j) => j.contactos || [])
+    .catch(() => [] as ContactoWA[]);
+  const comoChat = (k: ContactoWA): ChatWA => ({ jid: k.jid, nombre: k.nombre || k.numero || k.jid, grupo: false, noLeidos: 0, hora: 0, ultimo: '', ultimoMio: false, numero: k.numero });
+  const deContactos = hallar(contactos.map(comoChat));
+  if (deContactos) return deContactos;
+  if (contactos.length === 1) return { chat: comoChat(contactos[0]) };
+  if (contactos.length > 1) return { varios: contactos.map(comoChat) };
+  if (digitos.length >= 8 && digitos.length <= 15 && digitos.length >= q.replace(/\s/g, '').length - 2) {
+    const numero = digitos.length === 8 ? `504${digitos}` : digitos;
+    return { chat: comoChat({ jid: `${numero}@s.whatsapp.net`, nombre: `+${numero}`, numero: `+${numero}` }) };
+  }
+  return null;
 }
 
 /** El chat o el HECHO para el modelo (no está, o hay varios y hay que preguntar cuál). */
 async function chatDeRef(quien: string, ambito: string, ref: string): Promise<ChatWA | string> {
   const h = await buscarChat(quien, ambito, ref);
-  if (!h) return `WHATSAPP: no encuentro el chat «${ref}». Revisa primero (whatsapp revisar) o dime el nombre como lo tiene guardado.`;
+  if (!h) return `WHATSAPP: no encuentro a «${ref}» ni en sus chats ni en sus contactos. No mandé nada. Pídele el nombre como lo tiene guardado o el número.`;
   if ('varios' in h) {
     return `WHATSAPP: hay ${h.varios.length} chats que encajan con «${ref}»: ${h.varios
       .slice(0, 5)
