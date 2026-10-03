@@ -1,9 +1,12 @@
 // La tarjeta de Veta Wallet dentro de AURA, contra un servidor de mentira con las respuestas del real
 // (veta-wallet-backend-/routes/cards.js y controller/cardController.js).
 const assert = require('assert/strict');
-const { sesion, desbloqueo } = require('./out/veta.cjs');
+const { sesion, desbloqueo, cuenta } = require('./out/veta.cjs');
 const ss = globalThis.__ss;
 const la = globalThis.__la;
+// La sesión de Veta es de quien está dentro de AURA (AUR01): sus llaves llevan su seudónimo.
+cuenta.fijarCuenta('ana@aura.test');
+const llave = (base) => sesion.llaveDe(base, cuenta.seudonimoActual());
 
 const b64u = (o) => Buffer.from(JSON.stringify(o)).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
 const jwt = (exp, extra = {}) => `h.${b64u({ exp, ...extra })}.f`;
@@ -30,7 +33,7 @@ prueba('entrar: guarda JWT y refresco en el llavero (NO la contraseña) y reinte
   assert.equal(r.correo, 'Ana@X.com');
   assert.equal(r.direccion, '0xabc');
   assert.deepEqual(llamadas.map((l) => l.cuerpo.email), ['Ana@X.com', 'ana@x.com']);
-  assert.ok(ss.m.get('aura.veta.token') && ss.m.get('aura.veta.refresco') === 'rt-1');
+  assert.ok(ss.m.get(llave('aura.veta.token')) && ss.m.get(llave('aura.veta.refresco')) === 'rt-1');
   assert.ok(![...ss.m.values()].includes('secreta'), 'la contraseña no queda en el llavero sin biometría');
   assert.equal(sesion.conectada(), true);
 });
@@ -59,7 +62,7 @@ prueba('sesión vencida: se renueva con el refresco ANTES de pedir; si el refres
   llamadas = [];
   await sesion.tarjeta.mia();
   assert.deepEqual(llamadas.map((l) => l.ruta), ['/auth/refresh', '/cards/my-card']);
-  assert.equal(ss.m.get('aura.veta.refresco'), 'rt-3');
+  assert.equal(ss.m.get(llave('aura.veta.refresco')), 'rt-3');
   // Ahora el refresco deja de servir y el JWT vence.
   respuestas['/auth/login'] = [200, { token: jwt(ahoraS() - 5), refreshToken: 'rt-viejo' }];
   await sesion.entrar('ana@x.com', 'secreta');
@@ -88,25 +91,25 @@ prueba('huella: la contraseña se guarda SOLO con requireAuthentication; cancela
   la.hw = true; la.enrolado = true; la.tipos = [2];
   const cap = await desbloqueo.capacidadBiometrica();
   assert.deepEqual(cap, { disponible: true, tipo: 'face' });
-  assert.equal(await desbloqueo.activarDesbloqueo('mi-clave'), true);
-  const op = ss.opciones.get('aura.veta.clave-biometrica');
+  assert.equal(await desbloqueo.activarDesbloqueo('mi-clave', sesion.vinculoVeta()), true);
+  const op = ss.opciones.get(llave('aura.veta.clave-biometrica'));
   assert.equal(op.requireAuthentication, true);
   assert.equal(op.keychainAccessible, 'WHEN_UNLOCKED_THIS_DEVICE_ONLY');
   assert.equal(await desbloqueo.desbloqueoActivo(), true);
-  assert.equal(await desbloqueo.desbloquearClave(), 'mi-clave');
+  assert.equal(await desbloqueo.desbloquearClave(sesion.vinculoVeta()), 'mi-clave');
   ss.cancelarBio = true;
-  assert.equal(await desbloqueo.desbloquearClave(), null, 'cancelada: se cae a la contraseña escrita');
+  assert.equal(await desbloqueo.desbloquearClave(sesion.vinculoVeta()), null, 'cancelada: se cae a la contraseña escrita');
   ss.cancelarBio = false;
   await desbloqueo.desactivarDesbloqueo();
   assert.equal(await desbloqueo.desbloqueoActivo(), false);
-  assert.equal(ss.m.has('aura.veta.clave-biometrica'), false);
+  assert.equal(ss.m.has(llave('aura.veta.clave-biometrica')), false);
   la.enrolado = false;
   assert.equal((await desbloqueo.capacidadBiometrica()).disponible, false, 'sin huella registrada no se ofrece');
 });
 
 prueba('cerrar sesión borra JWT, refresco y correo', async () => {
   await sesion.salir();
-  for (const k of ['aura.veta.token', 'aura.veta.refresco', 'aura.veta.correo']) assert.equal(ss.m.has(k), false, k);
+  for (const k of ['aura.veta.token', 'aura.veta.refresco', 'aura.veta.correo']) assert.equal(ss.m.has(llave(k)), false, k);
   assert.equal(sesion.conectada(), false);
 });
 
@@ -117,7 +120,7 @@ const leerSrc = (r) => fs.readFileSync(path.join(__dirname, '../../src', r), 'ut
 
 prueba('VETA01: número/CVV/PIN que llegan tarde (pestaña oculta, app al fondo, sesión cerrada, cancelado) no se muestran', () => {
   const t = leerSrc('cartera/veta/SeccionTarjeta.tsx');
-  assert.match(t, /const vale = \(\) => g === gen\.current && activaRef\.current;/, 'cada operación sensible guarda su generación');
+  assert.match(t, /const vale = \(\) => g === gen\.current && activaRef\.current && deSesion\(gs, v\);/, 'cada operación sensible guarda su generación (y la de la sesión de Veta y de AURA)');
   for (const que of ['api.datos(clave)', 'api.pin(clave)', 'api.crearPin(pinNuevo, clave)']) {
     const i = t.indexOf(que);
     assert.ok(i > 0, que);
@@ -128,7 +131,19 @@ prueba('VETA01: número/CVV/PIN que llegan tarde (pestaña oculta, app al fondo,
   assert.match(t, /if \(!activa\) taparTodo\(\)/, 'ocultar la pestaña tapa');
   assert.match(t, /genSesion\.current\+\+;\s*taparTodo\(\);/, 'cerrar sesión tapa y cambia de generación');
   assert.match(t, /onCancelar=\{\(\) => \{\s*gen\.current\+\+;/, 'cancelar la ficha invalida lo que esté en vuelo');
-  assert.match(t, /if \(gs !== genSesion\.current \|\| !conectada\(\)\) return;/, 'una tarjeta que llega tras cerrar sesión no se pinta');
+  assert.match(t, /if \(!deSesion\(gs, v\) \|\| !conectada\(\)\) return;/, 'una tarjeta que llega tras cerrar sesión no se pinta');
+});
+
+prueba('AUR01 (pantalla): recarga, su seguimiento, congelar y la huella son de la sesión que los empezó', () => {
+  const t = leerSrc('cartera/veta/SeccionTarjeta.tsx');
+  assert.match(t, /const deSesion = useCallback\(\(gs: number, v: [^)]+\) => gs === genSesion\.current && vinculoVigente\(v\), \[\]\);/, 'la pantalla y el vínculo de Veta, juntos');
+  const i = t.indexOf('api.recargar(monto, clave)');
+  assert.match(t.slice(i, i + 220), /if \(!deSesion\(gs, v\)\) return \{ ok: true \};\s*setRecarga\(r\);/, 'el POST de recarga tardío no se pinta ni se sigue');
+  assert.match(t, /catch \(e\) \{\s*\/\/[^\n]*\n\s*if \(esVencidaVeta\(e\) \|\| !deSesion\(gs, v\)\) return \{ ok: true \};/, 'el error de otra sesión no avisa ni reconcilia');
+  assert.match(t, /return seguirRecarga\(\{[\s\S]{0,120}vale: \(\) => deSesion\(gs, v\) && activaRef\.current,/, 'el seguimiento se para al salir de la pestaña, de Veta o de AURA');
+  assert.doesNotMatch(t, /setInterval\(async/, 'no queda el sondeo sin guarda');
+  assert.match(t, /const \{ vinculo \} = await entrar\(correo, c\);[\s\S]{0,80}activarDesbloqueo\(c, vinculo\)/, 'la huella se guarda con el vínculo de la sesión que entró');
+  assert.match(leerSrc('cartera/veta/PedirClave.tsx'), /activarDesbloqueo\(c, v\)/, 'la ficha guarda la huella con el vínculo de cuando empezó');
 });
 
 prueba('VETA02: un 409 o una recarga sin respuesta clara se reconcilian con el estado real; nunca se repiten', () => {

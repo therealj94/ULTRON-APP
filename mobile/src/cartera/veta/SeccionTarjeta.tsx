@@ -16,6 +16,9 @@
  *   · Sin tarjeta todavía (404): se pide en Veta Wallet (exige Genesis ID aprobado, teléfono y el pago de la
  *     emisión, que allá se firma).
  *   · Reemitir, cancelar, 3D Secure, teléfono de códigos y disputas: en Veta Wallet (un toque la abre).
+ *   · Todo lo que viaja es de la sesión que lo empezó (auditoría AUR01): la tarjeta, la recarga y su
+ *     seguimiento, congelar y la huella miran el vínculo de Veta (veta/sesion.ts) al volver. Si mientras
+ *     tanto salió de Veta o de AURA —o entró otra persona—, nada de eso se pinta, se sigue ni se guarda.
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { ActivityIndicator, AppState, Pressable, StyleSheet, Text, View } from 'react-native';
@@ -28,6 +31,7 @@ import { cantidad, dinero, fechaCorta } from '../formato';
 import { PedirClave } from './PedirClave';
 import { TarjetaVisa, type ManejoTarjeta } from './TarjetaVisa';
 import { activarDesbloqueo, capacidadBiometrica, desactivarDesbloqueo, desbloqueoActivo, desbloquearClave, nombreBiometria } from './desbloqueo';
+import { seguirRecarga } from './recarga';
 import {
   cargarSesion,
   conectada,
@@ -35,10 +39,13 @@ import {
   entrar,
   ErrorVeta,
   escucharSesion,
+  esVencidaVeta,
   estaCongelada,
   salir,
   sinTarjeta,
   tarjeta as api,
+  vinculoVeta,
+  vinculoVigente,
   type DatosTarjeta,
   type MovTarjeta,
   type Recarga,
@@ -47,8 +54,6 @@ import {
 
 /** Segundos que número, CVV y PIN quedan a la vista (los mismos que Veta Wallet). */
 const OCULTAR_TRAS = 45;
-const CONSULTA_RECARGA_MS = 6_000;
-const ESPERA_RECARGA_MS = 10 * 60_000;
 
 type Fase = 'iniciando' | 'sinSesion' | 'cargando' | 'lista' | 'sinTarjeta' | 'error';
 type Pedido = null | 'datos' | 'pin' | 'crearPin' | 'recargar';
@@ -92,10 +97,16 @@ export function SeccionTarjeta({ activa }: { activa: boolean }) {
    * generación y se tira: nunca vuelve a poner datos a la vista.
    */
   const gen = useRef(0);
-  /** La de la sesión: un `cargar` que vuelve después de cerrar sesión no pinta la tarjeta. */
+  /**
+   * La de la sesión: un `cargar` que vuelve después de cerrar sesión no pinta la tarjeta. Va junto con el
+   * vínculo de Veta (veta/sesion.ts, auditoría AUR01): dueño en AURA, su generación y la cuenta de Veta. Lo
+   * que empezó con otro vínculo —salió de AURA o de Veta mientras viajaba— no se pinta ni se sigue.
+   */
   const genSesion = useRef(0);
   const activaRef = useRef(activa);
   activaRef.current = activa;
+  /** ¿Sigue siendo la sesión (de la pantalla y de Veta) que empezó la operación? */
+  const deSesion = useCallback((gs: number, v: ReturnType<typeof vinculoVeta>) => gs === genSesion.current && vinculoVigente(v), []);
 
   const taparTodo = useCallback(() => {
     gen.current++;
@@ -110,26 +121,29 @@ export function SeccionTarjeta({ activa }: { activa: boolean }) {
   const cargar = useCallback(async (silencioso = false) => {
     const gs = genSesion.current;
     await cargarSesion();
+    if (gs !== genSesion.current) return;
     if (!conectada()) {
       setFase('sinSesion');
       return;
     }
+    // El vínculo con la sesión ya cargada: lo de esta vuelta es de ella y de nadie más.
+    const v = vinculoVeta();
     if (!silencioso) setFase('cargando');
     try {
       const c = await api.mia();
-      if (gs !== genSesion.current || !conectada()) return; // cerró sesión mientras tanto
+      if (!deSesion(gs, v) || !conectada()) return; // cerró sesión mientras tanto
       setCard(c);
       setFase('lista');
       setError('');
       api
         .movimientos()
-        .then((m) => gs === genSesion.current && setMovs(m))
-        .catch(() => gs === genSesion.current && setMovs([]));
+        .then((m) => deSesion(gs, v) && setMovs(m))
+        .catch((e) => !esVencidaVeta(e) && deSesion(gs, v) && setMovs([]));
       // Una recarga que quedó a medias (en esta app o en Veta Wallet) se sigue.
       api
         .estadoRecarga()
         .then((r) => {
-          if (gs !== genSesion.current) return;
+          if (!deSesion(gs, v)) return;
           if (r?.status === 'pending' || r?.status === 'debited') {
             setRecarga(r);
             desdeRecarga.current = Date.now();
@@ -137,13 +151,13 @@ export function SeccionTarjeta({ activa }: { activa: boolean }) {
         })
         .catch(() => undefined);
     } catch (e) {
-      if (gs !== genSesion.current) return;
+      if (esVencidaVeta(e) || !deSesion(gs, v)) return;
       if (sinTarjeta(e)) return setFase('sinTarjeta');
       if (e instanceof ErrorVeta && e.tipo === 'sesion') return setFase('sinSesion');
       setError(mensajeDe(e));
       setFase('error');
     }
-  }, []);
+  }, [deSesion]);
 
   useEffect(() => {
     if (activa) void cargar(fase === 'lista');
@@ -194,40 +208,45 @@ export function SeccionTarjeta({ activa }: { activa: boolean }) {
     if (!activa) taparTodo();
   }, [activa, taparTodo]);
 
-  // Una recarga en camino: se consulta hasta que se acredita, falla o pasan 10 minutos.
+  // Una recarga en camino: se consulta hasta que se acredita, falla o pasan 10 minutos (veta/recarga.ts). Es
+  // de la sesión de ahora: si sale de la pestaña, de Veta o de AURA, se para, y lo que vuelva tarde no se pinta.
   useEffect(() => {
     if (!activa || !recarga || (recarga.status !== 'pending' && recarga.status !== 'debited')) return;
-    const t = setInterval(async () => {
-      if (Date.now() - desdeRecarga.current > ESPERA_RECARGA_MS) {
+    const gs = genSesion.current;
+    const v = vinculoVeta();
+    return seguirRecarga({
+      consultar: api.estadoRecarga,
+      vale: () => deSesion(gs, v) && activaRef.current,
+      desde: desdeRecarga.current,
+      alTope: () => {
         setRecarga(null);
         setAviso(tr('La red está tardando más de lo normal. Revisa tu tarjeta en unos minutos.', 'The network is slower than usual. Check your card in a few minutes.'));
-        return;
-      }
-      try {
-        const r = await api.estadoRecarga();
+      },
+      alEstado: (r) => {
         setRecarga(r);
         if (r?.status === 'funded') {
           vibrar('exito');
           setAviso(tr('¡Recarga acreditada!', 'Top-up credited!'));
           void cargar(true);
         } else if (r?.status === 'failed') setAviso(r.error || tr('La recarga no se completó.', 'The top-up didn’t complete.'));
-      } catch {
-        /* se reintenta en la próxima vuelta */
-      }
-    }, CONSULTA_RECARGA_MS);
-    return () => clearInterval(t);
-  }, [activa, recarga, cargar]);
+      },
+    });
+  }, [activa, recarga, cargar, deSesion]);
 
   const congelar = async (v: boolean) => {
     if (!card || congelando) return;
     const previo = card.status;
+    const gs = genSesion.current;
+    const vinculo = vinculoVeta();
     setCongelando(true);
     setCard({ ...card, status: v ? 'FROZEN' : 'ACTIVE' });
     try {
       const r = await api.congelar(v);
+      if (!deSesion(gs, vinculo)) return; // la tarjeta en pantalla ya no es la de esa sesión
       setCard((c) => (c ? { ...c, status: r?.status || (v ? 'FROZEN' : 'ACTIVE') } : c));
       setAviso(v ? tr('Tarjeta congelada: nadie puede usarla hasta que la actives.', 'Card frozen: nobody can use it until you turn it back on.') : tr('Tarjeta activa otra vez.', 'Card active again.'));
     } catch (e) {
+      if (esVencidaVeta(e) || !deSesion(gs, vinculo)) return;
       setCard((c) => (c ? { ...c, status: previo } : c));
       setAviso(tr(`No se pudo cambiar: ${mensajeDe(e)}`, `Couldn’t change it: ${mensajeDe(e)}`));
     } finally {
@@ -240,13 +259,14 @@ export function SeccionTarjeta({ activa }: { activa: boolean }) {
    * el estado real y se sigue esa. Nunca se vuelve a mandar a ciegas (auditoría VETA02).
    */
   const reconciliarRecarga = async (porQue: 'ya-habia' | 'incierta') => {
+    const v = vinculoVeta();
     const gs = genSesion.current;
     // El formulario se cierra ya: con el resultado en duda, un segundo «Recargar» podría cobrar dos veces.
     setRecargando(false);
     setMonto('');
     try {
       const r = await api.estadoRecarga();
-      if (gs !== genSesion.current) return; // cerró sesión mientras tanto
+      if (!deSesion(gs, v)) return; // cerró sesión (de Veta o de AURA) mientras tanto
       // El servidor solo deja UNA recarga abierta por persona: si hay una en camino, es la que hay que seguir
       // (la de recién o una empezada en Veta Wallet). No se dice «la tuya salió»: no se sabe cuál es.
       if (r?.status === 'pending' || r?.status === 'debited') {
@@ -260,7 +280,7 @@ export function SeccionTarjeta({ activa }: { activa: boolean }) {
     } catch {
       /* abajo se dice que no se pudo confirmar */
     }
-    if (gs !== genSesion.current) return;
+    if (!deSesion(gs, v)) return;
     setAviso(
       porQue === 'ya-habia'
         ? tr('Veta Wallet dice que ya hay una recarga, pero no pude ver en qué va. Revisa en unos minutos (no mandé otra).', 'Veta Wallet says there’s already a top-up, but I couldn’t see its status. Check in a few minutes (I didn’t send another).')
@@ -272,8 +292,10 @@ export function SeccionTarjeta({ activa }: { activa: boolean }) {
   const autorizar = async (clave: string): Promise<{ ok: boolean; msg?: string }> => {
     const que = pedido;
     const g = gen.current;
-    // ¿Sigue valiendo mostrar lo que llegue? (misma generación y la pestaña a la vista)
-    const vale = () => g === gen.current && activaRef.current;
+    const gs = genSesion.current;
+    const v = vinculoVeta();
+    // ¿Sigue valiendo mostrar lo que llegue? (misma generación, la pestaña a la vista y la misma sesión de Veta y de AURA)
+    const vale = () => g === gen.current && activaRef.current && deSesion(gs, v);
     try {
       if (que === 'datos') {
         const d = await api.datos(clave);
@@ -300,6 +322,8 @@ export function SeccionTarjeta({ activa }: { activa: boolean }) {
         setAviso(tr('PIN guardado.', 'PIN saved.'));
       } else if (que === 'recargar') {
         const r = await api.recargar(monto, clave);
+        // La respuesta de una recarga de otra sesión no se pinta ni se sigue (la sesión de ahora la verá al cargar).
+        if (!deSesion(gs, v)) return { ok: true };
         setRecarga(r);
         setRecargando(false);
         setMonto('');
@@ -312,6 +336,8 @@ export function SeccionTarjeta({ activa }: { activa: boolean }) {
       setPedido(null);
       return { ok: true };
     } catch (e) {
+      // De otra sesión (salió de Veta o de AURA mientras viajaba): ni aviso, ni reconciliación, ni ficha abierta.
+      if (esVencidaVeta(e) || !deSesion(gs, v)) return { ok: true };
       if (e instanceof ErrorVeta && e.tipo === 'clave') return { ok: false, msg: tr('Contraseña incorrecta', 'Wrong password') };
       if (e instanceof ErrorVeta && e.status === 409) {
         if (que === 'pin') {
@@ -575,12 +601,16 @@ function Conectar({ onListo }: { onListo: () => void }) {
     setYendo(true);
     setError('');
     try {
-      await entrar(correo, c);
+      // La huella se guarda con el vínculo de la sesión que acaba de entrar: si en medio salió de AURA o
+      // entró otra persona, la contraseña no queda en la llave de nadie.
+      const { vinculo } = await entrar(correo, c);
       vibrar('exito');
-      if (!deBio && usarBio && bio.disponible) await activarDesbloqueo(c);
+      if (!deBio && usarBio && bio.disponible) await activarDesbloqueo(c, vinculo);
       setClave('');
-      onListo();
+      if (vinculoVigente(vinculo)) onListo();
     } catch (e) {
+      // Entró otra persona (o salió de AURA) mientras viajaba: esta pantalla ya no es de quien escribió.
+      if (esVencidaVeta(e)) return;
       vibrar('aviso');
       const credenciales = e instanceof ErrorVeta && (e.status === 401 || e.status === 403 || e.status === 400 || e.status === 404);
       setError(credenciales ? tr('Correo o contraseña incorrectos.', 'Wrong email or password.') : mensajeDe(e));
@@ -591,8 +621,9 @@ function Conectar({ onListo }: { onListo: () => void }) {
   };
 
   const entrarConHuella = async () => {
-    const c = await desbloquearClave(tr('Entrar a tu Veta Wallet', 'Sign in to your Veta Wallet'));
-    if (c) await conectar(c, true);
+    const v = vinculoVeta();
+    const c = await desbloquearClave(v, tr('Entrar a tu Veta Wallet', 'Sign in to your Veta Wallet'));
+    if (c && vinculoVigente(v)) await conectar(c, true);
   };
 
   return (

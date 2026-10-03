@@ -14,6 +14,7 @@ import { sha256 } from '@noble/hashes/sha2';
 
 let correo = '';
 let generacion = 0;
+const oyentes = new Set<() => void>();
 
 const normal = (c: string | null | undefined) => String(c || '').trim().toLowerCase();
 
@@ -26,8 +27,25 @@ export function fijarCuenta(c: string | null | undefined, o: { nueva?: boolean }
   if (n !== correo || o.nueva) {
     correo = n;
     generacion++;
+    // En el acto, sin esperar a nada: lo que tenga sesiones propias (Veta Wallet) corta lo que tenía en
+    // vuelo y suelta lo que tenía en memoria antes de que la persona nueva vea una sola pantalla.
+    for (const f of [...oyentes]) {
+      try {
+        f();
+      } catch {
+        /* un oyente roto no deja la cuenta a medias */
+      }
+    }
   }
   return generacion;
+}
+
+/** Avisa cada cambio de generación (salir, entrar otra persona, o la misma de nuevo). Devuelve cómo dejar de oír. */
+export function alCambiarCuenta(f: () => void): () => void {
+  oyentes.add(f);
+  return () => {
+    oyentes.delete(f);
+  };
 }
 
 /** El correo de quien está dentro, o '' si no hay nadie. */

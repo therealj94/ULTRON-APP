@@ -14,28 +14,39 @@
  * antes de quedar viejo se suelta si nadie escribió encima. Empezar otro intento, «atrás», desmontar la
  * pantalla, salir o entrar otra persona vencen al anterior.
  *
+ * Sin intento no se entra (auditoría AUR15): antes las firmas de login lo aceptaban opcional y, sin él,
+ * escribían «como antes» —un login que llegaba tarde, con otra persona ya dentro, guardaba su token—. Ahora
+ * el intento es obligatorio en los tipos y, en tiempo de ejecución, solo vale uno que salió de
+ * `empezarIntento` (un objeto con la misma forma, armado a mano, no): sin intento nada se manda ni se guarda.
+ *
  * Sin React ni nada nativo más que el almacén (lo prueban las pruebas de identidad en node).
  */
 import type { SessionUser } from '../config';
 import { generacionCuenta, sigueVigente } from './cuenta';
 import { loadMesaToken, loadSession, saveMesaToken, saveSession } from './storage';
 
-export type Intento = { readonly id: number; readonly gen: number };
+declare const marcaIntento: unique symbol;
+/** Un intento de entrar. Solo lo fabrica `empezarIntento` (la marca impide armarlo a mano en los tipos). */
+export type Intento = { readonly id: number; readonly gen: number; readonly [marcaIntento]: true };
 
 /** El último intento que empezó: solo ese escribe. */
 let ultimo = 0;
+/** Los intentos que salieron de aquí (uno armado a mano no está, aunque tenga la misma forma). */
+const emitidos = new WeakSet<object>();
 /** Lo que guardó el último intento que llegó a escribir (para soltarlo si queda viejo). */
 let escrito: { id: number; token?: string; correo?: string } | null = null;
 /** Las escrituras de entrada, de a una. */
 let cola: Promise<unknown> = Promise.resolve();
 
 export function empezarIntento(): Intento {
-  return { id: ++ultimo, gen: generacionCuenta() };
+  const i = Object.freeze({ id: ++ultimo, gen: generacionCuenta() }) as Intento;
+  emitidos.add(i);
+  return i;
 }
 
-/** ¿Sigue siendo el último intento, en la misma sesión? Sin intento (las llamadas de antes), sí. */
+/** ¿Es un intento de verdad (salió de `empezarIntento`), el último, y en la misma sesión? Sin intento, no. */
 export function intentoVigente(i: Intento | null | undefined): boolean {
-  return !i || (i.id === ultimo && sigueVigente(i.gen));
+  return !!i && emitidos.has(i) && i.id === ultimo && sigueVigente(i.gen);
 }
 
 /** «Atrás», cancelar o desmontar la pantalla: vence a ESE intento si es el último (no a uno más nuevo). */
@@ -84,16 +95,15 @@ export type Escritura = {
  * La escritura de un intento: corre sola (ninguna otra escritura de entrada en medio) y solo si el
  * intento sigue siendo el vigente al empezar. Si `escribir` devuelve false —quedó viejo a medias— o el
  * intento ya estaba vencido, lo que ESTE intento alcanzó a guardar (aquí o en un paso anterior) se
- * suelta. true = quedó escrito. Sin intento escribe como antes, sin anotar nada.
+ * suelta. true = quedó escrito. Sin intento (o con uno que no salió de `empezarIntento`) no escribe nada.
  */
-export function confirmarIntento(i: Intento | null | undefined, escribir: (e: Escritura) => Promise<boolean | void>): Promise<boolean> {
+export function confirmarIntento(i: Intento, escribir: (e: Escritura) => Promise<boolean | void>): Promise<boolean> {
   return enCola(async () => {
     if (!intentoVigente(i)) {
-      if (i) await soltar(i);
+      if (i && emitidos.has(i)) await soltar(i);
       return false;
     }
     const anotar = (cambio: { token?: string; correo?: string }) => {
-      if (!i) return;
       escrito = { ...(escrito?.id === i.id ? escrito : {}), id: i.id, ...cambio };
     };
     const r = await escribir({
@@ -108,7 +118,7 @@ export function confirmarIntento(i: Intento | null | undefined, escribir: (e: Es
       },
     });
     if (r === false) {
-      if (i) await soltar(i);
+      await soltar(i);
       return false;
     }
     return true;
@@ -118,9 +128,9 @@ export function confirmarIntento(i: Intento | null | undefined, escribir: (e: Es
 /**
  * El token que devolvió el servidor al entrar (clave, huella o Genesis ID), guardado SOLO si el intento
  * sigue siendo el de ahora. Si «atrás» o un intento nuevo lo vencieron mientras se guardaba, se suelta.
- * false = no quedó (el intento ya no vale).
+ * false = no quedó (el intento ya no vale, o no hubo intento).
  */
-export function guardarTokenDeEntrada(token: string, i: Intento | null | undefined): Promise<boolean> {
+export function guardarTokenDeEntrada(token: string, i: Intento): Promise<boolean> {
   return confirmarIntento(i, async (e) => {
     await e.token(token);
     return e.sigue();
