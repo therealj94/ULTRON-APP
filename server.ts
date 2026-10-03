@@ -66,6 +66,7 @@ import {
   alAvisarApp,
   avisosPendientes,
   comandoComputadora,
+  computadoraConfigurada,
   confirmarAvisos,
   encargarTarea,
   montarRutasComputadora,
@@ -133,6 +134,8 @@ import { spotMetal } from './lib/mercado';
 import { turnoElectrum } from './server/electrum/turno';
 import { estadoLaya, saludLaya } from './lib/laya';
 import { ES_ELECTRUM, ES_ULTRON, PAGINA_RAIZ, PLATAFORMA, rutaPermitida } from './lib/plataforma';
+import { manifiestoBuild } from './lib/build';
+import { codigosActivos } from './server/cuentas';
 import {
   claveHiloDe,
   quienDelHilo,
@@ -411,6 +414,18 @@ alAvisar(async (ap, que) => {
       for (const tg of p.telegram.slice(0, 1)) await responderElectrum(String(tg), texto);
     }
   }
+});
+
+/**
+ * El manifiesto del build (documento maestro, AUR16 / G0): commit completo, servicio, contratos y banderas no
+ * secretas. Detrás de la sesión de mesa: el público ya tiene el commit corto en /api/health.
+ */
+app.get('/api/build', exigirMesa, limitar(30), (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  return res.json({
+    ...manifiestoBuild({ plataforma: ES_ELECTRUM ? 'electrum' : 'aura', banderas: { computadora: computadoraConfigurada(), codigosElectrum: ES_ELECTRUM && codigosActivos() } }),
+    honesto: true,
+  });
 });
 
 app.get('/api/health', async (req, res) => {
