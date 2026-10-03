@@ -407,8 +407,9 @@ prueba('app: su computadora como un agente: captura arriba, plan marcado, tiempo
   assert.match(hoja, /pie=\{\s*tarea && sigue \?\s*\(\s*<Boton titulo=\{tr\('Detener la tarea', 'Stop the task'\)\}/);
   assert.match(hoja, /\(ocupado && que !== 'parar'\)/);
   assert.match(hoja, /relojMision\(/, 'el tiempo transcurrido');
-  assert.match(hoja, /sobreTarea\('si', 'confirmar', \{ si: true \}\)/, '«Sí, hazlo» manda el sí');
-  assert.match(hoja, /sobreTarea\('no', 'confirmar', \{ si: false \}\)/);
+  // El sí nombra la pregunta que contesta (auditoría 3-oct, PC01): uno viejo no contesta una pregunta nueva.
+  assert.match(hoja, /sobreTarea\('si', 'confirmar', respuestaPc\(true, misionDeAhora, tarea\)\)/, '«Sí, hazlo» manda el sí ligado a su pregunta');
+  assert.match(hoja, /sobreTarea\('no', 'confirmar', respuestaPc\(false, misionDeAhora, tarea\)\)/);
   assert.match(hoja, /sobreTarea\('pausar', 'pausar'\)/);
   assert.match(hoja, /sobreTarea\('tomar', 'control', \{ tomar: true \}\)/);
   assert.match(hoja, /sobreTarea\('devolver', 'control', \{ tomar: false \}\)/);
