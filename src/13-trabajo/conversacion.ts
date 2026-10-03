@@ -9,6 +9,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AccionSensible } from './accionSensible';
+import type { RefTarea } from '../../mobile/src/lib/trabajos';
 
 export type EstadoTurno = 'pensando' | 'usando' | 'respondiendo' | 'lista' | 'error' | 'interrumpida';
 export type EstadoAccion = 'propuesta' | 'enviando' | 'hecha' | 'fallida' | 'espera' | 'sin-confirmar' | 'cancelada';
@@ -25,6 +26,8 @@ export type EntradaAura = {
   ms?: number;
   tsFin?: number;
   trazaId?: string;
+  /** Las tareas durables que dejó este turno (AUR08): la burbuja las enlaza aunque el panel esté cerrado. */
+  tareas?: RefTarea[];
 };
 export type EntradaAccion = {
   id: string;

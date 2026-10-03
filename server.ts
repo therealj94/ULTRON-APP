@@ -59,24 +59,44 @@ import { detectarIdioma } from './lib/idioma-detectar';
 import { redirigirADominio } from './server/dominio';
 import { quitarExpresiones } from './lib/expresiones';
 import { puntoDeCorte } from './lib/trozos';
-import { claveTurno, efectoDelTurno, enTurnoUnico, reclamarTurno, type TurnoGuardado } from './server/turno-unico';
+import { claveTurno, efectoDelTurno, enTurnoUnico, idTurnoValido, reclamarTurno, type TurnoGuardado } from './server/turno-unico';
+import {
+  abrirDecisionDeBorrador,
+  abrirEncargoComputadora,
+  cerrarDecisionPorChat,
+  cerrarEncargoComputadora,
+  clasificarEnvio,
+  enTurnoConTrabajos,
+  montarRutasTrabajos,
+  nuevoContextoTrabajos,
+  type SalidaEnvio,
+} from './server/trabajos';
+import type { MisionComputadoraMin } from './lib/tareas-durables';
 import { primeraVezEvento } from './lib/envios';
 import { respuestaFija } from './lib/respuestas-fijas';
 import {
   alAvisarApp,
   avisosPendientes,
+  capacidadesNodo,
   comandoComputadora,
   computadoraConfigurada,
   confirmarAvisos,
+  duenoDe,
   encargarTarea,
+  historialDe,
+  misionDeTarea,
   montarRutasComputadora,
   motorDelPerfil,
+  pararTarea,
+  pausarTarea,
+  reanudarTarea,
   resolverPreguntaComputadora,
+  vistaMision,
   type MotorNodo,
 } from './server/computadora';
-import { avisosDeEnvio, correrCorreoConEstado, montarRutasCorreo, resolverBorrador, respuestaAlBorrador } from './server/correo';
-import { bloqueTarea, correrTareaConEstado, precargarTareas, resolverTareaEnCurso, tareaDe } from './lib/tarea-en-curso';
-import { correrWhatsappConEstado, montarRutasWhatsapp, resolverBorradorWhatsapp, whatsappDisponible, whatsappPermitido } from './server/whatsapp';
+import { avisosDeEnvio, borradorDe, correrCorreoConEstado, montarRutasCorreo, resolverBorrador, respuestaAlBorrador } from './server/correo';
+import { accionTareaPorId, bloqueTarea, correrTareaConEstado, precargarTareas, resolverTareaEnCurso, tareaDe, tareasDePersona } from './lib/tarea-en-curso';
+import { borradorWhatsappDe, correrWhatsappConEstado, montarRutasWhatsapp, resolverBorradorWhatsapp, whatsappDisponible, whatsappPermitido } from './server/whatsapp';
 import { accionIniciativa, arrancarIniciativa, bloqueIniciativaTurno, correrMisionTurnoConEstado, duenoMisiones, montarRutasIniciativa } from './server/iniciativa';
 import { frenarIniciativa, pideApagarIniciativa, pideDejarDeProponer, type PersonaIniciativa } from './lib/iniciativa';
 import { montarRutasCerebroContinuo } from './server/cerebro-continuo';
@@ -1486,6 +1506,29 @@ montarRutasWhatsapp(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req)
 montarRutasIniciativa(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req), nivelDe: (c) => nivelDeCorreo(c) });
 // Su cerebro continuo: lo que hablamos antes, lo que quedó a medias, lo que sé de ti, su círculo y sus mensajes ordenados.
 montarRutasCerebroContinuo(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req) });
+// Las tareas durables y el panel de tareas (server/trabajos.ts, AUR08): adapta la tarea en curso de cada
+// conversación, las misiones de su computadora y los borradores que esperan su decisión.
+montarRutasTrabajos(app, {
+  exigirMesa,
+  limitar,
+  sesionDe: (req) => sesionDe(req),
+  tareaEnCurso: { listar: (correo) => tareasDePersona(correo), accion: (correo, id, accion, version) => accionTareaPorId(correo, id, accion, version) },
+  computadora: {
+    misiones: misionesComputadora,
+    // Como las rutas de la computadora: pausar y reanudar solo si el nodo sabe hacerlo.
+    pausar: (correo, id) => conMisionSuya(correo, id, async (t) => ((await capacidadesNodo()).includes('pausar') ? pausarTarea(t) : Promise.reject(new Error('tu computadora no sabe pausar')))),
+    reanudar: (correo, id) => conMisionSuya(correo, id, async (t) => ((await capacidadesNodo()).includes('pausar') ? reanudarTarea(t) : Promise.reject(new Error('tu computadora no sabe pausar')))),
+    parar: (correo, id) => conMisionSuya(correo, id, (t) => pararTarea(t)),
+  },
+  borradores: {
+    vigente: (correo, canal, ambito) => {
+      const b = canal === 'correo' ? borradorDe(correo, ambito) : borradorWhatsappDe(correo, ambito);
+      return b ? { intento: b.intento } : null;
+    },
+    enviar: (correo, canal, ambito, intento) => resolverBorradorDesdePanel(correo, canal, ambito, intento, 'sí'),
+    descartar: (correo, canal, ambito, intento) => resolverBorradorDesdePanel(correo, canal, ambito, intento, 'no'),
+  },
+});
 montarRutasApp(app, {
   exigirMesa,
   limitar,
@@ -2652,11 +2695,18 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   const turnoVigente = duenoComputadora && respuestaAlBorrador(message) === 'si' ? await efectoDelTurno('decision') : true;
   if (!turnoVigente) hechos.push('HECHO: este turno no quedó registrado para mandar nada (o ya lo atiende otro proceso del servidor). NO se mandó ningún borrador ni se soltó la computadora. No digas que se envió: dile que lo intente otra vez en un momento.');
   // En la voz el envío espera a que el turno se confirme (opciones.retener): un «sí…» especulativo no manda.
+  // El borrador que esperaba (su id de intento): si el chat lo resuelve, su decisión del panel se cierra con
+  // lo que pasó (AUR08, sin doble efecto). En la voz no: el envío espera a que se confirme el turno, y el
+  // panel lo verá como «ya no está esperando» sin decir que se envió.
+  const intentoCorreo = duenoComputadora && turnoVigente && !opciones.retener ? borradorDe(duenoComputadora, ambitoTurno)?.intento : undefined;
+  const intentoWhatsapp = duenoComputadora && turnoVigente && !opciones.retener ? borradorWhatsappDe(duenoComputadora, ambitoTurno)?.intento : undefined;
   const delCorreo = duenoComputadora && turnoVigente ? await resolverBorrador(duenoComputadora, ambitoTurno, message, opciones.retener) : null;
   if (delCorreo) hechos.push(delCorreo);
+  if (delCorreo && intentoCorreo) void cerrarDecisionPorChat(duenoComputadora, intentoCorreo, respuestaAlBorrador(message), delCorreo).catch(() => undefined);
   // Lo mismo con un mensaje de WhatsApp que esperaba su «sí» (server/whatsapp.ts).
   const delWhatsapp = duenoComputadora && turnoVigente && whatsappPermitido(duenoComputadora) ? await resolverBorradorWhatsapp(duenoComputadora, ambitoTurno, message, opciones.retener) : null;
   if (delWhatsapp) hechos.push(delWhatsapp);
+  if (delWhatsapp && intentoWhatsapp) void cerrarDecisionPorChat(duenoComputadora, intentoWhatsapp, respuestaAlBorrador(message), delWhatsapp).catch(() => undefined);
   // Su computadora se detuvo a pedir su sí (o le ofreció seguir): el «sí» o el «no» lo resuelve el servidor
   // (server/computadora.ts). Si había un borrador esperando, ese «sí» era para el borrador.
   const deLaPregunta = duenoComputadora && turnoVigente && !delCorreo && !delWhatsapp ? await resolverPreguntaComputadora(duenoComputadora, message, opciones.retener) : null;
@@ -3666,16 +3716,21 @@ async function correrHerramientaPedida(
         if (!compu) return fallo('HARNESS computadora: solo la uso para alguien con sesión. Pídele que entre con su cuenta.');
         const orden = await comandoComputadora(compu.quien, tarea);
         if (orden !== null) return orden;
+        // Trabajo durable (AUR08): la tarea existe ANTES de encargar, y la respuesta del turno la enlaza.
+        const ref = await abrirEncargoComputadora(compu.quien, ambito, tarea);
         const r = await encargarTarea({ instruccion: tarea, quien: compu.quien, motor: compu.motor, esperaMs: compu.esperaMs, senal, aparato: compu.aparato, idioma: compu.idioma });
-        return { texto: r.hecho, estado: !r.id ? 'failed' : r.tarea?.estado === 'hecha' ? 'succeeded' : 'unknown' };
+        const estado = !r.id ? 'failed' : r.tarea?.estado === 'hecha' ? 'succeeded' : 'unknown';
+        await cerrarEncargoComputadora(compu.quien, ref, { misionId: r.id || null, estado, texto: r.hecho });
+        return { texto: r.hecho, estado };
       },
       // Cada runner devuelve su estado y su recibo (AUR07): lo que no se pudo es `failed`, un borrador es un
       // recibo `borrador` (nada salió), lo parcial va `incompleto`. Ya no se deduce del tipo de herramienta.
-      correo: (arg) => correrCorreoConEstado(dueno, arg, ambito),
-      whatsapp: (arg) => correrWhatsappConEstado(dueno, arg, ambito),
+      // Un borrador que espera su «sí» abre su decisión exacta en el panel de tareas (AUR08).
+      correo: async (arg) => decisionDelBorrador(await correrCorreoConEstado(dueno, arg, ambito), dueno, ambito),
+      whatsapp: async (arg) => decisionDelBorrador(await correrWhatsappConEstado(dueno, arg, ambito), dueno, ambito),
       // Sus misiones, su círculo y sus mensajes ordenados: sin dueño (sin sesión) no hay de quién serían.
       mision: (arg) => (dueno ? correrMisionTurnoConEstado(dueno, arg) : Promise.resolve(fallo('HARNESS mision: solo con sesión. Pídele que entre con su cuenta.'))),
-      circulo: (arg) => correrCirculoConEstado(dueno, arg, ambito),
+      circulo: async (arg) => decisionDelBorrador(await correrCirculoConEstado(dueno, arg, ambito), dueno, ambito),
       triaje: (arg) => correrTriajeConEstado(dueno, arg, ambito),
       tarea: (arg) => (dueno ? correrTareaConEstado(dueno, ambito, arg) : Promise.resolve(fallo('HARNESS tarea: solo con sesión. Pídele que entre con su cuenta.'))),
       // Sus saldos de Veta Wallet (solo lectura, con la dirección pública que conectó en la app).
@@ -3684,6 +3739,69 @@ async function correrHerramientaPedida(
     extraerPython(reply),
     nivel
   );
+}
+
+/* ---------------------------------------------------------------- tareas durables (AUR08, server/trabajos.ts) */
+
+/**
+ * Las misiones de su computadora como las lee el panel de tareas (server/computadora.ts: historial y vista;
+ * solo lectura). Su plan marcado (con recibo de cada paso hecho) da el progreso real; su final, la evidencia.
+ */
+function misionesComputadora(correo: string): MisionComputadoraMin[] {
+  return historialDe(correo).map((h) => {
+    const m = misionDeTarea(h.tareaId);
+    const v = m ? vistaMision(m, h.estado) : null;
+    return {
+      id: h.id,
+      tareaId: h.tareaId,
+      instruccion: h.instruccion,
+      estado: h.estado,
+      ok: h.ok,
+      inicio: h.inicio,
+      segundos: h.segundos,
+      // Un error nunca cuenta como evidencia de éxito: solo la respuesta de una misión que terminó bien.
+      resultado: v?.final ? (v.final.ok ? v.final.respuesta : v.final.respuesta || v.final.error) || null : h.resultado,
+      pregunta: v?.pregunta ?? null,
+      ...(v ? { plan: v.plan.map((p) => ({ texto: p.texto, estado: p.estado })) } : {}),
+      ...(v?.final ? { enlaces: v.final.enlaces, datos: v.final.datos } : {}),
+    };
+  });
+}
+
+/** Pausar, reanudar o parar desde el panel: solo una misión que esté en el historial de ESTA persona. */
+async function conMisionSuya(correo: string, misionId: string, f: (tareaId: string) => Promise<unknown>): Promise<unknown> {
+  const h = historialDe(correo).find((x) => x.id === misionId || x.tareaId === misionId);
+  // Lo mismo que exige la ruta de la computadora (duenoDe): la tarea del nodo es de esta persona.
+  if (!h || duenoDe(h.tareaId) !== correo) throw new Error('esa misión no es de esta persona (o ya no está)');
+  return f(h.tareaId);
+}
+
+/**
+ * «Aprobar» o «Rechazar» desde el panel: el MISMO camino que el «sí»/«no» del chat (server/correo.ts y
+ * server/whatsapp.ts, que vuelven a mirar vigencia y dueño justo antes de mandar), pero solo si el borrador
+ * que espera es exactamente el aprobado (su id de intento). Si cambió, no se toca nada (`stale`).
+ */
+async function resolverBorradorDesdePanel(correo: string, canal: 'correo' | 'whatsapp', ambito: string, intento: string, respuesta: 'sí' | 'no'): Promise<SalidaEnvio> {
+  const b = canal === 'correo' ? borradorDe(correo, ambito) : borradorWhatsappDe(correo, ambito);
+  if (!b || b.intento !== intento) return { estado: 'stale', resumen: 'El borrador ya no era el aprobado; no se envió nada.' };
+  if (canal === 'whatsapp' && !whatsappPermitido(correo)) return { estado: 'failed', resumen: 'WHATSAPP: no lo mandé: esta cuenta ya no tiene su WhatsApp.' };
+  const hecho = canal === 'correo' ? await resolverBorrador(correo, ambito, respuesta) : await resolverBorradorWhatsapp(correo, ambito, respuesta);
+  if (hecho === null) return { estado: 'stale', resumen: 'El borrador ya no estaba esperando; no se envió nada.' };
+  return { estado: respuesta === 'no' ? 'failed' : clasificarEnvio(hecho), resumen: hecho };
+}
+
+/**
+ * Una herramienta dejó un borrador esperando su «sí» (recibo `borrador` con su id de intento): la tarea con su
+ * decisión exacta, para el panel. Se busca el borrador por ese intento (correo o WhatsApp); si no está, nada.
+ */
+async function decisionDelBorrador(r: ResultadoHerramienta, dueno: string, ambito: string): Promise<ResultadoHerramienta> {
+  const intento = r.recibo?.efecto === 'borrador' ? r.recibo.referencia : undefined;
+  if (!intento || !dueno.includes('@')) return r;
+  const c = borradorDe(dueno, ambito);
+  const w = borradorWhatsappDe(dueno, ambito);
+  if (c?.intento === intento) await abrirDecisionDeBorrador(dueno, ambito, { canal: 'correo', intento, para: c.para, desde: c.desde, asunto: c.asunto, texto: c.texto, vence: c.vence });
+  else if (w?.intento === intento) await abrirDecisionDeBorrador(dueno, ambito, { canal: 'whatsapp', intento, para: w.nombre, texto: w.texto, vence: w.vence });
+  return r;
 }
 
 /** El tope de tiempo de una llamada, sumado a la señal del turno (interrupción) si la hay. */
@@ -4141,6 +4259,8 @@ function jsonDelTurno(g: TurnoGuardado, extra: Record<string, unknown> = {}) {
     trazaId: g.trazaId,
     estado: g.estado || (g.parcial ? 'error' : 'completo'),
     ...(g.parcial ? { parcial: true, ...(g.motivo ? { motivo: g.motivo } : {}) } : {}),
+    // Las tareas durables del turno (AUR08): campo nuevo y opcional; una app vieja lo ignora.
+    ...(g.tareas?.length ? { tareas: g.tareas } : {}),
     ...extra,
     honesto: true,
   };
@@ -4156,9 +4276,11 @@ app.post('/api/turno', exigirMesaODesk, limitar(60), cupoDeMiembro, async (req, 
   // Lo corría un proceso que se cayó después de despachar algo (AUR06): no se corre otra vez a ciegas.
   if ('desconocido' in unico) return res.json(jsonDelTurno(turnoReconciliando(req.body?.idioma, unico.desconocido.efectos), { reconciliando: true, repetido: true }));
   let out: Awaited<ReturnType<typeof correrTurno>>;
+  // Las tareas durables que el turno cree (AUR08) vuelven en la respuesta: la burbuja las enlaza.
+  const trabajos = nuevoContextoTrabajos(idTurnoValido((body as Record<string, unknown>).idTurno));
   try {
     // Dentro del turno, cada efecto pasa antes por efectoDelTurno (persistir antes de actuar; fencing).
-    out = await enTurnoUnico(unico.terminar, () => correrTurno(body));
+    out = await enTurnoConTrabajos(trabajos, () => enTurnoUnico(unico.terminar, () => correrTurno(body)));
   } catch (e: any) {
     unico.terminar(null);
     // Sin esto la petición quedaba colgada: Express 4 no atrapa rechazos de handlers async.
@@ -4180,6 +4302,7 @@ app.post('/api/turno', exigirMesaODesk, limitar(60), cupoDeMiembro, async (req, 
     ...(out.estado ? { estado: out.estado } : {}),
     ...(parcial ? { parcial: true, ...(out.motivo ? { motivo: out.motivo } : {}) } : {}),
     ...(out.modelo ? { modelo: out.modelo, proveedor: out.proveedor } : {}),
+    ...(trabajos.refs.length ? { tareas: trabajos.refs } : {}),
   };
   unico.terminar(out.reply && !out.error ? g : null);
   if (out.error && !out.reply) {
@@ -4290,6 +4413,7 @@ app.post('/api/turno/stream', exigirMesaODesk, limitar(60), cupoDeMiembro, async
       estado: g.estado || (g.parcial ? 'error' : 'completo'),
       ...(g.parcial ? { parcial: true, ...(g.motivo ? { motivo: g.motivo } : {}) } : {}),
       ...(g.modelo ? { modelo: g.modelo, proveedor: g.proveedor } : {}),
+      ...(g.tareas?.length ? { tareas: g.tareas } : {}),
     });
     return res.end();
   }
@@ -4302,6 +4426,8 @@ app.post('/api/turno/stream', exigirMesaODesk, limitar(60), cupoDeMiembro, async
   // Lo que se guarda para un reintento: las herramientas y el `done` (sin `done`, no hubo respuesta).
   let herramientas: string[] = [];
   let hecho: any = null;
+  // Las tareas durables que el turno cree (AUR08): van en el `done` (campo nuevo; una app vieja lo ignora).
+  const trabajos = nuevoContextoTrabajos(idTurnoValido((body as Record<string, unknown>).idTurno));
   const terminar = () =>
     unico.terminar(
       hecho && (hecho.reply || hecho.voz)
@@ -4318,19 +4444,21 @@ app.post('/api/turno/stream', exigirMesaODesk, limitar(60), cupoDeMiembro, async
             ...(hecho.estado ? { estado: hecho.estado } : {}),
             ...(hecho.parcial === true ? { parcial: true, ...(hecho.motivo ? { motivo: String(hecho.motivo) } : {}) } : {}),
             ...(hecho.modelo ? { modelo: String(hecho.modelo), proveedor: String(hecho.proveedor || '') } : {}),
+            ...(Array.isArray(hecho.tareas) && hecho.tareas.length ? { tareas: hecho.tareas } : {}),
           }
         : null
     );
   const salida: SalidaEnVivo = {
     enviar: (evento, datos) => {
       if (evento === 'tools') herramientas = Array.isArray((datos as any)?.tools) ? (datos as any).tools : [];
+      if (evento === 'done' && trabajos.refs.length && datos && typeof datos === 'object') datos = { ...(datos as object), tareas: trabajos.refs };
       if (evento === 'done') hecho = datos;
       escribir(evento, datos);
     },
     // El cierre de un turno que ya corrió una herramienta, aunque la persona se haya ido: el reintento lo
     // recibe (marcado parcial) en vez de correr la herramienta otra vez (STREAM01).
     resultado: (datos) => {
-      hecho = datos;
+      hecho = trabajos.refs.length && datos && typeof datos === 'object' ? { ...(datos as object), tareas: trabajos.refs } : datos;
     },
     fin: () => {
       terminar();
@@ -4342,7 +4470,9 @@ app.post('/api/turno/stream', exigirMesaODesk, limitar(60), cupoDeMiembro, async
   // escrita y, con la red lenta del campo, la primera palabra tardaba segundos.
   // `terminar` también al final: si algún camino no llamara a `fin`, un reintento no queda esperando.
   // Dentro del turno, cada efecto pasa antes por efectoDelTurno (persistir antes de actuar; fencing).
-  return enTurnoUnico(unico.terminar, () => turnoEnVivoConTraza(body, salida, { senal: corte.signal, voz: turnoHablado(body), presupuestoVoz: (body as Record<string, unknown>).hablado === true })).finally(terminar);
+  return enTurnoConTrabajos(trabajos, () =>
+    enTurnoUnico(unico.terminar, () => turnoEnVivoConTraza(body, salida, { senal: corte.signal, voz: turnoHablado(body), presupuestoVoz: (body as Record<string, unknown>).hablado === true }))
+  ).finally(terminar);
 });
 
 /** Un turno dictado por voz (`hablado: true`) desde la app 5.0 o el .exe de Windows, con su cabecera. */

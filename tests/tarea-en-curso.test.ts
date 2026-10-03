@@ -231,3 +231,33 @@ test('decisiones y clasificación: lo que cuenta como cada cosa', () => {
   assert.equal(T.clasificarMensaje(t, 'y lo de la notaría'), 'sigue');
   assert.equal(T.clasificarMensaje(t, 'pon una alarma para mañana a las seis'), 'otra');
 });
+
+/* ------------------------------------------------------------------ el panel de tareas (AUR08) */
+
+test('panel: tareasDePersona las da todas (cada conversación); accionTareaPorId exige la versión que vio', async () => {
+  const quien = `panel-${Date.now()}@x.hn`;
+  const t = T.iniciarTarea(quien, 'tel-panel', { tipo: 'correo', titulo: 'revisar los 4 correos sin leer', pasos: CORREOS })!;
+  T.iniciarTarea(quien, 'web-panel', { tipo: 'otra', titulo: 'ordenar fotos', pasos: ['a', 'b'] });
+  const todas = T.tareasDePersona(quien);
+  assert.equal(todas.length, 2);
+  assert.ok(todas.some((x) => x.id === t.id));
+  // Otra persona no las ve.
+  assert.equal(T.tareasDePersona(`otra-${Date.now()}@x.hn`).length, 0);
+  // Pidió otra cosa: queda preguntando (la decisión del panel).
+  await T.resolverTareaEnCurso(quien, 'tel-panel', 'busca vuelos baratos a Roatán para diciembre');
+  const preguntando = T.tareasDePersona(quien).find((x) => x.id === t.id)!;
+  assert.equal(preguntando.estado, 'preguntando');
+  const vieja = T.accionTareaPorId(quien, t.id, 'seguir', preguntando.actualizado - 1);
+  assert.deepEqual({ ok: vieja.ok, motivo: (vieja as any).motivo }, { ok: false, motivo: 'version' }, 'una decisión de otra versión no se aplica');
+  const seguir = T.accionTareaPorId(quien, t.id, 'seguir', preguntando.actualizado);
+  assert.ok(seguir.ok && seguir.tarea?.estado === 'activa');
+  assert.match(seguir.ok && seguir.tarea ? seguir.tarea.despues || '' : '', /vuelos/, 'lo que pidió queda para después');
+  const pausa = T.accionTareaPorId(quien, t.id, 'pausar');
+  assert.ok(pausa.ok && pausa.tarea?.estado === 'pausada');
+  const retoma = T.accionTareaPorId(quien, t.id, 'retomar');
+  assert.ok(retoma.ok && retoma.tarea?.estado === 'activa');
+  const fuera = T.accionTareaPorId(quien, t.id, 'descartar');
+  assert.ok(fuera.ok && fuera.tarea === null, 'descartada: se cierra');
+  assert.equal(T.tareaDe(quien, 'tel-panel'), null);
+  assert.equal(T.accionTareaPorId(quien, t.id, 'pausar').ok, false, 'ya no existe');
+});

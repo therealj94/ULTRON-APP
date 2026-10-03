@@ -3,7 +3,7 @@
  * panel de trabajo (siempre a la vista). La etiqueta es visible para lectores de pantalla y el
  * placeholder solo da ejemplos: no reemplaza a la etiqueta.
  */
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Send } from 'lucide-react';
 
 type Props = {
@@ -15,10 +15,21 @@ type Props = {
   /** Lo que va a la derecha del botón Enviar (micrófono, «Más»). */
   despues?: React.ReactNode;
   id?: string;
+  /**
+   * Un texto que se le propone escribir («Cambia el correo para Ana: », tras «Editar» en el panel de
+   * tareas). Queda en el campo, con el foco; nunca se envía solo. `n` distingue dos propuestas iguales.
+   */
+  propuesta?: { texto: string; n: number } | null;
 };
 
-export function Compositor({ onEnviar, campoRef, oyendo, despues, id = 'dock-cmd-input' }: Props) {
+export function Compositor({ onEnviar, campoRef, oyendo, despues, id = 'dock-cmd-input', propuesta }: Props) {
   const [valor, setValor] = useState('');
+  useEffect(() => {
+    if (!propuesta?.texto) return;
+    setValor(propuesta.texto);
+    requestAnimationFrame(() => campoRef?.current?.focus());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [propuesta?.n]);
   const enviar = (e: React.FormEvent) => {
     e.preventDefault();
     const t = valor.trim();

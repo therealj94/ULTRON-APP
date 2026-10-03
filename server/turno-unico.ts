@@ -52,6 +52,8 @@ export type TurnoGuardado = {
   /** Quién contestó de verdad (EXEC04): el reintento no lo vuelve a adivinar por la `via`. */
   modelo?: string;
   proveedor?: string;
+  /** Las tareas durables que el turno creó o cambió (server/trabajos.ts, AUR08): el reintento las enlaza igual. */
+  tareas?: { id: string; title: string; state: string; version: number; updatedAt: string }[];
 };
 
 /** El registro durable de un turno (lib/durable.ts). */

@@ -39,6 +39,8 @@ import { accionSensibleDe, resultadoDe } from './13-trabajo/accionSensible';
 import { Conversacion } from './13-trabajo/Conversacion';
 import { Compositor } from './13-trabajo/Compositor';
 import { Inicio, EJEMPLOS_INICIO } from './13-trabajo/Inicio';
+import { IndicadorTrabajos, PanelTrabajos, useTrabajosWeb } from './13-trabajo/Trabajos';
+import { refsDeTurno } from '../mobile/src/lib/trabajos';
 
 /** Conversar: la sala entera. Trabajar: avatar chico y la conversación con sus resultados. */
 type ModoMesa = 'conversar' | 'trabajar';
@@ -167,6 +169,18 @@ export default function App() {
   const [bubble, setBubble] = useState({ texto: '', visible: false });
   /** «¿Te sirvió?» sobre la última respuesta del cerebro: su traza y en qué quedó la pregunta. */
   const [opinion, setOpinion] = useState<{ id: string; estado: 'preguntar' | 'gracias' } | null>(null);
+  // Las tareas durables (AUR08): el indicador, el panel y lo que propone «Editar» para el campo de escribir.
+  const [panelTareas, setPanelTareas] = useState(false);
+  const [tareaEnfocada, setTareaEnfocada] = useState<string | null>(null);
+  const [propuestaCampo, setPropuestaCampo] = useState<{ texto: string; n: number } | null>(null);
+  const trabajos = useTrabajosWeb({ conSesion: usuario.authenticated, panelAbierto: panelTareas });
+  const trabajosRef = useRef(trabajos.ahora);
+  trabajosRef.current = trabajos.ahora;
+  const tareasPorId = React.useMemo(() => Object.fromEntries(trabajos.tareas.map((t) => [t.id, t])), [trabajos.tareas]);
+  const abrirTarea = useCallback((id: string | null) => {
+    setTareaEnfocada(id);
+    setPanelTareas(true);
+  }, []);
   useEffect(() => {
     if (!opinion) return;
     const t = setTimeout(() => setOpinion(null), opinion.estado === 'gracias' ? 2500 : 25000);
@@ -534,7 +548,7 @@ export default function App() {
       // El turno en la conversación: su estado va cambiando con lo que manda el servidor.
       const idTurno = conv.aura('', 'pensando');
       let dicho = '';
-      const cerrarTurno = (cambio: { texto?: string; estado: 'lista' | 'error' | 'interrumpida'; ms?: number; trazaId?: string }) =>
+      const cerrarTurno = (cambio: { texto?: string; estado: 'lista' | 'error' | 'interrumpida'; ms?: number; trazaId?: string; tareas?: ReturnType<typeof refsDeTurno> }) =>
         conv.actualizar(idTurno, (x: any) => ({ ...cambio, texto: cambio.texto ?? x.texto, tsFin: Date.now() }));
       const resultadoAccion = (respuesta: string, error?: string) => {
         if (!o.accionId) return;
@@ -641,7 +655,10 @@ export default function App() {
           resultadoAccion('');
           return;
         }
-        cerrarTurno({ texto, estado: 'lista', ms: data.ms, trazaId: data.trazaId });
+        // Las tareas durables del turno (AUR08): la burbuja las enlaza y el indicador pregunta ya.
+        const tareasTurno = refsDeTurno(data);
+        cerrarTurno({ texto, estado: 'lista', ms: data.ms, trazaId: data.trazaId, ...(tareasTurno.length ? { tareas: tareasTurno } : {}) });
+        if (tareasTurno.length) trabajosRef.current();
         resultadoAccion(texto);
         if (data.emocion) emo = data.emocion;
         // Sin stream (el servidor contestó en JSON) no llegó ningún trozo: se dice la respuesta entera.
@@ -971,7 +988,7 @@ export default function App() {
       {bubble.texto}
     </div>
   );
-  const hayDialogo = dockOpen || settingsOpen || masOpen || accesoOpen || vaultOpen || photosOpen || cameraOpen;
+  const hayDialogo = dockOpen || settingsOpen || masOpen || accesoOpen || vaultOpen || photosOpen || cameraOpen || panelTareas;
   const opinar = (v: 1 | -1) => {
     if (!opinion) return;
     void opinarTurno(opinion.id, v);
@@ -1130,6 +1147,8 @@ export default function App() {
             </div>
 
             <div className="flex items-center gap-1 sm:gap-2 pointer-events-auto shrink-0">
+              {/* «Trabajando · 2» / «Necesito una decisión · 1» (AUR08): en el encabezado, nunca sobre el teclado. */}
+              <IndicadorTrabajos texto={trabajos.indicador} res={trabajos.resumen} reducido={trabajos.reducido} onAbrir={() => abrirTarea(null)} />
               <button
                 type="button"
                 onClick={() => setAccesoOpen(true)}
@@ -1185,12 +1204,15 @@ export default function App() {
                   onCancelar={cancelarAccion}
                   opinion={opinion}
                   onOpinar={opinar}
+                  tareasPorId={tareasPorId}
+                  onAbrirTarea={abrirTarea}
                   vacio={<Inicio nombre={nombreVisible} estado={estadoCerebro} onPedir={pedir} />}
                 />
                 <div className="border-t border-(--aura-borde) px-3 sm:px-4 pt-3 pb-3">
                   <Compositor
                     id="aura-trabajo-campo"
                     oyendo={oyendo}
+                    propuesta={modoMesa === 'trabajar' ? propuestaCampo : null}
                     onEnviar={(t) => {
                       playSfx('tap', soundFxEnabled);
                       pedir(t);
@@ -1261,6 +1283,7 @@ export default function App() {
           soundFxEnabled={soundFxEnabled}
           onClose={() => setDockOpen(false)}
           volverA={escribirBtn}
+          propuesta={modoMesa === 'trabajar' ? null : propuestaCampo}
           onSubmitCommand={(c) => {
             setDockOpen(false);
             pedir(c);
@@ -1373,6 +1396,23 @@ export default function App() {
         />
 
         <UltronVaultModal isOpen={vaultOpen} onClose={() => setVaultOpen(false)} onSpeak={(t) => decir(t, { emocion: 'neutral' })} />
+
+        {/* El panel de tareas (AUR08): cerrarlo no cancela nada; el servidor es la fuente de verdad. */}
+        <PanelTrabajos
+          abierto={panelTareas}
+          onCerrar={() => setPanelTareas(false)}
+          tareas={trabajos.tareas}
+          reducido={trabajos.reducido}
+          enfoque={tareaEnfocada}
+          onTarea={trabajos.aplicar}
+          onRefrescar={() => void trabajos.refrescar()}
+          onEditar={(sugerencia) => {
+            // «Editar»: el texto propuesto va al campo de escribir; lo manda la persona (nada sale solo).
+            setPanelTareas(false);
+            setPropuestaCampo((p) => ({ texto: sugerencia, n: (p?.n || 0) + 1 }));
+            if (modoMesa !== 'trabajar') setDockOpen(true);
+          }}
+        />
 
         <PhotoCaptureModal isOpen={photosOpen} onClose={() => setPhotosOpen(false)} photos={photos} onDeletePhoto={(id) => setPhotos((p) => p.filter((x) => x.id !== id))} onTriggerNewPhoto={() => { setPhotosOpen(false); setCameraOpen(true); }} />
 
