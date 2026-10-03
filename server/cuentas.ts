@@ -248,8 +248,10 @@ export async function recargarCuentas(): Promise<number> {
     const fin = k.revocado ? new Date(k.revocado).getTime() : new Date(k.vence).getTime();
     // Vencido o revocado: TODA sesión suya queda fuera, sin comparar horas (el reloj de la base y el
     // del servidor no tienen por qué coincidir al milisegundo). Con él ya no se abren sesiones nuevas.
-    if (k.revocado || fin <= ahora) claveDesdePorCorreo.set(correoDeCodigo(Number(k.id)), Number.MAX_SAFE_INTEGER);
-    else vivos.push({ id: `t-${k.id}`, nombre: k.para || 'Invitado', correos: [correoDeCodigo(Number(k.id))], acceso: { [k.plataforma]: k.nivel } });
+    if (k.revocado || fin <= ahora || !codigosActivos()) claveDesdePorCorreo.set(correoDeCodigo(Number(k.id)), Number.MAX_SAFE_INTEGER);
+    // Siempre consulta, aunque la fila diga otra cosa (los códigos viejos podían ser «escribe»): un código
+    // no acredita a una persona del padrón, así que no sube, no edita ni manda (AUR05).
+    else vivos.push({ id: `t-${k.id}`, nombre: k.para || 'Invitado', correos: [correoDeCodigo(Number(k.id))], acceso: { [k.plataforma]: 'lee' as Nivel } });
   }
   fijarCuentasAprobadas([
     ...cuentas
@@ -500,6 +502,16 @@ export async function decidirSolicitud(
  * con el código, y al revocarlo o vencer, cualquier sesión abierta con él deja de valer.
  */
 export const HORAS_CODIGO = [1, 5, 24] as const;
+
+/**
+ * El interruptor de los accesos de prueba (auditoría maestra 3-oct, AUR05). José decidió que los códigos
+ * sirven para que alguien PRUEBE Dr Electrum; si un día debe quedar solo para la junta, ELECTRUM_CODIGOS=0
+ * cierra la entrada con código y saca del padrón a todo invitado vivo en la siguiente recarga (≤1 min):
+ * sus sesiones dejan de valer, sin tocar a los miembros.
+ */
+export function codigosActivos(env: NodeJS.ProcessEnv = process.env): boolean {
+  return String(env.ELECTRUM_CODIGOS ?? '1').trim() !== '0';
+}
 const ALFABETO = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // sin 0/O ni 1/I/L: se dicta por teléfono
 
 export function correoDeCodigo(id: number): string {
@@ -559,6 +571,8 @@ function filaACodigo(f: any): CodigoVisible {
 export async function crearCodigo(o: { horas: number; plataforma: Plataforma; nivel: Nivel; para: string; por: string }): Promise<{ codigo: string } & CodigoVisible> {
   if (!HORAS_CODIGO.includes(o.horas as any)) throw new Error('duración inválida');
   if (o.nivel === 'mando') throw new Error('un código temporal no da mando');
+  if (!codigosActivos()) throw new Error('los accesos de prueba están apagados (ELECTRUM_CODIGOS=0)');
+  o = { ...o, nivel: 'lee' };
   for (let intento = 0; intento < 5; intento++) {
     const codigo = codigoNuevo();
     const [f] = await q(
