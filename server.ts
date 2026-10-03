@@ -106,6 +106,7 @@ import { destinoPublico } from './lib/red-publica';
 import { extraerPdf, dataUrlDeImagen, bufferDeCualquier } from './lib/leer-pdf';
 import { transcribirAudio, permisoTurbo, PROVEEDORES_OIDO_CONFIRMAR, PROVEEDORES_OIDO_ELECTRUM_CONFIRMAR, TERMINOS_ELECTRUM } from './lib/oido';
 import { conAcuse, hechoInterrumpida, oidoAlInterrumpir } from './lib/interrumpida';
+import { cerebroRapidoActivo, esPaso, esSoloConversacion, hablarRapido, modeloRapido, podriaSerPaso, probarCerebroRapido, SOLO_CONVERSAR_EN, SOLO_CONVERSAR_ES } from './lib/cerebro-rapido';
 import { COT_FORZADO, esTareaDeCodigo, requiereCot } from './lib/prompts/cot';
 import { extraerEmocion, normalizarEmocion, type Emocion } from './lib/emocion';
 import { cabeceraAlineacion } from './lib/alineacion';
@@ -4176,29 +4177,6 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
   // De quién queda el espacio con este turno (aunque sea sin cuenta): el precalentado lo mira (Codex en #126).
   const claveEspacio = p.correoApp ? `${String(p.correoApp).toLowerCase()}${p.compacto ? '|voz' : ''}` : '';
   try {
-    const r = await fetchNodo(`${ULTRON_NODO_URL}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-ultron-secreto': ULTRON_NODO_SECRETO },
-      body: JSON.stringify({ model: ULTRON_NODO_MODELO, stream: true, messages: mensajesQwen(system, message, hechos, hilo, p.nivel, p.contexto), options: { id_slot: p.espacio } }),
-      signal: conTope(senal, 60000),
-    });
-    // Solo un pedido que el nodo aceptó deja el espacio caliente (Codex en #126): si falló, el precalentado sigue valiendo.
-    anotarEspacio(p.espacio, r.ok && r.body ? claveEspacio : '');
-    if (!r.ok || !r.body) {
-      await r.body?.cancel().catch(() => {});
-      const reply = sinCerebro(p.datos);
-      if (reply) {
-        send('emocion', { emocion: 'preocupado' });
-        soltar('delta', reply);
-        return terminar(reply, 'tools-fallback', 'preocupado');
-      }
-      send('error', { error: FRASE_FALLO.cerebro[idioma], codigo: 'cerebro', status: r.status });
-      reg.cerrar({ error: `Qwen no contestó (${r.status})` });
-      return salida.fin();
-    }
-    reg.modelo(ULTRON_NODO_MODELO);
-    const reader = (r.body as any).getReader();
-    const dec = new TextDecoder();
     let buf = '';
     let full = '';
     let cuerpo = '';
@@ -4252,36 +4230,102 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       }
     };
 
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += dec.decode(value, { stream: true });
-        const lines = buf.split('\n');
-        buf = lines.pop() || '';
-        for (const line of lines) {
-          const l = line.trim();
-          if (!l) continue;
-          try {
-            const j = JSON.parse(l);
-            const piece = j.message?.content || j.response || '';
-            if (piece) {
-              reg.marca('nodo');
-              procesar(piece);
+    /*
+     * El cerebro rápido (lib/cerebro-rapido.ts): en un turno hablado que solo es conversación, escribe Bedrock
+     * (~0,5 s a la primera palabra; Qwen 1,5–2,3 s) con el mismo prompt, y lo escrito pasa por el mismo
+     * `procesar`. Si falla, tarda o dice «PASO» (le pidieron hacer algo), contesta Qwen.
+     */
+    let porRapido = false;
+    if ((opciones.voz || opciones.presupuestoVoz) && !p.foto && soloMarcasDeContexto(p.tools) && !p.clas?.inyeccion && !p.clas?.urgente && esSoloConversacion(p.crudo || message) && cerebroRapidoActivo()) {
+      const mensajesRapido = mensajesQwen(system, message, hechos, hilo, p.nivel, p.contexto);
+      const ultimo = mensajesRapido[mensajesRapido.length - 1];
+      ultimo.content = `${ultimo.content}\n\n${idioma === 'en' ? SOLO_CONVERSAR_EN : SOLO_CONVERSAR_ES}`;
+      let inicio = '';
+      let soltado = false;
+      try {
+        for await (const piece of hablarRapido(mensajesRapido, senal)) {
+          if (!soltado) {
+            inicio += piece;
+            if (esPaso(inicio)) break;
+            if (podriaSerPaso(inicio)) continue;
+            soltado = true;
+            porRapido = true;
+            reg.modelo(modeloRapido());
+            reg.marca('nodo');
+            procesar(inicio);
+            continue;
+          }
+          reg.marca('nodo');
+          procesar(piece);
+        }
+        if (!soltado && inicio.trim() && !esPaso(inicio)) {
+          porRapido = true;
+          reg.modelo(modeloRapido());
+          procesar(inicio);
+        }
+      } catch {
+        // Sin el rápido (permiso, red, tarde): si ya había dicho algo se queda con eso; si no, Qwen.
+      }
+      if (senal?.aborted) {
+        reg.cerrar({ error: 'la persona interrumpió' });
+        return salida.fin();
+      }
+    }
+    if (!porRapido) {
+      const r = await fetchNodo(`${ULTRON_NODO_URL}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-ultron-secreto': ULTRON_NODO_SECRETO },
+        body: JSON.stringify({ model: ULTRON_NODO_MODELO, stream: true, messages: mensajesQwen(system, message, hechos, hilo, p.nivel, p.contexto), options: { id_slot: p.espacio } }),
+        signal: conTope(senal, 60000),
+      });
+      // Solo un pedido que el nodo aceptó deja el espacio caliente (Codex en #126): si falló, el precalentado sigue valiendo.
+      anotarEspacio(p.espacio, r.ok && r.body ? claveEspacio : '');
+      if (!r.ok || !r.body) {
+        await r.body?.cancel().catch(() => {});
+        const reply = sinCerebro(p.datos);
+        if (reply) {
+          send('emocion', { emocion: 'preocupado' });
+          soltar('delta', reply);
+          return terminar(reply, 'tools-fallback', 'preocupado');
+        }
+        send('error', { error: FRASE_FALLO.cerebro[idioma], codigo: 'cerebro', status: r.status });
+        reg.cerrar({ error: `Qwen no contestó (${r.status})` });
+        return salida.fin();
+      }
+      reg.modelo(ULTRON_NODO_MODELO);
+      const reader = (r.body as any).getReader();
+      const dec = new TextDecoder();
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          const lines = buf.split('\n');
+          buf = lines.pop() || '';
+          for (const line of lines) {
+            const l = line.trim();
+            if (!l) continue;
+            try {
+              const j = JSON.parse(l);
+              const piece = j.message?.content || j.response || '';
+              if (piece) {
+                reg.marca('nodo');
+                procesar(piece);
+              }
+              if (j.done) {
+                reg.tokens(j.prompt_eval_count, j.eval_count);
+                // El proxy del nodo dice cuántas fichas del prompt ya estaban leídas (caché del espacio).
+                reg.lectura(j.prompt_eval_count, j.prompt_cache_count);
+              }
+            } catch {
+              /* línea parcial */
             }
-            if (j.done) {
-              reg.tokens(j.prompt_eval_count, j.eval_count);
-              // El proxy del nodo dice cuántas fichas del prompt ya estaban leídas (caché del espacio).
-              reg.lectura(j.prompt_eval_count, j.prompt_cache_count);
-            }
-          } catch {
-            /* línea parcial */
           }
         }
+      } finally {
+        // Cortado o terminado, el lector se suelta: la conexión al nodo no queda colgada.
+        await reader.cancel().catch(() => {});
       }
-    } finally {
-      // Cortado o terminado, el lector se suelta: la conexión al nodo no queda colgada.
-      await reader.cancel().catch(() => {});
     }
     // El modelo contestó con los hechos: lo que terminó su computadora ya quedó dicho.
     if (full.trim() && !senal?.aborted && p.avisoComputadora) confirmarAvisos(p.avisoComputadora.quien, p.avisoComputadora.ids);
@@ -4302,7 +4346,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     }
     // Las marcas ACCION_APP se quitan igual que en el streaming, para que las posiciones coincidan.
     let reply = extraerEmocion(full).texto;
-    let via = `${ULTRON_NODO_URL}/api/chat`;
+    let via = porRapido ? `bedrock:${modeloRapido()}` : `${ULTRON_NODO_URL}/api/chat`;
     if (pedido) {
       /*
        * La vuelta del harness también habla en cuanto hay una frase (antes se generaba entera en silencio
@@ -4562,6 +4606,13 @@ async function startServer() {
     if (ES_ELECTRUM && hayBaseElectrum()) void asegurarOrganizacion().catch((e) => console.error('[electrum] organización:', String(e?.message || e).slice(0, 160)));
     // Cada plataforma registra SU bot. Los dos desde el mismo proceso era la costura más fácil de
     // olvidar: un despliegue de Dr Electrum se quedaba con el webhook del bot de la junta.
+    // El cerebro rápido de la voz (lib/cerebro-rapido.ts): una prueba barata al arrancar, para ver en los
+    // logs si Bedrock contesta con las credenciales de este servidor (si no, la voz sigue con Qwen).
+    if (ES_ULTRON && cerebroRapidoActivo()) {
+      void probarCerebroRapido().then((r) =>
+        r.ok ? console.log(`[cerebro rápido] ${modeloRapido()} contesta en ${r.ms} ms`) : console.warn(`[cerebro rápido] ${modeloRapido()} no contesta (${r.ms} ms): ${r.detalle || ''}`)
+      );
+    }
     if (ES_ULTRON) {
       registrarWebhookTelegram()
         .then((r) => console.log('[AU-RA] telegram webhook', r.detalle))

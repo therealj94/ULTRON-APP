@@ -10,7 +10,7 @@
  * Un 4xx NO abre el circuito: es un problema de ESA petición (texto raro, argumento mal), no del
  * servicio.
  */
-export type Servicio = 'laya' | 'embeddings' | 'modelo_chico' | 'docling';
+export type Servicio = 'laya' | 'embeddings' | 'modelo_chico' | 'docling' | 'cerebro_rapido';
 
 const abiertoHasta = new Map<Servicio, number>();
 
