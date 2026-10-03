@@ -434,6 +434,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const interrumpidaTurno = useRef<string | null>(null);
   /** Cuándo entregó el oído la última frase (para medir cuánto tarda la respuesta en sonar). */
   const fraseOidaEn = useRef(0);
+  /** El mismo dato del pedido que espera en `pending` (si la persona habló mientras AU-RA contestaba). */
+  const pendienteOidaEn = useRef(0);
   const turnosHablados = useRef(0);
   const bubbleOp = useRef(new Animated.Value(0)).current;
   /** Última escena de la cámara local (descripción en español para el cerebro). */
@@ -1177,7 +1179,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   );
 
   const handleCommand = useCallback(
-    async (raw: string) => {
+    // `oidaEn`: cuándo entregó el oído esta frase (0 si se escribió): viaja con el pedido, también si espera en `pending`.
+    async (raw: string, oidaEn = 0) => {
       const cmd = raw.trim();
       if (!cmd) return;
       if (handling.current) {
@@ -1199,9 +1202,11 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
           return;
         }
         pending.current = cmd;
+        pendienteOidaEn.current = oidaEn;
         return;
       }
       handling.current = true;
+      fraseOidaEn.current = oidaEn;
       lastUserAt.current = Date.now();
       comentarista.usuarioHablo();
       await stopSpeaking();
@@ -1360,8 +1365,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         handling.current = false;
         idleStatus();
         const next = pending.current;
+        const nextOidaEn = pendienteOidaEn.current;
         pending.current = null;
-        if (next) void handleCommand(next);
+        if (next) void handleCommand(next, nextOidaEn);
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1594,7 +1600,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const onSpeechFinal = useCallback(
     (text: string) => {
       ultimoHablado.current = true;
-      void handleCommand(text);
+      void handleCommand(text, Date.now());
     },
     [handleCommand]
   );
@@ -1616,7 +1622,6 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       },
       onFinal: (t) => {
         setPartial('');
-        fraseOidaEn.current = Date.now();
         onSpeechFinal(t);
       },
       // Le hablaron encima (lib/speech.ts ya decidió que no es su eco ni un «ajá»): se calla YA, como una
@@ -1812,8 +1817,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         } finally {
           handling.current = false;
           const next = pending.current;
+          const nextOidaEn = pendienteOidaEn.current;
           pending.current = null;
-          if (next) void handleCommand(next);
+          if (next) void handleCommand(next, nextOidaEn);
         }
       })();
     },

@@ -13,7 +13,7 @@ import { ES_ELECTRUM } from '../variante';
 import * as cloud from './speechCloud';
 import * as native from './speechNative';
 import * as turbo from './speechTurbo';
-import { esInterrupcionReal, quitarEco } from './interrupcion';
+import { cuentaInterrupcion, esInterrupcionReal, quitarEco } from './interrupcion';
 import { registroVoz } from './tts';
 import { miga } from './reporte';
 
@@ -114,8 +114,9 @@ function wire() {
       const dichos = registroVoz.dichos();
       if (!esInterrupcionReal(t, dichos) || !turbo.turboTomarTurno()) return;
       ecoAlCortar = dichos;
-      // Para ver en los logs si fue la persona o su eco: lo que oyó y lo que ella decía.
-      miga(`oído: la cortó «${t.slice(0, 50)}» (decía «${(dichos[dichos.length - 1] || '').slice(0, 50)}»)`);
+      // Para ver en los logs si fue la persona o su eco, sin copiar lo dicho (puede ser privado): solo conteos.
+      const c = cuentaInterrupcion(t, dichos);
+      miga(`oído: la cortó (${c.palabras} palabras oídas, ${c.nuevas} no eran su eco${c.freno ? ', con freno' : ''})`);
       callbacks.onBargeIn?.(t);
       callbacks.onPartial?.(quitarEco(t, dichos));
     },
