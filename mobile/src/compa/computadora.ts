@@ -21,11 +21,16 @@ export type EstadoTareaPc = 'en_cola' | 'trabajando' | 'pausada' | 'confirmar' |
 
 /** `hecho`: false si la computadora dice que ese paso no se hizo (lo negó, la pararon). */
 export type PasoPc = { n: number; t: number; accion: string; texto?: string; miniatura?: string | null; hecho?: boolean };
-export type TareaPc = { id: string; instruccion: string; estado: EstadoTareaPc; pasos: PasoPc[]; respuesta: string | null; error: string | null; segundos: number; pregunta?: string | null; pregunta_id?: string | null };
+/**
+ * `epoca`: la del control (agente.py de AUR03/AUR09; el visor la manda como expectedControlEpoch y ve si otro tomó el
+ * control); `seguro`: entrada segura en curso (AURA no ve ni toca nada).
+ */
+export type TareaPc = { id: string; instruccion: string; estado: EstadoTareaPc; pasos: PasoPc[]; respuesta: string | null; error: string | null; segundos: number; pregunta?: string | null; pregunta_id?: string | null; epoca?: number; seguro?: boolean };
 export type ResumenPc = { id: string; estado: EstadoTareaPc; pasos: number; instruccion: string; ultimo: string | null };
 /** Una misión de su historial (server/computadora.ts, historialDe). */
 export type ItemHistorialPc = { id: string; tareaId: string; instruccion: string; estado: EstadoTareaPc; ok: boolean | null; inicio: number; segundos: number; resultado: string | null };
-export type CapacidadPc = 'pausar' | 'confirmar' | 'control';
+/** `entrada` y `seguro`: el visor completo (contrato de entradas y entrada segura, AUR09). */
+export type CapacidadPc = 'pausar' | 'confirmar' | 'control' | 'entrada' | 'seguro';
 export type EstadoPc = {
   configurada: boolean;
   ok: boolean;
@@ -300,6 +305,14 @@ export function controlesPc(caps: readonly string[] | undefined, e: EstadoTareaP
     /** El servicio todavía no sabe pausar ni dar el control: la app lo dice. */
     faltaActualizar: viva && !pausa && !control,
   };
+}
+
+/**
+ * ¿Va el botón «Pantalla completa» (el visor de AUR09)? Con el servicio que da la pantalla de ahora (el que sabe dar el
+ * control) y con la tarea ya empezada y viva.
+ */
+export function puedeVerPantallaPc(caps: readonly string[] | undefined, e: EstadoTareaPc | null | undefined): boolean {
+  return trabajando(e) && e !== 'en_cola' && !!caps?.includes('control');
 }
 
 /** Un toque sobre la captura (que ocupa toda la caja, 16:10 como el escritorio) en las coordenadas del nodo, [0, 1000]. */
