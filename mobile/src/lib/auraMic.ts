@@ -39,14 +39,18 @@ export function micCrudoDisponible(): boolean {
 export const FRECUENCIA_MIC = 16000;
 export const TROZO_MS = 100;
 
-/** Abre el micrófono; devuelve cómo cerrarlo, o null si no se pudo. */
-export async function abrirMicCrudo(alTrozo: (t: TrozoMic) => void, alFallo: (motivo: string) => void): Promise<(() => void) | null> {
+/**
+ * Abre el micrófono; devuelve cómo cerrarlo, o null si no se pudo. `conEco`: con la fuente de llamada
+ * (VOICE_COMMUNICATION + cancelación de eco del teléfono), para seguir oyendo mientras suena la voz de
+ * AU-RA y que se le pueda hablar encima; sin él, la de dictado (VOICE_RECOGNITION).
+ */
+export async function abrirMicCrudo(alTrozo: (t: TrozoMic) => void, alFallo: (motivo: string) => void, conEco = false): Promise<(() => void) | null> {
   const m = mic();
   if (!m) return null;
   const subs = [m.addListener('onTrozo', alTrozo), m.addListener('onFallo', (f) => alFallo(String(f?.motivo || 'falló el micrófono')))];
   const soltar = () => subs.forEach((s) => s.remove());
   try {
-    if (await m.empezar(FRECUENCIA_MIC, TROZO_MS, 'reconocimiento')) {
+    if (await m.empezar(FRECUENCIA_MIC, TROZO_MS, conEco ? 'llamada' : 'reconocimiento')) {
       return () => {
         soltar();
         try {

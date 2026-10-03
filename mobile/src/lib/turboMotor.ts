@@ -46,7 +46,8 @@ export type WsTurbo = {
 };
 
 export type DepsTurbo = {
-  abrirMic(alTrozo: (t: TrozoAudio) => void, alFallo: (motivo: string) => void): Promise<(() => void) | null>;
+  /** `conEco`: abrirlo con la cancelación de eco del teléfono (para oír mientras suena su voz). */
+  abrirMic(alTrozo: (t: TrozoAudio) => void, alFallo: (motivo: string) => void, conEco?: boolean): Promise<(() => void) | null>;
   permiso(): Promise<{ url: string } | null>;
   transcribirWav(wavB64: string, confirmar: boolean): Promise<string>;
   crearWs(url: string): WsTurbo;
@@ -57,6 +58,12 @@ export type DepsTurbo = {
 export type CallbacksTurbo = {
   onSpeechStart?: () => void;
   onPartial?: (texto: string) => void;
+  /**
+   * Lo que se va entendiendo MIENTRAS AU-RA habla (pausa con oído encima): puede ser su propio eco, un
+   * «ajá» o la persona interrumpiendo. Quien lo recibe decide (lib/interrupcion.ts) y, si es la persona,
+   * llama a `tomarTurno()`. Si nadie lo toma, esa frase no se entrega.
+   */
+  onPartialEncima?: (texto: string) => void;
   onLevel?: (nivel01: number) => void;
   onFinal?: (texto: string) => void;
   onListeningChange?: (on: boolean) => void;
@@ -88,6 +95,8 @@ export const TIEMPOS = {
   ruidoSinTextoMs: 4_000,
   /** Turbo ya entendió algo y su texto no cambia en este rato: la persona terminó de hablar. */
   textoQuietoMs: 2_000,
+  /** Mientras AU-RA habla, la voz tiene que pasar el umbral por esto más (su eco no abre frases). */
+  margenEncimaDb: 6,
 };
 
 const ABIERTO = 1;
@@ -99,6 +108,12 @@ export class MotorTurbo {
 
   private quiere = false;
   private pausado = false;
+  /** Oír encima: con la pausa (AU-RA hablando) el micrófono sigue abierto, con cancelación de eco. */
+  private oirEncima = false;
+  /** Pausado, pero oyendo encima ahora mismo. */
+  private encima = false;
+  /** El micrófono abierto ahora, ¿con cancelación de eco? */
+  private micConEco = false;
   private cerrarMic: (() => void) | null = null;
   private abriendoMic = false;
   private fallosMic = 0;
@@ -125,7 +140,8 @@ export class MotorTurbo {
   private wsAbierto = false;
   private conectando = false;
   private cola: string[] = [];
-  private pendientes: { trozos: string[]; vence: ReturnType<typeof setTimeout> }[] = [];
+  /** Frases cerradas que esperan su texto. `tragar`: no es de la persona (eco oído encima): no se entrega. */
+  private pendientes: { trozos: string[]; vence: ReturnType<typeof setTimeout>; tragar?: boolean }[] = [];
   private inactivo: ReturnType<typeof setTimeout> | null = null;
   private fallosVivo = 0;
   private sinVivoHasta = 0;
@@ -163,12 +179,65 @@ export class MotorTurbo {
     if (this.pausado === p) return;
     this.pausado = p;
     if (p) {
-      // Mientras suena su voz, el micrófono se cierra (no se oye a sí misma) y la frase a medias se olvida.
+      if (this.oirEncima) {
+        // Mientras suena su voz, el micrófono SIGUE abierto (con cancelación de eco): así se le puede
+        // hablar encima, como a una persona. Lo que se oiga no se entrega salvo que alguien tome el turno.
+        this.tragarFrase();
+        this.encima = true;
+        if (!this.cerrarMic || !this.micConEco) {
+          this.pararMic();
+          void this.arrancarMic();
+        }
+        return;
+      }
+      // Sin oír encima: mientras suena su voz, el micrófono se cierra (no se oye a sí misma) y la frase a
+      // medias se olvida.
       this.pararMic();
       this.olvidarFrase();
     } else {
+      if (this.encima) {
+        // Terminó de hablar sin que nadie la interrumpiera: lo que se estaba oyendo era su eco.
+        this.encima = false;
+        this.tragarFrase();
+      }
       void this.arrancarMic();
     }
+  }
+
+  /**
+   * Oír encima sí/no (Ajustes). Con sí, el micrófono se abre con la cancelación de eco del teléfono y
+   * sigue abierto mientras AU-RA habla.
+   */
+  setOirEncima(on: boolean) {
+    if (this.oirEncima === on) return;
+    this.oirEncima = on;
+    if (!on && this.encima) {
+      this.encima = false;
+      this.tragarFrase();
+      this.pararMic();
+      return;
+    }
+    // El micrófono abierto con la fuente de antes se vuelve a abrir con la de ahora.
+    if (this.cerrarMic && this.micConEco !== on) {
+      this.pararMic();
+      void this.arrancarMic();
+    }
+  }
+
+  /**
+   * La persona le habló encima (quien oyó los parciales lo decidió): la frase que va sonando es suya.
+   * Se sale de la pausa sin cerrar nada: el micrófono, la conexión y lo que ya se oyó siguen.
+   */
+  tomarTurno(): boolean {
+    if (!this.encima) return false;
+    this.encima = false;
+    this.pausado = false;
+    return true;
+  }
+
+  /** ¿Oyendo encima de su voz ahora? */
+  oyendoEncima() {
+    return this.encima;
   }
 
   reiniciar() {
@@ -193,12 +262,12 @@ export class MotorTurbo {
 
   /** ¿Oyendo de verdad ahora? (micrófono abierto y entregando audio). */
   escuchando() {
-    return this.quiere && !this.pausado && !!this.cerrarMic && this.ahora() - this.ultimoTrozoEn < this.t.micMudoMs;
+    return this.quiere && (!this.pausado || this.encima) && !!this.cerrarMic && this.ahora() - this.ultimoTrozoEn < this.t.micMudoMs;
   }
 
   /** El vigilante: queriendo oír y sin pausa, el micrófono tiene que estar entregando audio. */
   vivo() {
-    if (!this.quiere || this.pausado) return true;
+    if (!this.quiere || (this.pausado && !this.encima)) return true;
     if (this.abriendoMic || this.reintentoMic) return this.ahora() - this.micDesde < 8_000;
     return !!this.cerrarMic && this.ahora() - this.ultimoTrozoEn < this.t.micMudoMs + 1_000;
   }
@@ -209,14 +278,16 @@ export class MotorTurbo {
       clearTimeout(this.reintentoMic);
       this.reintentoMic = null;
     }
-    if (this.abriendoMic || this.cerrarMic || !this.quiere || this.pausado) return;
+    if (this.abriendoMic || this.cerrarMic || !this.quiere || (this.pausado && !this.encima)) return;
     this.abriendoMic = true;
     this.micDesde = this.ahora();
+    const conEco = this.oirEncima;
     let cerrar: (() => void) | null = null;
     try {
       cerrar = await this.deps.abrirMic(
         (t) => this.trozo(t),
-        (m) => this.falloMic(m)
+        (m) => this.falloMic(m),
+        conEco
       );
     } catch (e: any) {
       this.cb.onError?.(String(e?.message || e));
@@ -235,11 +306,12 @@ export class MotorTurbo {
       }, 700);
       return;
     }
-    if (!this.quiere || this.pausado) {
+    if (!this.quiere || (this.pausado && !this.encima)) {
       cerrar();
       return;
     }
     this.cerrarMic = cerrar;
+    this.micConEco = conEco;
     this.fallosMic = 0;
     this.historial = [];
     this.ultimoTrozoEn = this.ahora();
@@ -267,7 +339,7 @@ export class MotorTurbo {
     this.cb.onError?.(motivo);
     this.pararMic();
     this.olvidarFrase();
-    if (!this.quiere || this.pausado) return;
+    if (!this.quiere || (this.pausado && !this.encima)) return;
     this.fallosMic++;
     if (this.fallosMic >= 3) {
       this.fallosMic = 0;
@@ -282,15 +354,19 @@ export class MotorTurbo {
 
   // ── voz ───────────────────────────────────────────────────────────────────────────────────────
   private trozo(t: TrozoAudio) {
-    if (!this.cerrarMic || this.pausado || !this.quiere) return;
+    if (!this.cerrarMic || (this.pausado && !this.encima) || !this.quiere) return;
     const ahora = this.ahora();
     this.ultimoTrozoEn = ahora;
     const db = typeof t.db === 'number' && Number.isFinite(t.db) ? t.db : -100;
     if (!this.historial.length) this.ruido = ruidoInicial(db);
-    this.historial.push(db);
-    if (this.historial.length > VENTANA_RUIDO_TROZOS) this.historial.shift();
-    this.ruido = seguirRuido(this.ruido, this.historial);
-    const hayVoz = db >= umbralVoz(this.ruido);
+    // Con su voz sonando, el ruido del cuarto no se mide (su eco lo subiría) y la voz tiene que pasar
+    // el umbral por un margen: el eco que deja la cancelación no abre frases a cada rato.
+    if (!this.encima) {
+      this.historial.push(db);
+      if (this.historial.length > VENTANA_RUIDO_TROZOS) this.historial.shift();
+      this.ruido = seguirRuido(this.ruido, this.historial);
+    }
+    const hayVoz = db >= umbralVoz(this.ruido) + (this.encima ? this.t.margenEncimaDb : 0);
     const nivel = nivelDeDb(db, this.ruido);
     if (Math.abs(nivel - this.ultimoNivel) > 0.08 || (nivel === 0 && this.ultimoNivel !== 0)) {
       this.ultimoNivel = nivel;
@@ -344,6 +420,7 @@ export class MotorTurbo {
 
   /** Un golpe o un ruido corto sin texto: no es una frase. */
   private descartarFrase() {
+    if (this.encima) return this.tragarFrase();
     this.enVoz = false;
     this.trozosFrase = [];
     this.soltarParcial();
@@ -366,6 +443,8 @@ export class MotorTurbo {
   }
 
   private cerrarFrase() {
+    // Oyendo encima y nadie tomó el turno: era su eco (o un «ajá»). Se cierra sin entregarla.
+    if (this.encima) return this.tragarFrase();
     this.enVoz = false;
     const trozos = this.trozosFrase;
     this.trozosFrase = [];
@@ -382,6 +461,31 @@ export class MotorTurbo {
       this.respaldo(trozos);
     }
     this.programarInactivo();
+  }
+
+  /**
+   * La frase que va (oída encima de su voz) no es de la persona. Si su audio ya fue a Turbo, se cierra
+   * igual (un «commit») y su texto se tira al llegar: si no, ese audio quedaba en Turbo y salía pegado
+   * al comienzo de la frase siguiente.
+   */
+  private tragarFrase() {
+    const enviada = this.enVoz && this.trozosFrase.length >= 4 && (this.ws || this.conectando);
+    this.enVoz = false;
+    this.trozosFrase = [];
+    this.prerollo = [];
+    this.soltarParcial();
+    if (enviada) {
+      this.enviarAudio(SILENCIO_COMMIT_B64, true);
+      const p = { trozos: [] as string[], tragar: true, vence: setTimeout(() => this.vencioTragada(p), this.t.esperaFinalMs) };
+      this.pendientes.push(p);
+    }
+    this.programarInactivo();
+  }
+
+  /** Una frase tragada cuya respuesta no llegó: se olvida sin dar la conexión por mala. */
+  private vencioTragada(p: { trozos: string[] }) {
+    const i = this.pendientes.indexOf(p as any);
+    if (i >= 0) this.pendientes.splice(i, 1);
   }
 
   // ── el en vivo con Turbo ──────────────────────────────────────────────────────────────────────
@@ -472,10 +576,11 @@ export class MotorTurbo {
     }
     if (tipo === 'partial_transcript') {
       const texto = String(j.text || '').trim();
-      if (this.enVoz && !this.pausado && texto && texto !== this.parcial) {
+      if (this.enVoz && (!this.pausado || this.encima) && texto && texto !== this.parcial) {
         this.parcial = texto;
         this.parcialEn = this.ahora();
-        this.cb.onPartial?.(texto);
+        if (this.encima) this.cb.onPartialEncima?.(texto);
+        else this.cb.onPartial?.(texto);
       }
       return;
     }
@@ -488,6 +593,10 @@ export class MotorTurbo {
         return;
       }
       clearTimeout(p.vence);
+      if (p.tragar) {
+        this.prefijo = '';
+        return;
+      }
       const todo = `${this.prefijo}${texto}`;
       this.prefijo = '';
       this.entregar(todo, p.trozos);

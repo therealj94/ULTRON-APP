@@ -26,3 +26,6 @@ export const turboQuiere = () => motor.quiereOir();
 export const turboPausado = () => motor.estaPausado();
 export const turboEscuchando = () => motor.escuchando();
 export const turboVivo = () => motor.vivo();
+export const turboOirEncima = (on: boolean) => motor.setOirEncima(on);
+export const turboTomarTurno = () => motor.tomarTurno();
+export const turboOyendoEncima = () => motor.oyendoEncima();

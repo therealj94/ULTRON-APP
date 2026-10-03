@@ -512,12 +512,16 @@ test('si la persona interrumpe (ElevenLabs cierra), la señal del turno de adent
     // Se cortó al empezar (lo dicho es corto): turno normal, sin perdón en voz (auditoría externa, 1-oct:
     // ChatGPT voz se calla y atiende). El cerebro igual sabe que lo interrumpieron.
     assert.equal(dicho, 'La plata está a cuarenta.');
-    assert.equal(s.vistos[1].interrumpida, true, 'el cerebro sabe que lo interrumpieron (para no pedir perdón dos veces)');
+    // Sin perdón en voz: el cerebro sabe que lo interrumpieron y qué alcanzó a oír, y abre con un acuse
+    // corto («Va, dime»: lib/interrumpida.ts, José 3-oct). `interrumpida` queda para cuando la voz ya dijo perdón.
+    assert.equal(s.vistos[1].interrumpida, false);
+    assert.deepEqual((s.vistos[1].body as any).interrumpido, { oido: 'Empiezo a explicar' });
 
     // El turno siguiente, sin interrupción, ya no pide perdón.
     const r3 = await llm(s.base, pase, [{ role: 'user', content: 'gracias' }]);
     assert.equal(dichoDe(await r3.text()), 'La plata está a cuarenta.');
     assert.equal(s.vistos[2].interrumpida, false);
+    assert.equal((s.vistos[2].body as any).interrumpido, undefined);
   } finally {
     await s.cerrar();
   }

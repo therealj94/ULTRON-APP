@@ -576,12 +576,17 @@ export const PERDON_DESDE_CARACTERES = 120;
  * ElevenLabs no trae ese mensaje (revisión de Codex en #111).
  */
 export function perdonEnVoz(messages: unknown, ultimaDicha: string): boolean {
+  return oidoDeLaAnterior(messages, ultimaDicha).length >= PERDON_DESDE_CARACTERES;
+}
+
+/** Lo que la persona oyó de la respuesta anterior, sin etiquetas de audio ni los «...» del recorte. */
+export function oidoDeLaAnterior(messages: unknown, ultimaDicha: string): string {
   const lista = Array.isArray(messages) ? messages : [];
   let i = lista.length - 1;
   while (i >= 0 && (lista[i] as any)?.role === 'user') i--;
   const m: any = lista[i];
   const oido = m && m.role === 'assistant' ? textoDe(m.content) : ultimaDicha || '';
-  return aplanar(quitarExpresiones(oido)).replace(/(\.{3}|…|—|-)$/, '').trim().length >= PERDON_DESDE_CARACTERES;
+  return aplanar(quitarExpresiones(oido)).replace(/(\.{3}|…|—|-)$/, '').trim();
 }
 
 /** Lo primero que dice AU-RA cuando cortó una respuesta larga: un perdón breve, y enseguida lo nuevo. */
@@ -1189,7 +1194,11 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     };
     conv.vivo = vivoDeEste;
 
-    if (reconexion || (interrumpida && perdonEnVoz(req.body?.messages, conv.ultimaDicha))) {
+    // El perdón en voz, solo si cortó algo largo; si no, el cerebro abre con un acuse corto («Va, dime»):
+    // va como `interrumpido` en el cuerpo, igual que desde la mesa (lib/interrumpida.ts).
+    const perdonDicho = !reconexion && interrumpida && perdonEnVoz(req.body?.messages, conv.ultimaDicha);
+    const oidoAntes = interrumpida && !perdonDicho ? oidoDeLaAnterior(req.body?.messages, conv.ultimaDicha) : null;
+    if (reconexion || perdonDicho) {
       decir(reconexion ? reconexion.perdon : perdonDe(pase.idioma, conv.turnos));
       // El perdón no cuenta como «ya dijo algo»: si el cerebro falla, igual se explica.
       algo = false;
@@ -1472,9 +1481,10 @@ export function montarVozAgente(app: express.Express, d: Deps) {
           canal: 'mesa',
           aparato: pase.aparato,
           ...(pase.origen ? { origen: pase.origen } : {}),
+          ...(oidoAntes !== null ? { interrumpido: { oido: oidoAntes } } : {}),
         },
         persona: { correo: pase.correo, nombre: pase.nombre, rol: pase.rol, nivel },
-        interrumpida,
+        interrumpida: perdonDicho,
         senal,
         enviar: enviarTurno,
         retener,

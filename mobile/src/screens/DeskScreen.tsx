@@ -34,11 +34,13 @@ import {
   pauseMicForTts,
   reabrirMic,
   restartMic,
+  setOirEncima,
   setSpeechCallbacks,
   setSttEngine,
   unmuteMic,
   volverANativoSiToca,
 } from '../lib/speech';
+import { TOPE_CORTADA } from '../lib/interrupcion';
 import {
   addLongFact,
   borrarRastrosViejos,
@@ -52,7 +54,7 @@ import {
   type SttEngine,
 } from '../lib/storage';
 import { playSfx, preloadSfx, setSfxEnabled } from '../lib/sfx';
-import { StreamSpeaker, setAvatarVoz, setSpeechLevelListener, speak, speakPrayer, speakReaccion, speakSong, stopSpeaking, type SongRequest } from '../lib/tts';
+import { StreamSpeaker, fraccionSonando, registroVoz, setAvatarVoz, setSpeechLevelListener, speak, speakPrayer, speakReaccion, speakSong, stopSpeaking, type SongRequest } from '../lib/tts';
 import { frase, saludoConNombre, type FraseId } from '../lib/frases';
 import { de, idiomaActual, tr, useIdioma } from '../i18n';
 import { quitarExpresiones } from '../lib/expresiones';
@@ -296,7 +298,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const [toolHint, setToolHint] = useState('');
   const [winkSide, setWinkSide] = useState<'L' | 'R'>('L');
   const [canciones, setCanciones] = useState<Cancion[]>(CANCIONES_LOCAL);
-  const [settings, setSettings] = useState<Pick<AppSettings, 'sttEngine' | 'proactive' | 'sfx'>>({ sttEngine: 'turbo', proactive: true, sfx: true });
+  const [settings, setSettings] = useState<Pick<AppSettings, 'sttEngine' | 'proactive' | 'sfx' | 'interrumpir'>>({ sttEngine: 'turbo', proactive: true, sfx: true, interrumpir: true });
   const [camPerm, requestCam] = useCameraPermissions();
   /** 0 nadie · 0.5 alguien delante · 1 alguien mirando la pantalla (la cara se ilumina). */
   const [atencion, setAtencion] = useState(0);
@@ -420,6 +422,11 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   /** Cortar el turno en curso (el stream) y marcar que se canceló: «callar» no espera al cerebro. */
   const abortTurno = useRef<(() => void) | null>(null);
   const turnoCancelado = useRef(false);
+  /**
+   * La persona interrumpió a AU-RA hablándole encima: lo que alcanzó a oír de la respuesta. Viaja con el
+   * próximo pedido para que el cerebro sepa dónde quedó y conteste «Va, dime» en vez de repetirse.
+   */
+  const interrumpida = useRef<string | null>(null);
   const bubbleOp = useRef(new Animated.Value(0)).current;
   /** Última escena de la cámara local (descripción en español para el cerebro). */
   const escenaRef = useRef<Escena | null>(null);
@@ -855,8 +862,10 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         hablado: ultimoHablado.current,
         // Uno por frase y el mismo en los reintentos de abajo: el servidor no corre la frase dos veces.
         idTurno: nuevoIdTurno(),
+        ...(interrumpida.current !== null ? { interrumpido: { oido: interrumpida.current } } : {}),
       };
       ultimoHablado.current = false;
+      interrumpida.current = null;
       let emocion: Emocion = 'neutral';
       let reacted = false;
       // Un solo relleno y solo si el cerebro de verdad tarda (ESPERA_FRASE_MS, ~2,5 s; inmediato con
@@ -944,6 +953,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
               (speaker as StreamSpeaker).end();
               await (speaker as StreamSpeaker).done;
             }
+            // La interrumpieron mientras decía el final: lo que oyó la persona ya quedó en el hilo.
+            if (turnoCancelado.current) return;
             setToolHint('');
             if (result.reply) {
               setOnline(true);
@@ -1173,6 +1184,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       lastUserAt.current = Date.now();
       comentarista.usuarioHablo();
       await stopSpeaking();
+      registroVoz.nuevoTurno();
       historial.current = [...historial.current, { rol: 'usuario' as const, texto: cmd }].slice(-12);
       setMensajes((m) => [...m, { rol: 'usuario' as const, texto: cmd }].slice(-80));
 
@@ -1578,6 +1590,31 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         setPartial('');
         onSpeechFinal(t);
       },
+      // Le hablaron encima (lib/speech.ts ya decidió que no es su eco ni un «ajá»): se calla YA, como una
+      // persona, y escucha. Lo que dijo hasta ahí queda en el hilo y viaja con el próximo pedido.
+      onBargeIn: () => {
+        const oido = registroVoz.cortar(fraccionSonando());
+        interrumpida.current = oido.slice(-TOPE_CORTADA);
+        turnoCancelado.current = true;
+        abortTurno.current?.();
+        pending.current = null;
+        void stopSpeaking();
+        oidoMesa.current?.vozCortada();
+        speakingRef.current = false;
+        avisarMesa({ hablando: false, pensando: false });
+        if (oido) {
+          // Si la respuesta entera ya estaba en el hilo (una que se dijo de un tirón), queda solo lo oído.
+          const texto = quitarExpresiones(oido).trim();
+          const h = historial.current;
+          const ultima = h[h.length - 1];
+          if (ultima?.rol === 'ultron' && ultima.texto.startsWith(texto.replace(/…$/, '').slice(0, 24))) historial.current = [...h.slice(0, -1), { rol: 'ultron' as const, texto }];
+          else logUltron(oido);
+        }
+        setToolHint('');
+        setFace('LISTENING');
+        setStatus('listening');
+        miga(`mesa: la interrumpieron hablando (oyó ${oido.length} letras)`);
+      },
       // el reconocedor nativo reinicia entre frases (~300 ms): no parpadear el HUD
       onListeningChange: (on) => {
         if (listenOffTimer.current) clearTimeout(listenOffTimer.current);
@@ -1587,7 +1624,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       onError: () => {},
       onEngineChange: (eng) => setSettings((p) => ({ ...p, sttEngine: eng })),
     });
-  }, [onSpeechFinal]);
+  }, [onSpeechFinal, logUltron]);
 
   // ---------- Arranque ----------
   useEffect(() => {
@@ -1601,7 +1638,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       // La primera vez (o cuando el recorrido creció): la ventana con «Empezar» / «Después».
       const verTutorial = tocaOfrecerRecorrido(s, user.correo);
       setModoMesa(s.modoMesa === 'trabajar' ? 'trabajar' : 'charlar');
-      setSettings({ sttEngine: s.sttEngine, proactive: s.proactive, sfx: s.sfx });
+      setSettings({ sttEngine: s.sttEngine, proactive: s.proactive, sfx: s.sfx, interrumpir: s.interrumpir !== false });
+      setOirEncima(s.interrumpir !== false);
       // El orbe es su cara desde el 2-oct; los anillos, solo si la persona los eligió después.
       setCara(s.cara === 'anillos' && s.caraElegida ? 'anillos' : 'orbe');
       setAvatar(s.avatar);
@@ -2036,6 +2074,12 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       'IDLE'
     );
   };
+  const toggleInterrumpir = async () => {
+    const next = !settings.interrumpir;
+    setSettings((p) => ({ ...p, interrumpir: next }));
+    setOirEncima(next);
+    await saveSettings({ interrumpir: next });
+  };
   const toggleProactive = async () => {
     const next = !settings.proactive;
     proactiveRef.current = next;
@@ -2455,11 +2499,12 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   // el menú angosto «se mira mal»): la mesa le publica lo que hay y le presta sus mismas acciones.
   useEffect(() => {
     publicarMesa(
-      { avatar: avatarId, sttEngine: settings.sttEngine, proactive: settings.proactive, sfx: settings.sfx, memoria: longMemory.current.length, cara: cara ?? 'orbe' },
+      { avatar: avatarId, sttEngine: settings.sttEngine, proactive: settings.proactive, sfx: settings.sfx, interrumpir: settings.interrumpir, memoria: longMemory.current.length, cara: cara ?? 'orbe' },
       {
         fijarOido: (e) => void changeStt(e),
         alternarComentarios: () => void toggleProactive(),
         alternarEfectos: () => void toggleSfx(),
+        alternarInterrumpir: () => void toggleInterrumpir(),
         olvidar: confirmarOlvido,
         fijarCara: cambiarCara,
       }

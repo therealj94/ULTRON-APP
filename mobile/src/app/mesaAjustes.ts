@@ -20,6 +20,8 @@ export type DatosMesa = {
   sttEngine: SttEngine;
   proactive: boolean;
   sfx: boolean;
+  /** Hablarle encima: con el oído Turbo, se le puede interrumpir mientras habla. */
+  interrumpir: boolean;
   /** Cuántos hechos guarda la memoria de largo plazo de quien está en la mesa. */
   memoria: number;
   /** La cara de AU-RA: el orbe o los anillos. */
@@ -30,6 +32,7 @@ export type AccionesMesa = {
   fijarOido: (e: SttEngine) => void;
   alternarComentarios: () => void;
   alternarEfectos: () => void;
+  alternarInterrumpir: () => void;
   /** Pregunta antes (es irreversible) y borra en el teléfono y en el servidor. */
   olvidar: () => void;
   fijarCara: (c: 'orbe' | 'anillos') => void;

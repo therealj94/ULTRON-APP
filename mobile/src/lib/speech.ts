@@ -13,6 +13,8 @@ import { ES_ELECTRUM } from '../variante';
 import * as cloud from './speechCloud';
 import * as native from './speechNative';
 import * as turbo from './speechTurbo';
+import { esInterrupcionReal, quitarEco } from './interrupcion';
+import { registroVoz } from './tts';
 
 export type SttEngine = 'turbo' | 'native' | 'cloud';
 
@@ -29,7 +31,29 @@ export type SpeechCallbacks = {
   onListeningChange?: (on: boolean) => void;
   onError?: (msg: string) => void;
   onEngineChange?: (engine: SttEngine, reason: string) => void;
+  /**
+   * La persona le habló encima a AU-RA (José, 3-oct: «como ChatGPT con voz»): hay que callar la voz YA.
+   * Lo que siga diciendo llega como siempre por onPartial y onFinal.
+   */
+  onBargeIn?: (parcial: string) => void;
 };
+
+/**
+ * Hablarle encima (Ajustes, sí por omisión): con Turbo el micrófono sigue abierto mientras AU-RA habla,
+ * con la cancelación de eco del teléfono, y si la persona la interrumpe se calla y la escucha.
+ */
+let oirEncima = true;
+/** Lo que AU-RA decía cuando la interrumpieron: la frase de la persona puede empezar con ese eco. */
+let ecoAlCortar: string[] | null = null;
+
+export function setOirEncima(on: boolean) {
+  oirEncima = on;
+  turbo.turboOirEncima(on);
+}
+
+export function oyeEncima(): boolean {
+  return oirEncima && engine === 'turbo';
+}
 
 let engine: SttEngine = turboPosible() ? 'turbo' : 'native';
 /** El que eligió la persona (o el de omisión): a ese se vuelve tras caer por un fallo. */
@@ -80,9 +104,29 @@ function wire() {
     },
   });
   cloud.setSpeechCallbacks(common);
+  turbo.turboOirEncima(oirEncima);
   turbo.turboCallbacks({
     ...common,
-    onPartial: (t) => callbacks.onPartial?.(t),
+    onPartial: (t) => callbacks.onPartial?.(ecoAlCortar ? quitarEco(t, ecoAlCortar) : t),
+    // Mientras AU-RA habla: ¿es su eco, un «ajá», o la persona interrumpiendo? (lib/interrupcion.ts)
+    onPartialEncima: (t) => {
+      const dichos = registroVoz.dichos();
+      if (!esInterrupcionReal(t, dichos) || !turbo.turboTomarTurno()) return;
+      ecoAlCortar = dichos;
+      callbacks.onBargeIn?.(t);
+      callbacks.onPartial?.(quitarEco(t, dichos));
+    },
+    onFinal: (t) => {
+      const eco = ecoAlCortar;
+      ecoAlCortar = null;
+      const texto = eco ? quitarEco(t, eco) : t;
+      if (texto) callbacks.onFinal?.(texto);
+    },
+    onSpeechStart: () => {
+      // Una frase nueva oída sin interrupción de por medio ya no lleva el eco de antes.
+      if (!turbo.turboOyendoEncima()) ecoAlCortar = null;
+      callbacks.onSpeechStart?.();
+    },
     onUnavailable: (reason) => {
       if (engine !== 'turbo') return;
       void switchEngine(siguienteMotor('turbo')!, `Turbo no disponible (${reason})`, true);

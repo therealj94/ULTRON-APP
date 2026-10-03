@@ -421,6 +421,16 @@ function SeccionesMesa({ mesa }: { mesa: NonNullable<ReturnType<typeof mesaAjust
             onCambiar={(e) => e !== datos.sttEngine && acciones.fijarOido(e)}
           />
         </View>
+        <Fila
+          titulo={tr('Interrumpir hablando', 'Interrupt by talking')}
+          detalle={
+            datos.sttEngine === 'turbo'
+              ? tr('Háblale encima y se calla para escucharte, como una persona. Un «ajá» no la corta.', 'Talk over it and it stops to listen, like a person. An “uh-huh” won’t cut it off.')
+              : tr('Funciona con el oído Turbo.', 'Works with Turbo hearing.')
+          }
+          icono="microfono"
+          derecha={<Interruptor valor={datos.interrumpir} onCambiar={(v) => v !== datos.interrumpir && acciones.alternarInterrumpir()} etiqueta={tr('Interrumpir hablando', 'Interrupt by talking')} />}
+        />
       </Grupo>
 
       <Grupo titulo={tr(`La mesa · ${de(av.nombre)}`, `The desk · ${de(av.nombre)}`)}>
