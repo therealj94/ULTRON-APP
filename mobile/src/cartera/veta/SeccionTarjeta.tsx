@@ -18,7 +18,7 @@
  *   · Reemitir, cancelar, 3D Secure, teléfono de códigos y disputas: en Veta Wallet (un toque la abre).
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, Pressable, StyleSheet, Text, View } from 'react-native';
 import { tr, idiomaActual } from '../../i18n';
 import { MEDIDA, useTema } from '../../nucleo/tema';
 import { Boton, Campo, Hoja, Icono, Interruptor, Texto, vibrar, type NombreIcono } from '../../ui';
@@ -86,8 +86,29 @@ export function SeccionTarjeta({ activa }: { activa: boolean }) {
   const [quedan, setQuedan] = useState(0);
   const giro = useRef<ManejoTarjeta>(null);
   const desdeRecarga = useRef(0);
+  /**
+   * La generación de lo sensible (auditoría VETA01): ocultar la pestaña, mandar la app al fondo, cerrar sesión,
+   * cancelar la ficha u «Ocultar ya» la suben. Una respuesta de número/CVV/PIN que llega después es de otra
+   * generación y se tira: nunca vuelve a poner datos a la vista.
+   */
+  const gen = useRef(0);
+  /** La de la sesión: un `cargar` que vuelve después de cerrar sesión no pinta la tarjeta. */
+  const genSesion = useRef(0);
+  const activaRef = useRef(activa);
+  activaRef.current = activa;
+
+  const taparTodo = useCallback(() => {
+    gen.current++;
+    setDatos(null);
+    setPin(null);
+    setPedido(null);
+    setPinNuevo(null);
+    setEligiendoPin(false);
+    giro.current?.girar(false);
+  }, []);
 
   const cargar = useCallback(async (silencioso = false) => {
+    const gs = genSesion.current;
     await cargarSesion();
     if (!conectada()) {
       setFase('sinSesion');
@@ -96,17 +117,19 @@ export function SeccionTarjeta({ activa }: { activa: boolean }) {
     if (!silencioso) setFase('cargando');
     try {
       const c = await api.mia();
+      if (gs !== genSesion.current || !conectada()) return; // cerró sesión mientras tanto
       setCard(c);
       setFase('lista');
       setError('');
       api
         .movimientos()
-        .then(setMovs)
-        .catch(() => setMovs([]));
+        .then((m) => gs === genSesion.current && setMovs(m))
+        .catch(() => gs === genSesion.current && setMovs([]));
       // Una recarga que quedó a medias (en esta app o en Veta Wallet) se sigue.
       api
         .estadoRecarga()
         .then((r) => {
+          if (gs !== genSesion.current) return;
           if (r?.status === 'pending' || r?.status === 'debited') {
             setRecarga(r);
             desdeRecarga.current = Date.now();
@@ -114,6 +137,7 @@ export function SeccionTarjeta({ activa }: { activa: boolean }) {
         })
         .catch(() => undefined);
     } catch (e) {
+      if (gs !== genSesion.current) return;
       if (sinTarjeta(e)) return setFase('sinTarjeta');
       if (e instanceof ErrorVeta && e.tipo === 'sesion') return setFase('sinSesion');
       setError(mensajeDe(e));
@@ -125,7 +149,29 @@ export function SeccionTarjeta({ activa }: { activa: boolean }) {
     if (activa) void cargar(fase === 'lista');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activa]);
-  useEffect(() => escucharSesion(() => !conectada() && setFase('sinSesion')), []);
+  // Cerrar sesión (aquí o porque venció): todo lo de esa cuenta se borra de la pantalla.
+  useEffect(
+    () =>
+      escucharSesion(() => {
+        if (conectada()) return;
+        genSesion.current++;
+        taparTodo();
+        setCard(null);
+        setMovs(null);
+        setRecarga(null);
+        setFase('sinSesion');
+      }),
+    [taparTodo]
+  );
+  // La app al fondo (o la pantalla bloqueada): lo sensible se tapa y lo que estaba en vuelo ya no vale.
+  // Solo 'background': en iPhone el diálogo de Face ID pone la app en 'inactive', y eso no debe cortar la
+  // autorización que se está pidiendo.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (st) => {
+      if (st === 'background') taparTodo();
+    });
+    return () => sub.remove();
+  }, [taparTodo]);
 
   // Los datos sensibles se ocultan solos (y la tarjeta vuelve al frente).
   useEffect(() => {
@@ -133,6 +179,7 @@ export function SeccionTarjeta({ activa }: { activa: boolean }) {
     setQuedan(OCULTAR_TRAS);
     const tic = setInterval(() => setQuedan((q) => Math.max(0, q - 1)), 1000);
     const fin = setTimeout(() => {
+      gen.current++;
       setDatos(null);
       setPin(null);
       giro.current?.girar(false);
@@ -144,10 +191,8 @@ export function SeccionTarjeta({ activa }: { activa: boolean }) {
   }, [datos, pin]);
   // Al salir de la pestaña, nada sensible queda en memoria.
   useEffect(() => {
-    if (activa) return;
-    setDatos(null);
-    setPin(null);
-  }, [activa]);
+    if (!activa) taparTodo();
+  }, [activa, taparTodo]);
 
   // Una recarga en camino: se consulta hasta que se acredita, falla o pasan 10 minutos.
   useEffect(() => {
@@ -190,22 +235,65 @@ export function SeccionTarjeta({ activa }: { activa: boolean }) {
     }
   };
 
+  /**
+   * Una recarga cuyo resultado no se sabe (409: ya hay una; o se cortó la red después de mandarla): se pregunta
+   * el estado real y se sigue esa. Nunca se vuelve a mandar a ciegas (auditoría VETA02).
+   */
+  const reconciliarRecarga = async (porQue: 'ya-habia' | 'incierta') => {
+    const gs = genSesion.current;
+    // El formulario se cierra ya: con el resultado en duda, un segundo «Recargar» podría cobrar dos veces.
+    setRecargando(false);
+    setMonto('');
+    try {
+      const r = await api.estadoRecarga();
+      if (gs !== genSesion.current) return; // cerró sesión mientras tanto
+      // El servidor solo deja UNA recarga abierta por persona: si hay una en camino, es la que hay que seguir
+      // (la de recién o una empezada en Veta Wallet). No se dice «la tuya salió»: no se sabe cuál es.
+      if (r?.status === 'pending' || r?.status === 'debited') {
+        setRecarga(r);
+        desdeRecarga.current = Date.now();
+        setAviso(tr('Hay una recarga en camino: la sigo aquí hasta que se acredite (no mandé otra).', 'There’s a top-up on its way: I’m following it here until it’s credited (I didn’t send another).'));
+        return;
+      }
+      // «funded» es la ÚLTIMA recarga, que puede ser una de antes: se refresca el saldo, sin cantar victoria.
+      if (r?.status === 'funded') void cargar(true);
+    } catch {
+      /* abajo se dice que no se pudo confirmar */
+    }
+    if (gs !== genSesion.current) return;
+    setAviso(
+      porQue === 'ya-habia'
+        ? tr('Veta Wallet dice que ya hay una recarga, pero no pude ver en qué va. Revisa en unos minutos (no mandé otra).', 'Veta Wallet says there’s already a top-up, but I couldn’t see its status. Check in a few minutes (I didn’t send another).')
+        : tr('No pude confirmar si la recarga salió. No la repito para no cobrarte dos veces: revisa tu saldo en unos minutos.', 'I couldn’t confirm whether the top-up went out. I won’t repeat it so you aren’t charged twice: check your balance in a few minutes.')
+    );
+  };
+
   /** Lo que se pidió con la contraseña (o la huella). 401 = contraseña incorrecta: la ficha sigue abierta. */
   const autorizar = async (clave: string): Promise<{ ok: boolean; msg?: string }> => {
     const que = pedido;
+    const g = gen.current;
+    // ¿Sigue valiendo mostrar lo que llegue? (misma generación y la pestaña a la vista)
+    const vale = () => g === gen.current && activaRef.current;
     try {
       if (que === 'datos') {
         const d = await api.datos(clave);
+        if (!vale()) return { ok: true };
         if (d?.pan) {
           setDatos(d);
           giro.current?.girar(true); // al reverso: el CVV es lo que se viene a buscar
         } else if (d?.panUrl) setAviso(tr('Tu banco emisor pide abrir el número en su página segura: ábrelo en Veta Wallet.', 'Your issuer asks to open the number on its secure page: open it in Veta Wallet.'));
       } else if (que === 'pin') {
         const d = await api.pin(clave);
+        if (!vale()) return { ok: true };
         if (d?.pin) setPin(d.pin);
         else setAviso(tr('El emisor pide ver el PIN en su página segura: ábrelo en Veta Wallet.', 'The issuer asks to view the PIN on its secure page: open it in Veta Wallet.'));
       } else if (que === 'crearPin' && pinNuevo) {
         await api.crearPin(pinNuevo, clave);
+        if (!vale()) {
+          setPinNuevo(null);
+          setSinPin(false);
+          return { ok: true };
+        }
         setPin(pinNuevo);
         setPinNuevo(null);
         setSinPin(false);
@@ -229,8 +317,11 @@ export function SeccionTarjeta({ activa }: { activa: boolean }) {
         if (que === 'pin') {
           setSinPin(true);
           setAviso(tr('Tu tarjeta todavía no tiene un PIN. Puedes crearlo ahora.', 'Your card doesn’t have a PIN yet. You can create it now.'));
-        } else if (que === 'recargar') setAviso(tr('Ya hay una recarga en camino: la sigo aquí.', 'A top-up is already on its way: I’m following it here.'));
+        } else if (que === 'recargar') void reconciliarRecarga('ya-habia');
         else setAviso(tr('El emisor no puede mostrar los datos de esta tarjeta ahora mismo.', 'The issuer can’t show this card’s details right now.'));
+      } else if (que === 'recargar' && e instanceof ErrorVeta && (e.tipo === 'tiempo' || e.tipo === 'red' || e.tipo === 'servidor')) {
+        // Se mandó y no hubo respuesta clara: pudo salir. Se mira el estado; no se repite.
+        void reconciliarRecarga('incierta');
       } else if (e instanceof ErrorVeta && e.status === 400 && que === 'crearPin') {
         setEligiendoPin(true);
         setAviso(e.message || tr('El emisor no aceptó ese PIN: elige otro.', 'The issuer didn’t accept that PIN: pick another.'));
@@ -324,6 +415,7 @@ export function SeccionTarjeta({ activa }: { activa: boolean }) {
                 tam="chico"
                 icono="ojoTachado"
                 onPress={() => {
+                  gen.current++;
                   setDatos(null);
                   setPin(null);
                   giro.current?.girar(false);
@@ -438,6 +530,7 @@ export function SeccionTarjeta({ activa }: { activa: boolean }) {
         subtitulo={pedido === 'recargar' ? tr('Autoriza el pago con tu contraseña de Veta Wallet.', 'Authorize the payment with your Veta Wallet password.') : tr('Pedimos tu contraseña cada vez que se muestran datos sensibles. No se guardan en el teléfono.', 'We ask for your password every time sensitive data is shown. It isn’t stored on the phone.')}
         accion={pedido === 'recargar' ? tr('Recargar', 'Top up') : pedido === 'crearPin' ? tr('Guardar PIN', 'Save PIN') : tr('Mostrar', 'Show')}
         onCancelar={() => {
+          gen.current++;
           setPedido(null);
           setPinNuevo(null);
         }}

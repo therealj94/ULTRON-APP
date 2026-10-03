@@ -370,6 +370,33 @@ test('vigía: tope de 15 min (seguir mirando), cancelar, comprobante rechazado y
   assert.equal(r3.v.estado().fase, 'vencido');
 });
 
+test('vigía: al cerrar sesión se suelta YA; lo que estaba en vuelo no publica ni pinta (auditoría WAL02)', async () => {
+  // La búsqueda queda colgada hasta que la soltamos a mano: la sesión se cierra en medio.
+  let soltarBusqueda: (r: { hash: string | null; siguiente: number }) => void = () => {};
+  const f = vigiaFalso();
+  (f.v as any).deps.buscar = () => new Promise((res) => (soltarBusqueda = res));
+  f.v.empezar(await f.v.preparar(PAGO));
+  const guardadosAntes = f.guardados.length;
+  void f.tic(); // empieza a mirar y se queda esperando la red
+  await new Promise((r) => setImmediate(r));
+  f.v.soltar();
+  assert.equal(f.v.estado().fase, 'libre');
+  assert.equal(f.v.estado().pago, null);
+  assert.equal(f.timers.length, 0, 'sin vueltas pendientes');
+  assert.equal(f.guardados.length, guardadosAntes, 'lo guardado se queda: es de su dueño y solo él lo retoma');
+  soltarBusqueda({ hash: H1, siguiente: 600 }); // la red contesta tarde con el envío
+  for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+  assert.equal(f.publicados.length, 0, 'el comprobante de la cuenta anterior no se publica');
+  assert.equal(f.v.estado().fase, 'libre');
+  assert.equal(f.timers.length, 0);
+  // La siguiente cuenta empieza limpia: su búsqueda corre (la bandera de la vuelta vieja no la tapa).
+  (f.v as any).deps.buscar = async () => ({ hash: H2, siguiente: 9 });
+  f.v.empezar(await f.v.preparar(PAGO));
+  await f.tic();
+  assert.equal(f.v.estado().fase, 'publicado');
+  assert.deepEqual(f.publicados.map((p) => p.hash), [H2]);
+});
+
 /* ── el perfil con la cartera y la herramienta de AURA ────────────────────────────────────── */
 
 test('perfil: la cartera es una dirección 0x…40 hex, se borra con vacío y sobrevive a leer de disco', async () => {

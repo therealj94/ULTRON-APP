@@ -405,7 +405,9 @@ export function respuestaAlBorrador(mensaje: string): 'si' | 'no' | null {
   if (SI.test(t)) return NEGACION_EN_MEDIO.test(t) ? null : 'si';
   return null;
 }
-const NEGACION_EN_MEDIO = /(^|\s)(no|nunca|jamas|tampoco|ni|nada)(\s|$)/;
+// «sí espera», «ok cancela», «dale, para»: lo que viene después del sí lo frena (auditoría 3-oct, COM01).
+// «para» solo al final: «mándalo para el lunes» sigue siendo un sí.
+const NEGACION_EN_MEDIO = /(^|\s)(no|nunca|jamas|tampoco|ni|nada|espera|esperate|cancela(lo)?|paralo|alto|detente|stop|wait|cancel)(\s|$)|(^|\s)para$/;
 const SI_EN_MEDIO = /(^|\s)(si+|sip|dale|claro|ok(ay)?|hazlo|adelante|envia(lo|la)?|manda(lo|la)?)(\s|$)/;
 
 /** Lo que un envío confirmado en la voz terminó después de contestar: el próximo turno lo dice. */

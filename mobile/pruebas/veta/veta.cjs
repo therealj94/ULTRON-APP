@@ -110,6 +110,55 @@ prueba('cerrar sesión borra JWT, refresco y correo', async () => {
   assert.equal(sesion.conectada(), false);
 });
 
+// Auditoría del 3-oct (VETA01, VETA02, WAL01): las guardas están en el código de la pantalla y del hook.
+const fs = require('fs');
+const path = require('path');
+const leerSrc = (r) => fs.readFileSync(path.join(__dirname, '../../src', r), 'utf8');
+
+prueba('VETA01: número/CVV/PIN que llegan tarde (pestaña oculta, app al fondo, sesión cerrada, cancelado) no se muestran', () => {
+  const t = leerSrc('cartera/veta/SeccionTarjeta.tsx');
+  assert.match(t, /const vale = \(\) => g === gen\.current && activaRef\.current;/, 'cada operación sensible guarda su generación');
+  for (const que of ['api.datos(clave)', 'api.pin(clave)', 'api.crearPin(pinNuevo, clave)']) {
+    const i = t.indexOf(que);
+    assert.ok(i > 0, que);
+    assert.match(t.slice(i, i + 160), /if \(!vale\(\)\)/, `después de ${que} se comprueba la generación antes de mostrar`);
+  }
+  assert.match(t, /st === 'background'\) taparTodo\(\)/, 'al fondo se tapa (no en inactive: Face ID)');
+  assert.doesNotMatch(t, /st !== 'active'\) taparTodo/, 'inactive (diálogo de Face ID) no corta la autorización');
+  assert.match(t, /if \(!activa\) taparTodo\(\)/, 'ocultar la pestaña tapa');
+  assert.match(t, /genSesion\.current\+\+;\s*taparTodo\(\);/, 'cerrar sesión tapa y cambia de generación');
+  assert.match(t, /onCancelar=\{\(\) => \{\s*gen\.current\+\+;/, 'cancelar la ficha invalida lo que esté en vuelo');
+  assert.match(t, /if \(gs !== genSesion\.current \|\| !conectada\(\)\) return;/, 'una tarjeta que llega tras cerrar sesión no se pinta');
+});
+
+prueba('VETA02: un 409 o una recarga sin respuesta clara se reconcilian con el estado real; nunca se repiten', () => {
+  const t = leerSrc('cartera/veta/SeccionTarjeta.tsx');
+  assert.match(t, /que === 'recargar'\) void reconciliarRecarga\('ya-habia'\)/, '409: se mira la recarga que ya había');
+  assert.match(t, /que === 'recargar' && e instanceof ErrorVeta && \(e\.tipo === 'tiempo' \|\| e\.tipo === 'red' \|\| e\.tipo === 'servidor'\)\) \{[\s\S]{0,160}reconciliarRecarga\('incierta'\)/, 'tiempo/red: se reconcilia');
+  const r = t.slice(t.indexOf('const reconciliarRecarga'), t.indexOf('const autorizar'));
+  assert.match(r, /api\.estadoRecarga\(\)/);
+  assert.match(r, /setRecarga\(r\);\s*desdeRecarga\.current = Date\.now\(\);/, 'el seguimiento arranca de verdad');
+  assert.doesNotMatch(r, /api\.recargar\(/, 'no se vuelve a mandar');
+  assert.match(r, /const gs = genSesion\.current;\s*\/\/[^\n]*\n\s*setRecargando\(false\);\s*setMonto\(''\);/, 'el formulario se cierra ya: un segundo «Recargar» no cobra dos veces');
+  assert.doesNotMatch(r, /Recarga acreditada/, '«funded» puede ser una recarga de antes: no se canta victoria');
+});
+
+prueba('WAL01: saldos e historial de otra dirección (o llegados tras desconectar) se descartan', () => {
+  const t = leerSrc('cartera/useMiCartera.ts');
+  assert.match(t, /const sirve = \(\) => vivo\.current && e === epoca\.current && vigente\.current\?\.toLowerCase\(\) === d\.toLowerCase\(\);/);
+  assert.match(t, /if \(!sirve\(\) \|\| c\.direccion\.toLowerCase\(\) !== d\.toLowerCase\(\)\) return;/, 'saldos solo de la dirección vigente');
+  assert.match(t, /\.then\(\(h\) => \{\s*if \(!sirve\(\)\) return;/, 'historial solo de la generación vigente');
+  assert.match(t, /quitar: async \(\) => \{\s*fijarDireccion\(null\);/, 'desconectar invalida antes de esperar');
+  assert.match(t, /if \(!vivo\.current \|\| e !== epoca\.current\) return;/, 'una conexión vieja no pisa a la nueva');
+});
+
+prueba('WAL02: al cerrar sesión el vigía del pago se suelta (la conducta la prueba tests/cartera.test.ts)', () => {
+  assert.match(leerSrc('cartera/estado.ts'), /RELEVO\.alSalir\(\(\) => vigia\.soltar\(\)\);/);
+  const v = leerSrc('cartera/vigia.ts');
+  assert.match(v, /soltar\(\) \{\s*this\.generacion\+\+;/, 'soltar invalida lo que está en vuelo');
+  assert.match(v, /if \(this\.mirando === vuelta\) this\.mirando = 0;/, 'una vuelta vieja no apaga la bandera de la nueva');
+});
+
 (async () => {
   let fallos = 0;
   for (const [n, f] of pruebas) {

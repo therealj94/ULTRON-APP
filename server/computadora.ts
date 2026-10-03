@@ -824,7 +824,9 @@ export function respuestaSiNo(mensaje: string): 'si' | 'no' | null {
   }
   return null;
 }
-const NEGACION = /(^|\s)(no|nunca|jamas|tampoco|ni|nada|dont|don t|not|never)(\s|$)/;
+// También «espera», «cancela», «alto»… dichos después del sí (auditoría 3-oct, PC02: «sí espera» y «ok
+// cancela» salían como sí). «para» solo al final («dale, para»): en medio es preposición («sí, para mañana»).
+const NEGACION = /(^|\s)(no|nunca|jamas|tampoco|ni|nada|dont|don t|not|never|espera|esperate|cancela|cancelalo|paralo|alto|detente|stop|wait|cancel|hold on)(\s|$)|(^|\s)para$/;
 const AFIRMA = /(^|\s)(si|sip|claro|dale|ok|okay|okey|hazlo|adelante|confirmo|mandalo|envialo|sigue|yes|sure)(\s|$)/;
 
 /* ------------------------------------------------------------------ seguir la tarea hasta el final */
