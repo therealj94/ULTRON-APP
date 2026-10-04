@@ -468,6 +468,8 @@ export function VozProvider({ children, conCompanera = true }: Props) {
           cerrarBoca: () => senalVoz.cortar(),
           soltarPausaMicrofono: () => pauseMicForTts(false),
           enLlamada,
+          // P2: lo que la conversación está diciendo se calla también (sin colgar); sin sesión montada no suena nada de ella.
+          callarLlamada: () => controles.current?.callarSalida() ?? { ok: true },
           colgar: () => {
             const e = ciclo.estado();
             const ef = e === 'sonando' ? ciclo.rechazar() : ciclo.colgar();
@@ -649,7 +651,8 @@ export function VozProvider({ children, conCompanera = true }: Props) {
   const alEstado = useCallback((gen: number, e: EstadoVoz, detalle?: string) => control.alEstado(gen, e, detalle), [control]);
   const alMensaje = useCallback(
     (gen: number, rol: 'usuario' | 'ultron', texto: string) => {
-      if (gen !== control.vista().gen) return;
+      // A4: de otra generación, o de una sesión que ya terminó (desmontada), no cuenta.
+      if (gen !== control.vista().gen || !control.vista().montada) return;
       const limpio = quitarExpresiones(texto).trim();
       if (!limpio) return;
       if (rol === 'usuario') {
@@ -667,7 +670,7 @@ export function VozProvider({ children, conCompanera = true }: Props) {
   );
   const alInterrupcion = useCallback(
     (gen: number) => {
-      if (gen !== control.vista().gen) return;
+      if (gen !== control.vista().gen || !control.vista().montada) return;
       interrupcionVoz.emitir(interrupcionVoz.ultimo() + 1);
       senalVoz.cortar();
     },
@@ -677,6 +680,8 @@ export function VozProvider({ children, conCompanera = true }: Props) {
     (salida: number, entrada: number, cruda?: number, gen?: number) => {
       // AUR10: lo de una sesión vieja (su reloj que todavía late) no mueve la boca, el anillo ni la vigilancia.
       if (gen !== undefined && gen !== control.vista().gen) return;
+      // Terminada, solo cuenta el «a cero» (cierra la boca y apaga el anillo); nada más mueve la boca.
+      if (gen !== undefined && !control.vista().montada && (salida > 0 || entrada > 0)) return;
       nivelExterno(salida);
       nivelOido.emitir(entrada);
       control.entrada(entrada, cruda, gen);

@@ -6,12 +6,16 @@
  * conversación en vivo; «cancela / pausa / sigue con la tarea» y «tomo el control» van a su computadora;
  * «para» a secas con audio y tarea vivos pregunta. Aquí están los PUERTOS de la web:
  *
- *   · pararAudio → `callar()` de 03-voz/hablar.ts (la frase que suena y las que esperan);
+ *   · pararAudio → `callar()` de 03-voz/hablar.ts (la frase que suena y las que esperan) Y, con la llamada
+ *     abierta, `ConversacionEnVivo.callarSalida()`: el TTS de la mesa NO es el audio de la llamada (P2,
+ *     auditoría del 4-oct). Si la llamada no sabe callar su salida, se dice: callar la mesa no es un «listo»;
  *   · cortarTurno → lo que pase quien llama (el turno en camino que no debe decirse);
  *   · colgar → `ConversacionEnVivo.cerrar()` (03-voz/enVivo.ts), solo si hay una abierta;
  *   · tarea → las mismas rutas de su computadora que usa el teléfono, con la sesión de la mesa;
- *   · micrófono → la conversación en vivo de la web todavía no sabe silenciarse sin colgar: se dice
- *     («Aquí no puedo silenciar el micrófono»), no se finge.
+ *   · micrófono → `ConversacionEnVivo.silenciarMic()`: el de ESA sesión, sin colgar, y se vuelve a escuchar.
+ *     Si el SDK no sabe silenciar, se dice y el botón no lo anuncia (botonMicrofonoWeb), no se finge.
+ *
+ * Callar, silenciar o colgar nunca tocan la tarea durable (su computadora sigue como estaba).
  *
  * Sin DOM ni React: lo de afuera entra por parámetros (así se prueba en Node, tests/controles-voz-web.test.ts).
  */
@@ -52,17 +56,72 @@ export async function tareaWeb(que: QueTarea, pedir: PedirWeb): Promise<Resultad
   }
 }
 
+/**
+ * Lo que los controles necesitan de la llamada (ConversacionEnVivo lo cumple). Lo opcional, si falta, no se
+ * puede hacer y se dice.
+ */
+export type LlamadaWeb = {
+  estado(): string;
+  cerrar(): void;
+  silenciarMic?(silenciar: boolean): ResultadoPuerto;
+  callarSalida?(): ResultadoPuerto;
+};
+
+/** ¿Hay una llamada en curso (conectando o abierta)? */
+const enCurso = (l: LlamadaWeb | null | undefined): l is LlamadaWeb => {
+  const e = l?.estado();
+  return !!l && !!e && e !== 'cerrada' && e !== 'error';
+};
+
 /** Los puertos de la web. Sin `enVivo`, no hay qué colgar; sin `pedir`, la tarea no se maneja desde aquí. */
-export function puertosWeb(d: { callar: () => void; cortarTurno?: () => void; enVivo?: { estado(): string; cerrar(): void } | null; pedir?: PedirWeb }): PuertosControl {
+export function puertosWeb(d: { callar: () => void; cortarTurno?: () => void; enVivo?: LlamadaWeb | null; pedir?: PedirWeb }): PuertosControl {
   return {
-    pararAudio: () => d.callar(),
+    pararAudio: () => {
+      // La voz de la mesa (TTS ordinario) se calla siempre; no es el audio de la llamada.
+      d.callar();
+      const l = d.enVivo;
+      if (!enCurso(l)) return { ok: true };
+      if (!l.callarSalida) return { ok: false, detalle: 'Callé mi voz, pero no puedo callar el audio de la llamada en vivo; si querés, colgá.' };
+      return l.callarSalida();
+    },
     ...(d.cortarTurno ? { cortarTurno: d.cortarTurno } : {}),
+    microfono: (silenciar: boolean) => {
+      const l = d.enVivo;
+      if (!enCurso(l)) return { ok: false, detalle: 'No hay ninguna conversación en vivo abierta: el micrófono de la mesa se apaga con su botón.' };
+      if (!l.silenciarMic) return { ok: false, detalle: 'En vivo no puedo silenciar el micrófono sin colgar.' };
+      return l.silenciarMic(silenciar);
+    },
     colgar: () => {
-      const e = d.enVivo?.estado();
-      if (!d.enVivo || !e || e === 'cerrada') return { ok: false, detalle: 'No hay ninguna conversación en vivo que colgar.' };
-      d.enVivo.cerrar();
+      const l = d.enVivo;
+      if (!enCurso(l)) return { ok: false, detalle: 'No hay ninguna conversación en vivo que colgar.' };
+      l.cerrar();
       return { ok: true };
     },
     ...(d.pedir ? { tarea: (que: QueTarea) => tareaWeb(que, d.pedir!) } : {}),
   };
+}
+
+/**
+ * El botón del micrófono de la mesa. Sin llamada: el oído de siempre (useOido). Con la llamada abierta: el
+ * micrófono de ESA sesión (silenciar sin colgar / volver a escuchar), SOLO si la llamada sabe hacerlo; si no,
+ * el botón se apaga y dice por qué (no se anuncia algo que no hace).
+ */
+export function botonMicrofonoWeb(o: { vivoAbierta: boolean; silenciable: boolean; silenciado: boolean; micEnabled: boolean; escuchando: boolean }): {
+  modo: 'mesa' | 'llamada' | 'no_disponible';
+  /** aria-pressed: el micrófono está mandando. */
+  activo: boolean;
+  disabled: boolean;
+  etiqueta: string;
+} {
+  if (!o.vivoAbierta)
+    return {
+      modo: 'mesa',
+      activo: o.micEnabled,
+      disabled: false,
+      etiqueta: o.micEnabled ? (o.escuchando ? 'Micrófono abierto: te está escuchando' : 'Micrófono abierto') : 'Micrófono apagado',
+    };
+  if (!o.silenciable) return { modo: 'no_disponible', activo: true, disabled: true, etiqueta: 'En vivo no puedo silenciar el micrófono: para que deje de escucharte, colgá' };
+  return o.silenciado
+    ? { modo: 'llamada', activo: false, disabled: false, etiqueta: 'Micrófono de la llamada silenciado: tocá para volver a escuchar' }
+    : { modo: 'llamada', activo: true, disabled: false, etiqueta: 'Silenciar el micrófono de la llamada (no cuelga)' };
 }

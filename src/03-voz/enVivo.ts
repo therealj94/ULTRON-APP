@@ -15,13 +15,32 @@
  *
  * Mientras conecta o está abierta cuenta como trabajo activo (10-infra/trabajoActivo.ts; AUR14): la PWA no
  * aplica una versión nueva encima de la llamada; al colgar avisa y la recarga pendiente sigue.
+ *
+ * UNA SOLA TERMINACIÓN (A4, auditoría del 4-oct, paquete P2): se corte sola (onDisconnect), la cuelguen
+ * (cerrar: el botón, «cuelga», salir de la cuenta, desmontar la mesa), falle (onError) o venza un plazo, todo
+ * pasa por `terminar()`: la generación avanza (ningún callback de esa sesión vuelve a tocar estado, mensajes ni
+ * audio), los plazos se apagan, la sesión del SDK se cuelga (endSession es idempotente en el SDK), el pase se
+ * suelta una vez y el micrófono silenciado y la salida callada vuelven a cero. Antes la desconexión natural
+ * dejaba «cerrada» con los callbacks vivos: un «speaking» tardío la devolvía a «hablando».
+ *
+ * Los controles de la llamada (P2): `silenciarMic` deja de mandar el micrófono de ESTA sesión sin colgar
+ * (setMicMuted del SDK) y se puede volver a escuchar; `callarSalida` calla lo que la llamada está diciendo
+ * (volumen 0) hasta que termina esa frase, y la siguiente se oye. Lo que el SDK no sepa hacer no se anuncia
+ * (`puedeSilenciar`, `onControles`) ni se finge. Callar o colgar no tocan el trabajo durable.
  */
 import { avisarTrabajoLibre, registrarTrabajoActivo } from '../10-infra/trabajoActivo';
 
 export type EstadoEnVivo = 'cerrada' | 'conectando' | 'escuchando' | 'hablando' | 'error';
 
-/** Lo poco del SDK (@elevenlabs/client, Conversation) que se usa aquí. */
-export type SesionAgente = { endSession: () => Promise<void> | void };
+/**
+ * Lo poco del SDK (@elevenlabs/client, Conversation) que se usa aquí. Silenciar y el volumen son opcionales:
+ * si la sesión no los trae, no se anuncian.
+ */
+export type SesionAgente = {
+  endSession: () => Promise<void> | void;
+  setMicMuted?: (silenciado: boolean) => void;
+  setVolume?: (o: { volume: number }) => void;
+};
 export type OpcionesSesion = {
   conversationToken: string;
   connectionType: 'webrtc';
@@ -33,6 +52,10 @@ export type OpcionesSesion = {
   onMessage?: (m: { message: string; source: string }) => void;
 };
 
+/** Qué sabe hacer la llamada abierta (silenciar su micrófono sin colgar) y cómo está. */
+export type ControlesEnVivo = { silenciable: boolean; silenciado: boolean };
+export type ResultadoEnVivo = { ok: boolean; detalle?: string };
+
 export type DepsEnVivo = {
   /** Conversation.startSession del SDK (se carga solo al abrir: no pesa en la primera pantalla). */
   abrirSesion: (o: OpcionesSesion) => Promise<SesionAgente>;
@@ -40,6 +63,8 @@ export type DepsEnVivo = {
   pedir: (ruta: string, cuerpo: unknown) => Promise<{ ok: boolean; status: number; json: any }>;
   onEstado: (e: EstadoEnVivo, detalle?: string) => void;
   onMensaje: (quien: 'persona' | 'aura', texto: string) => void;
+  /** Lo que la llamada sabe hacer ahora y cómo está: la interfaz anuncia solo eso (cada vez que cambia). */
+  onControles?: (c: ControlesEnVivo) => void;
 };
 
 /**
@@ -78,11 +103,17 @@ export function porQueNoAbre(status: number, json: any): string {
 export class ConversacionEnVivo {
   private sesion: SesionAgente | null = null;
   private pase = '';
-  /** Cada apertura es una generación: lo que llegue de una vieja no toca el estado. */
+  /** Cada apertura es una generación: lo que llegue de una vieja (o de una ya terminada) no toca nada. */
   private gen = 0;
   private estado_: EstadoEnVivo = 'cerrada';
   /** Los plazos de la apertura en curso (null: no hay ninguna conectando). */
   private plazo: Plazos | null = null;
+  /** El micrófono de ESTA sesión, silenciado sin colgar. */
+  private micSilenciado_ = false;
+  /** Lo que la llamada estaba diciendo se calló (volumen 0) hasta que termine esa frase. */
+  private salidaCallada = false;
+  /** Lo último que se le contó a la interfaz (onControles), para no repetirlo. */
+  private anunciado = 'false:false';
 
   /** Ya se anotó como trabajo activo (una vez por conversación). */
   private registrada = false;
@@ -109,7 +140,8 @@ export class ConversacionEnVivo {
     const vencer = () => {
       apagar();
       fin();
-      this.vencio(gen);
+      // Venció un plazo de esta apertura: error recuperable (la mesa vuelve a su micrófono), la misma terminación.
+      if (gen === this.gen) this.terminar('error', NO_CONECTO);
     };
     const total = setTimeout(vencer, ABRIR_MAX_MS);
     const p: Plazos = {
@@ -128,13 +160,6 @@ export class ConversacionEnVivo {
     return p;
   }
 
-  /** Venció un plazo de la apertura `gen`: error recuperable y lo de esa apertura se suelta. */
-  private vencio(gen: number) {
-    if (gen !== this.gen) return;
-    this.poner(gen, 'error', NO_CONECTO);
-    this.soltarSesion();
-  }
-
   estado(): EstadoEnVivo {
     return this.estado_;
   }
@@ -146,16 +171,86 @@ export class ConversacionEnVivo {
     if (!this.ocupada()) avisarTrabajoLibre();
   }
 
+  /** La sesión abierta (con su SDK) de la generación vigente; null si no hay ninguna. */
+  private abierta(): SesionAgente | null {
+    return this.sesion && (this.estado_ === 'escuchando' || this.estado_ === 'hablando') ? this.sesion : null;
+  }
+
+  /** ¿Se puede silenciar el micrófono de la llamada sin colgar? Solo con una abierta cuyo SDK lo sepa. */
+  puedeSilenciar(): boolean {
+    return typeof this.abierta()?.setMicMuted === 'function';
+  }
+
+  micSilenciado(): boolean {
+    return this.micSilenciado_;
+  }
+
+  /** Le cuenta a la interfaz qué sabe hacer la llamada ahora (solo si cambió). */
+  private anunciar() {
+    const c: ControlesEnVivo = { silenciable: this.puedeSilenciar(), silenciado: this.micSilenciado_ };
+    const k = `${c.silenciable}:${c.silenciado}`;
+    if (k === this.anunciado) return;
+    this.anunciado = k;
+    this.d.onControles?.(c);
+  }
+
+  /** Silenciar (o volver a escuchar) el micrófono de ESTA sesión, sin colgar. */
+  silenciarMic(silenciar: boolean): ResultadoEnVivo {
+    const s = this.abierta();
+    if (!s) return { ok: false, detalle: 'No hay ninguna conversación en vivo abierta.' };
+    if (typeof s.setMicMuted !== 'function') return { ok: false, detalle: 'En vivo no puedo silenciar el micrófono sin colgar.' };
+    if (this.micSilenciado_ === silenciar) return { ok: false, detalle: silenciar ? 'El micrófono ya estaba silenciado.' : 'Ya te estaba escuchando.' };
+    try {
+      s.setMicMuted(silenciar);
+    } catch {
+      return { ok: false, detalle: 'No pude cambiar el micrófono de la conversación en vivo.' };
+    }
+    this.micSilenciado_ = silenciar;
+    this.anunciar();
+    return { ok: true };
+  }
+
+  /**
+   * Calla lo que la llamada está diciendo AHORA (volumen 0), sin colgar ni silenciar el micrófono. Cuando esa
+   * frase termina (o la interrumpen: el modo vuelve a escuchar) el volumen vuelve y la siguiente se oye. Sin
+   * llamada, o escuchando, no suena nada de ella: no hay nada que callar.
+   */
+  callarSalida(): ResultadoEnVivo {
+    const s = this.abierta();
+    if (!s || this.estado_ !== 'hablando') return { ok: true };
+    if (typeof s.setVolume !== 'function') return { ok: false, detalle: 'No puedo callar el audio de la llamada en vivo; si querés, colgá.' };
+    try {
+      s.setVolume({ volume: 0 });
+    } catch {
+      return { ok: false, detalle: 'No pude callar el audio de la llamada en vivo.' };
+    }
+    this.salidaCallada = true;
+    return { ok: true };
+  }
+
+  /** Terminó la frase que se calló: el volumen vuelve para la siguiente. */
+  private devolverSalida() {
+    if (!this.salidaCallada) return;
+    this.salidaCallada = false;
+    try {
+      this.sesion?.setVolume?.({ volume: 1 });
+    } catch {
+      /* la sesión ya no está */
+    }
+  }
+
   /** Abre la conversación. Devuelve false (y el porqué en onEstado 'error') si no abrió. */
   async abrir(o: { avatar: string; idioma: 'es' | 'en' }): Promise<boolean> {
-    if (this.estado_ === 'conectando' || this.estado_ === 'escuchando' || this.estado_ === 'hablando') return true;
+    if (this.ocupada()) return true;
     if (!this.registrada) {
       this.registrada = true;
       registrarTrabajoActivo('voz-en-vivo', () => this.ocupada());
     }
-    // Una sesión que quedó de un error se cuelga antes de abrir otra: nunca dos micrófonos.
-    this.soltarSesion();
+    // Lo que hubiera quedado de una sesión anterior se suelta antes de abrir otra: nunca dos micrófonos.
+    this.liberar();
     const gen = ++this.gen;
+    /** Todo lo que llega de esta apertura pasa por aquí: lo de una terminada (o de otra) no hace nada. */
+    const vigente = () => gen === this.gen;
     this.poner(gen, 'conectando');
     const plazo = this.plazos(gen);
     // 1) El permiso del servidor, con su plazo. Si vuelve cuando esta apertura ya venció o la colgaron,
@@ -163,13 +258,12 @@ export class ConversacionEnVivo {
     plazo.fase(PERMISO_MAX_MS);
     const pedido = this.d.pedir('/api/voz/agente', { avatar: o.avatar, idioma: o.idioma }).catch(() => ({ ok: false, status: 0, json: null as any }));
     void pedido.then((tarde) => {
-      if (gen !== this.gen && tarde.ok && tarde.json?.pase) void this.d.pedir('/api/voz/agente/cerrar', { pase: String(tarde.json.pase) }).catch(() => undefined);
+      if (!vigente() && tarde.ok && tarde.json?.pase) void this.d.pedir('/api/voz/agente/cerrar', { pase: String(tarde.json.pase) }).catch(() => undefined);
     });
     const r = await plazo.esperar(pedido);
-    if (r === VENCIDO || gen !== this.gen) return false;
+    if (r === VENCIDO || !vigente()) return false;
     if (!r.ok || !r.json?.token || !r.json?.pase) {
-      plazo.listo();
-      this.poner(gen, 'error', porQueNoAbre(r.status, r.json));
+      this.terminar('error', porQueNoAbre(r.status, r.json));
       return false;
     }
     const pase = String(r.json.pase);
@@ -183,78 +277,93 @@ export class ConversacionEnVivo {
         connectionType: 'webrtc',
         dynamicVariables: { pase },
         onConnect: () => {
-          if (gen !== this.gen) return;
+          if (!vigente()) return;
           plazo.listo();
           this.poner(gen, 'escuchando');
+          this.anunciar();
         },
         onModeChange: ({ mode }) => {
-          if (gen !== this.gen) return;
+          if (!vigente()) return;
           // Ya habla o escucha: conectó, aunque el onConnect no haya llegado antes.
           plazo.listo();
+          // Terminó la frase (o la interrumpieron): lo que se calló vuelve a sonar para la siguiente.
+          if (mode !== 'speaking') this.devolverSalida();
           this.poner(gen, mode === 'speaking' ? 'hablando' : 'escuchando');
+          this.anunciar();
         },
         onMessage: (m) => {
+          if (!vigente()) return;
           const texto = String(m?.message || '').trim();
-          if (texto && gen === this.gen) this.d.onMensaje(m.source === 'user' ? 'persona' : 'aura', texto);
+          if (texto) this.d.onMensaje(m.source === 'user' ? 'persona' : 'aura', texto);
         },
         onError: (mensaje) => {
-          if (gen !== this.gen) return;
-          this.poner(gen, 'error', String(mensaje || 'La conversación se cortó.'));
+          if (!vigente()) return;
           // Con 'error' la mesa vuelve a su micrófono: esta sesión se cuelga ya, no queda abierta al lado.
-          this.soltarSesion();
+          this.terminar('error', String(mensaje || 'La conversación se cortó.'));
         },
         onDisconnect: () => {
-          if (gen !== this.gen) return;
-          this.avisarCierre(pase);
-          this.sesion = null;
-          this.poner(gen, 'cerrada');
+          // Se cortó sola (ElevenLabs por inactividad, la red): la MISMA terminación que colgar.
+          if (!vigente()) return;
+          this.terminar('cerrada');
         },
       });
-      // Colgaron, venció o falló mientras conectaba (onError antes de tener la sesión): cuando la sesión
-      // aparezca ya no es de nadie y se cuelga, no queda abierta al lado.
+      // Colgaron, venció o terminó mientras conectaba (onError/onDisconnect antes de tener la sesión): cuando
+      // la sesión aparezca ya no es de nadie y se cuelga, no queda abierta al lado.
       void apertura.then(
         (tarde) => {
-          if (gen !== this.gen) void Promise.resolve(tarde.endSession()).catch(() => undefined);
+          if (!vigente()) void Promise.resolve(tarde.endSession()).catch(() => undefined);
         },
         () => undefined
       );
       const s = await plazo.esperar(apertura);
-      if (s === VENCIDO || gen !== this.gen) return false;
+      if (s === VENCIDO || !vigente()) return false;
       this.sesion = s;
+      this.anunciar();
       return true;
     } catch (e: any) {
-      plazo.listo();
-      this.avisarCierre(pase);
-      this.poner(gen, 'error', /permission|notallowed|denied/i.test(String(e?.name || e?.message || e)) ? 'Permití el micrófono en el navegador para hablar en vivo.' : 'No pude abrir la conversación en vivo. Seguimos con el micrófono de siempre.');
+      if (vigente())
+        this.terminar(
+          'error',
+          /permission|notallowed|denied/i.test(String(e?.name || e?.message || e)) ? 'Permití el micrófono en el navegador para hablar en vivo.' : 'No pude abrir la conversación en vivo. Seguimos con el micrófono de siempre.'
+        );
       return false;
     }
   }
 
-  /** Cuelga (también una apertura que todavía espera). Lo que llegue después de la sesión vieja ya no cuenta. */
+  /**
+   * Cuelga (también una apertura que todavía espera): el botón, «cuelga», salir de la cuenta, desmontar la
+   * mesa. Lo que llegue después de la sesión vieja ya no cuenta.
+   */
   cerrar() {
-    const s = this.sesion;
-    const pase = this.pase;
-    this.sesion = null;
-    this.gen++;
-    this.plazo?.cancelar();
-    this.estado_ = 'cerrada';
-    this.d.onEstado('cerrada');
-    if (s) void Promise.resolve(s.endSession()).catch(() => undefined);
-    this.avisarCierre(pase);
+    this.terminar('cerrada');
+  }
+
+  /**
+   * LA terminación (A4): la generación avanza (ningún callback de la sesión terminada vuelve a contar), los
+   * plazos se apagan, la sesión se cuelga y su pase se suelta una vez, el micrófono silenciado y la salida
+   * callada vuelven a cero, y se avisa el estado final.
+   */
+  private terminar(final: 'cerrada' | 'error', detalle?: string) {
+    this.liberar();
+    this.estado_ = final;
+    this.d.onEstado(final, detalle);
+    this.anunciar();
     avisarTrabajoLibre();
   }
 
   /**
-   * Cuelga la sesión que haya sin tocar el estado (lo que llegue de ella ya no cuenta). La generación
-   * avanza siempre: también un permiso que todavía no volvió deja de ser de esta conversación.
+   * Suelta lo de la sesión que haya, sin avisar estado: la generación avanza siempre (también un permiso que
+   * todavía no volvió deja de ser de esta conversación), los plazos se cancelan, la sesión se cuelga y el
+   * pase se avisa al servidor.
    */
-  private soltarSesion() {
+  private liberar() {
     const s = this.sesion;
     const pase = this.pase;
     this.gen++;
     this.plazo?.cancelar();
-    if (!s && !pase) return;
     this.sesion = null;
+    this.micSilenciado_ = false;
+    this.salidaCallada = false;
     if (s) void Promise.resolve(s.endSession()).catch(() => undefined);
     this.avisarCierre(pase);
   }

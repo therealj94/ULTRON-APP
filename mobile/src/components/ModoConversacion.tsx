@@ -42,7 +42,7 @@ import { miga } from '../lib/reporte';
 import { senalVoz } from '../avatar3d/senalVoz';
 import { Envolvente, PASO_BOCA_MS } from '../avatar3d/sincronia';
 import type { EstadoVoz } from '../compa/sesion';
-import { abrirSesionVoz, type ConvMin } from '../compa/sesionVoz';
+import { abrirSesionVoz, type CerrarSesionVoz, type ConvMin } from '../compa/sesionVoz';
 
 export type EstadoConversacion = EstadoVoz;
 
@@ -54,6 +54,11 @@ export type ControlesSesion = {
   avisar: (texto: string) => boolean;
   /** La persona está activa (escribiendo): el agente no la interrumpe. */
   actividad: () => void;
+  /**
+   * Callar lo que la conversación está diciendo AHORA, sin colgar ni silenciar el micrófono (P2): la frase
+   * siguiente se oye. Sin sesión, no suena nada de ella: `{ ok: true }`.
+   */
+  callarSalida: () => { ok: boolean; detalle?: string };
 };
 
 type Props = {
@@ -107,6 +112,8 @@ function Sesion({ gen, silenciada, permiso, onEstado, onMensaje, onInterrupcion,
   silencio.current = silenciada;
   const convRef = useRef(conv);
   convRef.current = conv;
+  /** La sesión de esta generación (compa/sesionVoz.ts): colgarla o callar su salida. */
+  const sesionRef = useRef<CerrarSesionVoz | null>(null);
 
   // Silenciada, tampoco se la oye: el volumen de salida baja a 0 (el micrófono lo corta `isMuted`).
   useEffect(() => {
@@ -147,6 +154,7 @@ function Sesion({ gen, silenciada, permiso, onEstado, onMensaje, onInterrupcion,
           /* sin sesión */
         }
       },
+      callarSalida: () => sesionRef.current?.callarSalida() ?? { ok: true },
     };
     return () => {
       controles.current = null;
@@ -155,31 +163,34 @@ function Sesion({ gen, silenciada, permiso, onEstado, onMensaje, onInterrupcion,
 
   // La sesión entera (permiso, SDK, reloj de la boca, cierre) vive en compa/sesionVoz.ts, sin React: así se
   // prueba con dobles que colgar en cualquier fase no deja nada vivo y que lo tardío no revive nada (AUR10).
-  useEffect(
-    () =>
-      abrirSesionVoz({
-        gen,
-        conv: () => convRef.current as unknown as ConvMin,
-        permiso: () => cbs.current.permiso(),
-        cbs: () => cbs.current,
-        silenciada: () => silencio.current,
-        abierta,
-        hablando,
-        oidoEn,
-        reloj: Date.now,
-        intervalo: (f, ms) => setInterval(f, ms),
-        limpiarIntervalo: (id) => clearInterval(id as ReturnType<typeof setInterval>),
-        boca: new Envolvente(),
-        envolventeLibre,
-        senal: senalVoz,
-        miga,
-        pasoMs: PASO_BOCA_MS,
-        sinVolumenMs: SIN_VOLUMEN_MS,
-      }),
+  useEffect(() => {
+    const sesion = abrirSesionVoz({
+      gen,
+      conv: () => convRef.current as unknown as ConvMin,
+      permiso: () => cbs.current.permiso(),
+      cbs: () => cbs.current,
+      silenciada: () => silencio.current,
+      abierta,
+      hablando,
+      oidoEn,
+      reloj: Date.now,
+      intervalo: (f, ms) => setInterval(f, ms),
+      limpiarIntervalo: (id) => clearInterval(id as ReturnType<typeof setInterval>),
+      boca: new Envolvente(),
+      envolventeLibre,
+      senal: senalVoz,
+      miga,
+      pasoMs: PASO_BOCA_MS,
+      sinVolumenMs: SIN_VOLUMEN_MS,
+    });
+    sesionRef.current = sesion;
+    return () => {
+      sesionRef.current = null;
+      sesion();
+    };
     // Una sesión por generación: el VozProvider la remonta (key) para abrir otra.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    []
-  );
+  }, []);
 
   return null;
 }

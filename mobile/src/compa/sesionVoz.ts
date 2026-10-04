@@ -16,6 +16,18 @@
  *
  * Con `recursos` (compa/recursos.ts) anota lo suyo (el reloj y la conexión) y lo suelta: las pruebas
  * comprueban que vuelve a cero junto con los contadores del SDK de mentira.
+ *
+ * UNA SOLA TERMINACIÓN (A4, auditoría del 4-oct, paquete P2; la misma regla que la web, src/03-voz/enVivo.ts):
+ * colgar (`cerrar()`, al desmontarse), la desconexión NATURAL (onDisconnect: la cortó el otro lado), un error
+ * y un permiso que no llega pasan todos por `terminar()`. Antes la desconexión natural y el error dejaban la
+ * sesión «viva» hasta que React la desmontara: en ese hueco un «speaking», un mensaje o una interrupción
+ * tardíos llegaban a la UI con la MISMA generación y el reloj de la boca seguía latiendo. Después de
+ * `terminar()` nada de esta sesión llega a la UI, al estado, al audio ni a los niveles; solo se sigue
+ * avisando que el audio quedó suelto (onDisconnect), que es lo que espera una llamada.
+ *
+ * `cerrar.callarSalida()` (P2): calla lo que la conversación está diciendo AHORA (volumen 0) sin colgar ni
+ * silenciar el micrófono; cuando termina esa frase el volumen vuelve (a 0 si está silenciada) y la siguiente
+ * se oye. La voz de la mesa (lib/tts.ts) no es este audio.
  */
 import type { EstadoVoz } from './sesion';
 import type { ContadorRecursos } from './recursos';
@@ -82,9 +94,14 @@ export type DepsSesionVoz = {
   recursos?: ContadorRecursos;
 };
 
-export function abrirSesionVoz(d: DepsSesionVoz): () => void {
+/** Colgar la sesión (idempotente) y, mientras vive, callar lo que está diciendo sin colgar. */
+export type CerrarSesionVoz = (() => void) & { callarSalida: () => { ok: boolean; detalle?: string } };
+
+export function abrirSesionVoz(d: DepsSesionVoz): CerrarSesionVoz {
   const { gen } = d;
   let vivo = true;
+  /** Lo que estaba diciendo se calló (volumen 0) hasta que termine esa frase. */
+  let salidaCallada = false;
   let nivel: unknown = null;
   let soltarReloj: (() => void) | null = null;
   let soltarConexion: (() => void) | null = null;
@@ -106,7 +123,9 @@ export function abrirSesionVoz(d: DepsSesionVoz): () => void {
   };
   const pedirFin = () => {
     try {
-      d.conv().endSession();
+      const r = d.conv().endSession() as any;
+      // Si el SDK devuelve una promesa que falla (ya cerrada), no queda un rechazo suelto.
+      if (r && typeof r.catch === 'function') r.catch(() => undefined);
     } catch {
       /* ya cerrada */
     }
@@ -119,6 +138,45 @@ export function abrirSesionVoz(d: DepsSesionVoz): () => void {
     soltarReloj?.();
     soltarReloj = null;
   };
+  /** startSession ya se pidió: al terminar por nuestro lado se le pide el fin al SDK. */
+  let iniciada = false;
+
+  /**
+   * LA terminación (A4): avisa el estado final (si lo hay) mientras todavía es de esta sesión y después la
+   * invalida: el reloj se para, la boca se cierra, se pide el fin al SDK (si `colgar`), y se avisa que el
+   * audio se está soltando y al servidor (una vez). Idempotente: la segunda vez no hace nada.
+   */
+  const terminar = (colgar: boolean, final?: { e: EstadoVoz; detalle?: string }) => {
+    if (!vivo) return;
+    if (final) avisar(final.e, final.detalle);
+    vivo = false;
+    salidaCallada = false;
+    pararReloj();
+    d.cbs().onNiveles(0, 0, undefined, gen);
+    d.hablando.current = false;
+    if (colgar) pedirFin();
+    else {
+      soltarConexion?.();
+      soltarConexion = null;
+    }
+    d.abierta.current = false;
+    // El SDK suelta el audio cuando termina de desconectar (onDisconnect); si nunca avisa, el
+    // VozProvider lo da por suelto a los pocos segundos.
+    if (audio === 'tomado') d.cbs().onAudio?.(gen, 'cerrando');
+    fin();
+  };
+
+  /** Calla lo que está diciendo ahora, sin colgar ni silenciar el micrófono (P2). */
+  const callarSalida = (): { ok: boolean; detalle?: string } => {
+    if (!vivo || !d.abierta.current || !d.hablando.current) return { ok: true };
+    try {
+      d.conv().setVolume({ volume: 0 });
+    } catch {
+      return { ok: false, detalle: 'No pude callar el audio de la conversación.' };
+    }
+    salidaCallada = true;
+    return { ok: true };
+  };
 
   void (async () => {
     avisar('conectando');
@@ -130,6 +188,7 @@ export function abrirSesionVoz(d: DepsSesionVoz): () => void {
       pase = r.pase;
       d.cbs().onAudio?.(gen, 'toma');
       soltarConexion = d.recursos?.tomar('conexion', `voz gen ${gen}`) || (() => undefined);
+      iniciada = true;
       d.conv().startSession({
         conversationToken: r.token,
         connectionType: 'webrtc',
@@ -156,6 +215,15 @@ export function abrirSesionVoz(d: DepsSesionVoz): () => void {
           d.hablando.current = mode === 'speaking';
           // Terminó de hablar: la boca se cierra ya, no con la caída.
           if (!d.hablando.current) d.boca.cortar();
+          // Terminó (o la interrumpieron) la frase que se calló: el volumen vuelve para la siguiente.
+          if (!d.hablando.current && salidaCallada) {
+            salidaCallada = false;
+            try {
+              d.conv().setVolume({ volume: d.silenciada() ? 0 : 1 });
+            } catch {
+              /* sin sesión */
+            }
+          }
           avisar(mode === 'speaking' ? 'hablando' : 'escuchando');
         },
         onMessage: (m) => {
@@ -177,18 +245,21 @@ export function abrirSesionVoz(d: DepsSesionVoz): () => void {
           if (vivo) d.senal.alineacion(al);
         },
         onError: (mensaje) => {
-          d.miga(`conversación fluida: error ${String(mensaje).slice(0, 80)}`);
           // Sin haber conectado, el error es que no abrió: el SDK ya soltó el audio antes de avisar.
           if (!d.abierta.current) soltarAudio();
-          avisar('error', String(mensaje));
+          if (!vivo) return;
+          d.miga(`conversación fluida: error ${String(mensaje).slice(0, 80)}`);
+          // La misma terminación que colgar: el control reconecta (otra generación) o vuelve al oído del teléfono.
+          terminar(true, { e: 'error', detalle: String(mensaje) });
         },
         onDisconnect: () => {
-          d.abierta.current = false;
-          d.hablando.current = false;
           soltarConexion?.();
           soltarConexion = null;
+          // El audio se da por suelto aunque esta sesión ya haya terminado: es lo que espera una llamada.
           soltarAudio();
-          avisar('cerrada');
+          if (!vivo) return;
+          // La cortó el otro lado (ElevenLabs por inactividad, la red): la MISMA terminación que colgar.
+          terminar(false, { e: 'cerrada' });
         },
       });
       if (!vivo) return;
@@ -253,20 +324,10 @@ export function abrirSesionVoz(d: DepsSesionVoz): () => void {
       // Con el código HTTP delante: así se le puede decir a la persona POR QUÉ (duenoAudio.motivoFalloVoz).
       const detalle = `${e?.status ? `HTTP ${e.status} · ` : ''}${String(e?.message || e)}`;
       d.miga(`conversación fluida: no abrió (${detalle.slice(0, 80)})`);
-      avisar('error', detalle);
+      terminar(iniciada, { e: 'error', detalle });
     }
   })();
 
-  return () => {
-    if (!vivo) return;
-    vivo = false;
-    pararReloj();
-    d.cbs().onNiveles(0, 0, undefined, gen);
-    pedirFin();
-    d.abierta.current = false;
-    // El SDK suelta el audio cuando termina de desconectar (onDisconnect); si nunca avisa, el
-    // VozProvider lo da por suelto a los pocos segundos.
-    if (audio === 'tomado') d.cbs().onAudio?.(gen, 'cerrando');
-    fin();
-  };
+  // Colgar (desmontarse): la misma terminación, sin estado que avisar (quien cuelga ya lo sabe).
+  return Object.assign(() => terminar(true), { callarSalida });
 }

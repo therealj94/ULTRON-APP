@@ -183,10 +183,12 @@ type Puede<T> = T | Promise<T>;
 
 /**
  * Cómo hace cada efecto quien ejecuta (el teléfono, la web). Lo que no tenga, no lo puede hacer: se dice.
- * Detener el audio y cortar el turno no fallan (lo que no suena ya está callado).
+ * Cortar el turno no falla (lo que no suena ya está callado). Detener el audio tampoco, salvo que haya una
+ * llamada cuyo audio no se pueda callar: callar la voz de la mesa no es callar la llamada (P2), y el puerto
+ * lo devuelve como `{ ok: false }` en vez de un «listo» de más.
  */
 export type PuertosControl = {
-  pararAudio?: () => Puede<void>;
+  pararAudio?: () => Puede<void | ResultadoPuerto>;
   cortarTurno?: () => Puede<void>;
   microfono?: (silenciar: boolean) => Puede<ResultadoPuerto>;
   colgar?: () => Puede<ResultadoPuerto>;
@@ -214,7 +216,8 @@ export async function ejecutarControl(control: ControlVoz, p: PuertosControl): P
   try {
     if (e.audio) {
       if (!p.pararAudio) return fallo('audio');
-      await p.pararAudio();
+      const r = await p.pararAudio();
+      if (r && !r.ok) return fallo('audio', r.detalle);
       hechos.push('audio');
     }
     if (e.turno) {
