@@ -29,9 +29,9 @@ const INSTR = 'Crea tres documentos: informe.docx, presupuesto.xlsx y carta.pdf,
 const sha = (c: string) => c.repeat(64);
 
 type A = Record<string, unknown>;
-const ok = (nombre: string, tipo: string, s: string, extra: A = {}): A => ({ ruta: `${ESP}/Documents/${nombre}`, existe: true, bytes: 2048, sha256: sha(s), reciente: true, mencionado: true, tipo, ...extra });
+const ok = (nombre: string, tipo: string, s: string, extra: A = {}): A => ({ ruta: `${ESP}/Documents/${nombre}`, existe: true, bytes: 2048, sha256: sha(s), reciente: true, mencionado: true, tipo, integro: true, ...extra });
 const falta = (nombre: string): A => ({ ruta: nombre, existe: false, bytes: 0, sha256: null, mencionado: true });
-const suelto = (nombre: string, tipo: string, s: string): A => ({ ruta: `${ESP}/${nombre}`, existe: true, bytes: 300, sha256: sha(s), reciente: true, mencionado: false, tipo });
+const suelto = (nombre: string, tipo: string, s: string): A => ({ ruta: `${ESP}/${nombre}`, existe: true, bytes: 300, sha256: sha(s), reciente: true, mencionado: false, tipo, integro: true });
 
 const TRES_OK = [ok('informe.docx', 'docx', '1'), ok('presupuesto.xlsx', 'xlsx', '2'), ok('carta.pdf', 'pdf', '3')];
 
@@ -202,7 +202,7 @@ test('un mismo archivo no cumple dos cosas pedidas', () => {
 
 test('«3 PDFs»: runtime.log no cuenta; 2 de 3 no basta; un .pdf que por dentro es texto no es un PDF; 3 PDFs de verdad sí', () => {
   const instr = 'Descarga las facturas y guarda 3 PDFs en Descargas';
-  const pdf = (n: string, s: string, tipo = 'pdf') => ({ ruta: `${ESP}/Downloads/${n}`, existe: true, bytes: 5000, sha256: sha(s), reciente: true, tipo });
+  const pdf = (n: string, s: string, tipo = 'pdf') => ({ ruta: `${ESP}/Downloads/${n}`, existe: true, bytes: 5000, sha256: sha(s), reciente: true, tipo, integro: true });
   const solo = cerrar(instr, [suelto('runtime.log', 'texto', '9')]);
   assert.equal(solo.c.estado, 'partial', 'un log no es un PDF');
   assert.equal(solo.criterios.length, 3);
@@ -290,7 +290,7 @@ test('otros cierres: la evidencia va a SU criterio (investigar), y el encargo na
 
 /* ------------------------------------------------------------------ revisión independiente: los huecos */
 
-const pdfNuevo = (n: string, s: string, carpeta = 'Downloads'): A => ({ ruta: `${ESP}/${carpeta}/${n}`, existe: true, bytes: 4000, sha256: sha(s), reciente: true, tipo: 'pdf' });
+const pdfNuevo = (n: string, s: string, carpeta = 'Downloads'): A => ({ ruta: `${ESP}/${carpeta}/${n}`, existe: true, bytes: 4000, sha256: sha(s), reciente: true, tipo: 'pdf', integro: true });
 const etiquetas = (r: { items: { nombre?: string; extensiones: string[] }[] }) => r.items.map((i) => i.nombre ?? i.extensiones.join('|'));
 
 test('revisión 1: plurales y capturas también piden archivos; una misión de archivos nunca se completa por el texto', async () => {
@@ -318,7 +318,7 @@ test('revisión 1: plurales y capturas también piden archivos; una misión de a
   assert.equal(dos.criterios.length, 2);
   const cap = cerrar('Haz una captura de pantalla de la página', [], 'Listo, ya la hice.');
   assert.equal(cap.c.estado, 'partial');
-  const conCap = cerrar('Haz una captura de pantalla de la página', [{ ruta: `${ESP}/Pictures/captura.png`, existe: true, bytes: 9000, sha256: sha('c'), reciente: true, tipo: 'png' }], 'Listo, ya la hice.');
+  const conCap = cerrar('Haz una captura de pantalla de la página', [{ ruta: `${ESP}/Pictures/captura.png`, existe: true, bytes: 9000, sha256: sha('c'), reciente: true, tipo: 'png', integro: true }], 'Listo, ya la hice.');
   assert.equal(conCap.c.estado, 'completed', 'con la captura de verdad, sí');
 });
 
@@ -330,7 +330,7 @@ test('revisión 2a: el archivo de origen («convierte datos.csv», «lee informe
   assert.deepEqual(etiquetas(requisitosDeEntrega('Convierte datos.csv a informe.pdf')), ['informe.pdf'], 'el destino con nombre sí');
   assert.deepEqual(etiquetas(requisitosDeEntrega('Resume reporte.pdf en un documento de Word')), ['docx|doc|odt|rtf'], 'resumir: el origen no, el Word sí');
   assert.deepEqual(etiquetas(requisitosDeEntrega('Abre el PDF del reglamento y dime qué dice')), [''], 'leer un PDF no es entregarlo');
-  const datos: A = { ruta: `${ESP}/datos.csv`, existe: true, bytes: 100, sha256: sha('d'), reciente: false, mencionado: true, tipo: 'texto' };
+  const datos: A = { ruta: `${ESP}/datos.csv`, existe: true, bytes: 100, sha256: sha('d'), reciente: false, mencionado: true, tipo: 'texto', integro: true };
   const bien = cerrar('Convierte datos.csv a PDF', [datos, pdfNuevo('datos.pdf', '1')], 'Listo, ya lo convertí.');
   assert.equal(bien.c.estado, 'completed', 'un PDF nuevo cumple; el CSV de origen (viejo) no estorba');
   assert.equal(cerrar('Convierte datos.csv a PDF', [datos], 'Listo.').c.estado, 'partial', 'sin el PDF, no');
@@ -494,7 +494,7 @@ test('servidor: «guarda 3 PDFs» y el nodo solo encontró runtime.log → no qu
 
 /* ------------------------------------------------------------------ «tres archivos»: lo genérico también son archivos */
 
-const nuevoEn = (n: string, tipo: string, s: string): A => ({ ruta: `${ESP}/Documents/${n}`, existe: true, bytes: 900, sha256: sha(s), reciente: true, tipo });
+const nuevoEn = (n: string, tipo: string, s: string): A => ({ ruta: `${ESP}/Documents/${n}`, existe: true, bytes: 900, sha256: sha(s), reciente: true, tipo, integro: true });
 const TRES_GENERICOS = [nuevoEn('resumen.txt', 'texto', '1'), nuevoEn('datos.csv', 'texto', '2'), nuevoEn('portada.png', 'png', '3')];
 
 test('genéricos: «crea tres archivos», «save three files»… piden archivos; sin decir cuántos no es seguro', async () => {
@@ -580,7 +580,7 @@ test('servidor: «crea tres archivos» con cero archivos → la frase dice 0 de 
 /* ------------------------------------------------------------------ ronda 3: reglas de diseño (R1–R5) */
 
 const VERBOSO = 'Listo, ya quedó todo lo que pediste con el contenido del sitio del proveedor de septiembre.';
-const arch = (ruta: string, tipo: string, s: string, extra: A = {}): A => ({ ruta: `${ESP}/${ruta}`, existe: true, bytes: 3000, sha256: sha(s), reciente: true, tipo, ...extra });
+const arch = (ruta: string, tipo: string, s: string, extra: A = {}): A => ({ ruta: `${ESP}/${ruta}`, existe: true, bytes: 3000, sha256: sha(s), reciente: true, tipo, integro: true, ...extra });
 
 test('R1: un archivo mencionado que no existe nunca deja completar, tampoco por «dato»', () => {
   const dato = cerrar('Busca el horario del banco', [{ ruta: 'horario.txt', existe: false, bytes: 0, sha256: null, mencionado: true }], 'Abre de 9 a 4 de lunes a viernes; lo dejé anotado en horario.txt');
@@ -904,6 +904,133 @@ test('ronda 5 · texto en el chat: un resumen, una traducción o una lista que v
   assert.equal(cerrar('Escribe un correo a Ana con el resumen', undefined, resumen).c.estado, 'partial');
   assert.equal(cerrar('Abre YouTube y pon música', undefined, resumen).c.estado, 'partial');
   assert.equal(cerrar('Hazme un resumen y guárdalo', undefined, resumen).c.estado, 'partial', 'guardarlo es un archivo');
+});
+
+/* ------------------------------------------------------------------ ronda 6 */
+
+const INFO6 = 'El oro cerró hoy en 2,410 dólares la onza, según el mercado de Londres; subió 1.2 por ciento en la semana.';
+
+test('ronda 6 · G2-A: la integridad es estructural; un archivo truncado no cumple, un nodo que no la comprobó tampoco', () => {
+  const tres = (cambio: Record<string, A>) =>
+    [ok('informe.docx', 'docx', '1'), ok('presupuesto.xlsx', 'xlsx', '2'), ok('carta.pdf', 'pdf', '3')].map((a) => cambio[nombreDeArchivo(a)] ?? a);
+  const nombreDeArchivo = (a: A) => String(a.ruta).split('/').pop()!;
+  // El nodo vio la cabecera pero no la estructura (PDF sin %%EOF, docx sin directorio central…): no cumple.
+  for (const [n, t] of [['informe.docx', 'docx'], ['presupuesto.xlsx', 'xlsx'], ['carta.pdf', 'pdf']]) {
+    const c = cerrar(INSTR, tres({ [n]: ok(n, t, n === 'carta.pdf' ? '3' : n === 'informe.docx' ? '1' : '2', { integro: false, defecto: 'sin %%EOF', bytes: 9 }) }));
+    assert.equal(c.c.estado, 'partial', n);
+    assert.match(c.texto, new RegExp(`${n.replace('.', '\\.')}[^.]*(incompleto|dañado)`), n);
+  }
+  // Un nodo de antes (sin `integro`): sin comprobar, nunca verificado.
+  const viejo = tres({ 'carta.pdf': (() => { const a = ok('carta.pdf', 'pdf', '3'); delete a.integro; return a; })() });
+  assert.equal(cerrar(INSTR, viejo).c.estado, 'partial');
+  assert.equal(cerrar(INSTR, tres({})).c.estado, 'completed', 'con los tres íntegros, sí');
+});
+
+test('ronda 6 · G2-B: una consulta con una acción en otro fragmento no es consulta', () => {
+  const casos = [
+    'Busca el precio del oro y anótalo en un excel',
+    'Busca el precio del oro y avísale a Bruno',
+    'Revisa si hay actualizaciones e instálalas',
+    'Busca el precio del oro y mándaselo a Ana',
+    'Busca el precio del oro y compártelo',
+    'Busca el precio del oro y reenvíaselo',
+    'Busca vuelos y apártame uno',
+    'What is the gold price? Then email it to Ana',
+    'Find the gold price and text it to Bruno',
+    'Check the settings and fix the wifi',
+    'Tell me the price and order two',
+  ];
+  for (const q of casos) assert.notEqual(cerrar(q, undefined, INFO6).c.estado, 'completed', q);
+  for (const q of ['Busca el precio del oro y dime cuánto subió', 'Busca el precio del oro y la plata', 'Busca vuelos a Los Ángeles', 'Busca la película de anoche y dime de qué trata'])
+    assert.equal(cerrar(q, undefined, INFO6).c.estado, 'completed', q);
+});
+
+test('ronda 6 · G2-B propiedad: «consulta + y + acción» (30 × 30) nunca se completa', () => {
+  const consultas = [
+    'Busca el precio del oro', 'Averigua el horario del banco', 'Investiga el clima de mañana', 'Consulta el saldo de la tarjeta', 'Revisa los vuelos a Madrid', 'Mira el tipo de cambio', 'Fíjate en el precio del café',
+    'Compara las tasas de los bancos', 'Dime el precio de la gasolina', 'Explícame el reglamento nuevo', 'Cuéntame la noticia principal', 'Lee el correo de Ana', 'Resume la página del SAR', 'Encuentra el teléfono de la alcaldía',
+    'Busca hoteles en Roatán', 'Averigua cuánto cuesta el pasaje', 'Revisa el pronóstico', 'Mira las ofertas de la tienda', 'Consulta el estado del pedido', 'Busca el horario del museo', 'Find the gold price',
+    'Search for flights to Miami', 'Look up the exchange rate', 'Check the weather', 'Tell me the score', 'What is the price of coffee', 'How much is the ticket', 'Which bank has the best rate', 'Who won the game', 'Where is the nearest pharmacy',
+  ];
+  const acciones = [
+    'anótalo en un excel', 'avísale a Bruno', 'instálalas', 'mándaselo a Ana', 'compártelo', 'reenvíaselo', 'apártame uno', 'cómpralo', 'pídelo', 'resérvalo', 'págalo', 'bórralo', 'súbelo', 'publícalo', 'agéndalo',
+    'llama a Ana', 'escríbele a Bruno', 'fix the wifi', 'order two', 'email it to Ana', 'text it to Bruno', 'book one', 'buy it', 'send it', 'share it', 'save it', 'post it', 'install them', 'delete it', 'reply to Ana',
+  ];
+  assert.equal(consultas.length, 30);
+  assert.equal(acciones.length, 30);
+  const malos: string[] = [];
+  for (const c of consultas) for (const a of acciones) {
+    const q = `${c} ${/^[a-z]/.test(a) && /^[A-Z]/.test(c) && /[a-z]$/.test(c) && /^(fix|order|email|text|book|buy|send|share|save|post|install|delete|reply)/.test(a) ? 'and' : 'y'} ${a}`;
+    if (cerrar(q, undefined, INFO6).c.estado === 'completed') malos.push(q);
+  }
+  assert.deepEqual(malos.slice(0, 15), [], `${malos.length} se completaron`);
+});
+
+test('ronda 6 · G2-C: lo que pidió la persona cuenta aunque el modelo encargue solo la consulta', () => {
+  const m = { ...mision('Busca el precio del oro', undefined, INFO6), pedidoPersona: 'Busca el precio del oro y mándaselo a Ana' } as MisionComputadoraMin;
+  const c = reconciliarConComputadora(tarea('Busca el precio del oro'), m, T0 + 60_000);
+  assert.equal(c!.estado, 'partial', 'mandárselo a Ana no se comprueba con el precio');
+  assert.equal(deComputadora(m, T0 + 60_000).state, 'partial');
+  // Persona y modelo piden lo mismo (consulta): se completa.
+  const igual = { ...mision('Busca el precio del oro', undefined, INFO6), pedidoPersona: '¿A cómo está el oro hoy?' } as MisionComputadoraMin;
+  assert.equal(reconciliarConComputadora(tarea('Busca el precio del oro'), igual, T0 + 60_000)!.estado, 'completed');
+  // Texto en el chat solo si ninguna de las dos pide otra cosa.
+  const res =
+    'La noticia cuenta que el Banco Central subió la tasa de política monetaria medio punto. La medida busca frenar la inflación, que llegó al 5,8 por ciento en septiembre.';
+  const texto = { ...mision('Hazme un resumen de la noticia', undefined, res), pedidoPersona: 'Hazme un resumen de la noticia y mándaselo a Ana' } as MisionComputadoraMin;
+  assert.equal(reconciliarConComputadora(tarea('Hazme un resumen de la noticia'), texto, T0 + 60_000)!.estado, 'partial');
+});
+
+test('ronda 6 · G2-C por el servidor: la misión guarda lo que pidió la persona y no queda ok con solo la consulta', async () => {
+  const n = await nodo(INFO6, {});
+  try {
+    await conNodo(n.url, async () => {
+      const r = await (encargarTarea as any)({ instruccion: 'Busca el precio del oro', pedidoPersona: 'Busca el precio del oro y mándaselo a Ana', quien: 'ana@x.hn', motor: 'holo', esperaMs: 8000 });
+      assert.equal(r.comprobada, false);
+      const m = misionDeTarea(r.id!)! as any;
+      assert.equal(m.pedidoPersona, 'Busca el precio del oro y mándaselo a Ana', 'se guarda en la misión');
+      assert.equal(vistaMision(m).final!.ok, false);
+      // Persona y modelo piden solo la consulta: ok (otra misión: el nodo de prueba siempre da el mismo id).
+      _olvidarEncargos();
+      const r2 = await (encargarTarea as any)({ instruccion: 'Busca el precio del oro', pedidoPersona: '¿A cómo está el oro hoy?', quien: 'ana@x.hn', motor: 'holo', esperaMs: 8000 });
+      assert.equal(r2.comprobada, true);
+    });
+  } finally {
+    await n.cerrar();
+  }
+});
+
+test('ronda 6 · G2-D: un acuse largo no se hace pasar por resumen ni traducción', () => {
+  const acuses = [
+    'Listo, ya hice el resumen de la noticia que me pediste. Lo terminé correctamente y lo revisé dos veces para que quedara bien, como pediste.',
+    'Aquí lo tienes: completé el resumen tal como me lo pediste, lo preparé con cuidado y quedó listo para que lo leas cuando quieras.',
+    "Done! I've finished the summary as you asked. I completed it carefully and I have done a second review so it is ready for you now.",
+  ];
+  for (const r of acuses) assert.equal(cerrar('Hazme un resumen de la noticia', undefined, r).c.estado, 'partial', r);
+  assert.equal(cerrar('Tradúceme esto al inglés: el banco subió la tasa', undefined, "Here it is: I've translated it as you asked and I completed the translation carefully, it is done and ready now.").c.estado, 'partial');
+  const real =
+    'La noticia cuenta que el Banco Central subió la tasa de política monetaria medio punto. La medida busca frenar la inflación, que llegó al 5,8 por ciento en septiembre. Los bancos ajustarán sus tasas en las próximas semanas.';
+  assert.equal(cerrar('Hazme un resumen de la noticia', undefined, real).c.estado, 'completed');
+  assert.equal(cerrar('Hazme un resumen de la noticia', undefined, `Listo, aquí está el resumen: ${real}`).c.estado, 'completed', 'un acuse delante de un resumen real no lo anula');
+});
+
+test("ronda 6 · G2-E: nombres con apóstrofo («O'Brien.pdf» no es «Brien.pdf»)", () => {
+  assert.deepEqual(requisitosDeEntrega("Crea O'Brien.pdf con la carta").items.map((i) => i.nombre), ["O'Brien.pdf"]);
+  assert.deepEqual(requisitosDeEntrega('Crea O’Brien.pdf con la carta').items.map((i) => i.nombre), ['O’Brien.pdf']);
+  assert.deepEqual(requisitosDeEntrega("Guarda 'O'Brien.pdf' en Documentos").items.map((i) => i.nombre), ["O'Brien.pdf"]);
+  assert.equal(cerrar("Crea O'Brien.pdf con la carta", [arch('Documents/Brien.pdf', 'pdf', '1', { mencionado: true })], 'Listo.').c.estado, 'partial');
+  assert.equal(cerrar("Crea O'Brien.pdf con la carta", [arch("Documents/O'Brien.pdf", 'pdf', '1', { mencionado: true })], 'Listo.').c.estado, 'completed');
+});
+
+test('ronda 6 · menores: dos carpetas en un pedido, nombres NFD en disco y «una tabla» en el chat', () => {
+  const q = 'Guarda informe.pdf en Documentos y carta.pdf en el Escritorio';
+  assert.deepEqual(requisitosDeEntrega(q).items.map((i) => [i.nombre, i.carpeta]), [['informe.pdf', 'documents'], ['carta.pdf', 'desktop']]);
+  assert.equal(cerrar(q, [arch('Documents/informe.pdf', 'pdf', '1', { mencionado: true }), arch('Desktop/carta.pdf', 'pdf', '2', { mencionado: true })], 'Listo.').c.estado, 'completed');
+  // «cotización.xlsx» descompuesto en el disco (NFD) es el mismo nombre.
+  assert.equal(cerrar('Crea cotización.xlsx con los precios', [arch('Documents/cotización.xlsx'.normalize('NFD'), 'xlsx', '1', { mencionado: true })], 'Listo.').c.estado, 'completed');
+  const tabla = 'Producto | Precio\nCafé | 120 lempiras\nAzúcar | 45 lempiras\nArroz | 38 lempiras\nFrijoles | 52 lempiras la libra en el mercado.';
+  assert.equal(cerrar('Hazme una tabla con los precios', undefined, tabla).c.estado, 'completed');
+  assert.equal(cerrar('Hazme una tabla en Excel con los precios', undefined, tabla).c.estado, 'partial');
 });
 
 test('ronda 3: lo legítimo de un archivo sigue completando', () => {

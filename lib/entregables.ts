@@ -32,6 +32,13 @@ export type ArchivoNodo = {
   tipo?: string;
   /** Los primeros 8 bytes en hex (para que la persona lo vea, no para decidir). */
   magia?: string;
+  /**
+   * Lo vio ENTERO (no solo la cabecera): un PDF con %%EOF y una página, un ZIP con su directorio central y sus partes, un
+   * PNG con IEND… (agente.py `integridad`). false: cortado o dañado (`defecto` dice por qué). Sin el campo o null: no
+   * se pudo comprobar (un nodo de antes): nunca verificado.
+   */
+  integro?: boolean | null;
+  defecto?: string;
 };
 
 export type Requisito = {
@@ -91,7 +98,8 @@ const limpio = (v: unknown, max: number) =>
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, max);
-export const nombreDeRuta = (ruta: string) => limpio(String(ruta).split('/').filter(Boolean).pop() || ruta, 80);
+/** El nombre de archivo de una ruta, en NFC: «cotización.xlsx» compuesto o descompuesto (NFD en el disco) es el mismo. */
+export const nombreDeRuta = (ruta: string) => limpio(String(ruta).normalize('NFC').split('/').filter(Boolean).pop() || ruta, 80);
 const extDe = (nombre: string) => (/\.([a-z0-9]{1,5})$/i.exec(nombre)?.[1] || '').toLowerCase();
 
 /** «a», «a y b», «a, b y c». */
@@ -109,11 +117,13 @@ export const EXT_ARCHIVO = 'odt|ods|odp|odg|docx?|xlsx?|pptx?|pdf|txt|csv|tsv|md
  * (agente.py RE_ARCHIVO, con `\w` Unicode de Python).
  */
 const RE_NOMBRE = new RegExp(
-  `(?<![\\p{L}\\p{N}_/.~-])((?:~/|/|\\./)?(?:[\\p{L}\\p{N}_.-]+/)*[\\p{L}\\p{N}_-][\\p{L}\\p{N}_.-]*(?:\\s?\\([^()\\n]{1,40}\\))?\\.(?:${EXT_ARCHIVO}))(?![\\p{L}\\p{N}_-])`,
+  // Un apóstrofo entre letras es parte del nombre («O'Brien.pdf», «O’Neil.docx»): nunca se corta en «Brien.pdf».
+  `(?<![\\p{L}\\p{N}_/.~'’-])((?:~/|/|\\./)?(?:[\\p{L}\\p{N}_.-]+/)*[\\p{L}\\p{N}_-](?:[\\p{L}\\p{N}_.-]|(?<=[\\p{L}\\p{N}])['’](?=[\\p{L}\\p{N}]))*(?:\\s?\\([^()\\n]{1,40}\\))?\\.(?:${EXT_ARCHIVO}))(?![\\p{L}\\p{N}_-])`,
   'giu'
 );
 /** Entre comillas se toma completo, con espacios: «informe final.pdf», "mis notas.txt". */
-const RE_NOMBRE_COMILLAS = new RegExp(`["«“'‘]([^"»”'’\\n]{1,120}?\\.(?:${EXT_ARCHIVO}))["»”'’]`, 'giu');
+// Entre comillas simples, un apóstrofo ENTRE letras no cierra la comilla: «'O'Brien.pdf'» es «O'Brien.pdf».
+const RE_NOMBRE_COMILLAS = new RegExp(`["«“'‘]((?:[^"»”'’\\n]|(?<=[\\p{L}\\p{N}])['’](?=[\\p{L}\\p{N}])){1,120}?\\.(?:${EXT_ARCHIVO}))["»”'’]`, 'giu');
 /** Antes de un nombre sin comillas, esto lo corta: un artículo, una preposición, una conjunción, un pronombre o un verbo. */
 const CORTAN_NOMBRE = new Set(
   (
@@ -379,7 +389,7 @@ const RE_V_TRADUCIR = /^(traduce|traduceme|traducelo|traducela|traducir|translat
  * plan, pasos, un borrador (que no sea de correo ni de WhatsApp), un poema, un chiste, un mensaje para leer aquí.
  */
 const RE_PRODUCTO_TEXTO =
-  /^(?:aqui\s+|here\s+)?(?:(?:un|una|unos|unas|el|la|los|las|mi|me|nos|a|an|the|some|\d+|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|two|three|four|five|ten)\s+)*(?:(?:breve|corto|corta|rapido|rapida|pequeno|pequena|short|quick|brief)\s+)?(?:resumen(?:es)?|resumencito|lista|listas|traduccion|traducciones|explicacion|respuesta|ideas?|plan|pasos|borrador|poema|poemas|chiste|chistes|mensaje|cuento|parrafo|summary|summaries|list|lists|translation|explanation|answer|ideas?|plan|steps|draft|poem|joke|jokes|message|paragraph|outline|esquema)(?:\s+(?:breve|corto|corta|short))?\b/;
+  /^(?:aqui\s+|here\s+)?(?:(?:un|una|unos|unas|el|la|los|las|mi|me|nos|a|an|the|some|\d+|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|two|three|four|five|ten)\s+)*(?:(?:breve|corto|corta|rapido|rapida|pequeno|pequena|short|quick|brief)\s+)?(?:resumen(?:es)?|resumencito|tabla|tablas|table|lista|listas|traduccion|traducciones|explicacion|respuesta|ideas?|plan|pasos|borrador|poema|poemas|chiste|chistes|mensaje|cuento|parrafo|summary|summaries|list|lists|translation|explanation|answer|ideas?|plan|steps|draft|poem|joke|jokes|message|paragraph|outline|esquema)(?:\s+(?:breve|corto|corta|short))?\b/;
 /** Lo que vuelve archivo (o correo) a un producto de texto: «en PDF», «un documento», «guárdalo», «un correo». */
 const RE_NO_ES_TEXTO_EN_CHAT =
   /\b(archivos?|ficheros?|documentos?|hojas?|presentacion(?:es)?|carpetas?|pdfs?|words?|excel(?:es)?|xlsx|docx|pptx|csv|zip|guard\w*|descarg\w*|export\w*|imprim\w*|correos?|e-?mails?|mails?|whatsapp|imagen(?:es)?|graficas?|graficos?|fotos?|capturas?|logos?|videos?|audios?|files?|documents?|spreadsheets?|slides?|folders?|charts?|images?|pictures?)\b/;
@@ -402,7 +412,67 @@ export function esConsulta(instruccion: string): boolean {
   const palabras = p.match(/[a-zñ]+/g) || [];
   if (palabras.some((w, i) => RE_V_PRODUCIR_COSA.test(w) || RE_V_PRODUCIR_ARCHIVO.test(w) || RE_V_ACTUAR.test(w) || RE_V_ENTREGA.test(w) || (RE_V_OPERACION.test(w) && !ARTICULOS.has(palabras[i - 1] || ''))))
     return false;
+  // Lista blanca de verdad (ronda 6): CADA fragmento empieza por un verbo de consulta o por una palabra que no es verbo,
+  // y no hay un imperativo con enclítico que no sea de consulta («anótalo», «mándaselo», «apártame», «instálalas»).
+  if (!fragmentosAceptables(p, false) || accionEnclitica(sinNombresDe(original), false)) return false;
   return /[¿?]/.test(p) || palabras.some((w) => RE_CONSULTA.test(w));
+}
+
+/** Los fragmentos de una instrucción, por sus conectores: y, e, luego, después, entonces, and, then, «,», «;», «.». */
+function fragmentosDe(p: string): string[] {
+  return p
+    .replace(/[¿¡«»"“”()]/g, ' ')
+    // Un punto parte solo si termina la frase (no en «bch.hn» ni en «24.70»).
+    .split(/[,;!?:\n]|\.(?=\s|$)|\s(?:y|e|luego|despues|entonces|and|then)\s/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
+/** Cómo puede empezar un fragmento de consulta: un verbo de consulta (lista CERRADA). */
+const INICIO_CONSULTA =
+  /^(busca|buscame|buscalo|buscala|buscalos|buscalas|averigua|averiguame|averigualo|investiga|investigalo|consulta|consultame|revisa|revisame|revisalo|mira|miralo|fijate|compara|comparame|dime|dimelo|dinos|decime|explica|explicame|explicamelo|cuentame|cuentamelo|cuentanos|lee|leeme|leelo|resume|resumeme|resumelo|encuentra|encuentrame|encuentralo|ve|abre|entra|visita|checa|chequea|verifica|comprueba|muestrame|ensename|find|search|look|check|tell|explain|read|summarize|compare|show|open|visit|what|whats|how|which|who|whom|whose|when|where|why|is|are|was|were|does|do|did|can|could)$/;
+/** …o una palabra que no es verbo (lista CERRADA): artículos, determinantes, preposiciones, números, interrogativos. */
+const INICIO_NO_VERBO = new Set(
+  (
+    'el la los las lo un una unos unas este esta estos estas ese esa esos esas aquel aquella mi mis tu tus su sus nuestro nuestra ' +
+    'a al de del en con por para sin sobre entre hasta desde hacia segun ante tras ' +
+    'que cual cuales cuanto cuanta cuantos cuantas como donde cuando quien quienes porque si tambien ademas favor porfa porfavor gracias ' +
+    'cero uno dos tres cuatro cinco seis siete ocho nueve diez cien mil ' +
+    'the a an of in on at to for with from by about also please if whether some any my your our its this that these those ' +
+    'one two three four five ten'
+  ).split(' ')
+);
+/** Producir texto que va en la respuesta (solo cuenta si se permite: el texto en el chat). */
+const INICIO_TEXTO = (w: string) => RE_V_PRODUCIR_COSA.test(w) || RE_V_NECESIDAD.test(w) || RE_V_TRADUCIR.test(w);
+function fragmentosAceptables(p: string, permitirTexto: boolean): boolean {
+  return fragmentosDe(p).every((f) => {
+    const w = (f.match(/[a-zñ0-9']+/) || [''])[0];
+    return !w || INICIO_CONSULTA.test(w) || INICIO_NO_VERBO.has(w) || /^\d+$/.test(w) || (permitirTexto && INICIO_TEXTO(w));
+  });
+}
+const RE_CLITICO = /(selos|selas|selo|sela|noslo|nosla|melo|mela|telo|tela|los|las|les|lo|la|le|me|nos)$/;
+/** Imperativos con enclítico comunes, sin tilde (como se escriben de prisa). */
+const RE_IMPERATIVO_CLITICO =
+  /^(anota|compra|aparta|instala|desinstala|manda|envia|reenvia|comparte|reserva|paga|borra|elimina|guarda|descarga|sube|publica|pide|ordena|agenda|apunta|copia|mueve|renombra|imprime|baja|avisa|llama|marca|agrega|anade|cambia|arregla|actualiza|cierra|transfiere|deposita|cobra|cancela|confirma|acepta|rechaza|firma|llena|rellena|completa|registra|inscribe|suscribe|haz|pon|di|da|escribe)(selos|selas|selo|sela|noslo|nosla|melo|mela|los|las|les|lo|la|le|me|nos)$/;
+const RAIZ_CONSULTA = /^(busca|averigua|investiga|consulta|revisa|mira|fija|compara|di|explica|cuenta|lee|resume|encuentra|muestra|ensena|checa|verifica|comprueba)$/;
+const RAIZ_TEXTO = /^(crea|haz|genera|prepara|arma|disena|dibuja|escribe|redacta|traduce|da|resume|explica)$/;
+/**
+ * ¿Hay un imperativo con enclítico que no sea de consulta («anótalo», «cómpralos», «apártame», «instálalas»,
+ * «mándaselo»)? Con tilde, si lo que queda antes del enclítico acaba como un imperativo (a, e, i) y no va detrás de un
+ * artículo («Los Ángeles», «la película» no). Sin tilde, los de la lista. `permitirTexto`: «escríbeme», «hazme»,
+ * «tradúceme» no cuentan (el texto en el chat).
+ */
+function accionEnclitica(original: string, permitirTexto: boolean): boolean {
+  const ws = [...String(original || '').normalize('NFC').matchAll(/\p{L}+/gu)].map((m) => m[0]);
+  return ws.some((w, i) => {
+    const p = plegar(w);
+    const c = RE_CLITICO.exec(p);
+    if (!c) return false;
+    const raiz = p.slice(0, p.length - c[1].length);
+    if (RAIZ_CONSULTA.test(raiz) || (permitirTexto && RAIZ_TEXTO.test(raiz))) return false;
+    if (ARTICULOS.has(plegar(ws[i - 1] || '')) || INICIO_NO_VERBO.has(plegar(ws[i - 1] || '')) && /^(el|la|los|las|un|una|unos|unas|mi|mis|tu|tus|su|sus)$/.test(plegar(ws[i - 1] || ''))) return false;
+    if (RE_IMPERATIVO_CLITICO.test(p)) return true;
+    return /[áéíóú]/.test(w.toLowerCase()) && raiz.length >= 3 && /[aei]$/.test(raiz);
+  });
 }
 
 /** ¿La instrucción solo opera sobre archivos que ya existen (copiar, mover, renombrar, borrar, descomprimir), sin crear nada? */
@@ -477,6 +547,8 @@ export type PedidoEntrega = {
   origenes: { nombres: string[]; sinNombre: OrigenSinNombre[] };
   /** Lo único que se pide producir es TEXTO que va en la respuesta (un resumen, una lista, una traducción): la respuesta es la entrega. */
   textoEnChat?: boolean;
+  /** Lo que pidió la PERSONA, guardado con los requisitos al crear la misión (G2-C: se evalúa sobre las dos instrucciones). */
+  pedidoPersona?: string;
 };
 
 /**
@@ -736,8 +808,11 @@ export function requisitosDeEntrega(instruccion: string): PedidoEntrega {
   // 4) La carpeta dicha con palabras, con un verbo de dejar: restricción del requisito al que se refiere. «guárdalos» =
   // todo lo anterior; «guárdalo» = lo último; «guarda informe.pdf en la carpeta X» = lo que va entre el verbo y la
   // carpeta. Si no se puede asociar sin duda (o dos carpetas para lo mismo), no es seguro.
+  let finCarpetaAnterior = -1;
   for (const m of sinNombres.matchAll(RE_CARPETA_DICHA)) {
     const pos = m.index ?? 0;
+    const desdeCarpeta = finCarpetaAnterior;
+    finCarpetaAnterior = pos + m[0].length;
     const cortada = cortarCarpeta(m[1] || m[2] || m[3] || '');
     const carpeta = normalizarCarpeta(cortada.carpeta);
     if (!carpeta) continue;
@@ -758,9 +833,11 @@ export function requisitosDeEntrega(instruccion: string): PedidoEntrega {
     const v = verbo;
     const conPos = items.filter((it) => posDe.has(it));
     let objetivo: Requisito[];
-    if (/(los|las)$/.test(v.w) || /\bthem\b/.test(antes.slice(v.pos))) objetivo = conPos.filter((it) => posDe.get(it)! < pos);
+    // Cada cosa lleva la carpeta más cercana a su derecha: «informe.pdf en Documentos y carta.pdf en el Escritorio».
+    const desde = Math.max(v.pos, desdeCarpeta);
+    if (/(los|las)$/.test(v.w) || /\bthem\b/.test(antes.slice(v.pos))) objetivo = conPos.filter((it) => posDe.get(it)! < pos && posDe.get(it)! > desdeCarpeta);
     else if (/(lo|la)$/.test(v.w) && v.w.length > 4) objetivo = conPos.filter((it) => posDe.get(it)! < pos).slice(-1);
-    else objetivo = conPos.filter((it) => posDe.get(it)! > v.pos && posDe.get(it)! < pos);
+    else objetivo = conPos.filter((it) => posDe.get(it)! > desde && posDe.get(it)! < pos);
     if (!objetivo.length && items.length === 1) objetivo = items; // un solo entregable: es ese
     if (!objetivo.length) {
       seguro = false;
@@ -779,6 +856,8 @@ export function requisitosDeEntrega(instruccion: string): PedidoEntrega {
   const soloTexto =
     textoEnChat &&
     !produceOtraCosa &&
+    fragmentosAceptables(sinNombres, true) &&
+    !accionEnclitica(sinWeb, true) &&
     explicitos === 0 &&
     !enTexto.length &&
     !RE_NO_ES_TEXTO_EN_CHAT.test(sinNombres) &&
@@ -793,14 +872,41 @@ const RE_ACUSE_INICIAL = /^\s*(?:¡\s*)?(?:listo|lista|hecho|hecha|ya\s+esta|ya\
  * ¿La respuesta trae el texto pedido (no un acuse)? Quitado lo que solo acusa recibo, al menos 80 caracteres. La regla
  * de «trae algo» (respuestaInformativa) la aplica quien llama.
  */
-export function respuestaConTexto(respuesta: string | null | undefined): boolean {
-  let r = plegar(String(respuesta || '')).trim();
-  for (let i = 0; i < 4; i++) {
-    const n = r.replace(RE_ACUSE_INICIAL, '');
-    if (n === r) break;
-    r = n;
-  }
-  return r.replace(/\s+/g, ' ').trim().length >= 80;
+export function respuestaConTexto(respuesta: string | null | undefined, datos?: { clave: string; valor: string }[] | null): boolean {
+  // Si el texto va en un campo propio («Resumen: …», «Traducción: …»), ese es el que cuenta.
+  const campo = (datos || []).find((d) => /^(resumen|traduccion|traducción|summary|translation|lista|tabla)$/i.test(plegar(d.clave).trim()));
+  return textoSinAcuses(campo ? campo.valor : String(respuesta || '')).length >= 80;
+}
+
+/**
+ * Lo que afirma haberlo hecho, en primera persona o refiriéndose al pedido (ronda 6): «ya hice el resumen», «lo
+ * terminé», «lo revisé», «quedó listo», «como me pediste», «aquí lo tienes», «I've finished», «as you asked»… Esas
+ * frases no son el resumen: se quitan antes de medir.
+ */
+const RE_AFIRMA_HECHO =
+  /\b(ya hice|lo hice|la hice|hice el|hice la|hice tu|lo termine|la termine|termine|lo revise|la revise|revise|lo complete|la complete|complete|lo prepare|la prepare|prepare|quedo list[oa]|quedo bien|me (lo |la )?pediste|como (me lo |me la |me )?pediste|como pediste|tal como|aqui (lo|la) tienes|aqui (esta|tienes|va)|listo|hecho|ya esta|ya quedo|correctamente|con cuidado|dos veces|i have done|i ve done|i've done|i have finished|i ve finished|i've finished|i finished|i completed|i have completed|i ve completed|i've completed|done|as you asked|as requested|here it is|here you go|i made|i wrote|i translated|i ve translated|i've translated|i have translated|lo traduje|ya traduje|lo resumi|ya resumi|lo escribi|ya escribi|carefully|ready for you)\b/;
+export function textoSinAcuses(respuesta: string): string {
+  const frases = plegar(String(respuesta || ''))
+    .split(/(?<=[.!?…])\s+|\n+|:\s+/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+  const sinAcuse = (f: string) => {
+    let r = f;
+    for (let i = 0; i < 4; i++) {
+      const n = r.replace(RE_ACUSE_INICIAL, '');
+      if (n === r) break;
+      r = n;
+    }
+    return r.trim();
+  };
+  // Una frase que afirma haberlo hecho se quita entera; de las demás, el acuse del principio.
+  return frases
+    .filter((f) => !RE_AFIRMA_HECHO.test(f))
+    .map(sinAcuse)
+    .filter(Boolean)
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 /** Cuánto dice un requisito: un nombre (3) más que un tipo (2), un tipo más que «un archivo» (1). */
@@ -880,13 +986,14 @@ export function requisitosCombinados(instruccion: string, pedidoPersona?: string
   const a = requisitosDeEntrega(instruccion);
   if (!pedidoPersona || !String(pedidoPersona).trim()) return a;
   const b = requisitosDeEntrega(String(pedidoPersona));
+  const persona = { pedidoPersona: String(pedidoPersona).slice(0, 2000) };
   const origenes = { nombres: [...new Set([...a.origenes.nombres, ...b.origenes.nombres])], sinNombre: [...a.origenes.sinNombre, ...b.origenes.sinNombre] };
-  if (!b.explicitos) return { ...a, origenes };
-  if (!a.explicitos) return { ...b, origenes };
+  if (!b.explicitos) return { ...a, origenes, ...persona };
+  if (!a.explicitos) return { ...b, origenes, ...persona };
   // Uno a uno, con lo más específico de cada par (R5 de la cuarta ronda: antes se elegía una lista entera).
   const { items, contradiccion } = combinarUnoAUno(a.items, b.items);
   const tope = items.slice(0, 10).map((x, i) => ({ ...x, id: `entrega-${i + 1}` }));
-  return { items: tope, seguro: a.seguro && b.seguro && !contradiccion && items.length <= 10, explicitos: tope.length, origenes };
+  return { items: tope, seguro: a.seguro && b.seguro && !contradiccion && items.length <= 10, explicitos: tope.length, origenes, ...persona };
 }
 
 /** ¿Lo único que se pidió producir es texto que va en la respuesta? (con lo que pidió la persona, si se sabe). */
@@ -945,6 +1052,9 @@ export function veredictoArchivo(a: ArchivoNodo, extensiones: string[]): Veredic
   if (!a.tipo) return { estado: 'unknown', motivo: `${n}: tu computadora no lo revisó por dentro, así que no sé si es ${claseDeExt(ext)}` };
   if (!esperados) return { estado: 'unknown', motivo: `${n}: no sé comprobar por dentro un archivo .${ext || '?'}` };
   if (!esperados.includes(a.tipo)) return { estado: 'not_met', motivo: `${n} no es ${claseDeExt(ext)} de verdad (por dentro es ${TIPO_EN_PALABRAS[a.tipo] || 'otra cosa'})` };
+  // Entero, no solo la cabecera (ronda 6): un PDF de 9 bytes con «%PDF-» o un docx sin directorio central no cumplen.
+  if (a.integro === false) return { estado: 'not_met', motivo: `${n} está incompleto o dañado (${limpio(a.defecto || 'no pasó la revisión', 80)})` };
+  if (a.integro !== true) return { estado: 'unknown', motivo: `${n}: tu computadora no comprobó que esté entero` };
   return { estado: 'verified', motivo: '' };
 }
 

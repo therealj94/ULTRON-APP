@@ -753,13 +753,14 @@ test('la misión con plan del cerebro: el nodo recibe solo la misión, la app ve
       conAvisos(async (vistos) =>
         conRutas(async (como) => {
           const r = await encargarTarea({
-            instruccion: 'Entra a bch.hn, busca el tipo de cambio y dime compra y venta PLAN: Entrar a bch.hn | Buscar el tipo de cambio | Darte compra y venta',
+            // «dime la compra y la venta»: cerrado por defecto, un fragmento sin artículo («y venta») no es consulta (ronda 6).
+            instruccion: 'Entra a bch.hn, busca el tipo de cambio y dime la compra y la venta PLAN: Entrar a bch.hn | Buscar el tipo de cambio | Darte compra y venta',
             quien: 'jose@x.hn',
             motor: 'holo',
             esperaMs: 0,
             aparato: 'tel-1',
           });
-          assert.equal(nodo.pedidos.find((p) => p.ruta === 'POST /tareas')!.cuerpo.instruccion, 'Entra a bch.hn, busca el tipo de cambio y dime compra y venta', 'al nodo no le va el plan');
+          assert.equal(nodo.pedidos.find((p) => p.ruta === 'POST /tareas')!.cuerpo.instruccion, 'Entra a bch.hn, busca el tipo de cambio y dime la compra y la venta', 'al nodo no le va el plan');
           assert.doesNotMatch(r.hecho, /Tu plan/, 'el plan lo escribió el cerebro: ya lo dijo');
           assert.deepEqual(vistos[0].aviso.plan, ['Entrar a bch.hn', 'Buscar el tipo de cambio', 'Darte compra y venta']);
           // La app: el plan va marcándose (el primer paso actual, luego hecho), con el tiempo transcurrido.
