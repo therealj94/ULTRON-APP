@@ -15,6 +15,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Pool } from 'pg';
 import { configTls } from '../ssl-base';
+import { exigirBaseDePrueba } from '../base-de-pruebas';
 import { ESQUEMA_COGNITIVO } from './esquema';
 
 let pool: Pool | null = null;
@@ -31,6 +32,7 @@ export function tipo(): 'postgres' | 'archivo' {
 function conexion(): Pool {
   if (!pool) {
     const url = urlBase();
+    exigirBaseDePrueba(url);
     pool = new Pool({
       // TLS verificado (lib/ssl-base.ts): la URL sin sus parámetros de TLS y el objeto que de verdad usa pg.
       ...configTls(url),

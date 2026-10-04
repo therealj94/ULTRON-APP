@@ -54,13 +54,15 @@ public partial class NotchWindow
                 return ajustes.CarteraDireccion;
             case "cartera.saldos":
             {
-                if (!CarteraVeta.EsDireccion(ajustes.CarteraDireccion)) return new { direccion = "", saldos = Array.Empty<object>(), total = 0m };
+                // monedas: las que se muestran hoy (la lista única); el selector de enviar ofrece solo esas.
+                if (!CarteraVeta.EsDireccion(ajustes.CarteraDireccion)) return new { direccion = "", saldos = Array.Empty<object>(), total = 0m, monedas = await Cartera.Monedas() };
                 var saldos = await Cartera.Saldos(ajustes.CarteraDireccion, Bool(a, "forzar") == true);
                 return new
                 {
                     direccion = ajustes.CarteraDireccion,
                     total = saldos.Sum(s => s.ValorUsd ?? 0),
                     saldos = saldos.Select(s => new { simbolo = s.Simbolo, cantidad = s.Cantidad, precio = s.PrecioUsd, usd = s.ValorUsd }),
+                    monedas = saldos.Select(s => s.Simbolo),
                     actualizado = DateTime.Now.ToString("HH:mm"),
                 };
             }
