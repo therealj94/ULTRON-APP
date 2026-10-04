@@ -163,8 +163,10 @@ test('enviar: solo con un «sí» explícito que abre la frase; la duda no enví
   for (const no of ['no', 'no lo envíes', 'espera', 'todavía no', 'sí, pero todavía no', 'si puedes, cámbialo a las 8', "don't send it", 'mejor cámbialo', '', 'manda saludos a Pedro']) {
     assert.equal(confirmaEnvio(no), false, no);
   }
-  // Las afirmaciones débiles se dicen a cualquier cosa: no envían.
-  for (const debil of ['ok', 'okay', 'va', 'dale', 'claro', 'perfecto', 'de acuerdo', 'sure']) assert.equal(confirmaEnvio(debil), false, debil);
+  // Cuarta ronda de permisos exactos: «dale», «ok», «va» valen igual en la app que en el correo (lib/afirmacion.ts).
+  for (const si of ['ok', 'okay', 'va', 'dale', 'claro', 'perfecto', 'de acuerdo', 'sure', '👍']) assert.equal(confirmaEnvio(si), true, si);
+  // Una pregunta nunca es la confirmación.
+  for (const pregunta of ['¿sí?', '¿ok?', 'sí o qué']) assert.equal(confirmaEnvio(pregunta), false, pregunta);
   // La orden de redactar no es a la vez la confirmación: la persona no oyó el texto todavía.
   for (const orden of ['escríbele a mamá que ya voy y mándalo', 'dile a Beto que llego tarde y envíalo', 'mándale un mensaje a Ana que sí voy, mándalo']) {
     assert.equal(confirmaEnvio(orden), false, orden);
@@ -252,8 +254,9 @@ test('el camino rápido con un borrador: «sí» lo manda (y se dice «Va, lo ma
   assert.equal(ordenPorReglas('sí', { contexto: { ...ctx, borrador: 'hola' } }), null, 'un «sí» suelto sin borrador de AURA no manda lo que la persona escribía');
   assert.deepEqual(ordenPorReglas('no lo mandes', { pendiente })?.accion, { tipo: 'descartar' });
   assert.equal(ordenPorReglas('sí'), null);
-  // Las afirmaciones débiles no envían ni con un borrador de AU-RA.
-  for (const debil of ['ok', 'okay', 'va', 'dale', 'claro']) assert.equal(ordenPorReglas(debil, { pendiente }), null, debil);
+  // Cuarta ronda: «ok», «dale», «va» valen como el «sí» (igual que en el correo): con el borrador de AU-RA, sale.
+  for (const si2 of ['ok', 'okay', 'va', 'dale', 'claro']) assert.deepEqual(ordenPorReglas(si2, { pendiente, contexto: ctx })?.accion, { tipo: 'enviar', para: 'beto@x.com', texto: 'Llego tarde' }, si2);
+  assert.equal(ordenPorReglas('¿sí?', { pendiente, contexto: ctx })?.accion?.tipo === 'enviar', false, 'una pregunta no envía');
   // «no» / «cancela» no borran lo que la persona escribió a mano: solo un borrador de AU-RA.
   for (const no of ['no', 'nop', 'cancela', 'bórralo']) {
     assert.equal(ordenPorReglas(no, { contexto: { ...ctx, borrador: 'lo que escribí yo', chatAbierto: CONTACTOS[0] } }), null, no);

@@ -1125,9 +1125,10 @@ export function ordenPorReglas(
   o: OpcionesReglas = {}
 ): OrdenRapida | null {
   const q = frase(texto);
-  if (!q) return null;
   const idioma = o.idioma === 'en' ? 'en' : 'es';
   const ahora = o.ahora ?? Date.now();
+  // «👍» o «✅» no dejan palabras en la frase limpia, pero son un sí a lo que espera (cuarta ronda).
+  if (!q) return atajoDeDecision(texto, o, idioma, ahora) ?? null;
   // AUR10: la pregunta «¿qué paro: mi voz, la tarea o las dos?» del turno anterior. Su respuesta decide;
   // otra frase cualquiera sigue su camino (y el turno siguiente soltará la pregunta).
   if (o.aclaracion?.length && puedeMano(o.contexto, 'controles')) {
@@ -1181,7 +1182,8 @@ export function decisionesApp(o: { contexto?: ContextoApp | null; pendiente?: { 
 
 /** La regla única sobre lo que espera en la app. */
 export function decidirEnApp(mensaje: string, o: Parameters<typeof decisionesApp>[0]): Decidido<DecisionApp> {
-  return decidirPendiente(mensaje, decisionesApp(o));
+  // Los contactos cuentan como nombres conocidos: «Aura, sí» con un contacto Aura no es un vocativo.
+  return decidirPendiente(mensaje, decisionesApp(o), { conocidos: (o.contexto?.contactos || []).map((c) => c.nombre) });
 }
 
 function decirDecisionApp(p: DecisionApp, o: OpcionesReglas, idioma: 'es' | 'en'): string {
@@ -1205,7 +1207,8 @@ function atajoDeDecision(texto: string, o: OpcionesReglas, idioma: 'es' | 'en', 
     return undefined;
   }
   if (d.tipo === 'preguntar') {
-    if (d.motivo === 'no-coincide') return null;
+    // Lo nombrado no coincide, o no queda claro (una pregunta, un «no, a Bruno»): el turno completo, que no lo hace.
+    if (d.motivo !== 'ambiguo') return null;
     const lista = d.candidatos.map((p) => decirDecisionApp(p, o, idioma)).join(idioma === 'en' ? ' or ' : ' o ');
     return { accion: null, decir: idioma === 'en' ? `Which one: ${lista}?` : `¿Cuál: ${lista}?`, via: 'reglas', soloDecir: true };
   }
@@ -1234,9 +1237,9 @@ function atajoDeDecision(texto: string, o: OpcionesReglas, idioma: 'es' | 'en', 
           : { tipo: 'recordatorio', texto: pr.texto, cuando: pr.cuando, ...(pr.llamada ? { llamada: true } : {}) };
     return { accion, decir: dichoDePropuesta(pr, idioma, ahora), via: 'reglas' };
   }
-  // Un mensaje sale con un «sí» fuerte o un verbo de envío («ok», «va», «dale» se dicen a cualquier cosa); lo escrito a
-  // mano en el chat, solo con el verbo de envío («envíalo»): lo escribió ella y lo tiene enfrente.
-  if (p.de === 'pendiente' ? !d.analisis.fuerte : !d.analisis.envio) return undefined;
+  // Cuarta ronda: el borrador de AU-RA sale con cualquier sí («dale» vale igual que en el correo); lo escrito a mano en el
+  // chat, solo con el verbo de envío («envíalo»): lo escribió ella y lo tiene enfrente.
+  if (p.de === 'chat' && !d.analisis.envio) return undefined;
   if (p.de === 'pendiente' && o.pendiente?.reemplazoDe) {
     // Permisos exactos (4-oct): el borrador de AU-RA reemplazó a otro del mismo turno: este «sí» pudo ser para el de antes.
     return { accion: null, decir: dichoDeReemplazo(o.pendiente.reemplazoDe, `${idioma === 'en' ? 'the message to' : 'el mensaje para'} ${o.pendiente.para}`, idioma), via: 'reglas', soloDecir: true, confirmarCambio: true };
@@ -1771,9 +1774,8 @@ export function prepararAcciones(
     }
     if (a.tipo === 'enviar') {
       // Solo a un teléfono que comprueba el texto aprobado antes de mandar (revisión 4-oct).
-      // El borrador de AU-RA, elegido por la regla única (afirmación pura, o lo nombrado es de él) con un «sí» fuerte o un
-      // verbo de envío («ok», «dale» se dicen a cualquier cosa).
-      if (enviado || !o.pendiente || conRedactar || !elegida('pendiente', 'mensaje') || !dApp.analisis.fuerte || !puedeMano(o.contexto, 'enviar_exacto')) continue;
+      // El borrador de AU-RA, elegido por la regla única (afirmación pura, o lo nombrado es de él).
+      if (enviado || !o.pendiente || conRedactar || !elegida('pendiente', 'mensaje') || !puedeMano(o.contexto, 'enviar_exacto')) continue;
       enviado = true;
       // Al destinatario de ESE borrador y con SU texto: el teléfono no manda otro contenido con este «sí».
       out.push({ tipo: 'enviar', para: o.pendiente.para, texto: o.pendiente.texto });

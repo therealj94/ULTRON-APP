@@ -69,7 +69,11 @@ export function pendientesDelTurno(o: { dueno: string; ambito: string; whatsapp:
   if (!o.dueno) return [];
   const out: PendienteTurno[] = [];
   const c = borradorDe(o.dueno, o.ambito);
-  if (c && !c.soloPanel) out.push({ origen: 'correo', tipo: 'correo', destino: `${(c.nombres || []).join(' ')} ${c.para.join(' ')}`.trim(), id: c.intento });
+  if (c && !c.soloPanel) {
+    // Cuarta ronda: a varios, cada uno cuenta (nombrar solo a una parte no lo elige); a la persona misma, «a mí» coincide.
+    const propia = c.para.length > 0 && c.para.every((x) => x.trim().toLowerCase() === o.dueno.trim().toLowerCase());
+    out.push({ origen: 'correo', tipo: 'correo', destino: `${(c.nombres || []).join(' ')} ${c.para.join(' ')}`.trim(), ...(c.para.length > 1 ? { destinatarios: [...c.para] } : {}), ...(propia ? { propia: true } : {}), id: c.intento });
+  }
   const w = o.whatsapp ? borradorWhatsappDe(o.dueno, o.ambito) : null;
   if (w && !w.soloPanel) out.push({ origen: 'whatsapp', tipo: 'whatsapp', destino: `${destinoWhatsapp(w)} ${w.chat}`, id: w.intento });
   for (const p of preguntasComputadora(o.dueno, o.ambito)) out.push({ origen: 'computadora', tipo: 'computadora', texto: p.texto, id: p.tareaId });
@@ -120,12 +124,16 @@ export async function resolverDecisionesDelTurno(o: OpcionesDecisionTurno): Prom
     return nada({ turnoVigente: false, appBloqueada: !!o.app });
   }
   if (d.tipo === 'preguntar') {
-    const lista = d.candidatos.map((p, i) => `${i + 1}) ${decirPendiente(p)}`).join('; ');
+    const una = d.candidatos.length === 1;
+    const lista = una ? decirPendiente(d.candidatos[0]) : d.candidatos.map((p, i) => `${i + 1}) ${decirPendiente(p)}`).join('; ');
+    const espera = una ? `lo que espera su decisión es ${lista}` : `lo que espera su decisión son ${d.candidatos.length} cosas: ${lista}`;
     const dijo = d.analisis.niega ? '«no»' : '«sí»';
     hechos.push(
       d.motivo === 'ambiguo'
-        ? `HECHO: dijo ${dijo} («${message.slice(0, 80)}»), pero hay ${d.candidatos.length} cosas esperando su decisión: ${lista}. Su respuesta no dice a cuál: NO hice ninguna (no se mandó, no se descartó ni se le contestó nada). Pregúntale cuál —que diga, por ejemplo, «sí, el correo» o a quién va—.`
-        : `HECHO: dijo «${message.slice(0, 80)}», pero lo que espera su decisión es ${lista}, y lo que nombró no coincide (otra persona, otro canal, otra hora o varios a la vez). NO hice nada. Pregúntale si es eso lo que quiere —que lo diga— o qué otra cosa quería.`
+        ? `HECHO: dijo ${dijo} («${message.slice(0, 80)}»), pero ${espera}. Su respuesta no dice a cuál: NO hice ninguna (no se mandó, no se descartó ni se le contestó nada). Pregúntale cuál —que diga, por ejemplo, «sí, el correo» o a quién va—.`
+        : d.motivo === 'aclarar'
+          ? `HECHO: dijo «${message.slice(0, 80)}», y ${espera}. No queda claro si es su respuesta (es una pregunta, o un «no» que nombra a alguien y puede ser una corrección): NO hice nada (no se mandó ni se descartó). Pregúntale qué quiere —que confirme con un «sí» o diga qué cambiar—.`
+          : `HECHO: dijo «${message.slice(0, 80)}», pero ${espera}, y lo que nombró no coincide (otra persona, el propio, otro canal, otra hora, solo una parte de los destinatarios o varios a la vez). NO hice nada. Pregúntale si es eso lo que quiere —que lo diga— o qué otra cosa quería.`
     );
     return nada({ ambiguo: true, appBloqueada: !!o.app });
   }

@@ -699,6 +699,22 @@ test('R3 computadora: una sola pregunta en esta conversación → el «sí» leg
   });
 });
 
+test('R4 computadora (cuarta ronda): «sí, a las 5» no confirma el PAGO de «L 5,000» (los montos de la pregunta no son una hora); el «sí» suelto, una vez', async () => {
+  await conNodo({}, async (n, avisos) => {
+    const r = await PC.encargarTarea({ instruccion: 'Paga la factura de la ferretería', quien: JOSE, motor: 'holo', esperaMs: 0, ...EN_TEL });
+    n.preguntar(r.id!, 'Voy a pagar L 5,000 a Ferretería López. ¿Lo hago?', 'p1', 'hP');
+    await hasta(() => preguntasVistas(avisos).length === 1);
+    for (const frase of ['sí, a las 5', 'sí, los 5000', 'sí, a las 5 de la tarde']) {
+      const d = await turno(frase);
+      assert.equal(n.efectos.length, 0, `«${frase}» no confirma el pago`);
+      assert.match(d.hechos.join('\n'), /no coincide|cuál/i, `«${frase}»: se pregunta`);
+    }
+    await turno('sí');
+    await turno('sí');
+    assert.deepEqual(n.efectos, [{ tarea: r.id, pregunta_id: 'p1', propuesta: 'hP' }]);
+  });
+});
+
 test('R5 correo: Ana → Bruno y el borrador para Bruno se REGENERA (una y dos veces, y editado) → el «sí» no manda y avisa que ahora es Bruno; el segundo, informado, UNA vez', async () => {
   for (const regeneraciones of [['Hola.'], ['Hola.', 'Hola.'], ['Hola, ¿cómo estás?']]) {
     await conEntorno({}, async ({ mandados }) => {
