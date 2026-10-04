@@ -156,6 +156,8 @@ type Borrador = {
   cuenta?: string;
   /** El número del chat («+50499990000»), para decirlo en el borrador: el «sí» aprueba ESE número, no un nombre. */
   numero?: string;
+  /** Permisos exactos (sexta ronda): va a un grupo; un «sí» solo lo identifica por su nombre completo. */
+  grupo?: boolean;
 };
 /**
  * Guardado con su dueño, su vencimiento y su intento: el «sí» manda ESE mensaje a ESE chat (auditoría 3-oct, COM01)
@@ -387,7 +389,7 @@ async function responder(quien: string, ambito: string, ref: string, texto: stri
   if (typeof c === 'string') return fallo(c.replace('Revisa primero (whatsapp revisar) o dime el nombre', 'Pídele el nombre'), 'referencia');
   const lista = LISTAS.get(llave(quien, ambito)) || [];
   const i = lista.findIndex((x) => x.jid === c.jid);
-  const borrador = guardarBorrador(quien, ambito, { chat: c.jid, nombre: c.nombre || c.jid, texto: texto.trim(), creado: Date.now(), ...(c.numero ? { numero: c.numero } : {}), ...(cuenta ? { cuenta } : {}) });
+  const borrador = guardarBorrador(quien, ambito, { chat: c.jid, nombre: c.nombre || c.jid, texto: texto.trim(), creado: Date.now(), ...(c.numero ? { numero: c.numero } : {}), ...(cuenta ? { cuenta } : {}), ...(c.grupo || /@g\.us$/.test(c.jid) ? { grupo: true } : {}) });
   // El paso queda «contestado» solo si el borrador quedó.
   const avance = i >= 0 && borrador.estado === 'succeeded' ? marcarPaso(quien, ambito, 'whatsapp', i, 'hecho', 'contestado').texto : '';
   return avance ? { ...borrador, texto: `${borrador.texto}\n${avance}` } : borrador;
@@ -624,6 +626,33 @@ export async function correrWhatsappConEstado(quien: string, arg: string, ambito
 export function _olvidarWhatsapp() {
   LISTAS.clear();
   BORRADORES.clear();
+  NOMBRES_CHATS.clear();
+}
+
+/** Los nombres de sus chats (por cuenta), un rato: para saber quién más se llama así sin pedirlos en cada turno. */
+const NOMBRES_CHATS = new Map<string, { t: number; nombres: string[] }>();
+const NOMBRES_CHATS_VIVE_MS = 60_000;
+
+/**
+ * Permisos exactos (sexta ronda, M1-B): los nombres de las PERSONAS de sus chats de WhatsApp (no los grupos), para que el
+ * servidor sepa, sin el teléfono, que «Antonio» es un contacto. Con un tope corto (`ms`): si el puente tarda o falla,
+ * vuelve lo último que supo (o nada) y el turno sigue. Nunca lanza.
+ */
+export async function nombresDeChats(quien: string, ms = 400): Promise<string[]> {
+  const k = normal(quien);
+  const guardado = NOMBRES_CHATS.get(k);
+  if (guardado && Date.now() - guardado.t < NOMBRES_CHATS_VIVE_MS) return guardado.nombres;
+  try {
+    const j = await pedir<{ chats: ChatWA[] }>('/chats?limite=200', { ms });
+    const nombres = (j.chats || []).filter((c) => !c.grupo && !/@g\.us$/.test(c.jid) && c.nombre).map((c) => c.nombre);
+    NOMBRES_CHATS.set(k, { t: Date.now(), nombres });
+    return nombres;
+  } catch {
+    // Si el puente no contesta, no se le vuelve a esperar en cada turno: lo último que se supo vale un rato más.
+    const nombres = guardado?.nombres || [];
+    NOMBRES_CHATS.set(k, { t: Date.now(), nombres });
+    return nombres;
+  }
 }
 
 /* ------------------------------------------------------------------ rutas para la app y Windows */
