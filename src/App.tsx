@@ -45,6 +45,8 @@ import { Conversacion } from './13-trabajo/Conversacion';
 import { Compositor } from './13-trabajo/Compositor';
 import { Inicio, EJEMPLOS_INICIO } from './13-trabajo/Inicio';
 import { IndicadorTrabajos, PanelTrabajos, useTrabajosWeb } from './13-trabajo/Trabajos';
+import { VisorEscritorio, abrirEscritorio, useVisorEscritorioAbierto } from './13-trabajo/VisorEscritorio';
+import { olvidarVisor } from '../mobile/src/app/visor';
 import { refsDeTurno } from '../mobile/src/lib/trabajos';
 
 /** Conversar: la sala entera. Trabajar: avatar chico y la conversación con sus resultados. */
@@ -199,6 +201,10 @@ export default function App() {
   const [tareaEnfocada, setTareaEnfocada] = useState<string | null>(null);
   const [propuestaCampo, setPropuestaCampo] = useState<{ texto: string; n: number } | null>(null);
   const trabajos = useTrabajosWeb({ conSesion: usuario.authenticated, cuenta: cuentaActiva, panelAbierto: panelTareas });
+  // El visor del escritorio de su computadora (U1, auditoría del 4-oct): el mismo de la app, abierto desde la tarea.
+  const escritorioAbierto = useVisorEscritorioAbierto();
+  const cuentaDelEscritorio = usuario.authenticated ? cuentaActiva : null;
+  useEffect(() => olvidarVisor(), [cuentaDelEscritorio]);
   const trabajosRef = useRef(trabajos.ahora);
   trabajosRef.current = trabajos.ahora;
   const tareasPorId = React.useMemo(() => Object.fromEntries(trabajos.tareas.map((t) => [t.id, t])), [trabajos.tareas]);
@@ -1154,7 +1160,7 @@ export default function App() {
       {bubble.texto}
     </div>
   );
-  const hayDialogo = dockOpen || settingsOpen || masOpen || accesoOpen || vaultOpen || photosOpen || cameraOpen || panelTareas || !!sinCorreo;
+  const hayDialogo = dockOpen || settingsOpen || masOpen || accesoOpen || vaultOpen || photosOpen || cameraOpen || panelTareas || !!sinCorreo || escritorioAbierto;
   const opinar = (v: 1 | -1) => {
     if (!opinion) return;
     void opinarTurno(opinion.id, v);
@@ -1660,7 +1666,17 @@ export default function App() {
             setPropuestaCampo((p) => ({ texto: sugerencia, n: (p?.n || 0) + 1 }));
             if (modoMesa !== 'trabajar') setDockOpen(true);
           }}
+          onAbrirEscritorio={(t) => {
+            // El visor se abre solo cuando la persona lo pide; cerrarlo vuelve aquí sin tocar la tarea.
+            void abrirEscritorio(t.environment.id).then((aviso) => {
+              if (aviso) decir(aviso, { emocion: 'neutral' });
+              else setPanelTareas(false);
+            });
+          }}
         />
+
+        {/* El escritorio de su computadora a toda la ventana (no el fullscreen de la app): volver lo cierra sin cancelar nada. */}
+        {usuario.authenticated ? <VisorEscritorio /> : null}
 
         <PhotoCaptureModal isOpen={photosOpen} onClose={() => setPhotosOpen(false)} photos={photos} onDeletePhoto={(id) => setPhotos((p) => p.filter((x) => x.id !== id))} onTriggerNewPhoto={() => { setPhotosOpen(false); setCameraOpen(true); }} />
 
