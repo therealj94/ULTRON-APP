@@ -274,10 +274,15 @@ function unidadesDe(palabras: string[]): Unidad[] {
   return out;
 }
 
-/** `conocidos`: nombres de contactos y destinos. El del avatar que coincide con uno no es vocativo. */
-export function analizarRespuesta(mensaje: string, o: { conocidos?: Iterable<string> } = {}): Analisis {
+/**
+ * `conocidos`: nombres de contactos y destinos. El del avatar que coincide con uno no es vocativo.
+ * `destinos`: solo los destinos de lo que espera. «claro» suelto deja de ser un sí solo si Claro es uno de ellos (un
+ * contacto «Claro» en la agenda, sin nada pendiente para él, no vuelve dudoso el «sí, claro» de siempre).
+ */
+export function analizarRespuesta(mensaje: string, o: { conocidos?: Iterable<string>; destinos?: Iterable<string> } = {}): Analisis {
   const palabras = fichasDelMensaje(mensaje);
   const conocidos = palabrasDe(o.conocidos);
+  const destinos = palabrasDe(o.destinos);
   const u = unidadesDe(palabras);
   const blanda = (x: Unidad | undefined) => !!x && (x.k === 'si' || x.k === 'cortesia' || x.k === 'vocativo');
   let avatarDudoso = false;
@@ -286,10 +291,10 @@ export function analizarRespuesta(mensaje: string, o: { conocidos?: Iterable<str
     const antes = u[i - 1]?.w;
     const trasPrep = !!antes && PREP_DESTINO.has(antes);
     // «claro» afirma en cualquier posición («sí, claro», «ok, claro»), SALVO justo detrás de a/al/para/pa/to/for (el
-    // contacto Claro: «sí, a Claro»), o si Claro es un contacto o un destino y va como vocativo suelto: no se sabe.
+    // contacto Claro: «sí, a Claro»), o si Claro es el destino de algo pendiente y va como vocativo suelto: no se sabe.
     if (x.k === 'si' && x.w === 'claro') {
       if (antes && PREP_CLARO.has(antes)) x.k = 'ficha';
-      else if (conocidos.has('claro') && (u.slice(0, i).every(blanda) || u.slice(i + 1).every(blanda))) {
+      else if (destinos.has('claro') && (u.slice(0, i).every(blanda) || u.slice(i + 1).every(blanda))) {
         avatarDudoso = true;
         x.k = 'ficha';
       }
@@ -451,7 +456,8 @@ export function cubreDecision(a: Analisis, p: DecisionPendiente): boolean {
  * `conocidos`: nombres de contactos (los destinos de lo que espera ya cuentan).
  */
 export function decidirPendiente<P extends DecisionPendiente>(mensaje: string, pendientes: readonly P[], o: { conocidos?: Iterable<string> } = {}): Decidido<P> {
-  const a = analizarRespuesta(mensaje, { conocidos: [...(o.conocidos || []), ...pendientes.flatMap((p) => [p.destino || '', ...(p.destinatarios || [])])] });
+  const destinos = pendientes.flatMap((p) => [p.destino || '', ...(p.destinatarios || [])]);
+  const a = analizarRespuesta(mensaje, { conocidos: [...(o.conocidos || []), ...destinos], destinos });
   const preguntar = (motivo: MotivoPregunta, candidatos: P[]): Decidido<P> => (candidatos.length ? { tipo: 'preguntar', motivo, candidatos, negativa: a.niega, analisis: a } : { tipo: 'nada', analisis: a });
   const noDiscretas = () => pendientes.filter((p) => !p.discreta || nombraDecision(a, p));
   // Cancelar un recordatorio: «cancélalo» / «sí, cancélalo» es su «sí». Lo demás tiene que ser un sí, cortesía, enlace o

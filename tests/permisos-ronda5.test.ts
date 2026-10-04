@@ -442,13 +442,17 @@ test('ronda 5 (ajuste «claro»): «sí, claro», «ok, claro», «claro, dale»
   const A = await import('../lib/afirmacion');
   const claroWA: any = { tipo: 'whatsapp', destino: 'Claro (+50477770004)' };
   const ana: any = { tipo: 'correo', destino: 'Ana <ana@example.test>' };
-  for (const [frase, ps, tipo] of [
+  for (const [frase, ps, tipo, conocidos] of [
     ['Claro, sí', [claroWA], 'preguntar'],
     ['sí, a Claro', [claroWA], 'ejecutar'],
     ['sí, claro', [ana], 'ejecutar'],
     ['ok, claro', [ana], 'ejecutar'],
-  ] as Array<[string, any[], string]>) {
-    const d: any = A.decidirPendiente(frase, ps);
+    // Claro solo en la agenda (la compañía de teléfono), sin nada pendiente para él: el «sí, claro» de siempre confirma.
+    ['sí, claro', [ana], 'ejecutar', ['Claro']],
+    ['claro, sí', [ana], 'ejecutar', ['Claro']],
+    ['sí, a Claro', [ana], 'preguntar', ['Claro']],
+  ] as Array<[string, any[], string, string[]?]>) {
+    const d: any = A.decidirPendiente(frase, ps, conocidos ? { conocidos } : {});
     if (d.tipo !== tipo) fallos.push(`función «${frase}»: esperaba ${tipo}, dio ${d.tipo}`);
   }
   assert.deepEqual(fallos, []);
