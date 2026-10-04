@@ -120,7 +120,7 @@ CERRAR_VNC = os.environ.get('CERRAR_VNC', '1') != '0'
 # contrato de entradas con época, secuencia, viewport y ACK, y el frame en cabeceras; `seguro`: la entrada segura.
 # La versión del VALIDADOR (ronda 9, G4): va en cada archivo (`integro_v`) y en /salud. El servidor solo cree
 # `integro: true` de un validador de esta versión o más nueva; lo de un nodo viejo queda «sin comprobar».
-VALIDADOR_VERSION = 11
+VALIDADOR_VERSION = 12
 CAPACIDADES = ['pausar', 'confirmar', 'control', 'entrada', 'seguro', f'validador-{VALIDADOR_VERSION}']
 ESTADOS_VIVOS = ('en_cola', 'trabajando', 'pausada', 'confirmar', 'control')
 # El espacio de trabajo de la misión dentro del escritorio (la carpeta de la persona del escritorio de la demo): lo
@@ -900,6 +900,9 @@ def tipo_por_dentro(magia_hex, marca, tam):
                 if mime in MIME_ODF:
                     return MIME_ODF[mime]
         return MARCA_OOXML.get(marca or '', 'zip')
+    # Ronda 12: un ZIP sin nada dentro (solo el fin del directorio central) también es un ZIP: el validador dirá que está vacío.
+    if b.startswith(b'PK\x05\x06'):
+        return 'zip'
     if b.startswith(b'{\\rtf'):
         return 'rtf'
     # Texto «Unicode» de Windows (UTF-16 con BOM): lleva ceros entre letras, pero es texto (ronda 9).
@@ -914,7 +917,7 @@ def tipo_por_dentro(magia_hex, marca, tam):
 
 # El validador que corre DENTRO del escritorio con su python3 (solo la biblioteca estándar). Recibe pares «tipo ruta» y
 # devuelve, por cada uno, «ruta\t1|0|-\tdefecto»: 1 entero, 0 cortado o falso, - no se sabe validar. Revisión externa
-# (rondas 7 a 11): la estructura de verdad y CONTENIDO REAL que SE VE, no firmas sueltas ni cascarones vacíos:
+# (rondas 7 a 12): la estructura de verdad y CONTENIDO REAL que SE VE, no firmas sueltas ni cascarones vacíos:
 #  · OOXML: [Content_Types].xml declara la parte principal (la de _rels/.rels); la parte parsea con su raíz y trae
 #    contenido: docx con algún w:t con texto (o una imagen embebida que existe en el ZIP); xlsx con alguna celda con
 #    texto o valor no vacío (también por sharedStrings); pptx con alguna diapositiva con a:t con texto o una imagen
@@ -940,10 +943,12 @@ def tipo_por_dentro(magia_hex, marca, tam):
 #  · Texto (.txt, .csv): el archivo ENTERO sin bytes binarios y con algo que se vea; UTF-16 con BOM vale; un CSV con
 #    solo separadores no. «Blanco» es lo mismo en todos los formatos: Unicode Z*, Cc, Cf y los rellenos invisibles.
 #  · RTF: llaves que cierran y algo de texto fuera de las tablas de fuentes, colores y estilos.
+#  · ZIP (ronda 12): cada archivo de dentro con una extensión conocida pasa SU validador (uno malo: el ZIP es 0; uno
+#    sin comprobar: «-»); los demás, con tamaño > 0. Topes de miembros, tamaño descomprimido y ZIP dentro de ZIP.
 # Si no se puede decidir: «-» (sin comprobar), nunca 1. Una falsificación HECHA A PROPÓSITO con contenido real y
 # estructura válida no se distingue de un archivo real: eso queda fuera de alcance (es un archivo).
 VALIDADOR = r"""
-import base64, re, struct, sys, unicodedata, zipfile, zlib
+import base64, io, re, struct, sys, unicodedata, zipfile, zlib
 import xml.etree.ElementTree as ET
 MAX = 200 * 1024 * 1024
 MAX_XML = 64 * 1024 * 1024
@@ -1181,10 +1186,76 @@ def odf(z, tipo, nombres):
     if tipo == 'odg':
         return '-', 'el dibujo no tiene texto: no sé comprobar que tenga lo pedido'
     return 0, 'el documento no tiene texto'
-def zipv(r, tipo):
+# Ronda 12: un ZIP vale por lo que lleva dentro. Topes contra las bombas: miembros, tamaño descomprimido (lo declarado,
+# que además limita lo que se lee) y ZIP dentro de ZIP.
+ZIP_MAX_MIEMBROS = 200
+ZIP_MAX_TOTAL = 64 * 1024 * 1024
+ZIP_MAX_PROF = 2
+TIPO_MIEMBRO = {'pdf': 'pdf', 'png': 'png', 'jpg': 'jpeg', 'jpeg': 'jpeg', 'gif': 'gif', 'webp': 'webp', 'rtf': 'rtf',
+                'doc': 'ole', 'dot': 'ole', 'xls': 'ole', 'xlt': 'ole', 'ppt': 'ole', 'pps': 'ole', 'pot': 'ole',
+                'txt': 'texto', 'csv': 'texto', 'tsv': 'texto', 'md': 'texto', 'json': 'texto', 'xml': 'texto', 'html': 'texto',
+                'htm': 'texto', 'svg': 'texto', 'docx': 'docx', 'xlsx': 'xlsx', 'pptx': 'pptx', 'odt': 'odt', 'ods': 'ods',
+                'odp': 'odp', 'odg': 'odg', 'zip': 'zip'}
+def miembro(b, nombre, tipo, prof):
+    if tipo in ('docx', 'xlsx', 'pptx', 'odt', 'ods', 'odp', 'odg', 'zip'):
+        return zipv(io.BytesIO(b), tipo, prof + 1)
+    if tipo == 'pdf':
+        return pdfv(b)
+    if tipo == 'png':
+        return pngv(b)
+    if tipo == 'jpeg':
+        return jpgv(b)
+    if tipo == 'gif':
+        return gifv(b)
+    if tipo == 'webp':
+        return webpv(b)
+    if tipo == 'rtf':
+        return rtfv(b)
+    if tipo == 'ole':
+        return olev(b, nombre)
+    return textov(b, nombre)
+def miembros_zip(z, prof):
+    infos = [i for i in z.infolist() if not i.filename.endswith('/')]
+    if not infos:
+        return 0, 'el ZIP no tiene ningún archivo dentro'
+    duda = None
+    for i in infos:
+        nombre = i.filename
+        ext = nombre.rsplit('.', 1)[-1].lower() if '.' in nombre.rsplit('/', 1)[-1] else ''
+        tipo = TIPO_MIEMBRO.get(ext)
+        if i.file_size == 0:
+            return 0, 'dentro del ZIP, %s está vacío' % nombre[:60]
+        if tipo is None:
+            continue
+        with z.open(i) as f:
+            b = f.read(ZIP_MAX_TOTAL + 1)
+        try:
+            v, por = miembro(b, nombre, tipo, prof)
+        except Duda as e:
+            v, por = '-', str(e)[:80]
+        except Malo as e:
+            v, por = 0, str(e)[:80]
+        except Exception as e:
+            v, por = 0, 'no se pudo abrir: %s' % str(e)[:60]
+        if v == 0:
+            return 0, 'dentro del ZIP, %s: %s' % (nombre[:60], por)
+        if v != 1 and duda is None:
+            duda = 'dentro del ZIP, %s: %s' % (nombre[:60], por)
+    if duda:
+        return '-', duda
+    return 1, ''
+def zipv(r, tipo, prof=0):
     if not zipfile.is_zipfile(r):
         return 0, 'no es un ZIP entero (le falta el directorio central)'
     with zipfile.ZipFile(r) as z:
+        if tipo == 'zip' or prof > 0:
+            infos = z.infolist()
+            if prof > ZIP_MAX_PROF:
+                return '-', 'tiene ZIP dentro de ZIP dentro de ZIP: no lo abro más hondo'
+            if len(infos) > ZIP_MAX_MIEMBROS:
+                return '-', 'tiene más de %d archivos dentro: no los reviso uno por uno' % ZIP_MAX_MIEMBROS
+            if sum(i.file_size for i in infos) > ZIP_MAX_TOTAL:
+                return '-', 'descomprimido pasa de %d MB: no lo descomprimo para revisarlo' % (ZIP_MAX_TOTAL >> 20)
         malo = z.testzip()
         if malo is not None:
             return 0, 'el ZIP está dañado (CRC de %s)' % malo[:60]
@@ -1195,9 +1266,7 @@ def zipv(r, tipo):
             return ooxml(z, tipo, nombres)
         if tipo in MIME_ODF:
             return odf(z, tipo, nombres)
-        if not any(i.file_size > 0 for i in z.infolist()):
-            return 0, 'todo lo que tiene dentro está vacío'
-    return 1, ''
+        return miembros_zip(z, prof)
 # ---------------------------------------------------------------- PDF
 def sin_cadenas(s):
     out, i, n = bytearray(), 0, len(s)

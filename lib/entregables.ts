@@ -49,9 +49,10 @@ export type ArchivoNodo = {
 /**
  * La versión mínima del validador del nodo en la que se confía (ronda 9, G4). Los de antes daban por enteros archivos sin
  * contenido (un PNG sin IDAT en la 7, un PDF con un /Pages vacío en la 8, un PDF en blanco de reportlab en la 9, un PDF
- * de Chrome con solo espacios en la 10): su «íntegro» queda «sin comprobar».
+ * de Chrome con solo espacios en la 10, un ZIP con un PDF en blanco o basura dentro en la 11): su «íntegro» queda «sin
+ * comprobar».
  */
-export const VALIDADOR_MIN = 11;
+export const VALIDADOR_MIN = 12;
 
 export type Requisito = {
   id: string;
@@ -304,9 +305,18 @@ const RE_FRASE = new RegExp(`(?<![\\w.])(?:(${DET})\\s+)?(?:(?:nuev[oa]s?|breves
  * Ronda 10: un formato SIN determinante («en Word», «como PDF», «in Word», «as PDF», «en formato PDF») no dice cuántos:
  * los cuentan los sustantivos enumerados delante («un informe, un presupuesto y una carta en Word» son 3).
  */
-const RE_FORMATO_SIN_DET = /\b(?:en|como|in|as)\s+(?:(?:formato|tipo|format)\s+(?:de\s+)?)?$/;
+const RE_FORMATO_SIN_DET = /\b(?:en|como|in|as|a|to)\s+(?:(?:formato|tipo|format)\s+(?:de\s+)?)?$/;
+/**
+ * Ronda 12: ¿la oración está en inglés? Cuenta palabras de función de cada idioma. En español «a PDF» es la preposición
+ * («Exporta a PDF…» = «en PDF»); en inglés, «a PDF» es el artículo.
+ */
+const RE_FUNCION_EN = /\b(?:the|and|of|to|in|for|with|make|write|create|save|export|please|my|your|an?|as|one|this|that|it|them|each|per|into)\b/g;
+const RE_FUNCION_ES = /\b(?:el|la|los|las|de|del|y|en|para|con|un|una|uno|que|por|haz|hazme|crea|escribe|guarda|pasa|exporta|convierte|mi|tu|su|lo|al|otra|otro|cada)\b/g;
+const esIngles = (t: string) => (t.match(RE_FUNCION_EN) || []).length > (t.match(RE_FUNCION_ES) || []).length;
 /** Lo que es UNA cosa aunque se enumere lo que lleva («los datos de ventas y gastos en Excel» es un archivo). */
 const RE_MASA = /^(?:datos|informacion|precios|cifras|resultados|numeros|estadisticas|totales|montos|data|information|info|prices|numbers|results|statistics|figures|totals)$/;
+/** Solo lo que nombra algo: «no, mejor», «por favor», «ahora» no son cosas enumeradas. */
+const RE_RELLENO_ENUM = /^(?:no|si|mejor|sino|mas|bien|tambien|ademas|ahora|luego|despues|entonces|por|favor|porfa|please|better|instead|rather|also|now|then|ok|vale|bueno|pues|todo|todos|todas|cada|uno|una|each|one)$/;
 const DETERMINANTES_ENUM = new Set('un una unos unas el la los las mi mis tu tus su sus este esta estos estas ese esa esos esas a an the my your our de del of'.split(' '));
 /**
  * Cuántos sustantivos se enumeran en `seg` (lo que va entre el verbo y «en X»): «un A, un B y una C» → 3; «las facturas
@@ -317,7 +327,7 @@ export function contarEnumerados(seg: string): number | null {
   if (!t) return 1;
   if (/^(?:los|las|them|todos|todas|all|ambos|ambas|both|estos|estas|these|those|ellos|ellas)$/.test(t)) return null;
   // Solo lo que nombra algo: «no, mejor», «por favor», «ahora» no son cosas enumeradas.
-  const relleno = /^(?:no|si|mejor|sino|mas|bien|tambien|ademas|ahora|luego|despues|entonces|por|favor|porfa|please|better|instead|rather|also|now|then|ok|vale|bueno|pues|todo|todos|todas|cada|uno|una|each|one)$/;
+  const relleno = RE_RELLENO_ENUM;
   const partes = t
     .split(/\s*[,;]\s*|\s+(?:y|e|and)\s+/)
     .map((x) => x.trim())
@@ -330,7 +340,8 @@ export function contarEnumerados(seg: string): number | null {
   // plural con su lista («las facturas de enero, febrero y marzo», «cartas para Ana, Bruno y Carla»): se cuentan. Una
   // cabeza en SINGULAR seguida de partes sueltas es su complemento («un informe de ventas y gastos» = 1) o dudoso
   // («la carta para Ana, para Bruno y para Carla»: null).
-  const conDet = (x: string) => /^(?:un|una|el|la|los|las|unos|unas|otro|otra|otros|otras|mi|tu|su|este|esta|ese|esa|a|an|the|another|my|your|this|that)\s/.test(x);
+  // Ronda 12: «uno»/«one» detrás de la conjunción también es otro sintagma («a letter for Ana and one for Bruno»).
+  const conDet = (x: string) => /^(?:un|una|uno|el|la|los|las|unos|unas|otro|otra|otros|otras|mi|tu|su|este|esta|ese|esa|a|an|the|another|one|my|your|this|that)\s/.test(x);
   const resto = partes.slice(1);
   if (resto.every(conDet)) return Math.min(50, partes.length);
   if (!conDet(partes[0]) && !/\b(?:de|del|of)\b/.test(partes[0]) && partes.every((x) => !conDet(x) && !/^(?:para|de|del|con|a|al|for|of|to|with)\s/.test(x))) return Math.min(50, partes.length);
@@ -346,9 +357,45 @@ export function contarEnumerados(seg: string): number | null {
 const RE_PLURAL_ENTREGABLE =
   /^(?:cartas|informes|reportes|facturas|presupuestos|documentos|archivos|ficheros|contratos|recibos|hojas|tablas|graficos|graficas|imagenes|fotos|fotografias|capturas|pantallazos|presentaciones|diapositivas|copias|versiones|cotizaciones|certificados|constancias|memos|memorandos|oficios|actas|planos|mapas|logos|folletos|carteles|afiches|tarjetas|invitaciones|curriculums|cvs|resumenes|propuestas|solicitudes|formularios|letters|reports|invoices|budgets|documents|files|contracts|receipts|sheets|spreadsheets|tables|charts|graphs|images|photos|pictures|screenshots|presentations|slides|copies|versions|quotes|quotations|certificates|plans|maps|logos|flyers|posters|cards|invitations|resumes|proposals|forms|pdfs|pngs|jpgs|docs|memos)$/;
 const NUM_PALABRA: Record<string, number> = {
-  dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10, once: 11, doce: 12, quince: 15, veinte: 20,
-  two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, twenty: 20,
+  dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10, once: 11, doce: 12, trece: 13, catorce: 14,
+  quince: 15, dieciseis: 16, diecisiete: 17, dieciocho: 18, diecinueve: 19, veinte: 20, treinta: 30, ambos: 2, ambas: 2,
+  two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13,
+  fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20, thirty: 30, both: 2,
 };
+/** Ronda 12: lo que cuenta con dos palabras: «una docena de», «media docena de», «un par de», «a dozen», «a couple of». */
+const numeroCompuesto = (antes: string, w: string, despues: string): number | null => {
+  if (w === 'docena') return antes === 'media' ? 6 : 12;
+  if (w === 'dozen') return antes === 'half' ? 6 : 12;
+  if (w === 'par' && /^(?:un|el)$/.test(antes) && despues === 'de') return 2;
+  if ((w === 'couple' || w === 'pair') && despues === 'of') return 2;
+  return null;
+};
+/**
+ * Ronda 12: el NÚCLEO PLURAL, en general y no por lista. Un sustantivo en -s/-es es plural salvo estos singulares
+ * (lista CERRADA) y los nombres propios con mayúscula.
+ */
+const SINGULARES_EN_S = new Set('mes pais analisis tesis virus lunes martes miercoles jueves viernes crisis sintesis enfasis bus gas plus status campus bonus atlas chasis news'.split(' '));
+/** Lo que acaba en -s sin ser un sustantivo (adverbios, pronombres, verbos de «tú», palabras del inglés). */
+const NO_SUSTANTIVO_EN_S = new Set(
+  ('mas ademas despues pues entonces antes tras menos mientras jamas quizas acaso gracias porfas nos les os es dos tres seis ' +
+    'puedes podrias quieres querias tienes necesitas haces harias pones mandas envias guardas sabes vas estas eres das dices ' +
+    'please this is us as its his hers yes thus always has was does lets perhaps besides sometimes whereas towards afterwards ' +
+    'ours yours theirs also unless across').split(' ')
+);
+/** Determinantes plurales: lo que nombran es plural (ES/EN). */
+const DET_PLURAL = new Set('los las unos unas estos estas esos esas aquellos aquellas mis tus sus nuestros nuestras vuestros vuestras algunos algunas varios varias these those several'.split(' '));
+/** Detrás de «de», un plural de esto es el contenido o el periodo de UNA cosa («de los gastos», «de los últimos meses»). */
+const MASA_O_PERIODO =
+  /^(?:datos|precios|cifras|resultados|numeros|estadisticas|totales|montos|ventas|gastos|ingresos|costos|costes|pagos|cobros|compras|movimientos|ganancias|perdidas|impuestos|meses|anos|dias|semanas|trimestres|horas|minutos|ultimos|ultimas|proximos|proximas|primeros|primeras|data|sales|expenses|costs|payments|months|years|days|weeks|hours|last|next|first)$/;
+/** Lo que reúne a varios en UNA cosa: «el resumen de las noticias», «la lista de los invitados» (no «la boleta de los alumnos»). */
+const RE_AGREGADOR =
+  /^(?:resumen|informe|reporte|analisis|lista|listado|tabla|cuadro|grafico|grafica|inventario|catalogo|indice|recopilacion|compilacion|comparacion|comparativa|consolidado|registro|historial|calendario|horario|agenda|presentacion|estadistica|balance|total|directorio|base|mapa|summary|report|list|table|chart|graph|inventory|catalog|index|overview|comparison|analysis|digest|roundup|compilation|schedule|calendar|directory|map)$/;
+const IDIOMAS = /^(?:espanol|ingles|frances|aleman|italiano|portugues|chino|japones|coreano|ruso|arabe|catalan|english|spanish|french|german|italian|portuguese|chinese|japanese)$/;
+/** «por favor», «por correo», «por la tarde»: «por» que NO reparte (no «uno por persona»). */
+const POR_NO_REPARTE =
+  /^(?:favor|ejemplo|fin|ahora|si|eso|esto|ello|lo|la|el|los|las|un|una|cada|que|correo|email|mail|whatsapp|telegram|mensaje|chat|telefono|internet|drive|dropbox|usb|escrito|completo|defecto|supuesto|cierto|tanto|encima|debajo|dentro|fuera|arriba|abajo|igual|ciento|siempre|vez|error|accidente|mi|tu|su|mis|tus|sus|favorcito|adelantado|ahi|aqui|alla|culpa|suerte|cuenta)$/;
+const RE_REPETIR = /^(?:duplica\w*|triplica\w*|repite\w*|repetir|duplicate|repeat|triplicate)$/;
+const RE_POR_SEPARADO = /^(?:separately|individually|separadamente|individualmente)$/;
 const RE_CUANTIFICADOR = /\b(?:otr[oa]s?|another|others|cada|each|every|both|ambos|ambas|todos|todas|all|varios|varias|several|uno por|una por|one per)\b/;
 const PREPOSICIONES_ENUM = new Set('con de del para sobre sin en a al desde hasta por entre segun tras hacia with of for about on in to from by into at as como'.split(' '));
 const DET_ENUM = new Set('un una el la los las unos unas mi mis tu tus su sus este esta estos estas ese esa esos esas otro otra otros otras a an the my your this that these those another'.split(' '));
@@ -813,9 +860,19 @@ export function requisitosDeEntrega(instruccion: string): PedidoEntrega {
     unidas.push(a);
   }
 
-  type Frase = { fam: Familia; cantidad: number | null; pos: number; fin: number; otro: boolean; absorbio: number; verbo: string | null; sinDet?: boolean; antes?: number };
+  type Frase = { fam: Familia; cantidad: number | null; pos: number; fin: number; otro: boolean; absorbio: number; verbo: string | null; sinDet?: boolean; antes?: number; explicito?: boolean };
   const frases: Frase[] = [];
   const reformatos: { fam: Familia; pos: number; plural?: boolean }[] = [];
+  // Los límites de la oración de `pos` (el punto, el punto y coma, el salto de línea…).
+  // El punto de «google.com» o «v2.1» no termina la oración: solo el que va seguido de un espacio o del final.
+  const corta = (x: number) => /[;!?\n]/.test(sinNombres[x]) || (sinNombres[x] === '.' && (x + 1 >= sinNombres.length || /\s/.test(sinNombres[x + 1])));
+  const oracion = (pos: number): [number, number] => {
+    let a = pos;
+    while (a > 0 && !corta(a - 1)) a--;
+    let b = pos;
+    while (b < sinNombres.length && !corta(b)) b++;
+    return [a, b];
+  };
   let finAnterior = 0;
   for (let iu = 0; iu < unidas.length; iu++) {
     const u = unidas[iu];
@@ -834,13 +891,18 @@ export function requisitosDeEntrega(instruccion: string): PedidoEntrega {
     }
     if (FAMILIAS_CARPETA.has(fam.clave) && RE_LUGAR_ANTES.test(previo) && !esArticuloIngles(previo)) continue;
     const plural = /^(?:\w+?)(?:s|es)\b/.test(sustantivo.split(/\s+/)[0]) && !/^(?:xlsx|docx|pptx)$/.test(sustantivo);
+    // Ronda 12: en inglés, «a PDF» es el artículo (un determinante singular); en español, «a PDF» es «en PDF».
+    const [o0, o1] = oracion(pos);
+    const ingles = esIngles(sinNombres.slice(o0, o1));
+    const articuloA = !det && /\ban?\s+$/.test(previo) && (ingles || esArticuloIngles(previo));
+    const detEf = det || (articuloA ? 'a' : '');
     let cantidad: number | null;
     let sinDet = false;
     let antes: number | null = null;
     if (/^\d+$/.test(det)) cantidad = Math.min(50, Number(det));
     else if (det in CANTIDADES && CANTIDADES[det] > 0) cantidad = CANTIDADES[det];
     else cantidad = plural ? null : 1;
-    if (!det && RE_FORMATO_SIN_DET.test(previo)) {
+    if (!det && !articuloA && RE_FORMATO_SIN_DET.test(previo)) {
       // Ronda 10: lo que va entre el último verbo y «en X» dice cuántos («un informe, un presupuesto y una carta en Word»).
       let seg = sinNombres.slice(desde, pos).replace(RE_FORMATO_SIN_DET, '');
       let pronombrePlural = false;
@@ -860,26 +922,47 @@ export function requisitosDeEntrega(instruccion: string): PedidoEntrega {
       sinDet = true;
       antes = pronombrePlural ? null : !/[a-zñ0-9]/.test(seg) ? 0 : n;
     }
-    // «un PDF con el informe y otro con el presupuesto»: «uno… y otro» son dos (o más, uno por cada «otro»).
-    if (cantidad === 1 && /^(?:un|una|a|an|uno|one)$/.test(det)) {
-      const otros = (sinNombres.slice(u.fin, hasta).match(/(?:,|\b(?:y|e|and))\s+(?:otro|otra|another)\b/g) || []).length;
-      if (otros) cantidad = 1 + otros;
-    }
+    const tras = sinNombres.slice(u.fin, hasta);
+    // «un PDF con el informe y otro con el presupuesto»: «uno… y otro» son dos (o más, uno por cada «otro»). Ronda 12:
+    // también «… y uno con la de Bruno», «and one for Bruno», «y uno más»; no «y uno en PDF» (ese es del PDF).
+    const RE_OTRO_MAS = /(?:,|\b(?:y|e|and))\s+(?:(?:otro|otra|another)\b|(?:uno|una|one)(?=\s+(?:para|con|de|del|sobre|por|mas|igual|for|with|of|about|more)\b|\s*(?:[,.;:!?]|$)))/g;
+    const otrosMas = [...tras.matchAll(RE_OTRO_MAS)].filter((m) => {
+      const resto = tras.slice((m.index ?? 0) + m[0].length);
+      return !(iu + 1 < unidas.length && !/[.;!?\n]/.test(resto) && /\b(?:en|como|a|in|as|to|into)\s+(?:(?:un|una|a|an|formato|tipo|format)\s+(?:de\s+)?)?$/.test(resto));
+    }).length;
+    if (cantidad === 1 && /^(?:un|una|a|an|uno|one)$/.test(detEf) && otrosMas) cantidad = 1 + otrosMas;
     // «un PDF por cada factura: luz, agua y teléfono»: uno por cada cosa de la lista; sin lista, no se sabe cuántos.
-    if (cantidad === 1 && /^(?:un|una|a|an|uno|one)?$/.test(det) && /^\s*(?:(?:por|para)\s+cada|for\s+each|per)\b/.test(sinNombres.slice(u.fin, hasta))) {
-      const lista = /:\s*([^.;]+)/.exec(sinNombres.slice(u.fin, hasta));
+    if (cantidad === 1 && /^(?:un|una|a|an|uno|one)?$/.test(detEf) && /^\s*(?:(?:por|para)\s+cada|for\s+each|per)\b/.test(tras)) {
+      const lista = /:\s*([^.;]+)/.exec(tras);
       const n = lista ? contarEnumerados(lista[1]) : null;
       cantidad = n && n > 1 ? n : null;
     }
+    // Ronda 12 (D): lo EXPLÍCITO gana sobre la enumeración de dentro: «en un solo PDF», «un único PDF», «todo en un PDF»,
+    // «a single PDF», «one PDF», «un PDF que tenga / con el informe y el presupuesto», «un ZIP con las cartas».
+    const reparte =
+      otrosMas > 0 ||
+      (/^\s*(?:(?:por|para)\s+cada|for\s+each|per|por\s+[a-zñ]+)\b/.test(tras) && !/^\s*por\s+(?:favor|ejemplo|correo|email|mail|whatsapp|telegram|mensaje|chat)\b/.test(tras));
+    const singular = /^(?:un|una|a|an|uno|one)$/.test(detEf);
+    const explicito =
+      cantidad === 1 &&
+      !reparte &&
+      (/\b(?:un|una)\s+(?:solo|sola|unico|unica|mismo|misma)\s+$/.test(previo) ||
+        /\b(?:a\s+single|one\s+single|just\s+one|only\s+one)\s+$/.test(previo) ||
+        /^(?:uno|one)$/.test(detEf) ||
+        /^\s+(?:solo|sola|unico|unica)\b/.test(tras) ||
+        (singular && /\b(?:todo|toda|todos|todas|all|everything)\s+(?:(?:junto|juntos|juntas|together)\s+)?(?:en|a|in|into)\s+$/.test(previo)) ||
+        (singular && /^\s*(?:(?:que|which|that)\s+(?:tenga|contenga|incluya|junte|reuna|lleve|una|has|contains|includes|combines|merges)|con|with|containing|including)\b/.test(tras)) ||
+        (fam.clave === 'zip' && (singular || /^(?:el|la|the)$/.test(detEf))));
     // Sin verbo en su oración también cuenta: mencionar un tipo de archivo es pedirlo («dos capturas del sitio por favor»).
     // «guárdala en PDF» (un verbo con su pronombre), no «… y Carla en Word» (un nombre que acaba en -la).
     const mRef = RE_REFORMATO_ANTES.exec(previo);
     const verboRef = (w: string) => esVerbo(w) || RE_IMPERATIVO_CLITICO.test(w) || RE_FORMA_ACCION.test(w) || esVerbo(w.replace(/(?:se|me|te|nos)?(?:lo|la|los|las)$/, ''));
-    if (mRef && (mRef[2] || verboRef(mRef[1]))) {
+    // Ronda 12: «comprímelos en un ZIP» no es otro formato de lo de antes: el ZIP es un entregable más (con su conteo).
+    if (mRef && (mRef[2] || verboRef(mRef[1])) && fam.clave !== 'zip') {
       reformatos.push({ fam, pos, plural: /(?:los|las)\s+(?:como|a|al|en)\s+(?:(?:un|una)\s+)?$|\bthem\s+(?:as|to|into)\s+(?:(?:a|an)\s+)?$/.test(previo) });
       continue;
     }
-    frases.push({ fam, cantidad, pos, fin: u.fin, otro: /^(otro|otra|another)$/.test(det), absorbio: 0, verbo: v.verbo, sinDet, ...(antes !== null ? { antes } : {}) });
+    frases.push({ fam, cantidad, pos, fin: u.fin, otro: /^(otro|otra|another)$/.test(det), absorbio: 0, verbo: v.verbo, sinDet, ...(antes !== null ? { antes } : {}), ...(explicito ? { explicito } : {}) });
   }
   // Una corrección hablada («dos PDFs, no, tres PDFs», «en PDF no, mejor en Word») reemplaza lo que corrige; «y no un
   // Word» excluye lo que niega. Entre nombres y frases, en el orden en que se dijeron.
@@ -918,18 +1001,13 @@ export function requisitosDeEntrega(instruccion: string): PedidoEntrega {
   }
   frases.sort((a, b) => a.pos - b.pos);
 
-  // 2b) Ronda 11: el CONTEO cerrado por defecto. Cantidad 1 «segura» solo si en la oración del pedido no hay números,
-  // plurales que puedan ser entregables, «otro», «cada», «todos», «both», «each»… ni una enumeración de cosas, y hay a lo
-  // más un sintagma entregable con determinante singular. Un número o una enumeración contable (antes o DESPUÉS del
-  // formato) dan la cantidad; lo demás queda sin cantidad segura (nunca se completa con menos).
+  // 2b) Rondas 11 y 12: el CONTEO cerrado por defecto. Cantidad 1 «segura» solo si NO hay ningún indicio de varios en
+  // el pedido, y los indicios se buscan en general (no por lista): un núcleo plural (determinante plural o sustantivo en
+  // -s/-es) que no sea complemento, un número, «otro/uno» tras una conjunción, «cada/todos/each/all», «por persona»,
+  // nombres o idiomas enumerados, «de A y de B», «repite/duplica», «por separado», una enumeración de cosas o las
+  // oraciones que siguen («Y otra para Bruno», «la de Bruno igual»). Un número que cuenta lo pedido o una enumeración
+  // contable dan la cantidad; lo explícito («un solo PDF», «un PDF con…») gana; lo demás queda sin cantidad segura.
   {
-    const oracion = (pos: number): [number, number] => {
-      let a = pos;
-      while (a > 0 && !/[.;!?\n]/.test(sinNombres[a - 1])) a--;
-      let b = pos;
-      while (b < sinNombres.length && !/[.;!?\n]/.test(sinNombres[b])) b++;
-      return [a, b];
-    };
     const fichas = (t: string) => t.match(/[a-zñ0-9]+|[,;]/g) || [];
     const numeroEn = (ts: string[]): number | null => {
       for (let i = 0; i < ts.length; i++) {
@@ -975,8 +1053,140 @@ export function requisitosDeEntrega(instruccion: string): PedidoEntrega {
         if ((antes === ',' || antes === 'y' || antes === 'and' || antes === 'e') && complemento(ts, k - 2, ingles)) return false;
         return true;
       }).length;
+
+    // Ronda 12: las fichas con su posición y si van con mayúscula (un nombre propio, no el principio de la oración).
+    type Ficha = { w: string; i: number; cap: boolean };
+    const alineado = sinWeb.length === sinNombres.length;
+    const fichasDe = (a: number, b: number): Ficha[] =>
+      [...sinNombres.slice(a, b).matchAll(/[a-zñ0-9]+|[,;:()]/g)].map((m) => {
+        const i = a + (m.index ?? 0);
+        const original = alineado ? sinWeb.slice(i, i + m[0].length) : '';
+        const cap = /^\p{Lu}/u.test(original) && !/^[\p{Lu}0-9]{2,}$/u.test(original) && !/(?:^|[.!?:;\n])[\s"'«“¿¡(]*$/.test(sinWeb.slice(0, i));
+        return { w: m[0], i, cap };
+      });
+    const enFormato = (i: number) => unidas.some((u) => i >= u.pos && i < u.fin);
+    const indicios = (fs: Ficha[], ingles: boolean, desdeFormato: number): { numero: number | null; varios: string | null } => {
+      const prep = (w: string) => PREPOSICIONES_ENUM.has(w) && !(ingles && w === 'a');
+      const det = (w: string) => DET_ENUM.has(w) && (ingles || w !== 'a');
+      const conj = (w: string) => /^(?:y|e|o|u|and|or)$/.test(w);
+      const fmt = (k: number) => !!fs[k] && enFormato(fs[k].i);
+      const verbo = (k: number) => !!fs[k] && esVerboEnum(fs[k].w) && !det(fs[k - 1]?.w || '');
+      const signo = (w: string) => /^[,;:()]$/.test(w);
+      const plural = (k: number) => {
+        const x = fs[k];
+        if (!x) return false;
+        const w = x.w;
+        return (
+          w.length >= 4 && /(?:s|es)$/.test(w) && !SINGULARES_EN_S.has(w) && !NO_SUSTANTIVO_EN_S.has(w) && !DET_PLURAL.has(w) && !x.cap && !fmt(k) &&
+          !esVerboEnum(w) && !(w in NUM_PALABRA) && !IDIOMAS.test(w) && !/^(?:otros|otras|todos|todas|cada|ambos|ambas)$/.test(w)
+        );
+      };
+      let comp: string | null = null;
+      let cabeza = ''; // el sustantivo de delante del complemento («la boleta | de los alumnos»)
+      let numero: number | null = null;
+      let varios: string | null = null;
+      const marcar = (por: string) => {
+        if (!varios) varios = por;
+      };
+      if (fs.filter((x) => IDIOMAS.test(x.w)).length >= 2) marcar('idiomas');
+      for (let k = 0; k < fs.length; k++) {
+        const { w } = fs[k];
+        const ant = fs[k - 1]?.w || '';
+        const sig = fs[k + 1]?.w || '';
+        if (signo(w) || fmt(k)) {
+          comp = null;
+          // Detrás del formato, un plural suelto es lo pedido («en Word cartas para…»).
+          if (fmt(k) && plural(k + 1)) marcar('plural');
+          continue;
+        }
+        if (RE_REPETIR.test(w)) marcar('repite'); // «Duplica la carta…», «Repite el informe…»
+        if (verbo(k)) {
+          comp = null;
+          if (plural(k + 1)) marcar('plural'); // «Haz cartas…», «Write letters…»
+          continue;
+        }
+        if (RE_POR_SEPARADO.test(w)) marcar('por separado');
+        // «otro», «uno» tras una conjunción y DESPUÉS del formato: otro sintagma más (antes del formato es el suyo).
+        if (/^(?:otro|otra|otros|otras|another|uno|una|one)$/.test(w) && (conj(ant) || ant === ',') && fs[k].i >= desdeFormato) marcar('otro');
+        // «por persona», «por mes», «per client», «por duplicado»: uno por cada uno; con una lista que se cuente, N.
+        if ((w === 'por' || w === 'per') && /^[a-zñ]/.test(sig) && !fs[k + 1].cap && !POR_NO_REPARTE.test(sig) && !det(sig) && !prep(sig) && ant !== 'as' && !/^(?:ti|usted|ustedes|nosotros|ellos|ellas|ella)$/.test(sig)) {
+          const resto = sinNombres.slice(fs[k + 1].i);
+          const lista = /^[a-zñ]+(?:\s+[a-zñ]+)?\s*(?::\s*([^.;!?\n]+)|\(([^)]+)\))/.exec(resto);
+          const n = lista ? contarEnumerados((lista[1] || lista[2] || '').trim()) : null;
+          if (n && n > 1) numero = numero ?? n;
+          else marcar('por');
+          continue;
+        }
+        if (prep(w)) {
+          const sigueFormato = fmt(k + 1) || ((/^(?:formato|tipo|format)$/.test(sig) || /^(?:un|una|a|an)$/.test(sig)) && fmt(k + 2));
+          comp = sigueFormato ? null : w;
+          cabeza = fs[k - 1]?.w || '';
+          continue;
+        }
+        if (conj(w)) {
+          if (det(sig) || verbo(k + 1) || /^(?:uno|una|one|otro|otra|another)$/.test(sig)) comp = null;
+          continue;
+        }
+        if (DET_PLURAL.has(w)) {
+          const nucleo = sig;
+          const contable = !MASA_O_PERIODO.test(nucleo) && !RE_MASA.test(nucleo) && !(nucleo in NUM_PALABRA) && !/^\d/.test(nucleo);
+          // Sin preposición delante: lo pedido es plural. Tras «de los/las»: de cada uno («la boleta de los alumnos»).
+          if (contable && (comp === null || (/^(?:de|del)$/.test(comp) && /^(?:los|las)$/.test(w) && !RE_AGREGADOR.test(cabeza)))) marcar('plural');
+          continue;
+        }
+        if (ingles && /^(?:the|my|your|our|their|his|her)$/.test(w)) {
+          let j = k + 1;
+          let ult = -1;
+          while (j < fs.length && j <= k + 3 && /^[a-z]/.test(fs[j].w) && !prep(fs[j].w) && !conj(fs[j].w) && !fmt(j) && !verbo(j)) ult = j++;
+          if (ult >= 0 && plural(ult) && !MASA_O_PERIODO.test(fs[ult].w) && !RE_MASA.test(fs[ult].w) && (comp === null || (comp === 'of' && w === 'the' && !RE_AGREGADOR.test(cabeza)))) marcar('plural');
+          continue;
+        }
+        const n = /^\d{1,2}$/.test(w) ? Number(w) : NUM_PALABRA[w] ?? numeroCompuesto(ant, w, sig);
+        if (n && n >= 2) {
+          if (comp !== null) continue; // cuenta otra cosa («para mis 3 clientes», «de los 5 alumnos»)
+          // «la factura 2», «página 3»: un número detrás de un sustantivo sin determinante es su identificador.
+          if (/^\d/.test(w) && /^[a-zñ]{3,}$/.test(ant) && !det(ant) && !verbo(k - 1) && !conj(ant) && !prep(ant) && !DET_PLURAL.has(ant)) continue;
+          let cuenta = false;
+          for (let j = k + 1; j <= k + 3 && j < fs.length; j++) {
+            if (signo(fs[j].w) || verbo(j)) break;
+            if (fmt(j) || plural(j) || /^(?:veces|times|copias|copies|versiones|versions)$/.test(fs[j].w)) {
+              cuenta = true;
+              break;
+            }
+          }
+          if (cuenta) numero = numero ?? Math.min(50, n);
+          else marcar('número');
+          continue;
+        }
+        // Un plural suelto justo antes del formato («… notas en Word», «cartas como PDF»).
+        if (comp === null && plural(k) && !det(ant) && prep(sig) && (fmt(k + 2) || fmt(k + 3))) marcar('plural');
+      }
+      // Nombres propios enumerados («para Ana y Bruno», «de Ana, Bruno y Carla»).
+      for (let k = 0; k + 2 < fs.length; k++) if (fs[k].cap && !fmt(k) && (fs[k + 1].w === ',' || conj(fs[k + 1].w)) && fs[k + 2].cap && !fmt(k + 2)) marcar('nombres');
+      // La preposición repetida: «de google y de bing», «del inicio y del contacto», «para Ana, para Bruno».
+      for (let k = 1; k + 1 < fs.length; k++) {
+        if (!(fs[k].w === ',' || conj(fs[k].w)) || !/^(?:de|del|para|for|of)$/.test(fs[k + 1].w)) continue;
+        const p = fs[k + 1].w === 'del' ? 'de' : fs[k + 1].w;
+        for (let j = k - 1; j >= 0 && j >= k - 6; j--) {
+          if (verbo(j) || fmt(j) || signo(fs[j].w)) break;
+          if ((fs[j].w === 'del' ? 'de' : fs[j].w) === p) {
+            marcar('preposición repetida');
+            break;
+          }
+        }
+      }
+      return { numero, varios };
+    };
+    // Las oraciones que SIGUEN al pedido y lo continúan («Y otra para Bruno.», «Otra para Bruno», «; la de Bruno igual»).
+    const RE_SIGUE = /^\s*(?:(?:y|e|and|also|tambien)\s+)?(?:otra|otro|otras|otros|another|la\s+de|el\s+de|las\s+de|los\s+de|lo\s+mismo|igual|one)\b/;
+    const RE_SIGUE_UNA = /^\s*(?:(?:y|e|and|also|tambien)\s+)?(?:otra|otro|another|la\s+de|el\s+de|one)\b/;
+
     const principales = frases.filter((f) => !(f.fam.clave === 'zip' && f.verbo && RE_V_COMPRIMIR.test(f.verbo)));
     principales.forEach((f, i) => {
+      if (f.explicito) {
+        f.cantidad = 1;
+        return;
+      }
       const [s0, s1] = oracion(f.pos);
       const previa = principales[i - 1] && principales[i - 1].fin > s0 ? principales[i - 1].fin : s0;
       const siguiente = principales[i + 1] && principales[i + 1].pos < s1 ? principales[i + 1] : null;
@@ -992,7 +1202,17 @@ export function requisitosDeEntrega(instruccion: string): PedidoEntrega {
         }
         const t = tras.trim();
         const empieza = /^(?:[,;]|(?:y|e|and)\s)/.test(t) || DET_ENUM.has((t.match(/^[a-zñ]+/) || [''])[0]);
-        const despues = empieza ? contarEnumerados(t.replace(/^[,;]\s*/, '')) : 0;
+        let despues = empieza ? contarEnumerados(t.replace(/^[,;]\s*/, '')) : 0;
+        // Ronda 12: detrás del formato solo cuentan los sintagmas con su determinante («, el presupuesto y la carta»); lo
+        // suelto es una aposición del mismo («en Word, versión formal e informal»): una parte no suma; varias, sin seguro.
+        const partesTras = t
+          .replace(/^[,;]\s*/, '')
+          .replace(/^(?:y|e|and)\s+/, '')
+          .split(/\s*[,;]\s*|\s+(?:y|e|and)\s+/)
+          .map((x) => x.replace(/^(?:(?:tambien|ademas|luego|despues|also|then|too)\s+)+/, ''))
+          .filter((x) => (x.match(/[a-zñ]{2,}/g) || []).some((w) => !RE_RELLENO_ENUM.test(w)));
+        const todasConDet = partesTras.every((x) => /^(?:un|una|uno|el|la|los|las|unos|unas|otro|otra|otros|otras|mi|tu|su|este|esta|ese|esa|a|an|the|another|one|my|your|this|that)\s/.test(x));
+        if (despues && !todasConDet) despues = despues > 1 ? null : 0;
         if (despues === null) f.cantidad = null;
         else if (despues > 0) {
           const total = (f.antes === 0 ? 0 : f.antes ?? 1) + despues;
@@ -1000,14 +1220,51 @@ export function requisitosDeEntrega(instruccion: string): PedidoEntrega {
         }
       }
       if (f.cantidad !== 1) return;
-      const region = fichas(sinNombres.slice(previa, siguiente ? f.fin : s1));
-      const n = numeroEn(region);
+      const fs = fichasDe(previa, siguiente ? f.fin : s1);
+      const region = fs.filter((x) => !/^[:()]$/.test(x.w)).map((x) => x.w);
+      const ingles = esIngles(sinNombres.slice(s0, s1));
+      const ind = indicios(fs, ingles, f.fin);
+      // Ronda 12 (C): las oraciones siguientes que empiezan con «y», «otra», «la de», «lo mismo», «igual»… y no traen su
+      // propio formato son parte de este pedido: «otra»/«la de» suma uno; lo demás (o un indicio en ellas) deja el
+      // conteo sin seguro.
+      let mas = 0;
+      let continua = false;
+      if (!siguiente) {
+        let b = s1;
+        while (b < sinNombres.length) {
+          const [n0, n1] = oracion(b + 1);
+          const texto = sinNombres.slice(n0, n1);
+          b = n1;
+          if (!texto.trim()) continue;
+          const cabeza = RE_SIGUE.exec(texto);
+          if (!cabeza || unidas.some((u) => u.pos >= n0 && u.pos < n1) || nombres.some((x) => x.pos >= n0 && x.pos < n1)) break;
+          const ws = texto.match(/[a-zñ]+/g) || [];
+          if (esVerboEnum(ws.find((w) => !/^(?:y|e|and|also|tambien)$/.test(w)) || '')) break;
+          const resto = indicios(fichasDe(n0 + cabeza[0].length, n1), ingles, n0);
+          if (RE_SIGUE_UNA.test(texto) && !resto.varios && !resto.numero) mas++;
+          else continua = true;
+        }
+      }
+      const n = ind.numero ?? numeroEn(region);
       if (n) {
         f.cantidad = n;
         return;
       }
-      const ingles = /\b(?:the|and|make|write|create|save|export|in|as|please|with|for)\b/.test(sinNombres.slice(s0, s1));
-      if (region.some((w) => RE_PLURAL_ENTREGABLE.test(w)) || RE_CUANTIFICADOR.test(region.join(' ')) || enumeracion(region, ingles) || sintagmas(region, ingles) > 1) f.cantidad = null;
+      // «otro/uno» del propio sintagma (antes del formato: «y otro en PDF») no es un indicio: es el suyo.
+      const sinPropios = fs.filter((x) => !(x.i < f.pos && /^(?:otr[oa]|another|un[oa]|one)$/.test(x.w))).map((x) => x.w);
+      if (
+        continua ||
+        ind.varios ||
+        region.some((w) => RE_PLURAL_ENTREGABLE.test(w)) ||
+        RE_CUANTIFICADOR.test(sinPropios.join(' ')) ||
+        enumeracion(region, ingles) ||
+        sintagmas(region, ingles) > 1
+      ) {
+        // Las oraciones que siguen con «otra»/«la de» ya se contaron; un indicio más no deja contar.
+        f.cantidad = null;
+        return;
+      }
+      if (mas) f.cantidad = 1 + mas;
     });
   }
 

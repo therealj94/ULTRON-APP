@@ -2458,6 +2458,60 @@ class ArchivosComprobados(Base):
         self.assertEqual({k: vistos[k].get('integro') for k in sin_decidir}, {k: None for k in sin_decidir}, 'sin ToUnicode: sin comprobar, nunca íntegro')
         self.assertEqual({k: (vistos[k].get('integro'), vistos[k].get('defecto')) for k in buenos if vistos[k].get('integro') is not True}, {}, 'lo que se ve, sí')
 
+    def muestras_r12(self):
+        """Ronda 12: ZIP con lo de dentro validado por su tipo (falsos), con lo que no se sabe comprobar o es demasiado (sin
+        decidir) y con contenido de verdad (buenos)."""
+        import io, zipfile
+
+        def zipear(miembros, comp=zipfile.ZIP_DEFLATED):
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, 'w', comp) as z:
+                for nombre, datos in miembros:
+                    z.writestr(nombre, datos)
+            return buf.getvalue()
+        f11, s11, b11 = self.muestras_r11()
+        pdf_bueno, pdf_blanco, pdf_sin_tu = b11['chrome_texto.pdf'], f11['chrome_espacios.pdf'], s11['type0_sin_tounicode.pdf']
+        docx_bueno = self.ooxml('word/document.xml', texto='Informe de ventas')
+        falsos = {
+            'pdf_blanco.zip': zipear([('informe.pdf', pdf_blanco)]),
+            'pdf_basura.zip': zipear([('x.pdf', b'esto no es un pdf')]),
+            'espacios.zip': zipear([('a.txt', b'    ')]),
+            'archivo_vacio.zip': zipear([('a.txt', b'')]),
+            'carpeta.zip': zipear([('carpeta/', b'')]),
+            'bueno_y_blanco.zip': zipear([('a.pdf', pdf_bueno), ('b.pdf', pdf_blanco)]),
+            'docx_vacio.zip': zipear([('carta.docx', self.ooxml('word/document.xml', texto=''))]),
+            'png_roto.zip': zipear([('foto.png', b'\x89PNG\r\n\x1a\n' + b'\x00' * 40)]),
+            'zip_en_zip_blanco.zip': zipear([('dentro.zip', zipear([('informe.pdf', pdf_blanco)]))]),
+            'desconocido_vacio.zip': zipear([('informe.pdf', pdf_bueno), ('datos.bin', b'')]),
+            'csv_comas.zip': zipear([('datos.csv', b',,,\n,,,\n')]),
+            'vacio.zip': zipear([]),  # solo el fin del directorio central (PK 05 06): por dentro también es un ZIP
+        }
+        sin_decidir = {
+            'pdf_sin_tounicode.zip': zipear([('informe.pdf', pdf_sin_tu)]),
+            'bomba.zip': zipear([('grande.txt', b'a' * (agente_tope_zip() + 1))]),
+            'muchos.zip': zipear([('t%03d.txt' % k, b'hola') for k in range(agente_max_miembros() + 1)]),
+            'muy_hondo.zip': zipear([('a.zip', zipear([('b.zip', zipear([('c.zip', zipear([('d.pdf', pdf_bueno)]))]))]))]),
+        }
+        buenos = {
+            'bueno.zip': zipear([('informe.pdf', pdf_bueno)]),
+            'guardado.zip': zipear([('informe.pdf', pdf_bueno)], comp=zipfile.ZIP_STORED),
+            'varios.zip': zipear([('informe.pdf', pdf_bueno), ('carta.docx', docx_bueno), ('notas.txt', b'Hola Ana'), ('logo.xyz', b'\x01\x02')]),
+            'con_carpeta.zip': zipear([('informes/', b''), ('informes/enero.pdf', pdf_bueno)]),
+            'zip_en_zip.zip': zipear([('dentro.zip', zipear([('informe.pdf', pdf_bueno)]))]),
+            'csv.zip': zipear([('datos.csv', b'producto,precio\ncafe,120\n')]),
+        }
+        return falsos, sin_decidir, buenos
+
+    def test_ronda12_un_zip_vale_por_lo_que_lleva_dentro(self):
+        """Ronda 12 (E): cada miembro con una extensión conocida se valida con SU validador (un 0 → el ZIP 0; un «-» → el
+        ZIP «-»); los desconocidos, con tamaño > 0. Tope de miembros, de tamaño descomprimido y de profundidad."""
+        self.assertGreaterEqual(agente.VALIDADOR_VERSION, 12)
+        falsos, sin_decidir, buenos = self.muestras_r12()
+        vistos = self._tandas({**falsos, **sin_decidir, **buenos})
+        self.assertEqual({k: (vistos[k].get('integro'), vistos[k].get('defecto')) for k in falsos if vistos[k].get('integro') is not False}, {}, 'un ZIP con algo malo dentro no es íntegro')
+        self.assertEqual({k: (vistos[k].get('integro'), vistos[k].get('defecto')) for k in sin_decidir if vistos[k].get('integro') is not None}, {}, 'lo que no se puede comprobar: sin comprobar')
+        self.assertEqual({k: (vistos[k].get('integro'), vistos[k].get('defecto')) for k in buenos if vistos[k].get('integro') is not True}, {}, 'lo que tiene contenido de verdad, sí')
+
     def test_nombres_con_apostrofo(self):
         """Ronda 6, G2-E: «O'Brien.pdf» entero (no «Brien.pdf»), también entre comillas simples."""
         self.assertEqual(agente.rutas_mencionadas("Crea O'Brien.pdf y O’Neil.docx"), ["O'Brien.pdf", 'O’Neil.docx'])
@@ -2467,6 +2521,21 @@ class ArchivosComprobados(Base):
         self.assertEqual(agente.rutas_mencionadas('Guarda la tabla en ~/Documents/precios.ods',
                                                   'Listo. Fuente: https://bch.hn/datos/tabla.csv y copia en resumen.txt.'),
                          ['~/Documents/precios.ods', 'resumen.txt'])
+
+
+
+def _constante_validador(nombre):
+    import re as _re
+    m = _re.search(r'^%s = (.+)$' % nombre, agente.VALIDADOR, _re.M)
+    return eval(m.group(1), {}) if m else 0
+
+
+def agente_tope_zip():
+    return _constante_validador('ZIP_MAX_TOTAL') or 64 * 1024 * 1024
+
+
+def agente_max_miembros():
+    return _constante_validador('ZIP_MAX_MIEMBROS') or 200
 
 
 class PermisoSinClase(ConEndpoints):
