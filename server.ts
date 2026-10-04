@@ -3750,7 +3750,7 @@ async function correrHerramientaPedida(
       // «parar / pausar / seguir» van a su tarea de ahora; lo demás es una misión nueva. Hecha Y comprobada
       // (el dato pedido, el archivo que el nodo encontró) = recibo; hecha sin poder comprobarlo = `unknown`
       // («Listo» no es evidencia: no se memoriza ni se da por hecho); sin encargo = fallo; encargada y sin
-      // final (sigue, se paró, falló a medias) = pudo haber hecho algo.
+      // final (sigue, se paró, falló a medias) = pudo haber hecho algo. Solo respondió = `unknown` sin efecto.
       computadora: async (tarea) => {
         if (!compu) return fallo('HARNESS computadora: solo la uso para alguien con sesión. Pídele que entre con su cuenta.');
         const orden = await comandoComputadora(compu.quien, tarea);
@@ -3763,7 +3763,10 @@ async function correrHerramientaPedida(
         // La tarea durable pasa a «reviso el resultado» si el nodo terminó; la reconciliación decide si se comprobó.
         await cerrarEncargoComputadora(compu.quien, ref, { misionId: r.id || null, estado: !r.id ? 'failed' : hecha ? 'succeeded' : 'unknown', texto: r.hecho });
         if (!r.id) return { texto: r.hecho, estado: 'failed' };
-        return hecha && r.comprobada ? { texto: r.hecho, estado: 'succeeded' } : incierto(r.hecho, { referencia: r.id, ...(hecha ? { codigo: 'sin-comprobar', incompleto: true } : {}) });
+        if (hecha && r.comprobada) return { texto: r.hecho, estado: 'succeeded' };
+        // Solo respondió (ronda 7): terminada, sin efecto y SIN comprobar; no es un éxito ni algo que se memorice como hecho.
+        if (hecha && r.respondida) return { texto: r.hecho, estado: 'unknown', recibo: { efecto: 'ninguno', codigo: 'respondida', incompleto: true, referencia: r.id } };
+        return incierto(r.hecho, { referencia: r.id, ...(hecha ? { codigo: 'sin-comprobar', incompleto: true } : {}) });
       },
       // Cada runner devuelve su estado y su recibo (AUR07): lo que no se pudo es `failed`, un borrador es un
       // recibo `borrador` (nada salió), lo parcial va `incompleto`. Ya no se deduce del tipo de herramienta.

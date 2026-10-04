@@ -117,7 +117,43 @@ const trozo = (v: unknown, max: number) => {
 };
 
 function refDe(reg: RegistroTarea): RefTarea {
-  return { id: reg.id, title: reg.titulo, state: reg.estado, version: reg.version, updatedAt: new Date(reg.actualizada).toISOString() };
+  // El enlace de la burbuja va a cualquier app: «respondida» sale como «partial» (terminal, sin comprobar). La app
+  // nueva pinta el estado de verdad con la tarea que lee de /api/trabajos.
+  const state = reg.estado === 'respondida' ? 'partial' : reg.estado;
+  return { id: reg.id, title: reg.titulo, state, version: reg.version, updatedAt: new Date(reg.actualizada).toISOString() };
+}
+
+/** Lo que pide la app para ver los estados nuevos (ronda 7): `?estados=respondida` o la cabecera `x-aura-estados`. */
+export const ESTADOS_NUEVOS = 'respondida';
+
+/**
+ * Compatibilidad con las apps de antes (ronda 7): no conocen el estado terminal `respondida`. Para ellas, cada tarea
+ * `respondida` sale como `partial` (terminal y sin comprobar: nunca «completada», nunca un error ni algo que sigue
+ * trabajando) con `estadoReal: 'respondida'`. La app que conoce el estado (`conoce`) recibe todo tal cual.
+ */
+export function compatEstados<T>(cuerpo: T, conoce: boolean): T {
+  if (conoce) return cuerpo;
+  const ver = (v: unknown, hondo: number): unknown => {
+    if (hondo > 8 || !v || typeof v !== 'object') return v;
+    if (Array.isArray(v)) return v.map((x) => ver(x, hondo + 1));
+    const o = v as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const [k, x] of Object.entries(o)) out[k] = ver(x, hondo + 1);
+    if (o.state === 'respondida') {
+      out.state = 'partial';
+      out.estadoReal = 'respondida';
+    }
+    return out;
+  };
+  return ver(cuerpo, 0) as T;
+}
+
+/** ¿Esta petición viene de una app que conoce los estados nuevos? */
+export function conoceEstadosNuevos(req: Pick<express.Request, 'query' | 'headers'>): boolean {
+  const q = req.query?.estados;
+  const h = req.headers?.['x-aura-estados'];
+  const dice = (v: unknown) => String(Array.isArray(v) ? v.join(',') : v ?? '').split(',').map((x) => x.trim()).includes(ESTADOS_NUEVOS);
+  return dice(q) || dice(h);
 }
 
 /** Una tarea terminada hace más que esto ya no sale en «recientes». */
@@ -560,6 +596,13 @@ const ID_VALIDO = /^[A-Za-z0-9_:.-]{3,96}$/;
 
 export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
   const ahora = () => (d.reloj ? d.reloj() : Date.now());
+  // Antes de las rutas: una app de antes recibe `respondida` como `partial` (compatEstados).
+  app.use('/api/trabajos', (req, res, next) => {
+    if (conoceEstadosNuevos(req)) return next();
+    const json = res.json.bind(res);
+    res.json = ((cuerpo: unknown) => json(compatEstados(cuerpo, false))) as typeof res.json;
+    return next();
+  });
   const correoDe = (req: express.Request) => conCorreo(String(d.sesionDe(req)?.correo || ''));
   /**
    * Sin sesión, 401 (la app renueva o pide entrar). Con sesión pero sin correo (no hay de quién serían las

@@ -99,7 +99,8 @@ test('encargar y esperar: si termina a tiempo, el hecho trae la respuesta y no s
   try {
     await conNodo(nodo.url, async () => {
       const r = await encargarTarea({ instruccion: 'Busca cuándo nació Morazán', quien: 'jose@x.hn', motor: 'holo', esperaMs: 10_000 });
-      assert.match(r.hecho, /Hecha en 1 pasos/);
+      // Ronda 7: una consulta solo se RESPONDE (terminada, sin comprobar), no se da por hecha.
+      assert.match(r.hecho, /RESPONDIDA \(no comprobada\), en 1 pasos/);
       assert.match(r.hecho, /3 de octubre de 1792/);
       assert.equal(nodo.pedidos[0].ruta, 'POST /tareas');
       assert.deepEqual({ instruccion: nodo.pedidos[0].cuerpo.instruccion, motor: nodo.pedidos[0].cuerpo.motor }, { instruccion: 'Busca cuándo nació Morazán', motor: 'holo' });
@@ -172,7 +173,7 @@ test('eligió Claude y el nodo no lo tiene: la hace la gratis y lo dice', async 
   try {
     await conNodo(nodo.url, async () => {
       const r = await encargarTarea({ instruccion: 'Busca algo', quien: 'a@x.hn', motor: 'claude', esperaMs: 10_000 });
-      assert.match(r.hecho, /Hecha/);
+      assert.match(r.hecho, /RESPONDIDA/);
       assert.match(r.hecho, /La hizo el modelo gratis: Claude no está configurado/);
       assert.deepEqual(nodo.pedidos.filter((p) => p.ruta === 'POST /tareas').map((p) => p.cuerpo.motor), ['claude', 'holo']);
     });
@@ -415,8 +416,9 @@ test('el turno dejó de esperar: se cuentan los avances y el resultado va al tel
         assert.equal(new Set(frases).size, frases.length, 'sin repetir la misma frase');
         const fin = vistos.find((v) => v.aviso.fase === 'termina')!;
         assert.equal(fin.aparato, 'tel-1');
-        assert.equal(fin.aviso.ok, true);
-        assert.match(fin.aviso.texto!, /^Listo, ya terminé en mi computadora\. Nació el 3 de octubre de 1792\./);
+        // Ronda 7: solo respondió: no es «ok» (nada comprobado) ni «Listo»; lo dice y da la respuesta.
+        assert.equal(fin.aviso.ok, false);
+        assert.match(fin.aviso.texto!, /^Solo te respondí; no hice ni comprobé ninguna otra acción\. Nació el 3 de octubre de 1792\./);
         assert.equal(avisosPendientes('jose@x.hn'), null, 'le llegó al teléfono: no se repite en el turno siguiente');
       })
     );
@@ -774,24 +776,27 @@ test('la misión con plan del cerebro: el nodo recibe solo la misión, la app ve
           await hasta(() => vistos.some((v) => v.aviso.fase === 'termina'));
           const fin = (await como('jose@x.hn', `/api/computadora/tareas/${r.id}`)).j.mision;
           assert.deepEqual(fin.plan.map((p: any) => p.estado), ['hecho', 'hecho', 'hecho']);
-          assert.equal(fin.final.ok, true);
+          // Ronda 7: una consulta respondida termina sin comprobar: ni ok ni «Listo», y no ofrece «Seguir».
+          assert.equal(fin.final.ok, false);
+          assert.equal(fin.final.respondida, true);
+          assert.equal(fin.puedeSeguir, false);
           assert.equal(fin.final.captura, 'FINAL', 'la captura final');
           assert.deepEqual(fin.final.datos, [
             { clave: 'Compra', valor: '24.70' },
             { clave: 'Venta', valor: '24.95' },
           ]);
           assert.deepEqual(fin.final.enlaces, ['https://www.bch.hn/tipo-de-cambio', 'https://bch.hn']);
-          assert.match(fin.final.texto, /^Listo, ya terminé en mi computadora\. Compra: 24\.70/);
+          assert.match(fin.final.texto, /^Solo te respondí; no hice ni comprobé ninguna otra acción\. Compra: 24\.70/);
           // El historial: la misión, la más nueva primero; y el nodo puede olvidarla: la tarjeta sigue.
           const h = (await como('jose@x.hn', '/api/computadora')).j.historial;
           assert.equal(h.length, 1);
-          assert.deepEqual({ id: h[0].id, ok: h[0].ok, estado: h[0].estado }, { id: r.id, ok: true, estado: 'hecha' });
+          assert.deepEqual({ id: h[0].id, ok: h[0].ok, estado: h[0].estado, respondida: h[0].respondida }, { id: r.id, ok: false, estado: 'hecha', respondida: true });
           assert.deepEqual(historialDe('otra@x.hn'), []);
           nodo.estado.perdida = true;
           const olvidada = await como('jose@x.hn', `/api/computadora/tareas/${r.id}`);
           assert.equal(olvidada.code, 200);
           assert.equal(olvidada.j.tarea.respuesta, nodo.tareas.get(r.id!)!.respuesta);
-          assert.equal((await como('jose@x.hn', `/api/computadora/misiones/${r.id}`)).j.mision.final.ok, true);
+          assert.equal((await como('jose@x.hn', `/api/computadora/misiones/${r.id}`)).j.mision.final.respondida, true);
           assert.equal((await como('otra@x.hn', `/api/computadora/misiones/${r.id}`)).code, 404, 'cada quien sus misiones');
         })
       )

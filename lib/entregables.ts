@@ -414,8 +414,26 @@ export function esConsulta(instruccion: string): boolean {
     return false;
   // Lista blanca de verdad (ronda 6): CADA fragmento empieza por un verbo de consulta o por una palabra que no es verbo,
   // y no hay un imperativo con enclítico que no sea de consulta («anótalo», «mándaselo», «apártame», «instálalas»).
-  if (!fragmentosAceptables(p, false) || accionEnclitica(sinNombresDe(original), false)) return false;
-  return /[¿?]/.test(p) || palabras.some((w) => RE_CONSULTA.test(w));
+  if (!fragmentosAceptables(p, false) || accionEnclitica(sinNombresDe(original), false) || verboDeAccionEn(sinNombresDe(original))) return false;
+  return /[¿?]/.test(p) || palabras.some((w) => RE_CONSULTA.test(w) || RE_INFINITIVO_CONSULTA.test(w)) || pideUnDato(p);
+}
+
+/** «necesito SABER», «me puedes DECIR», «podrías BUSCAR»: el infinitivo de una consulta también la marca (ronda 7). */
+const RE_INFINITIVO_CONSULTA =
+  /^(saber|decir|decirme|decirnos|buscar|buscarme|averiguar|averiguarme|investigar|consultar|revisar|leer|leerme|explicar|explicarme|contar|contarme|conocer|comparar|resumir|resumirme|encontrar|checar|verificar|comprobar|know|find|look|check)$/;
+/**
+ * «I need the gold price», «quiero el precio del dólar»: pedir un DATO con «necesito / quiero / need / want» y un
+ * determinante, sin nada que sea archivo, documento o correo en ese fragmento (eso es una entrega, no una consulta).
+ */
+const DETERMINANTES = new Set('el la los las un una unos unas mi mis tu su sus the a an my your our some'.split(' '));
+function pideUnDato(p: string): boolean {
+  return fragmentosDe(p).some((f) => {
+    if (RE_NO_ES_TEXTO_EN_CHAT.test(f) || /\b(informes?|reportes?|reports?|presupuestos?|facturas?|invoices?|contratos?|contracts?|budgets?)\b/.test(f)) return false;
+    const ws = f.match(/[a-zñ0-9']+/g) || [];
+    let i = 0;
+    while (i < ws.length && (SALTABLES.has(ws[i]) || /^(i|we|yo|nosotros|me|nos|would|like|really)$/.test(ws[i]))) i++;
+    return /^(necesito|necesitamos|ocupo|quiero|queremos|quisiera|need|want|needs|wants)$/.test(ws[i] || '') && DETERMINANTES.has(ws[i + 1] || '');
+  });
 }
 
 /** Los fragmentos de una instrucción, por sus conectores: y, e, luego, después, entonces, and, then, «,», «;», «.». */
@@ -429,7 +447,7 @@ function fragmentosDe(p: string): string[] {
 }
 /** Cómo puede empezar un fragmento de consulta: un verbo de consulta (lista CERRADA). */
 const INICIO_CONSULTA =
-  /^(busca|buscame|buscalo|buscala|buscalos|buscalas|averigua|averiguame|averigualo|investiga|investigalo|consulta|consultame|revisa|revisame|revisalo|mira|miralo|fijate|compara|comparame|dime|dimelo|dinos|decime|explica|explicame|explicamelo|cuentame|cuentamelo|cuentanos|lee|leeme|leelo|resume|resumeme|resumelo|encuentra|encuentrame|encuentralo|ve|abre|entra|visita|checa|chequea|verifica|comprueba|muestrame|ensename|find|search|look|check|tell|explain|read|summarize|compare|show|open|visit|what|whats|how|which|who|whom|whose|when|where|why|is|are|was|were|does|do|did|can|could)$/;
+  /^(?:(?:busca|averigua|investiga|consulta|revisa|mira|compara|lee|resume|encuentra|explica|cuenta|muestra|ensena|checa|chequea|verifica|comprueba|fija)(?:me|te|lo|la|los|las|nos|melo|mela|noslo|nosla)?|dime|dimelo|dinos|decime|di|ve|abre|entra|visita|saber|decir|decirme|decirnos|buscar|buscarme|averiguar|investigar|consultar|revisar|mirar|ver|comparar|leer|resumir|resumirme|encontrar|explicar|explicarme|contar|contarme|conocer|checar|verificar|comprobar|find|search|look|check|tell|explain|read|summarize|compare|show|open|visit|what|whats|how|which|who|whom|whose|when|where|why|is|are|was|were|does|do|did|know)$/;
 /** …o una palabra que no es verbo (lista CERRADA): artículos, determinantes, preposiciones, números, interrogativos. */
 const INICIO_NO_VERBO = new Set(
   (
@@ -443,11 +461,58 @@ const INICIO_NO_VERBO = new Set(
 );
 /** Producir texto que va en la respuesta (solo cuenta si se permite: el texto en el chat). */
 const INICIO_TEXTO = (w: string) => RE_V_PRODUCIR_COSA.test(w) || RE_V_NECESIDAD.test(w) || RE_V_TRADUCIR.test(w);
+/**
+ * Lo que se salta al principio de un fragmento para ver la palabra que de verdad lo empieza (ronda 7): «si», «además»,
+ * «por favor», «also», «please»… («y si alcanza PAGA la luz», «y por favor RESERVA», «Also BUY») y lo que pide sin
+ * decir el verbo todavía («necesito SABER», «me puedes DECIR», «podrías BUSCAR», «I need THE…»).
+ */
+const SALTABLES = new Set('si ademas tambien por favor porfa porfavor pues bueno also please so then if and y e luego despues entonces'.split(' '));
+const MODALES = new Set('necesito necesitamos necesita quiero queremos quisiera me nos te puedes puede podrias podria pudieras puedo i we need want would like can could you to'.split(' '));
 function fragmentosAceptables(p: string, permitirTexto: boolean): boolean {
   return fragmentosDe(p).every((f) => {
-    const w = (f.match(/[a-zñ0-9']+/) || [''])[0];
-    return !w || INICIO_CONSULTA.test(w) || INICIO_NO_VERBO.has(w) || /^\d+$/.test(w) || (permitirTexto && INICIO_TEXTO(w));
+    const ws = f.match(/[a-zñ0-9']+/g) || [];
+    let i = 0;
+    while (i < ws.length && (SALTABLES.has(ws[i]) || MODALES.has(ws[i]))) i++;
+    const w = ws[i] || '';
+    return !w || INICIO_CONSULTA.test(w) || (INICIO_NO_VERBO.has(w) && !SALTABLES.has(w)) || /^\d+$/.test(w) || (permitirTexto && INICIO_TEXTO(w));
   });
+}
+
+/**
+ * Defensa (ronda 7): un verbo de ACCIÓN conocido en cualquier forma (compra, compre, compras, comprar, paga, reserva,
+ * instala, anota; buy, pay, book, install, order…) saca la misión del camino de consulta. Lo que es un sustantivo detrás
+ * de un artículo («la compra», «el pago», «la reserva», «the order», «a book») no.
+ */
+const RE_FORMA_ACCION =
+  /^(?:compr|pag|pagu|reserv|instal|desinstal|anot|apart|agend|mand|envi|reenvi|transfier|transfer|cancel|llen|rellen|borr|elimin|descarg|guard|llam|avis|orden|alquil|contrat|suscrib|inscrib|imprim|renombr|compart)(?:a|as|e|es|en|an|o|ar|er|ir|ando|iendo|ado|ido|ada|ida|amos|emos|imos|aste|aron|ara|aria|are|ue|ues|uen)(?:lo|la|los|las|le|les|me|nos|selo|sela|melo|mela)?$/;
+const RE_ACCION_EN =
+  /^(buy|buys|buying|bought|pay|pays|paying|paid|book|books|booking|booked|install|installs|installing|installed|order|orders|ordering|ordered|purchase|purchases|purchased|purchasing|reserve|reserves|reserved|send|sends|sending|sent|email|emails|emailed|text|texts|texted|share|shares|shared|post|posts|posted|delete|deletes|deleted|remove|removes|removed|fix|fixes|fixed|cancel|cancels|cancelled|canceled|transfer|transfers|transferred|subscribe|subscribed|download|downloads|downloaded|upload|uploads|uploaded|save|saves|saved|forward|reply|replies|replied|schedule|scheduled)$/;
+const ANTES_DE_SUSTANTIVO = new Set('el la los las un una unos unas mi tu su mis tus sus este esta ese esa del al de se the a an my your our this that its his her their in of'.split(' '));
+const NO_SON_ACCION = new Set(['aparte', 'cobre', 'mando', 'llamas']);
+function verboDeAccionEn(original: string): boolean {
+  const ws = plegar(String(original || '')).match(/[a-zñ']+/g) || [];
+  return ws.some((w, i) => {
+    if (NO_SON_ACCION.has(w)) return false;
+    const es = RE_FORMA_ACCION.test(w);
+    const en = RE_ACCION_EN.test(w);
+    if (!es && !en) return false;
+    // «la compra», «el pago», «the order»: un sustantivo (solo en las formas que pueden serlo).
+    if (ANTES_DE_SUSTANTIVO.has(ws[i - 1] || '') && (en || /[aoe]$/.test(w))) return false;
+    return true;
+  });
+}
+
+/**
+ * ¿La respuesta REMITE a otro lugar en vez de traer el texto? («lo dejé abierto en el navegador», «ya se encuentra
+ * disponible en la pantalla», «está en la ventana del editor», «is now displayed on the desktop screen»). Eso no es la
+ * entrega: el texto no vino en la respuesta.
+ */
+const RE_LUGAR = /\b(pantalla|ventana|navegador|escritorio|editor|pestana|screen|desktop|browser|window|tab)\b/;
+const RE_REMITE = /\b(esta en|quedo en|queda en|se encuentra|disponible|deje abiert[oa]|dejo abiert[oa]|lo deje|la deje|abiert[oa] en|is on|is in|on the|in the|displayed|shown|left (it )?open|open on|open in)\b/;
+export function remiteAOtroLugar(respuesta: string | null | undefined): boolean {
+  return plegar(String(respuesta || ''))
+    .split(/(?<=[.!?…])\s+|\n+/)
+    .some((f) => (RE_LUGAR.test(f) && RE_REMITE.test(f)) || /\b(lo deje abierto|la deje abierta|left it open|is now displayed|displayed on|shown on)\b/.test(f));
 }
 const RE_CLITICO = /(selos|selas|selo|sela|noslo|nosla|melo|mela|telo|tela|los|las|les|lo|la|le|me|nos)$/;
 /** Imperativos con enclítico comunes, sin tilde (como se escriben de prisa). */
@@ -858,6 +923,7 @@ export function requisitosDeEntrega(instruccion: string): PedidoEntrega {
     !produceOtraCosa &&
     fragmentosAceptables(sinNombres, true) &&
     !accionEnclitica(sinWeb, true) &&
+    !verboDeAccionEn(sinNombres) &&
     explicitos === 0 &&
     !enTexto.length &&
     !RE_NO_ES_TEXTO_EN_CHAT.test(sinNombres) &&

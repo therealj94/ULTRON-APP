@@ -384,7 +384,7 @@ test('revisión 2e: el número pedido manda aunque el verbo esté en otra frase'
 
 test('revisión: lo legítimo no se rompe («crea informe.docx» con informe.docx correcto completa)', () => {
   assert.equal(cerrar('Crea informe.docx', [ok('informe.docx', 'docx', '1')], 'Listo.').c.estado, 'completed');
-  assert.equal(cerrar('Busca el clima de Tegucigalpa', undefined, 'Soleado, 28 grados').c.estado, 'completed', 'un dato sigue siendo un dato');
+  assert.equal(cerrar('Busca el clima de Tegucigalpa', undefined, 'Soleado, 28 grados').c.estado, 'respondida', 'un dato sigue siendo un dato (ronda 7: respondida, no completed)');
 });
 
 async function nodo(respuesta: string, extra: Record<string, unknown>) {
@@ -610,7 +610,7 @@ test('R2: cualquier familia de archivo hace la misión de archivos, aunque el ve
   // Un dato con un archivo como fuente sigue siendo un dato.
   for (const q of ['Abre el PDF del reglamento y dime qué dice', 'Busca fotos de Copán y dime cuál te gusta']) {
     assert.equal(pideArchivo(q), false, q);
-    assert.equal(cerrar(q, undefined, 'El reglamento fija el pago del impuesto el día 10 de cada mes, con multa del 5 por ciento.').c.estado, 'completed', q);
+    assert.equal(cerrar(q, undefined, 'El reglamento fija el pago del impuesto el día 10 de cada mes, con multa del 5 por ciento.').c.estado, 'respondida', q);
   }
 });
 
@@ -873,7 +873,7 @@ test('ronda 5 · propiedad: «verbo de producir + objeto» con cero archivos nun
   assert.deepEqual(malos, [], `se completaron sin entrega: ${malos.slice(0, 10).join(' · ')}`);
 });
 
-test('ronda 5 · propiedad inversa: 30 consultas puras sí se completan con el dato', () => {
+test('ronda 5 · propiedad inversa: 30 consultas puras se cierran con el dato (ronda 7: «respondida», nunca completed)', () => {
   const consultas = [
     '¿Cuánto es el tipo de cambio hoy?', 'Dime qué tiempo hace en Tegucigalpa', '¿Cuál es el horario del banco?', 'Busca y dime el precio del oro', 'Averigua cuánto cuesta el pasaje a San Pedro Sula',
     '¿Qué dice la página principal del BCH?', 'Explica qué es el impuesto sobre ventas', 'Lee la noticia principal y dime de qué trata', 'Resume la página del SAR y dime lo importante', '¿Quién ganó el partido de anoche?',
@@ -883,23 +883,23 @@ test('ronda 5 · propiedad inversa: 30 consultas puras sí se completan con el d
     'Explain what the page says', '¿Qué precio tiene el café hoy?', 'Dime cuál es la capital de Belice', '¿Cuántos días faltan para el feriado?', 'Busca y dime quién es el ministro de salud',
   ];
   assert.equal(consultas.length, 30);
-  const noCompletan = consultas.filter((q) => cerrar(q, undefined, 'Son 24.70 lempiras según el Banco Central, actualizado hoy a las 10:00.').c.estado !== 'completed');
-  assert.deepEqual(noCompletan, []);
+  const noRespondidas = consultas.filter((q) => cerrar(q, undefined, 'Son 24.70 lempiras según el Banco Central, actualizado hoy a las 10:00.').c.estado !== 'respondida');
+  assert.deepEqual(noRespondidas, []);
 });
 
-test('ronda 5 · texto en el chat: un resumen, una traducción o una lista que van en la respuesta SON la entrega', () => {
+test('ronda 5 · texto en el chat: un resumen, una traducción o una lista que van en la respuesta se responden (ronda 7: «respondida»)', () => {
   const resumen =
     'La noticia cuenta que el Banco Central subió la tasa de política monetaria medio punto. La medida busca frenar la inflación, que llegó al 5,8 por ciento en septiembre. Los bancos comerciales ajustarán sus tasas de préstamo en las próximas semanas.';
-  assert.equal(cerrar('Hazme un resumen de la noticia', undefined, resumen).c.estado, 'completed', 'el resumen está en la respuesta');
+  assert.equal(cerrar('Hazme un resumen de la noticia', undefined, resumen).c.estado, 'respondida', 'el resumen está en la respuesta');
   assert.equal(cerrar('Hazme un resumen de la noticia', undefined, 'Listo, ya está').c.estado, 'partial', 'un acuse no es un resumen');
   assert.equal(cerrar('Hazme un resumen de la noticia', undefined, 'Listo, ya está, hice el resumen como pediste.').c.estado, 'partial');
   const pdf = evaluarEntrega(mision('Hazme un resumen en PDF', [], resumen));
   assert.equal(pdf.tipo, 'archivo', 'en PDF es un archivo');
   assert.equal(pdf.comprobada, false);
   const traduccion = 'Here is the translation: The Central Bank raised the monetary policy rate by half a point to curb inflation, which reached 5.8 percent in September.';
-  assert.equal(cerrar('Tradúceme esto al inglés: el Banco Central subió la tasa medio punto para frenar la inflación', undefined, traduccion).c.estado, 'completed');
+  assert.equal(cerrar('Tradúceme esto al inglés: el Banco Central subió la tasa medio punto para frenar la inflación', undefined, traduccion).c.estado, 'respondida');
   assert.equal(cerrar('Haz un resumen y una gráfica', undefined, resumen).c.estado, 'partial', 'la gráfica no va en el texto');
-  assert.equal(cerrar('Dame una lista de 5 ideas para el negocio', undefined, '1. Vender café en línea con entrega a domicilio. 2. Ofrecer cursos de barismo. 3. Abrir un puesto en el mercado. 4. Hacer suscripciones mensuales. 5. Vender a oficinas.').c.estado, 'completed');
+  assert.equal(cerrar('Dame una lista de 5 ideas para el negocio', undefined, '1. Vender café en línea con entrega a domicilio. 2. Ofrecer cursos de barismo. 3. Abrir un puesto en el mercado. 4. Hacer suscripciones mensuales. 5. Vender a oficinas.').c.estado, 'respondida');
   // Lo que ya estaba: un correo va por su borrador; una acción en pantalla queda sin comprobar.
   assert.equal(cerrar('Escribe un correo a Ana con el resumen', undefined, resumen).c.estado, 'partial');
   assert.equal(cerrar('Abre YouTube y pon música', undefined, resumen).c.estado, 'partial');
@@ -942,7 +942,7 @@ test('ronda 6 · G2-B: una consulta con una acción en otro fragmento no es cons
   ];
   for (const q of casos) assert.notEqual(cerrar(q, undefined, INFO6).c.estado, 'completed', q);
   for (const q of ['Busca el precio del oro y dime cuánto subió', 'Busca el precio del oro y la plata', 'Busca vuelos a Los Ángeles', 'Busca la película de anoche y dime de qué trata'])
-    assert.equal(cerrar(q, undefined, INFO6).c.estado, 'completed', q);
+    assert.equal(cerrar(q, undefined, INFO6).c.estado, 'respondida', q);
 });
 
 test('ronda 6 · G2-B propiedad: «consulta + y + acción» (30 × 30) nunca se completa', () => {
@@ -971,9 +971,9 @@ test('ronda 6 · G2-C: lo que pidió la persona cuenta aunque el modelo encargue
   const c = reconciliarConComputadora(tarea('Busca el precio del oro'), m, T0 + 60_000);
   assert.equal(c!.estado, 'partial', 'mandárselo a Ana no se comprueba con el precio');
   assert.equal(deComputadora(m, T0 + 60_000).state, 'partial');
-  // Persona y modelo piden lo mismo (consulta): se completa.
+  // Persona y modelo piden lo mismo (consulta): se responde (ronda 7: «respondida», no completed).
   const igual = { ...mision('Busca el precio del oro', undefined, INFO6), pedidoPersona: '¿A cómo está el oro hoy?' } as MisionComputadoraMin;
-  assert.equal(reconciliarConComputadora(tarea('Busca el precio del oro'), igual, T0 + 60_000)!.estado, 'completed');
+  assert.equal(reconciliarConComputadora(tarea('Busca el precio del oro'), igual, T0 + 60_000)!.estado, 'respondida');
   // Texto en el chat solo si ninguna de las dos pide otra cosa.
   const res =
     'La noticia cuenta que el Banco Central subió la tasa de política monetaria medio punto. La medida busca frenar la inflación, que llegó al 5,8 por ciento en septiembre.';
@@ -990,10 +990,12 @@ test('ronda 6 · G2-C por el servidor: la misión guarda lo que pidió la person
       const m = misionDeTarea(r.id!)! as any;
       assert.equal(m.pedidoPersona, 'Busca el precio del oro y mándaselo a Ana', 'se guarda en la misión');
       assert.equal(vistaMision(m).final!.ok, false);
-      // Persona y modelo piden solo la consulta: ok (otra misión: el nodo de prueba siempre da el mismo id).
+      // Persona y modelo piden solo la consulta: respondida, sin comprobar (otra misión: el nodo de prueba siempre da el mismo id).
       _olvidarEncargos();
       const r2 = await (encargarTarea as any)({ instruccion: 'Busca el precio del oro', pedidoPersona: '¿A cómo está el oro hoy?', quien: 'ana@x.hn', motor: 'holo', esperaMs: 8000 });
-      assert.equal(r2.comprobada, true);
+      assert.equal(r2.comprobada, false);
+      assert.equal(r2.respondida, true);
+      assert.equal(r.respondida, false, 'con una acción pedida no es «solo una respuesta»');
     });
   } finally {
     await n.cerrar();
@@ -1010,8 +1012,8 @@ test('ronda 6 · G2-D: un acuse largo no se hace pasar por resumen ni traducció
   assert.equal(cerrar('Tradúceme esto al inglés: el banco subió la tasa', undefined, "Here it is: I've translated it as you asked and I completed the translation carefully, it is done and ready now.").c.estado, 'partial');
   const real =
     'La noticia cuenta que el Banco Central subió la tasa de política monetaria medio punto. La medida busca frenar la inflación, que llegó al 5,8 por ciento en septiembre. Los bancos ajustarán sus tasas en las próximas semanas.';
-  assert.equal(cerrar('Hazme un resumen de la noticia', undefined, real).c.estado, 'completed');
-  assert.equal(cerrar('Hazme un resumen de la noticia', undefined, `Listo, aquí está el resumen: ${real}`).c.estado, 'completed', 'un acuse delante de un resumen real no lo anula');
+  assert.equal(cerrar('Hazme un resumen de la noticia', undefined, real).c.estado, 'respondida');
+  assert.equal(cerrar('Hazme un resumen de la noticia', undefined, `Listo, aquí está el resumen: ${real}`).c.estado, 'respondida', 'un acuse delante de un resumen real no lo anula');
 });
 
 test("ronda 6 · G2-E: nombres con apóstrofo («O'Brien.pdf» no es «Brien.pdf»)", () => {
@@ -1029,8 +1031,137 @@ test('ronda 6 · menores: dos carpetas en un pedido, nombres NFD en disco y «un
   // «cotización.xlsx» descompuesto en el disco (NFD) es el mismo nombre.
   assert.equal(cerrar('Crea cotización.xlsx con los precios', [arch('Documents/cotización.xlsx'.normalize('NFD'), 'xlsx', '1', { mencionado: true })], 'Listo.').c.estado, 'completed');
   const tabla = 'Producto | Precio\nCafé | 120 lempiras\nAzúcar | 45 lempiras\nArroz | 38 lempiras\nFrijoles | 52 lempiras la libra en el mercado.';
-  assert.equal(cerrar('Hazme una tabla con los precios', undefined, tabla).c.estado, 'completed');
+  assert.equal(cerrar('Hazme una tabla con los precios', undefined, tabla).c.estado, 'respondida');
   assert.equal(cerrar('Hazme una tabla en Excel con los precios', undefined, tabla).c.estado, 'partial');
+});
+
+/* ------------------------------------------------------------------ ronda 7: dos estados finales */
+
+const ORO = 'El oro cerró hoy en 2,410 dólares la onza, según el mercado de Londres; subió 1.2 por ciento en la semana.';
+
+test('ronda 7 · 1: los casos de la revisión no quedan completed ni comprobados (una acción escondida tras «si», «además», «por favor», «also»…)', () => {
+  const casos = [
+    'Busca el precio del oro y además compra dos onzas',
+    'Mira mi saldo y si alcanza paga la luz',
+    'Revisa si hay actualizaciones y si hay instala todas',
+    'Busca vuelos a Madrid y por favor reserva el más barato',
+    'What is the gold price? Also buy two ounces',
+    'Check the gold price and please buy two ounces',
+    'Busca el precio del oro y lo anotas en la hoja',
+    'Revisa si hay actualizaciones y las instalas',
+  ];
+  for (const q of casos) {
+    const e = evaluarEntrega(mision(q, undefined, ORO));
+    assert.equal(e.comprobada, false, q);
+    const c = cerrar(q, undefined, ORO);
+    assert.notEqual(c.c.estado, 'completed', q);
+    assert.notEqual(c.c.estado, 'respondida', `${q}: una acción no es «solo una respuesta»`);
+  }
+});
+
+test('ronda 7 · 1: una consulta respondida queda «respondida», nunca completed ni comprobada', () => {
+  const consultas = [
+    'Busca el precio del oro y dime cuánto subió',
+    'Necesito saber el precio del oro',
+    'Quiero saber cuánto cuesta el oro',
+    'I need the gold price',
+    '¿Me puedes decir el precio del oro?',
+    'Podrías buscar el precio del oro',
+    'Busca el precio de ayer y compáralo con el de hoy',
+    'Lee la noticia y resúmela',
+  ];
+  for (const q of consultas) {
+    const e = evaluarEntrega(mision(q, undefined, ORO)) as any;
+    assert.equal(e.comprobada, false, q);
+    assert.equal(e.respondida, true, q);
+    const c = cerrar(q, undefined, ORO);
+    assert.equal(c.c.estado, 'respondida', q);
+    assert.match(c.c.resultado!.resumen, /Solo te respond[ií]; no hice ni comprob[eé] ninguna otra acci[oó]n/, q);
+    assert.ok(c.criterios.every((x) => x.estado !== 'verified'), 'responder no verifica ningún criterio');
+    assert.equal(c.s.state, 'respondida');
+    assert.equal(c.s.terminal, true);
+  }
+  // Un resumen en el chat también: respondida, no completed.
+  const resumen = 'La noticia cuenta que el Banco Central subió la tasa de política monetaria medio punto. La medida busca frenar la inflación, que llegó al 5,8 por ciento en septiembre.';
+  assert.equal(cerrar('Hazme un resumen de la noticia', undefined, resumen).c.estado, 'respondida');
+});
+
+test('ronda 7 · 2: una respuesta que remite a otro lugar (pantalla, ventana, navegador) no es la entrega: partial', () => {
+  const remiten = [
+    'He terminado de hacer el resumen solicitado y lo dejé abierto en el navegador para que puedas leerlo con calma cuando quieras, con todos los detalles importantes de la noticia.',
+    'El resumen solicitado ya se encuentra disponible en la pantalla de tu computadora, con los puntos principales de la noticia sobre la tasa de interés y la inflación del mes.',
+    'Resumen: está en la ventana del editor de texto que dejé abierta, con los tres puntos principales de la noticia del Banco Central y sus efectos en los préstamos.',
+    'The summary has been completed and is now displayed on the desktop screen, covering the main points about the central bank rate decision and inflation figures.',
+    'Tarea finalizada con éxito. El documento con el resumen de la noticia del Banco Central quedó en la pantalla, listo para que lo revises con todos los puntos importantes.',
+  ];
+  for (const r of remiten) {
+    const c = cerrar('Hazme un resumen de la noticia', undefined, r);
+    assert.equal(c.c.estado, 'partial', r);
+    assert.match(c.texto, /no vino en la respuesta/, r);
+  }
+  // También en una consulta: «el precio está en la pantalla» no es el precio.
+  assert.equal(cerrar('Busca el precio del oro', undefined, 'El precio del oro de hoy está en la pantalla del navegador que dejé abierto, en la página del mercado de Londres, con 2 decimales.').c.estado, 'partial');
+});
+
+test('ronda 7 · propiedad: NINGÚN camino sin entregable verificado da comprobada ni completed', () => {
+  const r = azar(77);
+  const piezas = ['Busca el precio del oro', 'Mira mi saldo', 'Hazme un resumen de la noticia', 'Dime el clima', 'Revisa si hay actualizaciones', 'Lee la noticia', 'What is the gold price?', 'Check the weather', 'Necesito saber el precio', 'Tradúceme esto al inglés'];
+  const acciones = ['y además compra dos onzas', 'y si alcanza paga la luz', 'y por favor reserva uno', 'Also buy two', 'and please order one', 'y lo anotas en la hoja', 'y las instalas', 'y mándaselo a Ana', 'y dime cuánto subió', ''];
+  const respuestas = [ORO, 'Listo, ya está', 'Lo dejé abierto en el navegador para que lo veas con calma, con todos los detalles importantes y los datos del mercado.', 'La noticia dice que el banco subió la tasa medio punto para frenar la inflación del 5,8 por ciento en septiembre pasado.'];
+  const malos: string[] = [];
+  for (let i = 0; i < 400; i++) {
+    const q = `${piezas[Math.floor(r() * piezas.length)]} ${acciones[Math.floor(r() * acciones.length)]}`.trim();
+    const resp = respuestas[Math.floor(r() * respuestas.length)];
+    const e = evaluarEntrega(mision(q, [], resp));
+    const c = reconciliarConComputadora(tarea(q), mision(q, [], resp), T0 + 60_000);
+    if (e.comprobada || c?.estado === 'completed' || deComputadora(mision(q, [], resp), T0 + 60_000).state === 'completed') malos.push(`${q} | ${resp.slice(0, 30)}`);
+  }
+  assert.deepEqual(malos.slice(0, 10), [], `${malos.length} sin entregable quedaron completed o comprobados`);
+});
+
+test('ronda 7 · servidor: la voz dice que solo respondió; la tarjeta no es «Listo» ni ofrece «Seguir»; el HECHO no es un éxito', async () => {
+  const n = await nodo(ORO, {});
+  try {
+    await conNodo(n.url, async () => {
+      const r = await (encargarTarea as any)({ instruccion: 'Busca el precio del oro y dime cuánto subió', quien: 'ana@x.hn', motor: 'holo', esperaMs: 8000 });
+      assert.equal(r.comprobada, false);
+      assert.equal(r.respondida, true);
+      assert.match(r.hecho, /RESPONDIDA/);
+      const v = vistaMision(misionDeTarea(r.id!)!) as any;
+      assert.equal(v.final.ok, false);
+      assert.equal(v.final.comprobado, false);
+      assert.equal(v.final.respondida, true);
+      assert.match(v.final.texto, /Solo te respond[ií]; no hice ni comprob[eé] ninguna otra acci[oó]n/);
+      assert.doesNotMatch(v.final.texto, /^Listo/);
+      assert.equal(v.puedeSeguir, false, 'terminada: no se ofrece seguir');
+    });
+  } finally {
+    await n.cerrar();
+  }
+});
+
+test('ronda 7 · clientes: los nuevos ven «respondida»; los viejos ven un terminal honesto (partial), nunca completed', async () => {
+  const { compatEstados } = (await import('../server/trabajos')) as any;
+  const snap = { id: 'x', state: 'respondida', terminal: true, title: 't' };
+  const viejo = compatEstados({ tareas: [snap], tarea: snap }, false);
+  assert.equal(viejo.tareas[0].state, 'partial');
+  assert.equal(viejo.tareas[0].estadoReal, 'respondida');
+  assert.equal(viejo.tareas[0].terminal, true);
+  assert.equal(viejo.tarea.state, 'partial');
+  assert.equal(compatEstados({ tareas: [snap] }, true).tareas[0].state, 'respondida');
+  // El cliente de la app y de la web pide los estados nuevos.
+  const { crearClienteTrabajos, etiquetaEstado } = (await import('../mobile/src/lib/trabajos')) as any;
+  const rutas: string[] = [];
+  const cli = crearClienteTrabajos(async (ruta: string) => (rutas.push(ruta), { status: 200, json: { tareas: [], tarea: null } }));
+  await cli.listar();
+  await cli.ver('tk_1');
+  await cli.cancelar('tk_1');
+  assert.ok(rutas.every((x) => /[?&]estados=respondida/.test(x)), rutas.join(' '));
+  assert.match(etiquetaEstado('respondida'), /Respondida/);
+  assert.match(etiquetaEstado('respondida'), /sin comprobar/i);
+  const { finalEnPalabras } = (await import('../mobile/src/compa/computadora')) as any;
+  assert.equal(finalEnPalabras({ estado: 'hecha', ok: false, comprobado: false, respondida: true }), 'Respondida (sin comprobar)');
+  assert.equal(finalEnPalabras({ estado: 'hecha', ok: false, comprobado: false }), 'Sin comprobar', 'un servidor de antes sigue igual');
 });
 
 test('ronda 3: lo legítimo de un archivo sigue completando', () => {

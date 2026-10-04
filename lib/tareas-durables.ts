@@ -42,7 +42,7 @@ import {
   reservarPedido,
   type AlmacenDurable,
 } from './durable';
-import { compararEntrega, comprobarCopia, esConsulta, esOperacionDeArchivos, esTextoEnChat, faltaEnPalabras, nombresEn, respuestaConTexto, textoSinAcuses, requisitosCombinados, requisitosDeEntrega, type ArchivoNodo, type ItemEntrega, type PedidoEntrega } from './entregables';
+import { compararEntrega, comprobarCopia, esConsulta, esOperacionDeArchivos, esTextoEnChat, faltaEnPalabras, nombresEn, remiteAOtroLugar, respuestaConTexto, textoSinAcuses, requisitosCombinados, requisitosDeEntrega, type ArchivoNodo, type ItemEntrega, type PedidoEntrega } from './entregables';
 
 export { esConsulta, esOperacionDeArchivos, nombresEn, requisitosCombinados, requisitosDeEntrega, type ArchivoNodo, type ItemEntrega, type PedidoEntrega } from './entregables';
 
@@ -63,6 +63,9 @@ export const ESTADOS_TAREA = [
   'reconciling',
   'verifying',
   'completed',
+  // Ronda 7: terminó RESPONDIENDO (una consulta o un texto en el chat). Terminal, pero NUNCA comprobada ni completada:
+  // «solo te respondí; no hice ni comprobé ninguna otra acción».
+  'respondida',
   'partial',
   'failed',
   'blocked',
@@ -71,7 +74,7 @@ export const ESTADOS_TAREA = [
 ] as const;
 export type EstadoTarea = (typeof ESTADOS_TAREA)[number];
 
-export const TERMINALES: ReadonlySet<EstadoTarea> = new Set<EstadoTarea>(['completed', 'partial', 'failed', 'cancelled']);
+export const TERMINALES: ReadonlySet<EstadoTarea> = new Set<EstadoTarea>(['completed', 'respondida', 'partial', 'failed', 'cancelled']);
 export const esTerminal = (e: EstadoTarea) => TERMINALES.has(e);
 /** Los que se pueden pausar (un trabajo vivo, no uno que ya espera a la persona ni uno que se está cerrando). */
 const PAUSABLES: ReadonlySet<EstadoTarea> = new Set<EstadoTarea>(['created', 'planning', 'queued', 'waiting_resource', 'running', 'verifying', 'blocked', 'reconciling']);
@@ -815,7 +818,25 @@ export function archivoComprobado(a: unknown): boolean {
  * `items`: cada cosa pedida con su estado y su archivo (solo para archivos); `hechos` de `total` pedidos. `revisado`:
  * el nodo revisó sus archivos al terminar (false: un nodo de antes o no pudo mirar; nada de archivos se comprobó).
  */
-export type Entrega = { comprobada: boolean; tipo: 'archivo' | 'accion' | 'dato'; evidencias: Evidencia[]; falta: string | null; items: ItemEntrega[]; hechos: number; total: number; revisado: boolean };
+export type Entrega = {
+  comprobada: boolean;
+  tipo: 'archivo' | 'accion' | 'dato';
+  evidencias: Evidencia[];
+  falta: string | null;
+  items: ItemEntrega[];
+  hechos: number;
+  total: number;
+  revisado: boolean;
+  /**
+   * Ronda 7: terminó RESPONDIENDO (una consulta pura o un texto en el chat que vino en la respuesta). Nunca es
+   * `comprobada`: se cierra `respondida`, no `completed`.
+   */
+  respondida?: boolean;
+};
+
+/** Lo que se le dice a la persona cuando solo se respondió. */
+export const SOLO_RESPONDI = 'Solo te respondí; no hice ni comprobé ninguna otra acción.';
+export const SOLO_RESPONDI_EN = "I only answered; I didn't do or verify any other action.";
 
 /** El id de la evidencia de un requisito verificado: uno por requisito, nunca compartido. */
 const idEvidenciaItem = (misionId: string, itemId: string) => `${misionId}:archivo:${itemId}`;
@@ -878,6 +899,11 @@ export function evaluarEntrega(m: Pick<MisionComputadoraMin, 'id' | 'instruccion
   // si trae el texto (no un acuse: «Listo, ya está» no es un resumen).
   // El texto en el chat solo vale si ninguna de las dos pide otra cosa (cada una es texto en el chat o una consulta).
   const textoEnChat = textos.some((t) => esTextoEnChat(t, req)) && textos.every((t) => esTextoEnChat(t, req) || esConsulta(t));
+  // Ronda 7: si la respuesta remite a otro lugar («lo dejé abierto en el navegador», «está en la pantalla»), el texto no
+  // vino en la respuesta: no es la entrega (partial), ni siquiera «respondida».
+  if ((textoEnChat || textos.every((t) => esConsulta(t))) && remiteAOtroLugar(m.resultado)) {
+    return { comprobada: false, tipo: 'dato', evidencias: abiertas, falta: 'El texto no vino en la respuesta: tu computadora dice que lo dejó en otro lugar (la pantalla, una ventana, el navegador), y eso no lo puedo comprobar.', items: [], hechos: 0, total: 1, revisado: true };
+  }
   if (textoEnChat && !(respuestaInformativa(textoSinAcuses(String(m.resultado || ''))) && respuestaConTexto(m.resultado, m.datos))) {
     return { comprobada: false, tipo: 'dato', evidencias: abiertas, falta: m.resultado ? 'Tu computadora dice que terminó, pero su respuesta no trae el texto que pediste: no pude comprobarlo.' : 'Terminó sin el texto que pediste.', items: [], hechos: 0, total: 1, revisado: true };
   }
@@ -887,9 +913,11 @@ export function evaluarEntrega(m: Pick<MisionComputadoraMin, 'id' | 'instruccion
   if (!respuestaInformativa(m.resultado)) {
     return { comprobada: false, tipo: 'dato', evidencias: abiertas, falta: m.resultado ? 'Tu computadora dice que terminó, pero no trajo lo que pediste: no pude comprobarlo.' : 'Terminó sin un resultado que lo compruebe.', items: [], hechos: 0, total: 1, revisado: true };
   }
-  const ev: Evidencia[] = [{ id: `${m.id}:respuesta`, tipo: 'dato', etiqueta: `Lo que encontró: ${texto(m.resultado, 190)}` }];
+  // Ronda 7: lo que se responde con el texto NO es una entrega verificada. Queda `respondida` (terminal, nunca
+  // comprobada): «solo te respondí; no hice ni comprobé ninguna otra acción».
+  const ev: Evidencia[] = [{ id: `${m.id}:respuesta`, tipo: 'dato', etiqueta: `Lo que respondió (sin comprobar): ${texto(m.resultado, 170)}` }];
   (m.datos || []).slice(0, 6).forEach((d, i) => ev.push({ id: `${m.id}:dato:${i}`, tipo: 'dato', etiqueta: `${texto(d.clave, 40)}: ${texto(d.valor, 120)}` }));
-  return { comprobada: true, tipo: 'dato', evidencias: [...ev, ...abiertas], falta: null, items: [], hechos: 1, total: 1, revisado: true };
+  return { comprobada: false, respondida: true, tipo: 'dato', evidencias: [...ev, ...abiertas], falta: SOLO_RESPONDI, items: [], hechos: 0, total: 1, revisado: true };
 }
 
 /** La evidencia de una misión terminada: solo lo que se comprobó (evaluarEntrega). */
@@ -931,7 +959,7 @@ function criteriosDeMision(m: Pick<MisionComputadoraMin, 'id'>, entrega: Entrega
     });
   }
   const ok = termino && entrega.comprobada;
-  const estado: Criterio['estado'] = ok ? 'verified' : termino && entrega.tipo === 'accion' ? 'unknown' : 'not_met';
+  const estado: Criterio['estado'] = ok ? 'verified' : termino && (entrega.tipo === 'accion' || entrega.respondida) ? 'unknown' : 'not_met';
   return [{ id: 'resultado', texto: TEXTO_RESULTADO, obligatorio: true, estado, evidencias: ok ? evidencias.map((e) => e.id) : [] }];
 }
 
@@ -947,10 +975,14 @@ function cierreDeComputadora(m: MisionComputadoraMin): { estado: EstadoTarea; ok
   const evidencias = termino ? entrega.evidencias : entrega.evidencias.filter((e) => e.tipo === 'enlace');
   const criterios = criteriosDeMision(m, entrega, evidencias, termino);
   const ok = termino && m.ok !== false && entrega.comprobada && criteriosCumplidos(criterios, evidencias);
-  const estado: EstadoTarea = ok ? 'completed' : base === 'verifying' || base === 'partial' ? 'partial' : base;
+  // Respondida: terminó, no dijo que quedó a medias, y lo único que había era responder (y lo respondió).
+  const respondida = !ok && termino && m.ok !== false && !!entrega.respondida;
+  const estado: EstadoTarea = ok ? 'completed' : respondida ? 'respondida' : base === 'verifying' || base === 'partial' ? 'partial' : base;
   const sinComprobar = estado === 'partial' && termino && !entrega.comprobada;
   const dijo = (n: number) => (m.resultado ? ` («${texto(m.resultado, n)}»)` : '');
-  const resumen = sinComprobar
+  const resumen = respondida
+    ? `${SOLO_RESPONDI} Lo que respondió: ${texto(m.resultado, 220)}`
+    : sinComprobar
     ? entrega.tipo === 'archivo' && entrega.total > 0
       ? `Tu computadora dice que terminó${dijo(120)}, pero no pude comprobarlo todo: ${entrega.hechos} de ${entrega.total} de lo que pediste.`
       : `Tu computadora dice que terminó${dijo(160)}, pero no pude comprobarlo.`
@@ -1027,7 +1059,7 @@ export function reconciliarConComputadora(reg: RegistroTarea, m: MisionComputado
       progreso: prog,
       pasoActual: null,
       resultado: { id: `${reg.id}:resultado`, resumen, evidencias: ev, parcial, pendiente: [], t: ahora },
-      eventos: [{ type: 'operation.receipt', payload: { operationId: m.tareaId, state: final === 'completed' ? 'succeeded' : final === 'cancelled' ? 'cancelled' : 'failed', effect: ok ? 'confirmed' : 'possible' } }],
+      eventos: [{ type: 'operation.receipt', payload: { operationId: m.tareaId, state: final === 'completed' ? 'succeeded' : final === 'respondida' ? 'answered' : final === 'cancelled' ? 'cancelled' : 'failed', effect: ok ? 'confirmed' : final === 'respondida' ? 'none' : 'possible' } }],
     };
   }
   // Pidió la pausa y el nodo todavía está vaciando la barrera: sigue «pausing» hasta que el nodo diga «pausada».

@@ -205,7 +205,7 @@ test('cliente: decide con decisionId + expectedVersion + opción exacta; un 409 
   const llamadas: { ruta: string; cuerpo?: any }[] = [];
   const pedir = async (ruta: string, init?: { method?: string; body?: string }) => {
     llamadas.push({ ruta, cuerpo: init?.body ? JSON.parse(init.body) : undefined });
-    if (ruta.endsWith('/decisiones')) return { status: 409, json: { codigo: 'version', error: 'cambió', tarea: tarea({ id: 'a', version: 9 }) } };
+    if (ruta.split('?')[0].endsWith('/decisiones')) return { status: 409, json: { codigo: 'version', error: 'cambió', tarea: tarea({ id: 'a', version: 9 }) } };
     return { status: 200, json: { tareas: [tarea({ id: 'a' })], resumen: { trabajando: 1, decisiones: 0 } } };
   };
   const c = crearClienteTrabajos(pedir);
@@ -213,13 +213,14 @@ test('cliente: decide con decisionId + expectedVersion + opción exacta; un 409 
   assert.equal(l.ok && l.tareas.length, 1);
   const t = tarea({ id: 'a', version: 4, decision: decision(), decisionId: 'dc_1' });
   const r = await c.decidir(t, 'aprobar');
-  assert.deepEqual(llamadas.at(-1), { ruta: '/api/trabajos/a/decisiones', cuerpo: { decisionId: 'dc_1', expectedVersion: 4, opcion: 'aprobar' } });
+  // Ronda 7: el cliente dice que conoce el estado «respondida» en cada petición.
+  assert.deepEqual(llamadas.at(-1), { ruta: '/api/trabajos/a/decisiones?estados=respondida', cuerpo: { decisionId: 'dc_1', expectedVersion: 4, opcion: 'aprobar' } });
   assert.equal(r.ok, false);
   if (r.ok) return;
   assert.equal(r.codigo, 'version');
   assert.equal(r.tarea?.version, 9);
   await c.cancelar('a');
-  assert.equal(llamadas.at(-1)!.ruta, '/api/trabajos/a/cancelar');
+  assert.equal(llamadas.at(-1)!.ruta, '/api/trabajos/a/cancelar?estados=respondida');
 });
 
 test('cliente: 401 y 403 (sesión sin correo) son «sin dueño»: se vacía, no es un error de red', async () => {

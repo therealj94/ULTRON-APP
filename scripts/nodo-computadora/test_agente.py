@@ -1564,10 +1564,56 @@ class ArchivosComprobados(Base):
 
     # ---- Ronda 6, G2-A: la integridad es estructural (no solo la cabecera), con od/head/tail/grep (y unzip si hay).
 
-    PDF_VALIDO = (b'%PDF-1.4\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n'
-                  b'2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n'
-                  b'3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >> endobj\n'
-                  b'xref\n0 4\n0000000000 65535 f \ntrailer << /Size 4 /Root 1 0 R >>\nstartxref\n200\n%%EOF\n')
+    @staticmethod
+    def pdf_clasico():
+        """Un PDF clásico de verdad: objetos, tabla xref en su desplazamiento y startxref que apunta a ella."""
+        objs = [b'<< /Type /Catalog /Pages 2 0 R >>', b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+                b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>',
+                b'<< /Length 35 >>\nstream\nBT /F1 12 Tf 72 712 Td (Hola) Tj ET\nendstream']
+        out = b'%PDF-1.4\n'
+        offs = []
+        for i, o in enumerate(objs, 1):
+            offs.append(len(out))
+            out += b'%d 0 obj\n' % i + o + b'\nendobj\n'
+        xref = len(out)
+        out += b'xref\n0 %d\n0000000000 65535 f \n' % (len(objs) + 1) + b''.join(b'%010d 00000 n \n' % x for x in offs)
+        out += b'trailer << /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n' % (len(objs) + 1, xref)
+        return out
+
+    @staticmethod
+    def pdf_objstm():
+        """Un PDF como los de qpdf o pdflatex con flujos de objetos: las páginas van comprimidas dentro de un /ObjStm y
+        la tabla es un flujo /Type /XRef (hecho a mano con zlib)."""
+        import zlib
+        cuerpos = [b'<< /Type /Catalog /Pages 3 0 R >>', b'<< /Type /Pages /Kids [4 0 R] /Count 1 >>', b'<< /Type /Page /Parent 3 0 R /MediaBox [0 0 612 792] >>']
+        cab, datos, pos = [], b'', 0
+        for n, c in zip((2, 3, 4), cuerpos):
+            cab.append(b'%d %d' % (n, pos))
+            datos += c + b' '
+            pos += len(c) + 1
+        primera = b' '.join(cab) + b' '
+        flujo = zlib.compress(primera + datos)
+        out = b'%PDF-1.5\n%\xe2\xe3\xcf\xd3\n'
+        out += b'1 0 obj\n<< /Type /ObjStm /N 3 /First %d /Filter /FlateDecode /Length %d >>\nstream\n' % (len(primera), len(flujo)) + flujo + b'\nendstream\nendobj\n'
+        xref = len(out)
+        tabla = zlib.compress(b'\x00' * 20)
+        out += b'5 0 obj\n<< /Type /XRef /Size 6 /W [1 2 1] /Root 2 0 R /Filter /FlateDecode /Length %d >>\nstream\n' % len(tabla) + tabla + b'\nendstream\nendobj\n'
+        out += b'startxref\n%d\n%%%%EOF\n' % xref
+        return out
+
+    @staticmethod
+    def jpeg_valido():
+        """Un JPEG mínimo con sus segmentos de verdad: SOI, APP0, DQT, SOF0, DHT, SOS, datos y EOI."""
+        import struct
+
+        def seg(m, datos):
+            return b'\xff' + bytes([m]) + struct.pack('>H', len(datos) + 2) + datos
+        return (b'\xff\xd8' + seg(0xe0, b'JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00') + seg(0xdb, b'\x00' + bytes(range(1, 65)))
+                + seg(0xc0, b'\x08\x00\x01\x00\x01\x01\x01\x11\x00') + seg(0xc4, b'\x00' + b'\x00' * 15 + b'\x00')
+                + seg(0xda, b'\x01\x01\x00\x00\x3f\x00') + b'\x7f\xa0' * 4 + b'\xff\xd9')
+
+    GIF_VALIDO = b'GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;'
+    RTF_VALIDO = b'{\\rtf1\\ansi\\deff0 {\\fonttbl {\\f0 Times;}} Hola, este es un documento RTF de verdad.\\par }'
 
     @staticmethod
     def png_valido():
@@ -1582,9 +1628,9 @@ class ArchivosComprobados(Base):
     def test_integridad_estructural(self):
         docx = self.ooxml('word/document.xml')
         casos = {
-            'bueno.pdf': (self.PDF_VALIDO, True),
+            'bueno.pdf': (self.pdf_clasico(), True),
             'corto.pdf': (b'%PDF-', False),
-            'sin_eof.pdf': (self.PDF_VALIDO[:-7] + b' ' * 40, False),
+            'sin_eof.pdf': (self.pdf_clasico()[:-7] + b' ' * 40, False),
             'sin_pagina.pdf': (self.PDF, False),
             'bueno.docx': (docx, True),
             'falso.docx': (b'PK\x03\x04' + b'\x00' * 26 + b'word/document.xml', False),
@@ -1595,8 +1641,8 @@ class ArchivosComprobados(Base):
             'bueno.zip': (self.ooxml('otra/cosa.xml'), True),
             'bueno.png': (self.png_valido(), True),
             'sin_iend.png': (self.png_valido()[:-12], False),
-            'bueno.jpg': (b'\xff\xd8\xff\xe0' + b'\x00' * 40 + b'\xff\xd9', True),
-            'cortado.jpg': (b'\xff\xd8\xff\xe0' + b'\x00' * 40, False),
+            'bueno.jpg': (self.jpeg_valido(), True),
+            'cortado.jpg': (self.jpeg_valido()[:-2], False),
             'datos.csv': (b'a,b\n1,2\n', True),
         }
 
@@ -1610,7 +1656,7 @@ class ArchivosComprobados(Base):
 
     def test_tres_documentos_uno_truncado(self):
         """El caso base de punta a punta en el nodo: tres archivos, uno truncado; y los tres válidos."""
-        cont = {'informe.docx': self.ooxml('word/document.xml'), 'presupuesto.xlsx': self.ooxml('xl/workbook.xml'), 'carta.pdf': self.PDF_VALIDO}
+        cont = {'informe.docx': self.ooxml('word/document.xml'), 'presupuesto.xlsx': self.ooxml('xl/workbook.xml'), 'carta.pdf': self.pdf_clasico()}
 
         def con(trunca):
             def antes(t):
@@ -1621,6 +1667,64 @@ class ArchivosComprobados(Base):
         self.assertEqual({k: n[k]['integro'] for k in cont}, {'informe.docx': True, 'presupuesto.xlsx': False, 'carta.pdf': True})
         n = self.por_nombre(self.correr_y_archivos('Listo.', instruccion=self.TRES, antes=con(None)))
         self.assertEqual({k: (n[k]['tipo'], n[k]['integro']) for k in cont}, {'informe.docx': ('docx', True), 'presupuesto.xlsx': ('xlsx', True), 'carta.pdf': ('pdf', True)})
+
+    # ---- Ronda 7, G2-N3/G2-m1/G2-m2: la validación de verdad, en Python DENTRO del escritorio (biblioteca estándar).
+
+    @staticmethod
+    def pptx_grande(partes=1000):
+        import io
+        import zipfile
+        b = io.BytesIO()
+        with zipfile.ZipFile(b, 'w', zipfile.ZIP_DEFLATED) as z:
+            z.writestr('[Content_Types].xml', '<Types/>')
+            z.writestr('ppt/presentation.xml', '<p:presentation/>')
+            for i in range(partes):
+                z.writestr(f'ppt/slides/slide{i}.xml', f'<p:sld n="{i}"/>')
+        return b.getvalue()
+
+    def test_falsos_de_la_revision_y_legitimos(self):
+        falsos = {
+            'f.docx': b'PK\x05\x06' + b'\x00' * 18 + b'[Content_Types].xml word/document.xml' + b'\x00' * 8,   # 67 B
+            'f.xlsx': b'PK\x01\x02PK\x05\x06' + b'\x00' * 14 + b'[Content_Types].xml xl/workbook.xml' + b'\x00' * 8,  # 65 B
+            'f.pdf': b'%PDF-1.4\n/Page /Type\n' + b'x' * 182 + b'\nstartxref\n9\n%%EOF\n',                  # 222 B, sin objetos
+            'f.jpg': b'\xff\xd8\xff\xd9\xff\xd9',                                                          # 6 B
+            'f.gif': b'GIF89a;',                                                                       # 7 B
+            'f.rtf': b'{\\rtf1}',                                                                       # 7 B
+            'f.png': b'\x89PNG\r\n\x1a\n' + b'\x00\x00\x00\x00IHDR' + b'\x00\x00\x00\x00IEND',             # 24 B
+        }
+        buenos = {
+            'b.docx': self.ooxml('word/document.xml'), 'b.xlsx': self.ooxml('xl/workbook.xml'), 'b.pptx': self.ooxml('ppt/presentation.xml'),
+            'grande.pptx': self.pptx_grande(), 'clasico.pdf': self.pdf_clasico(), 'objstm.pdf': self.pdf_objstm(),
+            'b.png': self.png_valido(), 'b.jpg': self.jpeg_valido(), 'b.gif': self.GIF_VALIDO, 'b.rtf': self.RTF_VALIDO,
+        }
+
+        def antes(t):
+            for k, v in {**falsos, **buenos}.items():
+                self.escribir(k, v)
+        n = self.por_nombre(self.correr_y_archivos('Listo.', instruccion='Guarda los archivos', antes=antes))
+        self.assertEqual({k: n[k].get('integro') is True for k in falsos}, {k: False for k in falsos}, 'ningún falso queda íntegro')
+        self.assertEqual({k: n[k].get('integro') for k in buenos}, {k: True for k in buenos}, 'los de verdad, sí')
+
+    def test_sin_python_en_el_escritorio_no_hay_integro(self):
+        """Sin python3 en el contenedor: integro None (sin comprobar), nunca True; la vía de grep ya no existe."""
+        real = agente.en_escritorio
+
+        def sin_python(comando, entrada=None, timeout=30):
+            if 'python3' in comando:
+                return b'SIN_PYTHON\n'
+            return real(comando, entrada=entrada, timeout=timeout)
+        agente.en_escritorio = sin_python
+        n = self.por_nombre(self.correr_y_archivos('Listo.', instruccion=self.TRES, antes=lambda t: [self.escribir(f'Documents/{k}', v) for k, v in
+                                                                                                         {'informe.docx': self.ooxml('word/document.xml'), 'presupuesto.xlsx': self.ooxml('xl/workbook.xml'), 'carta.pdf': self.pdf_clasico()}.items()]))
+        self.assertEqual({k: n[k].get('integro') for k in ('informe.docx', 'presupuesto.xlsx', 'carta.pdf')}, {'informe.docx': None, 'presupuesto.xlsx': None, 'carta.pdf': None})
+
+    def test_tres_falsos_y_tres_validos_de_punta_a_punta(self):
+        falsos = {'informe.docx': b'PK\x05\x06' + b'\x00' * 18 + b'word/document.xml', 'presupuesto.xlsx': b'PK\x05\x06xl/workbook.xml', 'carta.pdf': b'%PDF-1.4 /Page %%EOF'}
+        n = self.por_nombre(self.correr_y_archivos('Listo.', instruccion=self.TRES, antes=lambda t: [self.escribir(f'Documents/{k}', v) for k, v in falsos.items()]))
+        self.assertFalse(any(n[k].get('integro') is True for k in falsos))
+        validos = {'informe.docx': self.ooxml('word/document.xml'), 'presupuesto.xlsx': self.ooxml('xl/workbook.xml'), 'carta.pdf': self.pdf_objstm()}
+        n = self.por_nombre(self.correr_y_archivos('Listo.', instruccion=self.TRES, antes=lambda t: [self.escribir(f'Documents/{k}', v) for k, v in validos.items()]))
+        self.assertEqual({k: n[k].get('integro') for k in validos}, {k: True for k in validos})
 
     def test_nombres_con_apostrofo(self):
         """Ronda 6, G2-E: «O'Brien.pdf» entero (no «Brien.pdf»), también entre comillas simples."""
