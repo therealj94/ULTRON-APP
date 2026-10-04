@@ -322,3 +322,73 @@ test('ronda 7 G1-N1 (app): lo que espera la app lleva su versión — otro texto
   assert.equal((APP as any).mismaEsperaApp?.(visto, ahora), false, 'otro texto: no es la misma');
   assert.equal((APP as any).mismaEsperaApp?.(visto, visto), true);
 });
+
+/* ------------------------------------------------------------------ ajuste: la lista del revisor */
+
+const CONFIRMAN_AJUSTE = [
+  'eso', 'eso es', 'ese', 'ese mismo', 'sí, ese', 'tal cual',
+  'yup', 'sipi', 'sep', 'aha', 'mhm sí', 'oki doki', 'fine', 'ok fine', "yes ma'am",
+  'sí hombre', 'sí mujer', 'sí, chido', 'sí, bacán',
+  'enviar', 'mandar', 'sí, enviar', 'sí, mandar',
+];
+const PREGUNTAN_AJUSTE = ['bueno', 'ya', 'k', 'kk', 'sí, mándame copia', 'sí, también', 'sale y vale', 'send'];
+
+test('ronda 7 (ajuste): la lista del revisor — confirman una vez (función, atajo, servidor); las dudosas preguntan sin apartar nada', async () => {
+  const A = await import('../lib/afirmacion');
+  const fallos: string[] = [];
+  const ana: any = { tipo: 'correo', destino: 'Ana ana@example.test', tema: 'Informe Va.' };
+  const PEND = { para: 'ana@example.test', texto: 'Llego a las 3' };
+  const CTX: any = { pantalla: 'chats', contactos: [{ correo: 'ana@example.test', nombre: 'Ana' }], manos: ['enviar_exacto'] };
+  for (const frase of CONFIRMAN_AJUSTE) {
+    if (A.decidirPendiente(frase, [ana]).tipo !== 'ejecutar') fallos.push(`función «${frase}»`);
+    if (APP.ordenPorReglas(frase, { pendiente: PEND, contexto: CTX })?.accion?.tipo !== 'enviar') fallos.push(`atajo «${frase}»`);
+  }
+  for (const frase of PREGUNTAN_AJUSTE) {
+    const d: any = A.decidirPendiente(frase, [ana]);
+    if (d.tipo !== 'preguntar') fallos.push(`«${frase}» debía preguntar, dio ${d.tipo}`);
+    if (APP.ordenPorReglas(frase, { pendiente: PEND, contexto: CTX })?.accion?.tipo === 'enviar') fallos.push(`atajo «${frase}» mandó`);
+  }
+  CHATS = [BRUNO];
+  await conEntorno([], async ({ mandados }) => {
+    for (const frase of [...CONFIRMAN_AJUSTE, ...PREGUNTAN_AJUSTE]) {
+      C._olvidarCorreo();
+      const antes = mandados.length;
+      await C.correrCorreo(JOSE, 'escribir ana@example.test | Informe | Va.', 'tel');
+      const r = await turno(frase);
+      await turno(frase);
+      const efectos = mandados.length - antes;
+      const debe = CONFIRMAN_AJUSTE.includes(frase) ? 1 : 0;
+      if (efectos !== debe) fallos.push(`servidor «${frase}»: ${efectos}`);
+      if (!debe && (!vivo(C.borradorDe(JOSE, 'tel')) || !PREGUNTA.test(r.hechos.join('\n')))) fallos.push(`servidor «${frase}»: no siguió esperando o no se preguntó`);
+    }
+  });
+  assert.deepEqual(fallos, [], `${fallos.length} fallos`);
+});
+
+test('ronda 7 (ajuste): sin abrir agujeros — con dos pendientes «eso» o «tal cual» preguntan; «enviar» no cumple una llamada; «a ese» es un pronombre', async () => {
+  const A = await import('../lib/afirmacion');
+  const ana: any = { tipo: 'correo', destino: 'Ana ana@example.test' };
+  const bruno: any = { tipo: 'whatsapp', destino: 'Bruno (+50477773333)' };
+  const llamada: any = { tipo: 'llamar', destino: 'Ana ana@example.test' };
+  const fallos: string[] = [];
+  for (const [frase, ps, tipo] of [
+    ['eso', [ana, bruno], 'preguntar'],
+    ['tal cual', [ana, bruno], 'preguntar'],
+    ['sí, ese', [ana, bruno], 'preguntar'],
+    ['enviar', [llamada], 'preguntar'],
+    ['mandar', [ana, bruno], 'preguntar'],
+    ['sí, a ese', [ana], 'preguntar'],
+    ['sí, para esa', [ana], 'preguntar'],
+    ['sí hombre', [ana], 'ejecutar'],
+  ] as Array<[string, any[], string]>) {
+    const d: any = A.decidirPendiente(frase, ps);
+    if (d.tipo !== tipo) fallos.push(`«${frase}» con ${ps.length}: esperaba ${tipo}, dio ${d.tipo}`);
+  }
+  // «sí hombre» con un contacto «Hombre»: no es vocativo.
+  if (A.decidirPendiente('sí hombre', [ana], { conocidos: ['Hombre'] }).tipo !== 'preguntar') fallos.push('«sí hombre» con un contacto Hombre');
+  // La app: «enviar» no cumple una llamada propuesta.
+  const prop = { tipo: 'llamar' as const, con: 'ana@example.test', nombre: 'Ana', video: false };
+  const ctx: any = { pantalla: 'chats', contactos: [{ correo: 'ana@example.test', nombre: 'Ana' }], manos: ['llamar'] };
+  if (APP.ordenPorReglas('enviar', { propuesta: prop, contexto: ctx })?.accion?.tipo === 'llamar') fallos.push('«enviar» cumplió la llamada');
+  assert.deepEqual(fallos, []);
+});
