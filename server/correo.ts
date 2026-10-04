@@ -30,6 +30,7 @@ import { agregarCuenta, cuentasDe, CuentasNoDisponibles, leerCuentasSeguro, publ
 import { consultarCodigo, microsoftConfigurado, pedirCodigo } from '../lib/correo/microsoft';
 import { correoValido, detectarProveedor, type Proveedor } from '../lib/correo/proveedores';
 import { plegar } from '../lib/cerebro-comun';
+import { respuestaPura } from '../lib/afirmacion';
 import { iniciarTarea, marcarPaso, siguiente, tareaDe } from '../lib/tarea-en-curso';
 import type { RetencionAcciones } from './voz-agente';
 import { explicarFallo } from '../lib/correo/buzon';
@@ -62,6 +63,11 @@ type Borrador = {
   enRespuestaA?: string;
   referencias?: string[];
   creado: number;
+  /**
+   * Permisos exactos (tercera ronda): los nombres de a quién va (los de la lista: «Ana Pérez» de aperez@…). No entran
+   * en la huella: sirven para que «sí, a Ana» nombre este borrador aunque la dirección no diga «ana».
+   */
+  nombres?: string[];
 };
 /**
  * Lo que se le agrega al guardarlo (auditoría 3-oct, COM01): de quién es, hasta cuándo vale y cuál intento es.
@@ -392,7 +398,7 @@ async function responder(quien: string, ambito: string, ref: string, texto: stri
   const borrador = guardarBorrador(
     quien,
     ambito,
-    { cuentaId: ubic.c.id, desde: ubic.c.correo, para, cc, asunto, texto, cita, enRespuestaA: x.messageId || undefined, referencias: x.referencias, creado: Date.now() },
+    { cuentaId: ubic.c.id, desde: ubic.c.correo, para, cc, asunto, texto, cita, enRespuestaA: x.messageId || undefined, referencias: x.referencias, creado: Date.now(), ...(x.de && (!x.responderA || x.responderA === x.deCorreo) ? { nombres: [x.de] } : {}) },
     `Va como respuesta a ${x.de || x.deCorreo} en el mismo hilo${todos ? (cc.length ? ', a todos los del correo' : ' (no había nadie más en el correo: solo a quien lo mandó)') : ''}, con su correo citado debajo.`
   );
   // El paso queda «contestado» solo si el borrador quedó (uno vacío no contesta nada).
@@ -404,22 +410,30 @@ async function escribir(quien: string, ambito: string, para: string, asunto: str
   const cuentas = await cuentasDe(quien);
   if (!cuentas.length) return fallo(SIN_CUENTAS, 'sin-cuentas');
   let destinos = para.split(/[,;\s]+/).filter(Boolean);
+  let nombres: string[] | undefined;
   if (destinos.length && !destinos.every(correoValido)) {
     // «escríbele a Ana»: si es alguien de la lista, su dirección.
     const lista = LISTAS.get(llave(quien, ambito)) || [];
     const e = elegirCorreo(lista, para);
-    if (e.tipo === 'uno' && correoValido(lista[e.i].deCorreo)) destinos = [lista[e.i].deCorreo];
+    if (e.tipo === 'uno' && correoValido(lista[e.i].deCorreo)) {
+      destinos = [lista[e.i].deCorreo];
+      if (lista[e.i].de) nombres = [lista[e.i].de];
+    }
     // Permisos exactos (4-oct): varias personas encajan con ese nombre (dos «Ana» con direcciones distintas): no se
     // adivina; se pregunta cuál, con sus direcciones (el «sí» aprueba una dirección, nunca un nombre).
     if (e.tipo === 'varios') {
       const dirs = [...new Map(e.is.map((i) => [lista[i].deCorreo.toLowerCase(), remitente(lista[i].de, lista[i].deCorreo)])).values()];
       if (dirs.length > 1) return fallo(`CORREO: hay ${dirs.length} personas que encajan con «${para}»: ${dirs.join(' · ')}. No armé ningún borrador: pregúntale cuál (o la dirección exacta); no adivines.`, 'ambiguo');
       const unica = lista[e.is[0]].deCorreo;
-      if (correoValido(unica)) destinos = [unica];
+      if (correoValido(unica)) {
+        destinos = [unica];
+        const n = lista[e.is[0]].de;
+        if (n) nombres = [n];
+      }
     }
   }
   if (!destinos.length || !destinos.every(correoValido)) return fallo(`CORREO: «${para}» no es una dirección de correo. Pídele la dirección exacta.`, 'falta-dato');
-  return guardarBorrador(quien, ambito, { cuentaId: cuentas[0].id, desde: cuentas[0].correo, para: destinos, asunto: asunto || '(sin asunto)', texto, creado: Date.now() });
+  return guardarBorrador(quien, ambito, { cuentaId: cuentas[0].id, desde: cuentas[0].correo, para: destinos, asunto: asunto || '(sin asunto)', texto, creado: Date.now(), ...(nombres ? { nombres } : {}) });
 }
 
 /**
@@ -511,31 +525,12 @@ export function motivoBorrador(b: Pick<VigenciaBorrador, 'dueno' | 'vence'>, qui
   return null;
 }
 
-// Se comparan sin tildes («sí» → «si»): `\b` de las expresiones de JavaScript no ve la «í» como letra.
-const SI = /^(si+|sip|dale|claro|ok(ay)?|listo|de una|hazlo|adelante|envia(lo|la)?|manda(lo|la)?|perfecto|correcto|exacto|asi esta bien|esta bien)(\s|$)/;
-const NO = /^(no|nop|cancela(lo)?|borra(lo)?|mejor no|deja(lo)?|olvida(lo)?|todavia no|espera)(\s|$)/;
-
 /** «sí» / «no» a un borrador. Solo frases cortas: «sí, pero cámbiale…» no es un sí. */
 export function respuestaAlBorrador(mensaje: string): 'si' | 'no' | null {
-  const t = String(mensaje || '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[¡!¿?.,]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (!t || t.split(' ').length > 6) return null;
-  if (/(^|\s)(pero|cambia|cambiale|corrige|agrega|quita|en vez)(\s|$)/.test(t)) return null;
-  // Una respuesta que se contradice no decide nada: «claro que no» y «sí, no lo mandes» antes salían como
-  // un sí y el borrador se MANDABA (auditoría, 3-oct: solo se miraba la primera palabra). Se pregunta otra vez.
-  if (NO.test(t)) return SI_EN_MEDIO.test(t.replace(/^\S+\s?/, '')) ? null : 'no';
-  if (SI.test(t)) return NEGACION_EN_MEDIO.test(t) ? null : 'si';
-  return null;
+  // Permisos exactos (tercera ronda): la regla única (lib/afirmacion.ts). «sí, a Bruno», «sí, a las 5», «mándalo para
+  // el lunes» ya no son un «sí» suelto: nombran algo y lo decide la selección (server/decision-turno.ts).
+  return respuestaPura(mensaje);
 }
-// «sí espera», «ok cancela», «dale, para»: lo que viene después del sí lo frena (auditoría 3-oct, COM01).
-// «para» solo al final: «mándalo para el lunes» sigue siendo un sí.
-const NEGACION_EN_MEDIO = /(^|\s)(no|nunca|jamas|tampoco|ni|nada|espera|esperate|cancela(lo)?|paralo|alto|detente|stop|wait|cancel)(\s|$)|(^|\s)para$/;
-const SI_EN_MEDIO = /(^|\s)(si+|sip|dale|claro|ok(ay)?|hazlo|adelante|envia(lo|la)?|manda(lo|la)?)(\s|$)/;
 
 /** Lo que un envío confirmado en la voz terminó después de contestar: el próximo turno lo dice. */
 const AVISOS_ENVIO = new Map<string, string[]>();

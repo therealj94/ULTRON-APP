@@ -2739,7 +2739,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   let conTarea = false;
   if (duenoComputadora) {
     await aTiempoParaVoz(voz, 'tarea en curso', precargarTareas(duenoComputadora), undefined);
-    const alBorrador = !!(delCorreo || delWhatsapp) && respuestaAlBorrador(message) !== null;
+    const alBorrador = !!(delCorreo || delWhatsapp) && (decision.respondio || respuestaAlBorrador(message) !== null);
     const deLaTarea = await resolverTareaEnCurso(duenoComputadora, ambitoTurno, message, { borradorResuelto: alBorrador || !!deLaPregunta, retener: opciones.retener });
     const bloqueDeTarea = bloqueTarea(duenoComputadora, ambitoTurno, compacto);
     hechos.push(...[deLaTarea, bloqueDeTarea].filter((x): x is string => !!x));

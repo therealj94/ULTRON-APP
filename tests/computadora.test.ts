@@ -1141,7 +1141,9 @@ test('sí/no a su computadora: una negación en cualquier parte no es un sí; lo
   for (const t of ['no', 'mejor no', 'no lo hagas', 'cancela']) assert.equal(respuestaSiNo(t), 'no', t);
   // Auditoría 3-oct (PC02/COM01): lo que viene después del sí lo frena; «para» en medio es preposición.
   for (const t of ['sí espera', 'ok cancela', 'dale, para', 'sí, alto', 'ok wait', 'sí, espérate']) assert.equal(respuestaSiNo(t), null, t);
-  for (const t of ['sí, para mañana', 'dale, sigue']) assert.equal(respuestaSiNo(t), 'si', t);
+  assert.equal(respuestaSiNo('dale, sigue'), 'si');
+  // Permisos exactos (tercera ronda): «sí, para mañana» nombra un día: no es un «sí» suelto (lo decide la selección).
+  assert.equal(respuestaSiNo('sí, para mañana'), null);
 });
 
 test('el sí nombra su pregunta: uno que llega tarde no contesta la siguiente, ni por voz ni por la app (auditoría 3-oct, PC01)', async () => {

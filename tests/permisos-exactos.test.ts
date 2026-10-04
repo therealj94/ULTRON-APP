@@ -637,7 +637,10 @@ test('R1 atajo de la app: un «enviar» del borrador del chat abierto sale con S
   assert.notEqual(APP.ordenPorReglas('sí', { pendiente, contexto: viejo })?.accion?.tipo, 'enviar', 'un teléfono que no comprueba el texto no recibe un «enviar»');
   assert.notEqual(APP.ordenPorReglas('sí, mándalo', { contexto: viejo })?.accion?.tipo, 'enviar');
   assert.deepEqual(APP.prepararAcciones([{ tipo: 'enviar' }], { mensaje: 'sí, envíalo', pendiente, contexto: viejo }), [], 'tampoco por el camino del cerebro');
-  assert.deepEqual(APP.prepararAcciones([{ tipo: 'enviar' }], { mensaje: 'sí, envíalo', pendiente, contexto: CTX_BRUNO }), [{ tipo: 'enviar', para: 'ana@example.test', texto: 'Hola Ana' }]);
+  // Tercera ronda: con texto escrito en el chat de Bruno, «sí, envíalo» es ambiguo (tests/permisos-ronda3.test.ts); sin
+  // él, el borrador de AU-RA sale con su texto.
+  assert.deepEqual(APP.prepararAcciones([{ tipo: 'enviar' }], { mensaje: 'sí, envíalo', pendiente, contexto: { ...CTX_BRUNO, borrador: '' } }), [{ tipo: 'enviar', para: 'ana@example.test', texto: 'Hola Ana' }]);
+  assert.deepEqual(APP.prepararAcciones([{ tipo: 'enviar' }], { mensaje: 'sí, envíalo', pendiente, contexto: CTX_BRUNO }), [], 'dos esperando y no dice cuál');
 });
 
 test('R2 una sola decisión: «sí, a Bruno» o «sí, el de WhatsApp» con un correo para Ana NO lo manda (pregunta); «sí, mándalo» sí, UNA vez', async () => {

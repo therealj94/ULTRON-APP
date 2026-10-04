@@ -107,7 +107,10 @@ test('«sí» y «no» al borrador: solo frases cortas y claras', () => {
   for (const t of ['claro que no', 'sí, no lo mandes', 'dale, no', 'no, sí mándalo']) assert.equal(respuestaAlBorrador(t), null, t);
   // COM01: «sí espera» y «ok cancela» antes MANDABAN el borrador.
   for (const t of ['sí espera', 'ok cancela', 'dale, para', 'sí, cancélalo', 'listo, alto']) assert.equal(respuestaAlBorrador(t), null, t);
-  for (const t of ['mándalo para el lunes', 'sí, envíalo para Juan']) assert.equal(respuestaAlBorrador(t), 'si', t);
+  // Permisos exactos (tercera ronda): lo que nombra algo (un día, otra persona) ya no es un «sí» suelto: lo decide la
+  // selección (server/decision-turno.ts, lib/afirmacion.ts) y, si no coincide con lo que espera, se pregunta.
+  for (const t of ['mándalo para el lunes', 'sí, envíalo para Juan']) assert.equal(respuestaAlBorrador(t), null, t);
+  for (const t of ['sí señor', 'sí, de acuerdo', 'sí, envíalo porfavor', 'sí, mándalo ahorita', 'sí, envíalo AURA']) assert.equal(respuestaAlBorrador(t), 'si', t);
   for (const t of ['sí pero cámbiale el saludo', 'qué hora es', 'sí, y además dime cuántos correos tengo sin leer hoy']) assert.equal(respuestaAlBorrador(t), null, t);
 });
 

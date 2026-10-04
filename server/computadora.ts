@@ -42,6 +42,7 @@
  */
 import { nivelDeCorreo } from './nivel';
 import crypto from 'node:crypto';
+import { respuestaPura } from '../lib/afirmacion';
 import { clave } from '../lib/boveda';
 import { almacenDurable, claveDe, crearUnaVez, leerDurable } from '../lib/durable';
 import { evaluarEntrega, requisitosCombinados, type ArchivoNodo, type Entrega, type ItemEntrega, type PedidoEntrega } from '../lib/tareas-durables';
@@ -1229,30 +1230,13 @@ export function fraseDePregunta(pregunta: string, idioma: 'es' | 'en' = 'es'): s
   return idioma === 'en' ? `Before I go on I need your OK. ${p} Say yes or no.` : `Antes de seguir necesito tu sí. ${p} Dime sí o no.`;
 }
 
-/** «sí» / «no» a lo que su computadora preguntó (o a «¿sigo?»). Corto y sin «pero…»; si no, null. */
+/**
+ * «sí» / «no» a lo que su computadora preguntó (o a «¿sigo?»), con la regla única (lib/afirmacion.ts): «si» solo con una
+ * afirmación pura, «no» solo con una negativa pura; lo que nombra algo lo decide la selección (server/decision-turno.ts).
+ */
 export function respuestaSiNo(mensaje: string): 'si' | 'no' | null {
-  const t = sinAcentos(String(mensaje || ''))
-    .replace(/[¡!¿?.,;:]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (!t || t.split(' ').length > 6) return null;
-  if (/(^|\s)(pero|cambia|cambiale|corrige|en vez|instead|but)(\s|$)/.test(t)) return null;
-  const resto = t.replace(/^\S+\s?/, '');
-  if (/^(no|nop|nel|nunca|mejor no|negativo|cancela|cancelalo|detente|para|paralo|no lo hagas|nope|dont|don t|stop|cancel)(\s|$)/.test(t)) {
-    // «no, sí mándalo»: se contradice; se vuelve a preguntar en lugar de adivinar.
-    return AFIRMA.test(resto) ? null : 'no';
-  }
-  if (/^(si|sip|claro|dale|va pues|ok|okay|okey|hazlo|adelante|de acuerdo|esta bien|correcto|confirmo|sigue|siguele|continua|yes|yeah|yep|sure|go ahead|do it|continue|keep going)(\s|$)/.test(t) || t === 'va') {
-    // «claro que no», «sí, no lo hagas»: una negación en cualquier parte NO es un sí (auditoría, 3-oct:
-    // solo se miraba la primera palabra). Ante la duda, se pregunta otra vez.
-    return NEGACION.test(t) ? null : 'si';
-  }
-  return null;
+  return respuestaPura(mensaje);
 }
-// También «espera», «cancela», «alto»… dichos después del sí (auditoría 3-oct, PC02: «sí espera» y «ok
-// cancela» salían como sí). «para» solo al final («dale, para»): en medio es preposición («sí, para mañana»).
-const NEGACION = /(^|\s)(no|nunca|jamas|tampoco|ni|nada|dont|don t|not|never|espera|esperate|cancela|cancelalo|paralo|alto|detente|stop|wait|cancel|hold on)(\s|$)|(^|\s)para$/;
-const AFIRMA = /(^|\s)(si|sip|claro|dale|ok|okay|okey|hazlo|adelante|confirmo|mandalo|envialo|sigue|yes|sure)(\s|$)/;
 
 /* ------------------------------------------------------------------ seguir la tarea hasta el final */
 

@@ -31,8 +31,8 @@
 import crypto from 'node:crypto';
 import { consultarModelo } from './laya';
 import { predecirApp, UMBRAL_LIGERA } from './laya-ligera';
+import { confirmaEnvioDeMensaje, decidirPendiente, soloNombraLaAccion, type DecisionPendiente, type Decidido } from './afirmacion';
 import {
-  confirmaPropuesta,
   dichoDeMano,
   dichoDeProgramada,
   RE_LLAMAME,
@@ -943,15 +943,8 @@ export function decibleHasta(parcial: string): string {
  * texto que AU-RA va a escribir; se redacta y se pregunta.
  */
 export function confirmaEnvio(mensaje: string): boolean {
-  const q = plegar(mensaje).replace(/[.,;:!?¡¿"'«»“”]+/g, ' ').replace(/\s+/g, ' ').trim();
-  if (!q) return false;
-  if (/\b(no|nop|nel|todavia|aun|espera|esperate|cancela|cancelalo|borra|borralo|don ?t|not|wait|cancel|hold on)\b/.test(q)) return false;
-  if (esOrdenDeRedactar(q)) return false;
-  // «Sí» con tilde, o «si» solo (con su coma o al final); «si puedes…» sin tilde es condicional.
-  const crudo = String(mensaje || '').trim().toLowerCase();
-  if (/^[¡!\s]*(sí|sip|simón)(?=[\s,.!;:]|$)/.test(crudo) || /^[¡!\s]*si\s*([,.!;:]|$)/.test(crudo) || /^si (envialo|enviala|mandalo|mandala|claro|por favor|dale)\b/.test(q)) return true;
-  if (/^(sip|simon|yes|claro que si)\b/.test(q)) return true;
-  return /\b(envialo|enviala|mandalo|mandala|envialo ya|send it)\b/.test(q) || /\b(envia|manda|enviale|mandale|send)( el| ese| este| the| that)? (mensaje|borrador|message|draft)\b/.test(q);
+  // Permisos exactos (tercera ronda): la regla única (lib/afirmacion.ts).
+  return confirmaEnvioDeMensaje(mensaje);
 }
 
 /** «escríbele a…», «dile a Beto que…», «mándale un mensaje a…»: una orden de REDACTAR, no un «sí». */
@@ -1148,26 +1141,11 @@ export function ordenPorReglas(
       }
     }
   }
-  // La propuesta que espera (llamar, recordar), de un turno anterior: «sí» / «llámale» la cumple,
-  // «no» la suelta. Otra frase cualquiera sigue su camino (y el turno siguiente la soltará).
-  if (o.propuesta) {
-    const p = o.propuesta;
-    if (confirmaPropuesta(p.tipo, texto)) {
-      // Reemplazó a otra cosa en el mismo turno: su «sí» pudo ser para esa (permisos exactos, 4-oct).
-      if (p.reemplazoDe) return { accion: null, decir: dichoDeReemplazo(p.reemplazoDe, describirPropuesta(p), idioma), via: 'reglas', soloDecir: true, confirmarCambio: true };
-      if (p.tipo === 'recordatorio' && p.cuando < ahora + 15_000) {
-        return { accion: null, decir: idioma === 'en' ? 'That time already passed. Tell me another one.' : 'Esa hora ya pasó. Dime otra.', via: 'reglas', soltarPropuesta: true };
-      }
-      const accion: AccionApp =
-        p.tipo === 'llamar'
-          ? { tipo: 'llamar', con: p.con, video: p.video }
-          : p.tipo === 'cancelar_recordatorio'
-            ? { tipo: 'cancelar_recordatorio', id: p.id }
-            : { tipo: 'recordatorio', texto: p.texto, cuando: p.cuando, ...(p.llamada ? { llamada: true } : {}) };
-      return { accion, decir: dichoDePropuesta(p, idioma, ahora), via: 'reglas' };
-    }
-    if (niegaPropuesta(texto, p.tipo)) return { accion: null, decir: dichoNegado(p, idioma), via: 'reglas', soltarPropuesta: true };
-  }
+  // Lo que espera su «sí» en la app (el borrador de AU-RA, la llamada o el recordatorio propuestos, lo escrito en el
+  // chat abierto), con la regla única (lib/afirmacion.ts): el atajo ejecuta solo con una afirmación pura (o el verbo de
+  // la acción); lo que nombra a quién o cuándo lo decide el turno completo (null), y con varias esperando se pregunta.
+  const dec = atajoDeDecision(texto, o, idioma, ahora);
+  if (dec !== undefined) return dec;
   const r = q.split(' ').length <= 8 ? reglasDeSiempre(q, o) : null;
   if (r) return r;
   // Las manos nuevas que este teléfono sabe hacer.
@@ -1175,6 +1153,102 @@ export function ordenPorReglas(
   if (!m) return null;
   if (m.tipo === 'decir') return { accion: null, decir: m.decir, via: 'reglas', soloDecir: true };
   return m.tipo === 'propuesta' ? { accion: null, decir: m.decir, via: 'reglas', propuesta: m.propuesta } : { accion: m.accion, decir: m.decir, via: 'reglas' };
+}
+
+/* ------------------------------------------------------------------ lo que espera su «sí» en la app (regla única) */
+
+/** Una decisión de la app que espera su «sí»: de dónde viene (el borrador de AU-RA, la propuesta, el chat abierto). */
+export type DecisionApp = DecisionPendiente & { de: 'pendiente' | 'propuesta' | 'chat' };
+
+/**
+ * Lo que espera su «sí» en la app, en la forma de la regla única: el borrador de AU-RA (con el nombre del contacto), la
+ * propuesta (llamar, recordar, quitar un recordatorio) y lo escrito a mano en el chat abierto («discreto»: solo cuenta
+ * si el mensaje pide enviar o lo nombra; si el chat abierto es el de la misma persona del borrador, es uno solo).
+ */
+export function decisionesApp(o: { contexto?: ContextoApp | null; pendiente?: { para: string; texto: string } | null; propuesta?: Propuesta | null }): DecisionApp[] {
+  const contactos = o.contexto?.contactos || [];
+  const nombre = (correo: string) => contactos.find((c) => c.correo === correo)?.nombre || '';
+  const out: DecisionApp[] = [];
+  if (o.pendiente) out.push({ de: 'pendiente', tipo: 'mensaje', destino: `${nombre(o.pendiente.para)} ${o.pendiente.para}`.trim() });
+  const p = o.propuesta;
+  if (p) out.push(p.tipo === 'llamar' ? { de: 'propuesta', tipo: 'llamar', destino: `${p.nombre || nombre(p.con)} ${p.con}`.trim() } : { de: 'propuesta', tipo: p.tipo, texto: p.texto, cuando: p.cuando });
+  const abierto = o.contexto?.chatAbierto;
+  if (abierto?.correo && String(o.contexto?.borrador || '').trim() && abierto.correo !== o.pendiente?.para) {
+    out.push({ de: 'chat', tipo: 'chat', destino: `${abierto.nombre || nombre(abierto.correo)} ${abierto.correo}`.trim(), discreta: true });
+  }
+  return out;
+}
+
+/** La regla única sobre lo que espera en la app. */
+export function decidirEnApp(mensaje: string, o: Parameters<typeof decisionesApp>[0]): Decidido<DecisionApp> {
+  return decidirPendiente(mensaje, decisionesApp(o));
+}
+
+function decirDecisionApp(p: DecisionApp, o: OpcionesReglas, idioma: 'es' | 'en'): string {
+  const en = idioma === 'en';
+  if (p.de === 'propuesta' && o.propuesta) return describirPropuesta(o.propuesta);
+  const quien = (p.destino || '').replace(/\s*\S+@\S+$/, '') || p.destino || '';
+  if (p.de === 'chat') return en ? `what you typed in ${quien}'s chat` : `lo que escribiste en el chat de ${quien}`;
+  return en ? `the message to ${quien}` : `el mensaje para ${quien}`;
+}
+
+/**
+ * El atajo de la app sobre lo que espera su «sí». undefined: no es respuesta a nada de eso (siguen las otras reglas);
+ * null: lo decide el turno completo (nombró a quién o cuándo); una orden: lo que se hace o se pregunta.
+ */
+function atajoDeDecision(texto: string, o: OpcionesReglas, idioma: 'es' | 'en', ahora: number): OrdenRapida | null | undefined {
+  const d = decidirEnApp(texto, o);
+  const dichos = DICHOS[idioma];
+  if (d.tipo === 'nada') {
+    // «no lo quites», «déjalo así», «never mind»: la propuesta se suelta (sus negativas propias).
+    if (o.propuesta && niegaPropuesta(texto, o.propuesta.tipo)) return { accion: null, decir: dichoNegado(o.propuesta, idioma), via: 'reglas', soltarPropuesta: true };
+    return undefined;
+  }
+  if (d.tipo === 'preguntar') {
+    if (d.motivo === 'no-coincide') return null;
+    const lista = d.candidatos.map((p) => decirDecisionApp(p, o, idioma)).join(idioma === 'en' ? ' or ' : ' o ');
+    return { accion: null, decir: idioma === 'en' ? `Which one: ${lista}?` : `¿Cuál: ${lista}?`, via: 'reglas', soloDecir: true };
+  }
+  const p = d.p;
+  if (d.tipo === 'no') {
+    if (p.de === 'pendiente') return { accion: { tipo: 'descartar' }, decir: dichos.descartar, via: 'reglas' };
+    if (p.de === 'propuesta' && o.propuesta) return { accion: null, decir: dichoNegado(o.propuesta, idioma), via: 'reglas', soltarPropuesta: true };
+    // Lo que la persona escribía a mano no se toca por un «no» que quizá contestaba otra cosa.
+    return undefined;
+  }
+  // Ejecutar desde el atajo: solo la afirmación pura o el verbo de la acción («sí, llámale»). «sí, a Ana», «a las 5»:
+  // el turno completo, con todo lo que espera a la vista (también lo del servidor).
+  if (!soloNombraLaAccion(d.analisis, p)) return null;
+  if (p.de === 'propuesta' && o.propuesta) {
+    const pr = o.propuesta;
+    // Reemplazó a otra cosa en el mismo turno: su «sí» pudo ser para esa (permisos exactos, 4-oct).
+    if (pr.reemplazoDe) return { accion: null, decir: dichoDeReemplazo(pr.reemplazoDe, describirPropuesta(pr), idioma), via: 'reglas', soloDecir: true, confirmarCambio: true };
+    if (pr.tipo === 'recordatorio' && pr.cuando < ahora + 15_000) {
+      return { accion: null, decir: idioma === 'en' ? 'That time already passed. Tell me another one.' : 'Esa hora ya pasó. Dime otra.', via: 'reglas', soltarPropuesta: true };
+    }
+    const accion: AccionApp =
+      pr.tipo === 'llamar'
+        ? { tipo: 'llamar', con: pr.con, video: pr.video }
+        : pr.tipo === 'cancelar_recordatorio'
+          ? { tipo: 'cancelar_recordatorio', id: pr.id }
+          : { tipo: 'recordatorio', texto: pr.texto, cuando: pr.cuando, ...(pr.llamada ? { llamada: true } : {}) };
+    return { accion, decir: dichoDePropuesta(pr, idioma, ahora), via: 'reglas' };
+  }
+  // Un mensaje sale con un «sí» fuerte o un verbo de envío («ok», «va», «dale» se dicen a cualquier cosa); lo escrito a
+  // mano en el chat, solo con el verbo de envío («envíalo»): lo escribió ella y lo tiene enfrente.
+  if (p.de === 'pendiente' ? !d.analisis.fuerte : !d.analisis.envio) return undefined;
+  if (p.de === 'pendiente' && o.pendiente?.reemplazoDe) {
+    // Permisos exactos (4-oct): el borrador de AU-RA reemplazó a otro del mismo turno: este «sí» pudo ser para el de antes.
+    return { accion: null, decir: dichoDeReemplazo(o.pendiente.reemplazoDe, `${idioma === 'en' ? 'the message to' : 'el mensaje para'} ${o.pendiente.para}`, idioma), via: 'reglas', soloDecir: true, confirmarCambio: true };
+  }
+  // Revisión 4-oct: un `enviar` siempre lleva el texto aprobado, y solo a un teléfono que lo comprueba antes de mandar.
+  if (!puedeMano(o.contexto, 'enviar_exacto')) return { accion: null, decir: idioma === 'en' ? DICHO_ACTUALIZAR.en : DICHO_ACTUALIZAR.es, via: 'reglas', soloDecir: true };
+  // El de AU-RA sale con el texto que la persona oyó; el del chat abierto, a ESE chat y con ESE texto.
+  if (p.de === 'pendiente' && o.pendiente) return { accion: { tipo: 'enviar', para: o.pendiente.para, texto: o.pendiente.texto }, decir: dichos.enviar, via: 'reglas' };
+  const abierto = o.contexto?.chatAbierto?.correo;
+  const escrito = String(o.contexto?.borrador || '');
+  if (!abierto || !escrito.trim()) return null;
+  return { accion: { tipo: 'enviar', para: abierto, texto: escrito }, decir: dichos.enviar, via: 'reglas' };
 }
 
 /** Lo que se dice cuando el teléfono no sabe comprobar el texto aprobado (sin la mano `enviar_exacto`). */
@@ -1233,40 +1307,6 @@ function accionDeControl(c: ControlVoz, ctx: ContextoApp | null | undefined): Ac
 function reglasDeSiempre(q: string, o: OpcionesReglas): OrdenRapida | null {
   const d = DICHOS[o.idioma === 'en' ? 'en' : 'es'];
   const hecho = (accion: AccionApp, decir: string): OrdenRapida => ({ accion, decir, via: 'reglas' });
-
-  // El borrador que espera: «sí» / «envíalo» lo manda; «no» / «bórralo» lo borra. `pendiente` es el
-  // de AU-RA del turno ANTERIOR (el servidor ya soltó cualquier otro).
-  //  · «envíalo» (explícito) manda también el borrador que la persona escribió a mano en el chat abierto:
-  //    lo escribió ella y lo tiene enfrente.
-  //  · «sí» solo vale para el borrador de AU-RA, y las afirmaciones débiles («ok», «va», «dale»,
-  //    «claro») no envían nada: son lo que se contesta a cualquier cosa.
-  //  · «no» / «cancela» solo borra un borrador de AU-RA: el que la persona escribía a mano no se toca
-  //    por un «no» que quizá contestaba otra cosa.
-  const hayBorrador = !!o.pendiente || !!o.contexto?.borrador;
-  if (hayBorrador) {
-    const explicito = /^(si )?(envialo|enviala|mandalo|mandala|envialo ya|mandalo ya|send it|yes send it)$/.test(q);
-    const si = /^(si|sip|si claro|si por favor|yes|si envialo|si mandalo)$/.test(q);
-    if (explicito || (si && o.pendiente)) {
-      // Permisos exactos (4-oct): el borrador de AU-RA reemplazó a otro del mismo turno (otro destinatario o texto):
-      // este «sí» pudo ser para el de antes. No sale; se le dice a quién va ahora.
-      if (o.pendiente?.reemplazoDe) {
-        return { accion: null, decir: dichoDeReemplazo(o.pendiente.reemplazoDe, `${o.idioma === 'en' ? 'the message to' : 'el mensaje para'} ${o.pendiente.para}`, o.idioma === 'en' ? 'en' : 'es'), via: 'reglas', soloDecir: true, confirmarCambio: true };
-      }
-      // Revisión 4-oct: un `enviar` siempre lleva el texto aprobado, y solo a un teléfono que lo comprueba antes de mandar.
-      if (!puedeMano(o.contexto, 'enviar_exacto')) return { accion: null, decir: o.idioma === 'en' ? DICHO_ACTUALIZAR.en : DICHO_ACTUALIZAR.es, via: 'reglas', soloDecir: true };
-      // El de AU-RA sale con el texto que la persona oyó (el teléfono no manda otro contenido con este «sí»).
-      if (o.pendiente) return hecho({ tipo: 'enviar', para: o.pendiente.para, texto: o.pendiente.texto }, d.enviar);
-      // El que la persona escribió en el chat abierto: a ESE chat y con ESE texto (el que el teléfono reportó). Sin chat
-      // abierto o sin texto no hay qué aprobar: nada.
-      const abierto = o.contexto?.chatAbierto?.correo;
-      const escrito = String(o.contexto?.borrador || '');
-      if (!abierto || !escrito.trim()) return null;
-      return hecho({ tipo: 'enviar', para: abierto, texto: escrito }, d.enviar);
-    }
-    if (o.pendiente && /^(no|nop|mejor no|borralo|borrala|descartalo|descartala|no lo envies|no lo mandes|cancela|cancelalo|olvidalo|delete it|cancel|don ?t send it|no thanks)$/.test(q)) {
-      return hecho({ tipo: 'descartar' }, d.descartar);
-    }
-  }
 
   if (/^((vete|ve|regresa(te)?|vuelve|volver|regresar|anda|vamos|ir|go)( para| hacia| pa)? atras|regresa(te)?|vuelve|atras|back|go back|cierra (eso|esto|esta pantalla))$/.test(q)) {
     return hecho({ tipo: 'atras' }, d.atras);
@@ -1640,7 +1680,11 @@ export function prepararAcciones(
 ): AccionApp[] {
   // Permisos exactos (4-oct): lo que reemplazó a otra cosa del mismo turno no se cumple con este «sí» (pudo ser para la
   // de antes): primero se le dice a quién va ahora (server.ts, confirmarCambioApp).
+  // Permisos exactos (tercera ronda): qué decisión eligió el mensaje, con la regla única (lib/afirmacion.ts), mirando todo
+  // lo que espera (también lo que reemplazó, y lo escrito en el chat abierto): con varias y sin decir cuál, ninguna.
+  const dApp = decidirEnApp(o.mensaje, o);
   o = { ...o, pendiente: o.pendiente?.reemplazoDe ? null : o.pendiente, propuesta: o.propuesta?.reemplazoDe ? null : o.propuesta };
+  const elegida = (de: DecisionApp['de'], tipo: DecisionApp['tipo']) => dApp.tipo === 'ejecutar' && dApp.p.de === de && dApp.p.tipo === tipo;
   const out: AccionApp[] = [];
   const contactos = o.contexto?.contactos || [];
   const ahora = o.ahora ?? Date.now();
@@ -1664,7 +1708,7 @@ export function prepararAcciones(
       // Un recordatorio con llamada en un teléfono que solo sabe avisar: el mismo, como aviso.
       if (a.tipo === 'recordatorio' && a.llamada && puedeMano(o.contexto, 'recordatorio')) {
         const p = o.propuesta;
-        if (!cumplida && p?.tipo === 'recordatorio' && !conRedactar && p.cuando >= ahora + 15_000 && confirmaPropuesta('recordatorio', o.mensaje)) {
+        if (!cumplida && p?.tipo === 'recordatorio' && !conRedactar && p.cuando >= ahora + 15_000 && elegida('propuesta', 'recordatorio')) {
           cumplida = true;
           out.push({ tipo: 'recordatorio', texto: p.texto, cuando: p.cuando });
         } else if (a.cuando >= ahora + 15_000) proponer({ tipo: 'recordatorio', texto: a.texto, cuando: a.cuando });
@@ -1675,7 +1719,7 @@ export function prepararAcciones(
       const r = o.contexto?.recordatorios?.find((x) => x.id === a.id);
       if (!r) continue; // solo los que el teléfono dijo tener
       const p = o.propuesta;
-      if (!cumplida && p?.tipo === 'cancelar_recordatorio' && p.id === r.id && !conRedactar && confirmaPropuesta('cancelar_recordatorio', o.mensaje)) {
+      if (!cumplida && p?.tipo === 'cancelar_recordatorio' && p.id === r.id && !conRedactar && elegida('propuesta', 'cancelar_recordatorio')) {
         cumplida = true;
         out.push({ tipo: 'cancelar_recordatorio', id: r.id });
       } else proponer({ tipo: 'cancelar_recordatorio', id: r.id, texto: r.texto, cuando: r.cuando, llamada: r.llamada });
@@ -1686,7 +1730,7 @@ export function prepararAcciones(
       if (r.tipo !== 'uno') continue; // el cerebro debió preguntar a quién
       const p = o.propuesta;
       // Confirmar es cumplir LA PROPUESTA (a quién y si es video), nunca lo que el modelo escriba.
-      if (!cumplida && p?.tipo === 'llamar' && p.con === r.contacto.correo && !conRedactar && confirmaPropuesta('llamar', o.mensaje)) {
+      if (!cumplida && p?.tipo === 'llamar' && p.con === r.contacto.correo && !conRedactar && elegida('propuesta', 'llamar')) {
         cumplida = true;
         out.push({ tipo: 'llamar', con: p.con, video: p.video });
       } else proponer({ tipo: 'llamar', con: r.contacto.correo, nombre: r.contacto.nombre, video: a.video });
@@ -1702,7 +1746,7 @@ export function prepararAcciones(
     }
     if (a.tipo === 'recordatorio') {
       const p = o.propuesta;
-      if (!cumplida && p?.tipo === 'recordatorio' && !conRedactar && p.cuando >= ahora + 15_000 && confirmaPropuesta('recordatorio', o.mensaje)) {
+      if (!cumplida && p?.tipo === 'recordatorio' && !conRedactar && p.cuando >= ahora + 15_000 && elegida('propuesta', 'recordatorio')) {
         cumplida = true;
         out.push({ tipo: 'recordatorio', texto: p.texto, cuando: p.cuando, ...(p.llamada ? { llamada: true } : {}) });
       } else if (a.cuando >= ahora + 15_000) proponer({ tipo: 'recordatorio', texto: a.texto, cuando: a.cuando, ...(a.llamada ? { llamada: true } : {}) });
@@ -1727,7 +1771,9 @@ export function prepararAcciones(
     }
     if (a.tipo === 'enviar') {
       // Solo a un teléfono que comprueba el texto aprobado antes de mandar (revisión 4-oct).
-      if (enviado || !o.pendiente || conRedactar || !confirmaEnvio(o.mensaje) || !puedeMano(o.contexto, 'enviar_exacto')) continue;
+      // El borrador de AU-RA, elegido por la regla única (afirmación pura, o lo nombrado es de él) con un «sí» fuerte o un
+      // verbo de envío («ok», «dale» se dicen a cualquier cosa).
+      if (enviado || !o.pendiente || conRedactar || !elegida('pendiente', 'mensaje') || !dApp.analisis.fuerte || !puedeMano(o.contexto, 'enviar_exacto')) continue;
       enviado = true;
       // Al destinatario de ESE borrador y con SU texto: el teléfono no manda otro contenido con este «sí».
       out.push({ tipo: 'enviar', para: o.pendiente.para, texto: o.pendiente.texto });
