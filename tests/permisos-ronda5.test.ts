@@ -353,7 +353,7 @@ const DICCIONARIO = (
   'Jorge Miguel Laura Marta Teresa Raúl Óscar Hugo Iván Nora Olga Rita Tigo Bueno Celia Esperanza Rocío Ángel Cruz Mar ' +
   'Sol Flor Blanca Dolores Pilar Victoria Gloria Leo Noé Abel Ada Eva Ema Iris Inés Beto Chepe Toño Lupe Memo Nacho ' +
   'casa perro gato agua mañana tarde noche hoy lunes martes viernes cinco diez 5 10 300 hora reunión factura pago banco ' +
-  'tienda carro trabajo oficina jefe mamá papá hermano amigo doctor cita médico escuela niños comida cena almuerzo café ' +
+  'tienda carro trabajo oficina Rafa mamá papá Tito amigo doctor cita médico escuela niños comida cena almuerzo café ' +
   'dinero precio cuenta tarjeta número teléfono celular whatsapp correo mensaje chat llamada video foto archivo documento ' +
   'informe proyecto planta mina oro plata cobre camión ruta viaje vuelo hotel playa ciudad pueblo Tegucigalpa Honduras ' +
   'él ella le ellos usted ustedes nosotros todo algo mucho poco grande pequeño nuevo viejo rápido lento bien mal peor ' +

@@ -10,8 +10,8 @@
  *
  * Exportado aparte para probarlo con efectos simulados (tests/permisos-exactos.test.ts, tests/permisos-ronda3.test.ts).
  */
-import { borradorDe, resolverBorrador } from './correo';
-import { borradorWhatsappDe, destinoWhatsapp, resolverBorradorWhatsapp, whatsappPermitido } from './whatsapp';
+import { borradorDe, nombresRecientesCorreo, resolverBorrador } from './correo';
+import { borradorWhatsappDe, destinoWhatsapp, nombresDeChats, resolverBorradorWhatsapp, whatsappPermitido } from './whatsapp';
 import { preguntasComputadora, resolverPreguntaComputadora } from './computadora';
 import { cerrarDecisionPorChat, clasificarEnvio, type SalidaEnvio } from './trabajos';
 import { analizarRespuesta, decidirPendiente, type DecisionPendiente, type TipoDecision } from '../lib/afirmacion';
@@ -82,7 +82,11 @@ export function pendientesDelTurno(o: { dueno: string; ambito: string; whatsapp:
     out.push({ origen: 'correo', tipo: 'correo', destino: `${(c.nombres || []).join(' ')} ${c.para.join(' ')}`.trim(), ...(c.para.length > 1 ? { destinatarios: [...c.para] } : {}), ...(propia ? { propia: true } : {}), tema: `${c.asunto} ${c.texto}`, id: c.intento });
   }
   const w = o.whatsapp ? borradorWhatsappDe(o.dueno, o.ambito) : null;
-  if (w && !w.soloPanel) out.push({ origen: 'whatsapp', tipo: 'whatsapp', destino: `${destinoWhatsapp(w)} ${w.chat}`, tema: w.texto, id: w.intento });
+  if (w && !w.soloPanel) {
+    // Sexta ronda: un grupo se marca (solo su nombre completo lo identifica) y su JID no entra al destino.
+    const grupo = !!w.grupo || /@g\.us$/.test(w.chat);
+    out.push({ origen: 'whatsapp', tipo: 'whatsapp', destino: grupo ? destinoWhatsapp(w) : `${destinoWhatsapp(w)} ${w.chat}`, ...(grupo ? { grupo: true } : {}), tema: w.texto, id: w.intento });
+  }
   for (const p of preguntasComputadora(o.dueno, o.ambito)) out.push({ origen: 'computadora', tipo: 'computadora', texto: p.texto, id: p.tareaId });
   if (o.app) {
     const tipo = TIPO_APP[o.app.que] ?? 'mensaje';
@@ -121,7 +125,12 @@ export async function resolverDecisionesDelTurno(o: OpcionesDecisionTurno): Prom
   const nada = (extra: Partial<SalidaDecisionTurno> = {}): SalidaDecisionTurno => ({ hechos, turnoVigente: true, delCorreo: null, delWhatsapp: null, deLaPregunta: null, ambiguo: false, appBloqueada: false, respondio: false, ...extra });
   if (!dueno) return nada();
   const pendientes = pendientesDelTurno({ dueno, ambito, whatsapp: o.whatsapp, app: o.app });
-  const d = decidirPendiente(message, pendientes, { conocidos: o.conocidos });
+  // Sexta ronda (M1-B): quién más se llama así. Los contactos del teléfono (si los mandó), las personas de sus chats de
+  // WhatsApp (con un tope corto; sin teléfono, como en la web, son lo único que lo sabe) y quien le escribió hace poco.
+  const conocidos = pendientes.length
+    ? [...(o.conocidos || []), ...nombresRecientesCorreo(dueno, ambito), ...(o.whatsapp ? await nombresDeChats(dueno) : [])]
+    : o.conocidos;
+  const d = decidirPendiente(message, pendientes, { conocidos });
   const efecto = d.tipo === 'ejecutar' && d.p.origen !== 'app';
   // Un «sí» que va a mandar un borrador o soltar a su computadora: antes se deja anotado en el turno durable (AUR06,
   // persistir antes de actuar). Si este proceso ya no es el dueño del turno, no se resuelve nada aquí.

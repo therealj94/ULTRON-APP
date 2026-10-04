@@ -499,6 +499,14 @@ export function huellaCorreo(b: Pick<Borrador, 'cuentaId' | 'desde' | 'para' | '
   });
 }
 
+/**
+ * Permisos exactos (sexta ronda, M1-B): los nombres de quien le escribió en la última lista de correos de esta
+ * conversación (contactos recientes), para saber quién más se llama así.
+ */
+export function nombresRecientesCorreo(quien: string, ambito = ''): string[] {
+  return (LISTAS.get(llave(quien, ambito)) || []).map((x) => x.de).filter((x): x is string => !!x);
+}
+
 /** Pruebas y la app: el borrador que espera su «sí». */
 export function borradorDe(quien: string, ambito = ''): BorradorGuardado | null {
   const b = BORRADORES.get(llave(quien, ambito));
