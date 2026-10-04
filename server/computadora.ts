@@ -44,7 +44,7 @@ import { nivelDeCorreo } from './nivel';
 import crypto from 'node:crypto';
 import { clave } from '../lib/boveda';
 import { almacenDurable, claveDe, crearUnaVez, leerDurable } from '../lib/durable';
-import { evaluarEntrega, type ArchivoNodo, type Entrega, type ItemEntrega } from '../lib/tareas-durables';
+import { evaluarEntrega, requisitosCombinados, type ArchivoNodo, type Entrega, type ItemEntrega, type PedidoEntrega } from '../lib/tareas-durables';
 
 export type MotorNodo = 'holo' | 'claude';
 /**
@@ -526,6 +526,11 @@ type Mision = {
   plan: string[];
   /** El plan lo escribió el cerebro (si no, se armó de la instrucción). */
   planDelCerebro: boolean;
+  /**
+   * Lo que se pidió, calculado UNA vez al crearla con lo que pidió la PERSONA en su turno y con lo que el modelo encargó
+   * (lib/entregables.ts `requisitosCombinados`: gana lo más exigente). No se recalcula con otro texto después.
+   */
+  requisitos?: PedidoEntrega;
   inicio: number;
   tareas: string[];
   /** El paso del plan en que va (nunca retrocede). */
@@ -664,7 +669,7 @@ export function avisosPendientes(quien: string): { ids: string[]; hecho: string 
     .map((id) => ENCARGOS.get(id))
     .filter((e): e is Encargo => !!e?.terminada && !e.avisada);
   if (!listas.length) return null;
-  const partes = listas.map((e) => `«${e.instruccion.slice(0, 160)}»: ${resumenTarea(e.terminada!, e.instruccion)}`);
+  const partes = listas.map((e) => `«${e.instruccion.slice(0, 160)}»: ${resumenTarea(e.terminada!, e.instruccion, e.mision.requisitos)}`);
   return {
     ids: listas.map((e) => e.id),
     hecho: `COMPUTADORA (terminó lo que te encargaron antes) ${partes.join(' · ')} Díselo al empezar, en una o dos frases.`,
@@ -905,8 +910,8 @@ export function archivosDe(t: Pick<Tarea, 'archivos'>): ArchivoNodo[] | null {
 }
 
 /** Lo entregado de una tarea terminada, comprobado o no (lib/tareas-durables.ts `evaluarEntrega`). */
-export function entregaDe(instruccion: string, t: Pick<Tarea, 'id' | 'respuesta' | 'pasos' | 'archivos'>): Entrega {
-  return evaluarEntrega({ id: t.id, instruccion, resultado: t.respuesta ?? null, enlaces: visitadosDe(t), datos: datosDe(t.respuesta), archivos: archivosDe(t) });
+export function entregaDe(instruccion: string, t: Pick<Tarea, 'id' | 'respuesta' | 'pasos' | 'archivos'>, requisitos?: PedidoEntrega | null): Entrega {
+  return evaluarEntrega({ id: t.id, instruccion, resultado: t.respuesta ?? null, enlaces: visitadosDe(t), datos: datosDe(t.respuesta), archivos: archivosDe(t), requisitos: requisitos ?? null });
 }
 
 /** «Compra: 24.70», «Venta: 24.95»: los datos sueltos de la respuesta, para la tabla de la tarjeta. */
@@ -944,12 +949,12 @@ function cerrarMision(e: Encargo, t: Tarea) {
   m.pregunta = null;
   moverPlan(e, t);
   // «Listo» no es evidencia (revisión externa, 4-oct): ok solo si lo entregado se comprobó.
-  const entrega = entregaDe(m.instruccion, t);
+  const entrega = entregaDe(m.instruccion, t, m.requisitos);
   const ok = t.estado === 'hecha' && !misionIncompleta(t) && entrega.comprobada;
   m.final = {
     estado: t.estado,
     ok,
-    texto: fraseDeFinal(m.instruccion, t, m.idioma),
+    texto: fraseDeFinal(m.instruccion, t, m.idioma, m.requisitos),
     respuesta: t.respuesta ?? null,
     error: t.error ?? null,
     enlaces: enlacesDe(t),
@@ -1148,7 +1153,7 @@ export function fraseDePaso(p: Pick<PasoTarea, 'accion' | 'args'>, idioma: 'es' 
 }
 
 /** El final, para decirlo en voz sin pasar por el cerebro (el teléfono lo dice tal cual). */
-export function fraseDeFinal(mision: string, t: Tarea, idioma: 'es' | 'en' = 'es'): string {
+export function fraseDeFinal(mision: string, t: Tarea, idioma: 'es' | 'en' = 'es', requisitos?: PedidoEntrega | null): string {
   const en = idioma === 'en';
   const corto = (x: unknown, n: number) => {
     const s = String(x ?? '').replace(/\s+/g, ' ').trim();
@@ -1156,7 +1161,7 @@ export function fraseDeFinal(mision: string, t: Tarea, idioma: 'es' | 'en' = 'es
   };
   if (t.estado === 'hecha') {
     // Lo que no se comprobó no se dice como hecho: ni «listo», ni «ya lo guardé» (revisión externa, 4-oct).
-    const ent = entregaDe(mision, t);
+    const ent = entregaDe(mision, t, requisitos);
     if (!ent.comprobada) return fraseSinComprobar(ent, en, corto(t.respuesta, 200));
     const r = corto(t.respuesta, 650);
     const arch = ent.tipo === 'archivo' ? archivosEnPalabras(ent, en) : '';
@@ -1472,7 +1477,7 @@ async function alTerminar(e: Encargo, t: Tarea, enTurno: boolean, sinSeguir = fa
     avisarApp(e, { tipo: 'computadora', fase: 'termina', id: e.id, ok: !!e.mision.final?.ok });
     return { sigue: null };
   }
-  const llego = avisarApp(e, { tipo: 'computadora', fase: 'termina', id: e.id, ok: !!e.mision.final?.ok, texto: e.mision.final?.texto ?? fraseDeFinal(e.instruccion, t, e.idioma) }, true);
+  const llego = avisarApp(e, { tipo: 'computadora', fase: 'termina', id: e.id, ok: !!e.mision.final?.ok, texto: e.mision.final?.texto ?? fraseDeFinal(e.instruccion, t, e.idioma, e.mision.requisitos) }, true);
   if (llego) confirmarAvisos(e.quien, [e.id]);
   return { sigue: null };
 }
@@ -1497,6 +1502,8 @@ async function crearEncargo(o: {
    * la respuesta se perdió, en lugar de lanzar otra (auditoría 3-oct, PC04).
    */
   pedido?: string;
+  /** Lo que la persona pidió en su turno (R5): con la instrucción, da los requisitos de la misión. */
+  pedidoPersona?: string;
 }): Promise<Encargo> {
   // `desde_tarea`: la primera tarea de la misión, para que el nodo cuente como «de esta misión» lo que se guardó en
   // una vuelta anterior (agente.py nuevo; el de antes lo ignora).
@@ -1514,6 +1521,7 @@ async function crearEncargo(o: {
     instruccion: o.instruccion,
     plan: o.plan?.pasos ?? planDeMision(o.instruccion, o.idioma),
     planDelCerebro: !!o.plan?.delCerebro,
+    requisitos: requisitosCombinados(o.instruccion, o.pedidoPersona),
     inicio: ahora,
     tareas: [],
     indice: 0,
@@ -1582,10 +1590,10 @@ async function crearConReintento(o: Parameters<typeof crearEncargo>[0]): Promise
  * comprobó. Lo que no se comprobó va marcado SIN COMPROBAR con la orden de no darlo por hecho (revisión externa, 4-oct:
  * AURA no dice «ya lo guardé» si el nodo no encontró el archivo).
  */
-export function resumenTarea(t: Tarea, instruccion: string = t.instruccion): string {
+export function resumenTarea(t: Tarea, instruccion: string = t.instruccion, requisitos?: PedidoEntrega | null): string {
   const pasos = pasosUtiles(t);
   if (t.estado === 'hecha') {
-    const ent = entregaDe(instruccion, t);
+    const ent = entregaDe(instruccion, t, requisitos);
     const dijo = String(t.respuesta || '').slice(0, 1500);
     if (!ent.comprobada) {
       return (
@@ -1622,6 +1630,11 @@ export async function encargarTarea(o: {
   decirPlan?: boolean;
   /** El id del pedido de la app (`requestId`): repetido, el nodo devuelve la misma tarea. */
   pedido?: string;
+  /**
+   * Lo que pidió la PERSONA en el turno (R5). El argumento de la herramienta lo escribe el modelo y puede parafrasear
+   * «tres capturas» como «una captura»: los requisitos salen de los dos y gana lo más exigente.
+   */
+  pedidoPersona?: string;
 }): Promise<{ hecho: string; id: string | null; tarea: Tarea | null; incierto?: boolean; comprobada?: boolean }> {
   if (!computadoraConfigurada()) {
     return { hecho: 'HARNESS computadora: no está configurada en este servidor. No la usé; dilo con naturalidad.', id: null, tarea: null };
@@ -1633,7 +1646,7 @@ export async function encargarTarea(o: {
   const plan = { pasos: separado.plan ?? planDeMision(instruccion, idioma), delCerebro: !!separado.plan };
   let e: Encargo;
   let nota = '';
-  const base = { instruccion, paraNodo: prepararMision(instruccion, idioma), quien: o.quien, aparato: o.aparato ?? null, ambito: o.ambito ?? o.aparato ?? null, idioma, maxPasos: o.maxPasos ?? 25, vuelta: 0, plan, pedido: o.pedido };
+  const base = { instruccion, paraNodo: prepararMision(instruccion, idioma), quien: o.quien, aparato: o.aparato ?? null, ambito: o.ambito ?? o.aparato ?? null, idioma, maxPasos: o.maxPasos ?? 25, vuelta: 0, plan, pedido: o.pedido, pedidoPersona: o.pedidoPersona };
   try {
     try {
       e = await crearConReintento({ ...base, motor: o.motor });
@@ -1672,7 +1685,7 @@ export async function encargarTarea(o: {
     }
     // Se cerró mientras se consultaba (AUR04): vale el final que ya se decidió, no la lectura vieja.
     if (!aceptarLectura(e, gen, leida)) {
-      if (e.cerrada && e.terminada) return { hecho: `HARNESS computadora «${instruccion.slice(0, 160)}»: ${resumenTarea(e.terminada, instruccion)}${nota}`, id: e.id, tarea: e.terminada, comprobada: !!e.mision.final?.comprobado };
+      if (e.cerrada && e.terminada) return { hecho: `HARNESS computadora «${instruccion.slice(0, 160)}»: ${resumenTarea(e.terminada, instruccion, e.mision.requisitos)}${nota}`, id: e.id, tarea: e.terminada, comprobada: !!e.mision.final?.comprobado };
       continue;
     }
     t = leida;
@@ -1695,13 +1708,13 @@ export async function encargarTarea(o: {
       if (sigue) {
         return {
           hecho:
-            `HARNESS computadora «${instruccion.slice(0, 160)}»: la primera parte no alcanzó (${resumenTarea(t, instruccion).slice(0, 200)}) y ya sigue sola en tu computadora con lo que falta.${nota} ` +
+            `HARNESS computadora «${instruccion.slice(0, 160)}»: la primera parte no alcanzó (${resumenTarea(t, instruccion, e.mision.requisitos).slice(0, 200)}) y ya sigue sola en tu computadora con lo que falta.${nota} ` +
             `Di que sigues trabajando en eso. ${mira} No inventes el resultado.`,
           id: sigue.id,
           tarea: t,
         };
       }
-      return { hecho: `HARNESS computadora «${instruccion.slice(0, 160)}»: ${resumenTarea(t, instruccion)}${nota}`, id: e.id, tarea: t, comprobada: !!e.mision.final?.comprobado };
+      return { hecho: `HARNESS computadora «${instruccion.slice(0, 160)}»: ${resumenTarea(t, instruccion, e.mision.requisitos)}${nota}`, id: e.id, tarea: t, comprobada: !!e.mision.final?.comprobado };
     }
   }
   if (!e.cerrada) {

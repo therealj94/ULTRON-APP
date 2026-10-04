@@ -577,6 +577,130 @@ test('servidor: «crea tres archivos» con cero archivos → la frase dice 0 de 
   }
 });
 
+/* ------------------------------------------------------------------ ronda 3: reglas de diseño (R1–R5) */
+
+const VERBOSO = 'Listo, ya quedó todo lo que pediste con el contenido del sitio del proveedor de septiembre.';
+const arch = (ruta: string, tipo: string, s: string, extra: A = {}): A => ({ ruta: `${ESP}/${ruta}`, existe: true, bytes: 3000, sha256: sha(s), reciente: true, tipo, ...extra });
+
+test('R1: un archivo mencionado que no existe nunca deja completar, tampoco por «dato»', () => {
+  const dato = cerrar('Busca el horario del banco', [{ ruta: 'horario.txt', existe: false, bytes: 0, sha256: null, mencionado: true }], 'Abre de 9 a 4 de lunes a viernes; lo dejé anotado en horario.txt');
+  assert.equal(dato.c.estado, 'partial', 'el modelo nombró horario.txt y no está');
+  assert.match(dato.texto, /horario\.txt/);
+  // El origen nombrado que no aparece tampoco: «convierte datos.csv» y datos.csv no está.
+  const origen = cerrar('Convierte datos.csv a PDF', [{ ruta: 'datos.csv', existe: false, bytes: 0, sha256: null, mencionado: true }, arch('Documents/datos.pdf', 'pdf', '1')], 'Listo.');
+  assert.equal(origen.c.estado, 'partial');
+  // Fuera del espacio también es «no existe».
+  assert.equal(cerrar('Crea informe.docx', [ok('informe.docx', 'docx', '1'), { ruta: '/tmp/copia.docx', existe: false, bytes: 0, sha256: null, mencionado: true, fuera: true }], 'Listo, y dejé otra en /tmp/copia.docx').c.estado, 'partial');
+});
+
+test('R2: cualquier familia de archivo hace la misión de archivos, aunque el verbo no esté en la lista', async () => {
+  const { pideArchivo } = await import('../lib/tareas-durables');
+  for (const q of ['imprime el reporte a PDF', 'print the invoice as PDF', 'grab a screenshot of the homepage', 'screenshot the dashboard', 'dos capturas del sitio por favor', 'comprime la carpeta reportes', 'ponme el estado de cuenta en un excel', 'Hazme un pantallazo del panel']) {
+    assert.equal(pideArchivo(q), true, q);
+    const c = cerrar(q, [], VERBOSO);
+    assert.equal(c.c.estado, 'partial', `${q}: con cero archivos no se completa`);
+    assert.ok(c.criterios.length >= 1 && c.criterios.every((x) => x.estado !== 'verified'), q);
+  }
+  assert.equal(requisitosDeEntrega('dos capturas del sitio por favor').items.length, 2);
+  // Con lo pedido de verdad, sí.
+  assert.equal(cerrar('imprime el reporte a PDF', [arch('Documents/reporte.pdf', 'pdf', '1')], 'Listo.').c.estado, 'completed');
+  assert.equal(cerrar('dos capturas del sitio por favor', [arch('Pictures/a.png', 'png', '1'), arch('Pictures/b.png', 'png', '2')], 'Listo.').c.estado, 'completed');
+  assert.equal(cerrar('comprime la carpeta reportes', [arch('reportes.zip', 'zip', '1')], 'Listo.').c.estado, 'completed');
+  assert.equal(cerrar('screenshot the dashboard', [arch('Pictures/dash.png', 'png', '1')], 'Done.').c.estado, 'completed');
+  // Un dato con un archivo como fuente sigue siendo un dato.
+  for (const q of ['Abre el PDF del reglamento y dime qué dice', 'Busca fotos de Copán y dime cuál te gusta']) {
+    assert.equal(pideArchivo(q), false, q);
+    assert.equal(cerrar(q, undefined, 'El reglamento fija el pago del impuesto el día 10 de cada mes, con multa del 5 por ciento.').c.estado, 'completed', q);
+  }
+});
+
+test('R3: un archivo de origen nunca cumple; un origen sin nombre del mismo tipo deja el requisito sin comprobar', () => {
+  const ventas = arch('Downloads/ventas.xlsx', 'xlsx', 'e', { mencionado: true });
+  const unaHoja = cerrar('Abre ventas.xlsx desde el correo y hazme 2 hojas de cálculo', [ventas, arch('Documents/resumen.xlsx', 'xlsx', '1')], 'Listo, ya están las dos hojas.');
+  assert.equal(unaHoja.c.estado, 'partial', 'ventas.xlsx es de donde sale, no una de las dos hojas');
+  assert.match(unaHoja.texto, /1 de 2/);
+  // Su copia («ventas (1).xlsx») tampoco.
+  assert.equal(cerrar('Abre ventas.xlsx desde el correo y hazme 2 hojas de cálculo', [ventas, arch('Downloads/ventas (1).xlsx', 'xlsx', 'f'), arch('Documents/resumen.xlsx', 'xlsx', '1')], 'Listo.').c.estado, 'partial');
+  assert.equal(cerrar('Abre ventas.xlsx desde el correo y hazme 2 hojas de cálculo', [ventas, arch('Documents/resumen.xlsx', 'xlsx', '1'), arch('Documents/totales.xlsx', 'xlsx', '2')], 'Listo.').c.estado, 'completed', 'dos hojas nuevas sí');
+  const estado = requisitosDeEntrega('Baja el estado de cuenta y hazme 2 PDFs');
+  assert.equal(estado.seguro, false, 'lo que se baja sin nombre no se distingue de lo creado');
+  const baja = cerrar('Baja el estado de cuenta y hazme 2 PDFs', [arch('Downloads/estado.pdf', 'pdf', '1'), arch('Documents/resumen.pdf', 'pdf', '2')], 'Listo.');
+  assert.equal(baja.c.estado, 'partial');
+  assert.match(baja.texto, /no (puedo|pude) distinguir/i);
+  assert.equal(cerrar('Lee datos.csv y crea tres archivos', [arch('datos.csv', 'texto', 'd', { mencionado: true }), arch('Documents/a.txt', 'texto', '1'), arch('Documents/b.txt', 'texto', '2')], 'Listo.').c.estado, 'partial', 'datos.csv no es uno de los tres');
+  assert.equal(cerrar('Usa plantilla.docx y crea dos documentos de Word', [arch('Documents/plantilla.docx', 'docx', 'c', { mencionado: true }), arch('Documents/carta1.docx', 'docx', '1')], 'Listo.').c.estado, 'partial');
+});
+
+test('R4: el mismo contenido (sha256) cumple a lo más una cosa pedida', () => {
+  const copia = cerrar('Haz dos capturas de la página', [arch('Pictures/captura.png', 'png', '1'), arch('Pictures/captura (copia).png', 'png', '1')], 'Listo.');
+  assert.equal(copia.c.estado, 'partial', 'una copia idéntica no es otra captura');
+  assert.match(copia.texto, /1 de 2/);
+  assert.equal(cerrar('Haz dos capturas de la página', [arch('Pictures/captura.png', 'png', '1'), arch('Pictures/captura2.png', 'png', '2')], 'Listo.').c.estado, 'completed');
+  assert.equal(cerrar('Crea tres archivos', [arch('a.txt', 'texto', '1'), arch('b.txt', 'texto', '1'), arch('c.txt', 'texto', '2')], 'Listo.').c.estado, 'partial');
+});
+
+test('R5: los requisitos salen de lo que pidió la persona; gana lo más exigente y se guardan al crear la misión', async () => {
+  const combinar = (durables as any).requisitosCombinados as (i: string, p?: string) => { items: unknown[]; seguro: boolean };
+  assert.equal(typeof combinar, 'function');
+  assert.equal(combinar('Toma una captura de la página', 'Hazme tres capturas de la página').items.length, 3, 'el modelo dijo una; la persona, tres');
+  assert.equal(combinar('Hazme tres capturas de la página', 'Toma una captura').items.length, 3);
+  assert.equal(combinar('Crea un PDF con el resumen', 'Hazme un Word con el resumen').seguro, false, 'se contradicen: no es seguro');
+  assert.equal(combinar('Crea un PDF con el resumen', undefined).items.length, 1);
+  // El encargo durable nace con los requisitos de la persona.
+  _usarAlmacenDurable(almacenEnMemoria());
+  const ref = await (abrirEncargoComputadora as any)('cami@x.hn', 'web', 'Toma una captura de la página', 'Hazme tres capturas de la página');
+  const enc = (await leerTarea('cami@x.hn', ref!.id)) as any;
+  assert.equal(enc.tarea.criterios.length, 3);
+  // Por el servidor: el nodo deja una captura; la persona pidió tres.
+  const n = await nodo('Listo, ya tomé la captura.', { archivos: [arch('Pictures/captura.png', 'png', '1')] });
+  try {
+    await conNodo(n.url, async () => {
+      const r = await (encargarTarea as any)({ instruccion: 'Toma una captura de la página', pedidoPersona: 'Hazme tres capturas de la página', quien: 'cami@x.hn', motor: 'holo', esperaMs: 8000 });
+      assert.equal(r.comprobada, false);
+      const v = vistaMision(misionDeTarea(r.id!)!);
+      assert.equal(v.final!.ok, false);
+      assert.match(v.final!.texto, /1 de 3/);
+      assert.equal((v.final as any).entregables.length, 3);
+    });
+  } finally {
+    await n.cerrar();
+  }
+});
+
+test('calificador de formato: «dos archivos PDF» son 2 PDFs, no 2 archivos + 1 PDF', () => {
+  const casos: [string, number, string][] = [
+    ['Crea dos archivos PDF', 2, 'pdf'],
+    ['Tres documentos PDF', 3, 'pdf'],
+    ['Dos imágenes PNG', 2, 'png'],
+    ['Un archivo Excel', 1, 'xlsx'],
+    ['Dos documentos en Word', 2, 'docx'],
+    ['Save two PDF files', 2, 'pdf'],
+  ];
+  for (const [q, n, ext] of casos) {
+    const r = requisitosDeEntrega(q);
+    assert.equal(r.items.length, n, `${q}: ${JSON.stringify(r.items)}`);
+    assert.ok(r.items.every((i) => i.extensiones.includes(ext)), `${q}: todos de tipo ${ext}`);
+  }
+  // Entregar los dos PDFs pedidos completa.
+  assert.equal(cerrar('Crea dos archivos PDF', [arch('Documents/a.pdf', 'pdf', '1'), arch('Documents/b.pdf', 'pdf', '2')], 'Listo.').c.estado, 'completed');
+  // Control: «un Word y un PDF» siguen siendo dos cosas distintas.
+  const control = requisitosDeEntrega('Crea un Word y un PDF');
+  assert.equal(control.items.length, 2);
+  assert.deepEqual(control.items.map((i) => i.extensiones.includes('pdf')).sort(), [false, true]);
+});
+
+test('ronda 3: lo legítimo de un archivo sigue completando', () => {
+  const casos: [string, A[]][] = [
+    ['Crea informe.docx', [ok('informe.docx', 'docx', '1')]],
+    ['Guarda la página como PDF', [arch('Documents/pagina.pdf', 'pdf', '1')]],
+    ['Hazme una hoja de cálculo con los precios', [arch('Documents/precios.xlsx', 'xlsx', '1')]],
+    ['Toma una captura de pantalla', [arch('Pictures/captura.png', 'png', '1')]],
+    ['Descarga el reglamento', [arch('Downloads/reglamento.pdf', 'pdf', '1')]],
+    ['Convierte datos.csv a PDF', [arch('datos.csv', 'texto', 'd', { reciente: false, mencionado: true }), arch('Documents/datos.pdf', 'pdf', '1')]],
+  ];
+  for (const [q, a] of casos) assert.equal(cerrar(q, a, 'Listo.').c.estado, 'completed', q);
+});
+
 test('la app: la tarjeta cuenta cuántas cosas pedidas se comprobaron y lista cada una', async () => {
   const app: any = await import('../mobile/src/compa/computadora');
   const { finalEnPalabras, entregablesEnPalabras } = app;

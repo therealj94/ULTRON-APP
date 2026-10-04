@@ -42,9 +42,9 @@ import {
   reservarPedido,
   type AlmacenDurable,
 } from './durable';
-import { compararEntrega, faltaEnPalabras, requisitosDeEntrega, type ArchivoNodo, type ItemEntrega } from './entregables';
+import { compararEntrega, faltaEnPalabras, requisitosCombinados, requisitosDeEntrega, type ArchivoNodo, type ItemEntrega, type PedidoEntrega } from './entregables';
 
-export { requisitosDeEntrega, type ArchivoNodo, type ItemEntrega } from './entregables';
+export { requisitosCombinados, requisitosDeEntrega, type ArchivoNodo, type ItemEntrega, type PedidoEntrega } from './entregables';
 
 /* ------------------------------------------------------------------ estados */
 
@@ -701,6 +701,8 @@ export type MisionComputadoraMin = {
   datos?: { clave: string; valor: string }[];
   /** Lo que el nodo comprobó en su espacio de trabajo al terminar. undefined/null: no se comprobó (un nodo de antes). */
   archivos?: ArchivoNodo[] | null;
+  /** Lo que se pidió, calculado UNA vez al crear la misión con lo que pidió la persona (R5). Sin él, de la instrucción. */
+  requisitos?: PedidoEntrega | null;
 };
 
 /** El estado del nodo en el vocabulario de la sección 6. */
@@ -773,10 +775,11 @@ const RELLENO = new Set(
  * «tres PDFs», «una captura», «las facturas de enero, febrero y marzo»): una misión de archivos NUNCA se comprueba con
  * el texto de la respuesta (revisión independiente).
  */
-export function pideArchivo(instruccion: string, respuesta?: string | null): boolean {
+export function pideArchivo(instruccion: string, respuesta?: string | null, pedido?: PedidoEntrega | null): boolean {
+  if (pedido && pedido.explicitos > 0) return true;
   const p = plegar(sinUrls(String(instruccion || '')));
   if (RE_PIDE_GUARDAR.test(p) || RE_PIDE_CREAR.test(p) || RE_DICE_ARCHIVO.test(plegar(sinUrls(String(respuesta || ''))))) return true;
-  return requisitosDeEntrega(instruccion, respuesta).explicitos > 0;
+  return requisitosDeEntrega(instruccion).explicitos > 0;
 }
 
 /** ¿Pide una acción con efecto afuera (enviar, publicar, llenar un formulario…)? Eso no se comprueba desde aquí. */
@@ -813,12 +816,15 @@ export type Entrega = { comprobada: boolean; tipo: 'archivo' | 'accion' | 'dato'
 /** El id de la evidencia de un requisito verificado: uno por requisito, nunca compartido. */
 const idEvidenciaItem = (misionId: string, itemId: string) => `${misionId}:archivo:${itemId}`;
 
-export function evaluarEntrega(m: Pick<MisionComputadoraMin, 'id' | 'instruccion' | 'resultado' | 'enlaces' | 'datos' | 'archivos'>): Entrega {
+export function evaluarEntrega(m: Pick<MisionComputadoraMin, 'id' | 'instruccion' | 'resultado' | 'enlaces' | 'datos' | 'archivos' | 'requisitos'>): Entrega {
   const abiertas: Evidencia[] = (m.enlaces || []).slice(0, 6).map((u, i) => ({ id: `${m.id}:enlace:${i}`, tipo: 'enlace', etiqueta: texto(u, 120), ref: u }));
   const lista = Array.isArray(m.archivos) ? m.archivos : null;
-  if (pideArchivo(m.instruccion, m.resultado)) {
+  // R1: un archivo que se nombró (el modelo dijo «guardé X», o la instrucción lo usa) y no existe no deja completar por
+  // ningún camino; la misión se evalúa como de archivos y ese archivo es un criterio no cumplido.
+  const nombradoQueFalta = (lista || []).some((a) => a && a.mencionado === true && a.existe !== true);
+  if (nombradoQueFalta || pideArchivo(m.instruccion, m.resultado, m.requisitos)) {
     // Cada cosa pedida, por separado: su archivo (a lo más uno), su tipo por dentro, de esta misión, en su carpeta.
-    const { items, seguro, sobran } = compararEntrega(m.instruccion, lista, m.resultado);
+    const { items, seguro, sobran } = compararEntrega(m.instruccion, lista, m.requisitos);
     const pedidos = items.filter((i) => i.origen === 'pedido');
     const hechos = pedidos.filter((i) => i.estado === 'verified').length;
     const comprobada = seguro && items.length > 0 && items.every((i) => i.estado === 'verified');
@@ -861,9 +867,10 @@ function textoCriterio(r: { etiqueta: string; origen: 'pedido' | 'respuesta' }):
  * Los criterios de aceptación de un encargo a la computadora ANTES de empezar: si pide dejar archivos, uno por cosa
  * pedida (lib/entregables.ts `requisitosDeEntrega`); si no, el resultado comprobado.
  */
-export function criteriosDeEncargo(instruccion: string): { id: string; texto: string; obligatorio: boolean }[] {
-  if (!pideArchivo(instruccion)) return [{ id: 'resultado', texto: TEXTO_RESULTADO, obligatorio: true }];
-  return requisitosDeEntrega(instruccion).items.map((r) => ({ id: r.id, texto: textoCriterio(r), obligatorio: true }));
+export function criteriosDeEncargo(instruccion: string, pedidoPersona?: string | null): { id: string; texto: string; obligatorio: boolean }[] {
+  const req = requisitosCombinados(instruccion, pedidoPersona);
+  if (!pideArchivo(instruccion, null, req)) return [{ id: 'resultado', texto: TEXTO_RESULTADO, obligatorio: true }];
+  return req.items.map((r) => ({ id: r.id, texto: textoCriterio(r), obligatorio: true }));
 }
 
 /**
@@ -924,7 +931,8 @@ export function deComputadora(m: MisionComputadoraMin, ahora = Date.now()): Task
   const actual = m.plan?.find((p) => p.estado === 'actual' || p.estado === 'espera');
   const prog = progresoDePlan(m.plan);
   // Cada cosa pedida es su propio criterio, con su estado y SU evidencia (nunca una lista copiada a todos).
-  const criterios: Criterio[] = cierre && terminal ? cierre.criterios : criteriosDeEncargo(m.instruccion).map((c) => ({ ...c, estado: 'pending' as const, evidencias: [] }));
+  const pendientes = m.requisitos && pideArchivo(m.instruccion, null, m.requisitos) ? m.requisitos.items.map((r) => ({ id: r.id, texto: textoCriterio(r), obligatorio: true })) : criteriosDeEncargo(m.instruccion);
+  const criterios: Criterio[] = cierre && terminal ? cierre.criterios : pendientes.map((c) => ({ ...c, estado: 'pending' as const, evidencias: [] }));
   return {
     id: m.id,
     version: m.inicio + m.segundos,

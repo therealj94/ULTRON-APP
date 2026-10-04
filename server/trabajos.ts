@@ -169,7 +169,7 @@ const conCorreo = (c: string) => {
  * Antes de encargar a su computadora: la tarea durable, ya «running». Si el almacén no contesta se avisa y
  * el encargo sigue como antes (el turno ya dejó registrado su efecto en server/turno-unico.ts).
  */
-export async function abrirEncargoComputadora(duenoCorreo: string, ambito: string, instruccion: string): Promise<RefTarea | null> {
+export async function abrirEncargoComputadora(duenoCorreo: string, ambito: string, instruccion: string, pedidoPersona?: string | null): Promise<RefTarea | null> {
   const dueno = conCorreo(duenoCorreo);
   if (!dueno || !linea(instruccion, 10)) return null;
   const { requestId, turnoId } = pedidoDelTurno('computadora', instruccion);
@@ -182,7 +182,7 @@ export async function abrirEncargoComputadora(duenoCorreo: string, ambito: strin
       entorno: { kind: 'computadora', id: 'pendiente', displayName: 'Tu computadora' },
       pasoActual: 'Se lo encargo a tu computadora',
       // Si pide dejar archivos, un criterio por cosa pedida (cada uno se comprobará con SU archivo); si no, el resultado.
-      criterios: criteriosDeEncargo(instruccion),
+      criterios: criteriosDeEncargo(instruccion, pedidoPersona),
       origen: { kind: 'chat', ...(turnoId ? { turnoId } : {}), conversacion: linea(ambito, 80) },
       condicionParada: 'Termina con resultado, falla, la paras tú, o deja de dar noticias.',
     });

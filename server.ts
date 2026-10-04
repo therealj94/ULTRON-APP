@@ -3276,6 +3276,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
           // El teléfono del turno: ahí se abre sola la vista en vivo y se narra (sin aparato, todos los suyos).
           aparato: aparatoValido(body?.aparato),
           idioma: idiomaTurno,
+          // Lo que la persona pidió en este turno, tal cual (no la paráfrasis del modelo).
+          pedido: String(message || '').slice(0, 2000),
         }
       : null,
     // Lo que su computadora terminó y va en los hechos: se da por dicho solo si el modelo contesta con ellos.
@@ -3686,7 +3688,8 @@ function preguntarConManos(
  * Corre lo que pidió el modelo. Con un miembro, resolverPedido (lib/harness.ts) no deja pasar
  * `sistema` ni `ejecutor` aunque el modelo los pida: son del taller de la junta.
  */
-type TurnoComputadora = { quien: string; motor: MotorNodo; esperaMs: number; aparato?: string | null; idioma?: 'es' | 'en' } | null | undefined;
+/** `pedido`: lo que la persona escribió o dijo en este turno (R5: los requisitos de la misión salen también de ahí). */
+type TurnoComputadora = { quien: string; motor: MotorNodo; esperaMs: number; aparato?: string | null; idioma?: 'es' | 'en'; pedido?: string } | null | undefined;
 
 async function correrHerramientaPedida(
   ped: ReturnType<typeof extraerPedidoHerramienta>,
@@ -3749,8 +3752,9 @@ async function correrHerramientaPedida(
         const orden = await comandoComputadora(compu.quien, tarea);
         if (orden !== null) return orden;
         // Trabajo durable (AUR08): la tarea existe ANTES de encargar, y la respuesta del turno la enlaza.
-        const ref = await abrirEncargoComputadora(compu.quien, ambito, tarea);
-        const r = await encargarTarea({ instruccion: tarea, quien: compu.quien, motor: compu.motor, esperaMs: compu.esperaMs, senal, aparato: compu.aparato, ambito, idioma: compu.idioma });
+        // Los requisitos salen de lo que pidió la persona y de lo que el modelo encargó (gana lo más exigente).
+        const ref = await abrirEncargoComputadora(compu.quien, ambito, tarea, compu.pedido);
+        const r = await encargarTarea({ instruccion: tarea, pedidoPersona: compu.pedido, quien: compu.quien, motor: compu.motor, esperaMs: compu.esperaMs, senal, aparato: compu.aparato, ambito, idioma: compu.idioma });
         const hecha = r.tarea?.estado === 'hecha';
         // La tarea durable pasa a «reviso el resultado» si el nodo terminó; la reconciliación decide si se comprobó.
         await cerrarEncargoComputadora(compu.quien, ref, { misionId: r.id || null, estado: !r.id ? 'failed' : hecha ? 'succeeded' : 'unknown', texto: r.hecho });
@@ -3803,6 +3807,8 @@ function misionesComputadora(correo: string): MisionComputadoraMin[] {
       pregunta: v?.pregunta ?? null,
       ...(v ? { plan: v.plan.map((p) => ({ texto: p.texto, estado: p.estado })) } : {}),
       ...(v?.final ? { enlaces: v.final.visitados, datos: v.final.datos, archivos: v.final.archivos } : {}),
+      // Lo que se pidió, guardado al crear la misión (R5): no se recalcula con otro texto.
+      ...(m?.requisitos ? { requisitos: m.requisitos } : {}),
     };
   });
 }
