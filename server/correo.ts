@@ -665,7 +665,28 @@ export async function resolverBorrador(quien: string, ambito: string, mensaje: s
  * `huella` (revisión 4-oct): la de lo que mostró la tarjeta del panel (destinatario, cuenta y contenido). «Aprobar»
  * solo manda si el borrador que espera tiene ESA huella; sin ella, el panel no aprueba nada.
  */
-export type ComoResolver = { desdePanel?: boolean; huella?: string };
+export type ComoResolver = {
+  desdePanel?: boolean;
+  huella?: string;
+  /**
+   * Séptima ronda (G1-N1): el chat decidió sobre ESTE borrador (su id de intento y la huella que vio). Si cuando por fin
+   * se resuelve espera otro (otro turno lo apartó y armó uno nuevo) o cambió, no se toca nada.
+   */
+  intento?: string;
+  huellaVista?: string;
+  /** La regla única eligió este borrador (un sí o un no): si cambió, se dice que no salió y se pregunta de nuevo. */
+  decidido?: boolean;
+};
+
+/**
+ * ¿El borrador que espera ahora es el que se decidió? null si sí; si no, por qué (G1-N1). Sin `intento`, no se ata.
+ */
+export function motivoCambioDecidido(b: { intento: string; huella: string } | null, huellaAhora: string | null, como: ComoResolver): string | null {
+  if (como.intento === undefined) return null;
+  if (!b || b.intento !== como.intento) return 'mientras se decidía, lo que esperaba su «sí» cambió (otro borrador lo reemplazó, o ya no está)';
+  if (como.huellaVista && (b.huella !== como.huellaVista || huellaAhora !== como.huellaVista)) return 'mientras se decidía, el borrador cambió (otro destinatario, cuenta o contenido)';
+  return null;
+}
 
 /**
  * ¿«Aprobar» del panel puede mandar este borrador? null si sí. La huella que vio la persona tiene que ser la guardada
@@ -680,6 +701,9 @@ export function motivoPanel(b: { huella: string }, huellaAhora: string, vista: s
 /** Lo mismo, con el estado y el recibo del envío (AUR13: aceptado / fallido / incierto, con su operationId). */
 export async function resolverBorradorConEstado(quien: string, ambito: string, mensaje: string, retener?: RetencionAcciones, como: ComoResolver = {}): Promise<ResultadoHerramienta | null> {
   const b = borradorDe(quien, ambito);
+  // G1-N1: atado a lo decidido. Si cambió, no sale nada (ni se aparta ni se descarta el nuevo) y se pregunta de nuevo.
+  const cambio = motivoCambioDecidido(b, b ? huellaCorreo(b) : null, como);
+  if (cambio) return como.decidido ? fallo(`CORREO: NO se mandó ni se descartó nada: ${cambio}${b ? ` (ahora espera uno para ${b.para.join(', ')})` : ''}. Pregúntale de nuevo qué quiere hacer.`, 'cambio') : null;
   if (!b || (b.soloPanel && !como.desdePanel)) return null;
   const k = llave(quien, ambito);
   // «Aprobar» del panel: solo lo que mostró la tarjeta (no se toca el borrador si no coincide; un «no» siempre vale).

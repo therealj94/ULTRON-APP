@@ -28,6 +28,7 @@ import {
   anotarPropuesta,
   aparatoValido,
   appEsperandoDe,
+  mismaEsperaApp,
   avisoReemplazoApp,
   DICHO_ACTUALIZAR,
   confirmarCambioApp,
@@ -3235,6 +3236,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     crudo: message,
     // Permisos exactos (4-oct): el «sí» de este turno no es para lo que espera la app (fue ambiguo o nombró otra cosa).
     appBloqueada: decision.appBloqueada,
+    // Séptima ronda (G1-N1): lo que esperaba la app al decidir; si cuando salen las acciones espera otra cosa, no se cumple.
+    appVista: decision.appVista,
     mode,
     hechos,
     datos,
@@ -4174,7 +4177,7 @@ function avisoAccionFrenada(idioma: 'es' | 'en'): string {
  */
 async function accionesDelCerebro(
   texto: string,
-  p: { correoApp: string; contextoApp: ContextoApp | null; crudo: string; conApp: boolean; aparato: string | null; idioma: 'es' | 'en'; retener?: RetencionAcciones; appBloqueada?: boolean },
+  p: { correoApp: string; contextoApp: ContextoApp | null; crudo: string; conApp: boolean; aparato: string | null; idioma: 'es' | 'en'; retener?: RetencionAcciones; appBloqueada?: boolean; appVista?: { huella?: string } | null },
   delModelo: boolean
 ): Promise<{ texto: string; acciones: EventoAccion[]; sustituido: boolean }> {
   if (!delModelo) return { texto: neutralizarMarca(texto), acciones: [], sustituido: false };
@@ -4186,8 +4189,12 @@ async function accionesDelCerebro(
   // lo que espera la app se cumple con él.
   const nueva: { p: Propuesta | null } = { p: null };
   const amb = ambitoApp(p.correoApp, p.aparato);
-  const previa = p.appBloqueada ? null : propuestaAnterior(amb);
-  const pendiente = p.appBloqueada ? null : pendienteAnterior(amb);
+  // Séptima ronda (G1-N1): si lo que espera la app ya no es lo que vio la decisión (otro turno lo cambió), nada de eso
+  // se cumple con este «sí».
+  const appCambio = p.appVista !== undefined && !mismaEsperaApp(p.appVista, appEsperandoDe(amb, p.contextoApp));
+  const bloqueada = !!p.appBloqueada || appCambio;
+  const previa = bloqueada ? null : propuestaAnterior(amb);
+  const pendiente = bloqueada ? null : pendienteAnterior(amb);
   const listas = prepararAcciones(acciones, {
     mensaje: p.crudo,
     contexto: p.contextoApp,
@@ -4214,16 +4221,16 @@ async function accionesDelCerebro(
     const hayBorrador = !!pendienteAnterior(amb);
     const sinPromesa = limpio.replace(RE_PROMESA_ENVIO, '').trim();
     // El borrador reemplazó a otro del mismo turno: este «sí» no lo mandó; se dice a quién va ahora y el siguiente vale.
-    if (pendiente?.reemplazoDe && !p.appBloqueada) {
+    if (pendiente?.reemplazoDe && !bloqueada) {
       const aviso = avisoReemplazoApp(amb, pendiente, p.idioma, p.retener);
       return { texto: `${sinPromesa} ${aviso}`.trim(), acciones: eventos, sustituido: true };
     }
     // Un teléfono que no comprueba el texto aprobado (sin la mano `enviar_exacto`): no recibe ningún `enviar`.
-    if (hayBorrador && !p.appBloqueada && !puedeMano(p.contextoApp, 'enviar_exacto')) {
+    if (hayBorrador && !bloqueada && !puedeMano(p.contextoApp, 'enviar_exacto')) {
       const aviso = p.idioma === 'en' ? DICHO_ACTUALIZAR.en : DICHO_ACTUALIZAR.es;
       return { texto: `${sinPromesa} ${aviso}`.trim(), acciones: eventos, sustituido: true };
     }
-    if (p.appBloqueada && hayBorrador) {
+    if (bloqueada && hayBorrador) {
       const aviso = p.idioma === 'en' ? "I didn't send it: your «yes» didn't say which of the pending things it was for." : 'No lo mandé: su «sí» no decía si era para este mensaje o para otra cosa que esperaba.';
       return { texto: `${sinPromesa} ${aviso}`.trim(), acciones: eventos, sustituido: true };
     }

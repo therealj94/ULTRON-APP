@@ -27,7 +27,7 @@ import type express from 'express';
 import { clave } from '../lib/boveda';
 import { personaPorCorreoExacto } from '../lib/acceso';
 import crypto from 'node:crypto';
-import { decidirBorradorConEstado, fechaHN, motivoBorrador, motivoPanel, reemplazoPendiente, respuestaAlBorrador, vigenciaNueva, type ComoResolver, type VigenciaBorrador } from './correo';
+import { decidirBorradorConEstado, fechaHN, motivoBorrador, motivoCambioDecidido, motivoPanel, reemplazoPendiente, respuestaAlBorrador, vigenciaNueva, type ComoResolver, type VigenciaBorrador } from './correo';
 import { iniciarTarea, marcarPaso } from '../lib/tarea-en-curso';
 import type { RetencionAcciones } from './voz-agente';
 import { exito, fallo, incierto, type ResultadoHerramienta } from '../lib/recibo-herramienta';
@@ -441,6 +441,9 @@ export async function resolverBorradorWhatsapp(quien: string, ambito: string, me
 /** Lo mismo, con el estado y el recibo del envío (AUR13: aceptado / fallido / incierto, con su operationId). */
 export async function resolverBorradorWhatsappConEstado(quien: string, ambito: string, mensaje: string, retener?: RetencionAcciones, como: ComoResolver = {}): Promise<ResultadoHerramienta | null> {
   const b = borradorWhatsappDe(quien, ambito);
+  // G1-N1: atado a lo decidido. Si cambió, no sale nada (ni se aparta ni se descarta el nuevo) y se pregunta de nuevo.
+  const cambio = motivoCambioDecidido(b, b ? huellaWhatsapp(b) : null, como);
+  if (cambio) return como.decidido ? fallo(`WHATSAPP: NO se mandó ni se descartó nada: ${cambio}${b ? ` (ahora espera uno para ${destinoWhatsapp(b)})` : ''}. Pregúntale de nuevo qué quiere hacer.`, 'cambio') : null;
   if (!b || (b.soloPanel && !como.desdePanel)) return null;
   const k = llave(quien, ambito);
   // «Aprobar» del panel: solo lo que mostró la tarjeta (el chat exacto, el texto y la cuenta). Un «no» siempre vale.
@@ -630,7 +633,7 @@ export function _olvidarWhatsapp() {
 }
 
 /** Los nombres de sus chats (por cuenta), un rato: para saber quién más se llama así sin pedirlos en cada turno. */
-const NOMBRES_CHATS = new Map<string, { t: number; nombres: string[] }>();
+const NOMBRES_CHATS = new Map<string, { t: number; nombres: string[]; completo: boolean }>();
 const NOMBRES_CHATS_VIVE_MS = 60_000;
 
 /**
@@ -639,19 +642,29 @@ const NOMBRES_CHATS_VIVE_MS = 60_000;
  * vuelve lo último que supo (o nada) y el turno sigue. Nunca lanza.
  */
 export async function nombresDeChats(quien: string, ms = 400): Promise<string[]> {
+  return (await conocidosDeChats(quien, ms)).nombres;
+}
+
+/**
+ * Lo mismo, diciendo si la lista está COMPLETA (séptima ronda, G1-m1): `completo: false` si el puente no contestó a
+ * tiempo (o falló) y no hay una lista buena reciente. Entonces nadie sabe si hay otra «Ana»: un nombre que no sea el
+ * completo del destino hace preguntar.
+ */
+export async function conocidosDeChats(quien: string, ms = 400): Promise<{ nombres: string[]; completo: boolean }> {
   const k = normal(quien);
   const guardado = NOMBRES_CHATS.get(k);
-  if (guardado && Date.now() - guardado.t < NOMBRES_CHATS_VIVE_MS) return guardado.nombres;
+  if (guardado && Date.now() - guardado.t < NOMBRES_CHATS_VIVE_MS) return { nombres: guardado.nombres, completo: guardado.completo };
   try {
     const j = await pedir<{ chats: ChatWA[] }>('/chats?limite=200', { ms });
     const nombres = (j.chats || []).filter((c) => !c.grupo && !/@g\.us$/.test(c.jid) && c.nombre).map((c) => c.nombre);
-    NOMBRES_CHATS.set(k, { t: Date.now(), nombres });
-    return nombres;
+    NOMBRES_CHATS.set(k, { t: Date.now(), nombres, completo: true });
+    return { nombres, completo: true };
   } catch {
-    // Si el puente no contesta, no se le vuelve a esperar en cada turno: lo último que se supo vale un rato más.
+    // Si el puente no contesta, no se le vuelve a esperar en cada turno: lo último que se supo vale un rato más, pero
+    // como lista incompleta.
     const nombres = guardado?.nombres || [];
-    NOMBRES_CHATS.set(k, { t: Date.now(), nombres });
-    return nombres;
+    NOMBRES_CHATS.set(k, { t: Date.now(), nombres, completo: false });
+    return { nombres, completo: false };
   }
 }
 

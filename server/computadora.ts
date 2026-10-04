@@ -1748,9 +1748,9 @@ function misionesConPregunta(quien: string, ambito?: string): Mision[] {
  * Lo que su computadora espera que conteste por el chat (permisos exactos, 4-oct): cada pregunta (antes de algo
  * sensible) y el «¿sigo?» de una misión a medias. Con más de una, un «sí» suelto no decide cuál (server/decision-turno.ts).
  */
-export function preguntasComputadora(quien: string, ambito?: string): { tareaId: string; texto: string }[] {
+export function preguntasComputadora(quien: string, ambito?: string): { tareaId: string; texto: string; version?: string }[] {
   if (!quien) return [];
-  const ps = misionesConPregunta(quien, ambito).map((m) => ({ tareaId: m.pregunta!.tareaId, texto: m.pregunta!.texto }));
+  const ps = misionesConPregunta(quien, ambito).map((m) => ({ tareaId: m.pregunta!.tareaId, texto: m.pregunta!.texto, version: versionPregunta(m.pregunta!) }));
   const ofrece = ps.length ? null : misionQueOfreceSeguir(quien, ambito);
   return ofrece ? [{ tareaId: ofrece.tareas.at(-1) ?? '', texto: `¿sigo con «${ofrece.instruccion.slice(0, 120)}»?` }] : ps;
 }
@@ -1803,12 +1803,21 @@ type Retener = { hacer: (f: () => void) => void; alDescartar: (f: () => void) =>
  * AQUÍ (lo hace el servidor, no el modelo) y vuelve el HECHO para que AURA lo diga. Otra cosa: null (la
  * pregunta sigue esperando, y la app tiene los botones). En la voz, espera a que el turno se confirme.
  */
-export async function resolverPreguntaComputadora(quien: string, mensaje: string, retener?: Retener, opciones: { ambito?: string; elegida?: string } = {}): Promise<string | null> {
+/** La versión de una pregunta (su id, su huella y su texto): un «sí» decidido para una no contesta otra (G1-N1). */
+function versionPregunta(p: { id: string | null; huella?: string | null; texto: string }): string {
+  return `${p.id ?? ''}|${p.huella ?? ''}|${p.texto}`;
+}
+
+export async function resolverPreguntaComputadora(quien: string, mensaje: string, retener?: Retener, opciones: { ambito?: string; elegida?: string; version?: string } = {}): Promise<string | null> {
   if (!quien) return null;
   // `ambito`: solo las de esta conversación. `elegida`: la tarea cuya pregunta nombró la persona (server/decision-turno.ts).
   const enEsta = misionesConPregunta(quien, opciones.ambito);
   const conPregunta = opciones.elegida ? enEsta.filter((x) => x.pregunta?.tareaId === opciones.elegida) : enEsta;
   const m = conPregunta[0] ?? null;
+  // Séptima ronda (G1-N1): lo decidido fue ESA versión de la pregunta; si mientras tanto cambió, no se contesta.
+  if (opciones.version !== undefined && m?.pregunta && versionPregunta(m.pregunta) !== opciones.version) {
+    return `COMPUTADORA: NO contesté nada: mientras se decidía, su computadora cambió la pregunta (ahora: «${m.pregunta.texto}»). Léesela y pregúntale de nuevo.`;
+  }
   const ofrece = m || enEsta.length ? null : misionQueOfreceSeguir(quien, opciones.ambito);
   if (!m && !ofrece) return null;
   // Las marcas del propio teléfono («[[lectura:…]]», «[[sigues]]») no son la persona.

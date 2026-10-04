@@ -11,14 +11,14 @@
  * Exportado aparte para probarlo con efectos simulados (tests/permisos-exactos.test.ts, tests/permisos-ronda3.test.ts).
  */
 import { borradorDe, nombresRecientesCorreo, resolverBorrador } from './correo';
-import { borradorWhatsappDe, destinoWhatsapp, nombresDeChats, resolverBorradorWhatsapp, whatsappPermitido } from './whatsapp';
+import { borradorWhatsappDe, conocidosDeChats, destinoWhatsapp, resolverBorradorWhatsapp, whatsappPermitido } from './whatsapp';
 import { preguntasComputadora, resolverPreguntaComputadora } from './computadora';
 import { cerrarDecisionPorChat, clasificarEnvio, type SalidaEnvio } from './trabajos';
 import { analizarRespuesta, decidirPendiente, type DecisionPendiente, type TipoDecision } from '../lib/afirmacion';
 import type { RetencionAcciones } from './voz-agente';
 
 /** Lo que la app (PULSE2CHAT) tiene esperando el «sí» de un turno anterior: un mensaje, una llamada, un recordatorio. */
-export type AppEsperando = { que: string; para: string; cuando?: number };
+export type AppEsperando = { que: string; para: string; cuando?: number; huella?: string };
 
 export type OpcionesDecisionTurno = {
   /** De quién es la decisión (la sesión del turno). */
@@ -55,12 +55,17 @@ export type SalidaDecisionTurno = {
   appBloqueada: boolean;
   /** La regla única eligió una decisión y la respondió (sí o no): el mensaje era la respuesta, no otra orden. */
   respondio: boolean;
+  /**
+   * Séptima ronda (G1-N1): lo que esperaba la app cuando se decidió (con su huella). Las acciones de la app se cumplen
+   * solo si cuando salen espera exactamente eso (server.ts accionesDelCerebro, mismaEsperaApp).
+   */
+  appVista?: AppEsperando | null;
 };
 
 /* ------------------------------------------------------------------ lo que espera en esta conversación */
 
 /** Una decisión que espera su «sí» en esta conversación (la forma de la regla única, más de dónde viene). */
-export type PendienteTurno = DecisionPendiente & { origen: 'correo' | 'whatsapp' | 'computadora' | 'app' };
+export type PendienteTurno = DecisionPendiente & { origen: 'correo' | 'whatsapp' | 'computadora' | 'app'; huella?: string };
 
 const TIPO_APP: Record<string, TipoDecision> = { mensaje: 'mensaje', borrador: 'chat', llamar: 'llamar', recordatorio: 'recordatorio', cancelar_recordatorio: 'cancelar_recordatorio' };
 
@@ -79,18 +84,18 @@ export function pendientesDelTurno(o: { dueno: string; ambito: string; whatsapp:
     const propia = c.para.length > 0 && c.para.every((x) => x.trim().toLowerCase() === o.dueno.trim().toLowerCase());
     // Quinta ronda: su asunto y su texto son su `tema` (no la identifican, pero si lo nombrado cuadra con el tema de otra,
     // se pregunta: «el de la luz»).
-    out.push({ origen: 'correo', tipo: 'correo', destino: `${(c.nombres || []).join(' ')} ${c.para.join(' ')}`.trim(), ...(c.para.length > 1 ? { destinatarios: [...c.para] } : {}), ...(propia ? { propia: true } : {}), tema: `${c.asunto} ${c.texto}`, id: c.intento });
+    out.push({ origen: 'correo', tipo: 'correo', destino: `${(c.nombres || []).join(' ')} ${c.para.join(' ')}`.trim(), ...(c.para.length > 1 ? { destinatarios: [...c.para] } : {}), ...(propia ? { propia: true } : {}), tema: `${c.asunto} ${c.texto}`, id: c.intento, huella: c.huella });
   }
   const w = o.whatsapp ? borradorWhatsappDe(o.dueno, o.ambito) : null;
   if (w && !w.soloPanel) {
     // Sexta ronda: un grupo se marca (solo su nombre completo lo identifica) y su JID no entra al destino.
     const grupo = !!w.grupo || /@g\.us$/.test(w.chat);
-    out.push({ origen: 'whatsapp', tipo: 'whatsapp', destino: grupo ? destinoWhatsapp(w) : `${destinoWhatsapp(w)} ${w.chat}`, ...(grupo ? { grupo: true } : {}), tema: w.texto, id: w.intento });
+    out.push({ origen: 'whatsapp', tipo: 'whatsapp', destino: grupo ? destinoWhatsapp(w) : `${destinoWhatsapp(w)} ${w.chat}`, ...(grupo ? { grupo: true } : {}), tema: w.texto, id: w.intento, huella: w.huella });
   }
-  for (const p of preguntasComputadora(o.dueno, o.ambito)) out.push({ origen: 'computadora', tipo: 'computadora', texto: p.texto, id: p.tareaId });
+  for (const p of preguntasComputadora(o.dueno, o.ambito)) out.push({ origen: 'computadora', tipo: 'computadora', texto: p.texto, id: p.tareaId, ...(p.version !== undefined ? { huella: p.version } : {}) });
   if (o.app) {
     const tipo = TIPO_APP[o.app.que] ?? 'mensaje';
-    out.push({ origen: 'app', tipo, destino: o.app.para, ...(tipo === 'recordatorio' || tipo === 'cancelar_recordatorio' ? { texto: o.app.para } : {}), ...(o.app.cuando ? { cuando: o.app.cuando } : {}), ...(tipo === 'chat' ? { discreta: true } : {}) });
+    out.push({ origen: 'app', tipo, destino: o.app.para, ...(tipo === 'recordatorio' || tipo === 'cancelar_recordatorio' ? { texto: o.app.para } : {}), ...(o.app.cuando ? { cuando: o.app.cuando } : {}), ...(tipo === 'chat' ? { discreta: true } : {}), ...(o.app.huella ? { huella: o.app.huella } : {}) });
   }
   return out;
 }
@@ -124,20 +129,28 @@ export async function resolverDecisionesDelTurno(o: OpcionesDecisionTurno): Prom
   const hechos: string[] = [];
   const nada = (extra: Partial<SalidaDecisionTurno> = {}): SalidaDecisionTurno => ({ hechos, turnoVigente: true, delCorreo: null, delWhatsapp: null, deLaPregunta: null, ambiguo: false, appBloqueada: false, respondio: false, ...extra });
   if (!dueno) return nada();
+  // Lo que espera cuando la persona contestó (lo que estaba contestando).
   const pendientes = pendientesDelTurno({ dueno, ambito, whatsapp: o.whatsapp, app: o.app });
   // Sexta ronda (M1-B): quién más se llama así. Los contactos del teléfono (si los mandó), las personas de sus chats de
   // WhatsApp (con un tope corto; sin teléfono, como en la web, son lo único que lo sabe) y quien le escribió hace poco.
-  const conocidos = pendientes.length
-    ? [...(o.conocidos || []), ...nombresRecientesCorreo(dueno, ambito), ...(o.whatsapp ? await nombresDeChats(dueno) : [])]
-    : o.conocidos;
-  const d = decidirPendiente(message, pendientes, { conocidos });
+  // Séptima ronda (G1-N1): se cargan ANTES de decidir, y si mientras tanto lo que espera cambió (otro turno de la misma
+  // conversación apartó un borrador y armó otro), no se decide nada: se pregunta de nuevo. G1-m1: si la lista de chats
+  // no llegó a tiempo, se sabe que está incompleta.
+  const deChats = pendientes.length && o.whatsapp ? await conocidosDeChats(dueno) : { nombres: [] as string[], completo: true };
+  const conocidos = pendientes.length ? [...(o.conocidos || []), ...nombresRecientesCorreo(dueno, ambito), ...deChats.nombres] : o.conocidos;
+  const firma = (ps: PendienteTurno[]) => JSON.stringify(ps.filter((p) => p.origen !== 'app').map((p) => [p.origen, p.id, p.huella ?? '']));
+  if (pendientes.length && firma(pendientesDelTurno({ dueno, ambito, whatsapp: o.whatsapp })) !== firma(pendientes)) {
+    hechos.push(`HECHO: mientras leía su respuesta («${message.slice(0, 80)}»), lo que esperaba su decisión cambió (otro borrador o pregunta reemplazó al de antes). NO hice nada: ni se mandó ni se descartó. Dile qué espera ahora y pregúntale de nuevo.`);
+    return nada({ ambiguo: true, appBloqueada: !!o.app, appVista: o.app ?? null });
+  }
+  const d = decidirPendiente(message, pendientes, { conocidos, conocidosIncompletos: !deChats.completo });
   const efecto = d.tipo === 'ejecutar' && d.p.origen !== 'app';
   // Un «sí» que va a mandar un borrador o soltar a su computadora: antes se deja anotado en el turno durable (AUR06,
   // persistir antes de actuar). Si este proceso ya no es el dueño del turno, no se resuelve nada aquí.
   const turnoVigente = efecto ? await o.registrarEfecto() : true;
   if (!turnoVigente) {
     hechos.push('HECHO: este turno no quedó registrado para mandar nada (o ya lo atiende otro proceso del servidor). NO se mandó ningún borrador ni se soltó la computadora. No digas que se envió: dile que lo intente otra vez en un momento.');
-    return nada({ turnoVigente: false, appBloqueada: !!o.app });
+    return nada({ turnoVigente: false, appBloqueada: !!o.app, appVista: o.app ?? null });
   }
   if (d.tipo === 'preguntar') {
     const una = d.candidatos.length === 1;
@@ -151,7 +164,7 @@ export async function resolverDecisionesDelTurno(o: OpcionesDecisionTurno): Prom
           ? `HECHO: dijo «${message.slice(0, 80)}», y ${espera}. No queda claro si es su respuesta (es una pregunta, o un «no» que nombra a alguien y puede ser una corrección): NO hice nada (no se mandó ni se descartó). Pregúntale qué quiere —que confirme con un «sí» o diga qué cambiar—.`
           : `HECHO: dijo «${message.slice(0, 80)}», pero ${espera}, y lo que nombró no coincide (otra persona, el propio, otro canal, otra hora, solo una parte de los destinatarios o varios a la vez). NO hice nada. Pregúntale si es eso lo que quiere —que lo diga— o qué otra cosa quería.`
     );
-    return nada({ ambiguo: true, appBloqueada: !!o.app });
+    return nada({ ambiguo: true, appBloqueada: !!o.app, appVista: o.app ?? null });
   }
   // Lo que decidió la regla, o nada: con `nada` (no respondió a lo que espera, o cambió de tema) cada borrador recibe el
   // mensaje tal cual y queda apartado para el panel, como siempre.
@@ -162,22 +175,28 @@ export async function resolverDecisionesDelTurno(o: OpcionesDecisionTurno): Prom
   // El borrador que esperaba (su id de intento): si el chat lo resuelve, su decisión del panel se cierra con
   // lo que pasó (AUR08, sin doble efecto). En la voz no: el envío espera a que se confirme el turno.
   const decision = d.tipo === 'ejecutar' ? ('si' as const) : d.tipo === 'no' ? ('no' as const) : null;
-  const intentoCorreo = !retener ? borradorDe(dueno, ambito)?.intento : undefined;
-  const intentoWhatsapp = !retener ? borradorWhatsappDe(dueno, ambito)?.intento : undefined;
-  const delCorreo = toca('correo') ? await resolverBorrador(dueno, ambito, respuesta, retener) : null;
+  // Séptima ronda (G1-N1): cada resolvedor recibe el intento y la huella de lo que vio la decisión; si cuando por fin
+  // resuelve espera otro borrador (o este cambió), no toca nada y lo dice. Sin uno visto, ese canal no se toca.
+  const vistoCorreo = pendientes.find((p) => p.origen === 'correo');
+  const vistoWhatsapp = pendientes.find((p) => p.origen === 'whatsapp');
+  const atado = (p: PendienteTurno | undefined) => ({ intento: p?.id ?? '', ...(p?.huella ? { huellaVista: p.huella } : {}), decidido: !!elegido && elegido === p });
+  const intentoCorreo = !retener ? vistoCorreo?.id : undefined;
+  const intentoWhatsapp = !retener ? vistoWhatsapp?.id : undefined;
+  const delCorreo = toca('correo') && vistoCorreo ? await resolverBorrador(dueno, ambito, respuesta, retener, atado(vistoCorreo)) : null;
   if (delCorreo) hechos.push(delCorreo);
   // Si el mismo borrador sigue esperando (hay que confirmar a quién va, o repetir un envío incierto), su decisión del
   // panel queda abierta: no se cierra como si se hubiera decidido.
   const sigueCorreo = !!intentoCorreo && borradorDe(dueno, ambito)?.intento === intentoCorreo;
   if (delCorreo && intentoCorreo && !sigueCorreo) void cerrarDecisionPorChat(dueno, intentoCorreo, decision, delCorreo).catch(() => undefined);
-  const delWhatsapp = o.whatsapp && toca('whatsapp') ? await resolverBorradorWhatsapp(dueno, ambito, respuesta, retener) : null;
+  const delWhatsapp = o.whatsapp && toca('whatsapp') && vistoWhatsapp ? await resolverBorradorWhatsapp(dueno, ambito, respuesta, retener, atado(vistoWhatsapp)) : null;
   if (delWhatsapp) hechos.push(delWhatsapp);
   const sigueWhatsapp = !!intentoWhatsapp && borradorWhatsappDe(dueno, ambito)?.intento === intentoWhatsapp;
   if (delWhatsapp && intentoWhatsapp && !sigueWhatsapp) void cerrarDecisionPorChat(dueno, intentoWhatsapp, decision, delWhatsapp).catch(() => undefined);
   // Su computadora se detuvo a pedir su sí (o le ofreció seguir): solo la que eligió la regla (o, sin elección, como
   // siempre: un mensaje que no es respuesta no la toca).
   const elegida = elegido?.origen === 'computadora' ? elegido.id : undefined;
-  const deLaPregunta = toca('computadora') && !delCorreo && !delWhatsapp ? await resolverPreguntaComputadora(dueno, respuesta, retener, { ambito, ...(elegida ? { elegida } : {}) }) : null;
+  const version = elegido?.origen === 'computadora' ? elegido.huella : undefined;
+  const deLaPregunta = toca('computadora') && !delCorreo && !delWhatsapp ? await resolverPreguntaComputadora(dueno, respuesta, retener, { ambito, ...(elegida ? { elegida } : {}), ...(version !== undefined ? { version } : {}) }) : null;
   if (deLaPregunta) hechos.push(deLaPregunta);
   // Un «sí» que no tiene a qué contestar (el borrador venció, el servidor se reinició o nunca se armó): que
   // el modelo no lo tome por un envío y diga «enviado» por el historial (José, 3-oct).
@@ -189,7 +208,7 @@ export async function resolverDecisionesDelTurno(o: OpcionesDecisionTurno): Prom
         : 'HECHO: si su «sí» era para mandar un mensaje o un correo: ahora no hay ningún borrador esperando (venció o no se armó). NO se mandó nada. No digas que se envió: pregúntale qué quiere mandar y a quién.'
     );
   }
-  return nada({ delCorreo, delWhatsapp, deLaPregunta, appBloqueada: !!o.app && !!elegido && elegido.origen !== 'app', respondio: !!elegido });
+  return nada({ delCorreo, delWhatsapp, deLaPregunta, appBloqueada: !!o.app && !!elegido && elegido.origen !== 'app', respondio: !!elegido, appVista: o.app ?? null });
 }
 
 /**

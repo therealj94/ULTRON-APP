@@ -79,15 +79,17 @@ const AFIRMA = set(
     'mandalo mandelo mandala mandaselo mandeselo enviaselo mandale enviale andale andele sale cabal aja obvio afirmativo ' +
     'sure adelante perfecto correcto exacto chevere confirmo sigue continua continue ' +
     // Sexta ronda: voseo («hacelo», «mandá», «enviá») y «órale», «okis».
-    'hacelo manda envia orale okis'
+    'hacelo manda envia orale okis ' +
+    // Séptima ronda: «confirmado», voseo («hacele», «dele»), «échale», «excelente», «genial», «súper», «alright».
+    'confirmado hacele dele echale excelente genial super absolutely alright'
 );
 /** Afirmaciones de varias fichas. */
-const AFIRMA_FRASES = ['de una', 'va pues', 'dale pues', 'ta bueno', 'esta bueno', 'ya estuvo', 'no hay clavo', 'no hay problema', 'por supuesto', 'send it', 'go ahead', 'do it', 'claro que si', 'de acuerdo', 'esta bien', 'vaya pues', 'ta bien', 'sure thing', 'go for it'];
+const AFIRMA_FRASES = ['de una', 'va pues', 'dale pues', 'ta bueno', 'esta bueno', 'ya estuvo', 'no hay clavo', 'no hay problema', 'por supuesto', 'send it', 'go ahead', 'do it', 'claro que si', 'de acuerdo', 'esta bien', 'vaya pues', 'ta bien', 'sure thing', 'go for it', 'asi es', 'sounds good', 'todo bien', 'dale que si', 'de una vez', 'okey dokey', 'of course', 'all right'];
 /** La cortesía y el relleno de voz: SOLO estas. */
-const CORTESIA = set('porfa porfavor porfis gracias pues pue ya ahora ahorita nomas eh este please thanks');
+const CORTESIA = set('porfa porfavor porfis gracias pues pue ya ahora ahorita nomas eh este please thanks asi bueno entonces now');
 const CORTESIA_FRASES = ['por favor', 'por fa', 'a ver', 'tal cual', 'asi esta bien', 'asi esta perfecto', 'ese mismo', 'thank you'];
 /** «señor», «señora» y el nombre del avatar: cortesía SOLO como vocativo suelto al principio o al final. */
-const VOCATIVOS = set('senor senora aura claudio antonio ojos guardian jefe jefa mano hermano hermana compa amor carino bro boss man');
+const VOCATIVOS = set('senor senora aura claudio antonio ojos guardian jefe jefa mano hermano hermana compa amor carino bro boss man sir');
 /** Vocativos de varias fichas. */
 const VOCATIVOS_FRASES = ['mi amor'];
 /** Artículos: «a la jefa», «to the boss» siguen siendo a quién va. */
@@ -313,13 +315,16 @@ export function analizarRespuesta(mensaje: string, o: { conocidos?: Iterable<str
         x.k = 'ficha';
       }
     }
+    // La cortesía de una ficha («bueno», «así», «ya») detrás de a/al/para no es cortesía: es a quién va («a Bueno»).
+    if (x.k === 'cortesia' && !x.w.includes(' ') && (trasPrep || (!!antes && ARTICULO.has(antes) && PREP_DESTINO.has(u[i - 2]?.w || '')))) x.k = 'ficha';
     if (x.k === 'vocativo') {
       // Nunca detrás de a/al/para (ni de «a la», «to the»): ahí es a quién va.
       const trasArticulo = !!antes && ARTICULO.has(antes) && PREP_DESTINO.has(u[i - 2]?.w || '');
       const suelto = !trasPrep && !trasArticulo && (u.slice(0, i).every(blanda) || u.slice(i + 1).every(blanda));
       if (!suelto) x.k = 'ficha';
-      else if ((AVATARES.has(x.w) && conocidos.has(x.w)) || (!AVATARES.has(x.w) && destinos.has(x.w))) {
-        // El avatar que es un contacto o un destino, o un vocativo («hermano») que es el destino de algo pendiente.
+      else if (conocidos.has(x.w) || destinos.has(x.w)) {
+        // Séptima ronda: CUALQUIER vocativo de la lista (el avatar, «amor», «jefe», «bro», «señor») que es un contacto
+        // conocido o un destino: no se sabe si es a quién va. Se pregunta.
         avatarDudoso = true;
         x.k = 'ficha';
       } else x.k = 'cortesia';
@@ -494,19 +499,20 @@ function esDeSinNombre(w: string, p: DecisionPendiente): boolean {
 }
 
 /** Con quién más se puede confundir un nombre: las personas conocidas y los destinos de las otras pendientes. */
-export type ContextoNombres = { otros: NombreDestino[] };
+export type ContextoNombres = { otros: NombreDestino[]; incompleto?: boolean };
 
 /** ¿El nombre `n` de la decisión queda identificado por lo dicho? Devuelve las fichas que lo identifican, o null. */
 function nombreIdentificado(n: NombreDestino, contenido: string[], ctx: ContextoNombres): string[] | null {
   const dichas = n.fichas.filter((t) => contenido.includes(t));
   if (!dichas.length) return null;
   const entero = dichas.length === n.fichas.length;
-  // Un grupo: solo su nombre completo.
-  if (n.grupo) return entero ? dichas : null;
+  // Un grupo, o si no se pudo saber quién más se llama así (la lista de chats no llegó): solo el nombre completo.
+  if (n.grupo || ctx.incompleto) return entero ? dichas : null;
   // Una persona: una palabra suya que nadie más conocido comparte, o su nombre entero si nadie más se llama igual.
   const otros = ctx.otros.filter((o) => o.completo !== n.completo);
   const compartidas = new Set(otros.flatMap((o) => o.fichas));
   if (dichas.some((t) => !compartidas.has(t))) return dichas;
+  // Su nombre entero (de varias palabras) lo identifica aunque otro comparta alguna, si nadie más se llama igual.
   return entero && !otros.some((o) => o.completo === n.completo) && n.fichas.length > 1 ? dichas : null;
 }
 
@@ -522,10 +528,14 @@ export function nombraDecision(a: Analisis, p: DecisionPendiente): boolean {
 export function cubreDecision(a: Analisis, p: DecisionPendiente, ctx: ContextoNombres = { otros: [] }): boolean {
   if (a.plural || !a.contenido.length) return false;
   const propios = nombresDe(p);
-  // Una ficha que es el nombre COMPLETO de otra persona conocida (no de esta decisión): siempre se pregunta.
-  if (ctx.otros.some((o) => !propios.some((n) => n.completo === o.completo) && o.fichas.every((t) => a.contenido.includes(t)))) return false;
   const identifican = new Set<string>();
   for (const n of propios) for (const t of nombreIdentificado(n, a.contenido, ctx) || []) identifican.add(t);
+  // Los nombres de esta decisión dichos ENTEROS («la familia de Ana», «Ana López»): lo identifican aunque otro contacto
+  // comparta una de sus palabras (séptima ronda).
+  const enteros = propios.filter((n) => n.fichas.every((t) => a.contenido.includes(t) && identifican.has(t)));
+  // Una ficha que es el nombre COMPLETO de otra persona conocida (no de esta decisión), fuera de un nombre entero de
+  // esta: siempre se pregunta.
+  if (ctx.otros.some((o) => !propios.some((n) => n.completo === o.completo) && o.fichas.every((t) => a.contenido.includes(t)) && !enteros.some((n) => o.fichas.every((t) => n.fichas.includes(t))))) return false;
   if (!a.contenido.every((w) => identifican.has(w) || esDeSinNombre(w, p))) return false;
   if ((p.destinatarios?.length ?? 0) > 1) {
     const grupos = p.destinatarios!.map((d) => [...nombresDe({ tipo: p.tipo, destino: d }).flatMap((n) => n.fichas.filter((t) => identifican.has(t))), ...correosDe(d).map((x) => `email:${x}`)]);
@@ -546,7 +556,7 @@ export function cubreDecision(a: Analisis, p: DecisionPendiente, ctx: ContextoNo
  *  · `nada`: no es una respuesta a lo que espera (otra conversación, un cambio, «sí espera»).
  * `conocidos`: nombres de contactos (los destinos de lo que espera ya cuentan).
  */
-export function decidirPendiente<P extends DecisionPendiente>(mensaje: string, pendientes: readonly P[], o: { conocidos?: Iterable<string> } = {}): Decidido<P> {
+export function decidirPendiente<P extends DecisionPendiente>(mensaje: string, pendientes: readonly P[], o: { conocidos?: Iterable<string>; conocidosIncompletos?: boolean } = {}): Decidido<P> {
   const destinos = pendientes.flatMap((p) => [p.destino || '', ...(p.destinatarios || [])]);
   const a = analizarRespuesta(mensaje, { conocidos: [...(o.conocidos || []), ...destinos], destinos });
   const preguntar = (motivo: MotivoPregunta, candidatos: P[]): Decidido<P> => (candidatos.length ? { tipo: 'preguntar', motivo, candidatos, negativa: a.niega, analisis: a } : { tipo: 'nada', analisis: a });
@@ -592,7 +602,7 @@ export function decidirPendiente<P extends DecisionPendiente>(mensaje: string, p
   // Lo que sobra identifica UNA, y ninguna ficha cuadra con el destino o el tema de otra. Los nombres, con cuidado: con
   // quién más se pueden confundir (las personas conocidas y los destinos de las otras pendientes).
   const conocidosNombres = [...(o.conocidos || [])].map((c) => nombreDe(c)).filter((n): n is NombreDestino => !!n);
-  const ctxDe = (p: P): ContextoNombres => ({ otros: [...conocidosNombres, ...pendientes.filter((q) => q !== p).flatMap((q) => nombresDe(q))] });
+  const ctxDe = (p: P): ContextoNombres => ({ otros: [...conocidosNombres, ...pendientes.filter((q) => q !== p).flatMap((q) => nombresDe(q))], incompleto: !!o.conocidosIncompletos });
   const cubiertas = vivas.filter((p) => cubreDecision(a, p, ctxDe(p)) && !pendientes.some((q) => q !== p && a.contenido.some((w) => tocaA(w, q))));
   if (cubiertas.length === 1) return responder(cubiertas[0]);
   if (cubiertas.length > 1) return preguntar('ambiguo', cubiertas);

@@ -350,7 +350,7 @@ function azar(semilla: number) {
 /** 200 palabras comunes del español y nombres (ninguna de cortesía, ningún sí, ningún nombre del avatar). */
 const DICCIONARIO = (
   'Ana Bruno Carla Luz Paz Lee Mario Pedro Juan María José Luis Carlos Sofía Lucía Elena Rosa Diego Pablo Andrés ' +
-  'Jorge Miguel Laura Marta Teresa Raúl Óscar Hugo Iván Nora Olga Rita Tigo Bueno Celia Esperanza Rocío Ángel Cruz Mar ' +
+  'Jorge Miguel Laura Marta Teresa Raúl Óscar Hugo Iván Nora Olga Rita Tigo Silvia Celia Esperanza Rocío Ángel Cruz Mar ' +
   'Sol Flor Blanca Dolores Pilar Victoria Gloria Leo Noé Abel Ada Eva Ema Iris Inés Beto Chepe Toño Lupe Memo Nacho ' +
   'casa perro gato agua mañana tarde noche hoy lunes martes viernes cinco diez 5 10 300 hora reunión factura pago banco ' +
   'tienda carro trabajo oficina Rafa mamá papá Tito amigo doctor cita médico escuela niños comida cena almuerzo café ' +

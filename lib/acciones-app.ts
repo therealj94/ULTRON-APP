@@ -713,18 +713,25 @@ export function propuestaAnterior(correo: string, ahora = Date.now()): Propuesta
  * `contexto` del teléfono, también un borrador escrito en el chat abierto (revisión 4-oct: un «sí, mándalo» puede ser
  * para ese).
  */
-export function appEsperandoDe(correo: string, contexto?: ContextoApp | null, ahora = Date.now()): { que: string; para: string } | null {
+export function appEsperandoDe(correo: string, contexto?: ContextoApp | null, ahora = Date.now()): { que: string; para: string; huella: string } | null {
   const conNombre = (para: string) => {
     const c = (contexto?.contactos || []).find((x) => x.correo === para);
     return c ? `${c.nombre} <${c.correo}>` : para;
   };
+  // `huella` (séptima ronda, G1-N1): la versión exacta de lo que espera (a quién, qué texto, qué propuesta). Lo que se
+  // decidió con un «sí» no se cumple si cuando por fin sale espera otra cosa.
   const b = pendienteAnterior(correo, ahora);
-  if (b) return { que: 'mensaje', para: conNombre(b.para) };
+  if (b) return { que: 'mensaje', para: conNombre(b.para), huella: JSON.stringify(['mensaje', b.para, b.texto]) };
   const p = propuestaAnterior(correo, ahora);
-  if (p) return p.tipo === 'llamar' ? { que: 'llamar', para: p.nombre || p.con } : { que: p.tipo, para: p.texto };
+  if (p) return { ...(p.tipo === 'llamar' ? { que: 'llamar', para: p.nombre || p.con } : { que: p.tipo, para: p.texto }), huella: JSON.stringify(['propuesta', p]) };
   const abierto = contexto?.chatAbierto;
-  if (abierto?.correo && String(contexto?.borrador || '').trim()) return { que: 'borrador', para: `${abierto.nombre} <${abierto.correo}>` };
+  if (abierto?.correo && String(contexto?.borrador || '').trim()) return { que: 'borrador', para: `${abierto.nombre} <${abierto.correo}>`, huella: JSON.stringify(['borrador', abierto.correo, contexto?.borrador]) };
   return null;
+}
+
+/** ¿Lo que espera la app ahora es exactamente lo que se vio al decidir? (G1-N1). */
+export function mismaEsperaApp(vista: { huella?: string } | null | undefined, ahora: { huella?: string } | null | undefined): boolean {
+  return (vista?.huella ?? null) === (ahora?.huella ?? null);
 }
 
 export function soltarPropuesta(correo: string) {
