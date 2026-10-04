@@ -1421,24 +1421,82 @@ class ArchivosComprobados(Base):
 
     TRES = 'Crea tres documentos: informe.docx, presupuesto.xlsx y carta.pdf, y guárdalos en Documents'
 
-    @staticmethod
-    def ooxml(raiz):
+    # Ronda 8: los documentos de prueba son documentos DE VERDAD (como los que deja Word, Excel, PowerPoint o LibreOffice:
+    # tipos declarados, relaciones, la raíz correcta y contenido). El validador ya no acepta una parte que solo existe.
+    NS_CT = 'http://schemas.openxmlformats.org/package/2006/content-types'
+    NS_REL = 'http://schemas.openxmlformats.org/package/2006/relationships'
+    REL_DOC = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+
+    @classmethod
+    def _rels(cls, pares):
+        return (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="{cls.NS_REL}">'
+                + ''.join(f'<Relationship Id="{i}" Type="{cls.REL_DOC}/{t}" Target="{d}"/>' for i, t, d in pares) + '</Relationships>')
+
+    @classmethod
+    def ooxml(cls, raiz, texto='Informe sintético de prueba', partes=None):
+        """docx, xlsx o pptx de verdad según la parte principal; con otra «raiz», un ZIP cualquiera. `partes` cambia o
+        quita (None) partes para fabricar falsificaciones."""
         import io
         import zipfile
+        tipos = {'word/document.xml': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml',
+                 'xl/workbook.xml': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml',
+                 'ppt/presentation.xml': 'application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml'}
+        if raiz not in tipos:
+            cont = {'[Content_Types].xml': '<Types/>', raiz: '<x/>'}
+        else:
+            cont = {'_rels/.rels': cls._rels([('rId1', 'officeDocument', raiz)])}
+            extra = ''
+            if raiz == 'word/document.xml':
+                cont[raiz] = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                              f'<w:body><w:p><w:r><w:t xml:space="preserve">{texto}</w:t></w:r></w:p><w:sectPr/></w:body></w:document>')
+            elif raiz == 'xl/workbook.xml':
+                cont[raiz] = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+                              f'xmlns:r="{cls.REL_DOC}"><sheets><sheet name="Hoja1" sheetId="1" r:id="rId1"/></sheets></workbook>')
+                cont['xl/_rels/workbook.xml.rels'] = cls._rels([('rId1', 'worksheet', 'worksheets/sheet1.xml')])
+                cont['xl/worksheets/sheet1.xml'] = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+                                                   f'<sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>{texto}</t></is></c><c r="B1"><v>120</v></c></row></sheetData></worksheet>')
+                extra = '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+            else:
+                cont[raiz] = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" '
+                              f'xmlns:r="{cls.REL_DOC}"><p:sldIdLst><p:sldId id="256" r:id="rId2"/></p:sldIdLst></p:presentation>')
+                cont['ppt/_rels/presentation.xml.rels'] = cls._rels([('rId2', 'slide', 'slides/slide1.xml')])
+                cont['ppt/slides/slide1.xml'] = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" '
+                                                 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:sp><p:txBody>'
+                                                 f'<a:p><a:r><a:t>{texto}</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>')
+                extra = '<Override PartName="/ppt/slides/slide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>'
+            cont['[Content_Types].xml'] = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="{cls.NS_CT}">'
+                                           '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+                                           '<Default Extension="xml" ContentType="application/xml"/>'
+                                           f'<Override PartName="/{raiz}" ContentType="{tipos[raiz]}"/>{extra}</Types>')
+        for k, v in (partes or {}).items():
+            if v is None:
+                cont.pop(k, None)
+            else:
+                cont[k] = v
         b = io.BytesIO()
         with zipfile.ZipFile(b, 'w', zipfile.ZIP_DEFLATED) as z:
-            z.writestr('[Content_Types].xml', '<Types/>')
-            z.writestr(f'{raiz}', '<x/>')
+            for k, v in cont.items():
+                z.writestr(k, v)
         return b.getvalue()
 
     @staticmethod
-    def odf(mime):
+    def odf(mime, texto='Carta sintética de prueba', contenido=None, mimetype=None):
+        """odt/ods/odp de verdad (mimetype sin comprimir y primero, manifest y content.xml con texto)."""
         import io
         import zipfile
+        cuerpo = {'application/vnd.oasis.opendocument.text': f'<office:text><text:p>{texto}</text:p></office:text>',
+                  'application/vnd.oasis.opendocument.spreadsheet': f'<office:spreadsheet><table:table table:name="Hoja1"><table:table-row><table:table-cell><text:p>{texto}</text:p></table:table-cell></table:table-row></table:table></office:spreadsheet>',
+                  'application/vnd.oasis.opendocument.presentation': f'<office:presentation><draw:page draw:name="p1"><draw:frame><draw:text-box><text:p>{texto}</text:p></draw:text-box></draw:frame></draw:page></office:presentation>'}
+        xml = contenido if contenido is not None else (
+            '<?xml version="1.0" encoding="UTF-8"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" '
+            'xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" '
+            'xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" office:version="1.3">'
+            f'<office:body>{cuerpo.get(mime, "<office:text/>")}</office:body></office:document-content>')
         b = io.BytesIO()
         with zipfile.ZipFile(b, 'w') as z:
-            z.writestr(zipfile.ZipInfo('mimetype'), mime, compress_type=zipfile.ZIP_STORED)
-            z.writestr('content.xml', '<x/>', compress_type=zipfile.ZIP_DEFLATED)
+            z.writestr(zipfile.ZipInfo('mimetype'), mimetype if mimetype is not None else mime, compress_type=zipfile.ZIP_STORED)
+            z.writestr('META-INF/manifest.xml', '<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0"/>', compress_type=zipfile.ZIP_DEFLATED)
+            z.writestr('content.xml', xml, compress_type=zipfile.ZIP_DEFLATED)
         return b.getvalue()
 
     PDF = b'%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\ntrailer << >>\n%%EOF\n'
@@ -1581,24 +1639,37 @@ class ArchivosComprobados(Base):
         return out
 
     @staticmethod
-    def pdf_objstm():
-        """Un PDF como los de qpdf o pdflatex con flujos de objetos: las páginas van comprimidas dentro de un /ObjStm y
-        la tabla es un flujo /Type /XRef (hecho a mano con zlib)."""
+    def pdf_objstm(cuenta=1):
+        """Un PDF 1.5 con flujos de objetos como los de qpdf o pdflatex: catálogo, árbol y página comprimidos dentro de
+        un /ObjStm, y la tabla es un flujo /Type /XRef con predictor PNG (Up). pdf.js lo abre (verificado a mano)."""
+        import struct
         import zlib
-        cuerpos = [b'<< /Type /Catalog /Pages 3 0 R >>', b'<< /Type /Pages /Kids [4 0 R] /Count 1 >>', b'<< /Type /Page /Parent 3 0 R /MediaBox [0 0 612 792] >>']
-        cab, datos, pos = [], b'', 0
-        for n, c in zip((2, 3, 4), cuerpos):
-            cab.append(b'%d %d' % (n, pos))
-            datos += c + b' '
-            pos += len(c) + 1
-        primera = b' '.join(cab) + b' '
+        contenido = b'BT /F1 12 Tf 72 712 Td (Hola) Tj ET'
+        cuerpos = {1: b'<< /Type /Catalog /Pages 2 0 R >>', 2: b'<< /Type /Pages /Kids [3 0 R] /Count %d >>' % cuenta,
+                   3: b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>'}
+        cab, datos = [], b''
+        for n, c in cuerpos.items():
+            cab.append(b'%d %d' % (n, len(datos)))
+            datos += c + b'\n'
+        primera = b' '.join(cab) + b'\n'
         flujo = zlib.compress(primera + datos)
         out = b'%PDF-1.5\n%\xe2\xe3\xcf\xd3\n'
-        out += b'1 0 obj\n<< /Type /ObjStm /N 3 /First %d /Filter /FlateDecode /Length %d >>\nstream\n' % (len(primera), len(flujo)) + flujo + b'\nendstream\nendobj\n'
-        xref = len(out)
-        tabla = zlib.compress(b'\x00' * 20)
-        out += b'5 0 obj\n<< /Type /XRef /Size 6 /W [1 2 1] /Root 2 0 R /Filter /FlateDecode /Length %d >>\nstream\n' % len(tabla) + tabla + b'\nendstream\nendobj\n'
-        out += b'startxref\n%d\n%%%%EOF\n' % xref
+        off = {}
+        off[4] = len(out)
+        out += b'4 0 obj\n<< /Length %d >>\nstream\n' % len(contenido) + contenido + b'\nendstream\nendobj\n'
+        off[5] = len(out)
+        out += b'5 0 obj\n<< /Type /ObjStm /N 3 /First %d /Filter /FlateDecode /Length %d >>\nstream\n' % (len(primera), len(flujo)) + flujo + b'\nendstream\nendobj\n'
+        off[6] = len(out)
+        filas = [(0, 0, 0xff), (2, 5, 0), (2, 5, 1), (2, 5, 2), (1, off[4], 0), (1, off[5], 0), (1, off[6], 0)]
+        crudo, prev = b'', bytes(4)
+        for t, a, c in filas:
+            fila = struct.pack('>BHB', t, a, c)
+            crudo += b'\x02' + bytes((x - y) & 255 for x, y in zip(fila, prev))
+            prev = fila
+        tabla = zlib.compress(crudo)
+        out += (b'6 0 obj\n<< /Type /XRef /Size 7 /W [1 2 1] /Index [0 7] /Root 1 0 R /Filter /FlateDecode '
+                b'/DecodeParms << /Columns 4 /Predictor 12 >> /Length %d >>\nstream\n' % len(tabla) + tabla + b'\nendstream\nendobj\n')
+        out += b'startxref\n%d\n%%%%EOF\n' % off[6]
         return out
 
     @staticmethod
@@ -1670,17 +1741,15 @@ class ArchivosComprobados(Base):
 
     # ---- Ronda 7, G2-N3/G2-m1/G2-m2: la validación de verdad, en Python DENTRO del escritorio (biblioteca estándar).
 
-    @staticmethod
-    def pptx_grande(partes=1000):
-        import io
-        import zipfile
-        b = io.BytesIO()
-        with zipfile.ZipFile(b, 'w', zipfile.ZIP_DEFLATED) as z:
-            z.writestr('[Content_Types].xml', '<Types/>')
-            z.writestr('ppt/presentation.xml', '<p:presentation/>')
-            for i in range(partes):
-                z.writestr(f'ppt/slides/slide{i}.xml', f'<p:sld n="{i}"/>')
-        return b.getvalue()
+    @classmethod
+    def pptx_grande(cls, partes=1000):
+        """Una presentación de verdad con `partes` diapositivas (miles de partes en el ZIP)."""
+        ids = ''.join(f'<p:sldId id="{256 + i}" r:id="rId{i + 2}"/>' for i in range(partes))
+        rels = cls._rels([(f'rId{i + 2}', 'slide', f'slides/slide{i + 1}.xml') for i in range(partes)])
+        pres = ('<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" '
+                f'xmlns:r="{cls.REL_DOC}"><p:sldIdLst>{ids}</p:sldIdLst></p:presentation>')
+        extra = {f'ppt/slides/slide{i + 1}.xml': f'<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:spTree/></p:cSld></p:sld>' for i in range(partes)}
+        return cls.ooxml('ppt/presentation.xml', partes={'ppt/presentation.xml': pres, 'ppt/_rels/presentation.xml.rels': rels, **extra})
 
     def test_falsos_de_la_revision_y_legitimos(self):
         falsos = {
@@ -1725,6 +1794,198 @@ class ArchivosComprobados(Base):
         validos = {'informe.docx': self.ooxml('word/document.xml'), 'presupuesto.xlsx': self.ooxml('xl/workbook.xml'), 'carta.pdf': self.pdf_objstm()}
         n = self.por_nombre(self.correr_y_archivos('Listo.', instruccion=self.TRES, antes=lambda t: [self.escribir(f'Documents/{k}', v) for k, v in validos.items()]))
         self.assertEqual({k: n[k].get('integro') for k in validos}, {k: True for k in validos})
+
+    # ---- Ronda 8, G-A: falsificaciones MÁS elaboradas (las de la revisión) y lo legítimo que tiene que seguir pasando.
+
+    @staticmethod
+    def png(ancho=3, alto=2, color=2, prof=8, entrelazado=0, cortar=False, sin_idat=False):
+        import struct
+        import zlib
+        canales = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}[color]
+
+        def filas(w, h):
+            return b''.join(b'\x00' + bytes((((w * canales * prof) + 7) // 8)) for _ in range(h)) if w and h else b''
+        if entrelazado:
+            pasadas = ((0, 0, 8, 8), (4, 0, 8, 8), (0, 4, 4, 8), (2, 0, 4, 4), (0, 2, 2, 4), (1, 0, 2, 2), (0, 1, 1, 2))
+            crudo = b''.join(filas((ancho - x + dx - 1) // dx if ancho > x else 0, (alto - y + dy - 1) // dy if alto > y else 0) for x, y, dx, dy in pasadas)
+        else:
+            crudo = filas(ancho, alto)
+        if cortar:
+            crudo = crudo[:len(crudo) // 2]
+
+        def trozo(t, d):
+            return struct.pack('>I', len(d)) + t + d + struct.pack('>I', zlib.crc32(t + d) & 0xffffffff)
+        out = b'\x89PNG\r\n\x1a\n' + trozo(b'IHDR', struct.pack('>IIBBBBB', ancho, alto, prof, color, 0, 0, entrelazado))
+        if color == 3:
+            out += trozo(b'PLTE', b'\xff\x00\x00\x00\xff\x00')
+        if not sin_idat:
+            z = zlib.compress(crudo)
+            out += trozo(b'IDAT', z[:len(z) // 2]) + trozo(b'IDAT', z[len(z) // 2:])
+        return out + trozo(b'IEND', b'')
+
+    @staticmethod
+    def jpeg(sof=0xc0, tablas=True, datos=b'\x7f\xa0' * 4, escaneos=1, despues=b''):
+        import struct
+
+        def seg(m, d):
+            return b'\xff' + bytes([m]) + struct.pack('>H', len(d) + 2) + d
+        out = b'\xff\xd8' + seg(0xe0, b'JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00')
+        if tablas:
+            out += seg(0xdb, b'\x00' + bytes(range(1, 65)))
+        if sof:
+            out += seg(sof, b'\x08\x00\x10\x00\x10\x01\x01\x11\x00')
+        if tablas:
+            out += seg(0xc4, b'\x00' + b'\x01' + b'\x00' * 15 + b'\x00')
+        for _ in range(escaneos):
+            out += seg(0xda, b'\x01\x01\x00\x00\x3f\x00') + datos
+        return out + b'\xff\xd9' + despues
+
+    @staticmethod
+    def gif(imagenes=1, datos=True):
+        out = b'GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00'
+        for _ in range(imagenes):
+            out += b'!\xf9\x04\x01\x0a\x00\x00\x00' + b',\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02' + (b'\x02D\x01\x00' if datos else b'\x00')
+        return out + b';'
+
+    @staticmethod
+    def ole(flujo='WordDocument', contenido=None, tam=4096, cortar=0):
+        """Un documento de Office antiguo (CFB v3) mínimo: cabecera, un sector de FAT, uno de directorio y el flujo."""
+        import struct
+        FIN, LIBRE, FATS, NADA = 0xfffffffe, 0xffffffff, 0xfffffffd, 0xffffffff
+        if contenido is None:
+            contenido = {'WordDocument': b'\xec\xa5\xc1\x00', 'Workbook': b'\x09\x08\x10\x00', 'PowerPoint Document': b'\x00\x00\xe8\x03'}.get(flujo, b'')
+        datos = (contenido + b'\x00' * tam)[:tam]
+        n = (tam + 511) // 512
+        fat = [FATS, FIN] + [3 + k for k in range(n - 1)] + [FIN]
+        fat += [LIBRE] * (128 - len(fat))
+        cab = (b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1' + b'\x00' * 16 + struct.pack('<HHHHH', 0x3e, 3, 0xfffe, 9, 6) + b'\x00' * 6
+               + struct.pack('<IIIIIIIII', 0, 1, 1, 0, 4096, FIN, 0, FIN, 0) + struct.pack('<I', 0) + struct.pack('<I', LIBRE) * 108)
+
+        def entrada(nombre, tipo, hijo, inicio, largo):
+            nb = nombre.encode('utf-16-le') + b'\x00\x00'
+            return (nb + b'\x00' * (64 - len(nb)) + struct.pack('<HBB', len(nb), tipo, 1) + struct.pack('<III', NADA, NADA, hijo)
+                    + b'\x00' * 16 + b'\x00' * 4 + b'\x00' * 16 + struct.pack('<III', inicio, largo, 0))
+        directorio = entrada('Root Entry', 5, 1, FIN, 0) + entrada(flujo, 2, NADA, 2, tam) + b'\x00' * 256
+        out = cab + struct.pack('<128I', *fat) + directorio + datos + b'\x00' * (n * 512 - tam)
+        return out[:len(out) - cortar] if cortar else out
+
+    W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+
+    def falsificaciones_r8(self):
+        import io
+        import zipfile
+
+        def zip_de(partes):
+            b = io.BytesIO()
+            with zipfile.ZipFile(b, 'w') as z:
+                for k, v in partes.items():
+                    z.writestr(k, v)
+            return b.getvalue()
+        pdf_sin_raiz = self.pdf_clasico().replace(b'/Root 1 0 R', b'/Size_ 0 0 R')
+        clasico = self.pdf_clasico()
+        mal_off = clasico.replace(b'\nxref\n', b'\nxref\n', 1)
+        i = mal_off.index(b'0000000000 65535 f \n') + 20
+        mal_off = mal_off[:i] + b'0000000001' + mal_off[i + 10:]  # el objeto 1 «está» en el byte 1
+        objstm_vacio = (b'%PDF-1.7\n1 0 obj\n<< /Type /ObjStm /N 0 /First 0 /Length 0 >>\nstream\n\nendstream\nendobj\n'
+                        b'xref\n0 2\n0000000000 65535 f \n0000000009 00000 n \ntrailer\n<< /Size 2 >>\nstartxref\nOFF\n%%EOF\n')
+        objstm_vacio = objstm_vacio.replace(b'OFF', str(objstm_vacio.index(b'xref')).encode())
+        cadena = (b'%PDF-1.7\n1 0 obj\n<< /Title (/Type /Page) >>\nendobj\n'
+                  b'xref\n0 2\n0000000000 65535 f \n0000000009 00000 n \ntrailer\n<< /Size 2 >>\nstartxref\nOFF\n%%EOF\n')
+        cadena = cadena.replace(b'OFF', str(cadena.index(b'xref')).encode())
+        return {
+            # Las de la revisión (falsos.py).
+            'basura.docx': zip_de({'[Content_Types].xml': 'no soy xml', 'word/document.xml': 'basura'}),
+            'basura.xlsx': zip_de({'[Content_Types].xml': 'x', 'xl/workbook.xml': 'x'}),
+            'cadena.pdf': cadena,
+            'objstm_vacio.pdf': objstm_vacio,
+            'sin_idat.png': self.png(4000, 3000, sin_idat=True),
+            'sin_sof.jpg': self.jpeg(sof=0, tablas=False, datos=b'\x00' * 200),
+            'relleno.gif': b'GIF89a' + b'\x00' * 30 + b';',
+            'vacio.odt': self.odf('application/vnd.oasis.opendocument.text', contenido=''),
+            # Más elaboradas: estructura casi buena, sin contenido o con el contenido roto.
+            'sin_texto.docx': self.ooxml('word/document.xml', partes={'word/document.xml': f'<w:document xmlns:w="{self.W}"><w:body><w:p/></w:body></w:document>'}),
+            'sin_cuerpo.docx': self.ooxml('word/document.xml', partes={'word/document.xml': f'<w:document xmlns:w="{self.W}"/>'}),
+            'raiz_otra.docx': self.ooxml('word/document.xml', partes={'word/document.xml': '<html><body><t>hola</t></body></html>'}),
+            'sin_tipo.docx': self.ooxml('word/document.xml', partes={'[Content_Types].xml': f'<Types xmlns="{self.NS_CT}"/>'}),
+            'sin_celdas.xlsx': self.ooxml('xl/workbook.xml', partes={'xl/worksheets/sheet1.xml': '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData/></worksheet>'}),
+            'sin_hoja.xlsx': self.ooxml('xl/workbook.xml', partes={'xl/worksheets/sheet1.xml': None}),
+            'sin_diapos.pptx': self.ooxml('ppt/presentation.xml', partes={'ppt/presentation.xml': '<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"/>'}),
+            'mimetype_otro.odt': self.odf('application/vnd.oasis.opendocument.text', mimetype='text/plain'),
+            'sin_texto.odt': self.odf('application/vnd.oasis.opendocument.text', texto=''),
+            'sin_raiz.pdf': pdf_sin_raiz,
+            'xref_mentirosa.pdf': mal_off,
+            'cero_paginas.pdf': self.pdf_objstm(cuenta=0),
+            'idat_corto.png': self.png(64, 64, cortar=True),
+            'sin_datos.jpg': self.jpeg(datos=b''),
+            'sin_tablas.jpg': self.jpeg(tablas=False, datos=b'\x7f' * 200),
+            'imagen_vacia.gif': self.gif(datos=False),
+            'sin_imagen.gif': b'GIF89a\x01\x00\x01\x00\x00\x00\x00' + b'\x00' * 20 + b';',
+            'sin_flujo.doc': self.ole('Otra Cosa'),
+            'no_es_word.doc': self.ole('WordDocument', contenido=b'NOPE'),
+            'cortado.xls': self.ole('Workbook', cortar=1024),
+            'cabecera.ppt': self.ole('PowerPoint Document')[:512] + b'\x00' * 1100,
+        }
+
+    def legitimos_r8(self):
+        clasico = self.pdf_clasico()
+        viejo = clasico.rindex(b'startxref\n')
+        off_xref = int(clasico[viejo + 10:].split(b'\n')[0])
+        nuevo4 = len(clasico)
+        cont = b'BT /F1 12 Tf 72 700 Td (Adios) Tj ET'
+        inc = clasico + b'4 0 obj\n<< /Length %d >>\nstream\n' % len(cont) + cont + b'\nendstream\nendobj\n'
+        x2 = len(inc)
+        inc += b'xref\n0 1\n0000000000 65535 f \n4 1\n%010d 00000 n \ntrailer << /Size 5 /Root 1 0 R /Prev %d >>\nstartxref\n%d\n%%%%EOF\n' % (nuevo4, off_xref, x2)
+        return {
+            'b.docx': self.ooxml('word/document.xml'), 'b.xlsx': self.ooxml('xl/workbook.xml'), 'b.pptx': self.ooxml('ppt/presentation.xml'),
+            'grande.pptx': self.pptx_grande(), 'b.odt': self.odf('application/vnd.oasis.opendocument.text'),
+            'b.ods': self.odf('application/vnd.oasis.opendocument.spreadsheet'), 'b.odp': self.odf('application/vnd.oasis.opendocument.presentation'),
+            'clasico.pdf': clasico, 'objstm.pdf': self.pdf_objstm(), 'incremental.pdf': inc,
+            'b.png': self.png_valido(), 'rgb.png': self.png(40, 30), 'entrelazado.png': self.png(13, 7, entrelazado=1),
+            'paleta.png': self.png(9, 9, color=3, prof=4), 'rgba16.png': self.png(5, 5, color=6, prof=16),
+            'b.jpg': self.jpeg_valido(), 'progresivo.jpg': self.jpeg(sof=0xc2, escaneos=3),
+            'movimiento.jpg': self.jpeg(despues=b'\x00\x00\x00\x18ftypmp42' + b'\x00\x11\x22\x33' * 400),
+            'b.gif': self.GIF_VALIDO, 'animado.gif': self.gif(imagenes=3), 'b.rtf': self.RTF_VALIDO,
+            'b.doc': self.ole('WordDocument'), 'b.xls': self.ole('Workbook'), 'b.ppt': self.ole('PowerPoint Document'),
+        }
+
+    def test_ronda8_falsificaciones_elaboradas_no_quedan_integras(self):
+        # El nodo informa a lo más ARCHIVOS_MAX archivos por misión: van en tandas.
+        falsos, buenos = self.falsificaciones_r8(), self.legitimos_r8()
+        vistos = {}
+        for grupo in (falsos, buenos):
+            claves = sorted(grupo)
+            for k in range(0, len(claves), agente.ARCHIVOS_MAX):
+                tanda = {c: grupo[c] for c in claves[k:k + agente.ARCHIVOS_MAX]}
+                self.tearDown()
+                self.setUp()
+                n = self.por_nombre(self.correr_y_archivos('Listo.', instruccion='Guarda los archivos', antes=lambda t: [self.escribir(c, v) for c, v in tanda.items()]))
+                self.assertEqual(sorted(n), sorted(tanda))
+                vistos.update(n)
+        # Una falsificación «pasa» si queda íntegra Y con el tipo que su nombre promete (un .odt que por dentro es un ZIP
+        # cualquiera queda íntegro como ZIP, pero el servidor no lo acepta como .odt).
+        tipo = {'docx': 'docx', 'xlsx': 'xlsx', 'pptx': 'pptx', 'odt': 'odt', 'pdf': 'pdf', 'png': 'png', 'jpg': 'jpeg', 'gif': 'gif', 'doc': 'ole', 'xls': 'ole', 'ppt': 'ole'}
+        pasan = {k: (vistos[k].get('tipo'), vistos[k].get('integro')) for k in falsos if vistos[k].get('integro') is True and vistos[k].get('tipo') == tipo[k.rsplit('.', 1)[1]]}
+        self.assertEqual(pasan, {}, 'ninguna falsificación queda íntegra con el tipo que promete')
+        self.assertEqual({k: (vistos[k].get('integro'), vistos[k].get('defecto')) for k in buenos if vistos[k].get('integro') is not True}, {}, 'lo legítimo sigue íntegro')
+
+    def test_ronda8_lo_que_fabrico_la_revision_de_punta_a_punta(self):
+        """falsos.py de la revisión: los ocho archivos que ella fabricó, por comprobar_archivos con el escritorio."""
+        f = self.falsificaciones_r8()
+        nombres = {'informe.docx': 'basura.docx', 'datos.xlsx': 'basura.xlsx', 'portada.pdf': 'cadena.pdf', 'anexo.pdf': 'objstm_vacio.pdf',
+                   'captura.png': 'sin_idat.png', 'foto.jpg': 'sin_sof.jpg', 'logo.gif': 'relleno.gif', 'carta.odt': 'vacio.odt'}
+        n = self.por_nombre(self.correr_y_archivos('Listo.', instruccion='Crea ' + ', '.join(nombres),
+                                                   antes=lambda t: [self.escribir(k, f[v]) for k, v in nombres.items()]))
+        self.assertEqual({k: n[k].get('integro') for k in nombres}, {k: False for k in nombres})
+
+    def test_ronda8_ole_sin_decidir_queda_sin_comprobar(self):
+        """Un documento OLE con una extensión que no dice qué flujo debe tener: «-» (sin comprobar), nunca True."""
+        n = self.por_nombre(self.correr_y_archivos('Listo.', instruccion='Guarda raro.msg', antes=lambda t: self.escribir('raro.msg', self.ole('WordDocument'))))
+        self.assertIsNone(n['raro.msg'].get('integro'))
+
+    def test_ronda8_el_validador_se_puede_extraer(self):
+        """La cadena VALIDADOR es un script de Python completo (para probarlo en el escritorio real): compila solo."""
+        compile(agente.VALIDADOR, 'validador.py', 'exec')
+        self.assertNotIn('import agente', agente.VALIDADOR)
 
     def test_nombres_con_apostrofo(self):
         """Ronda 6, G2-E: «O'Brien.pdf» entero (no «Brien.pdf»), también entre comillas simples."""

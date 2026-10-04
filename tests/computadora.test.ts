@@ -418,7 +418,7 @@ test('el turno dejó de esperar: se cuentan los avances y el resultado va al tel
         assert.equal(fin.aparato, 'tel-1');
         // Ronda 7: solo respondió: no es «ok» (nada comprobado) ni «Listo»; lo dice y da la respuesta.
         assert.equal(fin.aviso.ok, false);
-        assert.match(fin.aviso.texto!, /^Solo te respondí; no hice ni comprobé ninguna otra acción\. Nació el 3 de octubre de 1792\./);
+        assert.match(fin.aviso.texto!, /^Te respondí con lo que encontré\. Si además pediste que hiciera algo, eso NO está comprobado: revisa antes de darlo por hecho\. Nació el 3 de octubre de 1792\./);
         assert.equal(avisosPendientes('jose@x.hn'), null, 'le llegó al teléfono: no se repite en el turno siguiente');
       })
     );
@@ -786,7 +786,7 @@ test('la misión con plan del cerebro: el nodo recibe solo la misión, la app ve
             { clave: 'Venta', valor: '24.95' },
           ]);
           assert.deepEqual(fin.final.enlaces, ['https://www.bch.hn/tipo-de-cambio', 'https://bch.hn']);
-          assert.match(fin.final.texto, /^Solo te respondí; no hice ni comprobé ninguna otra acción\. Compra: 24\.70/);
+          assert.match(fin.final.texto, /^Te respondí con lo que encontré\. Si además pediste que hiciera algo, eso NO está comprobado: revisa antes de darlo por hecho\. Compra: 24\.70/);
           // El historial: la misión, la más nueva primero; y el nodo puede olvidarla: la tarjeta sigue.
           const h = (await como('jose@x.hn', '/api/computadora')).j.historial;
           assert.equal(h.length, 1);

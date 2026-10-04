@@ -579,3 +579,87 @@ test(
     assert.equal(await p.getByRole('button', { name: /Abrir el panel de tareas/ }).count(), 0, 'Bea no tiene tareas: no aparece el indicador con la de Ana');
   }
 );
+
+test(
+  'en el navegador: una tarea «respondida» se pinta «Respondida · sin comprobar», nunca como completada (ronda 8)',
+  { skip: saltoNavegador, timeout: 120000 },
+  async (t) => {
+    const { chromium } = await import('playwright');
+    const ahoraIso = new Date().toISOString();
+    const pedidas: string[] = [];
+    const tarea = (id: string, state: string, title: string, extra: Record<string, unknown> = {}) => ({
+      id,
+      version: 1,
+      state,
+      terminal: state !== 'running',
+      source: 'durable',
+      title,
+      objective: title,
+      acceptance: [{ id: 'resultado', text: 'Tu computadora termina y lo entregado se comprueba', required: true, status: state === 'completed' ? 'verified' : state === 'running' ? 'pending' : 'unknown', evidenceIds: [] }],
+      environment: { kind: 'computadora', id: 'mis_1', displayName: 'Tu computadora' },
+      progress: null,
+      decision: null,
+      result: null,
+      createdAt: ahoraIso,
+      updatedAt: ahoraIso,
+      controls: { pause: state === 'running', resume: false, cancel: state === 'running' },
+      ...extra,
+    });
+    const resultado = (summary: string) => ({ id: 'r', summary, evidence: [], partial: [], pending: [], at: ahoraIso });
+    const tipos: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.wasm': 'application/wasm' };
+    const srv = http.createServer((req, res) => {
+      const u = new URL(req.url || '/', 'http://x');
+      const json = (o: unknown, s = 200) => (res.writeHead(s, { 'Content-Type': 'application/json' }), res.end(JSON.stringify(o)));
+      if (u.pathname === '/api/health') return json({ qwen: { vivo: true } });
+      if (u.pathname === '/api/nodo/listo') return json({ listo: true });
+      if (u.pathname === '/api/genesis/config') return json({ disponible: false });
+      if (u.pathname === '/api/ultron/sesion') return json({ authenticated: true, user: { nombre: 'Ana', rol: 'Junta', correo: 'ana@ejemplo.com' } });
+      if (u.pathname === '/api/trabajos') {
+        pedidas.push(u.search);
+        // Como el servidor de verdad: sin `estados=respondida` (una app de antes), la respondida va como «partial».
+        const nueva = u.searchParams.get('estados') === 'respondida';
+        return json({
+          tareas: [
+            tarea('tarea-viva-1', 'running', 'Busca vuelos a Madrid', { currentStep: 'Buscando vuelos' }),
+            tarea('tarea-resp-1', nueva ? 'respondida' : 'partial', 'Precio del oro de hoy', {
+              ...(nueva ? {} : { estadoReal: 'respondida' }),
+              result: resultado('Te respondí con lo que encontré. Si además pediste que hiciera algo, eso NO está comprobado: revisa antes de darlo por hecho. El oro cerró en 2,410 dólares.'),
+            }),
+            tarea('tarea-ok-1', 'completed', 'Crea informe.docx', { result: resultado('Lo comprobé: informe.docx (2048 bytes).') }),
+          ],
+        });
+      }
+      if (u.pathname.startsWith('/api/')) return json({}, 404);
+      let f = path.join(DIST, decodeURIComponent(u.pathname));
+      if (!f.startsWith(DIST) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(DIST, 'index.html');
+      res.writeHead(200, { 'Content-Type': tipos[path.extname(f)] || 'application/octet-stream' });
+      fs.createReadStream(f).pipe(res);
+    });
+    const url = await new Promise<string>((r) => srv.listen(0, '127.0.0.1', () => r(`http://127.0.0.1:${(srv.address() as any).port}`)));
+    const b = await chromium.launch({ executablePath: CHROMIUM, args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader'] });
+    t.after(async () => {
+      await b.close();
+      srv.close();
+    });
+    const p = await b.newPage({ viewport: { width: 1280, height: 800 } });
+    await p.goto(url + '/', { waitUntil: 'networkidle' });
+    await p.waitForSelector('#ultron-arranque[aria-hidden="true"]', { timeout: 20000 });
+    await p.getByRole('button', { name: /Abrir el panel de tareas/ }).click({ timeout: 20000 });
+    const resp = p.locator('#tarea-tarea-resp-1');
+    await resp.waitFor({ timeout: 10000 });
+    const texto = await resp.innerText();
+    assert.match(texto, /Respondida · sin comprobar/);
+    assert.doesNotMatch(texto, /Completada/);
+    assert.match(texto, /NO está comprobado/);
+    // El color de «completada» (verde) es solo de la completada de verdad.
+    const claseResp = await resp.locator('article span.font-semibold').first().getAttribute('class');
+    const claseOk = await p.locator('#tarea-tarea-ok-1 article span.font-semibold').first().getAttribute('class');
+    assert.doesNotMatch(claseResp || '', /aura-ok-texto/);
+    assert.match(claseOk || '', /aura-ok-texto/);
+    assert.match(await p.locator('#tarea-tarea-ok-1').innerText(), /Completada/);
+    // Va entre las recientes (terminada), no «En marcha».
+    const recientes = await p.getByRole('region', { name: 'Recientes' }).innerText();
+    assert.match(recientes, /Precio del oro de hoy/);
+    assert.ok(pedidas.length > 0 && pedidas.every((q) => /estados=respondida/.test(q)), `la web pide los estados nuevos: ${pedidas.join(' ')}`);
+  }
+);

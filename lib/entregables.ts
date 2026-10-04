@@ -414,7 +414,7 @@ export function esConsulta(instruccion: string): boolean {
     return false;
   // Lista blanca de verdad (ronda 6): CADA fragmento empieza por un verbo de consulta o por una palabra que no es verbo,
   // y no hay un imperativo con enclítico que no sea de consulta («anótalo», «mándaselo», «apártame», «instálalas»).
-  if (!fragmentosAceptables(p, false) || accionEnclitica(sinNombresDe(original), false) || verboDeAccionEn(sinNombresDe(original))) return false;
+  if (!fragmentosAceptables(p, false) || accionEnclitica(sinNombresDe(original), false) || verboDeAccionEn(sinNombresDe(original)) || imperativoEnFragmento(p)) return false;
   return /[¿?]/.test(p) || palabras.some((w) => RE_CONSULTA.test(w) || RE_INFINITIVO_CONSULTA.test(w)) || pideUnDato(p);
 }
 
@@ -451,7 +451,8 @@ const INICIO_CONSULTA =
 /** …o una palabra que no es verbo (lista CERRADA): artículos, determinantes, preposiciones, números, interrogativos. */
 const INICIO_NO_VERBO = new Set(
   (
-    'el la los las lo un una unos unas este esta estos estas ese esa esos esas aquel aquella mi mis tu tus su sus nuestro nuestra ' +
+    // Ronda 8: sin «esta», «estos», «estas»: sin tilde son también «está», «estás» (verbo: «si está barata renueva…»).
+    'el la los las lo un una unos unas este ese esa esos esas aquel aquella mi mis tu tus su sus nuestro nuestra ' +
     'a al de del en con por para sin sobre entre hasta desde hacia segun ante tras ' +
     'que cual cuales cuanto cuanta cuantos cuantas como donde cuando quien quienes porque si tambien ademas favor porfa porfavor gracias ' +
     'cero uno dos tres cuatro cinco seis siete ocho nueve diez cien mil ' +
@@ -468,13 +469,53 @@ const INICIO_TEXTO = (w: string) => RE_V_PRODUCIR_COSA.test(w) || RE_V_NECESIDAD
  */
 const SALTABLES = new Set('si ademas tambien por favor porfa porfavor pues bueno also please so then if and y e luego despues entonces'.split(' '));
 const MODALES = new Set('necesito necesitamos necesita quiero queremos quisiera me nos te puedes puede podrias podria pudieras puedo i we need want would like can could you to'.split(' '));
+/** «¿Está abierto…?», «¿Hay vuelos…?», «¿Es cierto…?»: un verbo de estado empieza una consulta solo si es una PREGUNTA. */
+const INICIO_PREGUNTA = /^(es|esta|estan|estas|hay|son|sera|seran|tiene|tienen|queda|quedan|sigue|siguen|abre|abren|cierra|cierran)$/;
 function fragmentosAceptables(p: string, permitirTexto: boolean): boolean {
+  const pregunta = /[¿?]/.test(p);
   return fragmentosDe(p).every((f) => {
     const ws = f.match(/[a-zñ0-9']+/g) || [];
     let i = 0;
     while (i < ws.length && (SALTABLES.has(ws[i]) || MODALES.has(ws[i]))) i++;
     const w = ws[i] || '';
-    return !w || INICIO_CONSULTA.test(w) || (INICIO_NO_VERBO.has(w) && !SALTABLES.has(w)) || /^\d+$/.test(w) || (permitirTexto && INICIO_TEXTO(w));
+    // Tras «si» no hay pregunta: «si está barata…» es la condición de una acción, no «¿está barata?».
+    const trasSi = ws.slice(0, i).includes('si') || ws.slice(0, i).includes('if');
+    return !w || INICIO_CONSULTA.test(w) || (INICIO_NO_VERBO.has(w) && !SALTABLES.has(w)) || /^\d+$/.test(w) || (pregunta && !trasSi && INICIO_PREGUNTA.test(w)) || (permitirTexto && INICIO_TEXTO(w));
+  });
+}
+
+/**
+ * Ronda 8 («analiza el fragmento entero»): un imperativo en medio de un fragmento, aunque el fragmento empiece por una
+ * palabra que no es verbo («y EN la página VENDE mis acciones», «si llueve APAGA los aspersores», «si está barata RENUEVA
+ * la suscripción»). Una palabra terminada como un imperativo (-a, -e) que NO va detrás de un artículo, una preposición
+ * o un interrogativo, y SÍ va delante de su objeto (mis, el, la, un, a…). Los verbos de consulta no cuentan.
+ */
+const OBJETO_DETRAS = new Set('mis mi tus tu sus su el la los las un una unos unas a al todo todos toda todas esa ese esos esas eso esto lo le les'.split(' '));
+const NOMINAL_DELANTE = new Set(
+  (
+    'el la los las lo un una unos unas mi mis tu tus su sus este esta estos estas ese esa esos esas del al de a en con por para sin sobre entre hasta desde hacia segun ' +
+    'que cual cuales cuanto cuanta cuantos cuantas como donde cuando quien quienes si no ya muy mas menos tan hora se te me nos le les ' +
+    'the a an of in on at to for with from by my your our its this that these those is are was were be'
+  ).split(' ')
+);
+/** Palabras terminadas en -a/-e que no son imperativos (preposiciones, adverbios, tiempo): «para el», «ahora la», «siempre el». */
+const NO_IMPERATIVO = new Set(
+  (
+    'para sobre entre desde hasta hacia ante donde como cuando siempre ahora antes tarde manana noche semana mismo misma toda todo cada otra otro nunca mientras grande grandes este esta ese esa aquella ' +
+    // Verbos de estado en tercera persona («qué precio TIENE el café», «cuánto CUESTA la onza», «a qué hora ABRE el banco»).
+    'tiene cuesta vale queda hace dice sale llega viene pasa juega gana pesa mide dura falta parece existe incluye contiene significa aparece ocurre sucede empieza termina abre ofrece'
+  ).split(' ')
+);
+function imperativoEnFragmento(p: string): boolean {
+  return fragmentosDe(p).some((f) => {
+    const ws = f.match(/[a-zñ]+/g) || [];
+    for (let i = 1; i < ws.length - 1; i++) {
+      const w = ws[i];
+      if (w.length < 4 || !/[ae]$/.test(w) || NO_IMPERATIVO.has(w) || INICIO_NO_VERBO.has(w) || NOMINAL_DELANTE.has(w) || INICIO_CONSULTA.test(w) || RAIZ_CONSULTA.test(w)) continue;
+      if (NOMINAL_DELANTE.has(ws[i - 1]) || !OBJETO_DETRAS.has(ws[i + 1])) continue;
+      return true;
+    }
+    return false;
   });
 }
 
@@ -483,12 +524,17 @@ function fragmentosAceptables(p: string, permitirTexto: boolean): boolean {
  * instala, anota; buy, pay, book, install, order…) saca la misión del camino de consulta. Lo que es un sustantivo detrás
  * de un artículo («la compra», «el pago», «la reserva», «the order», «a book») no.
  */
+// Ronda 8: también vender, firmar, aceptar, confirmar, aprobar, retirar, donar, invertir, reiniciar, apagar, cambiar,
+// publicar, subir, votar, depositar, cerrar, pedir, solicitar, activar, desactivar, responder, renovar, seguir (a alguien).
 const RE_FORMA_ACCION =
-  /^(?:compr|pag|pagu|reserv|instal|desinstal|anot|apart|agend|mand|envi|reenvi|transfier|transfer|cancel|llen|rellen|borr|elimin|descarg|guard|llam|avis|orden|alquil|contrat|suscrib|inscrib|imprim|renombr|compart)(?:a|as|e|es|en|an|o|ar|er|ir|ando|iendo|ado|ido|ada|ida|amos|emos|imos|aste|aron|ara|aria|are|ue|ues|uen)(?:lo|la|los|las|le|les|me|nos|selo|sela|melo|mela)?$/;
+  /^(?:compr|pag|pagu|reserv|instal|desinstal|anot|apart|agend|mand|envi|reenvi|transfier|transfer|cancel|llen|rellen|borr|elimin|descarg|guard|llam|avis|orden|alquil|contrat|suscrib|inscrib|imprim|renombr|compart|vend|firm|acept|confirm|aprob|aprueb|retir|don|invert|inviert|reinici|apag|apagu|cambi|public|publiqu|sub|vot|deposit|cierr|cerr|ped|pid|solicit|activ|desactiv|respond|renov|renuev|sigu)(?:a|as|e|es|en|an|o|ar|er|ir|ando|iendo|ado|ido|ada|ida|amos|emos|imos|aste|aron|ara|aria|are|ue|ues|uen)(?:lo|la|los|las|le|les|me|nos|selo|sela|melo|mela)?$/;
 const RE_ACCION_EN =
-  /^(buy|buys|buying|bought|pay|pays|paying|paid|book|books|booking|booked|install|installs|installing|installed|order|orders|ordering|ordered|purchase|purchases|purchased|purchasing|reserve|reserves|reserved|send|sends|sending|sent|email|emails|emailed|text|texts|texted|share|shares|shared|post|posts|posted|delete|deletes|deleted|remove|removes|removed|fix|fixes|fixed|cancel|cancels|cancelled|canceled|transfer|transfers|transferred|subscribe|subscribed|download|downloads|downloaded|upload|uploads|uploaded|save|saves|saved|forward|reply|replies|replied|schedule|scheduled)$/;
+  /^(buy|buys|buying|bought|pay|pays|paying|paid|book|books|booking|booked|install|installs|installing|installed|order|orders|ordering|ordered|purchase|purchases|purchased|purchasing|reserve|reserves|reserved|send|sends|sending|sent|email|emails|emailed|text|texts|texted|share|shares|shared|post|posts|posted|delete|deletes|deleted|remove|removes|removed|fix|fixes|fixed|cancel|cancels|cancelled|canceled|transfer|transfers|transferred|subscribe|subscribed|download|downloads|downloaded|upload|uploads|uploaded|save|saves|saved|forward|reply|replies|replied|schedule|scheduled|sell|sells|selling|sold|sign|signs|signed|accept|accepts|accepted|approve|approves|approved|withdraw|withdraws|withdrew|donate|donates|donated|invest|invests|invested|restart|restarts|restarted|reboot|shut|change|changes|changed|wire|wires|wired|turn|turns|turned|switch|vote|votes|voted|renew|renews|renewed|deposit|deposits|deposited|activate|activated|deactivate|deactivated|enable|enabled|disable|disabled|unsubscribe|unsubscribed|publish|published|submit|submitted|confirm|confirmed)$/;
 const ANTES_DE_SUSTANTIVO = new Set('el la los las un una unos unas mi tu su mis tus sus este esta ese esa del al de se the a an my your our this that its his her their in of'.split(' '));
-const NO_SON_ACCION = new Set(['aparte', 'cobre', 'mando', 'llamas']);
+const NO_SON_ACCION = new Set(['aparte', 'cobre', 'mando', 'llamas', 'done', 'dones', 'subes']);
+/** Delante de un interrogativo, el verbo describe («a qué hora CIERRA», «cuánto SUBE», «dónde VENDEN», «quién RESPONDE»). */
+const INTERROGATIVO_DELANTE = new Set('que cual cuales cuanto cuanta cuantos cuantas donde cuando quien quienes como hora'.split(' '));
+const DESCRIPTIVOS = /^(sube|suben|subio|baja|bajan|cambia|cambian|cierra|cierran|abre|abren|sigue|siguen)$/;
 function verboDeAccionEn(original: string): boolean {
   const ws = plegar(String(original || '')).match(/[a-zñ']+/g) || [];
   return ws.some((w, i) => {
@@ -498,6 +544,8 @@ function verboDeAccionEn(original: string): boolean {
     if (!es && !en) return false;
     // «la compra», «el pago», «the order»: un sustantivo (solo en las formas que pueden serlo).
     if (ANTES_DE_SUSTANTIVO.has(ws[i - 1] || '') && (en || /[aoe]$/.test(w))) return false;
+    // «a qué hora cierra», «cuánto sube», «si sube el dólar»: describe, no manda (la acción, si la hay, es OTRA palabra).
+    if (es && (INTERROGATIVO_DELANTE.has(ws[i - 1] || '') || (DESCRIPTIVOS.test(w) && (ws[i - 1] === 'si' || ws[i - 1] === 'esta')))) return false;
     return true;
   });
 }
@@ -507,12 +555,17 @@ function verboDeAccionEn(original: string): boolean {
  * disponible en la pantalla», «está en la ventana del editor», «is now displayed on the desktop screen»). Eso no es la
  * entrega: el texto no vino en la respuesta.
  */
-const RE_LUGAR = /\b(pantalla|ventana|navegador|escritorio|editor|pestana|screen|desktop|browser|window|tab)\b/;
-const RE_REMITE = /\b(esta en|quedo en|queda en|se encuentra|disponible|deje abiert[oa]|dejo abiert[oa]|lo deje|la deje|abiert[oa] en|is on|is in|on the|in the|displayed|shown|left (it )?open|open on|open in)\b/;
+// Ronda 8: también el portapapeles, Firefox, Chrome, gedit, LibreOffice, la terminal, una nota o «la página que abrí».
+const RE_LUGAR =
+  /\b(pantalla|ventana|navegador|escritorio|editor|pestana|portapapeles|firefox|chrome|chromium|gedit|libreoffice|writer|terminal|consola|bloc de notas|aplicacion de notas|screen|desktop|browser|window|tab|clipboard|notepad|notes app|console)\b/;
+const RE_REMITE =
+  /\b(esta en|quedo en|queda en|se encuentra|disponible|deje abiert[oa]|dejo abiert[oa]|lo deje|la deje|te lo deje|abiert[oa] en|copie|pegues|pegarlo|puedes leer|puedes verl[oa]|lo tienes en|ya lo tienes|lo encuentras|lo veras|aparece en|que abri|que cree|que deje|imprimi|is on|is in|on the|in the|displayed|shown|left (it )?open|open on|open in|copied|paste|you can read|you will find|i opened|printed)\b/;
+const RE_REMITE_SOLO =
+  /\b(lo deje abierto|la deje abierta|left it open|is now displayed|displayed on|shown on|(?:pagina|sitio|archivo|documento|nota|aplicacion|ventana|pestana)\b[^.;]{0,60}\bque (?:abri|cree|deje|escribi)|(?:page|site|file|document|note|tab|window) i (?:opened|created|left))\b/;
 export function remiteAOtroLugar(respuesta: string | null | undefined): boolean {
   return plegar(String(respuesta || ''))
     .split(/(?<=[.!?…])\s+|\n+/)
-    .some((f) => (RE_LUGAR.test(f) && RE_REMITE.test(f)) || /\b(lo deje abierto|la deje abierta|left it open|is now displayed|displayed on|shown on)\b/.test(f));
+    .some((f) => (RE_LUGAR.test(f) && RE_REMITE.test(f)) || RE_REMITE_SOLO.test(f));
 }
 const RE_CLITICO = /(selos|selas|selo|sela|noslo|nosla|melo|mela|telo|tela|los|las|les|lo|la|le|me|nos)$/;
 /** Imperativos con enclítico comunes, sin tilde (como se escriben de prisa). */
@@ -924,6 +977,7 @@ export function requisitosDeEntrega(instruccion: string): PedidoEntrega {
     fragmentosAceptables(sinNombres, true) &&
     !accionEnclitica(sinWeb, true) &&
     !verboDeAccionEn(sinNombres) &&
+    !imperativoEnFragmento(sinNombres) &&
     explicitos === 0 &&
     !enTexto.length &&
     !RE_NO_ES_TEXTO_EN_CHAT.test(sinNombres) &&

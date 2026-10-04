@@ -906,14 +906,165 @@ def tipo_por_dentro(magia_hex, marca, tam):
 
 # El validador que corre DENTRO del escritorio con su python3 (solo la biblioteca estándar). Recibe pares «tipo ruta» y
 # devuelve, por cada uno, «ruta\t1|0|-\tdefecto»: 1 entero, 0 cortado o falso, - no se sabe validar. Revisión externa
-# (ronda 7): la estructura de verdad, no firmas sueltas; un docx de 67 bytes con «word/document.xml» ya no pasa.
+# (rondas 7 y 8): la estructura de verdad y CONTENIDO, no firmas sueltas:
+#  · OOXML: [Content_Types].xml declara la parte principal (la de _rels/.rels); la parte parsea con su raíz (w:document
+#    con w:body y algún w:t con texto; workbook con sheets/sheet, cada hoja enlazada existe y parsea, y alguna celda con v
+#    o is; p:presentation con sldIdLst y alguna diapositiva que parsea).
+#  · ODF: mimetype exacto; content.xml con office:document-content y office:body con texto.
+#  · PDF: se sigue la tabla xref (clásica, /Prev y flujos /XRef con predictor): cada desplazamiento apunta a «N G obj»;
+#    /Root lleva a un catálogo, su /Pages a un árbol con /Count >= 1 y su primer hijo es una página (también dentro de un
+#    /ObjStm, descomprimido). Lo que va entre paréntesis (cadenas) no cuenta.
+#  · PNG: IHDR primero, IDAT (los datos descomprimidos alcanzan ancho × alto × canales, con entrelazado), IEND y CRC.
+#  · JPEG: SOI, SOF, DQT/DHT, SOS con datos y EOI; lo que va DESPUÉS de un EOI válido (fotos en movimiento) se acepta.
+#  · GIF: pantalla con tamaño, al menos una imagen (0x2C) con su tamaño de código LZW y datos, y el final «;».
+#  · OLE (.doc, .xls, .ppt): cabecera CFB, FAT y directorio dentro del archivo, y el flujo principal (WordDocument con
+#    su FIB, Workbook/Book con su BOF, PowerPoint Document). Si no se puede decidir: «-» (sin comprobar), nunca 1.
+# Una falsificación HECHA A PROPÓSITO con contenido real y estructura válida no se distingue de un archivo real: eso
+# queda fuera de alcance (no es un archivo dañado ni vacío; es un archivo).
 VALIDADOR = r"""
-import struct, sys, zipfile, zlib, re
+import re, struct, sys, zipfile, zlib
+import xml.etree.ElementTree as ET
 MAX = 200 * 1024 * 1024
-PRINCIPAL = {'docx': 'word/document.xml', 'xlsx': 'xl/workbook.xml', 'pptx': 'ppt/presentation.xml'}
+MAX_XML = 64 * 1024 * 1024
+MAX_PIXELES = 400 * 1024 * 1024
+class Duda(Exception):
+    pass
+class Malo(ValueError):
+    pass
 def leer(r):
     with open(r, 'rb') as f:
         return f.read(MAX + 1)
+def local(tag):
+    return tag.rsplit('}', 1)[-1] if isinstance(tag, str) else ''
+def espacio(tag):
+    return tag[1:].split('}', 1)[0] if isinstance(tag, str) and tag.startswith('{') else ''
+def xml_de(z, nombre):
+    i = z.getinfo(nombre)
+    if i.file_size > MAX_XML:
+        raise Duda('%s es demasiado grande para comprobarlo' % nombre)
+    try:
+        return ET.fromstring(z.read(nombre))
+    except ET.ParseError:
+        raise Malo('%s no es XML válido' % nombre)
+def hijos(e, nombre):
+    return [x for x in list(e) if local(x.tag) == nombre]
+def destinos(z, rels, base):
+    out = {}
+    if rels not in z.namelist():
+        return out
+    for x in xml_de(z, rels).iter():
+        if local(x.tag) == 'Relationship' and x.get('Id'):
+            t = x.get('Target') or ''
+            if x.get('TargetMode') == 'External':
+                continue
+            p = t.lstrip('/') if t.startswith('/') else norm(base + t)
+            out[x.get('Id')] = (p, x.get('Type') or '')
+    return out
+def norm(p):
+    partes = []
+    for s in p.split('/'):
+        if s == '..':
+            if partes:
+                partes.pop()
+        elif s and s != '.':
+            partes.append(s)
+    return '/'.join(partes)
+RID = '{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id'
+def rid(e):
+    for k, v in e.attrib.items():
+        if local(k) == 'id' and 'relationships' in espacio(k):
+            return v
+    return None
+TIPO_OOXML = {'docx': ('document', 'wordprocessingml', ('wordprocessingml', 'ms-word')),
+              'xlsx': ('workbook', 'spreadsheetml', ('spreadsheetml', 'ms-excel')),
+              'pptx': ('presentation', 'presentationml', ('presentationml', 'ms-powerpoint'))}
+PRINCIPAL = {'docx': 'word/document.xml', 'xlsx': 'xl/workbook.xml', 'pptx': 'ppt/presentation.xml'}
+def ooxml(z, tipo, nombres):
+    if '[Content_Types].xml' not in nombres:
+        return 0, 'le falta [Content_Types].xml'
+    ct = xml_de(z, '[Content_Types].xml')
+    if local(ct.tag) != 'Types':
+        return 0, '[Content_Types].xml no es una lista de tipos'
+    principal = None
+    for p, t in destinos(z, '_rels/.rels', '').values():
+        if t.endswith('/officeDocument'):
+            principal = p
+    principal = principal or PRINCIPAL[tipo]
+    if principal not in nombres:
+        return 0, 'le falta %s' % principal
+    raiz, ns, marcas = TIPO_OOXML[tipo]
+    declarado = None
+    ext = principal.rsplit('.', 1)[-1].lower()
+    for x in ct:
+        if local(x.tag) == 'Override' and (x.get('PartName') or '').lstrip('/').lower() == principal.lower():
+            declarado = x.get('ContentType') or ''
+        elif local(x.tag) == 'Default' and declarado is None and (x.get('Extension') or '').lower() == ext and any(m in (x.get('ContentType') or '') for m in marcas):
+            declarado = x.get('ContentType') or ''
+    if not declarado or not any(m in declarado for m in marcas) or 'main' not in declarado:
+        return 0, '[Content_Types].xml no declara %s como documento principal' % principal
+    doc = xml_de(z, principal)
+    if local(doc.tag) != raiz or ns not in espacio(doc.tag) and 'ooxml' not in espacio(doc.tag):
+        return 0, '%s no es un %s' % (principal, raiz)
+    base = principal.rsplit('/', 1)[0] + '/' if '/' in principal else ''
+    rels = destinos(z, base + '_rels/' + principal.rsplit('/', 1)[-1] + '.rels', base)
+    if tipo == 'docx':
+        cuerpo = hijos(doc, 'body')
+        if not cuerpo:
+            return 0, 'el documento no tiene cuerpo (w:body)'
+        if any(local(x.tag) == 't' and (x.text or '').strip() for x in cuerpo[0].iter()):
+            return 1, ''
+        if any(local(x.tag) in ('drawing', 'pict', 'object') for x in cuerpo[0].iter()):
+            return '-', 'el documento no tiene texto (solo imágenes u objetos): no sé comprobar que tenga lo pedido'
+        return 0, 'el documento no tiene texto'
+    if tipo == 'xlsx':
+        hojas = [h for s in hijos(doc, 'sheets') for h in hijos(s, 'sheet')]
+        if not hojas:
+            return 0, 'el libro no tiene hojas'
+        con_datos = False
+        for h in hojas:
+            d = rels.get(rid(h) or '')
+            if not d:
+                return 0, 'la hoja «%s» no está enlazada' % (h.get('name') or '')[:40]
+            if d[0] not in nombres:
+                return 0, 'le falta la hoja %s' % d[0]
+            hoja = xml_de(z, d[0])
+            if local(hoja.tag) == 'worksheet':
+                for c in hoja.iter():
+                    if local(c.tag) == 'c' and any(local(v.tag) in ('v', 'is') for v in c):
+                        con_datos = True
+                        break
+        return (1, '') if con_datos else (0, 'ninguna hoja tiene datos')
+    lista = hijos(doc, 'sldIdLst')
+    ids = [x for l in lista for x in hijos(l, 'sldId')]
+    if not ids:
+        return 0, 'la presentación no tiene diapositivas'
+    buenas = 0
+    for s in ids:
+        d = rels.get(rid(s) or '')
+        if not d or d[0] not in nombres:
+            return 0, 'le falta una diapositiva enlazada'
+        if buenas == 0 and local(xml_de(z, d[0]).tag) == 'sld':
+            buenas = 1
+    return (1, '') if buenas else (0, 'ninguna diapositiva es válida')
+MIME_ODF = {'odt': 'application/vnd.oasis.opendocument.text', 'ods': 'application/vnd.oasis.opendocument.spreadsheet',
+            'odp': 'application/vnd.oasis.opendocument.presentation', 'odg': 'application/vnd.oasis.opendocument.graphics'}
+NS_OFFICE = 'urn:oasis:names:tc:opendocument:xmlns:office:1.0'
+def odf(z, tipo, nombres):
+    if 'mimetype' not in nombres or z.read('mimetype').strip() != MIME_ODF[tipo].encode():
+        return 0, 'el mimetype no es el de un %s' % tipo
+    if 'content.xml' not in nombres:
+        return 0, 'le falta content.xml'
+    c = xml_de(z, 'content.xml')
+    if local(c.tag) != 'document-content' or espacio(c.tag) != NS_OFFICE:
+        return 0, 'content.xml no es un documento ODF'
+    cuerpo = [x for x in c if local(x.tag) == 'body' and espacio(x.tag) == NS_OFFICE]
+    if not cuerpo:
+        return 0, 'content.xml no tiene office:body'
+    if ''.join(cuerpo[0].itertext()).strip():
+        return 1, ''
+    if tipo == 'odg':
+        return '-', 'el dibujo no tiene texto: no sé comprobar que tenga lo pedido'
+    return 0, 'el documento no tiene texto'
 def zipv(r, tipo):
     if not zipfile.is_zipfile(r):
         return 0, 'no es un ZIP entero (le falta el directorio central)'
@@ -924,50 +1075,256 @@ def zipv(r, tipo):
         nombres = set(z.namelist())
         if not nombres:
             return 0, 'el ZIP no tiene nada dentro'
-        if tipo in PRINCIPAL:
-            if '[Content_Types].xml' not in nombres:
-                return 0, 'le falta [Content_Types].xml'
-            p = PRINCIPAL[tipo]
-            if p not in nombres:
-                return 0, 'le falta %s' % p
-            if z.getinfo(p).file_size <= 0:
-                return 0, '%s está vacío' % p
-        elif tipo in ('odt', 'ods', 'odp', 'odg'):
-            if 'content.xml' not in nombres:
-                return 0, 'le falta content.xml'
+        if tipo in TIPO_OOXML:
+            return ooxml(z, tipo, nombres)
+        if tipo in MIME_ODF:
+            return odf(z, tipo, nombres)
     return 1, ''
+# ---------------------------------------------------------------- PDF
+def sin_cadenas(s):
+    out, i, n = bytearray(), 0, len(s)
+    while i < n:
+        c = s[i]
+        if c == 0x28:
+            prof, i = 1, i + 1
+            while i < n and prof:
+                if s[i] == 0x5c:
+                    i += 2
+                    continue
+                if s[i] == 0x28:
+                    prof += 1
+                elif s[i] == 0x29:
+                    prof -= 1
+                i += 1
+            out += b' () '
+            continue
+        if c == 0x25:
+            j = s.find(b'\n', i)
+            k = s.find(b'\r', i)
+            fin = min(x for x in (j, k, n) if x >= 0)
+            i = fin
+            continue
+        if c == 0x3c and i + 1 < n and s[i + 1] != 0x3c:
+            j = s.find(b'>', i)
+            if j < 0:
+                break
+            out += b' <> '
+            i = j + 1
+            continue
+        if c == 0x3c:
+            out += b'<<'
+            i += 2
+            continue
+        out.append(c)
+        i += 1
+    return bytes(out)
+def entero(d, clave):
+    m = re.search(rb'/' + clave + rb'\s+(\d+)(?![\d.\s]*R\b)', d)
+    return int(m.group(1)) if m else None
+def ref(d, clave):
+    m = re.search(rb'/' + clave + rb'\s+(\d+)\s+(\d+)\s+R\b', d)
+    return int(m.group(1)) if m else None
+def es(d, tipo):
+    return re.search(rb'/Type\s*/' + tipo + rb'(?![A-Za-z0-9])', d) is not None
+def predictor(datos, d):
+    p = entero(d, b'Predictor') or 1
+    if p < 10:
+        return datos
+    col = entero(d, b'Columns') or 1
+    ancho = col + 1
+    out, prev = bytearray(), bytearray(col)
+    for k in range(0, len(datos) - ancho + 1, ancho):
+        f, fila = datos[k], bytearray(datos[k + 1:k + ancho])
+        for j in range(col):
+            a = fila[j - 1] if j else 0
+            b, c = prev[j], (prev[j - 1] if j else 0)
+            if f == 1:
+                fila[j] = (fila[j] + a) & 255
+            elif f == 2:
+                fila[j] = (fila[j] + b) & 255
+            elif f == 3:
+                fila[j] = (fila[j] + (a + b) // 2) & 255
+            elif f == 4:
+                pa, pb, pc = abs(b - c), abs(a - c), abs(a + b - 2 * c)
+                fila[j] = (fila[j] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 255
+            elif f != 0:
+                raise Malo('la tabla xref usa un predictor desconocido')
+        out += fila
+        prev = fila
+    return bytes(out)
+def flujo(b, ini):
+    m = re.compile(rb'\s*(\d+)\s+(\d+)\s+obj\b').match(b, ini)
+    if not m:
+        return None, None
+    fin_dic = b.find(b'stream', m.end())
+    fin_obj = b.find(b'endobj', m.end())
+    if fin_dic < 0 or (0 <= fin_obj < fin_dic):
+        return sin_cadenas(b[m.end():fin_obj if fin_obj >= 0 else m.end() + 4096]), None
+    d = sin_cadenas(b[m.end():fin_dic])
+    k = fin_dic + 6
+    if b[k:k + 2] == b'\r\n':
+        k += 2
+    elif b[k:k + 1] in (b'\n', b'\r'):
+        k += 1
+    largo = entero(d, b'Length')
+    fin = k + largo if largo is not None and b[k + largo:k + largo + 40].lstrip().startswith(b'endstream') else b.find(b'endstream', k)
+    datos = b[k:fin]
+    if re.search(rb'/Filter\s*\[?\s*/FlateDecode\s*\]?', d):
+        try:
+            datos = zlib.decompress(datos)
+        except zlib.error:
+            try:
+                datos = zlib.decompressobj().decompress(datos)
+            except zlib.error:
+                raise Duda('un flujo comprimido no se pudo abrir (cifrado o dañado)')
+        datos = predictor(datos, d)
+    elif re.search(rb'/Filter', d):
+        raise Duda('un flujo usa un filtro que no sé abrir')
+    return d, datos
+def tabla_clasica(b, off, xref, vistos):
+    i = off + 4
+    lin = re.compile(rb'\s*(\d+)\s+(\d+)[ \t]*\r?\n?')
+    ent = re.compile(rb'\s*(\d{10})\s(\d{5})\s([nf])')
+    while True:
+        m = lin.match(b, i)
+        if not m or b[m.start():m.end()].strip().startswith(b'trailer'):
+            break
+        ini, cuantos = int(m.group(1)), int(m.group(2))
+        i = m.end()
+        for k in range(cuantos):
+            e = ent.match(b, i)
+            if not e:
+                return 0, 'la tabla xref está rota'
+            i = e.end()
+            if e.group(3) == b'n' and ini + k not in xref:
+                xref[ini + k] = ('o', int(e.group(1)))
+        if b[i:i + 40].lstrip().startswith(b'trailer'):
+            break
+    t = b.find(b'trailer', i)
+    if t < 0:
+        return 0, 'le falta el trailer'
+    fin = b.find(b'startxref', t)
+    return sin_cadenas(b[t:fin if fin > 0 else t + 4096]), None
+def tabla_flujo(b, off, xref):
+    d, datos = flujo(b, off)
+    if d is None or datos is None or not es(d, b'XRef'):
+        return None, 'startxref no apunta a una tabla xref'
+    w = re.search(rb'/W\s*\[\s*(\d+)\s+(\d+)\s+(\d+)\s*\]', d)
+    if not w:
+        return None, 'la tabla xref no dice su formato'
+    w = [int(x) for x in w.groups()]
+    tam = entero(d, b'Size') or 0
+    idx = re.search(rb'/Index\s*\[([\d\s]+)\]', d)
+    pares = [int(x) for x in idx.group(1).split()] if idx else [0, tam]
+    paso = sum(w)
+    if paso == 0:
+        return None, 'la tabla xref está rota'
+    k = 0
+    for j in range(0, len(pares) - 1, 2):
+        for n in range(pares[j], pares[j] + pares[j + 1]):
+            fila = datos[k:k + paso]
+            if len(fila) < paso:
+                return None, 'la tabla xref está cortada'
+            k += paso
+            campos, p = [], 0
+            for ancho in w:
+                campos.append(int.from_bytes(fila[p:p + ancho], 'big') if ancho else None)
+                p += ancho
+            t = campos[0] if w[0] else 1
+            if n in xref:
+                continue
+            if t == 1:
+                xref[n] = ('o', campos[1])
+            elif t == 2:
+                xref[n] = ('s', campos[1], campos[2] or 0)
+    return d, None
+OBJ = re.compile(rb'\s*(\d+)\s+(\d+)\s+obj\b')
 def pdfv(b):
     if not b.startswith(b'%PDF-'):
         return 0, 'no empieza como un PDF'
-    cola = b[-2048:]
+    cola = b[-4096:]
     m = re.findall(rb'startxref\s+(\d+)', cola)
     if not m:
         return 0, 'le falta startxref al final: está cortado'
     if b'%%EOF' not in cola:
         return 0, 'le falta %%EOF al final: está cortado'
-    off = int(m[-1])
-    trozo = b[off:off + 400] if 0 < off < len(b) else b''
-    if not (trozo.startswith(b'xref') or (re.match(rb'\s*\d+\s+\d+\s+obj', trozo) and b'/XRef' in trozo)):
-        return 0, 'startxref no apunta a una tabla xref'
-    if not re.search(rb'\d+\s+\d+\s+obj', b):
-        return 0, 'no tiene ningún objeto'
-    if re.search(rb'/Type\s*/Page(?![s\w])', b):
-        return 1, ''
-    if re.search(rb'/Type\s*/ObjStm', b):
-        for mm in re.finditer(rb'/Type\s*/ObjStm.*?stream\r?\n', b, re.S):
-            ini = mm.end()
-            fin = b.find(b'endstream', ini)
-            try:
-                if re.search(rb'/Type\s*/Page(?![s\w])', zlib.decompress(b[ini:fin])):
-                    return 1, ''
-            except Exception:
-                pass
-        return 1, ''  # flujos de objetos: las páginas pueden ir comprimidas
-    return 0, 'no tiene ninguna página'
+    xref, raiz, cifrado, off, vistos = {}, None, False, int(m[-1]), set()
+    while off is not None:
+        if off in vistos or not (0 < off < len(b)) or len(vistos) > 50:
+            return 0, 'startxref no apunta a una tabla xref'
+        vistos.add(off)
+        if b[off:off + 4] == b'xref':
+            tr, mal = tabla_clasica(b, off, xref, vistos)
+        else:
+            tr, mal = tabla_flujo(b, off, xref)
+        if tr is None or mal:
+            return 0, mal or 'la tabla xref está rota'
+        raiz = raiz if raiz is not None else ref(tr, b'Root')
+        cifrado = cifrado or b'/Encrypt' in tr
+        if b'/XRefStm' in tr:
+            s = entero(tr, b'XRefStm')
+            if s and s not in vistos and 0 < s < len(b):
+                vistos.add(s)
+                tabla_flujo(b, s, xref)
+        off = entero(tr, b'Prev')
+    if not xref:
+        return 0, 'la tabla xref no tiene ningún objeto'
+    for n, e in xref.items():
+        if e[0] == 'o':
+            mm = OBJ.match(b, e[1]) if 0 < e[1] < len(b) else None
+            if not mm or int(mm.group(1)) != n:
+                return 0, 'la tabla xref apunta a un lugar donde no está el objeto %d' % n
+    if raiz is None:
+        return 0, 'el trailer no dice dónde está el catálogo (/Root)'
+    cache = {}
+    def objeto(n):
+        e = xref.get(n)
+        if e is None:
+            return None
+        if e[0] == 'o':
+            return flujo(b, e[1])[0]
+        if e[1] not in cache:
+            d, datos = flujo(b, xref[e[1]][1]) if xref.get(e[1], ('x',))[0] == 'o' else (None, None)
+            if d is None or datos is None or not es(d, b'ObjStm'):
+                return None
+            cuantos, primero = entero(d, b'N') or 0, entero(d, b'First') or 0
+            nums = [int(x) for x in datos[:primero].split()]
+            sitios = {nums[k]: nums[k + 1] for k in range(0, min(len(nums), 2 * cuantos) - 1, 2)}
+            orden = sorted(sitios.values()) + [len(datos) - primero]
+            cache[e[1]] = {o: sin_cadenas(datos[primero + p:primero + orden[orden.index(p) + 1]]) for o, p in sitios.items()}
+        return cache[e[1]].get(n)
+    try:
+        cat = objeto(raiz)
+    except Duda:
+        if cifrado:
+            raise Duda('el PDF está cifrado: no sé comprobar sus páginas')
+        raise
+    if cat is None or not es(cat, b'Catalog'):
+        return 0, 'el catálogo (/Root) no está o no es un catálogo'
+    pags = ref(cat, b'Pages')
+    pd = objeto(pags) if pags is not None else None
+    if pd is None or not es(pd, b'Pages'):
+        return 0, 'el catálogo no lleva a un árbol de páginas'
+    cuenta = entero(pd, b'Count')
+    if not cuenta or cuenta < 1:
+        return 0, 'no tiene ninguna página'
+    kids = re.search(rb'/Kids\s*\[\s*(\d+)\s+\d+\s+R', pd)
+    if kids:
+        hijo = objeto(int(kids.group(1)))
+        if hijo is None or not (es(hijo, b'Page') or es(hijo, b'Pages')):
+            return 0, 'el árbol de páginas apunta a algo que no es una página'
+    else:
+        return 0, 'el árbol de páginas no tiene hojas'
+    return 1, ''
+# ---------------------------------------------------------------- imágenes
+CANALES = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}
+PROF = {0: (1, 2, 4, 8, 16), 2: (8, 16), 3: (1, 2, 4, 8), 4: (8, 16), 6: (8, 16)}
+def bytes_png(ancho, alto, bits):
+    return 0 if ancho == 0 or alto == 0 else alto * (1 + (ancho * bits + 7) // 8)
 def pngv(b):
     if not b.startswith(b'\x89PNG\r\n\x1a\n'):
         return 0, 'no empieza como un PNG'
-    i, primero, fin = 8, True, False
+    i, cab, idat, plte, fin = 8, None, [], False, False
     while i + 12 <= len(b):
         n, t = struct.unpack('>I4s', b[i:i + 8])
         datos = b[i + 8:i + 8 + n]
@@ -976,40 +1333,156 @@ def pngv(b):
         crc = struct.unpack('>I', b[i + 8 + n:i + 12 + n])[0]
         if zlib.crc32(t + datos) & 0xffffffff != crc:
             return 0, 'CRC malo en %s' % t.decode('latin-1')
-        if primero and t != b'IHDR':
-            return 0, 'el primer bloque no es IHDR'
-        primero = False
+        if cab is None:
+            if t != b'IHDR' or n != 13:
+                return 0, 'el primer bloque no es IHDR'
+            cab = struct.unpack('>IIBBBBB', datos)
+        elif t == b'PLTE':
+            plte = True
+        elif t == b'IDAT':
+            idat.append(datos)
         i += 12 + n
         if t == b'IEND':
             fin = True
             break
+    if cab is None:
+        return 0, 'le falta IHDR'
     if not fin:
         return 0, 'le falta IEND: está cortado'
+    ancho, alto, prof, color, _, _, entre = cab
+    if ancho == 0 or alto == 0 or color not in CANALES or prof not in PROF[color]:
+        return 0, 'la cabecera de la imagen no es válida'
+    if not idat:
+        return 0, 'no tiene imagen (le falta IDAT)'
+    if color == 3 and not plte:
+        return 0, 'le falta la paleta'
+    bits = CANALES[color] * prof
+    if entre:
+        pasadas = ((0, 0, 8, 8), (4, 0, 8, 8), (0, 4, 4, 8), (2, 0, 4, 4), (0, 2, 2, 4), (1, 0, 2, 2), (0, 1, 1, 2))
+        esperado = sum(bytes_png((ancho - x + dx - 1) // dx if ancho > x else 0, (alto - y + dy - 1) // dy if alto > y else 0, bits) for x, y, dx, dy in pasadas)
+    else:
+        esperado = bytes_png(ancho, alto, bits)
+    if esperado > MAX_PIXELES:
+        return '-', 'la imagen es demasiado grande para comprobarla'
+    d = zlib.decompressobj()
+    total = 0
+    try:
+        for x in idat:
+            while x and total <= esperado:
+                total += len(d.decompress(x, 1 << 20))
+                x = d.unconsumed_tail
+            if total > esperado:
+                break
+        if total <= esperado:
+            total += len(d.flush())
+    except zlib.error:
+        return 0, 'los datos de la imagen están dañados'
+    if total < esperado:
+        return 0, 'la imagen está incompleta (%d de %d bytes)' % (total, esperado)
     return 1, ''
+SOF = set(range(0xc0, 0xd0)) - {0xc4, 0xc8, 0xcc}
 def jpgv(b):
     if len(b) < 100:
         return 0, 'solo tiene %d bytes' % len(b)
     if not b.startswith(b'\xff\xd8'):
         return 0, 'no empieza como un JPEG'
-    i = 2
-    while i + 4 <= len(b):
+    i, sof, tablas, escaneos = 2, False, False, 0
+    while i + 2 <= len(b):
         if b[i] != 0xff:
             return 0, 'un segmento está roto'
         m = b[i + 1]
+        if m == 0xff:
+            i += 1
+            continue
+        if m == 0xd9:
+            if not escaneos:
+                return 0, 'termina sin imagen'
+            return 1, ''
         if m in (0xd8, 0x01) or 0xd0 <= m <= 0xd7:
             i += 2
             continue
+        if i + 4 > len(b):
+            return 0, 'un segmento está cortado'
         n = struct.unpack('>H', b[i + 2:i + 4])[0]
         if n < 2 or i + 2 + n > len(b):
             return 0, 'un segmento está cortado'
-        if m == 0xda:
-            return (1, '') if b.rstrip(b'\x00')[-2:] == b'\xff\xd9' else (0, 'le falta el final (EOI): está cortado')
+        if m in SOF:
+            if n < 8 or struct.unpack('>H', b[i + 7:i + 9])[0] == 0:
+                return 0, 'el cuadro (SOF) no es válido'
+            sof = True
+        elif m in (0xc4, 0xdb):
+            tablas = True
+        elif m == 0xda:
+            if not sof:
+                return 0, 'le falta el cuadro (SOF) antes de la imagen'
+            if not tablas:
+                return 0, 'le faltan las tablas (DQT/DHT)'
+            j = i + 2 + n
+            k = j
+            while True:
+                k = b.find(b'\xff', k)
+                if k < 0 or k + 1 >= len(b):
+                    return 0, 'le falta el final (EOI): está cortado'
+                s = b[k + 1]
+                if s == 0x00 or 0xd0 <= s <= 0xd7 or s == 0xff:
+                    k += 1 if s == 0xff else 2
+                    continue
+                break
+            if k - j < 2:
+                return 0, 'la imagen no tiene datos'
+            escaneos += 1
+            i = k
+            continue
         i += 2 + n
-    return 0, 'le falta la imagen (SOS)'
+    return 0, 'le falta el final (EOI): está cortado'
 def gifv(b):
     if len(b) < 26 or b[:6] not in (b'GIF87a', b'GIF89a'):
         return 0, 'no es un GIF entero'
-    return (1, '') if b[-1:] == b';' else (0, 'le falta el final: está cortado')
+    ancho, alto, emp = struct.unpack('<HHB', b[6:11])
+    if ancho == 0 or alto == 0:
+        return 0, 'la pantalla del GIF no tiene tamaño'
+    i = 13 + (3 * 2 ** ((emp & 7) + 1) if emp & 0x80 else 0)
+    imagenes = 0
+    def bloques(i):
+        datos = 0
+        while True:
+            if i >= len(b):
+                raise ValueError('cortado')
+            n = b[i]
+            i += 1
+            if n == 0:
+                return i, datos
+            if i + n > len(b):
+                raise ValueError('cortado')
+            datos += n
+            i += n
+    try:
+        while i < len(b):
+            c = b[i]
+            if c == 0x3b:
+                return (1, '') if imagenes else (0, 'no tiene ninguna imagen')
+            if c == 0x21:
+                if i + 2 > len(b):
+                    return 0, 'está cortado'
+                i, _ = bloques(i + 2)
+            elif c == 0x2c:
+                if i + 10 > len(b):
+                    return 0, 'está cortado'
+                w, h, emp2 = struct.unpack('<4xHHB', b[i + 1:i + 10])
+                if w == 0 or h == 0:
+                    return 0, 'una imagen del GIF no tiene tamaño'
+                i += 10 + (3 * 2 ** ((emp2 & 7) + 1) if emp2 & 0x80 else 0)
+                if i >= len(b) or not 2 <= b[i] <= 11:
+                    return 0, 'una imagen del GIF no tiene datos válidos'
+                i, datos = bloques(i + 1)
+                if not datos:
+                    return 0, 'una imagen del GIF no tiene datos'
+                imagenes += 1
+            else:
+                return 0, 'un bloque del GIF no es válido'
+    except ValueError:
+        return 0, 'está cortado'
+    return 0, 'le falta el final: está cortado'
 def rtfv(b):
     if len(b) < 20 or not b.startswith(b'{\\rtf'):
         return 0, 'no es un RTF entero'
@@ -1017,6 +1490,75 @@ def rtfv(b):
     return (1, '') if t.count(b'{') == t.count(b'}') else (0, 'las llaves no cierran: está cortado')
 def webpv(b):
     return (1, '') if len(b) >= 20 and b[:4] == b'RIFF' and b[8:12] == b'WEBP' and struct.unpack('<I', b[4:8])[0] + 8 == len(b) else (0, 'el tamaño no cuadra: está cortado')
+# ---------------------------------------------------------------- Office antiguo (OLE / CFB)
+FLUJOS_OLE = {'doc': ('WordDocument',), 'dot': ('WordDocument',), 'xls': ('Workbook', 'Book'), 'xlt': ('Workbook', 'Book'),
+              'ppt': ('PowerPoint Document',), 'pps': ('PowerPoint Document',), 'pot': ('PowerPoint Document',)}
+FIN, LIBRE = 0xfffffffe, 0xffffffff
+def olev(b, ruta):
+    if len(b) < 1536 or not b.startswith(b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1'):
+        return 0, 'no es un documento de Office antiguo entero'
+    mayor, orden, desp, mini = struct.unpack('<HHHH', b[26:34])
+    if orden != 0xfffe or (mayor, desp) not in ((3, 9), (4, 12)) or mini != 6:
+        return 0, 'la cabecera del documento no es válida'
+    ss = 1 << desp
+    nfat, dir0 = struct.unpack('<I', b[44:48])[0], struct.unpack('<I', b[48:52])[0]
+    corte = struct.unpack('<I', b[56:60])[0]
+    difat0, ndifat = struct.unpack('<II', b[68:76])
+    sectores = (len(b) - ss) // ss
+    if sectores <= 0:
+        return 0, 'el tamaño no cuadra con los sectores'
+    def sector(s):
+        if s >= sectores:
+            raise Malo('un sector apunta fuera del archivo: está cortado')
+        return b[ss + s * ss: ss + (s + 1) * ss]
+    lista = [x for x in struct.unpack('<109I', b[76:512]) if x != LIBRE]
+    s, vistos = difat0, set()
+    while s not in (FIN, LIBRE) and len(lista) < nfat and s not in vistos:
+        vistos.add(s)
+        d = struct.unpack('<%dI' % (ss // 4), sector(s))
+        lista += [x for x in d[:-1] if x != LIBRE]
+        s = d[-1]
+    if len(lista) < nfat or nfat == 0:
+        return 0, 'la tabla de sectores (FAT) está incompleta'
+    fat = []
+    for s in lista[:nfat]:
+        fat += struct.unpack('<%dI' % (ss // 4), sector(s))
+    def cadena(s):
+        out = []
+        while s not in (FIN, LIBRE):
+            if s in out or s >= len(fat) or len(out) > sectores:
+                raise Malo('una cadena de sectores está rota')
+            out.append(s)
+            s = fat[s]
+        return out
+    directorio = b''.join(sector(s) for s in cadena(dir0))
+    entradas = {}
+    for k in range(0, len(directorio) - 127, 128):
+        e = directorio[k:k + 128]
+        largo = struct.unpack('<H', e[64:66])[0]
+        if not 2 <= largo <= 64:
+            continue
+        nombre = e[:largo - 2].decode('utf-16-le', 'replace')
+        tipo, inicio, tam = e[66], struct.unpack('<I', e[116:120])[0], struct.unpack('<I', e[120:124])[0]
+        entradas[nombre] = (tipo, inicio, tam)
+    ext = ruta.rsplit('.', 1)[-1].lower() if '.' in ruta else ''
+    buscados = FLUJOS_OLE.get(ext)
+    if not buscados:
+        return '-', 'no sé qué flujo debe tener este documento de Office antiguo'
+    for nombre in buscados:
+        e = entradas.get(nombre)
+        if e and e[0] == 2 and e[2] > 0:
+            if e[2] >= corte:
+                c = cadena(e[1])
+                if len(c) * ss < e[2] or any(s >= sectores for s in c):
+                    return 0, 'el flujo %s está cortado' % nombre
+                datos = b''.join(sector(s) for s in c[:2])
+                if nombre == 'WordDocument' and datos[:2] != b'\xec\xa5':
+                    return 0, 'el flujo WordDocument no es de Word'
+                if nombre in ('Workbook', 'Book') and datos[:2] not in (b'\x09\x08', b'\x09\x04', b'\x09\x02', b'\x09\x00'):
+                    return 0, 'el flujo %s no es de Excel' % nombre
+            return 1, ''
+    return 0, 'le falta el flujo principal (%s)' % ' o '.join(buscados)
 args = sys.argv[1:]
 for k in range(0, len(args) - 1, 2):
     tipo, r = args[k], args[k + 1]
@@ -1041,10 +1583,16 @@ for k in range(0, len(args) - 1, 2):
                 res = rtfv(b)
             elif tipo == 'webp':
                 res = webpv(b)
+            elif tipo == 'ole':
+                res = olev(b, r)
             elif tipo == 'texto':
                 res = (1, '')
             else:
                 res = ('-', 'no sé comprobar que esté entero')
+    except Duda as e:
+        res = ('-', str(e)[:120])
+    except Malo as e:
+        res = (0, str(e)[:120])
     except Exception as e:
         res = (0, 'no se pudo abrir: %s' % str(e)[:80])
     sys.stdout.write('%s\t%s\t%s\n' % (r, res[0], str(res[1]).replace('\t', ' ').replace('\n', ' ')))

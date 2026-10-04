@@ -3764,8 +3764,9 @@ async function correrHerramientaPedida(
         await cerrarEncargoComputadora(compu.quien, ref, { misionId: r.id || null, estado: !r.id ? 'failed' : hecha ? 'succeeded' : 'unknown', texto: r.hecho });
         if (!r.id) return { texto: r.hecho, estado: 'failed' };
         if (hecha && r.comprobada) return { texto: r.hecho, estado: 'succeeded' };
-        // Solo respondió (ronda 7): terminada, sin efecto y SIN comprobar; no es un éxito ni algo que se memorice como hecho.
-        if (hecha && r.respondida) return { texto: r.hecho, estado: 'unknown', recibo: { efecto: 'ninguno', codigo: 'respondida', incompleto: true, referencia: r.id } };
+        // Respondió (ronda 7): terminada y SIN comprobar; no es un éxito ni algo que se memorice como hecho. Ronda 8: el
+        // efecto es «posible», nunca «ninguno»: la computadora corrió y pudo tocar cosas (p. ej. una venta disfrazada).
+        if (hecha && r.respondida) return incierto(r.hecho, { referencia: r.id, codigo: 'respondida', incompleto: true });
         return incierto(r.hecho, { referencia: r.id, ...(hecha ? { codigo: 'sin-comprobar', incompleto: true } : {}) });
       },
       // Cada runner devuelve su estado y su recibo (AUR07): lo que no se pudo es `failed`, un borrador es un

@@ -701,7 +701,8 @@ test('el chat crea la tarea ANTES de encargar a la computadora, la enlaza en la 
     assert.equal(t2.state, 'respondida');
     assert.equal(t2.terminal, true);
     assert.ok(t2.result.evidence.some((e: any) => e.ref === 'https://banco.ejemplo/horario'));
-    assert.match(t2.result.summary, /Solo te respondí; no hice ni comprobé ninguna otra acción/);
+    assert.match(t2.result.summary, /Te respondí con lo que encontré\. Si además pediste que hiciera algo, eso NO está comprobado/);
+    assert.doesNotMatch(t2.result.summary, /no hice/);
     assert.equal(t3.state, 'respondida', 'la respuesta con el dato que se pidió se responde (no un «listo»), sin comprobar');
     assert.notEqual(t3.acceptance[0].status, 'verified');
     // Una app de ANTES (sin `estados`): la misma tarea llega como «partial» terminal con el estado de verdad aparte;

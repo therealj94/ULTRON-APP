@@ -98,7 +98,7 @@ test('la mano en el harness: la herramienta del cerebro se vuelve la línea de s
   assert.equal(arg, 'historia de Honduras | mayas de Copán | independencia 1821');
 });
 
-test('empieza: la tarea existe ANTES del recibo; el trabajo corre aparte y cierra completed con fuentes, aviso y notificación', async () => {
+test('empieza: la tarea existe ANTES del recibo; el trabajo corre aparte y cierra «respondida» con fuentes, aviso y notificación', async () => {
   const { deps, llamadas } = falsos();
   configurarInvestigacion(deps);
   const yo = correo();
@@ -131,17 +131,18 @@ test('empieza: la tarea existe ANTES del recibo; el trabajo corre aparte y cierr
   const fin = await leerTarea(yo, id);
   assert.ok(fin.ok && fin.tarea);
   if (!fin.ok || !fin.tarea) return;
-  assert.equal(fin.tarea.estado, 'completed');
+  // Ronda 8: un resumen con fuentes leídas responde, no comprueba: «respondida», nunca completed.
+  assert.equal(fin.tarea.estado, 'respondida');
   assert.match(fin.tarea.resultado!.resumen, /Copán fue una gran ciudad maya/);
   assert.ok(!/\[EMO/.test(fin.tarea.resultado!.resumen), 'sin la etiqueta de ánimo');
   assert.ok(fin.tarea.resultado!.evidencias.length >= 2 && fin.tarea.resultado!.evidencias.every((e) => e.tipo === 'enlace' && /^https:\/\//.test(e.ref || '')));
-  assert.equal(fin.tarea.criterios[0].estado, 'verified');
+  assert.equal(fin.tarea.criterios[0].estado, 'unknown');
   const v = vistaTarea(fin.tarea);
   assert.equal(v.controls.pause, false, 'una investigación no se pausa');
-  // La notificación: «Terminé de investigar», abre sus Tareas, sin PULSE2CHAT.
+  // La notificación: lista y SIN COMPROBAR (no «Terminé» como un hecho), abre sus Tareas, sin PULSE2CHAT.
   assert.equal(llamadas.avisos.length, 1);
   assert.equal(llamadas.avisos[0].correo, yo);
-  assert.equal(llamadas.avisos[0].titulo, 'Terminé de investigar');
+  assert.equal(llamadas.avisos[0].titulo, 'Investigación lista (sin comprobar)');
   assert.equal(llamadas.avisos[0].abrir, 'tareas');
   assert.match(llamadas.avisos[0].texto, /Tareas/);
   assert.ok(!/PULSE2CHAT/i.test(llamadas.avisos[0].texto));
@@ -151,6 +152,38 @@ test('empieza: la tarea existe ANTES del recibo; el trabajo corre aparte y cierr
   assert.match(a!.hechos[0], /^INVESTIGACIÓN TERMINADA/);
   confirmarAvisosInvestigacion(yo, a!.ids);
   assert.equal(avisosInvestigacion(yo), null);
+});
+
+test('ronda 8 · menor 2: sin ninguna página leída, la investigación queda partial (no completed) y el aviso no dice «Terminé»', async () => {
+  const { deps, llamadas } = falsos({ leer: async () => { throw new Error('403'); } });
+  configurarInvestigacion(deps);
+  const yo = correo();
+  const r = await empezarInvestigacion({ dueno: yo, ambito: 'voz', arg: 'tema sintético' });
+  await _esperarInvestigaciones();
+  const t = await leerTarea(yo, r.recibo!.referencia!);
+  assert.ok(t.ok && t.tarea);
+  if (!t.ok || !t.tarea) return;
+  assert.equal(t.tarea.estado, 'partial', 'el resumen sale solo de los fragmentos del buscador');
+  assert.notEqual(t.tarea.criterios[0].estado, 'verified');
+  assert.doesNotMatch(llamadas.avisos[0].titulo, /^Terminé de investigar$/);
+});
+
+test('ronda 8 · menor 2: con páginas leídas, la investigación queda «respondida» (no completed, no comprobada) y el aviso lo dice', async () => {
+  const { deps, llamadas } = falsos();
+  configurarInvestigacion(deps);
+  const yo = correo();
+  const r = await empezarInvestigacion({ dueno: yo, ambito: 'voz', arg: 'mayas de Copán' });
+  await _esperarInvestigaciones();
+  const t = await leerTarea(yo, r.recibo!.referencia!);
+  assert.ok(t.ok && t.tarea);
+  if (!t.ok || !t.tarea) return;
+  assert.equal(t.tarea.estado, 'respondida');
+  assert.notEqual(t.tarea.criterios[0].estado, 'verified', 'responder no verifica');
+  assert.ok(t.tarea.resultado!.evidencias.length >= 1, 'las fuentes siguen ahí');
+  assert.doesNotMatch(llamadas.avisos[0].titulo, /^Terminé de investigar$/);
+  assert.match(llamadas.avisos[0].titulo, /sin comprobar/i);
+  const a = avisosInvestigacion(yo);
+  assert.doesNotMatch(a!.hechos[0], /\(completa\)/);
 });
 
 test('sin el cerebro a tiempo: partial con los extractos de las fuentes (no se finge un resumen)', async () => {
@@ -164,7 +197,7 @@ test('sin el cerebro a tiempo: partial con los extractos de las fuentes (no se f
   if (!t.ok || !t.tarea) return;
   assert.equal(t.tarea.estado, 'partial');
   assert.match(t.tarea.resultado!.resumen, /No pude redactar el resumen a tiempo\. Esto dicen las fuentes, sin resumir/);
-  assert.equal(llamadas.avisos[0].titulo, 'Terminé de investigar (en parte)');
+  assert.equal(llamadas.avisos[0].titulo, 'Investigación a medias (sin comprobar)');
 });
 
 test('sin resultados: failed honesto, con su notificación', async () => {
