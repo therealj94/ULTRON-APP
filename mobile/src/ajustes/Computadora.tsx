@@ -737,6 +737,11 @@ function TarjetaFinal({
               {f.texto}
             </Texto>
           )}
+          {f.sinComprobar ? (
+            <Texto v="chica" color="aviso">
+              {f.sinComprobar}
+            </Texto>
+          ) : null}
           {f.datos.length >= 2 ? (
             <View style={[s.datos, { borderColor: tema.borde }]}>
               {f.datos.map((d, i) => (

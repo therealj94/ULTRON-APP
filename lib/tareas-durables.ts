@@ -23,6 +23,8 @@
  *  · Terminales monotónicos: `completed`, `partial`, `failed` y `cancelled` no cambian. Un evento viejo o
  *    una captura nueva no resucitan una tarea cerrada.
  *  · `completed` exige que cada criterio obligatorio esté verificado CON evidencia; si falta, es `partial`.
+ *    Evidencia es lo que se comprobó, no lo que el modelo dice: «listo», «hecho» o «guardé el archivo» no cuentan
+ *    (`evaluarEntrega`: el archivo lo comprueba el nodo; la página, un paso hecho; el dato pedido, la respuesta que lo trae).
  *  · Cada mutación pedida por la persona trae `expectedVersion`; conflicto devuelve el snapshot actual.
  *  · Progreso solo con denominador real («3 de 5 pasos hechos»); nunca un porcentaje inventado.
  *  · Nada aquí guarda contraseñas ni tokens; del borrador se guarda lo que se le mostró (destinatario,
@@ -655,6 +657,13 @@ export function deTareaEnCurso(t: TareaEnCursoMin): TaskSnapshot {
   };
 }
 
+/**
+ * Un archivo que el NODO comprobó al terminar (agente.py `comprobar_archivos`): dentro del espacio de trabajo de la
+ * misión, con su tamaño y su sha256. `reciente`: cambió durante esta misión. `mencionado`: lo nombraban la instrucción
+ * o la respuesta. `fuera`: lo nombrado caía fuera del espacio (no se miró). Nunca sale del texto del modelo.
+ */
+export type ArchivoNodo = { ruta: string; existe: boolean; bytes: number; sha256: string | null; reciente?: boolean; mencionado?: boolean; fuera?: boolean };
+
 /** Lo mínimo de una misión de su computadora (server/computadora.ts: historialDe + vistaMision). */
 export type MisionComputadoraMin = {
   id: string;
@@ -668,8 +677,11 @@ export type MisionComputadoraMin = {
   resultado: string | null;
   pregunta?: string | null;
   plan?: { texto: string; estado: string }[];
+  /** Las páginas que su computadora ABRIÓ de verdad (pasos hechos). Una dirección que solo está en el texto no va aquí. */
   enlaces?: string[];
   datos?: { clave: string; valor: string }[];
+  /** Lo que el nodo comprobó en su espacio de trabajo al terminar. undefined/null: no se comprobó (un nodo de antes). */
+  archivos?: ArchivoNodo[] | null;
 };
 
 /** El estado del nodo en el vocabulario de la sección 6. */
@@ -697,13 +709,135 @@ export function estadoDeComputadora(m: Pick<MisionComputadoraMin, 'estado' | 'ok
   }
 }
 
-/** La evidencia de una misión terminada: sus enlaces, sus datos y su respuesta (lo que el nodo devolvió). */
-export function evidenciaDeComputadora(m: MisionComputadoraMin): Evidencia[] {
-  const ev: Evidencia[] = [];
-  (m.enlaces || []).slice(0, 6).forEach((u, i) => ev.push({ id: `${m.id}:enlace:${i}`, tipo: 'enlace', etiqueta: texto(u, 120), ref: u }));
+/* ---------------- lo que se comprobó de verdad (revisión externa, 4-oct: «"Listo" puede marcar entregables como
+ * comprobados aunque los archivos no existan»). «Listo», «hecho», «guardé el archivo» o «ya está» son lo que DICE el
+ * modelo, no evidencia. Cuenta: el archivo que el NODO encontró al terminar (dentro del espacio de la misión, con bytes
+ * y sha256, de esta misión), la página que su computadora abrió (un paso hecho) y, si lo que se pidió es un dato, la
+ * respuesta que lo trae (es lo pedido, no una afirmación de que se hizo). Una acción con efecto afuera (enviar,
+ * publicar, llenar un formulario) no se puede comprobar desde aquí: queda «sin comprobar», nunca verificada. */
+
+const plegar = (s: unknown) =>
+  String(s ?? '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase();
+const sinUrls = (s: string) => s.replace(/\b(?:https?|ftp):\/\/\S+|\bwww\.\S+/gi, ' ');
+const EXT_ARCHIVO = 'odt|ods|odp|odg|docx?|xlsx?|pptx?|pdf|txt|csv|tsv|md|rtf|html?|json|xml|png|jpe?g|gif|svg|webp|zip';
+/** Pide dejar un archivo: guardar, descargar, exportar… */
+const RE_PIDE_GUARDAR = /\b(guarda(lo|la|los|las|me|melo|mela)?|guardar(lo|la|los|las)?|guardes|descarga(lo|la|los|las|me)?|descargar(lo|la|los|las)?|bajate|exporta(lo|la|los)?|exportar(lo|la)?|save|download|export)\b/;
+/** …o crear un documento, una hoja, un PDF (con nombre de archivo o sin él). */
+const RE_PIDE_CREAR = new RegExp(
+  `\\b(crea|crear|creame|haz|hazme|escribe|escribir|escribeme|genera|generar|arma|armame|prepara|preparame|redacta|make|create|write|generate|draft)\\b[^.;\\n]{0,60}?(\\b(documento|archivo|hoja( de calculo)?|planilla|presentacion|pdf|carpeta|word|excel|document|file|spreadsheet|presentation|folder)\\b|[\\w-][\\w.-]*\\.(${EXT_ARCHIVO})(?![\\w-]))`
+);
+/** La respuesta dice que dejó un archivo. */
+const RE_DICE_ARCHIVO =
+  /\b(guarde|guardado|guardada|guardados|guardadas|descargue|descargado|descargada|exporte|exportado|exportada|cree (el|un|la|una) (archivo|documento|hoja|pdf|presentacion|carpeta)|saved|downloaded|exported|created (the|a|an) (file|document|spreadsheet|pdf|folder))\b/;
+/** Una acción con efecto afuera, al empezar una frase o después de «y», «luego»… («revisa si el banco publica» no). */
+const RE_PIDE_ACCION =
+  /(?:^|[,;:.]\s*|\b(?:y|e|luego|despues|tambien|and|then)\s+)(envia(lo|la|los|las|le|les|selo|sela)?|enviale|enviame(lo|la)?|manda(lo|la|los|las|le|les|selo)?|mandale|mandame(lo|la)?|publica(lo|la)?|postea(lo|la)?|comenta(lo)?|responde(le|les)?|contesta(le|les)?|llena(lo|la)?|rellena(lo|la)?|completa (el|la|los|las) (formulario|registro|solicitud|encuesta)|registra(me|te|lo)?|registrate|inscribe(me|te)?|inscribete|suscribe(me|te)?|suscribete|reserva(me|lo|la)?|agenda(me|lo|la)?|borra(lo|la|los)?|elimina(lo|la|los)?|sube(lo|la)?|compra(lo|la|me)?|paga(lo|la)?|cancela(lo|la)?|inicia sesion|send|post|publish|reply|fill (in|out)|submit|register|sign (up|in)|subscribe|book|delete|remove|upload|buy|pay|cancel)\b/;
+/** Lo que solo afirma que terminó (o qué se hizo), sin dato: no cuenta para saber si la respuesta trae algo. */
+const RELLENO = new Set(
+  (
+    'listo lista listos hecho hecha hechos ya esta estan quedo quedaron queda todo toda bien vale perfecto excelente claro ' +
+    'terminado terminada termine terminamos completado completada complete completamos finalizado finalizada finalice ' +
+    'realizado realizada realice hice hizo los las del con sin sus tus mis que como nos pediste pidio pedido solicitado ' +
+    'indicado tarea mision encargo trabajo has hemos fue sido estuvo exito exitosamente correctamente problema problemas ' +
+    'done finished completed complete all set task was has have been you asked the and successfully now already yes ' +
+    'okay abri abierto abierta entre pagina sitio computadora envie enviado enviada mande mandado publique publicado ' +
+    'llene llenado rellenado registre registrado guarde guardado guardada descargue descargado archivo documento carpeta ' +
+    'respuesta'
+  ).split(' ')
+);
+
+/** ¿Pide (o dice que dejó) un archivo? */
+export function pideArchivo(instruccion: string, respuesta?: string | null): boolean {
+  const p = plegar(sinUrls(String(instruccion || '')));
+  return RE_PIDE_GUARDAR.test(p) || RE_PIDE_CREAR.test(p) || RE_DICE_ARCHIVO.test(plegar(sinUrls(String(respuesta || ''))));
+}
+
+/** ¿Pide una acción con efecto afuera (enviar, publicar, llenar un formulario…)? Eso no se comprueba desde aquí. */
+export function pideAccion(instruccion: string): boolean {
+  return RE_PIDE_ACCION.test(plegar(sinUrls(String(instruccion || ''))).trim());
+}
+
+/** ¿La respuesta trae algo (un número, o al menos tres palabras que no son «listo, ya lo hice»)? Sin URLs: eso no es un dato. */
+export function respuestaInformativa(respuesta: string | null | undefined): boolean {
+  const palabras = plegar(sinUrls(String(respuesta || ''))).match(/[a-z0-9ñ]+/g) || [];
+  if (palabras.some((w) => /\d/.test(w))) return true;
+  return palabras.filter((w) => w.length >= 3 && !RELLENO.has(w)).length >= 3;
+}
+
+/** ¿El nodo comprobó este archivo? Existe, más de 0 bytes, sha256 de verdad, de esta misión y dentro de su espacio. */
+export function archivoComprobado(a: unknown): boolean {
+  const x = a as ArchivoNodo | null;
+  if (!x || typeof x !== 'object' || x.existe !== true || x.fuera === true || x.reciente === false) return false;
+  const ruta = typeof x.ruta === 'string' ? x.ruta : '';
+  if (!ruta || ruta.length > 400 || /[\u0000-\u001f]/.test(ruta) || /(^|\/)\.\.(\/|$)/.test(ruta)) return false;
+  return Number.isFinite(x.bytes) && x.bytes > 0 && typeof x.sha256 === 'string' && /^[0-9a-f]{64}$/.test(x.sha256);
+}
+
+const nombreDe = (ruta: string) => texto(String(ruta).split('/').filter(Boolean).pop() || ruta, 80);
+
+/** Lo que se sabe de lo entregado: si se comprobó, qué lo comprueba y, si no, qué falta (dicho con honestidad). */
+export type Entrega = { comprobada: boolean; tipo: 'archivo' | 'accion' | 'dato'; evidencias: Evidencia[]; falta: string | null };
+
+export function evaluarEntrega(m: Pick<MisionComputadoraMin, 'id' | 'instruccion' | 'resultado' | 'enlaces' | 'datos' | 'archivos'>): Entrega {
+  const abiertas: Evidencia[] = (m.enlaces || []).slice(0, 6).map((u, i) => ({ id: `${m.id}:enlace:${i}`, tipo: 'enlace', etiqueta: texto(u, 120), ref: u }));
+  const lista = Array.isArray(m.archivos) ? m.archivos : null;
+  if (pideArchivo(m.instruccion, m.resultado)) {
+    if (!lista) return { comprobada: false, tipo: 'archivo', evidencias: abiertas, falta: 'Tu computadora dice que dejó el archivo, pero no pude comprobarlo: no revisó sus archivos al terminar.' };
+    const buenos = lista.filter(archivoComprobado);
+    // Lo que nombró y no está (o no es de esta misión) pesa: que haya otro archivo no lo suple.
+    const malos = lista.filter((a) => !archivoComprobado(a) && (a?.mencionado || a?.existe !== true));
+    if (!buenos.length || malos.length) {
+      const nombres = [...new Set(malos.map((a) => nombreDe(a?.ruta)))].slice(0, 3);
+      const falta = nombres.length
+        ? `No encontré ${nombres.map((n) => `«${n}»`).join(', ')} en tu computadora (en su carpeta de trabajo y hecho en esta misión): no pude comprobar que quedó guardado.`
+        : 'No encontré ningún archivo nuevo en tu computadora: no pude comprobar que quedó guardado.';
+      return { comprobada: false, tipo: 'archivo', evidencias: abiertas, falta };
+    }
+    const archivos: Evidencia[] = buenos.slice(0, 6).map((a, i) => ({
+      id: `${m.id}:archivo:${i}`,
+      tipo: 'archivo',
+      etiqueta: `${nombreDe(a.ruta)} · ${a.bytes} bytes · sha256 ${a.sha256!.slice(0, 12)}… (lo comprobó tu computadora)`,
+      ref: texto(a.ruta, 300),
+    }));
+    return { comprobada: true, tipo: 'archivo', evidencias: [...archivos, ...abiertas], falta: null };
+  }
+  if (pideAccion(m.instruccion)) {
+    return { comprobada: false, tipo: 'accion', evidencias: abiertas, falta: 'Tu computadora dice que lo hizo, pero no pude comprobarlo desde aquí: revísalo antes de darlo por hecho.' };
+  }
+  if (!respuestaInformativa(m.resultado)) {
+    return { comprobada: false, tipo: 'dato', evidencias: abiertas, falta: m.resultado ? 'Tu computadora dice que terminó, pero no trajo lo que pediste: no pude comprobarlo.' : 'Terminó sin un resultado que lo compruebe.' };
+  }
+  const ev: Evidencia[] = [{ id: `${m.id}:respuesta`, tipo: 'dato', etiqueta: `Lo que encontró: ${texto(m.resultado, 190)}` }];
   (m.datos || []).slice(0, 6).forEach((d, i) => ev.push({ id: `${m.id}:dato:${i}`, tipo: 'dato', etiqueta: `${texto(d.clave, 40)}: ${texto(d.valor, 120)}` }));
-  if (m.resultado) ev.push({ id: `${m.id}:respuesta`, tipo: 'recibo', etiqueta: texto(m.resultado, 200) });
-  return ev;
+  return { comprobada: true, tipo: 'dato', evidencias: [...ev, ...abiertas], falta: null };
+}
+
+/** La evidencia de una misión terminada: solo lo que se comprobó (evaluarEntrega). */
+export function evidenciaDeComputadora(m: MisionComputadoraMin): Evidencia[] {
+  return evaluarEntrega(m).evidencias;
+}
+
+/**
+ * Cómo cierra una misión terminada: `completed` solo si el nodo terminó, no dijo que quedó a medias y lo entregado se
+ * comprobó; si terminó sin poder comprobarlo, `partial` con el porqué (nunca el «Listo» del modelo como resumen).
+ */
+function cierreDeComputadora(m: MisionComputadoraMin): { estado: EstadoTarea; ok: boolean; entrega: Entrega; evidencias: Evidencia[]; resumen: string; parcial: string[] } {
+  const base = estadoDeComputadora(m);
+  const entrega = evaluarEntrega(m);
+  const termino = m.estado === 'hecha';
+  const ok = termino && m.ok !== false && entrega.comprobada;
+  const estado: EstadoTarea = ok ? 'completed' : base === 'verifying' || base === 'partial' ? 'partial' : base;
+  const sinComprobar = estado === 'partial' && termino && !entrega.comprobada;
+  const resumen = sinComprobar
+    ? `Tu computadora dice que terminó${m.resultado ? ` («${texto(m.resultado, 160)}»)` : ''}, pero no pude comprobarlo.`
+    : texto(m.resultado || (estado === 'cancelled' ? 'La paraste antes de terminar.' : estado === 'failed' ? 'Tu computadora no pudo hacerlo.' : 'Terminó, pero sin un resultado que lo acredite.'), 300);
+  const parcial = estado === 'partial' ? [sinComprobar && entrega.falta ? entrega.falta : 'No completó todo lo pedido.'] : [];
+  // Sin terminar (parada, falló), su texto es el error: solo cuentan las páginas que abrió.
+  const evidencias = termino ? entrega.evidencias : entrega.evidencias.filter((e) => e.tipo === 'enlace');
+  return { estado, ok, entrega, evidencias, resumen: texto(resumen, 300), parcial };
 }
 
 function progresoDePlan(plan?: { estado: string }[]): Progreso | null {
@@ -713,9 +847,10 @@ function progresoDePlan(plan?: { estado: string }[]): Progreso | null {
 
 /** Una misión de su computadora que no nació de una tarea durable, como TaskSnapshot (mismo id, solo lectura). */
 export function deComputadora(m: MisionComputadoraMin, ahora = Date.now()): TaskSnapshot {
-  let estado = estadoDeComputadora(m);
-  const ev = evidenciaDeComputadora(m);
-  if (estado === 'verifying') estado = ev.length ? 'completed' : 'partial';
+  const vivo = estadoDeComputadora(m);
+  const cierre = vivo === 'verifying' || esTerminal(vivo) ? cierreDeComputadora(m) : null;
+  const estado = cierre ? cierre.estado : vivo;
+  const ev = cierre ? cierre.evidencias : [];
   const terminal = esTerminal(estado);
   const actual = m.plan?.find((p) => p.estado === 'actual' || p.estado === 'espera');
   const prog = progresoDePlan(m.plan);
@@ -727,14 +862,14 @@ export function deComputadora(m: MisionComputadoraMin, ahora = Date.now()): Task
     source: 'computadora',
     title: texto(m.instruccion, 100) || 'Tu computadora',
     objective: texto(m.instruccion, 400),
-    acceptance: [{ id: 'resultado', text: 'La computadora termina y deja un resultado verificable', required: true, status: estado === 'completed' ? 'verified' : terminal ? 'not_met' : 'pending', evidenceIds: estado === 'completed' ? ev.map((e) => e.id) : [] }],
+    acceptance: [{ id: 'resultado', text: 'La computadora termina y lo entregado se comprueba (el dato pedido, la página que abrió o el archivo que encontró)', required: true, status: estado === 'completed' ? 'verified' : terminal ? 'not_met' : 'pending', evidenceIds: estado === 'completed' ? ev.map((e) => e.id) : [] }],
     environment: { kind: 'computadora', id: m.tareaId, displayName: 'Tu computadora' },
     ...(m.pregunta ? { currentStep: `Espera tu sí: ${texto(m.pregunta, 160)}` } : actual ? { currentStep: texto(actual.texto, 160) } : {}),
     progress: prog ? { done: prog.hechos, total: prog.total, unit: prog.unidad } : null,
     planVersion: 1,
     lastEventSequence: 0,
     decision: null,
-    result: terminal ? { id: `${m.id}:final`, summary: texto(m.resultado || (estado === 'cancelled' ? 'La paraste.' : 'Terminó sin resultado.'), 300), evidence: ev, partial: estado === 'partial' ? ['No completó todo lo pedido.'] : [], pending: [], at: new Date(m.inicio + m.segundos * 1000).toISOString() } : null,
+    result: cierre && terminal ? { id: `${m.id}:final`, summary: cierre.resumen, evidence: ev, partial: cierre.parcial, pending: [], at: new Date(m.inicio + m.segundos * 1000).toISOString() } : null,
     stopCondition: 'Termina, falla o la paras tú.',
     createdAt: new Date(m.inicio).toISOString(),
     updatedAt: new Date(Math.min(ahora, m.inicio + m.segundos * 1000)).toISOString(),
@@ -745,8 +880,9 @@ export function deComputadora(m: MisionComputadoraMin, ahora = Date.now()): Task
 
 /**
  * El cambio que lleva una tarea durable enlazada a su misión de la computadora hasta lo que la misión dice.
- * null si no hay nada que cambiar. Una misión que terminó bien con evidencia completa la tarea; sin
- * evidencia, `partial`; parada, `cancelled`.
+ * null si no hay nada que cambiar. Una misión que terminó bien con lo entregado COMPROBADO completa la tarea
+ * (evaluarEntrega: «Listo» no es evidencia); terminada sin poder comprobarlo, `partial` con «no pude
+ * comprobarlo»; parada, `cancelled`.
  */
 export function reconciliarConComputadora(reg: RegistroTarea, m: MisionComputadoraMin | null, ahora: number): Cambio | null {
   if (esTerminal(reg.estado)) return null;
@@ -760,23 +896,14 @@ export function reconciliarConComputadora(reg: RegistroTarea, m: MisionComputado
   const prog = progresoDePlan(m.plan);
   const actual = m.plan?.find((p) => p.estado === 'actual' || p.estado === 'espera');
   if (estado === 'verifying' || estado === 'partial' || estado === 'cancelled' || estado === 'failed') {
-    const ev = evidenciaDeComputadora(m);
-    const ok = estado === 'verifying' && ev.length > 0;
+    const { estado: final, ok, evidencias: ev, resumen, parcial } = cierreDeComputadora(m);
     const criterios = reg.criterios.map((c) => (c.obligatorio ? { ...c, estado: ok ? ('verified' as const) : ('not_met' as const), evidencias: ok ? ev.map((e) => e.id) : [] } : c));
-    const final: EstadoTarea = ok ? 'completed' : estado === 'verifying' ? 'partial' : estado;
     return {
       estado: final,
       criterios,
       progreso: prog,
       pasoActual: null,
-      resultado: {
-        id: `${reg.id}:resultado`,
-        resumen: texto(m.resultado || (final === 'cancelled' ? 'La paraste antes de terminar.' : final === 'failed' ? 'Tu computadora no pudo hacerlo.' : 'Terminó, pero sin un resultado que lo acredite.'), 300),
-        evidencias: ev,
-        parcial: final === 'partial' ? ['No quedó evidencia de todo lo pedido.'] : [],
-        pendiente: [],
-        t: ahora,
-      },
+      resultado: { id: `${reg.id}:resultado`, resumen, evidencias: ev, parcial, pendiente: [], t: ahora },
       eventos: [{ type: 'operation.receipt', payload: { operationId: m.tareaId, state: final === 'completed' ? 'succeeded' : final === 'cancelled' ? 'cancelled' : 'failed', effect: ok ? 'confirmed' : 'possible' } }],
     };
   }

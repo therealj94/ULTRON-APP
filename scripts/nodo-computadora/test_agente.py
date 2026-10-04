@@ -991,6 +991,15 @@ class CrearUnaVez(ConEndpoints):
         self.assertEqual(err.exception.status_code, 409)
         self.assertEqual(len(self.lanzadas), 4)
 
+    def test_la_vuelta_de_una_mision_cuenta_desde_su_primera_tarea_solo_del_mismo_dueno(self):
+        import asyncio
+        a = asyncio.run(agente.crear(Pedido({'instruccion': 'Crea informe.odt', 'dueno': 'huella-a'})))
+        agente.TAREAS[a['id']].desde -= 120  # empezó hace dos minutos
+        b = asyncio.run(agente.crear(Pedido({'instruccion': 'Sigue', 'dueno': 'huella-a', 'desde_tarea': a['id']})))
+        self.assertEqual(agente.TAREAS[b['id']].desde, agente.TAREAS[a['id']].desde, 'lo guardado en la vuelta anterior es de esta misión')
+        c = asyncio.run(agente.crear(Pedido({'instruccion': 'Sigue', 'dueno': 'huella-b', 'desde_tarea': a['id']})))
+        self.assertEqual(agente.TAREAS[c['id']].desde, agente.TAREAS[c['id']].creada, 'de otro dueño no se hereda')
+
 
 class Respuesta:
     """Un Response de mentira que guarda lo que se le dio (para leer las cabeceras del frame)."""
@@ -1294,6 +1303,112 @@ class EntradaSegura(ConEscritorio):
             self.capturas.append((threading.current_thread().name, bool(t.seguro)))
             return b'png', 1280, 800
         return captura
+
+
+class ArchivosComprobados(Base):
+    """Revisión externa (4-oct): «"Listo" puede marcar entregables como comprobados aunque los archivos no existan».
+    Al terminar, el NODO mira él mismo su espacio de trabajo (find, stat y sha256sum dentro del escritorio) y lo cuenta
+    en `archivos`; nunca lo saca del texto del modelo. Aquí el escritorio es una carpeta temporal y los comandos corren
+    con sh de verdad (el mismo comando que va por docker exec)."""
+
+    def setUp(self):
+        super().setUp()
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.espacio = os.path.realpath(self.tmp.name)
+        self.reales_archivos = (agente.ESPACIO_TRABAJO, agente.en_escritorio)
+        agente.ESPACIO_TRABAJO = self.espacio
+        self.comandos = []
+
+        def en_escritorio(comando, entrada=None, timeout=30):
+            import subprocess
+            self.comandos.append(comando)
+            r = subprocess.run(['sh', '-c', comando], input=entrada, capture_output=True, timeout=timeout)
+            if r.returncode != 0:
+                raise RuntimeError(r.stderr.decode('utf-8', 'ignore')[:300] or f'código {r.returncode}')
+            return r.stdout
+        agente.en_escritorio = en_escritorio
+
+    def tearDown(self):
+        agente.ESPACIO_TRABAJO, agente.en_escritorio = self.reales_archivos
+        self.tmp.cleanup()
+        super().tearDown()
+
+    def escribir(self, relativa, contenido=b'contenido', hace_s=0):
+        ruta = os.path.join(self.espacio, relativa)
+        os.makedirs(os.path.dirname(ruta), exist_ok=True)
+        with open(ruta, 'wb') as f:
+            f.write(contenido)
+        if hace_s:
+            os.utime(ruta, (time.time() - hace_s, time.time() - hace_s))
+        return ruta
+
+    def correr_y_archivos(self, respuesta, instruccion='Crea un documento informe.odt con el resumen y guárdalo', antes=None):
+        t, _ = CicloGratis.correr_con(self, [('answer', {'content': respuesta})], instruccion)
+        if antes:
+            antes(t)
+        agente.correr(t)
+        self.assertEqual(t.estado, 'hecha')
+        return t.resumen()
+
+    def test_dijo_listo_y_el_archivo_no_existe(self):
+        r = self.correr_y_archivos('Listo, guardé el archivo informe.odt en Documentos.')
+        self.assertIsNone(r['archivos_error'])
+        self.assertEqual(r['archivos'], [{'ruta': 'informe.odt', 'existe': False, 'bytes': 0, 'sha256': None, 'mencionado': True}],
+                         'decir que lo guardó no lo hace existir: el nodo lo buscó y no está')
+
+    def test_el_archivo_real_trae_bytes_y_sha256(self):
+        import hashlib
+        rutas = {}
+        r = self.correr_y_archivos('Listo, guardé el archivo informe.odt en Documentos.',
+                                   antes=lambda t: rutas.update(r=self.escribir('Documents/informe.odt', b'hola mundo')))
+        self.assertEqual(r['archivos'], [{'ruta': rutas['r'], 'existe': True, 'bytes': 10,
+                                          'sha256': hashlib.sha256(b'hola mundo').hexdigest(), 'reciente': True, 'mencionado': True}])
+
+    def test_lo_nuevo_sin_nombrar_cuenta_y_lo_oculto_o_viejo_no(self):
+        def antes(t):
+            self.escribir('Downloads/precios.csv', b'a,b\n1,2\n')
+            self.escribir('.mozilla/perfil/cookies.sqlite', b'x')
+            self.escribir('viejo.txt', b'de antes', hace_s=3600)
+        r = self.correr_y_archivos('Listo, ya quedó.', instruccion='Descarga la tabla de precios', antes=antes)
+        self.assertEqual([(os.path.relpath(a['ruta'], self.espacio), a['reciente'], a['mencionado']) for a in r['archivos']],
+                         [('Downloads/precios.csv', True, False)], 'solo lo de esta misión, sin lo oculto ni lo viejo')
+
+    def test_un_archivo_viejo_que_nombra_no_es_de_esta_mision(self):
+        r = self.correr_y_archivos('Listo, guardé el archivo informe.odt.', antes=lambda t: self.escribir('informe.odt', b'de ayer', hace_s=7200))
+        self.assertEqual(len(r['archivos']), 1)
+        self.assertTrue(r['archivos'][0]['existe'])
+        self.assertFalse(r['archivos'][0]['reciente'], 'ya estaba antes: no lo hizo esta misión')
+
+    def test_fuera_del_espacio_no_se_mira_ni_un_enlace_que_sale(self):
+        import tempfile
+        fuera = tempfile.NamedTemporaryFile(suffix='.txt', delete=False)
+        fuera.write(b'secreto')
+        fuera.close()
+        try:
+            def antes(t):
+                os.symlink(fuera.name, os.path.join(self.espacio, 'enlace.txt'))
+            r = self.correr_y_archivos(f'Listo, guardé {fuera.name}, ../secreto.txt y enlace.txt.', antes=antes)
+            por_ruta = {a['ruta']: a for a in r['archivos']}
+            self.assertEqual(por_ruta[fuera.name], {'ruta': fuera.name, 'existe': False, 'bytes': 0, 'sha256': None, 'mencionado': True, 'fuera': True})
+            self.assertEqual(por_ruta['../secreto.txt']['fuera'], True)
+            self.assertFalse(por_ruta['enlace.txt']['existe'], 'un enlace a algo de fuera no cuenta como archivo del espacio')
+            self.assertFalse(any(fuera.name in c for c in self.comandos), 'lo de fuera ni se le pregunta al escritorio')
+        finally:
+            os.unlink(fuera.name)
+
+    def test_sin_escritorio_no_se_comprueba_y_lo_dice(self):
+        def roto(*_a, **_k):
+            raise RuntimeError('docker: no such container')
+        agente.en_escritorio = roto
+        r = self.correr_y_archivos('Listo, guardé el archivo informe.odt.')
+        self.assertIsNone(r['archivos'], 'sin comprobar no es «no hay archivos»')
+        self.assertIn('docker', r['archivos_error'])
+
+    def test_lo_que_nombra_sale_de_la_instruccion_y_la_respuesta_no_de_una_url(self):
+        self.assertEqual(agente.rutas_mencionadas('Guarda la tabla en ~/Documents/precios.ods',
+                                                  'Listo. Fuente: https://bch.hn/datos/tabla.csv y copia en resumen.txt.'),
+                         ['~/Documents/precios.ods', 'resumen.txt'])
 
 
 if __name__ == '__main__':

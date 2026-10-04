@@ -58,6 +58,10 @@ export type FinalPc = {
   captura: string | null;
   segundos: number;
   pasos: number;
+  /** Lo entregado se comprobó (el dato pedido, el archivo que encontró el nodo). false: dijo que terminó y no se pudo comprobar. */
+  comprobado?: boolean;
+  /** Qué faltó comprobar, dicho para la persona (servidor nuevo). */
+  sinComprobar?: string | null;
 };
 export type MisionPc = {
   id: string;
@@ -322,7 +326,7 @@ export function aCoordenadas(x: number, y: number, ancho: number, alto: number):
 }
 
 /** Lo que se comparte del resultado: la misión, lo que encontró, los datos y los enlaces. */
-export function textoParaCompartir(instruccion: string, f: Pick<FinalPc, 'respuesta' | 'error' | 'datos' | 'enlaces' | 'ok'>, idioma: 'es' | 'en' = 'es'): string {
+export function textoParaCompartir(instruccion: string, f: Pick<FinalPc, 'respuesta' | 'error' | 'datos' | 'enlaces' | 'ok' | 'sinComprobar'>, idioma: 'es' | 'en' = 'es'): string {
   const en = idioma === 'en';
   const partes = [`«${instruccion.trim()}»`];
   const r = (f.respuesta || '').trim();
@@ -331,14 +335,18 @@ export function textoParaCompartir(instruccion: string, f: Pick<FinalPc, 'respue
   if (datosSueltos.length) partes.push(datosSueltos.map((d) => `${d.clave}: ${d.valor}`).join('\n'));
   const enlaces = f.enlaces.filter((u) => !r.includes(u));
   if (enlaces.length) partes.push(enlaces.join('\n'));
+  // Lo que no se comprobó no se comparte como hecho.
+  if (f.sinComprobar) partes.push(`${en ? 'Not verified' : 'Sin comprobar'}: ${f.sinComprobar}`);
   partes.push(en ? '— from my AU-RA computer' : '— desde la computadora de AU-RA');
   return partes.filter(Boolean).join('\n\n');
 }
 
 /** Cómo terminó, en una palabra para la tarjeta. */
-export function finalEnPalabras(f: Pick<FinalPc, 'estado' | 'ok'>, idioma: 'es' | 'en' = 'es'): string {
+export function finalEnPalabras(f: Pick<FinalPc, 'estado' | 'ok' | 'comprobado'>, idioma: 'es' | 'en' = 'es'): string {
   const en = idioma === 'en';
   if (f.ok) return en ? 'Done' : 'Listo';
+  // Dijo que terminó, pero lo entregado no se comprobó: ni «Listo» ni «A medias».
+  if (f.estado === 'hecha' && f.comprobado === false) return en ? 'Not verified' : 'Sin comprobar';
   if (f.estado === 'parada') return en ? 'Stopped' : 'Detenida';
   if (f.estado === 'fallo') return en ? 'Failed' : 'Falló';
   return en ? 'Unfinished' : 'A medias';

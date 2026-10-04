@@ -456,6 +456,8 @@ test('la misión sigue sola si una tarea no alcanza (hasta 3 más), desde donde 
         await hasta(() => vistos.some((v) => v.aviso.fase === 'termina'));
         assert.equal(nodo.altas.length, 2);
         assert.match(nodo.altas[1].instruccion, /^Sigue con esta misión desde donde está la pantalla ahora, sin empezar de cero: «Entra a sar\.gob\.hn y dime el horario»\. Lo último que hiciste: Abrió https:\/\/sar\.gob\.hn\./);
+        assert.equal(nodo.altas[0].desde_tarea, undefined, 'la primera tarea empieza la misión');
+        assert.equal(nodo.altas[1].desde_tarea, r.id, 'la vuelta le dice al nodo desde qué tarea es «de esta misión» (lo guardado antes cuenta)');
         const sigue = vistos.find((v) => v.aviso.fase === 'sigue')!;
         assert.equal(sigue.aviso.texto, 'Me falta un poco; sigo con la misión.');
         assert.notEqual(sigue.aviso.id, r.id);

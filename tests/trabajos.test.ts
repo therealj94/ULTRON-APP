@@ -612,11 +612,15 @@ test('el chat crea la tarea ANTES de encargar a la computadora, la enlaza en la 
   await cerrarEncargoComputadora(yo, r3, { misionId: 'mis_3', estado: 'succeeded' });
   const r4 = await abrirEncargoComputadora(yo, 'web', 'Busca la tasa del día');
   await cerrarEncargoComputadora(yo, r4, { misionId: 'mis_4', estado: 'succeeded' });
+  const r5 = await abrirEncargoComputadora(yo, 'web', 'Crea el documento informe.odt y guárdalo');
+  await cerrarEncargoComputadora(yo, r5, { misionId: 'mis_5', estado: 'succeeded' });
   const h2 = arnes({
     misiones: [
       { id: 'mis_2', tareaId: 'mis_2', instruccion: 'horario', estado: 'hecha', ok: true, inicio: T0, segundos: 40, resultado: 'Abre de 9 a 4', enlaces: ['https://banco.ejemplo/horario'] },
       { id: 'mis_3', tareaId: 'mis_3', instruccion: 'clima', estado: 'hecha', ok: true, inicio: T0, segundos: 40, resultado: 'Soleado, 28 grados', enlaces: [] },
       { id: 'mis_4', tareaId: 'mis_4', instruccion: 'tasa', estado: 'hecha', ok: true, inicio: T0, segundos: 40, resultado: null, enlaces: [] },
+      // «Listo, lo guardé» sin que el nodo lo comprobara (revisión externa, 4-oct).
+      { id: 'mis_5', tareaId: 'mis_5', instruccion: 'Crea el documento informe.odt y guárdalo', estado: 'hecha', ok: true, inicio: T0, segundos: 40, resultado: 'Listo, guardé informe.odt.', enlaces: [] },
       { id: 'mis_suelta', tareaId: 'mis_suelta', instruccion: 'otra cosa', estado: 'trabajando', ok: null, inicio: T0, segundos: 5, resultado: null },
     ],
   });
@@ -626,10 +630,14 @@ test('el chat crea la tarea ANTES de encargar a la computadora, la enlaza en la 
     const t3 = l.find((x) => x.id === r3!.id);
     assert.equal(t2.state, 'completed');
     assert.ok(t2.result.evidence.some((e: any) => e.ref === 'https://banco.ejemplo/horario'));
-    assert.equal(t3.state, 'completed', 'una respuesta del nodo es evidencia');
+    assert.equal(t3.state, 'completed', 'la respuesta con el dato que se pidió es el resultado (no un «listo»)');
     const t4 = l.find((x) => x.id === r4!.id);
     assert.equal(t4.state, 'partial', '«hecha» sin nada que lo acredite no es completed');
     assert.ok(t4.result.partial.length > 0);
+    const t5 = l.find((x) => x.id === r5!.id);
+    assert.equal(t5.state, 'partial', '«Listo, lo guardé» sin comprobar no es completed');
+    assert.notEqual(t5.acceptance[0].status, 'verified');
+    assert.match(t5.result.partial.join(' '), /no pude comprobar/i);
     assert.ok(l.some((x) => x.id === 'mis_suelta' && x.source === 'computadora'), 'la misión que no nació del chat se adapta, no se duplica');
   } finally {
     h2.cerrar();

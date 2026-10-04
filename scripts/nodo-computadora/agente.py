@@ -18,13 +18,18 @@ hechas. Solo se ofrece si hay ANTHROPIC_API_KEY.
 
 API (todo con `Authorization: Bearer $COMPUTADORA_CLAVE`, salvo /salud):
   GET  /salud
-  POST /tareas {"instruccion": "...", "motor": "holo"|"claude", "max_pasos": 25, "dueno": "<huella>", "request_id": "..."}
+  POST /tareas {"instruccion": "...", "motor": "holo"|"claude", "max_pasos": 25, "dueno": "<huella>", "request_id": "...",
+                "desde_tarea": "<primera tarea de la misión, si la sigue>"}
                                                          → {"id": ...} (el mismo request_id del mismo dueño: la misma tarea)
 
 Cada dueño (una huella, nunca el correo) trabaja en un escritorio limpio: si la tarea es de otro dueño que
 la anterior, el contenedor del escritorio se borra y se crea de nuevo (pestañas, historial, descargas y
 documentos del anterior no quedan). Las tareas terminadas se olvidan tras una hora.
-  GET  /tareas/{id}                                      → estado, pasos, respuesta, `pregunta` y `pregunta_id` (si espera un sí)
+  GET  /tareas/{id}                                      → estado, pasos, respuesta, `pregunta` y `pregunta_id` (si espera un sí),
+                                                           y al terminar `archivos`: [{ruta, existe, bytes, sha256, reciente?,
+                                                           mencionado?, fuera?}] que el NODO comprobó en el espacio de trabajo
+                                                           (ESPACIO_TRABAJO) después de la tarea, nunca sacados del texto del
+                                                           modelo; null + `archivos_error` si no pudo mirar (comprobar_archivos)
   GET  /tareas/{id}/eventos                              → los mismos pasos en vivo (SSE)
   POST /tareas/{id}/parar                                → {"estado", "parada": {"id", "fase"}}: fase «quiescent» (nada en
                                                            vuelo: detenida de verdad) o «draining» (un toque ya despachado
@@ -65,6 +70,7 @@ import hmac
 import io
 import json
 import os
+import posixpath
 import re
 import shlex
 import subprocess
@@ -110,6 +116,11 @@ CERRAR_VNC = os.environ.get('CERRAR_VNC', '1') != '0'
 # contrato de entradas con época, secuencia, viewport y ACK, y el frame en cabeceras; `seguro`: la entrada segura.
 CAPACIDADES = ['pausar', 'confirmar', 'control', 'entrada', 'seguro']
 ESTADOS_VIVOS = ('en_cola', 'trabajando', 'pausada', 'confirmar', 'control')
+# El espacio de trabajo de la misión dentro del escritorio (la carpeta de la persona del escritorio de la demo): lo
+# único donde se buscan y comprueban archivos al terminar. Lo de fuera ni se mira (revisión externa, 4-oct).
+ESPACIO_TRABAJO = os.environ.get('ESPACIO_TRABAJO', '/home/computeruse').rstrip('/') or '/home/computeruse'
+ARCHIVOS_MAX = 12        # cuántos archivos se cuentan en el final
+ARCHIVOS_PROFUNDIDAD = 6  # cuántas carpetas hacia dentro se busca
 
 cliente = OpenAI(base_url=MODELO_URL, api_key='local', timeout=120)
 app = FastAPI()
@@ -730,7 +741,7 @@ def correr_claude(t):
             if not usos:
                 # La captura final va con el resultado (la app la muestra en la tarjeta del final).
                 t.anotar(accion='answer', args={'content': texto[:300]}, ms=ms, miniatura=miniatura_de_paso(t))
-                return t.cerrar('hecha', respuesta=texto or '(sin respuesta)')
+                return terminar_hecha(t, texto or '(sin respuesta)')
             # `fallo`: algo salió mal o la persona dijo NO: lo que sigue en el mismo lote ya no se hace
             # (auditoría, 3-oct: tras un NO, las acciones siguientes del lote corrían igual).
             resultados, fallo = [], False
@@ -791,6 +802,110 @@ def correr_claude(t):
                                 dentro.clear()
                                 dentro.update(type='text', text='[screenshot evicted]')
     t.cerrar('sin_pasos', error=f'Se acabaron los {t.max_pasos} pasos sin terminar.')
+
+
+# ------------------------------------------------------------------ archivos: lo que el nodo comprueba al terminar
+
+EXTENSIONES = 'odt|ods|odp|odg|docx?|xlsx?|pptx?|pdf|txt|csv|tsv|md|rtf|html?|json|xml|png|jpe?g|gif|svg|webp|zip'
+RE_URL = re.compile(r'\b(?:https?|ftp)://\S+|\bwww\.\S+', re.I)
+RE_ARCHIVO = re.compile(r'(?<![\w/.~-])((?:~/|/|\.\./|\./)?(?:[\w.-]+/)*[\w-][\w.-]*\.(?:' + EXTENSIONES + r'))(?![\w-])', re.I)
+
+
+def rutas_mencionadas(*textos):
+    """Los archivos que nombran la instrucción o la respuesta (informe.odt, ~/Documents/x.pdf, /home/.../x.csv), sin
+    las direcciones web. Solo dicen QUÉ buscar: si existen lo dice el escritorio, nunca el texto."""
+    vistas = []
+    for texto in textos:
+        for m in RE_ARCHIVO.finditer(RE_URL.sub(' ', str(texto or ''))):
+            if m.group(1) not in vistas:
+                vistas.append(m.group(1))
+    return vistas[:8]
+
+
+def ruta_en_espacio(ruta):
+    """La ruta absoluta (normalizada) dentro del espacio de trabajo; '' si es un nombre suelto o relativo (se busca por
+    su nombre dentro del espacio); None si cae fuera (otra carpeta, «..»): eso no se mira."""
+    r = str(ruta or '').strip()
+    if r.startswith('~/'):
+        r = ESPACIO_TRABAJO + r[1:]
+    if not r.startswith('/'):
+        return None if '..' in r.split('/') else ''
+    n = posixpath.normpath(r)
+    return n if n.startswith(ESPACIO_TRABAJO + '/') else None
+
+
+def comando_archivos(nombres, minutos):
+    """El comando que corre DENTRO del escritorio: los archivos normales del espacio de trabajo (ni enlaces ni nada
+    oculto, como el perfil de Firefox) que se llaman como lo nombrado o que cambiaron en los últimos `minutos`, con su
+    tamaño, su hora y su sha256. Sin el espacio, SIN_ESPACIO."""
+    q = shlex.quote(ESPACIO_TRABAJO)
+    base = f'find {q} -mindepth 1 -maxdepth {ARCHIVOS_PROFUNDIDAD} -name ".*" -prune -o -type f'
+    partes = []
+    if nombres:
+        partes.append(base + ' \\( ' + ' -o '.join(f'-name {shlex.quote(n)}' for n in nombres) + ' \\) -print')
+    partes.append(f'{base} -mmin -{int(minutos)} -print')
+    return (f'cd {q} 2>/dev/null || {{ echo SIN_ESPACIO; exit 0; }}; '
+            '{ ' + '; '.join(partes) + "; } 2>/dev/null | awk '!v[$0]++' | head -n 40 | "
+            'while IFS= read -r f; do printf "%s\\t%s\\t%s\\n" "$(stat -c "%s %Y" -- "$f")" '
+            '"$(sha256sum -- "$f" | cut -d" " -f1)" "$f"; done')
+
+
+def comprobar_archivos(t, respuesta):
+    """Después de la tarea, el NODO mira su propio espacio de trabajo: lo que la instrucción o la respuesta nombran (si
+    existe, cuánto pesa y su sha256) y lo que se creó o cambió durante ESTA tarea (`reciente`). Del texto del modelo
+    solo sale qué buscar; lo de fuera del espacio no se mira (`fuera`). Devuelve (archivos, error); (None, error) si no
+    pudo mirar: eso es «sin comprobar», no «no hay archivos»."""
+    buscar, fuera = [], []
+    for n in rutas_mencionadas(t.instruccion, respuesta):
+        dentro = ruta_en_espacio(n)
+        (fuera if dentro is None else buscar).append((n, dentro))
+    nombres = sorted({posixpath.basename(dentro or n) for n, dentro in buscar})
+    minutos = int((time.time() - t.desde) // 60) + 2
+    try:
+        salida = en_escritorio(comando_archivos(nombres, minutos), timeout=40).decode('utf-8', 'replace')
+    except Exception as e:
+        return None, str(e)[:200] or 'no pude mirar el escritorio'
+    if salida.strip() == 'SIN_ESPACIO':
+        return None, f'no encontré el espacio de trabajo ({ESPACIO_TRABAJO})'
+
+    def es(a, n, dentro):
+        return a['ruta'] == dentro if dentro else posixpath.basename(a['ruta']) == posixpath.basename(n)
+
+    archivos = []
+    for linea in salida.splitlines():
+        partes = linea.split('\t', 2)
+        tam = partes[0].split() if len(partes) == 3 else []
+        if len(tam) != 2 or not re.fullmatch(r'[0-9a-f]{64}', partes[1]):
+            continue
+        ruta = posixpath.normpath(partes[2])
+        if not ruta.startswith(ESPACIO_TRABAJO + '/'):
+            continue
+        try:
+            a = {'ruta': ruta, 'existe': True, 'bytes': int(tam[0]), 'sha256': partes[1], 'reciente': float(tam[1]) >= t.desde - 2}
+        except ValueError:
+            continue
+        a['mencionado'] = any(es(a, n, dentro) for n, dentro in buscar)
+        if a['reciente'] or a['mencionado']:
+            archivos.append(a)
+    for n, dentro in buscar:
+        if not any(es(a, n, dentro) for a in archivos):
+            archivos.append({'ruta': n, 'existe': False, 'bytes': 0, 'sha256': None, 'mencionado': True})
+    archivos += [{'ruta': n, 'existe': False, 'bytes': 0, 'sha256': None, 'mencionado': True, 'fuera': True} for n, _ in fuera]
+    archivos.sort(key=lambda a: not a.get('mencionado'))  # lo nombrado primero; después lo nuevo
+    return archivos[:ARCHIVOS_MAX], None
+
+
+def terminar_hecha(t, respuesta):
+    """La tarea dice que terminó (`answer`). Antes de contarla «hecha», el nodo comprueba él mismo los archivos de su
+    espacio de trabajo («guardé el archivo» es lo que dice el modelo, no prueba). Se anota ANTES del final: nadie ve
+    «hecha» sin su comprobación (o sin el porqué de no tenerla)."""
+    try:
+        archivos, error = comprobar_archivos(t, respuesta)
+    except Exception as e:  # comprobar nunca impide cerrar la tarea: queda «sin comprobar»
+        archivos, error = None, str(e)[:200] or 'falló la comprobación'
+    with t.cambio:
+        t.archivos, t.archivos_error = archivos, error
+    return t.cerrar('hecha', respuesta=respuesta)
 
 
 # ------------------------------------------------------------------ tareas
@@ -896,8 +1011,13 @@ class Tarea:
         self.pasos = []
         self.respuesta = None
         self.error = None
+        # Lo que el nodo comprobó en su espacio de trabajo al terminar (terminar_hecha); None: no se miró.
+        self.archivos = None
+        self.archivos_error = None
         self.parar = False
         self.creada = time.time()
+        # Desde cuándo cuenta lo que se guarda como «de esta misión» (la primera tarea de la misión, si sigue a otra).
+        self.desde = self.creada
         self.cambio = threading.Condition()
         # Pausa, control de la persona y confirmación: se miran entre un paso y el siguiente.
         self.pausa = False
@@ -1182,6 +1302,7 @@ class Tarea:
             parada, traspaso = self._copia_parada(self.parada), dict(self.traspaso) if self.traspaso else None
         return {'id': self.id, 'motor': self.motor, 'instruccion': self.instruccion, 'estado': self.estado_visible(), 'pasos': pasos,
                 'respuesta': self.respuesta, 'error': self.error, 'segundos': round(time.time() - self.creada, 1),
+                'archivos': self.archivos, 'archivos_error': self.archivos_error,
                 'pregunta': self.pregunta, 'pregunta_id': self.pregunta_id, 'propuesta': self.propuesta,
                 'en_espera': self.en_espera, 'epoca': self.epoca, 'parada': parada, 'traspaso': traspaso,
                 'seguro': self.seguro, 'control_cliente': bool(self.lease and self.lease.get('cliente'))}
@@ -1261,7 +1382,7 @@ def correr(t: Tarea):
                     mensajes.append({'role': 'tool', 'tool_call_id': llamada.id, 'content': NO_PAUSA})
                     continue
                 if nombre == 'answer':
-                    return t.cerrar('hecha', respuesta=str(args.get('content', '')))
+                    return terminar_hecha(t, str(args.get('content', '')))
                 if nombre == 'ask_user_confirmation':
                     si = t.pedir_confirmacion(args.get('question', ''))
                     if si is None:
@@ -1335,6 +1456,11 @@ async def crear(req: Request):
         # Ya se hizo y se olvidó (o el nodo la perdió): no se vuelve a lanzar a ciegas.
         raise HTTPException(409, 'ese pedido ya se hizo; pide la tarea de nuevo si quieres repetirla')
     t = Tarea(instruccion, max(1, min(PASOS_MAX, int(cuerpo.get('max_pasos') or 25))), motor, dueno)
+    # Sigue una misión (`desde_tarea`: su primera tarea, del MISMO dueño): lo guardado en la vuelta anterior también es
+    # de esta misión. De otro dueño o ya olvidada: cuenta desde esta tarea.
+    anterior = TAREAS.get(str(cuerpo.get('desde_tarea') or '')[:40])
+    if anterior and anterior.dueno == dueno:
+        t.desde = min(t.creada, anterior.desde)
     olvidar_viejas()
     TAREAS[t.id] = t
     if llave:

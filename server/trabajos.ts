@@ -175,7 +175,7 @@ export async function abrirEncargoComputadora(duenoCorreo: string, ambito: strin
       estado: 'running',
       entorno: { kind: 'computadora', id: 'pendiente', displayName: 'Tu computadora' },
       pasoActual: 'Se lo encargo a tu computadora',
-      criterios: [{ id: 'resultado', texto: 'Tu computadora termina y deja un resultado que lo acredita (enlaces, datos o su respuesta)', obligatorio: true }],
+      criterios: [{ id: 'resultado', texto: 'Tu computadora termina y lo entregado se comprueba (el dato que pediste, la página que abrió o el archivo que ella misma encontró); «listo» no basta', obligatorio: true }],
       origen: { kind: 'chat', ...(turnoId ? { turnoId } : {}), conversacion: linea(ambito, 80) },
       condicionParada: 'Termina con resultado, falla, la paras tú, o deja de dar noticias.',
     });

@@ -123,7 +123,7 @@ import { despacharTaller, hechosCatalogo } from './lib/taller';
 import { listarTareas } from './lib/tareas';
 import { ejecutarCodigo, ejecutorActivo } from './lib/ejecutor';
 import { construirMensajes, extraerPython } from './lib/qwen';
-import { computadoraDisponible, correoDisponible, correrBucleHarness, extraerPedidoHerramienta, MINIMO_HERRAMIENTA_MS, quitarLineaPedido, resolverPedidoConEstado, type EstadoRespuesta, type ResultadoHerramienta, type VueltaHarness } from './lib/harness';
+import { computadoraDisponible, correoDisponible, correrBucleHarness, extraerPedidoHerramienta, incierto, MINIMO_HERRAMIENTA_MS, quitarLineaPedido, resolverPedidoConEstado, type EstadoRespuesta, type ResultadoHerramienta, type VueltaHarness } from './lib/harness';
 import { herramientasDelTurno, lineaDeHerramienta, notaDeCumplir, prometeSinHacer, reglasDeManos, topeDeVoz, type ManosDelTurno } from './lib/cerebro-manos';
 import { correrCarteraConEstado } from './lib/cartera';
 import { notaDeVoz, pideNotaDeVoz } from './lib/voz';
@@ -3752,8 +3752,10 @@ async function correrHerramientaPedida(
         };
       },
       // Sin identidad verificada no hay de quién sea la tarea ni a quién avisarle: no se encarga.
-      // «parar / pausar / seguir» van a su tarea de ahora; lo demás es una misión nueva. Hecha = recibo;
-      // sin encargo = fallo; encargada y sin final (sigue, se paró, falló a medias) = pudo haber hecho algo.
+      // «parar / pausar / seguir» van a su tarea de ahora; lo demás es una misión nueva. Hecha Y comprobada
+      // (el dato pedido, el archivo que el nodo encontró) = recibo; hecha sin poder comprobarlo = `unknown`
+      // («Listo» no es evidencia: no se memoriza ni se da por hecho); sin encargo = fallo; encargada y sin
+      // final (sigue, se paró, falló a medias) = pudo haber hecho algo.
       computadora: async (tarea) => {
         if (!compu) return fallo('HARNESS computadora: solo la uso para alguien con sesión. Pídele que entre con su cuenta.');
         const orden = await comandoComputadora(compu.quien, tarea);
@@ -3761,9 +3763,11 @@ async function correrHerramientaPedida(
         // Trabajo durable (AUR08): la tarea existe ANTES de encargar, y la respuesta del turno la enlaza.
         const ref = await abrirEncargoComputadora(compu.quien, ambito, tarea);
         const r = await encargarTarea({ instruccion: tarea, quien: compu.quien, motor: compu.motor, esperaMs: compu.esperaMs, senal, aparato: compu.aparato, idioma: compu.idioma });
-        const estado = !r.id ? 'failed' : r.tarea?.estado === 'hecha' ? 'succeeded' : 'unknown';
-        await cerrarEncargoComputadora(compu.quien, ref, { misionId: r.id || null, estado, texto: r.hecho });
-        return { texto: r.hecho, estado };
+        const hecha = r.tarea?.estado === 'hecha';
+        // La tarea durable pasa a «reviso el resultado» si el nodo terminó; la reconciliación decide si se comprobó.
+        await cerrarEncargoComputadora(compu.quien, ref, { misionId: r.id || null, estado: !r.id ? 'failed' : hecha ? 'succeeded' : 'unknown', texto: r.hecho });
+        if (!r.id) return { texto: r.hecho, estado: 'failed' };
+        return hecha && r.comprobada ? { texto: r.hecho, estado: 'succeeded' } : incierto(r.hecho, { referencia: r.id, ...(hecha ? { codigo: 'sin-comprobar', incompleto: true } : {}) });
       },
       // Cada runner devuelve su estado y su recibo (AUR07): lo que no se pudo es `failed`, un borrador es un
       // recibo `borrador` (nada salió), lo parcial va `incompleto`. Ya no se deduce del tipo de herramienta.
@@ -3790,7 +3794,9 @@ async function correrHerramientaPedida(
 
 /**
  * Las misiones de su computadora como las lee el panel de tareas (server/computadora.ts: historial y vista;
- * solo lectura). Su plan marcado (con recibo de cada paso hecho) da el progreso real; su final, la evidencia.
+ * solo lectura). Su plan marcado (con recibo de cada paso hecho) da el progreso real; su final, la evidencia:
+ * solo las páginas que de verdad abrió (`visitados`, no las direcciones del texto) y los archivos que el nodo
+ * comprobó al terminar (lib/tareas-durables.ts `evaluarEntrega` decide si eso comprueba lo pedido).
  */
 function misionesComputadora(correo: string): MisionComputadoraMin[] {
   return historialDe(correo).map((h) => {
@@ -3799,7 +3805,7 @@ function misionesComputadora(correo: string): MisionComputadoraMin[] {
     return {
       id: h.id,
       tareaId: h.tareaId,
-      instruccion: h.instruccion,
+      instruccion: v?.instruccion ?? h.instruccion,
       estado: h.estado,
       ok: h.ok,
       inicio: h.inicio,
@@ -3808,7 +3814,7 @@ function misionesComputadora(correo: string): MisionComputadoraMin[] {
       resultado: v?.final ? (v.final.ok ? v.final.respuesta : v.final.respuesta || v.final.error) || null : h.resultado,
       pregunta: v?.pregunta ?? null,
       ...(v ? { plan: v.plan.map((p) => ({ texto: p.texto, estado: p.estado })) } : {}),
-      ...(v?.final ? { enlaces: v.final.enlaces, datos: v.final.datos } : {}),
+      ...(v?.final ? { enlaces: v.final.visitados, datos: v.final.datos, archivos: v.final.archivos } : {}),
     };
   });
 }

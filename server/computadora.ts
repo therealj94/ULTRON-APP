@@ -44,6 +44,7 @@ import { nivelDeCorreo } from './nivel';
 import crypto from 'node:crypto';
 import { clave } from '../lib/boveda';
 import { almacenDurable, claveDe, crearUnaVez, leerDurable } from '../lib/durable';
+import { archivoComprobado, evaluarEntrega, type ArchivoNodo, type Entrega } from '../lib/tareas-durables';
 
 export type MotorNodo = 'holo' | 'claude';
 /**
@@ -77,6 +78,12 @@ export type Tarea = {
   pregunta_id?: string | null;
   /** La huella de la propuesta que se muestra (agente.py de AUR02): el sí la devuelve, ligado a lo que se vio. */
   propuesta?: string | null;
+  /**
+   * Lo que el NODO comprobó en su espacio de trabajo al terminar (agente.py nuevo, `comprobar_archivos`): existe,
+   * bytes, sha256. Sin el campo (el agente.py de antes) o null (no pudo mirar): nada de archivos se dio por comprobado.
+   */
+  archivos?: ArchivoNodo[] | null;
+  archivos_error?: string | null;
 };
 
 const TERMINADA = new Set<EstadoTarea>(['hecha', 'parada', 'sin_pasos', 'fallo']);
@@ -459,7 +466,12 @@ type Encargo = {
 export type EstadoPlan = 'hecho' | 'actual' | 'espera' | 'pendiente' | 'fallo';
 /** `recibo`: el paso del nodo que lo hizo (tarea y número). Sin recibo, un paso nunca sale «hecho». */
 export type PasoPlan = { texto: string; estado: EstadoPlan; recibo?: { tarea: string; n: number } };
-/** La tarjeta del final: lo que se dice, lo que encontró, datos y enlaces sueltos, y la captura final. */
+/**
+ * La tarjeta del final: lo que se dice, lo que encontró, datos y enlaces sueltos, y la captura final. `ok` solo si
+ * terminó Y lo entregado se comprobó (`comprobado`: el dato pedido, el archivo que el nodo encontró); «Listo» no basta.
+ * `visitados`: las páginas que de verdad abrió (los `enlaces` también traen las del texto, para compartir).
+ * `archivos`: lo que el nodo comprobó al terminar (null: no lo comprobó). `sinComprobar`: qué faltó, si faltó.
+ */
 export type FinalMision = {
   estado: EstadoTarea;
   ok: boolean;
@@ -471,6 +483,10 @@ export type FinalMision = {
   captura: string | null;
   segundos: number;
   pasos: number;
+  visitados: string[];
+  archivos: ArchivoNodo[] | null;
+  comprobado: boolean;
+  sinComprobar: string | null;
 };
 /**
  * Una MISIÓN: lo que se pidió, su plan y su final, aunque la hagan varias tareas del nodo. Su id es el de su
@@ -615,7 +631,7 @@ export function avisosPendientes(quien: string): { ids: string[]; hecho: string 
     .map((id) => ENCARGOS.get(id))
     .filter((e): e is Encargo => !!e?.terminada && !e.avisada);
   if (!listas.length) return null;
-  const partes = listas.map((e) => `«${e.instruccion.slice(0, 160)}»: ${resumenTarea(e.terminada!)}`);
+  const partes = listas.map((e) => `«${e.instruccion.slice(0, 160)}»: ${resumenTarea(e.terminada!, e.instruccion)}`);
   return {
     ids: listas.map((e) => e.id),
     hecho: `COMPUTADORA (terminó lo que te encargaron antes) ${partes.join(' · ')} Díselo al empezar, en una o dos frases.`,
@@ -821,6 +837,42 @@ export function enlacesDe(t: Pick<Tarea, 'respuesta' | 'pasos'>): string[] {
   return urls.filter((u) => u.length <= 300 && !vistos.has(u.replace(/\/+$/, '')) && vistos.add(u.replace(/\/+$/, ''))).slice(0, 5);
 }
 
+/** Las páginas que su computadora abrió DE VERDAD (pasos open_url que el nodo hizo): esas sí cuentan como evidencia. */
+export function visitadosDe(t: Pick<Tarea, 'pasos'>): string[] {
+  const urls = t.pasos
+    .filter((p) => p.accion === 'open_url' && p.hecho !== false && !p.incierto)
+    .map((p) => String((p.args as any)?.url || '').trim())
+    .filter(Boolean)
+    .map((u) => (/^https?:\/\//i.test(u) ? u : `https://${u}`));
+  const vistos = new Set<string>();
+  return urls.filter((u) => u.length <= 300 && !vistos.has(u.replace(/\/+$/, '')) && vistos.add(u.replace(/\/+$/, ''))).slice(0, 5);
+}
+
+/** Lo que el nodo dijo de sus archivos, saneado (null si no lo comprobó: el agente.py de antes o no pudo mirar). */
+export function archivosDe(t: Pick<Tarea, 'archivos'>): ArchivoNodo[] | null {
+  if (!Array.isArray(t.archivos)) return null;
+  return t.archivos.slice(0, 12).flatMap((a: any) =>
+    a && typeof a === 'object' && typeof a.ruta === 'string'
+      ? [
+          {
+            ruta: a.ruta.slice(0, 400),
+            existe: a.existe === true,
+            bytes: Number.isFinite(a.bytes) ? Math.max(0, Math.floor(a.bytes)) : 0,
+            sha256: typeof a.sha256 === 'string' ? a.sha256.slice(0, 64) : null,
+            ...(typeof a.reciente === 'boolean' ? { reciente: a.reciente } : {}),
+            ...(a.mencionado === true ? { mencionado: true } : {}),
+            ...(a.fuera === true ? { fuera: true } : {}),
+          },
+        ]
+      : []
+  );
+}
+
+/** Lo entregado de una tarea terminada, comprobado o no (lib/tareas-durables.ts `evaluarEntrega`). */
+export function entregaDe(instruccion: string, t: Pick<Tarea, 'id' | 'respuesta' | 'pasos' | 'archivos'>): Entrega {
+  return evaluarEntrega({ id: t.id, instruccion, resultado: t.respuesta ?? null, enlaces: visitadosDe(t), datos: datosDe(t.respuesta), archivos: archivosDe(t) });
+}
+
 /** «Compra: 24.70», «Venta: 24.95»: los datos sueltos de la respuesta, para la tabla de la tarjeta. */
 export function datosDe(respuesta: string | null | undefined): { clave: string; valor: string }[] {
   const out: { clave: string; valor: string }[] = [];
@@ -843,7 +895,9 @@ function cerrarMision(e: Encargo, t: Tarea) {
   m.fin = Date.now();
   m.pregunta = null;
   moverPlan(e, t);
-  const ok = t.estado === 'hecha' && !misionIncompleta(t);
+  // «Listo» no es evidencia (revisión externa, 4-oct): ok solo si lo entregado se comprobó.
+  const entrega = entregaDe(m.instruccion, t);
+  const ok = t.estado === 'hecha' && !misionIncompleta(t) && entrega.comprobada;
   m.final = {
     estado: t.estado,
     ok,
@@ -855,6 +909,10 @@ function cerrarMision(e: Encargo, t: Tarea) {
     captura: ultimaMiniatura(t),
     segundos: Math.round((m.fin - m.inicio) / 1000),
     pasos: m.pasosPrevios + pasosUtiles(t),
+    visitados: visitadosDe(t),
+    archivos: archivosDe(t),
+    comprobado: t.estado === 'hecha' && entrega.comprobada,
+    sinComprobar: t.estado === 'hecha' && !entrega.comprobada ? entrega.falta : null,
   };
   // A medias (sin pasos o perdió el contacto) y no la paró la persona: su «sí» la sigue.
   m.ofreceSeguir = !ok && (t.estado === 'sin_pasos' || t.estado === 'fallo') && m.rondas < MAX_RONDAS ? Date.now() : undefined;
@@ -1046,8 +1104,12 @@ export function fraseDeFinal(mision: string, t: Tarea, idioma: 'es' | 'en' = 'es
     return s.length > n ? `${s.slice(0, n - 1)}…` : s;
   };
   if (t.estado === 'hecha') {
+    // Lo que no se comprobó no se dice como hecho: ni «listo», ni «ya lo guardé» (revisión externa, 4-oct).
+    const ent = entregaDe(mision, t);
+    if (!ent.comprobada) return fraseSinComprobar(ent, en, corto(t.respuesta, 200));
     const r = corto(t.respuesta, 650);
-    return r ? (en ? `Done, I finished on my computer. ${r}` : `Listo, ya terminé en mi computadora. ${r}`) : en ? 'Done, I finished on my computer.' : 'Listo, ya terminé en mi computadora.';
+    const arch = ent.tipo === 'archivo' ? archivosEnPalabras(t, en) : '';
+    return r ? (en ? `Done, I finished on my computer. ${r}${arch}` : `Listo, ya terminé en mi computadora. ${r}${arch}`) : en ? `Done, I finished on my computer.${arch}` : `Listo, ya terminé en mi computadora.${arch}`;
   }
   if (t.estado === 'sin_pasos') {
     const u = [...t.pasos].reverse().find((p) => p.accion !== 'answer' && p.accion !== 'escritorio_limpio');
@@ -1057,6 +1119,41 @@ export function fraseDeFinal(mision: string, t: Tarea, idioma: 'es' | 'en' = 'es
   if (t.estado === 'fallo') return en ? `My computer failed: ${corto(t.error || 'no details', 120)}.` : `Mi computadora falló: ${corto(t.error || 'sin detalle', 120)}.`;
   if (t.error) return en ? `I stopped the computer task: ${corto(t.error, 120)}.` : `Paré lo de mi computadora: ${corto(t.error, 120)}.`;
   return en ? 'I stopped the computer task.' : 'Paré lo de mi computadora.';
+}
+
+/** «informe.odt (4096 bytes)»: lo que el nodo comprobó, dicho corto (vacío si no comprobó nada). */
+function listaComprobados(t: Pick<Tarea, 'archivos'>): string {
+  return (archivosDe(t) || [])
+    .filter(archivoComprobado)
+    .slice(0, 3)
+    .map((a) => `${a.ruta.split('/').pop()} (${a.bytes} bytes)`)
+    .join(', ');
+}
+
+function archivosEnPalabras(t: Pick<Tarea, 'archivos'>, en: boolean): string {
+  const lista = listaComprobados(t);
+  return !lista ? '' : en ? ` (I checked: ${lista}.)` : ` (Lo comprobé: ${lista}.)`;
+}
+
+/**
+ * El final de una tarea que dice que terminó pero cuya entrega no se pudo comprobar: honesto, sin «listo». Lo que
+ * dijo el modelo va entre comillas y a su nombre («mi computadora dice…»): es lo que afirma, no un hecho.
+ */
+function fraseSinComprobar(ent: Entrega, en: boolean, respuesta: string): string {
+  const r = respuesta ? `«${respuesta}»` : '';
+  if (ent.tipo === 'archivo') {
+    return en
+      ? `My computer says it saved it${r ? ` (${r})` : ''}, but I couldn’t verify that the file is there, so I’m not calling it done. Want me to check again?`
+      : `Mi computadora dice que lo guardó${r ? ` (${r})` : ''}, pero no pude comprobar que el archivo esté ahí, así que no lo doy por hecho. ¿Lo reviso otra vez?`;
+  }
+  if (ent.tipo === 'accion') {
+    return en
+      ? `My computer says ${r || 'it did it'}, but I couldn’t verify it from here. Please check before we count it as done.`
+      : `Mi computadora dice ${r || 'que ya lo hizo'}, pero no pude comprobarlo desde aquí. Revísalo antes de darlo por hecho.`;
+  }
+  return en
+    ? `My computer finished${r ? ` and said ${r}` : ''}, but it didn’t bring back what you asked for, so I couldn’t verify it.`
+    : `Mi computadora terminó${r ? ` y dijo ${r}` : ''}, pero no trajo lo que pediste, así que no pude comprobarlo.`;
 }
 
 /** La pregunta antes de algo sensible, para decirla en voz. */
@@ -1305,10 +1402,10 @@ async function alTerminar(e: Encargo, t: Tarea, enTurno: boolean, sinSeguir = fa
   if (enTurno || (t.estado === 'parada' && !t.error)) {
     e.avisada = true;
     confirmarAvisos(e.quien, [e.id]);
-    avisarApp(e, { tipo: 'computadora', fase: 'termina', id: e.id, ok: t.estado === 'hecha' });
+    avisarApp(e, { tipo: 'computadora', fase: 'termina', id: e.id, ok: !!e.mision.final?.ok });
     return { sigue: null };
   }
-  const llego = avisarApp(e, { tipo: 'computadora', fase: 'termina', id: e.id, ok: t.estado === 'hecha' && !misionIncompleta(t), texto: fraseDeFinal(e.instruccion, t, e.idioma) }, true);
+  const llego = avisarApp(e, { tipo: 'computadora', fase: 'termina', id: e.id, ok: !!e.mision.final?.ok, texto: e.mision.final?.texto ?? fraseDeFinal(e.instruccion, t, e.idioma) }, true);
   if (llego) confirmarAvisos(e.quien, [e.id]);
   return { sigue: null };
 }
@@ -1332,9 +1429,11 @@ async function crearEncargo(o: {
    */
   pedido?: string;
 }): Promise<Encargo> {
+  // `desde_tarea`: la primera tarea de la misión, para que el nodo cuente como «de esta misión» lo que se guardó en
+  // una vuelta anterior (agente.py nuevo; el de antes lo ignora).
   const creada: { id: string } = await pedir('/tareas', {
     method: 'POST',
-    body: JSON.stringify({ instruccion: o.paraNodo, motor: o.motor, max_pasos: o.maxPasos, dueno: huellaDe(o.quien), ...(o.pedido ? { request_id: o.pedido } : {}) }),
+    body: JSON.stringify({ instruccion: o.paraNodo, motor: o.motor, max_pasos: o.maxPasos, dueno: huellaDe(o.quien), ...(o.pedido ? { request_id: o.pedido } : {}), ...(o.mision ? { desde_tarea: o.mision.id } : {}) }),
   });
   // Ya la conocía (el nodo dijo que era la misma de un pedido anterior): no se anota ni se sigue dos veces.
   const yaEra = ENCARGOS.get(creada.id);
@@ -1408,10 +1507,25 @@ async function crearConReintento(o: Parameters<typeof crearEncargo>[0]): Promise
   }
 }
 
-/** El resultado contado para el modelo: qué pasó, en cuántos pasos, y la respuesta tal cual. */
-export function resumenTarea(t: Tarea): string {
+/**
+ * El resultado contado para el modelo: qué pasó, en cuántos pasos, la respuesta tal cual y si lo entregado se
+ * comprobó. Lo que no se comprobó va marcado SIN COMPROBAR con la orden de no darlo por hecho (revisión externa, 4-oct:
+ * AURA no dice «ya lo guardé» si el nodo no encontró el archivo).
+ */
+export function resumenTarea(t: Tarea, instruccion: string = t.instruccion): string {
   const pasos = pasosUtiles(t);
-  if (t.estado === 'hecha') return `Hecha en ${pasos} pasos (${Math.round(t.segundos)} s). Lo que encontró o hizo: ${String(t.respuesta || '').slice(0, 1500)}`;
+  if (t.estado === 'hecha') {
+    const ent = entregaDe(instruccion, t);
+    const dijo = String(t.respuesta || '').slice(0, 1500);
+    if (!ent.comprobada) {
+      return (
+        `Hecha en ${pasos} pasos (${Math.round(t.segundos)} s), según tu computadora. Lo que dijo: ${dijo || '(nada)'} ` +
+        `SIN COMPROBAR: ${ent.falta || 'no pude comprobarlo.'} No digas que quedó hecho ni guardado: di que tu computadora dice que terminó, que no pudiste comprobarlo, y ofrece revisarlo.`
+      );
+    }
+    const lista = ent.tipo === 'archivo' ? listaComprobados(t) : '';
+    return `Hecha en ${pasos} pasos (${Math.round(t.segundos)} s). Lo que encontró o hizo: ${dijo}${lista ? ` COMPROBADO por tu computadora: ${lista}.` : ''}`;
+  }
   if (t.estado === 'parada') return t.error ? `Se detuvo antes de terminar: ${t.error}.` : 'La pararon antes de terminar.';
   if (t.estado === 'sin_pasos') return `No la terminó en ${pasos} pasos. ${t.error || ''}`.trim();
   return `Falló: ${t.error || 'sin detalle'}.`;
@@ -1436,7 +1550,7 @@ export async function encargarTarea(o: {
   decirPlan?: boolean;
   /** El id del pedido de la app (`requestId`): repetido, el nodo devuelve la misma tarea. */
   pedido?: string;
-}): Promise<{ hecho: string; id: string | null; tarea: Tarea | null; incierto?: boolean }> {
+}): Promise<{ hecho: string; id: string | null; tarea: Tarea | null; incierto?: boolean; comprobada?: boolean }> {
   if (!computadoraConfigurada()) {
     return { hecho: 'HARNESS computadora: no está configurada en este servidor. No la usé; dilo con naturalidad.', id: null, tarea: null };
   }
@@ -1486,7 +1600,7 @@ export async function encargarTarea(o: {
     }
     // Se cerró mientras se consultaba (AUR04): vale el final que ya se decidió, no la lectura vieja.
     if (!aceptarLectura(e, gen, leida)) {
-      if (e.cerrada && e.terminada) return { hecho: `HARNESS computadora «${instruccion.slice(0, 160)}»: ${resumenTarea(e.terminada)}${nota}`, id: e.id, tarea: e.terminada };
+      if (e.cerrada && e.terminada) return { hecho: `HARNESS computadora «${instruccion.slice(0, 160)}»: ${resumenTarea(e.terminada, instruccion)}${nota}`, id: e.id, tarea: e.terminada, comprobada: !!e.mision.final?.comprobado };
       continue;
     }
     t = leida;
@@ -1509,13 +1623,13 @@ export async function encargarTarea(o: {
       if (sigue) {
         return {
           hecho:
-            `HARNESS computadora «${instruccion.slice(0, 160)}»: la primera parte no alcanzó (${resumenTarea(t).slice(0, 200)}) y ya sigue sola en tu computadora con lo que falta.${nota} ` +
+            `HARNESS computadora «${instruccion.slice(0, 160)}»: la primera parte no alcanzó (${resumenTarea(t, instruccion).slice(0, 200)}) y ya sigue sola en tu computadora con lo que falta.${nota} ` +
             `Di que sigues trabajando en eso. ${mira} No inventes el resultado.`,
           id: sigue.id,
           tarea: t,
         };
       }
-      return { hecho: `HARNESS computadora «${instruccion.slice(0, 160)}»: ${resumenTarea(t)}${nota}`, id: e.id, tarea: t };
+      return { hecho: `HARNESS computadora «${instruccion.slice(0, 160)}»: ${resumenTarea(t, instruccion)}${nota}`, id: e.id, tarea: t, comprobada: !!e.mision.final?.comprobado };
     }
   }
   if (!e.cerrada) {
