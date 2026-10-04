@@ -2728,6 +2728,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     whatsapp: !!duenoComputadora && whatsappPermitido(duenoComputadora),
     appEspera: !!(correoApp && pendienteAnterior(ambitoApp(correoApp, body?.aparato))),
     app: appEsperando,
+    conocidos: (contextoApp?.contactos || []).map((c) => c.nombre),
     registrarEfecto: () => efectoDelTurno('decision'),
   });
   hechos.push(...decision.hechos);

@@ -34,6 +34,11 @@ export type OpcionesDecisionTurno = {
   appEspera?: boolean;
   /** Qué espera la app (su borrador o su propuesta de un turno anterior, o lo escrito en el chat abierto). */
   app?: AppEsperando | null;
+  /**
+   * Quinta ronda: los nombres de sus contactos (los que mandó el teléfono): el nombre del avatar que es un contacto no
+   * es un vocativo («Antonio, sí»).
+   */
+  conocidos?: string[];
   /** Persistir antes de actuar (server/turno-unico.ts efectoDelTurno('decision')): false = no se resuelve nada. */
   registrarEfecto: () => Promise<boolean>;
 };
@@ -72,10 +77,12 @@ export function pendientesDelTurno(o: { dueno: string; ambito: string; whatsapp:
   if (c && !c.soloPanel) {
     // Cuarta ronda: a varios, cada uno cuenta (nombrar solo a una parte no lo elige); a la persona misma, «a mí» coincide.
     const propia = c.para.length > 0 && c.para.every((x) => x.trim().toLowerCase() === o.dueno.trim().toLowerCase());
-    out.push({ origen: 'correo', tipo: 'correo', destino: `${(c.nombres || []).join(' ')} ${c.para.join(' ')}`.trim(), ...(c.para.length > 1 ? { destinatarios: [...c.para] } : {}), ...(propia ? { propia: true } : {}), id: c.intento });
+    // Quinta ronda: su asunto y su texto son su `tema` (no la identifican, pero si lo nombrado cuadra con el tema de otra,
+    // se pregunta: «el de la luz»).
+    out.push({ origen: 'correo', tipo: 'correo', destino: `${(c.nombres || []).join(' ')} ${c.para.join(' ')}`.trim(), ...(c.para.length > 1 ? { destinatarios: [...c.para] } : {}), ...(propia ? { propia: true } : {}), tema: `${c.asunto} ${c.texto}`, id: c.intento });
   }
   const w = o.whatsapp ? borradorWhatsappDe(o.dueno, o.ambito) : null;
-  if (w && !w.soloPanel) out.push({ origen: 'whatsapp', tipo: 'whatsapp', destino: `${destinoWhatsapp(w)} ${w.chat}`, id: w.intento });
+  if (w && !w.soloPanel) out.push({ origen: 'whatsapp', tipo: 'whatsapp', destino: `${destinoWhatsapp(w)} ${w.chat}`, tema: w.texto, id: w.intento });
   for (const p of preguntasComputadora(o.dueno, o.ambito)) out.push({ origen: 'computadora', tipo: 'computadora', texto: p.texto, id: p.tareaId });
   if (o.app) {
     const tipo = TIPO_APP[o.app.que] ?? 'mensaje';
@@ -114,7 +121,7 @@ export async function resolverDecisionesDelTurno(o: OpcionesDecisionTurno): Prom
   const nada = (extra: Partial<SalidaDecisionTurno> = {}): SalidaDecisionTurno => ({ hechos, turnoVigente: true, delCorreo: null, delWhatsapp: null, deLaPregunta: null, ambiguo: false, appBloqueada: false, respondio: false, ...extra });
   if (!dueno) return nada();
   const pendientes = pendientesDelTurno({ dueno, ambito, whatsapp: o.whatsapp, app: o.app });
-  const d = decidirPendiente(message, pendientes);
+  const d = decidirPendiente(message, pendientes, { conocidos: o.conocidos });
   const efecto = d.tipo === 'ejecutar' && d.p.origen !== 'app';
   // Un «sí» que va a mandar un borrador o soltar a su computadora: antes se deja anotado en el turno durable (AUR06,
   // persistir antes de actuar). Si este proceso ya no es el dueño del turno, no se resuelve nada aquí.
