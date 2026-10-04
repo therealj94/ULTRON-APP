@@ -177,8 +177,14 @@ export type RegistroTarea = {
 
 /** Cuántos eventos se guardan con la tarea (el resto se reconstruye con el snapshot). */
 export const MAX_EVENTOS = 60;
-/** Cuántas tareas durables recuerda el índice de cada dueño. */
-export const MAX_INDICE = 40;
+/**
+ * Cuántas tareas TERMINADAS recuerda el índice de cada dueño (P5/A7). Las que no se sabe que terminaron no se recortan
+ * nunca: antes el índice guardaba las 40 más nuevas y la 41.ª tarea activa sacaba a la primera, que seguía en cola.
+ */
+export const MAX_HISTORIAL_INDICE = 200;
+/** Versión del esquema de la tarea durable y de su índice (va en el manifiesto de entrega). */
+export const ESQUEMA_TAREAS = 1;
+export const ESQUEMA_INDICE = 2;
 export const ESPACIO_TAREAS = 'tareas';
 export const ESPACIO_PEDIDOS = 'tareas/pedidos';
 export const ESPACIO_INDICE = 'tareas/indice';
@@ -380,26 +386,84 @@ export async function crearTarea(dueno: string, d: NuevaTarea, o: Opciones = {})
   if (!d.requestId || !d.titulo) return { ok: false, motivo: 'invalida', detalle: 'falta requestId o título' };
   const r = await reservarPedido({ espacio: ESPACIO_PEDIDOS, dueno, requestId: d.requestId, propuesto: idNuevo('tk'), almacen: a });
   if (r.ok === false) return { ok: false, motivo: 'almacen', detalle: r.detalle };
+  // P5/A7: el índice ANTES que el objeto. Una tarea que existe siempre está en su índice (antes se escribía la tarea, el
+  // índice fallaba con un aviso en el log y la tarea «creada» no salía nunca en la lista). Si el índice no se puede
+  // escribir, no se crea la tarea: el reintento del mismo pedido reserva el MISMO id y la deja anotada y creada. Una
+  // entrada sin objeto (se cayó entre las dos escrituras) no es una tarea: la lista la salta y la poda con el tiempo.
+  const ix = await indexar(dueno, r.id, ahora, a);
+  if (ix.ok === false) return { ok: false, motivo: 'almacen', detalle: `no pude anotar la tarea en tu índice; no la creé (${ix.detalle.slice(0, 100)})` };
   // Si quien reservó murió antes de escribir la tarea, el siguiente la escribe con el MISMO id.
   const c = await crearUnaVez(claveTarea(dueno, r.id), registroNuevo(r.id, d, ahora), a);
   if (c.ok === false) return { ok: false, motivo: 'almacen', detalle: c.detalle };
-  await indexar(dueno, r.id, ahora, a);
   return { ok: true, creada: c.creado, tarea: c.valor };
 }
 
-type Indice = { v: 1; ids: { id: string; t: number }[] };
+/**
+ * El índice de un dueño. `fin`: cuándo se supo que terminó (solo esas se recortan, las más viejas primero). Una entrada
+ * sin `fin` es «puede seguir activa» (las del índice v1 no lo traen): la lista la lee y, si ya terminó, la repara.
+ */
+type EntradaIndice = { id: string; t: number; fin?: number };
+type Indice = { v: 1 | 2; ids: EntradaIndice[] };
 
-async function indexar(dueno: string, id: string, ahora: number, a: AlmacenDurable) {
-  const r = await modificarDurable<Indice>(
+/** Recorta el índice: todas las que pueden seguir activas y las MAX_HISTORIAL_INDICE terminadas más recientes. */
+function recortarIndice(ids: EntradaIndice[]): EntradaIndice[] {
+  const terminadas = ids.filter((x) => x.fin).sort((x, y) => y.fin! - x.fin!);
+  const fuera = new Set(terminadas.slice(MAX_HISTORIAL_INDICE).map((x) => x.id));
+  return fuera.size ? ids.filter((x) => !fuera.has(x.id)) : ids;
+}
+
+async function indexar(dueno: string, id: string, ahora: number, a: AlmacenDurable): Promise<{ ok: true } | { ok: false; detalle: string }> {
+  let ultimo = '';
+  // Un fallo pasajero del almacén se reintenta una vez (los conflictos ya los reintenta modificarDurable).
+  for (let i = 0; i < 2; i++) {
+    const r = await modificarDurable<Indice>(
+      claveIndice(dueno),
+      (ix) => {
+        const ids = ix?.ids || [];
+        if (ids.some((x) => x.id === id)) return undefined;
+        return { v: 2, ids: recortarIndice([{ id, t: ahora }, ...ids]) };
+      },
+      a
+    );
+    if (r.ok === true) return { ok: true };
+    ultimo = r.detalle;
+  }
+  console.warn('[tareas] no pude anotar la tarea en el índice (no se crea):', ultimo.slice(0, 120));
+  return { ok: false, detalle: ultimo };
+}
+
+/**
+ * Repara el índice con lo que se aprendió al leer: `fin` para las que ya terminaron, fuera las entradas sin objeto que
+ * llevan más de un día (una creación que se cayó a medias) y dentro una tarea que existe y no estaba (`agregar`).
+ * Lo mejor posible: si falla, el índice queda como estaba (nunca se pierde una activa por esto).
+ */
+async function repararIndice(dueno: string, r: { fines?: Map<string, number>; podar?: Set<string>; agregar?: EntradaIndice }, a: AlmacenDurable): Promise<void> {
+  if (!r.fines?.size && !r.podar?.size && !r.agregar) return;
+  await modificarDurable<Indice>(
     claveIndice(dueno),
     (ix) => {
-      const ids = ix?.ids || [];
-      if (ids.some((x) => x.id === id)) return undefined;
-      return { v: 1, ids: [{ id, t: ahora }, ...ids].slice(0, MAX_INDICE) };
+      let ids = ix?.ids || [];
+      let cambio = false;
+      if (r.agregar && !ids.some((x) => x.id === r.agregar!.id)) {
+        ids = [r.agregar, ...ids];
+        cambio = true;
+      }
+      ids = ids.flatMap((x) => {
+        if (r.podar?.has(x.id)) {
+          cambio = true;
+          return [];
+        }
+        const fin = r.fines?.get(x.id);
+        if (fin && !x.fin) {
+          cambio = true;
+          return [{ ...x, fin }];
+        }
+        return [x];
+      });
+      return cambio ? { v: 2, ids: recortarIndice(ids) } : undefined;
     },
     a
-  );
-  if (r.ok === false) console.warn('[tareas] no pude anotar la tarea en el índice:', r.detalle.slice(0, 120));
+  ).catch(() => undefined);
 }
 
 /** La tarea id de una petición ya reservada (sin crear nada). null si no hay. */
@@ -417,14 +481,106 @@ export async function leerTarea(dueno: string, id: string, a: AlmacenDurable = a
   return { ok: true, tarea: l.valor };
 }
 
-/** Las durables del dueño, la más nueva primero. `ok: false` si el índice no se pudo leer. */
-export async function listarTareas(dueno: string, a: AlmacenDurable = almacenDurable()): Promise<{ ok: true; tareas: RegistroTarea[] } | { ok: false; detalle: string }> {
+/**
+ * Una tarea que se leyó directamente por su id (la app la tenía de una respuesta del chat): si existe y no estaba en el
+ * índice (una tarea de antes de P5 que el tope de 40 sacó), se vuelve a anotar. Así el índice es REPARABLE.
+ */
+export async function asegurarEnIndice(dueno: string, reg: Pick<RegistroTarea, 'id' | 'creada' | 'estado' | 'actualizada'>, a: AlmacenDurable = almacenDurable()): Promise<void> {
+  const ix = await leerDurable<Indice>(claveIndice(dueno), a).catch(() => null);
+  if (!ix || ix.ok === false || ix.valor?.ids.some((x) => x.id === reg.id)) return;
+  await repararIndice(dueno, { agregar: { id: reg.id, t: reg.creada, ...(esTerminal(reg.estado) ? { fin: reg.actualizada } : {}) } }, a);
+}
+
+/**
+ * Una página de la lista (P5/A7). `completo: false` si alguna tarea del índice no se pudo leer (`noLeidas`): un fallo del
+ * almacén NUNCA es «no hay tareas». `siguiente`: el cursor de la página que sigue (null si no hay más). Orden estable:
+ * primero las que pueden seguir activas (la más nueva primero) y después las terminadas (la que terminó más tarde
+ * primero). Con `recientesMs`, las terminadas hace más que eso no se devuelven (siguen en el índice, son historial).
+ */
+export type PaginaTareas = {
+  ok: true;
+  tareas: RegistroTarea[];
+  noLeidas: string[];
+  completo: boolean;
+  siguiente: string | null;
+  conteo: { activas: number; terminadas: number; indice: number; noLeidas: number };
+};
+export type OpcionesLista = { limite?: number; cursor?: string | null; recientesMs?: number; ahora?: number };
+
+type Cursor = { s: 'a' | 'h'; k: number; id: string };
+const leerCursor = (c: string | null | undefined): Cursor | null => {
+  if (!c) return null;
+  try {
+    const x = JSON.parse(Buffer.from(String(c), 'base64url').toString('utf8'));
+    return (x?.s === 'a' || x?.s === 'h') && Number.isFinite(x.k) && typeof x.id === 'string' ? { s: x.s, k: x.k, id: x.id } : null;
+  } catch {
+    return null;
+  }
+};
+const escribirCursor = (c: Cursor) => Buffer.from(JSON.stringify(c)).toString('base64url');
+/** Dónde va cada entrada en el orden de la lista. */
+const posicion = (x: EntradaIndice): Cursor => (x.fin ? { s: 'h', k: x.fin, id: x.id } : { s: 'a', k: x.t, id: x.id });
+/** ¿`p` va antes que `q`? Activas antes que historial; dentro, la clave mayor primero; empate, por id. */
+const antes = (p: Cursor, q: Cursor) => (p.s !== q.s ? p.s === 'a' : p.k !== q.k ? p.k > q.k : p.id < q.id);
+
+export async function listarTareasPagina(dueno: string, o: OpcionesLista = {}, a: AlmacenDurable = almacenDurable()): Promise<PaginaTareas | { ok: false; detalle: string }> {
   const ix = await leerDurable<Indice>(claveIndice(dueno), a);
   if (ix.ok === false) return { ok: false, detalle: ix.detalle };
-  const ids = ix.valor?.ids || [];
-  const leidas = await Promise.all(ids.map((x) => leerTarea(dueno, x.id, a)));
-  const tareas = leidas.flatMap((l) => (l.ok && l.tarea ? [l.tarea] : []));
-  return { ok: true, tareas: tareas.sort((x, y) => y.actualizada - x.actualizada) };
+  const ahora = o.ahora ?? Date.now();
+  const limite = o.limite && o.limite > 0 ? Math.floor(o.limite) : Infinity;
+  const desde = leerCursor(o.cursor);
+  const corte = o.recientesMs !== undefined ? ahora - o.recientesMs : -Infinity;
+  const entradas = (ix.valor?.ids || []).map((x) => ({ x, p: posicion(x) })).sort((u, v) => (antes(u.p, v.p) ? -1 : 1));
+  // Las terminadas fuera de `recientesMs` no se leen: ya se sabe que no van.
+  const candidatas = entradas.filter((e) => !(e.x.fin && e.x.fin < corte) && (!desde || antes(desde, e.p)));
+  const tareas: RegistroTarea[] = [];
+  const noLeidas: string[] = [];
+  const fines = new Map<string, number>();
+  const podar = new Set<string>();
+  const sinObjeto = new Set<string>();
+  let ultima: Cursor | null = null;
+  let i = 0;
+  // De a 10 en paralelo, hasta llenar la página.
+  while (i < candidatas.length && tareas.length < limite) {
+    const tanda = candidatas.slice(i, i + Math.min(10, Math.max(1, limite === Infinity ? 10 : limite - tareas.length)));
+    i += tanda.length;
+    const leidas = await Promise.all(tanda.map((e) => leerTarea(dueno, e.x.id, a).catch((err) => ({ ok: false as const, detalle: String(err?.message || err) }))));
+    tanda.forEach((e, j) => {
+      const l = leidas[j];
+      ultima = e.p;
+      if (l.ok === false) {
+        noLeidas.push(e.x.id);
+        return;
+      }
+      if (!l.tarea) {
+        sinObjeto.add(e.x.id);
+        if (ahora - e.x.t > 86_400_000) podar.add(e.x.id);
+        return;
+      }
+      if (esTerminal(l.tarea.estado) && !e.x.fin) fines.set(e.x.id, l.tarea.actualizada);
+      if (esTerminal(l.tarea.estado) && l.tarea.actualizada < corte) return;
+      tareas.push(l.tarea);
+    });
+  }
+  await repararIndice(dueno, { fines, podar }, a);
+  const quedan = i < candidatas.length;
+  const total = ix.valor?.ids.length ?? 0;
+  const terminadas = (ix.valor?.ids || []).filter((x) => x.fin || fines.has(x.id)).length;
+  return {
+    ok: true,
+    tareas,
+    noLeidas,
+    completo: noLeidas.length === 0,
+    siguiente: quedan && ultima ? escribirCursor(ultima) : null,
+    conteo: { activas: total - terminadas - sinObjeto.size, terminadas, indice: total, noLeidas: noLeidas.length },
+  };
+}
+
+/** Las durables del dueño (todas las del índice), la más nueva primero. `ok: false` si el índice no se pudo leer. */
+export async function listarTareas(dueno: string, a: AlmacenDurable = almacenDurable()): Promise<{ ok: true; tareas: RegistroTarea[]; noLeidas: string[]; completo: boolean } | { ok: false; detalle: string }> {
+  const p = await listarTareasPagina(dueno, {}, a);
+  if (p.ok === false) return p;
+  return { ok: true, tareas: p.tareas.sort((x, y) => y.actualizada - x.actualizada), noLeidas: p.noLeidas, completo: p.completo };
 }
 
 /* ------------------------------------------------------------------ cambiar */
@@ -464,7 +620,11 @@ export async function cambiarTarea(
   );
   if (r.ok === false) return { ok: false, motivo: 'almacen', detalle: r.detalle, tarea: visto };
   if (motivo) return { ok: false, motivo, tarea: visto };
-  return { ok: true, tarea: (r.valor as RegistroTarea | null) || visto!, cambiado };
+  const final = (r.valor as RegistroTarea | null) || visto!;
+  // Terminó: su entrada del índice pasa a historial (solo esas se recortan). Si no se puede anotar, queda como «puede
+  // seguir activa» (la lista la lee y lo repara): nunca al revés.
+  if (cambiado && visto && !esTerminal(visto.estado) && esTerminal(final.estado)) await repararIndice(dueno, { fines: new Map([[id, final.actualizada]]) }, a);
+  return { ok: true, tarea: final, cambiado };
 }
 
 /* ------------------------------------------------------------------ decisiones */
@@ -1043,11 +1203,33 @@ export function deComputadora(m: MisionComputadoraMin, ahora = Date.now()): Task
  * cada una; parada, `cancelled`. Los criterios obligatorios pasan a ser los de la misión (uno por cosa pedida); los
  * opcionales se conservan.
  */
+/** Cuánto puede quedarse una tarea enlazada «reconciling» sin que su misión aparezca antes de cerrarse como incierta. */
+export const RECONCILIAR_MAX_MS = 30 * 60_000;
+
 export function reconciliarConComputadora(reg: RegistroTarea, m: MisionComputadoraMin | null, ahora: number): Cambio | null {
   if (esTerminal(reg.estado)) return null;
   if (!m) {
-    // La misión ya no está (el servidor se reinició y su memoria se fue): no se sabe cómo terminó.
-    if (reg.estado === 'reconciling') return null;
+    // La misión no está en ningún lado (P5: las misiones son durables, así que esto es una tarea de antes de P5 o una
+    // misión que el almacén perdió): no se sabe cómo terminó. Primero se reconcilia; si pasado RECONCILIAR_MAX_MS sigue sin
+    // aparecer, se cierra con la verdad —no se sabe si hubo efecto— en lugar de quedarse «reconciling» para siempre.
+    // Nunca «completed»: no hay evidencia.
+    if (reg.estado === 'reconciling') {
+      if (ahora - reg.actualizada < RECONCILIAR_MAX_MS) return null;
+      return {
+        estado: 'failed',
+        pasoActual: null,
+        criterios: reg.criterios.map((c) => (c.obligatorio ? { ...c, estado: 'unknown' as const, evidencias: [] } : c)),
+        resultado: {
+          id: `${reg.id}:resultado`,
+          resumen: 'No pude confirmar cómo terminó en tu computadora: pudo haber hecho cambios. Revísala antes de pedírmelo otra vez; no lo repito a ciegas.',
+          evidencias: [],
+          parcial: [],
+          pendiente: ['Revisar en tu computadora qué quedó hecho'],
+          t: ahora,
+        },
+        eventos: [{ type: 'operation.receipt', payload: { operationId: reg.enlace?.id ?? reg.id, state: 'unknown', effect: 'possible', motivo: 'sin-mision' } }],
+      };
+    }
     if (ahora - reg.actualizada < 90_000) return null;
     return { estado: 'reconciling', pasoActual: 'No puedo confirmar cómo terminó en tu computadora; reviso antes de repetir nada.' };
   }

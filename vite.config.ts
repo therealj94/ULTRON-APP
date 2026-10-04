@@ -2,6 +2,7 @@ import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 import {defineConfig} from 'vite';
+import {infoBuildWeb} from './scripts/pwa/vite-build-info';
 import {swAura} from './scripts/pwa/vite-sw';
 
 /** Qué páginas se compilan, según qué producto sea este despliegue. */
@@ -19,8 +20,8 @@ function entradas() {
 export default defineConfig(() => {
   return {
     // swAura: el service worker de AU-RA sale del build con la lista exacta del shell (IOS02); un build
-    // de Dr Electrum no lo emite.
-    plugins: [react(), tailwindcss(), swAura()],
+    // de Dr Electrum no lo emite. infoBuildWeb: dist/aura-build.json con el SHA del build web (P5, /api/build).
+    plugins: [react(), tailwindcss(), swAura(), infoBuildWeb()],
     /*
      * Los workers salen como módulos ES: MapLibre 6 crea el suyo con `{ type: 'module' }`, y un
      * worker en formato iife no carga así. Ver `src-electrum/mapa/Mapa.tsx`.

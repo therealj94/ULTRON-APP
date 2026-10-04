@@ -10,6 +10,9 @@ export type S3Falso = {
   objetos: Map<string, { cuerpo: string; etag: string }>;
   lee: { ok: boolean };
   escribe: { ok: boolean };
+  /** Fallos por objeto (P5/A7): devuelve true para que ESA clave conteste 503 al escribir o al leer. */
+  fallaEscritura: { si: ((clave: string) => boolean) | null };
+  fallaLectura: { si: ((clave: string) => boolean) | null };
   /** Cuántos PUT llegaron (con y sin condición) y cuántos devolvieron 412. */
   puts: () => number;
   rechazos412: () => number;
@@ -21,6 +24,8 @@ export function instalarS3Falso(): S3Falso {
   const objetos = new Map<string, { cuerpo: string; etag: string }>();
   const lee = { ok: true };
   const escribe = { ok: true };
+  const fallaEscritura: S3Falso['fallaEscritura'] = { si: null };
+  const fallaLectura: S3Falso['fallaLectura'] = { si: null };
   let puts = 0;
   let rechazos = 0;
   let serie = 0;
@@ -31,7 +36,7 @@ export function instalarS3Falso(): S3Falso {
     const h = Object.fromEntries(Object.entries((init.headers || {}) as Record<string, string>).map(([k, v]) => [k.toLowerCase(), String(v)]));
     if (init.method === 'PUT') {
       puts++;
-      if (!escribe.ok) return new Response('fuera', { status: 503 });
+      if (!escribe.ok || fallaEscritura.si?.(clave)) return new Response('fuera', { status: 503 });
       const actual = objetos.get(clave);
       if (h['if-none-match'] === '*' && actual) {
         rechazos++;
@@ -45,7 +50,7 @@ export function instalarS3Falso(): S3Falso {
       objetos.set(clave, { cuerpo: Buffer.from(init.body).toString('utf8'), etag });
       return new Response('', { status: 200, headers: { etag } });
     }
-    if (!lee.ok) return new Response('fuera', { status: 503 });
+    if (!lee.ok || fallaLectura.si?.(clave)) return new Response('fuera', { status: 503 });
     const v = objetos.get(clave);
     return v === undefined ? new Response('no', { status: 404 }) : new Response(v.cuerpo, { status: 200, headers: { etag: v.etag } });
   }) as typeof fetch;
@@ -55,6 +60,8 @@ export function instalarS3Falso(): S3Falso {
     objetos,
     lee,
     escribe,
+    fallaEscritura,
+    fallaLectura,
     puts: () => puts,
     rechazos412: () => rechazos,
     restaurar: () => {

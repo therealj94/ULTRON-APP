@@ -1,0 +1,100 @@
+# Entrega identificable y vuelta atrás coordinada (P5)
+
+Este documento acompaña al paquete P5 de la auditoría externa del 4 de octubre de 2026 (A6, A7 y el contrato de entrega).
+Explica cómo identificar qué combinación está corriendo y cómo volver atrás de forma coordinada sin perder trabajo en
+curso. **Solo usa comandos y acciones que ya existen en el repositorio o en los servicios que usa.** Lo que no está
+automatizado se indica como acción manual. Este documento no reemplaza el ensayo real en staging (gate G7). Ese ensayo
+sigue pendiente.
+
+## 1. Qué está corriendo
+
+`GET /api/build` exige la sesión de mesa. Devuelve el manifiesto de entrega (`lib/build.ts`, `manifiestoEntrega`):
+
+| Campo | Qué acredita | Si no se sabe |
+|---|---|---|
+| `servidor.sha`, `servidor.hora` | Revisión del servidor (`RENDER_GIT_COMMIT`) y hora de arranque del proceso | `desconocido` |
+| `web.sha`, `web.hora` | Revisión de la que salió el build web que se sirve (`dist/aura-build.json`, escrito por `scripts/pwa/vite-build-info.ts`) | `desconocido` (por ejemplo, un `dist` anterior a P5) |
+| `nodo.estado`, `nodo.hash`, `nodo.validador`, `nodo.capacidades` | Lo que el nodo de la computadora dice en su `/salud`: los primeros 16 hex del sha256 de su `agente.py`, la versión de su validador y sus capacidades | `desconocido` si no contesta; `no_configurado` sin `COMPUTADORA_URL`/`COMPUTADORA_CLAVE` |
+| `validadorMinimo`, `nodo.validadorSuficiente` | El validador mínimo que exige el servidor (`VALIDADOR_MIN`) y si el nodo llega a ese mínimo | `null` si no se sabe |
+| `esquema` | Versiones de lo que se guarda: `tareas` 1, `indiceTareas` 2 y `misionesComputadora` 1 | — |
+| `contratos`, `banderas` | Lo de siempre: contratos entre piezas y banderas no secretas | — |
+| `almacen` | Una lectura y una escritura reales del almacén durable (`sondearAlmacen`, con caché de 30 s) | `ok: false` con el motivo |
+
+`GET /api/health` (público) sigue contestando `ok: true` mientras haya servidor. **Ese 200 no prueba que el almacén
+esté sano.** Para eso está el campo aparte `almacen: { ok, tipo, comprobado }`.
+
+El manifiesto **no** acredita el APK ni el `updateId` de la OTA que tiene instalada cada teléfono, ni el instalador de
+Windows. Eso se anota a mano desde el dispositivo (guion físico, recorrido 1 de la auditoría). Si las piezas no
+coinciden con lo esperado, se detiene la aceptación y se explica el desfase.
+
+Para comprobar a mano el hash del nodo, en la máquina del nodo:
+
+```bash
+sha256sum /opt/computadora/agente.py | cut -c1-16
+```
+
+## 2. Qué datos nuevos deja P5 y cómo los lee una versión anterior
+
+Todo vive en el mismo almacén durable de siempre (`ultron/durable/` en S3 o `data/durable/` en disco). No hay base de
+datos nueva ni migración destructiva.
+
+- **Índice de tareas v2** (`tareas/indice/<huella>/lista`): cada entrada puede llevar `fin`. Una versión anterior a P5
+  lee `ids[].id` igual que antes e ignora `fin`. Si esa versión escribe el índice, vuelve a recortar a 40 y a dejar
+  fuera las tareas activas más viejas. Por eso, **mientras corra una versión anterior, la A7 vuelve a reproducirse.**
+  Al volver a P5, el índice se repara solo en una dirección: una tarea leída por su id (`GET /api/trabajos/:id`) se
+  vuelve a anotar. Una tarea que la versión vieja sacó del índice y que nadie vuelve a pedir por id sigue sin
+  aparecer en la lista hasta que alguien la pida.
+- **Misiones durables de la computadora** (`computadora/misiones/…`, `computadora/tareas/…`, `computadora/historial/…`,
+  `computadora/seguimiento/…`): una versión anterior a P5 no las lee. Vuelve al comportamiento de antes: solo ve las
+  misiones de su propia memoria y contesta 404 a las de otra réplica o de antes del reinicio. Los objetos se quedan; al
+  volver a P5 se recuperan con su dueño, su final y sus recibos.
+- **Lo que no cambia de forma:** `tareas/<huella>/<id>`, `tareas/pedidos/…`, `computadora-pedidos/…`, `operaciones/…` y
+  `turnos/…`. Una versión anterior los sigue leyendo igual.
+
+## 3. Vuelta atrás coordinada, pieza por pieza
+
+El orden importa: se vuelve primero lo que **produce** datos nuevos (servidor) y después lo que los consume.
+
+1. **Antes de empezar**
+   - Anota el manifiesto (`GET /api/build`) y la lista de tareas activas de una cuenta de prueba (`GET /api/trabajos`
+     con `completo: true`).
+   - Anota las misiones vivas de su computadora (`GET /api/computadora`).
+   - No vuelvas atrás con una misión que espera un «sí» o con un control incierto (`controles[].estado === 'unknown'`):
+     primero resuélvelos o páralos.
+2. **Servidor y web** (los dos salen del mismo despliegue de Render: `npm run build` y luego `npm start`)
+   - En el panel de Render, elige un despliegue anterior del servicio y usa su acción de volver a ese despliegue
+     (rollback). Es una acción del panel, no un comando de este repositorio.
+   - La otra opción es revertir el commit en `main` (`git revert <sha>` y push, con la revisión de siempre), y Render
+     despliega el resultado.
+   - Después, comprueba que `servidor.sha` y `web.sha` de `/api/build` son los esperados. En una versión anterior a P5,
+     `/api/build` no trae esos campos: entonces compara `commit`.
+3. **Nodo de la computadora** (solo si también cambió)
+   - Copia el `agente.py` de la revisión deseada a `/opt/computadora/` y ejecuta `systemctl restart computadora`, como
+     indica `scripts/nodo-computadora/instalar.sh`. También sirve volver a correr ese script.
+   - El nodo olvida sus tareas al reiniciarse. Las misiones que seguían vivas se cierran con un final honesto: «se
+     reinició y perdió la tarea; no sé si alcanzó a terminar». Nunca se cierran como éxito. Por eso conviene reiniciar el
+     nodo sin misiones vivas.
+   - Comprueba que `nodo.hash` coincide con `sha256sum agente.py | cut -c1-16` y que `nodo.validadorSuficiente` es `true`.
+4. **App móvil** (solo si la OTA nueva depende del servidor nuevo)
+   - Workflow «OTA (EAS Update)» (`.github/workflows/ota.yml`) con `accion: volver-a-la-apk`. Ejecuta
+     `eas update:roll-back-to-embedded` para la huella de runtime de esa APK.
+   - Para volver a una OTA anterior concreta, el propio workflow remite a `eas update:republish`.
+   - Los clientes viejos siguen funcionando contra el servidor nuevo: `/api/trabajos` sin parámetros devuelve la misma
+     forma de siempre y los campos nuevos (`completo`, `siguiente`, `conteo`, `aviso`, `mision.controles`) se ignoran.
+5. **Windows**: tiene su propio instalador y su propio camino de publicación. P5 no lo toca.
+
+## 4. Volver a avanzar
+
+Se despliega de nuevo la revisión P5 y se vuelve a comprobar el manifiesto. Las misiones y tareas que se crearon con P5
+antes de volver atrás reaparecen con su dueño, su estado y sus recibos. No se vuelve a despachar ninguna tarea al nodo.
+Las tareas que la versión anterior sacó del índice se reparan al leerlas por su id (ver el punto 2).
+
+## 5. Lo que este documento NO acredita
+
+- No se ensayó todavía con el backend y el almacén reales de staging, ni con varios hosts. Las pruebas del repositorio
+  (`tests/computadora-replicas.test.ts`, `tests/trabajos-indice.test.ts`) usan procesos reales en una sola máquina, con
+  S3 y nodo sintéticos.
+- No hay alertas automáticas de tarea estancada, `reconciling`/`unknown` prolongado ni desfase de versión. El manifiesto
+  y `almacen` dan los datos, pero las alertas siguen pendientes.
+- Si una réplica muere, su seguimiento lo retoma otra **cuando alguien consulta** (la app, el panel o una ruta), una vez
+  vencido el lease. No hay un proceso que barra las misiones huérfanas al arrancar.

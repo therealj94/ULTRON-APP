@@ -379,13 +379,17 @@ export function crearClienteTrabajos(pedir: Pedir) {
     }
   };
   return {
-    async listar(): Promise<{ ok: true; tareas: TareaVista[] } | { ok: false; sinSesion: boolean; mensaje: string }> {
+    /**
+     * P5/A7: `completo: false` (con `aviso`) si el servidor no pudo leer alguna tarea: la lista que llega es parcial, no
+     * «eso es todo». Un servidor de antes no lo manda (se toma como completa, como siempre).
+     */
+    async listar(): Promise<{ ok: true; tareas: TareaVista[]; completo: boolean; aviso?: string } | { ok: false; sinSesion: boolean; mensaje: string }> {
       try {
         const r = await pedir(conEstados('/api/trabajos'), { method: 'GET' });
         // 401: sin sesión; 403: sesión sin correo (no hay de quién serían). Las dos: no hay tareas que mostrar.
         if (r.status === 401 || r.status === 403) return { ok: false, sinSesion: true, mensaje: 'sin sesión' };
         if (r.status !== 200 || !Array.isArray(r.json?.tareas)) return { ok: false, sinSesion: false, mensaje: String(r.json?.error || r.status) };
-        return { ok: true, tareas: r.json.tareas as TareaVista[] };
+        return { ok: true, tareas: r.json.tareas as TareaVista[], completo: r.json.completo !== false, ...(typeof r.json.aviso === 'string' && r.json.aviso ? { aviso: r.json.aviso } : {}) };
       } catch (e: any) {
         return { ok: false, sinSesion: false, mensaje: String(e?.message || e).slice(0, 120) };
       }
