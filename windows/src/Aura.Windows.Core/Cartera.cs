@@ -41,23 +41,25 @@ public static class CarteraVeta
 
     /// <summary>
     /// Aplica la respuesta de la lista única: los tokens visibles con su contrato vigente (el v2 desde el corte) y sus
-    /// precios fijos. Si la respuesta no sirve, no toca nada y devuelve false: se sigue con lo que había.
+    /// precios fijos. Si la respuesta no sirve, no toca nada y devuelve false: se sigue con lo que había. Solo ORIGEN
+    /// (la nativa) va sin contrato: otra moneda sin contrato se leería como saldo nativo, así que invalida la lista.
     /// </summary>
     public static bool AplicarListaUnica(string json)
     {
         try
         {
             using var d = JsonDocument.Parse(json);
-            if (!d.RootElement.TryGetProperty("monedas", out var ms) || ms.ValueKind != JsonValueKind.Array) return false;
+            if (d.RootElement.ValueKind != JsonValueKind.Object || !d.RootElement.TryGetProperty("monedas", out var ms) || ms.ValueKind != JsonValueKind.Array) return false;
             var tokens = new List<(string, string?)>();
             var precios = new Dictionary<string, decimal>();
             foreach (var m in ms.EnumerateArray())
             {
+                if (m.ValueKind != JsonValueKind.Object) return false;
                 if (!m.TryGetProperty("simbolo", out var s) || s.ValueKind != JsonValueKind.String) continue;
                 if (m.TryGetProperty("visible", out var v) && v.ValueKind == JsonValueKind.False) continue;
                 var simbolo = s.GetString()!.ToUpperInvariant();
                 string? contrato = m.TryGetProperty("contrato", out var c) && c.ValueKind == JsonValueKind.String ? c.GetString() : null;
-                if (contrato != null && !EsDireccion(contrato)) continue;
+                if (contrato == null ? simbolo != "ORIGEN" : !EsDireccion(contrato)) return false;
                 tokens.Add((simbolo, contrato));
                 if (m.TryGetProperty("precioFijo", out var p) && p.ValueKind == JsonValueKind.Number && p.TryGetDecimal(out var precio) && precio > 0) precios[simbolo] = precio;
             }
@@ -67,7 +69,7 @@ public static class CarteraVeta
             foreach (var (k, valor) in precios) PreciosFijos[k] = valor;
             return true;
         }
-        catch (JsonException) { return false; }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException) { return false; }
     }
 
     /// <summary>Vuelve a la copia de respaldo (para las pruebas).</summary>
@@ -129,22 +131,30 @@ public static class CarteraVeta
     }
 
     /// <summary>El lote JSON-RPC: saldo nativo (ORIGEN) + balanceOf de cada token.</summary>
-    public static string ArmarLote(string direccion)
+    public static string ArmarLote(string direccion) => ArmarLote(direccion, Tokens);
+
+    /// <summary>
+    /// El lote con una lista de tokens fija: quien arma el lote decodifica con la misma lista (Saldos), aunque la
+    /// lista única cambie mientras espera la respuesta.
+    /// </summary>
+    public static string ArmarLote(string direccion, (string Simbolo, string? Contrato)[] tokens)
     {
-        var llamadas = Tokens.Select((t, i) => t.Contrato == null
+        var llamadas = tokens.Select((t, i) => t.Contrato == null
             ? (object)new { jsonrpc = "2.0", id = i, method = "eth_getBalance", @params = new object[] { direccion, "latest" } }
             : new { jsonrpc = "2.0", id = i, method = "eth_call", @params = new object[] { new { to = t.Contrato, data = DatosBalanceOf(direccion) }, "latest" } });
         return JsonSerializer.Serialize(llamadas);
     }
 
-    public static List<Saldo> Saldos(Dictionary<int, string> hexes, decimal? oroOnza, decimal? plataOnza)
+    public static List<Saldo> Saldos(Dictionary<int, string> hexes, decimal? oroOnza, decimal? plataOnza) => Saldos(hexes, oroOnza, plataOnza, Tokens);
+
+    public static List<Saldo> Saldos(Dictionary<int, string> hexes, decimal? oroOnza, decimal? plataOnza, (string Simbolo, string? Contrato)[] tokens)
     {
         var lista = new List<Saldo>();
-        for (int i = 0; i < Tokens.Length; i++)
+        for (int i = 0; i < tokens.Length; i++)
         {
             var cant = hexes.TryGetValue(i, out var h) ? Cantidad(h) : 0;
-            var precio = Precio(Tokens[i].Simbolo, oroOnza, plataOnza);
-            lista.Add(new Saldo(Tokens[i].Simbolo, cant, precio, precio is { } p ? Math.Round(cant * p, 2) : null));
+            var precio = Precio(tokens[i].Simbolo, oroOnza, plataOnza);
+            lista.Add(new Saldo(tokens[i].Simbolo, cant, precio, precio is { } p ? Math.Round(cant * p, 2) : null));
         }
         return lista;
     }

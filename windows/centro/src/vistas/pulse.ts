@@ -204,6 +204,11 @@ export async function abrirPagar(correo: string, nombre: string, monto = '', mon
   const direccionEl = h('small', { class: 'tenue' }, T('Buscando su dirección de Veta Wallet…', 'Looking up their Veta Wallet address…'));
   const campo = h('input', { type: 'text', inputmode: 'decimal', value: monto, placeholder: '0.00', 'aria-label': T('Cantidad', 'Amount'), class: 'p2c-monto' }) as HTMLInputElement;
   const elegir = h('select', { 'aria-label': T('Moneda', 'Coin') }, ...PAGAR.MONEDAS.map((x) => h('option', { value: x, selected: x === moneda }, x))) as HTMLSelectElement;
+  // Mientras se abre, la lista única dice cuáles se muestran hoy.
+  void PAGAR.monedasVisibles().then((l) => {
+    const actual = elegir.value;
+    elegir.replaceChildren(...l.map((x) => h('option', { value: x, selected: x === actual }, x)));
+  });
   let direccion: string | null = null;
   const ir = boton(T('Revisar y firmar en Veta Wallet', 'Review and sign in Veta Wallet'), () => void enviar(), { tipo: 'acento', icono: 'enlace', deshabilitado: true });
   const d = dialogo(
