@@ -720,13 +720,67 @@ export function appEsperandoDe(correo: string, contexto?: ContextoApp | null, ah
   };
   // `huella` (séptima ronda, G1-N1): la versión exacta de lo que espera (a quién, qué texto, qué propuesta). Lo que se
   // decidió con un «sí» no se cumple si cuando por fin sale espera otra cosa.
+  // La versión lleva también cuándo se anotó: el mismo texto a la misma persona redactado otra vez es OTRA decisión.
   const b = pendienteAnterior(correo, ahora);
-  if (b) return { que: 'mensaje', para: conNombre(b.para), huella: JSON.stringify(['mensaje', b.para, b.texto]) };
+  if (b) return { que: 'mensaje', para: conNombre(b.para), huella: JSON.stringify(['mensaje', b.para, b.texto, b.t]) };
   const p = propuestaAnterior(correo, ahora);
-  if (p) return { ...(p.tipo === 'llamar' ? { que: 'llamar', para: p.nombre || p.con, video: !!p.video } : { que: p.tipo, para: p.texto }), huella: JSON.stringify(['propuesta', p]) };
+  if (p) return { ...(p.tipo === 'llamar' ? { que: 'llamar', para: p.nombre || p.con, video: !!p.video } : { que: p.tipo, para: p.texto }), huella: JSON.stringify(['propuesta', p, propuestas.get(clave(correo))?.t ?? null]) };
   const abierto = contexto?.chatAbierto;
   if (abierto?.correo && String(contexto?.borrador || '').trim()) return { que: 'borrador', para: `${abierto.nombre} <${abierto.correo}>`, huella: JSON.stringify(['borrador', abierto.correo, contexto?.borrador]) };
   return null;
+}
+
+/* ------------------------------------------------------------------ al confirmar el turno (novena ronda) */
+
+/** Las versiones de lo que esperaba la app que ya se cumplieron (por ámbito): una decisión sale una sola vez. */
+const cumplidas = new Map<string, string[]>();
+/** Lo que no salió al confirmar el turno (cambió lo que esperaba): el turno siguiente lo dice. */
+const avisosApp = new Map<string, string[]>();
+
+/** ¿Esta acción cumple lo que esperaba la app? (el mensaje de AU-RA o lo escrito en el chat, la propuesta que esperaba). */
+function cumpleEspera(a: AccionApp, propuesta: Pick<Propuesta, 'tipo'> | null | undefined): boolean {
+  if (a.tipo === 'enviar') return true;
+  return !!propuesta && a.tipo === propuesta.tipo && (a.tipo === 'llamar' || a.tipo === 'recordatorio' || a.tipo === 'cancelar_recordatorio');
+}
+
+/**
+ * Las acciones que SALEN al confirmar el turno (la voz espera a que se confirme; fuera de la voz, al momento). Las que
+ * cumplen lo que esperaba la app solo salen si lo que espera AHORA es exactamente lo que vio la decisión (su versión) y
+ * esa decisión no salió ya (una sola vez: confirmar dos veces, o la voz y otro camino, no la emiten dos veces). Si
+ * cambió o ya no está, no salen y el turno siguiente lo dice (avisosAppDe). Lo demás (abrir una pantalla…) sale igual.
+ */
+export function alConfirmarAccionesApp(
+  correo: string,
+  atada: { vista: { huella?: string } | null | undefined; contexto?: ContextoApp | null; propuesta?: Pick<Propuesta, 'tipo'> | null },
+  eventos: EventoAccion[],
+  ahora = Date.now()
+): EventoAccion[] {
+  const cumplen = eventos.filter((e) => cumpleEspera(e.accion, atada.propuesta));
+  if (!cumplen.length) return eventos;
+  const k = clave(correo);
+  const vista = atada.vista?.huella ?? null;
+  const sigue = !!vista && mismaEsperaApp(atada.vista, appEsperandoDe(correo, atada.contexto, ahora));
+  const yaSalio = !!vista && (cumplidas.get(k) || []).includes(vista);
+  if (!sigue || yaSalio) {
+    if (!yaSalio) {
+      const lista = avisosApp.get(k) || [];
+      lista.push('HECHO: lo que esperaba su «sí» en la app cambió (o ya no estaba) antes de confirmarse el turno: NO se mandó, no se marcó ni se agendó nada. Díselo y pregúntale de nuevo qué quiere.');
+      avisosApp.set(k, lista.slice(-3));
+    }
+    return eventos.filter((e) => !cumplen.includes(e));
+  }
+  // Se anota como cumplida la decisión sobre el mensaje de AU-RA o la propuesta (llevan cuándo se anotaron); lo escrito
+  // a mano en el chat no tiene una versión propia: ahí basta con que siga siendo lo mismo (y repetidaEnVoz en la voz).
+  if (!vista!.startsWith('["borrador"')) cumplidas.set(k, [...(cumplidas.get(k) || []), vista!].slice(-20));
+  return eventos;
+}
+
+/** Lo que no salió al confirmar el turno (cambió lo que esperaba la app): se entrega una vez, al turno siguiente. */
+export function avisosAppDe(correo: string): string[] {
+  const k = clave(correo);
+  const a = avisosApp.get(k) || [];
+  avisosApp.delete(k);
+  return a;
 }
 
 /** ¿Lo que espera la app ahora es exactamente lo que se vio al decidir? (G1-N1). */
@@ -826,6 +880,8 @@ export function _reiniciarAccionesApp() {
   lecturas.clear();
   registro.clear();
   ultimosLeidos.clear();
+  cumplidas.clear();
+  avisosApp.clear();
 }
 
 /* ------------------------------------------------------------------ a quién se refiere */
