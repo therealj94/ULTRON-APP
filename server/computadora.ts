@@ -44,7 +44,7 @@ import { nivelDeCorreo } from './nivel';
 import crypto from 'node:crypto';
 import { clave } from '../lib/boveda';
 import { almacenDurable, claveDe, crearUnaVez, leerDurable } from '../lib/durable';
-import { archivoComprobado, evaluarEntrega, type ArchivoNodo, type Entrega } from '../lib/tareas-durables';
+import { evaluarEntrega, type ArchivoNodo, type Entrega, type ItemEntrega } from '../lib/tareas-durables';
 
 export type MotorNodo = 'holo' | 'claude';
 /**
@@ -493,6 +493,7 @@ export type PasoPlan = { texto: string; estado: EstadoPlan; recibo?: { tarea: st
  * terminó Y lo entregado se comprobó (`comprobado`: el dato pedido, el archivo que el nodo encontró); «Listo» no basta.
  * `visitados`: las páginas que de verdad abrió (los `enlaces` también traen las del texto, para compartir).
  * `archivos`: lo que el nodo comprobó al terminar (null: no lo comprobó). `sinComprobar`: qué faltó, si faltó.
+ * `entregables`: CADA cosa pedida (si se pidieron archivos), con su estado y su porqué; null si no se pidieron archivos.
  */
 export type FinalMision = {
   estado: EstadoTarea;
@@ -509,7 +510,10 @@ export type FinalMision = {
   archivos: ArchivoNodo[] | null;
   comprobado: boolean;
   sinComprobar: string | null;
+  entregables: EntregableFinal[] | null;
 };
+/** Una cosa pedida, para la tarjeta y el panel: `verified` (con su archivo comprobado), `not_met` (falta o no es lo pedido) o `unknown` (no se pudo comprobar). */
+export type EntregableFinal = { id: string; texto: string; estado: ItemEntrega['estado']; detalle: string; ruta?: string };
 /**
  * Una MISIÓN: lo que se pidió, su plan y su final, aunque la hagan varias tareas del nodo. Su id es el de su
  * primera tarea. Vive en memoria (el historial se pierde si el servidor se reinicia; el nodo olvida las
@@ -873,7 +877,7 @@ export function visitadosDe(t: Pick<Tarea, 'pasos'>): string[] {
 /** Lo que el nodo dijo de sus archivos, saneado (null si no lo comprobó: el agente.py de antes o no pudo mirar). */
 export function archivosDe(t: Pick<Tarea, 'archivos'>): ArchivoNodo[] | null {
   if (!Array.isArray(t.archivos)) return null;
-  return t.archivos.slice(0, 12).flatMap((a: any) =>
+  return t.archivos.slice(0, 20).flatMap((a: any) =>
     a && typeof a === 'object' && typeof a.ruta === 'string'
       ? [
           {
@@ -884,6 +888,9 @@ export function archivosDe(t: Pick<Tarea, 'archivos'>): ArchivoNodo[] | null {
             ...(typeof a.reciente === 'boolean' ? { reciente: a.reciente } : {}),
             ...(a.mencionado === true ? { mencionado: true } : {}),
             ...(a.fuera === true ? { fuera: true } : {}),
+            // Lo que el nodo vio por dentro (agente.py nuevo). Sin el campo: tipo sin comprobar.
+            ...(typeof a.tipo === 'string' && /^[a-z0-9]{1,12}$/.test(a.tipo) ? { tipo: a.tipo } : {}),
+            ...(typeof a.magia === 'string' && /^[0-9a-f]{2,32}$/.test(a.magia) ? { magia: a.magia } : {}),
           },
         ]
       : []
@@ -911,6 +918,18 @@ function ultimaMiniatura(t: Pick<Tarea, 'pasos'>): string | null {
   return [...t.pasos].reverse().find((p) => p.miniatura)?.miniatura || null;
 }
 
+/** Cada cosa pedida para la tarjeta (null si no se pidieron archivos). Sin terminar, nada queda verificado. */
+export function entregablesDe(entrega: Entrega, termino: boolean): EntregableFinal[] | null {
+  if (entrega.tipo !== 'archivo') return null;
+  return entrega.items.map((i) => ({
+    id: i.id,
+    texto: i.etiqueta,
+    estado: termino ? i.estado : i.estado === 'verified' ? 'unknown' : i.estado,
+    detalle: termino ? i.detalle : 'No terminó: no se comprobó.',
+    ...(i.estado === 'verified' && i.archivo ? { ruta: i.archivo.ruta.slice(0, 300) } : {}),
+  }));
+}
+
 /** La misión terminó: se guarda su tarjeta (y, sin esperar, la captura final del nodo). */
 function cerrarMision(e: Encargo, t: Tarea) {
   const m = e.mision;
@@ -935,6 +954,7 @@ function cerrarMision(e: Encargo, t: Tarea) {
     archivos: archivosDe(t),
     comprobado: t.estado === 'hecha' && entrega.comprobada,
     sinComprobar: t.estado === 'hecha' && !entrega.comprobada ? entrega.falta : null,
+    entregables: entregablesDe(entrega, t.estado === 'hecha'),
   };
   // A medias (sin pasos o perdió el contacto) y no la paró la persona: su «sí» la sigue.
   m.ofreceSeguir = !ok && (t.estado === 'sin_pasos' || t.estado === 'fallo') && m.rondas < MAX_RONDAS ? Date.now() : undefined;
@@ -1132,7 +1152,7 @@ export function fraseDeFinal(mision: string, t: Tarea, idioma: 'es' | 'en' = 'es
     const ent = entregaDe(mision, t);
     if (!ent.comprobada) return fraseSinComprobar(ent, en, corto(t.respuesta, 200));
     const r = corto(t.respuesta, 650);
-    const arch = ent.tipo === 'archivo' ? archivosEnPalabras(t, en) : '';
+    const arch = ent.tipo === 'archivo' ? archivosEnPalabras(ent, en) : '';
     return r ? (en ? `Done, I finished on my computer. ${r}${arch}` : `Listo, ya terminé en mi computadora. ${r}${arch}`) : en ? `Done, I finished on my computer.${arch}` : `Listo, ya terminé en mi computadora.${arch}`;
   }
   if (t.estado === 'sin_pasos') {
@@ -1145,18 +1165,20 @@ export function fraseDeFinal(mision: string, t: Tarea, idioma: 'es' | 'en' = 'es
   return en ? 'I stopped the computer task.' : 'Paré lo de mi computadora.';
 }
 
-/** «informe.odt (4096 bytes)»: lo que el nodo comprobó, dicho corto (vacío si no comprobó nada). */
-function listaComprobados(t: Pick<Tarea, 'archivos'>): string {
-  return (archivosDe(t) || [])
-    .filter(archivoComprobado)
-    .slice(0, 3)
-    .map((a) => `${a.ruta.split('/').pop()} (${a.bytes} bytes)`)
-    .join(', ');
+/** «informe.odt (4096 bytes)»: cada cosa pedida que el nodo comprobó, con SU archivo (vacío si no comprobó nada). */
+function listaComprobados(ent: Entrega, max = 4): string {
+  const xs = ent.items.filter((i) => i.estado === 'verified' && i.archivo);
+  const nombres = xs.slice(0, max).map((i) => {
+    const n = i.archivo!.ruta.split('/').pop();
+    return `${n === i.etiqueta ? n : `${i.etiqueta}: ${n}`} (${i.archivo!.bytes} bytes)`;
+  });
+  return nombres.join(', ') + (xs.length > max ? ` y ${xs.length - max} más` : '');
 }
 
-function archivosEnPalabras(t: Pick<Tarea, 'archivos'>, en: boolean): string {
-  const lista = listaComprobados(t);
-  return !lista ? '' : en ? ` (I checked: ${lista}.)` : ` (Lo comprobé: ${lista}.)`;
+function archivosEnPalabras(ent: Entrega, en: boolean): string {
+  const lista = listaComprobados(ent);
+  if (!lista) return '';
+  return en ? ` (I checked ${ent.hechos} of ${ent.total}: ${lista}.)` : ` (Lo comprobé, ${ent.hechos} de ${ent.total}: ${lista}.)`;
 }
 
 /**
@@ -1166,9 +1188,18 @@ function archivosEnPalabras(t: Pick<Tarea, 'archivos'>, en: boolean): string {
 function fraseSinComprobar(ent: Entrega, en: boolean, respuesta: string): string {
   const r = respuesta ? `«${respuesta}»` : '';
   if (ent.tipo === 'archivo') {
-    return en
-      ? `My computer says it saved it${r ? ` (${r})` : ''}, but I couldn’t verify that the file is there, so I’m not calling it done. Want me to check again?`
-      : `Mi computadora dice que lo guardó${r ? ` (${r})` : ''}, pero no pude comprobar que el archivo esté ahí, así que no lo doy por hecho. ¿Lo reviso otra vez?`;
+    // Sin la revisión del nodo no hay nada que contar por cosa; con ella, cuántas de cuántas y qué falta de cada una.
+    if (!ent.revisado) {
+      return en
+        ? `My computer says it saved it${r ? ` (${r})` : ''}, but I couldn’t verify that the file is there, so I’m not calling it done. Want me to check again?`
+        : `Mi computadora dice que lo guardó${r ? ` (${r})` : ''}, pero no pude comprobar que el archivo esté ahí, así que no lo doy por hecho. ¿Lo reviso otra vez?`;
+    }
+    if (en) {
+      const malos = ent.items.filter((i) => i.estado !== 'verified').map((i) => i.etiqueta);
+      return `My computer says it finished${r ? ` (${r})` : ''}, but I could only verify ${ent.hechos} of ${ent.total} of what you asked for. Missing or not right: ${malos.slice(0, 4).join(', ')}. I’m not calling it done. Want me to check again?`;
+    }
+    const falta = String(ent.falta || '').replace(/\s+/g, ' ').trim();
+    return `Mi computadora dice que terminó${r ? ` (${r})` : ''}, pero no lo doy por hecho. ${falta.length > 420 ? `${falta.slice(0, 419)}…` : falta} ¿Lo reviso otra vez?`;
   }
   if (ent.tipo === 'accion') {
     return en
@@ -1546,11 +1577,11 @@ export function resumenTarea(t: Tarea, instruccion: string = t.instruccion): str
     if (!ent.comprobada) {
       return (
         `Hecha en ${pasos} pasos (${Math.round(t.segundos)} s), según tu computadora. Lo que dijo: ${dijo || '(nada)'} ` +
-        `SIN COMPROBAR: ${ent.falta || 'no pude comprobarlo.'} No digas que quedó hecho ni guardado: di que tu computadora dice que terminó, que no pudiste comprobarlo, y ofrece revisarlo.`
+        `SIN COMPROBAR: ${ent.falta || 'no pude comprobarlo.'}${ent.tipo === 'archivo' && ent.hechos ? ` Sí se comprobó: ${listaComprobados(ent, 10)}.` : ''} No digas que quedó hecho ni guardado: di que tu computadora dice que terminó, que no pudiste comprobarlo todo, cuenta qué se comprobó y qué falta de cada cosa, y ofrece revisarlo.`
       );
     }
-    const lista = ent.tipo === 'archivo' ? listaComprobados(t) : '';
-    return `Hecha en ${pasos} pasos (${Math.round(t.segundos)} s). Lo que encontró o hizo: ${dijo}${lista ? ` COMPROBADO por tu computadora: ${lista}.` : ''}`;
+    const lista = ent.tipo === 'archivo' ? listaComprobados(ent, 10) : '';
+    return `Hecha en ${pasos} pasos (${Math.round(t.segundos)} s). Lo que encontró o hizo: ${dijo}${lista ? ` COMPROBADO por tu computadora, cada cosa pedida con su archivo (${ent.hechos} de ${ent.total}): ${lista}.` : ''}`;
   }
   if (t.estado === 'parada') return t.error ? `Se detuvo antes de terminar: ${t.error}.` : 'La pararon antes de terminar.';
   if (t.estado === 'sin_pasos') return `No la terminó en ${pasos} pasos. ${t.error || ''}`.trim();

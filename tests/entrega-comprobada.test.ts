@@ -92,10 +92,13 @@ test('el nodo comprobó el archivo (existe, bytes, sha256, de esta misión) → 
   const m = mision({
     instruccion,
     resultado: 'Listo, guardé el archivo informe.odt en Documentos.',
-    archivos: [{ ruta: '/home/computeruse/Documents/informe.odt', existe: true, bytes: 2048, sha256: SHA, reciente: true, mencionado: true }],
+    archivos: [{ ruta: '/home/computeruse/Documents/informe.odt', existe: true, bytes: 2048, sha256: SHA, reciente: true, mencionado: true, tipo: 'odt' }],
   });
   const c = reconciliarConComputadora(tareaDeEncargo(instruccion), m, T0 + 60_000)!;
   assert.equal(c.estado, 'completed');
+  // Un nodo de antes no mira el tipo por dentro: el mismo archivo queda «sin comprobar», no verificado.
+  const sinTipo = mision({ ...m, archivos: [{ ...(m as any).archivos[0], tipo: undefined }] });
+  assert.equal(reconciliarConComputadora(tareaDeEncargo(instruccion), sinTipo, T0 + 60_000)!.estado, 'partial');
   const ev = c.resultado!.evidencias.find((e) => e.tipo === 'archivo');
   assert.ok(ev, 'la evidencia es el archivo comprobado');
   assert.equal(ev!.ref, '/home/computeruse/Documents/informe.odt');
@@ -191,7 +194,7 @@ test('servidor: el nodo dice «Listo, guardé informe.odt» y no lo comprobó �
 
 test('servidor: el nodo comprobó informe.odt (existe, bytes, sha256) → la misión queda ok y el HECHO lo dice', async () => {
   const n = await nodo('Listo, guardé el archivo informe.odt en Documentos.', {
-    archivos: [{ ruta: '/home/computeruse/Documents/informe.odt', existe: true, bytes: 4096, sha256: SHA, reciente: true, mencionado: true }],
+    archivos: [{ ruta: '/home/computeruse/Documents/informe.odt', existe: true, bytes: 4096, sha256: SHA, reciente: true, mencionado: true, tipo: 'odt' }],
   });
   try {
     await conNodo(n.url, async () => {

@@ -31,6 +31,7 @@ import {
   aCoordenadas,
   controlesPc,
   estadoEnPalabras,
+  entregablesEnPalabras,
   finalEnPalabras,
   haceCuanto,
   marcaPlan,
@@ -737,6 +738,16 @@ function TarjetaFinal({
               {f.texto}
             </Texto>
           )}
+          {f.entregables?.length ? (
+            // Cada cosa pedida con su marca: lo comprobado con su archivo, lo que falta o no es lo pedido, lo sin comprobar.
+            <View style={{ gap: 2 }} accessibilityLabel={tr('Lo que pediste, uno por uno', 'What you asked for, one by one')}>
+              {entregablesEnPalabras(f.entregables).map((linea, i) => (
+                <Texto key={f.entregables![i].id} v="chica" color={f.entregables![i].estado === 'verified' ? 'texto2' : 'aviso'} selectable>
+                  {linea}
+                </Texto>
+              ))}
+            </View>
+          ) : null}
           {f.sinComprobar ? (
             <Texto v="chica" color="aviso">
               {f.sinComprobar}

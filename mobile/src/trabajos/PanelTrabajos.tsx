@@ -17,6 +17,7 @@ import { MEDIDA, useTema } from '../nucleo/tema';
 import { Boton, Hoja, Texto } from '../ui';
 import {
   ARMADO_MS,
+  criteriosEnPalabras,
   etiquetaBoton,
   etiquetaEstado,
   gira,
@@ -241,12 +242,25 @@ function TarjetaDecision({ t, idioma, variasTareas, onResultado, onEditar }: { t
 function TarjetaResultado({ t }: { t: TareaVista }) {
   const tema = useTema();
   const r = t.result!;
+  const pedidos = criteriosEnPalabras(t.acceptance);
   return (
     <View style={[s.resultado, { borderColor: tema.borde, backgroundColor: tema.superficie2 }]}>
       <Texto v="chicaFuerte">{tr('Resultado', 'Result')}</Texto>
       <Texto v="chica" selectable>
         {r.summary}
       </Texto>
+      {pedidos.length ? (
+        <>
+          <Texto v="chicaFuerte" color="texto2">
+            {tr('Lo que pediste, uno por uno', 'What you asked for, one by one')}
+          </Texto>
+          {pedidos.map((c) => (
+            <Texto key={c.id} v="chica" color={c.estado === 'verified' ? 'texto' : 'aviso'} selectable>
+              {c.texto}
+            </Texto>
+          ))}
+        </>
+      ) : null}
       {r.evidence.length ? (
         <>
           <Texto v="chicaFuerte" color="texto2">

@@ -62,7 +62,10 @@ export type FinalPc = {
   comprobado?: boolean;
   /** Qué faltó comprobar, dicho para la persona (servidor nuevo). */
   sinComprobar?: string | null;
+  /** Cada cosa pedida (si se pidieron archivos), con su estado: comprobada con su archivo, falta/no es lo pedido, o sin comprobar. */
+  entregables?: EntregablePc[] | null;
 };
+export type EntregablePc = { id: string; texto: string; estado: 'verified' | 'not_met' | 'unknown'; detalle: string; ruta?: string };
 export type MisionPc = {
   id: string;
   instruccion: string;
@@ -339,7 +342,7 @@ export function aCoordenadas(x: number, y: number, ancho: number, alto: number):
 }
 
 /** Lo que se comparte del resultado: la misión, lo que encontró, los datos y los enlaces. */
-export function textoParaCompartir(instruccion: string, f: Pick<FinalPc, 'respuesta' | 'error' | 'datos' | 'enlaces' | 'ok' | 'sinComprobar'>, idioma: 'es' | 'en' = 'es'): string {
+export function textoParaCompartir(instruccion: string, f: Pick<FinalPc, 'respuesta' | 'error' | 'datos' | 'enlaces' | 'ok' | 'sinComprobar' | 'entregables'>, idioma: 'es' | 'en' = 'es'): string {
   const en = idioma === 'en';
   const partes = [`«${instruccion.trim()}»`];
   const r = (f.respuesta || '').trim();
@@ -348,18 +351,28 @@ export function textoParaCompartir(instruccion: string, f: Pick<FinalPc, 'respue
   if (datosSueltos.length) partes.push(datosSueltos.map((d) => `${d.clave}: ${d.valor}`).join('\n'));
   const enlaces = f.enlaces.filter((u) => !r.includes(u));
   if (enlaces.length) partes.push(enlaces.join('\n'));
-  // Lo que no se comprobó no se comparte como hecho.
+  // Lo que no se comprobó no se comparte como hecho; cada cosa pedida, con su marca.
   if (f.sinComprobar) partes.push(`${en ? 'Not verified' : 'Sin comprobar'}: ${f.sinComprobar}`);
+  else if (f.entregables?.length) partes.push(entregablesEnPalabras(f.entregables).join('\n'));
   partes.push(en ? '— from my AU-RA computer' : '— desde la computadora de AU-RA');
   return partes.filter(Boolean).join('\n\n');
 }
 
-/** Cómo terminó, en una palabra para la tarjeta. */
-export function finalEnPalabras(f: Pick<FinalPc, 'estado' | 'ok' | 'comprobado'>, idioma: 'es' | 'en' = 'es'): string {
+/** «✓ informe.docx · 2048 bytes», «✗ presupuesto.xlsx está vacío», «? …»: cada cosa pedida con su marca, para la tarjeta. */
+export function entregablesEnPalabras(xs: Pick<EntregablePc, 'estado' | 'detalle' | 'texto'>[]): string[] {
+  return xs.map((x) => `${x.estado === 'verified' ? '✓' : x.estado === 'not_met' ? '✗' : '?'} ${x.detalle || x.texto}`);
+}
+
+/** Cómo terminó, en una palabra para la tarjeta. Con archivos pedidos, cuántos de cuántos se comprobaron. */
+export function finalEnPalabras(f: Pick<FinalPc, 'estado' | 'ok' | 'comprobado' | 'entregables'>, idioma: 'es' | 'en' = 'es'): string {
   const en = idioma === 'en';
   if (f.ok) return en ? 'Done' : 'Listo';
   // Dijo que terminó, pero lo entregado no se comprobó: ni «Listo» ni «A medias».
-  if (f.estado === 'hecha' && f.comprobado === false) return en ? 'Not verified' : 'Sin comprobar';
+  if (f.estado === 'hecha' && f.comprobado === false) {
+    const xs = f.entregables || [];
+    const cuenta = xs.length ? (en ? ` · ${xs.filter((x) => x.estado === 'verified').length} of ${xs.length}` : ` · ${xs.filter((x) => x.estado === 'verified').length} de ${xs.length}`) : '';
+    return (en ? 'Not verified' : 'Sin comprobar') + cuenta;
+  }
   if (f.estado === 'parada') return en ? 'Stopped' : 'Detenida';
   if (f.estado === 'fallo') return en ? 'Failed' : 'Falló';
   return en ? 'Unfinished' : 'A medias';

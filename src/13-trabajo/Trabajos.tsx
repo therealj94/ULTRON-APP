@@ -16,6 +16,7 @@ import { Dialogo } from '../07-pantallas/Dialogo';
 import { headersMesa } from '../10-infra/sesionCliente';
 import {
   ARMADO_MS,
+  criteriosEnPalabras,
   crearClienteTrabajos,
   estadoInicial,
   etiquetaBoton,
@@ -439,10 +440,23 @@ function TarjetaDecision({ t, varias, onResultado, onEditar }: { t: TareaVista; 
 
 function TarjetaResultado({ t }: { t: TareaVista }) {
   const r = t.result!;
+  const pedidos = criteriosEnPalabras(t.acceptance);
   return (
     <div className="rounded-[14px] border border-(--aura-borde) p-3 flex flex-col gap-1.5">
       <p className="aura-sobretitulo">Resultado</p>
       <p className="text-[15px] text-(--aura-tinta) aura-seleccionable [overflow-wrap:anywhere]">{r.summary}</p>
+      {pedidos.length > 0 && (
+        <>
+          <p className="text-[13px] font-semibold text-(--aura-tinta-2)">Lo que pediste, uno por uno</p>
+          <ul className="flex flex-col gap-1 text-[14px]" role="list">
+            {pedidos.map((c) => (
+              <li key={c.id} className={`[overflow-wrap:anywhere] ${c.estado === 'verified' ? 'text-(--aura-tinta)' : 'text-(--aura-error-texto)'}`}>
+                {c.texto}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
       {r.evidence.length > 0 && (
         <>
           <p className="text-[13px] font-semibold text-(--aura-tinta-2)">Lo que lo acredita</p>

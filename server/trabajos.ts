@@ -34,6 +34,8 @@ import { almacenDurable, ejecutarUnaVez, hashArgumentos, reservarPedido } from '
 import {
   cambiarTarea,
   crearTarea,
+  criteriosCumplidos,
+  criteriosDeEncargo,
   deComputadora,
   ENTORNO_INVESTIGACION,
   esInvestigacion,
@@ -52,6 +54,7 @@ import {
   validarDecision,
   vistaTarea,
   type Cambio,
+  type Criterio,
   type Decision,
   type Evidencia,
   type MisionComputadoraMin,
@@ -178,7 +181,8 @@ export async function abrirEncargoComputadora(duenoCorreo: string, ambito: strin
       estado: 'running',
       entorno: { kind: 'computadora', id: 'pendiente', displayName: 'Tu computadora' },
       pasoActual: 'Se lo encargo a tu computadora',
-      criterios: [{ id: 'resultado', texto: 'Tu computadora termina y lo entregado se comprueba (el dato que pediste, la página que abrió o el archivo que ella misma encontró); «listo» no basta', obligatorio: true }],
+      // Si pide dejar archivos, un criterio por cosa pedida (cada uno se comprobará con SU archivo); si no, el resultado.
+      criterios: criteriosDeEncargo(instruccion),
       origen: { kind: 'chat', ...(turnoId ? { turnoId } : {}), conversacion: linea(ambito, 80) },
       condicionParada: 'Termina con resultado, falla, la paras tú, o deja de dar noticias.',
     });
@@ -292,12 +296,15 @@ export async function cerrarInvestigacion(duenoCorreo: string, id: string, r: Ci
   const estado = r.estado === 'completed' && !evidencias.length ? 'partial' : r.estado;
   const c = await cambiarTarea(dueno, id, (reg): Cambio | null => {
     if (!esInvestigacion(reg)) return null;
-    const ok = estado === 'completed';
+    // Las fuentes prueban SU criterio («fuentes»); otro criterio obligatorio que no prueban no se da por cumplido.
+    const criterios =
+      estado === 'completed' ? soloSuCriterio(reg.criterios, 'fuentes', evidencias) : reg.criterios.map((x) => (x.obligatorio ? { ...x, estado: 'not_met' as const, evidencias: [] } : x));
+    const final = estado === 'completed' && !criteriosCumplidos(criterios, evidencias) ? 'partial' : estado;
     return {
-      estado,
+      estado: final,
       pasoActual: null,
       ...(reg.progreso ? { progreso: { ...reg.progreso, hechos: reg.progreso.total } } : {}),
-      criterios: reg.criterios.map((x) => (x.obligatorio ? { ...x, estado: ok ? ('verified' as const) : ('not_met' as const), evidencias: ok ? evidencias.map((e) => e.id) : [] } : x)),
+      criterios,
       resultado: {
         id: `${reg.id}:resultado`,
         resumen: trozo(r.resumen, 1800),
@@ -306,7 +313,7 @@ export async function cerrarInvestigacion(duenoCorreo: string, id: string, r: Ci
         pendiente: (r.pendiente || []).map((x) => trozo(x, 200)).slice(0, 4),
         t: ahora,
       },
-      eventos: [{ type: 'operation.receipt', payload: { operationId: reg.id, state: estado === 'failed' ? 'failed' : 'succeeded', effect: 'none', fuentes: evidencias.length } }],
+      eventos: [{ type: 'operation.receipt', payload: { operationId: reg.id, state: final === 'failed' ? 'failed' : 'succeeded', effect: 'none', fuentes: evidencias.length } }],
     };
   }).catch(() => null);
   if (!c) return null;
@@ -424,16 +431,27 @@ function evidenciaDeEnvio(id: string, resumen: string, referencia?: string): Evi
   return [{ id: `${id}:recibo`, tipo: 'recibo', etiqueta: trozo(resumen, 200), ...(referencia ? { ref: trozo(referencia, 200) } : {}) }];
 }
 
+/**
+ * La evidencia va a SU criterio (`id`): ese queda verificado con ella; cualquier otro obligatorio que esta evidencia no
+ * prueba queda «sin comprobar» (nunca se copia la misma lista a todos los criterios). Los opcionales, como estaban.
+ */
+function soloSuCriterio(criterios: Criterio[], id: string, ev: Evidencia[]): Criterio[] {
+  return criterios.map((c) => (c.id === id ? { ...c, estado: ev.length ? 'verified' : 'not_met', evidencias: ev.map((e) => e.id) } : c.obligatorio ? { ...c, estado: c.estado === 'verified' ? 'verified' : 'unknown', evidencias: c.estado === 'verified' ? c.evidencias : [] } : c));
+}
+
 /** El cambio que deja un envío terminado (por el panel o por el chat). */
 function cambioDeEnvio(reg: RegistroTarea, estado: 'succeeded' | 'failed' | 'unknown' | 'stale', resumen: string, operacion: string, referencia?: string): Cambio {
   const ahora = Date.now();
   if (estado === 'succeeded') {
     const ev = evidenciaDeEnvio(operacion, resumen, referencia);
+    // El recibo del proveedor prueba el ENVÍO (su criterio), no cualquier otro criterio que la tarea tuviera.
+    const criterios = soloSuCriterio(reg.criterios, 'envio', ev);
+    const todo = criteriosCumplidos(criterios, ev);
     return {
-      estado: 'completed',
+      estado: todo ? 'completed' : 'partial',
       pasoActual: null,
-      criterios: reg.criterios.map((c) => ({ ...c, estado: 'verified', evidencias: ev.map((e) => e.id) })),
-      resultado: { id: `${reg.id}:resultado`, resumen: trozo(resumen, 300), evidencias: ev, parcial: [], pendiente: [], t: ahora },
+      criterios,
+      resultado: { id: `${reg.id}:resultado`, resumen: trozo(resumen, 300), evidencias: ev, parcial: todo ? [] : ['El envío se confirmó; lo demás que pedía esta tarea no se pudo comprobar con ese recibo.'], pendiente: [], t: ahora },
       eventos: [{ type: 'operation.receipt', payload: { operationId: operacion, state: 'succeeded', effect: 'confirmed' } }],
     };
   }

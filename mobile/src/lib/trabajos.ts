@@ -243,6 +243,16 @@ export function textoProgreso(p: TareaVista['progress'], idioma: 'es' | 'en' = '
   return idioma === 'en' ? `${Math.min(p.done, p.total)} of ${p.total} ${p.unit}` : `${Math.min(p.done, p.total)} de ${p.total} ${p.unit}`;
 }
 
+/**
+ * Lo pedido, uno por uno: «✓ informe.docx», «✗ presupuesto.xlsx», «? carta.pdf». Solo cuando hay más de un criterio
+ * (con uno solo, el resultado ya lo dice). La marca es su estado de verdad: verificado solo con su evidencia.
+ */
+export function criteriosEnPalabras(acc: TareaVista['acceptance'] | undefined): { id: string; texto: string; estado: string }[] {
+  if (!acc || acc.length < 2) return [];
+  const marca = (s: string) => (s === 'verified' ? '✓' : s === 'not_met' ? '✗' : s === 'unknown' ? '?' : '·');
+  return acc.map((c) => ({ id: c.id, estado: c.status, texto: `${marca(c.status)} ${String(c.text).split(/:\s/)[0].slice(0, 120)}` }));
+}
+
 /** «hace 2 min», para «última señal». */
 export function haceCuanto(iso: string | undefined, ahora = Date.now(), idioma: 'es' | 'en' = 'es'): string {
   const t = iso ? Date.parse(iso) : NaN;

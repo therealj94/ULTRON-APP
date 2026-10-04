@@ -27,9 +27,11 @@ la anterior, el contenedor del escritorio se borra y se crea de nuevo (pestañas
 documentos del anterior no quedan). Las tareas terminadas se olvidan tras una hora.
   GET  /tareas/{id}                                      → estado, pasos, respuesta, `pregunta` y `pregunta_id` (si espera un sí),
                                                            y al terminar `archivos`: [{ruta, existe, bytes, sha256, reciente?,
-                                                           mencionado?, fuera?}] que el NODO comprobó en el espacio de trabajo
+                                                           mencionado?, fuera?, tipo?, magia?}] que el NODO comprobó en el espacio de trabajo
                                                            (ESPACIO_TRABAJO) después de la tarea, nunca sacados del texto del
-                                                           modelo; null + `archivos_error` si no pudo mirar (comprobar_archivos)
+                                                           modelo; null + `archivos_error` si no pudo mirar (comprobar_archivos).
+                                                           `tipo`: lo que es POR DENTRO (bytes mágicos: pdf, docx, xlsx, odt,
+                                                           png, texto…; tipo_por_dentro), `magia`: sus primeros 8 bytes en hex
   GET  /tareas/{id}/eventos                              → los mismos pasos en vivo (SSE)
   POST /tareas/{id}/parar                                → {"estado", "parada": {"id", "fase"}}: fase «quiescent» (nada en
                                                            vuelo: detenida de verdad) o «draining» (un toque ya despachado
@@ -121,7 +123,7 @@ ESTADOS_VIVOS = ('en_cola', 'trabajando', 'pausada', 'confirmar', 'control')
 # El espacio de trabajo de la misión dentro del escritorio (la carpeta de la persona del escritorio de la demo): lo
 # único donde se buscan y comprueban archivos al terminar. Lo de fuera ni se mira (revisión externa, 4-oct).
 ESPACIO_TRABAJO = os.environ.get('ESPACIO_TRABAJO', '/home/computeruse').rstrip('/') or '/home/computeruse'
-ARCHIVOS_MAX = 12        # cuántos archivos se cuentan en el final
+ARCHIVOS_MAX = 20        # cuántos archivos se cuentan en el final
 ARCHIVOS_PROFUNDIDAD = 6  # cuántas carpetas hacia dentro se busca
 
 cliente = OpenAI(base_url=MODELO_URL, api_key='local', timeout=120)
@@ -836,10 +838,64 @@ def ruta_en_espacio(ruta):
     return n if n.startswith(ESPACIO_TRABAJO + '/') else None
 
 
+MAGIA_BYTES = 512  # cuánto del principio de cada archivo se mira para saber qué es por dentro
+RE_MARCA_OOXML = r'word/document\.xml|xl/workbook\.xml|ppt/presentation\.xml'
+MIME_ODF = {
+    'application/vnd.oasis.opendocument.text': 'odt',
+    'application/vnd.oasis.opendocument.spreadsheet': 'ods',
+    'application/vnd.oasis.opendocument.presentation': 'odp',
+    'application/vnd.oasis.opendocument.graphics': 'odg',
+}
+MARCA_OOXML = {'word/document.xml': 'docx', 'xl/workbook.xml': 'xlsx', 'ppt/presentation.xml': 'pptx'}
+
+
+def tipo_por_dentro(magia_hex, marca, tam):
+    """Qué es el archivo POR DENTRO, por sus primeros bytes (y, si es un ZIP, por la parte que lo hace Word, Excel o
+    PowerPoint): pdf, png, jpeg, gif, webp, ole (Office antiguo), odt/ods/odp/odg, docx/xlsx/pptx, zip, rtf, texto,
+    binario o vacio. None si no se pudo leer (eso es «tipo sin comprobar», no un tipo). La extensión no cuenta: un
+    «carta.pdf» que por dentro es texto es texto."""
+    if tam == 0:
+        return 'vacio'
+    try:
+        b = bytes.fromhex(magia_hex or '')
+    except ValueError:
+        return None
+    if not b:
+        return None
+    if b.startswith(b'%PDF-'):
+        return 'pdf'
+    if b.startswith(b'\x89PNG\r\n\x1a\n'):
+        return 'png'
+    if b.startswith(b'\xff\xd8\xff'):
+        return 'jpeg'
+    if b[:6] in (b'GIF87a', b'GIF89a'):
+        return 'gif'
+    if b[:4] == b'RIFF' and b[8:12] == b'WEBP':
+        return 'webp'
+    if b.startswith(b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1'):
+        return 'ole'
+    if b.startswith(b'PK\x03\x04'):
+        if len(b) >= 30:
+            largo, extra = int.from_bytes(b[26:28], 'little'), int.from_bytes(b[28:30], 'little')
+            if b[30:30 + largo] == b'mimetype':
+                tam_mime = int.from_bytes(b[18:22], 'little')
+                ini = 30 + largo + extra
+                mime = b[ini:ini + min(tam_mime, 100)].decode('ascii', 'replace')
+                if mime in MIME_ODF:
+                    return MIME_ODF[mime]
+        return MARCA_OOXML.get(marca or '', 'zip')
+    if b.startswith(b'{\\rtf'):
+        return 'rtf'
+    if b'\x00' not in b and all(c >= 0x20 or c in (9, 10, 12, 13) for c in b):
+        return 'texto'
+    return 'binario'
+
+
 def comando_archivos(nombres, minutos):
     """El comando que corre DENTRO del escritorio: los archivos normales del espacio de trabajo (ni enlaces ni nada
     oculto, como el perfil de Firefox) que se llaman como lo nombrado o que cambiaron en los últimos `minutos`, con su
-    tamaño, su hora y su sha256. Sin el espacio, SIN_ESPACIO."""
+    tamaño, su hora, su sha256, sus primeros MAGIA_BYTES bytes en hex y, si es un ZIP, la parte que lo hace Word, Excel
+    o PowerPoint (los nombres de un ZIP van sin comprimir). Solo coreutils y grep. Sin el espacio, SIN_ESPACIO."""
     q = shlex.quote(ESPACIO_TRABAJO)
     base = f'find {q} -mindepth 1 -maxdepth {ARCHIVOS_PROFUNDIDAD} -name ".*" -prune -o -type f'
     partes = []
@@ -848,8 +904,11 @@ def comando_archivos(nombres, minutos):
     partes.append(f'{base} -mmin -{int(minutos)} -print')
     return (f'cd {q} 2>/dev/null || {{ echo SIN_ESPACIO; exit 0; }}; '
             '{ ' + '; '.join(partes) + "; } 2>/dev/null | awk '!v[$0]++' | head -n 40 | "
-            'while IFS= read -r f; do printf "%s\\t%s\\t%s\\n" "$(stat -c "%s %Y" -- "$f")" '
-            '"$(sha256sum -- "$f" | cut -d" " -f1)" "$f"; done')
+            'while IFS= read -r f; do '
+            f'm=$(head -c {MAGIA_BYTES} -- "$f" 2>/dev/null | od -An -v -tx1 | tr -d " \\n"); z=""; '
+            f'case "$m" in 504b0304*) z=$(LC_ALL=C grep -a -o -m1 -E {shlex.quote(RE_MARCA_OOXML)} -- "$f" 2>/dev/null | head -n 1);; esac; '
+            'printf "%s\\t%s\\t%s\\t%s\\t%s\\n" "$(stat -c "%s %Y" -- "$f")" '
+            '"$(sha256sum -- "$f" | cut -d" " -f1)" "$m" "$z" "$f"; done')
 
 
 def comprobar_archivos(t, respuesta):
@@ -875,17 +934,22 @@ def comprobar_archivos(t, respuesta):
 
     archivos = []
     for linea in salida.splitlines():
-        partes = linea.split('\t', 2)
-        tam = partes[0].split() if len(partes) == 3 else []
+        partes = linea.split('\t', 4)
+        tam = partes[0].split() if len(partes) == 5 else []
         if len(tam) != 2 or not re.fullmatch(r'[0-9a-f]{64}', partes[1]):
             continue
-        ruta = posixpath.normpath(partes[2])
+        ruta = posixpath.normpath(partes[4])
         if not ruta.startswith(ESPACIO_TRABAJO + '/'):
             continue
         try:
             a = {'ruta': ruta, 'existe': True, 'bytes': int(tam[0]), 'sha256': partes[1], 'reciente': float(tam[1]) >= t.desde - 2}
         except ValueError:
             continue
+        magia = partes[2] if re.fullmatch(r'[0-9a-f]*', partes[2]) else ''
+        tipo = tipo_por_dentro(magia, partes[3].strip(), a['bytes'])
+        if tipo:  # sin poder leerlo por dentro no se inventa un tipo: queda «sin comprobar»
+            a['tipo'] = tipo
+            a['magia'] = magia[:16]
         a['mencionado'] = any(es(a, n, dentro) for n, dentro in buscar)
         if a['reciente'] or a['mencionado']:
             archivos.append(a)

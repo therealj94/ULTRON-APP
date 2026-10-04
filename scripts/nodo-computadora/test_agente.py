@@ -6,6 +6,7 @@ Se reemplazan fastapi, openai, httpx y PIL por módulos de mentira (lo que se pr
 control de la persona, el sí antes de algo sensible, nunca pagar, y el ciclo del motor gratis con eso).
 """
 import os
+import posixpath
 import sys
 import threading
 import time
@@ -1368,7 +1369,9 @@ class ArchivosComprobados(Base):
         r = self.correr_y_archivos('Listo, guardé el archivo informe.odt en Documentos.',
                                    antes=lambda t: rutas.update(r=self.escribir('Documents/informe.odt', b'hola mundo')))
         self.assertEqual(r['archivos'], [{'ruta': rutas['r'], 'existe': True, 'bytes': 10,
-                                          'sha256': hashlib.sha256(b'hola mundo').hexdigest(), 'reciente': True, 'mencionado': True}])
+                                          'sha256': hashlib.sha256(b'hola mundo').hexdigest(), 'reciente': True, 'mencionado': True,
+                                          # Se llama .odt pero por dentro es texto: el nodo dice lo que ES, no lo que dice el nombre.
+                                          'tipo': 'texto', 'magia': b'hola mun'.hex()}])
 
     def test_lo_nuevo_sin_nombrar_cuenta_y_lo_oculto_o_viejo_no(self):
         def antes(t):
@@ -1409,6 +1412,126 @@ class ArchivosComprobados(Base):
         r = self.correr_y_archivos('Listo, guardé el archivo informe.odt.')
         self.assertIsNone(r['archivos'], 'sin comprobar no es «no hay archivos»')
         self.assertIn('docker', r['archivos_error'])
+
+    # ---- RESULTADOS REALMENTE COMPROBADOS (revisión externa): tres documentos pedidos, uno por uno, con su tipo
+    # comprobado por dentro (bytes mágicos), no por la extensión ni por lo que dice el modelo.
+
+    TRES = 'Crea tres documentos: informe.docx, presupuesto.xlsx y carta.pdf, y guárdalos en Documents'
+
+    @staticmethod
+    def ooxml(raiz):
+        import io
+        import zipfile
+        b = io.BytesIO()
+        with zipfile.ZipFile(b, 'w', zipfile.ZIP_DEFLATED) as z:
+            z.writestr('[Content_Types].xml', '<Types/>')
+            z.writestr(f'{raiz}', '<x/>')
+        return b.getvalue()
+
+    @staticmethod
+    def odf(mime):
+        import io
+        import zipfile
+        b = io.BytesIO()
+        with zipfile.ZipFile(b, 'w') as z:
+            z.writestr(zipfile.ZipInfo('mimetype'), mime, compress_type=zipfile.ZIP_STORED)
+            z.writestr('content.xml', '<x/>', compress_type=zipfile.ZIP_DEFLATED)
+        return b.getvalue()
+
+    PDF = b'%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\ntrailer << >>\n%%EOF\n'
+    PNG = b'\x89PNG\r\n\x1a\n' + b'\x00\x00\x00\rIHDR' + b'\x00' * 20
+
+    def por_nombre(self, r):
+        return {posixpath.basename(a['ruta']): a for a in r['archivos']}
+
+    def test_tres_documentos_a_ninguno(self):
+        r = self.correr_y_archivos('Listo, ya quedaron los 3 archivos.', instruccion=self.TRES)
+        n = self.por_nombre(r)
+        self.assertEqual(sorted(n), ['carta.pdf', 'informe.docx', 'presupuesto.xlsx'])
+        self.assertTrue(all(a['existe'] is False and a['mencionado'] for a in n.values()), 'los tres se buscaron y no están')
+
+    def test_tres_documentos_b_uno_de_tres(self):
+        r = self.correr_y_archivos('Listo, ya quedaron los 3 archivos.', instruccion=self.TRES,
+                                   antes=lambda t: self.escribir('Documents/informe.docx', self.ooxml('word/document.xml')))
+        n = self.por_nombre(r)
+        self.assertEqual((n['informe.docx']['existe'], n['informe.docx']['tipo']), (True, 'docx'))
+        self.assertFalse(n['presupuesto.xlsx']['existe'])
+        self.assertFalse(n['carta.pdf']['existe'])
+
+    def test_tres_documentos_c_archivos_equivocados(self):
+        def antes(t):
+            self.escribir('runtime.log', b'2026-10-04 INFO arranque\n')
+            self.escribir('random.txt', b'hola')
+            self.escribir('foto.png', self.PNG)
+        r = self.correr_y_archivos('Listo, ya quedaron los 3 archivos.', instruccion=self.TRES, antes=antes)
+        n = self.por_nombre(r)
+        self.assertEqual({k: (a['existe'], a.get('mencionado'), a.get('tipo')) for k, a in n.items()}, {
+            'informe.docx': (False, True, None), 'presupuesto.xlsx': (False, True, None), 'carta.pdf': (False, True, None),
+            'runtime.log': (True, False, 'texto'), 'random.txt': (True, False, 'texto'), 'foto.png': (True, False, 'png'),
+        }, 'lo nuevo se cuenta como lo que es, sin hacerlo pasar por lo pedido')
+
+    def test_tres_documentos_d_incompletos(self):
+        def antes(t):
+            self.escribir('Documents/informe.docx', self.ooxml('word/document.xml'), hace_s=7200)  # de antes
+            self.escribir('Documents/presupuesto.xlsx', b'')                                  # vacío
+            self.escribir('Documents/carta.pdf', b'esto no es un pdf, es texto')               # otro tipo
+        r = self.correr_y_archivos('Listo, ya quedaron los 3 archivos.', instruccion=self.TRES, antes=antes)
+        n = self.por_nombre(r)
+        self.assertFalse(n['informe.docx']['reciente'], 'ya estaba antes de la misión')
+        self.assertEqual((n['presupuesto.xlsx']['bytes'], n['presupuesto.xlsx']['tipo']), (0, 'vacio'))
+        self.assertEqual(n['carta.pdf']['tipo'], 'texto', 'la extensión dice pdf; por dentro es texto')
+        self.assertEqual(len(n['carta.pdf']['magia']), 16, 'los primeros 8 bytes, en hex')
+
+    def test_tres_documentos_d_fuera_del_espacio(self):
+        r = self.correr_y_archivos('Listo.', instruccion='Crea informe.docx, presupuesto.xlsx y /tmp/carta.pdf',
+                                   antes=lambda t: self.escribir('carta.pdf', self.PDF))
+        fuera = [a for a in r['archivos'] if a['ruta'] == '/tmp/carta.pdf']
+        self.assertEqual(len(fuera), 1)
+        self.assertTrue(fuera[0]['fuera'])
+        self.assertFalse(fuera[0]['existe'])
+
+    def test_tres_documentos_e_los_tres_correctos(self):
+        import hashlib
+        cont = {'informe.docx': self.ooxml('word/document.xml'), 'presupuesto.xlsx': self.ooxml('xl/workbook.xml'), 'carta.pdf': self.PDF}
+
+        def antes(t):
+            for k, v in cont.items():
+                self.escribir(f'Documents/{k}', v)
+        r = self.correr_y_archivos('Listo, ya quedaron los 3 archivos.', instruccion=self.TRES, antes=antes)
+        n = self.por_nombre(r)
+        self.assertEqual(sorted(n), ['carta.pdf', 'informe.docx', 'presupuesto.xlsx'])
+        for k, v in cont.items():
+            a = n[k]
+            self.assertEqual((a['existe'], a['reciente'], a['mencionado'], a['bytes'], a['sha256']),
+                             (True, True, True, len(v), hashlib.sha256(v).hexdigest()), k)
+        self.assertEqual({k: a['tipo'] for k, a in n.items()}, {'informe.docx': 'docx', 'presupuesto.xlsx': 'xlsx', 'carta.pdf': 'pdf'})
+        self.assertEqual(n['carta.pdf']['magia'], self.PDF[:8].hex())
+
+    def test_tipos_por_dentro(self):
+        casos = {
+            'a.pdf': (self.PDF, 'pdf'), 'b.png': (self.PNG, 'png'), 'c.jpg': (b'\xff\xd8\xff\xe0' + b'\x00' * 30, 'jpeg'),
+            'd.odt': (self.odf('application/vnd.oasis.opendocument.text'), 'odt'),
+            'e.ods': (self.odf('application/vnd.oasis.opendocument.spreadsheet'), 'ods'),
+            'f.pptx': (self.ooxml('ppt/presentation.xml'), 'pptx'), 'g.zip': (self.ooxml('otra/cosa.xml'), 'zip'),
+            'h.csv': ('nombre,monto\nAna,10\nBea,ñ\n'.encode('utf-8'), 'texto'), 'i.doc': (b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1' + b'\x00' * 30, 'ole'),
+            'j.bin': (b'\x00\x01\x02\x03' * 10, 'binario'), 'k.rtf': (b'{\\rtf1\\ansi hola}', 'rtf'),
+        }
+
+        def antes(t):
+            for k, (v, _) in casos.items():
+                self.escribir(k, v)
+        r = self.correr_y_archivos('Listo.', instruccion='Guarda los archivos', antes=antes)
+        self.assertEqual({k: a['tipo'] for k, a in self.por_nombre(r).items()}, {k: v[1] for k, v in casos.items()})
+
+    def test_cantidad_tres_pdfs(self):
+        def antes(t):
+            self.escribir('Downloads/f1.pdf', self.PDF)
+            self.escribir('Downloads/f2.pdf', self.PDF + b'2')
+            self.escribir('Downloads/f3.pdf', b'no soy pdf')
+            self.escribir('runtime.log', b'log')
+        r = self.correr_y_archivos('Listo, guardé 3 PDFs.', instruccion='Descarga las facturas y guarda 3 PDFs en Downloads', antes=antes)
+        self.assertEqual({k: a['tipo'] for k, a in self.por_nombre(r).items()},
+                         {'f1.pdf': 'pdf', 'f2.pdf': 'pdf', 'f3.pdf': 'texto', 'runtime.log': 'texto'})
 
     def test_lo_que_nombra_sale_de_la_instruccion_y_la_respuesta_no_de_una_url(self):
         self.assertEqual(agente.rutas_mencionadas('Guarda la tabla en ~/Documents/precios.ods',
