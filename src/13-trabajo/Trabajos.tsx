@@ -225,9 +225,14 @@ type PropsPanel = {
   onTarea: (t: TareaVista | null | undefined) => void;
   onRefrescar: () => void;
   onEditar: (sugerencia: string) => void;
+  /** «Abrir el escritorio» de una tarea de su computadora (13-trabajo/VisorEscritorio.tsx). */
+  onAbrirEscritorio?: (t: TareaVista) => void;
 };
 
-export function PanelTrabajos({ abierto, onCerrar, tareas, reducido, enfoque, onTarea, onRefrescar, onEditar }: PropsPanel) {
+/** ¿Esta tarea tiene un escritorio que abrir? La de su computadora, mientras sigue. */
+export const tieneEscritorio = (t: Pick<TareaVista, 'terminal' | 'controls' | 'environment'>) => !t.terminal && (t.controls.open === 'computadora' || t.environment?.kind === 'computadora');
+
+export function PanelTrabajos({ abierto, onCerrar, tareas, reducido, enfoque, onTarea, onRefrescar, onEditar, onAbrirEscritorio }: PropsPanel) {
   const cerrar = useRef<HTMLButtonElement | null>(null);
   const g = useMemo(() => grupos(tareas), [tareas]);
   const vacio = !g.decisiones.length && !g.activas.length && !g.recientes.length;
@@ -236,7 +241,7 @@ export function PanelTrabajos({ abierto, onCerrar, tareas, reducido, enfoque, on
     const r = requestAnimationFrame(() => document.getElementById(`tarea-${enfoque}`)?.scrollIntoView({ block: 'nearest', behavior: reducido ? 'auto' : 'smooth' }));
     return () => cancelAnimationFrame(r);
   }, [abierto, enfoque, reducido]);
-  const comun = { reducido, onTarea, onRefrescar, onEditar, varias: g.decisiones.length > 1 };
+  const comun = { reducido, onTarea, onRefrescar, onEditar, onAbrirEscritorio, varias: g.decisiones.length > 1 };
   return (
     <Dialogo
       abierto={abierto}
@@ -266,7 +271,7 @@ export function PanelTrabajos({ abierto, onCerrar, tareas, reducido, enfoque, on
   );
 }
 
-type Comun = { reducido: boolean; onTarea: PropsPanel['onTarea']; onRefrescar: () => void; onEditar: (s: string) => void; varias: boolean };
+type Comun = { reducido: boolean; onTarea: PropsPanel['onTarea']; onRefrescar: () => void; onEditar: (s: string) => void; onAbrirEscritorio?: (t: TareaVista) => void; varias: boolean };
 
 function Seccion({ titulo, tareas, ...c }: Comun & { titulo: string; tareas: TareaVista[] }) {
   return (
@@ -283,7 +288,7 @@ function Seccion({ titulo, tareas, ...c }: Comun & { titulo: string; tareas: Tar
   );
 }
 
-function TarjetaTarea({ t, reducido, onTarea, onRefrescar, onEditar, varias }: Comun & { t: TareaVista }) {
+function TarjetaTarea({ t, reducido, onTarea, onRefrescar, onEditar, onAbrirEscritorio, varias }: Comun & { t: TareaVista }) {
   const [ocupado, setOcupado] = useState(false);
   const [aviso, setAviso] = useState<string | null>(null);
   const prog = textoProgreso(t.progress);
@@ -331,6 +336,11 @@ function TarjetaTarea({ t, reducido, onTarea, onRefrescar, onEditar, varias }: C
       )}
       {!t.terminal && (
         <div className="flex flex-wrap gap-2 pt-1">
+          {onAbrirEscritorio && tieneEscritorio(t) && (
+            <button type="button" className="aura-secundario" onClick={() => onAbrirEscritorio(t)} aria-label={`Abrir el escritorio de tu computadora: ${t.title}`}>
+              Abrir el escritorio
+            </button>
+          )}
           {t.controls.pause && (
             <button type="button" className="aura-secundario" disabled={ocupado} onClick={() => void control(() => clienteTrabajos.pausar(t.id))}>
               Pausar

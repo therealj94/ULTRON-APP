@@ -26,18 +26,24 @@ import { Texto, vibrar } from '../ui';
 import { respuestaPc, trabajando, type EstadoPc, type TareaPc } from '../compa/computadora';
 import {
   AcumuladorScroll,
-  BufferTeclado,
   FRAME_VIEJO_MS,
   Gestos,
   aLogico,
   aNormalizado,
   alternarZoom,
+  avisoDeLote,
   comboPermitido,
+  confirmarEscritura,
+  descartarEscritura,
   desplazar,
   edadFrame,
   intervaloCaptura,
   limitarVista,
   modoDeControl,
+  recuperarEscritura,
+  resolverEscritura,
+  seguirEscritura,
+  textoDeEventos,
   transformacion,
   vistaAjustada,
   zoomEn,
@@ -52,7 +58,7 @@ import {
   type TipoEntrada,
   type VistaZoom,
 } from '../lib/entradaRemota';
-import { cerrarVisor, guardarVista, seguirEnVisor, sesionDe, soltarOyente, suscribirVisor, visorAhora, vistaGuardada } from './visor';
+import { cerrarVisor, guardarVista, seguirEnVisor, sesionDe, soltarImagen, soltarOyente, suscribirVisor, tecladoDe, visorAhora, vistaGuardada } from './visor';
 
 const NEGRO = '#05070a';
 const VELO = 'rgba(8,10,14,0.78)';
@@ -116,7 +122,12 @@ function Visor({ tareaId, tareaSeguida }: { tareaId: string; tareaSeguida: strin
   );
   const sesion = useMemo(() => sesionDe(tareaId, enviar, repintar), [tareaId, enviar, repintar]);
   useEffect(() => () => soltarOyente(tareaId, repintar), [tareaId, repintar]);
-  const buffer = useRef(new BufferTeclado()).current;
+  // El campo y el lote de teclado (A3) viven con la sesión: lo que no llegó sigue ahí al reabrir. El lote pide la
+  // pantalla de ahora tras cada ACK y cuando espera la imagen de después (antes de un Enter).
+  const pedirImagen = useCallback(() => void leerPantallaRef.current?.(), []);
+  const { lote, buffer } = useMemo(() => tecladoDe(tareaId, pedirImagen), [tareaId, sesion, pedirImagen]);
+  useEffect(() => () => soltarImagen(tareaId, pedirImagen), [tareaId, pedirImagen]);
+  useEffect(() => setTexto(buffer.texto), [buffer]);
   const gestos = useRef(new Gestos()).current;
   const scroll = useRef(new AcumuladorScroll(40)).current;
   const scrollPendiente = useRef<{ n: number; x: number; y: number; enVuelo: boolean }>({ n: 0, x: 0, y: 0, enVuelo: false });
@@ -226,10 +237,15 @@ function Visor({ tareaId, tareaSeguida }: { tareaId: string; tareaSeguida: strin
 
   // La pantalla de ahora: con el control ~0,7 s (nunca dos a la vez), con AURA cada 2 s. Más nítida con zoom.
   const pidiendoPantalla = useRef(false);
+  /** Se pidió otra mientras una iba (el lote espera la de DESPUÉS de su entrada): sale en cuanto vuelve la anterior. */
+  const otraPantalla = useRef(false);
   const contador = useRef(0);
   const ultimaDuracion = useRef(0);
   const leerPantalla = useCallback(async (): Promise<Imagen | null> => {
-    if (pidiendoPantalla.current) return null;
+    if (pidiendoPantalla.current) {
+      otraPantalla.current = true;
+      return null;
+    }
     pidiendoPantalla.current = true;
     const desde = Date.now();
     try {
@@ -249,6 +265,10 @@ function Visor({ tareaId, tareaSeguida }: { tareaId: string; tareaSeguida: strin
       return null;
     } finally {
       pidiendoPantalla.current = false;
+      if (otraPantalla.current) {
+        otraPantalla.current = false;
+        void leerPantallaRef.current();
+      }
     }
   }, [tareaId, v.zoom, sesion, conexionOk, conexionMal]);
   const leerPantallaRef = useRef(leerPantalla);
@@ -274,14 +294,16 @@ function Visor({ tareaId, tareaSeguida }: { tareaId: string; tareaSeguida: strin
   // La app se va atrás (blur): se sueltan los modificadores y, al volver, release_all e imagen nueva.
   useEffect(() => {
     const sub = AppState.addEventListener('change', (s) => {
-      if (s !== 'active') sesion.alDesconectar();
-      else {
+      if (s !== 'active') {
+        sesion.alDesconectar();
+        lote.pausar('desconectado');
+      } else {
         void sesion.alReconectar();
         void leerPantallaRef.current();
       }
     });
     return () => sub.remove();
-  }, [sesion]);
+  }, [sesion, lote]);
 
   // Si la misión siguió con otra tarea y esta terminó, el visor la sigue (sin abrirse ni cerrarse solo).
   useEffect(() => {
@@ -360,7 +382,9 @@ function Visor({ tareaId, tareaSeguida }: { tareaId: string; tareaSeguida: strin
   /** Una entrada: por el contrato (con su ACK) o, con el servicio de antes, por la acción de antes. */
   const entrada = async (tipo: TipoEntrada, payload: Record<string, unknown>) => {
     if (!tengo) return;
-    if (!conEntrada) return entradaDeAntes(tipo, payload);
+    if (!conEntrada) return void (await entradaDeAntes(tipo, payload));
+    // Mientras sale lo escrito (texto + Enter), nada se mete en medio: un clic movería el foco antes del Enter.
+    if (lote.ocupado()) return avisar(tr('Espera a que termine de escribir.', 'Wait until it finishes typing.'));
     setEnVuelo((n) => n + 1);
     const r = await sesion.entrada(tipo, payload);
     setEnVuelo((n) => n - 1);
@@ -375,7 +399,7 @@ function Visor({ tareaId, tareaSeguida }: { tareaId: string; tareaSeguida: strin
     } else if (r.motivo !== 'desconectado') avisar(r.error || r.motivo);
   };
 
-  const entradaDeAntes = async (tipo: TipoEntrada, p: Record<string, any>) => {
+  const entradaDeAntes = async (tipo: TipoEntrada, p: Record<string, any>): Promise<boolean> => {
     let cuerpo: Record<string, unknown> | null = null;
     if (tipo === 'pointer' && p.accion === 'click') cuerpo = { tipo: 'click', ...aNormalizado({ x: p.x, y: p.y }, frame) };
     else if (tipo === 'text_commit') cuerpo = { tipo: 'escribir', texto: p.texto };
@@ -384,13 +408,18 @@ function Visor({ tareaId, tareaSeguida }: { tareaId: string; tareaSeguida: strin
       const combo = [...(p.mods as string[]), p.tecla].join('+');
       if (TECLAS_DE_ANTES.has(combo)) cuerpo = { tipo: 'tecla', teclas: combo };
     }
-    if (!cuerpo) return avisar(tr('Eso llega cuando se actualice el servicio de su computadora.', 'That arrives once its computer service is updated.'));
+    if (!cuerpo) {
+      avisar(tr('Eso llega cuando se actualice el servicio de su computadora.', 'That arrives once its computer service is updated.'));
+      return false;
+    }
     try {
       await api(`/api/computadora/tareas/${encodeURIComponent(tareaId)}/accion`, { method: 'POST', body: JSON.stringify(cuerpo) }, 20_000);
       vibrar('suave');
       void leerPantalla();
+      return true;
     } catch (e: any) {
       avisar(e?.message || '');
+      return false;
     }
   };
 
@@ -497,14 +526,59 @@ function Visor({ tareaId, tareaSeguida }: { tareaId: string; tareaSeguida: strin
     }
     setTexto(buffer.texto);
   };
+  /**
+   * Enviar lo escrito (A3): sale como UN lote que espera cada ACK y la imagen de después antes del Enter; si algo no
+   * llega se pausa y el campo enseña lo que falta (no se vacía antes de saber cómo le fue). Con el servicio de antes
+   * (sin ACK ni frames) va como antes, pero lo que no llegó vuelve al campo.
+   */
   const confirmarTexto = async (conEnter: boolean) => {
-    const eventos = buffer.confirmar(conEnter);
-    setTexto('');
-    for (const ev of eventos) await entrada(ev.type, ev.payload);
+    if (!tengo) return;
+    if (!conEntrada) {
+      const eventos = buffer.confirmar(conEnter);
+      for (let i = 0; i < eventos.length; i++) {
+        if (!(await entradaDeAntes(eventos[i].type, eventos[i].payload))) {
+          buffer.devolver(textoDeEventos(eventos.slice(i)).texto);
+          return setTexto(buffer.texto);
+        }
+      }
+      buffer.aplicado();
+      return setTexto('');
+    }
+    const r = await confirmarEscritura(buffer, lote, conEnter, { privado: seguro });
+    setTexto(buffer.texto);
+    if (r.ok) vibrar('suave');
+    else if (r.motivo === 'ocupado') avisar(tr('Espera a que termine lo anterior.', 'Wait for the previous text to finish.'));
+    else vibrar('aviso');
   };
+  const seguirTexto = async () => {
+    const r = await seguirEscritura(buffer, lote);
+    setTexto(buffer.texto);
+    if (r.ok) vibrar('suave');
+  };
+  const resolverTexto = (llego: boolean) => {
+    resolverEscritura(buffer, lote, llego);
+    setTexto(buffer.texto);
+  };
+  const editarTexto = () => {
+    recuperarEscritura(buffer, lote);
+    setTexto(buffer.texto);
+  };
+  const descartarTexto = () => {
+    descartarEscritura(buffer, lote);
+    setTexto('');
+  };
+  // Lo escrito en entrada segura (una contraseña) no sobrevive a terminarla: se tira, nunca pasa a un campo visible.
+  useEffect(() => {
+    if (!seguro && lote.privado && lote.abierto()) {
+      descartarEscritura(buffer, lote);
+      setTexto('');
+    }
+  }, [seguro, lote, buffer]);
 
   const cerrar = () => {
-    // Volver al chat: la tarea sigue y el control sigue siendo suyo; nada queda pulsado.
+    // Volver al chat: la tarea sigue y el control sigue siendo suyo; nada queda pulsado. Lo escrito que faltaba se
+    // pausa (no sale a solas con la vista cerrada) y espera aquí al reabrir.
+    lote.pausar('cerrado');
     sesion.mods.soltarTodo();
     if (tengo && conEntrada) void sesion.entrada('release_all', {});
     cerrarVisor();
@@ -627,8 +701,35 @@ function Visor({ tareaId, tareaSeguida }: { tareaId: string; tareaSeguida: strin
         {/* El teclado, con el control. */}
         {tengo ? (
           <View style={[s.teclado, { paddingBottom: (teclado ? 6 : ins.bottom + 6) + teclado, paddingLeft: ins.left + 8, paddingRight: ins.right + 8 }]}>
+            {lote.ocupado() ? (
+              <Texto v="mini" style={{ color: GRIS }} accessibilityLiveRegion="polite">
+                {lote.estado() === 'esperando_imagen' ? tr('Escribiendo… espera la imagen de ahora antes del Enter', 'Typing… waiting for the current image before Enter') : tr('Escribiendo…', 'Typing…')}
+              </Texto>
+            ) : lote.abierto() ? (
+              <View style={s.fila} accessibilityLiveRegion="polite">
+                <Texto v="mini" style={{ color: AMBAR, flexBasis: '100%' }}>
+                  {(() => {
+                    const a = avisoDeLote(lote);
+                    return a ? tr(a[0], a[1]) : '';
+                  })()}
+                </Texto>
+                {lote.incierto ? (
+                  <>
+                    <Boton etiqueta={tr('Sí llegó', 'It arrived')} lector={tr('Sí llegó: no lo repitas', 'It arrived: don’t repeat it')} onPress={() => resolverTexto(true)} />
+                    <Boton etiqueta={tr('No llegó', 'It didn’t arrive')} lector={tr('No llegó: mándalo otra vez al seguir', 'It didn’t arrive: send it again when resuming')} onPress={() => resolverTexto(false)} />
+                  </>
+                ) : (
+                  <>
+                    <Boton etiqueta={tr('Seguir', 'Resume')} lector={tr('Seguir mandando lo que falta', 'Keep sending what is left')} onPress={() => void seguirTexto()} fuerte />
+                    <Boton etiqueta={tr('Editar', 'Edit')} lector={tr('Devolver lo que falta al campo para editarlo', 'Put what is left back in the field to edit it')} onPress={editarTexto} />
+                  </>
+                )}
+                <Boton etiqueta={tr('Descartar', 'Discard')} lector={tr('Descartar lo que falta', 'Discard what is left')} onPress={descartarTexto} peligro />
+              </View>
+            ) : null}
             <View style={s.fila}>
               <TextInput
+                editable={buffer.enviando == null}
                 value={texto}
                 onChangeText={alEscribir}
                 onSubmitEditing={() => void confirmarTexto(true)}
@@ -644,7 +745,7 @@ function Visor({ tareaId, tareaSeguida }: { tareaId: string; tareaSeguida: strin
                 style={s.campo}
                 accessibilityLabel={seguro ? tr('Contraseña para la computadora', 'Password for the computer') : tr('Escribir en la computadora', 'Type on the computer')}
               />
-              <Boton etiqueta="➤" lector={tr('Mandar el texto (sin Enter)', 'Send the text (no Enter)')} onPress={() => void confirmarTexto(false)} deshabilitado={!texto} fuerte />
+              <Boton etiqueta="➤" lector={tr('Mandar el texto (sin Enter)', 'Send the text (no Enter)')} onPress={() => void confirmarTexto(false)} deshabilitado={!texto || buffer.enviando != null} fuerte />
             </View>
             <View style={s.fila}>
               {(['ctrl', 'shift', 'alt'] as Mod[]).map((m) => (

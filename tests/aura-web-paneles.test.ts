@@ -663,3 +663,211 @@ test(
     assert.ok(pedidas.length > 0 && pedidas.every((q) => /estados=respondida/.test(q)), `la web pide los estados nuevos: ${pedidas.join(' ')}`);
   }
 );
+
+/* ------------------------------------------------- el escritorio de su computadora en la web (U1, auditoría del 4-oct) */
+
+test('escritorio web: teclas físicas de la lista blanca, la rueda en pasos y qué tarea de la computadora se abre', async () => {
+  const { teclaDeEvento, pasosRueda, tareaDelEscritorio } = await import('../src/13-trabajo/escritorio');
+  assert.deepEqual(teclaDeEvento({ key: 'Enter' }), { tecla: 'enter', mods: [] });
+  assert.deepEqual(teclaDeEvento({ key: 'Tab', shiftKey: true }), { tecla: 'tab', mods: ['shift'] });
+  assert.deepEqual(teclaDeEvento({ key: 'c', ctrlKey: true }), { tecla: 'c', mods: ['ctrl'] });
+  assert.equal(teclaDeEvento({ key: 'q', ctrlKey: true }), null, 'Ctrl+Q no está en la lista');
+  assert.equal(teclaDeEvento({ key: 'a' }), null, 'el texto no va tecla por tecla: sale compuesto por el campo');
+  assert.equal(teclaDeEvento({ key: 'Enter', isComposing: true }), null, 'durante la composición del IME, el Enter es del IME');
+  assert.equal(teclaDeEvento({ key: 'l', metaKey: true }), null);
+  assert.equal(pasosRueda(100), 1);
+  assert.equal(pasosRueda(-320), -3);
+  assert.equal(pasosRueda(3, 1), 1, 'en líneas');
+  assert.equal(pasosRueda(99999), 10);
+  assert.equal(pasosRueda(0), 0);
+  const pedidas: string[] = [];
+  const pedir = (async (ruta: string) => {
+    pedidas.push(ruta);
+    if (ruta === '/api/computadora/misiones/mis_9') return { mision: { tareaId: 'tarea-9b' } };
+    if (ruta.startsWith('/api/computadora/misiones/')) throw Object.assign(new Error('no'), { status: 404 });
+    if (ruta === '/api/computadora') return { actual: { id: 'tarea-actual' } };
+    throw new Error('ruta inesperada');
+  }) as any;
+  assert.equal(await tareaDelEscritorio('mis_9', pedir), 'tarea-9b', 'una misión da su tarea de ahora');
+  assert.equal(await tareaDelEscritorio('tarea-7', pedir), 'tarea-7', 'si no es una misión, es la tarea');
+  assert.equal(await tareaDelEscritorio('pendiente', pedir), 'tarea-actual', 'sin id todavía: la actual');
+  await assert.rejects(tareaDelEscritorio('tarea-7', (async () => Promise.reject(Object.assign(new Error('sin red'), { status: undefined }))) as any));
+});
+
+test(
+  'en el navegador: abrir el escritorio desde la tarea, tomar el control, escribir «café ☕» + Enter (llega una vez y en orden), ratón, rueda, devolver el control y volver al chat sin cancelar',
+  { skip: saltoNavegador, timeout: 120000 },
+  async (t) => {
+    const { chromium } = await import('playwright');
+    const ahoraIso = new Date().toISOString();
+    const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+    // El nodo simulado: estado del control, época, frames y lo que de verdad aplicó.
+    const nodo = { estado: 'trabajando' as string, epoca: 3, seq: 40, entradas: [] as any[], control: [] as any[], parar: 0 };
+    const tipos: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.wasm': 'application/wasm' };
+    const srv = http.createServer((req, res) => {
+      const u = new URL(req.url || '/', 'http://x');
+      const json = (o: unknown, s = 200) => (res.writeHead(s, { 'Content-Type': 'application/json' }), res.end(JSON.stringify(o)));
+      const leer = () => new Promise<any>((r) => { let b = ''; req.on('data', (c) => (b += c)); req.on('end', () => r(JSON.parse(b || '{}'))); });
+      if (u.pathname === '/api/health') return json({ qwen: { vivo: true } });
+      if (u.pathname === '/api/nodo/listo') return json({ listo: true });
+      if (u.pathname === '/api/genesis/config') return json({ disponible: false });
+      if (u.pathname === '/api/ultron/sesion') return json({ authenticated: true, user: { nombre: 'Ana', rol: 'Junta', correo: 'ana@ejemplo.com' } });
+      if (u.pathname === '/api/trabajos')
+        return json({
+          tareas: [
+            {
+              id: 'tarea-pc-1',
+              version: 1,
+              state: 'running',
+              terminal: false,
+              source: 'computadora',
+              title: 'Rellena el formulario sintético',
+              objective: 'Rellena el formulario sintético',
+              acceptance: [],
+              environment: { kind: 'computadora', id: 'tarea-pc-1', displayName: 'Tu computadora' },
+              progress: null,
+              decision: null,
+              result: null,
+              createdAt: ahoraIso,
+              updatedAt: ahoraIso,
+              controls: { pause: false, resume: false, cancel: false, open: 'computadora' },
+            },
+          ],
+        });
+      if (u.pathname.startsWith('/api/computadora/misiones/')) return json({ error: 'no' }, 404);
+      if (u.pathname === '/api/computadora')
+        return json({ configurada: true, ok: true, motores: [], ocupada: true, ultima: null, actual: { id: 'tarea-pc-1', estado: nodo.estado, pasos: 1, instruccion: 'Rellena el formulario sintético', ultimo: null }, capacidades: ['pausar', 'confirmar', 'control', 'entrada', 'seguro'] });
+      if (u.pathname === '/api/computadora/tareas/tarea-pc-1')
+        return json({ tarea: { id: 'tarea-pc-1', instruccion: 'Rellena el formulario sintético', estado: nodo.estado, pasos: [], respuesta: null, error: null, segundos: 5, epoca: nodo.epoca, seguro: false } });
+      if (u.pathname === '/api/computadora/tareas/tarea-pc-1/pantalla')
+        // La imagen llega con retraso (500 ms): el Enter tiene que esperarla, no rechazarse ni perderse.
+        return void setTimeout(() => json({ imagen: PNG, frame: { seq: ++nodo.seq, ts: Date.now(), ancho: 1280, alto: 800, viewportRevision: 0, epoca: nodo.epoca, privado: false, edadMs: 0 } }), 500);
+      if (u.pathname === '/api/computadora/tareas/tarea-pc-1/control')
+        return void leer().then((b) => {
+          nodo.control.push(b);
+          if (b.tomar) {
+            nodo.estado = 'control';
+            nodo.epoca += 1;
+            return json({ ok: true, epoca: nodo.epoca, fase: null, honesto: true });
+          }
+          nodo.estado = 'trabajando';
+          return json({ ok: true, honesto: true });
+        });
+      if (u.pathname === '/api/computadora/tareas/tarea-pc-1/entrada')
+        return void leer().then((b) => {
+          if (nodo.estado !== 'control' || b.controlEpoch !== nodo.epoca) return json({ error: 'Otro dispositivo tiene el control ahora.', code: 'cliente' }, 409);
+          nodo.entradas.push(b);
+          return json({ ok: true, ack: { secuencia: b.inputSequence, estado: 'aplicada', ts: Date.now(), frame_seq: nodo.seq, epoca: nodo.epoca }, honesto: true });
+        });
+      if (u.pathname === '/api/computadora/tareas/tarea-pc-1/parar') {
+        nodo.parar++;
+        return json({ ok: true });
+      }
+      if (u.pathname.startsWith('/api/')) return json({}, 404);
+      let f = path.join(DIST, decodeURIComponent(u.pathname));
+      if (!f.startsWith(DIST) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(DIST, 'index.html');
+      res.writeHead(200, { 'Content-Type': tipos[path.extname(f)] || 'application/octet-stream' });
+      fs.createReadStream(f).pipe(res);
+    });
+    const url = await new Promise<string>((r) => srv.listen(0, '127.0.0.1', () => r(`http://127.0.0.1:${(srv.address() as any).port}`)));
+    const b = await chromium.launch({ executablePath: CHROMIUM, args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader'] });
+    t.after(async () => {
+      await b.close();
+      srv.close();
+    });
+    const p = await b.newPage({ viewport: { width: 1280, height: 800 } });
+    await p.goto(url + '/', { waitUntil: 'networkidle' });
+    await p.waitForSelector('#ultron-arranque[aria-hidden="true"]', { timeout: 20000 });
+    const modo = () => p.locator('#aura-escritorio [data-modo]').getAttribute('data-modo');
+    const teclado = () => nodo.entradas.filter((e) => e.type !== 'release_all');
+
+    // 1) Desde la tarea de su computadora, «Abrir el escritorio».
+    await p.getByRole('button', { name: /Abrir el panel de tareas/ }).click({ timeout: 20000 });
+    await p.getByRole('button', { name: /Abrir el escritorio/ }).click();
+    await p.waitForSelector('#aura-escritorio[role="dialog"][aria-modal="true"]', { timeout: 10000 });
+    await p.waitForFunction(() => document.querySelector('#aura-escritorio [data-modo]')?.getAttribute('data-modo') === 'aura', null, { timeout: 10000 });
+    assert.equal(await p.evaluate(() => document.fullscreenElement), null, 'no es el fullscreen de toda la app');
+    assert.equal(await p.locator('#aura-escritorio iframe').count(), 0, 'ni un iframe');
+    assert.equal(await p.evaluate(() => document.getElementById('aura-contenido')?.hasAttribute('inert')), true, 'lo de detrás queda inert');
+    await p.waitForSelector('#aura-escritorio [data-escritorio] img', { timeout: 10000 });
+
+    // 2) Tomar el control.
+    await p.getByRole('button', { name: 'Tomar el control', exact: true }).click();
+    await p.waitForFunction(() => document.querySelector('#aura-escritorio [data-modo]')?.getAttribute('data-modo') === 'tu', null, { timeout: 10000 });
+    assert.equal(nodo.control.at(-1).tomar, true);
+    assert.match(String(nodo.control.at(-1).clientId), /^visor-/);
+
+    // 3) Escribir con el campo (IME: sale el texto compuesto) y Enter: llega el texto y DESPUÉS el Enter, una vez cada uno.
+    const campo = p.locator('#aura-escritorio-campo');
+    await campo.waitFor({ timeout: 10000 });
+    await campo.fill('café ☕');
+    await campo.press('Enter');
+    await p.waitForFunction(() => (document.getElementById('aura-escritorio-campo') as HTMLInputElement | null)?.value === '', null, { timeout: 10000 });
+    assert.deepEqual(
+      teclado().map((e) => [e.type, e.payload]),
+      [
+        ['text_commit', { texto: 'café ☕' }],
+        ['key', { tecla: 'enter', mods: [] }],
+      ],
+      'texto y Enter, en orden, una sola vez'
+    );
+    assert.ok(teclado().every((e) => e.controlEpoch === nodo.epoca && e.remoteSessionId === 'tarea-pc-1'));
+    const seqs = nodo.entradas.map((e) => e.inputSequence);
+    assert.deepEqual(seqs, [...new Set(seqs)].sort((a, b) => a - b), 'secuencias crecientes y sin repetir');
+
+    // 4) Ratón: un clic sobre el escritorio llega como clic en un píxel lógico (1280×800); la rueda baja la página.
+    const caja = (await p.locator('#aura-escritorio [data-escritorio]').boundingBox())!;
+    // El clic es riesgoso: sobre una imagen que no es de después del Enter el visor lo rechaza («Espera la imagen de
+    // ahora») en vez de mandarlo. Como una persona, se vuelve a tocar cuando llega la imagen (con la máquina cargada
+    // puede tardar más de una vuelta).
+    for (let intento = 0; intento < 6 && !nodo.entradas.some((e) => e.type === 'pointer'); intento++) {
+      await p.waitForTimeout(900);
+      await p.mouse.click(caja.x + caja.width / 2, caja.y + caja.height / 2);
+      await new Promise<void>((r) => {
+        const fin = Date.now() + 1500;
+        const mirar = () => (nodo.entradas.some((e) => e.type === 'pointer') || Date.now() > fin ? r() : setTimeout(mirar, 50));
+        mirar();
+      });
+    }
+    assert.equal(nodo.entradas.filter((e) => e.type === 'pointer').length, 1, 'un solo clic llegó (los rechazados no salen)');
+    const clic = nodo.entradas.find((e) => e.type === 'pointer');
+    assert.ok(clic, 'el clic llegó al nodo');
+    assert.equal(clic.payload.accion, 'click');
+    assert.ok(clic.payload.x >= 0 && clic.payload.x < 1280 && clic.payload.y >= 0 && clic.payload.y < 800, `en píxeles lógicos: ${clic.payload.x},${clic.payload.y}`);
+    await p.mouse.wheel(0, 300);
+    await new Promise<void>((r) => {
+      const fin = Date.now() + 5000;
+      const mirar = () => (nodo.entradas.some((e) => e.type === 'scroll') || Date.now() > fin ? r() : setTimeout(mirar, 50));
+      mirar();
+    });
+    const rueda = nodo.entradas.find((e) => e.type === 'scroll');
+    assert.ok(rueda, 'la rueda llegó como scroll');
+    assert.equal(rueda.payload.dy, 3);
+    // Con el escritorio enfocado, una tecla especial del teclado físico va a la computadora (Tab no sale del visor).
+    await p.locator('#aura-escritorio [data-escritorio]').focus();
+    await p.keyboard.press('Tab');
+    await new Promise<void>((r) => {
+      const fin = Date.now() + 5000;
+      const mirar = () => (nodo.entradas.some((e) => e.type === 'key' && e.payload.tecla === 'tab') || Date.now() > fin ? r() : setTimeout(mirar, 50));
+      mirar();
+    });
+    assert.ok(nodo.entradas.some((e) => e.type === 'key' && e.payload.tecla === 'tab'), 'Tab llegó al nodo');
+    assert.equal(teclado().filter((e) => e.type === 'key' && e.payload.tecla === 'enter').length, 1, 'el Enter sigue siendo uno');
+
+    // 5) Devolver el control: se suelta todo allá y AURA vuelve a controlar.
+    await p.getByRole('button', { name: 'Devolver el control a AURA' }).click();
+    await p.waitForFunction(() => document.querySelector('#aura-escritorio [data-modo]')?.getAttribute('data-modo') === 'aura', null, { timeout: 10000 });
+    assert.equal(nodo.control.at(-1).tomar, false);
+    assert.ok(nodo.entradas.some((e) => e.type === 'release_all'), 'release_all antes de devolver');
+
+    // 6) Volver al chat: el visor se va, la tarea sigue (nada de parar) y la mesa vuelve a ser usable.
+    await p.getByRole('button', { name: /Volver al chat/ }).first().click();
+    await p.waitForFunction(() => !document.getElementById('aura-escritorio'), null, { timeout: 5000 });
+    assert.equal(nodo.parar, 0, 'cerrar la vista no cancela la tarea');
+    assert.equal(await p.evaluate(() => document.getElementById('aura-contenido')?.hasAttribute('inert')), false);
+    // (como las demás pruebas: con el teclado; un aviso flotante de la mesa puede tapar el botón al ratón)
+    await p.getByRole('button', { name: 'Escribir', exact: true }).focus();
+    await p.keyboard.press('Enter');
+    await p.waitForSelector('#dock-cmd-input', { timeout: 5000 });
+  }
+);
