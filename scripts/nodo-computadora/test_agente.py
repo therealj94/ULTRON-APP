@@ -2589,5 +2589,19 @@ class PermisoSinClase(ConEndpoints):
         self.assertEqual(len(preguntas), 2)
 
 
+class IdentidadDelNodo(unittest.TestCase):
+    """P5 (contrato de entrega): /salud dice QUÉ código corre (la huella de agente.py), su validador y sus capacidades."""
+
+    def test_salud_dice_su_huella_validador_y_capacidades(self):
+        import hashlib
+        with open(agente.__file__, 'rb') as f:
+            esperado = hashlib.sha256(f.read()).hexdigest()[:16]
+        s = agente.salud()
+        self.assertEqual(s.get('hash'), esperado)
+        self.assertEqual(s.get('validador'), agente.VALIDADOR_VERSION)
+        self.assertEqual(s.get('capacidades'), agente.CAPACIDADES)
+        self.assertNotIn(agente.CLAVE or 'sin-clave-configurada', str(s))
+
+
 if __name__ == '__main__':
     unittest.main()

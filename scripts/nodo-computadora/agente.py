@@ -122,6 +122,19 @@ CERRAR_VNC = os.environ.get('CERRAR_VNC', '1') != '0'
 # `integro: true` de un validador de esta versión o más nueva; lo de un nodo viejo queda «sin comprobar».
 VALIDADOR_VERSION = 12
 CAPACIDADES = ['pausar', 'confirmar', 'control', 'entrada', 'seguro', f'validador-{VALIDADOR_VERSION}']
+
+
+def _huella_codigo() -> str:
+    """P5 (contrato de entrega): la huella de ESTE agente.py (sha256 de su archivo, 16 hex). Va en /salud y el
+    servidor la pone en su manifiesto: así un ensayo dice qué código del nodo corrió. No lleva nada secreto."""
+    try:
+        with open(os.path.abspath(__file__), 'rb') as f:
+            return hashlib.sha256(f.read()).hexdigest()[:16]
+    except OSError:
+        return ''
+
+
+HUELLA_CODIGO = _huella_codigo()
 ESTADOS_VIVOS = ('en_cola', 'trabajando', 'pausada', 'confirmar', 'control')
 # El espacio de trabajo de la misión dentro del escritorio (la carpeta de la persona del escritorio de la demo): lo
 # único donde se buscan y comprueban archivos al terminar. Lo de fuera ni se mira (revisión externa, 4-oct).
@@ -3116,7 +3129,8 @@ def salud():
     ocupada = any(t.estado == 'trabajando' for t in TAREAS.values())
     motores = (['holo'] if isinstance(modelos, list) else []) + (['claude'] if CLAUDE_CLAVE else [])
     return {'ok': isinstance(modelos, list) and 'x' in pantalla, 'motores': motores, 'modelos': modelos,
-            'pantalla': pantalla, 'ocupada': ocupada, 'capacidades': CAPACIDADES, 'validador': VALIDADOR_VERSION}
+            'pantalla': pantalla, 'ocupada': ocupada, 'capacidades': CAPACIDADES, 'validador': VALIDADOR_VERSION,
+            'hash': HUELLA_CODIGO or None}
 
 
 @app.post('/tareas')

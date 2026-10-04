@@ -81,7 +81,6 @@ import {
   montarRutasTrabajos,
   nuevoContextoTrabajos,
 } from './server/trabajos';
-import type { MisionComputadoraMin } from './lib/tareas-durables';
 import { avisosInvestigacion, configurarInvestigacion, confirmarAvisosInvestigacion, empezarInvestigacion, investigacionDisponible } from './server/investigar';
 import { trozoPromete, trozoPrometeUOfrece, vigilarPromesas, type PasoVigilado } from './lib/promesas';
 import { vezDelEvento } from './lib/envios';
@@ -90,6 +89,7 @@ import {
   alAvisarApp,
   avisosPendientes,
   capacidadesNodo,
+  estadoComputadora,
   comandoComputadora,
   computadoraConfigurada,
   confirmarAvisos,
@@ -98,6 +98,7 @@ import {
   historialDe,
   misionDeTarea,
   montarRutasComputadora,
+  adaptadorTrabajos,
   motorDelPerfil,
   pararTarea,
   pausarTarea,
@@ -166,7 +167,7 @@ import { spotMetal } from './lib/mercado';
 import { turnoElectrum } from './server/electrum/turno';
 import { estadoLaya, saludLaya } from './lib/laya';
 import { ES_ELECTRUM, ES_ULTRON, PAGINA_RAIZ, PLATAFORMA, rutaPermitida } from './lib/plataforma';
-import { manifiestoBuild } from './lib/build';
+import { manifiestoEntrega, sondearAlmacen } from './lib/build';
 import { codigosActivos } from './server/cuentas';
 import {
   claveHiloDe,
@@ -449,15 +450,22 @@ alAvisar(async (ap, que) => {
 });
 
 /**
- * El manifiesto del build (documento maestro, AUR16 / G0): commit completo, servicio, contratos y banderas no
- * secretas. Detrás de la sesión de mesa: el público ya tiene el commit corto en /api/health.
+ * El manifiesto del build (documento maestro, AUR16 / G0; P5, contrato de entrega): commit completo, servicio, contratos
+ * y banderas no secretas, y además el SHA y la hora del servidor, el SHA del build web que se sirve (dist/aura-build.json),
+ * lo que el nodo de la computadora dice de sí en /salud (huella, validador, capacidades; «desconocido» si no contesta),
+ * el validador mínimo que exige el servidor, las versiones de esquema y la salud del almacén durable (leer y escribir).
+ * Detrás de la sesión de mesa: el público ya tiene el commit corto en /api/health.
  */
-app.get('/api/build', exigirMesa, limitar(30), (_req, res) => {
+app.get('/api/build', exigirMesa, limitar(30), async (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
-  return res.json({
-    ...manifiestoBuild({ plataforma: ES_ELECTRUM ? 'electrum' : 'aura', banderas: { computadora: computadoraConfigurada(), codigosElectrum: ES_ELECTRUM && codigosActivos() } }),
-    honesto: true,
-  });
+  const [m, almacen] = await Promise.all([
+    manifiestoEntrega(
+      { plataforma: ES_ELECTRUM ? 'electrum' : 'aura', banderas: { computadora: computadoraConfigurada(), codigosElectrum: ES_ELECTRUM && codigosActivos() } },
+      { nodo: computadoraConfigurada() ? () => estadoComputadora() : async () => ({ configurada: false, ok: false }) }
+    ),
+    sondearAlmacen(),
+  ]);
+  return res.json({ ...m, almacen, honesto: true });
 });
 
 app.get('/api/health', async (req, res) => {
@@ -470,11 +478,16 @@ app.get('/api/health', async (req, res) => {
   // a una revisión concreta. RENDER_GIT_COMMIT lo pone Render en cada despliegue.
   const commit = String(process.env.RENDER_GIT_COMMIT || '').slice(0, 7) || null;
   const cerebroVoz = { activo: cerebroRapidoActivo(), modelo: modeloRapido() };
+  // P5: `ok` dice que hay servidor (la app decide con él si está en línea); NO que el almacén durable esté sano. Eso va
+  // aparte: una lectura y una escritura reales (con caché de 30 s), sin detalle para quien no tiene sesión.
+  const a = await sondearAlmacen();
+  const almacen = autorizado ? a : { ok: a.ok, tipo: a.tipo, comprobado: a.comprobado };
   if (!autorizado) {
     return res.json({
       ok: true,
       version: '4.0',
       commit,
+      almacen,
       cerebroVoz,
       qwen: { vivo: s.qwen },
       fp: { vivo: s.fp },
@@ -490,6 +503,7 @@ app.get('/api/health', async (req, res) => {
     ok: true,
     version: '4.0',
     commit,
+    almacen,
     cerebroVoz,
     launch: false,
     cerebro: ULTRON_REMOTE_URL,
@@ -1525,13 +1539,9 @@ montarRutasTrabajos(app, {
   limitar,
   sesionDe: (req) => sesionDe(req),
   tareaEnCurso: { listar: (correo) => tareasDePersona(correo), accion: (correo, id, accion, version) => accionTareaPorId(correo, id, accion, version) },
-  computadora: {
-    misiones: misionesComputadora,
-    // Como las rutas de la computadora: pausar y reanudar solo si el nodo sabe hacerlo.
-    pausar: (correo, id) => conMisionSuya(correo, id, async (t) => ((await capacidadesNodo()).includes('pausar') ? pausarTarea(t) : Promise.reject(new Error('tu computadora no sabe pausar')))),
-    reanudar: (correo, id) => conMisionSuya(correo, id, async (t) => ((await capacidadesNodo()).includes('pausar') ? reanudarTarea(t) : Promise.reject(new Error('tu computadora no sabe pausar')))),
-    parar: (correo, id) => conMisionSuya(correo, id, (t) => pararTarea(t)),
-  },
+  // P5/A6 (server/computadora.ts adaptadorTrabajos): rehidrata de lo durable antes de leer sus misiones (otra réplica,
+  // o antes de un reinicio); pausar y reanudar solo si el nodo sabe; cada control deja su recibo durable.
+  computadora: adaptadorTrabajos(),
   borradores: {
     vigente: (correo, canal, ambito) => {
       const b = canal === 'correo' ? borradorDe(correo, ambito) : borradorWhatsappDe(correo, ambito);
@@ -3795,45 +3805,6 @@ async function correrHerramientaPedida(
 }
 
 /* ---------------------------------------------------------------- tareas durables (AUR08, server/trabajos.ts) */
-
-/**
- * Las misiones de su computadora como las lee el panel de tareas (server/computadora.ts: historial y vista;
- * solo lectura). Su plan marcado (con recibo de cada paso hecho) da el progreso real; su final, la evidencia:
- * solo las páginas que de verdad abrió (`visitados`, no las direcciones del texto) y los archivos que el nodo
- * comprobó al terminar (lib/tareas-durables.ts `evaluarEntrega` decide si eso comprueba lo pedido).
- */
-function misionesComputadora(correo: string): MisionComputadoraMin[] {
-  return historialDe(correo).map((h) => {
-    const m = misionDeTarea(h.tareaId);
-    const v = m ? vistaMision(m, h.estado) : null;
-    return {
-      id: h.id,
-      tareaId: h.tareaId,
-      instruccion: v?.instruccion ?? h.instruccion,
-      estado: h.estado,
-      ok: h.ok,
-      inicio: h.inicio,
-      segundos: h.segundos,
-      // Un error nunca cuenta como evidencia de éxito: solo la respuesta de una misión que terminó bien.
-      resultado: v?.final ? (v.final.ok ? v.final.respuesta : v.final.respuesta || v.final.error) || null : h.resultado,
-      pregunta: v?.pregunta ?? null,
-      ...(v ? { plan: v.plan.map((p) => ({ texto: p.texto, estado: p.estado })) } : {}),
-      ...(v?.final ? { enlaces: v.final.visitados, datos: v.final.datos, archivos: v.final.archivos } : {}),
-      // Lo que se pidió, guardado al crear la misión (R5): no se recalcula con otro texto.
-      ...(m?.requisitos ? { requisitos: m.requisitos } : {}),
-      // Lo que pidió la persona (G2-C): la acción o el archivo que pidió cuentan aunque el modelo encargara solo la consulta.
-      ...(m?.pedidoPersona ? { pedidoPersona: m.pedidoPersona } : {}),
-    };
-  });
-}
-
-/** Pausar, reanudar o parar desde el panel: solo una misión que esté en el historial de ESTA persona. */
-async function conMisionSuya(correo: string, misionId: string, f: (tareaId: string) => Promise<unknown>): Promise<unknown> {
-  const h = historialDe(correo).find((x) => x.id === misionId || x.tareaId === misionId);
-  // Lo mismo que exige la ruta de la computadora (duenoDe): la tarea del nodo es de esta persona.
-  if (!h || duenoDe(h.tareaId) !== correo) throw new Error('esa misión no es de esta persona (o ya no está)');
-  return f(h.tareaId);
-}
 
 /**
  * Una herramienta dejó un borrador esperando su «sí» (recibo `borrador` con su id de intento): la tarea con su

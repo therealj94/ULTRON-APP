@@ -2,7 +2,7 @@
  * LAS TAREAS DURABLES EN EL SERVIDOR (AUR08): las rutas del panel de tareas y los ganchos con que el chat
  * crea la tarea ANTES de hacer el trabajo durable y la enlaza desde su respuesta.
  *
- *   GET  /api/trabajos                          → { tareas: TaskSnapshot[], resumen: {trabajando, decisiones} }
+ *   GET  /api/trabajos[?limite&cursor]          → { tareas: TaskSnapshot[], resumen: {trabajando, decisiones}, completo, siguiente, conteo, aviso? }
  *   GET  /api/trabajos/:id                      → { tarea }
  *   GET  /api/trabajos/:id/eventos?desde=N      → { eventos, cursor, resync, tarea }   (polling con cursor)
  *   POST /api/trabajos {requestId, titulo, objetivo?}                  → { tarea } (201 nueva, 200 la misma)
@@ -43,8 +43,10 @@ import {
   ESPACIO_PEDIDOS,
   esTerminal,
   eventosDesde,
+  asegurarEnIndice,
   leerTarea,
   listarTareas,
+  listarTareasPagina,
   opcionesAprobacion,
   reconciliarConComputadora,
   reconciliarInvestigacion,
@@ -87,6 +89,12 @@ export type DepsTrabajos = {
   };
   /** Las misiones de su computadora (server/computadora.ts; solo se lee y se pausa/para). */
   computadora?: {
+    /**
+     * P5/A6: antes de leer sus misiones, que esta réplica las tenga (las rehidrata de lo durable si las encargó otra
+     * réplica o antes de un reinicio). false (o que lance): no se pudieron leer; entonces una tarea enlazada NO se da por
+     * perdida (no se reconcilia contra «no está»).
+     */
+    preparar?(correo: string): Promise<boolean>;
     misiones(correo: string): MisionComputadoraMin[];
     /** Con el dueño: solo se toca una misión que esté en SU historial. */
     pausar?(correo: string, misionId: string): Promise<unknown>;
@@ -549,8 +557,10 @@ export async function cerrarDecisionPorChat(duenoCorreo: string, intento: string
  * Lleva una tarea durable a lo que dicen sus fuentes (su computadora, el borrador) y guarda solo si cambió.
  * Nunca lanza: si no se pudo, devuelve la que había.
  */
-async function reconciliar(dueno: string, reg: RegistroTarea, d: DepsTrabajos, ahora: number): Promise<RegistroTarea> {
+async function reconciliar(dueno: string, reg: RegistroTarea, d: DepsTrabajos, ahora: number, computadoraLeida = true): Promise<RegistroTarea> {
   if (esTerminal(reg.estado)) return reg;
+  // Sin poder leer sus misiones (el almacén no contestó), una tarea enlazada se deja como está: «no la encuentro» no es «se perdió».
+  if (reg.enlace?.tipo === 'computadora' && !computadoraLeida) return reg;
   const misiones = reg.enlace?.tipo === 'computadora' && d.computadora ? d.computadora.misiones(dueno) : null;
   const vigente = (canal: 'correo' | 'whatsapp', ambito: string) => (d.borradores ? d.borradores.vigente(dueno, canal, ambito) : undefined);
   const r = await cambiarTarea(
@@ -607,6 +617,11 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
     return next();
   });
   const correoDe = (req: express.Request) => conCorreo(String(d.sesionDe(req)?.correo || ''));
+  /** Que esta réplica tenga las misiones de su computadora (P5/A6). true si se pudieron leer (o no hay de dónde). */
+  const prepararComputadora = async (dueno: string): Promise<boolean> => {
+    if (!d.computadora?.preparar) return true;
+    return d.computadora.preparar(dueno).then((x) => x !== false, () => false);
+  };
   /**
    * Sin sesión, 401 (la app renueva o pide entrar). Con sesión pero sin correo (no hay de quién serían las
    * tareas), 403: un 401 ahí haría que la app intentara renovar la sesión en cada sondeo.
@@ -617,9 +632,9 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
   /** `conReconciliar: false` para decidir: se valida contra lo que vio la persona, no contra un cambio de ahora. */
   async function buscar(dueno: string, id: string, conReconciliar = true): Promise<Encontrada> {
     if (!ID_VALIDO.test(id)) return { tipo: 'no' };
-    const l = await leerTarea(dueno, id).catch(() => ({ ok: false as const, detalle: '' }));
+    const [l, pc] = await Promise.all([leerTarea(dueno, id).catch(() => ({ ok: false as const, detalle: '' })), prepararComputadora(dueno)]);
     if (l.ok === false) return { tipo: 'almacen' };
-    if (l.tarea) return { tipo: 'durable', reg: conReconciliar ? await reconciliar(dueno, l.tarea, d, ahora()) : l.tarea };
+    if (l.tarea) return { tipo: 'durable', reg: conReconciliar ? await reconciliar(dueno, l.tarea, d, ahora(), pc) : l.tarea };
     const t = d.tareaEnCurso?.listar(dueno).find((x) => x.id === id);
     if (t) return { tipo: 'tc', t };
     const m = d.computadora?.misiones(dueno).find((x) => x.id === id);
@@ -629,21 +644,46 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
 
   const vista = (e: Encontrada): TaskSnapshot | null => (e.tipo === 'durable' ? vistaTarea(e.reg, ahora()) : e.tipo === 'tc' ? deTareaEnCurso(e.t) : e.tipo === 'pc' ? deComputadora(e.m, ahora()) : null);
 
+  /**
+   * GET /api/trabajos[?limite=N&cursor=C] (P5/A7). Sin `limite` (las apps de siempre): TODAS las que pueden seguir
+   * activas y las terminadas en RECIENTES_MS; ya no hay un tope de 40 que esconda una activa. Con `limite` (1..100): una
+   * página y `siguiente` (el cursor de la próxima; null si no hay más). Siempre:
+   *   · `completo`: false si alguna tarea del índice (o el historial de su computadora) no se pudo leer, con `aviso` y
+   *     `conteo.noLeidas`. Un fallo del almacén nunca es «no hay tareas»: si además no queda nada que mostrar, 503;
+   *   · `conteo`: { activas, terminadas, indice, noLeidas } según el índice (las activas nunca se recortan).
+   * Las tareas en curso de las conversaciones y las misiones de su computadora van en la primera página.
+   */
   app.get('/api/trabajos', d.exigirMesa, d.limitar(90), async (req, res) => {
     const dueno = correoDe(req);
     if (!dueno) return sinDueno(req, res);
     res.setHeader('Cache-Control', 'no-store');
     const t = ahora();
-    const l = await listarTareas(dueno).catch((e) => ({ ok: false as const, detalle: String(e?.message || e) }));
+    const limite = req.query.limite !== undefined ? Math.max(1, Math.min(100, Math.floor(Number(req.query.limite)) || 20)) : undefined;
+    const cursor = typeof req.query.cursor === 'string' && req.query.cursor.length <= 400 ? req.query.cursor : null;
+    const [l, pc] = await Promise.all([
+      listarTareasPagina(dueno, { limite, cursor, recientesMs: RECIENTES_MS, ahora: t }).catch((e) => ({ ok: false as const, detalle: String(e?.message || e) })),
+      prepararComputadora(dueno),
+    ]);
     if (l.ok === false) return almacenCaido(res);
-    const durables = await Promise.all(l.tareas.filter((x) => !esTerminal(x.estado) || t - x.actualizada < RECIENTES_MS).map((x) => reconciliar(dueno, x, d, t)));
+    const durables = await Promise.all(l.tareas.map((x) => reconciliar(dueno, x, d, t, pc)));
     const enlazadas = new Set(durables.flatMap((x) => (x.enlace?.tipo === 'computadora' ? [x.enlace.id] : [])));
+    const primera = !cursor;
     const tareas: TaskSnapshot[] = [
       ...durables.map((x) => vistaTarea(x, t)),
-      ...(d.tareaEnCurso?.listar(dueno) || []).map(deTareaEnCurso),
-      ...(d.computadora?.misiones(dueno) || []).filter((m) => !enlazadas.has(m.id) && !enlazadas.has(m.tareaId)).map((m) => deComputadora(m, t)),
+      ...(primera ? (d.tareaEnCurso?.listar(dueno) || []).map(deTareaEnCurso) : []),
+      ...(primera ? (d.computadora?.misiones(dueno) || []).filter((m) => !enlazadas.has(m.id) && !enlazadas.has(m.tareaId)).map((m) => deComputadora(m, t)) : []),
     ].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
-    return res.json({ tareas, resumen: resumenTareas(tareas, t), generado: new Date(t).toISOString(), honesto: true });
+    const completo = l.completo && pc;
+    const faltan = l.conteo.noLeidas;
+    const aviso = completo
+      ? undefined
+      : [faltan ? `No pude leer ${faltan === 1 ? 'una de tus tareas' : `${faltan} de tus tareas`} en este momento; no es que no exista${faltan === 1 ? '' : 'n'}.` : '', pc ? '' : 'No pude leer el historial de tu computadora en este momento.']
+          .filter(Boolean)
+          .join(' ');
+    const cuerpo = { tareas, resumen: resumenTareas(tareas, t), generado: new Date(t).toISOString(), completo, siguiente: l.siguiente, conteo: l.conteo, ...(aviso ? { aviso } : {}), honesto: true };
+    // Nada que mostrar y algo que no se pudo leer: no es «0 tareas». Una app de antes ve el error de siempre.
+    if (!completo && !tareas.length) return res.status(503).json({ ...cuerpo, error: aviso || 'No pude leer tus tareas en este momento. Prueba otra vez en un rato.', code: 'almacen_no_disponible' });
+    return res.json(cuerpo);
   });
 
   app.get('/api/trabajos/:id', d.exigirMesa, d.limitar(120), async (req, res) => {
@@ -652,6 +692,8 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
     res.setHeader('Cache-Control', 'no-store');
     const e = await buscar(dueno, String(req.params.id || ''));
     if (e.tipo === 'almacen') return almacenCaido(res);
+    // Leída por su id: si no estaba en el índice (una de antes de P5 que el tope sacó), se vuelve a anotar.
+    if (e.tipo === 'durable') await asegurarEnIndice(dueno, e.reg).catch(() => undefined);
     const v = vista(e);
     return v ? res.json({ tarea: v, honesto: true }) : noEsta(res);
   });
