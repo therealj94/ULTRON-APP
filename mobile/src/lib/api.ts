@@ -443,9 +443,11 @@ function turnoBody(opts: TurnoOpts) {
 }
 
 /** Un turno con el cerebro (Qwen 27B). `image` = data URL jpeg opcional para preguntas visuales. */
-export async function turno(opts: TurnoOpts): Promise<ChatResult> {
+export async function turno(opts: TurnoOpts, gen = generacionCuenta()): Promise<ChatResult> {
   try {
-    const data = await api<any>('/api/turno', { method: 'POST', body: turnoBody(opts), headers: { 'x-aura-origen': 'app' } }, 70_000);
+    // `gen`: la sesión a la que pertenece el turno. Un reintento que la mesa hace después (tras una pausa) pasa la de su
+    // primer intento: si en medio salió A y entró B, no sale con el cuerpo de A y el token de B, vuelve «vencida».
+    const data = await pedirApi<any>('/api/turno', { method: 'POST', body: turnoBody(opts), headers: { 'x-aura-origen': 'app' } }, Date.now() + 70_000, true, gen);
     const pelado = pelarEtiqueta(String(data.reply || ''));
     const emocion = data.emocion ? normalizarEmocion(data.emocion) : pelado.emocion || 'neutral';
     const voz = data.voz ? pelarEtiqueta(String(data.voz)).texto.trim() : undefined;

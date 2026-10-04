@@ -8,8 +8,9 @@ on:
   pull_request:
   push:
     branches: [main]
+    # La web importa módulos de mobile/src (p. ej. mobile/src/lib/trabajos): un cambio solo en mobile/ también se
+    # prueba aquí, con su navegador.
     paths-ignore:
-      - "mobile/**"
       - "**.md"
 
 concurrency:

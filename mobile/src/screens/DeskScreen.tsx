@@ -17,6 +17,7 @@ import { DeskMenu } from '../components/DeskMenu';
 import type { Escena, MotorVision } from '../lib/escena';
 import type { DeskPresence, FaceState, Mode, SessionUser } from '../config';
 import { esVencida } from '../lib/intentoEntrada';
+import { generacionCuenta, sigueVigente } from '../lib/cuenta';
 import { api, CANCIONES_LOCAL, healthCheck, listCanciones, nuevoIdTurno, olvidarMemoriaServidor, rememberFact, turno, turnoStream, verCamara, type Cancion, type Turn } from '../lib/api';
 import { faceForEmocion, type Emocion } from '../lib/emocion';
 import { GENEROS, generoPorId, interpretar, type Gag } from '../lib/intenciones';
@@ -936,6 +937,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       setStatus('thinking');
       avisarMesa({ pensando: true });
       setToolHint('');
+      // La sesión a la que pertenece este turno: el JSON de respaldo y su reintento salen con ELLA o no salen.
+      const genTurno = generacionCuenta();
       const base = {
         message: cmd,
         mode: modeRef.current,
@@ -1051,7 +1054,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
             // entera. Con el MISMO idTurno, el JSON devuelve ese turno ya corrido (server/turno-unico.ts),
             // sin repetir sus herramientas; de lo que trae se dice solo lo que falta detrás de lo oído.
             if (result.cierre === 'eof' && Date.now() - t0Turno < 30_000) {
-              const recuperado = await turno(base);
+              const recuperado = await turno(base, genTurno);
               if (turnoCancelado.current) {
                 if (speaker) (speaker as StreamSpeaker).cancel();
                 return;
@@ -1102,13 +1105,14 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
 
         // 2) JSON clásico (visión o servidor sin stream).
         if (!reacted) setFace('THINKING');
-        let out = await turno(base);
+        let out = await turno(base, genTurno);
         cancelMmm();
         if (turnoCancelado.current || out.vencida) return;
         const failed = (r: { error?: string; reply?: string }) => !!(r.error || !r.reply);
         if (failed(out) && Date.now() - t0Turno < 30_000) {
           await new Promise((r) => setTimeout(r, 800));
-          out = await turno(base);
+          if (turnoCancelado.current || !sigueVigente(genTurno)) return;
+          out = await turno(base, genTurno);
           if (turnoCancelado.current || out.vencida) return;
         }
         setToolHint('');

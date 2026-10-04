@@ -127,6 +127,26 @@ const resp = (cuerpo, status = 200) => new Response(JSON.stringify(cuerpo), { st
   ok('stream (tiempo agotado con B dentro): lo de A no se entrega como respuesta parcial', !JSON.stringify(rSt2 || {}).includes('PIÑA'), JSON.stringify(rSt2));
   ok('…y termina «vencido»', esVencida(rSt2), String(rSt2?.message || JSON.stringify(rSt2)));
 
+  /* ── el reintento de la mesa (tras 800 ms) con la sesión del primer intento: si entró B, no sale ─────── */
+  CUENTA.fijarCuenta(null, { nueva: true });
+  dentro('a@prueba.local', 'tok-A');
+  const salidas = [];
+  let intentos = 0;
+  globalThis.fetch = async (_u, init = {}) => {
+    salidas.push({ token: String((init.headers || {})['x-ultron-sesion'] || ''), cuerpo: String(init.body || '') });
+    intentos++;
+    return intentos === 1 ? resp({ error: 'el cerebro no contestó' }, 502) : resp({ reply: 'Listo, armé el correo a Juan con tu saldo de 12,400.' });
+  };
+  const baseA = { message: 'mándale a Juan mi saldo', mode: 'conversar', userName: 'Ana', historial: [{ rol: 'user', texto: 'mi saldo es 12,400' }] };
+  const genA = CUENTA.generacionCuenta();
+  const r1 = await API.turno(baseA, genA);
+  ok('reintento: el primer intento de A falla (sin «vencida»)', !!r1.error && !r1.vencida, JSON.stringify(r1));
+  dentro(null, '');
+  dentro('b@prueba.local', 'tok-B');
+  const r2 = await API.turno(baseA, genA);
+  ok('reintento con B dentro: no sale nada con el cuerpo de A', !salidas.slice(1).some((s) => /saldo/.test(s.cuerpo)), JSON.stringify(salidas.slice(1)));
+  ok('…y vuelve «vencido», sin respuesta', r2.vencida === true && !r2.reply, JSON.stringify(r2));
+
   /* ── lo siguiente de B sale con B y sin nada de A ───────────────────────────────────────── */
   const enviados = [];
   globalThis.fetch = async (url, init = {}) => {
