@@ -58,7 +58,8 @@ export const LLAMADA_VIEJA_MS = 90_000;
 /** Cuánto se recuerda un aviso ya enseñado (para no enseñarlo dos veces). */
 export const VENTANA_VISTOS_MS = 6 * 3600_000;
 export const MAX_VISTOS = 80;
-export const ABRIBLES = ['mesa', 'chats', 'ajustes', 'computadora', 'correos'] as const;
+/** `tareas`: la mesa con el panel de tareas abierto (p. ej. «Terminé de investigar», server/investigar.ts). */
+export const ABRIBLES = ['mesa', 'chats', 'ajustes', 'computadora', 'correos', 'tareas'] as const;
 
 const linea = (s: unknown, max: number) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
 

@@ -126,6 +126,11 @@ export default function App() {
    */
   const [sesionVista, setSesionVista] = useState<'comprobando' | 'si' | 'no'>('comprobando');
   const historialRef = useRef<{ rol: string; texto: string }[]>([]);
+  /**
+   * La cuenta (correo) dueña de lo que hay en esta pestaña. La conversación guardada va por correo, no por el nombre
+   * visible: dos cuentas con el mismo nombre no comparten nada (bloqueo 4 de la revisión del 4-oct).
+   */
+  const [cuentaActiva, setCuentaActiva] = useState<string | null>(null);
   const pendienteGenesis = useRef('');
   const pendienteGesto = useRef<(() => void) | null>(null);
 
@@ -150,7 +155,7 @@ export default function App() {
   const [inicioOculto, setInicioOculto] = useState(false);
   const escribirBtn = useRef<HTMLButtonElement>(null);
   // La conversación en pantalla, por cuenta (13-trabajo/conversacion.ts).
-  const conv = useConversacion(usuario.authenticated ? usuario.name : null);
+  const conv = useConversacion(usuario.authenticated ? cuentaActiva : null);
   /** true mientras se despacha un pedido local: lo que AU-RA conteste ahí también queda escrito. */
   const enComando = useRef(false);
   // Nombre de la plataforma: lo dice el servidor (Genesis Core o Cerebro de Minas), no está escrito aquí.
@@ -195,7 +200,17 @@ export default function App() {
   }, [opinion]);
   const bubbleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Un aviso tocado lleva a su pantalla («computadora» → trabajar), también con la ventana ya abierta.
-  useEffect(() => escucharAvisosTocados((d) => setModoMesa(d)), []);
+  useEffect(
+    () =>
+      escucharAvisosTocados((d) => {
+        if (d === 'tareas') {
+          // El resultado de una investigación vive en el panel de Tareas: se abre ahí, no solo la vista de trabajo.
+          setModoMesa('trabajar');
+          abrirTarea(null);
+        } else setModoMesa(d);
+      }),
+    [abrirTarea]
+  );
 
   useEffect(() => {
     onLip(setLipLevel);
@@ -385,8 +400,18 @@ export default function App() {
   const [ofreceAvisos, setOfreceAvisos] = useState(false);
   const [activandoAvisos, setActivandoAvisos] = useState(false);
   function fijarCuenta(correo: string | null | undefined) {
+    const nueva = String(correo || '').trim().toLowerCase();
+    // Cambió la cuenta (cerró sesión, venció, o entró otra persona): nada de la anterior se queda en esta pestaña.
+    // Ni el historial que viaja al cerebro como contexto, ni lo de Genesis a medias, ni fotos ni la opinión abierta.
+    if (nueva !== correoCuenta.current) {
+      historialRef.current = [];
+      pendienteGenesis.current = '';
+      setPhotos([]);
+      setOpinion(null);
+    }
     fijarCuentaMemoria(correo);
-    correoCuenta.current = String(correo || '').trim().toLowerCase();
+    correoCuenta.current = nueva;
+    setCuentaActiva(nueva || null);
     void cuentaDeAvisos(correoCuenta.current || null);
     setOfreceAvisos(!!correoCuenta.current && ofrecerAvisos());
   }
@@ -657,8 +682,10 @@ export default function App() {
           return;
         }
         if (data.error === 'sesión requerida') {
-          // La sesión venció (o se cerró en otro lado): vuelve la puerta de entrar.
+          // La sesión venció (o se cerró en otro lado): vuelve la puerta de entrar y se suelta lo de esa cuenta,
+          // así quien entre después no hereda su historial (bloqueo 4 de la revisión del 4-oct).
           setUsuario({ name: '', role: 'Junta Directiva · Orden Global', authenticated: false });
+          fijarCuenta(null);
           setSesionVista('no');
           decir('Eso necesita tu sesión de junta. Entrá y lo hacemos.', { emocion: 'neutral' });
           cerrarTurno({ texto: 'Eso necesita tu sesión de junta. Entrá y lo hacemos.', estado: 'lista' });

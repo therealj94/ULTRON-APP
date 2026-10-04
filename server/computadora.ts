@@ -43,7 +43,8 @@
 import { nivelDeCorreo } from './nivel';
 import crypto from 'node:crypto';
 import { clave } from '../lib/boveda';
-import { claveDe, crearUnaVez, leerDurable } from '../lib/durable';
+import { almacenDurable, claveDe, crearUnaVez, leerDurable } from '../lib/durable';
+import { archivoComprobado, evaluarEntrega, type ArchivoNodo, type Entrega } from '../lib/tareas-durables';
 
 export type MotorNodo = 'holo' | 'claude';
 /**
@@ -77,6 +78,12 @@ export type Tarea = {
   pregunta_id?: string | null;
   /** La huella de la propuesta que se muestra (agente.py de AUR02): el sí la devuelve, ligado a lo que se vio. */
   propuesta?: string | null;
+  /**
+   * Lo que el NODO comprobó en su espacio de trabajo al terminar (agente.py nuevo, `comprobar_archivos`): existe,
+   * bytes, sha256. Sin el campo (el agente.py de antes) o null (no pudo mirar): nada de archivos se dio por comprobado.
+   */
+  archivos?: ArchivoNodo[] | null;
+  archivos_error?: string | null;
 };
 
 const TERMINADA = new Set<EstadoTarea>(['hecha', 'parada', 'sin_pasos', 'fallo']);
@@ -150,6 +157,9 @@ async function pedir(ruta: string, init: RequestInit & { ms?: number } = {}): Pr
 /** ¿Vale la pena intentarlo otra vez? Sin código (no contestó) o un 5xx; un 4xx es un no de verdad. */
 const reintentable = (e: unknown) => !(e instanceof ErrorNodo) || !e.status || e.status >= 500;
 
+/** ¿Pudo el pedido llegar al nodo aunque no supimos la respuesta? Sin conexión (rechazada, sin DNS) o un 4xx: no. */
+const pedidoPudoLlegar = (e: unknown) => reintentable(e) && !/ECONNREFUSED|ENOTFOUND|EAI_AGAIN|EHOSTUNREACH|ENETUNREACH/.test(String((e as Error)?.message || e));
+
 let capsCache: { en: number; caps: CapacidadNodo[] } | null = null;
 const CAPS_MS = 60_000;
 
@@ -193,6 +203,27 @@ export async function pararTarea(id: string): Promise<{ fase: FaseQuietud | null
   return { fase: fase(j?.parada?.fase), parada: typeof j?.parada?.id === 'string' ? j.parada.id : null };
 }
 
+/** Lo que aprueba un sí: la pregunta (`id`) y la huella EXACTA de la propuesta que se le mostró (`huella`). */
+export type PreguntaAtada = { id: string | null; huella: string | null };
+
+/**
+ * El sí o el no a ESA pregunta, atado a la propuesta exacta que se le mostró (revisión 4-oct: «una aprobación para Ana
+ * no permite una acción para Bruno»). Un «sí» necesita la huella de la propuesta (lo que se aprueba, destino e importe
+ * incluidos): sin ella no se manda (un nodo de antes, o un pedido que no dice qué aprueba). Justo antes de mandarlo se
+ * mira qué pregunta el nodo AHORA: si es otra pregunta, u otra propuesta (otro destino) bajo el mismo id, no se manda,
+ * aunque el nodo no lo revisara. Un «no» no autoriza nada: va con la pregunta que nombra.
+ */
+export async function confirmarAtado(tareaId: string, si: boolean, p: PreguntaAtada): Promise<void> {
+  if (si) {
+    if (!p.id || !p.huella) throw new ErrorNodo('ese sí no dice qué propuesta exacta aprueba (tu computadora tiene que ser la versión que la nombra); no lo mandé', 409);
+    const t = await verTarea(tareaId, false, 8000);
+    if (t.estado !== 'confirmar' || t.pregunta_id !== p.id || (t.propuesta ?? null) !== p.huella) {
+      throw new ErrorNodo('lo que tu computadora pregunta ahora ya no es lo que aprobaste (otra pregunta u otro destino); no lo contesté, mira la de ahora', 409);
+    }
+  }
+  await confirmarTarea(tareaId, si, p.id, p.huella);
+}
+
 /* Lo del agente.py nuevo (capacidades): pausar, seguir, el sí, el control de la persona y la pantalla de ahora. */
 export async function pausarTarea(id: string): Promise<{ fase: FaseQuietud | null }> {
   const j = await pedir(`/tareas/${encodeURIComponent(id)}/pausar`, { method: 'POST', ms: 12_000 });
@@ -203,7 +234,8 @@ export async function reanudarTarea(id: string): Promise<void> {
 }
 /**
  * El sí o el no a UNA pregunta (`preguntaId`) y, si se conoce, a la propuesta que se le mostró (`propuesta`, la
- * huella del agente.py de AUR02): si la computadora ya pregunta otra cosa, el nodo dice 409.
+ * huella del agente.py de AUR02): si la computadora ya pregunta otra cosa, el nodo dice 409. Para un «sí» se usa
+ * `confirmarAtado`, que exige la propuesta y la revisa contra el nodo justo antes.
  */
 export async function confirmarTarea(id: string, si: boolean, preguntaId?: string | null, propuesta?: string | null): Promise<void> {
   await pedir(`/tareas/${encodeURIComponent(id)}/confirmar`, {
@@ -456,7 +488,12 @@ type Encargo = {
 export type EstadoPlan = 'hecho' | 'actual' | 'espera' | 'pendiente' | 'fallo';
 /** `recibo`: el paso del nodo que lo hizo (tarea y número). Sin recibo, un paso nunca sale «hecho». */
 export type PasoPlan = { texto: string; estado: EstadoPlan; recibo?: { tarea: string; n: number } };
-/** La tarjeta del final: lo que se dice, lo que encontró, datos y enlaces sueltos, y la captura final. */
+/**
+ * La tarjeta del final: lo que se dice, lo que encontró, datos y enlaces sueltos, y la captura final. `ok` solo si
+ * terminó Y lo entregado se comprobó (`comprobado`: el dato pedido, el archivo que el nodo encontró); «Listo» no basta.
+ * `visitados`: las páginas que de verdad abrió (los `enlaces` también traen las del texto, para compartir).
+ * `archivos`: lo que el nodo comprobó al terminar (null: no lo comprobó). `sinComprobar`: qué faltó, si faltó.
+ */
 export type FinalMision = {
   estado: EstadoTarea;
   ok: boolean;
@@ -468,6 +505,10 @@ export type FinalMision = {
   captura: string | null;
   segundos: number;
   pasos: number;
+  visitados: string[];
+  archivos: ArchivoNodo[] | null;
+  comprobado: boolean;
+  sinComprobar: string | null;
 };
 /**
  * Una MISIÓN: lo que se pidió, su plan y su final, aunque la hagan varias tareas del nodo. Su id es el de su
@@ -612,7 +653,7 @@ export function avisosPendientes(quien: string): { ids: string[]; hecho: string 
     .map((id) => ENCARGOS.get(id))
     .filter((e): e is Encargo => !!e?.terminada && !e.avisada);
   if (!listas.length) return null;
-  const partes = listas.map((e) => `«${e.instruccion.slice(0, 160)}»: ${resumenTarea(e.terminada!)}`);
+  const partes = listas.map((e) => `«${e.instruccion.slice(0, 160)}»: ${resumenTarea(e.terminada!, e.instruccion)}`);
   return {
     ids: listas.map((e) => e.id),
     hecho: `COMPUTADORA (terminó lo que te encargaron antes) ${partes.join(' · ')} Díselo al empezar, en una o dos frases.`,
@@ -818,6 +859,42 @@ export function enlacesDe(t: Pick<Tarea, 'respuesta' | 'pasos'>): string[] {
   return urls.filter((u) => u.length <= 300 && !vistos.has(u.replace(/\/+$/, '')) && vistos.add(u.replace(/\/+$/, ''))).slice(0, 5);
 }
 
+/** Las páginas que su computadora abrió DE VERDAD (pasos open_url que el nodo hizo): esas sí cuentan como evidencia. */
+export function visitadosDe(t: Pick<Tarea, 'pasos'>): string[] {
+  const urls = t.pasos
+    .filter((p) => p.accion === 'open_url' && p.hecho !== false && !p.incierto)
+    .map((p) => String((p.args as any)?.url || '').trim())
+    .filter(Boolean)
+    .map((u) => (/^https?:\/\//i.test(u) ? u : `https://${u}`));
+  const vistos = new Set<string>();
+  return urls.filter((u) => u.length <= 300 && !vistos.has(u.replace(/\/+$/, '')) && vistos.add(u.replace(/\/+$/, ''))).slice(0, 5);
+}
+
+/** Lo que el nodo dijo de sus archivos, saneado (null si no lo comprobó: el agente.py de antes o no pudo mirar). */
+export function archivosDe(t: Pick<Tarea, 'archivos'>): ArchivoNodo[] | null {
+  if (!Array.isArray(t.archivos)) return null;
+  return t.archivos.slice(0, 12).flatMap((a: any) =>
+    a && typeof a === 'object' && typeof a.ruta === 'string'
+      ? [
+          {
+            ruta: a.ruta.slice(0, 400),
+            existe: a.existe === true,
+            bytes: Number.isFinite(a.bytes) ? Math.max(0, Math.floor(a.bytes)) : 0,
+            sha256: typeof a.sha256 === 'string' ? a.sha256.slice(0, 64) : null,
+            ...(typeof a.reciente === 'boolean' ? { reciente: a.reciente } : {}),
+            ...(a.mencionado === true ? { mencionado: true } : {}),
+            ...(a.fuera === true ? { fuera: true } : {}),
+          },
+        ]
+      : []
+  );
+}
+
+/** Lo entregado de una tarea terminada, comprobado o no (lib/tareas-durables.ts `evaluarEntrega`). */
+export function entregaDe(instruccion: string, t: Pick<Tarea, 'id' | 'respuesta' | 'pasos' | 'archivos'>): Entrega {
+  return evaluarEntrega({ id: t.id, instruccion, resultado: t.respuesta ?? null, enlaces: visitadosDe(t), datos: datosDe(t.respuesta), archivos: archivosDe(t) });
+}
+
 /** «Compra: 24.70», «Venta: 24.95»: los datos sueltos de la respuesta, para la tabla de la tarjeta. */
 export function datosDe(respuesta: string | null | undefined): { clave: string; valor: string }[] {
   const out: { clave: string; valor: string }[] = [];
@@ -840,7 +917,9 @@ function cerrarMision(e: Encargo, t: Tarea) {
   m.fin = Date.now();
   m.pregunta = null;
   moverPlan(e, t);
-  const ok = t.estado === 'hecha' && !misionIncompleta(t);
+  // «Listo» no es evidencia (revisión externa, 4-oct): ok solo si lo entregado se comprobó.
+  const entrega = entregaDe(m.instruccion, t);
+  const ok = t.estado === 'hecha' && !misionIncompleta(t) && entrega.comprobada;
   m.final = {
     estado: t.estado,
     ok,
@@ -852,6 +931,10 @@ function cerrarMision(e: Encargo, t: Tarea) {
     captura: ultimaMiniatura(t),
     segundos: Math.round((m.fin - m.inicio) / 1000),
     pasos: m.pasosPrevios + pasosUtiles(t),
+    visitados: visitadosDe(t),
+    archivos: archivosDe(t),
+    comprobado: t.estado === 'hecha' && entrega.comprobada,
+    sinComprobar: t.estado === 'hecha' && !entrega.comprobada ? entrega.falta : null,
   };
   // A medias (sin pasos o perdió el contacto) y no la paró la persona: su «sí» la sigue.
   m.ofreceSeguir = !ok && (t.estado === 'sin_pasos' || t.estado === 'fallo') && m.rondas < MAX_RONDAS ? Date.now() : undefined;
@@ -876,7 +959,7 @@ export function versionDeEstado(): number {
 }
 
 /** Lo que la app muestra de una misión: el plan marcado, el tiempo, la pregunta pendiente (y cuál es) y el final. */
-export function vistaMision(m: Mision, estado?: EstadoTarea | null, pregunta?: string | null, preguntaId?: string | null, version = versionDeEstado()) {
+export function vistaMision(m: Mision, estado?: EstadoTarea | null, pregunta?: string | null, preguntaId?: string | null, version = versionDeEstado(), propuesta?: string | null) {
   const enConfirmar = estado === 'confirmar';
   return {
     version,
@@ -891,6 +974,8 @@ export function vistaMision(m: Mision, estado?: EstadoTarea | null, pregunta?: s
     pregunta: m.pregunta?.texto ?? (enConfirmar ? pregunta || null : null),
     /** Cuál pregunta es: la app la manda con su sí (si ya cambió, el servidor dice 409 y no la contesta). */
     preguntaId: m.pregunta ? m.pregunta.id : enConfirmar ? preguntaId || null : null,
+    /** La huella de la propuesta que muestra (revisión 4-oct): la app la manda con su sí; otra propuesta no se aprueba. */
+    propuesta: m.pregunta ? m.pregunta.huella ?? null : enConfirmar ? propuesta || null : null,
     final: m.final ?? null,
     // El botón «Seguir»: quedó a medias (no la paró la persona) y quedan rondas.
     puedeSeguir: !!m.final && !m.final.ok && m.final.estado !== 'parada' && m.rondas < MAX_RONDAS,
@@ -975,10 +1060,19 @@ export function instruccionContinuar(mision: string, t: Pick<Tarea, 'pasos'>, id
     .slice(-4)
     .map((p) => pasoEnPalabras(p, idioma));
   const m = mision.slice(0, 900);
+  // Lo que salió y se cortó a medias: seguir (lo pidió la persona) no es repetirlo. Se mira la pantalla primero.
+  const inciertas = t.pasos.filter((p) => p.incierto).slice(-2).map((p) => pasoEnPalabras(p, idioma));
   if (idioma === 'en') {
-    return `Continue this mission from where the screen is now, without starting over: «${m}».${hechos.length ? ` The last things you did: ${hechos.join('; ')}.` : ''} Finish the whole mission and answer with the concrete result that was asked for.`;
+    const ojo = inciertas.length ? ` Unconfirmed: «${inciertas.join('; ')}» may already have happened. Do NOT repeat it: look at the screen first and, if you can't confirm it, stop and ask.` : '';
+    return `Continue this mission from where the screen is now, without starting over: «${m}».${hechos.length ? ` The last things you did: ${hechos.join('; ')}.` : ''}${ojo} Finish the whole mission and answer with the concrete result that was asked for.`;
   }
-  return `Sigue con esta misión desde donde está la pantalla ahora, sin empezar de cero: «${m}».${hechos.length ? ` Lo último que hiciste: ${hechos.join('; ')}.` : ''} Termina la misión completa y responde con el resultado concreto que se pidió.`;
+  const ojo = inciertas.length ? ` Sin confirmar: «${inciertas.join('; ')}» pudo haberse hecho ya. NO la repitas: mira la pantalla primero y, si no puedes confirmarlo, detente y pregunta.` : '';
+  return `Sigue con esta misión desde donde está la pantalla ahora, sin empezar de cero: «${m}».${hechos.length ? ` Lo último que hiciste: ${hechos.join('; ')}.` : ''}${ojo} Termina la misión completa y responde con el resultado concreto que se pidió.`;
+}
+
+/** ¿Dejó la tarea una acción que salió y se cortó a medias (no se sabe si pasó)? */
+export function conAccionIncierta(t: Pick<Tarea, 'pasos'>): boolean {
+  return (t.pasos || []).some((p) => p.incierto === true);
 }
 
 /* ------------------------------------------------------------------ lo que se dice mientras trabaja */
@@ -1034,8 +1128,12 @@ export function fraseDeFinal(mision: string, t: Tarea, idioma: 'es' | 'en' = 'es
     return s.length > n ? `${s.slice(0, n - 1)}…` : s;
   };
   if (t.estado === 'hecha') {
+    // Lo que no se comprobó no se dice como hecho: ni «listo», ni «ya lo guardé» (revisión externa, 4-oct).
+    const ent = entregaDe(mision, t);
+    if (!ent.comprobada) return fraseSinComprobar(ent, en, corto(t.respuesta, 200));
     const r = corto(t.respuesta, 650);
-    return r ? (en ? `Done, I finished on my computer. ${r}` : `Listo, ya terminé en mi computadora. ${r}`) : en ? 'Done, I finished on my computer.' : 'Listo, ya terminé en mi computadora.';
+    const arch = ent.tipo === 'archivo' ? archivosEnPalabras(t, en) : '';
+    return r ? (en ? `Done, I finished on my computer. ${r}${arch}` : `Listo, ya terminé en mi computadora. ${r}${arch}`) : en ? `Done, I finished on my computer.${arch}` : `Listo, ya terminé en mi computadora.${arch}`;
   }
   if (t.estado === 'sin_pasos') {
     const u = [...t.pasos].reverse().find((p) => p.accion !== 'answer' && p.accion !== 'escritorio_limpio');
@@ -1045,6 +1143,41 @@ export function fraseDeFinal(mision: string, t: Tarea, idioma: 'es' | 'en' = 'es
   if (t.estado === 'fallo') return en ? `My computer failed: ${corto(t.error || 'no details', 120)}.` : `Mi computadora falló: ${corto(t.error || 'sin detalle', 120)}.`;
   if (t.error) return en ? `I stopped the computer task: ${corto(t.error, 120)}.` : `Paré lo de mi computadora: ${corto(t.error, 120)}.`;
   return en ? 'I stopped the computer task.' : 'Paré lo de mi computadora.';
+}
+
+/** «informe.odt (4096 bytes)»: lo que el nodo comprobó, dicho corto (vacío si no comprobó nada). */
+function listaComprobados(t: Pick<Tarea, 'archivos'>): string {
+  return (archivosDe(t) || [])
+    .filter(archivoComprobado)
+    .slice(0, 3)
+    .map((a) => `${a.ruta.split('/').pop()} (${a.bytes} bytes)`)
+    .join(', ');
+}
+
+function archivosEnPalabras(t: Pick<Tarea, 'archivos'>, en: boolean): string {
+  const lista = listaComprobados(t);
+  return !lista ? '' : en ? ` (I checked: ${lista}.)` : ` (Lo comprobé: ${lista}.)`;
+}
+
+/**
+ * El final de una tarea que dice que terminó pero cuya entrega no se pudo comprobar: honesto, sin «listo». Lo que
+ * dijo el modelo va entre comillas y a su nombre («mi computadora dice…»): es lo que afirma, no un hecho.
+ */
+function fraseSinComprobar(ent: Entrega, en: boolean, respuesta: string): string {
+  const r = respuesta ? `«${respuesta}»` : '';
+  if (ent.tipo === 'archivo') {
+    return en
+      ? `My computer says it saved it${r ? ` (${r})` : ''}, but I couldn’t verify that the file is there, so I’m not calling it done. Want me to check again?`
+      : `Mi computadora dice que lo guardó${r ? ` (${r})` : ''}, pero no pude comprobar que el archivo esté ahí, así que no lo doy por hecho. ¿Lo reviso otra vez?`;
+  }
+  if (ent.tipo === 'accion') {
+    return en
+      ? `My computer says ${r || 'it did it'}, but I couldn’t verify it from here. Please check before we count it as done.`
+      : `Mi computadora dice ${r || 'que ya lo hizo'}, pero no pude comprobarlo desde aquí. Revísalo antes de darlo por hecho.`;
+  }
+  return en
+    ? `My computer finished${r ? ` and said ${r}` : ''}, but it didn’t bring back what you asked for, so I couldn’t verify it.`
+    : `Mi computadora terminó${r ? ` y dijo ${r}` : ''}, pero no trajo lo que pediste, así que no pude comprobarlo.`;
 }
 
 /** La pregunta antes de algo sensible, para decirla en voz. */
@@ -1193,8 +1326,10 @@ function alCambiarEstado(e: Encargo, t: Tarea, enTurno: boolean) {
   const en = e.idioma === 'en';
   if (t.estado === 'confirmar' && t.pregunta) {
     const id = t.pregunta_id || null;
-    // La misma pregunta (por su id; con el nodo de antes, por su texto) no se vuelve a avisar.
-    if (m.pregunta?.tareaId === e.id && (id ? m.pregunta.id === id : m.pregunta.texto === t.pregunta)) return;
+    // La misma pregunta (por su id y la huella de su propuesta; con el nodo de antes, por su texto) no se vuelve a avisar.
+    // Otra propuesta bajo el mismo id (otro destino) es OTRA pregunta: se avisa con su texto y su huella nuevos, y un
+    // «sí» que se dio para la de antes ya no la contesta (revisión 4-oct).
+    if (m.pregunta?.tareaId === e.id && (id ? m.pregunta.id === id && (m.pregunta.huella ?? null) === (t.propuesta ?? null) : m.pregunta.texto === t.pregunta)) return;
     // Una consulta que salió antes de que llegara su respuesta: esa pregunta ya está contestada.
     if (id ? e.contestada?.id === id : e.contestada?.texto === t.pregunta && Date.now() - e.contestada.en < 10_000) return;
     m.pregunta = { tareaId: e.id, texto: t.pregunta, desde: Date.now(), id, huella: t.propuesta || null };
@@ -1259,7 +1394,9 @@ async function alTerminar(e: Encargo, t: Tarea, enTurno: boolean, sinSeguir = fa
   // El seguimiento ya no hace falta: se cancela su vuelta (los recibos, el final y la misión se quedan).
   if (e.reloj) clearTimeout(e.reloj);
   e.reloj = undefined;
-  if (!sinSeguir && misionIncompleta(t) && e.vuelta < MAX_CONTINUACIONES) {
+  // Una acción que salió y se cortó a medias (`incierto`) no se sigue sola: la continuación «desde donde está la
+  // pantalla» podría repetirla (un pago, un envío). La misión cierra a medias y la persona decide si sigue.
+  if (!sinSeguir && misionIncompleta(t) && !conAccionIncierta(t) && e.vuelta < MAX_CONTINUACIONES) {
     const e2 = await crearEncargo({
       instruccion: e.instruccion,
       paraNodo: instruccionContinuar(e.instruccion, t, e.idioma),
@@ -1291,10 +1428,10 @@ async function alTerminar(e: Encargo, t: Tarea, enTurno: boolean, sinSeguir = fa
   if (enTurno || (t.estado === 'parada' && !t.error)) {
     e.avisada = true;
     confirmarAvisos(e.quien, [e.id]);
-    avisarApp(e, { tipo: 'computadora', fase: 'termina', id: e.id, ok: t.estado === 'hecha' });
+    avisarApp(e, { tipo: 'computadora', fase: 'termina', id: e.id, ok: !!e.mision.final?.ok });
     return { sigue: null };
   }
-  const llego = avisarApp(e, { tipo: 'computadora', fase: 'termina', id: e.id, ok: t.estado === 'hecha' && !misionIncompleta(t), texto: fraseDeFinal(e.instruccion, t, e.idioma) }, true);
+  const llego = avisarApp(e, { tipo: 'computadora', fase: 'termina', id: e.id, ok: !!e.mision.final?.ok, texto: e.mision.final?.texto ?? fraseDeFinal(e.instruccion, t, e.idioma) }, true);
   if (llego) confirmarAvisos(e.quien, [e.id]);
   return { sigue: null };
 }
@@ -1318,9 +1455,11 @@ async function crearEncargo(o: {
    */
   pedido?: string;
 }): Promise<Encargo> {
+  // `desde_tarea`: la primera tarea de la misión, para que el nodo cuente como «de esta misión» lo que se guardó en
+  // una vuelta anterior (agente.py nuevo; el de antes lo ignora).
   const creada: { id: string } = await pedir('/tareas', {
     method: 'POST',
-    body: JSON.stringify({ instruccion: o.paraNodo, motor: o.motor, max_pasos: o.maxPasos, dueno: huellaDe(o.quien), ...(o.pedido ? { request_id: o.pedido } : {}) }),
+    body: JSON.stringify({ instruccion: o.paraNodo, motor: o.motor, max_pasos: o.maxPasos, dueno: huellaDe(o.quien), ...(o.pedido ? { request_id: o.pedido } : {}), ...(o.mision ? { desde_tarea: o.mision.id } : {}) }),
   });
   // Ya la conocía (el nodo dijo que era la misma de un pedido anterior): no se anota ni se sigue dos veces.
   const yaEra = ENCARGOS.get(creada.id);
@@ -1394,10 +1533,25 @@ async function crearConReintento(o: Parameters<typeof crearEncargo>[0]): Promise
   }
 }
 
-/** El resultado contado para el modelo: qué pasó, en cuántos pasos, y la respuesta tal cual. */
-export function resumenTarea(t: Tarea): string {
+/**
+ * El resultado contado para el modelo: qué pasó, en cuántos pasos, la respuesta tal cual y si lo entregado se
+ * comprobó. Lo que no se comprobó va marcado SIN COMPROBAR con la orden de no darlo por hecho (revisión externa, 4-oct:
+ * AURA no dice «ya lo guardé» si el nodo no encontró el archivo).
+ */
+export function resumenTarea(t: Tarea, instruccion: string = t.instruccion): string {
   const pasos = pasosUtiles(t);
-  if (t.estado === 'hecha') return `Hecha en ${pasos} pasos (${Math.round(t.segundos)} s). Lo que encontró o hizo: ${String(t.respuesta || '').slice(0, 1500)}`;
+  if (t.estado === 'hecha') {
+    const ent = entregaDe(instruccion, t);
+    const dijo = String(t.respuesta || '').slice(0, 1500);
+    if (!ent.comprobada) {
+      return (
+        `Hecha en ${pasos} pasos (${Math.round(t.segundos)} s), según tu computadora. Lo que dijo: ${dijo || '(nada)'} ` +
+        `SIN COMPROBAR: ${ent.falta || 'no pude comprobarlo.'} No digas que quedó hecho ni guardado: di que tu computadora dice que terminó, que no pudiste comprobarlo, y ofrece revisarlo.`
+      );
+    }
+    const lista = ent.tipo === 'archivo' ? listaComprobados(t) : '';
+    return `Hecha en ${pasos} pasos (${Math.round(t.segundos)} s). Lo que encontró o hizo: ${dijo}${lista ? ` COMPROBADO por tu computadora: ${lista}.` : ''}`;
+  }
   if (t.estado === 'parada') return t.error ? `Se detuvo antes de terminar: ${t.error}.` : 'La pararon antes de terminar.';
   if (t.estado === 'sin_pasos') return `No la terminó en ${pasos} pasos. ${t.error || ''}`.trim();
   return `Falló: ${t.error || 'sin detalle'}.`;
@@ -1422,7 +1576,7 @@ export async function encargarTarea(o: {
   decirPlan?: boolean;
   /** El id del pedido de la app (`requestId`): repetido, el nodo devuelve la misma tarea. */
   pedido?: string;
-}): Promise<{ hecho: string; id: string | null; tarea: Tarea | null }> {
+}): Promise<{ hecho: string; id: string | null; tarea: Tarea | null; incierto?: boolean; comprobada?: boolean }> {
   if (!computadoraConfigurada()) {
     return { hecho: 'HARNESS computadora: no está configurada en este servidor. No la usé; dilo con naturalidad.', id: null, tarea: null };
   }
@@ -1444,7 +1598,9 @@ export async function encargarTarea(o: {
       nota = ' (La hizo el modelo gratis: Claude no está configurado en la computadora.)';
     }
   } catch (err: any) {
-    return { hecho: `HARNESS computadora: no pude encargarla (${String(err?.message || err).slice(0, 120)}). Dilo con honestidad y ofrece intentarlo en un momento. No inventes el resultado.`, id: null, tarea: null };
+    // `incierto`: el nodo no contestó (o dio 5xx) después de que el pedido pudo llegarle; un 4xx o una conexión
+    // rechazada son un no de verdad (no se creó nada).
+    return { hecho: `HARNESS computadora: no pude encargarla (${String(err?.message || err).slice(0, 120)}). Dilo con honestidad y ofrece intentarlo en un momento. No inventes el resultado.`, id: null, tarea: null, incierto: pedidoPudoLlegar(err) };
   }
   // El teléfono abre la vista en vivo: la captura, el plan, los pasos en palabras y el tecleo bajito.
   const dichoPlan = o.decirPlan ? fraseDePlan(plan.pasos, idioma) : '';
@@ -1470,7 +1626,7 @@ export async function encargarTarea(o: {
     }
     // Se cerró mientras se consultaba (AUR04): vale el final que ya se decidió, no la lectura vieja.
     if (!aceptarLectura(e, gen, leida)) {
-      if (e.cerrada && e.terminada) return { hecho: `HARNESS computadora «${instruccion.slice(0, 160)}»: ${resumenTarea(e.terminada)}${nota}`, id: e.id, tarea: e.terminada };
+      if (e.cerrada && e.terminada) return { hecho: `HARNESS computadora «${instruccion.slice(0, 160)}»: ${resumenTarea(e.terminada, instruccion)}${nota}`, id: e.id, tarea: e.terminada, comprobada: !!e.mision.final?.comprobado };
       continue;
     }
     t = leida;
@@ -1493,13 +1649,13 @@ export async function encargarTarea(o: {
       if (sigue) {
         return {
           hecho:
-            `HARNESS computadora «${instruccion.slice(0, 160)}»: la primera parte no alcanzó (${resumenTarea(t).slice(0, 200)}) y ya sigue sola en tu computadora con lo que falta.${nota} ` +
+            `HARNESS computadora «${instruccion.slice(0, 160)}»: la primera parte no alcanzó (${resumenTarea(t, instruccion).slice(0, 200)}) y ya sigue sola en tu computadora con lo que falta.${nota} ` +
             `Di que sigues trabajando en eso. ${mira} No inventes el resultado.`,
           id: sigue.id,
           tarea: t,
         };
       }
-      return { hecho: `HARNESS computadora «${instruccion.slice(0, 160)}»: ${resumenTarea(t)}${nota}`, id: e.id, tarea: t };
+      return { hecho: `HARNESS computadora «${instruccion.slice(0, 160)}»: ${resumenTarea(t, instruccion)}${nota}`, id: e.id, tarea: t, comprobada: !!e.mision.final?.comprobado };
     }
   }
   if (!e.cerrada) {
@@ -1545,15 +1701,21 @@ function misionQueOfreceSeguir(quien: string): Mision | null {
  * tarea, de otra persona (la ruta ya lo niega) o de una pregunta que ya cambió no aprueba nada, aunque el nodo no lo
  * revisara. Devuelve el id y la huella de la propuesta mostrada (el nodo nuevo la revisa también); null: no vale.
  */
-export async function preguntaDeTarea(id: string, pedida: string | null): Promise<{ id: string | null; huella: string | null } | null> {
+export async function preguntaDeTarea(id: string, pedida: string | null, propuestaPedida: string | null = null): Promise<PreguntaAtada | null> {
   const e = ENCARGOS.get(id);
   if (!e || e.cerrada) return null;
   const mostrada = e.mision.pregunta?.tareaId === id ? e.mision.pregunta : null;
-  if (mostrada?.id && (!pedida || pedida === mostrada.id)) return { id: mostrada.id, huella: mostrada.huella ?? null };
-  const t = await verTarea(id, false, 8000).catch(() => null);
-  if (!t || t.estado !== 'confirmar' || !t.pregunta) return null;
-  if (pedida && t.pregunta_id !== pedida) return null;
-  return { id: t.pregunta_id ?? null, huella: t.propuesta ?? null };
+  let p: PreguntaAtada | null = null;
+  if (mostrada?.id && (!pedida || pedida === mostrada.id)) p = { id: mostrada.id, huella: mostrada.huella ?? null };
+  else {
+    const t = await verTarea(id, false, 8000).catch(() => null);
+    if (!t || t.estado !== 'confirmar' || !t.pregunta) return null;
+    if (pedida && t.pregunta_id !== pedida) return null;
+    p = { id: t.pregunta_id ?? null, huella: t.propuesta ?? null };
+  }
+  // Si la app dice qué propuesta vio (revisión 4-oct), tiene que ser esta: la de otra (otro destino) no aprueba nada.
+  if (propuestaPedida && propuestaPedida !== p.huella) return null;
+  return p;
 }
 
 /** Ya contestó su sí o su no: el teléfono quita los botones y vuelve el tecleo enseguida (sin esperar al sondeo). */
@@ -1593,7 +1755,9 @@ export async function resolverPreguntaComputadora(quien: string, mensaje: string
     m.pregunta = null;
     // El sí va atado a ESTA pregunta: si cuando por fin sale (la voz espera a que el turno se confirme) la
     // computadora ya pregunta otra cosa, el nodo no la contesta con él (auditoría 3-oct, PC01).
-    const hacer = () => confirmarTarea(p.tareaId, r === 'si', p.id, p.huella).then(() => alResponder(p.tareaId, p.id));
+    // Revisión 4-oct: el «sí» va atado a la huella de la propuesta que se le dijo; justo antes se revisa contra lo que el
+    // nodo pregunta ahora (otra propuesta bajo el mismo id, otro destino: no se contesta con este «sí»).
+    const hacer = () => confirmarAtado(p.tareaId, r === 'si', { id: p.id, huella: p.huella ?? null }).then(() => alResponder(p.tareaId, p.id));
     if (retener) {
       retener.alDescartar(() => {
         m.pregunta = p;
@@ -1603,6 +1767,10 @@ export async function resolverPreguntaComputadora(quien: string, mensaje: string
       try {
         await hacer();
       } catch (err: any) {
+        // Ya pregunta otra cosa (u otra propuesta): esa se avisa sola con su texto nuevo; esta no vuelve.
+        if (err instanceof ErrorNodo && err.status === 409) {
+          return `COMPUTADORA: NO contesté «${r === 'si' ? 'sí' : 'no'}» a «${p.texto}»: ${String(err.message).slice(0, 160)}. Díselo con honestidad: su computadora pregunta otra cosa ahora; que la mire antes de decidir.`;
+        }
         m.pregunta = p;
         return `COMPUTADORA: quiso contestar «${r === 'si' ? 'sí' : 'no'}» a «${p.texto}», pero tu computadora no recibió la respuesta (${String(err?.message || err).slice(0, 80)}). Díselo y que lo toque en la app.`;
       }
@@ -1841,6 +2009,65 @@ function pasoEnPalabrasSolo(p: Pick<PasoTarea, 'accion' | 'args'>, idioma: 'es' 
  *   GET  /api/computadora/misiones/:id                              una misión del historial (con su tarjeta final)
  *   POST /api/computadora/misiones/:id/seguir                       sigue una misión que quedó a medias
  */
+/**
+ * El registro durable de un encargo de la app por su `requestId` (`computadora-pedidos/<huella>/<requestId>`):
+ * `creando` (reservado: se está lanzando), con `id` (la tarea que creó), `libre` (no se creó nada: se puede
+ * probar otra vez) o `incierto` (no se sabe si llegó al nodo).
+ */
+type RegistroPedidoApp = { id?: string; estado?: 'creando' | 'libre' | 'incierto'; en: number };
+
+/**
+ * Lanza el encargo de la app UNA vez por dueño + `requestId`, con lo durable delante (AUR06; revisión externa,
+ * 4-oct). Persistir antes de actuar: se RESERVA el pedido (`creando`) antes de pedirle nada al nodo, y se anota la
+ * tarea al volver. Un error del almacén no es «no existe»:
+ *  · si no se puede mirar ni reservar, no se lanza (503 honesto);
+ *  · si el pedido ya tiene su tarea, se devuelve esa (otra réplica, o antes de un reinicio);
+ *  · si quedó `creando`/`incierto` (se cayó a medias, o no se pudo anotar la tarea creada), NO se lanza otra:
+ *    409 `pedido_incierto`, que mire sus tareas antes de pedirlo de nuevo. El nodo dedupe por request_id solo en
+ *    RAM: tras reiniciarse lanzaría otra.
+ */
+async function lanzarUnaVez(clave: string, correo: string, hacer: () => Promise<{ code: number; j: any; incierto?: boolean }>): Promise<{ code: number; j: any }> {
+  const a = almacenDurable();
+  const sinAlmacen = (detalle: string) => {
+    console.warn('[computadora] no pude mirar o reservar el pedido en el almacén durable; no lo lanzo:', String(detalle).slice(0, 120));
+    return { code: 503, j: { error: 'No pude comprobar si ese encargo ya estaba hecho, así que no lo lancé. Prueba en un momento.', code: 'almacen', honesto: true } };
+  };
+  const yaEstaba = (r: RegistroPedidoApp) => {
+    if (r.id) {
+      if (duenoDe(r.id) !== null && duenoDe(r.id) !== correo) return { code: 404, j: { error: 'No encuentro esa tarea.', honesto: true } };
+      const m = misionDeTarea(r.id);
+      return { code: 200, j: { id: r.id, mision: m ? vistaMision(m) : null, repetido: true, honesto: true } };
+    }
+    return {
+      code: 409,
+      j: { error: 'Ese encargo ya se estaba lanzando y no sé si llegó a tu computadora. Mira tus tareas antes de pedirlo otra vez; no lo lanzo de nuevo a ciegas.', code: 'pedido_incierto', honesto: true },
+    };
+  };
+  const ahora = Date.now();
+  const l = await leerDurable<RegistroPedidoApp>(clave, a).catch((e) => ({ ok: false as const, detalle: String(e?.message || e) }));
+  if (l.ok === false) return sinAlmacen(l.detalle);
+  let etag: string;
+  if (l.valor && l.valor.estado === 'libre' && !l.valor.id) {
+    const w = await a.cas(clave, { estado: 'creando', en: ahora }, l.etag!).catch((e) => ({ ok: false as const, conflicto: false as const, detalle: String(e?.message || e) }));
+    if (w.ok === false) return w.conflicto ? yaEstaba({ estado: 'creando', en: ahora }) : sinAlmacen(w.detalle);
+    etag = w.etag;
+  } else if (l.valor) {
+    return yaEstaba(l.valor);
+  } else {
+    const c = await crearUnaVez<RegistroPedidoApp>(clave, { estado: 'creando', en: ahora }, a).catch((e) => ({ ok: false as const, detalle: String(e?.message || e) }));
+    if (c.ok === false) return sinAlmacen(c.detalle);
+    if (!c.creado) return yaEstaba(c.valor);
+    etag = c.etag;
+  }
+  const r = await hacer().catch((e: any) => ({ code: 502, incierto: true, j: { error: String(e?.message || e).slice(0, 120), honesto: true } }));
+  // Lo que pasó, anotado sobre la reserva. Si no se puede guardar, queda `creando`: un reintento tras un reinicio
+  // sabrá que no se sabe y no lanzará otra (aquí, el Map de pedidos la sigue devolviendo).
+  const fin: RegistroPedidoApp = r.code === 200 && r.j?.id ? { id: String(r.j.id), en: Date.now() } : { estado: r.incierto ? 'incierto' : 'libre', en: Date.now() };
+  const w = await a.cas(clave, fin, etag).catch((e) => ({ ok: false as const, conflicto: false as const, detalle: String(e?.message || e) }));
+  if (w.ok === false) console.warn(`[computadora] no pude anotar cómo quedó el pedido; queda «creando» (un reintento no lanzará otro): ${String((w as { detalle?: string }).detalle || 'conflicto').slice(0, 120)}`);
+  return r;
+}
+
 export function montarRutasComputadora(app: import('express').Express, d: DepsRutas) {
   type Req = import('express').Request;
   type Res = import('express').Response;
@@ -1885,8 +2112,9 @@ export function montarRutasComputadora(app: import('express').Express, d: DepsRu
 
   /**
    * Los encargos de la app por su `requestId` (de quién + id): un doble toque o un reintento del teléfono
-   * devuelve la misma misión en lugar de lanzar otra (auditoría 3-oct, PC04). Si falló, se olvida: el reintento
-   * llega al nodo con el mismo id y el nodo devuelve la tarea si la alcanzó a crear.
+   * devuelve la misma misión en lugar de lanzar otra (auditoría 3-oct, PC04). Si falló, aquí se olvida y manda lo
+   * durable (lanzarUnaVez): un no de verdad deja el pedido `libre` (el reintento prueba otra vez); si no se sabe si
+   * llegó al nodo, queda `incierto` y el reintento no lanza otra.
    */
   const pedidosApp = new Map<string, { en: number; r: Promise<{ code: number; j: any }> }>();
   const PEDIDO_APP_VALE_MS = 10 * 60_000;
@@ -1906,9 +2134,9 @@ export function montarRutasComputadora(app: import('express').Express, d: DepsRu
     const aparato = String(req.headers['x-aura-aparato'] || '').trim();
     const idioma = req.body?.idioma === 'en' ? 'en' : 'es';
     const pedido = typeof req.body?.requestId === 'string' && /^[A-Za-z0-9._:-]{8,80}$/.test(req.body.requestId) ? String(req.body.requestId) : '';
-    const hacer = async (): Promise<{ code: number; j: any }> => {
+    const hacer = async (): Promise<{ code: number; j: any; incierto?: boolean }> => {
       const r = await encargarTarea({ instruccion, quien: correo, motor, esperaMs: 0, aparato: /^[A-Za-z0-9._:-]{1,128}$/.test(aparato) ? aparato : null, idioma, decirPlan: true, pedido: pedido ? `app:${pedido}` : undefined });
-      if (!r.id) return { code: 503, j: { error: r.hecho.replace(/^HARNESS computadora:\s*/, '').replace(/\s*(Dilo con honestidad.*|No inventes.*|No la usé.*|dilo con naturalidad\.?)$/i, ''), honesto: true } };
+      if (!r.id) return { code: 503, incierto: !!r.incierto, j: { error: r.hecho.replace(/^HARNESS computadora:\s*/, '').replace(/\s*(Dilo con honestidad.*|No inventes.*|No la usé.*|dilo con naturalidad\.?)$/i, ''), honesto: true } };
       return { code: 200, j: { id: r.id, mision: misionDeTarea(r.id) ? vistaMision(misionDeTarea(r.id)!) : null, honesto: true } };
     };
     if (!pedido) {
@@ -1917,32 +2145,15 @@ export function montarRutasComputadora(app: import('express').Express, d: DepsRu
     }
     const llave = `${correo}|${pedido}`;
     for (const [k, v] of pedidosApp) if (Date.now() - v.en > PEDIDO_APP_VALE_MS) pedidosApp.delete(k);
-    // Lo durable primero (auditoría maestra, AUR06): si este pedido ya creó su tarea —en otra réplica o antes de
-    // un reinicio, cuando el Map de aquí ya no lo sabe—, se devuelve esa y no se lanza otra.
     const claveDurable = claveDe('computadora-pedidos', correo, pedido);
-    if (!pedidosApp.has(llave)) {
-      const visto = await leerDurable<{ id?: string }>(claveDurable).catch(() => null);
-      const idVisto = visto?.ok ? String(visto.valor?.id || '') : '';
-      if (idVisto && duenoDe(idVisto) !== null && duenoDe(idVisto) !== correo) return noEsSuya(res);
-      if (idVisto) {
-        const m = misionDeTarea(idVisto);
-        return res.json({ id: idVisto, mision: m ? vistaMision(m) : null, repetido: true, honesto: true });
-      }
-    }
     let previo = pedidosApp.get(llave);
     if (!previo) {
-      previo = { en: Date.now(), r: hacer() };
+      // El doble toque en este proceso espera esta misma promesa (se anota antes de cualquier espera).
+      previo = { en: Date.now(), r: lanzarUnaVez(claveDurable, correo, hacer) };
       pedidosApp.set(llave, previo);
     }
     const r = await previo.r.catch((e: any) => ({ code: 502, j: { error: String(e?.message || e).slice(0, 120), honesto: true } }));
     if (r.code !== 200 && pedidosApp.get(llave) === previo) pedidosApp.delete(llave);
-    // Anotado de forma durable: un reintento tras un reinicio o en otra réplica recibe esta misma tarea. Si otra
-    // réplica la anotó antes (el nodo dedupe por request_id, así que es la misma), manda la primera.
-    if (r.code === 200 && r.j?.id) {
-      const c = await crearUnaVez(claveDurable, { id: String(r.j.id), en: Date.now() }).catch(() => null);
-      if (c?.ok && !c.creado && c.valor?.id && c.valor.id !== r.j.id) r.j.id = String(c.valor.id);
-      if (!c?.ok) console.warn('[computadora] no pude anotar el pedido de forma durable; queda solo en memoria');
-    }
     // La misma misión, con su estado de ahora (no el del primer pedido).
     const m = r.code === 200 ? misionDeTarea(r.j.id) : null;
     return res.status(r.code).json(m ? { ...r.j, mision: vistaMision(m) } : r.j);
@@ -1971,7 +2182,7 @@ export function montarRutasComputadora(app: import('express').Express, d: DepsRu
       const version = versionDeEstado();
       return res.json({
         tarea: { ...t, pasos: t.pasos.map((p) => ({ ...p, texto: pasoEnPalabras(p, idioma) })) },
-        mision: m ? vistaMision(m, crudo.estado, crudo.pregunta, crudo.pregunta_id, version) : null,
+        mision: m ? vistaMision(m, crudo.estado, crudo.pregunta, crudo.pregunta_id, version, crudo.propuesta) : null,
         version,
         honesto: true,
       });
@@ -1999,14 +2210,17 @@ export function montarRutasComputadora(app: import('express').Express, d: DepsRu
     d.limitar(20),
     sobreTarea('No le llegó tu respuesta', 'confirmar', async (id, req) => {
       if (typeof req.body?.si !== 'boolean') throw Object.assign(new Error('Di sí o no.'), { codigo: 400 });
-      // El sí va atado a la pregunta que vio en la pantalla (`preguntaId`, la app nueva). La app de antes no lo
-      // manda: vale la pregunta que este servidor le mostró; si no conoce ninguna, la que el nodo tiene ahora.
+      // El sí va atado a la pregunta que vio en la pantalla (`preguntaId`) y a la propuesta que mostraba (`propuesta`,
+      // su huella). Revisión 4-oct: un «sí» que no dice a qué pregunta contesta ya no aprueba «la que haya ahora» (podía
+      // ser otra, para otra persona). Un «no» no autoriza nada: vale con la pregunta que el servidor conoce.
       const pedida: string | null = typeof req.body?.preguntaId === 'string' && req.body.preguntaId ? String(req.body.preguntaId).slice(0, 64) : null;
+      const propuestaPedida: string | null = typeof req.body?.propuesta === 'string' && req.body.propuesta ? String(req.body.propuesta).slice(0, 128) : null;
+      if (req.body.si && !pedida) throw new ErrorNodo('ese sí no dice a qué pregunta contesta; mira la de ahora y vuelve a tocar «Sí»', 409);
       // AUR02: el servidor revisa que ese id sea la pregunta de ESTA tarea (la que mostró, o la que el nodo tiene
       // ahora para ella), aunque el nodo no lo revisara: un id de otra tarea u otra propuesta no aprueba nada.
-      const p = await preguntaDeTarea(id, pedida);
+      const p = await preguntaDeTarea(id, pedida, propuestaPedida);
       if (!p) throw new ErrorNodo('esa respuesta no es para la pregunta de esta tarea; mira la de ahora', 409);
-      await confirmarTarea(id, req.body.si, p.id, p.huella);
+      await confirmarAtado(id, req.body.si, p);
       alResponder(id, p.id);
       return { si: req.body.si };
     })

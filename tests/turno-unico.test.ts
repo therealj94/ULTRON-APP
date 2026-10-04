@@ -265,6 +265,8 @@ test('AUR06: con el almacén caído al reclamar, el turno corre como antes (solo
     const clave = claveTurno('majo@orden.org', 'caido-00001');
     const a = await T.reclamarTurno(clave);
     assert.ok('terminar' in a && a.terminar.durable === false);
+    // Contesta, pero sin registro durable no despacha nada con efecto (revisión externa, 4-oct).
+    assert.equal(await a.terminar.efecto('correo'), false);
     const b = await T.reclamarTurno(clave, 20);
     assert.ok('enCurso' in b, 'el cerrojo en vivo sigue funcionando');
   });

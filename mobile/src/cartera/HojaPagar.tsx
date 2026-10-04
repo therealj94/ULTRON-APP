@@ -18,7 +18,7 @@ import { MEDIDA, useTema } from '../nucleo/tema';
 import { Boton, Campo, Chip, Hoja, Icono, Texto, vibrar } from '../ui';
 import { direccionDe, miCartera, type MiCartera } from './conexion';
 import { abrirCartera, abrirEnvioEnWallet, useVigia, vigia } from './estado';
-import { COMISION_USD, cortar, EXPLORADOR_TX, MONEDAS, montoValido, simbolo, type Envio } from './logica';
+import { COMISION_USD, cortar, EXPLORADOR_TX, MONEDAS, mismoEnvio, montoValido, simbolo, type Envio, type EnvioRevisado } from './logica';
 import { leerSaldos, type Cartera } from './red';
 import { TOPE_VIGIA_MS } from './vigia';
 
@@ -30,7 +30,12 @@ const PRINCIPALES = ['ORIGEN', 'AUKA', 'AGKA', 'ONDK', 'HARV', 'IBS'];
 export function HojaPagar({ visible, onCerrar, correo, nombre, monto: montoInicial, moneda: monedaInicial, deVoz }: Props) {
   const tema = useTema();
   const v = useVigia();
-  const [suya, setSuya] = useState<string | null | undefined>(undefined);
+  // La dirección que llegó, con el correo para el que se pidió (revisión 4-oct): si la hoja cambia de persona, la de
+  // la anterior no se muestra ni se usa para la nueva, ni por un instante.
+  const [suyaDe, setSuyaDe] = useState<{ correo: string; direccion: string | null } | undefined>(undefined);
+  const suya = suyaDe && suyaDe.correo === correo ? suyaDe.direccion : undefined;
+  // Lo que revisó en el resumen: lo único que «Confirmar» puede mandar a firmar.
+  const [revisado, setRevisado] = useState<EnvioRevisado | null>(null);
   const [mia, setMia] = useState<MiCartera | null | undefined>(undefined);
   const [saldos, setSaldos] = useState<Cartera | null>(null);
   const [moneda, setMoneda] = useState('ORIGEN');
@@ -48,14 +53,15 @@ export function HojaPagar({ visible, onCerrar, correo, nombre, monto: montoInici
     if (!visible) return;
     setPaso('elegir');
     setError('');
-    setSuya(undefined);
+    setSuyaDe(undefined);
+    setRevisado(null);
     setMia(undefined);
     setSaldos(null);
     setMoneda(simbolo(monedaInicial) || 'ORIGEN');
     setTexto(montoValido(montoInicial) || '');
     setMasMonedas(!PRINCIPALES.includes(simbolo(monedaInicial) || 'ORIGEN'));
     let vivo = true;
-    void direccionDe(correo).then((d) => vivo && setSuya(d));
+    void direccionDe(correo).then((d) => vivo && setSuyaDe({ correo, direccion: d }));
     void miCartera().then((c) => {
       if (!vivo) return;
       setMia(c);
@@ -89,16 +95,27 @@ export function HojaPagar({ visible, onCerrar, correo, nombre, monto: montoInici
       vibrar('aviso');
       return setError(tr('Escribe una cantidad mayor que cero (por ejemplo 5 o 2.5).', 'Enter an amount above zero (e.g. 5 or 2.5).'));
     }
+    if (!suya) return;
     setError('');
+    setRevisado({ correo, direccion: suya, monto, moneda });
     setPaso('resumen');
   };
 
   const confirmar = async () => {
-    if (!suya || !mia || !monto) return;
+    if (!mia) return;
+    // Lo que se firma es lo que revisó: si en medio cambió la persona, la dirección, la cantidad o la moneda, no se
+    // abre la wallet con eso; se vuelve a revisar.
+    const actual = suya && monto ? { correo, direccion: suya, monto, moneda } : null;
+    if (!revisado || !mismoEnvio(revisado, actual)) {
+      vibrar('aviso');
+      setRevisado(null);
+      setPaso('elegir');
+      return setError(tr('Cambió a quién va o lo que se envía: revísalo otra vez antes de confirmar.', 'Who it goes to or what is sent changed: review it again before confirming.'));
+    }
     setAbriendo(true);
     setError('');
     try {
-      const p = await vigia.preparar({ correo, nombre, direccion: suya, mia: mia.direccion, monto, moneda });
+      const p = await vigia.preparar({ correo: revisado.correo, nombre, direccion: revisado.direccion, mia: mia.direccion, monto: revisado.monto, moneda: revisado.moneda });
       const envio: Envio = { direccion: p.direccion, monto: p.monto, simbolo: p.moneda };
       await abrirEnvioEnWallet(envio);
       vibrar('medio');
@@ -285,7 +302,7 @@ export function HojaPagar({ visible, onCerrar, correo, nombre, monto: montoInici
         </View>
       ) : (
         <View style={{ gap: MEDIDA.espacio.l }}>
-          <Resumen tema={tema} nombre={nombre} direccion={suya} monto={monto || ''} moneda={moneda} desde={mia.direccion} />
+          <Resumen tema={tema} nombre={nombre} direccion={revisado?.direccion || suya} monto={revisado?.monto || monto || ''} moneda={revisado?.moneda || moneda} desde={mia.direccion} />
           <Texto v="chica" color="texto2">
             {tr(
               'AURA no mueve tu dinero: abre Veta Wallet con el envío ya llenado y tú lo confirmas allá con tu contraseña. Cuando la cadena lo confirme, dejo el comprobante en este chat.',

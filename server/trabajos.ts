@@ -35,6 +35,8 @@ import {
   cambiarTarea,
   crearTarea,
   deComputadora,
+  ENTORNO_INVESTIGACION,
+  esInvestigacion,
   deTareaEnCurso,
   ESPACIO_PEDIDOS,
   esTerminal,
@@ -43,6 +45,7 @@ import {
   listarTareas,
   opcionesAprobacion,
   reconciliarConComputadora,
+  reconciliarInvestigacion,
   resumenTareas,
   tareaDePedido,
   transicionValida,
@@ -53,6 +56,7 @@ import {
   type Evidencia,
   type MisionComputadoraMin,
   type OpcionId,
+  type Progreso,
   type RegistroTarea,
   type TareaEnCursoMin,
   type TaskSnapshot,
@@ -86,10 +90,13 @@ export type DepsTrabajos = {
     reanudar?(correo: string, misionId: string): Promise<unknown>;
     parar?(correo: string, misionId: string): Promise<unknown>;
   };
-  /** Los borradores que esperan su «sí» (server/correo.ts, server/whatsapp.ts). */
+  /**
+   * Los borradores que esperan su «sí» (server/correo.ts, server/whatsapp.ts). `huella`: la de lo que espera
+   * (destinatario o chat, cuenta y contenido); `enviar` recibe la que mostró la tarjeta y solo manda si es esa.
+   */
   borradores?: {
-    vigente(correo: string, canal: 'correo' | 'whatsapp', ambito: string): { intento: string } | null;
-    enviar(correo: string, canal: 'correo' | 'whatsapp', ambito: string, intento: string): Promise<SalidaEnvio>;
+    vigente(correo: string, canal: 'correo' | 'whatsapp', ambito: string): { intento: string; huella?: string } | null;
+    enviar(correo: string, canal: 'correo' | 'whatsapp', ambito: string, intento: string, huella: string): Promise<SalidaEnvio>;
     descartar(correo: string, canal: 'correo' | 'whatsapp', ambito: string, intento: string): Promise<unknown>;
   };
 };
@@ -171,7 +178,7 @@ export async function abrirEncargoComputadora(duenoCorreo: string, ambito: strin
       estado: 'running',
       entorno: { kind: 'computadora', id: 'pendiente', displayName: 'Tu computadora' },
       pasoActual: 'Se lo encargo a tu computadora',
-      criterios: [{ id: 'resultado', texto: 'Tu computadora termina y deja un resultado que lo acredita (enlaces, datos o su respuesta)', obligatorio: true }],
+      criterios: [{ id: 'resultado', texto: 'Tu computadora termina y lo entregado se comprueba (el dato que pediste, la página que abrió o el archivo que ella misma encontró); «listo» no basta', obligatorio: true }],
       origen: { kind: 'chat', ...(turnoId ? { turnoId } : {}), conversacion: linea(ambito, 80) },
       condicionParada: 'Termina con resultado, falla, la paras tú, o deja de dar noticias.',
     });
@@ -208,9 +215,115 @@ export async function cerrarEncargoComputadora(duenoCorreo: string, ref: RefTare
   if (c && c.ok) anotar(c.tarea);
 }
 
+/* ------------------------------------------------------------------ ganchos: investigar en segundo plano */
+
+/**
+ * Investigar (server/investigar.ts): la tarea durable ANTES de empezar y de contestar, ya «running». El reintento
+ * del mismo turno devuelve la MISMA tarea (`nueva: false`): quien llama no arranca otro trabajo. null si el
+ * almacén no contesta: entonces NO se empieza (y AURA no dice «empecé»).
+ */
+export async function abrirInvestigacion(duenoCorreo: string, ambito: string, tema: string, pasos: number, topeMin: number): Promise<{ ref: RefTarea; nueva: boolean } | null> {
+  const dueno = conCorreo(duenoCorreo);
+  if (!dueno || !linea(tema, 10)) return null;
+  const { requestId, turnoId } = pedidoDelTurno('investigar', tema);
+  try {
+    const r = await crearTarea(dueno, {
+      requestId,
+      titulo: trozo(`Investigar: ${tema}`, 90),
+      objetivo: `Investigar «${trozo(tema, 300)}» en internet y dejarte un resumen con sus fuentes.`,
+      estado: 'running',
+      entorno: ENTORNO_INVESTIGACION,
+      pasoActual: 'Empiezo a buscar',
+      progreso: { hechos: 0, total: Math.max(1, pasos), unidad: 'pasos' },
+      criterios: [{ id: 'fuentes', texto: 'Un resumen hecho con fuentes que puedes abrir', obligatorio: true }],
+      origen: { kind: 'chat', ...(turnoId ? { turnoId } : {}), conversacion: linea(ambito, 80) },
+      condicionParada: `Termina con un resumen y sus fuentes, no encuentra nada, la cancelas tú, o se acaba su tiempo (${topeMin} minutos).`,
+    });
+    if (r.ok === false) {
+      console.warn('[trabajos] no pude crear la tarea de la investigación:', r.detalle.slice(0, 120));
+      return null;
+    }
+    anotar(r.tarea);
+    return { ref: refDe(r.tarea), nueva: r.creada && !esTerminal(r.tarea.estado) };
+  } catch (e: any) {
+    console.warn('[trabajos] no pude crear la tarea de la investigación:', String(e?.message || e).slice(0, 120));
+    return null;
+  }
+}
+
+/**
+ * Un paso de la investigación (su latido): `sigue`, `cerrada` (ya es terminal: la cancelaste desde el panel) o
+ * `error` (el almacén no contestó: se sigue, el cierre lo vuelve a intentar).
+ */
+export async function avanzarInvestigacion(duenoCorreo: string, id: string, paso: string, progreso: Progreso): Promise<'sigue' | 'cerrada' | 'error'> {
+  const dueno = conCorreo(duenoCorreo);
+  if (!dueno) return 'error';
+  let terminal = false;
+  const c = await cambiarTarea(dueno, id, (reg) => {
+    // Ya terminal (la cancelaste desde el panel): no se toca, y quien trabaja deja de hacerlo.
+    if (esTerminal(reg.estado)) {
+      terminal = true;
+      return null;
+    }
+    return esInvestigacion(reg) ? { pasoActual: paso, progreso } : null;
+  }).catch(() => null);
+  if (terminal || (c && c.ok === false && c.motivo === 'terminal')) return 'cerrada';
+  return c && c.ok ? 'sigue' : 'error';
+}
+
+export type CierreInvestigacion = {
+  estado: 'completed' | 'partial' | 'failed';
+  resumen: string;
+  fuentes: { titulo: string; url: string }[];
+  parcial?: string[];
+  pendiente?: string[];
+};
+
+/**
+ * Cierra la investigación con lo que de verdad quedó: `completed` solo con resumen y al menos una fuente (la
+ * evidencia de su criterio); sin fuentes, `partial`. Devuelve la tarea cerrada, o `cerrada` si ya era terminal
+ * (la cancelaste: no se le avisa nada), o null si el almacén no contestó.
+ */
+export async function cerrarInvestigacion(duenoCorreo: string, id: string, r: CierreInvestigacion): Promise<RefTarea | 'cerrada' | null> {
+  const dueno = conCorreo(duenoCorreo);
+  if (!dueno) return null;
+  const ahora = Date.now();
+  const evidencias: Evidencia[] = r.fuentes.slice(0, 8).map((f, i) => ({ id: `${id}:fuente:${i}`, tipo: 'enlace', etiqueta: trozo(f.titulo || f.url, 120), ref: String(f.url).slice(0, 500) }));
+  const estado = r.estado === 'completed' && !evidencias.length ? 'partial' : r.estado;
+  const c = await cambiarTarea(dueno, id, (reg): Cambio | null => {
+    if (!esInvestigacion(reg)) return null;
+    const ok = estado === 'completed';
+    return {
+      estado,
+      pasoActual: null,
+      ...(reg.progreso ? { progreso: { ...reg.progreso, hechos: reg.progreso.total } } : {}),
+      criterios: reg.criterios.map((x) => (x.obligatorio ? { ...x, estado: ok ? ('verified' as const) : ('not_met' as const), evidencias: ok ? evidencias.map((e) => e.id) : [] } : x)),
+      resultado: {
+        id: `${reg.id}:resultado`,
+        resumen: trozo(r.resumen, 1800),
+        evidencias,
+        parcial: (r.parcial || []).map((x) => trozo(x, 200)).slice(0, 4),
+        pendiente: (r.pendiente || []).map((x) => trozo(x, 200)).slice(0, 4),
+        t: ahora,
+      },
+      eventos: [{ type: 'operation.receipt', payload: { operationId: reg.id, state: estado === 'failed' ? 'failed' : 'succeeded', effect: 'none', fuentes: evidencias.length } }],
+    };
+  }).catch(() => null);
+  if (!c) return null;
+  if (c.ok) {
+    anotar(c.tarea);
+    return refDe(c.tarea);
+  }
+  return c.motivo === 'terminal' ? 'cerrada' : null;
+}
+
 /* ------------------------------------------------------------------ ganchos: los borradores */
 
-export type BorradorParaDecidir = { canal: 'correo' | 'whatsapp'; intento: string; para: string[] | string; desde?: string; asunto?: string; texto: string; vence: number };
+/**
+ * `huella`: la del borrador (server/correo.ts huellaCorreo, server/whatsapp.ts huellaWhatsapp: destinatario o chat exacto,
+ * cuenta y contenido). Es el vínculo de la decisión: «Aprobar» manda solo un borrador con ESA huella (revisión 4-oct).
+ */
+export type BorradorParaDecidir = { canal: 'correo' | 'whatsapp'; intento: string; para: string[] | string; desde?: string; asunto?: string; texto: string; vence: number; huella?: string };
 
 function decisionDeBorrador(ambito: string, b: BorradorParaDecidir, planVersion: number, ahora: number): Decision {
   const destinatario = trozo(Array.isArray(b.para) ? b.para.join(', ') : b.para, 160) || 'sin destinatario';
@@ -231,7 +344,8 @@ function decisionDeBorrador(ambito: string, b: BorradorParaDecidir, planVersion:
     creada: ahora,
     caduca: b.vence,
     planVersion,
-    vinculo: { tipo: 'borrador', canal: b.canal, ambito: linea(ambito, 80), intento: b.intento, hash: hashArgumentos({ canal: b.canal, para: b.para, desde: b.desde || '', asunto: b.asunto || '', texto: b.texto }) },
+    // Sin la huella del borrador, un hash propio que nunca coincide con uno guardado: «Aprobar» no manda a ciegas.
+    vinculo: { tipo: 'borrador', canal: b.canal, ambito: linea(ambito, 80), intento: b.intento, hash: b.huella || `sin-huella:${hashArgumentos({ canal: b.canal, para: b.para, desde: b.desde || '', asunto: b.asunto || '', texto: b.texto })}` },
   };
 }
 
@@ -386,6 +500,8 @@ async function reconciliar(dueno: string, reg: RegistroTarea, d: DepsTrabajos, a
     dueno,
     reg.id,
     (x): Cambio | null => {
+      // Una investigación que nadie trabaja ya (el proceso se reinició): se cierra con la verdad.
+      if (esInvestigacion(x)) return reconciliarInvestigacion(x, ahora);
       if (x.enlace?.tipo === 'computadora' && misiones) {
         const id = x.enlace.id;
         return reconciliarConComputadora(x, misiones.find((m) => m.id === id || m.tareaId === id) ?? null, ahora);
@@ -394,7 +510,7 @@ async function reconciliar(dueno: string, reg: RegistroTarea, d: DepsTrabajos, a
       if (x.estado === 'awaiting_approval' && dec?.vinculo?.tipo === 'borrador') {
         if (dec.caduca && ahora > dec.caduca) return { estado: 'blocked', pasoActual: 'La propuesta caducó sin enviarse. Si aún lo quieres, pide un borrador nuevo.' };
         const v = vigente(dec.vinculo.canal, dec.vinculo.ambito);
-        if (v !== undefined && v?.intento !== dec.vinculo.intento) {
+        if (v !== undefined && (v?.intento !== dec.vinculo.intento || (v.huella !== undefined && v.huella !== dec.vinculo.hash))) {
           return {
             estado: 'blocked',
             pasoActual: 'El borrador ya no está esperando (se resolvió en otro lado o el servidor se reinició). No se envió nada desde aquí.',
@@ -587,8 +703,10 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
       return res.json({ tarea: vistaTarea(r.reg, ahora()), honesto: true });
     }
     if (!d.borradores) return res.status(503).json({ error: 'Ahora no puedo enviar desde aquí.', honesto: true });
-    // Justo antes del efecto: ¿el borrador que espera es EXACTAMENTE el aprobado? (invariante 4)
-    if (d.borradores.vigente(dueno, vinc.canal, vinc.ambito)?.intento !== vinc.intento) {
+    // Justo antes del efecto: ¿el borrador que espera es EXACTAMENTE el aprobado? (invariante 4) El mismo intento y la
+    // misma huella (destinatario, cuenta y contenido): una aprobación para Ana no manda a Bruno.
+    const espera = d.borradores.vigente(dueno, vinc.canal, vinc.ambito);
+    if (espera?.intento !== vinc.intento || (espera.huella !== undefined && espera.huella !== vinc.hash)) {
       const fresca = await reconciliar(dueno, e.reg, d, ahora());
       return res.status(409).json({ error: 'Esa propuesta ya no es la que espera: no envié nada. Mira la actual o pide una nueva.', codigo: 'propuesta-cambiada', tarea: vistaTarea(fresca, ahora()), honesto: true });
     }
@@ -596,7 +714,7 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
     const r = await aplicar({ resolver: { ...resolver, operacion }, decision: null, estado: 'running', pasoActual: 'Enviando lo que aprobaste…' });
     if (!r.ok) return r.resp();
     const salida = await ejecutarUnaVez<SalidaEnvio>({ dueno, requestId: operacion, tipo: `${vinc.canal}.enviar`, argsHash: vinc.hash }, async () => {
-      const s = await d.borradores!.enviar(dueno, vinc.canal, vinc.ambito, vinc.intento);
+      const s = await d.borradores!.enviar(dueno, vinc.canal, vinc.ambito, vinc.intento, vinc.hash);
       const estado = s.estado === 'stale' ? 'failed' : s.estado;
       return { estado, resultado: s, recibo: { efecto: estado === 'succeeded' ? 'confirmed' : estado === 'unknown' ? 'possible' : 'none', proveedor: vinc.canal, ...(s.referencia ? { referencia: s.referencia } : {}), detalle: trozo(s.resumen, 160) } };
     });
@@ -650,6 +768,8 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
       let cambio: Cambio;
       let ack: 'aplicado' | 'recibido' = 'aplicado';
       if (control === 'pausar') {
+        // Una investigación corre de un tirón con su tope: no se finge una pausa (se puede cancelar).
+        if (esInvestigacion(reg)) return res.status(409).json({ error: 'Una investigación no se pausa: termina sola en unos minutos. Si ya no la quieres, cancélala.', codigo: 'no-pausable', tarea: vistaTarea(reg, t0), honesto: true });
         if (!transicionValida(reg.estado, 'paused') || reg.estado === 'awaiting_approval') return res.status(409).json({ error: 'Esta tarea ahora espera tu decisión; no hay trabajo que pausar.', codigo: 'no-pausable', tarea: vistaTarea(reg, t0), honesto: true });
         // Con su computadora: la pausa la confirma el nodo. Si no puede (sin esa capacidad, caída), no se
         // finge: la tarea sigue como estaba. Si la barrera tarda (`draining`), queda `pausing` (recibido).

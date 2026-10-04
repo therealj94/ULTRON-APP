@@ -25,7 +25,7 @@ export type PasoPc = { n: number; t: number; accion: string; texto?: string; min
  * `epoca`: la del control (agente.py de AUR03/AUR09; el visor la manda como expectedControlEpoch y ve si otro tomó el
  * control); `seguro`: entrada segura en curso (AURA no ve ni toca nada).
  */
-export type TareaPc = { id: string; instruccion: string; estado: EstadoTareaPc; pasos: PasoPc[]; respuesta: string | null; error: string | null; segundos: number; pregunta?: string | null; pregunta_id?: string | null; epoca?: number; seguro?: boolean };
+export type TareaPc = { id: string; instruccion: string; estado: EstadoTareaPc; pasos: PasoPc[]; respuesta: string | null; error: string | null; segundos: number; pregunta?: string | null; pregunta_id?: string | null; propuesta?: string | null; epoca?: number; seguro?: boolean };
 export type ResumenPc = { id: string; estado: EstadoTareaPc; pasos: number; instruccion: string; ultimo: string | null };
 /** Una misión de su historial (server/computadora.ts, historialDe). */
 export type ItemHistorialPc = { id: string; tareaId: string; instruccion: string; estado: EstadoTareaPc; ok: boolean | null; inicio: number; segundos: number; resultado: string | null };
@@ -58,6 +58,10 @@ export type FinalPc = {
   captura: string | null;
   segundos: number;
   pasos: number;
+  /** Lo entregado se comprobó (el dato pedido, el archivo que encontró el nodo). false: dijo que terminó y no se pudo comprobar. */
+  comprobado?: boolean;
+  /** Qué faltó comprobar, dicho para la persona (servidor nuevo). */
+  sinComprobar?: string | null;
 };
 export type MisionPc = {
   id: string;
@@ -71,6 +75,8 @@ export type MisionPc = {
   pregunta: string | null;
   /** Cuál pregunta es: el sí la nombra (si ya cambió, el servidor no la contesta). */
   preguntaId?: string | null;
+  /** La huella de la propuesta que se muestra: el sí la nombra (otra propuesta, otro destino, no se aprueba). */
+  propuesta?: string | null;
   final: FinalPc | null;
   puedeSeguir: boolean;
   version?: number;
@@ -138,10 +144,21 @@ export class VistaPc {
   }
 }
 
-/** El cuerpo del sí o el no: con la pregunta que vio en la pantalla (la de la misión; si no, la de la tarea). */
-export function respuestaPc(si: boolean, mision: Pick<MisionPc, 'preguntaId'> | null | undefined, tarea: Pick<TareaPc, 'pregunta_id'> | null | undefined): { si: boolean; preguntaId?: string } {
-  const preguntaId = mision?.preguntaId || tarea?.pregunta_id || null;
-  return preguntaId ? { si, preguntaId } : { si };
+/**
+ * El cuerpo del sí o el no: con la pregunta que vio en la pantalla (la de la misión; si no, la de la tarea) y la huella
+ * de la propuesta que mostraba, de la MISMA fuente (revisión 4-oct: el sí aprueba esa propuesta exacta, destino
+ * incluido; sin ella el servidor no manda un sí).
+ */
+export function respuestaPc(
+  si: boolean,
+  mision: Pick<MisionPc, 'preguntaId' | 'propuesta'> | null | undefined,
+  tarea: Pick<TareaPc, 'pregunta_id' | 'propuesta'> | null | undefined,
+): { si: boolean; preguntaId?: string; propuesta?: string } {
+  const deMision = !!mision?.preguntaId;
+  const preguntaId = (deMision ? mision?.preguntaId : tarea?.pregunta_id) || null;
+  const propuesta = (deMision ? mision?.propuesta : tarea?.propuesta) || null;
+  if (!preguntaId) return { si };
+  return propuesta ? { si, preguntaId, propuesta } : { si, preguntaId };
 }
 
 /** El id de un encargo: el mismo si se reintenta, para que el servidor no lance dos misiones (auditoría 3-oct, PC04). */
@@ -322,7 +339,7 @@ export function aCoordenadas(x: number, y: number, ancho: number, alto: number):
 }
 
 /** Lo que se comparte del resultado: la misión, lo que encontró, los datos y los enlaces. */
-export function textoParaCompartir(instruccion: string, f: Pick<FinalPc, 'respuesta' | 'error' | 'datos' | 'enlaces' | 'ok'>, idioma: 'es' | 'en' = 'es'): string {
+export function textoParaCompartir(instruccion: string, f: Pick<FinalPc, 'respuesta' | 'error' | 'datos' | 'enlaces' | 'ok' | 'sinComprobar'>, idioma: 'es' | 'en' = 'es'): string {
   const en = idioma === 'en';
   const partes = [`«${instruccion.trim()}»`];
   const r = (f.respuesta || '').trim();
@@ -331,14 +348,18 @@ export function textoParaCompartir(instruccion: string, f: Pick<FinalPc, 'respue
   if (datosSueltos.length) partes.push(datosSueltos.map((d) => `${d.clave}: ${d.valor}`).join('\n'));
   const enlaces = f.enlaces.filter((u) => !r.includes(u));
   if (enlaces.length) partes.push(enlaces.join('\n'));
+  // Lo que no se comprobó no se comparte como hecho.
+  if (f.sinComprobar) partes.push(`${en ? 'Not verified' : 'Sin comprobar'}: ${f.sinComprobar}`);
   partes.push(en ? '— from my AU-RA computer' : '— desde la computadora de AU-RA');
   return partes.filter(Boolean).join('\n\n');
 }
 
 /** Cómo terminó, en una palabra para la tarjeta. */
-export function finalEnPalabras(f: Pick<FinalPc, 'estado' | 'ok'>, idioma: 'es' | 'en' = 'es'): string {
+export function finalEnPalabras(f: Pick<FinalPc, 'estado' | 'ok' | 'comprobado'>, idioma: 'es' | 'en' = 'es'): string {
   const en = idioma === 'en';
   if (f.ok) return en ? 'Done' : 'Listo';
+  // Dijo que terminó, pero lo entregado no se comprobó: ni «Listo» ni «A medias».
+  if (f.estado === 'hecha' && f.comprobado === false) return en ? 'Not verified' : 'Sin comprobar';
   if (f.estado === 'parada') return en ? 'Stopped' : 'Detenida';
   if (f.estado === 'fallo') return en ? 'Failed' : 'Falló';
   return en ? 'Unfinished' : 'A medias';

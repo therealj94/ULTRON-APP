@@ -150,13 +150,17 @@ export async function enviarUnaVez<R = unknown>(o: {
   const base = { operacion: o.operacion, repetido: false };
 
   // 1) ¿Lo mismo de antes quedó incierto? Se reconcilia antes de intentar de nuevo (nunca se reenvía a ciegas).
+  //    Si el almacén no deja mirarlo, NO es «no había nada»: no se manda (revisión externa, 4-oct).
   if (o.contenido) {
-    const l = await leerDurable<{ op: string; t: number }>(claveContenido(o.dueno, o.contenido), a).catch(() => null);
-    const prev = l && l.ok && l.valor && l.valor.op !== o.operacion && Date.now() - Number(l.valor.t || 0) < VIGENCIA_CONTENIDO_MS ? l.valor.op : '';
+    const l = await leerDurable<{ op: string; t: number }>(claveContenido(o.dueno, o.contenido), a).catch((e) => ({ ok: false as const, detalle: String(e?.message || e) }));
+    if (l.ok === false) return { ...base, estado: 'failed', motivo: 'almacen', detalle: `no pude comprobar si un envío igual quedó pendiente: ${String(l.detalle).slice(0, 120)}` };
+    const prev = l.valor && l.valor.op !== o.operacion && Date.now() - Number(l.valor.t || 0) < VIGENCIA_CONTENIDO_MS ? l.valor.op : '';
     if (prev) {
-      const lp = await leerOperacion(o.dueno, prev, a).catch(() => null);
-      const p = lp && lp.ok ? lp.valor : null;
-      if (p && (p.estado === 'dispatched' || p.estado === 'unknown')) {
+      const lp = await leerOperacion(o.dueno, prev, a).catch((e) => ({ ok: false as const, detalle: String(e?.message || e) }));
+      if (lp.ok === false) return { ...base, estado: 'failed', motivo: 'almacen', detalle: `no pude comprobar cómo quedó el envío igual de antes: ${String(lp.detalle).slice(0, 120)}` };
+      const p = lp.valor;
+      // `requested` también: otro proceso lo registró y pudo estar a punto de mandarlo (o se cayó en medio).
+      if (p && (p.estado === 'requested' || p.estado === 'dispatched' || p.estado === 'unknown')) {
         const rc = await reconciliarSeguro(o.reconciliar, prev);
         if (rc.encontrado) {
           await cerrarReconciliada(o.canal, o.dueno, prev, rc, a);
@@ -176,7 +180,15 @@ export async function enviarUnaVez<R = unknown>(o: {
   if (!reg.nueva) return yaRegistrada<R>(o.canal, o.dueno, reg.op, o.reconciliar, a);
 
   // 3) Lo que sale queda anotado por su contenido (para reconciliar si lo vuelve a pedir) y se despacha ANTES del efecto.
-  if (o.contenido) await modificarDurable(claveContenido(o.dueno, o.contenido), () => ({ op: o.operacion, t: Date.now() }), a).catch(() => undefined);
+  //    Si no se pudo anotar, no se manda: un incierto de este envío no tendría con qué reconciliarse después y lo
+  //    mismo, pedido otra vez, saldría a ciegas.
+  if (o.contenido) {
+    const anotado = await modificarDurable(claveContenido(o.dueno, o.contenido), () => ({ op: o.operacion, t: Date.now() }), a).catch((e) => ({ ok: false as const, conflicto: false, detalle: String(e?.message || e) }));
+    if (anotado.ok === false) {
+      await avanzarOperacion({ dueno: o.dueno, requestId: o.operacion, a: 'failed', recibo: { efecto: 'none', detalle: 'no se despachó: no pude anotarlo' }, almacen: a }).catch(() => undefined);
+      return { ...base, estado: 'failed', motivo: 'almacen', detalle: anotado.detalle };
+    }
+  }
   const desp = await avanzarOperacion({ dueno: o.dueno, requestId: o.operacion, a: 'dispatched', almacen: a });
   if (desp.ok === false) {
     await avanzarOperacion({ dueno: o.dueno, requestId: o.operacion, a: 'failed', recibo: { efecto: 'none', detalle: `no se despachó: ${desp.motivo}` }, almacen: a }).catch(() => undefined);
@@ -214,13 +226,22 @@ export async function enviarUnaVez<R = unknown>(o: {
  * contesta, se deja pasar: perder un mensaje es peor que verlo dos veces.
  */
 export async function primeraVezEvento(fuente: string, dueno: string, id: string, almacen?: AlmacenDurable): Promise<boolean> {
+  return (await vezDelEvento(fuente, dueno, id, almacen)) !== 'repetido';
+}
+
+/**
+ * Lo mismo, sin confundir «no sé» con «primera vez»: `incierto` cuando no hay id o el almacén no contestó. Quien
+ * lo procesa igual (perder un mensaje es peor) lo hace SIN efectos: contestar sí, mandar o encargar no, porque
+ * pudo ser la reentrega de uno que ya los hizo (server.ts, el webhook de Telegram).
+ */
+export async function vezDelEvento(fuente: string, dueno: string, id: string, almacen?: AlmacenDurable): Promise<'primera' | 'repetido' | 'incierto'> {
   const ev = String(id ?? '').trim();
   const f = String(fuente || '').toLowerCase().replace(/[^a-z0-9-]/g, '');
-  if (!ev || !f || !String(dueno || '').trim()) return true;
+  if (!ev || !f || !String(dueno || '').trim()) return 'incierto';
   try {
     const r = await crearUnaVez(claveDe(`eventos/${f}`, dueno, ev.slice(0, 200)), { t: Date.now() }, almacen || almacenDurable());
-    return r.ok ? r.creado : true;
+    return r.ok ? (r.creado ? 'primera' : 'repetido') : 'incierto';
   } catch {
-    return true;
+    return 'incierto';
   }
 }

@@ -14,12 +14,12 @@ import { useEffect, useRef } from 'react';
 import { AppState } from 'react-native';
 import { tr } from '../i18n';
 import { emitir, escuchar, type AccionApp } from '../nucleo/contrato';
-import { resolverContacto } from '../pulse/relevo';
+import { contactosConocidos } from '../pulse/relevo';
 import { abrirConversacion } from '../app/rutas';
 import { HojaCartera as HojaCarteraVista } from './HojaCartera';
 import { HojaPagar } from './HojaPagar';
 import { abrirCartera, abrirPagar, anunciarHojasCartera, cerrarHojaCartera, retomarPago, useHojaCartera, vigia, type HojaCartera } from './estado';
-import { montoValido, simbolo } from './logica';
+import { destinoDePago, montoValido, simbolo } from './logica';
 
 /** Lo que AURA pide por voz para la cartera. Devuelve si la atendió (las demás acciones no son de aquí). */
 export function atenderAccionCartera(a: AccionApp): boolean {
@@ -29,13 +29,17 @@ export function atenderAccionCartera(a: AccionApp): boolean {
     return true;
   }
   if (a.tipo === 'pagar') {
-    const c = resolverContacto(a.con);
-    const correo = c?.correo || (/^[^@\s]+@[^@\s]+$/.test(a.con.trim()) ? a.con.trim().toLowerCase() : '');
-    if (!correo) {
-      emitir('hecho', { accion: a, ok: false, detalle: tr(`No encuentro a «${a.con}» entre tus contactos de PULSE2CHAT.`, `I can’t find “${a.con}” among your PULSE2CHAT contacts.`) });
+    // Revisión 4-oct: el destino es EXACTO (el correo que manda el servidor, o un solo contacto sin dudas). Antes se
+    // tomaba el contacto «más parecido»: con dos Nicole, o un nombre mal oído, el envío se preparaba para otra persona.
+    const d = destinoDePago(a.con, contactosConocidos());
+    if (!d || 'varios' in d) {
+      const detalle = d
+        ? tr(`Hay varias personas que encajan con «${a.con}» (${d.varios.map((x) => x.nombre).join(', ')}): dime cuál y lo preparo.`, `Several people match “${a.con}” (${d.varios.map((x) => x.nombre).join(', ')}): tell me which one.`)
+        : tr(`No encuentro a «${a.con}» entre tus contactos de PULSE2CHAT.`, `I can’t find “${a.con}” among your PULSE2CHAT contacts.`);
+      emitir('hecho', { accion: a, ok: false, detalle });
       return true;
     }
-    const nombre = c?.nombre || correo.split('@')[0];
+    const { correo, nombre } = d;
     // El hilo de esa persona debajo: ahí queda el comprobante cuando la cadena confirme el envío.
     abrirConversacion(correo, nombre);
     abrirPagar({ correo, nombre, monto: montoValido(a.monto) || undefined, moneda: simbolo(a.moneda) || undefined, deVoz: true });

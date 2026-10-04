@@ -35,6 +35,7 @@ import { sumarManejadorDeFondo } from '../pulse/servicioLlamada';
 import { iniciarAvisosRelevo } from '../pulse/avisosRelevo';
 import { abrirRuta, rutaActual, RUTAS_DE_SESION } from '../app/rutas';
 import { abrirHoja, hayAnfitrion } from '../app/hojas';
+import { pedirPanelTrabajos } from '../trabajos/abrirPanel';
 import { usuarioActual } from '../app/sesion';
 import {
   anotarVisto,
@@ -238,6 +239,13 @@ async function hacer(x: Pendiente, correo: string) {
   if (d.tipo === 'mensaje' && d.abrir === 'chats') {
     // Un mensaje del chat: se abren los chats y ahí se lee. AURA no anuncia «tienes un mensaje».
     abrirRuta('Chats');
+    return;
+  }
+  if (d.tipo === 'mensaje' && d.abrir === 'tareas') {
+    // Lo que terminó en segundo plano (una investigación): la mesa con su panel de tareas, y AURA lo dice.
+    abrirRuta('Mesa');
+    pedirPanelTrabajos();
+    decir(textoAlAbrir(d));
     return;
   }
   if (d.tipo === 'mensaje' && d.abrir === 'ajustes') abrirRuta('Ajustes');

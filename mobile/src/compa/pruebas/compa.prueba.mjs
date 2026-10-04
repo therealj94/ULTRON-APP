@@ -2887,6 +2887,10 @@ prueba('su computadora: una respuesta vieja no vuelve a la tarea de antes, el s�
   assert.deepEqual(respuestaPc(true, { preguntaId: 'p2' }, { pregunta_id: 'p1' }), { si: true, preguntaId: 'p2' });
   assert.deepEqual(respuestaPc(false, null, { pregunta_id: 'p1' }), { si: false, preguntaId: 'p1' });
   assert.deepEqual(respuestaPc(true, null, null), { si: true });
+  // Revisión 4-oct: la huella de la propuesta va con su pregunta, de la misma fuente (nunca la de otra).
+  assert.deepEqual(respuestaPc(true, { preguntaId: 'p2', propuesta: 'h2' }, { pregunta_id: 'p1', propuesta: 'h1' }), { si: true, preguntaId: 'p2', propuesta: 'h2' });
+  assert.deepEqual(respuestaPc(true, { preguntaId: 'p2' }, { pregunta_id: 'p1', propuesta: 'h1' }), { si: true, preguntaId: 'p2' });
+  assert.deepEqual(respuestaPc(true, null, { pregunta_id: 'p1', propuesta: 'h1' }), { si: true, preguntaId: 'p1', propuesta: 'h1' });
   // Cada encargo, su id (el servidor lo acepta: letras, números y . _ : -; de 8 a 80).
   const p1 = nuevoPedidoPc();
   assert.match(p1, /^[A-Za-z0-9._:-]{8,80}$/);

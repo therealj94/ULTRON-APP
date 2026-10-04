@@ -4,13 +4,16 @@
  * navegarla (una recarga cortaría la conversación en vivo). Aquí se traduce a lo que la mesa web sabe
  * mostrar; lo que no tiene pantalla en la web deja la mesa como está.
  */
-export type DestinoAviso = 'conversar' | 'trabajar';
+export type DestinoAviso = 'conversar' | 'trabajar' | 'tareas';
 
 export function destinoDeAviso(abrir: unknown): DestinoAviso | null {
   switch (String(abrir || '')) {
     case 'computadora':
     case 'misiones':
       return 'trabajar';
+    // «Terminé de investigar» (server/investigar.ts): abre el panel de Tareas, donde está el resultado (Codex, PR 142).
+    case 'tareas':
+      return 'tareas';
     case 'mesa':
       return 'conversar';
     default:

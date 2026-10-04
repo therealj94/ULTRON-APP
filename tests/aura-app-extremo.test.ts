@@ -1440,3 +1440,49 @@ test('STREAM01 y EXEC04 por JSON: la redacción fallida sale parcial con su esta
     contestar = antes;
   }
 });
+
+test('José, 4-oct: lo que promete sin herramienta («Ya está encendida», «te aviso por PULSE2CHAT») no se dice ni se entrega', { skip: !listo }, async () => {
+  const antes = contestar;
+  try {
+    // Sin el cerebro con manos (CEREBRO_VOZ apagado en las pruebas) contesta el Qwen del nodo: la guarda vale igual.
+    contestar = () => '[EMO: neutral] Ya está encendida. ¿Qué necesitás que haga?';
+    const evs = await turnoStream('cuéntame qué pasa con tu compu, prueba de promesas uno');
+    const done = evs.find((e) => e.ev === 'done')!.data;
+    assert.ok(!/encendida/.test(done.reply), done.reply);
+    assert.match(done.reply, /^Todavía no he hecho nada en mi computadora\./);
+    assert.ok(!evs.some((e) => (e.ev === 'delta' || e.ev === 'replace') && /encendida/.test(e.data.text)), 'la frase retenida nunca salió a la voz');
+
+    contestar = () => '[EMO: neutral] Va, voy a investigar los hitos de Honduras y te aviso por PULSE2CHAT cuando termine.';
+    const evs2 = await turnoStream('investiga los hitos de la historia de Honduras, prueba de promesas dos');
+    const done2 = evs2.find((e) => e.ev === 'done')!.data;
+    assert.match(done2.reply, /Todavía no puedo escribirte por PULSE2CHAT/);
+    assert.match(done2.reply, /Todavía no lo empecé\. ¿Lo investigo ahora y te aviso con una notificación cuando termine\?/);
+    assert.ok(!evs2.some((e) => e.ev === 'delta' && /te aviso por PULSE2CHAT/.test(e.data.text)));
+
+    // Por JSON, lo mismo.
+    const j = await turno('cuéntame qué pasa con tu compu, prueba de promesas tres');
+    assert.ok(!/te aviso por PULSE2CHAT/.test(j.reply), j.reply);
+    assert.match(j.reply, /Todavía no lo empecé/);
+
+    // Y por la voz (ElevenLabs): lo dicho nunca es la promesa.
+    const pase = emitirPase(yo, 'aura', 'es', { aparato: 'tel-promesas' }).pase;
+    const r = await voz(pase, [{ role: 'user', content: 'investiga los hitos de la historia de Honduras, prueba de promesas cuatro' }]);
+    assert.ok(!/te aviso por PULSE2CHAT/i.test(r.dicho), r.dicho);
+    assert.match(r.dicho, /Todavía no lo empecé/);
+
+    // Una respuesta normal pasa igual que antes.
+    contestar = () => '[EMO: neutral] Copán fue una gran ciudad maya del occidente de Honduras.';
+    const normal = (await turnoStream('háblame de Copán, prueba de promesas cinco')).find((e) => e.ev === 'done')!.data;
+    assert.equal(normal.reply, 'Copán fue una gran ciudad maya del occidente de Honduras.');
+  } finally {
+    contestar = antes;
+  }
+});
+
+test('José, 4-oct: la mano «investigar» se ofrece con sesión, sin prometer PULSE2CHAT', { skip: !listo }, async () => {
+  alNodo.length = 0;
+  await turnoStream('háblame de los mayas, prueba de la mano investigar');
+  const sys = alNodo.at(-1)!.system;
+  assert.match(sys, /PEDIR_HERRAMIENTA: investigar/);
+  assert.match(sys, /Nunca prometas «te lo mando por PULSE2CHAT»/);
+});

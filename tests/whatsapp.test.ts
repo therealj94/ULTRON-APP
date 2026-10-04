@@ -317,7 +317,7 @@ test('el borrador de WhatsApp va atado a su dueño, su destino y su vencimiento:
     assert.ok(borradorWhatsappDe(JOSE, 'tel'));
     // En la voz, el turno se confirma cuando el borrador ya venció: no sale.
     const v = retener();
-    assert.match((await resolverBorradorWhatsapp(JOSE, 'tel', 'sí', v.opciones as any))!, /se manda a Beto en cuanto termine este turno/);
+    assert.match((await resolverBorradorWhatsapp(JOSE, 'tel', 'sí', v.opciones as any))!, /se manda a Beto \(\+50499990000\) en cuanto termine este turno/);
     Date.now = () => realAhora() + 16 * 60_000;
     v.r.hacer!();
     await new Promise((res) => setTimeout(res, 50));
@@ -402,7 +402,7 @@ test('leer bien: quién dijo qué y a qué hora, lo nuevo primero; «Ana» con d
     await correrWhatsapp(JOSE, 'leer 1', 'tel');
     // Contestar el último que faltaba cierra la tarea (el borrador espera su «sí» igual).
     const b = await correrWhatsapp(JOSE, 'responder Ana López | Gracias, ya lo reviso.', 'tel');
-    assert.match(b, /^BORRADOR DE WHATSAPP \(NO enviado\) para Ana López:\nGracias, ya lo reviso\./);
+    assert.match(b, /^BORRADOR DE WHATSAPP \(NO enviado\) para Ana López \(\+50499992222\):\nGracias, ya lo reviso\./, 'dice el número al que va');
     assert.match(b, /TAREA TERMINADA: «revisar los 4 chats con mensajes sin leer» \(4 de 4 hechos\)/);
     assert.equal(tareaDe(JOSE, 'tel'), null);
     assert.equal(p.enviados.length, 0, 'nada sale sin el «sí»');

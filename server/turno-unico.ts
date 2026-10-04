@@ -5,7 +5,8 @@
  * sus reintentos; aquí se recuerda, por quién habla + ese id, el turno en curso o terminado hace poco:
  *   · si sigue en curso, el reintento lo ESPERA (no corre otro en paralelo);
  *   · si terminó con respuesta, el reintento recibe esa misma respuesta (`repetido: true`);
- *   · si terminó sin respuesta (error, cortado), el reintento corre un turno nuevo: para eso reintenta.
+ *   · si terminó sin respuesta (error, cortado) SIN haber despachado nada, el reintento corre un turno nuevo:
+ *     para eso reintenta. Si ya había despachado algo, recibe `desconocido` (no se repite a ciegas).
  *   · si se cansa de esperar y el turno SIGUE en curso, recibe «en curso» (`enCurso`): cansarse de esperar
  *     no le da la propiedad del turno (auditoría 3-oct, EXEC01: a los 75 s entraba un segundo ejecutor
  *     mientras el primero seguía y podía repetir un envío o una tarea de la computadora).
@@ -26,9 +27,15 @@
  *     (es seguro); si ya había despachado algo, NO se re-ejecuta a ciegas: el turno queda `desconocido` y el
  *     reintento recibe eso (la ruta lo dice con honestidad y propone revisar antes de pedirlo otra vez).
  *   · El resultado se guarda al terminar; un reintento tras un reinicio recibe la misma respuesta.
- * Si el almacén no contesta al reclamar, el turno corre como antes (solo el Map) y se avisa en el log: no se
- * deja a la persona sin respuesta por una caída de S3. El registro guarda la respuesta ya dada (la misma que
- * va a su memoria) para repetirla; conviene una regla de ciclo de vida sobre `ultron/durable/turnos/`.
+ * Si el almacén no contesta al reclamar, el turno corre con el Map para CONTESTAR (no se deja a la persona sin
+ * respuesta por una caída de S3), pero SIN EFECTOS: un turno que no quedó reclamado de forma durable no despacha
+ * nada (ni herramientas que dejan o hacen algo, ni el «sí» a un borrador, ni acciones del teléfono): tras un
+ * reinicio o en otra réplica nadie sabría que ya se hizo (revisión externa, 4-oct). La ruta lo dice con honestidad.
+ *   · Un turno que despachó algo y terminó SIN respuesta (error, cortado) no queda `libre`: queda `desconocido`.
+ *     Antes el reintento de la app (para eso reintenta) corría el turno otra vez y repetía el envío o la tarea.
+ *   · Un turno hecho que despachó algo repite su respuesta aunque pase su vida: con efectos, nunca vuelve a correr.
+ * El registro guarda la respuesta ya dada (la misma que va a su memoria) para repetirla; conviene una regla de
+ * ciclo de vida sobre `ultron/durable/turnos/`.
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { almacenDurable, claveDe, crearUnaVez, PROCESO_DURABLE, type AlmacenDurable } from '../lib/durable';
@@ -72,7 +79,16 @@ export type RegistroTurno = {
   actualizado: number;
 };
 
-type Entrada = { promesa: Promise<TurnoGuardado | null>; resolver: (r: TurnoGuardado | null) => void; hecho: boolean; ts: number };
+type Entrada = {
+  promesa: Promise<TurnoGuardado | null>;
+  resolver: (r: TurnoGuardado | null) => void;
+  hecho: boolean;
+  ts: number;
+  /** Lo que este turno despachó con efecto, en este proceso. */
+  efectos: string[];
+  /** Terminó SIN respuesta después de despachar algo: el reintento recibe «desconocido», no corre otro. */
+  desconocido?: string[];
+};
 
 export const VIDA_MS = 2 * 60_000;
 export const MAX_TURNOS = 500;
@@ -164,7 +180,7 @@ export function crearTurnosUnicos(opciones: Partial<Config> & { proceso?: string
 
   function crearEntrada(clave: string): Entrada {
     let resolver!: (r: TurnoGuardado | null) => void;
-    const e: Entrada = { promesa: new Promise((r) => (resolver = r)), resolver: (r) => resolver(r), hecho: false, ts: cfg.ahora() };
+    const e: Entrada = { promesa: new Promise((r) => (resolver = r)), resolver: (r) => resolver(r), hecho: false, ts: cfg.ahora(), efectos: [] };
     turnos.set(clave, e);
     podar();
     return e;
@@ -246,7 +262,11 @@ export function crearTurnosUnicos(opciones: Partial<Config> & { proceso?: string
     return enCola(p, async () => {
       if (p.perdido) return;
       const t = cfg.ahora();
-      const w = await escribir(p, (reg) => (r ? { ...reg, estado: 'hecho', resultado: r, vence: 0, actualizado: t } : { ...reg, estado: 'libre', vence: 0, actualizado: t }));
+      // Sin respuesta: `libre` (el reintento lo corre) solo si no despachó nada; si ya despachó algo, `desconocido`
+      // (correrlo otra vez repetiría el envío o la tarea).
+      const w = await escribir(p, (reg) =>
+        r ? { ...reg, estado: 'hecho', resultado: r, vence: 0, actualizado: t } : { ...reg, estado: reg.efectos.length ? 'desconocido' : 'libre', vence: 0, actualizado: t }
+      );
       if (w === 'error') console.warn('[turno-unico] no pude guardar el final del turno; un reintento tras un reinicio lo verá incierto.');
     })
       .catch(() => undefined)
@@ -292,12 +312,15 @@ export function crearTurnosUnicos(opciones: Partial<Config> & { proceso?: string
     let choques = 0;
     for (;;) {
       const t = cfg.ahora();
-      if (reg.estado === 'hecho' && reg.resultado && t - reg.actualizado <= VIDA_DURABLE_MS) return { previo: reg.resultado };
+      const conEfectos = (reg.efectos || []).length > 0;
+      // Un turno que despachó algo no vuelve a correr nunca: aunque haya pasado la vida de su respuesta, se repite.
+      if (reg.estado === 'hecho' && reg.resultado && (conEfectos || t - reg.actualizado <= VIDA_DURABLE_MS)) return { previo: reg.resultado };
       if (reg.estado === 'desconocido') return { desconocido: { efectos: reg.efectos } };
       const vencido = reg.estado === 'en-curso' && reg.vence <= t;
       let nuevo: RegistroTurno | null = null;
-      // Su dueño murió después de despachar algo: no se corre otra vez a ciegas.
-      if (vencido && reg.efectos.length) nuevo = { ...reg, estado: 'desconocido', vence: 0, actualizado: t };
+      // Su dueño murió después de despachar algo (o terminó sin respuesta después de despacharlo, en un registro
+      // de antes de este cambio): no se corre otra vez a ciegas.
+      if ((vencido || reg.estado === 'libre' || reg.estado === 'hecho') && conEfectos) nuevo = { ...reg, estado: 'desconocido', vence: 0, actualizado: t };
       // Libre (terminó sin respuesta), viejo, o su dueño murió sin haber hecho nada: se puede correr.
       else if (reg.estado === 'libre' || reg.estado === 'hecho' || vencido) nuevo = { ...mio, token: reg.token + 1, t, vence: t + cfg.leaseMs, actualizado: t };
       if (nuevo) {
@@ -321,19 +344,35 @@ export function crearTurnosUnicos(opciones: Partial<Config> & { proceso?: string
 
   /* ---------------------------------------------------------------- lo de siempre, con lo durable debajo */
 
+  /**
+   * El cierre del turno que corre aquí. `p` null: el almacén no contestó al reclamar; el turno contesta, pero no
+   * despacha nada con efecto (tras un reinicio o en otra réplica nadie sabría que ya se hizo).
+   */
   function terminarDe(clave: string, entrada: Entrada, p: Propio | null): Terminar {
     let guardado: Promise<void> = Promise.resolve();
     const terminar = ((r: TurnoGuardado | null) => {
       if (entrada.hecho) return guardado;
       entrada.hecho = true;
       entrada.ts = cfg.ahora();
+      // Sin respuesta y sin nada despachado: el próximo reintento corre uno nuevo (para eso reintenta). Si ya
+      // despachó algo, el lugar se queda como `desconocido`: el reintento no lo corre otra vez.
+      if (!r && entrada.efectos.length) entrada.desconocido = [...entrada.efectos];
       entrada.resolver(r);
-      // Sin respuesta no hay nada que repetir: el próximo reintento corre uno nuevo.
-      if (!r && turnos.get(clave) === entrada) turnos.delete(clave);
+      if (!r && !entrada.desconocido && turnos.get(clave) === entrada) turnos.delete(clave);
       guardado = p ? cerrarDurable(p, r) : Promise.resolve();
       return guardado;
     }) as Terminar;
-    terminar.efecto = (que: string) => (p ? efectoDurable(p, que) : Promise.resolve(!entrada.hecho));
+    const sinRegistro = (que: string) => {
+      console.warn(`[turno-unico] no despacho «${String(que).slice(0, 40)}»: el turno no quedó registrado en el almacén durable.`);
+      return false;
+    };
+    terminar.efecto = async (que: string) => {
+      if (!p) return sinRegistro(que);
+      if (entrada.hecho) return false;
+      const ok = await efectoDurable(p, que);
+      if (ok) entrada.efectos.push(String(que).slice(0, 40));
+      return ok;
+    };
     terminar.durable = !!p;
     return terminar;
   }
@@ -372,10 +411,13 @@ export function crearTurnosUnicos(opciones: Partial<Config> & { proceso?: string
       podar();
       const e = turnos.get(clave);
       if (!e) return reclamarAqui(clave, tope);
+      if (e.desconocido) return { desconocido: { efectos: e.desconocido } };
       let reloj: ReturnType<typeof setTimeout> | undefined;
       const limite = new Promise<null>((r) => (reloj = setTimeout(() => r(null), Math.max(0, tope - cfg.ahora()))));
       const previo = await Promise.race([e.promesa.catch(() => null), limite]).finally(() => clearTimeout(reloj));
       if (previo) return { previo };
+      // Terminó sin respuesta después de despachar algo: no se corre otra vez.
+      if (e.desconocido) return { desconocido: { efectos: e.desconocido } };
       // Se pasó la espera y sigue en curso: el dueño sigue siendo el primero (puede estar mandando algo).
       // Este reintento no corre otro; se le dice que sigue, sin soltar la propiedad.
       if (turnos.get(clave) === e && !e.hecho) return { enCurso: true };
@@ -429,6 +471,22 @@ export function enTurnoUnico<T>(terminar: Terminar, f: () => T): T {
 export function efectoDelTurno(que: string): Promise<boolean> {
   const t = turnoActual.getStore();
   return t ? t.efecto(que) : Promise.resolve(true);
+}
+
+/**
+ * Un turno que contesta pero NO despacha nada con efecto. Para cuando no se puede saber si lo que llega es la
+ * primera vez: un webhook reentregado con el almacén caído, o la voz que se reconecta y repite sola la última
+ * frase (el turno de antes pudo haber despachado ya). Si la persona lo quiere, lo pide otra vez: eso sí es suyo.
+ */
+export function turnoSinEfectos(motivo: string): Terminar {
+  const no = (que: string) => {
+    console.warn(`[turno-unico] no despacho «${String(que).slice(0, 40)}»: ${motivo}.`);
+    return false;
+  };
+  const t = (() => Promise.resolve()) as unknown as Terminar;
+  t.efecto = (que: string) => Promise.resolve(no(que));
+  t.durable = false;
+  return t;
 }
 
 /** Solo pruebas. */

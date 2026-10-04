@@ -199,6 +199,12 @@ export type ContextoTaller = {
    * un recordatorio, no un aviso urgente a la junta.
    */
   manosApp?: readonly string[];
+  /**
+   * Antes de correr una acción con efecto (lo que no es `lectura`): persiste que se despacha en el turno
+   * (server/turno-unico.ts `efectoDelTurno`). false = NO se corre: el turno no quedó registrado (sin almacén,
+   * turno sin efectos o ya de otro proceso) y un reintento la repetiría (revisión externa, 4-oct).
+   */
+  antesDeEfecto?: (herramienta: string) => Promise<boolean>;
 };
 
 /**
@@ -248,6 +254,10 @@ async function conPermiso(nombre: keyof typeof ACCIONES_TALLER, args: Record<str
     destino: accion.efecto === 'externo' ? 'junta' : null,
   });
   if (d.veredicto !== 'permitir') return { ok: false, texto: textoDeDecision({ herramienta: nombre }, d), decision: d.veredicto };
+  // Persistir antes de actuar: sin dejarlo registrado en el turno, no se hace (un reintento lo repetiría).
+  if (accion.efecto !== 'lectura' && ctx.antesDeEfecto && !(await ctx.antesDeEfecto(`taller.${nombre}`).catch(() => false))) {
+    return { ok: false, texto: 'No lo hice: no pude dejar registrado este turno, así que no se mandó ni se cambió nada. Pídemelo otra vez en un momento.' };
+  }
   return accion.correr(args);
 }
 

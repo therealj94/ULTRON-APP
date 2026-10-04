@@ -752,6 +752,12 @@ export type TurnoVoz = {
   enviar: (evento: string, datos: any) => void;
   /** Lo que el turno le pide al teléfono espera a que ElevenLabs confirme el turno (RetencionAcciones). */
   retener: RetencionAcciones;
+  /**
+   * La frase llegó con `[[reconecta]]`: el teléfono la repite solo tras una caída de la sesión. El turno de antes
+   * pudo haber despachado ya algo (o seguir corriendo en el servidor): este contesta, pero SIN efectos (revisión
+   * externa, 4-oct). Si la persona lo quiere, lo pide otra vez y eso sí es suyo.
+   */
+  reconexion?: boolean;
 };
 
 /**
@@ -1538,6 +1544,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
         senal,
         enviar: enviarTurno,
         retener,
+        reconexion: !!reconexion,
       })
       .then(
         () => avisarFin(),
