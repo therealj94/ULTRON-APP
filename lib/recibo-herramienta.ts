@@ -42,7 +42,16 @@ export type ReciboHerramienta = {
   operacion?: string;
   /** AUR13: la operación ya existía (reintento, otra réplica): no se volvió a hacer. */
   repetido?: boolean;
+  /**
+   * P4 (auditoría del 4-oct, A5): qué cuentas se consultaron de verdad en una lectura de varias fuentes (correo) y,
+   * de las que no, por qué (`timeout`, `auth`…) y el paso siguiente (`reintentar`, `reconectar`…). Sin texto crudo
+   * del proveedor: así una caída no se confunde con «no hay nada» ni una parcial con el total.
+   */
+  cuentas?: CuentaConsultada[];
 };
+
+/** Lo que se sabe de cada cuenta en una lectura (P4). */
+export type CuentaConsultada = { cuenta: string; estado: 'consultada' | 'fallo'; fallo?: string; siguiente?: string };
 
 /** Lo que devuelve una herramienta con su estado: el texto va al modelo; el estado y el recibo, a la traza y al turno. */
 export type ResultadoHerramienta = { texto: string; estado: EstadoHerramienta; recibo?: ReciboHerramienta };

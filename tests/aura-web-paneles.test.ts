@@ -110,10 +110,15 @@ test('Escribir abierto tiene su campo con etiqueta', () => {
 test('las pestañas de Ajustes son pestañas (no botones con aria-pressed)', () => {
   const html = renderToStaticMarkup(ajustes(true));
   assert.match(html, /role="tablist"/);
-  assert.equal((html.match(/role="tab"/g) || []).length, 4);
+  assert.equal((html.match(/role="tab"/g) || []).length, 5);
   assert.equal((html.match(/aria-selected="true"/g) || []).length, 1);
   assert.match(html, /role="tabpanel"/);
-  for (const t of ['Preferencias', 'Voz', 'Privacidad y datos', 'Diagnóstico']) assert.ok(html.includes(t), t);
+  for (const t of ['Preferencias', 'Voz', 'Tu AURA', 'Privacidad y datos', 'Diagnóstico']) assert.ok(html.includes(t), t);
+});
+
+test('P4/U1: «Más» lleva a tus correos, a «Lo que sé de ti» y a tus avisos (entradas reales, no solo memoria local)', () => {
+  const html = renderToStaticMarkup(React.createElement(MenuMas, { ...(mas(true).props as object), onAbrirTuAura: nada } as any));
+  for (const t of ['Tus correos', 'Lo que sé de ti', 'Tus avisos']) assert.ok(html.includes(t), `Más: ${t}`);
 });
 
 test('Tab en el borde del diálogo da la vuelta; en medio deja hacer al navegador', () => {
@@ -661,5 +666,253 @@ test(
     const recientes = await p.getByRole('region', { name: 'Recientes' }).innerText();
     assert.match(recientes, /Precio del oro de hoy/);
     assert.ok(pedidas.length > 0 && pedidas.every((q) => /estados=respondida/.test(q)), `la web pide los estados nuevos: ${pedidas.join(' ')}`);
+  }
+);
+
+/* ------------------------------------------------- P4 / U1: correo, memoria del servidor e iniciativa en la web */
+
+type Pedida = { metodo: string; ruta: string; cuerpo: any };
+/**
+ * Un servidor de prueba con sesión y las APIs de verdad que usa la web (las mismas que la app Expo): cuentas de
+ * correo, la bandeja por cuenta, «lo que sé de ti» y las preferencias de avisos. Todo sintético, sin red de afuera.
+ */
+function servidorP4(o: { cuentas: Array<{ id: string; correo: string }>; caida?: string; conectarOk?: boolean }) {
+  const pedidas: Pedida[] = [];
+  const turnos: any[] = [];
+  const cuentas = [...o.cuentas];
+  let dato: any = { id: 'dato-1', categoria: 'rutinas', dato: 'Vive en Puerto Sintético', clave: 'vive', confianza: 1, fuente: 'manual', desde: Date.parse('2026-10-01T12:00:00Z'), visto: 0, veces: 1, origen: 'primeravez', alcance: 'general' };
+  let prefs: any = { zona: 'America/Tegucigalpa', quietas: { desde: '21:00', hasta: '07:00' }, canales: ['app'], maxDia: 1, cadaDias: 1, urgentes: [], llamadaUrgente: false, clasesApagadas: [], temasSilenciados: [], luego: '2h', apagado: false };
+  const tipos: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.wasm': 'application/wasm' };
+  const srv = http.createServer((req, res) => {
+    const u = new URL(req.url || '/', 'http://x');
+    const json = (x: unknown, s = 200) => (res.writeHead(s, { 'Content-Type': 'application/json' }), res.end(JSON.stringify(x)));
+    const leer = () =>
+      new Promise<any>((r) => {
+        let b = '';
+        req.on('data', (c) => (b += c));
+        req.on('end', () => {
+          try {
+            r(JSON.parse(b || '{}'));
+          } catch {
+            r({});
+          }
+        });
+      });
+    const metodo = req.method || 'GET';
+    if (u.pathname === '/api/health') return json({ qwen: { vivo: true } });
+    if (u.pathname === '/api/nodo/listo') return json({ listo: true });
+    if (u.pathname === '/api/genesis/config') return json({ disponible: false });
+    if (u.pathname === '/api/capacidades') return json({ capacidades: [] });
+    if (u.pathname === '/api/ultron/sesion') return json({ authenticated: true, user: { nombre: 'Ana', rol: 'Junta', correo: 'ana@ejemplo.com' } });
+    if (/^\/api\/(correo|cerebro|avisos|perfil)/.test(u.pathname) || u.pathname === '/api/turno/stream') {
+      return void leer().then((cuerpo) => {
+        pedidas.push({ metodo, ruta: u.pathname + u.search, cuerpo });
+        if (u.pathname === '/api/correo/cuentas' && metodo === 'GET') return json({ cuentas: cuentas.map((c) => ({ ...c, proveedor: { nombre: 'Sintético', auth: 'clave' } })), microsoft: false, honesto: true });
+        if (u.pathname === '/api/correo/detectar') return json({ proveedor: { nombre: 'Sintético', auth: 'clave', ayuda: 'Usa una contraseña de aplicación.', fuente: 'conocido', imap: { host: 'imap.prueba.invalid' }, smtp: { host: 'smtp.prueba.invalid' } }, honesto: true });
+        if (u.pathname === '/api/correo/cuentas' && metodo === 'POST') {
+          if (!o.conectarOk) return json({ error: 'imap.prueba.invalid no aceptó la clave.', honesto: true }, 400);
+          const c = { id: `c${cuentas.length + 1}`, correo: String(cuerpo.correo || '') };
+          cuentas.push(c);
+          return json({ cuenta: { ...c, proveedor: { nombre: 'Sintético', auth: 'clave' } }, honesto: true });
+        }
+        if (u.pathname === '/api/correo/bandeja') {
+          const c = cuentas.find((x) => x.id === u.searchParams.get('cuenta'));
+          if (!c) return json({ error: 'Esa cuenta ya no está conectada.' }, 404);
+          if (c.id === o.caida) return json({ mensajes: [], cuentas, errores: [{ cuentaId: c.id, cuenta: c.correo, error: 'imap.prueba.invalid no aceptó la clave.', tipo: 'auth', siguiente: 'reconectar', mensaje: `${c.correo} no aceptó la autorización (la clave cambió o caducó).` }], cobertura: [], honesto: true });
+          return json({ mensajes: [], cuentas, errores: [], cobertura: [{ cuentaId: c.id, cuenta: c.correo, total: 12, revisados: 1 }], honesto: true });
+        }
+        if (u.pathname === '/api/cerebro/conocer' && metodo === 'GET') return json({ categorias: dato ? [{ id: 'rutinas', nombre: 'Rutinas', datos: [dato] }] : [], total: dato ? 1 : 0, faltan: [], honesto: true });
+        if (u.pathname === '/api/cerebro/abiertos') return json({ abiertos: [], cerrados: [], honesto: true });
+        if (u.pathname === '/api/cerebro/conocer/dato-1' && metodo === 'PATCH') {
+          dato = { ...dato, ...(cuerpo.dato ? { dato: cuerpo.dato, corregido: Date.now() } : {}), ...(cuerpo.alcance ? { alcance: cuerpo.alcance } : {}) };
+          return json({ dato, durable: true, honesto: true });
+        }
+        if (u.pathname === '/api/cerebro/conocer/olvidar') {
+          dato = null;
+          return json({ ok: true, borrados: 1, durable: true, honesto: true });
+        }
+        if (u.pathname === '/api/perfil' && metodo === 'PUT') return json({ perfil: {}, durable: true, honesto: true });
+        if (u.pathname === '/api/avisos/preferencias' && metodo === 'GET') return json({ preferencias: prefs, honesto: true });
+        if (u.pathname === '/api/avisos/preferencias' && metodo === 'POST') {
+          prefs = { ...prefs, ...cuerpo };
+          return json({ preferencias: prefs, cancelados: 0, retiradas: 0, honesto: true });
+        }
+        if (u.pathname === '/api/turno/stream') {
+          turnos.push(cuerpo);
+          const r = 'Listo, lo leí.';
+          res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+          return res.end(`event: done\ndata: ${JSON.stringify({ reply: r, voz: r, emocion: 'neutral' })}\n\n`);
+        }
+        return json({}, 404);
+      });
+    }
+    if (u.pathname.startsWith('/api/')) return json({}, 404);
+    let f = path.join(DIST, decodeURIComponent(u.pathname));
+    if (!f.startsWith(DIST) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(DIST, 'index.html');
+    res.writeHead(200, { 'Content-Type': tipos[path.extname(f)] || 'application/octet-stream' });
+    fs.createReadStream(f).pipe(res);
+  });
+  const url = new Promise<string>((r) => srv.listen(0, '127.0.0.1', () => r(`http://127.0.0.1:${(srv.address() as any).port}`)));
+  return { url, pedidas, turnos, cerrar: () => srv.close() };
+}
+
+test(
+  'en el navegador: Ajustes → Tu AURA: tus correos (con un proveedor caído), «Lo que sé de ti» y tus avisos; navegar y volver (P4/U1)',
+  { skip: saltoNavegador, timeout: 120000 },
+  async (t) => {
+    const { chromium } = await import('playwright');
+    const s = servidorP4({ cuentas: [{ id: 'c1', correo: 'casa@prueba.invalid' }, { id: 'c2', correo: 'trabajo@prueba.invalid' }], caida: 'c2' });
+    const url = await s.url;
+    // Sin WebGL (la sala 3D no hace falta para los paneles): menos carga y sin esperas atascadas en la GPU por software.
+    const b = await chromium.launch({ executablePath: CHROMIUM, args: ['--disable-3d-apis'] });
+    t.after(async () => {
+      await b.close();
+      s.cerrar();
+    });
+    const p = await b.newPage({ viewport: { width: 1280, height: 800 } });
+    // Cada espera falla pronto y dice dónde (en vez de agotar el tiempo de toda la prueba).
+    p.setDefaultTimeout(10000);
+    await p.goto(url + '/', { waitUntil: 'networkidle' });
+    await p.waitForSelector('#ultron-arranque[aria-hidden="true"]', { timeout: 20000 });
+
+    // 1) Ajustes → Tu AURA: las tres entradas.
+    await p.getByRole('button', { name: 'Ajustes', exact: true }).click();
+    await p.getByRole('tab', { name: 'Tu AURA' }).click();
+    const panel = p.locator('#aura-panel-aura');
+    for (const n of ['Tus correos', 'Lo que sé de ti', 'Tus avisos']) await panel.getByRole('button', { name: new RegExp(n) }).waitFor({ timeout: 10000 });
+
+    // 2) Tus correos: las dos cuentas; la caída dice qué pasó y qué hacer con ESA cuenta.
+    await panel.getByRole('button', { name: /Tus correos/ }).click();
+    await panel.getByRole('heading', { name: 'Tus correos' }).waitFor();
+    const caida = panel.locator('[data-cuenta="c2"]');
+    const sana = panel.locator('[data-cuenta="c1"]');
+    await sana.getByText('casa@prueba.invalid', { exact: true }).waitFor();
+    await caida.getByText('trabajo@prueba.invalid', { exact: true }).waitFor();
+    await caida.getByText(/no aceptó la autorización/).waitFor({ timeout: 10000 });
+    await caida.getByRole('button', { name: /Reconectar trabajo@prueba\.invalid/ }).waitFor();
+    await sana.getByText(/Responde/).waitFor({ timeout: 10000 });
+    assert.equal(await sana.getByText(/no aceptó/).count(), 0, 'la cuenta sana no hereda el error de la otra');
+    // Reconectar ESA cuenta: el formulario viene con su dirección.
+    await caida.getByRole('button', { name: /Reconectar trabajo@prueba\.invalid/ }).click();
+    assert.equal(await panel.getByLabel('Tu dirección de correo').inputValue(), 'trabajo@prueba.invalid');
+    // Volver.
+    await panel.getByRole('button', { name: /Volver/ }).click();
+    await panel.getByRole('button', { name: /Lo que sé de ti/ }).waitFor();
+
+    // 3) Lo que sé de ti (memoria del SERVIDOR): ver, «No usarlo», corregir y olvidar.
+    await panel.getByRole('button', { name: /Lo que sé de ti/ }).click();
+    await panel.getByRole('heading', { name: 'Lo que sé de ti' }).waitFor();
+    await panel.getByText('Vive en Puerto Sintético').waitFor({ timeout: 10000 });
+    await panel.getByRole('button', { name: 'No usarlo' }).click();
+    await panel.getByText(/No lo uso hasta que me lo pidas/).waitFor();
+    assert.ok(s.pedidas.some((x) => x.metodo === 'PATCH' && x.ruta === '/api/cerebro/conocer/dato-1' && x.cuerpo.alcance === 'limitado'), 'No usarlo va al servidor');
+    await panel.getByRole('button', { name: 'Usarlo' }).waitFor();
+    await panel.getByRole('button', { name: 'Corregir' }).click();
+    await panel.getByLabel('Corregido').fill('Vive en Villa Sintética');
+    await panel.getByRole('button', { name: 'Guardar' }).click();
+    await panel.getByText('Vive en Villa Sintética').waitFor();
+    assert.ok(s.pedidas.some((x) => x.metodo === 'PATCH' && x.cuerpo.dato === 'Vive en Villa Sintética'));
+    await panel.getByRole('button', { name: /Olvidar: Vive en Villa Sintética/ }).click();
+    await panel.getByRole('button', { name: 'Olvidarlo' }).click();
+    await p.waitForFunction(() => !document.body.innerText.includes('Vive en Villa Sintética'), null, { timeout: 10000 });
+    const olvido = s.pedidas.find((x) => x.ruta === '/api/cerebro/conocer/olvidar');
+    assert.deepEqual(olvido?.cuerpo, { ids: ['dato-1'], claves: [{ categoria: 'rutinas', clave: 'vive' }] }, 'olvida en el servidor, por id y por clave común');
+    assert.ok(s.pedidas.some((x) => x.metodo === 'PUT' && x.ruta === '/api/perfil' && x.cuerpo?.encuesta?.vive === ''), 'y la respuesta del perfil que lo repetía');
+    // No se reemplaza por «borrar memoria local».
+    assert.equal(await panel.getByRole('button', { name: /memoria local/ }).count(), 0);
+    await panel.getByRole('button', { name: /Volver/ }).click();
+
+    // 4) Tus avisos: leer y cambiar en el servidor.
+    await panel.getByRole('button', { name: /Tus avisos/ }).click();
+    await panel.getByRole('heading', { name: 'Tus avisos' }).waitFor();
+    const avisarme = panel.getByRole('switch', { name: /Avisarme/ });
+    await avisarme.waitFor({ timeout: 10000 });
+    assert.equal(await avisarme.getAttribute('aria-checked'), 'true');
+    await avisarme.click();
+    await p.waitForFunction(() => document.querySelector('#aura-panel-aura [role="switch"]')?.getAttribute('aria-checked') === 'false', null, { timeout: 10000 });
+    assert.ok(s.pedidas.some((x) => x.metodo === 'POST' && x.ruta === '/api/avisos/preferencias' && x.cuerpo.apagado === true));
+    await panel.getByRole('button', { name: /Volver/ }).click();
+    await panel.getByRole('button', { name: /Tus correos/ }).waitFor();
+    await p.keyboard.press('Escape');
+    await p.waitForFunction(() => !document.querySelector('[role="dialog"]'));
+
+    // 5) Desde «Más»: abre Ajustes directo en «Tus correos».
+    // Como «Escribir» en las otras pruebas: el dock se anima, así que se enfoca y se pulsa Enter.
+    await p.locator('button[aria-label="Más opciones"]:visible').first().focus();
+    await p.keyboard.press('Enter');
+    await p.getByRole('button', { name: /Tus correos/ }).click();
+    await p.locator('#aura-panel-aura').getByRole('heading', { name: 'Tus correos' }).waitFor({ timeout: 10000 });
+    await p.keyboard.press('Escape');
+  }
+);
+
+test(
+  'en el navegador: pedir leer el correo sin cuenta → conectar, pegar u omitir, y retomar el MISMO pedido (P4)',
+  { skip: saltoNavegador, timeout: 120000 },
+  async (t) => {
+    const { chromium } = await import('playwright');
+    const s = servidorP4({ cuentas: [], conectarOk: true });
+    const url = await s.url;
+    // Sin WebGL (la sala 3D no hace falta para los paneles): menos carga y sin esperas atascadas en la GPU por software.
+    const b = await chromium.launch({ executablePath: CHROMIUM, args: ['--disable-3d-apis'] });
+    t.after(async () => {
+      await b.close();
+      s.cerrar();
+    });
+    const p = await b.newPage({ viewport: { width: 1280, height: 800 } });
+    await p.goto(url + '/', { waitUntil: 'networkidle' });
+    await p.waitForSelector('#ultron-arranque[aria-hidden="true"]', { timeout: 20000 });
+    const escribir = async (texto: string) => {
+      if (!(await p.locator('#dock-cmd-input').count())) {
+        await p.getByRole('button', { name: 'Escribir', exact: true }).focus();
+        await p.keyboard.press('Enter');
+        await p.waitForSelector('#dock-cmd-input');
+      }
+      await p.locator('#dock-cmd-input').fill(texto);
+      await p.locator('#dock-cmd-input').press('Enter');
+    };
+    const aviso = p.locator('[role="dialog"][aria-labelledby="aura-sin-correo-titulo"]');
+    const esperarTurnos = async (n: number) => {
+      for (let i = 0; i < 75 && s.turnos.length < n; i++) await p.waitForTimeout(200);
+    };
+
+    // a) Omitir: no se manda nada al cerebro y no queda colgado.
+    await escribir('Léeme mi correo');
+    await aviso.waitFor({ timeout: 10000 });
+    for (const n of [/Conectar un correo/, /Pegar el contenido/, /Omitir/]) await aviso.getByRole('button', { name: n }).waitFor();
+    await aviso.getByRole('button', { name: /Omitir/ }).click();
+    await p.waitForFunction(() => !document.querySelector('[aria-labelledby="aura-sin-correo-titulo"]'));
+    await p.waitForTimeout(500);
+    assert.equal(s.turnos.length, 0, 'omitir no manda el pedido sin correo');
+
+    // b) Pegar el contenido: sigue el MISMO pedido, con lo pegado.
+    await escribir('Léeme mi correo');
+    await aviso.waitFor({ timeout: 10000 });
+    await aviso.getByRole('button', { name: /Pegar el contenido/ }).click();
+    await aviso.getByLabel(/Contenido del correo/).fill('De: Ana Sintética. Asunto: planos. Nos vemos el lunes.');
+    await aviso.getByRole('button', { name: /Seguir con lo pegado/ }).click();
+    await esperarTurnos(1);
+    assert.equal(s.turnos.length, 1);
+    assert.match(s.turnos[0].message, /^Léeme mi correo/);
+    assert.match(s.turnos[0].message, /Nos vemos el lunes/);
+
+    // c) Conectar: lleva a Ajustes → Tus correos (que SÍ existe), conecta y retoma el mismo pedido.
+    await escribir('Revisa mi correo de hoy');
+    await aviso.waitFor({ timeout: 10000 });
+    await aviso.getByRole('button', { name: /Conectar un correo/ }).click();
+    const panel = p.locator('#aura-panel-aura');
+    await panel.getByRole('heading', { name: 'Tus correos' }).waitFor({ timeout: 10000 });
+    await panel.getByLabel('Tu dirección de correo').fill('nuevo@prueba.invalid');
+    await panel.getByRole('button', { name: 'Continuar' }).click();
+    await panel.getByLabel(/Clave/).fill('clave-sintetica');
+    await panel.getByRole('button', { name: 'Conectar', exact: true }).click();
+    await panel.getByText('nuevo@prueba.invalid', { exact: true }).waitFor({ timeout: 10000 });
+    const retomar = panel.getByRole('button', { name: /Retomar/ });
+    await retomar.waitFor();
+    await retomar.click();
+    await p.waitForFunction(() => !document.querySelector('[role="dialog"]'), null, { timeout: 10000 });
+    await esperarTurnos(2);
+    assert.equal(s.turnos.length, 2, 'retomó el pedido');
+    assert.equal(s.turnos[1].message, 'Revisa mi correo de hoy', 'el MISMO pedido, tal cual');
   }
 );

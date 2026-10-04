@@ -4,6 +4,9 @@ import { FaceCanvas, caraDeEmocion } from './02-cara';
 import type { Gesto } from './02-cara/gestos';
 import { caraDeTexto } from './02-cara/emocion';
 import { DockDrawer, SettingsSheet, nombreModo, Arranque, AccesoModal, UltronVaultModal, VisionOverlay, PhotoCaptureModal, CameraCountdownModal, MenuMas } from './07-pantallas';
+import type { Tab as TabAjustes } from './07-pantallas/SettingsSheet';
+import type { VistaAura } from './07-pantallas/TuAura';
+import { AvisoSinCorreo, cuantasCuentasCorreo, pedidoConPegado, quiereLeerCorreo } from './07-pantallas/AvisoSinCorreo';
 import type { Escena } from './02-cara/vision/escena';
 import { playSfx } from './03-voz/audio';
 import { hablar, cantar, callar, precargar, setVozActiva, type Dicho, type Vecinos } from './03-voz/hablar';
@@ -146,6 +149,16 @@ export default function App() {
   const [dockOpen, setDockOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [masOpen, setMasOpen] = useState(false);
+  /** P4: abrir Ajustes en un destino (Más → Tus correos; leer el correo sin cuenta → Tus correos). */
+  const [ajustesEn, setAjustesEn] = useState<{ tab: TabAjustes; vista?: VistaAura; n: number } | null>(null);
+  const abrirAjustesEn = useCallback((tab: TabAjustes, vista?: VistaAura) => {
+    setAjustesEn((x) => ({ tab, vista, n: (x?.n || 0) + 1 }));
+    setSettingsOpen(true);
+  }, []);
+  /** P4: pidió leer el correo y el servidor confirmó que no hay ninguna cuenta: el aviso con sus tres salidas. */
+  const [sinCorreo, setSinCorreo] = useState<string | null>(null);
+  /** P4: el pedido que espera a que conecte un correo; «Retomar» lo manda tal cual. */
+  const [pedidoCorreo, setPedidoCorreo] = useState<string | null>(null);
   const [modoMesa, setModoMesa] = useState<ModoMesa>(() => (lee('aura_modo_mesa', 'conversar') === 'trabajar' ? 'trabajar' : 'conversar'));
   useEffect(() => guarda('aura_modo_mesa', modoMesa), [modoMesa]);
   const { preferencia: preferenciaTema, setPreferencia: setPreferenciaTema, tema, variables: variablesTema } = useTema();
@@ -937,11 +950,34 @@ export default function App() {
    * espera Confirmar. Lo demás sigue por `comando`, igual que siempre.
    */
   const pedir = useCallback(
-    (raw: string, hablado = false) => {
+    (raw: string, hablado = false, o: { sinChequeoCorreo?: boolean; retomado?: boolean } = {}) => {
       const cmd = raw.trim();
       if (!cmd) return;
       habladoRef.current = hablado;
-      conv.persona(cmd);
+      // Retomar el pedido que esperaba un correo: ya está en la conversación, no se repite la burbuja.
+      if (!o.retomado) conv.persona(cmd);
+      // P4: pedir leer el correo sin ninguna cuenta no termina en «conéctalo en Ajustes» sin salida: si el servidor
+      // CONFIRMA que no hay cuentas, se ofrece conectar (y retomar esto mismo), pegar el contenido u omitir. Si no se
+      // pudo saber (503, red), el pedido sigue normal.
+      if (!o.sinChequeoCorreo && usuario.authenticated && quiereLeerCorreo(cmd)) {
+        const vigente = deEstaCuenta();
+        void cuantasCuentasCorreo().then((n) => {
+          if (!vigente()) return;
+          if (n === 0) {
+            ultimaInteraccion.current = Date.now();
+            setSinCorreo(cmd);
+            return;
+          }
+          habladoRef.current = hablado;
+          enComando.current = true;
+          try {
+            comando(cmd);
+          } finally {
+            enComando.current = false;
+          }
+        });
+        return;
+      }
       const accion = accionSensibleDe(cmd);
       if (accion) {
         ultimaInteraccion.current = Date.now();
@@ -958,7 +994,7 @@ export default function App() {
         enComando.current = false;
       }
     },
-    [comando, decir, conv.persona, conv.proponer]
+    [comando, decir, conv.persona, conv.proponer, usuario.authenticated]
   );
 
   const confirmarAccion = useCallback(
@@ -1118,7 +1154,7 @@ export default function App() {
       {bubble.texto}
     </div>
   );
-  const hayDialogo = dockOpen || settingsOpen || masOpen || accesoOpen || vaultOpen || photosOpen || cameraOpen || panelTareas;
+  const hayDialogo = dockOpen || settingsOpen || masOpen || accesoOpen || vaultOpen || photosOpen || cameraOpen || panelTareas || !!sinCorreo;
   const opinar = (v: 1 | -1) => {
     if (!opinion) return;
     void opinarTurno(opinion.id, v);
@@ -1491,6 +1527,26 @@ export default function App() {
           onToggleSleep={() => (face === 'SLEEPING' ? despertar() : dormir())}
           onToggleKioskFrame={() => setIsKioskFrame((v) => !v)}
           onToggleFullscreen={toggleFullscreen}
+          onAbrirTuAura={(v) => abrirAjustesEn('aura', v)}
+        />
+
+        <AvisoSinCorreo
+          pedido={sinCorreo}
+          onConectar={() => {
+            // A la pantalla que SÍ existe (Ajustes → Tu AURA → Tus correos); el pedido queda esperando para retomarlo.
+            setPedidoCorreo(sinCorreo);
+            setSinCorreo(null);
+            abrirAjustesEn('aura', 'correos');
+          }}
+          onPegar={(texto) => {
+            const p = sinCorreo;
+            setSinCorreo(null);
+            if (p) pedir(pedidoConPegado(p, texto), false, { sinChequeoCorreo: true, retomado: true });
+          }}
+          onOmitir={() => {
+            setSinCorreo(null);
+            decir('Listo, lo dejamos. Cuando quieras, conectá tu correo en Ajustes → Tu AURA → Tus correos, o pegame el texto.', { emocion: 'neutral' });
+          }}
         />
 
         <SettingsSheet
@@ -1508,6 +1564,15 @@ export default function App() {
           estadoCerebro={estadoCerebro}
           estadoArranque={estadoArranque}
           hayConversacion={conv.entradas.length > 0}
+          abrirEn={ajustesEn}
+          pedidoPendiente={pedidoCorreo}
+          onRetomarPedido={() => {
+            const p = pedidoCorreo;
+            setPedidoCorreo(null);
+            setSettingsOpen(false);
+            // El MISMO pedido, tal cual: ya hay correo conectado, así que va directo al cerebro.
+            if (p) pedir(p, false, { sinChequeoCorreo: true, retomado: true });
+          }}
           onVaciarConversacion={conv.vaciar}
           onClose={() => setSettingsOpen(false)}
           onSelectMode={(m) => {

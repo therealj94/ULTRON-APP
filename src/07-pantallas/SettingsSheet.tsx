@@ -1,6 +1,6 @@
 import { perfil as perfilActual } from '../perfil';
-import React, { useRef, useState } from 'react';
-import { X, Volume2, Mic, ShieldCheck, Fingerprint, Camera, Wand2, SlidersHorizontal, Lock, Activity, Trash2, MessageSquareX, KeyRound } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { X, Volume2, Mic, ShieldCheck, Fingerprint, Camera, Wand2, SlidersHorizontal, Lock, Activity, Trash2, MessageSquareX, KeyRound, Sparkles } from 'lucide-react';
 import type { Mode, FaceState } from '../types';
 import type { PreferenciaTema } from '../01-diseno/aura';
 import type { Postura } from '../11-sala/tareas';
@@ -8,6 +8,7 @@ import { playSfx } from '../03-voz/audio';
 import { Capacidades, Repertorio, VozOficial, useCatalogo, type Catalogo } from './Capacidades';
 import { Control } from './Control';
 import { Dialogo } from './Dialogo';
+import { TuAura, type VistaAura } from './TuAura';
 
 interface Props {
   isOpen: boolean;
@@ -38,6 +39,14 @@ interface Props {
   onEjemplo: (cmd: string) => void;
   onOlvidar: () => void;
   onVaciarConversacion: () => void;
+  /**
+   * Abrir en una pestaña (y vista de «Tu AURA») concreta: «Más → Tus correos», o el aviso de leer el correo sin
+   * cuenta. `n` cambia en cada pedido para que el mismo destino se pueda pedir otra vez.
+   */
+  abrirEn?: { tab: Tab; vista?: VistaAura; n: number } | null;
+  /** El pedido que espera a que conecte un correo («léeme mi correo»): al conectarlo se ofrece retomarlo tal cual. */
+  pedidoPendiente?: string | null;
+  onRetomarPedido?: () => void;
 }
 
 export const MODOS: Array<{ id: Mode; label: string; desc: string }> = [
@@ -62,10 +71,12 @@ const NOMBRE_CARA: Partial<Record<FaceState, string>> = {
   SING: 'Cantando', SLEEPING: 'Dormida', SPEAKING: 'Hablando', LISTENING: 'Escuchando',
 };
 
-type Tab = 'preferencias' | 'voz' | 'privacidad' | 'diagnostico';
+export type Tab = 'preferencias' | 'voz' | 'aura' | 'privacidad' | 'diagnostico';
 const TABS: Array<{ id: Tab; label: string; Icono: typeof Volume2 }> = [
   { id: 'preferencias', label: 'Preferencias', Icono: SlidersHorizontal },
   { id: 'voz', label: 'Voz', Icono: Mic },
+  // P4/U1 (auditoría del 4-oct): correos, memoria del servidor y avisos, como en la app Expo.
+  { id: 'aura', label: 'Tu AURA', Icono: Sparkles },
   { id: 'privacidad', label: 'Privacidad y datos', Icono: Lock },
   { id: 'diagnostico', label: 'Diagnóstico', Icono: Activity },
 ];
@@ -171,7 +182,17 @@ function QuienProcesa({ cat }: { cat: Catalogo | null }) {
 
 export const SettingsSheet: React.FC<Props> = (p) => {
   const [tab, setTab] = useState<Tab>('preferencias');
+  const [vista, setVista] = useState<VistaAura>('menu');
   const refsTab = useRef<Array<HTMLButtonElement | null>>([]);
+  // Abrir directo en un destino (Más → Tus correos; leer el correo sin cuenta).
+  // Cada pedido se aplica una vez: abrir Ajustes después por otro lado no vuelve a saltar a ese destino.
+  const aplicado = useRef(0);
+  useEffect(() => {
+    if (!p.isOpen || !p.abrirEn || p.abrirEn.n === aplicado.current) return;
+    aplicado.current = p.abrirEn.n;
+    setTab(p.abrirEn.tab);
+    if (p.abrirEn.vista) setVista(p.abrirEn.vista);
+  }, [p.isOpen, p.abrirEn?.n]);
   const { cat, error } = useCatalogo();
   const ejemplo = (c: string) => {
     p.onClose();
@@ -336,6 +357,8 @@ export const SettingsSheet: React.FC<Props> = (p) => {
           </>
         )}
 
+        {tab === 'aura' && <TuAura vista={vista} onVista={setVista} pedidoPendiente={p.pedidoPendiente} onRetomar={p.onRetomarPedido} />}
+
         {tab === 'privacidad' && (
           <>
             <section className="flex flex-col gap-2" aria-labelledby="priv-quien">
@@ -397,6 +420,17 @@ export const SettingsSheet: React.FC<Props> = (p) => {
                   <Trash2 className="w-4 h-4" aria-hidden="true" /> Borrar conversación y memoria local
                 </button>
               </div>
+              {/* P4: lo que AU-RA guarda EN EL SERVIDOR se gestiona dato por dato; borrar lo local no lo reemplaza. */}
+              <button
+                type="button"
+                className="aura-secundario self-start"
+                onClick={() => {
+                  setTab('aura');
+                  setVista('conocer');
+                }}
+              >
+                Lo que sé de ti (en el servidor): corregir, «No usarlo» u olvidar
+              </button>
             </section>
           </>
         )}

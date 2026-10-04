@@ -170,26 +170,131 @@ async function cuentaDeRef(quien: string, ref: string): Promise<{ c: CuentaCorre
   return c && Number(uid) > 0 ? { c, uid: Number(uid) } : null;
 }
 
+/* ------------------------------------------------------------------ el colector común de lectura (P4, A5)
+ *
+ * Auditoría del 4-oct (A5): buscar por nombre hacía `.catch(() => [])` en cada cuenta, así que un timeout o una
+ * autorización caducada daban el mismo «no encuentro ningún correo» que una búsqueda vacía de verdad. Ahora revisar,
+ * buscar y ubicar pasan por aquí: cada cuenta queda «consultada» (con lo que trajo) o «fallo» (con un error SEGURO: el
+ * tipo, el paso siguiente y una frase sin el texto crudo del proveedor, que puede traer usuarios o claves).
+ */
+
+export type TipoFalloCorreo = 'timeout' | 'auth' | 'certificado' | 'servidor' | 'desconocido';
+export type SiguientePasoCorreo = 'reintentar' | 'reconectar' | 'revisar-servidor';
+/** Por qué no se pudo leer una cuenta, dicho sin detalles sensibles. */
+export type FalloSeguroCorreo = { tipo: TipoFalloCorreo; siguiente: SiguientePasoCorreo; mensaje: string };
+/** Lo que se sabe de cada cuenta en una lectura. */
+export type CoberturaCuenta = { cuentaId: string; cuenta: string; estado: 'consultada' | 'fallo'; traidos?: number; total?: number; revisados?: number; fallo?: FalloSeguroCorreo };
+/**
+ * El resultado tipado de buscar un correo en todas las cuentas:
+ *  · found: todas las cuentas contestaron y hay uno (o varios del mismo remitente, o pidió «el último»);
+ *  · ambiguous: todas contestaron y encajan varios remitentes: se pregunta;
+ *  · empty: todas contestaron y no hay ninguno (aquí sí «no encuentro»);
+ *  · partial: alguna contestó y alguna no: lo hallado es solo de las consultadas (puede traer `elegido`);
+ *  · provider_failed: ninguna contestó: no se sabe si existe.
+ */
+export type BusquedaCorreo =
+  | { tipo: 'found'; elegido: Resumen; hallados: Resumen[]; cobertura: CoberturaCuenta[] }
+  | { tipo: 'ambiguous'; hallados: Resumen[]; cobertura: CoberturaCuenta[] }
+  | { tipo: 'empty'; hallados: Resumen[]; cobertura: CoberturaCuenta[] }
+  | { tipo: 'partial'; elegido?: Resumen; hallados: Resumen[]; cobertura: CoberturaCuenta[] }
+  | { tipo: 'provider_failed'; hallados: Resumen[]; cobertura: CoberturaCuenta[] };
+
+/** De un error del IMAP (o de renovar el permiso) a un fallo seguro: tipo, paso siguiente y una frase sin lo crudo. */
+export function clasificarFalloCorreo(e: any, cuenta: string): FalloSeguroCorreo {
+  const codigo = String(e?.code || '');
+  const todo = `${codigo} ${e?.serverResponseCode || ''} ${e?.responseCode || ''} ${String(e?.responseText || e?.response || e?.message || e || '')}`;
+  if (e?.authenticationFailed || codigo === 'EAUTH' || e?.responseCode === 535 || /AUTHENTICATIONFAILED|authentication failed|invalid credentials|incorrect (password|username)|login failed|\b535\b|invalid_grant|renovar el permiso|secreto ilegible/i.test(todo)) {
+    return { tipo: 'auth', siguiente: 'reconectar', mensaje: `${cuenta} no aceptó la autorización (la clave cambió o el permiso caducó)` };
+  }
+  if (/CERT|SELF_SIGNED|UNABLE_TO_VERIFY|altname|certificate/i.test(todo)) return { tipo: 'certificado', siguiente: 'revisar-servidor', mensaje: `el certificado del servidor de ${cuenta} no es válido` };
+  if (/ENOTFOUND|EAI_AGAIN|getaddrinfo|servidor interno bloqueado/i.test(todo)) return { tipo: 'servidor', siguiente: 'revisar-servidor', mensaje: `no encuentro el servidor de ${cuenta}` };
+  if (/ECONNREFUSED|ETIMEDOUT|ETIMEOUT|ECONNRESET|ESOCKET|EHOSTUNREACH|ENETUNREACH|timeout|timed out|closed/i.test(todo)) return { tipo: 'timeout', siguiente: 'reintentar', mensaje: `${cuenta} no contestó a tiempo` };
+  return { tipo: 'desconocido', siguiente: 'reintentar', mensaje: `${cuenta} falló sin un motivo que pueda decir` };
+}
+
+/** El paso siguiente, dicho para el modelo (y para la persona). */
+function pasoDe(f: FalloSeguroCorreo): string {
+  if (f.siguiente === 'reconectar') return 'hay que reconectar esa cuenta en Ajustes → Tus correos';
+  if (f.siguiente === 'revisar-servidor') return 'hay que revisar el servidor de esa cuenta en Ajustes → Tus correos';
+  return 'se puede reintentar en un momento';
+}
+/** «casa@x no contestó a tiempo — se puede reintentar en un momento» (sin «;» por dentro: van separadas por «; »). */
+const falloEnPalabras = (f: FalloSeguroCorreo) => `${f.mensaje} — ${pasoDe(f)}`;
+
+type ConsultaCuenta = { c: CuentaCorreo; ok: true; lista: Resumen[]; cob: Cobertura } | { c: CuentaCorreo; ok: false; fallo: FalloSeguroCorreo };
+
+/** Lee cada cuenta con las mismas opciones; ninguna caída se traga como lista vacía. */
+async function consultarCuentas(quien: string, cuentas: CuentaCorreo[], opciones: Parameters<Buzon['listar']>[2]): Promise<ConsultaCuenta[]> {
+  return Promise.all(
+    cuentas.map(async (c): Promise<ConsultaCuenta> => {
+      const cob: Cobertura = {};
+      try {
+        return { c, ok: true, lista: await buzon.listar(quien, c, { ...opciones, cobertura: cob }), cob };
+      } catch (e) {
+        return { c, ok: false, fallo: clasificarFalloCorreo(e, c.correo) };
+      }
+    })
+  );
+}
+
+function coberturaDe(consultas: ConsultaCuenta[]): CoberturaCuenta[] {
+  return consultas
+    .map((x): CoberturaCuenta =>
+      'fallo' in x
+        ? { cuentaId: x.c.id, cuenta: x.c.correo, estado: 'fallo', fallo: x.fallo }
+        : { cuentaId: x.c.id, cuenta: x.c.correo, estado: 'consultada', traidos: x.lista.length, ...(Number.isFinite(x.cob.total) ? { total: Number(x.cob.total) } : {}), revisados: x.cob.revisados ?? x.lista.length }
+    )
+    .sort((a, b) => a.cuenta.localeCompare(b.cuenta));
+}
+
+/** Para el recibo: qué cuentas se consultaron y, de las que no, el tipo de fallo y el paso siguiente. */
+function cuentasDelRecibo(cob: CoberturaCuenta[]): NonNullable<ResultadoHerramienta['recibo']>['cuentas'] {
+  return cob.map((x) => (x.fallo ? { cuenta: x.cuenta, estado: 'fallo' as const, fallo: x.fallo.tipo, siguiente: x.fallo.siguiente } : { cuenta: x.cuenta, estado: 'consultada' as const }));
+}
+
+/** Un `fallo` con más campos en su recibo (las cuentas consultadas). */
+function falloCon(texto: string, codigo: string, extra: ResultadoHerramienta['recibo'] = {}): ResultadoHerramienta {
+  const f = fallo(texto, codigo);
+  return { ...f, recibo: { ...f.recibo, ...extra } };
+}
+
+/** ¿Se puede abrir sin preguntar? Uno solo, varios del mismo remitente, o pidió «el último». */
+function elegible(hallados: Resumen[], reciente: boolean): Resumen | undefined {
+  if (!hallados.length) return undefined;
+  const mismoRemitente = new Set(hallados.map((h) => h.deCorreo.toLowerCase())).size === 1;
+  return hallados.length === 1 || reciente || mismoRemitente ? hallados[0] : undefined;
+}
+
+/**
+ * EL COLECTOR COMÚN DE BÚSQUEDA (P4): busca `consulta` en todas sus cuentas (o en las que se le den) y devuelve el
+ * resultado tipado con la cobertura de cada cuenta. Una caída nunca se vuelve «vacío»; una parcial nunca se presenta
+ * como el total.
+ */
+export async function buscarEnCuentas(quien: string, consulta: string, o: { reciente?: boolean; n?: number; cuentas?: CuentaCorreo[] } = {}): Promise<BusquedaCorreo> {
+  const cuentas = o.cuentas ?? (await cuentasDe(quien));
+  const consultas = await consultarCuentas(quien, cuentas, { buscar: consulta, n: o.n ?? 5 });
+  const cobertura = coberturaDe(consultas);
+  const hallados = consultas.flatMap((x) => (x.ok ? x.lista : [])).sort((a, b) => b.fecha.localeCompare(a.fecha));
+  const caidas = consultas.filter((x) => !x.ok).length;
+  if (cuentas.length && caidas === cuentas.length) return { tipo: 'provider_failed', hallados: [], cobertura };
+  const elegido = elegible(hallados, !!o.reciente);
+  if (caidas) return { tipo: 'partial', hallados, cobertura, ...(elegido ? { elegido } : {}) };
+  if (!hallados.length) return { tipo: 'empty', hallados, cobertura };
+  return elegido ? { tipo: 'found', elegido, hallados, cobertura } : { tipo: 'ambiguous', hallados, cobertura };
+}
+
 /** Revisar (los no leídos de todas sus cuentas) o buscar. Numera para que después diga «lee el 2». */
 async function revisar(quien: string, ambito: string, buscar?: string): Promise<ResultadoHerramienta> {
   const cuentas = await cuentasDe(quien);
   if (!cuentas.length) return fallo(SIN_CUENTAS, 'sin-cuentas');
-  const errores: string[] = [];
-  const todos: Resumen[] = [];
+  const consultas = await consultarCuentas(quien, cuentas, buscar ? { buscar, n: 8, extractos: true } : { soloNoLeidos: true, n: 13, extractos: true });
+  const cob = coberturaDe(consultas);
+  const cuentasRecibo = cuentasDelRecibo(cob);
+  // Errores seguros (P4): la cuenta, qué pasó y qué hacer; nunca el texto crudo del proveedor.
+  const errores = cob.filter((x) => x.fallo).map((x) => falloEnPalabras(x.fallo!));
+  const todos: Resumen[] = consultas.flatMap((x) => (x.ok ? x.lista : []));
   // Cuánto se miró en cada cuenta (AUR13): se dice «miré los N más recientes de M», nunca «todo».
-  const coberturas: { correo: string; cob: Cobertura; traidos: number }[] = [];
-  await Promise.all(
-    cuentas.map(async (c) => {
-      const cob: Cobertura = {};
-      try {
-        const r = await buzon.listar(quien, c, buscar ? { buscar, n: 8, extractos: true, cobertura: cob } : { soloNoLeidos: true, n: 13, extractos: true, cobertura: cob });
-        todos.push(...r);
-        coberturas.push({ correo: c.correo, cob, traidos: r.length });
-      } catch (e: any) {
-        errores.push(`${c.correo}: ${String(e?.responseText || e?.message || e).slice(0, 100)}`);
-      }
-    })
-  );
+  const coberturas = consultas.flatMap((x) => (x.ok ? [{ correo: x.c.correo, cob: x.cob, traidos: x.lista.length }] : []));
   todos.sort((a, b) => b.fecha.localeCompare(a.fecha));
   const lista = todos.slice(0, 12);
   const k = llave(quien, ambito);
@@ -199,12 +304,12 @@ async function revisar(quien: string, ambito: string, buscar?: string): Promise<
   const noAbrio = errores.length ? `\nNo pude abrir: ${errores.join('; ')}. Díselo.` : '';
   const que = buscar ? `buscando «${buscar}»` : 'sin leer';
   // Ninguna cuenta abrió: no es «no hay nada», es que no se pudo mirar (AUR07).
-  if (errores.length === cuentas.length) return fallo(`CORREO: no pude abrir ninguna de sus cuentas (${errores.join('; ')}). No sé si tiene correos nuevos; díselo así, sin inventar.`, 'proveedor');
+  if (errores.length === cuentas.length) return falloCon(`CORREO: no pude abrir ninguna de sus cuentas (${errores.join('; ')}). No sé si tiene correos ${buscar ? `de «${buscar}»` : 'nuevos'}; díselo así, sin inventar, con el paso de cada cuenta.`, 'proveedor', { cuentas: cuentasRecibo });
   const hayMas = todos.length > lista.length ? ` (hay más; estos son los ${lista.length} más nuevos)` : '';
   // Una muestra (quedaron más sin traer) tampoco es el total: sirve para contestar, no para memorizar como conclusión.
   const muestra = !!hayMas || coberturas.some((x) => Number(x.cob.total) > (x.cob.revisados ?? x.traidos));
   // Con alguna cuenta que no abrió, lo que se trae es parcial: sirve para contestar, no para memorizar.
-  const recibo = { efecto: 'ninguno' as const, proveedor: 'imap', ...(errores.length || muestra ? { incompleto: true } : {}) };
+  const recibo = { efecto: 'ninguno' as const, proveedor: 'imap', ...(errores.length || muestra ? { incompleto: true } : {}), cuentas: cuentasRecibo };
   if (!lista.length) return exito(`CORREO (${que}, ${cuentas.length} ${cuentas.length === 1 ? 'cuenta' : 'cuentas'}): nada.${noAbrio}`, recibo);
   const lineas = lista.map((m, i) => lineaCorreo(m, i, { variasCuentas: varias, marcarNoLeidos: !!buscar })).join('\n');
   const cobertura = coberturas
@@ -271,7 +376,13 @@ export function elegirCorreo(lista: Pick<Resumen, 'de' | 'deCorreo' | 'asunto'>[
   return { tipo: 'varios', is };
 }
 
-type Ubicado = { ref: string; n?: number; resumen?: Resumen } | { hecho: string };
+/**
+ * Dónde quedó la referencia. Si hubo que buscar en sus cuentas, `cuentas` dice cuáles se consultaron (P4); `aviso` es
+ * lo que hay que decir al abrirlo (una cuenta no se pudo mirar) y `incompleto`, que no es el total.
+ */
+type Ubicado =
+  | { ref: string; n?: number; resumen?: Resumen; aviso?: string; incompleto?: boolean; cuentas?: ReturnType<typeof cuentasDelRecibo> }
+  | { hecho: string; codigo?: string; cuentas?: ReturnType<typeof cuentasDelRecibo> };
 
 /**
  * De la referencia al correo: en la lista numerada; si no está ahí, buscándolo en su bandeja. Sin
@@ -307,30 +418,66 @@ async function ubicar(quien: string, ambito: string, ref: string, o: { siguiente
     const n = parseInt(r.replace(/\D/g, ''), 10);
     return { hecho: n ? `CORREO: no hay un correo ${n} en la última lista${lista.length ? ` (tiene ${lista.length})` : ''}. ${lista.length ? 'Pregúntale cuál.' : 'Revisa primero (correo revisar).'}` : 'CORREO: ¿cuál? Pregúntale el número, el remitente o el asunto.' };
   }
-  // No está en la lista: se busca en sus cuentas (sin cambiar la numeración de la lista).
+  // No está en la lista: se busca en sus cuentas (sin cambiar la numeración de la lista), con el colector común (P4):
+  // una caída no es «no hay», y lo que se halló en unas cuentas no es lo que hay en todas.
   const cuentas = await cuentasDe(quien);
-  if (!cuentas.length) return { hecho: SIN_CUENTAS };
-  const hallados: Resumen[] = [];
-  await Promise.all(cuentas.map(async (c) => hallados.push(...(await buzon.listar(quien, c, { buscar: e.consulta, n: 5 }).catch(() => [] as Resumen[])))));
-  hallados.sort((a, b) => b.fecha.localeCompare(a.fecha));
-  if (!hallados.length) return { hecho: `CORREO: no encuentro ningún correo de «${e.consulta}» (ni en la lista ni buscando en su bandeja). Pregúntale cómo se llama el remitente o de qué trata.` };
-  const mismoRemitente = new Set(hallados.map((h) => h.deCorreo.toLowerCase())).size === 1;
-  if (hallados.length === 1 || e.reciente || mismoRemitente) return { ref: hallados[0].ref, resumen: hallados[0] };
-  const opciones = hallados.slice(0, 4).map((h) => `${h.de || h.deCorreo} — «${h.asunto}» (${fechaHN(h.fecha)})`).join(' · ');
-  return { hecho: `CORREO: en la lista no está; buscando «${e.consulta}» hay ${hallados.length}: ${opciones}. Pregúntale cuál (por remitente o asunto); no adivines.` };
+  if (!cuentas.length) return { hecho: SIN_CUENTAS, codigo: 'sin-cuentas' };
+  const b = await buscarEnCuentas(quien, e.consulta, { reciente: e.reciente, cuentas });
+  const cuentasR = cuentasDelRecibo(b.cobertura);
+  const miradas = b.cobertura.filter((x) => x.estado === 'consultada').map((x) => x.cuenta);
+  const caidas = b.cobertura.filter((x) => x.fallo).map((x) => falloEnPalabras(x.fallo!));
+  const faltaron = caidas.length ? ` OJO: no pude mirar ${caidas.join('; ')}. Puede haber más ahí: díselo.` : '';
+  const opciones = (hs: Resumen[]) => hs.slice(0, 4).map((h) => `${h.de || h.deCorreo} — «${h.asunto}» (${fechaHN(h.fecha)})${cuentas.length > 1 ? ` en ${cuentas.find((c) => c.id === h.cuenta)?.correo || h.cuenta}` : ''}`).join(' · ');
+  if (b.tipo === 'provider_failed') {
+    return {
+      hecho: `CORREO: no pude buscar «${e.consulta}»: ${caidas.join('; ')}. No sé si tiene correos de «${e.consulta}»: no digas que no hay. Dile qué pasó y el paso siguiente de cada cuenta.`,
+      codigo: 'proveedor',
+      cuentas: cuentasR,
+    };
+  }
+  if (b.tipo === 'empty') {
+    return {
+      hecho: `CORREO: no encuentro ningún correo de «${e.consulta}» (ni en la lista ni buscando en su bandeja: busqué en ${miradas.join(', ')}, solo la bandeja de entrada). Pregúntale cómo se llama el remitente o de qué trata.`,
+      codigo: 'no-encontrado',
+      cuentas: cuentasR,
+    };
+  }
+  if (b.tipo === 'partial' && !b.hallados.length) {
+    return {
+      hecho: `CORREO: en ${miradas.join(', ')} no encuentro ningún correo de «${e.consulta}», pero no pude mirar ${caidas.join('; ')}. No sé si está ahí: no digas que no existe. Dile cuál cuenta sí miré, cuál no y el paso siguiente.`,
+      codigo: 'parcial',
+      cuentas: cuentasR,
+    };
+  }
+  if (b.tipo === 'ambiguous' || (b.tipo === 'partial' && !b.elegido)) {
+    return { hecho: `CORREO: en la lista no está; buscando «${e.consulta}» hay ${b.hallados.length}: ${opciones(b.hallados)}. Pregúntale cuál (por remitente o asunto); no adivines.${faltaron}`, codigo: 'ambiguo', cuentas: cuentasR };
+  }
+  const elegido = b.tipo === 'found' ? b.elegido : b.elegido!;
+  if (b.tipo === 'partial') {
+    return {
+      ref: elegido.ref,
+      resumen: elegido,
+      incompleto: true,
+      cuentas: cuentasR,
+      aviso: `OJO: lo busqué solo en ${miradas.join(', ')}; no pude mirar ${caidas.join('; ')}. Puede haber otro de «${e.consulta}» ahí: díselo antes de leerlo, sin decir que es el único.`,
+    };
+  }
+  return { ref: elegido.ref, resumen: elegido, cuentas: cuentasR };
 }
 
 /** Abre el correo y lo deja listo para leer: cuerpo limpio en trozos, adjuntos con nombre. */
 async function leerRef(quien: string, ambito: string, ref: string, o: { siguiente?: boolean } = {}): Promise<ResultadoHerramienta> {
   const u = await ubicar(quien, ambito, ref, o);
-  if ('hecho' in u) return fallo(u.hecho, 'referencia');
+  if ('hecho' in u) return falloCon(u.hecho, u.codigo || 'referencia', u.cuentas ? { cuentas: u.cuentas } : {});
   const ubic = await cuentaDeRef(quien, u.ref);
   if (!ubic) return fallo('CORREO: esa cuenta ya no está conectada.', 'no-disponible');
   let x: Mensaje | null;
   try {
     x = await buzon.leer(quien, ubic.c, ubic.uid);
   } catch (e: any) {
-    return fallo(`CORREO: no pude abrirlo (${String(e?.responseText || e?.message || e).slice(0, 120)}).`, 'proveedor');
+    // Error seguro (P4): qué pasó y el paso siguiente, sin el texto crudo del proveedor.
+    const f = clasificarFalloCorreo(e, ubic.c.correo);
+    return falloCon(`CORREO: no pude abrirlo: ${falloEnPalabras(f)}. No sé qué dice; no lo inventes.`, 'proveedor', { cuentas: [{ cuenta: ubic.c.correo, estado: 'fallo', fallo: f.tipo, siguiente: f.siguiente }] });
   }
   if (!x) return fallo('CORREO: ese correo ya no está en la bandeja.', 'no-encontrado');
   const k = llave(quien, ambito);
@@ -353,6 +500,7 @@ async function leerRef(quien: string, ambito: string, ref: string, o: { siguient
   const avance = u.n ? marcarPaso(quien, ambito, 'correo', u.n - 1, 'hecho').texto : '';
   const texto = [
     `${cual} — de ${remitente(x.de, x.deCorreo)}, para ${x.para || 'ti'}${copia} — «${x.asunto}» — ${fechaHN(x.fecha)} (hora de Honduras).`,
+    u.aviso || '',
     adj,
     cuerpo ? `TEXTO (limpio: sin firma ni lo citado de correos anteriores${trozos.length > 1 ? `; en ${trozos.length} trozos` : ''}):\n${dados.join('\n')}` : 'TEXTO: no trae texto (solo el asunto' + (x.adjuntos.length ? ' y los adjuntos' : '') + ').',
     quedan ? `(Quedan ${quedan} trozos más: si quiere que sigas, PEDIR_HERRAMIENTA: correo seguir.)` : '',
@@ -363,7 +511,7 @@ async function leerRef(quien: string, ambito: string, ref: string, o: { siguient
   ]
     .filter(Boolean)
     .join('\n');
-  return exito(texto, { efecto: 'ninguno', proveedor: 'imap', referencia: u.ref });
+  return exito(texto, { efecto: 'ninguno', proveedor: 'imap', referencia: u.ref, ...(u.incompleto ? { incompleto: true } : {}), ...(u.cuentas ? { cuentas: u.cuentas } : {}) });
 }
 
 /** «Sigue»: el trozo siguiente del correo que está leyendo. */
@@ -396,7 +544,7 @@ function sinRepetir(xs: string[], fuera: string[]): string[] {
 
 async function responder(quien: string, ambito: string, ref: string, texto: string, todos = false): Promise<ResultadoHerramienta> {
   const u = await ubicar(quien, ambito, ref);
-  if ('hecho' in u) return fallo(u.hecho, 'referencia');
+  if ('hecho' in u) return falloCon(u.hecho, u.codigo || 'referencia', u.cuentas ? { cuentas: u.cuentas } : {});
   const ubic = await cuentaDeRef(quien, u.ref);
   if (!ubic) return fallo('CORREO: esa cuenta ya no está conectada.', 'no-disponible');
   const x = await buzon.leer(quien, ubic.c, ubic.uid).catch(() => null);
@@ -415,7 +563,9 @@ async function responder(quien: string, ambito: string, ref: string, texto: stri
   );
   // El paso queda «contestado» solo si el borrador quedó (uno vacío no contesta nada).
   const avance = borrador.estado === 'succeeded' && u.n ? marcarPaso(quien, ambito, 'correo', u.n - 1, 'hecho', 'contestado').texto : '';
-  return avance ? { ...borrador, texto: `${borrador.texto}\n${avance}` } : borrador;
+  // P4: lo encontró buscando con una cuenta caída: se dice al leerle el borrador (puede haber otro igual ahí).
+  const extra = [u.aviso, avance].filter(Boolean).join('\n');
+  return extra ? { ...borrador, texto: `${borrador.texto}\n${extra}` } : borrador;
 }
 
 async function escribir(quien: string, ambito: string, para: string, asunto: string, texto: string): Promise<ResultadoHerramienta> {
@@ -1086,7 +1236,9 @@ export function montarRutasCorreo(app: express.Express, d: Deps) {
     if (cual && !cuentas.length) return res.status(404).json({ error: 'Esa cuenta ya no está conectada.', honesto: true });
     const buscar = String(req.query.buscar || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 80);
     const n = Math.min(50, Math.max(1, Math.floor(Number(req.query.n)) || 25));
-    const errores: { cuentaId: string; cuenta: string; error: string }[] = [];
+    // P4: además del texto para quien configura el servidor (`error`), el fallo seguro tipado: qué pasó (`tipo`), qué
+    // hacer (`siguiente`: reintentar o reconectar ESA cuenta) y una frase sin lo crudo (`mensaje`).
+    const errores: { cuentaId: string; cuenta: string; error: string; tipo: TipoFalloCorreo; siguiente: SiguientePasoCorreo; mensaje: string }[] = [];
     const mensajes: Resumen[] = [];
     // Cuánto se miró en cada cuenta (AUR13): la app puede decir «los 25 más recientes de 340».
     const cobertura: { cuentaId: string; cuenta: string; total: number | null; revisados: number }[] = [];
@@ -1098,7 +1250,8 @@ export function montarRutasCorreo(app: express.Express, d: Deps) {
           mensajes.push(...r);
           cobertura.push({ cuentaId: c.id, cuenta: c.correo, total: Number.isFinite(cob.total) ? Number(cob.total) : null, revisados: cob.revisados ?? r.length });
         } catch (e) {
-          errores.push({ cuentaId: c.id, cuenta: c.correo, error: explicarFallo(e, c.proveedor.imap.host, c.proveedor.imap.puerto, 'leer') });
+          const f = clasificarFalloCorreo(e, c.correo);
+          errores.push({ cuentaId: c.id, cuenta: c.correo, error: explicarFallo(e, c.proveedor.imap.host, c.proveedor.imap.puerto, 'leer'), tipo: f.tipo, siguiente: f.siguiente, mensaje: f.mensaje });
         }
       })
     );
