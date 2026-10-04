@@ -50,6 +50,8 @@ export type DecisionPendiente = {
   propia?: boolean;
   /** Va a un grupo (JID «@g.us» o marcado así): solo su nombre COMPLETO lo identifica. */
   grupo?: boolean;
+  /** Desde qué cuenta sale (un correo): «por gmail» solo coincide si es de Gmail (o si va a una de Gmail). */
+  desde?: string;
   id?: string;
 };
 
@@ -144,7 +146,7 @@ const PREGUNTA_ENVIO = set('mando envio mandamos enviamos mandarlo enviarlo hago
 
 /** Cómo se nombra cada decisión por su canal o su acción. */
 const NOMBRES: Record<TipoDecision, Set<string>> = {
-  correo: set('correo correos mail email emails imeil gmail outlook'),
+  correo: set('correo correos mail email emails imeil'),
   whatsapp: set('whatsapp wasap guasap wsp whats wa'),
   computadora: set('computadora compu pc maquina ordenador computer pregunta'),
   mensaje: set('pulse pulse2chat chat'),
@@ -490,6 +492,7 @@ function fichasHora(cuando: number | undefined): string[] {
 /** ¿Esta ficha identifica a esta decisión (su canal, su acción, su destinatario o correo, su hora, el propio)? */
 function esDe(w: string, p: DecisionPendiente): boolean {
   if (w === YO_PROPIO) return !!p.propia;
+  if (PROVEEDORES[w]) return esDelProveedor(w, p);
   if (w.startsWith('email:')) return direccionesDe(p).includes(w.slice(6));
   if (NOMBRES[p.tipo].has(w)) return true;
   if (DE_MENSAJE.has(w) && TIPOS_MENSAJE.has(p.tipo)) return true;
@@ -507,9 +510,31 @@ function tocaA(w: string, q: DecisionPendiente): boolean {
   return [...fichasDe(q.tema, true), ...fichasDe(q.texto, true)].filter((x) => !/\d/.test(x)).includes(w);
 }
 
+/**
+ * Octava ronda: el nombre de un PROVEEDOR de correo no es el canal. Solo identifica un correo cuya dirección (a quién va)
+ * o cuya cuenta (desde) es de ese proveedor.
+ */
+const PROVEEDORES: Record<string, string[]> = {
+  gmail: ['gmail.com', 'googlemail.com'],
+  google: ['gmail.com', 'googlemail.com'],
+  outlook: ['outlook.com', 'hotmail.com', 'live.com', 'msn.com', 'outlook.es', 'hotmail.es'],
+  hotmail: ['outlook.com', 'hotmail.com', 'live.com', 'msn.com', 'outlook.es', 'hotmail.es'],
+  yahoo: ['yahoo.com', 'yahoo.es', 'ymail.com'],
+  icloud: ['icloud.com', 'me.com', 'mac.com'],
+};
+
+/** ¿El proveedor `w` es el de alguna dirección de esta decisión (a quién va o desde dónde sale)? */
+function esDelProveedor(w: string, p: DecisionPendiente): boolean {
+  const dominios = PROVEEDORES[w];
+  if (!dominios || p.tipo !== 'correo') return false;
+  const dirs = [...direccionesDe(p), ...correosDe(p.desde)];
+  return dirs.some((d) => dominios.some((dom) => d.endsWith(`@${dom}`)));
+}
+
 /** ¿Esta ficha es de la decisión sin contar sus nombres (canal, correo, número, hora, texto, el propio)? */
 function esDeSinNombre(w: string, p: DecisionPendiente): boolean {
   if (w === YO_PROPIO) return !!p.propia;
+  if (PROVEEDORES[w]) return esDelProveedor(w, p);
   if (w.startsWith('email:')) return direccionesDe(p).includes(w.slice(6));
   if (NOMBRES[p.tipo].has(w)) return true;
   if (DE_MENSAJE.has(w) && TIPOS_MENSAJE.has(p.tipo)) return true;

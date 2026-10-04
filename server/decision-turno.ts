@@ -84,7 +84,7 @@ export function pendientesDelTurno(o: { dueno: string; ambito: string; whatsapp:
     const propia = c.para.length > 0 && c.para.every((x) => x.trim().toLowerCase() === o.dueno.trim().toLowerCase());
     // Quinta ronda: su asunto y su texto son su `tema` (no la identifican, pero si lo nombrado cuadra con el tema de otra,
     // se pregunta: «el de la luz»).
-    out.push({ origen: 'correo', tipo: 'correo', destino: `${(c.nombres || []).join(' ')} ${c.para.join(' ')}`.trim(), ...(c.para.length > 1 ? { destinatarios: [...c.para] } : {}), ...(propia ? { propia: true } : {}), tema: `${c.asunto} ${c.texto}`, id: c.intento, huella: c.huella });
+    out.push({ origen: 'correo', tipo: 'correo', destino: `${(c.nombres || []).join(' ')} ${c.para.join(' ')}`.trim(), ...(c.para.length > 1 ? { destinatarios: [...c.para] } : {}), ...(propia ? { propia: true } : {}), tema: `${c.asunto} ${c.texto}`, desde: c.desde, id: c.intento, huella: c.huella });
   }
   const w = o.whatsapp ? borradorWhatsappDe(o.dueno, o.ambito) : null;
   if (w && !w.soloPanel) {
