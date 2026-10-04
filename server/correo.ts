@@ -68,7 +68,19 @@ type Borrador = {
    * en la huella: sirven para que «sí, a Ana» nombre este borrador aunque la dirección no diga «ana».
    */
   nombres?: string[];
+  /** Novena ronda: el proveedor que declara la cuenta desde la que sale (no entra en la huella). */
+  proveedorCuenta?: string;
 };
+
+/** El proveedor que declara una cuenta conectada: por su entrada (Microsoft) o su servidor (smtp.gmail.com, Office 365). */
+export function proveedorDeCuenta(c: { proveedor?: { auth?: string; smtp?: { host?: string } } }): string | undefined {
+  const host = String(c.proveedor?.smtp?.host || '').toLowerCase();
+  if (c.proveedor?.auth === 'microsoft' || /office365|outlook|hotmail|live\.com/.test(host)) return 'outlook';
+  if (/gmail|google/.test(host)) return 'gmail';
+  if (/yahoo/.test(host)) return 'yahoo';
+  if (/icloud|me\.com/.test(host)) return 'icloud';
+  return undefined;
+}
 /**
  * Lo que se le agrega al guardarlo (auditoría 3-oct, COM01): de quién es, hasta cuándo vale y cuál intento es.
  * El «sí» manda ESE borrador, de ESA persona, desde ESA cuenta, y solo si no venció cuando por fin sale.
@@ -398,7 +410,7 @@ async function responder(quien: string, ambito: string, ref: string, texto: stri
   const borrador = guardarBorrador(
     quien,
     ambito,
-    { cuentaId: ubic.c.id, desde: ubic.c.correo, para, cc, asunto, texto, cita, enRespuestaA: x.messageId || undefined, referencias: x.referencias, creado: Date.now(), ...(x.de && (!x.responderA || x.responderA === x.deCorreo) ? { nombres: [x.de] } : {}) },
+    { cuentaId: ubic.c.id, desde: ubic.c.correo, para, cc, asunto, texto, cita, enRespuestaA: x.messageId || undefined, referencias: x.referencias, creado: Date.now(), ...(x.de && (!x.responderA || x.responderA === x.deCorreo) ? { nombres: [x.de] } : {}), ...(proveedorDeCuenta(ubic.c) ? { proveedorCuenta: proveedorDeCuenta(ubic.c) } : {}) },
     `Va como respuesta a ${x.de || x.deCorreo} en el mismo hilo${todos ? (cc.length ? ', a todos los del correo' : ' (no había nadie más en el correo: solo a quien lo mandó)') : ''}, con su correo citado debajo.`
   );
   // El paso queda «contestado» solo si el borrador quedó (uno vacío no contesta nada).
@@ -433,7 +445,7 @@ async function escribir(quien: string, ambito: string, para: string, asunto: str
     }
   }
   if (!destinos.length || !destinos.every(correoValido)) return fallo(`CORREO: «${para}» no es una dirección de correo. Pídele la dirección exacta.`, 'falta-dato');
-  return guardarBorrador(quien, ambito, { cuentaId: cuentas[0].id, desde: cuentas[0].correo, para: destinos, asunto: asunto || '(sin asunto)', texto, creado: Date.now(), ...(nombres ? { nombres } : {}) });
+  return guardarBorrador(quien, ambito, { cuentaId: cuentas[0].id, desde: cuentas[0].correo, para: destinos, asunto: asunto || '(sin asunto)', texto, creado: Date.now(), ...(nombres ? { nombres } : {}), ...(proveedorDeCuenta(cuentas[0]) ? { proveedorCuenta: proveedorDeCuenta(cuentas[0]) } : {}) });
 }
 
 /**
