@@ -17,8 +17,22 @@ import * as RELEVO from './relevo';
 
 const DIRECCION = /^0x[0-9a-fA-F]{40}$/;
 
-/** Las monedas de la red (las mismas de Veta Wallet). */
+/** Las monedas de la red (las mismas de Veta Wallet): copia de respaldo de la lista única. */
 export const MONEDAS = ['ORIGEN', 'AUKA', 'AGKA', 'ONDK', 'MNKA', 'IBS', 'HARV', 'AUBEX', 'ASL', 'LOVE', 'REST', 'SOL', 'AIT', 'AGRO', 'POLITICAL'];
+
+/**
+ * Las monedas que se pueden enviar hoy: las que muestra la cartera según la lista única (una moneda oculta ya
+ * no se ofrece, y la cartera no la aceptaría). Si la cartera no contesta, la copia de respaldo.
+ */
+export async function monedasVisibles(): Promise<string[]> {
+  try {
+    const c = await pedir<any>('cartera.saldos', {});
+    const l = Array.isArray(c?.monedas) ? c.monedas.filter((x: unknown) => typeof x === 'string' && x) : [];
+    return l.length ? l : MONEDAS;
+  } catch {
+    return MONEDAS;
+  }
+}
 
 /** La dirección de Veta Wallet de alguien del chat (su ficha), o null si no la tiene a la vista. */
 export async function direccionDe(correo: string): Promise<string | null> {
