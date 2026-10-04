@@ -27,12 +27,12 @@ Son 17 por avatar, 34 en total, en `mobile/assets/avatares/video/`. Cada uno dur
 | `espera` | fondo | 45 s en reposo, despierto y sin nada que hacer: mira alrededor 10 s y vuelve al reposo |
 | `saluda` | golpe (una vez) | al aparecer en la mesa, o con el gesto `saludar`, `entrar` o `salir` |
 | `senala` | golpe | cuando tocás un atajo de la mesa, o con el gesto `senalar` |
-| `risa` | golpe | emoción `risa`, o cuando lo tocás |
-| `sorpresa` | golpe | emoción `sorpresa`, o con el gesto `despertar` |
+| `risa` | golpe | emoción `risa`, o un toque (ver «Los toques») |
+| `sorpresa` | golpe | emoción `sorpresa`, el gesto `despertar`, un toque, o los blasters |
 | `triste` | golpe | emoción `triste` o `preocupado` |
 | `celebra` | golpe | emoción `orgullo`, su computadora terminó bien, o dice «¡Lo logramos!», «¡Misión cumplida!», «¡Felicidades!» |
 | `asiente` | golpe | una acción de la app salió bien (el «listo» de `hecho`), se envió un mensaje, o dice «Sí», «¡Listo!», «Hecho», «Ya lo envié» |
-| `niega` | golpe | una acción salió mal (el «no pude»), su computadora falló, o dice «No puedo…», «Lo siento, no…», «Me temo que no» |
+| `niega` | golpe | una acción salió mal (el «no pude»), su computadora falló, dice «No puedo…», «Lo siento, no…», «Me temo que no», o saca el sable de luz (o lo molestan en el descanso) |
 | `duda` | golpe | dice «No te entendí», «¿Me lo repetís?», «¿Cuál de los dos?» |
 | `despide` | golpe | colgaste la llamada del avatar (mientras se ve «Llamada terminada»), o dice «¡Adiós!», «Nos vemos», «Hasta luego» |
 
@@ -58,6 +58,91 @@ Son 17 por avatar, 34 en total, en `mobile/assets/avatares/video/`. Cada uno dur
 - Un golpe avisa 900 ms antes de terminar, para que el fondo que sigue se cargue mientras el golpe llega al reposo.
 - Los bordes se funden con el color de fondo del avatar.
 - Si un video falla, vuelven las fotos durante el resto de la sesión.
+
+## Los toques
+
+Tocarlos hace cosas, y no siempre la misma. Va en `mobile/src/avatares/video/efectos/`, por fuera del cuerpo en video: `CuerpoVideo.tsx`, `guion.ts` y los clips no cambian.
+
+| Archivo | Qué hace |
+|---|---|
+| `toques.ts` | El motor, puro: cuenta los toques, decide la reacción, el descanso y lo sutil. Usa reloj y azar inyectables |
+| `escena.ts` | Los datos y la geometría, puros. Dónde va el sable en cada encuadre, cómo se blande, por dónde vuelan los disparos, la sacudida, los sonidos y la vibración |
+| `espadaJedi.ts`, `blasters.ts`, `pintar.ts`, `pincel.ts` | El dibujo con Skia. Es un worklet que graba un SkPicture por cuadro en el hilo de la interfaz |
+| `CapaEfectos.tsx` | La capa: envuelve al video, pinta encima, programa sonidos y vibración, y sacude la pantalla |
+
+**Lo que pasa**
+
+- **Un toque**: una onda de luz donde cayó el dedo, del color del avatar. A veces viene un golpe del video, variado por zona:
+  - en la cabeza: se ríe, duda, se sorprende o asiente;
+  - en el cuerpo: se ríe, celebra, se sorprende o saluda.
+
+  Nunca repite el golpe anterior ni pide uno que el guion no haría (8 s). Tampoco pide más de uno cada 2,6 s, así tocar seguido no encadena fundidos. La voz es la de siempre: el `onTap` de la mesa.
+- **Cuatro toques en 2,2 s** (la misma ventana del «ya, ya» de la mesa): saca el **sable de luz** o empiezan los **blasters**.
+  - Claudio prefiere el sable (70 %) y ANT-ONIO los blasters (70 %). Nunca sale tres veces seguidas lo mismo.
+  - Con el sable el video hace `niega`, que no mueve las manos, así el sable sigue en la mano. Con los blasters hace `sorpresa`.
+  - La mesa dice una frase corta de molesto. Con el sable es una de `annoy` («Oye… ¿qué haces?», «Ya, ya. Con cuidado.»); con los blasters, una de `angry` («¡Basta! Pium, pium, pium.»). Son las frases de siempre de `voice-lines.json` y salen de la caché de audio después de la primera vez. Esa ráfaga llama a `onRafaga` (`DeskScreen.onRafagaVideo`) en vez del `onTap` del cuarto toque.
+- **Una secuencia a la vez.** Los toques durante el sable o los blasters solo hacen la onda. Después vienen 12 s de descanso: otra ráfaga en ese rato solo lo molesta (onda naranja y `niega`, o `duda` si ya negó).
+- **El blaster o el sable de la mesa** (el comando de voz «blaster» o «sable de luz», o el enojo de muchos toques: `attack` de DeskScreen) también se ven en el video. Usan el sonido que ya puso la mesa y no se encima con otra secuencia.
+
+**El sable**
+
+- Dura 3,2 s:
+  1. aparece la empuñadura metálica en la mano;
+  2. la hoja crece con un destello;
+  3. amaga hacia afuera, da un tajo grande cruzando el cuerpo y vuelve;
+  4. lo sostiene con un temblor de pulso;
+  5. se apaga y la empuñadura se va.
+- La hoja va en cuatro capas: un resplandor ancho y difuso, el brillo, el color y un núcleo casi blanco. Detrás deja una estela en abanico que se apaga hacia lo más viejo. El plasma parpadea apenas.
+- El de Claudio es verde, como su corona. El de ANT-ONIO es azul, como los ribetes de la chaqueta.
+- Suena `saber` al encenderse y `whoosh` en cada tajo y al apagarse. Vibra medio al encender y suave en los tajos.
+
+**Los blasters**
+
+- Son 8 disparos en 2,6 s, de borde a borde y alternando lados.
+- Cada uno sale con un fogonazo y cruza como un trazo rojo con resplandor, estela y núcleo claro. Revienta en el borde de enfrente con un destello, un anillo de choque y chispas que saltan hacia adentro y caen.
+- Cada impacto sacude la pantalla hasta 3,5 px.
+- Suena `blaster` y vibra suave con cada disparo.
+
+**Dónde va el sable.** `AGARRES` (`escena.ts`) dice dónde está la mano en el cuadro del video (0..1 sobre 720×1280), medido en la foto base y en `niega`. `encuadrar` (el mismo de CuerpoVideo) lo lleva a la caja en pantalla, así queda en la mano en cualquier tamaño.
+
+| Lugar | Claudio | ANT-ONIO |
+|---|---|---|
+| Mesa vertical (cuerpo entero) | mano derecha de la pantalla (0,78; 0,71) | mano izquierda (0,24; 0,87) |
+| Mesa acostada (retrato) | la mano queda bajo el borde: el sable entra desde abajo a la derecha | lo mismo, a la izquierda |
+| Llamada (círculo) | entra más cerca del centro, para que no lo corte el círculo | ídem |
+
+**Según el estado**
+
+| Estado | Qué hace |
+|---|---|
+| Tranquilo en la mesa | Todo: sonidos, vibración, golpes, frase y la secuencia entera |
+| Habla, oye a la persona, piensa, duerme | Sutil: onda chica, sin sonido, sin golpes, sin frase. La ráfaga es una versión chica y corta (1,4 a 1,7 s), sin sacudida |
+| Conversación o llamada abierta | Sutil, aunque la ráfaga haya empezado tranquila |
+| La llamada del avatar (el círculo) | Siempre sutil y recortado al círculo. El toque lo sigue recibiendo la cara: el doble toque silencia como siempre. `CuerpoLlamada` solo lo mira en la fase de captura y devuelve `false` |
+| «Reducir movimiento» | Quieto: el sable aparece y se va con un fundido, sin blandir, sin estela ni temblor. Los disparos son trazos quietos que aparecen y se van despacio. No hay sacudida, y los golpes ya los quita el guion |
+| Tapado (otra pantalla, la llamada encima) o desmontado | Se corta: ningún reloj, sonido ni animación queda programado |
+
+Lo sutil se decide por cómo estaba al **empezar** la ráfaga. El primer toque puede hacerlo hablar (la frase del toque de la mesa), y eso no le quita el sable al cuarto.
+
+Los sonidos son los de `lib/sfx.ts`: respetan el ajuste «sonidos» y no suenan en una llamada. El interruptor de silencio del iPhone no se puede leer sin un módulo nativo nuevo: la app ya reproduce sus efectos con `playsInSilentModeIOS`. La vibración es de `expo-haptics`. Nada toca el micrófono ni la voz.
+
+**Rendimiento.**
+
+- Cada cuadro se dibuja en el hilo de la interfaz y React no se re-renderiza durante la animación.
+- El lienzo solo está montado mientras hay algo que pintar, más 3 s.
+- Quieto no gasta: el cuadro solo se vuelve a grabar cuando cambia un tiempo.
+- La capa no toma el dedo: todo va con `pointerEvents="none"`, y el toque sigue siendo del Pressable de CuerpoMesa.
+- No hay saltos de diseño: la capa es absoluta.
+- Si el dibujo falla, los efectos se apagan por el resto de la sesión, el avatar sigue igual y queda una miga.
+
+**Pruebas**
+
+```
+cd mobile && npx tsx src/avatares/pruebas/efectos.prueba.mjs   # el motor y la escena (en calidad-movil.yml)
+npx tsx scripts/qa/efectos-avatar.ts [dirSalida] [dirCuadros]   # el dibujo con CanvasKit sobre cuadros reales
+```
+
+`efectos-avatar.ts` pinta, con el mismo `pintar.ts` del teléfono, cada caso sobre un cuadro real del clip (`dirCuadros`: PNG `<avatar>-<clip>.png` de 720×1280). Saca una hoja, los cuadros de la animación cada 40 ms y comprobaciones de píxeles: el núcleo blanco, el resplandor del color de cada uno, la empuñadura en la mano, el disparo rojo y nada de estela con «reducir movimiento».
 
 ## El cambio de clip (sin saltos)
 

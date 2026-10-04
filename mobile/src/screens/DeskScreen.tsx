@@ -1568,6 +1568,30 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     }
   }, [onAudio, settle, showBubble]);
 
+  /**
+   * Claudio y ANT-ONIO en video: cuatro toques seguidos sacaron el sable de luz o los blasters
+   * (avatares/video/efectos). Llega EN VEZ del onTap de ese cuarto toque: dice una frase corta de molesto,
+   * de las de siempre (lineas.ts; sale de la caché de audio después de la primera vez). La capa ya decidió
+   * que el avatar estaba tranquilo al empezar la ráfaga; aquí no se pisa una conversación, una llamada ni
+   * otra reacción en curso (el «ya, ya»).
+   */
+  const onRafagaVideo = useCallback(
+    (efecto: 'espada' | 'blasters') => {
+      pausarMirada();
+      const ahora = Date.now();
+      lastUserAt.current = ahora;
+      lastTapAt.current = ahora;
+      recentTaps.current = [];
+      if (conversandoRef.current || enLlamadaRef.current || presenceRef.current === 'sleep' || handling.current) return;
+      handling.current = true;
+      setFace('ANGRY');
+      void say(pick(lineas(efecto === 'blasters' ? 'angry' : 'annoy')), 'ANGRY', { emocion: 'molesto' }).finally(() => {
+        handling.current = false;
+      });
+    },
+    [pausarMirada, say]
+  );
+
   const onTap = useCallback(
     (zone: TouchZone, _x: number, _y: number) => {
       pausarMirada();
@@ -2660,6 +2684,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         onLongPress={onLongPress}
         activo={mesaActiva && !tutorialAbierto && !(llamadaActiva(voz.ciclo) && !voz.llamada.minimizada)}
         senal={senalAtajo}
+        conversando={vozOcupa}
+        ataque={attack}
+        onRafaga={onRafagaVideo}
       />
     ) : (
       fotosCara
