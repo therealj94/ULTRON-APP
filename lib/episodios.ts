@@ -36,7 +36,7 @@ import {
   palabras,
   preguntarModelo,
 } from './cerebro-comun';
-import { datosConocidos, datosPorReglas, incorporarDatos, interpretarDatos, precargarConocer, type DatoNuevo } from './conocer-persona';
+import { datosPorReglas, datosUsables, incorporarDatos, interpretarDatos, precargarConocer, type DatoNuevo } from './conocer-persona';
 import { redactar } from './cognitivo/base';
 import { coseno, embeddingsConfigurados, fundirPorRango, vectorDe, vectorizar } from './cognitivo/embeddings';
 import { limpiarTexto, precargarSupresiones, terminosVigentes, tumbasDe, tumbasEnCache, type Tumba } from './supresiones';
@@ -391,7 +391,8 @@ export function episodioPorReglas(tramo: TurnoEp[], nombre = ''): Episodio {
 async function resumirYGuardar(clave: string, tramo: TurnoEp[]): Promise<Episodio> {
   const nombre = nombres.get(clave) || '';
   const abiertos = abiertosEnCache(clave).slice(0, 12);
-  const sabidos = datosConocidos(clave)
+  // Lo que la persona limitó («No usarlo») tampoco va al modelo que resume (P1/A1).
+  const sabidos = datosUsables(clave)
     .slice(0, 25)
     .map((d) => `- ${d.dato}`)
     .join('\n');

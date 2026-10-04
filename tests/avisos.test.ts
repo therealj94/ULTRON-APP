@@ -493,3 +493,46 @@ test('el teléfono entiende las preferencias del servidor y arma los cambios que
   assert.equal(m.idQuietas({ desde: '21:00', hasta: '07:00' }), '21-07');
   assert.deepEqual(m.cuerpoPosponer(1, p!, new Date(2026, 9, 31, 10, 0)), { fecha: '2026-11-01', hora: '07:00' });
 });
+
+/* ------------------------------------------------------------------ P1 / A2: la outbox con la revalidación real */
+
+const SI = await import('../server/iniciativa');
+const MODELO_CORREO = async () =>
+  JSON.stringify([{ tipo: 'ayuda', texto: 'Tienes tres correos sin leer. ¿Te resumo lo importante?', pedido: 'Revisa mi correo y resume lo importante', prioridad: 1, porque: 'Hay tres correos sin leer', fuente: 'correo' }]);
+
+test('A2 outbox + revalidarAhora: la propuesta del modelo sobre el correo solo sale con el correo observado vigente; cada estado de la fuente se distingue', async () => {
+  const ahora = Date.parse('2026-10-05T16:00:00Z'); // 10:00 Honduras
+  const casos: Array<[string, unknown, number, string]> = [
+    ['vigente', { observaciones: { correo: { estado: 'vigente', valor: 3 } } }, 1, 'entregado'],
+    ['3→0', { correoSinLeer: 0 }, 0, 'resuelta'],
+    ['vacío', { observaciones: { correo: { estado: 'empty' } } }, 0, 'resuelta'],
+    ['desconectado', { desconectadas: ['correo'], correoSinLeer: null }, 0, 'fuente_desconectada'],
+    ['no configurado', { observaciones: { correo: { estado: 'not_configured' } } }, 0, 'fuente_no_configurada'],
+    ['no disponible', { observaciones: { correo: { estado: 'unavailable' } } }, 0, 'fuente_no_disponible'],
+    ['ausente', {}, 0, 'sin_observacion'],
+  ];
+  for (const [nombre, alEntregar, n, motivo] of casos) {
+    const c = correo();
+    const s = await ini.siguientePropuesta({ correo: c }, { ahora, correoSinLeer: 3, modelo: MODELO_CORREO });
+    assert.ok(s.propuesta, nombre);
+    await av.encolarAviso(c, s.propuesta!, ahora);
+    const { log, ent } = dobles();
+    const r = await av.procesarOutbox(c, { revalidar: (q) => SI.revalidarAhora(c, q, { contadores: async () => alEntregar as any }, ahora + 60_000), entregadores: ent, sello: av.selloLocal({ dir: null }), ahora: ahora + 60_000 });
+    assert.equal(log.length, n, `${nombre}: entregas`);
+    assert.equal(r[0]?.motivo, motivo, nombre);
+  }
+});
+
+test('A2 una propuesta guardada con fuente «modelo» que afirma correo no se entrega aunque el buzón tenga correo: nunca se ancló a la fuente', async () => {
+  const ahora = Date.parse('2026-10-05T16:00:00Z');
+  const c = correo();
+  const vieja = propuesta({ ahora, tipo: 'ayuda', texto: 'Tienes tres correos sin leer. ¿Te resumo lo importante?', pedido: 'Revisa mi correo y resume lo importante', evidencia: { porQue: 'Hay tres', fuente: { tipo: 'modelo', visto: ahora }, paso: 'x', permiso: 'leer_correo', caduca: ahora + DIA } });
+  const idea = propuesta({ ahora, tipo: 'ayuda', texto: '¿Te preparo la lista del súper?', pedido: 'Sí, prepárame la lista del súper.', evidencia: { porQue: 'idea', fuente: { tipo: 'modelo', visto: ahora }, paso: 'x', permiso: 'ninguno', caduca: ahora + DIA } });
+  const f = { observaciones: { correo: { estado: 'vigente' as const, valor: 3 } } };
+  assert.deepEqual(ini.revalidarPropuesta(vieja, f, ahora + 60_000), { vigente: false, motivo: 'sin_fuente' });
+  assert.deepEqual(ini.revalidarPropuesta(idea, f, ahora + 60_000), { vigente: true }, 'control: una idea que no afirma hechos sigue valiendo');
+  await av.encolarAviso(c, vieja, ahora);
+  const { log, ent } = dobles();
+  await av.procesarOutbox(c, { revalidar: (q) => ini.revalidarPropuesta(q, f, ahora + 60_000), entregadores: ent, sello: av.selloLocal({ dir: null }), ahora: ahora + 60_000 });
+  assert.equal(log.length, 0);
+});

@@ -429,9 +429,9 @@ test('cada propuesta guarda su evidencia: por qué ahora, fuente vigente, siguie
   const correoP = p.propuestas.find((x) => /correos sin leer/.test(x.texto));
   assert.equal(correoP?.evidencia?.fuente.tipo, 'correo');
   assert.equal(correoP?.evidencia?.permiso, 'leer_correo');
-  // Las del modelo también: fuente «modelo» y caducan al día.
+  // Las del modelo también, pero «modelo» no es una fuente (P1/A2): ideas sin hecho → «ninguna», caducan al día.
   const m = await ini.pensarPropuestas({ correo: c }, { ahora: TARDE, modelo: async () => buenas });
-  assert.ok(m.propuestas.every((x) => x.evidencia && x.evidencia.fuente.tipo === 'modelo' && x.evidencia.caduca === TARDE + ini.CADUCA_COLA_MS));
+  assert.ok(m.propuestas.every((x) => x.evidencia && x.evidencia.fuente.tipo === 'ninguna' && x.evidencia.caduca === TARDE + ini.CADUCA_COLA_MS));
 });
 
 test('la iniciativa prepara, no envía: una propuesta cuyo pedido manda algo a un tercero se descarta', () => {
@@ -463,11 +463,11 @@ test('revalidar: caducada, misión cerrada o avanzada, fuente que no se pudo lee
   assert.deepEqual(ini.revalidarPropuesta(p, { misiones: [{ ...mision, estado: 'hecha' }] }, t + H), { vigente: false, motivo: 'resuelta' });
   assert.deepEqual(ini.revalidarPropuesta(p, { misiones: [] }, t + H), { vigente: false, motivo: 'resuelta' }, 'ya no existe');
   assert.deepEqual(ini.revalidarPropuesta(p, { misiones: [{ ...mision, actualizada: t + 30 * 60_000 }] }, t + H), { vigente: false, motivo: 'resuelta' }, 'avanzó: ya no está estancada');
-  assert.deepEqual(ini.revalidarPropuesta(p, { misiones: null }, t + H), { vigente: false, motivo: 'fuente_desconectada' }, 'no se pudo leer: no se inventa que sigue igual');
+  assert.deepEqual(ini.revalidarPropuesta(p, { misiones: null }, t + H), { vigente: false, motivo: 'fuente_no_disponible' }, 'no se pudo leer: no se inventa que sigue igual');
   const pc = { ...p, misionId: undefined, tipo: 'ayuda' as const, evidencia: { ...p.evidencia, fuente: { tipo: 'correo' as const, visto: t } } };
   assert.deepEqual(ini.revalidarPropuesta(pc, { correoSinLeer: 2 }, t + H), { vigente: true });
   assert.deepEqual(ini.revalidarPropuesta(pc, { correoSinLeer: 0 }, t + H), { vigente: false, motivo: 'resuelta' });
-  assert.deepEqual(ini.revalidarPropuesta(pc, { correoSinLeer: null }, t + H), { vigente: false, motivo: 'fuente_desconectada' });
+  assert.deepEqual(ini.revalidarPropuesta(pc, { correoSinLeer: null }, t + H), { vigente: false, motivo: 'fuente_no_disponible' }, 'conectada pero no se pudo leer (P1/A2: distinto de desconectada)');
   const pk = { ...p, misionId: undefined, tipo: 'conocer' as const, campo: 'musica', evidencia: { ...p.evidencia, fuente: { tipo: 'perfil' as const, id: 'musica', visto: t } } };
   assert.deepEqual(ini.revalidarPropuesta(pk, { perfil: perfilInicial({ apodo: 'X' }) }, t + H), { vigente: true });
   assert.deepEqual(ini.revalidarPropuesta(pk, { perfil: { ...perfilInicial({ apodo: 'X' }), encuesta: { musica: 'boleros' } } as any }, t + H), { vigente: false, motivo: 'resuelta' });
@@ -656,4 +656,248 @@ test('rutas de avisos: preferencias de la sesión, cambios validados, posponer c
   } finally {
     srv.close();
   }
+});
+
+/* ------------------------------------------------------------------ P1 / A2: avisos con evidencia de servidor */
+
+const SI = await import('../server/iniciativa');
+/** Lo que dijo el modelo en la auditoría: afirma un hecho del buzón («tres correos sin leer»). */
+const MODELO_CORREO = async () =>
+  JSON.stringify([{ tipo: 'ayuda', texto: 'Tienes tres correos sin leer. ¿Te resumo lo importante?', pedido: 'Revisa mi correo y resume lo importante', prioridad: 1, porque: 'Hay tres correos sin leer', fuente: 'correo' }]);
+const CORREO_3 = { observaciones: { correo: { estado: 'vigente', valor: 3 } }, correoSinLeer: 3 } as const;
+
+test('A2 REPRO: lo que afirma el modelo no es evidencia; resuelto, desconectado o sin observación ya no vale', async () => {
+  const c = correo();
+  const first = await ini.siguientePropuesta({ correo: c }, { ahora: TARDE, zona: 'UTC', correoSinLeer: 3, modelo: MODELO_CORREO });
+  assert.equal(first.origen, 'modelo');
+  assert.ok(first.propuesta);
+  const f = first.propuesta!.evidencia!.fuente;
+  assert.notEqual(f.tipo, 'modelo', '«modelo» no es una fuente');
+  assert.equal(f.tipo, 'correo', 'apunta al candidato del servidor que sostiene lo que dice');
+  assert.equal(f.version, 3, 'con la versión que se vio');
+  assert.ok(f.visto === TARDE && first.propuesta!.evidencia!.caduca > TARDE, 'fecha y caducidad');
+  const despues = await ini.siguientePropuesta({ correo: c }, { ahora: TARDE + 60_000, zona: 'UTC', correoSinLeer: 0, modelo: null });
+  assert.notEqual(despues.propuesta?.id, first.propuesta!.id, 'el correo pasó de 3 a 0: no se vuelve a mostrar');
+  const p = first.propuesta!;
+  for (const [f2, motivo] of [
+    [{ correoSinLeer: null, desconectadas: ['correo'] }, 'fuente_desconectada'],
+    [{ observaciones: { correo: { estado: 'disconnected' } } }, 'fuente_desconectada'],
+    [{ observaciones: { correo: { estado: 'not_configured' } } }, 'fuente_no_configurada'],
+    [{ observaciones: { correo: { estado: 'unavailable' } } }, 'fuente_no_disponible'],
+    [{ correoSinLeer: null }, 'fuente_no_disponible'],
+    [{ observaciones: { correo: { estado: 'empty' } } }, 'resuelta'],
+    [{ correoSinLeer: 0 }, 'resuelta'],
+    [{}, 'sin_observacion'],
+  ] as const) {
+    assert.deepEqual(ini.revalidarPropuesta(p, f2 as any, TARDE + 2 * 60_000), { vigente: false, motivo }, JSON.stringify(f2));
+  }
+  assert.deepEqual(ini.revalidarPropuesta(p, { observaciones: { correo: { estado: 'vigente', valor: 2 } } } as any, TARDE + 2 * 60_000), { vigente: true }, 'control: sigue habiendo correo sin leer');
+  // Una misión que no se pudo observar (no se leyó) tampoco se da por vigente.
+  const seg = ini.propuestasDeRespaldo({ correo: c }, { ahora: TARDE, misiones: [{ id: 'm_aaaaaa', titulo: 'Vender el carro', objetivo: 'x', pasos: [], proximoPaso: '', estado: 'activa', notas: [], creada: TARDE - 9 * DIA, actualizada: TARDE - 5 * DIA }], modelo: null }).find((x) => x.tipo === 'seguimiento')!;
+  assert.deepEqual(ini.revalidarPropuesta(seg, {}, TARDE + H), { vigente: false, motivo: 'sin_observacion' });
+});
+
+test('A2 sanear: la propuesta del modelo apunta a un candidato del servidor; sin candidato, lo que afirma un hecho se descarta y la idea pura queda sin fuente de hecho', () => {
+  const cand = ini.candidatosDe({ ahora: TARDE, correoSinLeer: 3, misiones: [{ id: 'm_bbbbbb', titulo: 'Abrir la pulpería', objetivo: 'x', pasos: [], proximoPaso: '', estado: 'activa', notas: [], creada: TARDE - 9 * DIA, actualizada: TARDE - 5 * DIA }] }, TARDE);
+  assert.ok(cand.has('correo') && cand.has('mision:m_bbbbbb'));
+  const raw = JSON.stringify([
+    { tipo: 'ayuda', texto: 'Tienes tres correos sin leer. ¿Te resumo lo importante?', pedido: 'Revisa mi correo y resume lo importante', prioridad: 1 },
+    { tipo: 'seguimiento', texto: '¿Cómo vas con «Abrir la pulpería»? ¿Avanzamos hoy?', pedido: 'Sí, ayúdame con «Abrir la pulpería».', prioridad: 2, fuente: 'mision:m_bbbbbb' },
+    { tipo: 'ayuda', texto: 'Tienes 2 chats de WhatsApp sin leer. ¿Te cuento quién escribió?', pedido: 'Sí, revisa mi WhatsApp.', prioridad: 2 },
+    { tipo: 'ayuda', texto: '¿Quieres que te busque vuelos baratos a Roatán?', pedido: 'Sí, búscame vuelos baratos a Roatán.', prioridad: 3, fuente: 'mision:m_inventada' },
+  ]);
+  const ps = ini.sanearPropuestas(raw, TARDE, cand);
+  const por = (re: RegExp) => ps.find((x) => re.test(x.texto));
+  assert.equal(por(/correos sin leer/)?.evidencia?.fuente.tipo, 'correo', 'inferida del pedido: leer el correo');
+  assert.equal(por(/pulpería/)?.evidencia?.fuente.tipo, 'mision');
+  assert.equal(por(/pulpería/)?.evidencia?.fuente.id, 'm_bbbbbb');
+  assert.equal(por(/pulpería/)?.misionId, 'm_bbbbbb');
+  assert.equal(por(/WhatsApp/), undefined, 'afirma un hecho de una fuente que el servidor no vio: fuera');
+  assert.equal(por(/Roatán/)?.evidencia?.fuente.tipo, 'ninguna', 'una idea sin hecho, con referencia inventada: queda sin fuente de hecho');
+  assert.ok(ps.every((x) => x.evidencia?.fuente.tipo !== 'modelo'));
+  // Sin candidatos (el modelo dice «tres correos» pero el servidor no lo vio): fuera.
+  assert.equal(ini.sanearPropuestas(raw, TARDE).some((x) => /correos sin leer/.test(x.texto)), false);
+});
+
+/** Un reloj de verdad (coordinador + revalidación + outbox), con el modelo que afirma correo y contadores que cambian al despachar. */
+async function despacharCorreo(alDespachar: () => unknown) {
+  const c = correo();
+  const entregas: import('../lib/iniciativa').Propuesta[] = [];
+  let llamadas = 0;
+  const contadores = async () => {
+    llamadas++;
+    return llamadas === 1 ? CORREO_3 : (alDespachar() as any);
+  };
+  const r = SI.arrancarIniciativa({ personas: () => [{ correo: c }], entregadores: { app: (_c, a) => (entregas.push(a.propuesta), 1) }, contadores: contadores as any, modelo: MODELO_CORREO, reloj: () => TARDE, cadaMs: 10 * 60_000, sello: av.selloLocal({ dir: null }) });
+  try {
+    await r.vuelta();
+  } finally {
+    r.parar();
+  }
+  const est = await av.leerAvisos(c);
+  return { entregas, llamadas, outbox: est.ok ? est.estado.outbox : [] };
+}
+
+test('A2 coordinador → revalidación → outbox: si el correo se resuelve, se desconecta, queda desconocido o falla antes del despacho, CERO entregas; vigente, UNA', async () => {
+  const casos: Array<[string, () => unknown, string]> = [
+    ['resuelto (3→0)', () => ({ observaciones: { correo: { estado: 'empty' } }, correoSinLeer: 0 }), 'resuelta'],
+    ['desconectado', () => ({ observaciones: { correo: { estado: 'disconnected' } }, correoSinLeer: null, desconectadas: ['correo'] }), 'fuente_desconectada'],
+    ['contador ausente', () => ({}), 'sin_observacion'],
+    ['no configurado', () => ({ observaciones: { correo: { estado: 'not_configured' } } }), 'fuente_no_configurada'],
+    ['proveedor caído', () => ({ observaciones: { correo: { estado: 'unavailable' } }, correoSinLeer: null }), 'fuente_no_disponible'],
+    [
+      'el contador lanza',
+      () => {
+        throw new Error('IMAP sintético caído');
+      },
+      'fuente_no_disponible',
+    ],
+  ];
+  for (const [nombre, alDespachar, motivo] of casos) {
+    const r = await despacharCorreo(alDespachar);
+    assert.equal(r.llamadas, 2, `${nombre}: se observó al pensar y otra vez justo antes de entregar`);
+    assert.equal(r.entregas.length, 0, `${nombre}: ninguna entrega`);
+    assert.equal(r.outbox[0]?.estado, 'omitido', nombre);
+    assert.equal(r.outbox[0]?.motivo, motivo, nombre);
+  }
+  const vigente = await despacharCorreo(() => CORREO_3);
+  assert.equal(vigente.entregas.length, 1, 'control: sigue vigente, una entrega');
+  assert.equal(vigente.entregas[0].evidencia?.fuente.tipo, 'correo');
+  assert.equal(vigente.outbox[0]?.estado, 'entregado');
+});
+
+test('A2 coordinador → outbox con una misión: la propuesta del modelo sustentada en la misión no sale si la misión se cierra antes del despacho; si sigue abierta, sale una vez', async () => {
+  const caso = async (cerrar: boolean) => {
+    const c = correo();
+    await crearMision(c, { titulo: 'Vender el carro', pasos: ['Tomar fotos'] }, TARDE - 5 * DIA);
+    const [m] = await misionesDe(c);
+    const modelo = async () => JSON.stringify([{ tipo: 'seguimiento', texto: '¿Cómo vas con «Vender el carro»? ¿Lo avanzamos hoy?', pedido: 'Sí, ayúdame con el siguiente paso de «Vender el carro».', prioridad: 1, fuente: `mision:${m.id}` }]);
+    // Pospuso los avisos dos horas: la propuesta se encola y espera.
+    await av.cambiarPreferencias(c, { pospuestoHasta: TARDE + 2 * H }, TARDE - 60_000);
+    let ahora = TARDE;
+    const entregas: string[] = [];
+    const r = SI.arrancarIniciativa({ personas: () => [{ correo: c }], entregadores: { app: (_c, a) => (entregas.push(a.propuesta.texto), 1) }, modelo, reloj: () => ahora, cadaMs: 10 * 60_000, sello: av.selloLocal({ dir: null }) });
+    try {
+      await r.vuelta();
+      assert.equal(entregas.length, 0, 'pospuesto: espera');
+      const est = await ini.leerEstadoIniciativa(c);
+      assert.ok(est.ok && est.estado.pendiente?.evidencia?.fuente.tipo === 'mision' && est.estado.pendiente.evidencia.fuente.id === m.id, 'apunta a la misión del servidor');
+      if (cerrar) await cerrarMision(c, m.id, 'hecha', TARDE + H);
+      ahora = TARDE + 3 * H;
+      await r.vuelta();
+    } finally {
+      r.parar();
+    }
+    return entregas;
+  };
+  assert.equal((await caso(true)).length, 0, 'misión cerrada antes del despacho: cero entregas');
+  assert.equal((await caso(false)).length, 1, 'control: sigue abierta, una entrega');
+});
+
+test('A2 composición: las rutas y el reloj reciben EL MISMO adaptador de contadores; un error no se vuelve contador 0', async () => {
+  const a = correo();
+  const llamadas: string[] = [];
+  let falla = false;
+  const adaptador = async (c: string) => {
+    llamadas.push(c);
+    if (falla) throw new Error('proveedor sintético caído');
+    return CORREO_3;
+  };
+  const comp = SI.componerIniciativa({ contadores: adaptador as any });
+  assert.equal(comp.contadores, adaptador);
+  const app = express();
+  app.use(express.json());
+  const pasa = ((_q: express.Request, _s: express.Response, nx: express.NextFunction) => nx()) as express.RequestHandler;
+  comp.montarRutas(app, { exigirMesa: pasa, limitar: () => pasa, sesionDe: () => ({ correo: a }), modelo: MODELO_CORREO, reloj: () => TARDE });
+  const srv = app.listen(0, '127.0.0.1');
+  await new Promise((r) => srv.once('listening', r));
+  try {
+    const g = await (await fetch(`http://127.0.0.1:${(srv.address() as AddressInfo).port}/api/iniciativa`)).json();
+    assert.match(g.propuesta?.texto || '', /correos sin leer/, 'la ruta vio el correo por el adaptador');
+    assert.deepEqual(llamadas, [a], 'la ruta llamó al adaptador con la persona de la sesión');
+  } finally {
+    srv.close();
+  }
+  // Revalidar con el contador fallando: no es «0 sin leer» (resuelta) ni vigencia.
+  const est = await ini.leerEstadoIniciativa(a);
+  assert.ok(est.ok && est.estado.pendiente);
+  falla = true;
+  if (est.ok && est.estado.pendiente) {
+    assert.deepEqual(await SI.revalidarAhora(a, est.estado.pendiente, { contadores: adaptador as any }, TARDE + 30_000), { vigente: false, motivo: 'fuente_no_disponible' });
+  }
+  // El reloj, con el mismo adaptador (sin pasarle otro).
+  const entregas: string[] = [];
+  const reloj = comp.arrancar({ personas: () => [{ correo: a }], entregadores: { app: (_c, x) => (entregas.push(x.propuesta.id), 1) }, modelo: MODELO_CORREO, reloj: () => TARDE + 60_000, cadaMs: 10 * 60_000, sello: av.selloLocal({ dir: null }) });
+  try {
+    llamadas.length = 0;
+    await reloj.vuelta();
+  } finally {
+    reloj.parar();
+  }
+  assert.ok(llamadas.length >= 1 && llamadas.every((c) => c === a), 'el reloj usó el mismo adaptador, solo para su dueño');
+  assert.equal(entregas.length, 0, 'con el contador fallando, el aviso del correo no sale');
+  const despues = await ini.leerEstadoIniciativa(a);
+  assert.ok(despues.ok && despues.estado.pendiente === null, 'la pendiente sin fuente observable se retira en vez de mostrarse');
+});
+
+test('A2 el adaptador de contadores separa vigente, empty, unavailable, disconnected y not_configured; nunca cuenta un error como 0 ni mira otra cuenta', async () => {
+  const { crearContadores } = await import('../server/fuentes-iniciativa');
+  const pedidosWA: string[] = [];
+  const cuentas: Record<string, { ok: true; cuentas: { id: string; correo: string }[] } | { ok: false }> = {
+    'tres@x.hn': { ok: true, cuentas: [{ id: 'c1', correo: 'tres@x.hn' }, { id: 'c2', correo: 'otra@x.hn' }] },
+    'cero@x.hn': { ok: true, cuentas: [{ id: 'c3', correo: 'cero@x.hn' }] },
+    'nada@x.hn': { ok: true, cuentas: [] },
+    'caida@x.hn': { ok: false },
+    'clave@x.hn': { ok: true, cuentas: [{ id: 'c4', correo: 'clave@x.hn' }] },
+    'mitad@x.hn': { ok: true, cuentas: [{ id: 'c5', correo: 'mitad@x.hn' }, { id: 'c6', correo: 'lenta@x.hn' }] },
+  };
+  const noLeidos: Record<string, () => Promise<number>> = {
+    c1: async () => 2,
+    c2: async () => 1,
+    c3: async () => 0,
+    c4: async () => {
+      throw Object.assign(new Error('Synthetic AUTHENTICATIONFAILED'), { authenticationFailed: true });
+    },
+    c5: async () => 4,
+    c6: async () => {
+      throw Object.assign(new Error('Synthetic timeout'), { code: 'ETIMEDOUT' });
+    },
+  };
+  const contar = crearContadores({
+    correo: { cuentas: async (c) => cuentas[c] ?? { ok: true, cuentas: [] }, noLeidos: (dueno, cuenta) => (assert.ok(cuentas[dueno].ok && (cuentas[dueno] as any).cuentas.some((x: any) => x.id === cuenta.id), 'solo cuentas de su dueño'), noLeidos[cuenta.id]()) },
+    whatsapp: { permitido: (c) => c === 'tres@x.hn', disponible: () => true, estado: async () => ({ vinculado: true, conectado: true }), chats: async () => (pedidosWA.push('chats'), [{ noLeidos: 2 }, { noLeidos: 0 }, { noLeidos: 1 }]) },
+    reloj: () => TARDE,
+  });
+  const obs = async (c: string) => (await contar(c)).observaciones!;
+  assert.deepEqual((await obs('tres@x.hn')).correo, { estado: 'vigente', valor: 3, version: 3, visto: TARDE });
+  assert.deepEqual((await obs('tres@x.hn')).whatsapp, { estado: 'vigente', valor: 2, version: 2, visto: TARDE });
+  assert.equal((await obs('cero@x.hn')).correo?.estado, 'empty');
+  assert.equal((await obs('nada@x.hn')).correo?.estado, 'not_configured');
+  assert.equal((await obs('caida@x.hn')).correo?.estado, 'unavailable', 'no poder leer las cuentas no es «no tiene correo»');
+  assert.equal((await obs('clave@x.hn')).correo?.estado, 'disconnected', 'la clave ya no entra: desconectada');
+  assert.equal((await obs('mitad@x.hn')).correo?.estado, 'unavailable', 'una cuenta caída: cobertura parcial, no se afirma un número');
+  assert.ok(!('valor' in ((await obs('mitad@x.hn')).correo || {})), 'nada de contar solo la mitad');
+  const antes = pedidosWA.length;
+  assert.equal((await obs('cero@x.hn')).whatsapp?.estado, 'not_configured', 'el WhatsApp de otra cuenta no se mira');
+  assert.equal(pedidosWA.length, antes, 'ni se le piden los chats');
+  // Lo heredado que lee el resto del código sale de la observación, nunca un 0 inventado.
+  const caida = await contar('caida@x.hn');
+  assert.equal(caida.correoSinLeer, null);
+  const clave = await contar('clave@x.hn');
+  assert.deepEqual(clave.desconectadas, ['correo']);
+  // WhatsApp desvinculado o el puente que falla.
+  const wa = (estado: () => Promise<any>, chats: () => Promise<any>) => crearContadores({ whatsapp: { permitido: () => true, disponible: () => true, estado, chats }, reloj: () => TARDE });
+  assert.equal((await wa(async () => ({ vinculado: false, conectado: false }), async () => [])('j@x.hn')).observaciones?.whatsapp?.estado, 'disconnected');
+  assert.equal((await wa(async () => { throw new Error('puente'); }, async () => [])('j@x.hn')).observaciones?.whatsapp?.estado, 'unavailable');
+  assert.equal((await wa(async () => ({ vinculado: true, conectado: true }), async () => { throw new Error('puente'); })('j@x.hn')).observaciones?.whatsapp?.estado, 'unavailable');
+  assert.equal((await wa(async () => ({ vinculado: true, conectado: true }), async () => [{ noLeidos: 0 }])('j@x.hn')).observaciones?.whatsapp?.estado, 'empty');
+});
+
+test('A2 server.ts compone UN adaptador productivo y lo da a las rutas y al reloj (no los monta por separado)', () => {
+  const src = fs.readFileSync(path.resolve(import.meta.dirname, '../server.ts'), 'utf8');
+  assert.match(src, /componerIniciativa\(\{\s*contadores:\s*contadoresProductivos\(\)/, 'un solo adaptador productivo');
+  assert.match(src, /iniciativa\.montarRutas\(app,/);
+  assert.match(src, /iniciativa\.arrancar\(\{/);
+  assert.doesNotMatch(src, /\bmontarRutasIniciativa\(app/, 'las rutas no se montan sin el adaptador');
+  assert.doesNotMatch(src, /\barrancarIniciativa\(\{/, 'el reloj no arranca sin el adaptador');
 });

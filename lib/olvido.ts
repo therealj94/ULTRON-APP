@@ -22,6 +22,7 @@
  *   de cada marca (`supresiones`) para soltar su copia.
  */
 import { CajonNoDisponible } from './cerebro-comun';
+import { CAMPO_CLAVE, campoDeClave, plegarClave, type CampoConClave } from './clave-comun';
 import { agregarDato, corregirDato, datosQueCubre, limitarDato, purgarConocer, type Alcance, type ClaveDato, type Dato, type Origen } from './conocer-persona';
 import { purgarEpisodios } from './episodios';
 import { actualizarPerfil, CAMPOS_ENCUESTA, guardarPerfil, leerPerfilSeguro, PerfilNoDisponible, type Cambios, type Perfil } from './perfil-persona';
@@ -29,18 +30,10 @@ import { ALMACENES, cerrarAlmacen, campoSuprimido, camposSuprimidos, marcarSupre
 
 /**
  * LA CLAVE COMÚN de cada respuesta del perfil: la categoría y la clave de su copia en «lo que sé de ti». La
- * misma tabla que la app (mobile/src/primeravez/flujo.ts CLAVE_CONOCER; una prueba las compara).
+ * misma tabla que la app (mobile/src/primeravez/flujo.ts CLAVE_CONOCER; una prueba las compara). Vive en
+ * lib/clave-comun.ts (también la usa la vista autorizada del contexto, lib/perfil-persona.ts perfilDeUso).
  */
-export const CAMPO_CLAVE = {
-  trabajo: { categoria: 'trabajo', clave: 'oficio' },
-  vive: { categoria: 'rutinas', clave: 'vive' },
-  familia: { categoria: 'familia', clave: 'familia:encuesta' },
-  gustos: { categoria: 'gustos', clave: 'pasatiempos' },
-  comida: { categoria: 'gustos', clave: 'comida favorita' },
-  musica: { categoria: 'gustos', clave: 'musica' },
-  ayuda: { categoria: 'metas', clave: 'quiere de aura' },
-} as const;
-export type CampoConClave = keyof typeof CAMPO_CLAVE;
+export { CAMPO_CLAVE, campoDeClave, type CampoConClave } from './clave-comun';
 
 /** Cómo arma la app el dato de cada respuesta (flujo.ts datoConocerDe): para volver del dato a la respuesta. */
 const PREFIJO: Record<CampoConClave, string> = {
@@ -52,22 +45,6 @@ const PREFIJO: Record<CampoConClave, string> = {
   musica: 'Música que le gusta: ',
   ayuda: 'Quiere que AURA le ayude a: ',
 };
-
-const plegarClave = (s: string | undefined) =>
-  String(s || '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-/** La respuesta del perfil que corresponde a un dato con clave común, o null. */
-export function campoDeClave(k: { categoria?: string; clave?: string }): CampoConClave | null {
-  const clave = plegarClave(k.clave);
-  if (!clave) return null;
-  for (const [campo, c] of Object.entries(CAMPO_CLAVE)) if (c.categoria === k.categoria && c.clave === clave) return campo as CampoConClave;
-  return null;
-}
 
 /** «Vive en Tocoa» → «Tocoa» (la respuesta del perfil); si no tiene la forma de la plantilla, el texto entero. */
 export function respuestaDeDato(campo: CampoConClave, texto: string): string {

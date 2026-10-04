@@ -21,7 +21,7 @@ import { montarRutasApp } from './server/app-rutas';
 import { montarRutasCaras } from './server/caras-rutas';
 import { avisarComputadoraPorPush, avisarPush, llamarPorPush, montarRutasPush, proponerPorPush } from './server/push';
 import { montarRutasWindows, instruccionWindows } from './server/windows-rutas';
-import { actualizarPerfil, leerPerfil, lineaPerfil, perfilEnCache, sembrarDesdeGenesis, type Perfil } from './lib/perfil-persona';
+import { actualizarPerfil, leerPerfil, perfilEnCache, sembrarDesdeGenesis, type Perfil } from './lib/perfil-persona';
 import {
   abrirTurnoApp,
   ambitoApp,
@@ -109,12 +109,12 @@ import {
 import { avisosDeEnvio, borradorDe, correrCorreoConEstado, montarRutasCorreo, respuestaAlBorrador } from './server/correo';
 import { accionTareaPorId, bloqueTarea, correrTareaConEstado, precargarTareas, resolverTareaEnCurso, tareaDe, tareasDePersona } from './lib/tarea-en-curso';
 import { borradorWhatsappDe, correrWhatsappConEstado, destinoWhatsapp, montarRutasWhatsapp, whatsappDisponible, whatsappPermitido } from './server/whatsapp';
-import { accionIniciativa, arrancarIniciativa, bloqueIniciativaTurno, correrMisionTurnoConEstado, duenoMisiones, montarRutasIniciativa } from './server/iniciativa';
+import { accionIniciativa, bloqueIniciativaTurno, componerIniciativa, correrMisionTurnoConEstado, duenoMisiones } from './server/iniciativa';
+import { contadoresProductivos } from './server/fuentes-iniciativa';
+import { bloquesPersonales } from './server/contexto-turno';
 import { frenarIniciativa, pideApagarIniciativa, pideDejarDeProponer, type PersonaIniciativa } from './lib/iniciativa';
 import { montarRutasCerebroContinuo } from './server/cerebro-continuo';
-import { anotarTurnos, bloqueEpisodios, iniciarBarridoPausas, precargarCerebro } from './lib/episodios';
-import { bloqueAbiertos } from './lib/abiertos';
-import { bloqueConocer, firmaConocer } from './lib/conocer-persona';
+import { anotarTurnos, iniciarBarridoPausas, precargarCerebro } from './lib/episodios';
 import { correrCirculoConEstado, precargarCirculo } from './lib/circulo';
 import { correrTriajeConEstado } from './lib/triaje';
 import { fichaManosPrompt } from './lib/manos-ficha';
@@ -1515,7 +1515,10 @@ alAvisarApp((quien, aviso, aparato) => {
 montarRutasCorreo(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req) });
 montarRutasWhatsapp(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req) });
 // Lo que AU-RA propone por su cuenta y las misiones de cada persona (server/iniciativa.ts).
-montarRutasIniciativa(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req), nivelDe: (c) => nivelDeCorreo(c) });
+// UN adaptador de contadores (correo y WhatsApp de cada quien, server/fuentes-iniciativa.ts) para las rutas y para
+// el reloj: lo que se ve al pensar una propuesta y al revalidarla antes de mostrarla o avisarla sale de lo mismo.
+const iniciativa = componerIniciativa({ contadores: contadoresProductivos() });
+iniciativa.montarRutas(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req), nivelDe: (c) => nivelDeCorreo(c) });
 // Su cerebro continuo: lo que hablamos antes, lo que quedó a medias, lo que sé de ti, su círculo y sus mensajes ordenados.
 montarRutasCerebroContinuo(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req) });
 // Las tareas durables y el panel de tareas (server/trabajos.ts, AUR08): adapta la tarea en curso de cada
@@ -3135,7 +3138,10 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   const perfilPersona = await conApodoDelTurno(correoApp, message, hilo, await perfilPedido);
   const comoLeDecimos = perfilPersona?.apodo || (quien ? nombreDe(quien) : nombre) || undefined;
   // Sin apodo elegido, AURA se lo pregunta (una vez, con naturalidad) y lo recuerda.
-  const bloquePerfil = [lineaPerfil(perfilPersona), correoApp ? lineaApodoPendiente(perfilPersona, idiomaTurno === 'en' ? 'en' : 'es', { nombre }) : ''].filter(Boolean).join('\n');
+  // Lo personal del turno como VISTA AUTORIZADA (server/contexto-turno.ts): lo que la persona marcó «No usarlo»
+  // no entra ni por su perfil, ni por lo que AU-RA sabe de ella, ni por los resúmenes de antes (texto y voz).
+  const personal = bloquesPersonales({ dueno: duenoComputadora, perfil: perfilPersona, compacto, nombre: comoLeDecimos, consulta: message, conPregunta: !compacto });
+  const bloquePerfil = [personal.bloquePerfil, correoApp ? lineaApodoPendiente(perfilPersona, idiomaTurno === 'en' ? 'en' : 'es', { nombre }) : ''].filter(Boolean).join('\n');
   // Las reglas de la app van en el system (iguales turno a turno, el nodo no las relee); en el mensaje
   // del turno, solo lo de este momento: dónde está, sus contactos, lo que espera su «sí», la hora.
   // Qué puede hacer en ESTA plataforma (lib/manos-ficha.ts): lo ofrece sin miedo y nunca ofrece lo que aquí no hace.
@@ -3152,10 +3158,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   // (server/prompt-turno.ts).
   // Su cerebro continuo: lo que quedó a medias y lo que hablaron antes de esto (en el mensaje del turno), y
   // lo que AU-RA sabe de su vida (en lo fijo, sin la firma: aprender un dato no rehace el system).
-  const bloqueCerebro = duenoComputadora
-    ? [bloqueAbiertos(duenoComputadora, compacto), bloqueEpisodios(duenoComputadora, message, compacto)].filter(Boolean).join('\n\n')
-    : '';
-  const conocer = duenoComputadora ? bloqueConocer(duenoComputadora, compacto, { nombre: comoLeDecimos, conPregunta: !compacto }) : '';
+  const bloqueCerebro = personal.bloqueCerebro;
+  const conocer = personal.conocer;
   const argsPiezas: Parameters<typeof piezasDelTurno>[0] = {
     nivel,
     perfil,
@@ -3178,7 +3182,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     bloqueCerebro: bloqueCerebro ? neutralizarMarca(bloqueCerebro) : '',
     conocer: conocer ? neutralizarMarca(conocer) : '',
     // Corregir, limitar o borrar algo de lo que sabe rehace el system congelado (aprender algo no).
-    conocerFirma: duenoComputadora ? firmaConocer(duenoComputadora) : undefined,
+    conocerFirma: personal.conocerFirma,
   };
   const piezas = piezasDelTurno(argsPiezas);
   // Mientras la conversación sigue, el mismo fijo de antes si solo cambió la conversación (el hilo va en
@@ -5422,7 +5426,7 @@ async function startServer() {
       // Canales en orden: el de acciones de la app; si no estaba escuchando (0), push (FCM / Web Push).
       // La llamada solo para las clases urgentes que ella eligió Y si activó «llamada para urgentes».
       // Si no sale, la misma propuesta aparece al abrir la app (GET /api/iniciativa).
-      arrancarIniciativa({
+      iniciativa.arrancar({
         personas: () => personasRecientes(),
         entregadores: {
           app: (correo, a) => empujarAccion(correo, accionIniciativa(a.propuesta)).entregada,
