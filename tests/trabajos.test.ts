@@ -245,6 +245,9 @@ test('adaptador de la tarea en curso: mismo id, progreso con denominador real y 
   assert.deepEqual(s.decision?.options.map((o) => o.id), ['posponer', 'elegir:seguir', 'rechazar']);
   assert.match(s.currentStep || '', /Dani/);
   assert.equal(deTareaEnCurso({ ...t, estado: 'pausada' }).state, 'paused');
+  // Todos los pasos marcados no es evidencia: nunca «verified» sin evidencias (bloqueo 3, revisión del 4-oct).
+  const todos = deTareaEnCurso({ ...t, pasos: t.pasos.map((p) => ({ ...p, estado: 'hecho' as const })) });
+  assert.ok(todos.acceptance.every((c) => c.status !== 'verified' || c.evidenceIds.length > 0));
 });
 
 /* ------------------------------------------------------------------ rutas */

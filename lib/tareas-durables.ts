@@ -639,7 +639,7 @@ export function deTareaEnCurso(t: TareaEnCursoMin): TaskSnapshot {
     source: 'tarea-en-curso',
     title: t.titulo,
     objective: t.titulo,
-    acceptance: [{ id: 'pasos', text: `Ver los ${t.pasos.length} pasos`, required: true, status: hechos === t.pasos.length ? 'verified' : 'pending', evidenceIds: [] }],
+    acceptance: [{ id: 'pasos', text: `Ver los ${t.pasos.length} pasos`, required: true, status: hechos === t.pasos.length ? 'unknown' : 'pending', evidenceIds: [] }], // sin evidencia nunca es «verified»
     environment: { kind: t.tipo === 'correo' ? 'correo' : t.tipo === 'whatsapp' ? 'whatsapp' : 'chat', id: t.ambito, displayName: t.tipo === 'correo' ? 'Tu correo' : t.tipo === 'whatsapp' ? 'Tu WhatsApp' : 'Esta conversación' },
     ...(siguiente >= 0 ? { currentStep: `Sigue: ${t.pasos[siguiente].etiqueta}` } : {}),
     progress: { done: hechos, total: t.pasos.length, unit: 'pasos' },

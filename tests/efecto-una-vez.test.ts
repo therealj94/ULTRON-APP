@@ -310,7 +310,8 @@ test('repetición incierta: solo la acepta el «sí» del chat a esa pregunta; u
     assert.equal(mandados.length, 1);
     // 3) El «Aprobar» del panel para ese mismo borrador (la decisión de antes, que no vio la pregunta): no sale.
     assert.equal(C.borradorDe(quien, 'tel')?.intento, intento, 'el borrador espera la respuesta informada');
-    const panel = await C.resolverBorradorConEstado(quien, 'tel', 'sí', undefined, { desdePanel: true });
+    // Con la huella exacta del borrador (bloqueo 1): lo que frena aquí es el riesgo de repetir, no otra versión.
+    const panel = await C.resolverBorradorConEstado(quien, 'tel', 'sí', undefined, { desdePanel: true, huella: C.borradorDe(quien, 'tel')!.huella });
     assert.equal(mandados.length, 1, 'el panel no acepta el riesgo de repetir por la persona');
     assert.match(panel!.texto, /sin confirmar/);
     // 4) El «sí» del chat a la pregunta informada sí lo manda (una vez).
