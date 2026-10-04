@@ -25,6 +25,8 @@ interface Props {
   enlace?: EnlaceUrl;
   usuario: { name: string; role: string; authenticated: boolean };
   soundFxEnabled: boolean;
+  /** La puerta de la web: sin sesión no hay mesa, así que no se cierra (ni botón, ni Escape, ni fondo). */
+  obligatorio?: boolean;
   onClose: () => void;
   /** `correo`: el de la sesión, para la memoria por cuenta de la mesa (09-estado/memoria.ts). */
   onAuthSuccess: (nombre: string, rol: string, correo?: string) => void;
@@ -35,7 +37,7 @@ interface Props {
  * Acceso de junta: correo + clave contra el cerebro remoto. Sin escáner de huella de teatro:
  * la sesión firmada dura catorce días y se renueva sola.
  */
-export const AccesoModal: React.FC<Props> = ({ isOpen, enlace = null, usuario, soundFxEnabled, onClose, onAuthSuccess, onLogout }) => {
+export const AccesoModal: React.FC<Props> = ({ isOpen, enlace = null, usuario, soundFxEnabled, obligatorio = false, onClose, onAuthSuccess, onLogout }) => {
   const [vista, setVista] = useState<'entrar' | 'olvide' | 'solicitar' | 'poner' | 'clave' | 'solicitudes'>(() =>
     enlace && enlace.tipo !== 'solicitudes' ? 'poner' : 'entrar'
   );
@@ -143,10 +145,12 @@ export const AccesoModal: React.FC<Props> = ({ isOpen, enlace = null, usuario, s
   };
 
   return (
-    <Dialogo abierto={isOpen} onCerrar={onClose} idTitulo="aura-acceso-titulo" claseCapa="items-center justify-center p-3 sm:p-4" clase="aura-sube w-full max-w-md bg-(--aura-fondo) rounded-[28px] p-6 shadow-[0_16px_48px_rgba(0,0,0,0.53)] flex flex-col gap-4 relative overflow-hidden">
-        <button type="button" onClick={onClose} className="absolute top-4 right-4 w-9 h-9 rounded-full bg-(--aura-panel-2) text-(--aura-tinta-2) hover:bg-(--aura-oro-suave) flex items-center justify-center cursor-pointer" aria-label="Cerrar">
-          <X className="w-5 h-5" />
-        </button>
+    <Dialogo abierto={isOpen} onCerrar={obligatorio ? () => undefined : onClose} idTitulo="aura-acceso-titulo" claseCapa="items-center justify-center p-3 sm:p-4" clase="aura-sube w-full max-w-md bg-(--aura-fondo) rounded-[28px] p-6 shadow-[0_16px_48px_rgba(0,0,0,0.53)] flex flex-col gap-4 relative overflow-hidden">
+        {!obligatorio && (
+          <button type="button" onClick={onClose} className="absolute top-4 right-4 w-9 h-9 rounded-full bg-(--aura-panel-2) text-(--aura-tinta-2) hover:bg-(--aura-oro-suave) flex items-center justify-center cursor-pointer" aria-label="Cerrar">
+            <X className="w-5 h-5" />
+          </button>
+        )}
         <div>
           <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-(--aura-oro)/10 border border-(--aura-borde) text-[12px] font-mono text-(--aura-oro-texto) mb-1">
             <Globe className="w-3 h-3" />
@@ -154,7 +158,7 @@ export const AccesoModal: React.FC<Props> = ({ isOpen, enlace = null, usuario, s
             <span className={`w-1.5 h-1.5 rounded-full ${remoto === 'ok' ? 'bg-(--aura-salvia) animate-pulse' : remoto === 'off' ? 'bg-(--aura-barro)' : 'bg-(--aura-oro)'}`} />
           </div>
           <h2 id="aura-acceso-titulo" className="font-display font-semibold text-2xl text-(--aura-tinta)">{usuario.authenticated ? 'Tu sesión' : 'Entrar a la junta'}</h2>
-          <p className="text-[14px] leading-snug text-(--aura-tinta-2) mt-1">Con sesión: memoria propia, bóveda, redespliegue. Sin sesión, AU-RA igual conversa.</p>
+          <p className="text-[14px] leading-snug text-(--aura-tinta-2) mt-1">{usuario.authenticated ? 'Tu memoria, tu bóveda y tus manos van con tu sesión.' : 'AU-RA es privada: entrá con tu cuenta o con tu Genesis ID.'}</p>
         </div>
 
         {vista === 'poner' && enlaceVivo && enlaceVivo.tipo !== 'solicitudes' ? (

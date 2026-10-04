@@ -120,6 +120,11 @@ export default function App() {
 
   // ---- Sesión y memoria corta
   const [usuario, setUsuario] = useState({ name: '', role: 'Junta Directiva · Orden Global', authenticated: false });
+  /**
+   * ¿Ya se sabe si hay sesión? Sin sesión la web no abre la mesa (ni micrófono, ni voz): solo la puerta de
+   * entrar, con correo y clave o con Genesis ID (José, 4-oct: «deja acceder sin poner credenciales»).
+   */
+  const [sesionVista, setSesionVista] = useState<'comprobando' | 'si' | 'no'>('comprobando');
   const historialRef = useRef<{ rol: string; texto: string }[]>([]);
   const pendienteGenesis = useRef('');
   const pendienteGesto = useRef<(() => void) | null>(null);
@@ -336,13 +341,18 @@ export default function App() {
     fetch('/api/ultron/sesion', { headers: headersMesa() })
       .then((r) => r.json())
       .then((d) => {
-        if (vivo && d.authenticated && d.user) {
+        if (!vivo) return;
+        if (d.authenticated && d.user) {
           setUsuario({ name: d.user.nombre || '', role: d.user.rol || 'Junta Directiva · Orden Global', authenticated: true });
           // La memoria larga de este navegador es POR CUENTA (09-estado/memoria.ts).
           fijarCuenta(d.user.correo);
-        }
+          setSesionVista('si');
+        } else setSesionVista('no');
       })
-      .catch(() => {});
+      .catch(() => {
+        // Sin respuesta no se abre la mesa a ciegas: la puerta (que reintenta al entrar).
+        if (vivo) setSesionVista('no');
+      });
     setEstadoArranque('buscando el cerebro');
     Promise.race([fetch('/api/health').then((r) => r.json()).catch(() => null), new Promise((r) => setTimeout(() => r(null), 2500))]).then((h: any) => {
       if (!vivo) return;
@@ -647,7 +657,9 @@ export default function App() {
           return;
         }
         if (data.error === 'sesión requerida') {
-          setAccesoOpen(true);
+          // La sesión venció (o se cerró en otro lado): vuelve la puerta de entrar.
+          setUsuario({ name: '', role: 'Junta Directiva · Orden Global', authenticated: false });
+          setSesionVista('no');
           decir('Eso necesita tu sesión de junta. Entrá y lo hacemos.', { emocion: 'neutral' });
           cerrarTurno({ texto: 'Eso necesita tu sesión de junta. Entrá y lo hacemos.', estado: 'lista' });
           resultadoAccion('', 'sesión requerida');
@@ -961,7 +973,7 @@ export default function App() {
 
   // ---- OÍDO continuo con barge-in.
   useOido({
-    activo: micEnabled && !isBooting && !vivoAbierta,
+    activo: micEnabled && !isBooting && !vivoAbierta && usuario.authenticated,
     dichos: () => registroVoz.dichos(),
     hablando: () => !!hablando.current || registroVoz.hablando(),
     onFinal: (t) => {
@@ -1059,6 +1071,32 @@ export default function App() {
     document.getElementById(`aura-modo-${MODOS_MESA[j].id}`)?.focus();
   };
   const puntoEstado = cerebroListo === 'listo' ? 'bg-(--aura-salvia)' : cerebroListo === 'calentando' ? 'bg-(--aura-oro)' : 'bg-(--aura-barro)';
+
+  // Sin sesión: solo la puerta. La mesa no se monta (ni su micrófono, ni su voz, ni sus paneles).
+  if (!usuario.authenticated && sesionVista === 'no') {
+    return (
+      <div id="ultron-app-root" className="aura relative w-screen h-screen supports-[height:100dvh]:h-dvh overflow-hidden flex items-center justify-center" style={variablesTema} data-tema={tema}>
+        <div className="font-display text-3xl font-semibold text-(--aura-tinta) opacity-40" aria-hidden="true">
+          AU-RA
+        </div>
+        <AccesoModal
+          isOpen
+          obligatorio
+          enlace={enlaceCorreo}
+          usuario={usuario}
+          soundFxEnabled={soundFxEnabled}
+          onClose={() => undefined}
+          onAuthSuccess={(name, role, correo) => {
+            setUsuario({ name, role, authenticated: true });
+            fijarCuenta(correo);
+            setSesionVista('si');
+            decir(saludoDe(name).id, { emocion: 'feliz' });
+          }}
+          onLogout={() => undefined}
+        />
+      </div>
+    );
+  }
 
   return (
     <div
@@ -1431,6 +1469,8 @@ export default function App() {
           }}
           onLogout={() => {
             setUsuario({ name: '', role: 'Junta Directiva · Orden Global', authenticated: false });
+            // Sin sesión vuelve la puerta: la mesa no queda abierta para quien llegue después.
+            setSesionVista('no');
             // La memoria larga de esta cuenta deja de leerse (queda en su cajón para su vuelta).
             fijarCuenta(null);
             // Tableta compartida: quien entre después no hereda la conversación ni las fotos.
