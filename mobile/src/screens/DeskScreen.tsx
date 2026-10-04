@@ -458,6 +458,13 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const lastUserAt = useRef(Date.now());
   const historial = useRef<Turn[]>([]);
   const longMemory = useRef<string[]>([]);
+  // El hilo es de UNA cuenta: si la mesa siguiera montada al entrar otra, no viaja nada de la anterior.
+  const historialDe = useRef(user.correo);
+  if (historialDe.current !== user.correo) {
+    historial.current = [];
+    longMemory.current = [];
+    historialDe.current = user.correo;
+  }
   const lastTapAt = useRef(0);
   const listenOffTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recentTaps = useRef<number[]>([]);
