@@ -16,10 +16,18 @@ const nada: ManosDelTurno = { app: false, manos: [], sistema: false, computadora
 /** La acción de la app que sale de una línea, ya validada como la valida el servidor. */
 function accionDe(linea: string | null) {
   assert.ok(linea, 'sin línea');
-  const { acciones, texto } = extraerAcciones(`Va.\n${linea}`);
-  assert.equal(texto.trim(), 'Va.', 'la línea no se dice');
-  assert.equal(acciones.length, 1);
-  return validarAccion(acciones[0]);
+  // Extraer y validar miran el reloj (un recordatorio en el pasado no vale): se hace en el mismo AHORA de la prueba,
+  // no en la hora real (antes, pasada esa hora, «en 30 s» caía en el pasado y la prueba fallaba sola).
+  const real = Date.now;
+  Date.now = () => AHORA;
+  try {
+    const { acciones, texto } = extraerAcciones(`Va.\n${linea}`);
+    assert.equal(texto.trim(), 'Va.', 'la línea no se dice');
+    assert.equal(acciones.length, 1);
+    return validarAccion(acciones[0]);
+  } finally {
+    Date.now = real;
+  }
 }
 
 test('cada turno tiene solo las herramientas que puede usar', () => {
