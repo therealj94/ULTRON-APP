@@ -42,7 +42,7 @@ import {
   reservarPedido,
   type AlmacenDurable,
 } from './durable';
-import { compararEntrega, comprobarCopia, esConsulta, esOperacionDeArchivos, esTextoEnChat, faltaEnPalabras, nombresEn, respuestaConTexto, requisitosCombinados, requisitosDeEntrega, type ArchivoNodo, type ItemEntrega, type PedidoEntrega } from './entregables';
+import { compararEntrega, comprobarCopia, esConsulta, esOperacionDeArchivos, esTextoEnChat, faltaEnPalabras, nombresEn, respuestaConTexto, textoSinAcuses, requisitosCombinados, requisitosDeEntrega, type ArchivoNodo, type ItemEntrega, type PedidoEntrega } from './entregables';
 
 export { esConsulta, esOperacionDeArchivos, nombresEn, requisitosCombinados, requisitosDeEntrega, type ArchivoNodo, type ItemEntrega, type PedidoEntrega } from './entregables';
 
@@ -703,6 +703,8 @@ export type MisionComputadoraMin = {
   archivos?: ArchivoNodo[] | null;
   /** Lo que se pidió, calculado UNA vez al crear la misión con lo que pidió la persona (R5). Sin él, de la instrucción. */
   requisitos?: PedidoEntrega | null;
+  /** Lo que pidió la PERSONA en su turno (G2-C): la acción, el archivo o el producto cuentan si aparecen en cualquiera de las dos. */
+  pedidoPersona?: string | null;
 };
 
 /** El estado del nodo en el vocabulario de la sección 6. */
@@ -818,12 +820,16 @@ export type Entrega = { comprobada: boolean; tipo: 'archivo' | 'accion' | 'dato'
 /** El id de la evidencia de un requisito verificado: uno por requisito, nunca compartido. */
 const idEvidenciaItem = (misionId: string, itemId: string) => `${misionId}:archivo:${itemId}`;
 
-export function evaluarEntrega(m: Pick<MisionComputadoraMin, 'id' | 'instruccion' | 'resultado' | 'enlaces' | 'datos' | 'archivos' | 'requisitos'>): Entrega {
+export function evaluarEntrega(m: Pick<MisionComputadoraMin, 'id' | 'instruccion' | 'resultado' | 'enlaces' | 'datos' | 'archivos' | 'requisitos'> & { pedidoPersona?: string | null }): Entrega {
   const abiertas: Evidencia[] = (m.enlaces || []).slice(0, 6).map((u, i) => ({ id: `${m.id}:enlace:${i}`, tipo: 'enlace', etiqueta: texto(u, 120), ref: u }));
   const lista = Array.isArray(m.archivos) ? m.archivos : null;
   // R1: un archivo que se nombró (el modelo dijo «guardé X», o la instrucción lo usa) y no existe no deja completar por
   // ningún camino; la misión se evalúa como de archivos y ese archivo es un criterio no cumplido.
-  const req = m.requisitos || null;
+  // G2-C: lo que pidió la persona y lo que encargó el modelo; la acción, el archivo o el producto cuentan si aparecen en
+  // cualquiera de las dos, la consulta solo si lo es en ambas.
+  const pedidoPersona = m.pedidoPersona ?? m.requisitos?.pedidoPersona ?? null;
+  const textos = [m.instruccion, pedidoPersona].filter((x): x is string => !!x && !!String(x).trim());
+  const req = m.requisitos || (pedidoPersona ? requisitosCombinados(m.instruccion, pedidoPersona) : null);
   // «el informe final.pdf»: si existe «informe final.pdf», que «final.pdf» no esté no es un nombrado que falte.
   const alternativas = (req || requisitosDeEntrega(m.instruccion)).items.filter((r) => r.alternativa);
   const resuelto = (a: ArchivoNodo) => alternativas.some((r) => r.nombre!.toLowerCase() === String(a.ruta).split('/').pop()!.toLowerCase() && (lista || []).some((b) => b.existe === true && String(b.ruta).split('/').pop()!.toLowerCase() === r.alternativa!.toLowerCase()));
@@ -831,7 +837,7 @@ export function evaluarEntrega(m: Pick<MisionComputadoraMin, 'id' | 'instruccion
   // Copiar, mover, renombrar, borrar o descomprimir: ACCIONES sobre archivos que ya existen. El texto no las comprueba;
   // solo una copia que el nodo muestre en la carpeta pedida con la MISMA huella que el original (comprobarCopia).
   // Si lo que pidió la persona (R5) trae entregables concretos, se comprueban esos (camino de archivos).
-  if (esOperacionDeArchivos(m.instruccion) && !(m.requisitos && m.requisitos.explicitos > 0)) {
+  if (textos.some((t) => esOperacionDeArchivos(t)) && !(req && req.explicitos > 0)) {
     const copia = !nombradoQueFalta && lista ? comprobarCopia(m.instruccion, lista) : null;
     if (copia) {
       const ev: Evidencia = { id: `${m.id}:copia`, tipo: 'archivo', etiqueta: texto(`${copia.detalle} (lo comprobó tu computadora)`, 200), ref: texto(copia.destino.ruta, 300) };
@@ -848,9 +854,9 @@ export function evaluarEntrega(m: Pick<MisionComputadoraMin, 'id' | 'instruccion
       revisado: !!lista,
     };
   }
-  if (nombradoQueFalta || pideArchivo(m.instruccion, m.resultado, m.requisitos)) {
+  if (nombradoQueFalta || textos.some((t) => pideArchivo(t, m.resultado, req))) {
     // Cada cosa pedida, por separado: su archivo (a lo más uno), su tipo por dentro, de esta misión, en su carpeta.
-    const { items, seguro, sobran } = compararEntrega(m.instruccion, lista, m.requisitos);
+    const { items, seguro, sobran } = compararEntrega(m.instruccion, lista, req);
     const pedidos = items.filter((i) => i.origen === 'pedido');
     const hechos = pedidos.filter((i) => i.estado === 'verified').length;
     const comprobada = seguro && items.length > 0 && items.every((i) => i.estado === 'verified');
@@ -864,17 +870,18 @@ export function evaluarEntrega(m: Pick<MisionComputadoraMin, 'id' | 'instruccion
       }));
     return { comprobada, tipo: 'archivo', evidencias: [...archivos, ...abiertas], falta: comprobada ? null : faltaEnPalabras(items, sobran, !lista), items, hechos, total: pedidos.length, revisado: !!lista };
   }
-  if (pideAccion(m.instruccion)) {
+  if (textos.some((t) => pideAccion(t))) {
     return { comprobada: false, tipo: 'accion', evidencias: abiertas, falta: 'Tu computadora dice que lo hizo, pero no pude comprobarlo desde aquí: revísalo antes de darlo por hecho.', items: [], hechos: 0, total: 1, revisado: true };
   }
   // Cerrado por defecto (ronda 5): solo una CONSULTA pura se completa con el texto. Lo que no se puede decidir no es dato.
   // Texto que va en la respuesta misma («hazme un resumen de la noticia», «tradúceme esto»): la respuesta ES la entrega,
   // si trae el texto (no un acuse: «Listo, ya está» no es un resumen).
-  const textoEnChat = esTextoEnChat(m.instruccion, req);
-  if (textoEnChat && !(respuestaInformativa(m.resultado) && respuestaConTexto(m.resultado))) {
+  // El texto en el chat solo vale si ninguna de las dos pide otra cosa (cada una es texto en el chat o una consulta).
+  const textoEnChat = textos.some((t) => esTextoEnChat(t, req)) && textos.every((t) => esTextoEnChat(t, req) || esConsulta(t));
+  if (textoEnChat && !(respuestaInformativa(textoSinAcuses(String(m.resultado || ''))) && respuestaConTexto(m.resultado, m.datos))) {
     return { comprobada: false, tipo: 'dato', evidencias: abiertas, falta: m.resultado ? 'Tu computadora dice que terminó, pero su respuesta no trae el texto que pediste: no pude comprobarlo.' : 'Terminó sin el texto que pediste.', items: [], hechos: 0, total: 1, revisado: true };
   }
-  if (!textoEnChat && !esConsulta(m.instruccion)) {
+  if (!textoEnChat && !textos.every((t) => esConsulta(t))) {
     return { comprobada: false, tipo: 'accion', evidencias: abiertas, falta: 'No sé comprobar desde aquí lo que pediste: no es una consulta que se responda con un dato, ni dejó algo que tu computadora pueda revisar.', items: [], hechos: 0, total: 1, revisado: true };
   }
   if (!respuestaInformativa(m.resultado)) {

@@ -532,6 +532,8 @@ type Mision = {
    * (lib/entregables.ts `requisitosCombinados`: gana lo más exigente). No se recalcula con otro texto después.
    */
   requisitos?: PedidoEntrega;
+  /** Lo que pidió la PERSONA en su turno, tal cual (G2-C): la entrega se evalúa sobre esto y sobre lo que encargó el modelo. */
+  pedidoPersona?: string;
   inicio: number;
   tareas: string[];
   /** El paso del plan en que va (nunca retrocede). */
@@ -904,6 +906,9 @@ export function archivosDe(t: Pick<Tarea, 'archivos'>): ArchivoNodo[] | null {
             // Lo que el nodo vio por dentro (agente.py nuevo). Sin el campo: tipo sin comprobar.
             ...(typeof a.tipo === 'string' && /^[a-z0-9]{1,12}$/.test(a.tipo) ? { tipo: a.tipo } : {}),
             ...(typeof a.magia === 'string' && /^[0-9a-f]{2,32}$/.test(a.magia) ? { magia: a.magia } : {}),
+            // Si lo vio entero (agente.py `integridad`); sin el campo: un nodo de antes, sin comprobar.
+            ...(typeof a.integro === 'boolean' ? { integro: a.integro } : {}),
+            ...(typeof a.defecto === 'string' ? { defecto: a.defecto.slice(0, 120) } : {}),
           },
         ]
       : []
@@ -1506,6 +1511,7 @@ async function crearEncargo(o: {
     plan: o.plan?.pasos ?? planDeMision(o.instruccion, o.idioma),
     planDelCerebro: !!o.plan?.delCerebro,
     requisitos: requisitosCombinados(o.instruccion, o.pedidoPersona),
+    ...(o.pedidoPersona ? { pedidoPersona: String(o.pedidoPersona).slice(0, 2000) } : {}),
     inicio: ahora,
     tareas: [],
     indice: 0,

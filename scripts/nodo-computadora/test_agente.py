@@ -1374,7 +1374,7 @@ class ArchivosComprobados(Base):
         self.assertEqual(r['archivos'], [{'ruta': rutas['r'], 'existe': True, 'bytes': 10,
                                           'sha256': hashlib.sha256(b'hola mundo').hexdigest(), 'reciente': True, 'mencionado': True,
                                           # Se llama .odt pero por dentro es texto: el nodo dice lo que ES, no lo que dice el nombre.
-                                          'tipo': 'texto', 'magia': b'hola mun'.hex()}])
+                                          'tipo': 'texto', 'magia': b'hola mun'.hex(), 'integro': True}])
 
     def test_lo_nuevo_sin_nombrar_cuenta_y_lo_oculto_o_viejo_no(self):
         def antes(t):
@@ -1561,6 +1561,71 @@ class ArchivosComprobados(Base):
         n = self.por_nombre(r)
         self.assertEqual({k: (a['existe'], a['mencionado'], a['tipo']) for k, a in n.items()},
                          {'informe final.pdf': (True, True, 'pdf'), 'cotización.xlsx': (True, True, 'xlsx')})
+
+    # ---- Ronda 6, G2-A: la integridad es estructural (no solo la cabecera), con od/head/tail/grep (y unzip si hay).
+
+    PDF_VALIDO = (b'%PDF-1.4\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n'
+                  b'2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n'
+                  b'3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >> endobj\n'
+                  b'xref\n0 4\n0000000000 65535 f \ntrailer << /Size 4 /Root 1 0 R >>\nstartxref\n200\n%%EOF\n')
+
+    @staticmethod
+    def png_valido():
+        import struct
+        import zlib
+
+        def trozo(tipo, datos):
+            return struct.pack('>I', len(datos)) + tipo + datos + struct.pack('>I', zlib.crc32(tipo + datos) & 0xffffffff)
+        return (b'\x89PNG\r\n\x1a\n' + trozo(b'IHDR', struct.pack('>IIBBBBB', 1, 1, 8, 0, 0, 0, 0))
+                + trozo(b'IDAT', zlib.compress(b'\x00\x00')) + trozo(b'IEND', b''))
+
+    def test_integridad_estructural(self):
+        docx = self.ooxml('word/document.xml')
+        casos = {
+            'bueno.pdf': (self.PDF_VALIDO, True),
+            'corto.pdf': (b'%PDF-', False),
+            'sin_eof.pdf': (self.PDF_VALIDO[:-7] + b' ' * 40, False),
+            'sin_pagina.pdf': (self.PDF, False),
+            'bueno.docx': (docx, True),
+            'falso.docx': (b'PK\x03\x04' + b'\x00' * 26 + b'word/document.xml', False),
+            'cortado.docx': (docx[:len(docx) // 2], False),
+            'bueno.xlsx': (self.ooxml('xl/workbook.xml'), True),
+            'falso.xlsx': (b'PK\x03\x04' + b'\x00' * 26 + b'xl/workbook.xml' + b'\x00' * 14, False),
+            'corto.zip': (b'PK\x03\x04', False),
+            'bueno.zip': (self.ooxml('otra/cosa.xml'), True),
+            'bueno.png': (self.png_valido(), True),
+            'sin_iend.png': (self.png_valido()[:-12], False),
+            'bueno.jpg': (b'\xff\xd8\xff\xe0' + b'\x00' * 40 + b'\xff\xd9', True),
+            'cortado.jpg': (b'\xff\xd8\xff\xe0' + b'\x00' * 40, False),
+            'datos.csv': (b'a,b\n1,2\n', True),
+        }
+
+        def antes(t):
+            for k, (v, _) in casos.items():
+                self.escribir(k, v)
+        r = self.correr_y_archivos('Listo.', instruccion='Guarda los archivos', antes=antes)
+        n = self.por_nombre(r)
+        self.assertEqual({k: n[k].get('integro') for k in casos}, {k: v[1] for k, v in casos.items()})
+        self.assertTrue(all(n[k].get('defecto') for k, (_, bueno) in casos.items() if not bueno), 'lo que no está entero dice por qué')
+
+    def test_tres_documentos_uno_truncado(self):
+        """El caso base de punta a punta en el nodo: tres archivos, uno truncado; y los tres válidos."""
+        cont = {'informe.docx': self.ooxml('word/document.xml'), 'presupuesto.xlsx': self.ooxml('xl/workbook.xml'), 'carta.pdf': self.PDF_VALIDO}
+
+        def con(trunca):
+            def antes(t):
+                for k, v in cont.items():
+                    self.escribir(f'Documents/{k}', v[:len(v) // 3] if k == trunca else v)
+            return antes
+        n = self.por_nombre(self.correr_y_archivos('Listo.', instruccion=self.TRES, antes=con('presupuesto.xlsx')))
+        self.assertEqual({k: n[k]['integro'] for k in cont}, {'informe.docx': True, 'presupuesto.xlsx': False, 'carta.pdf': True})
+        n = self.por_nombre(self.correr_y_archivos('Listo.', instruccion=self.TRES, antes=con(None)))
+        self.assertEqual({k: (n[k]['tipo'], n[k]['integro']) for k in cont}, {'informe.docx': ('docx', True), 'presupuesto.xlsx': ('xlsx', True), 'carta.pdf': ('pdf', True)})
+
+    def test_nombres_con_apostrofo(self):
+        """Ronda 6, G2-E: «O'Brien.pdf» entero (no «Brien.pdf»), también entre comillas simples."""
+        self.assertEqual(agente.rutas_mencionadas("Crea O'Brien.pdf y O’Neil.docx"), ["O'Brien.pdf", 'O’Neil.docx'])
+        self.assertEqual(agente.rutas_mencionadas("Guarda 'O'Brien.pdf' en Documents"), ["O'Brien.pdf"])
 
     def test_lo_que_nombra_sale_de_la_instruccion_y_la_respuesta_no_de_una_url(self):
         self.assertEqual(agente.rutas_mencionadas('Guarda la tabla en ~/Documents/precios.ods',

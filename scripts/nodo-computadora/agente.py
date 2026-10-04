@@ -814,9 +814,10 @@ EXTENSIONES = 'odt|ods|odp|odg|docx?|xlsx?|pptx?|pdf|txt|csv|tsv|md|rtf|html?|js
 RE_URL = re.compile(r'\b(?:https?|ftp)://\S+|\bwww\.\S+', re.I)
 # Igual que el servidor (lib/entregables.ts RE_NOMBRE): \w de Python ya es Unicode («cotización.xlsx» entero), y un
 # paréntesis antes de la extensión es parte del nombre («reporte (1).pdf», «reporte (versión final).docx»).
-RE_ARCHIVO = re.compile(r'(?<![\w/.~-])((?:~/|/|\.\./|\./)?(?:[\w.-]+/)*[\w-][\w.-]*(?:\s?\([^()\n]{1,40}\))?\.(?:' + EXTENSIONES + r'))(?![\w-])', re.I)
+RE_ARCHIVO = re.compile(r"(?<![\w/.~'’-])((?:~/|/|\.\./|\./)?(?:[\w.-]+/)*[\w-](?:[\w.-]|(?<=\w)['’](?=\w))*(?:\s?\([^()\n]{1,40}\))?\.(?:" + EXTENSIONES + r"))(?![\w-])", re.I)
 # Entre comillas, completo y con espacios: «informe final.pdf», "mis notas.txt".
-RE_ARCHIVO_COMILLAS = re.compile(r'["«“\'‘]([^"»”\'’\n]{1,120}?\.(?:' + EXTENSIONES + r'))["»”\'’]', re.I)
+# Un apóstrofo ENTRE letras («O'Brien») no cierra la comilla.
+RE_ARCHIVO_COMILLAS = re.compile(r'["«“\'‘]((?:[^"»”\'’\n]|(?<=\w)[\'’](?=\w)){1,120}?\.(?:' + EXTENSIONES + r'))["»”\'’]', re.I)
 
 
 def rutas_mencionadas(*textos):
@@ -851,6 +852,8 @@ def ruta_en_espacio(ruta):
 
 
 MAGIA_BYTES = 512  # cuánto del principio de cada archivo se mira para saber qué es por dentro
+COLA_BYTES = 1024  # cuánto del final se mira (%%EOF, IEND, FFD9)
+ZIP_COLA_BYTES = 65558  # el fin del directorio central de un ZIP está en los últimos 65 535 + 22 bytes
 RE_MARCA_OOXML = r'word/document\.xml|xl/workbook\.xml|ppt/presentation\.xml'
 MIME_ODF = {
     'application/vnd.oasis.opendocument.text': 'odt',
@@ -903,6 +906,59 @@ def tipo_por_dentro(magia_hex, marca, tam):
     return 'binario'
 
 
+def integridad(tipo, magia_hex, cola_hex, verif, tam):
+    """¿El archivo está ENTERO, no solo con la cabecera bien? (True, ''), (False, por qué) o (None, por qué) si no se
+    sabe validar. Revisión externa (ronda 6): un PDF de 9 bytes con «%PDF-», un docx de 47 bytes con la cadena
+    «word/document.xml» o un zip de 4 bytes ya no pasan."""
+    try:
+        cab = bytes.fromhex(magia_hex or '')
+        cola = bytes.fromhex(cola_hex or '')
+    except ValueError:
+        return None, 'no pude leerlo'
+    v = dict(x.split('=', 1) for x in (verif or '').split(';') if '=' in x)
+    if tam == 0 or tipo == 'vacio':
+        return False, 'está vacío'
+    if tipo == 'pdf':
+        if tam < 200:
+            return False, f'solo tiene {tam} bytes'
+        if b'%%EOF' not in cola:
+            return False, 'le falta el final (%%EOF): está cortado'
+        if not v.get('paginas', '0').isdigit() or int(v.get('paginas', '0')) < 1:
+            return False, 'no tiene ninguna página'
+        return True, ''
+    if tipo in ('docx', 'xlsx', 'pptx', 'odt', 'ods', 'odp', 'odg', 'zip'):
+        if v.get('eocd') != '1':
+            return False, 'le falta el fin del directorio del ZIP: está cortado'
+        if v.get('cd') != '1':
+            return False, 'el ZIP no tiene entradas'
+        if v.get('unzip') == 'mal':
+            return False, 'unzip dice que está dañado'
+        if tipo in ('docx', 'xlsx', 'pptx'):
+            principal = {'docx': 'word/document.xml', 'xlsx': 'xl/workbook.xml', 'pptx': 'ppt/presentation.xml'}[tipo]
+            if not v.get('ct', '0').isdigit() or int(v.get('ct', '0')) < 1:
+                return False, 'le falta [Content_Types].xml'
+            if v.get('pp') != principal:
+                return False, f'le falta {principal} en el directorio'
+        return True, ''
+    if tipo == 'png':
+        if cab[12:16] != b'IHDR':
+            return False, 'le falta IHDR al principio'
+        if b'IEND' not in cola[-12:]:
+            return False, 'le falta IEND: está cortado'
+        return True, ''
+    if tipo == 'jpeg':
+        return (True, '') if cola[-2:] == b'\xff\xd9' else (False, 'le falta el final (FFD9): está cortado')
+    if tipo == 'gif':
+        return (True, '') if cola[-1:] == b'\x3b' else (False, 'le falta el final: está cortado')
+    if tipo == 'webp':
+        return (True, '') if len(cab) >= 8 and int.from_bytes(cab[4:8], 'little') + 8 == tam else (False, 'el tamaño no cuadra: está cortado')
+    if tipo == 'rtf':
+        return (True, '') if b'}' in cola else (False, 'le falta el cierre: está cortado')
+    if tipo == 'texto':
+        return True, ''
+    return None, 'no sé comprobar que esté entero'
+
+
 def comando_archivos(nombres, minutos):
     """El comando que corre DENTRO del escritorio: los archivos normales del espacio de trabajo (ni enlaces ni nada
     oculto, como el perfil de Firefox) que se llaman como lo nombrado o que cambiaron en los últimos `minutos`, con su
@@ -917,10 +973,24 @@ def comando_archivos(nombres, minutos):
     return (f'cd {q} 2>/dev/null || {{ echo SIN_ESPACIO; exit 0; }}; '
             '{ ' + '; '.join(partes) + "; } 2>/dev/null | awk '!v[$0]++' | head -n 40 | "
             'while IFS= read -r f; do '
-            f'm=$(head -c {MAGIA_BYTES} -- "$f" 2>/dev/null | od -An -v -tx1 | tr -d " \\n"); z=""; '
-            f'case "$m" in 504b0304*) z=$(LC_ALL=C grep -a -o -m1 -E {shlex.quote(RE_MARCA_OOXML)} -- "$f" 2>/dev/null | head -n 1);; esac; '
-            'printf "%s\\t%s\\t%s\\t%s\\t%s\\n" "$(stat -c "%s %Y" -- "$f")" '
-            '"$(sha256sum -- "$f" | cut -d" " -f1)" "$m" "$z" "$f"; done')
+            f'm=$(head -c {MAGIA_BYTES} -- "$f" 2>/dev/null | od -An -v -tx1 | tr -d " \\n"); z=""; v=""; '
+            # La cola (los últimos COLA_BYTES): %%EOF de un PDF, IEND de un PNG, FFD9 de un JPEG.
+            f'c=$(tail -c {COLA_BYTES} -- "$f" 2>/dev/null | od -An -v -tx1 | tr -d " \\n"); '
+            # Un ZIP (docx, xlsx, pptx, odt…): el fin del directorio central (PK 05 06) y sus entradas (PK 01 02) en los
+            # últimos 65 558 bytes, [Content_Types].xml y la parte principal; unzip -tq si está en el escritorio.
+            'case "$m" in 504b0304*) '
+            f'z=$(LC_ALL=C grep -a -o -m1 -E {shlex.quote(RE_MARCA_OOXML)} -- "$f" 2>/dev/null | head -n 1); '
+            # Con los espacios de od: « 50 4b 05 06» solo casa en el límite de un byte.
+            f't=$(tail -c {ZIP_COLA_BYTES} -- "$f" 2>/dev/null | od -An -v -tx1 | tr -s " \\n" "  "); '
+            'case "$t" in *" 50 4b 05 06"*) e=1;; *) e=0;; esac; case "$t" in *" 50 4b 01 02"*) d=1;; *) d=0;; esac; '
+            f'ct=$(tail -c {ZIP_COLA_BYTES} -- "$f" 2>/dev/null | LC_ALL=C grep -a -c -F "[Content_Types].xml"); '
+            f'pp=$(tail -c {ZIP_COLA_BYTES} -- "$f" 2>/dev/null | LC_ALL=C grep -a -o -E {shlex.quote(RE_MARCA_OOXML)} | head -n 1); '
+            'if command -v unzip >/dev/null 2>&1; then unzip -tq "$f" >/dev/null 2>&1 && u=ok || u=mal; else u=na; fi; '
+            'v="eocd=$e;cd=$d;ct=$ct;pp=$pp;unzip=$u";; '
+            # Un PDF: al menos una /Page (no /Pages).
+            '25504446*) pg=$(LC_ALL=C grep -a -c -E "/Page([^s]|$)" -- "$f" 2>/dev/null); v="paginas=$pg";; esac; '
+            'printf "%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n" "$(stat -c "%s %Y" -- "$f")" '
+            '"$(sha256sum -- "$f" | cut -d" " -f1)" "$m" "$z" "$c" "$v" "$f"; done')
 
 
 def comprobar_archivos(t, respuesta):
@@ -941,16 +1011,17 @@ def comprobar_archivos(t, respuesta):
     if salida.strip() == 'SIN_ESPACIO':
         return None, f'no encontré el espacio de trabajo ({ESPACIO_TRABAJO})'
 
-    def es(a, n, dentro):  # sin distinguir mayúsculas, como el servidor
-        return a['ruta'].lower() == dentro.lower() if dentro else posixpath.basename(a['ruta']).lower() == posixpath.basename(n).lower()
+    def es(a, n, dentro):  # sin distinguir mayúsculas ni NFC/NFD, como el servidor
+        nfc = lambda x: unicodedata.normalize('NFC', x).lower()  # noqa: E731
+        return nfc(a['ruta']) == nfc(dentro) if dentro else nfc(posixpath.basename(a['ruta'])) == nfc(posixpath.basename(n))
 
     archivos = []
     for linea in salida.splitlines():
-        partes = linea.split('\t', 4)
-        tam = partes[0].split() if len(partes) == 5 else []
+        partes = linea.split('\t', 6)
+        tam = partes[0].split() if len(partes) == 7 else []
         if len(tam) != 2 or not re.fullmatch(r'[0-9a-f]{64}', partes[1]):
             continue
-        ruta = posixpath.normpath(partes[4])
+        ruta = posixpath.normpath(partes[6])
         if not ruta.startswith(ESPACIO_TRABAJO + '/'):
             continue
         try:
@@ -962,6 +1033,11 @@ def comprobar_archivos(t, respuesta):
         if tipo:  # sin poder leerlo por dentro no se inventa un tipo: queda «sin comprobar»
             a['tipo'] = tipo
             a['magia'] = magia[:16]
+            cola = partes[4] if re.fullmatch(r'[0-9a-f]*', partes[4]) else ''
+            entero, defecto = integridad(tipo, magia, cola, partes[5].strip(), a['bytes'])
+            a['integro'] = entero
+            if defecto:
+                a['defecto'] = defecto
         a['mencionado'] = any(es(a, n, dentro) for n, dentro in buscar)
         if a['reciente'] or a['mencionado']:
             archivos.append(a)

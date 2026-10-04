@@ -3810,6 +3810,8 @@ function misionesComputadora(correo: string): MisionComputadoraMin[] {
       ...(v?.final ? { enlaces: v.final.visitados, datos: v.final.datos, archivos: v.final.archivos } : {}),
       // Lo que se pidió, guardado al crear la misión (R5): no se recalcula con otro texto.
       ...(m?.requisitos ? { requisitos: m.requisitos } : {}),
+      // Lo que pidió la persona (G2-C): la acción o el archivo que pidió cuentan aunque el modelo encargara solo la consulta.
+      ...(m?.pedidoPersona ? { pedidoPersona: m.pedidoPersona } : {}),
     };
   });
 }
