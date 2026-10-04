@@ -288,6 +288,105 @@ test('otros cierres: la evidencia va a SU criterio (investigar), y el encargo na
 
 /* ------------------------------------------------------------------ el servidor contra un nodo: lo que AURA dice */
 
+/* ------------------------------------------------------------------ revisión independiente: los huecos */
+
+const pdfNuevo = (n: string, s: string, carpeta = 'Downloads'): A => ({ ruta: `${ESP}/${carpeta}/${n}`, existe: true, bytes: 4000, sha256: sha(s), reciente: true, tipo: 'pdf' });
+const etiquetas = (r: { items: { nombre?: string; extensiones: string[] }[] }) => r.items.map((i) => i.nombre ?? i.extensiones.join('|'));
+
+test('revisión 1: plurales y capturas también piden archivos; una misión de archivos nunca se completa por el texto', async () => {
+  const { pideArchivo } = await import('../lib/tareas-durables');
+  {
+    // Lo que pasaba: tipo «dato» y completed con una respuesta que solo cuenta lo que hizo.
+    const antes = cerrar('Crea tres PDFs con las facturas', [], 'Listo, terminé las tres facturas de septiembre del proveedor Ferretería Central.');
+    assert.equal(antes.c.estado, 'partial', 'sin PDFs no hay completed');
+  }
+  assert.equal(pideArchivo('Crea tres PDFs con las facturas'), true);
+  assert.equal(pideArchivo('Crea dos documentos: el acta y el anexo'), true);
+  assert.equal(pideArchivo('Haz una captura de pantalla de la página'), true);
+  assert.equal(pideArchivo('Busca el clima de Tegucigalpa'), false, 'lo legítimo sin archivos sigue siendo un dato');
+  assert.equal(pideArchivo('Busca fotos de Copán y dime cuál te gusta'), false, 'buscar fotos no es dejarlas');
+  // Antes: sin PDFs comprobados caía en «dato» y una respuesta con palabras («…del proveedor Ferretería Central») la completaba.
+  for (const archivos of [[], undefined]) {
+    const tres = cerrar('Crea tres PDFs con las facturas', archivos, 'Listo, terminé las tres facturas de septiembre del proveedor Ferretería Central.');
+    assert.equal(tres.c.estado, 'partial', `«Listo, terminé» no completa una misión de archivos (${JSON.stringify(archivos)})`);
+    assert.equal(tres.criterios.length, 3);
+    assert.ok(tres.criterios.every((x) => x.estado !== 'verified'));
+    assert.equal(evaluarEntrega(mision('Crea tres PDFs con las facturas', archivos, 'Listo, terminé las tres facturas de septiembre del proveedor Ferretería Central.')).tipo, 'archivo');
+  }
+  const dos = cerrar('Crea dos documentos: el acta y el anexo', [], 'Listo, ya están los dos documentos.');
+  assert.equal(dos.c.estado, 'partial');
+  assert.equal(dos.criterios.length, 2);
+  const cap = cerrar('Haz una captura de pantalla de la página', [], 'Listo, ya la hice.');
+  assert.equal(cap.c.estado, 'partial');
+  const conCap = cerrar('Haz una captura de pantalla de la página', [{ ruta: `${ESP}/Pictures/captura.png`, existe: true, bytes: 9000, sha256: sha('c'), reciente: true, tipo: 'png' }], 'Listo, ya la hice.');
+  assert.equal(conCap.c.estado, 'completed', 'con la captura de verdad, sí');
+});
+
+test('revisión 2a: el archivo de origen («convierte datos.csv», «lee informe.pdf») no es un entregable', () => {
+  const conv = requisitosDeEntrega('Convierte datos.csv a PDF');
+  assert.deepEqual(etiquetas(conv), ['pdf'], 'se entrega un PDF; datos.csv es de donde sale');
+  assert.deepEqual(etiquetas(requisitosDeEntrega('Lee informe.pdf y crea un resumen.docx')), ['resumen.docx']);
+  assert.deepEqual(etiquetas(requisitosDeEntrega('Con los datos de ventas.xlsx haz grafica.png')), ['grafica.png']);
+  assert.deepEqual(etiquetas(requisitosDeEntrega('Convierte datos.csv a informe.pdf')), ['informe.pdf'], 'el destino con nombre sí');
+  assert.deepEqual(etiquetas(requisitosDeEntrega('Resume reporte.pdf en un documento de Word')), ['docx|doc|odt|rtf'], 'resumir: el origen no, el Word sí');
+  assert.deepEqual(etiquetas(requisitosDeEntrega('Abre el PDF del reglamento y dime qué dice')), [''], 'leer un PDF no es entregarlo');
+  const datos: A = { ruta: `${ESP}/datos.csv`, existe: true, bytes: 100, sha256: sha('d'), reciente: false, mencionado: true, tipo: 'texto' };
+  const bien = cerrar('Convierte datos.csv a PDF', [datos, pdfNuevo('datos.pdf', '1')], 'Listo, ya lo convertí.');
+  assert.equal(bien.c.estado, 'completed', 'un PDF nuevo cumple; el CSV de origen (viejo) no estorba');
+  assert.equal(cerrar('Convierte datos.csv a PDF', [datos], 'Listo.').c.estado, 'partial', 'sin el PDF, no');
+});
+
+test('revisión 2b: «guárdalo como PDF» es el formato del mismo entregable, no otro archivo', () => {
+  const r = requisitosDeEntrega('Crea un documento con el resumen y guárdalo como PDF');
+  assert.deepEqual(etiquetas(r), ['pdf']);
+  assert.equal(r.seguro, true);
+  assert.equal(cerrar('Crea un documento con el resumen y guárdalo como PDF', [pdfNuevo('resumen.pdf', '1', 'Documents')], 'Listo.').c.estado, 'completed');
+  const w = requisitosDeEntrega('Crea un Word y expórtalo a PDF');
+  assert.ok(w.items.length <= 1 || !w.seguro, `no exige de más: ${JSON.stringify(w)}`);
+  assert.equal(cerrar('Crea un Word y expórtalo a PDF', [pdfNuevo('resumen.pdf', '1', 'Documents')], 'Listo.').c.estado, 'completed', 'el PDF exportado es lo que se entrega');
+});
+
+test('revisión 2c: un plural sin número no se da por cumplido con un archivo; una enumeración clara cuenta cada cosa', () => {
+  const enu = requisitosDeEntrega('Descarga las facturas de enero, febrero y marzo');
+  assert.equal(enu.items.length, 3);
+  const una = cerrar('Descarga las facturas de enero, febrero y marzo', [pdfNuevo('factura_enero.pdf', '1')], 'Listo, descargué las facturas.');
+  assert.equal(una.c.estado, 'partial', 'una de tres no basta');
+  assert.match(una.texto, /1 de 3/);
+  const tres = cerrar('Descarga las facturas de enero, febrero y marzo', [pdfNuevo('factura_enero.pdf', '1'), pdfNuevo('factura_febrero.pdf', '2'), pdfNuevo('factura_marzo.pdf', '3')], 'Listo.');
+  assert.equal(tres.c.estado, 'completed');
+  // Dos de enero no cubren marzo: cada mes es su archivo.
+  assert.equal(cerrar('Descarga las facturas de enero, febrero y marzo', [pdfNuevo('factura_enero.pdf', '1'), pdfNuevo('factura_enero_2.pdf', '2'), pdfNuevo('factura_febrero.pdf', '3')], 'Listo.').c.estado, 'partial');
+  const vago = requisitosDeEntrega('Descarga las facturas del proveedor');
+  assert.equal(vago.seguro, false, 'sin decir cuántas, no es seguro');
+  assert.equal(cerrar('Descarga las facturas del proveedor', [pdfNuevo('factura_1.pdf', '1'), pdfNuevo('factura_2.pdf', '2')], 'Listo.').c.estado, 'partial');
+});
+
+test('revisión 2d: el mismo nombre en dos carpetas son dos entregables', () => {
+  const instr = 'Guarda la factura en ~/Documents/factura.pdf y una copia en ~/Desktop/factura.pdf';
+  const r = requisitosDeEntrega(instr);
+  assert.equal(r.items.length, 2, JSON.stringify(r));
+  const unaSola = cerrar(instr, [pdfNuevo('factura.pdf', '1', 'Documents'), falta('~/Desktop/factura.pdf')], 'Listo, ya están las dos.');
+  assert.equal(unaSola.c.estado, 'partial');
+  assert.match(unaSola.texto, /1 de 2/);
+  assert.equal(cerrar(instr, [pdfNuevo('factura.pdf', '1', 'Documents'), pdfNuevo('factura.pdf', '2', 'Desktop')], 'Listo.').c.estado, 'completed');
+});
+
+test('revisión 2e: el número pedido manda aunque el verbo esté en otra frase', () => {
+  for (const instr of ['Necesito tres PDFs con las facturas de septiembre', 'Tres PDFs con las facturas de septiembre, por favor. Guárdalos en Descargas.']) {
+    const r = requisitosDeEntrega(instr);
+    assert.equal(r.items.length, 3, instr);
+    const c = cerrar(instr, [pdfNuevo('factura_sep.pdf', '1')], 'Descargué las facturas.');
+    assert.equal(c.c.estado, 'partial', instr);
+    assert.equal(c.criterios.length, 3);
+    assert.match(c.texto, /1 de 3/);
+  }
+});
+
+test('revisión: lo legítimo no se rompe («crea informe.docx» con informe.docx correcto completa)', () => {
+  assert.equal(cerrar('Crea informe.docx', [ok('informe.docx', 'docx', '1')], 'Listo.').c.estado, 'completed');
+  assert.equal(cerrar('Busca el clima de Tegucigalpa', undefined, 'Soleado, 28 grados').c.estado, 'completed', 'un dato sigue siendo un dato');
+});
+
 async function nodo(respuesta: string, extra: Record<string, unknown>) {
   const srv = http.createServer((req, res) => {
     let datos = '';
@@ -390,6 +489,91 @@ test('servidor: «guarda 3 PDFs» y el nodo solo encontró runtime.log → no qu
     });
   } finally {
     await n.cerrar();
+  }
+});
+
+/* ------------------------------------------------------------------ «tres archivos»: lo genérico también son archivos */
+
+const nuevoEn = (n: string, tipo: string, s: string): A => ({ ruta: `${ESP}/Documents/${n}`, existe: true, bytes: 900, sha256: sha(s), reciente: true, tipo });
+const TRES_GENERICOS = [nuevoEn('resumen.txt', 'texto', '1'), nuevoEn('datos.csv', 'texto', '2'), nuevoEn('portada.png', 'png', '3')];
+
+test('genéricos: «crea tres archivos», «save three files»… piden archivos; sin decir cuántos no es seguro', async () => {
+  const { pideArchivo } = await import('../lib/tareas-durables');
+  const casos: [string, number, boolean][] = [
+    ['Crea tres archivos', 3, true],
+    ['Guarda 3 archivos', 3, true],
+    ['Genera dos ficheros', 2, true],
+    ['Hazme tres documentos', 3, true],
+    ['Save three files', 3, true],
+    ['Create 2 files', 2, true],
+    ['Create a file', 1, true],
+    ['Crea un archivo', 1, true],
+    ['Descarga los archivos', 1, false],
+    ['Crea archivos con los datos', 1, false],
+  ];
+  for (const [q, n, seguro] of casos) {
+    assert.equal(pideArchivo(q), true, q);
+    const r = requisitosDeEntrega(q);
+    assert.equal(r.items.length, n, `${q}: ${JSON.stringify(r)}`);
+    assert.equal(r.seguro, seguro, q);
+    // Con cero archivos y una respuesta que lo afirma con muchas palabras: nunca comprobado.
+    const e = evaluarEntrega(mision(q, [], 'Listo, creé todos los archivos que pediste con los datos del proveedor de septiembre.'));
+    assert.equal(e.tipo, 'archivo', q);
+    assert.equal(e.comprobada, false, q);
+    assert.equal(cerrar(q, [], 'Listo, creé todos los archivos que pediste con los datos del proveedor de septiembre.').c.estado, 'partial', q);
+  }
+  // Sin decir cuántos, ni con tres archivos buenos se completa.
+  assert.equal(cerrar('Descarga los archivos', TRES_GENERICOS, 'Listo.').c.estado, 'partial');
+});
+
+test('«crea tres archivos»: 0 de 3, 1 de 3, registros y temporales no cuentan, tres buenos completan', () => {
+  const q = 'Crea tres archivos';
+  const cero = cerrar(q, [], 'Listo, creé los tres archivos');
+  assert.equal(cero.c.estado, 'partial');
+  assert.equal(cero.criterios.length, 3);
+  assert.match(cero.texto, /0 de 3/);
+  assert.equal(cero.s.state, 'partial');
+  const uno = cerrar(q, [TRES_GENERICOS[0]], 'Listo, creé los tres archivos');
+  assert.equal(uno.c.estado, 'partial');
+  assert.match(uno.texto, /1 de 3/);
+  const basura = cerrar(q, [suelto('runtime.log', 'texto', '7'), suelto('borrador.tmp', 'binario', '8'), suelto('descarga.part', 'binario', '9')], 'Listo, creé los tres archivos');
+  assert.equal(basura.c.estado, 'partial');
+  assert.ok(basura.criterios.every((x) => x.estado !== 'verified'), 'ni el registro ni los temporales cumplen');
+  assert.match(basura.texto, /0 de 3/);
+  // Un archivo vacío o viejo tampoco; y uno no cumple dos.
+  assert.equal(cerrar(q, [TRES_GENERICOS[0], TRES_GENERICOS[1], nuevoEn('vacio.txt', 'vacio', '4')].map((a, i) => (i === 2 ? { ...a, bytes: 0 } : a)), 'Listo.').c.estado, 'partial');
+  const tres = cerrar(q, TRES_GENERICOS, 'Listo, creé los tres archivos');
+  assert.equal(tres.c.estado, 'completed');
+  assert.equal(tres.criterios.filter((x) => x.estado === 'verified').length, 3);
+  assert.equal(tres.s.state, 'completed');
+});
+
+test('servidor: «crea tres archivos» con cero archivos → la frase dice 0 de 3 y no «Listo»; con tres buenos, «Listo»', async () => {
+  const cero = await nodo('Listo, creé los tres archivos', { archivos: [] });
+  try {
+    await conNodo(cero.url, async () => {
+      const r = await encargarTarea({ instruccion: 'Crea tres archivos con el resumen', quien: 'ana@x.hn', motor: 'holo', esperaMs: 8000 });
+      assert.equal(r.comprobada, false);
+      assert.match(r.hecho, /SIN COMPROBAR/);
+      const v = vistaMision(misionDeTarea(r.id!)!);
+      assert.equal(v.final!.ok, false);
+      assert.doesNotMatch(v.final!.texto, /^Listo/);
+      assert.match(v.final!.texto, /0 de 3/);
+    });
+  } finally {
+    await cero.cerrar();
+  }
+  const tres = await nodo('Listo, creé los tres archivos', { archivos: TRES_GENERICOS });
+  try {
+    await conNodo(tres.url, async () => {
+      const r = await encargarTarea({ instruccion: 'Crea tres archivos con el resumen', quien: 'ana@x.hn', motor: 'holo', esperaMs: 8000 });
+      assert.equal(r.comprobada, true);
+      const v = vistaMision(misionDeTarea(r.id!)!);
+      assert.match(v.final!.texto, /^Listo/);
+      assert.match(v.final!.texto, /3 de 3/);
+    });
+  } finally {
+    await tres.cerrar();
   }
 });
 

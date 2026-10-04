@@ -746,7 +746,7 @@ const EXT_ARCHIVO = 'odt|ods|odp|odg|docx?|xlsx?|pptx?|pdf|txt|csv|tsv|md|rtf|ht
 const RE_PIDE_GUARDAR = /\b(guarda(lo|la|los|las|me|melo|mela)?|guardar(lo|la|los|las)?|guardes|descarga(lo|la|los|las|me)?|descargar(lo|la|los|las)?|bajate|exporta(lo|la|los)?|exportar(lo|la)?|save|download|export)\b/;
 /** …o crear un documento, una hoja, un PDF (con nombre de archivo o sin él). */
 const RE_PIDE_CREAR = new RegExp(
-  `\\b(crea|crear|creame|haz|hazme|escribe|escribir|escribeme|genera|generar|arma|armame|prepara|preparame|redacta|make|create|write|generate|draft)\\b[^.;\\n]{0,60}?(\\b(documento|archivo|hoja( de calculo)?|planilla|presentacion|pdf|carpeta|word|excel|document|file|spreadsheet|presentation|folder)\\b|[\\w-][\\w.-]*\\.(${EXT_ARCHIVO})(?![\\w-]))`
+  `\\b(crea|crear|creame|haz|hazme|escribe|escribir|escribeme|genera|generar|arma|armame|prepara|preparame|redacta|toma|tomame|saca|sacame|make|create|write|generate|draft|take)\\b[^.;\\n]{0,60}?(\\b(documentos?|archivos?|hojas?( de calculo)?|planillas?|presentacion(es)?|pdfs?|carpetas?|words?|excel(es|s)?|capturas?|imagen(es)?|fotos?|screenshots?|images?|documents?|files?|spreadsheets?|presentations?|folders?)\\b|[\\w-][\\w.-]*\\.(${EXT_ARCHIVO})(?![\\w-]))`
 );
 /** La respuesta dice que dejó un archivo. */
 const RE_DICE_ARCHIVO =
@@ -768,10 +768,15 @@ const RELLENO = new Set(
   ).split(' ')
 );
 
-/** ¿Pide (o dice que dejó) un archivo? */
+/**
+ * ¿Pide (o dice que dejó) un archivo? También si de la instrucción salen entregables concretos (nombres que se entregan,
+ * «tres PDFs», «una captura», «las facturas de enero, febrero y marzo»): una misión de archivos NUNCA se comprueba con
+ * el texto de la respuesta (revisión independiente).
+ */
 export function pideArchivo(instruccion: string, respuesta?: string | null): boolean {
   const p = plegar(sinUrls(String(instruccion || '')));
-  return RE_PIDE_GUARDAR.test(p) || RE_PIDE_CREAR.test(p) || RE_DICE_ARCHIVO.test(plegar(sinUrls(String(respuesta || ''))));
+  if (RE_PIDE_GUARDAR.test(p) || RE_PIDE_CREAR.test(p) || RE_DICE_ARCHIVO.test(plegar(sinUrls(String(respuesta || ''))))) return true;
+  return requisitosDeEntrega(instruccion, respuesta).explicitos > 0;
 }
 
 /** ¿Pide una acción con efecto afuera (enviar, publicar, llenar un formulario…)? Eso no se comprueba desde aquí. */
@@ -813,7 +818,7 @@ export function evaluarEntrega(m: Pick<MisionComputadoraMin, 'id' | 'instruccion
   const lista = Array.isArray(m.archivos) ? m.archivos : null;
   if (pideArchivo(m.instruccion, m.resultado)) {
     // Cada cosa pedida, por separado: su archivo (a lo más uno), su tipo por dentro, de esta misión, en su carpeta.
-    const { items, seguro, sobran } = compararEntrega(m.instruccion, lista);
+    const { items, seguro, sobran } = compararEntrega(m.instruccion, lista, m.resultado);
     const pedidos = items.filter((i) => i.origen === 'pedido');
     const hechos = pedidos.filter((i) => i.estado === 'verified').length;
     const comprobada = seguro && items.length > 0 && items.every((i) => i.estado === 'verified');
