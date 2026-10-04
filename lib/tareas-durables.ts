@@ -44,7 +44,7 @@ import {
 } from './durable';
 import { compararEntrega, comprobarCopia, esConsulta, esOperacionDeArchivos, esTextoEnChat, faltaEnPalabras, nombresEn, remiteAOtroLugar, respuestaConTexto, textoSinAcuses, requisitosCombinados, requisitosDeEntrega, type ArchivoNodo, type ItemEntrega, type PedidoEntrega } from './entregables';
 
-export { esConsulta, esOperacionDeArchivos, nombresEn, requisitosCombinados, requisitosDeEntrega, type ArchivoNodo, type ItemEntrega, type PedidoEntrega } from './entregables';
+export { esConsulta, esOperacionDeArchivos, nombresEn, requisitosCombinados, requisitosDeEntrega, VALIDADOR_MIN, type ArchivoNodo, type ItemEntrega, type PedidoEntrega } from './entregables';
 
 /* ------------------------------------------------------------------ estados */
 

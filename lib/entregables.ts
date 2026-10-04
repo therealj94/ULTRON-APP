@@ -38,8 +38,19 @@ export type ArchivoNodo = {
    * se pudo comprobar (un nodo de antes): nunca verificado.
    */
   integro?: boolean | null;
+  /**
+   * La versión del validador que dijo `integro` (ronda 9, G4: agente.py VALIDADOR_VERSION). Un `integro: true` sin ella,
+   * o de una versión menor que VALIDADOR_MIN, es de un nodo viejo que aceptaba cascarones vacíos: sin comprobar.
+   */
+  integro_v?: number;
   defecto?: string;
 };
+
+/**
+ * La versión mínima del validador del nodo en la que se confía (ronda 9, G4). Los de antes daban por enteros archivos sin
+ * contenido (un PNG sin IDAT en la 7, un PDF con un /Pages vacío en la 8): su «íntegro» queda «sin comprobar».
+ */
+export const VALIDADOR_MIN = 9;
 
 export type Requisito = {
   id: string;
@@ -1175,6 +1186,9 @@ export function veredictoArchivo(a: ArchivoNodo, extensiones: string[]): Veredic
   // Entero, no solo la cabecera (ronda 6): un PDF de 9 bytes con «%PDF-» o un docx sin directorio central no cumplen.
   if (a.integro === false) return { estado: 'not_met', motivo: `${n} está incompleto o dañado (${limpio(a.defecto || 'no pasó la revisión', 80)})` };
   if (a.integro !== true) return { estado: 'unknown', motivo: `${n}: tu computadora no comprobó que esté entero` };
+  // Ronda 9 (G4): «íntegro» solo de un validador que conocemos; el de un nodo viejo aceptaba archivos sin contenido.
+  if (!(typeof a.integro_v === 'number' && Number.isFinite(a.integro_v) && a.integro_v >= VALIDADOR_MIN))
+    return { estado: 'unknown', motivo: `${n}: lo revisó un validador viejo de tu computadora (versión ${typeof a.integro_v === 'number' ? a.integro_v : 'sin marca'}; hace falta la ${VALIDADOR_MIN}), así que no sé si tiene contenido de verdad` };
   return { estado: 'verified', motivo: '' };
 }
 

@@ -914,6 +914,8 @@ export function archivosDe(t: Pick<Tarea, 'archivos'>): ArchivoNodo[] | null {
             ...(typeof a.magia === 'string' && /^[0-9a-f]{2,32}$/.test(a.magia) ? { magia: a.magia } : {}),
             // Si lo vio entero (agente.py `integridad`); sin el campo: un nodo de antes, sin comprobar.
             ...(typeof a.integro === 'boolean' ? { integro: a.integro } : {}),
+            // Con qué versión del validador lo dijo (ronda 9): sin ella, un «íntegro» no se cree (veredictoArchivo).
+            ...(typeof a.integro_v === 'number' && Number.isFinite(a.integro_v) ? { integro_v: Math.floor(a.integro_v) } : {}),
             ...(typeof a.defecto === 'string' ? { defecto: a.defecto.slice(0, 120) } : {}),
           },
         ]

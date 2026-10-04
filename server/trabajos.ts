@@ -352,7 +352,7 @@ export async function cerrarInvestigacion(duenoCorreo: string, id: string, r: Ci
         pendiente: (r.pendiente || []).map((x) => trozo(x, 200)).slice(0, 4),
         t: ahora,
       },
-      eventos: [{ type: 'operation.receipt', payload: { operationId: reg.id, state: final === 'failed' ? 'failed' : final === 'respondida' ? 'answered' : 'partial', effect: 'none', fuentes: evidencias.length } }],
+      eventos: [{ type: 'operation.receipt', payload: { operationId: reg.id, state: final === 'failed' ? 'failed' : final === 'respondida' ? 'answered' : 'partial', effect: final === 'failed' ? 'none' : 'unknown', fuentes: evidencias.length } }],
     };
   }).catch(() => null);
   if (!c) return null;

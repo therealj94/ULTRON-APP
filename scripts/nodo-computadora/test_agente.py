@@ -1374,7 +1374,7 @@ class ArchivosComprobados(Base):
         self.assertEqual(r['archivos'], [{'ruta': rutas['r'], 'existe': True, 'bytes': 10,
                                           'sha256': hashlib.sha256(b'hola mundo').hexdigest(), 'reciente': True, 'mencionado': True,
                                           # Se llama .odt pero por dentro es texto: el nodo dice lo que ES, no lo que dice el nombre.
-                                          'tipo': 'texto', 'magia': b'hola mun'.hex(), 'integro': True}])
+                                          'tipo': 'texto', 'magia': b'hola mun'.hex(), 'integro': True, 'integro_v': agente.VALIDADOR_VERSION}])
 
     def test_lo_nuevo_sin_nombrar_cuenta_y_lo_oculto_o_viejo_no(self):
         def antes(t):
@@ -1749,6 +1749,8 @@ class ArchivosComprobados(Base):
         pres = ('<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" '
                 f'xmlns:r="{cls.REL_DOC}"><p:sldIdLst>{ids}</p:sldIdLst></p:presentation>')
         extra = {f'ppt/slides/slide{i + 1}.xml': f'<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:spTree/></p:cSld></p:sld>' for i in range(partes)}
+        extra['ppt/slides/slide1.xml'] = ('<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
+                                          '<p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>Presentación grande</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>')
         return cls.ooxml('ppt/presentation.xml', partes={'ppt/presentation.xml': pres, 'ppt/_rels/presentation.xml.rels': rels, **extra})
 
     def test_falsos_de_la_revision_y_legitimos(self):
@@ -1986,6 +1988,181 @@ class ArchivosComprobados(Base):
         """La cadena VALIDADOR es un script de Python completo (para probarlo en el escritorio real): compila solo."""
         compile(agente.VALIDADOR, 'validador.py', 'exec')
         self.assertNotIn('import agente', agente.VALIDADOR)
+
+    # ---- Ronda 9, G3: CONTENIDO real, no solo estructura (las falsificaciones de fakes/hacer.py y fakes/ole.py).
+
+    @staticmethod
+    def pdf_de(objs, root=1):
+        out = b'%PDF-1.4\n'
+        offs = {}
+        for n, cuerpo in objs:
+            offs[n] = len(out)
+            out += b'%d 0 obj\n' % n + cuerpo + b'\nendobj\n'
+        x = len(out)
+        mx = max(offs) + 1
+        out += b'xref\n0 %d\n0000000000 65535 f \n' % mx + b''.join(b'%010d 00000 n \n' % offs[n] for n in range(1, mx))
+        return out + b'trailer\n<< /Size %d /Root %d 0 R >>\nstartxref\n%d\n%%%%EOF\n' % (mx, root, x)
+
+    @staticmethod
+    def chunk_png(t, d):
+        import struct
+        import zlib
+        return struct.pack('>I', len(d)) + t + d + struct.pack('>I', zlib.crc32(t + d) & 0xffffffff)
+
+    @staticmethod
+    def seg_jpeg(m, d):
+        import struct
+        return b'\xff' + bytes([m]) + struct.pack('>H', len(d) + 2) + d
+
+    @classmethod
+    def ole_mini(cls, flujo='WordDocument', contenido=None, tam=100, sin_minifat=False):
+        """Un documento OLE cuyo flujo principal es pequeño (< 4096): vive en el MINI-flujo, con su mini-FAT."""
+        import struct
+        FIN, LIBRE, FATS = 0xfffffffe, 0xffffffff, 0xfffffffd
+        if contenido is None:
+            contenido = {'WordDocument': b'\xec\xa5\xc1\x00', 'Workbook': b'\x09\x08\x10\x00', 'PowerPoint Document': b'\x00\x00\xe8\x03'}.get(flujo, b'')
+        datos = (contenido + b'\x00' * tam)[:tam]
+        nmini = (tam + 63) // 64
+        # Sectores: 0 FAT, 1 directorio, 2 mini-FAT, 3 contenedor del mini-flujo (512 B = 8 mini-sectores).
+        fat = [FATS, FIN, FIN, FIN] + [LIBRE] * 124
+        minifat = [k + 1 for k in range(nmini - 1)] + [FIN] + [LIBRE] * (128 - nmini)
+        cab = (b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1' + b'\x00' * 16 + struct.pack('<HHHHH', 0x3e, 3, 0xfffe, 9, 6) + b'\x00' * 6
+               + struct.pack('<IIIIIIIII', 0, 1, 1, 0, 4096, FIN if sin_minifat else 2, 0 if sin_minifat else 1, FIN, 0) + struct.pack('<I', 0) + struct.pack('<I', LIBRE) * 108)
+
+        def entrada(nombre, tipo, hijo, inicio, largo):
+            nb = nombre.encode('utf-16-le') + b'\x00\x00'
+            return (nb + b'\x00' * (64 - len(nb)) + struct.pack('<HBB', len(nb), tipo, 1) + struct.pack('<III', LIBRE, LIBRE, hijo)
+                    + b'\x00' * 36 + struct.pack('<III', inicio, largo, 0))
+        directorio = entrada('Root Entry', 5, 1, 3, 512) + entrada(flujo, 2, LIBRE, 0, tam) + b'\x00' * 256
+        contenedor = (datos + b'\x00' * 512)[:512]
+        return cab + struct.pack('<128I', *fat) + directorio + struct.pack('<128I', *minifat) + contenedor
+
+    @classmethod
+    def webp(cls, tipo='VP8L'):
+        import struct
+        if tipo == 'VP8L':
+            datos = b'\x2f' + struct.pack('<I', (0) | (0 << 14)) + b'\x00' * 8   # 1×1, sin pérdida
+        else:
+            datos = b'\x50\x01\x00\x9d\x01\x2a\x01\x00\x01\x00' + b'\x00' * 20   # 1×1, con pérdida
+        ch = tipo.encode().ljust(4) + struct.pack('<I', len(datos)) + datos + (b'\x00' if len(datos) % 2 else b'')
+        cuerpo = b'WEBP' + ch
+        return b'RIFF' + struct.pack('<I', len(cuerpo)) + cuerpo
+
+    def falsificaciones_r9(self):
+        import struct
+        import zlib
+        P = self.pdf_de
+        cat = (1, b'<< /Type /Catalog /Pages 2 0 R >>')
+        raiz = (2, b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>')
+        sh = '<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1"><v></v></c></row></sheetData></worksheet>'
+        w = h = 64
+        crudo = b''.join(b'\xff' + b'\x00' * (w * 3) for _ in range(h))
+        png_filtro = (b'\x89PNG\r\n\x1a\n' + self.chunk_png(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0))
+                      + self.chunk_png(b'IDAT', zlib.compress(crudo)) + self.chunk_png(b'IEND', b''))
+        S = self.seg_jpeg
+        jpg = (b'\xff\xd8' + S(0xe0, b'JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00') + S(0xdb, b'\x00' + b'\x01' * 64)
+               + S(0xc0, b'\x08' + struct.pack('>HH', 8000, 8000) + b'\x01\x01\x11\x00') + S(0xc4, b'\x00' + b'\x01' + b'\x00' * 15 + b'\x00')
+               + S(0xda, b'\x01\x01\x00\x00\x3f\x00') + b'\x12\x34' + b'\xff\xd9')
+        gif = (b'GIF89a' + struct.pack('<HHBBB', 1000, 1000, 0x80, 0, 0) + b'\x00\x00\x00\xff\xff\xff'
+               + b'\x2c' + struct.pack('<HHHHB', 0, 0, 1000, 1000, 0) + b'\x02' + b'\x01\x00' + b'\x00' + b';')
+        cuerpo = b'WEBP' + b'\x00' * 12
+        imagen_falta = self.ooxml('word/document.xml', partes={
+            'word/document.xml': f'<w:document xmlns:w="{self.W}" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="{self.REL_DOC}"><w:body><w:p><w:r><w:drawing><a:blip r:embed="rId9"/></w:drawing></w:r></w:p></w:body></w:document>'})
+        return {
+            'pdf_pages_vacio.pdf': P([cat, raiz, (3, b'<< /Type /Pages /Kids [] /Count 0 >>')]),
+            'pdf_pagina_blanca.pdf': P([cat, raiz, (3, b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>')]),
+            'pdf_page_anidada.pdf': P([cat, raiz, (3, b'<< /Type /Font /X << /Type /Page >> >>')]),
+            'pdf_contenido_vacio.pdf': P([cat, raiz, (3, b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>'), (4, b'<< /Length 0 >>\nstream\n\nendstream')]),
+            'pdf_ciclo.pdf': P([cat, (2, b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>'), (3, b'<< /Type /Pages /Kids [2 0 R] /Count 1 >>')]),
+            'xlsx_celda_vacia.xlsx': self.ooxml('xl/workbook.xml', partes={'xl/worksheets/sheet1.xml': sh}),
+            'xlsx_compartida_vacia.xlsx': self.ooxml('xl/workbook.xml', partes={
+                'xl/worksheets/sheet1.xml': sh.replace('<c r="A1"><v></v></c>', '<c r="A1" t="s"><v>0</v></c>'),
+                'xl/sharedStrings.xml': '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><si><t></t></si></sst>'}),
+            'pptx_diapo_vacia.pptx': self.ooxml('ppt/presentation.xml', partes={'ppt/slides/slide1.xml': '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"/>'}),
+            'docx_imagen_que_falta.docx': imagen_falta,
+            # Sin texto ni imagen, pero con un encabezado enlazado que existe: un enlace no es contenido.
+            'docx_solo_encabezado.docx': self.ooxml('word/document.xml', partes={
+                'word/document.xml': f'<w:document xmlns:w="{self.W}" xmlns:r="{self.REL_DOC}"><w:body><w:p/><w:sectPr><w:headerReference w:type="default" r:id="rIdH"/></w:sectPr></w:body></w:document>',
+                'word/_rels/document.xml.rels': self._rels([('rIdH', 'header', 'header1.xml')]),
+                'word/header1.xml': f'<w:hdr xmlns:w="{self.W}"><w:p/></w:hdr>'}),
+            'webp_basura.webp': b'RIFF' + struct.pack('<I', len(cuerpo)) + cuerpo,
+            'webp_vp8_sin_firma.webp': self.webp('VP8 ').replace(b'\x9d\x01\x2a', b'\x00\x00\x00'),
+            'rtf_vacio.rtf': b'{\\rtf1                    }',
+            'rtf_solo_tablas.rtf': b'{\\rtf1\\ansi{\\fonttbl{\\f0 Times New Roman;}}{\\colortbl;\\red0\\green0\\blue0;}\\f0 }',
+            'blanco.txt': b'   \n\n  \n',
+            'blanco.csv': b'\n',
+            'mixto.txt': b'a' * 512 + bytes(range(256)) * 4,
+            'png_filtro_malo.png': png_filtro,
+            'jpeg_cortado.jpg': jpg,
+            'gif_basura.gif': gif,
+            'vacio_dentro.zip': self.ooxml('otra/cosa.xml', partes={'otra/cosa.xml': '', '[Content_Types].xml': ''}),
+            'relleno.doc': self.ole_mini('WordDocument', sin_minifat=True),
+            'relleno.xls': self.ole_mini('Workbook', sin_minifat=True),
+            'mini_no_es_word.doc': self.ole_mini('WordDocument', contenido=b'NOPE'),
+        }
+
+    def legitimos_r9(self):
+        import struct
+        con_imagen = self.ooxml('word/document.xml', partes={
+            'word/document.xml': f'<w:document xmlns:w="{self.W}" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="{self.REL_DOC}"><w:body><w:p><w:r><w:drawing><a:blip r:embed="rId9"/></w:drawing></w:r></w:p></w:body></w:document>',
+            'word/_rels/document.xml.rels': self._rels([('rId9', 'image', 'media/image1.png')]),
+            'word/media/image1.png': self.png_valido()})
+        diapo_foto = self.ooxml('ppt/presentation.xml', partes={
+            'ppt/slides/slide1.xml': ('<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+                                      f'xmlns:r="{self.REL_DOC}"><p:cSld><p:spTree><p:pic><p:blipFill><a:blip r:embed="rId3"/></p:blipFill></p:pic></p:spTree></p:cSld></p:sld>'),
+            'ppt/slides/_rels/slide1.xml.rels': self._rels([('rId3', 'image', '../media/image1.png')]),
+            'ppt/media/image1.png': self.png_valido()})
+        compartidas = self.ooxml('xl/workbook.xml', partes={
+            'xl/worksheets/sheet1.xml': '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="s"><v>0</v></c></row></sheetData></worksheet>',
+            'xl/sharedStrings.xml': '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><si><t>Café</t></si></sst>'})
+        foto_pdf = self.pdf_de([(1, b'<< /Type /Catalog /Pages 2 0 R >>'), (2, b'<< /Type /Pages /Kids [3 0 R] /Count 1 /Resources << /XObject << /Im0 4 0 R >> >> >>'),
+                                (3, b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>'),
+                                (4, b'<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /BitsPerComponent 8 /ColorSpace /DeviceGray /Length 1 >>\nstream\n\x80\nendstream')])
+        return {
+            'utf16.txt': '﻿Hola, esto es un texto Unicode de Windows.\r\n'.encode('utf-16-le'),
+            'utf16be.csv': '﻿producto,precio\ncafé,120\n'.encode('utf-16-be'),
+            'normal.csv': 'producto,precio\ncafé,120\n'.encode(),
+            'latin1.txt': 'Año de producción: 2024. Señal: ñandú.\n'.encode('latin-1'),
+            'solo_imagen.docx': con_imagen, 'diapo_foto.pptx': diapo_foto, 'compartidas.xlsx': compartidas,
+            'foto.pdf': foto_pdf, 'b.webp': self.webp('VP8L'), 'perdida.webp': self.webp('VP8 '),
+            'mini.doc': self.ole_mini('WordDocument'), 'mini.xls': self.ole_mini('Workbook'), 'mini.ppt': self.ole_mini('PowerPoint Document'),
+            'b.zip': self.ooxml('otra/cosa.xml'),
+        }
+
+    def _tandas(self, grupo):
+        vistos = {}
+        claves = sorted(grupo)
+        for k in range(0, len(claves), agente.ARCHIVOS_MAX):
+            tanda = {c: grupo[c] for c in claves[k:k + agente.ARCHIVOS_MAX]}
+            self.tearDown()
+            self.setUp()
+            n = self.por_nombre(self.correr_y_archivos('Listo.', instruccion='Guarda los archivos', antes=lambda t: [self.escribir(c, v) for c, v in tanda.items()]))
+            self.assertEqual(sorted(n), sorted(tanda))
+            vistos.update(n)
+        return vistos
+
+    TIPO_POR_EXT = {'docx': 'docx', 'xlsx': 'xlsx', 'pptx': 'pptx', 'odt': 'odt', 'pdf': 'pdf', 'png': 'png', 'jpg': 'jpeg', 'gif': 'gif',
+                    'doc': 'ole', 'xls': 'ole', 'ppt': 'ole', 'webp': 'webp', 'rtf': 'rtf', 'txt': 'texto', 'csv': 'texto', 'zip': 'zip', 'ods': 'ods', 'odp': 'odp'}
+
+    def test_ronda9_estructura_valida_sin_contenido_no_queda_integra(self):
+        falsos = self.falsificaciones_r9()
+        vistos = self._tandas(falsos)
+        pasan = {k: (vistos[k].get('tipo'), vistos[k].get('defecto')) for k in falsos
+                 if vistos[k].get('integro') is True and vistos[k].get('tipo') == self.TIPO_POR_EXT[k.rsplit('.', 1)[1]]}
+        self.assertEqual(pasan, {}, 'ninguna falsificación con estructura válida y sin contenido queda íntegra')
+
+    def test_ronda9_lo_legitimo_sigue_integro(self):
+        buenos = {**self.legitimos_r8(), **self.legitimos_r9()}
+        vistos = self._tandas(buenos)
+        self.assertEqual({k: (vistos[k].get('tipo'), vistos[k].get('integro'), vistos[k].get('defecto')) for k in buenos
+                          if vistos[k].get('integro') is not True or vistos[k].get('tipo') != self.TIPO_POR_EXT[k.rsplit('.', 1)[1]]}, {})
+
+    def test_ronda9_cada_archivo_lleva_la_version_del_validador(self):
+        """G4: el servidor solo cree `integro` de un validador que conoce; el nodo marca la versión en cada archivo y en /salud."""
+        self.assertGreaterEqual(agente.VALIDADOR_VERSION, 9)
+        n = self.por_nombre(self.correr_y_archivos('Listo.', instruccion='Guarda los archivos', antes=lambda t: [self.escribir('a.pdf', self.pdf_clasico()), self.escribir('b.txt', b' ')]))
+        self.assertEqual({k: (v.get('integro'), v.get('integro_v')) for k, v in n.items()}, {'a.pdf': (True, agente.VALIDADOR_VERSION), 'b.txt': (False, agente.VALIDADOR_VERSION)})
+        self.assertIn(f'validador-{agente.VALIDADOR_VERSION}', agente.CAPACIDADES)
 
     def test_nombres_con_apostrofo(self):
         """Ronda 6, G2-E: «O'Brien.pdf» entero (no «Brien.pdf»), también entre comillas simples."""
