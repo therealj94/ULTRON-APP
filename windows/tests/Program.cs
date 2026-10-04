@@ -310,6 +310,13 @@ Check(saldosCartera[0] is { Simbolo: "ORIGEN", Cantidad: 1000m } && saldosCarter
 Check(CarteraVeta.Decir(saldosCartera, "origen", false).StartsWith("Tienes 1,000 ORIGEN (unos 1,818"), "decir origen: " + CarteraVeta.Decir(saldosCartera, "origen", false));
 Check(CarteraVeta.Decir(saldosCartera, null, false).StartsWith("Tienes unos 8,038.7 dólares: 2 AUKA, 1,000 ORIGEN") || CarteraVeta.Decir(saldosCartera, null, false).StartsWith("Tienes unos 8,039 dólares"), "decir todo: " + CarteraVeta.Decir(saldosCartera, null, false));
 Check(CarteraVeta.Decir(new List<Saldo>(), null, true) == "Your wallet is empty.", "cartera vacia");
+// Lista única de monedas: contrato vigente (v2), ocultas fuera, precios de la lista; respuesta rota no toca nada.
+var v2Auka = "0x" + string.Concat(Enumerable.Repeat("a2", 20));
+Check(CarteraVeta.AplicarListaUnica("{\"monedas\":[{\"simbolo\":\"ORIGEN\",\"contrato\":null,\"visible\":true,\"precioFijo\":null},{\"simbolo\":\"AUKA\",\"contrato\":\"" + v2Auka + "\",\"visible\":true},{\"simbolo\":\"HARV\",\"contrato\":\"0x0fa04d11f28b28cbc9b98dd016f02023addb1923\",\"visible\":true,\"precioFijo\":0.75},{\"simbolo\":\"AUBEX\",\"contrato\":\"0xf1498640b27a66c0dc505093d70911c060e04fb0\",\"visible\":false}]}"), "lista unica aplicada");
+Check(CarteraVeta.Tokens.Length == 3 && CarteraVeta.Tokens[1] == ("AUKA", v2Auka) && CarteraVeta.Precio("HARV", null, null) == 0.75m && CarteraVeta.Precio("AUBEX", null, null) == null, "lista unica: v2, ocultas y precios");
+Check(!CarteraVeta.AplicarListaUnica("{\"otra\":1}") && !CarteraVeta.AplicarListaUnica("no es json") && CarteraVeta.Tokens.Length == 3, "lista unica rota no toca nada");
+CarteraVeta.UsarRespaldo();
+Check(CarteraVeta.Tokens.Length == 15 && CarteraVeta.Precio("AUBEX", null, null) == null && CarteraVeta.Precio("LOVE", null, null) == 0.1m, "respaldo: 15 tokens y AUBEX sin precio fijo");
 static bool Lanza(Action f) { try { f(); return false; } catch { return true; } }
 // Enviar por PULSE2CHAT: AURA prepara el enlace de Veta Wallet (#pagar) y mira la cadena; nunca firma.
 Check(CarteraVeta.Monto("10") == 10m && CarteraVeta.Monto("2.5") == 2.5m && CarteraVeta.Monto("2,5") == 2.5m && CarteraVeta.Monto("1,000") == 1000m && CarteraVeta.Monto("1,000.25") == 1000.25m, "monto escrito");

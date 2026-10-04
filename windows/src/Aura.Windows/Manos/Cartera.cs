@@ -19,6 +19,19 @@ internal static class Cartera
     static readonly HttpClient http = new() { Timeout = TimeSpan.FromSeconds(15) };
     static (DateTime En, decimal? Oro, decimal? Plata) precios;
     static (DateTime En, string Direccion, List<Saldo> Saldos)? ultimo;
+    static DateTime listaUnicaEn = DateTime.MinValue;
+
+    /// <summary>
+    /// Trae la lista única de monedas cada cinco minutos (el contrato vigente de cada una, el v2 desde el corte).
+    /// Si no responde se sigue con lo último que hubo, o con la copia de respaldo.
+    /// </summary>
+    static async Task ListaUnica(CancellationToken ct)
+    {
+        if (DateTime.UtcNow - listaUnicaEn < TimeSpan.FromMinutes(5)) return;
+        listaUnicaEn = DateTime.UtcNow;
+        try { CarteraVeta.AplicarListaUnica(await http.GetStringAsync(CarteraVeta.ListaUnicaUrl, ct)); }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException) { listaUnicaEn = DateTime.UtcNow - TimeSpan.FromMinutes(4); }
+    }
 
     /// <summary>Valida (o vacía) la dirección que pega la persona. Devuelve la dirección limpia.</summary>
     public static string ValidarDireccion(string d)
@@ -48,6 +61,7 @@ internal static class Cartera
         if (!CarteraVeta.EsDireccion(direccion)) throw new InvalidOperationException("Primero pon tu dirección de Veta Wallet en el Centro → Cartera.");
         if (!forzar && ultimo is { } u && u.Direccion == direccion && DateTime.UtcNow - u.En < TimeSpan.FromSeconds(30)) return u.Saldos;
         var precioTask = Precios(ct);
+        await ListaUnica(ct);
         using var r = await http.PostAsync(CarteraVeta.Rpc, new StringContent(CarteraVeta.ArmarLote(direccion), Encoding.UTF8, "application/json"), ct);
         if (!r.IsSuccessStatusCode) throw new InvalidOperationException($"La red de Orden Global no contestó ({(int)r.StatusCode}). Intenta en un momento.");
         var hexes = CarteraVeta.LeerLote(await r.Content.ReadAsStringAsync(ct));

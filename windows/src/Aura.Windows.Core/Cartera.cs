@@ -19,8 +19,16 @@ public static class CarteraVeta
     public const long CadenaId = 5550;
     const decimal GramosOnza = 31.1035m;
 
-    /// <summary>Los tokens de la red (los mismos de veta-wallet-app/src/api.js), con 18 decimales.</summary>
-    public static readonly (string Simbolo, string? Contrato)[] Tokens =
+    /// <summary>
+    /// La lista única de monedas: la sirve la plataforma de migración y es la misma que leen la wallet, Genesis ID y
+    /// el explorador. El día del corte a la v2 el contrato vigente cambia ahí y AURA lo toma solo (AplicarListaUnica).
+    /// </summary>
+    public const string ListaUnicaUrl = "https://migracion-sfsp.onrender.com/api/monedas";
+
+    /// <summary>Los tokens de la red, con 18 decimales. Empieza con la copia de respaldo y la reemplaza la lista única.</summary>
+    public static (string Simbolo, string? Contrato)[] Tokens { get; private set; } = Respaldo();
+
+    static (string Simbolo, string? Contrato)[] Respaldo() => new (string, string?)[]
     {
         ("ORIGEN", null), ("AUKA", "0x6Facc8Df79cEDc6C5065442ce27e915Aa3a26B9B"), ("AGKA", "0x961f798f998c7Ff44D47d62C7FA1B572eF187a4B"),
         ("ONDK", "0xfb83eEA4B384a4b18E5A1EBa7a4bb4C0b7CA19c1"), ("MNKA", "0x18b6680CFF71c11067bec312Fc48786bE2e54Ead"),
@@ -31,12 +39,54 @@ public static class CarteraVeta
         ("AGRO", "0x2A31ba919A5339fCB0F8aEeFfCE2c807B16007fe"), ("POLITICAL", "0x92496E1848e001428A3495409a9A9f616bB6dD3B"),
     };
 
-    /// <summary>Los precios fijos de referencia que usa la wallet para los tokens del ecosistema.</summary>
-    public static readonly Dictionary<string, decimal> PreciosFijos = new()
+    /// <summary>
+    /// Aplica la respuesta de la lista única: los tokens visibles con su contrato vigente (el v2 desde el corte) y sus
+    /// precios fijos. Si la respuesta no sirve, no toca nada y devuelve false: se sigue con lo que había.
+    /// </summary>
+    public static bool AplicarListaUnica(string json)
+    {
+        try
+        {
+            using var d = JsonDocument.Parse(json);
+            if (!d.RootElement.TryGetProperty("monedas", out var ms) || ms.ValueKind != JsonValueKind.Array) return false;
+            var tokens = new List<(string, string?)>();
+            var precios = new Dictionary<string, decimal>();
+            foreach (var m in ms.EnumerateArray())
+            {
+                if (!m.TryGetProperty("simbolo", out var s) || s.ValueKind != JsonValueKind.String) continue;
+                if (m.TryGetProperty("visible", out var v) && v.ValueKind == JsonValueKind.False) continue;
+                var simbolo = s.GetString()!.ToUpperInvariant();
+                string? contrato = m.TryGetProperty("contrato", out var c) && c.ValueKind == JsonValueKind.String ? c.GetString() : null;
+                if (contrato != null && !EsDireccion(contrato)) continue;
+                tokens.Add((simbolo, contrato));
+                if (m.TryGetProperty("precioFijo", out var p) && p.ValueKind == JsonValueKind.Number && p.TryGetDecimal(out var precio) && precio > 0) precios[simbolo] = precio;
+            }
+            if (tokens.Count == 0) return false;
+            Tokens = tokens.ToArray();
+            PreciosFijos.Clear();
+            foreach (var (k, valor) in precios) PreciosFijos[k] = valor;
+            return true;
+        }
+        catch (JsonException) { return false; }
+    }
+
+    /// <summary>Vuelve a la copia de respaldo (para las pruebas).</summary>
+    public static void UsarRespaldo()
+    {
+        Tokens = Respaldo();
+        PreciosFijos.Clear();
+        foreach (var (k, valor) in PreciosRespaldo) PreciosFijos[k] = valor;
+    }
+
+    /// <summary>Copia de respaldo de los precios fijos de la lista única. AUBEX va sin precio: se retira (SFSP §19).</summary>
+    static readonly Dictionary<string, decimal> PreciosRespaldo = new()
     {
         ["AGRO"] = 13.13m, ["AIT"] = 5.32m, ["SOL"] = 0.75m, ["REST"] = 8.57m, ["LOVE"] = 0.1m,
-        ["POLITICAL"] = 0.33m, ["ASL"] = 2.328m, ["AUBEX"] = 10m, ["HARV"] = 0.75m, ["IBS"] = 1.2m,
+        ["POLITICAL"] = 0.33m, ["ASL"] = 2.328m, ["HARV"] = 0.75m, ["IBS"] = 1.2m,
     };
+
+    /// <summary>Los precios fijos de referencia de los tokens del ecosistema que no cotizan.</summary>
+    public static readonly Dictionary<string, decimal> PreciosFijos = new(PreciosRespaldo);
 
     static readonly Regex Direccion = new("^0x[0-9a-fA-F]{40}$");
     public static bool EsDireccion(string d) => Direccion.IsMatch(d.Trim());
