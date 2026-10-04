@@ -31,7 +31,7 @@ import { Aparecer, Boton, Campo, Fila, Grupo, Icono, Interruptor, PantallaConCab
 
 type Props = {
   /** `intento`: el de esta entrada; quien la termina (app/sesion.ts entrarCon) lo vuelve a mirar. */
-  onAuthenticated: (user: SessionUser, intento?: Intento) => void;
+  onAuthenticated: (user: SessionUser, intento: Intento) => void;
   /** Volver a la entrada con Genesis ID (desde la primera fase). */
   onAtras?: () => void;
 };

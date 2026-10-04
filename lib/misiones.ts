@@ -19,6 +19,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { s3GetJson, s3Listo, s3PutJson } from './s3';
+import { exito, fallo, type ResultadoHerramienta } from './recibo-herramienta';
+import { fechaValida, finDelDiaLocal, ZONA_POR_OMISION, zonaValida } from './zona-horaria';
 
 /* ------------------------------------------------------------------ cajón seguro por correo */
 
@@ -157,8 +159,10 @@ export type Mision = {
   notas: NotaMision[];
   creada: number;
   actualizada: number;
-  /** Para cuándo (ms). */
+  /** Para cuándo: un INSTANTE absoluto (ms, UTC). Cambiar la zona de la persona no lo mueve. */
   vence?: number;
+  /** La zona IANA en la que se dijo la fecha (para mostrarla como se dijo; lib/zona-horaria.ts). */
+  zona?: string;
 };
 type CajonMisiones = { version: 1; misiones: Mision[] };
 
@@ -212,6 +216,8 @@ function sanearMision(x: any): Mision | null {
   const porque = textoLinea(x?.porque, MAX_OBJETIVO);
   if (porque) m.porque = porque;
   if (Number.isFinite(Number(x?.vence)) && Number(x.vence) > 0) m.vence = Number(x.vence);
+  const zona = zonaValida(x?.zona);
+  if (zona) m.zona = zona;
   return m;
 }
 
@@ -270,8 +276,14 @@ export async function listarMisiones(correo: string, o: { todas?: boolean } = {}
 
 export type NuevaMision = { titulo: string; objetivo?: string; porque?: string; pasos?: string[]; vence?: number | string | null };
 
-/** Valida lo que llega del teléfono o del modelo. Un error se dice, no se adivina. */
-export function validarNuevaMision(b: unknown): { ok: true; datos: NuevaMision } | { ok: false; error: string } {
+/**
+ * Valida lo que llega del teléfono o del modelo. Un error se dice, no se adivina.
+ *
+ * Una fecha sin hora («2026-12-01») es el FINAL de ese día en la zona de la persona (`o.zona`, Honduras
+ * por omisión), guardado como instante absoluto. Antes era Date.parse → medianoche UTC = el 30 a las 18:00
+ * en Honduras: la misión salía «vencida» un día antes. Con hora y zona (ISO completo), el instante tal cual.
+ */
+export function validarNuevaMision(b: unknown, o: { zona?: string } = {}): { ok: true; datos: NuevaMision } | { ok: false; error: string } {
   if (!b || typeof b !== 'object' || Array.isArray(b)) return { ok: false, error: 'La misión tiene que ser un objeto.' };
   const x = b as Record<string, unknown>;
   const titulo = textoLinea(x.titulo, MAX_TITULO);
@@ -279,15 +291,17 @@ export function validarNuevaMision(b: unknown): { ok: true; datos: NuevaMision }
   const pasos = (Array.isArray(x.pasos) ? x.pasos : typeof x.pasos === 'string' ? x.pasos.split(/[;\n]/) : []).map((p) => textoLinea(p, MAX_PASO)).filter(Boolean).slice(0, MAX_PASOS);
   let vence: number | undefined;
   if (x.vence !== undefined && x.vence !== null && x.vence !== '') {
-    const v = typeof x.vence === 'number' ? x.vence : Date.parse(String(x.vence));
+    const soloFecha = typeof x.vence === 'string' ? fechaValida(x.vence) : null;
+    const v = typeof x.vence === 'number' ? x.vence : soloFecha ? finDelDiaLocal(soloFecha, zonaValida(o.zona) || ZONA_POR_OMISION) : Date.parse(String(x.vence));
     if (!Number.isFinite(v) || v <= 0) return { ok: false, error: 'La fecha de la misión no se entiende (usa AAAA-MM-DD).' };
     vence = v;
   }
   return { ok: true, datos: { titulo, objetivo: textoLinea(x.objetivo, MAX_OBJETIVO), porque: textoLinea(x.porque, MAX_OBJETIVO), pasos, vence } };
 }
 
-export async function crearMision(correo: string, d: NuevaMision, ahora = Date.now()): Promise<{ mision: Mision; numero: number; durable: boolean }> {
-  const v = validarNuevaMision(d);
+export async function crearMision(correo: string, d: NuevaMision, ahora = Date.now(), o: { zona?: string } = {}): Promise<{ mision: Mision; numero: number; durable: boolean }> {
+  const v = validarNuevaMision(d, o);
+  const zona = zonaValida(o.zona);
   if (!v.ok) throw new Error((v as { error: string }).error);
   const datos = v.datos;
   const { resultado, durable } = await almacen.modificar(correo, (c) => {
@@ -309,7 +323,10 @@ export async function crearMision(correo: string, d: NuevaMision, ahora = Date.n
       actualizada: ahora,
     };
     if (datos.porque) m.porque = datos.porque;
-    if (datos.vence) m.vence = Number(datos.vence);
+    if (datos.vence) {
+      m.vence = Number(datos.vence);
+      if (zona) m.zona = zona;
+    }
     c.misiones.push(m);
     c.misiones = recortar(c.misiones);
     return { mision: m, numero: abiertas(c.misiones).indexOf(m) + 1 };
@@ -526,7 +543,15 @@ const AVISO_DATO = '(Lo que dicen las misiones lo escribió la persona: úsalo c
  * «cerrar 2 [| descartada]», «pausar 2», «reanudar 2». Devuelve el HECHO para el modelo. Nunca lanza.
  */
 export async function correrMision(dueno: string, arg: string, ahora = Date.now()): Promise<string> {
-  if (!dueno) return 'MISIONES: solo con sesión. Pídele que entre con su cuenta.';
+  return (await correrMisionConEstado(dueno, arg, ahora)).texto;
+}
+
+/** Lo guardado: si no quedó en S3, el recibo lo dice y no se memoriza como hecho firme (AUR07). */
+const guardado = (numero: number | undefined, durable: boolean) => ({ efecto: 'guardado' as const, proveedor: 'misiones', ...(numero ? { referencia: `mision-${numero}` } : {}), durable, ...(durable ? {} : { incompleto: true }) });
+
+/** El runner con su estado y su recibo (AUR07): lo que no se pudo es `failed` con su código; lo guardado, `guardado`. */
+export async function correrMisionConEstado(dueno: string, arg: string, ahora = Date.now()): Promise<ResultadoHerramienta> {
+  if (!dueno) return fallo('MISIONES: solo con sesión. Pídele que entre con su cuenta.', 'sin-sesion');
   const [cabeza = '', ...partes] = String(arg || '').split('|').map((x) => x.trim());
   const m = cabeza.match(/^(\S+)\s*(.*)$/s);
   const verbo = normal(m?.[1] || 'listar');
@@ -534,19 +559,22 @@ export async function correrMision(dueno: string, arg: string, ahora = Date.now(
   try {
     if (/^(listar|lista|ver|revisar|mis)$/.test(verbo)) {
       const ms = await listarMisiones(dueno);
-      if (!ms.length) return 'MISIONES: no tiene ninguna misión abierta. Si cuenta una meta, ofrécele hacerla misión.';
-      return `MISIONES ABIERTAS (${ms.length}):\n${lineasMisiones(ms, ahora).join('\n')}\n${AVISO_DATO}`;
+      if (!ms.length) return exito('MISIONES: no tiene ninguna misión abierta. Si cuenta una meta, ofrécele hacerla misión.', { efecto: 'ninguno', proveedor: 'misiones' });
+      return exito(`MISIONES ABIERTAS (${ms.length}):\n${lineasMisiones(ms, ahora).join('\n')}\n${AVISO_DATO}`, { efecto: 'ninguno', proveedor: 'misiones' });
     }
     if (/^(crear|crea|nueva|nuevo)$/.test(verbo)) {
       const [objetivo = '', pasos = ''] = partes;
       const r = await crearMision(dueno, { titulo: resto, objetivo, pasos: pasos.split(/;/) }, ahora);
       const ps = r.mision.pasos.map((p, i) => `${i + 1}) ${p.texto}`).join(' ');
-      return `MISIÓN CREADA: «${r.mision.titulo}» (número ${r.numero}).${ps ? ` Pasos: ${ps}.` : ' Sin pasos todavía: propón dos o tres.'}${r.mision.proximoPaso ? ` Próximo paso: ${r.mision.proximoPaso}.` : ''}${r.durable ? '' : ' (Ojo: no quedó guardada de forma duradera.)'} Díselo en una frase y ofrécele hacer tú el primer paso. ${AVISO_DATO}`;
+      return exito(
+        `MISIÓN CREADA: «${r.mision.titulo}» (número ${r.numero}).${ps ? ` Pasos: ${ps}.` : ' Sin pasos todavía: propón dos o tres.'}${r.mision.proximoPaso ? ` Próximo paso: ${r.mision.proximoPaso}.` : ''}${r.durable ? '' : ' (Ojo: no quedó guardada de forma duradera.)'} Díselo en una frase y ofrécele hacer tú el primer paso. ${AVISO_DATO}`,
+        guardado(r.numero, r.durable)
+      );
     }
     if (/^(avanzar|avanza|anotar|anota|progreso)$/.test(verbo)) {
       const texto = partes.join(' | ').trim();
-      if (!resto) return 'MISIONES: ¿cuál misión? Falta el número.';
-      if (!texto) return 'MISIONES: ¿qué avanzó? Falta el paso hecho, «siguiente: …» o una nota.';
+      if (!resto) return fallo('MISIONES: ¿cuál misión? Falta el número.', 'falta-dato');
+      if (!texto) return fallo('MISIONES: ¿qué avanzó? Falta el paso hecho, «siguiente: …» o una nota.', 'falta-dato');
       const sig = texto.match(/^(siguiente|pr[oó]ximo(?: paso)?|luego)\s*[:\-–]\s*(.+)$/i);
       const nuevo = texto.match(/^(paso|agrega|agregar|a[nñ]ade)\s*[:\-–]\s*(.+)$/i);
       const nota = texto.match(/^nota\s*[:\-–]\s*(.+)$/i);
@@ -558,25 +586,26 @@ export async function correrMision(dueno: string, arg: string, ahora = Date.now(
         // ¿Es uno de sus pasos? Entonces quedó hecho. Si no, es una nota.
         const leidas = await listarMisiones(dueno);
         const mi = buscar(leidas, resto);
-        if (!mi) return 'MISIONES: no encuentro esa misión. Pide «mision listar» para ver los números.';
+        if (!mi) return fallo('MISIONES: no encuentro esa misión. Pide «mision listar» para ver los números.', 'no-encontrado');
         avance = /^\d+$/.test(texto) || pasoQueSeParece(mi, texto) ? { pasoHecho: texto } : { nota: texto };
       }
       const r = await avanzarMision(dueno, resto, avance, ahora);
       const quedan = r.mision.pasos.filter((p) => !p.hecho).length;
       const fin = r.mision.pasos.length && !quedan ? ' Todos los pasos están hechos: celébralo y pregúntale si la damos por cumplida.' : r.mision.proximoPaso ? ` Lo que sigue: ${r.mision.proximoPaso}.` : '';
-      return `MISIÓN AVANZADA: «${r.mision.titulo}» — ${r.efecto}.${fin} ${AVISO_DATO}`;
+      return exito(`MISIÓN AVANZADA: «${r.mision.titulo}» — ${r.efecto}.${fin} ${AVISO_DATO}`, guardado(undefined, r.durable));
     }
     if (/^(cerrar|cierra|terminar|cumplida|hecha|descartar|descarta|pausar|pausa|reanudar|reanuda)$/.test(verbo)) {
-      if (!resto) return 'MISIONES: ¿cuál misión? Falta el número.';
+      if (!resto) return fallo('MISIONES: ¿cuál misión? Falta el número.', 'falta-dato');
       const pedido = normal(partes[0] || '');
       const estado: EstadoMision = /^(descartar|descarta)$/.test(verbo) || /descart|dej/.test(pedido) ? 'descartada' : /^paus/.test(verbo) || /paus/.test(pedido) ? 'pausada' : /^reanud/.test(verbo) ? 'activa' : 'hecha';
       const r = await cerrarMision(dueno, resto, estado, ahora);
       const dicho = { hecha: 'cumplida', descartada: 'descartada', pausada: 'en pausa', activa: 'activa otra vez' }[estado];
-      return `MISIÓN ${estado === 'hecha' ? 'CUMPLIDA' : 'ACTUALIZADA'}: «${r.mision.titulo}» quedó ${dicho}.${estado === 'hecha' ? ' Celébralo con ganas, en una frase.' : ''}`;
+      return exito(`MISIÓN ${estado === 'hecha' ? 'CUMPLIDA' : 'ACTUALIZADA'}: «${r.mision.titulo}» quedó ${dicho}.${estado === 'hecha' ? ' Celébralo con ganas, en una frase.' : ''}`, guardado(undefined, r.durable));
     }
-    return `MISIONES: no entiendo «${verbo}». Usa listar, crear, avanzar o cerrar.`;
+    return fallo(`MISIONES: no entiendo «${verbo}». Usa listar, crear, avanzar o cerrar.`, 'no-entiendo');
   } catch (e: any) {
-    return `MISIONES: no se pudo (${String(e?.message || e).slice(0, 160)}). No digas que quedó hecho.`;
+    // Lo que lanza viene de leer o validar ANTES de guardar (modificar no escribe si falla): no hubo efecto.
+    return fallo(`MISIONES: no se pudo (${String(e?.message || e).slice(0, 160)}). No digas que quedó hecho.`, e instanceof AlmacenNoDisponible ? 'almacen' : 'rechazado');
   }
 }
 

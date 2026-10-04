@@ -36,6 +36,8 @@ import { HojaComputadoraVivo } from '../ajustes/Computadora';
 import { HojaCorreos } from '../ajustes/Correos';
 import { abrirHoja, anunciarAnfitrion, cerrarHoja, hojasAhora, suscribirHojas } from './hojas';
 import { HojasCerebro } from './HojasCerebro';
+import { VisorComputadora } from './VisorComputadora';
+import { visorAbierto } from './visor';
 
 /** La voz de la persona por encima de esto es que está hablando (el anillo que late). */
 const NIVEL_HABLA = 0.15;
@@ -65,8 +67,9 @@ export function ComputadoraEnVivo() {
   if (!comp.current)
     comp.current = new CompaneroPc({
       abrirVista: (id) => abrirHoja('computadora', { tareaId: id }),
-      // En una llamada de PULSE2CHAT no se le abre nada encima.
-      puedeAbrir: () => !vozRef.current?.vista.suspendida,
+      // En una llamada de PULSE2CHAT no se le abre nada encima; con el visor abierto tampoco (AURA no roba el foco: la
+      // pregunta y el estado se ven en el visor mismo).
+      puedeAbrir: () => !vozRef.current?.vista.suspendida && !visorAbierto(),
       decir: (texto, boleto) => emitir('lectura', { texto, ...(boleto ? { boleto } : {}) }),
       sonido: (on) => {
         quiere.current = on;
@@ -174,6 +177,8 @@ export function ComputadoraEnVivo() {
         pregunta={companero.pregunta}
         alEstado={(id, ahora, estado) => companero.alEstado(id, ahora, estado)}
       />
+      {/* El visor a pantalla completa (app/VisorComputadora.tsx): solo cuando la persona lo abre desde su tarea. */}
+      <VisorComputadora tareaSeguida={companero.tareaId} />
       <HojaCorreos visible={hojas.abierta === 'correos'} onCerrar={cerrarHoja} />
       {/* Sus misiones, lo que sabe de ti y tu círculo (app/HojasCerebro.tsx), también desde cualquier pantalla. */}
       <HojasCerebro />

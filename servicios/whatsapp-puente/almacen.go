@@ -408,6 +408,20 @@ func (a *Almacen) Origen(chat, id string) (Mensaje, error) {
 	return ms[0], nil
 }
 
+// Un mensaje PROPIO por su id, en cualquier chat (AUR13: el id lo deriva AU-RA de su operación, así que no se repite
+// entre chats; buscar sin el chat evita fallar cuando el chat quedó guardado por su LID).
+func (a *Almacen) MioPorID(id string) (Mensaje, error) {
+	ms, err := a.leer(`SELECT id, chat, de, nombre_de, mio, hora, tipo, texto, NULL, duracion, archivo, crudo IS NOT NULL, eliminado, editado, chat_wa, de_wa
+		FROM mensajes WHERE id = ? AND mio = 1 LIMIT 1`, id)
+	if err != nil {
+		return Mensaje{}, err
+	}
+	if len(ms) == 0 {
+		return Mensaje{}, sql.ErrNoRows
+	}
+	return ms[0], nil
+}
+
 // El mensaje crudo con la ruta nueva que dio WhatsApp al volver a subir el archivo.
 func (a *Almacen) ActualizarCrudo(chat, id string, crudo []byte) error {
 	_, err := a.db.Exec(`UPDATE mensajes SET crudo = ? WHERE chat = ? AND id = ? AND eliminado = 0`, nilSiVacio(crudo), a.resolver(chat), id)

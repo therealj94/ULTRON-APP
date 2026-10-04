@@ -25,6 +25,7 @@ import { consultarModeloLote } from './laya';
 import { listar } from './correo/buzon';
 import { leerCuentasSeguro } from './correo/cuentas';
 import { chatsWA, mensajesWA, whatsappDisponible, whatsappPermitido, estadoWA } from '../server/whatsapp';
+import { exito, fallo, type ResultadoHerramienta } from './recibo-herramienta';
 
 export type Importancia = 'urgente' | 'importante' | 'normal' | 'ruido';
 export type Intencion = 'pregunta' | 'dinero' | 'familia' | 'trabajo' | 'publicidad' | 'grupo' | 'estafa';
@@ -401,16 +402,26 @@ export function resumenTriaje(p: Record<Importancia, Clasificada[]>, o: { errore
 
 export { INSTRUCCION_TRIAJE } from './harness';
 
-/** El runner del harness: «revisar» (todo), «whatsapp», «correo». */
+/** El runner del harness: «revisar» (todo), «whatsapp», «correo». Solo el texto. */
 export async function correrTriaje(dueno: string, arg: string, _ambito = '', fuentes?: FuentesTriaje): Promise<string> {
-  if (!dueno) return 'TRIAJE: solo con sesión. Pídele que entre con su cuenta.';
+  return (await correrTriajeConEstado(dueno, arg, _ambito, fuentes)).texto;
+}
+
+/**
+ * El runner con su estado y su recibo (AUR07): si no se pudo revisar ninguna fuente es `failed` (no «nada
+ * nuevo»); si alguna falló, lo traído va `incompleto` (sirve para contestar, no se memoriza como conclusión).
+ */
+export async function correrTriajeConEstado(dueno: string, arg: string, _ambito = '', fuentes?: FuentesTriaje): Promise<ResultadoHerramienta> {
+  if (!dueno) return fallo('TRIAJE: solo con sesión. Pídele que entre con su cuenta.', 'sin-sesion');
   const v = plegar(String(arg || '').split(/\s+/)[0] || 'revisar');
   const canal: 'todo' | 'whatsapp' | 'correo' = /^(whatsapp|wa|chats)$/.test(v) ? 'whatsapp' : /^(correo|correos|email|mail)$/.test(v) ? 'correo' : 'todo';
-  if (canal === 'whatsapp' && !fuentes?.whatsapp && !(whatsappDisponible() && whatsappPermitido(dueno))) return 'TRIAJE: su WhatsApp no está conectado aquí. No lo revisé; dilo con naturalidad.';
+  if (canal === 'whatsapp' && !fuentes?.whatsapp && !(whatsappDisponible() && whatsappPermitido(dueno))) return fallo('TRIAJE: su WhatsApp no está conectado aquí. No lo revisé; dilo con naturalidad.', 'no-disponible');
   try {
     const r = await triar(dueno, { canal, fuentes });
-    return r.resumen;
+    const revisadas = [r.revisado.whatsapp, r.revisado.correo].filter(Boolean).length;
+    if (!revisadas && r.errores.length) return fallo(`${r.resumen}\nNo pude revisar ninguna fuente: no digas que no hay nada nuevo.`, 'proveedor');
+    return exito(r.resumen, { efecto: 'ninguno', proveedor: 'triaje', ...(r.errores.length ? { incompleto: true } : {}) });
   } catch (e: any) {
-    return `TRIAJE: falló (${String(e?.message || e).slice(0, 140)}).`;
+    return fallo(`TRIAJE: falló (${String(e?.message || e).slice(0, 140)}).`, 'excepcion');
   }
 }

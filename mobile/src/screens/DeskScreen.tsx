@@ -73,6 +73,8 @@ import { avisarMesa, mensajeVoz, nivelOido, oidoTelefono, sueloCompa } from '../
 import { etiquetaCiclo, llamadaActiva, llamadaTerminada } from '../compa/llamadaCiclo';
 import { accionesDelTurno } from '../compa/acciones';
 import { emitir, escuchar } from '../nucleo/contrato';
+import { accionDeControlMesa, estadoControlesDe } from '../compa/controles';
+import { respuestaAclaracion, type ControlVoz } from '../lib/controlesVoz';
 import { usePulse } from '../pulse/PulseProvider';
 import { useSinLeerTotal } from '../pulse/chats';
 import { ChatMesa } from '../components/ChatMesa';
@@ -115,7 +117,12 @@ import type { PantallaCerebro } from '../compa/cerebro';
 import { TarjetaPropuesta } from '../components/TarjetaPropuesta';
 import { HojaCerebro } from '../app/HojasCerebro';
 import { publicarMesa, retirarMesa } from '../app/mesaAjustes';
+import { tomarPrimeraPeticion } from '../app/sesion';
 import { useBorradorMesa } from '../lib/borradorMesa';
+import { refsDeTurno } from '../lib/trabajos';
+import { avisarTrabajos, useTrabajos } from '../trabajos/useTrabajos';
+import { IndicadorTrabajos } from '../trabajos/IndicadorTrabajos';
+import { PanelTrabajos } from '../trabajos/PanelTrabajos';
 
 type Props = {
   user: SessionUser;
@@ -192,6 +199,8 @@ export function DeskScreen(props: Props) {
 /** Las acciones que el cerebro decidió en el turno de la mesa van al bus (la app las hace). */
 function emitirAccionesDelTurno(r: unknown) {
   for (const a of accionesDelTurno(r)) emitir('accion', a);
+  // El turno creó o tocó tareas durables (AUR08): el indicador las pregunta ya, sin esperar al sondeo.
+  if (refsDeTurno(r).length) avisarTrabajos();
 }
 
 function Mesa({ user, onLogout, recienElegido = false }: Props) {
@@ -234,7 +243,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const [presence, setPresence] = useState<DeskPresence>('stay');
   const [bubble, setBubble] = useState('');
   const [status, setStatus] = useState<'boot' | 'listening' | 'muted' | 'thinking' | 'speaking' | 'orando' | 'reconnect' | 'offline'>('boot');
-  const [draft, setDraft] = useState('');
+  // La primera vez deja escrita la primera petición (AUR11, el miniresultado): la persona la revisa y la manda.
+  const [draft, setDraft] = useState(() => tomarPrimeraPeticion());
   // Lo escrito sobrevive a una actualización por aire (UI01, 3-oct).
   useBorradorMesa(draft, setDraft);
   const [listening, setListening] = useState(false);
@@ -252,6 +262,10 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   /** Su computadora en la nube (ajustes/Computadora.tsx): la hoja, su estado y el aviso de la mesa. */
   const [pcAbierta, setPcAbierta] = useState(false);
   const [pcEstado, setPcEstado] = useState<EstadoPc | null>(null);
+  const pcEstadoRef = useRef<EstadoPc | null>(null);
+  pcEstadoRef.current = pcEstado;
+  /** AUR10: «para» a secas con voz y tarea vivas preguntó qué parar; la respuesta del turno siguiente decide. */
+  const aclaracionMesa = useRef<ControlVoz[] | null>(null);
   const [pcAviso, setPcAviso] = useState<{ texto: string; terminada: boolean } | null>(null);
   /** La vista en vivo de toda la app (app/ComputadoraEnVivo.tsx) abierta: el aviso de arriba sobra. */
   const pcVivoAbierta = useSyncExternalStore(suscribirHojas, () => hojasAhora().abierta === 'computadora', () => false);
@@ -363,6 +377,11 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
    * la pila no gasta batería ni reinicia un micrófono que es de otro).
    */
   const mesaActiva = mesaVisible && appActiva;
+
+  // Las tareas durables (AUR08): el indicador mínimo y el panel. Cerrar el panel no cancela nada; el
+  // servidor es la fuente de verdad y, al volver, la misma tarea (mismo id) sigue con su estado.
+  const [panelTrabajos, setPanelTrabajos] = useState(false);
+  const trabajos = useTrabajos({ activo: mesaActiva || panelTrabajos, panelAbierto: panelTrabajos, idioma: idioma === 'en' ? 'en' : 'es' });
 
   // Su computadora: se pregunta despacio (rápido mientras trabaja) con la mesa a la vista. Mientras
   // trabaja, la mesa lo dice arriba con «Ver»; al terminar, «terminó · ver el resultado» un rato.
@@ -1259,6 +1278,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       fraseOidaEn.current = oidaEn;
       lastUserAt.current = Date.now();
       comentarista.usuarioHablo();
+      // Lo que estaba vivo ANTES de cortar la voz: «para» decide sobre eso (AUR10).
+      const controlesAntes = estadoControlesDe({ hablando: speakingRef.current, cola: 0, tarea: pcEstadoRef.current?.actual?.estado, ciclo: vozRef.current.ciclo, pensando: false });
       await stopSpeaking();
       registroVoz.nuevoTurno();
       interrumpidaTurno.current = interrumpida.current;
@@ -1267,16 +1288,27 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       setMensajes((m) => [...m, { rol: 'usuario' as const, texto: cmd }].slice(-80));
 
       const enConocer = modeRef.current === 'CONOCER' && conocerIdxRef.current >= 0 && conocerIdxRef.current < CONOCER_QUESTIONS.length;
-      const intent = interpretar(cmd, { dormido: presenceRef.current === 'sleep', enConocer });
+      const intent = interpretar(cmd, { dormido: presenceRef.current === 'sleep', enConocer, ...controlesAntes });
 
       try {
+        // La respuesta a «¿Qué paro: mi voz, la tarea o las dos?» (AUR10): cada control toca solo lo suyo.
+        if (aclaracionMesa.current) {
+          const opciones = aclaracionMesa.current;
+          aclaracionMesa.current = null;
+          const r = respuestaAclaracion(cmd, opciones);
+          if (r === 'ninguno') return void (await say(tr('Va, sigo.', "Okay, I'll keep going."), 'IDLE'));
+          if (r) {
+            for (const c of r) emitir('accion', accionDeControlMesa(c));
+            return;
+          }
+        }
         if (presenceRef.current === 'sleep') {
           setPresence('stay');
           presenceRef.current = 'stay';
           if (intent.tipo === 'despertar') return void (await say(tr('Despierto. Te escucho.', 'Awake. I’m listening.'), 'HAPPY', { emocion: 'feliz' }));
         }
         // En la entrevista todo es respuesta salvo salir / callar / dormir / menú / sesión.
-        if (enConocer && !['conocer_salir', 'callar', 'dormir', 'logout', 'menu', 'catalogo'].includes(intent.tipo)) return void (await answerConocer(cmd));
+        if (enConocer && !['conocer_salir', 'callar', 'dormir', 'logout', 'menu', 'catalogo', 'control', 'aclarar'].includes(intent.tipo)) return void (await answerConocer(cmd));
 
         // La respuesta a «¿solo ahora o siempre?» (la cámara).
         if (esperaModoCamara.current) {
@@ -1303,6 +1335,12 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         }
 
         switch (intent.tipo) {
+          case 'control':
+            emitir('accion', accionDeControlMesa(intent.control));
+            return;
+          case 'aclarar':
+            aclaracionMesa.current = intent.opciones;
+            return void (await say(intent.pregunta, 'CURIOUS', { emocion: 'curioso' }));
           case 'despertar':
             return void (await say(tr('Aquí estoy.', 'I’m here.'), 'HAPPY', { emocion: 'feliz' }));
           case 'llamame':
@@ -2650,6 +2688,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
             ]}
           >
             {caraEntrando}
+            {/* El indicador de tareas va arriba del cuadro del avatar: no tapa la cabecera del chat ni el teclado. */}
+            <IndicadorTrabajos texto={trabajos.indicador} resumen={trabajos.resumen} reducido={trabajos.reducido} onAbrir={() => setPanelTrabajos(true)} style={styles.trabajosCuadro} />
           </View>
           <View style={{ flex: 1 }}>
             <ChatMesa
@@ -2681,6 +2721,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
 
       {!enCuadro && (
         <>
+        {/* «Trabajando · 2» / «Necesito una decisión · 1»: arriba a la derecha, frente al estado; nunca abajo con el teclado. */}
+        <IndicadorTrabajos texto={trabajos.indicador} resumen={trabajos.resumen} reducido={trabajos.reducido} onAbrir={() => setPanelTrabajos(true)} style={styles.trabajos} />
+
         <View pointerEvents="none" style={styles.hud}>
           <View style={[styles.hudDot, { backgroundColor: dotColor }]} />
           <Text style={styles.hudText}>
@@ -2760,6 +2803,26 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       />
 
       <HojaComputadora visible={pcAbierta} onCerrar={() => setPcAbierta(false)} nombreAvatar={de(avatarPorId(avatarId).nombre)} />
+
+      <PanelTrabajos
+        visible={panelTrabajos}
+        onCerrar={() => setPanelTrabajos(false)}
+        tareas={trabajos.tareas}
+        reducido={trabajos.reducido}
+        idioma={idioma === 'en' ? 'en' : 'es'}
+        onTarea={trabajos.aplicar}
+        onRefrescar={() => void trabajos.refrescar()}
+        onEditar={(sugerencia) => {
+          // «Editar»: el texto propuesto queda en el campo de escribir; lo manda la persona (nada sale solo).
+          setPanelTrabajos(false);
+          setDraft(sugerencia);
+          if (!enCuadro) setMenuOpen(true);
+        }}
+        onAbrirComputadora={() => {
+          setPanelTrabajos(false);
+          setPcAbierta(true);
+        }}
+      />
 
       {/* Su computadora trabaja (o acaba de terminar): se dice arriba, con «Ver». */}
       {pcAviso && !pcAbierta && !pcVivoAbierta && !tutorialAbierto ? (
@@ -2917,6 +2980,9 @@ const styles = StyleSheet.create({
   avisoPcTexto: { color: '#F2EEE8', fontSize: 13.5, fontWeight: '700', flexShrink: 1 },
   avisoPcVer: { fontSize: 13.5, fontWeight: '900' },
   root: { flex: 1, backgroundColor: T.fondo2 },
+  // El indicador de tareas (AUR08): arriba a la derecha, a la altura del estado; el cuadro del chat lo lleva dentro.
+  trabajos: { position: 'absolute', top: 12, right: 16, zIndex: 35 },
+  trabajosCuadro: { position: 'absolute', top: 10, right: 10, zIndex: 35 },
   cuadro: { overflow: 'hidden', backgroundColor: '#000', position: 'relative' },
   hud: {
     position: 'absolute',

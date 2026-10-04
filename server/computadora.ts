@@ -43,10 +43,20 @@
 import { nivelDeCorreo } from './nivel';
 import crypto from 'node:crypto';
 import { clave } from '../lib/boveda';
+import { claveDe, crearUnaVez, leerDurable } from '../lib/durable';
 
 export type MotorNodo = 'holo' | 'claude';
-/** `hecho`: el recibo del nodo (agente.py nuevo): false si la acción no se hizo (la negó, la pararon, otra época). */
-export type PasoTarea = { n: number; t: number; accion: string; args?: Record<string, unknown>; ms?: number; miniatura?: string | null; hecho?: boolean };
+/**
+ * `hecho`: el recibo del nodo (agente.py nuevo): false si la acción no se hizo (la negó, la pararon, otra época).
+ * `incierto`: salió y se cortó a medias; no se sabe si pasó (no es «no se hizo»).
+ */
+export type PasoTarea = { n: number; t: number; accion: string; args?: Record<string, unknown>; ms?: number; miniatura?: string | null; hecho?: boolean; incierto?: boolean };
+/**
+ * Parar y tomar/devolver el control en tres estados (agente.py de AUR03): `fenced` (recibido, ningún despacho
+ * nuevo), `draining` (un toque ya salió y se espera que termine) y `quiescent` (nada en vuelo: ya es verdad).
+ * null: el nodo de antes no lo dice.
+ */
+export type FaseQuietud = 'fenced' | 'draining' | 'quiescent';
 /**
  * Los estados del nodo. `pausada`, `confirmar` (espera el sí de la persona) y `control` (la persona tiene el
  * escritorio) solo los da el agente.py nuevo: siguen vivos, pero quietos.
@@ -65,13 +75,19 @@ export type Tarea = {
   pregunta?: string | null;
   /** Cuál pregunta es (agente.py nuevo): el sí la nombra y otra no se contesta con él (auditoría 3-oct, PC01). */
   pregunta_id?: string | null;
+  /** La huella de la propuesta que se muestra (agente.py de AUR02): el sí la devuelve, ligado a lo que se vio. */
+  propuesta?: string | null;
 };
 
 const TERMINADA = new Set<EstadoTarea>(['hecha', 'parada', 'sin_pasos', 'fallo']);
 /** Vivas pero quietas: no avanzan solas, no se narran y no cuentan para el tope de tiempo. */
 const QUIETA = new Set<EstadoTarea>(['pausada', 'confirmar', 'control']);
-/** Lo que el nodo sabe hacer además de encargar y parar (agente.py nuevo: /salud → capacidades). */
-export type CapacidadNodo = 'pausar' | 'confirmar' | 'control';
+/**
+ * Lo que el nodo sabe hacer además de encargar y parar (agente.py nuevo: /salud → capacidades). `entrada`: el contrato
+ * de entradas del visor (época, secuencia, viewport, ACK) y el frame en cabeceras; `seguro`: la entrada segura (AUR09).
+ */
+export type CapacidadNodo = 'pausar' | 'confirmar' | 'control' | 'entrada' | 'seguro';
+const CAPACIDADES_NODO: readonly CapacidadNodo[] = ['pausar', 'confirmar', 'control', 'entrada', 'seguro'];
 /** Cada cuánto se pregunta por la tarea mientras se espera. */
 const SONDEO_MS = 2000;
 /** Tras esto, una tarea que nadie terminó de esperar se deja de seguir. */
@@ -138,7 +154,7 @@ let capsCache: { en: number; caps: CapacidadNodo[] } | null = null;
 const CAPS_MS = 60_000;
 
 function capsDe(j: any): CapacidadNodo[] {
-  return Array.isArray(j?.capacidades) ? j.capacidades.filter((c: unknown): c is CapacidadNodo => c === 'pausar' || c === 'confirmar' || c === 'control') : [];
+  return Array.isArray(j?.capacidades) ? j.capacidades.filter((c: unknown): c is CapacidadNodo => CAPACIDADES_NODO.includes(c as CapacidadNodo)) : [];
 }
 
 /** ¿Contesta el nodo? Qué motores ofrece, si está ocupado y qué sabe hacer. Para Ajustes y la salud del sistema. */
@@ -165,35 +181,200 @@ export async function verTarea(id: string, miniaturas = false, ms = 10_000, sena
   return pedir(`/tareas/${encodeURIComponent(id)}${miniaturas ? '?miniaturas=1' : ''}`, { signal: senal ? AbortSignal.any([senal, tope]) : tope });
 }
 
-export async function pararTarea(id: string): Promise<void> {
-  await pedir(`/tareas/${encodeURIComponent(id)}/parar`, { method: 'POST', ms: 8000 });
+const fase = (x: unknown): FaseQuietud | null => (x === 'fenced' || x === 'draining' || x === 'quiescent' ? x : null);
+
+/**
+ * Parar. El agente.py de AUR03 contesta cuando ya nada está en vuelo (`quiescent`) o, pasado su tope (5 s), con
+ * `draining` y el id de la parada: un toque que ya salió termina (y queda con su recibo). El de antes no dice fase
+ * (null). Se espera hasta 12 s: más que el tope del nodo.
+ */
+export async function pararTarea(id: string): Promise<{ fase: FaseQuietud | null; parada: string | null }> {
+  const j = await pedir(`/tareas/${encodeURIComponent(id)}/parar`, { method: 'POST', ms: 12_000 });
+  return { fase: fase(j?.parada?.fase), parada: typeof j?.parada?.id === 'string' ? j.parada.id : null };
 }
 
 /* Lo del agente.py nuevo (capacidades): pausar, seguir, el sí, el control de la persona y la pantalla de ahora. */
-export async function pausarTarea(id: string): Promise<void> {
-  await pedir(`/tareas/${encodeURIComponent(id)}/pausar`, { method: 'POST', ms: 8000 });
+export async function pausarTarea(id: string): Promise<{ fase: FaseQuietud | null }> {
+  const j = await pedir(`/tareas/${encodeURIComponent(id)}/pausar`, { method: 'POST', ms: 12_000 });
+  return { fase: fase(j?.fase) };
 }
 export async function reanudarTarea(id: string): Promise<void> {
   await pedir(`/tareas/${encodeURIComponent(id)}/reanudar`, { method: 'POST', ms: 8000 });
 }
-/** El sí o el no a UNA pregunta (`preguntaId`): si la computadora ya pregunta otra cosa, el nodo dice 409. */
-export async function confirmarTarea(id: string, si: boolean, preguntaId?: string | null): Promise<void> {
-  await pedir(`/tareas/${encodeURIComponent(id)}/confirmar`, { method: 'POST', body: JSON.stringify({ si, ...(preguntaId ? { pregunta_id: preguntaId } : {}) }), ms: 8000 });
+/**
+ * El sí o el no a UNA pregunta (`preguntaId`) y, si se conoce, a la propuesta que se le mostró (`propuesta`, la
+ * huella del agente.py de AUR02): si la computadora ya pregunta otra cosa, el nodo dice 409.
+ */
+export async function confirmarTarea(id: string, si: boolean, preguntaId?: string | null, propuesta?: string | null): Promise<void> {
+  await pedir(`/tareas/${encodeURIComponent(id)}/confirmar`, {
+    method: 'POST',
+    body: JSON.stringify({ si, ...(preguntaId ? { pregunta_id: preguntaId } : {}), ...(propuesta ? { propuesta } : {}) }),
+    ms: 8000,
+  });
 }
-export async function controlTarea(id: string, tomar: boolean): Promise<void> {
-  await pedir(`/tareas/${encodeURIComponent(id)}/control`, { method: 'POST', body: JSON.stringify({ tomar }), ms: 8000 });
+/**
+ * Tomar o devolver el control: «tú controlas» / «sigo yo» solo con `quiescent` (con `draining`, termina sola). Con
+ * `cliente` (el visor de AUR09; derivado de la sesión, clienteDeSesion) el control queda ligado a ese cliente y el nodo
+ * cerca a cualquier otro; `epocaEsperada` (expectedControlEpoch): si el control ya cambió, el nodo dice 409. Devuelve la
+ * época del control (`controlEpoch`, la que llevan las entradas); null con el nodo de antes.
+ */
+export async function controlTarea(id: string, tomar: boolean, o: { cliente?: string | null; epocaEsperada?: number | null } = {}): Promise<{ fase: FaseQuietud | null; epoca: number | null; seguro?: boolean }> {
+  const cuerpo = { tomar, ...(o.cliente ? { clientId: o.cliente } : {}), ...(Number.isInteger(o.epocaEsperada) ? { expectedControlEpoch: o.epocaEsperada } : {}) };
+  const j = await pedir(`/tareas/${encodeURIComponent(id)}/control`, { method: 'POST', body: JSON.stringify(cuerpo), ms: 12_000 });
+  return { fase: fase(j?.fase), epoca: Number.isInteger(j?.epoca) ? j.epoca : null, ...(typeof j?.seguro === 'boolean' ? { seguro: j.seguro } : {}) };
 }
 export type AccionPersona = { tipo: 'click'; x: number; y: number } | { tipo: 'escribir'; texto: string; enter?: boolean } | { tipo: 'tecla'; teclas: string } | { tipo: 'scroll'; direccion: 'up' | 'down' };
 export async function accionPersona(id: string, a: AccionPersona): Promise<void> {
   await pedir(`/tareas/${encodeURIComponent(id)}/accion`, { method: 'POST', body: JSON.stringify(a), ms: 20_000 });
 }
-/** Lo que se ve ahora (JPEG), solo mientras esa tarea tiene el escritorio. */
-export async function pantallaDeTarea(id: string): Promise<Buffer> {
-  const c = conf();
-  const r = await fetch(`${c.url}/tareas/${encodeURIComponent(id)}/pantalla`, { headers: { authorization: `Bearer ${c.clave}` }, signal: AbortSignal.timeout(15_000) });
-  if (!r.ok) throw new ErrorNodo(`HTTP ${r.status}`, r.status);
-  return Buffer.from(await r.arrayBuffer());
+/**
+ * El frame de una captura (agente.py de AUR09): su secuencia, la hora del nodo (ms), el tamaño lógico (el de las
+ * coordenadas de las entradas), la revisión del viewport, la época del control y si es privado (entrada segura: no se
+ * guarda ni va a ningún modelo). null con el nodo de antes.
+ */
+export type FrameNodo = { seq: number; ts: number; ancho: number; alto: number; viewportRevision: number; epoca: number | null; privado: boolean };
+
+function frameDe(h: Headers): FrameNodo | null {
+  if (!h.get('x-frame-seq')) return null;
+  const n = (k: string) => Number(h.get(k));
+  const [seq, ts, ancho, alto, rev] = ['x-frame-seq', 'x-frame-ts', 'x-frame-ancho', 'x-frame-alto', 'x-viewport-rev'].map(n);
+  if (![seq, ts, ancho, alto, rev].every((x) => Number.isFinite(x) && x >= 0)) return null;
+  const epoca = h.get('x-control-epoca') == null ? null : n('x-control-epoca');
+  return { seq, ts: Math.round(ts * 1000), ancho, alto, viewportRevision: rev, epoca: Number.isInteger(epoca) ? epoca : null, privado: h.get('x-privado') === '1' };
 }
+
+/** Lo que se ve ahora (JPEG), solo mientras esa tarea tiene el escritorio, con su frame (si el nodo lo dice). */
+export async function pantallaDeTarea(id: string, ancho?: number): Promise<{ jpeg: Buffer; frame: FrameNodo | null }> {
+  const c = conf();
+  const q = Number.isInteger(ancho) ? `?ancho=${Math.max(480, Math.min(1280, Number(ancho)))}` : '';
+  const r = await fetch(`${c.url}/tareas/${encodeURIComponent(id)}/pantalla${q}`, { headers: { authorization: `Bearer ${c.clave}` }, signal: AbortSignal.timeout(15_000) });
+  if (!r.ok) throw new ErrorNodo(`HTTP ${r.status}`, r.status);
+  return { jpeg: Buffer.from(await r.arrayBuffer()), frame: frameDe(r.headers) };
+}
+
+/* ------------------------------------------------------------------ el contrato de entradas del visor (AUR09) */
+
+/**
+ * Una entrada del visor (RemoteInput de AUR09, con los nombres de ese contrato): de la sesión remota (la tarea), de un
+ * cliente, con la época del control, su secuencia, la revisión del viewport con que se miró y un tipo con sus datos.
+ * Las coordenadas van en píxeles LÓGICOS del escritorio (los del frame), no de la pantalla del teléfono.
+ */
+export type EntradaRemota = {
+  remoteSessionId: string;
+  clientId: string;
+  controlEpoch: number;
+  inputSequence: number;
+  viewportRevision: number;
+  type: 'pointer' | 'scroll' | 'key' | 'text_commit' | 'release_all';
+  payload: Record<string, unknown>;
+};
+export type AckEntrada = { secuencia: number; estado: string; ts: number; frame_seq: number; epoca: number; duplicada?: boolean };
+
+/** Lo más que pesa una entrada (el texto va acotado aparte, a 500). */
+export const MAX_ENTRADA_BYTES = 4096;
+const MODS_ORDEN = ['ctrl', 'shift', 'alt'] as const;
+const TECLAS_ESPECIALES = ['enter', 'tab', 'escape', 'backspace', 'delete', 'up', 'down', 'left', 'right', 'home', 'end', 'pageup', 'pagedown', 'space', 'f5'];
+const NAVEGACION = ['up', 'down', 'left', 'right', 'home', 'end', 'pageup', 'pagedown'];
+/** Ctrl + letra: seleccionar todo, copiar, pegar, cortar, deshacer, rehacer, buscar, barra, recargar, pestaña nueva y cerrarla. */
+const LETRAS_CTRL = 'acvxzyflrtw'.split('');
+
+/** La lista blanca de teclas y combinaciones (la misma que agente.py y mobile/src/lib/entradaRemota.ts). */
+export function comboPermitido(mods: readonly string[], tecla: string): boolean {
+  const m = new Set(mods);
+  if ([...m].some((x) => !(MODS_ORDEN as readonly string[]).includes(x))) return false;
+  const es = (...xs: string[]) => m.size === xs.length && xs.every((x) => m.has(x));
+  if (m.size === 0) return TECLAS_ESPECIALES.includes(tecla);
+  if (es('shift')) return [...NAVEGACION, 'tab', 'enter'].includes(tecla);
+  if (es('ctrl')) return LETRAS_CTRL.includes(tecla) || [...NAVEGACION, 'backspace', 'delete', 'enter', 'tab'].includes(tecla);
+  if (es('ctrl', 'shift')) return [...NAVEGACION, 'z', 't', 'tab'].includes(tecla);
+  if (es('alt')) return tecla === 'left' || tecla === 'right';
+  return false;
+}
+
+/** Valida una entrada como el nodo (antes de mandarla): null si no vale. El texto, compuesto (NFC) y sin controles. */
+export function validarEntradaRemota(b: any, id: string): EntradaRemota | null {
+  if (!b || typeof b !== 'object' || b.remoteSessionId !== id) return null;
+  const ent = (v: unknown, lo: number, hi: number) => typeof v === 'number' && Number.isInteger(v) && v >= lo && v <= hi;
+  if (typeof b.clientId !== 'string' || !/^[A-Za-z0-9_-]{8,64}$/.test(b.clientId)) return null;
+  if (!ent(b.controlEpoch, 0, 1e9) || !ent(b.inputSequence, 1, 1e12) || !ent(b.viewportRevision, 0, 1e9)) return null;
+  const p = b.payload && typeof b.payload === 'object' && !Array.isArray(b.payload) ? b.payload : {};
+  const xy = (k: string) => ent(p[k], 0, 8192);
+  const mods = (v: unknown, permitidos: readonly string[]): string[] | null => {
+    if (v == null) return [];
+    if (!Array.isArray(v) || v.length > 3 || v.some((x) => !permitidos.includes(x))) return null;
+    return MODS_ORDEN.filter((x) => v.includes(x));
+  };
+  const base = { remoteSessionId: id, clientId: b.clientId, controlEpoch: b.controlEpoch, inputSequence: b.inputSequence, viewportRevision: b.viewportRevision };
+  switch (b.type) {
+    case 'pointer': {
+      const accion = p.accion ?? 'click';
+      const m = mods(p.mods, ['ctrl', 'shift']);
+      if (!['click', 'doble', 'derecho', 'arrastre'].includes(accion) || !xy('x') || !xy('y') || !m) return null;
+      if (accion === 'arrastre' && (!xy('x2') || !xy('y2'))) return null;
+      return { ...base, type: 'pointer', payload: { accion, x: p.x, y: p.y, mods: m, ...(accion === 'arrastre' ? { x2: p.x2, y2: p.y2 } : {}) } };
+    }
+    case 'scroll': {
+      const dy = p.dy ?? 0;
+      const dx = p.dx ?? 0;
+      if (!xy('x') || !xy('y') || !ent(dy, -10, 10) || !ent(dx, -10, 10) || (!dy && !dx)) return null;
+      return { ...base, type: 'scroll', payload: { x: p.x, y: p.y, dy, dx } };
+    }
+    case 'key': {
+      const tecla = typeof p.tecla === 'string' ? p.tecla.toLowerCase() : '';
+      const m = mods(p.mods, MODS_ORDEN);
+      if (!m || !comboPermitido(m, tecla)) return null;
+      return { ...base, type: 'key', payload: { tecla, mods: m } };
+    }
+    case 'text_commit': {
+      if (typeof p.texto !== 'string') return null;
+      const texto = p.texto.normalize('NFC');
+      if (texto.length < 1 || texto.length > 500 || /[\u0000-\u001f\u007f]/.test(texto)) return null;
+      return { ...base, type: 'text_commit', payload: { texto } };
+    }
+    case 'release_all':
+      return { ...base, type: 'release_all', payload: {} };
+    default:
+      return null;
+  }
+}
+
+/** Manda una entrada (ya validada, con el cliente derivado de la sesión) y devuelve su ACK. */
+export async function entradaRemota(id: string, e: EntradaRemota): Promise<AckEntrada> {
+  const j = await pedir(`/tareas/${encodeURIComponent(id)}/entrada`, { method: 'POST', body: JSON.stringify(e), ms: 20_000 });
+  return j?.ack;
+}
+
+/** La entrada segura (agente.py de AUR09): activar, o salir con el frame que la persona vio (`frameSeq`). */
+export async function seguroTarea(id: string, activar: boolean, cliente: string | null, frameSeq?: number | null): Promise<{ seguro: boolean; epoca: number | null }> {
+  const cuerpo = { activar, ...(cliente ? { clientId: cliente } : {}), ...(Number.isInteger(frameSeq) ? { frameSeq } : {}) };
+  const j = await pedir(`/tareas/${encodeURIComponent(id)}/seguro`, { method: 'POST', body: JSON.stringify(cuerpo), ms: 8000 });
+  return { seguro: !!j?.seguro, epoca: Number.isInteger(j?.epoca) ? j.epoca : null };
+}
+
+/**
+ * El cliente que ve el nodo: derivado de la persona, de SU sesión (el token, que nunca sale del servidor) y del id que
+ * da el visor. Otra sesión con el mismo id es otro cliente: el id del visor solo no da autoridad (AUR09).
+ */
+export function clienteDeSesion(correo: string, token: string | undefined, clientId: string): string {
+  return crypto.createHash('sha256').update(`visor|${correo}|${token ?? ''}|${clientId}`).digest('hex').slice(0, 32);
+}
+
+/** Lo que dice cada rechazo del nodo, en palabras para la app (el código va aparte: la app decide con él). */
+const MOTIVOS_ENTRADA: Record<string, string> = {
+  sin_control: 'Primero toma el control.',
+  cliente: 'Otro dispositivo tiene el control ahora.',
+  epoca_revocada: 'El control cambió; mira la pantalla de ahora.',
+  epoca_cambio: 'El control cambió; mira la pantalla de ahora.',
+  secuencia_vieja: 'Esa entrada ya pasó; no la repito.',
+  viewport: 'La pantalla cambió; toca otra vez sobre la de ahora.',
+  aun_no: 'Un momento: está terminando su último paso.',
+  tasa: 'Más despacio: demasiadas entradas seguidas.',
+  incierta: 'No sé si se hizo; mira la pantalla antes de seguir.',
+  frame_viejo: 'Mira la pantalla de ahora antes de terminar la entrada segura.',
+  seguro: 'Primero termina la entrada segura.',
+  entrada_invalida: 'Esa entrada no la entiendo.',
+};
+const codigoDe = (msg: string) => /^([a-z_]+):/.exec(msg)?.[1] ?? null;
 
 /** Lo que la persona puede hacer con el control: validado antes de mandarlo al nodo. */
 export function validarAccionPersona(b: any): AccionPersona | null {
@@ -261,6 +442,14 @@ type Encargo = {
   contestada?: { texto: string; id: string | null; en: number };
   /** Hasta cuándo se la sigue (se alarga mientras está quieta: pausa, control o esperando su sí). */
   limite: number;
+  /**
+   * La generación del encargo (sube al cerrarlo) y la versión de lo último aceptado del nodo (solo crece): una
+   * respuesta que salió antes y llega después no cambia nada (AUR04).
+   */
+  gen: number;
+  version: number;
+  /** La vuelta del seguimiento que está programada (se cancela al cerrar; los recibos se quedan). */
+  reloj?: ReturnType<typeof setTimeout>;
 };
 
 /** Cómo va cada paso del plan en la app. */
@@ -300,8 +489,11 @@ type Mision = {
   recibos: Record<number, { tarea: string; n: number }>;
   fin?: number;
   final?: FinalMision;
-  /** Lo que su computadora le preguntó y todavía no contesta (`id`: cuál, si el nodo lo dice). */
-  pregunta?: { tareaId: string; texto: string; desde: number; id: string | null } | null;
+  /**
+   * Lo que su computadora le preguntó y todavía no contesta (`id`: cuál, si el nodo lo dice; `huella`: la de la
+   * propuesta que se le mostró, agente.py de AUR02).
+   */
+  pregunta?: { tareaId: string; texto: string; desde: number; id: string | null; huella?: string | null } | null;
   /** Se quedó a medias y se le ofreció seguir: su «sí» la sigue (hasta aquí vale). */
   ofreceSeguir?: number;
   /** Cuántas veces la persona dijo «sigue» después de un final a medias. */
@@ -392,6 +584,17 @@ export function misionDe(id: string): string | null {
 
 export function ultimaTareaDe(quien: string): string | null {
   return ULTIMA.get(quien) ?? null;
+}
+
+/**
+ * ¿Tiene ahora una tarea viva en su computadora (encargada y todavía sin cerrar)? Solo lee lo que hay en
+ * memoria, sin preguntar al nodo: el camino rápido de la voz (AUR10) lo usa para saber si «para» a secas
+ * puede querer decir parar la tarea (y entonces pregunta) o solo callar.
+ */
+export function tareaVivaDe(quien: string): boolean {
+  const id = ultimaTareaDe(String(quien || '').toLowerCase()) ?? ultimaTareaDe(quien);
+  const e = id ? ENCARGOS.get(id) : null;
+  return !!e && !e.cerrada && !e.terminada;
 }
 
 export function pendientesDe(quien: string): string[] {
@@ -601,7 +804,7 @@ function moverPlan(e: Encargo, t: Pick<Tarea, 'pasos'>) {
 
 /* ------------------------------------------------------------------ el final: la tarjeta que se comparte */
 
-const pasosUtiles = (t: Pick<Tarea, 'pasos'>) => t.pasos.filter((p) => p.hecho !== false && !['answer', 'escritorio_limpio', 'pedir_confirmacion', 'confirmacion', 'persona'].includes(p.accion)).length;
+const pasosUtiles = (t: Pick<Tarea, 'pasos'>) => t.pasos.filter((p) => p.hecho !== false && !['answer', 'escritorio_limpio', 'pedir_confirmacion', 'confirmacion', 'persona', 'modo_seguro'].includes(p.accion)).length;
 
 /** Las direcciones del resultado y las páginas que abrió (sin repetir, hasta 5). */
 export function enlacesDe(t: Pick<Tarea, 'respuesta' | 'pasos'>): string[] {
@@ -883,9 +1086,13 @@ const AFIRMA = /(^|\s)(si|sip|claro|dale|ok|okay|okey|hazlo|adelante|confirmo|ma
  * terminar, decide: seguir la misión con otra tarea o avisar el final YA (no en el turno siguiente).
  */
 function seguir(e: Encargo) {
+  const programar = () => {
+    e.reloj = setTimeout(vuelta, TIEMPOS_SEGUIR.sondeoMs);
+    e.reloj.unref?.();
+  };
   const vuelta = async () => {
     // Terminó o se olvidó (las pruebas): ya no se sigue.
-    if (e.cerrada || ENCARGOS.get(e.id) !== e) return;
+    if (!sigueVivo(e, e.gen)) return;
     // Se pasó del tope trabajando (lo quieto no cuenta): se para y se le dice dónde quedó, con «¿sigo?».
     if (Date.now() > e.limite) {
       void pararTarea(e.id).catch(() => undefined);
@@ -894,12 +1101,15 @@ function seguir(e: Encargo) {
       return;
     }
     if (e.soltada) {
+      // Lo que se ve al salir la consulta: si al volver el encargo ya se cerró, se olvidó o es de otra generación,
+      // la respuesta (o el error) es vieja y no cambia nada ni se avisa (AUR04: hecha→pausada tras el cierre).
+      const gen = e.gen;
       try {
         const t = await verTarea(e.id);
+        if (!aceptarLectura(e, gen, t)) return;
         alContestar(e);
-        e.ultimaVista = t;
         if (TERMINADA.has(t.estado)) {
-          if (!e.cerrada) await alTerminar(e, t, false);
+          await alTerminar(e, t, false);
           return;
         }
         moverPlan(e, t);
@@ -907,12 +1117,32 @@ function seguir(e: Encargo) {
         if (QUIETA.has(t.estado)) e.limite = Math.max(e.limite, Date.now() + SEGUIR_MAX_MS);
         else narrar(e, t);
       } catch (err) {
+        if (!sigueVivo(e, gen)) return;
         if (await sinRespuesta(e, err)) return;
       }
     }
-    setTimeout(vuelta, TIEMPOS_SEGUIR.sondeoMs).unref?.();
+    if (sigueVivo(e, e.gen)) programar();
   };
-  setTimeout(vuelta, TIEMPOS_SEGUIR.sondeoMs).unref?.();
+  programar();
+}
+
+/** ¿El encargo sigue abierto, es el anotado y de la misma generación que cuando salió la consulta? */
+function sigueVivo(e: Encargo, gen: number): boolean {
+  return !e.cerrada && e.gen === gen && ENCARGOS.get(e.id) === e;
+}
+
+/**
+ * Una lectura del nodo, después del await (AUR04): vale solo si el encargo sigue vivo y en la misma generación,
+ * y si la transición es legal (un final no vuelve a un estado vivo). Si vale, queda como la última vista con su
+ * versión (que solo crece).
+ */
+function aceptarLectura(e: Encargo, gen: number, t: Tarea): boolean {
+  if (!sigueVivo(e, gen)) return false;
+  const antes = e.ultimaVista?.estado;
+  if (antes && TERMINADA.has(antes) && !TERMINADA.has(t.estado)) return false;
+  e.ultimaVista = t;
+  e.version++;
+  return true;
 }
 
 /** El nodo volvió a contestar: si se le había dicho que no contestaba, que sepa que sigue. */
@@ -967,7 +1197,7 @@ function alCambiarEstado(e: Encargo, t: Tarea, enTurno: boolean) {
     if (m.pregunta?.tareaId === e.id && (id ? m.pregunta.id === id : m.pregunta.texto === t.pregunta)) return;
     // Una consulta que salió antes de que llegara su respuesta: esa pregunta ya está contestada.
     if (id ? e.contestada?.id === id : e.contestada?.texto === t.pregunta && Date.now() - e.contestada.en < 10_000) return;
-    m.pregunta = { tareaId: e.id, texto: t.pregunta, desde: Date.now(), id };
+    m.pregunta = { tareaId: e.id, texto: t.pregunta, desde: Date.now(), id, huella: t.propuesta || null };
     avisarApp(e, { tipo: 'computadora', fase: 'confirmar', id: e.id, pregunta: t.pregunta, ...(enTurno ? {} : { texto: fraseDePregunta(t.pregunta, e.idioma) }) }, true);
     return;
   }
@@ -1020,8 +1250,15 @@ function narrar(e: Encargo, t: Tarea, ahora = Date.now()) {
  * ya no queda para el turno siguiente.
  */
 async function alTerminar(e: Encargo, t: Tarea, enTurno: boolean, sinSeguir = false): Promise<{ sigue: Encargo | null }> {
+  // Un final se decide una vez (AUR04): lo que llegue después (otra consulta, un error) no lo vuelve a decidir.
+  if (e.cerrada) return { sigue: null };
   e.cerrada = true;
+  e.gen++;
   e.terminada = t;
+  e.ultimaVista = t;
+  // El seguimiento ya no hace falta: se cancela su vuelta (los recibos, el final y la misión se quedan).
+  if (e.reloj) clearTimeout(e.reloj);
+  e.reloj = undefined;
   if (!sinSeguir && misionIncompleta(t) && e.vuelta < MAX_CONTINUACIONES) {
     const e2 = await crearEncargo({
       instruccion: e.instruccion,
@@ -1128,6 +1365,8 @@ async function crearEncargo(o: {
     fallos: 0,
     primerFallo: 0,
     limite: ahora + SEGUIR_MAX_MS,
+    gen: 0,
+    version: 0,
   };
   ENCARGOS.set(e.id, e);
   ULTIMA.set(o.quien, e.id);
@@ -1222,12 +1461,19 @@ export async function encargarTarea(o: {
     await esperar(Math.min(SONDEO_MS, hasta - Date.now()), o.senal);
     const queda = hasta - Date.now();
     if (queda <= 0 || o.senal?.aborted) break;
+    const gen = e.gen;
+    let leida: Tarea;
     try {
-      t = await verTarea(e.id, false, Math.min(10_000, queda), o.senal);
+      leida = await verTarea(e.id, false, Math.min(10_000, queda), o.senal);
     } catch {
       continue;
     }
-    e.ultimaVista = t;
+    // Se cerró mientras se consultaba (AUR04): vale el final que ya se decidió, no la lectura vieja.
+    if (!aceptarLectura(e, gen, leida)) {
+      if (e.cerrada && e.terminada) return { hecho: `HARNESS computadora «${instruccion.slice(0, 160)}»: ${resumenTarea(e.terminada)}${nota}`, id: e.id, tarea: e.terminada };
+      continue;
+    }
+    t = leida;
     moverPlan(e, t);
     // Se detuvo a pedir permiso antes de algo sensible: lo pregunta el turno (el teléfono pone los botones).
     if (t.estado === 'confirmar' && t.pregunta && !e.cerrada) {
@@ -1293,6 +1539,23 @@ function misionQueOfreceSeguir(quien: string): Mision | null {
   return m?.ofreceSeguir && Date.now() - m.ofreceSeguir < SEGUIR_VALE_MS ? m : null;
 }
 
+/**
+ * La pregunta de la tarea `id` que contesta un sí de la app (AUR02): la que este servidor le mostró para ESA tarea
+ * o, si no, la que el nodo tiene ahora para ella. Si la app nombra una (`pedida`), tiene que ser esa: un id de otra
+ * tarea, de otra persona (la ruta ya lo niega) o de una pregunta que ya cambió no aprueba nada, aunque el nodo no lo
+ * revisara. Devuelve el id y la huella de la propuesta mostrada (el nodo nuevo la revisa también); null: no vale.
+ */
+export async function preguntaDeTarea(id: string, pedida: string | null): Promise<{ id: string | null; huella: string | null } | null> {
+  const e = ENCARGOS.get(id);
+  if (!e || e.cerrada) return null;
+  const mostrada = e.mision.pregunta?.tareaId === id ? e.mision.pregunta : null;
+  if (mostrada?.id && (!pedida || pedida === mostrada.id)) return { id: mostrada.id, huella: mostrada.huella ?? null };
+  const t = await verTarea(id, false, 8000).catch(() => null);
+  if (!t || t.estado !== 'confirmar' || !t.pregunta) return null;
+  if (pedida && t.pregunta_id !== pedida) return null;
+  return { id: t.pregunta_id ?? null, huella: t.propuesta ?? null };
+}
+
 /** Ya contestó su sí o su no: el teléfono quita los botones y vuelve el tecleo enseguida (sin esperar al sondeo). */
 function alResponder(tareaId: string, preguntaId?: string | null) {
   const e = ENCARGOS.get(tareaId);
@@ -1330,7 +1593,7 @@ export async function resolverPreguntaComputadora(quien: string, mensaje: string
     m.pregunta = null;
     // El sí va atado a ESTA pregunta: si cuando por fin sale (la voz espera a que el turno se confirme) la
     // computadora ya pregunta otra cosa, el nodo no la contesta con él (auditoría 3-oct, PC01).
-    const hacer = () => confirmarTarea(p.tareaId, r === 'si', p.id).then(() => alResponder(p.tareaId, p.id));
+    const hacer = () => confirmarTarea(p.tareaId, r === 'si', p.id, p.huella).then(() => alResponder(p.tareaId, p.id));
     if (retener) {
       retener.alDescartar(() => {
         m.pregunta = p;
@@ -1419,13 +1682,17 @@ export async function comandoComputadora(quien: string, arg: string): Promise<st
   try {
     if (verbo === 'parar') {
       if (e.cerrada) return 'HARNESS computadora: tu computadora ya había terminado; no había nada que parar. Díselo.';
-      await pararTarea(e.id);
+      // «Paré» solo con quietud (AUR03): si un toque ya había salido, se termina (no se puede deshacer) y queda parada.
+      const p = await pararTarea(e.id);
+      if (p.fase === 'draining' || p.fase === 'fenced')
+        return `HARNESS computadora: le pedí parar «${m.instruccion.slice(0, 120)}» y ya no empieza nada nuevo, pero está terminando una acción que ya había empezado (no la puede deshacer); en cuanto termine queda detenida. Díselo así, sin decir que ya paró.`;
       return `HARNESS computadora: paré «${m.instruccion.slice(0, 120)}». Díselo en una frase.`;
     }
     const caps = await capacidadesNodo();
     if (verbo === 'pausar') {
       if (!caps.includes('pausar')) return 'HARNESS computadora: tu computadora todavía no sabe pausar (falta actualizar su servicio); solo puedo pararla del todo. Explícaselo y pregúntale si la paras.';
-      await pausarTarea(e.id);
+      const p = await pausarTarea(e.id);
+      if (p.fase === 'draining') return 'HARNESS computadora: la pausé; está terminando la acción que ya había empezado y después se queda quieta hasta que diga «sigue». Díselo en una frase.';
       return 'HARNESS computadora: la pausé; sigue cuando diga «sigue». Díselo en una frase.';
     }
     if (e.cerrada) {
@@ -1466,6 +1733,7 @@ export async function resumenUltima(quien: string): Promise<{ id: string; estado
 
 /** Pruebas: olvidar los encargos. */
 export function _olvidarEncargos() {
+  for (const e of ENCARGOS.values()) if (e.reloj) clearTimeout(e.reloj);
   ENCARGOS.clear();
   MISIONES.clear();
   HISTORIAL.clear();
@@ -1479,7 +1747,8 @@ export function _olvidarEncargos() {
 type DepsRutas = {
   exigirMesa: import('express').RequestHandler;
   limitar: (max: number, ventanaMs?: number, grupo?: string) => import('express').RequestHandler;
-  sesionDe: (req: import('express').Request) => { correo: string } | null;
+  /** La sesión autenticada (server/seguridad.ts): el correo y su token (el visor deriva de él su cliente, AUR09). */
+  sesionDe: (req: import('express').Request) => { correo: string; token?: string } | null;
   /** Qué motor eligió en Ajustes («gratis» o «pago»); sin perfil, gratis. */
   motorDe?: (correo: string) => Promise<string | null | undefined>;
 };
@@ -1520,10 +1789,13 @@ function pasoEnPalabrasSolo(p: Pick<PasoTarea, 'accion' | 'args'>, idioma: 'es' 
     case 'confirmacion':
       return a.si ? (en ? 'You said yes' : 'Dijiste que sí') : en ? 'You said no' : 'Dijiste que no';
     case 'persona':
-      if (a.tipo === 'click') return en ? 'You tapped the screen' : 'Tú tocaste la pantalla';
+      if (a.tipo === 'click' || a.tipo === 'pointer') return a.accion === 'arrastre' ? (en ? 'You dragged on the screen' : 'Tú arrastraste en la pantalla') : en ? 'You tapped the screen' : 'Tú tocaste la pantalla';
       if (a.tipo === 'escribir') return en ? `You typed (${Number(a.letras) || 0} characters)` : `Tú escribiste (${Number(a.letras) || 0} letras)`;
-      if (a.tipo === 'tecla') return en ? `You pressed ${corto(a.teclas, 20)}` : `Tú presionaste ${corto(a.teclas, 20)}`;
+      if (a.tipo === 'texto') return en ? 'You typed' : 'Tú escribiste';
+      if (a.tipo === 'tecla' || a.tipo === 'key') return en ? `You pressed ${corto(a.teclas, 20)}` : `Tú presionaste ${corto(a.teclas, 20)}`;
       return en ? 'You scrolled' : 'Tú moviste la página';
+    case 'modo_seguro':
+      return a.activo ? (en ? 'Secure input: AURA neither saw nor touched anything' : 'Entrada segura: AURA no vio ni tocó nada') : en ? 'Secure input ended' : 'Terminó la entrada segura';
     case 'screenshot':
       return en ? 'Looked at the screen' : 'Miró la pantalla';
     case 'zoom':
@@ -1558,12 +1830,14 @@ function pasoEnPalabrasSolo(p: Pick<PasoTarea, 'accion' | 'args'>, idioma: 'es' 
  * capturas de cada paso, y el botón de pararla. Cada quien ve solo sus tareas.
  *   GET  /api/computadora            → { configurada, ok, motores, ocupada, capacidades, ultima, actual, historial }
  *   GET  /api/computadora/tareas/:id → la tarea con miniaturas (si es suya) y su `mision` (plan marcado, tiempo, pregunta, final)
- *   POST /api/computadora/tareas/:id/parar
+ *   POST /api/computadora/tareas/:id/parar                         → { fase }: quiescent (detenida) o draining (termina un toque)
  *   POST /api/computadora/tareas/:id/pausar | /reanudar            (si el nodo sabe: capacidades)
- *   POST /api/computadora/tareas/:id/confirmar {si}                 el sí o el no a lo que preguntó
- *   POST /api/computadora/tareas/:id/control {tomar}                tomar el control / devolverlo
- *   POST /api/computadora/tareas/:id/accion {tipo, …}               lo que hace la persona con el control
- *   GET  /api/computadora/tareas/:id/pantalla                       { imagen } lo que se ve ahora (JPEG en base64)
+ *   POST /api/computadora/tareas/:id/confirmar {si, preguntaId}     el sí o el no a ESA pregunta de ESA tarea
+ *   POST /api/computadora/tareas/:id/control {tomar, clientId?, expectedControlEpoch?}  → { fase, epoca }
+ *   POST /api/computadora/tareas/:id/accion {tipo, …}               lo que hace la persona con el control (la app de antes)
+ *   POST /api/computadora/tareas/:id/entrada {RemoteInput}          el visor (AUR09): una entrada con su ACK → { ack }
+ *   POST /api/computadora/tareas/:id/seguro {activar, clientId, frameSeq?}  entrada segura (contraseñas)
+ *   GET  /api/computadora/tareas/:id/pantalla?ancho=                { imagen, frame } lo que se ve ahora (JPEG en base64) y su frame
  *   GET  /api/computadora/misiones/:id                              una misión del historial (con su tarjeta final)
  *   POST /api/computadora/misiones/:id/seguir                       sigue una misión que quedó a medias
  */
@@ -1643,6 +1917,18 @@ export function montarRutasComputadora(app: import('express').Express, d: DepsRu
     }
     const llave = `${correo}|${pedido}`;
     for (const [k, v] of pedidosApp) if (Date.now() - v.en > PEDIDO_APP_VALE_MS) pedidosApp.delete(k);
+    // Lo durable primero (auditoría maestra, AUR06): si este pedido ya creó su tarea —en otra réplica o antes de
+    // un reinicio, cuando el Map de aquí ya no lo sabe—, se devuelve esa y no se lanza otra.
+    const claveDurable = claveDe('computadora-pedidos', correo, pedido);
+    if (!pedidosApp.has(llave)) {
+      const visto = await leerDurable<{ id?: string }>(claveDurable).catch(() => null);
+      const idVisto = visto?.ok ? String(visto.valor?.id || '') : '';
+      if (idVisto && duenoDe(idVisto) !== null && duenoDe(idVisto) !== correo) return noEsSuya(res);
+      if (idVisto) {
+        const m = misionDeTarea(idVisto);
+        return res.json({ id: idVisto, mision: m ? vistaMision(m) : null, repetido: true, honesto: true });
+      }
+    }
     let previo = pedidosApp.get(llave);
     if (!previo) {
       previo = { en: Date.now(), r: hacer() };
@@ -1650,6 +1936,13 @@ export function montarRutasComputadora(app: import('express').Express, d: DepsRu
     }
     const r = await previo.r.catch((e: any) => ({ code: 502, j: { error: String(e?.message || e).slice(0, 120), honesto: true } }));
     if (r.code !== 200 && pedidosApp.get(llave) === previo) pedidosApp.delete(llave);
+    // Anotado de forma durable: un reintento tras un reinicio o en otra réplica recibe esta misma tarea. Si otra
+    // réplica la anotó antes (el nodo dedupe por request_id, así que es la misma), manda la primera.
+    if (r.code === 200 && r.j?.id) {
+      const c = await crearUnaVez(claveDurable, { id: String(r.j.id), en: Date.now() }).catch(() => null);
+      if (c?.ok && !c.creado && c.valor?.id && c.valor.id !== r.j.id) r.j.id = String(c.valor.id);
+      if (!c?.ok) console.warn('[computadora] no pude anotar el pedido de forma durable; queda solo en memoria');
+    }
     // La misma misión, con su estado de ahora (no el del primer pedido).
     const m = r.code === 200 ? misionDeTarea(r.j.id) : null;
     return res.status(r.code).json(m ? { ...r.j, mision: vistaMision(m) } : r.j);
@@ -1664,11 +1957,17 @@ export function montarRutasComputadora(app: import('express').Express, d: DepsRu
     const idioma = req.query.idioma === 'en' ? 'en' : 'es';
     try {
       const paso = req.query.paso != null ? Number(req.query.paso) : undefined;
-      const crudo = await verTarea(req.params.id, true);
+      const leida = await verTarea(req.params.id, true);
+      const e = ENCARGOS.get(req.params.id);
+      // Una lectura que salió antes del final y llega después (AUR04): el final ya decidido manda; un estado vivo
+      // viejo no reabre «hecha» como «pausada», ni mueve el plan, ni vuelve a mostrar la pregunta.
+      const crudo: Tarea =
+        e?.terminada && !TERMINADA.has(leida.estado)
+          ? { ...leida, estado: e.terminada.estado, respuesta: e.terminada.respuesta ?? leida.respuesta, error: e.terminada.error ?? leida.error, pregunta: null, pregunta_id: null, propuesta: null }
+          : leida;
       // La misión como se pidió (al nodo le pudo ir con «sigue desde donde quedó…» o con «dime qué hay»).
       const t = tareaParaApp({ ...crudo, instruccion: misionDe(req.params.id) || crudo.instruccion }, paso);
-      const e = ENCARGOS.get(req.params.id);
-      if (e && !TERMINADA.has(crudo.estado)) moverPlan(e, crudo);
+      if (e && !e.cerrada && !TERMINADA.has(crudo.estado)) moverPlan(e, crudo);
       const version = versionDeEstado();
       return res.json({
         tarea: { ...t, pasos: t.pasos.map((p) => ({ ...p, texto: pasoEnPalabras(p, idioma) })) },
@@ -1702,23 +2001,91 @@ export function montarRutasComputadora(app: import('express').Express, d: DepsRu
       if (typeof req.body?.si !== 'boolean') throw Object.assign(new Error('Di sí o no.'), { codigo: 400 });
       // El sí va atado a la pregunta que vio en la pantalla (`preguntaId`, la app nueva). La app de antes no lo
       // manda: vale la pregunta que este servidor le mostró; si no conoce ninguna, la que el nodo tiene ahora.
-      let preguntaId: string | null = typeof req.body?.preguntaId === 'string' && req.body.preguntaId ? String(req.body.preguntaId).slice(0, 64) : null;
-      if (!preguntaId) {
-        const m = misionDeTarea(id);
-        preguntaId = m?.pregunta?.tareaId === id ? m.pregunta.id : null;
-        if (!preguntaId) preguntaId = (await verTarea(id, false, 8000).catch(() => null))?.pregunta_id ?? null;
-      }
-      await confirmarTarea(id, req.body.si, preguntaId);
-      alResponder(id, preguntaId);
+      const pedida: string | null = typeof req.body?.preguntaId === 'string' && req.body.preguntaId ? String(req.body.preguntaId).slice(0, 64) : null;
+      // AUR02: el servidor revisa que ese id sea la pregunta de ESTA tarea (la que mostró, o la que el nodo tiene
+      // ahora para ella), aunque el nodo no lo revisara: un id de otra tarea u otra propuesta no aprueba nada.
+      const p = await preguntaDeTarea(id, pedida);
+      if (!p) throw new ErrorNodo('esa respuesta no es para la pregunta de esta tarea; mira la de ahora', 409);
+      await confirmarTarea(id, req.body.si, p.id, p.huella);
+      alResponder(id, p.id);
       return { si: req.body.si };
     })
   );
+  /** El id que da el visor (AUR09) para ligar su control; la app de antes no lo manda. */
+  const idVisor = (v: unknown): string | null => (typeof v === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(v) ? v : null);
+  /** El cliente que ve el nodo: el id del visor ligado a ESTA sesión (clienteDeSesion). */
+  const clienteVisor = (req: Req, clientId: string | null): string | null => {
+    const s = d.sesionDe(req);
+    return s && clientId ? clienteDeSesion(String(s.correo).toLowerCase(), s.token, clientId) : null;
+  };
   app.post(
     '/api/computadora/tareas/:id/control',
     d.exigirMesa,
     d.limitar(20),
-    sobreTarea('No pude cambiar el control', 'control', (id, req) => controlTarea(id, !!req.body?.tomar))
+    sobreTarea('No pude cambiar el control', 'control', (id, req) => {
+      const esperada = req.body?.expectedControlEpoch;
+      return controlTarea(id, !!req.body?.tomar, { cliente: clienteVisor(req, idVisor(req.body?.clientId)), epocaEsperada: Number.isInteger(esperada) ? esperada : null });
+    })
   );
+  /**
+   * Lo que el servidor recuerda de las entradas de cada control (por tarea): el cliente, la época, la última secuencia
+   * que dejó pasar y los ACK recientes. Un repetido devuelve el mismo ACK sin llegar al nodo y una secuencia vieja no
+   * pasa: tras reconectar nada se reproduce. El nodo vuelve a revisar todo (es el árbitro); esto ahorra el viaje.
+   */
+  const libros = new Map<string, { cliente: string; epoca: number; ultima: number; acks: Map<number, AckEntrada> }>();
+  const LIBROS_MAX = 500;
+  const rechazo = (res: Res, e: any) => {
+    const st = e instanceof ErrorNodo ? e.status : undefined;
+    const code = codigoDe(String(e?.message || ''));
+    const error = (code && MOTIVOS_ENTRADA[code]) || String(e?.message || 'La computadora no contestó.').slice(0, 160);
+    if (st === 409 || st === 400 || st === 429) return res.status(st).json({ error, code, honesto: true });
+    return res.status(502).json({ error: code === 'incierta' ? error : `La computadora no contestó (${String(e?.message || e).slice(0, 80)}).`, code: code ?? 'sin_respuesta', honesto: true });
+  };
+  app.post('/api/computadora/tareas/:id/entrada', d.exigirMesa, d.limitar(600), async (req, res) => {
+    const correo = correoDe(req);
+    if (!correo) return sinSesion(res);
+    const id = req.params.id;
+    if (duenoDe(id) !== correo) return noEsSuya(res);
+    if (JSON.stringify(req.body ?? null).length > MAX_ENTRADA_BYTES) return res.status(413).json({ error: 'Esa entrada pesa demasiado.', code: 'entrada_invalida', honesto: true });
+    const v = validarEntradaRemota(req.body, id);
+    if (!v) return res.status(400).json({ error: MOTIVOS_ENTRADA.entrada_invalida, code: 'entrada_invalida', honesto: true });
+    if (!(await exigirCapacidad(res, 'entrada'))) return;
+    const cliente = clienteVisor(req, v.clientId)!;
+    let libro = libros.get(id);
+    if (!libro || libro.cliente !== cliente || libro.epoca !== v.controlEpoch) {
+      libro = { cliente, epoca: v.controlEpoch, ultima: 0, acks: new Map() };
+      libros.delete(id);
+      libros.set(id, libro);
+      while (libros.size > LIBROS_MAX) libros.delete(libros.keys().next().value!);
+    }
+    const previo = libro.acks.get(v.inputSequence);
+    if (previo) return res.json({ ok: true, ack: { ...previo, duplicada: true }, honesto: true });
+    if (v.inputSequence <= libro.ultima) return res.status(409).json({ error: MOTIVOS_ENTRADA.secuencia_vieja, code: 'secuencia_vieja', honesto: true });
+    libro.ultima = v.inputSequence; // se gasta antes de mandarla: un repetido en camino no sale dos veces
+    try {
+      const ack = await entradaRemota(id, { ...v, clientId: cliente });
+      libro.acks.set(v.inputSequence, ack);
+      for (const k of [...libro.acks.keys()].slice(0, Math.max(0, libro.acks.size - 64))) libro.acks.delete(k);
+      return res.json({ ok: true, ack, honesto: true });
+    } catch (e: any) {
+      // Nunca se registra el cuerpo (puede ser una contraseña en entrada segura): solo el código.
+      return rechazo(res, e);
+    }
+  });
+  app.post('/api/computadora/tareas/:id/seguro', d.exigirMesa, d.limitar(30), async (req, res) => {
+    const correo = correoDe(req);
+    if (!correo) return sinSesion(res);
+    if (duenoDe(req.params.id) !== correo) return noEsSuya(res);
+    if (typeof req.body?.activar !== 'boolean') return res.status(400).json({ error: 'Di si la activas o la terminas.', honesto: true });
+    if (!(await exigirCapacidad(res, 'seguro'))) return;
+    const frameSeq = Number.isInteger(req.body?.frameSeq) ? Number(req.body.frameSeq) : null;
+    try {
+      const r = await seguroTarea(req.params.id, req.body.activar, clienteVisor(req, idVisor(req.body?.clientId)), frameSeq);
+      return res.json({ ok: true, ...r, honesto: true });
+    } catch (e: any) {
+      return rechazo(res, e);
+    }
+  });
   app.post(
     '/api/computadora/tareas/:id/accion',
     d.exigirMesa,
@@ -1729,11 +2096,20 @@ export function montarRutasComputadora(app: import('express').Express, d: DepsRu
       await accionPersona(id, a);
     })
   );
+  /**
+   * La pantalla de ahora, con su frame y su edad al salir del servidor (`edadMs`: la app le suma lo que tardó en llegar;
+   * no depende de la hora del teléfono). El servidor no la guarda: pasa tal cual (en entrada segura viene `privado`).
+   * 240 por minuto: el visor la pide cada ~0,7 s con el control (mientras AURA controla, cada 2 s).
+   */
   app.get(
     '/api/computadora/tareas/:id/pantalla',
     d.exigirMesa,
-    d.limitar(120),
-    sobreTarea('No pude ver la pantalla', 'control', async (id) => ({ imagen: (await pantallaDeTarea(id)).toString('base64') }))
+    d.limitar(240),
+    sobreTarea('No pude ver la pantalla', 'control', async (id, req) => {
+      const ancho = Number(req.query.ancho);
+      const { jpeg, frame } = await pantallaDeTarea(id, Number.isInteger(ancho) ? ancho : undefined);
+      return { imagen: jpeg.toString('base64'), frame: frame ? { ...frame, edadMs: Math.max(0, Date.now() - frame.ts) } : null };
+    })
   );
 
   app.get('/api/computadora/misiones/:id', d.exigirMesa, d.limitar(60), async (req, res) => {

@@ -5,7 +5,8 @@
 import { useEffect, useMemo } from 'react';
 import { StyleSheet, View, useWindowDimensions } from 'react-native';
 import Animated, { Easing, useAnimatedStyle, useSharedValue, withDelay, withRepeat, withTiming } from 'react-native-reanimated';
-import { de, tr } from '../../i18n';
+import { de, tr, useIdioma } from '../../i18n';
+import { peticionInicial } from '../flujo';
 import { MEDIDA, useTema } from '../../nucleo/tema';
 import { avatarPorId } from '../../avatares/catalogo';
 import { Aparecer, BotonCheck, Texto, vibrar } from '../../ui';
@@ -64,6 +65,9 @@ export function LluviaConfeti({ avatar }: { avatar: PropsPaso['borrador']['avata
 export function PasoFiesta({ borrador }: PropsPaso) {
   const { width } = useWindowDimensions();
   const a = avatarPorId(borrador.avatar);
+  const idioma = useIdioma();
+  // El miniresultado sigue aquí: la primera petición queda escrita en la mesa (AUR11).
+  const peticion = peticionInicial(borrador, idioma === 'en' ? 'en' : 'es');
   useEffect(() => {
     vibrar('exito');
   }, []);
@@ -87,6 +91,13 @@ export function PasoFiesta({ borrador }: PropsPaso) {
       <Aparecer retraso={450} desde="escala">
         <VistaAvatar id={borrador.avatar} tam={Math.min(220, width * 0.55)} />
       </Aparecer>
+      {!!peticion && (
+        <Aparecer retraso={560}>
+          <Texto v="chica" color="texto2" centro>
+            {tr(`Tu primera petición te espera escrita en la mesa: «${peticion}»`, `Your first request is waiting at the desk: “${peticion}”`)}
+          </Texto>
+        </Aparecer>
+      )}
     </View>
   );
 }

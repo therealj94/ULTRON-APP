@@ -1210,7 +1210,8 @@ prueba('manos: el contexto le dice al servidor qué manos sabe hacer este teléf
   const enviados = [];
   const ctx = new ContextoApp({ enviar: async (c) => enviados.push(c), contactos: async () => [], escuchar: () => () => {}, esperar: (f) => (f(), () => {}) });
   const c = await ctx.enviarAhora(true);
-  assert.deepEqual([...c.manos], ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame', 'cartera', 'pagar']);
+  // `controles` (AUR10): los controles de voz separados (detener audio, colgar, la tarea).
+  assert.deepEqual([...c.manos], ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame', 'cartera', 'pagar', 'controles']);
   assert.deepEqual([...c.manos], [...MANOS_APP]);
 });
 
@@ -2869,6 +2870,15 @@ prueba('su computadora: una respuesta vieja no vuelve a la tarea de antes, el s�
   assert.equal(v.acepta(v.boleto(), 't2', 300), true);
   assert.equal(v.acepta(v.boleto(), 't2'), true, 'un servidor sin versión: se pinta como antes');
   assert.equal(v.elegir('t2'), false, 'elegir la misma no cambia la época');
+  // AUR04: un final no se reabre. Una respuesta con versión mayor pero estado vivo viejo (salió antes del final) no
+  // vuelve a poner «pausada» sobre «hecha»; otra tarea no se contagia.
+  assert.equal(v.acepta(v.boleto(), 't2', 400, 'hecha'), true);
+  assert.equal(v.terminada('t2'), true);
+  assert.equal(v.acepta(v.boleto(), 't2', 500, 'pausada'), false, 'hecha → pausada no');
+  assert.equal(v.acepta(v.boleto(), 't2', 600, 'parada'), true, 'un final sí se pinta (el del servidor manda)');
+  v.elegir('t3');
+  assert.equal(v.acepta(v.boleto(), 't3', 700, 'trabajando'), true);
+  assert.equal(v.terminada('t3'), false);
   // El estado general: también por versión.
   assert.equal(v.aceptaEstado(50), true);
   assert.equal(v.aceptaEstado(40), false);

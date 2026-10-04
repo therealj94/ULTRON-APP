@@ -540,13 +540,26 @@ test('el cerebro: la instrucción pide la misión completa, que mire la pantalla
  * el control de la persona y la pantalla de ahora. `guion(t)` cambia la tarea en cada consulta; el resto de
  * rutas cambian la tarea como lo haría el nodo de verdad. `caido` hace que las consultas fallen.
  */
-type TareaFalsa = { id: string; n: number; instruccion: string; consultas: number; estado: string; pasos: any[]; respuesta: string | null; error: string | null; pregunta: string | null; pregunta_id?: string | null; si?: boolean };
+type TareaFalsa = { id: string; n: number; instruccion: string; consultas: number; estado: string; pasos: any[]; respuesta: string | null; error: string | null; pregunta: string | null; pregunta_id?: string | null; propuesta?: string | null; si?: boolean; cliente?: string | null; epoca?: number; seguro?: boolean };
 /**
  * Como el agente.py de ahora: cada pregunta trae su `pregunta_id` y el sí tiene que nombrarla (otra: 409); el
  * mismo `request_id` del mismo dueño es la misma tarea; `respuestasPerdidas` crea la tarea pero corta la
- * respuesta (el servidor no se entera y reintenta).
+ * respuesta (el servidor no se entera y reintenta). Opcionales: `conPropuesta` (el agente.py de AUR02: cada
+ * pregunta trae la huella de su propuesta y el sí puede nombrarla), `sinRevisar` (un nodo que no revisa a qué
+ * pregunta va el sí: lo tiene que revisar el servidor), `parada` (lo que contesta parar: quiescent o draining) y
+ * `demora` (ms que tarda una consulta; la respuesta es la foto de cuando llegó).
  */
-async function nodoAgente(o: { caps?: string[]; guion: (t: TareaFalsa) => void; altasQueFallan?: number; altaCodigo?: number; respuestasPerdidas?: number }) {
+async function nodoAgente(o: {
+  caps?: string[];
+  guion: (t: TareaFalsa) => void;
+  altasQueFallan?: number;
+  altaCodigo?: number;
+  respuestasPerdidas?: number;
+  conPropuesta?: boolean;
+  sinRevisar?: boolean;
+  parada?: 'quiescent' | 'draining';
+  demora?: (t: TareaFalsa, url: string) => number;
+}) {
   const tareas = new Map<string, TareaFalsa>();
   const porPedido = new Map<string, string>();
   const pedidos: Array<{ ruta: string; cuerpo: any }> = [];
@@ -587,22 +600,48 @@ async function nodoAgente(o: { caps?: string[]; guion: (t: TareaFalsa) => void; 
         t.consultas++;
         const antes = t.pregunta;
         o.guion(t);
-        if (t.pregunta && (t.pregunta !== antes || !t.pregunta_id)) t.pregunta_id = `p${++preguntas}`;
-        if (!t.pregunta) t.pregunta_id = null;
-        return json(200, { id: t.id, motor: 'holo', instruccion: t.instruccion, estado: t.estado, pasos: t.pasos, respuesta: t.respuesta, error: t.error, segundos: 20, pregunta: t.pregunta, pregunta_id: t.pregunta_id ?? null });
+        if (t.pregunta && (t.pregunta !== antes || !t.pregunta_id)) {
+          t.pregunta_id = `p${++preguntas}`;
+          if (o.conPropuesta) t.propuesta = `h${preguntas}`;
+        }
+        if (!t.pregunta) t.pregunta_id = t.propuesta = null;
+        const foto = { id: t.id, motor: 'holo', instruccion: t.instruccion, estado: t.estado, pasos: [...t.pasos], respuesta: t.respuesta, error: t.error, segundos: 20, pregunta: t.pregunta, pregunta_id: t.pregunta_id ?? null, ...(o.conPropuesta ? { propuesta: t.propuesta ?? null } : {}) };
+        const ms = o.demora?.(t, req.url!) ?? 0;
+        if (ms > 0) return void setTimeout(() => json(200, foto), ms);
+        return json(200, foto);
       }
       if (!o.caps && accion !== 'parar') return json(404, { detail: 'Not Found' });
       if (accion === 'parar') {
+        if (o.parada === 'draining') return json(200, { id: t.id, estado: t.estado, parada: { id: 'pd1', fase: 'draining', en_vuelo: { accion: 'click', estado: 'en_vuelo' } } });
         t.estado = 'parada';
-        return json(200, { id: t.id });
+        return json(200, { id: t.id, ...(o.parada ? { estado: 'parada', parada: { id: 'pd1', fase: 'quiescent', en_vuelo: null } } : {}) });
       }
       if (!viva) return json(409, { detail: 'la tarea ya terminó' });
+      const conEntrada = !!o.caps?.includes('entrada');
       if (accion === 'pausar') t.estado = 'pausada';
       else if (accion === 'reanudar') t.estado = 'trabajando';
-      else if (accion === 'control') t.estado = cuerpo?.tomar ? 'control' : 'trabajando';
+      else if (accion === 'control') {
+        t.estado = cuerpo?.tomar ? 'control' : 'trabajando';
+        // Como el agente.py de AUR09: el control queda ligado al cliente que lo tomó (otra sesión, otra época).
+        if (conEntrada && cuerpo?.tomar) {
+          if (cuerpo.clientId !== t.cliente) t.epoca = (t.epoca ?? 3) + (t.cliente ? 1 : 0);
+          t.cliente = cuerpo.clientId ?? null;
+        }
+        if (conEntrada) return json(200, { id: t.id, estado: t.estado, fase: 'quiescent', epoca: t.epoca ?? 3 });
+      } else if (accion === 'entrada' && conEntrada) {
+        if (t.estado !== 'control') return json(409, { detail: 'sin_control: primero toma el control' });
+        if (cuerpo.clientId !== t.cliente) return json(409, { detail: 'cliente: el control lo tiene otro dispositivo' });
+        if (cuerpo.controlEpoch !== (t.epoca ?? 3)) return json(409, { detail: `epoca_revocada: el control cambió (época ${t.epoca ?? 3})` });
+        return json(200, { id: t.id, ack: { secuencia: cuerpo.inputSequence, estado: 'hecha', ts: Date.now() / 1000, frame_seq: 7, epoca: cuerpo.controlEpoch } });
+      } else if (accion === 'seguro' && o.caps?.includes('seguro')) {
+        if (!cuerpo?.activar && !(cuerpo?.frameSeq > 7)) return json(409, { detail: 'frame_viejo: mira la pantalla de ahora antes de terminar la entrada segura' });
+        t.seguro = !!cuerpo?.activar;
+        return json(200, { id: t.id, seguro: t.seguro, epoca: t.epoca ?? 3, frame_seq: 8 });
+      }
       else if (accion === 'confirmar') {
         if (t.estado !== 'confirmar') return json(409, { detail: 'no está esperando ningún sí' });
-        if (!cuerpo.pregunta_id || cuerpo.pregunta_id !== t.pregunta_id) return json(409, { detail: 'esa respuesta era para otra pregunta; mira la de ahora' });
+        if (!o.sinRevisar && (!cuerpo.pregunta_id || cuerpo.pregunta_id !== t.pregunta_id)) return json(409, { detail: 'esa respuesta era para otra pregunta; mira la de ahora' });
+        if (!o.sinRevisar && cuerpo.propuesta && cuerpo.propuesta !== t.propuesta) return json(409, { detail: 'esa respuesta era para otra propuesta' });
         t.si = !!cuerpo.si;
         t.estado = 'trabajando';
         t.pregunta = null;
@@ -612,7 +651,10 @@ async function nodoAgente(o: { caps?: string[]; guion: (t: TareaFalsa) => void; 
         if (t.estado !== 'control') return json(409, { detail: 'primero toma el control' });
         t.pasos.push({ n: t.pasos.length + 1, t: 9, accion: 'persona', args: { tipo: cuerpo.tipo } });
       } else if (accion === 'pantalla') {
-        res.writeHead(200, { 'content-type': 'image/jpeg' });
+        const frame = conEntrada
+          ? { 'X-Frame-Seq': '8', 'X-Frame-Ts': (Date.now() / 1000 - 0.4).toFixed(3), 'X-Frame-Ancho': '1280', 'X-Frame-Alto': '800', 'X-Viewport-Rev': '2', 'X-Control-Epoca': String(t.epoca ?? 3), 'X-Privado': t.seguro ? '1' : '0' }
+          : {};
+        res.writeHead(200, { 'content-type': 'image/jpeg', ...frame });
         return res.end(Buffer.from('JPEGDATA'));
       }
       return json(200, { id: t.id, estado: t.estado });
@@ -630,12 +672,13 @@ async function conRutas<T>(fn: (como: (quien: string | null, ruta: string, init?
   const app = express();
   app.use(express.json());
   const pasa: RequestHandler = (_q, _r, n) => n();
-  montarRutasComputadora(app, { exigirMesa: pasa, limitar: () => pasa, sesionDe: (req) => (req.headers['x-quien'] ? { correo: String(req.headers['x-quien']) } : null) });
+  // La sesión: quién (x-quien) y su token (x-token; por omisión uno fijo), como sesionDe de server/seguridad.ts.
+  montarRutasComputadora(app, { exigirMesa: pasa, limitar: () => pasa, sesionDe: (req) => (req.headers['x-quien'] ? { correo: String(req.headers['x-quien']), token: String(req.headers['x-token'] || 'token-de-prueba') } : null) });
   const srv = app.listen(0, '127.0.0.1');
   await new Promise((r) => srv.once('listening', r));
   const base = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
   const como = (quien: string | null, ruta: string, init: RequestInit = {}) =>
-    fetch(`${base}${ruta}`, { ...init, headers: { 'content-type': 'application/json', ...(quien ? { 'x-quien': quien } : {}) } }).then(async (r) => ({ code: r.status, j: await r.json() }));
+    fetch(`${base}${ruta}`, { ...init, headers: { 'content-type': 'application/json', ...((init.headers as Record<string, string>) || {}), ...(quien ? { 'x-quien': quien } : {}) } }).then(async (r) => ({ code: r.status, j: await r.json() }));
   try {
     return await fn(como);
   } finally {
@@ -1177,6 +1220,36 @@ test('encargar una vez: la respuesta perdida y el reintento dan UNA tarea; la ap
   }
 });
 
+test('el mismo pedido de la app tras un reinicio (o en otra réplica) da la MISMA tarea: lo durable lo recuerda (AUR06)', async () => {
+  const { _usarAlmacenDurable, almacenEnMemoria } = await import('../lib/durable');
+  const almacen = almacenEnMemoria();
+  _usarAlmacenDurable(almacen);
+  const nodo = await nodoAgente({ caps: CAPS, guion: () => undefined });
+  try {
+    await conNodo(nodo.url, () =>
+      conAvisos(async () => {
+        const cuerpo = JSON.stringify({ instruccion: 'Entra a bch.hn y dime el dólar', requestId: 'tel-reinicio-0001' });
+        const primera = await conRutas((como) => como('jose@x.hn', '/api/computadora/tareas', { method: 'POST', body: cuerpo }));
+        assert.equal(primera.code, 200);
+        const altas = () => nodo.pedidos.filter((p) => p.ruta === 'POST /tareas').length;
+        const antes = altas();
+        // «Reinicio»: rutas montadas de nuevo (el Map de pedidos vacío) con el registro durable intacto.
+        const otra = await conRutas((como) => como('jose@x.hn', '/api/computadora/tareas', { method: 'POST', body: cuerpo }));
+        assert.equal(otra.code, 200);
+        assert.equal(otra.j.id, primera.j.id, 'la misma tarea');
+        assert.equal(otra.j.repetido, true);
+        assert.equal(altas(), antes, 'ni un pedido nuevo al nodo');
+        // Otra persona con el mismo requestId no ve la de José.
+        const ana = await conRutas((como) => como('ana@x.hn', '/api/computadora/tareas', { method: 'POST', body: cuerpo }));
+        assert.notEqual(ana.j.id, primera.j.id);
+      })
+    );
+  } finally {
+    _usarAlmacenDurable(null);
+    await nodo.cerrar();
+  }
+});
+
 test('la app ve qué versión del estado es y un paso que no se hizo no cuenta (auditoría 3-oct, PC05)', async () => {
   const nodo = await nodoAgente({
     caps: CAPS,
@@ -1208,5 +1281,279 @@ test('la app ve qué versión del estado es y un paso que no se hizo no cuenta (
     );
   } finally {
     await nodo.cerrar();
+  }
+});
+
+test('el sí es de la pregunta de ESA tarea: un id de otra tarea no aprueba aunque el nodo no lo revise, y la propuesta mostrada viaja al nodo (AUR02)', async () => {
+  // Cada tarea pregunta algo distinto; el nodo de mentira NO revisa a qué pregunta va el sí (lo tiene que revisar el servidor).
+  const nodo = await nodoAgente({
+    caps: CAPS,
+    conPropuesta: true,
+    sinRevisar: true,
+    guion: (t) => {
+      if (t.si === undefined && t.consultas >= 1) {
+        t.estado = 'confirmar';
+        t.pregunta = t.n === 1 ? '¿Envío el borrador X a ana@example.test?' : '¿Envío el borrador Y a bruno@example.test?';
+      }
+    },
+  });
+  try {
+    await conNodo(nodo.url, () =>
+      conAvisos(async (vistos) =>
+        conRutas(async (como) => {
+          const a = await encargarTarea({ instruccion: 'Entra al correo y envía el borrador X a ana@example.test', quien: 'jose@x.hn', motor: 'holo', esperaMs: 0 });
+          const b = await encargarTarea({ instruccion: 'Entra al correo y envía el borrador Y a bruno@example.test', quien: 'jose@x.hn', motor: 'holo', esperaMs: 0 });
+          await hasta(() => vistos.filter((v) => v.aviso.fase === 'confirmar').length >= 2);
+          const pa = (await como('jose@x.hn', `/api/computadora/tareas/${a.id}`)).j.mision.preguntaId;
+          const pb = (await como('jose@x.hn', `/api/computadora/tareas/${b.id}`)).j.mision.preguntaId;
+          assert.ok(pa && pb && pa !== pb);
+          const confirmarDe = (id: string | null) => nodo.pedidos.filter((x) => x.ruta === `POST /tareas/${id}/confirmar`);
+          // El sí de la pregunta de Ana mandado a la tarea de Bruno (id manipulado): no se aprueba ni llega al nodo.
+          const mal = await como('jose@x.hn', `/api/computadora/tareas/${b.id}/confirmar`, { method: 'POST', body: JSON.stringify({ si: true, preguntaId: pa }) });
+          assert.equal(mal.code, 409);
+          assert.equal(confirmarDe(b.id).length, 0, 'el servidor no la manda');
+          assert.equal(nodo.tareas.get(b.id!)!.si, undefined);
+          // Otra persona: ni la ve.
+          assert.equal((await como('ana@x.hn', `/api/computadora/tareas/${a.id}/confirmar`, { method: 'POST', body: JSON.stringify({ si: true, preguntaId: pa }) })).code, 404);
+          // La de verdad: el nodo recibe la pregunta y la propuesta que se mostró.
+          const propuesta = nodo.tareas.get(a.id!)!.propuesta;
+          assert.ok(propuesta);
+          const ok = await como('jose@x.hn', `/api/computadora/tareas/${a.id}/confirmar`, { method: 'POST', body: JSON.stringify({ si: true, preguntaId: pa }) });
+          assert.equal(ok.code, 200);
+          assert.deepEqual(confirmarDe(a.id).at(-1)!.cuerpo, { si: true, pregunta_id: pa, propuesta });
+        })
+      )
+    );
+  } finally {
+    await nodo.cerrar();
+  }
+});
+
+test('detener: «paré» solo cuando la computadora quedó quieta; si un toque ya salió, se dice que está terminando (AUR03)', async () => {
+  const { comandoComputadora } = await import('../server/computadora');
+  for (const fase of ['draining', 'quiescent'] as const) {
+    const nodo = await nodoAgente({ caps: CAPS, parada: fase, guion: () => undefined });
+    try {
+      await conNodo(nodo.url, () =>
+        conAvisos(async () =>
+          conRutas(async (como) => {
+            const r = await encargarTarea({ instruccion: 'Entra a x.hn y lee', quien: 'jose@x.hn', motor: 'holo', esperaMs: 0 });
+            const h = (await comandoComputadora('jose@x.hn', 'para'))!;
+            if (fase === 'draining') {
+              assert.doesNotMatch(h, /paré/);
+              assert.match(h, /está terminando una acción que ya había empezado/);
+            } else assert.match(h, /^HARNESS computadora: paré/);
+            const p = await como('jose@x.hn', `/api/computadora/tareas/${r.id}/parar`, { method: 'POST', body: '{}' });
+            assert.equal(p.code, 200);
+            assert.equal(p.j.fase, fase, 'la app sabe si ya está detenida o terminando');
+          })
+        )
+      );
+    } finally {
+      await nodo.cerrar();
+    }
+  }
+});
+
+test('una consulta que sale antes del final y llega después no reabre hecha→pausada ni avisa lo viejo (AUR04)', async () => {
+  const lento = { activo: false };
+  const nodo = await nodoAgente({ caps: CAPS, guion: () => undefined, demora: (_t, url) => (lento.activo && url.includes('miniaturas=1') ? 500 : 0) });
+  try {
+    await conNodo(nodo.url, () =>
+      conAvisos(async (vistos) =>
+        conRutas(async (como) => {
+          const r = await encargarTarea({ instruccion: 'Entra a x.hn y lee las noticias', quien: 'jose@x.hn', motor: 'holo', esperaMs: 0 });
+          const t = nodo.tareas.get(r.id!)!;
+          t.estado = 'pausada';
+          await hasta(() => vistos.some((v) => v.aviso.fase === 'pausa'));
+          // La app pide la tarea (el nodo la ve pausada, pero la respuesta tarda)…
+          lento.activo = true;
+          const tardia = como('jose@x.hn', `/api/computadora/tareas/${r.id}`);
+          await new Promise((res) => setTimeout(res, 60));
+          // …y mientras, termina y el seguimiento la cierra.
+          t.estado = 'hecha';
+          t.respuesta = 'Listo: tres noticias.';
+          await hasta(() => vistos.some((v) => v.aviso.fase === 'termina'));
+          const avisosAlCerrar = vistos.length;
+          const v = await tardia;
+          assert.equal(v.j.tarea.estado, 'hecha', 'la respuesta vieja no vuelve a poner «pausada»');
+          assert.equal(v.j.mision.final.estado, 'hecha');
+          await new Promise((res) => setTimeout(res, 200));
+          assert.equal(vistos.length, avisosAlCerrar, 'nada viejo se avisa después del final');
+        })
+      )
+    );
+  } finally {
+    await nodo.cerrar();
+  }
+});
+
+test('el seguimiento: su consulta sale, la tarea se cierra mientras tanto, y la respuesta vieja no avisa nada (AUR04)', async () => {
+  const tarde = { activo: false };
+  const nodo2 = await nodoAgente({ caps: CAPS, guion: () => undefined, demora: (_t, url) => (tarde.activo && !url.includes('miniaturas') ? 400 : 0) });
+  try {
+    await conNodo(nodo2.url, () =>
+      conAvisos(async (vistos) => {
+        const r = await encargarTarea({ instruccion: 'Entra a x.hn y lee', quien: 'jose@x.hn', motor: 'holo', esperaMs: 0 });
+        const t = nodo2.tareas.get(r.id!)!;
+        await hasta(() => t.consultas >= 1);
+        tarde.activo = true;
+        t.estado = 'pausada';
+        const antes = t.consultas;
+        await hasta(() => t.consultas > antes);
+        _olvidarEncargos();
+        await new Promise((res) => setTimeout(res, 600));
+        assert.ok(!vistos.some((v) => v.aviso.fase === 'pausa'), 'la consulta vieja no avisa una pausa de una tarea ya cerrada');
+      })
+    );
+  } finally {
+    await nodo2.cerrar();
+  }
+});
+
+const CAPS_VISOR = [...CAPS, 'entrada', 'seguro'];
+
+test('el visor: cada entrada se valida en el servidor, va con la identidad de la sesión y tiene su ACK; lo repetido no se repite y lo viejo no pasa (AUR09)', async () => {
+  const { validarEntradaRemota } = await import('../server/computadora');
+  const nodo = await nodoAgente({ caps: CAPS_VISOR, guion: () => undefined });
+  try {
+    await conNodo(nodo.url, () =>
+      conAvisos(async () =>
+        conRutas(async (como) => {
+          const r = await encargarTarea({ instruccion: 'Entra a x.hn y lee', quien: 'jose@x.hn', motor: 'holo', esperaMs: 0 });
+          const ruta = (a: string) => `/api/computadora/tareas/${r.id}/${a}`;
+          const post = (a: string, cuerpo: unknown, quien: string | null = 'jose@x.hn', headers: Record<string, string> = {}) =>
+            como(quien, ruta(a), { method: 'POST', body: JSON.stringify(cuerpo), headers });
+          const alNodo = (a: string) => nodo.pedidos.filter((p) => p.ruta === `POST /tareas/${r.id}/${a}`);
+          assert.deepEqual((await como('jose@x.hn', '/api/computadora')).j.capacidades, CAPS_VISOR);
+
+          // Tomar el control desde el visor: el nodo recibe un cliente derivado de la sesión (ni el correo ni el id crudo).
+          const tomar = await post('control', { tomar: true, clientId: 'visor-abc12345' });
+          assert.equal(tomar.code, 200);
+          assert.equal(tomar.j.epoca, 3);
+          const cliente = alNodo('control')[0].cuerpo.clientId;
+          assert.match(cliente, /^[0-9a-f]{32}$/);
+          assert.ok(!JSON.stringify(alNodo('control')).includes('jose@x.hn') && cliente !== 'visor-abc12345');
+
+          const ev = (seq: number, type: string, payload: unknown, extra: Record<string, unknown> = {}) => ({
+            remoteSessionId: r.id, clientId: 'visor-abc12345', controlEpoch: 3, inputSequence: seq, viewportRevision: 2, type, payload, ...extra,
+          });
+          const a1 = await post('entrada', ev(1, 'pointer', { accion: 'click', x: 640, y: 400 }));
+          assert.equal(a1.code, 200);
+          assert.deepEqual({ s: a1.j.ack.secuencia, e: a1.j.ack.estado }, { s: 1, e: 'hecha' });
+          assert.equal(alNodo('entrada')[0].cuerpo.clientId, cliente, 'el nodo ve el mismo cliente del control');
+          // El mismo evento otra vez (un reintento tras perder la respuesta): el mismo ACK, sin llegar al nodo.
+          const a1b = await post('entrada', ev(1, 'pointer', { accion: 'click', x: 640, y: 400 }));
+          assert.equal(a1b.code, 200);
+          assert.equal(a1b.j.ack.duplicada, true);
+          assert.equal(alNodo('entrada').length, 1);
+          assert.equal((await post('entrada', ev(3, 'text_commit', { texto: 'Árbol 😀' }))).code, 200);
+          const vieja = await post('entrada', ev(2, 'key', { tecla: 'enter' }));
+          assert.deepEqual({ code: vieja.code, c: vieja.j.code }, { code: 409, c: 'secuencia_vieja' });
+          assert.equal(alNodo('entrada').length, 2, 'lo viejo no llega al nodo');
+
+          // Lo mal formado no pasa (ni llega al nodo); lo de otro dueño, 404; sin sesión, 401.
+          for (const malo of [
+            ev(9, 'borrar_disco', {}),
+            ev(9, 'text_commit', { texto: 'dos\nlíneas' }),
+            ev(9, 'text_commit', { texto: 'x'.repeat(501) }),
+            ev(9, 'key', { tecla: 'c' }),
+            ev(9, 'key', { tecla: 'delete', mods: ['ctrl', 'alt'] }),
+            ev(9, 'pointer', { x: -1, y: 3 }),
+            ev(9, 'pointer', { accion: 'click', x: 1, y: 1 }, { remoteSessionId: 'otra' }),
+            ev(9, 'pointer', { accion: 'click', x: 1, y: 1 }, { controlEpoch: '3' }),
+            ev(9, 'pointer', { accion: 'click', x: 1, y: 1 }, { clientId: 'x' }),
+          ]) {
+            const m = await post('entrada', malo);
+            assert.equal(m.code, 400, JSON.stringify(malo));
+            assert.equal(m.j.code, 'entrada_invalida');
+          }
+          assert.equal((await post('entrada', { ...ev(9, 'text_commit', { texto: 'hola' }), relleno: 'x'.repeat(5000) })).code, 413);
+          assert.equal((await post('entrada', ev(9, 'key', { tecla: 'tab' }), 'otra@x.hn')).code, 404);
+          assert.equal((await post('entrada', ev(9, 'key', { tecla: 'tab' }), null)).code, 401);
+          assert.equal(alNodo('entrada').length, 2);
+
+          // La identidad sale de la sesión: el mismo clientId desde OTRA sesión es otro cliente y el nodo lo cerca.
+          const otraSesion = await post('entrada', ev(10, 'key', { tecla: 'tab' }), 'jose@x.hn', { 'x-token': 'otro-token' });
+          assert.deepEqual({ code: otraSesion.code, c: otraSesion.j.code }, { code: 409, c: 'cliente' });
+          assert.notEqual(alNodo('entrada').at(-1)!.cuerpo.clientId, cliente);
+          // Si esa sesión toma el control, la del primer teléfono queda cercada (otra época).
+          assert.equal((await post('control', { tomar: true, clientId: 'visor-abc12345' }, 'jose@x.hn', { 'x-token': 'otro-token' })).j.epoca, 4);
+          const cercada = await post('entrada', ev(11, 'key', { tecla: 'tab' }));
+          assert.equal(cercada.code, 409);
+          assert.equal(cercada.j.code, 'cliente');
+          assert.match(cercada.j.error, /otro dispositivo/i);
+
+          // La pantalla trae su frame: secuencia, tamaño lógico, revisión del viewport y su edad.
+          const p = await como('jose@x.hn', ruta('pantalla'));
+          assert.equal(Buffer.from(p.j.imagen, 'base64').toString(), 'JPEGDATA');
+          assert.deepEqual({ seq: p.j.frame.seq, a: p.j.frame.ancho, h: p.j.frame.alto, v: p.j.frame.viewportRevision, pr: p.j.frame.privado }, { seq: 8, a: 1280, h: 800, v: 2, pr: false });
+          assert.ok(p.j.frame.edadMs >= 300 && p.j.frame.edadMs < 5000, `edad ${p.j.frame.edadMs}`);
+          assert.equal(validarEntradaRemota(ev(1, 'release_all', {}), r.id)?.type, 'release_all');
+          assert.equal((validarEntradaRemota(ev(1, 'text_commit', { texto: 'café' }), r.id)?.payload as any).texto, 'café', 'el acento compuesto');
+        })
+      )
+    );
+  } finally {
+    await nodo.cerrar();
+  }
+});
+
+test('el visor: entrada segura con un secreto sintético que no queda en trazas, pasos ni misión; salir pide un frame nuevo; con el nodo viejo se dice (AUR09)', async () => {
+  const SECRETO = 'Clave-Sintetica-Servidor-7xP';
+  const nodo = await nodoAgente({ caps: CAPS_VISOR, guion: () => undefined });
+  const dichos: string[] = [];
+  const reales = { log: console.log, warn: console.warn, error: console.error, info: console.info };
+  const espia = (...a: unknown[]) => void dichos.push(a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' '));
+  try {
+    Object.assign(console, { log: espia, warn: espia, error: espia, info: espia });
+    await conNodo(nodo.url, () =>
+      conAvisos(async (vistos) =>
+        conRutas(async (como) => {
+          const r = await encargarTarea({ instruccion: 'Entra a banco.hn e inicia sesión', quien: 'jose@x.hn', motor: 'holo', esperaMs: 0 });
+          const post = (a: string, cuerpo: unknown) => como('jose@x.hn', `/api/computadora/tareas/${r.id}/${a}`, { method: 'POST', body: JSON.stringify(cuerpo) });
+          assert.equal((await post('control', { tomar: true, clientId: 'visor-abc12345' })).code, 200);
+          assert.equal((await post('seguro', { activar: true, clientId: 'visor-abc12345' })).j.seguro, true);
+          const ev = { remoteSessionId: r.id, clientId: 'visor-abc12345', controlEpoch: 3, inputSequence: 1, viewportRevision: 2, type: 'text_commit', payload: { texto: SECRETO } };
+          assert.equal((await post('entrada', ev)).code, 200);
+          const p = await como('jose@x.hn', `/api/computadora/tareas/${r.id}/pantalla`);
+          assert.equal(p.j.frame.privado, true, 'la pantalla del intervalo sale marcada privada');
+          const sin = await post('seguro', { activar: false, clientId: 'visor-abc12345' });
+          assert.deepEqual({ code: sin.code, c: sin.j.code }, { code: 409, c: 'frame_viejo' });
+          assert.equal((await post('seguro', { activar: false, clientId: 'visor-abc12345', frameSeq: p.j.frame.seq })).j.seguro, false);
+          const vista = await como('jose@x.hn', `/api/computadora/tareas/${r.id}`);
+          const todo = JSON.stringify(vista.j) + JSON.stringify(vistos) + dichos.join('\n') + JSON.stringify((await como('jose@x.hn', '/api/computadora')).j);
+          assert.ok(!todo.includes(SECRETO), 'el secreto no está en la tarea, la misión, los avisos ni en lo que el servidor escribió');
+          assert.equal(nodo.pedidos.filter((x) => JSON.stringify(x.cuerpo ?? '').includes(SECRETO)).length, 1, 'llegó una vez al nodo (a la computadora), y nada más');
+        })
+      )
+    );
+  } finally {
+    Object.assign(console, reales);
+    await nodo.cerrar();
+  }
+  // El agente.py de antes (sin entrada): el visor nuevo no se inventa el contrato; se dice claro.
+  const viejo = await nodoAgente({ caps: CAPS, guion: () => undefined });
+  try {
+    await conNodo(viejo.url, () =>
+      conAvisos(async () =>
+        conRutas(async (como) => {
+          const r = await encargarTarea({ instruccion: 'Entra a x.hn y lee', quien: 'jose@x.hn', motor: 'holo', esperaMs: 0 });
+          const ev = { remoteSessionId: r.id, clientId: 'visor-abc12345', controlEpoch: 0, inputSequence: 1, viewportRevision: 0, type: 'key', payload: { tecla: 'tab' } };
+          const e = await como('jose@x.hn', `/api/computadora/tareas/${r.id}/entrada`, { method: 'POST', body: JSON.stringify(ev) });
+          assert.equal(e.code, 501);
+          assert.equal((await como('jose@x.hn', `/api/computadora/tareas/${r.id}/seguro`, { method: 'POST', body: '{"activar":true,"clientId":"visor-abc12345"}' })).code, 501);
+          // La pantalla sin frame del nodo viejo: la imagen igual, y frame null (la app lo trata como sin frescura).
+          const p = await como('jose@x.hn', `/api/computadora/tareas/${r.id}/pantalla`);
+          assert.equal(p.j.frame, null);
+          // La app de antes con el servidor nuevo: tomar el control sin clientId y la acción de antes siguen.
+          assert.equal((await como('jose@x.hn', `/api/computadora/tareas/${r.id}/control`, { method: 'POST', body: '{"tomar":true}' })).code, 200);
+          assert.ok(!('clientId' in viejo.pedidos.find((x) => x.ruta.endsWith('/control'))!.cuerpo));
+          assert.equal((await como('jose@x.hn', `/api/computadora/tareas/${r.id}/accion`, { method: 'POST', body: '{"tipo":"click","x":500,"y":300}' })).code, 200);
+        })
+      )
+    );
+  } finally {
+    await viejo.cerrar();
   }
 });

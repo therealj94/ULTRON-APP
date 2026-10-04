@@ -3,6 +3,19 @@
  * qué se guarda en el perfil y cómo se arma cada respuesta de la encuesta. Vive aparte de React
  * para probarlo en node (las pantallas solo lo dibujan).
  *
+ * PRIMERO UN RESULTADO (documento maestro, sección 14 y recorrido R1; AUR11): antes de configurar nada,
+ *   objetivo    → «¿Qué te gustaría resolver primero? Puedes empezar sin conectar ninguna cuenta» (una opción
+ *                 o con sus palabras; se puede saltar)
+ *   restriccion → SOLO la restricción que cambia el resultado (presupuesto y uso para comparar, cuándo para
+ *                 un recordatorio…), saltable
+ *   conectar    → la cuenta, solo si el objetivo la necesita (revisar el correo, contestar WhatsApp)
+ *   listo       → el MINIRESULTADO: la primera petición armada, que queda escrita en la mesa al terminar.
+ *                 «Usar mi petición ahora» termina ya; «Personalizar primero» sigue con lo de siempre.
+ * El plan (`pasosDelPlan`) depende del objetivo: sin objetivo no hay restricción ni miniresultado; la
+ * conexión y los permisos solo entran si hacen falta. Lo personal (encuesta, cumpleaños) se puede saltar
+ * siempre: el formulario no exige familia, salud ni finanzas.
+ *
+ * Y después, lo de antes:
  *   genesis  → «Genesis ID compartió contigo» (nombre y cumpleaños con ✔) o pregunta el cumpleaños
  *   idioma   → Español o English (la app, la voz y las respuestas cambian al instante)
  *   apodo    → «¿Cómo quieres que te diga?»
@@ -15,8 +28,9 @@
  *              y qué quiere que AURA haga por él. Cada una con opciones de un toque, «Otro (escribir)»
  *              y «Responder hablando» (el dictado del teléfono, bienvenida/dictado.ts)
  *   iniciativa → cuánto quiere que AURA le proponga por su cuenta (Alta, Media, Baja, Apagada)
- *   permisos → micrófono, cámara, Bluetooth, avisos y ubicación, explicados
- *   fiesta   → celebración y a la mesa
+ *   permisos → solo los que pide el objetivo (los avisos para un recordatorio), explicados; los demás se
+ *              piden donde se usan (el micrófono en la mesa) y todos están en Ajustes
+ *   fiesta   → celebración, la primera petición y a la mesa
  *
  * Cada pregunta de la encuesta es su propio paso: la barra avanza con cada tarjeta, «atrás» vuelve a
  * la anterior y se retoma donde se quedó si Android cierra la app a la mitad. Lo que se salta se
@@ -161,9 +175,293 @@ export const PREGUNTAS: readonly Pregunta[] = [
   },
 ];
 
-export type PasoId = 'genesis' | 'idioma' | 'apodo' | 'avatar' | 'tema' | 'aura' | 'conectar' | `encuesta:${CampoPregunta}` | 'iniciativa' | 'permisos' | 'fiesta';
+export type PasoId =
+  | 'objetivo'
+  | 'restriccion'
+  | 'listo'
+  | 'genesis'
+  | 'idioma'
+  | 'apodo'
+  | 'avatar'
+  | 'tema'
+  | 'aura'
+  | 'conectar'
+  | `encuesta:${CampoPregunta}`
+  | 'iniciativa'
+  | 'permisos'
+  | 'fiesta';
 
-export const PASOS: readonly PasoId[] = ['genesis', 'idioma', 'apodo', 'avatar', 'tema', 'aura', 'conectar', ...PREGUNTAS.map((p) => `encuesta:${p.campo}` as const), 'iniciativa', 'permisos', 'fiesta'];
+const PASOS_ENCUESTA = PREGUNTAS.map((p) => `encuesta:${p.campo}` as const);
+
+/** Todos los pasos, en orden. Cada persona recorre los de su plan (`pasosDelPlan`). */
+export const PASOS: readonly PasoId[] = ['objetivo', 'restriccion', 'conectar', 'listo', 'genesis', 'idioma', 'apodo', 'avatar', 'tema', 'aura', ...PASOS_ENCUESTA, 'iniciativa', 'permisos', 'fiesta'];
+
+/**
+ * Los pasos de la v2, CONGELADOS: el número de paso que guardó una versión vieja se traduce con esta lista
+ * (antes se calculaba de PASOS, y cada paso nuevo corría los números).
+ */
+export const PASOS_V2: readonly PasoId[] = ['genesis', 'idioma', 'apodo', 'avatar', 'tema', 'aura', ...PASOS_ENCUESTA, 'iniciativa', 'permisos', 'fiesta'];
+
+/** El orden de la v3 antes del objetivo: para seguir desde un paso que ya no está en el plan. */
+const PASOS_ANTES: readonly PasoId[] = ['genesis', 'idioma', 'apodo', 'avatar', 'tema', 'aura', 'conectar', ...PASOS_ENCUESTA, 'iniciativa', 'permisos', 'fiesta'];
+
+/* ── el primer resultado: qué quiere resolver y la restricción que lo cambia ─────────────── */
+
+export type ObjetivoId = 'comparar' | 'organizar' | 'recordar' | 'escribir' | 'buscar' | 'correo' | 'whatsapp';
+/** Los permisos que puede pedir un objetivo (de PERMISOS_ANDROID, src/nucleo/contrato.ts). */
+export type PermisoObjetivo = 'android.permission.POST_NOTIFICATIONS' | 'android.permission.RECORD_AUDIO' | 'android.permission.CAMERA';
+
+export type Objetivo = {
+  id: ObjetivoId;
+  icono: NombreIcono;
+  titulo: Bilingue;
+  /** Cómo empieza la petición que queda lista para AURA. */
+  pedido: Bilingue;
+  /** LA restricción que cambia el resultado: una sola pregunta. */
+  restriccion: { pregunta: Bilingue; nota: Bilingue; etiqueta: Bilingue; ejemplo: Bilingue; sugerencias: readonly Bilingue[] };
+  /** La cuenta que hace falta para hacerlo (si no la conecta, puede pegar el texto). */
+  conexion?: 'correo' | 'whatsapp';
+  permisos?: readonly PermisoObjetivo[];
+};
+
+export const OBJETIVOS: readonly Objetivo[] = [
+  {
+    id: 'comparar',
+    icono: 'estrella',
+    titulo: { es: 'Comparar opciones', en: 'Compare options' },
+    pedido: { es: 'Compara estas opciones y déjame una recomendación con fuentes', en: 'Compare these options and give me a recommendation with sources' },
+    restriccion: {
+      pregunta: { es: '¿Qué pesa más: el presupuesto o el uso?', en: 'What matters most: budget or use?' },
+      nota: { es: 'Con eso cambia cuál te recomiendo.', en: 'That changes which one I recommend.' },
+      etiqueta: { es: 'Lo que más pesa', en: 'What matters most' },
+      ejemplo: { es: 'Ej.: hasta L 15,000, para trabajar', en: 'E.g.: up to $600, for work' },
+      sugerencias: [
+        { es: 'Lo más barato', en: 'The cheapest' },
+        { es: 'La mejor calidad', en: 'The best quality' },
+        { es: 'Para trabajar', en: 'For work' },
+        { es: 'Para la casa', en: 'For home' },
+      ],
+    },
+  },
+  {
+    id: 'organizar',
+    icono: 'reloj',
+    titulo: { es: 'Organizar mi día', en: 'Organize my day' },
+    pedido: { es: 'Ayúdame a organizar mi día', en: 'Help me organize my day' },
+    restriccion: {
+      pregunta: { es: '¿Qué tienes sí o sí hoy?', en: 'What do you have to do today, no matter what?' },
+      nota: { es: 'Lo fijo primero; lo demás lo acomodo alrededor.', en: 'The fixed things first; I’ll fit the rest around them.' },
+      etiqueta: { es: 'Lo que no se mueve', en: 'What can’t move' },
+      ejemplo: { es: 'Ej.: reunión a las 10 y recoger a los niños a las 4', en: 'E.g.: meeting at 10 and school pickup at 4' },
+      sugerencias: [
+        { es: 'Trabajo en la mañana', en: 'Work in the morning' },
+        { es: 'Una reunión', en: 'A meeting' },
+        { es: 'Recoger a alguien', en: 'Picking someone up' },
+        { es: 'Ir al banco', en: 'Going to the bank' },
+      ],
+    },
+  },
+  {
+    id: 'recordar',
+    icono: 'campana',
+    titulo: { es: 'Recordarme algo', en: 'Remind me of something' },
+    pedido: { es: 'Recuérdame algo', en: 'Remind me of something' },
+    restriccion: {
+      pregunta: { es: '¿Qué y cuándo te lo recuerdo?', en: 'What, and when should I remind you?' },
+      nota: { es: 'Con la hora exacta te aviso a tiempo.', en: 'With the exact time I’ll let you know on time.' },
+      etiqueta: { es: 'Qué y cuándo', en: 'What and when' },
+      ejemplo: { es: 'Ej.: pagar la luz el viernes a las 9', en: 'E.g.: pay the power bill on Friday at 9' },
+      sugerencias: [
+        { es: 'Hoy en la tarde', en: 'This afternoon' },
+        { es: 'Mañana temprano', en: 'Tomorrow morning' },
+        { es: 'Cada día', en: 'Every day' },
+        { es: 'El fin de semana', en: 'On the weekend' },
+      ],
+    },
+    permisos: ['android.permission.POST_NOTIFICATIONS'],
+  },
+  {
+    id: 'escribir',
+    icono: 'lapiz',
+    titulo: { es: 'Escribir un mensaje', en: 'Write a message' },
+    pedido: { es: 'Ayúdame a escribir un mensaje (déjalo en borrador, no lo mandes)', en: 'Help me write a message (leave it as a draft, don’t send it)' },
+    restriccion: {
+      pregunta: { es: '¿Para quién y en qué tono?', en: 'Who is it for, and in what tone?' },
+      nota: { es: 'No es lo mismo tu jefe que tu mamá.', en: 'Your boss isn’t your mom.' },
+      etiqueta: { es: 'Para quién y tono', en: 'Who and tone' },
+      ejemplo: { es: 'Ej.: a un cliente, serio pero amable', en: 'E.g.: to a client, serious but friendly' },
+      sugerencias: [
+        { es: 'Formal', en: 'Formal' },
+        { es: 'Cariñoso', en: 'Warm' },
+        { es: 'Corto y directo', en: 'Short and direct' },
+        { es: 'Para un cliente', en: 'For a client' },
+      ],
+    },
+  },
+  {
+    id: 'buscar',
+    icono: 'globo',
+    titulo: { es: 'Averiguar algo', en: 'Look something up' },
+    pedido: { es: 'Averigua esto y dime lo que encontraste con sus fuentes', en: 'Look this up and tell me what you found, with sources' },
+    restriccion: {
+      pregunta: { es: '¿Para qué lo necesitas?', en: 'What do you need it for?' },
+      nota: { es: 'Así busco lo que te sirve y no lo primero que sale.', en: 'So I look for what helps you, not just the first result.' },
+      etiqueta: { es: 'Para qué', en: 'What for' },
+      ejemplo: { es: 'Ej.: para decidir antes del lunes', en: 'E.g.: to decide before Monday' },
+      sugerencias: [
+        { es: 'Para decidir hoy', en: 'To decide today' },
+        { es: 'En Honduras', en: 'In Honduras' },
+        { es: 'Lo más reciente', en: 'The latest' },
+        { es: 'Explicado fácil', en: 'Explained simply' },
+      ],
+    },
+  },
+  {
+    id: 'correo',
+    icono: 'correo',
+    titulo: { es: 'Revisar mi correo', en: 'Check my email' },
+    pedido: { es: 'Revisa mi correo y dime lo importante', en: 'Check my email and tell me what matters' },
+    restriccion: {
+      pregunta: { es: '¿Qué buscas en tu correo?', en: 'What are you looking for in your email?' },
+      nota: { es: 'Para no leerte todo, solo lo que importa.', en: 'So I don’t read you everything, just what matters.' },
+      etiqueta: { es: 'Lo que busco', en: 'What I’m looking for' },
+      ejemplo: { es: 'Ej.: lo de un cliente de esta semana', en: 'E.g.: a client’s emails from this week' },
+      sugerencias: [
+        { es: 'Lo urgente', en: 'What’s urgent' },
+        { es: 'De hoy', en: 'From today' },
+        { es: 'De una persona', en: 'From one person' },
+        { es: 'Facturas y pagos', en: 'Invoices and payments' },
+      ],
+    },
+    conexion: 'correo',
+  },
+  {
+    id: 'whatsapp',
+    icono: 'chat',
+    titulo: { es: 'Contestar mis WhatsApp', en: 'Answer my WhatsApp' },
+    pedido: { es: 'Revisa mis WhatsApp y prepárame respuestas en borrador', en: 'Check my WhatsApp and draft replies for me' },
+    restriccion: {
+      pregunta: { es: '¿De quién o de qué?', en: 'From whom, or about what?' },
+      nota: { es: 'Nada se manda sin tu «sí».', en: 'Nothing is sent without your “yes”.' },
+      etiqueta: { es: 'De quién o de qué', en: 'From whom or about what' },
+      ejemplo: { es: 'Ej.: el grupo de la familia', en: 'E.g.: the family group' },
+      sugerencias: [
+        { es: 'Lo que no he contestado', en: 'What I haven’t answered' },
+        { es: 'De trabajo', en: 'Work' },
+        { es: 'De la familia', en: 'Family' },
+        { es: 'De hoy', en: 'From today' },
+      ],
+    },
+    conexion: 'whatsapp',
+  },
+];
+
+/** El objetivo elegido (por su id), o null si escribió el suyo o no eligió. */
+export function objetivoDe(b: Pick<Borrador, 'objetivo'>): Objetivo | null {
+  return OBJETIVOS.find((o) => o.id === b.objetivo) || null;
+}
+
+const unaLinea = (s: string | undefined, max: number) =>
+  String(s || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, max)
+    .trim();
+
+/**
+ * LA PRIMERA PETICIÓN: el objetivo (la opción, o lo que escribió) y la restricción, en una frase lista para
+ * mandar a AURA. Vacía si no hay objetivo. Es el miniresultado de la primera vez: queda escrita en la mesa.
+ */
+export function peticionInicial(b: Pick<Borrador, 'objetivo' | 'objetivoTexto' | 'restriccion'>, idioma: 'es' | 'en'): string {
+  const o = objetivoDe(b);
+  const texto = unaLinea(b.objetivoTexto, 200);
+  const r = unaLinea(b.restriccion, 160);
+  const base = o ? (texto ? `${o.pedido[idioma]}: ${texto}` : o.pedido[idioma]) : texto;
+  if (!base) return '';
+  const fin = /[.!?]$/.test(base) ? base : `${base}.`;
+  const etiqueta = o ? o.restriccion.etiqueta[idioma] : idioma === 'en' ? 'Keep in mind' : 'Ten en cuenta';
+  return r ? `${fin} ${etiqueta}: ${r}${/[.!?]$/.test(r) ? '' : '.'}` : fin;
+}
+
+/** Los permisos que el plan pide (solo los del objetivo; los demás, donde se usan). */
+export function permisosDelPlan(b: Pick<Borrador, 'objetivo'>): PermisoObjetivo[] {
+  return [...(objetivoDe(b)?.permisos || [])];
+}
+
+/**
+ * Los pasos de ESTA persona, en orden: sin objetivo no hay restricción ni miniresultado; los permisos solo si
+ * el objetivo los necesita. Conectar WhatsApp y correo se OFRECE siempre (José, 3-oct: «desde el principio
+ * … conectar WhatsApp y el correo cuando alguien entra la primera vez»), siempre saltable: el documento maestro
+ * pide que se pueda empezar sin conectar nada, no que se esconda.
+ */
+export function pasosDelPlan(b: Pick<Borrador, 'objetivo' | 'objetivoTexto' | 'restriccion'>): PasoId[] {
+  const o = objetivoDe(b);
+  const conPeticion = !!peticionInicial(b, 'es');
+  return PASOS.filter((p) => {
+    if (p === 'restriccion' || p === 'listo') return conPeticion;
+    if (p === 'permisos') return !!o?.permisos?.length;
+    return true;
+  });
+}
+
+/** El paso que sigue en el plan; si `paso` ya no está (cambió el objetivo), el siguiente que sí esté. */
+export function siguienteEn(plan: readonly PasoId[], paso: PasoId): PasoId {
+  const i = plan.indexOf(paso);
+  if (i >= 0) return plan[Math.min(plan.length - 1, i + 1)];
+  const j = PASOS.indexOf(paso);
+  return PASOS.slice(j + 1).find((p) => plan.includes(p)) || plan[plan.length - 1];
+}
+
+export function anteriorEn(plan: readonly PasoId[], paso: PasoId): PasoId {
+  const i = plan.indexOf(paso);
+  if (i >= 0) return plan[Math.max(0, i - 1)];
+  const j = PASOS.indexOf(paso);
+  return [...PASOS.slice(0, Math.max(0, j))].reverse().find((p) => plan.includes(p)) || plan[0];
+}
+
+/** 0..1 para la barra (la fiesta es el 100 %). */
+export function progresoEn(plan: readonly PasoId[], paso: PasoId): number {
+  const n = plan.length - 1;
+  const i = plan.indexOf(paso);
+  return n > 0 && i >= 0 ? Math.max(0, Math.min(1, i / n)) : 0;
+}
+
+/**
+ * DÓNDE RETOMAR: el nombre guardado (v3) o, si no hay, el número de la v2 (con sus pasos de entonces). Si ese
+ * paso ya no está en el plan, el siguiente que sí esté (en el orden de antes, para lo de antes). Quien
+ * estaba en el primer paso de antes (o en ninguno) empieza por el objetivo.
+ */
+export function pasoRetomado(plan: readonly PasoId[], v3: string | null | undefined, v2: number | null | undefined): PasoId {
+  let nombre: PasoId | null = v3 && (PASOS as readonly string[]).includes(v3) ? (v3 as PasoId) : null;
+  if (!nombre && Number.isInteger(v2) && (v2 as number) > 0 && (v2 as number) < PASOS_V2.length) nombre = PASOS_V2[v2 as number];
+  if (!nombre || nombre === 'genesis') return plan[0];
+  if (plan.includes(nombre)) return nombre;
+  const orden = PASOS_ANTES.includes(nombre) ? PASOS_ANTES : PASOS;
+  return orden.slice(orden.indexOf(nombre) + 1).find((p) => plan.includes(p)) || plan[0];
+}
+
+/** Lo del objetivo guardado aparte (si Android cierra la app a la mitad), sano. */
+export function objetivoGuardado(raw: string | null | undefined): Pick<Borrador, 'objetivo' | 'objetivoTexto' | 'restriccion'> {
+  let j: any = null;
+  try {
+    j = JSON.parse(String(raw || 'null'));
+  } catch {
+    return {};
+  }
+  if (!j || typeof j !== 'object') return {};
+  const r: Pick<Borrador, 'objetivo' | 'objetivoTexto' | 'restriccion'> = {};
+  if (OBJETIVOS.some((o) => o.id === j.objetivo)) r.objetivo = j.objetivo;
+  const t = unaLinea(j.objetivoTexto, 200);
+  if (t) r.objetivoTexto = t;
+  const re = unaLinea(j.restriccion, 160);
+  if (re && (r.objetivo || r.objetivoTexto)) r.restriccion = re;
+  return r;
+}
+
+/** Los pasos que se pueden saltar con el botón de arriba: todo lo que no hace falta para usar AURA. */
+export function saltable(paso: PasoId): boolean {
+  return paso.startsWith('encuesta:') || paso === 'objetivo' || paso === 'restriccion' || paso === 'permisos' || paso === 'aura' || paso === 'conectar' || paso === 'iniciativa';
+}
 
 /**
  * ¿Correo de Orden Global? El servidor ya conoce sus servidores (lib/correo/proveedores.ts): basta la
@@ -187,20 +485,6 @@ export function preguntaDe(paso: PasoId): Pregunta | null {
   return PREGUNTAS.find((p) => p.campo === campo) || null;
 }
 
-/** 0..1 para la barra (la fiesta es el 100 %). */
-export function progreso(i: number): number {
-  const n = PASOS.length - 1;
-  return Math.max(0, Math.min(1, i / n));
-}
-
-export function siguiente(i: number): number {
-  return Math.min(PASOS.length - 1, i + 1);
-}
-
-export function anterior(i: number): number {
-  return Math.max(0, i - 1);
-}
-
 /** Lo que se va juntando en la primera vez antes de escribirse en el perfil. */
 export type Borrador = {
   apodo: string;
@@ -210,6 +494,10 @@ export type Borrador = {
   encuesta: Encuesta;
   /** Sin elegir: no se manda (el servidor usa «media»). */
   iniciativa?: NivelIniciativa;
+  /** Lo que quiere resolver primero (un ObjetivoId), lo que escribió con sus palabras y la restricción. No van al perfil. */
+  objetivo?: string;
+  objetivoTexto?: string;
+  restriccion?: string;
 };
 
 export function borradorDesde(p: Perfil | null, nombre?: string): Borrador {

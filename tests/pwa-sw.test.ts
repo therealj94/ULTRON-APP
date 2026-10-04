@@ -61,6 +61,8 @@ function cargarSw(redFalla = { valor: false }) {
         },
         put: async (req: any, r: Response) => void c.set(new URL(typeof req === 'string' ? req : req.url, 'https://aura.test').pathname, r),
         match: async (req: any) => c.get(new URL(typeof req === 'string' ? req : req.url, 'https://aura.test').pathname),
+        keys: async () => [...c.keys()].map((p) => new Request(`https://aura.test${p}`)),
+        delete: async (req: any) => c.delete(new URL(typeof req === 'string' ? req : req.url, 'https://aura.test').pathname),
       };
     },
     match: async (req: any) => {
@@ -104,7 +106,7 @@ function cargarSw(redFalla = { valor: false }) {
     oyentes[tipo]({ waitUntil: (x: Promise<unknown>) => (p = x), ...extra });
     await p;
   };
-  return { oyentes, cajas, responder, esperar, pedidasRed, saltos: () => saltoEspera, reclamados: () => reclamados };
+  return { self, oyentes, cajas, responder, esperar, pedidasRed, saltos: () => saltoEspera, reclamados: () => reclamados };
 }
 
 test('el service worker no toca /api, /sso, la sesión, otros orígenes, la sala ni Electrum', async () => {
@@ -188,4 +190,68 @@ test('manifest e index para el icono del iPhone: standalone, id estable, iconos 
   assert.match(html, /<link rel="apple-touch-icon" href="\/apple-touch-icon.png"/);
   assert.match(html, /<meta name="apple-mobile-web-app-title" content="AU-RA"/);
   assert.doesNotMatch(fs.readFileSync(path.join(raiz, 'electrum.html'), 'utf8'), /sw\.js|serviceWorker/, 'Electrum no registra el service worker de AU-RA');
+});
+
+/*
+ * AUR14 · purga por logout: al salir de la cuenta el worker borra todo caché que pudiera tener algo de ella
+ * (el seudónimo de los avisos, cualquier caché de AU-RA que no sea el shell de ESTA versión, y del shell lo
+ * que no sea el shell); la clave del shell es por versión. Lo que no es de AU-RA no se toca.
+ */
+test('purga por logout: el worker borra lo de la cuenta y deja solo el shell público de esta versión', async () => {
+  const sw = cargarSw();
+  await sw.esperar('install');
+  const shell = [...sw.cajas.keys()].find((n) => n.startsWith('aura-shell-'))!;
+  assert.match(shell, /^aura-shell-[0-9a-f]{16}$/, 'la clave del shell es por versión (la huella del build)');
+  sw.cajas.get(shell)!.set('/assets/lazy-777.js', new Response('perezoso'));
+  sw.cajas.set('aura-cuenta', new Map([['/__aura_para', new Response('u0123456789abcdef')]]));
+  sw.cajas.set('aura-shell-viejo', new Map([['/', new Response('viejo')]]));
+  sw.cajas.set('otra-cosa', new Map([['/x', new Response('x')]]));
+  const respuestas: any[] = [];
+  await sw.esperar('message', { data: { tipo: 'purgar' }, ports: [{ postMessage: (m: any) => respuestas.push(m) }] });
+  assert.ok(!sw.cajas.has('aura-cuenta'), 'el seudónimo de la cuenta se fue');
+  assert.ok(!sw.cajas.has('aura-shell-viejo'), 'un shell de otra versión se fue');
+  assert.ok(sw.cajas.has('otra-cosa'), 'lo que no es de AU-RA no se toca');
+  assert.deepEqual([...sw.cajas.get(shell)!.keys()].sort(), [...listaPrecache(bundle)!].sort(), 'del shell queda exactamente el precache');
+  assert.deepEqual(JSON.parse(JSON.stringify(respuestas)), [{ purgado: true }], 'avisa a la página que terminó');
+  assert.equal(sw.saltos(), 0, 'purgar no activa una versión que espera');
+});
+
+test('aviso tocado: con una ventana abierta le dice a qué pantalla ir (sin navegarla); sin ventana, abre /?abrir=', async () => {
+  const sw = cargarSw();
+  const mensajes: unknown[] = [];
+  let enfocada = 0;
+  const abiertas: string[] = [];
+  sw.self.clients.matchAll = async () => [{ url: 'https://aura.test/', focus: async () => void enfocada++, postMessage: (m: unknown) => void mensajes.push(m), navigate: () => assert.fail('no se navega: cortaría la llamada') }];
+  sw.self.clients.openWindow = async (u: string) => void abiertas.push(u);
+  await sw.esperar('notificationclick', { notification: { close() {}, data: { abrir: 'computadora' } } });
+  // El mensaje nace en el contexto del worker (vm): se compara por su forma.
+  assert.deepEqual(JSON.parse(JSON.stringify(mensajes)), [{ tipo: 'aura-abrir', abrir: 'computadora' }]);
+  assert.equal(enfocada, 1);
+  assert.deepEqual(abiertas, []);
+  sw.self.clients.matchAll = async () => [];
+  await sw.esperar('notificationclick', { notification: { close() {}, data: { abrir: 'computadora' } } });
+  assert.deepEqual(abiertas, ['/?abrir=computadora']);
+});
+
+test('el cliente: ?abrir= al abrir (y se quita de la barra) y el mensaje del worker llevan a su pantalla', async () => {
+  const { destinoDeAviso, escucharAvisosTocados } = await import('../src/10-infra/abrirDesdeAviso');
+  assert.equal(destinoDeAviso('computadora'), 'trabajar');
+  assert.equal(destinoDeAviso('mesa'), 'conversar');
+  assert.equal(destinoDeAviso('chats'), null, 'lo que la web no muestra deja la mesa como está');
+  const oyentes: Array<(e: any) => void> = [];
+  let barra = '';
+  const w: any = {
+    location: { href: 'https://aura.test/?abrir=computadora' },
+    history: { state: null, replaceState: (_s: unknown, _t: string, u: string) => void (barra = u) },
+    navigator: { serviceWorker: { addEventListener: (_t: string, f: any) => oyentes.push(f), removeEventListener: () => oyentes.pop() } },
+  };
+  const idas: string[] = [];
+  const dejar = escucharAvisosTocados((d) => idas.push(d), w);
+  assert.deepEqual(idas, ['trabajar']);
+  assert.equal(barra, '/');
+  oyentes[0]({ data: { tipo: 'aura-abrir', abrir: 'mesa' } });
+  oyentes[0]({ data: { tipo: 'otro', abrir: 'computadora' } });
+  assert.deepEqual(idas, ['trabajar', 'conversar']);
+  dejar();
+  assert.equal(oyentes.length, 0);
 });

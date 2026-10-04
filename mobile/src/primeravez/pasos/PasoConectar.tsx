@@ -10,6 +10,11 @@
  *   · WhatsApp: el mismo vincular de la pestaña de WhatsApp (con un código en este teléfono, o con QR). Se
  *     revisa solo cada 4 s y, al quedar vinculado, lo dice con su número.
  *   · Todo se puede saltar: queda en Chats y en Ajustes → Tus correos.
+ *
+ * AUR11 (documento maestro, sección 14): este paso solo aparece cuando lo que la persona quiere resolver
+ * primero necesita la cuenta (revisar su correo, contestar WhatsApp: flujo.ts pasosDelPlan), y lo dice así:
+ * «Para revisar ese hilo necesito acceso a esa cuenta. Puedes conectarla o pegar solo el texto que quieras
+ * usar». La cuenta que hace falta va primero.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
@@ -22,28 +27,27 @@ import * as WA from '../../whatsapp/api';
 import { Vincular } from '../../whatsapp/PantallaWhatsapp';
 import { telefonoBonito, vistaDe, type EstadoWA } from '../../whatsapp/logica';
 import { EncabezadoPaso } from '../piezas';
-import { esCorreoOrdenGlobal } from '../flujo';
+import { esCorreoOrdenGlobal, objetivoDe } from '../flujo';
 import type { PropsPaso } from './tipos';
 
 type Detectado = { nombre: string; auth: 'clave' | 'microsoft'; ayuda: string; fuente: string };
 
-export function PasoConectar(_: PropsPaso) {
+export function PasoConectar({ borrador }: PropsPaso) {
+  const cuenta = objetivoDe(borrador)?.conexion;
+  const primero = cuenta === 'whatsapp' ? <TarjetaWhatsapp /> : <TarjetaCorreo />;
+  const despues = cuenta === 'whatsapp' ? <TarjetaCorreo /> : <TarjetaWhatsapp />;
   return (
     <View style={{ gap: MEDIDA.espacio.xl }}>
       <EncabezadoPaso
-        etiqueta={tr('Tus mensajes', 'Your messages')}
-        titulo={tr('Conecta tu correo y tu WhatsApp', 'Connect your email and WhatsApp')}
+        etiqueta={tr('Solo si quieres', 'Only if you want')}
+        titulo={cuenta === 'whatsapp' ? tr('Conecta tu WhatsApp', 'Connect your WhatsApp') : cuenta === 'correo' ? tr('Conecta tu correo', 'Connect your email') : tr('Conecta tu correo y tu WhatsApp', 'Connect your email and WhatsApp')}
         texto={tr(
-          'Así leo tus correos y tus chats, te aviso lo importante y te ayudo a contestar. Nunca mando nada sin que me digas que sí. Si prefieres, lo haces después en Chats.',
-          'That way I read your email and chats, tell you what matters and help you reply. I never send anything until you say yes. If you prefer, do it later in Chats.'
+          'Para revisar ese hilo necesito acceso a esa cuenta. Puedes conectarla o pegar solo el texto que quieras usar. Nunca mando nada sin que me digas que sí; si prefieres, lo haces después en Chats.',
+          'To check that thread I need access to that account. You can connect it or paste just the text you want to use. I never send anything until you say yes; if you prefer, do it later in Chats.'
         )}
       />
-      <Aparecer retraso={120}>
-        <TarjetaCorreo />
-      </Aparecer>
-      <Aparecer retraso={200}>
-        <TarjetaWhatsapp />
-      </Aparecer>
+      <Aparecer retraso={120}>{primero}</Aparecer>
+      <Aparecer retraso={200}>{despues}</Aparecer>
     </View>
   );
 }

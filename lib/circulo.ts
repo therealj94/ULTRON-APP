@@ -20,7 +20,8 @@
  */
 import { clave as claveBoveda } from './boveda';
 import { clavePersona, CajonNoDisponible, crearCajones, linea, nuevoId, plegar } from './cerebro-comun';
-import { borradorWhatsappPara, enviarWA, whatsappDisponible, whatsappPermitido } from '../server/whatsapp';
+import { borradorWhatsappParaConEstado, enviarWA, whatsappDisponible, whatsappPermitido } from '../server/whatsapp';
+import { exito, fallo, incierto, type ResultadoHerramienta } from './recibo-herramienta';
 
 export const RELACIONES = ['esposa', 'esposo', 'pareja', 'hija', 'hijo', 'madre', 'padre', 'hermana', 'hermano', 'familia', 'amigo', 'amiga', 'socio', 'socia', 'asistente', 'otro'] as const;
 export type Relacion = (typeof RELACIONES)[number];
@@ -389,7 +390,15 @@ function lineaPersona(p: MiembroCirculo, i: number): string {
  * del padrón, el mismo que usa server/whatsapp.ts para el «sí»); `ambito`: la conversación.
  */
 export async function correrCirculo(dueno: string, arg: string, ambito = '', d: DepsCirculo = {}): Promise<string> {
-  if (!dueno) return 'CÍRCULO: solo con sesión. Pídele que entre con su cuenta.';
+  return (await correrCirculoConEstado(dueno, arg, ambito, d)).texto;
+}
+
+/**
+ * El runner con su estado y su recibo (AUR07). Un recordatorio que salió es `confirmado`; uno que el puente
+ * rechazó (4xx) es `failed`; uno que se despachó y no se supo (caída, tiempo) es `unknown`: no se repite a ciegas.
+ */
+export async function correrCirculoConEstado(dueno: string, arg: string, ambito = '', d: DepsCirculo = {}): Promise<ResultadoHerramienta> {
+  if (!dueno) return fallo('CÍRCULO: solo con sesión. Pídele que entre con su cuenta.', 'sin-sesion');
   const [cabeza, ...partes] = String(arg || '').split('|').map((x) => x.trim());
   const m = cabeza.match(/^(\S+)\s*(.*)$/s);
   const verbo = plegar(m?.[1] || 'listar');
@@ -398,12 +407,12 @@ export async function correrCirculo(dueno: string, arg: string, ambito = '', d: 
   try {
     personas = await circuloDe(dueno);
   } catch {
-    return 'CÍRCULO: no pude leer su círculo guardado en este momento. No hice nada; dilo con naturalidad.';
+    return fallo('CÍRCULO: no pude leer su círculo guardado en este momento. No hice nada; dilo con naturalidad.', 'almacen');
   }
   try {
     if (/^(listar|lista|quienes|ver)$/.test(verbo)) {
-      if (!personas.length) return 'CÍRCULO: todavía no tiene a nadie guardado. Pregúntale por su gente (nombre, relación y su WhatsApp) y agrégalos con «circulo agregar».';
-      return `CÍRCULO (${personas.length}):\n${personas.map(lineaPersona).join('\n')}`;
+      if (!personas.length) return exito('CÍRCULO: todavía no tiene a nadie guardado. Pregúntale por su gente (nombre, relación y su WhatsApp) y agrégalos con «circulo agregar».', { efecto: 'ninguno', proveedor: 'circulo' });
+      return exito(`CÍRCULO (${personas.length}):\n${personas.map(lineaPersona).join('\n')}`, { efecto: 'ninguno', proveedor: 'circulo' });
     }
     if (/^(agregar|agrega|anadir|guardar|nuevo)$/.test(verbo)) {
       const [relacion = '', numero = '', p2c = ''] = partes;
@@ -411,28 +420,29 @@ export async function correrCirculo(dueno: string, arg: string, ambito = '', d: 
       if (numero) cuerpo.whatsapp = numero;
       if (p2c) cuerpo.pulse2chat = p2c;
       const { persona } = await agregarPersona(dueno, cuerpo);
-      return `CÍRCULO: guardé a ${etiquetaDe(persona)}${persona.canales.whatsapp ? ` con WhatsApp ${persona.canales.whatsapp}` : ' (sin número todavía)'}. Para escribirle siempre te voy a pedir su «sí».`;
+      return exito(`CÍRCULO: guardé a ${etiquetaDe(persona)}${persona.canales.whatsapp ? ` con WhatsApp ${persona.canales.whatsapp}` : ' (sin número todavía)'}. Para escribirle siempre te voy a pedir su «sí».`, { efecto: 'guardado', proveedor: 'circulo', referencia: persona.id });
     }
     const quien = resto;
-    if (!quien) return `CÍRCULO: ¿a quién? Dime el nombre o la relación («mi esposa»).`;
+    if (!quien) return fallo(`CÍRCULO: ¿a quién? Dime el nombre o la relación («mi esposa»).`, 'falta-dato');
     const r = resolverPersona(personas, quien);
-    if (!r) return `CÍRCULO: no tengo a «${linea(quien, 40)}» en su círculo. Pídele el nombre, la relación y su WhatsApp para guardarla (circulo agregar …). No inventes números.`;
-    if ('ambiguas' in r) return `CÍRCULO: «${linea(quien, 40)}» puede ser ${r.ambiguas.map((p) => p.nombre).join(' o ')}. Pregúntale cuál.`;
+    if (!r) return fallo(`CÍRCULO: no tengo a «${linea(quien, 40)}» en su círculo. Pídele el nombre, la relación y su WhatsApp para guardarla (circulo agregar …). No inventes números.`, 'no-encontrado');
+    if ('ambiguas' in r) return fallo(`CÍRCULO: «${linea(quien, 40)}» puede ser ${r.ambiguas.map((p) => p.nombre).join(' o ')}. Pregúntale cuál.`, 'ambiguo');
     const p = r.persona;
-    if (/^(llamar|llama|llamale|telefonear)$/.test(verbo)) return textoLlamada(p, dueno);
+    // Llamar no se puede desde el servidor: el texto explica cómo (lo hace la app). No hubo efecto.
+    if (/^(llamar|llama|llamale|telefonear)$/.test(verbo)) return fallo(textoLlamada(p, dueno), 'no-disponible');
     if (!/^(recordar|recuerdale|recuerda|recordatorio|escribir|escribele|mensaje|avisar|avisale|decir|dile)$/.test(verbo)) {
-      return `CÍRCULO: no entiendo «${verbo}». Usa listar, recordar, escribir, agregar o llamar.`;
+      return fallo(`CÍRCULO: no entiendo «${verbo}». Usa listar, recordar, escribir, agregar o llamar.`, 'no-entiendo');
     }
     const esRecordatorio = /^(recordar|recuerdale|recuerda|recordatorio|avisar|avisale)$/.test(verbo);
     let texto = linea(partes[0] || '', 900);
     const cuando = linea(partes[1] || '', 60);
-    if (!texto) return `CÍRCULO: ¿qué le digo a ${p.nombre}? Falta el mensaje.`;
+    if (!texto) return fallo(`CÍRCULO: ¿qué le digo a ${p.nombre}? Falta el mensaje.`, 'falta-dato');
     if (cuando && !texto.toLowerCase().includes(cuando.toLowerCase())) texto = `${texto} (${cuando})`;
     const chat = canalWhatsapp(p);
     const listo = d.whatsappListo ? d.whatsappListo(dueno) : capacidadesCirculo(dueno).whatsapp;
     if (!chat || !listo) {
       const porQue = !chat ? `no tengo su WhatsApp ni su teléfono guardado` : 'su WhatsApp no está conectado en este servidor';
-      return `CÍRCULO: no puedo escribirle a ${etiquetaDe(p)} desde aquí: ${porQue}. ${p.canales.pulse2chat ? `Por PULSE2CHAT lo hace la app del teléfono («escríbele a ${p.nombre}»).` : 'Desde la app del teléfono puede escribirle por PULSE2CHAT.'} No digas que se mandó.`;
+      return fallo(`CÍRCULO: no puedo escribirle a ${etiquetaDe(p)} desde aquí: ${porQue}. ${p.canales.pulse2chat ? `Por PULSE2CHAT lo hace la app del teléfono («escríbele a ${p.nombre}»).` : 'Desde la app del teléfono puede escribirle por PULSE2CHAT.'} No digas que se mandó.`, 'no-disponible');
     }
     const aviso = cuando ? ` OJO: no puedo programar el envío para más tarde desde el servidor; si dice que sí, sale ahora. Si prefiere que salga a esa hora, ofrécele ponerse un recordatorio en su teléfono para mandarlo.` : '';
     // Permiso permanente para recordatorios (solo lo da José desde su app): sale sin preguntar, con tope.
@@ -447,23 +457,27 @@ export async function correrCirculo(dueno: string, arg: string, ambito = '', d: 
         try {
           await (d.enviar || enviarWA)(chat, corto);
         } catch (e: any) {
-          return `CÍRCULO: NO se pudo mandar el recordatorio a ${etiquetaDe(p)} (${String(e?.message || e).slice(0, 120)}). Díselo con honestidad.`;
+          const porque = String(e?.message || e).slice(0, 120);
+          const status = Number(e?.status) || 0;
+          // El puente lo rechazó (4xx): no salió. Una caída o un tiempo agotado pudo haberlo mandado igual.
+          if (status >= 400 && status < 500) return fallo(`CÍRCULO: NO se pudo mandar el recordatorio a ${etiquetaDe(p)} (${porque}). Díselo con honestidad.`, 'proveedor');
+          return incierto(`CÍRCULO: mandé el recordatorio a ${etiquetaDe(p)} pero el WhatsApp no confirmó (${porque}). No sé si le llegó: no lo vuelvas a mandar sin preguntarle; dile que lo revise en su WhatsApp.`, { proveedor: 'whatsapp', referencia: chat });
         }
         await cajones
           .modificar(k, (c) => {
             c.envios.push({ persona: p.id, t: ahora });
           })
           .catch(() => undefined);
-        return `RECORDATORIO ENVIADO por WhatsApp a ${etiquetaDe(p)} (José le dio permiso permanente para recordatorios): «${corto}». Díselo en una frase.`;
+        return exito(`RECORDATORIO ENVIADO por WhatsApp a ${etiquetaDe(p)} (José le dio permiso permanente para recordatorios): «${corto}». Díselo en una frase.`, { efecto: 'confirmado', proveedor: 'whatsapp', referencia: chat });
       }
       // Pasado el tope del día, vuelve a preguntar.
     }
-    const b = (d.borrador || borradorWhatsappPara)(dueno, ambito, { chat, nombre: etiquetaDe(p), texto });
-    return `${b}${aviso}`;
+    const b = d.borrador ? exito(d.borrador(dueno, ambito, { chat, nombre: etiquetaDe(p), texto }), { efecto: 'borrador', proveedor: 'whatsapp' }) : borradorWhatsappParaConEstado(dueno, ambito, { chat, nombre: etiquetaDe(p), texto });
+    return aviso ? { ...b, texto: `${b.texto}${aviso}` } : b;
   } catch (e: any) {
-    if (e instanceof ErrorCirculo) return `CÍRCULO: ${e.message}`;
-    if (e instanceof CajonNoDisponible) return 'CÍRCULO: no pude leer su círculo guardado en este momento. No hice nada.';
-    return `CÍRCULO: falló (${String(e?.message || e).slice(0, 140)}).`;
+    if (e instanceof ErrorCirculo) return fallo(`CÍRCULO: ${e.message}`, 'rechazado');
+    if (e instanceof CajonNoDisponible) return fallo('CÍRCULO: no pude leer su círculo guardado en este momento. No hice nada.', 'almacen');
+    return fallo(`CÍRCULO: falló (${String(e?.message || e).slice(0, 140)}).`, 'excepcion');
   }
 }
 

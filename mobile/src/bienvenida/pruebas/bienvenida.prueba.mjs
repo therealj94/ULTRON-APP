@@ -26,6 +26,9 @@ import {
   armarRespuesta,
   apodoDeDictado,
   esCorreoOrdenGlobal,
+  pasosDelPlan,
+  PASOS_V2,
+  saltable,
 } from '../../primeravez/flujo.ts';
 import { anotarEnConocer } from '../conocer.ts';
 import { abrirBienvenida, abrirPreguntas, bienvenidaAhora, cerrarBienvenida, suscribirBienvenida } from '../estado.ts';
@@ -45,10 +48,15 @@ prueba('pregunta todo lo que ocupa, en orden: idioma, apodo, a qué se dedica, d
   assert.equal(new Set(PASOS).size, PASOS.length);
 });
 
-prueba('al principio: conectar el correo y el WhatsApp, con instrucciones; Orden Global solo con correo y contraseña', () => {
+prueba('conectar el correo y el WhatsApp desde la primera vez (saltable), con instrucciones; Orden Global solo con correo y contraseña', () => {
   const i = (p) => PASOS.indexOf(p);
-  assert.ok(i('conectar') === i('aura') + 1, 'justo después de que AURA se presenta, antes de la encuesta');
+  // AUR11 (documento maestro, sección 14): la cuenta se pide justo cuando el objetivo la necesita, antes del
+  // primer resultado y de la encuesta (y solo entonces: flujo.ts pasosDelPlan; tests/primeravez-objetivo.test.ts).
+  assert.ok(i('conectar') === i('restriccion') + 1, 'justo después de la restricción del objetivo, antes del miniresultado');
   assert.ok(i('conectar') < i('encuesta:trabajo'));
+  assert.ok(pasosDelPlan({ ...borradorDesde(null, 'Ana'), objetivo: 'correo' }).includes('conectar'), 'revisar el correo la pide');
+  // José (3-oct): «desde el principio… conectar WhatsApp y el correo». Se ofrece siempre, saltable.
+  assert.ok(pasosDelPlan(borradorDesde(null, 'Ana')).includes('conectar'), 'se ofrece siempre, aunque el objetivo no la pida');
   assert.equal(cambiosDelPaso('conectar', borradorDesde(null, 'Ana')), null, 'no escribe en el perfil (lo guarda el servidor)');
   assert.ok(esCorreoOrdenGlobal('j.ordonez@ordenglobal.org') && esCorreoOrdenGlobal('  Ana@OrdenGlobal.ORG '));
   for (const no of ['ana@gmail.com', 'ana@ordenglobal.org.hn', 'ana@mail-ordenglobal.org', 'ordenglobal.org', '']) assert.ok(!esCorreoOrdenGlobal(no), no);
@@ -62,7 +70,8 @@ prueba('al principio: conectar el correo y el WhatsApp, con instrucciones; Orden
   assert.match(pc, /clearInterval/, 'y deja de preguntar al salir del paso');
   const pv = leer('primeravez/PrimeraVez.tsx');
   assert.match(pv, /paso === 'conectar' \? \(\s*<PasoConectar/, 'se dibuja');
-  assert.match(pv, /paso === 'conectar' \|\| paso === 'iniciativa'/, 'se puede saltar');
+  assert.ok(saltable('conectar'), 'se puede saltar');
+  assert.match(leer('primeravez/pasos/PasoConectar.tsx'), /Puedes conectarla o pegar solo el texto que quieras usar/, 'sin cuenta, puede pegar el texto');
 });
 
 prueba('cada pregunta tiene opciones de selección múltiple en los dos idiomas, un ejemplo para «Otro» y su porqué', () => {
@@ -171,9 +180,11 @@ prueba('saltable y retomable: lo que falta se ofrece después, y la primera vez 
   assert.deepEqual(pasosPendientes(lleno), []);
   const pv = leer('primeravez/PrimeraVez.tsx');
   assert.match(pv, /aura\.primeravez\.paso\.v3:/, 'se guarda el nombre del paso (no retoma en el que no es)');
-  assert.match(pv, /PASOS\.filter\(\(p\) => p !== 'conectar'\)/, 'un número viejo (v2) se traduce con los pasos de antes');
-  assert.match(pv, /paso === 'iniciativa'/, 'la iniciativa se puede saltar');
-  assert.match(pv, /PASOS\.indexOf\('iniciativa'\)/, '«Saltar todas» sigue en la iniciativa');
+  // Un número viejo (v2) se traduce con los pasos de antes, ahora congelados (flujo.ts PASOS_V2).
+  assert.deepEqual([...PASOS_V2], PASOS.filter((p) => !['objetivo', 'restriccion', 'listo', 'conectar'].includes(p)), 'un número viejo (v2) se traduce con los pasos de antes');
+  assert.match(pv, /pasoRetomado\(/);
+  assert.ok(saltable('iniciativa'), 'la iniciativa se puede saltar');
+  assert.match(pv, /ir\('iniciativa', 1\)/, '«Saltar todas» sigue en la iniciativa');
 });
 
 prueba('la ventana: se abre, pasa a las preguntas y se cierra (bienvenida/estado.ts)', () => {

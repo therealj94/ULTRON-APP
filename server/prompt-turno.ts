@@ -65,6 +65,12 @@ export type PiezasTurno = {
    * aprender un dato no rehace el system a media conversación (entra cuando se rehace el fijo).
    */
   conocer?: string;
+  /**
+   * La versión de lo que la persona CORRIGIÓ, LIMITÓ o BORRÓ de lo que AU-RA sabe (lib/conocer-persona.ts
+   * firmaConocer, AUR11): sí entra en la firma. Aprender algo no la cambia (el system no se rehace a media
+   * conversación); corregir o borrar sí, y el turno siguiente ya no usa lo viejo.
+   */
+  conocerFirma?: string;
 };
 
 /** Lo del cerebro que va en el system corto de la voz: los encabezados y párrafos, sin las líneas de hecho. */
@@ -126,7 +132,7 @@ ${miembro ? '' : `${hechosCatalogo()}\n`}`;
   const fijo = `${cabeza}${memoria}${p.conocer?.trim() ? `\n\n${p.conocer.trim()}` : ''}${app}`;
   // Lo fijo sin la conversación ni lo guardado solo: si esto no cambió, el system de antes sigue valiendo
   // (fijoDeLaConversacion).
-  const firma = `${cabeza}${memoriaFirma}${app}`;
+  const firma = `${cabeza}${memoriaFirma}${app}${p.conocerFirma ? `\n[conocer ${p.conocerFirma}]` : ''}`;
   const agente = promptAgente(p.agente, p.nivel);
   // Lo del turno sin los HECHOS (el turno los pone él mismo, y el harness les suma lo que devuelve cada
   // herramienta): va en el MENSAJE de la persona, no en el system (server.ts mensajesQwen).

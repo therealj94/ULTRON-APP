@@ -255,6 +255,32 @@ const resp = (cuerpo, status = 200, cab = {}) => new Response(JSON.stringify(cue
     ok('lo que escribió el intento nuevo no lo suelta el viejo', mesa.token === 'tok-B', mesa.token);
   } else ok('hay coordinador de intentos (lib/intentoEntrada.ts)', false);
 
+  /* ── AUR15: sin intento no se entra (la firma vieja no restaura a A bajo B) ───────────── */
+  // Antes el intento era opcional: un login sin él guardaba su token aunque llegara tarde, con otra
+  // persona ya dentro. Ahora sin intento (o con uno que no salió del coordinador) ni sale ni guarda.
+  nadie();
+  globalThis.fetch = servidorDeEntrada((ruta) => (ruta === '/api/ultron/biometric-login' ? resp({ token: 'tok-bio-A', user: { nombre: 'A', correo: 'a@prueba.local' } }) : resp({})));
+  dentro('b@prueba.local', 'tok-B');
+  const pSin = API.loginClave('a@prueba.local', 'clave-a').then(() => 'entró', (e) => e);
+  await espera(5);
+  pendientes['a@prueba.local']?.('tok-A-sin-intento');
+  delete pendientes['a@prueba.local'];
+  const rSin = await pSin;
+  ok('AUR15: loginClave sin intento no guarda su token encima del de B', mesa.token === 'tok-B', mesa.token);
+  ok('…ni llega al servidor', !enviados.some((p) => p.ruta === '/api/ultron/entrar'), JSON.stringify(enviados.map((p) => p.ruta)));
+  ok('…y falla como vencida', esVencida(rSin), String(rSin?.message || rSin));
+  const rBio = await API.loginBiometric({ name: 'A', role: 'x', correo: 'a@prueba.local' }, 2_000, null).then(() => 'entró', (e) => e);
+  ok('AUR15: loginBiometric con intento null tampoco guarda', mesa.token === 'tok-B' && esVencida(rBio), `${mesa.token} · ${rBio?.message || rBio}`);
+  const falso = { id: 999_999, gen: CUENTA.generacionCuenta() };
+  const pFalso = API.loginClave('a@prueba.local', 'clave-a', falso).then(() => 'entró', (e) => e);
+  await espera(5);
+  pendientes['a@prueba.local']?.('tok-A-falso');
+  delete pendientes['a@prueba.local'];
+  const rFalso = await pFalso;
+  ok('AUR15: un intento fabricado (no salió de empezarIntento) no entra', mesa.token === 'tok-B' && esVencida(rFalso), `${mesa.token} · ${rFalso?.message || rFalso}`);
+  ok('AUR15: guardar el token o escribir sin intento no hace nada', (await INTENTO.guardarTokenDeEntrada('tok-X', undefined)) === false && (await INTENTO.confirmarIntento(null, async () => true)) === false && mesa.token === 'tok-B', mesa.token);
+  ok('AUR15: sin intento no se está vigente', INTENTO.intentoVigente(undefined) === false && INTENTO.intentoVigente(falso) === false);
+
   /* ── la vuelta tardía de Genesis no pisa a un intento más nuevo ───────────────────────── */
   nadie();
   globalThis.fetch = servidorDeEntrada((ruta) =>

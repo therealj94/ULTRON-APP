@@ -347,6 +347,29 @@ test('códigos temporales: únicos, 1/5/24 h, abren Dr Electrum y al vencer o re
     await new Promise((r) => setTimeout(r, 250));
     assert.equal(sesionDe(reqCon(corta.token)), null);
 
+    // AUR05 (auditoría maestra 3-oct): un código es para probar, nunca para trabajar.
+    const quiereTrabajo = await pedir('/api/ultron/codigos', { horas: 1, para: 'Prueba Trabajo', nivel: 'escribe' }, jose.token);
+    assert.equal(quiereTrabajo.json.nivel, 'lee', 'pedir «escribe» por código queda en consulta');
+    const viejo = await pedir('/api/ultron/codigos', { horas: 1, para: 'Código viejo' }, jose.token);
+    await pg.query(`UPDATE cuentas.codigo SET nivel = 'escribe' WHERE id = $1`, [viejo.json.id]);
+    await cuentas.recargarCuentas();
+    const eViejo = await pedir('/api/ultron/entrar-codigo', { codigo: viejo.json.codigo });
+    assert.equal(nivelDe(identificar({ correo: sesionDe(reqCon(eViejo.json.token))!.correo }), 'electrum'), 'lee', 'un código viejo «escribe» entra como consulta');
+    // El interruptor: ELECTRUM_CODIGOS=0 cierra la entrada y saca del padrón a los invitados vivos.
+    process.env.ELECTRUM_CODIGOS = '0';
+    try {
+      assert.equal(cuentas.codigosActivos(), false);
+      const cerrado = await pedir('/api/ultron/entrar-codigo', { codigo: viejo.json.codigo });
+      assert.equal(cerrado.status, 403);
+      assert.equal(cerrado.json.code, 'codigos_apagados');
+      await cuentas.recargarCuentas();
+      assert.equal(sesionDe(reqCon(eViejo.json.token)), null, 'la sesión del invitado quedó cortada');
+      assert.equal((await pedir('/api/ultron/codigos', { horas: 1, para: 'Nadie' }, jose.token)).status, 403, 'tampoco se crean códigos');
+    } finally {
+      delete process.env.ELECTRUM_CODIGOS;
+      await cuentas.recargarCuentas();
+    }
+
     const lista = await pedir('/api/ultron/codigos', undefined, jose.token);
     assert.ok(lista.json.codigos.some((k: any) => k.id === c.json.id && k.estado === 'revocado'));
     assert.ok(lista.json.codigos.every((k: any) => !('codigo' in k) && !('huella' in k)), 'la lista no trae códigos ni huellas');

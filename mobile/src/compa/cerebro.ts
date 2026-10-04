@@ -175,7 +175,27 @@ export function conPasoHecho(m: Mision, indice: number, ahora: number): Mision {
 
 /* ── lo que sabe de ti y lo que quedó a medias ───────────────────────────────────────────────── */
 
-export type DatoPersona = { id: string; categoria: string; dato: string; clave?: string; confianza: number; fuente: string; desde: number; visto: number; veces: number };
+/**
+ * Un dato de «lo que sé de ti» con su PROCEDENCIA (AUR11, lib/conocer-persona.ts): de dónde salió (`origen`),
+ * cuándo (`desde`, `actualizado`, `corregido`), si la persona lo dijo o AURA lo dedujo (`explicito`) y su
+ * `alcance` (limitado: se guarda y se ve, pero AURA no lo usa). Un servidor viejo no los manda: opcionales.
+ */
+export type DatoPersona = {
+  id: string;
+  categoria: string;
+  dato: string;
+  clave?: string;
+  confianza: number;
+  fuente: string;
+  desde: number;
+  visto: number;
+  veces: number;
+  origen?: 'conversacion' | 'primeravez' | 'ajustes' | 'app';
+  explicito?: boolean;
+  alcance?: 'general' | 'limitado';
+  actualizado?: number;
+  corregido?: number;
+};
 export type CategoriaConocer = { id: string; nombre: string; datos: DatoPersona[] };
 export type Hueco = { clave: string; pregunta: string };
 export type Conocer = { categorias: CategoriaConocer[]; total: number; faltan: Hueco[] };
@@ -204,6 +224,50 @@ export function sinDato(c: Conocer, id: string): Conocer {
     return { ...k, datos };
   });
   return { ...c, categorias, total: Math.max(0, c.total - quitados) };
+}
+
+/** Cambia un dato en la vista (al corregirlo o limitarlo), sin esperar a volver a leer. */
+export function conDato(c: Conocer, d: DatoPersona): Conocer {
+  return { ...c, categorias: c.categorias.map((k) => ({ ...k, datos: k.datos.map((x) => (x.id === d.id ? { ...x, ...d } : x)) })) };
+}
+
+const MESES_ES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+const MESES_EN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** «3 oct» / «Oct 3» (con el año si no es el de `ahora`); vacío si no hay fecha. Hora de Honduras. */
+export function fechaCorta(t: number | undefined, idioma: Idioma = 'es', ahora = Date.now()): string {
+  if (!t || !Number.isFinite(t)) return '';
+  const d = new Date(t - 6 * 3600_000);
+  const hoy = new Date(ahora - 6 * 3600_000);
+  const [dia, mes, anio] = [d.getUTCDate(), d.getUTCMonth(), d.getUTCFullYear()];
+  const conAnio = anio !== hoy.getUTCFullYear() ? ` ${anio}` : '';
+  return idioma === 'en' ? `${MESES_EN[mes]} ${dia}${conAnio}` : `${dia} ${MESES_ES[mes]}${conAnio}`;
+}
+
+/**
+ * LA PROCEDENCIA de un dato, en palabras (AUR11): quién lo dijo, de dónde salió, cuándo y si AURA lo usa.
+ *   «Me lo dijiste en la primera vez · 3 oct» · «Lo deduje de una conversación · 12 sep» ·
+ *   «Lo corregiste · 3 oct» · «… · No lo uso hasta que me lo pidas» (limitado).
+ * Un servidor viejo (sin procedencia) cae en lo de antes (origenDato).
+ */
+export function procedenciaDato(d: DatoPersona, idioma: Idioma = 'es', ahora = Date.now()): string {
+  const en = idioma === 'en';
+  const partes: string[] = [];
+  if (d.corregido) partes.push(`${en ? 'You corrected it' : 'Lo corregiste'} · ${fechaCorta(d.corregido, idioma, ahora)}`);
+  else if (d.origen) {
+    const dicho: Record<NonNullable<DatoPersona['origen']>, [string, string]> = {
+      primeravez: ['Me lo dijiste en la primera vez', 'You told me when we first met'],
+      ajustes: ['Lo escribiste en Ajustes', 'You wrote it in Settings'],
+      app: ['Me lo dijiste en la app', 'You told me in the app'],
+      conversacion: ['Me lo dijiste conversando', 'You told me in a conversation'],
+    };
+    const [es, eng] = d.explicito === false ? ['Lo deduje de una conversación', 'I inferred it from a conversation'] : dicho[d.origen];
+    const quien = en ? eng : es;
+    const f = fechaCorta(d.desde, idioma, ahora);
+    partes.push(f ? `${quien} · ${f}` : quien);
+  } else partes.push(origenDato(d, idioma));
+  if (d.alcance === 'limitado') partes.push(en ? 'I don’t use it unless you ask' : 'No lo uso hasta que me lo pidas');
+  return partes.join(' · ');
 }
 
 /** «Lo dijiste tú» / «Lo deduje» según la confianza y la fuente. */

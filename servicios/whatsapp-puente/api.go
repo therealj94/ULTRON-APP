@@ -25,8 +25,10 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -36,7 +38,8 @@ type Cuenta interface {
 	VincularQR() (string, error)
 	VincularCodigo(telefono string) (string, error)
 	Desvincular() error
-	Enviar(chat, texto string) (Mensaje, error)
+	// id: el id del mensaje que pide AU-RA (AUR13, derivado de su operación); vacío = uno nuevo de WhatsApp.
+	Enviar(chat, texto, id string) (Mensaje, error)
 	MarcarLeido(chat string) error
 	Media(chat, id string) ([]byte, string, error)
 	// La foto de perfil (ErrSinFoto si no tiene) y si ya se sabe sin preguntar (nil: no se sabe).
@@ -78,7 +81,12 @@ type API struct {
 	clave   string
 	cuenta  Cuenta
 	almacen *Almacen
+	// Los envíos con id van de uno en uno: buscar si ya salió y mandarlo no se cruzan (AUR13).
+	enviando sync.Mutex
 }
+
+// El id que AU-RA le pone a un mensaje (AUR13): como los de WhatsApp Web, 3EB0 + hexadecimal en mayúsculas.
+var idDeAura = regexp.MustCompile(`^3EB0[0-9A-F]{16,40}$`)
 
 func (a *API) Rutas() http.Handler {
 	m := http.NewServeMux()
@@ -154,6 +162,20 @@ func (a *API) Rutas() http.Handler {
 		escribir(w, 200, map[string]any{"mensajes": ms})
 	}))
 	m.HandleFunc("POST /enviar", a.con(a.enviar))
+	// AUR13: un mensaje propio por su id (para que AU-RA reconcilie un envío del que no supo el final).
+	m.HandleFunc("GET /mensaje", a.con(func(w http.ResponseWriter, r *http.Request) {
+		id := r.URL.Query().Get("id")
+		if id == "" || len(id) > 128 {
+			fallo(w, 400, errors.New("falta el id"))
+			return
+		}
+		msg, err := a.almacen.MioPorID(id)
+		if err != nil {
+			fallo(w, 404, errors.New("no hay un mensaje tuyo con ese id"))
+			return
+		}
+		escribir(w, 200, map[string]any{"mensaje": msg})
+	}))
 	m.HandleFunc("POST /leido", a.con(func(w http.ResponseWriter, r *http.Request) {
 		var c struct {
 			Chat string `json:"chat"`
@@ -269,10 +291,13 @@ func (a *API) vincular(w http.ResponseWriter, r *http.Request) {
 	escribir(w, 200, map[string]any{"qr": qr})
 }
 
+// POST /enviar {chat, texto, id?}. Con `id` (AUR13: el que AU-RA deriva de su operación), el mismo mensaje no sale
+// dos veces: si ya hay uno propio con ese id, se devuelve ese con "repetido": true y no se manda otra vez.
 func (a *API) enviar(w http.ResponseWriter, r *http.Request) {
 	var c struct {
 		Chat  string `json:"chat"`
 		Texto string `json:"texto"`
+		ID    string `json:"id"`
 	}
 	if json.NewDecoder(r.Body).Decode(&c) != nil || c.Chat == "" || strings.TrimSpace(c.Texto) == "" {
 		fallo(w, 400, errors.New("falta el chat o el texto"))
@@ -282,7 +307,19 @@ func (a *API) enviar(w http.ResponseWriter, r *http.Request) {
 		fallo(w, 400, errors.New("el mensaje es muy largo (máximo 4000 letras)"))
 		return
 	}
-	m, err := a.cuenta.Enviar(c.Chat, c.Texto)
+	if c.ID != "" {
+		if !idDeAura.MatchString(c.ID) {
+			fallo(w, 400, errors.New("ese id de mensaje no tiene la forma esperada"))
+			return
+		}
+		a.enviando.Lock()
+		defer a.enviando.Unlock()
+		if m, err := a.almacen.MioPorID(c.ID); err == nil {
+			escribir(w, 200, map[string]any{"mensaje": m, "repetido": true})
+			return
+		}
+	}
+	m, err := a.cuenta.Enviar(c.Chat, c.Texto, c.ID)
 	if err != nil {
 		fallo(w, codigoDe(err), err)
 		return

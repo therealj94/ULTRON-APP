@@ -96,7 +96,8 @@ test('validar: título obligatorio, fecha que se entienda, textos de una línea 
   assert.ok(!v.datos.titulo.includes('\n'));
   assert.ok(!/PEDIR_HERRAMIENTA/.test(v.datos.titulo), 'el prompt no recibe una línea de pedido');
   assert.deepEqual(v.datos.pasos, ['uno', 'dos', 'tres']);
-  assert.equal(v.datos.vence, Date.parse('2026-12-01'));
+  // Una fecha sin hora es el final de ese día en Honduras (antes, medianoche UTC: «vencida» el 30 a las 18:00).
+  assert.equal(v.datos.vence, Date.parse('2026-12-02T05:59:59.999Z'));
 });
 
 test('tope de misiones abiertas', async () => {

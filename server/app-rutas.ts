@@ -1,10 +1,11 @@
 /**
  * LAS RUTAS DE LA APP 5.0 (contrato: mobile/src/nucleo/contrato.ts).
  *
- *   GET  /api/perfil            → { perfil: Perfil | null, disponible, durable } (+ lo público de la
+ *   GET  /api/perfil            → { perfil: Perfil | null, disponible, durable, supresiones } (+ lo público de la
  *                                  plataforma, que la web ya leía de esta misma ruta: acento, nombre, modos)
- *   PUT  /api/perfil  Partial<Perfil>  → { perfil, durable } (503 `perfil_no_disponible` si el guardado
- *                                  no se pudo leer). El teléfono saca el cambio de su cola solo con `durable: true`.
+ *   PUT  /api/perfil  Partial<Perfil> & { hechoEn?: {campo: hora} } → { perfil, durable, suprimidos,
+ *                                  supresiones } (503 `perfil_no_disponible` si el guardado no se pudo leer).
+ *                                  El teléfono saca el cambio de su cola solo con `durable: true`.
  *   GET  /api/app/acciones      text/event-stream: cada evento `data: {"id","accion"}`
  *                                  (cabecera opcional `x-aura-aparato: <id del teléfono>`); además,
  *                                  durante la conversación, `event: ambiente` + `data: {"sonido","on"}`
@@ -15,7 +16,8 @@
  * de la sesión firmada, nunca del cuerpo.
  */
 import type express from 'express';
-import { actualizarPerfil, almacenDurable, leerPerfilSeguro, PerfilNoDisponible, validarCambios } from '../lib/perfil-persona';
+import { almacenDurable, leerPerfilSeguro, PerfilNoDisponible, validarCambios } from '../lib/perfil-persona';
+import { guardarPerfilGobernado, hechoEnValido, supresionesPerfil } from '../lib/olvido';
 import { accionesDesde, ambitoApp, aparatoValido, guardarContexto, MAX_CANALES_POR_CUENTA, suscribir, validarContexto } from '../lib/acciones-app';
 import type { Sesion } from './seguridad';
 
@@ -72,8 +74,11 @@ export function montarRutasApp(app: express.Express, d: Deps) {
     // declarado persistente); sin eso, lo que tiene puede perderse en un redespliegue.
     const leido = s ? await leerPerfilSeguro(s.correo) : null;
     const perfil = leido && leido.ok ? leido.perfil : null;
+    // `supresiones`: cada respuesta borrada con la hora de su marca (AUR11): el teléfono suelta su copia vieja
+    // en vez de reenviarla.
+    const supresiones = s ? await supresionesPerfil(s.correo) : undefined;
     res.setHeader('Cache-Control', 'no-store');
-    return res.json({ ...d.perfilPlataforma(req), perfil, ...(s ? { disponible: !!leido?.ok, durable: almacenDurable() } : {}), honesto: true });
+    return res.json({ ...d.perfilPlataforma(req), perfil, ...(s ? { disponible: !!leido?.ok, durable: almacenDurable(), supresiones } : {}), honesto: true });
   });
 
   app.put('/api/perfil', d.exigirMesa, d.limitar(30), async (req, res) => {
@@ -82,8 +87,11 @@ export function montarRutasApp(app: express.Express, d: Deps) {
     const v = validarCambios(req.body);
     if (v.ok === false) return res.status(400).json({ error: v.error, honesto: true });
     try {
-      const { perfil, durable } = await actualizarPerfil(s.correo, v.cambios, { apodo: s.nombre.split(' ')[0] });
-      return res.json({ perfil, durable, honesto: true });
+      // Con las marcas de supresión de por medio (lib/olvido.ts): una copia vieja no resucita lo borrado
+      // (`suprimidos`), vaciar una respuesta la borra en todos lados y cambiarla la corrige en todos lados.
+      // `hechoEn`: cuándo cambió el teléfono cada campo (lo que llega sin hora es una copia vieja).
+      const { perfil, durable, suprimidos, supresiones } = await guardarPerfilGobernado(s.correo, v.cambios, { apodo: s.nombre.split(' ')[0], hechoEn: hechoEnValido(req.body?.hechoEn) });
+      return res.json({ perfil, durable, suprimidos, supresiones, honesto: true });
     } catch (e) {
       // El guardado no se pudo leer (S3 caído tras un redespliegue): no se pisa lo que no se vio. El
       // teléfono conserva sus cambios y los vuelve a mandar.

@@ -26,33 +26,51 @@ la anterior, el contenedor del escritorio se borra y se crea de nuevo (pestañas
 documentos del anterior no quedan). Las tareas terminadas se olvidan tras una hora.
   GET  /tareas/{id}                                      → estado, pasos, respuesta, `pregunta` y `pregunta_id` (si espera un sí)
   GET  /tareas/{id}/eventos                              → los mismos pasos en vivo (SSE)
-  POST /tareas/{id}/parar
+  POST /tareas/{id}/parar                                → {"estado", "parada": {"id", "fase"}}: fase «quiescent» (nada en
+                                                           vuelo: detenida de verdad) o «draining» (un toque ya despachado
+                                                           termina; se consulta con el id). Nunca bloquea más de ESPERA_QUIETUD_S.
+  GET  /tareas/{id}/parada/{parada_id}                   → cómo va esa parada (fenced → draining → quiescent) y el recibo del toque en vuelo
   POST /tareas/{id}/pausar · /reanudar                   → pausa entre un paso y el siguiente
-  POST /tareas/{id}/confirmar {"si": true|false, "pregunta_id": "..."}  → contesta ESA pregunta (otra: 409)
-  POST /tareas/{id}/control {"tomar": true|false}        → la persona toma el escritorio (la tarea espera) o lo devuelve
+  POST /tareas/{id}/confirmar {"si": true|false, "pregunta_id": "...", "propuesta": "..."}  → contesta ESA pregunta, de ESA
+                                                           propuesta (otra: 409). `propuesta` es opcional (servidor de antes).
+  POST /tareas/{id}/control {"tomar": true|false}        → la persona toma el escritorio (la tarea espera) o lo devuelve;
+                                                           {"fase": "quiescent" | "draining"} como parar
   POST /tareas/{id}/accion {"tipo": "click"|"escribir"|"tecla"|"scroll", ...}  → lo que hace la persona con el control
-  GET  /tareas/{id}/pantalla                             → la captura de ahora (JPEG), solo mientras esa tarea tiene el escritorio
-  GET  /pantalla                                         → la captura de ahora (PNG)
+  GET  /tareas/{id}/pantalla?ancho=960                   → la captura de ahora (JPEG), solo mientras esa tarea tiene el escritorio,
+                                                           con su frame en cabeceras: X-Frame-Seq, X-Frame-Ts (hora del nodo),
+                                                           X-Frame-Ancho/Alto (tamaño lógico), X-Viewport-Rev, X-Control-Epoca y
+                                                           X-Privado (1 en modo seguro: no se guarda ni va al modelo)
+  POST /tareas/{id}/control {"tomar", "clientId"?, "expectedControlEpoch"?}  → con clientId el control queda ligado a ESE
+                                                           cliente (lease): otra sesión que lo toma abre otra época y cerca al anterior
+  POST /tareas/{id}/entrada {remoteSessionId, clientId, controlEpoch, inputSequence, viewportRevision, type, payload}
+                                                         → el contrato de entradas (AUR09): pointer, scroll, key, text_commit,
+                                                           release_all; un ACK por evento; lo repetido devuelve el mismo ACK sin
+                                                           tocar; lo viejo, de otra época, otro cliente u otro viewport: 409
+  POST /tareas/{id}/seguro {"activar", "clientId"?, "frameSeq"?}  → entrada segura (contraseñas): el agente no toca ni mira;
+                                                           salir pide un frame visto DESPUÉS de lo último que escribió la persona
+  GET  /pantalla                                         → la captura de ahora (PNG); nunca durante una entrada segura (423)
 
 Estados de una tarea: en_cola, trabajando, pausada, confirmar (espera el sí de la persona antes de algo
 sensible: enviar, iniciar sesión, publicar, borrar), control (la persona tiene el escritorio), y los finales
 hecha, parada, sin_pasos, fallo. Pagar o comprar: nunca (la acción no se hace aunque el modelo la pida).
-/salud dice `capacidades` (pausar, confirmar, control): el servidor de AU-RA solo ofrece lo que el nodo sabe.
-  POST /vista                                            → {"ruta": "/vista/<llave>/vnc.html?..."} para mirar en vivo
-  GET  /vista/permitir                                   → para el forward_auth de Caddy
+/salud dice `capacidades` (pausar, confirmar, control, entrada, seguro): el servidor de AU-RA solo ofrece lo que el
+nodo sabe.
+  POST /vista · GET /vista/permitir                      → cerradas (AUR09): noVNC aceptaba clics y teclas por fuera del
+                                                           árbitro (épocas, candado del escritorio, modo seguro). 410 / 403.
 """
 import asyncio
 import base64
+import hashlib
 import hmac
 import io
 import json
 import os
 import re
-import secrets
 import shlex
 import subprocess
 import threading
 import time
+import unicodedata
 import uuid
 
 import httpx
@@ -79,10 +97,18 @@ ESPERA_CONFIRMACION_S = int(os.environ.get('ESPERA_CONFIRMACION_S', '600'))
 PAUSA_MAX_S = int(os.environ.get('PAUSA_MAX_S', '1800'))
 # El sí a una pregunta del modelo vale para UNA acción de lo que se preguntó, en este rato (auditoría 3-oct, PC01).
 PERMISO_VALE_S = float(os.environ.get('PERMISO_VALE_S', '120'))
-# Lo más que tomar/devolver el control o pausar espera a que termine el toque que ya está en vuelo.
-ESPERA_QUIETUD_S = 30.0
-# Lo que este servicio sabe hacer además de encargar y parar (el servidor de AU-RA lo lee en /salud).
-CAPACIDADES = ['pausar', 'confirmar', 'control']
+# Lo más que parar, pausar o tomar/devolver el control esperan a que termine el toque que ya está en vuelo. Pasado
+# el tope contestan «draining» con un id para consultar, sin quedarse bloqueados (AUR03). Menos que lo que el
+# servidor de AU-RA espera la respuesta (12 s; el de antes, 8 s).
+ESPERA_QUIETUD_S = float(os.environ.get('ESPERA_QUIETUD_S', '5'))
+# Las entradas de la persona por segundo (cubeta: ráfaga y ritmo sostenido) en el contrato de entradas (AUR09).
+ENTRADAS_POR_S = float(os.environ.get('ENTRADAS_POR_S', '15'))
+ENTRADAS_RAFAGA = int(os.environ.get('ENTRADAS_RAFAGA', '30'))
+# Cerrar el VNC de la imagen del escritorio al crearlo (noVNC no puede saltarse el árbitro). 0 lo deja.
+CERRAR_VNC = os.environ.get('CERRAR_VNC', '1') != '0'
+# Lo que este servicio sabe hacer además de encargar y parar (el servidor de AU-RA lo lee en /salud). `entrada`: el
+# contrato de entradas con época, secuencia, viewport y ACK, y el frame en cabeceras; `seguro`: la entrada segura.
+CAPACIDADES = ['pausar', 'confirmar', 'control', 'entrada', 'seguro']
 ESTADOS_VIVOS = ('en_cola', 'trabajando', 'pausada', 'confirmar', 'control')
 
 cliente = OpenAI(base_url=MODELO_URL, api_key='local', timeout=120)
@@ -101,6 +127,19 @@ def en_escritorio(comando, entrada=None, timeout=30):
 
 
 TAMANO = {'ancho': 1280, 'alto': 800}  # el de la última captura (para los toques de la persona)
+# El último frame que se le entregó a la persona (AUR09): su secuencia, la hora del nodo, el tamaño lógico y la
+# revisión del viewport. Las coordenadas de una entrada valen solo para la revisión con que se miró: si el escritorio
+# cambia de tamaño o se crea otro, la revisión sube y lo que venía con la de antes no toca.
+FRAME = {'seq': 0, 'ts': 0.0, 'ancho': TAMANO['ancho'], 'alto': TAMANO['alto'], 'rev': 1}
+
+
+def anotar_frame(ancho, alto):
+    """Una captura que se le entrega a la persona (con el escritorio tomado): sube la secuencia y, si el tamaño
+    cambió, la revisión del viewport."""
+    if (ancho, alto) != (FRAME['ancho'], FRAME['alto']):
+        FRAME['rev'] += 1
+    FRAME.update(seq=FRAME['seq'] + 1, ts=time.time(), ancho=ancho, alto=alto)
+    return dict(FRAME)
 
 
 def captura():
@@ -112,10 +151,13 @@ def captura():
 
 
 def escritorio_nuevo():
-    """Borra el escritorio y crea uno limpio, igual que instalar.sh, y espera a que tenga pantalla."""
+    """Borra el escritorio y crea uno limpio, igual que instalar.sh, y espera a que tenga pantalla. Sin publicar el
+    puerto de noVNC (AUR09: nadie entra al escritorio por fuera del árbitro), y otro viewport: las coordenadas que
+    venían del escritorio de antes ya no tocan."""
+    FRAME['rev'] += 1
     subprocess.run(['docker', 'rm', '-f', ESCRITORIO], capture_output=True, timeout=60)
     r = subprocess.run(['docker', 'run', '-d', '--name', ESCRITORIO, '--restart', 'unless-stopped',
-                        '-e', 'WIDTH=1280', '-e', 'HEIGHT=800', '-p', '127.0.0.1:6080:6080', '--shm-size', '2g',
+                        '-e', 'WIDTH=1280', '-e', 'HEIGHT=800', '--shm-size', '2g',
                         ESCRITORIO_IMAGEN], capture_output=True, timeout=120)
     if r.returncode != 0:
         raise RuntimeError('no pude crear el escritorio: ' + r.stderr.decode('utf-8', 'ignore')[:200])
@@ -125,11 +167,26 @@ def escritorio_nuevo():
             captura()
             # La barra y el gestor de ventanas tardan un poco más que la pantalla.
             en_escritorio('pgrep -x tint2 >/dev/null && pgrep -x mutter >/dev/null', timeout=10)
+            cerrar_vnc()
             time.sleep(2)
             return
         except Exception:
             time.sleep(1)
     raise RuntimeError('el escritorio nuevo no arrancó a tiempo')
+
+
+def cerrar_vnc():
+    """La imagen de la demo arranca x11vnc (sin clave) y noVNC dentro del contenedor. Nada los usa (xdotool habla con
+    la pantalla): se cierran para que ninguna ruta acepte entradas por fuera del árbitro. Sin el puerto publicado ya
+    no se alcanzan desde fuera del host; esto cierra también la red interna de docker. Lo mejor posible: si la
+    imagen no los tiene o los vuelve a lanzar, no rompe nada (no verificado en el nodo real)."""
+    if not CERRAR_VNC:
+        return
+    try:
+        # «[x]11vnc»: el patrón no se encuentra a sí mismo en la línea del sh que lo corre.
+        en_escritorio("pkill -f '[x]11vnc'; pkill -f '[w]ebsockify'; pkill -f '[n]ovnc_proxy'; true", timeout=10)
+    except Exception:
+        pass
 
 
 def xdotool(*args):
@@ -229,9 +286,16 @@ NO_FOCO = ('Not executed: the keyboard focus moved (Tab or a shortcut) and I can
 NO_PAUSA = 'Not executed: the user paused you or took the desktop. Look at the screen again before acting.'
 NO_PARADA = 'Not executed: the task was stopped.'
 NO_ESCRITORIO = 'Not executed: this task no longer has the desktop.'
+NO_CAMBIO = ('Not executed: this is no longer exactly what the user approved (the recipient, the text, the amount, the '
+             'page, the owner or the time changed, or the approval expired). Ask again saying exactly what will happen.')
+NO_PERMISO = 'Not executed: that approval was already used (or is no longer valid). Ask again if it is still needed.'
+INCIERTO = ('It may have happened or not: look at the screen and check before anything else. Do not repeat it '
+            'without asking the user again.')
 SI_DIJO = 'The user said YES. Go ahead with exactly that action.'
 NOTA_CONTROL = ('Note: the user took control of the desktop for a moment and may have changed what is on the '
                 'screen. Look at the new screenshot and continue the task from where it is now, without starting over.')
+NOTA_SEGURO = ('Note: the user typed private data (a password or similar) by hand while you could not see the screen. '
+               'Do not read, repeat or reveal what is in password or private fields; continue the task.')
 
 
 class Detenida(Exception):
@@ -246,9 +310,94 @@ def idioma_de(texto):
     return 'en' if en > es else 'es'
 
 
-def pregunta_para(elemento, idioma='es'):
+# Lo que hace consecuente a una acción sensible (AUR02): a quién va (correos, @usuarios, teléfonos), cuánto (importes),
+# qué texto lleva y en qué página. El sí se liga a eso, no a la clase («enviar»): el sí de «enviar a Ana» no envía a Bruno.
+CORREO = re.compile(r'[\w.+-]+@[\w-]+(?:\.[\w-]+)+')
+USUARIO = re.compile(r'(?<![\w.+-])@([A-Za-z0-9_]{2,30})\b')
+TELEFONO = re.compile(r'\+\d[\d ().-]{6,}\d|\b\d{4}[- ]\d{4}\b')
+IMPORTE = re.compile(r'(?:[$€£]|\bL\.?|\bUSD|\bHNL|\bEUR)\s?\d[\d.,]*\d|\b\d[\d.,]*\s?(?:USD|HNL|EUR|d[oó]lares|lempiras|euros)\b', re.I)
+# Teclas que vuelven a otra página: lo escrito ya no está a la vista.
+NAVEGA = (['alt', 'left'], ['alt', 'right'], ['f5'], ['ctrl', 'r'])
+
+
+def _normal(texto):
+    return ' '.join(str(texto or '').split()).casefold()
+
+
+def _huella(x):
+    """Huella estable de algo (los conjuntos, ordenados)."""
+    return hashlib.sha256(json.dumps(x, sort_keys=True, ensure_ascii=False, default=sorted).encode()).hexdigest()
+
+
+def destinos_de(texto):
+    """A quién va algo, normalizado: correos, @usuarios y teléfonos que nombra."""
+    s = str(texto or '')
+    d = {m.group(0).lower() for m in CORREO.finditer(s)}
+    d |= {'@' + m.group(1).lower() for m in USUARIO.finditer(s)}
+    d |= {('+' if m.group(0).startswith('+') else '') + re.sub(r'\D', '', m.group(0)) for m in TELEFONO.finditer(s)}
+    return frozenset(d)
+
+
+def importes_de(texto):
+    return frozenset(re.sub(r'\s+', '', m.group(0)).upper() for m in IMPORTE.finditer(str(texto or '')))
+
+
+def dominio_de(url):
+    u = str(url or '').strip().lower()
+    u = re.sub(r'^[a-z]+://', '', u).split('/')[0].split('?')[0].split('#')[0].split('@')[-1].split(':')[0]
+    return u[4:] if u.startswith('www.') else u
+
+
+def operacion(t, nombre, a, elemento, clases):
+    """La operación canónica de una acción sensible (AUR02), la que se aprueba y se vuelve a calcular en el punto del
+    efecto: qué acción, sobre qué elemento, a quién, con qué texto (lo escrito en la página desde que se abrió) y qué
+    importe, en qué página."""
+    escrito = list(t.escrito)
+    if nombre == 'type' and a.get('text'):
+        escrito.append(str(a['text']))
+    fuente = f'{elemento} {" ".join(escrito)}'
+    return {'accion': nombre, 'elemento': _normal(elemento)[:200], 'clases': frozenset(clases),
+            'destinos': destinos_de(fuente), 'importes': importes_de(fuente),
+            'texto': _huella(_normal(' '.join(escrito))), 'dominio': t.dominio}
+
+
+def vinculo(op, p):
+    """El binding de un permiso a una operación: la operación + tarea, dueño, época, pregunta y caducidad."""
+    return _huella({'op': op, 'tarea': p['tarea'], 'dueno': p['dueno'], 'epoca': p['epoca'],
+                    'pregunta_id': p['pregunta_id'], 'vence': p['vence']})
+
+
+def cubre(p, op, t):
+    """¿El sí `p` (libre, sin usar) cubre esta operación? Misma tarea, dueño y época, sin vencer, y: o se aprobó esta
+    operación exacta, o lo que se preguntó nombra su clase, a todos sus destinatarios e importes, con el mismo texto
+    escrito y en la misma página que cuando se preguntó."""
+    if not p or p.get('estado') != 'libre':
+        return False
+    if p['tarea'] != t.id or p['dueno'] != t.dueno or p['epoca'] != t.epoca or time.time() > p['vence']:
+        return False
+    if p.get('op') is not None:
+        return _huella(p['op']) == _huella(op)
+    c = op['clases']
+    if not c or c & {'otro', 'desconocido'} or not c <= p['clases']:
+        return False
+    return (op['destinos'] <= p['destinos'] and op['importes'] <= p['importes'] and op['texto'] == p['texto']
+            and op['dominio'] == p['dominio'])
+
+
+def pregunta_para(elemento, idioma='es', op=None, incierta=False):
+    """La pregunta antes de una acción sensible: dice a quién va y cuánto (lo que el sí aprueba)."""
     e = ' '.join(str(elemento).split())[:80]
-    return f'I am about to click «{e}». Should I?' if idioma == 'en' else f'Voy a tocar «{e}». ¿Lo hago?'
+    en = idioma == 'en'
+    extra = []
+    if op and op['destinos']:
+        extra.append(('to ' if en else 'para ') + ', '.join(sorted(op['destinos']))[:160])
+    if op and op['importes']:
+        extra.append(('for ' if en else 'por ') + ', '.join(sorted(op['importes']))[:60])
+    sufijo = f' ({"; ".join(extra)})' if extra else ''
+    if incierta:
+        return (f'«{e}»{sufijo} may already have happened (I could not tell). Should I try again?' if en
+                else f'Puede que «{e}»{sufijo} ya se haya hecho (no supe si llegó). ¿Lo intento otra vez?')
+    return f'I am about to click «{e}»{sufijo}. Should I?' if en else f'Voy a tocar «{e}»{sufijo}. ¿Lo hago?'
 
 
 def _teclas(a):
@@ -295,27 +444,36 @@ def intencion(elemento):
     return 'normal', frozenset()
 
 
-def _sensible(t, elemento, idioma, clases=frozenset({'otro'})):
-    """Lo sensible, con un sí para ESTA acción. El sí que el modelo pidió antes (ask_user_confirmation) solo la
-    cubre si es de lo mismo que se preguntó, en la misma época de la tarea y antes de vencer; se usa una vez y,
-    si la acción es otra, se pierde (auditoría 3-oct, PC01: el sí de «iniciar sesión» dejaba borrar después)."""
-    p, t.permiso = t.permiso, None
-    if (p and p['epoca'] == t.epoca and time.time() <= p['vence'] and clases
-            and not (clases & {'otro', 'desconocido'}) and clases <= p['clases']):
-        return None
-    si = t.pedir_confirmacion(pregunta_para(elemento, idioma))
-    # El sí de aquí es para esta acción, que se hace ahora: no deja permiso para la siguiente.
-    t.permiso = None
-    if si is None:
-        raise Detenida('la pararon mientras esperaba tu sí')
-    return None if si else NO_DIJO
+def _sensible(t, elemento, idioma, clases, op, accion):
+    """Lo sensible, con un sí para ESTA operación (AUR02). El sí que el modelo pidió antes (ask_user_confirmation)
+    solo la cubre si nombra lo mismo (clase, destinatarios, importes, el texto escrito, la página), en la misma época
+    y antes de vencer; se usa una vez y, si la operación es otra, se pierde y se pregunta otra vez diciendo lo que
+    cambió (antes el sí de «enviar a Ana» enviaba a Bruno). El sí queda RESERVADO para esta operación: se canjea en
+    el punto del efecto (efecto_modelo), una sola vez."""
+    with t.cambio:
+        p, t.permiso = t.permiso, None
+    if not cubre(p, op, t):
+        incierta = _huella(op) in t.inciertas
+        si = t.pedir_confirmacion(pregunta_para(elemento, idioma, op, incierta), op=op)
+        if si is None:
+            raise Detenida('la pararon mientras esperaba tu sí')
+        if not si:
+            return NO_DIJO
+        with t.cambio:
+            p, t.permiso = t.permiso, None
+        if not cubre(p, op, t):
+            # La pausaron o tomaron el control mientras contestaba: ese sí era de otra época.
+            return NO_PAUSA if p and p['epoca'] != t.epoca else NO_CAMBIO
+    t.reservar(p, op, *accion)
+    return None
 
 
-def _decidir(t, tipo, clases, texto, idioma):
+def _decidir(t, tipo, clases, texto, idioma, nombre, a, elemento):
     if tipo == 'pago':
         return NO_PAGO
     if tipo in ('sensible', 'desconocido'):
-        return _sensible(t, texto, idioma, clases)
+        op = operacion(t, nombre, a, elemento, clases)
+        return _sensible(t, texto, idioma, clases, op, (nombre, a, elemento))
     return None
 
 
@@ -323,7 +481,9 @@ def revisar_accion(t, nombre, a):
     """Antes de una acción del motor gratis, el mediador de efectos: pagar o comprar, nunca; lo sensible o lo que
     no se sabe qué hace, solo con el sí de la persona. Lleva la cuenta de lo enfocado (`t.ultimo_elemento`: '' es
     la página recién abierta, None es «no se sabe» tras un Tab). Devuelve None si se puede hacer, o el texto que
-    vuelve al modelo en lugar de hacerla."""
+    vuelve al modelo en lugar de hacerla. Si es sensible y tiene su sí, la operación queda en `t.por_hacer`
+    (reservada) para canjearla en el efecto."""
+    t.por_hacer = None
     if nombre == 'type' and TARJETA.search(str(a.get('text', ''))):
         return NO_PAGO
     idioma = idioma_de(t.instruccion)
@@ -336,7 +496,8 @@ def revisar_accion(t, nombre, a):
         tipo, clases = intencion(foco)
         if tipo in ('normal', 'cookies') and CAMPO_CLAVE.search(foco):
             tipo, clases = 'sensible', frozenset({'sesion'})
-        return _decidir(t, tipo, clases, f'Enter en «{foco}»' if idioma == 'es' else f'Enter on «{foco}»', idioma)
+        return _decidir(t, tipo, clases, f'Enter en «{foco}»' if idioma == 'es' else f'Enter on «{foco}»', idioma,
+                        nombre, a, foco)
     if _mueve_foco(nombre, a):
         t.ultimo_elemento = None
         return None
@@ -353,7 +514,7 @@ def revisar_accion(t, nombre, a):
         t.ultimo_elemento = None
         return None
     tipo, clases = intencion(elemento)
-    r = _decidir(t, tipo, clases, elemento, idioma)
+    r = _decidir(t, tipo, clases, elemento, idioma, nombre, a, elemento)
     if r is None:
         t.ultimo_elemento = elemento  # solo si se toca de verdad: lo negado no se enfoca
     return r
@@ -439,6 +600,15 @@ def miniatura(png, ancho=480):
     out = io.BytesIO()
     im.save(out, 'JPEG', quality=70)
     return base64.b64encode(out.getvalue()).decode()
+
+
+def miniatura_de_paso(t):
+    """La captura que se guarda con un paso (la app la muestra y queda en la tarjeta del final): nunca durante una
+    entrada segura (AUR09): lo de ese intervalo no se guarda."""
+    if t.seguro:
+        return None
+    png = captura()[0]
+    return None if t.seguro else miniatura(png)
 
 
 # ------------------------------------------------------------------ motor de pago: Claude
@@ -559,7 +729,7 @@ def correr_claude(t):
             texto = ' '.join(b.get('text', '') for b in j['content'] if b.get('type') == 'text').strip()
             if not usos:
                 # La captura final va con el resultado (la app la muestra en la tarjeta del final).
-                t.anotar(accion='answer', args={'content': texto[:300]}, ms=ms, miniatura=miniatura(captura()[0]))
+                t.anotar(accion='answer', args={'content': texto[:300]}, ms=ms, miniatura=miniatura_de_paso(t))
                 return t.cerrar('hecha', respuesta=texto or '(sin respuesta)')
             # `fallo`: algo salió mal o la persona dijo NO: lo que sigue en el mismo lote ya no se hace
             # (auditoría, 3-oct: tras un NO, las acciones siguientes del lote corrían igual).
@@ -582,7 +752,7 @@ def correr_claude(t):
                     continue
                 res = {'type': 'tool_result', 'tool_use_id': b['id'], 'toolset_name': 'computer'}
                 entrada = b.get('input') or {}
-                hecho = False
+                hecho = incierto = False
                 if fallo:
                     res.update(content=NO_HECHA, is_error=True)
                 elif t.epoca != epoca or t.pausa or t.control:
@@ -596,15 +766,16 @@ def correr_claude(t):
                     res['content'] = accion_claude(b['name'], entrada)  # esperar no toca: sin el candado
                     hecho = True
                 else:
-                    contenido, hecho = efecto_modelo(t, epoca, lambda: accion_claude(b['name'], entrada))
+                    contenido, hecho = efecto_modelo(t, epoca, lambda: accion_claude(b['name'], entrada), b['name'])
+                    incierto = not hecho and (t.ultima_op or {}).get('estado') == 'incierta'
                     if hecho:
                         res['content'] = contenido
                     else:
                         res.update(content=contenido, is_error=True)
                         fallo = True
                 paso = t.anotar(accion=b['name'], args=entrada, ms=ms, pensado=texto[-400:],
-                                miniatura=miniatura(captura()[0]) if b['name'] != 'screenshot' else None)
-                t.resultado_paso(paso, hecho)
+                                miniatura=miniatura_de_paso(t) if b['name'] != 'screenshot' else None)
+                t.resultado_paso(paso, hecho, incierto)
                 resultados.append(res)
             # Solo las 3 últimas capturas viajan: las viejas pesan y no ayudan.
             mensajes.append({'role': 'user', 'content': resultados})
@@ -639,30 +810,60 @@ PEDIDOS = {}
 PEDIDOS_MAX = 2000
 
 
-def efecto_modelo(t, epoca, hacer):
+def soltar_entradas():
+    """Suelta teclas modificadoras y botones del ratón: al tomar o devolver el control y al parar, ninguna tecla ni
+    botón queda pulsado para el operador siguiente (AUR03). Se llama con el candado del escritorio tomado."""
+    try:
+        en_escritorio('xdotool keyup Shift_L Shift_R Control_L Control_R Alt_L Alt_R Super_L Super_R; '
+                      'xdotool mouseup 1; xdotool mouseup 2; xdotool mouseup 3', timeout=10)
+    except Exception:
+        pass
+
+
+def _canjear(t, s):
+    """Canjea el sí reservado para la operación `s`, en el punto del efecto (con el escritorio y la tarea tomados):
+    se recalcula la operación con lo que hay AHORA y tiene que ser la misma que se aprobó, del mismo dueño, en la
+    misma época y sin vencer. Se canjea una vez: un segundo worker o un replay lo encuentran usado. None si vale."""
+    p = s['permiso']
+    if p.get('estado') != 'reservado':
+        return NO_PERMISO
+    op = operacion(t, s['nombre'], s['args'], s['elemento'], s['clases'])
+    if (p['tarea'] != t.id or p['dueno'] != t.dueno or DUENO_ACTUAL['v'] != p['dueno'] or p['epoca'] != t.epoca
+            or time.time() > p['vence'] or p.get('hash') != vinculo(op, p)):
+        p['estado'] = 'invalido'
+        return NO_CAMBIO
+    p['estado'] = 'consumido'
+    return None
+
+
+def efecto_modelo(t, epoca, hacer, accion='', sensible=None):
     """Un toque del modelo, por la misma cola que lo de la persona, el reinicio y la captura (ESCRITORIO_LOCK):
     la última revisión va pegada al efecto. Si entre la decisión y el toque la pararon, la pausaron, tomaron o
     devolvieron el control (otra época) o el escritorio cambió de dueño, no se hace (auditoría 3-oct, PC03). La
-    inferencia nunca tiene el candado. Devuelve (texto para el modelo, si se hizo)."""
+    revisión y el despacho son atómicos con parar/tomar el control (`t.cambio`): o el toque ve la parada y no sale,
+    o la parada lo ve en vuelo y contesta «draining» (AUR03). Si es sensible, su sí se canjea aquí (AUR02). La
+    inferencia nunca tiene el candado. Devuelve (texto para el modelo, si se hizo); un toque que se corta a medias
+    queda «incierto» (t.ultima_op), no como no hecho."""
     with ESCRITORIO_LOCK:
-        if t.parar:
-            return NO_PARADA, False
-        if t.epoca != epoca or t.pausa or t.control:
-            return NO_PAUSA, False
-        if REINICIANDO['v'] or DUENO_ACTUAL['v'] != t.dueno:
-            return NO_ESCRITORIO, False
+        with t.cambio:
+            no = t.motivo_para_no(epoca)
+            if no is None and sensible is not None:
+                no = _canjear(t, sensible)
+            elif no is not None and sensible is not None and sensible['permiso'].get('estado') == 'reservado':
+                sensible['permiso']['estado'] = 'invalido'  # se usa o se pierde
+            if no is not None:
+                t.ultima_op = None
+                return no, False
+            op = t.abrir_op('modelo', accion, epoca, _huella(sensible['permiso']['op']) if sensible else None)
+        estado = 'incierta'
         try:
-            return hacer(), True
+            r = hacer()
+            estado = 'hecha'
+            return r, True
         except Exception as e:
-            return f'Error: {e}', False
-
-
-def quietud(timeout=ESPERA_QUIETUD_S):
-    """Espera a que termine el toque que ya está en vuelo (lo que empezó termina y queda en los pasos)."""
-    if not ESCRITORIO_LOCK.acquire(timeout=timeout):
-        return False
-    ESCRITORIO_LOCK.release()
-    return True
+            return f'Error: {e}. {INCIERTO}', False
+        finally:
+            t.cerrar_op(op, estado)
 
 
 def olvidar_viejas():
@@ -705,20 +906,152 @@ class Tarea:
         self.pregunta = None    # la pregunta que espera su sí
         self.pregunta_id = None  # y cuál es: un sí solo contesta ESA pregunta (auditoría 3-oct, PC01)
         self.si = None
-        # El sí a una pregunta del modelo: {clases, epoca, vence, pregunta_id}. Vale para UNA acción de lo que se
-        # preguntó, en esta época y antes de vencer (_sensible).
+        self.propuesta = None   # la huella de lo que se pregunta: el sí de la app nombra ESTA propuesta (AUR02)
+        # El sí a una pregunta: {clases, destinos, importes, texto, dominio, tarea, dueno, epoca, vence, pregunta_id,
+        # op, estado: libre → reservado → consumido | invalido}. Vale para UNA operación de lo que se preguntó
+        # (_sensible, cubre) y se canjea en el efecto (_canjear).
         self.permiso = None
+        self.por_hacer = None   # la operación sensible aprobada y reservada, para el efecto que sigue
         # Sube cada vez que pausan, toman o devuelven el control, o paran: lo decidido en otra época no toca
         # (efecto_modelo) y un permiso de otra época no vale.
         self.epoca = 0
         self.ultimo_elemento = ''   # lo enfocado: un Enter después vale lo mismo que tocarlo ('' página, None no se sabe)
         self.persona_actuo = False
         self.notas = []          # lo que se le dice al modelo en el paso siguiente
+        # La página: dónde (dominio del último open_url) y lo escrito desde que se abrió (el texto consecuente).
+        self.dominio = ''
+        self.escrito = []
+        self.inciertas = set()   # operaciones sensibles que se cortaron a medias: repetirlas se pregunta así
+        # El toque en vuelo (del modelo o de la persona) y el último despachado, con su recibo (AUR03).
+        self.en_vuelo = None
+        self.ultima_op = None
+        self.parada = None       # {id, fase: fenced → draining → quiescent, epoca, en_vuelo}
+        self.traspaso = None     # {id, a: persona | agente, fase, epoca}: tomar o devolver el control
+        self.devolviendo = False  # devolvió el control: lo que la persona mande ya no entra
+        # El control de la persona ligado a UN cliente (AUR09): {cliente (None: la app de antes), epoca, ultima
+        # secuencia aceptada, acks recientes, cubeta}. Otra sesión que lo toma abre otra época y cerca al anterior.
+        self.lease = None
+        # Entrada segura: el agente no toca ni mira, nada de ese rato se guarda; se sale con un frame nuevo
+        # (secuencia mayor que `seguro_frame`, la del frame de cuando escribió por última vez).
+        self.seguro = False
+        self.seguro_frame = 0
 
     @property
     def permiso_unico(self):
         """¿Queda un sí del modelo sin usar? (lo de antes: un booleano; ahora el permiso ligado)."""
         return self.permiso is not None
+
+    # -- despacho, quietud y traspaso (AUR03). Orden de candados: ESCRITORIO_LOCK y después self.cambio.
+
+    def motivo_para_no(self, epoca):
+        """Con self.cambio tomado: por qué un toque del modelo decidido en `epoca` ya no puede salir (None: puede)."""
+        if self.parar or self.estado not in ESTADOS_VIVOS:
+            return NO_PARADA
+        if self.epoca != epoca or self.pausa or self.control:
+            return NO_PAUSA
+        if REINICIANDO['v'] or DUENO_ACTUAL['v'] != self.dueno:
+            return NO_ESCRITORIO
+        return None
+
+    def abrir_op(self, quien, accion, epoca, clave=None):
+        """Con self.cambio tomado: el toque sale. Queda en vuelo hasta cerrar_op."""
+        op = {'id': uuid.uuid4().hex[:10], 'quien': quien, 'accion': str(accion or ''), 'epoca': epoca,
+              'desde': time.time(), 'estado': 'en_vuelo'}
+        if clave:
+            op['clave'] = clave
+        self.en_vuelo = op
+        self.ultima_op = op
+        return op
+
+    def cerrar_op(self, op, estado):
+        """El toque terminó (hecha, incierta o no_hecha), con el escritorio tomado. Si una parada o un traspaso lo
+        esperaban, se completan aquí mismo (y se sueltan teclas y puntero antes de que nadie más toque)."""
+        with self.cambio:
+            op['estado'] = estado
+            op['hasta'] = time.time()
+            if self.en_vuelo is op:
+                self.en_vuelo = None
+            if estado == 'incierta' and op.get('clave'):
+                self.inciertas.add(op['clave'])
+            self._quieta(soltar=True)
+            self.cambio.notify_all()
+
+    def _vuelo_viejo(self, epoca):
+        """¿Queda en vuelo un toque despachado antes de la época `epoca` (con la autoridad que se revocó)?"""
+        return self.en_vuelo is not None and self.en_vuelo['epoca'] < epoca
+
+    def _quieta(self, soltar):
+        """Con self.cambio tomado (y el escritorio si `soltar`): completa la parada o el traspaso que ya no tienen
+        nada en vuelo de la época revocada. La parada cierra la tarea como parada: «detenida» solo con quietud."""
+        listo = False
+        p = self.parada
+        if p and p['fase'] != 'quiescent' and not self._vuelo_viejo(p['epoca']):
+            p.update(fase='quiescent', quieta_en=time.time())
+            self.cerrar('parada')
+            listo = True
+        tr = self.traspaso
+        if tr and tr['fase'] != 'quiescent' and not self._vuelo_viejo(tr['epoca']):
+            if tr['a'] == 'agente':
+                self.devolviendo = False
+                self.lease = None
+                self.avisar(control=False, pausa=False)
+            tr.update(fase='quiescent', quieta_en=time.time())
+            listo = True
+        # Solo en SU escritorio (parar una tarea vieja no le suelta las teclas a la de otro dueño).
+        if listo and soltar and DUENO_ACTUAL['v'] == self.dueno and not REINICIANDO['v']:
+            soltar_entradas()
+        if listo:
+            self.cambio.notify_all()
+        return listo
+
+    def _aguardar(self, cond, tope):
+        """Con self.cambio tomado: espera hasta que `cond()` sea falsa o pase el tope. True si se cumplió."""
+        hasta = time.time() + tope
+        while cond() and time.time() < hasta:
+            self.cambio.wait(min(0.2, max(0.01, hasta - time.time())))
+        return not cond()
+
+    def _completar(self):
+        """Fuera de self.cambio: la parada o el traspaso ya no esperan nada; se completan con el escritorio tomado
+        (soltar teclas y puntero). Si el escritorio no se consigue a tiempo, se completan sin soltar."""
+        tengo = ESCRITORIO_LOCK.acquire(timeout=ESPERA_ESCRITORIO_S)
+        try:
+            with self.cambio:
+                self._quieta(soltar=tengo)
+        finally:
+            if tengo:
+                ESCRITORIO_LOCK.release()
+
+    def tras_efecto(self, nombre, a, sensible=False):
+        """Lo que se sabe de la página después de un toque hecho: dónde está y lo que se ha escrito en ella (AUR02)."""
+        if nombre == 'open_url':
+            self.dominio = dominio_de(a.get('url'))
+            self.escrito = []
+        elif nombre == 'key' and _teclas(a) in NAVEGA:
+            self.dominio = '?'
+            self.escrito = []
+        elif nombre == 'type':
+            self.escrito.append(str(a.get('text', '')))
+        elif nombre == 'key' and not _pide_enter(nombre, a):
+            # Borrar, pegar, cortar…: el texto cambió aunque no se sepa cómo (un sí anterior ya no lo cubre).
+            self.escrito.append(f'<{"+".join(_teclas(a))}>')
+        if sensible:
+            self.escrito = []  # se envió: lo que se escriba ahora es otro borrador
+
+    def reservar(self, p, op, nombre, a, elemento):
+        """El sí `p` queda reservado para ESTA operación (se canjea en efecto_modelo, una vez)."""
+        with self.cambio:
+            p.update(op=op, estado='reservado')
+            p['hash'] = vinculo(op, p)
+            self.por_hacer = {'permiso': p, 'nombre': nombre, 'args': dict(a), 'elemento': elemento, 'clases': op['clases']}
+
+    def _copia_parada(self, p):
+        if not p:
+            return None
+        r = {k: v for k, v in p.items() if k != 'en_vuelo'}
+        v = p.get('en_vuelo')
+        r['en_vuelo'] = {k: x for k, x in v.items() if k != 'clave'} if v else None
+        return r
 
     def anotar(self, **paso):
         with self.cambio:
@@ -728,16 +1061,24 @@ class Tarea:
             self.cambio.notify_all()
         return paso
 
-    def resultado_paso(self, paso, hecho):
-        """El recibo del paso: si la acción se hizo de verdad o no (la app no marca hecho lo que no se hizo)."""
+    def resultado_paso(self, paso, hecho, incierto=False):
+        """El recibo del paso: si la acción se hizo de verdad o no (la app no marca hecho lo que no se hizo), y si se
+        cortó a medias después de salir (`incierto`: no se sabe; no es «deshecho»)."""
         with self.cambio:
             paso['hecho'] = bool(hecho)
+            if incierto:
+                paso['incierto'] = True
             self.cambio.notify_all()
 
     def cerrar(self, estado, respuesta=None, error=None):
+        """El final. Un final no se reabre ni se reescribe (AUR04): lo que llegue tarde (un «hecha» después de
+        parar) no lo cambia."""
         with self.cambio:
+            if self.estado not in ESTADOS_VIVOS:
+                return
             self.estado, self.respuesta, self.error = estado, respuesta, error
-            self.pausa = self.control = False
+            self.pausa = self.control = self.seguro = False
+            self.lease = None
             self.pregunta = None
             self.cambio.notify_all()
 
@@ -762,11 +1103,13 @@ class Tarea:
                 setattr(self, k, v)
             self.cambio.notify_all()
 
-    def contestar(self, pregunta_id, si):
-        """El sí o el no a la pregunta `pregunta_id`. False si ya no es la que espera (una respuesta vieja no
-        contesta una pregunta nueva)."""
+    def contestar(self, pregunta_id, si, propuesta=None):
+        """El sí o el no a la pregunta `pregunta_id` (y, si viene, a la `propuesta` que se le mostró). False si ya no
+        es la que espera (una respuesta vieja no contesta una pregunta nueva)."""
         with self.cambio:
             if not self.pregunta or not pregunta_id or self.pregunta_id != pregunta_id or self.si is not None:
+                return False
+            if propuesta and propuesta != self.propuesta:
                 return False
             self.si = bool(si)
             self.cambio.notify_all()
@@ -774,8 +1117,9 @@ class Tarea:
 
     def esperar_si_pausada(self):
         """Entre un paso y el siguiente: si la pausaron o la persona tiene el control, espera (el escritorio
-        sigue siendo de esta tarea). False si la pararon mientras tanto. Al volver del control, el modelo lo sabe."""
-        if not (self.pausa or self.control):
+        sigue siendo de esta tarea). False si la pararon mientras tanto. Al volver del control, el modelo lo sabe.
+        Durante una entrada segura también espera: el modelo no mira la pantalla (la captura es después de esto)."""
+        if not (self.pausa or self.control or self.seguro):
             return True
         hasta = time.time() + PAUSA_MAX_S
         with self.cambio:
@@ -783,7 +1127,7 @@ class Tarea:
             self.persona_actuo = False
             self.cambio.notify_all()
             try:
-                while (self.pausa or self.control) and not self.parar:
+                while (self.pausa or self.control or self.seguro) and not self.parar:
                     queda = hasta - time.time()
                     if queda <= 0:
                         raise Detenida('estuvo en pausa demasiado tiempo')
@@ -798,39 +1142,49 @@ class Tarea:
             self.ultimo_elemento = None  # la persona tocó: ya no se sabe qué está enfocado
         return True
 
-    def pedir_confirmacion(self, pregunta):
+    def pedir_confirmacion(self, pregunta, op=None):
         """Se queda quieta hasta el sí o el no de la persona. True/False; None si la pararon. Sin respuesta
-        en ESPERA_CONFIRMACION_S la tarea se cierra (Detenida): nada sensible se hace sin su sí."""
+        en ESPERA_CONFIRMACION_S la tarea se cierra (Detenida): nada sensible se hace sin su sí. Con `op` (la
+        operación exacta que se va a hacer), el sí es para esa operación."""
         pregunta = ' '.join(str(pregunta or '').split())[:300] or 'Voy a hacer algo sensible. ¿Lo hago?'
         pid = uuid.uuid4().hex[:12]
+        # Lo que se muestra y se aprueba: tarea, pregunta y operación. El servidor la devuelve con el sí.
+        propuesta = _huella({'tarea': self.id, 'pregunta_id': pid, 'pregunta': pregunta, 'op': op})[:16]
         self.permiso = None
         self.anotar(accion='pedir_confirmacion', args={'pregunta': pregunta})
         hasta = time.time() + ESPERA_CONFIRMACION_S
         with self.cambio:
-            self.pregunta, self.pregunta_id, self.si, self.en_espera = pregunta, pid, None, True
+            self.pregunta, self.pregunta_id, self.propuesta, self.si, self.en_espera = pregunta, pid, propuesta, None, True
             self.cambio.notify_all()
             try:
                 while self.si is None and not self.parar and time.time() < hasta:
                     self.cambio.wait(min(5, max(0.05, hasta - time.time())))
                 si = self.si
             finally:
-                self.pregunta, self.pregunta_id, self.si, self.en_espera = None, None, None, False
+                self.pregunta, self.pregunta_id, self.propuesta, self.si, self.en_espera = None, None, None, None, False
                 self.cambio.notify_all()
         if self.parar:
             return None
         if si is None:
             raise Detenida('nadie dijo que sí a tiempo; no hice lo que pedía permiso')
         self.anotar(accion='confirmacion', args={'si': bool(si)})
-        # El sí deja permiso para UNA acción de lo que se preguntó, en esta época y por PERMISO_VALE_S.
-        self.permiso = {'clases': clases_de(pregunta), 'epoca': self.epoca, 'vence': time.time() + PERMISO_VALE_S,
-                        'pregunta_id': pid} if si else None
+        # El sí deja permiso para UNA operación de lo que se preguntó (a quién, cuánto, con el texto escrito ahora y
+        # en esta página), de esta tarea y este dueño, en esta época y por PERMISO_VALE_S (AUR02).
+        self.permiso = {'clases': clases_de(pregunta), 'destinos': destinos_de(pregunta), 'importes': importes_de(pregunta),
+                        'texto': _huella(_normal(' '.join(self.escrito))), 'dominio': self.dominio, 'op': op,
+                        'tarea': self.id, 'dueno': self.dueno, 'epoca': self.epoca, 'vence': time.time() + PERMISO_VALE_S,
+                        'pregunta_id': pid, 'estado': 'libre'} if si else None
         return bool(si)
 
     def resumen(self, con_miniaturas=False):
         pasos = self.pasos if con_miniaturas else [{k: v for k, v in p.items() if k != 'miniatura'} for p in self.pasos]
+        with self.cambio:
+            parada, traspaso = self._copia_parada(self.parada), dict(self.traspaso) if self.traspaso else None
         return {'id': self.id, 'motor': self.motor, 'instruccion': self.instruccion, 'estado': self.estado_visible(), 'pasos': pasos,
                 'respuesta': self.respuesta, 'error': self.error, 'segundos': round(time.time() - self.creada, 1),
-                'pregunta': self.pregunta, 'pregunta_id': self.pregunta_id, 'en_espera': self.en_espera, 'epoca': self.epoca}
+                'pregunta': self.pregunta, 'pregunta_id': self.pregunta_id, 'propuesta': self.propuesta,
+                'en_espera': self.en_espera, 'epoca': self.epoca, 'parada': parada, 'traspaso': traspaso,
+                'seguro': self.seguro, 'control_cliente': bool(self.lease and self.lease.get('cliente'))}
 
 
 def correr(t: Tarea):
@@ -851,7 +1205,9 @@ def correr(t: Tarea):
                 limpio = True
         # «trabajando» solo con SU escritorio ya listo: antes se marcaba antes del reinicio y la pantalla del
         # dueño anterior se podía pedir en ese rato.
-        t.estado = 'trabajando'
+        with t.cambio:
+            if t.estado in ESTADOS_VIVOS:  # si la pararon mientras se preparaba, sigue parada (no se reabre)
+                t.estado = 'trabajando'
         if limpio:
             t.anotar(accion='escritorio_limpio')
         if t.motor == 'claude':
@@ -912,14 +1268,18 @@ def correr(t: Tarea):
                         return t.cerrar('parada')
                     mensajes.append({'role': 'tool', 'tool_call_id': llamada.id, 'content': SI_DIJO if si else NO_DIJO})
                     continue
-                # Pagar o comprar, nunca; lo sensible, con su sí (aunque el modelo no lo haya preguntado).
+                # Pagar o comprar, nunca; lo sensible, con su sí (aunque el modelo no lo haya preguntado), ligado a
+                # la operación exacta y canjeado en el efecto (AUR02).
                 resultado = revisar_accion(t, nombre, args)
-                hecho = False
+                sensible, t.por_hacer = t.por_hacer, None
+                hecho = incierto = False
                 if resultado is None:
-                    resultado, hecho = efecto_modelo(t, epoca, lambda: ejecutar(nombre, args, ancho, alto))
+                    resultado, hecho = efecto_modelo(t, epoca, lambda: ejecutar(nombre, args, ancho, alto), nombre, sensible)
+                    incierto = not hecho and (t.ultima_op or {}).get('estado') == 'incierta'
                     if hecho:
+                        t.tras_efecto(nombre, args, sensible is not None)
                         asentar(nombre, args)
-                t.resultado_paso(paso, hecho)
+                t.resultado_paso(paso, hecho, incierto)
                 mensajes.append({'role': 'tool', 'tool_call_id': llamada.id, 'content': resultado})
             t.cerrar('sin_pasos', error=f'Se acabaron los {t.max_pasos} pasos sin terminar.')
         except Detenida as d:
@@ -1000,11 +1360,42 @@ def ver(id: str, req: Request, miniaturas: int = 0):
     return tarea(req, id).resumen(bool(miniaturas))
 
 
+def detener(t, tope=None):
+    """Parar en tres estados (AUR03): se recibe y se cerca (fenced: ningún despacho nuevo con esta autoridad, en
+    todos los motores y en lo de la persona: efecto_modelo y accion_persona miran `parar` en el mismo candado en
+    que despachan); si un toque ya salió, draining hasta que termine; quiescent cuando nada queda en vuelo bajo la
+    época revocada, y solo entonces la tarea queda «parada». Espera como mucho `tope`; si no alcanzó, contesta
+    draining con el id para consultar (GET /tareas/{id}/parada/{pid}) y se completa sola al terminar el toque. Lo
+    ya despachado queda con su recibo (hecha o incierta), no se da por deshecho. Repetir parar devuelve la misma."""
+    tope = ESPERA_QUIETUD_S if tope is None else tope
+    with t.cambio:
+        if t.parada is None:
+            t.avisar(parar=True)  # despierta también a la que espera una pausa o un sí; sube la época
+            t.parada = {'id': uuid.uuid4().hex[:12], 'fase': 'fenced', 'epoca': t.epoca, 'recibida': time.time(),
+                        'en_vuelo': t.en_vuelo}
+            if t._vuelo_viejo(t.parada['epoca']):
+                t.parada['fase'] = 'draining'
+        listo = t._aguardar(lambda: t._vuelo_viejo(t.parada['epoca']), tope)
+    if listo:
+        t._completar()
+    with t.cambio:
+        return {'estado': t.estado_visible(), 'parada': t._copia_parada(t.parada)}
+
+
 @app.post('/tareas/{id}/parar')
 def parar(id: str, req: Request):
     t = tarea(req, id)
-    t.avisar(parar=True)  # despierta también a la que espera una pausa o un sí
-    return {'id': id, 'estado': t.estado}
+    return {'id': id, **detener(t)}
+
+
+@app.get('/tareas/{id}/parada/{pid}')
+def ver_parada(id: str, pid: str, req: Request):
+    """Cómo va una parada que contestó draining (y el recibo del toque que estaba en vuelo)."""
+    t = tarea(req, id)
+    with t.cambio:
+        if not t.parada or t.parada['id'] != pid:
+            raise HTTPException(404, 'no existe esa parada')
+        return t._copia_parada(t.parada)
 
 
 def viva(t):
@@ -1024,15 +1415,30 @@ async def cuerpo_de(req: Request):
 @app.post('/tareas/{id}/pausar')
 def pausar(id: str, req: Request):
     t = viva(tarea(req, id))
-    t.avisar(pausa=True)
-    # El ACK sale cuando ningún toque está en vuelo: lo que ya empezó terminó y quedó en los pasos.
-    quieta = quietud()
-    return {'id': id, 'estado': t.estado_visible(), 'en_espera': t.en_espera, 'quieta': quieta, 'epoca': t.epoca}
+    # El ACK sale cuando ningún toque de antes de la pausa está en vuelo (lo que ya empezó terminó y quedó en los
+    # pasos), o dice draining pasado el tope.
+    with t.cambio:
+        if t.control:
+            # Con la persona al mando el agente ya está quieto: pausar no cambia nada (ni la época de su control).
+            return {'id': id, 'estado': t.estado_visible(), 'en_espera': t.en_espera, 'quieta': True,
+                    'fase': 'quiescent', 'epoca': t.epoca}
+        t.avisar(pausa=True)
+        epoca = t.epoca
+        quieta = t._aguardar(lambda: t._vuelo_viejo(epoca), ESPERA_QUIETUD_S)
+        return {'id': id, 'estado': t.estado_visible(), 'en_espera': t.en_espera, 'quieta': quieta,
+                'fase': 'quiescent' if quieta else 'draining', 'epoca': t.epoca}
 
 
 @app.post('/tareas/{id}/reanudar')
 def reanudar(id: str, req: Request):
     t = viva(tarea(req, id))
+    if t.seguro:
+        raise HTTPException(409, 'seguro: primero termina la entrada segura (con una pantalla nueva)')
+    if t.control:
+        # «Sigue» con la persona al mando es devolver el control: por el traspaso (se vacía la cola de la persona, se
+        # sueltan teclas y el modelo recibe otra época), no saltándoselo.
+        r = cambiar_control(t, False)
+        return {'id': id, 'estado': r['estado'], 'fase': r['fase']}
     t.avisar(pausa=False, control=False)
     return {'id': id, 'estado': t.estado_visible()}
 
@@ -1044,32 +1450,87 @@ async def confirmar(id: str, req: Request):
     si = bool(cuerpo.get('si'))
     if not t.pregunta:
         raise HTTPException(409, 'no está esperando ningún sí')
-    # El sí lleva la pregunta que contesta: una respuesta vieja (o sin decir a cuál) no contesta la de ahora.
-    if not t.contestar(str(cuerpo.get('pregunta_id') or ''), si):
+    # El sí lleva la pregunta que contesta (y la propuesta que se le mostró, con el servidor nuevo): una respuesta
+    # vieja, de otra propuesta o sin decir a cuál no contesta la de ahora.
+    if not t.contestar(str(cuerpo.get('pregunta_id') or ''), si, str(cuerpo.get('propuesta') or '') or None):
         raise HTTPException(409, 'esa respuesta era para otra pregunta; mira la de ahora')
     return {'id': id, 'si': si}
 
 
-def cambiar_control(t, tomar):
-    """La persona toma o devuelve el escritorio, por la cola del escritorio: devolver espera a que termine lo que
-    ella está haciendo (escribir, un clic) antes de que el modelo pueda volver a tocar, y tomar espera a que termine
-    el toque del modelo que ya estaba en vuelo (auditoría 3-oct, PC03). La respuesta sale cuando ya es verdad."""
-    if not ESCRITORIO_LOCK.acquire(timeout=ESPERA_QUIETUD_S):
-        raise HTTPException(409, 'un momento: está terminando una acción')
-    try:
+def _lease_nuevo(cliente, epoca):
+    """El control de la persona ligado a un cliente y una época (AUR09). La secuencia empieza de cero en cada lease."""
+    return {'cliente': cliente, 'epoca': epoca, 'ultima': 0, 'acks': {}, 'cubeta': float(ENTRADAS_RAFAGA),
+            'cubeta_en': time.time()}
+
+
+def cambiar_control(t, tomar, cliente=None, epoca_esperada=None):
+    """La persona toma o devuelve el escritorio (transferencia exclusiva, AUR03). Primero se cerca al que lo tenía:
+    tomar sube la época (el modelo ya no despacha nada) y devolver deja de aceptar lo que la persona mande. Después
+    se espera, con tope, a que termine el toque que ya estaba en vuelo (el del modelo al tomar; escribir o un clic
+    de la persona al devolver), se sueltan teclas y puntero y, al devolver, se pasa el control al modelo con otra
+    época. «fase»: quiescent (ya es verdad) o draining (termina sola en cuanto acabe ese toque; nadie toca a la vez).
+
+    AUR09: con `cliente` el control queda ligado a ESE cliente (lease, con su época): solo él manda entradas
+    (/entrada). Si otro cliente (otro teléfono, otra sesión de la misma persona) lo toma, se abre otra época, lo que
+    el anterior tenía en vuelo termina, se sueltan teclas y el anterior queda cercado. Devolver lo hace quien lo tiene
+    (o la persona sin decir cliente: la voz, la app de antes); en entrada segura, no (primero se sale con una pantalla
+    nueva). `epoca_esperada` (expectedControlEpoch): si el control ya cambió, 409 y nada cambia."""
+    with t.cambio:
         if t.pregunta:
             raise HTTPException(409, 'primero contesta si lo hace o no')
-        t.avisar(control=tomar, pausa=False)
-    finally:
-        ESCRITORIO_LOCK.release()
-    return {'estado': t.estado_visible(), 'en_espera': t.en_espera, 'epoca': t.epoca}
+        if epoca_esperada is not None and epoca_esperada != t.epoca:
+            raise HTTPException(409, f'epoca_cambio: el control cambió (época {t.epoca}); mira el de ahora')
+        actual = t.lease['cliente'] if t.lease else None
+        if tomar and not t.control:
+            t.avisar(control=True, pausa=False)
+            t.lease = _lease_nuevo(cliente, t.epoca)
+            t.traspaso = {'id': uuid.uuid4().hex[:12], 'a': 'persona', 'fase': 'draining', 'epoca': t.epoca, 'desde': time.time()}
+        elif tomar and (t.lease is None or actual != cliente):
+            # Otro cliente recupera el control (o el que lo devolvía era otro): otra época; el anterior queda cercado.
+            t.devolviendo = False
+            t.epoca += 1
+            t.lease = _lease_nuevo(cliente, t.epoca)
+            t.traspaso = {'id': uuid.uuid4().hex[:12], 'a': 'persona', 'fase': 'draining', 'epoca': t.epoca, 'desde': time.time()}
+            t.cambio.notify_all()
+        elif tomar and t.devolviendo:
+            # Lo devolvía y se arrepintió antes de que terminara su último toque: sigue siendo suyo.
+            t.devolviendo = False
+            t.traspaso = {'id': uuid.uuid4().hex[:12], 'a': 'persona', 'fase': 'quiescent', 'epoca': t.epoca, 'desde': time.time()}
+        elif not tomar and t.control and not t.devolviendo:
+            if t.seguro:
+                raise HTTPException(409, 'seguro: primero termina la entrada segura (con una pantalla nueva)')
+            if cliente is not None and actual is not None and cliente != actual:
+                raise HTTPException(409, 'cliente: el control lo tiene otro dispositivo')
+            t.devolviendo = True
+            # La época que tendrá el modelo: lo que la persona despachó antes es de la autoridad que se revoca.
+            t.traspaso = {'id': uuid.uuid4().hex[:12], 'a': 'agente', 'fase': 'draining', 'epoca': t.epoca + 1, 'desde': time.time()}
+        tr = t.traspaso
+        listo = (not tr or tr['fase'] == 'quiescent'
+                 or t._aguardar(lambda: t._vuelo_viejo(tr['epoca']), ESPERA_QUIETUD_S))
+    if listo and tr:
+        t._completar()
+    with t.cambio:
+        return {'estado': t.estado_visible(), 'en_espera': t.en_espera, 'epoca': t.epoca,
+                'fase': tr['fase'] if tr else 'quiescent', 'traspaso': tr['id'] if tr else None, 'seguro': t.seguro}
+
+
+CLIENTE = re.compile(r'[A-Za-z0-9_-]{8,64}')
+
+
+def cliente_de(cuerpo):
+    """El cliente que manda (el servidor de AU-RA lo deriva de la sesión autenticada); None si no viene o no vale."""
+    c = cuerpo.get('clientId')
+    return c if isinstance(c, str) and CLIENTE.fullmatch(c) else None
 
 
 @app.post('/tareas/{id}/control')
 async def control(id: str, req: Request):
     t = viva(tarea(req, id))
-    tomar = bool((await cuerpo_de(req)).get('tomar'))
-    r = await asyncio.get_running_loop().run_in_executor(None, lambda: cambiar_control(t, tomar))
+    cuerpo = await cuerpo_de(req)
+    tomar = bool(cuerpo.get('tomar'))
+    esperada = cuerpo.get('expectedControlEpoch')
+    esperada = esperada if isinstance(esperada, int) and not isinstance(esperada, bool) else None
+    r = await asyncio.get_running_loop().run_in_executor(None, lambda: cambiar_control(t, tomar, cliente_de(cuerpo), esperada))
     return {'id': id, **r}
 
 
@@ -1077,9 +1538,10 @@ TECLAS_PERSONA = {'enter', 'tab', 'escape', 'backspace', 'delete', 'up', 'down',
                   'home', 'end', 'space', 'ctrl+l', 'ctrl+a', 'ctrl+c', 'ctrl+v', 'ctrl+f', 'alt+left', 'alt+right', 'f5'}
 
 
-def accion_persona(t, cuerpo):
+def accion_persona(t, cuerpo, epoca=None):
     """Lo que hace la persona con el control: tocar, escribir, una tecla o bajar. Coordenadas en [0, 1000].
-    Lo que escribe no se guarda en los pasos (puede ser su contraseña: para eso tomó el control)."""
+    Lo que escribe no se guarda en los pasos (puede ser su contraseña: para eso tomó el control). `epoca`: la del
+    control cuando llegó el pedido; si mientras esperaba en la cola devolvió o volvió a tomar el control, no entra."""
     tipo = str(cuerpo.get('tipo') or '')
     ancho, alto = TAMANO['ancho'], TAMANO['alto']
 
@@ -1089,12 +1551,30 @@ def accion_persona(t, cuerpo):
         except (TypeError, ValueError):
             raise HTTPException(400, 'coordenadas en [0, 1000]')
 
-    # Se revisa otra vez justo antes de tocar, con el escritorio tomado: la acción pudo esperar en la cola y,
-    # mientras, pararon la tarea o el escritorio cambió de dueño.
+    if t.devolviendo:
+        raise HTTPException(409, 'ya devolviste el control')
+    # Con el control ligado a un cliente (AUR09) solo entra lo de /entrada, con su época y su secuencia: la acción de
+    # antes no se salta el árbitro.
+    if t.lease and t.lease.get('cliente'):
+        raise HTTPException(409, 'cliente: el control lo tiene un dispositivo con el visor nuevo')
+    # Se revisa otra vez justo antes de tocar, con el escritorio tomado y en el mismo paso en que sale (atómico con
+    # parar y devolver): la acción pudo esperar en la cola y, mientras, pararon la tarea, devolvió el control o el
+    # escritorio cambió de dueño.
     with ESCRITORIO_LOCK:
-        if t.parar or not t.control or REINICIANDO['v'] or DUENO_ACTUAL['v'] != t.dueno:
-            raise HTTPException(409, 'la tarea ya no tiene el escritorio')
-        paso = _accion_persona(t, cuerpo, tipo, ancho, alto, coord)
+        with t.cambio:
+            if (t.parar or not t.control or t.devolviendo or REINICIANDO['v'] or DUENO_ACTUAL['v'] != t.dueno
+                    or (epoca is not None and epoca != t.epoca) or (t.lease and t.lease.get('cliente'))):
+                raise HTTPException(409, 'la tarea ya no tiene el escritorio')
+            op = t.abrir_op('persona', tipo, t.epoca)
+        estado = 'incierta'
+        try:
+            paso = _accion_persona(t, cuerpo, tipo, ancho, alto, coord)
+            estado = 'hecha'
+        except HTTPException:
+            estado = 'no_hecha'
+            raise
+        finally:
+            t.cerrar_op(op, estado)
     asentar('persona')  # la espera a que la pantalla cambie, ya sin el escritorio tomado
     return paso
 
@@ -1120,9 +1600,274 @@ def _accion_persona(t, cuerpo, tipo, ancho, alto, coord):
         ejecutar('scroll', {'direction': paso['direction'], 'x': 500, 'y': 500}, ancho, alto)
     else:
         raise HTTPException(400, 'tipo es click, escribir, tecla o scroll')
+    if tipo in ('escribir', 'tecla'):
+        t.escrito.append('<persona>')  # escribió ella (no se guarda qué): un sí anterior ya no cubre el texto
     t.persona_actuo = True
     t.anotar(accion='persona', args=paso)
     return paso
+
+
+# ------------------------------------------------------------------ el contrato de entradas (AUR09)
+
+TIPOS_ENTRADA = ('pointer', 'scroll', 'key', 'text_commit', 'release_all')
+# Las teclas que no son texto (el texto va entero en text_commit, ya compuesto por el teclado del teléfono).
+TECLAS_ESPECIALES = {'enter': 'Return', 'tab': 'Tab', 'escape': 'Escape', 'backspace': 'BackSpace', 'delete': 'Delete',
+                     'up': 'Up', 'down': 'Down', 'left': 'Left', 'right': 'Right', 'home': 'Home', 'end': 'End',
+                     'pageup': 'Prior', 'pagedown': 'Next', 'space': 'space', 'f5': 'F5'}
+NAVEGACION = frozenset({'up', 'down', 'left', 'right', 'home', 'end', 'pageup', 'pagedown'})
+# Ctrl + letra: seleccionar todo, copiar, pegar, cortar, deshacer, rehacer, buscar, barra de direcciones, recargar,
+# pestaña nueva y cerrar pestaña. Nada que salga del navegador (sin Super, sin Ctrl+Alt, sin Alt+F4, sin Ctrl+Q).
+LETRAS_CTRL = frozenset('acvxzyflrtw')
+MODS = ('ctrl', 'shift', 'alt')  # el orden con que se combinan
+
+
+def combo_permitido(mods, tecla):
+    """La lista blanca de teclas y combinaciones de la persona (la misma en el servidor y en la app)."""
+    m = frozenset(mods)
+    if not m <= set(MODS):
+        return False
+    if not m:
+        return tecla in TECLAS_ESPECIALES
+    if m == {'shift'}:
+        return tecla in NAVEGACION | {'tab', 'enter'}
+    if m == {'ctrl'}:
+        return tecla in LETRAS_CTRL or tecla in NAVEGACION | {'backspace', 'delete', 'enter', 'tab'}
+    if m == {'ctrl', 'shift'}:
+        return tecla in NAVEGACION | {'z', 't', 'tab'}
+    if m == {'alt'}:
+        return tecla in ('left', 'right')
+    return False
+
+
+def _entero(v, lo, hi):
+    if isinstance(v, bool) or not isinstance(v, int) or not lo <= v <= hi:
+        raise ValueError('número fuera de rango')
+    return v
+
+
+def _mods(v, permitidos):
+    if v is None:
+        return []
+    if not isinstance(v, list) or len(v) > 3 or any(m not in permitidos for m in v):
+        raise ValueError('modificadores')
+    return [m for m in MODS if m in v]
+
+
+def validar_entrada(c, id):
+    """Una entrada del contrato (AUR09): de esta sesión remota (la tarea), de un cliente, con la época del control,
+    su secuencia, la revisión del viewport con que se miró y un tipo con sus datos validados y acotados. 400 si no."""
+    try:
+        if not isinstance(c, dict) or str(c.get('remoteSessionId') or '') != id:
+            raise ValueError('sesión')
+        cliente = c.get('clientId')
+        if not isinstance(cliente, str) or not CLIENTE.fullmatch(cliente):
+            raise ValueError('cliente')
+        epoca = _entero(c.get('controlEpoch'), 0, 10 ** 9)
+        secuencia = _entero(c.get('inputSequence'), 1, 10 ** 12)
+        rev = _entero(c.get('viewportRevision'), 0, 10 ** 9)
+        tipo = c.get('type')
+        p = c.get('payload') if isinstance(c.get('payload'), dict) else {}
+        xy = lambda k: _entero(p.get(k), 0, 8192)  # noqa: E731 (píxeles lógicos; el tamaño real se mira al tocar)
+        if tipo == 'pointer':
+            accion = p.get('accion', 'click')
+            if accion not in ('click', 'doble', 'derecho', 'arrastre'):
+                raise ValueError('accion')
+            datos = {'accion': accion, 'x': xy('x'), 'y': xy('y'), 'mods': _mods(p.get('mods'), ('ctrl', 'shift'))}
+            if accion == 'arrastre':
+                datos.update(x2=xy('x2'), y2=xy('y2'))
+        elif tipo == 'scroll':
+            datos = {'x': xy('x'), 'y': xy('y'), 'dy': _entero(p.get('dy', 0), -10, 10), 'dx': _entero(p.get('dx', 0), -10, 10)}
+            if not datos['dy'] and not datos['dx']:
+                raise ValueError('scroll vacío')
+        elif tipo == 'key':
+            tecla = str(p.get('tecla') or '').lower()
+            mods = _mods(p.get('mods'), MODS)
+            if not combo_permitido(mods, tecla):
+                raise ValueError('esa tecla no')
+            datos = {'tecla': tecla, 'mods': mods}
+        elif tipo == 'text_commit':
+            texto = p.get('texto')
+            if not isinstance(texto, str):
+                raise ValueError('texto')
+            # La composición final del teclado (IME): acentos compuestos (e + ´ = é), sin controles ni saltos (Enter
+            # es una tecla), hasta 500.
+            texto = unicodedata.normalize('NFC', texto)
+            if not 1 <= len(texto) <= 500 or re.search(r'[\x00-\x1f\x7f]', texto):
+                raise ValueError('texto')
+            datos = {'texto': texto}
+        elif tipo == 'release_all':
+            datos = {}
+        else:
+            raise ValueError('tipo')
+    except (ValueError, TypeError) as e:
+        raise HTTPException(400, f'entrada_invalida: {e}')
+    return {'cliente': cliente, 'epoca': epoca, 'secuencia': secuencia, 'rev': rev, 'tipo': tipo, 'datos': datos}
+
+
+ACKS_GUARDADOS = 64
+
+
+def aplicar_entrada(t, e):
+    """Una entrada de la persona, por el árbitro (AUR09): solo del cliente que tiene el control, en su época, con una
+    secuencia nueva (la repetida devuelve el MISMO ACK sin tocar otra vez: tras reconectar nada se reproduce; la vieja,
+    409), con el ritmo acotado y, si lleva coordenadas, del viewport que se está mostrando. Se revisa otra vez con el
+    escritorio tomado, en el mismo paso en que sale (atómico con parar, tomar y devolver). Un error a medias suelta
+    teclas y botones y queda «incierta». Devuelve el ACK: secuencia, estado, hora del nodo y el frame de antes del toque
+    (`frame_seq`: la app espera uno más nuevo antes de otra entrada riesgosa)."""
+    with t.cambio:
+        L = t.lease
+        if not t.control or t.devolviendo or L is None:
+            raise HTTPException(409, 'sin_control: primero toma el control')
+        if L['cliente'] != e['cliente']:
+            raise HTTPException(409, 'cliente: el control lo tiene otro dispositivo')
+        if e['epoca'] != t.epoca or L['epoca'] != t.epoca:
+            raise HTTPException(409, f'epoca_revocada: el control cambió (época {t.epoca})')
+        previo = L['acks'].get(e['secuencia'])
+        if previo is not None:
+            return dict(previo, duplicada=True)
+        if e['secuencia'] <= L['ultima']:
+            raise HTTPException(409, 'secuencia_vieja: esa entrada ya pasó')
+        if not t.en_espera and e['tipo'] != 'release_all':
+            raise HTTPException(409, 'aun_no: un momento: está terminando su último paso')
+        ahora = time.time()
+        L['cubeta'] = min(float(ENTRADAS_RAFAGA), L['cubeta'] + (ahora - L['cubeta_en']) * ENTRADAS_POR_S)
+        L['cubeta_en'] = ahora
+        if L['cubeta'] < 1:
+            raise HTTPException(429, 'tasa: demasiadas entradas seguidas')
+        L['cubeta'] -= 1
+        # La secuencia se gasta antes de tocar: un repetido que llega mientras esta corre no entra dos veces.
+        L['ultima'] = e['secuencia']
+    if e['tipo'] == 'release_all' and not t.en_espera:
+        return _ack(t, L, e)  # el agente todavía termina su toque: al tomar el control ya se sueltan
+    with ESCRITORIO_LOCK:
+        with t.cambio:
+            if t.parar or not t.control or t.devolviendo or REINICIANDO['v'] or DUENO_ACTUAL['v'] != t.dueno:
+                raise HTTPException(409, 'sin_control: la tarea ya no tiene el escritorio')
+            if t.lease is not L or t.epoca != e['epoca']:
+                raise HTTPException(409, f'epoca_revocada: el control cambió (época {t.epoca})')
+            if e['tipo'] in ('pointer', 'scroll'):
+                d = e['datos']
+                fuera = any(d[k] >= FRAME['ancho'] for k in ('x', 'x2') if k in d) or any(d[k] >= FRAME['alto'] for k in ('y', 'y2') if k in d)
+                if (e['rev'] != FRAME['rev'] or (TAMANO['ancho'], TAMANO['alto']) != (FRAME['ancho'], FRAME['alto']) or fuera):
+                    raise HTTPException(409, f'viewport: esas coordenadas son de otra pantalla (revisión {FRAME["rev"]})')
+            op = t.abrir_op('persona', e['tipo'], t.epoca)
+        estado = 'incierta'
+        try:
+            _entrada_persona(t, e)
+            estado = 'hecha'
+        except HTTPException:
+            estado = 'no_hecha'
+            raise
+        except Exception:
+            soltar_entradas()  # nada queda pulsado tras un error a medias
+            raise HTTPException(502, 'incierta: no sé si se hizo; mira la pantalla antes de seguir')
+        finally:
+            t.cerrar_op(op, estado)
+    return _ack(t, L, e)
+
+
+def _ack(t, L, e):
+    with t.cambio:
+        ack = {'secuencia': e['secuencia'], 'estado': 'hecha', 'ts': round(time.time(), 3), 'frame_seq': FRAME['seq'],
+               'epoca': t.epoca}
+        L['acks'][e['secuencia']] = ack
+        for viejo in sorted(L['acks'])[:-ACKS_GUARDADOS]:
+            L['acks'].pop(viejo, None)
+        return dict(ack)
+
+
+def _entrada_persona(t, e):
+    """Lo que hace la entrada en el escritorio (con el escritorio tomado). Las combinaciones salen enteras en una sola
+    orden (ninguna tecla queda pulsada entre una entrada y la siguiente). En entrada segura no se anota nada."""
+    d, tipo = e['datos'], e['tipo']
+    if tipo == 'pointer':
+        boton = '3' if d['accion'] == 'derecho' else '1'
+        if d['accion'] == 'arrastre':
+            # Bajar, moverse en dos tramos (las páginas necesitan ver el movimiento) y soltar, en una sola orden.
+            mx, my = (d['x'] + d['x2']) // 2, (d['y'] + d['y2']) // 2
+            xdotool('mousemove', '--sync', d['x'], d['y'], 'mousedown', '1', 'sleep', '0.08', 'mousemove', '--sync', mx, my,
+                    'sleep', '0.05', 'mousemove', '--sync', d['x2'], d['y2'], 'sleep', '0.05', 'mouseup', '1')
+        else:
+            clic = ['click', '--repeat', '2', '--delay', '120', boton] if d['accion'] == 'doble' else ['click', boton]
+            abajo = [x for m in d['mods'] for x in ('keydown', m)]
+            arriba = [x for m in reversed(d['mods']) for x in ('keyup', m)]
+            xdotool('mousemove', '--sync', d['x'], d['y'], *abajo, *clic, *arriba)
+    elif tipo == 'scroll':
+        args = ['mousemove', '--sync', d['x'], d['y']]
+        if d['dy']:
+            args += ['click', '--repeat', abs(d['dy']), '5' if d['dy'] > 0 else '4']
+        if d['dx']:
+            args += ['click', '--repeat', abs(d['dx']), '7' if d['dx'] > 0 else '6']
+        xdotool(*args)
+    elif tipo == 'key':
+        xdotool('key', '--clearmodifiers', '+'.join(d['mods'] + [TECLAS_ESPECIALES.get(d['tecla'], d['tecla'])]))
+    elif tipo == 'text_commit':
+        # xdotool type con --delay: algunos campos pierden letras si se escribe de golpe.
+        xdotool('type', '--delay', '12', '--', d['texto'])
+    elif tipo == 'release_all':
+        soltar_entradas()
+        return
+    if tipo in ('key', 'text_commit'):
+        t.escrito.append('<persona>')  # escribió ella (no se guarda qué): un sí anterior ya no cubre el texto
+    t.persona_actuo = True
+    if t.seguro:
+        # Lo de la entrada segura no se anota (ni el largo); para salir hace falta un frame de después de esto.
+        t.seguro_frame = FRAME['seq']
+        return
+    resumen = {'tipo': 'texto' if tipo == 'text_commit' else tipo}
+    if tipo == 'pointer':
+        resumen['accion'] = d['accion']
+    elif tipo == 'key':
+        resumen['teclas'] = '+'.join(d['mods'] + [d['tecla']])
+    t.anotar(accion='persona', args=resumen)
+
+
+def cambiar_seguro(t, activar, cliente=None, frame_seq=None):
+    """Entrada segura (AUR09): solo con el control en manos de ESTE cliente. Mientras dura, el agente no toca (tiene
+    el control la persona) ni mira (esperar_si_pausada no lo deja pasar a la captura; las capturas de los pasos se
+    saltan), lo que escribe la persona no se anota y su pantalla sale marcada privada (no se guarda). Salir pide un
+    frame visto DESPUÉS de lo último que escribió (frame_seq mayor que seguro_frame): la persona mira la pantalla de
+    ahora antes de soltarla. Seguir con el agente es aparte: devolver el control a propósito."""
+    with t.cambio:
+        actual = t.lease['cliente'] if t.lease else None
+        if activar:
+            if not t.control or t.devolviendo:
+                raise HTTPException(409, 'sin_control: primero toma el control')
+            if cliente is None or actual != cliente:
+                raise HTTPException(409, 'cliente: la entrada segura es del dispositivo que tiene el control')
+            if not t.seguro:
+                t.seguro = True
+                t.seguro_frame = FRAME['seq']
+                t.anotar(accion='modo_seguro', args={'activo': True})
+        elif t.seguro:
+            if cliente is not None and actual is not None and cliente != actual:
+                raise HTTPException(409, 'cliente: el control lo tiene otro dispositivo')
+            try:
+                visto = int(frame_seq)
+            except (TypeError, ValueError):
+                visto = -1
+            if visto <= t.seguro_frame or visto > FRAME['seq']:
+                raise HTTPException(409, 'frame_viejo: mira la pantalla de ahora antes de terminar la entrada segura')
+            t.seguro = False
+            t.notas.append(NOTA_SEGURO)
+            t.anotar(accion='modo_seguro', args={'activo': False})
+        t.cambio.notify_all()
+        return {'seguro': t.seguro, 'epoca': t.epoca, 'frame_seq': FRAME['seq']}
+
+
+@app.post('/tareas/{id}/entrada')
+async def entrada(id: str, req: Request):
+    t = viva(tarea(req, id))
+    e = validar_entrada(await cuerpo_de(req), id)
+    ack = await asyncio.get_running_loop().run_in_executor(None, lambda: aplicar_entrada(t, e))
+    return {'id': id, 'ack': ack}
+
+
+@app.post('/tareas/{id}/seguro')
+async def seguro(id: str, req: Request):
+    t = viva(tarea(req, id))
+    cuerpo = await cuerpo_de(req)
+    return {'id': id, **cambiar_seguro(t, bool(cuerpo.get('activar')), cliente_de(cuerpo), cuerpo.get('frameSeq'))}
 
 
 @app.post('/tareas/{id}/accion')
@@ -1133,13 +1878,17 @@ async def accion(id: str, req: Request):
         raise HTTPException(409, 'primero toma el control')
     if not t.en_espera:
         raise HTTPException(409, 'un momento: está terminando su último paso')
-    paso = await asyncio.get_running_loop().run_in_executor(None, lambda: accion_persona(t, cuerpo))
+    epoca = t.epoca
+    paso = await asyncio.get_running_loop().run_in_executor(None, lambda: accion_persona(t, cuerpo, epoca))
     return {'ok': True, 'paso': paso}
 
 
 @app.get('/tareas/{id}/pantalla')
-def pantalla_tarea(id: str, req: Request):
-    """Lo que se ve ahora, solo mientras ESA tarea tiene el escritorio (nadie mira el de otro dueño)."""
+def pantalla_tarea(id: str, req: Request, ancho: int = 960):
+    """Lo que se ve ahora, solo mientras ESA tarea tiene el escritorio (nadie mira el de otro dueño). Con su frame
+    (AUR09) en cabeceras: secuencia, hora del nodo, tamaño lógico (el de las coordenadas), revisión del viewport, la
+    época del control y si es privado (entrada segura: no se guarda ni va al modelo). `ancho`: el de la imagen
+    (480–1280; con zoom, más nítida)."""
     t = viva(tarea(req, id))
     if t.estado == 'en_cola':
         raise HTTPException(409, 'todavía no empieza')
@@ -1151,11 +1900,16 @@ def pantalla_tarea(id: str, req: Request):
     try:
         if REINICIANDO['v'] or DUENO_ACTUAL['v'] != t.dueno:
             raise HTTPException(409, 'preparando su escritorio')
-        png, _, _ = captura()
+        png, w, h = captura()
+        meta = anotar_frame(w, h)
+        privado = t.seguro
     finally:
         ESCRITORIO_LOCK.release()
-    jpg = base64.b64decode(miniatura(png, 960))
-    return Response(jpg, media_type='image/jpeg', headers={'Cache-Control': 'no-store'})
+    jpg = base64.b64decode(miniatura(png, max(480, min(1280, int(ancho or 960)))))
+    return Response(jpg, media_type='image/jpeg', headers={
+        'Cache-Control': 'no-store', 'X-Frame-Seq': str(meta['seq']), 'X-Frame-Ts': f"{meta['ts']:.3f}",
+        'X-Frame-Ancho': str(meta['ancho']), 'X-Frame-Alto': str(meta['alto']), 'X-Viewport-Rev': str(meta['rev']),
+        'X-Control-Epoca': str(t.epoca), 'X-Privado': '1' if privado else '0'})
 
 
 @app.get('/tareas/{id}/eventos')
@@ -1173,7 +1927,7 @@ async def eventos(id: str, req: Request):
                 return
             if t.estado_visible() != visto:
                 visto = t.estado_visible()
-                yield f'event: estado\ndata: {json.dumps({"estado": visto, "pregunta": t.pregunta, "pregunta_id": t.pregunta_id}, ensure_ascii=False)}\n\n'
+                yield f'event: estado\ndata: {json.dumps({"estado": visto, "pregunta": t.pregunta, "pregunta_id": t.pregunta_id, "propuesta": t.propuesta}, ensure_ascii=False)}\n\n'
             await asyncio.get_running_loop().run_in_executor(None, lambda: _esperar(t, enviados, visto))
 
     return StreamingResponse(flujo(), media_type='text/event-stream', headers={'Cache-Control': 'no-cache'})
@@ -1188,33 +1942,26 @@ def _esperar(t, enviados, visto=None):
 @app.get('/pantalla')
 def pantalla(req: Request):
     exigir(req)
+    # Durante una entrada segura nadie más que la persona (por su tarea) ve la pantalla (AUR09).
+    if any(t.seguro for t in list(TAREAS.values())):
+        raise HTTPException(423, 'seguro: hay una entrada segura en curso')
     png, _, _ = captura()
     return Response(png, media_type='image/png', headers={'Cache-Control': 'no-store'})
 
 
-# Vista en vivo: una llave por pedido, que vence. Caddy pregunta aquí (forward_auth) antes de pasar a noVNC.
+# La vista noVNC está CERRADA (AUR09): con view_only=0 aceptaba clics y teclas por fuera del árbitro (épocas, candado
+# del escritorio, entrada segura), y view_only es solo una opción del cliente. La persona ve y usa el escritorio por
+# /tareas/{id}/pantalla y /tareas/{id}/entrada. Queda el diccionario para que una llave vieja tampoco abra nada.
 VISTAS = {}
 
 
 @app.post('/vista')
 async def vista(req: Request):
     exigir(req)
-    cuerpo = await req.json() if req.headers.get('content-length') not in (None, '0') else {}
-    llave = secrets.token_urlsafe(24)
-    VISTAS[llave] = time.time() + int(cuerpo.get('segundos') or 1800)
-    solo_mirar = 0 if cuerpo.get('tomar_control') else 1
-    ruta = f'/vista/{llave}/vnc.html?path=vista/{llave}/websockify&autoconnect=1&resize=scale&view_only={solo_mirar}'
-    return {'ruta': ruta, 'vence_en': int(VISTAS[llave] - time.time())}
+    raise HTTPException(410, 'la vista noVNC está cerrada: usa la pantalla de la tarea (con el control y la entrada segura)')
 
 
 @app.get('/vista/permitir')
 def permitir(req: Request):
-    uri = req.headers.get('x-forwarded-uri', '')
-    partes = uri.split('/')
-    llave = partes[2] if len(partes) > 2 and partes[1] == 'vista' else ''
-    ahora = time.time()
-    for k in [k for k, v in VISTAS.items() if v < ahora]:
-        VISTAS.pop(k, None)
-    if llave and llave in VISTAS:
-        return Response(status_code=200)
-    return JSONResponse({'error': 'vista vencida'}, status_code=403)
+    """El forward_auth de Caddy (si alguien vuelve a publicar /vista): nunca deja pasar."""
+    return JSONResponse({'error': 'vista cerrada'}, status_code=403)

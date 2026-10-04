@@ -205,16 +205,95 @@ export function juntarCambios(a: Partial<Perfil>, b: Partial<Perfil>): Partial<P
  * perfil es más nuevo que el último que vio este teléfono (las dos horas son del reloj del servidor). Ahí
  * el hueco es lo que se borró desde otro teléfono o la web, y reenviarlo desde esta caché lo resucitaba.
  */
-export function huecosDelServidor(local: Perfil | null, servidor: Perfil | null, o: { servidorManda?: boolean } = {}): Partial<Perfil> {
+export function huecosDelServidor(local: Perfil | null, servidor: Perfil | null, o: { servidorManda?: boolean; supresiones?: Supresiones } = {}): Partial<Perfil> {
   const h: Partial<Perfil> = {};
   if (!local || !servidor || o.servidorManda) return h;
+  // …ni lo que el servidor MARCÓ como borrado (AUR11: `supresiones`, tenga o no un «visto» este teléfono).
+  const sup = o.supresiones || {};
   if (local.apodo && !servidor.apodo) h.apodo = local.apodo;
-  if (local.cumple && !servidor.cumple) h.cumple = local.cumple;
+  if (local.cumple && !servidor.cumple && !sup.cumple) h.cumple = local.cumple;
   if (local.completado && !servidor.completado) h.completado = true;
   const enc: Encuesta = {};
-  for (const k of CAMPOS_ENCUESTA) if (local.encuesta[k] && !servidor.encuesta[k]) enc[k] = local.encuesta[k];
+  for (const k of CAMPOS_ENCUESTA) if (local.encuesta[k] && !servidor.encuesta[k] && !sup[`encuesta.${k}`]) enc[k] = local.encuesta[k];
   if (Object.keys(enc).length) h.encuesta = enc;
   return h;
+}
+
+/* ── las marcas de supresión del servidor (AUR11) ─────────────────────────────────────────── */
+
+/**
+ * Cada respuesta borrada en la cuenta, con la hora de su marca (reloj del servidor): `{'encuesta.vive': …}`.
+ * El servidor rechaza lo que llega sin hora o con una hora de antes; aquí se suelta esa copia vieja.
+ */
+export type Supresiones = Record<string, number>;
+/** Cuándo se cambió aquí cada campo de lo pendiente (reloj del teléfono): va como `hechoEn` en el PUT. */
+export type HorasPendientes = Record<string, number>;
+
+const CAMPOS_CON_HORA = new Set<string>([...CAMPOS_ENCUESTA.map((k) => `encuesta.${k}`), 'cumple']);
+
+/** Lo que mande el servidor, sano (solo campos del perfil con hora). */
+export function supresionesDe(raw: unknown): Supresiones {
+  const r: Supresiones = {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return r;
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) if (CAMPOS_CON_HORA.has(k) && Number(v) > 0) r[k] = Number(v);
+  return r;
+}
+
+/** Los campos que tocan unos cambios: 'encuesta.vive', 'cumple'. */
+export function camposDe(c: Partial<Perfil>): string[] {
+  const r: string[] = [];
+  for (const k of Object.keys(c.encuesta || {})) if (CAMPOS_CON_HORA.has(`encuesta.${k}`)) r.push(`encuesta.${k}`);
+  if (c.cumple !== undefined) r.push('cumple');
+  return r;
+}
+
+/** El `hechoEn` del PUT: la hora de cada campo de ESTE lote (no de toda la encuesta, que viaja entera). */
+export function hechoEnDe(lote: Partial<Perfil>, horas: HorasPendientes): HorasPendientes {
+  const r: HorasPendientes = {};
+  for (const c of camposDe(lote)) if (horas[c] > 0) r[c] = horas[c];
+  return r;
+}
+
+/**
+ * La hora de un cambio hecho AQUÍ ahora. Si este teléfono ya vio la marca de ese campo, el cambio es posterior al
+ * borrado por definición: va después de la marca aunque el reloj del teléfono vaya atrasado respecto al del
+ * servidor (Codex, PR 140). Lo que se cambió antes de enterarse de la marca conserva su hora y sigue cayendo.
+ */
+export function horaDeCambio(campo: string, ahora: number, sup: Supresiones): number {
+  return Math.max(ahora, (sup[campo] || 0) + 1);
+}
+
+/** ¿Este campo de lo pendiente es una copia vieja? (lo cubre una marca y no se cambió aquí DESPUÉS de ella) */
+const viejo = (campo: string, sup: Supresiones, horas: HorasPendientes) => !!sup[campo] && !(horas[campo] > sup[campo]);
+
+/**
+ * Lo pendiente sin las copias viejas de lo que el servidor borró (o rechazó: `rechazados`). Lo que se cambió
+ * aquí después de la marca se queda. null si no queda nada.
+ */
+export function podarPendiente(p: Partial<Perfil> | null, sup: Supresiones, horas: HorasPendientes, rechazados: readonly string[] = []): Partial<Perfil> | null {
+  if (!p) return null;
+  const fuera = (campo: string) => rechazados.includes(campo) || viejo(campo, sup, horas);
+  const r: Partial<Perfil> = { ...p };
+  if (p.encuesta) {
+    const e: Encuesta = { ...p.encuesta };
+    // Vaciar (borrar) nunca es una copia vieja: solo se poda un valor.
+    for (const k of Object.keys(e) as (keyof Encuesta)[]) if (e[k] && fuera(`encuesta.${k}`)) delete e[k];
+    if (Object.keys(e).length) r.encuesta = e;
+    else delete r.encuesta;
+  }
+  if (p.cumple && fuera('cumple')) delete r.cumple;
+  return Object.keys(r).length ? r : null;
+}
+
+/** El perfil de este teléfono sin los valores que el servidor rechazó por una marca. */
+export function sinRechazados(p: Perfil, rechazados: readonly string[]): Perfil {
+  if (!rechazados.length) return p;
+  const r: Perfil = { ...p, encuesta: { ...p.encuesta } };
+  for (const c of rechazados) {
+    if (c === 'cumple') delete r.cumple;
+    else if (c.startsWith('encuesta.')) delete r.encuesta[c.slice('encuesta.'.length) as keyof Encuesta];
+  }
+  return r;
 }
 
 /**
@@ -222,7 +301,7 @@ export function huecosDelServidor(local: Perfil | null, servidor: Perfil | null,
  * cambiarse desde la web u otro teléfono), pero lo que aquí se sabe y allá falta se conserva
  * (`huecosDelServidor`), y los cambios pendientes de este teléfono van encima de todo.
  */
-export function fusionar(local: Perfil | null, servidor: Perfil | null, pendiente: Partial<Perfil> | null, o: { servidorManda?: boolean } = {}): Perfil | null {
+export function fusionar(local: Perfil | null, servidor: Perfil | null, pendiente: Partial<Perfil> | null, o: { servidorManda?: boolean; supresiones?: Supresiones } = {}): Perfil | null {
   if (!servidor) return local;
   if (!local) return servidor;
   let base = servidor;
@@ -241,6 +320,8 @@ const CLAVE = (correo: string) => `aura.perfil.v1:${correo.trim().toLowerCase()}
 const CLAVE_PENDIENTE = (correo: string) => `aura.perfil.pendiente.v1:${correo.trim().toLowerCase()}`;
 /** El `actualizado` (reloj del servidor) del último perfil que este teléfono recibió del servidor. */
 const CLAVE_SERVIDOR = (correo: string) => `aura.perfil.servidor.v1:${correo.trim().toLowerCase()}`;
+/** Cuándo se cambió aquí cada campo de lo pendiente (AUR11): una cola de antes de esto no la tiene. */
+const CLAVE_HORAS = (correo: string) => `aura.perfil.pendiente.en.v1:${correo.trim().toLowerCase()}`;
 
 let dueno = '';
 /**
@@ -258,6 +339,10 @@ let enviando: Promise<void> | null = null;
 let ultimoRecibo: { lote: Partial<Perfil>; durable: boolean } | null = null;
 /** El `actualizado` del último perfil recibido del servidor (0 = todavía ninguno en este teléfono). */
 let vistoServidor = 0;
+/** La hora (del teléfono) de cada campo pendiente: el servidor la compara con sus marcas de supresión. */
+let horas: HorasPendientes = {};
+/** Las marcas que dijo el servidor la última vez (AUR11): lo que cubren no se reenvía desde aquí. */
+let supresiones: Supresiones = {};
 /**
  * Dónde está lo último de esta persona:
  *   local     → solo en este teléfono (todavía no contestó el servidor);
@@ -343,13 +428,19 @@ async function guardarLocal() {
   const clave = CLAVE(dueno);
   const clavePendiente = CLAVE_PENDIENTE(dueno);
   const claveServidor = CLAVE_SERVIDOR(dueno);
+  const claveHoras = CLAVE_HORAS(dueno);
   const perfil = JSON.stringify(actual);
   const lote = pendiente ? JSON.stringify(pendiente) : null;
   const visto = vistoServidor;
+  // Solo las horas de lo que sigue pendiente (lo ya guardado no necesita hora).
+  horas = pendiente ? hechoEnDe(pendiente, horas) : {};
+  const conHora = horas;
   try {
     await AsyncStorage.setItem(clave, perfil);
     if (lote) await AsyncStorage.setItem(clavePendiente, lote);
     else await AsyncStorage.removeItem(clavePendiente);
+    if (Object.keys(conHora).length) await AsyncStorage.setItem(claveHoras, JSON.stringify(conHora));
+    else await AsyncStorage.removeItem(claveHoras);
     if (visto) await AsyncStorage.setItem(claveServidor, String(visto));
   } catch {
     /* sin almacenamiento, vive en memoria hasta que se pueda */
@@ -384,11 +475,14 @@ function enviarLote(): Promise<{ lote: Partial<Perfil>; durable: boolean } | nul
   if (!pendiente || !actual || !dueno) return Promise.resolve(null);
   const gen = generacion;
   const lote = pendiente;
-  const cuerpo = cuerpoPut(actual, lote);
+  // Cada campo de ESTE lote con la hora en que se cambió aquí (AUR11): sin hora, el servidor lo toma por una
+  // copia vieja si una marca de supresión lo cubre.
+  const hechoEn = hechoEnDe(lote, horas);
+  const cuerpo = { ...cuerpoPut(actual, lote), ...(Object.keys(hechoEn).length ? { hechoEn } : {}) };
   let res: { lote: Partial<Perfil>; durable: boolean } | null = null;
   const p = (async () => {
     try {
-      const r = await api<{ perfil?: unknown; durable?: boolean }>(RUTA_PERFIL, { method: 'PUT', body: JSON.stringify(cuerpo) }, 12_000);
+      const r = await api<{ perfil?: unknown; durable?: boolean; suprimidos?: unknown; supresiones?: unknown }>(RUTA_PERFIL, { method: 'PUT', body: JSON.stringify(cuerpo) }, 12_000);
       if (gen !== generacion) return;
       const durable = r?.durable === true;
       res = { lote, durable };
@@ -397,13 +491,18 @@ function enviarLote(): Promise<{ lote: Partial<Perfil>; durable: boolean } | nul
       if (durable) espera = 4_000;
       // Lo que se cambió mientras viajaba este lote sigue pendiente; el lote mismo, solo si no quedó durable.
       if (durable) pendiente = pendiente === lote ? null : pendiente;
+      // Lo que el servidor rechazó por una marca (una copia vieja) se suelta: ni pendiente ni aquí.
+      const rechazados = (Array.isArray(r?.suprimidos) ? r.suprimidos : []).filter((c): c is string => typeof c === 'string');
+      supresiones = { ...supresiones, ...supresionesDe(r?.supresiones) };
+      pendiente = podarPendiente(pendiente, supresiones, horas, rechazados);
+      if (rechazados.length && actual) actual = sinRechazados(actual, rechazados);
       const delServidor = normalizarPerfil(r?.perfil);
       const manda = servidorManda(delServidor, durable);
-      const huecos = huecosDelServidor(actual, delServidor, { servidorManda: manda });
+      const huecos = huecosDelServidor(actual, delServidor, { servidorManda: manda, supresiones });
       if (Object.keys(huecos).length) pendiente = juntarCambios(huecos, pendiente || {});
       if (delServidor && actual) {
         // El servidor devuelve el perfil entero: se toma su `actualizado` y lo que puso él (nombreGenesis).
-        const junto = fusionar(actual, delServidor, pendiente, { servidorManda: manda });
+        const junto = fusionar(actual, delServidor, pendiente, { servidorManda: manda, supresiones });
         if (junto) poner({ ...junto, actualizado: Math.max(junto.actualizado, actual.actualizado) });
       }
       anotarVisto(delServidor);
@@ -470,6 +569,8 @@ export async function cargarPerfil(
     espera = 4_000;
     ultimoRecibo = null;
     vistoServidor = 0;
+    horas = {};
+    supresiones = {};
     if (reintento) clearTimeout(reintento);
     reintento = null;
   }
@@ -479,22 +580,26 @@ export async function cargarPerfil(
   let local: Perfil | null = null;
   let pen: unknown = null;
   let visto = 0;
+  let horasGuardadas: unknown = null;
   try {
     local = normalizarPerfil(JSON.parse((await AsyncStorage.getItem(CLAVE(c))) || 'null'));
     pen = JSON.parse((await AsyncStorage.getItem(CLAVE_PENDIENTE(c))) || 'null');
     visto = Number(await AsyncStorage.getItem(CLAVE_SERVIDOR(c))) || 0;
+    horasGuardadas = JSON.parse((await AsyncStorage.getItem(CLAVE_HORAS(c))) || 'null');
   } catch {
     local = null;
   }
   // La lectura local llegó tarde (ya está otra persona, o esta misma en otra sesión): no se aplica.
   if (!vigente()) return (actual ?? perfilInicial({ ahora: Date.now() })) as Perfil;
   if (visto > vistoServidor) vistoServidor = visto;
+  // Las horas guardadas con la cola (una cola de antes de esto no las tiene: el servidor la tratará como vieja).
+  horas = { ...supresionesDe(horasGuardadas), ...horas };
   pendiente = pen && typeof pen === 'object' ? juntarCambios(pen as Partial<Perfil>, pendiente || {}) : pendiente;
   if (local) poner(local);
 
   const traer = (async () => {
     try {
-      const r = await api<{ perfil?: unknown; durable?: boolean; disponible?: boolean }>(RUTA_PERFIL, undefined, o.topeMs ?? 8_000);
+      const r = await api<{ perfil?: unknown; durable?: boolean; disponible?: boolean; supresiones?: unknown }>(RUTA_PERFIL, undefined, o.topeMs ?? 8_000);
       if (!vigente()) return;
       // `disponible: false`: el servidor no pudo leer lo guardado (S3 caído). Un perfil null ahí no
       // quiere decir «no tiene perfil»: no se toma como respuesta, se sigue con lo local.
@@ -503,12 +608,15 @@ export async function cargarPerfil(
       // no queda nada por mandar.
       if (estado !== 'durable') estado = r?.durable === true ? 'durable' : 'recibido';
       const servidor = normalizarPerfil(r?.perfil);
+      // Las marcas de supresión (AUR11): lo que cubren y aquí no se cambió después ya no se manda.
+      supresiones = supresionesDe(r?.supresiones);
+      pendiente = podarPendiente(pendiente, supresiones, horas);
       // Lo que el servidor perdió (o nunca recibió) se le vuelve a mandar; lo que se borró en otro
-      // teléfono (servidor durable y más nuevo que lo visto aquí) no.
+      // teléfono (servidor durable y más nuevo que lo visto aquí, o con su marca) no.
       const manda = servidorManda(servidor, r?.durable === true);
-      const huecos = huecosDelServidor(actual, servidor, { servidorManda: manda });
+      const huecos = huecosDelServidor(actual, servidor, { servidorManda: manda, supresiones });
       if (Object.keys(huecos).length) pendiente = juntarCambios(huecos, pendiente || {});
-      const junto = fusionar(actual, servidor, pendiente, { servidorManda: manda });
+      const junto = fusionar(actual, servidor, pendiente, { servidorManda: manda, supresiones });
       if (junto) poner(junto);
       anotarVisto(servidor);
     } catch {
@@ -564,6 +672,8 @@ function aplicarYEncolar(cambios: Partial<Perfil>): Perfil | null {
   }
   const nuevo = aplicarCambios(actual, cambios, Math.max(Date.now(), actual.actualizado + 1));
   pendiente = juntarCambios(pendiente || {}, cambios);
+  const ahora = Date.now();
+  for (const c of camposDe(cambios)) horas[c] = horaDeCambio(c, ahora, supresiones);
   poner(nuevo);
   return nuevo;
 }
@@ -613,5 +723,7 @@ export function soltarPerfil() {
   estado = 'local';
   ultimoRecibo = null;
   vistoServidor = 0;
+  horas = {};
+  supresiones = {};
   avisar();
 }

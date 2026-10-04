@@ -24,6 +24,7 @@ import { correoDeCodigo } from './cuentas';
 import {
   HORAS_CODIGO,
   NIVELES,
+  codigosActivos,
   crearCodigo,
   entrarConCodigo,
   listarCodigos,
@@ -281,9 +282,12 @@ export function montarRutasCuentas(app: Express, d: DepsCuentas) {
     if (!conCodigos) return res.status(404).json({ ok: false, error: 'Los códigos temporales son de Dr Electrum.' });
     const por = esAprobador(req);
     if (!por) return res.status(403).json({ ok: false, error: 'Los códigos los crea solo el aprobador de cuentas.', code: 'no_aprobador' });
+    if (!codigosActivos()) return res.status(403).json({ ok: false, error: 'Los accesos de prueba están apagados (ELECTRUM_CODIGOS=0).', code: 'codigos_apagados' });
     const horas = Number(req.body?.horas);
     if (!HORAS_CODIGO.includes(horas as any)) return res.status(400).json({ ok: false, error: 'Elegí 1, 5 o 24 horas.' });
-    const nivel: Nivel = req.body?.nivel === 'escribe' ? 'escribe' : 'lee';
+    // Un código es para PROBAR, no para trabajar (auditoría maestra 3-oct, AUR05): siempre consulta. Quien
+    // necesite subir o editar pide su cuenta del padrón, que sí acredita a la persona.
+    const nivel: Nivel = 'lee';
     const para = String(req.body?.para || '').replace(/\s+/g, ' ').trim().slice(0, 80);
     // El nombre es con el que Dr Electrum saluda a quien entra con el código.
     if (!para) return res.status(400).json({ ok: false, error: 'Poné el nombre de la persona: Dr Electrum la saluda con él al entrar.' });
@@ -303,6 +307,7 @@ export function montarRutasCuentas(app: Express, d: DepsCuentas) {
   app.post('/api/ultron/entrar-codigo', limitar(10, 15 * 60_000, 'entrar-codigo'), async (req, res) => {
     if (!cuentasDisponibles()) return sinBase(res);
     if (!conCodigos) return res.status(404).json({ ok: false, error: 'Los códigos temporales son de Dr Electrum.' });
+    if (!codigosActivos()) return res.status(403).json({ ok: false, error: 'Los accesos de prueba están apagados. Dr Electrum es solo para la junta.', code: 'codigos_apagados' });
     const ip = String(req.ip || req.socket.remoteAddress || 'x');
     // El freno por cuenta se usa con la IP como «cuenta»: probar códigos al azar se frena igual.
     const espera = esperaEntrada(`codigo:${ip}`, ip);

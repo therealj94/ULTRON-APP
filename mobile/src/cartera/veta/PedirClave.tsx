@@ -16,6 +16,7 @@ import { tr, idiomaActual } from '../../i18n';
 import { MEDIDA, useTema } from '../../nucleo/tema';
 import { Boton, Campo, Hoja, Icono, Texto, vibrar } from '../../ui';
 import { activarDesbloqueo, capacidadBiometrica, desbloqueoActivo, desbloquearClave, nombreBiometria, type TipoBiometria } from './desbloqueo';
+import { vinculoVeta } from './sesion';
 
 type Props = {
   visible: boolean;
@@ -43,6 +44,8 @@ export function PedirClave({ visible, titulo, subtitulo, accion, onCancelar, onA
     async (c: string, deBio = false) => {
       if (!c || enVuelo.current) return;
       enVuelo.current = true;
+      // La sesión que autoriza: la huella solo se guarda si sigue siendo ella al terminar (veta/desbloqueo.ts).
+      const v = vinculoVeta();
       setYendo(true);
       setError('');
       try {
@@ -57,7 +60,7 @@ export function PedirClave({ visible, titulo, subtitulo, accion, onCancelar, onA
           return;
         }
         vibrar('exito');
-        if (!deBio && quiereActivar && bio.disponible && !activo) await activarDesbloqueo(c);
+        if (!deBio && quiereActivar && bio.disponible && !activo) await activarDesbloqueo(c, v);
       } catch (e: any) {
         setError(e?.message || tr('No se pudo. Intenta otra vez.', 'It didn’t work. Try again.'));
       } finally {
@@ -72,7 +75,7 @@ export function PedirClave({ visible, titulo, subtitulo, accion, onCancelar, onA
   const usarBio = useCallback(async () => {
     setProbandoBio(true);
     setError('');
-    const c = await desbloquearClave(titulo);
+    const c = await desbloquearClave(vinculoVeta(), titulo);
     setProbandoBio(false);
     if (!c) {
       setManual(true);
@@ -99,7 +102,7 @@ export function PedirClave({ visible, titulo, subtitulo, accion, onCancelar, onA
       setActivo(listo);
       if (listo) {
         setProbandoBio(true);
-        const c = await desbloquearClave(titulo);
+        const c = await desbloquearClave(vinculoVeta(), titulo);
         if (!vivo) return;
         setProbandoBio(false);
         if (c) await enviar(c, true);

@@ -10,9 +10,14 @@
  *   · Se guarda solo DESPUÉS de que el servidor la aceptó (una equivocada dejaría un desbloqueo inútil).
  *   · Si la biometría cambia (otra huella, Face ID reconfigurado), el sistema invalida la llave: la lectura
  *     falla y se vuelve a pedir la contraseña escrita. Es lo correcto: una biometría nueva puede ser de otro.
+ *   · Es de su dueño en AURA (auditoría AUR01): la llave lleva su seudónimo, y guardar o sacar la clave
+ *     exige el vínculo de la sesión que lo pidió (veta/sesion.ts). Si en medio sale o entra otra persona,
+ *     no se guarda ni se entrega. La de antes, sin dueño, se descarta (sesion.ts descartarSinDueno).
  */
 import * as SecureStore from 'expo-secure-store';
 import * as LocalAuthentication from 'expo-local-authentication';
+import { generacionCuenta, seudonimoActual, sigueVigente } from '../../lib/cuenta';
+import { descartarSinDueno, llaveDe, vinculoVigente, type VinculoVeta } from './sesion';
 
 const CLAVE = 'aura.veta.clave-biometrica';
 /** Marca sin protección: saber si está activo sin disparar el diálogo del sistema. */
@@ -35,56 +40,80 @@ export async function capacidadBiometrica(): Promise<{ disponible: boolean; tipo
   }
 }
 
+/** ¿Quien está dentro de AURA tiene la huella activa para su Veta? (sin nadie dentro, no) */
 export async function desbloqueoActivo(): Promise<boolean> {
+  const dueno = seudonimoActual();
+  if (!dueno) return false;
+  const gen = generacionCuenta();
+  await descartarSinDueno();
   try {
-    return (await SecureStore.getItemAsync(MARCA)) === '1';
+    return (await SecureStore.getItemAsync(llaveDe(MARCA, dueno))) === '1' && sigueVigente(gen);
   } catch {
     return false;
   }
 }
 
-export async function activarDesbloqueo(clave: string): Promise<boolean> {
-  if (!clave) return false;
+async function borrarDe(dueno: string) {
   try {
-    await SecureStore.setItemAsync(CLAVE, String(clave), {
+    await SecureStore.deleteItemAsync(llaveDe(CLAVE, dueno));
+  } catch {
+    /* ya no estaba */
+  }
+  try {
+    await SecureStore.deleteItemAsync(llaveDe(MARCA, dueno));
+  } catch {
+    /* ya no estaba */
+  }
+}
+
+/**
+ * Guarda la contraseña detrás de la huella, en la llave del dueño de `v` (el vínculo que se capturó al
+ * empezar la operación que la validó). Si `v` ya no es el de ahora —o deja de serlo mientras el sistema la
+ * guarda— no queda nada: la próxima vez se pide escrita.
+ */
+export async function activarDesbloqueo(clave: string, v: VinculoVeta): Promise<boolean> {
+  if (!clave || !vinculoVigente(v)) return false;
+  try {
+    await SecureStore.setItemAsync(llaveDe(CLAVE, v.dueno), String(clave), {
       requireAuthentication: true,
       keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
       authenticationPrompt: 'Guardar tu contraseña de Veta Wallet',
     });
-    await SecureStore.setItemAsync(MARCA, '1');
-    return true;
+    await SecureStore.setItemAsync(llaveDe(MARCA, v.dueno), '1');
   } catch {
     // Teléfono sin bloqueo de pantalla seguro, o el sistema rechazó la llave.
-    await desactivarDesbloqueo();
+    await borrarDe(v.dueno);
     return false;
   }
+  if (!vinculoVigente(v)) {
+    await borrarDe(v.dueno);
+    return false;
+  }
+  return true;
 }
 
-/** La contraseña, tras la huella o la cara. null si se canceló, falló o la llave ya no sirve. */
-export async function desbloquearClave(motivo = 'Confirma que eres tú'): Promise<string | null> {
+/**
+ * La contraseña, tras la huella o la cara, para la sesión `v`. null si se canceló, falló, la llave ya no
+ * sirve, o mientras el sistema la liberaba salió o entró otra persona.
+ */
+export async function desbloquearClave(v: VinculoVeta, motivo = 'Confirma que eres tú'): Promise<string | null> {
+  if (!vinculoVigente(v)) return null;
   try {
-    const v = await SecureStore.getItemAsync(CLAVE, {
+    const c = await SecureStore.getItemAsync(llaveDe(CLAVE, v.dueno), {
       requireAuthentication: true,
       keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
       authenticationPrompt: motivo,
     });
-    return v || null;
+    return c && vinculoVigente(v) ? c : null;
   } catch {
     return null;
   }
 }
 
+/** Apaga la huella de quien está dentro de AURA (cerrar sesión de Veta). */
 export async function desactivarDesbloqueo(): Promise<void> {
-  try {
-    await SecureStore.deleteItemAsync(CLAVE);
-  } catch {
-    /* ya no estaba */
-  }
-  try {
-    await SecureStore.deleteItemAsync(MARCA);
-  } catch {
-    /* ya no estaba */
-  }
+  const dueno = seudonimoActual();
+  if (dueno) await borrarDe(dueno);
 }
 
 export const nombreBiometria = (t: TipoBiometria, es = true) => (t === 'face' ? 'Face ID' : t === 'iris' ? (es ? 'el iris' : 'iris') : es ? 'la huella' : 'fingerprint');

@@ -15,7 +15,7 @@ import { loadCreds, loadMesaToken, loadSession, saveMesaToken } from './storage'
 import { quitarExpresiones } from './expresiones';
 import { cabecerasAparato } from './aparato';
 import { generacionCuenta, sigueVigente } from './cuenta';
-import { guardarTokenDeEntrada, vencida, type Intento } from './intentoEntrada';
+import { guardarTokenDeEntrada, intentoVigente, vencida, type Intento } from './intentoEntrada';
 import { avatarActual } from '../avatares/actual';
 import { idiomaActual } from '../i18n';
 import { etiquetasDeVista, vistaDeEtiquetas, vistaDeRespuesta, type FocoVision, type VistaCamara } from './vistaCamara';
@@ -227,14 +227,24 @@ export async function healthCheck() {
 /**
  * El token de una entrada se guarda solo si su intento sigue siendo el último (lib/intentoEntrada.ts):
  * un login de A que contesta después del de B, o después de «atrás», no lo pisa y falla con `vencida`.
- * Sin intento, como antes.
+ * El intento es OBLIGATORIO (auditoría AUR15): antes era opcional y, sin él, el token se guardaba igual.
  */
-async function guardarTokenDe(token: string | undefined, intento?: Intento | null) {
+async function guardarTokenDe(token: string | undefined, intento: Intento) {
   if (!token) return;
   if (!(await guardarTokenDeEntrada(token, intento))) throw vencida();
 }
 
-export async function loginBiometric(user: SessionUser, timeoutMs = 12_000, intento?: Intento | null) {
+/**
+ * Antes de mandar la clave (o la huella): sin un intento vigente —ninguno, uno que no salió de
+ * `empezarIntento`, o uno que ya venció— no sale nada; su respuesta no podría guardarse de todos modos.
+ * Lo mira en tiempo de ejecución también: una llamada desde JS sin tipos, o con `as any`, no lo esquiva.
+ */
+function exigirIntento(intento: Intento) {
+  if (!intentoVigente(intento)) throw vencida();
+}
+
+export async function loginBiometric(user: SessionUser, timeoutMs: number, intento: Intento) {
+  exigirIntento(intento);
   const data = await api<{ user?: { nombre?: string; rol?: string; correo?: string }; token?: string }>('/api/ultron/biometric-login', {
     method: 'POST',
     body: JSON.stringify({ biometricType: 'desk_access', userName: user.name, role: user.role, correo: user.correo }),
@@ -243,7 +253,8 @@ export async function loginBiometric(user: SessionUser, timeoutMs = 12_000, inte
   return data;
 }
 
-export async function loginClave(correo: string, clave: string, intento?: Intento | null) {
+export async function loginClave(correo: string, clave: string, intento: Intento) {
+  exigirIntento(intento);
   const data = await api<{ miembro?: { nombre?: string; rol?: string; correo?: string }; token?: string }>('/api/ultron/entrar', {
     method: 'POST',
     body: JSON.stringify({ correo: String(correo).trim().toLowerCase(), clave }),
@@ -358,6 +369,8 @@ export type ChatResult = {
   cierre?: 'done' | 'error' | 'eof' | 'timeout';
   /** El idTurno con que se pidió: con él, un reintento por JSON recupera ESE turno sin correr otro. */
   idTurno?: string;
+  /** Las tareas durables que el turno creó o cambió (AUR08, lib/trabajos.ts `refsDeTurno`). Un servidor viejo no las manda. */
+  tareas?: unknown[];
 };
 
 type TurnoOpts = {
@@ -431,7 +444,7 @@ export async function turno(opts: TurnoOpts): Promise<ChatResult> {
     const pelado = pelarEtiqueta(String(data.reply || ''));
     const emocion = data.emocion ? normalizarEmocion(data.emocion) : pelado.emocion || 'neutral';
     const voz = data.voz ? pelarEtiqueta(String(data.voz)).texto.trim() : undefined;
-    return { reply: quitarExpresiones(pelado.texto).trim(), voz, emocion, mode: data.mode, ms: data.ms, via: data.via, error: data.error, acciones: data.acciones, ...(data.parcial === true ? { parcial: true } : {}) };
+    return { reply: quitarExpresiones(pelado.texto).trim(), voz, emocion, mode: data.mode, ms: data.ms, via: data.via, error: data.error, acciones: data.acciones, ...(data.parcial === true ? { parcial: true } : {}), ...(Array.isArray(data.tareas) ? { tareas: data.tareas } : {}) };
   } catch (e: any) {
     return { reply: '', emocion: 'neutral', error: e?.message || 'Sin conexión al cerebro' };
   }
@@ -534,6 +547,7 @@ export function turnoStream(opts: TurnoOpts, h: StreamHandlers): { promise: Prom
           via: data.via,
           acciones: data.acciones,
           ...(data.parcial === true ? { parcial: true } : {}),
+          ...(Array.isArray(data.tareas) ? { tareas: data.tareas } : {}),
           cierre: 'done',
         };
       } else if (ev === 'error') done = { reply: quitarExpresiones(full), voz: full, emocion: emocion || 'neutral', error: String(data.error || 'error'), ...(full.trim() ? { parcial: true } : {}), cierre: 'error' };

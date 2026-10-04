@@ -20,6 +20,8 @@ import { tareaDe, _olvidarTareas } from '../lib/tarea-en-curso';
 const DIR_DATOS = fs.mkdtempSync(path.join(os.tmpdir(), 'whatsapp-'));
 process.env.ULTRON_TAREA_CURSO_DIR = path.join(DIR_DATOS, 'tarea-en-curso');
 process.env.ULTRON_ABIERTOS_DIR = path.join(DIR_DATOS, 'abiertos');
+// El registro durable de los envíos (lib/durable.ts sin S3), también en el temporal.
+process.env.ULTRON_DURABLE_DIR = path.join(DIR_DATOS, 'durable');
 
 const CLAVE = 'clave-del-puente-de-prueba-123';
 const ahora = Date.now();
@@ -71,7 +73,8 @@ async function puenteFalso(vinculado = true, otros: { chats?: any[]; mensajes?: 
       if (u.pathname === '/buscar') return json(200, { mensajes: mensajes.filter((m) => m.texto.toLowerCase().includes((u.searchParams.get('q') || '').toLowerCase())) });
       if (u.pathname === '/enviar') {
         const c = JSON.parse(datos);
-        enviados.push(c);
+        // El id estable de la operación (AUR13) se prueba aparte (más abajo): aquí, a quién y qué.
+        enviados.push({ chat: c.chat, texto: c.texto });
         return json(200, { mensaje: { id: 'E1', chat: c.chat, mio: true, texto: c.texto, tipo: 'texto', hora: Date.now() } });
       }
       if (u.pathname === '/leido') return json(200, { ok: true });
@@ -269,7 +272,10 @@ test('el cerebro: revisa, lee por nombre, deja borrador y solo con el «sí» se
     assert.equal(p.enviados.length, 0, 'el borrador no sale solo');
     // Un «sí» en otra conversación no lo manda; un «sí, pero…» tampoco (y ese borrador ya no vale: va uno nuevo).
     assert.equal(await resolverBorradorWhatsapp(JOSE, 'web', 'sí'), null);
-    assert.match((await resolverBorradorWhatsapp(JOSE, 'tel', 'sí, pero cámbiale la hora'))!, /ya no vale y no se mandó/);
+    assert.match((await resolverBorradorWhatsapp(JOSE, 'tel', 'sí, pero cámbiale la hora'))!, /NO se mandó\. Queda en su panel de tareas/);
+    assert.equal(borradorWhatsappDe(JOSE, 'tel')?.soloPanel, true, 'espera al panel (AUR08)…');
+    assert.equal(await resolverBorradorWhatsapp(JOSE, 'tel', 'sí'), null, '…pero el chat ya no lo manda');
+    assert.match((await resolverBorradorWhatsapp(JOSE, 'tel', 'no', undefined, { desdePanel: true }))!, /no se mandó/, '«Rechazar» del panel lo descarta');
     assert.equal(borradorWhatsappDe(JOSE, 'tel'), null);
     assert.equal(p.enviados.length, 0);
     await correrWhatsapp(JOSE, 'responder 1 | Sí llego a las tres', 'tel');
@@ -402,4 +408,219 @@ test('leer bien: quién dijo qué y a qué hora, lo nuevo primero; «Ana» con d
     assert.equal(p.enviados.length, 0, 'nada sale sin el «sí»');
     await resolverBorradorWhatsapp(JOSE, 'tel', 'no');
   }).finally(() => p.cerrar());
+});
+
+/* ------------------------------------------------------------------ AUR13: el envío tras el «sí», una sola vez y honesto */
+
+/**
+ * Un puente que habla como servicios/whatsapp-puente con lo de AUR13: `/enviar` recibe el `id` estable de la
+ * operación (el puente lo usa como id del mensaje de WhatsApp y no lo manda dos veces) y `/mensaje?id=` lo busca.
+ * `modo` decide qué pasa al enviar: `ok`, `colgar` (WhatsApp lo mandó pero la respuesta no llega a tiempo),
+ * `colgar-perdido` (no se sabe: no quedó en el puente), `rechazo` (400).
+ */
+async function puenteEnvio() {
+  const enviados: Array<{ chat: string; texto: string; id?: string }> = [];
+  const guardados = new Map<string, any>();
+  const estado = { modo: 'ok' as 'ok' | 'colgar' | 'colgar-perdido' | 'rechazo', numero: '+50499998888' };
+  const chats = [{ jid: '50499990000@s.whatsapp.net', nombre: 'Beto', grupo: false, noLeidos: 1, hora: ahora, ultimo: 'hola', ultimoMio: false, numero: '+50499990000' }];
+  const contactos = [{ jid: '50433334444@s.whatsapp.net', nombre: 'Lucía Reyes', numero: '+50433334444' }];
+  const colgados: http.ServerResponse[] = [];
+  const srv = http.createServer((req, res) => {
+    let datos = '';
+    req.on('data', (c) => (datos += c));
+    req.on('end', () => {
+      const json = (code: number, j: unknown) => (res.writeHead(code, { 'content-type': 'application/json' }), res.end(JSON.stringify(j)));
+      if (req.headers.authorization !== `Bearer ${CLAVE}`) return json(401, { error: 'clave' });
+      const u = new URL(req.url!, 'http://x');
+      if (u.pathname === '/estado') return json(200, { vinculado: true, conectado: true, numero: estado.numero, vinculando: false });
+      if (u.pathname === '/chats') return json(200, { chats: chats.filter((c) => sinT(c.nombre).includes(sinT(u.searchParams.get('buscar') || ''))) });
+      if (u.pathname === '/contactos') return json(200, { contactos: contactos.filter((k) => sinT(k.nombre).includes(sinT(u.searchParams.get('buscar') || ''))) });
+      if (u.pathname === '/mensajes') return json(200, { chat: chats[0], mensajes: [...guardados.values()].filter((m) => m.chat === u.searchParams.get('chat')) });
+      if (u.pathname === '/mensaje') {
+        const m = guardados.get(String(u.searchParams.get('id')));
+        return m ? json(200, { mensaje: m }) : json(404, { error: 'no está' });
+      }
+      if (u.pathname === '/enviar') {
+        const c = JSON.parse(datos);
+        if (estado.modo === 'rechazo') return json(400, { error: 'chat inválido' });
+        // Como el puente nuevo: el mismo id no sale dos veces.
+        if (c.id && guardados.has(c.id)) return json(200, { mensaje: guardados.get(c.id), repetido: true });
+        enviados.push(c);
+        const m = { id: c.id || `E${enviados.length}`, chat: c.chat, de: 'yo', mio: true, texto: c.texto, tipo: 'texto', hora: Date.now() };
+        if (estado.modo !== 'colgar-perdido') guardados.set(m.id, m);
+        if (estado.modo === 'colgar' || estado.modo === 'colgar-perdido') return void colgados.push(res);
+        return json(200, { mensaje: m });
+      }
+      return json(404, { error: 'no' });
+    });
+  });
+  await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+  return {
+    url: `http://127.0.0.1:${(srv.address() as AddressInfo).port}`,
+    enviados,
+    guardados,
+    estado,
+    cerrar: () => {
+      for (const r of colgados) r.destroy();
+      return new Promise<void>((r) => srv.close(() => r()));
+    },
+  };
+}
+
+const D13 = await import('../lib/durable');
+const E13 = await import('../lib/envios');
+const W13 = await import('../server/whatsapp');
+const C13 = await import('../server/correo');
+
+async function conEnvioWA(f: (p: Awaited<ReturnType<typeof puenteEnvio>>) => Promise<void>) {
+  const p = await puenteEnvio();
+  D13._usarAlmacenDurable(D13.almacenEnMemoria());
+  W13._topesWhatsappDePrueba({ enviarMs: 150 });
+  try {
+    await conPuente(p.url, JOSE, () => f(p));
+  } finally {
+    W13._topesWhatsappDePrueba(null);
+    D13._usarAlmacenDurable(null);
+    await p.cerrar();
+  }
+}
+
+const retenerWA = () => {
+  const r: { hacer: (() => void) | null; descartar: (() => void) | null } = { hacer: null, descartar: null };
+  return { r, opciones: { hacer: (f: () => void) => (r.hacer = f), alDescartar: (f: () => void) => (r.descartar = f), recordar: () => {} } };
+};
+
+test('AUR13 WhatsApp: el «sí» manda una sola vez con el id estable de la operación; «aceptado por WhatsApp», nunca «entregado» sin constancia; sin correo conectado igual funciona', async () => {
+  await conEnvioWA(async (p) => {
+    await correrWhatsapp(JOSE, 'responder Beto | Llego a las tres', 'tel');
+    const b = borradorWhatsappDe(JOSE, 'tel')!;
+    const op = E13.operacionDeBorrador('whatsapp', b.intento);
+    // El correo no tiene nada pendiente (ni cuentas): no estorba al «sí» de WhatsApp.
+    assert.equal(await C13.resolverBorrador(JOSE, 'tel', 'sí'), null);
+    const r = (await W13.resolverBorradorWhatsappConEstado(JOSE, 'tel', 'sí'))!;
+    assert.equal(r.estado, 'succeeded');
+    assert.match(r.texto, /^WHATSAPP ENVIADO a Beto/);
+    assert.match(r.texto, /aceptado por WhatsApp/);
+    assert.match(r.texto, /no consta todavía que le llegó/);
+    assert.doesNotMatch(r.texto, /\bentregado\b/i);
+    assert.equal(r.recibo?.entrega, 'aceptado');
+    assert.equal(r.recibo?.operacion, op);
+    assert.equal(p.enviados.length, 1);
+    assert.equal(p.enviados[0].id, E13.idMensajeWADeOperacion(op));
+    assert.match(p.enviados[0].id!, /^3EB0[0-9A-F]{18}$/);
+    assert.equal(r.recibo?.referencia, p.enviados[0].id, 'el recibo lleva el id que devolvió el puente');
+    const l = await D13.leerOperacion(JOSE, op);
+    assert.deepEqual(l.ok && l.valor?.historia.map((h) => h.estado), ['requested', 'dispatched', 'succeeded']);
+    // El mismo borrador aprobado otra vez (reintento, otra réplica, reinicio): no sale.
+    const otra = await W13.enviarBorradorWhatsappAprobado(JOSE, b);
+    assert.equal(otra.recibo?.repetido, true);
+    assert.equal(p.enviados.length, 1);
+    // Dos réplicas a la vez: uno.
+    await correrWhatsapp(JOSE, 'responder Beto | Otro mensaje', 'tel');
+    const b2 = borradorWhatsappDe(JOSE, 'tel')!;
+    await Promise.all([W13.enviarBorradorWhatsappAprobado(JOSE, b2), W13.enviarBorradorWhatsappAprobado(JOSE, b2)]);
+    assert.equal(p.enviados.length, 2);
+    // Cobertura honesta al revisar.
+    assert.match(await correrWhatsapp(JOSE, 'revisar', 'tel'), /COBERTURA: miré los 1 chats más recientes que da el puente/);
+  });
+});
+
+test('AUR13 WhatsApp: un timeout queda incierto y se reconcilia por el id del puente; si no consta, «No he podido confirmar el envío» y no se reenvía a ciegas', async () => {
+  await conEnvioWA(async (p) => {
+    // WhatsApp lo mandó, pero la respuesta del puente no llegó: se busca por el id y se confirma.
+    p.estado.modo = 'colgar';
+    await correrWhatsapp(JOSE, 'responder Beto | Ya pagué', 'tel');
+    const r = (await W13.resolverBorradorWhatsappConEstado(JOSE, 'tel', 'sí'))!;
+    assert.equal(r.estado, 'succeeded', r.texto);
+    assert.match(r.texto, /WHATSAPP ENVIADO a Beto/);
+    assert.match(r.texto, /comprob/);
+    assert.equal(p.enviados.length, 1);
+    // No quedó constancia: incierto, sin reenviar.
+    p.estado.modo = 'colgar-perdido';
+    await correrWhatsapp(JOSE, 'responder Beto | Voy saliendo', 'tel');
+    const op = E13.operacionDeBorrador('whatsapp', borradorWhatsappDe(JOSE, 'tel')!.intento);
+    const r2 = (await W13.resolverBorradorWhatsappConEstado(JOSE, 'tel', 'sí'))!;
+    assert.equal(r2.estado, 'unknown');
+    assert.equal(r2.recibo?.entrega, 'incierto');
+    assert.match(r2.texto, /No he podido confirmar el envío/);
+    assert.doesNotMatch(r2.texto, /WHATSAPP ENVIADO|NO se pudo mandar/);
+    assert.equal(p.enviados.length, 2);
+    const l = await D13.leerOperacion(JOSE, op);
+    assert.equal(l.ok && l.valor?.estado, 'unknown');
+    // Otro borrador igual: se reconcilia primero; como sigue sin constar, se pide otra decisión (no sale solo).
+    p.estado.modo = 'ok';
+    await correrWhatsapp(JOSE, 'responder Beto | Voy saliendo', 'tel');
+    const r3 = (await W13.resolverBorradorWhatsappConEstado(JOSE, 'tel', 'sí'))!;
+    assert.equal(p.enviados.length, 2, 'no se reenvía a ciegas');
+    assert.match(r3.texto, /sin confirmar/);
+    assert.ok(borradorWhatsappDe(JOSE, 'tel'));
+    // El puente lo rechaza (400): fallido con certeza.
+    await W13.resolverBorradorWhatsappConEstado(JOSE, 'tel', 'no');
+    p.estado.modo = 'rechazo';
+    await correrWhatsapp(JOSE, 'responder Beto | Otra cosa', 'tel');
+    const r4 = (await W13.resolverBorradorWhatsappConEstado(JOSE, 'tel', 'sí'))!;
+    assert.equal(r4.estado, 'failed');
+    assert.equal(r4.recibo?.entrega, 'fallido');
+    assert.match(r4.texto, /NO se pudo mandar/);
+  });
+});
+
+test('AUR13 WhatsApp (Ana→Bruno): el «sí» autoriza ESE chat, ESE texto y ESA cuenta; si cambia antes de ejecutar, no sale y queda otra decisión', async () => {
+  await conEnvioWA(async (p) => {
+    await correrWhatsapp(JOSE, 'responder Beto | El informe va hoy', 'tel');
+    const v = retenerWA();
+    await W13.resolverBorradorWhatsappConEstado(JOSE, 'tel', 'sí', v.opciones as any);
+    await correrWhatsapp(JOSE, 'responder Lucía | El informe va hoy', 'tel');
+    v.r.hacer!();
+    await new Promise((r) => setTimeout(r, 80));
+    assert.equal(p.enviados.length, 0, 'ni a Beto ni a Lucía');
+    assert.match(C13.avisosDeEnvio(JOSE, 'tel').join(' '), /NO se mandó.*cambió/);
+    assert.equal(borradorWhatsappDe(JOSE, 'tel')?.nombre, 'Lucía Reyes', 'la nueva decisión espera');
+    await W13.resolverBorradorWhatsappConEstado(JOSE, 'tel', 'no');
+    // Texto cambiado tras el «sí».
+    await correrWhatsapp(JOSE, 'responder Beto | Te pago 100', 'tel');
+    const b = borradorWhatsappDe(JOSE, 'tel')!;
+    const v2 = retenerWA();
+    await W13.resolverBorradorWhatsappConEstado(JOSE, 'tel', 'sí', v2.opciones as any);
+    b.texto = 'Te pago 10000';
+    v2.r.hacer!();
+    await new Promise((r) => setTimeout(r, 80));
+    assert.equal(p.enviados.length, 0);
+    assert.match(C13.avisosDeEnvio(JOSE, 'tel').join(' '), /NO se mandó.*no es lo que aprobó/);
+    await W13.resolverBorradorWhatsappConEstado(JOSE, 'tel', 'no');
+    // La cuenta de WhatsApp vinculada cambió entre el borrador y el «sí»: no sale por la otra.
+    await correrWhatsapp(JOSE, 'responder Beto | Hola', 'tel');
+    p.estado.numero = '+50411110000';
+    const r = (await W13.resolverBorradorWhatsappConEstado(JOSE, 'tel', 'sí'))!;
+    assert.equal(r.estado, 'failed');
+    assert.match(r.texto, /cuenta de WhatsApp.*cambió/);
+    assert.equal(p.enviados.length, 0);
+  });
+});
+
+test('AUR13 la app: /api/whatsapp/enviar con idEnvio sale una vez; el mismo id con otro texto no se canjea; un timeout es «incierto»', async () => {
+  await conEnvioWA(async (p) => {
+    const { como, cerrar } = await appDePrueba();
+    try {
+      const cuerpo = { chat: '50499990000@s.whatsapp.net', texto: 'Sí llego', idEnvio: 'toque-abcdef123456' };
+      const a = await como(JOSE, '/api/whatsapp/enviar', { method: 'POST', body: JSON.stringify(cuerpo) });
+      assert.equal(a.status, 200);
+      const ja = await a.json();
+      assert.equal(ja.entrega, 'aceptado');
+      const b = await como(JOSE, '/api/whatsapp/enviar', { method: 'POST', body: JSON.stringify(cuerpo) });
+      assert.equal((await b.json()).repetido, true);
+      assert.equal(p.enviados.length, 1);
+      const otro = await como(JOSE, '/api/whatsapp/enviar', { method: 'POST', body: JSON.stringify({ ...cuerpo, texto: 'No llego' }) });
+      assert.equal(otro.status, 409);
+      assert.equal(p.enviados.length, 1);
+      p.estado.modo = 'colgar-perdido';
+      const t = await como(JOSE, '/api/whatsapp/enviar', { method: 'POST', body: JSON.stringify({ ...cuerpo, idEnvio: 'toque-zzzzzz999999', texto: 'Otro' }) });
+      assert.equal(t.status, 202);
+      const jt = await t.json();
+      assert.equal(jt.estado, 'incierto');
+      assert.match(jt.error, /No he podido confirmar el envío/);
+    } finally {
+      await cerrar();
+    }
+  });
 });

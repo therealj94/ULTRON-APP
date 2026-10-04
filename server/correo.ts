@@ -25,7 +25,7 @@
  */
 import type express from 'express';
 import crypto from 'node:crypto';
-import { enTrozos, leer, limpiarCuerpo, listar, mandar, probarCuenta, sinCitas, type Mensaje, type Resumen } from '../lib/correo/buzon';
+import { buscarEnviado, enTrozos, leer, limpiarCuerpo, listar, mandar, probarCuenta, sinCitas, type Cobertura, type Mensaje, type Resumen } from '../lib/correo/buzon';
 import { agregarCuenta, cuentasDe, CuentasNoDisponibles, leerCuentasSeguro, publica, quitarCuenta, type CuentaCorreo } from '../lib/correo/cuentas';
 import { consultarCodigo, microsoftConfigurado, pedirCodigo } from '../lib/correo/microsoft';
 import { correoValido, detectarProveedor, type Proveedor } from '../lib/correo/proveedores';
@@ -33,11 +33,13 @@ import { plegar } from '../lib/cerebro-comun';
 import { iniciarTarea, marcarPaso, siguiente, tareaDe } from '../lib/tarea-en-curso';
 import type { RetencionAcciones } from './voz-agente';
 import { explicarFallo } from '../lib/correo/buzon';
+import { exito, fallo, incierto, type ResultadoHerramienta } from '../lib/recibo-herramienta';
+import { enviarUnaVez, huellaAprobacion, messageIdDeOperacion, operacionDeBorrador, type ResultadoEnvio, type SalidaEnvio } from '../lib/envios';
 
 /* ------------------------------------------------------------------ el buzón (las pruebas ponen uno falso) */
 
-type Buzon = { listar: typeof listar; leer: typeof leer; mandar: typeof mandar };
-const BUZON_REAL: Buzon = { listar, leer, mandar };
+type Buzon = { listar: typeof listar; leer: typeof leer; mandar: typeof mandar; buscarEnviado: typeof buscarEnviado };
+const BUZON_REAL: Buzon = { listar, leer, mandar, buscarEnviado };
 let buzon: Buzon = BUZON_REAL;
 /** Solo pruebas: un buzón de mentira (sin IMAP ni SMTP). `null` vuelve al de verdad. */
 export function _buzonDePrueba(b: Partial<Buzon> | null) {
@@ -65,7 +67,18 @@ type Borrador = {
  * Lo que se le agrega al guardarlo (auditoría 3-oct, COM01): de quién es, hasta cuándo vale y cuál intento es.
  * El «sí» manda ESE borrador, de ESA persona, desde ESA cuenta, y solo si no venció cuando por fin sale.
  */
-type BorradorGuardado = Borrador & VigenciaBorrador;
+type BorradorGuardado = Borrador &
+  VigenciaBorrador & {
+    /** AUR13: la huella de lo que se le leyó (cuenta, destinatarios, asunto, texto, hilo): el «sí» autoriza ESO. */
+    huella: string;
+    /** AUR13: la operación igual de antes, sin confirmar, cuyo riesgo de repetir ya aceptó con un segundo «sí». */
+    repeticionAceptada?: string;
+    /**
+     * AUR08: siguió con otra cosa sin decidir. El borrador no se tira: espera la decisión del panel de tareas
+     * hasta que venza, pero el chat ya no lo resuelve (un «sí» suelto de después no lo manda).
+     */
+    soloPanel?: boolean;
+  };
 export type VigenciaBorrador = { dueno: string; vence: number; intento: string };
 const BORRADORES = new Map<string, BorradorGuardado>();
 /** Un borrador que nadie confirmó en este rato se olvida: un «sí» de mañana no manda lo de hoy. */
@@ -132,15 +145,20 @@ async function cuentaDeRef(quien: string, ref: string): Promise<{ c: CuentaCorre
 }
 
 /** Revisar (los no leídos de todas sus cuentas) o buscar. Numera para que después diga «lee el 2». */
-async function revisar(quien: string, ambito: string, buscar?: string): Promise<string> {
+async function revisar(quien: string, ambito: string, buscar?: string): Promise<ResultadoHerramienta> {
   const cuentas = await cuentasDe(quien);
-  if (!cuentas.length) return SIN_CUENTAS;
+  if (!cuentas.length) return fallo(SIN_CUENTAS, 'sin-cuentas');
   const errores: string[] = [];
   const todos: Resumen[] = [];
+  // Cuánto se miró en cada cuenta (AUR13): se dice «miré los N más recientes de M», nunca «todo».
+  const coberturas: { correo: string; cob: Cobertura; traidos: number }[] = [];
   await Promise.all(
     cuentas.map(async (c) => {
+      const cob: Cobertura = {};
       try {
-        todos.push(...(await buzon.listar(quien, c, buscar ? { buscar, n: 8, extractos: true } : { soloNoLeidos: true, n: 13, extractos: true })));
+        const r = await buzon.listar(quien, c, buscar ? { buscar, n: 8, extractos: true, cobertura: cob } : { soloNoLeidos: true, n: 13, extractos: true, cobertura: cob });
+        todos.push(...r);
+        coberturas.push({ correo: c.correo, cob, traidos: r.length });
       } catch (e: any) {
         errores.push(`${c.correo}: ${String(e?.responseText || e?.message || e).slice(0, 100)}`);
       }
@@ -152,22 +170,35 @@ async function revisar(quien: string, ambito: string, buscar?: string): Promise<
   LISTAS.set(k, lista);
   LECTURAS.delete(k);
   const varias = cuentas.length > 1;
-  const fallo = errores.length ? `\nNo pude abrir: ${errores.join('; ')}. Díselo.` : '';
+  const noAbrio = errores.length ? `\nNo pude abrir: ${errores.join('; ')}. Díselo.` : '';
   const que = buscar ? `buscando «${buscar}»` : 'sin leer';
-  if (!lista.length) return `CORREO (${que}, ${cuentas.length} ${cuentas.length === 1 ? 'cuenta' : 'cuentas'}): nada.${fallo}`;
+  // Ninguna cuenta abrió: no es «no hay nada», es que no se pudo mirar (AUR07).
+  if (errores.length === cuentas.length) return fallo(`CORREO: no pude abrir ninguna de sus cuentas (${errores.join('; ')}). No sé si tiene correos nuevos; díselo así, sin inventar.`, 'proveedor');
   const hayMas = todos.length > lista.length ? ` (hay más; estos son los ${lista.length} más nuevos)` : '';
+  // Una muestra (quedaron más sin traer) tampoco es el total: sirve para contestar, no para memorizar como conclusión.
+  const muestra = !!hayMas || coberturas.some((x) => Number(x.cob.total) > (x.cob.revisados ?? x.traidos));
+  // Con alguna cuenta que no abrió, lo que se trae es parcial: sirve para contestar, no para memorizar.
+  const recibo = { efecto: 'ninguno' as const, proveedor: 'imap', ...(errores.length || muestra ? { incompleto: true } : {}) };
+  if (!lista.length) return exito(`CORREO (${que}, ${cuentas.length} ${cuentas.length === 1 ? 'cuenta' : 'cuentas'}): nada.${noAbrio}`, recibo);
   const lineas = lista.map((m, i) => lineaCorreo(m, i, { variasCuentas: varias, marcarNoLeidos: !!buscar })).join('\n');
+  const cobertura = coberturas
+    .sort((a, b) => a.correo.localeCompare(b.correo))
+    .map(({ correo, cob, traidos }) => `miré los ${cob.revisados ?? traidos} más recientes${Number.isFinite(cob.total) ? ` de ${cob.total}` : ''} ${buscar ? 'que encajan' : 'sin leer'} en ${correo} (solo la bandeja de entrada)`)
+    .join('; ');
+  const lineaCobertura = cobertura ? `COBERTURA: ${cobertura}. Si te pregunta, di eso tal cual; no digas que revisaste todo su correo.\n` : '';
   // Varios sin leer: es una tarea de varios pasos, y se lleva hasta el final.
   let tarea = '';
   if (!buscar && lista.length >= 2) {
     const t = iniciarTarea(quien, ambito, { tipo: 'correo', titulo: `revisar los ${lista.length} correos sin leer`, pasos: lista.map((m) => `${m.de || m.deCorreo} — «${m.asunto}»`) });
     if (t) tarea = `\nTAREA EN CURSO: «${t.titulo}». Llévalos en orden, uno por uno, hasta el último (o hasta que diga que ya).`;
   }
-  return (
-    `CORREO (${que}: ${lista.length}${hayMas}; del más nuevo al más viejo; horas de Honduras):\n${lineas}${fallo}\n` +
-    'CÓMO DECIRLO: cuántos son y de quién, cada uno con su número, remitente (el nombre; la dirección solo si no hay nombre o si la pide) y asunto, sin leer los extractos enteros. ' +
-    'Luego pregúntale por cuál empiezas (o empieza por el 1). Para abrir uno: correo leer <número, remitente o asunto>.' +
-    tarea
+  return exito(
+    `CORREO (${que}: ${lista.length}${hayMas}; del más nuevo al más viejo; horas de Honduras):\n${lineas}${noAbrio}\n` +
+      lineaCobertura +
+      'CÓMO DECIRLO: cuántos son y de quién, cada uno con su número, remitente (el nombre; la dirección solo si no hay nombre o si la pide) y asunto, sin leer los extractos enteros. ' +
+      'Luego pregúntale por cuál empiezas (o empieza por el 1). Para abrir uno: correo leer <número, remitente o asunto>.' +
+      tarea,
+    recibo
   );
 }
 
@@ -264,18 +295,18 @@ async function ubicar(quien: string, ambito: string, ref: string, o: { siguiente
 }
 
 /** Abre el correo y lo deja listo para leer: cuerpo limpio en trozos, adjuntos con nombre. */
-async function leerRef(quien: string, ambito: string, ref: string, o: { siguiente?: boolean } = {}): Promise<string> {
+async function leerRef(quien: string, ambito: string, ref: string, o: { siguiente?: boolean } = {}): Promise<ResultadoHerramienta> {
   const u = await ubicar(quien, ambito, ref, o);
-  if ('hecho' in u) return u.hecho;
+  if ('hecho' in u) return fallo(u.hecho, 'referencia');
   const ubic = await cuentaDeRef(quien, u.ref);
-  if (!ubic) return 'CORREO: esa cuenta ya no está conectada.';
+  if (!ubic) return fallo('CORREO: esa cuenta ya no está conectada.', 'no-disponible');
   let x: Mensaje | null;
   try {
     x = await buzon.leer(quien, ubic.c, ubic.uid);
   } catch (e: any) {
-    return `CORREO: no pude abrirlo (${String(e?.responseText || e?.message || e).slice(0, 120)}).`;
+    return fallo(`CORREO: no pude abrirlo (${String(e?.responseText || e?.message || e).slice(0, 120)}).`, 'proveedor');
   }
-  if (!x) return 'CORREO: ese correo ya no está en la bandeja.';
+  if (!x) return fallo('CORREO: ese correo ya no está en la bandeja.', 'no-encontrado');
   const k = llave(quien, ambito);
   const lista = LISTAS.get(k) || [];
   const cuerpo = limpiarCuerpo(x.texto);
@@ -294,7 +325,7 @@ async function leerRef(quien: string, ambito: string, ref: string, o: { siguient
   const adj = x.adjuntos.length ? `Adjuntos: ${x.adjuntos.map((a) => `${a.nombre} (${Math.max(1, Math.round(a.bytes / 1024))} KB)`).join(', ')}.` : 'Sin adjuntos.';
   const cual = u.n ? `CORREO ${u.n} de ${lista.length}` : 'CORREO';
   const avance = u.n ? marcarPaso(quien, ambito, 'correo', u.n - 1, 'hecho').texto : '';
-  return [
+  const texto = [
     `${cual} — de ${remitente(x.de, x.deCorreo)}, para ${x.para || 'ti'}${copia} — «${x.asunto}» — ${fechaHN(x.fecha)} (hora de Honduras).`,
     adj,
     cuerpo ? `TEXTO (limpio: sin firma ni lo citado de correos anteriores${trozos.length > 1 ? `; en ${trozos.length} trozos` : ''}):\n${dados.join('\n')}` : 'TEXTO: no trae texto (solo el asunto' + (x.adjuntos.length ? ' y los adjuntos' : '') + ').',
@@ -306,21 +337,25 @@ async function leerRef(quien: string, ambito: string, ref: string, o: { siguient
   ]
     .filter(Boolean)
     .join('\n');
+  return exito(texto, { efecto: 'ninguno', proveedor: 'imap', referencia: u.ref });
 }
 
 /** «Sigue»: el trozo siguiente del correo que está leyendo. */
-function seguirLectura(quien: string, ambito: string): string {
+function seguirLectura(quien: string, ambito: string): ResultadoHerramienta {
   const lec = LECTURAS.get(llave(quien, ambito));
-  if (!lec) return 'CORREO: no estoy leyendo ninguno ahora. Pregúntale cuál quiere que le lea.';
+  if (!lec) return fallo('CORREO: no estoy leyendo ninguno ahora. Pregúntale cuál quiere que le lea.', 'falta-dato');
   if (lec.dado >= lec.trozos.length) {
     const t = tareaDe(quien, ambito);
     const sig = t && t.tipo === 'correo' ? siguiente(t) : -1;
-    return `CORREO: ese correo (de ${lec.de || lec.deCorreo}, «${lec.asunto}») ya se leyó entero. Pregúntale si le contesta${sig >= 0 ? ` o sigues con el ${sig + 1}` : ''}.`;
+    return exito(`CORREO: ese correo (de ${lec.de || lec.deCorreo}, «${lec.asunto}») ya se leyó entero. Pregúntale si le contesta${sig >= 0 ? ` o sigues con el ${sig + 1}` : ''}.`, { efecto: 'ninguno', referencia: lec.ref });
   }
   const i = lec.dado;
   lec.dado += 1;
   const quedan = lec.trozos.length - lec.dado;
-  return `CORREO (sigue el de ${lec.de || lec.deCorreo}, «${lec.asunto}») — trozo ${i + 1} de ${lec.trozos.length}:\n${lec.trozos[i]}\n${quedan ? `(Quedan ${quedan}; pregunta si sigues.)` : '(Es el final del correo: pregúntale si le contesta o sigues con el siguiente.)'}\n${AVISO_AJENO}`;
+  return exito(
+    `CORREO (sigue el de ${lec.de || lec.deCorreo}, «${lec.asunto}») — trozo ${i + 1} de ${lec.trozos.length}:\n${lec.trozos[i]}\n${quedan ? `(Quedan ${quedan}; pregunta si sigues.)` : '(Es el final del correo: pregúntale si le contesta o sigues con el siguiente.)'}\n${AVISO_AJENO}`,
+    { efecto: 'ninguno', referencia: lec.ref }
+  );
 }
 
 /** Las direcciones sin repetir ni las suyas. */
@@ -333,32 +368,33 @@ function sinRepetir(xs: string[], fuera: string[]): string[] {
   return out;
 }
 
-async function responder(quien: string, ambito: string, ref: string, texto: string, todos = false): Promise<string> {
+async function responder(quien: string, ambito: string, ref: string, texto: string, todos = false): Promise<ResultadoHerramienta> {
   const u = await ubicar(quien, ambito, ref);
-  if ('hecho' in u) return u.hecho;
+  if ('hecho' in u) return fallo(u.hecho, 'referencia');
   const ubic = await cuentaDeRef(quien, u.ref);
-  if (!ubic) return 'CORREO: esa cuenta ya no está conectada.';
+  if (!ubic) return fallo('CORREO: esa cuenta ya no está conectada.', 'no-disponible');
   const x = await buzon.leer(quien, ubic.c, ubic.uid).catch(() => null);
-  if (!x) return 'CORREO: no pude abrir ese correo para contestarlo.';
+  if (!x) return fallo('CORREO: no pude abrir ese correo para contestarlo.', 'proveedor');
   const asunto = /^\s*re\s*:/i.test(x.asunto) ? x.asunto : `Re: ${x.asunto}`;
   const mias = (await cuentasDe(quien)).map((c) => c.correo);
   const para = [x.responderA || x.deCorreo].filter(Boolean);
   const cc = todos ? sinRepetir([...x.paraCorreos, ...x.ccCorreos], [...mias, ...para]) : [];
   const original = sinCitas(x.texto).slice(0, 2000);
   const cita = original ? `\n\nEl ${fechaHN(x.fecha, Date.now(), { completa: true })}, ${remitente(x.de, x.deCorreo)} escribió:\n${original.split('\n').map((l) => `> ${l}`).join('\n')}` : '';
-  const avance = u.n && texto.trim() ? marcarPaso(quien, ambito, 'correo', u.n - 1, 'hecho', 'contestado').texto : '';
   const borrador = guardarBorrador(
     quien,
     ambito,
     { cuentaId: ubic.c.id, desde: ubic.c.correo, para, cc, asunto, texto, cita, enRespuestaA: x.messageId || undefined, referencias: x.referencias, creado: Date.now() },
     `Va como respuesta a ${x.de || x.deCorreo} en el mismo hilo${todos ? (cc.length ? ', a todos los del correo' : ' (no había nadie más en el correo: solo a quien lo mandó)') : ''}, con su correo citado debajo.`
   );
-  return avance ? `${borrador}\n${avance}` : borrador;
+  // El paso queda «contestado» solo si el borrador quedó (uno vacío no contesta nada).
+  const avance = borrador.estado === 'succeeded' && u.n ? marcarPaso(quien, ambito, 'correo', u.n - 1, 'hecho', 'contestado').texto : '';
+  return avance ? { ...borrador, texto: `${borrador.texto}\n${avance}` } : borrador;
 }
 
-async function escribir(quien: string, ambito: string, para: string, asunto: string, texto: string): Promise<string> {
+async function escribir(quien: string, ambito: string, para: string, asunto: string, texto: string): Promise<ResultadoHerramienta> {
   const cuentas = await cuentasDe(quien);
-  if (!cuentas.length) return SIN_CUENTAS;
+  if (!cuentas.length) return fallo(SIN_CUENTAS, 'sin-cuentas');
   let destinos = para.split(/[,;\s]+/).filter(Boolean);
   if (destinos.length && !destinos.every(correoValido)) {
     // «escríbele a Ana»: si es alguien de la lista, su dirección.
@@ -366,18 +402,41 @@ async function escribir(quien: string, ambito: string, para: string, asunto: str
     const e = elegirCorreo(lista, para);
     if (e.tipo === 'uno' && correoValido(lista[e.i].deCorreo)) destinos = [lista[e.i].deCorreo];
   }
-  if (!destinos.length || !destinos.every(correoValido)) return `CORREO: «${para}» no es una dirección de correo. Pídele la dirección exacta.`;
+  if (!destinos.length || !destinos.every(correoValido)) return fallo(`CORREO: «${para}» no es una dirección de correo. Pídele la dirección exacta.`, 'falta-dato');
   return guardarBorrador(quien, ambito, { cuentaId: cuentas[0].id, desde: cuentas[0].correo, para: destinos, asunto: asunto || '(sin asunto)', texto, creado: Date.now() });
 }
 
-function guardarBorrador(quien: string, ambito: string, b: Borrador, nota = ''): string {
-  if (!b.texto.trim()) return 'CORREO: el borrador vino vacío. Pregúntale qué quiere decir.';
-  BORRADORES.set(llave(quien, ambito), { ...b, ...vigenciaNueva(quien, b.creado, BORRADOR_VIVE_MS) });
-  return (
+/** El borrador queda esperando su «sí»: el recibo es `borrador` con su id de intento (nada salió todavía). */
+function guardarBorrador(quien: string, ambito: string, b: Borrador, nota = ''): ResultadoHerramienta {
+  if (!b.texto.trim()) return fallo('CORREO: el borrador vino vacío. Pregúntale qué quiere decir.', 'falta-dato');
+  const vigencia = vigenciaNueva(quien, b.creado, BORRADOR_VIVE_MS);
+  BORRADORES.set(llave(quien, ambito), { ...b, ...vigencia, huella: huellaCorreo(b) });
+  return exito(
     `BORRADOR (NO enviado) desde ${b.desde} para ${b.para.join(', ')}${b.cc?.length ? ` (con copia a ${b.cc.join(', ')})` : ''} — «${b.asunto}»:\n${b.texto}\n` +
-    (nota ? `${nota}\n` : '') +
-    'Léeselo tal cual y pregúntale si lo mandas. Solo se manda si dice que sí; si quiere cambios, haz otro borrador.'
+      (nota ? `${nota}\n` : '') +
+      'Léeselo tal cual y pregúntale si lo mandas. Solo se manda si dice que sí; si quiere cambios, haz otro borrador.',
+    { efecto: 'borrador', proveedor: 'smtp', referencia: vigencia.intento, durable: false }
   );
+}
+
+const direccionesCanon = (xs: string[] | undefined) => [...new Set((xs || []).map((x) => normal(x)).filter(Boolean))].sort();
+
+/**
+ * La huella de un correo (AUR13, sección 10): la cuenta remitente, los destinatarios, el asunto, el texto y el hilo,
+ * normalizados. Se calcula al armar el borrador (lo que se le leyó) y otra vez justo antes de mandarlo: si no
+ * coinciden, lo que iba a salir ya no es lo que aprobó.
+ */
+export function huellaCorreo(b: Pick<Borrador, 'cuentaId' | 'desde' | 'para' | 'cc' | 'asunto' | 'texto' | 'cita' | 'enRespuestaA'>): string {
+  return huellaAprobacion('correo', {
+    cuentaId: String(b.cuentaId || ''),
+    desde: normal(b.desde),
+    para: direccionesCanon(b.para),
+    cc: direccionesCanon(b.cc),
+    asunto: String(b.asunto || '').trim(),
+    texto: String(b.texto || '').trim(),
+    cita: String(b.cita || ''),
+    enRespuestaA: String(b.enRespuestaA || ''),
+  });
 }
 
 /** Pruebas y la app: el borrador que espera su «sí». */
@@ -450,59 +509,101 @@ function anotarAvisoEnvio(quien: string, ambito: string, hecho: string) {
 
 /**
  * El «sí» o el «no» a un borrador (correo o WhatsApp), con las mismas reglas:
- * - Vale SOLO el turno siguiente: si la persona dice otra cosa, el borrador se descarta (un «ok» suelto
- *   de tres turnos después no manda nada).
+ * - En el chat vale SOLO el turno siguiente: si la persona dice otra cosa, el chat ya no lo resuelve (un «ok»
+ *   suelto de tres turnos después no manda nada). El borrador sigue esperando en el panel de tareas hasta
+ *   que venza (AUR08): «Aprobar» ahí lo manda, con las mismas comprobaciones.
  * - En la voz (`retener`), el envío espera a que ElevenLabs confirme el turno: un «sí…» de un turno
  *   especulativo que seguía con «…pero cámbiale» no manda nada. El resultado llega en el turno siguiente.
  */
-export async function decidirBorrador(o: {
+type OpcionesDecidir = {
   quien: string;
   ambito: string;
   mensaje: string;
   /** Saca el borrador (ya no espera). */
   quitar: () => void;
+  /**
+   * AUR08: siguió con otra cosa. Si está, el borrador se aparta para el panel (espera hasta que venza; el chat ya
+   * no lo resuelve) en vez de tirarse.
+   */
+  apartar?: () => void;
   /** Lo vuelve a poner (el turno de voz se descartó). */
   reponer: () => void;
-  /** Lo manda y devuelve el HECHO (enviado o el fallo). */
-  enviar: () => Promise<string>;
   canal: 'CORREO' | 'WHATSAPP';
   para: string;
   retener?: RetencionAcciones;
   /**
-   * ¿Todavía se puede mandar AHORA? null si sí; si no, por qué (venció, es de otra sesión). Se mira justo antes
-   * de mandar: en la voz eso puede ser un rato después del «sí» (auditoría 3-oct, COM01).
+   * ¿Todavía se puede mandar AHORA? null si sí; si no, por qué (venció, es de otra sesión, el borrador cambió). Se
+   * mira justo antes de mandar: en la voz eso puede ser un rato después del «sí» (auditoría 3-oct, COM01; AUR13).
    */
   vigente?: () => string | null;
-}): Promise<string | null> {
+};
+
+/**
+ * El «sí» o el «no» a un borrador (correo o WhatsApp), con las mismas reglas:
+ * - Vale SOLO el turno siguiente: si la persona dice otra cosa, el borrador se descarta (un «ok» suelto
+ *   de tres turnos después no manda nada).
+ * - En la voz (`retener`), el envío espera a que ElevenLabs confirme el turno: un «sí…» de un turno
+ *   especulativo que seguía con «…pero cámbiale» no manda nada. El resultado llega en el turno siguiente.
+ * - El envío (`enviar`) devuelve su estado y su recibo (AUR13): aceptado, fallido o incierto, con su operationId.
+ */
+export async function decidirBorradorConEstado(o: OpcionesDecidir & { enviar: () => Promise<ResultadoHerramienta> }): Promise<ResultadoHerramienta> {
   const r = respuestaAlBorrador(o.mensaje);
+  if (!r && o.apartar) {
+    o.apartar();
+    return fallo(
+      `${o.canal}: había un borrador para ${o.para} esperando su «sí», pero siguió con otra cosa: NO se mandó. Queda en su panel de tareas hasta que venza, por si lo quiere aprobar ahí; un «sí» suelto en el chat ya no lo manda. Si lo quiere mandar ahora, arma uno nuevo y vuelve a preguntar.`,
+      'apartado'
+    );
+  }
   o.quitar();
-  if (!r) return `${o.canal}: había un borrador para ${o.para} esperando su «sí», pero siguió con otra cosa: ya no vale y no se mandó. Si lo quiere mandar, arma uno nuevo y vuelve a preguntar.`;
-  if (r === 'no') return `${o.canal}: no se mandó; el borrador para ${o.para} quedó descartado. Díselo en pocas palabras.`;
-  const enviarSiVale = async () => {
+  if (!r) return fallo(`${o.canal}: había un borrador para ${o.para} esperando su «sí», pero siguió con otra cosa: ya no vale y no se mandó. Si lo quiere mandar, arma uno nuevo y vuelve a preguntar.`, 'descartado');
+  if (r === 'no') return exito(`${o.canal}: no se mandó; el borrador para ${o.para} quedó descartado. Díselo en pocas palabras.`, { efecto: 'ninguno', codigo: 'descartado' });
+  const enviarSiVale = async (): Promise<ResultadoHerramienta> => {
     const motivo = o.vigente?.();
-    if (motivo) return `${o.canal}: NO se mandó: ${motivo}. Díselo con honestidad; si lo quiere mandar, arma uno nuevo y vuelve a preguntar.`;
-    return o.enviar();
+    if (motivo) return fallo(`${o.canal}: NO se mandó: ${motivo}. Díselo con honestidad; si lo quiere mandar, arma uno nuevo y vuelve a preguntar.`, 'no-vigente');
+    try {
+      return await o.enviar();
+    } catch (e: any) {
+      // `enviar` contiene sus propios fallos; lo que lance aquí pasó antes del efecto (sus cuentas, el almacén).
+      return fallo(`${o.canal}: NO se pudo mandar (${String(e?.message || e).slice(0, 140)}). No salió; díselo con honestidad.`, 'excepcion');
+    }
   };
   if (!o.retener) return enviarSiVale();
   o.retener.alDescartar(o.reponer);
   o.retener.hacer(() => {
-    void enviarSiVale().then(
-      (hecho) => anotarAvisoEnvio(o.quien, o.ambito, hecho),
-      (e) => anotarAvisoEnvio(o.quien, o.ambito, `${o.canal}: NO se pudo mandar (${String(e?.message || e).slice(0, 140)}). Díselo con honestidad.`)
-    );
+    void enviarSiVale().then((hecho) => anotarAvisoEnvio(o.quien, o.ambito, hecho.texto));
   });
-  return `${o.canal}: dijo que sí; se manda a ${o.para} en cuanto termine este turno. Dile que ya lo estás mandando (todavía no digas que llegó; el resultado te llega en el próximo turno).`;
+  return exito(`${o.canal}: dijo que sí; se manda a ${o.para} en cuanto termine este turno. Dile que ya lo estás mandando (todavía no digas que llegó; el resultado te llega en el próximo turno).`, {
+    efecto: 'borrador',
+    codigo: 'pendiente-del-turno',
+  });
+}
+
+/** Lo mismo, solo el texto (como siempre). `enviar` devuelve el HECHO. */
+export async function decidirBorrador(o: OpcionesDecidir & { enviar: () => Promise<string> }): Promise<string | null> {
+  return (await decidirBorradorConEstado({ ...o, enviar: async () => exito(await o.enviar()) })).texto;
 }
 
 /**
  * Al empezar el turno: si espera un borrador, se resuelve AQUÍ (lo manda el servidor, no el modelo) y
  * vuelve el HECHO para que el modelo lo diga. Null si no había nada.
  */
-export async function resolverBorrador(quien: string, ambito: string, mensaje: string, retener?: RetencionAcciones): Promise<string | null> {
+export async function resolverBorrador(quien: string, ambito: string, mensaje: string, retener?: RetencionAcciones, como?: ComoResolver): Promise<string | null> {
+  return (await resolverBorradorConEstado(quien, ambito, mensaje, retener, como))?.texto ?? null;
+}
+
+/**
+ * De dónde viene la decisión. `desdePanel`: «Aprobar»/«Rechazar» del panel, que también resuelve un borrador
+ * apartado (AUR08); sin él (el chat), un borrador apartado no se toca y otra cosa lo aparta en vez de tirarlo.
+ */
+export type ComoResolver = { desdePanel?: boolean };
+
+/** Lo mismo, con el estado y el recibo del envío (AUR13: aceptado / fallido / incierto, con su operationId). */
+export async function resolverBorradorConEstado(quien: string, ambito: string, mensaje: string, retener?: RetencionAcciones, como: ComoResolver = {}): Promise<ResultadoHerramienta | null> {
   const b = borradorDe(quien, ambito);
-  if (!b) return null;
+  if (!b || (b.soloPanel && !como.desdePanel)) return null;
   const k = llave(quien, ambito);
-  return decidirBorrador({
+  return decidirBorradorConEstado({
     quien,
     ambito,
     mensaje,
@@ -510,53 +611,175 @@ export async function resolverBorrador(quien: string, ambito: string, mensaje: s
     canal: 'CORREO',
     para: b.para.join(', '),
     quitar: () => BORRADORES.delete(k),
+    ...(como.desdePanel ? {} : { apartar: () => void (b.soloPanel = true) }),
     // Un turno de voz descartado lo repone, pero nunca encima de otro borrador que se armó después.
     reponer: () => {
       if (!BORRADORES.has(k) && !motivoBorrador(b, quien)) BORRADORES.set(k, b);
     },
-    vigente: () => motivoBorrador(b, quien),
-    enviar: () => mandarBorrador(quien, b),
+    vigente: () => {
+      const motivo = motivoBorrador(b, quien);
+      if (motivo) return motivo;
+      // AUR13 (sección 10): si entre el «sí» y el efecto se armó otro borrador (el plan cambió: otro destinatario,
+      // otro texto), el «sí» era para el de antes y ya no vale; el nuevo espera su propia decisión.
+      const actual = BORRADORES.get(k);
+      if (actual && actual.intento !== b.intento) return `después de su «sí» el borrador cambió (ahora va para ${actual.para.join(', ')} — «${actual.asunto}»). Ese nuevo espera su propia decisión: léeselo y pregúntale`;
+      return null;
+    },
+    enviar: () => enviarBorradorAprobado(quien, b, { ambito }),
   });
 }
 
-async function mandarBorrador(quien: string, b: Borrador): Promise<string> {
-  const c = (await cuentasDe(quien)).find((x) => x.id === b.cuentaId);
-  if (!c) return 'CORREO: no lo mandé: esa cuenta ya no está conectada.';
-  // La misma cuenta que se le leyó («desde lola@…»): si cambió de dirección, no sale por otra.
-  if (normal(c.correo) !== normal(b.desde)) return `CORREO: no lo mandé: se armó desde ${b.desde} y esa cuenta ya no es la misma.`;
-  try {
-    const r2 = await buzon.mandar(quien, c, { para: b.para, cc: b.cc, asunto: b.asunto, texto: `${b.texto}${b.cita || ''}`, enRespuestaA: b.enRespuestaA, referencias: b.referencias });
-    // El SMTP puede aceptar unas direcciones y rechazar otras sin fallar: se dice exactamente a quién llegó.
-    if (!r2.aceptados.length) return `CORREO: NO se mandó: el servidor rechazó ${r2.rechazados.join(', ') || 'las direcciones'}. Díselo con honestidad.`;
-    const faltan = r2.rechazados.length ? ` OJO: el servidor rechazó ${r2.rechazados.join(', ')}; a esas no les llegó.` : '';
-    return `CORREO ENVIADO desde ${b.desde} a ${r2.aceptados.join(', ')} — «${b.asunto}»${r2.guardadoEnEnviados ? ' (quedó en Enviados)' : ''}.${faltan} Díselo en una frase.`;
-  } catch (e: any) {
-    return `CORREO: NO se pudo mandar (${String(e?.response || e?.message || e).slice(0, 140)}). El borrador no salió; díselo con honestidad.`;
+/** El texto y el recibo de un envío de correo, según lo que pasó (AUR13: decir solo lo que consta). */
+function hechoDeEnvioCorreo(b: BorradorGuardado, r: ResultadoEnvio<DatosEnvioCorreo>, messageId: string): ResultadoHerramienta {
+  const para = b.para.join(', ');
+  const recibo = { proveedor: 'smtp', referencia: r.referencia || messageId, operacion: r.operacion, ...(r.repetido ? { repetido: true } : {}) };
+  const aceptadoPor = `ENTREGA: aceptado por el servidor de salida de ${b.desde}; eso no confirma que ya esté en su bandeja ni que lo leyó. Díselo en una frase (que salió; no digas que ya le llegó).`;
+  if (r.motivo === 'aprobacion-no-coincide') return fallo('CORREO: NO se mandó: esa aprobación era para otro correo (otro destinatario, contenido o cuenta). Hace falta su decisión otra vez: léele el borrador y pregúntale.', 'aprobacion');
+  if (r.motivo === 'almacen') return fallo('CORREO: NO lo mandé: no pude dejar registrado el envío antes de mandarlo (así no se arriesga a salir dos veces). Dile que lo intente en un momento.', 'almacen');
+  if (r.motivo === 'repeticion-incierta') {
+    return fallo(
+      `CORREO: NO lo mandé todavía: un correo igual (a ${para}, «${b.asunto}») de hace un rato quedó sin confirmar — no sé si salió — y no lo encuentro en Enviados. ` +
+        'Para no mandarlo dos veces, pregúntale: si dice «sí» otra vez, lo mando de nuevo (podría llegarle repetido); si dice «no», queda así.',
+      'confirmar-repeticion'
+    );
   }
+  if (r.estado === 'succeeded') {
+    const conf = { ...recibo, efecto: 'confirmado' as const, entrega: r.entrega || ('aceptado' as const) };
+    if (r.repetido && r.reconciliado) return exito(`CORREO ENVIADO desde ${b.desde} a ${para} — «${b.asunto}»: ya había salido (lo encontré en Enviados de ${b.desde}), así que no lo volví a mandar. ${aceptadoPor}`, conf);
+    if (r.repetido) return exito(`CORREO ENVIADO desde ${b.desde} a ${para} — «${b.asunto}»: ya había salido antes (es el mismo borrador aprobado), así que no lo volví a mandar. ${aceptadoPor}`, conf);
+    if (r.reconciliado) return exito(`CORREO ENVIADO desde ${b.desde} a ${para} — «${b.asunto}». El servidor no contestó a tiempo, pero lo comprobé: está en Enviados de ${b.desde}. ${aceptadoPor}`, conf);
+    const d = r.datos;
+    const aceptados = d?.aceptados?.length ? d.aceptados : b.para;
+    // El SMTP puede aceptar unas direcciones y rechazar otras sin fallar: se dice exactamente a quién.
+    const faltan = d?.rechazados?.length ? ` OJO: el servidor rechazó ${d.rechazados.join(', ')}; a esas no les llegó.` : '';
+    return exito(`CORREO ENVIADO desde ${b.desde} a ${aceptados.join(', ')} — «${b.asunto}»${d?.guardadoEnEnviados ? ' (quedó en Enviados)' : ''}.${faltan} ${aceptadoPor}`, conf);
+  }
+  if (r.estado === 'unknown') {
+    return incierto(
+      `CORREO: No he podido confirmar el envío a ${para} — «${b.asunto}». El servidor de correo no contestó a tiempo: pudo haber salido o no, y no lo encuentro en Enviados. ` +
+        'No lo volví a mandar (para no duplicarlo). Díselo así, con esas palabras; si quiere, que revise su carpeta de Enviados. Si pide mandarlo otra vez, primero lo vuelvo a buscar.',
+      { ...recibo, entrega: 'incierto' }
+    );
+  }
+  const rechazo = r.datos?.rechazados?.length && !r.datos?.aceptados?.length;
+  const texto = rechazo
+    ? `CORREO: NO se mandó: el servidor rechazó ${r.datos!.rechazados!.join(', ')}. Díselo con honestidad.`
+    : `CORREO: NO se pudo mandar (${String(r.detalle || 'sin detalle').slice(0, 140)}). No salió; díselo con honestidad.`;
+  return { texto, estado: 'failed', recibo: { ...recibo, efecto: 'ninguno', entrega: 'fallido', codigo: rechazo ? 'rechazado' : 'proveedor' } };
+}
+
+type DatosEnvioCorreo = { aceptados?: string[]; rechazados?: string[]; guardadoEnEnviados?: boolean; error?: unknown };
+
+/**
+ * ¿El error del SMTP prueba que NO salió? (AUR13). Antes de hablar con el servidor, o si rechazó en el saludo, la
+ * clave, el remitente o los destinatarios, o con un código de error: seguro que no. Un timeout o un corte en DATA (o
+ * sin saber en qué paso): pudo haber salido → incierto.
+ */
+export function clasificarErrorSmtp(e: any): SalidaEnvio<DatosEnvioCorreo> {
+  const detalle = String(e?.response || e?.message || e).slice(0, 140);
+  const rechazados = Array.isArray(e?.rejected) ? e.rejected.map((x: unknown) => (typeof x === 'string' ? x : (x as { address?: string })?.address || '')).filter(Boolean) : [];
+  if (e?.antesDeMandar) return { estado: 'failed', detalle, datos: { error: e } };
+  if (rechazados.length || e?.code === 'EENVELOPE') return { estado: 'failed', detalle: rechazados.length ? `el servidor rechazó ${rechazados.join(', ')}` : detalle, datos: { aceptados: [], rechazados, error: e } };
+  const comando = String(e?.command || '').toUpperCase();
+  if (['EAUTH', 'EDNS', 'ETLS', 'EMESSAGE', 'EOAUTH2'].includes(String(e?.code || ''))) return { estado: 'failed', detalle, datos: { error: e } };
+  if (/^(CONN|EHLO|HELO|LHLO|STARTTLS|AUTH|MAIL|RCPT)/.test(comando)) return { estado: 'failed', detalle, datos: { error: e } };
+  if (Number(e?.responseCode) >= 400) return { estado: 'failed', detalle, datos: { error: e } };
+  return { estado: 'unknown', detalle, datos: { error: e } };
+}
+
+/**
+ * Manda un borrador ya aprobado (AUR13), una sola vez, por el registro de operaciones (lib/envios.ts): operationId
+ * del borrador, Message-ID derivado, revalidación de lo aprobado (huella, cuenta) en el punto de efecto y
+ * reconciliación en Enviados si queda incierto. Exportado para las pruebas (otra réplica con la misma copia).
+ * Con `ambito`, un borrador alterado tras el «sí» vuelve como decisión nueva en esa conversación.
+ */
+export async function enviarBorradorAprobado(quien: string, b: BorradorGuardado, o: { ambito?: string } = {}): Promise<ResultadoHerramienta> {
+  // Lo que iba a salir tiene que ser lo que aprobó (sección 10): ni otro destinatario, ni otro texto, ni otra cuenta.
+  if (!b.huella || huellaCorreo(b) !== b.huella) {
+    const k = o.ambito !== undefined ? llave(quien, o.ambito) : '';
+    if (k && !BORRADORES.has(k)) {
+      const { dueno: _d, vence: _v, intento: _i, huella: _h, repeticionAceptada: _r, ...plano } = b;
+      BORRADORES.set(k, { ...plano, ...vigenciaNueva(quien, Date.now(), BORRADOR_VIVE_MS), huella: huellaCorreo(b) });
+    }
+    return fallo(
+      `CORREO: NO se mandó: lo que iba a salir ya no es lo que aprobó (cambió el destinatario, el contenido o la cuenta; ahora sería para ${b.para.join(', ')} — «${b.asunto}»). ` +
+        'Hace falta su decisión otra vez: léeselo y pregúntale si lo mandas.',
+      'aprobacion'
+    );
+  }
+  let c: CuentaCorreo | undefined;
+  try {
+    c = (await cuentasDe(quien)).find((x) => x.id === b.cuentaId);
+  } catch {
+    return fallo('CORREO: NO lo mandé: no pude leer sus cuentas en este momento. Dile que lo intente en un rato.', 'almacen');
+  }
+  if (!c) return fallo('CORREO: no lo mandé: esa cuenta ya no está conectada.', 'no-disponible');
+  // La misma cuenta que se le leyó («desde lola@…»): si cambió de dirección, no sale por otra.
+  if (normal(c.correo) !== normal(b.desde)) return fallo(`CORREO: no lo mandé: se armó desde ${b.desde} y esa cuenta ya no es la misma.`, 'no-disponible');
+  const cuenta = c;
+  const operacion = operacionDeBorrador('correo', b.intento);
+  const messageId = messageIdDeOperacion(operacion, b.desde);
+  const r = await enviarUnaVez<DatosEnvioCorreo>({
+    canal: 'correo',
+    dueno: quien,
+    operacion,
+    huella: b.huella,
+    contenido: b.huella,
+    repeticionAceptada: b.repeticionAceptada,
+    efecto: async () => {
+      try {
+        const r2 = await buzon.mandar(quien, cuenta, { para: b.para, cc: b.cc, asunto: b.asunto, texto: `${b.texto}${b.cita || ''}`, enRespuestaA: b.enRespuestaA, referencias: b.referencias, messageId, operacion });
+        if (!r2.aceptados.length) return { estado: 'failed', detalle: `el servidor rechazó ${r2.rechazados.join(', ') || 'las direcciones'}`, datos: r2 };
+        return { estado: 'succeeded', entrega: 'aceptado', referencia: r2.messageId || messageId, datos: r2 };
+      } catch (e) {
+        return clasificarErrorSmtp(e);
+      }
+    },
+    reconciliar: async (op) => {
+      const id = messageIdDeOperacion(op, b.desde);
+      const v = await buzon.buscarEnviado(quien, cuenta, id);
+      return v === 'encontrado' ? { encontrado: true, referencia: id, detalle: 'está en Enviados' } : { encontrado: false, detalle: v };
+    },
+  });
+  // Otro igual de antes sigue sin constar: el borrador vuelve a esperar, ahora para un «sí» informado (puede repetirse).
+  if (r.motivo === 'repeticion-incierta' && o.ambito !== undefined) {
+    const k = llave(quien, o.ambito);
+    if (!BORRADORES.has(k) && !motivoBorrador(b, quien)) BORRADORES.set(k, { ...b, repeticionAceptada: r.previa });
+  }
+  return hechoDeEnvioCorreo(b, r, messageId);
 }
 
 /**
  * El runner del harness: «revisar», «buscar x», «leer 3|Ana|el último de Ana», «seguir», «siguiente»,
  * «saltar 3», «responder 3|Ana| | texto», «responder-todos … | texto», «escribir a@b | asunto | texto».
+ * Solo el texto (el de siempre); el estado y el recibo, con correrCorreoConEstado.
  */
 export async function correrCorreo(quien: string, arg: string, ambito = ''): Promise<string> {
-  if (!quien) return 'CORREO: solo con sesión. Pídele que entre con su cuenta.';
+  return (await correrCorreoConEstado(quien, arg, ambito)).texto;
+}
+
+/**
+ * El runner con su estado y su recibo (AUR07): lo que no se pudo hacer es `failed` (con su código), un
+ * borrador es `succeeded` con recibo `borrador` (nada salió), lo leído con alguna cuenta caída va `incompleto`.
+ */
+export async function correrCorreoConEstado(quien: string, arg: string, ambito = ''): Promise<ResultadoHerramienta> {
+  if (!quien) return fallo('CORREO: solo con sesión. Pídele que entre con su cuenta.', 'sin-sesion');
   const [cabeza, ...partes] = String(arg || '').split('|').map((x) => x.trim());
   const m = cabeza.match(/^(\S+)\s*(.*)$/s);
   const verbo = plegar(m?.[1] || 'revisar');
   let resto = (m?.[2] || '').trim();
   try {
     if (/^(revisar|revisa|nuevos|bandeja)$/.test(verbo)) return await revisar(quien, ambito);
-    if (/^(buscar|busca)$/.test(verbo)) return resto ? await revisar(quien, ambito, resto) : 'CORREO: ¿qué busco? Falta el texto.';
+    if (/^(buscar|busca)$/.test(verbo)) return resto ? await revisar(quien, ambito, resto) : fallo('CORREO: ¿qué busco? Falta el texto.', 'falta-dato');
     // Sin decir cuál: el siguiente que falta (de la tarea, o el primero de la lista).
     if (/^(leer|lee|leeme|abrir|abre)$/.test(verbo)) return await leerRef(quien, ambito, resto, { siguiente: !resto });
     if (/^(siguiente|proximo|otro)$/.test(verbo)) return await leerRef(quien, ambito, '', { siguiente: true });
     if (/^(seguir|sigue|continuar|continua|mas)$/.test(verbo)) return seguirLectura(quien, ambito);
     if (/^(saltar|salta|omitir)$/.test(verbo)) {
       const u = await ubicar(quien, ambito, resto);
-      if ('hecho' in u) return u.hecho;
-      if (!u.n) return 'CORREO: ese no está en la lista de la tarea.';
-      return marcarPaso(quien, ambito, 'correo', u.n - 1, 'saltado').texto || `CORREO: salté el ${u.n}.`;
+      if ('hecho' in u) return fallo(u.hecho, 'referencia');
+      if (!u.n) return fallo('CORREO: ese no está en la lista de la tarea.', 'no-encontrado');
+      return exito(marcarPaso(quien, ambito, 'correo', u.n - 1, 'saltado').texto || `CORREO: salté el ${u.n}.`, { efecto: 'guardado', durable: false });
     }
     const aTodos = /^(responder|responde|contestar|contesta)[-_]?(a)?[-_]?todos$/.test(verbo) || /^a?\s*todos\b/i.test(resto);
     if (aTodos || /^(responder|responde|contestar|contesta)$/.test(verbo)) {
@@ -567,9 +790,10 @@ export async function correrCorreo(quien: string, arg: string, ambito = ''): Pro
       const [asunto = '', ...texto] = partes;
       return await escribir(quien, ambito, resto, asunto, texto.join(' | '));
     }
-    return `CORREO: no entiendo «${verbo}». Usa revisar, buscar, leer, seguir, siguiente, saltar, responder, responder-todos o escribir.`;
+    return fallo(`CORREO: no entiendo «${verbo}». Usa revisar, buscar, leer, seguir, siguiente, saltar, responder, responder-todos o escribir.`, 'no-entiendo');
   } catch (e: any) {
-    return `CORREO: falló (${String(e?.message || e).slice(0, 140)}).`;
+    // Lo que lanza aquí (leer sus cuentas, el IMAP) pasa antes de dejar un borrador: no hubo efecto.
+    return fallo(`CORREO: falló (${String(e?.message || e).slice(0, 140)}).`, 'excepcion');
   }
 }
 
@@ -743,17 +967,22 @@ export function montarRutasCorreo(app: express.Express, d: Deps) {
     const n = Math.min(50, Math.max(1, Math.floor(Number(req.query.n)) || 25));
     const errores: { cuentaId: string; cuenta: string; error: string }[] = [];
     const mensajes: Resumen[] = [];
+    // Cuánto se miró en cada cuenta (AUR13): la app puede decir «los 25 más recientes de 340».
+    const cobertura: { cuentaId: string; cuenta: string; total: number | null; revisados: number }[] = [];
     await Promise.all(
       cuentas.map(async (c) => {
+        const cob: Cobertura = {};
         try {
-          mensajes.push(...(await listar(q, c, buscar ? { buscar, n } : { n })));
+          const r = await buzon.listar(q, c, buscar ? { buscar, n, cobertura: cob } : { n, cobertura: cob });
+          mensajes.push(...r);
+          cobertura.push({ cuentaId: c.id, cuenta: c.correo, total: Number.isFinite(cob.total) ? Number(cob.total) : null, revisados: cob.revisados ?? r.length });
         } catch (e) {
           errores.push({ cuentaId: c.id, cuenta: c.correo, error: explicarFallo(e, c.proveedor.imap.host, c.proveedor.imap.puerto, 'leer') });
         }
       })
     );
     mensajes.sort((a, b) => b.fecha.localeCompare(a.fecha));
-    return res.json({ mensajes: mensajes.slice(0, n * Math.max(1, cuentas.length)), cuentas: todas.map(publica), errores, honesto: true });
+    return res.json({ mensajes: mensajes.slice(0, n * Math.max(1, cuentas.length)), cuentas: todas.map(publica), errores, cobertura, honesto: true });
   });
 
   app.get('/api/correo/mensaje', d.exigirMesa, d.limitar(60), async (req, res) => {
@@ -809,15 +1038,47 @@ export function montarRutasCorreo(app: express.Express, d: Deps) {
     const idValido = (x: unknown) => typeof x === 'string' && /^<[^<>\s]{3,500}>$/.test(x.trim());
     const enRespuestaA = idValido(b.enRespuestaA) ? String(b.enRespuestaA).trim() : undefined;
     const referencias = enRespuestaA && Array.isArray(b.referencias) ? b.referencias.filter(idValido).map((x: string) => x.trim()).slice(-50) : undefined;
-    try {
-      const r = await mandar(q, c, { para, cc: ccSolo, asunto, texto, enRespuestaA, referencias });
-      if (!r.aceptados.length) return res.status(502).json({ error: `No salió: el servidor rechazó ${r.rechazados.join(', ') || 'las direcciones'}.`, rechazados: r.rechazados, honesto: true });
-      return res.json({ ok: true, desde: c.correo, aceptados: r.aceptados, rechazados: r.rechazados, guardadoEnEnviados: r.guardadoEnEnviados, honesto: true });
-    } catch (e: any) {
-      // El SMTP rechazó a todos (nodemailer lo da como error del sobre): se dice a quién.
-      const rechazados = Array.isArray(e?.rejected) ? e.rejected.map((x: unknown) => (typeof x === 'string' ? x : (x as { address?: string })?.address || '')).filter(Boolean) : [];
-      if (rechazados.length) return res.status(502).json({ error: `No salió: el servidor rechazó ${rechazados.join(', ')}.`, rechazados, honesto: true });
-      return res.status(502).json({ error: `No salió. ${explicarFallo(e, c.proveedor.smtp.host, c.proveedor.smtp.puerto, 'mandar')}`, honesto: true });
+    /*
+     * AUR13: el toque de «Mandar» también pasa por el registro durable. `idEnvio` (opcional, lo pone la app por cada
+     * toque) hace que un reintento del MISMO toque no salga dos veces; el mismo id con otro destinatario o contenido
+     * no se canjea (409: hace falta confirmar otra vez). Un timeout es «incierto» (202), nunca «no salió».
+     */
+    const idEnvio = typeof b.idEnvio === 'string' && /^[A-Za-z0-9_-]{8,80}$/.test(b.idEnvio) ? b.idEnvio : crypto.randomUUID();
+    const operacion = `envio-correo-app-${idEnvio}`;
+    const messageId = messageIdDeOperacion(operacion, c.correo);
+    const huella = huellaAprobacion('correo', { cuentaId: c.id, desde: normal(c.correo), para: direccionesCanon(para), cc: direccionesCanon(ccSolo), asunto, texto, enRespuestaA: enRespuestaA || '' });
+    const r = await enviarUnaVez<DatosEnvioCorreo>({
+      canal: 'correo',
+      dueno: q,
+      operacion,
+      huella,
+      efecto: async () => {
+        try {
+          const r2 = await buzon.mandar(q, c, { para, cc: ccSolo, asunto, texto, enRespuestaA, referencias, messageId, operacion });
+          if (!r2.aceptados.length) return { estado: 'failed', detalle: 'rechazados', datos: r2 };
+          return { estado: 'succeeded', entrega: 'aceptado', referencia: r2.messageId || messageId, datos: r2 };
+        } catch (e) {
+          return clasificarErrorSmtp(e);
+        }
+      },
+      reconciliar: async (op) => {
+        const id = messageIdDeOperacion(op, c.correo);
+        return (await buzon.buscarEnviado(q, c, id)) === 'encontrado' ? { encontrado: true, referencia: id } : { encontrado: false };
+      },
+    });
+    const comun = { operacion: r.operacion, honesto: true };
+    if (r.motivo === 'aprobacion-no-coincide') return res.status(409).json({ error: 'Esa confirmación era para otro correo (otro destinatario o contenido): no mandé nada. Confírmalo otra vez.', code: 'confirmacion_de_otro_envio', ...comun });
+    if (r.motivo === 'almacen') return res.status(503).json({ error: 'No pude registrar el envío antes de mandarlo; no mandé nada. Prueba en un momento.', ...comun });
+    if (r.estado === 'succeeded') {
+      const d = r.datos;
+      return res.json({ ok: true, desde: c.correo, entrega: r.entrega, ...(r.repetido ? { repetido: true } : {}), ...(d ? { aceptados: d.aceptados, rechazados: d.rechazados, guardadoEnEnviados: d.guardadoEnEnviados } : {}), ...comun });
     }
+    if (r.estado === 'unknown') {
+      return res.status(202).json({ ok: false, estado: 'incierto', error: 'No he podido confirmar el envío: el servidor de correo no contestó a tiempo y no lo encuentro en Enviados. No lo volví a mandar; revisa tu carpeta de Enviados.', ...comun });
+    }
+    const d = r.datos;
+    if (d?.rechazados?.length && !d.aceptados?.length) return res.status(502).json({ error: `No salió: el servidor rechazó ${d.rechazados.join(', ')}.`, rechazados: d.rechazados, ...comun });
+    if (r.repetido) return res.status(502).json({ error: 'Ese envío ya había fallado; no salió. Inténtalo como un envío nuevo.', ...comun });
+    return res.status(502).json({ error: `No salió. ${explicarFallo(d?.error ?? r.detalle, c.proveedor.smtp.host, c.proveedor.smtp.puerto, 'mandar')}`, ...comun });
   });
 }

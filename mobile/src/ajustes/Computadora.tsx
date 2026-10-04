@@ -35,6 +35,7 @@ import {
   haceCuanto,
   marcaPlan,
   nuevoPedidoPc,
+  puedeVerPantallaPc,
   relojMision,
   respuestaPc,
   sondeoMs,
@@ -49,6 +50,7 @@ import {
   type TareaPc,
 } from '../compa/computadora';
 import { abrirHoja, hayAnfitrion } from '../app/hojas';
+import { abrirVisor } from '../app/visor';
 
 type PropsHoja = { visible: boolean; onCerrar: () => void; nombreAvatar: string };
 
@@ -129,7 +131,8 @@ export function HojaComputadoraVivo({
       const boleto = vista.boleto();
       try {
         const r = await api<{ tarea: TareaPc; mision: MisionPc | null; version?: number }>(`/api/computadora/tareas/${encodeURIComponent(id)}?idioma=${idioma}`, { method: 'GET' }, 12_000);
-        if (vista.acepta(boleto, id, r.version)) {
+        const vale = vista.acepta(boleto, id, r.version, r.tarea.estado);
+        if (vale) {
           setTarea(r.tarea);
           if (r.mision) {
             setMision(r.mision);
@@ -137,7 +140,8 @@ export function HojaComputadoraVivo({
           }
         }
         setSinRespuesta(0);
-        alEstadoRef.current?.(id, trabajando(r.tarea.estado), r.tarea.estado);
+        // Un estado vivo viejo de una tarea que ya se vio terminar no vuelve a encender nada (AUR04).
+        if (vale || !vista.terminada(id)) alEstadoRef.current?.(id, trabajando(r.tarea.estado), r.tarea.estado);
       } catch {
         // La próxima vuelta lo intenta otra vez; tras unas cuantas, se le dice (nunca se queda colgada sin decir nada).
         setSinRespuesta((n) => n + 1);
@@ -290,8 +294,11 @@ export function HojaComputadoraVivo({
     setError('');
     setOcupado(que);
     try {
-      await api(`/api/computadora/tareas/${encodeURIComponent(tarea.id)}/${ruta}`, { method: 'POST', body: JSON.stringify(cuerpo) }, 12_000);
+      const r = await api<{ fase?: string | null }>(`/api/computadora/tareas/${encodeURIComponent(tarea.id)}/${ruta}`, { method: 'POST', body: JSON.stringify(cuerpo) }, 15_000);
       vibrar('medio');
+      // Un toque que ya había salido termina primero (no se deshace): no se dice «detenida» ni «tú controlas» todavía.
+      if (r?.fase === 'draining')
+        setError(tr('Está terminando una acción que ya había empezado; en un momento queda como pediste.', 'It is finishing an action it had already started; in a moment it will be as you asked.'));
       await leerTarea(tarea.id);
     } catch (e: any) {
       vibrar('aviso');
@@ -446,6 +453,22 @@ export function HojaComputadoraVivo({
                 </View>
               ) : null}
             </Pressable>
+
+            {/* El visor a pantalla completa (app/VisorComputadora.tsx): verla y usarla de verdad. Cerrarlo vuelve al
+                chat sin tocar la tarea; reabrirlo encuentra la misma sesión. AURA nunca lo abre sola. */}
+            {puedeVerPantallaPc(estado?.capacidades, tarea.estado) ? (
+              <Boton
+                titulo={tr('Pantalla completa', 'Full screen')}
+                tam="chico"
+                variante="secundario"
+                onPress={() => {
+                  const id = tarea.id;
+                  onCerrar();
+                  // La hoja termina de irse antes de abrir el visor (iOS no presenta un Modal mientras otro se va).
+                  setTimeout(() => abrirVisor(id), 320);
+                }}
+              />
+            ) : null}
 
             {sinRespuesta >= FALLOS_PARA_AVISAR && sigue ? (
               <Texto v="chica" color="aviso">

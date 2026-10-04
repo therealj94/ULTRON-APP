@@ -14,6 +14,10 @@
  *
  * Todo vence: el intento en VIDA_INTENTO_MS (lo que la wallet guarda el pedido) y un pase depositado en
  * VIDA_VUELTA_MS. Vive en memoria (un proceso): un reinicio en medio solo obliga a entrar de nuevo.
+ *
+ * AUR14: un intento ya recogido deja una MARCA (sin el pase) durante VIDA_INTENTO_MS: si la misma vuelta se
+ * abre otra vez (del historial de Safari, un segundo toque, el otro contexto) se reconoce como web y va a
+ * una página neutra, nunca a la de Android con el pase metido en un enlace.
  */
 import { createHash } from 'node:crypto';
 
@@ -28,6 +32,8 @@ const RETO = /^[A-Za-z0-9_-]{43}$/;
 
 type Intento = { reto: string; creado: number; vuelta?: { pase?: string; error?: string; en: number } };
 const intentos = new Map<string, Intento>();
+/** Los estados web ya recogidos (solo cuándo): la vuelta repetida no es de Android. */
+const recogidos = new Map<string, number>();
 
 /** La huella del verificador, como la calcula el teléfono: SHA-256 del texto, en base64url. */
 export function retoDe(verificador: string): string {
@@ -40,6 +46,18 @@ function vencido(i: Intento, ahora: number): boolean {
 
 function purgar(ahora: number) {
   for (const [k, i] of intentos) if (vencido(i, ahora)) intentos.delete(k);
+  for (const [k, t] of recogidos) if (ahora - t > VIDA_INTENTO_MS) recogidos.delete(k);
+}
+
+/** ¿Este estado fue de un intento web que ya se recogió (hace poco)? */
+export function fueIntentoWeb(estado: string | undefined, ahora = Date.now()): boolean {
+  const t = estado ? recogidos.get(estado) : undefined;
+  if (t === undefined) return false;
+  if (ahora - t > VIDA_INTENTO_MS) {
+    recogidos.delete(estado!);
+    return false;
+  }
+  return true;
 }
 
 /** Registra el intento de la web. false si la forma no vale, ya existía o no cabe uno más. */
@@ -83,10 +101,12 @@ export function recogerVuelta(estado: string, verificador: string, ahora = Date.
   if (retoDe(verificador) !== i.reto) return { estado: 'reto' };
   if (!i.vuelta) return { estado: 'pendiente' };
   intentos.delete(estado);
+  recogidos.set(estado, ahora);
   return i.vuelta.pase ? { estado: 'listo', pase: i.vuelta.pase } : { estado: 'error', error: i.vuelta.error || 'desconocido' };
 }
 
 /** Solo pruebas. */
 export function _olvidarIntentosWeb() {
   intentos.clear();
+  recogidos.clear();
 }

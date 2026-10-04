@@ -83,7 +83,7 @@ export type DatosGenesis = { nombre?: string | null; cumple?: string | null };
  * guardara: la pantalla no dice nada.
  */
 export type ResultadoGenesis =
-  | { ok: true; miembro: Miembro; chat: boolean; genesis?: DatosGenesis; intento?: Intento }
+  | { ok: true; miembro: Miembro; chat: boolean; genesis?: DatosGenesis; intento: Intento }
   | { ok: false; codigo: string; mensaje: string; gid?: string };
 /** `web`: ir directo a la web de Veta Wallet (quien no tiene la app y eligió la web). */
 export type OpcionesEntrada = { web?: boolean };

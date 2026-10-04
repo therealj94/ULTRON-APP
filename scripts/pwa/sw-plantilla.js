@@ -9,6 +9,8 @@
  *     y no guarda respuestas no-store o privadas. No pone nada en cola para mandarlo «cuando vuelva la red»;
  *   · una versión nueva se instala y ESPERA: la web avisa «Hay una versión nueva · Recargar» y solo con ese
  *     toque (mensaje `activar`) toma el control. Al activarse borra los cachés viejos de AU-RA;
+ *   · al salir de la cuenta (mensaje `purgar`, AUR14) borra todo lo que pudiera ser de ella y deja solo el
+ *     shell público de esta versión;
  *   · avisos con la app cerrada (Web Push; en iPhone, solo la AU-RA instalada): el contenido llega cifrado
  *     para este navegador (lib/push-web.ts) y se enseña SOLO si es de la cuenta que está en este navegador
  *     (src/10-infra/avisosWeb.ts deja su seudónimo en el caché «aura-cuenta»); si no, un aviso genérico sin
@@ -59,8 +61,44 @@ self.addEventListener('activate', (e) => {
   );
 });
 
+/**
+ * PURGA POR LOGOUT (AUR14): al salir de la cuenta la página manda `purgar`. Se borra todo caché de AU-RA
+ * que pudiera tener algo de la cuenta: el seudónimo de los avisos (`aura-cuenta`), cualquier `aura-*` que
+ * no sea el shell de ESTA versión, y del shell todo lo que no sea el shell (lo guardado de paso). Lo que
+ * queda es el shell público del build, con clave por versión. Lo que no es de AU-RA no se toca.
+ */
+function purgarCuenta() {
+  return caches.keys().then((nombres) =>
+    Promise.all(
+      nombres.map((n) => {
+        if (n === CACHE)
+          return caches.open(CACHE).then((c) =>
+            c.keys().then((reqs) => Promise.all(reqs.filter((r) => PRECACHE.indexOf(new URL(r.url).pathname) < 0).map((r) => c.delete(r))))
+          );
+        if (n.indexOf('aura-') === 0) return caches.delete(n);
+        return null;
+      })
+    )
+  );
+}
+
 self.addEventListener('message', (e) => {
   if (e.data && e.data.tipo === 'activar') self.skipWaiting();
+  else if (e.data && e.data.tipo === 'purgar') {
+    const hecho = purgarCuenta()
+      .then(
+        () => true,
+        () => false
+      )
+      .then((ok) => {
+        try {
+          if (e.ports && e.ports[0]) e.ports[0].postMessage({ purgado: ok });
+        } catch (err) {
+          /* la página ya no escucha */
+        }
+      });
+    if (e.waitUntil) e.waitUntil(hecho);
+  }
 });
 
 self.addEventListener('fetch', (e) => {
@@ -135,7 +173,12 @@ self.addEventListener('notificationclick', (e) => {
   e.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((ventanas) => {
       for (const v of ventanas) {
-        if (new URL(v.url).origin === self.location.origin && 'focus' in v) return v.focus();
+        if (new URL(v.url).origin === self.location.origin && 'focus' in v) {
+          // Ya abierta: se le dice a qué pantalla ir (src/10-infra/abrirDesdeAviso.ts) en vez de navegarla,
+          // que recargaría la app y cortaría una conversación en vivo.
+          if ('postMessage' in v) v.postMessage({ tipo: 'aura-abrir', abrir });
+          return v.focus();
+        }
       }
       return self.clients.openWindow(destino);
     })
