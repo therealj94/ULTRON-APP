@@ -259,7 +259,7 @@ test(
     const p = await b.newPage({ viewport: { width: 390, height: 844 } });
     await p.goto(srv.url + '/', { waitUntil: 'networkidle' });
     await p.waitForSelector('#aura-acceso-titulo', { timeout: 20000 });
-    assert.equal((await p.locator('#aura-acceso-titulo').textContent())?.trim(), 'Entrar a la junta');
+    assert.equal((await p.locator('#aura-acceso-titulo').textContent())?.trim(), 'Entrar a AU-RA');
     assert.equal(await p.locator('button[aria-label="Cerrar"]').count(), 0, 'la puerta no tiene «Cerrar»');
     assert.equal(await p.locator('.aura-mic').count(), 0, 'sin micrófono');
     assert.equal(await p.getByRole('button', { name: 'Escribir', exact: true }).count(), 0, 'sin la mesa detrás');
