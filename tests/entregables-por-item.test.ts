@@ -29,9 +29,9 @@ const INSTR = 'Crea tres documentos: informe.docx, presupuesto.xlsx y carta.pdf,
 const sha = (c: string) => c.repeat(64);
 
 type A = Record<string, unknown>;
-const ok = (nombre: string, tipo: string, s: string, extra: A = {}): A => ({ ruta: `${ESP}/Documents/${nombre}`, existe: true, bytes: 2048, sha256: sha(s), reciente: true, mencionado: true, tipo, integro: true, integro_v: 9, ...extra });
+const ok = (nombre: string, tipo: string, s: string, extra: A = {}): A => ({ ruta: `${ESP}/Documents/${nombre}`, existe: true, bytes: 2048, sha256: sha(s), reciente: true, mencionado: true, tipo, integro: true, integro_v: 10, ...extra });
 const falta = (nombre: string): A => ({ ruta: nombre, existe: false, bytes: 0, sha256: null, mencionado: true });
-const suelto = (nombre: string, tipo: string, s: string): A => ({ ruta: `${ESP}/${nombre}`, existe: true, bytes: 300, sha256: sha(s), reciente: true, mencionado: false, tipo, integro: true, integro_v: 9 });
+const suelto = (nombre: string, tipo: string, s: string): A => ({ ruta: `${ESP}/${nombre}`, existe: true, bytes: 300, sha256: sha(s), reciente: true, mencionado: false, tipo, integro: true, integro_v: 10 });
 
 const TRES_OK = [ok('informe.docx', 'docx', '1'), ok('presupuesto.xlsx', 'xlsx', '2'), ok('carta.pdf', 'pdf', '3')];
 
@@ -202,7 +202,7 @@ test('un mismo archivo no cumple dos cosas pedidas', () => {
 
 test('«3 PDFs»: runtime.log no cuenta; 2 de 3 no basta; un .pdf que por dentro es texto no es un PDF; 3 PDFs de verdad sí', () => {
   const instr = 'Descarga las facturas y guarda 3 PDFs en Descargas';
-  const pdf = (n: string, s: string, tipo = 'pdf') => ({ ruta: `${ESP}/Downloads/${n}`, existe: true, bytes: 5000, sha256: sha(s), reciente: true, tipo, integro: true, integro_v: 9 });
+  const pdf = (n: string, s: string, tipo = 'pdf') => ({ ruta: `${ESP}/Downloads/${n}`, existe: true, bytes: 5000, sha256: sha(s), reciente: true, tipo, integro: true, integro_v: 10 });
   const solo = cerrar(instr, [suelto('runtime.log', 'texto', '9')]);
   assert.equal(solo.c.estado, 'partial', 'un log no es un PDF');
   assert.equal(solo.criterios.length, 3);
@@ -291,7 +291,7 @@ test('otros cierres: la evidencia va a SU criterio (investigar), y el encargo na
 
 /* ------------------------------------------------------------------ revisión independiente: los huecos */
 
-const pdfNuevo = (n: string, s: string, carpeta = 'Downloads'): A => ({ ruta: `${ESP}/${carpeta}/${n}`, existe: true, bytes: 4000, sha256: sha(s), reciente: true, tipo: 'pdf', integro: true, integro_v: 9 });
+const pdfNuevo = (n: string, s: string, carpeta = 'Downloads'): A => ({ ruta: `${ESP}/${carpeta}/${n}`, existe: true, bytes: 4000, sha256: sha(s), reciente: true, tipo: 'pdf', integro: true, integro_v: 10 });
 const etiquetas = (r: { items: { nombre?: string; extensiones: string[] }[] }) => r.items.map((i) => i.nombre ?? i.extensiones.join('|'));
 
 test('revisión 1: plurales y capturas también piden archivos; una misión de archivos nunca se completa por el texto', async () => {
@@ -319,7 +319,7 @@ test('revisión 1: plurales y capturas también piden archivos; una misión de a
   assert.equal(dos.criterios.length, 2);
   const cap = cerrar('Haz una captura de pantalla de la página', [], 'Listo, ya la hice.');
   assert.equal(cap.c.estado, 'partial');
-  const conCap = cerrar('Haz una captura de pantalla de la página', [{ ruta: `${ESP}/Pictures/captura.png`, existe: true, bytes: 9000, sha256: sha('c'), reciente: true, tipo: 'png', integro: true, integro_v: 9 }], 'Listo, ya la hice.');
+  const conCap = cerrar('Haz una captura de pantalla de la página', [{ ruta: `${ESP}/Pictures/captura.png`, existe: true, bytes: 9000, sha256: sha('c'), reciente: true, tipo: 'png', integro: true, integro_v: 10 }], 'Listo, ya la hice.');
   assert.equal(conCap.c.estado, 'completed', 'con la captura de verdad, sí');
 });
 
@@ -331,7 +331,7 @@ test('revisión 2a: el archivo de origen («convierte datos.csv», «lee informe
   assert.deepEqual(etiquetas(requisitosDeEntrega('Convierte datos.csv a informe.pdf')), ['informe.pdf'], 'el destino con nombre sí');
   assert.deepEqual(etiquetas(requisitosDeEntrega('Resume reporte.pdf en un documento de Word')), ['docx|doc|odt|rtf'], 'resumir: el origen no, el Word sí');
   assert.deepEqual(etiquetas(requisitosDeEntrega('Abre el PDF del reglamento y dime qué dice')), [''], 'leer un PDF no es entregarlo');
-  const datos: A = { ruta: `${ESP}/datos.csv`, existe: true, bytes: 100, sha256: sha('d'), reciente: false, mencionado: true, tipo: 'texto', integro: true, integro_v: 9 };
+  const datos: A = { ruta: `${ESP}/datos.csv`, existe: true, bytes: 100, sha256: sha('d'), reciente: false, mencionado: true, tipo: 'texto', integro: true, integro_v: 10 };
   const bien = cerrar('Convierte datos.csv a PDF', [datos, pdfNuevo('datos.pdf', '1')], 'Listo, ya lo convertí.');
   assert.equal(bien.c.estado, 'completed', 'un PDF nuevo cumple; el CSV de origen (viejo) no estorba');
   assert.equal(cerrar('Convierte datos.csv a PDF', [datos], 'Listo.').c.estado, 'partial', 'sin el PDF, no');
@@ -495,7 +495,7 @@ test('servidor: «guarda 3 PDFs» y el nodo solo encontró runtime.log → no qu
 
 /* ------------------------------------------------------------------ «tres archivos»: lo genérico también son archivos */
 
-const nuevoEn = (n: string, tipo: string, s: string): A => ({ ruta: `${ESP}/Documents/${n}`, existe: true, bytes: 900, sha256: sha(s), reciente: true, tipo, integro: true, integro_v: 9 });
+const nuevoEn = (n: string, tipo: string, s: string): A => ({ ruta: `${ESP}/Documents/${n}`, existe: true, bytes: 900, sha256: sha(s), reciente: true, tipo, integro: true, integro_v: 10 });
 const TRES_GENERICOS = [nuevoEn('resumen.txt', 'texto', '1'), nuevoEn('datos.csv', 'texto', '2'), nuevoEn('portada.png', 'png', '3')];
 
 test('genéricos: «crea tres archivos», «save three files»… piden archivos; sin decir cuántos no es seguro', async () => {
@@ -581,7 +581,7 @@ test('servidor: «crea tres archivos» con cero archivos → la frase dice 0 de 
 /* ------------------------------------------------------------------ ronda 3: reglas de diseño (R1–R5) */
 
 const VERBOSO = 'Listo, ya quedó todo lo que pediste con el contenido del sitio del proveedor de septiembre.';
-const arch = (ruta: string, tipo: string, s: string, extra: A = {}): A => ({ ruta: `${ESP}/${ruta}`, existe: true, bytes: 3000, sha256: sha(s), reciente: true, tipo, integro: true, integro_v: 9, ...extra });
+const arch = (ruta: string, tipo: string, s: string, extra: A = {}): A => ({ ruta: `${ESP}/${ruta}`, existe: true, bytes: 3000, sha256: sha(s), reciente: true, tipo, integro: true, integro_v: 10, ...extra });
 
 test('R1: un archivo mencionado que no existe nunca deja completar, tampoco por «dato»', () => {
   const dato = cerrar('Busca el horario del banco', [{ ruta: 'horario.txt', existe: false, bytes: 0, sha256: null, mencionado: true }], 'Abre de 9 a 4 de lunes a viernes; lo dejé anotado en horario.txt');
@@ -1254,26 +1254,27 @@ test('ronda 8 · servidor: la frase y el HECHO de una respondida no dicen que no
 
 /* ------------------------------------------------------------------ ronda 9 */
 
-test('ronda 9 · G4: «íntegro» de un nodo viejo (sin la marca del validador, o con la 8) queda sin comprobar; con la 9, sí', async () => {
+test('ronda 9 · G4: «íntegro» de un nodo viejo (sin la marca del validador, o con la 8 o la 9) queda sin comprobar; con la 10, sí (ronda 10)', async () => {
   const q = 'Guarda una captura de pantalla como captura.png en Documentos';
   const png = (extra: A): A[] => [{ ruta: `${ESP}/Documents/captura.png`, existe: true, bytes: 45, sha256: sha('a'), reciente: true, mencionado: true, tipo: 'png', magia: '89504e470d0a1a0a', integro: true, ...extra }];
-  for (const extra of [{}, { integro_v: 8 }, { integro_v: '9' }, { integro_v: 0 }]) {
+  for (const extra of [{}, { integro_v: 8 }, { integro_v: 9 }, { integro_v: '10' }, { integro_v: 0 }]) {
     const c = cerrar(q, png(extra), 'Listo, guardé captura.png.');
     assert.equal(c.c.estado, 'partial', JSON.stringify(extra));
     assert.equal(evaluarEntrega(mision(q, png(extra), 'Listo, guardé captura.png.')).comprobada, false);
     assert.match(c.texto, /validador/, 'dice por qué no lo cree');
   }
-  assert.equal(cerrar(q, png({ integro_v: 9 }), 'Listo, guardé captura.png.').c.estado, 'completed');
   assert.equal(cerrar(q, png({ integro_v: 10 }), 'Listo, guardé captura.png.').c.estado, 'completed');
+  assert.equal(cerrar(q, png({ integro_v: 11 }), 'Listo, guardé captura.png.').c.estado, 'completed');
   // Lo que dice «dañado» sí se cree aunque sea de un validador viejo (más estricto no es).
   assert.equal(cerrar(q, png({ integro: false, defecto: 'le falta IDAT' }), 'Listo.').c.estado, 'partial');
   // El servidor deja pasar la marca del nodo (archivosDe) y decide con ella.
   const { entregaDe } = (await import('../server/computadora')) as any;
   const t = (extra: A) => ({ id: 't1', respuesta: 'Listo, guardé captura.png.', pasos: [], archivos: png(extra) });
-  assert.equal(entregaDe(q, t({ integro_v: 9 })).comprobada, true);
+  assert.equal(entregaDe(q, t({ integro_v: 10 })).comprobada, true);
+  assert.equal(entregaDe(q, t({ integro_v: 9 })).comprobada, false, 'el validador de la ronda 9 aceptaba PDF en blanco');
   assert.equal(entregaDe(q, t({})).comprobada, false);
   assert.equal(entregaDe(q, t({ integro_v: 8 })).comprobada, false);
-  assert.equal((durables as any).VALIDADOR_MIN, 9);
+  assert.equal((durables as any).VALIDADOR_MIN, 10);
 });
 
 test('ronda 9 · menor 1: la investigación «respondida» tampoco afirma que no hubo efecto en su recibo', async () => {
@@ -1287,6 +1288,47 @@ test('ronda 9 · menor 1: la investigación «respondida» tampoco afirma que no
   const recibo = t.tarea.eventos.find((e: any) => e.type === 'operation.receipt');
   assert.ok(recibo, 'tiene su recibo');
   assert.notEqual(recibo.payload.effect, 'none');
+});
+
+/* ------------------------------------------------------------------ ronda 10 */
+
+test('ronda 10 · G1: lo enumerado sin número delante de «en X / como X / in X / as X» se cuenta uno por uno', () => {
+  const tipo: Record<string, string> = { docx: 'docx', pdf: 'pdf', png: 'png' };
+  const casos: [string, number, string][] = [
+    ['Haz un informe, un presupuesto y una carta en Word', 3, 'docx'],
+    ['Crea un PDF con el informe y otro con el presupuesto', 2, 'pdf'],
+    ['Descarga las facturas de enero, febrero y marzo en PDF', 3, 'pdf'],
+    ['Make a report, a budget and a letter in Word', 3, 'docx'],
+    ['Write a cover letter and a resume as PDF', 2, 'pdf'],
+    ['Haz un informe, un presupuesto y una carta en PDF', 3, 'pdf'],
+    ['Hazme una carta y un informe en PDF', 2, 'pdf'],
+    ['Prepara un contrato y una factura en PDF', 2, 'pdf'],
+    ['Guarda la factura de luz y la de agua en PDF', 2, 'pdf'],
+    ['Exporta los gráficos de ventas, de gastos y de clientes como PNG', 3, 'png'],
+    ['Haz un PDF por cada factura: luz, agua y teléfono', 3, 'pdf'],
+    ['Crea el informe, el presupuesto y la carta como documentos de Word', 3, 'docx'],
+    ['Crea un PDF con el informe, otro con el presupuesto y otro con la carta', 3, 'pdf'],
+  ];
+  for (const [q, n, ext] of casos) {
+    const r = requisitosDeEntrega(q);
+    assert.deepEqual([r.items.length, r.seguro], [n, true], q);
+    const uno = [arch(`Documents/a.${ext}`, tipo[ext], '1')];
+    assert.notEqual(cerrar(q, uno, 'Listo, ya están.').c.estado, 'completed', `${q}: con UN archivo no completa`);
+    const todos = Array.from({ length: n }, (_, k) => arch(`Documents/a${k}.${ext}`, tipo[ext], String(k + 1)));
+    assert.equal(cerrar(q, todos, 'Listo, ya están.').c.estado, 'completed', `${q}: con los ${n}, sí`);
+  }
+  // Sin poder decidir cuántos (un pronombre plural, «todas»): no es seguro, y nunca completa.
+  for (const q of ['Descarga las facturas y guárdalas en PDF', 'Find the invoices and save them as PDF', 'Guarda todas en PDF']) {
+    const r = requisitosDeEntrega(q);
+    assert.equal(r.seguro, false, q);
+    assert.notEqual(cerrar(q, [arch('Documents/a.pdf', 'pdf', '1')], 'Listo.').c.estado, 'completed', q);
+  }
+  // Lo de un solo entregable sigue igual.
+  const unos: [string, number][] = [
+    ['Guarda el informe en PDF', 1], ['Haz una tabla con los precios en Excel', 1], ['Exporta los datos de ventas y gastos en Excel', 1],
+    ['Crea un informe en Word y un presupuesto en Excel', 2], ['Guarda la página como PDF', 1], ['Save the report as PDF', 1],
+  ];
+  for (const [q, n] of unos) assert.deepEqual([requisitosDeEntrega(q).items.length, requisitosDeEntrega(q).seguro], [n, true], q);
 });
 
 test('ronda 3: lo legítimo de un archivo sigue completando', () => {
