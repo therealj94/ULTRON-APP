@@ -146,8 +146,13 @@ jobs:
           set -o pipefail
           npx tsx --test --test-concurrency=1 tests/aura-web-paneles.test.ts | tee navegador.tap
           grep -q '^# fail 0$' navegador.tap
-          # Ninguna omitida: una prueba de navegador saltada no cuenta como validada.
+          # Ninguna omitida, pendiente ni cancelada: una prueba de navegador que no corrió no cuenta como validada.
           grep -q '^# skipped 0$' navegador.tap || { echo "::error::hay pruebas de navegador omitidas"; exit 1; }
+          grep -q '^# todo 0$' navegador.tap || { echo "::error::hay pruebas de navegador marcadas como pendientes"; exit 1; }
+          grep -q '^# cancelled 0$' navegador.tap || { echo "::error::hay pruebas de navegador canceladas"; exit 1; }
+          # Y que de verdad corrieran: un archivo vacío también da «fail 0».
+          corridas=$(sed -n 's/^# pass \([0-9]*\)$/\1/p' navegador.tap)
+          [ "${corridas:-0}" -ge 15 ] || { echo "::error::solo pasaron ${corridas:-0} pruebas de navegador (mínimo 15)"; exit 1; }
 
   # El nombre de siempre («web») para quien espere ese check: verde solo si las cuatro tandas y el navegador lo están.
   web:

@@ -436,8 +436,15 @@ export default function App() {
   const activarLosAvisos = async () => {
     if (!correoCuenta.current || activandoAvisos) return;
     setActivandoAvisos(true);
+    const vigente = deEstaCuenta();
     const r = await activarAvisos(correoCuenta.current);
     setActivandoAvisos(false);
+    if (!vigente()) {
+      // Cambió la cuenta mientras se pedía el permiso: los avisos vuelven a ser de la cuenta de ahora (o de nadie) y el
+      // resultado de la anterior no se le dice a la siguiente (revisión independiente del 4-oct).
+      void cuentaDeAvisos(correoCuenta.current || null);
+      return;
+    }
     setOfreceAvisos(false);
     if (r === 'activados') decir('Listo: te aviso aunque AU-RA esté cerrada.', { emocion: 'feliz' });
     else if (r === 'denegado') decir('Sin permiso no te puedo avisar con la app cerrada. Lo puedes activar en Ajustes del teléfono.', { emocion: 'neutral' });
