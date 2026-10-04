@@ -32,6 +32,8 @@ export type EstadoTarea =
   | 'reconciling'
   | 'verifying'
   | 'completed'
+  /** Ronda 7: solo respondió (una consulta, un texto en el chat). Terminal y SIN comprobar; nunca «completada». */
+  | 'respondida'
   | 'partial'
   | 'failed'
   | 'blocked'
@@ -59,6 +61,8 @@ export type TareaVista = {
   id: string;
   version: number;
   state: EstadoTarea;
+  /** Un servidor que habla con una app de antes manda `respondida` como `partial` y el estado de verdad aquí. */
+  estadoReal?: EstadoTarea;
   terminal: boolean;
   source: 'durable' | 'tarea-en-curso' | 'computadora';
   title: string;
@@ -81,7 +85,11 @@ export type TareaVista = {
 /** Lo que enlaza la respuesta del chat (`tareas` en el `done` o en el JSON del turno). */
 export type RefTarea = { id: string; title: string; state: EstadoTarea; version: number; updatedAt: string };
 
-const TERMINALES = new Set<EstadoTarea>(['completed', 'partial', 'failed', 'cancelled']);
+const TERMINALES = new Set<EstadoTarea>(['completed', 'respondida', 'partial', 'failed', 'cancelled']);
+
+/** Esta app conoce el estado `respondida` (ronda 7): se lo dice al servidor en cada petición de tareas. */
+const CON_ESTADOS = 'estados=respondida';
+const conEstados = (ruta: string) => `${ruta}${ruta.includes('?') ? '&' : '?'}${CON_ESTADOS}`;
 
 /* ------------------------------------------------------------------ el reductor */
 
@@ -225,6 +233,7 @@ const ETIQUETAS: Record<EstadoTarea, [string, string]> = {
   reconciling: ['Sin confirmar · lo reviso', 'Unconfirmed · checking'],
   verifying: ['Verificando', 'Verifying'],
   completed: ['Completada', 'Completed'],
+  respondida: ['Respondida · sin comprobar', 'Answered · not verified'],
   partial: ['Parcial', 'Partial'],
   failed: ['No se pudo', 'Failed'],
   blocked: ['Bloqueada', 'Blocked'],
@@ -361,7 +370,7 @@ const enc = encodeURIComponent;
 export function crearClienteTrabajos(pedir: Pedir) {
   const post = async (ruta: string, cuerpo: Record<string, unknown> = {}): Promise<ResultadoAccion> => {
     try {
-      const r = await pedir(ruta, { method: 'POST', body: JSON.stringify(cuerpo) });
+      const r = await pedir(conEstados(ruta), { method: 'POST', body: JSON.stringify(cuerpo) });
       if (r.status >= 200 && r.status < 300) return { ok: true, tarea: r.json?.tarea ?? null, ...(r.json?.sugerencia ? { sugerencia: String(r.json.sugerencia) } : {}), ...(r.json?.repetida ? { repetida: true } : {}) };
       const codigo = String(r.json?.codigo || r.json?.code || r.status);
       return { ok: false, codigo, mensaje: mensajeDeError(codigo), tarea: r.json?.tarea ?? null };
@@ -372,7 +381,7 @@ export function crearClienteTrabajos(pedir: Pedir) {
   return {
     async listar(): Promise<{ ok: true; tareas: TareaVista[] } | { ok: false; sinSesion: boolean; mensaje: string }> {
       try {
-        const r = await pedir('/api/trabajos', { method: 'GET' });
+        const r = await pedir(conEstados('/api/trabajos'), { method: 'GET' });
         // 401: sin sesión; 403: sesión sin correo (no hay de quién serían). Las dos: no hay tareas que mostrar.
         if (r.status === 401 || r.status === 403) return { ok: false, sinSesion: true, mensaje: 'sin sesión' };
         if (r.status !== 200 || !Array.isArray(r.json?.tareas)) return { ok: false, sinSesion: false, mensaje: String(r.json?.error || r.status) };
@@ -383,7 +392,7 @@ export function crearClienteTrabajos(pedir: Pedir) {
     },
     async ver(id: string): Promise<TareaVista | null> {
       try {
-        const r = await pedir(`/api/trabajos/${enc(id)}`, { method: 'GET' });
+        const r = await pedir(conEstados(`/api/trabajos/${enc(id)}`), { method: 'GET' });
         return r.status === 200 ? (r.json?.tarea as TareaVista) : null;
       } catch {
         return null;

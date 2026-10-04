@@ -125,7 +125,8 @@ test('una dirección que solo está en el texto no es evidencia; la respuesta co
   // Lo que se pidió es un dato y la respuesta lo trae: ese es el resultado (no un «listo»).
   const clima = mision({ instruccion: 'Busca el clima de Tegucigalpa', resultado: 'Soleado, 28 grados', enlaces: ['https://clima.ejemplo/tgu'] });
   const c2 = reconciliarConComputadora(tareaDeEncargo('Busca el clima de Tegucigalpa'), clima, T0 + 60_000)!;
-  assert.equal(c2.estado, 'completed');
+  // Ronda 7: el dato en la respuesta se RESPONDE (terminal, sin comprobar), no queda «completed».
+  assert.equal(c2.estado, 'respondida');
   assert.ok(c2.resultado!.evidencias.some((e) => e.ref === 'https://clima.ejemplo/tgu'), 'la página que abrió de verdad sí cuenta');
 });
 

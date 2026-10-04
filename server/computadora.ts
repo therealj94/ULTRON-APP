@@ -45,7 +45,7 @@ import crypto from 'node:crypto';
 import { respuestaPura } from '../lib/afirmacion';
 import { clave } from '../lib/boveda';
 import { almacenDurable, claveDe, crearUnaVez, leerDurable } from '../lib/durable';
-import { evaluarEntrega, requisitosCombinados, type ArchivoNodo, type Entrega, type ItemEntrega, type PedidoEntrega } from '../lib/tareas-durables';
+import { evaluarEntrega, requisitosCombinados, SOLO_RESPONDI, SOLO_RESPONDI_EN, type ArchivoNodo, type Entrega, type ItemEntrega, type PedidoEntrega } from '../lib/tareas-durables';
 
 export type MotorNodo = 'holo' | 'claude';
 /**
@@ -510,6 +510,11 @@ export type FinalMision = {
   visitados: string[];
   archivos: ArchivoNodo[] | null;
   comprobado: boolean;
+  /**
+   * Ronda 7: SOLO respondió (una consulta o un texto en el chat). Es un final terminado pero NO comprobado: `ok` y
+   * `comprobado` siguen en false. Una app de antes no conoce el campo y la muestra como «Sin comprobar» (terminada).
+   */
+  respondida: boolean;
   sinComprobar: string | null;
   entregables: EntregableFinal[] | null;
 };
@@ -848,7 +853,8 @@ export function estadoDelPlan(m: Pick<Mision, 'plan' | 'indice' | 'final'> & { r
     const recibo = m.recibos ? m.recibos[j] : undefined;
     const conRecibo = m.recibos ? !!recibo : j < m.indice;
     let e: EstadoPlan;
-    if (m.final?.ok) e = conRecibo ? 'hecho' : 'pendiente';
+    // Terminada bien o solo respondió: lo que tiene recibo, hecho; lo demás, pendiente (no es un fallo).
+    if (m.final?.ok || m.final?.respondida) e = conRecibo ? 'hecho' : 'pendiente';
     else if (m.final) e = j === m.indice ? 'fallo' : j < m.indice && conRecibo ? 'hecho' : 'pendiente';
     else e = j === m.indice ? (estado && QUIETA.has(estado) ? 'espera' : 'actual') : j < m.indice && conRecibo ? 'hecho' : 'pendiente';
     return recibo ? { texto, estado: e, recibo } : { texto, estado: e };
@@ -971,6 +977,7 @@ function cerrarMision(e: Encargo, t: Tarea) {
     visitados: visitadosDe(t),
     archivos: archivosDe(t),
     comprobado: t.estado === 'hecha' && entrega.comprobada,
+    respondida: t.estado === 'hecha' && !ok && !misionIncompleta(t) && !!entrega.respondida,
     sinComprobar: t.estado === 'hecha' && !entrega.comprobada ? entrega.falta : null,
     entregables: entregablesDe(entrega, t.estado === 'hecha'),
   };
@@ -1016,7 +1023,8 @@ export function vistaMision(m: Mision, estado?: EstadoTarea | null, pregunta?: s
     propuesta: m.pregunta ? m.pregunta.huella ?? null : enConfirmar ? propuesta || null : null,
     final: m.final ?? null,
     // El botón «Seguir»: quedó a medias (no la paró la persona) y quedan rondas.
-    puedeSeguir: !!m.final && !m.final.ok && m.final.estado !== 'parada' && m.rondas < MAX_RONDAS,
+    // Una que solo respondió ya terminó (ronda 7): no se ofrece seguir.
+    puedeSeguir: !!m.final && !m.final.ok && !m.final.respondida && m.final.estado !== 'parada' && m.rondas < MAX_RONDAS,
   };
 }
 export type VistaMision = ReturnType<typeof vistaMision>;
@@ -1033,6 +1041,7 @@ export function historialDe(quien: string) {
       instruccion: m.instruccion.slice(0, 200),
       estado: m.final?.estado ?? ('trabajando' as EstadoTarea),
       ok: m.final?.ok ?? null,
+      respondida: !!m.final?.respondida,
       inicio: m.inicio,
       segundos: Math.round(((m.fin ?? Date.now()) - m.inicio) / 1000),
       resultado: (m.final?.respuesta || m.final?.error || '').slice(0, 160) || null,
@@ -1168,6 +1177,11 @@ export function fraseDeFinal(mision: string, t: Tarea, idioma: 'es' | 'en' = 'es
   if (t.estado === 'hecha') {
     // Lo que no se comprobó no se dice como hecho: ni «listo», ni «ya lo guardé» (revisión externa, 4-oct).
     const ent = entregaDe(mision, t, requisitos);
+    // Solo respondió (ronda 7): se dice la respuesta y que no hizo ni comprobó nada más; nunca «Listo».
+    if (!ent.comprobada && ent.respondida && !misionIncompleta(t)) {
+      const r = corto(t.respuesta, 650);
+      return en ? `${SOLO_RESPONDI_EN}${r ? ` ${r}` : ''}` : `${SOLO_RESPONDI}${r ? ` ${r}` : ''}`;
+    }
     if (!ent.comprobada) return fraseSinComprobar(ent, en, corto(t.respuesta, 200));
     const r = corto(t.respuesta, 650);
     const arch = ent.tipo === 'archivo' ? archivosEnPalabras(ent, en) : '';
@@ -1585,6 +1599,12 @@ export function resumenTarea(t: Tarea, instruccion: string = t.instruccion, requ
   if (t.estado === 'hecha') {
     const ent = entregaDe(instruccion, t, requisitos);
     const dijo = String(t.respuesta || '').slice(0, 1500);
+    if (!ent.comprobada && ent.respondida && !misionIncompleta(t)) {
+      return (
+        `RESPONDIDA (no comprobada), en ${pasos} pasos (${Math.round(t.segundos)} s). Lo que respondió tu computadora: ${dijo || '(nada)'} ` +
+        `Díselo como respuesta y aclara que solo respondiste: no hiciste ni comprobaste ninguna otra acción. No digas «listo» ni que quedó hecho.`
+      );
+    }
     if (!ent.comprobada) {
       return (
         `Hecha en ${pasos} pasos (${Math.round(t.segundos)} s), según tu computadora. Lo que dijo: ${dijo || '(nada)'} ` +
@@ -1625,7 +1645,7 @@ export async function encargarTarea(o: {
    * «tres capturas» como «una captura»: los requisitos salen de los dos y gana lo más exigente.
    */
   pedidoPersona?: string;
-}): Promise<{ hecho: string; id: string | null; tarea: Tarea | null; incierto?: boolean; comprobada?: boolean }> {
+}): Promise<{ hecho: string; id: string | null; tarea: Tarea | null; incierto?: boolean; comprobada?: boolean; respondida?: boolean }> {
   if (!computadoraConfigurada()) {
     return { hecho: 'HARNESS computadora: no está configurada en este servidor. No la usé; dilo con naturalidad.', id: null, tarea: null };
   }
@@ -1675,7 +1695,7 @@ export async function encargarTarea(o: {
     }
     // Se cerró mientras se consultaba (AUR04): vale el final que ya se decidió, no la lectura vieja.
     if (!aceptarLectura(e, gen, leida)) {
-      if (e.cerrada && e.terminada) return { hecho: `HARNESS computadora «${instruccion.slice(0, 160)}»: ${resumenTarea(e.terminada, instruccion, e.mision.requisitos)}${nota}`, id: e.id, tarea: e.terminada, comprobada: !!e.mision.final?.comprobado };
+      if (e.cerrada && e.terminada) return { hecho: `HARNESS computadora «${instruccion.slice(0, 160)}»: ${resumenTarea(e.terminada, instruccion, e.mision.requisitos)}${nota}`, id: e.id, tarea: e.terminada, comprobada: !!e.mision.final?.comprobado, respondida: !!e.mision.final?.respondida };
       continue;
     }
     t = leida;
@@ -1704,7 +1724,7 @@ export async function encargarTarea(o: {
           tarea: t,
         };
       }
-      return { hecho: `HARNESS computadora «${instruccion.slice(0, 160)}»: ${resumenTarea(t, instruccion, e.mision.requisitos)}${nota}`, id: e.id, tarea: t, comprobada: !!e.mision.final?.comprobado };
+      return { hecho: `HARNESS computadora «${instruccion.slice(0, 160)}»: ${resumenTarea(t, instruccion, e.mision.requisitos)}${nota}`, id: e.id, tarea: t, comprobada: !!e.mision.final?.comprobado, respondida: !!e.mision.final?.respondida };
     }
   }
   if (!e.cerrada) {

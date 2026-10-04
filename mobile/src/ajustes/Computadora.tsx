@@ -674,8 +674,8 @@ export function HojaComputadoraVivo({
             <Texto v="chicaFuerte">{tr('Misiones recientes', 'Recent missions')}</Texto>
             {historial.map((h) => (
               <Pressable key={h.id} onPress={() => void abrirDelHistorial(h.id)} accessibilityRole="button" style={[s.historia, { borderColor: tema.borde }]}>
-                <Texto v="chicaFuerte" style={[s.marca, { color: h.ok ? tema.exito : h.ok === false ? tema.aviso : tema.acento }]}>
-                  {h.ok ? '✓' : h.ok === false ? '✕' : '●'}
+                <Texto v="chicaFuerte" style={[s.marca, { color: h.ok ? tema.exito : h.respondida ? tema.acento : h.ok === false ? tema.aviso : tema.acento }]}>
+                  {h.ok ? '✓' : h.respondida ? '?' : h.ok === false ? '✕' : '●'}
                 </Texto>
                 <View style={{ flex: 1 }}>
                   <Texto v="chica" numberOfLines={1}>

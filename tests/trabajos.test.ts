@@ -694,12 +694,24 @@ test('el chat crea la tarea ANTES de encargar a la computadora, la enlaza en la 
     ],
   });
   try {
-    const l = (await h2.pedir('/api/trabajos', yo)).json.tareas as any[];
+    // Ronda 7: una app que conoce el estado nuevo lo pide; la consulta respondida queda «respondida», no completed.
+    const l = (await h2.pedir('/api/trabajos?estados=respondida', yo)).json.tareas as any[];
     const t2 = l.find((x) => x.id === r2!.id);
     const t3 = l.find((x) => x.id === r3!.id);
-    assert.equal(t2.state, 'completed');
+    assert.equal(t2.state, 'respondida');
+    assert.equal(t2.terminal, true);
     assert.ok(t2.result.evidence.some((e: any) => e.ref === 'https://banco.ejemplo/horario'));
-    assert.equal(t3.state, 'completed', 'la respuesta con el dato que se pidió es el resultado (no un «listo»)');
+    assert.match(t2.result.summary, /Solo te respondí; no hice ni comprobé ninguna otra acción/);
+    assert.equal(t3.state, 'respondida', 'la respuesta con el dato que se pidió se responde (no un «listo»), sin comprobar');
+    assert.notEqual(t3.acceptance[0].status, 'verified');
+    // Una app de ANTES (sin `estados`): la misma tarea llega como «partial» terminal con el estado de verdad aparte;
+    // nunca «completed», nunca un estado que no conoce ni algo que sigue trabajando.
+    const viejo = (await h2.pedir('/api/trabajos', yo)).json.tareas as any[];
+    const v2 = viejo.find((x) => x.id === r2!.id);
+    assert.deepEqual({ state: v2.state, estadoReal: v2.estadoReal, terminal: v2.terminal }, { state: 'partial', estadoReal: 'respondida', terminal: true });
+    assert.ok(!viejo.some((x) => x.state === 'respondida'));
+    const una = (await h2.pedir(`/api/trabajos/${r3!.id}`, yo)).json.tarea;
+    assert.deepEqual({ state: una.state, estadoReal: una.estadoReal }, { state: 'partial', estadoReal: 'respondida' });
     const t4 = l.find((x) => x.id === r4!.id);
     assert.equal(t4.state, 'partial', '«hecha» sin nada que lo acredite no es completed');
     assert.ok(t4.result.partial.length > 0);

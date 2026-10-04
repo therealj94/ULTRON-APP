@@ -28,7 +28,7 @@ export type PasoPc = { n: number; t: number; accion: string; texto?: string; min
 export type TareaPc = { id: string; instruccion: string; estado: EstadoTareaPc; pasos: PasoPc[]; respuesta: string | null; error: string | null; segundos: number; pregunta?: string | null; pregunta_id?: string | null; propuesta?: string | null; epoca?: number; seguro?: boolean };
 export type ResumenPc = { id: string; estado: EstadoTareaPc; pasos: number; instruccion: string; ultimo: string | null };
 /** Una misión de su historial (server/computadora.ts, historialDe). */
-export type ItemHistorialPc = { id: string; tareaId: string; instruccion: string; estado: EstadoTareaPc; ok: boolean | null; inicio: number; segundos: number; resultado: string | null };
+export type ItemHistorialPc = { id: string; tareaId: string; instruccion: string; estado: EstadoTareaPc; ok: boolean | null; respondida?: boolean; inicio: number; segundos: number; resultado: string | null };
 /** `entrada` y `seguro`: el visor completo (contrato de entradas y entrada segura, AUR09). */
 export type CapacidadPc = 'pausar' | 'confirmar' | 'control' | 'entrada' | 'seguro';
 export type EstadoPc = {
@@ -60,6 +60,8 @@ export type FinalPc = {
   pasos: number;
   /** Lo entregado se comprobó (el dato pedido, el archivo que encontró el nodo). false: dijo que terminó y no se pudo comprobar. */
   comprobado?: boolean;
+  /** Ronda 7: solo respondió (una consulta). Terminada y SIN comprobar: ni «Listo» ni «A medias». */
+  respondida?: boolean;
   /** Qué faltó comprobar, dicho para la persona (servidor nuevo). */
   sinComprobar?: string | null;
   /** Cada cosa pedida (si se pidieron archivos), con su estado: comprobada con su archivo, falta/no es lo pedido, o sin comprobar. */
@@ -364,9 +366,11 @@ export function entregablesEnPalabras(xs: Pick<EntregablePc, 'estado' | 'detalle
 }
 
 /** Cómo terminó, en una palabra para la tarjeta. Con archivos pedidos, cuántos de cuántos se comprobaron. */
-export function finalEnPalabras(f: Pick<FinalPc, 'estado' | 'ok' | 'comprobado' | 'entregables'>, idioma: 'es' | 'en' = 'es'): string {
+export function finalEnPalabras(f: Pick<FinalPc, 'estado' | 'ok' | 'comprobado' | 'entregables' | 'respondida'>, idioma: 'es' | 'en' = 'es'): string {
   const en = idioma === 'en';
   if (f.ok) return en ? 'Done' : 'Listo';
+  // Solo respondió: terminada, sin comprobar nada (un servidor de antes no manda el campo: sigue como antes).
+  if (f.estado === 'hecha' && f.respondida) return en ? 'Answered (not verified)' : 'Respondida (sin comprobar)';
   // Dijo que terminó, pero lo entregado no se comprobó: ni «Listo» ni «A medias».
   if (f.estado === 'hecha' && f.comprobado === false) {
     const xs = f.entregables || [];

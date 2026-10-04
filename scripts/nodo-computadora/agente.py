@@ -852,8 +852,6 @@ def ruta_en_espacio(ruta):
 
 
 MAGIA_BYTES = 512  # cuánto del principio de cada archivo se mira para saber qué es por dentro
-COLA_BYTES = 1024  # cuánto del final se mira (%%EOF, IEND, FFD9)
-ZIP_COLA_BYTES = 65558  # el fin del directorio central de un ZIP está en los últimos 65 535 + 22 bytes
 RE_MARCA_OOXML = r'word/document\.xml|xl/workbook\.xml|ppt/presentation\.xml'
 MIME_ODF = {
     'application/vnd.oasis.opendocument.text': 'odt',
@@ -906,57 +904,172 @@ def tipo_por_dentro(magia_hex, marca, tam):
     return 'binario'
 
 
-def integridad(tipo, magia_hex, cola_hex, verif, tam):
-    """¿El archivo está ENTERO, no solo con la cabecera bien? (True, ''), (False, por qué) o (None, por qué) si no se
-    sabe validar. Revisión externa (ronda 6): un PDF de 9 bytes con «%PDF-», un docx de 47 bytes con la cadena
-    «word/document.xml» o un zip de 4 bytes ya no pasan."""
+# El validador que corre DENTRO del escritorio con su python3 (solo la biblioteca estándar). Recibe pares «tipo ruta» y
+# devuelve, por cada uno, «ruta\t1|0|-\tdefecto»: 1 entero, 0 cortado o falso, - no se sabe validar. Revisión externa
+# (ronda 7): la estructura de verdad, no firmas sueltas; un docx de 67 bytes con «word/document.xml» ya no pasa.
+VALIDADOR = r"""
+import struct, sys, zipfile, zlib, re
+MAX = 200 * 1024 * 1024
+PRINCIPAL = {'docx': 'word/document.xml', 'xlsx': 'xl/workbook.xml', 'pptx': 'ppt/presentation.xml'}
+def leer(r):
+    with open(r, 'rb') as f:
+        return f.read(MAX + 1)
+def zipv(r, tipo):
+    if not zipfile.is_zipfile(r):
+        return 0, 'no es un ZIP entero (le falta el directorio central)'
+    with zipfile.ZipFile(r) as z:
+        malo = z.testzip()
+        if malo is not None:
+            return 0, 'el ZIP está dañado (CRC de %s)' % malo[:60]
+        nombres = set(z.namelist())
+        if not nombres:
+            return 0, 'el ZIP no tiene nada dentro'
+        if tipo in PRINCIPAL:
+            if '[Content_Types].xml' not in nombres:
+                return 0, 'le falta [Content_Types].xml'
+            p = PRINCIPAL[tipo]
+            if p not in nombres:
+                return 0, 'le falta %s' % p
+            if z.getinfo(p).file_size <= 0:
+                return 0, '%s está vacío' % p
+        elif tipo in ('odt', 'ods', 'odp', 'odg'):
+            if 'content.xml' not in nombres:
+                return 0, 'le falta content.xml'
+    return 1, ''
+def pdfv(b):
+    if not b.startswith(b'%PDF-'):
+        return 0, 'no empieza como un PDF'
+    cola = b[-2048:]
+    m = re.findall(rb'startxref\s+(\d+)', cola)
+    if not m:
+        return 0, 'le falta startxref al final: está cortado'
+    if b'%%EOF' not in cola:
+        return 0, 'le falta %%EOF al final: está cortado'
+    off = int(m[-1])
+    trozo = b[off:off + 400] if 0 < off < len(b) else b''
+    if not (trozo.startswith(b'xref') or (re.match(rb'\s*\d+\s+\d+\s+obj', trozo) and b'/XRef' in trozo)):
+        return 0, 'startxref no apunta a una tabla xref'
+    if not re.search(rb'\d+\s+\d+\s+obj', b):
+        return 0, 'no tiene ningún objeto'
+    if re.search(rb'/Type\s*/Page(?![s\w])', b):
+        return 1, ''
+    if re.search(rb'/Type\s*/ObjStm', b):
+        for mm in re.finditer(rb'/Type\s*/ObjStm.*?stream\r?\n', b, re.S):
+            ini = mm.end()
+            fin = b.find(b'endstream', ini)
+            try:
+                if re.search(rb'/Type\s*/Page(?![s\w])', zlib.decompress(b[ini:fin])):
+                    return 1, ''
+            except Exception:
+                pass
+        return 1, ''  # flujos de objetos: las páginas pueden ir comprimidas
+    return 0, 'no tiene ninguna página'
+def pngv(b):
+    if not b.startswith(b'\x89PNG\r\n\x1a\n'):
+        return 0, 'no empieza como un PNG'
+    i, primero, fin = 8, True, False
+    while i + 12 <= len(b):
+        n, t = struct.unpack('>I4s', b[i:i + 8])
+        datos = b[i + 8:i + 8 + n]
+        if len(datos) != n or i + 12 + n > len(b):
+            return 0, 'un bloque está cortado'
+        crc = struct.unpack('>I', b[i + 8 + n:i + 12 + n])[0]
+        if zlib.crc32(t + datos) & 0xffffffff != crc:
+            return 0, 'CRC malo en %s' % t.decode('latin-1')
+        if primero and t != b'IHDR':
+            return 0, 'el primer bloque no es IHDR'
+        primero = False
+        i += 12 + n
+        if t == b'IEND':
+            fin = True
+            break
+    if not fin:
+        return 0, 'le falta IEND: está cortado'
+    return 1, ''
+def jpgv(b):
+    if len(b) < 100:
+        return 0, 'solo tiene %d bytes' % len(b)
+    if not b.startswith(b'\xff\xd8'):
+        return 0, 'no empieza como un JPEG'
+    i = 2
+    while i + 4 <= len(b):
+        if b[i] != 0xff:
+            return 0, 'un segmento está roto'
+        m = b[i + 1]
+        if m in (0xd8, 0x01) or 0xd0 <= m <= 0xd7:
+            i += 2
+            continue
+        n = struct.unpack('>H', b[i + 2:i + 4])[0]
+        if n < 2 or i + 2 + n > len(b):
+            return 0, 'un segmento está cortado'
+        if m == 0xda:
+            return (1, '') if b.rstrip(b'\x00')[-2:] == b'\xff\xd9' else (0, 'le falta el final (EOI): está cortado')
+        i += 2 + n
+    return 0, 'le falta la imagen (SOS)'
+def gifv(b):
+    if len(b) < 26 or b[:6] not in (b'GIF87a', b'GIF89a'):
+        return 0, 'no es un GIF entero'
+    return (1, '') if b[-1:] == b';' else (0, 'le falta el final: está cortado')
+def rtfv(b):
+    if len(b) < 20 or not b.startswith(b'{\\rtf'):
+        return 0, 'no es un RTF entero'
+    t = re.sub(rb'\\[{}\\]', b'', b)
+    return (1, '') if t.count(b'{') == t.count(b'}') else (0, 'las llaves no cierran: está cortado')
+def webpv(b):
+    return (1, '') if len(b) >= 20 and b[:4] == b'RIFF' and b[8:12] == b'WEBP' and struct.unpack('<I', b[4:8])[0] + 8 == len(b) else (0, 'el tamaño no cuadra: está cortado')
+args = sys.argv[1:]
+for k in range(0, len(args) - 1, 2):
+    tipo, r = args[k], args[k + 1]
     try:
-        cab = bytes.fromhex(magia_hex or '')
-        cola = bytes.fromhex(cola_hex or '')
-    except ValueError:
-        return None, 'no pude leerlo'
-    v = dict(x.split('=', 1) for x in (verif or '').split(';') if '=' in x)
-    if tam == 0 or tipo == 'vacio':
-        return False, 'está vacío'
-    if tipo == 'pdf':
-        if tam < 200:
-            return False, f'solo tiene {tam} bytes'
-        if b'%%EOF' not in cola:
-            return False, 'le falta el final (%%EOF): está cortado'
-        if not v.get('paginas', '0').isdigit() or int(v.get('paginas', '0')) < 1:
-            return False, 'no tiene ninguna página'
-        return True, ''
-    if tipo in ('docx', 'xlsx', 'pptx', 'odt', 'ods', 'odp', 'odg', 'zip'):
-        if v.get('eocd') != '1':
-            return False, 'le falta el fin del directorio del ZIP: está cortado'
-        if v.get('cd') != '1':
-            return False, 'el ZIP no tiene entradas'
-        if v.get('unzip') == 'mal':
-            return False, 'unzip dice que está dañado'
-        if tipo in ('docx', 'xlsx', 'pptx'):
-            principal = {'docx': 'word/document.xml', 'xlsx': 'xl/workbook.xml', 'pptx': 'ppt/presentation.xml'}[tipo]
-            if not v.get('ct', '0').isdigit() or int(v.get('ct', '0')) < 1:
-                return False, 'le falta [Content_Types].xml'
-            if v.get('pp') != principal:
-                return False, f'le falta {principal} en el directorio'
-        return True, ''
-    if tipo == 'png':
-        if cab[12:16] != b'IHDR':
-            return False, 'le falta IHDR al principio'
-        if b'IEND' not in cola[-12:]:
-            return False, 'le falta IEND: está cortado'
-        return True, ''
-    if tipo == 'jpeg':
-        return (True, '') if cola[-2:] == b'\xff\xd9' else (False, 'le falta el final (FFD9): está cortado')
-    if tipo == 'gif':
-        return (True, '') if cola[-1:] == b'\x3b' else (False, 'le falta el final: está cortado')
-    if tipo == 'webp':
-        return (True, '') if len(cab) >= 8 and int.from_bytes(cab[4:8], 'little') + 8 == tam else (False, 'el tamaño no cuadra: está cortado')
-    if tipo == 'rtf':
-        return (True, '') if b'}' in cola else (False, 'le falta el cierre: está cortado')
-    if tipo == 'texto':
-        return True, ''
-    return None, 'no sé comprobar que esté entero'
+        if tipo in ('docx', 'xlsx', 'pptx', 'odt', 'ods', 'odp', 'odg', 'zip'):
+            res = zipv(r, tipo)
+        else:
+            b = leer(r)
+            if len(b) > MAX:
+                res = ('-', 'demasiado grande para comprobarlo')
+            elif not b:
+                res = (0, 'está vacío')
+            elif tipo == 'pdf':
+                res = pdfv(b)
+            elif tipo == 'png':
+                res = pngv(b)
+            elif tipo == 'jpeg':
+                res = jpgv(b)
+            elif tipo == 'gif':
+                res = gifv(b)
+            elif tipo == 'rtf':
+                res = rtfv(b)
+            elif tipo == 'webp':
+                res = webpv(b)
+            elif tipo == 'texto':
+                res = (1, '')
+            else:
+                res = ('-', 'no sé comprobar que esté entero')
+    except Exception as e:
+        res = (0, 'no se pudo abrir: %s' % str(e)[:80])
+    sys.stdout.write('%s\t%s\t%s\n' % (r, res[0], str(res[1]).replace('\t', ' ').replace('\n', ' ')))
+"""
+
+
+def validar_en_escritorio(pares):
+    """La integridad de cada archivo, con python3 DENTRO del escritorio. {ruta: (True|False|None, defecto)}. Sin python3
+    (o si falla) todo queda None, «sin comprobar»: nunca se da por entero lo que no se pudo validar."""
+    if not pares:
+        return {}
+    args = ' '.join(f'{shlex.quote(tipo)} {shlex.quote(ruta)}' for tipo, ruta in pares)
+    comando = f'if command -v python3 >/dev/null 2>&1; then python3 - {args}; else echo SIN_PYTHON; fi'
+    try:
+        salida = en_escritorio(comando, entrada=VALIDADOR.encode(), timeout=90).decode('utf-8', 'replace')
+    except Exception as e:
+        return {r: (None, f'no pude validarlo ({str(e)[:60]})') for _, r in pares}
+    if salida.strip() == 'SIN_PYTHON':
+        return {r: (None, 'el escritorio no tiene python3 para validarlo') for _, r in pares}
+    out = {}
+    for linea in salida.splitlines():
+        partes = linea.split('\t')
+        if len(partes) == 3:
+            out[partes[0]] = ({'1': True, '0': False}.get(partes[1]), partes[2])
+    return {r: out.get(r, (None, 'no pude validarlo')) for _, r in pares}
 
 
 def comando_archivos(nombres, minutos):
@@ -973,24 +1086,10 @@ def comando_archivos(nombres, minutos):
     return (f'cd {q} 2>/dev/null || {{ echo SIN_ESPACIO; exit 0; }}; '
             '{ ' + '; '.join(partes) + "; } 2>/dev/null | awk '!v[$0]++' | head -n 40 | "
             'while IFS= read -r f; do '
-            f'm=$(head -c {MAGIA_BYTES} -- "$f" 2>/dev/null | od -An -v -tx1 | tr -d " \\n"); z=""; v=""; '
-            # La cola (los últimos COLA_BYTES): %%EOF de un PDF, IEND de un PNG, FFD9 de un JPEG.
-            f'c=$(tail -c {COLA_BYTES} -- "$f" 2>/dev/null | od -An -v -tx1 | tr -d " \\n"); '
-            # Un ZIP (docx, xlsx, pptx, odt…): el fin del directorio central (PK 05 06) y sus entradas (PK 01 02) en los
-            # últimos 65 558 bytes, [Content_Types].xml y la parte principal; unzip -tq si está en el escritorio.
-            'case "$m" in 504b0304*) '
-            f'z=$(LC_ALL=C grep -a -o -m1 -E {shlex.quote(RE_MARCA_OOXML)} -- "$f" 2>/dev/null | head -n 1); '
-            # Con los espacios de od: « 50 4b 05 06» solo casa en el límite de un byte.
-            f't=$(tail -c {ZIP_COLA_BYTES} -- "$f" 2>/dev/null | od -An -v -tx1 | tr -s " \\n" "  "); '
-            'case "$t" in *" 50 4b 05 06"*) e=1;; *) e=0;; esac; case "$t" in *" 50 4b 01 02"*) d=1;; *) d=0;; esac; '
-            f'ct=$(tail -c {ZIP_COLA_BYTES} -- "$f" 2>/dev/null | LC_ALL=C grep -a -c -F "[Content_Types].xml"); '
-            f'pp=$(tail -c {ZIP_COLA_BYTES} -- "$f" 2>/dev/null | LC_ALL=C grep -a -o -E {shlex.quote(RE_MARCA_OOXML)} | head -n 1); '
-            'if command -v unzip >/dev/null 2>&1; then unzip -tq "$f" >/dev/null 2>&1 && u=ok || u=mal; else u=na; fi; '
-            'v="eocd=$e;cd=$d;ct=$ct;pp=$pp;unzip=$u";; '
-            # Un PDF: al menos una /Page (no /Pages).
-            '25504446*) pg=$(LC_ALL=C grep -a -c -E "/Page([^s]|$)" -- "$f" 2>/dev/null); v="paginas=$pg";; esac; '
-            'printf "%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n" "$(stat -c "%s %Y" -- "$f")" '
-            '"$(sha256sum -- "$f" | cut -d" " -f1)" "$m" "$z" "$c" "$v" "$f"; done')
+            f'm=$(head -c {MAGIA_BYTES} -- "$f" 2>/dev/null | od -An -v -tx1 | tr -d " \\n"); z=""; '
+            f'case "$m" in 504b0304*) z=$(LC_ALL=C grep -a -o -m1 -E {shlex.quote(RE_MARCA_OOXML)} -- "$f" 2>/dev/null | head -n 1);; esac; '
+            'printf "%s\\t%s\\t%s\\t%s\\t%s\\n" "$(stat -c "%s %Y" -- "$f")" '
+            '"$(sha256sum -- "$f" | cut -d" " -f1)" "$m" "$z" "$f"; done')
 
 
 def comprobar_archivos(t, respuesta):
@@ -1017,11 +1116,11 @@ def comprobar_archivos(t, respuesta):
 
     archivos = []
     for linea in salida.splitlines():
-        partes = linea.split('\t', 6)
-        tam = partes[0].split() if len(partes) == 7 else []
+        partes = linea.split('\t', 4)
+        tam = partes[0].split() if len(partes) == 5 else []
         if len(tam) != 2 or not re.fullmatch(r'[0-9a-f]{64}', partes[1]):
             continue
-        ruta = posixpath.normpath(partes[6])
+        ruta = posixpath.normpath(partes[4])
         if not ruta.startswith(ESPACIO_TRABAJO + '/'):
             continue
         try:
@@ -1033,14 +1132,17 @@ def comprobar_archivos(t, respuesta):
         if tipo:  # sin poder leerlo por dentro no se inventa un tipo: queda «sin comprobar»
             a['tipo'] = tipo
             a['magia'] = magia[:16]
-            cola = partes[4] if re.fullmatch(r'[0-9a-f]*', partes[4]) else ''
-            entero, defecto = integridad(tipo, magia, cola, partes[5].strip(), a['bytes'])
-            a['integro'] = entero
-            if defecto:
-                a['defecto'] = defecto
         a['mencionado'] = any(es(a, n, dentro) for n, dentro in buscar)
         if a['reciente'] or a['mencionado']:
             archivos.append(a)
+    # La integridad de verdad, con python3 dentro del escritorio (validar_en_escritorio); sin él, None.
+    validados = validar_en_escritorio([(a['tipo'], a['ruta']) for a in archivos if a.get('tipo')])
+    for a in archivos:
+        if a.get('tipo'):
+            entero, defecto = validados.get(a['ruta'], (None, 'no pude validarlo'))
+            a['integro'] = entero
+            if defecto:
+                a['defecto'] = defecto
     for n, dentro in buscar:
         if not any(es(a, n, dentro) for a in archivos):
             archivos.append({'ruta': n, 'existe': False, 'bytes': 0, 'sha256': None, 'mencionado': True})
