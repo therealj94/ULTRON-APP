@@ -284,8 +284,10 @@ async function trabajar(x: { id: string; dueno: string; tema: string; consultas:
     const texto = red?.ok ? limpiarRedaccion(red.texto) : '';
     const fuentesEv = orden.map((f) => ({ titulo: f.titulo, url: f.url }));
     if (texto && !senal.aborted) {
+      // Ronda 8: con al menos una página leída, el resumen RESPONDE (respondida, sin comprobar); sin ninguna, sale solo de
+      // los fragmentos del buscador: partial.
       cierre = {
-        estado: 'completed',
+        estado: leidas ? 'respondida' : 'partial',
         resumen: texto,
         fuentes: fuentesEv,
         parcial: leidas ? [] : ['No pude abrir ninguna página: el resumen sale de lo que mostraron las búsquedas.'],
@@ -309,9 +311,12 @@ async function trabajar(x: { id: string; dueno: string; tema: string; consultas:
   // Sin el cierre guardado (el almacén no contestó dos veces) no se dice que está en Tareas: no está. El resultado
   // queda para contárselo en el turno siguiente (Codex, PR 142).
   const guardada = cerrada !== null;
-  const estado = cerrada && typeof cerrada === 'object' && cerrada.state === 'partial' ? 'partial' : cierre.estado;
+  // El estado con que de verdad se cerró (el enlace de la burbuja dice «partial» por las apps de antes: su estadoReal).
+  const real = cerrada && typeof cerrada === 'object' ? cerrada.estadoReal ?? cerrada.state : null;
+  const estado = real === 'partial' || real === 'respondida' ? real : cierre.estado === 'completed' ? 'respondida' : cierre.estado;
   anotarAviso(dueno, { id, tema, estado, resumen: cierre.resumen, t: Date.now() });
-  const titulo = estado === 'completed' ? 'Terminé de investigar' : estado === 'partial' ? 'Terminé de investigar (en parte)' : 'No pude terminar la investigación';
+  // Ni «Terminé» a secas: lo investigado es una respuesta, no un hecho comprobado (ronda 8).
+  const titulo = estado === 'respondida' ? 'Investigación lista (sin comprobar)' : estado === 'partial' ? 'Investigación a medias (sin comprobar)' : 'No pude terminar la investigación';
   const primera = linea(cierre.resumen.replace(/^\s*[-•\d.)\[\]]+\s*/, ''), 200).replace(/\s*\[\d+\]/g, '');
   const dondeQueda = !guardada
     ? 'No pude guardarlo en Tareas: te lo cuento cuando vuelvas a hablarme.'
@@ -340,8 +345,8 @@ export function avisosInvestigacion(quien: string): { ids: string[]; hechos: str
   if (!listas.length && !corriendo.length) return null;
   const hechos: string[] = [];
   if (listas.length) {
-    const partes = listas.map((a) => `«${linea(a.tema, 120)}» (${a.estado === 'completed' ? 'completa' : a.estado === 'partial' ? 'en parte' : 'no se pudo'}): ${linea(a.resumen, 600)}`);
-    hechos.push(`INVESTIGACIÓN TERMINADA (te la encargaron antes; ya le llegó la notificación) ${partes.join(' · ')} Díselo al empezar, en una o dos frases, y que el resumen con sus fuentes está en Tareas.`);
+    const partes = listas.map((a) => `«${linea(a.tema, 120)}» (${a.estado === 'respondida' || a.estado === 'completed' ? 'respondida, sin comprobar' : a.estado === 'partial' ? 'en parte, sin comprobar' : 'no se pudo'}): ${linea(a.resumen, 600)}`);
+    hechos.push(`INVESTIGACIÓN TERMINADA (te la encargaron antes; ya le llegó la notificación) ${partes.join(' · ')} Díselo al empezar, en una o dos frases, como lo que encontraste (no como un hecho comprobado), y que el resumen con sus fuentes está en Tareas.`);
   }
   for (const e of corriendo) {
     hechos.push(`INVESTIGACIÓN EN CURSO (tarea ${e.id}): «${linea(e.tema, 120)}», desde hace ${minutos(Date.now() - e.inicio)} min. Si pregunta, dile que sigue y que le llega una notificación al terminar; no la vuelvas a empezar.`);

@@ -272,8 +272,9 @@ test('otros cierres: la evidencia va a SU criterio (investigar), y el encargo na
   const t = (await leerTarea(yo, id)) as any;
   assert.equal(t.tarea.estado, 'partial', 'las fuentes no prueban la tabla');
   const [fuentes, tabla] = t.tarea.criterios;
-  assert.equal(fuentes.estado, 'verified');
-  assert.equal(fuentes.evidencias.length, 1);
+  // Ronda 8: un resumen con fuentes responde, no comprueba: su criterio queda «sin comprobar»; las fuentes, en el resultado.
+  assert.equal(fuentes.estado, 'unknown');
+  assert.equal(t.tarea.resultado.evidencias.length, 1);
   assert.equal(tabla.estado, 'unknown');
   assert.deepEqual(tabla.evidencias, []);
   // El encargo a la computadora: un criterio por documento pedido desde que nace (el panel los muestra pendientes).
@@ -1076,7 +1077,7 @@ test('ronda 7 · 1: una consulta respondida queda «respondida», nunca complete
     assert.equal(e.respondida, true, q);
     const c = cerrar(q, undefined, ORO);
     assert.equal(c.c.estado, 'respondida', q);
-    assert.match(c.c.resultado!.resumen, /Solo te respond[ií]; no hice ni comprob[eé] ninguna otra acci[oó]n/, q);
+    assert.match(c.c.resultado!.resumen, /Te respond[ií] con lo que encontr[eé]/, q);
     assert.ok(c.criterios.every((x) => x.estado !== 'verified'), 'responder no verifica ningún criterio');
     assert.equal(c.s.state, 'respondida');
     assert.equal(c.s.terminal, true);
@@ -1131,7 +1132,7 @@ test('ronda 7 · servidor: la voz dice que solo respondió; la tarjeta no es «L
       assert.equal(v.final.ok, false);
       assert.equal(v.final.comprobado, false);
       assert.equal(v.final.respondida, true);
-      assert.match(v.final.texto, /Solo te respond[ií]; no hice ni comprob[eé] ninguna otra acci[oó]n/);
+      assert.match(v.final.texto, /Te respond[ií] con lo que encontr[eé]/);
       assert.doesNotMatch(v.final.texto, /^Listo/);
       assert.equal(v.puedeSeguir, false, 'terminada: no se ofrece seguir');
     });
@@ -1162,6 +1163,93 @@ test('ronda 7 · clientes: los nuevos ven «respondida»; los viejos ven un term
   const { finalEnPalabras } = (await import('../mobile/src/compa/computadora')) as any;
   assert.equal(finalEnPalabras({ estado: 'hecha', ok: false, comprobado: false, respondida: true }), 'Respondida (sin comprobar)');
   assert.equal(finalEnPalabras({ estado: 'hecha', ok: false, comprobado: false }), 'Sin comprobar', 'un servidor de antes sigue igual');
+});
+
+/* ------------------------------------------------------------------ ronda 8 */
+
+/** Lo que dice una tarea «respondida» (ronda 8, G-B): nunca afirma que no hubo efecto. */
+const NUEVO_RESPONDI = /Te respond[ií] con lo que encontr[eé]\. Si adem[aá]s pediste que hiciera algo, eso NO est[aá] comprobado: revisa antes de darlo por hecho/;
+
+test('ronda 8 · G-B: «respondida» nunca afirma que no hubo efecto: el recibo es «possible» y el texto no dice «no hice nada»', () => {
+  for (const q of ['Busca el precio del oro y dime cuánto subió', 'Necesito saber el precio del oro', 'Lee la noticia y resúmela']) {
+    const c = reconciliarConComputadora(tarea(q), mision(q, [], ORO), T0 + 60_000)!;
+    assert.equal(c.estado, 'respondida', q);
+    const recibo = (c as any).eventos[0].payload;
+    assert.notEqual(recibo.effect, 'none', `${q}: la computadora corrió y pudo tocar cosas`);
+    assert.equal(recibo.effect, 'possible', q);
+    assert.match(c.resultado!.resumen, NUEVO_RESPONDI, q);
+    assert.doesNotMatch(c.resultado!.resumen, /no hice|no hubo efecto|ninguna otra acci/i, q);
+    assert.doesNotMatch(deComputadora(mision(q, [], ORO), T0 + 60_000).result!.summary, /no hice|ninguna otra acci/i, q);
+  }
+  assert.doesNotMatch(String((durables as any).SOLO_RESPONDI), /no hice/);
+  assert.doesNotMatch(String((durables as any).SOLO_RESPONDI_EN), /didn.t do/);
+});
+
+test('ronda 8 · G-B: las acciones disfrazadas de la revisión (consulta2: 4 × 26 + 4 en inglés) no terminan «respondida»', () => {
+  const verbos = ['vende mis acciones', 'firma el contrato', 'acepta la invitación', 'publica el post', 'borra el correo', 'sigue a Juan', 'confirma la cita', 'aprueba la factura', 'vota por Juan', 'transfiere 500 a Bruno', 'retira 500', 'deposita el cheque', 'apaga el servidor', 'reinicia el router', 'cierra la cuenta', 'pide un Uber', 'solicita el préstamo', 'activa el débito automático', 'desactiva la alarma', 'cambia la contraseña', 'escribe que llego tarde', 'responde que sí', 'dale like', 'dona 100 dólares', 'invierte 1000', 'renueva la suscripción'];
+  const prefijos = ['Revisa el saldo y si alcanza ', 'Mira el precio y en la página ', 'Busca la oferta y si está barata ', 'Consulta el clima y si llueve '];
+  const malos: string[] = [];
+  for (const p of prefijos) for (const v of verbos) {
+    const e = evaluarEntrega({ id: 'm', instruccion: p + v, resultado: 'El saldo es 12,400 lempiras y el precio está en 24.70.', enlaces: [], datos: [], archivos: [] } as any);
+    if (e.respondida) malos.push(p + v);
+  }
+  for (const q of ['Check the gold price; if it is under 2000 sell everything', 'Check my balance and if there is enough, wire 500 to Bruno', 'Look at the invite and accept it if it is from Juan', 'Check the weather, and on the app turn off the sprinklers']) {
+    if (evaluarEntrega({ id: 'm', instruccion: q, resultado: 'The price is 2,010 dollars per ounce right now.', enlaces: [], datos: [], archivos: [] } as any).respondida) malos.push(q);
+  }
+  for (const q of ['Busca la oferta del iPhone en Amazon y si está barata cómprala ya', 'Revisa el precio del dólar y si está barato vende mis acciones', 'Mira el precio y en Binance vende mis bitcoins']) {
+    if (deComputadora(mision(q, [], 'El precio es 24.70 y la oferta está en 899 dólares; listo.'), T0 + 60_000).state === 'respondida') malos.push(q);
+  }
+  assert.deepEqual(malos, [], `${malos.length} acciones disfrazadas terminaron «respondida»`);
+});
+
+test('ronda 8 · menor 1: una respuesta que remite al portapapeles, a Firefox, a gedit, a la terminal o a una nota no es «respondida»', () => {
+  const instr = ['Hazme un resumen de la noticia principal de La Prensa', 'Tradúceme al inglés el primer párrafo de la página de la ENEE', '¿Cuál es el precio del dólar hoy en el Banco Central?'];
+  const resp = [
+    'He escrito el resumen completo de la noticia en el documento de LibreOffice Writer que dejé listo, con los puntos principales y las conclusiones del artículo de hoy 4 de octubre.',
+    'Copié el resumen completo al portapapeles para que lo pegues donde quieras; incluye los tres puntos clave y la conclusión del artículo publicado hoy.',
+    'Puedes leer la traducción completa en la página que abrí en Firefox; la traduje con el traductor del sitio y se ve bien formateada en 3 párrafos.',
+    'La traducción completa está en el archivo de texto que abrí en gedit, con los 3 párrafos traducidos al inglés y revisados.',
+    'Ya lo tienes en la terminal: imprimí la traducción completa de los 3 párrafos con el comando que corrí.',
+    'El precio del dólar aparece en el sitio del Banco Central que abrí; lo verás en la tabla de tipo de cambio de referencia del día de hoy 4 de octubre.',
+    'Lo encuentras en la nota que creé en la aplicación de notas, con el resumen de 5 puntos y la conclusión.',
+    'Te lo dejé en Firefox, en la segunda pestaña, con el resumen de 5 puntos.',
+    'I copied the full summary to the clipboard so you can paste it wherever you want, with the three key points.',
+    'You can read it on the page I opened in Chrome, with the full translation of the three paragraphs.',
+  ];
+  const malos: string[] = [];
+  for (const i of instr) for (const r of resp) if (evaluarEntrega({ id: 'm', instruccion: i, resultado: r, enlaces: [], datos: [], archivos: [] } as any).respondida) malos.push(`${i.slice(0, 20)} | ${r.slice(0, 50)}`);
+  assert.deepEqual(malos, []);
+  // Lo legítimo sigue: el dato o el resumen EN la respuesta.
+  assert.equal(evaluarEntrega({ id: 'm', instruccion: instr[2], resultado: 'El dólar está hoy en 24.70 lempiras a la compra y 24.95 a la venta, según el Banco Central.', enlaces: [], datos: [], archivos: [] } as any).respondida, true);
+});
+
+test('ronda 8 · las consultas legítimas siguen «respondida» con la defensa nueva', () => {
+  const legitimas = [
+    'Busca el precio del oro y dime cuánto subió', 'Necesito saber el precio del oro', 'Quiero saber cuánto cuesta el oro', 'I need the gold price',
+    '¿Me puedes decir el precio del oro?', 'Podrías buscar el precio del oro', 'Busca el precio de ayer y compáralo con el de hoy', 'Lee la noticia y resúmela',
+    'Averigua si abre el museo el domingo', 'Busca cuándo abre la oficina del RNP', 'Dime cuántos habitantes tiene Copán', 'Busca el precio en Amazon y en eBay',
+    'Mira qué dice la noticia', 'Busca vuelos a Madrid esta semana', 'Busca la película de anoche y dime de qué trata', '¿Está abierto el banco hoy?',
+  ];
+  const no = legitimas.filter((q) => cerrar(q, undefined, ORO).c.estado !== 'respondida');
+  assert.deepEqual(no, []);
+});
+
+test('ronda 8 · servidor: la frase y el HECHO de una respondida no dicen que no hubo acción', async () => {
+  const n = await nodo(ORO, {});
+  try {
+    await conNodo(n.url, async () => {
+      _olvidarEncargos();
+      const r = await (encargarTarea as any)({ instruccion: 'Busca el precio del oro y dime cuánto subió', quien: 'ana@x.hn', motor: 'holo', esperaMs: 8000 });
+      assert.equal(r.respondida, true);
+      assert.doesNotMatch(r.hecho, /no hiciste|ninguna otra acci/i);
+      assert.match(r.hecho, /NO est[aá] comprobado/);
+      const v = vistaMision(misionDeTarea(r.id!)!) as any;
+      assert.match(v.final.texto, NUEVO_RESPONDI);
+      assert.doesNotMatch(v.final.texto, /no hice/);
+    });
+  } finally {
+    await n.cerrar();
+  }
 });
 
 test('ronda 3: lo legítimo de un archivo sigue completando', () => {

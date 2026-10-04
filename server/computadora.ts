@@ -1177,7 +1177,7 @@ export function fraseDeFinal(mision: string, t: Tarea, idioma: 'es' | 'en' = 'es
   if (t.estado === 'hecha') {
     // Lo que no se comprobó no se dice como hecho: ni «listo», ni «ya lo guardé» (revisión externa, 4-oct).
     const ent = entregaDe(mision, t, requisitos);
-    // Solo respondió (ronda 7): se dice la respuesta y que no hizo ni comprobó nada más; nunca «Listo».
+    // Respondió (ronda 7): la respuesta y que lo demás NO está comprobado (ronda 8: nunca «no hice nada»); nunca «Listo».
     if (!ent.comprobada && ent.respondida && !misionIncompleta(t)) {
       const r = corto(t.respuesta, 650);
       return en ? `${SOLO_RESPONDI_EN}${r ? ` ${r}` : ''}` : `${SOLO_RESPONDI}${r ? ` ${r}` : ''}`;
@@ -1602,7 +1602,7 @@ export function resumenTarea(t: Tarea, instruccion: string = t.instruccion, requ
     if (!ent.comprobada && ent.respondida && !misionIncompleta(t)) {
       return (
         `RESPONDIDA (no comprobada), en ${pasos} pasos (${Math.round(t.segundos)} s). Lo que respondió tu computadora: ${dijo || '(nada)'} ` +
-        `Díselo como respuesta y aclara que solo respondiste: no hiciste ni comprobaste ninguna otra acción. No digas «listo» ni que quedó hecho.`
+        `Díselo como respuesta. Si además te pidió que hicieras algo, dile que eso NO está comprobado y que lo revise antes de darlo por hecho. No digas «listo» ni que quedó hecho, y tampoco que tu computadora no tocó nada: corrió y pudo tocar cosas.`
       );
     }
     if (!ent.comprobada) {

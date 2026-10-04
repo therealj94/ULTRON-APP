@@ -64,7 +64,7 @@ export const ESTADOS_TAREA = [
   'verifying',
   'completed',
   // Ronda 7: terminó RESPONDIENDO (una consulta o un texto en el chat). Terminal, pero NUNCA comprobada ni completada:
-  // «solo te respondí; no hice ni comprobé ninguna otra acción».
+  // «te respondí con lo que encontré; si además pediste algo, eso NO está comprobado» (ronda 8: nunca «no hice nada»).
   'respondida',
   'partial',
   'failed',
@@ -834,9 +834,12 @@ export type Entrega = {
   respondida?: boolean;
 };
 
-/** Lo que se le dice a la persona cuando solo se respondió. */
-export const SOLO_RESPONDI = 'Solo te respondí; no hice ni comprobé ninguna otra acción.';
-export const SOLO_RESPONDI_EN = "I only answered; I didn't do or verify any other action.";
+/**
+ * Lo que se le dice a la persona cuando se respondió (ronda 8, G-B): NUNCA afirma que no hubo efecto. La misión corrió
+ * en la computadora, que pudo tocar cosas; si además se pidió una acción, no está comprobada.
+ */
+export const SOLO_RESPONDI = 'Te respondí con lo que encontré. Si además pediste que hiciera algo, eso NO está comprobado: revisa antes de darlo por hecho.';
+export const SOLO_RESPONDI_EN = 'I answered with what I found. If you also asked me to do something, that is NOT verified: check before taking it as done.';
 
 /** El id de la evidencia de un requisito verificado: uno por requisito, nunca compartido. */
 const idEvidenciaItem = (misionId: string, itemId: string) => `${misionId}:archivo:${itemId}`;
@@ -914,7 +917,7 @@ export function evaluarEntrega(m: Pick<MisionComputadoraMin, 'id' | 'instruccion
     return { comprobada: false, tipo: 'dato', evidencias: abiertas, falta: m.resultado ? 'Tu computadora dice que terminó, pero no trajo lo que pediste: no pude comprobarlo.' : 'Terminó sin un resultado que lo compruebe.', items: [], hechos: 0, total: 1, revisado: true };
   }
   // Ronda 7: lo que se responde con el texto NO es una entrega verificada. Queda `respondida` (terminal, nunca
-  // comprobada): «solo te respondí; no hice ni comprobé ninguna otra acción».
+  // comprobada): SOLO_RESPONDI. Nunca afirma que no hubo efecto (ronda 8).
   const ev: Evidencia[] = [{ id: `${m.id}:respuesta`, tipo: 'dato', etiqueta: `Lo que respondió (sin comprobar): ${texto(m.resultado, 170)}` }];
   (m.datos || []).slice(0, 6).forEach((d, i) => ev.push({ id: `${m.id}:dato:${i}`, tipo: 'dato', etiqueta: `${texto(d.clave, 40)}: ${texto(d.valor, 120)}` }));
   return { comprobada: false, respondida: true, tipo: 'dato', evidencias: [...ev, ...abiertas], falta: SOLO_RESPONDI, items: [], hechos: 0, total: 1, revisado: true };
@@ -975,7 +978,8 @@ function cierreDeComputadora(m: MisionComputadoraMin): { estado: EstadoTarea; ok
   const evidencias = termino ? entrega.evidencias : entrega.evidencias.filter((e) => e.tipo === 'enlace');
   const criterios = criteriosDeMision(m, entrega, evidencias, termino);
   const ok = termino && m.ok !== false && entrega.comprobada && criteriosCumplidos(criterios, evidencias);
-  // Respondida: terminó, no dijo que quedó a medias, y lo único que había era responder (y lo respondió).
+  // Respondida: terminó, no dijo que quedó a medias, y lo que se pidió se respondió. NO dice que no hubo efecto (ronda 8):
+  // la computadora corrió y pudo tocar cosas; su recibo es «possible», como cualquier misión sin comprobar.
   const respondida = !ok && termino && m.ok !== false && !!entrega.respondida;
   const estado: EstadoTarea = ok ? 'completed' : respondida ? 'respondida' : base === 'verifying' || base === 'partial' ? 'partial' : base;
   const sinComprobar = estado === 'partial' && termino && !entrega.comprobada;
@@ -1059,7 +1063,7 @@ export function reconciliarConComputadora(reg: RegistroTarea, m: MisionComputado
       progreso: prog,
       pasoActual: null,
       resultado: { id: `${reg.id}:resultado`, resumen, evidencias: ev, parcial, pendiente: [], t: ahora },
-      eventos: [{ type: 'operation.receipt', payload: { operationId: m.tareaId, state: final === 'completed' ? 'succeeded' : final === 'respondida' ? 'answered' : final === 'cancelled' ? 'cancelled' : 'failed', effect: ok ? 'confirmed' : final === 'respondida' ? 'none' : 'possible' } }],
+      eventos: [{ type: 'operation.receipt', payload: { operationId: m.tareaId, state: final === 'completed' ? 'succeeded' : final === 'respondida' ? 'answered' : final === 'cancelled' ? 'cancelled' : 'failed', effect: ok ? 'confirmed' : 'possible' } }],
     };
   }
   // Pidió la pausa y el nodo todavía está vaciando la barrera: sigue «pausing» hasta que el nodo diga «pausada».

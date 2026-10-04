@@ -68,7 +68,7 @@ import {
 /* ------------------------------------------------------------------ tipos */
 
 /** Lo que enlaza la respuesta del chat: una tarjeta compacta (título, estado, última actualización). */
-export type RefTarea = { id: string; title: string; state: TaskSnapshot['state']; version: number; updatedAt: string };
+export type RefTarea = { id: string; title: string; state: TaskSnapshot['state']; version: number; updatedAt: string; estadoReal?: TaskSnapshot['state'] };
 
 /** Cómo terminó un envío aprobado: `stale` = el borrador ya no era ese (no se envió nada). */
 export type SalidaEnvio = { estado: 'succeeded' | 'failed' | 'unknown' | 'stale'; resumen: string; referencia?: string };
@@ -120,7 +120,7 @@ function refDe(reg: RegistroTarea): RefTarea {
   // El enlace de la burbuja va a cualquier app: «respondida» sale como «partial» (terminal, sin comprobar). La app
   // nueva pinta el estado de verdad con la tarea que lee de /api/trabajos.
   const state = reg.estado === 'respondida' ? 'partial' : reg.estado;
-  return { id: reg.id, title: reg.titulo, state, version: reg.version, updatedAt: new Date(reg.actualizada).toISOString() };
+  return { id: reg.id, title: reg.titulo, state, version: reg.version, updatedAt: new Date(reg.actualizada).toISOString(), ...(state !== reg.estado ? { estadoReal: reg.estado } : {}) };
 }
 
 /** Lo que pide la app para ver los estados nuevos (ronda 7): `?estados=respondida` o la cabecera `x-aura-estados`. */
@@ -312,7 +312,8 @@ export async function avanzarInvestigacion(duenoCorreo: string, id: string, paso
 }
 
 export type CierreInvestigacion = {
-  estado: 'completed' | 'partial' | 'failed';
+  /** `respondida` (ronda 8): un resumen con fuentes leídas responde, no comprueba. `completed` se trata igual. */
+  estado: 'respondida' | 'completed' | 'partial' | 'failed';
   resumen: string;
   fuentes: { titulo: string; url: string }[];
   parcial?: string[];
@@ -320,22 +321,24 @@ export type CierreInvestigacion = {
 };
 
 /**
- * Cierra la investigación con lo que de verdad quedó: `completed` solo con resumen y al menos una fuente (la
- * evidencia de su criterio); sin fuentes, `partial`. Devuelve la tarea cerrada, o `cerrada` si ya era terminal
- * (la cancelaste: no se le avisa nada), o null si el almacén no contestó.
+ * Cierra la investigación con lo que de verdad quedó. Ronda 8: un resumen con fuentes RESPONDE, no comprueba: queda
+ * `respondida` (terminal, su criterio sin verificar, como cualquier respuesta), nunca `completed`; sin fuentes,
+ * `partial`. Devuelve la tarea cerrada, o `cerrada` si ya era terminal (la cancelaste: no se le avisa nada), o null si
+ * el almacén no contestó.
  */
 export async function cerrarInvestigacion(duenoCorreo: string, id: string, r: CierreInvestigacion): Promise<RefTarea | 'cerrada' | null> {
   const dueno = conCorreo(duenoCorreo);
   if (!dueno) return null;
   const ahora = Date.now();
   const evidencias: Evidencia[] = r.fuentes.slice(0, 8).map((f, i) => ({ id: `${id}:fuente:${i}`, tipo: 'enlace', etiqueta: trozo(f.titulo || f.url, 120), ref: String(f.url).slice(0, 500) }));
-  const estado = r.estado === 'completed' && !evidencias.length ? 'partial' : r.estado;
+  const responde = (r.estado === 'completed' || r.estado === 'respondida') && evidencias.length > 0;
   const c = await cambiarTarea(dueno, id, (reg): Cambio | null => {
     if (!esInvestigacion(reg)) return null;
-    // Las fuentes prueban SU criterio («fuentes»); otro criterio obligatorio que no prueban no se da por cumplido.
-    const criterios =
-      estado === 'completed' ? soloSuCriterio(reg.criterios, 'fuentes', evidencias) : reg.criterios.map((x) => (x.obligatorio ? { ...x, estado: 'not_met' as const, evidencias: [] } : x));
-    const final = estado === 'completed' && !criteriosCumplidos(criterios, evidencias) ? 'partial' : estado;
+    // Responder no verifica: sus criterios quedan «sin comprobar» (unknown), con las fuentes como evidencia del resultado.
+    // Si se pidió algo más que el resumen con fuentes (otro criterio obligatorio, p. ej. una tabla), queda partial.
+    const criterios = reg.criterios.map((x) => (x.obligatorio ? { ...x, estado: responde ? ('unknown' as const) : ('not_met' as const), evidencias: [] } : x));
+    const otros = reg.criterios.some((x) => x.obligatorio && x.id !== 'fuentes');
+    const final = responde ? (otros ? 'partial' : 'respondida') : r.estado === 'completed' || r.estado === 'respondida' ? 'partial' : r.estado;
     return {
       estado: final,
       pasoActual: null,
@@ -349,7 +352,7 @@ export async function cerrarInvestigacion(duenoCorreo: string, id: string, r: Ci
         pendiente: (r.pendiente || []).map((x) => trozo(x, 200)).slice(0, 4),
         t: ahora,
       },
-      eventos: [{ type: 'operation.receipt', payload: { operationId: reg.id, state: final === 'failed' ? 'failed' : 'succeeded', effect: 'none', fuentes: evidencias.length } }],
+      eventos: [{ type: 'operation.receipt', payload: { operationId: reg.id, state: final === 'failed' ? 'failed' : final === 'respondida' ? 'answered' : 'partial', effect: 'none', fuentes: evidencias.length } }],
     };
   }).catch(() => null);
   if (!c) return null;
