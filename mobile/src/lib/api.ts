@@ -603,7 +603,8 @@ export function turnoStream(opts: TurnoOpts, h: StreamHandlers): { promise: Prom
     // Cancelar (el usuario dijo «callar») rechaza ya, sin depender de cómo cierre el XHR al abortarlo.
     cancelar = () => fail(new Error('cancelado'));
     xhr.ontimeout = () =>
-      full ? finish({ reply: quitarExpresiones(full).trim(), voz: full.trim(), emocion: emocion || 'neutral', error: 'timeout', parcial: true, cierre: 'timeout', ...idTurno }) : fail(new Error('timeout'));
+      // Salió o entró otra persona mientras esperaba: lo que alcanzó a llegar de la anterior no se entrega.
+      !sigueVigente(gen) ? fail(vencida()) : full ? finish({ reply: quitarExpresiones(full).trim(), voz: full.trim(), emocion: emocion || 'neutral', error: 'timeout', parcial: true, cierre: 'timeout', ...idTurno }) : fail(new Error('timeout'));
     const payload = turnoBody(opts);
     void Promise.all([loadMesaToken(), cabecerasAparato(true).catch(() => ({}) as Record<string, string>)]).then(([t, extra]) => {
       if (settled) return;

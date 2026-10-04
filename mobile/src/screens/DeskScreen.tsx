@@ -474,11 +474,16 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   /** Cortar el turno en curso (el stream) y marcar que se canceló: «callar» no espera al cerebro. */
   const abortTurno = useRef<(() => void) | null>(null);
   const turnoCancelado = useRef(false);
+  /** La mesa sigue montada: al irse, lo que quedó en cola (lo que dijo la persona anterior) ya no se manda. */
+  const mesaMontada = useRef(true);
   // La mesa se va (salió, venció o entró otra persona): el turno en vuelo se corta y lo que llegue ya no se dice ni se hace.
   useEffect(
     () => () => {
+      mesaMontada.current = false;
       turnoCancelado.current = true;
       abortTurno.current?.();
+      pending.current = null;
+      pendienteOidaEn.current = 0;
     },
     []
   );
@@ -1481,7 +1486,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         const next = pending.current;
         const nextOidaEn = pendienteOidaEn.current;
         pending.current = null;
-        if (next) void handleCommand(next, nextOidaEn);
+        if (next && mesaMontada.current) void handleCommand(next, nextOidaEn);
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps

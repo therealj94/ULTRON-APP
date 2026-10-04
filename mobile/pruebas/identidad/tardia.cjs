@@ -110,6 +110,23 @@ const resp = (cuerpo, status = 200) => new Response(JSON.stringify(cuerpo), { st
   ok('stream: el turno termina «vencido», sin su done', esVencida(rSt), String(rSt?.message || JSON.stringify(rSt)));
   ok('stream: la conexión de A se corta', x.abortado === true);
 
+  /* ── turnoStream(): A recibe trozos, cambia la cuenta y el turno de A vence por tiempo ─────────── */
+  CUENTA.fijarCuenta(null, { nueva: true });
+  dentro('a@prueba.local', 'tok-A');
+  const st2 = API.turnoStream({ message: 'mi código', mode: 'conversar', userName: 'Ana', historial: [], idTurno: 'turno-a-0002' }, {});
+  await espera(20);
+  const x2 = xhrs[xhrs.length - 1];
+  // Llega un trozo con A dentro (sin pasar por onprogress, como cuando el aparato lo junta al final).
+  x2.status = 200;
+  x2.readyState = 3;
+  x2.responseText += ev('delta', { text: 'Ana, tu código es PIÑA-7781.', voz: 'Ana, tu código es PIÑA-7781.' });
+  dentro(null, '');
+  dentro('b@prueba.local', 'tok-B');
+  x2.ontimeout?.();
+  const rSt2 = await Promise.race([st2.promise.catch((e) => e), espera(500).then(() => 'colgado')]);
+  ok('stream (tiempo agotado con B dentro): lo de A no se entrega como respuesta parcial', !JSON.stringify(rSt2 || {}).includes('PIÑA'), JSON.stringify(rSt2));
+  ok('…y termina «vencido»', esVencida(rSt2), String(rSt2?.message || JSON.stringify(rSt2)));
+
   /* ── lo siguiente de B sale con B y sin nada de A ───────────────────────────────────────── */
   const enviados = [];
   globalThis.fetch = async (url, init = {}) => {
