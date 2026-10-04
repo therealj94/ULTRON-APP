@@ -55,6 +55,14 @@ export async function seudonimoDe(correo: string): Promise<string> {
   return `u${Array.from(h.slice(0, 8), (b) => b.toString(16).padStart(2, '0')).join('')}`;
 }
 
+/**
+ * De quién es el navegador AHORA (correo en minúsculas; '' = nadie). Lo fija `cuentaDeAvisos` en cuanto cambia la cuenta,
+ * antes de cualquier espera: un alta de avisos que siga en vuelo de la cuenta anterior lo mira al volver y no deja el
+ * navegador apuntando a quien ya salió (revisión independiente del 4-oct).
+ */
+let cuentaVigente = '';
+const normal = (c: string | null | undefined) => String(c || '').trim().toLowerCase();
+
 /** Le dice al service worker de quién es este navegador ('' = nadie: no enseña el texto de ningún aviso). */
 async function fijarPara(para: string) {
   try {
@@ -92,6 +100,11 @@ export async function activarAvisos(correo: string): Promise<'activados' | 'dene
       body: JSON.stringify({ suscripcion: sus.toJSON() }),
     });
     if (!alta.ok) return alta.status === 503 ? 'sin-servidor' : 'error';
+    // Mientras se pedía el permiso o el alta, la cuenta cambió: este navegador no queda apuntando a la anterior.
+    if (normal(correo) !== cuentaVigente) {
+      await cuentaDeAvisos(cuentaVigente || null);
+      return 'error';
+    }
     await fijarPara(await seudonimoDe(correo));
     return 'activados';
   } catch {
@@ -101,6 +114,7 @@ export async function activarAvisos(correo: string): Promise<'activados' | 'dene
 
 /** Entró una cuenta (o se recuperó la sesión): el worker sabe de quién es este navegador. */
 export async function cuentaDeAvisos(correo: string | null) {
+  cuentaVigente = normal(correo);
   if (!avisosSoportados()) return;
   if (correo) {
     // Si esta cuenta ya tenía el permiso dado, la suscripción del navegador se vuelve a apuntar a ella.
