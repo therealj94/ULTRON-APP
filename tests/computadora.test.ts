@@ -558,6 +558,8 @@ async function nodoAgente(o: {
   altaCodigo?: number;
   respuestasPerdidas?: number;
   conPropuesta?: boolean;
+  /** Un nodo de antes de AUR02: sus preguntas no traen la huella de la propuesta. */
+  sinPropuesta?: boolean;
   sinRevisar?: boolean;
   parada?: 'quiescent' | 'draining';
   demora?: (t: TareaFalsa, url: string) => number;
@@ -604,10 +606,10 @@ async function nodoAgente(o: {
         o.guion(t);
         if (t.pregunta && (t.pregunta !== antes || !t.pregunta_id)) {
           t.pregunta_id = `p${++preguntas}`;
-          if (o.conPropuesta) t.propuesta = `h${preguntas}`;
+          if (!o.sinPropuesta) t.propuesta = `h${preguntas}`;
         }
         if (!t.pregunta) t.pregunta_id = t.propuesta = null;
-        const foto = { id: t.id, motor: 'holo', instruccion: t.instruccion, estado: t.estado, pasos: [...t.pasos], respuesta: t.respuesta, error: t.error, segundos: 20, pregunta: t.pregunta, pregunta_id: t.pregunta_id ?? null, ...(o.conPropuesta ? { propuesta: t.propuesta ?? null } : {}) };
+        const foto = { id: t.id, motor: 'holo', instruccion: t.instruccion, estado: t.estado, pasos: [...t.pasos], respuesta: t.respuesta, error: t.error, segundos: 20, pregunta: t.pregunta, pregunta_id: t.pregunta_id ?? null, ...(o.sinPropuesta ? {} : { propuesta: t.propuesta ?? null }) };
         const ms = o.demora?.(t, req.url!) ?? 0;
         if (ms > 0) return void setTimeout(() => json(200, foto), ms);
         return json(200, foto);
@@ -644,6 +646,8 @@ async function nodoAgente(o: {
         if (t.estado !== 'confirmar') return json(409, { detail: 'no está esperando ningún sí' });
         if (!o.sinRevisar && (!cuerpo.pregunta_id || cuerpo.pregunta_id !== t.pregunta_id)) return json(409, { detail: 'esa respuesta era para otra pregunta; mira la de ahora' });
         if (!o.sinRevisar && cuerpo.propuesta && cuerpo.propuesta !== t.propuesta) return json(409, { detail: 'esa respuesta era para otra propuesta' });
+        // Como el agente.py de la revisión 4-oct: un «sí» sin la propuesta exacta no contesta nada.
+        if (!o.sinRevisar && !o.sinPropuesta && cuerpo.si && cuerpo.propuesta !== t.propuesta) return json(409, { detail: 'ese sí no nombra la propuesta de ahora' });
         t.si = !!cuerpo.si;
         t.estado = 'trabajando';
         t.pregunta = null;
@@ -850,7 +854,7 @@ test('confirmación: antes de algo sensible pausa y pregunta en la app y en voz;
         assert.equal(await resolverPreguntaComputadora('otra@x.hn', 'sí'), null, 'el sí de otra persona no vale');
         const h = await resolverPreguntaComputadora('jose@x.hn', '¡Sí, dale!');
         assert.match(h!, /^COMPUTADORA: dijo que sí a «Voy a tocar «Enviar formulario»/);
-        assert.deepEqual(nodo.pedidos.find((x) => /\/confirmar$/.test(x.ruta))!.cuerpo, { si: true, pregunta_id: 'p1' }, 'el sí nombra la pregunta que contesta');
+        assert.deepEqual(nodo.pedidos.find((x) => /\/confirmar$/.test(x.ruta))!.cuerpo, { si: true, pregunta_id: 'p1', propuesta: 'h1' }, 'el sí nombra la pregunta que contesta y la propuesta exacta');
         assert.equal(await resolverPreguntaComputadora('jose@x.hn', 'sí'), null, 'ya contestada: un segundo «sí» no hace nada');
         await hasta(() => vistos.some((v) => v.aviso.fase === 'termina'));
         assert.match(vistos.find((v) => v.aviso.fase === 'termina')!.aviso.texto!, /Envié el formulario/);
@@ -905,7 +909,10 @@ test('confirmación en el turno: si pregunta mientras el turno espera, lo dice e
           assert.equal(v.j.mision.plan.find((x: any) => x.estado === 'espera')?.texto, 'Entrar a x.hn', 'el paso de ahora queda en espera');
           assert.equal((await como('jose@x.hn', `/api/computadora/tareas/${r.id}/confirmar`, { method: 'POST', body: '{}' })).code, 400, 'sí o no, nada más');
           assert.equal((await como('otra@x.hn', `/api/computadora/tareas/${r.id}/confirmar`, { method: 'POST', body: '{"si":true}' })).code, 404);
-          const c = await como('jose@x.hn', `/api/computadora/tareas/${r.id}/confirmar`, { method: 'POST', body: '{"si":true}' });
+          // Revisión 4-oct: un «sí» que no dice a qué pregunta contesta no aprueba «la que haya»; con la pregunta y la
+          // propuesta que muestra la app, sí.
+          assert.equal((await como('jose@x.hn', `/api/computadora/tareas/${r.id}/confirmar`, { method: 'POST', body: '{"si":true}' })).code, 409);
+          const c = await como('jose@x.hn', `/api/computadora/tareas/${r.id}/confirmar`, { method: 'POST', body: JSON.stringify({ si: true, preguntaId: v.j.mision.preguntaId, propuesta: v.j.mision.propuesta }) });
           assert.equal(c.code, 200);
           assert.equal(c.j.si, true);
           assert.equal((await como('jose@x.hn', `/api/computadora/tareas/${r.id}/confirmar`, { method: 'POST', body: '{"si":true}' })).code, 409, 'ya no espera');
@@ -1166,9 +1173,9 @@ test('el sí nombra su pregunta: uno que llega tarde no contesta la siguiente, n
           t.pregunta = 'Voy a tocar «Eliminar cuenta». ¿Lo hago?';
           t.pregunta_id = 'p9';
           hacer!();
-          await hasta(() => nodo.pedidos.filter((x) => /\/confirmar$/.test(x.ruta)).length >= 1);
-          await new Promise((res) => setTimeout(res, 100));
-          assert.equal(nodo.pedidos.filter((x) => /\/confirmar$/.test(x.ruta))[0].cuerpo.pregunta_id, 'p1');
+          await new Promise((res) => setTimeout(res, 200));
+          // Revisión 4-oct: el servidor mira qué pregunta el nodo justo antes y ni siquiera lo manda (el nodo, además, lo negaría).
+          assert.equal(nodo.pedidos.filter((x) => /\/confirmar$/.test(x.ruta) && x.cuerpo?.si === true).length, 0);
           assert.equal(t.si, undefined, 'el sí del login NO contestó la de borrar');
           assert.equal(t.estado, 'confirmar');
           // La app con la pregunta vieja: 409 y no se contesta; con la de ahora, sí.
@@ -1552,6 +1559,115 @@ test('el visor: entrada segura con un secreto sintético que no queda en trazas,
           assert.equal((await como('jose@x.hn', `/api/computadora/tareas/${r.id}/control`, { method: 'POST', body: '{"tomar":true}' })).code, 200);
           assert.ok(!('clientId' in viejo.pedidos.find((x) => x.ruta.endsWith('/control'))!.cuerpo));
           assert.equal((await como('jose@x.hn', `/api/computadora/tareas/${r.id}/accion`, { method: 'POST', body: '{"tipo":"click","x":500,"y":300}' })).code, 200);
+        })
+      )
+    );
+  } finally {
+    await viejo.cerrar();
+  }
+});
+
+/* ------------------------------------------------------------------ revisión 4-oct: el sí va atado a la propuesta EXACTA */
+
+test('revisión 4-oct: «aprobé enviar a Ana» y bajo la MISMA pregunta la propuesta pasa a Bruno → el «sí» del chat no la aprueba (aunque el nodo no lo revise)', async () => {
+  const { resolverPreguntaComputadora } = await import('../server/computadora');
+  const nodo = await nodoAgente({
+    caps: CAPS,
+    conPropuesta: true,
+    sinRevisar: true,
+    guion: (t) => {
+      if (t.si === undefined && !t.pregunta) {
+        t.estado = 'confirmar';
+        t.pregunta = 'Voy a tocar «Enviar» (para ana@example.test). ¿Lo hago?';
+      }
+    },
+  });
+  try {
+    await conNodo(nodo.url, () =>
+      conAvisos(async (vistos) => {
+        const r = await encargarTarea({ instruccion: 'Entra al correo y envía el borrador a ana@example.test', quien: 'jose@x.hn', motor: 'holo', esperaMs: 0 });
+        await hasta(() => vistos.some((v) => v.aviso.fase === 'confirmar'));
+        // La persona oyó «para ana». Antes de que conteste, el nodo cambia la propuesta (otro destino) SIN cambiar el id.
+        const t = nodo.tareas.get(r.id!)!;
+        t.pregunta = 'Voy a tocar «Enviar» (para bruno@example.test). ¿Lo hago?';
+        t.propuesta = 'h-bruno';
+        const h = await resolverPreguntaComputadora('jose@x.hn', 'sí');
+        const sies = nodo.pedidos.filter((x) => /\/confirmar$/.test(x.ruta) && x.cuerpo?.si === true);
+        assert.equal(sies.length, 0, 'aprobé para Ana: no llega ningún «sí» para Bruno');
+        assert.equal(t.si, undefined);
+        assert.match(h!, /NO/);
+        assert.doesNotMatch(h!, /dijo que sí a .*; tu computadora sigue/);
+      })
+    );
+  } finally {
+    await nodo.cerrar();
+  }
+});
+
+test('revisión 4-oct: por la app, un «sí» sin decir a qué pregunta, con la propuesta vieja o con un nodo sin propuestas NO aprueba; un «no» siempre vale', async () => {
+  const nodo = await nodoAgente({
+    caps: CAPS,
+    conPropuesta: true,
+    sinRevisar: true,
+    guion: (t) => {
+      if (t.si === undefined && !t.pregunta) {
+        t.estado = 'confirmar';
+        t.pregunta = 'Voy a tocar «Pagar» (para nicole@example.test; por 5 ORIGEN). ¿Lo hago?';
+      }
+    },
+  });
+  try {
+    await conNodo(nodo.url, () =>
+      conAvisos(async (vistos) =>
+        conRutas(async (como) => {
+          const r = await encargarTarea({ instruccion: 'Entra a la wallet y págale 5 ORIGEN a nicole@example.test', quien: 'jose@x.hn', motor: 'holo', esperaMs: 0 });
+          await hasta(() => vistos.some((v) => v.aviso.fase === 'confirmar'));
+          const vista = (await como('jose@x.hn', `/api/computadora/tareas/${r.id}`)).j;
+          const { preguntaId, propuesta } = vista.mision;
+          assert.ok(preguntaId && propuesta, 'la app recibe la pregunta y la huella de la propuesta que muestra');
+          const sies = () => nodo.pedidos.filter((x) => x.ruta === `POST /tareas/${r.id}/confirmar` && x.cuerpo?.si === true).length;
+          const ruta = `/api/computadora/tareas/${r.id}/confirmar`;
+          // Sin decir a cuál: no.
+          assert.equal((await como('jose@x.hn', ruta, { method: 'POST', body: JSON.stringify({ si: true }) })).code, 409);
+          // La propuesta cambia bajo el mismo id (ahora para otra persona): ni con el id ni con la huella vieja.
+          const t = nodo.tareas.get(r.id!)!;
+          t.pregunta = 'Voy a tocar «Pagar» (para bruno@example.test; por 5 ORIGEN). ¿Lo hago?';
+          t.propuesta = 'h-bruno';
+          assert.equal((await como('jose@x.hn', ruta, { method: 'POST', body: JSON.stringify({ si: true, preguntaId }) })).code, 409);
+          assert.equal((await como('jose@x.hn', ruta, { method: 'POST', body: JSON.stringify({ si: true, preguntaId, propuesta }) })).code, 409);
+          assert.equal(sies(), 0, 'aprobé para Nicole: no sale un «sí» para Bruno');
+          assert.equal(t.si, undefined);
+          // Un «no» no autoriza nada: vale con la pregunta de ahora.
+          const no = await como('jose@x.hn', ruta, { method: 'POST', body: JSON.stringify({ si: false, preguntaId }) });
+          assert.equal(no.code, 200);
+          assert.equal(t.si, false);
+        })
+      )
+    );
+  } finally {
+    await nodo.cerrar();
+  }
+  // Un nodo de antes (sin huella de propuesta): un «sí» no se puede atar a lo que se vio → no se manda.
+  const viejo = await nodoAgente({
+    caps: CAPS,
+    sinPropuesta: true,
+    guion: (t) => {
+      if (t.si === undefined && !t.pregunta) {
+        t.estado = 'confirmar';
+        t.pregunta = '¿Envío el formulario?';
+      }
+    },
+  });
+  try {
+    await conNodo(viejo.url, () =>
+      conAvisos(async (vistos) =>
+        conRutas(async (como) => {
+          const r = await encargarTarea({ instruccion: 'Entra a x.hn y envía el formulario', quien: 'jose@x.hn', motor: 'holo', esperaMs: 0 });
+          await hasta(() => vistos.some((v) => v.aviso.fase === 'confirmar'));
+          const { preguntaId } = (await como('jose@x.hn', `/api/computadora/tareas/${r.id}`)).j.mision;
+          const si = await como('jose@x.hn', `/api/computadora/tareas/${r.id}/confirmar`, { method: 'POST', body: JSON.stringify({ si: true, preguntaId }) });
+          assert.equal(si.code, 409);
+          assert.equal(viejo.tareas.get(r.id!)!.si, undefined, 'sin propuesta que nombrar, el «sí» no llega');
         })
       )
     );

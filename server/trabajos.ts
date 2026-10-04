@@ -90,10 +90,13 @@ export type DepsTrabajos = {
     reanudar?(correo: string, misionId: string): Promise<unknown>;
     parar?(correo: string, misionId: string): Promise<unknown>;
   };
-  /** Los borradores que esperan su «sí» (server/correo.ts, server/whatsapp.ts). */
+  /**
+   * Los borradores que esperan su «sí» (server/correo.ts, server/whatsapp.ts). `huella`: la de lo que espera
+   * (destinatario o chat, cuenta y contenido); `enviar` recibe la que mostró la tarjeta y solo manda si es esa.
+   */
   borradores?: {
-    vigente(correo: string, canal: 'correo' | 'whatsapp', ambito: string): { intento: string } | null;
-    enviar(correo: string, canal: 'correo' | 'whatsapp', ambito: string, intento: string): Promise<SalidaEnvio>;
+    vigente(correo: string, canal: 'correo' | 'whatsapp', ambito: string): { intento: string; huella?: string } | null;
+    enviar(correo: string, canal: 'correo' | 'whatsapp', ambito: string, intento: string, huella: string): Promise<SalidaEnvio>;
     descartar(correo: string, canal: 'correo' | 'whatsapp', ambito: string, intento: string): Promise<unknown>;
   };
 };
@@ -316,7 +319,11 @@ export async function cerrarInvestigacion(duenoCorreo: string, id: string, r: Ci
 
 /* ------------------------------------------------------------------ ganchos: los borradores */
 
-export type BorradorParaDecidir = { canal: 'correo' | 'whatsapp'; intento: string; para: string[] | string; desde?: string; asunto?: string; texto: string; vence: number };
+/**
+ * `huella`: la del borrador (server/correo.ts huellaCorreo, server/whatsapp.ts huellaWhatsapp: destinatario o chat exacto,
+ * cuenta y contenido). Es el vínculo de la decisión: «Aprobar» manda solo un borrador con ESA huella (revisión 4-oct).
+ */
+export type BorradorParaDecidir = { canal: 'correo' | 'whatsapp'; intento: string; para: string[] | string; desde?: string; asunto?: string; texto: string; vence: number; huella?: string };
 
 function decisionDeBorrador(ambito: string, b: BorradorParaDecidir, planVersion: number, ahora: number): Decision {
   const destinatario = trozo(Array.isArray(b.para) ? b.para.join(', ') : b.para, 160) || 'sin destinatario';
@@ -337,7 +344,8 @@ function decisionDeBorrador(ambito: string, b: BorradorParaDecidir, planVersion:
     creada: ahora,
     caduca: b.vence,
     planVersion,
-    vinculo: { tipo: 'borrador', canal: b.canal, ambito: linea(ambito, 80), intento: b.intento, hash: hashArgumentos({ canal: b.canal, para: b.para, desde: b.desde || '', asunto: b.asunto || '', texto: b.texto }) },
+    // Sin la huella del borrador, un hash propio que nunca coincide con uno guardado: «Aprobar» no manda a ciegas.
+    vinculo: { tipo: 'borrador', canal: b.canal, ambito: linea(ambito, 80), intento: b.intento, hash: b.huella || `sin-huella:${hashArgumentos({ canal: b.canal, para: b.para, desde: b.desde || '', asunto: b.asunto || '', texto: b.texto })}` },
   };
 }
 
@@ -502,7 +510,7 @@ async function reconciliar(dueno: string, reg: RegistroTarea, d: DepsTrabajos, a
       if (x.estado === 'awaiting_approval' && dec?.vinculo?.tipo === 'borrador') {
         if (dec.caduca && ahora > dec.caduca) return { estado: 'blocked', pasoActual: 'La propuesta caducó sin enviarse. Si aún lo quieres, pide un borrador nuevo.' };
         const v = vigente(dec.vinculo.canal, dec.vinculo.ambito);
-        if (v !== undefined && v?.intento !== dec.vinculo.intento) {
+        if (v !== undefined && (v?.intento !== dec.vinculo.intento || (v.huella !== undefined && v.huella !== dec.vinculo.hash))) {
           return {
             estado: 'blocked',
             pasoActual: 'El borrador ya no está esperando (se resolvió en otro lado o el servidor se reinició). No se envió nada desde aquí.',
@@ -695,8 +703,10 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
       return res.json({ tarea: vistaTarea(r.reg, ahora()), honesto: true });
     }
     if (!d.borradores) return res.status(503).json({ error: 'Ahora no puedo enviar desde aquí.', honesto: true });
-    // Justo antes del efecto: ¿el borrador que espera es EXACTAMENTE el aprobado? (invariante 4)
-    if (d.borradores.vigente(dueno, vinc.canal, vinc.ambito)?.intento !== vinc.intento) {
+    // Justo antes del efecto: ¿el borrador que espera es EXACTAMENTE el aprobado? (invariante 4) El mismo intento y la
+    // misma huella (destinatario, cuenta y contenido): una aprobación para Ana no manda a Bruno.
+    const espera = d.borradores.vigente(dueno, vinc.canal, vinc.ambito);
+    if (espera?.intento !== vinc.intento || (espera.huella !== undefined && espera.huella !== vinc.hash)) {
       const fresca = await reconciliar(dueno, e.reg, d, ahora());
       return res.status(409).json({ error: 'Esa propuesta ya no es la que espera: no envié nada. Mira la actual o pide una nueva.', codigo: 'propuesta-cambiada', tarea: vistaTarea(fresca, ahora()), honesto: true });
     }
@@ -704,7 +714,7 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
     const r = await aplicar({ resolver: { ...resolver, operacion }, decision: null, estado: 'running', pasoActual: 'Enviando lo que aprobaste…' });
     if (!r.ok) return r.resp();
     const salida = await ejecutarUnaVez<SalidaEnvio>({ dueno, requestId: operacion, tipo: `${vinc.canal}.enviar`, argsHash: vinc.hash }, async () => {
-      const s = await d.borradores!.enviar(dueno, vinc.canal, vinc.ambito, vinc.intento);
+      const s = await d.borradores!.enviar(dueno, vinc.canal, vinc.ambito, vinc.intento, vinc.hash);
       const estado = s.estado === 'stale' ? 'failed' : s.estado;
       return { estado, resultado: s, recibo: { efecto: estado === 'succeeded' ? 'confirmed' : estado === 'unknown' ? 'possible' : 'none', proveedor: vinc.canal, ...(s.referencia ? { referencia: s.referencia } : {}), detalle: trozo(s.resumen, 160) } };
     });

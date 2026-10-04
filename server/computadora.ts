@@ -203,6 +203,27 @@ export async function pararTarea(id: string): Promise<{ fase: FaseQuietud | null
   return { fase: fase(j?.parada?.fase), parada: typeof j?.parada?.id === 'string' ? j.parada.id : null };
 }
 
+/** Lo que aprueba un sí: la pregunta (`id`) y la huella EXACTA de la propuesta que se le mostró (`huella`). */
+export type PreguntaAtada = { id: string | null; huella: string | null };
+
+/**
+ * El sí o el no a ESA pregunta, atado a la propuesta exacta que se le mostró (revisión 4-oct: «una aprobación para Ana
+ * no permite una acción para Bruno»). Un «sí» necesita la huella de la propuesta (lo que se aprueba, destino e importe
+ * incluidos): sin ella no se manda (un nodo de antes, o un pedido que no dice qué aprueba). Justo antes de mandarlo se
+ * mira qué pregunta el nodo AHORA: si es otra pregunta, u otra propuesta (otro destino) bajo el mismo id, no se manda,
+ * aunque el nodo no lo revisara. Un «no» no autoriza nada: va con la pregunta que nombra.
+ */
+export async function confirmarAtado(tareaId: string, si: boolean, p: PreguntaAtada): Promise<void> {
+  if (si) {
+    if (!p.id || !p.huella) throw new ErrorNodo('ese sí no dice qué propuesta exacta aprueba (tu computadora tiene que ser la versión que la nombra); no lo mandé', 409);
+    const t = await verTarea(tareaId, false, 8000);
+    if (t.estado !== 'confirmar' || t.pregunta_id !== p.id || (t.propuesta ?? null) !== p.huella) {
+      throw new ErrorNodo('lo que tu computadora pregunta ahora ya no es lo que aprobaste (otra pregunta u otro destino); no lo contesté, mira la de ahora', 409);
+    }
+  }
+  await confirmarTarea(tareaId, si, p.id, p.huella);
+}
+
 /* Lo del agente.py nuevo (capacidades): pausar, seguir, el sí, el control de la persona y la pantalla de ahora. */
 export async function pausarTarea(id: string): Promise<{ fase: FaseQuietud | null }> {
   const j = await pedir(`/tareas/${encodeURIComponent(id)}/pausar`, { method: 'POST', ms: 12_000 });
@@ -213,7 +234,8 @@ export async function reanudarTarea(id: string): Promise<void> {
 }
 /**
  * El sí o el no a UNA pregunta (`preguntaId`) y, si se conoce, a la propuesta que se le mostró (`propuesta`, la
- * huella del agente.py de AUR02): si la computadora ya pregunta otra cosa, el nodo dice 409.
+ * huella del agente.py de AUR02): si la computadora ya pregunta otra cosa, el nodo dice 409. Para un «sí» se usa
+ * `confirmarAtado`, que exige la propuesta y la revisa contra el nodo justo antes.
  */
 export async function confirmarTarea(id: string, si: boolean, preguntaId?: string | null, propuesta?: string | null): Promise<void> {
   await pedir(`/tareas/${encodeURIComponent(id)}/confirmar`, {
@@ -937,7 +959,7 @@ export function versionDeEstado(): number {
 }
 
 /** Lo que la app muestra de una misión: el plan marcado, el tiempo, la pregunta pendiente (y cuál es) y el final. */
-export function vistaMision(m: Mision, estado?: EstadoTarea | null, pregunta?: string | null, preguntaId?: string | null, version = versionDeEstado()) {
+export function vistaMision(m: Mision, estado?: EstadoTarea | null, pregunta?: string | null, preguntaId?: string | null, version = versionDeEstado(), propuesta?: string | null) {
   const enConfirmar = estado === 'confirmar';
   return {
     version,
@@ -952,6 +974,8 @@ export function vistaMision(m: Mision, estado?: EstadoTarea | null, pregunta?: s
     pregunta: m.pregunta?.texto ?? (enConfirmar ? pregunta || null : null),
     /** Cuál pregunta es: la app la manda con su sí (si ya cambió, el servidor dice 409 y no la contesta). */
     preguntaId: m.pregunta ? m.pregunta.id : enConfirmar ? preguntaId || null : null,
+    /** La huella de la propuesta que muestra (revisión 4-oct): la app la manda con su sí; otra propuesta no se aprueba. */
+    propuesta: m.pregunta ? m.pregunta.huella ?? null : enConfirmar ? propuesta || null : null,
     final: m.final ?? null,
     // El botón «Seguir»: quedó a medias (no la paró la persona) y quedan rondas.
     puedeSeguir: !!m.final && !m.final.ok && m.final.estado !== 'parada' && m.rondas < MAX_RONDAS,
@@ -1302,8 +1326,10 @@ function alCambiarEstado(e: Encargo, t: Tarea, enTurno: boolean) {
   const en = e.idioma === 'en';
   if (t.estado === 'confirmar' && t.pregunta) {
     const id = t.pregunta_id || null;
-    // La misma pregunta (por su id; con el nodo de antes, por su texto) no se vuelve a avisar.
-    if (m.pregunta?.tareaId === e.id && (id ? m.pregunta.id === id : m.pregunta.texto === t.pregunta)) return;
+    // La misma pregunta (por su id y la huella de su propuesta; con el nodo de antes, por su texto) no se vuelve a avisar.
+    // Otra propuesta bajo el mismo id (otro destino) es OTRA pregunta: se avisa con su texto y su huella nuevos, y un
+    // «sí» que se dio para la de antes ya no la contesta (revisión 4-oct).
+    if (m.pregunta?.tareaId === e.id && (id ? m.pregunta.id === id && (m.pregunta.huella ?? null) === (t.propuesta ?? null) : m.pregunta.texto === t.pregunta)) return;
     // Una consulta que salió antes de que llegara su respuesta: esa pregunta ya está contestada.
     if (id ? e.contestada?.id === id : e.contestada?.texto === t.pregunta && Date.now() - e.contestada.en < 10_000) return;
     m.pregunta = { tareaId: e.id, texto: t.pregunta, desde: Date.now(), id, huella: t.propuesta || null };
@@ -1675,15 +1701,21 @@ function misionQueOfreceSeguir(quien: string): Mision | null {
  * tarea, de otra persona (la ruta ya lo niega) o de una pregunta que ya cambió no aprueba nada, aunque el nodo no lo
  * revisara. Devuelve el id y la huella de la propuesta mostrada (el nodo nuevo la revisa también); null: no vale.
  */
-export async function preguntaDeTarea(id: string, pedida: string | null): Promise<{ id: string | null; huella: string | null } | null> {
+export async function preguntaDeTarea(id: string, pedida: string | null, propuestaPedida: string | null = null): Promise<PreguntaAtada | null> {
   const e = ENCARGOS.get(id);
   if (!e || e.cerrada) return null;
   const mostrada = e.mision.pregunta?.tareaId === id ? e.mision.pregunta : null;
-  if (mostrada?.id && (!pedida || pedida === mostrada.id)) return { id: mostrada.id, huella: mostrada.huella ?? null };
-  const t = await verTarea(id, false, 8000).catch(() => null);
-  if (!t || t.estado !== 'confirmar' || !t.pregunta) return null;
-  if (pedida && t.pregunta_id !== pedida) return null;
-  return { id: t.pregunta_id ?? null, huella: t.propuesta ?? null };
+  let p: PreguntaAtada | null = null;
+  if (mostrada?.id && (!pedida || pedida === mostrada.id)) p = { id: mostrada.id, huella: mostrada.huella ?? null };
+  else {
+    const t = await verTarea(id, false, 8000).catch(() => null);
+    if (!t || t.estado !== 'confirmar' || !t.pregunta) return null;
+    if (pedida && t.pregunta_id !== pedida) return null;
+    p = { id: t.pregunta_id ?? null, huella: t.propuesta ?? null };
+  }
+  // Si la app dice qué propuesta vio (revisión 4-oct), tiene que ser esta: la de otra (otro destino) no aprueba nada.
+  if (propuestaPedida && propuestaPedida !== p.huella) return null;
+  return p;
 }
 
 /** Ya contestó su sí o su no: el teléfono quita los botones y vuelve el tecleo enseguida (sin esperar al sondeo). */
@@ -1723,7 +1755,9 @@ export async function resolverPreguntaComputadora(quien: string, mensaje: string
     m.pregunta = null;
     // El sí va atado a ESTA pregunta: si cuando por fin sale (la voz espera a que el turno se confirme) la
     // computadora ya pregunta otra cosa, el nodo no la contesta con él (auditoría 3-oct, PC01).
-    const hacer = () => confirmarTarea(p.tareaId, r === 'si', p.id, p.huella).then(() => alResponder(p.tareaId, p.id));
+    // Revisión 4-oct: el «sí» va atado a la huella de la propuesta que se le dijo; justo antes se revisa contra lo que el
+    // nodo pregunta ahora (otra propuesta bajo el mismo id, otro destino: no se contesta con este «sí»).
+    const hacer = () => confirmarAtado(p.tareaId, r === 'si', { id: p.id, huella: p.huella ?? null }).then(() => alResponder(p.tareaId, p.id));
     if (retener) {
       retener.alDescartar(() => {
         m.pregunta = p;
@@ -1733,6 +1767,10 @@ export async function resolverPreguntaComputadora(quien: string, mensaje: string
       try {
         await hacer();
       } catch (err: any) {
+        // Ya pregunta otra cosa (u otra propuesta): esa se avisa sola con su texto nuevo; esta no vuelve.
+        if (err instanceof ErrorNodo && err.status === 409) {
+          return `COMPUTADORA: NO contesté «${r === 'si' ? 'sí' : 'no'}» a «${p.texto}»: ${String(err.message).slice(0, 160)}. Díselo con honestidad: su computadora pregunta otra cosa ahora; que la mire antes de decidir.`;
+        }
         m.pregunta = p;
         return `COMPUTADORA: quiso contestar «${r === 'si' ? 'sí' : 'no'}» a «${p.texto}», pero tu computadora no recibió la respuesta (${String(err?.message || err).slice(0, 80)}). Díselo y que lo toque en la app.`;
       }
@@ -2144,7 +2182,7 @@ export function montarRutasComputadora(app: import('express').Express, d: DepsRu
       const version = versionDeEstado();
       return res.json({
         tarea: { ...t, pasos: t.pasos.map((p) => ({ ...p, texto: pasoEnPalabras(p, idioma) })) },
-        mision: m ? vistaMision(m, crudo.estado, crudo.pregunta, crudo.pregunta_id, version) : null,
+        mision: m ? vistaMision(m, crudo.estado, crudo.pregunta, crudo.pregunta_id, version, crudo.propuesta) : null,
         version,
         honesto: true,
       });
@@ -2172,14 +2210,17 @@ export function montarRutasComputadora(app: import('express').Express, d: DepsRu
     d.limitar(20),
     sobreTarea('No le llegó tu respuesta', 'confirmar', async (id, req) => {
       if (typeof req.body?.si !== 'boolean') throw Object.assign(new Error('Di sí o no.'), { codigo: 400 });
-      // El sí va atado a la pregunta que vio en la pantalla (`preguntaId`, la app nueva). La app de antes no lo
-      // manda: vale la pregunta que este servidor le mostró; si no conoce ninguna, la que el nodo tiene ahora.
+      // El sí va atado a la pregunta que vio en la pantalla (`preguntaId`) y a la propuesta que mostraba (`propuesta`,
+      // su huella). Revisión 4-oct: un «sí» que no dice a qué pregunta contesta ya no aprueba «la que haya ahora» (podía
+      // ser otra, para otra persona). Un «no» no autoriza nada: vale con la pregunta que el servidor conoce.
       const pedida: string | null = typeof req.body?.preguntaId === 'string' && req.body.preguntaId ? String(req.body.preguntaId).slice(0, 64) : null;
+      const propuestaPedida: string | null = typeof req.body?.propuesta === 'string' && req.body.propuesta ? String(req.body.propuesta).slice(0, 128) : null;
+      if (req.body.si && !pedida) throw new ErrorNodo('ese sí no dice a qué pregunta contesta; mira la de ahora y vuelve a tocar «Sí»', 409);
       // AUR02: el servidor revisa que ese id sea la pregunta de ESTA tarea (la que mostró, o la que el nodo tiene
       // ahora para ella), aunque el nodo no lo revisara: un id de otra tarea u otra propuesta no aprueba nada.
-      const p = await preguntaDeTarea(id, pedida);
+      const p = await preguntaDeTarea(id, pedida, propuestaPedida);
       if (!p) throw new ErrorNodo('esa respuesta no es para la pregunta de esta tarea; mira la de ahora', 409);
-      await confirmarTarea(id, req.body.si, p.id, p.huella);
+      await confirmarAtado(id, req.body.si, p);
       alResponder(id, p.id);
       return { si: req.body.si };
     })

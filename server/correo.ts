@@ -78,6 +78,12 @@ type BorradorGuardado = Borrador &
      * hasta que venza, pero el chat ya no lo resuelve (un «sí» suelto de después no lo manda).
      */
     soloPanel?: boolean;
+    /**
+     * Revisión 4-oct («una aprobación para Ana no manda a Bruno»): este borrador REEMPLAZÓ a otro que todavía esperaba
+     * su «sí» en el chat (se armaron dos en el mismo turno). Dice a quién iba el de antes: el primer «sí» del chat pudo
+     * ser para ese, así que no manda este; pide confirmarlo nombrando a quién va ahora.
+     */
+    reemplazoDe?: string;
   };
 export type VigenciaBorrador = { dueno: string; vence: number; intento: string };
 const BORRADORES = new Map<string, BorradorGuardado>();
@@ -406,14 +412,34 @@ async function escribir(quien: string, ambito: string, para: string, asunto: str
   return guardarBorrador(quien, ambito, { cuentaId: cuentas[0].id, desde: cuentas[0].correo, para: destinos, asunto: asunto || '(sin asunto)', texto, creado: Date.now() });
 }
 
+/**
+ * ¿El borrador nuevo reemplaza a otro que todavía esperaba su «sí» en el chat, con otro destino o contenido? Normal-
+ * mente no: al empezar cada turno el de antes se resuelve (sí/no) o se aparta para el panel (`soloPanel`). Si sigue
+ * ahí, se armaron dos en el mismo turno y la persona pudo oír los dos: su «sí» no es de este sin confirmarlo.
+ * Devuelve a quién iba el de antes (correo y WhatsApp).
+ */
+export function reemplazoPendiente(previo: { soloPanel?: boolean; huella: string; dueno: string; vence: number } | undefined, huella: string, quien: string, para: string): string | null {
+  if (!previo || previo.soloPanel || motivoBorrador(previo, quien) || previo.huella === huella) return null;
+  return para;
+}
+
 /** El borrador queda esperando su «sí»: el recibo es `borrador` con su id de intento (nada salió todavía). */
 function guardarBorrador(quien: string, ambito: string, b: Borrador, nota = ''): ResultadoHerramienta {
   if (!b.texto.trim()) return fallo('CORREO: el borrador vino vacío. Pregúntale qué quiere decir.', 'falta-dato');
   const vigencia = vigenciaNueva(quien, b.creado, BORRADOR_VIVE_MS);
-  BORRADORES.set(llave(quien, ambito), { ...b, ...vigencia, huella: huellaCorreo(b) });
+  const k = llave(quien, ambito);
+  const huella = huellaCorreo(b);
+  const previo = BORRADORES.get(k);
+  // Se arma desde cero: nada del de antes (ni su aceptación de repetir, que era de ESE destinatario) pasa a este.
+  const reemplazo = reemplazoPendiente(previo, huella, quien, previo ? `${previo.para.join(', ')} — «${previo.asunto}»` : '');
+  BORRADORES.set(k, { ...b, ...vigencia, huella, ...(reemplazo ? { reemplazoDe: reemplazo } : {}) });
+  const aviso = reemplazo
+    ? `OJO: este borrador REEMPLAZA al que esperaba para ${reemplazo}, que ya NO se manda. Díselo claro: el que espera ahora es para ${b.para.join(', ')}. Antes de mandarlo le vuelvo a confirmar a quién va.\n`
+    : '';
   return exito(
     `BORRADOR (NO enviado) desde ${b.desde} para ${b.para.join(', ')}${b.cc?.length ? ` (con copia a ${b.cc.join(', ')})` : ''} — «${b.asunto}»:\n${b.texto}\n` +
       (nota ? `${nota}\n` : '') +
+      aviso +
       'Léeselo tal cual y pregúntale si lo mandas. Solo se manda si dice que sí; si quiere cambios, haz otro borrador.',
     { efecto: 'borrador', proveedor: 'smtp', referencia: vigencia.intento, durable: false }
   );
@@ -536,6 +562,13 @@ type OpcionesDecidir = {
    * mira justo antes de mandar: en la voz eso puede ser un rato después del «sí» (auditoría 3-oct, COM01; AUR13).
    */
   vigente?: () => string | null;
+  /**
+   * Revisión 4-oct: el borrador reemplazó a otro en el mismo turno (`reemplazoDe`: a quién iba el de antes). El primer
+   * «sí» del chat no lo manda (pudo ser para el de antes): `aceptarCambio` marca que ya se le dijo a quién va ahora,
+   * y el borrador sigue esperando su «sí» informado. El panel no pasa por aquí (su tarjeta muestra el destino exacto).
+   */
+  reemplazoDe?: string;
+  aceptarCambio?: () => void;
 };
 
 /**
@@ -553,6 +586,14 @@ export async function decidirBorradorConEstado(o: OpcionesDecidir & { enviar: ()
     return fallo(
       `${o.canal}: había un borrador para ${o.para} esperando su «sí», pero siguió con otra cosa: NO se mandó. Queda en su panel de tareas hasta que venza, por si lo quiere aprobar ahí; un «sí» suelto en el chat ya no lo manda. Si lo quiere mandar ahora, arma uno nuevo y vuelve a preguntar.`,
       'apartado'
+    );
+  }
+  if (r === 'si' && o.reemplazoDe) {
+    o.aceptarCambio?.();
+    return fallo(
+      `${o.canal}: NO se mandó todavía: en el mismo turno el borrador cambió (antes era para ${o.reemplazoDe}; el que espera ahora es para ${o.para}). Su «sí» pudo ser para el de antes. ` +
+        `Léele el de ahora y pregúntale si lo mandas a ${o.para}; si dice que sí otra vez, sale a ${o.para}.`,
+      'confirmar-destino'
     );
   }
   o.quitar();
@@ -595,14 +636,29 @@ export async function resolverBorrador(quien: string, ambito: string, mensaje: s
 /**
  * De dónde viene la decisión. `desdePanel`: «Aprobar»/«Rechazar» del panel, que también resuelve un borrador
  * apartado (AUR08); sin él (el chat), un borrador apartado no se toca y otra cosa lo aparta en vez de tirarlo.
+ * `huella` (revisión 4-oct): la de lo que mostró la tarjeta del panel (destinatario, cuenta y contenido). «Aprobar»
+ * solo manda si el borrador que espera tiene ESA huella; sin ella, el panel no aprueba nada.
  */
-export type ComoResolver = { desdePanel?: boolean };
+export type ComoResolver = { desdePanel?: boolean; huella?: string };
+
+/**
+ * ¿«Aprobar» del panel puede mandar este borrador? null si sí. La huella que vio la persona tiene que ser la guardada
+ * y la que da el borrador ahora (recalculada): otro destinatario, cuenta o contenido bajo el mismo intento no sale.
+ */
+export function motivoPanel(b: { huella: string }, huellaAhora: string, vista: string | undefined): string | null {
+  if (!vista) return 'el panel no dijo qué versión aprobó';
+  if (b.huella !== vista || huellaAhora !== vista) return 'lo que espera ya no es lo que se aprobó en el panel (otro destinatario, cuenta o contenido)';
+  return null;
+}
 
 /** Lo mismo, con el estado y el recibo del envío (AUR13: aceptado / fallido / incierto, con su operationId). */
 export async function resolverBorradorConEstado(quien: string, ambito: string, mensaje: string, retener?: RetencionAcciones, como: ComoResolver = {}): Promise<ResultadoHerramienta | null> {
   const b = borradorDe(quien, ambito);
   if (!b || (b.soloPanel && !como.desdePanel)) return null;
   const k = llave(quien, ambito);
+  // «Aprobar» del panel: solo lo que mostró la tarjeta (no se toca el borrador si no coincide; un «no» siempre vale).
+  const noEsElDelPanel = como.desdePanel && respuestaAlBorrador(mensaje) === 'si' ? motivoPanel(b, huellaCorreo(b), como.huella) : null;
+  if (noEsElDelPanel) return fallo(`CORREO: NO se mandó: ${noEsElDelPanel}. Hace falta su decisión sobre lo que de verdad espera (ahora sería para ${b.para.join(', ')} — «${b.asunto}»).`, 'aprobacion');
   return decidirBorradorConEstado({
     quien,
     ambito,
@@ -611,7 +667,7 @@ export async function resolverBorradorConEstado(quien: string, ambito: string, m
     canal: 'CORREO',
     para: b.para.join(', '),
     quitar: () => BORRADORES.delete(k),
-    ...(como.desdePanel ? {} : { apartar: () => void (b.soloPanel = true) }),
+    ...(como.desdePanel ? {} : { apartar: () => void (b.soloPanel = true), reemplazoDe: b.reemplazoDe, aceptarCambio: () => void delete b.reemplazoDe }),
     // Un turno de voz descartado lo repone, pero nunca encima de otro borrador que se armó después.
     reponer: () => {
       if (!BORRADORES.has(k) && !motivoBorrador(b, quien)) BORRADORES.set(k, b);

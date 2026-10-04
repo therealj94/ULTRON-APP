@@ -104,7 +104,7 @@ import {
 } from './server/computadora';
 import { avisosDeEnvio, borradorDe, correrCorreoConEstado, montarRutasCorreo, resolverBorrador, respuestaAlBorrador } from './server/correo';
 import { accionTareaPorId, bloqueTarea, correrTareaConEstado, precargarTareas, resolverTareaEnCurso, tareaDe, tareasDePersona } from './lib/tarea-en-curso';
-import { borradorWhatsappDe, correrWhatsappConEstado, montarRutasWhatsapp, resolverBorradorWhatsapp, whatsappDisponible, whatsappPermitido } from './server/whatsapp';
+import { borradorWhatsappDe, correrWhatsappConEstado, destinoWhatsapp, montarRutasWhatsapp, resolverBorradorWhatsapp, whatsappDisponible, whatsappPermitido } from './server/whatsapp';
 import { accionIniciativa, arrancarIniciativa, bloqueIniciativaTurno, correrMisionTurnoConEstado, duenoMisiones, montarRutasIniciativa } from './server/iniciativa';
 import { frenarIniciativa, pideApagarIniciativa, pideDejarDeProponer, type PersonaIniciativa } from './lib/iniciativa';
 import { montarRutasCerebroContinuo } from './server/cerebro-continuo';
@@ -1531,9 +1531,9 @@ montarRutasTrabajos(app, {
   borradores: {
     vigente: (correo, canal, ambito) => {
       const b = canal === 'correo' ? borradorDe(correo, ambito) : borradorWhatsappDe(correo, ambito);
-      return b ? { intento: b.intento } : null;
+      return b ? { intento: b.intento, huella: b.huella } : null;
     },
-    enviar: (correo, canal, ambito, intento) => resolverBorradorDesdePanel(correo, canal, ambito, intento, 'sí'),
+    enviar: (correo, canal, ambito, intento, huella) => resolverBorradorDesdePanel(correo, canal, ambito, intento, 'sí', huella),
     descartar: (correo, canal, ambito, intento) => resolverBorradorDesdePanel(correo, canal, ambito, intento, 'no'),
   },
 });
@@ -2727,11 +2727,15 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   const intentoWhatsapp = duenoComputadora && turnoVigente && !opciones.retener ? borradorWhatsappDe(duenoComputadora, ambitoTurno)?.intento : undefined;
   const delCorreo = duenoComputadora && turnoVigente ? await resolverBorrador(duenoComputadora, ambitoTurno, message, opciones.retener) : null;
   if (delCorreo) hechos.push(delCorreo);
-  if (delCorreo && intentoCorreo) void cerrarDecisionPorChat(duenoComputadora, intentoCorreo, respuestaAlBorrador(message), delCorreo).catch(() => undefined);
+  // Si el mismo borrador sigue esperando (hay que confirmar a quién va, o repetir un envío incierto), su decisión del
+  // panel queda abierta: no se cierra como si se hubiera decidido.
+  const sigueCorreo = !!intentoCorreo && borradorDe(duenoComputadora, ambitoTurno)?.intento === intentoCorreo;
+  if (delCorreo && intentoCorreo && !sigueCorreo) void cerrarDecisionPorChat(duenoComputadora, intentoCorreo, respuestaAlBorrador(message), delCorreo).catch(() => undefined);
   // Lo mismo con un mensaje de WhatsApp que esperaba su «sí» (server/whatsapp.ts).
   const delWhatsapp = duenoComputadora && turnoVigente && whatsappPermitido(duenoComputadora) ? await resolverBorradorWhatsapp(duenoComputadora, ambitoTurno, message, opciones.retener) : null;
   if (delWhatsapp) hechos.push(delWhatsapp);
-  if (delWhatsapp && intentoWhatsapp) void cerrarDecisionPorChat(duenoComputadora, intentoWhatsapp, respuestaAlBorrador(message), delWhatsapp).catch(() => undefined);
+  const sigueWhatsapp = !!intentoWhatsapp && borradorWhatsappDe(duenoComputadora, ambitoTurno)?.intento === intentoWhatsapp;
+  if (delWhatsapp && intentoWhatsapp && !sigueWhatsapp) void cerrarDecisionPorChat(duenoComputadora, intentoWhatsapp, respuestaAlBorrador(message), delWhatsapp).catch(() => undefined);
   // Su computadora se detuvo a pedir su sí (o le ofreció seguir): el «sí» o el «no» lo resuelve el servidor
   // (server/computadora.ts). Si había un borrador esperando, ese «sí» era para el borrador.
   const deLaPregunta = duenoComputadora && turnoVigente && !delCorreo && !delWhatsapp ? await resolverPreguntaComputadora(duenoComputadora, message, opciones.retener) : null;
@@ -3830,13 +3834,16 @@ async function conMisionSuya(correo: string, misionId: string, f: (tareaId: stri
 /**
  * «Aprobar» o «Rechazar» desde el panel: el MISMO camino que el «sí»/«no» del chat (server/correo.ts y
  * server/whatsapp.ts, que vuelven a mirar vigencia y dueño justo antes de mandar), pero solo si el borrador
- * que espera es exactamente el aprobado (su id de intento). Si cambió, no se toca nada (`stale`).
+ * que espera es exactamente el aprobado: su id de intento y la huella que mostró la tarjeta (destinatario o chat,
+ * cuenta y contenido; revisión 4-oct). Si cambió, no se toca nada (`stale`).
  */
-async function resolverBorradorDesdePanel(correo: string, canal: 'correo' | 'whatsapp', ambito: string, intento: string, respuesta: 'sí' | 'no'): Promise<SalidaEnvio> {
+async function resolverBorradorDesdePanel(correo: string, canal: 'correo' | 'whatsapp', ambito: string, intento: string, respuesta: 'sí' | 'no', huella?: string): Promise<SalidaEnvio> {
   const b = canal === 'correo' ? borradorDe(correo, ambito) : borradorWhatsappDe(correo, ambito);
   if (!b || b.intento !== intento) return { estado: 'stale', resumen: 'El borrador ya no era el aprobado; no se envió nada.' };
+  if (respuesta === 'sí' && (!huella || b.huella !== huella)) return { estado: 'stale', resumen: 'Lo que espera ya no es lo que aprobaste (otro destinatario, cuenta o contenido); no se envió nada.' };
   if (canal === 'whatsapp' && !whatsappPermitido(correo)) return { estado: 'failed', resumen: 'WHATSAPP: no lo mandé: esta cuenta ya no tiene su WhatsApp.' };
-  const hecho = canal === 'correo' ? await resolverBorrador(correo, ambito, respuesta, undefined, { desdePanel: true }) : await resolverBorradorWhatsapp(correo, ambito, respuesta, undefined, { desdePanel: true });
+  const como = { desdePanel: true, ...(huella ? { huella } : {}) };
+  const hecho = canal === 'correo' ? await resolverBorrador(correo, ambito, respuesta, undefined, como) : await resolverBorradorWhatsapp(correo, ambito, respuesta, undefined, como);
   if (hecho === null) return { estado: 'stale', resumen: 'El borrador ya no estaba esperando; no se envió nada.' };
   return { estado: respuesta === 'no' ? 'failed' : clasificarEnvio(hecho), resumen: hecho };
 }
@@ -3850,8 +3857,9 @@ async function decisionDelBorrador(r: ResultadoHerramienta, dueno: string, ambit
   if (!intento || !dueno.includes('@')) return r;
   const c = borradorDe(dueno, ambito);
   const w = borradorWhatsappDe(dueno, ambito);
-  if (c?.intento === intento) await abrirDecisionDeBorrador(dueno, ambito, { canal: 'correo', intento, para: c.para, desde: c.desde, asunto: c.asunto, texto: c.texto, vence: c.vence });
-  else if (w?.intento === intento) await abrirDecisionDeBorrador(dueno, ambito, { canal: 'whatsapp', intento, para: w.nombre, texto: w.texto, vence: w.vence });
+  // La tarjeta dice a quién va de verdad (WhatsApp: el nombre Y el número del chat) y queda atada a la huella del borrador.
+  if (c?.intento === intento) await abrirDecisionDeBorrador(dueno, ambito, { canal: 'correo', intento, para: c.para, desde: c.desde, asunto: c.asunto, texto: c.texto, vence: c.vence, huella: c.huella });
+  else if (w?.intento === intento) await abrirDecisionDeBorrador(dueno, ambito, { canal: 'whatsapp', intento, para: destinoWhatsapp(w), texto: w.texto, vence: w.vence, huella: w.huella });
   return r;
 }
 

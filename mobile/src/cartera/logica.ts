@@ -280,6 +280,59 @@ export function decirSaldos(saldos: Saldo[], solo: string | null = null, idioma:
 
 export type Envio = { direccion: string; monto: string; simbolo: string };
 
+type ContactoPago = { correo: string; nombre: string };
+const plegarNombre = (s: string) =>
+  String(s || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9ñ@._\s-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+/**
+ * A quién va un envío que AURA prepara («mándale 5 ORIGEN a Nicole»), EXACTO (revisión 4-oct: un envío preparado para
+ * Nicole no sale para otra persona). Si viene un correo (el servidor lo resuelve y manda el correo exacto), es ese tal
+ * cual. Si viene un nombre (un servidor viejo), solo un contacto sin dudas: el nombre entero, o todas las palabras
+ * dichas en su nombre; con dos que encajan, `varios` (se pregunta), y lo parecido o mal oído no elige a nadie.
+ */
+export function destinoDePago(con: string, contactos: readonly ContactoPago[]): ContactoPago | { varios: ContactoPago[] } | null {
+  const crudo = String(con || '').trim().toLowerCase();
+  if (!crudo) return null;
+  if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(crudo)) {
+    const c = contactos.find((x) => String(x.correo || '').toLowerCase() === crudo);
+    return { correo: crudo, nombre: c?.nombre || crudo.split('@')[0] };
+  }
+  const q = plegarNombre(con);
+  if (!q) return null;
+  const elegir = (xs: ContactoPago[]) => (xs.length === 1 ? xs[0] : xs.length > 1 ? { varios: xs.slice(0, 5) } : null);
+  const exactos = contactos.filter((c) => plegarNombre(c.nombre) === q);
+  if (exactos.length) return elegir(exactos);
+  const palabras = q.split(' ');
+  return elegir(contactos.filter((c) => palabras.every((p) => plegarNombre(c.nombre).split(' ').includes(p))));
+}
+
+/** Lo que la persona revisó en el resumen del envío (a quién, a qué dirección, cuánto y en qué moneda). */
+export type EnvioRevisado = { correo: string; direccion: string; monto: string; moneda: string };
+
+/**
+ * ¿Lo que se va a confirmar es exactamente lo que se revisó? (revisión 4-oct). Si la hoja cambió de persona, llegó otra
+ * dirección, otra cantidad u otra moneda, esa revisión no lo autoriza: se vuelve a revisar.
+ */
+export function mismoEnvio(revisado: EnvioRevisado | null | undefined, ahora: EnvioRevisado | null | undefined): boolean {
+  if (!revisado || !ahora) return false;
+  const dir = (d: string) => String(d || '').trim().toLowerCase();
+  return (
+    dir(revisado.correo) === dir(ahora.correo) &&
+    !!direccionValida(revisado.direccion) &&
+    dir(revisado.direccion) === dir(ahora.direccion) &&
+    montoValido(revisado.monto) !== null &&
+    montoValido(revisado.monto) === montoValido(ahora.monto) &&
+    simbolo(revisado.moneda) !== null &&
+    simbolo(revisado.moneda) === simbolo(ahora.moneda)
+  );
+}
+
 function partesEnvio(e: Envio): { a: string; m: string; s: string } {
   const a = direccionValida(e.direccion);
   if (!a) throw new Error('Esa persona no tiene una dirección de Veta Wallet válida.');

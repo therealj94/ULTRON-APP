@@ -457,7 +457,11 @@ class PermisoLigado(ConEndpoints):
             h.start()
             pa = esperar_pregunta()
             self.assertEqual(t.resumen()['pregunta_id'], pa, 'la app y el servidor ven qué pregunta es')
-            self.assertEqual(asyncio.run(agente.confirmar(t.id, Pedido({'si': True, 'pregunta_id': pa}))), {'id': t.id, 'si': True})
+            # Revisión 4-oct: el sí sin la propuesta exacta ya no vale; con ella, sí.
+            with self.assertRaises(agente.HTTPException) as e0:
+                asyncio.run(agente.confirmar(t.id, Pedido({'si': True, 'pregunta_id': pa})))
+            self.assertEqual(e0.exception.status_code, 409)
+            self.assertEqual(asyncio.run(agente.confirmar(t.id, Pedido({'si': True, 'pregunta_id': pa, 'propuesta': t.propuesta}))), {'id': t.id, 'si': True})
             h.join(1)
             self.assertTrue(resultado['a'])
             h = threading.Thread(target=lambda: resultado.update(b=t.pedir_confirmacion('¿Borro el archivo?')), daemon=True)
@@ -471,6 +475,7 @@ class PermisoLigado(ConEndpoints):
             with self.assertRaises(agente.HTTPException):
                 asyncio.run(agente.confirmar(t.id, Pedido({'si': True})))  # sin decir a cuál: tampoco
             self.assertFalse(t.contestar(pa, True))
+            self.assertFalse(t.contestar(pb, True), 'un sí sin propuesta no contesta ni la de ahora')
             self.assertEqual(t.estado_visible(), 'confirmar', 'la segunda sigue esperando')
             self.assertTrue(t.contestar(pb, False))
             h.join(1)

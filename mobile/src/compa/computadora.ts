@@ -25,7 +25,7 @@ export type PasoPc = { n: number; t: number; accion: string; texto?: string; min
  * `epoca`: la del control (agente.py de AUR03/AUR09; el visor la manda como expectedControlEpoch y ve si otro tomó el
  * control); `seguro`: entrada segura en curso (AURA no ve ni toca nada).
  */
-export type TareaPc = { id: string; instruccion: string; estado: EstadoTareaPc; pasos: PasoPc[]; respuesta: string | null; error: string | null; segundos: number; pregunta?: string | null; pregunta_id?: string | null; epoca?: number; seguro?: boolean };
+export type TareaPc = { id: string; instruccion: string; estado: EstadoTareaPc; pasos: PasoPc[]; respuesta: string | null; error: string | null; segundos: number; pregunta?: string | null; pregunta_id?: string | null; propuesta?: string | null; epoca?: number; seguro?: boolean };
 export type ResumenPc = { id: string; estado: EstadoTareaPc; pasos: number; instruccion: string; ultimo: string | null };
 /** Una misión de su historial (server/computadora.ts, historialDe). */
 export type ItemHistorialPc = { id: string; tareaId: string; instruccion: string; estado: EstadoTareaPc; ok: boolean | null; inicio: number; segundos: number; resultado: string | null };
@@ -75,6 +75,8 @@ export type MisionPc = {
   pregunta: string | null;
   /** Cuál pregunta es: el sí la nombra (si ya cambió, el servidor no la contesta). */
   preguntaId?: string | null;
+  /** La huella de la propuesta que se muestra: el sí la nombra (otra propuesta, otro destino, no se aprueba). */
+  propuesta?: string | null;
   final: FinalPc | null;
   puedeSeguir: boolean;
   version?: number;
@@ -142,10 +144,21 @@ export class VistaPc {
   }
 }
 
-/** El cuerpo del sí o el no: con la pregunta que vio en la pantalla (la de la misión; si no, la de la tarea). */
-export function respuestaPc(si: boolean, mision: Pick<MisionPc, 'preguntaId'> | null | undefined, tarea: Pick<TareaPc, 'pregunta_id'> | null | undefined): { si: boolean; preguntaId?: string } {
-  const preguntaId = mision?.preguntaId || tarea?.pregunta_id || null;
-  return preguntaId ? { si, preguntaId } : { si };
+/**
+ * El cuerpo del sí o el no: con la pregunta que vio en la pantalla (la de la misión; si no, la de la tarea) y la huella
+ * de la propuesta que mostraba, de la MISMA fuente (revisión 4-oct: el sí aprueba esa propuesta exacta, destino
+ * incluido; sin ella el servidor no manda un sí).
+ */
+export function respuestaPc(
+  si: boolean,
+  mision: Pick<MisionPc, 'preguntaId' | 'propuesta'> | null | undefined,
+  tarea: Pick<TareaPc, 'pregunta_id' | 'propuesta'> | null | undefined,
+): { si: boolean; preguntaId?: string; propuesta?: string } {
+  const deMision = !!mision?.preguntaId;
+  const preguntaId = (deMision ? mision?.preguntaId : tarea?.pregunta_id) || null;
+  const propuesta = (deMision ? mision?.propuesta : tarea?.propuesta) || null;
+  if (!preguntaId) return { si };
+  return propuesta ? { si, preguntaId, propuesta } : { si, preguntaId };
 }
 
 /** El id de un encargo: el mismo si se reintenta, para que el servidor no lance dos misiones (auditoría 3-oct, PC04). */

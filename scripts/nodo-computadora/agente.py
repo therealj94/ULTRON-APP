@@ -37,7 +37,9 @@ documentos del anterior no quedan). Las tareas terminadas se olvidan tras una ho
   GET  /tareas/{id}/parada/{parada_id}                   → cómo va esa parada (fenced → draining → quiescent) y el recibo del toque en vuelo
   POST /tareas/{id}/pausar · /reanudar                   → pausa entre un paso y el siguiente
   POST /tareas/{id}/confirmar {"si": true|false, "pregunta_id": "...", "propuesta": "..."}  → contesta ESA pregunta, de ESA
-                                                           propuesta (otra: 409). `propuesta` es opcional (servidor de antes).
+                                                           propuesta (otra: 409). Un «sí» SIN `propuesta` tampoco vale (409):
+                                                           el sí aprueba la operación exacta que se mostró, destino incluido.
+                                                           Un «no» basta con `pregunta_id` (no autoriza nada).
   POST /tareas/{id}/control {"tomar": true|false}        → la persona toma el escritorio (la tarea espera) o lo devuelve;
                                                            {"fase": "quiescent" | "draining"} como parar
   POST /tareas/{id}/accion {"tipo": "click"|"escribir"|"tecla"|"scroll", ...}  → lo que hace la persona con el control
@@ -1224,12 +1226,15 @@ class Tarea:
             self.cambio.notify_all()
 
     def contestar(self, pregunta_id, si, propuesta=None):
-        """El sí o el no a la pregunta `pregunta_id` (y, si viene, a la `propuesta` que se le mostró). False si ya no
-        es la que espera (una respuesta vieja no contesta una pregunta nueva)."""
+        """El sí o el no a la pregunta `pregunta_id` y a la `propuesta` que se le mostró. False si ya no es la que espera
+        (una respuesta vieja no contesta una pregunta nueva). Un sí tiene que nombrar la propuesta EXACTA (revisión
+        4-oct: antes, sin `propuesta`, se aceptaba por `pregunta_id`); un no basta con la pregunta (no autoriza nada)."""
         with self.cambio:
             if not self.pregunta or not pregunta_id or self.pregunta_id != pregunta_id or self.si is not None:
                 return False
             if propuesta and propuesta != self.propuesta:
+                return False
+            if si and propuesta != self.propuesta:
                 return False
             self.si = bool(si)
             self.cambio.notify_all()
@@ -1576,8 +1581,8 @@ async def confirmar(id: str, req: Request):
     si = bool(cuerpo.get('si'))
     if not t.pregunta:
         raise HTTPException(409, 'no está esperando ningún sí')
-    # El sí lleva la pregunta que contesta (y la propuesta que se le mostró, con el servidor nuevo): una respuesta
-    # vieja, de otra propuesta o sin decir a cuál no contesta la de ahora.
+    # El sí lleva la pregunta que contesta y la propuesta que se le mostró: una respuesta vieja, de otra propuesta o sin
+    # decir a cuál (pregunta o propuesta) no contesta la de ahora. El no, con la pregunta basta.
     if not t.contestar(str(cuerpo.get('pregunta_id') or ''), si, str(cuerpo.get('propuesta') or '') or None):
         raise HTTPException(409, 'esa respuesta era para otra pregunta; mira la de ahora')
     return {'id': id, 'si': si}

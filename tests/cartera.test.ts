@@ -574,3 +574,52 @@ test('QR para recibir: la matriz que el lector de OpenCV leyó bien (huella fija
   assert.equal(codigoQR('x'.repeat(213))!.length, 57, 'la 10 llena');
   assert.equal(codigoQR('x'.repeat(214)), null, 'lo que no cabe no se dibuja a medias');
 });
+
+/* ── revisión 4-oct: un envío preparado para Nicole no sale para otra persona ─────────────── */
+
+test('pagar (servidor, ya seguro: evidencia): con dos «Nicole» no se prepara nada; con el nombre entero va el correo EXACTO', () => {
+  const contexto = {
+    pantalla: 'mesa' as const,
+    contactos: [
+      { correo: 'nicole.paz@x.com', nombre: 'Nicole Paz' },
+      { correo: 'nicole.lopez@x.com', nombre: 'Nicole López' },
+      { correo: 'bruno@x.com', nombre: 'Bruno' },
+    ],
+    manos: ['pagar'] as any,
+  };
+  assert.deepEqual(prepararAcciones([{ tipo: 'pagar', con: 'Nicole', monto: '5', moneda: 'ORIGEN' }], { mensaje: 'mándale 5 a Nicole', contexto }), [], 'dos Nicole: el cerebro tiene que preguntar');
+  assert.deepEqual(prepararAcciones([{ tipo: 'pagar', con: 'Nicole Paz', monto: '5', moneda: 'ORIGEN' }], { mensaje: 'x', contexto }), [{ tipo: 'pagar', con: 'nicole.paz@x.com', monto: '5', moneda: 'ORIGEN' }]);
+  assert.deepEqual(prepararAcciones([{ tipo: 'pagar', con: 'Nicol', monto: '5' }], { mensaje: 'x', contexto }), [], 'un nombre mal oído no elige a nadie');
+});
+
+test('pagar (teléfono): el destino del envío preparado es EXACTO — el correo tal cual, o un solo contacto sin dudas; nunca el «más parecido»', async () => {
+  const { destinoDePago } = await import('../mobile/src/cartera/logica');
+  const contactos = [
+    { correo: 'nicole.paz@x.com', nombre: 'Nicole Paz' },
+    { correo: 'nicole.lopez@x.com', nombre: 'Nicole López' },
+    { correo: 'bruno@x.com', nombre: 'Bruno Díaz' },
+  ];
+  // Lo que manda el servidor: el correo exacto. Se usa tal cual, aunque haya otro contacto que «se le parezca».
+  assert.deepEqual(destinoDePago('Nicole.Paz@x.com', contactos), { correo: 'nicole.paz@x.com', nombre: 'Nicole Paz' });
+  assert.deepEqual(destinoDePago('nueva@x.com', contactos), { correo: 'nueva@x.com', nombre: 'nueva' });
+  // Un nombre (un servidor viejo): solo si es uno sin dudas.
+  assert.deepEqual(destinoDePago('Nicole', contactos), { varios: [contactos[0], contactos[1]] });
+  assert.deepEqual(destinoDePago('nicole lopez', contactos), { correo: 'nicole.lopez@x.com', nombre: 'Nicole López' });
+  assert.deepEqual(destinoDePago('Bruno', contactos), { correo: 'bruno@x.com', nombre: 'Bruno Díaz' });
+  // Mal oído o parecido: nadie (antes una letra de diferencia elegía al «más parecido»).
+  assert.equal(destinoDePago('Nicol', contactos), null);
+  assert.equal(destinoDePago('Brunno', contactos), null);
+  assert.equal(destinoDePago('', contactos), null);
+});
+
+test('pagar (teléfono): lo que se confirma es lo que se revisó — otra persona, dirección, cantidad o moneda no se firma con esa revisión', async () => {
+  const { mismoEnvio } = await import('../mobile/src/cartera/logica');
+  const revisado = { correo: 'nicole.paz@x.com', direccion: ANA, monto: '5', moneda: 'ORIGEN' };
+  assert.equal(mismoEnvio(revisado, { ...revisado }), true);
+  assert.equal(mismoEnvio(revisado, { ...revisado, correo: 'NICOLE.PAZ@x.com', direccion: ANA.toLowerCase() }), true, 'mayúsculas no cambian a quién va');
+  assert.equal(mismoEnvio(revisado, { ...revisado, correo: 'bruno@x.com' }), false, 'la hoja ahora es de Bruno');
+  assert.equal(mismoEnvio(revisado, { ...revisado, direccion: YO }), false, 'la dirección que llegó es otra');
+  assert.equal(mismoEnvio(revisado, { ...revisado, monto: '50' }), false);
+  assert.equal(mismoEnvio(revisado, { ...revisado, moneda: 'AUKA' }), false);
+  assert.equal(mismoEnvio(null, revisado), false, 'sin revisión, nada');
+});

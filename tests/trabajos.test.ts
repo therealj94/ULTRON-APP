@@ -249,10 +249,10 @@ test('adaptador de la tarea en curso: mismo id, progreso con denominador real y 
 
 /* ------------------------------------------------------------------ rutas */
 
-type Llamadas = { enviar: number; descartar: number; accionesTc: string[]; pausarPc: string[]; pararPc: string[] };
+type Llamadas = { enviar: number; descartar: number; accionesTc: string[]; pausarPc: string[]; pararPc: string[]; huellas: string[] };
 
-function arnes(o: { salida?: SalidaEnvio; tc?: TareaEnCursoMin[]; misiones?: MisionComputadoraMin[]; vigente?: (canal: string, ambito: string) => string | null; ahora?: () => number; pausarPc?: () => Promise<unknown>; pararPc?: () => Promise<unknown>; reanudarPc?: () => Promise<unknown> } = {}) {
-  const ll: Llamadas = { enviar: 0, descartar: 0, accionesTc: [], pausarPc: [], pararPc: [] };
+function arnes(o: { salida?: SalidaEnvio; tc?: TareaEnCursoMin[]; misiones?: MisionComputadoraMin[]; vigente?: (canal: string, ambito: string) => string | null; huellaVigente?: () => string | undefined; ahora?: () => number; pausarPc?: () => Promise<unknown>; pararPc?: () => Promise<unknown>; reanudarPc?: () => Promise<unknown> } = {}) {
+  const ll: Llamadas = { enviar: 0, descartar: 0, accionesTc: [], pausarPc: [], pararPc: [], huellas: [] };
   const pasa = ((_q: express.Request, _s: express.Response, nx: express.NextFunction) => nx()) as express.RequestHandler;
   const deps: DepsTrabajos = {
     exigirMesa: pasa,
@@ -284,10 +284,12 @@ function arnes(o: { salida?: SalidaEnvio; tc?: TareaEnCursoMin[]; misiones?: Mis
     borradores: {
       vigente: (_c, canal, ambito) => {
         const i = o.vigente ? o.vigente(canal, ambito) : 'int-1';
-        return i ? { intento: i } : null;
+        const huella = o.huellaVigente?.();
+        return i ? { intento: i, ...(huella !== undefined ? { huella } : {}) } : null;
       },
-      enviar: async () => {
+      enviar: async (_c, _canal, _ambito, _intento, huella) => {
         ll.enviar++;
+        ll.huellas.push(huella);
         await new Promise((r) => setTimeout(r, 15));
         return o.salida || { estado: 'succeeded', resumen: 'CORREO ENVIADO desde yo@ejemplo.com a ana@ejemplo.com — «Fechas».' };
       },
@@ -417,6 +419,67 @@ test('decidir: el borrador cambió (otro intento) → error recuperable, sin env
     const tarde = await h.pedir(`/api/trabajos/${t.id}/decisiones`, yo, { decisionId: t.decisionId, expectedVersion: t.version, opcion: 'aprobar' });
     assert.equal(tarde.status, 409);
     assert.equal(h.ll.enviar, 0);
+  } finally {
+    h.cerrar();
+  }
+});
+
+test('decidir (revisión 4-oct): aprobar va atado a la huella del borrador que mostró la tarjeta; mismo intento con otro destino → 409, sin envío', async () => {
+  _usarAlmacenDurable(almacenEnMemoria());
+  const yo = correo();
+  let huella: string | undefined = 'huella-ana';
+  let intento = 'int-1';
+  const h = arnes({ vigente: () => intento, huellaVigente: () => huella });
+  try {
+    const ref = await abrirDecisionDeBorrador(yo, 'telefono', { ...borrador('int-1'), huella: 'huella-ana' });
+    const t = (await h.pedir(`/api/trabajos/${ref!.id}`, yo)).json.tarea;
+    // El mismo intento, pero lo que espera ahora va a Bruno (otra huella): la aprobación de Ana no lo manda.
+    huella = 'huella-bruno';
+    const r = await h.pedir(`/api/trabajos/${t.id}/decisiones`, yo, { decisionId: t.decisionId, expectedVersion: t.version, opcion: 'aprobar' });
+    assert.equal(r.status, 409);
+    assert.equal(r.json.codigo, 'propuesta-cambiada');
+    assert.equal(h.ll.enviar, 0, 'aprobé para Ana: nada sale para Bruno');
+    assert.equal((await h.pedir(`/api/trabajos/${t.id}`, yo)).json.tarea.state, 'blocked', 'la tarjeta de Ana ya no se puede aprobar');
+    // Lo legítimo: el borrador que espera es el de la tarjeta; al enviar se pasa la huella que se aprobó.
+    huella = 'huella-ana2';
+    intento = 'int-2';
+    const ref2 = await abrirDecisionDeBorrador(yo, 'web', { ...borrador('int-2'), huella: 'huella-ana2' });
+    const t2 = (await h.pedir(`/api/trabajos/${ref2!.id}`, yo)).json.tarea;
+    const ok = await h.pedir(`/api/trabajos/${t2.id}/decisiones`, yo, { decisionId: t2.decisionId, expectedVersion: t2.version, opcion: 'aprobar' });
+    assert.equal(ok.status, 200);
+    assert.deepEqual(h.ll.huellas, ['huella-ana2'], 'enviar recibe la huella aprobada (server.ts la compara con la del borrador)');
+  } finally {
+    h.cerrar();
+  }
+});
+
+test('decidir (revisión 4-oct, ya seguro: evidencia): aprobar la versión 1 del plan (Ana) no ejecuta la versión 2 (Bruno) de la misma tarea', async () => {
+  _usarAlmacenDurable(almacenEnMemoria());
+  const yo = correo();
+  let intento = 'int-ana';
+  const h = arnes({ vigente: () => intento });
+  try {
+    const a = await abrirDecisionDeBorrador(yo, 'telefono', { ...borrador('int-ana'), huella: 'h-ana' });
+    const v1 = (await h.pedir(`/api/trabajos/${a!.id}`, yo)).json.tarea;
+    assert.equal(v1.decision.proposal.recipient, 'ana@ejemplo.com');
+    const ed = await h.pedir(`/api/trabajos/${v1.id}/decisiones`, yo, { decisionId: v1.decisionId, expectedVersion: v1.version, opcion: 'editar' });
+    assert.equal(ed.status, 200);
+    // La propuesta nueva (versión 2 del plan) va a Bruno, en la MISMA tarea.
+    intento = 'int-bruno';
+    await abrirDecisionDeBorrador(yo, 'telefono', { ...borrador('int-bruno'), para: ['bruno@ejemplo.com'], huella: 'h-bruno' });
+    const v2 = (await h.pedir(`/api/trabajos/${a!.id}`, yo)).json.tarea;
+    assert.equal(v2.planVersion, 2);
+    assert.equal(v2.decision.proposal.recipient, 'bruno@ejemplo.com');
+    // Un «Aprobar» con lo que vio de la versión 1 (otra decisión, otra versión): no ejecuta la de Bruno.
+    for (const viejo of [
+      { decisionId: v1.decisionId, expectedVersion: v1.version },
+      { decisionId: v1.decisionId, expectedVersion: v2.version },
+      { decisionId: v2.decisionId, expectedVersion: v1.version },
+    ]) {
+      const r = await h.pedir(`/api/trabajos/${v2.id}/decisiones`, yo, { ...viejo, opcion: 'aprobar' });
+      assert.equal(r.status, 409, JSON.stringify(viejo));
+    }
+    assert.equal(h.ll.enviar, 0, 'aprobé el plan de Ana: nada sale para Bruno');
   } finally {
     h.cerrar();
   }

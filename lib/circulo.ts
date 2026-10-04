@@ -20,7 +20,7 @@
  */
 import { clave as claveBoveda } from './boveda';
 import { clavePersona, CajonNoDisponible, crearCajones, linea, nuevoId, plegar } from './cerebro-comun';
-import { borradorWhatsappParaConEstado, enviarWA, whatsappDisponible, whatsappPermitido } from '../server/whatsapp';
+import { borradorWhatsappParaConEstado, cuentaWhatsappVinculada, enviarWA, whatsappDisponible, whatsappPermitido } from '../server/whatsapp';
 import { exito, fallo, incierto, type ResultadoHerramienta } from './recibo-herramienta';
 
 export const RELACIONES = ['esposa', 'esposo', 'pareja', 'hija', 'hijo', 'madre', 'padre', 'hermana', 'hermano', 'familia', 'amigo', 'amiga', 'socio', 'socia', 'asistente', 'otro'] as const;
@@ -472,7 +472,11 @@ export async function correrCirculoConEstado(dueno: string, arg: string, ambito 
       }
       // Pasado el tope del día, vuelve a preguntar.
     }
-    const b = d.borrador ? exito(d.borrador(dueno, ambito, { chat, nombre: etiquetaDe(p), texto }), { efecto: 'borrador', proveedor: 'whatsapp' }) : borradorWhatsappParaConEstado(dueno, ambito, { chat, nombre: etiquetaDe(p), texto });
+    // El borrador va al jid del número GUARDADO (nunca a un chat buscado por nombre) y desde la cuenta vinculada ahora:
+    // el «sí» autoriza ESE número desde ESA cuenta (revisión 4-oct).
+    const b = d.borrador
+      ? exito(d.borrador(dueno, ambito, { chat, nombre: etiquetaDe(p), texto }), { efecto: 'borrador', proveedor: 'whatsapp' })
+      : borradorWhatsappParaConEstado(dueno, ambito, { chat, nombre: etiquetaDe(p), texto, cuenta: await cuentaWhatsappVinculada() });
     return aviso ? { ...b, texto: `${b.texto}${aviso}` } : b;
   } catch (e: any) {
     if (e instanceof ErrorCirculo) return fallo(`CÍRCULO: ${e.message}`, 'rechazado');
