@@ -12,8 +12,13 @@ test('bajo el corredor de pruebas, una base de producción no se abre', () => {
     assert.ok(process.env.NODE_TEST_CONTEXT, 'esta prueba debe correr con --test');
     assert.throws(() => exigirBaseDePrueba('postgres://u:c@db.ejemplo.com:5432/electrum'), /no dice que sea de pruebas/);
     assert.throws(() => exigirBaseDePrueba('no es una url'), /no dice que sea de pruebas/);
+    // «latest» contiene «test», pero no es una base de pruebas.
+    assert.throws(() => exigirBaseDePrueba('postgres://u@db.ejemplo.com/electrum_latest'), /no dice que sea de pruebas/);
+    assert.throws(() => exigirBaseDePrueba('postgres://u@db.ejemplo.com/contestaciones'), /no dice que sea de pruebas/);
     assert.doesNotThrow(() => exigirBaseDePrueba('postgres://electrum:electrum-ci@127.0.0.1:5432/electrum_pruebas'));
     assert.doesNotThrow(() => exigirBaseDePrueba('postgres://u@localhost/catastro_test?sslmode=disable'));
+    assert.doesNotThrow(() => exigirBaseDePrueba('postgres://u@localhost/pruebas'));
+    assert.doesNotThrow(() => exigirBaseDePrueba('postgres://u@localhost/test-cuentas'));
   } finally {
     if (antes === undefined) delete process.env.BASE_DE_PRUEBAS; else process.env.BASE_DE_PRUEBAS = antes;
   }
