@@ -528,7 +528,7 @@ async function reconciliar(dueno: string, reg: RegistroTarea, d: DepsTrabajos, a
       if (x.estado === 'awaiting_approval' && dec?.vinculo?.tipo === 'borrador') {
         if (dec.caduca && ahora > dec.caduca) return { estado: 'blocked', pasoActual: 'La propuesta caducó sin enviarse. Si aún lo quieres, pide un borrador nuevo.' };
         const v = vigente(dec.vinculo.canal, dec.vinculo.ambito);
-        if (v !== undefined && (v?.intento !== dec.vinculo.intento || (v.huella !== undefined && v.huella !== dec.vinculo.hash))) {
+        if (v !== undefined && (v?.intento !== dec.vinculo.intento || !v.huella || v.huella !== dec.vinculo.hash)) {
           return {
             estado: 'blocked',
             pasoActual: 'El borrador ya no está esperando (se resolvió en otro lado o el servidor se reinició). No se envió nada desde aquí.',
@@ -722,9 +722,10 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
     }
     if (!d.borradores) return res.status(503).json({ error: 'Ahora no puedo enviar desde aquí.', honesto: true });
     // Justo antes del efecto: ¿el borrador que espera es EXACTAMENTE el aprobado? (invariante 4) El mismo intento y la
-    // misma huella (destinatario, cuenta y contenido): una aprobación para Ana no manda a Bruno.
+    // misma huella (destinatario, cuenta y contenido): una aprobación para Ana no manda a Bruno. Sin huella del que
+    // espera no hay con qué compararlo: se bloquea (permisos exactos, 4-oct; antes, sin huella, pasaba).
     const espera = d.borradores.vigente(dueno, vinc.canal, vinc.ambito);
-    if (espera?.intento !== vinc.intento || (espera.huella !== undefined && espera.huella !== vinc.hash)) {
+    if (espera?.intento !== vinc.intento || !espera.huella || espera.huella !== vinc.hash) {
       const fresca = await reconciliar(dueno, e.reg, d, ahora());
       return res.status(409).json({ error: 'Esa propuesta ya no es la que espera: no envié nada. Mira la actual o pide una nueva.', codigo: 'propuesta-cambiada', tarea: vistaTarea(fresca, ahora()), honesto: true });
     }

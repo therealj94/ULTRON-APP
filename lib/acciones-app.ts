@@ -83,7 +83,11 @@ export type AccionApp =
   | { tipo: 'avatar'; valor: AvatarApp }
   | { tipo: 'abrir_chat'; con: string }
   | { tipo: 'redactar'; para: string; texto: string }
-  | { tipo: 'enviar'; para?: string }
+  /**
+   * `texto` (permisos exactos, 4-oct): lo pone el SERVIDOR con el borrador de AU-RA que la persona aprobó (nunca el
+   * modelo: validarAccion no lo deja pasar). El teléfono solo manda si su borrador sigue siendo ese texto.
+   */
+  | { tipo: 'enviar'; para?: string; texto?: string }
   | { tipo: 'descartar' }
   | { tipo: 'silencio'; valor: boolean }
   | { tipo: 'presencia'; valor: PresenciaApp }
@@ -533,7 +537,12 @@ export function contextoDe(correo: string, ahora = Date.now()): ContextoApp | nu
  * minutos quedan como tope además del turno.
  */
 export const PENDIENTE_TTL_MS = 3 * 60_000;
-type Pendiente = { para: string; texto: string; t: number; turno: number };
+/**
+ * `reemplazoDe` (permisos exactos, 4-oct): en el MISMO turno se armó otro antes (otro destinatario u otro texto, o una
+ * llamada/recordatorio que esperaba): dice cuál era. La persona pudo oír los dos; su «sí» no manda este sin
+ * confirmarlo (se le dice a quién va ahora y el «sí» siguiente ya es para este).
+ */
+type Pendiente = { para: string; texto: string; t: number; turno: number; reemplazoDe?: string };
 const pendientes = new Map<string, Pendiente>();
 const turnosApp = new Map<string, number>();
 
@@ -570,9 +579,43 @@ export function deshacerTurnoApp(correo: string, n: number) {
 }
 
 export function anotarPendiente(correo: string, p: { para: string; texto: string }, ahora = Date.now()) {
-  pendientes.set(clave(correo), { para: p.para, texto: p.texto, t: ahora, turno: turnoAppActual(correo) });
+  const k = clave(correo);
+  const turno = turnoAppActual(correo);
+  // Permisos exactos (4-oct): ¿reemplaza a otra cosa que esperaba su «sí» y que se armó en ESTE mismo turno? (lo de
+  // turnos anteriores ya lo resolvió o lo soltó este turno). Entonces su «sí» pudo ser para la de antes.
+  const previo = pendientes.get(k);
+  const previa = propuestas.get(k);
+  const reemplazo =
+    previo && previo.turno === turno && (previo.para !== p.para || previo.texto !== p.texto)
+      ? previo.reemplazoDe || `el mensaje para ${previo.para}`
+      : previa && previa.turno === turno
+        ? describirPropuesta(previa.p)
+        : previo && previo.turno === turno
+          ? previo.reemplazoDe
+          : undefined;
+  pendientes.set(k, { para: p.para, texto: p.texto, t: ahora, turno, ...(reemplazo ? { reemplazoDe: reemplazo } : {}) });
   // Un «sí» tiene UN significado: el borrador nuevo reemplaza a la llamada o al recordatorio que esperaba.
-  propuestas.delete(clave(correo));
+  propuestas.delete(k);
+}
+
+/** Cómo se dice una propuesta que quedó reemplazada. */
+function describirPropuesta(p: Propuesta): string {
+  if (p.tipo === 'llamar') return `la llamada a ${p.nombre || p.con}`;
+  if (p.tipo === 'cancelar_recordatorio') return `quitar el recordatorio «${p.texto}»`;
+  return `el recordatorio «${p.texto}»`;
+}
+
+/**
+ * Ya se le dijo a quién va (o qué se hace) ahora: lo que espera queda sin la marca de reemplazo y vale para el «sí» del
+ * turno SIGUIENTE (permisos exactos, 4-oct).
+ */
+export function confirmarCambioApp(correo: string, ahora = Date.now()) {
+  const k = clave(correo);
+  const turno = turnoAppActual(correo);
+  const v = pendientes.get(k);
+  if (v?.reemplazoDe) pendientes.set(k, { para: v.para, texto: v.texto, t: ahora, turno });
+  const pr = propuestas.get(k);
+  if (pr?.reemplazoDe) propuestas.set(k, { p: pr.p, t: ahora, turno });
 }
 
 /** El borrador de AU-RA que espera (del turno anterior, o recién redactado en este), o null. */
@@ -608,12 +651,28 @@ export function soltarPendiente(correo: string) {
  * (o un borrador nuevo) reemplaza a la vieja. Lo que se hace al confirmar es LA PROPUESTA (a quién,
  * a qué hora), no lo que el modelo escriba en ese turno.
  */
-type PropuestaGuardada = { p: Propuesta; t: number; turno: number };
+type PropuestaGuardada = { p: Propuesta; t: number; turno: number; reemplazoDe?: string };
 const propuestas = new Map<string, PropuestaGuardada>();
+/** Lo que espera, con la marca de si reemplazó a otra cosa del mismo turno (permisos exactos, 4-oct). */
+export type PropuestaEsperando = Propuesta & { reemplazoDe?: string };
 
 export function anotarPropuesta(correo: string, p: Propuesta, ahora = Date.now()) {
-  propuestas.set(clave(correo), { p, t: ahora, turno: turnoAppActual(correo) });
-  pendientes.delete(clave(correo));
+  const k = clave(correo);
+  const turno = turnoAppActual(correo);
+  // Permisos exactos (4-oct): si en ESTE turno ya esperaba otra cosa (otra llamada, otro recordatorio, un mensaje), su
+  // «sí» pudo ser para esa: esta no se cumple sin confirmarla.
+  const previa = propuestas.get(k);
+  const previo = pendientes.get(k);
+  const reemplazo =
+    previa && previa.turno === turno && JSON.stringify(previa.p) !== JSON.stringify(p)
+      ? previa.reemplazoDe || describirPropuesta(previa.p)
+      : previo && previo.turno === turno
+        ? `el mensaje para ${previo.para}`
+        : previa && previa.turno === turno
+          ? previa.reemplazoDe
+          : undefined;
+  propuestas.set(k, { p, t: ahora, turno, ...(reemplazo ? { reemplazoDe: reemplazo } : {}) });
+  pendientes.delete(k);
 }
 
 /** La propuesta que espera (de este turno o del anterior), o null. */
@@ -628,10 +687,20 @@ export function propuestaDe(correo: string, ahora = Date.now()): Propuesta | nul
 }
 
 /** La que la persona YA OYÓ (de un turno anterior): la única que un «sí» puede cumplir. */
-export function propuestaAnterior(correo: string, ahora = Date.now()): Propuesta | null {
+export function propuestaAnterior(correo: string, ahora = Date.now()): PropuestaEsperando | null {
   const p = propuestaDe(correo, ahora);
   const v = propuestas.get(clave(correo));
-  return p && v && v.turno < turnoAppActual(correo) ? p : null;
+  if (!p || !v || v.turno >= turnoAppActual(correo)) return null;
+  return v.reemplazoDe ? { ...p, reemplazoDe: v.reemplazoDe } : p;
+}
+
+/** Lo que espera la app de un turno anterior (su borrador o su propuesta), para saber si un «sí» es ambiguo. */
+export function appEsperandoDe(correo: string, ahora = Date.now()): { que: string; para: string } | null {
+  const b = pendienteAnterior(correo, ahora);
+  if (b) return { que: 'mensaje', para: b.para };
+  const p = propuestaAnterior(correo, ahora);
+  if (!p) return null;
+  return p.tipo === 'llamar' ? { que: 'llamar', para: p.nombre || p.con } : { que: p.tipo, para: p.texto };
 }
 
 export function soltarPropuesta(correo: string) {
@@ -945,6 +1014,11 @@ export type OrdenRapida = {
   soltarAclaracion?: boolean;
   /** Otras acciones del mismo turno, después de `accion` («las dos»: callar y cancelar la tarea). */
   mas?: AccionApp[];
+  /**
+   * Permisos exactos (4-oct): lo que espera reemplazó a otra cosa del mismo turno; este «sí» no lo hizo y `decir`
+   * cuenta a quién va ahora. Quien lo empuja llama a confirmarCambioApp: el «sí» del turno siguiente ya es para esto.
+   */
+  confirmarCambio?: boolean;
 };
 
 /** Sin acentos, sin signos, sin el «AURA,» del principio ni el «por favor» del final. */
@@ -1055,6 +1129,8 @@ export function ordenPorReglas(
   if (o.propuesta) {
     const p = o.propuesta;
     if (confirmaPropuesta(p.tipo, texto)) {
+      // Reemplazó a otra cosa en el mismo turno: su «sí» pudo ser para esa (permisos exactos, 4-oct).
+      if (p.reemplazoDe) return { accion: null, decir: dichoDeReemplazo(p.reemplazoDe, describirPropuesta(p), idioma), via: 'reglas', soloDecir: true, confirmarCambio: true };
       if (p.tipo === 'recordatorio' && p.cuando < ahora + 15_000) {
         return { accion: null, decir: idioma === 'en' ? 'That time already passed. Tell me another one.' : 'Esa hora ya pasó. Dime otra.', via: 'reglas', soltarPropuesta: true };
       }
@@ -1077,11 +1153,18 @@ export function ordenPorReglas(
   return m.tipo === 'propuesta' ? { accion: null, decir: m.decir, via: 'reglas', propuesta: m.propuesta } : { accion: m.accion, decir: m.decir, via: 'reglas' };
 }
 
+/** «Antes era X; ahora es Y. ¿Lo hago?»: lo que reemplazó a otra cosa del mismo turno se confirma antes de hacerlo. */
+function dichoDeReemplazo(antes: string, ahora: string, idioma: 'es' | 'en'): string {
+  return idioma === 'en'
+    ? `I didn't do it yet: it changed (it was ${antes}; now it's ${ahora}). Do you want me to go ahead with this one?`
+    : `Todavía no lo hice: cambió (antes era ${antes}; ahora es ${ahora}). ¿Sigo con esto?`;
+}
+
 type OpcionesReglas = {
   idioma?: 'es' | 'en';
   contexto?: ContextoApp | null;
-  pendiente?: { para: string; texto: string } | null;
-  propuesta?: Propuesta | null;
+  pendiente?: { para: string; texto: string; reemplazoDe?: string } | null;
+  propuesta?: PropuestaEsperando | null;
   ahora?: number;
   /** AUR10: lo que está vivo (audio, tarea, llamada, turno) para leer «para» / «basta» a secas. */
   estadoControles?: EstadoControles;
@@ -1134,7 +1217,14 @@ function reglasDeSiempre(q: string, o: OpcionesReglas): OrdenRapida | null {
     const explicito = /^(si )?(envialo|enviala|mandalo|mandala|envialo ya|mandalo ya|send it|yes send it)$/.test(q);
     const si = /^(si|sip|si claro|si por favor|yes|si envialo|si mandalo)$/.test(q);
     if (explicito || (si && o.pendiente)) {
-      const para = o.pendiente?.para || o.contexto?.chatAbierto?.correo;
+      // Permisos exactos (4-oct): el borrador de AU-RA reemplazó a otro del mismo turno (otro destinatario o texto):
+      // este «sí» pudo ser para el de antes. No sale; se le dice a quién va ahora.
+      if (o.pendiente?.reemplazoDe) {
+        return { accion: null, decir: dichoDeReemplazo(o.pendiente.reemplazoDe, `${o.idioma === 'en' ? 'the message to' : 'el mensaje para'} ${o.pendiente.para}`, o.idioma === 'en' ? 'en' : 'es'), via: 'reglas', soloDecir: true, confirmarCambio: true };
+      }
+      // El de AU-RA sale con el texto que la persona oyó (el teléfono no manda otro contenido con este «sí»).
+      if (o.pendiente) return hecho({ tipo: 'enviar', para: o.pendiente.para, texto: o.pendiente.texto }, d.enviar);
+      const para = o.contexto?.chatAbierto?.correo;
       return hecho(para ? { tipo: 'enviar', para } : { tipo: 'enviar' }, d.enviar);
     }
     if (o.pendiente && /^(no|nop|mejor no|borralo|borrala|descartalo|descartala|no lo envies|no lo mandes|cancela|cancelalo|olvidalo|delete it|cancel|don ?t send it|no thanks)$/.test(q)) {
@@ -1454,8 +1544,8 @@ export async function ordenRapida(
   o: {
     idioma?: 'es' | 'en';
     contexto?: ContextoApp | null;
-    pendiente?: { para: string; texto: string } | null;
-    propuesta?: Propuesta | null;
+    pendiente?: { para: string; texto: string; reemplazoDe?: string } | null;
+    propuesta?: PropuestaEsperando | null;
     esperaLayaMs?: number;
     esCharla?: (t: string) => boolean;
     /** false: sin Laya ligera (las pruebas del Laya del nodo; ULTRON_LAYA_LIGERA=0 hace lo mismo). */
@@ -1504,14 +1594,17 @@ export function prepararAcciones(
   o: {
     mensaje: string;
     contexto?: ContextoApp | null;
-    pendiente?: { para: string; texto: string } | null;
+    pendiente?: { para: string; texto: string; reemplazoDe?: string } | null;
     /** La propuesta (llamar, recordar) de un turno ANTERIOR: la única que este mensaje puede confirmar. */
-    propuesta?: Propuesta | null;
+    propuesta?: PropuestaEsperando | null;
     /** Una llamada o un recordatorio pedido en ESTE turno no se hace: se propone (espera el «sí»). */
     alProponer?: (p: Propuesta) => void;
     ahora?: number;
   }
 ): AccionApp[] {
+  // Permisos exactos (4-oct): lo que reemplazó a otra cosa del mismo turno no se cumple con este «sí» (pudo ser para la
+  // de antes): primero se le dice a quién va ahora (server.ts, confirmarCambioApp).
+  o = { ...o, pendiente: o.pendiente?.reemplazoDe ? null : o.pendiente, propuesta: o.propuesta?.reemplazoDe ? null : o.propuesta };
   const out: AccionApp[] = [];
   const contactos = o.contexto?.contactos || [];
   const ahora = o.ahora ?? Date.now();
@@ -1599,7 +1692,8 @@ export function prepararAcciones(
     if (a.tipo === 'enviar') {
       if (enviado || !o.pendiente || conRedactar || !confirmaEnvio(o.mensaje)) continue;
       enviado = true;
-      out.push({ tipo: 'enviar', para: o.pendiente.para });
+      // Al destinatario de ESE borrador y con SU texto: el teléfono no manda otro contenido con este «sí».
+      out.push({ tipo: 'enviar', para: o.pendiente.para, texto: o.pendiente.texto });
     } else if (a.tipo === 'redactar') {
       // Con la lista de contactos a la vista, un borrador para alguien que no está (o con dos parecidos)
       // no sale: el teléfono diría «no encuentro a X» y el «sí» siguiente no mandaría nada.

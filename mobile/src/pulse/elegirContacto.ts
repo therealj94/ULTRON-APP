@@ -29,13 +29,18 @@ function distancia(a: string, b: string): number {
   return fila[b.length];
 }
 
-/** Si dos empatan gana la charla más reciente (las conversaciones vienen ordenadas así). */
+/**
+ * Permisos exactos (revisión externa, 4-oct): si dos contactos distintos empatan en lo mejor («Ana» y «Ana»), no se elige
+ * ninguno (null: «no encuentro a…»; el cerebro pregunta cuál). Antes ganaba la charla más reciente, y un «sí» para una
+ * Ana podía salir para la otra.
+ */
 export function elegirContacto(con: string, lista: readonly ContactoConocido[]): ContactoConocido | null {
   const q = normalizar(con);
   if (!q) return null;
   const porCorreo = lista.find((p) => p.correo === q);
   if (porCorreo) return porCorreo;
   let mejor: ContactoConocido | null = null;
+  let empate = false;
   let puntos = 0;
   for (const p of lista) {
     const n = normalizar(p.nombre);
@@ -52,7 +57,18 @@ export function elegirContacto(con: string, lista: readonly ContactoConocido[]):
     if (v > puntos) {
       puntos = v;
       mejor = p;
-    }
+      empate = false;
+    } else if (v > 0 && v === puntos && mejor && mejor.correo !== p.correo) empate = true;
   }
-  return mejor;
+  return empate ? null : mejor;
+}
+
+/**
+ * ¿El borrador que el teléfono tiene es exactamente el texto que la persona aprobó? (el `texto` que el servidor manda con
+ * `enviar`). Sin texto aprobado (un APK de antes no lo pedía, o un «envíalo» de lo que la persona escribió a mano en el
+ * chat abierto), vale lo que hay.
+ */
+export function mismoTextoAprobado(borrador: string | null | undefined, aprobado: string | null | undefined): boolean {
+  if (aprobado === undefined || aprobado === null) return true;
+  return String(borrador ?? '').trim() === String(aprobado).trim();
 }

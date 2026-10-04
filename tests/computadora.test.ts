@@ -1327,7 +1327,12 @@ test('el sí es de la pregunta de ESA tarea: un id de otra tarea no aprueba aunq
           // La de verdad: el nodo recibe la pregunta y la propuesta que se mostró.
           const propuesta = nodo.tareas.get(a.id!)!.propuesta;
           assert.ok(propuesta);
-          const ok = await como('jose@x.hn', `/api/computadora/tareas/${a.id}/confirmar`, { method: 'POST', body: JSON.stringify({ si: true, preguntaId: pa }) });
+          // Permisos exactos (4-oct): un sí que no nombra la propuesta que mostraba la tarjeta no aprueba; con ella, sí.
+          assert.equal((await como('jose@x.hn', `/api/computadora/tareas/${a.id}/confirmar`, { method: 'POST', body: JSON.stringify({ si: true, preguntaId: pa }) })).code, 409);
+          assert.equal(confirmarDe(a.id).length, 0);
+          const mostrada = (await como('jose@x.hn', `/api/computadora/tareas/${a.id}`)).j.mision.propuesta;
+          assert.equal(mostrada, propuesta, 'la tarjeta trae la huella de la propuesta que muestra');
+          const ok = await como('jose@x.hn', `/api/computadora/tareas/${a.id}/confirmar`, { method: 'POST', body: JSON.stringify({ si: true, preguntaId: pa, propuesta: mostrada }) });
           assert.equal(ok.code, 200);
           assert.deepEqual(confirmarDe(a.id).at(-1)!.cuerpo, { si: true, pregunta_id: pa, propuesta });
         })

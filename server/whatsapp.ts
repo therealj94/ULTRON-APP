@@ -224,9 +224,14 @@ async function buscarChat(quien: string, ambito: string, ref: string): Promise<H
   // Por número («el 9999-0000», «+504 9999 0000»): el chat cuyo número termina así.
   const digitos = q.replace(/\D/g, '');
   if (digitos.length >= 7 && digitos.length >= q.replace(/\s/g, '').length - 2) {
-    const porNumero = (cs: ChatWA[]) => cs.find((c) => !!c.numero && c.numero.replace(/\D/g, '').endsWith(digitos)) || null;
+    // Permisos exactos (4-oct): dos chats cuyo número termina igual (otro país, otro código) no se resuelven por el
+    // primero que aparece: se pregunta cuál.
+    const porNumero = (cs: ChatWA[]): Hallazgo => {
+      const xs = distintos(cs.filter((c) => !!c.numero && c.numero.replace(/\D/g, '').endsWith(digitos)));
+      return xs.length > 1 ? { varios: xs } : xs[0] ? { chat: xs[0] } : null;
+    };
     const c = porNumero(lista) || porNumero(await chatsWA(digitos, 5).catch(() => []));
-    if (c) return { chat: c };
+    if (c) return c;
   }
   // Primero en la última lista que se le leyó; si no está, en todos sus chats.
   const hallar = (cs: ChatWA[]): Hallazgo => {
@@ -357,6 +362,8 @@ async function leer(quien: string, ambito: string, ref: string): Promise<Resulta
 /** El borrador queda esperando su «sí»: recibo `borrador` con su id de intento (nada salió todavía). */
 function guardarBorrador(quien: string, ambito: string, b: Borrador): ResultadoHerramienta {
   if (!b.texto.trim()) return fallo('WHATSAPP: el borrador vino vacío. Pregúntale qué quiere decir.', 'falta-dato');
+  // Permisos exactos (4-oct): el «sí» autoriza mandar desde UNA cuenta vinculada; sin saber cuál, no hay borrador.
+  if (!digitos(b.cuenta)) return fallo('WHATSAPP: no armé el borrador: no pude comprobar desde qué cuenta de WhatsApp saldría (el puente no dijo el número vinculado). No se mandó nada; dile que lo intente en un momento.', 'cuenta-desconocida');
   const vigencia = vigenciaNueva(quien, b.creado, BORRADOR_VIVE_MS);
   const k = llave(quien, ambito);
   const huella = huellaWhatsapp(b);
@@ -445,7 +452,7 @@ export async function resolverBorradorWhatsappConEstado(quien: string, ambito: s
     canal: 'WHATSAPP',
     para: destinoWhatsapp(b),
     quitar: () => BORRADORES.delete(k),
-    ...(como.desdePanel ? {} : { apartar: () => void (b.soloPanel = true), reemplazoDe: b.reemplazoDe, aceptarCambio: () => void delete b.reemplazoDe }),
+    ...(como.desdePanel ? {} : { apartar: () => void (b.soloPanel = true), reemplazoDe: b.reemplazoDe, aceptarCambio: () => void delete b.reemplazoDe, reponerCambio: ((antes) => () => void (b.reemplazoDe = antes))(b.reemplazoDe) }),
     // Un turno de voz descartado lo repone, pero nunca encima de otro borrador (quizá a otro chat) armado después.
     reponer: () => {
       if (!BORRADORES.has(k) && !motivoBorrador(b, quien)) BORRADORES.set(k, b);
@@ -544,7 +551,12 @@ export async function enviarBorradorWhatsappAprobado(quien: string, b: BorradorG
     return fallo(`WHATSAPP: NO lo mandé: no pude comprobar su WhatsApp (${String(e?.message || e).slice(0, 100)}). Dile que lo intente en un momento.`, 'proveedor');
   }
   if (!est.vinculado) return fallo('WHATSAPP: NO lo mandé: su WhatsApp ya no está vinculado. Dile que lo vuelva a vincular.', 'no-disponible');
-  if (b.cuenta && est.numero && digitos(b.cuenta) !== digitos(est.numero)) {
+  // Permisos exactos (4-oct): el «sí» autoriza mandar desde ESA cuenta. Si no se supo con cuál se armó, o no se sabe
+  // cuál está vinculada ahora, no hay con qué comparar: no sale (antes, sin cuenta, salía desde la que hubiera).
+  if (!digitos(b.cuenta) || !digitos(est.numero)) {
+    return fallo('WHATSAPP: NO se mandó: no pude comprobar que su WhatsApp vinculado sea la misma cuenta con la que se armó el borrador. Dile que lo revise (Ajustes → WhatsApp) y, si lo quiere mandar, arma otro borrador y pregúntale.', 'cuenta-desconocida');
+  }
+  if (digitos(b.cuenta) !== digitos(est.numero)) {
     return fallo(`WHATSAPP: NO se mandó: la cuenta de WhatsApp vinculada cambió (el borrador se armó con ${b.cuenta} y ahora está ${est.numero}). Si lo quiere mandar desde la nueva, arma otro borrador y pregúntale.`, 'cuenta-cambiada');
   }
   const operacion = operacionDeBorrador('whatsapp', b.intento);

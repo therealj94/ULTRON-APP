@@ -27,6 +27,8 @@ import {
   ambitoApp,
   anotarPropuesta,
   aparatoValido,
+  appEsperandoDe,
+  confirmarCambioApp,
   contextoDe,
   decibleHasta,
   deshacerTurnoApp,
@@ -64,17 +66,14 @@ import { redirigirADominio } from './server/dominio';
 import { quitarExpresiones } from './lib/expresiones';
 import { puntoDeCorte } from './lib/trozos';
 import { claveTurno, efectoDelTurno, enTurnoUnico, idTurnoValido, reclamarTurno, turnoSinEfectos, type TurnoGuardado } from './server/turno-unico';
-import { resolverBorradorDesdePanel, resolverDecisionesDelTurno } from './server/decision-turno';
+import { pendientesDelTurno, resolverBorradorDesdePanel, resolverDecisionesDelTurno } from './server/decision-turno';
 import {
   abrirDecisionDeBorrador,
   abrirEncargoComputadora,
-  cerrarDecisionPorChat,
   cerrarEncargoComputadora,
-  clasificarEnvio,
   enTurnoConTrabajos,
   montarRutasTrabajos,
   nuevoContextoTrabajos,
-  type SalidaEnvio,
 } from './server/trabajos';
 import type { MisionComputadoraMin } from './lib/tareas-durables';
 import { avisosInvestigacion, configurarInvestigacion, confirmarAvisosInvestigacion, empezarInvestigacion, investigacionDisponible } from './server/investigar';
@@ -97,15 +96,13 @@ import {
   pararTarea,
   pausarTarea,
   reanudarTarea,
-  resolverPreguntaComputadora,
-  respuestaSiNo,
   tareaVivaDe,
   vistaMision,
   type MotorNodo,
 } from './server/computadora';
-import { avisosDeEnvio, borradorDe, correrCorreoConEstado, montarRutasCorreo, resolverBorrador, respuestaAlBorrador } from './server/correo';
+import { avisosDeEnvio, borradorDe, correrCorreoConEstado, montarRutasCorreo, respuestaAlBorrador } from './server/correo';
 import { accionTareaPorId, bloqueTarea, correrTareaConEstado, precargarTareas, resolverTareaEnCurso, tareaDe, tareasDePersona } from './lib/tarea-en-curso';
-import { borradorWhatsappDe, correrWhatsappConEstado, destinoWhatsapp, montarRutasWhatsapp, resolverBorradorWhatsapp, whatsappDisponible, whatsappPermitido } from './server/whatsapp';
+import { borradorWhatsappDe, correrWhatsappConEstado, destinoWhatsapp, montarRutasWhatsapp, whatsappDisponible, whatsappPermitido } from './server/whatsapp';
 import { accionIniciativa, arrancarIniciativa, bloqueIniciativaTurno, correrMisionTurnoConEstado, duenoMisiones, montarRutasIniciativa } from './server/iniciativa';
 import { frenarIniciativa, pideApagarIniciativa, pideDejarDeProponer, type PersonaIniciativa } from './lib/iniciativa';
 import { montarRutasCerebroContinuo } from './server/cerebro-continuo';
@@ -2707,7 +2704,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   const deLaComputadora = duenoComputadora ? avisosPendientes(duenoComputadora) : null;
   if (deLaComputadora) hechos.push(neutralizarMarca(deLaComputadora.hecho));
   // Un correo que esperaba su «sí» o su «no» (server/correo.ts): lo manda (o lo descarta) el servidor, aquí.
-  const ambitoTurno = aparatoValido(body?.aparato) || String(body?.origen || (opciones.voz ? 'voz' : canal)).slice(0, 40);
+  const ambitoTurno = ambitoDelTurno(body, opciones);
   // Lo que un envío confirmado en la voz terminó después de contestar (el resultado real, una vez).
   if (duenoComputadora) hechos.push(...avisosDeEnvio(duenoComputadora, ambitoTurno));
   // Lo que investigó en segundo plano (server/investigar.ts): lo que terminó y no se le dijo, y lo que sigue
@@ -2716,6 +2713,9 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   if (deLaInvestigacion) hechos.push(...deLaInvestigacion.hechos.map((h) => neutralizarMarca(h)));
   // El «sí» o el «no» a lo que esperaba su decisión (un borrador de correo o de WhatsApp, la pregunta de su
   // computadora) lo resuelve el servidor aquí (server/decision-turno.ts), no el modelo.
+  // Permisos exactos (4-oct): lo que espera la app cuenta para saber si un «sí» es ambiguo; si lo es (o nombró otra
+  // cosa), lo de la app tampoco sale en este turno (appBloqueada → accionesDelCerebro).
+  const appEsperando = correoApp ? appEsperandoDe(ambitoApp(correoApp, body?.aparato)) : null;
   const decision = await resolverDecisionesDelTurno({
     dueno: duenoComputadora,
     ambito: ambitoTurno,
@@ -2723,6 +2723,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     retener: opciones.retener,
     whatsapp: !!duenoComputadora && whatsappPermitido(duenoComputadora),
     appEspera: !!(correoApp && pendienteAnterior(ambitoApp(correoApp, body?.aparato))),
+    app: appEsperando,
     registrarEfecto: () => efectoDelTurno('decision'),
   });
   hechos.push(...decision.hechos);
@@ -3227,6 +3228,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     t0,
     message: mensajeHilo || message,
     crudo: message,
+    // Permisos exactos (4-oct): el «sí» de este turno no es para lo que espera la app (fue ambiguo o nombró otra cosa).
+    appBloqueada: decision.appBloqueada,
     mode,
     hechos,
     datos,
@@ -4019,6 +4022,12 @@ function anotarHerramientasAura(reg: ReturnType<typeof iniciarTraza>, tools: str
  * ANTES de clasificar, buscar o despertar al modelo grande: en voz, la diferencia entre contestar al
  * instante y hacer esperar segundos por un «listo». Solo si hay un teléfono que pueda hacerlo.
  */
+/** La conversación del turno (el aparato, la web, la voz): la de los borradores de correo y WhatsApp que esperan su «sí». */
+function ambitoDelTurno(body: any, opciones: OpcionesTurno = {}): string {
+  const canal: CanalMem = body?.canal === 'telegram' ? 'telegram' : 'mesa';
+  return aparatoValido(body?.aparato) || String(body?.origen || (opciones.voz ? 'voz' : canal)).slice(0, 40);
+}
+
 async function ordenDeApp(body: any, opciones: OpcionesTurno = {}): Promise<{ decir: string; acciones: EventoAccion[]; via: string } | null> {
   const correo = body?.canal !== 'telegram' && body?.sesion?.correo ? String(body.sesion.correo).toLowerCase() : '';
   const message = String(body?.message || body?.text || '').trim();
@@ -4030,6 +4039,10 @@ async function ordenDeApp(body: any, opciones: OpcionesTurno = {}): Promise<{ de
   const amb = ambitoApp(correo, body?.aparato);
   const contexto = contextoDe(amb);
   if (!contexto && oyentesDe(correo) === 0) return null;
+  // Permisos exactos (4-oct): si además de lo que espera la app espera otra decisión (un borrador de correo o de
+  // WhatsApp, la pregunta de su computadora), el «sí» no se resuelve aquí por la app: lo decide el turno completo
+  // (server/decision-turno.ts), que pregunta cuál si no lo dice.
+  if (appEsperandoDe(amb) && pendientesDelTurno({ dueno: correo, ambito: ambitoDelTurno(body, opciones), whatsapp: whatsappPermitido(correo) }).length) return null;
   // `pendienteDe` aquí ya es solo el borrador del turno anterior: abrirTurnoApp soltó cualquier otro.
   // Lo mismo la propuesta (llamar, recordar): solo la del turno anterior puede cumplirse con un «sí».
   // En el idioma en que le hablaron: «go back» con la app en español se contesta en inglés (la
@@ -4059,12 +4072,14 @@ async function ordenDeApp(body: any, opciones: OpcionesTurno = {}): Promise<{ de
     aparato: aparatoValido(body?.aparato),
     retener: opciones.retener,
     antes:
-      orden.propuesta || orden.soltarPropuesta || orden.aclaracion || orden.soltarAclaracion
+      orden.propuesta || orden.soltarPropuesta || orden.aclaracion || orden.soltarAclaracion || orden.confirmarCambio
         ? () => {
             if (orden.propuesta) anotarPropuesta(amb, orden.propuesta);
             if (orden.soltarPropuesta) soltarPropuesta(amb);
             if (orden.soltarAclaracion) soltarAclaracion(amb);
             if (orden.aclaracion) anotarAclaracion(amb, orden.aclaracion);
+            // Ya se le dijo a quién va ahora: el «sí» del turno siguiente es para esto (permisos exactos, 4-oct).
+            if (orden.confirmarCambio) confirmarCambioApp(amb);
           }
         : undefined,
   });
@@ -4144,7 +4159,7 @@ function avisoAccionFrenada(idioma: 'es' | 'en'): string {
  */
 async function accionesDelCerebro(
   texto: string,
-  p: { correoApp: string; contextoApp: ContextoApp | null; crudo: string; conApp: boolean; aparato: string | null; idioma: 'es' | 'en'; retener?: RetencionAcciones },
+  p: { correoApp: string; contextoApp: ContextoApp | null; crudo: string; conApp: boolean; aparato: string | null; idioma: 'es' | 'en'; retener?: RetencionAcciones; appBloqueada?: boolean },
   delModelo: boolean
 ): Promise<{ texto: string; acciones: EventoAccion[]; sustituido: boolean }> {
   if (!delModelo) return { texto: neutralizarMarca(texto), acciones: [], sustituido: false };
@@ -4152,13 +4167,16 @@ async function accionesDelCerebro(
   if (!p.correoApp || !p.conApp || !acciones.length) return { texto: limpio, acciones: [], sustituido: false };
   // El único borrador que un «sí» puede enviar: el de un turno anterior (antes de empujar nada de este).
   // Igual la propuesta: llamar o recordar pedido en ESTE turno no se hace, queda esperando el «sí».
+  // Permisos exactos (4-oct): si el «sí» de este turno no fue para lo de la app (ambiguo, o nombró otra cosa), nada de
+  // lo que espera la app se cumple con él.
   const nueva: { p: Propuesta | null } = { p: null };
   const amb = ambitoApp(p.correoApp, p.aparato);
-  const previa = propuestaAnterior(amb);
+  const previa = p.appBloqueada ? null : propuestaAnterior(amb);
+  const pendiente = p.appBloqueada ? null : pendienteAnterior(amb);
   const listas = prepararAcciones(acciones, {
     mensaje: p.crudo,
     contexto: p.contextoApp,
-    pendiente: pendienteAnterior(amb),
+    pendiente,
     propuesta: previa,
     alProponer: (x) => (nueva.p = x),
   });
@@ -4179,6 +4197,20 @@ async function accionesDelCerebro(
   const salioEnvio = listas.some((a) => a.tipo === 'enviar');
   if (pidioEnviar && !salioEnvio) {
     const hayBorrador = !!pendienteAnterior(amb);
+    const sinPromesa = limpio.replace(RE_PROMESA_ENVIO, '').trim();
+    // El borrador reemplazó a otro del mismo turno: este «sí» no lo mandó; se dice a quién va ahora y el siguiente vale.
+    if (pendiente?.reemplazoDe && !p.appBloqueada) {
+      confirmarCambioApp(amb);
+      const aviso =
+        p.idioma === 'en'
+          ? `I haven't sent it: it changed (it was ${pendiente.reemplazoDe}; now it's the message to ${pendiente.para}). Should I send it to ${pendiente.para}?`
+          : `No lo mandé todavía: cambió (antes era ${pendiente.reemplazoDe}; ahora es el mensaje para ${pendiente.para}). ¿Se lo mando a ${pendiente.para}?`;
+      return { texto: `${sinPromesa} ${aviso}`.trim(), acciones: eventos, sustituido: true };
+    }
+    if (p.appBloqueada && hayBorrador) {
+      const aviso = p.idioma === 'en' ? "I didn't send it: your «yes» didn't say which of the pending things it was for." : 'No lo mandé: su «sí» no decía si era para este mensaje o para otra cosa que esperaba.';
+      return { texto: `${sinPromesa} ${aviso}`.trim(), acciones: eventos, sustituido: true };
+    }
     const aviso =
       p.idioma === 'en'
         ? hayBorrador
@@ -4187,7 +4219,6 @@ async function accionesDelCerebro(
         : hayBorrador
           ? 'Todavía no lo mandé: dime «envíalo» y lo mando.'
           : 'No mandé nada: ese borrador ya venció. Dime otra vez qué mando y a quién.';
-    const sinPromesa = limpio.replace(RE_PROMESA_ENVIO, '').trim();
     return { texto: `${sinPromesa} ${aviso}`.trim(), acciones: eventos, sustituido: true };
   }
   const mudo = !extraerEmocion(limpio).texto.trim();

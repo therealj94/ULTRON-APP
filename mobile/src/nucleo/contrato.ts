@@ -97,7 +97,8 @@ export type AccionApp =
   /** Deja el borrador escrito en el chat con esa persona, sin enviarlo. AURA lo lee en voz alta. */
   | { tipo: 'redactar'; para: string; texto: string }
   /** Envía el borrador que está escrito (en el chat abierto o el de `para`). */
-  | { tipo: 'enviar'; para?: string }
+  /** `texto`: el que la persona aprobó (lo pone el servidor). Si el borrador ya dice otra cosa, no se manda. */
+  | { tipo: 'enviar'; para?: string; texto?: string }
   /** Borra el borrador sin enviarlo. */
   | { tipo: 'descartar' }
   /** true = AURA se calla y deja de escuchar; false = vuelve. */

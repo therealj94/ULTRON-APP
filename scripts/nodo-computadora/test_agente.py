@@ -139,13 +139,16 @@ class RevisarAccion(Base):
         self.assertEqual(agente.revisar_accion(t, 'click', {'element': 'Enviar'}), agente.NO_DIJO)
         self.assertEqual([p['accion'] for p in t.pasos], ['pedir_confirmacion', 'confirmacion', 'pedir_confirmacion', 'confirmacion'])
 
-    def test_el_si_del_modelo_vale_para_una_sola_accion(self):
+    def test_el_si_del_modelo_no_vale_para_ningun_toque_y_el_exacto_para_uno(self):
+        # Permisos exactos (4-oct): el sí a la pregunta libre del modelo no cubre el toque (antes cubría su CLASE); el
+        # toque se pregunta con la operación exacta, y ese sí vale para ese toque, una vez.
         t = self.tarea()
         contestar_cuando_pregunte(t, True)
         self.assertTrue(t.pedir_confirmacion('¿Envío el formulario?'))
-        self.assertIsNone(agente.revisar_accion(t, 'click', {'element': 'Enviar'}), 'la primera, con el sí que dio')
-        contestar_cuando_pregunte(t, False)
+        preguntas = contestar_en_orden(t, [True, False])
+        self.assertIsNone(agente.revisar_accion(t, 'click', {'element': 'Enviar'}), 'la primera, con su sí exacto')
         self.assertEqual(agente.revisar_accion(t, 'click', {'element': 'Publicar'}), agente.NO_DIJO, 'la segunda pregunta otra vez')
+        self.assertEqual(preguntas, ['Voy a tocar «Enviar». ¿Lo hago?', 'Voy a tocar «Publicar». ¿Lo hago?'])
 
     def test_enter_sobre_algo_sensible_o_de_pago_no_se_salta_la_revision(self):
         t = self.tarea()
@@ -415,21 +418,20 @@ class PermisoLigado(ConEndpoints):
         contestar_cuando_pregunte(t, False)
         self.assertEqual(agente.revisar_accion(t, 'click', {'element': 'Iniciar sesión'}), agente.NO_DIJO)
 
-    def test_el_si_vale_para_esa_clase_una_vez_y_vence(self):
+    def test_el_si_vale_para_esa_operacion_una_vez_y_vence(self):
         t = self.tarea()
         contestar_cuando_pregunte(t, True)
-        t.pedir_confirmacion('¿Inicio sesión?')
-        self.assertIsNone(agente.revisar_accion(t, 'click', {'element': 'Botón Iniciar sesión'}), 'la que se preguntó')
+        self.assertIsNone(agente.revisar_accion(t, 'click', {'element': 'Botón Iniciar sesión'}), 'la que se preguntó, exacta')
         contestar_cuando_pregunte(t, False)
         self.assertEqual(agente.revisar_accion(t, 'click', {'element': 'Botón Iniciar sesión'}), agente.NO_DIJO, 'una sola vez')
         antes = agente.PERMISO_VALE_S
         agente.PERMISO_VALE_S = 0.05
         try:
             contestar_cuando_pregunte(t, True)
-            t.pedir_confirmacion('¿Envío el formulario?')
+            self.assertIsNone(agente.revisar_accion(t, 'click', {'element': 'Enviar'}))
+            s, t.por_hacer = t.por_hacer, None
             time.sleep(0.1)
-            contestar_cuando_pregunte(t, False)
-            self.assertEqual(agente.revisar_accion(t, 'click', {'element': 'Enviar'}), agente.NO_DIJO, 'vencido: pregunta otra vez')
+            self.assertEqual(agente.efecto_modelo(t, t.epoca, lambda: 'Done.', sensible=s), (agente.NO_CAMBIO, False), 'vencido: no se toca')
         finally:
             agente.PERMISO_VALE_S = antes
 
@@ -693,10 +695,11 @@ class PermisoExacto(ConEndpoints):
             ('click', {'element': 'Botón Enviar', 'x': 500, 'y': 700}),
             ('answer', {'content': 'Enviado a ana@example.test.'}),
         ], instruccion='Entra al correo y envía el borrador a ana@example.test')
-        preguntas = contestar_en_orden(t, [True, False])
+        # El sí libre del modelo no cubre el toque: el toque se pregunta con la operación exacta (permisos exactos, 4-oct).
+        preguntas = contestar_en_orden(t, [True, True, False])
         agente.correr(t)
         self.assertEqual(len(clics_en(self.hechas, 'Botón Enviar')), 1, 'aprobada e intacta: una sola vez')
-        self.assertEqual(len(preguntas), 2, 'el segundo envío vuelve a preguntar (el sí se usó)')
+        self.assertEqual(len(preguntas), 3, 'el segundo envío vuelve a preguntar (el sí se usó)')
 
     def _aprobada(self, t, elemento='Botón Enviar a ana@example.test'):
         contestar_cuando_pregunte(t, True)
@@ -1537,6 +1540,57 @@ class ArchivosComprobados(Base):
         self.assertEqual(agente.rutas_mencionadas('Guarda la tabla en ~/Documents/precios.ods',
                                                   'Listo. Fuente: https://bch.hn/datos/tabla.csv y copia en resumen.txt.'),
                          ['~/Documents/precios.ods', 'resumen.txt'])
+
+
+class PermisoSinClase(ConEndpoints):
+    """Permisos exactos (revisión externa, 4-oct): un sí NUNCA vale por la CLASE de la acción. El sí libre que el modelo
+    pide con su pregunta («¿Envío el mensaje a Ana?») no nombra la operación exacta (qué elemento, a quién, con qué
+    texto, en qué página): no autoriza ningún toque sensible. Lo sensible se pregunta en el punto del efecto con la
+    operación exacta, y ese sí se canjea una sola vez."""
+
+    def test_el_si_libre_para_ana_no_envia_en_el_chat_de_bruno(self):
+        t, vistos = CicloGratis.correr_con(self, [
+            ('ask_user_confirmation', {'question': '¿Envío el mensaje a Ana?'}),
+            ('click', {'element': 'Chat de Bruno', 'x': 100, 'y': 200}),
+            ('click', {'element': 'Botón Enviar', 'x': 500, 'y': 700}),
+            ('answer', {'content': 'No lo envié.'}),
+        ], instruccion='Abre el chat y mándale el mensaje a Ana')
+        preguntas = contestar_en_orden(t, [True, False])
+        agente.correr(t)
+        self.assertEqual(clics_en(self.hechas, 'Botón Enviar'), [], 'el sí para Ana no envía en el chat de Bruno (misma clase: enviar)')
+        self.assertEqual(len(preguntas), 2, 'el toque sensible pide su propia decisión, con la operación exacta')
+        self.assertIn('Botón Enviar', preguntas[1])
+
+    def test_un_si_libre_no_cubre_un_toque_de_su_clase(self):
+        t = self.tarea()
+        contestar_cuando_pregunte(t, True)
+        self.assertTrue(t.pedir_confirmacion('¿Envío el formulario?'))
+        preguntas = contestar_en_orden(t, [False])
+        self.assertEqual(agente.revisar_accion(t, 'click', {'element': 'Enviar'}), agente.NO_DIJO,
+                         'enviar es la clase que se preguntó, pero no la operación: se pregunta otra vez')
+        self.assertEqual(preguntas, ['Voy a tocar «Enviar». ¿Lo hago?'])
+        self.assertEqual(self.hechas, [])
+
+    def test_sin_destino_resuelto_la_pregunta_libre_no_cubre_nada(self):
+        # La pregunta nombra a «Ana» (un nombre, no un correo ni un teléfono): destinos vacíos. Antes, un envío sin
+        # destino a la vista (vacío ⊆ vacío) quedaba cubierto por ese sí.
+        t = self.tarea()
+        contestar_cuando_pregunte(t, True)
+        t.pedir_confirmacion('¿Le mando el mensaje a Ana?')
+        self.assertIsNone(t.permiso.get('op'), 'el sí libre no nombra ninguna operación')
+        self.assertFalse(agente.cubre(t.permiso, agente.operacion(t, 'click', {}, 'Botón Enviar', frozenset({'enviar'})), t))
+
+    def test_la_operacion_exacta_aprobada_se_hace_una_sola_vez(self):
+        t = self.tarea()
+        preguntas = contestar_en_orden(t, [True, False])
+        self.assertIsNone(agente.revisar_accion(t, 'click', {'element': 'Botón Enviar a ana@example.test'}))
+        s, t.por_hacer = t.por_hacer, None
+        hechos = []
+        self.assertTrue(agente.efecto_modelo(t, t.epoca, lambda: hechos.append(1) or 'Done.', sensible=s)[1])
+        self.assertFalse(agente.efecto_modelo(t, t.epoca, lambda: hechos.append(1) or 'Done.', sensible=s)[1], 'el mismo sí no se canjea dos veces')
+        self.assertEqual(agente.revisar_accion(t, 'click', {'element': 'Botón Enviar a ana@example.test'}), agente.NO_DIJO, 'repetirlo pide otro sí')
+        self.assertEqual(hechos, [1])
+        self.assertEqual(len(preguntas), 2)
 
 
 if __name__ == '__main__':

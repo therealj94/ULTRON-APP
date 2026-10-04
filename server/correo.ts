@@ -407,6 +407,14 @@ async function escribir(quien: string, ambito: string, para: string, asunto: str
     const lista = LISTAS.get(llave(quien, ambito)) || [];
     const e = elegirCorreo(lista, para);
     if (e.tipo === 'uno' && correoValido(lista[e.i].deCorreo)) destinos = [lista[e.i].deCorreo];
+    // Permisos exactos (4-oct): varias personas encajan con ese nombre (dos «Ana» con direcciones distintas): no se
+    // adivina; se pregunta cuál, con sus direcciones (el «sí» aprueba una dirección, nunca un nombre).
+    if (e.tipo === 'varios') {
+      const dirs = [...new Map(e.is.map((i) => [lista[i].deCorreo.toLowerCase(), remitente(lista[i].de, lista[i].deCorreo)])).values()];
+      if (dirs.length > 1) return fallo(`CORREO: hay ${dirs.length} personas que encajan con «${para}»: ${dirs.join(' · ')}. No armé ningún borrador: pregúntale cuál (o la dirección exacta); no adivines.`, 'ambiguo');
+      const unica = lista[e.is[0]].deCorreo;
+      if (correoValido(unica)) destinos = [unica];
+    }
   }
   if (!destinos.length || !destinos.every(correoValido)) return fallo(`CORREO: «${para}» no es una dirección de correo. Pídele la dirección exacta.`, 'falta-dato');
   return guardarBorrador(quien, ambito, { cuentaId: cuentas[0].id, desde: cuentas[0].correo, para: destinos, asunto: asunto || '(sin asunto)', texto, creado: Date.now() });
@@ -569,6 +577,8 @@ type OpcionesDecidir = {
    */
   reemplazoDe?: string;
   aceptarCambio?: () => void;
+  /** En la voz: si el turno se descarta (la frase seguía), «ya se le dijo a quién va» no cuenta. */
+  reponerCambio?: () => void;
 };
 
 /**
@@ -590,6 +600,7 @@ export async function decidirBorradorConEstado(o: OpcionesDecidir & { enviar: ()
   }
   if (r === 'si' && o.reemplazoDe) {
     o.aceptarCambio?.();
+    if (o.retener && o.reponerCambio) o.retener.alDescartar(o.reponerCambio);
     return fallo(
       `${o.canal}: NO se mandó todavía: en el mismo turno el borrador cambió (antes era para ${o.reemplazoDe}; el que espera ahora es para ${o.para}). Su «sí» pudo ser para el de antes. ` +
         `Léele el de ahora y pregúntale si lo mandas a ${o.para}; si dice que sí otra vez, sale a ${o.para}.`,
@@ -667,7 +678,7 @@ export async function resolverBorradorConEstado(quien: string, ambito: string, m
     canal: 'CORREO',
     para: b.para.join(', '),
     quitar: () => BORRADORES.delete(k),
-    ...(como.desdePanel ? {} : { apartar: () => void (b.soloPanel = true), reemplazoDe: b.reemplazoDe, aceptarCambio: () => void delete b.reemplazoDe }),
+    ...(como.desdePanel ? {} : { apartar: () => void (b.soloPanel = true), reemplazoDe: b.reemplazoDe, aceptarCambio: () => void delete b.reemplazoDe, reponerCambio: ((antes) => () => void (b.reemplazoDe = antes))(b.reemplazoDe) }),
     // Un turno de voz descartado lo repone, pero nunca encima de otro borrador que se armó después.
     reponer: () => {
       if (!BORRADORES.has(k) && !motivoBorrador(b, quien)) BORRADORES.set(k, b);

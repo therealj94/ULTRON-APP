@@ -287,7 +287,9 @@ function arnes(o: { salida?: SalidaEnvio; tc?: TareaEnCursoMin[]; misiones?: Mis
     borradores: {
       vigente: (_c, canal, ambito) => {
         const i = o.vigente ? o.vigente(canal, ambito) : 'int-1';
-        const huella = o.huellaVigente?.();
+        // Como los borradores de verdad, el que espera dice su huella (la del fixture: `h-<intento>`). Sin huella, el
+        // panel no aprueba nada (permisos exactos, 4-oct).
+        const huella = o.huellaVigente ? o.huellaVigente() : i ? `h-${i}` : undefined;
         return i ? { intento: i, ...(huella !== undefined ? { huella } : {}) } : null;
       },
       enviar: async (_c, _canal, _ambito, _intento, huella) => {
@@ -313,7 +315,7 @@ function arnes(o: { salida?: SalidaEnvio; tc?: TareaEnCursoMin[]; misiones?: Mis
   return { ll, pedir, cerrar: () => srv.close() };
 }
 
-const borrador = (intento = 'int-1', vence = Date.now() + 15 * 60_000) => ({ canal: 'correo' as const, intento, para: ['ana@ejemplo.com'], desde: 'yo@ejemplo.com', asunto: 'Fechas de la reunión', texto: 'Hola Ana, ¿martes o jueves?', vence });
+const borrador = (intento = 'int-1', vence = Date.now() + 15 * 60_000) => ({ canal: 'correo' as const, intento, para: ['ana@ejemplo.com'], desde: 'yo@ejemplo.com', asunto: 'Fechas de la reunión', texto: 'Hola Ana, ¿martes o jueves?', vence, huella: `h-${intento}` });
 
 test('rutas: sin sesión 401; la persona sale de la sesión; otro no ve ni toca mis tareas', async () => {
   _usarAlmacenDurable(almacenEnMemoria());

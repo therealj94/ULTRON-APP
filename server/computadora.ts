@@ -536,9 +536,11 @@ type Mision = {
   final?: FinalMision;
   /**
    * Lo que su computadora le preguntó y todavía no contesta (`id`: cuál, si el nodo lo dice; `huella`: la de la
-   * propuesta que se le mostró, agente.py de AUR02).
+   * propuesta que se le mostró, agente.py de AUR02). `reemplazoDe` (permisos exactos, 4-oct): esta pregunta reemplazó a
+   * otra de la misma tarea que todavía esperaba (otra pregunta u otra propuesta bajo el mismo id): dice cuál era. El
+   * primer «sí» del chat pudo ser para esa, así que no contesta esta: primero se le dice qué pregunta ahora.
    */
-  pregunta?: { tareaId: string; texto: string; desde: number; id: string | null; huella?: string | null } | null;
+  pregunta?: { tareaId: string; texto: string; desde: number; id: string | null; huella?: string | null; reemplazoDe?: string } | null;
   /** Se quedó a medias y se le ofreció seguir: su «sí» la sigue (hasta aquí vale). */
   ofreceSeguir?: number;
   /** Cuántas veces la persona dijo «sigue» después de un final a medias. */
@@ -1363,7 +1365,10 @@ function alCambiarEstado(e: Encargo, t: Tarea, enTurno: boolean) {
     if (m.pregunta?.tareaId === e.id && (id ? m.pregunta.id === id && (m.pregunta.huella ?? null) === (t.propuesta ?? null) : m.pregunta.texto === t.pregunta)) return;
     // Una consulta que salió antes de que llegara su respuesta: esa pregunta ya está contestada.
     if (id ? e.contestada?.id === id : e.contestada?.texto === t.pregunta && Date.now() - e.contestada.en < 10_000) return;
-    m.pregunta = { tareaId: e.id, texto: t.pregunta, desde: Date.now(), id, huella: t.propuesta || null };
+    // Permisos exactos (4-oct): si esperaba OTRA de esta tarea (otro id, u otra propuesta bajo el mismo id), la nueva
+    // queda marcada: un «sí» que ya venía en camino era para la de antes.
+    const previa = m.pregunta?.tareaId === e.id ? m.pregunta : null;
+    m.pregunta = { tareaId: e.id, texto: t.pregunta, desde: Date.now(), id, huella: t.propuesta || null, ...(previa ? { reemplazoDe: previa.texto } : {}) };
     avisarApp(e, { tipo: 'computadora', fase: 'confirmar', id: e.id, pregunta: t.pregunta, ...(enTurno ? {} : { texto: fraseDePregunta(t.pregunta, e.idioma) }) }, true);
     return;
   }
@@ -1711,13 +1716,25 @@ export function fraseDePlan(plan: readonly string[], idioma: 'es' | 'en' = 'es')
   return idioma === 'en' ? `On it. My plan: ${lista}.` : `Va. Mi plan: ${lista}.`;
 }
 
-/** La misión de alguien que espera su sí (la más nueva), si la pregunta sigue valiendo. */
-function misionConPregunta(quien: string): Mision | null {
+/** Las misiones de esta persona que esperan su sí ahora, si la pregunta sigue valiendo (la más reciente primero). */
+function misionesConPregunta(quien: string): Mision[] {
+  const out: Mision[] = [];
   for (const id of [...(HISTORIAL.get(quien) ?? [])].reverse()) {
     const m = MISIONES.get(id);
-    if (m?.pregunta && !m.final && Date.now() - m.pregunta.desde < PREGUNTA_VALE_MS) return m;
+    if (m?.pregunta && !m.final && Date.now() - m.pregunta.desde < PREGUNTA_VALE_MS && !out.includes(m)) out.push(m);
   }
-  return null;
+  return out;
+}
+
+/**
+ * Lo que su computadora espera que conteste por el chat (permisos exactos, 4-oct): cada pregunta (antes de algo
+ * sensible) y el «¿sigo?» de una misión a medias. Con más de una, un «sí» suelto no decide cuál (server/decision-turno.ts).
+ */
+export function preguntasComputadora(quien: string): { tareaId: string; texto: string }[] {
+  if (!quien) return [];
+  const ps = misionesConPregunta(quien).map((m) => ({ tareaId: m.pregunta!.tareaId, texto: m.pregunta!.texto }));
+  const ofrece = ps.length ? null : misionQueOfreceSeguir(quien);
+  return ofrece ? [{ tareaId: ofrece.tareas.at(-1) ?? '', texto: `¿sigo con «${ofrece.instruccion.slice(0, 120)}»?` }] : ps;
 }
 
 function misionQueOfreceSeguir(quien: string): Mision | null {
@@ -1769,7 +1786,8 @@ type Retener = { hacer: (f: () => void) => void; alDescartar: (f: () => void) =>
  */
 export async function resolverPreguntaComputadora(quien: string, mensaje: string, retener?: Retener): Promise<string | null> {
   if (!quien) return null;
-  const m = misionConPregunta(quien);
+  const conPregunta = misionesConPregunta(quien);
+  const m = conPregunta[0] ?? null;
   const ofrece = m ? null : misionQueOfreceSeguir(quien);
   if (!m && !ofrece) return null;
   // Las marcas del propio teléfono («[[lectura:…]]», «[[sigues]]») no son la persona.
@@ -1781,8 +1799,24 @@ export async function resolverPreguntaComputadora(quien: string, mensaje: string
     if (ofrece) ofrece.ofreceSeguir = undefined;
     return null;
   }
+  // Permisos exactos (4-oct): dos misiones esperan su sí a la vez. Un «sí» (o un «no») suelto no dice a cuál: antes
+  // contestaba la más reciente, aunque la persona hablara de la otra. No se contesta ninguna.
+  if (conPregunta.length > 1) {
+    return `COMPUTADORA: NO contesté nada: hay ${conPregunta.length} preguntas de su computadora esperando su sí (${conPregunta.map((x) => `«${x.pregunta!.texto}»`).join(' y ')}) y su «${r === 'si' ? 'sí' : 'no'}» no dice a cuál. Pregúntale cuál; también puede contestar cada una con sus botones en la app.`;
+  }
   if (m) {
     const p = m.pregunta!;
+    // Permisos exactos (4-oct): esta pregunta reemplazó a otra que esperaba (otra propuesta, quizá otro destino). Su
+    // «sí» pudo ser para la de antes: no contesta esta. Se le dice qué pregunta ahora; el «sí» siguiente ya es para esta.
+    if (r === 'si' && p.reemplazoDe) {
+      const antes = p.reemplazoDe;
+      delete p.reemplazoDe;
+      // Un turno de voz que se descarta (la frase seguía) no cuenta como «ya se le dijo».
+      retener?.alDescartar(() => {
+        if (m.pregunta === p) p.reemplazoDe = antes;
+      });
+      return `COMPUTADORA: NO contesté todavía: antes de su «sí» su computadora cambió la pregunta (antes: «${antes}»; ahora: «${p.texto}»). Su «sí» pudo ser para la de antes. Léele la de ahora tal cual y pregúntale; si dice que sí otra vez, la contesto.`;
+    }
     m.pregunta = null;
     // El sí va atado a ESTA pregunta: si cuando por fin sale (la voz espera a que el turno se confirme) la
     // computadora ya pregunta otra cosa, el nodo no la contesta con él (auditoría 3-oct, PC01).
@@ -2247,6 +2281,10 @@ export function montarRutasComputadora(app: import('express').Express, d: DepsRu
       const pedida: string | null = typeof req.body?.preguntaId === 'string' && req.body.preguntaId ? String(req.body.preguntaId).slice(0, 64) : null;
       const propuestaPedida: string | null = typeof req.body?.propuesta === 'string' && req.body.propuesta ? String(req.body.propuesta).slice(0, 128) : null;
       if (req.body.si && !pedida) throw new ErrorNodo('ese sí no dice a qué pregunta contesta; mira la de ahora y vuelve a tocar «Sí»', 409);
+      // Permisos exactos (4-oct): un «sí» que no nombra la propuesta que mostraba la tarjeta tampoco vale. Antes se tomaba
+      // la que este servidor tenía guardada, que pudo cambiar (otro destino, otro contenido bajo el mismo id) después de
+      // que la tarjeta se pintó. La app actual siempre la manda cuando el nodo la da; sin ella el nodo tampoco aceptaría.
+      if (req.body.si && !propuestaPedida) throw new ErrorNodo('ese sí no dice qué propuesta exacta aprueba; mira la de ahora y vuelve a tocar «Sí»', 409);
       // AUR02: el servidor revisa que ese id sea la pregunta de ESTA tarea (la que mostró, o la que el nodo tiene
       // ahora para ella), aunque el nodo no lo revisara: un id de otra tarea u otra propuesta no aprueba nada.
       const p = await preguntaDeTarea(id, pedida, propuestaPedida);

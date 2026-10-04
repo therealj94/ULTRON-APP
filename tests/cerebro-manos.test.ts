@@ -45,7 +45,9 @@ test('cada turno tiene solo las herramientas que puede usar', () => {
   assert.deepEqual(nombres({ ...nada, app: true, manos: ['llamar'] }), nombres({ ...nada, app: true, manos: ['llamar'] }));
 });
 
-test('«llámame en 30 segundos» (la llamada de José del 3-oct) es una llamada de AU-RA en 30 s, no «eso es un recordatorio»', () => {
+test('«llámame en 30 segundos» (la llamada de José del 3-oct) es una llamada de AU-RA en 30 s, no «eso es un recordatorio»', (t) => {
+  // El reloj del validador (cuandoValido) es el de la prueba: con el de la máquina, una hora fija ya pasada no vale.
+  t.mock.method(Date, 'now', () => AHORA);
   const a = accionDe(lineaDeHerramienta('llamarme', { en_segundos: 30 }, AHORA));
   assert.deepEqual(a, { tipo: 'recordatorio', texto: 'Te llamo como me pediste', cuando: AHORA + 30_000, llamada: true });
   // Con motivo, lo dice al llamar; en diez minutos.
@@ -57,7 +59,8 @@ test('«llámame en 30 segundos» (la llamada de José del 3-oct) es una llamada
   assert.deepEqual(accionDe(lineaDeHerramienta('llamarme', {}, AHORA)), { tipo: 'llamame' });
 });
 
-test('las manos del teléfono salen con la forma del contrato de la app', () => {
+test('las manos del teléfono salen con la forma del contrato de la app', (t) => {
+  t.mock.method(Date, 'now', () => AHORA);
   assert.deepEqual(accionDe(lineaDeHerramienta('llamar_contacto', { contacto: 'Beto' })), { tipo: 'llamar', con: 'Beto', video: false });
   assert.deepEqual(accionDe(lineaDeHerramienta('llamar_contacto', { contacto: 'Ana', video: true })), { tipo: 'llamar', con: 'Ana', video: true });
   assert.deepEqual(accionDe(lineaDeHerramienta('recordatorio', { accion: 'poner', cuando: '2026-10-04T17:00', texto: 'Llamar al banco' }, AHORA)), {

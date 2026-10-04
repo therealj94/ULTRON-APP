@@ -297,7 +297,7 @@ test('WhatsApp: «Aprobar» del panel con la huella de Ana no manda al mismo int
 test('círculo: «escríbele a mi esposa» sale al jid guardado aunque haya otra «Ana» (ya era así), y el borrador dice el número', async () => {
   const { borradorWhatsappParaConEstado } = W;
   await conPuente({ chats: [ANA_1, ANA_2] }, async (p) => {
-    const r = borradorWhatsappParaConEstado(JOSE, 'tel', { chat: ANA_2.jid, nombre: 'Ana (esposa)', texto: 'Llego tarde' });
+    const r = borradorWhatsappParaConEstado(JOSE, 'tel', { chat: ANA_2.jid, nombre: 'Ana (esposa)', texto: 'Llego tarde', cuenta: '+50499998888' });
     assert.match(r.texto, /para Ana \(esposa\) \(\+50499992222\)/);
     assert.match((await W.resolverBorradorWhatsapp(JOSE, 'tel', 'sí'))!, /WHATSAPP ENVIADO/);
     assert.deepEqual(p.enviados.map((e) => e.chat), [ANA_2.jid], 'al jid aprobado, aunque haya otra «Ana»');

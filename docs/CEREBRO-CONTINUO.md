@@ -90,9 +90,9 @@ En `server.ts`, con la persona del turno: `const personaCerebro = duenoComputado
 ## Lo que se puede de verdad desde el servidor
 
 - **WhatsApp a la familia:** sí, si su WhatsApp personal está vinculado (`WHATSAPP_PUENTE_URL`,
-  `WHATSAPP_PUENTE_CLAVE`, `WHATSAPP_DUENOS`). Siempre deja un borrador y se manda con su «sí». La
-  excepción son los recordatorios a alguien a quien José dio permiso permanente: esos salen sin preguntar,
-  hasta 3 por día por persona.
+  `WHATSAPP_PUENTE_CLAVE`, `WHATSAPP_DUENOS`). Siempre deja un borrador y se manda con su «sí» a ese
+  texto. Sin excepciones (permisos exactos, 4-oct): el «permiso permanente de recordatorios» se sigue
+  guardando, pero ya no manda nada sin preguntar (era un permiso por clase de acción, no por contenido).
 - **Llamar a alguien del círculo:** no. WhatsApp no deja llamar desde un dispositivo vinculado. La llamada
   de Twilio (`lib/canales.ts` `llamada`) solo marca a `JEFE_TELEFONO`, el propio José, y además necesita
   `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` y `TWILIO_VOICE_FROM`. `circulo llamar` lo dice así y ofrece

@@ -441,7 +441,7 @@ test('acciones: el camino rápido va al canal del teléfono sin el 27B; «escrí
     alNodo.length = 0;
     const si = await turno('sí');
     assert.equal(si.reply, 'Va, lo mando.');
-    assert.deepEqual(si.acciones.map((e: any) => e.accion), [{ tipo: 'enviar', para: 'beto@x.com' }]);
+    assert.deepEqual(si.acciones.map((e: any) => e.accion), [{ tipo: 'enviar', para: 'beto@x.com', texto: 'Llego tarde' }], 'con el texto que oyó (permisos exactos, 4-oct)');
     assert.equal(alNodo.length, 0);
     assert.ok(await espera(() => tel.acciones().some((a) => a.tipo === 'enviar')));
   } finally {

@@ -278,8 +278,9 @@ GENERICO = re.compile(r'\b(continuar|contin[uú]a|continue|proceder|proceed|acep
                       r'permitir|aplicar|apply|finalizar|finish|ok|okay|yes|sí)\b', re.I)
 # Un Enter en el campo de la contraseña envía el inicio de sesión.
 CAMPO_CLAVE = re.compile(r'contrase[nñ]a|password|\bclave\b', re.I)
-# Qué hace cada acción sensible. El sí a una pregunta vale para las clases que nombró: aprobar «iniciar sesión» no
-# aprueba «borrar» (auditoría 3-oct, PC01: antes el sí del login dejaba borrar después).
+# Qué hace cada acción sensible (para decirlo en la pregunta y en los pasos). Un sí NUNCA vale por la clase: aprobar
+# «iniciar sesión» no aprueba «borrar» (auditoría 3-oct, PC01), ni «enviar a Ana» aprueba otro envío (permisos
+# exactos, 4-oct): solo la operación exacta que se preguntó (cubre).
 CLASES = (
     ('borrar', re.compile(r'\b(borrar|borr[oa](lo|la)?|eliminar|elimin[oa](lo|la)?|suprimir|vaciar|delete|remove|erase|trash)\b', re.I)),
     ('enviar', re.compile(r'\b(enviar|env[ií]o|env[ií]a(lo|la|r)?|mandar|mand[oa](lo|la)?|submit|send)\b', re.I)),
@@ -383,20 +384,20 @@ def vinculo(op, p):
 
 
 def cubre(p, op, t):
-    """¿El sí `p` (libre, sin usar) cubre esta operación? Misma tarea, dueño y época, sin vencer, y: o se aprobó esta
-    operación exacta, o lo que se preguntó nombra su clase, a todos sus destinatarios e importes, con el mismo texto
-    escrito y en la misma página que cuando se preguntó."""
+    """¿El sí `p` (libre, sin usar) cubre esta operación? Misma tarea, dueño y época, sin vencer, y que se haya
+    aprobado ESTA operación exacta (qué elemento, a quién, con qué texto, cuánto y en qué página).
+
+    Permisos exactos (revisión externa, 4-oct): antes, el sí a una pregunta libre del modelo («¿Envío el mensaje a
+    Ana?») cubría cualquier toque de la misma CLASE (enviar) cuyos destinos estuvieran entre los nombrados; un nombre
+    («Ana») no es un destino resuelto, así que un envío sin destino a la vista (vacío ⊆ vacío) —el chat de Bruno— salía
+    con el sí de Ana. Un sí sin operación no cubre nada: lo sensible se pregunta con la operación exacta."""
     if not p or p.get('estado') != 'libre':
         return False
     if p['tarea'] != t.id or p['dueno'] != t.dueno or p['epoca'] != t.epoca or time.time() > p['vence']:
         return False
-    if p.get('op') is not None:
-        return _huella(p['op']) == _huella(op)
-    c = op['clases']
-    if not c or c & {'otro', 'desconocido'} or not c <= p['clases']:
+    if p.get('op') is None:
         return False
-    return (op['destinos'] <= p['destinos'] and op['importes'] <= p['importes'] and op['texto'] == p['texto']
-            and op['dominio'] == p['dominio'])
+    return _huella(p['op']) == _huella(op)
 
 
 def pregunta_para(elemento, idioma='es', op=None, incierta=False):
@@ -460,11 +461,10 @@ def intencion(elemento):
 
 
 def _sensible(t, elemento, idioma, clases, op, accion):
-    """Lo sensible, con un sí para ESTA operación (AUR02). El sí que el modelo pidió antes (ask_user_confirmation)
-    solo la cubre si nombra lo mismo (clase, destinatarios, importes, el texto escrito, la página), en la misma época
-    y antes de vencer; se usa una vez y, si la operación es otra, se pierde y se pregunta otra vez diciendo lo que
-    cambió (antes el sí de «enviar a Ana» enviaba a Bruno). El sí queda RESERVADO para esta operación: se canjea en
-    el punto del efecto (efecto_modelo), una sola vez."""
+    """Lo sensible, con un sí para ESTA operación (AUR02). El sí que el modelo pidió antes con una pregunta libre
+    (ask_user_confirmation) no la cubre (permisos exactos, 4-oct: no nombra la operación, solo su clase): se pierde y
+    se pregunta en este punto con la operación exacta, diciendo a quién y cuánto. El sí queda RESERVADO para esta
+    operación: se canjea en el punto del efecto (efecto_modelo), una sola vez."""
     with t.cambio:
         p, t.permiso = t.permiso, None
     if not cubre(p, op, t):
