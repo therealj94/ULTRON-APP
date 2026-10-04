@@ -42,7 +42,7 @@ import {
   reservarPedido,
   type AlmacenDurable,
 } from './durable';
-import { compararEntrega, comprobarCopia, esConsulta, esOperacionDeArchivos, faltaEnPalabras, nombresEn, requisitosCombinados, requisitosDeEntrega, type ArchivoNodo, type ItemEntrega, type PedidoEntrega } from './entregables';
+import { compararEntrega, comprobarCopia, esConsulta, esOperacionDeArchivos, esTextoEnChat, faltaEnPalabras, nombresEn, respuestaConTexto, requisitosCombinados, requisitosDeEntrega, type ArchivoNodo, type ItemEntrega, type PedidoEntrega } from './entregables';
 
 export { esConsulta, esOperacionDeArchivos, nombresEn, requisitosCombinados, requisitosDeEntrega, type ArchivoNodo, type ItemEntrega, type PedidoEntrega } from './entregables';
 
@@ -868,7 +868,13 @@ export function evaluarEntrega(m: Pick<MisionComputadoraMin, 'id' | 'instruccion
     return { comprobada: false, tipo: 'accion', evidencias: abiertas, falta: 'Tu computadora dice que lo hizo, pero no pude comprobarlo desde aquí: revísalo antes de darlo por hecho.', items: [], hechos: 0, total: 1, revisado: true };
   }
   // Cerrado por defecto (ronda 5): solo una CONSULTA pura se completa con el texto. Lo que no se puede decidir no es dato.
-  if (!esConsulta(m.instruccion)) {
+  // Texto que va en la respuesta misma («hazme un resumen de la noticia», «tradúceme esto»): la respuesta ES la entrega,
+  // si trae el texto (no un acuse: «Listo, ya está» no es un resumen).
+  const textoEnChat = esTextoEnChat(m.instruccion, req);
+  if (textoEnChat && !(respuestaInformativa(m.resultado) && respuestaConTexto(m.resultado))) {
+    return { comprobada: false, tipo: 'dato', evidencias: abiertas, falta: m.resultado ? 'Tu computadora dice que terminó, pero su respuesta no trae el texto que pediste: no pude comprobarlo.' : 'Terminó sin el texto que pediste.', items: [], hechos: 0, total: 1, revisado: true };
+  }
+  if (!textoEnChat && !esConsulta(m.instruccion)) {
     return { comprobada: false, tipo: 'accion', evidencias: abiertas, falta: 'No sé comprobar desde aquí lo que pediste: no es una consulta que se responda con un dato, ni dejó algo que tu computadora pueda revisar.', items: [], hechos: 0, total: 1, revisado: true };
   }
   if (!respuestaInformativa(m.resultado)) {

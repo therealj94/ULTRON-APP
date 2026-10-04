@@ -372,6 +372,18 @@ const RE_V_PRODUCIR_COSA =
 /** Dejar un archivo (bajar, guardar, exportar, imprimir, capturar, comprimir). */
 const RE_V_PRODUCIR_ARCHIVO =
   /^(exporta|exportame|exportar|guarda|guardame|guardar|descarga|descargame|descargar|baja|bajame|bajate|bajar|imprime|imprimeme|imprimir|toma|tomame|saca|sacame|comprime|comprimir|zipea|save|export|download|print|take|grab|snap|capture|screenshot|compress|zip)$/;
+/** Traducir: el producto es texto que va en la respuesta. */
+const RE_V_TRADUCIR = /^(traduce|traduceme|traducelo|traducela|traducir|translate)$/;
+/**
+ * Productos de TEXTO que van en la respuesta misma: un resumen, una lista, una traducción, una explicación, ideas, un
+ * plan, pasos, un borrador (que no sea de correo ni de WhatsApp), un poema, un chiste, un mensaje para leer aquí.
+ */
+const RE_PRODUCTO_TEXTO =
+  /^(?:aqui\s+|here\s+)?(?:(?:un|una|unos|unas|el|la|los|las|mi|me|nos|a|an|the|some|\d+|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|two|three|four|five|ten)\s+)*(?:(?:breve|corto|corta|rapido|rapida|pequeno|pequena|short|quick|brief)\s+)?(?:resumen(?:es)?|resumencito|lista|listas|traduccion|traducciones|explicacion|respuesta|ideas?|plan|pasos|borrador|poema|poemas|chiste|chistes|mensaje|cuento|parrafo|summary|summaries|list|lists|translation|explanation|answer|ideas?|plan|steps|draft|poem|joke|jokes|message|paragraph|outline|esquema)(?:\s+(?:breve|corto|corta|short))?\b/;
+/** Lo que vuelve archivo (o correo) a un producto de texto: «en PDF», «un documento», «guárdalo», «un correo». */
+const RE_NO_ES_TEXTO_EN_CHAT =
+  /\b(archivos?|ficheros?|documentos?|hojas?|presentacion(?:es)?|carpetas?|pdfs?|words?|excel(?:es)?|xlsx|docx|pptx|csv|zip|guard\w*|descarg\w*|export\w*|imprim\w*|correos?|e-?mails?|mails?|whatsapp|imagen(?:es)?|graficas?|graficos?|fotos?|capturas?|logos?|videos?|audios?|files?|documents?|spreadsheets?|slides?|folders?|charts?|images?|pictures?)\b/;
+
 /** Actuar afuera: subir, enviar, publicar. */
 const RE_V_ACTUAR = /^(sube|subir|subelo|subela|envia|enviale|enviar|envialo|enviala|manda|mandale|mandar|mandalo|publica|publicar|publicalo|upload|send|post|publish)$/;
 /** Lo que marca una consulta: preguntar, buscar y decir, explicar, leer y decir. */
@@ -463,6 +475,8 @@ export type PedidoEntrega = {
   explicitos: number;
   /** Lo que la instrucción usa como ORIGEN: nunca cumple un requisito (ni sus copias). */
   origenes: { nombres: string[]; sinNombre: OrigenSinNombre[] };
+  /** Lo único que se pide producir es TEXTO que va en la respuesta (un resumen, una lista, una traducción): la respuesta es la entrega. */
+  textoEnChat?: boolean;
 };
 
 /**
@@ -670,13 +684,18 @@ export function requisitosDeEntrega(instruccion: string): PedidoEntrega {
   }
   // 5) Cada verbo de PRODUCIR necesita algo reconocible que entregar. «Hazme una gráfica», «diseña un logo», «crea la
   // factura de Ana»: sin un tipo de archivo que se pueda revisar, un requisito «lo que pediste: …» que nunca se verifica.
+  let textoEnChat = false;
+  let produceOtraCosa = false;
   {
     const ws = [...sinNombres.matchAll(/[a-zñ]+/g)];
-    const esCualquierVerbo = (w: string) => esVerbo(w) || RE_V_ACTUAR.test(w) || RE_CONSULTA.test(w);
+    const esCualquierVerbo = (w: string) => esVerbo(w) || RE_V_ACTUAR.test(w) || RE_CONSULTA.test(w) || RE_V_TRADUCIR.test(w);
+    if (ws.some((m) => RE_V_TRADUCIR.test(m[0]))) textoEnChat = true;
     const entregables = [...nombres.map((n) => n.pos), ...frases.map((f) => f.pos)];
     ws.forEach((m, i) => {
       const w = m[0];
-      if (!RE_V_PRODUCIR_COSA.test(w)) return;
+      // «dame una lista de ideas», «necesito un resumen»: pedir texto también es pedir un producto de texto.
+      const pide = RE_V_NECESIDAD.test(w);
+      if (!RE_V_PRODUCIR_COSA.test(w) && !pide) return;
       const ini = (m.index ?? 0) + w.length;
       let fin = sinNombres.length;
       const finOracion = sinNombres.slice(ini).search(RE_FIN_ORACION);
@@ -689,9 +708,20 @@ export function requisitosDeEntrega(instruccion: string): PedidoEntrega {
           break;
         }
       }
-      if (entregables.some((q) => q >= ini && q < fin)) return;
+      if (entregables.some((q) => q >= ini && q < fin)) {
+        produceOtraCosa = true;
+        return;
+      }
       const objeto = limpio(sinWeb.slice(ini, fin).replace(/^\s*(?:me|nos|le|les)\s+/i, '').replace(/\s+(?:y|e|and)\s*$/i, ''), 60);
       if (!objeto || /^(lo|la|los|las|it|them|eso|esto)$/i.test(objeto)) return;
+      // Texto que va en la respuesta («un resumen de la noticia», «una lista de ideas»): la respuesta es la entrega.
+      const objetoP = plegar(sinWeb.slice(ini, fin)).trim();
+      if (RE_PRODUCTO_TEXTO.test(objetoP) && !RE_NO_ES_TEXTO_EN_CHAT.test(objetoP)) {
+        textoEnChat = true;
+        return;
+      }
+      if (pide) return; // «necesito tres PDFs» ya salió como frase; lo demás no es producir
+      produceOtraCosa = true;
       items.push({ id: '', etiqueta: `lo que pediste: ${objeto}`, extensiones: [], clase: 'lo que pediste', cantidadSegura: true, origen: 'pedido', inverificable: true });
       posDe.set(items[items.length - 1], m.index ?? 0);
     });
@@ -743,7 +773,34 @@ export function requisitosDeEntrega(instruccion: string): PedidoEntrega {
   }
   const TOPE = 10;
   if (items.length > TOPE) seguro = false;
-  return { items: items.slice(0, TOPE).map((x, i) => ({ ...x, id: `entrega-${i + 1}` })), seguro, explicitos, origenes };
+  // Solo texto en el chat si NADA más lo vuelve archivo: ni un nombre, ni un tipo de archivo, ni «guárdalo», ni otra cosa
+  // que producir, ni bajar, copiar o enviar.
+  const palabrasTodas = sinNombres.match(/[a-zñ]+/g) || [];
+  const soloTexto =
+    textoEnChat &&
+    !produceOtraCosa &&
+    explicitos === 0 &&
+    !enTexto.length &&
+    !RE_NO_ES_TEXTO_EN_CHAT.test(sinNombres) &&
+    !palabrasTodas.some((w, i) => RE_V_PRODUCIR_ARCHIVO.test(w) || RE_V_ACTUAR.test(w) || (RE_V_OPERACION.test(w) && !ARTICULOS.has(palabrasTodas[i - 1] || '')));
+  return { items: items.slice(0, TOPE).map((x, i) => ({ ...x, id: `entrega-${i + 1}` })), seguro, explicitos, origenes, ...(soloTexto ? { textoEnChat: true } : {}) };
+}
+
+/** Lo que solo acusa recibo («Listo», «Ya está», «Aquí tienes:») al principio de una respuesta. */
+const RE_ACUSE_INICIAL = /^\s*(?:¡\s*)?(?:listo|lista|hecho|hecha|ya\s+esta|ya\s+quedo|claro|perfecto|ok|okay|vale|done|sure|of course|aqui\s+(?:esta|tienes|va)|here\s+(?:it\s+is|you\s+go|is))[\s,.;:!¡-]*/;
+
+/**
+ * ¿La respuesta trae el texto pedido (no un acuse)? Quitado lo que solo acusa recibo, al menos 80 caracteres. La regla
+ * de «trae algo» (respuestaInformativa) la aplica quien llama.
+ */
+export function respuestaConTexto(respuesta: string | null | undefined): boolean {
+  let r = plegar(String(respuesta || '')).trim();
+  for (let i = 0; i < 4; i++) {
+    const n = r.replace(RE_ACUSE_INICIAL, '');
+    if (n === r) break;
+    r = n;
+  }
+  return r.replace(/\s+/g, ' ').trim().length >= 80;
 }
 
 /** Cuánto dice un requisito: un nombre (3) más que un tipo (2), un tipo más que «un archivo» (1). */
@@ -830,6 +887,13 @@ export function requisitosCombinados(instruccion: string, pedidoPersona?: string
   const { items, contradiccion } = combinarUnoAUno(a.items, b.items);
   const tope = items.slice(0, 10).map((x, i) => ({ ...x, id: `entrega-${i + 1}` }));
   return { items: tope, seguro: a.seguro && b.seguro && !contradiccion && items.length <= 10, explicitos: tope.length, origenes };
+}
+
+/** ¿Lo único que se pidió producir es texto que va en la respuesta? (con lo que pidió la persona, si se sabe). */
+export function esTextoEnChat(instruccion: string, pedido?: PedidoEntrega | null): boolean {
+  const a = requisitosDeEntrega(instruccion);
+  if (pedido && (pedido.explicitos > 0 || pedido.items.some((i) => i.inverificable))) return false;
+  return !!a.textoEnChat && (!pedido || pedido.explicitos === 0);
 }
 
 /**

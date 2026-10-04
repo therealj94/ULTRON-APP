@@ -887,6 +887,25 @@ test('ronda 5 · propiedad inversa: 30 consultas puras sí se completan con el d
   assert.deepEqual(noCompletan, []);
 });
 
+test('ronda 5 · texto en el chat: un resumen, una traducción o una lista que van en la respuesta SON la entrega', () => {
+  const resumen =
+    'La noticia cuenta que el Banco Central subió la tasa de política monetaria medio punto. La medida busca frenar la inflación, que llegó al 5,8 por ciento en septiembre. Los bancos comerciales ajustarán sus tasas de préstamo en las próximas semanas.';
+  assert.equal(cerrar('Hazme un resumen de la noticia', undefined, resumen).c.estado, 'completed', 'el resumen está en la respuesta');
+  assert.equal(cerrar('Hazme un resumen de la noticia', undefined, 'Listo, ya está').c.estado, 'partial', 'un acuse no es un resumen');
+  assert.equal(cerrar('Hazme un resumen de la noticia', undefined, 'Listo, ya está, hice el resumen como pediste.').c.estado, 'partial');
+  const pdf = evaluarEntrega(mision('Hazme un resumen en PDF', [], resumen));
+  assert.equal(pdf.tipo, 'archivo', 'en PDF es un archivo');
+  assert.equal(pdf.comprobada, false);
+  const traduccion = 'Here is the translation: The Central Bank raised the monetary policy rate by half a point to curb inflation, which reached 5.8 percent in September.';
+  assert.equal(cerrar('Tradúceme esto al inglés: el Banco Central subió la tasa medio punto para frenar la inflación', undefined, traduccion).c.estado, 'completed');
+  assert.equal(cerrar('Haz un resumen y una gráfica', undefined, resumen).c.estado, 'partial', 'la gráfica no va en el texto');
+  assert.equal(cerrar('Dame una lista de 5 ideas para el negocio', undefined, '1. Vender café en línea con entrega a domicilio. 2. Ofrecer cursos de barismo. 3. Abrir un puesto en el mercado. 4. Hacer suscripciones mensuales. 5. Vender a oficinas.').c.estado, 'completed');
+  // Lo que ya estaba: un correo va por su borrador; una acción en pantalla queda sin comprobar.
+  assert.equal(cerrar('Escribe un correo a Ana con el resumen', undefined, resumen).c.estado, 'partial');
+  assert.equal(cerrar('Abre YouTube y pon música', undefined, resumen).c.estado, 'partial');
+  assert.equal(cerrar('Hazme un resumen y guárdalo', undefined, resumen).c.estado, 'partial', 'guardarlo es un archivo');
+});
+
 test('ronda 3: lo legítimo de un archivo sigue completando', () => {
   const casos: [string, A[]][] = [
     ['Crea informe.docx', [ok('informe.docx', 'docx', '1')]],
