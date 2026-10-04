@@ -24,6 +24,13 @@ const { emitirSesion, sesionDe } = await import('../server/seguridad');
 const { identificar, nivelDe, reiniciarPadron } = await import('../lib/acceso');
 const { peticionSes, correoValido } = await import('../lib/correo-ses');
 const { rutaPermitida } = await import('../lib/plataforma');
+const { exigirBaseDePrueba } = await import('../lib/base-de-pruebas');
+
+/** Conexión directa para preparar y limpiar: pasa por la misma barrera que el módulo, porque trunca tablas. */
+async function poolDePrueba() {
+  exigirBaseDePrueba(cuentas.urlCuentas());
+  return new (await import('pg')).Pool({ connectionString: cuentas.urlCuentas() });
+}
 
 type Enviado = { para: string; asunto: string; texto: string; html?: string };
 const buzon: Enviado[] = [];
@@ -108,7 +115,7 @@ test('olvidé mi contraseña → enlace por correo → clave nueva; las sesiones
   const { srv, pedir } = await levantar('electrum');
   try {
     // Limpio lo de pruebas anteriores.
-    const pg = new (await import('pg')).Pool({ connectionString: cuentas.urlCuentas() });
+    const pg = await poolDePrueba();
     await pg.query('TRUNCATE cuentas.cuenta, cuentas.enlace, cuentas.solicitud RESTART IDENTITY');
     await pg.end();
     await cuentas.recargarCuentas();
@@ -165,7 +172,7 @@ test('olvidé mi contraseña → enlace por correo → clave nueva; las sesiones
 test('cambiar la contraseña sabiendo la actual (también la del cerebro remoto)', { skip: sinBase ? 'sin base' : false }, async () => {
   const { srv, pedir } = await levantar('ultron');
   try {
-    const pg = new (await import('pg')).Pool({ connectionString: cuentas.urlCuentas() });
+    const pg = await poolDePrueba();
     await pg.query('TRUNCATE cuentas.cuenta, cuentas.enlace, cuentas.solicitud RESTART IDENTITY');
     await pg.end();
     await cuentas.recargarCuentas();
@@ -186,7 +193,7 @@ test('cambiar la contraseña sabiendo la actual (también la del cerebro remoto)
 });
 
 test('dos pedidos de enlace a la vez dejan un solo enlace vivo', { skip: sinBase ? 'sin base' : false }, async () => {
-  const pg = new (await import('pg')).Pool({ connectionString: cuentas.urlCuentas() });
+  const pg = await poolDePrueba();
   try {
     await pg.query(`DELETE FROM cuentas.enlace WHERE correo = 'carrera@ordenglobal.org'`);
     const tokens = await Promise.all(Array.from({ length: 6 }, () => cuentas.crearEnlace('carrera@ordenglobal.org', 'restablecer', 30, 0)));
@@ -205,7 +212,7 @@ test('dos pedidos de enlace a la vez dejan un solo enlace vivo', { skip: sinBase
 test('pedir acceso → José aprueba con nivel → la persona crea su clave y entra al padrón', { skip: sinBase ? 'sin base' : false }, async () => {
   const { srv, pedir } = await levantar('electrum');
   try {
-    const pg = new (await import('pg')).Pool({ connectionString: cuentas.urlCuentas() });
+    const pg = await poolDePrueba();
     await pg.query('TRUNCATE cuentas.cuenta, cuentas.enlace, cuentas.solicitud RESTART IDENTITY');
     await pg.end();
     await cuentas.recargarCuentas();
@@ -283,7 +290,7 @@ test('códigos temporales: únicos, 1/5/24 h, abren Dr Electrum y al vencer o re
   const { srv, pedir } = await levantar('electrum');
   const aura = await levantar('ultron');
   try {
-    const pg = new (await import('pg')).Pool({ connectionString: cuentas.urlCuentas() });
+    const pg = await poolDePrueba();
     await pg.query('TRUNCATE cuentas.codigo RESTART IDENTITY');
     reiniciarPadron();
     const jose = emitirSesion({ correo: 'j.ordonez@ordenglobal.org', nombre: 'José', rol: 'Junta' });
@@ -382,7 +389,7 @@ test('códigos temporales: únicos, 1/5/24 h, abren Dr Electrum y al vencer o re
 
 test('cuenta de miembro por Genesis ID: existe en la base, NO entra al padrón (sigue miembro) y se puede suspender', { skip: sinBase ? 'sin base' : false }, async () => {
   const { esDeComunidad, sesionAbreAura } = await import('../server/seguridad');
-  const pg = new (await import('pg')).Pool({ connectionString: cuentas.urlCuentas() });
+  const pg = await poolDePrueba();
   try {
     await cuentas.recargarCuentas();
     await pg.query('TRUNCATE cuentas.cuenta, cuentas.enlace, cuentas.solicitud RESTART IDENTITY');

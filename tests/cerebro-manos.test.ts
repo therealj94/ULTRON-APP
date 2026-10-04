@@ -2,7 +2,7 @@
  * Las manos como herramientas (lib/cerebro-manos.ts): qué herramientas tiene cada turno y que cada llamada
  * se vuelva EXACTAMENTE la línea que el resto del servidor ya sabe validar y correr.
  */
-import test from 'node:test';
+import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { herramientasDelTurno, lineaDeHerramienta, reglasDeManos, topeDeVoz, TOPE_VOZ_CHARS, type ManosDelTurno } from '../lib/cerebro-manos';
 import { extraerAcciones, validarAccion } from '../lib/acciones-app';
@@ -10,6 +10,9 @@ import { extraerPedidoHerramienta } from '../lib/harness';
 import { confirmaPropuesta, esAfirmacionSola, RECORDATORIO_MIN_MS } from '../lib/manos-app';
 
 const AHORA = Date.UTC(2026, 9, 4, 4, 8); // 3-oct 22:08 en Honduras
+// El reloj se fija en AHORA: el código descarta los recordatorios vencidos, y con el reloj real estas
+// fechas fijas vencen solas y la prueba se rompe el día después de escrita.
+mock.timers.enable({ apis: ['Date'], now: AHORA });
 const nombres = (d: ManosDelTurno) => herramientasDelTurno(d).map((t) => t.toolSpec!.name);
 const nada: ManosDelTurno = { app: false, manos: [], sistema: false, computadora: false, correo: false, whatsapp: false, sesion: false, triaje: false };
 
