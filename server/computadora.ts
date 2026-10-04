@@ -43,7 +43,7 @@
 import { nivelDeCorreo } from './nivel';
 import crypto from 'node:crypto';
 import { clave } from '../lib/boveda';
-import { claveDe, crearUnaVez, leerDurable } from '../lib/durable';
+import { almacenDurable, claveDe, crearUnaVez, leerDurable } from '../lib/durable';
 
 export type MotorNodo = 'holo' | 'claude';
 /**
@@ -149,6 +149,9 @@ async function pedir(ruta: string, init: RequestInit & { ms?: number } = {}): Pr
 
 /** ¿Vale la pena intentarlo otra vez? Sin código (no contestó) o un 5xx; un 4xx es un no de verdad. */
 const reintentable = (e: unknown) => !(e instanceof ErrorNodo) || !e.status || e.status >= 500;
+
+/** ¿Pudo el pedido llegar al nodo aunque no supimos la respuesta? Sin conexión (rechazada, sin DNS) o un 4xx: no. */
+const pedidoPudoLlegar = (e: unknown) => reintentable(e) && !/ECONNREFUSED|ENOTFOUND|EAI_AGAIN|EHOSTUNREACH|ENETUNREACH/.test(String((e as Error)?.message || e));
 
 let capsCache: { en: number; caps: CapacidadNodo[] } | null = null;
 const CAPS_MS = 60_000;
@@ -975,10 +978,19 @@ export function instruccionContinuar(mision: string, t: Pick<Tarea, 'pasos'>, id
     .slice(-4)
     .map((p) => pasoEnPalabras(p, idioma));
   const m = mision.slice(0, 900);
+  // Lo que salió y se cortó a medias: seguir (lo pidió la persona) no es repetirlo. Se mira la pantalla primero.
+  const inciertas = t.pasos.filter((p) => p.incierto).slice(-2).map((p) => pasoEnPalabras(p, idioma));
   if (idioma === 'en') {
-    return `Continue this mission from where the screen is now, without starting over: «${m}».${hechos.length ? ` The last things you did: ${hechos.join('; ')}.` : ''} Finish the whole mission and answer with the concrete result that was asked for.`;
+    const ojo = inciertas.length ? ` Unconfirmed: «${inciertas.join('; ')}» may already have happened. Do NOT repeat it: look at the screen first and, if you can't confirm it, stop and ask.` : '';
+    return `Continue this mission from where the screen is now, without starting over: «${m}».${hechos.length ? ` The last things you did: ${hechos.join('; ')}.` : ''}${ojo} Finish the whole mission and answer with the concrete result that was asked for.`;
   }
-  return `Sigue con esta misión desde donde está la pantalla ahora, sin empezar de cero: «${m}».${hechos.length ? ` Lo último que hiciste: ${hechos.join('; ')}.` : ''} Termina la misión completa y responde con el resultado concreto que se pidió.`;
+  const ojo = inciertas.length ? ` Sin confirmar: «${inciertas.join('; ')}» pudo haberse hecho ya. NO la repitas: mira la pantalla primero y, si no puedes confirmarlo, detente y pregunta.` : '';
+  return `Sigue con esta misión desde donde está la pantalla ahora, sin empezar de cero: «${m}».${hechos.length ? ` Lo último que hiciste: ${hechos.join('; ')}.` : ''}${ojo} Termina la misión completa y responde con el resultado concreto que se pidió.`;
+}
+
+/** ¿Dejó la tarea una acción que salió y se cortó a medias (no se sabe si pasó)? */
+export function conAccionIncierta(t: Pick<Tarea, 'pasos'>): boolean {
+  return (t.pasos || []).some((p) => p.incierto === true);
 }
 
 /* ------------------------------------------------------------------ lo que se dice mientras trabaja */
@@ -1259,7 +1271,9 @@ async function alTerminar(e: Encargo, t: Tarea, enTurno: boolean, sinSeguir = fa
   // El seguimiento ya no hace falta: se cancela su vuelta (los recibos, el final y la misión se quedan).
   if (e.reloj) clearTimeout(e.reloj);
   e.reloj = undefined;
-  if (!sinSeguir && misionIncompleta(t) && e.vuelta < MAX_CONTINUACIONES) {
+  // Una acción que salió y se cortó a medias (`incierto`) no se sigue sola: la continuación «desde donde está la
+  // pantalla» podría repetirla (un pago, un envío). La misión cierra a medias y la persona decide si sigue.
+  if (!sinSeguir && misionIncompleta(t) && !conAccionIncierta(t) && e.vuelta < MAX_CONTINUACIONES) {
     const e2 = await crearEncargo({
       instruccion: e.instruccion,
       paraNodo: instruccionContinuar(e.instruccion, t, e.idioma),
@@ -1422,7 +1436,7 @@ export async function encargarTarea(o: {
   decirPlan?: boolean;
   /** El id del pedido de la app (`requestId`): repetido, el nodo devuelve la misma tarea. */
   pedido?: string;
-}): Promise<{ hecho: string; id: string | null; tarea: Tarea | null }> {
+}): Promise<{ hecho: string; id: string | null; tarea: Tarea | null; incierto?: boolean }> {
   if (!computadoraConfigurada()) {
     return { hecho: 'HARNESS computadora: no está configurada en este servidor. No la usé; dilo con naturalidad.', id: null, tarea: null };
   }
@@ -1444,7 +1458,9 @@ export async function encargarTarea(o: {
       nota = ' (La hizo el modelo gratis: Claude no está configurado en la computadora.)';
     }
   } catch (err: any) {
-    return { hecho: `HARNESS computadora: no pude encargarla (${String(err?.message || err).slice(0, 120)}). Dilo con honestidad y ofrece intentarlo en un momento. No inventes el resultado.`, id: null, tarea: null };
+    // `incierto`: el nodo no contestó (o dio 5xx) después de que el pedido pudo llegarle; un 4xx o una conexión
+    // rechazada son un no de verdad (no se creó nada).
+    return { hecho: `HARNESS computadora: no pude encargarla (${String(err?.message || err).slice(0, 120)}). Dilo con honestidad y ofrece intentarlo en un momento. No inventes el resultado.`, id: null, tarea: null, incierto: pedidoPudoLlegar(err) };
   }
   // El teléfono abre la vista en vivo: la captura, el plan, los pasos en palabras y el tecleo bajito.
   const dichoPlan = o.decirPlan ? fraseDePlan(plan.pasos, idioma) : '';
@@ -1841,6 +1857,65 @@ function pasoEnPalabrasSolo(p: Pick<PasoTarea, 'accion' | 'args'>, idioma: 'es' 
  *   GET  /api/computadora/misiones/:id                              una misión del historial (con su tarjeta final)
  *   POST /api/computadora/misiones/:id/seguir                       sigue una misión que quedó a medias
  */
+/**
+ * El registro durable de un encargo de la app por su `requestId` (`computadora-pedidos/<huella>/<requestId>`):
+ * `creando` (reservado: se está lanzando), con `id` (la tarea que creó), `libre` (no se creó nada: se puede
+ * probar otra vez) o `incierto` (no se sabe si llegó al nodo).
+ */
+type RegistroPedidoApp = { id?: string; estado?: 'creando' | 'libre' | 'incierto'; en: number };
+
+/**
+ * Lanza el encargo de la app UNA vez por dueño + `requestId`, con lo durable delante (AUR06; revisión externa,
+ * 4-oct). Persistir antes de actuar: se RESERVA el pedido (`creando`) antes de pedirle nada al nodo, y se anota la
+ * tarea al volver. Un error del almacén no es «no existe»:
+ *  · si no se puede mirar ni reservar, no se lanza (503 honesto);
+ *  · si el pedido ya tiene su tarea, se devuelve esa (otra réplica, o antes de un reinicio);
+ *  · si quedó `creando`/`incierto` (se cayó a medias, o no se pudo anotar la tarea creada), NO se lanza otra:
+ *    409 `pedido_incierto`, que mire sus tareas antes de pedirlo de nuevo. El nodo dedupe por request_id solo en
+ *    RAM: tras reiniciarse lanzaría otra.
+ */
+async function lanzarUnaVez(clave: string, correo: string, hacer: () => Promise<{ code: number; j: any; incierto?: boolean }>): Promise<{ code: number; j: any }> {
+  const a = almacenDurable();
+  const sinAlmacen = (detalle: string) => {
+    console.warn('[computadora] no pude mirar o reservar el pedido en el almacén durable; no lo lanzo:', String(detalle).slice(0, 120));
+    return { code: 503, j: { error: 'No pude comprobar si ese encargo ya estaba hecho, así que no lo lancé. Prueba en un momento.', code: 'almacen', honesto: true } };
+  };
+  const yaEstaba = (r: RegistroPedidoApp) => {
+    if (r.id) {
+      if (duenoDe(r.id) !== null && duenoDe(r.id) !== correo) return { code: 404, j: { error: 'No encuentro esa tarea.', honesto: true } };
+      const m = misionDeTarea(r.id);
+      return { code: 200, j: { id: r.id, mision: m ? vistaMision(m) : null, repetido: true, honesto: true } };
+    }
+    return {
+      code: 409,
+      j: { error: 'Ese encargo ya se estaba lanzando y no sé si llegó a tu computadora. Mira tus tareas antes de pedirlo otra vez; no lo lanzo de nuevo a ciegas.', code: 'pedido_incierto', honesto: true },
+    };
+  };
+  const ahora = Date.now();
+  const l = await leerDurable<RegistroPedidoApp>(clave, a).catch((e) => ({ ok: false as const, detalle: String(e?.message || e) }));
+  if (l.ok === false) return sinAlmacen(l.detalle);
+  let etag: string;
+  if (l.valor && l.valor.estado === 'libre' && !l.valor.id) {
+    const w = await a.cas(clave, { estado: 'creando', en: ahora }, l.etag!).catch((e) => ({ ok: false as const, conflicto: false as const, detalle: String(e?.message || e) }));
+    if (w.ok === false) return w.conflicto ? yaEstaba({ estado: 'creando', en: ahora }) : sinAlmacen(w.detalle);
+    etag = w.etag;
+  } else if (l.valor) {
+    return yaEstaba(l.valor);
+  } else {
+    const c = await crearUnaVez<RegistroPedidoApp>(clave, { estado: 'creando', en: ahora }, a).catch((e) => ({ ok: false as const, detalle: String(e?.message || e) }));
+    if (c.ok === false) return sinAlmacen(c.detalle);
+    if (!c.creado) return yaEstaba(c.valor);
+    etag = c.etag;
+  }
+  const r = await hacer().catch((e: any) => ({ code: 502, incierto: true, j: { error: String(e?.message || e).slice(0, 120), honesto: true } }));
+  // Lo que pasó, anotado sobre la reserva. Si no se puede guardar, queda `creando`: un reintento tras un reinicio
+  // sabrá que no se sabe y no lanzará otra (aquí, el Map de pedidos la sigue devolviendo).
+  const fin: RegistroPedidoApp = r.code === 200 && r.j?.id ? { id: String(r.j.id), en: Date.now() } : { estado: r.incierto ? 'incierto' : 'libre', en: Date.now() };
+  const w = await a.cas(clave, fin, etag).catch((e) => ({ ok: false as const, conflicto: false as const, detalle: String(e?.message || e) }));
+  if (w.ok === false) console.warn(`[computadora] no pude anotar cómo quedó el pedido; queda «creando» (un reintento no lanzará otro): ${String((w as { detalle?: string }).detalle || 'conflicto').slice(0, 120)}`);
+  return r;
+}
+
 export function montarRutasComputadora(app: import('express').Express, d: DepsRutas) {
   type Req = import('express').Request;
   type Res = import('express').Response;
@@ -1885,8 +1960,9 @@ export function montarRutasComputadora(app: import('express').Express, d: DepsRu
 
   /**
    * Los encargos de la app por su `requestId` (de quién + id): un doble toque o un reintento del teléfono
-   * devuelve la misma misión en lugar de lanzar otra (auditoría 3-oct, PC04). Si falló, se olvida: el reintento
-   * llega al nodo con el mismo id y el nodo devuelve la tarea si la alcanzó a crear.
+   * devuelve la misma misión en lugar de lanzar otra (auditoría 3-oct, PC04). Si falló, aquí se olvida y manda lo
+   * durable (lanzarUnaVez): un no de verdad deja el pedido `libre` (el reintento prueba otra vez); si no se sabe si
+   * llegó al nodo, queda `incierto` y el reintento no lanza otra.
    */
   const pedidosApp = new Map<string, { en: number; r: Promise<{ code: number; j: any }> }>();
   const PEDIDO_APP_VALE_MS = 10 * 60_000;
@@ -1906,9 +1982,9 @@ export function montarRutasComputadora(app: import('express').Express, d: DepsRu
     const aparato = String(req.headers['x-aura-aparato'] || '').trim();
     const idioma = req.body?.idioma === 'en' ? 'en' : 'es';
     const pedido = typeof req.body?.requestId === 'string' && /^[A-Za-z0-9._:-]{8,80}$/.test(req.body.requestId) ? String(req.body.requestId) : '';
-    const hacer = async (): Promise<{ code: number; j: any }> => {
+    const hacer = async (): Promise<{ code: number; j: any; incierto?: boolean }> => {
       const r = await encargarTarea({ instruccion, quien: correo, motor, esperaMs: 0, aparato: /^[A-Za-z0-9._:-]{1,128}$/.test(aparato) ? aparato : null, idioma, decirPlan: true, pedido: pedido ? `app:${pedido}` : undefined });
-      if (!r.id) return { code: 503, j: { error: r.hecho.replace(/^HARNESS computadora:\s*/, '').replace(/\s*(Dilo con honestidad.*|No inventes.*|No la usé.*|dilo con naturalidad\.?)$/i, ''), honesto: true } };
+      if (!r.id) return { code: 503, incierto: !!r.incierto, j: { error: r.hecho.replace(/^HARNESS computadora:\s*/, '').replace(/\s*(Dilo con honestidad.*|No inventes.*|No la usé.*|dilo con naturalidad\.?)$/i, ''), honesto: true } };
       return { code: 200, j: { id: r.id, mision: misionDeTarea(r.id) ? vistaMision(misionDeTarea(r.id)!) : null, honesto: true } };
     };
     if (!pedido) {
@@ -1917,32 +1993,15 @@ export function montarRutasComputadora(app: import('express').Express, d: DepsRu
     }
     const llave = `${correo}|${pedido}`;
     for (const [k, v] of pedidosApp) if (Date.now() - v.en > PEDIDO_APP_VALE_MS) pedidosApp.delete(k);
-    // Lo durable primero (auditoría maestra, AUR06): si este pedido ya creó su tarea —en otra réplica o antes de
-    // un reinicio, cuando el Map de aquí ya no lo sabe—, se devuelve esa y no se lanza otra.
     const claveDurable = claveDe('computadora-pedidos', correo, pedido);
-    if (!pedidosApp.has(llave)) {
-      const visto = await leerDurable<{ id?: string }>(claveDurable).catch(() => null);
-      const idVisto = visto?.ok ? String(visto.valor?.id || '') : '';
-      if (idVisto && duenoDe(idVisto) !== null && duenoDe(idVisto) !== correo) return noEsSuya(res);
-      if (idVisto) {
-        const m = misionDeTarea(idVisto);
-        return res.json({ id: idVisto, mision: m ? vistaMision(m) : null, repetido: true, honesto: true });
-      }
-    }
     let previo = pedidosApp.get(llave);
     if (!previo) {
-      previo = { en: Date.now(), r: hacer() };
+      // El doble toque en este proceso espera esta misma promesa (se anota antes de cualquier espera).
+      previo = { en: Date.now(), r: lanzarUnaVez(claveDurable, correo, hacer) };
       pedidosApp.set(llave, previo);
     }
     const r = await previo.r.catch((e: any) => ({ code: 502, j: { error: String(e?.message || e).slice(0, 120), honesto: true } }));
     if (r.code !== 200 && pedidosApp.get(llave) === previo) pedidosApp.delete(llave);
-    // Anotado de forma durable: un reintento tras un reinicio o en otra réplica recibe esta misma tarea. Si otra
-    // réplica la anotó antes (el nodo dedupe por request_id, así que es la misma), manda la primera.
-    if (r.code === 200 && r.j?.id) {
-      const c = await crearUnaVez(claveDurable, { id: String(r.j.id), en: Date.now() }).catch(() => null);
-      if (c?.ok && !c.creado && c.valor?.id && c.valor.id !== r.j.id) r.j.id = String(c.valor.id);
-      if (!c?.ok) console.warn('[computadora] no pude anotar el pedido de forma durable; queda solo en memoria');
-    }
     // La misma misión, con su estado de ahora (no el del primer pedido).
     const m = r.code === 200 ? misionDeTarea(r.j.id) : null;
     return res.status(r.code).json(m ? { ...r.j, mision: vistaMision(m) } : r.j);

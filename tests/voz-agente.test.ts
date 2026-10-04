@@ -860,6 +860,7 @@ test('contestó la llamada de un recordatorio: `[[recordatorio]]` llega al cereb
     const r = await llm(s.base, paseDe(persona()), [{ role: 'user', content: '[[recordatorio]] Tomar la pastilla' }]);
     assert.equal(dichoDe(await r.text()), '¡Hola! Te llamo para recordarte la pastilla.');
     assert.match(String(s.vistos[0].body.message), /^\(Contesté la llamada de recordatorio .*«Tomar la pastilla»/);
+    assert.equal(s.vistos[0].reconexion, false, 'un turno que no es reconexión despacha como siempre');
   } finally {
     await s.cerrar();
   }
@@ -892,6 +893,9 @@ test('reconexión a mitad de llamada: `[[reconecta]] <frase>` pide un perdón co
     assert.equal(s.vistos.length, 1);
     assert.equal(s.vistos[0].body.message, '¿cómo va el oro?', 'el cerebro (y su hilo) ve la frase de la persona, no la marca');
     assert.equal(s.vistos[0].interrumpida, false, 'no es una interrupción: no se pide perdón dos veces');
+    // La frase repetida sola al reconectar va marcada: el servidor la atiende SIN efectos (el turno de antes pudo
+    // haberlos hecho ya; revisión externa, 4-oct).
+    assert.equal(s.vistos[0].reconexion, true);
     const en = dichoDe(await (await llm(s.base, paseDe(persona(), 'claudio', 'en'), [{ role: 'user', content: '[[reconecta]] how is gold doing?' }])).text());
     assert.equal(en, 'Sorry, I got cut off. El oro está a tres mil.');
     assert.equal(s.vistos[1].body.message, 'how is gold doing?');

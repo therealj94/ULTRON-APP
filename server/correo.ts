@@ -625,7 +625,7 @@ export async function resolverBorradorConEstado(quien: string, ambito: string, m
       if (actual && actual.intento !== b.intento) return `después de su «sí» el borrador cambió (ahora va para ${actual.para.join(', ')} — «${actual.asunto}»). Ese nuevo espera su propia decisión: léeselo y pregúntale`;
       return null;
     },
-    enviar: () => enviarBorradorAprobado(quien, b, { ambito }),
+    enviar: () => enviarBorradorAprobado(quien, b, { ambito, desdePanel: como.desdePanel }),
   });
 }
 
@@ -693,7 +693,7 @@ export function clasificarErrorSmtp(e: any): SalidaEnvio<DatosEnvioCorreo> {
  * reconciliación en Enviados si queda incierto. Exportado para las pruebas (otra réplica con la misma copia).
  * Con `ambito`, un borrador alterado tras el «sí» vuelve como decisión nueva en esa conversación.
  */
-export async function enviarBorradorAprobado(quien: string, b: BorradorGuardado, o: { ambito?: string } = {}): Promise<ResultadoHerramienta> {
+export async function enviarBorradorAprobado(quien: string, b: BorradorGuardado, o: { ambito?: string; desdePanel?: boolean } = {}): Promise<ResultadoHerramienta> {
   // Lo que iba a salir tiene que ser lo que aprobó (sección 10): ni otro destinatario, ni otro texto, ni otra cuenta.
   if (!b.huella || huellaCorreo(b) !== b.huella) {
     const k = o.ambito !== undefined ? llave(quien, o.ambito) : '';
@@ -725,7 +725,9 @@ export async function enviarBorradorAprobado(quien: string, b: BorradorGuardado,
     operacion,
     huella: b.huella,
     contenido: b.huella,
-    repeticionAceptada: b.repeticionAceptada,
+    // Aceptar el riesgo de repetir es la respuesta de la persona en el chat a esa pregunta; un «Aprobar» del panel
+    // (decidido antes de saber que lo de antes quedó incierto) no la da (revisión externa, 4-oct).
+    repeticionAceptada: o.desdePanel ? undefined : b.repeticionAceptada,
     efecto: async () => {
       try {
         const r2 = await buzon.mandar(quien, cuenta, { para: b.para, cc: b.cc, asunto: b.asunto, texto: `${b.texto}${b.cita || ''}`, enRespuestaA: b.enRespuestaA, referencias: b.referencias, messageId, operacion });
@@ -742,9 +744,10 @@ export async function enviarBorradorAprobado(quien: string, b: BorradorGuardado,
     },
   });
   // Otro igual de antes sigue sin constar: el borrador vuelve a esperar, ahora para un «sí» informado (puede repetirse).
+  // Desde el panel vuelve sin el riesgo aceptado: lo acepta un «sí» del chat a esa pregunta, no un botón de antes.
   if (r.motivo === 'repeticion-incierta' && o.ambito !== undefined) {
     const k = llave(quien, o.ambito);
-    if (!BORRADORES.has(k) && !motivoBorrador(b, quien)) BORRADORES.set(k, { ...b, repeticionAceptada: r.previa });
+    if (!BORRADORES.has(k) && !motivoBorrador(b, quien)) BORRADORES.set(k, { ...b, repeticionAceptada: o.desdePanel ? undefined : r.previa });
   }
   return hechoDeEnvioCorreo(b, r, messageId);
 }

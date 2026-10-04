@@ -347,6 +347,31 @@ export function empujarOrdenPc(correo: string, aparato: string | null | undefine
 }
 
 /**
+ * Las acciones del teléfono que dejan algo afuera o lo agendan (mandar el borrador, marcar, que AURA llame, poner
+ * o quitar un recordatorio). Las demás solo mueven la pantalla, leen o llenan algo que la persona confirma allá.
+ */
+const CON_EFECTO: ReadonlySet<string> = new Set(['enviar', 'llamar', 'llamame', 'recordatorio', 'cancelar_recordatorio']);
+export function accionConEfecto(a: Pick<AccionApp, 'tipo'>): boolean {
+  return CON_EFECTO.has(a.tipo);
+}
+
+/**
+ * Antes de empujar una acción con efecto, el turno lo deja persistido (server/turno-unico.ts `efectoDelTurno`,
+ * revisión externa 4-oct): si no quedó (sin almacén, turno de otro proceso, turno sin efectos), NO sale. Así un
+ * reintento del turno no la vuelve a mandar con otro id (el teléfono deduplica por id, no por contenido).
+ * Devuelve las que salen y las que se frenaron (para decirlo con honestidad).
+ */
+export async function accionesQueSalen<A extends Pick<AccionApp, 'tipo'>>(acciones: A[], antesDeEfecto: (que: string) => Promise<boolean>): Promise<{ salen: A[]; frenadas: A[] }> {
+  const salen: A[] = [];
+  const frenadas: A[] = [];
+  for (const a of acciones) {
+    if (!accionConEfecto(a) || (await antesDeEfecto(`app:${a.tipo}`).catch(() => false))) salen.push(a);
+    else frenadas.push(a);
+  }
+  return { salen, frenadas };
+}
+
+/**
  * Manda la acción a los teléfonos de esa persona: con `aparato`, SOLO a ese (si no está escuchando,
  * a ninguno: el teléfono que hizo el turno la recibe igual en la respuesta, con el mismo id); sin
  * aparato, a todos. Un teléfono que falla al escribir no deja sin la acción a los demás. Devuelve el
