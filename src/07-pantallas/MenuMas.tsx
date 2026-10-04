@@ -3,7 +3,7 @@
  * Escribir y el micrófono. Cada interruptor dice en palabras cómo está, no solo con color.
  */
 import React from 'react';
-import { Volume2, VolumeX, Eye, EyeOff, Camera, Moon, Sun, Smartphone, Maximize2, Minimize2, X } from 'lucide-react';
+import { Volume2, VolumeX, Eye, EyeOff, Camera, Moon, Sun, Smartphone, Maximize2, Minimize2, X, Mail, Brain, Bell } from 'lucide-react';
 import { Dialogo } from './Dialogo';
 
 type Props = {
@@ -20,6 +20,11 @@ type Props = {
   onToggleSleep: () => void;
   onToggleKioskFrame: () => void;
   onToggleFullscreen: () => void;
+  /**
+   * P4/U1 (auditoría del 4-oct): las entradas a lo de AURA en el servidor, como en la app Expo: tus correos, «Lo que
+   * sé de ti» y tus avisos. Abre Ajustes → Tu AURA en esa vista.
+   */
+  onAbrirTuAura?: (vista: 'correos' | 'conocer' | 'avisos') => void;
 };
 
 function Fila(p: { icono: React.ReactNode; titulo: string; estado?: string; pulsado?: boolean; onClick: () => void }) {
@@ -78,6 +83,13 @@ export function MenuMas(p: Props) {
         pulsado={p.visionEnabled}
         onClick={y(p.onToggleVision)}
       />
+      {p.onAbrirTuAura && (
+        <>
+          <Fila icono={<Mail className="w-5 h-5" />} titulo="Tus correos" estado="Conectar, ver si responden, reconectar" onClick={y(() => p.onAbrirTuAura!('correos'), true)} />
+          <Fila icono={<Brain className="w-5 h-5" />} titulo="Lo que sé de ti" estado="Corregir, «No usarlo» u olvidar (en el servidor)" onClick={y(() => p.onAbrirTuAura!('conocer'), true)} />
+          <Fila icono={<Bell className="w-5 h-5" />} titulo="Tus avisos" estado="Cuándo y cómo te avisa AU-RA" onClick={y(() => p.onAbrirTuAura!('avisos'), true)} />
+        </>
+      )}
       <Fila icono={<Camera className="w-5 h-5" />} titulo="Foto 3-2-1" estado="Tomar una foto con cuenta atrás" onClick={y(p.onOpenCamera, true)} />
       <Fila
         icono={p.isSleeping ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
