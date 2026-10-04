@@ -149,9 +149,16 @@ export function useTrabajosWeb(o: { conSesion: boolean; cuenta?: string | null; 
     return () => clearTimeout(t);
   }, [texto]);
 
-  const aplicar = useCallback((t: TareaVista | null | undefined) => {
-    if (t) despachar({ tipo: 'una', tarea: t, en: Date.now() });
-  }, []);
+  // Cada cuenta tiene su propio `aplicar`: un botón (Aprobar, Pausar…) que se pulsó con A guarda el de A, y si su respuesta
+  // llega cuando ya está B, la tarea de A no entra al panel de B (revisión independiente del 4-oct).
+  const genVista = gen.current;
+  const aplicar = useCallback(
+    (t: TareaVista | null | undefined) => {
+      if (genVista !== gen.current) return;
+      if (t) despachar({ tipo: 'una', tarea: t, en: Date.now() });
+    },
+    [genVista]
+  );
 
   return { tareas, resumen: res, indicador: ind?.texto ?? null, reducido, refrescar, ahora: () => ya.current(), aplicar, error: s.error };
 }

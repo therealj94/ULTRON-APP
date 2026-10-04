@@ -483,3 +483,99 @@ test(
     assert.ok(!dicho.some((s) => /PIÑA|7781/.test(s)), `nada de Ana se mandó a la voz (${dicho.length} envíos a voz)`);
   }
 );
+
+test(
+  'en el navegador: A pulsa «Pausar», sale y entra B; la respuesta tardía de A no mete su tarea en el panel de B (revisión independiente del 4-oct)',
+  { skip: saltoNavegador, timeout: 120000 },
+  async (t) => {
+    const { chromium } = await import('playwright');
+    let quien: 'ana' | 'bea' | null = 'ana';
+    let soltar: (() => void) | null = null;
+    let pidioPausa: (() => void) | null = null;
+    const pausaPedida = new Promise<void>((r) => (pidioPausa = r));
+    const ahoraIso = new Date().toISOString();
+    const tareaDeAna = (estado: 'running' | 'paused') => ({
+      id: 'tarea-ana-1',
+      version: estado === 'running' ? 1 : 2,
+      state: estado,
+      terminal: false,
+      source: 'tarea-en-curso',
+      title: 'Informe privado SECRETO-ANA',
+      objective: 'Informe privado SECRETO-ANA',
+      acceptance: [],
+      environment: { kind: 'chat', id: 'mesa', displayName: 'Esta conversación' },
+      progress: { done: 1, total: 3, unit: 'pasos' },
+      planVersion: 1,
+      lastEventSequence: 0,
+      lastHeartbeatAt: ahoraIso,
+      decision: null,
+      result: null,
+      stopCondition: 'Se terminan los pasos.',
+      createdAt: ahoraIso,
+      updatedAt: ahoraIso,
+      origin: { kind: 'tarea-en-curso', conversacion: 'mesa' },
+      controls: { pause: estado === 'running', resume: estado === 'paused', cancel: true },
+    });
+    const tipos: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.wasm': 'application/wasm' };
+    const srv = http.createServer((req, res) => {
+      const u = new URL(req.url || '/', 'http://x');
+      const json = (o: unknown, s = 200) => (res.writeHead(s, { 'Content-Type': 'application/json' }), res.end(JSON.stringify(o)));
+      if (u.pathname === '/api/health') return json({ qwen: { vivo: true } });
+      if (u.pathname === '/api/nodo/listo') return json({ listo: true });
+      if (u.pathname === '/api/genesis/config') return json({ disponible: false });
+      if (u.pathname === '/api/ultron/sesion')
+        return json(quien === 'ana' ? { authenticated: true, user: { nombre: 'Ana', rol: 'Junta', correo: 'ana@ejemplo.com' } } : quien === 'bea' ? { authenticated: true, user: { nombre: 'Bea', rol: 'Junta', correo: 'bea@ejemplo.com' } } : { authenticated: false });
+      if (u.pathname === '/api/ultron/salir') {
+        quien = null;
+        return json({ ok: true });
+      }
+      if (u.pathname === '/api/ultron/entrar') {
+        quien = 'bea';
+        return json({ ok: true, token: 'token-de-bea', miembro: { nombre: 'Bea', rol: 'Junta', correo: 'bea@ejemplo.com' } });
+      }
+      // Las tareas son de quien tiene la sesión: Ana tiene una; Bea, ninguna.
+      if (u.pathname === '/api/trabajos') return quien ? json({ tareas: quien === 'ana' ? [tareaDeAna('running')] : [] }) : json({ error: 'sesión requerida' }, 401);
+      if (u.pathname === '/api/trabajos/tarea-ana-1/pausar') {
+        pidioPausa!();
+        // El servidor tarda: la respuesta llega cuando Bea ya está dentro.
+        return void new Promise<void>((r) => (soltar = r)).then(() => json({ ok: true, tarea: { ...tareaDeAna('running'), version: 2 } }));
+      }
+      if (u.pathname.startsWith('/api/')) return json({}, 404);
+      let f = path.join(DIST, decodeURIComponent(u.pathname));
+      if (!f.startsWith(DIST) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(DIST, 'index.html');
+      res.writeHead(200, { 'Content-Type': tipos[path.extname(f)] || 'application/octet-stream' });
+      fs.createReadStream(f).pipe(res);
+    });
+    const url = await new Promise<string>((r) => srv.listen(0, '127.0.0.1', () => r(`http://127.0.0.1:${(srv.address() as any).port}`)));
+    const b = await chromium.launch({ executablePath: CHROMIUM, args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader'] });
+    t.after(async () => {
+      soltar?.();
+      await b.close();
+      srv.close();
+    });
+    const p = await b.newPage({ viewport: { width: 1280, height: 800 } });
+    await p.goto(url + '/', { waitUntil: 'networkidle' });
+    await p.waitForSelector('#ultron-arranque[aria-hidden="true"]', { timeout: 20000 });
+    // 1) Ana abre su panel y pulsa «Pausar»; el servidor se queda pensando.
+    await p.getByRole('button', { name: /Abrir el panel de tareas/ }).click({ timeout: 20000 });
+    await p.getByRole('button', { name: 'Pausar', exact: true }).click();
+    await pausaPedida;
+    await p.keyboard.press('Escape').catch(() => {});
+    // 2) Ana sale; entra Bea.
+    await p.getByRole('button', { name: 'Sesión de Ana' }).click();
+    await p.getByRole('button', { name: /Cerrar sesión/ }).click();
+    await p.waitForSelector('#aura-acceso-titulo', { timeout: 15000 });
+    await p.getByRole('button', { name: /Soy de la junta/ }).click().catch(() => {});
+    await p.locator('input[type="email"]').fill('bea@ejemplo.com');
+    await p.locator('input[type="password"]').fill('clave-de-bea');
+    await p.locator('form button[type="submit"]').click();
+    await p.waitForSelector('#ultron-app-root[data-modo]', { timeout: 15000 });
+    await p.waitForTimeout(800);
+    // 3) Llega la respuesta tardía de Ana (con su tarea).
+    soltar!();
+    // El indicador cambia como mucho cada 2,5 s (MINIMO_INDICADOR_MS): se espera a que pueda aparecer.
+    await p.waitForTimeout(3500);
+    assert.doesNotMatch(await p.locator('body').innerText(), /SECRETO-ANA/, 'el título de la tarea de Ana no aparece para Bea');
+    assert.equal(await p.getByRole('button', { name: /Abrir el panel de tareas/ }).count(), 0, 'Bea no tiene tareas: no aparece el indicador con la de Ana');
+  }
+);
