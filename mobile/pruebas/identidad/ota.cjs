@@ -107,5 +107,18 @@ const { ok, fin } = require('../chat/comun.cjs');
   quitarC();
   ok('O6: sin nadie registrado, nada que esperar', (await B.prepararRecarga(50)).fallaron.length === 0);
 
+  /* ── O7: la recarga de la OTA no se acusa como crash ─────────────────────────────────── */
+  //  La OTA recarga con la app delante. La marca de «viva» se baja (y se espera) antes de recargar: el
+  //  arranque siguiente no manda un `crash-previo` por una recarga que la app hizo a propósito.
+  if (M.REPORTE && M.REPORTE.cierreIntencional) {
+    const as = globalThis.__as;
+    if (typeof globalThis.__DEV__ === 'undefined') globalThis.__DEV__ = false;
+    as.m.set('ultron_migas_viva_v1', '1');
+    await M.REPORTE.cierreIntencional('ota: recarga intencional');
+    ok('O7: la recarga intencional baja la marca de «viva» antes de recargar', as.m.get('ultron_migas_viva_v1') === '0', String(as.m.get('ultron_migas_viva_v1')));
+    const migas = JSON.parse(as.m.get('ultron_migas_v1') || as.m.get([...as.m.keys()].find((k) => /migas/.test(k) && !/viva/.test(k))) || '[]');
+    ok('…y deja la miga de por qué', migas.some((x) => /recarga intencional/.test(x)), JSON.stringify(migas.slice(-2)));
+  } else ok('O7: hay cierreIntencional en lib/reporte', false);
+
   fin();
 })();

@@ -37,8 +37,8 @@ function guardar() {
   AsyncStorage.setItem(CLAVE, JSON.stringify(migas.slice(-MAX))).catch(() => {});
 }
 
-function marcarViva(viva: boolean) {
-  AsyncStorage.setItem(CLAVE_VIVA, viva ? '1' : '0').catch(() => {});
+function marcarViva(viva: boolean): Promise<void> {
+  return AsyncStorage.setItem(CLAVE_VIVA, viva ? '1' : '0').catch(() => {});
 }
 
 /** Marca, modelo y sistema. Nada que identifique a la persona (ni el nombre del teléfono, ni el serial). */
@@ -50,6 +50,16 @@ function equipo(): string {
     /* */
   }
   return '?';
+}
+
+/**
+ * Un cierre que la app hace a propósito con la pantalla delante (la OTA recarga con `reloadAsync`): no es un
+ * crash. Sin esto el siguiente arranque encuentra la marca de «viva» y acusa una caída que no hubo.
+ */
+export function cierreIntencional(motivo: string): Promise<void> {
+  miga(motivo);
+  // Se espera a que la marca quede escrita: la recarga mata el proceso enseguida.
+  return marcarViva(false);
 }
 
 /** Marca de paso. Barato: se guarda en disco para sobrevivir a un crash nativo. */

@@ -43,6 +43,8 @@ const piezas = {
   PERFIL: 'lib/perfil',
   CUENTA: 'lib/cuenta',
   BARRERA: 'lib/barreraOta',
+  // El diagnóstico de campo: una recarga a propósito (la OTA) no se acusa como crash.
+  REPORTE: 'lib/reporte',
   RECORDATORIOS: 'compa/recordatorios',
   RELEVO: 'pulse/relevo',
   CONTRATO: 'nucleo/contrato',
