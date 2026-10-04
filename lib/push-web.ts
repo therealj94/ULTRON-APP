@@ -109,7 +109,10 @@ export function vapid(): { publica: string; privada: crypto.KeyObject; contacto:
   const priv = clave('webpush_privada');
   if (!publica || !priv) return null;
   const pub = deB64url(publica);
-  const d = deB64url(priv);
+  // La llave privada de P-256 son 32 bytes; algunas herramientas (y ECDH de Node) quitan los ceros de la izquierda
+  // (≈1 de cada 256 pares): se completan, en vez de dar por roto un par válido y quedarse sin avisos web en silencio.
+  const crudo = deB64url(priv);
+  const d = crudo.length > 0 && crudo.length < 32 ? Buffer.concat([Buffer.alloc(32 - crudo.length), crudo]) : crudo;
   if (pub.length !== 65 || pub[0] !== 0x04 || d.length !== 32) return null;
   try {
     const privada = crypto.createPrivateKey({ key: { kty: 'EC', crv: 'P-256', d: b64url(d), x: b64url(pub.subarray(1, 33)), y: b64url(pub.subarray(33, 65)) }, format: 'jwk' });
@@ -126,7 +129,9 @@ export const pushWebConfigurado = () => !!vapid();
 export function crearParVapid(): { publica: string; privada: string } {
   const e = crypto.createECDH('prime256v1');
   e.generateKeys();
-  return { publica: b64url(e.getPublicKey()), privada: b64url(e.getPrivateKey()) };
+  // getPrivateKey() quita los ceros de la izquierda (≈1 de cada 256): siempre 32 bytes.
+  const d = e.getPrivateKey();
+  return { publica: b64url(e.getPublicKey()), privada: b64url(Buffer.concat([Buffer.alloc(Math.max(0, 32 - d.length)), d])) };
 }
 
 export async function suscripcionesDe(correo: string): Promise<{ ok: true; suscripciones: SuscripcionWeb[] } | { ok: false }> {

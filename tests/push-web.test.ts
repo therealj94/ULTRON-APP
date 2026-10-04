@@ -108,6 +108,26 @@ test('VAPID: ES256 que verifica con la llave pública anunciada, aud = origen de
     assert.ok(crypto.verify('sha256', Buffer.from(`${cab}.${cuerpo}`), { key: llave, dsaEncoding: 'ieee-p1363' }, deB64url(firma)));
   }));
 
+test('VAPID: un par cuya llave privada empieza con ceros (≈1 de cada 256) sigue valiendo, venga de crearParVapid o de otra herramienta', () => {
+  // Se busca un par así (determinista: se prueban pares hasta dar con uno; en promedio, unos 256).
+  let e: crypto.ECDH;
+  do {
+    e = crypto.createECDH('prime256v1');
+    e.generateKeys();
+  } while (e.getPrivateKey().length === 32);
+  const corta = b64url(e.getPrivateKey());
+  process.env.WEB_PUSH_VAPID_PUBLICA = b64url(e.getPublicKey());
+  process.env.WEB_PUSH_VAPID_PRIVADA = corta;
+  try {
+    assert.ok(W.vapid(), 'la llave sin los ceros de la izquierda se completa a 32 bytes');
+  } finally {
+    delete process.env.WEB_PUSH_VAPID_PUBLICA;
+    delete process.env.WEB_PUSH_VAPID_PRIVADA;
+  }
+  // Y crearParVapid nunca entrega una privada de menos de 32 bytes.
+  for (let i = 0; i < 2000; i++) assert.equal(deB64url(W.crearParVapid().privada).length, 32);
+});
+
 test('VAPID: sin par, o con un par roto, no hay avisos web (y no se rompe nada)', () => {
   assert.equal(W.vapid(), null);
   process.env.WEB_PUSH_VAPID_PUBLICA = 'no-es-una-llave';
