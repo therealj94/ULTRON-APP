@@ -9,6 +9,7 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
+using Aura.Windows.Core;
 
 namespace Aura.Windows.Centro;
 
@@ -20,6 +21,8 @@ namespace Aura.Windows.Centro;
 internal sealed class CentroWindow : Window
 {
     public const string Origen = "https://centro.aura.local";
+    /// <summary>¿Es de la página propia? Origen exacto (esquema, host y puerto), nunca por prefijo.</summary>
+    static bool Propia(string? url) => PuenteCentro.OrigenExacto(url, PuenteCentro.Origen);
     readonly WebView2 web = new() { DefaultBackgroundColor = System.Drawing.Color.FromArgb(255, 10, 10, 12) };
     readonly Func<string, JsonElement, Task<object?>> manejar;
     bool listo, cerrandoDeVerdad;
@@ -52,8 +55,8 @@ internal sealed class CentroWindow : Window
     {
         try
         {
-            var perfil = Path.Combine(Registro.Carpeta, "Centro");
-            var entorno = await CoreWebView2Environment.CreateAsync(null, perfil, new CoreWebView2EnvironmentOptions("--autoplay-policy=no-user-gesture-required"));
+            // El mismo entorno (perfil «Centro») que el orbe del notch: un solo grupo de procesos de Edge.
+            var entorno = await EntornoWeb.Compartido();
             await web.EnsureCoreWebView2Async(entorno);
             var core = web.CoreWebView2;
             core.Settings.AreHostObjectsAllowed = false;
@@ -63,15 +66,20 @@ internal sealed class CentroWindow : Window
             core.Settings.AreDevToolsEnabled = Debugger.IsAttached;
             core.SetVirtualHostNameToFolderMapping("centro.aura.local", Path.Combine(AppContext.BaseDirectory, "CentroAssets"), CoreWebView2HostResourceAccessKind.DenyCors);
             // Solo la página propia navega aquí; cualquier enlace de afuera se abre en el navegador.
-            core.NavigationStarting += (_, e) => { if (!e.Uri.StartsWith(Origen, StringComparison.OrdinalIgnoreCase)) { e.Cancel = true; AbrirAfuera(e.Uri); } };
+            core.NavigationStarting += (_, e) => { if (!Propia(e.Uri)) { e.Cancel = true; AbrirAfuera(e.Uri); } };
+            // Tampoco dentro de un iframe: la página propia no los usa.
+            core.FrameNavigationStarting += (_, e) => { if (!Propia(e.Uri)) e.Cancel = true; };
+            // Nada se descarga desde el Centro (como en la ventana de llamadas).
+            core.DownloadStarting += (_, e) => e.Cancel = true;
             core.NewWindowRequested += (_, e) => { e.Handled = true; AbrirAfuera(e.Uri); };
             // Micrófono y cámara: solo para la página propia (llamadas de PULSE2CHAT). Lo demás, no.
             core.PermissionRequested += (_, e) =>
             {
-                bool propia = e.Uri.StartsWith(Origen, StringComparison.OrdinalIgnoreCase);
+                bool propia = Propia(e.Uri) && Propia(web.CoreWebView2?.Source);
                 e.State = propia && e.PermissionKind is CoreWebView2PermissionKind.Microphone or CoreWebView2PermissionKind.Camera
                     ? CoreWebView2PermissionState.Allow : CoreWebView2PermissionState.Deny;
-                e.SavesInProfile = true;
+                // Se decide cada vez: nada queda guardado en el perfil para otro origen.
+                e.SavesInProfile = false;
             };
             core.WebMessageReceived += (_, e) => _ = Recibir(e);
             core.ProcessFailed += (_, e) => Registro.Anotar("centro", "WebView2 falló: " + e.ProcessFailedKind);
@@ -98,7 +106,8 @@ internal sealed class CentroWindow : Window
 
     async Task Recibir(CoreWebView2WebMessageReceivedEventArgs e)
     {
-        if (!e.Source.StartsWith(Origen, StringComparison.OrdinalIgnoreCase)) return;
+        // Cada mensaje: del origen exacto, y la página principal también lo es (no un marco ajeno).
+        if (!Propia(e.Source) || !Propia(web.CoreWebView2?.Source)) { Registro.Anotar("centro", "mensaje de otro origen, ignorado"); return; }
         int id = 0;
         try
         {
@@ -106,6 +115,7 @@ internal sealed class CentroWindow : Window
             var r = doc.RootElement;
             id = r.GetProperty("id").GetInt32();
             var metodo = r.GetProperty("metodo").GetString() ?? "";
+            if (!PuenteCentro.MetodoPermitido(metodo)) throw new InvalidOperationException("Método desconocido: " + metodo);
             var args = r.TryGetProperty("args", out var a) ? a.Clone() : default;
             var valor = await manejar(metodo, args);
             Responder(new { id, ok = true, valor });
@@ -137,6 +147,14 @@ internal sealed class CentroWindow : Window
     /// <summary>Trae el Centro al frente (y a una sección, si se pide).</summary>
     public void Mostrar(string? seccion = null)
     {
+        // Si se abrió mientras se preparaba escondido, aún no tenía botón en la barra de tareas ni lugar en la
+        // pantalla: minimizarla la hacía «desaparecer». Siempre con su botón y centrada en la pantalla.
+        ShowInTaskbar = true;
+        if (Left < -10000 || Top < -10000)
+        {
+            Left = (SystemParameters.WorkArea.Width - Width) / 2 + SystemParameters.WorkArea.Left;
+            Top = (SystemParameters.WorkArea.Height - Height) / 2 + SystemParameters.WorkArea.Top;
+        }
         if (!IsVisible) Show();
         if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
         Activate();

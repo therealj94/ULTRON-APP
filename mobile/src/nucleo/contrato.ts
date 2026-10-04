@@ -29,9 +29,21 @@ export type Encuesta = {
   trabajo?: string;
   /** Pasatiempos, deportes, lo que le gusta. */
   gustos?: string;
+  /** Lo que quiere que AURA haga por él (la primera vez lo elige o lo escribe). */
+  ayuda?: string;
   /** Lo que quiera que AURA sepa y no cupo arriba. */
   otros?: string;
 };
+
+export type MotorComputadora = 'gratis' | 'pago';
+
+/**
+ * Cuánta iniciativa quiere de AURA (server/iniciativa.ts, lib/perfil-persona.ts): con qué frecuencia le
+ * propone cosas sin que se lo pida. alta: cada 2 h (hasta 6 al día) · media: cada 4 h (hasta 3) · baja: 1
+ * al día · apagada: nunca. Sin valor, media.
+ */
+export type NivelIniciativa = 'alta' | 'media' | 'baja' | 'apagada';
+export const NIVELES_INICIATIVA: readonly NivelIniciativa[] = ['alta', 'media', 'baja', 'apagada'];
 
 export type Perfil = {
   /** Cómo quiere que le digan («José», «Jefe», «Pepe»). */
@@ -51,6 +63,13 @@ export type Perfil = {
    * de los chats (lado) o a pantalla completa (completa). Sin valor, paseo. Ver avatar3d/presencia.ts.
    */
   presencia?: ModoPresencia;
+  /**
+   * Quién maneja su computadora en la nube (server/computadora.ts): el modelo propio (gratis) o Claude
+   * (de pago). Sin valor, gratis.
+   */
+  motorComputadora?: MotorComputadora;
+  /** Cuánto le propone AURA por su cuenta (NivelIniciativa). Sin valor, media. */
+  iniciativa?: NivelIniciativa;
   /** Milisegundos. */
   actualizado: number;
 };
@@ -106,12 +125,29 @@ export type AccionApp =
   /** Quita un recordatorio (por el id que el teléfono contó en su contexto). Solo tras el «sí». */
   | { tipo: 'cancelar_recordatorio'; id: string }
   /** «Llámame»: el avatar llama a la persona, ya (la pantalla «te está llamando»; compa/llamadaCiclo.ts). */
-  | { tipo: 'llamame' };
+  | { tipo: 'llamame' }
+  /** «¿Cuánto tengo en mi wallet?»: abre la hoja Cartera (cartera/HojasCartera.tsx). Solo lectura. */
+  | { tipo: 'cartera' }
+  /**
+   * «Mándale 5 ORIGEN a Ana»: abre su chat y la hoja de enviar, LLENADA. La persona revisa, confirma y firma
+   * en Veta Wallet con su contraseña: AURA nunca paga sola (cartera/HojaPagar.tsx).
+   */
+  | { tipo: 'pagar'; con: string; monto?: string; moneda?: string }
+  /*
+   * LOS CONTROLES DE VOZ SEPARADOS (AUR10, lib/controlesVoz.ts; mano `controles`), cada uno con UN efecto.
+   * Los decide el servidor con lo que dijo la persona (el modelo no los puede pedir):
+   */
+  /** «Cállate», «para de hablar»: para lo que suena y su cola. No silencia el micrófono ni cancela la tarea. */
+  | { tipo: 'detener_audio' }
+  /** «Cuelga»: cierra la llamada del avatar y sus recursos. La tarea de su computadora sigue como estaba. */
+  | { tipo: 'colgar' }
+  /** «Cancela / pausa / sigue con la tarea», «tomo el control»: su computadora. No cuelga. */
+  | { tipo: 'tarea'; que: 'pausar' | 'reanudar' | 'cancelar' | 'tomar' };
 
 export type CampoPerfil = 'apodo' | 'cumple' | keyof Encuesta;
 
 /** Las manos que este teléfono sabe hacer: van en el contexto para que el servidor las ofrezca. */
-export const MANOS_APP = ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame'] as const;
+export const MANOS_APP = ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame', 'cartera', 'pagar', 'controles'] as const;
 export type Mano = (typeof MANOS_APP)[number];
 
 /** Un recordatorio puesto en el teléfono (lo cuenta en el contexto para decirlo y cancelarlo por voz). */
@@ -126,6 +162,17 @@ export type RecordatorioPuesto = { id: string; texto: string; cuando: number; ll
  */
 export const RUTA_ACCIONES = '/api/app/acciones';
 export const RUTA_CONTEXTO = '/api/app/contexto';
+
+/**
+ * Por el MISMO canal de acciones, durante la conversación: `event: ambiente` + `data: {"sonido","on"}`.
+ * Es el sonido de fondo mientras AURA hace una tarea lenta (tecleo al buscar, hojas al leer, lápiz al
+ * calcular); `on: false` lo quita. No es una acción (no lleva id, no se deduplica ni se repite al
+ * reconectar) y solo llega al aparato de la conversación. Un teléfono que no lo conoce lo salta.
+ * Los mismos nombres que compa/frasesEstado.ts (SONIDOS_AMBIENTE) y lib/acciones-app.ts.
+ */
+export const EVENTO_AMBIENTE = 'ambiente';
+export type SonidoAmbiente = 'teclado' | 'papel' | 'lapiz';
+export type Ambiente = { sonido: SonidoAmbiente | null; on: boolean };
 
 export type Contexto = {
   pantalla: Pantalla;
@@ -176,6 +223,8 @@ export type Eventos = {
    * queda guardado en compa/recordatorios.ts (`tomarPorDecir`) hasta que la voz se monte.
    */
   recordatorio: { texto: string; base: string };
+  /** El sonido de fondo de una tarea lenta en la conversación (llega por el canal de acciones). */
+  ambiente: Ambiente;
 };
 
 type Oyente<K extends keyof Eventos> = (dato: Eventos[K]) => void;

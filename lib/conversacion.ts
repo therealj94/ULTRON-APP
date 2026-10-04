@@ -66,18 +66,21 @@ export function esInterno(message: string): boolean {
   return false;
 }
 
+/**
+ * «Sí, hazlo», «dale», «revisa eso»: sigue con lo último del hilo. Con límite de palabra y sin
+ * despedidas ni negaciones: «buenos días», «bueno, gracias», «claro que no» o «siempre me pasa eso»
+ * no son un «sí» (1-oct: lanzaban una búsqueda web con la última frase de AU-RA como consulta).
+ */
 export function esContinuacion(message: string): boolean {
   const q = fold(message);
   if (!q) return false;
-  if (
-    /^(si|dale|ok|vale|hazlo|hazlo vos|procede|adelante|claro|bueno|si hacerlo|si,? haz|si, hacerlo)/.test(q) &&
-    q.length < 240
-  ) {
-    return true;
-  }
+  if (/\b(no|gracias|buen[oa]s? (dias|tardes|noches)|adios|chao|hasta luego)\b/.test(q)) return false;
+  if (/^(si|dale|ok|okay|vale|hazlo|procede|adelante|claro|bueno|listo)\b/.test(q) && q.length < 120) return true;
   return (
     q.length < 280 &&
-    /\b(esto|eso|ese codigo|el codigo|el repo|el readme|la pagina|el enlace|el link|el proyecto|profund[oa]|descarga(lo| el codigo)?|analiza(lo)?|revisa (esto|eso|el|la|lo|profundo)|el objeto)\b/.test(q)
+    (/\b(ese codigo|el codigo|el repo|el readme|la pagina|el enlace|el link|el proyecto|el objeto)\b/.test(q) ||
+      /\b(revisa|analiza|descarga|lee|abre|mira|busca|investiga)(lo|la)?( (mas )?(a )?profund[oa])? (esto|eso|ese|esa|aquello)\b/.test(q) ||
+      /\b(analizalo|descargalo|revisalo|revisa profundo|a fondo)\b/.test(q))
   );
 }
 
@@ -163,23 +166,38 @@ export function fusionarHilo(opts: {
   cliente?: TurnoHilo[];
   mensaje: string;
   max?: number;
+  /** Caracteres por mensaje (la voz usa menos: cada ficha es tiempo antes de hablar). */
+  maxCaracteres?: number;
 }): MsgHilo[] {
   const durable = opts.durable || [];
   const cliente = opts.cliente || [];
   const src = durable.length >= 2 ? durable : [...cliente, ...durable];
+  const tope = opts.maxCaracteres ?? 1800;
   const msgs: MsgHilo[] = [];
   for (const t of src.slice(-(opts.max ?? 16))) {
-    const content = String(t.texto || '').trim().slice(0, 1800);
+    const content = String(t.texto || '').trim().slice(0, tope);
     if (!content) continue;
     const role: 'user' | 'assistant' = t.rol === 'ultron' || t.rol === 'assistant' ? 'assistant' : 'user';
     msgs.push({ role, content });
   }
-  const actual = String(opts.mensaje || '').trim().slice(0, 1800);
+  const actual = String(opts.mensaje || '').trim().slice(0, tope);
   if (msgs.length && msgs[msgs.length - 1].role === 'user' && msgs[msgs.length - 1].content === actual) {
     msgs.pop();
   }
   return msgs;
 }
+
+/**
+ * Qué va en el bloque de memoria del prompt (lib/memoria.ts, lib/memoria-miembro.ts):
+ *   · 'todo'    — todo: la memoria larga, el hilo corto y la conversación mediana (lo de siempre).
+ *   · 'mediano' — sin el hilo corto: el turno ya manda el hilo como mensajes (server.ts), y el corto
+ *                 repetido dentro del system cambiaba en cada turno y obligaba al nodo a releerlo todo.
+ *   · 'firma'   — lo que, si cambia, obliga a rehacer el system a media conversación
+ *                 (server/prompt-turno.ts fijoDeLaConversacion): con quién habla, su acceso y lo que
+ *                 pidió recordar a propósito. Lo que se guarda solo por nombrar «la mina» o «la junta»
+ *                 no entra: pasa en muchos turnos, y lo dicho en la conversación ya está en los mensajes.
+ */
+export type HiloMemoria = 'todo' | 'mediano' | 'firma';
 
 export function capasHilo(corta: TurnoHilo[]): { corto: string; mediano: string } {
   const items = (corta || []).filter((t) => String(t.texto || '').trim());

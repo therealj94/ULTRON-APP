@@ -132,6 +132,29 @@ async function pedir<T>(ruta: string, init: RequestInit = {}, msIntento = ESPERA
   }
 }
 
+/**
+ * Dictado Turbo: un token de un solo uso de ElevenLabs con la dirección del WebSocket lista (pistas del
+ * oficio, idioma automático). La clave no llega al teléfono. null si el servidor no lo da.
+ */
+export async function permisoTurbo(): Promise<{ url: string } | null> {
+  try {
+    const j = await pedir<{ url?: string }>('/api/electrum/turbo/permiso', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }, 8_000);
+    return j?.url && /^wss:\/\//.test(j.url) ? { url: j.url } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Una grabación (WAV en base64) al oído del servidor. `confirmar`: directo con Scribe v2, sin Turbo. */
+export async function oirWav(wavB64: string, confirmar = false): Promise<string> {
+  const j = await pedir<{ texto?: string }>(
+    '/api/electrum/oir',
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ audio: wavB64, mime: 'audio/wav', ...(confirmar ? { confirmar: true } : {}) }) },
+    20_000
+  );
+  return String(j?.texto || '').trim();
+}
+
 // Los tipos del hilo viven en `campo.ts`, que no importa nada nativo y se prueba sin teléfono.
 export type { Traza, TurnoHilo } from './campo';
 

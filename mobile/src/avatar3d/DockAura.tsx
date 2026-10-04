@@ -26,7 +26,8 @@ import type { Pantalla } from '../nucleo/contrato';
 import { useVozOpcional, type ApiVoz } from '../compa/VozProvider';
 import { Icono } from '../pulse/ui/Icono';
 import { Tocable } from '../pulse/ui/Tocable';
-import { AvatarVivo, type ControlCuerpo } from './AvatarVivo';
+import { type ControlCuerpo } from './AvatarVivo';
+import { CuerpoElegido } from './CuerpoElegido';
 import { Figura2D } from './Figura2D';
 import { disposicionDock, siguienteModo, type Disposicion } from './presencia';
 import { fijarPresencia, useAnotarCuerpoAparte, useEsLaVisible, useEstadoAvatar, useModoPresencia, usePreferenciaPresencia } from './usePresencia';
@@ -139,7 +140,7 @@ function DockAura({ disposicion, voz }: { disposicion: Disposicion; voz: ApiVoz 
       accessibilityLabel={tr('AURA, tu compañera', 'AURA, your companion')}
       accessibilityHint={tr('Toca para saludarla; toca dos veces para silenciarla o despertarla', 'Tap to say hi; double-tap to mute or wake her')}
     >
-      <AvatarVivo
+      <CuerpoElegido
         ref={cuerpo}
         avatar={avatar}
         camara={camara}

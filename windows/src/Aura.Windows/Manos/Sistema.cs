@@ -19,6 +19,32 @@ internal static class Sistema
     struct MEMORYSTATUSEX { public uint dwLength, dwMemoryLoad; public ulong ullTotalPhys, ullAvailPhys, ullTotalPageFile, ullAvailPageFile, ullTotalVirtual, ullAvailVirtual, ullAvailExtendedVirtual; }
     [DllImport("kernel32.dll")] static extern bool GlobalMemoryStatusEx(ref MEMORYSTATUSEX m);
 
+    [DllImport("kernel32.dll")] static extern bool GetSystemTimes(out long ocioso, out long nucleo, out long usuario);
+
+    /// <summary>El uso del procesador (%) medido en medio segundo.</summary>
+    static int Cpu()
+    {
+        GetSystemTimes(out var o1, out var k1, out var u1);
+        System.Threading.Thread.Sleep(500);
+        GetSystemTimes(out var o2, out var k2, out var u2);
+        long total = (k2 - k1) + (u2 - u1), ocio = o2 - o1;
+        return total <= 0 ? 0 : (int)Math.Clamp(Math.Round(100.0 * (total - ocio) / total), 0, 100);
+    }
+
+    /// <summary>El nombre del wifi conectado (netsh con argumentos fijos), o null.</summary>
+    static string? Wifi()
+    {
+        try
+        {
+            using var p = Process.Start(new ProcessStartInfo("netsh.exe", "wlan show interfaces") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true })!;
+            var salida = p.StandardOutput.ReadToEnd();
+            p.WaitForExit(3000);
+            var m = Regex.Match(salida, @"^\s*SSID\s*:\s*(.+?)\s*$", RegexOptions.Multiline);
+            return m.Success && m.Groups[1].Value.Length > 0 ? m.Groups[1].Value : null;
+        }
+        catch { return null; }
+    }
+
     static string Gb(long bytes) => (bytes / 1024d / 1024 / 1024).ToString("0.#", CultureInfo.InvariantCulture);
 
     public static string Info(string que, string idioma)
@@ -67,6 +93,48 @@ internal static class Sistema
                 catch { internet = false; }
                 return internet ? (en ? $"You're online by {via}." : $"Hay internet, por {via}.") : (en ? $"Connected by {via}, but the internet doesn't answer." : $"Hay conexión por {via}, pero internet no responde.");
             }
+            case "cpu": { var c = Cpu(); return en ? $"The processor is at {c}%." : $"El procesador está al {c} %."; }
+            case "memoria":
+            {
+                var m = new MEMORYSTATUSEX { dwLength = (uint)Marshal.SizeOf<MEMORYSTATUSEX>() };
+                GlobalMemoryStatusEx(ref m);
+                long usada = (long)(m.ullTotalPhys - m.ullAvailPhys);
+                return en ? $"Memory: {m.dwMemoryLoad}% in use ({Gb(usada)} of {Gb((long)m.ullTotalPhys)} GB)." : $"Memoria: {m.dwMemoryLoad} % en uso ({Gb(usada)} de {Gb((long)m.ullTotalPhys)} GB).";
+            }
+            case "ip":
+            {
+                var ips = NetworkInterface.GetAllNetworkInterfaces()
+                    .Where(n => n.OperationalStatus == OperationalStatus.Up && n.NetworkInterfaceType is not (NetworkInterfaceType.Loopback or NetworkInterfaceType.Tunnel))
+                    .SelectMany(n => n.GetIPProperties().UnicastAddresses).Select(a => a.Address)
+                    .Where(a => a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && !System.Net.IPAddress.IsLoopback(a)).Select(a => a.ToString()).Distinct().ToList();
+                if (ips.Count == 0) return en ? "No network connection, so no IP address." : "No hay conexión de red: no tienes dirección IP.";
+                return en ? $"Your local IP is {string.Join(", ", ips)}." : $"Tu IP local es {string.Join(", ", ips)}.";
+            }
+            case "encendido":
+            {
+                var t = TimeSpan.FromMilliseconds(Environment.TickCount64);
+                return en ? $"The PC has been on for {(int)t.TotalDays} d {t.Hours} h {t.Minutes} min." : $"La computadora lleva encendida {(t.TotalDays >= 1 ? $"{(int)t.TotalDays} d " : "")}{t.Hours} h {t.Minutes} min.";
+            }
+            case "version":
+            {
+                string nombre = "Windows", edicion = "";
+                try
+                {
+                    using var k = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion");
+                    nombre = k?.GetValue("ProductName") as string ?? nombre;
+                    edicion = k?.GetValue("DisplayVersion") as string ?? "";
+                }
+                catch { }
+                // El registro dice «Windows 10» también en Windows 11: la compilación 22000 o más es 11.
+                if (Environment.OSVersion.Version.Build >= 22000) nombre = nombre.Replace("Windows 10", "Windows 11");
+                var v = $"{nombre}{(edicion.Length > 0 ? " " + edicion : "")} (build {Environment.OSVersion.Version.Build})";
+                return en ? $"This PC runs {v}." : $"Esta computadora tiene {v}.";
+            }
+            case "wifi":
+            {
+                var w = Wifi();
+                return w != null ? (en ? $"You're connected to the Wi-Fi “{w}”." : $"Estás conectado al wifi «{w}».") : (en ? "You're not connected to any Wi-Fi." : "No estás conectado a ningún wifi.");
+            }
             default:
             {
                 var m = new MEMORYSTATUSEX { dwLength = (uint)Marshal.SizeOf<MEMORYSTATUSEX>() };
@@ -78,8 +146,19 @@ internal static class Sistema
         }
     }
 
-    static readonly string[] Ejecutables = { ".exe", ".msi", ".bat", ".cmd", ".ps1", ".vbs", ".js", ".jse", ".wsf", ".scr", ".com", ".lnk", ".jar", ".hta", ".cpl", ".msc", ".reg", ".appx", ".msix" };
-    public static bool EsEjecutable(string ruta) => Ejecutables.Contains(Path.GetExtension(ruta).ToLowerInvariant());
+    /// <summary>
+    /// Lo que se abre sin preguntar: documentos, imágenes, audio y video comunes. Antes era al revés (una lista de
+    /// ejecutables) y se colaban .url, .iso, .vhd, .appinstaller, .settingcontent-ms, .chm, .docm, .py…: una página
+    /// deja «factura.iso» en Descargas y «abre lo último que descargué» lo abría sin preguntar (revisión 2-oct).
+    /// </summary>
+    static readonly HashSet<string> SinPreguntar = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".pdf", ".txt", ".md", ".csv", ".rtf", ".docx", ".xlsx", ".pptx", ".odt", ".ods", ".odp",
+        ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".heic", ".svg",
+        ".mp3", ".wav", ".m4a", ".flac", ".ogg", ".mp4", ".mov", ".mkv", ".webm", ".avi",
+    };
+    /// <summary>Todo lo que no es un documento común (programas, instaladores, accesos, imágenes de disco, macros) espera el «sí».</summary>
+    public static bool PideConfirmar(string ruta) => !SinPreguntar.Contains(Path.GetExtension(ruta));
 
     static IEnumerable<string> Carpetas() => new[]
     {

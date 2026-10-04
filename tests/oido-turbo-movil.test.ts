@@ -1,0 +1,656 @@
+/**
+ * El oído Turbo del teléfono (mobile/src/lib/turboMotor.ts y turboLogica.ts): micrófono, reloj,
+ * WebSocket y servidor de mentira. Lo que se prueba es lo que siente la persona: que la frase llegue,
+ * entera, en cuanto calla; que lo de dinero se confirme; que nunca se pierda aunque falle la red.
+ */
+import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
+import { FRASE_DE_DINERO as DINERO_SERVIDOR, pcmDeWav } from '../lib/oido';
+import {
+  FRASE_DE_DINERO,
+  SILENCIO_BASE_MS,
+  SILENCIO_CORTO_MS,
+  SILENCIO_LARGO_MS,
+  aBase64,
+  deBase64,
+  datoSensibleDeDinero,
+  esFraseDeDinero,
+  fraseSinVerificar,
+  limpiarFinal,
+  silencioParaCerrar,
+  wavDeTrozos,
+} from '../mobile/src/lib/turboLogica';
+import { MotorTurbo, type TrozoAudio, type WsTurbo } from '../mobile/src/lib/turboMotor';
+
+const espera = (ms = 5) => new Promise((r) => setTimeout(r, ms));
+
+describe('Oído Turbo (teléfono): lógica', () => {
+  it('la expresión de dinero es la misma que la del servidor', () => {
+    assert.equal(FRASE_DE_DINERO.source, DINERO_SERVIDOR.source);
+    assert.equal(esFraseDeDinero('Mándale cinco origen a Ana'), true);
+    assert.equal(esFraseDeDinero('abre Spotify'), false);
+  });
+
+  it('cierra rápido si terminó la idea y espera si se quedó a medias', () => {
+    assert.equal(silencioParaCerrar('¿Qué hora es?'), SILENCIO_CORTO_MS);
+    assert.equal(silencioParaCerrar('abre Excel'), SILENCIO_BASE_MS);
+    assert.equal(silencioParaCerrar('ponme música y'), SILENCIO_LARGO_MS);
+    assert.equal(silencioParaCerrar('mándale un mensaje a'), SILENCIO_LARGO_MS);
+    assert.equal(silencioParaCerrar('busca el correo de,'), SILENCIO_LARGO_MS);
+    assert.equal(silencioParaCerrar('revisa mi-'), SILENCIO_LARGO_MS);
+    assert.ok(silencioParaCerrar('') > SILENCIO_BASE_MS, 'sin texto todavía espera un poco más');
+  });
+
+  it('base64 a mano igual que Buffer, y el WAV lo lee el servidor tal cual', () => {
+    for (const n of [0, 1, 2, 3, 4, 5, 320, 3200, 3201]) {
+      const b = Buffer.from(Array.from({ length: n }, (_, i) => (i * 37 + 11) & 255));
+      assert.equal(aBase64(new Uint8Array(b)), b.toString('base64'), `codificar ${n}`);
+      assert.deepEqual(Buffer.from(deBase64(b.toString('base64'))), b, `decodificar ${n}`);
+    }
+    const t1 = Buffer.alloc(3200, 1).toString('base64');
+    const t2 = Buffer.alloc(3200, 2).toString('base64');
+    const wav = Buffer.from(wavDeTrozos([t1, t2]), 'base64');
+    const leido = pcmDeWav(wav);
+    assert.equal(leido?.frecuencia, 16000);
+    assert.equal(leido?.pcm.length, 6400);
+    assert.equal(leido?.pcm[0], 1);
+    assert.equal(leido?.pcm[6399], 2);
+  });
+
+  it('limpia comillas y basura', () => {
+    assert.equal(limpiarFinal('"Open Chrome".'), 'Open Chrome');
+    assert.equal(limpiarFinal('Gracias por ver el video'), '');
+    assert.equal(limpiarFinal('a'), '');
+  });
+});
+
+// ── el motor con todo de mentira ─────────────────────────────────────────────────────────────────
+class WsFalso implements WsTurbo {
+  readyState = 0;
+  enviados: any[] = [];
+  cerrado = false;
+  onopen: (() => void) | null = null;
+  onmessage: ((e: { data: any }) => void) | null = null;
+  onerror: ((e?: any) => void) | null = null;
+  onclose: ((e?: any) => void) | null = null;
+  constructor(public url: string) {}
+  abrir() {
+    this.readyState = 1;
+    this.onopen?.();
+    this.decir({ message_type: 'session_started' });
+  }
+  decir(j: object) {
+    this.onmessage?.({ data: JSON.stringify(j) });
+  }
+  send(d: string) {
+    this.enviados.push(JSON.parse(d));
+  }
+  close() {
+    this.cerrado = true;
+    this.readyState = 3;
+  }
+  caer() {
+    this.readyState = 3;
+    this.onclose?.({ code: 1006 });
+  }
+  get commits() {
+    return this.enviados.filter((m) => m.commit).length;
+  }
+}
+
+function banco(opts: { permiso?: boolean; abreWs?: boolean; mic?: 'bien' | 'falla'; confirmado?: string; respaldo?: string; demoraWav?: number; confirmarFalla?: boolean } = {}) {
+  let reloj = 1_000_000;
+  const ws: WsFalso[] = [];
+  const llamadasWav: { wav: string; confirmar: boolean }[] = [];
+  const finales: string[] = [];
+  const parciales: string[] = [];
+  const eventos: string[] = [];
+  const vias: string[] = [];
+  let alTrozo: ((t: TrozoAudio) => void) | null = null;
+  let micAbierto = false;
+  let permisos = 0;
+  const motor = new MotorTurbo({
+    ahora: () => reloj,
+    abrirMic: async (cb) => {
+      if (opts.mic === 'falla') return null;
+      alTrozo = cb;
+      micAbierto = true;
+      return () => {
+        micAbierto = false;
+        alTrozo = null;
+      };
+    },
+    permiso: async () => {
+      permisos++;
+      return opts.permiso === false ? null : { url: `wss://falso/${permisos}` };
+    },
+    crearWs: (url) => {
+      const w = new WsFalso(url);
+      ws.push(w);
+      if (opts.abreWs !== false) setTimeout(() => w.abrir(), 1);
+      return w;
+    },
+    transcribirWav: async (wav, confirmar) => {
+      llamadasWav.push({ wav, confirmar });
+      if (opts.demoraWav) await new Promise((r) => setTimeout(r, opts.demoraWav));
+      if (confirmar && opts.confirmarFalla) throw new Error('HTTP 502');
+      return confirmar ? (opts.confirmado ?? '') : (opts.respaldo ?? 'texto del respaldo');
+    },
+    tiempos: { esperaFinalMs: 60, confirmarMs: 200, inactivoMs: 10_000 },
+  });
+  motor.setCallbacks({
+    onFinal: (t) => finales.push(t),
+    onPartial: (t) => parciales.push(t),
+    onSpeechStart: () => eventos.push('voz'),
+    onUnavailable: (m) => eventos.push(`no:${m}`),
+    onListeningChange: (on) => eventos.push(on ? 'oye' : 'no-oye'),
+    onMedida: (m) => vias.push(m.via),
+  });
+  /** Un trozo de 0,1 s: voz (-20 dBFS) o silencio (-75). Cada trozo trae su número en los bytes. */
+  let n = 0;
+  const trozo = (voz: boolean) => {
+    reloj += 100;
+    n++;
+    alTrozo?.({ audio: Buffer.alloc(3200, n & 255).toString('base64'), db: voz ? -20 : -75 });
+  };
+  const silencio = (k: number) => {
+    for (let i = 0; i < k; i++) trozo(false);
+  };
+  const voz = (k: number) => {
+    for (let i = 0; i < k; i++) trozo(true);
+  };
+  const trozoDb = (db: number) => {
+    reloj += 100;
+    n++;
+    alTrozo?.({ audio: Buffer.alloc(3200, n & 255).toString('base64'), db });
+  };
+  return { motor, ws, llamadasWav, finales, parciales, eventos, vias, trozo, trozoDb, silencio, voz, abierto: () => micAbierto, permisos: () => permisos, avanzar: (ms: number) => (reloj += ms) };
+}
+
+describe('Oído Turbo (teléfono): el motor', () => {
+  it('frase normal: guarda lo de antes de la voz, la manda en vivo y entrega la frase al cerrar', async () => {
+    const b = banco();
+    b.motor.activar();
+    await espera();
+    assert.ok(b.abierto());
+    b.silencio(10);
+    b.voz(12);
+    await espera();
+    assert.deepEqual(b.eventos.filter((e) => e === 'voz'), ['voz']);
+    assert.equal(b.ws.length, 1, 'un WebSocket con el token del servidor');
+    const w = b.ws[0];
+    assert.match(w.url, /^wss:\/\/falso\//);
+    w.decir({ message_type: 'partial_transcript', text: 'abre' });
+    w.decir({ message_type: 'partial_transcript', text: 'abre Excel' });
+    assert.deepEqual(b.parciales, ['abre', 'abre Excel']);
+    // Se manda lo de antes de la voz (0,6 s) + toda la voz.
+    assert.equal(w.enviados.length, 6 + 12);
+    b.silencio(4);
+    assert.equal(w.commits, 0, 'a los 0,4 s de silencio todavía no cierra');
+    b.silencio(1);
+    assert.equal(w.commits, 1, 'a los 0,5 s cierra (terminó en una palabra completa)');
+    assert.equal(w.enviados.at(-1).commit, true);
+    w.decir({ message_type: 'committed_transcript', text: 'Abre Excel.' });
+    await espera();
+    assert.deepEqual(b.finales, ['Abre Excel.']);
+    assert.equal(b.llamadasWav.length, 0, 'sin dinero no se paga otra transcripción');
+  });
+
+  it('frase de dinero: se confirma con Scribe v2 con el audio entero de la frase', async () => {
+    const b = banco({ confirmado: 'Págale cien lempiras a Ana.' });
+    b.motor.activar();
+    await espera();
+    b.silencio(8);
+    b.voz(15);
+    await espera();
+    b.silencio(8);
+    b.ws[0].decir({ message_type: 'committed_transcript', text: 'Págale 100 dólares a Ana.' });
+    await espera(20);
+    assert.deepEqual(b.finales, ['Págale cien lempiras a Ana.']);
+    assert.deepEqual(b.vias, ['corroborada'], 'Scribe v2 devolvió la frase: corroborada');
+    assert.equal(b.llamadasWav.length, 1);
+    assert.equal(b.llamadasWav[0].confirmar, true);
+    const pcm = pcmDeWav(Buffer.from(b.llamadasWav[0].wav, 'base64'))!.pcm;
+    // 6 de antes + 15 de voz + los de silencio hasta el cierre (sin parcial, 0,65 s: 7), de 3200 bytes cada uno.
+    assert.equal(pcm.length, (6 + 15 + 7) * 3200);
+  });
+
+  // VOICE04 (auditoría del 3-oct): una segunda transcripción vacía conservaba lo que oyó Turbo y lo
+  // marcaba «confirmada». Vacío, error o sin respuesta a tiempo no corroboran nada: un monto o un
+  // destinatario dudosos no salen como orden, salen pidiendo que se confirmen.
+  const fraseDinero = async (b: ReturnType<typeof banco>, turbo: string) => {
+    b.motor.activar();
+    await espera();
+    b.voz(10);
+    await espera();
+    b.silencio(8);
+    b.ws[0].decir({ message_type: 'committed_transcript', text: turbo });
+    await espera(20);
+  };
+
+  it('Scribe v2 devuelve vacío: no corrobora; el monto y el destinatario salen pidiendo confirmación', async () => {
+    const b = banco({ confirmado: '' });
+    await fraseDinero(b, 'Mándale 5 ORIGEN a Ana');
+    assert.deepEqual(b.vias, ['no_corroborada'], 'nunca «confirmada» con una verificación vacía');
+    assert.equal(b.finales.length, 1, 'la frase no se pierde');
+    assert.notEqual(b.finales[0], 'Mándale 5 ORIGEN a Ana', 'la orden no sale como si estuviera verificada');
+    assert.equal(b.finales[0], fraseSinVerificar('Mándale 5 ORIGEN a Ana'));
+    assert.match(b.finales[0], /monto/);
+  });
+
+  it('Scribe v2 no contesta a tiempo: timeout, y también pide confirmar', async () => {
+    const b = banco({ confirmado: 'Mándale 50 ORIGEN a Ana', demoraWav: 400 });
+    await fraseDinero(b, 'Mándale 5 ORIGEN a Ana');
+    await espera(450);
+    assert.deepEqual(b.vias, ['timeout']);
+    assert.deepEqual(b.finales, [fraseSinVerificar('Mándale 5 ORIGEN a Ana')], 'lo que llegue tarde no cambia nada');
+  });
+
+  it('la verificación falla (error del servidor): cuenta como sin respuesta, no como confirmada', async () => {
+    const b = banco({ confirmarFalla: true });
+    await fraseDinero(b, 'Págale 100 dólares a Beto');
+    assert.deepEqual(b.vias, ['timeout']);
+    assert.deepEqual(b.finales, [fraseSinVerificar('Págale 100 dólares a Beto')]);
+  });
+
+  it('una pregunta de dinero sin monto ni destinatario sigue tal cual aunque no se corrobore', async () => {
+    const b = banco({ confirmado: '' });
+    await fraseDinero(b, '¿Cuánto tengo de saldo?');
+    assert.deepEqual(b.vias, ['no_corroborada']);
+    assert.deepEqual(b.finales, ['¿Cuánto tengo de saldo?']);
+    assert.equal(datoSensibleDeDinero('¿Cuánto tengo de saldo?'), false);
+    assert.equal(datoSensibleDeDinero('Págale a Ana'), true, 'a quién va el dinero es dato sensible');
+    assert.equal(datoSensibleDeDinero('manda cien lempiras'), true, 'un monto dicho con palabras también');
+    assert.equal(datoSensibleDeDinero('¿cuánto vale el oro en dólares?'), false);
+  });
+
+  it('se quedó en «y»: espera a que siga y no corta la frase', async () => {
+    const b = banco();
+    b.motor.activar();
+    await espera();
+    b.voz(10);
+    await espera();
+    b.ws[0].decir({ message_type: 'partial_transcript', text: 'ponme música y' });
+    b.silencio(7);
+    assert.equal(b.ws[0].commits, 0, 'a los 0,7 s no cierra: la frase sigue');
+    b.voz(5);
+    b.ws[0].decir({ message_type: 'partial_transcript', text: 'ponme música y baja las luces' });
+    b.silencio(5);
+    assert.equal(b.ws[0].commits, 1);
+  });
+
+  it('un golpe corto sin texto no es una frase', async () => {
+    const b = banco();
+    b.motor.activar();
+    await espera();
+    b.silencio(5);
+    b.voz(1);
+    await espera();
+    b.silencio(8);
+    assert.equal(b.ws[0].commits, 0);
+    assert.equal(b.finales.length, 0);
+  });
+
+  it('un «sí» cortito con texto de Turbo sí cuenta', async () => {
+    const b = banco();
+    b.motor.activar();
+    await espera();
+    b.voz(1);
+    await espera();
+    b.ws[0].decir({ message_type: 'partial_transcript', text: 'Sí.' });
+    b.silencio(4);
+    assert.equal(b.ws[0].commits, 1);
+    b.ws[0].decir({ message_type: 'committed_transcript', text: 'Sí.' });
+    await espera();
+    assert.deepEqual(b.finales, ['Sí.']);
+  });
+
+  it('sin permiso del servidor la frase igual llega, entera, por /api/stt', async () => {
+    const b = banco({ permiso: false, respaldo: 'Abre Excel' });
+    b.motor.activar();
+    await espera();
+    b.silencio(3);
+    b.voz(8);
+    await espera();
+    b.silencio(8);
+    await espera(20);
+    assert.equal(b.ws.length, 0);
+    assert.deepEqual(b.finales, ['Abre Excel']);
+    assert.equal(b.llamadasWav[0].confirmar, false);
+  });
+
+  it('silenciar y reabrir mientras una frase vieja está en /api/stt: esa frase ya no entra como turno (Codex, 3-oct)', async () => {
+    const b = banco({ permiso: false, respaldo: 'Lo de antes de silenciar', demoraWav: 60 });
+    b.motor.activar();
+    await espera();
+    b.silencio(3);
+    b.voz(8);
+    await espera();
+    b.silencio(8);
+    await espera(15);
+    assert.equal(b.llamadasWav.length, 1, 'la frase salió por /api/stt (todavía sin respuesta)');
+    assert.deepEqual(b.finales, []);
+    b.motor.silenciar();
+    b.motor.activar();
+    await espera(150);
+    assert.deepEqual(b.finales, [], 'llegó después de reabrir: era de antes, se tira');
+    // Lo que se dice DESPUÉS de reabrir sí entra.
+    b.silencio(3);
+    b.voz(8);
+    await espera();
+    b.silencio(8);
+    await espera(150);
+    assert.deepEqual(b.finales, ['Lo de antes de silenciar'], 'la frase nueva (mismo texto del falso) sí llega');
+  });
+
+  it('si Turbo no contesta a tiempo, la frase va por /api/stt y esa conexión se cierra', async () => {
+    const b = banco({ respaldo: 'Abre Excel' });
+    b.motor.activar();
+    await espera();
+    b.voz(8);
+    await espera();
+    b.silencio(8);
+    await espera(120);
+    assert.deepEqual(b.finales, ['Abre Excel']);
+    assert.equal(b.ws[0].cerrado, true);
+  });
+
+  it('se cae el WebSocket a media frase: reconecta y vuelve a mandar todo lo que iba', async () => {
+    const b = banco();
+    b.motor.activar();
+    await espera();
+    b.voz(6);
+    await espera();
+    b.ws[0].caer();
+    await espera();
+    assert.equal(b.ws.length, 2, 'otra conexión con otro token');
+    b.voz(4);
+    const reenviados = b.ws[1].enviados.length;
+    assert.equal(reenviados, 6 + 4, 'reenvió los 6 trozos que iban de la frase y siguió con los nuevos');
+    b.silencio(8);
+    b.ws[1].decir({ message_type: 'committed_transcript', text: 'Abre WhatsApp' });
+    await espera();
+    assert.deepEqual(b.finales, ['Abre WhatsApp']);
+  });
+
+  it('tres fallos seguidos del en vivo: un rato solo por /api/stt (sin pedir más tokens)', async () => {
+    const b = banco({ abreWs: false, respaldo: 'hola' });
+    b.motor.activar();
+    await espera();
+    for (let i = 0; i < 3; i++) {
+      b.voz(5);
+      await espera();
+      b.ws.at(-1)!.caer();
+      b.silencio(8);
+      await espera(10);
+    }
+    const ws = b.ws.length;
+    const permisos = b.permisos();
+    b.voz(5);
+    await espera();
+    b.silencio(8);
+    await espera(20);
+    assert.equal(b.ws.length, ws, 'no abre otro WebSocket');
+    assert.equal(b.permisos(), permisos, 'no pide otro token');
+    assert.ok(b.finales.includes('hola'));
+  });
+
+  it('mientras habla AU-RA el micrófono se cierra y la frase a medias se olvida', async () => {
+    const b = banco();
+    b.motor.activar();
+    await espera();
+    b.voz(6);
+    await espera();
+    b.motor.pausar(true);
+    assert.equal(b.abierto(), false);
+    b.ws[0].decir({ message_type: 'committed_transcript', text: 'eco de su propia voz' });
+    await espera();
+    assert.deepEqual(b.finales, []);
+    b.motor.pausar(false);
+    await espera();
+    assert.equal(b.abierto(), true);
+  });
+
+  it('el micrófono crudo no abre: avisa para volver al reconocedor del teléfono', async () => {
+    const b = banco({ mic: 'falla' });
+    b.motor.activar();
+    await espera(1600);
+    assert.ok(b.eventos.some((e) => e.startsWith('no:')));
+  });
+
+  it('cuarto con ventilador o tele (-45 dBFS) sin que nadie hable: no «oye» nada (José, 2-oct)', async () => {
+    const b = banco();
+    b.motor.activar();
+    await espera();
+    for (let i = 0; i < 200; i++) b.trozoDb(-45 + (i % 5) - 2);
+    assert.equal(b.eventos.filter((e) => e === 'voz').length, 0, 'el ruido de fondo no es voz');
+    assert.equal(b.ws.length, 0, 'ni se abre el WebSocket');
+  });
+
+  it('voz sobre ese ruido: la detecta y la cierra a tiempo (no a los 15 s)', async () => {
+    const b = banco();
+    b.motor.activar();
+    await espera();
+    for (let i = 0; i < 20; i++) b.trozoDb(-45);
+    for (let i = 0; i < 12; i++) b.trozoDb(i % 4 === 3 ? -40 : -22); // voz con pausas entre palabras
+    await espera();
+    assert.equal(b.eventos.filter((e) => e === 'voz').length, 1);
+    for (let i = 0; i < 7; i++) b.trozoDb(-45);
+    assert.equal(b.ws[0].commits, 1, 'cerró a los ~0,65 s de silencio, con el ruido de fondo sonando');
+  });
+
+  it('ceros del micrófono (silencio digital) entre ruido de fondo: no bajan el umbral ni dejan la frase abierta', async () => {
+    const b = banco();
+    b.motor.activar();
+    await espera();
+    for (let i = 0; i < 10; i++) b.trozoDb(-45);
+    for (let i = 0; i < 10; i++) b.trozoDb(-20);
+    await espera();
+    for (let i = 0; i < 3; i++) b.trozoDb(-100);
+    for (let i = 0; i < 10; i++) b.trozoDb(-45);
+    assert.equal(b.ws[0].commits, 1, 'la frase se cerró');
+    for (let i = 0; i < 50; i++) b.trozoDb(-45);
+    assert.equal(b.eventos.filter((e) => e === 'voz').length, 1, 'y el ruido no abre otra');
+  });
+
+  it('el texto de Turbo deja de cambiar: la frase se cierra aunque el volumen siga alto (eco, ruido)', async () => {
+    const b = banco();
+    b.motor.activar();
+    await espera();
+    b.voz(5);
+    await espera();
+    b.ws[0].decir({ message_type: 'partial_transcript', text: 'pon música' });
+    b.voz(15); // 1,5 s más de «voz» que Turbo no entiende como palabras nuevas
+    assert.equal(b.ws[0].commits, 0);
+    b.voz(6);
+    assert.equal(b.ws[0].commits, 1, 'a los 2 s sin texto nuevo, cierra');
+  });
+
+  it('se enciende la tele a mitad: a lo mucho una falsa alarma de 4 s y después nada', async () => {
+    const b = banco();
+    b.motor.activar();
+    await espera();
+    for (let i = 0; i < 20; i++) b.trozoDb(-70);
+    for (let i = 0; i < 60; i++) b.trozoDb(-38 + (i % 3)); // la tele: 6 s, Turbo no entiende palabras
+    await espera();
+    for (let i = 0; i < 150; i++) b.trozoDb(-38 + (i % 3));
+    await espera();
+    assert.ok(b.eventos.filter((e) => e === 'voz').length <= 1, `falsas alarmas: ${b.eventos.filter((e) => e === 'voz').length}`);
+    assert.equal(b.finales.length, 0);
+    assert.equal(b.ws[0]?.commits ?? 0, 0, 'el ruido no se manda a transcribir');
+  });
+
+  it('silenciar cierra todo', async () => {
+    const b = banco();
+    b.motor.activar();
+    await espera();
+    b.voz(6);
+    await espera();
+    b.motor.silenciar();
+    assert.equal(b.abierto(), false);
+    assert.equal(b.ws[0].cerrado, true);
+    assert.equal(b.motor.escuchando(), false);
+  });
+});
+
+// ── el dictado de campo de Dr Electrum (apretar, hablar, soltar) ────────────────────────────────
+import { dictarTurbo } from '../mobile/src/lib/turboDictado';
+
+function bancoDictado(opts: { permiso?: boolean; confirmado?: string; respaldo?: string; mic?: boolean; servidorCaido?: boolean } = {}) {
+  const ws: WsFalso[] = [];
+  const wavs: { wav: string; confirmar: boolean }[] = [];
+  const finales: string[] = [];
+  const parciales: string[] = [];
+  let fines = 0;
+  let alTrozo: ((t: TrozoAudio) => void) | null = null;
+  let abierto = false;
+  const deps = {
+    abrirMic: async (cb: (t: TrozoAudio) => void) => {
+      if (opts.mic === false) return null;
+      alTrozo = cb;
+      abierto = true;
+      return () => {
+        abierto = false;
+        alTrozo = null;
+      };
+    },
+    permiso: async () => (opts.permiso === false ? null : { url: 'wss://falso/electrum' }),
+    crearWs: (url: string) => {
+      const w = new WsFalso(url);
+      ws.push(w);
+      setTimeout(() => w.abrir(), 1);
+      return w;
+    },
+    transcribirWav: async (wav: string, confirmar: boolean) => {
+      wavs.push({ wav, confirmar });
+      if (opts.servidorCaido) throw new Error('sin red');
+      return confirmar ? (opts.confirmado ?? '') : (opts.respaldo ?? 'lo del respaldo');
+    },
+    esperaFinalMs: 60,
+    confirmarMs: 200,
+  };
+  const errores: string[] = [];
+  const cb = { onFinal: (t: string) => finales.push(t), onParcial: (t: string) => parciales.push(t), onFin: () => fines++, onError: (m: string) => errores.push(m) };
+  const hablar = (k: number) => {
+    for (let i = 0; i < k; i++) alTrozo?.({ audio: Buffer.alloc(3200, i + 1).toString('base64'), db: -20 });
+  };
+  return { deps, cb, ws, wavs, finales, parciales, errores, fines: () => fines, hablar, abierto: () => abierto };
+}
+
+describe('Oído Turbo (teléfono): dictado de campo de Dr Electrum', () => {
+  it('lo dicho va en vivo, los parciales caen en la caja y al soltar llega el texto final', async () => {
+    const b = bancoDictado();
+    const c = await dictarTurbo(b.deps, b.cb);
+    assert.ok(c);
+    b.hablar(8);
+    await espera();
+    assert.equal(b.ws[0].enviados.length, 8, 'lo dicho antes de conectar esperó en la cola');
+    b.ws[0].decir({ message_type: 'partial_transcript', text: 'muéstrame la concesión' });
+    assert.deepEqual(b.parciales, ['muéstrame la concesión']);
+    c!.parar();
+    assert.equal(b.abierto(), false, 'al soltar se cierra el micrófono');
+    await espera();
+    assert.equal(b.ws[0].commits, 1);
+    b.ws[0].decir({ message_type: 'committed_transcript', text: 'Muéstrame la concesión Quebrada Seca.' });
+    await espera();
+    assert.deepEqual(b.finales, ['Muéstrame la concesión Quebrada Seca.']);
+    assert.equal(b.fines(), 1);
+    assert.equal(b.wavs.length, 0);
+  });
+
+  it('con cifras se confirma con Scribe v2', async () => {
+    const b = bancoDictado({ confirmado: '¿Qué traslapes tiene Concordia seis?' });
+    const c = await dictarTurbo(b.deps, b.cb);
+    b.hablar(10);
+    await espera();
+    c!.parar();
+    await espera();
+    b.ws[0].decir({ message_type: 'committed_transcript', text: '¿Qué traslapes tiene Concordia 6?' });
+    await espera(20);
+    assert.deepEqual(b.finales, ['¿Qué traslapes tiene Concordia seis?']);
+    assert.equal(b.wavs[0].confirmar, true);
+    assert.equal(pcmDeWav(Buffer.from(b.wavs[0].wav, 'base64'))!.pcm.length, 10 * 3200, 'la grabación entera');
+  });
+
+  it('sin token del servidor, la grabación entera va por /api/electrum/oir', async () => {
+    const b = bancoDictado({ permiso: false, respaldo: 'Revisa el expediente' });
+    const c = await dictarTurbo(b.deps, b.cb);
+    b.hablar(10);
+    await espera();
+    c!.parar();
+    await espera(20);
+    assert.equal(b.ws.length, 0);
+    assert.deepEqual(b.finales, ['Revisa el expediente']);
+    assert.equal(b.wavs[0].confirmar, false);
+  });
+
+  it('Turbo no contesta al soltar: va por el servidor', async () => {
+    const b = bancoDictado({ respaldo: 'Revisa el expediente' });
+    const c = await dictarTurbo(b.deps, b.cb);
+    b.hablar(10);
+    await espera();
+    c!.parar();
+    await espera(120);
+    assert.deepEqual(b.finales, ['Revisa el expediente']);
+  });
+
+  it('cancelar tira lo dicho; un toque sin hablar no manda nada', async () => {
+    const b = bancoDictado();
+    const c = await dictarTurbo(b.deps, b.cb);
+    b.hablar(10);
+    await espera();
+    c!.cancelar();
+    await espera(20);
+    assert.deepEqual(b.finales, []);
+    assert.equal(b.fines(), 1);
+    const b2 = bancoDictado();
+    const c2 = await dictarTurbo(b2.deps, b2.cb);
+    b2.hablar(1);
+    c2!.parar();
+    await espera(20);
+    assert.deepEqual(b2.finales, []);
+    assert.equal(b2.wavs.length, 0);
+    assert.equal(b2.fines(), 1);
+  });
+
+  it('un «sí» cortito que Turbo ya entendió no se tira', async () => {
+    const b = bancoDictado();
+    const c = await dictarTurbo(b.deps, b.cb);
+    b.hablar(2);
+    await espera();
+    b.ws[0].decir({ message_type: 'partial_transcript', text: 'Sí.' });
+    c!.parar();
+    await espera(20);
+    assert.deepEqual(b.finales, ['Sí.']);
+    assert.equal(b.wavs.length, 0);
+  });
+
+  it('sin Turbo y sin servidor (sin señal): avisa en vez de apagarse callado', async () => {
+    const b = bancoDictado({ permiso: false, servidorCaido: true });
+    const c = await dictarTurbo(b.deps, b.cb);
+    b.hablar(10);
+    await espera();
+    c!.parar();
+    await espera(20);
+    assert.deepEqual(b.finales, []);
+    assert.equal(b.errores.length, 1);
+    assert.match(b.errores[0], /señal/);
+    assert.equal(b.fines(), 1);
+  });
+
+  it('el servidor contesta que no había voz: silencio, sin alerta', async () => {
+    const b = bancoDictado({ permiso: false, respaldo: '' });
+    const c = await dictarTurbo(b.deps, b.cb);
+    b.hablar(10);
+    await espera();
+    c!.parar();
+    await espera(20);
+    assert.deepEqual(b.finales, []);
+    assert.deepEqual(b.errores, []);
+  });
+
+  it('sin micrófono crudo devuelve null (sigue el reconocedor del teléfono)', async () => {
+    const b = bancoDictado({ mic: false });
+    assert.equal(await dictarTurbo(b.deps, b.cb), null);
+  });
+});

@@ -16,11 +16,11 @@ public partial class NotchWindow
 {
     string borradorGuardado = "";
     bool borradorSucio;
-    CallWindow? llamadas;
     static string RutaRecuperacion => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AuraWindows", "draft.bin");
 
     internal void AbrirPanel(bool si)
     {
+        if (si) PrecalentarCerebro("chat");
         if (panelAbierto == si) return;
         panelAbierto = si;
         if (!si) GuardarRecuperacion();
@@ -37,7 +37,7 @@ public partial class NotchWindow
         bool mio = quien == "Tú";
         var cuerpo = new TextBlock { Text = texto, TextWrapping = TextWrapping.Wrap, FontSize = 14, LineHeight = 20 };
         var pila = new StackPanel();
-        if (!mio) pila.Children.Add(new TextBlock { Text = quien, FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = (Brush)FindResource("Acento"), Margin = new Thickness(0, 0, 0, 4) });
+        if (!mio) pila.Children.Add(new TextBlock { Text = quien, FontSize = 11, FontWeight = FontWeights.SemiBold, FontFamily = (FontFamily)FindResource("LetraRotulo"), Foreground = (Brush)FindResource("Acento"), Margin = new Thickness(0, 0, 0, 4) });
         pila.Children.Add(cuerpo);
         EspejarBurbuja(quien, cuerpo);
         if (!mio)
@@ -46,7 +46,7 @@ public partial class NotchWindow
             var usar = new Button { Content = "Al borrador", Style = (Style)FindResource("Pildora"), Padding = new Thickness(10, 4, 10, 4), FontSize = 11.5 };
             usar.Click += (_, _) => { if (cuerpo.Text.Length == 0) return; Borrador.Text = cuerpo.Text; PestanaBorrador.IsChecked = true; };
             var oir = new Button { Content = "Escuchar", Style = (Style)FindResource("Pildora"), Padding = new Thickness(10, 4, 10, 4), FontSize = 11.5 };
-            oir.Click += (_, _) => { if (cuerpo.Text.Length == 0) return; Callar(); voz = new System.Threading.CancellationTokenSource(); var c = new Core.CortadorFrases(); foreach (var f in c.Agregar(cuerpo.Text)) Decir(f, "neutral", voz.Token); if (c.Resto() is { } r) Decir(r, "neutral", voz.Token); };
+            oir.Click += (_, _) => { if (cuerpo.Text.Length == 0) return; if (AgenteAbierto) CerrarAgente(); Callar(); voz = new System.Threading.CancellationTokenSource(); var c = new Core.CortadorFrases(); foreach (var f in c.Agregar(cuerpo.Text)) Decir(f, "neutral", voz.Token); if (c.Resto() is { } r) Decir(r, "neutral", voz.Token); };
             var copiar = new Button { Content = "Copiar", Style = (Style)FindResource("Pildora"), Padding = new Thickness(10, 4, 10, 4), FontSize = 11.5 };
             copiar.Click += (_, _) => { try { Clipboard.SetText(cuerpo.Text); } catch { } };
             fila.Children.Add(usar); fila.Children.Add(oir); fila.Children.Add(copiar);
@@ -54,8 +54,10 @@ public partial class NotchWindow
         }
         var burbuja = new Border
         {
-            Child = pila, CornerRadius = new CornerRadius(18), Padding = new Thickness(14, 10, 14, 8),
+            // Placas de radio corto con filo de 1 px: la tuya con el metal del avatar, la suya en grafito.
+            Child = pila, CornerRadius = new CornerRadius(6), Padding = new Thickness(14, 10, 14, 8), BorderThickness = new Thickness(1),
             Background = mio ? (Brush)FindResource("AcentoSuave") : (Brush)FindResource("Superficie"),
+            BorderBrush = (Brush)FindResource("Linea"),
             HorizontalAlignment = mio ? HorizontalAlignment.Right : HorizontalAlignment.Left,
             MaxWidth = 440, Margin = new Thickness(mio ? 40 : 0, 6, mio ? 0 : 30, 2),
         };
@@ -63,6 +65,13 @@ public partial class NotchWindow
         while (Mensajes.Children.Count > 61) Mensajes.Children.RemoveAt(1);
         Desplazar.ScrollToEnd();
         return cuerpo;
+    }
+
+    void QuitarBurbuja(TextBlock cuerpo)
+    {
+        DependencyObject? d = cuerpo;
+        while (d != null && d is not Border { Parent: Panel }) d = VisualTreeHelper.GetParent(d) ?? LogicalTreeHelper.GetParent(d);
+        if (d is Border b && b.Parent == Mensajes) Mensajes.Children.Remove(b);
     }
 
     void EntradaTecla(object s, KeyEventArgs e)
@@ -116,9 +125,14 @@ public partial class NotchWindow
         catch (Exception ex) { Avisar(new Aviso(T("No se pudo", "Couldn't do it"), ex.Message, "", "worried")); }
     }
 
+    /// <summary>
+    /// «Llamadas y video»: las llamadas de verdad son las de PULSE2CHAT, en el Centro. La CallWindow vieja (CallWindow.cs)
+    /// dependía de un gateway en http://127.0.0.1:8787 que no se instala; queda solo para su prueba (--rtc-self-test).
+    /// </summary>
     void AbrirLlamadas(object s, RoutedEventArgs e)
     {
-        try { if (llamadas == null) { llamadas = new CallWindow(); llamadas.Closed += (_, _) => llamadas = null; } llamadas.Show(); llamadas.Activate(); }
+        e.Handled = true;
+        try { AbrirCentro("pulse"); }
         catch (Exception ex) { Avisar(new Aviso(T("Llamadas", "Calls"), ex.Message, "", "worried")); }
     }
 
@@ -132,6 +146,7 @@ public partial class NotchWindow
         if (v.ShowDialog() != true) return;
         // Solo lo que se edita en la ventana: los recordatorios y un token renovado mientras estaba abierta se conservan.
         var r = v.Resultado;
+        var quienAntes = IdentidadAura;
         bool cambioCuenta = r.Correo != ajustes.Correo || r.Servidor != ajustes.Servidor || r.Token != v.TokenAlAbrir;
         ajustes.Servidor = r.Servidor; ajustes.Correo = r.Correo; ajustes.Avatar = r.Avatar; ajustes.Idioma = r.Idioma;
         if (r.Clave.Length > 0 || r.Token.Length == 0) ajustes.Clave = r.Clave;
@@ -153,7 +168,13 @@ public partial class NotchWindow
         bool cambioAvisos = r.AvisosDeApps != ajustes.AvisosDeApps;
         ajustes.AvisosDeApps = r.AvisosDeApps; ajustes.AvisosPrivados = r.AvisosPrivados; ajustes.AvisosEnVoz = r.AvisosEnVoz;
         ajustes.AppsSilenciadas = r.AppsSilenciadas;
-        if (cambioCuentas) IniciarCuentas();
+        ajustes.Transparencia = Aura.Windows.Core.VidrioNotch.Leer(r.Transparencia); AplicarVidrio();
+        ajustes.MenosMovimiento = r.MenosMovimiento; AvatarView.MenosMovimientoPedido = r.MenosMovimiento;
+        ajustes.EfectosDeSonido = r.EfectosDeSonido; SonidosOrbe();
+        bool movido = r.NotchBorde != ajustes.NotchBorde || r.NotchFraccion != ajustes.NotchFraccion || r.NotchMonitor != ajustes.NotchMonitor;
+        if (movido) MoverNotch(new Aura.Windows.Core.LugarNotch(Aura.Windows.Core.PosicionNotch.LeerBorde(r.NotchBorde), Aura.Windows.Core.PosicionNotch.LeerFraccion(r.NotchFraccion)), r.NotchMonitor);
+        // Otra identidad AURA: IniciarCuentas detiene y borra las cuentas de la anterior.
+        if (cambioCuentas || IdentidadAura != quienAntes) IniciarCuentas();
         if (cambioAvisos) IniciarAvisosApps();
         if (!ajustes.MostrarMusica) musicaVisible = false;
         AlCambiarMusica(cancion, false); // mostrar u ocultar la música al momento

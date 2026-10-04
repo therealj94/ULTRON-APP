@@ -86,12 +86,14 @@ test('las horas de Honduras: UTC-6 fijo, ida y vuelta, y legibles como se dicen'
   assert.match(ahoraEnHonduras(AHORA), /^miércoles 30 de septiembre de 2026, 2:00 de la tarde \(2026-09-30T14:00\)$/);
 });
 
-test('cuándo vale un recordatorio: hora de Honduras o epoch, entre un minuto y un año, fechas que existen', () => {
+test('cuándo vale un recordatorio: hora de Honduras o epoch, entre 25 segundos y un año, fechas que existen', () => {
   assert.equal(cuandoValido('2026-09-30T17:00', AHORA), hn(30, 17));
   assert.equal(cuandoValido(hn(30, 17), AHORA), hn(30, 17));
   assert.equal(cuandoValido('2026-09-30T23:00:00Z', AHORA), Date.UTC(2026, 8, 30, 23), 'con zona explícita');
   assert.equal(cuandoValido('2026-09-30T13:00', AHORA), null, 'ya pasó');
-  assert.equal(cuandoValido(AHORA + 30_000, AHORA), null, 'menos de un minuto');
+  // «Llámame en 30 segundos» (José, 3-oct): vale. Menos de 25 s no (el teléfono pide 20 s por delante).
+  assert.equal(cuandoValido(AHORA + 30_000, AHORA), AHORA + 30_000, 'en 30 segundos');
+  assert.equal(cuandoValido(AHORA + 20_000, AHORA), null, 'menos de 25 segundos');
   assert.equal(cuandoValido('2028-01-01T10:00', AHORA), null, 'más de un año');
   assert.equal(cuandoValido('2026-09-31T10:00', AHORA), null, 'el 31 de septiembre no existe');
   assert.equal(cuandoValido('mañana', AHORA), null);
@@ -186,7 +188,9 @@ test('reglas · la propuesta espera el «sí»: «sí» / «llámale» la cumple
   assert.equal(no?.accion, null);
   assert.equal(no?.soltarPropuesta, true);
   assert.equal(no?.decir, 'Va, no llamo.');
-  for (const debil of ['ok', 'dale', 'va', 'claro', 'perfecto']) assert.equal(ordenPorReglas(debil, { contexto: conManos, propuesta: p, ahora: AHORA })?.accion?.tipo === 'llamar', false, `«${debil}» no marca`);
+  // Contestar «¿Le marco a Mamá?» con «ok», «okey», «dale» o «va» es un sí (José, 3-oct); a media frase o con un «pero», no.
+  for (const si2 of ['ok', 'Okey.', 'dale', 'va', 'claro', 'perfecto', 'ok pues']) assert.equal(ordenPorReglas(si2, { contexto: conManos, propuesta: p, ahora: AHORA })?.accion?.tipo, 'llamar', `«${si2}» marca`);
+  for (const no2 of ['ok pero a Beto', 'ajá', 'mhm', 'dale, mejor no', 'ok, espera']) assert.notEqual(ordenPorReglas(no2, { contexto: conManos, propuesta: p, ahora: AHORA })?.accion?.tipo, 'llamar', `«${no2}» no marca`);
   assert.equal(confirmaPropuesta('llamar', 'sí, pero llama a Ana'), false, '«pero» no es permiso');
   assert.equal(confirmaPropuesta('llamar', 'si puedes más tarde'), false, '«si» sin tilde abriendo condicional');
   assert.equal(confirmaPropuesta('llamar', 'Sí, por favor'), true);
@@ -282,8 +286,8 @@ test('prepararAcciones: llamar y recordar pedidos en ESTE turno se proponen; con
   const t3 = prepararAcciones([{ tipo: 'llamar', con: 'Beto', video: false }], { mensaje: 'sí', contexto: conManos, propuesta: p, alProponer, ahora: AHORA });
   assert.deepEqual(t3, []);
   assert.equal(vistas[0]?.con, 'beto@x.com');
-  // Sin «sí» explícito, nada.
-  assert.deepEqual(prepararAcciones([{ tipo: 'llamar', con: 'Mamá', video: false }], { mensaje: 'ok', contexto: conManos, propuesta: p, alProponer: () => {}, ahora: AHORA }), []);
+  // Sin un sí (otra cosa que no confirma), nada.
+  assert.deepEqual(prepararAcciones([{ tipo: 'llamar', con: 'Mamá', video: false }], { mensaje: 'ok, pero espera', contexto: conManos, propuesta: p, alProponer: () => {}, ahora: AHORA }), []);
   // Un contacto dudoso no se propone ni se marca.
   vistas.length = 0;
   assert.deepEqual(prepararAcciones([{ tipo: 'llamar', con: 'Ana', video: false }], { mensaje: 'llama a Ana', contexto: conManos, alProponer, ahora: AHORA }), []);
@@ -547,6 +551,13 @@ test('con la mano `llamame`, recordatorios, timers y despertadores se ponen DIRE
   assert.equal(en.decir, "Done, I'll call you in 5 minutes, at 11:05 AM.");
   assert.equal((ordenPorReglas('wake me up at 7', { ...o, idioma: 'en' })!.accion as any).cuando, msDeHN(2026, 10, 1, 7, 0));
   assert.equal((ordenPorReglas('pon una alarma a las 5 para la pastilla', o)!.accion as any).texto, 'La pastilla');
+  // Como lo dijo José en la llamada (1-oct): iba al cerebro y tardaba; ahora es directo.
+  const jose = ordenPorReglas('Cuéntame, necesito una alarma en 3 minutos y me llames.', o)!;
+  assert.deepEqual(jose.accion, { tipo: 'recordatorio', texto: 'Tu alarma', cuando: temprano + 3 * 60_000, llamada: true });
+  assert.equal(jose.decir, 'Listo, te llamo en 3 minutos, a las 11:03 a. m.');
+  assert.equal((ordenPorReglas('ponme una alarma en 20 minutos para sacar la ropa', o)!.accion as any).texto, 'Sacar la ropa');
+  assert.equal((ordenPorReglas('quiero un timer en media hora', o)!.accion as any).cuando, temprano + 30 * 60_000);
+  assert.match((ordenPorReglas('necesito un recordatorio en una hora', o)!.accion as any).texto, /alarma/i);
   // Un timer de segundos no es un recordatorio (menos de un minuto): contesta el cerebro.
   assert.equal(ordenPorReglas('ponme un timer de 30 segundos', o), null);
   // Cancelarlo sigue pidiendo el «sí».

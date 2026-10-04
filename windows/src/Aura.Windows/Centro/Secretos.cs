@@ -13,7 +13,7 @@ namespace Aura.Windows.Centro;
 /// </summary>
 internal static class Secretos
 {
-    static readonly Regex ClaveValida = new("^[a-z0-9._-]{1,60}$");
+    static readonly Regex ClaveValida = new(@"^[a-z0-9._-]{1,60}\z");
     static readonly object candado = new();
     static string Archivo => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AuraWindows", "secretos.bin");
 
@@ -38,7 +38,7 @@ internal static class Secretos
 
     static void Validar(string clave)
     {
-        if (!ClaveValida.IsMatch(clave)) throw new InvalidOperationException("Nombre de secreto inválido.");
+        if (!ClaveValida.IsMatch(clave) || !Core.PuenteCentro.ClaveSecretoValida(clave)) throw new InvalidOperationException("Nombre de secreto inválido.");
     }
 
     public static string? Obtener(string clave) { Validar(clave); lock (candado) return Leer().TryGetValue(clave, out var v) ? v : null; }

@@ -237,10 +237,10 @@ test('panel con Laya', async (t) => {
 });
 
 test('Laya solo por https, salvo hacia la propia máquina', () => {
-  assert.equal(urlSegura('https://35-175-175-203.sslip.io/laya/'), 'https://35-175-175-203.sslip.io/laya');
+  assert.equal(urlSegura('https://203-0-113-9.sslip.io/laya/'), 'https://203-0-113-9.sslip.io/laya');
   assert.equal(urlSegura('http://127.0.0.1:8792'), 'http://127.0.0.1:8792');
   assert.equal(urlSegura('http://localhost:8792/'), 'http://localhost:8792');
-  assert.equal(urlSegura('http://35.175.175.203:8792'), '');
+  assert.equal(urlSegura('http://203.0.113.9:8792'), '');
   assert.equal(urlSegura('ftp://x'), '');
   assert.equal(urlSegura('no es url'), '');
   assert.equal(urlSegura(''), '');

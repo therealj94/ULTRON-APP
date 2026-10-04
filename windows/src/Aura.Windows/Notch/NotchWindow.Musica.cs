@@ -27,6 +27,8 @@ public partial class NotchWindow
     AgendaCuenta? agenda;
 
     bool MusicaSonando => ajustes.MostrarMusica && cancion is { Sonando: true };
+    /// <summary>Hay una canción (sonando o en pausa): con el ratón encima del reposo salen sus controles.</summary>
+    bool MusicaALaMano => ajustes.MostrarMusica && cancion != null;
 
     void IniciarMusicaYCuentas()
     {
@@ -41,18 +43,19 @@ public partial class NotchWindow
     {
         cancion = c;
         cancionDesde = DateTime.Now;
-        PortadaChica.Visibility = BarrasMusica.Visibility = MusicaSonando ? Visibility.Visible : Visibility.Collapsed;
         BarrasMusica.Nivel = MusicaSonando ? 0.55 : 0;
         if (c == null) { musicaVisible = false; Recalcular(); return; }
         TituloMusica.Text = c.Titulo;
         ArtistaMusica.Text = c.Artista.Length > 0 ? $"{c.Artista} · {c.App}" : c.App;
-        BotonPlayMusica.Content = c.Sonando ? "" : "";
+        BotonPlayMusica.Content = BotonPlayChico.Content = c.Sonando ? "\uE769" : "\uE768";
+        ZonaMusicaChica.ToolTip = (c.Artista.Length > 0 ? $"{c.Titulo} · {c.Artista}" : c.Titulo) + T(" — toca para ver la tarjeta", " — click to open the card");
         var img = Imagen(c.Portada);
         PortadaChica.Background = img != null ? new ImageBrush(img) { Stretch = Stretch.UniformToFill } : (Brush)FindResource("Superficie2");
         PortadaGrande.Background = img != null ? new ImageBrush(img) { Stretch = Stretch.UniformToFill } : (Brush)FindResource("Superficie2");
         GlifoMusica.Visibility = img != null ? Visibility.Collapsed : Visibility.Visible;
         // Canción nueva: la tarjeta aparece unos segundos (como la isla) si no hay algo más importante.
-        if (nueva && c.Sonando && ajustes.MostrarMusica && !hablandoAhora && !escuchando) MostrarTarjetaMusica(5);
+        // Con el ratón sobre el reposo los controles ya están a la mano: la tarjeta no se le pone encima.
+        if (nueva && c.Sonando && ajustes.MostrarMusica && !hablandoAhora && !escuchando && !(raton && modo == Modo.Reposo)) MostrarTarjetaMusica(5);
         Recalcular();
     }
 
@@ -91,6 +94,38 @@ public partial class NotchWindow
     async void MusicaSiguiente(object s, RoutedEventArgs e) { e.Handled = true; if (!await musica.Siguiente()) Escritorio.Siguiente(); MostrarTarjetaMusica(5); }
     async void MusicaAnterior(object s, RoutedEventArgs e) { e.Handled = true; if (!await musica.Anterior()) Escritorio.Anterior(); MostrarTarjetaMusica(5); }
 
+    /// <summary>
+    /// La música en el reposo: sin ratón, la portada y las barritas (si suena); con el ratón encima, la portada
+    /// y los controles (también en pausa, para poder volver a darle play). Las barritas se apartan para hacerles sitio.
+    /// </summary>
+    void PintarMusicaChica()
+    {
+        bool controles = modo == Modo.Reposo && raton && MusicaALaMano;
+        ControlesChicos.Visibility = controles ? Visibility.Visible : Visibility.Collapsed;
+        PortadaChica.Visibility = MusicaSonando || controles ? Visibility.Visible : Visibility.Collapsed;
+        BarrasMusica.Visibility = MusicaSonando && !controles ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    // Los controles chicos del reposo: actúan sin abrir la tarjeta (el ratón ya está ahí).
+    async void MusicaPlayChico(object s, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        var antes = cancion?.Sonando;
+        if (!await musica.PlayPausa()) Escritorio.PlayPausa();
+        // Se ve al instante; si Windows ya avisó del cambio (AlCambiarMusica), su glifo manda.
+        if (cancion is { } c && c.Sonando == antes) BotonPlayChico.Content = c.Sonando ? "\uE768" : "\uE769";
+    }
+    async void MusicaSiguienteChico(object s, RoutedEventArgs e) { e.Handled = true; if (!await musica.Siguiente()) Escritorio.Siguiente(); }
+    async void MusicaAnteriorChico(object s, RoutedEventArgs e) { e.Handled = true; if (!await musica.Anterior()) Escritorio.Anterior(); }
+
+    /// <summary>Tocar la portada chica (o sus barritas) abre la tarjeta completa de lo que suena.</summary>
+    void PortadaChicaClic(object s, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (cancion == null || modo != Modo.Reposo) return;
+        e.Handled = true;
+        MostrarTarjetaMusica(6);
+    }
+
     /// <summary>Las manos de música: qué suena, buscar en Spotify o YouTube Music.</summary>
     async Task HacerMusica(string valor)
     {
@@ -102,6 +137,21 @@ public partial class NotchWindow
             var dicho = c.Artista.Length > 0 ? T($"Suena «{c.Titulo}», de {c.Artista}, en {c.App}.", $"It's “{c.Titulo}” by {c.Artista}, on {c.App}.") : T($"Suena «{c.Titulo}» en {c.App}.", $"It's “{c.Titulo}” on {c.App}.");
             AgregarMensaje(ajustes.NombreAvatar, dicho);
             Contestar(dicho, "feliz");
+            return;
+        }
+        if (partes[0] == "reanudar")
+        {
+            // Lo que estaba sonando sigue; si no había nada, Spotify se abre y retoma lo último.
+            if (cancion is { Titulo.Length: > 0 }) { if (!await musica.PlayPausa()) Escritorio.PlayPausa(); HechoMusica(T("Música", "Music"), 4); return; }
+            if (Aplicaciones.Buscar("spotify", 80) is { } sp)
+            {
+                Aplicaciones.Abrir(sp);
+                await Task.Delay(3500);
+                Escritorio.PlayPausa();
+                Hecho(T("Spotify", "Spotify"), T("Retomando tu música", "Resuming your music"), "\uE8D6");
+                return;
+            }
+            NoPude(T("No hay música para retomar. Dime qué quieres oír: «pon Bad Bunny».", "Nothing to resume. Tell me what to play."));
             return;
         }
         var q = partes.Length > 1 ? partes[1] : "";
@@ -151,6 +201,27 @@ public partial class NotchWindow
             }
             pensando = false;
         }
+        // Spotify de escritorio sin cuenta conectada: busca y le da play él mismo al primer resultado.
+        if (donde == "spotify" && q.Length > 0 && Aplicaciones.Buscar("spotify", 80) != null)
+        {
+            pensando = true; TextoPiensa.Text = T("Poniéndolo en Spotify…", "Putting it on in Spotify…"); Recalcular();
+            string? puesto = null;
+            try { puesto = await Musica.PonerEnEscritorio(q, Ingles); } catch (Exception ex) { Centro.Registro.Anotar("spotify", ex.Message); }
+            pensando = false;
+            if (puesto != null)
+            {
+                // Se dice que suena cuando Windows dice que suena ESO (lo que muestra la tarjeta de música).
+                if (await Verificar.Esperar(() => cancion is { } c && MusicaPedida.Menciona(c.Titulo + " " + c.Artista, q), 5000, 250))
+                { Hecho(T("Sonando en Spotify", "Playing on Spotify"), puesto, "\uE8D6", T($"Listo, suena {puesto}.", $"Playing {puesto}.")); return; }
+                if (cancion is { Titulo.Length: > 0 } otra)
+                { NoPude(T($"Le di play a «{puesto}», pero sigue sonando «{otra.Titulo}». Dale play tú en Spotify o pídemelo otra vez.", $"I pressed play on “{puesto}”, but “{otra.Titulo}” is still playing.")); return; }
+                Hecho(T("Sonando en Spotify", "Playing on Spotify"), puesto, "\uE8D6", T($"Le di play a {puesto}.", $"Pressed play on {puesto}."));
+                return;
+            }
+            // No apareció un botón de lo pedido: no se le da play a otra cosa, y se dice tal cual.
+            NoPude(T($"Te dejé «{q}» buscado en Spotify, pero no pude darle play: tócalo tú en el primero.", $"I searched “{q}” in Spotify but couldn't press play: hit play on the first one."));
+            return;
+        }
         var app = await Task.Run(() => Musica.Buscar(donde, q));
         Hecho(T("Buscando en ", "Searching ") + app, q, "", T($"Te busco {q} en {app}. Dale play a la que quieras.", $"Looking up {q} on {app}. Hit play on the one you want."));
     }
@@ -161,18 +232,25 @@ public partial class NotchWindow
     {
         correo?.Dispose(); correo = null;
         agenda?.Dispose(); agenda = null;
+        // Las cuentas son de una identidad AURA: sin sesión no corre nada; de otra persona, se borran.
+        var quien = IdentidadAura;
+        if (quien.Length == 0) { foreach (var c in conexiones.Values) c.Dispose(); conexiones.Clear(); return; }
+        if (DuenoCuentas.HayQueLimpiar(ajustes.DuenoCuentas, quien)) { LimpiarCuentas(quien); return; }
+        long gen = generacionCuentas.Actual;
         CrearConexiones();
         var (buzonApi, agendaApi) = FuentesDeCuentas();
         correo = buzonApi;
         if (correo == null && ajustes.CorreoDireccion.Length > 3 && ajustes.CorreoClave.Length > 0) correo = new Correo(ajustes.CorreoDireccion, ajustes.CorreoClave);
         if (correo != null)
         {
-            correo.Nuevo += c => Dispatcher.BeginInvoke(new Action(() =>
+            // Varios nuevos juntos: UN aviso con cuántos (o «al menos» cuántos) y de quiénes, no una ráfaga (H10).
+            correo.Nuevos += (nuevas, alMenos) => Dispatcher.BeginInvoke(new Action(() =>
             {
-                if (!ajustes.AvisarCorreos || pausado) return;
-                Avisar(new Aviso(T("Correo de ", "Email from ") + c.De, c.Asunto, "", "happy", T("Leer", "Read"), () => _ = LeerCorreos("leer", false), 7));
+                if (!generacionCuentas.Vigente(gen) || !ajustes.AvisarCorreos || pausado) return;
+                var (titulo, cuerpo) = ConteoCorreo.Aviso(nuevas, alMenos, Ingles);
+                Avisar(new Aviso(titulo, cuerpo, "", "happy", T("Leer", "Read"), () => _ = LeerCorreos("leer", false), 7));
             }));
-            correo.Fallo += m => Dispatcher.BeginInvoke(new Action(() => Avisar(new Aviso(T("Correo", "Email"), m, "", "worried", Segundos: 8))));
+            correo.Fallo += m => Dispatcher.BeginInvoke(new Action(() => { if (generacionCuentas.Vigente(gen)) Avisar(new Aviso(T("Correo", "Email"), m, "", "worried", Segundos: 8)); }));
             correo.Vigilar();
         }
         if (agendaApi != null || ajustes.AgendaUrl.Length > 8)
@@ -182,7 +260,7 @@ public partial class NotchWindow
                 agenda = agendaApi ?? new AgendaCuenta(ajustes.AgendaUrl);
                 agenda.Pronto += ev => Dispatcher.BeginInvoke(new Action(() =>
                 {
-                    if (pausado) return;
+                    if (!generacionCuentas.Vigente(gen) || pausado) return;
                     var min = Math.Max(1, (int)Math.Round((ev.Inicio - DateTime.Now).TotalMinutes));
                     Avisar(new Aviso(T($"En {min} min: ", $"In {min} min: ") + ev.Titulo, ev.Lugar.Length > 0 ? ev.Lugar : ev.Inicio.ToString("h:mm tt"), "", "happy", Segundos: 12));
                     Contestar(T($"En {min} minutos tienes {ev.Titulo}.", $"In {min} minutes you have {ev.Titulo}."));
@@ -199,12 +277,16 @@ public partial class NotchWindow
         pensando = true; TextoPiensa.Text = T("Revisando tu correo…", "Checking your email…"); Recalcular();
         System.Collections.Generic.List<Carta> cartas;
         var de = que.StartsWith("de|") ? LayaLigera.Normalizar(que[3..]) : null;
-        try { cartas = await correo.NoLeidos(que == "contar" || de != null ? 50 : 8); }
+        // Se piden como mucho 50 (o 8 para leer): si llegan todas, puede haber más; se dice «al menos», nunca un total inventado (H10).
+        int pedidas = que == "contar" || de != null ? 50 : 8;
+        try { cartas = await correo.NoLeidos(pedidas); }
         catch (Exception ex) { NoPude(ex.Message); return; }
         pensando = false;
+        bool alMenos = ConteoCorreo.Tope(cartas.Count, pedidas);
         if (de != null)
         {
             cartas = cartas.Where(c => LayaLigera.Normalizar(c.De).Contains(de, StringComparison.Ordinal)).Take(8).ToList();
+            alMenos = false;
             if (cartas.Count == 0) { Hecho(T("Nada de " + que[3..], "Nothing from " + que[3..]), correo.Direccion, "", T($"No tienes correos sin leer de {que[3..]}.", $"No unread email from {que[3..]}.")); return; }
             que = "leer";
         }
@@ -212,7 +294,8 @@ public partial class NotchWindow
         if (que == "contar")
         {
             var quienes = string.Join(", ", cartas.Take(3).Select(c => c.De));
-            Hecho(T($"{cartas.Count} sin leer", $"{cartas.Count} unread"), quienes, "", T($"Tienes {cartas.Count} correos sin leer; los últimos, de {quienes}.", $"You have {cartas.Count} unread emails; the latest from {quienes}."));
+            var cuantos = ConteoCorreo.Cantidad(cartas.Count, alMenos, Ingles);
+            Hecho(ConteoCorreo.Titulo(cartas.Count, alMenos, Ingles), quienes, "", T($"Tienes {cuantos} correos sin leer de los últimos 14 días; los últimos, de {quienes}.", $"You have {cuantos} unread emails from the last 14 days; the latest from {quienes}."));
             return;
         }
         var lista = string.Join("\n", cartas.Select(c => $"• {c.De}: {c.Asunto}"));
@@ -225,7 +308,7 @@ public partial class NotchWindow
             return;
         }
         var dicho = string.Join(". ", cartas.Take(4).Select(c => T($"De {c.De}: {c.Asunto}", $"From {c.De}: {c.Asunto}")));
-        Hecho(T($"{cartas.Count} sin leer", $"{cartas.Count} unread"), cartas[0].Asunto, "", dicho + ".");
+        Hecho(ConteoCorreo.Titulo(cartas.Count, alMenos, Ingles), cartas[0].Asunto, "", dicho + ".");
     }
 
     async Task LeerAgenda(string que)

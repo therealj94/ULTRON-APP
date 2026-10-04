@@ -24,7 +24,7 @@ internal sealed class AjustesWindow : Window
         TokenAlAbrir = actual.Token;
         Title = "Ajustes · AURA"; Width = 520; SizeToContent = SizeToContent.Height; ResizeMode = ResizeMode.NoResize;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Background = new SolidColorBrush(Color.FromRgb(10, 10, 12)); Foreground = Brushes.White;
+        Background = (Brush)FindResource("Obsidiana"); Foreground = (Brush)FindResource("Texto");
         FontFamily = (FontFamily)FindResource("Letra");
         var raiz = new StackPanel { Margin = new Thickness(26, 22, 26, 22) };
         var scroll = new ScrollViewer { Content = raiz, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, MaxHeight = SystemParameters.WorkArea.Height - 80 };
@@ -32,7 +32,7 @@ internal sealed class AjustesWindow : Window
 
         TextBlock Titulo(string t) => new() { Text = t, FontSize = 13, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 18, 0, 8), Foreground = (Brush)FindResource("Acento") };
         TextBlock Nota(string t) => new() { Text = t, FontSize = 12, Foreground = (Brush)FindResource("Tenue"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0) };
-        Border Caja(UIElement c) => new() { Child = c, Background = (Brush)FindResource("Superficie"), CornerRadius = new CornerRadius(12), Padding = new Thickness(12, 9, 12, 9), Margin = new Thickness(0, 0, 0, 8) };
+        Border Caja(UIElement c) => new() { Child = c, Background = (Brush)FindResource("Superficie"), CornerRadius = new CornerRadius(6), BorderBrush = (Brush)FindResource("Linea"), BorderThickness = new Thickness(1), Padding = new Thickness(12, 9, 12, 9), Margin = new Thickness(0, 0, 0, 8) };
 
         raiz.Children.Add(new TextBlock { Text = "AURA para Windows", FontSize = 22, FontWeight = FontWeights.SemiBold });
         raiz.Children.Add(Nota("El mismo cerebro, las mismas voces y los mismos avatares que la app AU-RA."));
@@ -40,7 +40,7 @@ internal sealed class AjustesWindow : Window
         raiz.Children.Add(Titulo("Tu cuenta"));
         var servidor = new TextBox { Text = a.Servidor }; raiz.Children.Add(Caja(servidor));
         var correo = new TextBox { Text = a.Correo }; raiz.Children.Add(Caja(correo));
-        var clave = new PasswordBox { Password = a.Clave, Background = Brushes.Transparent, Foreground = Brushes.White, BorderThickness = new Thickness(0), CaretBrush = Brushes.White }; raiz.Children.Add(Caja(clave));
+        var clave = new PasswordBox { Password = a.Clave, Background = Brushes.Transparent, Foreground = (Brush)FindResource("Texto"), BorderThickness = new Thickness(0), CaretBrush = (Brush)FindResource("AcentoVivo") }; raiz.Children.Add(Caja(clave));
         var estado = Nota(string.IsNullOrEmpty(a.Token) ? "Sin sesión: conversar funciona; memoria, perfil y Laya del nodo necesitan tu cuenta." : $"Dentro como {(a.Nombre.Length > 0 ? a.Nombre : a.Correo)}.");
         var filaCuenta = new WrapPanel();
         var entrar = new Button { Content = "Entrar", Style = (Style)FindResource("PildoraAcento") };
@@ -83,6 +83,32 @@ internal sealed class AjustesWindow : Window
         }
         raiz.Children.Add(idiomas);
 
+        // ── El notch: transparencia y borde (la posición exacta se elige arrastrándolo) ──
+        raiz.Children.Add(Titulo("Notch"));
+        var cuanto = new TextBlock { FontSize = 12, Foreground = (Brush)FindResource("Tenue"), VerticalAlignment = VerticalAlignment.Center, Width = 120, TextAlignment = TextAlignment.Right };
+        void DecirVidrio(double v) => cuanto.Text = v >= 0.995 ? "Sólido" : $"Transparencia {Math.Round((1 - v) * 100)} %";
+        var vidrio = new Slider { Minimum = VidrioNotch.Min, Maximum = VidrioNotch.Max, Value = VidrioNotch.Leer(a.Transparencia), SmallChange = 0.01, LargeChange = 0.1, IsMoveToPointEnabled = true, Width = 300, VerticalAlignment = VerticalAlignment.Center, ToolTip = "Izquierda: más transparente · derecha: negro sólido" };
+        System.Windows.Automation.AutomationProperties.SetName(vidrio, "Transparencia del notch");
+        vidrio.ValueChanged += (_, e) => { a.Transparencia = Math.Round(e.NewValue, 2); DecirVidrio(e.NewValue); };
+        DecirVidrio(vidrio.Value);
+        var filaVidrio = new StackPanel { Orientation = Orientation.Horizontal };
+        filaVidrio.Children.Add(vidrio); filaVidrio.Children.Add(cuanto);
+        raiz.Children.Add(new TextBlock { Text = "Transparencia del notch", FontSize = 13 });
+        raiz.Children.Add(filaVidrio);
+        raiz.Children.Add(Nota("La píldora deja ver lo de atrás; al conversar, avisar o pedir tu «sí» se vuelve casi opaca para que el texto se lea."));
+        var bordes = new WrapPanel { Margin = new Thickness(0, 8, 0, 0) };
+        foreach (var (id, nombre) in new[] { ("arriba", "Arriba"), ("abajo", "Abajo") })
+        {
+            var rb = new RadioButton { Content = nombre, GroupName = "borde", IsChecked = a.NotchBorde == id, Style = (Style)FindResource("Pestana"), Margin = new Thickness(0, 0, 6, 0) };
+            rb.Checked += (_, _) => a.NotchBorde = id;
+            bordes.Children.Add(rb);
+        }
+        var centrar = new Button { Content = "Restablecer posición", Style = (Style)FindResource("Pildora"), ToolTip = "Arriba al centro del monitor principal" };
+        centrar.Click += (_, _) => { a.NotchBorde = "arriba"; a.NotchFraccion = 0.5; a.NotchMonitor = ""; foreach (var x in bordes.Children) if (x is RadioButton r) r.IsChecked = (string)r.Content == "Arriba"; };
+        bordes.Children.Add(centrar);
+        raiz.Children.Add(bordes);
+        raiz.Children.Add(Nota("Arrástralo desde la píldora por el borde de la pantalla (o a otro monitor); al soltarlo se pega a la izquierda, al centro o a la derecha. Doble clic: vuelve arriba al centro."));
+
         raiz.Children.Add(Titulo("Conversación"));
         CheckBox Op(string t, bool v, Action<bool> set) { var c = new CheckBox { Content = t, IsChecked = v }; c.Checked += (_, _) => set(true); c.Unchecked += (_, _) => set(false); raiz.Children.Add(c); return c; }
         Op("Manos libres: al terminar de contestar, vuelve a escucharte", a.ManosLibres, v => a.ManosLibres = v);
@@ -90,6 +116,8 @@ internal sealed class AjustesWindow : Window
         Op("Contestar con voz", a.ResponderConVoz, v => a.ResponderConVoz = v);
         Op("«Oye AURA» la despierta (micrófono atento, con la luz naranja encendida)", a.PalabraActivacion, v => a.PalabraActivacion = v);
         Op("Apartarse con juegos o videos a pantalla completa", a.OcultarEnPantallaCompleta, v => a.OcultarEnPantallaCompleta = v);
+        Op("Menos movimiento (el avatar quieto, sin animaciones)", a.MenosMovimiento, v => a.MenosMovimiento = v);
+        Op("Efectos de sonido del orbe de AU-RA (cortos y bajitos)", a.EfectosDeSonido, v => a.EfectosDeSonido = v);
         raiz.Children.Add(Titulo("Nativo (sin internet)"));
         Op("Hablar siempre con la voz de Windows", a.VozDeWindows, v => a.VozDeWindows = v);
         Op("Oír siempre con el dictado de Windows", a.OidoDeWindows, v => a.OidoDeWindows = v);
@@ -150,7 +178,7 @@ internal sealed class AjustesWindow : Window
             fila.Children.Add(boton); fila.Children.Add(quitar);
             raiz.Children.Add(fila); raiz.Children.Add(nota);
         }
-        var avanzado = new Expander { Header = "Avanzado: Client ID propios (opcional)", Foreground = Brushes.White, Margin = new Thickness(0, 10, 0, 0) };
+        var avanzado = new Expander { Header = "Avanzado: Client ID propios (opcional)", Foreground = (Brush)FindResource("Texto"), Margin = new Thickness(0, 10, 0, 0) };
         var avz = new StackPanel();
         TextBox Campo(string valor, string pista) { var t = new TextBox { Text = valor, ToolTip = pista }; avz.Children.Add(Nota(pista)); avz.Children.Add(Caja(t)); return t; }
         var idSpotify = Campo(a.SpotifyClientId, "Spotify Client ID");
@@ -170,7 +198,7 @@ internal sealed class AjustesWindow : Window
 
         raiz.Children.Add(Titulo("Correo y agenda sin conectar cuenta (IMAP / iCal)"));
         var correoDir = new TextBox { Text = a.CorreoDireccion }; raiz.Children.Add(Caja(correoDir));
-        var correoClave = new PasswordBox { Password = a.CorreoClave, Background = Brushes.Transparent, Foreground = Brushes.White, BorderThickness = new Thickness(0) }; raiz.Children.Add(Caja(correoClave));
+        var correoClave = new PasswordBox { Password = a.CorreoClave, Background = Brushes.Transparent, Foreground = (Brush)FindResource("Texto"), BorderThickness = new Thickness(0) }; raiz.Children.Add(Caja(correoClave));
         raiz.Children.Add(Nota("Gmail: usa una «contraseña de aplicación» (Cuenta de Google → Seguridad → Verificación en 2 pasos → Contraseñas de aplicaciones). También Yahoo, iCloud y otros IMAP. Solo se lee: nada se marca ni se borra."));
         var agendaUrl = new TextBox { Text = a.AgendaUrl }; raiz.Children.Add(Caja(agendaUrl));
         raiz.Children.Add(Nota("Calendario: en Google Calendar → Configuración del calendario → «Dirección secreta en formato iCal». Pégala aquí (no la compartas)."));
@@ -214,7 +242,7 @@ internal sealed class AjustesWindow : Window
         raiz.Children.Add(Titulo("Llamadas y video (servicio aparte, opcional)"));
         ConnectionSettings llamadas; try { llamadas = ConnectionStore.Load(); } catch { llamadas = new(); }
         var urlLlamadas = new TextBox { Text = llamadas.Gateway }; raiz.Children.Add(Caja(urlLlamadas));
-        var claveLlamadas = new PasswordBox { Password = llamadas.Token, Background = Brushes.Transparent, Foreground = Brushes.White, BorderThickness = new Thickness(0) }; raiz.Children.Add(Caja(claveLlamadas));
+        var claveLlamadas = new PasswordBox { Password = llamadas.Token, Background = Brushes.Transparent, Foreground = (Brush)FindResource("Texto"), BorderThickness = new Thickness(0) }; raiz.Children.Add(Caja(claveLlamadas));
         raiz.Children.Add(Nota("Dirección y clave del servicio de llamadas de windows/gateway. Sin él, lo demás funciona igual."));
         raiz.Children.Add(Nota("Atajos: Ctrl+Alt+Espacio hablar · Ctrl+Alt+A abrir el chat · Ctrl+Alt+W elegir dónde escribir · Ctrl+Alt+Esc pausar todo."));
 

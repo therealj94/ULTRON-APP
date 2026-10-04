@@ -36,6 +36,25 @@ const ENV: Record<string, string[]> = {
   jefe_tel: ['JEFE_TELEFONO'],
   resend: ['RESEND_API_KEY'],
   mail_from: ['MAIL_FROM'],
+  // La computadora de los agentes (scripts/nodo-computadora): https://<ip>.sslip.io/api y su clave.
+  computadora_url: ['COMPUTADORA_URL'],
+  computadora_clave: ['COMPUTADORA_CLAVE'],
+  // El WhatsApp personal (servicios/whatsapp-puente, servicio privado de Render) y quién lo puede ver.
+  whatsapp_url: ['WHATSAPP_PUENTE_URL'],
+  whatsapp_clave: ['WHATSAPP_PUENTE_CLAVE'],
+  whatsapp_duenos: ['WHATSAPP_DUENOS'],
+  // Avisos web (la AU-RA instalada en un iPhone): el par VAPID P-256 en base64url (lib/push-web.ts).
+  webpush_publica: ['WEB_PUSH_VAPID_PUBLICA'],
+  webpush_privada: ['WEB_PUSH_VAPID_PRIVADA'],
+  webpush_contacto: ['WEB_PUSH_CONTACTO'],
+  // Correo de cada persona: la llave con que se cifran sus claves (si falta, la de la sesión) y la app de
+  // Microsoft para entrar a Outlook/Microsoft 365 con OAuth (lib/correo).
+  correo_cifrado: ['CORREO_CLAVE_CIFRADO', 'ULTRON_SESION_SECRETO'],
+  ms_client_id: ['MS_CLIENT_ID'],
+  // Los avisos al teléfono con la app cerrada (lib/push.ts): el JSON entero de la cuenta de servicio de Firebase.
+  firebase_cuenta: ['FIREBASE_SERVICE_ACCOUNT'],
+  // El relevo de PULSE2CHAT avisa a AU-RA de un mensaje nuevo (server/push.ts /api/push/relevo): clave compartida.
+  push_relevo: ['PUSH_RELEVO_CLAVE'],
 };
 
 export function clave(id: string): string {

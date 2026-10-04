@@ -1,9 +1,12 @@
+using System.Linq;
 using System;
 using System.Diagnostics;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using GSMTC = global::Windows.Media.Control;
+
+using Aura.Windows.Core;
 
 namespace Aura.Windows.Manos;
 
@@ -111,11 +114,45 @@ internal sealed class Musica : IDisposable
     {
         if (donde == "spotify")
         {
-            try { Process.Start(new ProcessStartInfo("spotify:search:" + Uri.EscapeDataString(q)) { UseShellExecute = true }); return "Spotify"; }
-            catch { Process.Start(new ProcessStartInfo("https://open.spotify.com/search/" + Uri.EscapeDataString(q)) { UseShellExecute = true }); return "Spotify web"; }
+            if (SpotifyWeb.HayAppSpotify()) { try { Process.Start(new ProcessStartInfo("spotify:search:" + Uri.EscapeDataString(q)) { UseShellExecute = true }); return "Spotify"; } catch { } }
+            Process.Start(new ProcessStartInfo("https://open.spotify.com/search/" + Uri.EscapeDataString(q)) { UseShellExecute = true });
+            return "Spotify web";
         }
         Process.Start(new ProcessStartInfo("https://music.youtube.com/search?q=" + Uri.EscapeDataString(q)) { UseShellExecute = true });
         return "YouTube Music";
+    }
+
+    /// <summary>
+    /// Spotify sin cuenta conectada: abre la búsqueda en la app de escritorio y pulsa el «Reproducir» del
+    /// primer resultado con UI Automation (los botones de Spotify se llaman «Play Bad Bunny» /
+    /// «Reproducir Bad Bunny»). Devuelve lo que puso, o null si no pudo (queda la búsqueda abierta).
+    /// </summary>
+    public static async Task<string?> PonerEnEscritorio(string q, bool ingles, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(q) || !SpotifyWeb.HayAppSpotify()) return null;
+        try { Process.Start(new ProcessStartInfo("spotify:search:" + Uri.EscapeDataString(q)) { UseShellExecute = true }); }
+        catch { return null; }
+        var reloj = Stopwatch.StartNew();
+        await Task.Delay(1500, ct);
+        while (reloj.Elapsed < TimeSpan.FromSeconds(12))
+        {
+            var v = Ventanas.Abiertas().FirstOrDefault(x => x.Proceso.Equals("spotify", StringComparison.OrdinalIgnoreCase));
+            if (v != null)
+            {
+                var botones = await Task.Run(() => Controles.Visibles(v.Handle, ingles, 8000, 2500), ct);
+                // Solo un «Reproducir X» que nombre lo pedido: mientras la búsqueda nueva carga, los botones que se ven
+                // son los de la anterior (así volvía a sonar «Bohemian Rhapsody» cuando se pedía «The Verve»).
+                var play = botones.FirstOrDefault(b => System.Text.RegularExpressions.Regex.IsMatch(b.Nombre, @"^(?:Play|Reproducir|Reproduce)\s+\S", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+                                                       && MusicaPedida.Menciona(b.Nombre, q));
+                if (play != null)
+                {
+                    Controles.Pulsar(play);
+                    return System.Text.RegularExpressions.Regex.Replace(play.Nombre, @"^(?:Play|Reproducir|Reproduce)\s+", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                }
+            }
+            await Task.Delay(800, ct);
+        }
+        return null;
     }
 
     public void Dispose()

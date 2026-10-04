@@ -161,6 +161,89 @@ function playNext(onAllEnd?: () => void, onError?: () => void, onStart?: () => v
   return audio.play();
 }
 
+/** El navegador puede tocar MP3 mientras llega (MediaSource). Chrome, Edge y Firefox sí; si no, el blob entero. */
+export function soportaAudioEnVivo(): boolean {
+  try {
+    return typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported('audio/mpeg');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Toca un MP3 que va llegando a trozos (la voz en vivo de /api/tts/stream): empieza a sonar con el primer
+ * pedazo en vez de esperar el archivo entero (diagnóstico de voz, 1-oct, H2). Misma boca, misma forma de
+ * cortar (stopVoice) y los mismos avisos que playWavBlob.
+ */
+export function playMp3EnVivo(lector: ReadableStreamDefaultReader<Uint8Array>, onEnd?: () => void, onError?: () => void, onStart?: () => void) {
+  queue = [];
+  soltarActual();
+  const ms = new MediaSource();
+  const url = URL.createObjectURL(ms);
+  const audio = new Audio(url);
+  audio.setAttribute('playsinline', 'true');
+  current = audio;
+  alCortar = onEnd || null;
+  ensureAnalyser(audio);
+  let fallo = false;
+  const fallar = () => {
+    if (fallo) return;
+    fallo = true;
+    lector.cancel().catch(() => undefined);
+    URL.revokeObjectURL(url);
+    if (current === audio) {
+      current = null;
+      alCortar = null;
+    }
+    onError?.();
+  };
+  audio.onplaying = () => {
+    startLip();
+    onStart?.();
+  };
+  audio.onended = () => {
+    URL.revokeObjectURL(url);
+    if (current === audio) {
+      current = null;
+      alCortar = null;
+    }
+    lipCb?.(0);
+    onEnd?.();
+  };
+  audio.onerror = fallar;
+  ms.addEventListener(
+    'sourceopen',
+    async () => {
+      try {
+        const sb = ms.addSourceBuffer('audio/mpeg');
+        const listo = () => new Promise<void>((r) => sb.addEventListener('updateend', () => r(), { once: true }));
+        let arrancado = false;
+        for (;;) {
+          const { done, value } = await lector.read();
+          if (current !== audio) {
+            // Lo callaron (soltarActual ya cortó el sonido): tampoco se sigue bajando.
+            lector.cancel().catch(() => undefined);
+            return;
+          }
+          if (done) break;
+          if (!value?.length) continue;
+          sb.appendBuffer(value);
+          await listo();
+          if (!arrancado) {
+            arrancado = true;
+            audio.play().catch(fallar);
+          }
+        }
+        if (ms.readyState === 'open') ms.endOfStream();
+        if (!arrancado) fallar();
+      } catch {
+        fallar();
+      }
+    },
+    { once: true }
+  );
+}
+
 export function playFile(src: string, onEnd?: () => void, onError?: () => void, onStart?: () => void) {
   stopVoice();
   const audio = new Audio(src);

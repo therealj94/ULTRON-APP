@@ -10,22 +10,28 @@
  *
  * Fases: pick (elegir cuenta) → clave | quick (huella) | crear | olvide. El «atrás» de la cabecera y
  * el de Android vuelven a la fase anterior; desde la primera, a la entrada con Genesis ID.
+ *
+ * Cada «Entrar» es un intento (lib/intentoEntrada.ts, auditoría del 3-oct AUTH03): el token, la sesión y
+ * la clave recordada solo se guardan si sigue siendo el último. «Atrás», cambiar de fase o salir de la
+ * pantalla lo vencen: una respuesta que llega después no guarda nada, no dice nada y no entra.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { BackHandler, KeyboardAvoidingView, Platform, StyleSheet, View } from 'react-native';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { de, tr, useIdioma } from '../i18n';
 import { DESK_USERS, findDeskUserByEmail, normalizeDeskEmail, type DeskUser, type SessionUser } from '../config';
 import { loginBiometric, loginClave, olvideClave, pedirCuenta } from '../lib/api';
+import { cancelarIntento, confirmarIntento, empezarIntento, esVencida, intentoVigente, type Intento } from '../lib/intentoEntrada';
 import { miga } from '../lib/reporte';
-import { getFingerprintUnlock, loadCreds, saveCreds, saveSession, setFingerprintUnlock } from '../lib/storage';
+import { getFingerprintUnlock, loadCreds, saveCreds, setFingerprintUnlock } from '../lib/storage';
 import { AVATARES } from '../avatares/catalogo';
 import { MiniAvatar } from '../avatares/MiniAvatar';
 import { MEDIDA, useTema } from '../nucleo/tema';
 import { Aparecer, Boton, Campo, Fila, Grupo, Icono, Interruptor, PantallaConCabecera, Texto, vibrar } from '../ui';
 
 type Props = {
-  onAuthenticated: (user: SessionUser) => void;
+  /** `intento`: el de esta entrada; quien la termina (app/sesion.ts entrarCon) lo vuelve a mirar. */
+  onAuthenticated: (user: SessionUser, intento: Intento) => void;
   /** Volver a la entrada con Genesis ID (desde la primera fase). */
   onAtras?: () => void;
 };
@@ -73,11 +79,30 @@ export function LoginScreen({ onAuthenticated, onAtras }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [savedName, setSavedName] = useState<string | null>(null);
+  /** La entrada en curso de esta pantalla (la última que tocó «Entrar»). */
+  const intentoRef = useRef<Intento | null>(null);
+  const nuevoIntento = () => {
+    cancelarIntento(intentoRef.current);
+    intentoRef.current = empezarIntento();
+    return intentoRef.current;
+  };
+  /** «Atrás», otra fase o salir de la pantalla: la entrada en curso ya no guarda ni entra. */
+  const abandonarIntento = () => {
+    if (!intentoRef.current) return;
+    cancelarIntento(intentoRef.current);
+    intentoRef.current = null;
+    setLoading(false);
+  };
+  // Salir de la pantalla (desmontarla) también la vence.
+  useEffect(() => () => cancelarIntento(intentoRef.current), []);
+  /** ¿Lo que acaba de volver es de la entrada de ahora? Si no, la pantalla no lo muestra. */
+  const deAhora = (i: Intento) => intentoRef.current === i && intentoVigente(i);
 
   /** La fase anterior (la que abre «atrás»); null = salir de esta pantalla. */
   const faseAnterior = (f: Fase): Fase | null => (f === 'pick' ? null : f === 'clave' || f === 'quick' ? 'pick' : 'clave');
   const volver = () => {
     const a = faseAnterior(phase);
+    abandonarIntento();
     setError('');
     setListo('');
     if (a) setPhase(a);
@@ -166,31 +191,42 @@ export function LoginScreen({ onAuthenticated, onAtras }: Props) {
     };
   }, []);
 
-  const finish = async (user: SessionUser, persist?: { clave: string }) => {
+  /**
+   * Guarda lo de esta entrada y avisa que entró, como UN paso del intento: si ya no es el último (otra
+   * entrada empezó, o «atrás»), no guarda nada más, suelta lo que alcanzó a guardar y no entra.
+   */
+  const finish = async (user: SessionUser, persist: { clave: string } | undefined, intento: Intento) => {
     const correo = normalizeDeskEmail(user.correo);
     const session = { ...user, correo };
-    try {
-      await saveSession(session);
-      if (remember && persist?.clave) {
-        await saveCreds({ correo, clave: persist.clave, name: session.name });
-      } else if (!remember) {
-        await saveCreds(null);
+    const guardado = await confirmarIntento(intento, async (e) => {
+      try {
+        await e.sesion(session);
+        if (!e.sigue()) return false;
+        if (remember && persist?.clave) {
+          await saveCreds({ correo, clave: persist.clave, name: session.name });
+        } else if (!remember) {
+          await saveCreds(null);
+        }
+        if (!e.sigue()) return false;
+        // Huella: se enciende solo con la clave guardada (la usa para entrar); apagar el interruptor, o no
+        // guardar la contraseña, la apaga de verdad (antes se quedaba activa y seguía pidiendo la huella).
+        if (!remember || (fingerprintAvailable && !useFingerprint)) {
+          await setFingerprintUnlock(false);
+        } else if (persist?.clave && useFingerprint && fingerprintAvailable) {
+          await setFingerprintUnlock(true, correo);
+        }
+      } catch (err) {
+        // Ya se verificó quién es: si el teléfono no deja guardar, entra igual (la próxima vez pedirá la clave).
+        miga(`entrada: no se pudo guardar (${err instanceof Error ? err.message : String(err)})`);
       }
-      // Huella: se enciende solo con la clave guardada (la usa para entrar); apagar el interruptor, o no
-      // guardar la contraseña, la apaga de verdad (antes se quedaba activa y seguía pidiendo la huella).
-      if (!remember || (fingerprintAvailable && !useFingerprint)) {
-        await setFingerprintUnlock(false);
-      } else if (persist?.clave && useFingerprint && fingerprintAvailable) {
-        await setFingerprintUnlock(true, correo);
-      }
-    } catch (e) {
-      // Ya se verificó quién es: si el teléfono no deja guardar, entra igual (la próxima vez pedirá la clave).
-      miga(`entrada: no se pudo guardar (${e instanceof Error ? e.message : String(e)})`);
-    }
-    onAuthenticated(session);
+      return e.sigue();
+    });
+    if (!guardado || !intentoVigente(intento)) return;
+    onAuthenticated(session, intento);
   };
 
   const enterWithFingerprint = async () => {
+    const previo = intentoRef.current;
     setLoading(true);
     setError('');
     try {
@@ -214,7 +250,8 @@ export function LoginScreen({ onAuthenticated, onAtras }: Props) {
       setError(e?.message || tr('No se pudo usar la huella', 'Couldn’t use the fingerprint'));
       setPhase('clave');
     } finally {
-      setLoading(false);
+      // enterBiometric deja `loading` como corresponde a su intento; aquí solo si no llegó a empezar otro.
+      if (intentoRef.current === previo) setLoading(false);
     }
   };
 
@@ -231,31 +268,35 @@ export function LoginScreen({ onAuthenticated, onAtras }: Props) {
     setLoading(true);
     setError('');
     const persist = maybeClave || clave ? { clave: maybeClave || clave } : undefined;
+    const intento = nuevoIntento();
     try {
-      const data = await loginBiometric({ name: user.name, role: user.role, correo: normalizeDeskEmail(user.correo) }, 8_000);
-      await finish({ name: data.user?.nombre || user.name, role: data.user?.rol || user.role, correo: user.correo }, persist);
+      const data = await loginBiometric({ name: user.name, role: user.role, correo: normalizeDeskEmail(user.correo) }, 8_000, intento);
+      await finish({ name: data.user?.nombre || user.name, role: data.user?.rol || user.role, correo: user.correo }, persist, intento);
     } catch (e: any) {
+      // Una entrada vieja (otra empezó, o «atrás»): ni modo local, ni aviso.
+      if (esVencida(e) || !deAhora(intento)) return;
       const status = e?.status;
       if (!status || status >= 500) {
         // Sin servidor: escritorio local (quien llega aquí ya confirmó que es el dueño del teléfono).
-        await finish({ name: user.name, role: user.role, correo: user.correo }, persist);
+        await finish({ name: user.name, role: user.role, correo: user.correo }, persist, intento);
         return;
       }
       // El servidor dijo que no: con la clave guardada se intenta entrar de verdad; sin ella, no se pasa.
       // (Antes bastaba con que el correo se hubiera usado alguna vez en este teléfono.)
       if ((status === 401 || status === 403) && persist?.clave) {
         try {
-          const data = await loginClave(normalizeDeskEmail(user.correo), persist.clave);
-          await finish({ name: data.miembro?.nombre || user.name, role: data.miembro?.rol || user.role, correo: user.correo }, persist);
+          const data = await loginClave(normalizeDeskEmail(user.correo), persist.clave, intento);
+          await finish({ name: data.miembro?.nombre || user.name, role: data.miembro?.rol || user.role, correo: user.correo }, persist, intento);
           return;
         } catch {
           /* la clave guardada ya no sirve: se pide escribirla */
         }
+        if (!deAhora(intento)) return;
       }
       setError(status === 401 || status === 403 ? tr('Tu sesión no se pudo renovar. Escribe tu clave para entrar.', 'Your session couldn’t be renewed. Type your password to sign in.') : tr('No pude abrir el escritorio. Intenta en un momento.', 'Couldn’t open the desk. Try again in a moment.'));
       setPhase('clave');
     } finally {
-      setLoading(false);
+      if (intentoRef.current === intento) setLoading(false);
     }
   };
 
@@ -296,23 +337,28 @@ export function LoginScreen({ onAuthenticated, onAtras }: Props) {
     }
     setLoading(true);
     setError('');
+    const intento = nuevoIntento();
     try {
-      const data = await loginClave(normalizeDeskEmail(user.correo), clave);
+      const data = await loginClave(normalizeDeskEmail(user.correo), clave, intento);
       await finish(
         {
           name: data.miembro?.nombre || user.name,
           role: data.miembro?.rol || user.role,
           correo: user.correo,
         },
-        { clave }
+        { clave },
+        intento
       );
     } catch (e: any) {
+      // Una entrada vieja (otra empezó, o «atrás»): ni modo local, ni aviso.
+      if (esVencida(e) || !deAhora(intento)) return;
       const status = e?.status;
       if (!status || status >= 500) {
         // Servidor sin respuesta: solo dejo pasar si la clave coincide con la última validada en este teléfono.
         const creds = await loadCreds();
+        if (!deAhora(intento)) return;
         if (creds && normalizeDeskEmail(creds.correo) === normalizeDeskEmail(user.correo) && creds.clave === clave) {
-          await finish({ name: creds.name || user.name, role: user.role, correo: user.correo }, { clave });
+          await finish({ name: creds.name || user.name, role: user.role, correo: user.correo }, { clave }, intento);
           return;
         }
         setError(tr('El servidor no responde y no tengo tu clave verificada en este teléfono. Intenta en un momento.', 'The server isn’t answering and your password isn’t verified on this phone. Try again in a moment.'));
@@ -320,11 +366,12 @@ export function LoginScreen({ onAuthenticated, onAtras }: Props) {
       }
       setError(status === 401 || status === 403 ? tr('Correo o clave incorrectos.', 'Wrong email or password.') : e?.message || tr('No pude verificar la clave.', 'Couldn’t verify the password.'));
     } finally {
-      setLoading(false);
+      if (intentoRef.current === intento) setLoading(false);
     }
   };
 
   const pickUser = (u: DeskUser) => {
+    abandonarIntento();
     setSelected(u);
     setError('');
     if (u.id === 'otro') setCustomCorreo('');
@@ -332,6 +379,7 @@ export function LoginScreen({ onAuthenticated, onAtras }: Props) {
   };
 
   const irA = (f: Fase) => {
+    abandonarIntento();
     setError('');
     setListo('');
     vibrar('seleccion');

@@ -61,6 +61,9 @@ import { zona2D } from '../avatar3d/mapeo';
 import { cuerposAparte, marcoMesa, useModoPresencia } from '../avatar3d/usePresencia';
 import { haciaMarco, transicionMesa, type ModoVisible } from '../avatar3d/presencia';
 import { AvatarVivo } from '../avatar3d/AvatarVivo';
+import { OrbeMini } from '../avatar3d/OrbeMini';
+import { CuerpoVideo } from '../avatares/video/CuerpoVideo';
+import { hayVideo } from '../avatares/video/clips';
 
 /** Lado de su caja (px). El cuerpo es ~54 % del lado; el resto es aura, sombra y brinco. */
 const LADO = 104;
@@ -212,6 +215,9 @@ export function Companera() {
   const dirRef = useRef<-1 | 1>(1);
   const mirarRef = useRef<EstadoAvatar['mirar']>({ x: 0, y: 0, activa: false });
   const [estadoCuerpo, setEstadoCuerpo] = useState<EstadoAvatar>(estadoAvatar.ultimo());
+  // Claudio y ANT-ONIO pequeños también van en video (su cara en el círculo); si el video no se puede
+  // usar en este teléfono, vuelve su cuerpo de antes (3D o la foto).
+  const [sinVideo, setSinVideo] = useState(false);
   const publicar = useCallback(() => {
     const e = estadoDesdeAnimo(animo.current, Date.now(), {
       caminando: !!caminarRef.current,
@@ -345,8 +351,8 @@ export function Companera() {
   // La voz (estado de la sesión), lo que dice, las interrupciones y lo que hace la mesa.
   const v = voz.vista;
   useEffect(() => {
-    despachar({ tipo: 'voz', voz: { estado: v.estado, silenciada: v.silenciada, dormida: v.dormida, suspendida: v.suspendida } });
-  }, [despachar, v.estado, v.silenciada, v.dormida, v.suspendida]);
+    despachar({ tipo: 'voz', voz: { estado: v.estado, silenciada: v.silenciada, dormida: v.dormida, suspendida: v.suspendida, pensando: v.pensando } });
+  }, [despachar, v.estado, v.silenciada, v.dormida, v.suspendida, v.pensando]);
   // La llamada del avatar: mientras suena o se habla, la compañera no está (la llamada es su presencia).
   useEffect(() => {
     despachar({ tipo: 'ciclo', estado: voz.ciclo });
@@ -651,7 +657,7 @@ export function Companera() {
         onPanResponderTerminationRequest: () => !gestos.llevando(),
         onPanResponderGrant: (e) => {
           const { pageX, pageY } = e.nativeEvent;
-          vozRef.current.precalentar();
+          // Sin precalentar al tocar: el permiso de la conversación se pide cuando suena la llamada.
           mirarDedo(pageX, pageY);
           alGesto(gestos.bajar(Date.now(), pageX, pageY));
           programarVencer();
@@ -763,6 +769,25 @@ export function Companera() {
           accessibilityLabel={tr('AURA, tu compañera', 'AURA, your companion')}
           accessibilityHint={tr('Toca para saludarla; dile «llámame» y te llama; mantén para moverla', 'Tap to say hi; say "call me" and she calls you; hold to move her')}
         >
+          {avatar === 'aura' ? (
+            // AU-RA: su orbe, como en la mesa (antes el robot 3D o la figurita dorada).
+            <View pointerEvents="none" style={[s.retrato, { width: lado, height: lado, borderRadius: lado / 2, left: M.cx - lado / 2, top: M.cy - lado / 2, backgroundColor: 'transparent' }]}>
+              <OrbeMini lado={lado} estado={estadoCuerpo} activo={!oculta && !apartada} />
+            </View>
+          ) : hayVideo(avatar) && !sinVideo ? (
+            <View pointerEvents="none" style={[s.retrato, { width: lado, height: lado, borderRadius: lado / 2, left: M.cx - lado / 2, top: M.cy - lado / 2, backgroundColor: estilo.cuerpo }]}>
+              <CuerpoVideo
+                avatar={avatar}
+                camara="retrato"
+                estado={estadoCuerpo}
+                ancho={lado}
+                alto={lado}
+                activo={!oculta && !apartada}
+                onFallo={() => setSinVideo(true)}
+                respaldo={<Image source={fotos[fotoClaudio(exp)]} style={s.foto} resizeMode="cover" />}
+              />
+            </View>
+          ) : (
           <AvatarVivo
             avatar={avatar}
             camara="cuerpo"
@@ -787,6 +812,7 @@ export function Companera() {
               </>
             }
           />
+          )}
         </View>
       </Animated.View>
     </View>

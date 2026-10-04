@@ -13,17 +13,30 @@
  *   · S3 (`ULTRON_MEMORIA_BUCKET`, `ultron/perfiles/<huella>.json`), la copia que sobrevive a un
  *     redespliegue de Render. Sin S3 funciona igual, solo que no es duradero.
  * El nombre del archivo es una huella del correo: un listado del cubo no enseña correos.
+ *
+ * Lo BORRADO no vuelve (AUR11, lib/supresiones.ts): cada respuesta guarda cuándo se puso (`marcas`, reloj
+ * del servidor) y al leer se quita la que cubra una marca de supresión posterior. Así un respaldo restaurado
+ * o un perfil de antes (sin marcas) no enseñan lo que la persona borró después. Lo que llega de un teléfono
+ * con una copia vieja lo filtra lib/olvido.ts antes de escribir.
  */
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { s3GetJson, s3Listo, s3PutJson } from './s3';
+import { campoSuprimido, tumbasDe, type Tumba } from './supresiones';
 
 export type Tema = 'oscuro' | 'claro' | 'sistema';
 export type AvatarPerfil = 'ojos' | 'aura' | 'claudio' | 'antonio';
 export type IdiomaPerfil = 'es' | 'en';
 /** Cómo tiene a AURA en el teléfono: caminando chiquita, al lado de los chats o a pantalla completa. */
 export type PresenciaPerfil = 'paseo' | 'lado' | 'completa';
+/** Quién maneja la computadora del agente: el modelo abierto propio (gratis) o Claude (de pago). */
+export type MotorComputadora = 'gratis' | 'pago';
+/**
+ * Cuánta iniciativa quiere de AURA (lib/iniciativa.ts): con qué frecuencia le propone cosas sin que se
+ * lo pida. Sin elegir, 'media' (iniciativaDe).
+ */
+export type NivelIniciativa = 'alta' | 'media' | 'baja' | 'apagada';
 
 export type Encuesta = {
   vive?: string;
@@ -32,6 +45,8 @@ export type Encuesta = {
   familia?: string;
   trabajo?: string;
   gustos?: string;
+  /** Lo que quiere que AURA haga por ella (la primera vez lo elige o lo escribe). */
+  ayuda?: string;
   otros?: string;
 };
 
@@ -45,16 +60,49 @@ export type Perfil = {
   encuesta: Encuesta;
   completado: boolean;
   presencia?: PresenciaPerfil;
+  motorComputadora?: MotorComputadora;
+  iniciativa?: NivelIniciativa;
+  /**
+   * La persona eligió cómo quiere que le digan (lo escribió en la app, lo dijo en una conversación).
+   * Sin esto y sin `completado`, el apodo es el de relleno (su primer nombre o «amigo») y AURA se lo
+   * pregunta (lib/apodo.ts). Lo pone el servidor al guardar un apodo; el teléfono no lo manda.
+   */
+  apodoElegido?: boolean;
+  /**
+   * La dirección PÚBLICA de su Veta Wallet (0x + 40 hex): con ella AURA solo LEE saldos («¿cuánto tengo en
+   * mi wallet?», lib/cartera.ts). La pone la app (cartera/conexion.ts): sale de su ficha de PULSE2CHAT o la
+   * pega la persona. Nunca una contraseña ni una llave.
+   */
+  cartera?: string;
+  /**
+   * Cuándo se puso cada respuesta (reloj del servidor): `{'encuesta.vive': 1700000000000, cumple: …}`. Lo
+   * pone el servidor; un perfil de antes no lo tiene (y entonces cualquier marca de supresión gana).
+   */
+  marcas?: Record<string, number>;
   actualizado: number;
 };
 
 export const MAX_APODO = 40;
 export const MAX_CAMPO_ENCUESTA = 300;
-export const CAMPOS_ENCUESTA = ['vive', 'comida', 'musica', 'familia', 'trabajo', 'gustos', 'otros'] as const;
+export const CAMPOS_ENCUESTA = ['vive', 'comida', 'musica', 'familia', 'trabajo', 'gustos', 'ayuda', 'otros'] as const;
 const AVATARES: AvatarPerfil[] = ['ojos', 'aura', 'claudio', 'antonio'];
 const TEMAS: Tema[] = ['oscuro', 'claro', 'sistema'];
 const PRESENCIAS: PresenciaPerfil[] = ['paseo', 'lado', 'completa'];
+const MOTORES: MotorComputadora[] = ['gratis', 'pago'];
+export const NIVELES_INICIATIVA: readonly NivelIniciativa[] = ['alta', 'media', 'baja', 'apagada'];
+export const INICIATIVA_POR_OMISION: NivelIniciativa = 'media';
+
+/** La iniciativa que eligió (o la de por omisión, 'media'). */
+export function iniciativaDe(p: Pick<Perfil, 'iniciativa'> | null | undefined): NivelIniciativa {
+  return p?.iniciativa && NIVELES_INICIATIVA.includes(p.iniciativa) ? p.iniciativa : INICIATIVA_POR_OMISION;
+}
 const DIAS_DEL_MES = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+/** Una dirección de Veta Wallet de verdad (0x seguida de 40 cifras hexadecimales), o null. */
+export function carteraValida(v: unknown): string | null {
+  const t = String(v ?? '').trim();
+  return /^0x[0-9a-fA-F]{40}$/.test(t) ? t : null;
+}
 
 /** Texto limpio de una línea: sin caracteres de control ni saltos (van al prompt), recortado. */
 function textoLimpio(v: unknown, max: number): string {
@@ -121,6 +169,23 @@ export function validarCambios(cuerpo: unknown): { ok: true; cambios: Cambios } 
     if (!PRESENCIAS.includes(b.presencia as PresenciaPerfil)) return { ok: false, error: 'La presencia es paseo, lado o completa.' };
     c.presencia = b.presencia as PresenciaPerfil;
   }
+  if (b.motorComputadora !== undefined) {
+    if (!MOTORES.includes(b.motorComputadora as MotorComputadora)) return { ok: false, error: 'La computadora es gratis o pago.' };
+    c.motorComputadora = b.motorComputadora as MotorComputadora;
+  }
+  if (b.iniciativa !== undefined) {
+    if (!NIVELES_INICIATIVA.includes(b.iniciativa as NivelIniciativa)) return { ok: false, error: 'La iniciativa es alta, media, baja o apagada.' };
+    c.iniciativa = b.iniciativa as NivelIniciativa;
+  }
+  if (b.cartera !== undefined) {
+    // Vacío o null = desconectar la cartera: se borra.
+    if (b.cartera === null || b.cartera === '') c.cartera = '';
+    else {
+      const d = carteraValida(b.cartera);
+      if (!d) return { ok: false, error: 'La cartera es una dirección de Veta Wallet: 0x seguida de 40 letras y números.' };
+      c.cartera = d;
+    }
+  }
   if (b.encuesta !== undefined) {
     if (!b.encuesta || typeof b.encuesta !== 'object' || Array.isArray(b.encuesta)) return { ok: false, error: 'La encuesta tiene que ser un objeto.' };
     const e = b.encuesta as Record<string, unknown>;
@@ -152,19 +217,64 @@ export function perfilInicial(o: { apodo?: string; nombreGenesis?: string; cumpl
 
 /** Aplica cambios validados. La encuesta se mezcla campo por campo; un campo vacío se borra. */
 export function aplicarCambios(base: Perfil, c: Cambios, ahora = Date.now()): Perfil {
-  const { encuesta, cumple, ...resto } = c;
+  const { encuesta, cumple, cartera, ...resto } = c;
   const p: Perfil = { ...base, ...resto, encuesta: { ...base.encuesta }, actualizado: ahora };
+  const marcas: Record<string, number> = { ...(base.marcas || {}) };
+  const marcar = (campo: string, puesto: boolean, cambio: boolean) => {
+    if (!puesto) delete marcas[campo];
+    else if (cambio || !marcas[campo]) marcas[campo] = ahora;
+  };
+  if (cartera !== undefined) {
+    if (cartera) p.cartera = cartera;
+    else delete p.cartera;
+  }
   if (encuesta) {
     for (const [k, v] of Object.entries(encuesta)) {
+      const antes = (base.encuesta as Record<string, string | undefined>)[k];
       if (v) (p.encuesta as Record<string, string>)[k] = v;
       else delete (p.encuesta as Record<string, string>)[k];
+      marcar(`encuesta.${k}`, !!v, !!v && v !== antes);
     }
   }
   if (cumple !== undefined) {
     if (cumple) p.cumple = cumple;
     else delete p.cumple;
+    marcar('cumple', !!cumple, !!cumple && cumple !== base.cumple);
   }
+  if (Object.keys(marcas).length) p.marcas = marcas;
+  else delete p.marcas;
   return p;
+}
+
+/** Los campos con marca: las respuestas de la encuesta y el cumpleaños. */
+const CAMPOS_CON_MARCA = new Set([...CAMPOS_ENCUESTA.map((k) => `encuesta.${k}`), 'cumple']);
+
+function marcasValidas(raw: unknown): Record<string, number> | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const m: Record<string, number> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) if (CAMPOS_CON_MARCA.has(k) && Number(v) > 0) m[k] = Number(v);
+  return Object.keys(m).length ? m : undefined;
+}
+
+/**
+ * El perfil sin las respuestas que cubre una marca de supresión posterior a cuando se pusieron (un respaldo
+ * restaurado, un perfil de antes de las marcas). Devuelve el mismo objeto si no hay nada que quitar.
+ */
+export function sinSuprimidos(p: Perfil, tumbas: readonly Tumba[]): Perfil {
+  if (!tumbas.length) return p;
+  let r: Perfil | null = null;
+  for (const k of CAMPOS_ENCUESTA) {
+    if (!p.encuesta[k] || !campoSuprimido(tumbas, `encuesta.${k}`, p.marcas?.[`encuesta.${k}`])) continue;
+    r ??= { ...p, encuesta: { ...p.encuesta }, ...(p.marcas ? { marcas: { ...p.marcas } } : {}) };
+    delete r.encuesta[k];
+    if (r.marcas) delete r.marcas[`encuesta.${k}`];
+  }
+  if (p.cumple && campoSuprimido(tumbas, 'cumple', p.marcas?.cumple)) {
+    r ??= { ...p, encuesta: { ...p.encuesta }, ...(p.marcas ? { marcas: { ...p.marcas } } : {}) };
+    delete r.cumple;
+    if (r.marcas) delete r.marcas.cumple;
+  }
+  return r || p;
 }
 
 /** Lo que se lee de disco o de S3 pasa por la misma validación que lo que llega del teléfono. */
@@ -181,9 +291,17 @@ function sanear(raw: unknown): Perfil | null {
     encuesta: r.encuesta || {},
     // Un valor viejo o raro no invalida el perfil entero: se queda sin presencia (paseo).
     presencia: PRESENCIAS.includes(r.presencia as PresenciaPerfil) ? r.presencia : undefined,
+    motorComputadora: MOTORES.includes(r.motorComputadora as MotorComputadora) ? r.motorComputadora : undefined,
+    iniciativa: NIVELES_INICIATIVA.includes(r.iniciativa as NivelIniciativa) ? r.iniciativa : undefined,
+    cartera: carteraValida(r.cartera) || undefined,
   });
   if (!v.ok) return null;
   const p = aplicarCambios(perfilInicial({ nombreGenesis: String(r.nombreGenesis || '') }), v.cambios, Number(r.actualizado) || 0);
+  if (r.apodoElegido === true) p.apodoElegido = true;
+  // Las marcas son las guardadas (no la hora de esta lectura); un perfil de antes no tiene.
+  delete p.marcas;
+  const m = marcasValidas(r.marcas);
+  if (m) p.marcas = m;
   return p;
 }
 
@@ -251,7 +369,19 @@ export function almacenDurable(): boolean {
 export async function leerPerfilSeguro(correo: string): Promise<{ ok: true; perfil: Perfil | null } | { ok: false }> {
   const c = correoNormal(correo);
   if (!c) return { ok: true, perfil: null };
-  if (cache.has(c)) return { ok: true, perfil: cache.get(c) ?? null };
+  // Las marcas de supresión primero: sin ellas no se sabe qué está borrado, y no se enseña nada (falla cerrado).
+  let tumbas: Tumba[];
+  try {
+    tumbas = await tumbasDe(c);
+  } catch {
+    return { ok: false };
+  }
+  if (cache.has(c)) {
+    const enCache = cache.get(c) ?? null;
+    const limpio = enCache ? sinSuprimidos(enCache, tumbas) : null;
+    if (limpio !== enCache) cache.set(c, limpio);
+    return { ok: true, perfil: limpio };
+  }
   let p = leerDeDisco(c);
   if (!p && s3Listo()) {
     const r = await s3GetJson(claveS3(c)).catch(() => ({ ok: false, json: null }) as { ok: boolean; json: unknown });
@@ -263,6 +393,7 @@ export async function leerPerfilSeguro(correo: string): Promise<{ ok: true; perf
       return { ok: false };
     }
   }
+  if (p) p = sinSuprimidos(p, tumbas);
   cache.set(c, p);
   return { ok: true, perfil: p };
 }
@@ -309,6 +440,8 @@ export async function actualizarPerfil(correo: string, cambios: Cambios, base: {
   if (!leido.ok) throw new PerfilNoDisponible();
   const previo = leido.perfil || perfilInicial({ apodo: base.apodo });
   const perfil = aplicarCambios(previo, cambios);
+  // Un apodo que llega a guardarse lo eligió la persona (en la app o diciéndolo): ya no se pregunta.
+  if (cambios.apodo) perfil.apodoElegido = true;
   const { durable } = await guardarPerfil(correo, perfil);
   return { perfil, durable };
 }
@@ -381,7 +514,13 @@ function fechaCumple(mmdd: string, idioma: IdiomaPerfil) {
 export function lineaPerfil(p: Perfil | null | undefined, ahora = new Date()): string {
   if (!p) return '';
   const idioma = p.idioma;
-  const partes: string[] = [`Le dices «${p.apodo}» (así pidió que le llamaras; úsalo al saludar y de vez en cuando, no en cada frase).`];
+  // Sin apodo elegido es el de relleno (su primer nombre o «amigo»): no se dice que lo pidió (lib/apodo.ts lo pregunta).
+  const elegido = p.completado || p.apodoElegido;
+  const partes: string[] = [
+    elegido
+      ? `Le dices «${p.apodo}» (así pidió que le llamaras; úsalo al saludar y de vez en cuando, no en cada frase).`
+      : `Le dices «${p.apodo}» por ahora (es de relleno: todavía no te dijo cómo quiere que le llames).`,
+  ];
   if (p.nombreGenesis) partes.push(`Su nombre completo (de su Genesis ID): ${p.nombreGenesis}.`);
   if (p.cumple) {
     partes.push(
@@ -398,6 +537,7 @@ export function lineaPerfil(p: Perfil | null | undefined, ahora = new Date()): s
     gustos: 'Le gusta',
     comida: 'Comida favorita',
     musica: 'Música que le gusta',
+    ayuda: 'Lo que quiere que hagas por ella',
     otros: 'Además quiso que supieras',
   };
   for (const k of CAMPOS_ENCUESTA) if (e[k]) partes.push(`${etiquetas[k]}: ${e[k]}.`);

@@ -5,7 +5,7 @@
  */
 
 import { FEW_SHOT_HONESTO } from './prompts/few-shot';
-import { COT_FORZADO, esTareaDeCodigo, requiereCot } from './prompts/cot';
+import { COT_FORZADO, pideCodigo, requiereCot } from './prompts/cot';
 import { HONESTIDAD_CONVERSACION, promptHonesto, TEXTO_TELEGRAM, VOZ_ESCRITORIO } from './prompts/honestidad';
 import { instruccionHarness } from './harness';
 import type { NivelAura } from './perfiles/tipos';
@@ -34,6 +34,10 @@ export function construirMensajes(opts: {
   harness?: boolean;
   /** Con quién habla (server/nivel.ts). Un miembro no oye «asistente de la junta» ni ve sistema/ejecutor. */
   nivel?: NivelAura;
+  /** Es el dueño de un WhatsApp conectado (server/whatsapp.ts): se le ofrece la herramienta. */
+  whatsapp?: boolean;
+  /** El turno es de alguien con sesión: se le ofrecen sus misiones y su círculo (lib/harness.ts). */
+  sesion?: boolean;
   /**
    * Lo que cambia en cada turno (hora, app, HECHOS: server/prompt-turno.ts piezasDelTurno). Va al FINAL
    * del system, después de las reglas fijas: así el principio es igual turno a turno y el nodo reutiliza
@@ -42,7 +46,8 @@ export function construirMensajes(opts: {
   delTurno?: string;
 }): { messages: ChatMessage[]; meta: MensajesMeta } {
   const user = String(opts.user || '').trim();
-  const codigo = esTareaDeCodigo(user);
+  // Solo un pedido de código cambia las instrucciones (pideCodigo); «analiza» solo es pensar con cuidado (cot).
+  const codigo = pideCodigo(user);
   const cot = opts.cot ?? requiereCot(user);
   const fewShot = opts.fewShot ?? codigo;
   const ragOn = opts.rag ?? codigo;
@@ -55,7 +60,7 @@ export function construirMensajes(opts: {
   const parts: string[] = [codigo ? promptHonesto(nivel) : HONESTIDAD_CONVERSACION];
   if (!codigo) parts.push(telegram ? TEXTO_TELEGRAM : VOZ_ESCRITORIO);
   parts.push(String(opts.personalidad || '').trim());
-  if (harness) parts.push(instruccionHarness(nivel));
+  if (harness) parts.push(instruccionHarness(nivel, undefined, !!opts.whatsapp, !!opts.sesion));
   if (cot) parts.push(COT_FORZADO);
   if (fewShot) parts.push(FEW_SHOT_HONESTO);
 

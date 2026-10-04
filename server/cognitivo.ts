@@ -20,6 +20,7 @@ import { tipo as tipoAlmacen } from '../lib/cognitivo/base';
 import { firmar, listarAprobaciones, type EstadoAprobacion } from '../lib/cognitivo/aprobaciones';
 import { evaluar, listarReglas, type Efecto } from '../lib/cognitivo/politica';
 import { estadoCognitivo } from '../lib/cognitivo/estado';
+import { fijarInterruptores, todosLosInterruptores } from '../lib/interruptores';
 
 export function nivelEnEsta(req: Request): { quien: string | null; nivel: Nivel | null } {
   const id = identidadDe(req);
@@ -89,6 +90,15 @@ export function montarRutasCognitivas(app: Express) {
     } catch (e: any) {
       res.status(503).json({ error: String(e?.message || e).slice(0, 160), honesto: true });
     }
+  });
+
+  // Los interruptores de la voz (lib/interruptores.ts): ver y cambiar sin redesplegar, solo con mando.
+  app.get('/api/interruptores', exigirMandoAqui, limitar(30), (_req, res) => {
+    res.json({ interruptores: todosLosInterruptores(), honesto: true });
+  });
+  app.post('/api/interruptores', exigirMandoAqui, limitar(10), async (req, res) => {
+    const r = await fijarInterruptores(req.body?.interruptores ?? req.body);
+    res.status(r.ok ? 200 : 503).json({ ...r, honesto: true });
   });
 
   app.get('/api/cognitivo/auditoria', exigirMandoAqui, limitar(30), async (req, res) => {

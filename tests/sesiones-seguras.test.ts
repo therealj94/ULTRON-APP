@@ -128,7 +128,7 @@ test('destinoPublico no deja pasar la red interna', async () => {
 
 /* ---------------------------------------------------- contra el servidor compilado */
 
-const SERVIDOR = path.join(process.cwd(), 'dist', 'server.cjs');
+const SERVIDOR = path.join(process.cwd(), 'build-server', 'server.cjs');
 const hay = fs.existsSync(SERVIDOR);
 const CLAVE_BUENA = 'la-clave-buena';
 
@@ -151,7 +151,7 @@ function leerCuerpo(r: http.IncomingMessage): Promise<any> {
   });
 }
 
-test('servidor: el freno, la salida que dura tras reiniciar, y el ojo sin sesión', { skip: hay ? false : 'sin dist/server.cjs: correr `npm run build` antes' }, async (t) => {
+test('servidor: el freno, la salida que dura tras reiniciar, y el ojo sin sesión', { skip: hay ? false : 'sin build-server/server.cjs: correr `npm run build` antes' }, async (t) => {
   // El cerebro remoto de mentira: la clave buena entra, cualquier otra es 401.
   const remoto = await escuchar(async (rq, rs) => {
     const b = await leerCuerpo(rq);

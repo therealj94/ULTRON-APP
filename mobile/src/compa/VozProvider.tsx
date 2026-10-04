@@ -7,7 +7,7 @@
  *
  *  · la sesión de ElevenLabs (components/ModoConversacion, montada con `key={gen}`) y su control
  *    (sesion.ts): abrir, cerrar, silenciar de verdad, reintentar, generaciones (M4);
- *  · el permiso precalentado (permiso.ts): cuando la persona quiere hablar, solo falta conectar;
+ *  · el permiso precalentado (permiso.ts) mientras suena la llamada: al contestar, solo falta conectar;
  *  · segundo plano: la sesión se cierra (M5); al volver se precalienta otra vez;
  *  · llamadas (llamada.ts): AURA se apaga del todo y vuelve como estaba al colgar;
  *  · el puente de acciones y el contexto (acciones.ts): lo que AURA decide hacer llega por SSE y se
@@ -21,6 +21,9 @@
  *    píldora para usar la app (entrar a los chats la minimiza sola) y no hay sesión fuera de ella;
  *  · el audio: cuándo la conversación suelta de verdad el audio del teléfono (audioVoz.ts), avisado en
  *    el bus (`voz`) para que una llamada no arranque el suyo mientras AURA todavía se cierra;
+ *  · el SONIDO DE FONDO de una tarea lenta en la conversación (ambiente.ts): tecleo, papel o lápiz
+ *    mientras AURA busca, lee o calcula; lo manda el servidor por el canal de acciones y se para al
+ *    contestar, al hablar la persona, al colgar o silenciar y con la app detrás;
  *  · el puente de acciones se detiene con la app detrás y se reanuda al volver (sin SSE en segundo
  *    plano); al cerrar cada conversación se le avisa al servidor (POST /api/voz/agente/cerrar);
  *  · la boca de AURA como señal para cualquier cuerpo (avatar3d/senalVoz.ts): el nivel de la voz
@@ -38,33 +41,38 @@ import { api } from '../lib/api';
 import { loadMesaToken } from '../lib/storage';
 import { miga, reportarEstado } from '../lib/reporte';
 import { emocionDeTexto } from '../lib/emocion';
-import { escucharNivelVoz, nivelExterno, speak, stopSpeaking, suspenderVoz, vozSuspendida } from '../lib/tts';
+import { callarPorConversacion, escucharNivelVoz, nivelExterno, speak, stopSpeaking, suspenderVoz, vozSuspendida } from '../lib/tts';
 import { pauseMicForTts, suspenderOido } from '../lib/speech';
-import { suspenderSfx } from '../lib/sfx';
+import { sfxActivos, suspenderSfx } from '../lib/sfx';
 import { quitarExpresiones } from '../lib/expresiones';
 import { idiomaActual, tr, useIdioma } from '../i18n';
 import { avatarActual } from '../avatares/actual';
 import type { AvatarId } from '../avatares/catalogo';
 import { emitir, escuchar, RUTA_CONTEXTO, RUTA_PERFIL, type Contexto } from '../nucleo/contrato';
 import { ModoConversacion, type ControlesSesion } from '../components/ModoConversacion';
-import { ControlSesion, type EstadoVoz, type VistaSesion } from './sesion';
+import { ControlSesion, PERMISO_MAX_MS, type EstadoVoz, type VistaSesion } from './sesion';
 import { Precalentador } from './permiso';
 import { coordinarLlamadas } from './llamada';
 import { ContextoApp, PuenteAcciones, decirLectura, type XhrMin } from './acciones';
+import { AmbienteConversacion } from './ambiente';
+import { reproductorAmbiente } from './ambienteSonido';
 import { escucharPorDecir, escucharSonando, listarRecordatorios, llamadaSonando, tomarPorDecir, type LlamadaRecordatorio } from './recordatorios';
 import { callarAvisoQueSuena, contestadaEnPantalla, depsRecordatorios, perdidaEnPantalla, rechazar as rechazarRecordatorio } from './recordatoriosNativo';
 import { ALTO_PILDORA, LlamadaAvatar, type VistaLlamada } from './LlamadaAvatar';
 import { callarTimbre, sonarTimbre } from './timbre';
 import { AudioVoz } from './audioVoz';
 import { cabecerasAparato } from '../lib/aparato';
+import { registrarTrabajoActivo } from '../lib/barreraOta';
 import { escucharCuenta } from '../pulse/relevo';
 import { contactosParaAura } from './contactos';
 import { ecoMesa, interrupcionVoz, mensajeVoz, nivelOido } from './canales';
-import { CicloLlamada, MENSAJE_SIGUES, avisoMinutos, diaHonduras, llamadaActiva, type EfectoCiclo, type EstadoCiclo, type OrigenLlamada } from './llamadaCiclo';
+import { CicloLlamada, MENSAJE_SIGUES, avisoMinutos, diaHonduras, llamadaActiva, mandarAlAgente, seguirVozMesa, type EfectoCiclo, type EstadoCiclo, type OrigenLlamada } from './llamadaCiclo';
+import { aplicarAccionControl, puertosTelefono } from './controles';
 import { loadVozHoy, saveVozHoy } from '../lib/storage';
 import { avatarPorId } from '../avatares/catalogo';
 import { de } from '../i18n';
 import { senalVoz } from '../avatar3d/senalVoz';
+import { pedirGolpe } from '../avatares/video/pistas';
 
 export type ApiVoz = {
   vista: VistaSesion;
@@ -81,13 +89,13 @@ export type ApiVoz = {
   iniciar: () => boolean;
   /** Colgar la llamada. */
   terminar: () => void;
-  /** En llamada, cuelga; si no, que llame. */
+  /** En llamada, cuelga; sonando, rechaza; si no, abre la conversación al instante. */
   alternar: () => void;
   /** En llamada: micrófono y voz apagados (true) o de vuelta (false). Fuera de una llamada no hace nada. */
   silenciar: (valor: boolean) => void;
   /** El doble toque: en llamada, silenciar / volver a escuchar. */
   despertarOSilenciar: () => 'despierta' | 'duerme' | 'nada';
-  /** Dejar el permiso listo (al entrar, al sonar la llamada). */
+  /** Dejar el permiso listo. Solo al sonar la llamada (el timbre lo llama solo): no al entrar ni al tocar. */
   precalentar: () => void;
   /** El avatar de la mesa cambió: la voz se reabre con él. */
   fijarAvatar: (id: AvatarId) => void;
@@ -111,6 +119,9 @@ export type ApiVoz = {
 
 const VozCtx = createContext<ApiVoz | null>(null);
 
+
+/** Lo que la app tiene que seguir detrás para colgar la llamada (un diálogo del sistema dura menos). */
+export const SEGUNDO_PLANO_MS = 3_000;
 export function useVoz(): ApiVoz {
   const v = useContext(VozCtx);
   if (!v) throw new Error('useVoz fuera de VozProvider');
@@ -126,8 +137,17 @@ export function vozOcupaMicrofono(v: VistaSesion): boolean {
   return v.montada || v.dormida;
 }
 
+/** El plazo de la petición es el de la fase «permiso» del control (sesion.ts): los dos dicen lo mismo. */
 const pedirPermiso = (avatar: AvatarId, idioma: 'es' | 'en') =>
-  api<{ token: string; pase: string; cid?: string }>('/api/voz/agente', { method: 'POST', body: JSON.stringify({ avatar, idioma }) }, 15_000);
+  api<{ token: string; pase: string; cid?: string }>('/api/voz/agente', { method: 'POST', body: JSON.stringify({ avatar, idioma }) }, PERMISO_MAX_MS);
+
+/**
+ * Va a hablar (abrió la app o volvió a ella): el cerebro deja leído su contexto y el primer turno no espera 4–8 s.
+ * El servidor decide si hace falta (con un turno reciente no hace nada; una vez por minuto como mucho). Desde el
+ * 2-oct el precalentado ya no se pierde: antes las sondas de otros servicios le borraban el espacio a la persona y
+ * cada vuelta a la app costaba ~8 s de GPU para nada; por eso se había quitado de aquí.
+ */
+const precalentarCerebro = () => void api('/api/cerebro/calentar', { method: 'POST', body: '{}' }, 8_000).catch(() => undefined);
 
 /** Se cerró una conversación: el servidor suelta lo suyo (opcional, sin esperar; si falla, vence solo). */
 const avisarCierre = (pase: string) =>
@@ -135,6 +155,8 @@ const avisarCierre = (pase: string) =>
 
 /** Una sola para toda la app: la llamada escucha su aviso en el bus (`voz`). */
 const audioVoz = new AudioVoz((libre) => emitir('voz', { libre }));
+/** Para la mesa: espera a que la conversación suelte el audio del teléfono (como mucho `topeMs`, 4 s). */
+export const esperarAudioLibre = (topeMs?: number) => audioVoz.esperarLibre(topeMs);
 
 async function hayToken(): Promise<boolean> {
   return !!(await loadMesaToken().catch(() => ''));
@@ -160,6 +182,21 @@ export function VozProvider({ children, conCompanera = true }: Props) {
   if (!pre.current) pre.current = new Precalentador(pedirPermiso);
   const precalentador = pre.current;
   const controles = useRef<ControlesSesion | null>(null);
+  /** Los reintentos de mensajes de la llamada en curso: se cancelan al colgar (AUR10). */
+  const reintentos = useRef<Array<() => void>>([]);
+  // El sonido de fondo de las tareas lentas: solo con la conversación abierta, sin silencio, la app
+  // delante y los sonidos de la app activados.
+  const amb = useRef<AmbienteConversacion | null>(null);
+  if (!amb.current)
+    amb.current = new AmbienteConversacion({
+      reproductor: reproductorAmbiente,
+      puede: () => {
+        const v = control.vista();
+        return v.montada && !v.silenciada && !v.suspendida && (v.estado === 'escuchando' || v.estado === 'hablando') && AppState.currentState === 'active' && sfxActivos();
+      },
+      miga,
+    });
+  const ambiente = amb.current;
 
   const precalentar = useCallback(() => {
     const v = control.vista();
@@ -178,6 +215,8 @@ export function VozProvider({ children, conCompanera = true }: Props) {
   const cic = useRef<CicloLlamada | null>(null);
   if (!cic.current) cic.current = new CicloLlamada({ idioma: () => control.vista().idioma });
   const ciclo = cic.current;
+  // La conversación con AURA o su llamada, vivas: la OTA no recarga encima (lib/barreraOta.ts).
+  useEffect(() => registrarTrabajoActivo('conversacion-aura', () => control.vista().montada || llamadaActiva(ciclo.estado())), [control, ciclo]);
   const estadoCiclo = useSyncExternalStore(
     useCallback((f: () => void) => ciclo.suscribir(f), [ciclo]),
     () => ciclo.estado(),
@@ -218,7 +257,12 @@ export function VozProvider({ children, conCompanera = true }: Props) {
           case 'cerrar':
             // Con el registro de toda la llamada: si se cortó sola, en el servidor se ve por qué.
             reportarEstado(`llamada del avatar: cuelga (${ef.motivo})`);
+            // Lo que esperaba reintentarse en esta llamada ya no sale (AUR10: cero timers de la llamada al colgar).
+            for (const cancelar of reintentos.current.splice(0)) cancelar();
             control.terminar();
+            // Y otra vez a los 5 s: si el oído de la mesa no volvió a tomar el micrófono, se ve en el
+            // servidor (1-oct: «el micrófono dejó de escuchar» después de una llamada que falló).
+            setTimeout(() => reportarEstado('5 s después de colgar'), 5_000);
             break;
           case 'silenciar':
             control.silenciar(ef.valor);
@@ -227,14 +271,24 @@ export function VozProvider({ children, conCompanera = true }: Props) {
           case 'decirEnLlamada':
           case 'sigues': {
             const texto = ef.tipo === 'sigues' ? MENSAJE_SIGUES : ef.texto;
-            if (controles.current?.enviarTexto(texto)) break;
-            // Recién conectada, el control puede tardar un instante: se reintenta una vez.
-            setTimeout(() => {
-              if (controles.current?.enviarTexto(texto)) return;
-              miga(`llamada del avatar: no se pudo mandar ${texto.slice(0, 20)}`);
-              const rec = /^\[\[recordatorio\]\]\s*(.+)$/.exec(texto);
-              if (rec) decirConLaMesa(tr(`Te llamo para recordarte: ${rec[1]}`, `I'm calling to remind you: ${rec[1]}`));
-            }, 600);
+            // Recién conectada, el control puede tardar un instante: se reintenta una vez, y SOLO en esta
+            // misma sesión (AUR10: si en medio se colgó y se abrió otra, el texto viejo no entra en la nueva).
+            const gen = control.vista().gen;
+            const cancelar = mandarAlAgente(texto, {
+              enviar: (t) => !!controles.current?.enviarTexto(t),
+              vigente: () => control.vista().gen === gen && control.vista().montada,
+              esperar: (f, ms) => {
+                const t = setTimeout(f, ms);
+                return () => clearTimeout(t);
+              },
+              alFallar: (t) => {
+                miga(`llamada del avatar: no se pudo mandar ${t.slice(0, 20)}`);
+                const rec = /^\[\[recordatorio\]\]\s*(.+)$/.exec(t);
+                if (rec) decirConLaMesa(tr(`Te llamo para recordarte: ${rec[1]}`, `I'm calling to remind you: ${rec[1]}`));
+              },
+            });
+            reintentos.current.push(cancelar);
+            if (reintentos.current.length > 8) reintentos.current.shift();
             break;
           }
           case 'avisoTope':
@@ -326,15 +380,21 @@ export function VozProvider({ children, conCompanera = true }: Props) {
   precalentarRef.current = precalentar;
 
   /** «Llámame» (la mesa, la hoja «Más», el atajo, la orden del servidor): suena la llamada del avatar. */
-  const llamame = useCallback((): boolean => {
+  /** «Hablar» de la mesa: la conversación se abre ya, sin sonar (ciclo.hablarYa). */
+  const hablarYa = useCallback((): boolean => {
     if (control.vista().suspendida) {
-      miga('llamada del avatar: hay otra llamada, no suena');
+      miga('hablar: hay otra llamada, no se abre');
       return false;
     }
-    const antes = ciclo.estado();
-    ejecutar(ciclo.llamar({ tipo: 'llamame' }));
-    return ciclo.estado() === 'sonando' || antes !== 'reposo';
+    // La mesa se calla: desde aquí habla la conversación.
+    void stopSpeaking();
+    const ef = ciclo.hablarYa();
+    ejecutar(ef);
+    miga('hablar: conversación al instante');
+    return ef.some((e) => e.tipo === 'abrir');
   }, [control, ciclo, ejecutar]);
+  // «Llámame» dicho en la mesa también abre al instante: suena solo lo que tiene hora (un recordatorio).
+  const llamame = hablarYa;
   const llamameRef = useRef(llamame);
   llamameRef.current = llamame;
 
@@ -354,29 +414,73 @@ export function VozProvider({ children, conCompanera = true }: Props) {
     // pueden quedarse con el micrófono (nadie más escucharía). Fallan y el oído del teléfono vuelve.
     const vigia = setInterval(() => {
       const r = control.revisar();
-      if (r !== 'nada') miga(`voz: ${r === 'sorda' ? 'abierta pero sin audio del micrófono' : 'no conectó a tiempo'}; el audio vuelve al oído del teléfono`);
+      if (r === 'sin-muestras') {
+        miga('voz: el micrófono dejó de mandar audio a media llamada; reconecto');
+        reportarEstado('voz: micrófono congelado en la llamada (reconecta)');
+      } else if (r !== 'nada') miga(`voz: ${r === 'sorda' ? 'abierta pero sin audio del micrófono' : 'no conectó a tiempo'}; el audio vuelve al oído del teléfono`);
     }, 1_000);
+    /*
+     * Segundo plano de verdad, no un parpadeo. En Android, cualquier ventana del sistema por encima (el
+     * diálogo de un permiso, aunque ya esté dado y se cierre solo) pausa la app, y React Native lo da como
+     * `background` durante unos milisegundos. 1-oct: poner un recordatorio pide el permiso de avisos y eso
+     * colgaba la llamada justo cuando AURA decía «Listo, te llamo a las 7:45». Se cuelga solo si sigue
+     * detrás pasado SEGUNDO_PLANO_MS.
+     */
+    let detras: ReturnType<typeof setTimeout> | null = null;
     const app = AppState.addEventListener('change', (st) => {
       if (st === 'active') {
-        precalentar();
+        if (detras) {
+          clearTimeout(detras);
+          detras = null;
+          miga('voz: volvió del segundo plano a tiempo; la llamada sigue');
+          return;
+        }
+        precalentarCerebro();
         puenteRef.current?.arrancar();
-      } else if (st === 'background') {
-        miga('voz: segundo plano, la llamada del avatar se cuelga');
-        ejecutar(ciclo.apagar());
-        control.segundoPlano();
-        // Sin SSE en segundo plano (batería, datos): al volver se reconecta con Last-Event-ID.
-        puenteRef.current?.parar();
+      } else if (st === 'background' && !detras) {
+        detras = setTimeout(() => {
+          detras = null;
+          if (AppState.currentState === 'active') return;
+          miga('voz: segundo plano, la llamada del avatar se cuelga');
+          ejecutar(ciclo.apagar());
+          control.segundoPlano();
+          // Sin SSE en segundo plano (batería, datos): al volver se reconecta con Last-Event-ID.
+          puenteRef.current?.parar();
+        }, SEGUNDO_PLANO_MS);
       }
     });
     const offPerfil = escuchar('perfil', (p) => {
       control.perfil(p.avatar, p.idioma);
-      precalentar();
     });
     const offAccion = escuchar('accion', (a) => {
-      // «Llámame» que resolvió el servidor (el camino rápido o el cerebro): suena la llamada del avatar.
+      // «Llámame» que resolvió el servidor (el camino rápido o el cerebro): la conversación se abre ya.
       if (a.tipo === 'llamame') {
         const ok = llamameRef.current();
         emitir('hecho', { accion: a, ok, ...(ok ? {} : { detalle: tr('Ahora no puedo llamarte: hay otra llamada.', "I can't call you right now: there's another call.") }) });
+        return;
+      }
+      // AUR10: los controles separados, cada uno con su efecto (compa/controles.ts). Detener el audio no
+      // silencia el micrófono ni cancela la tarea; colgar no toca la tarea; cancelar la tarea no cuelga.
+      if (a.tipo === 'detener_audio' || a.tipo === 'colgar' || a.tipo === 'tarea') {
+        const enLlamada = () => llamadaActiva(ciclo.estado()) || control.vista().montada;
+        const puertos = puertosTelefono({
+          pararVozMesa: () => stopSpeaking(),
+          cerrarBoca: () => senalVoz.cortar(),
+          soltarPausaMicrofono: () => pauseMicForTts(false),
+          enLlamada,
+          colgar: () => {
+            const e = ciclo.estado();
+            const ef = e === 'sonando' ? ciclo.rechazar() : ciclo.colgar();
+            if (!ef.length) return { ok: false, detalle: tr('No hay ninguna llamada que colgar.', 'There is no call to hang up.') };
+            ejecutar(ef);
+            return { ok: true };
+          },
+          api: (ruta, init, ms) => api(ruta, init, ms),
+        });
+        void aplicarAccionControl(a, puertos).then((r) => {
+          miga(`voz: control ${a.tipo}${a.tipo === 'tarea' ? `/${a.que}` : ''} → ${r.ok ? 'hecho' : `no (${String(r.detalle || '').slice(0, 60)})`}`);
+          emitir('hecho', { accion: a, ok: r.ok, ...(r.detalle ? { detalle: r.detalle } : {}) });
+        });
         return;
       }
       if (a.tipo !== 'silencio') return;
@@ -440,6 +544,7 @@ export function VozProvider({ children, conCompanera = true }: Props) {
     return () => {
       clearInterval(tic);
       clearInterval(vigia);
+      if (detras) clearTimeout(detras);
       app.remove();
       offPerfil();
       offAccion();
@@ -449,12 +554,14 @@ export function VozProvider({ children, conCompanera = true }: Props) {
       offPantalla();
       offLlamada();
     };
-  }, [control, precalentar, ciclo, ejecutar]);
+  }, [control, ciclo, ejecutar]);
 
-  // Precalentar al montarse (entrar a la app con sesión) y al cambiar de avatar o idioma.
-  useEffect(() => {
-    precalentar();
-  }, [precalentar, vista.avatar, vista.idioma]);
+  /*
+   * El permiso de la conversación (y con él el cerebro del nodo, server.ts calentarCerebro) se
+   * precalienta SOLO cuando suena la llamada del avatar (el efecto `timbre`): toda conversación empieza
+   * sonando, y la persona tarda más en contestar que el permiso en llegar. Antes también al montarse,
+   * al volver a la app, al cambiar de avatar o idioma y al tocar a la compañera: ~8 s de GPU sin llamada.
+   */
 
   // El puente de acciones y el contexto: viven mientras viva la app (sin sesión, esperan).
   const contexto = useRef<ContextoApp | null>(null);
@@ -464,6 +571,11 @@ export function VozProvider({ children, conCompanera = true }: Props) {
       token: async () => (await loadMesaToken().catch(() => '')) || null,
       xhr: () => new XMLHttpRequest() as unknown as XhrMin,
       alAccion: (a) => emitir('accion', a),
+      // El sonido de fondo de la conversación (event: ambiente): se pone o se quita aquí mismo.
+      alAmbiente: (a) => {
+        emitir('ambiente', a);
+        ambiente.alEvento(a);
+      },
       // api() renueva la sesión sola si el servidor dice 401.
       renovar: () => api(RUTA_PERFIL, undefined, 10_000).then(() => undefined),
       // Qué teléfono escucha: el servidor le empuja las acciones al aparato que habló.
@@ -498,12 +610,36 @@ export function VozProvider({ children, conCompanera = true }: Props) {
       ctx.parar();
       contexto.current = null;
     };
-  }, [precalentador]);
+  }, [precalentador, ambiente]);
+  // El sonido de fondo se va si la conversación se cierra, se silencia, llega una llamada o la app se va
+  // atrás (y al desmontarse la voz).
+  useEffect(() => {
+    if (!(vista.montada && !vista.silenciada && !vista.suspendida && (vista.estado === 'escuchando' || vista.estado === 'hablando'))) ambiente.parar('conversación');
+  }, [ambiente, vista.montada, vista.silenciada, vista.suspendida, vista.estado]);
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (e) => {
+      if (e !== 'active') ambiente.parar('detrás');
+    });
+    return () => {
+      sub.remove();
+      ambiente.parar('fin');
+    };
+  }, [ambiente]);
   // Un solo dueño del audio (compa/duenoAudio.ts): al abrirse la conversación en vivo, venga de donde
   // venga (la mesa, la compañera, el panel), la voz de la mesa se calla. Nunca dos voces a la vez.
   useEffect(() => {
     if (vista.montada) void stopSpeaking();
   }, [vista.montada, vista.gen]);
+  // Y mientras dure no vuelve a sonar: ni el resto de un turno que venía en camino ni un saludo, una
+  // reacción o algo pedido desde el menú (lib/tts.ts, callarPorConversacion). Al colgar, o al fallar,
+  // la mesa vuelve a tener voz antes de decir por qué no conectó.
+  useEffect(() => {
+    const off = seguirVozMesa(ciclo, control, callarPorConversacion);
+    return () => {
+      off();
+      callarPorConversacion(false);
+    };
+  }, [ciclo, control]);
   const conversando = vista.montada && (vista.estado === 'escuchando' || vista.estado === 'hablando');
   useEffect(() => {
     contexto.current?.fijarConversando(conversando);
@@ -519,10 +655,15 @@ export function VozProvider({ children, conCompanera = true }: Props) {
       if (rol === 'usuario') {
         control.oyoFrase();
         ejecutar(ciclo.turnoUsuario(limpio));
+        ambiente.parar('persona');
+      } else {
+        // Contestó: ya no piensa (aunque el «speaking» no llegue, p. ej. silenciada).
+        control.respondio();
+        ambiente.alHablaAvatar(texto);
       }
       mensajeVoz.emitir({ rol, texto: limpio, emocion: rol === 'ultron' ? emocionDeTexto(texto) : 'neutral', en: Date.now() });
     },
-    [control, ciclo, ejecutar]
+    [control, ciclo, ejecutar, ambiente]
   );
   const alInterrupcion = useCallback(
     (gen: number) => {
@@ -533,10 +674,12 @@ export function VozProvider({ children, conCompanera = true }: Props) {
     [control]
   );
   const alNiveles = useCallback(
-    (salida: number, entrada: number) => {
+    (salida: number, entrada: number, cruda?: number, gen?: number) => {
+      // AUR10: lo de una sesión vieja (su reloj que todavía late) no mueve la boca, el anillo ni la vigilancia.
+      if (gen !== undefined && gen !== control.vista().gen) return;
       nivelExterno(salida);
       nivelOido.emitir(entrada);
-      control.entrada(entrada);
+      control.entrada(entrada, cruda, gen);
     },
     [control]
   );
@@ -546,11 +689,13 @@ export function VozProvider({ children, conCompanera = true }: Props) {
     else audioVoz.cerrando(gen);
   }, []);
   const alFin = useCallback((_gen: number, pase: string) => avisarCierre(pase), []);
+  const alPermiso = useCallback((gen: number) => control.permisoListo(gen), [control]);
   const permiso = useCallback(async () => {
     const v = control.vista();
     const p = await precalentador.tomar(v.avatar, v.idioma, v.intento > 0);
-    // Los minutos que le quedan hoy (miembros): el ciclo avisa antes de agotarlos.
-    ciclo.fijarTope(typeof p.restanteMs === 'number' ? p.restanteMs : null);
+    // Los minutos que le quedan hoy (miembros): el ciclo avisa antes de agotarlos. Un permiso que vuelve
+    // cuando su sesión ya no es la vigente no fija nada (AUR10: lo tardío no toca la llamada de ahora).
+    if (control.vista().gen === v.gen) ciclo.fijarTope(typeof p.restanteMs === 'number' ? p.restanteMs : null);
     return p;
   }, [control, precalentador, ciclo]);
 
@@ -586,7 +731,8 @@ export function VozProvider({ children, conCompanera = true }: Props) {
       minimizar: (si) => setMinimizada(si && llamadaActiva(ciclo.estado())),
       iniciar: llamame,
       terminar: colgar,
-      alternar: () => (llamadaActiva(ciclo.estado()) ? (ciclo.estado() === 'sonando' ? ejecutar(ciclo.rechazar()) : colgar()) : void llamame()),
+      // «Hablar»: abre la conversación al instante (sin timbre). En llamada, cuelga; sonando, rechaza.
+      alternar: () => (llamadaActiva(ciclo.estado()) ? (ciclo.estado() === 'sonando' ? ejecutar(ciclo.rechazar()) : colgar()) : void hablarYa()),
       silenciar: (v) => {
         const e = ciclo.estado();
         if (v ? e === 'en_llamada' : e === 'silenciado') ejecutar(ciclo.dobleToque());
@@ -615,7 +761,7 @@ export function VozProvider({ children, conCompanera = true }: Props) {
         void speak(texto, { onAudioStart: () => pauseMicForTts(true), onEnd: () => pauseMicForTts(false) });
       },
     };
-  }, [vista, control, precalentar, estadoCiclo, ciclo, ejecutar, usadoHoyMs, nombreLlamada, llamadaLista, minimizada, altavoz, llamame]);
+  }, [vista, control, precalentar, estadoCiclo, ciclo, ejecutar, usadoHoyMs, nombreLlamada, llamadaLista, minimizada, altavoz, llamame, hablarYa]);
 
   // Llamada minimizada: la app baja lo que ocupa la píldora (las pantallas leen el borde de arriba
   // con useSafeAreaInsets). Fuera de un SafeAreaProvider se usan los bordes de la ventana.
@@ -624,6 +770,11 @@ export function VozProvider({ children, conCompanera = true }: Props) {
     const b = bordesApp || initialWindowMetrics?.insets || { top: 0, bottom: 0, left: 0, right: 0 };
     return minimizada ? { ...b, top: b.top + ALTO_PILDORA } : b;
   }, [bordesApp, minimizada]);
+
+  // Colgó la llamada del avatar: mientras se ve «Llamada terminada», Claudio y ANT-ONIO en video se despiden.
+  useEffect(() => {
+    if (estadoCiclo === 'colgada') pedirGolpe('despide');
+  }, [estadoCiclo]);
 
   return (
     <VozCtx.Provider value={valor}>
@@ -640,6 +791,7 @@ export function VozProvider({ children, conCompanera = true }: Props) {
           onNiveles={alNiveles}
           onAudio={alAudio}
           onFin={alFin}
+          onPermiso={alPermiso}
           controles={controles}
         />
       ) : null}
@@ -700,6 +852,8 @@ class LimiteCuerpo extends Component<{ children: ReactNode; respaldo: ReactNode 
   }
 }
 function cuerpo3DLlamada(avatar: AvatarId): ((lado: number, respaldo: ReactNode) => ReactNode) | undefined {
+  // AU-RA: su orbe (el MiniAvatar de la llamada ya lo es, y late con su voz); nada de robot 3D encima.
+  if (avatar === 'aura') return undefined;
   if (moduloCuerpoLlamada === undefined) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports

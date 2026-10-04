@@ -17,7 +17,7 @@
  */
 import { pathToFileURL } from 'node:url';
 import { secretoDerivado } from '../server/seguridad';
-import { ETIQUETA_SECRETO_LLM, PASE_TTL_MS } from '../server/voz-agente';
+import { CASCADA_ELEVENLABS_MS, ETIQUETA_SECRETO_LLM, PASE_TTL_MS, RELLENO_AGENTE_MS } from '../server/voz-agente';
 import { NOMBRE_AVATAR, VOCES_ELEVEN, type AvatarVoz, type Idioma } from '../server/eleven';
 
 const API = 'https://api.elevenlabs.io/v1';
@@ -90,10 +90,24 @@ const PRIMERA: Record<AvatarVoz, Record<Idioma, string>> = {
   antonio: { es: '¡Aquí ANT-ONIO! ¿En qué te echo una mano?', en: 'ANT-ONIO here! What can I help you with?' },
 };
 
-/** Lo que el reconocimiento tiene que oír bien (nombres propios de la app). */
-export const PALABRAS_ASR = ['AU-RA', 'Aura', 'Claudio', 'ANT-ONIO', 'Antonio', 'Orden Global', 'Guardián', 'Genesis ID', 'Veta Wallet'];
+/**
+ * Lo que el reconocimiento tiene que oír bien: los nombres propios de la app y, desde el 1-oct (José: «el
+ * micrófono en Windows se confunde muchísimo»), las apps y órdenes que más se piden a las manos de la PC y del
+ * teléfono. «abre exel», «pon spotifai», «cierra el crom» llegaban así y las reglas no las reconocían.
+ */
+export const PALABRAS_ASR = [
+  'AU-RA', 'Aura', 'Claudio', 'ANT-ONIO', 'Antonio', 'Orden Global', 'Guardián', 'Genesis ID', 'Veta Wallet', 'PULSE2CHAT',
+  'Spotify', 'YouTube', 'Excel', 'Word', 'PowerPoint', 'Outlook', 'Chrome', 'Edge', 'WhatsApp', 'Teams', 'Zoom',
+  'Bloc de notas', 'calculadora', 'captura de pantalla', 'volumen', 'siguiente canción', 'pausa', 'recuérdame', 'videollamada',
+];
 
 /** Lo que no hay que tomar como interrupción: asentir mientras el avatar habla. */
+/** Los rellenos de la espera (soft timeout), en cada idioma. */
+export const RELLENOS: Record<'es' | 'en', string[]> = {
+  es: ['Mmm… a ver.', 'Déjame ver.', 'A ver…', 'Un segundo.'],
+  en: ['Hmm… let me see.', 'Let me check.', 'One sec.', 'Hmm…'],
+};
+
 const ASENTIR: Record<Idioma, string[]> = {
   es: ['ajá', 'sí', 'ok', 'okay', 'mhm', 'claro', 'ya', 'exacto', 'ah ok', 'vale'],
   en: ['uh-huh', 'yeah', 'yes', 'ok', 'okay', 'mhm', 'right', 'sure', 'got it'],
@@ -121,19 +135,39 @@ function config(avatar: AvatarVoz, idioma: Idioma, secretId: string, modeloTts: 
             request_headers: { 'X-Pase': { variable_name: 'pase' } },
           },
           backup_llm_config: { preference: 'disabled' },
+          // Cuánto espera ElevenLabs al cerebro antes de cortar (1-oct: de 4 s por omisión a 12 s). Con 4 s
+          // toda respuesta lenta obligaba a meter relleno antes del corte; el puente del servidor ya cubre.
+          cascade_timeout_seconds: CASCADA_ELEVENLABS_MS / 1000,
         },
       },
       tts: { model_id: modeloTts, voice_id: VOCES_ELEVEN[avatar][idioma] },
       asr: { provider: 'scribe_realtime', quality: 'high', keywords: PALABRAS_ASR },
       turn: {
         turn_model: 'turn_v3',
-        turn_eagerness: 'normal',
-        speculative_turn: false,
+        // «Rápido» (José, 3-oct, con permiso): en sus llamadas el agente esperó 3,7 s para decidir que había
+        // terminado, y una vez no lo decidió nunca (11 s de silencio hasta colgar). turn_v3 sigue mirando
+        // el sentido de la frase; con «eager» no espera de más.
+        turn_eagerness: 'eager',
+        // Turno especulativo (José, 1-oct): la respuesta se pide en la pausa. Las acciones esperan a que
+        // el turno se confirme (server/voz-agente.ts, RetencionAcciones): una frase a medias no hace nada.
+        speculative_turn: true,
         interruption_ignore_terms: ASENTIR[idioma],
         interruption_ignore_term_languages: [idioma],
         merge_with_default_ignore_terms: true,
-        soft_timeout_config: { timeout_seconds: 2.5, message: idioma === 'en' ? 'Hmm… let me see.' : 'Mmm… a ver.' },
+        // El relleno de ElevenLabs, solo de RESPALDO: si nuestro servidor no mandó nada a los 4,5 s (el puente
+        // habla a los 3 s). Antes a 2,5 s y sonaban dos rellenos seguidos (auditoría externa, 1-oct).
+        soft_timeout_config: {
+          timeout_seconds: RELLENO_AGENTE_MS / 1000,
+          message: RELLENOS[idioma][0],
+          additional_soft_timeout_messages: RELLENOS[idioma].slice(1),
+          randomize_fillers: true,
+          // Uno por respuesta (el puente y los seguimientos del servidor hacen el resto).
+          max_soft_timeouts_per_generation: 1,
+        },
       },
+      // Las voces y el ruido de fondo (la tele, otra persona) no cuentan como si la persona siguiera hablando
+      // (José, 3-oct: la frase que nunca se cerró).
+      vad: { background_voice_detection: true },
       // Lo mismo que dura un pase (PASE_TTL_MS en server/voz-agente.ts): más allá, la voz solo se despide.
       conversation: { max_duration_seconds: Math.floor(PASE_TTL_MS / 1000) },
     },

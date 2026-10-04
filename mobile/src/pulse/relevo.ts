@@ -9,8 +9,9 @@
  *      misma persona: mismos contactos, mismas conversaciones.
  *   2. CADA PETICIÓN DE ESCUCHA DICE QUÉ APARATO ES (`aparato` = id de su llave). Sin eso, AU-RA y
  *      la app Orden Global se robaban el timbre y las respuestas de las llamadas.
- *   3. Sin grupos, pagos ni estados por ahora: conversaciones 1 a 1 cifradas, el círculo, buscar,
- *      fotos cifradas y llamadas. Lo que llega de un grupo se ve en su hilo si ya estaba.
+ *   3. Sin grupos ni estados por ahora: conversaciones 1 a 1 cifradas, el círculo, buscar, fotos
+ *      cifradas, llamadas y el comprobante de un pago (`pago`; el pago lo firma Veta Wallet, ver
+ *      cartera/). Lo que llega de un grupo se ve en su hilo si ya estaba.
  *
  * Y lo que se aprendió con la auditoría del 29-sep: lo ya abierto se guarda por id (el hilo se
  * sondea y Hermes, sin JIT, tardaba en volver a descifrar y verificar doscientos mensajes cada vez);
@@ -134,32 +135,65 @@ function avisarCuenta() {
 }
 
 /**
+ * El alta en curso (auditoría del 3-oct, AUTH02). Cada alta toma un número; salir —o empezar otra alta—
+ * lo vence. Una alta que vuelve tarde (la persona ya salió, entró otra, o volvió a entrar con otro pase)
+ * no guarda la llave, no publica nada y no avisa: antes reponía la cuenta del chat en memoria y en
+ * SecureStore después de salir.
+ */
+let alta = 0;
+
+function altaVencida(): ErrorRelevo {
+  return Object.assign(new Error('la persona salió durante el alta del chat'), { motivo: 'vencida' });
+}
+
+/**
  * Entra al chat con el pase de Genesis que trajo la wallet. Devuelve el correo de la cuenta.
  *
  * El NOMBRE no viaja en el alta: si la cuenta ya existía, el relevo lo pisaba con el de Genesis y el
  * nombre con el que la persona sale en el chat (el que eligió en la wallet o en la web) desaparecía
  * para todos sus contactos. Solo si la ficha quedó SIN nombre —cuenta recién hecha— se le pone el de
  * Genesis, aparte y después.
+ *
+ * Después de cada `await` se mira que el alta siga siendo la de ahora y que dentro de AU-RA no haya
+ * otra persona (la entrada con Genesis fija a la suya mientras el alta viaja: eso sí vale). Si quedó
+ * vieja después de escribir, lo que escribió se suelta, si sigue siendo suyo.
  */
 export async function entrarConPase(pase: string, verificador: string, nombre?: string, duenoAura: string = correoCuenta()): Promise<Cuenta> {
+  const mia = ++alta;
+  const aura = normalCorreo(duenoAura);
+  const vigente = () => mia === alta && (!correoCuenta() || correoCuenta() === aura);
   const d = await pedir<{ llave: string; correo: string }>('/alta', { pase, verificador });
   if (!d?.llave || !d?.correo) throw new Error('el relevo no devolvió la llave');
-  const aura = normalCorreo(duenoAura);
-  yo = { correo: String(d.correo).toLowerCase(), llave: d.llave, ...(aura ? { aura } : {}) };
-  await SecureStore.setItemAsync(CAJON_CUENTA, JSON.stringify(yo)).catch(() => {});
+  if (!vigente()) throw altaVencida();
+  const cuenta: Cuenta = { correo: String(d.correo).toLowerCase(), llave: d.llave, ...(aura ? { aura } : {}) };
+  const guardada = JSON.stringify(cuenta);
+  /** Quedó vieja con algo ya escrito: se suelta lo suyo (salir pudo borrar ANTES de que esto se guardara). */
+  const soltarLoMio = async () => {
+    if (yo === cuenta) {
+      yo = null;
+      publicadaPara = null;
+    }
+    if ((await SecureStore.getItemAsync(CAJON_CUENTA).catch(() => null)) === guardada) await SecureStore.deleteItemAsync(CAJON_CUENTA).catch(() => {});
+    throw altaVencida();
+  };
+  yo = cuenta;
+  await SecureStore.setItemAsync(CAJON_CUENTA, guardada).catch(() => {});
+  if (!vigente()) return soltarLoMio();
   publicadaPara = null;
   await publicarMiLlave().catch(() => null);
+  if (!vigente()) return soltarLoMio();
   const n = String(nombre || '').trim();
   if (n) {
     try {
-      const f = await ficha(yo.correo);
-      if (!String(f?.nombre || '').trim()) await pedir('/perfil', firmado({ nombre: n.slice(0, 80) }));
+      const f = await ficha(cuenta.correo);
+      if (vigente() && !String(f?.nombre || '').trim()) await pedir('/perfil', firmado({ nombre: n.slice(0, 80) }));
     } catch {
       /* sin nombre no pasa nada: se ve la parte de antes de la @ */
     }
+    if (!vigente()) return soltarLoMio();
   }
   avisarCuenta();
-  return yo;
+  return cuenta;
 }
 
 /**
@@ -177,8 +211,10 @@ export async function recuperar(duenoAura: string = correoCuenta()): Promise<Cue
     await salir();
     return null;
   }
+  // Si sale (o empieza un alta, o entra otra persona) mientras se lee el cajón, lo leído ya no se repone.
+  const mia = alta;
   const g = await SecureStore.getItemAsync(CAJON_CUENTA).catch(() => null);
-  if (!g) return null;
+  if (!g || mia !== alta || normalCorreo(correoCuenta()) !== dueno) return null;
   try {
     const c = JSON.parse(g) as Cuenta;
     if (!c?.correo || !c?.llave) return null;
@@ -196,6 +232,9 @@ export async function recuperar(duenoAura: string = correoCuenta()): Promise<Cue
 
 /** Sale del chat en este teléfono: corta la escucha, olvida la cuenta y todo lo abierto en memoria. */
 export async function salir() {
+  // Antes de cualquier `await`: un alta (o una recuperación) en vuelo ya no es de nadie que esté aquí.
+  alta++;
+  await quitarAvisos().catch(() => undefined);
   for (const f of [...antesDeSalirHacer]) {
     try {
       f();
@@ -226,6 +265,24 @@ export async function salir() {
 }
 
 export const quien = () => yo;
+
+/*
+ * LOS AVISOS DEL CHAT CON LA APP CERRADA. El relevo no tiene la cuenta de Firebase de AU-RA: se le apunta
+ * una referencia firmada por el servidor de AU-RA (pulse/avisosRelevo.ts la pide) y, cuando llega un
+ * mensaje, el relevo se la devuelve a AU-RA, que avisa a este teléfono. Ni una palabra del mensaje viaja.
+ */
+let refAvisos = '';
+export async function apuntarAvisos(ref: string): Promise<void> {
+  if (!yo || !ref) return;
+  await pedir('/suscribir', firmado({ aura: ref, aparato: await miAparato() }));
+  refAvisos = ref;
+}
+export async function quitarAvisos(): Promise<void> {
+  if (!yo || !refAvisos) return;
+  const ref = refAvisos;
+  refAvisos = '';
+  await pedir('/desuscribir', firmado({ aura: ref })).catch(() => undefined);
+}
 
 /* ── las llaves de los aparatos ───────────────────────────────────────────────────────────── */
 
@@ -323,6 +380,10 @@ export type Mensaje = {
   llaveArchivo?: string;
   ivArchivo?: string;
   cita?: string;
+  /** Comprobante de un envío (tipo «pago»): lo publica el relevo después de comprobarlo en la cadena. */
+  monto?: string;
+  moneda?: string;
+  hash?: string;
 };
 
 /** Un grupo no se escribe desde AU-RA: sin llaves de grupo, el mensaje saldría en claro. */
@@ -667,6 +728,12 @@ export const responderAmistad = async (de: string, aceptar: boolean) => {
 };
 export const leido = (de: string) => pedir('/leido', firmado({ de })).catch(() => null);
 export const ficha = (de: string) => pedir<any>('/ficha', firmado({ de }));
+/**
+ * El comprobante de un envío que YA pasó en la cadena (cartera/vigia.ts): el relevo comprueba el hash contra
+ * la cadena y lo deja en el hilo como mensaje de tipo «pago». El mismo contrato que AURA para Windows.
+ */
+export const pago = (p: { para: string; monto: string; moneda: string; hash: string; nota?: string }) =>
+  pedir<{ mensaje?: unknown }>('/pago', firmado({ para: String(p.para).toLowerCase(), monto: p.monto, moneda: p.moneda, hash: p.hash, nota: p.nota || '' }), 45_000);
 
 /** El código de seguridad con alguien: si coincide en los dos teléfonos, no hay nadie en medio. */
 export async function codigoCon(correo: string): Promise<string | null> {

@@ -22,6 +22,8 @@ export type Turno = {
   honesto?: boolean;
   /** La traza de este turno en el servidor: para decir «me sirvió / no me sirvió». */
   trazaId?: string;
+  /** Las tareas durables que el turno creó o cambió (AUR08). Un servidor viejo no las manda. */
+  tareas?: unknown[];
 };
 
 export type PeticionTurno = {
@@ -34,6 +36,10 @@ export type PeticionTurno = {
   correo?: string;
   /** Descripción de la escena que ya interpretó la cámara local (quién está, qué hace). */
   escena?: string;
+  /** Lo dijo en voz alta (el oído de la web): el servidor le pone los topes de la voz. */
+  hablado?: boolean;
+  /** Le habló encima a la respuesta anterior: lo que alcanzó a oír (lib/interrumpida.ts en el servidor). */
+  interrumpido?: { oido: string };
 };
 
 function cuerpo(opts: PeticionTurno) {
@@ -48,6 +54,8 @@ function cuerpo(opts: PeticionTurno) {
     usuario: opts.usuario,
     correo: opts.correo,
     escena: opts.escena || undefined,
+    hablado: opts.hablado ? true : undefined,
+    interrumpido: opts.interrumpido ? { oido: String(opts.interrumpido.oido || '').slice(-400) } : undefined,
   });
 }
 
@@ -119,6 +127,7 @@ export async function pedirTurnoStream(opts: PeticionTurno, ev: EventosTurno = {
         ms: data?.ms,
         via: data?.via,
         trazaId: data?.trazaId,
+        ...(Array.isArray(data?.tareas) ? { tareas: data.tareas } : {}),
         honesto: true,
       };
     } else if (evento === 'error') {

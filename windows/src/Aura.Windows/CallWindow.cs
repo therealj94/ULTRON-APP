@@ -17,7 +17,7 @@ internal sealed class CallWindow : Window {
  readonly Button create=new(){Content="Crear llamada"},join=new(){Content="Unirme con invitación"};
  string? room,participant;bool ready,closed;Task? poll;
  public CallWindow(bool selfTest=false,string? resultPath=null){
-  gateway=new(selfTest?new ConnectionSettings():ConnectionStore.Load());Title="Llamadas · AURA Windows";Width=960;Height=850;Background=new SolidColorBrush(Color.FromRgb(17,25,34));Foreground=Brushes.White;
+  gateway=new(selfTest?new ConnectionSettings():ConnectionStore.Load());Title="Llamadas · AURA Windows";Width=960;Height=850;Background=new SolidColorBrush(Color.FromRgb(0x0D,0x0C,0x0A));Foreground=new SolidColorBrush(Color.FromRgb(0xEC,0xE5,0xD6));
   var grid=new Grid();Content=grid;grid.RowDefinitions.Add(new(){Height=GridLength.Auto});grid.RowDefinitions.Add(new());
   var top=new StackPanel {Margin=new Thickness(18)};grid.Children.Add(top);var row=new WrapPanel();row.Children.Add(create);row.Children.Add(join);var copy=new Button{Content="Copiar invitación"};row.Children.Add(copy);top.Children.Add(row);top.Children.Add(invite);top.Children.Add(state);Grid.SetRow(browser,1);grid.Children.Add(browser);
   create.Click+=async(_,_)=>await Start(false);join.Click+=async(_,_)=>await Start(true);copy.Click+=(_,_)=>{if(!string.IsNullOrWhiteSpace(invite.Text)){try{Clipboard.SetText(invite.Text);state.Text="Invitación copiada. Compártela solo con la persona que esperas.";}catch(Exception ex){state.Text=ex.Message;}}};
@@ -30,7 +30,7 @@ internal sealed class CallWindow : Window {
     core.SetVirtualHostNameToFolderMapping("aura.windows.local",Path.Combine(AppContext.BaseDirectory,"CallAssets"),CoreWebView2HostResourceAccessKind.DenyCors);
     core.NavigationStarting+=(_,e)=>{if(e.Uri!=Origin+"call.html")e.Cancel=true;};
     core.NewWindowRequested+=(_,e)=>e.Handled=true;core.DownloadStarting+=(_,e)=>e.Cancel=true;
-    core.PermissionRequested+=(_,e)=>{e.State=CoreWebView2PermissionState.Deny;if(!selfTest&&e.Uri.StartsWith(Origin,StringComparison.Ordinal)&&e.PermissionKind is CoreWebView2PermissionKind.Microphone or CoreWebView2PermissionKind.Camera){e.State=MessageBox.Show(this,$"¿Permitir {e.PermissionKind} para esta llamada?","AURA · Permiso",MessageBoxButton.YesNo,MessageBoxImage.Question)==MessageBoxResult.Yes?CoreWebView2PermissionState.Allow:CoreWebView2PermissionState.Deny;}e.SavesInProfile=false;};
+    core.PermissionRequested+=(_,e)=>{e.State=CoreWebView2PermissionState.Deny;if(!selfTest&&Aura.Windows.Core.PuenteCentro.OrigenExacto(e.Uri,new Uri(Origin))&&e.PermissionKind is CoreWebView2PermissionKind.Microphone or CoreWebView2PermissionKind.Camera){e.State=MessageBox.Show(this,$"¿Permitir {e.PermissionKind} para esta llamada?","AURA · Permiso",MessageBoxButton.YesNo,MessageBoxImage.Question)==MessageBoxResult.Yes?CoreWebView2PermissionState.Allow:CoreWebView2PermissionState.Deny;}e.SavesInProfile=false;};
     core.WebMessageReceived+=async(_,e)=>{
      if(e.Source!=Origin+"call.html"||closed||e.WebMessageAsJson.Length>262144)return;
      try{using var doc=JsonDocument.Parse(e.WebMessageAsJson);var m=doc.RootElement;string? kind=m.GetProperty("kind").GetString();

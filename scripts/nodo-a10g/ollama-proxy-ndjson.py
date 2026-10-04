@@ -9,6 +9,17 @@ MODEL = "/opt/models/orcarouter_Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
 # conocimiento minero y la instruccion de herramientas (que va al final), y contestaba de memoria
 # sin consultar nunca el catastro. El system va entero; lo que se recorta es la conversacion vieja.
 MAX_CHARS = int(os.environ.get("PROXY_MAX_CHARS", "60000"))
+# 2-oct: el espacio (slot) COMUN, el ultimo de los 4 de llama-server. Todo pedido que no dice en que espacio va
+# (Dr Electrum, el ULTRON viejo de Render con su chat de prueba cada 3 min, cualquier sonda) cae AQUI. Antes
+# llama-server lo ponia en el espacio menos usado y le borraba lo leido a una persona: el turno siguiente de
+# esa persona releia ~7 700 fichas desde cero (8 s antes de la primera palabra; medido en el log del nodo).
+ESPACIO_COMUN = int(os.environ.get("PROXY_ESPACIO_COMUN", "3"))
+
+def espacio_de(valor):
+    """El espacio pedido (0..15) o, si no viene o no es valido, el comun."""
+    if isinstance(valor, int) and not isinstance(valor, bool) and 0 <= valor < 16:
+        return valor
+    return ESPACIO_COMUN
 
 def linea(content, done, extra=None, tools=None):
     msg = {"role": "assistant", "content": content or ""}
@@ -24,8 +35,16 @@ def linea(content, done, extra=None, tools=None):
         "eval_count": int(u.get("completion_tokens") or 0),
         "eval_duration": int(float(u.get("predicted_ms") or 0) * 1e6),
     }
+    if u.get("prompt_cache") is not None:
+        # Cuantas fichas del prompt ya estaban leidas en el espacio (el servidor lo anota en la traza).
+        o["prompt_cache_count"] = int(u.get("prompt_cache") or 0)
     if done:
         o["done_reason"] = "stop"
+    if u.get("error"):
+        # 1-oct: un fallo va como error, sin texto. Antes iba como si lo dijera AU-RA («Proba de nuevo.»,
+        # «Te escucho.»): la voz lo leia y quedaba en su memoria. Quien llama elige que decir.
+        o["error"] = str(u["error"])[:200]
+        o["done_reason"] = "error"
     return json.dumps(o, ensure_ascii=False) + "\n"
 
 def largo(msgs):
@@ -75,13 +94,16 @@ def chat():
         "max_tokens": int(op.get("num_predict") or 1536),
         "temperature": float(op["temperature"]) if op.get("temperature") is not None else 0.7,
     }
+    # 1-oct: el espacio (slot) de cada persona. Lo leido de ella queda en ESE espacio y un reintento
+    # cae ahi mismo (espera la lectura en curso y la reutiliza) en vez de releer todo en otro.
+    payload["id_slot"] = espacio_de(op.get("id_slot"))
     # Las herramientas NO se mandan a llama: quien llama las describe en el system (formato Hermes)
     # y lee las <tool_call> del texto. Mandarlas ademas las duplicaba en el prompt.
     def generate():
         tcs, usage, got = [], {}, False
         r = requests.post(LLAMA + "/v1/chat/completions", json=payload, stream=True, timeout=600)
         if r.status_code != 200:
-            yield linea("El modelo no tomo el turno (" + str(r.status_code) + "). Proba de nuevo.", True)
+            yield linea("", True, {"error": "llama-server HTTP " + str(r.status_code)})
             return
         for raw in r.iter_lines():
             if not raw:
@@ -96,7 +118,7 @@ def chat():
             except Exception:
                 continue
             if chunk.get("error"):
-                yield linea("No pude completar este turno. Proba de nuevo.", True)
+                yield linea("", True, {"error": str(chunk.get("error"))[:200]})
                 return
             delta = ((chunk.get("choices") or [{}])[0].get("delta") or {})
             tim = chunk.get("timings") or {}
@@ -105,11 +127,14 @@ def chat():
                 usage["predicted_ms"] = tim.get("predicted_ms") or 0
             if tim.get("prompt_n") is not None:
                 usage["prompt_tokens"] = tim["prompt_n"] + int(tim.get("cache_n") or 0)
+                usage["prompt_cache"] = int(tim.get("cache_n") or 0)
             txt = delta.get("content") or ""
             if txt:
                 got = True
                 yield linea(txt, False)
-        yield linea("" if got else "Te escucho.", True, usage)
+        if not got:
+            usage["error"] = "sin texto"
+        yield linea("", True, usage)
     # Ollama contesta en un solo JSON cuando piden stream:false (asi templa el asistente de
     # PULSE2CHAT y asi preguntan los que no leen a trozos).
     if data.get("stream", True) is False:
@@ -128,6 +153,43 @@ def chat():
 def tags():
     # Tambien bajo el nombre corto que configura el asistente (AURA_MODELO=qwen3.8:27b).
     return jsonify({"models": [{"name": MODEL, "model": MODEL}, {"name": "qwen3.8:27b", "model": "qwen3.8:27b"}, {"name": "orcarouter/Qwen3.8-27B-Uncensored", "model": "orcarouter/Qwen3.8-27B-Uncensored"}]})
+
+
+# 1-oct: precalentar lo fijo de AU-RA. Este llama-server (Qwen3.8 con draft-mtp) solo reutiliza lo ya leído
+# desde un checkpoint, y el checkpoint queda al FINAL de cada prompt. Si se le manda solo el system (hasta su
+# <|im_end|>), el checkpoint queda justo ahí y el turno siguiente lee solo lo nuevo: 0,4 s en vez de 6,5 s.
+@app.route("/api/precalentar", methods=["POST"])
+def precalentar():
+    data = request.get_json(force=True, silent=True) or {}
+    system = str(data.get("system") or "")
+    if not system or len(system) > MAX_CHARS:
+        return jsonify({"ok": False, "error": "system vacio o demasiado largo"}), 400
+    try:
+        t0 = time.time()
+        # 1-oct: con el historial (mensajes) queda leido tambien, hasta donde empezara el mensaje nuevo; y en
+        # el espacio (slot) de la persona, donde caeran sus turnos.
+        hist = [m for m in (data.get("mensajes") or []) if isinstance(m, dict) and m.get("role") in ("user", "assistant") and isinstance(m.get("content"), str)]
+        MARCA = "\u2063PRECALENTAR\u2063"
+        plantilla = requests.post(LLAMA + "/apply-template", json={"messages": [{"role": "system", "content": system}] + hist + [{"role": "user", "content": MARCA}]}, timeout=10).json().get("prompt") or ""
+        if hist:
+            k = plantilla.rfind(MARCA)
+            inicio = plantilla.rfind("<|im_start|>", 0, k) if k >= 0 else -1
+            if inicio < 0:
+                return jsonify({"ok": False, "error": "no encontre el mensaje nuevo en la plantilla"}), 500
+            prefijo = plantilla[:inicio]
+        else:
+            i = plantilla.find(system)
+            fin = plantilla.find("<|im_end|>", i + len(system)) if i >= 0 else -1
+            if fin < 0:
+                return jsonify({"ok": False, "error": "no encontre el system en la plantilla"}), 500
+            prefijo = plantilla[: fin + len("<|im_end|>\n")]
+        cuerpo = {"prompt": prefijo, "n_predict": 0, "cache_prompt": True}
+        cuerpo["id_slot"] = espacio_de(data.get("id_slot"))
+        r = requests.post(LLAMA + "/completion", json=cuerpo, timeout=90).json()
+        tm = r.get("timings") or {}
+        return jsonify({"ok": True, "leidas": tm.get("prompt_n"), "reusadas": tm.get("cache_n"), "ms": int((time.time() - t0) * 1000)})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)[:200]}), 502
 
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=11434, threaded=True)

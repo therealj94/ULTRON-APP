@@ -67,8 +67,13 @@ const ss = globalThis.__ss;
   globalThis.__wb = async () => ({ type: 'dismiss' });
   const antes = rn.url.length + rn.app.length;
   const r3 = await GENESIS.entrarConGenesis();
-  ok('SIN_VUELTA', r3.codigo === 'SIN_VUELTA');
+  ok('sin app: SIN_WALLET (la pantalla ofrece instalar, la web o el correo)', r3.codigo === 'SIN_WALLET', JSON.stringify(r3));
   ok('no quedan oyentes de Linking/AppState vivos', rn.url.length + rn.app.length - antes === 0, `${rn.url.length + rn.app.length - antes}`);
-  ok('el pedido pendiente se borra tras SIN_VUELTA', !ss.m.has('aura.genesis.pendiente'));
+  ok('el pedido pendiente se borra tras SIN_WALLET', !ss.m.has('aura.genesis.pendiente'));
+  // Elegida la web y cerrada la pestaña sin vuelta: SIN_VUELTA, y tampoco queda nada.
+  const r4 = await GENESIS.entrarConGenesis({ web: true });
+  ok('web sin vuelta: SIN_VUELTA', r4.codigo === 'SIN_VUELTA', JSON.stringify(r4));
+  ok('no quedan oyentes tras la web', rn.url.length + rn.app.length - antes === 0, `${rn.url.length + rn.app.length - antes}`);
+  ok('el pedido pendiente se borra tras SIN_VUELTA por la web (nadie lo guarda)', !ss.m.has('aura.genesis.pendiente'));
   fin();
 })().catch((e) => { console.error('ERR', e); process.exit(1); });

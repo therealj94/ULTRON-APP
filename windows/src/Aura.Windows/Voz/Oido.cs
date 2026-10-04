@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using Aura.Windows.Core;
 using NAudio.Wave;
 
 namespace Aura.Windows.Voz;
@@ -15,29 +16,33 @@ namespace Aura.Windows.Voz;
 internal sealed class Oido : IDisposable
 {
     const int Muestreo = 16000;
-    const int MsBloque = 20;
+    const int MsBloque = DetectorVoz.MsBloque;
     WaveInEvent? mic;
     readonly List<byte> frase = new();
     readonly Queue<byte[]> previo = new();
-    double piso = 0.004;
-    bool hablando;
-    int msVoz, msSilencio, msTotal, msEsperando;
+    /// <summary>Cuándo empieza y termina una frase, y el piso de ruido (Aura.Windows.Core, probado).</summary>
+    readonly DetectorVoz det = new() { Continuo = false };
 
     public bool Abierto => mic != null;
+    /// <summary>Está oyendo una frase ahora mismo (empezó a hablar y todavía no termina).</summary>
+    public bool OyendoFrase => mic != null && det.Hablando;
     /// <summary>Esperando voz: después de este tiempo sin que nadie hable, se cierra (salvo en continuo).</summary>
-    public int EsperaMaxMs { get; set; } = 8000;
-    public bool Continuo { get; set; }
+    public int EsperaMaxMs { get => det.EsperaMaxMs; set => det.EsperaMaxMs = value; }
+    public bool Continuo { get => det.Continuo; set => det.Continuo = value; }
     /// <summary>AURA está hablando: más umbral, y lo que pase es una interrupción.</summary>
-    public bool ModoInterrupcion { get; set; }
-    public int SilencioFinMs { get; set; } = 750;
+    public bool ModoInterrupcion { get => det.ModoInterrupcion; set => det.ModoInterrupcion = value; }
+    public int SilencioFinMs { get => det.SilencioFinMs; set => det.SilencioFinMs = value; }
     /// <summary>Cuánto suena AURA ahora (0..1): su propia voz que vuelve por el micrófono no es una interrupción.</summary>
-    public double NivelAltavoz { get; set; }
+    public double NivelAltavoz { get => det.NivelAltavoz; set => det.NivelAltavoz = value; }
 
     public event Action<double>? Nivel;
     public event Action? EmpezoAHablar;
     public event Action<byte[]>? Frase;
     public event Action? SeCanso;
     public event Action<string>? Fallo;
+    /// <summary>El micrófono entrega solo ceros (permiso de Windows apagado, micrófono muteado por hardware).</summary>
+    public event Action? MicMudoDelSistema;
+    int bloquesCero;
 
     public void Abrir()
     {
@@ -59,7 +64,7 @@ internal sealed class Oido : IDisposable
         }
     }
 
-    void Reiniciar() { lock (frase) { frase.Clear(); previo.Clear(); hablando = false; msVoz = msSilencio = msTotal = msEsperando = 0; } }
+    void Reiniciar() { bloquesCero = 0; lock (frase) { frase.Clear(); previo.Clear(); det.Reiniciar(); } }
 
     public void Cerrar()
     {
@@ -78,45 +83,65 @@ internal sealed class Oido : IDisposable
         for (int i = 0; i < e.BytesRecorded - 1; i += 2) { double v = BitConverter.ToInt16(e.Buffer, i) / 32768.0; suma += v * v; }
         double rms = n > 0 ? Math.Sqrt(suma / n) : 0;
         Nivel?.Invoke(Math.Min(1, rms * 9));
+        // Silencio DIGITAL total (ceros exactos) durante 4 s: Windows le negó el micrófono a las apps de escritorio
+        // (Privacidad → Micrófono) y entrega ceros sin dar error. Antes AURA quedaba «escuchando» sorda, sin avisar.
+        if (suma == 0) { if ((bloquesCero += 1) == 4000 / MsBloque) MicMudoDelSistema?.Invoke(); }
+        else bloquesCero = 0;
         var bloque = new byte[e.BytesRecorded];
         Buffer.BlockCopy(e.Buffer, 0, bloque, 0, e.BytesRecorded);
         byte[]? lista = null; bool empezo = false, canso = false;
         lock (frase)
         {
-            double umbral = Math.Max(0.012, piso * (ModoInterrupcion ? 7 : 3.2));
-            if (ModoInterrupcion) umbral = Math.Max(Math.Max(umbral, 0.05), NivelAltavoz * 0.22);
-            bool voz = rms > umbral;
-            if (!hablando)
+            bool yaHablando = det.Hablando;
+            switch (det.Bloque(rms))
             {
-                // El piso solo aprende del silencio (y despacio): la voz no lo sube.
-                if (!voz) piso = piso * 0.97 + rms * 0.03;
-                previo.Enqueue(bloque);
-                while (previo.Count > 15) previo.Dequeue(); // 300 ms antes de la primera sílaba
-                msVoz = voz ? msVoz + MsBloque : Math.Max(0, msVoz - MsBloque);
-                msEsperando += MsBloque;
-                if (msVoz >= (ModoInterrupcion ? 260 : 120))
-                {
-                    hablando = true; empezo = true; msSilencio = 0; msTotal = 0;
-                    foreach (var b in previo) frase.AddRange(b);
+                case EventoVoz.Empezo:
+                    empezo = true;
+                    foreach (var b in previo) frase.AddRange(b); // 400 ms antes de la primera sílaba
                     previo.Clear();
-                }
-                else if (!Continuo && msEsperando > EsperaMaxMs) { canso = true; msEsperando = int.MinValue / 2; } // avisa UNA vez
-            }
-            else
-            {
-                frase.AddRange(bloque);
-                msTotal += MsBloque;
-                msSilencio = voz ? 0 : msSilencio + MsBloque;
-                if (msSilencio >= SilencioFinMs || msTotal >= 25000)
-                {
-                    lista = Wav(frase.ToArray());
-                    frase.Clear(); hablando = false; msVoz = 0; msEsperando = 0;
-                }
+                    frase.AddRange(bloque);
+                    break;
+                case EventoVoz.Fin:
+                    frase.AddRange(bloque);
+                    lista = Wav(Normalizar(frase.ToArray()));
+                    frase.Clear();
+                    break;
+                case EventoVoz.Ruido:
+                    // 25 s sin una pausa: ruido del cuarto. No va al transcriptor.
+                    frase.Clear();
+                    break;
+                case EventoVoz.Canso:
+                    canso = true;
+                    goto default;
+                default:
+                    if (yaHablando) frase.AddRange(bloque);
+                    else { previo.Enqueue(bloque); while (previo.Count > 20) previo.Dequeue(); }
+                    break;
             }
         }
         if (empezo) EmpezoAHablar?.Invoke();
         if (lista != null && lista.Length > 44 + Muestreo / 2) Frase?.Invoke(lista); // menos de 0,25 s de audio no es una frase
         if (canso) SeCanso?.Invoke();
+    }
+
+    /// <summary>
+    /// Sube el volumen de la frase para que el pico quede cerca de -3 dB (máximo ×8): el micrófono de una laptop
+    /// a un metro llega muy bajo y el transcriptor se equivoca más. Nunca la satura; si ya viene fuerte, no la toca.
+    /// </summary>
+    public static byte[] Normalizar(byte[] pcm)
+    {
+        int pico = 1;
+        for (int i = 0; i + 1 < pcm.Length; i += 2) pico = Math.Max(pico, Math.Abs((int)BitConverter.ToInt16(pcm, i)));
+        double g = Math.Min(8.0, 0.7 * short.MaxValue / pico);
+        if (g <= 1.15) return pcm;
+        var o = new byte[pcm.Length];
+        for (int i = 0; i + 1 < pcm.Length; i += 2)
+        {
+            int v = (int)Math.Round(BitConverter.ToInt16(pcm, i) * g);
+            v = Math.Clamp(v, short.MinValue, short.MaxValue);
+            o[i] = (byte)(v & 0xFF); o[i + 1] = (byte)((v >> 8) & 0xFF);
+        }
+        return o;
     }
 
     public static byte[] Wav(byte[] pcm)

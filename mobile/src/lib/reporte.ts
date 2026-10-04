@@ -37,8 +37,8 @@ function guardar() {
   AsyncStorage.setItem(CLAVE, JSON.stringify(migas.slice(-MAX))).catch(() => {});
 }
 
-function marcarViva(viva: boolean) {
-  AsyncStorage.setItem(CLAVE_VIVA, viva ? '1' : '0').catch(() => {});
+function marcarViva(viva: boolean): Promise<void> {
+  return AsyncStorage.setItem(CLAVE_VIVA, viva ? '1' : '0').catch(() => {});
 }
 
 /** Marca, modelo y sistema. Nada que identifique a la persona (ni el nombre del teléfono, ni el serial). */
@@ -50,6 +50,16 @@ function equipo(): string {
     /* */
   }
   return '?';
+}
+
+/**
+ * Un cierre que la app hace a propósito con la pantalla delante (la OTA recarga con `reloadAsync`): no es un
+ * crash. Sin esto el siguiente arranque encuentra la marca de «viva» y acusa una caída que no hubo.
+ */
+export function cierreIntencional(motivo: string): Promise<void> {
+  miga(motivo);
+  // Se espera a que la marca quede escrita: la recarga mata el proceso enseguida.
+  return marcarViva(false);
 }
 
 /** Marca de paso. Barato: se guarda en disco para sobrevivir a un crash nativo. */
@@ -182,4 +192,15 @@ export async function iniciarReporte() {
 export function reportarEstado(nota: string) {
   miga(nota);
   enviar({ tipo: 'estado', nota, migas });
+}
+
+/**
+ * Una pantalla se rompió al dibujar y la atrapó su límite (app/LimitePantalla.tsx): la app sigue viva,
+ * pero se manda como error (no fatal) con sus migas, para verlo en los logs igual que uno sin capturar.
+ */
+export function reportarErrorPantalla(pantalla: string, error: unknown) {
+  const e = error as { message?: unknown; stack?: unknown } | null;
+  const texto = String(e?.message || error).slice(0, 360);
+  miga(`pantalla ${pantalla}: se rompió (${texto.slice(0, 80)})`);
+  enviar({ tipo: 'error-js', fatal: false, error: `pantalla ${pantalla}: ${texto}`, stack: String(e?.stack || '').slice(0, 1500), migas });
 }

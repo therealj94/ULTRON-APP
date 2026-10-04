@@ -51,13 +51,24 @@ internal sealed class AvatarView : FrameworkElement
     public string Estado
     {
         get => estado;
-        set { if (estado == value) return; estado = value; InvalidateVisual(); }
+        set { if (estado == value) return; estado = value; InvalidateVisual(); EstadoCambio?.Invoke(); }
     }
+
+    /// <summary>Cambió <see cref="Estado"/> (el orbe de AU-RA lo sigue: NotchWindow.Orbe.cs).</summary>
+    public event Action? EstadoCambio;
 
     /// <summary>0..1: cuánto suena la voz ahora mismo.</summary>
     public double Boca { get => boca; set => boca = Math.Clamp(value, 0, 1); }
 
     public bool Quieto { get; set; }
+
+    /// <summary>«Menos movimiento» de Ajustes (además del de Windows).</summary>
+    public static bool MenosMovimientoPedido { get; set; }
+    /// <summary>
+    /// Movimiento reducido: quietud de verdad. Sin fotogramas, sin mirada que sigue al cursor, sin parpadeo,
+    /// sin saltos, giros ni mareos (solo la boca, que dice que está hablando).
+    /// </summary>
+    public static bool MenosMovimiento => MenosMovimientoPedido || !SystemParameters.ClientAreaAnimation;
 
     /// <summary>Se deja tocar: un toque lo hace saltar, tres seguidos lo marean y si lo acaricias salen corazones.</summary>
     public bool Tocable
@@ -86,6 +97,7 @@ internal sealed class AvatarView : FrameworkElement
     /// <summary>salto | mareo | corazones</summary>
     public void Reaccionar(string cual)
     {
+        if (MenosMovimiento) { Reacciono?.Invoke(cual); return; }
         reaccion = cual;
         reaccionT = cual switch { "mareo" => 2.2, "corazones" => 2.4, _ => 0.6 };
         Reacciono?.Invoke(cual);
@@ -120,7 +132,15 @@ internal sealed class AvatarView : FrameworkElement
         t += dt;
         // La boca sube rápido y baja despacio, como una boca de verdad.
         bocaSuave += (boca - bocaSuave) * (boca > bocaSuave ? 0.6 : 0.25);
-        if (!Quieto && SystemParameters.ClientAreaAnimation)
+        if (MenosMovimiento)
+        {
+            // Quieto: primer fotograma, ojos al frente y abiertos, nada que salte o gire. Solo se redibuja si la boca cambia.
+            bool habia = fotograma != 0 || mirada != default || reaccion != "" || parpadeo < 0;
+            fotograma = 0; direccion = 1; acumulado = 0; mirada = default; reaccion = ""; reaccionT = 0; encima = 0; parpadeo = 3;
+            if (habia || estado == "speaking") InvalidateVisual();
+            return;
+        }
+        if (!Quieto)
         {
             acumulado += dt;
             double paso = estado == "speaking" ? 1.0 / 14 : 1.0 / 10;
@@ -163,6 +183,7 @@ internal sealed class AvatarView : FrameworkElement
         double resto = reaccionT;
         double salto = reaccion == "salto" ? -Math.Abs(Math.Sin(resto / 0.6 * Math.PI)) * s0 * 0.12 : 0;
         double giro = reaccion == "mareo" ? Math.Sin(t * 14) * 9 * Math.Min(1, resto) : mirada.X * 3;
+        if (MenosMovimiento) { Cuerpo(dc, w, h); return; }
         dc.PushTransform(new TranslateTransform(mirada.X * s0 * 0.025, salto));
         dc.PushTransform(new RotateTransform(giro, w / 2, h * 0.85));
         Cuerpo(dc, w, h);
@@ -243,7 +264,7 @@ internal sealed class AvatarView : FrameworkElement
         var c = new Point(w / 2, h / 2);
         var cian = Color.FromRgb(0x5C, 0xE1, 0xFF);
         double abierto = parpadeo < 0 ? 0.12 : reaccion == "corazones" || estado == "happy" ? 0.55 : estado == "thinking" ? 0.7 : 1;
-        double latido = estado == "speaking" ? 1 + bocaSuave * 0.25 : estado == "listening" ? 1 + Math.Sin(t * 6) * 0.05 : 1;
+        double latido = estado == "speaking" ? 1 + bocaSuave * 0.25 : estado == "listening" && !MenosMovimiento ? 1 + Math.Sin(t * 6) * 0.05 : 1;
         var halo = new RadialGradientBrush(Color.FromArgb(90, cian.R, cian.G, cian.B), Color.FromArgb(0, cian.R, cian.G, cian.B));
         foreach (var lado in new[] { -1, 1 })
         {

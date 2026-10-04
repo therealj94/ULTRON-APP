@@ -6,6 +6,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Check, Copy, Send, X, Clock, AlertTriangle, CircleCheck, Hourglass, Ban, ThumbsUp, ThumbsDown, Camera } from 'lucide-react';
 import type { Entrada, EntradaAccion, EntradaAura } from './conversacion';
+import { EnlacesTareas } from './Trabajos';
+import type { TareaVista } from '../../mobile/src/lib/trabajos';
 
 const HORA = new Intl.DateTimeFormat('es', { hour: '2-digit', minute: '2-digit' });
 export const hora = (ts: number) => HORA.format(new Date(ts));
@@ -185,9 +187,12 @@ type Props = {
   onOpinar?: (valor: 1 | -1) => void;
   /** Lo que se ve cuando todavía no hay nada (el inicio). */
   vacio?: React.ReactNode;
+  /** Las tareas durables como están ahora (AUR08) y cómo abrir una en el panel. */
+  tareasPorId?: Record<string, TareaVista>;
+  onAbrirTarea?: (id: string) => void;
 };
 
-export function Conversacion({ entradas, onConfirmar, onCancelar, opinion, onOpinar, vacio }: Props) {
+export function Conversacion({ entradas, onConfirmar, onCancelar, opinion, onOpinar, vacio, tareasPorId, onAbrirTarea }: Props) {
   const fin = useRef<HTMLDivElement>(null);
   const lista = useRef<HTMLDivElement>(null);
   const [aviso, setAviso] = useState('');
@@ -261,6 +266,7 @@ export function Conversacion({ entradas, onConfirmar, onCancelar, opinion, onOpi
                 )}
                 {esUltima && opinion?.estado === 'gracias' && <span>Gracias, lo anoto.</span>}
               </div>
+              {e.tareas?.length && onAbrirTarea ? <EnlacesTareas refs={e.tareas} porId={tareasPorId || {}} onAbrir={onAbrirTarea} /> : null}
             </li>
           );
         })}

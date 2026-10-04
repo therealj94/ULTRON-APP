@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Oído local de AU-RA en el nodo T4 (g4dn.xlarge, 35.175.175.203).
+# Oído local de AU-RA en el nodo T4 (g4dn.xlarge, <ip-t4>).
 # Levanta faster-whisper (large-v3, int8_float16) con API compatible OpenAI en :8791.
 # Requisitos: driver NVIDIA + docker + nvidia-container-toolkit (ya presentes si el nodo corrió Chatterbox/Qwen-TTS).
 # Uso en el nodo:  bash instalar-oido.sh   (idempotente)
@@ -25,5 +25,5 @@ for i in $(seq 1 60); do
   sleep 5
 done
 echo "Prueba: curl -F model=${MODELO} -F language=es -F file=@voz.wav http://127.0.0.1:${PUERTO}/v1/audio/transcriptions"
-echo "En Render: ULTRON_STT_URL=http://35.175.175.203:${PUERTO}  ULTRON_STT_MODELO=${MODELO}${CLAVE:+  ULTRON_STT_CLAVE=***}"
+echo "En Render: ULTRON_STT_URL=http://<ip-t4>:${PUERTO}  ULTRON_STT_MODELO=${MODELO}${CLAVE:+  ULTRON_STT_CLAVE=***}"
 echo "Abrir el puerto ${PUERTO} en el security group solo para la IP de salida de Render."

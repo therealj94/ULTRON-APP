@@ -53,22 +53,35 @@ export async function saveVozHoy(v: VozHoy) {
 const RASTROS_VIEJOS = ['ultron_fp_chat_log_v2', 'ultron_fp_person_memory_v2'];
 
 export type SavedCreds = { correo: string; clave: string; name?: string };
-export type SttEngine = 'native' | 'cloud';
+export type SttEngine = 'turbo' | 'native' | 'cloud';
 export type AppSettings = {
   voiceId: string;
   micMuted: boolean;
   visionEnabled: boolean;
   gazeEnabled: boolean;
-  /** Oído: reconocimiento del sistema en el teléfono o grabación + Whisper en el servidor propio. */
+  /** Oído: Scribe v2 Realtime Turbo en vivo, el reconocimiento del teléfono o grabación + Scribe en el servidor. */
   sttEngine: SttEngine;
+  /** La persona eligió el oído en Ajustes (un «native» guardado por omisión antes de Turbo no cuenta). */
+  oidoElegido?: boolean;
   /** Comentarios espontáneos de lo que ve la cámara. */
   proactive: boolean;
   /** Efectos de sonido al tocar. */
   sfx: boolean;
-  /** Cómo contesta AU-RA en la sala: de pie en el centro o sentada en su sillón. */
-  postura: 'pie' | 'sentada';
-  /** Su cara: los anillos (Skia, la de siempre desde el 25-sep) o la habitación 3D. */
-  cara: 'anillos' | 'sala';
+  /**
+   * Hablarle encima (José, 3-oct: «como ChatGPT con voz»): con el oído Turbo, el micrófono sigue abierto
+   * mientras AU-RA habla (con cancelación de eco) y si la persona la interrumpe, se calla y la escucha.
+   */
+  interrumpir: boolean;
+  /**
+   * La persona lo eligió en Ajustes. Sin esto vale «no»: el 3-oct (OTA de la mañana) quedó «sí» por
+   * omisión y en el Samsung de José fue peor (su eco la cortaba a las ~20 letras y el micrófono en modo
+   * llamada tardaba en oír). Ese «sí» guardado sin elegirlo no cuenta.
+   */
+  interrumpirElegido?: boolean;
+  /** Su cara: el orbe de partículas (desde el 2-oct) o los anillos (Skia). «sala» quedó de antes: es el orbe. */
+  cara: 'orbe' | 'anillos' | 'sala';
+  /** La persona eligió su cara en Ajustes (los «anillos» guardados por omisión antes del orbe no cuentan). */
+  caraElegida?: boolean;
   /** Con quién se habla en la mesa: el Guardián (ojos celestes), AU-RA (la dorada) o Claudio. Se elige al entrar. */
   avatar: AvatarId;
   /** Ya eligió avatar alguna vez. */
@@ -84,6 +97,10 @@ export type AppSettings = {
   carasActivas: Record<string, number>;
   /** Quién ya vio (o saltó para siempre) el recorrido de primera vez (por correo). */
   tutorialVisto: Record<string, boolean>;
+  /** Qué versión del recorrido vio cada quien (por correo; tutorial/pasos.ts VERSION_RECORRIDO). */
+  recorridoVisto: Record<string, number>;
+  /** Cuántas veces dijo «Después» a la ventana del recorrido (por correo): pasado el tope ya no se ofrece sola. */
+  recorridoPospuesto: Record<string, number>;
   /** La mesa para charlar (avatar grande) o para trabajar (avatar compacto + la conversación escrita). */
   modoMesa: 'charlar' | 'trabajar';
   /**
@@ -103,17 +120,19 @@ const DEFAULT_SETTINGS: AppSettings = {
   micMuted: false,
   visionEnabled: true,
   gazeEnabled: true,
-  sttEngine: 'native',
+  sttEngine: 'turbo',
   proactive: true,
   sfx: true,
-  postura: 'pie',
-  cara: 'anillos',
+  interrumpir: false,
+  cara: 'orbe',
   avatar: 'aura',
   avatarElegido: false,
   idioma: 'es',
   camaraSiempre: {},
   carasActivas: {},
   tutorialVisto: {},
+  recorridoVisto: {},
+  recorridoPospuesto: {},
   modoMesa: 'charlar',
   vozLlamada: true,
 };
@@ -176,6 +195,9 @@ export async function loadSettings(): Promise<AppSettings> {
     s.voiceId = 'ultron';
     s.avatar = normalizarAvatarId(s.avatar);
     s.idioma = normalizarIdioma(s.idioma);
+    // Desde el 2-oct el oído es Turbo (José: «la mejor versión de todas»), salvo que la persona haya elegido otro.
+    if (!s.oidoElegido) s.sttEngine = 'turbo';
+    if (!s.interrumpirElegido) s.interrumpir = false;
     return s;
   } catch {
     return DEFAULT_SETTINGS;

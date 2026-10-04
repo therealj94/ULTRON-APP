@@ -76,6 +76,24 @@ async function turno(primerMs, respuesta) {
   }
   const lenta = filas.at(-1);
   chequear(lenta.relleno, 'con el cerebro lento (3,5 s) sí dice «déjame ver»');
+  // VOZ 001 (auditoría de Codex, 3-oct): parar la voz a media frase suelta la espera del turno en el acto.
+  // Antes `done` del StreamSpeaker esperaba al guard (duración + 1,5 s; hasta 25 s) y la siguiente
+  // pregunta quedaba en cola con la voz ya callada.
+  {
+    await TTS.stopSpeaking();
+    await reloj.avanzar(50);
+    const sp = new TTS.StreamSpeaker({});
+    sp.push('Esta es una respuesta larga que tardaría muchos segundos en sonar entera por la bocina del teléfono de José.');
+    sp.end();
+    let soltada = -1;
+    const t1 = Date.now();
+    void sp.done.then(() => (soltada = Date.now() - t1));
+    await reloj.avanzar(mundo.ttsMs + 900);
+    await TTS.stopSpeaking();
+    await reloj.avanzar(300);
+    console.log(`[latencia] parar la voz a media frase: la espera del turno se soltó a los ${soltada} ms`);
+    chequear(soltada >= 0 && soltada < mundo.ttsMs + 1500, `al parar la voz, la espera del turno se suelta en el acto (se soltó a ${soltada} ms)`);
+  }
   console.log(fallos ? `\n${fallos} falla(s) de latencia` : '\nlatencia bien');
   process.exit(fallos ? 1 : 0);
 })();

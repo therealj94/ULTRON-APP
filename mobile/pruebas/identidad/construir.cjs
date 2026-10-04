@@ -1,6 +1,6 @@
 // Empaqueta para node lo que decide DE QUIÉN es cada cosa en un teléfono compartido: el cliente de la
-// API (renovar y cerrar sesión), el perfil, los recordatorios, la generación de la cuenta y la barrera
-// de la actualización por aire. Con el código REAL; lo nativo, simulado (./shims y los del chat).
+// API (renovar y cerrar sesión, el turno en stream), el perfil, los recordatorios, la generación de la
+// cuenta, los intentos de entrar (clave y Genesis ID) y la barrera de la actualización por aire. Con el código REAL; lo nativo, simulado (./shims y los del chat).
 //
 // `SRC=/otra/copia/mobile/src node construir.cjs` empaqueta otra copia (para ver fallar una prueba
 // contra el código de antes).
@@ -43,9 +43,14 @@ const piezas = {
   PERFIL: 'lib/perfil',
   CUENTA: 'lib/cuenta',
   BARRERA: 'lib/barreraOta',
+  // El diagnóstico de campo: una recarga a propósito (la OTA) no se acusa como crash.
+  REPORTE: 'lib/reporte',
   RECORDATORIOS: 'compa/recordatorios',
   RELEVO: 'pulse/relevo',
   CONTRATO: 'nucleo/contrato',
+  // De quién es cada intento de entrar (AUTH03) y la entrada con Genesis que lo usa.
+  INTENTO: 'lib/intentoEntrada',
+  GENESIS: 'lib/genesis',
 };
 const lineas = Object.entries(piezas)
   .filter(([, r]) => fs.existsSync(path.join(SRC, r + '.ts')))

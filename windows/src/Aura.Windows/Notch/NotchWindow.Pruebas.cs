@@ -104,11 +104,12 @@ public partial class NotchWindow
         Directory.CreateDirectory(carpeta);
         var w = new NotchWindow(true) { Left = -4000, Top = 0 };
         w.Show();
-        void Foto(string nombre)
+        void Foto(string nombre, bool entero = false)
         {
             w.Aplicar();
             w.UpdateLayout();
-            var h = Math.Max(150, w.alto.Valor + 40);
+            // Pegado abajo, la silueta está al fondo de la ventana: se fotografía entera.
+            var h = entero ? w.Height : Math.Max(150, w.alto.Valor + 40);
             const double escala = 2;
             var rtb = new RenderTargetBitmap((int)(AnchoVentana * escala), (int)(h * escala), 96 * escala, 96 * escala, PixelFormats.Pbgra32);
             // Fondo como el escritorio de Windows de la referencia: azul, para ver la silueta negra.
@@ -135,6 +136,8 @@ public partial class NotchWindow
             w.cancion = new Manos.Cancion("Vivir mi vida", "Marc Anthony", "Spotify", true, null, TimeSpan.FromSeconds(80), TimeSpan.FromMinutes(4));
             w.PortadaChica.Visibility = w.BarrasMusica.Visibility = Visibility.Visible; w.BarrasMusica.Nivel = 0.6;
             w.modo = w.ModoQueToca(); Foto($"{avatar}-06b-reposo-musica");
+            // Con el ratón encima: la portada y los controles (anterior, play/pausa, siguiente) sin abrir nada.
+            w.raton = true; Foto($"{avatar}-06e-reposo-musica-controles"); w.raton = false;
             w.TituloMusica.Text = w.cancion.Titulo; w.ArtistaMusica.Text = "Marc Anthony · Spotify"; w.ProgresoMusica.Width = 90;
             w.musicaVisible = true; w.modo = w.ModoQueToca(); Foto($"{avatar}-06c-musica"); w.musicaVisible = false; w.cancion = null;
             w.PortadaChica.Visibility = w.BarrasMusica.Visibility = Visibility.Collapsed;
@@ -143,6 +146,17 @@ public partial class NotchWindow
             w.propuesta = new Propuesta("¿Lo escribo en Documento1 - Word?", "Estimado licenciado: le confirmo la reunión del jueves a las diez…", DateTime.Now.AddSeconds(30), () => Task.CompletedTask);
             w.TituloConfirma.Text = w.propuesta.Titulo; w.CuerpoConfirma.Text = w.propuesta.Cuerpo; w.modo = w.ModoQueToca(); Foto($"{avatar}-07-confirma"); w.propuesta = null;
         }
+        // Pegado al borde de abajo: la misma silueta reflejada (orejas hacia arriba), creciendo hacia arriba. Sin cámara.
+        w.AplicarAvatar("aura", false);
+        w.MoverNotch(new LugarNotch(BordeNotch.Abajo, 0.5), null);
+        w.modo = w.ModoQueToca(); Foto("aura-11-abajo-reposo", true);
+        w.avisoActual = new Aviso("Recordatorio", "Tomar agua y estirar las piernas", "");
+        w.TituloAviso.Text = w.avisoActual.Titulo; w.CuerpoAviso.Text = w.avisoActual.Cuerpo; w.modo = w.ModoQueToca(); Foto("aura-12-abajo-aviso", true); w.avisoActual = null;
+        if (w.PuntoCamara.Visibility == Visibility.Visible) throw new InvalidOperationException("Abajo no se dibuja la cámara.");
+        w.MoverNotch(LugarNotch.DeFabrica, null);
+        w.modo = w.ModoQueToca(); w.Aplicar();
+        if (w.PuntoCamara.Visibility != Visibility.Visible) throw new InvalidOperationException("Arriba al centro vuelve la cámara.");
+        w.AplicarAvatar("claudio", false);
         w.panelAbierto = true; w.Height = w.AltoPanel + 48; w.modo = w.ModoQueToca();
         w.AgregarMensaje("Tú", "Redáctame un correo corto para confirmar la reunión del jueves.");
         w.AgregarMensaje("AU-RA", "Listo. Te dejé el borrador en el panel: saludo, confirmación de la reunión del jueves a las diez y una despedida cordial. ¿Lo escribo en Word?");
@@ -153,6 +167,9 @@ public partial class NotchWindow
         // Regresión: la silueta tiene orejas (más ancha arriba que el cuerpo) y esquinas redondas abajo.
         var g = Silueta(100, 236, 36, 13, Oreja).Bounds;
         if (Math.Abs(g.Width - (236 + 2 * Oreja)) > 0.5 || Math.Abs(g.Height - 36) > 0.5) throw new InvalidOperationException("La silueta del notch no tiene la forma esperada: " + g);
+        // Reflejada abajo: mismo tamaño, pegada al fondo del lienzo.
+        var gb = Silueta(100, 236, 36, 13, Oreja, true, 170).Bounds;
+        if (Math.Abs(gb.Width - (236 + 2 * Oreja)) > 0.5 || Math.Abs(gb.Height - 36) > 0.5 || Math.Abs(gb.Bottom - 170) > 0.5) throw new InvalidOperationException("La silueta de abajo no tiene la forma esperada: " + gb);
         w.Close();
     }
 

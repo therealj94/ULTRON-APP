@@ -118,7 +118,7 @@ test('la sesión identifica por CORREO: un miembro llamado «José» no hereda l
 });
 
 test('nivel de una petición: la sesión manda; sin sesión, junta solo con la clave de la mesa', () => {
-  const miembro = emitirSesion({ correo: MIEMBRO, nombre: 'Ana', rol: ROL_MIEMBRO });
+  const miembro = emitirSesion({ correo: MIEMBRO, nombre: 'Ana', rol: ROL_MIEMBRO }, { comunidad: true });
   const jose = emitirSesion({ correo: JOSE, nombre: 'José', rol: ROL_JUNTA });
   const entorno = { NODE_ENV: process.env.NODE_ENV, ULTRON_MESA_CLAVE: process.env.ULTRON_MESA_CLAVE };
   process.env.NODE_ENV = 'production';
@@ -335,7 +335,7 @@ test('memoria: un miembro no escribe en la de la junta ni ve nada de ella', asyn
 });
 
 test('rutas de la junta: un miembro con sesión recibe 403; la junta pasa', () => {
-  const miembro = emitirSesion({ correo: MIEMBRO, nombre: 'Ana', rol: ROL_MIEMBRO });
+  const miembro = emitirSesion({ correo: MIEMBRO, nombre: 'Ana', rol: ROL_MIEMBRO }, { comunidad: true });
   const jose = emitirSesion({ correo: JOSE, nombre: 'José', rol: ROL_JUNTA });
   const correr = (token: string) => {
     let codigo = 0;

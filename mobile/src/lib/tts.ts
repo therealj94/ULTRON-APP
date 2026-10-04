@@ -28,12 +28,14 @@ import { API_BASE } from '../config';
 import type { Emocion } from './emocion';
 import { envolventeDeTexto, envolventeLibre, type EnvelopeKind } from './lipsync';
 import { frase, reaccionDe, type FraseId } from './frases';
-import { soloExpresiones } from './expresiones';
+import { quitarExpresiones, soloExpresiones } from './expresiones';
 import type { AvatarId } from '../avatares/catalogo';
 import { avatarActual, fijarAvatar } from '../avatares/actual';
 import { senalVoz } from '../avatar3d/senalVoz';
 import { ADELANTO_MS, BocaAlineada, Envolvente, PASO_BOCA_MS, RelojReproduccion, leerAlineacion, type AlineacionAudio } from '../avatar3d/sincronia';
 import { idiomaActual } from '../i18n';
+import { RegistroVoz } from './interrupcion';
+import { faltaDecir } from './reemplazoVoz';
 
 type Perf = 'speak' | 'sing';
 
@@ -48,6 +50,21 @@ export type SpeakCallbacks = {
 
 let current: Audio.Sound | null = null;
 let gen = 0;
+
+/**
+ * Lo que va diciendo la voz, frase por frase (lib/interrupcion.ts): el oído lo usa para no confundir
+ * el eco de AU-RA con la persona, y al interrumpirla se sabe qué alcanzó a oír.
+ */
+export const registroVoz = new RegistroVoz();
+/** Cuánto va (0..1) de la frase que suena ahora, por la posición real del audio. */
+let fraccionActual: (() => number) | null = null;
+export function fraccionSonando(): number | undefined {
+  try {
+    return fraccionActual?.() ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /** Los tiempos por letra de cada audio descargado (por su ruta en el teléfono) y de cada sonido preparado. */
 const alineaciones = new Map<string, AlineacionAudio>();
@@ -128,6 +145,22 @@ export function suspenderVoz(on: boolean) {
 }
 export function vozSuspendida() {
   return suspendida;
+}
+
+/**
+ * Con la conversación en vivo (la llamada del avatar) abierta habla el agente por WebRTC: la mesa no le
+ * pone su voz encima. No basta con callar lo que suena al abrirse: cada `speak()` empieza una generación
+ * nueva, así que un turno que ya venía en camino (su locutor por frases), la segunda parte de una
+ * reacción («ya, ya» y la risa) o una canción pedida desde el menú volvían a sonar encima del agente.
+ * Aquí se corta en la raíz: no se pide audio ni se reproduce nada; el texto sigue llegando a la pantalla.
+ * Lo fija el VozProvider (llamadaCiclo.ts, `seguirVozMesa`). Aparte de `suspendida`: esa es la de las
+ * llamadas de PULSE2CHAT, con su propio dueño y su modo de audio.
+ */
+let callaPorConversacion = false;
+export function callarPorConversacion(on: boolean) {
+  if (callaPorConversacion === on) return;
+  callaPorConversacion = on;
+  if (on) void stopSpeaking();
 }
 
 /** El nivel de boca de una voz que no suena por aquí (la conversación fluida, por WebRTC). */
@@ -240,23 +273,41 @@ async function conExtension(path: string, ct: string): Promise<string> {
   }
 }
 
-async function fetchSource(text: string, perf: Perf, emocion: Emocion, privado = false): Promise<AVPlaybackSource | null> {
-  const avatar = avatarActual();
+/**
+ * Lo dicho justo antes y lo que viene, como ElevenLabs los quiere (`previous_text` / `next_text`): texto
+ * plano, sin etiquetas, corto. Con ellos la frase no arranca con entonación de comienzo, y el servidor
+ * pone el tono de la emoción solo en la primera (la que no tiene `previo`) — auditoría externa, 1-oct.
+ */
+export type VecinosVoz = { previo?: string; siguiente?: string };
+function vecinosLimpios(v?: VecinosVoz): { previo?: string; siguiente?: string } {
+  const limpio = (t?: string) => quitarExpresiones(String(t || '')).replace(/\s+/g, ' ').trim();
+  const previo = limpio(v?.previo).slice(-200);
+  const siguiente = limpio(v?.siguiente).slice(0, 200);
+  return { ...(previo ? { previo } : {}), ...(siguiente ? { siguiente } : {}) };
+}
+
+async function fetchSource(text: string, perf: Perf, emocion: Emocion, privado = false, vecinos?: VecinosVoz, voz?: AvatarId): Promise<AVPlaybackSource | null> {
+  // Con la conversación en vivo nadie la va a oír: ni se le pide al servidor (cuesta voz).
+  if (callaPorConversacion) return null;
+  // `voz`: habla otro que el avatar de la mesa (los anfitriones del recorrido, recorrido/).
+  const avatar = voz || avatarActual();
   const idioma = idiomaActual();
   if (privado) {
     // Lo que se lee de un chat cifrado: por POST (el texto no va en la URL), `privado` (el servidor no
     // guarda el audio en su caché) y sin la caché de aquí.
-    const uri = await downloadPost(TTS_ENDPOINT, { text, performance: perf, emocion, avatar, idioma, privado: true }, 40_000);
+    const uri = await downloadPost(TTS_ENDPOINT, { text, performance: perf, emocion, avatar, idioma, privado: true, ...vecinosLimpios(vecinos) }, 40_000);
     return uri ? { uri } : null;
   }
-  const key = `${avatar}|${idioma}|${perf}|${emocion}|${text}`;
+  const v = perf === 'sing' ? {} : vecinosLimpios(vecinos);
+  // Los vecinos cambian la entonación (y el tono va solo en la primera): forman parte de la clave.
+  const key = `${avatar}|${idioma}|${perf}|${emocion}|${text}|${(v.previo || '').slice(-40)}|${(v.siguiente || '').slice(0, 40)}`;
   const hit = fileCache.get(key);
   if (hit) return { uri: hit };
   const headers = { Accept: 'audio/*', ...(await sessionHeaders()) };
   for (let attempt = 0; attempt < 2; attempt++) {
     const path = tmpPath('ultron', 'wav');
     try {
-      const r = await FileSystem.downloadAsync(ttsUrl(text, perf, emocion, avatar, idioma), path, { headers });
+      const r = await FileSystem.downloadAsync(ttsUrl(text, perf, emocion, avatar, idioma, v), path, { headers });
       const ct = String((r.headers as any)?.['Content-Type'] || (r.headers as any)?.['content-type'] || '');
       const info = await FileSystem.getInfoAsync(path);
       if (r.status === 200 && info.exists && (info.size || 0) > 64 && (!ct || /audio|octet/.test(ct))) {
@@ -269,7 +320,7 @@ async function fetchSource(text: string, perf: Perf, emocion: Emocion, privado =
       await FileSystem.deleteAsync(path, { idempotent: true }).catch(() => {});
       if (r.status === 200 && ct && !/audio|octet/.test(ct)) {
         // servidor sin GET /api/tts: devolvió HTML. Usar POST.
-        const uri = await downloadPost(TTS_ENDPOINT, { text, performance: perf, emocion, avatar, idioma }, 40_000);
+        const uri = await downloadPost(TTS_ENDPOINT, { text, performance: perf, emocion, avatar, idioma, ...v }, 40_000);
         if (uri) guardarEnCache(key, uri);
         return uri ? { uri } : null;
       }
@@ -329,7 +380,8 @@ async function downloadPost(url: string, body: Record<string, unknown>, timeoutM
 // ---------------------------------------------------------------- reproducción
 
 async function prepare(source: AVPlaybackSource): Promise<Audio.Sound | null> {
-  if (suspendida) return null;
+  // Todo lo que suena pasa por aquí (frases, el locutor del turno, canciones, oraciones).
+  if (suspendida || callaPorConversacion) return null;
   try {
     const { sound } = await Audio.Sound.createAsync(source, { shouldPlay: false, progressUpdateIntervalMillis: 50 });
     const uri = typeof source === 'object' && source && 'uri' in source ? String((source as { uri?: string }).uri || '') : '';
@@ -349,6 +401,13 @@ type PlayMeta = { text?: string | null; kind?: EnvelopeKind };
  * (un poco adelantado, ADELANTO_MS, por lo que tarda en llegar a la pantalla), abriendo rápido y
  * cerrando suave. Sin ellos: la envolvente por sílabas del texto (si cuadra con la duración) o libre.
  */
+/**
+ * Cómo se suelta la espera de la frase que suena ahora. stopSpeaking la llama: parar el sonido no dispara
+ * su final natural, y sin esto el turno quedaba esperando al guard (hasta 25 s) con la voz ya callada y la
+ * siguiente pregunta en cola (auditoría de Codex del 3-oct, VOZ 001).
+ */
+let soltarActual: (() => void) | null = null;
+
 function playPrepared(sound: Audio.Sound, my: number, maxMs = 25_000, meta: PlayMeta = {}): Promise<void> {
   return new Promise<void>((resolve) => {
     let done = false;
@@ -377,25 +436,35 @@ function playPrepared(sound: Audio.Sound, my: number, maxMs = 25_000, meta: Play
       }
       emitLevel((env || (env = envolventeLibre(kind)))(pos));
     }, alineada ? PASO_BOCA_MS : 50);
+    let duracion = 0;
     const end = () => {
       if (done) return;
       done = true;
       clearInterval(tick);
+      if (fraccionActual === fraccion) fraccionActual = null;
+      // Sonó entera (no la cortaron): cuenta como oída.
+      if (my === gen && meta.text) registroVoz.termino();
       senalVoz.formaReproducida(null);
       emitLevel(0);
       if (guard) clearTimeout(guard);
       if (current === sound) current = null;
+      if (soltarActual === end) soltarActual = null;
       void sound.unloadAsync().catch(() => {});
       resolve();
     };
+    const fraccion = () => (duracion > 0 ? reloj.posicion(Date.now()) / duracion : NaN);
     if (my !== gen) return end();
     current = sound;
+    soltarActual = end;
+    fraccionActual = fraccion;
+    if (meta.text && kind !== 'sing') registroVoz.empezo(meta.text);
     sound.setOnPlaybackStatusUpdate((st) => {
       if (!st.isLoaded) {
         if ((st as any).error) end();
         return;
       }
       reloj.aviso(st.positionMillis || 0, Date.now(), st.isPlaying);
+      if (st.durationMillis) duracion = st.durationMillis;
       if (st.durationMillis && !guard) {
         guard = setTimeout(end, st.durationMillis + 1500);
         env = envolventeDeTexto(meta.text, st.durationMillis, kind);
@@ -411,9 +480,13 @@ export async function stopSpeaking() {
   gen += 1;
   const s = current;
   current = null;
+  fraccionActual = null;
+  registroVoz.callo();
   // La boca se cierra ya, no cuando el reproductor termine de parar.
   senalVoz.formaReproducida(null);
   emitLevel(0);
+  const soltar = soltarActual;
+  soltarActual = null;
   if (s) {
     try {
       await s.stopAsync();
@@ -422,6 +495,8 @@ export async function stopSpeaking() {
       /* */
     }
   }
+  // La espera de esa frase se suelta ya (quien hablaba sigue con el turno siguiente), no al guard.
+  soltar?.();
 }
 
 function beginSpeak() {
@@ -545,15 +620,27 @@ export async function speakPrayer(opts?: SpeakCallbacks & { tema?: string; onPre
 }
 
 /** Calienta la caché de audio con frases que se van a decir pronto (saludos, «un momento»). */
-export async function prefetchPhrases(phrases: string[], emocion: Emocion = 'neutral') {
+export async function prefetchPhrases(phrases: string[], emocion: Emocion = 'neutral', voz?: AvatarId) {
   const queue = phrases.map(cleanForSpeech).filter(Boolean);
   const worker = async () => {
     while (queue.length) {
       const p = queue.shift()!;
-      await fetchSource(p, 'speak', emocion).catch(() => null);
+      await fetchSource(p, 'speak', emocion, false, undefined, voz).catch(() => null);
     }
   };
   await Promise.all([worker(), worker()]);
+}
+
+/**
+ * Deja listo el audio de un texto entero, partido igual que lo parte `speak` (con sus vecinos, que son
+ * parte de la clave de la caché): cuando llegue su turno suena sin esperar al servidor. Lo usa el
+ * recorrido para preparar la frase que sigue mientras suena la de ahora.
+ */
+export async function prepararHabla(text: string, o?: { emocion?: Emocion; voz?: AvatarId }): Promise<void> {
+  const clean = cleanForSpeech(text);
+  if (!clean || callaPorConversacion) return;
+  const frases = splitSentences(clean);
+  await Promise.all(frases.map((f, i) => fetchSource(f, 'speak', o?.emocion || 'neutral', false, { previo: frases[i - 1], siguiente: frases[i + 1] }, o?.voz).catch(() => null)));
 }
 
 export async function speak(
@@ -563,10 +650,14 @@ export async function speak(
     emocion?: Emocion;
     /** Texto de un chat de la persona (una lectura): sin caché ni aquí ni en el servidor. */
     privado?: boolean;
+    /** Con la voz de este avatar en vez del de la mesa (los anfitriones del recorrido). */
+    voz?: AvatarId;
   }
 ): Promise<boolean> {
   const clean = cleanForSpeech(text);
-  if (!clean) {
+  // Con la conversación en vivo, ni siquiera el stopSpeaking de abajo: comparte el nivel de la boca con
+  // el agente y se la cerraría de golpe a media frase.
+  if (!clean || callaPorConversacion) {
     opts?.onEnd?.();
     return false;
   }
@@ -582,7 +673,7 @@ export async function speak(
   const AHEAD = 2;
   const sources: Array<Promise<AVPlaybackSource | null>> = [];
   const launch = (i: number) => {
-    if (i < sentences.length && !sources[i]) sources[i] = fetchSource(sentences[i], perf, emocion, !!opts?.privado);
+    if (i < sentences.length && !sources[i]) sources[i] = fetchSource(sentences[i], perf, emocion, !!opts?.privado, { previo: sentences[i - 1], siguiente: sentences[i + 1] }, opts?.voz);
   };
   for (let i = 0; i < Math.min(AHEAD + 1, sentences.length); i++) launch(i);
 
@@ -624,13 +715,29 @@ export async function speak(
 }
 
 /**
+ * Desde cuántas letras ANTES de la coma sale la primera frase: el mismo número que el servidor
+ * (lib/trozos.ts COMA_PRIMERA) y la mesa web (src/03-voz/frases.ts). Si no coinciden, un tramo que el
+ * servidor ya soltó se queda esperando aquí. tests/web-frases.test.ts vigila que sigan iguales.
+ */
+export const COMA_PRIMERA = 28;
+const RE_COMA_PRIMERA = new RegExp(`^([\\s\\S]{${COMA_PRIMERA - 1},}?[^\\d\\s][,;:])(\\s+|$)([\\s\\S]*)$`);
+
+/**
  * Locutor incremental: recibe texto a trozos (stream del cerebro) y va hablando cada oración
  * completa mientras siguen llegando las siguientes. Misma cola/generación que speak(): si algo
  * llama a stopSpeaking(), el locutor se detiene.
  */
 export class StreamSpeaker {
   private buf = '';
-  private queue: string[] = [];
+  /**
+   * Las frases por decir, cada una con la que se dijo antes (su `previo`: entonación y tono) y la versión
+   * del texto a la que pertenecen (`reemplazar` la sube: lo de una versión vieja ya no suena).
+   */
+  private queue: Array<{ texto: string; previo: string; v: number }> = [];
+  /** La versión del texto: sube con cada `replace` del servidor. */
+  private version = 0;
+  /** Las frases que ya empezaron a sonar, en orden: lo que la persona ya oyó. */
+  private oido: string[] = [];
   private pumping = false;
   private closed = false;
   private my: number;
@@ -661,7 +768,7 @@ export class StreamSpeaker {
     // La PRIMERA frase larga sale en su coma (como la corta el servidor, lib/trozos COMA_PRIMERA): su
     // audio se pide mientras el cerebro sigue escribiendo. Antes esperaba al punto y una respuesta de
     // una sola frase sonaba recién al final.
-    const coma = !m && !this.sources.size ? this.buf.match(/^([\s\S]{27,}?[^\d\s][,;:])(\s+|$)([\s\S]*)$/) : null;
+    const coma = !m && !this.sources.size ? this.buf.match(RE_COMA_PRIMERA) : null;
     if (m && m[1].trim().length >= 6) {
       const sentence = cleanForSpeech(m[1]);
       this.buf = m[3] || '';
@@ -697,22 +804,51 @@ export class StreamSpeaker {
     this.resolveDone();
   }
 
+  /**
+   * El servidor corrigió lo dicho (`replace`, con el texto ENTERO hasta ahí; auditoría del 3-oct VOICE02).
+   * Lo que todavía no sonó del texto viejo se tira —la cola, el trozo a medias y el audio ya preparado—;
+   * la frase que está sonando termina (no se corta a media palabra). De lo corregido se dice solo lo que
+   * falta (lib/reemplazoVoz.ts): si lo oído coincide, sigue donde iba; si no, desde la frase que difiere,
+   * con `aviso` delante («Corrijo:») para que se entienda que corrige.
+   */
+  reemplazar(texto: string, aviso = '') {
+    if (this.closed) return;
+    this.version++;
+    this.queue = [];
+    this.buf = '';
+    if (this.nextPrepared) {
+      void this.nextPrepared.then((s) => s?.unloadAsync().catch(() => {}));
+      this.nextPrepared = null;
+    }
+    // La entonación sigue a lo último que de verdad sonó, no a lo que se tiró.
+    this.ultima = this.oido[this.oido.length - 1] || '';
+    const { decir, corrige } = faltaDecir(this.oido.join(' '), cleanForSpeech(texto));
+    if (decir) this.push(corrige && aviso ? `${aviso} ${decir}` : decir);
+  }
+
   get hasSpoken() {
     return this.spoke;
   }
 
-  private source(sentence: string) {
-    let p = this.sources.get(sentence);
+  /** La última frase que se mandó a decir: es el `previo` de la siguiente (entonación y tono solo al empezar). */
+  private ultima = '';
+
+  private source(sentence: string, previo?: string) {
+    // La clave lleva lo dicho antes: la misma frase después de otra se pide aparte (sin el tono del
+    // comienzo y con su entonación seguida) — revisión de Codex en #111.
+    const clave = `${previo || ''}\u0000${sentence}`;
+    let p = this.sources.get(clave);
     if (!p) {
-      p = fetchSource(sentence, 'speak', this.opts.emocion || 'neutral');
-      this.sources.set(sentence, p);
+      p = fetchSource(sentence, 'speak', this.opts.emocion || 'neutral', false, { previo });
+      this.sources.set(clave, p);
     }
     return p;
   }
 
   private enqueue(sentence: string) {
-    this.queue.push(sentence);
-    void this.source(sentence);
+    this.queue.push({ texto: sentence, previo: this.ultima, v: this.version });
+    void this.source(sentence, this.ultima);
+    this.ultima = sentence;
     if (!this.pumping) void this.pump();
   }
 
@@ -721,11 +857,11 @@ export class StreamSpeaker {
     try {
       if (!this.spoke) await lastSpeak.catch(() => {});
       while (this.queue.length && this.my === gen) {
-        const sentence = this.queue.shift()!;
+        const { texto: sentence, previo, v } = this.queue.shift()!;
         const sound = this.nextPrepared
           ? await this.nextPrepared
           : await (async () => {
-              const src = await this.source(sentence);
+              const src = await this.source(sentence, previo);
               return src ? prepare(src) : null;
             })();
         this.nextPrepared = null;
@@ -733,10 +869,15 @@ export class StreamSpeaker {
           if (sound) void sound.unloadAsync().catch(() => {});
           break;
         }
+        // Mientras se preparaba, el servidor corrigió el texto: esta frase ya no va.
+        if (v !== this.version) {
+          if (sound) void sound.unloadAsync().catch(() => {});
+          continue;
+        }
         if (this.queue[0]) {
           const nxt = this.queue[0];
           this.nextPrepared = (async () => {
-            const src = await this.source(nxt);
+            const src = await this.source(nxt.texto, nxt.previo);
             return src ? prepare(src) : null;
           })();
         }
@@ -745,6 +886,7 @@ export class StreamSpeaker {
           this.spoke = true;
           this.opts.onAudioStart?.();
         }
+        this.oido.push(sentence);
         this.opts.onSentence?.(sentence);
         await playPrepared(sound, this.my, 25_000, { text: sentence, kind: this.opts.emocion === 'oracion' ? 'pray' : 'speak' });
       }

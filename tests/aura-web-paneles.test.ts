@@ -143,14 +143,15 @@ const DIST = process.env.AURA_DIST || path.join(process.cwd(), 'dist');
 const CHROMIUM = [process.env.AURA_CHROMIUM, '/opt/pw-browsers/chromium'].find((x) => x && fs.existsSync(x));
 const hayDist = fs.existsSync(path.join(DIST, 'index.html'));
 
-function servir(): Promise<{ url: string; cerrar: () => void }> {
+function servir(o: { conSesion?: boolean } = { conSesion: true }): Promise<{ url: string; cerrar: () => void }> {
   const tipos: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.json': 'application/json', '.mp3': 'audio/mpeg', '.webmanifest': 'application/manifest+json', '.wasm': 'application/wasm' };
   const srv = http.createServer((req, res) => {
     const u = new URL(req.url || '/', 'http://x');
     const json = (o: unknown) => (res.writeHead(200, { 'Content-Type': 'application/json' }), res.end(JSON.stringify(o)));
     if (u.pathname === '/api/health') return json({ qwen: { vivo: false } });
     if (u.pathname === '/api/nodo/listo') return json({ listo: false });
-    if (u.pathname === '/api/ultron/sesion') return json({ authenticated: false });
+    // La mesa solo se abre con sesión (sin ella, la puerta: José, 4-oct).
+    if (u.pathname === '/api/ultron/sesion') return json(o.conSesion ? { authenticated: true, user: { nombre: 'Prueba', rol: 'Junta', correo: 'prueba@ejemplo.com' } } : { authenticated: false });
     if (u.pathname === '/api/capacidades') return json({ capacidades: [] });
     if (u.pathname.startsWith('/api/')) return (res.writeHead(404, { 'Content-Type': 'application/json' }), res.end('{}'));
     let f = path.join(DIST, decodeURIComponent(u.pathname));
@@ -241,5 +242,105 @@ test(
       assert.equal(await p.getByRole('tab', { name: 'Voz' }).getAttribute('aria-selected'), 'true');
       await p.keyboard.press('Escape');
     });
+  }
+);
+
+test(
+  'en el navegador, sin sesión: solo la puerta de entrar (sin mesa, sin micrófono, no se cierra)',
+  { skip: !CHROMIUM ? 'sin Chromium de Playwright (AURA_CHROMIUM o /opt/pw-browsers)' : !hayDist ? 'sin dist/: correr la compilación antes' : false, timeout: 120000 },
+  async (t) => {
+    const { chromium } = await import('playwright');
+    const srv = await servir({ conSesion: false });
+    const b = await chromium.launch({ executablePath: CHROMIUM, args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader'] });
+    t.after(async () => {
+      await b.close();
+      srv.cerrar();
+    });
+    const p = await b.newPage({ viewport: { width: 390, height: 844 } });
+    await p.goto(srv.url + '/', { waitUntil: 'networkidle' });
+    await p.waitForSelector('#aura-acceso-titulo', { timeout: 20000 });
+    assert.equal((await p.locator('#aura-acceso-titulo').textContent())?.trim(), 'Entrar a AU-RA');
+    assert.equal(await p.locator('button[aria-label="Cerrar"]').count(), 0, 'la puerta no tiene «Cerrar»');
+    assert.equal(await p.locator('.aura-mic').count(), 0, 'sin micrófono');
+    assert.equal(await p.getByRole('button', { name: 'Escribir', exact: true }).count(), 0, 'sin la mesa detrás');
+    await p.keyboard.press('Escape');
+    await p.waitForTimeout(300);
+    assert.equal(await p.locator('#aura-acceso-titulo').count(), 1, 'Escape no la cierra');
+  }
+);
+
+test(
+  'en el navegador: vence la sesión de A y entra B → nada del historial de A viaja ni se ve (bloqueo 4, revisión del 4-oct)',
+  { skip: !CHROMIUM ? 'sin Chromium de Playwright (AURA_CHROMIUM o /opt/pw-browsers)' : !hayDist ? 'sin dist/: correr la compilación antes' : false, timeout: 120000 },
+  async (t) => {
+    const { chromium } = await import('playwright');
+    const cuerpos: any[] = [];
+    let turnos = 0;
+    let sesionB = false;
+    const tipos: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.wasm': 'application/wasm' };
+    const srv = http.createServer((req, res) => {
+      const u = new URL(req.url || '/', 'http://x');
+      const json = (o: unknown, s = 200) => (res.writeHead(s, { 'Content-Type': 'application/json' }), res.end(JSON.stringify(o)));
+      const leer = () => new Promise<string>((r) => { let b = ''; req.on('data', (c) => (b += c)); req.on('end', () => r(b)); });
+      if (u.pathname === '/api/health') return json({ qwen: { vivo: true } });
+      if (u.pathname === '/api/nodo/listo') return json({ listo: true });
+      if (u.pathname === '/api/genesis/config') return json({ disponible: false });
+      if (u.pathname === '/api/ultron/sesion') return json(sesionB ? { authenticated: true, user: { nombre: 'Bea', rol: 'Junta', correo: 'bea@ejemplo.com' } } : { authenticated: true, user: { nombre: 'Ana', rol: 'Junta', correo: 'ana@ejemplo.com' } });
+      if (u.pathname === '/api/ultron/entrar') {
+        sesionB = true;
+        return json({ ok: true, token: 'token-de-bea', miembro: { nombre: 'Bea', rol: 'Junta', correo: 'bea@ejemplo.com' } });
+      }
+      if (u.pathname === '/api/turno/stream') {
+        return void leer().then((b) => {
+          turnos++;
+          cuerpos.push(JSON.parse(b || '{}'));
+          // El segundo turno de Ana encuentra la sesión vencida.
+          if (turnos === 2) return json({ error: 'sesión requerida' }, 401);
+          const reply = turnos === 1 ? 'Anotado, Ana: tu clave secreta es PIÑA-7781.' : 'Hola, Bea.';
+          res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+          res.end(`event: done\ndata: ${JSON.stringify({ reply, voz: reply, emocion: 'neutral' })}\n\n`);
+        });
+      }
+      if (u.pathname.startsWith('/api/')) return json({}, 404);
+      let f = path.join(DIST, decodeURIComponent(u.pathname));
+      if (!f.startsWith(DIST) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(DIST, 'index.html');
+      res.writeHead(200, { 'Content-Type': tipos[path.extname(f)] || 'application/octet-stream' });
+      fs.createReadStream(f).pipe(res);
+    });
+    const url = await new Promise<string>((r) => srv.listen(0, '127.0.0.1', () => r(`http://127.0.0.1:${(srv.address() as any).port}`)));
+    const b = await chromium.launch({ executablePath: CHROMIUM, args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader'] });
+    t.after(async () => {
+      await b.close();
+      srv.close();
+    });
+    const p = await b.newPage({ viewport: { width: 1280, height: 800 } });
+    await p.goto(url + '/', { waitUntil: 'networkidle' });
+    await p.waitForSelector('#ultron-arranque[aria-hidden="true"]', { timeout: 20000 });
+    const escribir = async (texto: string) => {
+      if (!(await p.locator('#dock-cmd-input').count())) {
+        await p.getByRole('button', { name: 'Escribir', exact: true }).focus();
+        await p.keyboard.press('Enter');
+        await p.waitForSelector('#dock-cmd-input');
+      }
+      await p.locator('#dock-cmd-input').fill(texto);
+      await p.locator('#dock-cmd-input').press('Enter');
+    };
+    await escribir('Mi clave secreta es PIÑA-7781, recuérdala');
+    await p.waitForFunction(() => document.body.innerText.includes('PIÑA-7781'), null, { timeout: 15000 });
+    await p.keyboard.press('Escape').catch(() => {});
+    // El segundo turno de Ana: la sesión venció → la puerta.
+    await escribir('¿Cuál era mi clave?');
+    await p.waitForSelector('#aura-acceso-titulo', { timeout: 15000 });
+    // Entra Bea.
+    await p.locator('input[type="email"]').fill('bea@ejemplo.com');
+    await p.locator('input[type="password"]').fill('clave-de-bea');
+    await p.locator('form button[type="submit"]').click();
+    await p.waitForSelector('#ultron-app-root[data-modo]', { timeout: 15000 });
+    assert.doesNotMatch(await p.locator('body').innerText(), /PIÑA-7781/, 'en pantalla no queda nada de Ana');
+    await escribir('Hola');
+    await p.waitForFunction(() => document.body.innerText.includes('Hola, Bea'), null, { timeout: 15000 });
+    const deBea = cuerpos[cuerpos.length - 1];
+    assert.ok(Array.isArray(deBea.historial), 'el turno lleva su historial');
+    assert.doesNotMatch(JSON.stringify(deBea), /PIÑA-7781|clave secreta/, 'el historial que viaja al cerebro no trae nada de Ana');
   }
 );

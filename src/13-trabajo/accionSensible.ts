@@ -124,6 +124,9 @@ export function resultadoDe(respuesta: string, error?: string): Resultado {
   if (!t) return { estado: 'sin-confirmar', resumen: 'No llegó respuesta del servidor: no sé si se hizo.' };
   if (/EN ESPERA DE APROBACI[OÓ]N/i.test(t)) return { estado: 'espera', resumen: 'Todavía no se hizo: espera la aprobación de la junta.' };
   if (/NO EJECUTADO|no envi[eé]|no llam[eé]|no mand[eé]|\bfalta\b|no supe el canal|no lo hago|necesita tu sesi[oó]n|\b(telegram|twilio|resend)\s+[45]\d\d\b/i.test(t)) return { estado: 'fallida', resumen: t };
+  // «El mensaje no fue enviado», «no se pudo enviar», «falló el envío»: la palabra «enviado» con un «no»
+  // delante no es un recibo (auditoría de Codex del 3-oct: se mostraba «Hecho»).
+  if (/\bno\s+(fue|ha\s+sido|se\s+ha|est[aá]|qued[oó]|pude|se\s+pudo|logr[eé])\b|\bfall[oóa]\w*|\berror\b|rechazad[oa]|no\s+(se\s+)?(envi|mand|llam|inici)\w*/i.test(t)) return { estado: 'fallida', resumen: t };
   if (/\b(enviad[oa]|aceptad[oa]|iniciada)\b/i.test(t)) return { estado: 'hecha', resumen: t };
   return { estado: 'sin-confirmar', resumen: t };
 }

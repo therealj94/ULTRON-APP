@@ -8,10 +8,11 @@
  * vuelve a avisar esta ruta, que sabe cuándo recupera el foco. Sin eso, AURA creía seguir en Ajustes
  * y no se ponía al lado del chat.
  */
-import { useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { PantallaChats, PantallaConversacion } from '../../pulse';
+import { PantallaConversacion } from '../../pulse';
+import { ChatsConWhatsapp } from '../../whatsapp/ChatsConWhatsapp';
 import { emitir, type Eventos } from '../../nucleo/contrato';
 import type { RaizParams } from '../rutas';
 
@@ -31,12 +32,35 @@ function useAvisarAlVolver(aviso: () => Eventos['pantalla']) {
   );
 }
 
-export function Chats({ navigation }: NativeStackScreenProps<RaizParams, 'Chats'>) {
+/**
+ * «Abre WhatsApp» (app/acciones.ts → rutas.abrirWhatsapp): la ruta trae `whatsapp` con un número nuevo en
+ * cada pedido. `enWhatsapp` de los chats cambia de pestaña cuando pasa a true; si ya estaba en true (se
+ * pidió antes y la persona volvió a PULSE2CHAT), se baja y se vuelve a subir para que cambie otra vez.
+ */
+function usePestanaWhatsapp(pedido: number | undefined): boolean {
+  const [en, setEn] = useState(!!pedido);
+  const primero = useRef(true);
+  useEffect(() => {
+    if (primero.current) {
+      primero.current = false;
+      return;
+    }
+    if (!pedido) return;
+    setEn(false);
+    const t = setTimeout(() => setEn(true), 0);
+    return () => clearTimeout(t);
+  }, [pedido]);
+  return en;
+}
+
+export function Chats({ navigation, route }: NativeStackScreenProps<RaizParams, 'Chats'>) {
   useAvisarAlVolver(() => ({ pantalla: 'chats', chatAbierto: null }));
+  const enWhatsapp = usePestanaWhatsapp(route.params?.whatsapp);
   return (
-    <PantallaChats
+    <ChatsConWhatsapp
       onAbrir={(correo, nombre) => navigation.push('Conversacion', { con: correo, nombre })}
       onAtras={() => (navigation.canGoBack() ? navigation.goBack() : navigation.navigate('Mesa'))}
+      enWhatsapp={enWhatsapp}
     />
   );
 }

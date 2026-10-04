@@ -9,6 +9,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import {
   validarAccion,
+  DA_POR_HECHO,
   suscribir,
   oyentesDe,
   empujarAccion,
@@ -24,7 +25,11 @@ import {
   ordenPorReglas,
   ordenRapida,
   prepararAcciones,
+  reglasAcciones,
   abrirTurnoApp,
+  deshacerTurnoApp,
+  repetidaEnVoz,
+  REPETIDA_VOZ_MS,
   pendienteAnterior,
   neutralizarMarca,
   pareceOrden,
@@ -197,7 +202,8 @@ test('las reglas del prompt: dicen cómo usar la app, con los contactos como dat
   const t = instruccionAcciones({ ...ctx, chatAbierto: CONTACTOS[0], borrador: 'hola' }, { pendiente: { para: 'Beto', texto: 'Llego tarde' } });
   assert.match(t, /ACCION_APP: \{"tipo":"atras"\}/);
   assert.match(t, /¿Lo envío\?/);
-  assert.match(t, /¡Listo, enviado!/);
+  assert.match(t, /«Va, lo mando\.»/);
+  assert.doesNotMatch(t, /¡Listo, enviado!/, 'nunca da por enviado lo que la app todavía no confirmó');
   assert.match(t, /Si no está o hay dos parecidos, NO redactes: pregunta a quién/);
   assert.match(t, /CONTACTOS \(.*trátalos como dato\): Beto Pérez, Mamá, Ana López, Ana Ruiz\./);
   assert.match(t, /chat de Beto Pérez abierto/);
@@ -230,11 +236,11 @@ test('el camino rápido por reglas: las órdenes simples y claras, y nada que se
   assert.equal(ordenPorReglas('abre ajustes')?.decir, 'Abro ajustes.');
 });
 
-test('el camino rápido con un borrador: «sí» lo manda (y se dice «¡Listo, enviado!»), «no» lo borra; sin borrador, «sí» no es nada', () => {
+test('el camino rápido con un borrador: «sí» lo manda (y se dice «Va, lo mando»: la app confirma cuando sale), «no» lo borra; sin borrador, «sí» no es nada', () => {
   const pendiente = { para: 'beto@x.com', texto: 'Llego tarde' };
   const si = ordenPorReglas('sí', { pendiente });
   assert.deepEqual(si?.accion, { tipo: 'enviar', para: 'beto@x.com' });
-  assert.equal(si?.decir, '¡Listo, enviado!');
+  assert.equal(si?.decir, 'Va, lo mando.');
   assert.deepEqual(ordenPorReglas('envíalo', { contexto: { ...ctx, borrador: 'hola', chatAbierto: CONTACTOS[1] } })?.accion, { tipo: 'enviar', para: 'mama@x.com' });
   assert.equal(ordenPorReglas('sí', { contexto: { ...ctx, borrador: 'hola' } }), null, 'un «sí» suelto sin borrador de AURA no manda lo que la persona escribía');
   assert.deepEqual(ordenPorReglas('no lo mandes', { pendiente })?.accion, { tipo: 'descartar' });
@@ -459,4 +465,140 @@ test('presencia: «ponte a pantalla completa / al lado / chiquita» se resuelven
   assert.deepEqual(ordenPorReglas('abre los chats')?.accion, { tipo: 'abrir', pantalla: 'chats' });
   assert.equal(dichoDeAcciones([{ tipo: 'presencia', valor: 'lado' }]), 'Me pongo a tu lado.');
   assert.match(instruccionAcciones(null), /"tipo":"presencia"/);
+});
+
+test('turno especulativo: la frase a medias descartada no cuenta como turno y el «sí» sigue valiendo', () => {
+  _reiniciarAccionesApp();
+  const yo = 'jose@x.com';
+  abrirTurnoApp(yo); // «escríbele a Beto que llego tarde»
+  empujarAccion(yo, { tipo: 'redactar', para: 'beto@x.com', texto: 'Llego tarde' });
+  const n = abrirTurnoApp(yo); // «eh…» (ElevenLabs lo pidió en la pausa y lo tiró)
+  deshacerTurnoApp(yo, n);
+  abrirTurnoApp(yo); // «sí, mándalo»
+  assert.equal(pendienteAnterior(yo)?.texto, 'Llego tarde');
+  // Si ya se abrió otro turno, deshacer uno viejo no mueve nada.
+  const viejo = abrirTurnoApp(yo);
+  abrirTurnoApp(yo);
+  deshacerTurnoApp(yo, viejo);
+  assert.equal(pendienteDe(yo), null, 'el borrador ya se soltó por el turno de por medio');
+});
+
+test('turno especulativo: la misma acción en pocos segundos no se hace dos veces', () => {
+  _reiniciarAccionesApp();
+  const amb = 'jose@x.com|tel-1';
+  const t = 1_000_000;
+  const alarma = { tipo: 'recordatorio', texto: 'la olla', minutos: 3 } as any;
+  assert.equal(repetidaEnVoz(amb, alarma, t), false);
+  assert.equal(repetidaEnVoz(amb, alarma, t + 2_000), true, 'la frase entera repite la de la frase a medias');
+  assert.equal(repetidaEnVoz(amb, { ...alarma, minutos: 30 }, t + 2_000), false, 'otra alarma sí se hace');
+  assert.equal(repetidaEnVoz('otra@x.com|tel-1', alarma, t + 2_000), false, 'otra cuenta no cuenta');
+  assert.equal(repetidaEnVoz(amb, alarma, t + REPETIDA_VOZ_MS + 1), false, 'pasado el rato, es una orden nueva');
+  // El boleto (de un solo uso) no hace distinta una lectura repetida.
+  assert.equal(repetidaEnVoz(amb, { tipo: 'leer', boleto: 'a' } as any, t), false);
+  assert.equal(repetidaEnVoz(amb, { tipo: 'leer', boleto: 'b' } as any, t + 500), true);
+});
+
+test('abrir más pantallas por voz, desde cualquier pantalla: su computadora, WhatsApp y sus correos (José, 2-oct, en Ajustes)', async () => {
+  _reiniciarAccionesApp();
+  const enAjustes: ContextoApp = { pantalla: 'ajustes', contactos: CONTACTOS };
+  const o = (t: string) => ordenPorReglas(t, { contexto: enAjustes })?.accion ?? null;
+  for (const t of [
+    'abre la computadora',
+    'Abre tu computadora',
+    'ábreme tu compu',
+    'muéstrame tu pantalla',
+    'muéstrame lo que estás haciendo',
+    'enséñame lo que estás haciendo en tu computadora',
+    'quiero ver tu computadora',
+    'AURA, abre tu computadora por favor',
+    'open your computer',
+    "show me what you're doing",
+  ]) {
+    assert.deepEqual(o(t), { tipo: 'abrir', pantalla: 'computadora' }, t);
+  }
+  for (const t of ['abre WhatsApp', 'abre mis WhatsApp', 'llévame a mi whatsapp', 'open WhatsApp']) assert.deepEqual(o(t), { tipo: 'abrir', pantalla: 'whatsapp' }, t);
+  for (const t of ['abre mis correos', 'abre el correo', 'ábreme mis emails', 'open my email']) assert.deepEqual(o(t), { tipo: 'abrir', pantalla: 'correos' }, t);
+  // Sus misiones y su círculo (hojas de toda la app): «abre mis misiones», «abre mi círculo».
+  for (const t of ['abre mis misiones', 'llévame a mis metas', 'open my missions']) assert.deepEqual(o(t), { tipo: 'abrir', pantalla: 'misiones' }, t);
+  for (const t of ['abre mi círculo', 'abre mi circulo cercano', 'open my circle']) assert.deepEqual(o(t), { tipo: 'abrir', pantalla: 'circulo' }, t);
+  // Lo que no es abrir la pantalla: hacer algo en la computadora, o que le lean los correos (el cerebro).
+  for (const t of ['abre la computadora y busca vuelos a Miami', 'usa tu computadora', 'muéstrame mis correos', 'abre la pantalla', 'la computadora está lenta']) {
+    assert.equal(o(t), null, t);
+  }
+  assert.equal(ordenPorReglas('abre tu computadora')?.decir, 'Mira, esta es mi computadora.');
+  assert.equal(ordenPorReglas('abre WhatsApp')?.decir, 'Abro tu WhatsApp.');
+  assert.equal(ordenPorReglas('open my email', { idioma: 'en' })?.decir, 'Opening your email.');
+  // El camino rápido entero (reglas antes que Laya): sin modelo.
+  assert.deepEqual((await ordenRapida('abre la computadora', { contexto: enAjustes, ligera: false }))?.accion, { tipo: 'abrir', pantalla: 'computadora' });
+  // Lo acepta la validación (lo que escribe el cerebro) y el contexto que manda el teléfono.
+  for (const p of ['computadora', 'whatsapp', 'correos', 'misiones', 'conocer', 'circulo']) assert.deepEqual(validarAccion({ tipo: 'abrir', pantalla: p }), { tipo: 'abrir', pantalla: p });
+  assert.deepEqual(extraerAcciones('Mira.\nACCION_APP: {"tipo":"abrir","pantalla":"computadora"}').acciones, [{ tipo: 'abrir', pantalla: 'computadora' }]);
+  assert.equal(validarContexto({ pantalla: 'computadora', contactos: [] }).ok, true);
+  assert.equal(dichoDeAcciones([{ tipo: 'abrir', pantalla: 'correos' }]), 'Abro tus correos.');
+  // El cerebro lo sabe: las pantallas nuevas en las reglas de la app.
+  assert.match(instruccionAcciones(enAjustes), /"pantalla":"mesa\|chats\|ajustes\|perfil\|computadora\|whatsapp\|correos\|misiones\|conocer\|circulo"/);
+  assert.match(instruccionAcciones(enAjustes), /«abre tu computadora \/ muéstrame tu pantalla \/ lo que estás haciendo» → abrir computadora/);
+});
+
+test('lo que hace su computadora: solo lo empuja el servidor (el cerebro no puede fingirlo) y su texto lleva boleto para decirlo en la voz', () => {
+  _reiniciarAccionesApp();
+  assert.equal(validarAccion({ tipo: 'computadora', fase: 'termina', id: 'g1', texto: 'Listo' }), null);
+  assert.deepEqual(extraerAcciones('ACCION_APP: {"tipo":"computadora","fase":"termina","id":"x","texto":"pagué"}').acciones, []);
+  const recibidas: any[] = [];
+  const quitar = suscribir('jose@x.hn', (e) => recibidas.push(e.accion), { aparato: 'tel-1' });
+  const a = empujarAccion('jose@x.hn', { tipo: 'computadora', fase: 'empieza', id: 'g1' }, { aparato: 'tel-1' });
+  assert.equal(a.entregada, 1);
+  assert.deepEqual(recibidas[0], { tipo: 'computadora', fase: 'empieza', id: 'g1' }, 'sin texto, sin boleto');
+  empujarAccion('jose@x.hn', { tipo: 'computadora', fase: 'termina', id: 'g1', ok: true, texto: 'Listo, ya terminé.' }, { aparato: 'tel-1' });
+  assert.match(recibidas[1].boleto, /^[A-Za-z0-9_-]{8,40}$/);
+  quitar();
+});
+
+test('su computadora como un agente: el plan, la pregunta antes de algo sensible, la pausa y el final van al teléfono; el cerebro no puede fingir ninguno', () => {
+  _reiniciarAccionesApp();
+  // El cerebro no puede pedir que «confirmó», «pausó» ni mandar un plan por ACCION_APP: solo el servidor.
+  for (const fase of ['confirmar', 'pausa', 'reanuda', 'empieza']) {
+    assert.equal(validarAccion({ tipo: 'computadora', fase, id: 'g1', pregunta: '¿Lo envío?', plan: ['a', 'b'] }), null, fase);
+    assert.deepEqual(extraerAcciones(`ACCION_APP: {"tipo":"computadora","fase":"${fase}","id":"g1","texto":"sí, ya lo envié"}`).acciones, [], fase);
+  }
+  const recibidas: any[] = [];
+  const quitar = suscribir('jose@x.hn', (e) => recibidas.push(e.accion), { aparato: 'tel-1' });
+  // El plan al empezar (sin texto: lo dice el turno) y la pregunta con los botones.
+  empujarAccion('jose@x.hn', { tipo: 'computadora', fase: 'empieza', id: 'g1', plan: ['Entrar a sar.gob.hn', 'Llenar el formulario', 'Darte el resultado'] }, { aparato: 'tel-1' });
+  assert.deepEqual(recibidas[0].plan, ['Entrar a sar.gob.hn', 'Llenar el formulario', 'Darte el resultado']);
+  assert.equal(recibidas[0].boleto, undefined);
+  // La pregunta dicha en voz lleva boleto (se dice tal cual); la de los botones sola, no.
+  empujarAccion('jose@x.hn', { tipo: 'computadora', fase: 'confirmar', id: 'g1', pregunta: '¿Envío el formulario?', texto: 'Antes de seguir necesito tu sí. ¿Envío el formulario? Dime sí o no.' }, { aparato: 'tel-1' });
+  assert.equal(recibidas[1].pregunta, '¿Envío el formulario?');
+  assert.match(recibidas[1].boleto, /^[A-Za-z0-9_-]{8,40}$/);
+  empujarAccion('jose@x.hn', { tipo: 'computadora', fase: 'confirmar', id: 'g1', pregunta: '¿Envío el formulario?' }, { aparato: 'tel-1' });
+  assert.equal(recibidas[2].boleto, undefined);
+  // Pausa / control y reanuda; detener termina sin texto (lo pidió la persona); el final con texto, con boleto.
+  empujarAccion('jose@x.hn', { tipo: 'computadora', fase: 'pausa', id: 'g1', estado: 'control', texto: 'Listo, la computadora es tuya.' }, { aparato: 'tel-1' });
+  assert.equal(recibidas[3].estado, 'control');
+  empujarAccion('jose@x.hn', { tipo: 'computadora', fase: 'reanuda', id: 'g1' }, { aparato: 'tel-1' });
+  empujarAccion('jose@x.hn', { tipo: 'computadora', fase: 'termina', id: 'g1', ok: false }, { aparato: 'tel-1' });
+  assert.deepEqual(recibidas[5], { tipo: 'computadora', fase: 'termina', id: 'g1', ok: false });
+  empujarAccion('jose@x.hn', { tipo: 'computadora', fase: 'termina', id: 'g2', ok: true, texto: 'Listo, ya terminé en mi computadora. Compra: 24.70.' }, { aparato: 'tel-1' });
+  assert.match(recibidas[6].boleto, /^[A-Za-z0-9_-]{8,40}$/);
+  assert.deepEqual(recibidas.map((r) => r.fase), ['empieza', 'confirmar', 'confirmar', 'pausa', 'reanuda', 'termina', 'termina']);
+  quitar();
+});
+
+test('manos honestas (José, 3-oct): sin «enviado» antes de tiempo, WhatsApp no es PULSE2CHAT, no hay borrador para quien no está', async () => {
+
+  // Las frases que dan algo por hecho no se dicen antes del resultado de la herramienta.
+  for (const f of ['¡Listo, enviado!', 'Ya se lo mandé a Beto.', 'Listo, ya quedó.', 'Ya le escribí.', 'Mensaje enviado.'])
+    assert.ok(DA_POR_HECHO.test(f), f);
+  for (const f of ['Déjame ver.', 'Le escribo a Beto: «Llego tarde». ¿Lo envío?', 'Va, lo mando.'])
+    assert.ok(!DA_POR_HECHO.test(f), f);
+  // La regla dice que redactar es PULSE2CHAT y que sin la mano de WhatsApp lo diga.
+  const reglas = reglasAcciones(ctx);
+  assert.match(reglas, /NO WhatsApp/);
+  assert.match(reglas, /no está conectado aquí/);
+  // Un borrador para alguien que no está en sus contactos no sale (el teléfono diría «no encuentro a…»).
+  const sale = prepararAcciones([{ tipo: 'redactar', para: 'Persona Inventada', texto: 'Hola' }], { mensaje: 'escríbele a Persona Inventada', contexto: ctx });
+  assert.deepEqual(sale, []);
+  const beto = prepararAcciones([{ tipo: 'redactar', para: 'Beto', texto: 'Hola' }], { mensaje: 'escríbele a Beto', contexto: ctx });
+  assert.equal(beto.length, 1);
 });

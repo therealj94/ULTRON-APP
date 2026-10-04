@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Laya en el nodo T4 (g4dn.xlarge, 35.175.175.203): los modelos de decisión en un solo servicio.
+# Laya en el nodo T4 (g4dn.xlarge, <ip-t4>): los modelos de decisión en un solo servicio.
 #   electrum   qué especialistas convoca Dr Electrum (POST /decidir, lo usa lib/laya.ts)
 #   mensaje    decisiones sobre cada mensaje de AU-RA / PULSE2CHAT (POST /v1/mensaje)
 #   documento  qué es un fragmento de expediente y qué trae (POST /v1/documento)
@@ -168,7 +168,7 @@ curl -sS -H "Authorization: Bearer ${CLAVE}" -H 'content-type: application/json'
 echo
 echo "El :${PUERTO} NO se abre en el security group: Laya sale por el Caddy de Voicebox con TLS."
 echo "  /opt/voicebox/caddy/Caddyfile, antes de @autorizado:  handle_path /laya/* { reverse_proxy 127.0.0.1:${PUERTO} }"
-echo "En Render (aura-fp y ultron-looi-desk): ULTRON_LAYA_URL=https://35-175-175-203.sslip.io/laya"
+echo "En Render (aura-fp y ultron-looi-desk): ULTRON_LAYA_URL=https://<ip-t4-con-guiones>.sslip.io/laya"
 echo "  ULTRON_LAYA_CLAVE=<LAYA_CLAVE de ${ENTORNO}>  ULTRON_LAYA_TIMEOUT_MS=1000"
 echo "Evaluar: cd ${BASE} && venv/bin/python evaluar.py --modelo ${MODELO} --tabla datos/test-tabla.jsonl --bordes datos/bordes-tabla.jsonl"
 for n in "${NUEVOS[@]}"; do

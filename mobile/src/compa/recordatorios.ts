@@ -43,7 +43,7 @@ import type { RecordatorioPuesto } from '../nucleo/contrato';
 /** Lo que se usa de notifee (el de verdad o uno falso). */
 export type NotifeeMin = {
   requestPermission: () => Promise<{ authorizationStatus: number }>;
-  getNotificationSettings?: () => Promise<{ android?: { alarm?: number } }>;
+  getNotificationSettings?: () => Promise<{ authorizationStatus?: number; android?: { alarm?: number } }>;
   createChannel: (c: Record<string, unknown>) => Promise<string>;
   createTriggerNotification: (n: Record<string, unknown>, t: Record<string, unknown>) => Promise<string>;
   getTriggerNotifications?: () => Promise<{ notification: { id?: string; data?: Record<string, unknown> } }[]>;
@@ -54,7 +54,7 @@ export type NotifeeMin = {
 export type ConstantesNotifee = {
   TriggerType: { TIMESTAMP: number };
   AlarmType: { SET_AND_ALLOW_WHILE_IDLE: number; SET_EXACT_AND_ALLOW_WHILE_IDLE?: number };
-  AuthorizationStatus: { DENIED: number };
+  AuthorizationStatus: { DENIED: number; AUTHORIZED?: number };
   AndroidImportance: { HIGH: number };
   AndroidCategory?: { CALL: string; REMINDER?: string };
   AndroidVisibility?: { PUBLIC: number; PRIVATE?: number };
@@ -209,7 +209,11 @@ export async function programarRecordatorio(a: { texto: string; cuando: number; 
     puestos.push(String(aviso.id));
   };
   try {
-    const permiso = await m.requestPermission();
+    // Si ya está dado, no se pide: pedirlo abre (y cierra) una ventana del sistema que pausa la app, y en
+    // una llamada eso la colgaba (VozProvider, SEGUNDO_PLANO_MS).
+    const ya = m.getNotificationSettings ? await m.getNotificationSettings().catch(() => null) : null;
+    const dado = k.AuthorizationStatus.AUTHORIZED !== undefined && ya?.authorizationStatus === k.AuthorizationStatus.AUTHORIZED;
+    const permiso = dado ? { authorizationStatus: ya!.authorizationStatus as number } : await m.requestPermission();
     if (permiso.authorizationStatus === k.AuthorizationStatus.DENIED) {
       return { ok: false, detalle: tr('Necesito permiso de avisos para recordarte. Actívalo en Ajustes, en Avisos.', 'I need notification permission to remind you. Turn it on in Settings, under Notifications.') };
     }

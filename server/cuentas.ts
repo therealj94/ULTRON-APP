@@ -250,8 +250,10 @@ export async function recargarCuentas(): Promise<number> {
     const fin = k.revocado ? new Date(k.revocado).getTime() : new Date(k.vence).getTime();
     // Vencido o revocado: TODA sesión suya queda fuera, sin comparar horas (el reloj de la base y el
     // del servidor no tienen por qué coincidir al milisegundo). Con él ya no se abren sesiones nuevas.
-    if (k.revocado || fin <= ahora) claveDesdePorCorreo.set(correoDeCodigo(Number(k.id)), Number.MAX_SAFE_INTEGER);
-    else vivos.push({ id: `t-${k.id}`, nombre: k.para || 'Invitado', correos: [correoDeCodigo(Number(k.id))], acceso: { [k.plataforma]: k.nivel } });
+    if (k.revocado || fin <= ahora || !codigosActivos()) claveDesdePorCorreo.set(correoDeCodigo(Number(k.id)), Number.MAX_SAFE_INTEGER);
+    // Siempre consulta, aunque la fila diga otra cosa (los códigos viejos podían ser «escribe»): un código
+    // no acredita a una persona del padrón, así que no sube, no edita ni manda (AUR05).
+    else vivos.push({ id: `t-${k.id}`, nombre: k.para || 'Invitado', correos: [correoDeCodigo(Number(k.id))], acceso: { [k.plataforma]: 'lee' as Nivel } });
   }
   fijarCuentasAprobadas([
     ...cuentas
@@ -284,8 +286,10 @@ export async function cuentaDe(correo: string): Promise<Cuenta | null> {
  */
 export async function entrarConCuenta(correo: string, clave: string): Promise<'ok' | 'mal' | 'suspendida' | 'sin_clave'> {
   const [f] = await q(`SELECT clave_hash, estado FROM cuentas.cuenta WHERE correo = $1`, [correo]);
+  // La suspensión va ANTES que «sin clave»: una cuenta suspendida que nunca se puso clave caía al
+  // cerebro remoto, que la aceptaba, y volvía a entrar a AU-RA como miembro de la comunidad.
+  if (f?.estado === 'suspendida') return 'suspendida';
   if (!f?.clave_hash) return 'sin_clave';
-  if (f.estado === 'suspendida') return 'suspendida';
   return (await claveCoincide(clave, f.clave_hash)) ? 'ok' : 'mal';
 }
 
@@ -304,6 +308,33 @@ export async function fijarClave(correo: string, clave: string, nombre = ''): Pr
   );
   claveDesdePorCorreo.set(correo, desde);
   return desde;
+}
+
+/**
+ * La cuenta de un MIEMBRO de la comunidad que entró con su Genesis ID (server/genesis.ts). Sin acceso a
+ * ninguna plataforma (`acceso` vacío): así no entra al padrón (recargarCuentas solo sube las que tienen
+ * acceso) y sigue siendo miembro, nunca junta. Sirve para que la persona exista en la base —con su
+ * nombre de Genesis y el GID de donde salió en `aprobada_por`— y para poder suspenderla
+ * (`estado = 'suspendida'` le cierra también la entrada con Genesis).
+ *
+ * Si la cuenta ya existía no se toca nada salvo un nombre vacío: ni su acceso, ni su estado, ni su clave.
+ * Devuelve true si la abrió ahora.
+ */
+export async function asegurarCuentaMiembro(correo: string, nombre: string, gid: string): Promise<boolean> {
+  const [f] = await q<{ nueva: boolean }>(
+    `INSERT INTO cuentas.cuenta (correo, nombre, aprobada_por) VALUES ($1, $2, $3)
+     ON CONFLICT (correo) DO UPDATE SET
+       nombre = CASE WHEN cuentas.cuenta.nombre = '' THEN EXCLUDED.nombre ELSE cuentas.cuenta.nombre END
+     RETURNING (xmax = 0) AS nueva`,
+    [correo, String(nombre || '').slice(0, 120), `genesis:${gid}`]
+  );
+  return !!f?.nueva;
+}
+
+/** ¿La cuenta de este correo está suspendida? (sin cuenta, no). */
+export async function cuentaSuspendida(correo: string): Promise<boolean> {
+  const [f] = await q(`SELECT estado FROM cuentas.cuenta WHERE correo = $1`, [correo]);
+  return f?.estado === 'suspendida';
 }
 
 /** ¿Este correo puede pedir un enlace de clave? Solo si está EXACTO en el padrón o tiene cuenta activa. */
@@ -473,6 +504,16 @@ export async function decidirSolicitud(
  * con el código, y al revocarlo o vencer, cualquier sesión abierta con él deja de valer.
  */
 export const HORAS_CODIGO = [1, 5, 24] as const;
+
+/**
+ * El interruptor de los accesos de prueba (auditoría maestra 3-oct, AUR05). José decidió que los códigos
+ * sirven para que alguien PRUEBE Dr Electrum; si un día debe quedar solo para la junta, ELECTRUM_CODIGOS=0
+ * cierra la entrada con código y saca del padrón a todo invitado vivo en la siguiente recarga (≤1 min):
+ * sus sesiones dejan de valer, sin tocar a los miembros.
+ */
+export function codigosActivos(env: NodeJS.ProcessEnv = process.env): boolean {
+  return String(env.ELECTRUM_CODIGOS ?? '1').trim() !== '0';
+}
 const ALFABETO = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // sin 0/O ni 1/I/L: se dicta por teléfono
 
 export function correoDeCodigo(id: number): string {
@@ -532,6 +573,8 @@ function filaACodigo(f: any): CodigoVisible {
 export async function crearCodigo(o: { horas: number; plataforma: Plataforma; nivel: Nivel; para: string; por: string }): Promise<{ codigo: string } & CodigoVisible> {
   if (!HORAS_CODIGO.includes(o.horas as any)) throw new Error('duración inválida');
   if (o.nivel === 'mando') throw new Error('un código temporal no da mando');
+  if (!codigosActivos()) throw new Error('los accesos de prueba están apagados (ELECTRUM_CODIGOS=0)');
+  o = { ...o, nivel: 'lee' };
   for (let intento = 0; intento < 5; intento++) {
     const codigo = codigoNuevo();
     const [f] = await q(

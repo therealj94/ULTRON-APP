@@ -258,6 +258,35 @@ test('el bucle', async (t) => {
     assert.ok(Date.now() - t0 < 350, 'debió cortarla antes de que terminara');
     assert.equal(r.traza[0].ok, false);
     assert.match(r.traza[0].resumen, /tardó más de/);
+    assert.equal(r.traza[0].estado, 'failed', 'una lectura que no contestó no hizo nada: fallo');
+  });
+
+  await t.test('EXEC03: una herramienta con efecto que vence su tope queda «unknown» y recibe la señal de cancelar', async () => {
+    let senalVista: AbortSignal | undefined;
+    let veces = 0;
+    const enviar: Herramienta = {
+      nombre: 'enviar_aviso',
+      descripcion: 'Manda un aviso.',
+      escribe: true,
+      plataformas: ['electrum'],
+      msMaximo: 60,
+      esquema: { type: 'object', properties: {} },
+      async ejecutar(_a, ctx) {
+        veces++;
+        senalVista = ctx.senal;
+        // Ya lo despachó y se queda esperando la confirmación (que llega tarde).
+        await new Promise((r) => setTimeout(r, 300));
+        return { ok: true, texto: 'Aviso enviado.' };
+      },
+    };
+    const { pensar, vistos } = modelo('<tool_call>{"name":"enviar_aviso","arguments":{}}</tool_call>', '<tool_call>{"name":"enviar_aviso","arguments":{}}</tool_call>', 'No sé si salió; lo reviso.');
+    const r = await correrAgente({ mensajes: [{ role: 'user', content: 'avisa' }], herramientas: [enviar], ctx: CTX, pensar });
+    assert.equal(r.traza.length, 1);
+    assert.equal(r.traza[0].estado, 'unknown', 'dejar de esperar no es un fallo: pudo haber salido');
+    assert.equal(r.traza[0].ok, false, 'y tampoco un éxito');
+    assert.equal(senalVista?.aborted, true, 'la herramienta recibió la señal de cancelar, no solo se dejó de esperar');
+    assert.match(JSON.stringify(vistos[1]), /no sé si se hizo|No lo repitas/i);
+    assert.equal(veces, 1, 'el reintento del modelo no la vuelve a correr');
   });
 
   await t.test('el presupuesto de rondas corta el bucle infinito', async () => {

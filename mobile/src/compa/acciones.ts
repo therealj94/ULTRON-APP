@@ -16,9 +16,12 @@
  *
  * Sin React Native: todo lo de afuera entra por `deps` y las pruebas lo corren con un servidor falso.
  */
-import type { AccionApp, Contexto, Eventos, Pantalla, RecordatorioPuesto } from '../nucleo/contrato';
-import { MANOS_APP, RUTA_ACCIONES } from '../nucleo/contrato';
+import type { AccionApp, Ambiente, Contexto, Eventos, Pantalla, RecordatorioPuesto } from '../nucleo/contrato';
+import { EVENTO_AMBIENTE, MANOS_APP, RUTA_ACCIONES } from '../nucleo/contrato';
 import { LectorSse, jsonDe } from './sse';
+import { esAccionPc, PANTALLAS_MAS } from './computadora';
+import { esAccionIniciativa } from './iniciativa';
+import { PANTALLAS_CEREBRO } from './cerebro';
 
 /** Lo que se usa de un XMLHttpRequest (el de React Native o uno falso en las pruebas). */
 export type XhrMin = {
@@ -40,7 +43,13 @@ const temporizador: Temporizador = (f, ms) => {
   return () => clearTimeout(t);
 };
 
-const PANTALLAS: readonly Pantalla[] = ['mesa', 'chats', 'ajustes', 'perfil'];
+// Las del contrato y las de más (su computadora, WhatsApp y sus correos: compa/computadora.ts; sus misiones,
+// lo que sabe de ti y tu círculo: compa/cerebro.ts).
+const PANTALLAS: readonly string[] = ['mesa', 'chats', 'ajustes', 'perfil', ...PANTALLAS_MAS, ...PANTALLAS_CEREBRO] satisfies readonly (
+  | Pantalla
+  | (typeof PANTALLAS_MAS)[number]
+  | (typeof PANTALLAS_CEREBRO)[number]
+)[];
 const TEMAS = ['oscuro', 'claro', 'sistema'];
 const AVATARES = ['ojos', 'aura', 'claudio', 'antonio'];
 const CAMPOS_PERFIL = ['apodo', 'cumple', 'vive', 'comida', 'musica', 'familia', 'trabajo', 'gustos', 'otros'];
@@ -88,9 +97,35 @@ export function esAccionApp(a: any): a is AccionApp {
       return typeof a.id === 'string' && /^aura-rec-[a-z0-9-]{1,80}$/.test(a.id);
     case 'llamame':
       return true;
+    // La cartera (cartera/HojasCartera.tsx): abrir la hoja, o la de enviar llenada (se firma en Veta Wallet).
+    case 'cartera':
+      return true;
+    case 'pagar':
+      return txt(a.con, 254) && (a.monto === undefined || txt(a.monto, 40)) && (a.moneda === undefined || txt(a.moneda, 16));
+    // Lo que hace su computadora en la nube (server/computadora.ts): abrir la vista, avances y el final.
+    case 'computadora':
+      return esAccionPc(a);
+    // Lo que AURA propone por su cuenta (server/iniciativa.ts): la tarjeta de la mesa (compa/iniciativa.ts).
+    case 'iniciativa':
+      return esAccionIniciativa(a);
+    // Los controles de voz separados (AUR10, compa/controles.ts): cada uno con un solo efecto.
+    case 'detener_audio':
+    case 'colgar':
+      return true;
+    case 'tarea':
+      return a.que === 'pausar' || a.que === 'reanudar' || a.que === 'cancelar' || a.que === 'tomar';
     default:
       return false;
   }
+}
+
+const SONIDOS = ['teclado', 'papel', 'lapiz'];
+
+/** El `data` de un `event: ambiente`, validado: un sonido que no conozco es «sin sonido». */
+export function ambienteDe(d: any): Ambiente | null {
+  if (!d || typeof d !== 'object' || typeof d.on !== 'boolean') return null;
+  const sonido = d.on && SONIDOS.includes(d.sonido) ? (d.sonido as Ambiente['sonido']) : null;
+  return { sonido, on: !!sonido };
 }
 
 /**
@@ -261,6 +296,8 @@ export type DepsPuente = {
   xhr: () => XhrMin;
   /** Por cada acción válida y nueva. */
   alAccion: (a: AccionApp, id?: string) => void;
+  /** El sonido de fondo de la conversación (`event: ambiente`). Sin esto, se salta. */
+  alAmbiente?: (a: Ambiente) => void;
   /** El servidor dijo 401: renovar la sesión (en la app, una petición por api() que la renueva sola). */
   renovar?: () => Promise<void>;
   /** Cabeceras de más para el SSE (en la app, `x-aura-aparato`: qué teléfono escucha). */
@@ -381,6 +418,11 @@ export class PuenteAcciones {
       this.vigilar(n);
       for (const ev of this.lector.leer(texto)) {
         if (ev.id) this.ultimoId = ev.id;
+        if (ev.evento === EVENTO_AMBIENTE) {
+          const a = ambienteDe(jsonDe(ev));
+          if (a) this.d.alAmbiente?.(a);
+          continue;
+        }
         if (ev.evento !== 'message' && ev.evento !== 'accion') continue;
         const d = jsonDe<{ id?: string; accion?: unknown }>(ev);
         if (!d) continue;

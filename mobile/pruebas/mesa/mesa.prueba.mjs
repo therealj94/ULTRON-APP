@@ -5,8 +5,10 @@
  *   · reconocer caras con permiso: comparar vectores, entender «conóceme / te presento a / olvida a»,
  *     el «sí» de la persona presentada (con plazo) y el permiso por persona (src/caras/caras.ts);
  *   · el recorrido de primera vez: solo capacidades que existen (cada paso nombra archivos reales) y
- *     «no volver a mostrar» por persona (src/tutorial/pasos.ts);
- *   · el contraste de los textos del tema (A17): cada token de texto ≥ 4,5:1 sobre cada fondo.
+ *     «no volver a mostrar» por persona (src/tutorial/pasos.ts; el recorrido en sí: src/recorrido);
+ *   · el contraste de los textos del tema (A17): cada token de texto ≥ 4,5:1 sobre cada fondo;
+ *   · costuras leídas del código: «olvidar» también en el servidor, el puntito del Chat, salir con
+ *     confirmación y la red de seguridad de cada pantalla (app/LimitePantalla.tsx).
  *
  *   cd mobile && npx tsx pruebas/mesa/mesa.prueba.mjs
  */
@@ -31,7 +33,8 @@ import {
   promediar,
   vectorValido,
 } from '../../src/caras/caras.ts';
-import { conTutorialVisto, pasosTutorial, tocaTutorial } from '../../src/tutorial/pasos.ts';
+import { conTutorialVisto, tocaTutorial } from '../../src/tutorial/pasos.ts';
+import { abrirVisor, cerrarVisor, guardarVista, seguirEnVisor, sesionDe as sesionDelVisor, visorAhora, vistaGuardada } from '../../src/app/visor.ts';
 
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
 const RAIZ = path.resolve(AQUI, '../../..');
@@ -191,7 +194,7 @@ prueba('caras: el permiso es por persona y revocable; al cerebro solo le llega �
 
 /* ── el recorrido ────────────────────────────────────────────────────────────────────────── */
 
-prueba('hoja «Más» (José, Samsung Android 16: tarjetas apiladas como baraja): alturas por contenido, sin base 0, con desplazamiento', () => {
+prueba('hoja «Más» (José, Samsung Android 16: tarjetas apiladas como baraja): alturas por contenido, sin base 0, y la hoja se desplaza', () => {
   const src = fs.readFileSync(path.join(RAIZ, 'mobile/src/components/HojaMas.tsx'), 'utf8');
   const estilo = (nombre) => {
     const m = new RegExp(`\\n    ${nombre}: \\{([\\s\\S]*?)\\n?    ?\\},?\\n`).exec(src.slice(src.indexOf('function estilos')));
@@ -202,28 +205,15 @@ prueba('hoja «Más» (José, Samsung Android 16: tarjetas apiladas como baraja)
   // cada tarjeta se desbordaba sobre la siguiente. Se reprodujo con Yoga (el motor de Android).
   for (const n of ['celda', 'caja', 'mosaico']) assert.doesNotMatch(estilo(n), /(^|[\s{,])flex:\s*1\b/, `${n} sin flex: 1`);
   assert.match(estilo('mosaico'), /minHeight:\s*76/, 'la tarjeta mide por contenido, al menos 76 dp');
-  assert.match(estilo('desplazable'), /flexShrink:\s*1/, 'la rejilla se encoge para caber en la hoja…');
-  assert.match(src, /<ScrollView[^>]*style=\{st\.desplazable\}[^>]*contentContainerStyle=\{st\.rejilla\}/, '…dentro de un ScrollView (lo que no cabe se desplaza)');
+  // Lo que no cabe se desplaza: ahora lo hace la hoja entera (ui/Hoja lleva su ScrollView, 2-oct, «no
+  // puedo bajar» en los correos) y la rejilla va plana, sin otro desplazable adentro.
+  const hoja = fs.readFileSync(path.join(RAIZ, 'mobile/src/ui/Hoja.tsx'), 'utf8');
+  assert.match(hoja, /<ScrollView[\s\S]*?\{children\}[\s\S]*?<\/ScrollView>/, 'la hoja desplaza su contenido');
+  assert.match(hoja, /contenido: \{ flexGrow: 0, flexShrink: 1 \}/, 'y se encoge para caber en la pantalla');
+  assert.doesNotMatch(src, /<ScrollView/, 'sin un desplazable dentro de otro');
+  assert.match(src, /<View style=\{\[st\.desplazable, st\.rejilla\]\}>/);
   assert.match(src, /<Text style=\{st\.titulo\}>\{m\.titulo\}<\/Text>/, 'el título no se corta (numberOfLines solo en el subtítulo)');
   assert.match(src, /width:\s*ancho\s*\}/, 'cada celda es una fracción del ancho real de la rejilla');
-});
-
-prueba('recorrido: cada paso nombra de dónde sale y esos archivos EXISTEN (nada inventado)', () => {
-  const pasos = pasosTutorial('Claudio');
-  assert.ok(pasos.length >= 6 && pasos.length <= 9, 'corto');
-  const ids = pasos.map((p) => p.id);
-  for (const id of ['hablar', 'envivo', 'chat', 'manos', 'recordatorios', 'internet', 'camara', 'avatar']) assert.ok(ids.includes(id), `enseña «${id}»`);
-  for (const p of pasos) {
-    assert.ok(p.titulo && p.texto.length > 20, p.id);
-    const rutas = [...p.fuente.matchAll(/((?:src|lib|server|screens|components|compa|pulse|avatares|caras|tutorial)\/[\w./-]+|\blib\/[\w.-]+)/g)].map((m) => m[1]);
-    assert.ok(rutas.length, `${p.id}: nombra su fuente`);
-    for (const r of rutas) {
-      const limpio = r.replace(/\/\*$/, '').replace(/\.$/, '');
-      const candidatos = [path.join(RAIZ, limpio), path.join(RAIZ, 'mobile', limpio), path.join(RAIZ, 'mobile/src', limpio), path.join(RAIZ, 'mobile/src', `${limpio}.ts`), path.join(RAIZ, 'mobile/src', `${limpio}.tsx`), path.join(RAIZ, `${limpio}.ts`)];
-      assert.ok(candidatos.some((c) => fs.existsSync(c)), `${p.id}: «${limpio}» existe`);
-    }
-  }
-  assert.match(pasos.find((p) => p.id === 'camara').texto, /números, no fotos/);
 });
 
 prueba('recorrido: una vez por persona; «no volver a mostrar» no se lo quita a otra cuenta', () => {
@@ -255,6 +245,233 @@ prueba('contraste: texto, texto2 y texto3 ≥ 4,5:1 sobre cada fondo, en claro y
   assert.deepEqual(malas, []);
   const peor = filas.reduce((m, f) => (f[1] < m[1] ? f : m));
   console.log(`      (${filas.length} combinaciones; la más baja: ${peor[0]} ${peor[1].toFixed(2)}:1)`);
+});
+
+prueba('contraste (UI01, 3-oct): la letra sobre el oro (botón, burbuja mía, etiquetas) ≥ 4,5:1 en claro y en oscuro', () => {
+  // Antes, en claro: blanco sobre #B8913F = 2,93:1. Ahora la letra sobre el oro es la tinta del tema.
+  const filas = [];
+  for (const [nombre, p] of [['claro', CLARO], ['oscuro', OSCURO]]) {
+    filas.push([`${nombre}.sobreAcento/acento`, contraste(p.sobreAcento, p.acento)]);
+    filas.push([`${nombre}.textoMia/burbujaMia`, contraste(p.textoMia, p.burbujaMia)]);
+  }
+  // El botón principal es un degradado de oro (ui/Boton.tsx, oroDe): la letra se lee en cada parada.
+  const boton = fs.readFileSync(path.join(RAIZ, 'mobile/src/ui/Boton.tsx'), 'utf8');
+  const oro = /return oscuro \? \[([^\]]+)\] : \[([^\]]+)\];/.exec(boton);
+  assert.ok(oro, 'oroDe sigue en ui/Boton.tsx');
+  const paradas = (s) => [...s.matchAll(/'(#[0-9A-Fa-f]{6})'/g)].map((m) => m[1]);
+  for (const c of paradas(oro[1])) filas.push([`oscuro.sobreAcento/oro ${c}`, contraste(OSCURO.sobreAcento, c)]);
+  for (const c of paradas(oro[2])) filas.push([`claro.sobreAcento/oro ${c}`, contraste(CLARO.sobreAcento, c)]);
+  const malas = filas.filter(([, c]) => c < 4.5).map(([k, c]) => `${k} ${c.toFixed(2)}`);
+  assert.deepEqual(malas, []);
+  // Y nadie pinta blanco a mano encima del acento (lo que se arregla en el token no se rompe en una pantalla).
+  const sospechosas = [];
+  const recorrer = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const f = path.join(d, e.name);
+      if (e.isDirectory()) {
+        if (e.name !== 'pruebas' && e.name !== 'node_modules') recorrer(f);
+      } else if (/\.tsx$/.test(e.name)) {
+        const src = fs.readFileSync(f, 'utf8');
+        for (const linea of src.split('\n')) {
+          if (/backgroundColor: (tema|t|P|p)\.(acento|burbujaMia)\b/.test(linea) && /color: '#(fff|FFF|ffffff|FFFFFF)'/.test(linea)) sospechosas.push(path.relative(RAIZ, f));
+        }
+      }
+    }
+  };
+  recorrer(path.join(RAIZ, 'mobile/src'));
+  assert.deepEqual(sospechosas, []);
+});
+
+/* ── costuras de la mesa (leídas del código: estos módulos cargan React Native) ───────────── */
+
+const fuente = (archivo) => fs.readFileSync(path.join(RAIZ, 'mobile/src', archivo), 'utf8');
+
+prueba('mesa: «olvidar» borra también en el servidor; el puntito del Chat llega a la barra; salir pregunta', () => {
+  const desk = fuente('screens/DeskScreen.tsx');
+  const olvido = /const confirmarOlvido = useCallback\(([\s\S]*?)\n  \}, \[/.exec(desk)?.[1] || '';
+  assert.match(olvido, /clearLongMemory\(user\)/, 'borra la copia del teléfono');
+  assert.match(olvido, /olvidarMemoriaServidor\(/, 'y pide al servidor que olvide');
+  assert.match(olvido, /no pude borrar la copia del servidor/, 'si el servidor no confirmó, lo dice');
+  assert.match(fuente('lib/api.ts'), /olvidar: true/, 'POST /api/memoria {olvidar:true}');
+  assert.match(desk, /<BarraMesa[\s\S]*?chatSinLeer=\{chatSinLeer\}/, 'la mesa le pasa el puntito a la barra');
+  const chats = fuente('pulse/chats.ts');
+  const sinLeer = /export function useSinLeerTotal[\s\S]*?\n\}/.exec(chats)?.[0] || '';
+  const ms = Number(/sondear\(refrescarLista, \(\) => ([\d_]+)\)/.exec(sinLeer)?.[1].replace(/_/g, ''));
+  assert.ok(ms >= 30_000, `el sondeo del puntito es tranquilo (≥ 30 s; es ${ms} ms)`);
+  // «Cerrar sesión» se mudó a Ajustes (José, 2-oct): ahí pregunta antes con su hoja; el menú ya no saca a nadie.
+  const menu = fuente('components/DeskMenu.tsx');
+  assert.doesNotMatch(menu, /onLogout/, 'el menú de la mesa ya no cierra la sesión');
+  const ajustes = fuente('ajustes/Ajustes.tsx');
+  assert.match(ajustes, /<Fila titulo=\{tr\('Cerrar sesión', 'Sign out'\)\}[^\n]*onPress=\{\(\) => abrir\('salir'\)\}/, 'en Ajustes, «Cerrar sesión» abre la pregunta');
+  assert.match(ajustes, /<Hoja visible=\{hoja === 'salir'\}[\s\S]*?salirDeLaSesion\(\)/, 'y solo su botón saca');
+});
+
+prueba('menú de la mesa (José, 2-oct, captura): corto, ancho en vertical, nada cortado; los ajustes viven en Ajustes', async () => {
+  const menu = fuente('components/DeskMenu.tsx');
+  // Antes: Math.min(460, width * 0.64) → ~250 dp en un teléfono, con «Olvidar» fuera de la pantalla.
+  assert.doesNotMatch(menu, /width \* 0\.64\)/);
+  const ancho = /export function anchoPanel\(ancho: number\): number \{\s*return ([^;]+);/.exec(menu)?.[1];
+  assert.ok(ancho, 'el ancho del panel sale de anchoPanel');
+  const anchoPanel = new Function('ancho', `return ${ancho};`);
+  assert.equal(anchoPanel(392), 360, 'vertical (392 dp): casi todo el ancho');
+  assert.equal(anchoPanel(360), 328);
+  assert.equal(anchoPanel(850), 440, 'acostado: una columna cómoda, no media pantalla');
+  assert.ok(anchoPanel(320) <= 320 - 32, 'nunca más ancho que la pantalla');
+  assert.match(menu, /textos: \{ flex: 1, minWidth: 0 \}/, 'el texto de cada fila se parte en renglones en vez de empujar el botón fuera');
+  assert.doesNotMatch(menu, /maxWidth: 300/);
+  assert.match(menu, /paddingBottom: ins\.bottom \+ 28, paddingRight: ins\.right \+ 20/, 'respeta la barra de gestos y la muesca acostado');
+  assert.match(menu, /emitir\('accion', \{ tipo: 'abrir', pantalla: 'ajustes' \}\)/, '«Ajustes» abre la pantalla completa');
+  // Lo que se fue del menú… sin perder nada: cada opción está en Ajustes con la misma acción de la mesa.
+  for (const fuera of ['onSetSttEngine', 'onToggleProactive', 'onToggleSfx', 'onForget', 'memoryCount', 'onSetCara', 'onSetPostura']) assert.doesNotMatch(menu, new RegExp(fuera), `${fuera} ya no está en el menú`);
+  const ajustes = fuente('ajustes/Ajustes.tsx');
+  for (const [que, re] of [
+    ['la voz', /tr\('Voz', 'Voice'\)/],
+    ['el oído (teléfono o nube)', /acciones\.fijarOido\(e\)/],
+    ['comenta lo que ve', /acciones\.alternarComentarios\(\)/],
+    ['los efectos de sonido', /acciones\.alternarEfectos\(\)/],
+    ['la memoria y olvidar', /onPress=\{acciones\.olvidar\}/],
+    ['su cara', /onCambiar=\{acciones\.fijarCara\}/],
+    ['el orbe (José, 2-oct) o los anillos', /\{ id: 'orbe', texto: tr\('Orbe', 'Orb'\) \}/],
+    ['lo que sé de ti', /abrir\('conocer'\)/],
+  ]) assert.match(ajustes, re, `Ajustes tiene ${que}`);
+  const desk = fuente('screens/DeskScreen.tsx');
+  // La cara de AURA es el orbe; si la WebView no puede, los anillos (y si tampoco, la clásica): nunca vacía.
+  assert.match(desk, /<OrbeAura[\s\S]*?sonidos=\{settings\.sfx\}[\s\S]*?onFallo=\{onFalloOrbe\}/, 'el orbe con sus sonidos según Ajustes');
+  assert.match(desk, /cara === 'orbe' && conOrbe \? 'orbe' : anillosOClasica/, 'si el orbe falla, los anillos');
+  assert.doesNotMatch(desk, /SalaAura/, 'la habitación 3D ya no está en el teléfono');
+  assert.match(desk, /publicarMesa\([\s\S]*?fijarOido: \(e\) => void changeStt\(e\)[\s\S]*?olvidar: confirmarOlvido/, 'la mesa le presta a Ajustes sus mismas acciones');
+  assert.match(desk, /case 'ajustes':\s*\/\/[^\n]*\n\s*return emitir\('accion', \{ tipo: 'abrir', pantalla: 'ajustes' \}\)/, '«Más → Ajustes» abre la pantalla de Ajustes');
+  // El puente entre la mesa y Ajustes: solo avisa si cambió algo; las acciones siempre las últimas.
+  const { publicarMesa, retirarMesa, mesaAjustes, suscribirMesa } = await import('../../src/app/mesaAjustes.ts');
+  let avisos = 0;
+  const quitar = suscribirMesa(() => avisos++);
+  const datos = { avatar: 'aura', sttEngine: 'native', proactive: true, sfx: true, memoria: 2, cara: 'anillos', postura: 'pie' };
+  let llamadas = 0;
+  publicarMesa(datos, { fijarOido() {}, alternarComentarios() {}, alternarEfectos() {}, olvidar() {}, fijarCara() {}, fijarPostura() {} });
+  publicarMesa({ ...datos }, { fijarOido() {}, alternarComentarios() {}, alternarEfectos() {}, olvidar: () => llamadas++, fijarCara() {}, fijarPostura() {} });
+  assert.equal(avisos, 1, 'redibujar la mesa sin cambios no redibuja Ajustes');
+  mesaAjustes().acciones.olvidar();
+  assert.equal(llamadas, 1, 'pero la acción es la del último dibujo');
+  publicarMesa({ ...datos, memoria: 0 }, mesaAjustes().acciones);
+  assert.equal(avisos, 2);
+  assert.equal(mesaAjustes().datos.memoria, 0);
+  retirarMesa();
+  assert.equal(mesaAjustes(), null, 'sin mesa, Ajustes no dibuja la sección');
+  assert.equal(avisos, 3);
+  quitar();
+});
+
+prueba('app: cada pantalla va dentro de su red de seguridad (LimitePantalla) con «Reintentar»', () => {
+  assert.match(fuente('app/AppAura.tsx'), /screenLayout=\{[\s\S]*?<LimitePantalla/);
+  const limite = fuente('app/LimitePantalla.tsx');
+  assert.match(limite, /getDerivedStateFromError/);
+  assert.match(limite, /reportarErrorPantalla\(/);
+  assert.match(limite, /tr\('Reintentar', 'Try again'\)/);
+});
+
+prueba('app: «abre tu computadora / WhatsApp / mis correos» desde cualquier pantalla, y la vista en vivo se abre sola (José, 2-oct)', () => {
+  const raiz = fuente('app/AppAura.tsx');
+  assert.match(raiz, /\{enSesion && <ComputadoraEnVivo \/>\}/, 'la raíz dibuja la vista en vivo encima de cualquier pantalla');
+  const acciones = fuente('app/acciones.ts');
+  assert.match(acciones, /mas === 'computadora' \|\| mas === 'correos'[\s\S]*?abrirHoja\(mas\)/, 'computadora y correos: las hojas de toda la app');
+  assert.match(acciones, /mas === 'whatsapp'[\s\S]*?abrirWhatsapp\(\)/, 'WhatsApp: los chats con su pestaña');
+  assert.match(fuente('app/rutas.ts'), /abrirRuta\('Chats', \{ whatsapp: Date\.now\(\) \}\)/);
+  assert.match(fuente('app/pantallas/Chats.tsx'), /enWhatsapp=\{enWhatsapp\}/, 'la ruta le pasa la pestaña a los chats');
+  const vivo = fuente('app/ComputadoraEnVivo.tsx');
+  assert.match(vivo, /esAccionPc\(a\)\) companero\.alAccion\(a\)/, 'los avisos de su computadora llegan al compañero');
+  assert.match(vivo, /emitir\('lectura'/, 'lo dice con la voz de AURA (lectura con boleto o la voz de la mesa)');
+  assert.match(vivo, /<HojaCorreos visible=\{hojas\.abierta === 'correos'\}/);
+  // La mesa y Ajustes no dibujan otra: HojaComputadora solo abre la de toda la app.
+  const hoja = fuente('ajustes/Computadora.tsx');
+  assert.match(hoja, /export function HojaComputadora\([\s\S]*?abrirHoja\('computadora'\)/);
+  // Solo lo que ya trae la app: el tecleo es el mismo archivo del sonido de la conversación.
+  assert.match(fuente('compa/computadoraSonido.ts'), /require\('\.\.\/\.\.\/assets\/sfx\/teclado\.mp3'\)/);
+  assert.ok(fs.existsSync(path.join(RAIZ, 'mobile/assets/sfx/teclado.mp3')));
+});
+
+prueba('app: su computadora como un agente: captura arriba, plan marcado, tiempo, Detener/Pausar/Tomar el control, su sí, resultado para compartir e historial (José, 2-oct)', () => {
+  const hoja = fuente('ajustes/Computadora.tsx');
+  // De arriba abajo: la captura en vivo va antes que el plan, y el plan antes que los mandos y el final.
+  const en = (re) => {
+    const i = hoja.search(re);
+    assert.ok(i >= 0, `falta ${re}`);
+    return i;
+  };
+  const pantalla = en(/La pantalla en vivo, arriba de todo/);
+  const pregunta = en(/tr\('Necesito tu sí para seguir'/);
+  const plan = en(/tr\('El plan', 'The plan'\)/);
+  const mandos = en(/tr\('Pausar', 'Pause'\)/);
+  const final = en(/<TarjetaFinal mision=\{misionDeAhora\}/);
+  assert.ok(pantalla < pregunta && pregunta < plan && plan < mandos && mandos < final, 'captura → su sí → plan → mandos → resultado');
+  // Detener: fijo abajo (el pie de la hoja, fuera del desplazamiento) y nunca bloqueado por otro botón en camino
+  // (auditoría, 3-oct: quedaba debajo de todo y la guarda de «ocupado» lo ignoraba).
+  assert.match(hoja, /pie=\{\s*tarea && sigue \?\s*\(\s*<Boton titulo=\{tr\('Detener la tarea', 'Stop the task'\)\}/);
+  assert.match(hoja, /\(ocupado && que !== 'parar'\)/);
+  assert.match(hoja, /relojMision\(/, 'el tiempo transcurrido');
+  // El sí nombra la pregunta que contesta (auditoría 3-oct, PC01): uno viejo no contesta una pregunta nueva.
+  assert.match(hoja, /sobreTarea\('si', 'confirmar', respuestaPc\(true, misionDeAhora, tarea\)\)/, '«Sí, hazlo» manda el sí ligado a su pregunta');
+  assert.match(hoja, /sobreTarea\('no', 'confirmar', respuestaPc\(false, misionDeAhora, tarea\)\)/);
+  assert.match(hoja, /sobreTarea\('pausar', 'pausar'\)/);
+  assert.match(hoja, /sobreTarea\('tomar', 'control', \{ tomar: true \}\)/);
+  assert.match(hoja, /sobreTarea\('devolver', 'control', \{ tomar: false \}\)/);
+  assert.match(hoja, /c\.faltaActualizar \?/, 'con el servicio viejo se explica por qué solo hay Detener');
+  assert.match(hoja, /aCoordenadas\(locationX, locationY, anchoImg, altoImg\)/, 'con el control, tocar la captura hace clic ahí');
+  assert.match(hoja, /Share\.share\(\{ message: textoParaCompartir\(/, 'el resultado se comparte (Share de React Native: sin módulos nativos nuevos)');
+  assert.match(hoja, /Linking\.openURL\(u\)/, 'los enlaces se abren');
+  assert.match(hoja, /\/api\/computadora\/misiones\/\$\{encodeURIComponent\(m\.id\)\}\/seguir/, '«Seguir» una misión a medias');
+  assert.match(hoja, /tr\('Misiones recientes', 'Recent missions'\)/, 'el historial');
+  assert.match(hoja, /sinRespuesta >= FALLOS_PARA_AVISAR/, 'si no llega nada, lo dice (nunca colgada en silencio)');
+  const vivo = fuente('app/ComputadoraEnVivo.tsx');
+  assert.match(vivo, /planInicial=\{companero\.plan\}/);
+  assert.match(vivo, /companero\.alEstado\(s\.actual\.id, trabajando\(s\.actual\.estado\), s\.actual\.estado\)/, 'el sondeo de fondo también ve si quedó quieta');
+  // Sin dependencias nativas nuevas (va por OTA): solo lo que ya trae React Native.
+  const deps = JSON.parse(fs.readFileSync(path.join(RAIZ, 'mobile/package.json'), 'utf8')).dependencies;
+  assert.ok(!deps['expo-clipboard'] && !deps['react-native-share'], 'sin módulos nativos nuevos');
+});
+
+prueba('su computadora a pantalla completa (AUR09): visor propio desde la tarea, vuelve al chat sin cancelarla, misma sesión al reabrir, AURA no lo abre sola', () => {
+  const visor = fuente('app/VisorComputadora.tsx');
+  // Una pantalla propia (un Modal a pantalla completa con rotación), no el fullscreen de toda la app.
+  assert.match(visor, /<Modal visible animationType="fade"[^>]*supportedOrientations=/);
+  assert.doesNotMatch(visor, /StatusBar\.setHidden|setStatusBarHidden|NavigationBar\.setVisibilityAsync|lockAsync/, 'no toca la pantalla de toda la app ni la orientación');
+  for (const t of ['AURA controla', 'Solicitando control', 'Tú controlas', 'Sin conexión']) assert.ok(visor.includes(`'${t}`), `el indicador «${t}»`);
+  for (const t of ["'Tomar el control'", "'Devolver'", "'Pausar'", "'Cancelar'", "'Ajustar'", "'Linux · Firefox'", "'🔒 Segura'"]) assert.ok(visor.includes(t), `en la barra: ${t}`);
+  // Una sola capa de coordenadas (lib/entradaRemota.ts), y la de antes ya no.
+  assert.match(visor, /aLogico\(T, frame, g\.x, g\.y\)/);
+  assert.doesNotMatch(visor, /aCoordenadas\(/);
+  // Entrada segura: campo de contraseña; salir con una imagen pedida ahora.
+  assert.match(visor, /secureTextEntry=\{seguro\}/);
+  assert.match(visor, /frameSeq: seq/);
+  // Volver al chat suelta lo pulsado y no cancela nada.
+  assert.match(visor, /const cerrar = \(\) => \{[\s\S]*?soltarTodo\(\)[\s\S]*?cerrarVisor\(\);/);
+  assert.doesNotMatch(visor.match(/const cerrar = \(\) => \{[\s\S]*?\n  \};/)[0], /parar/, 'cerrar no detiene la tarea');
+  // AURA no roba el foco: con el visor abierto la hoja no se abre sola, y el compañero nunca abre el visor.
+  const vivo = fuente('app/ComputadoraEnVivo.tsx');
+  assert.match(vivo, /puedeAbrir: \(\) => !vozRef\.current\?\.vista\.suspendida && !visorAbierto\(\)/);
+  assert.match(vivo, /<VisorComputadora tareaSeguida=\{companero\.tareaId\} \/>/);
+  assert.doesNotMatch(fuente('compa/computadora.ts'), /abrirVisor/);
+  assert.match(fuente('ajustes/Computadora.tsx'), /setTimeout\(\(\) => abrirVisor\(id\), 320\)/, 'se abre desde la tarea (tras irse la hoja)');
+  // La sesión sobrevive a cerrar y reabrir: el mismo cliente, el mismo control y el mismo encuadre.
+  const envio = async () => ({ secuencia: 1, estado: 'hecha', ts: 0, frame_seq: 1, epoca: 1 });
+  abrirVisor('tarea-v1');
+  const s1 = sesionDelVisor('tarea-v1', envio);
+  s1.alControl(5);
+  guardarVista('tarea-v1', { zoom: 2, centro: { x: 300, y: 200 } });
+  cerrarVisor();
+  assert.equal(visorAhora().abierto, false);
+  abrirVisor('tarea-v1');
+  const s2 = sesionDelVisor('tarea-v1', envio);
+  assert.equal(s2, s1, 'la misma sesión');
+  assert.equal(s2.epoca, 5, 'con su control');
+  assert.deepEqual(vistaGuardada('tarea-v1'), { zoom: 2, centro: { x: 300, y: 200 } });
+  seguirEnVisor('tarea-v2');
+  assert.equal(visorAhora().tareaId, 'tarea-v2', 'la misión siguió: el visor abierto la sigue');
+  cerrarVisor();
+  seguirEnVisor('tarea-v3');
+  assert.equal(visorAhora().abierto, false, 'cerrado, no se abre solo');
+  // Sin dependencias nuevas: solo React Native, safe-area (ya estaba) y lo nuestro.
+  const imports = [...visor.matchAll(/from '([^']+)'/g)].map((m) => m[1]).filter((m) => !m.startsWith('.'));
+  assert.deepEqual([...new Set(imports)].sort(), ['react', 'react-native', 'react-native-safe-area-context']);
 });
 
 for (const [nombre, f] of pruebas) {

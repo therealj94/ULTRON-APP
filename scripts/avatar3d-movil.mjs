@@ -3,7 +3,7 @@
  * Empaqueta el cuerpo 3D de AURA (src/12-avatar3d/escena.ts + three.js + el decodificador meshopt)
  * en UNA página HTML y la escribe como módulo de la app del teléfono: mobile/src/avatar3d/escenaHtml.ts.
  *
- * Mismo camino que la sala (scripts/sala-movil.mjs): la página va dentro de la APK, así el avatar
+ * Mismo camino que el orbe (scripts/orbe-movil.mjs): la página va dentro de la APK, así el avatar
  * aparece sin red y no depende de que el servidor esté arriba. El modelo .glb NO va aquí: lo lleva
  * Metro como archivo (mobile/assets/avatar3d/) y el teléfono se lo pasa a la página en pedazos.
  *

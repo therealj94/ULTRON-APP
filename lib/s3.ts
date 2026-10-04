@@ -70,6 +70,11 @@ async function s3(opts: {
   timeoutMs?: number;
   /** «bytes=a-b»: solo ese tramo del objeto (S3 contesta 206). No entra en la firma: S3 no lo exige. */
   range?: string;
+  /**
+   * Escritura condicional (lib/durable.ts): `If-None-Match: *` (crear solo si no existe; 412 si ya existe) o
+   * `If-Match: <ETag>` (compare-and-set; 412 si cambió). Van firmadas.
+   */
+  condicion?: { 'if-none-match'?: '*'; 'if-match'?: string };
 }): Promise<{ ok: boolean; status: number; body: Buffer; detalle: string; cabeceras?: Record<string, string> }> {
   const bucket = opts.bucket ?? bucketMemoria();
   const access = String(process.env.AWS_ACCESS_KEY_ID || '').trim();
@@ -94,6 +99,8 @@ async function s3(opts: {
     'x-amz-date': amzDate,
   };
   if (contentType) headers['content-type'] = contentType;
+  if (opts.condicion?.['if-none-match']) headers['if-none-match'] = opts.condicion['if-none-match'];
+  if (opts.condicion?.['if-match']) headers['if-match'] = opts.condicion['if-match'];
   const signed = Object.keys(headers).sort();
   const canonicalHeaders = signed.map((k) => `${k}:${headers[k]}\n`).join('');
   const signedHeaders = signed.join(';');
@@ -115,13 +122,13 @@ async function s3(opts: {
       signal: AbortSignal.timeout(opts.timeoutMs ?? 12000),
     });
     const buf = Buffer.from(await r.arrayBuffer());
-    if (!r.ok) {
-      return { ok: false, status: r.status, body: buf, detalle: `S3 ${r.status}: ${buf.toString('utf8').slice(0, 160)}` };
-    }
     const cabeceras: Record<string, string> = {};
     for (const k of ['content-range', 'etag', 'last-modified', 'content-type']) {
       const v = r.headers.get(k);
       if (v) cabeceras[k] = v;
+    }
+    if (!r.ok) {
+      return { ok: false, status: r.status, body: buf, detalle: `S3 ${r.status}: ${buf.toString('utf8').slice(0, 160)}`, cabeceras };
     }
     return { ok: true, status: r.status, body: buf, detalle: 'ok', cabeceras };
   } catch (e: any) {
@@ -144,6 +151,36 @@ export async function s3PutJson(key: string, json: unknown): Promise<{ ok: boole
   const body = Buffer.from(JSON.stringify(json), 'utf8');
   const r = await s3({ method: 'PUT', key, body });
   return { ok: r.ok, detalle: r.detalle };
+}
+
+/** Un JSON con su ETag (para el compare-and-set de lib/durable.ts). 404 = `missing`, no un fallo. */
+export async function s3GetJsonConEtag(key: string, timeoutMs = 8000): Promise<{ ok: boolean; json: any | null; etag: string | null; detalle: string; missing?: boolean }> {
+  const r = await s3({ method: 'GET', key, timeoutMs });
+  if (r.status === 404) return { ok: true, json: null, etag: null, detalle: 'vacío', missing: true };
+  if (!r.ok) return { ok: false, json: null, etag: null, detalle: r.detalle };
+  try {
+    return { ok: true, json: JSON.parse(r.body.toString('utf8')), etag: r.cabeceras?.etag || null, detalle: 'ok' };
+  } catch {
+    return { ok: false, json: null, etag: null, detalle: 'S3: JSON inválido' };
+  }
+}
+
+/**
+ * PUT condicional: `siNoExiste` (If-None-Match: *) o `siCoincide` (If-Match: ETag). `conflicto` cuando S3
+ * contesta 412 (la condición no se cumplió) o 409 (otra escritura condicional al mismo objeto en curso:
+ * se reintenta leyendo). Cualquier otro fallo es `ok: false` sin conflicto: no se sabe, no se da por hecho.
+ */
+export async function s3PutJsonCondicional(
+  key: string,
+  json: unknown,
+  cond: { siNoExiste?: boolean; siCoincide?: string },
+  timeoutMs = 8000
+): Promise<{ ok: boolean; etag: string | null; conflicto: boolean; status: number; detalle: string }> {
+  const body = Buffer.from(JSON.stringify(json), 'utf8');
+  const condicion = cond.siNoExiste ? { 'if-none-match': '*' as const } : cond.siCoincide ? { 'if-match': cond.siCoincide } : undefined;
+  if (!condicion) return { ok: false, etag: null, conflicto: false, status: 0, detalle: 'PUT condicional sin condición' };
+  const r = await s3({ method: 'PUT', key, body, condicion, timeoutMs });
+  return { ok: r.ok, etag: r.cabeceras?.etag || null, conflicto: r.status === 412 || r.status === 409, status: r.status, detalle: r.detalle };
 }
 
 /* ------------------------------------------------------------ cubo de expedientes (Dr Electrum) */

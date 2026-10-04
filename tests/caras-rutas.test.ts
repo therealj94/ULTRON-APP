@@ -39,8 +39,8 @@ await new Promise((r) => srv.once('listening', r));
 const base = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
 after(() => srv.close());
 
-const junta = emitirSesion({ correo: 'Maria@Ordenglobal.org', nombre: 'María José', rol: 'Junta' });
-const miembro = emitirSesion({ correo: 'comunidad@gmail.com', nombre: 'José', rol: 'Miembro · Genesis ID' });
+const junta = emitirSesion({ correo: 'Maria@Ordenglobal.org', nombre: 'María José', rol: 'Junta' }, { comunidad: true });
+const miembro = emitirSesion({ correo: 'comunidad@gmail.com', nombre: 'José', rol: 'Miembro · Genesis ID' }, { comunidad: true });
 const h = (token?: string) => ({ 'content-type': 'application/json', ...(token ? { 'x-ultron-sesion': token } : {}) });
 const vec = (semilla: number) => Array.from({ length: 128 }, (_, i) => Math.round(Math.sin(semilla * 7.3 + i) * 0.3 * 1e4) / 1e4);
 const post = (token: string, body: unknown) => fetch(`${base}/api/caras`, { method: 'POST', headers: h(token), body: JSON.stringify(body) });
@@ -132,7 +132,7 @@ test('olvidar de verdad: una por id y después todas; el archivo tampoco las tie
 });
 
 test('si S3 no guarda, borrar no se confirma (503) y al reintentar con S3 sano se borra de verdad', async () => {
-  const quien = emitirSesion({ correo: 's3-cae@ordenglobal.org', nombre: 'Prueba S3', rol: 'Junta' });
+  const quien = emitirSesion({ correo: 's3-cae@ordenglobal.org', nombre: 'Prueba S3', rol: 'Junta' }, { comunidad: true });
   const guardado: Record<string, unknown> = {};
   let s3Sano = true;
   _s3DePrueba({ listo: () => true, put: async (k: string, j: unknown) => (s3Sano ? ((guardado[k] = j), { ok: true, detalle: '' }) : { ok: false, detalle: 'S3 503' }) });

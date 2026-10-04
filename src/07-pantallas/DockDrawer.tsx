@@ -11,6 +11,8 @@ interface Props {
   onSubmitCommand: (cmd: string) => void;
   /** El botón Escribir: al cerrar, el foco vuelve ahí. */
   volverA?: { current: HTMLElement | null };
+  /** Un texto propuesto para el campo (lo manda la persona; nunca sale solo). */
+  propuesta?: { texto: string; n: number } | null;
 }
 
 const CHIPS = [
@@ -52,7 +54,7 @@ export const DockDrawer: React.FC<Props> = (p) => {
           <X className="w-5 h-5" aria-hidden="true" />
         </button>
       </div>
-      <Compositor campoRef={campo} onEnviar={(t) => pedir(t)} />
+      <Compositor campoRef={campo} onEnviar={(t) => pedir(t)} propuesta={p.propuesta} />
       <div>
         <p id="aura-atajos" className="text-[13px] text-(--aura-tinta-2) mb-1.5">
           Atajos

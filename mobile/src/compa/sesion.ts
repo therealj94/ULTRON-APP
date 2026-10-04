@@ -40,6 +40,12 @@ export type VistaSesion = {
   idioma: Idioma;
   /** 0 el primer intento; 1 el reintento (con permiso nuevo). */
   intento: number;
+  /**
+   * Piensa: la conversación entendió una frase de la persona y el agente todavía no contesta (CALL04). Es
+   * de la vista, no del estado: el micrófono sigue siendo de la conversación (sigue «escuchando» para todo lo
+   * demás) y la persona puede seguir hablando. Con tope (PENSANDO_MAX_MS).
+   */
+  pensando: boolean;
   detalle?: string;
 };
 
@@ -49,28 +55,80 @@ export type Opciones = {
   silencioCierraMs?: number;
   /** Reintentos automáticos si falla al abrir. */
   reintentos?: number;
-  /** «Conectando…» más de esto sin conectar cuenta como fallo (CONECTAR_MAX_MS). */
+  /** Reconexiones por error en TODA la conversación abierta (TOPE_RECONEXIONES). */
+  reconexiones?: number;
+  /** Con el permiso en la mano, el WebRTC más de esto sin conectar cuenta como fallo (CONECTAR_MAX_MS). */
   conectarMaxMs?: number;
+  /** Esperando el permiso del servidor más de esto cuenta como fallo (ESPERA_PERMISO_MS). */
+  esperaPermisoMs?: number;
+  /** «Conectando…» más de esto en total, sumadas las fases, cuenta como fallo (ABRIR_MAX_MS). */
+  abrirMaxMs?: number;
+  /** Pensando más de esto sin que el agente conteste, vuelve a «escuchando» (PENSANDO_MAX_MS). */
+  pensandoMaxMs?: number;
   /** Abierta y sin silencio, sin nada del micrófono en este rato: no le llega la voz (SORDA_MS). */
   sordaMs?: number;
+  /** Ya oía y las muestras del micrófono dejaron de llegar este rato (SIN_MUESTRAS_MS). */
+  sinMuestrasMs?: number;
 };
 
 export const SILENCIO_CIERRA_MS = 3 * 60_000;
 /**
- * Lo más que puede quedarse «Conectando…». Antes no había tope: si la conexión no terminaba nunca, la
- * sesión seguía «montada» para siempre, el audio seguía siendo suyo y NADIE más escuchaba (la mesa y
- * la compañera le ceden el micrófono a la conversación). Fallar aquí hace el reintento de siempre y,
- * si tampoco, suelta el audio: el oído del teléfono vuelve.
+ * «Conectando…» son dos esperas distintas (CALL02, auditoría del 3-oct): pedir el permiso a nuestro servidor
+ * (POST /api/voz/agente) y conectar el WebRTC con él. Antes había un solo plazo de 12 s para las dos
+ * mientras la petición del permiso podía tardar 15: un permiso válido que llegaba a los 13 s se tiraba y se
+ * reintentaba. Ahora cada fase tiene su plazo y hay un tope total; lo que avise tarde una generación que ya
+ * falló sigue sin contar (gen).
+ *
+ * PERMISO_MAX_MS: lo que espera la petición del permiso (el timeout de `api()` en el VozProvider).
+ */
+export const PERMISO_MAX_MS = 15_000;
+/** El controlador espera un poco más: la petición avisa primero con su propio error (el porqué real). */
+export const ESPERA_PERMISO_MS = PERMISO_MAX_MS + 1_000;
+/**
+ * Con el permiso en la mano, lo más que puede tardar el WebRTC en conectar. Antes no había tope: si la
+ * conexión no terminaba nunca, la sesión seguía «montada» para siempre, el audio seguía siendo suyo y NADIE
+ * más escuchaba (la mesa y la compañera le ceden el micrófono a la conversación). Fallar aquí hace el
+ * reintento de siempre y, si tampoco, suelta el audio: el oído del teléfono vuelve.
  */
 export const CONECTAR_MAX_MS = 12_000;
+/** Lo más que puede durar «Conectando…» sumadas las dos fases (un permiso al límite no regala otros 12 s). */
+export const ABRIR_MAX_MS = 25_000;
+/**
+ * Lo más que se muestra «pensando» sin que el agente conteste (el cerebro con herramientas puede tardar,
+ * pero no tanto): pasado esto no se sabe qué pasa y se vuelve a «escuchando», que es lo cierto.
+ */
+export const PENSANDO_MAX_MS = 20_000;
 /**
  * Conectada, sin silencio, y en todo este rato ni una muestra del micrófono por encima del piso
  * (UMBRAL_ENTRADA) ni una frase de la persona: el micrófono de WebRTC no le llega (otro lo tiene, el
  * sistema lo silenció). Se trata como un fallo al abrir y el audio vuelve al oído del teléfono.
+ * SOLO cuando quien abre no manda el valor crudo del micrófono (sin lecturas no hay otra señal). Con
+ * lecturas crudas manda la vitalidad de la pista, no la amplitud (CALL01, auditoría del 3-oct: 320
+ * lecturas frescas en cero —la persona todavía callada— terminaban en «sorda» a los 16 s; un cero fresco
+ * es silencio legítimo).
  */
 export const SORDA_MS = 15_000;
 /** Un micrófono vivo nunca da un cero perfecto (ruido de fondo): por debajo de esto es que no llega nada. */
 export const UMBRAL_ENTRADA = 0.0005;
+/**
+ * El micrófono deja de mandar muestras (Codex, 3-oct: la llamada seguía diciendo «escuchando» sin oír
+ * nada). El volumen que da el SDK no cae a 0: se CONGELA en el último valor (nativeVolume.ts solo lo
+ * cambia con cada cuadro de audio). Un micrófono vivo cambia ese valor varias veces por segundo, o da 0
+ * exacto en silencio con supresión de ruido (eso cuenta como vivo); un valor distinto de 0 que no cambia
+ * en este rato, sin que el avatar hable, es que se congeló: se reconecta la conversación (el reintento de
+ * siempre, con tope y con la última frase). Vale también si se congeló desde el principio (CALL01): la
+ * vitalidad son los cuadros nuevos, no que la persona ya haya hablado.
+ */
+export const SIN_MUESTRAS_MS = 12_000;
+/**
+ * Lo más que se reconecta por error una misma conversación (desde que se abre hasta que se cierra). El
+ * `intento` vuelve a 0 al conectar (así un reintento con permiso nuevo vale para cada apertura), y
+ * con eso solo, el único reintento se volvía infinito: 1-oct, el cerebro tardó, ElevenLabs cortó con
+ * «Server error» y la app reconectó una y otra vez (gen 2, gen 3…), cada una una conversación nueva.
+ * Este tope NO vuelve a 0 al conectar: solo al abrir una conversación nueva. Pasado, falla como
+ * siempre (error, el audio vuelve a la mesa).
+ */
+export const TOPE_RECONEXIONES = 2;
 
 export class ControlSesion {
   private v: VistaSesion;
@@ -81,22 +139,44 @@ export class ControlSesion {
   private reloj: () => number;
   private silencioCierraMs: number;
   private reintentos: number;
+  private topeReconexiones: number;
+  /** Reconexiones por error de la conversación abierta (vuelve a 0 solo al abrir una nueva). */
+  private reconexiones = 0;
   private conectarMaxMs: number;
+  private esperaPermisoMs: number;
+  private abrirMaxMs: number;
+  private pensandoMaxMs: number;
   private sordaMs: number;
   /** Desde cuándo está «conectando» la generación vigente. */
   private conectandoDesde = 0;
+  /** La fase de «conectando»: esperando el permiso o, con él, conectando el WebRTC (y desde cuándo). */
+  private fase: 'permiso' | 'conectar' = 'permiso';
+  private faseDesde = 0;
+  /** Desde cuándo piensa (la frase de la persona que se entendió). */
+  private pensandoDesde = 0;
   /** Desde cuándo escucha sin silencio (0: no escucha o está silenciada). */
   private oyendoDesde = -1;
   /** Le llegó algo del micrófono (o una frase de la persona) en esta generación. */
   private oyoAlgo = false;
+  private sinMuestrasMs: number;
+  /** El valor crudo del micrófono la última vez, y cuándo cambió por última vez (una muestra nueva). */
+  private ultimaCruda = Number.NaN;
+  private ultimaMuestra = 0;
+  /** Quien abre la sesión manda el valor crudo: solo así se puede saber si se congeló. */
+  private conMuestras = false;
 
   constructor(avatar: AvatarId, idioma: Idioma, o: Opciones = {}) {
     this.reloj = o.reloj || Date.now;
     this.silencioCierraMs = o.silencioCierraMs ?? SILENCIO_CIERRA_MS;
     this.reintentos = o.reintentos ?? 1;
+    this.topeReconexiones = o.reconexiones ?? TOPE_RECONEXIONES;
     this.conectarMaxMs = o.conectarMaxMs ?? CONECTAR_MAX_MS;
+    this.esperaPermisoMs = o.esperaPermisoMs ?? ESPERA_PERMISO_MS;
+    this.abrirMaxMs = o.abrirMaxMs ?? ABRIR_MAX_MS;
+    this.pensandoMaxMs = o.pensandoMaxMs ?? PENSANDO_MAX_MS;
     this.sordaMs = o.sordaMs ?? SORDA_MS;
-    this.v = { gen: 0, montada: false, estado: 'cerrada', silenciada: false, dormida: false, suspendida: false, avatar, idioma, intento: 0 };
+    this.sinMuestrasMs = o.sinMuestrasMs ?? SIN_MUESTRAS_MS;
+    this.v = { gen: 0, montada: false, estado: 'cerrada', silenciada: false, dormida: false, suspendida: false, avatar, idioma, intento: 0, pensando: false };
   }
 
   vista(): VistaSesion {
@@ -113,6 +193,9 @@ export class ControlSesion {
   private poner(cambio: Partial<VistaSesion>) {
     const n = { ...this.v, ...cambio };
     if (!('detalle' in cambio)) delete n.detalle;
+    // Pensar solo cabe escuchando, abierta y sin silencio, en la misma generación: hablar, silenciar,
+    // reconectar, cerrar o fallar lo terminan.
+    if (n.pensando && !(n.montada && !n.silenciada && n.estado === 'escuchando' && n.gen === this.v.gen)) n.pensando = false;
     const igual = (Object.keys(n) as (keyof VistaSesion)[]).every((k) => n[k] === this.v[k]) && Object.keys(this.v).length === Object.keys(n).length;
     if (igual) return;
     const antes = this.v;
@@ -127,21 +210,72 @@ export class ControlSesion {
     if (n.gen !== antes.gen) {
       this.oyoAlgo = false;
       this.oyendoDesde = -1;
+      this.conMuestras = false;
+      this.ultimaCruda = Number.NaN;
     }
-    if (n.montada && n.estado === 'conectando' && (n.gen !== antes.gen || antes.estado !== 'conectando' || !antes.montada)) this.conectandoDesde = ahora;
+    if (n.montada && n.estado === 'conectando' && (n.gen !== antes.gen || antes.estado !== 'conectando' || !antes.montada)) {
+      // Cada generación empieza esperando su permiso (el reintento pide uno nuevo).
+      this.conectandoDesde = ahora;
+      this.fase = 'permiso';
+      this.faseDesde = ahora;
+    }
     const oyendo = n.montada && !n.silenciada && (n.estado === 'escuchando' || n.estado === 'hablando');
     if (!oyendo) this.oyendoDesde = -1;
-    else if (this.oyendoDesde < 0) this.oyendoDesde = ahora;
+    else if (this.oyendoDesde < 0) {
+      this.oyendoDesde = ahora;
+      // Recién abierto o recién des-silenciado: el reloj de las muestras empieza aquí.
+      this.ultimaMuestra = ahora;
+    }
   }
 
-  /** El volumen del micrófono de la conversación (0..1, ~20 Hz). */
-  entrada(nivel: number) {
-    if (nivel > UMBRAL_ENTRADA && this.v.montada) this.oyoAlgo = true;
+  /**
+   * El volumen del micrófono de la conversación (0..1, ~20 Hz). `cruda`: el valor tal cual lo da el SDK
+   * (sin escalar); si no cambia, no llegó una muestra nueva. `gen`: de qué sesión es (AUR10): el reloj de
+   * una sesión vieja que todavía late no le dice a la nueva que oye (taparía «sorda» y «sin muestras»).
+   */
+  entrada(nivel: number, cruda?: number, gen?: number) {
+    if (!this.v.montada) return;
+    if (gen !== undefined && gen !== this.v.gen) return;
+    if (nivel > UMBRAL_ENTRADA) this.oyoAlgo = true;
+    if (cruda === undefined) return;
+    this.conMuestras = true;
+    // Un 0 exacto repetido es silencio de verdad con supresión de ruido (Codex en #138): no se puede
+    // distinguir de un micrófono parado, así que cuenta como vivo. Congelado es un valor DISTINTO de 0 que
+    // no cambia nada: ningún micrófono vivo repite el mismo RMS cuadro tras cuadro.
+    if (cruda === 0 || cruda !== this.ultimaCruda) {
+      this.ultimaCruda = cruda;
+      this.ultimaMuestra = this.reloj();
+    }
   }
 
-  /** La conversación entendió una frase de la persona: le llega la voz. */
+  /**
+   * La conversación entendió una frase de la persona: le llega la voz. Y desde ahora piensa, hasta que el
+   * agente conteste (CALL04).
+   */
   oyoFrase() {
-    if (this.v.montada) this.oyoAlgo = true;
+    if (!this.v.montada) return;
+    this.oyoAlgo = true;
+    this.ultimaMuestra = this.reloj();
+    if (!this.v.silenciada && this.v.estado === 'escuchando') {
+      this.pensandoDesde = this.reloj();
+      this.poner({ pensando: true });
+    }
+  }
+
+  /** El agente contestó (su mensaje llegó, aunque el «speaking» no): ya no piensa. */
+  respondio() {
+    if (this.v.pensando) this.poner({ pensando: false });
+  }
+
+  /**
+   * Llegó el permiso de esta generación: empieza la fase de conectar el WebRTC, con su propio plazo
+   * (CALL02). El de una generación vieja no cuenta.
+   */
+  permisoListo(gen: number) {
+    const v = this.v;
+    if (gen !== v.gen || !v.montada || v.estado !== 'conectando' || this.fase !== 'permiso') return;
+    this.fase = 'conectar';
+    this.faseDesde = this.reloj();
   }
 
   /**
@@ -149,25 +283,41 @@ export class ControlSesion {
    * llegue nada del micrófono, cuentan como un fallo al abrir (reintento y, si tampoco, se suelta el
    * audio). Devuelve lo que hizo.
    */
-  revisar(): 'nada' | 'no-conecto' | 'sorda' {
+  revisar(): 'nada' | 'no-conecto' | 'sorda' | 'sin-muestras' {
     const v = this.v;
     if (!v.montada || v.suspendida) return 'nada';
     const ahora = this.reloj();
-    if (v.estado === 'conectando' && ahora - this.conectandoDesde >= this.conectarMaxMs) {
-      this.alEstado(v.gen, 'error', 'no conectó a tiempo');
-      return 'no-conecto';
+    if (v.estado === 'conectando') {
+      // Cada fase con su plazo, y las dos juntas con el tope total.
+      const plazoFase = this.fase === 'permiso' ? this.esperaPermisoMs : this.conectarMaxMs;
+      if (ahora - this.faseDesde >= plazoFase || ahora - this.conectandoDesde >= this.abrirMaxMs) {
+        this.alEstado(v.gen, 'error', this.fase === 'permiso' ? 'no conectó a tiempo (el servidor no dio la llave a tiempo)' : 'no conectó a tiempo');
+        return 'no-conecto';
+      }
+      return 'nada';
     }
-    if (this.oyendoDesde >= 0 && !this.oyoAlgo && ahora - this.oyendoDesde >= this.sordaMs) {
+    if (v.pensando && ahora - this.pensandoDesde >= this.pensandoMaxMs) this.poner({ pensando: false });
+    // Sin lecturas crudas, la amplitud (y una frase entendida) es la única señal que hay. Con ellas manda
+    // la vitalidad de la pista (abajo): un cero fresco es silencio, no sordera.
+    if (!this.conMuestras && this.oyendoDesde >= 0 && !this.oyoAlgo && ahora - this.oyendoDesde >= this.sordaMs) {
       // Sin reintento: la persona ya lleva un rato hablándole a nadie. El audio vuelve al oído del
       // teléfono en el acto (y se le dice por qué).
       this.poner({ montada: false, estado: 'error', silenciada: false, intento: 0, detalle: 'no llegó audio del micrófono' });
       return 'sorda';
+    }
+    // Dejaron de llegar cuadros (oyera algo antes o no): ya no dice «escuchando» a nadie. Se reconecta
+    // (reintento con tope y con la última frase); si tampoco, falla como siempre y el oído del teléfono vuelve.
+    if (this.conMuestras && v.estado === 'escuchando' && this.oyendoDesde >= 0 && ahora - this.ultimaMuestra >= this.sinMuestrasMs) {
+      this.ultimaMuestra = ahora;
+      this.alEstado(v.gen, 'error', 'el micrófono dejó de mandar audio');
+      return 'sin-muestras';
     }
     return 'nada';
   }
 
   /** Una generación nueva: la sesión anterior (si había) se desmonta y se monta otra limpia. */
   private abrir(cambio: Partial<VistaSesion> = {}) {
+    this.reconexiones = 0;
     this.poner({ gen: this.v.gen + 1, montada: true, estado: 'conectando', intento: 0, dormida: false, ...cambio });
   }
 
@@ -256,7 +406,8 @@ export class ControlSesion {
   alEstado(gen: number, e: EstadoVoz, detalle?: string) {
     if (gen !== this.v.gen || !this.v.montada) return;
     if (e === 'error') {
-      if (this.v.intento < this.reintentos) {
+      if (this.v.intento < this.reintentos && this.reconexiones < this.topeReconexiones) {
+        this.reconexiones += 1;
         this.poner({ gen: this.v.gen + 1, estado: 'conectando', intento: this.v.intento + 1, detalle });
         return;
       }

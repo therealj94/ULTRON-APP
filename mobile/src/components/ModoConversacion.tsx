@@ -42,6 +42,7 @@ import { miga } from '../lib/reporte';
 import { senalVoz } from '../avatar3d/senalVoz';
 import { Envolvente, PASO_BOCA_MS } from '../avatar3d/sincronia';
 import type { EstadoVoz } from '../compa/sesion';
+import { abrirSesionVoz, type ConvMin } from '../compa/sesionVoz';
 
 export type EstadoConversacion = EstadoVoz;
 
@@ -65,13 +66,22 @@ type Props = {
   onMensaje: (gen: number, rol: 'usuario' | 'ultron', texto: string) => void;
   /** Le hablaron encima y se calló. */
   onInterrupcion: (gen: number) => void;
-  /** Volúmenes a ~20 Hz: su voz (0..1, la boca) y la de la persona (0..1, el anillo que late). */
-  onNiveles: (salida: number, entrada: number) => void;
+  /**
+   * Volúmenes a ~20 Hz: su voz (0..1, la boca) y la de la persona (0..1, el anillo que late). `cruda`: el
+   * valor del micrófono tal cual lo da el SDK (se congela si dejan de llegar muestras; sin sesión, undefined).
+   * `gen`: de qué sesión (AUR10): el VozProvider descarta lo de una vieja.
+   */
+  onNiveles: (salida: number, entrada: number, cruda?: number, gen?: number) => void;
   controles: MutableRefObject<ControlesSesion | null>;
   /** El audio del teléfono: lo toma, lo soltó, o se pidió cerrar (y se soltará en seguida). */
   onAudio?: (gen: number, que: 'toma' | 'suelta' | 'cerrando') => void;
   /** Terminó una sesión que se pidió abrir: su pase, para avisarle al servidor. Una vez por sesión. */
   onFin?: (gen: number, pase: string) => void;
+  /**
+   * Llegó el permiso y empieza a conectar el WebRTC: «conectando» son dos esperas con plazos distintos
+   * (compa/sesion.ts, CALL02), y el control tiene que saber en cuál está.
+   */
+  onPermiso?: (gen: number) => void;
 };
 
 export function ModoConversacion(p: Props) {
@@ -85,10 +95,12 @@ export function ModoConversacion(p: Props) {
 /** Sin volumen real de la salida más de esto mientras habla, la boca sigue una envolvente de habla (lipsync.ts). */
 const SIN_VOLUMEN_MS = 600;
 
-function Sesion({ gen, silenciada, permiso, onEstado, onMensaje, onInterrupcion, onNiveles, controles, onAudio, onFin }: Props) {
+function Sesion({ gen, silenciada, permiso, onEstado, onMensaje, onInterrupcion, onNiveles, controles, onAudio, onFin, onPermiso }: Props) {
   const conv = useConversation();
-  const cbs = useRef({ onEstado, onMensaje, onInterrupcion, onNiveles, permiso, onAudio, onFin });
-  cbs.current = { onEstado, onMensaje, onInterrupcion, onNiveles, permiso, onAudio, onFin };
+  /** Cuándo llegó lo último que ElevenLabs oyó de la persona (para la miga de cuánto tardó en hablar). */
+  const oidoEn = useRef(0);
+  const cbs = useRef({ onEstado, onMensaje, onInterrupcion, onNiveles, permiso, onAudio, onFin, onPermiso });
+  cbs.current = { onEstado, onMensaje, onInterrupcion, onNiveles, permiso, onAudio, onFin, onPermiso };
   const abierta = useRef(false);
   const hablando = useRef(false);
   const silencio = useRef(silenciada);
@@ -141,153 +153,33 @@ function Sesion({ gen, silenciada, permiso, onEstado, onMensaje, onInterrupcion,
     };
   }, [controles]);
 
-  useEffect(() => {
-    let vivo = true;
-    let nivel: ReturnType<typeof setInterval> | null = null;
-    const boca = new Envolvente();
-    const avisar = (e: EstadoConversacion, detalle?: string) => vivo && cbs.current.onEstado(gen, e, detalle);
-    // El audio y el fin se avisan AUNQUE esta generación ya no esté montada: el cierre de verdad
-    // (onDisconnect) llega después de desmontarse, y es justo lo que espera una llamada.
-    let audio: 'sin' | 'tomado' | 'suelto' = 'sin';
-    let pase = '';
-    /** El servidor se entera una sola vez, a lo primero: se desconectó o se pidió cerrar. */
-    const fin = () => {
-      if (pase) cbs.current.onFin?.(gen, pase);
-      pase = '';
-    };
-    const soltarAudio = () => {
-      fin();
-      if (audio !== 'tomado') return;
-      audio = 'suelto';
-      cbs.current.onAudio?.(gen, 'suelta');
-    };
-    (async () => {
-      avisar('conectando');
-      try {
-        const r = await cbs.current.permiso();
-        if (!vivo) return;
-        audio = 'tomado';
-        pase = r.pase;
-        cbs.current.onAudio?.(gen, 'toma');
-        conv.startSession({
-          conversationToken: r.token,
-          connectionType: 'webrtc',
-          dynamicVariables: { pase: r.pase },
-          onConnect: () => {
-            if (!vivo) return;
-            abierta.current = true;
-            if (silencio.current) {
-              try {
-                conv.setVolume({ volume: 0 });
-              } catch {
-                /* se reintenta con el próximo cambio */
-              }
-            }
-            miga(`conversación fluida: conectada (gen ${gen})`);
-            avisar('escuchando');
-          },
-          onModeChange: ({ mode }) => {
-            hablando.current = mode === 'speaking';
-            // Terminó de hablar: la boca se cierra ya, no con la caída.
-            if (!hablando.current) boca.cortar();
-            avisar(mode === 'speaking' ? 'hablando' : 'escuchando');
-          },
-          onMessage: (m) => {
-            const texto = String(m.message || '').trim();
-            if (texto && vivo) cbs.current.onMensaje(gen, m.source === 'user' ? 'usuario' : 'ultron', texto);
-          },
-          onInterruption: () => {
-            boca.cortar();
-            if (vivo) cbs.current.onInterrupcion(gen);
-          },
-          onAudioAlignment: (al) => {
-            if (vivo) senalVoz.alineacion(al);
-          },
-          onError: (mensaje) => {
-            miga(`conversación fluida: error ${String(mensaje).slice(0, 80)}`);
-            // Sin haber conectado, el error es que no abrió: el SDK ya soltó el audio antes de avisar.
-            if (!abierta.current) soltarAudio();
-            avisar('error', String(mensaje));
-          },
-          onDisconnect: () => {
-            abierta.current = false;
-            hablando.current = false;
-            soltarAudio();
-            avisar('cerrada');
-          },
-        });
-        // La boca sigue el volumen real de la voz del avatar (20 Hz); si el teléfono no lo da, una
-        // envolvente de habla mientras el agente habla. El de la persona, para el anillo que late.
-        let sinVolumenDesde = 0;
-        let envolvente: ((ms: number) => number) | null = null;
-        let t0 = 0;
-        let antes = Date.now();
-        nivel = setInterval(() => {
-          let salida = 0;
-          let entrada = 0;
-          try {
-            salida = Math.min(1, convRef.current.getOutputVolume() * 1.6);
-            entrada = silencio.current ? 0 : Math.min(1, convRef.current.getInputVolume() * 2);
-          } catch {
-            /* sin sesión todavía */
-          }
-          const ahora = Date.now();
-          if (hablando.current && salida < 0.01) {
-            if (!sinVolumenDesde) sinVolumenDesde = ahora;
-            if (ahora - sinVolumenDesde > SIN_VOLUMEN_MS) {
-              if (!envolvente) {
-                envolvente = envolventeLibre('speak', gen);
-                t0 = ahora;
-              }
-              salida = envolvente(ahora - t0);
-            }
-          } else {
-            sinVolumenDesde = 0;
-            if (!hablando.current) envolvente = null;
-          }
-          // El espectro, antes del nivel: el nivel es el que publica la boca nueva.
-          if (hablando.current && senalVoz.quiereForma()) {
-            try {
-              senalVoz.espectro(convRef.current.getOutputByteFrequencyData());
-            } catch {
-              /* sin espectro: la forma sale del volumen */
-            }
-          }
-          // Abre rápido, cierra suave; en silencio, cerrada. (No se espera al «speaking» del SDK para
-          // abrir: a veces llega después del primer sonido y se comería la primera sílaba.)
-          const dt = ahora - antes;
-          antes = ahora;
-          if (silencio.current) boca.cortar();
-          const abre = silencio.current ? 0 : boca.seguir(salida, dt);
-          cbs.current.onNiveles(abre, entrada);
-        }, PASO_BOCA_MS);
-      } catch (e: any) {
-        soltarAudio();
-        if (!vivo) return;
-        // Con el código HTTP delante: así se le puede decir a la persona POR QUÉ (duenoAudio.motivoFalloVoz).
-        const detalle = `${e?.status ? `HTTP ${e.status} · ` : ''}${String(e?.message || e)}`;
-        miga(`conversación fluida: no abrió (${detalle.slice(0, 80)})`);
-        avisar('error', detalle);
-      }
-    })();
-    return () => {
-      vivo = false;
-      if (nivel) clearInterval(nivel);
-      cbs.current.onNiveles(0, 0);
-      try {
-        conv.endSession();
-      } catch {
-        /* ya cerrada */
-      }
-      abierta.current = false;
-      // El SDK suelta el audio cuando termina de desconectar (onDisconnect); si nunca avisa, el
-      // VozProvider lo da por suelto a los pocos segundos.
-      if (audio === 'tomado') cbs.current.onAudio?.(gen, 'cerrando');
-      fin();
-    };
+  // La sesión entera (permiso, SDK, reloj de la boca, cierre) vive en compa/sesionVoz.ts, sin React: así se
+  // prueba con dobles que colgar en cualquier fase no deja nada vivo y que lo tardío no revive nada (AUR10).
+  useEffect(
+    () =>
+      abrirSesionVoz({
+        gen,
+        conv: () => convRef.current as unknown as ConvMin,
+        permiso: () => cbs.current.permiso(),
+        cbs: () => cbs.current,
+        silenciada: () => silencio.current,
+        abierta,
+        hablando,
+        oidoEn,
+        reloj: Date.now,
+        intervalo: (f, ms) => setInterval(f, ms),
+        limpiarIntervalo: (id) => clearInterval(id as ReturnType<typeof setInterval>),
+        boca: new Envolvente(),
+        envolventeLibre,
+        senal: senalVoz,
+        miga,
+        pasoMs: PASO_BOCA_MS,
+        sinVolumenMs: SIN_VOLUMEN_MS,
+      }),
     // Una sesión por generación: el VozProvider la remonta (key) para abrir otra.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    []
+  );
 
   return null;
 }

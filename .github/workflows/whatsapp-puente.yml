@@ -1,0 +1,37 @@
+name: WhatsApp (puente)
+
+# El puente de WhatsApp (servicios/whatsapp-puente): que compile y pasen sus pruebas (almacén, contenido
+# de los mensajes y la API con una cuenta falsa) en cada PR que lo toque. Render lo construye con su
+# Dockerfile al fusionar; esto evita que llegue roto.
+
+on:
+  pull_request:
+    paths:
+      - "servicios/whatsapp-puente/**"
+      - ".github/workflows/whatsapp-puente.yml"
+  push:
+    branches: [main]
+    paths:
+      - "servicios/whatsapp-puente/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  puente:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: servicios/whatsapp-puente
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: servicios/whatsapp-puente/go.mod
+          cache-dependency-path: servicios/whatsapp-puente/go.sum
+      - run: go vet ./...
+      - run: go test ./...
+      # La imagen que construye Render: si el Dockerfile se rompe, se ve aquí.
+      - run: docker build -t whatsapp-puente .

@@ -7,14 +7,44 @@
  *   cd mobile && npx tsx src/compa/pruebas/compa.prueba.mjs
  */
 import assert from 'node:assert/strict';
+import {
+  avisoMesa,
+  estadoEnPalabras,
+  sondeoMs,
+  tareaEnPalabras,
+  trabajando as pcTrabajando,
+  enMarcha as pcEnMarcha,
+  quieta as pcQuieta,
+  EJEMPLOS_PC,
+  CompaneroPc,
+  esAccionPc,
+  PAUSA_TRAS_PERSONA_MS,
+  MIN_ENTRE_FRASES_MS,
+  FINAL_ESPERA_MAX_MS,
+  TOPE_TRABAJO_MS,
+  TOPE_QUIETA_MS,
+  relojMision,
+  marcaPlan,
+  controlesPc,
+  aCoordenadas,
+  textoParaCompartir,
+  finalEnPalabras,
+  haceCuanto,
+  VistaPc,
+  nuevoPedidoPc,
+  respuestaPc,
+} from '../computadora.ts';
 import http from 'node:http';
-import { CONECTAR_MAX_MS, ControlSesion, SORDA_MS } from '../sesion.ts';
+import { ABRIR_MAX_MS, CONECTAR_MAX_MS, ControlSesion, ESPERA_PERMISO_MS, PENSANDO_MAX_MS, PERMISO_MAX_MS, SIN_MUESTRAS_MS, SORDA_MS, TOPE_RECONEXIONES } from '../sesion.ts';
 import {
   CicloLlamada,
   ESPERA_SIGUES_MS,
   FIN_VISIBLE_MS,
+  FRASE_RECONECTA_MS,
   MENSAJE_LLAMAME,
+  MENSAJE_RECONECTA,
   MENSAJE_SIGUES,
+  mensajeReconecta,
   PREGUNTA_SIGUES_MS,
   SONAR_MS,
   avisoMinutos,
@@ -23,7 +53,9 @@ import {
   leyendaLlamada,
   llamadaActiva,
   llamadaTerminada,
+  mesaCallada,
   relojLlamada,
+  seguirVozMesa,
 } from '../llamadaCiclo.ts';
 import { Precalentador } from '../permiso.ts';
 import { coordinarLlamadas } from '../llamada.ts';
@@ -31,7 +63,8 @@ import { ANIMO_INICIAL, GLOBO_PENSANDO_MS, expresion, puedeCaminar, reducir } fr
 import { Gestos } from '../gestos.ts';
 import { pegarABorde, reubicar, yCarril, limitar, destinoPaseo, lugarGlobo } from '../borde.ts';
 import { LectorSse } from '../sse.ts';
-import { PuenteAcciones, ContextoApp, esAccionApp, accionesDelTurno, accionNueva, depurarContactos, VENTANA_MISMA_ACCION_MS, mensajeDeLectura, decirLectura, mensajeDeRecordatorio, decirRecordatorio } from '../acciones.ts';
+import { PuenteAcciones, ContextoApp, esAccionApp, accionesDelTurno, accionNueva, depurarContactos, VENTANA_MISMA_ACCION_MS, mensajeDeLectura, decirLectura, mensajeDeRecordatorio, decirRecordatorio, ambienteDe } from '../acciones.ts';
+import { AmbienteConversacion, GRACIA_MS, AMBIENTE_MAX_MS, VOLUMEN_AMBIENTE } from '../ambiente.ts';
 import * as REC from '../recordatorios.ts';
 import { programarRecordatorio, _olvidarRecordatorios, CANAL_RECORDATORIOS } from '../recordatorios.ts';
 // Del servidor (lib/manos-app.ts), con import dinámico: el typecheck de la app (mobile/tsconfig, que
@@ -39,11 +72,12 @@ import { programarRecordatorio, _olvidarRecordatorios, CANAL_RECORDATORIOS } fro
 const { RE_LECTURA, turnoDeRecordatorio } = await import(new URL('../../../../lib/manos-app.ts', import.meta.url).href);
 import { MANOS_APP } from '../../nucleo/contrato.ts';
 import { AudioVoz } from '../audioVoz.ts';
-import { OidoMesa, VigilanteOido, TOPE_REINICIOS_OIDO, duenoAudio, motivoFalloVoz } from '../duenoAudio.ts';
+import { OidoMesa, VigilanteOido, TOPE_REINICIOS_OIDO, ESPERA_SORDO_MS, ESPERA_SORDO_MAX_MS, duenoAudio, motivoFalloVoz } from '../duenoAudio.ts';
 import { FIGURAS, mezclarFigura, estiloDe } from '../figura.ts';
 import { emocionDeTexto } from '../../lib/emocion.ts';
 import { emitir, escuchar } from '../../nucleo/contrato.ts';
-import { ESTADOS_FRASE, EMOCION_DE_ESTADO, MemoriaFrases, fraseDeEstado, frasesDe, esRelleno, quitarRellenoInicial, estadoDeEspera } from '../frasesEstado.ts';
+import { MemoriaEtiquetas, etiquetasDe } from '../etiquetasVoz.ts';
+import { ESTADOS_FRASE, EMOCION_DE_ESTADO, MemoriaFrases, fraseDeEstado, frasesDe, esRelleno, quitarRellenoInicial, estadoDeEspera, empiezaConMuletilla, tareaDe, TAREAS, SONIDOS_AMBIENTE, vozDeEspera } from '../frasesEstado.ts';
 import { EXPRESIONES_AVATAR } from '../../avatar3d/tipos.ts';
 import { EMOCIONES } from '../../lib/emocion.ts';
 import { AVATARES } from '../../avatares/catalogo.ts';
@@ -116,6 +150,37 @@ prueba('sesión: un error reintenta una vez con generación nueva y después se 
   // Iniciar después de un error abre de nuevo.
   assert.equal(c.iniciar(), true);
   assert.equal(c.vista().montada, true);
+});
+
+prueba('sesión (1-oct): las reconexiones por error tienen tope por conversación; conectar NO lo vuelve a cero', () => {
+  const c = new ControlSesion('claudio', 'es');
+  c.iniciar();
+  c.alEstado(c.vista().gen, 'escuchando');
+  const g0 = c.vista().gen;
+  // ElevenLabs corta («Server error») una y otra vez, cada vez DESPUÉS de conectar (antes: infinito).
+  for (let i = 1; i <= TOPE_RECONEXIONES; i++) {
+    c.alEstado(c.vista().gen, 'error', 'Server error');
+    assert.equal(c.vista().montada, true, `reconexión ${i}`);
+    assert.equal(c.vista().gen, g0 + i);
+    c.alEstado(c.vista().gen, 'escuchando');
+    assert.equal(c.vista().intento, 0, 'el intento sí vuelve a 0 al conectar');
+  }
+  c.alEstado(c.vista().gen, 'error', 'Server error');
+  assert.equal(c.vista().montada, false, 'pasado el tope falla limpio: el audio vuelve a la mesa');
+  assert.equal(c.vista().estado, 'error');
+  assert.equal(c.vista().gen, g0 + TOPE_RECONEXIONES, 'no abrió otra');
+  // Una conversación nueva (la persona vuelve a abrir) empieza con el tope entero.
+  c.iniciar();
+  c.alEstado(c.vista().gen, 'escuchando');
+  const g1 = c.vista().gen;
+  c.alEstado(g1, 'error', 'Server error');
+  assert.equal(c.vista().montada, true);
+  assert.equal(c.vista().gen, g1 + 1);
+  // Con `reconexiones: 0` no se reconecta nunca (y el reintento al abrir tampoco).
+  const d = new ControlSesion('aura', 'es', { reconexiones: 0 });
+  d.iniciar();
+  d.alEstado(d.vista().gen, 'error', 'red');
+  assert.equal(d.vista().montada, false);
 });
 
 prueba('sesión: el doble toque silencia sin cerrar y otro la despierta al instante', () => {
@@ -280,6 +345,34 @@ prueba('audio de la voz: libre al soltar de verdad; el cierre sin aviso se suelt
   assert.deepEqual(avisos, [false, true]);
   a.soltar(2); // el onDisconnect tardío no avisa dos veces
   assert.deepEqual(avisos, [false, true]);
+});
+
+prueba('audio de la voz: esperarLibre resuelve al soltar de verdad o al tope (la mesa reabre su oído después, 1-oct)', async () => {
+  const relojes = [];
+  const a = new AudioVoz(() => {}, (f, ms) => {
+    const r = { f, ms, vivo: true };
+    relojes.push(r);
+    return () => (r.vivo = false);
+  });
+  let listo = false;
+  await a.esperarLibre();
+  a.tomar(1);
+  const p = a.esperarLibre().then(() => (listo = true));
+  await dormir(1);
+  assert.equal(listo, false, 'mientras la conversación tiene el audio, espera');
+  a.soltar(1); // onDisconnect: el SDK ya paró su sesión de audio
+  await p;
+  assert.equal(relojes.at(-1).vivo, false, 'el tope de la espera se cancela');
+  // Nadie avisa: al tope sigue igual.
+  a.tomar(2);
+  let listo2 = false;
+  const p2 = a.esperarLibre(4000).then(() => (listo2 = true));
+  await dormir(1);
+  assert.equal(listo2, false);
+  assert.equal(relojes.at(-1).ms, 4000);
+  relojes.at(-1).f();
+  await p2;
+  assert.equal(a.libre(), false, 'el tope solo suelta la espera, no el audio');
 });
 
 /* ── generaciones contra un proveedor con candado (como el ConversationProvider del SDK) ─────── */
@@ -674,6 +767,190 @@ prueba('puente + turno: el «enviar» del SSE y el del done no salen dos veces (
   assert.equal(ejecutadas.length, 1, JSON.stringify(ejecutadas));
 });
 
+/* ── el sonido de fondo de la conversación (tecleo, papel, lápiz) ─────────────────────────── */
+
+/** Un XHR falso para el puente: `llega(texto)` le suma texto al cuerpo como lo haría el SSE. */
+function puenteConXhr(d) {
+  let xhr;
+  const puente = new PuenteAcciones({
+    base: 'http://x',
+    token: async () => 't',
+    xhr: () =>
+      (xhr = {
+        responseText: '',
+        status: 200,
+        readyState: 1,
+        cab: {},
+        onprogress: null,
+        onreadystatechange: null,
+        onerror: null,
+        open() {},
+        setRequestHeader(k, v) {
+          this.cab[k] = v;
+        },
+        send() {},
+        abort() {},
+      }),
+    esperar: () => () => {},
+    ...d,
+  });
+  return {
+    puente,
+    llega(t) {
+      xhr.responseText += t;
+      xhr.readyState = 3;
+      xhr.onprogress();
+    },
+    xhr: () => xhr,
+  };
+}
+
+/** Un reloj y un temporizador a mano para el controlador del sonido. */
+function relojFalso() {
+  let ahora = 0;
+  const pendientes = [];
+  return {
+    reloj: () => ahora,
+    esperar: (f, ms) => {
+      const p = { f, en: ahora + ms, vivo: true };
+      pendientes.push(p);
+      return () => (p.vivo = false);
+    },
+    avanzar(ms) {
+      ahora += ms;
+      for (const p of pendientes) if (p.vivo && p.en <= ahora) {
+        p.vivo = false;
+        p.f();
+      }
+    },
+  };
+}
+
+prueba('ambiente: `event: ambiente` llega por el canal de acciones, no es una acción ni mueve el Last-Event-ID', async () => {
+  const acciones = [];
+  const ambientes = [];
+  const c = puenteConXhr({ alAccion: (a) => acciones.push(a), alAmbiente: (a) => ambientes.push(a) });
+  c.puente.arrancar();
+  await dormir(10);
+  c.llega('id: acc-1\ndata: ' + JSON.stringify({ id: 'acc-1', accion: { tipo: 'atras' } }) + '\n\n');
+  c.llega('event: ambiente\ndata: {"sonido":"teclado","on":true}\n\n');
+  c.llega('event: ambiente\ndata: {"sonido":"papel","on":true}\n\n');
+  c.llega('event: ambiente\ndata: {"sonido":"tambor","on":true}\n\n');
+  c.llega('event: ambiente\ndata: {"sonido":null,"on":false}\n\n');
+  c.llega('event: ambiente\ndata: no-es-json\n\n');
+  assert.deepEqual(acciones, [{ tipo: 'atras' }], 'el ambiente no es una acción');
+  assert.deepEqual(ambientes, [
+    { sonido: 'teclado', on: true },
+    { sonido: 'papel', on: true },
+    { sonido: null, on: false },
+    { sonido: null, on: false },
+  ], 'un sonido que no conozco es «sin sonido»');
+  // Al reconectar pide lo que vino después de la última ACCIÓN (el ambiente no lleva id).
+  c.puente.parar();
+  c.puente.arrancar();
+  await dormir(10);
+  assert.equal(c.xhr().cab['Last-Event-ID'], 'acc-1');
+  c.puente.parar();
+  // Un puente sin `alAmbiente` (una pieza vieja) lo salta sin romperse.
+  const viejo = puenteConXhr({ alAccion: (a) => acciones.push(a) });
+  viejo.puente.arrancar();
+  await dormir(10);
+  viejo.llega('event: ambiente\ndata: {"sonido":"teclado","on":true}\n\n');
+  viejo.puente.parar();
+  assert.equal(acciones.length, 1);
+  assert.equal(ambienteDe({ on: true, sonido: 'lapiz' }).sonido, 'lapiz');
+  assert.equal(ambienteDe({ sonido: 'lapiz' }), null);
+  // Los mismos nombres en el servidor, el contrato y el banco de tareas.
+  const { SONIDOS_AMBIENTE: delServidor } = await import(new URL('../../../../lib/acciones-app.ts', import.meta.url).href);
+  assert.deepEqual([...delServidor], [...SONIDOS_AMBIENTE]);
+  for (const t of Object.values(TAREAS)) assert.ok(t.sonido === null || SONIDOS_AMBIENTE.includes(t.sonido));
+});
+
+prueba('ambiente: suena al llegar, sigue con las frases de espera y se para cuando el avatar empieza a contestar', async () => {
+  const r = relojFalso();
+  const log = [];
+  let puede = true;
+  const amb = new AmbienteConversacion({
+    reproductor: { poner: (s) => log.push(`poner ${s}`), quitar: () => log.push('quitar') },
+    puede: () => puede,
+    reloj: r.reloj,
+    esperar: r.esperar,
+  });
+  const c = puenteConXhr({ alAccion: () => {}, alAmbiente: (a) => amb.alEvento(a) });
+  c.puente.arrancar();
+  await dormir(10);
+  c.llega('event: ambiente\ndata: {"sonido":"teclado","on":true}\n\n');
+  assert.equal(amb.actual, 'teclado');
+  assert.deepEqual(log, ['poner teclado']);
+  // La frase que lo acompaña, la del agente y una de seguimiento: no lo paran.
+  amb.alHablaAvatar('Te lo busco en tus chats.');
+  r.avanzar(GRACIA_MS + 100);
+  amb.alHablaAvatar('[curious] Déjame buscarlo…');
+  amb.alHablaAvatar('Mmm… a ver.');
+  amb.alHablaAvatar(frasesDe('seguimiento', 'claudio', 'es')[0]);
+  assert.equal(amb.actual, 'teclado', 'las frases de espera no cuentan como respuesta');
+  // Otra ronda (ahora lee la página): cambia el sonido.
+  c.llega('event: ambiente\ndata: {"sonido":"papel","on":true}\n\n');
+  assert.deepEqual(log, ['poner teclado', 'poner papel']);
+  // La respuesta de verdad: se para aunque el `off` del servidor no haya llegado.
+  r.avanzar(GRACIA_MS + 100);
+  amb.alHablaAvatar('El cobre está a cuatro dólares la libra.');
+  assert.equal(amb.actual, null);
+  assert.deepEqual(log, ['poner teclado', 'poner papel', 'quitar']);
+  // El `off` que llega después no hace nada más.
+  c.llega('event: ambiente\ndata: {"sonido":null,"on":false}\n\n');
+  assert.deepEqual(log.slice(3), []);
+  // Off del servidor, la persona que habla, el tope: siempre se para.
+  amb.alEvento({ sonido: 'lapiz', on: true });
+  amb.alEvento({ sonido: null, on: false });
+  amb.alEvento({ sonido: 'lapiz', on: true });
+  amb.parar('persona');
+  amb.alEvento({ sonido: 'teclado', on: true });
+  r.avanzar(AMBIENTE_MAX_MS + 1);
+  assert.equal(amb.actual, null, 'un off perdido no deja tecleando para siempre');
+  assert.deepEqual(log.slice(3), ['poner lapiz', 'quitar', 'poner lapiz', 'quitar', 'poner teclado', 'quitar']);
+  // Silenciada, cerrada, la app detrás o los sonidos apagados: no suena.
+  puede = false;
+  amb.alEvento({ sonido: 'teclado', on: true });
+  assert.equal(amb.actual, null);
+  assert.ok(VOLUMEN_AMBIENTE > 0 && VOLUMEN_AMBIENTE <= 0.25, 'bajito, por debajo de la voz');
+  c.puente.parar();
+});
+
+prueba('frases de estado: tareas → estado y sonido; muchas por avatar para esperar; sin muletilla tras el relleno; etiquetas v4 solo en la voz', () => {
+  assert.deepEqual([tareaDe('web').estado, tareaDe('web').sonido, tareaDe('web').lenta], ['buscando', 'teclado', true]);
+  assert.deepEqual([tareaDe('leer').estado, tareaDe('leer').sonido], ['leyendo', 'papel']);
+  assert.deepEqual([tareaDe('pdf-leer').estado, tareaDe('pdf-leer').sonido], ['leyendo', 'papel']);
+  assert.deepEqual([tareaDe('calculo-mina').estado, tareaDe('calculo-mina').sonido, tareaDe('calculo-mina').lenta], ['calculando', 'lapiz', false]);
+  assert.deepEqual([tareaDe('vision').estado, tareaDe('vision').sonido], ['mirando', null]);
+  assert.equal(tareaDe('rag'), null, 'lo que no es tarea no hace esperar');
+  assert.equal(tareaDe('harness'), null);
+  // «Muchísimas para que suene humano siempre»: de 15 a 45 por estado de tarea, avatar e idioma (José,
+  // 1-oct: «no escuchemos siempre lo mismo»).
+  for (const e of ['pensando', 'revisando', 'buscando', 'calculando', 'abriendo', 'leyendo', 'mirando', 'seguimiento'])
+    for (const a of AVATARES_BANCO)
+      for (const i of ['es', 'en']) {
+        const n = frasesDe(e, a, i).length;
+        assert.ok(n >= 15 && n <= 45, `${e}/${a}/${i}: ${n}`);
+        // Siempre quedan de sobra sin muletilla para después del relleno del agente.
+        assert.ok(frasesDe(e, a, i).filter((f) => !empiezaConMuletilla(f)).length >= 12, `${e}/${a}/${i} sin muletilla`);
+      }
+  const m = new MemoriaFrases();
+  for (let k = 0; k < 30; k++) assert.ok(!empiezaConMuletilla(fraseDeEstado('pensando', 'aura', 'es', { memoria: m, sinMuletilla: true }).texto));
+  const evitar = frasesDe('seguimiento', 'ojos', 'es').slice(0, -1);
+  assert.equal(fraseDeEstado('seguimiento', 'ojos', 'es', { memoria: m, evitar }).texto, frasesDe('seguimiento', 'ojos', 'es').at(-1), 'no repite las ya dichas en la espera');
+  // Las frases de espera son relleno: si el cerebro empieza con una, sobra.
+  assert.equal(esRelleno('Ya casi lo tengo…'), true);
+  assert.equal(esRelleno('Hojeando el documento…'), true);
+  assert.equal(estadoDeEspera('léeme este pdf'), 'leyendo');
+  assert.equal(estadoDeEspera('¿qué ves?'), 'mirando');
+  // Las etiquetas v4 van en la voz, nunca en el banco (el globito).
+  const me = new MemoriaEtiquetas();
+  const dicha = vozDeEspera('Buscando…', 'buscando', 'aura', () => 0.1, me);
+  assert.ok(etiquetasDe('buscando', 'aura').some((t) => dicha === `[${t}] Buscando…`), dicha);
+  assert.equal(vozDeEspera('Buscando…', 'buscando', 'aura', () => 0.99, me), 'Buscando…');
+});
+
 prueba('puente: parado en segundo plano, al volver reconecta con Last-Event-ID (revisión 5, B11)', async () => {
   let conexiones = 0;
   const ultimos = [];
@@ -933,7 +1210,8 @@ prueba('manos: el contexto le dice al servidor qué manos sabe hacer este teléf
   const enviados = [];
   const ctx = new ContextoApp({ enviar: async (c) => enviados.push(c), contactos: async () => [], escuchar: () => () => {}, esperar: (f) => (f(), () => {}) });
   const c = await ctx.enviarAhora(true);
-  assert.deepEqual([...c.manos], ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame']);
+  // `controles` (AUR10): los controles de voz separados (detener audio, colgar, la tarea).
+  assert.deepEqual([...c.manos], ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame', 'cartera', 'pagar', 'controles']);
   assert.deepEqual([...c.manos], [...MANOS_APP]);
 });
 
@@ -1004,6 +1282,27 @@ prueba('manos: recordatorio — permiso de avisos, aviso programado una sola vez
   assert.match(negado.detalle, /permiso de avisos/);
   assert.equal(puestos.length, 1);
   assert.equal((await programarRecordatorio({ texto: 'X', cuando: ahora + 7200_000 }, { notifee: () => null, ahora: () => ahora })).ok, false, 'sin notifee se dice');
+});
+
+prueba('recordatorio: con el permiso de avisos ya dado NO se vuelve a pedir (pedirlo pausa la app y colgaba la llamada)', async () => {
+  _olvidarRecordatorios();
+  const ahora = Date.UTC(2026, 8, 30, 20, 0);
+  const K = { TriggerType: { TIMESTAMP: 0 }, AlarmType: { SET_AND_ALLOW_WHILE_IDLE: 1 }, AuthorizationStatus: { DENIED: 0, AUTHORIZED: 1 }, AndroidImportance: { HIGH: 4 } };
+  let pedidos = 0;
+  let estado = 1;
+  const m = {
+    requestPermission: async () => (pedidos++, { authorizationStatus: 1 }),
+    getNotificationSettings: async () => ({ authorizationStatus: estado, android: { alarm: 0 } }),
+    createChannel: async (c) => c.id,
+    createTriggerNotification: async (n) => n.id,
+  };
+  const d = { notifee: () => ({ m, k: K }), ahora: () => ahora, dueno: () => 'u-prueba' };
+  assert.equal((await programarRecordatorio({ texto: 'Hacer una llamada', cuando: ahora + 3 * 60_000, llamada: true }, d)).ok, true);
+  assert.equal(pedidos, 0, 'ya estaba dado: no se abre la ventana del permiso');
+  // Sin el permiso todavía, sí se pide (la primera vez).
+  estado = 0;
+  assert.equal((await programarRecordatorio({ texto: 'Otra', cuando: ahora + 4 * 60_000 }, d)).ok, true);
+  assert.equal(pedidos, 1);
 });
 
 /** Un notifee falso con lo que usan los recordatorios: guarda lo programado y lo mostrado. */
@@ -1224,9 +1523,10 @@ prueba('la compañera en los chats (José 5.1: «lo hice pequeño en chat y me d
   assert.ok(m.oye());
 });
 
-prueba('vigilante del oído: sin señales de vida → reinicio duro; tras el tope → la nube; si tampoco, «sordo»', async () => {
-  const s = { nuestro: true, silenciado: false, hablando: false, pensando: false, pausado: false, vivo: false, reinicios: 0, nube: 0, soltadas: 0, enNube: false };
+prueba('vigilante del oído: sin señales de vida → reinicio duro; tras el tope → la nube; si tampoco, «sordo» (y sigue probando, espaciado)', async () => {
+  const s = { nuestro: true, silenciado: false, hablando: false, pensando: false, pausado: false, vivo: false, reinicios: 0, nube: 0, soltadas: 0, enNube: false, t: 0 };
   const v = new VigilanteOido({
+    reloj: () => s.t,
     esNuestro: () => s.nuestro,
     silenciado: () => s.silenciado,
     hablando: () => s.hablando,
@@ -1255,7 +1555,7 @@ prueba('vigilante del oído: sin señales de vida → reinicio duro; tras el top
   // Revive en la nube: vuelve a cero.
   s.vivo = true;
   assert.equal(v.revisar(), 'nada');
-  // Muere otra vez y la nube ya no es opción: se rinde y lo dice (sordo), sin reiniciar en bucle.
+  // Muere otra vez y la nube ya no es opción: queda sordo y lo dice, sin reiniciar en bucle…
   s.vivo = false;
   for (let i = 0; i < TOPE_REINICIOS_OIDO; i++) v.revisar();
   assert.equal(v.revisar(), 'nube');
@@ -1264,6 +1564,23 @@ prueba('vigilante del oído: sin señales de vida → reinicio duro; tras el top
   const antes = s.reinicios;
   assert.equal(v.revisar(), 'sordo');
   assert.equal(s.reinicios, antes, 'sordo no reinicia en bucle');
+  // …pero ya no es para siempre (antes: «sordo» y nunca más se probaba): reinicio duro a los 15 s,
+  // 30 s, 60 s… con tope de 2 min.
+  const esperas = [];
+  let desde = s.t;
+  for (let n = 0; n < 6; n++) {
+    let k = 0;
+    while (v.revisar() === 'sordo') {
+      s.t += 1000;
+      if (++k > 1000) assert.fail('no volvió a probar');
+    }
+    esperas.push(s.t - desde);
+    desde = s.t;
+    await new Promise((r) => setTimeout(r, 0));
+  }
+  assert.deepEqual(esperas, [ESPERA_SORDO_MS, 2 * ESPERA_SORDO_MS, 4 * ESPERA_SORDO_MS, ESPERA_SORDO_MAX_MS, ESPERA_SORDO_MAX_MS, ESPERA_SORDO_MAX_MS]);
+  assert.equal(s.reinicios, antes + 6, 'cada intento es un reinicio duro');
+  assert.equal(v.estaSordo(), true, 'la etiqueta sigue diciendo que no oye hasta que reviva');
   s.vivo = true;
   assert.equal(v.revisar(), 'nada');
   assert.equal(v.estaSordo(), false, 'en cuanto revive deja de estar sordo');
@@ -1287,18 +1604,113 @@ prueba('vigilante del oído: sin señales de vida → reinicio duro; tras el top
   assert.equal(s.reinicios, r0);
 });
 
+prueba('vigilante del oído: las cuentas vuelven a cero cuando el oído vuelve a ser nuestro (tras una llamada); sano en la nube, prueba otra vez el del teléfono', async () => {
+  const s = { nuestro: true, vivo: false, revivio: false, reinicios: 0, nativo: 0, cambia: false, t: 0 };
+  const v = new VigilanteOido({
+    reloj: () => s.t,
+    esNuestro: () => s.nuestro,
+    silenciado: () => false,
+    hablando: () => false,
+    pensando: () => false,
+    pausado: () => false,
+    soltarPausa: () => {},
+    vivo: () => s.vivo,
+    revivio: () => s.revivio,
+    reiniciar: () => void s.reinicios++,
+    caerANube: () => false, // ya en la nube
+    volverANativo: () => (s.nativo++, s.cambia),
+  });
+  for (let i = 0; i < TOPE_REINICIOS_OIDO; i++) v.revisar();
+  v.revisar();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(v.estaSordo(), true);
+  // La llamada del avatar toma el audio y lo devuelve: dueño nuevo, cuentas en cero (sin esperar al tope).
+  s.nuestro = false;
+  assert.equal(v.revisar(), 'nada');
+  s.nuestro = true;
+  assert.equal(v.revisar(), 'reinicia', 'vuelve a empezar por un reinicio, no «sordo»');
+  assert.equal(v.estaSordo(), false);
+  // Estando sordo, el intento espaciado prueba primero el del teléfono; si cambió de motor, no reinicia.
+  for (let i = 0; i < TOPE_REINICIOS_OIDO; i++) v.revisar();
+  await new Promise((r) => setTimeout(r, 0));
+  s.t += ESPERA_SORDO_MS;
+  s.cambia = true;
+  const r0 = s.reinicios;
+  const n0 = s.nativo;
+  assert.equal(v.revisar(), 'reinicia');
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(s.nativo, n0 + 1);
+  assert.equal(s.reinicios, r0, 'cambiar de motor ya lo arranca nuevo');
+  // Revive de verdad: cuentas en cero y, sano y quieto, se le pregunta a speech si toca volver al del teléfono.
+  s.vivo = true;
+  s.revivio = true;
+  assert.equal(v.revisar(), 'nada');
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(v.estaSordo(), false);
+  assert.equal(s.nativo, n0 + 2);
+});
+
+prueba('al colgar la llamada del avatar, la mesa reabre su oído cuando la voz soltó el audio (Android: el stop tardío lo mataba)', async () => {
+  const m = mesaSimulada();
+  const reabiertos = [];
+  m.deps.reabrirMic = () => void ((m.quiere = true), (m.pausado = false), reabiertos.push('reabre'));
+  const audio = new AudioVoz(() => {});
+  m.deps.esperarAudioLibre = () => audio.esperarLibre(4000);
+  const oido = new OidoMesa(m.deps);
+  oido.fijar('mesa');
+  assert.equal(oido.aplicar('conversacion'), 'suelta');
+  audio.tomar(7);
+  // Cuelga: el dueño vuelve a la mesa, pero el SDK todavía no paró su sesión de audio.
+  assert.equal(oido.aplicar('mesa'), 'toma');
+  await dormir(5);
+  assert.deepEqual(reabiertos, [], 'no reabre mientras la conversación tiene el audio');
+  audio.soltar(7); // onDisconnect: ya paró
+  await dormir(1);
+  assert.deepEqual(reabiertos, ['reabre'], 'reabre en cuanto queda libre');
+  assert.ok(m.oye());
+  // Si mientras esperaba el audio pasó a otro (otra llamada), no reabre.
+  assert.equal(oido.aplicar('llamada'), 'suelta');
+  audio.tomar(8);
+  assert.equal(oido.aplicar('mesa'), 'toma');
+  assert.equal(oido.aplicar('conversacion'), 'suelta');
+  audio.soltar(8);
+  await dormir(1);
+  assert.deepEqual(reabiertos, ['reabre']);
+  // Ir de la mesa a la compañera mientras espera no cancela el reabrir (es el mismo oído).
+  audio.tomar(9);
+  assert.equal(oido.aplicar('mesa'), 'toma');
+  assert.equal(oido.aplicar('companera'), 'nada');
+  audio.soltar(9);
+  await dormir(1);
+  assert.deepEqual(reabiertos, ['reabre', 'reabre']);
+  // Sin aviso de la voz, reabre igual al tope (4 s; aquí con un reloj corto).
+  const corto = new AudioVoz(() => {}, (f) => {
+    const t = setTimeout(f, 5);
+    return () => clearTimeout(t);
+  });
+  m.deps.esperarAudioLibre = () => corto.esperarLibre();
+  const oido2 = new OidoMesa(m.deps);
+  oido2.fijar('conversacion');
+  corto.tomar(1);
+  oido2.aplicar('mesa');
+  await dormir(20);
+  assert.deepEqual(reabiertos, ['reabre', 'reabre', 'reabre']);
+});
+
 prueba('conversación en vivo: «Conectando…» sin tope o abierta sin audio del micrófono ya no se quedan con el micrófono', () => {
   let ahora = 0;
   const c = new ControlSesion('claudio', 'es', { reloj: () => ahora, reintentos: 1 });
-  // Doble toque en los chats: abre y se queda «conectando» (la conexión no termina nunca).
+  // Doble toque en los chats: abre, llega el permiso y se queda «conectando» (el WebRTC no termina nunca).
   c.despertarOSilenciar();
   assert.equal(c.vista().estado, 'conectando');
+  c.permisoListo(c.vista().gen);
   ahora += CONECTAR_MAX_MS - 1;
   assert.equal(c.revisar(), 'nada');
   ahora += 1;
   assert.equal(c.revisar(), 'no-conecto');
   assert.equal(c.vista().montada, true, 'primero el reintento (permiso nuevo)');
   assert.equal(c.vista().intento, 1);
+  c.permisoListo(c.vista().gen);
   ahora += CONECTAR_MAX_MS;
   assert.equal(c.revisar(), 'no-conecto');
   assert.equal(c.vista().montada, false, 'tampoco: suelta el audio (el oído del teléfono vuelve)');
@@ -1334,6 +1746,240 @@ prueba('conversación en vivo: «Conectando…» sin tope o abierta sin audio de
   c.silenciar(true);
   ahora += SORDA_MS * 3;
   assert.equal(c.revisar(), 'nada');
+});
+
+prueba('llamada: el micrófono deja de mandar muestras a media llamada → no sigue «escuchando», reconecta (Codex, 3-oct)', () => {
+  let ahora = 1_000;
+  const c = new ControlSesion('aura', 'es', { reloj: () => ahora });
+  c.iniciar();
+  c.alEstado(c.vista().gen, 'escuchando');
+  // Vivo: el valor crudo cambia con cada cuadro (ruido de fondo), aunque la persona calle.
+  for (let t = 0; t < SIN_MUESTRAS_MS * 2; t += 50) {
+    ahora += 50;
+    c.entrada(0.004, 0.002 + (t % 7) * 1e-5);
+  }
+  assert.equal(c.revisar(), 'nada', 'micrófono vivo y callado: no es fallo');
+  // Supresión de ruido: en silencio da 0 exacto cuadro tras cuadro. Eso es silencio, no un micrófono parado (Codex en #138).
+  for (let t = 0; t < SIN_MUESTRAS_MS * 2; t += 50) {
+    ahora += 50;
+    c.entrada(0, 0);
+  }
+  assert.equal(c.revisar(), 'nada', 'ceros exactos en silencio: no reconecta');
+  // Se congela: el SDK repite el último valor (no cae a 0).
+  const gen = c.vista().gen;
+  for (let t = 0; t < SIN_MUESTRAS_MS - 500; t += 50) {
+    ahora += 50;
+    c.entrada(0.004, 0.00207);
+  }
+  assert.equal(c.revisar(), 'nada', 'todavía no');
+  ahora += 600;
+  c.entrada(0.004, 0.00207);
+  assert.equal(c.revisar(), 'sin-muestras');
+  assert.equal(c.vista().estado, 'conectando', 'ya no dice «escuchando»: reconecta');
+  assert.equal(c.vista().gen, gen + 1);
+  assert.equal(c.vista().montada, true);
+  // Mientras el avatar habla no se juzga (el valor puede quedarse quieto con el eco cancelado).
+  c.alEstado(c.vista().gen, 'escuchando');
+  c.entrada(0.004, 0.001);
+  c.alEstado(c.vista().gen, 'hablando');
+  ahora += SIN_MUESTRAS_MS * 2;
+  c.entrada(0.004, 0.001);
+  assert.equal(c.revisar(), 'nada');
+  // Silenciada a propósito: tampoco (el micrófono lo cortó ella).
+  c.alEstado(c.vista().gen, 'escuchando');
+  c.silenciar(true);
+  ahora += SIN_MUESTRAS_MS * 2;
+  assert.equal(c.revisar(), 'nada');
+  // Sin valor crudo (quien abre no lo manda) no se puede juzgar: no se inventa un fallo.
+  const d = new ControlSesion('aura', 'es', { reloj: () => ahora });
+  d.iniciar();
+  d.alEstado(d.vista().gen, 'escuchando');
+  d.entrada(0.01);
+  ahora += SIN_MUESTRAS_MS * 3;
+  assert.equal(d.revisar(), 'nada');
+  // Si tampoco vuelve tras reconectar, falla como siempre y se dice por qué (no «permiso»).
+  assert.match(motivoFalloVoz('el micrófono dejó de mandar audio'), /dejó de mandarme audio/);
+});
+
+prueba('CALL01: silencio desde el inicio (lecturas frescas en cero) no es «sorda»; una pista congelada falla y se recupera con tope', () => {
+  let ahora = 1_000;
+  const c = new ControlSesion('aura', 'es', { reloj: () => ahora });
+  c.iniciar();
+  c.permisoListo(c.vista().gen);
+  c.alEstado(c.vista().gen, 'escuchando');
+  // 400 lecturas nuevas del SDK a 20 Hz (20 s), todas en 0 exacto: la persona no ha dicho nada todavía y la
+  // supresión de ruido da cero. Antes, a los ~16 s: «sorda» (se adivinaba por la amplitud).
+  for (let i = 0; i < 400; i++) {
+    ahora += 50;
+    c.entrada(0, 0);
+    assert.equal(c.revisar(), 'nada', `lectura ${i}: un cero fresco es silencio, no un micrófono muerto`);
+  }
+  assert.equal(c.vista().montada, true);
+  assert.equal(c.vista().estado, 'escuchando');
+  // Congelada desde el principio: el SDK repite el mismo valor (distinto de 0) y la persona no ha hablado.
+  // No es amplitud (es casi nada) sino que no llegan cuadros: falla y reconecta.
+  const d = new ControlSesion('aura', 'es', { reloj: () => ahora });
+  d.iniciar();
+  d.permisoListo(d.vista().gen);
+  d.alEstado(d.vista().gen, 'escuchando');
+  const congelada = () => {
+    let r = 'nada';
+    for (let t = 0; t < SIN_MUESTRAS_MS + 2_000 && r === 'nada'; t += 50) {
+      ahora += 50;
+      d.entrada(0.0002, 0.0001);
+      r = d.revisar();
+    }
+    return r;
+  };
+  const g0 = d.vista().gen;
+  assert.equal(congelada(), 'sin-muestras');
+  assert.equal(d.vista().gen, g0 + 1, 'se reconecta (una generación nueva)');
+  assert.equal(d.vista().montada, true);
+  assert.equal(d.vista().estado, 'conectando');
+  // Se recupera con límites: reconecta hasta TOPE_RECONEXIONES y, si sigue congelada, suelta el micrófono.
+  for (let k = 1; k <= TOPE_RECONEXIONES; k++) {
+    d.permisoListo(d.vista().gen);
+    d.alEstado(d.vista().gen, 'escuchando');
+    assert.equal(congelada(), 'sin-muestras');
+  }
+  assert.equal(d.vista().montada, false, 'pasado el tope no reconecta más: el oído del teléfono vuelve');
+  assert.equal(d.vista().estado, 'error');
+  assert.match(motivoFalloVoz(d.vista().detalle), /dejó de mandarme audio/);
+  // Y una pista que vuelve a mandar cuadros tras reconectar ya no falla.
+  const e = new ControlSesion('aura', 'es', { reloj: () => ahora });
+  e.iniciar();
+  e.permisoListo(e.vista().gen);
+  e.alEstado(e.vista().gen, 'escuchando');
+  for (let t = 0; t < SIN_MUESTRAS_MS * 2; t += 50) {
+    ahora += 50;
+    e.entrada(0.004, 0.002 + ((t / 50) % 5) * 1e-5);
+  }
+  assert.equal(e.revisar(), 'nada');
+});
+
+prueba('CALL02: permiso y conexión con plazo por fase y tope total (permiso tardío válido, cancelado, red lenta, conexión colgada)', () => {
+  let ahora = 0;
+  const nueva = () => {
+    const c = new ControlSesion('aura', 'es', { reloj: () => ahora, reintentos: 1 });
+    c.iniciar();
+    return c;
+  };
+  assert.ok(ESPERA_PERMISO_MS > PERMISO_MAX_MS, 'la petición del permiso avisa primero con su propio timeout');
+  assert.ok(ABRIR_MAX_MS < ESPERA_PERMISO_MS + CONECTAR_MAX_MS, 'el tope total acota la suma de las fases');
+  // 1) Permiso tardío pero válido (14 s: dentro de los 15 s de la petición). Antes el controlador lo daba
+  //    por fallido a los 12 s y el permiso que llegaba se tiraba.
+  let c = nueva();
+  let g = c.vista().gen;
+  ahora += 14_000;
+  assert.equal(c.revisar(), 'nada', 'esperando el permiso cuenta su plazo, no los 12 s de conectar');
+  c.permisoListo(g);
+  ahora += 6_000;
+  assert.equal(c.revisar(), 'nada', 'conectar tiene su propio plazo desde que llegó el permiso');
+  c.alEstado(g, 'escuchando');
+  assert.equal(c.vista().estado, 'escuchando');
+  assert.equal(c.vista().gen, g, 'la misma generación: no se reintentó');
+  // 2) Red lenta: el permiso a los 3 s y el WebRTC tarda casi todo su plazo.
+  c = nueva();
+  g = c.vista().gen;
+  ahora += 3_000;
+  c.permisoListo(g);
+  ahora += CONECTAR_MAX_MS - 100;
+  assert.equal(c.revisar(), 'nada');
+  c.alEstado(g, 'escuchando');
+  assert.equal(c.vista().estado, 'escuchando');
+  // 3) Conexión colgada: con el permiso en la mano, el WebRTC no termina nunca.
+  c = nueva();
+  g = c.vista().gen;
+  ahora += 1_000;
+  c.permisoListo(g);
+  ahora += CONECTAR_MAX_MS - 1;
+  assert.equal(c.revisar(), 'nada');
+  ahora += 1;
+  assert.equal(c.revisar(), 'no-conecto');
+  assert.equal(c.vista().gen, g + 1, 'reintento con permiso nuevo');
+  assert.equal(c.vista().estado, 'conectando');
+  // El permiso que la generación vieja recibe tarde no cambia la fase de la nueva.
+  c.permisoListo(g);
+  ahora += ESPERA_PERMISO_MS - 1;
+  assert.equal(c.revisar(), 'nada', 'la nueva sigue esperando SU permiso');
+  ahora += 1;
+  assert.equal(c.revisar(), 'no-conecto');
+  assert.equal(c.vista().montada, false, 'tampoco: suelta el audio');
+  assert.match(motivoFalloVoz(c.vista().detalle), /tardó demasiado en conectar/, 'no se confunde con el permiso del micrófono');
+  // 4) El permiso no llega nunca: la petición tiene su timeout (15 s); el controlador es el respaldo.
+  c = nueva();
+  ahora += PERMISO_MAX_MS;
+  assert.equal(c.revisar(), 'nada', 'se le deja a la petición avisar con su propio error');
+  ahora += ESPERA_PERMISO_MS - PERMISO_MAX_MS;
+  assert.equal(c.revisar(), 'no-conecto');
+  // 5) Tope total: el permiso al límite y la conexión colgada no suman 15 + 12 s.
+  c = nueva();
+  g = c.vista().gen;
+  ahora += ESPERA_PERMISO_MS - 500;
+  c.permisoListo(g);
+  ahora += ABRIR_MAX_MS - (ESPERA_PERMISO_MS - 500) - 1;
+  assert.equal(c.revisar(), 'nada');
+  ahora += 1;
+  assert.equal(c.revisar(), 'no-conecto', 'el plazo total manda aunque la fase de conectar no haya vencido');
+  // 6) Cancelado: cuelga mientras espera el permiso; lo que llegue tarde no abre ni falla nada.
+  c = nueva();
+  g = c.vista().gen;
+  ahora += 2_000;
+  c.terminar();
+  c.permisoListo(g);
+  c.alEstado(g, 'escuchando');
+  ahora += ABRIR_MAX_MS * 2;
+  assert.equal(c.revisar(), 'nada');
+  assert.equal(c.vista().montada, false);
+  assert.equal(c.vista().estado, 'cerrada');
+});
+
+prueba('CALL04: transcripción aceptada y respuesta pendiente → «pensando» (con tope), sin tocar quién tiene el micrófono', () => {
+  let ahora = 0;
+  const c = new ControlSesion('aura', 'es', { reloj: () => ahora });
+  c.iniciar();
+  const g = c.vista().gen;
+  c.permisoListo(g);
+  c.alEstado(g, 'escuchando');
+  assert.equal(c.vista().pensando, false);
+  // ElevenLabs entregó lo que dijo la persona: hasta que el agente conteste, piensa.
+  c.oyoFrase();
+  assert.equal(c.vista().pensando, true);
+  assert.equal(c.vista().estado, 'escuchando', 'el estado de la sesión (y con él el micrófono) no cambia');
+  assert.equal(c.vista().montada, true);
+  assert.equal(c.vista().montada && !c.vista().silenciada, true, 'el micrófono sigue siendo de la conversación (vozOcupaMicrofono)');
+  c.alEstado(g, 'hablando');
+  assert.equal(c.vista().pensando, false, 'empezó a hablar: ya no piensa');
+  c.alEstado(g, 'escuchando');
+  assert.equal(c.vista().pensando, false, 'terminar de hablar no es pensar');
+  // Contestó con texto sin audio (o el modo «speaking» no llegó): su mensaje también cierra la espera.
+  c.oyoFrase();
+  c.respondio();
+  assert.equal(c.vista().pensando, false);
+  // Con tope: si nunca contesta, no se queda pensando para siempre.
+  c.oyoFrase();
+  ahora += PENSANDO_MAX_MS - 1;
+  c.revisar();
+  assert.equal(c.vista().pensando, true);
+  ahora += 1;
+  c.revisar();
+  assert.equal(c.vista().pensando, false, 'pasado el tope vuelve a «escuchando»');
+  assert.equal(c.vista().estado, 'escuchando');
+  // Silenciar, colgar o reconectar la terminan.
+  c.oyoFrase();
+  c.silenciar(true);
+  assert.equal(c.vista().pensando, false);
+  c.silenciar(false);
+  c.oyoFrase();
+  c.alEstado(g, 'error', 'Server error');
+  assert.equal(c.vista().pensando, false, 'reconectando no piensa');
+  c.terminar();
+  c.oyoFrase();
+  assert.equal(c.vista().pensando, false, 'sin sesión no hay nada que pensar');
+  // La compañera lo pinta: piensa (no «escucha») mientras espera la respuesta, y escucha cuando no.
+  const vozDe = (pensando) => ({ estado: 'escuchando', silenciada: false, dormida: false, suspendida: false, pensando });
+  assert.equal(expresion(reducir(ANIMO_INICIAL, { tipo: 'voz', voz: vozDe(true) }, 0).animo, 0), 'piensa');
+  assert.equal(expresion(reducir(ANIMO_INICIAL, { tipo: 'voz', voz: vozDe(false) }, 0).animo, 0), 'escucha');
 });
 
 prueba('fallo de la conversación en vivo → el micrófono de la mesa vuelve de verdad (la pausa colgada se suelta)', () => {
@@ -1569,7 +2215,9 @@ prueba('ciclo: la máquina entera — REPOSO → SONANDO → CONECTANDO → EN_L
   assert.equal(c.sesionViva(), false, 'sonando tampoco (no se cobra hasta contestar)');
   assert.deepEqual(tipos2(c.contestar()), ['timbre', 'contestada', 'abrir']);
   assert.equal(c.estado(), 'conectando');
-  assert.deepEqual(c.conectado(), [{ tipo: 'primerMensaje', texto: MENSAJE_LLAMAME }], '«llámame»: el primer mensaje es [[llamada]] (saluda como quien llama)');
+  // El saludo es el first_message del agente: mandar [[llamada]] además hacía un saludo doble.
+  assert.deepEqual(c.conectado(), [], '«llámame»: no se manda [[llamada]] (antes: «¡Aquí estoy! Cuéntame.» + «¡Hola! Aquí estoy…»)');
+  assert.equal(MENSAJE_LLAMAME, '[[llamada]]', 'la marca sigue existiendo (el servidor la atiende para versiones viejas)');
   assert.equal(c.estado(), 'en_llamada');
   assert.deepEqual(c.dobleToque(), [{ tipo: 'silenciar', valor: true }]);
   assert.equal(c.estado(), 'silenciado');
@@ -1585,6 +2233,32 @@ prueba('ciclo: la máquina entera — REPOSO → SONANDO → CONECTANDO → EN_L
   assert.equal(c.estado(), 'reposo', 'se ve «Llamada terminada» un momento y vuelve a reposo');
   assert.deepEqual(vistos, ['sonando', 'conectando', 'en_llamada', 'silenciado', 'en_llamada', 'colgada', 'reposo']);
   assert.equal(c.usadoMs(), 90_000, 'solo se cobra lo conectado');
+});
+
+prueba('ciclo: «Hablar» abre la conversación al instante — sin timbre ni pantalla entrante (José 1-oct)', () => {
+  const { c, tipos2 } = cicloDePrueba();
+  const vistos = [];
+  c.suscribir((e) => vistos.push(e));
+  assert.deepEqual(tipos2(c.hablarYa()), ['contestada', 'abrir'], 'nada de timbre');
+  assert.equal(c.estado(), 'conectando');
+  assert.deepEqual(vistos, ['conectando'], 'nunca pasa por «sonando»');
+  assert.deepEqual(c.conectado(), [], 'el saludo es el first_message del agente');
+  assert.equal(c.estado(), 'en_llamada');
+  assert.deepEqual(c.hablarYa(), [], 'ya hablando, no abre otra');
+  // Si algo ya sonaba (un recordatorio), «Hablar» lo contesta.
+  const b = cicloDePrueba();
+  b.c.llamar(RECL);
+  assert.deepEqual(b.tipos2(b.c.hablarYa()), ['timbre', 'contestada', 'abrir']);
+  assert.deepEqual(b.c.conectado(), [{ tipo: 'primerMensaje', texto: '[[recordatorio]] Llamar a Beto' }]);
+  // Sin minutos de hoy: lo dice la mesa, no se abre nada.
+  const d = cicloDePrueba();
+  d.c.hablarYa();
+  d.c.conectado();
+  d.c.fallo('HTTP 429 · tope de voz');
+  d.c.listo();
+  assert.equal(d.c.llamadaDisponible(), false);
+  assert.deepEqual(d.c.hablarYa(), [{ tipo: 'alNativo', texto: null, motivo: 'tope' }]);
+  assert.equal(d.c.estado(), 'reposo');
 });
 
 prueba('ciclo: rechazar → RECHAZADA; no contestar en 60 s → PERDIDA; «llámame» en llamada no suena otra', () => {
@@ -1677,6 +2351,111 @@ prueba('ciclo: silencio 3 min → «¿sigues ahí?» → 20 s sin respuesta → 
   mudo.c.dobleToque();
   mudo.r.t += PREGUNTA_SIGUES_MS + ESPERA_SIGUES_MS;
   assert.deepEqual(mudo.c.tic(), [{ tipo: 'cerrar', motivo: 'silencio' }]);
+});
+
+prueba('ciclo (1-oct): la sesión se cae a mitad de llamada → reconecta con `[[reconecta]] <última frase>`, sin otro saludo; pasado el tope cuelga y el oído vuelve a la mesa', () => {
+  const { c, r } = cicloDePrueba();
+  const ctl = new ControlSesion('claudio', 'es', { reloj: () => r.t });
+  const enviados = [];
+  const efectos = [];
+  const ejecutar = (ef) => {
+    for (const e of ef) {
+      efectos.push(e.tipo);
+      if (e.tipo === 'abrir') ctl.iniciar();
+      if (e.tipo === 'cerrar') ctl.terminar();
+      if (e.tipo === 'primerMensaje') enviados.push(e.texto);
+    }
+  };
+  // Lo mismo que el VozProvider: lo que pasa en la sesión, contado al ciclo.
+  let antes = ctl.vista();
+  ctl.suscribir((v) => {
+    const a = antes;
+    antes = v;
+    const ef = [];
+    if (v.montada && v.estado === 'conectando' && (!a.montada || a.gen !== v.gen)) ef.push(...c.sesionAbriendo());
+    if (v.montada && (v.estado === 'escuchando' || v.estado === 'hablando') && a.estado === 'conectando') ef.push(...c.conectado());
+    if (!v.montada && v.estado === 'error' && (a.montada || a.estado !== 'error')) ef.push(...c.fallo(v.detalle));
+    else if (a.montada && !v.montada) ef.push(...c.cerrada('cortada'));
+    ejecutar(ef);
+  });
+  const dueno = () => duenoAudio({ enLlamada: false, conversacion: ctl.vista().montada || ctl.vista().dormida || llamadaActiva(c.estado()), mesaVisible: true, appActiva: true });
+  ejecutar(c.llamar({ tipo: 'llamame' }));
+  ejecutar(c.contestar());
+  ctl.alEstado(ctl.vista().gen, 'escuchando');
+  assert.deepEqual(enviados, [], 'al contestar no se manda saludo (lo dice el agente)');
+  // La persona pide algo; el cerebro tarda y ElevenLabs corta la sesión («Server error»).
+  r.t += 2_000;
+  c.turnoUsuario('pon una alarma en tres minutos');
+  r.t += 5_000;
+  ctl.alEstado(ctl.vista().gen, 'error', 'Server error');
+  assert.equal(c.estado(), 'en_llamada', 'la llamada sigue (reconectando)');
+  ctl.alEstado(ctl.vista().gen, 'escuchando');
+  assert.deepEqual(enviados, ['[[reconecta]] pon una alarma en tres minutos'], 'la conversación nueva pide perdón y retoma lo que pidió');
+  // Se cae otra vez sin que la persona dijera nada en esta sesión: solo el perdón (la frase ya se mandó).
+  r.t += 3_000;
+  ctl.alEstado(ctl.vista().gen, 'error', 'Server error');
+  ctl.alEstado(ctl.vista().gen, 'escuchando');
+  assert.deepEqual(enviados.slice(1), [MENSAJE_RECONECTA]);
+  // Y otra: pasado el tope ya no reconecta: cuelga por fallo y el oído vuelve a la mesa.
+  ctl.alEstado(ctl.vista().gen, 'error', 'Server error');
+  assert.equal(ctl.vista().montada, false);
+  assert.equal(c.estado(), 'colgada');
+  assert.equal(c.motivo(), 'fallo');
+  assert.ok(efectos.includes('alNativo'), 'lo dice la mesa');
+  assert.equal(dueno(), 'mesa', 'el audio vuelve a la mesa');
+  assert.ok(!enviados.some((t) => /\[\[llamada\]\]/.test(t)), 'nunca otro saludo');
+});
+
+prueba('ciclo: `[[reconecta]]` solo con una frase reciente y de la persona (no las marcas de la app); silenciada no se manda', () => {
+  const { c, r } = cicloDePrueba();
+  c.llamar(RECL);
+  c.contestar();
+  c.sesionAbriendo();
+  assert.deepEqual(c.conectado(), [{ tipo: 'primerMensaje', texto: '[[recordatorio]] Llamar a Beto' }]);
+  // Una frase vieja (ya contestada) no se vuelve a hacer.
+  c.turnoUsuario('gracias');
+  r.t += FRASE_RECONECTA_MS + 1;
+  c.sesionAbriendo();
+  assert.deepEqual(c.conectado(), [{ tipo: 'primerMensaje', texto: MENSAJE_RECONECTA }]);
+  // Una marca que vuelve como «frase de la persona» (el eco del texto mandado) no cuenta.
+  c.turnoUsuario('[[reconecta]] gracias');
+  c.sesionAbriendo();
+  assert.deepEqual(c.conectado(), [{ tipo: 'primerMensaje', texto: MENSAJE_RECONECTA }]);
+  // Una frase YA CONTESTADA (el avatar habló de verdad después) no se vuelve a hacer al reconectar.
+  c.turnoUsuario('pon una alarma en tres minutos');
+  r.t += 500;
+  c.agente(true);
+  r.t += 3_000;
+  c.agente(false);
+  c.sesionAbriendo();
+  assert.deepEqual(c.conectado(), [{ tipo: 'primerMensaje', texto: MENSAJE_RECONECTA }], 'contestada: no se repite (la alarma no se pone dos veces)');
+  // Solo el relleno («Mmm… a ver.», corto) no la contesta: sí se retoma.
+  c.turnoUsuario('¿cómo va el oro?');
+  c.agente(true);
+  r.t += 900;
+  c.agente(false);
+  c.sesionAbriendo();
+  assert.deepEqual(c.conectado(), [{ tipo: 'primerMensaje', texto: '[[reconecta]] ¿cómo va el oro?' }]);
+  // Solo la ÚLTIMA frase, limpia.
+  c.turnoUsuario('hola');
+  c.turnoUsuario('  ¿y   mañana qué tengo? ');
+  c.sesionAbriendo();
+  assert.deepEqual(c.conectado(), [{ tipo: 'primerMensaje', texto: '[[reconecta]] ¿y mañana qué tengo?' }]);
+  // Silenciada: se reconecta callada (no se la oiría).
+  c.turnoUsuario('una cosa');
+  c.dobleToque();
+  c.sesionAbriendo();
+  assert.deepEqual(c.conectado(), []);
+  assert.equal(c.estado(), 'silenciado');
+  // Una llamada NUEVA no hereda nada de la anterior.
+  c.colgar();
+  c.listo();
+  c.llamar({ tipo: 'llamame' });
+  c.contestar();
+  c.sesionAbriendo();
+  assert.deepEqual(c.conectado(), []);
+  assert.equal(mensajeReconecta(''), MENSAJE_RECONECTA);
+  assert.equal(mensajeReconecta('x'.repeat(400)).length, MENSAJE_RECONECTA.length + 1 + 300);
 });
 
 prueba('ciclo: colgar corta la sesión y devuelve el oído de la mesa (con el ControlSesion y el dueño del audio reales)', () => {
@@ -1846,6 +2625,380 @@ prueba('«llámame» en la mesa: lo reconoce el intérprete del teléfono (sin r
   // El teléfono le dice al servidor que sabe esta mano (así el camino rápido del servidor también la usa).
   assert.ok(MANOS_APP.includes('llamame'));
   assert.ok(esAccionApp({ tipo: 'llamame' }));
+});
+
+/* ── la voz de la mesa con la conversación en vivo (auditoría 1-oct, el mismo arreglo que la web) ── */
+
+/** El ciclo y la sesión conectados como en el VozProvider: lo que pasa en la sesión se le cuenta al ciclo. */
+function llamadaConVozMesa() {
+  const { c: ciclo } = cicloDePrueba();
+  const control = new ControlSesion('aura', 'es');
+  const voz = { callada: false, cambios: [], alNativo: [] };
+  const ejecutar = (efs) => {
+    for (const ef of efs) {
+      if (ef.tipo === 'abrir') control.iniciar();
+      else if (ef.tipo === 'cerrar') control.terminar();
+      // Lo que la mesa diría con su voz: se anota si en ese instante podía hablar.
+      else if (ef.tipo === 'alNativo') voz.alNativo.push({ ...ef, mesaPodiaHablar: !voz.callada });
+    }
+  };
+  let antes = control.vista();
+  control.suscribir((v) => {
+    const a = antes;
+    antes = v;
+    const ef = [];
+    if (v.montada && v.estado === 'conectando' && (!a.montada || a.gen !== v.gen)) ef.push(...ciclo.sesionAbriendo());
+    if (v.montada && (v.estado === 'escuchando' || v.estado === 'hablando') && a.estado === 'conectando') ef.push(...ciclo.conectado());
+    if (!v.montada && v.estado === 'error' && (a.montada || a.estado !== 'error')) ef.push(...ciclo.fallo(v.detalle));
+    else if (a.montada && !v.montada) ef.push(...ciclo.cerrada('cortada'));
+    ejecutar(ef);
+  });
+  const off = seguirVozMesa(ciclo, control, (on) => {
+    voz.callada = on;
+    voz.cambios.push(on);
+  });
+  return { ciclo, control, voz, ejecutar, off };
+}
+
+prueba('voz de la mesa: con la conversación en vivo abierta calla (también lo que ya venía), y vuelve al colgar', () => {
+  const { ciclo, control, voz, ejecutar, off } = llamadaConVozMesa();
+  assert.equal(voz.callada, false, 'en reposo la mesa habla');
+  assert.deepEqual(voz.cambios, [false]);
+  // «Hablar»: la mesa calla en el MISMO instante en que el ciclo pasa a conectando, antes de abrir la
+  // sesión (un turno en camino no alcanza a decir nada en medio).
+  const ef = ciclo.hablarYa();
+  assert.equal(voz.callada, true, 'conectando: la mesa ya no habla');
+  ejecutar(ef);
+  assert.equal(control.vista().montada, true);
+  control.alEstado(control.vista().gen, 'escuchando');
+  assert.equal(ciclo.estado(), 'en_llamada');
+  control.alEstado(control.vista().gen, 'hablando');
+  assert.equal(voz.callada, true, 'en llamada, hablando el agente: la mesa calla');
+  ejecutar(ciclo.dobleToque());
+  assert.equal(voz.callada, true, 'silenciada sigue siendo la llamada: la mesa no habla por su cuenta');
+  ejecutar(ciclo.dobleToque());
+  ejecutar(ciclo.colgar());
+  assert.equal(control.vista().montada, false);
+  assert.equal(voz.callada, false, 'colgó: la mesa vuelve a tener voz');
+  assert.deepEqual(voz.cambios, [false, true, false], 'un solo aviso por cambio');
+  // Sonando (el timbre de un recordatorio) tampoco habla encima; rechazada, vuelve.
+  ciclo.tic();
+  ciclo.listo();
+  ciclo.llamar(RECL);
+  assert.equal(voz.callada, true, 'sonando: la mesa calla');
+  ciclo.rechazar();
+  assert.equal(voz.callada, false, 'rechazada: la mesa vuelve');
+  off();
+  ciclo.llamar({ tipo: 'llamame' });
+  assert.equal(voz.callada, false, 'sin seguirlos, ya no avisa');
+});
+
+prueba('voz de la mesa: una sesión montada por otro lado (sin llamada en el ciclo) también la calla', () => {
+  assert.equal(mesaCallada('reposo', { montada: true }), true);
+  assert.equal(mesaCallada('reposo', { montada: false }), false);
+  assert.equal(mesaCallada('colgada', { montada: false }), false);
+  for (const e of ['sonando', 'conectando', 'en_llamada', 'silenciado']) assert.equal(mesaCallada(e, { montada: false }), true, e);
+  const { control, voz } = llamadaConVozMesa();
+  control.iniciar();
+  assert.equal(voz.callada, true);
+});
+
+prueba('voz de la mesa: si la conversación falla (también conectando) la mesa recupera la voz ANTES de decir por qué', () => {
+  const { ciclo, control, voz, ejecutar } = llamadaConVozMesa();
+  // Un recordatorio que llama: contesta y la sesión no llega a conectar (el reintento tampoco).
+  ejecutar(ciclo.llamar(RECL));
+  ejecutar(ciclo.contestar());
+  assert.equal(voz.callada, true);
+  control.alEstado(control.vista().gen, 'error', 'webrtc: ice failed');
+  assert.equal(control.vista().montada, true, 'primero, un reintento: sigue siendo la llamada');
+  assert.equal(voz.callada, true, 'en el reintento la mesa sigue callada');
+  control.alEstado(control.vista().gen, 'error', 'webrtc: ice failed');
+  assert.equal(control.vista().montada, false, 'el fallo desmonta la sesión (y con eso ModoConversacion la cuelga)');
+  assert.equal(ciclo.estado(), 'colgada');
+  assert.equal(voz.callada, false);
+  assert.equal(voz.alNativo.length, 1, 'el recordatorio lo dice la mesa');
+  assert.equal(voz.alNativo[0].texto, RECL.texto);
+  assert.equal(voz.alNativo[0].mesaPodiaHablar, true, 'cuando lo pide el ciclo, la mesa ya tiene voz');
+});
+
+prueba('su computadora en la app: estado, pasos en palabras, sondeo y el aviso de la mesa (José, 2-oct)', () => {
+  const base = { configurada: true, ok: true, motores: ['holo'], ocupada: false, ultima: null, actual: null };
+  assert.equal(estadoEnPalabras(null).tono, 'espera');
+  assert.match(estadoEnPalabras({ ...base, configurada: false }).texto, /no está conectada/);
+  assert.match(estadoEnPalabras({ ...base, ok: false }).texto, /No contesta/);
+  assert.equal(estadoEnPalabras(base).texto, 'Lista para trabajar');
+  const trabajandoYa = { id: 't1', estado: 'trabajando', pasos: 3, instruccion: 'x', ultimo: 'Abrió es.wikipedia.org' };
+  assert.equal(estadoEnPalabras({ ...base, actual: trabajandoYa }).tono, 'trabaja');
+  assert.ok(pcTrabajando('en_cola') && pcTrabajando('trabajando') && !pcTrabajando('hecha'));
+  assert.ok(sondeoMs('trabajando', true) < sondeoMs('hecha', true), 'mientras trabaja se renueva rápido');
+  assert.ok(sondeoMs('hecha', false) >= 15000, 'sin trabajo, la mesa pregunta despacio');
+  const pasos = [{ n: 1, t: 1, accion: 'escritorio_limpio', texto: 'Abrió un escritorio limpio' }, { n: 2, t: 5, accion: 'open_url', texto: 'Abrió es.wikipedia.org' }];
+  assert.equal(tareaEnPalabras({ estado: 'trabajando', pasos, error: null }), 'Paso 1 · Abrió es.wikipedia.org');
+  assert.equal(tareaEnPalabras({ estado: 'hecha', pasos: [...pasos, { n: 3, t: 9, accion: 'answer' }], error: null }), 'Lista en 1 pasos');
+  assert.equal(tareaEnPalabras({ estado: 'fallo', pasos, error: 'sin red' }), 'Falló: sin red');
+  // El aviso de la mesa: mientras trabaja dice en qué va; al terminar, «terminó» una vez; antes de nada, nada.
+  assert.equal(avisoMesa(null, null), null);
+  assert.deepEqual(avisoMesa(null, trabajandoYa), { texto: 'Su computadora · Abrió es.wikipedia.org', terminada: false });
+  const hecha = { ...trabajandoYa, estado: 'hecha' };
+  assert.deepEqual(avisoMesa(trabajandoYa, hecha), { texto: 'Su computadora terminó · ver el resultado', terminada: true });
+  assert.equal(avisoMesa(hecha, hecha), null, 'no se repite');
+  assert.equal(avisoMesa(null, hecha), null, 'una vieja al abrir la app no se anuncia');
+  for (const e of EJEMPLOS_PC) assert.ok(e.es.length > 20 && e.en.length > 20 && /\.(org|hn|com)| Google/.test(e.es), 'cada ejemplo dice la página');
+});
+
+prueba('su computadora en vivo: se abre sola, teclea, cuenta avances sin hablar encima y dice el resultado (José, 2-oct)', () => {
+  // Los avisos que manda el servidor (server/computadora.ts) los acepta el puente; lo mal formado, no.
+  assert.ok(esAccionApp({ tipo: 'computadora', fase: 'empieza', id: 'g1' }));
+  assert.ok(esAccionApp({ tipo: 'computadora', fase: 'termina', id: 'g1', ok: true, texto: 'Listo.', boleto: 'abcdEFGH1234' }));
+  assert.ok(!esAccionApp({ tipo: 'computadora', fase: 'bailar', id: 'g1' }));
+  assert.ok(!esAccionApp({ tipo: 'computadora', fase: 'paso', id: 'g 1' }));
+  assert.ok(!esAccionPc({ tipo: 'computadora', fase: 'paso', id: 'g1', texto: '' }));
+  // Las pantallas de más, desde cualquier pantalla.
+  for (const p of ['computadora', 'whatsapp', 'correos']) assert.ok(esAccionApp({ tipo: 'abrir', pantalla: p }), p);
+  assert.ok(!esAccionApp({ tipo: 'abrir', pantalla: 'banco' }));
+
+  let ahora = 1_000_000;
+  const relojes = [];
+  const esperar = (f, ms) => {
+    const r = { f, en: ahora + ms, vivo: true };
+    relojes.push(r);
+    return () => (r.vivo = false);
+  };
+  const avanzar = (ms) => {
+    const fin = ahora + ms;
+    for (;;) {
+      const r = relojes.filter((x) => x.vivo && x.en <= fin).sort((a, b) => a.en - b.en)[0];
+      if (!r) break;
+      ahora = r.en;
+      r.vivo = false;
+      r.f();
+    }
+    ahora = fin;
+  };
+  const vistas = [];
+  const dichos = [];
+  const sonidos = [];
+  let ocupado = false;
+  let enLlamada = false;
+  const c = new CompaneroPc({
+    abrirVista: (id) => vistas.push(id),
+    puedeAbrir: () => !enLlamada,
+    decir: (texto, boleto) => dichos.push({ texto, boleto }),
+    sonido: (on) => sonidos.push(on),
+    ocupado: () => ocupado,
+    esperar,
+    reloj: () => ahora,
+  });
+  c.alAccion({ tipo: 'computadora', fase: 'empieza', id: 'g1' });
+  assert.deepEqual(vistas, ['g1'], 'la vista en vivo se abre sola');
+  assert.deepEqual(sonidos, [true], 'y suena el tecleo');
+  assert.equal(c.trabajando, true);
+  c.alAccion({ tipo: 'computadora', fase: 'paso', id: 'g1', texto: 'Ya entré a bch.hn.', boleto: 'b1b1b1b1b1' });
+  assert.deepEqual(dichos, [{ texto: 'Ya entré a bch.hn.', boleto: 'b1b1b1b1b1' }]);
+  // Otro avance enseguida: no (nunca dos seguidas).
+  avanzar(MIN_ENTRE_FRASES_MS - 1000);
+  c.alAccion({ tipo: 'computadora', fase: 'paso', id: 'g1', texto: 'Estoy leyendo la página.', boleto: 'b2b2b2b2b2' });
+  assert.equal(dichos.length, 1);
+  assert.equal(c.ultimaFrase, 'Estoy leyendo la página.', 'la vista la muestra igual');
+  // La persona habla: los avances esperan.
+  avanzar(5000);
+  c.personaHablo();
+  c.alAccion({ tipo: 'computadora', fase: 'paso', id: 'g1', texto: 'Analizando los resultados…', boleto: 'b3b3b3b3b3' });
+  assert.equal(dichos.length, 1, 'no se le habla encima a la persona');
+  avanzar(PAUSA_TRAS_PERSONA_MS);
+  ocupado = true; // AURA está hablando de otra cosa
+  c.alAccion({ tipo: 'computadora', fase: 'paso', id: 'g1', texto: 'Sigo navegando.', boleto: 'b4b4b4b4b4' });
+  assert.equal(dichos.length, 1, 'ni encima de AURA');
+  ocupado = false;
+  c.alAccion({ tipo: 'computadora', fase: 'paso', id: 'g1', texto: 'Toqué «Tipo de cambio».', boleto: 'b5b5b5b5b5' });
+  assert.equal(dichos.length, 2);
+  // La persona cierra la vista; la misión sigue con otra tarea: no se la vuelve a abrir, pero se cuenta.
+  c.vistaCerrada();
+  avanzar(MIN_ENTRE_FRASES_MS);
+  c.alAccion({ tipo: 'computadora', fase: 'sigue', id: 'g2', texto: 'Me falta un poco; sigo con la misión.', boleto: 'b6b6b6b6b6' });
+  assert.deepEqual(vistas, ['g1'], 'cerró la vista: no se le abre otra vez');
+  assert.equal(c.tareaId, 'g2');
+  assert.equal(dichos.at(-1).texto, 'Me falta un poco; sigo con la misión.');
+  // El resultado: espera a que haya silencio y lo dice; el tecleo se apaga.
+  ocupado = true;
+  c.alAccion({ tipo: 'computadora', fase: 'termina', id: 'g2', ok: true, texto: 'Listo, ya terminé en mi computadora. Compra 24.70.', boleto: 'b7b7b7b7b7' });
+  assert.equal(c.trabajando, false);
+  assert.equal(sonidos.at(-1), false, 'se apaga el tecleo');
+  assert.equal(dichos.at(-1).texto, 'Me falta un poco; sigo con la misión.', 'todavía no: alguien habla');
+  avanzar(2000);
+  ocupado = false;
+  avanzar(600);
+  assert.deepEqual(dichos.at(-1), { texto: 'Listo, ya terminé en mi computadora. Compra 24.70.', boleto: 'b7b7b7b7b7' });
+  // Aunque sigan hablando, al tope se dice igual.
+  ocupado = true;
+  c.alAccion({ tipo: 'computadora', fase: 'termina', id: 'g2', ok: false, texto: 'No alcancé a terminar.', boleto: 'b8b8b8b8b8' });
+  avanzar(FINAL_ESPERA_MAX_MS + 600);
+  assert.equal(dichos.at(-1).texto, 'No alcancé a terminar.');
+  ocupado = false;
+  // Una nueva tarea con una llamada de PULSE2CHAT: no se le abre nada encima.
+  enLlamada = true;
+  c.alAccion({ tipo: 'computadora', fase: 'empieza', id: 'g3' });
+  assert.deepEqual(vistas, ['g1']);
+  // Sin noticias: el tecleo no se queda sonando para siempre.
+  avanzar(TOPE_TRABAJO_MS + 1);
+  assert.equal(c.trabajando, false);
+  assert.equal(sonidos.at(-1), false);
+  // El sondeo ve que terminó aunque el aviso se perdiera; y la misión que siguió sin avisar.
+  c.alAccion({ tipo: 'computadora', fase: 'empieza', id: 'g4' });
+  c.alEstado('g5', true);
+  assert.equal(c.tareaId, 'g5');
+  c.alEstado('g5', false);
+  assert.equal(c.trabajando, false);
+});
+
+prueba('su computadora: una respuesta vieja no vuelve a la tarea de antes, el sí nombra su pregunta y encargar lleva su id (auditoría 3-oct, PC05/PC01/PC04)', () => {
+  const v = new VistaPc();
+  // Mira la tarea t1; sale un GET de t1 (y uno del estado general).
+  v.elegir('t1');
+  const deT1 = v.boleto();
+  const estadoViejo = v.boleto();
+  // Mientras iban, encarga otra: la vista pasa a t2.
+  assert.equal(v.elegir('t2'), true);
+  assert.equal(v.acepta(deT1, 't1', 10), false, 'la respuesta de t1 ya no se pinta');
+  assert.equal(v.puedeCambiar(estadoViejo), false, 'el estado viejo (ultima: t1) no cambia la tarea elegida');
+  assert.equal(v.id, 't2');
+  // Las de t2: la más nueva gana aunque llegue primero; la vieja que llega tarde no la pisa.
+  const a = v.boleto();
+  const b = v.boleto();
+  assert.equal(v.acepta(b, 't2', 200), true);
+  assert.equal(v.acepta(a, 't2', 100), false, 'versión menor: llegó tarde');
+  assert.equal(v.acepta(v.boleto(), 't2', 300), true);
+  assert.equal(v.acepta(v.boleto(), 't2'), true, 'un servidor sin versión: se pinta como antes');
+  assert.equal(v.elegir('t2'), false, 'elegir la misma no cambia la época');
+  // AUR04: un final no se reabre. Una respuesta con versión mayor pero estado vivo viejo (salió antes del final) no
+  // vuelve a poner «pausada» sobre «hecha»; otra tarea no se contagia.
+  assert.equal(v.acepta(v.boleto(), 't2', 400, 'hecha'), true);
+  assert.equal(v.terminada('t2'), true);
+  assert.equal(v.acepta(v.boleto(), 't2', 500, 'pausada'), false, 'hecha → pausada no');
+  assert.equal(v.acepta(v.boleto(), 't2', 600, 'parada'), true, 'un final sí se pinta (el del servidor manda)');
+  v.elegir('t3');
+  assert.equal(v.acepta(v.boleto(), 't3', 700, 'trabajando'), true);
+  assert.equal(v.terminada('t3'), false);
+  // El estado general: también por versión.
+  assert.equal(v.aceptaEstado(50), true);
+  assert.equal(v.aceptaEstado(40), false);
+  assert.equal(v.aceptaEstado(undefined), true);
+  // El sí lleva la pregunta que vio (la de la misión; si no, la de la tarea).
+  assert.deepEqual(respuestaPc(true, { preguntaId: 'p2' }, { pregunta_id: 'p1' }), { si: true, preguntaId: 'p2' });
+  assert.deepEqual(respuestaPc(false, null, { pregunta_id: 'p1' }), { si: false, preguntaId: 'p1' });
+  assert.deepEqual(respuestaPc(true, null, null), { si: true });
+  // Revisión 4-oct: la huella de la propuesta va con su pregunta, de la misma fuente (nunca la de otra).
+  assert.deepEqual(respuestaPc(true, { preguntaId: 'p2', propuesta: 'h2' }, { pregunta_id: 'p1', propuesta: 'h1' }), { si: true, preguntaId: 'p2', propuesta: 'h2' });
+  assert.deepEqual(respuestaPc(true, { preguntaId: 'p2' }, { pregunta_id: 'p1', propuesta: 'h1' }), { si: true, preguntaId: 'p2' });
+  assert.deepEqual(respuestaPc(true, null, { pregunta_id: 'p1', propuesta: 'h1' }), { si: true, preguntaId: 'p1', propuesta: 'h1' });
+  // Cada encargo, su id (el servidor lo acepta: letras, números y . _ : -; de 8 a 80).
+  const p1 = nuevoPedidoPc();
+  assert.match(p1, /^[A-Za-z0-9._:-]{8,80}$/);
+  assert.notEqual(nuevoPedidoPc(), p1);
+});
+
+prueba('su computadora como un agente: plan, tu sí antes de algo sensible, pausa y control, resultado para compartir (José, 2-oct: «como Grok, el agente de ChatGPT»)', () => {
+  // Los avisos nuevos del servidor: bien formados pasan; lo raro, no.
+  assert.ok(esAccionPc({ tipo: 'computadora', fase: 'empieza', id: 'g1', plan: ['Entrar a bch.hn', 'Darte el resultado'] }));
+  assert.ok(esAccionPc({ tipo: 'computadora', fase: 'confirmar', id: 'g1', pregunta: '¿Envío el formulario?', texto: 'Antes de seguir necesito tu sí.', boleto: 'abcdEFGH1234' }));
+  assert.ok(esAccionPc({ tipo: 'computadora', fase: 'pausa', id: 'g1', estado: 'control' }));
+  assert.ok(esAccionPc({ tipo: 'computadora', fase: 'reanuda', id: 'g1' }));
+  assert.ok(esAccionApp({ tipo: 'computadora', fase: 'confirmar', id: 'g1', pregunta: '¿Lo hago?' }), 'el puente de acciones también los deja pasar');
+  assert.ok(!esAccionPc({ tipo: 'computadora', fase: 'empieza', id: 'g1', plan: [] }));
+  assert.ok(!esAccionPc({ tipo: 'computadora', fase: 'empieza', id: 'g1', plan: ['a', 'b', 'c', 'd', 'e', 'f', 'g'] }));
+  assert.ok(!esAccionPc({ tipo: 'computadora', fase: 'pausa', id: 'g1', estado: 'dormida' }));
+  assert.ok(!esAccionPc({ tipo: 'computadora', fase: 'confirmar', id: 'g1', pregunta: '' }));
+  // Vivas pero quietas: siguen vivas (la vista y la mesa las muestran), pero sin tecleo.
+  for (const e of ['pausada', 'confirmar', 'control']) assert.ok(pcTrabajando(e) && pcQuieta(e) && !pcEnMarcha(e), e);
+  assert.ok(pcEnMarcha('trabajando') && !pcQuieta('trabajando') && !pcTrabajando('parada'));
+  const base = { configurada: true, ok: true, motores: ['holo'], ocupada: true, ultima: 'g1' };
+  const actual = (estado) => ({ ...base, actual: { id: 'g1', estado, pasos: 2, instruccion: 'x', ultimo: null } });
+  assert.equal(estadoEnPalabras(actual('confirmar')).texto, 'Espera tu sí');
+  assert.equal(estadoEnPalabras(actual('pausada')).texto, 'En pausa');
+  assert.equal(estadoEnPalabras(actual('control'), 'en').texto, 'You have control');
+  assert.equal(tareaEnPalabras({ estado: 'confirmar', pasos: [], error: null }), 'Espera tu sí para seguir');
+  assert.deepEqual(avisoMesa(null, actual('confirmar').actual), { texto: 'Su computadora espera tu sí · ver', terminada: false });
+  // El reloj, las marcas del plan, el toque en la pantalla (en [0, 1000]) y cómo terminó.
+  assert.deepEqual([0, 42, 725, 3729].map((x) => relojMision(x)), ['0:00', '0:42', '12:05', '1:02:09']);
+  assert.deepEqual(['hecho', 'actual', 'espera', 'pendiente', 'fallo'].map(marcaPlan), ['✓', '●', 'Ⅱ', '○', '✕']);
+  assert.deepEqual(aCoordenadas(160, 50, 320, 200), { x: 500, y: 250 });
+  assert.deepEqual(aCoordenadas(-5, 999, 320, 200), { x: 0, y: 1000 });
+  assert.equal(finalEnPalabras({ estado: 'hecha', ok: true }), 'Listo');
+  assert.equal(finalEnPalabras({ estado: 'parada', ok: false }), 'Detenida');
+  assert.equal(finalEnPalabras({ estado: 'sin_pasos', ok: false }), 'A medias');
+  assert.equal(haceCuanto(1_000_000, 1_000_000 + 5 * 60_000), 'hace 5 min');
+  // Los mandos: con el servicio nuevo, Pausar / Seguir / Tomar el control / Devolver; con el viejo solo Detener y se explica.
+  const caps = ['pausar', 'confirmar', 'control'];
+  assert.deepEqual(controlesPc(caps, 'trabajando'), { detener: true, pausar: true, seguir: false, tomar: true, devolver: false, contestar: false, faltaActualizar: false });
+  assert.deepEqual(controlesPc(caps, 'pausada'), { detener: true, pausar: false, seguir: true, tomar: true, devolver: false, contestar: false, faltaActualizar: false });
+  assert.deepEqual(controlesPc(caps, 'control'), { detener: true, pausar: false, seguir: false, tomar: false, devolver: true, contestar: false, faltaActualizar: false });
+  assert.equal(controlesPc(caps, 'confirmar').contestar, true);
+  assert.deepEqual(controlesPc([], 'trabajando'), { detener: true, pausar: false, seguir: false, tomar: false, devolver: false, contestar: false, faltaActualizar: true });
+  assert.equal(controlesPc(caps, 'hecha').detener, false, 'terminada: no hay nada que detener');
+  // Compartir: la misión, lo que encontró, los datos que no estaban en el texto y los enlaces.
+  const compartido = textoParaCompartir('Entra a bch.hn y dime el dólar', { ok: true, respuesta: 'Compra: 24.70. Venta: 24.95.', error: null, datos: [{ clave: 'Compra', valor: '24.70' }, { clave: 'Fecha', valor: '2 de octubre' }], enlaces: ['https://www.bch.hn/tipo-de-cambio'] });
+  assert.equal(compartido, '«Entra a bch.hn y dime el dólar»\n\nCompra: 24.70. Venta: 24.95.\n\nFecha: 2 de octubre\n\nhttps://www.bch.hn/tipo-de-cambio\n\n— desde la computadora de AU-RA');
+  assert.match(textoParaCompartir('x', { ok: false, respuesta: null, error: 'sin red', datos: [], enlaces: [] }), /No terminó: sin red\./);
+
+  // El compañero: el plan al empezar (encargada desde la app lo dice), la pregunta abre la vista y calla el
+  // tecleo, el sí la reanuda, la pausa y el control también callan, y quieta no se apaga a los 6 minutos.
+  let ahora = 1_000_000;
+  const relojes = [];
+  const esperar = (f, ms) => {
+    const r = { f, en: ahora + ms, vivo: true };
+    relojes.push(r);
+    return () => (r.vivo = false);
+  };
+  const avanzar = (ms) => {
+    const fin = ahora + ms;
+    for (;;) {
+      const r = relojes.filter((x) => x.vivo && x.en <= fin).sort((a, b) => a.en - b.en)[0];
+      if (!r) break;
+      ahora = r.en;
+      r.vivo = false;
+      r.f();
+    }
+    ahora = fin;
+  };
+  const vistas = [];
+  const dichos = [];
+  const sonidos = [];
+  const c = new CompaneroPc({ abrirVista: (id) => vistas.push(id), puedeAbrir: () => true, decir: (texto, boleto) => dichos.push({ texto, boleto }), sonido: (on) => sonidos.push(on), ocupado: () => false, esperar, reloj: () => ahora });
+  c.alAccion({ tipo: 'computadora', fase: 'empieza', id: 'm1', plan: ['Entrar a sar.gob.hn', 'Llenar el formulario', 'Darte el resultado'], texto: 'Va. Mi plan: entrar a sar.gob.hn, llenar el formulario y darte el resultado.', boleto: 'p1p1p1p1p1' });
+  assert.deepEqual(c.plan, ['Entrar a sar.gob.hn', 'Llenar el formulario', 'Darte el resultado']);
+  assert.deepEqual(dichos.at(-1), { texto: 'Va. Mi plan: entrar a sar.gob.hn, llenar el formulario y darte el resultado.', boleto: 'p1p1p1p1p1' });
+  assert.deepEqual(sonidos, [true]);
+  c.vistaCerrada(); // la cerró… pero una pregunta es para ella: se le abre otra vez
+  c.alAccion({ tipo: 'computadora', fase: 'confirmar', id: 'm1', pregunta: 'Voy a tocar «Enviar». ¿Lo hago?', texto: 'Antes de seguir necesito tu sí. Voy a tocar «Enviar». ¿Lo hago? Dime sí o no.', boleto: 'q1q1q1q1q1' });
+  assert.deepEqual(vistas, ['m1', 'm1'], 'se abre con los botones');
+  assert.equal(c.quieta, 'confirmar');
+  assert.equal(c.pregunta, 'Voy a tocar «Enviar». ¿Lo hago?');
+  assert.equal(sonidos.at(-1), false, 'esperando su sí no suena el tecleo');
+  assert.equal(dichos.at(-1).texto, 'Antes de seguir necesito tu sí. Voy a tocar «Enviar». ¿Lo hago? Dime sí o no.');
+  avanzar(TOPE_TRABAJO_MS + 1000);
+  assert.equal(c.trabajando, true, 'quieta esperando su sí no se da por muerta a los 6 minutos');
+  c.alAccion({ tipo: 'computadora', fase: 'reanuda', id: 'm1' });
+  assert.equal(c.quieta, null);
+  assert.equal(c.pregunta, null, 'se quitan los botones');
+  assert.equal(sonidos.at(-1), true, 'vuelve el tecleo');
+  c.alAccion({ tipo: 'computadora', fase: 'pausa', id: 'm1', estado: 'control', texto: 'Listo, la computadora es tuya.', boleto: 'c1c1c1c1c1' });
+  assert.equal(c.quieta, 'control');
+  assert.equal(sonidos.at(-1), false);
+  assert.equal(dichos.at(-1).texto, 'Listo, la computadora es tuya.', 'AURA lo dice aunque acabe de hablar: lo pidió la persona');
+  c.alAccion({ tipo: 'computadora', fase: 'pausa', id: 'otra', estado: 'pausada' });
+  assert.equal(c.quieta, 'control', 'el aviso de otra tarea no toca esta');
+  // El sondeo ve que volvió a avanzar aunque el «reanuda» se perdiera.
+  c.alEstado('m1', true, 'trabajando');
+  assert.equal(c.quieta, null);
+  assert.equal(sonidos.at(-1), true);
+  c.alEstado('m1', true, 'pausada');
+  assert.equal(c.quieta, 'pausada');
+  avanzar(TOPE_QUIETA_MS + 1000);
+  assert.equal(c.trabajando, false, 'tampoco para siempre: al tope de lo quieto se apaga');
+  // Detener: termina sin texto (lo pidió la persona); todo limpio.
+  c.alAccion({ tipo: 'computadora', fase: 'empieza', id: 'm2' });
+  c.alAccion({ tipo: 'computadora', fase: 'termina', id: 'm2', ok: false });
+  assert.deepEqual({ trabajando: c.trabajando, quieta: c.quieta, pregunta: c.pregunta }, { trabajando: false, quieta: null, pregunta: null });
 });
 
 for (const [nombre, f] of pruebas) {

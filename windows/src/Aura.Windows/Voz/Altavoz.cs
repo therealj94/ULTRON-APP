@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -16,16 +17,26 @@ namespace Aura.Windows.Voz;
 internal sealed class Altavoz : IDisposable
 {
     readonly object candado = new();
-    readonly Queue<(Task<Core.Audio?> Audio, string Texto)> cola = new();
+    readonly Queue<(Task<Core.Audio?> Audio, string Texto, bool Relleno, long Turno)> cola = new();
     CancellationTokenSource corte = new();
     Task? bucle;
     WaveOutEvent? salida;
     long generacion;
 
     public event Action<double>? Nivel;
+    /// <summary>
+    /// Empezó a sonar de verdad: el dispositivo ya está pidiendo muestras (antes se avisaba ANTES de abrirlo,
+    /// y la métrica de «primera voz» contaba de menos: auditoría 1-oct, H08).
+    /// </summary>
     public event Action? Empezo;
+    /// <summary>Llegó el audio TTS de una frase (relleno o no, de qué turno, Stopwatch.GetTimestamp() del momento).</summary>
+    public event Action<bool, long, long>? AudioRecibido;
+    /// <summary>Una frase empezó a sonar en el dispositivo (relleno o no, de qué turno, Stopwatch.GetTimestamp()).</summary>
+    public event Action<bool, long, long>? Reproduciendo;
     /// <summary>Empieza a sonar esta frase (para el subtítulo).</summary>
     public event Action<string>? Frase;
+    /// <summary>Esta frase ya está abierta para sonar, con lo que dura su audio en segundos (null si no se sabe): el orbe forma sus palabras a ese ritmo.</summary>
+    public event Action<string, double?>? FraseConDuracion;
     /// <summary>Se vació la cola y ya no suena nada.</summary>
     public event Action? Termino;
     public event Action<string>? Fallo;
@@ -33,12 +44,12 @@ internal sealed class Altavoz : IDisposable
     /// <summary>Suena algo o hay frases esperando su audio.</summary>
     public bool Ocupado { get { lock (candado) return cola.Count > 0 || bucle is { IsCompleted: false }; } }
 
-    /// <summary>Encola el audio de una frase (la tarea ya está pidiéndolo).</summary>
-    public void Encolar(Task<Core.Audio?> audio, string texto)
+    /// <summary>Encola el audio de una frase (la tarea ya está pidiéndolo). <paramref name="relleno"/>: «A ver…», no cuenta como respuesta.</summary>
+    public void Encolar(Task<Core.Audio?> audio, string texto, bool relleno = false, long turno = 0)
     {
         lock (candado)
         {
-            cola.Enqueue((audio, texto));
+            cola.Enqueue((audio, texto, relleno, turno));
             if (bucle == null || bucle.IsCompleted) { var gen = generacion; var ct = corte.Token; bucle = Task.Run(() => Reproducir(gen, ct)); }
         }
     }
@@ -48,7 +59,7 @@ internal sealed class Altavoz : IDisposable
         bool avisado = false;
         while (!ct.IsCancellationRequested)
         {
-            (Task<Core.Audio?> Audio, string Texto) siguiente;
+            (Task<Core.Audio?> Audio, string Texto, bool Relleno, long Turno) siguiente;
             lock (candado)
             {
                 if (cola.Count == 0) { bucle = null; break; }
@@ -59,9 +70,16 @@ internal sealed class Altavoz : IDisposable
             catch (OperationCanceledException) { continue; }
             catch (Exception ex) { Fallo?.Invoke(ex.Message); continue; }
             if (audio == null || audio.Bytes.Length < 100 || ct.IsCancellationRequested) continue;
-            if (!avisado) { avisado = true; Sonando = true; Empezo?.Invoke(); }
+            AudioRecibido?.Invoke(siguiente.Relleno, siguiente.Turno, Stopwatch.GetTimestamp());
             Frase?.Invoke(siguiente.Texto);
-            try { await Sonar(audio, ct).ConfigureAwait(false); }
+            var actual = siguiente;
+            void AlSonar()
+            {
+                if (ct.IsCancellationRequested) return;
+                Reproduciendo?.Invoke(actual.Relleno, actual.Turno, Stopwatch.GetTimestamp());
+                if (!avisado) { avisado = true; Sonando = true; Empezo?.Invoke(); }
+            }
+            try { await Sonar(audio, siguiente.Texto, ct, AlSonar).ConfigureAwait(false); }
             catch (OperationCanceledException) { }
             catch (Exception ex) { Fallo?.Invoke("No pude reproducir la voz: " + ex.Message); }
         }
@@ -69,12 +87,16 @@ internal sealed class Altavoz : IDisposable
         if (gen == Interlocked.Read(ref generacion)) { Sonando = false; Termino?.Invoke(); }
     }
 
-    async Task Sonar(Core.Audio audio, CancellationToken ct)
+    async Task Sonar(Core.Audio audio, string texto, CancellationToken ct, Action alSonar)
     {
         using var ms = new MemoryStream(audio.Bytes);
         using WaveStream lector = audio.Tipo.Contains("wav") ? new WaveFileReader(ms) : new StreamMediaFoundationReader(ms);
+        double? dura = null;
+        try { var d = lector.TotalTime.TotalSeconds; if (d > 0 && double.IsFinite(d)) dura = d; } catch { /* sin duración: el orbe reparte por sílabas */ }
+        FraseConDuracion?.Invoke(texto, dura);
         var medidor = new MeteringSampleProvider(lector.ToSampleProvider(), Math.Max(1, lector.WaveFormat.SampleRate / 50));
-        medidor.StreamVolume += (_, e) => { float m = 0; foreach (var v in e.MaxSampleValues) m = Math.Max(m, v); Nivel?.Invoke(Math.Min(1, m * 1.4)); };
+        int primera = 0;
+        medidor.StreamVolume += (_, e) => { if (Interlocked.Exchange(ref primera, 1) == 0) alSonar(); float m = 0; foreach (var v in e.MaxSampleValues) m = Math.Max(m, v); Nivel?.Invoke(Math.Min(1, m * 1.4)); };
         var fin = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var o = new WaveOutEvent { DesiredLatency = 120 };
         lock (candado) salida = o;

@@ -14,6 +14,10 @@
  * Cuando ya no queda ninguna, avisa `libre: true`; al tomarla la primera, `libre: false`. El
  * VozProvider lo pasa al bus del contrato (`voz`), que es lo que escucha la llamada.
  *
+ * La mesa también espera (`esperarLibre`): al colgar la llamada del avatar reabre su reconocedor, y en
+ * Android el `stopAudioSession` que llega después se lo mataba (1-oct: «después de colgar el micrófono
+ * de la mesa dejó de escuchar»). Reabre cuando la voz quedó libre, o al tope si nadie avisa.
+ *
  * Sin React Native: se prueba en Node.
  */
 type Temporizador = (f: () => void, ms: number) => () => void;
@@ -28,6 +32,7 @@ export const TOPE_CIERRE_MS = 4_000;
 export class AudioVoz {
   private tomadas = new Set<number>();
   private topes = new Map<number, () => void>();
+  private esperan = new Set<() => void>();
 
   constructor(
     private avisar: (libre: boolean) => void,
@@ -52,7 +57,24 @@ export class AudioVoz {
     this.topes.get(gen)?.();
     this.topes.delete(gen);
     if (!this.tomadas.delete(gen)) return;
-    if (this.libre()) this.avisar(true);
+    if (!this.libre()) return;
+    this.avisar(true);
+    for (const f of [...this.esperan]) f();
+  }
+
+  /** Resuelve cuando el audio quede libre (ya, si lo está), o a los `topeMs` aunque nadie avise. */
+  esperarLibre(topeMs = this.topeMs): Promise<void> {
+    if (this.libre()) return Promise.resolve();
+    return new Promise<void>((listo) => {
+      let cancelar: () => void = () => {};
+      const fin = () => {
+        if (!this.esperan.delete(fin)) return;
+        cancelar();
+        listo();
+      };
+      this.esperan.add(fin);
+      cancelar = this.esperar(fin, topeMs);
+    });
   }
 
   /** Se pidió cerrar `gen` (se desmontó): si no avisa en `topeMs`, se suelta igual. */

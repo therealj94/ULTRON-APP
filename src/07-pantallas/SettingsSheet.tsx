@@ -136,7 +136,7 @@ function QuienProcesa({ cat }: { cat: Catalogo | null }) {
   const filas: Array<{ que: string; como: string }> = [
     {
       que: 'Lo que decís por el micrófono',
-      como: 'Lo transcribe el reconocimiento de voz de tu navegador. En Chrome y Edge ese servicio envía el audio a servidores de Google o de Microsoft; AU-RA recibe solo el texto.',
+      como: 'Mientras hablás, tu voz va en vivo a ElevenLabs (Scribe v2 Realtime Turbo) con un permiso de un solo uso que da el servidor de AU-RA; lo de dinero también pasa por el servidor para confirmarlo. Si el navegador no deja abrir el micrófono así, lo transcribe el reconocimiento de voz del navegador (en Chrome y Edge, servicios de Google o de Microsoft).',
     },
     {
       que: 'Lo que escribís o decís, y la respuesta',
@@ -329,7 +329,7 @@ export const SettingsSheet: React.FC<Props> = (p) => {
             <div className="aura-tarjeta honda p-3">
               <p className="text-[15px] font-semibold text-(--aura-tinta)">Cómo te oye</p>
               <p className="text-[14px] text-(--aura-tinta-2) mt-0.5">
-                Con el micrófono abierto escucha todo el tiempo y podés interrumpirla hablando. En esta web lo transcribe el reconocimiento de voz del navegador (ver «Privacidad y datos»); en Firefox no hay, y se escribe.
+                Con el micrófono abierto escucha todo el tiempo y podés interrumpirla hablando. En esta web tu voz va en vivo a ElevenLabs (Scribe v2 Realtime Turbo) y el texto aparece mientras hablás; si el navegador no lo permite, usa el reconocimiento de voz del navegador (ver «Privacidad y datos»).
               </p>
             </div>
             <Repertorio cat={cat} onEjemplo={ejemplo} />

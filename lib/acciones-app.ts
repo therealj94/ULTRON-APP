@@ -39,7 +39,8 @@ import {
   dichoDePropuesta,
   dichoNegado,
   manoDe,
-  instruccionManos,
+  estadoManos,
+  reglasManos,
   limpiarDicho,
   manoPorReglas,
   MAX_LECTURA,
@@ -55,12 +56,21 @@ import {
   type Propuesta,
   type RecordatorioApp,
 } from './manos-app';
+import { controlExplicito, dichoDeControl, interpretarControl, respuestaAclaracion, type ControlVoz, type EstadoControles, type QueTarea } from './controles-voz';
 
 export type { AccionMano, Mano, Propuesta, RecordatorioApp } from './manos-app';
+export type { ControlVoz, EstadoControles } from './controles-voz';
 export { turnoDeRecordatorio } from './manos-app';
 export { dichoDePropuesta, preguntaDePropuesta } from './manos-app';
 
-export type Pantalla = 'mesa' | 'chats' | 'ajustes' | 'perfil';
+/**
+ * Las pantallas que «abrir» sabe abrir. `computadora` es la vista en vivo de su computadora en la nube
+ * (mobile/src/ajustes/Computadora.tsx), `whatsapp` los chats con la pestaña de WhatsApp y `correos` sus
+ * buzones (mobile/src/ajustes/Correos.tsx). José (2-oct), en Ajustes: «abre la computadora» y AURA no sabía.
+ * `misiones`, `conocer` (lo que AU-RA sabe de la persona y lo que quedó a medias) y `circulo` (su familia y
+ * socios) son hojas de toda la app (mobile/src/app/HojasCerebro.tsx).
+ */
+export type Pantalla = 'mesa' | 'chats' | 'ajustes' | 'perfil' | 'computadora' | 'whatsapp' | 'correos' | 'misiones' | 'conocer' | 'circulo';
 export type TemaApp = 'oscuro' | 'claro' | 'sistema';
 export type AvatarApp = 'ojos' | 'aura' | 'claudio' | 'antonio';
 /** Cómo está AURA en el teléfono: chiquita caminando, al lado de los chats o a pantalla completa. */
@@ -78,7 +88,65 @@ export type AccionApp =
   | { tipo: 'silencio'; valor: boolean }
   | { tipo: 'presencia'; valor: PresenciaApp }
   /** Las manos nuevas (llamar, leer, buscar, idioma, perfil, recordatorios): lib/manos-app.ts. */
-  | AccionMano;
+  | AccionMano
+  /** Lo que hace su computadora en la nube (server/computadora.ts). Solo la empuja el servidor. */
+  | AccionComputadora
+  /** Lo que AU-RA propone por su cuenta (server/iniciativa.ts). Solo la empuja el servidor. */
+  | AccionIniciativa
+  /** Los controles de voz separados (AUR10). Solo los decide el camino rápido, con lo que dijo la persona. */
+  | AccionControl;
+
+/**
+ * LOS CONTROLES DE VOZ QUE HACE EL TELÉFONO (AUR10, lib/controles-voz.ts), cada uno con UN efecto:
+ *  · detener_audio: para lo que suena y su cola (no silencia el micrófono, no cancela la tarea);
+ *  · colgar: cierra la llamada y sus recursos (la tarea sigue como estaba);
+ *  · tarea: pausar, seguir, cancelar o tomar el control de su computadora (no cuelga).
+ * Silenciar o volver a abrir el micrófono sigue siendo `silencio`. Solo a un teléfono con la mano
+ * `controles`; el modelo NO puede pedirlos (`validarAccion` no los conoce): salen de lo que dijo la persona.
+ */
+export type AccionControl = { tipo: 'detener_audio' } | { tipo: 'colgar' } | { tipo: 'tarea'; que: QueTarea };
+
+/**
+ * UNA PROPUESTA DE AU-RA, SIN QUE NADIE LE PIDIERA NADA (server/iniciativa.ts la empuja; el modelo NO puede
+ * pedirla: `validarAccion` no la conoce). La app la muestra como tarjeta con «Sí» / «Luego» / «No» y
+ * contesta con POST /api/iniciativa/responder; con «Sí», `pedido` es lo que AU-RA hace (un turno normal).
+ */
+export type AccionIniciativa = {
+  tipo: 'iniciativa';
+  id: string;
+  texto: string;
+  pedido: string;
+  clase: string;
+  prioridad: number;
+  creada: number;
+  misionId?: string;
+};
+
+/**
+ * SU COMPUTADORA, EN VIVO EN EL TELÉFONO (server/computadora.ts la empuja; el modelo NO puede pedirla con
+ * ACCION_APP: `validarAccion` no la conoce):
+ *  · empieza: una tarea arrancó → la app abre la vista en vivo (captura y pasos) y pone el tecleo bajito;
+ *  · paso:    va avanzando → `texto` es una frase corta para decir («Ya entré a bch.hn.»);
+ *  · sigue:   la tarea no alcanzó y la misión sigue con otra (otro `id`);
+ *  · confirmar: se detuvo antes de algo sensible (enviar, iniciar sesión, publicar, borrar) → `pregunta`
+ *               para los botones Sí / No, y `texto` para decirla (si no la dijo ya el turno);
+ *  · pausa:   la pausaron o la persona tomó el control (`estado`); reanuda: siguió;
+ *  · termina: terminó → `texto` es el resultado para decir (si no lo dijo ya el turno) y `ok`.
+ * `plan` (en empieza) es la lista corta de la misión que la app va marcando.
+ * Con `texto`, `boleto` (lo pone empujarAccion) deja decirlo tal cual en la conversación de voz (lecturaDe).
+ */
+export type FaseComputadora = 'empieza' | 'paso' | 'sigue' | 'confirmar' | 'pausa' | 'reanuda' | 'termina';
+export type AccionComputadora = {
+  tipo: 'computadora';
+  fase: FaseComputadora;
+  id: string;
+  texto?: string;
+  ok?: boolean;
+  boleto?: string;
+  plan?: string[];
+  pregunta?: string;
+  estado?: 'pausada' | 'control';
+};
 
 export type Contacto = { correo: string; nombre: string };
 export type ContextoApp = {
@@ -92,7 +160,7 @@ export type ContextoApp = {
   recordatorios?: RecordatorioApp[];
 };
 
-const PANTALLAS: Pantalla[] = ['mesa', 'chats', 'ajustes', 'perfil'];
+const PANTALLAS: Pantalla[] = ['mesa', 'chats', 'ajustes', 'perfil', 'computadora', 'whatsapp', 'correos', 'misiones', 'conocer', 'circulo'];
 const TEMAS: TemaApp[] = ['oscuro', 'claro', 'sistema'];
 const AVATARES: AvatarApp[] = ['ojos', 'aura', 'claudio', 'antonio'];
 const PRESENCIAS: PresenciaApp[] = ['paseo', 'lado', 'completa'];
@@ -149,7 +217,9 @@ export function validarAccion(x: unknown): AccionApp | null {
 
 export type EventoAccion = { id: string; accion: AccionApp };
 type Oyente = (e: EventoAccion) => void;
-type Canal = { oyente: Oyente; aparato: string | null; desalojar?: () => void };
+/** Un evento del canal que NO es una acción (hoy solo `ambiente`): va con su propio `event:` del SSE. */
+type OyenteEvento = (nombre: string, datos: unknown) => void;
+type Canal = { oyente: Oyente; aparato: string | null; desalojar?: () => void; alEvento?: OyenteEvento };
 /** Por cuenta, en orden de llegada (un Set recorre en el orden en que se añadió): el primero es el más viejo. */
 const canales = new Map<string, Set<Canal>>();
 /** La clave de un correo o de un ámbito (`correo#aparato`): el correo sin mayúsculas, el aparato tal cual. */
@@ -188,7 +258,7 @@ export function aparatoValido(x: unknown): string | null {
  *    nuevo es el teléfono que la persona tiene en la mano; el viejo casi siempre es un canal muerto.
  * `desalojar` es cómo cerrar ese canal desde aquí (la ruta termina la respuesta SSE).
  */
-export function suscribir(correo: string, oyente: Oyente, o: { aparato?: string | null; desalojar?: () => void; max?: number } = {}): () => void {
+export function suscribir(correo: string, oyente: Oyente, o: { aparato?: string | null; desalojar?: () => void; max?: number; alEvento?: OyenteEvento } = {}): () => void {
   const k = clave(correo);
   let s = canales.get(k);
   if (!s) canales.set(k, (s = new Set()));
@@ -204,7 +274,7 @@ export function suscribir(correo: string, oyente: Oyente, o: { aparato?: string 
   if (aparato) for (const c of [...s]) if (c.aparato === aparato) fuera(c);
   const max = Math.max(1, o.max ?? MAX_CANALES_POR_CUENTA);
   while (s.size >= max) fuera(s.values().next().value as Canal);
-  const canal: Canal = { oyente, aparato, desalojar: o.desalojar };
+  const canal: Canal = { oyente, aparato, desalojar: o.desalojar, alEvento: o.alEvento };
   s.add(canal);
   return () => {
     s!.delete(canal);
@@ -213,7 +283,92 @@ export function suscribir(correo: string, oyente: Oyente, o: { aparato?: string 
 }
 
 export function oyentesDe(correo: string): number {
-  return canales.get(clave(correo))?.size || 0;
+  // El .exe de Windows (aparato «win-…») deja su canal abierto siempre, pero no es un teléfono: no cuenta.
+  let n = 0;
+  for (const c of canales.get(clave(correo)) || []) if (!c.aparato?.startsWith('win-')) n++;
+  return n;
+}
+
+/**
+ * EL SONIDO DE FONDO de la conversación (la «animación» sonora mientras AURA hace una tarea lenta):
+ * tecleo al buscar, hojas al leer, lápiz al calcular. `on: false` lo para.
+ *
+ * NO es una acción: no pasa por `validarAccion` (el modelo no puede pedirlo con ACCION_APP), no queda
+ * en el registro de reconexión (un sonido de hace diez segundos no se repite al volver) y no se
+ * deduplica. Viaja por el MISMO canal del teléfono (GET /api/app/acciones) como `event: ambiente`; un
+ * teléfono que no lo conoce lo salta (solo lee `message`/`accion`). Va SOLO al aparato de la
+ * conversación: sin aparato no va a nadie (no suena en el otro teléfono de la persona).
+ */
+export const SONIDOS_AMBIENTE = ['teclado', 'papel', 'lapiz'] as const;
+export type SonidoAmbiente = (typeof SONIDOS_AMBIENTE)[number];
+export type EventoAmbiente = { sonido: SonidoAmbiente | null; on: boolean };
+
+export function empujarAmbiente(correo: string, aparato: string | null | undefined, e: EventoAmbiente): number {
+  const ap = aparatoValido(aparato);
+  if (!ap) return 0;
+  const datos: EventoAmbiente = { sonido: e.on && e.sonido && SONIDOS_AMBIENTE.includes(e.sonido) ? e.sonido : null, on: !!e.on && !!e.sonido };
+  let entregado = 0;
+  for (const c of [...(canales.get(clave(correo)) || [])]) {
+    if (c.aparato !== ap || !c.alEvento) continue;
+    try {
+      c.alEvento('ambiente', datos);
+      entregado++;
+    } catch {
+      /* ese canal se fue */
+    }
+  }
+  return entregado;
+}
+
+/** Una orden para las manos de la PC (Windows): la frase de la persona va con ella para la guarda. */
+export type OrdenPc = { id: string; orden: string; dicho: string };
+
+/**
+ * Manda una orden del cerebro al .exe de Windows de esa conversación (`event: pc` del canal; los
+ * teléfonos no la escuchan). Solo con aparato: una orden de la PC nunca va «a todos». El .exe la pasa
+ * por sus reglas y su guarda (FiltroAcciones.Coherente) antes de hacerla. Devuelve a cuántos llegó.
+ */
+export function empujarOrdenPc(correo: string, aparato: string | null | undefined, o: { orden: string; dicho: string; id?: string }): number {
+  const ap = aparatoValido(aparato);
+  const orden = linea(o.orden, 160);
+  if (!ap || !orden) return 0;
+  const datos: OrdenPc = { id: o.id || nuevoIdAccion(), orden, dicho: linea(o.dicho, 600) };
+  let entregado = 0;
+  for (const c of [...(canales.get(clave(correo)) || [])]) {
+    if (c.aparato !== ap || !c.alEvento) continue;
+    try {
+      c.alEvento('pc', datos);
+      entregado++;
+    } catch {
+      /* ese canal se fue */
+    }
+  }
+  return entregado;
+}
+
+/**
+ * Las acciones del teléfono que dejan algo afuera o lo agendan (mandar el borrador, marcar, que AURA llame, poner
+ * o quitar un recordatorio). Las demás solo mueven la pantalla, leen o llenan algo que la persona confirma allá.
+ */
+const CON_EFECTO: ReadonlySet<string> = new Set(['enviar', 'llamar', 'llamame', 'recordatorio', 'cancelar_recordatorio']);
+export function accionConEfecto(a: Pick<AccionApp, 'tipo'>): boolean {
+  return CON_EFECTO.has(a.tipo);
+}
+
+/**
+ * Antes de empujar una acción con efecto, el turno lo deja persistido (server/turno-unico.ts `efectoDelTurno`,
+ * revisión externa 4-oct): si no quedó (sin almacén, turno de otro proceso, turno sin efectos), NO sale. Así un
+ * reintento del turno no la vuelve a mandar con otro id (el teléfono deduplica por id, no por contenido).
+ * Devuelve las que salen y las que se frenaron (para decirlo con honestidad).
+ */
+export async function accionesQueSalen<A extends Pick<AccionApp, 'tipo'>>(acciones: A[], antesDeEfecto: (que: string) => Promise<boolean>): Promise<{ salen: A[]; frenadas: A[] }> {
+  const salen: A[] = [];
+  const frenadas: A[] = [];
+  for (const a of acciones) {
+    if (!accionConEfecto(a) || (await antesDeEfecto(`app:${a.tipo}`).catch(() => false))) salen.push(a);
+    else frenadas.push(a);
+  }
+  return { salen, frenadas };
 }
 
 /**
@@ -223,10 +378,11 @@ export function oyentesDe(correo: string): number {
  * evento (su id va también en la respuesta del turno, para que la app no la haga dos veces) y a
  * cuántos canales llegó.
  */
-export function empujarAccion(correo: string, accion: AccionApp, o: { aparato?: string | null } = {}): { evento: EventoAccion; entregada: number } {
-  // Leer y buscar llevan un boleto de un solo uso: con él vuelve la lectura del teléfono (lecturaDe).
-  if (accion.tipo === 'leer' || accion.tipo === 'buscar') accion = { ...accion, boleto: anotarLectura(correo) };
-  const evento: EventoAccion = { id: crypto.randomBytes(6).toString('base64url'), accion };
+export function empujarAccion(correo: string, accion: AccionApp, o: { aparato?: string | null; id?: string } = {}): { evento: EventoAccion; entregada: number } {
+  // Leer y buscar llevan un boleto de un solo uso: con él vuelve la lectura del teléfono (lecturaDe). Lo
+  // que dice su computadora (un avance, el resultado) también: así se dice tal cual en la voz.
+  if (accion.tipo === 'leer' || accion.tipo === 'buscar' || (accion.tipo === 'computadora' && accion.texto)) accion = { ...accion, boleto: anotarLectura(correo) };
+  const evento: EventoAccion = { id: o.id || nuevoIdAccion(), accion };
   const aparato = aparatoValido(o.aparato);
   // Lo que espera el «sí» es de ESTE aparato (ámbito), no de la cuenta entera.
   const amb = ambitoApp(correo, aparato);
@@ -249,6 +405,30 @@ export function empujarAccion(correo: string, accion: AccionApp, o: { aparato?: 
   // «Respóndele» después de leer: a quien se le leyó.
   if (accion.tipo === 'leer' && accion.de) ultimosLeidos.set(clave(correo), { de: accion.de, t: Date.now() });
   return { evento, entregada };
+}
+
+/** El id de un evento de acción. Un turno de voz lo pide antes de empujar (la acción espera a que se confirme). */
+export function nuevoIdAccion(): string {
+  return crypto.randomBytes(6).toString('base64url');
+}
+
+/**
+ * La misma acción, otra vez, en pocos segundos y en el mismo aparato: el respaldo del turno especulativo
+ * de la voz. Si ElevenLabs no avisó que descartó la frase a medias («pon una alarma en tres minutos»)
+ * y después llega la frase entera con la misma orden, la segunda no se hace. Anota la acción si es nueva.
+ */
+export const REPETIDA_VOZ_MS = 10_000;
+const hechasVoz = new Map<string, { firma: string; t: number }[]>();
+export function repetidaEnVoz(amb: string, accion: AccionApp, ahora = Date.now()): boolean {
+  const k = clave(amb);
+  const { boleto: _b, ...resto } = accion as AccionApp & { boleto?: string };
+  const firma = JSON.stringify(resto);
+  const lista = (hechasVoz.get(k) || []).filter((x) => ahora - x.t < REPETIDA_VOZ_MS);
+  const repetida = lista.some((x) => x.firma === firma);
+  if (!repetida) lista.push({ firma, t: ahora });
+  if (lista.length) hechasVoz.set(k, lista);
+  else hechasVoz.delete(k);
+  return repetida;
 }
 
 /* ------------------------------------------------------------------ la reconexión (Last-Event-ID) */
@@ -300,7 +480,7 @@ function contacto(x: unknown): Contacto | null {
 export function validarContexto(cuerpo: unknown): { ok: true; contexto: ContextoApp } | { ok: false; error: string } {
   if (!cuerpo || typeof cuerpo !== 'object' || Array.isArray(cuerpo)) return { ok: false, error: 'El contexto tiene que ser un objeto.' };
   const b = cuerpo as Record<string, unknown>;
-  if (!PANTALLAS.includes(b.pantalla as Pantalla)) return { ok: false, error: 'pantalla es mesa, chats, ajustes o perfil.' };
+  if (!PANTALLAS.includes(b.pantalla as Pantalla)) return { ok: false, error: 'pantalla es mesa, chats, ajustes, perfil, computadora, whatsapp, correos, misiones, conocer o circulo.' };
   if (b.contactos !== undefined && !Array.isArray(b.contactos)) return { ok: false, error: 'contactos es una lista.' };
   const vistos = new Set<string>();
   const contactos: Contacto[] = [];
@@ -374,7 +554,19 @@ export function abrirTurnoApp(correo: string): number {
   if (p && p.turno !== n - 1) pendientes.delete(k);
   const pr = propuestas.get(k);
   if (pr && pr.turno !== n - 1) propuestas.delete(k);
+  const ac = aclaraciones.get(k);
+  if (ac && ac.turno !== n - 1) aclaraciones.delete(k);
   return n;
+}
+
+/**
+ * El turno `n` no contó: era una frase a medias que la voz descartó (turno especulativo de ElevenLabs).
+ * Si ningún otro turno se abrió después, el contador vuelve atrás y el «sí» del turno siguiente sigue
+ * respondiendo al borrador o a la propuesta de antes.
+ */
+export function deshacerTurnoApp(correo: string, n: number) {
+  const k = clave(correo);
+  if (turnosApp.get(k) === n) turnosApp.set(k, n - 1);
 }
 
 export function anotarPendiente(correo: string, p: { para: string; texto: string }, ahora = Date.now()) {
@@ -446,6 +638,35 @@ export function soltarPropuesta(correo: string) {
   propuestas.delete(clave(correo));
 }
 
+/* ------------------------------------------------------------------ la pregunta de los controles (AUR10) */
+
+/**
+ * «¿Qué paro: mi voz, la tarea o las dos?»: la pregunta espera la respuesta del turno SIGUIENTE, con las
+ * mismas reglas que la propuesta (cualquier otro turno la suelta, tres minutos de tope). Lo que se hace
+ * con la respuesta son SUS opciones (lo que estaba vivo al preguntar), no lo que diga el modelo.
+ */
+type AclaracionGuardada = { opciones: ControlVoz[]; t: number; turno: number };
+const aclaraciones = new Map<string, AclaracionGuardada>();
+
+export function anotarAclaracion(correo: string, opciones: ControlVoz[], ahora = Date.now()) {
+  aclaraciones.set(clave(correo), { opciones: [...opciones], t: ahora, turno: turnoAppActual(correo) });
+}
+
+/** La pregunta que la persona YA OYÓ (de un turno anterior, vigente), o null. */
+export function aclaracionAnterior(correo: string, ahora = Date.now()): ControlVoz[] | null {
+  const v = aclaraciones.get(clave(correo));
+  if (!v) return null;
+  if (ahora - v.t > PENDIENTE_TTL_MS || v.turno < turnoAppActual(correo) - 1) {
+    aclaraciones.delete(clave(correo));
+    return null;
+  }
+  return v.turno < turnoAppActual(correo) ? [...v.opciones] : null;
+}
+
+export function soltarAclaracion(correo: string) {
+  aclaraciones.delete(clave(correo));
+}
+
 /* ------------------------------------------------------------------ las lecturas del teléfono */
 
 /**
@@ -499,7 +720,9 @@ export function _reiniciarAccionesApp() {
   contextos.clear();
   pendientes.clear();
   turnosApp.clear();
+  hechasVoz.clear();
   propuestas.clear();
+  aclaraciones.clear();
   lecturas.clear();
   registro.clear();
   ultimosLeidos.clear();
@@ -568,6 +791,9 @@ const RE_TOKEN = /ACCI[OÓ]N_APP/i;
  * por los pendientes, y en voz la marca se decía. Aquí la marca se rompe (ACCION_APP → ACCION-APP)
  * antes de componer ese texto con nada, y ya no la reconoce ninguna de las expresiones de arriba.
  */
+/** «Ya lo mandé», «listo, enviado», «ya quedó»: frases que dan algo por hecho (no se dicen antes del resultado). */
+export const DA_POR_HECHO = /\b(enviad[oa]s?|mandad[oa]s?|ya\s+(te\s+|se\s+)?(lo|la|le|los|les)\s+(mand[eé]|envi[eé]|escrib[ií])|ya\s+qued[oó]|listo,?\s+(ya\s+)?(est[aá]|qued[oó]|se\s+(mand|envi)))/i;
+
 export function neutralizarMarca(texto: string): string {
   return String(texto ?? '').replace(/ACCI[OÓ]N_APP/gi, (m) => m.replace('_', '-'));
 }
@@ -648,15 +874,36 @@ export function instruccionAcciones(
   ctx: ContextoApp | null,
   o: { idioma?: 'es' | 'en'; pendiente?: { para: string; texto: string } | null; propuesta?: Propuesta | null; ultimoLeido?: string | null; ahora?: number } = {}
 ): string {
+  return `${reglasAcciones(ctx)}\n${estadoAcciones(ctx, o)}`;
+}
+
+/**
+ * Las reglas de la app (qué acciones hay y cuándo se usan, y las manos que este teléfono sabe hacer). No
+ * cambian de un turno a otro: van en el system (server/prompt-turno.ts `reglasApp`) y el nodo no las
+ * relee. 1-oct, llamada de José: todo el bloque iba en el mensaje de cada turno y el nodo releía ~2 000
+ * fichas por turno.
+ */
+export function reglasAcciones(ctx: ContextoApp | null): string {
   const lineas = [
     'APP (puedes manejar la app de la persona): para hacer algo en su teléfono, escribe al final de tu respuesta UNA línea sola por acción, así:',
     'ACCION_APP: {"tipo":"atras"}',
-    'Las acciones: {"tipo":"atras"} · {"tipo":"abrir","pantalla":"mesa|chats|ajustes|perfil"} · {"tipo":"tema","valor":"oscuro|claro|sistema"} · {"tipo":"avatar","valor":"ojos|aura|claudio"} · {"tipo":"abrir_chat","con":"<nombre>"} · {"tipo":"redactar","para":"<nombre>","texto":"<mensaje>"} · {"tipo":"enviar","para":"<nombre>"} · {"tipo":"descartar"} · {"tipo":"silencio","valor":true} · {"tipo":"presencia","valor":"completa|lado|paseo"}.',
-    'Cuándo: «vete atrás / regresa» → atras. «abre ajustes / los chats / la mesa / mi perfil» → abrir. «ponlo oscuro / claro» → tema. «cambia a Claudio / a AU-RA / al Guardián» → avatar (Guardián = ojos). «cállate / silencio» → silencio. «ponte a pantalla completa / en grande» → presencia completa; «ponte al lado (del chat)» → presencia lado; «ponte chiquita / vuelve a caminar» → presencia paseo.',
+    'Las acciones: {"tipo":"atras"} · {"tipo":"abrir","pantalla":"mesa|chats|ajustes|perfil|computadora|whatsapp|correos|misiones|conocer|circulo"} · {"tipo":"tema","valor":"oscuro|claro|sistema"} · {"tipo":"avatar","valor":"ojos|aura|claudio"} · {"tipo":"abrir_chat","con":"<nombre>"} · {"tipo":"redactar","para":"<nombre>","texto":"<mensaje>"} · {"tipo":"enviar","para":"<nombre>"} · {"tipo":"descartar"} · {"tipo":"silencio","valor":true} · {"tipo":"presencia","valor":"completa|lado|paseo"}.',
+    'Cuándo: «vete atrás / regresa» → atras. «abre ajustes / los chats / la mesa / mi perfil» → abrir. «abre tu computadora / muéstrame tu pantalla / lo que estás haciendo» → abrir computadora (la ves en vivo); «abre WhatsApp / mis WhatsApp» → abrir whatsapp; «abre mis correos» → abrir correos; «abre mis misiones» → abrir misiones; «qué has aprendido de mí / qué quedó pendiente» → abrir conocer; «abre mi círculo / mi familia en la app» → abrir circulo. Funciona desde cualquier pantalla. Si además piden HACER algo en páginas («usa tu computadora y busca…»), eso es PEDIR_HERRAMIENTA computadora: la pantalla se abre sola. «ponlo oscuro / claro» → tema. «cambia a Claudio / a AU-RA / al Guardián» → avatar (Guardián = ojos). «cállate / silencio» → silencio. «ponte a pantalla completa / en grande» → presencia completa; «ponte al lado (del chat)» → presencia lado; «ponte chiquita / vuelve a caminar» → presencia paseo.',
     '«Escríbele a X que …»: busca a X en CONTACTOS (por nombre o parentesco: «mi mamá» es el contacto que se llama así). Si está, redactar con el mensaje escrito como lo escribiría la persona (en primera persona: «dile que llego tarde» → «Llego tarde»), y DI el borrador en voz alta: «Le escribo a Beto: “Llego tarde”. ¿Lo envío?». Si no está o hay dos parecidos, NO redactes: pregunta a quién.',
-    'Enviar SOLO si la persona lo confirma de forma explícita («sí», «envíalo», «mándalo») en el turno siguiente a oír el borrador: entonces enviar y di «¡Listo, enviado!». Aunque la orden de redactar diga «y mándalo», primero redacta y pregunta; nunca redactar y enviar en la misma respuesta. «Bórralo / no lo mandes» → descartar. Nunca envíes por tu cuenta.',
+    'Enviar SOLO si la persona lo confirma de forma explícita («sí», «envíalo», «mándalo») en el turno siguiente a oír el borrador: entonces enviar y di «Va, lo mando.» (nunca «enviado» ni «listo»: la app avisa cuando de verdad salió). Aunque la orden de redactar diga «y mándalo», primero redacta y pregunta; nunca redactar y enviar en la misma respuesta. «Bórralo / no lo mandes» → descartar. Nunca envíes por tu cuenta.',
+    'redactar y enviar son los chats de AU-RA (PULSE2CHAT), NO WhatsApp. Si piden WhatsApp («mándale un WhatsApp a…»): eso es PEDIR_HERRAMIENTA whatsapp responder si lo tienes; si no lo tienes, di que su WhatsApp no está conectado aquí y ofrece mandarlo por los chats de AU-RA. Nunca digas que mandaste un WhatsApp con redactar.',
     'La línea ACCION_APP no se lee ni se dice: la hace la app. No expliques la línea ni la menciones.',
   ];
+  lineas.push(...reglasManos(ctx));
+  return lineas.join('\n');
+}
+
+/** Lo de este momento en la app: dónde está, sus contactos, lo que espera su «sí». Va en el mensaje del turno. */
+export function estadoAcciones(
+  ctx: ContextoApp | null,
+  o: { pendiente?: { para: string; texto: string } | null; propuesta?: Propuesta | null; ultimoLeido?: string | null; ahora?: number } = {}
+): string {
+  const lineas: string[] = [];
   if (ctx) {
     const nombres = ctx.contactos.slice(0, 80).map((c) => c.nombre);
     lineas.push(
@@ -670,7 +917,7 @@ export function instruccionAcciones(
   if (o.pendiente) lineas.push(`BORRADOR QUE ESPERA SU «SÍ»: para ${o.pendiente.para}: «${o.pendiente.texto.slice(0, 300)}».`);
   // Las manos nuevas, solo las que este teléfono sabe hacer (un APK viejo no ve ninguna).
   const leido = o.ultimoLeido ? ctx?.contactos.find((c) => c.correo === o.ultimoLeido)?.nombre || o.ultimoLeido : null;
-  lineas.push(...instruccionManos(ctx, { propuesta: o.propuesta, ultimoLeido: leido, ahora: o.ahora }));
+  lineas.push(...estadoManos(ctx, { propuesta: o.propuesta, ultimoLeido: leido, ahora: o.ahora }));
   return lineas.join('\n');
 }
 
@@ -689,6 +936,15 @@ export type OrdenRapida = {
   soltarPropuesta?: boolean;
   /** Solo hay que contestar (qué recordatorios tiene), sin acción ni propuesta. */
   soloDecir?: boolean;
+  /**
+   * AUR10: la frase no dice el alcance («para» con audio y tarea vivos): no se hace nada, se pregunta
+   * (`decir`) y estas opciones esperan la respuesta del turno siguiente (anotarAclaracion).
+   */
+  aclaracion?: ControlVoz[];
+  /** La respuesta llegó (o se desistió): la pregunta se suelta. */
+  soltarAclaracion?: boolean;
+  /** Otras acciones del mismo turno, después de `accion` («las dos»: callar y cancelar la tarea). */
+  mas?: AccionApp[];
 };
 
 /** Sin acentos, sin signos, sin el «AURA,» del principio ni el «por favor» del final. */
@@ -708,11 +964,25 @@ const PANTALLA_DE: Array<[RegExp, Pantalla]> = [
   [/^(el |mi |the |my )?(perfil|profile)$/, 'perfil'],
   // «Lo que sabe de mí» (la pantalla de Perfil): «abre lo que sabes de mí», «muéstrame qué sabes de mí».
   [/^(lo )?que (sabes|sabe|conoces) de mi$|^what you know about me$/, 'perfil'],
+  // Su computadora en la nube, en vivo: «abre la computadora», «muéstrame tu pantalla», «lo que estás haciendo».
+  [/^(la |tu |su |mi |the |your |my )?(computadora|compu|computer|pc)( en la nube)?$/, 'computadora'],
+  [/^(tu |su |your )(pantalla|screen|escritorio|desktop)$/, 'computadora'],
+  [/^(lo )?que (estas|esta) haciendo( en (tu|la) (computadora|compu))?$|^lo que haces$|^what (youre|you re|you are) doing$/, 'computadora'],
+  // Los chats con la pestaña de WhatsApp: «abre WhatsApp», «mis WhatsApp».
+  [/^(el |mi |mis |los |the |my )?(whatsapp|whatsapps|wasap|wasaps|guasap|whats app)$/, 'whatsapp'],
+  // Sus buzones (Correos): «abre mis correos». «Muéstrame mis correos» no: eso es leerlos (el cerebro).
+  [/^(el |mi |mis |los |tus |the |my )?(correos?|correo electronico|emails?|e mails?|mails?|buzones|inbox)$/, 'correos'],
+  // Sus misiones (metas que AU-RA acompaña) y su círculo (familia, socios): «abre mis misiones», «abre mi círculo».
+  [/^(las |mis |tus |the |my )?(misiones|metas|missions|goals)$/, 'misiones'],
+  [/^(el |mi |tu |the |my )?(circulo|circulo cercano|circle|inner circle)$/, 'circulo'],
 ];
 
+/** Con estos verbos se pide VER algo (que se lo lean), no abrir la pantalla de los buzones. */
+const RE_VERBO_VER = /^(muestrame|ensename|show|show me)$/;
+
 const DICHOS: Record<'es' | 'en', Record<string, string>> = {
-  es: { completa: 'Aquí estoy, de frente.', lado: 'Me pongo a tu lado.', paseo: 'Me hago chiquita.', atras: 'Listo.', ajustes: 'Abro ajustes.', chats: 'Abro tus chats.', mesa: 'Vamos a la mesa.', perfil: 'Abro tu perfil.', oscuro: 'Listo, en oscuro.', claro: 'Listo, en claro.', sistema: 'Listo, como el sistema.', ojos: 'Te paso con el Guardián.', aura: 'Aquí AU-RA.', claudio: '¡Va! Te paso con Claudio.', antonio: '¡Va! Te paso con ANT-ONIO.', silencio: 'Va.', habla: 'Aquí estoy.', enviar: '¡Listo, enviado!', descartar: 'Listo, lo borré.' },
-  en: { completa: 'Here I am, full screen.', lado: "I'll stay by your side.", paseo: "I'll make myself small.", atras: 'Done.', ajustes: 'Opening settings.', chats: 'Opening your chats.', mesa: 'Back to the desk.', perfil: 'Opening your profile.', oscuro: 'Done, dark it is.', claro: 'Done, light it is.', sistema: 'Done, following the system.', ojos: 'Switching you to the Guardian.', aura: 'AU-RA here.', claudio: 'Sure! Switching you to Claudio.', antonio: 'Sure! Switching you to ANT-ONIO.', silencio: 'Okay.', habla: "I'm here.", enviar: 'Done, sent!', descartar: 'Okay, I deleted it.' },
+  es: { completa: 'Aquí estoy, de frente.', lado: 'Me pongo a tu lado.', paseo: 'Me hago chiquita.', atras: 'Listo.', ajustes: 'Abro ajustes.', chats: 'Abro tus chats.', mesa: 'Vamos a la mesa.', perfil: 'Abro tu perfil.', computadora: 'Mira, esta es mi computadora.', whatsapp: 'Abro tu WhatsApp.', correos: 'Abro tus correos.', misiones: 'Aquí están tus misiones.', conocer: 'Esto es lo que sé de ti.', circulo: 'Abro tu círculo.', oscuro: 'Listo, en oscuro.', claro: 'Listo, en claro.', sistema: 'Listo, como el sistema.', ojos: 'Te paso con el Guardián.', aura: 'Aquí AU-RA.', claudio: '¡Va! Te paso con Claudio.', antonio: '¡Va! Te paso con ANT-ONIO.', silencio: 'Va.', habla: 'Aquí estoy.', enviar: 'Va, lo mando.', descartar: 'Listo, lo borré.' },
+  en: { completa: 'Here I am, full screen.', lado: "I'll stay by your side.", paseo: "I'll make myself small.", atras: 'Done.', ajustes: 'Opening settings.', chats: 'Opening your chats.', mesa: 'Back to the desk.', perfil: 'Opening your profile.', computadora: 'Look, this is my computer.', whatsapp: 'Opening your WhatsApp.', correos: 'Opening your email.', misiones: 'Here are your missions.', conocer: 'This is what I know about you.', circulo: 'Opening your circle.', oscuro: 'Done, dark it is.', claro: 'Done, light it is.', sistema: 'Done, following the system.', ojos: 'Switching you to the Guardian.', aura: 'AU-RA here.', claudio: 'Sure! Switching you to Claudio.', antonio: 'Sure! Switching you to ANT-ONIO.', silencio: 'Okay.', habla: "I'm here.", enviar: 'Okay, sending it.', descartar: 'Okay, I deleted it.' },
 };
 
 /**
@@ -732,6 +1002,12 @@ export function dichoDeAcciones(acciones: AccionApp[], idioma?: 'es' | 'en'): st
       return d[a.valor];
     case 'silencio':
       return a.valor ? d.silencio : d.habla;
+    case 'detener_audio':
+      return d.silencio;
+    case 'colgar':
+      return dichoDeControl('colgar', en ? 'en' : 'es');
+    case 'tarea':
+      return dichoDeControl(CONTROL_DE_TAREA[a.que], en ? 'en' : 'es');
     case 'presencia':
       return d[a.valor];
     case 'enviar':
@@ -755,12 +1031,25 @@ export function dichoDeAcciones(acciones: AccionApp[], idioma?: 'es' | 'en'): st
  */
 export function ordenPorReglas(
   texto: string,
-  o: { idioma?: 'es' | 'en'; contexto?: ContextoApp | null; pendiente?: { para: string; texto: string } | null; propuesta?: Propuesta | null; ahora?: number } = {}
+  o: OpcionesReglas = {}
 ): OrdenRapida | null {
   const q = frase(texto);
   if (!q) return null;
   const idioma = o.idioma === 'en' ? 'en' : 'es';
   const ahora = o.ahora ?? Date.now();
+  // AUR10: la pregunta «¿qué paro: mi voz, la tarea o las dos?» del turno anterior. Su respuesta decide;
+  // otra frase cualquiera sigue su camino (y el turno siguiente soltará la pregunta).
+  if (o.aclaracion?.length && puedeMano(o.contexto, 'controles')) {
+    const r = respuestaAclaracion(texto, o.aclaracion);
+    if (r === 'ninguno') return { accion: null, decir: idioma === 'en' ? "Okay, I'll keep going." : 'Va, sigo.', via: 'reglas', soloDecir: true, soltarAclaracion: true };
+    if (r) {
+      const acciones = r.map((c) => accionDeControl(c, o.contexto)).filter((a): a is AccionApp => !!a);
+      if (acciones.length) {
+        const ult = r[r.length - 1];
+        return { accion: acciones[0], ...(acciones.length > 1 ? { mas: acciones.slice(1) } : {}), decir: dichoDeControl(ult, idioma), via: 'reglas', soltarAclaracion: true };
+      }
+    }
+  }
   // La propuesta que espera (llamar, recordar), de un turno anterior: «sí» / «llámale» la cumple,
   // «no» la suelta. Otra frase cualquiera sigue su camino (y el turno siguiente la soltará).
   if (o.propuesta) {
@@ -788,8 +1077,47 @@ export function ordenPorReglas(
   return m.tipo === 'propuesta' ? { accion: null, decir: m.decir, via: 'reglas', propuesta: m.propuesta } : { accion: m.accion, decir: m.decir, via: 'reglas' };
 }
 
+type OpcionesReglas = {
+  idioma?: 'es' | 'en';
+  contexto?: ContextoApp | null;
+  pendiente?: { para: string; texto: string } | null;
+  propuesta?: Propuesta | null;
+  ahora?: number;
+  /** AUR10: lo que está vivo (audio, tarea, llamada, turno) para leer «para» / «basta» a secas. */
+  estadoControles?: EstadoControles;
+  /** AUR10: las opciones de la pregunta del turno anterior (aclaracionAnterior). */
+  aclaracion?: ControlVoz[] | null;
+};
+
+const CONTROL_DE_TAREA: Record<QueTarea, ControlVoz> = { pausar: 'pausar_tarea', reanudar: 'reanudar_tarea', cancelar: 'cancelar_tarea', tomar: 'tomar_control' };
+
+/**
+ * El control, como acción para el teléfono (AUR10). Con la mano `controles`, cada uno con su efecto; sin
+ * ella (un APK viejo) solo lo que ya entendía: silenciar / volver a hablar. null: ese teléfono no lo sabe.
+ */
+function accionDeControl(c: ControlVoz, ctx: ContextoApp | null | undefined): AccionApp | null {
+  if (c === 'silenciar_mic') return { tipo: 'silencio', valor: true };
+  if (c === 'activar_mic') return { tipo: 'silencio', valor: false };
+  if (!puedeMano(ctx, 'controles')) return null;
+  switch (c) {
+    case 'detener_audio':
+    case 'interrumpir':
+      return { tipo: 'detener_audio' };
+    case 'colgar':
+      return { tipo: 'colgar' };
+    case 'pausar_tarea':
+      return { tipo: 'tarea', que: 'pausar' };
+    case 'reanudar_tarea':
+      return { tipo: 'tarea', que: 'reanudar' };
+    case 'cancelar_tarea':
+      return { tipo: 'tarea', que: 'cancelar' };
+    case 'tomar_control':
+      return { tipo: 'tarea', que: 'tomar' };
+  }
+}
+
 /** Las órdenes simples de siempre (borrador, atrás, abrir, tema, avatar, silencio), sobre la frase ya limpia. */
-function reglasDeSiempre(q: string, o: { idioma?: 'es' | 'en'; contexto?: ContextoApp | null; pendiente?: { para: string; texto: string } | null }): OrdenRapida | null {
+function reglasDeSiempre(q: string, o: OpcionesReglas): OrdenRapida | null {
   const d = DICHOS[o.idioma === 'en' ? 'en' : 'es'];
   const hecho = (accion: AccionApp, decir: string): OrdenRapida => ({ accion, decir, via: 'reglas' });
 
@@ -821,8 +1149,11 @@ function reglasDeSiempre(q: string, o: { idioma?: 'es' | 'en'; contexto?: Contex
   const abrir = /^(abre|abreme|abrir|ve a|vete a|ir a|llevame a|muestrame|ensename|entra a|pon|open|go to|show me|show|take me to) (.+)$/.exec(q);
   if (abrir) {
     const p = PANTALLA_DE.find(([re]) => re.test(abrir[2]))?.[1];
-    if (p) return hecho({ tipo: 'abrir', pantalla: p }, d[p]);
+    if (p && !(p === 'correos' && RE_VERBO_VER.test(abrir[1]))) return hecho({ tipo: 'abrir', pantalla: p }, d[p]);
   }
+  // «Quiero ver tu computadora», «déjame ver lo que estás haciendo»: solo su computadora (lo demás, Laya).
+  const ver = /^(quiero ver|dejame ver|let me see) (.+)$/.exec(q);
+  if (ver && PANTALLA_DE.find(([re]) => re.test(ver[2]))?.[1] === 'computadora') return hecho({ tipo: 'abrir', pantalla: 'computadora' }, d.computadora);
 
   const tema =
     /^(?:(pon(?:lo|la|me|le)?|cambia(?:lo|la)?|activa|usa|switch|make it|set it|turn on) )?(?:(?:a|al|en|to) )?(?:(?:el|la) )?(?:(modo|tema|theme|mode) )?(oscuro|negro|noche|dark|claro|blanco|dia|light|sistema|automatico|auto|system)(?: (mode|theme))?$/.exec(q);
@@ -843,6 +1174,18 @@ function reglasDeSiempre(q: string, o: { idioma?: 'es' | 'en'; contexto?: Contex
     return hecho({ tipo: 'avatar', valor }, d[valor]);
   }
 
+  // AUR10: el teléfono que sabe los controles separados recibe UN efecto por frase (lib/controles-voz.ts):
+  // «cállate» calla lo que suena (no silencia el micrófono), «cuelga» cuelga, «cancela la tarea» la
+  // cancela; «para» a secas con audio y tarea vivos se pregunta.
+  if (puedeMano(o.contexto, 'controles')) {
+    const c = interpretarControl(q, o.estadoControles || {}, o.idioma === 'en' ? 'en' : 'es');
+    if (c?.tipo === 'aclarar') return { accion: null, decir: c.pregunta, via: 'reglas', soloDecir: true, aclaracion: c.opciones };
+    if (c) {
+      const a = accionDeControl(c.control, o.contexto);
+      if (a) return hecho(a, a.tipo === 'silencio' ? (a.valor ? d.silencio : d.habla) : a.tipo === 'detener_audio' ? d.silencio : dichoDeControl(c.control, o.idioma === 'en' ? 'en' : 'es'));
+    }
+  }
+  // Un APK viejo: lo de siempre.
   if (/^(callate|calla|silencio|shh+|chito|deja de hablar|deja de escuchar|no hables|shut up|be quiet|quiet|stop talking|hush|mute|silence)( (un|por un|el) (rato|ratito|momento|segundo))?$/.test(q)) {
     return hecho({ tipo: 'silencio', valor: true }, d.silencio);
   }
@@ -909,8 +1252,12 @@ export function ordenDeEtiqueta(
       return n <= PALABRAS_SIN_PARAMETRO && !RE_CONTRA_ATRAS.test(q) ? hecho({ tipo: 'atras' }, d.atras) : null;
     // Laya ligera además tiene que ver la palabra (un «callar» sin nada de callar es un salto del
     // clasificador); el Laya del nodo, que entiende más, solo no puede tener lo contrario.
-    case 'app_callar':
-      return n <= PALABRAS_SIN_PARAMETRO && (via !== 'ligera' || RE_CALLAR.test(q)) && !RE_HABLAR.test(q) ? hecho({ tipo: 'silencio', valor: true }, d.silencio) : null;
+    case 'app_callar': {
+      if (!(n <= PALABRAS_SIN_PARAMETRO && (via !== 'ligera' || RE_CALLAR.test(q)) && !RE_HABLAR.test(q))) return null;
+      // AUR10: con la mano `controles`, callar es detener lo que suena; solo una frase del micrófono lo silencia.
+      if (puedeMano(o.contexto, 'controles') && controlExplicito(q) !== 'silenciar_mic') return hecho({ tipo: 'detener_audio' }, d.silencio);
+      return hecho({ tipo: 'silencio', valor: true }, d.silencio);
+    }
     case 'app_hablar':
       return n <= PALABRAS_SIN_PARAMETRO && (via !== 'ligera' || RE_HABLAR.test(q)) && !RE_CALLAR_YA.test(q) ? hecho({ tipo: 'silencio', valor: false }, d.habla) : null;
     case 'app_abrir': {
@@ -1114,6 +1461,9 @@ export async function ordenRapida(
     /** false: sin Laya ligera (las pruebas del Laya del nodo; ULTRON_LAYA_LIGERA=0 hace lo mismo). */
     ligera?: boolean;
     ahora?: number;
+    /** AUR10: lo que está vivo y la pregunta del turno anterior (ver ordenPorReglas). */
+    estadoControles?: EstadoControles;
+    aclaracion?: ControlVoz[] | null;
   } = {}
 ): Promise<OrdenRapida | null> {
   const r = ordenPorReglas(texto, o);
@@ -1238,11 +1588,24 @@ export function prepararAcciones(
       out.push({ tipo: 'buscar', q: a.q });
       continue;
     }
+    if (a.tipo === 'pagar') {
+      // Solo a alguien de sus contactos, sin dudas: con dos parecidos (o ninguno) el cerebro debió preguntar.
+      // Y aun así no se paga nada: la app abre el envío llenado y la persona lo firma en Veta Wallet.
+      const r = resolverContacto(a.con, contactos);
+      if (r.tipo !== 'uno') continue;
+      out.push({ ...a, con: r.contacto.correo });
+      continue;
+    }
     if (a.tipo === 'enviar') {
       if (enviado || !o.pendiente || conRedactar || !confirmaEnvio(o.mensaje)) continue;
       enviado = true;
       out.push({ tipo: 'enviar', para: o.pendiente.para });
-    } else if (a.tipo === 'redactar') out.push({ ...a, para: aCorreo(a.para) });
+    } else if (a.tipo === 'redactar') {
+      // Con la lista de contactos a la vista, un borrador para alguien que no está (o con dos parecidos)
+      // no sale: el teléfono diría «no encuentro a X» y el «sí» siguiente no mandaría nada.
+      if (contactos.length && resolverContacto(a.para, contactos).tipo !== 'uno') continue;
+      out.push({ ...a, para: aCorreo(a.para) });
+    }
     else if (a.tipo === 'abrir_chat') out.push({ ...a, con: aCorreo(a.con) });
     else out.push(a);
   }

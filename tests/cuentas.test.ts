@@ -347,6 +347,29 @@ test('códigos temporales: únicos, 1/5/24 h, abren Dr Electrum y al vencer o re
     await new Promise((r) => setTimeout(r, 250));
     assert.equal(sesionDe(reqCon(corta.token)), null);
 
+    // AUR05 (auditoría maestra 3-oct): un código es para probar, nunca para trabajar.
+    const quiereTrabajo = await pedir('/api/ultron/codigos', { horas: 1, para: 'Prueba Trabajo', nivel: 'escribe' }, jose.token);
+    assert.equal(quiereTrabajo.json.nivel, 'lee', 'pedir «escribe» por código queda en consulta');
+    const viejo = await pedir('/api/ultron/codigos', { horas: 1, para: 'Código viejo' }, jose.token);
+    await pg.query(`UPDATE cuentas.codigo SET nivel = 'escribe' WHERE id = $1`, [viejo.json.id]);
+    await cuentas.recargarCuentas();
+    const eViejo = await pedir('/api/ultron/entrar-codigo', { codigo: viejo.json.codigo });
+    assert.equal(nivelDe(identificar({ correo: sesionDe(reqCon(eViejo.json.token))!.correo }), 'electrum'), 'lee', 'un código viejo «escribe» entra como consulta');
+    // El interruptor: ELECTRUM_CODIGOS=0 cierra la entrada y saca del padrón a los invitados vivos.
+    process.env.ELECTRUM_CODIGOS = '0';
+    try {
+      assert.equal(cuentas.codigosActivos(), false);
+      const cerrado = await pedir('/api/ultron/entrar-codigo', { codigo: viejo.json.codigo });
+      assert.equal(cerrado.status, 403);
+      assert.equal(cerrado.json.code, 'codigos_apagados');
+      await cuentas.recargarCuentas();
+      assert.equal(sesionDe(reqCon(eViejo.json.token)), null, 'la sesión del invitado quedó cortada');
+      assert.equal((await pedir('/api/ultron/codigos', { horas: 1, para: 'Nadie' }, jose.token)).status, 403, 'tampoco se crean códigos');
+    } finally {
+      delete process.env.ELECTRUM_CODIGOS;
+      await cuentas.recargarCuentas();
+    }
+
     const lista = await pedir('/api/ultron/codigos', undefined, jose.token);
     assert.ok(lista.json.codigos.some((k: any) => k.id === c.json.id && k.estado === 'revocado'));
     assert.ok(lista.json.codigos.every((k: any) => !('codigo' in k) && !('huella' in k)), 'la lista no trae códigos ni huellas');
@@ -354,5 +377,46 @@ test('códigos temporales: únicos, 1/5/24 h, abren Dr Electrum y al vencer o re
   } finally {
     srv.close();
     aura.srv.close();
+  }
+});
+
+test('cuenta de miembro por Genesis ID: existe en la base, NO entra al padrón (sigue miembro) y se puede suspender', { skip: sinBase ? 'sin base' : false }, async () => {
+  const { esDeComunidad, sesionAbreAura } = await import('../server/seguridad');
+  const pg = new (await import('pg')).Pool({ connectionString: cuentas.urlCuentas() });
+  try {
+    await cuentas.recargarCuentas();
+    await pg.query('TRUNCATE cuentas.cuenta, cuentas.enlace, cuentas.solicitud RESTART IDENTITY');
+    await cuentas.recargarCuentas();
+    reiniciarPadron();
+
+    assert.equal(await cuentas.asegurarCuentaMiembro('rosa@comunidad.hn', 'Rosa Elena Díaz', 'GEN-ROSA-0001-R'), true, 'la primera vez la abre');
+    assert.equal(await cuentas.asegurarCuentaMiembro('rosa@comunidad.hn', 'Otro Nombre', 'GEN-ROSA-0001-R'), false, 'la segunda, nada');
+    const c = await cuentas.cuentaDe('rosa@comunidad.hn');
+    assert.equal(c?.nombre, 'Rosa Elena Díaz', 'el nombre que ya tenía no se pisa');
+    assert.deepEqual(c?.acceso, {}, 'sin acceso a ninguna plataforma');
+    assert.equal(c?.tieneClave, false);
+    const [f] = (await pg.query(`SELECT aprobada_por FROM cuentas.cuenta WHERE correo = $1`, ['rosa@comunidad.hn'])).rows;
+    assert.equal(f.aprobada_por, 'genesis:GEN-ROSA-0001-R');
+
+    // Después de recargar sigue fuera del padrón: es miembro de la comunidad, nunca junta.
+    await cuentas.recargarCuentas();
+    assert.equal(identificar({ correo: 'rosa@comunidad.hn' }), null);
+    assert.equal(esDeComunidad('rosa@comunidad.hn', 'ultron'), true);
+    assert.equal(sesionAbreAura('rosa@comunidad.hn', true), true);
+    assert.equal(sesionAbreAura('rosa@comunidad.hn', false), false, 'sin la marca firmada no abre');
+
+    // A quien el padrón ya tiene aprobado no se le toca el acceso.
+    await pg.query(`INSERT INTO cuentas.cuenta (correo, nombre, acceso) VALUES ('beto@mina.hn', 'Beto', '{"ultron":"lee"}')`);
+    assert.equal(await cuentas.asegurarCuentaMiembro('beto@mina.hn', 'Beto Genesis', 'GEN-BETO-0001-B'), false);
+    assert.deepEqual((await cuentas.cuentaDe('beto@mina.hn'))?.acceso, { ultron: 'lee' });
+
+    // Suspendida por José: la entrada con Genesis la frena (server/genesis.ts, `suspendida`).
+    await pg.query(`UPDATE cuentas.cuenta SET estado = 'suspendida' WHERE correo = 'rosa@comunidad.hn'`);
+    assert.equal(await cuentas.cuentaSuspendida('rosa@comunidad.hn'), true);
+    assert.equal(await cuentas.asegurarCuentaMiembro('rosa@comunidad.hn', 'Rosa', 'GEN-ROSA-0001-R'), false);
+    assert.equal(await cuentas.cuentaSuspendida('rosa@comunidad.hn'), true, 'volver a entrar no la reactiva');
+  } finally {
+    await pg.end();
+    await cuentas._cerrarCuentas();
   }
 });

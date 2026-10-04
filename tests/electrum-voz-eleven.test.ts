@@ -7,7 +7,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { guionEleven, pausaPorFallo, VOZ_ELECTRUM_ELEVEN, VOCES_ELEVEN, vozEleven, _reiniciarFrenoEleven, elevenListo } from '../server/eleven';
 import { abrirVozEnVivo, expresar, hablar } from '../server/voz';
-import { PROVEEDORES_OIDO, PROVEEDORES_OIDO_ELECTRUM, transcribirAudio } from '../lib/oido';
+import { PROVEEDORES_OIDO, PROVEEDORES_OIDO_ELECTRUM, transcribirAudio, topeScribe, RESERVA_RESPALDO_MS } from '../lib/oido';
+import { presupuesto, PRESUPUESTO_OIDO_MS, MINIMO_UTIL_MS } from '../lib/presupuesto';
 import { voiceboxFalso, conVoicebox, CLAVE_FALSA } from './voicebox-falso';
 
 const preparar = (t: string) => expresar(t, 'neutral', 'speak', { cifras: false });
@@ -89,7 +90,8 @@ test('Dr Electrum habla con v4 Turbo, con los vecinos para enlazar la entonació
           assert.equal(llamadas[0].clave, 'xi-de-prueba');
           assert.equal(llamadas[0].cuerpo.model_id, 'eleven_v4_turbo');
           assert.equal(llamadas[0].cuerpo.language_code, 'es');
-          assert.equal(llamadas[0].cuerpo.text, '[warmly] Buenas tardes, José.');
+          // Con frase antes (`previo`), sin el tono: va solo en la primera de la respuesta (auditoría, 1-oct).
+          assert.equal(llamadas[0].cuerpo.text, 'Buenas tardes, José.');
           assert.equal(llamadas[0].cuerpo.previous_text, 'Antes.');
           assert.equal(llamadas[0].cuerpo.next_text, 'Después.');
           assert.equal(vb.pedidos.filter((p) => p.ruta.startsWith('POST /generate')).length, 0, 'Voicebox ni se entera');
@@ -170,12 +172,11 @@ test('AU-RA FP habla con ElevenLabs: la voz del avatar y del idioma elegidos; Vo
   }
 });
 
-test('el oído de Dr Electrum: Scribe primero con el vocabulario minero, Whisper de respaldo', async () => {
-  assert.deepEqual(
-    PROVEEDORES_OIDO_ELECTRUM.map((p) => p.nombre),
-    ['elevenlabs', ...PROVEEDORES_OIDO.map((p) => p.nombre)]
-  );
-  assert.ok(!PROVEEDORES_OIDO.some((p) => p.nombre === 'elevenlabs'), 'AU-RA no cambia');
+test('el oído: Scribe primero en Dr Electrum (vocabulario minero) y en AU-RA (sus apps y avatares), Whisper de respaldo', async () => {
+  // Turbo primero para lo que llega en WAV (José, 2-oct); este audio es webm, así que oye Scribe v2.
+  assert.deepEqual(PROVEEDORES_OIDO_ELECTRUM.map((p) => p.nombre), ['elevenlabs-turbo', 'elevenlabs', 'voicebox', 'gemini']);
+  // AU-RA también: Scribe primero (José, 1-oct); y antes, Turbo para lo que llega en WAV (José, 2-oct).
+  assert.deepEqual(PROVEEDORES_OIDO.map((p) => p.nombre), ['elevenlabs-turbo', 'elevenlabs', 'voicebox', 'gemini']);
   const vb = await voiceboxFalso({ transcripcion: () => ({ texto: 'lo oyó whisper' }) });
   const audio = Buffer.alloc(2000, 1);
   try {
@@ -189,10 +190,15 @@ test('el oído de Dr Electrum: Scribe primero con el vocabulario minero, Whisper
           const form = llamadas[0].cuerpo as FormData;
           assert.equal(form.get('model_id'), 'scribe_v2');
           assert.ok(form.getAll('keyterms').includes('INHGEOMIN'));
-          // AU-RA, con la misma clave puesta, sigue oyendo con Whisper.
+          // AU-RA también oye con Scribe, pero con SUS pistas (apps y avatares), no las del oficio minero.
           const a = await transcribirAudio({ audio, mime: 'audio/webm', language: 'es' });
-          assert.equal(a.via, 'voicebox:whisper');
-          assert.equal(llamadas.length, 1);
+          assert.equal(a.via, 'elevenlabs:scribe');
+          assert.equal(llamadas.length, 2);
+          const formAura = llamadas[1].cuerpo as FormData;
+          assert.equal(formAura.get('model_id'), 'scribe_v2');
+          assert.ok(formAura.getAll('keyterms').includes('Spotify') && formAura.getAll('keyterms').includes('AU-RA'));
+          assert.ok(!formAura.getAll('keyterms').includes('INHGEOMIN'));
+          assert.ok(formAura.getAll('keyterms').length < 100, 'menos de 100 pistas: con más, ElevenLabs cobra 20 s mínimo');
         }
       );
       await conEleven(
@@ -205,6 +211,38 @@ test('el oído de Dr Electrum: Scribe primero con el vocabulario minero, Whisper
       );
     });
   } finally {
+    await vb.cerrar();
+  }
+});
+
+test('si Scribe se cuelga, el respaldo todavía alcanza a oír dentro del presupuesto de /api/stt', async () => {
+  // El tope de Scribe deja sitio al respaldo: con los 15 s de /api/stt, Scribe tiene 10 y quedan 5.
+  assert.equal(topeScribe(presupuesto(PRESUPUESTO_OIDO_MS, () => 0)), PRESUPUESTO_OIDO_MS - RESERVA_RESPALDO_MS);
+  assert.equal(topeScribe(presupuesto(60_000, () => 0)), 15000, 'sin apuro (Telegram): sus 15 s de siempre');
+  assert.equal(topeScribe(presupuesto(3000, () => 0)), MINIMO_UTIL_MS, 'con poco tiempo: nunca menos del mínimo útil');
+  const vb = await voiceboxFalso({ transcripcion: () => ({ texto: 'lo oyó whisper' }) });
+  const real = globalThis.fetch;
+  const antes = process.env.ELEVENLABS_API_KEY;
+  process.env.ELEVENLABS_API_KEY = 'xi-de-prueba';
+  // Scribe no contesta nunca: solo suelta cuando le cortan la señal.
+  globalThis.fetch = (async (entrada: any, init?: any) => {
+    const url = String(entrada?.url || entrada);
+    if (!url.startsWith('https://api.elevenlabs.io/')) return real(entrada, init);
+    return new Promise<Response>((_, rechazar) => init?.signal?.addEventListener('abort', () => rechazar(init.signal.reason)));
+  }) as typeof fetch;
+  try {
+    await conVoicebox(vb.url, CLAVE_FALSA, async () => {
+      const t0 = Date.now();
+      const reloj = presupuesto(4000);
+      const o = await transcribirAudio({ audio: Buffer.alloc(2000, 1), mime: 'audio/webm', language: 'es', presupuesto: reloj });
+      assert.equal(o.via, 'voicebox:whisper', 'Scribe colgado: oye Whisper antes de que se acabe el tiempo');
+      assert.equal(o.texto, 'lo oyó whisper');
+      assert.ok(Date.now() - t0 < 4000, `dentro del presupuesto (${Date.now() - t0} ms)`);
+    });
+  } finally {
+    globalThis.fetch = real;
+    if (antes === undefined) delete process.env.ELEVENLABS_API_KEY;
+    else process.env.ELEVENLABS_API_KEY = antes;
     await vb.cerrar();
   }
 });

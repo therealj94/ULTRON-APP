@@ -23,7 +23,8 @@ internal sealed record Aviso(string Titulo, string Cuerpo, string Icono = "",
 
 /// <summary>
 /// El notch de AURA para Windows. Una silueta negra pegada al borde de arriba (con las orejas cóncavas
-/// y las esquinas de abajo redondas, como en la imagen de referencia) que crece y se encoge con
+/// y las esquinas de abajo redondas, como en la imagen de referencia) o, si lo arrastras, al de abajo
+/// (la misma silueta reflejada, creciendo hacia arriba; ver NotchWindow.Posicion.cs), que crece y se encoge con
 /// resortes, como la isla dinámica: reposo, escucha, piensa, habla, avisos, confirmaciones y el panel
 /// completo. Todo el tamaño y la forma salen de tres resortes (ancho, alto, radio); cada capa se
 /// funde con el suyo. La ventana es transparente: fuera de la silueta, los clics pasan de largo.
@@ -33,7 +34,8 @@ public partial class NotchWindow : Window
     const double AnchoVentana = 640, Oreja = 10, AltoCompacto = 170;
     readonly bool soloRender;
     readonly Resorte ancho = new(236, 260, 25), alto = new(36, 260, 25), radio = new(13, 260, 25);
-    // El brillo también entra y sale suave; sin brillo, el efecto se quita (una sombra invisible también cuesta dibujarla).
+    // «brillo» (el nombre de siempre) es la presencia del filo grabado: entra y sale suave y sigue la voz.
+    // Ya no es un resplandor: es la opacidad de una línea de 1 px (ver NotchWindow.Contraste.cs).
     readonly Resorte brillo = new(0, 200, 28);
     readonly Dictionary<Modo, (FrameworkElement Capa, Resorte Opacidad)> capas = new();
     readonly Stopwatch reloj = Stopwatch.StartNew();
@@ -62,6 +64,7 @@ public partial class NotchWindow : Window
     {
         this.soloRender = soloRender;
         InitializeComponent();
+        PrepararContraste();
         capas[Modo.Reposo] = (CapaReposo, new Resorte(1, 420, 40));
         capas[Modo.Escucha] = (CapaEscucha, new Resorte(0, 420, 40));
         capas[Modo.Piensa] = (CapaPiensa, new Resorte(0, 420, 40));
@@ -74,11 +77,21 @@ public partial class NotchWindow : Window
         Contenido.MouseLeftButtonUp += ClicForma;
         MouseEnter += (_, _) => { raton = true; Recalcular(); };
         MouseLeave += (_, _) => { raton = false; Recalcular(); };
+        // Clic en otra ventana: el panel se recoge solo (salvo que estés hablando, escribiendo o haya algo que confirmar).
+        Deactivated += (_, _) =>
+        {
+            if (panelAbierto && propuesta == null && !escuchando && !pensando && !hablandoAhora && Entrada.Text.Length == 0)
+                AbrirPanel(false);
+        };
         Width = AnchoVentana; Height = AltoCompacto;
         AvatarPanel.Tocable = true;
         PrepararSoltar();
+        PrepararArrastre();
         Iniciar();
+        CargarLugar();
         if (soloRender) { Aplicar(); Dibujar(); return; }
+        // La cara de AU-RA: el orbe de partículas (NotchWindow.Orbe.cs). Si no llega a estar listo, el avatar de siempre.
+        PrepararOrbe();
 
         SourceInitialized += (_, _) =>
         {
@@ -97,25 +110,30 @@ public partial class NotchWindow : Window
         vigia.Tick += (_, _) => Vigilar();
         vigia.Start();
         Closing += AlCerrar;
+        // Windows bloqueado: AURA deja de oír y de hablar hasta que desbloquees (NotchWindow.Asistente.cs).
+        Microsoft.Win32.SystemEvents.SessionSwitch += AlCambiarSesion;
     }
 
     // ───────────────────────────── forma y animación ─────────────────────────────
 
     (double W, double H, double R) Tamano(Modo m) => m switch
     {
-        // Con música sonando el reposo se ensancha para su portada y sus barritas, como la isla.
-        Modo.Reposo => raton ? (MusicaSonando ? 400 : 370, 42, 15) : (MusicaSonando ? 290 : 236, 36, 13),
+        // Con música sonando el reposo se ensancha para su portada y sus barritas, como la isla; con el ratón
+        // encima, más todavía para los controles (anterior, play/pausa, siguiente) sin tapar la cámara.
+        Modo.Reposo => raton ? (MusicaALaMano ? 500 : 370, 42, 15) : (MusicaSonando ? 290 : 236, 36, 13),
         Modo.Musica => (450, 94, 28),
         Modo.Escucha => (360, 58, 21),
         Modo.Piensa => (340, 58, 21),
-        Modo.Habla => (470, 80, 26),
+        // Con el orbe, «habla» abre su escenario: el orbe arriba y la frase formada con sus partículas debajo.
+        Modo.Habla => OrbeVisible ? (470, AltoEscenario, 30) : (470, 80, 26),
         Modo.Aviso => (450, 84, 28),
         Modo.Confirma => (480, 118, 28),
         Modo.Panel => (560, AltoPanel, 30),
         _ => (236, 36, 13),
     };
 
-    double AltoPanel => Math.Max(420, Math.Min(760, SystemParameters.WorkArea.Height - 24));
+    /// <summary>El alto del panel: lo que quepa en el monitor del notch (abajo deja sitio para que la ventana no se salga por arriba).</summary>
+    double AltoPanel => Math.Max(420, Math.Min(760, altoUtil - (lugar.Borde == BordeNotch.Abajo ? 56 : 24)));
 
     /// <summary>Qué modo toca ahora, por prioridad: confirmar &gt; panel &gt; aviso &gt; escucha &gt; piensa &gt; habla &gt; reposo.</summary>
     Modo ModoQueToca()
@@ -123,7 +141,9 @@ public partial class NotchWindow : Window
         if (propuesta != null) return Modo.Confirma;
         if (panelAbierto) return Modo.Panel;
         if (avisoActual != null) return Modo.Aviso;
-        if (escuchando) return Modo.Escucha;
+        // En la conversación en vivo el micrófono queda abierto todo el rato: con el orbe, mientras AURA contesta se ve que
+        // habla (su escenario, con las palabras); con los demás avatares, como siempre, la capa de escucha.
+        if (escuchando && !(hablandoAhora && AgenteAbierto && OrbeVisible)) return Modo.Escucha;
         if (pensando) return Modo.Piensa;
         if (hablandoAhora) return Modo.Habla;
         if (musicaVisible) return Modo.Musica;
@@ -136,7 +156,7 @@ public partial class NotchWindow : Window
         if (nuevo != modo)
         {
             // La ventana crece ANTES de animar hacia el panel (o la confirmación sobre el panel).
-            if ((nuevo == Modo.Panel || panelAbierto) && !soloRender && Height < AltoPanel + 48) Height = AltoPanel + 48;
+            if ((nuevo == Modo.Panel || panelAbierto) && !soloRender && Height < AltoPanel + 48) FijarAlto(AltoPanel + 48);
             modo = nuevo;
         }
         Aplicar();
@@ -154,19 +174,29 @@ public partial class NotchWindow : Window
             op.Objetivo = m == modo ? 1 : 0;
             capa.IsHitTestVisible = m == modo;
         }
-        // En reposo con el ratón encima: su nombre y el micrófono.
-        NombreChico.Opacity = modo == Modo.Reposo && raton ? 1 : 0;
-        MicChico.Opacity = modo == Modo.Reposo && raton ? 1 : 0;
-        BotonCentroChico.Opacity = modo == Modo.Reposo && raton ? 1 : 0;
-        // El micrófono silenciado se ve SIEMPRE (tachado, en rojo): nunca quedas sin saber si te oye.
-        BotonSilencio.Opacity = modo == Modo.Reposo && (raton || microSilenciado) ? 1 : 0;
-        Camara.Margin = new Thickness(0, modo == Modo.Reposo && !raton ? 13 : 14, 0, 0);
-        brillo.Objetivo = modo switch { Modo.Escucha => 0.55, Modo.Habla => 0.35, Modo.Confirma => 0.45, Modo.Aviso => 0.3, Modo.Musica => 0.25, _ => 0 };
-        if (soloRender && !pruebaAnimacion) { ancho.Saltar(w); alto.Saltar(h); radio.Saltar(r); brillo.Saltar(brillo.Objetivo); foreach (var (m, (_, op)) in capas) op.Saltar(m == modo ? 1 : 0); Dibujar(); return; }
+        // En reposo con el ratón encima: su nombre, el Centro y el micrófono, escalonados. El micrófono silenciado
+        // se ve SIEMPRE (tachado, en lacre): nunca quedas sin saber si te oye.
+        Templar();
+        AparecerControles();
+        PintarMusicaChica();
+        // La «cámara» solo arriba al centro (imita el notch de la cámara); la luz del micrófono se ve siempre.
+        bool abajo = lugar.Borde == BordeNotch.Abajo;
+        var camara = lugar.EsDeFabrica && monitorActual.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+        PuntoCamara.Visibility = LenteCamara.Visibility = camara;
+        LuzMic.Margin = new Thickness(camara == Visibility.Visible ? 10 : 0, 2, 0, 0);
+        double hueco = modo == Modo.Reposo && !raton ? 13 : 14;
+        Camara.VerticalAlignment = abajo ? VerticalAlignment.Bottom : VerticalAlignment.Top;
+        Camara.Margin = abajo ? new Thickness(0, 0, 0, hueco) : new Thickness(0, hueco, 0, 0);
+        brillo.Objetivo = FiloDeModo();
+        PintarFilo();
+        // Una capa más alta que la ventana compacta (el escenario del orbe): la ventana crece antes de animar.
+        if (!soloRender && !panelAbierto && h + 48 > Height) FijarAlto(h + 48);
+        ActualizarOrbe();
+        if (soloRender && !pruebaAnimacion) { BarrasEscucha.Asentar(); BarrasHabla.Asentar(); ancho.Saltar(w); alto.Saltar(h); radio.Saltar(r); brillo.Saltar(brillo.Objetivo); foreach (var (m, (_, op)) in capas) op.Saltar(m == modo ? 1 : 0); Dibujar(); return; }
         if (!animando) { animando = true; ultimo = reloj.Elapsed; CompositionTarget.Rendering += Fotograma; }
     }
 
-    /// <summary>El brillo sigue la voz sin saltos: cambia su objetivo y deja que el resorte lo lleve.</summary>
+    /// <summary>El filo sigue la voz sin saltos: cambia su objetivo y deja que el resorte lo lleve.</summary>
     void AnimarBrillo(double v)
     {
         brillo.Objetivo = Math.Clamp(v, 0, 1);
@@ -179,7 +209,7 @@ public partial class NotchWindow : Window
         double dt = (ahora - ultimo).TotalSeconds; ultimo = ahora;
         medidor?.Fotograma(ahora);
         // Movimiento reducido: directo al final, sin animar (la prueba de fluidez anima siempre, para medir los resortes).
-        bool saltar = !pruebaAnimacion && !SystemParameters.ClientAreaAnimation;
+        bool saltar = !pruebaAnimacion && MenosMovimiento;
         if (saltar) { ancho.Saltar(ancho.Objetivo); alto.Saltar(alto.Objetivo); radio.Saltar(radio.Objetivo); brillo.Saltar(brillo.Objetivo); }
         else { ancho.Paso(dt); alto.Paso(dt); radio.Paso(dt); brillo.Paso(dt); }
         bool quieto = ancho.Quieto && alto.Quieto && radio.Quieto && Math.Abs(brillo.Valor - brillo.Objetivo) < 0.005;
@@ -190,25 +220,33 @@ public partial class NotchWindow : Window
         {
             CompositionTarget.Rendering -= Fotograma; animando = false;
             medidor?.Pausa(); // el tiempo quieto no es un fotograma lento
-            if (!panelAbierto && Height > AltoCompacto + 1) Height = AltoCompacto;
+            double queda = Math.Max(AltoCompacto, alto.Objetivo + 48);
+            if (!panelAbierto && Height > queda + 1) FijarAlto(queda);
         }
     }
 
-    /// <summary>La silueta de la imagen de referencia: orejas cóncavas arriba, lados rectos, esquinas de abajo redondas.</summary>
-    internal static Geometry Silueta(double x0, double w, double h, double r, double e)
+    /// <summary>
+    /// La silueta de la imagen de referencia: orejas cóncavas arriba, lados rectos, esquinas de abajo redondas.
+    /// Con <paramref name="abajo"/>, la misma reflejada: pegada al borde de abajo de un lienzo de alto
+    /// <paramref name="lienzo"/>, con las orejas cóncavas hacia arriba.
+    /// </summary>
+    internal static Geometry Silueta(double x0, double w, double h, double r, double e, bool abajo = false, double lienzo = 0)
     {
         r = Math.Min(r, Math.Min(w / 2, h - e));
+        Point P(double x, double y) => new(x, abajo ? lienzo - y : y);
+        var giro = abajo ? SweepDirection.Counterclockwise : SweepDirection.Clockwise;
+        var contra = abajo ? SweepDirection.Clockwise : SweepDirection.Counterclockwise;
         var g = new StreamGeometry();
         using (var c = g.Open())
         {
-            c.BeginFigure(new Point(x0 - e, 0), true, true);
-            c.ArcTo(new Point(x0, e), new Size(e, e), 0, false, SweepDirection.Clockwise, true, true);
-            c.LineTo(new Point(x0, h - r), true, true);
-            c.ArcTo(new Point(x0 + r, h), new Size(r, r), 0, false, SweepDirection.Counterclockwise, true, true);
-            c.LineTo(new Point(x0 + w - r, h), true, true);
-            c.ArcTo(new Point(x0 + w, h - r), new Size(r, r), 0, false, SweepDirection.Counterclockwise, true, true);
-            c.LineTo(new Point(x0 + w, e), true, true);
-            c.ArcTo(new Point(x0 + w + e, 0), new Size(e, e), 0, false, SweepDirection.Clockwise, true, true);
+            c.BeginFigure(P(x0 - e, 0), true, true);
+            c.ArcTo(P(x0, e), new Size(e, e), 0, false, giro, true, true);
+            c.LineTo(P(x0, h - r), true, true);
+            c.ArcTo(P(x0 + r, h), new Size(r, r), 0, false, contra, true, true);
+            c.LineTo(P(x0 + w - r, h), true, true);
+            c.ArcTo(P(x0 + w, h - r), new Size(r, r), 0, false, contra, true, true);
+            c.LineTo(P(x0 + w, e), true, true);
+            c.ArcTo(P(x0 + w + e, 0), new Size(e, e), 0, false, giro, true, true);
         }
         g.Freeze();
         return g;
@@ -217,28 +255,26 @@ public partial class NotchWindow : Window
     void Dibujar()
     {
         double w = ancho.Valor, h = alto.Valor, r = radio.Valor;
-        var b = Math.Clamp(brillo.Valor, 0, 1);
-        if (b < 0.01) { if (Forma.Effect != null) Forma.Effect = null; }
-        else { if (Forma.Effect == null) Forma.Effect = Brillo; Brillo.Opacity = b; }
-        double x0 = (AnchoVentana - w) / 2;
-        Forma.Data = Silueta(x0, w, h, r, Oreja);
-        Canvas.SetLeft(Contenido, x0); Canvas.SetTop(Contenido, 0);
+        Filo.Opacity = Math.Clamp(brillo.Valor, 0, 1);
+        // En su sitio; si crece cerca de un lado del monitor, se corre hacia dentro para quedar entera.
+        double x0 = PosicionNotch.CentroVisible(centroVentana, w, limiteIzq, limiteDer, Oreja, MargenBorde) - w / 2;
+        bool abajo = lugar.Borde == BordeNotch.Abajo;
+        double lienzo = double.IsFinite(Height) ? Height : AltoCompacto;
+        Forma.Data = Reflejo.Data = Silueta(x0, w, h, r, Oreja, abajo, lienzo);
+        PintarVidrio();
+        Canvas.SetLeft(Contenido, x0); Canvas.SetTop(Contenido, abajo ? lienzo - h : 0);
         Contenido.Width = w; Contenido.Height = h;
-        var clip = new RectangleGeometry(new Rect(0, -r, w, h + r), r, r); clip.Freeze();
+        // Las esquinas del lado pegado al borde quedan fuera del recorte (ese lado es recto).
+        var clip = new RectangleGeometry(abajo ? new Rect(0, 0, w, h + r) : new Rect(0, -r, w, h + r), r, r); clip.Freeze();
         Contenido.Clip = clip;
+        double entra = abajo ? 8 : -8, sale = abajo ? -6 : 6;
         foreach (var (m, (capa, op)) in capas)
         {
             capa.Opacity = Math.Clamp(op.Valor, 0, 1);
             capa.Visibility = op.Valor < 0.01 && m != modo ? Visibility.Hidden : Visibility.Visible;
-            ((TranslateTransform)capa.RenderTransform).Y = (1 - Math.Clamp(op.Valor, 0, 1)) * (m == modo ? -8 : 6);
+            ((TranslateTransform)capa.RenderTransform).Y = MenosMovimiento ? 0 : (1 - Math.Clamp(op.Valor, 0, 1)) * (m == modo ? entra : sale);
         }
-    }
-
-    void Ubicar()
-    {
-        // Arriba al centro del monitor principal, pegado al borde (encima de la barra si la hubiera).
-        Left = (SystemParameters.PrimaryScreenWidth - AnchoVentana) / 2;
-        Top = 0;
+        ColocarOrbe();
     }
 
     /// <summary>
@@ -272,6 +308,7 @@ public partial class NotchWindow : Window
         BotonAviso.Visibility = a.Boton != null ? Visibility.Visible : Visibility.Collapsed;
         BotonAviso.Content = a.Boton;
         Recalcular();
+        GolpeDeAviso();
         if (soloRender) return;
         relojAviso = new DispatcherTimer { Interval = TimeSpan.FromSeconds(a.Segundos) };
         relojAviso.Tick += (_, _) => { if (raton && modo == Modo.Aviso) return; SiguienteAviso(); };
@@ -293,8 +330,16 @@ public partial class NotchWindow : Window
 
     void ClicForma(object s, MouseButtonEventArgs e)
     {
-        if (modo == Modo.Panel || modo == Modo.Confirma) return;
+        if (arrastrando || modo == Modo.Panel || modo == Modo.Confirma) return;
         if (modo == Modo.Aviso && avisoActual?.Accion != null) { AccionAviso(s, e); return; }
+        // Movido de su sitio, el clic espera un instante por si es doble clic (vuelve arriba al centro).
+        if (SePuedeArrastrar && DiferirClic(ClicPildora)) return;
+        ClicPildora();
+    }
+
+    void ClicPildora()
+    {
+        if (modo == Modo.Panel || modo == Modo.Confirma) return;
         // Con música: el primer toque abre su tarjeta; el segundo, el chat.
         if (modo == Modo.Reposo && MusicaSonando && !musicaVisible) { MostrarTarjetaMusica(6); return; }
         if (modo == Modo.Musica) { musicaVisible = false; }
@@ -332,13 +377,21 @@ public partial class NotchWindow : Window
         bandeja = new Forms.NotifyIcon { Icon = System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath!) ?? System.Drawing.SystemIcons.Application, Text = "AURA", Visible = true };
         bandeja.MouseClick += (_, e) => { if (e.Button == Forms.MouseButtons.Left) Dispatcher.Invoke(() => AbrirPanel(!panelAbierto)); };
         var menu = new Forms.ContextMenuStrip();
-        menu.Items.Add("Abrir el Centro  (Ctrl+Alt+C)", null, (_, _) => Dispatcher.Invoke(() => AbrirCentro()));
-        menu.Items.Add("Chat rápido en el notch  (Ctrl+Alt+A)", null, (_, _) => Dispatcher.Invoke(() => AbrirPanel(true)));
-        menu.Items.Add("Hablar  (Ctrl+Alt+Espacio)", null, (_, _) => Dispatcher.Invoke(() => Microfono(this, new RoutedEventArgs())));
-        menu.Items.Add("Pausar todo  (Ctrl+Alt+Esc)", null, (_, _) => Dispatcher.Invoke(PausarTodo));
-        menu.Items.Add("Ajustes", null, (_, _) => Dispatcher.Invoke(() => AbrirCentro("ajustes")));
+        // Los atajos van a la derecha, en Plex Mono (los dibuja MenuBandeja); el texto, solo.
+        Forms.ToolStripMenuItem Item(string texto, string atajo, Action hacer)
+        {
+            var i = new Forms.ToolStripMenuItem(texto, null, (_, _) => Dispatcher.Invoke(hacer)) { ShortcutKeyDisplayString = atajo };
+            menu.Items.Add(i);
+            return i;
+        }
+        Item("Abrir el Centro", "Ctrl+Alt+C", () => AbrirCentro());
+        Item("Chat rápido en el notch", "Ctrl+Alt+A", () => AbrirPanel(true));
+        Item("Hablar", "Ctrl+Alt+Espacio", () => Microfono(this, new RoutedEventArgs()));
+        Item("Pausar todo", "Ctrl+Alt+Esc", () => PausarTodo());
+        Item("Ajustes", "", () => AbrirCentro("ajustes"));
         menu.Items.Add(new Forms.ToolStripSeparator());
-        menu.Items.Add("Salir", null, (_, _) => Dispatcher.Invoke(Close));
+        Item("Cerrar AURA por completo", "", () => SalirDelTodo()).Tag = "peligro";
+        MenuBandeja.Vestir(menu);
         bandeja.ContextMenuStrip = menu;
     }
 
@@ -353,7 +406,9 @@ public partial class NotchWindow : Window
         {
             var sb = new System.Text.StringBuilder(64); GetClassName(fg, sb, 64);
             var clase = sb.ToString();
-            var pantalla = Forms.Screen.PrimaryScreen!.Bounds;
+            // El monitor donde está el notch (no siempre el principal).
+            var pb = Forms.Screen.PrimaryScreen!.Bounds;
+            var pantalla = AreaDelNotch() ?? new RECT { Left = pb.Left, Top = pb.Top, Right = pb.Right, Bottom = pb.Bottom };
             completa = clase is not ("Progman" or "WorkerW" or "Shell_TrayWnd") && r.Left <= pantalla.Left && r.Top <= pantalla.Top && r.Right >= pantalla.Right && r.Bottom >= pantalla.Bottom;
         }
         Mostrar(!completa || modo != Modo.Reposo);
@@ -367,15 +422,45 @@ public partial class NotchWindow : Window
         Raiz.IsHitTestVisible = si;
     }
 
+    /// <summary>
+    /// Cerrar AURA de verdad (bandeja, notch y Centro: «Cerrar AURA por completo»). Antes «Salir» podía dejar el
+    /// proceso vivo y escondido: si un paso de la limpieza fallaba, el cierre se cortaba ahí, o un hilo de audio o
+    /// de red seguía corriendo; y como AURA es una sola, volver a abrirla no hacía nada (le pasaba el pedido a la
+    /// que quedó escondida). Ahora cada paso va por separado y, si en 5 s el proceso no terminó, se termina igual.
+    /// </summary>
+    internal void SalirDelTodo(bool sinPreguntar = false)
+    {
+        if (sinPreguntar) borradorSucio = false;
+        saliendo = true;
+        Close();
+    }
+
+    bool saliendo, cerrado;
+
     void AlCerrar(object? s, CancelEventArgs e)
     {
-        if (!GuardarAntesDeSalir()) { e.Cancel = true; return; }
-        CompositionTarget.Rendering -= Fotograma;
-        vigia.Stop(); relojAviso?.Stop();
-        Terminar();
-        if (fuente != null) { for (int i = 1; i <= 5; i++) UnregisterHotKey(fuente.Handle, i); fuente.RemoveHook(Gancho); }
-        if (bandeja != null) { bandeja.Visible = false; bandeja.Dispose(); }
+        if (cerrado) return;
+        if (!GuardarAntesDeSalir()) { e.Cancel = true; saliendo = false; return; }
+        cerrado = true;
+        // El reloj de seguridad va primero: pase lo que pase en la limpieza, el proceso termina.
+        if (!soloRender)
+            new System.Threading.Thread(() => { System.Threading.Thread.Sleep(5000); Centro.Registro.Anotar("salir", "la limpieza no terminó en 5 s: salida forzada"); Environment.Exit(0); }) { IsBackground = true }.Start();
+        Centro.Registro.Anotar("salir", "cerrando AURA por completo");
+        Seguro(() => CompositionTarget.Rendering -= Fotograma);
+        Seguro(() => { if (!soloRender) Microsoft.Win32.SystemEvents.SessionSwitch -= AlCambiarSesion; });
+        Seguro(() => { vigia.Stop(); relojAviso?.Stop(); });
+        Seguro(() => { if (AgenteAbierto || abriendoAgente) CerrarAgente(); });
+        Seguro(Terminar);
+        Seguro(() => { if (fuente != null) { for (int i = 1; i <= 5; i++) UnregisterHotKey(fuente.Handle, i); fuente.RemoveHook(Gancho); } });
+        Seguro(() => { if (bandeja != null) { bandeja.Visible = false; bandeja.Dispose(); } });
         // En las pruebas del CI la que termina es la prueba (con su resultado escrito), no la ventana.
         if (!soloRender) Application.Current.Shutdown();
+    }
+
+    /// <summary>Un paso de la limpieza al cerrar: si falla se anota y se sigue con el siguiente.</summary>
+    static void Seguro(Action paso)
+    {
+        try { paso(); }
+        catch (Exception ex) { Centro.Registro.Anotar("salir", "un paso falló (sigo): " + ex.GetBaseException().Message); }
     }
 }

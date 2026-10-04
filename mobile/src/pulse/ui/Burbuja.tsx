@@ -14,6 +14,7 @@ import { MEDIDA, useTema, type Paleta } from '../../nucleo/tema';
 import { tr } from '../../i18n';
 import * as RELEVO from '../relevo';
 import { hora, type Fila } from './formato';
+import { TarjetaPago } from '../../cartera/TarjetaPago';
 
 type FilaMsg = Extract<Fila, { tipo: 'msg' }>;
 
@@ -166,6 +167,8 @@ function FotoMensaje({ m, ancho, onVer, p }: { m: RELEVO.Mensaje; ancho: number;
 function BurbujaBase({ fila, anchoMax, onReintentar, onDescartar, onVerFoto }: Props) {
   const p = useTema();
   const { m, mio, primera, ultima, leido } = fila;
+  // El comprobante de un pago (cartera/): su tarjeta, que vuelve a mirar la cadena. Yo soy quien lo mandó o lo recibió.
+  if (m.tipo === 'pago' && !m.borrado) return <TarjetaPago m={m} mio={mio} yo={mio ? m.de : m.para} anchoMax={anchoMax} />;
   const fondo = mio ? p.burbujaMia : p.burbujaOtro;
   const letra = mio ? p.textoMia : p.textoOtro;
   const tenue = mio ? p.textoMia : p.texto3;

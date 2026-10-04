@@ -19,9 +19,15 @@
  *  · SONANDO: la pantalla «te está llamando» con la cara del avatar, timbre y vibración (efecto
  *    `timbre`). Con la app cerrada o el teléfono bloqueado, la de un recordatorio la hace sonar el aviso
  *    a pantalla completa de notifee (compa/recordatorios.ts), y sus botones llegan aquí igual.
- *  · Al contestar se abre la sesión (efecto `abrir`); al conectar, el PRIMER MENSAJE es el motivo de la
- *    llamada: `[[llamada]]` (llámame: saluda como quien llama) o `[[recordatorio]] <texto>` (lo dice y
- *    sigue la charla). Dura HASTA QUE LA PERSONA CUELGUE.
+ *  · Al contestar se abre la sesión (efecto `abrir`); al conectar, el saludo lo dice el propio agente de
+ *    ElevenLabs (su `first_message`, que el cliente no puede cambiar: los overrides de first_message
+ *    están apagados en la plataforma). Un recordatorio manda además `[[recordatorio]] <texto>` (lo dice
+ *    y sigue la charla). «Llámame» ya NO manda `[[llamada]]`: salía un saludo doble («¡Aquí estoy!
+ *    Cuéntame.» del agente y «¡Hola! Aquí estoy…» de nuestro servidor). Dura HASTA QUE LA PERSONA CUELGUE.
+ *  · Si la sesión se cae a mitad de la llamada y el control la reconecta (sesion.ts, con tope), la
+ *    conversación de ElevenLabs es NUEVA: al conectar se manda `[[reconecta]] <la última frase de la
+ *    persona>` (si dijo algo hace poco en la sesión que se cayó) y el servidor pide un perdón corto y la
+ *    atiende; sin frase, `[[reconecta]]` solo («Perdón, se me cortó. ¿Me repites?»). Nunca otro saludo.
  *  · Protección de minutos: tras `preguntaMs` (3 min) sin que nadie hable, el avatar pregunta «¿sigues
  *    ahí?» (efecto `sigues`); si nadie contesta en `esperaSiguesMs` (20 s) después de preguntar, cuelga.
  *    Silenciada, cuelga pasado lo mismo (no puede preguntar). Configurable.
@@ -94,8 +100,27 @@ export const FIN_VISIBLE_MS = 2_200;
 /** Sin minutos hoy: no se intenta de nuevo en este rato (el día de Honduras cambia antes o el teléfono se reinicia). */
 const TOPE_ESPERA_MS = 6 * 60 * 60_000;
 
+/** Lo que mandaba «llámame» al conectar. Ya no se manda (el saludo es el first_message del agente); el servidor lo sigue atendiendo para las versiones viejas. */
 export const MENSAJE_LLAMAME = '[[llamada]]';
 export const MENSAJE_SIGUES = '[[sigues]]';
+export const MENSAJE_RECONECTA = '[[reconecta]]';
+/** La sesión se reconectó a mitad de la llamada: perdón corto y, si la hay, la última frase de la persona otra vez. */
+export const mensajeReconecta = (frase?: string | null) => {
+  const f = String(frase || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+  return f ? `${MENSAJE_RECONECTA} ${f}` : MENSAJE_RECONECTA;
+};
+/**
+ * La última frase de la persona se repite al reconectar solo si es de hace menos de esto: la caída que
+ * importa es la del turno en curso (el cerebro tardó y ElevenLabs cortó). Una pregunta vieja, que ya
+ * se contestó, no se vuelve a hacer.
+ */
+export const FRASE_RECONECTA_MS = 60_000;
+/**
+ * Si el avatar habló al menos esto después de la frase, la frase ya está contestada: al reconectar no se
+ * vuelve a mandar (Codex en #101: se repetía la respuesta o la acción, p. ej. la alarma dos veces). El
+ * relleno de ElevenLabs («Mmm… a ver.», ~1 s) no cuenta como respuesta.
+ */
+export const CONTESTADA_MS = 1_500;
 /** El recordatorio tal como viaja por la conversación (lo mismo que compa/acciones.ts, mensajeDeRecordatorio). */
 export const mensajeRecordatorio = (texto: string) => `[[recordatorio]] ${String(texto || '').replace(/\s+/g, ' ').trim().slice(0, 300)}`;
 
@@ -119,6 +144,70 @@ export function avisoMinutos(restanteMs: number, idioma: Idioma): string {
 /** ¿Hay llamada a la vista (suena, conecta o se habla)? Mientras tanto la mesa no escucha ni habla. */
 export function llamadaActiva(e: EstadoCiclo): boolean {
   return e === 'sonando' || e === 'conectando' || e === 'en_llamada' || e === 'silenciado';
+}
+
+/**
+ * ¿La voz de la mesa (su TTS) tiene que callar? Con la llamada a la vista o la sesión de ElevenLabs
+ * montada (también una abierta por otro lado, antes de que el ciclo se entere) habla el agente: la mesa
+ * no le pone otra voz encima, ni la de un turno que ya venía en camino ni un saludo o una reacción.
+ */
+export function mesaCallada(e: EstadoCiclo, sesion: { montada: boolean }): boolean {
+  return llamadaActiva(e) || sesion.montada;
+}
+
+/**
+ * Sigue el ciclo y la sesión y avisa `callar(true | false)` en cuanto cambia `mesaCallada`. Va por las
+ * suscripciones (síncronas) y no por un efecto de React: así la mesa calla en el mismo instante en que
+ * se abre la llamada, antes del siguiente render, y vuelve a poder hablar antes de que se ejecute lo que
+ * pide el ciclo al fallar (que la mesa diga por qué no conectó). Devuelve cómo dejar de seguirlos.
+ */
+export function seguirVozMesa(
+  ciclo: { estado(): EstadoCiclo; suscribir(f: () => void): () => void },
+  sesion: { vista(): { montada: boolean }; suscribir(f: () => void): () => void },
+  callar: (on: boolean) => void
+): () => void {
+  let antes: boolean | null = null;
+  const revisar = () => {
+    const ahora = mesaCallada(ciclo.estado(), sesion.vista());
+    if (ahora === antes) return;
+    antes = ahora;
+    callar(ahora);
+  };
+  const offCiclo = ciclo.suscribir(revisar);
+  const offSesion = sesion.suscribir(revisar);
+  revisar();
+  return () => {
+    offCiclo();
+    offSesion();
+  };
+}
+
+/** Lo que espera la sesión recién conectada antes de reintentar un mensaje (el control tarda un instante). */
+export const REINTENTO_MENSAJE_MS = 600;
+
+/**
+ * Manda un texto al agente (el motivo de la llamada, «¿sigues ahí?», la reconexión) y, si el control
+ * todavía no está, lo reintenta UNA vez. AUR10: el reintento solo sale si la sesión sigue siendo la misma
+ * (`vigente`); si en medio se colgó y se abrió otra, el texto viejo NO entra en la llamada nueva (cuenta
+ * como no entregado: `alFallar`). Devuelve cómo cancelar el reintento (al colgar: cero timers vivos).
+ */
+export function mandarAlAgente(
+  texto: string,
+  d: { enviar: (t: string) => boolean; vigente: () => boolean; esperar: (f: () => void, ms: number) => () => void; alFallar: (t: string) => void },
+  reintentoMs = REINTENTO_MENSAJE_MS
+): () => void {
+  if (d.vigente() && d.enviar(texto)) return () => undefined;
+  let hecho = false;
+  const cancelar = d.esperar(() => {
+    if (hecho) return;
+    hecho = true;
+    if (d.vigente() && d.enviar(texto)) return;
+    d.alFallar(texto);
+  }, reintentoMs);
+  return () => {
+    hecho = true;
+    cancelar();
+  };
 }
 
 /** ¿Terminó hace nada (se ve «Llamada terminada» un momento)? */
@@ -150,6 +239,11 @@ export class CicloLlamada {
   private sesionDesde = -1;
   /** Estamos colgando nosotros (el `cerrada` que venga después no es un corte). */
   private cerrandoNosotros = false;
+  /** La última frase de la persona en la sesión vigente, y la de la sesión que se cayó (para reconectar). */
+  private fraseSesion: { texto: string; en: number } | null = null;
+  /** Desde cuándo habla el avatar (0: no habla). */
+  private hablaDesde = 0;
+  private fraseCortada: string | null = null;
 
   constructor(o: OpcionesCiclo = {}) {
     this.reloj = o.reloj || Date.now;
@@ -282,6 +376,26 @@ export class CicloLlamada {
     return [{ tipo: 'timbre', on: true }];
   }
 
+  /**
+   * «Hablar» (el botón de la mesa): la persona quiere conversar YA, como el modo voz de ChatGPT. No suena
+   * nada ni sale la pantalla de llamada entrante: de REPOSO a CONECTANDO de una vez (José 1-oct: «al
+   * instante»). Lo que sí suena es un recordatorio, porque ahí llama el avatar (llamar). Si algo ya está
+   * sonando, es contestarlo; con la conversación abierta, no hace nada.
+   */
+  hablarYa(): EfectoCiclo[] {
+    if (this.e === 'sonando') return this.contestar();
+    if (this.sesionViva()) return [];
+    if (!this.llamadaDisponible()) return [{ tipo: 'alNativo', texto: null, motivo: 'tope' }];
+    const origen: OrigenLlamada = { tipo: 'llamame' };
+    this.origen_ = origen;
+    this.motivo_ = null;
+    this.conectadaDesde = 0;
+    this.agenteHablando = false;
+    this.preguntado = 0;
+    this.ir('conectando');
+    return [{ tipo: 'contestada', origen }, { tipo: 'abrir' }];
+  }
+
   /** Contestó (el botón de la pantalla o el del aviso). */
   contestar(): EfectoCiclo[] {
     if (this.e !== 'sonando' || !this.origen_) return [];
@@ -319,8 +433,21 @@ export class CicloLlamada {
     return this.terminar('persona', true);
   }
 
-  /** La sesión se abrió por otro lado (un botón «en vivo» viejo): se sigue como llamada, sin timbre. */
+  /**
+   * Una sesión nueva se está abriendo. En plena llamada (ya conectó antes) es una RECONEXIÓN: se guarda
+   * la última frase de la persona de la sesión que se cayó, si es reciente, para mandarla al conectar.
+   * Si no hay llamada, la sesión se abrió por otro lado (un botón «en vivo» viejo): se sigue como
+   * llamada, sin timbre.
+   */
   sesionAbriendo(): EfectoCiclo[] {
+    if (this.e === 'en_llamada' || this.e === 'silenciado') {
+      const f = this.fraseSesion;
+      this.fraseCortada = f && this.reloj() - f.en <= FRASE_RECONECTA_MS ? f.texto : null;
+      this.fraseSesion = null;
+      return [];
+    }
+    this.fraseSesion = null;
+    this.fraseCortada = null;
     if (this.e === 'reposo' || llamadaTerminada(this.e)) {
       this.origen_ = { tipo: 'directa' };
       this.motivo_ = null;
@@ -330,8 +457,19 @@ export class CicloLlamada {
     return [];
   }
 
-  /** La sesión conectó: en llamada, y el motivo de la llamada entra como primer mensaje. */
+  /**
+   * La sesión conectó: en llamada, y el motivo de la llamada (un recordatorio) entra como primer mensaje.
+   * Si ya estaba en llamada, es una reconexión: `[[reconecta]]` con la frase que se cortó (nada de otro
+   * saludo). Silenciada no se manda nada (no se la oiría).
+   */
   conectado(): EfectoCiclo[] {
+    if (this.e === 'en_llamada' || this.e === 'silenciado') {
+      const frase = this.fraseCortada;
+      this.fraseCortada = null;
+      if (this.e === 'silenciado') return [];
+      this.ultimaVoz = this.reloj();
+      return [{ tipo: 'primerMensaje', texto: mensajeReconecta(frase) }];
+    }
     if (this.e !== 'conectando') {
       if (this.e === 'reposo' || llamadaTerminada(this.e)) this.sesionAbriendo();
       else return [];
@@ -344,8 +482,8 @@ export class CicloLlamada {
     this.ir('en_llamada');
     const ef: EfectoCiclo[] = [];
     const o = this.origen_;
-    if (o?.tipo === 'llamame') ef.push({ tipo: 'primerMensaje', texto: MENSAJE_LLAMAME });
-    else if (o?.tipo === 'recordatorio') ef.push({ tipo: 'primerMensaje', texto: mensajeRecordatorio(o.texto) });
+    // «Llámame»: el saludo es el first_message del agente (mandar `[[llamada]]` hacía un saludo doble).
+    if (o?.tipo === 'recordatorio') ef.push({ tipo: 'primerMensaje', texto: mensajeRecordatorio(o.texto) });
     const aviso = this.revisarTope();
     if (aviso) ef.push(aviso);
     return ef;
@@ -376,9 +514,15 @@ export class CicloLlamada {
     return this.terminar(motivo, true);
   }
 
-  /** La persona dijo algo en la llamada: contesta el «¿sigues ahí?» y reinicia la cuenta. */
-  turnoUsuario(_texto?: string): EfectoCiclo[] {
+  /**
+   * La persona dijo algo en la llamada: contesta el «¿sigues ahí?» y reinicia la cuenta. La frase se
+   * guarda (la última de la sesión) por si la sesión se cae antes de contestarla; las marcas que manda
+   * la app (`[[…]]`) no son frases suyas.
+   */
+  turnoUsuario(texto?: string): EfectoCiclo[] {
     if (this.e !== 'en_llamada') return [];
+    const t = String(texto || '').trim();
+    if (t && !t.startsWith('[[')) this.fraseSesion = { texto: t, en: this.reloj() };
     this.ultimaVoz = this.reloj();
     this.preguntado = 0;
     this.finPregunta = 0;
@@ -390,6 +534,13 @@ export class CicloLlamada {
     if (this.e !== 'en_llamada' && this.e !== 'silenciado') return [];
     this.agenteHablando = hablando;
     const ahora = this.reloj();
+    if (hablando) this.hablaDesde = this.hablaDesde || ahora;
+    else {
+      // Lo que dijo después de la frase, si fue una respuesta de verdad, la deja contestada.
+      const f = this.fraseSesion;
+      if (f && this.hablaDesde && this.hablaDesde >= f.en && ahora - this.hablaDesde >= CONTESTADA_MS) this.fraseSesion = null;
+      this.hablaDesde = 0;
+    }
     if (this.preguntado) {
       if (!hablando) this.finPregunta = ahora;
     } else this.ultimaVoz = ahora;

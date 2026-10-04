@@ -12,9 +12,11 @@ on:
       - "scripts/qa/firma-release.mjs"
       - "scripts/qa/comprobar-apk.mjs"
       - "scripts/qa/runtime-android.mjs"
+# En una rama, un push nuevo corta la compilación vieja. En main nunca: cada commit de main que
+# cambia el nativo tiene que dejar su APK (y su huella en el Release, que lee el flujo de OTA).
 concurrency:
   group: apk-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: write
@@ -41,7 +43,7 @@ jobs:
       # actualizaciones de producción; las de ramas, `pruebas` (ver CANAL en app.config.js).
       EXPO_CANAL: ${{ github.ref == 'refs/heads/main' && 'production' || 'pruebas' }}
     outputs:
-      version: ${{ steps.version.outputs.version }}
+      version: ${{ steps.falta.outputs.version }}
     # Dos aplicaciones del mismo proyecto. Una matriz y no dos ficheros: así no se desincronizan,
     # que es lo que pasa siempre con dos flujos copiados. Cada variante corre en su propio runner
     # con su propio checkout, de modo que el `android/` que genera una no toca el de la otra.
@@ -64,13 +66,6 @@ jobs:
           cache: npm
           cache-dependency-path: mobile/package-lock.json
 
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - uses: gradle/actions/setup-gradle@v4
-
       - name: Install JS
         working-directory: mobile
         run: npm ci
@@ -87,7 +82,43 @@ jobs:
         working-directory: mobile
         run: echo "runtime=$(node ../scripts/qa/runtime-android.mjs)" >> "$GITHUB_OUTPUT"
 
+      # ¿Hace falta compilar? En un push a main, si la huella nativa Y la versión son las de la APK
+      # del Release «latest», la APK saldría igual por dentro: lo nuevo (solo JS) ya va por OTA
+      # (ota.yml) y se ahorran los ~20 min de Gradle. A mano (workflow_dispatch) o en ramas, siempre.
+      - name: ¿Hace falta compilar?
+        id: falta
+        working-directory: mobile
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RT: ${{ steps.runtime.outputs.runtime }}
+        run: |
+          VERSION=$(node -p "require('./app.json').expo.version")
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          COMPILAR=true
+          if [ "$GITHUB_REF" = "refs/heads/main" ] && [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            mkdir -p rt
+            gh release download --repo "$GITHUB_REPOSITORY" --pattern "runtime-${ULTRON_APP}.txt" --dir rt 2>/dev/null || true
+            PUBLICADA=$(cat "rt/runtime-${ULTRON_APP}.txt" 2>/dev/null || echo "")
+            ETIQUETA=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName 2>/dev/null || echo "")
+            if [ -n "$RT" ] && [ "$PUBLICADA" = "$RT" ] && [ "$ETIQUETA" = "v${VERSION}" ]; then
+              COMPILAR=false
+              echo "::notice title=APK sin cambios nativos (${ULTRON_APP})::Misma huella ($RT) y versión ($VERSION) que el Release ${ETIQUETA}: no se compila; el JS nuevo va por OTA."
+              echo "= ${ULTRON_APP}: misma huella y versión que ${ETIQUETA} → sin compilar (va por OTA)" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+          echo "compilar=${COMPILAR}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@v4
+        if: steps.falta.outputs.compilar == 'true'
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        if: steps.falta.outputs.compilar == 'true'
+
       - name: Prebuild Android
+        if: steps.falta.outputs.compilar == 'true'
         working-directory: mobile
         env:
           CI: "1"
@@ -113,6 +144,7 @@ jobs:
       # claves no se escriben en ningún archivo ni en la línea de comandos: el build.gradle que
       # parchea scripts/qa/firma-release.mjs las lee del entorno cuando compila.
       - name: Firma del release
+        if: steps.falta.outputs.compilar == 'true'
         id: firma
         working-directory: mobile
         env:
@@ -147,6 +179,7 @@ jobs:
       # Release = JS empaquetado + Hermes. Firmado con la keystore propia si el paso anterior la
       # preparó; si no, con la keystore debug del template (para instalar directo).
       - name: Release APK
+        if: steps.falta.outputs.compilar == 'true'
         working-directory: mobile/android
         env:
           GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx4g
@@ -168,6 +201,7 @@ jobs:
         run: rm -rf "$RUNNER_TEMP/firma-apk"
 
       - name: Rename APK
+        if: steps.falta.outputs.compilar == 'true'
         id: version
         working-directory: mobile
         run: |
@@ -180,6 +214,7 @@ jobs:
       # La huella SHA-256 del certificado con que QUEDÓ firmado el APK, leída del APK con apksigner
       # (no supuesta). En la forma «AB:CD:…» que va tal cual en ANDROID_CERT_SHA256 del servidor.
       - name: Huella del certificado
+        if: steps.falta.outputs.compilar == 'true'
         working-directory: mobile
         env:
           HUELLA_AUTORIZADA: ${{ vars.ANDROID_CERT_SHA256_AUTORIZADA || '3A:2E:DC:D5:23:2C:F0:6F:2F:8E:96:AE:F6:FC:40:D0:1D:61:5A:E2:4C:8E:59:66:BA:A1:03:83:51:55:70:5F' }}
@@ -211,6 +246,7 @@ jobs:
       # Un APK que compila puede llevar la configuración de la otra app: pasó exactamente eso, y
       # ni el typecheck ni Gradle ni el tamaño del fichero lo delataron. Esto lo abre y mira.
       - name: Comprobar el APK
+        if: steps.falta.outputs.compilar == 'true'
         working-directory: mobile
         run: node ../scripts/qa/comprobar-apk.mjs "out/${{ matrix.marca }}-${{ steps.version.outputs.version }}.apk" "${{ matrix.variante }}"
 
@@ -218,6 +254,7 @@ jobs:
       # coincide con la de antes del prebuild, ninguna actualización publicada le llegaría nunca.
       # Se guarda junto al APK: el flujo de OTA la usa para saber si hay APK que pueda recibir.
       - name: Runtime de la APK
+        if: steps.falta.outputs.compilar == 'true'
         working-directory: mobile
         run: |
           APK="out/${{ matrix.marca }}-${{ steps.version.outputs.version }}.apk"
@@ -230,6 +267,7 @@ jobs:
           echo "runtime ${{ matrix.variante }} ($EXPO_CANAL): $EN_APK" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload APK
+        if: steps.falta.outputs.compilar == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.marca }}-apk
@@ -242,24 +280,40 @@ jobs:
   # El Release va aparte, después de las dos. Dentro de la matriz, en main los dos trabajos
   # intentaban crear la MISMA etiqueta a la vez; aquí se juntan los dos APK y se publica una sola
   # vez, que además es lo que quiere quien descarga: las dos apps en el mismo sitio.
+  #
+  # Si ninguna variante se compiló (mismo nativo y versión que el Release), no hay nada que publicar;
+  # si solo una, el Release se actualiza con esa y la otra queda como estaba (su huella no cambió).
   publicar:
     needs: apk
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: read
     steps:
+      - name: ¿Se compiló algo?
+        id: hay
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          N=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" --jq '[.artifacts[] | select(.name | endswith("-apk"))] | length')
+          echo "n=$N" >> "$GITHUB_OUTPUT"
+          if [ "$N" = "0" ]; then echo "Sin APK nueva: el Release queda como estaba." >> "$GITHUB_STEP_SUMMARY"; fi
+
       - uses: actions/download-artifact@v4
+        if: steps.hay.outputs.n != '0'
         with:
           path: apks
           merge-multiple: true
 
       - name: Ver qué llegó
+        if: steps.hay.outputs.n != '0'
         run: ls -la apks
 
       # Enlace de descarga directo y permanente:
       #   https://github.com/<owner>/<repo>/releases/latest/download/AU-RA-FP-<version>.apk
       - name: Publicar Release
+        if: steps.hay.outputs.n != '0'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ needs.apk.outputs.version }}

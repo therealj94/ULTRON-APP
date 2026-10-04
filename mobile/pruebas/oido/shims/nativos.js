@@ -96,6 +96,9 @@ module.exports = {
   },
   api: {
     transcribe: async () => '',
+    // El oído Turbo no corre en este arnés (sin micrófono crudo: `expo` simulado no lo trae).
+    transcribirWav: async () => '',
+    pedirPermisoTurbo: async () => null,
     TTS_ENDPOINT: 'https://prueba/api/tts',
     CANTAR_ENDPOINT: 'https://prueba/api/cantar',
     ORAR_ENDPOINT: 'https://prueba/api/orar',

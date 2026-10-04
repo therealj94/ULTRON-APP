@@ -12,11 +12,13 @@ import { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { de, tr, useIdioma } from '../i18n';
-import { cumpleLegible, guardarPerfil, usePerfil } from '../lib/perfil';
+import { api } from '../lib/api';
+import { cumpleLegible, guardarPerfil, guardarPerfilConRecibo, usePerfil } from '../lib/perfil';
+import { claveComunDeCampo, copiaConocer, reciboDurable, suprimirCopias, type EstadoSupresion } from '../lib/supresion';
 import type { Encuesta } from '../nucleo/contrato';
 import { MEDIDA, useTema } from '../nucleo/tema';
 import { Aparecer, Boton, Campo, Chip, Fila, Grupo, Hoja, Palomita, PantallaConCabecera, Texto, vibrar } from '../ui';
-import { PREGUNTAS, armarRespuesta, separarRespuesta, type Pregunta } from '../primeravez/flujo';
+import { PREGUNTAS, armarRespuesta, datoConocerDe, separarRespuesta, type Pregunta } from '../primeravez/flujo';
 import type { RaizParams } from '../app/rutas';
 
 type Props = NativeStackScreenProps<RaizParams, 'Perfil'>;
@@ -30,10 +32,26 @@ const ETIQUETAS: Record<Pregunta['campo'], { es: string; en: string }> = {
   familia: { es: 'Tu familia', en: 'Your family' },
   trabajo: { es: 'A qué te dedicas', en: 'What you do' },
   gustos: { es: 'Lo que te gusta', en: 'What you enjoy' },
+  ayuda: { es: 'Lo que quieres que AURA haga por ti', en: 'What you want AURA to do for you' },
 };
 
 /** La hoja para editar una respuesta: chips (varios) + texto libre. */
-function EditorRespuesta({ pregunta, valor, onGuardar, onBorrar }: { pregunta: Pregunta | null; valor: string; onGuardar: (v: string) => void; onBorrar: () => void }) {
+function EditorRespuesta({
+  pregunta,
+  valor,
+  onGuardar,
+  onBorrar,
+  borrando,
+  errorBorrar,
+}: {
+  pregunta: Pregunta | null;
+  valor: string;
+  onGuardar: (v: string) => void;
+  onBorrar: () => void;
+  /** El borrado va en camino (esperando el recibo de cada copia). */
+  borrando: boolean;
+  errorBorrar: string | null;
+}) {
   const idioma = useIdioma();
   const inicial = pregunta ? separarRespuesta(valor, pregunta.sugerencias, idioma) : { chips: [], texto: valor };
   const [chips, setChips] = useState<string[]>(inicial.chips);
@@ -60,8 +78,22 @@ function EditorRespuesta({ pregunta, valor, onGuardar, onBorrar }: { pregunta: P
         multiline={!pregunta}
         style={!pregunta ? { minHeight: 80, textAlignVertical: 'top' } : undefined}
       />
-      <Boton titulo={tr('Guardar', 'Save')} onPress={() => onGuardar(resp)} deshabilitado={!resp} />
-      {!!valor && <Boton titulo={tr('Borrar esta respuesta', 'Erase this answer')} icono="basura" variante="fantasma" onPress={onBorrar} />}
+      <Boton titulo={tr('Guardar', 'Save')} onPress={() => onGuardar(resp)} deshabilitado={!resp || borrando} />
+      {(!!valor || !!errorBorrar) && (
+        <Boton
+          titulo={errorBorrar ? tr('Volver a intentar el borrado', 'Try erasing again') : tr('Borrar esta respuesta', 'Erase this answer')}
+          icono="basura"
+          variante="fantasma"
+          onPress={onBorrar}
+          cargando={borrando}
+          textoCargando={tr('Borrando…', 'Erasing…')}
+        />
+      )}
+      {!!errorBorrar && (
+        <Texto v="chica" color="aviso">
+          {errorBorrar}
+        </Texto>
+      )}
     </View>
   );
 }
@@ -72,14 +104,54 @@ export function LoQueSabe({ navigation }: Props) {
   const perfil = usePerfil();
   const [editando, setEditando] = useState<Editando>(null);
   const [borrarTodo, setBorrarTodo] = useState(false);
+  const [errorBorrar, setErrorBorrar] = useState<string | null>(null);
+  /** La supresión en curso (una respuesta o todo): pendiente hasta tener el recibo de cada copia. */
+  const [suprimiendo, setSuprimiendo] = useState<EstadoSupresion | null>(null);
+  const [errorCampo, setErrorCampo] = useState<string | null>(null);
   const enc = perfil?.encuesta || {};
   const pregunta = editando && editando.campo !== 'otros' ? PREGUNTAS.find((p) => p.campo === editando.campo) || null : null;
-  const hayAlgo = Object.values(enc).some(Boolean);
+
+  const abrirEditor = (campo: Pregunta['campo'] | 'otros') => {
+    setErrorCampo(null);
+    setSuprimiendo(null);
+    setEditando({ campo });
+  };
 
   const guardarCampo = (campo: keyof Encuesta, v: string) => {
     guardarPerfil({ encuesta: { [campo]: v } });
-    vibrar(v ? 'exito' : 'suave');
+    // Corregir también corrige su copia en «lo que sé de ti» (misma clave común: se reemplaza, no se repite), y
+    // el servidor corrige sus usos activos: los resúmenes que decían lo viejo y el system congelado (AUR11).
+    const d = campo !== 'otros' ? datoConocerDe(campo, v) : null;
+    if (d) void api('/api/cerebro/conocer', { method: 'POST', body: JSON.stringify({ ...d, origen: 'ajustes', dicho: Date.now() }) }, 10_000).catch(() => undefined);
+    vibrar('exito');
     setEditando(null);
+  };
+
+  /**
+   * «Borrar esta respuesta»: el perfil Y su copia en «lo que sé de ti» (PRIV01). La hoja se cierra solo
+   * con el recibo durable de las dos; si no, dice qué pasó y deja reintentar.
+   */
+  const borrarCampo = async (campo: keyof Encuesta) => {
+    setSuprimiendo('pendiente');
+    setErrorCampo(null);
+    const clave = claveComunDeCampo(campo);
+    const r = await suprimirCopias([
+      { nombre: 'perfil', borrar: () => guardarPerfilConRecibo({ encuesta: { [campo]: '' } }) },
+      ...(clave ? [copiaConocer(api, { claves: [clave] })] : []),
+    ]);
+    setSuprimiendo(r.estado);
+    if (r.estado === 'confirmado') {
+      vibrar('suave');
+      setEditando(null);
+      return;
+    }
+    vibrar('aviso');
+    setErrorCampo(
+      tr(
+        'Ya no está en este teléfono, pero el servidor todavía no confirmó que lo borró de forma segura. Lo sigo intentando; vuelve a tocar para comprobarlo.',
+        'It’s gone from this phone, but the server hasn’t confirmed it was safely erased yet. I’ll keep trying; tap again to check.'
+      )
+    );
   };
 
   return (
@@ -101,17 +173,16 @@ export function LoQueSabe({ navigation }: Props) {
         <Aparecer retraso={60}>
           <Grupo titulo={tr('Lo que me contaste', 'What you told me')}>
             {PREGUNTAS.map((p) => (
-              <Fila key={p.campo} titulo={tr(ETIQUETAS[p.campo].es, ETIQUETAS[p.campo].en)} detalle={enc[p.campo] || tr('Sin responder · toca para contarme', 'Not answered · tap to tell me')} icono={p.icono} onPress={() => setEditando({ campo: p.campo })} />
+              <Fila key={p.campo} titulo={tr(ETIQUETAS[p.campo].es, ETIQUETAS[p.campo].en)} detalle={enc[p.campo] || tr('Sin responder · toca para contarme', 'Not answered · tap to tell me')} icono={p.icono} onPress={() => abrirEditor(p.campo)} />
             ))}
-            <Fila titulo={tr('Algo más', 'Anything else')} detalle={enc.otros || tr('Lo que quieras que AURA sepa', 'Whatever you want AURA to know')} icono="chispas" onPress={() => setEditando({ campo: 'otros' })} />
+            <Fila titulo={tr('Algo más', 'Anything else')} detalle={enc.otros || tr('Lo que quieras que AURA sepa', 'Whatever you want AURA to know')} icono="chispas" onPress={() => abrirEditor('otros')} />
           </Grupo>
         </Aparecer>
 
-        {hayAlgo && (
-          <Aparecer retraso={120}>
-            <Boton titulo={tr('Borrar todo lo que te conté', 'Erase everything I told you')} icono="basura" variante="peligro" onPress={() => setBorrarTodo(true)} />
-          </Aparecer>
-        )}
+        {/* Siempre a mano: aunque la encuesta esté vacía, AURA puede haber aprendido cosas conversando. */}
+        <Aparecer retraso={120}>
+          <Boton titulo={tr('Borrar todo lo que te conté', 'Erase everything I told you')} icono="basura" variante="peligro" onPress={() => setBorrarTodo(true)} />
+        </Aparecer>
       </View>
 
       <Hoja
@@ -126,7 +197,9 @@ export function LoQueSabe({ navigation }: Props) {
             pregunta={pregunta}
             valor={enc[editando.campo] || ''}
             onGuardar={(v) => guardarCampo(editando.campo, v)}
-            onBorrar={() => guardarCampo(editando.campo, '')}
+            onBorrar={() => void borrarCampo(editando.campo)}
+            borrando={suprimiendo === 'pendiente'}
+            errorBorrar={errorCampo}
           />
         )}
       </Hoja>
@@ -141,13 +214,51 @@ export function LoQueSabe({ navigation }: Props) {
           <Texto v="chica" color="texto3">
             {tr('No se puede deshacer.', 'This can’t be undone.')}
           </Texto>
+          {!!errorBorrar && (
+            <Texto v="chica" color="aviso">
+              {errorBorrar}
+            </Texto>
+          )}
           <Boton
             titulo={tr('Borrar todo', 'Erase all')}
             icono="basura"
             variante="peligro"
-            onPress={() => {
-              guardarPerfil({ encuesta: { vive: '', comida: '', musica: '', familia: '', trabajo: '', gustos: '', otros: '' } });
+            cargando={suprimiendo === 'pendiente'}
+            textoCargando={tr('Borrando…', 'Erasing…')}
+            onPress={async () => {
+              // Todo de verdad: lo que AURA aprendió conversando (que también entra en lo que sabe de ti) y la
+              // encuesta entera, también «ayuda» (auditoría de Codex del 3-oct, PRI 001). Primero lo del
+              // servidor: si no quedó guardado de verdad (durable), no se cierra ni se vacía la encuesta, así el
+              // botón sigue aquí para volver a intentarlo (Codex en #137).
+              setSuprimiendo('pendiente');
+              setErrorBorrar(null);
+              let r: unknown = null;
+              try {
+                r = await api<{ durable?: boolean }>('/api/cerebro/conocer', { method: 'DELETE' }, 15_000);
+              } catch {
+                r = null;
+              }
+              // Solo `durable: true` es recibo: un servidor que no lo dice tampoco confirma (PRIV01).
+              if (!reciboDurable(r)) {
+                setSuprimiendo('error');
+                setErrorBorrar(tr('No alcancé a borrar de forma segura lo que aprendí conversando. No cerré nada: vuelve a intentarlo en un momento.', 'I couldn’t safely erase what I learned from our chats. Nothing was closed: try again in a moment.'));
+                return;
+              }
+              // Y la encuesta, ESPERANDO su recibo (antes el PUT salía y la hoja se cerraba sin saber si quedó).
+              const enPerfil = await guardarPerfilConRecibo({ encuesta: { vive: '', comida: '', musica: '', familia: '', trabajo: '', gustos: '', ayuda: '', otros: '' } });
+              if (!enPerfil) {
+                setSuprimiendo('error');
+                setErrorBorrar(
+                  tr(
+                    'Lo que aprendí conversando ya está borrado. Tus respuestas ya no están en este teléfono, pero el servidor todavía no confirmó que las borró: lo sigo intentando; vuelve a tocar «Borrar todo» para comprobarlo.',
+                    'What I learned from our chats is erased. Your answers are gone from this phone, but the server hasn’t confirmed erasing them yet: I’ll keep trying; tap “Erase all” again to check.'
+                  )
+                );
+                return;
+              }
+              setSuprimiendo('confirmado');
               vibrar('medio');
+              setErrorBorrar(null);
               setBorrarTodo(false);
             }}
           />

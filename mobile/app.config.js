@@ -60,6 +60,18 @@ const AURA_FONDO = '#232528';
 // El fondo del ícono, el mismo gris con el que se dibujó assets/icon.png (scripts/marca-aura.py).
 const AURA_ICONO = '#2C2E32';
 
+/*
+ * AVISOS CON LA APP CERRADA (Firebase Cloud Messaging, src/push): SOLO AU-RA.
+ *
+ * `google-services.json` es del proyecto Firebase `aura-fp` y trae un único cliente, el paquete
+ * `link.ordenglobal.ultronfp`. El plugin de `@react-native-firebase/app` aplica el plugin de Gradle
+ * de Google Services, que falla la compilación si el archivo no tiene un cliente para el paquete que
+ * se compila: en Dr Electrum (`link.ordenglobal.drelectrumfp`) rompería la APK. Por eso ni el archivo
+ * ni los plugins entran en la rama del doctor. El de `messaging` solo pone el ícono y color por omisión
+ * de los avisos de FCM (los nuestros son solo datos y los dibuja notifee).
+ */
+const FIREBASE_PLUGINS = ['@react-native-firebase/app', '@react-native-firebase/messaging'];
+
 /** Cambia las opciones de un plugin de la lista sin tocar el resto. */
 function conPlugin(plugins, nombre, cambiar) {
   return (plugins || []).map((p) => {
@@ -77,9 +89,11 @@ module.exports = ({ config }) => {
       ...expo,
       // «automatic»: el tema «Sistema» de la 5.0 sigue al teléfono (con «dark» Android siempre dice oscuro).
       userInterfaceStyle: 'automatic',
-      plugins: conPlugin(expo.plugins, 'expo-splash-screen', (o) => ({ ...o, backgroundColor: AURA_FONDO })),
+      plugins: [...conPlugin(expo.plugins, 'expo-splash-screen', (o) => ({ ...o, backgroundColor: AURA_FONDO })), ...FIREBASE_PLUGINS],
       android: {
         ...expo.android,
+        // Firebase Cloud Messaging (src/push): solo AU-RA. Ver FIREBASE_PLUGINS.
+        googleServicesFile: './google-services.json',
         adaptiveIcon: { ...expo.android?.adaptiveIcon, backgroundColor: AURA_ICONO },
         /*
          * La vuelta de la wallet por https (App Link verificado). `ultronfp://` lo puede declarar

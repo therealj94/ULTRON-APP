@@ -3,21 +3,38 @@
  * con su ícono, para qué lo usa AURA y el BOTÓN CHECK ✔ que lo pide con el diálogo nativo y se
  * completa al concederlo. Si quedó bloqueado («No volver a preguntar»), la fila ofrece abrir los
  * Ajustes del sistema; al volver a la app se revisa todo otra vez. Arriba, «Permitir todo».
+ * Al final, «Alarmas y recordatorios» (Android 12+): no tiene diálogo, su botón abre los Ajustes.
  */
 import { useCallback, useEffect, useState } from 'react';
 import { AppState, StyleSheet, View } from 'react-native';
 import { tr } from '../i18n';
 import { MEDIDA, useTema } from '../nucleo/tema';
 import { Aparecer, Boton, BotonCheck, Icono, Tarjeta, Texto, vibrar } from '../ui';
-import { INFO_PERMISOS, abrirAjustesSistema, estadosPermisos, listo, pedirPermiso, pedirTodos, type EstadoPermiso, type IdPermiso } from './permisos';
+import {
+  INFO_PERMISOS as TODOS_PERMISOS,
+  abrirAjustesAlarma,
+  abrirAjustesSistema,
+  estadoAlarmaExacta,
+  estadosPermisos,
+  listo,
+  pedirPermiso,
+  pedirTodos,
+  type EstadoAlarma,
+  type EstadoPermiso,
+  type IdPermiso,
+} from './permisos';
 
-export function ListaPermisos({ conBotonTodo = true }: { conBotonTodo?: boolean }) {
+/** `solo`: muestra solo esos permisos (la primera vez pide lo que hace falta para el objetivo, AUR11). */
+export function ListaPermisos({ conBotonTodo = true, solo }: { conBotonTodo?: boolean; solo?: readonly IdPermiso[] }) {
   const tema = useTema();
+  const INFO_PERMISOS = solo ? TODOS_PERMISOS.filter((p) => solo.includes(p.id)) : TODOS_PERMISOS;
   const [estados, setEstados] = useState<Partial<Record<IdPermiso, EstadoPermiso>>>({});
   const [pidiendo, setPidiendo] = useState<IdPermiso | 'todos' | null>(null);
+  const [alarma, setAlarma] = useState<EstadoAlarma | null>(null);
 
   const revisar = useCallback(async () => {
     setEstados(await estadosPermisos());
+    setAlarma(await estadoAlarmaExacta());
   }, []);
 
   useEffect(() => {
@@ -91,6 +108,34 @@ export function ListaPermisos({ conBotonTodo = true }: { conBotonTodo?: boolean 
           </Aparecer>
         );
       })}
+      {alarma && alarma !== 'noAplica' && (
+        <Aparecer retraso={80 + INFO_PERMISOS.length * 70}>
+          <Tarjeta relleno={MEDIDA.espacio.m} style={alarma === 'concedido' ? { borderColor: tema.exito } : undefined}>
+            <View style={s.fila}>
+              <View style={[s.icono, { backgroundColor: alarma === 'concedido' ? tema.exitoFondo : tema.acentoFondo }]}>
+                <Icono nombre="reloj" tam={20} color={alarma === 'concedido' ? tema.exito : tema.acentoTexto} />
+              </View>
+              <View style={{ flex: 1, gap: 2 }}>
+                <Texto v="cuerpoFuerte">{tr('Alarmas y recordatorios', 'Alarms & reminders')}</Texto>
+                <Texto v="chica" color="texto2">
+                  {alarma === 'concedido'
+                    ? tr('Tus recordatorios suenan a la hora exacta.', 'Your reminders ring right on time.')
+                    : tr('Para que tus recordatorios suenen a la hora exacta. Sin esto pueden llegar unos minutos tarde.', 'So your reminders ring right on time. Without it they may arrive a few minutes late.')}
+                </Texto>
+              </View>
+              <BotonCheck
+                hecho={alarma === 'concedido'}
+                onPress={() => {
+                  if (alarma !== 'concedido') void abrirAjustesAlarma();
+                }}
+                etiqueta={`${tr('Alarmas y recordatorios', 'Alarms & reminders')}: ${alarma === 'concedido' ? tr('permitido', 'allowed') : tr('permitir, abrir ajustes', 'allow, open settings')}`}
+                color={tema.exito}
+                colorMarca="#FFFFFF"
+              />
+            </View>
+          </Tarjeta>
+        </Aparecer>
+      )}
     </View>
   );
 }

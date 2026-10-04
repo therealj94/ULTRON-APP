@@ -20,7 +20,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const SERVIDOR = path.join(process.cwd(), 'dist', 'server.cjs');
+const SERVIDOR = path.join(process.cwd(), 'build-server', 'server.cjs');
 const PUERTO = 7803;
 const BASE = `http://127.0.0.1:${PUERTO}`;
 const SECRETO = 'secreto-de-prueba-subir';

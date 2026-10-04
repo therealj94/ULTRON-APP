@@ -5,7 +5,7 @@
  * El movimiento central de esta interfaz —la cara que se aparta— no se puede revisar leyendo código:
  * o se mira, o no se sabe. Esto lo mira.
  *
- *   npm run build && NODE_ENV=production PORT=3460 node dist/server.cjs
+ *   npm run build && NODE_ENV=production PORT=3460 node build-server/server.cjs
  *   CHROMIUM_PATH=... node scripts/qa/electrum.mjs http://127.0.0.1:3460 ./qa-electrum
  */
 import { chromium } from 'playwright';

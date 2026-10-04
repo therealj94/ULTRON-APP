@@ -51,7 +51,8 @@ export type Expresion =
 
 export const EXPRESIONES: readonly Expresion[] = ['tranquila', 'contenta', 'encantada', 'enojada', 'dormida', 'escucha', 'piensa', 'sorprendida', 'triste', 'uy', 'levantada', 'timida'];
 
-export type VozVista = { estado: EstadoVoz; silenciada: boolean; dormida: boolean; suspendida: boolean };
+/** `pensando`: la conversación entendió a la persona y el agente todavía no contesta (sesion.ts, CALL04). */
+export type VozVista = { estado: EstadoVoz; silenciada: boolean; dormida: boolean; suspendida: boolean; pensando?: boolean };
 
 export type Animo = {
   /** 0..1: sube con los toques seguidos, baja sola. */
@@ -198,7 +199,7 @@ export function expresion(a: Animo, ahora: number): Expresion {
   if (estaDormida(a.voz)) return 'dormida';
   if (r) return r;
   if (hablando(a)) return expresionDeEmocion(a.sentir);
-  if (a.mesa.pensando || a.voz.estado === 'conectando') return 'piensa';
+  if (a.mesa.pensando || a.voz.estado === 'conectando' || a.voz.pensando) return 'piensa';
   if (a.voz.estado === 'escuchando') return 'escucha';
   // Sin conversación en vivo, el oído del teléfono la hace escuchar (si de verdad escucha).
   if (a.oido && !vozAbierta(a.voz)) return 'escucha';

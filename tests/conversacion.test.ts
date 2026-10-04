@@ -38,6 +38,17 @@ describe('Hilo y búsqueda sin que se lo pidan', () => {
     assert.match(resuelto, /No pidas el enlace/);
   });
 
+  it('un saludo, un «gracias» o un «no» no siguen lo anterior (1-oct: lanzaban búsquedas)', () => {
+    const hilo = [{ rol: 'ultron', texto: 'El proyecto usa Whisper y GPT. ¿Quieres que busque más del repositorio en internet?' }];
+    for (const msg of ['buenos días', 'Bueno, gracias', 'claro que no', 'siempre me pasa eso', 'okey no importa', 'eso es todo', 'me gusta eso', 'sinceramente no sé']) {
+      assert.equal(esContinuacion(msg), false, msg);
+      assert.equal(resolverReferencia(msg, hilo), msg, msg);
+    }
+    for (const msg of ['sí', 'dale', 'ok, búscalo', 'claro, adelante', 'revisa eso', 'analízalo a fondo', 'lee el readme']) {
+      assert.equal(esContinuacion(msg), true, msg);
+    }
+  });
+
   it('pregunta externa busca sola; saludo y «recuerda que» no', () => {
     assert.equal(esPreguntaExterna('hola'), false);
     assert.ok(pedidoRed('recuerda que tomo té verde') == null);

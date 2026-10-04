@@ -11,7 +11,7 @@ Silueta negra pegada al borde de arriba, con las «orejas» cóncavas y las esqu
 | Reposo | 236 × 36: el avatar chiquito, la cámara y el punto de conexión. Con el ratón encima crece y muestra su nombre y el micrófono. |
 | Escucha | Barras que siguen tu voz, brillo del color del avatar y la **luz naranja** de micrófono abierto. |
 | Piensa | Lo que dijiste y tres puntos en ola. |
-| Habla | El avatar moviendo la boca con el **nivel real del audio**, el subtítulo de la frase que suena y las barras de su voz. |
+| Habla | El avatar moviendo la boca con el **nivel real del audio**, el subtítulo de la frase que suena y las barras de su voz. Con AU-RA, su **orbe** arriba y la frase que suena formada con sus partículas debajo (el notch crece a 470 × 200 mientras habla). |
 | Aviso | Notificaciones en cola: recordatorios, «abriendo Excel», capturas, respuestas con el chat cerrado. |
 | Confirma | Lo que no se deshace solo (escribir en otra ventana, bloquear) espera tu «sí» por voz o con el botón, 30 s. |
 | Panel | El chat completo, las acciones y el borrador. |
@@ -20,7 +20,9 @@ Con un juego o video a pantalla completa se aparta. Con «reducir movimiento» d
 
 ## Avatares
 
-AU-RA, Claudio y ANT-ONIO son sus **modelos 3D de la app** (`vendor/aura-avatar-suite`) renderizados a hojas de 24 fotogramas por estado: reposo, escucha, piensa, feliz, preocupado y tres aperturas de boca (`scripts/render-avatares.cjs`). El Guardián son sus ojos celestes, dibujados en vivo. Al cambiar de avatar cambian el color, la cara y la voz (la elige el servidor por avatar, igual que en la app).
+Claudio y ANT-ONIO son sus **modelos 3D de la app** (`vendor/aura-avatar-suite`) renderizados a hojas de 24 fotogramas por estado: reposo, escucha, piensa, feliz, preocupado y tres aperturas de boca (`scripts/render-avatares.cjs`). El Guardián son sus ojos celestes, dibujados en vivo. Al cambiar de avatar cambian el color, la cara y la voz (la elige el servidor por avatar, igual que en la app).
+
+**La cara de AU-RA es su orbe de partículas** (aprobado por José): `src/14-orbe/orbe.html` es la fuente de verdad y el `.csproj` la publica tal cual como `OrbeAssets/orbe.html` (sin copia en `windows/`; el Centro la copia al armarse). En el notch va en una WebView2 de composición (la normal no se dibuja en una ventana transparente), una sola que se pone sobre la cara de la capa que se ve y se funde con ella (`Notch/OrbeView.cs`, `NotchWindow.Orbe.cs`; el protocolo, puro y probado, en `Aura.Windows.Core/ProtocoloOrbe.cs`). La mueve el estado real (escucha, piensa, habla, feliz), el nivel real del altavoz (o de la conversación en vivo) y el texto de cada frase con lo que dura su audio: el orbe **no habla** (la voz es la de siempre), solo forma las palabras. Efectos de sonido: Ajustes → «Efectos de sonido» (encendidos de fábrica); «Menos movimiento» también lo calma. Si no hay WebView2 Runtime, falla WebGL o no dice «listo» en 10 s, el notch sigue con el avatar de antes (las hojas de AU-RA siguen en `AvatarAssets/aura` para eso). `--orbe-self-test` lo prueba en el CI con el .exe publicado.
 
 ## Voz
 
@@ -29,7 +31,8 @@ AU-RA, Claudio y ANT-ONIO son sus **modelos 3D de la app** (`vendor/aura-avatar-
 - **Voz:** cada frase se pide a `/api/tts` apenas cierra, mientras el cerebro sigue escribiendo: la primera palabra suena antes de que termine de pensar.
 - **Interrumpir:** hablarle mientras habla la calla (su propia voz por el altavoz no cuenta: el umbral sube con su nivel).
 - **Manos libres:** al terminar de contestar vuelve a escuchar; si nadie habla en unos segundos, se recoge.
-- **«Oye AURA»** (opcional): gramática de pocas frases con el reconocedor de Windows, sin red.
+- **«Oye AURA»** (modo «palabra», el recomendado): la palabra se reconoce en el equipo, sin red, con el modelo propio (`Modelos/hey_aura.onnx`) y, de respaldo, el reconocedor de Windows. Hasta oírla no sale audio del equipo: solo después (o mientras dura la charla, o con un «sí/no» pendiente) la frase va a `/api/stt`. Si este equipo no puede encender ningún detector local, el micrófono no queda abierto (se habla con Ctrl+Alt+Espacio). «Siempre atenta», en cambio, manda cada frase al servidor y busca el nombre en el texto.
+- **Windows bloqueado:** AURA se pausa sola (micrófono, despertador, voz, conversación en vivo y avisos) y vuelve como estaba al desbloquear.
 
 Atajos: **Ctrl+Alt+Espacio** hablar · **Ctrl+Alt+A** chat · **Ctrl+Alt+W** elegir dónde escribir · **Ctrl+Alt+Esc** pausar todo.
 
@@ -41,11 +44,21 @@ Atajos: **Ctrl+Alt+Espacio** hablar · **Ctrl+Alt+A** chat · **Ctrl+Alt+W** ele
 - **Inicio**: saludo, tu cartera, lo que suena y tu día (agenda, correos, últimos avisos).
 - **Chat**: el mismo del notch, en grande.
 - **PULSE2CHAT**: chats cifrados de punta a punta, llamadas y videollamadas (el mismo relevo y cifrado que la app; este equipo es un aparato más con su propia llave). Las llamadas entrantes suenan en el notch aunque el Centro esté cerrado («sí» contesta, «no» rechaza). Por voz: «llama a Karla», «videollamada con Karla», «mándale un mensaje a Karla que ya voy» (con confirmación).
+- **WhatsApp personal** (solo la cuenta dueña; para cualquier otra ni aparece): en la misma sección que PULSE2CHAT, arriba se cambia **PULSE2CHAT ⇄ WhatsApp** (clic, ← → en las pestañas, o deslizar de lado con dos dedos o el dedo). Vincular con el **QR** (se actualiza solo) o con número (código de 8 letras); luego la lista (buscar, sin leer, grupos, hora de Honduras) y la conversación (fotos en miniatura que se abren en grande, notas de voz, documentos, «🚫 Mensaje eliminado», «editado»), con la caja de escribir: Enter envía, Mayús+Enter baja de renglón. Desvincular, con confirmación. Todo pasa por AURA con tu sesión (`whatsapp.*` en `centro/PUENTE.md`).
 - **Música**: reproductor de Spotify (portada, progreso, controles, volumen, dispositivos) y búsqueda para poner canciones con un clic.
 - **Cartera**: saldos de Veta Wallet **solo lectura** (ORIGEN y los tokens de la red 5550, mismos contratos y precios que la wallet). «¿Cuánto ORIGEN tengo?». Enviar se hace en Veta Wallet.
 - **Ajustes**: por secciones, cada opción con su explicación; conexiones (Spotify, Google, Microsoft), notificaciones, privacidad y **diagnóstico** (el registro `%LOCALAPPDATA%\AuraWindows\aura.log`, con los tiempos de cada paso y sin secretos, para copiarlo si algo falla).
 
 **El notch** ganó: botón para **silenciar el micrófono** (tachado en rojo, siempre visible), botón del Centro, modos de escucha («Oye AURA», «siempre atenta», «solo si lo pido»), respuesta más rápida (la Laya del nodo no se consulta si no tiene el modelo), **escritura en cualquier app** («escribe hola»: corto va directo; largo pide confirmación; nunca en contraseñas), y **control del equipo** por voz: «cópialo», «pégalo», «guárdalo», «nueva pestaña», «pon la ventana a la izquierda», «presiona control shift s», «abre la configuración de wifi», «sube el brillo», «activa el modo oscuro».
+
+## El recorrido: Claudio y ANT-ONIO te enseñan AURA (Centro)
+
+Al terminar la guía de la primera vez («Ver el recorrido»), en **Inicio → Ver lo que sé hacer** o en **Ajustes → Atajos**: unos 5 minutos a pantalla completa dentro del Centro (`windows/centro/src/recorrido`). Claudio a la izquierda y ANT-ONIO a la derecha, en su video (los mismos clips de la app y el mismo director que no parpadea), conversan con su voz de ElevenLabs y en medio, sobre un escritorio de Windows dibujado, pasa cada ejemplo: el notch que crece, escucha y habla; Ctrl+Alt+Espacio y «Oye AURA»; escribir en el Bloc de notas (corto directo, largo con «sí», nunca en contraseñas); ventana a la izquierda, brillo y modo oscuro; notificaciones de WhatsApp, Teams y Outlook; música; correo, agenda y recordatorios; una llamada de PULSE2CHAT; el Centro y la cartera (solo lectura); el micrófono silenciado, la pausa y lo cifrado. Doce capítulos con título de cine, golpes de cámara, sonidos y efectos que le salen al que habla; **Claudio se hace chiquito y vuela al notch** y habla desde ahí. Tres momentos para tocar (las teclas, el «Sí», «Contestar»); si nadie toca, sigue solo. Al final, probar de verdad: hablarle, chat, música, PULSE2CHAT o conectar cuentas.
+
+- La voz la pide AURA (`voz.decir`, ver `centro/PUENTE.md`): la página no sale a la red. Sin servidor, el recorrido se lee con subtítulos.
+- Mientras está abierto, AURA se calla y silencia el micrófono (`recorrido.abierto`: el recorrido dice «Oye AURA» por el altavoz); al cerrarlo todo vuelve como estaba. Si escondes la ventana, entra una llamada o AURA lleva a otra sección, se cierra solo.
+- El Centro de abajo se esconde mientras tanto (sigue vivo: PULSE2CHAT escucha); su avatar 3D le quitaba cuadros al recorrido.
+- Pruebas: `centro/test/recorrido.test.mjs` (guion, motor igual al del teléfono, coreografía, archivos, que lo prometido exista en este README) y `--centro-self-test` en el CI con fotos del recorrido en WebView2 y si los videos dibujan.
 
 ## Notificaciones de otras apps (1.4)
 
@@ -119,7 +132,7 @@ Instalar `AURA-Windows-Setup-1.0.0-x64.exe` (por usuario, sin permisos de admini
 
 ## Compilar y probar
 
-- Núcleo (corre en cualquier sistema): `dotnet run --project windows/tests/Aura.Windows.Tests.csproj` — 198 comprobaciones (incluye el lector iCal): reglas, casos de la auditoría, horas de recordatorio, confirmaciones, Laya ligera C# = Python, SSE, cortador de frases, resorte.
+- Núcleo (corre en cualquier sistema): `dotnet run --project windows/tests/Aura.Windows.Tests.csproj` — 198 comprobaciones (incluye el lector iCal): reglas, casos de la auditoría, horas de recordatorio, confirmaciones, Laya ligera C# = Python, SSE, cortador de frases, resorte, y el protocolo del orbe con su contrato contra `src/14-orbe/orbe.html` (si la página cambia lo que el notch le habla, falla).
 - App: `./windows/scripts/publish.ps1` en Windows con .NET 10 (también compila en Linux con `EnableWindowsTargeting`, sin poder ejecutarse).
 - CI (`.github/workflows/aura-windows.yml`, Windows): pruebas, .exe, **capturas reales de cada estado del notch**, conversación completa contra un servidor AU-RA simulado (`gateway/fixture-aura.mjs`), **prueba nativa** (UI Automation leyendo el Bloc de notas, OCR de Windows, controles por nombre, ventanas, información del equipo, voz de Windows), llamadas, escritura real en el Bloc de notas, instalador, instalar y desinstalar.
 
@@ -140,6 +153,13 @@ Una revisión independiente del código 1.0 encontró y se corrigió:
 - Lo probado en CI usa un servidor simulado: no acredita el Qwen, la voz ni el oído de producción, ni un micrófono físico. Eso se prueba en la PC.
 - La escritura directa es para Word y el Bloc de notas (UI Automation, con foco verificado). No hay control universal del escritorio.
 - Laya del nodo necesita que se entrene y se reinicie el servicio en la T4 (no hay acceso desde aquí).
-- Sin firma Authenticode del propietario: SmartScreen puede avisar la primera vez.
+- Sin firma Authenticode del propietario: SmartScreen puede avisar la primera vez. **TODO (auditoría 1-oct, H07)**: con un certificado de firma de código, cargar en GitHub los secretos `AURA_SIGN_PFX` (el .pfx en base64) y `AURA_SIGN_PFX_PASSWORD`: el CI ya firma el .exe y el instalador si existen (`windows/scripts/sign.ps1 -DesdeSecretos`, SHA-256 con sello de tiempo) y, si no, avisa y sigue sin firma. Después, exigir la firma del editor en `Manos/Actualizador.cs` antes de instalar.
+
+## Release, versión y actualización (auditoría 1-oct)
+
+- **Una versión para todo**: el CI fija `AURA_VERSION=2.0.<build>` y la usan el .exe (FileVersion/ProductVersion, con el commit tras el «+»), el instalador (`ISCC /DAppVer`, VersionInfo) y la ficha `aura-windows.json`; el CI falla si no coinciden.
+- **Solo hacia adelante**: AURA se actualiza si la versión publicada es MAYOR que la suya (nunca a una igual o anterior), con el SHA-256 del instalador comprobado al bajar y otra vez justo antes de correrlo. La instalación sola espera mientras haya voz, acciones, algo esperando el «sí», un borrador sin guardar o una llamada (PULSE2CHAT avisa con `notch.llamada`; la ventana de llamadas también cuenta) y 10 min sin usar la PC.
+- **ONNX Runtime al lado del .exe**: `onnxruntime.dll` ya no va dentro del .exe de un solo archivo y viaja con el runtime de Visual C++ (`msvcp140*.dll`, `vcruntime140*.dll`), que necesita y que .NET autocontenido no trae; AURA lo carga por ruta completa desde su carpeta. `--onnx-self-test` carga el modelo propio en el .exe publicado y en el instalado (CI). Si falla, `aura.log` guarda la cadena completa de excepciones (saneada), la versión de ORT y qué piezas faltan.
+- **Registro sin lo que dices**: `aura.log` guarda tiempos, largos y tipos; el texto de lo dicho y de las órdenes, solo con «Registro detallado» (Ajustes → Privacidad, apagado de fábrica), y aun así sin correos, enlaces con parámetros ni números largos. Las métricas de voz son por turno (`[voz-turno]`: id, etapas por separado, cómo terminó y anomalías marcadas); en vivo se cuentan desde la transcripción.
 - Las llamadas usan el servicio aparte de `windows/gateway` (opcional, configurable en Ajustes).
 - `windows/training/` es el candidato anterior de Codex (1/10 en su prueba); queda como historial, reemplazado por Laya «windows» del nodo.

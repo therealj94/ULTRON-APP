@@ -6,17 +6,58 @@ name: Calidad (antes de publicar la app)
 # ignorado por web.yml para esos cambios) podía salir por aire igual.
 #
 # Se llama desde los otros flujos (`uses: ./.github/workflows/calidad-movil.yml`); también a mano.
+# Y en cada PR que toque la app: un error de tipos o un arnés roto se ve ANTES de fusionar, no al
+# publicar. En el PR, `npm test` no se repite aquí: web.yml ya lo corre en todos los PR, con PostGIS.
 # Sin Postgres: las pruebas del catastro de Dr Electrum se saltan (las corre web.yml con PostGIS).
 # Los arneses del chat contra el relevo real se saltan si el relevo no está (vive en otro repositorio).
 
 on:
   workflow_call:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - "mobile/**"
+      - ".github/workflows/calidad-movil.yml"
 
 permissions:
   contents: read
 
 jobs:
+  # `npm test` en 3 tandas en paralelo (scripts/qa/repartir-pruebas.mjs): es lo que más tarda antes de
+  # publicar una OTA. Dentro de cada tanda, de una en una, como siempre.
+  pruebas:
+    if: github.event_name != 'pull_request'
+    name: pruebas (${{ matrix.tanda }}/3)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        tanda: [1, 2, 3]
+    env:
+      NODE_ENV: test
+      ULTRON_MEMORIA_BUCKET: ""
+      AWS_ACCESS_KEY_ID: ""
+      AWS_SECRET_ACCESS_KEY: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            mobile/package-lock.json
+      - name: Dependencias (raíz)
+        run: npm ci
+      # Algunas pruebas de `npm test` leen código de la app (pruebas *-movil).
+      - name: Dependencias (app)
+        working-directory: mobile
+        run: npm ci
+      # Lo mismo que `npm test` (incluye la lógica de la app que se prueba en node), por tandas.
+      - name: Pruebas (tanda ${{ matrix.tanda }}/3)
+        run: npx tsx --test --test-concurrency=1 $(node scripts/qa/repartir-pruebas.mjs ${{ matrix.tanda }} 3)
+
   calidad:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -47,10 +88,6 @@ jobs:
         working-directory: mobile
         run: npm run typecheck
 
-      # Las pruebas de siempre (incluyen la lógica de la app que se prueba en node).
-      - name: Pruebas (npm test)
-        run: npm test
-
       # Los arneses del teléfono: identidad y aislamiento, costuras entre frentes, chat, llamadas,
       # la compañera, el avatar, la sincronía de la boca, la mesa y el oído (la secuencia de José).
       - name: Arneses de la app
@@ -60,9 +97,13 @@ jobs:
           sh pruebas/identidad/todas.sh
           sh pruebas/costuras/todas.sh
           sh pruebas/chat/todas.sh
+          sh pruebas/veta/todas.sh
           node pruebas/llamadas/pruebas.js
           npx tsx src/compa/pruebas/compa.prueba.mjs
           npx tsx src/avatar3d/pruebas/avatar3d.prueba.mjs
           npx tsx src/avatar3d/pruebas/sincronia.prueba.mjs
+          npx tsx src/avatares/pruebas/video.prueba.mjs
+          npx tsx src/recorrido/pruebas/recorrido.prueba.mjs
+          npx tsx src/whatsapp/pruebas/whatsapp.prueba.mjs
           npx tsx pruebas/mesa/mesa.prueba.mjs
           sh pruebas/oido/todas.sh

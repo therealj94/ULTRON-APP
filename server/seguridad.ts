@@ -1,12 +1,13 @@
 import type { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
-import { identificar, nivelDe, type Identificacion, type Plataforma } from '../lib/acceso';
+import { identificar, nivelDe, personaPorCorreoExacto, type Identificacion, type Plataforma } from '../lib/acceso';
 import dns from 'dns/promises';
 import net from 'net';
 import fs from 'fs';
 import path from 'path';
 import { ipPrivada } from '../lib/red-publica';
 import { s3GetJson, s3Listo, s3PutJson } from '../lib/s3';
+import { modoDesarrollo } from '../lib/entorno';
 
 export type Sesion = {
   token: string;
@@ -16,6 +17,12 @@ export type Sesion = {
   at: number;
   /** Cuándo vence (ms). Las de un código temporal vencen con el código, no a los 14 días. */
   exp?: number;
+  /**
+   * Sesión de MIEMBRO DE LA COMUNIDAD: la emitió AU-RA a alguien que no está en el padrón (entró por el
+   * cerebro remoto). Va firmada en el token: sin ella, un correo que el padrón no conoce no abre la mesa
+   * (sesionAbreAura), así sacar a alguien del padrón le cierra AU-RA en vez de abrírsela como miembro.
+   */
+  comunidad?: boolean;
 };
 
 const sesiones = new Map<string, Sesion>();
@@ -96,10 +103,11 @@ function leerSesionFirmada(token: string): Sesion | null {
     rol: String(p.rol || 'Junta'),
     at: Number(p.at) || Date.now(),
     exp: Number(p.exp) || undefined,
+    ...(p.com === 1 ? { comunidad: true } : {}),
   };
 }
 
-export function emitirSesion(user: { correo: string; nombre: string; rol: string }, opciones: { vence?: number } = {}): Sesion {
+export function emitirSesion(user: { correo: string; nombre: string; rol: string }, opciones: { vence?: number; comunidad?: boolean } = {}): Sesion {
   const at = Date.now();
   // Nunca más de 14 días; una sesión de código temporal vence justo con el código.
   const exp = Math.min(at + SESION_TTL_MS, opciones.vence ?? Infinity);
@@ -112,8 +120,9 @@ export function emitirSesion(user: { correo: string; nombre: string; rol: string
     // Dos entradas del mismo miembro en el mismo milisegundo (teléfono y web a la vez) daban el mismo
     // token, y cerrar la de un aparato cerraba la del otro.
     n: crypto.randomBytes(9).toString('base64url'),
+    ...(opciones.comunidad ? { com: 1 } : {}),
   });
-  const s: Sesion = { token, correo: user.correo, nombre: user.nombre, rol: user.rol, at, exp };
+  const s: Sesion = { token, correo: user.correo, nombre: user.nombre, rol: user.rol, at, exp, ...(opciones.comunidad ? { comunidad: true } : {}) };
   sesiones.set(token, s);
   return s;
 }
@@ -427,35 +436,68 @@ function secretosIguales(a: string, b: string) {
   return crypto.timingSafeEqual(ba, bb);
 }
 
-/** Junta: sesión emitida en /entrar, o clave de mesa en header. En producción no hay hueco. */
+/**
+ * ¿Esta sesión abre la mesa de AU-RA? La sesión es UNA para las dos plataformas (misma firma), así que
+ * «tiene sesión» no basta: una de Dr Electrum —un código temporal de la demo, o alguien del padrón que
+ * solo tiene Electrum— entraba a AU-RA y hablaba con el 27B. Abre la mesa:
+ *  · quien está en el padrón CON acceso a AU-RA (la junta y quien se haya aprobado), o
+ *  · el miembro de la comunidad: alguien que NO está en el padrón y cuya sesión AU-RA emitió como tal
+ *    (`comunidad`, firmado en el token al entrar por el cerebro remoto; server/nivel.ts lo trata como
+ *    miembro, con su perfil recortado).
+ * No la abre quien el padrón conoce y deja fuera de AU-RA, ni un código temporal (son de Electrum), ni
+ * un correo que el padrón ya no conoce con una sesión que no era de comunidad: alguien que sacaron del
+ * padrón (o una cuenta solo de Electrum que borraron) con su token todavía vigente. Antes ese caso caía
+ * en «no está en el padrón → miembro» y sacarlo le ABRÍA AU-RA por 14 días.
+ */
+export function sesionAbreAura(correo: string, comunidad = false): boolean {
+  const c = String(correo || '').trim().toLowerCase();
+  if (!c || c.endsWith(DOMINIO_CODIGO)) return false;
+  const persona = personaPorCorreoExacto(c);
+  return persona ? !!persona.acceso.ultron : comunidad;
+}
+
+/**
+ * ¿La sesión que AU-RA está por emitir es de un miembro de la comunidad? Sí cuando la emite AU-RA (no
+ * Dr Electrum) a alguien que el padrón no conoce: entró por el cerebro remoto, con Genesis ID abierto o
+ * con una cuenta propia de miembro. Esa marca, firmada en el token, es lo único que deja a un correo
+ * fuera del padrón abrir la mesa (sesionAbreAura).
+ */
+export function esDeComunidad(correo: string, plataforma: Plataforma): boolean {
+  const c = String(correo || '').trim().toLowerCase();
+  return plataforma !== 'electrum' && !!c && !c.endsWith(DOMINIO_CODIGO) && !personaPorCorreoExacto(c);
+}
+
+/** Junta: sesión de AU-RA (sesionAbreAura), o clave de mesa en header. Sin marca de desarrollo no hay hueco. */
 export function mesaAutorizada(req: Request): boolean {
-  if (sesionDe(req)) return true;
+  const s = sesionDe(req);
+  if (s && sesionAbreAura(s.correo, !!s.comunidad)) return true;
   const clave = process.env.ULTRON_MESA_CLAVE || '';
   const got = String(req.headers['x-ultron-mesa'] || '');
   if (clave && got && secretosIguales(clave, got)) return true;
-  if (process.env.NODE_ENV !== 'production' && !clave) return true;
+  // El hueco de desarrollo solo con marca explícita (lib/entorno.ts): sin NODE_ENV ya no se abre.
+  if (modoDesarrollo() && !clave) return true;
   return false;
 }
 
 /**
- * Rutas de conversación: hablar, oír y ver. Decisión de la junta (19-sep): la APK no debe
- * quedar muda si el token murió en un redespliegue, así que pasan con rate limit por IP.
- * Todo lo que cambia estado (memoria, bóveda, ejecutor, redeploy) exige sesión real.
- */
-/**
- * La excepción de la APK (decisión de la junta, 19-sep): estas rutas pasan sin sesión, con límite
- * por IP, para que el teléfono no se quede mudo si el token murió en un redespliegue.
+ * Lo que pasa SIN sesión, con límite por IP (decisión de la junta, 19-sep: la APK no debe quedar muda
+ * si su token muere): oír, ver, la voz y el canto. Ninguna de estas rutas despierta al cerebro.
  *
- * `/api/electrum` ESTABA en esta lista y no debía: Dr Electrum no viaja en ninguna APK, no tiene
- * token que se le muera, y va a guardar el catastro de un país. Tenerlo aquí lo dejaba abierto a
- * cualquiera que diera con la URL —consultas al catastro y turnos de Qwen gratis, en el nodo de
- * José—. Se gobierna aparte, con `exigirPlataforma('electrum')`.
+ * `/api/turno` (y su stream) ESTABA aquí: cualquiera sin cuenta corría turnos en el 27B sin censura del
+ * nodo de José (1-oct, Fase 0.3). Ahora un turno pide sesión de AU-RA o la clave de la mesa; el
+ * teléfono renueva su token con la clave guardada ante el 401, y con ULTRON_SESION_SECRETO fijo el
+ * token ya no muere en un redespliegue. La web abre «Entrar» ante el 401.
+ *
+ * `/api/electrum` tampoco va aquí: Dr Electrum se gobierna con `exigirPlataforma('electrum')`.
+ *
+ * Coincidencia EXACTA a propósito: con prefijo, `/api/voz` dejaba pasar `/api/voz/agente` (abrir una
+ * conversación de ElevenLabs, que sí piensa con el 27B) por ser «una ruta de voz».
  */
-const RUTAS_CONVERSACION = ['/api/turno', '/api/tts', '/api/stt', '/api/vision/analyze', '/api/cantar', '/api/orar', '/api/voz', '/api/diag'];
+const RUTAS_SIN_CEREBRO = ['/api/tts', '/api/tts/stream', '/api/voz', '/api/stt', '/api/vision/analyze', '/api/cantar', '/api/orar', '/api/diag'];
 
 function rutaConversacion(path: string) {
-  const p = String(path || '').split('?')[0];
-  return RUTAS_CONVERSACION.some((r) => p === r || p.startsWith(`${r}/`));
+  const p = String(path || '').split('?')[0].replace(/\/+$/, '');
+  return RUTAS_SIN_CEREBRO.includes(p);
 }
 
 export function mesaDeskAutorizada(req: Request): boolean {
@@ -520,6 +562,17 @@ export function gastarCupo(claveCupo: string, max: number, ventanaMs = 60_000, a
   arr.push(ahora);
   hits.set(k, arr);
   return true;
+}
+
+/**
+ * Devuelve el lugar que se gastó en `marca` (el `ahora` con que se llamó a gastarCupo): un turno que no
+ * llegó a ser turno, la frase a medias del especulativo. Se quita ESA entrada y no la última: si después
+ * llegó otra, la de la persona sigue contando y la vieja no se queda ocupando la ventana.
+ */
+export function devolverCupo(claveCupo: string, marca: number) {
+  const arr = hits.get(`cupo:${claveCupo}`);
+  const i = arr ? arr.indexOf(marca) : -1;
+  if (i >= 0) arr!.splice(i, 1);
 }
 
 /* ------------------------------------------------------- intentos de clave por cuenta */
@@ -617,19 +670,40 @@ function claveDemo(plataforma: Plataforma): string {
   return String(process.env.ULTRON_MESA_CLAVE || '').trim();
 }
 
+/**
+ * ¿La llave FIJA de Dr Electrum abre? (auditoría 3-oct, SEC01). Dr Electrum es solo de la junta y sus
+ * datos son reales: una llave que no vence ni se revoca y se pasa de mano en mano no abre nada en
+ * producción, y no hay variable que la reactive (una puerta que se puede volver a abrir sigue siendo
+ * una puerta). Para que alguien lo PRUEBE están los códigos `DE-…` que crea el aprobador (1, 5 o 24 h,
+ * revocables, con el nombre de la persona: server/cuentas.ts), que entran como sesión del padrón y
+ * vencen solos. La llave fija queda solo para desarrollo (AURA_DEV=1 / NODE_ENV=test).
+ */
+export function llaveFijaElectrumPermitida(env: NodeJS.ProcessEnv = process.env): boolean {
+  return modoDesarrollo(env);
+}
+
+let avisadoLlaveFija = false;
+
 export function plataformaAutorizada(req: Request, plataforma: Plataforma): boolean {
   if (nivelDe(identidadDe(req), plataforma)) return true;
 
   const clave = claveDemo(plataforma);
   const got = String(req.headers['x-ultron-llave'] || req.headers[plataforma === 'electrum' ? 'x-electrum-llave' : 'x-ultron-mesa'] || '');
-  if (clave && got && secretosIguales(clave, got)) return true;
+  if (clave && got && secretosIguales(clave, got)) {
+    if (plataforma !== 'electrum' || llaveFijaElectrumPermitida()) return true;
+    if (!avisadoLlaveFija) {
+      avisadoLlaveFija = true;
+      console.warn('[Electrum] alguien trajo la llave fija y en producción ya no abre: para probar, un código DE-.');
+    }
+    return false;
+  }
 
-  // Fuera de producción y sin llave puesta, se abre: es lo que deja correr las pruebas y el QA de
-  // Playwright. En producción no hay hueco, con llave o sin ella.
-  if (process.env.NODE_ENV !== 'production' && !clave) {
+  // En modo desarrollo (AURA_DEV=1 o NODE_ENV=test, lib/entorno.ts) y sin llave puesta, se abre: es
+  // lo que deja correr las pruebas y el QA de Playwright. Sin esa marca no hay hueco, con llave o sin ella.
+  if (modoDesarrollo() && !clave) {
     if (!avisadoHueco) {
       avisadoHueco = true;
-      console.warn('[AU-RA] sin NODE_ENV=production y sin llave: las plataformas quedan abiertas. Solo desarrollo.');
+      console.warn('[AU-RA] modo desarrollo y sin llave: las plataformas quedan abiertas. Solo desarrollo.');
     }
     return true;
   }
@@ -646,7 +720,7 @@ export function exigirPlataforma(plataforma: Plataforma) {
     return res.status(401).json({
       error:
         plataforma === 'electrum'
-          ? 'Dr Electrum FP es privado. Entrá con tu sesión o con la llave de la demostración.'
+          ? 'Dr Electrum FP es privado. Entrá con tu sesión o con el código de prueba que te dio José.'
           : 'AU-RA es privado. Entra con sesión de junta.',
       code: 'sesion_requerida',
       plataforma,

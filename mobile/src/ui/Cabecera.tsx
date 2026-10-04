@@ -84,7 +84,7 @@ export function PantallaConCabecera({ titulo, subtitulo, onAtras, derecha, child
       <Animated.ScrollView
         onScroll={alScroll}
         scrollEventThrottle={16}
-        contentContainerStyle={[{ paddingTop: altoBarra + 4, paddingBottom: ins.bottom + 40, paddingHorizontal: MEDIDA.espacio.l }, contenidoStyle]}
+        contentContainerStyle={[{ paddingTop: altoBarra + 4, paddingBottom: ins.bottom + 40, paddingLeft: MEDIDA.espacio.l + ins.left, paddingRight: MEDIDA.espacio.l + ins.right }, contenidoStyle]}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
@@ -109,7 +109,7 @@ export function PantallaConCabecera({ titulo, subtitulo, onAtras, derecha, child
           <View style={[StyleSheet.absoluteFill, { backgroundColor: tema.oscuro ? 'rgba(28,29,32,0.72)' : 'rgba(247,243,236,0.78)' }]} />
           <View style={[s.linea, { backgroundColor: tema.borde }]} />
         </Animated.View>
-        <View style={s.filaBarra} pointerEvents="box-none">
+        <View style={[s.filaBarra, { paddingLeft: 12 + ins.left, paddingRight: 12 + ins.right }]} pointerEvents="box-none">
           <View style={s.lado}>{onAtras && <BotonRedondo onPress={onAtras} />}</View>
           <Animated.View style={[s.centro, aTituloChico]} pointerEvents="none">
             <Texto v="cuerpoFuerte" numberOfLines={1}>

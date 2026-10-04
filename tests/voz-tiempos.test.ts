@@ -106,3 +106,91 @@ test('/api/tts sin tiempos es como antes; con tiempos, la alineación va con el 
     }
   );
 });
+
+test('voz en vivo (/api/tts/stream de la mesa web): pide el stream de ElevenLabs con la voz del avatar y lo devuelve a trozos', async () => {
+  const { abrirVozEnVivo } = await import('../server/voz');
+  await conEleven(
+    () => mp3(),
+    async (llamadas) => {
+      const vivo = await abrirVozEnVivo({ texto: 'Hola, ¿cómo estás hoy?', emocion: 'neutral', plataforma: 'ultron', idioma: 'es', avatar: 'claudio' });
+      assert.ok(vivo && vivo.tipo === 'vivo', 'en vivo, no la caché');
+      assert.equal(llamadas.length, 1);
+      assert.match(llamadas[0].url, new RegExp(`/text-to-speech/${VOCES_ELEVEN.claudio.es}/stream`), 'la voz de Claudio');
+      if (vivo?.tipo !== 'vivo') return;
+      const lector = vivo.cuerpo.getReader();
+      let bytes = 0;
+      for (;;) {
+        const { done, value } = await lector.read();
+        if (done) break;
+        bytes += value.length;
+      }
+      assert.equal(bytes, 4000);
+    }
+  );
+});
+
+/** Una respuesta HTTP fingida: lo que `pasarVozEnVivo` usa (write, end, close, writableEnded). */
+function salidaFingida() {
+  const alCerrar: Array<() => void> = [];
+  const s = {
+    escrito: 0,
+    writableEnded: false,
+    write: (b: Buffer) => {
+      s.escrito += b.length;
+      return true;
+    },
+    end: () => {
+      s.writableEnded = true;
+    },
+    on: (_e: 'close', fn: () => void) => alCerrar.push(fn),
+    cerrar: () => alCerrar.forEach((fn) => fn()),
+  };
+  return s;
+}
+
+test('voz en vivo entera: pasa a trozos y queda en la caché', async () => {
+  const { pasarVozEnVivo } = await import('../server/voz');
+  const guardados: Buffer[] = [];
+  const cuerpo = new ReadableStream<Uint8Array>({
+    start(c) {
+      c.enqueue(new Uint8Array(600).fill(1));
+      c.enqueue(new Uint8Array(600).fill(2));
+      c.close();
+    },
+  });
+  const res = salidaFingida();
+  assert.equal(await pasarVozEnVivo({ cuerpo, guardar: (a) => guardados.push(a) }, res), true);
+  assert.equal(res.escrito, 1200);
+  assert.equal(guardados.length, 1);
+  assert.equal(guardados[0].length, 1200);
+});
+
+test('voz en vivo cortada por la persona: no se guarda un MP3 mocho en la caché', async () => {
+  const { pasarVozEnVivo } = await import('../server/voz');
+  const guardados: Buffer[] = [];
+  const res = salidaFingida();
+  // Un trozo y luego ElevenLabs sigue generando; la persona cuelga a medias.
+  const cuerpo = new ReadableStream<Uint8Array>({
+    start(c) {
+      c.enqueue(new Uint8Array(900).fill(1));
+      setTimeout(() => res.cerrar(), 10);
+    },
+  });
+  assert.equal(await pasarVozEnVivo({ cuerpo, guardar: (a) => guardados.push(a) }, res), false);
+  assert.equal(res.escrito, 900, 'lo que alcanzó a llegar sí se pasó');
+  assert.equal(guardados.length, 0, 'cortada: fuera de la caché');
+  assert.equal(res.writableEnded, true);
+});
+
+test('voz en vivo que ElevenLabs corta con error: tampoco se guarda', async () => {
+  const { pasarVozEnVivo } = await import('../server/voz');
+  const guardados: Buffer[] = [];
+  const cuerpo = new ReadableStream<Uint8Array>({
+    start(c) {
+      c.enqueue(new Uint8Array(900).fill(1));
+      setTimeout(() => c.error(new Error('se cayó')), 5);
+    },
+  });
+  assert.equal(await pasarVozEnVivo({ cuerpo, guardar: (a) => guardados.push(a) }, salidaFingida()), false);
+  assert.equal(guardados.length, 0);
+});

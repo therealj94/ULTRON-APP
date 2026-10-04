@@ -1,9 +1,11 @@
 import 'react-native-gesture-handler';
+import { View } from 'react-native';
 import * as SplashScreen from 'expo-splash-screen';
 import { AppAura } from './src/app/AppAura';
 import { ES_ELECTRUM } from './src/variante';
 import ElectrumApp from './src/electrum/ElectrumApp';
 import { useActualizacionAlVolver } from './src/lib/ota';
+import { marcarActividad } from './src/lib/barreraOta';
 
 /**
  * El splash nativo (negro con el ícono) se queda hasta que la intro está pintada encima: negro sobre
@@ -30,6 +32,11 @@ export default function App() {
   // Antes de bifurcar: las actualizaciones por aire. Solo AU-RA las tiene encendidas; en Dr Electrum
   // `Updates.isEnabled` es falso y el hook no hace nada.
   useActualizacionAlVolver();
-  if (ES_ELECTRUM) return <ElectrumApp />;
-  return <AppAura />;
+  // Cada toque, en cualquier pantalla, cuenta como actividad: la OTA no recarga en plena mano.
+  // onTouchStart burbujea desde el hijo tocado sin quitarle el toque a nadie.
+  return (
+    <View style={{ flex: 1 }} onTouchStart={() => marcarActividad()}>
+      {ES_ELECTRUM ? <ElectrumApp /> : <AppAura />}
+    </View>
+  );
 }

@@ -145,6 +145,11 @@ que una puerta abierta.
 Para que alguien pruebe Dr Electrum sin cuenta. El aprobador (`CUENTAS_APROBADOR`) los crea en
 **Cuenta → Códigos**, con el mapa abierto: 1, 5 o 24 horas (no hay más), nivel Consulta o Trabajo
 (nunca Mando) y, si quiere, para quién. El invitado entra en «Tengo un código de acceso».
+Desde la auditoría maestra del 3-oct (AUR05) un código es **siempre Consulta**: aunque se pida
+Trabajo, o la fila vieja diga «escribe», entra como consulta (no sube, no edita, no manda, no baja
+archivos). Un código no acredita a una persona del padrón. **Interruptor:** `ELECTRUM_CODIGOS=0` en
+el servicio cierra la entrada con código, impide crear nuevos y, en la siguiente recarga (≤1 min),
+corta las sesiones de todos los invitados vivos sin tocar a los miembros.
 
 - **Nunca se repite.** Cada código es nuevo y al azar (`DE-XXXX-XXXX-XXXX`, unos 59 bits). En la
   base se guarda solo su huella SHA-256 y los últimos 4 caracteres para reconocerlo: el código
@@ -156,5 +161,7 @@ Para que alguien pruebe Dr Electrum sin cuenta. El aprobador (`CUENTAS_APROBADOR
 - **Revocar** lo corta al instante.
 - Solo en Dr Electrum: en AU-RA cualquier sesión abre la mesa de la junta, y los dos servicios
   firman con secretos distintos, así que una sesión de invitado de Electrum no vale en AU-RA.
-- La llave de demostración fija (`ELECTRUM_CLAVE`) sigue funcionando en el mismo campo; lo que
-  tiene forma de código entra como código.
+- La llave de demostración fija (`ELECTRUM_CLAVE`) ya **no abre en producción** (auditoría 3-oct,
+  SEC01: no vence ni se revoca, y los datos de Electrum son reales), y ninguna variable la reactiva.
+  Probar es con código. Solo sirve en desarrollo. Lo que tiene forma de código entra como código en
+  el mismo campo.

@@ -29,7 +29,16 @@ export const MODELO_ELEVEN = 'eleven_v4_turbo';
 
 /** 96 kb/s: la voz grave conserva el cuerpo y un trozo de 7 s pesa ~85 KB en el teléfono. */
 const FORMATO = 'mp3_44100_96';
-const API = 'https://api.elevenlabs.io/v1';
+/**
+ * Dónde se le habla a ElevenLabs (ELEVEN_API_BASE; por omisión la de siempre). Sirve para probar la
+ * región de EE. UU. (`https://api.us.elevenlabs.io`) con una variable de Render, sin tocar código.
+ */
+export function apiEleven(): string {
+  const v = String(process.env.ELEVEN_API_BASE || '').trim().replace(/\/+$/, '');
+  return /^https:\/\/api(\.[a-z]{2})?\.elevenlabs\.io$/.test(v) ? v : 'https://api.elevenlabs.io';
+}
+
+const API = `${apiEleven()}/v1`;
 
 export function modeloEleven(): string {
   return String(process.env.ELEVENLABS_MODELO || '').trim() || MODELO_ELEVEN;
@@ -92,7 +101,7 @@ export const NOMBRE_AVATAR: Record<AvatarVoz, Record<Idioma, string>> = {
 export function lineaAvatar(avatar: AvatarVoz, idioma: Idioma = 'es'): string {
   const oficio: Record<AvatarVoz, string> = {
     ojos: 'AVATAR: te ven como el Guardián, dos ojos celestes sobre negro. Te llamas Guardián, no AU-RA. Tu oficio: cuidar el espacio de la persona. Vigilas con la cámara cuando te lo piden, describes lo que ves con precisión, avisas de cambios, explicas los modos de la mesa (guardián, análisis, estrategia, explorador) y das consejos de seguridad. Tono sereno, preciso y breve; nunca alarmista.',
-    aura: 'AVATAR: te ven como AU-RA, la de los ojos dorados. Tu oficio: compañera personal. Ayudas con la agenda y los recordatorios, recuerdas lo que la persona te cuenta (su memoria), das ánimo, oras con ella si lo pide y conversas con calidez. Tono cálido, cercano y claro.',
+    aura: 'AVATAR: te ven como AU-RA, un orbe de luz hecho de partículas que forma las palabras que dices. Tu oficio: compañera personal. Ayudas con la agenda y los recordatorios, recuerdas lo que la persona te cuenta (su memoria), das ánimo, oras con ella si lo pide y conversas con calidez. Tono cálido, cercano y claro.',
     claudio: 'AVATAR: te ven como Claudio, un zorro de lentes amarillos y suéter negro con la corona de Orden Global. Te llamas Claudio, no AU-RA. Tu oficio: anfitrión de marketing. Das ideas de contenido, escribes textos y publicaciones para redes, eslóganes, guiones cortos de video y campañas; propones con ejemplos listos para usar. Tono curioso, cálido, ingenioso y bromista, sin dejar de ser profesional.',
     antonio: 'AVATAR: te ven como ANT-ONIO, una hormiga de lentes, cuatro brazos y ropa negra con cian. Te llamas ANT-ONIO, no AU-RA. Tu oficio: aliado inteligente para organizar y resolver: tareas y pendientes, planes paso a paso, recordatorios, resúmenes, trámites, tecnología y cómo usar las apps (Veta Wallet, Genesis ID, PULSE2CHAT). Con cuatro brazos haces varias cosas a la vez: propones un plan corto y lo ejecutas con las acciones de la app. Tono enérgico, claro, positivo y práctico, con humor ligero.',
   };
@@ -152,7 +161,7 @@ export function pausaPorFallo(status: number, cuerpo: string): number {
  * Las marcas de expresión que escribe el cerebro (las mismas de AU-RA, lib/expresiones.ts), en la
  * etiqueta de v4 que suena a eso. Las que en boca de un doctor de minas no suman se quitan.
  */
-const EXPRESION_A_V4: Record<string, string> = {
+export const EXPRESION_A_V4: Record<string, string> = {
   risa: 'laughs',
   risita: 'chuckles',
   'risa tierna': 'chuckles',
@@ -174,6 +183,55 @@ const EXPRESION_A_V4: Record<string, string> = {
   respiro: 'inhales',
   bufido: 'scoffs',
   carraspeo: 'clears throat',
+  // Las de tono y de acción que v4 actúa (verificadas el 1-oct, mobile/src/compa/etiquetasVoz.ts):
+  // el cerebro las escribe en español y aquí pasan a la etiqueta.
+  tarareo: 'hums',
+  jadeo: 'gasps',
+  carcajada: 'laughs',
+  'risa burlona': 'scoffs',
+  'risa picara': 'mischievously',
+  emocionado: 'excited',
+  emocionada: 'excited',
+  entusiasmado: 'enthusiastic',
+  entusiasmada: 'enthusiastic',
+  'con ternura': 'tender',
+  'en voz baja': 'whispers',
+  bajito: 'softly',
+  pensativo: 'thoughtful',
+  pensativa: 'thoughtful',
+  curioso: 'curious',
+  curiosa: 'curious',
+  'con picardia': 'mischievously',
+  jugueton: 'playfully',
+  juguetona: 'playfully',
+  serio: 'matter-of-fact',
+  seria: 'matter-of-fact',
+  aliviado: 'relieved',
+  aliviada: 'relieved',
+  nervioso: 'nervously',
+  nerviosa: 'nervously',
+  apenado: 'sheepish',
+  apenada: 'sheepish',
+  impresionado: 'impressed',
+  impresionada: 'impressed',
+  asombrado: 'amazed',
+  asombrada: 'amazed',
+  encantado: 'delighted',
+  encantada: 'delighted',
+  tranquilizando: 'reassuring',
+  calmado: 'calm',
+  calmada: 'calm',
+  orgulloso: 'proud',
+  orgullosa: 'proud',
+  sarcastico: 'sarcastic',
+  sarcastica: 'sarcastic',
+  'sin emocion': 'deadpan',
+  titubeo: 'hesitates',
+  tartamudeo: 'stammers',
+  'con calidez': 'warmly',
+  alegre: 'cheerfully',
+  concentrado: 'focused',
+  concentrada: 'focused',
   aja: '',
   eso: '',
   auch: '',
@@ -232,12 +290,25 @@ const VOCABULARIO_INGLES = new Set(
     // Las de Eleven v4: se pueden encadenar y las sigue en orden.
     'whispering shouting laughing ecstatic excitedly cheerfully nervously sarcastic sarcastically confidently ' +
     'seriously dramatically proudly sadly happily curiously thoughtfully reassuring encouraging ' +
-    'patient patiently enthusiastic enthusiastically amazed awe hushed chuckling giggling grin smiling'
+    'patient patiently enthusiastic enthusiastically amazed awe hushed chuckling giggling grin smiling ' +
+    // Las del catálogo verificado el 1-oct (mobile/src/compa/etiquetasVoz.ts).
+    'hums mischievously deadpan delighted sheepish focused stammers playfully'
   ).split(' ')
 );
 function esEtiquetaIngles(k: string): boolean {
   const palabras = k.split(/[\s,'-]+/).filter(Boolean);
   return palabras.length > 0 && palabras.length <= 8 && palabras.every((w) => VOCABULARIO_INGLES.has(w));
+}
+
+/**
+ * La etiqueta v4 de una marca del cerebro («risa» → «laughs», «softly, reverent» tal cual), o null si
+ * no tiene una que sume (se quita). La usa la voz de la llamada (server/voz-agente.ts), que recibe el
+ * texto a trozos y no puede pasar por `guionEleven` entero.
+ */
+export function etiquetaV4(marca: string): string | null {
+  const k = sinTildes(marca);
+  if (k in EXPRESION_A_V4) return EXPRESION_A_V4[k] || null;
+  return esEtiquetaIngles(k) ? k : null;
 }
 
 /** Cuántas etiquetas como mucho por trozo: más de eso suena a actor sobreactuando. */
@@ -247,7 +318,18 @@ const MAX_ETIQUETAS = 4;
  * El texto que se manda a v4. `preparar` es lo mismo que Voicebox usa para la boca (markdown fuera,
  * cifras y unidades en palabras, «mmm...»): se inyecta para no duplicar esas reglas aquí.
  */
-export function guionEleven(texto: string, emocion: Emocion, preparar: (t: string) => string): string {
+export function guionEleven(
+  texto: string,
+  emocion: Emocion,
+  preparar: (t: string) => string,
+  /**
+   * `tono`: poner el tono de la emoción delante. Solo en la PRIMERA frase de una respuesta: el teléfono y
+   * la web piden la voz frase por frase, y con el tono en cada una sonaba «[warmly]… [warmly]… [warmly]»
+   * (auditoría externa, 1-oct; ElevenLabs recomienda 1-2 etiquetas por línea). Quien tiene `previo`
+   * (hay frase antes) no lo pone.
+   */
+  o: { tono?: boolean } = {}
+): string {
   const crudo = String(texto || '');
   const partes = crudo.split(/\[([^\]\n]{1,80})\]/);
   const salida: string[] = [];
@@ -278,7 +360,7 @@ export function guionEleven(texto: string, emocion: Emocion, preparar: (t: strin
     .replace(/\s{2,}/g, ' ')
     .trim();
   if (!/[\p{L}\p{N}]/u.test(guion.replace(/\[[^\]]*\]/g, ''))) return '';
-  const tono = TONO_V4[emocion];
+  const tono = o.tono === false ? undefined : TONO_V4[emocion];
   if (tono && !guion.startsWith('[')) guion = `[${tono}] ${guion}`;
   return guion;
 }

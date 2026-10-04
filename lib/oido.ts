@@ -1,11 +1,12 @@
 /**
- * Oído: transcribe audio de verdad. Whisper en el servidor propio de AU-RA (Voicebox), Gemini de reserva.
+ * Oído: transcribe audio de verdad. ElevenLabs Scribe v2 primero (AU-RA y Dr Electrum); el Whisper propio
+ * (Voicebox, mientras exista) y Gemini de reserva.
  * En Dr Electrum va primero ElevenLabs Scribe v2, con el vocabulario minero como pista; Whisper y
  * Gemini quedan detrás. Si no hay clave o no se entiende, se dice. No se inventa lo hablado.
  */
 
 import { clave } from './boveda';
-import { presupuesto, type Presupuesto } from './presupuesto';
+import { presupuesto, MINIMO_UTIL_MS, type Presupuesto } from './presupuesto';
 import { detectarIdioma, idiomaDeCodigo, type IdiomaTurno } from './idioma-detectar';
 
 /** `idioma`: en qué idioma habló (es/en), cuando se pidió `language: 'auto'`. */
@@ -166,13 +167,43 @@ export const TERMINOS_ELECTRUM = [
   'DXF',
   'UTM',
   'Decreto 109-2019',
+  'MiAmbiente',
+  'ICF',
+  'NAD27',
+  'WGS84',
+  'Juticalpa',
+  'Catacamas',
+  'Tegucigalpa',
+  'Don Chema',
+  'Tatiana',
 ];
 
 /**
- * ElevenLabs Scribe v2. Más preciso que Whisper en español con nombres propios y siglas, y con
- * pistas de vocabulario. Pide su corte al presupuesto: 15 s o lo que quede.
+ * Lo que AU-RA tiene que oír bien (José, 1-oct: «el micrófono se confunde muchísimo»): los avatares, las
+ * apps y las órdenes que más se piden a las manos de la PC y del teléfono. Menos de 100 pistas: con más,
+ * ElevenLabs cobra un mínimo de 20 s por audio (documentación de speech-to-text).
  */
-async function transcribirEleven(audio: Buffer, mime: string, language: string, reloj: Presupuesto): Promise<Escucha> {
+export const TERMINOS_AURA = [
+  'AU-RA', 'Aura', 'Claudio', 'ANT-ONIO', 'Antonio', 'Guardián', 'Orden Global', 'PULSE2CHAT', 'Genesis ID', 'Veta Wallet',
+  'Spotify', 'YouTube', 'Excel', 'Word', 'PowerPoint', 'Outlook', 'Chrome', 'Edge', 'WhatsApp', 'Teams', 'Zoom',
+  'Bloc de notas', 'calculadora', 'captura de pantalla', 'volumen', 'siguiente canción', 'pausa', 'recuérdame',
+  'videollamada', 'llámame', 'lempiras', 'Tegucigalpa', 'San Pedro Sula', 'Honduras',
+];
+
+/**
+ * ElevenLabs Scribe v2 (documentación de speech-to-text: `model_id: scribe_v2`, `language_code`, `keyterms`,
+ * `tag_audio_events`). Más preciso que Whisper en español con nombres propios y siglas, y con pistas de
+ * vocabulario (medido el 1-oct: «Oye Aura, abre Excel y ponme The Verve en Spotify» exacto, 0,74 s).
+ * Pide su corte al presupuesto: 15 s como mucho, pero dejando RESERVA_RESPALDO_MS para que, si se cuelga,
+ * Whisper o Gemini todavía alcancen a oír antes de que el teléfono corte (/api/stt da 15 s en total).
+ */
+export const RESERVA_RESPALDO_MS = 5000;
+
+export function topeScribe(reloj: Presupuesto): number {
+  return Math.min(15000, Math.max(MINIMO_UTIL_MS, reloj.queda() - RESERVA_RESPALDO_MS));
+}
+
+async function transcribirEleven(audio: Buffer, mime: string, language: string, reloj: Presupuesto, terminos: readonly string[] = TERMINOS_ELECTRUM): Promise<Escucha> {
   const key = clave('elevenlabs');
   if (!key) return null;
   const form = new FormData();
@@ -182,8 +213,8 @@ async function transcribirEleven(audio: Buffer, mime: string, language: string, 
   if (language !== 'auto') form.append('language_code', language);
   form.append('tag_audio_events', 'false');
   // Una pista por campo: un arreglo JSON en un solo campo lo rechaza por «caracteres inválidos».
-  for (const t of TERMINOS_ELECTRUM) form.append('keyterms', t);
-  const r = await fetch('https://api.elevenlabs.io/v1/speech-to-text', { method: 'POST', headers: { 'xi-api-key': key }, body: form, signal: reloj.senal(15000) });
+  for (const t of terminos) form.append('keyterms', t);
+  const r = await fetch('https://api.elevenlabs.io/v1/speech-to-text', { method: 'POST', headers: { 'xi-api-key': key }, body: form, signal: reloj.senal(topeScribe(reloj)) });
   if (!r.ok) {
     console.warn('[stt eleven]', r.status, (await r.text().catch(() => '')).slice(0, 160));
     return null;
@@ -198,16 +229,176 @@ async function transcribirEleven(audio: Buffer, mime: string, language: string, 
   return { texto: texto.slice(0, 4000), via: 'elevenlabs:scribe', idioma: typeof j.language_code === 'string' ? j.language_code : undefined };
 }
 
-/** El orden: el Whisper propio (gratis), y Gemini de reserva. */
-export const PROVEEDORES_OIDO: ProveedorOido[] = [
+/**
+ * El WAV que llega (AURA para Windows manda WAV 16 kHz mono de 16 bits): si es PCM que el tiempo real de
+ * Scribe acepta, dónde empiezan las muestras y a qué frecuencia. `null` para cualquier otra cosa (m4a del
+ * teléfono, ogg de Telegram, WAV en otro formato): eso sigue por Scribe v2 por lotes.
+ */
+const FRECUENCIAS_TURBO = new Set([8000, 16000, 22050, 24000, 44100, 48000]);
+export function pcmDeWav(audio: Buffer): { pcm: Buffer; frecuencia: number } | null {
+  if (audio.length < 44 || audio.toString('ascii', 0, 4) !== 'RIFF' || audio.toString('ascii', 8, 12) !== 'WAVE') return null;
+  let formato: { tipo: number; canales: number; frecuencia: number; bits: number } | null = null;
+  for (let i = 12; i + 8 <= audio.length; ) {
+    const id = audio.toString('ascii', i, i + 4);
+    const largo = audio.readUInt32LE(i + 4);
+    const cuerpo = i + 8;
+    if (id === 'fmt ' && cuerpo + 16 <= audio.length) {
+      formato = { tipo: audio.readUInt16LE(cuerpo), canales: audio.readUInt16LE(cuerpo + 2), frecuencia: audio.readUInt32LE(cuerpo + 4), bits: audio.readUInt16LE(cuerpo + 14) };
+    } else if (id === 'data') {
+      if (!formato || formato.tipo !== 1 || formato.canales !== 1 || formato.bits !== 16 || !FRECUENCIAS_TURBO.has(formato.frecuencia)) return null;
+      // Hay grabadoras que dejan el largo en 0 o en 0xFFFFFFFF mientras graban: se toma lo que haya.
+      const fin = largo && cuerpo + largo <= audio.length ? cuerpo + largo : audio.length;
+      const pcm = audio.subarray(cuerpo, fin - ((fin - cuerpo) % 2));
+      return pcm.length ? { pcm, frecuencia: formato.frecuencia } : null;
+    }
+    i = cuerpo + largo + (largo % 2);
+  }
+  return null;
+}
+
+/**
+ * Frases de dinero: con estas no se actúa sobre lo que oyó Turbo (José, 2-oct: «Turbo + confirmar dinero»).
+ * En la prueba del 2-oct Turbo escribió «100 dólares» cuando se dijo «cien lempiras»: un monto o una moneda
+ * mal oídos son un pago equivocado, así que se vuelven a oír con Scribe v2, que acertó 17 de 18.
+ */
+export const FRASE_DE_DINERO =
+  /\b(origen|auka|agka|veta|wallet|cartera|billetera|saldo|d[oó]lar\w*|lempira\w*|usd|pesos?|plata|dinero|monto|money|balance|dollars?|pag[aáoeu]\w*|pay\w*|transfi?er\w*|deposit\w*|cobr\w*|presta\w*)\b|\$|\b(envi[aáeé]\w*|env[ií]\w*|m[aá]nd\w*|send\w*)\b[^.?!]*\d/i;
+export function esFraseDeDinero(texto: string): boolean {
+  return FRASE_DE_DINERO.test(texto);
+}
+
+/**
+ * Scribe v2 Realtime Turbo (José, 2-oct: «cambia a Scribe v2 Realtime Turbo… en todos menos Dr Electrum»):
+ * el WAV ya grabado se manda de golpe por el WebSocket de tiempo real y se cierra con un commit manual.
+ * Medido el 2-oct con 18 frases: ~0,2 s contra ~0,6 s de Scribe v2 por lotes, pero 11 de 18 exactas contra
+ * 17 (sobre todo números: «cien» → «100»). Por eso lo de dinero se confirma con Scribe v2 antes de actuar.
+ * Devuelve `null` si el audio no es WAV PCM o si Turbo falla: la cadena sigue con Scribe v2 por lotes.
+ */
+export const MODELO_TURBO = 'scribe_v2_realtime_turbo';
+
+function oirTurbo(pcm: Buffer, frecuencia: number, language: string, terminos: readonly string[], tope: number, key: string): Promise<{ texto: string; idioma?: string } | null> {
+  const q = new URLSearchParams({ model_id: process.env.ELEVENLABS_STT_TURBO || MODELO_TURBO, audio_format: `pcm_${frecuencia}`, commit_strategy: 'manual' });
+  if (language !== 'auto') q.set('language_code', language);
+  for (const t of terminos) q.append('keyterms', t);
+  return new Promise((resolver) => {
+    let hecho = false;
+    // El WebSocket de Node 22 acepta cabeceras como segundo argumento (no está en los tipos del DOM).
+    const ws = new (WebSocket as any)(`wss://api.elevenlabs.io/v1/speech-to-text/realtime?${q}`, { headers: { 'xi-api-key': key } }) as WebSocket;
+    const terminar = (r: { texto: string; idioma?: string } | null, aviso?: string) => {
+      if (hecho) return;
+      hecho = true;
+      clearTimeout(reloj);
+      if (aviso) console.warn('[stt turbo]', aviso.slice(0, 160));
+      try {
+        ws.close();
+      } catch {}
+      resolver(r);
+    };
+    const reloj = setTimeout(() => terminar(null, `sin transcripción en ${tope} ms`), tope);
+    ws.onerror = () => terminar(null, 'error del WebSocket');
+    ws.onclose = (e) => terminar(null, `cerrado antes de transcribir (${e.code})`);
+    ws.onmessage = (e) => {
+      let j: any;
+      try {
+        j = JSON.parse(String(e.data));
+      } catch {
+        return;
+      }
+      if (j.message_type === 'session_started') {
+        // Trozos de 0,1 s, todos seguidos: el audio ya está grabado, no hay que esperar al ritmo real.
+        const trozo = Math.max(2, Math.round(frecuencia / 10) * 2);
+        for (let i = 0; i < pcm.length; i += trozo) {
+          const ultimo = i + trozo >= pcm.length;
+          ws.send(JSON.stringify({ message_type: 'input_audio_chunk', audio_base_64: pcm.subarray(i, i + trozo).toString('base64'), commit: ultimo, sample_rate: frecuencia }));
+        }
+      } else if (j.message_type === 'committed_transcript' || j.message_type === 'committed_transcript_with_timestamps') {
+        // A veces envuelve la frase entre comillas («"Remind me…".»): se quitan.
+        const texto = String(j.text || '').trim().replace(/^["“«]\s*(.*?)\s*["”»]\.?$/s, '$1').trim();
+        terminar({ texto, idioma: typeof j.language_code === 'string' ? j.language_code : undefined });
+      } else if (/error|exceeded|limited/i.test(String(j.message_type))) {
+        terminar(null, `${j.message_type} ${j.error || j.message || ''}`);
+      }
+    };
+  });
+}
+
+async function transcribirTurbo(audio: Buffer, mime: string, language: string, reloj: Presupuesto, terminos: readonly string[] = TERMINOS_AURA): Promise<Escucha> {
+  const key = clave('elevenlabs');
+  if (!key || !/^audio\/(x-)?wav$|^audio\/wave$/.test(mime) || typeof WebSocket !== 'function') return null;
+  const wav = pcmDeWav(audio);
+  if (!wav) return null;
+  // Turbo es el rápido: si no contesta en la mitad del tiempo que queda, Scribe v2 por lotes todavía alcanza.
+  const turbo = await oirTurbo(wav.pcm, wav.frecuencia, language, terminos, Math.min(8000, Math.max(MINIMO_UTIL_MS, Math.floor(topeScribe(reloj) / 2))), key);
+  if (!turbo) return null;
+  if (turbo.texto.length < 2 || STT_BASURA.test(turbo.texto)) return { texto: '', via: 'elevenlabs:scribe-turbo' };
+  if (esFraseDeDinero(turbo.texto) && reloj.alcanza()) {
+    const confirmada = await transcribirEleven(audio, mime, language, reloj, terminos).catch(() => null);
+    if (confirmada?.texto) return { ...confirmada, via: 'elevenlabs:scribe-turbo+confirmado' };
+    console.warn('[stt turbo] frase de dinero sin confirmar con Scribe v2: se usa la de Turbo');
+  }
+  return { texto: turbo.texto.slice(0, 4000), via: 'elevenlabs:scribe-turbo', idioma: turbo.idioma };
+}
+
+/**
+ * El teléfono oye en vivo con Turbo (mobile/src/lib/turboMotor.ts): abre el WebSocket de tiempo real
+ * directo a ElevenLabs con un token de UN SOLO USO que pide el servidor (documentación: POST
+ * /v1/single-use-token/realtime_scribe; la clave nunca sale del servidor). La dirección va armada aquí
+ * con el modelo, el formato del micrófono crudo, el idioma, el cierre manual y las pistas de AU-RA.
+ */
+export async function permisoTurbo(
+  language: string,
+  reloj: Presupuesto = presupuesto(6000),
+  terminos: readonly string[] = TERMINOS_AURA
+): Promise<{ url: string; modelo: string } | null> {
+  const key = clave('elevenlabs');
+  if (!key) return null;
+  const r = await fetch('https://api.elevenlabs.io/v1/single-use-token/realtime_scribe', { method: 'POST', headers: { 'xi-api-key': key }, signal: reloj.senal(5000) }).catch(() => null);
+  if (!r?.ok) {
+    console.warn('[stt turbo] sin token de un solo uso', r?.status, r ? (await r.text().catch(() => '')).slice(0, 160) : '');
+    return null;
+  }
+  const j: any = await r.json().catch(() => null);
+  if (typeof j?.token !== 'string' || !j.token) return null;
+  const modelo = process.env.ELEVENLABS_STT_TURBO || MODELO_TURBO;
+  const q = new URLSearchParams({ model_id: modelo, audio_format: 'pcm_16000', commit_strategy: 'manual', token: j.token });
+  const idioma = (language || 'es').slice(0, 2).toLowerCase();
+  if (idioma === 'es' || idioma === 'en') q.set('language_code', idioma);
+  for (const t of terminos) q.append('keyterms', t);
+  return { url: `wss://api.elevenlabs.io/v1/speech-to-text/realtime?${q}`, modelo };
+}
+
+/** Confirmar una frase de dinero que el teléfono ya oyó con Turbo: directo con Scribe v2, sin Turbo. */
+export const PROVEEDORES_OIDO_CONFIRMAR = (): ProveedorOido[] => PROVEEDORES_OIDO.filter((p) => p.nombre !== 'elevenlabs-turbo');
+/** Lo mismo para Dr Electrum (las pistas del oficio). */
+export const PROVEEDORES_OIDO_ELECTRUM_CONFIRMAR = (): ProveedorOido[] => PROVEEDORES_OIDO_ELECTRUM.filter((p) => p.nombre !== 'elevenlabs-turbo');
+
+/** Los respaldos: el Whisper propio (si sigue configurado) y Gemini. */
+const RESPALDOS_OIDO: ProveedorOido[] = [
   { nombre: 'voicebox', listo: () => !!(clave('voicebox_url') && clave('voicebox_clave')), oir: transcribirVoicebox },
   { nombre: 'gemini', listo: () => !!clave('gemini'), oir: transcribirGemini },
 ];
 
-/** Dr Electrum: Scribe primero; el Whisper propio y Gemini, de respaldo en ese orden. */
+/**
+ * AU-RA y sus avatares (teléfono, web, Windows frase por frase, Telegram): Scribe primero, con las pistas de
+ * AU-RA (José, 1-oct: «cámbialo a Scribe primero… en todos los avatares»). Antes era Whisper primero.
+ * Desde el 2-oct, lo que llega en WAV (Windows) pasa antes por Scribe v2 Realtime Turbo; el resto (m4a del
+ * teléfono, ogg de Telegram) no lo puede mandar al tiempo real sin convertirlo y sigue por Scribe v2.
+ */
+export const PROVEEDORES_OIDO: ProveedorOido[] = [
+  { nombre: 'elevenlabs-turbo', listo: () => !!clave('elevenlabs'), oir: (a, m, l, r) => transcribirTurbo(a, m, l, r, TERMINOS_AURA) },
+  { nombre: 'elevenlabs', listo: () => !!clave('elevenlabs'), oir: (a, m, l, r) => transcribirEleven(a, m, l, r, TERMINOS_AURA) },
+  ...RESPALDOS_OIDO,
+];
+
+/**
+ * Dr Electrum: Turbo primero para lo que llega en WAV (la web graba cada frase en WAV de 16 kHz) con las
+ * pistas del oficio (José, 2-oct: «Dr Electrum ya puedes conectarlo Turbo»); después Scribe v2 por
+ * lotes con las mismas pistas, y los mismos respaldos. Lo de dinero se confirma igual que en AU-RA.
+ */
 export const PROVEEDORES_OIDO_ELECTRUM: ProveedorOido[] = [
-  { nombre: 'elevenlabs', listo: () => !!clave('elevenlabs'), oir: transcribirEleven },
-  ...PROVEEDORES_OIDO,
+  { nombre: 'elevenlabs-turbo', listo: () => !!clave('elevenlabs'), oir: (a, m, l, r) => transcribirTurbo(a, m, l, r, TERMINOS_ELECTRUM) },
+  { nombre: 'elevenlabs', listo: () => !!clave('elevenlabs'), oir: (a, m, l, r) => transcribirEleven(a, m, l, r, TERMINOS_ELECTRUM) },
+  ...RESPALDOS_OIDO,
 ];
 
 /**
@@ -249,7 +440,7 @@ export async function transcribirAudio(opts: {
   presupuesto?: Presupuesto;
   /** Pruebas: otra cadena de proveedores. */
   proveedores?: ProveedorOido[];
-  /** Quién oye. Dr Electrum usa Scribe primero; AU-RA, el Whisper propio. */
+  /** Quién oye: cambia las pistas de vocabulario de Scribe (las de AU-RA o las del oficio de Dr Electrum). */
   plataforma?: 'ultron' | 'electrum';
 }): Promise<Oido> {
   const buf = opts.audio?.length ? opts.audio : Buffer.alloc(0);
@@ -288,7 +479,7 @@ export async function transcribirAudio(opts: {
   }
   if (motivo === 'ninguno') {
     // Los nombres de las variables van al registro, no a quien habla: a él no le sirven de nada.
-    console.warn('[oido] sin proveedor de oído: falta VOICEBOX_URL + VOICEBOX_CLAVE o GEMINI_API_KEY');
+    console.warn('[oido] sin proveedor de oído: falta ELEVENLABS_API_KEY (o VOICEBOX_URL + VOICEBOX_CLAVE, o GEMINI_API_KEY)');
     return { texto: '', via: 'ninguno', detalle: 'Ahora mismo no puedo oír audios. Escríbeme.' };
   }
   console.warn(`[oido] ningún proveedor contestó (probados: ${intentados.join(', ')})`);

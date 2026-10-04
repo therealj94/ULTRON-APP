@@ -15,14 +15,54 @@ import { useSyncExternalStore } from 'react';
 import { emitir, escuchar, type AccionApp } from '../nucleo/contrato';
 import * as RELEVO from './relevo';
 import * as CHATS from './chats';
-import { registrarTrabajoActivo } from '../lib/barreraOta';
+import * as SecureStore from 'expo-secure-store';
+import { antesDeRecargar, registrarTrabajoActivo } from '../lib/barreraOta';
+import { armarAlijo, restaurarAlijo } from './borradoresRecarga';
 
 export type Borrador = { texto: string; deVoz: boolean; en: number };
 export type Contacto = { correo: string; nombre: string };
 
 let borradores: Record<string, Borrador> = {};
-// Los borradores viven solo en memoria: con alguno escrito, la actualización por aire no recarga.
-registrarTrabajoActivo('borrador-chat', () => Object.values(borradores).some((b) => !!b?.texto?.trim()));
+// Los borradores viven en memoria: con alguno escrito, la actualización por aire no recarga. Devuelve
+// cuándo se tocó el último: uno olvidado hace rato deja de frenarla (barreraOta.ts)… y entonces se guarda
+// en el llavero justo antes de recargar y vuelve después (borradoresRecarga.ts; UI01, 3-oct). Lo que no
+// cabe en el llavero frena siempre: si no se puede guardar, no se recarga encima.
+registrarTrabajoActivo('borrador-chat', () => {
+  const ultimo = Object.values(borradores).reduce((m, b) => (b?.texto?.trim() ? Math.max(m, b.en || Date.now()) : m), 0);
+  if (!ultimo) return false;
+  return armarAlijo(RELEVO.quien()?.correo || '', borradores, Date.now()).cabe ? ultimo : true;
+});
+
+/* ── el alijo de la recarga: guardar antes, devolver después, solo a su cuenta ───────────────── */
+
+const CAJON_ALIJO = 'aura.borradores.recarga';
+antesDeRecargar('borrador-chat', async () => {
+  const { json } = armarAlijo(RELEVO.quien()?.correo || '', borradores, Date.now());
+  if (json) await SecureStore.setItemAsync(CAJON_ALIJO, json);
+  else await SecureStore.deleteItemAsync(CAJON_ALIJO).catch(() => {});
+});
+
+/** Al arrancar (y al entrar a la cuenta del chat): lo que se escribía antes de la recarga, a su sitio. */
+async function devolverAlijo() {
+  let json: string | null = null;
+  try {
+    json = await SecureStore.getItemAsync(CAJON_ALIJO);
+  } catch {
+    return;
+  }
+  const r = restaurarAlijo(json, RELEVO.quien()?.correo || '', Date.now());
+  if (r.accion === 'nada' || r.accion === 'esperar') return;
+  await SecureStore.deleteItemAsync(CAJON_ALIJO).catch(() => {});
+  if (r.accion !== 'restaurar' || !r.borradores) return;
+  // Lo escrito después de volver gana: solo se rellena lo que no tiene borrador.
+  let cambio = false;
+  for (const [c, b] of Object.entries(r.borradores)) {
+    if (borradores[c]?.texto?.trim()) continue;
+    borradores = { ...borradores, [c]: b };
+    cambio = true;
+  }
+  if (cambio) avisar();
+}
 let abierto: Contacto | null = null;
 /** El último que redactó AURA: a quién va «envíalo» si no hay un chat abierto. */
 let ultimoRedactado: string | null = null;
@@ -241,8 +281,13 @@ g.__auraBorradores = escuchar('accion', (a) => {
   if (a.tipo === 'redactar' || a.tipo === 'enviar' || a.tipo === 'descartar') void manejar(a);
 });
 
-/** Al salir de la cuenta, los borradores se van con ella. */
+// Lo que quedó de antes de una recarga: al arrancar si la cuenta ya está, o cuando entre.
+void devolverAlijo();
+RELEVO.escucharCuenta(() => void devolverAlijo());
+
+/** Al salir de la cuenta, los borradores se van con ella (también su alijo de la recarga). */
 RELEVO.alSalir(() => {
+  void SecureStore.deleteItemAsync(CAJON_ALIJO).catch(() => {});
   borradores = {};
   enCurso.clear();
   recientes.clear();

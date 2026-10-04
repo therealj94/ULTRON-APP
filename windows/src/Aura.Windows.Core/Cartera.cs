@@ -99,6 +99,101 @@ public static class CarteraVeta
         return lista;
     }
 
+    // ───────────── enviar: AURA prepara, Veta Wallet firma ─────────────
+
+    /// <summary>La web de Veta Wallet. El envío se firma allá, con la contraseña de la persona.</summary>
+    public const string Wallet = "https://app.vetawallet.com/";
+
+    /// <summary>El símbolo tal cual lo usa la red («origen» → «ORIGEN»), o null si no es de la red.</summary>
+    public static string? Simbolo(string s) => Tokens.Select(t => t.Simbolo).FirstOrDefault(x => x.Equals((s ?? "").Trim(), StringComparison.OrdinalIgnoreCase)
+        || (x == "ORIGEN" && (s ?? "").Trim().Equals("origenes", StringComparison.OrdinalIgnoreCase)));
+
+    /// <summary>
+    /// Una cantidad escrita o dicha («10», «2.5», «2,5», «1,000») → decimal &gt; 0 con hasta 18 decimales, o null.
+    /// Una coma seguida de tres cifras (y sin punto) es de miles; si no, es el decimal.
+    /// </summary>
+    public static decimal? Monto(string? texto)
+    {
+        var t = (texto ?? "").Trim().Replace(" ", "");
+        if (!Regex.IsMatch(t, @"^\d{1,15}(?:[.,]\d{1,18})*$")) return null;
+        if (t.Contains(',') && !t.Contains('.')) t = Regex.IsMatch(t, @"^\d{1,3}(?:,\d{3})+$") ? t.Replace(",", "") : t.Replace(',', '.');
+        else t = t.Replace(",", "");
+        if (t.Count(c => c == '.') > 1) return null;
+        return decimal.TryParse(t, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var m) && m > 0 ? m : null;
+    }
+
+    /// <summary>
+    /// El enlace de cobro de Veta Wallet (#pagar?a=…&amp;m=…&amp;s=…): abre el envío ya llenado y la persona lo
+    /// firma allá. AURA no firma ni manda nada: si no se confirma en la wallet, no pasa nada.
+    /// </summary>
+    public static string EnlacePagar(string direccion, decimal monto, string simbolo)
+    {
+        if (!EsDireccion(direccion)) throw new InvalidOperationException("Esa persona no tiene una dirección de Veta Wallet válida.");
+        if (monto <= 0 || decimal.Round(monto, 18) != monto) throw new InvalidOperationException("La cantidad no es válida.");
+        var sim = Simbolo(simbolo) ?? throw new InvalidOperationException($"No conozco la moneda {simbolo}.");
+        var m = monto.ToString("0.##################", CultureInfo.InvariantCulture);
+        return $"{Wallet}#pagar?a={direccion.Trim()}&m={Uri.EscapeDataString(m)}&s={Uri.EscapeDataString(sim)}";
+    }
+
+    /// <summary>La cantidad en la unidad mínima de la cadena (18 decimales).</summary>
+    public static BigInteger AWei(decimal monto)
+    {
+        var entero = decimal.Truncate(monto);
+        var fraccion = monto - entero;
+        var wei = new BigInteger(entero) * BigInteger.Pow(10, 18);
+        // La parte fraccionaria, cifra por cifra (decimal tiene 28: no se pierde nada hasta 18).
+        for (int i = 17; i >= 0 && fraccion > 0; i--)
+        {
+            fraccion *= 10;
+            var d = (int)decimal.Truncate(fraccion);
+            wei += d * BigInteger.Pow(10, i);
+            fraccion -= d;
+        }
+        return wei;
+    }
+
+    static BigInteger Hex(string? h)
+    {
+        if (string.IsNullOrEmpty(h)) return BigInteger.Zero;
+        var x = h.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? h[2..] : h;
+        return x.Length == 0 || !Regex.IsMatch(x, "^[0-9a-fA-F]+$") ? BigInteger.Zero : BigInteger.Parse("0" + x, NumberStyles.HexNumber);
+    }
+
+    /// <summary>El número de bloque de una respuesta hex («0x4db67»).</summary>
+    public static long Bloque(string? hex) => (long)Hex(hex);
+
+    /// <summary>
+    /// Entre los bloques (respuestas de eth_getBlockByNumber con las transacciones completas), el hash del envío de
+    /// `desde` a `para` por esa cantidad exacta: ORIGEN es una transferencia nativa; un token, la llamada
+    /// transfer(para, cantidad) a su contrato. Sirve para publicar el comprobante en el chat DESPUÉS de que pasó.
+    /// </summary>
+    public static string? BuscarEnvio(string jsonBloques, string desde, string para, string simbolo, decimal monto)
+    {
+        var sim = Simbolo(simbolo);
+        if (sim == null || !EsDireccion(desde) || !EsDireccion(para)) return null;
+        var contrato = Tokens.First(t => t.Simbolo == sim).Contrato;
+        var wei = AWei(monto);
+        string d = desde.Trim().ToLowerInvariant(), p = para.Trim().ToLowerInvariant();
+        var datos = "0xa9059cbb" + p[2..].PadLeft(64, '0') + wei.ToString("x").TrimStart('0').PadLeft(64, '0');
+        using var doc = JsonDocument.Parse(jsonBloques);
+        var bloques = doc.RootElement.ValueKind == JsonValueKind.Array ? doc.RootElement.EnumerateArray().ToList() : new List<JsonElement> { doc.RootElement };
+        foreach (var b in bloques)
+        {
+            if (!b.TryGetProperty("result", out var r) || r.ValueKind != JsonValueKind.Object || !r.TryGetProperty("transactions", out var txs) || txs.ValueKind != JsonValueKind.Array) continue;
+            foreach (var tx in txs.EnumerateArray())
+            {
+                if (tx.ValueKind != JsonValueKind.Object) continue;
+                string De(string k) => tx.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString()!.ToLowerInvariant() : "";
+                if (De("from") != d) continue;
+                var ok = contrato == null
+                    ? De("to") == p && Hex(De("value")) == wei
+                    : De("to") == contrato.ToLowerInvariant() && De("input") == datos;
+                if (ok && De("hash") is { Length: 66 } hash) return hash;
+            }
+        }
+        return null;
+    }
+
     static string Num(decimal n, bool en) => n.ToString(n >= 1000 ? "#,0" : n >= 1 ? "#,0.##" : "0.####", CultureInfo.GetCultureInfo(en ? "en-US" : "es-HN"));
 
     /// <summary>Cómo se dice: «Tienes 1,520.4 ORIGEN (unos 1,321 dólares). Además: 0.12 AUKA…».</summary>

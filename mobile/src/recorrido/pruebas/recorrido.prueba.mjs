@@ -1,0 +1,364 @@
+/**
+ * Pruebas en Node del recorrido (sin teléfono): el guion (solo los dos anfitriones, cada paso pedido
+ * existe en su escena, las esperas tienen indicación, el nombre se pone bien), el motor (avanza al
+ * terminar cada línea, espera el toque, sigue solo si nadie toca, un aviso viejo no mueve nada,
+ * siguiente / atrás / pausa) y que cada escena tiene su animación.
+ *
+ *   cd mobile && npx tsx src/recorrido/pruebas/recorrido.prueba.mjs
+ */
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { DEMOS, ESCENAS, OPCIONES_FINAL, PRUEBAS, duracionLectura, pasoEn, siguientes, textoDe } from '../guion.ts';
+import { ESPERA_VOZ_MS, INICIO, lineaDe, pasoVisible, progreso, reducir } from '../motor.ts';
+import { esperarFrame } from '../../lib/esperarFrame.ts';
+import { COREOGRAFIA, EFECTOS, SONIDOS, achicadoEn, momentoDe } from '../coreografia.ts';
+
+const AQUI = path.dirname(fileURLToPath(import.meta.url));
+const pruebas = [];
+const prueba = (nombre, f) => pruebas.push([nombre, f]);
+
+prueba('solo hablan Claudio y ANT-ONIO, y se turnan', () => {
+  for (const e of ESCENAS) for (const l of e.lineas) assert.ok(l.quien === 'claudio' || l.quien === 'antonio', `${e.id}: ${l.quien}`);
+  const quienes = ESCENAS.flatMap((e) => e.lineas.map((l) => l.quien));
+  assert.ok(quienes.filter((q) => q === 'claudio').length >= 15 && quienes.filter((q) => q === 'antonio').length >= 15, 'los dos hablan bastante');
+  let seguidas = 1;
+  for (let i = 1; i < quienes.length; i++) {
+    seguidas = quienes[i] === quienes[i - 1] ? seguidas + 1 : 1;
+    assert.ok(seguidas <= 2, `nadie dice más de dos líneas seguidas (línea ${i})`);
+  }
+});
+
+prueba('todas las escenas, en orden, con su animación y sus pasos', () => {
+  assert.deepEqual(ESCENAS.map((e) => e.id), [...DEMOS]);
+  for (const e of ESCENAS) {
+    assert.ok(e.lineas.length >= 2, `${e.id} tiene conversación`);
+    assert.ok(e.fuente.length > 10, `${e.id} dice de dónde sale`);
+    for (const l of e.lineas) if (l.paso) assert.ok(e.pasos.includes(l.paso), `${e.id}: el paso «${l.paso}» no está en su lista`);
+    for (const p of e.pasos) assert.ok(e.lineas.some((l) => l.paso === p), `${e.id}: nadie pide el paso «${p}»`);
+    assert.equal(e.lineas[0].paso, e.pasos[0], `${e.id} empieza en su primer paso`);
+    assert.ok(fs.existsSync(path.join(AQUI, '..', 'escenas', `${e.id[0].toUpperCase()}${e.id.slice(1)}.tsx`)), `falta escenas/${e.id}.tsx`);
+  }
+});
+
+prueba('cada escena nombra de dónde sale su función y esos archivos EXISTEN (nada inventado)', () => {
+  const RAIZ = path.resolve(AQUI, '../../../..');
+  for (const e of ESCENAS) {
+    const rutas = [...e.fuente.matchAll(/((?:src|lib|server|screens|components|compa|pulse|avatares|caras|avatar3d|ajustes|scripts|recorrido|tutorial)\/[\w./-]+)/g)].map((m) => m[1]);
+    assert.ok(rutas.length || /DeskScreen/.test(e.fuente), `${e.id}: nombra su fuente`);
+    for (const r of rutas) {
+      const limpio = r.replace(/\/\*$/, '').replace(/[.,]$/, '');
+      const candidatos = [limpio, `mobile/${limpio}`, `mobile/src/${limpio}`, `mobile/src/${limpio}.ts`, `mobile/src/${limpio}.tsx`, `${limpio}.ts`].map((c) => path.join(RAIZ, c));
+      assert.ok(candidatos.some((c) => fs.existsSync(c)), `${e.id}: «${limpio}» no existe`);
+    }
+  }
+});
+
+prueba('los dos idiomas, frases cortas y esperas con indicación', () => {
+  for (const e of ESCENAS) {
+    assert.ok(e.titulo.es && e.titulo.en);
+    for (const l of e.lineas) {
+      assert.ok(l.texto.es && l.texto.en, `${e.id}: falta un idioma`);
+      assert.ok(l.texto.es.length <= 190, `${e.id}: «${l.texto.es.slice(0, 40)}…» es muy larga para decirse de una vez`);
+      if (l.espera) assert.ok(l.espera.etiqueta.es && l.espera.etiqueta.en && l.espera.ms >= 0);
+    }
+  }
+  const conToque = ESCENAS.filter((e) => e.lineas.some((l) => l.espera)).map((e) => e.id);
+  assert.deepEqual(conToque, ['mesa', 'camara', 'llamada', 'chat', 'whatsapp', 'propuestas', 'final'], 'se toca: «Más», la foto, contestar, «sí, envíalo», la pestaña de WhatsApp, «Sí, hazlo» y qué probar');
+  const ultima = ESCENAS.at(-1).lineas.at(-1);
+  assert.equal(ultima.espera.ms, 0, 'la última espera a que elija (no se cierra sola)');
+});
+
+prueba('el nombre: el primero, y sin nombre la frase queda limpia', () => {
+  const l = ESCENAS[0].lineas[0];
+  assert.equal(textoDe(l, 'es', 'José Enamorado'), '¡Hola, José! Soy Claudio, y hoy te voy a enseñar todo lo que puede hacer AU-RA.');
+  assert.equal(textoDe(l, 'es', ''), '¡Hola! Soy Claudio, y hoy te voy a enseñar todo lo que puede hacer AU-RA.');
+  assert.equal(textoDe(ESCENAS.at(-1).lineas.at(-1), 'en', ''), 'Now it’s your turn. What do you want to try first?');
+  for (const e of ESCENAS) for (const l of e.lineas) for (const i of ['es', 'en']) assert.ok(!textoDe(l, i, 'Ana').includes('{'), 'no queda ninguna llave');
+});
+
+prueba('el paso de la animación sigue a las líneas', () => {
+  const cam = ESCENAS.find((e) => e.id === 'camara');
+  assert.deepEqual([0, 1, 2, 3, 4].map((l) => pasoEn(cam, l)), ['abre', 'abre', 'flash', 'analiza', 'resultado']);
+});
+
+prueba('el motor: habla, espera el toque, y sigue solo si nadie toca', () => {
+  let s = INICIO;
+  const v0 = s.vuelta;
+  s = reducir(s, { tipo: 'termino', vuelta: s.vuelta });
+  assert.deepEqual([s.e, s.l, s.fase], [0, 1, 'habla']);
+  assert.ok(s.vuelta > v0, 'la línea nueva tiene su vuelta');
+  assert.equal(reducir(s, { tipo: 'termino', vuelta: v0 }), s, 'un «terminó» viejo no hace nada');
+  // A la cámara: la línea 1 espera el toque.
+  const eCam = ESCENAS.findIndex((x) => x.id === 'camara');
+  s = reducir(s, { tipo: 'ir', e: eCam });
+  s = reducir(s, { tipo: 'termino', vuelta: s.vuelta });
+  assert.deepEqual([s.e, s.l, s.fase], [eCam, 1, 'habla']);
+  s = reducir(s, { tipo: 'termino', vuelta: s.vuelta });
+  assert.equal(s.fase, 'espera', 'terminó de hablar: espera la foto');
+  const tocado = reducir(s, { tipo: 'toque' });
+  assert.deepEqual([tocado.l, tocado.fase, tocado.tocado], [2, 'habla', true], 'tocó: flash');
+  const solo = reducir(s, { tipo: 'esperaVencio', vuelta: s.vuelta });
+  assert.deepEqual([solo.l, solo.tocado], [2, false], 'nadie tocó: sigue sola');
+  assert.equal(reducir(tocado, { tipo: 'toque' }), tocado, 'tocar donde no se espera nada no hace nada');
+});
+
+prueba('tocar mientras todavía habla adelanta la espera', () => {
+  let s = reducir(INICIO, { tipo: 'ir', e: ESCENAS.findIndex((x) => x.id === 'camara') });
+  s = reducir(s, { tipo: 'termino', vuelta: s.vuelta });
+  assert.equal(s.fase, 'habla');
+  assert.equal(reducir(s, { tipo: 'toque' }).l, 2);
+});
+
+prueba('siguiente, atrás, pausa y el final', () => {
+  let s = reducir(INICIO, { tipo: 'siguiente' });
+  assert.deepEqual([s.e, s.l], [1, 0]);
+  s = reducir(s, { tipo: 'termino', vuelta: s.vuelta });
+  s = reducir(s, { tipo: 'anterior' });
+  assert.deepEqual([s.e, s.l], [1, 0], 'a mitad de escena, atrás vuelve a su principio');
+  s = reducir(s, { tipo: 'anterior' });
+  assert.deepEqual([s.e, s.l], [0, 0], 'al principio, a la escena de antes');
+  const p = reducir(s, { tipo: 'pausa' });
+  assert.ok(p.pausado);
+  assert.equal(reducir(p, { tipo: 'termino', vuelta: p.vuelta }), p, 'en pausa no avanza');
+  const r = reducir(p, { tipo: 'sigue' });
+  assert.ok(!r.pausado && r.vuelta > p.vuelta, 'al seguir, la línea empieza otra vez');
+  // Al final: la última línea espera sin límite.
+  let f = reducir(INICIO, { tipo: 'ir', e: ESCENAS.length - 1 });
+  f = reducir(f, { tipo: 'termino', vuelta: f.vuelta });
+  f = reducir(f, { tipo: 'termino', vuelta: f.vuelta });
+  assert.equal(f.fase, 'espera');
+  assert.equal(reducir(f, { tipo: 'esperaVencio', vuelta: f.vuelta }), f, 'no se cierra sola');
+  assert.equal(reducir(f, { tipo: 'toque' }).fase, 'fin', 'eligió: termina');
+  assert.equal(progreso(reducir(f, { tipo: 'toque' })), 1);
+  assert.equal(reducir(reducir(f, { tipo: 'siguiente' }), { tipo: 'siguiente' }).fase, 'fin');
+});
+
+prueba('recorrerlo entero sin tocar nada llega a elegir', () => {
+  let s = INICIO;
+  for (let i = 0; i < 200 && !(s.fase === 'espera' && lineaDe(s).espera.ms === 0); i++) {
+    s = s.fase === 'espera' ? reducir(s, { tipo: 'esperaVencio', vuelta: s.vuelta }) : reducir(s, { tipo: 'termino', vuelta: s.vuelta });
+  }
+  assert.deepEqual([s.e, s.fase], [ESCENAS.length - 1, 'espera']);
+  const total = ESCENAS.reduce((n, e) => n + e.lineas.reduce((m, l) => m + duracionLectura(l.texto.es) + (l.espera?.ms || 0), 0), 0);
+  // La versión 2 explica todo y dónde tocar (José: «que explique todo detallado»): más larga, pero se pausa,
+  // se salta por capítulos y se repite.
+  assert.ok(total > 300_000 && total < 600_000, `dura entre 5 y 10 minutos sin voz (${Math.round(total / 1000)} s)`);
+});
+
+prueba('preparar lo que sigue cruza de escena', () => {
+  const ultima = ESCENAS[0].lineas.length - 1;
+  assert.deepEqual(siguientes(0, ultima, 2), [{ e: 1, l: 0 }, { e: 1, l: 1 }]);
+  assert.deepEqual(siguientes(ESCENAS.length - 1, ESCENAS.at(-1).lineas.length - 1), []);
+});
+
+prueba('lo que se prueba al final existe en la mesa', () => {
+  assert.deepEqual(OPCIONES_FINAL.map((o) => o.id), [...PRUEBAS]);
+  const mesa = fs.readFileSync(path.join(AQUI, '../../screens/DeskScreen.tsx'), 'utf8');
+  for (const id of PRUEBAS) assert.ok(new RegExp(`case '${id}'`).test(mesa), `DeskScreen no atiende «${id}»`);
+});
+
+prueba('la coreografía: cada paso de cada escena tiene su momento, y lo que pide existe', () => {
+  for (const e of ESCENAS) {
+    assert.ok(COREOGRAFIA[e.id], `${e.id} sin coreografía`);
+    for (const p of e.pasos) assert.ok(COREOGRAFIA[e.id][p], `${e.id}/${p} sin momento`);
+    for (const p of Object.keys(COREOGRAFIA[e.id])) assert.ok(e.pasos.includes(p), `${e.id}: la coreografía nombra un paso que no existe («${p}»)`);
+  }
+  const efectos = fs.readFileSync(path.join(AQUI, '../escenas/efectos.tsx'), 'utf8');
+  for (const ef of EFECTOS) assert.ok(efectos.includes(`case '${ef}':`), `efectos.tsx no dibuja «${ef}»`);
+  const sonidos = fs.readFileSync(path.join(AQUI, '../sonidos.ts'), 'utf8');
+  for (const so of SONIDOS) {
+    if (so === 'whoosh' || so === 'tap') continue;
+    const m = sonidos.match(new RegExp(`${so}: \\{ src: require\\('([^']+)'\\)`));
+    assert.ok(m, `sonidos.ts no carga «${so}»`);
+    assert.ok(fs.existsSync(path.join(AQUI, '..', m[1])), `falta el archivo de «${so}»: ${m[1]}`);
+  }
+  // Los momentos clave que pidió José: la foto con flash y obturador, la llamada con timbre.
+  assert.deepEqual(momentoDe('camara', 'flash'), { efecto: 'flash', sonido: 'obturador', vibra: 'fuerte' });
+  assert.equal(momentoDe('llamada', 'suena').sonido, 'timbre');
+  assert.equal(momentoDe('nada', 'x').efecto, null);
+});
+
+prueba('el recordatorio: Claudio lo dice y es él quien se achica y vuela a la franja', () => {
+  const rec = ESCENAS.find((e) => e.id === 'recordatorio');
+  const achica = rec.lineas.find((l) => l.paso === 'achica');
+  assert.equal(achica.quien, 'claudio');
+  assert.match(achica.texto.es, /yo me hago chiquito/);
+  assert.equal(achicadoEn('recordatorio', 'achica'), 'claudio');
+  assert.equal(achicadoEn('recordatorio', 'suena'), 'claudio', 'sigue chiquito mientras suena la llamada');
+  assert.equal(achicadoEn('recordatorio', 'pide'), null);
+  assert.equal(achicadoEn('chat', 'lee'), null, 'al salir del recordatorio vuelve');
+  const escena = fs.readFileSync(path.join(AQUI, '../escenas/Recordatorio.tsx'), 'utf8');
+  assert.match(escena, /marcarLugar\?\.\('franja'/, 'la escena marca dónde aterriza');
+});
+
+prueba('cada vez que se abre empieza de cero (cerrado no se queda montado con el estado viejo)', () => {
+  const app = fs.readFileSync(path.join(AQUI, '../RecorridoApp.tsx'), 'utf8');
+  assert.match(app, /if \(!visible\) return null;/);
+  // Y abierto de nuevo, el motor arranca en la bienvenida aunque la vez anterior terminara.
+  let s = reducir(INICIO, { tipo: 'ir', e: ESCENAS.length - 1 });
+  s = reducir(reducir(s, { tipo: 'siguiente' }), { tipo: 'siguiente' });
+  assert.equal(s.fase, 'fin');
+  assert.deepEqual([INICIO.e, INICIO.l, INICIO.fase], [0, 0, 'habla']);
+});
+
+prueba('el ejemplo se mueve cuando suena la voz de su línea, no antes (José, 2-oct: «no lo hace fluido»)', () => {
+  const ir = (id, l) => ({ ...INICIO, e: ESCENAS.findIndex((x) => x.id === id), l, vuelta: 10 + l });
+  // La foto: en «flash» la escena sigue abierta hasta que suena la línea del flash.
+  const cam = ESCENAS.find((x) => x.id === 'camara');
+  const lFlash = cam.lineas.findIndex((l) => l.paso === 'flash');
+  const s = ir('camara', lFlash);
+  assert.equal(pasoVisible(s, 0), pasoEn(cam, lFlash - 1), 'antes de la voz: el paso de la línea anterior');
+  assert.equal(pasoVisible(s, s.vuelta), 'flash', 'con la voz sonando: su paso');
+  assert.equal(pasoVisible({ ...s, tocado: true }, 0), 'flash', 'un toque responde al momento');
+  assert.equal(pasoVisible({ ...s, fase: 'espera' }, 0), 'flash', 'en la espera del toque ya se ve');
+  // Al entrar a una escena se ve su primer paso de una (lo cubre la entrada del capítulo).
+  for (const e of ESCENAS) assert.equal(pasoVisible(ir(e.id, 0), 0), e.pasos[0], `${e.id} entra en su primer paso`);
+  // Claudio se achica cuando dice «me hago chiquito», no antes.
+  const rec = ESCENAS.find((x) => x.id === 'recordatorio');
+  const lAchica = rec.lineas.findIndex((l) => l.paso === 'achica');
+  const sr = ir('recordatorio', lAchica);
+  assert.equal(achicadoEn('recordatorio', pasoVisible(sr, 0)), null);
+  assert.equal(achicadoEn('recordatorio', pasoVisible(sr, sr.vuelta)), 'claudio');
+  assert.ok(ESPERA_VOZ_MS >= 800 && ESPERA_VOZ_MS <= 2000, 'si la voz tarda, el ejemplo no se queda esperando para siempre');
+});
+
+prueba('Claudio no desaparece al volver de la franja: nada de estilos animados que se quitan ni hilo nativo en el vuelo', () => {
+  const vista = fs.readFileSync(path.join(AQUI, '../Recorrido.tsx'), 'utf8');
+  assert.doesNotMatch(vista, /chiquito \? null : \{ opacity/, 'el estilo del turno ya no se quita al achicarse');
+  assert.doesNotMatch(vista, /chiquito && vuelo\s*\?\s*\{/, 'el estilo del vuelo está siempre');
+  const anims = [...vista.matchAll(/Animated\.(?:spring|timing)\((frente|vuela),[^;]*?useNativeDriver: (true|false)/g)];
+  assert.equal(anims.length, 3, 'el turno, la ida y la vuelta');
+  for (const m of anims) assert.equal(m[2], 'false', `${m[1]} no va por el hilo nativo`);
+  assert.match(vista, /setAterrizajes\(\(n\) => n \+ 1\)/, 'al aterrizar, su cuadro se monta de nuevo');
+  assert.match(vista, /cuadro-\$\{aterrizajes\}/);
+});
+
+prueba('se ve qué está pasando: preparando la voz, sin voz, en pausa y la cuenta de la espera', () => {
+  const vista = fs.readFileSync(path.join(AQUI, '../Recorrido.tsx'), 'utf8');
+  assert.match(vista, /preparando: \{ es: 'preparando la voz'/);
+  assert.match(vista, /leyendo: \{ es: 'sin voz ahora · léelo'/);
+  assert.match(vista, /<EnPausa /);
+  assert.match(vista, /o sigo solo en \$\{segundos\} s/);
+  // Todas las esperas siguen solas (con su cuenta), menos la del final: ahí se elige qué probar.
+  for (const e of ESCENAS) for (const l of e.lineas) if (l.espera && e.id !== 'final') assert.ok(l.espera.ms > 0, `${e.id}: la espera sigue sola (con cuenta)`);
+});
+
+prueba('probar «foto» prende la cámara y espera la imagen; «recordatorio» guía al momento', async () => {
+  const mesa = fs.readFileSync(path.join(AQUI, '../../screens/DeskScreen.tsx'), 'utf8');
+  const ver = mesa.slice(mesa.indexOf('const whatDoYouSee'), mesa.indexOf('const runGag'));
+  assert.match(ver, /encenderCamara\('temporal'\)/, '«¿qué ves?» con la cámara apagada la prende solo ahora');
+  assert.match(ver, /esperarFrame\(/);
+  assert.match(ver, /setToolHint\(tr\('mirando con la cámara'/, 'mientras enfoca dice «mirando»');
+  const probar = mesa.slice(mesa.indexOf('const probarDesdeRecorrido'), mesa.indexOf('const probarDesdeRecorrido') + 1800);
+  assert.match(probar, /case 'recordatorio':[\s\S]*?recuérdame a las cinco/);
+  // esperarFrame: sin cámara lista sigue preguntando; con foto buena la devuelve; sin foto, se rinde a tiempo.
+  let t = 0;
+  const dormir = async (ms) => void (t += ms);
+  const ahora = () => t;
+  let lista = null;
+  let pedidas = 0;
+  const foto = await esperarFrame(() => lista, { maxMs: 7000, cadaMs: 350, dormir, ahora: () => { if (t >= 1000 && !lista) lista = async () => (++pedidas < 2 ? null : 'b64'); return ahora(); } });
+  assert.equal(foto, 'b64');
+  assert.ok(t >= 1000 && t < 7000);
+  t = 0;
+  assert.equal(await esperarFrame(() => null, { maxMs: 2000, cadaMs: 350, dormir, ahora }), null);
+  assert.ok(t <= 2000, 'no espera de más');
+  t = 0;
+  assert.equal(await esperarFrame(() => async () => { throw new Error('ocupada'); }, { maxMs: 1000, cadaMs: 350, dormir, ahora }), null, 'un error de la cámara no lo rompe');
+  // Una cámara que nunca contesta: se rinde a tiempo (reloj de verdad, 300 ms).
+  const t0 = Date.now();
+  assert.equal(await esperarFrame(() => () => new Promise(() => {}), { maxMs: 300, cadaMs: 100 }), null, 'una foto colgada no la cuelga');
+  assert.ok(Date.now() - t0 < 1500, `se rindió en ${Date.now() - t0} ms`);
+});
+
+prueba('cubre todo lo que hay hoy en la app (José: «hemos agregado cosas… que explique todo detallado»)', () => {
+  const ids = ESCENAS.map((e) => e.id);
+  for (const id of ['mesa', 'hablar', 'llamada', 'chat', 'whatsapp', 'correo', 'computadora', 'conocer', 'propuestas', 'avisos', 'camara', 'recordatorio', 'ajustes'])
+    assert.ok(ids.includes(id), `falta la escena «${id}»`);
+  const todo = ESCENAS.flatMap((e) => e.lineas.map((l) => l.texto.es)).join(' ');
+  for (const [que, re] of [
+    ['los tres botones', /Chat[\s\S]*Más/],
+    ['hablar sin palabra clave', /sin palabra clave/],
+    ['«llámame» y el botón', /«Que te llame»/],
+    ['PULSE2CHAT', /PULSE2CHAT/],
+    ['la pestaña de Correos al lado de WhatsApp', /pestaña Correos, al lado de WhatsApp/],
+    ['vincular WhatsApp', /Dispositivos vinculados/],
+    ['conectar el correo', /contraseña de aplicación/],
+    ['su computadora en vivo', /Su computadora/],
+    ['Misiones', /Misiones/],
+    ['Lo que sé de ti', /«Lo que sé de ti»/],
+    ['Mi círculo', /«Mi círculo»/],
+    ['la tarjeta Sí/Luego/No', /«Sí, hazlo», «Luego» o «No»/],
+    ['el nivel de iniciativa', /«Iniciativa de AURA»/],
+    ['avisos con la app cerrada', /app cerrada/],
+    ['el permiso de avisos', /Permisos del teléfono, Avisos/],
+    ['la cámara y «comenta lo que ve»', /«Comenta lo que ve»/],
+    ['recordatorios', /recuérdame/],
+    ['Ajustes', /abre ajustes/],
+  ])
+    assert.match(todo, re, `el recorrido no explica ${que}`);
+});
+
+prueba('las escenas nuevas señalan dónde tocar (José: «señalando dónde tocar»)', () => {
+  for (const id of ['mesa', 'avisos', 'whatsapp', 'conocer', 'propuestas', 'ajustes']) {
+    const f = fs.readFileSync(path.join(AQUI, '..', 'escenas', `${id[0].toUpperCase()}${id.slice(1)}.tsx`), 'utf8');
+    assert.match(f, /<Senala |<Toca /, `${id} no señala nada`);
+    // Cada paso que pide su guion lo sabe dibujar (su ORDEN es el de los pasos).
+    const orden = f.match(/const ORDEN = \[([^\]]+)\]/)?.[1].match(/'([a-z]+)'/g)?.map((x) => x.slice(1, -1));
+    assert.deepEqual(orden, [...ESCENAS.find((e) => e.id === id).pasos], `${id}: los pasos de la escena y del guion no coinciden`);
+  }
+  const guia = fs.readFileSync(path.join(AQUI, '../escenas/guia.tsx'), 'utf8');
+  assert.match(guia, /👆/, 'la manito que señala');
+});
+
+prueba('dice lo mismo que AURA sabe del menú (lib/menu-app.ts, la fuente única)', () => {
+  const menu = fs.readFileSync(path.resolve(AQUI, '../../../../lib/menu-app.ts'), 'utf8');
+  const todo = ESCENAS.flatMap((e) => e.lineas.map((l) => l.texto.es)).join(' ');
+  for (const nombre of ['Dispositivos vinculados', 'Con un código', 'Tus correos', 'contraseña de aplicación', 'Entrar con Microsoft', 'Iniciativa de AURA', 'Permisos del teléfono', 'Alarmas y recordatorios', 'Lo que sé de ti', 'Mi círculo', 'Su computadora', 'Comenta lo que ve', 'Que te llame'])
+    assert.ok(menu.includes(nombre) && todo.includes(nombre), `«${nombre}» tiene que decirse igual en el recorrido y en el menú`);
+});
+
+prueba('la ventana: Empezar / Después, saltable y repetible (tutorial/pasos.ts)', async () => {
+  const P = await import('../../tutorial/pasos.ts');
+  assert.equal(P.tocaOfrecerRecorrido({}, 'Ana@X.com'), true, 'la primera vez se ofrece');
+  assert.equal(P.tocaOfrecerRecorrido({}, ''), false, 'sin persona, no');
+  // Quien vio el recorrido viejo (la marca de siempre) lo vuelve a ver ofrecido una vez: creció.
+  assert.equal(P.versionVista({ tutorialVisto: { 'ana@x.com': true } }, 'ana@x.com'), 1);
+  assert.equal(P.tocaOfrecerRecorrido({ tutorialVisto: { 'ana@x.com': true } }, 'ana@x.com'), true);
+  const visto = P.conRecorridoVisto({}, 'Ana@x.com');
+  assert.deepEqual(visto, { recorridoVisto: { 'ana@x.com': P.VERSION_RECORRIDO }, tutorialVisto: { 'ana@x.com': true } });
+  assert.equal(P.tocaOfrecerRecorrido(visto, 'ana@x.com'), false, 'visto: ya no sale solo');
+  // «Después» se cuenta: vuelve hasta MAX_POSPONER veces, después ya no sale sola.
+  let m = {};
+  for (let k = 0; k < P.MAX_POSPONER; k++) {
+    assert.equal(P.tocaOfrecerRecorrido(m, 'ana@x.com'), true, `vez ${k + 1}`);
+    m = { ...m, ...P.conRecorridoPospuesto(m, 'ana@x.com') };
+  }
+  assert.equal(P.tocaOfrecerRecorrido(m, 'ana@x.com'), false);
+  assert.equal(P.tocaOfrecerRecorrido(m, 'beto@x.com'), true, 'cada quien lo suyo');
+  // La mesa: la primera vez abre la VENTANA (no el recorrido de golpe) y «Qué puedo hacer» también.
+  const mesa = fs.readFileSync(path.join(AQUI, '../../screens/DeskScreen.tsx'), 'utf8');
+  assert.match(mesa, /tocaOfrecerRecorrido\(s, user\.correo\)/);
+  assert.match(mesa, /abrirBienvenida\('primera'\)/);
+  assert.match(mesa, /case 'tutorial':[\s\S]{0,120}abrirBienvenida\('menu'\)/);
+  assert.match(mesa, /<VentanaBienvenida /);
+  assert.match(mesa, /saveSettings\(conRecorridoVisto\(s0, user\.correo\)\)/, 'al cerrarlo (terminado o no) queda visto');
+  const ventana = fs.readFileSync(path.join(AQUI, '../../bienvenida/VentanaBienvenida.tsx'), 'utf8');
+  for (const b of ['Empezar el recorrido', 'Después', 'Contarte de mí']) assert.ok(ventana.includes(b), `la ventana no tiene «${b}»`);
+  assert.match(ventana, /conRecorridoPospuesto/, '«Después» se cuenta');
+});
+
+let ok = 0;
+for (const [nombre, f] of pruebas) {
+  try {
+    await f();
+    ok++;
+    console.log(`ok - ${nombre}`);
+  } catch (e) {
+    console.log(`FALLA - ${nombre}\n  ${e.message}`);
+  }
+}
+console.log(`\n${ok}/${pruebas.length} pruebas del recorrido`);
+if (ok !== pruebas.length) process.exit(1);

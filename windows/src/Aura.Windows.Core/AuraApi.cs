@@ -15,6 +15,9 @@ public sealed record Respuesta(string Texto, string Voz, string Emocion, string?
 /// <summary>Audio de la voz del avatar (ElevenLabs en el servidor) y sus tiempos por letra si los hubo.</summary>
 public sealed record Audio(byte[] Bytes, string Tipo, string Motor, string? Alineacion);
 
+/// <summary>El permiso para hablar con el agente: la URL firmada (wss://), el pase y la conversación.</summary>
+public sealed record PermisoAgente(string Url, string Pase, string Cid, long? RestanteMs);
+
 public sealed class AuraError : Exception
 {
     public HttpStatusCode? Estado { get; }
@@ -36,6 +39,8 @@ public sealed class AuraApi : IDisposable
     public string? Token { get; set; }
     /// <summary>Si el servidor rechaza el token, se pide uno nuevo con las credenciales guardadas (una vez).</summary>
     public Func<CancellationToken, Task<string?>>? Renovar { get; set; }
+    /// <summary>El id de este equipo (x-aura-aparato): lo que el cerebro pida para la PC va solo a su canal.</summary>
+    public string? Aparato { get; set; }
 
     public AuraApi(string servidor, string? token = null, HttpMessageHandler? handler = null)
     {
@@ -59,6 +64,7 @@ public sealed class AuraApi : IDisposable
         if (cuerpo != null) r.Content = new StringContent(JsonSerializer.Serialize(cuerpo), Encoding.UTF8, "application/json");
         if (!string.IsNullOrEmpty(Token)) r.Headers.TryAddWithoutValidation("x-ultron-sesion", Token);
         r.Headers.TryAddWithoutValidation("x-aura-origen", "windows");
+        if (!string.IsNullOrEmpty(Aparato)) r.Headers.TryAddWithoutValidation("x-aura-aparato", Aparato);
         r.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(aceptar ?? "application/json"));
         return r;
     }
@@ -179,6 +185,48 @@ public sealed class AuraApi : IDisposable
         Token = null;
     }
 
+    /// <summary>
+    /// Abre una conversación por voz con el agente de ElevenLabs de su avatar: una URL firmada de un
+    /// solo uso (wss://) y el pase que vuelve al servidor en cada turno. Necesita sesión y <see cref="Aparato"/>.
+    /// </summary>
+    public async Task<PermisoAgente> AbrirAgente(string avatar, string idioma, CancellationToken ct = default)
+    {
+        using var r = await Enviar(() => Pedido(HttpMethod.Post, "api/voz/agente", new { avatar, idioma, transporte = "websocket" }), ct, TimeSpan.FromSeconds(15)).ConfigureAwait(false);
+        using var j = await Json(r, ct).ConfigureAwait(false);
+        var raiz = j.RootElement;
+        string S(string k) => raiz.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : "";
+        var url = S("url");
+        if (!url.StartsWith("wss://", StringComparison.Ordinal) || S("pase").Length == 0) throw new AuraError("El servidor no abrió la conversación por voz.");
+        long? restante = raiz.TryGetProperty("restanteMs", out var rm) && rm.TryGetInt64(out var ms) ? ms : null;
+        return new PermisoAgente(url, S("pase"), S("cid"), restante);
+    }
+
+    /// <summary>
+    /// Avisa que la persona va a hablar: el cerebro deja leído su contexto y el primer turno no espera 4–8 s
+    /// (POST /api/cerebro/calentar). Nunca lanza: si falla, el turno simplemente tarda lo de antes.
+    /// </summary>
+    public async Task Calentar(CancellationToken ct = default)
+    {
+        if (string.IsNullOrEmpty(Token)) return;
+        try { using var r = await Enviar(() => Pedido(HttpMethod.Post, "api/cerebro/calentar", new { }), ct, TimeSpan.FromSeconds(8)).ConfigureAwait(false); }
+        catch (Exception) { }
+    }
+
+    /// <summary>Cuelga: el pase deja de valer ya (no a los cinco minutos).</summary>
+    public async Task CerrarAgente(string pase, CancellationToken ct = default)
+    {
+        try { using var r = await Enviar(() => Pedido(HttpMethod.Post, "api/voz/agente/cerrar", new { pase }), ct, TimeSpan.FromSeconds(8)).ConfigureAwait(false); }
+        catch (AuraError) { }
+    }
+
+    /// <summary>El canal de AURA (SSE) de este equipo: lo lee <see cref="CanalPc"/>. Queda abierto hasta que se corte.</summary>
+    public async Task<Stream> Canal(CancellationToken ct = default)
+    {
+        if (string.IsNullOrEmpty(Token) || string.IsNullOrEmpty(Aparato)) throw new AuraError("Sin sesión no hay canal.");
+        var r = await Enviar(() => Pedido(HttpMethod.Get, "api/app/acciones", null, "text/event-stream"), ct, Timeout.InfiniteTimeSpan, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
+        return await r.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+    }
+
     public async Task<bool> Salud(CancellationToken ct = default)
     {
         try { using var r = await Enviar(() => Pedido(HttpMethod.Get, "api/health"), ct, TimeSpan.FromSeconds(10)).ConfigureAwait(false); return true; }
@@ -195,7 +243,7 @@ public sealed class AuraApi : IDisposable
         var cuerpo = new Dictionary<string, object?>
         {
             ["message"] = mensaje, ["mode"] = "CONOCER", ["usuario"] = usuario,
-            ["historial"] = historial.TakeLast(10).Select(h => new { rol = h.Rol, texto = h.Texto }).ToArray(),
+            ["historial"] = historial.TakeLast(16).Select(h => new { rol = h.Rol, texto = h.Texto }).ToArray(),
             ["memoria"] = Array.Empty<string>(), ["avatar"] = avatar, ["idioma"] = idioma,
         };
         if (hablado) cuerpo["hablado"] = true;
@@ -326,6 +374,48 @@ public sealed class AuraApi : IDisposable
             raiz.TryGetProperty(servicio, out var s) && s.ValueKind == JsonValueKind.Object && s.TryGetProperty(campo, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
         var raiz = j.RootElement;
         return (Id(raiz, "spotify"), Id(raiz, "google"), Id(raiz, "google", "clientSecret"), Id(raiz, "microsoft"));
+    }
+
+    /// <summary>
+    /// El WhatsApp personal (server/whatsapp.ts) con la sesión: el JSON de una ruta de /api/whatsapp/* (solo
+    /// las de <see cref="PuenteWhatsApp.Rutas"/>). Los errores del servidor ({error}) llegan como AuraError con su texto.
+    /// </summary>
+    public async Task<JsonElement> WhatsApp(HttpMethod metodo, string ruta, object? cuerpo = null, TimeSpan? tope = null, CancellationToken ct = default)
+    {
+        if (!PuenteWhatsApp.RutaValida(ruta) || (metodo != HttpMethod.Get && metodo != HttpMethod.Post)) throw new AuraError("Esa ruta de WhatsApp no existe.");
+        if (string.IsNullOrEmpty(Token)) throw new AuraError("Entra con tu cuenta en Ajustes.", HttpStatusCode.Unauthorized);
+        using var r = await Enviar(() => Pedido(metodo, ruta, metodo == HttpMethod.Post ? cuerpo ?? new { } : null), ct, tope ?? TimeSpan.FromSeconds(25)).ConfigureAwait(false);
+        using var j = await Json(r, ct).ConfigureAwait(false);
+        return j.RootElement.Clone();
+    }
+
+    /// <summary>
+    /// Una foto, audio o documento de WhatsApp en grande (GET /api/whatsapp/media): los bytes y su tipo, con
+    /// tope (<paramref name="maximo"/>): si el servidor dice que es más grande, o manda más, se corta y se avisa.
+    /// </summary>
+    public async Task<(byte[] Bytes, string Tipo)> WhatsAppMedia(string ruta, long maximo, CancellationToken ct = default)
+    {
+        if (!PuenteWhatsApp.RutaValida(ruta) || !ruta.StartsWith("api/whatsapp/media?", StringComparison.Ordinal)) throw new AuraError("Esa ruta de WhatsApp no existe.");
+        if (string.IsNullOrEmpty(Token)) throw new AuraError("Entra con tu cuenta en Ajustes.", HttpStatusCode.Unauthorized);
+        using var reloj = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        reloj.CancelAfter(TimeSpan.FromSeconds(60));
+        using var r = await Enviar(() => Pedido(HttpMethod.Get, ruta, null, "*/*"), reloj.Token, TimeSpan.FromSeconds(60), HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
+        if (r.Content.Headers.ContentLength is long largo && largo > maximo) throw new AuraError($"El archivo es muy grande para verlo aquí (más de {maximo / (1024 * 1024)} MB). Ábrelo en tu teléfono.");
+        try
+        {
+            await using var s = await r.Content.ReadAsStreamAsync(reloj.Token).ConfigureAwait(false);
+            using var ms = new MemoryStream();
+            var buf = new byte[81920];
+            int n;
+            while ((n = await s.ReadAsync(buf, reloj.Token).ConfigureAwait(false)) > 0)
+            {
+                if (ms.Length + n > maximo) throw new AuraError($"El archivo es muy grande para verlo aquí (más de {maximo / (1024 * 1024)} MB). Ábrelo en tu teléfono.");
+                ms.Write(buf, 0, n);
+            }
+            return (ms.ToArray(), r.Content.Headers.ContentType?.MediaType ?? "application/octet-stream");
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { throw new AuraError("El servidor AURA tardó demasiado."); }
+        catch (IOException) { throw new AuraError("Se cortó la conexión mientras bajaba el archivo."); }
     }
 
     public void Dispose() => http.Dispose();

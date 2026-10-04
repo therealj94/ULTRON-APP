@@ -28,11 +28,17 @@ public partial class NotchWindow
     DesktopTarget? destino;
     CancellationTokenSource? escribiendo;
 
+    /// <summary>Cómo salió la última mano: true (se vio hecha), false (no se pudo), null (espera tu «sí» o no se sabe).</summary>
+    bool? resultadoUltimo;
+
     bool Ingles => ajustes.Idioma == "en";
     string T(string es, string en) => Ingles ? en : es;
 
     void Hecho(string titulo, string cuerpo, string icono, string? decir = null, string? boton = null, Action? accion = null, double segundos = 2.6)
     {
+        resultadoUltimo = true;
+        // La orden del cerebro ya quedó: la conversación lo sabe (sin interrumpir). Lo de las reglas no hace falta: el cerebro lo oyó.
+        if (!intentoLocal) AvisarAgente(T("hecho — ", "done — ") + titulo + (cuerpo.Length > 0 ? " · " + cuerpo : ""), false);
         Avisar(new Aviso(titulo, cuerpo, icono, "happy", boton, accion, segundos));
         // Si no hubo voz (apagada o sin ninguna voz), en manos libres se vuelve a escuchar igual.
         bool hablo = decir != null && Contestar(decir);
@@ -45,6 +51,7 @@ public partial class NotchWindow
     {
         if (cancion != null && ajustes.MostrarMusica)
         {
+            resultadoUltimo = true;
             MostrarTarjetaMusica(segundos);
             AgregarMensaje(ajustes.NombreAvatar, titulo);
             if (continuo) EmpezarAEscuchar();
@@ -54,6 +61,13 @@ public partial class NotchWindow
 
     void NoPude(string motivo)
     {
+        resultadoUltimo = false;
+        ultimoMotivo = motivo;
+        // Primer intento de las reglas en la conversación en vivo: todavía no se muestra ni se dice nada. Si la orden
+        // del cerebro (el segundo intento) sale, no hubo fallo; si no, AlOirEnVivo lo dice entonces (Codex en #112).
+        if (intentoLocal) return;
+        // En la conversación en vivo el agente lo dice (antes quedaba solo escrito y AURA ya había dicho «listo»).
+        AvisarAgente(T("no se pudo — ", "couldn't do it — ") + motivo, true);
         pensando = false;
         Recalcular();
         Avisar(new Aviso(T("No se pudo", "Couldn't do it"), motivo, "", "worried", Segundos: 5));
@@ -64,21 +78,24 @@ public partial class NotchWindow
     internal async Task Hacer(Pedido p, string texto, bool hablado)
     {
         if (pausado) return;
+        using var ocupada = AccionEnCurso(); // la actualización sola no se mete a mitad de una acción
         try
         {
             switch (p.Mano)
             {
                 case Mano.AbrirApp:
                 {
-                    var app = Aplicaciones.Buscar(p.Valor);
+                    // Al arrancar (o con una app recién instalada) el índice puede no tenerla todavía: se espera y se rehace.
+                    var app = Aplicaciones.Buscar(p.Valor) ?? await Aplicaciones.BuscarConIndice(p.Valor);
                     if (app == null)
                     {
                         if (Parametros.Sitio(p.Valor) is { } web) { Escritorio.AbrirWeb(web); Hecho(T("Abriendo ", "Opening ") + p.Valor, web, "", T("Listo, abro " + p.Valor + ".", "Opening " + p.Valor + ".")); }
                         else NoPude(T($"No encontré «{p.Valor}» en esta computadora.", $"I couldn't find “{p.Valor}” on this PC."));
                         break;
                     }
-                    Aplicaciones.Abrir(app);
-                    Hecho(T("Abriendo ", "Opening ") + app.Nombre, "", "", T("Listo, abro " + app.Nombre + ".", "Opening " + app.Nombre + "."));
+                    // Se dice que quedó cuando se VE la ventana (y si no aparece, se intenta otra vez).
+                    if (await Aplicaciones.AbrirVerificado(app)) Hecho(T("Abrí ", "Opened ") + app.Nombre, "", "", T("Listo, abrí " + app.Nombre + ".", app.Nombre + " is open."));
+                    else NoPude(T($"Intenté abrir {app.Nombre} dos veces y no se abrió.", $"I tried to open {app.Nombre} twice and it didn't open."));
                     break;
                 }
                 case Mano.AbrirCarpeta:
@@ -96,7 +113,12 @@ public partial class NotchWindow
                 case Mano.VolumenSubir: Escritorio.Volumen(true, Parametros.Limpiar(texto).Contains("poco") ? 2 : 5); Hecho(T("Volumen arriba", "Volume up"), "", ""); break;
                 case Mano.VolumenBajar: Escritorio.Volumen(false, Parametros.Limpiar(texto).Contains("poco") ? 2 : 5); Hecho(T("Volumen abajo", "Volume down"), "", ""); break;
                 case Mano.Silenciar: Escritorio.Mute(); Hecho(T("Sonido", "Sound"), T("Silencio activado o quitado", "Mute toggled"), ""); break;
-                case Mano.MultimediaPausa: if (!await musica.PlayPausa()) Escritorio.PlayPausa(); HechoMusica(T("Play / pausa", "Play / pause"), 4); break;
+                case Mano.MultimediaPausa:
+                    // «Pausa» con la música ya en pausa (o «sigue» con la música sonando) no la alterna al revés.
+                    if (!(p.Valor == "pausar" && cancion is { Sonando: false } || p.Valor == "reanudar" && cancion is { Sonando: true }))
+                        if (!await musica.PlayPausa()) Escritorio.PlayPausa();
+                    HechoMusica(p.Valor switch { "pausar" => T("Música en pausa", "Music paused"), "reanudar" => T("Música sonando", "Music playing"), _ => T("Play / pausa", "Play / pause") }, 4);
+                    break;
                 case Mano.MultimediaSiguiente: if (!await musica.Siguiente()) Escritorio.Siguiente(); HechoMusica(T("Siguiente canción", "Next track"), 5); break;
                 case Mano.MultimediaAnterior: if (!await musica.Anterior()) Escritorio.Anterior(); HechoMusica(T("Canción anterior", "Previous track"), 5); break;
                 case Mano.Escritorio: Escritorio.MostrarEscritorio(); Hecho(T("Escritorio", "Desktop"), "", ""); break;
@@ -143,9 +165,11 @@ public partial class NotchWindow
                     break;
                 case Mano.Atajo: HacerAtajo(p.Valor); break;
                 case Mano.Pulsar: await PulsarControl(p.Valor); break;
-                case Mano.Ventana: HacerVentana(p.Valor); break;
+                case Mano.Ventana: await HacerVentana(p.Valor); break;
                 case Mano.Portapapeles: await Portapapeles(texto, hablado); break;
                 case Mano.AbrirArchivo: AbrirArchivo(p.Valor); break;
+                case Mano.VolumenA or Mano.Apps or Mano.Teclas or Mano.Archivos or Mano.Herramienta or Mano.Navegador or Mano.TextoPantalla or Mano.Varias:
+                    await HacerMas(p, hablado); break; // NotchWindow.ManosMas.cs
                 default: await Conversar(texto, hablado); break;
             }
         }
@@ -195,6 +219,46 @@ public partial class NotchWindow
     }
 
     /// <summary>«Dale a Guardar»: el control por su nombre, con UI Automation. Si suena a algo con efecto, primero pregunta.</summary>
+    /// <summary>
+    /// Una orden que pidió el cerebro («cierra spotify»): pasa por las MISMAS reglas que lo que tú dices, así
+    /// que solo puede hacer lo que AURA ya sabe hacer, con sus mismas confirmaciones. Nunca vuelve al cerebro.
+    /// `dicho`: SOLO lo que se oyó o escribió en este equipo hace un momento ("" si nada): sin eso, espera el «sí».
+    /// </summary>
+    async Task HacerOrdenDelCerebro(string orden, string dicho, bool hablado)
+    {
+        var p = Intencion.PorReglas(orden);
+        if (p.Mano == Mano.Ninguna) { Centro.Registro.AnotarDicho("cerebro-manos", "→ nada", orden); NoPude(T($"Todavía no sé hacer «{orden}» en esta computadora.", $"I don't know how to do “{orden}” on this PC yet.")); return; }
+        // Win+R, Win+X o Enter por orden del cerebro: nunca (abren una puerta o envían algo). Si lo dices tú, sí.
+        if (AutorizarOrden.TeclasProhibidasAlCerebro(p))
+        {
+            Centro.Registro.AnotarDicho("cerebro-manos", "descartada (teclas prohibidas al cerebro)", orden);
+            NoPude(T($"No pulso «{orden}» por orden de la conversación. Si lo quieres, dímelo tú.", $"I won't press “{orden}” because the conversation asked. If you want it, tell me yourself."));
+            return;
+        }
+        // El cerebro no trae cosas que no dijiste (una canción de antes, otra app, cerrar algo cuando pediste un
+        // chiste): misma clase de acción y mismo objetivo que lo tuyo (o tus frases de hace un momento).
+        var contexto = historial.Where(x => x.Rol == "usuario").Select(x => x.Texto).TakeLast(2).ToList();
+        var veredicto = AutorizarOrden.AutorizarDelCerebro(orden, dicho, contexto);
+        Centro.Registro.Anotar("cerebro-manos", $"→ {p.Mano} · {veredicto}");
+        if (veredicto == Veredicto.Rechazar)
+        {
+            Centro.Registro.AnotarDicho("cerebro-manos", "descartada (no sale de lo dicho)", orden);
+            // Antes se descartaba callada y la voz ya había dicho que lo hacía.
+            NoPude(T($"No hice «{orden}»: no me quedó claro que eso pediste. ¿Me lo repites?", $"I didn't do “{orden}”: I'm not sure that's what you asked. Can you say it again?"));
+            return;
+        }
+        Centro.Registro.AnotarDicho("cerebro-manos", $"→ {p.Mano}", orden);
+        if (veredicto == Veredicto.Confirmar)
+        {
+            // Cerrar, forzar, escribir… que no dijiste tal cual: primero el «sí».
+            Proponer(new Propuesta(T($"¿Hago «{orden}»?", $"Do “{orden}”?"), T("Me lo pidió la conversación; confírmalo.", "The conversation asked for it; please confirm."),
+                DateTime.Now.AddSeconds(30), () => Hacer(p, orden, false)));
+            return;
+        }
+        try { await Hacer(p, orden, false); }
+        catch (Exception ex) { NoPude(ex.Message); }
+    }
+
     async Task PulsarControl(string nombre)
     {
         var h = Pantalla.Objetivo(fuente?.Handle ?? IntPtr.Zero);
@@ -208,7 +272,7 @@ public partial class NotchWindow
     }
 
     /// <summary>Ventanas: cambiar a una, minimizar, maximizar, restaurar o pedirle que se cierre (con «sí»).</summary>
-    void HacerVentana(string valor)
+    async Task HacerVentana(string valor)
     {
         var partes = valor.Split('|', 2);
         var accion = partes[0]; var cual = partes.Length > 1 ? partes[1] : "";
@@ -217,20 +281,33 @@ public partial class NotchWindow
         if (h == IntPtr.Zero)
         {
             // «Cambia a Word» sin Word abierto: se abre.
-            if (accion == "cambiar" && Aplicaciones.Buscar(cual) is { } app) { Aplicaciones.Abrir(app); Hecho(T("Abriendo ", "Opening ") + app.Nombre, "", "\uE8A7", T("No estaba abierta; la abro.", "It wasn't open; opening it.")); return; }
+            if (accion == "cambiar" && Aplicaciones.Buscar(cual) is { } app)
+            {
+                if (await Aplicaciones.AbrirVerificado(app)) Hecho(T("Abrí ", "Opened ") + app.Nombre, "", "\uE8A7", T("No estaba abierta; ya la abrí.", "It wasn't open; it's open now."));
+                else NoPude(T($"{app.Nombre} no estaba abierta e intenté abrirla, pero no abrió.", $"{app.Nombre} wasn't open and I couldn't open it."));
+                return;
+            }
             NoPude(cual.Length > 0 ? T($"No veo una ventana de «{cual}» abierta.", $"I don't see a “{cual}” window open.") : T("No encuentro tu ventana de trabajo.", "I can't find your working window."));
             return;
         }
         var titulo = v?.Titulo ?? T("la ventana", "the window");
         switch (accion)
         {
-            case "cambiar": Ventanas.AlFrente(h); Hecho(titulo, "", "\uE737"); break;
+            case "cambiar":
+                if (await Ventanas.AlFrenteVerificado(h)) Hecho(titulo, "", "\uE737");
+                else NoPude(T($"Windows no me dejó traer «{titulo}» al frente.", $"Windows didn't let me bring “{titulo}” to the front."));
+                break;
             case "minimizar": Ventanas.Minimizar(h); Hecho(T("Minimizada", "Minimized"), titulo, "\uE737"); break;
             case "maximizar": Ventanas.Maximizar(h); Hecho(T("Maximizada", "Maximized"), titulo, "\uE737"); break;
             case "restaurar": Ventanas.Restaurar(h); Hecho(T("Restaurada", "Restored"), titulo, "\uE737"); break;
             case "cerrar":
-                Proponer(new Propuesta(T($"¿Cierro «{titulo}»?", $"Close “{titulo}”?"), T("Si hay algo sin guardar, la app te va a preguntar.", "If something isn't saved, the app will ask you."), DateTime.Now.AddSeconds(30),
-                    () => { Ventanas.Cerrar(h); Hecho(T("Cerrando ", "Closing ") + titulo, "", "\uE711"); return System.Threading.Tasks.Task.CompletedTask; }));
+                // De una: si hay algo sin guardar, la propia app pregunta. Se dice que quedó cuando la ventana ya no está.
+                switch (await Ventanas.CerrarVerificado(h))
+                {
+                    case Ventanas.Cierre.Cerrada: Hecho(T("Cerré ", "Closed ") + titulo, "", "\uE711"); break;
+                    case Ventanas.Cierre.PreguntaGuardar: Hecho(T("Te pregunta si guardas", "It's asking to save"), titulo, "\uE711", T("Te está preguntando si guardas los cambios.", "It's asking whether to save your changes."), segundos: 5); break;
+                    default: NoPude(T($"Le pedí a «{titulo}» que se cerrara y sigue abierta.", $"I asked “{titulo}” to close and it's still open.")); break;
+                }
                 break;
         }
     }
@@ -268,8 +345,8 @@ public partial class NotchWindow
         if (f == null) { NoPude(valor == "ultimo-descargado" ? T("No hay descargas.", "There are no downloads.") : T($"No encontré un archivo «{valor}» en Descargas, Escritorio ni Documentos.", $"I couldn't find a file “{valor}” in Downloads, Desktop or Documents.")); return; }
         var archivo = f;
         void Abre() { Process.Start(new ProcessStartInfo(archivo.FullName) { UseShellExecute = true }); Hecho(T("Abriendo ", "Opening ") + archivo.Name, archivo.DirectoryName ?? "", "\uE8A5", T("Ahí está.", "Here it is.")); }
-        if (Sistema.EsEjecutable(archivo.FullName))
-            Proponer(new Propuesta(T($"¿Abro «{archivo.Name}»?", $"Open “{archivo.Name}”?"), T("Es un programa o instalador: ábrelo solo si confías en él.", "It's a program or installer: open it only if you trust it."), DateTime.Now.AddSeconds(30), () => { Abre(); return System.Threading.Tasks.Task.CompletedTask; }));
+        if (Sistema.PideConfirmar(archivo.FullName))
+            Proponer(new Propuesta(T($"¿Abro «{archivo.Name}»?", $"Open “{archivo.Name}”?"), T("No es un documento común (puede ser un programa, un acceso o un instalador): ábrelo solo si confías en él.", "It's not a common document (it may be a program, shortcut or installer): open it only if you trust it."), DateTime.Now.AddSeconds(30), () => { Abre(); return System.Threading.Tasks.Task.CompletedTask; }));
         else Abre();
     }
 
@@ -308,9 +385,18 @@ public partial class NotchWindow
             }
             finally { escribiendo.Dispose(); escribiendo = null; }
         }
-        // Corto y de una línea: se escribe ya (así se usa: «escribe hola»). Largo: se confirma primero.
-        if (texto.Length <= 280 && texto.Split('\n').Length <= 3) { await Escribir(); return; }
-        Proponer(new Propuesta(T("¿Lo escribo en ", "Type it into ") + (sel.Titulo.Length > 0 ? sel.Titulo : sel.App) + "?", texto.Length > 140 ? texto[..140] + "…" : texto, DateTime.Now.AddSeconds(30), Escribir));
+        if (sel.EsTerminal && PlanEscritura.TieneSaltos(texto))
+        {
+            NoPude(T("En una terminal no escribo varias líneas: un salto de línea ejecutaría el comando.", "I won't type several lines into a terminal: a line break would run the command."));
+            return;
+        }
+        // Una línea corta en un control verificado se escribe ya («escribe hola»); nunca aprieta Enter ni Tab.
+        // Con saltos de línea, largo o sin poder fijar el control: primero el «sí» (y se revalida al escribir).
+        if (!PlanEscritura.RequiereConfirmacion(texto, sel.FocoVerificado)) { await Escribir(); return; }
+        var muestra = texto.Replace("\r\n", "\n").Replace('\n', '⏎');
+        Proponer(new Propuesta(T("¿Lo escribo en ", "Type it into ") + (sel.Titulo.Length > 0 ? sel.Titulo : sel.App) + "?",
+            (muestra.Length > 140 ? muestra[..140] + "…" : muestra) + (PlanEscritura.TieneSaltos(texto) ? T(" · los saltos de línea no envían", " · line breaks won't send") : ""),
+            DateTime.Now.AddSeconds(30), Escribir));
     }
 
     /// <summary>Ctrl+Alt+W: esta ventana (Word o Bloc de notas) es el destino de la próxima escritura.</summary>
@@ -393,7 +479,11 @@ public partial class NotchWindow
             var fila = new Grid { Margin = new Thickness(0, 0, 0, 6) };
             fila.ColumnDefinitions.Add(new ColumnDefinition());
             fila.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            fila.Children.Add(new TextBlock { Text = r.Cuando.ToString("ddd HH:mm") + " · " + r.Tarea, TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center });
+            // La hora en Mono (las cifras, alineadas), la tarea en Sans.
+            var renglon = new TextBlock { TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center };
+            renglon.Inlines.Add(new System.Windows.Documents.Run(r.Cuando.ToString("ddd HH:mm")) { Style = (Style)FindResource("Atajo") });
+            renglon.Inlines.Add(new System.Windows.Documents.Run("  " + r.Tarea));
+            fila.Children.Add(renglon);
             var quitar = new Button { Content = "", Style = (Style)FindResource("Icono"), ToolTip = T("Quitar", "Remove") };
             var id = r.Id;
             quitar.Click += (_, _) => { ajustes.Recordatorios.RemoveAll(x => x.Id == id); try { ajustes.Guardar(); } catch { } PintarRecordatorios(); };

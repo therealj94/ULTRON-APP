@@ -10,6 +10,7 @@ data/pdfs/
 data/tareas.json
 data/telegram-hilo.json
 data/memoria-junta.json
+data/memoria-miembros/
 data/canto/
 data/cognitivo/
 para-ocr.txt
@@ -20,5 +21,14 @@ voces-prueba/
 # Datos de entrenamiento exportados de las trazas (preguntas reales): nunca al repositorio.
 entrenamiento/salida/
 data/perfiles/
+# Las marcas de lo que cada persona borró (lib/supresiones.ts): datos privados.
+data/supresiones/
+# La tarea en curso de cada persona (lib/tarea-en-curso.ts): datos privados.
+data/tarea-en-curso/
+# Preferencias de avisos, outbox y sellos de entrega de cada persona (lib/avisos.ts): datos privados.
+data/avisos/
 windows/src/Aura.Windows/CentroAssets/
 windows/centro/node_modules/
+build-server/
+# Lo durable sin S3 (lib/durable.ts: turnos, operaciones, leases): estado local, nunca al repositorio.
+data/durable/

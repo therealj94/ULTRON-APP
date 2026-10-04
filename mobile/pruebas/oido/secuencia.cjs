@@ -118,7 +118,8 @@ async function montarApp({ voz = 'conecta', llamada = false } = {}) {
       idle();
     }
   };
-  SPEECH.setSpeechCallbacks({
+  // Los oyentes de la mesa (DeskScreen los vuelve a poner al montarse, p. ej. tras cambiar de cuenta).
+  const oyentesMesa = {
     onFinal: (t) => {
       // La mesa (DeskScreen.handleCommand): «llámame» lo reconoce el intérprete del teléfono, sin red.
       if (ciclo && INTENCIONES && INTENCIONES.interpretar(t).tipo === 'llamame') {
@@ -135,7 +136,9 @@ async function montarApp({ voz = 'conecta', llamada = false } = {}) {
         void decir(`Respuesta a «${t}»`);
       }, 600);
     },
-  });
+  };
+  SPEECH.setSpeechCallbacks(oyentesMesa);
+  app.cablear = () => SPEECH.setSpeechCallbacks(oyentesMesa);
   // El ánimo de la compañera: sus globitos.
   let animo = ANIMO.ANIMO_INICIAL;
   const despachar = (ev) => {
@@ -159,6 +162,8 @@ async function montarApp({ voz = 'conecta', llamada = false } = {}) {
       setTimeout(() => {
         if (!s.vivo) return;
         mundo.webrtcTieneMic = true; // AudioSession de LiveKit + la pista del micrófono
+        // Llegó el permiso y arranca el WebRTC (ModoConversacion → onFase): corre el plazo de conectar.
+        control.permisoListo?.(gen);
         if (app.voz === 'cuelga') return;
         s.timers.push(
           setTimeout(() => {
@@ -432,7 +437,7 @@ prueba('LA LLAMADA DEL AVATAR de punta a punta: mesa habla → «llámame» → 
   await avanzar(1500);
   paso('3 contestó');
   chequear(c.estado() === 'en_llamada' && !app.timbre, '3: en llamada y el timbre calló');
-  chequear(app.oidos.some((o) => o.por === 'conversacion (primer mensaje)' && o.texto === '[[llamada]]'), '3: el primer mensaje es [[llamada]] (saluda como quien llama)');
+  chequear(!app.oidos.some((o) => o.por === 'conversacion (primer mensaje)' && o.texto === '[[llamada]]'), '3: no se manda [[llamada]]: el saludo es el first_message del agente (antes salía doble)');
   const gen = app.control.vista().gen;
   r = await decirYEsperar(app, '¿qué hay de nuevo hoy?', '4 hablar en la llamada');
   chequear(r.quien === 'conversacion', '4: la oye la llamada');
@@ -557,6 +562,80 @@ prueba('con el hilo principal lento, el «end» tardío de un abort() no provoca
   mundo.hiloMs = 2;
 });
 
+prueba('VOICE03: un final del reconocedor abortado no entra al soltar la pausa de la voz, al silenciar y reabrir, al reiniciar ni al cambiar de cuenta; y el oído no queda bloqueado', async () => {
+  const app = await montarApp();
+  // El hilo principal lento (la escena 3D, el TTS arrancando): el `end` del abort() llega tarde, y el
+  // final que el reconocedor viejo tenía en camino cae ANTES del `start` del nuevo.
+  mundo.hiloMs = 300;
+  const viejo = async (paso, texto) => {
+    const antes = app.oidos.length;
+    mundo.finalViejo(texto);
+    await avanzar(20);
+    const entro = app.oidos.slice(antes).some((o) => o.texto === texto);
+    console.log(`   · ${paso.padEnd(34)} final viejo «${texto}» → ${entro ? 'ENTRÓ COMO TURNO' : 'descartado'}`);
+    chequear(!entro, `${paso}: el final del reconocedor abortado entró como turno`);
+  };
+  const oyeDespues = async (paso, texto) => {
+    await avanzar(3_000);
+    const r = await decirYEsperar(app, texto, paso);
+    chequear(r.quien === 'telefono', `${paso}: después el oído vuelve a oír (no queda bloqueado)`);
+  };
+  // 1) La voz de la mesa: pausa true → false en seguida (una frase cortita, o una cancelada).
+  SPEECH.pauseMicForTts(true);
+  await avanzar(40);
+  SPEECH.pauseMicForTts(false);
+  await avanzar(40);
+  await viejo('1 pausa TTS true→false', 'lo que dijo antes de que hablara');
+  await oyeDespues('1 tras la pausa', 'y ahora qué hora es');
+  // 2) Silenciar y reabrir rápido (lo que ya cubría el arreglo de #138: sigue cubierto).
+  await SPEECH.muteMic();
+  await avanzar(40);
+  await SPEECH.unmuteMic();
+  await avanzar(40);
+  await viejo('2 silenciar y reabrir', 'esto era antes del silencio');
+  await oyeDespues('2 tras silenciar', 'ya puedes oír');
+  // 3) El vigilante lo reinicia (o el oído vuelve de otro dueño, o cambia el avatar: reabrirMic).
+  void SPEECH.restartMic();
+  await avanzar(100);
+  await viejo('3 reinicio', 'esto era del reconocedor de antes');
+  await oyeDespues('3 tras reiniciar', 'otra pregunta');
+  void SPEECH.reabrirMic();
+  await avanzar(100);
+  await viejo('3 reabrir (cambio de avatar)', 'esto era con el otro avatar');
+  await oyeDespues('3 tras reabrir', 'hola de nuevo');
+  // 4) Cambio de cuenta: se destruye el oído y se vuelve a abrir con los mismos oyentes de la mesa.
+  await SPEECH.destroySpeech();
+  app.cablear();
+  await SPEECH.enableAlwaysOnMic();
+  await avanzar(100);
+  await viejo('4 cambio de cuenta', 'esto era de la cuenta anterior');
+  await oyeDespues('4 con la cuenta nueva', 'buenas tardes');
+  // 5) Un teléfono que no avisa ni `start` ni el `end` del abort(): la red de seguridad lo suelta sola.
+  mundo.hiloMs = 2;
+  mundo.sinAvisos = true;
+  SPEECH.pauseMicForTts(true);
+  await avanzar(40);
+  SPEECH.pauseMicForTts(false);
+  await avanzar(40);
+  await viejo('5 sin avisos: pausa TTS', 'lo de antes en un teléfono sin avisos');
+  await avanzar(4_000);
+  const antes = app.oidos.length;
+  chequear(mundo.oirNativo('sigo aquí'), '5: el reconocedor nuevo está oyendo');
+  await avanzar(1_000);
+  chequear(app.oidos.slice(antes).some((o) => o.texto === 'sigo aquí'), '5: sin `start` ni `end`, el oído no se queda bloqueado para siempre');
+  // 6) La red de seguridad es por corte: la de un silencio anterior no suelta el corte de uno más nuevo.
+  await SPEECH.muteMic();
+  await avanzar(40);
+  await SPEECH.unmuteMic();
+  await avanzar(2_500);
+  await SPEECH.muteMic();
+  await avanzar(40);
+  await SPEECH.unmuteMic();
+  await avanzar(600); // ya pasaron 3 s desde el primer reabrir, no desde el segundo
+  await viejo('6 sin avisos: dos silencios seguidos', 'lo del segundo silencio');
+  mundo.sinAvisos = false;
+});
+
 (async () => {
   console.log(`oído (${NUEVO ? 'con el arreglo' : 'código de main'})`);
   for (const [nombre, f] of pruebas) {
@@ -565,7 +644,7 @@ prueba('con el hilo principal lento, el «end» tardío de un abort() no provoca
     appViva?.cerrar();
     appViva = null;
     await SPEECH.destroySpeech();
-    Object.assign(mundo, { webrtcTieneMic: false, fallaAlArrancar: null, hiloMs: 2 });
+    Object.assign(mundo, { webrtcTieneMic: false, fallaAlArrancar: null, hiloMs: 2, sinAvisos: false });
     if (SPEECH.currentSttEngine() !== 'native') await SPEECH.setSttEngine('native');
     await avanzar(1000);
     console.log(`\n${nombre}`);

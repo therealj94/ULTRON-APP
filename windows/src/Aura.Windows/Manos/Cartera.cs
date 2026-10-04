@@ -56,4 +56,36 @@ internal static class Cartera
         ultimo = (DateTime.UtcNow, direccion, saldos);
         return saldos;
     }
+
+    static async Task<string> Rpc(string cuerpo, CancellationToken ct)
+    {
+        using var r = await http.PostAsync(CarteraVeta.Rpc, new StringContent(cuerpo, Encoding.UTF8, "application/json"), ct);
+        if (!r.IsSuccessStatusCode) throw new InvalidOperationException($"La red de Orden Global no contestó ({(int)r.StatusCode}).");
+        return await r.Content.ReadAsStringAsync(ct);
+    }
+
+    /// <summary>El último bloque de la cadena (desde dónde empezar a buscar un envío).</summary>
+    public static async Task<long> Bloque(CancellationToken ct = default)
+    {
+        using var d = JsonDocument.Parse(await Rpc("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_blockNumber\",\"params\":[]}", ct));
+        return d.RootElement.TryGetProperty("result", out var r) ? CarteraVeta.Bloque(r.GetString()) : 0;
+    }
+
+    /// <summary>
+    /// Busca el envío de `desde` a `para` en los bloques desde `inicio` (hasta 200 por vez). Devuelve el hash si ya
+    /// pasó y el siguiente bloque por mirar. Solo LEE la cadena.
+    /// </summary>
+    public static async Task<(string? Hash, long Siguiente)> BuscarEnvio(string desde, string para, string simbolo, decimal monto, long inicio, CancellationToken ct = default)
+    {
+        var ultimo = await Bloque(ct);
+        // Sin base conocida se empieza en el último bloque: mirar hacia atrás podría tomar un envío viejo igual.
+        if (inicio <= 0 || inicio > ultimo + 1) inicio = ultimo;
+        var fin = Math.Min(ultimo, inicio + 199);
+        if (fin < inicio) return (null, inicio);
+        var lote = new List<object>();
+        for (long b = inicio; b <= fin; b++)
+            lote.Add(new { jsonrpc = "2.0", id = b, method = "eth_getBlockByNumber", @params = new object[] { "0x" + b.ToString("x"), true } });
+        var json = await Rpc(JsonSerializer.Serialize(lote), ct);
+        return (CarteraVeta.BuscarEnvio(json, desde, para, simbolo, monto), fin + 1);
+    }
 }

@@ -29,7 +29,7 @@ public partial class NotchWindow
     string estadoGenesis = "";
     static readonly HttpClient relevoHttp = new() { Timeout = TimeSpan.FromSeconds(65) };
     const string RelevoBase = "https://cerebro.ordenscan.com/mensajes";
-    static readonly Regex RutaRelevo = new("^/[a-z0-9/_-]{1,60}$");
+    static readonly Regex RutaRelevo = new(@"^/[a-z0-9/_-]{1,60}\z");
 
     /// <summary>
     /// Arranca el Centro escondido (con sesión): así PULSE2CHAT escucha llamadas y mensajes aunque nunca lo
@@ -39,6 +39,8 @@ public partial class NotchWindow
     {
         if (soloRender || centro != null || string.IsNullOrEmpty(ajustes.Token)) return;
         centro = new CentroWindow(ManejarCentro) { ShowActivated = false, ShowInTaskbar = false, Left = -32000, Top = -32000, WindowStartupLocation = WindowStartupLocation.Manual };
+        centro.Activated += (_, _) => { if (panelAbierto) AbrirPanel(false); };
+        centro.IsVisibleChanged += AlEsconderCentro;
         centro.Listo += () => Dispatcher.BeginInvoke(new Action(() =>
         {
             if (centro == null) return;
@@ -49,7 +51,7 @@ public partial class NotchWindow
         centro.Show();
     }
 
-    /// <summary>«llamada|voz|karla», «llamada|video|karla», «mensaje|karla|texto». Los mensajes esperan el «sí».</summary>
+    /// <summary>«llamada|voz|karla», «llamada|video|karla», «mensaje|karla|texto», «pago|karla|10|ORIGEN». Los mensajes esperan el «sí».</summary>
     void HacerPulse(string valor)
     {
         var p = valor.Split('|', 3);
@@ -61,6 +63,15 @@ public partial class NotchWindow
             // La página tarda un momento en cargar si el Centro no estaba abierto.
             Dispatcher.BeginInvoke(new Action(() => Mandar(new { tipo = "llamada", video = p[1] == "video", con = p[2] })), DispatcherPriority.ApplicationIdle);
             Hecho(p[1] == "video" ? T("Videollamada", "Video call") : T("Llamando", "Calling"), p[2], "\uE717");
+            return;
+        }
+        if (p[0] == "pago")
+        {
+            // «pago|beto|10|ORIGEN»: el Centro busca a la persona y abre el envío para revisarlo; se firma en Veta Wallet.
+            var q = p[2].Split('|', 2);
+            AbrirCentro("pulse");
+            Dispatcher.BeginInvoke(new Action(() => Mandar(new { tipo = "pago", con = p[1], monto = q[0], moneda = q.Length > 1 ? q[1] : "ORIGEN" })), DispatcherPriority.ApplicationIdle);
+            Hecho(T($"Enviar {q[0]} {(q.Length > 1 ? q[1] : "ORIGEN")}", $"Send {q[0]} {(q.Length > 1 ? q[1] : "ORIGEN")}"), T($"a {p[1]} · revísalo y fírmalo en Veta Wallet", $"to {p[1]} · review and sign it in Veta Wallet"), "\uE8C7");
             return;
         }
         var con = p[1];
@@ -76,6 +87,9 @@ public partial class NotchWindow
         if (centro == null)
         {
             centro = new CentroWindow(ManejarCentro);
+            // Con el Centro al frente, el panel del notch se recoge: no lo tapa.
+            centro.Activated += (_, _) => { if (panelAbierto) AbrirPanel(false); };
+            centro.IsVisibleChanged += AlEsconderCentro;
             centro.Mostrar(seccion);
             return;
         }
@@ -116,11 +130,15 @@ public partial class NotchWindow
     internal void AvisarEstadoCentro() => centro?.Emitir("estado", EstadoCentro());
 
     static string Texto(JsonElement a, string k) => a.ValueKind == JsonValueKind.Object && a.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : "";
+    /// <summary>La clave de un secreto pedido por la página; solo las de PULSE2CHAT.</summary>
+    static string ClaveSecreto(JsonElement a) => Texto(a, "clave") is var k && PuenteCentro.ClaveSecretoValida(k) ? k : throw new InvalidOperationException("Nombre de secreto inválido.");
     static bool? Bool(JsonElement a, string k) => a.ValueKind == JsonValueKind.Object && a.TryGetProperty(k, out var v) && v.ValueKind is JsonValueKind.True or JsonValueKind.False ? v.GetBoolean() : null;
 
     /// <summary>El puente: cada método del Centro. Corre en el hilo de la interfaz.</summary>
     async Task<object?> ManejarCentro(string metodo, JsonElement a)
     {
+        // Lista cerrada (PuenteCentro.Metodos): lo que no está ahí no existe, ni por prefijo.
+        if (!PuenteCentro.MetodoPermitido(metodo)) throw new InvalidOperationException("Método desconocido: " + metodo);
         switch (metodo)
         {
             case "estado": return EstadoCentro();
@@ -136,11 +154,16 @@ public partial class NotchWindow
             case "ventana.mostrar": AbrirCentro(Texto(a, "seccion") is { Length: > 0 } sec ? sec : null); return true;
             case "relevo": return await Relevo(Texto(a, "ruta"), a.TryGetProperty("cuerpo", out var c) ? c : default, a.TryGetProperty("ms", out var ms) && ms.TryGetInt32(out var m) ? m : 15000);
             case "relevo.archivo": return await RelevoArchivo(Texto(a, "id"));
-            case "secreto.leer": return Secretos.Obtener(Texto(a, "clave"));
-            case "secreto.guardar": Secretos.Guardar(Texto(a, "clave"), Texto(a, "valor")); return true;
-            case "secreto.borrar": Secretos.Borrar(Texto(a, "clave")); return true;
+            // Solo las claves de PULSE2CHAT («p2c.…»): Secretos lo vuelve a comprobar.
+            case "secreto.leer": return Secretos.Obtener(ClaveSecreto(a));
+            case "secreto.guardar": Secretos.Guardar(ClaveSecreto(a), Texto(a, "valor")); return true;
+            case "secreto.borrar": Secretos.Borrar(ClaveSecreto(a)); return true;
             case "notch.timbre": Timbre(Texto(a, "de"), Texto(a, "nombre"), Bool(a, "video") == true); return true;
             case "notch.colgada" or "notch.timbreFin": if (propuesta?.Titulo.StartsWith("📞") == true) { propuesta = null; relojPropuesta?.Stop(); Recalcular(); } return true;
+            case "notch.monitores": return MonitoresParaCentro();
+            case "notch.restablecer": RestablecerPosicion(); AvisarEstadoCentro(); return AjustesParaCentro();
+            // El estado real de la llamada de PULSE2CHAT (sonando, conectando o hablando): la actualización sola espera.
+            case "notch.llamada": llamadaPulse = Bool(a, "activa") == true; return true;
             case "notch.aviso": Avisar(new Aviso(Recortar(Texto(a, "titulo"), 60), Recortar(Texto(a, "cuerpo"), 120), "", "happy", T("Ver", "View"), () => AbrirCentro("pulse"), 6)); return true;
             case "chat.enviar":
             {
@@ -154,13 +177,72 @@ public partial class NotchWindow
                 Microfono(this, new RoutedEventArgs()); return true;
             case "inicio.dia": return await ResumenDelDia();
             case "diagnostico.leer": return Registro.Ultimo(400);
+            case "actualizar.estado": return EstadoActualizacion();
+            case "actualizar.buscar": await BuscarActualizacion(true); return EstadoActualizacion();
+            case "actualizar.instalar": { var motivo = await InstalarAhora(); return new { ok = motivo == null, motivo }; }
+            case "voz.decir": return await VozDelRecorrido(a);
+            case "recorrido.abierto": RecorridoAbierto(Bool(a, "si") == true); return true;
+            // Se contesta primero y se sale después: la página no queda esperando una respuesta que nunca llega.
+            case "app.cerrar": _ = Dispatcher.BeginInvoke(new Action(() => SalirDelTodo()), System.Windows.Threading.DispatcherPriority.Background); return true;
             case "diagnostico.carpeta": Process.Start(new ProcessStartInfo("explorer.exe", "\"" + Registro.Carpeta + "\"") { UseShellExecute = true }); return true;
+            case "spotify.estado" or "spotify.buscar" or "spotify.poner" or "spotify.control" or "spotify.dispositivos" or "spotify.transferir":
+                return await ManejarSpotify(metodo, a);
+            case "cartera.direccion" or "cartera.saldos" or "cartera.portapapeles" or "cartera.pagar" or "cartera.buscarEnvio" or "cartera.abrirWallet":
+                return await ManejarCartera(metodo, a);
+            case "conectar" or "desconectar": return await ManejarConexion(metodo, Texto(a, "servicio"));
+            // El WhatsApp personal (NotchWindow.WhatsApp.cs): /api/whatsapp/* con la sesión, validado antes de salir.
+            case "whatsapp.estado" or "whatsapp.vincular" or "whatsapp.desvincular" or "whatsapp.chats" or "whatsapp.mensajes"
+                or "whatsapp.enviar" or "whatsapp.leido" or "whatsapp.media":
+                return await ManejarWhatsApp(metodo, a);
             default:
-                if (metodo.StartsWith("spotify.", StringComparison.Ordinal)) return await ManejarSpotify(metodo, a);
-                if (metodo.StartsWith("cartera.", StringComparison.Ordinal)) return await ManejarCartera(metodo, a);
-                if (metodo is "conectar" or "desconectar") return await ManejarConexion(metodo, Texto(a, "servicio"));
                 throw new InvalidOperationException("Método desconocido: " + metodo);
         }
+    }
+
+    /// <summary>
+    /// La voz de Claudio o ANT-ONIO en el recorrido del Centro: el audio de /api/tts con su avatar (la página
+    /// no sale a la red). Frases cortas del guion; cualquier otra cosa no se pide.
+    /// </summary>
+    async Task<object?> VozDelRecorrido(JsonElement a)
+    {
+        if (api == null) return null;
+        var texto = Texto(a, "texto").Trim();
+        if (texto.Length == 0 || texto.Length > 400) return null;
+        var avatar = Texto(a, "avatar");
+        if (avatar is not ("claudio" or "antonio" or "aura" or "ojos")) avatar = ajustes.Avatar;
+        var emocion = Texto(a, "emocion");
+        if (!Regex.IsMatch(emocion, "^[a-z]{1,16}$")) emocion = "neutral";
+        var audio = await api.Voz(texto, emocion, avatar, ajustes.Idioma);
+        return new { base64 = Convert.ToBase64String(audio.Bytes), mime = audio.Tipo };
+    }
+
+    bool microPorRecorrido;
+
+    /// <summary>
+    /// Con el recorrido abierto AURA no escucha: el recorrido suena por el altavoz y dice «Oye AURA». Se calla,
+    /// se silencia el micrófono (solo si no lo estaba) y al cerrar vuelve como estaba.
+    /// </summary>
+    internal void RecorridoAbierto(bool si)
+    {
+        if (si)
+        {
+            Callar(true);
+            if (!microSilenciado) { microPorRecorrido = true; microSilenciado = true; continuo = false; CerrarOido(); AplicarEscucha(); }
+            Registro.Anotar("recorrido", "abierto");
+            return;
+        }
+        if (!microPorRecorrido) return;
+        microPorRecorrido = false;
+        if (microSilenciado) { microSilenciado = false; AplicarEscucha(); }
+        Registro.Anotar("recorrido", "cerrado");
+    }
+
+    /// <summary>La ventana del Centro se escondió (la cerraron o se recogió): el recorrido se cierra y AURA vuelve a oír.</summary>
+    void AlEsconderCentro(object? s, DependencyPropertyChangedEventArgs e)
+    {
+        if (centro == null || centro.IsVisible) return;
+        RecorridoAbierto(false);
+        centro.Emitir("ventana.escondida", null);
     }
 
     /// <summary>Para el Inicio del Centro: lo de hoy en la agenda, correos sin leer y los últimos avisos de las apps.</summary>
@@ -168,6 +250,7 @@ public partial class NotchWindow
     {
         object[] eventos = Array.Empty<object>();
         int? correos = null;
+        bool correosAlMenos = false;
         string[] ultimos = Array.Empty<string>();
         if (agenda != null)
         {
@@ -183,7 +266,7 @@ public partial class NotchWindow
         }
         if (correo != null)
         {
-            try { using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8)); correos = (await correo.NoLeidos(30, cts.Token)).Count; }
+            try { using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8)); correos = (await correo.NoLeidos(30, cts.Token)).Count; correosAlMenos = ConteoCorreo.Tope(correos.Value, 30); }
             catch (Exception ex) when (ex is not OutOfMemoryException) { Registro.Anotar("inicio", "correo: " + ex.Message); }
         }
         if (avisosApps != null)
@@ -191,7 +274,7 @@ public partial class NotchWindow
             try { ultimos = (await Task.Run(() => avisosApps.Recientes(6))).Where(x => !AvisosApps.EsPropia(x.Aumid) && !Silenciada(x.App)).Take(3).Select(x => $"{x.App}: {x.Titulo}").ToArray(); }
             catch (Exception ex) when (ex is not OutOfMemoryException) { Registro.Anotar("inicio", "avisos: " + ex.Message); }
         }
-        return new { eventos, correos, avisos = ultimos };
+        return new { eventos, correos, correosAlMenos, avisos = ultimos };
     }
 
     static string Recortar(string s, int n) => s.Length > n ? s[..n] + "…" : s;
@@ -252,11 +335,15 @@ public partial class NotchWindow
     void FijarSesion(string token, Miembro m, bool genesis)
     {
         if (!string.Equals(ajustes.Correo, m.Correo, StringComparison.OrdinalIgnoreCase)) { Secretos.BorrarTodo(); ajustes.CarteraDireccion = ""; }
+        // Correo, agenda y conexiones son de una identidad: si no son de quien entra (o no tienen dueño), se detienen y borran.
+        var quien = DuenoCuentas.Identidad(token, m.Correo);
+        if (DuenoCuentas.HayQueLimpiar(ajustes.DuenoCuentas, quien)) LimpiarCuentas(quien);
         ajustes.Token = token; ajustes.Correo = m.Correo; ajustes.Nombre = m.Nombre; ajustes.Rol = m.Rol; ajustes.Nivel = m.Nivel; ajustes.Gid = m.Gid;
         ajustes.PorGenesis = genesis;
         if (genesis) ajustes.Clave = "";
         GuardarAjustes();
         CrearApi();
+        IniciarCuentas();
         noRenovarHasta = DateTime.MinValue;
         AvisoCuenta.Visibility = Visibility.Collapsed;
         AvisarEstadoCentro();
@@ -268,6 +355,8 @@ public partial class NotchWindow
         if (api != null) await api.Salir();
         ajustes.Token = ""; ajustes.Clave = ""; ajustes.Nombre = ""; ajustes.Rol = ""; ajustes.Nivel = ""; ajustes.Gid = ""; ajustes.PorGenesis = false;
         Secretos.BorrarTodo();
+        // Se detienen buzón, agenda y conexiones, y se borran sus tokens y claves: eran de quien salió.
+        LimpiarCuentas("");
         GuardarAjustes();
         CrearApi();
         AvisoCuenta.Visibility = Visibility.Visible;
@@ -278,14 +367,16 @@ public partial class NotchWindow
 
     object AjustesParaCentro() => new
     {
-        avatar = ajustes.Avatar, idioma = ajustes.Idioma, escucha = ajustes.Escucha,
+        avatar = ajustes.Avatar, idioma = ajustes.Idioma, escucha = ajustes.Escucha, vozMotor = ajustes.VozMotor,
         manosLibres = ajustes.ManosLibres, interrumpir = ajustes.Interrumpir, responderConVoz = ajustes.ResponderConVoz,
         ocultarEnPantallaCompleta = ajustes.OcultarEnPantallaCompleta, vozDeWindows = ajustes.VozDeWindows, oidoDeWindows = ajustes.OidoDeWindows,
         avisosDeApps = ajustes.AvisosDeApps, avisosPrivados = ajustes.AvisosPrivados, avisosEnVoz = ajustes.AvisosEnVoz, appsSilenciadas = ajustes.AppsSilenciadas,
-        avisarCorreos = ajustes.AvisarCorreos, mostrarMusica = ajustes.MostrarMusica,
+        avisarCorreos = ajustes.AvisarCorreos, mostrarMusica = ajustes.MostrarMusica, actualizarSolo = ajustes.ActualizarSolo, transparencia = ajustes.Transparencia,
         correoDireccion = ajustes.CorreoDireccion, agendaUrl = ajustes.AgendaUrl, tieneClaveCorreo = ajustes.CorreoClave.Length > 0,
         carteraDireccion = ajustes.CarteraDireccion, servidor = ajustes.Servidor,
         clientes = new { spotify = ajustes.SpotifyClientId, google = ajustes.GoogleClientId, microsoft = ajustes.MicrosoftClientId },
+        notch = new { borde = ajustes.NotchBorde, fraccion = ajustes.NotchFraccion, monitor = ajustes.NotchMonitor, menosMovimiento = ajustes.MenosMovimiento },
+        registroDetallado = ajustes.RegistroDetallado, efectosDeSonido = ajustes.EfectosDeSonido,
     };
 
     void GuardarDesdeCentro(JsonElement a)
@@ -300,6 +391,11 @@ public partial class NotchWindow
                 case "idioma" when p.Value.GetString() is "es" or "en": ajustes.Idioma = p.Value.GetString()!; escucha = true; break;
                 case "escucha" when p.Value.GetString() is "pedir" or "palabra" or "siempre": ajustes.Escucha = p.Value.GetString()!; escucha = true; break;
                 case "manosLibres": ajustes.ManosLibres = p.Value.GetBoolean(); break;
+                case "vozMotor" when p.Value.GetString() is "agente" or "local":
+                    ajustes.VozMotor = p.Value.GetString()!; agenteFalloHasta = DateTime.MinValue;
+                    if (ajustes.VozMotor == "local") CerrarAgente();
+                    break;
+                case "actualizarSolo": ajustes.ActualizarSolo = p.Value.GetBoolean(); break;
                 case "interrumpir": ajustes.Interrumpir = p.Value.GetBoolean(); break;
                 case "responderConVoz": ajustes.ResponderConVoz = p.Value.GetBoolean(); break;
                 case "ocultarEnPantallaCompleta": ajustes.OcultarEnPantallaCompleta = p.Value.GetBoolean(); break;
@@ -311,15 +407,39 @@ public partial class NotchWindow
                 case "appsSilenciadas": ajustes.AppsSilenciadas = p.Value.EnumerateArray().Select(x => x.GetString() ?? "").Where(x => x.Length > 0).Distinct().ToList(); break;
                 case "avisarCorreos": ajustes.AvisarCorreos = p.Value.GetBoolean(); break;
                 case "mostrarMusica": ajustes.MostrarMusica = p.Value.GetBoolean(); AlCambiarMusica(cancion, false); break;
+                case "transparencia" when p.Value.ValueKind == JsonValueKind.Number && p.Value.TryGetDouble(out var vidrio) && double.IsFinite(vidrio):
+                    ajustes.Transparencia = Math.Clamp(vidrio, VidrioMin, VidrioMax); AplicarVidrio(); break;
+                case "notch" when p.Value.ValueKind == JsonValueKind.Object: GuardarNotchDesdeCentro(p.Value); break;
                 case "correoDireccion": ajustes.CorreoDireccion = (p.Value.GetString() ?? "").Trim(); cuentas = true; break;
                 case "correoClave": ajustes.CorreoClave = p.Value.GetString() ?? ""; cuentas = true; break;
                 case "agendaUrl": ajustes.AgendaUrl = (p.Value.GetString() ?? "").Trim(); cuentas = true; break;
                 case "carteraDireccion": ajustes.CarteraDireccion = Manos.Cartera.ValidarDireccion(p.Value.GetString() ?? ""); break;
-                case "servidor": ajustes.Servidor = AuraApi.Validar(p.Value.GetString() ?? "").AbsoluteUri.TrimEnd('/'); CrearApi(); break;
+                case "servidor":
+                {
+                    // Otro servidor recibiría tu sesión, tu clave guardada y el canal de las manos: la página sola no
+                    // lo decide (revisión de seguridad 2-oct). Pregunta la ventana nativa y, si cambia, se cierra la sesión.
+                    var nuevo = AuraApi.Validar(p.Value.GetString() ?? "").AbsoluteUri.TrimEnd('/');
+                    if (string.Equals(nuevo, ajustes.Servidor.TrimEnd('/'), StringComparison.OrdinalIgnoreCase)) break;
+                    var host = new Uri(nuevo).Host;
+                    if (MessageBox.Show(this, T($"¿Conectar AURA al servidor «{host}»?\n\nPor seguridad se cierra tu sesión en esta PC y tendrás que entrar de nuevo. Hazlo solo si Orden Global te lo indicó.",
+                                               $"Connect AURA to the server “{host}”?\n\nFor security you'll be signed out on this PC."), "AURA", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) break;
+                    Registro.Anotar("ajustes", "servidor cambiado a " + host + ": sesión cerrada");
+                    ajustes.Token = ""; ajustes.Clave = "";
+                    ajustes.Servidor = nuevo; CrearApi();
+                    break;
+                }
                 case "clientes" when p.Value.ValueKind == JsonValueKind.Object:
                     ajustes.SpotifyClientId = Texto(p.Value, "spotify").Trim(); ajustes.GoogleClientId = Texto(p.Value, "google").Trim();
                     ajustes.MicrosoftClientId = Texto(p.Value, "microsoft").Trim(); if (Texto(p.Value, "googleSecreto") is { Length: > 0 } gs) ajustes.GoogleClientSecret = gs.Trim();
                     cuentas = true; break;
+                // Los efectos de sonido del orbe de AU-RA (y del orbe de la guía del Centro).
+                case "efectosDeSonido" when p.Value.ValueKind is JsonValueKind.True or JsonValueKind.False:
+                    ajustes.EfectosDeSonido = p.Value.GetBoolean(); SonidosOrbe(); break;
+                // Privacidad del registro (H13): el texto de lo dicho entra en aura.log solo si lo pides.
+                case "registroDetallado" when p.Value.ValueKind is JsonValueKind.True or JsonValueKind.False:
+                    ajustes.RegistroDetallado = Registro.Detallado = p.Value.GetBoolean();
+                    Registro.Anotar("ajustes", "registro detallado " + (ajustes.RegistroDetallado ? "encendido" : "apagado"));
+                    break;
             }
         }
         GuardarAjustes();
@@ -327,6 +447,23 @@ public partial class NotchWindow
         if (avisos) IniciarAvisosApps();
         if (escucha) AplicarEscucha();
         AvisarEstadoCentro();
+    }
+
+    /// <summary>«Posición del notch» del Centro: { borde: arriba|abajo, fraccion: 0..1, monitor: nombre o "", menosMovimiento }.</summary>
+    void GuardarNotchDesdeCentro(JsonElement n)
+    {
+        var borde = n.TryGetProperty("borde", out var b) && b.ValueKind == JsonValueKind.String ? PosicionNotch.LeerBorde(b.GetString()) : lugar.Borde;
+        var fraccion = n.TryGetProperty("fraccion", out var f) && f.ValueKind == JsonValueKind.Number && f.TryGetDouble(out var fv) ? PosicionNotch.LeerFraccion(fv) : lugar.Fraccion;
+        string? monitor = null;
+        if (n.TryGetProperty("monitor", out var m) && m.ValueKind == JsonValueKind.String)
+        {
+            // Solo un monitor que existe (o "" = el principal).
+            var pedido = m.GetString() ?? "";
+            monitor = pedido.Length == 0 || Monitores().Any(x => string.Equals(x.Nombre, pedido, StringComparison.OrdinalIgnoreCase)) ? pedido : null;
+            if (monitor != null && Monitores().FirstOrDefault(x => x.Principal)?.Nombre is { } principal && string.Equals(principal, monitor, StringComparison.OrdinalIgnoreCase)) monitor = "";
+        }
+        if (Bool(n, "menosMovimiento") is { } menos) { ajustes.MenosMovimiento = menos; AvatarView.MenosMovimientoPedido = menos; }
+        MoverNotch(new LugarNotch(borde, fraccion), monitor);
     }
 
     // ───────────── PULSE2CHAT: el relevo desde aquí (sin CORS) ─────────────
@@ -353,7 +490,7 @@ public partial class NotchWindow
 
     async Task<object> RelevoArchivo(string id)
     {
-        if (!Regex.IsMatch(id, "^[A-Za-z0-9_-]{4,80}$")) throw new InvalidOperationException("Archivo inválido.");
+        if (!Regex.IsMatch(id, @"^[A-Za-z0-9_-]{4,80}\z")) throw new InvalidOperationException("Archivo inválido.");
         using var r = await relevoHttp.GetAsync(RelevoBase + "/archivo/" + id);
         if (!r.IsSuccessStatusCode) throw new InvalidOperationException("El archivo no está (" + (int)r.StatusCode + ").");
         var b = await r.Content.ReadAsByteArrayAsync();

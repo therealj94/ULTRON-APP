@@ -137,7 +137,9 @@ describe('lo que se lee nunca enseña las etiquetas', () => {
   });
 
   it('para decir, el teléfono deja las expresiones y quita lo demás', () => {
-    assert.equal(movil.soloExpresiones('[softly] Ay [Risa] no [suspiro soñador].'), ' Ay [risa] no [suspiro soñador].');
+    // Las de tono de la voz v4 también pasan (el servidor decide cuáles suenan); [1] y [Anexo A] no.
+    assert.equal(movil.soloExpresiones('[softly] Ay [Risa] no [suspiro soñador].'), '[softly] Ay [risa] no [suspiro soñador].');
+    assert.equal(movil.soloExpresiones('Mira [1] el [Anexo A] [con picardía] ya.'), 'Mira  el  [con picardía] ya.');
   });
 });
 

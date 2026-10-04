@@ -74,7 +74,17 @@ type Resumen = {
   tokensOut: number;
   utiles: number;
   noUtiles: number;
+  /** p50/p95 de cada etapa del turno (ms) y fichas leídas (lib/cognitivo/traza.ts, paso «tiempos»). */
+  etapas?: Record<string, { n: number; p50: number; p95: number }>;
 };
+
+/** Las etapas del turno que se muestran, en el orden en que pasan. */
+const ETAPAS: [string, string][] = [
+  ['preparado', 'Listo para pensar'],
+  ['nodo', 'Primera palabra del modelo'],
+  ['primer-texto', 'Primer texto a la voz'],
+];
+const segundos = (ms: number) => `${(ms / 1000).toFixed(1)} s`;
 
 async function pedir<T>(url: string, init: RequestInit = {}): Promise<{ ok: boolean; status: number; json: T | null }> {
   try {
@@ -230,6 +240,32 @@ export const Control: React.FC = () => {
                     <div className="text-[20px] font-semibold text-(--aura-tinta)">{v}</div>
                   </div>
                 ))}
+              </div>
+            </section>
+          )}
+
+          {resumen?.etapas && Object.keys(resumen.etapas).length > 0 && (
+            <section>
+              <div className={titulo}>
+                <span>Velocidad de la voz (típico · lento)</span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {ETAPAS.filter(([k]) => resumen.etapas![k]).map(([k, nombre]) => (
+                  <div key={k} className={tarjeta}>
+                    <div className="text-[12px] text-(--aura-tinta-3)">{nombre}</div>
+                    <div className="text-[20px] font-semibold text-(--aura-tinta) tabular-nums">
+                      {segundos(resumen.etapas![k].p50)} · {segundos(resumen.etapas![k].p95)}
+                    </div>
+                  </div>
+                ))}
+                {resumen.etapas.fichas && (
+                  <div className={tarjeta}>
+                    <div className="text-[12px] text-(--aura-tinta-3)">Leído de caché</div>
+                    <div className="text-[20px] font-semibold text-(--aura-tinta) tabular-nums">
+                      {resumen.etapas.cache ? `${Math.round((resumen.etapas.cache.p50 / Math.max(1, resumen.etapas.fichas.p50)) * 100)} %` : '—'}
+                    </div>
+                  </div>
+                )}
               </div>
             </section>
           )}

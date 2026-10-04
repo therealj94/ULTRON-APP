@@ -49,7 +49,7 @@ con el registro de moderación después de las primeras semanas.
 
 ## Antes de empezar
 
-- El servicio Laya tiene que contestar `POST /laya/v1/mensaje`. Hoy (26-sep) el A10G llega a `https://35-175-175-203.sslip.io/laya/salud` (200, TLS verificado) pero `/v1/mensaje` todavía da **404**.
+- El servicio Laya tiene que contestar `POST /laya/v1/mensaje`. Hoy (26-sep) el A10G llega a `https://<ip-t4-con-guiones>.sslip.io/laya/salud` (200, TLS verificado) pero `/v1/mensaje` todavía da **404**.
 - Hace falta la clave (`LAYA_CLAVE`) que configure quien despliega Laya.
 - Hacerlo a una hora tranquila: el reinicio templa el modelo (unos segundos).
 
@@ -68,7 +68,7 @@ install -o root -g root -m 644 integracion.diff test_politica.py /root/laya-p2c/
 # 2 · El EnvironmentFile, root y 600 (lleva la clave). Empezar en modo sombra.
 install -o root -g root -m 600 /dev/null /etc/aura-laya.env
 cat > /etc/aura-laya.env <<'EOF'
-LAYA_URL=https://35-175-175-203.sslip.io/laya
+LAYA_URL=https://<ip-t4-con-guiones>.sslip.io/laya
 LAYA_CLAVE=<la clave de Laya>
 LAYA_TIMEOUT_MS=800
 # sombra: clasifica y registra, pero AU-RA no cambia nada. Pasar a «activo» tras revisar.

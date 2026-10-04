@@ -44,6 +44,7 @@ export const IMAGENES_ICONOS: Record<NombreIcono, number> = {
   oido: require('../../assets/iconos/oido.png'),
   tocar: require('../../assets/iconos/tocar.png'),
   ojo: require('../../assets/iconos/ojo.png'),
+  ojoTachado: require('../../assets/iconos/ojoTachado.png'),
   basura: require('../../assets/iconos/basura.png'),
   paleta: require('../../assets/iconos/paleta.png'),
   idioma: require('../../assets/iconos/idioma.png'),

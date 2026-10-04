@@ -14,11 +14,13 @@ import { pathToFileURL } from 'node:url';
 import ts from 'typescript';
 
 const root = path.resolve(new URL('..', import.meta.url).pathname);
-const src = fs.readFileSync(path.join(root, 'src', 'lib', 'intenciones.ts'), 'utf8');
-const js = ts.transpileModule(src, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 } }).outputText;
+const transpilar = (nombre) =>
+  ts.transpileModule(fs.readFileSync(path.join(root, 'src', 'lib', `${nombre}.ts`), 'utf8'), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 } }).outputText;
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'intenciones-'));
 const file = path.join(tmp, 'intenciones.mjs');
-fs.writeFileSync(file, js);
+// Callar y los controles los decide lib/controlesVoz.ts (AUR10): va al lado, con su extensión.
+fs.writeFileSync(path.join(tmp, 'controlesVoz.mjs'), transpilar('controlesVoz'));
+fs.writeFileSync(file, transpilar('intenciones').replace(/from '\.\/controlesVoz'/g, "from './controlesVoz.mjs'"));
 const { interpretar } = await import(pathToFileURL(file).href);
 
 let fails = 0;
@@ -109,8 +111,15 @@ check('cuéntame un chiste', 'chiste');
 check('hazme reír', 'chiste');
 check('activa la cámara', 'vision_on');
 check('visión activa', 'vision_on');
-check('qué ves', 'que_ves');
+check('qué ves', (o) => o.tipo === 'que_ves' && !o.foco);
 check('¿qué hay en la mesa?', 'que_ves');
+
+console.log('\n— Lo que se le muestra a la cámara: leer, precio, qué es (lib/vistaCamara.ts) —');
+for (const f of ['léeme esto', 'Aura, lee esto por favor', '¿qué dice este cartel?', 'qué dice aquí', 'léeme la etiqueta', 'me puedes leer esta hoja', 'read this for me']) check(f, (o) => o.tipo === 'que_ves' && o.foco === 'leer');
+for (const f of ['¿cuánto dice el precio?', 'cuánto marca la etiqueta', 'dime el precio de esto', '¿qué precio tiene esto?', "what's the price"]) check(f, (o) => o.tipo === 'que_ves' && o.foco === 'precio');
+for (const f of ['¿qué es esto?', 'qué tengo en la mano', 'qué es lo que te muestro', 'sabes qué es esto', 'what is this']) check(f, (o) => o.tipo === 'que_ves' && o.foco === 'que_es');
+// Lo parecido que NO es la cámara: al cerebro.
+for (const f of ['léeme el mensaje de Ana', 'lee mis mensajes', 'cuánto cuesta el oro', '¿qué es la minería artesanal?', 'qué dice el contrato de la mina sobre regalías', 'cuánto dice el informe que produjimos']) check(f, (o) => o.tipo !== 'que_ves');
 check('qué hora es', 'hora');
 check('hora', 'hora');
 check('qué día es hoy', 'fecha');

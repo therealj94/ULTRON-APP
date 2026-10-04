@@ -1,0 +1,20 @@
+# La puerta de la computadora de los agentes. TLS de Let's Encrypt con el nombre sslip.io de la IP elástica.
+#   /api/*  → el servicio de tareas (pide su propia clave: Authorization: Bearer)
+#
+# La vista en vivo (noVNC, con la que se podría tomar el control del escritorio) NO se publica: queda en
+# 127.0.0.1:6080. Se mira lo que hace el agente con las capturas de cada paso (/api/tareas/{id}?miniaturas=1
+# y /api/pantalla), que piden la misma clave.
+{$DOMINIO} {
+	encode zstd gzip
+
+	handle_path /api/* {
+		reverse_proxy 127.0.0.1:8100 {
+			# Las tareas en vivo (SSE) no se cortan a medio camino.
+			flush_interval -1
+		}
+	}
+
+	handle {
+		respond "no existe" 404
+	}
+}

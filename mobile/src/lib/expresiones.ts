@@ -78,12 +78,16 @@ export function quitarExpresiones(texto: string): string {
 }
 
 /**
- * Para DECIR: deja las expresiones conocidas, escritas como las entiende el servidor, y quita los
- * demás corchetes (una etiqueta de audio vieja se leería en voz alta).
+ * Para DECIR: deja las expresiones grabadas (escritas como las entiende el servidor) y las etiquetas de
+ * tono de la voz v4 ([warmly], [con picardía], [hums]…), y quita los demás corchetes ([1], [Anexo A]).
+ * El servidor decide qué suena: con v4 pasa solo las del catálogo (server/eleven.ts, etiquetaV4) y con
+ * la voz de respaldo las quita todas; ninguna se lee en voz alta.
  */
 export function soloExpresiones(texto: string): string {
   return String(texto || '').replace(/\[([^\]]+)\]/g, (_todo, dentro: string) => {
     const e = expresionDe(dentro);
-    return e ? `[${e}]` : '';
+    if (e) return `[${e}]`;
+    const t = dentro.trim();
+    return PARECE_ETIQUETA.test(t) ? `[${t}]` : '';
   });
 }

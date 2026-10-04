@@ -11,6 +11,8 @@
  * con datos de muestra: así la página se diseña y se prueba sin el .exe. Ver PUENTE.md.
  */
 
+import { muestraWhatsApp } from './whatsapp/muestra';
+
 type Respuesta = { id: number; ok: boolean; valor?: unknown; error?: string };
 type Evento = { evento: string; datos: unknown };
 
@@ -77,6 +79,7 @@ async function muestra(metodo: string, args: any): Promise<unknown> {
       estadoMuestra.sesion = { nombre: 'José', correo: 'jose@ordenglobal.org', rol: 'Junta Directiva · Orden Global', nivel: 'junta' };
       return { miembro: estadoMuestra.sesion };
     case 'salir': estadoMuestra.sesion = null; return true;
+    case 'app.cerrar': return true;
     case 'ajustes.leer': return { avatar: 'aura', idioma: 'es', escucha: 'palabra', responderConVoz: true, interrumpir: true, avisosDeApps: true };
     case 'ajustes.guardar': Object.assign(estadoMuestra, args ?? {}); return true;
     case 'primeraVez.terminar': estadoMuestra.primeraVez = false; return true;
@@ -84,6 +87,9 @@ async function muestra(metodo: string, args: any): Promise<unknown> {
       return { direccion: '0x12ab…9f3c', total: 1843.2, moneda: 'USD', saldos: [
         { simbolo: 'ORIGEN', cantidad: 1520.4, usd: 1321.6 }, { simbolo: 'AUKA', cantidad: 0.12, usd: 492.1 }, { simbolo: 'AGKA', cantidad: 1, usd: 29.5 }] };
     case 'spotify.estado': return { conectado: false, sonando: null };
-    default: return null;
+    default:
+      // El WhatsApp personal: datos inventados para ver el panel sin el .exe (whatsapp/muestra.ts).
+      if (metodo.startsWith('whatsapp.')) return muestraWhatsApp(metodo, args);
+      return null;
   }
 }

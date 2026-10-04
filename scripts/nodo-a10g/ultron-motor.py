@@ -69,7 +69,7 @@ CUPO = threading.BoundedSemaphore(int(os.environ.get('ULTRON_MOTOR_CUPO', '2')))
 
 # Solo lo que ULTRON necesita. Todo lo demás es 404, no 403: no se cuenta qué
 # hay detrás.
-PERMITIDO = {('POST', '/api/chat'), ('POST', '/api/embed'), ('GET', '/api/tags'), ('GET', '/salud')}
+PERMITIDO = {('POST', '/api/chat'), ('POST', '/api/embed'), ('POST', '/api/precalentar'), ('GET', '/api/tags'), ('GET', '/salud')}
 
 contador = {'pedidos': 0, 'rechazados': 0, 'desde': time.time()}
 
@@ -152,6 +152,24 @@ class Motor(BaseHTTPRequestHandler):
         # LA REGLA QUE NO SE NEGOCIA: el modelo y el contexto son los de esta
         # casa, no los que pida quien llama. Un pedido con otro modelo u otra
         # ventana obliga a ollama a recargar 17 GB y deja a AU-RA esperando.
+        if ruta == '/api/precalentar':
+            # Solo el system de AU-RA, para dejarlo leído (ollama-proxy-ndjson.py): sin modelo ni opciones.
+            sistema = pedido.get('system')
+            if not isinstance(sistema, str) or not sistema:
+                return self._json(400, {'error': 'falta system', 'codigo': 'SIN_SYSTEM'})
+            limpio = {'system': sistema}
+            # 1-oct: el historial que va despues del system (queda leido entero) y el espacio de la
+            # persona en llama.cpp. Solo mensajes de texto con rol de usuario o asistente.
+            msgs = pedido.get('mensajes')
+            if isinstance(msgs, list) and len(msgs) <= 200:
+                ok = [m for m in msgs if isinstance(m, dict) and m.get('role') in ('user', 'assistant') and isinstance(m.get('content'), str)]
+                if ok:
+                    limpio['mensajes'] = [{'role': m['role'], 'content': m['content']} for m in ok]
+            slot = pedido.get('id_slot')
+            if isinstance(slot, int) and not isinstance(slot, bool) and 0 <= slot < 16:
+                limpio['id_slot'] = slot
+            self._reenviar('POST', ruta, json.dumps(limpio).encode())
+            return
         if ruta == '/api/embed':
             # Los vectores van con SU modelo, que es otro y chico. Del pedido
             # solo se respeta la entrada: ni modelo ni opciones se aceptan de

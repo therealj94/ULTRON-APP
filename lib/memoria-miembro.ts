@@ -18,7 +18,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { capasHilo } from './conversacion';
+import { capasHilo, type HiloMemoria } from './conversacion';
 import { s3GetJson, s3Listo, s3PutJson } from './s3';
 
 export type TurnoMiembro = { rol: 'user' | 'ultron'; texto: string; t: number; canal: 'mesa' | 'telegram' | 'sistema' };
@@ -100,6 +100,12 @@ function enCache(c: string, cajon: CajonMiembro) {
 }
 
 /**
+ * Cajones que se devolvieron vacíos porque S3 no se pudo leer: no se guardan nunca (si se guardaran, el
+ * turno nuevo pisaría en S3 toda la memoria buena de esa persona).
+ */
+const sinLeer = new WeakSet<CajonMiembro>();
+
+/**
  * El cajón de un correo: caché, disco, S3. Si S3 no contesta, se sigue con lo que haya (vacío) sin
  * guardarlo en la caché, para que el próximo turno vuelva a preguntar. Nunca lanza.
  */
@@ -118,7 +124,9 @@ export async function cargarMiembro(correo: string): Promise<CajonMiembro> {
       cajon = sanear(r.json);
       escribirEnDisco(c, cajon);
     } else if (!r.ok) {
-      return vacio();
+      const v = vacio();
+      sinLeer.add(v);
+      return v;
     }
   }
   const final = cajon || vacio();
@@ -126,14 +134,15 @@ export async function cargarMiembro(correo: string): Promise<CajonMiembro> {
   return final;
 }
 
-/** Guarda en orden, un correo a la vez: disco y S3. */
-function guardar(c: string, cajon: CajonMiembro): Promise<void> {
+/** Guarda en orden, un correo a la vez: disco y S3. Resuelve false si S3 está configurado y no guardó. */
+function guardar(c: string, cajon: CajonMiembro): Promise<boolean> {
   const previa = colas.get(c) || Promise.resolve();
   const paso = previa.then(async () => {
     escribirEnDisco(c, cajon);
-    if (!s3Listo()) return;
+    if (!s3Listo()) return true;
     const r = await s3PutJson(claveS3(c), cajon).catch((e) => ({ ok: false, detalle: String(e?.message || e) }));
     if (!r.ok) console.warn('[memoria miembro] S3 no guardó', String((r as any).detalle || '').slice(0, 120));
+    return r.ok;
   });
   const cola = paso.catch(() => undefined);
   colas.set(c, cola);
@@ -157,6 +166,11 @@ export async function recordarTurnoMiembro(o: { correo: string; rol: 'user' | 'u
   const texto = String(o.texto || '').trim().slice(0, 4000);
   if (!c || !texto) return;
   const cajon = await cargarMiembro(c);
+  // S3 no se pudo leer: este turno no se anota (mejor perder un turno que borrar toda su memoria).
+  if (sinLeer.has(cajon)) {
+    console.warn('[memoria miembro] S3 no se pudo leer; no anoto el turno para no pisar su memoria');
+    return;
+  }
   const t = Date.now();
   cajon.corta = [...cajon.corta, { rol: o.rol, texto, t, canal: o.canal || 'mesa' }].slice(-MAX_CORTA_MIEMBRO);
   if (o.rol === 'user' && esHechoDeMiembro(texto)) {
@@ -177,33 +191,43 @@ export async function guardarHechoMiembro(correo: string, hecho: string): Promis
   const h = String(hecho || '').trim().slice(0, 400);
   if (!c || !h) return;
   const cajon = await cargarMiembro(c);
+  if (sinLeer.has(cajon)) throw new Error('No pude leer tu memoria guardada en este momento; no guardé nada. Prueba otra vez en un rato.');
+  // Ya guardado: no se reescribe (lib/memoria.ts guardarHechoQuien, el mismo motivo).
+  if (cajon.larga.some((x) => x.hecho === h)) return;
   cajon.larga = [{ hecho: h, t: Date.now() }, ...cajon.larga.filter((x) => x.hecho !== h)].slice(0, MAX_LARGA_MIEMBRO);
   enCache(c, cajon);
   await guardar(c, cajon);
 }
 
-/** Borra todo lo del miembro (su hilo y sus hechos). Solo lo suyo. */
-export async function olvidarMiembro(correo: string): Promise<void> {
+/** Borra todo lo del miembro (su hilo y sus hechos). Solo lo suyo. `durable`: false si S3 no lo borró. */
+export async function olvidarMiembro(correo: string): Promise<{ durable: boolean }> {
   const c = correoNormal(correo);
-  if (!c) return;
+  if (!c) return { durable: true };
   const cajon = vacio();
   enCache(c, cajon);
-  await guardar(c, cajon);
+  return { durable: await guardar(c, cajon) };
 }
 
 /** Lo que va al prompt: con quién habla, lo que pidió recordar y su hilo. Nada de nadie más. */
-export function promptMemoriaMiembro(correo: string, nombre?: string): string {
+/** `hilo`: como en lib/memoria.ts promptMemoria ('todo', 'mediano' o 'firma'; lib/conversacion.ts). */
+export function promptMemoriaMiembro(correo: string, nombre?: string, hilo: HiloMemoria = 'todo'): string {
   const cajon = cache.get(correoNormal(correo)) || vacio();
   const n = String(nombre || '').trim() || 'un miembro de la comunidad';
   const capas = capasHilo(cajon.corta);
   // El hilo se etiqueta como lo que es: la persona, no «Junta».
   const miembro = (s: string) => s.replace(/^Junta: /gm, 'Miembro: ');
+  const hablas = `HABLAS CON: ${n}, miembro de la comunidad de Orden Global (no es de la junta). Esta memoria es solo suya.`;
+  // Lo de un miembro solo se guarda cuando lo pide («recuerda que…»): entra entero en la firma.
+  const pidio = `LO QUE ${n.toUpperCase()} TE PIDIÓ RECORDAR:\n${cajon.larga.map((h) => `- ${h.hecho}`).join('\n') || '(nada aún)'}`;
+  if (hilo === 'firma') return [hablas, pidio].join('\n');
   return [
-    `HABLAS CON: ${n}, miembro de la comunidad de Orden Global (no es de la junta). Esta memoria es solo suya.`,
-    `LO QUE ${n.toUpperCase()} TE PIDIÓ RECORDAR:\n${cajon.larga.map((h) => `- ${h.hecho}`).join('\n') || '(nada aún)'}`,
-    `HILO CORTO CON ${n.toUpperCase()} (lo último; «esto» es esto):\n${miembro(capas.corto) || '(nada)'}`,
+    hablas,
+    pidio,
+    hilo === 'todo' ? `HILO CORTO CON ${n.toUpperCase()} (lo último; «esto» es esto):\n${miembro(capas.corto) || '(nada)'}` : '',
     `CONVERSACIÓN MEDIANA CON ${n.toUpperCase()}:\n${miembro(capas.mediano) || '(nada)'}`,
-  ].join('\n');
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 /** Lo que ve el miembro en /api/memoria: lo suyo, y de la junta nada. */

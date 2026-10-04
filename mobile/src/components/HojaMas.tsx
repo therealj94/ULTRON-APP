@@ -11,8 +11,12 @@
  *   · Avatar            — cambiar con quién hablas;
  *   · Modo trabajo      — el avatar compacto y la conversación escrita debajo, para leer y volver a
  *                         consultar lo dicho (y «Modo charla» para volver al avatar grande);
+ *   · Misiones          — las metas que AURA te ayuda a cumplir (ajustes/Misiones.tsx);
+ *   · Su computadora    — lo que hace la computadora en la nube del avatar, y encargarle algo
+ *                         (ajustes/Computadora.tsx); solo si el servidor la tiene;
  *   · Qué puedo hacer   — el recorrido corto (src/tutorial);
- *   · Ajustes           — el menú completo de la mesa (DeskMenu).
+ *   · Ajustes           — la pantalla de Ajustes (voz, oído, memoria, su cara, tema, perfil, permisos
+ *                         y sesión); el menú corto de la mesa (DeskMenu) sigue en «Escribir».
  * Cada mosaico dice su estado debajo del nombre (p. ej. «Solo ahora · 8 min»).
  *
  * El layout, a prueba de Android (José, Samsung con Android 16: las tarjetas salían apiladas como una
@@ -24,14 +28,14 @@
  * sin ella se ve igual.
  */
 import { useMemo } from 'react';
-import { ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { tr } from '../i18n';
 import { MEDIDA, useTema, type Paleta } from '../nucleo/tema';
 import { Hoja } from '../ui/Hoja';
 import { Icono, type NombreIcono } from '../pulse/ui/Icono';
 import { Tocable } from '../pulse/ui/Tocable';
 
-export type OpcionMas = 'chat' | 'envivo' | 'escribir' | 'camara' | 'caras' | 'avatar' | 'modo' | 'tutorial' | 'ajustes';
+export type OpcionMas = 'chat' | 'envivo' | 'escribir' | 'camara' | 'caras' | 'avatar' | 'modo' | 'misiones' | 'computadora' | 'tutorial' | 'ajustes';
 
 type Props = {
   visible: boolean;
@@ -49,6 +53,9 @@ type Props = {
   trabajando: boolean;
   /** Sin la barra de tres botones a la vista (el chat de la mesa): «Chats» también va aquí. */
   conChat?: boolean;
+  /** Lo que se lee debajo de «Su computadora» («Lista», «Trabajando…»); sin él, no se muestra. */
+  estadoComputadora?: string | null;
+  computadoraTrabajando?: boolean;
 };
 
 type Mosaico = { id: OpcionMas; icono: NombreIcono; titulo: string; sub: string; activo?: boolean };
@@ -65,7 +72,7 @@ export function HojaMas(p: Props) {
       id: 'envivo',
       icono: 'llamar',
       titulo: p.conversando ? tr('Colgar', 'Hang up') : tr(`Que ${p.nombreAvatar} te llame`, `Have ${p.nombreAvatar} call you`),
-      sub: p.conversando ? tr(`En llamada con ${p.nombreAvatar}`, `On a call with ${p.nombreAvatar}`) : tr('Suena como una llamada y hablan de corrido', 'Rings like a call, then you talk hands-free'),
+      sub: p.conversando ? tr(`En llamada con ${p.nombreAvatar}`, `On a call with ${p.nombreAvatar}`) : tr('Se abre al instante y hablan de corrido', 'Opens right away and you talk hands-free'),
       activo: p.conversando,
     },
     { id: 'escribir', icono: 'teclado', titulo: tr('Escribir', 'Type'), sub: tr('El teclado y el menú', 'Keyboard and menu') },
@@ -79,6 +86,10 @@ export function HojaMas(p: Props) {
       sub: p.trabajando ? tr('El avatar grande otra vez', 'The big avatar again') : tr('Avatar chico y lo escrito', 'Small avatar, written chat'),
       activo: p.trabajando,
     },
+    { id: 'misiones', icono: 'palomita', titulo: tr('Misiones', 'Missions'), sub: tr('Tus metas, paso a paso', 'Your goals, step by step') },
+    ...(p.estadoComputadora != null
+      ? [{ id: 'computadora' as const, icono: 'pantalla' as const, titulo: tr('Su computadora', 'Their computer'), sub: p.estadoComputadora, activo: !!p.computadoraTrabajando }]
+      : []),
     { id: 'tutorial', icono: 'ayuda', titulo: tr('Qué puedo hacer', 'What I can do'), sub: tr('Un recorrido corto', 'A short tour') },
     { id: 'ajustes', icono: 'ajustes', titulo: tr('Ajustes', 'Settings'), sub: tr('Todo lo de la mesa', 'Everything else') },
   ];
@@ -87,7 +98,8 @@ export function HojaMas(p: Props) {
   const ancho = `${100 / columnas}%` as const;
   return (
     <Hoja visible={p.visible} onCerrar={p.onCerrar} titulo={tr('Más', 'More')}>
-      <ScrollView style={st.desplazable} contentContainerStyle={st.rejilla} showsVerticalScrollIndicator={false} bounces={false} keyboardShouldPersistTaps="handled">
+      {/* La hoja ya se recorre con el dedo (ui/Hoja): la rejilla va plana, sin otro desplazable adentro. */}
+      <View style={[st.desplazable, st.rejilla]}>
         {mosaicos.map((m) => (
           <View key={m.id} style={[st.celda, { width: ancho }]}>
             <Tocable
@@ -108,7 +120,7 @@ export function HojaMas(p: Props) {
             </Tocable>
           </View>
         ))}
-      </ScrollView>
+      </View>
     </Hoja>
   );
 }

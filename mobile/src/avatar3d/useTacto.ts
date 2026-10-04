@@ -9,7 +9,6 @@
 import { useEffect, useMemo, useRef, type RefObject } from 'react';
 import { PanResponder, type GestureResponderHandlers } from 'react-native';
 import { Gestos, type SalidaGesto } from '../compa/gestos';
-import { useVozOpcional } from '../compa/VozProvider';
 import { toqueAvatar } from './contrato';
 import { zona2D } from './mapeo';
 import type { ControlCuerpo } from './AvatarVivo';
@@ -18,9 +17,6 @@ import type { GestoDedo, ZonaToque } from './tipos';
 type Medida = { ancho: number; alto: number };
 
 export function useTacto(cuerpo: RefObject<ControlCuerpo | null>, medida: Medida): GestureResponderHandlers {
-  const voz = useVozOpcional();
-  const vozRef = useRef(voz);
-  vozRef.current = voz;
   const m = useRef(medida);
   m.current = medida;
   const gestos = useMemo(() => new Gestos({ radio: Math.max(30, Math.min(medida.ancho, medida.alto) * 0.3) }), [medida.ancho, medida.alto]);
@@ -61,7 +57,6 @@ export function useTacto(cuerpo: RefObject<ControlCuerpo | null>, medida: Medida
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => false,
       onPanResponderGrant: (e) => {
-        vozRef.current?.precalentar();
         alGesto(gestos.bajar(Date.now(), e.nativeEvent.locationX, e.nativeEvent.locationY));
         programar();
       },

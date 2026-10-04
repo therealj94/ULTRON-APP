@@ -19,11 +19,12 @@ import type { Express, Request, Response } from 'express';
 import { enviarCorreo, correoValido } from '../lib/correo-ses';
 import { dominioPrincipal } from './dominio';
 import { identificar, personaPorCorreoExacto, puedeEntrar, type Nivel, type Plataforma } from '../lib/acceso';
-import { anotarExitoEntrada, anotarFalloEntrada, emitirSesion, esperaEntrada, exigirSesion, limitar, sesionDe } from './seguridad';
+import { anotarExitoEntrada, anotarFalloEntrada, emitirSesion, esDeComunidad, esperaEntrada, exigirSesion, limitar, sesionDe } from './seguridad';
 import { correoDeCodigo } from './cuentas';
 import {
   HORAS_CODIGO,
   NIVELES,
+  codigosActivos,
   crearCodigo,
   entrarConCodigo,
   listarCodigos,
@@ -166,7 +167,7 @@ export function montarRutasCuentas(app: Express, d: DepsCuentas) {
     const { nombre, rol } = d.nombreYRol(e.correo, (await cuentaDe(e.correo))?.nombre);
     await fijarClave(e.correo, clave, nombre);
     // La clave queda guardada igual, pero la sesión solo se abre si esta plataforma le corresponde.
-    const s = puedeEntrar(identificar({ correo: e.correo }), d.plataforma) ? emitirSesion({ correo: e.correo, nombre, rol }) : null;
+    const s = puedeEntrar(identificar({ correo: e.correo }), d.plataforma) ? emitirSesion({ correo: e.correo, nombre, rol }, { comunidad: esDeComunidad(e.correo, d.plataforma) }) : null;
     const aviso = plantilla({
       plataforma: d.plataforma,
       saludo: `Hola, ${nombre}:`,
@@ -183,7 +184,7 @@ export function montarRutasCuentas(app: Express, d: DepsCuentas) {
   /* ---------------------------------------------------------------- cambiar sabiendo la actual */
   app.post('/api/ultron/clave/cambiar', exigirSesion, limitar(8, 15 * 60_000, 'clave-cambiar'), async (req, res) => {
     if (!cuentasDisponibles()) return sinBase(res);
-    const s = (req as any).sesion as { correo: string; nombre: string; rol: string };
+    const s = (req as any).sesion as { correo: string; nombre: string; rol: string; comunidad?: boolean };
     const correo = d.normalizarCorreo(s.correo);
     const actual = String(req.body?.actual ?? '');
     const nueva = String(req.body?.nueva ?? '');
@@ -205,7 +206,7 @@ export function montarRutasCuentas(app: Express, d: DepsCuentas) {
     anotarExitoEntrada(correo, ip);
     await fijarClave(correo, nueva, s.nombre);
     // La sesión con la que se hizo el cambio se renueva: las demás quedan cerradas.
-    const nuevaSesion = emitirSesion({ correo: s.correo, nombre: s.nombre, rol: s.rol });
+    const nuevaSesion = emitirSesion({ correo: s.correo, nombre: s.nombre, rol: s.rol }, { comunidad: !!s.comunidad });
     const aviso = plantilla({
       plataforma: d.plataforma,
       saludo: `Hola, ${s.nombre}:`,
@@ -281,9 +282,12 @@ export function montarRutasCuentas(app: Express, d: DepsCuentas) {
     if (!conCodigos) return res.status(404).json({ ok: false, error: 'Los códigos temporales son de Dr Electrum.' });
     const por = esAprobador(req);
     if (!por) return res.status(403).json({ ok: false, error: 'Los códigos los crea solo el aprobador de cuentas.', code: 'no_aprobador' });
+    if (!codigosActivos()) return res.status(403).json({ ok: false, error: 'Los accesos de prueba están apagados (ELECTRUM_CODIGOS=0).', code: 'codigos_apagados' });
     const horas = Number(req.body?.horas);
     if (!HORAS_CODIGO.includes(horas as any)) return res.status(400).json({ ok: false, error: 'Elegí 1, 5 o 24 horas.' });
-    const nivel: Nivel = req.body?.nivel === 'escribe' ? 'escribe' : 'lee';
+    // Un código es para PROBAR, no para trabajar (auditoría maestra 3-oct, AUR05): siempre consulta. Quien
+    // necesite subir o editar pide su cuenta del padrón, que sí acredita a la persona.
+    const nivel: Nivel = 'lee';
     const para = String(req.body?.para || '').replace(/\s+/g, ' ').trim().slice(0, 80);
     // El nombre es con el que Dr Electrum saluda a quien entra con el código.
     if (!para) return res.status(400).json({ ok: false, error: 'Poné el nombre de la persona: Dr Electrum la saluda con él al entrar.' });
@@ -303,6 +307,7 @@ export function montarRutasCuentas(app: Express, d: DepsCuentas) {
   app.post('/api/ultron/entrar-codigo', limitar(10, 15 * 60_000, 'entrar-codigo'), async (req, res) => {
     if (!cuentasDisponibles()) return sinBase(res);
     if (!conCodigos) return res.status(404).json({ ok: false, error: 'Los códigos temporales son de Dr Electrum.' });
+    if (!codigosActivos()) return res.status(403).json({ ok: false, error: 'Los accesos de prueba están apagados. Dr Electrum es solo para la junta.', code: 'codigos_apagados' });
     const ip = String(req.ip || req.socket.remoteAddress || 'x');
     // El freno por cuenta se usa con la IP como «cuenta»: probar códigos al azar se frena igual.
     const espera = esperaEntrada(`codigo:${ip}`, ip);

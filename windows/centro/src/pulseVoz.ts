@@ -1,11 +1,13 @@
 /**
  * PULSE2CHAT por voz (desde el notch): «llama a Karla», «videollamada con Karla», «mándale un mensaje a
- * Karla que…». AURA (C#) ya confirmó los mensajes con un «sí»; aquí se busca a la persona entre tus
+ * Karla que…», «mándale 10 ORIGEN a Karla» (abre el envío para firmarlo en Veta Wallet). AURA (C#) ya confirmó los mensajes con un «sí»; aquí se busca a la persona entre tus
  * contactos y conversaciones y se hace. Lo que pasa se cuenta en el notch.
  */
 import { al, pedir } from './puente';
 import * as RELEVO from './pulse/relevo';
 import { llamar } from './pulse';
+import { abrirPagar } from './vistas/pulse';
+import { montoValido } from './pulse/pagar';
 
 const norma = (s: string) => RELEVO.normalizar(s).replace(/\s+/g, ' ').trim();
 
@@ -34,7 +36,7 @@ export async function buscarContacto(dicho: string): Promise<RELEVO.Persona | nu
   return mejor[0].p;
 }
 
-type Accion = { tipo: 'llamada' | 'mensaje'; video?: boolean; con: string; texto?: string };
+type Accion = { tipo: 'llamada' | 'mensaje' | 'pago'; video?: boolean; con: string; texto?: string; monto?: string; moneda?: string };
 
 al<Accion>('pulse.accion', async (a) => {
   const aviso = (titulo: string, cuerpo: string) => pedir('notch.aviso', { titulo, cuerpo }).catch(() => {});
@@ -42,6 +44,14 @@ al<Accion>('pulse.accion', async (a) => {
   const p = await buscarContacto(a.con);
   if (!p) { aviso('PULSE2CHAT', `No encontré a «${a.con}» entre tus contactos (o hay dos con ese nombre).`); pedir('ventana.mostrar', { seccion: 'pulse' }).catch(() => {}); return; }
   const nombre = p.nombre || p.correo;
+  if (a.tipo === 'pago') {
+    // No se manda nada aquí: se abre el hilo y el envío para revisarlo; se firma en Veta Wallet.
+    pedir('ventana.mostrar', { seccion: 'pulse' }).catch(() => {});
+    window.dispatchEvent(new CustomEvent('centro:ir', { detail: 'pulse' }));
+    setTimeout(() => window.dispatchEvent(new CustomEvent('p2c:abrir', { detail: { correo: p.correo } })), 150);
+    void abrirPagar(p.correo, nombre, montoValido(String(a.monto || '')) || '', String(a.moneda || 'ORIGEN').toUpperCase());
+    return;
+  }
   if (a.tipo === 'llamada') {
     pedir('ventana.mostrar', { seccion: 'pulse' }).catch(() => {});
     llamar(p.correo, !!a.video);

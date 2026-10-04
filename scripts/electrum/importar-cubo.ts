@@ -2,7 +2,7 @@
  * Corre una importación del cubo de expedientes creada desde el panel de infraestructura.
  *
  * El panel crea la fila en `importacion` y lanza un trabajo de Render con
- * `node dist/importar-cubo.cjs <id>`: otra máquina, con las mismas variables que el servicio, que
+ * `node build-server/importar-cubo.cjs <id>`: otra máquina, con las mismas variables que el servicio, que
  * baja cada archivo, lo aprende y anota el avance en la base. Así el servicio web —512 MB— sigue
  * contestando mientras entran dos mil archivos.
  *

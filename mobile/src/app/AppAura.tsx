@@ -18,10 +18,16 @@
  * Las pantallas que reemplazan la pila (desde la intro, al entrar, al salir) entran fundiéndose;
  * las que se abren encima (Ajustes, Crea tu Genesis ID), deslizándose desde la derecha.
  *
+ * Cada pantalla va dentro de LimitePantalla: si una se rompe al dibujar, enseña «Reintentar» en su
+ * lugar y lo reporta, sin tumbar la app entera.
+ *
  * Las barras del sistema siguen al tema (iconos claros sobre fondo oscuro y al revés); en la intro y
  * en la mesa se esconden, como antes (la mesa es un escenario de pantalla completa). Al cambiar de
  * ruta se avisa por el bus (`emitir('pantalla', …)`) para que AURA sepa dónde está la persona, y lo
  * que AURA pide por el bus («vete atrás», «abre ajustes», «pon el tema claro») lo atiende acciones.ts.
+ *
+ * Encima de todo, con la sesión abierta, ComputadoraEnVivo: la vista en vivo de su computadora (se abre
+ * sola cuando empieza una tarea) y sus correos, que se abren por voz desde cualquier pantalla.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { AppState, Platform, type AppStateStatus } from 'react-native';
@@ -42,6 +48,10 @@ import { Ajustes } from '../ajustes/Ajustes';
 import { LoQueSabe } from '../ajustes/LoQueSabe';
 import { PrimeraVez } from '../primeravez/PrimeraVez';
 import { useAccionesDeAura } from './acciones';
+import { AvisoActualizacion } from './AvisoActualizacion';
+import { ComputadoraEnVivo } from './ComputadoraEnVivo';
+import { HojasCartera } from '../cartera/HojasCartera';
+import { LimitePantalla } from './LimitePantalla';
 import { Bienvenida } from './pantallas/Bienvenida';
 import { CrearGenesis } from './pantallas/CrearGenesis';
 import { Entrar } from './pantallas/Entrar';
@@ -51,6 +61,7 @@ import { Chats, Conversacion } from './pantallas/Chats';
 import { OtrasFormas } from './pantallas/OtrasFormas';
 import { abrirConversacion, abrirRuta, nav, pantallaDeRuta, RUTAS_DE_SESION, type RaizParams } from './rutas';
 import { useUsuario } from './sesion';
+import { usePush } from '../push/nativo';
 
 const Pila = createNativeStackNavigator<RaizParams>();
 
@@ -86,6 +97,8 @@ export function AppAura() {
   const tema = useTema();
   useAccionesDeAura();
   const usuario = useUsuario();
+  // Avisos del servidor con la app cerrada (FCM): registra este teléfono al entrar y lo suelta al salir.
+  usePush(usuario?.correo);
   const [ruta, setRuta] = useState<string | undefined>(undefined);
   const enSesion = !!usuario && !!ruta && RUTAS_DE_SESION.includes(ruta);
 
@@ -138,6 +151,12 @@ export function AppAura() {
         >
           <Pila.Navigator
             initialRouteName="Intro"
+            // Cada pantalla en su propia red de seguridad: si una se rompe al dibujar, no tumba la app.
+            screenLayout={({ route, navigation, children }) => (
+              <LimitePantalla pantalla={route.name} puedeVolver={() => navigation.canGoBack()} onVolver={() => navigation.goBack()}>
+                {children}
+              </LimitePantalla>
+            )}
             screenOptions={{
               headerShown: false,
               animation: 'slide_from_right',
@@ -160,6 +179,12 @@ export function AppAura() {
             <Pila.Screen name="Conversacion" component={Conversacion} />
           </Pila.Navigator>
         </NavigationContainer>
+        {/* «Actualización lista · Reiniciar» (lib/ota.ts), solo con la sesión abierta. */}
+        {enSesion && <AvisoActualizacion />}
+        {/* Su computadora en vivo (se abre sola al empezar una tarea) y sus correos, encima de cualquier pantalla. */}
+        {enSesion && <ComputadoraEnVivo />}
+        {/* Su cartera de Veta Wallet y «Enviar dinero» (cartera/): se abren desde un chat, el menú o por voz. */}
+        {enSesion && <HojasCartera />}
         </VozProvider>
         </PulseProvider>
       </SafeAreaProvider>

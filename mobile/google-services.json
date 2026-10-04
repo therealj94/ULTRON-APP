@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "747974600225",
+    "project_id": "aura-fp",
+    "storage_bucket": "aura-fp.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:747974600225:android:e6fe1ecd5dad7580e66560",
+        "android_client_info": {
+          "package_name": "link.ordenglobal.ultronfp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAOdMAWkcVfSHVwp9Lzgu7Y8EHESqMQzSI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

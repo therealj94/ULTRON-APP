@@ -144,6 +144,16 @@ export function quitarExpresiones(texto: string): string {
     .replace(/[ \t]{2,}/g, ' ');
 }
 
+/**
+ * Las marcas de tono y de acción que la voz v4 actúa (server/eleven.ts las pasa a su etiqueta; todas
+ * verificadas con la API el 1-oct, mobile/src/compa/etiquetasVoz.ts). Con la voz de respaldo
+ * (Voicebox) se quitan sin sonar.
+ */
+export const TONOS_VOZ = [
+  'emocionado', 'con ternura', 'en voz baja', 'pensativo', 'con picardía', 'serio', 'aliviado', 'apenado',
+  'impresionado', 'sarcástico', 'tarareo', 'carcajada', 'carraspeo',
+] as const;
+
 /** Las etiquetas que se le enseñan al cerebro, en el orden de la lista. */
 export const ETIQUETAS_EXPRESION = Object.keys(EXPRESIONES);
 
@@ -156,7 +166,9 @@ export function instruccionExpresiones(): string {
   return [
     `EXPRESIONES DE VOZ: tu voz tiene sonidos grabados que se oyen donde los escribas, entre corchetes: ${lista}.`,
     'Úsalos poco: uno, como mucho dos por respuesta, y solo donde una persona de verdad se reiría, suspiraría o se sorprendería («Ay, no me digas [risa] esa no me la sabía»).',
-    'Nunca en respuestas serias, de dinero, precios, contratos o temas legales, ni cuando alguien está pasándola mal. Solo esos: no inventes otros.',
+    'Nunca en respuestas serias, de dinero, precios, contratos o temas legales, ni cuando alguien está pasándola mal.',
+    `TONO DE VOZ: al empezar una frase, si cambia el ánimo, puedes poner uno de estos (la voz lo actúa, no se lee): ${TONOS_VOZ.map((t) => `[${t}]`).join(', ')}.`,
+    'Varía: no repitas la misma marca en dos respuestas seguidas. Solo los de estas listas: no inventes otros.',
     'Si abriste con [EMO:risa], no empieces con [risa]: la risa ya suena sola. No se ven en pantalla; solo se oyen.',
   ].join(' ');
 }

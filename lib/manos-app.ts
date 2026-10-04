@@ -35,7 +35,12 @@ import type { ContextoApp, Contacto, Resolucion } from './acciones-app';
 
 /* ------------------------------------------------------------------ las formas */
 
-export const MANOS = ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame'] as const;
+/**
+ * `controles` (AUR10): el teléfono sabe los controles de voz separados (lib/controles-voz.ts): detener el
+ * audio, colgar y la tarea (pausar, seguir, cancelar, tomar el control). Sin ella, «cállate» sigue siendo
+ * `silencio` (lo que entiende un APK viejo).
+ */
+export const MANOS = ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame', 'cartera', 'pagar', 'controles'] as const;
 export type Mano = (typeof MANOS)[number];
 
 export const CAMPOS_PERFIL = ['apodo', 'cumple', 'vive', 'trabajo', 'familia', 'gustos', 'comida', 'musica', 'otros'] as const;
@@ -60,7 +65,14 @@ export type AccionMano =
   /** Quita un recordatorio del teléfono (por su id, de los que contó en el contexto). Tras el «sí». */
   | { tipo: 'cancelar_recordatorio'; id: string }
   /** El avatar llama a la persona: en su teléfono suena la llamada entrante («llámame»). Sin «sí»: lo pidió ella. */
-  | { tipo: 'llamame' };
+  | { tipo: 'llamame' }
+  /** Abre su Cartera de Veta Wallet en la app (solo lectura). */
+  | { tipo: 'cartera' }
+  /**
+   * Abre en la app el envío a un contacto, LLENADO (mobile/src/cartera/HojaPagar.tsx). No mueve nada: la
+   * persona lo revisa, lo confirma y lo firma en Veta Wallet con su contraseña. Por eso no espera un «sí» aquí.
+   */
+  | { tipo: 'pagar'; con: string; monto?: string; moneda?: string };
 
 /** Lo que espera el «sí» del turno siguiente (el borrador de un mensaje va aparte, en acciones-app). */
 export type Propuesta =
@@ -78,7 +90,12 @@ export const MAX_CAMPO = 300;
 export const MAX_RECORDATORIO = 140;
 export const MAX_BUSQUEDA = 80;
 /** Un recordatorio vale desde dentro de un minuto hasta dentro de un año. */
-export const RECORDATORIO_MIN_MS = 60_000;
+/**
+ * Lo más pronto que se pone un recordatorio o una llamada de AU-RA: «llámame en 30 segundos» (José,
+ * 3-oct; antes el mínimo era un minuto y AU-RA contestaba «eso es un recordatorio»). El teléfono pide
+ * 20 s por delante (mobile/src/compa/recordatorios.ts MARGEN_MS): 25 s deja margen para la red.
+ */
+export const RECORDATORIO_MIN_MS = 25_000;
 export const RECORDATORIO_MAX_MS = 366 * 24 * 3600_000;
 
 const linea = (v: unknown, max: number) =>
@@ -145,6 +162,16 @@ export function validarMano(a: Record<string, unknown>, ahora = Date.now()): Acc
     }
     case 'llamame':
       return { tipo: 'llamame' };
+    case 'cartera':
+      return { tipo: 'cartera' };
+    case 'pagar': {
+      const con = linea(a.con, 254);
+      if (!con) return null;
+      // Solo la forma: la app vuelve a validar la cantidad (montoValido) y la moneda antes de mostrarlas.
+      const monto = linea(a.monto, 40).replace(/[^0-9.,]/g, '');
+      const moneda = linea(a.moneda, 16).toUpperCase().replace(/[^A-Z]/g, '');
+      return { tipo: 'pagar', con, ...(monto ? { monto } : {}), ...(moneda ? { moneda } : {}) };
+    }
     default:
       return undefined;
   }
@@ -162,6 +189,7 @@ export function esMano(tipo: string): tipo is Mano {
 /** La mano que hace falta para una acción (cancelar un recordatorio es de «recordatorio»; con llamada, de «recordatorio_llamada»), o null si es de las de siempre. */
 export function manoDe(a: { tipo: string; llamada?: boolean }): Mano | null {
   if (a.tipo === 'cancelar_recordatorio') return 'recordatorio';
+  if (a.tipo === 'detener_audio' || a.tipo === 'colgar' || a.tipo === 'tarea') return 'controles';
   if (a.tipo === 'recordatorio' && a.llamada) return 'recordatorio_llamada';
   return esMano(a.tipo) ? a.tipo : null;
 }
@@ -407,7 +435,7 @@ export function palabras(texto: string): { q: string; orig: string[] } {
  */
 const INICIO = [
   'oye', 'hey', 'ey', 'aura', 'au ra', 'au-ra', 'claudio', 'guardian', 'porfa', 'por favor', 'please', 'ok', 'okay', 'ya', 'a ver', 'mira', 'mire',
-  'fijate que', 'fijate q', 'fijese que', 'bueno', 'este', 'mi reina', 'mi amor', 'mi vida', 'eh', 'ah', 'vaya', 'hola',
+  'fijate que', 'fijate q', 'fijese que', 'bueno', 'este', 'mi reina', 'mi amor', 'mi vida', 'eh', 'ah', 'vaya', 'hola', 'cuentame',
 ].map((m) => m.split(' '));
 const FIN = ['por favor', 'porfa', 'porfis', 'please', 'ya', 'ahora', 'ahorita', 'pues', 'dale', 'gracias', 'si puedes', 'rapido', 'mi reina', 'aura'].map((m) => m.split(' '));
 
@@ -507,7 +535,9 @@ const TXT_TIMER = String.raw`(?: (?:para|que|de|to|for) (?<txt>.+))?`;
  * «despiértame a las 6» sin «de la tarde» es de mañana.
  */
 function timerPorReglas(q: string, orig: string[], ahora: number, en: boolean): { texto: string; cuando: number; dentro?: string } | null {
-  const intentos: Array<[RegExp, 'timer' | 'alarma' | 'despertar' | 'despertarDentro']> = [
+  const intentos: Array<[RegExp, 'timer' | 'alarma' | 'alarmaDentro' | 'despertar' | 'despertarDentro']> = [
+    // «necesito una alarma en 3 minutos y me llames» (1-oct, llamada de José: iba al cerebro y tardaba).
+    [new RegExp(String.raw`^(?:(?:necesito|quiero|ocupo|ponme|pon|poneme|pone|programa|programame|activa|activame|hazme) )?(?:que me pongas )?(?:un |una |el |la )?(?<cual>alarma|despertador|timer|taimer|temporizador|recordatorio|aviso) (?:en|dentro de|para dentro de) ${NUM_TIMER} ${UNIDAD_TIMER}(?: y (?:me llames|llamame|me marques|marcame|me avises|avisame|me timbres))?${TXT_TIMER}$`, 'd'), 'alarmaDentro'],
     [new RegExp(String.raw`^(?:(?:ponme|pon|poneme|programa|programame|activa|activame|inicia|iniciame|arranca|hazme|pone) )?(?:un |una |el |la )?(?:timer|taimer|temporizador|cronometro|cuenta regresiva)(?: de| por| para)? ${NUM_TIMER} ${UNIDAD_TIMER}${TXT_TIMER}$`, 'd'), 'timer'],
     [new RegExp(String.raw`^(?:set |start )?(?:a |an )?(?:timer|countdown)(?: for| of)? ${NUM_TIMER} ${UNIDAD_TIMER}${TXT_TIMER}$`, 'd'), 'timer'],
     [new RegExp(String.raw`^(?:set |start )?(?:a |an )?${NUM_TIMER} ${UNIDAD_TIMER} (?:timer|countdown)${TXT_TIMER}$`, 'd'), 'timer'],
@@ -523,7 +553,7 @@ function timerPorReglas(q: string, orig: string[], ahora: number, en: boolean): 
     if (!m || !g) continue;
     let cuando: number | null;
     let dentro: string | undefined;
-    if (forma === 'timer' || forma === 'despertarDentro') {
+    if (forma === 'timer' || forma === 'despertarDentro' || forma === 'alarmaDentro') {
       const u = /hora|hour/.test(g.u) ? 'hora' : 'minuto';
       const n = g.n === 'a' || g.n === 'an' || g.n === 'one' ? 'un' : g.n;
       cuando = dentroDe(n, u, ahora);
@@ -538,11 +568,11 @@ function timerPorReglas(q: string, orig: string[], ahora: number, en: boolean): 
     const dicho = g.txt ? linea(mayuscula(tramo(q, orig, m.indices?.groups?.txt)), MAX_RECORDATORIO) : '';
     const texto =
       dicho ||
-      (forma === 'timer'
+      (forma === 'timer' || (forma === 'alarmaDentro' && /timer|taimer|temporizador/.test(g.cual || ''))
         ? en
           ? `Your ${dentro} timer is up`
           : `Se cumplió tu timer de ${dentro}`
-        : forma === 'alarma'
+        : forma === 'alarma' || forma === 'alarmaDentro'
           ? en
             ? 'Your alarm'
             : 'Tu alarma'
@@ -827,15 +857,28 @@ function deIntentos(intentos: Array<[RegExp, 'hora' | 'dentro']>, q: string, ori
 /* ------------------------------------------------------------------ la confirmación de una propuesta */
 
 /**
+ * ¿El mensaje ENTERO es un «sí» de los que se dicen en Honduras? («ok», «okey», «dale», «va», «sale»,
+ * «órale», «de una», «claro», «perfecto», «de acuerdo», con «pues», «ya» o «porfa» al final). Solo cuenta
+ * como respuesta a la pregunta del turno anterior («¿Le marco a Beto?», «¿Lo envío?»): un «ok» suelto a
+ * media frase no confirma nada. «ajá» y «mhm» no están: es lo que uno dice para que sepan que escucha.
+ * José, 3-oct: contestó «Okey» a «¿Te llamo?» y AU-RA no lo tomó como un sí.
+ */
+export function esAfirmacionSola(mensaje: string): boolean {
+  const q = plegar(String(mensaje || '').toLowerCase()).replace(/[^a-z0-9ñ\s]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return /^(ok|okey|okay|oki|okis|okidoki|dale|va|vaya pues|sale|orale|de una|claro|claro que si|perfecto|de acuerdo|correcto|esta bien|hagale|hazle|si|sip|yes|yep|yeah|sure|go ahead)( (ok|okey|dale|va|pues|ya|porfa|por favor|please|entonces|claro|perfecto|gracias))*$/.test(q);
+}
+
+/**
  * ¿Este mensaje confirma la propuesta? Las mismas exigencias que el «sí» de un borrador: un «sí» que
- * ABRE la frase, o el verbo explícito («llámale», «ponlo»). Un «no», «espera», «pero», «mejor» u
- * «otra» en cualquier parte lo deja sin hacer: «sí, pero llama a Ana» no es permiso para llamar a Beto.
- * Las afirmaciones débiles («ok», «dale», «va») no confirman nada.
+ * ABRE la frase, el verbo explícito («llámale», «ponlo»), o un «ok / okey / dale / va» que es TODO el
+ * mensaje (esAfirmacionSola). Un «no», «espera», «pero», «mejor» u «otra» en cualquier parte lo deja sin
+ * hacer: «sí, pero llama a Ana» no es permiso para llamar a Beto.
  */
 export function confirmaPropuesta(tipo: Propuesta['tipo'], mensaje: string): boolean {
   const crudo = String(mensaje || '').trim().toLowerCase();
   const q = plegar(crudo).replace(/[^a-z0-9ñ\s]+/g, ' ').replace(/\s+/g, ' ').trim();
   if (!q) return false;
+  if (esAfirmacionSola(crudo)) return true;
   // Para cancelar un recordatorio, «cancélalo» / «bórralo» es el «sí».
   if (tipo === 'cancelar_recordatorio') {
     if (/\b(no|nop|nel|todavia|aun|espera|esperate|pero|mejor|otra|otro|dejalo|don ?t|not|wait|but|instead|keep)\b/.test(q)) return false;
@@ -913,6 +956,10 @@ export function dichoDeMano(a: AccionMano, idioma: IdiomaApp = 'es'): string {
       return en ? 'Done, I cancelled it.' : 'Listo, lo cancelé.';
     case 'llamame':
       return en ? 'Sure, calling you now!' : '¡Va, ya te llamo!';
+    case 'cartera':
+      return en ? 'Here’s your wallet.' : 'Aquí está tu cartera.';
+    case 'pagar':
+      return en ? 'I opened it filled in: check it and sign it in Veta Wallet.' : 'Te lo dejé listo: revísalo y fírmalo en Veta Wallet.';
   }
 }
 
@@ -922,11 +969,21 @@ export function dichoDeMano(a: AccionMano, idioma: IdiomaApp = 'es'): string {
  * Las líneas del prompt para las manos que ESTE teléfono sabe hacer (ninguna si es un APK viejo).
  * Cortas: cada una dice la forma, cuándo usarla con ejemplos como habla la gente aquí, y lo que no.
  */
+/** Las manos: las reglas (fijas) y lo de este momento (cambia), en ese orden. */
 export function instruccionManos(ctx: ContextoApp | null, o: { propuesta?: Propuesta | null; ultimoLeido?: string | null; ahora?: number } = {}): string[] {
+  return [...reglasManos(ctx), ...estadoManos(ctx, o)];
+}
+
+/**
+ * Las reglas de las manos: dependen solo de lo que este teléfono sabe hacer (`ctx.manos`), no del
+ * momento. Van en el system (server/prompt-turno.ts `reglasApp`): igual turno a turno, el nodo no las
+ * relee. Lo que cambia (la hora, a quién responder, los recordatorios, lo que espera su «sí») va en
+ * estadoManos, en el mensaje del turno.
+ */
+export function reglasManos(ctx: ContextoApp | null): string[] {
   const l: string[] = [];
   const puede = (m: Mano) => puedeMano(ctx, m);
   if (!ctx?.manos?.length) return l;
-  const ahora = o.ahora ?? Date.now();
   l.push('MANOS (también puedes, con la misma línea ACCION_APP):');
   if (puede('llamar'))
     l.push(
@@ -936,10 +993,7 @@ export function instruccionManos(ctx: ContextoApp | null, o: { propuesta?: Propu
     l.push(
       '· Leer: {"tipo":"leer","de":"<nombre>"} o {"tipo":"leer"} (lo no leído de todos). «¿qué me dijo Beto?», «léeme mis mensajes», «¿tengo mensajes?». Tú NO ves los mensajes (van cifrados en su teléfono): di solo «A ver…» y el teléfono los lee con tu voz. Nunca inventes lo que dicen.'
     );
-  if (puede('leer') || ctx.chatAbierto)
-    l.push(
-      `· Responder: «respóndele que ya voy» es redactar a ${ctx.chatAbierto ? `${ctx.chatAbierto.nombre} (el chat abierto)` : o.ultimoLeido ? `${o.ultimoLeido} (a quien le leíste de último)` : 'quien te diga'}, igual que «escríbele».`
-    );
+  if (puede('leer')) l.push('· Responder: «respóndele que ya voy» es redactar (igual que «escríbele») a quien diga RESPONDER A, abajo.');
   if (puede('buscar')) l.push('· Buscar: {"tipo":"buscar","q":"<palabras>"}. «busca en mis chats la dirección», «¿dónde me mandaron el número del doctor?» (q: "número del doctor"). Di «Déjame buscar»; el teléfono dice en qué chat está y lo abre.');
   if (puede('idioma')) l.push('· Idioma: {"tipo":"idioma","valor":"en|es"}. «háblame en inglés», «volvamos al español».');
   if (puede('perfil'))
@@ -952,15 +1006,35 @@ export function instruccionManos(ctx: ContextoApp | null, o: { propuesta?: Propu
     );
   if (puede('recordatorio') && puede('llamame'))
     l.push(
-      `· Recordatorio, timer o despertador: {"tipo":"recordatorio","texto":"Llamar a Beto","cuando":"AAAA-MM-DDTHH:MM","llamada":true} (hora de Honduras). «recuérdame a las 2 llamar a Beto», «ponme un timer de 10 minutos», «despiértame a las 6»: a esa hora TÚ la llamas y se lo dices. Se pone DIRECTO (no preguntes) y confirma con la hora exacta: «Listo, te llamo a las 2:00 p. m.». Si la hora no está clara, pregunta la hora. AHORA en Honduras: ${ahoraEnHonduras(ahora)}.`
+      `· Recordatorio, timer o despertador: {"tipo":"recordatorio","texto":"Llamar a Beto","cuando":"AAAA-MM-DDTHH:MM","llamada":true} (hora de Honduras). «recuérdame a las 2 llamar a Beto», «ponme un timer de 10 minutos», «despiértame a las 6»: a esa hora TÚ la llamas y se lo dices. Se pone DIRECTO (no preguntes) y confirma con la hora exacta: «Listo, te llamo a las 2:00 p. m.». Si la hora no está clara, pregunta la hora. La hora de ahora: AHORA en Honduras, abajo.`
     );
   else if (puede('recordatorio'))
     l.push(
-      `· Recordatorio: {"tipo":"recordatorio","texto":"Llamar a mi mamá","cuando":"AAAA-MM-DDTHH:MM"} (hora de Honduras). «recuérdame a las 5 llamar a mi mamá», «avísame en media hora que saque la ropa». Como llamar: escribe la línea y PREGUNTA con la hora exacta («¿Te recuerdo "Llamar a mi mamá" hoy a las 5:00 de la tarde?»); se pone solo con su «sí». AHORA en Honduras: ${ahoraEnHonduras(ahora)}.`
+      `· Recordatorio: {"tipo":"recordatorio","texto":"Llamar a mi mamá","cuando":"AAAA-MM-DDTHH:MM"} (hora de Honduras). «recuérdame a las 5 llamar a mi mamá», «avísame en media hora que saque la ropa». Como llamar: escribe la línea y PREGUNTA con la hora exacta («¿Te recuerdo "Llamar a mi mamá" hoy a las 5:00 de la tarde?»); se pone solo con su «sí». La hora de ahora: AHORA en Honduras, abajo.`
+    );
+  if (puede('cartera'))
+    l.push('· Cartera: {"tipo":"cartera"} abre su Cartera de Veta Wallet en la app («enséñame mi wallet»). Para decir cuánto tiene, pide la herramienta cartera.');
+  if (puede('pagar'))
+    l.push(
+      '· Pagar: {"tipo":"pagar","con":"<nombre>","monto":"5","moneda":"ORIGEN"} cuando pida mandarle dinero a alguien de CONTACTOS («mándale 5 ORIGEN a Ana»). Solo abre el envío LLENADO en la app: ella lo revisa y lo firma en Veta Wallet con su contraseña. Tú NUNCA pagas ni pides contraseñas ni direcciones (la dirección sale de su ficha). Di «Te lo dejé listo: revísalo y fírmalo en Veta Wallet». Sin monto o moneda clara, pregunta.'
     );
   if (puede('recordatorio_llamada') && !puede('llamame'))
     l.push(
       '· Recordatorio con llamada: igual, con "llamada":true, cuando pida que lo LLAMES para recordarle («llámame a las 5 para recordarme la pastilla», «márcame mañana a las 7 y recuérdame la cita»): a esa hora le entra tu llamada y, si contesta, se lo dices con tu voz. Pregunta «¿Te llamo hoy a las 5:00 de la tarde para recordarte …?». «llámame» solo, sin recordar nada, no es esto.'
+    );
+  return l;
+}
+
+/** Lo de este momento para las manos (va en el mensaje del turno, no en el system). */
+export function estadoManos(ctx: ContextoApp | null, o: { propuesta?: Propuesta | null; ultimoLeido?: string | null; ahora?: number } = {}): string[] {
+  const l: string[] = [];
+  const puede = (m: Mano) => puedeMano(ctx, m);
+  if (!ctx?.manos?.length) return l;
+  const ahora = o.ahora ?? Date.now();
+  if (puede('recordatorio')) l.push(`AHORA en Honduras: ${ahoraEnHonduras(ahora)}.`);
+  if (puede('leer') || ctx.chatAbierto)
+    l.push(
+      `RESPONDER A: ${ctx.chatAbierto ? `${ctx.chatAbierto.nombre} (el chat abierto)` : o.ultimoLeido ? `${o.ultimoLeido} (a quien le leíste de último)` : 'quien te diga'}.${ctx.chatAbierto ? ` «Respóndele que ya voy» es redactar a ${ctx.chatAbierto.nombre} (el chat abierto).` : o.ultimoLeido ? ` «Respóndele que ya voy» es redactar a ${o.ultimoLeido} (a quien le leíste de último).` : ''}`
     );
   if (puede('recordatorio') && ctx.recordatorios) {
     const recs = ctx.recordatorios.filter((r) => r.cuando > ahora - 60_000);
@@ -972,10 +1046,10 @@ export function instruccionManos(ctx: ContextoApp | null, o: { propuesta?: Propu
     const p = o.propuesta;
     l.push(
       p.tipo === 'llamar'
-        ? `ESPERA SU «SÍ»: ${p.video ? 'videollamada' : 'llamada'} a ${p.nombre}. Si dice «sí», repite la línea de llamar; si dice que no, no la escribas.`
+        ? `ESPERA SU «SÍ»: ${p.video ? 'videollamada' : 'llamada'} a ${p.nombre}. Si dice que sí («sí», «ok», «okey», «dale», «va»), vuelve a pedir la misma llamada; si dice que no, no.`
         : p.tipo === 'cancelar_recordatorio'
-          ? `ESPERA SU «SÍ»: cancelar el recordatorio «${p.texto}» (${p.id}). Si dice «sí», repite la línea; si no, no la escribas.`
-          : `ESPERA SU «SÍ»: recordatorio${p.llamada ? ' con llamada' : ''} «${p.texto}» ${horaLegible(p.cuando, ahora)}. Si dice «sí», repite la línea; si cambia la hora, escríbela con la hora nueva y vuelve a preguntar.`
+          ? `ESPERA SU «SÍ»: cancelar el recordatorio «${p.texto}» (${p.id}). Si dice que sí, vuelve a pedirlo igual; si no, no.`
+          : `ESPERA SU «SÍ»: recordatorio${p.llamada ? ' con llamada' : ''} «${p.texto}» ${horaLegible(p.cuando, ahora)}. Si dice que sí, vuelve a pedirlo igual; si cambia la hora, pídelo con la hora nueva y vuelve a preguntar.`
     );
   }
   return l;

@@ -10,7 +10,7 @@
  * volver (`onAtras`). Los datos salen de `chats.ts` (un almacén compartido con el hilo y la voz); esta
  * pantalla no pide nada por su cuenta.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ActivityIndicator, FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import Animated, { cancelAnimation, FadeIn, useAnimatedStyle, useSharedValue, withRepeat, withSequence, withSpring, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -33,21 +33,23 @@ export type PropsPantallaChats = {
   onAbrir: (correo: string, nombre: string) => void;
   /** Volver (si no se pasa, no hay botón de volver). */
   onAtras?: () => void;
+  /** Debajo del título: el cambio PULSE2CHAT ↔ WhatsApp (whatsapp/ChatsConWhatsapp), si lo hay. */
+  cambio?: ReactNode;
 };
 
-export function PantallaChats({ onAbrir, onAtras }: PropsPantallaChats) {
+export function PantallaChats({ onAbrir, onAtras, cambio }: PropsPantallaChats) {
   useIdioma();
   const pulse = usePulseSiHay();
   const cuenta = pulse ? pulse.cuenta : RELEVO.quien();
   useEffect(() => {
     emitir('pantalla', { pantalla: 'chats', chatAbierto: null });
   }, []);
-  return cuenta ? <Lista yo={cuenta.correo} onAbrir={onAbrir} onAtras={onAtras} /> : <SinCuenta onAtras={onAtras} />;
+  return cuenta ? <Lista yo={cuenta.correo} onAbrir={onAbrir} onAtras={onAtras} cambio={cambio} /> : <SinCuenta onAtras={onAtras} cambio={cambio} />;
 }
 
 /* ── sin cuenta del chat en este teléfono ─────────────────────────────────────────────────── */
 
-function SinCuenta({ onAtras }: { onAtras?: () => void }) {
+function SinCuenta({ onAtras, cambio }: { onAtras?: () => void; cambio?: ReactNode }) {
   const p = useTema();
   const pulse = usePulseSiHay();
   const ins = useSafeAreaInsets();
@@ -75,6 +77,7 @@ function SinCuenta({ onAtras }: { onAtras?: () => void }) {
           <Icono nombre="atras" color={p.texto} tam={24} grosor={2} />
         </Tocable>
       ) : null}
+      {cambio ? <View style={{ paddingHorizontal: MEDIDA.espacio.l, marginTop: onAtras ? 0 : MEDIDA.espacio.m }}>{cambio}</View> : null}
       <View
         style={{
           flex: 1,
@@ -162,7 +165,7 @@ type Item =
   | { tipo: 'amigo'; clave: string; persona: RELEVO.Persona }
   | { tipo: 'remoto'; clave: string; persona: RELEVO.Persona };
 
-function Lista({ yo, onAbrir, onAtras }: { yo: string; onAbrir: (correo: string, nombre: string) => void; onAtras?: () => void }) {
+function Lista({ yo, onAbrir, onAtras, cambio }: { yo: string; onAbrir: (correo: string, nombre: string) => void; onAtras?: () => void; cambio?: ReactNode }) {
   const p = useTema();
   const s = useMemo(() => estilos(p), [p]);
   const ins = useSafeAreaInsets();
@@ -411,6 +414,7 @@ function Lista({ yo, onAbrir, onAtras }: { yo: string; onAbrir: (correo: string,
           </View>
           <BotonAuraAlLado color={p.texto2} colorActivo={p.acentoTexto} />
         </View>
+        {cambio ? <View style={{ marginTop: MEDIDA.espacio.m }}>{cambio}</View> : null}
         <View style={s.buscador}>
           <Icono nombre="buscar" tam={18} color={p.texto3} grosor={2} />
           <TextInput

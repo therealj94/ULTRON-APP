@@ -6,8 +6,13 @@
  * y los ojos te siguen. Ritmo según haga falta: ~3 fotos/s con alguien delante, 1/s sin nadie, una
  * cada 2,5 s dormida. Cada foto se borra al terminar.
  *
- * El servidor (lo que hay en la mesa, comentarios) recibe esa MISMA foto chica, y no a cada rato:
- * cada 20 s con alguien delante, cada 60 s sin nadie, nunca dormida.
+ * El servidor (lo que hay en la mesa, para «Comenta lo que ve») recibe esa MISMA foto chica y solo si
+ * hace falta (lib/vistaCamara.ts intervaloServidor): con «Comenta lo que ve» apagado, ninguna; encendido,
+ * cada 20 s con alguien delante (60 s sin nadie) y, si la escena no cambia, cada vez menos (hasta 2 y
+ * 4 min); nunca dormida. Contesta con una vista estructurada (objetos con caja, texto leído, lugar).
+ *
+ * `previa`: la vista de la cámara se hace visible (una ventanita arriba) para que la persona apunte lo
+ * que quiere que lea o reconozca; el resto del tiempo sigue casi invisible.
  *
  * Motor 'servidor' (respaldo): si ML Kit no está o falla 3 veces seguidas, se vuelve al de antes
  * —una foto cada 12 s (30 s dormida) al servidor—, pero ya con la foto chica.
@@ -28,8 +33,9 @@ import { AppState, StyleSheet, View, type AppStateStatus } from 'react-native';
 import { CameraView } from 'expo-camera';
 import * as FileSystem from 'expo-file-system/legacy';
 import FaceDetection from '@react-native-ml-kit/face-detection';
-import { describeImage } from '../lib/api';
-import { LOCAL_CON_PERSONA_MS, LOCAL_DORMIDA_MS, LOCAL_SIN_PERSONA_MS, SERVIDOR_CON_PERSONA_MS, SERVIDOR_SIN_PERSONA_MS } from '../lib/camaraModo';
+import { verCamara } from '../lib/api';
+import { LOCAL_CON_PERSONA_MS, LOCAL_DORMIDA_MS, LOCAL_SIN_PERSONA_MS } from '../lib/camaraModo';
+import { etiquetasDeVista, intervaloServidor, mismaEscena, type VistaCamara } from '../lib/vistaCamara';
 import { reportarEstado } from '../lib/reporte';
 import {
   MaquinaEscena,
@@ -84,7 +90,8 @@ function borrar(uri?: string | null) {
   if (uri) void FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
 }
 
-export type FrameGrabber = () => Promise<string | null>;
+/** `leer`: más calidad JPEG (texto chico, precios); lo normal basta para describir. */
+export type FrameGrabber = (opts?: { calidad?: 'normal' | 'leer' }) => Promise<string | null>;
 
 export type CamaraVisionProps = {
   /** Permiso concedido y visión encendida. Con false se emite una vez `{ motor: 'ninguno' }`. */
@@ -99,23 +106,18 @@ export type CamaraVisionProps = {
   onGaze?: (x: number, y: number, activa: boolean) => void;
   /** Etiquetas de la mesa según el nodo de visión (servidor). */
   onObjects?: (labels: string[]) => void;
-  /** Resumen + etiquetas del servidor (comentario proactivo en DeskScreen). */
-  onScene?: (summary: string, labels: string[]) => void;
+  /** La vista estructurada del servidor (comentario proactivo en DeskScreen). */
+  onVista?: (v: VistaCamara) => void;
+  /** «Comenta lo que ve» encendido: sin esto (y con ML Kit) no se sube ninguna foto por su cuenta. */
+  observar?: boolean;
+  /** La vista de la cámara visible (para apuntar lo que se quiere leer o reconocer). */
+  previa?: boolean;
   /** Cambio de motor real en uso. */
   onMotor?: (m: MotorVision) => void;
 };
 
-const LABEL_PROMPT =
-  'Responde SOLO con una lista corta en español, separada por comas, de lo visible (máximo 6): persona, objetos, gestos evidentes (ej: persona, taza, teléfono, saluda). Sin frases.';
-
-function parseLabels(text: string): string[] {
-  return text
-    .replace(/\.$/, '')
-    .split(/[,;\n]/)
-    .map((s) => s.trim().toLowerCase().replace(/^(una?|el|la|los|las|unos|unas)\s+/, ''))
-    .filter((s) => s.length > 2 && s.length < 32)
-    .slice(0, 6);
-}
+/** JPEG: el bucle (ML Kit + a veces el servidor) con poca; «qué ves» con algo más; leer con más. */
+const CALIDAD = { bucle: 0.5, normal: 0.6, leer: 0.85 } as const;
 
 function useAppActiva() {
   const [activa, setActiva] = useState(AppState.currentState === 'active' || AppState.currentState == null);
@@ -133,15 +135,17 @@ type Foto = { uri: string; width: number; height: number };
 type MotorProps = {
   activa: boolean;
   dormido: boolean;
+  observar: boolean;
+  previa: boolean;
   grabRef?: React.MutableRefObject<FrameGrabber | null>;
   /** Caras de una foto (ML Kit). Devuelve cuántas personas cuenta la escena. */
   onCaras: (caras: CaraMlkit[], w: number, h: number) => number;
   /** ML Kit no está o dejó de responder: a partir de aquí solo el servidor. */
   onSinDetector: () => void;
-  onEtiquetas: (summary: string, labels: string[]) => void;
+  onVista: (v: VistaCamara) => void;
 };
 
-function CamaraMotor({ activa, dormido, grabRef, onCaras, onSinDetector, onEtiquetas }: MotorProps) {
+function CamaraMotor({ activa, dormido, observar, previa, grabRef, onCaras, onSinDetector, onVista }: MotorProps) {
   const ref = useRef<CameraView>(null);
   const listaRef = useRef(false);
   const [tamano, setTamano] = useState<string | undefined>(undefined);
@@ -150,8 +154,10 @@ function CamaraMotor({ activa, dormido, grabRef, onCaras, onSinDetector, onEtiqu
   const mlOk = useRef(true);
   const dormidoRef = useRef(dormido);
   dormidoRef.current = dormido;
-  const cb = useRef({ onCaras, onSinDetector, onEtiquetas });
-  cb.current = { onCaras, onSinDetector, onEtiquetas };
+  const observarRef = useRef(observar);
+  observarRef.current = observar;
+  const cb = useRef({ onCaras, onSinDetector, onVista });
+  cb.current = { onCaras, onSinDetector, onVista };
 
   const tomar = useCallback(async (opciones: { base64: boolean; quality: number }): Promise<(Foto & { base64?: string }) | null> => {
     if (!ref.current || !listaRef.current) return null;
@@ -180,8 +186,8 @@ function CamaraMotor({ activa, dormido, grabRef, onCaras, onSinDetector, onEtiqu
   useEffect(() => {
     if (!grabRef) return;
     grabRef.current = activa
-      ? async () => {
-          const f = await conCamara(() => tomar({ base64: true, quality: 0.6 }));
+      ? async (o) => {
+          const f = await conCamara(() => tomar({ base64: true, quality: o?.calidad === 'leer' ? CALIDAD.leer : CALIDAD.normal }));
           if (!f) return null;
           borrar(f.uri);
           const b64 = f.base64 || null;
@@ -208,16 +214,28 @@ function CamaraMotor({ activa, dormido, grabRef, onCaras, onSinDetector, onEtiqu
     let fallos = 0;
     let ultimoServidor = 0;
     let conPersona = false;
+    let personasAntes = -1;
+    /** Vistas seguidas iguales: cada una espacia la siguiente subida (intervaloServidor). */
+    let sinCambios = 0;
+    let vistaAntes: VistaCamara | null = null;
+    /** Una subida a la vez: con 35 s de tope y 20 s de ritmo podían ir dos juntas. */
+    let subiendo = false;
     const servidor = async (uri: string) => {
+      subiendo = true;
       try {
         const b64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
         borrar(uri);
         if (!b64 || b64.length < MINIMO_FOTO) return;
         avisarUnaVez('buena', `cámara: primera foto al servidor (${b64.length} car. base64)`);
-        const text = await describeImage(b64, LABEL_PROMPT);
-        if (vivo && text) cb.current.onEtiquetas(text, parseLabels(text));
+        const r = await verCamara(b64, 'escena');
+        if (!vivo || !r?.vista) return;
+        sinCambios = mismaEscena(vistaAntes, r.vista) ? sinCambios + 1 : 0;
+        vistaAntes = r.vista;
+        cb.current.onVista(r.vista);
       } catch {
         borrar(uri);
+      } finally {
+        subiendo = false;
       }
     };
     void (async () => {
@@ -225,7 +243,7 @@ function CamaraMotor({ activa, dormido, grabRef, onCaras, onSinDetector, onEtiqu
       while (vivo) {
         const t0 = Date.now();
         let espera = LOCAL_SIN_PERSONA_MS;
-        const foto = await conCamara(() => tomar({ base64: false, quality: 0.5 }));
+        const foto = await conCamara(() => tomar({ base64: false, quality: CALIDAD.bucle }));
         if (!vivo) {
           borrar(foto?.uri);
           break;
@@ -235,7 +253,11 @@ function CamaraMotor({ activa, dormido, grabRef, onCaras, onSinDetector, onEtiqu
             try {
               const caras = await FaceDetection.detect(foto.uri, OPCIONES_ML);
               fallos = 0;
-              conPersona = cb.current.onCaras(caras.map(caraDeMlkit), foto.width, foto.height) > 0;
+              const personas = cb.current.onCaras(caras.map(caraDeMlkit), foto.width, foto.height);
+              conPersona = personas > 0;
+              // Llegó o se fue alguien: la escena cambió, la próxima subida vuelve al ritmo de base.
+              if (personasAntes >= 0 && personas !== personasAntes) sinCambios = 0;
+              personasAntes = personas;
             } catch (e) {
               fallos += 1;
               if (fallos >= FALLOS_ML_MAX) {
@@ -246,16 +268,8 @@ function CamaraMotor({ activa, dormido, grabRef, onCaras, onSinDetector, onEtiqu
             }
           }
           const dormida = dormidoRef.current;
-          const cadaServidor = mlOk.current
-            ? dormida
-              ? Infinity
-              : conPersona
-                ? SERVIDOR_CON_PERSONA_MS
-                : SERVIDOR_SIN_PERSONA_MS
-            : dormida
-              ? SERVIDOR_DORMIDO_MS
-              : SERVIDOR_CADA_MS;
-          if (Date.now() - ultimoServidor >= cadaServidor) {
+          const cadaServidor = intervaloServidor({ mlkit: mlOk.current, dormida, conPersona, necesitaEscena: observarRef.current, sinCambios });
+          if (!subiendo && Date.now() - ultimoServidor >= cadaServidor) {
             ultimoServidor = Date.now();
             void servidor(foto.uri); // lee la foto y la borra él
           } else {
@@ -283,8 +297,9 @@ function CamaraMotor({ activa, dormido, grabRef, onCaras, onSinDetector, onEtiqu
   }, [tamano]);
 
   if (!activa) return null;
+  // Misma vista con otro estilo: la cámara no se vuelve a montar al mostrarla u ocultarla.
   return (
-    <View style={styles.box} pointerEvents="none">
+    <View style={previa ? styles.previa : styles.box} pointerEvents="none">
       <CameraView
         ref={ref}
         style={StyleSheet.absoluteFill}
@@ -299,9 +314,9 @@ function CamaraMotor({ activa, dormido, grabRef, onCaras, onSinDetector, onEtiqu
 
 // ---------------------------------------------------------------- componente público
 
-export function CamaraVision({ enabled, dormido = false, grabRef, onEscena, onGaze, onObjects, onScene, onMotor }: CamaraVisionProps) {
-  const cb = useRef({ onEscena, onGaze, onObjects, onScene, onMotor });
-  cb.current = { onEscena, onGaze, onObjects, onScene, onMotor };
+export function CamaraVision({ enabled, dormido = false, grabRef, onEscena, onGaze, onObjects, onVista, onMotor, observar = false, previa = false }: CamaraVisionProps) {
+  const cb = useRef({ onEscena, onGaze, onObjects, onVista, onMotor });
+  cb.current = { onEscena, onGaze, onObjects, onVista, onMotor };
   const appActiva = useAppActiva();
   const maquina = useRef(new MaquinaEscena(UMBRALES_FOTOS)).current;
   const ultimaEscena = useRef<Escena | null>(null);
@@ -371,12 +386,13 @@ export function CamaraVision({ enabled, dormido = false, grabRef, onEscena, onGa
     conDetector.current = false;
   }, []);
 
-  // Etiquetas del nodo de visión: objetos y comentarios siempre; la presencia solo si no hay ML Kit
+  // La vista del nodo de visión: objetos y comentarios siempre; la presencia solo si no hay ML Kit
   // (con ML Kit, quién está delante lo sabe el teléfono, y mejor).
-  const onEtiquetas = useCallback(
-    (summary: string, labels: string[]) => {
+  const onVistaMotor = useCallback(
+    (v: VistaCamara) => {
+      const labels = etiquetasDeVista(v);
       if (labels.length) cb.current.onObjects?.(labels);
-      cb.current.onScene?.(summary, labels);
+      cb.current.onVista?.(v);
       if (conDetector.current) return;
       anunciarMotor('servidor');
       const e = escenaDesdeEtiquetas(labels, Date.now(), ultimaEscena.current);
@@ -391,7 +407,18 @@ export function CamaraVision({ enabled, dormido = false, grabRef, onEscena, onGa
   );
 
   if (!enabled) return null;
-  return <CamaraMotor activa={activa} dormido={dormido} grabRef={grabRef} onCaras={onCaras} onSinDetector={onSinDetector} onEtiquetas={onEtiquetas} />;
+  return (
+    <CamaraMotor
+      activa={activa}
+      dormido={dormido}
+      observar={observar}
+      previa={previa}
+      grabRef={grabRef}
+      onCaras={onCaras}
+      onSinDetector={onSinDetector}
+      onVista={onVistaMotor}
+    />
+  );
 }
 
 const styles = StyleSheet.create({
@@ -402,4 +429,19 @@ const styles = StyleSheet.create({
    * casi invisible (2% de opacidad, 96×72 en una esquina) sobre el negro de la mesa.
    */
   box: { position: 'absolute', left: 0, bottom: 0, width: 96, height: 72, opacity: 0.02, overflow: 'hidden' },
+  /** Visible para apuntar: arriba a la derecha, como un espejo chico (la vista frontal sale espejada). */
+  previa: {
+    position: 'absolute',
+    right: 12,
+    top: 96,
+    width: 132,
+    height: 176,
+    opacity: 1,
+    overflow: 'hidden',
+    borderRadius: 14,
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.75)',
+    zIndex: 30,
+    elevation: 30,
+  },
 });

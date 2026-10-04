@@ -16,7 +16,29 @@
  </ItemGroup>
  <ItemGroup>
   <Resource Include="AvatarAssets/**/*.png"/>
+  <!-- IBM Plex (SIL OFL 1.1) va dentro del .exe; la licencia viaja al lado, como pide la OFL. -->
+  <Resource Include="Fuentes/*.ttf"/>
+  <Content Include="Fuentes/OFL-IBM-Plex.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true"/>
   <Content Include="CallAssets/**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true"/>
   <Content Include="CentroAssets/**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true"/>
+  <Content Include="Modelos/**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true"/>
+  <!-- La cara de AURA: el orbe que aprobó José. Se publica LA FUENTE DE VERDAD (src/14-orbe/orbe.html), sin copia en
+       windows/ que se pueda desfasar; tests/Program.cs comprueba este enlace y el idioma que el notch le habla. -->
+  <Content Include="../../../src/14-orbe/orbe.html" Link="OrbeAssets/orbe.html" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true"/>
  </ItemGroup>
+ <!--
+  ONNX Runtime (el modelo propio «Hey AURA») va AL LADO del .exe, no dentro (auditoría 1-oct, H05): dentro del
+  .exe de un solo archivo se extraía a %TEMP% y, si eso fallaba o Windows encontraba antes otra copia (la vieja
+  de System32), NativeMethods no arrancaba. Aura.Windows.Core/MotorOnnx.cs lo carga por ruta completa desde aquí.
+  El runtime de Visual C++ que necesita (msvcp140*.dll, vcruntime140*.dll) lo copia publish.ps1 junto a él.
+  Los .lib del paquete (solo sirven para compilar C++) no se publican.
+ -->
+ <Target Name="OnnxAlLadoDelExe" AfterTargets="ComputeResolvedFilesToPublishList" Condition="'$(PublishSingleFile)' == 'true'">
+  <ItemGroup>
+   <ResolvedFileToPublish Condition="$([System.String]::Copy('%(Filename)').StartsWith('onnxruntime')) And '%(Extension)' == '.dll'">
+    <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+   </ResolvedFileToPublish>
+   <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="$([System.String]::Copy('%(Filename)').StartsWith('onnxruntime')) And '%(Extension)' == '.lib'"/>
+  </ItemGroup>
+ </Target>
 </Project>
