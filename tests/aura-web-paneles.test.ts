@@ -143,14 +143,15 @@ const DIST = process.env.AURA_DIST || path.join(process.cwd(), 'dist');
 const CHROMIUM = [process.env.AURA_CHROMIUM, '/opt/pw-browsers/chromium'].find((x) => x && fs.existsSync(x));
 const hayDist = fs.existsSync(path.join(DIST, 'index.html'));
 
-function servir(): Promise<{ url: string; cerrar: () => void }> {
+function servir(o: { conSesion?: boolean } = { conSesion: true }): Promise<{ url: string; cerrar: () => void }> {
   const tipos: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.json': 'application/json', '.mp3': 'audio/mpeg', '.webmanifest': 'application/manifest+json', '.wasm': 'application/wasm' };
   const srv = http.createServer((req, res) => {
     const u = new URL(req.url || '/', 'http://x');
     const json = (o: unknown) => (res.writeHead(200, { 'Content-Type': 'application/json' }), res.end(JSON.stringify(o)));
     if (u.pathname === '/api/health') return json({ qwen: { vivo: false } });
     if (u.pathname === '/api/nodo/listo') return json({ listo: false });
-    if (u.pathname === '/api/ultron/sesion') return json({ authenticated: false });
+    // La mesa solo se abre con sesión (sin ella, la puerta: José, 4-oct).
+    if (u.pathname === '/api/ultron/sesion') return json(o.conSesion ? { authenticated: true, user: { nombre: 'Prueba', rol: 'Junta', correo: 'prueba@ejemplo.com' } } : { authenticated: false });
     if (u.pathname === '/api/capacidades') return json({ capacidades: [] });
     if (u.pathname.startsWith('/api/')) return (res.writeHead(404, { 'Content-Type': 'application/json' }), res.end('{}'));
     let f = path.join(DIST, decodeURIComponent(u.pathname));
@@ -241,5 +242,29 @@ test(
       assert.equal(await p.getByRole('tab', { name: 'Voz' }).getAttribute('aria-selected'), 'true');
       await p.keyboard.press('Escape');
     });
+  }
+);
+
+test(
+  'en el navegador, sin sesión: solo la puerta de entrar (sin mesa, sin micrófono, no se cierra)',
+  { skip: !CHROMIUM ? 'sin Chromium de Playwright (AURA_CHROMIUM o /opt/pw-browsers)' : !hayDist ? 'sin dist/: correr la compilación antes' : false, timeout: 120000 },
+  async (t) => {
+    const { chromium } = await import('playwright');
+    const srv = await servir({ conSesion: false });
+    const b = await chromium.launch({ executablePath: CHROMIUM, args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader'] });
+    t.after(async () => {
+      await b.close();
+      srv.cerrar();
+    });
+    const p = await b.newPage({ viewport: { width: 390, height: 844 } });
+    await p.goto(srv.url + '/', { waitUntil: 'networkidle' });
+    await p.waitForSelector('#aura-acceso-titulo', { timeout: 20000 });
+    assert.equal((await p.locator('#aura-acceso-titulo').textContent())?.trim(), 'Entrar a AU-RA');
+    assert.equal(await p.locator('button[aria-label="Cerrar"]').count(), 0, 'la puerta no tiene «Cerrar»');
+    assert.equal(await p.locator('.aura-mic').count(), 0, 'sin micrófono');
+    assert.equal(await p.getByRole('button', { name: 'Escribir', exact: true }).count(), 0, 'sin la mesa detrás');
+    await p.keyboard.press('Escape');
+    await p.waitForTimeout(300);
+    assert.equal(await p.locator('#aura-acceso-titulo').count(), 1, 'Escape no la cierra');
   }
 );

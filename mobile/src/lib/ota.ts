@@ -18,7 +18,7 @@
 import { useEffect, useRef, useSyncExternalStore } from 'react';
 import { AppState, Keyboard, type AppStateStatus } from 'react-native';
 import * as Updates from 'expo-updates';
-import { miga } from './reporte';
+import { cierreIntencional, miga } from './reporte';
 import { escuchar } from '../nucleo/contrato';
 import { ecoMesa, mensajeVoz } from '../compa/canales';
 import { VARIANTE } from '../variante';
@@ -97,7 +97,8 @@ function recargar(por: string) {
   void prepararRecarga()
     .then((r) => {
       if (r.fallaron.length) miga(`ota: no se guardó antes de recargar (${r.fallaron.join(', ')})`);
-      return Updates.reloadAsync();
+      // La recarga es a propósito: el próximo arranque no la cuenta como crash.
+      return cierreIntencional('ota: recarga intencional').then(() => Updates.reloadAsync());
     })
     .catch(() => {
       recargando = false;
