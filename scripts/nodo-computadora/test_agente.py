@@ -1536,6 +1536,22 @@ class ArchivosComprobados(Base):
         self.assertEqual({k: a['tipo'] for k, a in self.por_nombre(r).items()},
                          {'f1.pdf': 'pdf', 'f2.pdf': 'pdf', 'f3.pdf': 'texto', 'runtime.log': 'texto'})
 
+    def test_hasta_veinte_nombres_como_el_servidor(self):
+        """Ronda 4: el nodo busca tantos nombres como cuenta (ARCHIVOS_MAX), no solo 8."""
+        nombres = [f'doc{i:02d}.txt' for i in range(12)]
+        r = self.correr_y_archivos('Listo.', instruccion='Crea ' + ', '.join(nombres),
+                                   antes=lambda t: [self.escribir(f'Documents/{n}', f'contenido {n}'.encode()) for n in nombres])
+        n = self.por_nombre(r)
+        self.assertEqual(sorted(k for k, a in n.items() if a['existe'] and a['mencionado']), nombres)
+        self.assertEqual(len(agente.rutas_mencionadas(' '.join(f'a{i}.pdf' for i in range(30)))), agente.ARCHIVOS_MAX)
+
+    def test_mayusculas_como_el_servidor(self):
+        """Ronda 4: el servidor compara los nombres sin distinguir mayúsculas; el nodo también («Informe.PDF» es informe.pdf)."""
+        r = self.correr_y_archivos('Listo.', instruccion='Guarda Informe.PDF en Documents',
+                                   antes=lambda t: self.escribir('Documents/informe.pdf', self.PDF))
+        self.assertEqual([(posixpath.basename(a['ruta']), a['existe'], a['mencionado']) for a in r['archivos']], [('informe.pdf', True, True)])
+        self.assertEqual(agente.rutas_mencionadas('Crea informe.pdf e INFORME.PDF'), ['informe.pdf'])
+
     def test_lo_que_nombra_sale_de_la_instruccion_y_la_respuesta_no_de_una_url(self):
         self.assertEqual(agente.rutas_mencionadas('Guarda la tabla en ~/Documents/precios.ods',
                                                   'Listo. Fuente: https://bch.hn/datos/tabla.csv y copia en resumen.txt.'),

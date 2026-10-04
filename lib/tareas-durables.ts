@@ -42,9 +42,9 @@ import {
   reservarPedido,
   type AlmacenDurable,
 } from './durable';
-import { compararEntrega, faltaEnPalabras, requisitosCombinados, requisitosDeEntrega, type ArchivoNodo, type ItemEntrega, type PedidoEntrega } from './entregables';
+import { compararEntrega, comprobarCopia, esOperacionDeArchivos, faltaEnPalabras, requisitosCombinados, requisitosDeEntrega, type ArchivoNodo, type ItemEntrega, type PedidoEntrega } from './entregables';
 
-export { requisitosCombinados, requisitosDeEntrega, type ArchivoNodo, type ItemEntrega, type PedidoEntrega } from './entregables';
+export { esOperacionDeArchivos, requisitosCombinados, requisitosDeEntrega, type ArchivoNodo, type ItemEntrega, type PedidoEntrega } from './entregables';
 
 /* ------------------------------------------------------------------ estados */
 
@@ -822,6 +822,26 @@ export function evaluarEntrega(m: Pick<MisionComputadoraMin, 'id' | 'instruccion
   // R1: un archivo que se nombró (el modelo dijo «guardé X», o la instrucción lo usa) y no existe no deja completar por
   // ningún camino; la misión se evalúa como de archivos y ese archivo es un criterio no cumplido.
   const nombradoQueFalta = (lista || []).some((a) => a && a.mencionado === true && a.existe !== true);
+  // Copiar, mover, renombrar, borrar o descomprimir: ACCIONES sobre archivos que ya existen. El texto no las comprueba;
+  // solo una copia que el nodo muestre en la carpeta pedida con la MISMA huella que el original (comprobarCopia).
+  // Si lo que pidió la persona (R5) trae entregables concretos, se comprueban esos (camino de archivos).
+  if (esOperacionDeArchivos(m.instruccion) && !(m.requisitos && m.requisitos.explicitos > 0)) {
+    const copia = !nombradoQueFalta && lista ? comprobarCopia(m.instruccion, lista) : null;
+    if (copia) {
+      const ev: Evidencia = { id: `${m.id}:copia`, tipo: 'archivo', etiqueta: texto(`${copia.detalle} (lo comprobó tu computadora)`, 200), ref: texto(copia.destino.ruta, 300) };
+      return { comprobada: true, tipo: 'accion', evidencias: [ev, ...abiertas], falta: null, items: [], hechos: 1, total: 1, revisado: true };
+    }
+    return {
+      comprobada: false,
+      tipo: 'accion',
+      evidencias: abiertas,
+      falta: 'Tu computadora dice que lo hizo (copiar, mover, renombrar, borrar o descomprimir), pero no pude comprobarlo: revísalo antes de darlo por hecho.',
+      items: [],
+      hechos: 0,
+      total: 1,
+      revisado: !!lista,
+    };
+  }
   if (nombradoQueFalta || pideArchivo(m.instruccion, m.resultado, m.requisitos)) {
     // Cada cosa pedida, por separado: su archivo (a lo más uno), su tipo por dentro, de esta misión, en su carpeta.
     const { items, seguro, sobran } = compararEntrega(m.instruccion, lista, m.requisitos);
@@ -869,7 +889,7 @@ function textoCriterio(r: { etiqueta: string; origen: 'pedido' | 'respuesta' }):
  */
 export function criteriosDeEncargo(instruccion: string, pedidoPersona?: string | null): { id: string; texto: string; obligatorio: boolean }[] {
   const req = requisitosCombinados(instruccion, pedidoPersona);
-  if (!pideArchivo(instruccion, null, req)) return [{ id: 'resultado', texto: TEXTO_RESULTADO, obligatorio: true }];
+  if (esOperacionDeArchivos(instruccion) || !pideArchivo(instruccion, null, req)) return [{ id: 'resultado', texto: TEXTO_RESULTADO, obligatorio: true }];
   return req.items.map((r) => ({ id: r.id, texto: textoCriterio(r), obligatorio: true }));
 }
 

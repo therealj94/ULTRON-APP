@@ -17,7 +17,7 @@ import * as durables from '../lib/tareas-durables';
 import { aplicarCambio, deComputadora, evaluarEntrega, reconciliarConComputadora, registroNuevo, type Criterio, type MisionComputadoraMin, type RegistroTarea } from '../lib/tareas-durables';
 
 // Por nombre del módulo: así la reproducción con el código de antes falla prueba por prueba, no al importar.
-const requisitosDeEntrega = (s: string): { seguro: boolean; items: { nombre?: string; extensiones: string[] }[] } => (durables as any).requisitosDeEntrega(s);
+const requisitosDeEntrega = (s: string): { seguro: boolean; items: { nombre?: string; extensiones: string[]; carpeta?: string }[] } => (durables as any).requisitosDeEntrega(s);
 import { encargarTarea, _olvidarEncargos, misionDeTarea, vistaMision } from '../server/computadora';
 import { almacenEnMemoria, _usarAlmacenDurable } from '../lib/durable';
 import { crearTarea, leerTarea, ENTORNO_INVESTIGACION } from '../lib/tareas-durables';
@@ -687,6 +687,79 @@ test('calificador de formato: «dos archivos PDF» son 2 PDFs, no 2 archivos + 1
   const control = requisitosDeEntrega('Crea un Word y un PDF');
   assert.equal(control.items.length, 2);
   assert.deepEqual(control.items.map((i) => i.extensiones.includes('pdf')).sort(), [false, true]);
+});
+
+/* ------------------------------------------------------------------ ronda 4 */
+
+type Pedido = { items: { nombre?: string; extensiones: string[]; carpeta?: string }[]; seguro: boolean };
+const combinar4 = (i: string, p?: string): Pedido => (durables as any).requisitosCombinados(i, p);
+const conRequisitos = (instr: string, req: unknown, archivos: A[]) => evaluarEntrega({ ...mision(instr, archivos, 'Listo.'), requisitos: req } as any);
+
+test('ronda 4 · 1: al combinar, lo más específico gana (un nombre o un tipo le gana a lo genérico)', () => {
+  const r1 = combinar4('Crea informe.docx', 'Hazme un archivo');
+  assert.deepEqual(r1.items.map((i) => i.nombre), ['informe.docx'], JSON.stringify(r1));
+  assert.equal(conRequisitos('Crea informe.docx', r1, [arch('Documents/informe.docx', 'texto', '1'), arch('Documents/x.txt', 'texto', '2')]).comprobada, false, 'un informe.docx que por dentro es texto no cumple');
+  assert.equal(conRequisitos('Crea informe.docx', r1, [arch('Documents/informe.docx', 'docx', '1')]).comprobada, true);
+  const r2 = combinar4('Crea resumen.pdf', 'Hazme un PDF');
+  assert.deepEqual(r2.items.map((i) => i.nombre), ['resumen.pdf']);
+  assert.equal(conRequisitos('Crea resumen.pdf', r2, [arch('Documents/resumen.pdf', 'texto', '1'), arch('Documents/otro.pdf', 'pdf', '2')]).comprobada, false);
+  const r3 = combinar4('Crea informe.docx y datos.xlsx', 'Hazme dos documentos');
+  assert.deepEqual(r3.items.map((i) => i.nombre), ['informe.docx', 'datos.xlsx']);
+  assert.equal(conRequisitos('Crea informe.docx y datos.xlsx', r3, [arch('Documents/informe.docx', 'texto', '1'), arch('Documents/notas.txt', 'texto', '2'), arch('Documents/datos.xlsx', 'xlsx', '3')]).comprobada, false);
+  // La cantidad mayor, con los nombres.
+  const r4 = combinar4('Crea informe.docx', 'Hazme tres archivos');
+  assert.equal(r4.items.length, 3);
+  assert.ok(r4.items.some((i) => i.nombre === 'informe.docx'));
+  // Se contradicen: otro tipo.
+  assert.equal(combinar4('Crea informe.docx', 'Hazme un PDF').seguro, false);
+  assert.equal(combinar4('Crea resumen.pdf', 'Crea informe.pdf').seguro, false, 'otro nombre');
+});
+
+test('ronda 4 · 2: una corrección hablada reemplaza; un ejemplo de referencia es origen', () => {
+  const n = (q: string) => requisitosDeEntrega(q).items;
+  assert.equal(n('Hazme dos PDFs, no, tres PDFs').length, 3);
+  assert.deepEqual(n('Hazme el informe en PDF no, mejor en Word').map((i) => i.extensiones[0]), ['docx']);
+  assert.equal(n('Hazme dos PDFs, como el PDF de ayer').length, 2);
+  assert.deepEqual(n('Hazme un Word, perdón, un PDF').map((i) => i.extensiones[0]), ['pdf']);
+  assert.deepEqual(n('Hazme un PDF y no un Word').map((i) => i.extensiones[0]), ['pdf'], '«no un Word» excluye, no suma');
+  assert.equal(n('Hazme tres PDFs igual que el anterior').length, 3);
+  assert.equal(cerrar('Hazme dos PDFs, no, tres PDFs', [arch('a.pdf', 'pdf', '1'), arch('b.pdf', 'pdf', '2'), arch('c.pdf', 'pdf', '3')], 'Listo.').c.estado, 'completed');
+});
+
+test('ronda 4 · 3: la carpeta dicha con palabras se comprueba', () => {
+  const r = requisitosDeEntrega('Guarda informe.pdf en la carpeta facturas');
+  assert.equal(r.items[0].carpeta, 'facturas');
+  assert.equal(cerrar('Guarda informe.pdf en la carpeta facturas', [arch('Documents/otra/informe.pdf', 'pdf', '1', { mencionado: true })], 'Listo.').c.estado, 'partial');
+  assert.equal(cerrar('Guarda informe.pdf en la carpeta facturas', [arch('Documents/facturas/informe.pdf', 'pdf', '1', { mencionado: true })], 'Listo.').c.estado, 'completed');
+  const q = 'Hazme 2 PDFs y guárdalos en Documentos/facturas';
+  assert.deepEqual(requisitosDeEntrega(q).items.map((i) => i.carpeta), ['documents/facturas', 'documents/facturas']);
+  assert.equal(cerrar(q, [arch('a.pdf', 'pdf', '1'), arch('b.pdf', 'pdf', '2')], 'Listo.').c.estado, 'partial', 'en la raíz no');
+  assert.equal(cerrar(q, [arch('Documents/facturas/a.pdf', 'pdf', '1'), arch('Documents/facturas/b.pdf', 'pdf', '2')], 'Listo.').c.estado, 'completed');
+  assert.equal(cerrar('Hazme un PDF y guárdalo en el escritorio', [arch('Desktop/x.pdf', 'pdf', '1')], 'Listo.').c.estado, 'completed', 'Escritorio = Desktop');
+  assert.equal(cerrar('Hazme un PDF y guárdalo en el escritorio', [arch('Documents/x.pdf', 'pdf', '1')], 'Listo.').c.estado, 'partial');
+  assert.equal(cerrar('Descarga el reglamento en Descargas', [arch('Downloads/reglamento.pdf', 'pdf', '1')], 'Listo.').c.estado, 'completed', 'Descargas = Downloads');
+});
+
+test('ronda 4 · 4: copiar, mover, renombrar o borrar no se dan por hechos por el texto', () => {
+  const dicho = 'Listo, ya quedó: el contrato de arrendamiento del local está ahora donde pediste, con fecha de hoy.';
+  for (const q of ['Copia el contrato a la carpeta de José', 'Mueve las facturas a la carpeta 2024', 'Renombra el contrato a contrato-final', 'Borra los borradores viejos del escritorio']) {
+    const e = evaluarEntrega(mision(q, [], dicho));
+    assert.equal(e.comprobada, false, q);
+    assert.equal(cerrar(q, [], dicho).c.estado, 'partial', q);
+  }
+  // Estricto: la copia nombrada existe en la carpeta pedida con la MISMA huella que el original.
+  const q = 'Copia contrato.pdf a la carpeta jose';
+  const original = arch('Documents/contrato.pdf', 'pdf', '7', { mencionado: true, reciente: false });
+  assert.equal(cerrar(q, [original, arch('jose/contrato.pdf', 'pdf', '7', { mencionado: true })], 'Listo.').c.estado, 'completed');
+  assert.equal(cerrar(q, [original, arch('jose/contrato.pdf', 'pdf', '8', { mencionado: true })], 'Listo.').c.estado, 'partial', 'otra huella no es una copia');
+  assert.equal(cerrar(q, [original, arch('otra/contrato.pdf', 'pdf', '7', { mencionado: true })], 'Listo.').c.estado, 'partial', 'otra carpeta tampoco');
+});
+
+test('ronda 4 · 5: «descomprime facturas.zip» no pide el ZIP como entregable', () => {
+  const q = 'Descomprime facturas.zip';
+  const c = cerrar(q, [arch('Downloads/facturas.zip', 'zip', 'z', { mencionado: true, reciente: false }), arch('Downloads/facturas/f1.pdf', 'pdf', '1')], 'Listo, ya lo descomprimí.');
+  assert.ok(!c.criterios.some((x) => /facturas\.zip: existe/.test(x.texto)), `el ZIP es el origen: ${JSON.stringify(c.criterios.map((x) => x.texto))}`);
+  assert.equal(c.c.estado, 'partial', 'sin poder comprobar qué salió del ZIP, queda sin comprobar');
 });
 
 test('ronda 3: lo legítimo de un archivo sigue completando', () => {

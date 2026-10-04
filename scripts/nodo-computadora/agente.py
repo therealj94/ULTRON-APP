@@ -821,9 +821,10 @@ def rutas_mencionadas(*textos):
     vistas = []
     for texto in textos:
         for m in RE_ARCHIVO.finditer(RE_URL.sub(' ', str(texto or ''))):
-            if m.group(1) not in vistas:
+            # Sin distinguir mayúsculas, como el servidor (lib/entregables.ts): «Informe.PDF» es informe.pdf.
+            if m.group(1).lower() not in [v.lower() for v in vistas]:
                 vistas.append(m.group(1))
-    return vistas[:8]
+    return vistas[:ARCHIVOS_MAX]
 
 
 def ruta_en_espacio(ruta):
@@ -900,7 +901,7 @@ def comando_archivos(nombres, minutos):
     base = f'find {q} -mindepth 1 -maxdepth {ARCHIVOS_PROFUNDIDAD} -name ".*" -prune -o -type f'
     partes = []
     if nombres:
-        partes.append(base + ' \\( ' + ' -o '.join(f'-name {shlex.quote(n)}' for n in nombres) + ' \\) -print')
+        partes.append(base + ' \\( ' + ' -o '.join(f'-iname {shlex.quote(n)}' for n in nombres) + ' \\) -print')
     partes.append(f'{base} -mmin -{int(minutos)} -print')
     return (f'cd {q} 2>/dev/null || {{ echo SIN_ESPACIO; exit 0; }}; '
             '{ ' + '; '.join(partes) + "; } 2>/dev/null | awk '!v[$0]++' | head -n 40 | "
@@ -920,7 +921,7 @@ def comprobar_archivos(t, respuesta):
     for n in rutas_mencionadas(t.instruccion, respuesta):
         dentro = ruta_en_espacio(n)
         (fuera if dentro is None else buscar).append((n, dentro))
-    nombres = sorted({posixpath.basename(dentro or n) for n, dentro in buscar})
+    nombres = sorted({posixpath.basename(dentro or n).lower() for n, dentro in buscar})
     minutos = int((time.time() - t.desde) // 60) + 2
     try:
         salida = en_escritorio(comando_archivos(nombres, minutos), timeout=40).decode('utf-8', 'replace')
@@ -929,8 +930,8 @@ def comprobar_archivos(t, respuesta):
     if salida.strip() == 'SIN_ESPACIO':
         return None, f'no encontré el espacio de trabajo ({ESPACIO_TRABAJO})'
 
-    def es(a, n, dentro):
-        return a['ruta'] == dentro if dentro else posixpath.basename(a['ruta']) == posixpath.basename(n)
+    def es(a, n, dentro):  # sin distinguir mayúsculas, como el servidor
+        return a['ruta'].lower() == dentro.lower() if dentro else posixpath.basename(a['ruta']).lower() == posixpath.basename(n).lower()
 
     archivos = []
     for linea in salida.splitlines():

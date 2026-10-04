@@ -55,6 +55,8 @@ export type Requisito = {
   libre?: boolean;
   /** Algo sin nombre que se bajó o se abrió puede ser lo mismo que esto: nunca queda verificado (dice qué). */
   dudoso?: string;
+  /** La carpeta dicha con palabras («en la carpeta facturas», «en Documentos/facturas»), normalizada: documents/facturas. */
+  carpeta?: string;
 };
 
 export type EstadoItem = 'verified' | 'not_met' | 'unknown';
@@ -243,7 +245,16 @@ export function clavesDe(instruccion: string): string[] {
 
 /** Dejar algo: crear, guardar, descargar, exportar, imprimir, comprimir, copiar… */
 const RE_V_ENTREGA =
-  /^(crea\w*|crear\w*|haz|hazme|hacer|hagas|escrib\w*|genera\w*|arma\w*|prepara\w*|redacta\w*|guard\w*|descarg\w*|baja|bajame|bajate|bajar\w*|export\w*|saca\w*|toma\w*|imprim\w*|comprim\w*|zipea\w*|copia|copiame|copialo|copiala|copiar\w*|mueve|muevelo|muevela|mover\w*|renombra\w*|pon|ponme|ponlo|ponla|make|create|write|generate|draft|save|download|export|take|print\w*|grab|snap|screenshot|capture|compress\w*|zip|copy|move|rename)$/;
+  /^(crea\w*|crear\w*|haz|hazme|hacer|hagas|escrib\w*|genera\w*|arma\w*|prepara\w*|redacta\w*|guard\w*|descarg\w*|baja|bajame|bajate|bajar\w*|export\w*|saca\w*|toma\w*|imprim\w*|comprim\w*|zipea\w*|pon|ponme|ponlo|ponla|ponlos|ponlas|make|create|write|generate|draft|save|download|export|take|print\w*|grab|snap|screenshot|capture|compress\w*|zip)$/;
+/**
+ * Operar sobre archivos que ya existen: copiar, mover, renombrar, borrar, descomprimir. Son ACCIONES: su objeto es el
+ * origen y el resultado no se crea de cero; el texto no las comprueba (evaluarEntrega: «sin comprobar», salvo una copia
+ * que el nodo muestre con la misma huella en la carpeta pedida).
+ */
+const RE_V_OPERACION =
+  /^(copia|copiame|copialo|copiala|copialos|copialas|copiar\w*|mueve|muevelo|muevela|muevelos|muevelas|mover\w*|renombra\w*|borra\w*|elimina\w*|descomprim\w*|extrae\w*|unzip\w*|copy|move|rename|delete|remove|extract)$/;
+/** «una copia», «a copy»: el sustantivo, no el verbo. */
+const ARTICULOS = new Set(['un', 'una', 'la', 'el', 'otra', 'otro', 'a', 'an', 'the', 'su', 'tu', 'mi']);
 /** Pedirlo sin verbo de hacer: «necesito tres PDFs», «dame los dos documentos». */
 const RE_V_NECESIDAD = /^(necesito|necesitamos|necesita|ocupo|ocupamos|quiero|queremos|dame|deme|damelos|damelas|consigue\w*|consiguen|need|want)$/;
 /** De dónde sale lo que se usa, o un dato que se pide de algo: leer, abrir, usar, buscar, «dime»… («lee informe.pdf», «busca fotos»). */
@@ -270,6 +281,10 @@ function verboYPapel(antes: string): { verbo: string | null; papel: Papel } {
   const palabras = oracion.match(/[a-zñ]+/g) || [];
   for (let i = palabras.length - 1; i >= 0; i--) {
     const w = palabras[i];
+    if (RE_V_OPERACION.test(w)) {
+      if (ARTICULOS.has(palabras[i - 1] || '')) continue; // «una copia en ~/Desktop/…»
+      return { verbo: w, papel: 'origen' };
+    }
     if (RE_V_ENTREGA.test(w) || RE_V_NECESIDAD.test(w)) return { verbo: w, papel: 'entrega' };
     if (RE_V_ORIGEN.test(w)) return { verbo: w, papel: 'origen' };
     if (RE_V_CONVERTIR.test(w)) return { verbo: w, papel: RE_DESTINO_ANTES.test(antes.trimEnd() + ' ') ? 'entrega' : 'origen' };
@@ -282,6 +297,58 @@ const esArticuloIngles = (previo: string) => /\b(make|create|write|generate|draf
 /** Bajar o guardar algo (no «haz las cuentas»): solo entonces un plural de otra cosa son archivos. */
 const RE_V_BAJAR = /^(guard|descarg|baj|export|download|save)/;
 const raizDe = (w: string) => w.replace(/(es|s)$/, '');
+
+/** ¿La instrucción solo opera sobre archivos que ya existen (copiar, mover, renombrar, borrar, descomprimir), sin crear nada? */
+export function esOperacionDeArchivos(instruccion: string): boolean {
+  const palabras = plegar(sinUrls(String(instruccion || ''))).match(/[a-zñ]+/g) || [];
+  const op = palabras.some((w, i) => RE_V_OPERACION.test(w) && !ARTICULOS.has(palabras[i - 1] || ''));
+  const otra = palabras.some((w) => RE_V_ENTREGA.test(w) || RE_V_NECESIDAD.test(w) || RE_V_CONVERTIR.test(w));
+  return op && !otra;
+}
+
+/* ---- correcciones, negaciones y ejemplos de referencia ---- */
+
+/** «dos PDFs, no, tres PDFs», «en PDF no, mejor en Word», «un Word, perdón, un PDF»: lo de después reemplaza a lo de antes. */
+const RE_CORRECCION = /\bno\s*[,:;]|\bmejor\b|\bmas bien\b|\bperdon\b|\bdigo\b|\bo sea\b|\bquiero decir\b|\bcorrijo\b|\bi mean\b|\bactually\b|\brather\b|\bsorry\b/;
+/** «y no un Word», «sin PDF», «not a PDF»: eso no se pide. */
+const RE_NEGACION_ANTES = /\b(?:no|sin|without|not|ni)\s+(?:(?:un|una|el|la|los|las|en|a|an|the|ningun|ninguna)\s+)?$/;
+/** «como el PDF de ayer», «igual que el anterior», «basado en la plantilla»: un ejemplo de referencia (origen), no un entregable. */
+const RE_REFERENCIA_ANTES =
+  /(?:\b(?:como|like)\s+(?:el|la|los|las|the)\s+|\b(?:igual que|igual a|parecid[oa]s? a|similar a|basad[oa]s? en|siguiendo|al estilo de|similar to|based on|same as)\s+(?:(?:el|la|los|las|al|the)\s+)?)$/;
+
+/* ---- la carpeta dicha con palabras ---- */
+
+const ALIAS_CARPETA: Record<string, string> = {
+  documentos: 'documents', 'mis documentos': 'documents', documents: 'documents',
+  escritorio: 'desktop', desktop: 'desktop',
+  descargas: 'downloads', downloads: 'downloads',
+  imagenes: 'pictures', pictures: 'pictures', fotos: 'pictures',
+};
+/** «Documentos/Facturas» → «documents/facturas»; «escritorio» → «desktop». */
+export function normalizarCarpeta(c: string): string {
+  return plegar(c)
+    .split('/')
+    .map((x) => x.trim())
+    .filter((x) => x && x !== '~' && x !== '.')
+    .map((x) => ALIAS_CARPETA[x] || x)
+    .join('/');
+}
+/** ¿El archivo está directamente en esa carpeta (al final de su ruta)? */
+export function enCarpeta(ruta: string, carpeta: string): boolean {
+  const padre = normalizarCarpeta(String(ruta).split('/').slice(0, -1).join('/')).split('/');
+  const quiere = carpeta.split('/').filter(Boolean);
+  if (!quiere.length || quiere.length > padre.length) return false;
+  return quiere.every((x, i) => padre[padre.length - quiere.length + i] === x);
+}
+/** «en la carpeta facturas», «a la carpeta de José», «en Documentos/facturas», «en el escritorio», «en Descargas», «into the Reports folder». */
+const RE_CARPETA_DICHA = new RegExp(
+  [
+    '\\b(?:en|a|al|dentro de|in|into|to)\\s+(?:(?:la|el|mi|tu|su|the|my|your)\\s+)?(?:carpeta|folder|directorio)\\s+(?:de\\s+|del\\s+|llamada\\s+|called\\s+)?["«]?([a-z0-9ñ_.-]+(?:/[a-z0-9ñ_.-]+)*)',
+    '\\b(?:en|a|al|in|into|to)\\s+(?:(?:la|el|mis|tus|sus|mi|tu|su|the|my|your)\\s+)?((?:documentos|documents|escritorio|desktop|descargas|downloads|imagenes|pictures)(?:/[a-z0-9ñ_.-]+)*)\\b',
+    '\\b(?:en|a|al|in|into|to)\\s+(~?/?[a-z0-9ñ_.-]+(?:/[a-z0-9ñ_.-]+)+)/?',
+  ].join('|'),
+  'g'
+);
 
 /** Lo que se usa sin nombre («baja el estado de cuenta», «abre el excel del correo»): `ext` null si no se sabe de qué tipo es. */
 export type OrigenSinNombre = { etiqueta: string; ext: string[] | null; pos: number };
@@ -310,18 +377,18 @@ export function requisitosDeEntrega(instruccion: string): PedidoEntrega {
   const origenes: PedidoEntrega['origenes'] = { nombres: [], sinNombre: [] };
 
   // 1) Los nombres que se entregan; los de origen, aparte. Sin repetir la MISMA ruta; el mismo nombre en otra carpeta es otro.
-  type Nombre = { nombre: string; ruta?: string; pos: number };
+  type Nombre = { nombre: string; ruta?: string; pos: number; fin: number };
   const vistos: Nombre[] = [];
   for (const m of sinWeb.matchAll(RE_NOMBRE)) {
     const pos = m.index ?? 0;
     const ruta = m[1];
     const antes = plegar(sinWeb.slice(0, pos));
     const papel = papelEn(antes);
-    if (papel === 'origen' || RE_ORIGEN_ANTES.test(antes.trimEnd() + ' ')) {
+    if (papel === 'origen' || RE_ORIGEN_ANTES.test(antes.trimEnd() + ' ') || RE_REFERENCIA_ANTES.test(antes.trimEnd() + ' ')) {
       if (!origenes.nombres.includes(nombreDeRuta(ruta).toLowerCase())) origenes.nombres.push(nombreDeRuta(ruta).toLowerCase());
       continue;
     }
-    vistos.push({ nombre: nombreDeRuta(ruta), ...(ruta.includes('/') ? { ruta } : {}), pos });
+    vistos.push({ nombre: nombreDeRuta(ruta), ...(ruta.includes('/') ? { ruta } : {}), pos, fin: pos + m[0].length });
   }
   const clave = (n: Nombre) => (n.ruta ? n.ruta.replace(/^\.\//, '') : n.nombre).toLowerCase();
   const nombres: Nombre[] = [];
@@ -364,13 +431,15 @@ export function requisitosDeEntrega(instruccion: string): PedidoEntrega {
     unidas.push(a);
   }
 
-  type Frase = { fam: Familia; cantidad: number | null; pos: number; otro: boolean; absorbio: number; verbo: string | null };
+  type Frase = { fam: Familia; cantidad: number | null; pos: number; fin: number; otro: boolean; absorbio: number; verbo: string | null };
   const frases: Frase[] = [];
   const reformatos: { fam: Familia; pos: number }[] = [];
   for (const u of unidas) {
     const { fam, det, sustantivo, pos } = u;
     const previo = sinNombres.slice(0, pos).trimEnd() + ' ';
     const v = verboYPapel(sinNombres.slice(0, pos));
+    // «como el PDF de ayer», «igual que la plantilla»: un ejemplo, no algo que entregar.
+    if (RE_REFERENCIA_ANTES.test(previo) || (/^(el|la|los|las|the)$/.test(det) && /\b(?:como|like)\s+$/.test(previo))) continue;
     // «del PDF», «abre el PDF», «busca fotos»: de dónde sale (se anota como origen). «en Documentos»: la carpeta.
     if (v.papel === 'origen' || RE_ORIGEN_ANTES.test(previo)) {
       if (v.papel === 'origen' && v.verbo && RE_V_TRAER.test(v.verbo)) origenes.sinNombre.push({ etiqueta: fam.clase, ext: fam.ext.length ? fam.ext : null, pos });
@@ -387,7 +456,20 @@ export function requisitosDeEntrega(instruccion: string): PedidoEntrega {
       reformatos.push({ fam, pos });
       continue;
     }
-    frases.push({ fam, cantidad, pos, otro: /^(otro|otra|another)$/.test(det), absorbio: 0, verbo: v.verbo });
+    frases.push({ fam, cantidad, pos, fin: u.fin, otro: /^(otro|otra|another)$/.test(det), absorbio: 0, verbo: v.verbo });
+  }
+  // Una corrección hablada («dos PDFs, no, tres PDFs», «en PDF no, mejor en Word») reemplaza lo que corrige; «y no un
+  // Word» excluye lo que niega. Entre nombres y frases, en el orden en que se dijeron.
+  {
+    const menciones = [...nombres.map((n) => ({ n, f: null as Frase | null, pos: n.pos, fin: n.fin })), ...frases.map((f) => ({ n: null as Nombre | null, f, pos: f.pos, fin: f.fin }))].sort((x, y) => x.pos - y.pos);
+    const fuera = new Set<unknown>();
+    menciones.forEach((cur, i) => {
+      const antesDe = sinNombres.slice(i > 0 ? menciones[i - 1].fin : 0, cur.pos);
+      if (RE_NEGACION_ANTES.test(sinNombres.slice(0, cur.pos).trimEnd() + ' ') && !/[,;:]\s*$/.test(antesDe.trimEnd())) fuera.add(cur.n || cur.f);
+      else if (i > 0 && RE_CORRECCION.test(antesDe)) fuera.add(menciones[i - 1].n || menciones[i - 1].f);
+    });
+    for (let i = nombres.length - 1; i >= 0; i--) if (fuera.has(nombres[i])) nombres.splice(i, 1);
+    for (let i = frases.length - 1; i >= 0; i--) if (fuera.has(frases[i])) frases.splice(i, 1);
   }
   // «Crea un documento… y guárdalo como PDF»: el formato del entregable de antes (el mismo archivo), no otro. Si lo de
   // antes tiene nombre («crea informe.docx y expórtalo a PDF»), son dos: el nombrado y el exportado.
@@ -399,7 +481,7 @@ export function requisitosDeEntrega(instruccion: string): PedidoEntrega {
       f.fam = r.fam;
       continue;
     }
-    extra.push({ fam: r.fam, cantidad: 1, pos: r.pos, otro: true, absorbio: 0, verbo: null });
+    extra.push({ fam: r.fam, cantidad: 1, pos: r.pos, fin: r.pos, otro: true, absorbio: 0, verbo: null });
   }
   frases.push(...extra);
   // «Comprime la carpeta reportes»: comprimir deja un ZIP aunque no lo nombre.
@@ -407,7 +489,8 @@ export function requisitosDeEntrega(instruccion: string): PedidoEntrega {
   const iComp = palabras.findIndex((w) => RE_V_COMPRIMIR.test(w));
   if (iComp >= 0 && !frases.some((f) => f.fam.clave === 'zip') && !nombres.some((n) => extDe(n.nombre) === 'zip')) {
     const zip = FAMILIAS.find((f) => f.clave === 'zip')!;
-    frases.push({ fam: zip, cantidad: 1, pos: sinNombres.search(new RegExp(`\\b${palabras[iComp]}\\b`)), otro: true, absorbio: 0, verbo: palabras[iComp] });
+    const posZip = sinNombres.search(new RegExp(`\\b${palabras[iComp]}\\b`));
+    frases.push({ fam: zip, cantidad: 1, pos: posZip, fin: posZip, otro: true, absorbio: 0, verbo: palabras[iComp] });
   }
   frases.sort((a, b) => a.pos - b.pos);
 
@@ -422,6 +505,7 @@ export function requisitosDeEntrega(instruccion: string): PedidoEntrega {
   }
 
   const items: Requisito[] = [];
+  const posDe = new Map<Requisito, number>();
   const repetido = (n: Nombre) => nombres.filter((x) => x.nombre.toLowerCase() === n.nombre.toLowerCase()).length > 1;
   const dudosoPara = (ext: string[], pos: number) => origenes.sinNombre.find((o) => o.pos < pos && (o.ext === null || ext.length === 0 || o.ext.some((e) => ext.includes(e))));
   // Cada nombre es suyo; si viene después de una frase del mismo tipo que aún tiene sitio, es una de esas cosas.
@@ -430,6 +514,7 @@ export function requisitosDeEntrega(instruccion: string): PedidoEntrega {
     const f = [...frases].reverse().find((x) => !x.otro && x.pos < n.pos && (x.fam.ext.length === 0 || x.fam.ext.includes(ext)) && (x.cantidad === null || x.absorbio < x.cantidad));
     if (f) f.absorbio++;
     items.push({ id: '', etiqueta: n.ruta && repetido(n) ? n.ruta : n.nombre, nombre: n.nombre, ...(n.ruta ? { ruta: n.ruta } : {}), extensiones: [ext], clase: claseDeExt(ext), cantidadSegura: true, origen: 'pedido' });
+    posDe.set(items[items.length - 1], n.pos);
   }
   for (const f of frases) {
     const dudoso = dudosoPara(f.fam.ext, f.pos);
@@ -439,11 +524,13 @@ export function requisitosDeEntrega(instruccion: string): PedidoEntrega {
       if (f.absorbio > 0) continue; // «los documentos informe.docx y carta.pdf»: los nombres dicen cuántos
       seguro = false;
       items.push({ id: '', etiqueta: `${f.fam.claseP} (no dijiste cuántos)`, extensiones: f.fam.ext, clase: f.fam.clase, cantidadSegura: false, origen: 'pedido', ...marca });
+      posDe.set(items[items.length - 1], f.pos);
       continue;
     }
     const resto = f.cantidad - f.absorbio;
     for (let k = 1; k <= resto; k++) {
       items.push({ id: '', etiqueta: resto > 1 ? `${f.fam.claseN} n.º ${k}` : f.fam.clase, extensiones: f.fam.ext, clase: f.fam.clase, cantidadSegura: true, origen: 'pedido', ...(f.fam.ext.length ? {} : { libre: true }), ...marca });
+      posDe.set(items[items.length - 1], f.pos);
     }
   }
 
@@ -472,27 +559,114 @@ export function requisitosDeEntrega(instruccion: string): PedidoEntrega {
   }
   const explicitos = items.length;
   if (!items.length) items.push({ id: '', etiqueta: 'el archivo que pediste', extensiones: [], clase: 'un archivo', cantidadSegura: true, origen: 'pedido' });
+
+  // 4) La carpeta dicha con palabras, con un verbo de dejar: restricción del requisito al que se refiere. «guárdalos» =
+  // todo lo anterior; «guárdalo» = lo último; «guarda informe.pdf en la carpeta X» = lo que va entre el verbo y la
+  // carpeta. Si no se puede asociar sin duda (o dos carpetas para lo mismo), no es seguro.
+  for (const m of sinNombres.matchAll(RE_CARPETA_DICHA)) {
+    const pos = m.index ?? 0;
+    const carpeta = normalizarCarpeta(m[1] || m[2] || m[3] || '');
+    if (!carpeta) continue;
+    const antes = sinNombres.slice(0, pos);
+    const ini = Math.max(...[...antes.matchAll(new RegExp(RE_FIN_ORACION, 'g'))].map((x) => (x.index ?? 0) + 1), 0);
+    const ws = [...antes.slice(ini).matchAll(/[a-zñ]+/g)];
+    let verbo: { w: string; pos: number } | null = null;
+    for (let i = ws.length - 1; i >= 0; i--) {
+      const w = ws[i][0];
+      if (RE_V_OPERACION.test(w) && !ARTICULOS.has(ws[i - 1]?.[0] || '')) break; // copiar/mover: es el destino de una acción
+      if (RE_V_ENTREGA.test(w) || RE_V_NECESIDAD.test(w)) {
+        verbo = { w, pos: ini + (ws[i].index ?? 0) };
+        break;
+      }
+    }
+    if (!verbo) continue;
+    const v = verbo;
+    const conPos = items.filter((it) => posDe.has(it));
+    let objetivo: Requisito[];
+    if (/(los|las)$/.test(v.w) || /\bthem\b/.test(antes.slice(v.pos))) objetivo = conPos.filter((it) => posDe.get(it)! < pos);
+    else if (/(lo|la)$/.test(v.w) && v.w.length > 4) objetivo = conPos.filter((it) => posDe.get(it)! < pos).slice(-1);
+    else objetivo = conPos.filter((it) => posDe.get(it)! > v.pos && posDe.get(it)! < pos);
+    if (!objetivo.length && items.length === 1) objetivo = items; // un solo entregable: es ese
+    if (!objetivo.length) {
+      seguro = false;
+      continue;
+    }
+    for (const it of objetivo) {
+      if (it.carpeta && it.carpeta !== carpeta) seguro = false;
+      it.carpeta = carpeta;
+    }
+  }
   const TOPE = 10;
   if (items.length > TOPE) seguro = false;
   return { items: items.slice(0, TOPE).map((x, i) => ({ ...x, id: `entrega-${i + 1}` })), seguro, explicitos, origenes };
 }
 
-/** ¿Este requisito y aquel pueden ser la misma cosa pedida? */
-function compatibles(x: Requisito, y: Requisito): boolean {
-  if (x.nombre && y.nombre) return x.nombre.toLowerCase() === y.nombre.toLowerCase();
-  if (x.extensiones.length === 0 || y.extensiones.length === 0) return true;
-  return x.extensiones.some((e) => y.extensiones.includes(e));
+/** Cuánto dice un requisito: un nombre (3) más que un tipo (2), un tipo más que «un archivo» (1). */
+const especificidad = (r: Requisito) => (r.nombre ? 3 : r.extensiones.length ? 2 + 1 / (1 + r.extensiones.length) : r.claves?.length ? 1.5 : 1);
+
+/**
+ * La misma cosa pedida dicha de dos maneras, con lo MÁS específico de las dos (nunca se pierde un nombre, una
+ * extensión, una carpeta ni una duda). null si se contradicen: otro nombre, otro tipo, otra carpeta.
+ */
+function fundir(x: Requisito, y: Requisito): Requisito | null {
+  const carpetas = [x.carpeta, y.carpeta].filter(Boolean);
+  if (carpetas.length === 2 && carpetas[0] !== carpetas[1]) return null;
+  const comun = { carpeta: x.carpeta || y.carpeta, dudoso: x.dudoso || y.dudoso, cantidadSegura: x.cantidadSegura && y.cantidadSegura };
+  const limpiar = (r: Requisito): Requisito => {
+    const o = { ...r };
+    if (!o.carpeta) delete o.carpeta;
+    if (!o.dudoso) delete o.dudoso;
+    return o;
+  };
+  if (x.nombre && y.nombre) {
+    if (x.nombre.toLowerCase() !== y.nombre.toLowerCase()) return null;
+    if (x.ruta && y.ruta && x.ruta.toLowerCase() !== y.ruta.toLowerCase()) return null;
+    return limpiar({ ...(x.ruta ? x : y), ...comun });
+  }
+  const nombrado = x.nombre ? x : y.nombre ? y : null;
+  if (nombrado) {
+    const otro = nombrado === x ? y : x;
+    if (otro.extensiones.length && !otro.extensiones.includes(nombrado.extensiones[0])) return null;
+    return limpiar({ ...nombrado, ...comun });
+  }
+  if (x.extensiones.length && y.extensiones.length) {
+    const inter = x.extensiones.filter((e) => y.extensiones.includes(e));
+    if (!inter.length) return null;
+    const base = x.extensiones.length <= y.extensiones.length ? x : y;
+    const r = limpiar({ ...base, ...comun, extensiones: inter });
+    delete r.libre;
+    return r;
+  }
+  const tipado = x.extensiones.length ? x : y.extensiones.length ? y : x.claves?.length ? x : y.claves?.length ? y : x;
+  const r = limpiar({ ...tipado, ...comun });
+  if (!(x.libre && y.libre)) delete r.libre;
+  return r;
 }
 
-/** ¿Cada requisito de `menor` tiene uno compatible (distinto) en `mayor`? */
-function cubre(mayor: Requisito[], menor: Requisito[]): boolean {
-  const libres = [...mayor];
-  for (const r of menor) {
-    const i = libres.findIndex((x) => compatibles(x, r));
-    if (i < 0) return false;
-    libres.splice(i, 1);
+/**
+ * Uno a uno: cada requisito de una fuente con su par en la otra, quedándose con lo más específico. La cantidad es la
+ * mayor (lo que sobra de una fuente se suma). Si a los dos les sobran cosas que no casan, se contradicen.
+ */
+function combinarUnoAUno(a: Requisito[], b: Requisito[]): { items: Requisito[]; contradiccion: boolean } {
+  const libres = [...b];
+  const items: Requisito[] = [];
+  const sinPar: Requisito[] = [];
+  for (const x of [...a].sort((p, q) => especificidad(q) - especificidad(p))) {
+    let mejor = -1;
+    let fusion: Requisito | null = null;
+    libres.forEach((y, i) => {
+      const f = fundir(x, y);
+      if (f && (mejor < 0 || especificidad(y) > especificidad(libres[mejor]))) {
+        mejor = i;
+        fusion = f;
+      }
+    });
+    if (mejor >= 0 && fusion) {
+      items.push(fusion);
+      libres.splice(mejor, 1);
+    } else sinPar.push(x);
   }
-  return true;
+  return { items: [...items, ...sinPar, ...libres], contradiccion: sinPar.length > 0 && libres.length > 0 };
 }
 
 /**
@@ -507,10 +681,36 @@ export function requisitosCombinados(instruccion: string, pedidoPersona?: string
   const origenes = { nombres: [...new Set([...a.origenes.nombres, ...b.origenes.nombres])], sinNombre: [...a.origenes.sinNombre, ...b.origenes.sinNombre] };
   if (!b.explicitos) return { ...a, origenes };
   if (!a.explicitos) return { ...b, origenes };
-  if (cubre(b.items, a.items) && b.items.length >= a.items.length) return { ...b, seguro: a.seguro && b.seguro, origenes };
-  if (cubre(a.items, b.items)) return { ...a, seguro: a.seguro && b.seguro, origenes };
-  const mayor = a.items.length >= b.items.length ? a : b;
-  return { ...mayor, seguro: false, origenes };
+  // Uno a uno, con lo más específico de cada par (R5 de la cuarta ronda: antes se elegía una lista entera).
+  const { items, contradiccion } = combinarUnoAUno(a.items, b.items);
+  const tope = items.slice(0, 10).map((x, i) => ({ ...x, id: `entrega-${i + 1}` }));
+  return { items: tope, seguro: a.seguro && b.seguro && !contradiccion && items.length <= 10, explicitos: tope.length, origenes };
+}
+
+/**
+ * La única acción sobre archivos que se puede comprobar, y estrictamente: «copia contrato.pdf a la carpeta jose». El
+ * original (nombrado) existe con su huella, y en la carpeta pedida hay un archivo con su mismo nombre, en otra ruta y con
+ * la MISMA sha256. Cualquier otra cosa: null («sin comprobar»).
+ */
+export function comprobarCopia(instruccion: string, lista: ArchivoNodo[]): { destino: ArchivoNodo; detalle: string } | null {
+  const sinWeb = sinUrls(String(instruccion || ''));
+  const p = plegar(sinWeb);
+  const palabras = p.match(/[a-zñ]+/g) || [];
+  if (!palabras.some((w, i) => /^(copia|copialo|copiala|copiar|copy)$/.test(w) && !ARTICULOS.has(palabras[i - 1] || ''))) return null;
+  if (palabras.some((w, i) => RE_V_OPERACION.test(w) && !/^(copia|copialo|copiala|copiar|copy)$/.test(w) && !ARTICULOS.has(palabras[i - 1] || ''))) return null;
+  const nombres = [...sinWeb.matchAll(RE_NOMBRE)].map((m) => nombreDeRuta(m[1]).toLowerCase());
+  const carpetas = [...p.replace(RE_NOMBRE, (x) => ' '.repeat(x.length)).matchAll(RE_CARPETA_DICHA)].map((m) => normalizarCarpeta(m[1] || m[2] || m[3] || '')).filter(Boolean);
+  if (nombres.length !== 1 || carpetas.length !== 1) return null;
+  const [nombre] = nombres;
+  const [carpeta] = carpetas;
+  const sanos = lista.filter((a) => a && a.existe === true && !a.fuera && typeof a.sha256 === 'string' && /^[0-9a-f]{64}$/.test(a.sha256) && a.bytes > 0 && rutaValida(a.ruta) && nombreDeRuta(a.ruta).toLowerCase() === nombre);
+  const destinos = sanos.filter((a) => enCarpeta(a.ruta, carpeta));
+  const originales = sanos.filter((a) => !enCarpeta(a.ruta, carpeta));
+  for (const d of destinos) {
+    const o = originales.find((x) => x.sha256 === d.sha256 && x.ruta !== d.ruta);
+    if (o) return { destino: d, detalle: `${nombreDeRuta(d.ruta)} está en ${carpeta} con la misma huella que el original (sha256 ${String(d.sha256).slice(0, 12)}…)` };
+  }
+  return null;
 }
 
 /* ------------------------------------------------------------------ comprobar cada archivo */
@@ -580,10 +780,16 @@ export function compararEntrega(instruccion: string, lista: ArchivoNodo[] | null
   };
   // R4: un mismo contenido (sha256) cumple a lo más una cosa pedida.
   const shas = new Map<string, string>();
-  const conVeredicto = (a: ArchivoNodo, exts: string[]) => {
+  const conVeredicto = (a: ArchivoNodo, exts: string[], carpeta?: string) => {
     const otro = a.existe === true && typeof a.sha256 === 'string' ? shas.get(a.sha256) : undefined;
     if (otro) return { a, v: { estado: 'not_met' as const, motivo: `${nombreDeRuta(a.ruta)} es una copia idéntica de ${otro} (el mismo contenido cuenta una vez)` } };
-    return { a, v: veredictoArchivo(a, exts) };
+    const v = veredictoArchivo(a, exts);
+    // La carpeta que dijo con palabras también se comprueba.
+    if (v.estado === 'verified' && carpeta && !enCarpeta(a.ruta, carpeta)) {
+      const padre = String(a.ruta).split('/').slice(-2, -1)[0] || '/';
+      return { a, v: { estado: 'not_met' as const, motivo: `${nombreDeRuta(a.ruta)} quedó en «${limpio(padre, 60)}», no en la carpeta ${carpeta}` } };
+    }
+    return { a, v };
   };
   const mejor = (xs: { a: ArchivoNodo; v: Veredicto }[]) => xs.sort((x, y) => ORDEN[x.v.estado] - ORDEN[y.v.estado] || Number(identifica(y.a)) - Number(identifica(x.a)))[0];
   const cerrarItem = (r: Requisito, elegido: { a: ArchivoNodo; v: Veredicto } | undefined, sinArchivo: string): ItemEntrega => {
@@ -617,7 +823,7 @@ export function compararEntrega(instruccion: string, lista: ArchivoNodo[] | null
         // Lo que el nodo no encontró, con su carpeta: es de la cosa pedida con ESA carpeta.
         (a.existe === true || !a.ruta.includes('/') || !r.ruta || a.ruta === r.ruta)
     );
-    let cand = mismo.map((a) => conVeredicto(a, r.extensiones));
+    let cand = mismo.map((a) => conVeredicto(a, r.extensiones, r.carpeta));
     if (r.ruta && cand.length) {
       const enLaCarpeta = cand.filter((c) => enRuta(c.a, r.ruta!) || c.a.existe !== true);
       const otra = cand.find((c) => c.v.estado === 'verified' && !enRuta(c.a, r.ruta!));
@@ -632,7 +838,7 @@ export function compararEntrega(instruccion: string, lista: ArchivoNodo[] | null
   }
   // 2) Lo que solo tiene tipo («3 PDFs»): un archivo de ese tipo, cada uno distinto; nunca basura que no se nombró.
   for (const r of reqs.filter((x) => !x.nombre && x.extensiones.length)) {
-    const cand = lista.filter((a) => !usados.has(a) && !esOrigen(a) && a.existe === true && !RE_BASURA.test(a.ruta) && r.extensiones.includes(extDe(nombreDeRuta(a.ruta)))).map((a) => conVeredicto(a, r.extensiones));
+    const cand = lista.filter((a) => !usados.has(a) && !esOrigen(a) && a.existe === true && !RE_BASURA.test(a.ruta) && r.extensiones.includes(extDe(nombreDeRuta(a.ruta)))).map((a) => conVeredicto(a, r.extensiones, r.carpeta));
     if (!r.cantidadSegura) {
       const buenos = cand.filter((c) => c.v.estado === 'verified');
       buenos.forEach((c) => usados.add(c.a));
@@ -653,7 +859,7 @@ export function compararEntrega(instruccion: string, lista: ArchivoNodo[] | null
   // «Tres archivos» (libre): cualquier archivo nuevo y sano cumple uno; van al final para no quitarle a lo identificado.
   const genericos = reqs.filter((x) => !x.nombre && !x.extensiones.length);
   for (const r of [...genericos.filter((x) => !x.libre), ...genericos.filter((x) => x.libre)]) {
-    const cand = lista.filter((a) => !usados.has(a) && !esOrigen(a) && a.existe === true && !RE_BASURA.test(a.ruta)).map((a) => conVeredicto(a, []));
+    const cand = lista.filter((a) => !usados.has(a) && !esOrigen(a) && a.existe === true && !RE_BASURA.test(a.ruta)).map((a) => conVeredicto(a, [], r.carpeta));
     const buenos = cand.filter((c) => c.v.estado === 'verified');
     if (!r.cantidadSegura) {
       // «Guarda los archivos»: sin decir cuántos ni de qué tipo, nada lo puede comprobar.
