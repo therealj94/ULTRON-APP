@@ -103,6 +103,14 @@ function nombra(q: string, p: PendienteTurno): boolean {
  * Con varias decisiones esperando, un «sí» solo vale si nombra exactamente una (por su canal o por a quién va); si no,
  * es ambiguo. Antes se aplicaba a todas (mandaba el correo Y el WhatsApp) o a la primera que hubiera.
  */
+/**
+ * ¿El camino rápido de la app (server.ts ordenDeApp) NO puede resolver este turno? Si además de lo que espera la app
+ * espera otra decisión en el servidor, el «sí» lo decide el turno completo.
+ */
+export function atajoDeAppBloqueado(o: { dueno: string; ambito: string; whatsapp: boolean; appEspera: boolean; mensaje?: string; contexto?: unknown }): boolean {
+  return o.appEspera && pendientesDelTurno({ dueno: o.dueno, ambito: o.ambito, whatsapp: o.whatsapp }).length > 0;
+}
+
 export function elegirPendiente(mensaje: string, ps: PendienteTurno[]): { tipo: 'uno'; p: PendienteTurno } | { tipo: 'ninguno' } | { tipo: 'ambiguo' } {
   if (!ps.length) return { tipo: 'ninguno' };
   if (ps.length === 1) return { tipo: 'uno', p: ps[0] };

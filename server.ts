@@ -28,6 +28,7 @@ import {
   anotarPropuesta,
   aparatoValido,
   appEsperandoDe,
+  avisoReemplazoApp,
   confirmarCambioApp,
   contextoDe,
   decibleHasta,
@@ -66,7 +67,7 @@ import { redirigirADominio } from './server/dominio';
 import { quitarExpresiones } from './lib/expresiones';
 import { puntoDeCorte } from './lib/trozos';
 import { claveTurno, efectoDelTurno, enTurnoUnico, idTurnoValido, reclamarTurno, turnoSinEfectos, type TurnoGuardado } from './server/turno-unico';
-import { pendientesDelTurno, resolverBorradorDesdePanel, resolverDecisionesDelTurno } from './server/decision-turno';
+import { atajoDeAppBloqueado, resolverBorradorDesdePanel, resolverDecisionesDelTurno } from './server/decision-turno';
 import {
   abrirDecisionDeBorrador,
   abrirEncargoComputadora,
@@ -4042,7 +4043,7 @@ async function ordenDeApp(body: any, opciones: OpcionesTurno = {}): Promise<{ de
   // Permisos exactos (4-oct): si además de lo que espera la app espera otra decisión (un borrador de correo o de
   // WhatsApp, la pregunta de su computadora), el «sí» no se resuelve aquí por la app: lo decide el turno completo
   // (server/decision-turno.ts), que pregunta cuál si no lo dice.
-  if (appEsperandoDe(amb) && pendientesDelTurno({ dueno: correo, ambito: ambitoDelTurno(body, opciones), whatsapp: whatsappPermitido(correo) }).length) return null;
+  if (atajoDeAppBloqueado({ dueno: correo, ambito: ambitoDelTurno(body, opciones), whatsapp: whatsappPermitido(correo), appEspera: !!appEsperandoDe(amb), mensaje: message, contexto })) return null;
   // `pendienteDe` aquí ya es solo el borrador del turno anterior: abrirTurnoApp soltó cualquier otro.
   // Lo mismo la propuesta (llamar, recordar): solo la del turno anterior puede cumplirse con un «sí».
   // En el idioma en que le hablaron: «go back» con la app en español se contesta en inglés (la
@@ -4200,11 +4201,7 @@ async function accionesDelCerebro(
     const sinPromesa = limpio.replace(RE_PROMESA_ENVIO, '').trim();
     // El borrador reemplazó a otro del mismo turno: este «sí» no lo mandó; se dice a quién va ahora y el siguiente vale.
     if (pendiente?.reemplazoDe && !p.appBloqueada) {
-      confirmarCambioApp(amb);
-      const aviso =
-        p.idioma === 'en'
-          ? `I haven't sent it: it changed (it was ${pendiente.reemplazoDe}; now it's the message to ${pendiente.para}). Should I send it to ${pendiente.para}?`
-          : `No lo mandé todavía: cambió (antes era ${pendiente.reemplazoDe}; ahora es el mensaje para ${pendiente.para}). ¿Se lo mando a ${pendiente.para}?`;
+      const aviso = avisoReemplazoApp(amb, pendiente, p.idioma, p.retener);
       return { texto: `${sinPromesa} ${aviso}`.trim(), acciones: eventos, sustituido: true };
     }
     if (p.appBloqueada && hayBorrador) {

@@ -618,6 +618,17 @@ export function confirmarCambioApp(correo: string, ahora = Date.now()) {
   if (pr?.reemplazoDe) propuestas.set(k, { p: pr.p, t: ahora, turno });
 }
 
+/**
+ * El modelo pidió enviar un borrador que reemplazó a otro del mismo turno: no salió. Devuelve lo que se dice (a quién
+ * va ahora) y deja que el «sí» siguiente valga para este.
+ */
+export function avisoReemplazoApp(correo: string, pendiente: { para: string; reemplazoDe?: string }, idioma: 'es' | 'en', _retener?: { hacer: (f: () => void) => void; alDescartar: (f: () => void) => void }): string {
+  confirmarCambioApp(correo);
+  return idioma === 'en'
+    ? `I haven't sent it: it changed (it was ${pendiente.reemplazoDe}; now it's the message to ${pendiente.para}). Should I send it to ${pendiente.para}?`
+    : `No lo mandé todavía: cambió (antes era ${pendiente.reemplazoDe}; ahora es el mensaje para ${pendiente.para}). ¿Se lo mando a ${pendiente.para}?`;
+}
+
 /** El borrador de AU-RA que espera (del turno anterior, o recién redactado en este), o null. */
 export function pendienteDe(correo: string, ahora = Date.now()): Pendiente | null {
   const v = pendientes.get(clave(correo));
