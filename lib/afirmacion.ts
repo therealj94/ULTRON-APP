@@ -81,17 +81,28 @@ const AFIRMA = set(
     // Sexta ronda: voseo («hacelo», «mandá», «enviá») y «órale», «okis».
     'hacelo manda envia orale okis ' +
     // Séptima ronda: «confirmado», voseo («hacele», «dele»), «échale», «excelente», «genial», «súper», «alright».
-    'confirmado hacele dele echale excelente genial super absolutely alright'
+    'confirmado hacele dele echale excelente genial super absolutely alright ' +
+    // Ajuste de la séptima ronda: «yup», «sipi», «sep», «aha», «fine», «chido», «bacán».
+    'yup sipi sep aha fine chido bacan'
 );
+/**
+ * «eso», «ese», «ese mismo», «tal cual»: afirman lo que hay (solo con UNA pendiente, como toda afirmación pura); detrás
+ * de a/al/para/de son un pronombre («a ese»): no se sabe a quién.
+ */
+const DEICTICOS = set('eso ese esa');
+/** «enviar», «mandar» sueltos: afirman SOLO un envío (un correo, un WhatsApp, un mensaje), nunca una llamada o un recordatorio. */
+const INFINITIVOS = set('enviar mandar');
+/** Casi un sí («k», «kk», «oka», «oks»), o solo cortesía («bueno», «ya»): no ejecutan; se pide confirmar. */
+const CASI_SI = /^(k+|oka|oks)$/;
 /** Afirmaciones de varias fichas. */
-const AFIRMA_FRASES = ['de una', 'va pues', 'dale pues', 'ta bueno', 'esta bueno', 'ya estuvo', 'no hay clavo', 'no hay problema', 'por supuesto', 'send it', 'go ahead', 'do it', 'claro que si', 'de acuerdo', 'esta bien', 'vaya pues', 'ta bien', 'sure thing', 'go for it', 'asi es', 'sounds good', 'todo bien', 'dale que si', 'de una vez', 'okey dokey', 'of course', 'all right'];
+const AFIRMA_FRASES = ['de una', 'va pues', 'dale pues', 'ta bueno', 'esta bueno', 'ya estuvo', 'no hay clavo', 'no hay problema', 'por supuesto', 'send it', 'go ahead', 'do it', 'claro que si', 'de acuerdo', 'esta bien', 'vaya pues', 'ta bien', 'sure thing', 'go for it', 'asi es', 'sounds good', 'todo bien', 'dale que si', 'de una vez', 'okey dokey', 'of course', 'all right', 'oki doki', 'eso es', 'ese mismo', 'esa misma', 'tal cual'];
 /** La cortesía y el relleno de voz: SOLO estas. */
 const CORTESIA = set('porfa porfavor porfis gracias pues pue ya ahora ahorita nomas eh este please thanks asi bueno entonces now');
-const CORTESIA_FRASES = ['por favor', 'por fa', 'a ver', 'tal cual', 'asi esta bien', 'asi esta perfecto', 'ese mismo', 'thank you'];
+const CORTESIA_FRASES = ['por favor', 'por fa', 'a ver', 'asi esta bien', 'asi esta perfecto', 'thank you'];
 /** «señor», «señora» y el nombre del avatar: cortesía SOLO como vocativo suelto al principio o al final. */
-const VOCATIVOS = set('senor senora aura claudio antonio ojos guardian jefe jefa mano hermano hermana compa amor carino bro boss man sir');
+const VOCATIVOS = set('senor senora aura claudio antonio ojos guardian jefe jefa mano hermano hermana compa amor carino bro boss man sir hombre mujer maam madam');
 /** Vocativos de varias fichas. */
-const VOCATIVOS_FRASES = ['mi amor'];
+const VOCATIVOS_FRASES = ['mi amor', 'ma am'];
 /** Artículos: «a la jefa», «to the boss» siguen siendo a quién va. */
 const ARTICULO = set('el la los las mi tu su the my');
 const AVATARES = set('aura claudio antonio ojos guardian');
@@ -116,6 +127,8 @@ const PREP_DESTINO = set('a al para pa to for con de');
 const PREP_CLARO = set('a al para pa to for');
 /** Pronombres: nunca identifican a nadie. («él» con tilde se marca antes de quitar tildes.) */
 const PRONOMBRES = set('pronel ella ellos ellas le les him her them');
+/** Los deícticos que quedan como ficha (detrás de a/para/de): también pronombres. */
+const PRONOMBRES_DEICTICOS = set('eso ese esa esos esas');
 /** «a mí», «para mí», «to me», «a mi correo». */
 const YO = set('mi me yo myself mio mia');
 const CANAL_PROPIO = set('correo email mail numero cel celular telefono whatsapp chat');
@@ -243,6 +256,10 @@ export type Analisis = {
   propio: boolean;
   /** Afirmación pura: un sí y SOLO cortesía (no sobra ninguna ficha). */
   pura: boolean;
+  /** El sí se apoya en «enviar»/«mandar» suelto: vale solo para un envío. */
+  infinitivo: boolean;
+  /** Casi un sí («k», «kk») o solo cortesía («bueno», «ya»): se pide confirmar, no se aparta lo que espera. */
+  casiSi: boolean;
   /** Negativa pura: un «no» reconocido y solo cortesía. */
   negativaPura: boolean;
 };
@@ -275,11 +292,11 @@ function unidadesDe(palabras: string[]): Unidad[] {
     }
     const w = palabras[i];
     const c = colapsada(w);
-    const k: Clase = AFIRMA.has(w) || (c !== w && AFIRMA.has(c) && /^(si|yes|ok|va|dale|sale|vale|claro|listo|aja|obvio)$/.test(c))
+    const k: Clase = AFIRMA.has(w) || DEICTICOS.has(w) || INFINITIVOS.has(w) || (c !== w && AFIRMA.has(c) && /^(si|yes|ok|va|dale|sale|vale|claro|listo|aja|obvio)$/.test(c))
       ? 'si'
       : NIEGA.has(w) || (c === 'no' && w !== c)
         ? 'niega'
-        : CORTESIA.has(w) || /^m{2,}$|^e+h+$|^h+m+$/.test(w)
+        : CORTESIA.has(w) || /^m{2,}$|^e+h+$|^h+m+$|^m+h+m+$/.test(w)
           ? 'cortesia'
           : VOCATIVOS.has(w)
             ? 'vocativo'
@@ -308,6 +325,8 @@ export function analizarRespuesta(mensaje: string, o: { conocidos?: Iterable<str
     const trasPrep = !!antes && PREP_DESTINO.has(antes);
     // «claro» afirma en cualquier posición («sí, claro», «ok, claro»), SALVO justo detrás de a/al/para/pa/to/for (el
     // contacto Claro: «sí, a Claro»), o si Claro es el destino de algo pendiente y va como vocativo suelto: no se sabe.
+    // «a ese», «para eso», «el de esa»: un pronombre, no un sí.
+    if (x.k === 'si' && DEICTICOS.has(x.w) && trasPrep) x.k = 'ficha';
     if (x.k === 'si' && x.w === 'claro') {
       if (antes && PREP_CLARO.has(antes)) x.k = 'ficha';
       else if (destinos.has('claro') && (u.slice(0, i).every(blanda) || u.slice(i + 1).every(blanda))) {
@@ -362,7 +381,7 @@ export function analizarRespuesta(mensaje: string, o: { conocidos?: Iterable<str
     if (YO.has(x.w) && antes && (PREP_DESTINO.has(antes) || antes === 'send' || antes === 'send it')) {
       if (x.w !== 'mi' || !despues || CANAL_PROPIO.has(despues.w) || blanda(despues)) return void (propio = true);
     }
-    if (PRONOMBRES.has(x.w)) return void (pronombre = true);
+    if (PRONOMBRES.has(x.w) || (PRONOMBRES_DEICTICOS.has(x.w) && antes && PREP_DESTINO.has(antes))) return void (pronombre = true);
     // «a él» sin tilde, «a lo», «a la» sin nada detrás: pronombres.
     if ((x.w === 'el' || x.w === 'lo' || x.w === 'la') && antes && PREP_DESTINO.has(antes) && (!despues || blanda(despues))) return void (pronombre = true);
     if (ENLACE.has(x.w) || ENVIO.has(x.w) || CAMBIO.has(x.w) || FRENA.has(x.w)) return;
@@ -374,7 +393,9 @@ export function analizarRespuesta(mensaje: string, o: { conocidos?: Iterable<str
   const limpia = !restos.length && !propio && !pronombre && !avatarDudoso && !pregunta;
   const pura = sis.length > 0 && limpia && !niega && !contradice;
   const negativaPura = niega && limpia && !contradice && !sis.length;
-  return { palabras: ws, unidades: u, niega, contradice, cambio, redactar, pregunta, afirma, envio, contenido, restos, rolDe, cancelaClaro, plural, pronombre, avatarDudoso, propio, pura, negativaPura };
+  const infinitivo = pura && sis.every((x) => INFINITIVOS.has(x.w));
+  const casiSi = !sis.length && !niega && u.length > 0 && u.every((x) => x.k === 'cortesia' || (x.k === 'ficha' && CASI_SI.test(x.w))) && !u.every((x) => x.k === 'cortesia' && /^(eh|este|ehm|m+|mm|hm|mhm|gracias|thanks)$/.test(x.w));
+  return { palabras: ws, unidades: u, niega, contradice, cambio, redactar, pregunta, afirma, envio, contenido, restos, rolDe, cancelaClaro, plural, pronombre, avatarDudoso, propio, pura, negativaPura, infinitivo, casiSi };
 }
 
 /** ¿Es una afirmación pura? (un sí y solo cortesía: «sí», «dale», «sí señor»; no «sí, a Lee» ni «¿sí?»). */
@@ -580,6 +601,8 @@ export function decidirPendiente<P extends DecisionPendiente>(mensaje: string, p
   if (a.contradice || a.redactar) return { tipo: 'nada', analisis: a };
   // Una pregunta nunca es un sí: si habla de esto, se pide confirmar.
   if (a.pregunta) return a.afirma || a.niega || a.palabras.some((w) => PREGUNTA_ENVIO.has(w)) ? preguntar('aclarar', noDiscretas()) : { tipo: 'nada', analisis: a };
+  // «k», «kk», «bueno», «ya» solos: casi un sí. No se ejecuta ni se aparta: se pide confirmar.
+  if (a.casiSi) return preguntar('aclarar', noDiscretas());
   if (!a.niega && (!a.afirma || a.cambio)) return { tipo: 'nada', analisis: a };
   // Un pronombre, o el avatar que es un contacto: no se sabe a quién.
   if (a.pronombre || a.avatarDudoso) return preguntar('aclarar', noDiscretas());
@@ -587,6 +610,8 @@ export function decidirPendiente<P extends DecisionPendiente>(mensaje: string, p
   const vivas = pendientes.filter((p) => !p.discreta || a.envio || nombraDecision(a, p));
   if (!vivas.length) return { tipo: 'nada', analisis: a };
   const responder = (p: P): Decidido<P> => (a.niega ? { tipo: 'no', p, analisis: a } : { tipo: 'ejecutar', p, analisis: a });
+  // «enviar», «mandar» sueltos: solo con UNA pendiente de envío.
+  if (a.pura && a.infinitivo && (vivas.length !== 1 || !TIPOS_MENSAJE.has(vivas[0].tipo))) return preguntar(vivas.length > 1 ? 'ambiguo' : 'aclarar', [...vivas]);
   if (a.pura || a.negativaPura) return vivas.length === 1 ? responder(vivas[0]) : preguntar('ambiguo', [...vivas]);
   // Un «no» con algo detrás que no sea un canal: «no sé», «no es eso», «no, a Bruno»: no se descarta nada.
   if (a.niega && (!a.contenido.length || (!a.cancelaClaro && !a.contenido.every((w) => DE_CANAL.has(w))))) return preguntar('aclarar', [...vivas]);
@@ -614,7 +639,7 @@ export function decidirPendiente<P extends DecisionPendiente>(mensaje: string, p
  * acción misma y nada más («llámale», «ponlo»).
  */
 export function soloNombraLaAccion(a: Analisis, p: DecisionPendiente): boolean {
-  if (a.pura) return true;
+  if (a.pura) return !a.infinitivo || TIPOS_MENSAJE.has(p.tipo);
   const verbos = VERBOS[p.tipo];
   const otras = a.unidades.filter((x) => x.k !== 'si' && x.k !== 'cortesia').map((x) => x.w);
   return !!verbos && !a.pregunta && !a.pronombre && !a.avatarDudoso && !a.propio && otras.length > 0 && otras.every((w) => verbos.has(w));
