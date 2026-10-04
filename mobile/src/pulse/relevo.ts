@@ -27,6 +27,7 @@ import Constants from 'expo-constants';
 import * as CANDADO from './candado';
 import type { Aparato, Bulto } from './candado';
 import { correoCuenta } from '../lib/cuenta';
+import { elegirContacto, normalizar } from './elegirContacto';
 
 const BASE = String((Constants.expoConfig?.extra as any)?.mensajesApi || 'https://cerebro.ordenscan.com/mensajes').replace(/\/+$/, '');
 const CAJON_CUENTA = 'aura.p2c.cuenta';
@@ -659,61 +660,16 @@ export function contactosConocidos(): { correo: string; nombre: string }[] {
   return [...vistos.values()];
 }
 
-/** Minúsculas y sin acentos: «María» y «maria» son la misma. */
-export const normalizar = (s: string) =>
-  String(s || '')
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/\s+/g, ' ')
-    .trim();
-
-function distancia(a: string, b: string): number {
-  if (Math.abs(a.length - b.length) > 2) return 3;
-  const fila = Array.from({ length: b.length + 1 }, (_, j) => j);
-  for (let i = 1; i <= a.length; i++) {
-    let diag = fila[0];
-    fila[0] = i;
-    for (let j = 1; j <= b.length; j++) {
-      const arriba = fila[j];
-      fila[j] = Math.min(fila[j] + 1, fila[j - 1] + 1, diag + (a[i - 1] === b[j - 1] ? 0 : 1));
-      diag = arriba;
-    }
-  }
-  return fila[b.length];
-}
+/** Minúsculas y sin acentos: «María» y «maria» son la misma (mobile/src/pulse/elegirContacto.ts). */
+export { normalizar };
 
 /**
  * Quién es «con»: correo exacto, nombre exacto o parecido (sin acentos, una palabra del nombre, el
- * principio, o una letra mal oída por la voz). Entre las conversaciones y el círculo conocidos; si dos
- * empatan gana la charla más reciente (las conversaciones vienen ordenadas así).
+ * principio, o una letra mal oída por la voz). Entre las conversaciones y el círculo conocidos. Lo puro está en
+ * elegirContacto.ts.
  */
 export function resolverContacto(con: string): { correo: string; nombre: string } | null {
-  const q = normalizar(con);
-  if (!q) return null;
-  const lista = contactosConocidos();
-  const porCorreo = lista.find((p) => p.correo === q);
-  if (porCorreo) return porCorreo;
-  let mejor: { correo: string; nombre: string } | null = null;
-  let puntos = 0;
-  for (const p of lista) {
-    const n = normalizar(p.nombre);
-    const palabras = n.split(' ');
-    const local = p.correo.split('@')[0];
-    let v = 0;
-    if (n === q) v = 100;
-    else if (local === q) v = 90;
-    else if (n.startsWith(q + ' ') || palabras.includes(q)) v = 80;
-    else if (q.includes(' ') && n.includes(q)) v = 70;
-    else if (q.length >= 3 && (n.startsWith(q) || palabras.some((w) => w.startsWith(q)))) v = 60;
-    else if (q.length >= 3 && local.startsWith(q)) v = 50;
-    else if (q.length >= 4 && palabras.some((w) => w.length >= 4 && distancia(w, q) <= (q.length >= 7 ? 2 : 1))) v = 40;
-    if (v > puntos) {
-      puntos = v;
-      mejor = p;
-    }
-  }
-  return mejor;
+  return elegirContacto(con, contactosConocidos());
 }
 
 export const buscar = async (q: string): Promise<Persona[]> => {
