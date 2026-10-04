@@ -306,12 +306,20 @@ async function trabajar(x: { id: string; dueno: string; tema: string; consultas:
     cerrada = await cerrarInvestigacion(dueno, id, cierre);
   }
   if (cerrada === 'cerrada') return;
+  // Sin el cierre guardado (el almacén no contestó dos veces) no se dice que está en Tareas: no está. El resultado
+  // queda para contárselo en el turno siguiente (Codex, PR 142).
+  const guardada = cerrada !== null;
   const estado = cerrada && typeof cerrada === 'object' && cerrada.state === 'partial' ? 'partial' : cierre.estado;
   anotarAviso(dueno, { id, tema, estado, resumen: cierre.resumen, t: Date.now() });
   const titulo = estado === 'completed' ? 'Terminé de investigar' : estado === 'partial' ? 'Terminé de investigar (en parte)' : 'No pude terminar la investigación';
   const primera = linea(cierre.resumen.replace(/^\s*[-•\d.)\[\]]+\s*/, ''), 200).replace(/\s*\[\d+\]/g, '');
-  const texto = `«${linea(tema, 80)}»: ${linea(primera, 150)}${primera.length > 150 ? '…' : ''} ${estado === 'failed' ? 'Lo dejé anotado en Tareas.' : 'El resumen y las fuentes están en Tareas.'}`;
-  await d.avisar(dueno, { titulo, texto, id: `inv-${id}`.slice(0, 80), abrir: 'tareas' }).catch(() => null);
+  const dondeQueda = !guardada
+    ? 'No pude guardarlo en Tareas: te lo cuento cuando vuelvas a hablarme.'
+    : estado === 'failed'
+      ? 'Lo dejé anotado en Tareas.'
+      : 'El resumen y las fuentes están en Tareas.';
+  const texto = `«${linea(tema, 80)}»: ${linea(primera, 150)}${primera.length > 150 ? '…' : ''} ${dondeQueda}`;
+  await d.avisar(dueno, { titulo, texto, id: `inv-${id}`.slice(0, 80), abrir: guardada ? 'tareas' : 'mesa' }).catch(() => null);
 }
 
 /* ------------------------------------------------------------------ lo que AURA sabe al empezar el turno */

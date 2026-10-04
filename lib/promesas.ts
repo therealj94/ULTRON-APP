@@ -299,6 +299,12 @@ export type ContextoVigilancia = {
  * guarda es conservadora y no corrige lo que una herramienta de verdad empezó.
  */
 const SOLO_LEEN = new Set(['web', 'leer', 'sistema', 'cartera']);
+/**
+ * Lo que de verdad respalda «voy a investigar» o «te aviso cuando termine»: trabajo que sigue después del turno
+ * y avisa (la investigación, su computadora, una misión, una tarea en curso). Abrir Ajustes o armar un borrador
+ * en el mismo turno no respalda una investigación que nadie empezó (Codex, PR 142).
+ */
+const RESPALDAN_INVESTIGAR = new Set(['investigar', 'computadora', 'mision', 'tarea']);
 
 export type Vigilada = { texto: string; cambiada: boolean; motivos: string[] };
 
@@ -332,6 +338,10 @@ export function vigilarPromesas(texto: string, ctx: ContextoVigilancia): Vigilad
   }
   const vivos = ctx.pasos.filter((p) => p.estado !== 'failed');
   const empezo = vivos.some((p) => !SOLO_LEEN.has(p.herramienta)) || (ctx.acciones || 0) > 0;
+  // Cada clase de promesa pide lo suyo: investigar, una herramienta de trabajo largo; «te aviso», eso o una
+  // acción de la app que avisa (un recordatorio, una llamada); otro trabajo, cualquier herramienta que actúe.
+  const respaldaInvestigar = vivos.some((p) => RESPALDAN_INVESTIGAR.has(p.herramienta));
+  const respaldaAviso = respaldaInvestigar || (ctx.acciones || 0) > 0;
   const tocoComputadora = vivos.some((p) => p.herramienta === 'computadora');
   const investigo = ctx.pasos.some((p) => p.herramienta === 'investigar' && p.estado === 'succeeded');
   const resultados = textosConResultados(ctx.pasos);
@@ -356,8 +366,11 @@ export function vigilarPromesas(texto: string, ctx: ContextoVigilancia): Vigilad
           motivos.add('computadora');
           fuera = true;
         }
-        if ((tipos.includes('trabajo') || tipos.includes('aviso')) && !empezo) {
-          const investiga = VERBO_INVESTIGAR.test(plano(f));
+        const investigaF = VERBO_INVESTIGAR.test(plano(f));
+        const sinRespaldo =
+          (tipos.includes('trabajo') && !(investigaF ? respaldaInvestigar : empezo)) || (tipos.includes('aviso') && !respaldaAviso);
+        if ((tipos.includes('trabajo') || tipos.includes('aviso')) && sinRespaldo) {
+          const investiga = investigaF;
           busco ||= investiga;
           otroTrabajo ||= tipos.includes('trabajo') && !investiga;
           // Con resultados ya en el turno, «voy a buscar» es prometer lo que ya hizo.

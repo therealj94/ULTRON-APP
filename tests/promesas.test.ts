@@ -153,3 +153,14 @@ test('noUsaResultados: la vuelta que tras buscar solo pregunta o promete; la que
   assert.equal(noUsaResultados('Voy a buscar los hitos clave de Honduras desde Copán hasta hoy.'), true);
   assert.equal(noUsaResultados('Honduras se independizó en 1821; Copán fue una gran ciudad maya del período clásico.'), false);
 });
+
+test('guarda: una acción ajena en el mismo turno (Ajustes, un borrador) no respalda «voy a investigar y te aviso» (Codex, PR 142)', () => {
+  const mixto = vigilarPromesas('Listo, abrí Ajustes. Voy a investigar eso y te aviso.', { pasos: [{ herramienta: 'correo', estado: 'succeeded' }], acciones: 1 });
+  assert.equal(mixto.cambiada, true, 'la promesa de investigar sale aunque hubo otra acción');
+  assert.doesNotMatch(mixto.texto, /Voy a investigar/);
+  assert.match(mixto.texto, /abrí Ajustes/, 'lo demás queda');
+  const conInvestigar = vigilarPromesas('Voy a investigar eso y te aviso.', { pasos: [{ herramienta: 'investigar', estado: 'succeeded' }] });
+  assert.equal(conInvestigar.cambiada, false, 'con la investigación empezada, vale');
+  const recordatorio = vigilarPromesas('Te aviso a las cinco.', { pasos: [], acciones: 1 });
+  assert.equal(recordatorio.cambiada, false, '«te aviso» de un recordatorio (acción de la app) vale');
+});

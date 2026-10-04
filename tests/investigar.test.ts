@@ -281,3 +281,30 @@ test('reinicio a mitad: sin latido pasado el tope, el panel la cierra failed con
     srv.close();
   }
 });
+
+test('si el cierre no se pudo guardar (almacén caído dos veces), no se dice que está en Tareas (Codex, PR 142)', async () => {
+  let romper = false;
+  const base = almacenEnMemoria();
+  const fragil: AlmacenDurable = {
+    tipo: base.tipo,
+    multiReplica: base.multiReplica,
+    leer: (c) => base.leer(c),
+    crear: (c, v) => base.crear(c, v),
+    cas: (c, v, e) => (romper ? Promise.reject(new Error('S3 no contesta')) : base.cas(c, v, e)),
+  };
+  _usarAlmacenDurable(fragil);
+  const { deps, llamadas } = falsos({
+    redactar: async () => {
+      romper = true; // de aquí en adelante, ninguna escritura entra: el cierre falla
+      return { ok: true, texto: '1. Copán fue una gran ciudad maya [1].', modelo: 'cerebro-falso' };
+    },
+  });
+  configurarInvestigacion(deps);
+  const r = await empezarInvestigacion({ dueno: correo(), ambito: 'voz', arg: 'mayas de Copán' });
+  assert.equal(r.estado, 'succeeded');
+  await _esperarInvestigaciones();
+  assert.equal(llamadas.avisos.length, 1);
+  assert.doesNotMatch(llamadas.avisos[0].texto, /están en Tareas/);
+  assert.match(llamadas.avisos[0].texto, /No pude guardarlo en Tareas/);
+  assert.equal(llamadas.avisos[0].abrir, 'mesa', 'no abre un panel donde no está');
+});

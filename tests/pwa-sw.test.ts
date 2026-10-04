@@ -237,7 +237,7 @@ test('el cliente: ?abrir= al abrir (y se quita de la barra) y el mensaje del wor
   const { destinoDeAviso, escucharAvisosTocados } = await import('../src/10-infra/abrirDesdeAviso');
   assert.equal(destinoDeAviso('computadora'), 'trabajar');
   assert.equal(destinoDeAviso('mesa'), 'conversar');
-  assert.equal(destinoDeAviso('tareas'), 'trabajar', '«Terminé de investigar»: sus tareas');
+  assert.equal(destinoDeAviso('tareas'), 'tareas', '«Terminé de investigar»: abre el panel de Tareas');
   assert.equal(destinoDeAviso('chats'), null, 'lo que la web no muestra deja la mesa como está');
   const oyentes: Array<(e: any) => void> = [];
   let barra = '';

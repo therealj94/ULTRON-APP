@@ -195,7 +195,17 @@ export default function App() {
   }, [opinion]);
   const bubbleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Un aviso tocado lleva a su pantalla («computadora» → trabajar), también con la ventana ya abierta.
-  useEffect(() => escucharAvisosTocados((d) => setModoMesa(d)), []);
+  useEffect(
+    () =>
+      escucharAvisosTocados((d) => {
+        if (d === 'tareas') {
+          // El resultado de una investigación vive en el panel de Tareas: se abre ahí, no solo la vista de trabajo.
+          setModoMesa('trabajar');
+          abrirTarea(null);
+        } else setModoMesa(d);
+      }),
+    [abrirTarea]
+  );
 
   useEffect(() => {
     onLip(setLipLevel);
