@@ -48,9 +48,10 @@ export type ArchivoNodo = {
 
 /**
  * La versión mínima del validador del nodo en la que se confía (ronda 9, G4). Los de antes daban por enteros archivos sin
- * contenido (un PNG sin IDAT en la 7, un PDF con un /Pages vacío en la 8): su «íntegro» queda «sin comprobar».
+ * contenido (un PNG sin IDAT en la 7, un PDF con un /Pages vacío en la 8, un PDF en blanco de reportlab en la 9): su
+ * «íntegro» queda «sin comprobar».
  */
-export const VALIDADOR_MIN = 9;
+export const VALIDADOR_MIN = 10;
 
 export type Requisito = {
   id: string;
@@ -299,6 +300,33 @@ const PLURALES = 'los|las|unos|unas|varios|varias|algunos|algunas|mis|tus|sus|es
 const DET = `\\d{1,2}|${Object.keys(CANTIDADES).join('|')}|${PLURALES}`;
 // Un adjetivo suelto entre el número y el tipo («tres nuevos documentos», «dos breves PDFs»).
 const RE_FRASE = new RegExp(`(?<![\\w.])(?:(${DET})\\s+)?(?:(?:nuev[oa]s?|breves?|cort[oa]s?|nuevos|new|short)\\s+)?(${FAMILIAS.map((f) => `(?:${f.re})`).join('|')})(?![\\w.])`, 'g');
+/**
+ * Ronda 10: un formato SIN determinante («en Word», «como PDF», «in Word», «as PDF», «en formato PDF») no dice cuántos:
+ * los cuentan los sustantivos enumerados delante («un informe, un presupuesto y una carta en Word» son 3).
+ */
+const RE_FORMATO_SIN_DET = /\b(?:en|como|in|as)\s+(?:(?:formato|tipo|format)\s+(?:de\s+)?)?$/;
+/** Lo que es UNA cosa aunque se enumere lo que lleva («los datos de ventas y gastos en Excel» es un archivo). */
+const RE_MASA = /^(?:datos|informacion|precios|cifras|resultados|numeros|estadisticas|totales|montos|data|information|info|prices|numbers|results|statistics|figures|totals)$/;
+const DETERMINANTES_ENUM = new Set('un una unos unas el la los las mi mis tu tus su sus este esta estos estas ese esa esos esas a an the my your our de del of'.split(' '));
+/**
+ * Cuántos sustantivos se enumeran en `seg` (lo que va entre el verbo y «en X»): «un A, un B y una C» → 3; «las facturas
+ * de enero, febrero y marzo» → 3; «el informe» → 1; «los» / «them» / «todas» → null (no se puede decidir).
+ */
+function contarEnumerados(seg: string): number | null {
+  const t = seg.replace(/^[\s,;:]*(?:(?:y|e|and|luego|then|also|tambien)\s+)*/, '').trim();
+  if (!t) return 1;
+  if (/^(?:los|las|them|todos|todas|all|ambos|ambas|both|estos|estas|these|those|ellos|ellas)$/.test(t)) return null;
+  // Solo lo que nombra algo: «no, mejor», «por favor», «ahora» no son cosas enumeradas.
+  const relleno = /^(?:no|si|mejor|sino|mas|bien|tambien|ademas|ahora|luego|despues|entonces|por|favor|porfa|please|better|instead|rather|also|now|then|ok|vale|bueno|pues|todo|todos|todas)$/;
+  const partes = t
+    .split(/\s*[,;]\s*|\s+(?:y|e|and)\s+/)
+    .map((x) => x.trim())
+    .filter((x) => (x.match(/[a-zñ]{2,}/g) || []).some((w) => !relleno.test(w)));
+  if (partes.length < 2) return 1;
+  const cabeza = (partes[0].match(/[a-zñ]+/g) || []).find((w) => !DETERMINANTES_ENUM.has(w)) || '';
+  if (RE_MASA.test(cabeza)) return 1;
+  return Math.min(50, partes.length);
+}
 /** Entre un sustantivo y su formato: «archivos PDF», «documentos en Word», «imagen de tipo PNG», «en formato PDF». */
 const RE_PEGADO = /^\s+(?:(?:en|de)\s+)?(?:(?:tipo|formato)\s+)?(?:(?:de|en)\s+)?$/;
 /** Antes del tipo, esto dice de dónde sale (del PDF, de los documentos) o en qué carpeta (la carpeta Documentos): no qué entregar. */
@@ -759,9 +787,14 @@ export function requisitosDeEntrega(instruccion: string): PedidoEntrega {
 
   type Frase = { fam: Familia; cantidad: number | null; pos: number; fin: number; otro: boolean; absorbio: number; verbo: string | null };
   const frases: Frase[] = [];
-  const reformatos: { fam: Familia; pos: number }[] = [];
-  for (const u of unidas) {
+  const reformatos: { fam: Familia; pos: number; plural?: boolean }[] = [];
+  let finAnterior = 0;
+  for (let iu = 0; iu < unidas.length; iu++) {
+    const u = unidas[iu];
     const { fam, det, sustantivo, pos } = u;
+    const desde = finAnterior;
+    finAnterior = u.fin;
+    const hasta = iu + 1 < unidas.length ? unidas[iu + 1].pos : sinNombres.length;
     const previo = sinNombres.slice(0, pos).trimEnd() + ' ';
     const v = verboYPapel(sinNombres.slice(0, pos));
     // «como el PDF de ayer», «igual que la plantilla»: un ejemplo, no algo que entregar.
@@ -777,9 +810,38 @@ export function requisitosDeEntrega(instruccion: string): PedidoEntrega {
     if (/^\d+$/.test(det)) cantidad = Math.min(50, Number(det));
     else if (det in CANTIDADES && CANTIDADES[det] > 0) cantidad = CANTIDADES[det];
     else cantidad = plural ? null : 1;
+    if (!det && RE_FORMATO_SIN_DET.test(previo)) {
+      // Ronda 10: lo que va entre el último verbo y «en X» dice cuántos («un informe, un presupuesto y una carta en Word»).
+      let seg = sinNombres.slice(desde, pos).replace(RE_FORMATO_SIN_DET, '');
+      let pronombrePlural = false;
+      let anterior = '';
+      for (const m of seg.matchAll(/[a-zñ]+/g)) {
+        const tras = DETERMINANTES_ENUM.has(anterior);
+        anterior = m[0];
+        // «a resume», «el informe»: detrás de un determinante es un sustantivo, no el verbo.
+        if (!tras && (esVerbo(m[0]) || RE_V_CREAR.test(m[0]) || /^(?:make|write|create|save|export|download|prepare|draft|find|put)$/.test(m[0]))) {
+          pronombrePlural = /(?:los|las)$/.test(m[0]) && m[0].length > 5;
+          seg = seg.slice((m.index ?? 0) + m[0].length);
+        }
+      }
+      const n = pronombrePlural ? null : contarEnumerados(seg);
+      if (n === null) cantidad = null;
+      else if (n > 1 || !plural) cantidad = n;
+    }
+    // «un PDF con el informe y otro con el presupuesto»: «uno… y otro» son dos (o más, uno por cada «otro»).
+    if (cantidad === 1 && /^(?:un|una|a|an|uno|one)$/.test(det)) {
+      const otros = (sinNombres.slice(u.fin, hasta).match(/(?:,|\b(?:y|e|and))\s+(?:otro|otra|another)\b/g) || []).length;
+      if (otros) cantidad = 1 + otros;
+    }
+    // «un PDF por cada factura: luz, agua y teléfono»: uno por cada cosa de la lista; sin lista, no se sabe cuántos.
+    if (cantidad === 1 && /^(?:un|una|a|an|uno|one)?$/.test(det) && /^\s*(?:(?:por|para)\s+cada|for\s+each|per)\b/.test(sinNombres.slice(u.fin, hasta))) {
+      const lista = /:\s*([^.;]+)/.exec(sinNombres.slice(u.fin, hasta));
+      const n = lista ? contarEnumerados(lista[1]) : null;
+      cantidad = n && n > 1 ? n : null;
+    }
     // Sin verbo en su oración también cuenta: mencionar un tipo de archivo es pedirlo («dos capturas del sitio por favor»).
     if (RE_REFORMATO_ANTES.test(previo)) {
-      reformatos.push({ fam, pos });
+      reformatos.push({ fam, pos, plural: /(?:los|las)\s+(?:como|a|al|en)\s+(?:(?:un|una)\s+)?$|\bthem\s+(?:as|to|into)\s+(?:(?:a|an)\s+)?$/.test(previo) });
       continue;
     }
     frases.push({ fam, cantidad, pos, fin: u.fin, otro: /^(otro|otra|another)$/.test(det), absorbio: 0, verbo: v.verbo });
@@ -807,7 +869,8 @@ export function requisitosDeEntrega(instruccion: string): PedidoEntrega {
       f.fam = r.fam;
       continue;
     }
-    extra.push({ fam: r.fam, cantidad: 1, pos: r.pos, fin: r.pos, otro: true, absorbio: 0, verbo: null });
+    // «guárdalas en PDF», «save them as PDF»: varias cosas sin contar (ronda 10): no se sabe cuántos.
+    extra.push({ fam: r.fam, cantidad: r.plural ? null : 1, pos: r.pos, fin: r.pos, otro: true, absorbio: 0, verbo: null });
   }
   frases.push(...extra);
   // «Comprime la carpeta reportes»: comprimir deja un ZIP aunque no lo nombre.
@@ -904,6 +967,8 @@ export function requisitosDeEntrega(instruccion: string): PedidoEntrega {
       for (let j = i + 1; j < ws.length; j++) {
         const x = ws[j];
         if ((x.index ?? 0) >= fin) break;
+        // «… y la carta COMO documentos de Word»: ese «como» presenta el formato de lo enumerado, no corta la oración.
+        if (/^(?:como|as)$/.test(x[0]) && entregables.some((q) => q > (x.index ?? 0) && q - (x.index ?? 0) <= 12)) continue;
         if (esCualquierVerbo(x[0]) && !ARTICULOS.has(ws[j - 1]?.[0] || '')) {
           fin = x.index ?? fin;
           break;

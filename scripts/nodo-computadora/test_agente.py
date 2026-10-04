@@ -1850,25 +1850,57 @@ class ArchivosComprobados(Base):
         return out + b';'
 
     @staticmethod
-    def ole(flujo='WordDocument', contenido=None, tam=4096, cortar=0):
-        """Un documento de Office antiguo (CFB v3) mínimo: cabecera, un sector de FAT, uno de directorio y el flujo."""
+    def contenido_ole(flujo):
+        """El contenido REAL mínimo de cada flujo principal (ronda 10): un FIB con texto (ccpText) y la tabla en 1Table;
+        un libro con una hoja y una celda NUMBER; una presentación con un TextCharsAtom."""
+        import struct
+        if flujo == 'WordDocument':
+            fib = bytearray(1024)
+            fib[0:4] = b'\xec\xa5\xc1\x00'
+            fib[10:12] = struct.pack('<H', 0x0200)          # fWhichTblStm: la tabla va en «1Table»
+            fib[76:80] = struct.pack('<i', 24)              # ccpText: 24 caracteres de texto
+            fib[1024 - 26:] = 'Informe de ventas 2025.\r'.encode('latin-1').ljust(26, b'\x00')
+            return bytes(fib), [('1Table', b'\x00' * 64)]
+        if flujo == 'Workbook':
+            def reg(t, d):
+                return struct.pack('<HH', t, len(d)) + d
+            libro = (reg(0x0809, struct.pack('<HHHHII', 0x0600, 0x0005, 0, 0, 0, 0)) + reg(0x000A, b'')
+                     + reg(0x0809, struct.pack('<HHHHII', 0x0600, 0x0010, 0, 0, 0, 0)) + reg(0x0203, struct.pack('<HHHd', 0, 0, 0, 120.5)) + reg(0x000A, b''))
+            return libro, []
+        if flujo == 'PowerPoint Document':
+            texto = 'Ventas Q3'.encode('utf-16-le')
+            atomo = struct.pack('<HHI', 0x0000, 0x0FA0, len(texto)) + texto
+            return struct.pack('<HHI', 0x000F, 0x03E8, len(atomo)) + atomo, []
+        return b'', []
+
+    @classmethod
+    def ole(cls, flujo='WordDocument', contenido=None, tam=4096, cortar=0, extra=None):
+        """Un documento de Office antiguo (CFB v3) mínimo: cabecera, un sector de FAT, uno de directorio y sus flujos
+        (cada uno de `tam` bytes en sectores normales). Con contenido REAL por defecto (contenido_ole)."""
         import struct
         FIN, LIBRE, FATS, NADA = 0xfffffffe, 0xffffffff, 0xfffffffd, 0xffffffff
+        real, extras = cls.contenido_ole(flujo)
         if contenido is None:
-            contenido = {'WordDocument': b'\xec\xa5\xc1\x00', 'Workbook': b'\x09\x08\x10\x00', 'PowerPoint Document': b'\x00\x00\xe8\x03'}.get(flujo, b'')
-        datos = (contenido + b'\x00' * tam)[:tam]
+            contenido = real
+        flujos = [(flujo, contenido)] + (extras if extra is None else extra)
         n = (tam + 511) // 512
-        fat = [FATS, FIN] + [3 + k for k in range(n - 1)] + [FIN]
+        fat = [FATS, FIN]
+        for k in range(len(flujos)):
+            ini = 2 + k * n
+            fat += [ini + j + 1 for j in range(n - 1)] + [FIN]
         fat += [LIBRE] * (128 - len(fat))
         cab = (b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1' + b'\x00' * 16 + struct.pack('<HHHHH', 0x3e, 3, 0xfffe, 9, 6) + b'\x00' * 6
                + struct.pack('<IIIIIIIII', 0, 1, 1, 0, 4096, FIN, 0, FIN, 0) + struct.pack('<I', 0) + struct.pack('<I', LIBRE) * 108)
 
-        def entrada(nombre, tipo, hijo, inicio, largo):
+        def entrada(nombre, tipo, derecha, hijo, inicio, largo):
             nb = nombre.encode('utf-16-le') + b'\x00\x00'
-            return (nb + b'\x00' * (64 - len(nb)) + struct.pack('<HBB', len(nb), tipo, 1) + struct.pack('<III', NADA, NADA, hijo)
+            return (nb + b'\x00' * (64 - len(nb)) + struct.pack('<HBB', len(nb), tipo, 1) + struct.pack('<III', NADA, derecha, hijo)
                     + b'\x00' * 16 + b'\x00' * 4 + b'\x00' * 16 + struct.pack('<III', inicio, largo, 0))
-        directorio = entrada('Root Entry', 5, 1, FIN, 0) + entrada(flujo, 2, NADA, 2, tam) + b'\x00' * 256
-        out = cab + struct.pack('<128I', *fat) + directorio + datos + b'\x00' * (n * 512 - tam)
+        directorio = entrada('Root Entry', 5, NADA, 1, FIN, 0)
+        for k, (nombre, _) in enumerate(flujos):
+            directorio += entrada(nombre, 2, k + 2 if k + 1 < len(flujos) else NADA, NADA, 2 + k * n, tam)
+        directorio = (directorio + b'\x00' * 512)[:512]
+        out = cab + struct.pack('<128I', *fat) + directorio + b''.join((d + b'\x00' * (n * 512))[:n * 512] for _, d in flujos)
         return out[:len(out) - cortar] if cortar else out
 
     W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
@@ -2015,33 +2047,42 @@ class ArchivosComprobados(Base):
         return b'\xff' + bytes([m]) + struct.pack('>H', len(d) + 2) + d
 
     @classmethod
-    def ole_mini(cls, flujo='WordDocument', contenido=None, tam=100, sin_minifat=False):
-        """Un documento OLE cuyo flujo principal es pequeño (< 4096): vive en el MINI-flujo, con su mini-FAT."""
+    def ole_mini(cls, flujo='WordDocument', contenido=None, tam=100, sin_minifat=False, extra=None):
+        """Un documento OLE cuyos flujos son pequeños (< 4096): viven en el MINI-flujo, con su mini-FAT."""
         import struct
         FIN, LIBRE, FATS = 0xfffffffe, 0xffffffff, 0xfffffffd
+        real, extras = cls.contenido_ole(flujo)
         if contenido is None:
-            contenido = {'WordDocument': b'\xec\xa5\xc1\x00', 'Workbook': b'\x09\x08\x10\x00', 'PowerPoint Document': b'\x00\x00\xe8\x03'}.get(flujo, b'')
-        datos = (contenido + b'\x00' * tam)[:tam]
-        nmini = (tam + 63) // 64
+            contenido = real
+        flujos = [(flujo, (contenido + b'\x00' * tam)[:tam])] + [(n_, d[:64]) for n_, d in (extras if extra is None else extra)]
+        minifat, contenedor, inicios = [], b'', []
+        for _, d in flujos:
+            k = (len(d) + 63) // 64
+            inicios.append(len(minifat))
+            minifat += [len(minifat) + j + 1 for j in range(k - 1)] + [FIN]
+            contenedor += (d + b'\x00' * 64 * k)[:64 * k]
+        minifat += [LIBRE] * (128 - len(minifat))
         # Sectores: 0 FAT, 1 directorio, 2 mini-FAT, 3 contenedor del mini-flujo (512 B = 8 mini-sectores).
         fat = [FATS, FIN, FIN, FIN] + [LIBRE] * 124
-        minifat = [k + 1 for k in range(nmini - 1)] + [FIN] + [LIBRE] * (128 - nmini)
         cab = (b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1' + b'\x00' * 16 + struct.pack('<HHHHH', 0x3e, 3, 0xfffe, 9, 6) + b'\x00' * 6
                + struct.pack('<IIIIIIIII', 0, 1, 1, 0, 4096, FIN if sin_minifat else 2, 0 if sin_minifat else 1, FIN, 0) + struct.pack('<I', 0) + struct.pack('<I', LIBRE) * 108)
 
-        def entrada(nombre, tipo, hijo, inicio, largo):
+        def entrada(nombre, tipo, derecha, hijo, inicio, largo):
             nb = nombre.encode('utf-16-le') + b'\x00\x00'
-            return (nb + b'\x00' * (64 - len(nb)) + struct.pack('<HBB', len(nb), tipo, 1) + struct.pack('<III', LIBRE, LIBRE, hijo)
+            return (nb + b'\x00' * (64 - len(nb)) + struct.pack('<HBB', len(nb), tipo, 1) + struct.pack('<III', LIBRE, derecha, hijo)
                     + b'\x00' * 36 + struct.pack('<III', inicio, largo, 0))
-        directorio = entrada('Root Entry', 5, 1, 3, 512) + entrada(flujo, 2, LIBRE, 0, tam) + b'\x00' * 256
-        contenedor = (datos + b'\x00' * 512)[:512]
-        return cab + struct.pack('<128I', *fat) + directorio + struct.pack('<128I', *minifat) + contenedor
+        directorio = entrada('Root Entry', 5, LIBRE, 1, 3, 512)
+        for k, (nombre, d) in enumerate(flujos):
+            directorio += entrada(nombre, 2, k + 2 if k + 1 < len(flujos) else LIBRE, LIBRE, inicios[k], len(d))
+        directorio = (directorio + b'\x00' * 512)[:512]
+        return cab + struct.pack('<128I', *fat) + directorio + struct.pack('<128I', *minifat) + (contenedor + b'\x00' * 512)[:512]
 
     @classmethod
     def webp(cls, tipo='VP8L'):
         import struct
         if tipo == 'VP8L':
-            datos = b'\x2f' + struct.pack('<I', (0) | (0 << 14)) + b'\x00' * 8   # 1×1, sin pérdida
+            # 1×1 negro sin pérdida, tal como lo escribe Pillow (ronda 10: con sus datos de verdad; Pillow lo decodifica).
+            return b'RIFF\x1a\x00\x00\x00WEBPVP8L\x0e\x00\x00\x00/\x00\x00\x00\x00\x07\x10\x11\xfd\x0fDD\xff\x03'
         else:
             datos = b'\x50\x01\x00\x9d\x01\x2a\x01\x00\x01\x00' + b'\x00' * 20   # 1×1, con pérdida
         ch = tipo.encode().ljust(4) + struct.pack('<I', len(datos)) + datos + (b'\x00' if len(datos) % 2 else b'')
@@ -2115,8 +2156,10 @@ class ArchivosComprobados(Base):
         compartidas = self.ooxml('xl/workbook.xml', partes={
             'xl/worksheets/sheet1.xml': '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="s"><v>0</v></c></row></sheetData></worksheet>',
             'xl/sharedStrings.xml': '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><si><t>Café</t></si></sst>'})
+        # Ronda 10: una imagen en los recursos cuenta solo si la página la pinta (Do).
         foto_pdf = self.pdf_de([(1, b'<< /Type /Catalog /Pages 2 0 R >>'), (2, b'<< /Type /Pages /Kids [3 0 R] /Count 1 /Resources << /XObject << /Im0 4 0 R >> >> >>'),
-                                (3, b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>'),
+                                (3, b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 5 0 R >>'),
+                                (5, b'<< /Length 31 >>\nstream\nq 200 0 0 200 72 500 cm /Im0 Do Q\nendstream'),
                                 (4, b'<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /BitsPerComponent 8 /ColorSpace /DeviceGray /Length 1 >>\nstream\n\x80\nendstream')])
         return {
             'utf16.txt': '﻿Hola, esto es un texto Unicode de Windows.\r\n'.encode('utf-16-le'),
@@ -2159,10 +2202,170 @@ class ArchivosComprobados(Base):
 
     def test_ronda9_cada_archivo_lleva_la_version_del_validador(self):
         """G4: el servidor solo cree `integro` de un validador que conoce; el nodo marca la versión en cada archivo y en /salud."""
-        self.assertGreaterEqual(agente.VALIDADOR_VERSION, 9)
+        self.assertGreaterEqual(agente.VALIDADOR_VERSION, 10)
         n = self.por_nombre(self.correr_y_archivos('Listo.', instruccion='Guarda los archivos', antes=lambda t: [self.escribir('a.pdf', self.pdf_clasico()), self.escribir('b.txt', b' ')]))
         self.assertEqual({k: (v.get('integro'), v.get('integro_v')) for k, v in n.items()}, {'a.pdf': (True, agente.VALIDADOR_VERSION), 'b.txt': (False, agente.VALIDADOR_VERSION)})
         self.assertIn(f'validador-{agente.VALIDADOR_VERSION}', agente.CAPACIDADES)
+
+    # ---- Ronda 10: PDF en blanco como los dejan reportlab, fpdf y Chrome; WEBP sin datos; Office antiguo vacío.
+
+    @classmethod
+    def pdf_pagina(cls, contenido, filtro=None, recursos=b'', extra=()):
+        """Un PDF de una página cuyo flujo de contenido es `contenido`, codificado con `filtro` (lista de nombres)."""
+        import base64
+        import zlib
+        datos = contenido
+        for f in reversed(filtro or []):
+            if f == 'FlateDecode':
+                datos = zlib.compress(datos)
+            elif f == 'ASCII85Decode':
+                datos = base64.a85encode(datos) + b'~>'
+            elif f == 'ASCIIHexDecode':
+                datos = datos.hex().encode() + b'>'
+            elif f == 'RunLengthDecode':
+                out = b''
+                for k in range(0, len(datos), 128):
+                    trozo = datos[k:k + 128]
+                    out += bytes([len(trozo) - 1]) + trozo
+                datos = out + b'\x80'
+            elif f == 'LZWDecode':
+                datos = cls.lzw_codificar(datos)
+            elif f == 'DCTDecode':
+                pass
+        fil = (b' /Filter [' + b' '.join(b'/' + f.encode() for f in filtro) + b']') if filtro else b''
+        return cls.pdf_de([(1, b'<< /Type /Catalog /Pages 2 0 R >>'), (2, b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>'),
+                           (3, b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> ' + recursos + b' >> /Contents 4 0 R >>'),
+                           (4, b'<< /Length %d%s >>\nstream\n' % (len(datos), fil) + datos + b'\nendstream'), *extra])
+
+    @staticmethod
+    def lzw_codificar(datos):
+        """LZW como el de PDF (códigos de 9 a 12 bits, más significativo primero, EarlyChange 1)."""
+        tabla = {bytes([i]): i for i in range(256)}
+        sig, ancho, bits, nb, out, w = 258, 9, 0, 0, bytearray(), b''
+
+        def emitir(c):
+            nonlocal bits, nb
+            bits = (bits << ancho) | c
+            nb += ancho
+            while nb >= 8:
+                nb -= 8
+                out.append((bits >> nb) & 255)
+        emitir(256)
+        for x in datos:
+            wc = w + bytes([x])
+            if wc in tabla:
+                w = wc
+                continue
+            emitir(tabla[w])
+            tabla[wc] = sig
+            sig += 1
+            if sig + 1 >= (1 << ancho) and ancho < 12:
+                ancho += 1
+            w = bytes([x])
+        if w:
+            emitir(tabla[w])
+        emitir(257)
+        if nb:
+            out.append((bits << (8 - nb)) & 255)
+        return bytes(out)
+
+    def pdfs_r10(self):
+        P = self.pdf_pagina
+        imagen = (5, b'<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /BitsPerComponent 8 /ColorSpace /DeviceGray /Length 1 >>\nstream\n\x80\nendstream')
+        forma = (5, b'<< /Type /XObject /Subtype /Form /BBox [0 0 100 100] /Resources << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> /Length 33 >>\nstream\nBT /F1 12 Tf 10 10 Td (Hola) Tj ET\nendstream')
+        forma_vacia = (5, b'<< /Type /XObject /Subtype /Form /BBox [0 0 100 100] /Length 8 >>\nstream\n0.5 w q Q\nendstream')
+        falsos = {
+            'rl_blanco.pdf': P(b'BT /F1 12 Tf 14.4 TL ET', ['ASCII85Decode', 'FlateDecode']),
+            'rl_texto_vacio.pdf': P(b'BT /F1 12 Tf 14.4 TL ET\nBT 1 0 0 1 72 720 Tm () Tj T* ET', ['ASCII85Decode', 'FlateDecode']),
+            'fpdf_blanco.pdf': P(b'2 J\n0.57 w\n', ['FlateDecode']),
+            'fpdf_celda_vacia.pdf': P(b'2 J\n0.57 w\nBT /F1 12.00 Tf ET\nBT 31.18 795.77 Td ( ) Tj ET\n', ['FlateDecode']),
+            'hex_espacios.pdf': P(b'BT /F1 12 Tf 72 720 Td <2020> Tj [( ) -250 <20>] TJ ET', ['FlateDecode']),
+            'chrome_fondo.pdf': P(b'.24 0 0 -.24 0 792 cm\nq\n3.125 0 0 3.125 115.625 115.625 cm\n1 1 1 RG 1 1 1 rg\n0 0 741 981 re\nf\nQ\n', ['FlateDecode']),
+            'fondo_gris_blanco.pdf': P(b'1 g 0 0 612 792 re f 1 G 72 72 m 300 300 l S', None),
+            'cmyk_blanco.pdf': P(b'0 0 0 0 k 0 0 612 792 re f', None),
+            'imagen_sin_usar.pdf': P(b'2 J 0.57 w', None, b'/XObject << /Im0 5 0 R >>', (imagen,)),
+            'forma_vacia.pdf': P(b'q /Fx0 Do Q', None, b'/XObject << /Fx0 5 0 R >>', (forma_vacia,)),
+            'solo_camino.pdf': P(b'0 0 1 rg 72 72 200 100 re n', None),
+        }
+        buenos = {
+            'rl_texto.pdf': P(b'BT /F1 12 Tf 14.4 TL ET\nBT 1 0 0 1 72 720 Tm (Informe de ventas) Tj T* ET', ['ASCII85Decode', 'FlateDecode']),
+            'fpdf_texto.pdf': P(b'2 J\n0.57 w\nBT /F1 12.00 Tf ET\nBT 31.18 795.77 Td (Carta) Tj ET\n', ['FlateDecode']),
+            'tj_array.pdf': P(b'BT /F1 12 Tf 72 720 Td [(H) 20 (ola)] TJ ET', None),
+            'hex_cid.pdf': P(b'BT /F1 12 Tf 72 720 Td <00240031> Tj ET', ['FlateDecode']),
+            'comilla.pdf': P(b"BT /F1 12 Tf 14 TL 72 720 Td (Hola) ' ET", None),
+            'imagen_usada.pdf': P(b'q 200 0 0 200 72 500 cm /Im0 Do Q', None, b'/XObject << /Im0 5 0 R >>', (imagen,)),
+            'forma_con_texto.pdf': P(b'q /Fx0 Do Q', None, b'/XObject << /Fx0 5 0 R >>', (forma,)),
+            'imagen_en_linea.pdf': P(b'q 10 0 0 10 72 72 cm BI /W 1 /H 1 /BPC 8 /CS /G ID \x80 EI Q', None),
+            'dibujo_azul.pdf': P(b'0.1 0.3 0.8 rg 72 500 200 100 re f', ['FlateDecode']),
+            'linea_negra.pdf': P(b'0 0 0 RG 72 400 m 300 400 l S', None),
+            'linea_por_defecto.pdf': P(b'72 400 m 300 400 l S', None),
+            'fondo_blanco_y_texto.pdf': P(b'1 1 1 rg 0 0 612 792 re f 0 g BT /F1 12 Tf 72 720 Td (Hola) Tj ET', None),
+            'q_restaura_color.pdf': P(b'q 1 1 1 rg Q 72 72 100 100 re f', None),
+            'lzw.pdf': P(b'BT /F1 12 Tf 72 720 Td (Comprimido con LZW, como los PDF viejos) Tj ET', ['LZWDecode']),
+            'ahx.pdf': P(b'BT /F1 12 Tf 72 720 Td (Hexadecimal) Tj ET', ['ASCIIHexDecode']),
+            'rle.pdf': P(b'BT /F1 12 Tf 72 720 Td (RunLength) Tj ET', ['RunLengthDecode']),
+            'sombreado.pdf': P(b'/Sh0 sh', None),
+        }
+        sin_decidir = {'filtro_raro.pdf': P(b'BT (x) Tj ET', ['JBIG2Decode'])}
+        return falsos, buenos, sin_decidir
+
+    def test_ronda10_pdf_en_blanco_de_bibliotecas_no_es_integro(self):
+        falsos, buenos, raros = self.pdfs_r10()
+        vistos = self._tandas({**falsos, **buenos, **raros})
+        self.assertEqual({k: vistos[k].get('integro') for k in falsos if vistos[k].get('integro') is not False}, {}, 'un PDF en blanco no tiene contenido')
+        self.assertEqual({k: (vistos[k].get('integro'), vistos[k].get('defecto')) for k in buenos if vistos[k].get('integro') is not True}, {}, 'lo que pinta de verdad sí')
+        self.assertEqual({k: vistos[k].get('integro') for k in raros}, {k: None for k in raros}, 'un filtro que no sé abrir: sin comprobar, nunca íntegro')
+
+    def test_ronda10_webp_y_office_antiguo_sin_contenido(self):
+        import struct
+
+        def riff(fcc, d):
+            ch = fcc + struct.pack('<I', len(d)) + d + (b'\x00' if len(d) & 1 else b'')
+            return b'RIFF' + struct.pack('<I', len(ch) + 4) + b'WEBP' + ch
+
+        def reg(t, d):
+            return struct.pack('<HH', t, len(d)) + d
+        libro_vacio = (reg(0x0809, struct.pack('<HHHHII', 0x0600, 0x0005, 0, 0, 0, 0)) + reg(0x000A, b'')
+                       + reg(0x0809, struct.pack('<HHHHII', 0x0600, 0x0010, 0, 0, 0, 0)) + reg(0x0201, struct.pack('<HHH', 0, 0, 0)) + reg(0x000A, b''))
+        falsos = {
+            'vp8l_solo_cabecera.webp': riff(b'VP8L', b'\x2f' + struct.pack('<I', (4000 - 1) | ((3000 - 1) << 14))),
+            'vp8_solo_cabecera.webp': riff(b'VP8 ', bytes([0x10, 0x00, 0x00]) + b'\x9d\x01\x2a' + struct.pack('<HH', 1920, 1080)),
+            'vp8_sin_coeficientes.webp': riff(b'VP8 ', bytes([0x40, 0x01, 0x00]) + b'\x9d\x01\x2a' + struct.pack('<HH', 1920, 1080) + b'\x00' * 10),
+            'solo_firma.doc': self.ole('WordDocument', contenido=b'\xec\xa5\xc1\x00'),
+            'sin_tabla.doc': self.ole('WordDocument', extra=[]),
+            'libro_sin_celdas.xls': self.ole('Workbook', contenido=libro_vacio),
+            'mini_solo_firma.doc': self.ole_mini('WordDocument', contenido=b'\xec\xa5\xc1\x00'),
+            'mini_libro_vacio.xls': self.ole_mini('Workbook', contenido=libro_vacio[:100], tam=len(libro_vacio[:100])),
+            'diapos_sin_texto.ppt': self.ole('PowerPoint Document', contenido=struct.pack('<HHI', 0x000F, 0x03E8, 0)),
+        }
+        buenos = {'b.doc': self.ole('WordDocument'), 'b.xls': self.ole('Workbook'), 'b.ppt': self.ole('PowerPoint Document'),
+                  'mini.doc': self.ole_mini('WordDocument'), 'mini.xls': self.ole_mini('Workbook'), 'mini.ppt': self.ole_mini('PowerPoint Document'),
+                  'b.webp': self.webp('VP8L'), 'perdida.webp': self.webp('VP8 ')}
+        vistos = self._tandas({**falsos, **buenos})
+        self.assertEqual({k: vistos[k].get('integro') for k in falsos if vistos[k].get('integro') is True}, {}, 'sin datos no es íntegro')
+        self.assertEqual({k: vistos[k].get('integro') for k in ('vp8l_solo_cabecera.webp', 'vp8_solo_cabecera.webp', 'solo_firma.doc', 'libro_sin_celdas.xls')},
+                         {k: False for k in ('vp8l_solo_cabecera.webp', 'vp8_solo_cabecera.webp', 'solo_firma.doc', 'libro_sin_celdas.xls')})
+        self.assertEqual({k: (vistos[k].get('integro'), vistos[k].get('defecto')) for k in buenos if vistos[k].get('integro') is not True}, {})
+
+    def test_ronda10_formula_grafico_y_ancho_cero(self):
+        grafico = self.ooxml('ppt/presentation.xml', partes={
+            'ppt/slides/slide1.xml': ('<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+                                      f'xmlns:r="{self.REL_DOC}" xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"><p:cSld><p:spTree><p:graphicFrame><a:graphic><a:graphicData>'
+                                      '<c:chart r:id="rId5"/></a:graphicData></a:graphic></p:graphicFrame></p:spTree></p:cSld></p:sld>'),
+            'ppt/slides/_rels/slide1.xml.rels': self._rels([('rId5', 'chart', '../charts/chart1.xml')]),
+            'ppt/charts/chart1.xml': '<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart><c:plotArea><c:barChart><c:ser><c:val><c:numRef><c:numCache><c:pt idx="0"><c:v>10</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser></c:barChart></c:plotArea></c:chart></c:chartSpace>'})
+        grafico_vacio = self.ooxml('ppt/presentation.xml', partes={
+            'ppt/slides/slide1.xml': ('<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+                                      f'xmlns:r="{self.REL_DOC}" xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"><p:cSld><p:spTree><p:graphicFrame><a:graphic><a:graphicData>'
+                                      '<c:chart r:id="rId5"/></a:graphicData></a:graphic></p:graphicFrame></p:spTree></p:cSld></p:sld>'),
+            'ppt/slides/_rels/slide1.xml.rels': self._rels([('rId5', 'chart', '../charts/chart1.xml')]),
+            'ppt/charts/chart1.xml': '<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart/></c:chartSpace>'})
+        formula = self.ooxml('xl/workbook.xml', partes={
+            'xl/worksheets/sheet1.xml': '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1"><f>SUM(1,2)</f><v></v></c></row></sheetData></worksheet>'})
+        casos = {'grafico.pptx': (grafico, True), 'formula.xlsx': (formula, True), 'grafico_vacio.pptx': (grafico_vacio, False),
+                 'ancho_cero.txt': ('​‌‍⁠﻿ \n'.encode(), False)}
+        vistos = self._tandas({k: v for k, (v, _) in casos.items()})
+        self.assertEqual({k: vistos[k].get('integro') for k in casos}, {k: e for k, (_, e) in casos.items()})
 
     def test_nombres_con_apostrofo(self):
         """Ronda 6, G2-E: «O'Brien.pdf» entero (no «Brien.pdf»), también entre comillas simples."""

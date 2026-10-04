@@ -120,7 +120,7 @@ CERRAR_VNC = os.environ.get('CERRAR_VNC', '1') != '0'
 # contrato de entradas con época, secuencia, viewport y ACK, y el frame en cabeceras; `seguro`: la entrada segura.
 # La versión del VALIDADOR (ronda 9, G4): va en cada archivo (`integro_v`) y en /salud. El servidor solo cree
 # `integro: true` de un validador de esta versión o más nueva; lo de un nodo viejo queda «sin comprobar».
-VALIDADOR_VERSION = 9
+VALIDADOR_VERSION = 10
 CAPACIDADES = ['pausar', 'confirmar', 'control', 'entrada', 'seguro', f'validador-{VALIDADOR_VERSION}']
 ESTADOS_VIVOS = ('en_cola', 'trabajando', 'pausada', 'confirmar', 'control')
 # El espacio de trabajo de la misión dentro del escritorio (la carpeta de la persona del escritorio de la demo): lo
@@ -914,7 +914,7 @@ def tipo_por_dentro(magia_hex, marca, tam):
 
 # El validador que corre DENTRO del escritorio con su python3 (solo la biblioteca estándar). Recibe pares «tipo ruta» y
 # devuelve, por cada uno, «ruta\t1|0|-\tdefecto»: 1 entero, 0 cortado o falso, - no se sabe validar. Revisión externa
-# (rondas 7, 8 y 9): la estructura de verdad y CONTENIDO REAL, no firmas sueltas ni cascarones vacíos:
+# (rondas 7 a 10): la estructura de verdad y CONTENIDO REAL, no firmas sueltas ni cascarones vacíos:
 #  · OOXML: [Content_Types].xml declara la parte principal (la de _rels/.rels); la parte parsea con su raíz y trae
 #    contenido: docx con algún w:t con texto (o una imagen embebida que existe en el ZIP); xlsx con alguna celda con
 #    texto o valor no vacío (también por sharedStrings); pptx con alguna diapositiva con a:t con texto o una imagen
@@ -922,20 +922,24 @@ def tipo_por_dentro(magia_hex, marca, tam):
 #  · ODF: mimetype exacto; content.xml con office:document-content y office:body con texto.
 #  · PDF: se sigue la tabla xref (clásica, /Prev y flujos /XRef con predictor): cada desplazamiento apunta a «N G obj»;
 #    /Root lleva a un catálogo y su /Pages a un árbol con /Count >= 1 que se RECORRE (tope de profundidad y nodos, sin
-#    ciclos) hasta hojas /Type /Page de verdad; alguna con /Contents con datos o con /XObject en sus recursos.
+#    ciclos) hasta hojas /Type /Page de verdad. Ronda 10: el contenido se decodifica (Flate, ASCII85, ASCIIHex,
+#    RunLength, LZW; un filtro desconocido: «-») y tiene que PINTAR: texto no blanco (Tj, TJ, ', "), una imagen o un
+#    formulario que pinta usado con Do, una imagen en línea, un sombreado o un trazo/relleno que no sea blanco.
 #  · PNG: IHDR primero, IDAT descomprimido que alcanza ancho × alto × canales, filtro de cada fila entre 0 y 4, IEND.
 #  · JPEG: SOI, SOF, DQT/DHT, SOS con datos (al menos 1 byte cada 2000 píxeles declarados) y EOI; lo que va DESPUÉS
 #    de un EOI válido (fotos en movimiento) se acepta.
 #  · GIF: pantalla con tamaño, al menos una imagen (0x2C) con su tamaño de código LZW y datos proporcionales, y «;».
-#  · WEBP: un bloque VP8 (firma 9D 01 2A, tamaño coherente) o VP8L (0x2F), suelto o en un cuadro ANMF.
-#  · OLE (.doc, .xls, .ppt): cabecera CFB, FAT y directorio dentro del archivo, y el flujo principal (WordDocument con
-#    su FIB, Workbook/Book con su BOF, PowerPoint Document), también si vive en el mini-flujo (con su mini-FAT).
+#  · WEBP: un bloque VP8 (firma 9D 01 2A, primera partición > 0 y coeficientes después) o VP8L (0x2F, con datos tras la
+#    cabecera), suelto o en un cuadro ANMF, con un tamaño mínimo proporcional a los píxeles.
+#  · OLE (.doc, .xls, .ppt): cabecera CFB, FAT y directorio dentro del archivo, y el flujo principal también en el
+#    mini-flujo. Ronda 10: Word con ccpText > 1 y su flujo 0Table/1Table; Excel con alguna celda con dato tras el BOF de
+#    una hoja; PowerPoint con un TextCharsAtom/TextBytesAtom con texto (si no, «-»).
 #  · Texto (.txt, .csv): el archivo ENTERO sin bytes binarios y con algo que no sea blanco; UTF-16 con BOM vale.
 #  · RTF: llaves que cierran y algo de texto fuera de las tablas de fuentes, colores y estilos.
 # Si no se puede decidir: «-» (sin comprobar), nunca 1. Una falsificación HECHA A PROPÓSITO con contenido real y
 # estructura válida no se distingue de un archivo real: eso queda fuera de alcance (es un archivo).
 VALIDADOR = r"""
-import re, struct, sys, zipfile, zlib
+import base64, re, struct, sys, zipfile, zlib
 import xml.etree.ElementTree as ET
 MAX = 200 * 1024 * 1024
 MAX_XML = 64 * 1024 * 1024
@@ -959,7 +963,8 @@ def textov(b):
         if len(b) != len(b.translate(None, CONTROL)):
             return 0, 'tiene bytes binarios (no es texto)'
         t = b.decode('utf-8', 'replace')
-    if not t.replace('\ufeff', '').strip():
+    # Ronda 10: los espacios de ancho cero (U+200B, U+200C, U+200D, U+2060, U+FEFF) también son blanco.
+    if not re.sub('[\u200b\u200c\u200d\u2060\ufeff]', '', t).strip():
         return 0, 'no tiene texto (solo espacios)'
     return 1, ''
 def leer(r):
@@ -1090,11 +1095,22 @@ def ooxml(z, tipo, nombres):
                 base_sl = d[0].rsplit('/', 1)[0] + '/'
                 rels_sl = destinos(z, base_sl + '_rels/' + d[0].rsplit('/', 1)[-1] + '.rels', base_sl)
                 fotos = [x for x in sl.iter() if local(x.tag) == 'pic']
-                if any(imagen_presente(z, f, rels_sl, nombres) for f in fotos):
+                if any(imagen_presente(z, f, rels_sl, nombres) for f in fotos) or grafico_con_datos(z, sl, rels_sl, nombres):
                     buenas = 1
     if not validas:
         return 0, 'ninguna diapositiva es válida'
     return (1, '') if buenas else (0, 'ninguna diapositiva tiene texto ni imagen')
+def grafico_con_datos(z, sl, rels, nombres):
+    # Ronda 10: un graphicFrame con c:chart cuya parte existe y trae datos (algún c:v con valor).
+    for x in sl.iter():
+        if local(x.tag) != 'chart':
+            continue
+        for k, v in x.attrib.items():
+            if local(k) == 'id' and 'relationships' in espacio(k):
+                d = rels.get(v)
+                if d and d[0] in nombres and any(local(y.tag) == 'v' and (y.text or '').strip() for y in xml_de(z, d[0]).iter()):
+                    return True
+    return False
 def imagen_presente(z, e, rels, nombres):
     # Solo una imagen de verdad (a:blip, v:imagedata): un encabezado o un hipervínculo enlazado no es contenido.
     for x in e.iter():
@@ -1112,6 +1128,9 @@ def compartidas(z, rels, nombres):
         return []
     return [''.join(si.itertext()) for si in xml_de(z, nombre) if local(si.tag) == 'si']
 def celda_con_valor(c, comp):
+    # Ronda 10: una fórmula sin valor guardado (<f>SUM(1,2)</f>, como la deja openpyxl) también es un dato.
+    if any(local(v.tag) == 'f' and (v.text or '').strip() for v in c):
+        return True
     for v in c:
         if local(v.tag) == 'is' and ''.join(v.itertext()).strip():
             return True
@@ -1266,6 +1285,98 @@ def valor_pdf(d):
             return float(t)
         return t
     return v(0)
+MAX_FLUJO = 64 * 1024 * 1024
+def lzw(d, temprano=1):
+    out, tabla, ancho, prev, bits, nb = bytearray(), [bytes([i]) for i in range(256)] + [b'', b''], 9, None, 0, 0
+    for byte in d:
+        bits = (bits << 8) | byte
+        nb += 8
+        while nb >= ancho:
+            nb -= ancho
+            cod = (bits >> nb) & ((1 << ancho) - 1)
+            bits &= (1 << nb) - 1
+            if cod == 256:
+                tabla, ancho, prev = tabla[:258], 9, None
+                continue
+            if cod == 257:
+                return bytes(out)
+            if prev is None:
+                if cod >= len(tabla):
+                    raise Malo('un flujo LZW está roto')
+                e = tabla[cod]
+            elif cod < len(tabla):
+                e = tabla[cod]
+                tabla.append(prev + e[:1])
+            elif cod == len(tabla):
+                e = prev + prev[:1]
+                tabla.append(e)
+            else:
+                raise Malo('un flujo LZW está roto')
+            out += e
+            prev = e
+            if len(out) > MAX_FLUJO:
+                raise Duda('un flujo es demasiado grande para comprobarlo')
+            if len(tabla) + temprano >= (1 << ancho) and ancho < 12:
+                ancho += 1
+    return bytes(out)
+def runlength(d):
+    out, i = bytearray(), 0
+    while i < len(d):
+        n = d[i]
+        i += 1
+        if n == 128:
+            break
+        if n < 128:
+            out += d[i:i + n + 1]
+            i += n + 1
+        else:
+            out += d[i:i + 1] * (257 - n)
+            i += 1
+    return bytes(out)
+FILTROS = {b'FlateDecode': 'flate', b'Fl': 'flate', b'ASCII85Decode': 'a85', b'A85': 'a85', b'ASCIIHexDecode': 'ahx', b'AHx': 'ahx',
+           b'RunLengthDecode': 'rl', b'RL': 'rl', b'LZWDecode': 'lzw', b'LZW': 'lzw'}
+def decodificar_flujo(d, datos):
+    # Ronda 10: toda la cadena de filtros que se sabe abrir (Flate, ASCII85, ASCIIHex, RunLength, LZW, con predictor).
+    # Un filtro desconocido: «-» (sin comprobar), nunca «tiene contenido».
+    dd = valor_pdf(d)
+    f = dd.get(b'Filter') if isinstance(dd, dict) else None
+    filtros = [x for x in (f if isinstance(f, list) else [f]) if x is not None]
+    parms = dd.get(b'DecodeParms') if isinstance(dd, dict) else None
+    parms = parms if isinstance(parms, list) else [parms] * len(filtros)
+    for k, x in enumerate(filtros):
+        nombre = x[1:] if isinstance(x, bytes) and x.startswith(b'/') else b''
+        clase = FILTROS.get(nombre)
+        if clase is None:
+            raise Duda('un flujo usa un filtro que no sé abrir (%s)' % nombre.decode('latin-1')[:20])
+        pm = parms[k] if k < len(parms) and isinstance(parms[k], dict) else {}
+        if clase == 'flate':
+            try:
+                o = zlib.decompressobj()
+                datos = o.decompress(datos, MAX_FLUJO)
+            except zlib.error:
+                raise Duda('un flujo comprimido no se pudo abrir (cifrado o dañado)')
+        elif clase == 'a85':
+            t = re.sub(rb'\s+', b'', datos)
+            t = t[2:] if t.startswith(b'<~') else t
+            t = t.split(b'~>')[0]
+            try:
+                datos = base64.a85decode(t)
+            except ValueError:
+                raise Malo('un flujo ASCII85 está roto')
+        elif clase == 'ahx':
+            t = re.sub(rb'\s+', b'', datos).split(b'>')[0]
+            try:
+                datos = bytes.fromhex((t + b'0' * (len(t) % 2)).decode('ascii'))
+            except ValueError:
+                raise Malo('un flujo ASCIIHex está roto')
+        elif clase == 'rl':
+            datos = runlength(datos)
+        elif clase == 'lzw':
+            datos = lzw(datos, int(pm.get(b'EarlyChange', 1)) if isinstance(pm.get(b'EarlyChange', 1), float) else 1)
+        if clase in ('flate', 'lzw') and pm:
+            datos = predictor(datos, b'/Predictor %d /Columns %d' % (int(pm.get(b'Predictor', 1) or 1) if isinstance(pm.get(b'Predictor'), float) else 1,
+                                                                    int(pm.get(b'Columns', 1) or 1) if isinstance(pm.get(b'Columns'), float) else 1))
+    return datos
 def flujo(b, ini, decodificar=True):
     m = re.compile(rb'\s*(\d+)\s+(\d+)\s+obj\b').match(b, ini)
     if not m:
@@ -1285,18 +1396,7 @@ def flujo(b, ini, decodificar=True):
     datos = b[k:fin]
     if not decodificar:
         return d, datos
-    if re.search(rb'/Filter\s*\[?\s*/FlateDecode\s*\]?', d):
-        try:
-            datos = zlib.decompress(datos)
-        except zlib.error:
-            try:
-                datos = zlib.decompressobj().decompress(datos)
-            except zlib.error:
-                raise Duda('un flujo comprimido no se pudo abrir (cifrado o dañado)')
-        datos = predictor(datos, d)
-    elif re.search(rb'/Filter', d):
-        raise Duda('un flujo usa un filtro que no sé abrir')
-    return d, datos
+    return d, decodificar_flujo(d, datos)
 def tabla_clasica(b, off, xref, vistos):
     i = off + 4
     lin = re.compile(rb'\s*(\d+)\s+(\d+)[ \t]*\r?\n?')
@@ -1433,32 +1533,180 @@ def pdfv(b):
             x = valor_pdf(o) if o is not None else None
             prof += 1
         return x
-    def con_datos(x):
+    def contenido_de(x, prof=0):
+        # Los flujos de /Contents (uno o una lista), decodificados y unidos.
+        if prof > 4:
+            return b''
         refs = x if isinstance(x, list) else [x]
+        out = []
         for r in refs[:200]:
-            if isinstance(r, tuple):
-                e = xref.get(r[1])
-                if e and e[0] == 's':
-                    lista = dic(r)
-                    if isinstance(lista, list) and con_datos(lista):
-                        return True
-                elif e and e[0] == 'o':
-                    d, crudo = flujo(b, e[1], False)
-                    if crudo is None:
-                        lista = valor_pdf(d) if d is not None else None
-                        if isinstance(lista, list) and con_datos(lista):
-                            return True
-                        continue
-                    if not crudo.strip():
-                        continue
-                    if re.search(rb'/Filter\s*\[?\s*/FlateDecode\s*\]?', d) and not re.search(rb'/Filter\s*\[\s*/FlateDecode\s*/', d):
-                        try:
-                            if zlib.decompressobj().decompress(crudo, 1 << 20).strip():
-                                return True
+            if not isinstance(r, tuple):
+                continue
+            e = xref.get(r[1])
+            if e and e[0] == 's':
+                lista = dic(r)
+                if isinstance(lista, list):
+                    out.append(contenido_de(lista, prof + 1))
+            elif e and e[0] == 'o':
+                d, crudo = flujo(b, e[1], False)
+                if crudo is None:
+                    lista = valor_pdf(d) if d is not None else None
+                    if isinstance(lista, list):
+                        out.append(contenido_de(lista, prof + 1))
+                    continue
+                out.append(decodificar_flujo(d, crudo))
+        return b'\n'.join(out)
+    def xobjeto(recursos, nombre):
+        r = dic(recursos)
+        xo = dic(r.get(b'XObject')) if isinstance(r, dict) else None
+        x = xo.get(nombre) if isinstance(xo, dict) else None
+        if not isinstance(x, tuple):
+            return None, None
+        e = xref.get(x[1])
+        if not e or e[0] != 'o':
+            return None, None
+        d, crudo = flujo(b, e[1], False)
+        dd = valor_pdf(d) if d is not None else None
+        return (dd if isinstance(dd, dict) else None), (d, crudo)
+    def pinta(datos, recursos, prof):
+        # Ronda 10: algún operador que PINTE de verdad: texto no blanco (Tj, TJ, ', "), una imagen o un formulario que
+        # pinta (Do hacia un XObject de los recursos), una imagen en línea (BI), un sombreado (sh) o un trazo/relleno de
+        # un color que no sea blanco. Un rectángulo blanco (el fondo de Chrome) no es contenido.
+        if prof > 8:
+            return False
+        ops = []
+        relleno_blanco, trazo_blanco, pila_g = False, False, []
+        i, n = 0, len(datos)
+        def blanco(nums, cmyk=False):
+            if not nums or not all(isinstance(v, float) for v in nums):
+                return False
+            if len(nums) == 4 or cmyk:
+                return all(v <= 0.001 for v in nums)
+            return all(v >= 0.999 for v in nums)
+        def texto_visible(x):
+            if isinstance(x, list):
+                return any(texto_visible(y) for y in x)
+            return isinstance(x, (bytes, bytearray)) and x.strip(b' \t\r\n\x0c\x00') != b''
+        while i < n:
+            c = datos[i]
+            if c in b' \t\r\n\x0c\x00':
+                i += 1
+            elif c == 0x25:
+                j = datos.find(b'\n', i)
+                i = n if j < 0 else j + 1
+            elif c == 0x28:
+                prof_s, j, out = 1, i + 1, bytearray()
+                while j < n and prof_s:
+                    ch = datos[j]
+                    if ch == 0x5c and j + 1 < n:
+                        sig = datos[j + 1]
+                        if 0x30 <= sig <= 0x37:
+                            m = re.compile(rb'[0-7]{1,3}').match(datos, j + 1)
+                            out.append(int(m.group(0), 8) & 255)
+                            j = m.end()
                             continue
-                        except zlib.error:
-                            return True
+                        out += {0x6e: b'\n', 0x72: b'\r', 0x74: b'\t', 0x62: b'\x08', 0x66: b'\x0c'}.get(sig, bytes([sig]) if sig not in (0x0a, 0x0d) else b'')
+                        j += 2
+                        continue
+                    if ch == 0x28:
+                        prof_s += 1
+                    elif ch == 0x29:
+                        prof_s -= 1
+                        if not prof_s:
+                            break
+                    out.append(ch)
+                    j += 1
+                ops.append(bytes(out))
+                i = j + 1
+            elif c == 0x3c and datos[i + 1:i + 2] == b'<':
+                ops.append(b'<<')
+                i += 2
+            elif c == 0x3e and datos[i + 1:i + 2] == b'>':
+                ops.append(b'>>')
+                i += 2
+            elif c == 0x3c:
+                j = datos.find(b'>', i)
+                j = n if j < 0 else j
+                h = re.sub(rb'\s+', b'', datos[i + 1:j])
+                try:
+                    ops.append(bytes.fromhex((h + b'0' * (len(h) % 2)).decode('ascii')))
+                except ValueError:
+                    ops.append(b'?')
+                i = j + 1
+            elif c == 0x5b:
+                ops.append('[')
+                i += 1
+            elif c == 0x5d:
+                k = len(ops) - 1
+                while k >= 0 and ops[k] != '[':
+                    k -= 1
+                lista = ops[k + 1:] if k >= 0 else []
+                del ops[max(k, 0):]
+                ops.append(lista)
+                i += 1
+            elif c == 0x2f:
+                m = re.compile(rb'/[^\s/<>\[\]()%{}]*').match(datos, i)
+                ops.append(('n', m.group(0)[1:]))
+                i = m.end()
+            else:
+                m = re.compile(rb'[+-]?(?:\d+\.?\d*|\.\d+)').match(datos, i)
+                if m:
+                    ops.append(float(m.group(0)))
+                    i = m.end()
+                    continue
+                m = re.compile(rb"[A-Za-z'\"*]+").match(datos, i)
+                if not m:
+                    i += 1
+                    continue
+                op = m.group(0)
+                i = m.end()
+                nums = [v for v in ops if isinstance(v, float)]
+                if op in (b'Tj', b"'") and ops and texto_visible(ops[-1]):
                     return True
+                if op == b'"' and ops and texto_visible(ops[-1]):
+                    return True
+                if op == b'TJ' and ops and texto_visible(ops[-1]):
+                    return True
+                if op in (b'BI', b'sh'):
+                    return True
+                if op == b'Do' and ops and isinstance(ops[-1], tuple):
+                    dd, par = xobjeto(recursos, ops[-1][1])
+                    dtx, crudo = par or (None, None)
+                    if dd is not None:
+                        sub = dd.get(b'Subtype')
+                        if sub == b'/Image':
+                            if (dd.get(b'Width') or 0) > 0 and (dd.get(b'Height') or 0) > 0 and crudo:
+                                return True
+                        elif sub == b'/Form' and crudo is not None:
+                            if pinta(decodificar_flujo(dtx, crudo), dd.get(b'Resources', recursos), prof + 1):
+                                return True
+                elif op == b'q':
+                    pila_g.append((relleno_blanco, trazo_blanco))
+                elif op == b'Q':
+                    if pila_g:
+                        relleno_blanco, trazo_blanco = pila_g.pop()
+                elif op in (b'g', b'rg', b'k'):
+                    relleno_blanco = blanco(nums, op == b'k')
+                elif op in (b'G', b'RG', b'K'):
+                    trazo_blanco = blanco(nums, op == b'K')
+                elif op in (b'sc', b'scn'):
+                    relleno_blanco = blanco(nums) if not any(isinstance(v, tuple) for v in ops) else False
+                elif op in (b'SC', b'SCN'):
+                    trazo_blanco = blanco(nums) if not any(isinstance(v, tuple) for v in ops) else False
+                elif op == b'cs':
+                    relleno_blanco = False
+                elif op == b'CS':
+                    trazo_blanco = False
+                elif op in (b'f', b'F', b'f*'):
+                    if not relleno_blanco:
+                        return True
+                elif op in (b'S', b's'):
+                    if not trazo_blanco:
+                        return True
+                elif op in (b'B', b'B*', b'b', b'b*'):
+                    if not relleno_blanco or not trazo_blanco:
+                        return True
+                ops = []
         return False
     hojas, contenido, vistos_p = 0, False, set()
     pila = [(('R', pags), None, 0)]
@@ -1482,13 +1730,9 @@ def pdfv(b):
                     pila.append((k, rec, prof + 1))
         elif tipo == b'/Page':
             hojas += 1
-            if nodo.get(b'Contents') is not None and con_datos(nodo[b'Contents']):
+            # Un /XObject en los recursos solo cuenta si el contenido lo usa (Do).
+            if nodo.get(b'Contents') is not None and pinta(contenido_de(nodo[b'Contents']), rec, 0):
                 contenido = True
-            else:
-                r = dic(rec)
-                xo = dic(r.get(b'XObject')) if isinstance(r, dict) else None
-                if isinstance(xo, dict) and xo:
-                    contenido = True
     if not hojas:
         return 0, 'no tiene ninguna página de verdad (el árbol no llega a una /Page)'
     if not contenido:
@@ -1729,13 +1973,21 @@ def rtfv(b):
             i += 1
     return (1, '') if letras else (0, 'no tiene texto')
 def vp8_valido(fcc, d):
+    # Ronda 10: con DATOS de imagen, no solo la cabecera. VP8: primera partición > 0, algo después de ella (los
+    # coeficientes) y un tamaño de al menos 1 byte cada 8000 píxeles. VP8L: al menos 4 bytes tras la cabecera y 1 cada
+    # millón de píxeles (sin pérdida, un color liso se codifica casi en nada: la cota tiene que ser muy generosa).
     if fcc == b'VP8 ':
         if len(d) < 10 or d[3:6] != b'\x9d\x01\x2a' or d[0] & 1:
             return False
         primera = (d[0] | d[1] << 8 | d[2] << 16) >> 5
-        return (struct.unpack('<H', d[6:8])[0] & 0x3fff) > 0 and (struct.unpack('<H', d[8:10])[0] & 0x3fff) > 0 and 10 + primera <= len(d)
+        w, h = struct.unpack('<H', d[6:8])[0] & 0x3fff, struct.unpack('<H', d[8:10])[0] & 0x3fff
+        return w > 0 and h > 0 and primera > 0 and 10 + primera < len(d) and len(d) >= w * h // 8000
     if fcc == b'VP8L':
-        return len(d) >= 5 and d[0] == 0x2f and (d[4] >> 5) == 0
+        if len(d) < 5 or d[0] != 0x2f or (d[4] >> 5) != 0:
+            return False
+        bits = struct.unpack('<I', d[1:5])[0]
+        w, h = (bits & 0x3fff) + 1, ((bits >> 14) & 0x3fff) + 1
+        return len(d) - 5 >= max(4, w * h // 1000000)
     return False
 def webpv(b):
     if len(b) < 20 or b[:4] != b'RIFF' or b[8:12] != b'WEBP' or struct.unpack('<I', b[4:8])[0] + 8 != len(b):
@@ -1829,23 +2081,63 @@ def olev(b, ruta):
         if len(out) * 64 < tam:
             raise Malo('el flujo pequeño está cortado')
         return b''.join(out)
-    for nombre in buscados:
+    def leer_flujo(nombre, tope=MAX_FLUJO):
         e = entradas.get(nombre)
-        if e and e[0] == 2 and e[2] > 0:
-            if e[2] >= corte:
-                c = cadena(e[1])
-                if len(c) * ss < e[2] or any(s >= sectores for s in c):
-                    return 0, 'el flujo %s está cortado' % nombre
-                datos = b''.join(sector(s) for s in c[:2])
-            else:
-                datos = mini(e[1], e[2])
-            if nombre == 'WordDocument' and datos[:2] != b'\xec\xa5':
+        if not e or e[0] != 2 or e[2] <= 0:
+            return None
+        if e[2] >= corte:
+            c = cadena(e[1])
+            if len(c) * ss < e[2] or any(s >= sectores for s in c):
+                raise Malo('el flujo %s está cortado' % nombre)
+            return b''.join(sector(s) for s in c[:(min(e[2], tope) + ss - 1) // ss])[:e[2]]
+        return mini(e[1], e[2])[:e[2]]
+    for nombre in buscados:
+        datos = leer_flujo(nombre)
+        if datos is None:
+            continue
+        if nombre == 'WordDocument':
+            # Ronda 10: el FIB dice cuánto texto hay (ccpText) y en qué flujo está la tabla (0Table o 1Table).
+            if datos[:2] != b'\xec\xa5':
                 return 0, 'el flujo WordDocument no es de Word'
-            if nombre in ('Workbook', 'Book') and datos[:2] not in (b'\x09\x08', b'\x09\x04', b'\x09\x02', b'\x09\x00'):
-                return 0, 'el flujo %s no es de Excel' % nombre
-            if nombre == 'PowerPoint Document' and datos[2:4] != b'\xe8\x03':
-                return '-', 'el flujo PowerPoint Document no empieza como sé reconocerlo'
+            if len(datos) < 80:
+                return 0, 'el FIB del documento está cortado'
+            tabla = '1Table' if struct.unpack('<H', datos[10:12])[0] & 0x0200 else '0Table'
+            if tabla not in entradas:
+                return 0, 'le falta el flujo %s del documento' % tabla
+            ccp = struct.unpack('<i', datos[76:80])[0]
+            if ccp <= 1:
+                return 0, 'el documento no tiene texto (ccpText = %d)' % ccp
             return 1, ''
+        if nombre in ('Workbook', 'Book'):
+            if datos[:2] not in (b'\x09\x08', b'\x09\x04', b'\x09\x02', b'\x09\x00'):
+                return 0, 'el flujo %s no es de Excel' % nombre
+            # Ronda 10: algún registro de celda con dato después del BOF de una hoja.
+            i, hoja = 0, False
+            while i + 4 <= len(datos):
+                tipo_r, largo = struct.unpack('<HH', datos[i:i + 4])
+                if tipo_r in (0x0809, 0x0409, 0x0209, 0x0009):
+                    hoja = largo >= 4 and struct.unpack('<H', datos[i + 6:i + 8])[0] == 0x0010
+                elif hoja and tipo_r in (0x00FD, 0x0203, 0x027E, 0x00BD, 0x0006, 0x0204, 0x0205, 0x0406):
+                    return 1, ''
+                i += 4 + largo
+            return 0, 'el libro no tiene ninguna celda con datos'
+        if nombre == 'PowerPoint Document':
+            if datos[2:4] != b'\xe8\x03':
+                return '-', 'el flujo PowerPoint Document no empieza como sé reconocerlo'
+            # Algún TextCharsAtom (0x0FA0) o TextBytesAtom (0x0FA8) con texto; si no, no sé decidir.
+            i = 0
+            while i + 8 <= len(datos):
+                ver_inst, tipo_r, largo = struct.unpack('<HHI', datos[i:i + 8])
+                if ver_inst & 0x0f == 0x0f:
+                    i += 8
+                    continue
+                if tipo_r in (0x0FA0, 0x0FA8):
+                    t = datos[i + 8:i + 8 + largo]
+                    t = t.decode('utf-16-le', 'replace') if tipo_r == 0x0FA0 else t.decode('latin-1')
+                    if t.strip():
+                        return 1, ''
+                i += 8 + largo
+            return '-', 'no encontré texto en la presentación (puede tener solo imágenes): no sé comprobarla'
     return 0, 'le falta el flujo principal (%s)' % ' o '.join(buscados)
 args = sys.argv[1:]
 for k in range(0, len(args) - 1, 2):
