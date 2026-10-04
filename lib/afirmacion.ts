@@ -129,7 +129,7 @@ const ENVIO = set('envialo envielo enviala mandalo mandelo mandala mandaselo man
 /** «mándamelo», «send me»: piden enviar Y dicen a quién: a la persona. */
 const A_MI = set('mandamelo mandamela mandamelos enviamelo enviamela enviamelos mandame enviame pasamelo reenviamelo');
 /** Palabras de enlace: en el turno completo no nombran nada (en el atajo, cualquiera de ellas ya es contenido). */
-const ENLACE = set('a al el la los las lo de del por para to the y and e en con via o this that it of for');
+const ENLACE = set('a al el la los las lo de del por para to the y and e en con via o this that it of for at');
 /** Detrás de estas, lo que sigue es a quién va («a Aura», «al señor», «para mí», «to me»). */
 const PREP_DESTINO = set('a al para pa to for con de');
 /** Detrás de estas, «claro» es el contacto Claro, no un sí. */
@@ -205,10 +205,24 @@ function correosDe(texto: string | undefined): string[] {
  * «99994455»), si juntos tienen al menos 4 (una hora «5.30» no se toca).
  */
 function juntarDigitos(s: string): string {
-  return s.replace(/\d+(?:[\s.\-]\d+)+/g, (m) => {
-    const j = m.replace(/[\s.\-]/g, '');
-    return j.length >= 4 ? j : m;
-  });
+  const esHora = (h: string, mm: string) => Number(h) <= 23 && Number(mm) <= 59;
+  return (
+    s
+      // Duodécima ronda: una HORA no se junta («a las 10.30», «de las 10 30», «at 10:30», «10.30 am»): queda «10:30».
+      .replace(/(\b(?:a las|las|a la|at|de las|de la)\s+)(\d{1,2})[.:\s](\d{2})(?!\d)/gi, (m, pre, h, mm) => (esHora(h, mm) ? `${pre}${h}:${mm}` : m))
+      .replace(/(?<!\d)(\d{1,2})[.\s](\d{2})(\s*(?:am|pm|a\.\s?m|p\.\s?m)\b)/gi, (m, h, mm, ap) => (esHora(h, mm) ? `${h}:${mm}${ap}` : m))
+      // Un monto con miles («4,455», «1,250,000», «4 455») y quizá decimales («4,455.00», «4.455,00»): sus pesos, juntos.
+      .replace(/(?<![\d:])\d{1,3}(?:[,.\s]\d{3})+(?:[.,]\d{2})?(?![\d:])/g, (m) => {
+        const sinDecimales = /[.,]\d{2}$/.test(m) && !/[.,]\d{3}$/.test(m) ? m.slice(0, -3) : m;
+        const j = sinDecimales.replace(/[,.\s]/g, '');
+        return j.length >= 4 ? j : m;
+      })
+      // Lo demás separado por guion, espacio, punto o barra («44-55», «9999-4455», «4/455»): un número, si son 4 o más.
+      .replace(/(?<![\d:])\d+(?:[\s.\-/]\d+)+(?![\d:])/g, (m) => {
+        const j = m.replace(/[\s.\-/]/g, '');
+        return j.length >= 4 ? j : m;
+      })
+  );
 }
 
 function fichasDelMensaje(mensaje: string): string[] {
@@ -550,7 +564,8 @@ function tocaA(w: string, q: DecisionPendiente): boolean {
   if (DE_CANAL.has(w)) return false;
   if (esDe(w, q)) return true;
   // Un número de al menos 4 dígitos cuadra también por su final («4455» con «99994455»).
-  if (/^\d{4,}$/.test(w) && ajenas.some((x) => /^\d{4,}$/.test(x) && (x.endsWith(w) || w.endsWith(x)))) return true;
+  // (duodécima ronda: también si uno contiene al otro: «4455» con «44554»).
+  if (/^\d{4,}$/.test(w) && ajenas.some((x) => /^\d{4,}$/.test(x) && (x.includes(w) || w.includes(x)))) return true;
   return enTexto(w, ajenas);
 }
 
@@ -728,7 +743,9 @@ export function decidirPendiente<P extends DecisionPendiente>(mensaje: string, p
   // quién más se pueden confundir (las personas conocidas y los destinos de las otras pendientes).
   const conocidosNombres = [...(o.conocidos || [])].map((c) => nombreDe(c)).filter((n): n is NombreDestino => !!n);
   const ctxDe = (p: P): ContextoNombres => ({ otros: [...conocidosNombres, ...pendientes.filter((q) => q !== p).flatMap((q) => nombresDe(q))], incompleto: !!o.conocidosIncompletos });
-  const cubiertas = vivas.filter((p) => cubreDecision(a, p, ctxDe(p)) && !pendientes.some((q) => q !== p && a.contenido.some((w) => tocaA(w, q))));
+  // Duodécima ronda: otra decisión vuelve ambigua a esta solo si TODO lo dicho podría ser de ella («sí, el correo a Ana»
+  // con su computadora preguntando por «el correo de Bruno»: «Ana» no es de la pregunta, así que es el correo).
+  const cubiertas = vivas.filter((p) => cubreDecision(a, p, ctxDe(p)) && !pendientes.some((q) => q !== p && a.contenido.every((w) => tocaA(w, q))));
   if (cubiertas.length === 1) return responder(cubiertas[0]);
   if (cubiertas.length > 1) return preguntar('ambiguo', cubiertas);
   return preguntar('no-coincide', [...vivas]);
