@@ -57,6 +57,12 @@ export type Requisito = {
   dudoso?: string;
   /** La carpeta dicha con palabras («en la carpeta facturas», «en Documentos/facturas»), normalizada: documents/facturas. */
   carpeta?: string;
+  /** Un nombre con espacios sin comillas («el informe final.pdf»): el nombre puede ser este, más largo. Solo cumple
+   * sin duda un archivo que se llame así; uno que se llame como `nombre` queda «sin comprobar». */
+  alternativa?: string;
+  /** Se pidió producir algo sin un tipo de archivo que se pueda revisar («una gráfica», «un logo», «la factura de Ana»):
+   * nunca queda verificado. */
+  inverificable?: boolean;
 };
 
 export type EstadoItem = 'verified' | 'not_met' | 'unknown';
@@ -97,7 +103,69 @@ export function enLista(xs: string[], y = 'y'): string {
 /* ------------------------------------------------------------------ tipos */
 
 export const EXT_ARCHIVO = 'odt|ods|odp|odg|docx?|xlsx?|pptx?|pdf|txt|csv|tsv|md|rtf|html?|json|xml|png|jpe?g|gif|svg|webp|zip';
-const RE_NOMBRE = new RegExp(`(?<![\\w/.~-])((?:~/|/|\\./)?(?:[\\w.-]+/)*[\\w-][\\w.-]*\\.(?:${EXT_ARCHIVO}))(?![\\w-])`, 'gi');
+/**
+ * Un nombre de archivo en el texto: letras Unicode («cotización.xlsx» entero, no «n.xlsx»), con carpeta o sin ella, y
+ * con un paréntesis antes de la extensión («reporte (1).pdf», «reporte (versión final).docx»). Igual que el nodo
+ * (agente.py RE_ARCHIVO, con `\w` Unicode de Python).
+ */
+const RE_NOMBRE = new RegExp(
+  `(?<![\\p{L}\\p{N}_/.~-])((?:~/|/|\\./)?(?:[\\p{L}\\p{N}_.-]+/)*[\\p{L}\\p{N}_-][\\p{L}\\p{N}_.-]*(?:\\s?\\([^()\\n]{1,40}\\))?\\.(?:${EXT_ARCHIVO}))(?![\\p{L}\\p{N}_-])`,
+  'giu'
+);
+/** Entre comillas se toma completo, con espacios: «informe final.pdf», "mis notas.txt". */
+const RE_NOMBRE_COMILLAS = new RegExp(`["«“'‘]([^"»”'’\\n]{1,120}?\\.(?:${EXT_ARCHIVO}))["»”'’]`, 'giu');
+/** Antes de un nombre sin comillas, esto lo corta: un artículo, una preposición, una conjunción, un pronombre o un verbo. */
+const CORTAN_NOMBRE = new Set(
+  (
+    'el la los las un una unos unas lo le les me te se nos mi tu su mis tus sus este esta ese esa al del de en con como para por desde hasta sobre entre ' +
+    'y e o u ni que llamado llamada nombre nombrado the a an of in on at to from as into called named and or my your this that it'
+  ).split(' ')
+);
+export type NombreEnTexto = { ruta: string; nombre: string; pos: number; fin: number; alternativa?: string };
+/**
+ * Los nombres de archivo de un texto, en orden: los de comillas completos; los demás con el patrón de arriba. Si la
+ * palabra de antes no corta (no es artículo, preposición, conjunción ni verbo), el nombre pudo tener más palabras
+ * («informe final.pdf»): va en `alternativa`.
+ */
+export function nombresEn(texto: string, esVerbo: (w: string) => boolean = () => false): NombreEnTexto[] {
+  const t = String(texto || '').normalize('NFC');
+  const out: NombreEnTexto[] = [];
+  let resto = t;
+  for (const m of t.matchAll(RE_NOMBRE_COMILLAS)) {
+    const pos = m.index ?? 0;
+    const ruta = m[1].trim();
+    out.push({ ruta, nombre: nombreDeRuta(ruta), pos, fin: pos + m[0].length });
+    resto = resto.slice(0, pos) + ' '.repeat(m[0].length) + resto.slice(pos + m[0].length);
+  }
+  for (const m of resto.matchAll(RE_NOMBRE)) {
+    const pos = m.index ?? 0;
+    const ruta = m[1];
+    const n: NombreEnTexto = { ruta, nombre: nombreDeRuta(ruta), pos, fin: pos + m[0].length };
+    if (!ruta.includes('/') && /\s$/.test(resto.slice(0, pos)) && !/[,;:.!?()«»"“”]\s*$/.test(resto.slice(0, pos))) {
+      const palabras = resto.slice(Math.max(0, pos - 80), pos).match(/[\p{L}\p{N}_-]+(?=\s+$|\s+[\p{L}\p{N}_-])/gu) || [];
+      const previas = (resto.slice(Math.max(0, pos - 80), pos).trimEnd().split(/(?<=[,;:.!?()«»"“”])|\s+/u) || []).filter(Boolean);
+      const extra: string[] = [];
+      for (let i = previas.length - 1; i >= 0 && extra.length < 3; i--) {
+        const w = previas[i];
+        if (/[,;:.!?()«»"“”]$/.test(w)) break;
+        const wp = plegar(w);
+        if (CORTAN_NOMBRE.has(wp) || /^\d+$/.test(wp) || esVerbo(wp) || FAMILIAS.some((f) => new RegExp(`^(?:${f.re})$`).test(wp))) break;
+        extra.unshift(w);
+      }
+      void palabras;
+      if (extra.length) n.alternativa = `${extra.join(' ')} ${n.nombre}`;
+    }
+    out.push(n);
+  }
+  return out.sort((a, b) => a.pos - b.pos);
+}
+/** El texto con los nombres de archivo en blanco (mismo largo): para buscar verbos y frases sin que «facturas.zip» sea «zip». */
+function sinNombresDe(texto: string): string {
+  const t = String(texto || '').normalize('NFC');
+  let r = t;
+  for (const n of nombresEn(t)) r = r.slice(0, n.pos) + ' '.repeat(n.fin - n.pos) + r.slice(n.fin);
+  return r;
+}
 
 /** Qué tiene que haber visto el nodo por dentro para cada extensión. */
 const TIPOS_POR_EXT: Record<string, string[]> = {
@@ -231,7 +299,7 @@ const VACIAS = new Set(
 
 /** Las palabras que identifican lo pedido («reglamento», «facturas»), para un archivo pedido sin nombre. */
 export function clavesDe(instruccion: string): string[] {
-  const p = plegar(sinUrls(String(instruccion || ''))).replace(RE_NOMBRE, ' ');
+  const p = plegar(sinNombresDe(sinUrls(String(instruccion || ''))));
   const out: string[] = [];
   for (const w of p.match(/[a-z0-9ñ]{5,}/g) || []) {
     if (VACIAS.has(w) || FAMILIAS.some((f) => new RegExp(`^(?:${f.re})$`).test(w))) continue;
@@ -298,9 +366,37 @@ const esArticuloIngles = (previo: string) => /\b(make|create|write|generate|draf
 const RE_V_BAJAR = /^(guard|descarg|baj|export|download|save)/;
 const raizDe = (w: string) => w.replace(/(es|s)$/, '');
 
+/** Producir algo nuevo cuyo tipo puede no reconocerse («hazme una gráfica», «diseña un logo», «graba un audio»). */
+const RE_V_PRODUCIR_COSA =
+  /^(crea|creame|crear|creen|haz|hazme|hacer|hagas|genera|generame|generar|prepara|preparame|preparar|arma|armame|armar|disena|disename|disenar|dibuja|dibujame|dibujar|graba|grabame|grabar|escribe|escribeme|escribir|redacta|redactame|redactar|make|create|generate|draw|record|write|draft|design|compose|build|produce)$/;
+/** Dejar un archivo (bajar, guardar, exportar, imprimir, capturar, comprimir). */
+const RE_V_PRODUCIR_ARCHIVO =
+  /^(exporta|exportame|exportar|guarda|guardame|guardar|descarga|descargame|descargar|baja|bajame|bajate|bajar|imprime|imprimeme|imprimir|toma|tomame|saca|sacame|comprime|comprimir|zipea|save|export|download|print|take|grab|snap|capture|screenshot|compress|zip)$/;
+/** Actuar afuera: subir, enviar, publicar. */
+const RE_V_ACTUAR = /^(sube|subir|subelo|subela|envia|enviale|enviar|envialo|enviala|manda|mandale|mandar|mandalo|publica|publicar|publicalo|upload|send|post|publish)$/;
+/** Lo que marca una consulta: preguntar, buscar y decir, explicar, leer y decir. */
+const RE_CONSULTA =
+  /^(dime|dinos|di|decime|cuentame|cuanto|cuanta|cuantos|cuantas|que|cual|cuales|quien|quienes|donde|cuando|como|porque|busca|buscame|averigua|averiguame|investiga|consulta|explica|explicame|resume|resumeme|lee|leeme|revisa|verifica|comprueba|mira|checa|chequea|what|whats|how|which|who|where|when|why|find|search|look|check|explain|summarize|read|tell|is|are|does|do|can)$/;
+
+/**
+ * ¿Es una CONSULTA pura (lo único que se completa con el texto de la respuesta)? Lista blanca: tiene que haber una marca
+ * de pregunta («dime», «cuánto», «qué», «busca», «explica», «¿…?») y NINGÚN verbo de producir o actuar (crear, hacer,
+ * guardar, descargar, copiar, enviar…), ni un nombre de archivo. Si no se puede decidir, no es consulta.
+ */
+export function esConsulta(instruccion: string): boolean {
+  const original = sinUrls(String(instruccion || ''));
+  if (nombresEn(original).length) return false;
+  const p = plegar(sinNombresDe(original));
+  const palabras = p.match(/[a-zñ]+/g) || [];
+  if (palabras.some((w, i) => RE_V_PRODUCIR_COSA.test(w) || RE_V_PRODUCIR_ARCHIVO.test(w) || RE_V_ACTUAR.test(w) || RE_V_ENTREGA.test(w) || (RE_V_OPERACION.test(w) && !ARTICULOS.has(palabras[i - 1] || ''))))
+    return false;
+  return /[¿?]/.test(p) || palabras.some((w) => RE_CONSULTA.test(w));
+}
+
 /** ¿La instrucción solo opera sobre archivos que ya existen (copiar, mover, renombrar, borrar, descomprimir), sin crear nada? */
 export function esOperacionDeArchivos(instruccion: string): boolean {
-  const palabras = plegar(sinUrls(String(instruccion || ''))).match(/[a-zñ]+/g) || [];
+  // Con los nombres quitados: «facturas.zip» no es el verbo «zip».
+  const palabras = plegar(sinNombresDe(sinUrls(String(instruccion || '')))).match(/[a-zñ]+/g) || [];
   const op = palabras.some((w, i) => RE_V_OPERACION.test(w) && !ARTICULOS.has(palabras[i - 1] || ''));
   const otra = palabras.some((w) => RE_V_ENTREGA.test(w) || RE_V_NECESIDAD.test(w) || RE_V_CONVERTIR.test(w));
   return op && !otra;
@@ -328,7 +424,7 @@ const ALIAS_CARPETA: Record<string, string> = {
 export function normalizarCarpeta(c: string): string {
   return plegar(c)
     .split('/')
-    .map((x) => x.trim())
+    .map((x) => x.replace(/\s+/g, ' ').trim())
     .filter((x) => x && x !== '~' && x !== '.')
     .map((x) => ALIAS_CARPETA[x] || x)
     .join('/');
@@ -343,12 +439,21 @@ export function enCarpeta(ruta: string, carpeta: string): boolean {
 /** «en la carpeta facturas», «a la carpeta de José», «en Documentos/facturas», «en el escritorio», «en Descargas», «into the Reports folder». */
 const RE_CARPETA_DICHA = new RegExp(
   [
-    '\\b(?:en|a|al|dentro de|in|into|to)\\s+(?:(?:la|el|mi|tu|su|the|my|your)\\s+)?(?:carpeta|folder|directorio)\\s+(?:de\\s+|del\\s+|llamada\\s+|called\\s+)?["«]?([a-z0-9ñ_.-]+(?:/[a-z0-9ñ_.-]+)*)',
-    '\\b(?:en|a|al|in|into|to)\\s+(?:(?:la|el|mis|tus|sus|mi|tu|su|the|my|your)\\s+)?((?:documentos|documents|escritorio|desktop|descargas|downloads|imagenes|pictures)(?:/[a-z0-9ñ_.-]+)*)\\b',
-    '\\b(?:en|a|al|in|into|to)\\s+(~?/?[a-z0-9ñ_.-]+(?:/[a-z0-9ñ_.-]+)+)/?',
+    // «en la carpeta Facturas 2024»: el nombre completo, hasta la puntuación (cortarCarpeta lo recorta en «y …»).
+    '\\b(?:en|a|al|dentro de|in|into|to)\\s+(?:(?:la|el|mi|tu|su|the|my|your)\\s+)?(?:carpeta|folder|directorio)\\s+(?:de\\s+|del\\s+|llamada\\s+|called\\s+)?["«]?([a-z0-9ñ_.-][^,.;:!?\\n"»]*)',
+    '\\b(?:en|a|al|in|into|to)\\s+(?:(?:la|el|mis|tus|sus|mi|tu|su|the|my|your)\\s+)?((?:documentos|documents|escritorio|desktop|descargas|downloads|imagenes|pictures)(?:/[^/,.;:!?\\n"»]+)*)',
+    '\\b(?:en|a|al|in|into|to)\\s+(~?/?[a-z0-9ñ_.-]+(?:/[^/,.;:!?\\n"»]+)+)/?',
   ].join('|'),
   'g'
 );
+/** Lo que sigue a la carpeta y no es su nombre: «… y mándalo», «… para el cliente». */
+function cortarCarpeta(c: string): { carpeta: string; duda: boolean } {
+  const corto = c.replace(/\s+(?:y|e|o|u|and|or|para|por|con|que|donde|luego|despues|then|for|with)\s.*$/, '').replace(/\s+(?:y|e|and)$/, '').trim();
+  const ultimo = corto.split('/').pop() || '';
+  // Un nombre de carpeta muy largo, o con «de la», «del»: no se sabe dónde termina.
+  const duda = ultimo.split(/\s+/).length > 4 || /\s(?:de|del|de la|de los|of the)\s/.test(` ${ultimo} `.replace(/^\s\S+/, ''));
+  return { carpeta: corto, duda };
+}
 
 /** Lo que se usa sin nombre («baja el estado de cuenta», «abre el excel del correo»): `ext` null si no se sabe de qué tipo es. */
 export type OrigenSinNombre = { etiqueta: string; ext: string[] | null; pos: number };
@@ -371,24 +476,31 @@ export type PedidoEntrega = {
  * puede distinguir de lo que se crea. `explicitos`: cuántos salen de lo que dijo: con alguno, la misión es de archivos.
  */
 export function requisitosDeEntrega(instruccion: string): PedidoEntrega {
-  const sinWeb = sinUrls(String(instruccion || ''));
+  const sinWeb = sinUrls(String(instruccion || '')).normalize('NFC');
   const p = plegar(sinWeb);
   let seguro = true;
   const origenes: PedidoEntrega['origenes'] = { nombres: [], sinNombre: [] };
 
   // 1) Los nombres que se entregan; los de origen, aparte. Sin repetir la MISMA ruta; el mismo nombre en otra carpeta es otro.
-  type Nombre = { nombre: string; ruta?: string; pos: number; fin: number };
+  type Nombre = { nombre: string; ruta?: string; pos: number; fin: number; alternativa?: string };
   const vistos: Nombre[] = [];
-  for (const m of sinWeb.matchAll(RE_NOMBRE)) {
-    const pos = m.index ?? 0;
-    const ruta = m[1];
-    const antes = plegar(sinWeb.slice(0, pos));
+  const esVerbo = (w: string) => RE_V_ENTREGA.test(w) || RE_V_NECESIDAD.test(w) || RE_V_ORIGEN.test(w) || RE_V_CONVERTIR.test(w) || RE_V_OPERACION.test(w) || RE_V_PRODUCIR_COSA.test(w) || RE_V_PRODUCIR_ARCHIVO.test(w);
+  const enTexto = nombresEn(sinWeb, esVerbo);
+  const sinNombres = (() => {
+    let r = p;
+    for (const n of enTexto) r = r.slice(0, n.pos) + ' '.repeat(n.fin - n.pos) + r.slice(n.fin);
+    return r;
+  })();
+  for (const m of enTexto) {
+    const pos = m.pos;
+    const ruta = m.ruta;
+    const antes = sinNombres.slice(0, pos);
     const papel = papelEn(antes);
     if (papel === 'origen' || RE_ORIGEN_ANTES.test(antes.trimEnd() + ' ') || RE_REFERENCIA_ANTES.test(antes.trimEnd() + ' ')) {
       if (!origenes.nombres.includes(nombreDeRuta(ruta).toLowerCase())) origenes.nombres.push(nombreDeRuta(ruta).toLowerCase());
       continue;
     }
-    vistos.push({ nombre: nombreDeRuta(ruta), ...(ruta.includes('/') ? { ruta } : {}), pos, fin: pos + m[0].length });
+    vistos.push({ nombre: nombreDeRuta(ruta), ...(ruta.includes('/') ? { ruta } : {}), pos, fin: m.fin, ...(m.alternativa ? { alternativa: m.alternativa } : {}) });
   }
   const clave = (n: Nombre) => (n.ruta ? n.ruta.replace(/^\.\//, '') : n.nombre).toLowerCase();
   const nombres: Nombre[] = [];
@@ -402,8 +514,7 @@ export function requisitosDeEntrega(instruccion: string): PedidoEntrega {
 
   // 2) Las frases de tipo con su cantidad («tres documentos», «3 PDFs», «una hoja de cálculo», «como PDF»). Primero
   // las crudas; un formato pegado a un sustantivo genérico lo precisa («dos archivos PDF», «two PDF files»).
-  type Cruda = { fam: Familia; det: string; sustantivo: string; pos: number; fin: number };
-  const sinNombres = p.replace(RE_NOMBRE, (x) => ' '.repeat(x.length)); // «informe.docx» no es la frase «docx»
+  type Cruda = { fam: Familia; det: string; sustantivo: string; pos: number; fin: number }; // sinNombres: «informe.docx» no es la frase «docx»
   const crudas: Cruda[] = [];
   for (const m of sinNombres.matchAll(RE_FRASE)) {
     const fam = FAMILIAS.find((f) => new RegExp(`^(?:${f.re})$`).test(m[2]));
@@ -513,7 +624,7 @@ export function requisitosDeEntrega(instruccion: string): PedidoEntrega {
     const ext = extDe(n.nombre);
     const f = [...frases].reverse().find((x) => !x.otro && x.pos < n.pos && (x.fam.ext.length === 0 || x.fam.ext.includes(ext)) && (x.cantidad === null || x.absorbio < x.cantidad));
     if (f) f.absorbio++;
-    items.push({ id: '', etiqueta: n.ruta && repetido(n) ? n.ruta : n.nombre, nombre: n.nombre, ...(n.ruta ? { ruta: n.ruta } : {}), extensiones: [ext], clase: claseDeExt(ext), cantidadSegura: true, origen: 'pedido' });
+    items.push({ id: '', etiqueta: n.ruta && repetido(n) ? n.ruta : n.nombre, nombre: n.nombre, ...(n.ruta ? { ruta: n.ruta } : {}), ...(n.alternativa ? { alternativa: n.alternativa } : {}), extensiones: [ext], clase: claseDeExt(ext), cantidadSegura: true, origen: 'pedido' });
     posDe.set(items[items.length - 1], n.pos);
   }
   for (const f of frases) {
@@ -557,7 +668,39 @@ export function requisitosDeEntrega(instruccion: string): PedidoEntrega {
       break;
     }
   }
+  // 5) Cada verbo de PRODUCIR necesita algo reconocible que entregar. «Hazme una gráfica», «diseña un logo», «crea la
+  // factura de Ana»: sin un tipo de archivo que se pueda revisar, un requisito «lo que pediste: …» que nunca se verifica.
+  {
+    const ws = [...sinNombres.matchAll(/[a-zñ]+/g)];
+    const esCualquierVerbo = (w: string) => esVerbo(w) || RE_V_ACTUAR.test(w) || RE_CONSULTA.test(w);
+    const entregables = [...nombres.map((n) => n.pos), ...frases.map((f) => f.pos)];
+    ws.forEach((m, i) => {
+      const w = m[0];
+      if (!RE_V_PRODUCIR_COSA.test(w)) return;
+      const ini = (m.index ?? 0) + w.length;
+      let fin = sinNombres.length;
+      const finOracion = sinNombres.slice(ini).search(RE_FIN_ORACION);
+      if (finOracion >= 0) fin = ini + finOracion;
+      for (let j = i + 1; j < ws.length; j++) {
+        const x = ws[j];
+        if ((x.index ?? 0) >= fin) break;
+        if (esCualquierVerbo(x[0]) && !ARTICULOS.has(ws[j - 1]?.[0] || '')) {
+          fin = x.index ?? fin;
+          break;
+        }
+      }
+      if (entregables.some((q) => q >= ini && q < fin)) return;
+      const objeto = limpio(sinWeb.slice(ini, fin).replace(/^\s*(?:me|nos|le|les)\s+/i, '').replace(/\s+(?:y|e|and)\s*$/i, ''), 60);
+      if (!objeto || /^(lo|la|los|las|it|them|eso|esto)$/i.test(objeto)) return;
+      items.push({ id: '', etiqueta: `lo que pediste: ${objeto}`, extensiones: [], clase: 'lo que pediste', cantidadSegura: true, origen: 'pedido', inverificable: true });
+      posDe.set(items[items.length - 1], m.index ?? 0);
+    });
+  }
   const explicitos = items.length;
+  // Una consulta sobre un archivo nombrado («lee informe.pdf y dime qué dice»): no es un dato que se dé por bueno con el
+  // texto, ni algo que se entregue; queda sin comprobar.
+  if (!items.length && origenes.nombres.length)
+    items.push({ id: '', etiqueta: `lo que pediste sobre ${origenes.nombres.slice(0, 3).join(', ')}`, extensiones: [], clase: 'lo que pediste', cantidadSegura: true, origen: 'pedido', inverificable: true });
   if (!items.length) items.push({ id: '', etiqueta: 'el archivo que pediste', extensiones: [], clase: 'un archivo', cantidadSegura: true, origen: 'pedido' });
 
   // 4) La carpeta dicha con palabras, con un verbo de dejar: restricción del requisito al que se refiere. «guárdalos» =
@@ -565,8 +708,10 @@ export function requisitosDeEntrega(instruccion: string): PedidoEntrega {
   // carpeta. Si no se puede asociar sin duda (o dos carpetas para lo mismo), no es seguro.
   for (const m of sinNombres.matchAll(RE_CARPETA_DICHA)) {
     const pos = m.index ?? 0;
-    const carpeta = normalizarCarpeta(m[1] || m[2] || m[3] || '');
+    const cortada = cortarCarpeta(m[1] || m[2] || m[3] || '');
+    const carpeta = normalizarCarpeta(cortada.carpeta);
     if (!carpeta) continue;
+    if (cortada.duda) seguro = false;
     const antes = sinNombres.slice(0, pos);
     const ini = Math.max(...[...antes.matchAll(new RegExp(RE_FIN_ORACION, 'g'))].map((x) => (x.index ?? 0) + 1), 0);
     const ws = [...antes.slice(ini).matchAll(/[a-zñ]+/g)];
@@ -695,11 +840,12 @@ export function requisitosCombinados(instruccion: string, pedidoPersona?: string
 export function comprobarCopia(instruccion: string, lista: ArchivoNodo[]): { destino: ArchivoNodo; detalle: string } | null {
   const sinWeb = sinUrls(String(instruccion || ''));
   const p = plegar(sinWeb);
-  const palabras = p.match(/[a-zñ]+/g) || [];
+  const palabras = plegar(sinNombresDe(sinWeb)).match(/[a-zñ]+/g) || [];
+  void p;
   if (!palabras.some((w, i) => /^(copia|copialo|copiala|copiar|copy)$/.test(w) && !ARTICULOS.has(palabras[i - 1] || ''))) return null;
   if (palabras.some((w, i) => RE_V_OPERACION.test(w) && !/^(copia|copialo|copiala|copiar|copy)$/.test(w) && !ARTICULOS.has(palabras[i - 1] || ''))) return null;
-  const nombres = [...sinWeb.matchAll(RE_NOMBRE)].map((m) => nombreDeRuta(m[1]).toLowerCase());
-  const carpetas = [...p.replace(RE_NOMBRE, (x) => ' '.repeat(x.length)).matchAll(RE_CARPETA_DICHA)].map((m) => normalizarCarpeta(m[1] || m[2] || m[3] || '')).filter(Boolean);
+  const nombres = nombresEn(sinWeb).map((m) => m.nombre.toLowerCase());
+  const carpetas = [...plegar(sinNombresDe(sinWeb)).matchAll(RE_CARPETA_DICHA)].map((m) => normalizarCarpeta(cortarCarpeta(m[1] || m[2] || m[3] || '').carpeta)).filter(Boolean);
   if (nombres.length !== 1 || carpetas.length !== 1) return null;
   const [nombre] = nombres;
   const [carpeta] = carpetas;
@@ -764,7 +910,11 @@ export function compararEntrega(instruccion: string, lista: ArchivoNodo[] | null
   const claves = clavesDe(instruccion);
   const identifica = (a: ArchivoNodo, propias?: string[]) => (propias?.length ? propias : claves).some((k) => plegar(nombreDeRuta(a.ruta)).includes(k));
   // Lo que la instrucción nombra como ORIGEN («convierte datos.csv») no es una afirmación de tu computadora ni algo que sobre.
-  const nombradosEnInstruccion = new Set([...sinUrls(String(instruccion || '')).matchAll(RE_NOMBRE)].map((m) => nombreDeRuta(m[1]).toLowerCase()));
+  const nombradosEnInstruccion = new Set(nombresEn(sinUrls(String(instruccion || ''))).map((m) => m.nombre.toLowerCase()));
+  // «el informe final.pdf»: si existe «informe final.pdf», el «final.pdf» que no está no es una afirmación falsa.
+  const cortosResueltos = new Set(
+    reqs.filter((r) => r.alternativa && lista.some((a) => a.existe === true && nombreDeRuta(a.ruta).toLowerCase() === r.alternativa!.toLowerCase())).map((r) => r.nombre!.toLowerCase())
+  );
   const items: ItemEntrega[] = [];
   // R3: lo que la instrucción usa como origen (y sus copias: «ventas (1).xlsx») nunca cumple un requisito.
   const tallo = (n: string) =>
@@ -813,6 +963,24 @@ export function compararEntrega(instruccion: string, lista: ArchivoNodo[] | null
   };
   const conNombre = reqs.filter((x) => x.nombre);
   for (const r of [...conNombre.filter((x) => x.ruta), ...conNombre.filter((x) => !x.ruta)]) {
+    // «el informe final.pdf»: el nombre completo, si está, es ese; si solo está «final.pdf», no se sabe.
+    if (r.alternativa) {
+      const largo = lista.filter((a) => !usados.has(a) && !esOrigen(a) && nombreDeRuta(a.ruta).toLowerCase() === r.alternativa!.toLowerCase());
+      if (largo.length) {
+        items.push(cerrarItem({ ...r, etiqueta: r.alternativa }, mejor(largo.map((a) => conVeredicto(a, r.extensiones, r.carpeta))), `falta ${r.alternativa}`));
+        continue;
+      }
+      const corto = lista.filter((a) => !usados.has(a) && !esOrigen(a) && a.existe === true && nombreDeRuta(a.ruta).toLowerCase() === r.nombre!.toLowerCase());
+      items.push({
+        id: r.id,
+        etiqueta: r.etiqueta,
+        estado: corto.length ? 'unknown' : 'not_met',
+        detalle: corto.length ? `encontré ${r.nombre}, pero no sé si pediste «${r.alternativa}» o «${r.nombre}» (ponlo entre comillas)` : `falta ${r.alternativa} (o ${r.nombre})`,
+        origen: r.origen,
+      });
+      corto.slice(0, 1).forEach((a) => usados.add(a));
+      continue;
+    }
     const otras = conNombre.filter((x) => x !== r && x.ruta && x.nombre!.toLowerCase() === r.nombre!.toLowerCase());
     const mismo = lista.filter(
       (a) =>
@@ -857,7 +1025,10 @@ export function compararEntrega(instruccion: string, lista: ArchivoNodo[] | null
   }
   // 3) Lo genérico («descarga el reglamento»): un archivo nuevo y sano cuyo nombre lo identifique; si no, no se sabe.
   // «Tres archivos» (libre): cualquier archivo nuevo y sano cumple uno; van al final para no quitarle a lo identificado.
-  const genericos = reqs.filter((x) => !x.nombre && !x.extensiones.length);
+  for (const r of reqs.filter((x) => x.inverificable)) {
+    items.push({ id: r.id, etiqueta: r.etiqueta, estado: 'unknown', detalle: `${r.etiqueta}: no sé comprobar esto desde aquí (no tiene un tipo de archivo que pueda revisar)`, origen: r.origen });
+  }
+  const genericos = reqs.filter((x) => !x.nombre && !x.extensiones.length && !x.inverificable);
   for (const r of [...genericos.filter((x) => !x.libre), ...genericos.filter((x) => x.libre)]) {
     const cand = lista.filter((a) => !usados.has(a) && !esOrigen(a) && a.existe === true && !RE_BASURA.test(a.ruta)).map((a) => conVeredicto(a, [], r.carpeta));
     const buenos = cand.filter((c) => c.v.estado === 'verified');
@@ -887,7 +1058,7 @@ export function compararEntrega(instruccion: string, lista: ArchivoNodo[] | null
   let k = reqs.length;
   for (const a of lista) {
     const n = nombreDeRuta(a.ruta);
-    if (!a.mencionado || (a.existe === true && !a.fuera) || usados.has(a)) continue;
+    if (!a.mencionado || (a.existe === true && !a.fuera) || usados.has(a) || cortosResueltos.has(n.toLowerCase())) continue;
     if (yaVistos.has(n.toLowerCase()) || (nombresPedidos.has(n.toLowerCase()) && items.some((i) => i.archivo === a))) continue;
     if (items.length >= 14) break;
     yaVistos.add(n.toLowerCase());

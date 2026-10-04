@@ -682,11 +682,12 @@ test('el chat crea la tarea ANTES de encargar a la computadora, la enlaza en la 
   await cerrarEncargoComputadora(yo, r4, { misionId: 'mis_4', estado: 'succeeded' });
   const r5 = await abrirEncargoComputadora(yo, 'web', 'Crea el documento informe.odt y guárdalo');
   await cerrarEncargoComputadora(yo, r5, { misionId: 'mis_5', estado: 'succeeded' });
+  // Las misiones dicen lo mismo que se encargó: solo una CONSULTA se completa con el dato (ronda 5, cerrado por defecto).
   const h2 = arnes({
     misiones: [
-      { id: 'mis_2', tareaId: 'mis_2', instruccion: 'horario', estado: 'hecha', ok: true, inicio: T0, segundos: 40, resultado: 'Abre de 9 a 4', enlaces: ['https://banco.ejemplo/horario'] },
-      { id: 'mis_3', tareaId: 'mis_3', instruccion: 'clima', estado: 'hecha', ok: true, inicio: T0, segundos: 40, resultado: 'Soleado, 28 grados', enlaces: [] },
-      { id: 'mis_4', tareaId: 'mis_4', instruccion: 'tasa', estado: 'hecha', ok: true, inicio: T0, segundos: 40, resultado: null, enlaces: [] },
+      { id: 'mis_2', tareaId: 'mis_2', instruccion: 'Busca el horario del banco', estado: 'hecha', ok: true, inicio: T0, segundos: 40, resultado: 'Abre de 9 a 4', enlaces: ['https://banco.ejemplo/horario'] },
+      { id: 'mis_3', tareaId: 'mis_3', instruccion: 'Busca el clima', estado: 'hecha', ok: true, inicio: T0, segundos: 40, resultado: 'Soleado, 28 grados', enlaces: [] },
+      { id: 'mis_4', tareaId: 'mis_4', instruccion: 'Busca la tasa del día', estado: 'hecha', ok: true, inicio: T0, segundos: 40, resultado: null, enlaces: [] },
       // «Listo, lo guardé» sin que el nodo lo comprobara (revisión externa, 4-oct).
       { id: 'mis_5', tareaId: 'mis_5', instruccion: 'Crea el documento informe.odt y guárdalo', estado: 'hecha', ok: true, inicio: T0, segundos: 40, resultado: 'Listo, guardé informe.odt.', enlaces: [] },
       { id: 'mis_suelta', tareaId: 'mis_suelta', instruccion: 'otra cosa', estado: 'trabajando', ok: null, inicio: T0, segundos: 5, resultado: null },

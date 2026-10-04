@@ -1552,6 +1552,16 @@ class ArchivosComprobados(Base):
         self.assertEqual([(posixpath.basename(a['ruta']), a['existe'], a['mencionado']) for a in r['archivos']], [('informe.pdf', True, True)])
         self.assertEqual(agente.rutas_mencionadas('Crea informe.pdf e INFORME.PDF'), ['informe.pdf'])
 
+    def test_nombres_con_acentos_parentesis_y_comillas_como_el_servidor(self):
+        """Ronda 5: «cotización.xlsx» entero, «reporte (1).pdf», y lo de comillas completo con espacios."""
+        self.assertEqual(agente.rutas_mencionadas('Crea cotización.xlsx, reporte (1).pdf, reporte (versión final).docx y «informe final.pdf»'),
+                         ['cotización.xlsx', 'reporte (1).pdf', 'reporte (versión final).docx', 'informe final.pdf'])
+        r = self.correr_y_archivos('Listo.', instruccion='Crea «informe final.pdf» y cotización.xlsx',
+                                   antes=lambda t: (self.escribir('Documents/informe final.pdf', self.PDF), self.escribir('Documents/cotización.xlsx', self.ooxml('xl/workbook.xml'))))
+        n = self.por_nombre(r)
+        self.assertEqual({k: (a['existe'], a['mencionado'], a['tipo']) for k, a in n.items()},
+                         {'informe final.pdf': (True, True, 'pdf'), 'cotización.xlsx': (True, True, 'xlsx')})
+
     def test_lo_que_nombra_sale_de_la_instruccion_y_la_respuesta_no_de_una_url(self):
         self.assertEqual(agente.rutas_mencionadas('Guarda la tabla en ~/Documents/precios.ods',
                                                   'Listo. Fuente: https://bch.hn/datos/tabla.csv y copia en resumen.txt.'),

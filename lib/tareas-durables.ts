@@ -42,9 +42,9 @@ import {
   reservarPedido,
   type AlmacenDurable,
 } from './durable';
-import { compararEntrega, comprobarCopia, esOperacionDeArchivos, faltaEnPalabras, requisitosCombinados, requisitosDeEntrega, type ArchivoNodo, type ItemEntrega, type PedidoEntrega } from './entregables';
+import { compararEntrega, comprobarCopia, esConsulta, esOperacionDeArchivos, faltaEnPalabras, nombresEn, requisitosCombinados, requisitosDeEntrega, type ArchivoNodo, type ItemEntrega, type PedidoEntrega } from './entregables';
 
-export { esOperacionDeArchivos, requisitosCombinados, requisitosDeEntrega, type ArchivoNodo, type ItemEntrega, type PedidoEntrega } from './entregables';
+export { esConsulta, esOperacionDeArchivos, nombresEn, requisitosCombinados, requisitosDeEntrega, type ArchivoNodo, type ItemEntrega, type PedidoEntrega } from './entregables';
 
 /* ------------------------------------------------------------------ estados */
 
@@ -777,6 +777,8 @@ const RELLENO = new Set(
  */
 export function pideArchivo(instruccion: string, respuesta?: string | null, pedido?: PedidoEntrega | null): boolean {
   if (pedido && pedido.explicitos > 0) return true;
+  // Una extensión conocida obliga a entrega: nunca es un dato (ronda 5).
+  if (nombresEn(sinUrls(String(instruccion || ''))).length) return true;
   const p = plegar(sinUrls(String(instruccion || '')));
   if (RE_PIDE_GUARDAR.test(p) || RE_PIDE_CREAR.test(p) || RE_DICE_ARCHIVO.test(plegar(sinUrls(String(respuesta || ''))))) return true;
   return requisitosDeEntrega(instruccion).explicitos > 0;
@@ -821,7 +823,11 @@ export function evaluarEntrega(m: Pick<MisionComputadoraMin, 'id' | 'instruccion
   const lista = Array.isArray(m.archivos) ? m.archivos : null;
   // R1: un archivo que se nombró (el modelo dijo «guardé X», o la instrucción lo usa) y no existe no deja completar por
   // ningún camino; la misión se evalúa como de archivos y ese archivo es un criterio no cumplido.
-  const nombradoQueFalta = (lista || []).some((a) => a && a.mencionado === true && a.existe !== true);
+  const req = m.requisitos || null;
+  // «el informe final.pdf»: si existe «informe final.pdf», que «final.pdf» no esté no es un nombrado que falte.
+  const alternativas = (req || requisitosDeEntrega(m.instruccion)).items.filter((r) => r.alternativa);
+  const resuelto = (a: ArchivoNodo) => alternativas.some((r) => r.nombre!.toLowerCase() === String(a.ruta).split('/').pop()!.toLowerCase() && (lista || []).some((b) => b.existe === true && String(b.ruta).split('/').pop()!.toLowerCase() === r.alternativa!.toLowerCase()));
+  const nombradoQueFalta = (lista || []).some((a) => a && a.mencionado === true && a.existe !== true && !resuelto(a));
   // Copiar, mover, renombrar, borrar o descomprimir: ACCIONES sobre archivos que ya existen. El texto no las comprueba;
   // solo una copia que el nodo muestre en la carpeta pedida con la MISMA huella que el original (comprobarCopia).
   // Si lo que pidió la persona (R5) trae entregables concretos, se comprueban esos (camino de archivos).
@@ -860,6 +866,10 @@ export function evaluarEntrega(m: Pick<MisionComputadoraMin, 'id' | 'instruccion
   }
   if (pideAccion(m.instruccion)) {
     return { comprobada: false, tipo: 'accion', evidencias: abiertas, falta: 'Tu computadora dice que lo hizo, pero no pude comprobarlo desde aquí: revísalo antes de darlo por hecho.', items: [], hechos: 0, total: 1, revisado: true };
+  }
+  // Cerrado por defecto (ronda 5): solo una CONSULTA pura se completa con el texto. Lo que no se puede decidir no es dato.
+  if (!esConsulta(m.instruccion)) {
+    return { comprobada: false, tipo: 'accion', evidencias: abiertas, falta: 'No sé comprobar desde aquí lo que pediste: no es una consulta que se responda con un dato, ni dejó algo que tu computadora pueda revisar.', items: [], hechos: 0, total: 1, revisado: true };
   }
   if (!respuestaInformativa(m.resultado)) {
     return { comprobada: false, tipo: 'dato', evidencias: abiertas, falta: m.resultado ? 'Tu computadora dice que terminó, pero no trajo lo que pediste: no pude comprobarlo.' : 'Terminó sin un resultado que lo compruebe.', items: [], hechos: 0, total: 1, revisado: true };

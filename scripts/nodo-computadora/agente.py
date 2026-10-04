@@ -812,18 +812,29 @@ def correr_claude(t):
 
 EXTENSIONES = 'odt|ods|odp|odg|docx?|xlsx?|pptx?|pdf|txt|csv|tsv|md|rtf|html?|json|xml|png|jpe?g|gif|svg|webp|zip'
 RE_URL = re.compile(r'\b(?:https?|ftp)://\S+|\bwww\.\S+', re.I)
-RE_ARCHIVO = re.compile(r'(?<![\w/.~-])((?:~/|/|\.\./|\./)?(?:[\w.-]+/)*[\w-][\w.-]*\.(?:' + EXTENSIONES + r'))(?![\w-])', re.I)
+# Igual que el servidor (lib/entregables.ts RE_NOMBRE): \w de Python ya es Unicode («cotización.xlsx» entero), y un
+# paréntesis antes de la extensión es parte del nombre («reporte (1).pdf», «reporte (versión final).docx»).
+RE_ARCHIVO = re.compile(r'(?<![\w/.~-])((?:~/|/|\.\./|\./)?(?:[\w.-]+/)*[\w-][\w.-]*(?:\s?\([^()\n]{1,40}\))?\.(?:' + EXTENSIONES + r'))(?![\w-])', re.I)
+# Entre comillas, completo y con espacios: «informe final.pdf», "mis notas.txt".
+RE_ARCHIVO_COMILLAS = re.compile(r'["«“\'‘]([^"»”\'’\n]{1,120}?\.(?:' + EXTENSIONES + r'))["»”\'’]', re.I)
 
 
 def rutas_mencionadas(*textos):
     """Los archivos que nombran la instrucción o la respuesta (informe.odt, ~/Documents/x.pdf, /home/.../x.csv), sin
-    las direcciones web. Solo dicen QUÉ buscar: si existen lo dice el escritorio, nunca el texto."""
+    las direcciones web, en el orden en que aparecen. Solo dicen QUÉ buscar: si existen lo dice el escritorio, nunca el
+    texto."""
     vistas = []
     for texto in textos:
-        for m in RE_ARCHIVO.finditer(RE_URL.sub(' ', str(texto or ''))):
+        t = unicodedata.normalize('NFC', RE_URL.sub(' ', str(texto or '')))
+        halladas = []
+        for m in RE_ARCHIVO_COMILLAS.finditer(t):
+            halladas.append((m.start(), m.group(1).strip()))
+            t = t[:m.start()] + ' ' * (m.end() - m.start()) + t[m.end():]
+        halladas += [(m.start(), m.group(1)) for m in RE_ARCHIVO.finditer(t)]
+        for _, n in sorted(halladas):
             # Sin distinguir mayúsculas, como el servidor (lib/entregables.ts): «Informe.PDF» es informe.pdf.
-            if m.group(1).lower() not in [v.lower() for v in vistas]:
-                vistas.append(m.group(1))
+            if n.lower() not in [v.lower() for v in vistas]:
+                vistas.append(n)
     return vistas[:ARCHIVOS_MAX]
 
 
