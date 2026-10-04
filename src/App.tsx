@@ -353,10 +353,12 @@ export default function App() {
   useEffect(() => {
     let vivo = true;
     const t0 = Date.now();
+    // Si mientras llega esta respuesta la cuenta ya cambió (entró alguien por la puerta, o salió), es tardía: no fija nada.
+    const vigente = deEstaCuenta();
     fetch('/api/ultron/sesion', { headers: headersMesa() })
       .then((r) => r.json())
       .then((d) => {
-        if (!vivo) return;
+        if (!vivo || !vigente()) return;
         if (d.authenticated && d.user) {
           setUsuario({ name: d.user.nombre || '', role: d.user.rol || 'Junta Directiva · Orden Global', authenticated: true });
           // La memoria larga de este navegador es POR CUENTA (09-estado/memoria.ts).
@@ -366,7 +368,7 @@ export default function App() {
       })
       .catch(() => {
         // Sin respuesta no se abre la mesa a ciegas: la puerta (que reintenta al entrar).
-        if (vivo) setSesionVista('no');
+        if (vivo && vigente()) setSesionVista('no');
       });
     setEstadoArranque('buscando el cerebro');
     Promise.race([fetch('/api/health').then((r) => r.json()).catch(() => null), new Promise((r) => setTimeout(() => r(null), 2500))]).then((h: any) => {
