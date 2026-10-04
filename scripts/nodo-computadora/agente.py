@@ -120,7 +120,7 @@ CERRAR_VNC = os.environ.get('CERRAR_VNC', '1') != '0'
 # contrato de entradas con época, secuencia, viewport y ACK, y el frame en cabeceras; `seguro`: la entrada segura.
 # La versión del VALIDADOR (ronda 9, G4): va en cada archivo (`integro_v`) y en /salud. El servidor solo cree
 # `integro: true` de un validador de esta versión o más nueva; lo de un nodo viejo queda «sin comprobar».
-VALIDADOR_VERSION = 10
+VALIDADOR_VERSION = 11
 CAPACIDADES = ['pausar', 'confirmar', 'control', 'entrada', 'seguro', f'validador-{VALIDADOR_VERSION}']
 ESTADOS_VIVOS = ('en_cola', 'trabajando', 'pausada', 'confirmar', 'control')
 # El espacio de trabajo de la misión dentro del escritorio (la carpeta de la persona del escritorio de la demo): lo
@@ -914,7 +914,7 @@ def tipo_por_dentro(magia_hex, marca, tam):
 
 # El validador que corre DENTRO del escritorio con su python3 (solo la biblioteca estándar). Recibe pares «tipo ruta» y
 # devuelve, por cada uno, «ruta\t1|0|-\tdefecto»: 1 entero, 0 cortado o falso, - no se sabe validar. Revisión externa
-# (rondas 7 a 10): la estructura de verdad y CONTENIDO REAL, no firmas sueltas ni cascarones vacíos:
+# (rondas 7 a 11): la estructura de verdad y CONTENIDO REAL que SE VE, no firmas sueltas ni cascarones vacíos:
 #  · OOXML: [Content_Types].xml declara la parte principal (la de _rels/.rels); la parte parsea con su raíz y trae
 #    contenido: docx con algún w:t con texto (o una imagen embebida que existe en el ZIP); xlsx con alguna celda con
 #    texto o valor no vacío (también por sharedStrings); pptx con alguna diapositiva con a:t con texto o una imagen
@@ -925,6 +925,8 @@ def tipo_por_dentro(magia_hex, marca, tam):
 #    ciclos) hasta hojas /Type /Page de verdad. Ronda 10: el contenido se decodifica (Flate, ASCII85, ASCIIHex,
 #    RunLength, LZW; un filtro desconocido: «-») y tiene que PINTAR: texto no blanco (Tj, TJ, ', "), una imagen o un
 #    formulario que pinta usado con Do, una imagen en línea, un sombreado o un trazo/relleno que no sea blanco.
+#    Ronda 11: el texto se decodifica con la /ToUnicode de su fuente (bfchar y bfrange); espacios de cualquier ancho,
+#    nbsp, U+3000, U+200B… no se ven. Una fuente compuesta sin ToUnicode no cuenta: si no hay otra cosa, «-».
 #  · PNG: IHDR primero, IDAT descomprimido que alcanza ancho × alto × canales, filtro de cada fila entre 0 y 4, IEND.
 #  · JPEG: SOI, SOF, DQT/DHT, SOS con datos (al menos 1 byte cada 2000 píxeles declarados) y EOI; lo que va DESPUÉS
 #    de un EOI válido (fotos en movimiento) se acepta.
@@ -933,13 +935,15 @@ def tipo_por_dentro(magia_hex, marca, tam):
 #    cabecera), suelto o en un cuadro ANMF, con un tamaño mínimo proporcional a los píxeles.
 #  · OLE (.doc, .xls, .ppt): cabecera CFB, FAT y directorio dentro del archivo, y el flujo principal también en el
 #    mini-flujo. Ronda 10: Word con ccpText > 1 y su flujo 0Table/1Table; Excel con alguna celda con dato tras el BOF de
-#    una hoja; PowerPoint con un TextCharsAtom/TextBytesAtom con texto (si no, «-»).
-#  · Texto (.txt, .csv): el archivo ENTERO sin bytes binarios y con algo que no sea blanco; UTF-16 con BOM vale.
+#    una hoja; PowerPoint con un TextCharsAtom/TextBytesAtom con texto (si no, «-»). Ronda 11: Word lee su texto por
+#    la tabla de piezas (si no puede, «-»); Excel exige que LABEL/LABELSST tengan texto que se vea.
+#  · Texto (.txt, .csv): el archivo ENTERO sin bytes binarios y con algo que se vea; UTF-16 con BOM vale; un CSV con
+#    solo separadores no. «Blanco» es lo mismo en todos los formatos: Unicode Z*, Cc, Cf y los rellenos invisibles.
 #  · RTF: llaves que cierran y algo de texto fuera de las tablas de fuentes, colores y estilos.
 # Si no se puede decidir: «-» (sin comprobar), nunca 1. Una falsificación HECHA A PROPÓSITO con contenido real y
 # estructura válida no se distingue de un archivo real: eso queda fuera de alcance (es un archivo).
 VALIDADOR = r"""
-import base64, re, struct, sys, zipfile, zlib
+import base64, re, struct, sys, unicodedata, zipfile, zlib
 import xml.etree.ElementTree as ET
 MAX = 200 * 1024 * 1024
 MAX_XML = 64 * 1024 * 1024
@@ -949,7 +953,20 @@ class Duda(Exception):
 class Malo(ValueError):
     pass
 CONTROL = bytes(c for c in range(32) if c not in (9, 10, 12, 13, 27)) + b'\x7f'
-def textov(b):
+# Ronda 11: lo que NO se ve: espacios de cualquier ancho (Z*), controles (Cc), formato (Cf: U+200B…U+200D, U+2060,
+# U+FEFF, U+00AD…) y los «rellenos» que se dibujan vacíos (Braille en blanco U+2800, rellenos hangul U+3164, U+115F,
+# U+1160, U+FFA0, U+180E) y el carácter de sustitución.
+BLANCOS_EXTRA = set('\u2800\u3164\u115f\u1160\uffa0\u180e\ufffd')
+def visible(t):
+    for ch in t or '':
+        if ch in BLANCOS_EXTRA:
+            continue
+        cat = unicodedata.category(ch)
+        if cat[0] == 'Z' or cat in ('Cc', 'Cf', 'Cs', 'Co', 'Cn'):
+            continue
+        return True
+    return False
+def textov(b, ruta=''):
     # Ronda 9: el archivo ENTERO (no solo el principio): sin bytes binarios y con algún carácter que no sea blanco.
     # UTF-16 con BOM (el «Unicode» de Windows) es texto.
     if b[:2] in (b'\xff\xfe', b'\xfe\xff'):
@@ -963,9 +980,12 @@ def textov(b):
         if len(b) != len(b.translate(None, CONTROL)):
             return 0, 'tiene bytes binarios (no es texto)'
         t = b.decode('utf-8', 'replace')
-    # Ronda 10: los espacios de ancho cero (U+200B, U+200C, U+200D, U+2060, U+FEFF) también son blanco.
-    if not re.sub('[\u200b\u200c\u200d\u2060\ufeff]', '', t).strip():
+    # Ronda 10: los espacios de ancho cero también son blanco (ronda 11: la misma noción de blanco en todo).
+    if not visible(t):
         return 0, 'no tiene texto (solo espacios)'
+    # Ronda 11: un CSV con solo separadores (,,,  "","") no tiene datos: algún campo tiene que tener algo.
+    if ruta.lower().endswith(('.csv', '.tsv')) and not visible(re.sub('[,;\t|"\']', '', t)):
+        return 0, 'el CSV no tiene ningún dato (solo separadores)'
     return 1, ''
 def leer(r):
     with open(r, 'rb') as f:
@@ -1047,7 +1067,7 @@ def ooxml(z, tipo, nombres):
         cuerpo = hijos(doc, 'body')
         if not cuerpo:
             return 0, 'el documento no tiene cuerpo (w:body)'
-        if any(local(x.tag) == 't' and (x.text or '').strip() for x in cuerpo[0].iter()):
+        if any(local(x.tag) == 't' and visible(x.text) for x in cuerpo[0].iter()):
             return 1, ''
         # Solo imágenes: cuentan si la imagen embebida EXISTE en el ZIP (y no está vacía).
         if imagen_presente(z, cuerpo[0], rels, nombres):
@@ -1089,7 +1109,7 @@ def ooxml(z, tipo, nombres):
             if local(sl.tag) != 'sld':
                 continue
             validas += 1
-            if any(local(x.tag) == 't' and (x.text or '').strip() for x in sl.iter()):
+            if any(local(x.tag) == 't' and visible(x.text) for x in sl.iter()):
                 buenas = 1
             else:
                 base_sl = d[0].rsplit('/', 1)[0] + '/'
@@ -1132,13 +1152,13 @@ def celda_con_valor(c, comp):
     if any(local(v.tag) == 'f' and (v.text or '').strip() for v in c):
         return True
     for v in c:
-        if local(v.tag) == 'is' and ''.join(v.itertext()).strip():
+        if local(v.tag) == 'is' and visible(''.join(v.itertext())):
             return True
-        if local(v.tag) == 'v' and (v.text or '').strip():
+        if local(v.tag) == 'v' and visible(v.text):
             if c.get('t') != 's':
                 return True
             try:
-                return comp[int(v.text.strip())].strip() != ''
+                return visible(comp[int(v.text.strip())])
             except (ValueError, IndexError):
                 return False
     return False
@@ -1156,7 +1176,7 @@ def odf(z, tipo, nombres):
     cuerpo = [x for x in c if local(x.tag) == 'body' and espacio(x.tag) == NS_OFFICE]
     if not cuerpo:
         return 0, 'content.xml no tiene office:body'
-    if ''.join(cuerpo[0].itertext()).strip():
+    if visible(''.join(cuerpo[0].itertext())):
         return 1, ''
     if tipo == 'odg':
         return '-', 'el dibujo no tiene texto: no sé comprobar que tenga lo pedido'
@@ -1568,6 +1588,85 @@ def pdfv(b):
         d, crudo = flujo(b, e[1], False)
         dd = valor_pdf(d) if d is not None else None
         return (dd if isinstance(dd, dict) else None), (d, crudo)
+    fuentes_cache = {}
+    dudoso = [False]
+    def cmap_de(ref):
+        # ToUnicode: bfchar y bfrange (también la forma con lista). {longitud: ({código: texto}, [(ini, fin, base, largo)])}.
+        e = xref.get(ref[1]) if isinstance(ref, tuple) else None
+        if not e or e[0] != 'o':
+            return None
+        d, crudo = flujo(b, e[1], False)
+        if crudo is None:
+            return None
+        t = decodificar_flujo(d, crudo)
+        uno, rangos, largos = {}, [], set()
+        def uni(h):
+            try:
+                return bytes.fromhex(h.decode('ascii')).decode('utf-16-be', 'replace')
+            except ValueError:
+                return '\ufffd'
+        for m in re.finditer(rb'<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>', b''.join(re.findall(rb'begincodespacerange(.*?)endcodespacerange', t, re.S))):
+            largos.add(len(m.group(1)) // 2)
+        for bloque in re.findall(rb'beginbfchar(.*?)endbfchar', t, re.S):
+            for m in re.finditer(rb'<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]*)>', bloque):
+                uno[bytes.fromhex(m.group(1).decode('ascii'))] = uni(m.group(2))
+                largos.add(len(m.group(1)) // 2)
+        for bloque in re.findall(rb'beginbfrange(.*?)endbfrange', t, re.S):
+            for m in re.finditer(rb'<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*(?:<([0-9A-Fa-f]*)>|\[([^\]]*)\])', bloque):
+                a, z, lg = int(m.group(1), 16), int(m.group(2), 16), len(m.group(1)) // 2
+                largos.add(lg)
+                if m.group(3) is not None:
+                    rangos.append((a, z, m.group(3), lg))
+                else:
+                    for k, h in enumerate(re.findall(rb'<([0-9A-Fa-f]*)>', m.group(4))):
+                        if a + k <= z:
+                            uno[(a + k).to_bytes(lg, 'big')] = uni(h)
+        return uno, rangos, sorted(largos) or [1]
+    def fuente(recursos, nombre):
+        r = dic(recursos)
+        fs = dic(r.get(b'Font')) if isinstance(r, dict) else None
+        x = fs.get(nombre) if isinstance(fs, dict) else None
+        clave = x[1] if isinstance(x, tuple) else id(x)
+        if clave in fuentes_cache:
+            return fuentes_cache[clave]
+        f = dic(x)
+        info = None
+        if isinstance(f, dict):
+            tu = f.get(b'ToUnicode')
+            info = {'compuesta': f.get(b'Subtype') == b'/Type0', 'cmap': cmap_de(tu) if isinstance(tu, tuple) else None}
+        fuentes_cache[clave] = info
+        return info
+    def texto_de(info, crudo):
+        # El texto que de verdad se escribe; None si no se puede saber (fuente compuesta sin ToUnicode).
+        if info and info['cmap']:
+            uno, rangos, largos = info['cmap']
+            out, i = [], 0
+            while i < len(crudo):
+                for lg in sorted(largos, reverse=True):
+                    cod = crudo[i:i + lg]
+                    if len(cod) < lg:
+                        continue
+                    if cod in uno:
+                        out.append(uno[cod])
+                        break
+                    v = int.from_bytes(cod, 'big')
+                    hallado = next((r for r in rangos if r[3] == lg and r[0] <= v <= r[1]), None)
+                    if hallado:
+                        base = int(hallado[2] or b'0', 16) + (v - hallado[0])
+                        try:
+                            out.append(base.to_bytes(max(2, len(hallado[2]) // 2), 'big').decode('utf-16-be', 'replace'))
+                        except (OverflowError, ValueError):
+                            out.append('\ufffd')
+                        break
+                else:
+                    lg = largos[0]
+                    out.append('\ufffd')
+                i += lg
+            return ''.join(out)
+        if info and info['compuesta']:
+            return None
+        # Fuente simple sin ToUnicode (WinAnsi / estándar): un byte por carácter; 0xA0 es el espacio duro.
+        return crudo.decode('latin-1')
     def pinta(datos, recursos, prof):
         # Ronda 10: algún operador que PINTE de verdad: texto no blanco (Tj, TJ, ', "), una imagen o un formulario que
         # pinta (Do hacia un XObject de los recursos), una imagen en línea (BI), un sombreado (sh) o un trazo/relleno de
@@ -1583,10 +1682,19 @@ def pdfv(b):
             if len(nums) == 4 or cmyk:
                 return all(v <= 0.001 for v in nums)
             return all(v >= 0.999 for v in nums)
+        fuente_actual = [None]
         def texto_visible(x):
+            # Ronda 11: decodificado con la fuente actual (ToUnicode); espacios, nbsp, emsp, U+3000, U+200B… no se ven.
             if isinstance(x, list):
                 return any(texto_visible(y) for y in x)
-            return isinstance(x, (bytes, bytearray)) and x.strip(b' \t\r\n\x0c\x00') != b''
+            if not isinstance(x, (bytes, bytearray)) or not x:
+                return False
+            t = texto_de(fuente_actual[0], bytes(x))
+            if t is None:
+                if x.strip(b'\x00\x20'):
+                    dudoso[0] = True
+                return False
+            return visible(t.replace('\xa0', ' '))
         while i < n:
             c = datos[i]
             if c in b' \t\r\n\x0c\x00':
@@ -1669,6 +1777,9 @@ def pdfv(b):
                     return True
                 if op in (b'BI', b'sh'):
                     return True
+                if op == b'Tf':
+                    nombre = next((v[1] for v in ops if isinstance(v, tuple)), None)
+                    fuente_actual[0] = fuente(recursos, nombre) if nombre is not None else None
                 if op == b'Do' and ops and isinstance(ops[-1], tuple):
                     dd, par = xobjeto(recursos, ops[-1][1])
                     dtx, crudo = par or (None, None)
@@ -1735,6 +1846,8 @@ def pdfv(b):
                 contenido = True
     if not hojas:
         return 0, 'no tiene ninguna página de verdad (el árbol no llega a una /Page)'
+    if not contenido and dudoso[0]:
+        return '-', 'su texto usa una fuente sin tabla ToUnicode: no sé comprobar que no esté en blanco'
     if not contenido:
         return 0, 'ninguna página tiene contenido (están en blanco)'
     return 1, ''
@@ -2010,6 +2123,80 @@ def webpv(b):
 FLUJOS_OLE = {'doc': ('WordDocument',), 'dot': ('WordDocument',), 'xls': ('Workbook', 'Book'), 'xlt': ('Workbook', 'Book'),
               'ppt': ('PowerPoint Document',), 'pps': ('PowerPoint Document',), 'pot': ('PowerPoint Document',)}
 FIN, LIBRE = 0xfffffffe, 0xffffffff
+def cadenas_sst(trozos):
+    # SST de BIFF8: cstTotal, cstUnique y las cadenas (cch, grbit, [cRun], [cbExtRst], caracteres, runs, ext). Una
+    # cadena partida entre registros sigue en el CONTINUE con su propio byte de grbit.
+    datos, cortes, pos = b''.join(trozos), [], 0
+    for t in trozos:
+        pos += len(t)
+        cortes.append(pos)
+    unicos = struct.unpack('<I', datos[4:8])[0]
+    out, i = [], 8
+    def siguiente_corte(i):
+        return next((c for c in cortes if c > i), len(datos))
+    while len(out) < unicos and i + 3 <= len(datos):
+        cch, grbit = struct.unpack('<H', datos[i:i + 2])[0], datos[i + 2]
+        i += 3
+        runs = ext = 0
+        if grbit & 0x08:
+            runs = struct.unpack('<H', datos[i:i + 2])[0]
+            i += 2
+        if grbit & 0x04:
+            ext = struct.unpack('<I', datos[i:i + 4])[0]
+            i += 4
+        alto, partes, quedan = grbit & 1, [], cch
+        while quedan > 0 and i < len(datos):
+            fin = siguiente_corte(i)
+            ancho = 2 if alto else 1
+            n = min(quedan, (fin - i) // ancho)
+            trozo = datos[i:i + n * ancho]
+            partes.append(trozo.decode('utf-16-le' if alto else 'latin-1', 'replace'))
+            quedan -= n
+            i += n * ancho
+            if quedan > 0:
+                alto = datos[i] & 1
+                i += 1
+        out.append(''.join(partes))
+        i += 4 * runs + ext
+    return out
+def texto_word(fib, tabla, ccp):
+    # FibRgFcLcb97: fcClx/lcbClx es el par 33. La Clx: Prc (0x01) a saltar y un Pcdt (0x02) con la PlcPcd.
+    csw = struct.unpack('<H', fib[32:34])[0]
+    p = 34 + 2 * csw
+    cslw = struct.unpack('<H', fib[p:p + 2])[0]
+    p += 2 + 4 * cslw
+    cb = struct.unpack('<H', fib[p:p + 2])[0]
+    if cb < 34:
+        return None
+    base = p + 2 + 33 * 8
+    fc, lcb = struct.unpack('<II', fib[base:base + 8])
+    clx = tabla[fc:fc + lcb]
+    if lcb == 0 or len(clx) != lcb:
+        return None
+    i = 0
+    while i < len(clx) and clx[i] == 0x01:
+        i += 3 + struct.unpack('<H', clx[i + 1:i + 3])[0]
+    if i >= len(clx) or clx[i] != 0x02:
+        return None
+    n_lcb = struct.unpack('<I', clx[i + 1:i + 5])[0]
+    plc = clx[i + 5:i + 5 + n_lcb]
+    n = (len(plc) - 4) // 12
+    if n <= 0:
+        return None
+    cps = struct.unpack('<%dI' % (n + 1), plc[:4 * (n + 1)])
+    out = []
+    for k in range(n):
+        pcd = plc[4 * (n + 1) + 8 * k: 4 * (n + 1) + 8 * (k + 1)]
+        fcp = struct.unpack('<I', pcd[2:6])[0]
+        largo = min(cps[k + 1], ccp) - cps[k]
+        if largo <= 0:
+            continue
+        if fcp & 0x40000000:
+            ini = (fcp & 0x3fffffff) // 2
+            out.append(fib[ini:ini + largo].decode('cp1252', 'replace'))
+        else:
+            out.append(fib[fcp:fcp + 2 * largo].decode('utf-16-le', 'replace'))
+    return ''.join(out)
 def olev(b, ruta):
     if len(b) < 1536 or not b.startswith(b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1'):
         return 0, 'no es un documento de Office antiguo entero'
@@ -2107,20 +2294,60 @@ def olev(b, ruta):
             ccp = struct.unpack('<i', datos[76:80])[0]
             if ccp <= 1:
                 return 0, 'el documento no tiene texto (ccpText = %d)' % ccp
+            # Ronda 11: el texto mismo, por la tabla de piezas (Clx en la tabla): con algo que no sea blanco (ni solo
+            # saltos de párrafo). Si no se puede leer, «-».
+            try:
+                texto = texto_word(datos, leer_flujo(tabla) or b'', ccp)
+            except Exception:
+                texto = None
+            if texto is None:
+                return '-', 'no pude leer el texto del documento (tabla de piezas): no sé comprobarlo'
+            if not visible(texto):
+                return 0, 'el documento no tiene texto (solo saltos de párrafo o espacios)'
             return 1, ''
         if nombre in ('Workbook', 'Book'):
             if datos[:2] not in (b'\x09\x08', b'\x09\x04', b'\x09\x02', b'\x09\x00'):
                 return 0, 'el flujo %s no es de Excel' % nombre
-            # Ronda 10: algún registro de celda con dato después del BOF de una hoja.
-            i, hoja = 0, False
+            # Ronda 10: algún registro de celda con dato después del BOF de una hoja. Ronda 11: un texto (LABEL,
+            # LABELSST) cuenta solo si se ve (no espacios); la tabla de cadenas (SST) se lee con sus CONTINUE.
+            regs, i = [], 0
             while i + 4 <= len(datos):
                 tipo_r, largo = struct.unpack('<HH', datos[i:i + 4])
-                if tipo_r in (0x0809, 0x0409, 0x0209, 0x0009):
-                    hoja = largo >= 4 and struct.unpack('<H', datos[i + 6:i + 8])[0] == 0x0010
-                elif hoja and tipo_r in (0x00FD, 0x0203, 0x027E, 0x00BD, 0x0006, 0x0204, 0x0205, 0x0406):
-                    return 1, ''
+                regs.append((tipo_r, datos[i + 4:i + 4 + largo]))
                 i += 4 + largo
-            return 0, 'el libro no tiene ninguna celda con datos'
+            sst = None
+            for k, (tipo_r, d) in enumerate(regs):
+                if tipo_r == 0x00FC:
+                    trozos = [d]
+                    j = k + 1
+                    while j < len(regs) and regs[j][0] == 0x003C:
+                        trozos.append(regs[j][1])
+                        j += 1
+                    try:
+                        sst = cadenas_sst(trozos)
+                    except Exception:
+                        sst = None
+                    break
+            hoja, dudoso_xls = False, False
+            for tipo_r, d in regs:
+                if tipo_r in (0x0809, 0x0409, 0x0209, 0x0009):
+                    hoja = len(d) >= 4 and struct.unpack('<H', d[2:4])[0] == 0x0010
+                elif hoja and tipo_r in (0x0203, 0x027E, 0x00BD, 0x0006, 0x0205, 0x0406):
+                    return 1, ''
+                elif hoja and tipo_r == 0x00FD and len(d) >= 10:
+                    isst = struct.unpack('<I', d[6:10])[0]
+                    if sst is None or isst >= len(sst):
+                        dudoso_xls = True
+                    elif visible(sst[isst]):
+                        return 1, ''
+                elif hoja and tipo_r == 0x0204 and len(d) >= 9:
+                    cch, alto = struct.unpack('<H', d[6:8])[0], d[8] & 1
+                    t = d[9:9 + cch * (2 if alto else 1)].decode('utf-16-le' if alto else 'latin-1', 'replace')
+                    if visible(t):
+                        return 1, ''
+            if dudoso_xls:
+                return '-', 'no pude leer la tabla de textos del libro: no sé comprobar sus celdas'
+            return 0, 'el libro no tiene ninguna celda con datos (solo vacías o con espacios)'
         if nombre == 'PowerPoint Document':
             if datos[2:4] != b'\xe8\x03':
                 return '-', 'el flujo PowerPoint Document no empieza como sé reconocerlo'
@@ -2134,7 +2361,7 @@ def olev(b, ruta):
                 if tipo_r in (0x0FA0, 0x0FA8):
                     t = datos[i + 8:i + 8 + largo]
                     t = t.decode('utf-16-le', 'replace') if tipo_r == 0x0FA0 else t.decode('latin-1')
-                    if t.strip():
+                    if visible(t):
                         return 1, ''
                 i += 8 + largo
             return '-', 'no encontré texto en la presentación (puede tener solo imágenes): no sé comprobarla'
@@ -2166,7 +2393,7 @@ for k in range(0, len(args) - 1, 2):
             elif tipo == 'ole':
                 res = olev(b, r)
             elif tipo == 'texto':
-                res = textov(b)
+                res = textov(b, r)
             else:
                 res = ('-', 'no sé comprobar que esté entero')
     except Duda as e:

@@ -1850,17 +1850,26 @@ class ArchivosComprobados(Base):
         return out + b';'
 
     @staticmethod
-    def contenido_ole(flujo):
+    def contenido_ole(flujo, texto='Informe de ventas 2025.\r'):
         """El contenido REAL mínimo de cada flujo principal (ronda 10): un FIB con texto (ccpText) y la tabla en 1Table;
-        un libro con una hoja y una celda NUMBER; una presentación con un TextCharsAtom."""
+        un libro con una hoja y una celda NUMBER; una presentación con un TextCharsAtom. Ronda 11: el FIB de Word trae
+        su tabla de piezas (Clx en 1Table) y el texto en el flujo, como lo escribe Word (cp1252, «comprimido»)."""
         import struct
         if flujo == 'WordDocument':
             fib = bytearray(1024)
             fib[0:4] = b'\xec\xa5\xc1\x00'
             fib[10:12] = struct.pack('<H', 0x0200)          # fWhichTblStm: la tabla va en «1Table»
-            fib[76:80] = struct.pack('<i', 24)              # ccpText: 24 caracteres de texto
-            fib[1024 - 26:] = 'Informe de ventas 2025.\r'.encode('latin-1').ljust(26, b'\x00')
-            return bytes(fib), [('1Table', b'\x00' * 64)]
+            fib[32:34] = struct.pack('<H', 14)              # csw
+            fib[62:64] = struct.pack('<H', 22)              # cslw
+            fib[76:80] = struct.pack('<i', len(texto))      # ccpText
+            fib[152:154] = struct.pack('<H', 93)            # cbRgFcLcb
+            datos = texto.encode('cp1252')
+            fib[512:512 + len(datos)] = datos
+            fc = (512 * 2) | 0x40000000
+            plc = struct.pack('<II', 0, len(texto)) + struct.pack('<HIH', 0, fc, 0)
+            clx = b'\x02' + struct.pack('<I', len(plc)) + plc
+            fib[418:426] = struct.pack('<II', 0, len(clx))  # fcClx, lcbClx (par 33 de FibRgFcLcb97)
+            return bytes(fib), [('1Table', (clx + b'\x00' * 64)[:64])]
         if flujo == 'Workbook':
             def reg(t, d):
                 return struct.pack('<HH', t, len(d)) + d
@@ -2047,13 +2056,15 @@ class ArchivosComprobados(Base):
         return b'\xff' + bytes([m]) + struct.pack('>H', len(d) + 2) + d
 
     @classmethod
-    def ole_mini(cls, flujo='WordDocument', contenido=None, tam=100, sin_minifat=False, extra=None):
-        """Un documento OLE cuyos flujos son pequeños (< 4096): viven en el MINI-flujo, con su mini-FAT."""
+    def ole_mini(cls, flujo='WordDocument', contenido=None, tam=None, sin_minifat=False, extra=None):
+        """Un documento OLE cuyos flujos son pequeños (< 4096): viven en el MINI-flujo, con su mini-FAT (el contenedor
+        del mini-flujo ocupa los sectores que haga falta)."""
         import struct
         FIN, LIBRE, FATS = 0xfffffffe, 0xffffffff, 0xfffffffd
         real, extras = cls.contenido_ole(flujo)
         if contenido is None:
             contenido = real
+        tam = len(contenido) if tam is None else tam
         flujos = [(flujo, (contenido + b'\x00' * tam)[:tam])] + [(n_, d[:64]) for n_, d in (extras if extra is None else extra)]
         minifat, contenedor, inicios = [], b'', []
         for _, d in flujos:
@@ -2062,8 +2073,10 @@ class ArchivosComprobados(Base):
             minifat += [len(minifat) + j + 1 for j in range(k - 1)] + [FIN]
             contenedor += (d + b'\x00' * 64 * k)[:64 * k]
         minifat += [LIBRE] * (128 - len(minifat))
-        # Sectores: 0 FAT, 1 directorio, 2 mini-FAT, 3 contenedor del mini-flujo (512 B = 8 mini-sectores).
-        fat = [FATS, FIN, FIN, FIN] + [LIBRE] * 124
+        nc = max(1, (len(contenedor) + 511) // 512)
+        # Sectores: 0 FAT, 1 directorio, 2 mini-FAT, 3… contenedor del mini-flujo.
+        fat = [FATS, FIN, FIN] + [3 + j + 1 for j in range(nc - 1)] + [FIN]
+        fat += [LIBRE] * (128 - len(fat))
         cab = (b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1' + b'\x00' * 16 + struct.pack('<HHHHH', 0x3e, 3, 0xfffe, 9, 6) + b'\x00' * 6
                + struct.pack('<IIIIIIIII', 0, 1, 1, 0, 4096, FIN if sin_minifat else 2, 0 if sin_minifat else 1, FIN, 0) + struct.pack('<I', 0) + struct.pack('<I', LIBRE) * 108)
 
@@ -2071,11 +2084,11 @@ class ArchivosComprobados(Base):
             nb = nombre.encode('utf-16-le') + b'\x00\x00'
             return (nb + b'\x00' * (64 - len(nb)) + struct.pack('<HBB', len(nb), tipo, 1) + struct.pack('<III', LIBRE, derecha, hijo)
                     + b'\x00' * 36 + struct.pack('<III', inicio, largo, 0))
-        directorio = entrada('Root Entry', 5, LIBRE, 1, 3, 512)
+        directorio = entrada('Root Entry', 5, LIBRE, 1, 3, nc * 512)
         for k, (nombre, d) in enumerate(flujos):
             directorio += entrada(nombre, 2, k + 2 if k + 1 < len(flujos) else LIBRE, LIBRE, inicios[k], len(d))
         directorio = (directorio + b'\x00' * 512)[:512]
-        return cab + struct.pack('<128I', *fat) + directorio + struct.pack('<128I', *minifat) + (contenedor + b'\x00' * 512)[:512]
+        return cab + struct.pack('<128I', *fat) + directorio + struct.pack('<128I', *minifat) + (contenedor + b'\x00' * 512 * nc)[:512 * nc]
 
     @classmethod
     def webp(cls, tipo='VP8L'):
@@ -2202,7 +2215,7 @@ class ArchivosComprobados(Base):
 
     def test_ronda9_cada_archivo_lleva_la_version_del_validador(self):
         """G4: el servidor solo cree `integro` de un validador que conoce; el nodo marca la versión en cada archivo y en /salud."""
-        self.assertGreaterEqual(agente.VALIDADOR_VERSION, 10)
+        self.assertGreaterEqual(agente.VALIDADOR_VERSION, 11)
         n = self.por_nombre(self.correr_y_archivos('Listo.', instruccion='Guarda los archivos', antes=lambda t: [self.escribir('a.pdf', self.pdf_clasico()), self.escribir('b.txt', b' ')]))
         self.assertEqual({k: (v.get('integro'), v.get('integro_v')) for k, v in n.items()}, {'a.pdf': (True, agente.VALIDADOR_VERSION), 'b.txt': (False, agente.VALIDADOR_VERSION)})
         self.assertIn(f'validador-{agente.VALIDADOR_VERSION}', agente.CAPACIDADES)
@@ -2366,6 +2379,84 @@ class ArchivosComprobados(Base):
                  'ancho_cero.txt': ('​‌‍⁠﻿ \n'.encode(), False)}
         vistos = self._tandas({k: v for k, (v, _) in casos.items()})
         self.assertEqual({k: vistos[k].get('integro') for k in casos}, {k: e for k, (_, e) in casos.items()})
+
+    # ---- Ronda 11: lo que se VE. PDF con fuentes compuestas (Chrome, Identity-H) y su ToUnicode; CSV, xls, docx, doc.
+
+    @classmethod
+    def pdf_type0(cls, codigos, mapa=None, a_unicode=True):
+        """Un PDF con una fuente compuesta (Type0, Identity-H) como la de Chrome: el texto son códigos de glifo de 2 bytes
+        y su significado lo da la tabla /ToUnicode (bfchar y bfrange)."""
+        mapa = mapa if mapa is not None else {0x0003: 0x0020, 0x0004: 0x00A0, 0x0005: 0x3000, 0x0006: 0x200B, 0x0007: 0x2800}
+        chars = ''.join('<%04X> <%04X>\n' % (k, v) for k, v in mapa.items())
+        cmap = (b'/CIDInit /ProcSet findresource begin 12 dict begin begincmap /CMapName /Adobe-Identity-UCS def\n'
+                b'1 begincodespacerange <0000> <FFFF> endcodespacerange\n'
+                + b'%d beginbfchar\n' % len(mapa) + chars.encode() + b'endbfchar\n'
+                b'1 beginbfrange <0024> <003D> <0041> endbfrange\nendcmap CMapName currentdict /CMap defineresource pop end end')
+        contenido = b'BT /F1 12 Tf 72 720 Td <' + b''.join(b'%04X' % c for c in codigos) + b'> Tj ET'
+        tu = b' /ToUnicode 6 0 R' if a_unicode else b''
+        return cls.pdf_de([(1, b'<< /Type /Catalog /Pages 2 0 R >>'), (2, b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>'),
+                           (3, b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>'),
+                           (4, b'<< /Length %d >>\nstream\n' % len(contenido) + contenido + b'\nendstream'),
+                           (5, b'<< /Type /Font /Subtype /Type0 /BaseFont /AAAAAA+Arial /Encoding /Identity-H /DescendantFonts [7 0 R]' + tu + b' >>'),
+                           (6, b'<< /Length %d >>\nstream\n' % len(cmap) + cmap + b'\nendstream'),
+                           (7, b'<< /Type /Font /Subtype /CIDFontType2 /BaseFont /AAAAAA+Arial /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> >>')])
+
+    @classmethod
+    def libro_xls(cls, celdas, sst=None):
+        """Un Workbook BIFF8: globales (con su SST si se da) y una hoja con `celdas` (registros ya hechos)."""
+        import struct
+
+        def reg(t, d):
+            return struct.pack('<HH', t, len(d)) + d
+        glob = reg(0x0809, struct.pack('<HHHHII', 0x0600, 0x0005, 0, 0, 0, 0))
+        if sst is not None:
+            cuerpo = struct.pack('<II', len(sst), len(sst)) + b''.join(struct.pack('<HB', len(x), 0) + x.encode('latin-1') for x in sst)
+            glob += reg(0x00FC, cuerpo)
+        glob += reg(0x000A, b'')
+        return glob + reg(0x0809, struct.pack('<HHHHII', 0x0600, 0x0010, 0, 0, 0, 0)) + b''.join(reg(t, d) for t, d in celdas) + reg(0x000A, b'')
+
+    def muestras_r11(self):
+        """Ronda 11: lo que no se ve (falsos), lo que no se puede leer (sin decidir) y lo que sí se ve (buenos)."""
+        import struct
+
+        def label(t):
+            return (0x0204, struct.pack('<HHHHB', 0, 0, 0, len(t), 0) + t.encode('latin-1'))
+
+        def labelsst(i):
+            return (0x00FD, struct.pack('<HHHI', 0, 0, 0, i))
+        docx_zwsp = self.ooxml('word/document.xml', texto='​​⁠')
+        falsos = {
+            'chrome_espacios.pdf': self.pdf_type0([0x0003] * 8),
+            'chrome_nbsp_emsp_ideo.pdf': self.pdf_type0([0x0004, 0x0005, 0x0006, 0x0007]),
+            'winansi_nbsp.pdf': self.pdf_pagina(b'BT /F1 12 Tf 72 720 Td (\xa0\xa0\xa0) Tj ET', None),
+            'comas.csv': b',,,\n,,,\n',
+            'comillas.csv': b'"",""\n"",""\n',
+            'espacios.xls': self.ole('Workbook', contenido=self.libro_xls([label('   ')])),
+            'espacios_sst.xls': self.ole('Workbook', contenido=self.libro_xls([labelsst(0)], sst=['   '])),
+            'zwsp.docx': docx_zwsp,
+            'parrafos.doc': self.ole('WordDocument', contenido=self.contenido_ole('WordDocument', texto='\r\r\r\r')[0]),
+        }
+        sin_decidir = {'type0_sin_tounicode.pdf': self.pdf_type0([0x0024, 0x0025], a_unicode=False)}
+        buenos = {
+            'chrome_texto.pdf': self.pdf_type0([0x0024, 0x0003, 0x0025]),      # «A B» por el bfrange
+            'chrome_espacios_y_texto.pdf': self.pdf_type0([0x0003, 0x0004, 0x0026]),
+            'cjk.pdf': self.pdf_type0([0x0010], mapa={0x0010: 0x4F60}),         # 你
+            'arabe.pdf': self.pdf_type0([0x0011], mapa={0x0011: 0x0645}),       # م
+            'datos.csv': b'producto,precio\ncafe,120\n',
+            'un_campo.csv': b',,x,\n',
+            'texto.xls': self.ole('Workbook', contenido=self.libro_xls([label('Gasto')])),
+            'texto_sst.xls': self.ole('Workbook', contenido=self.libro_xls([labelsst(1)], sst=['  ', 'Total'])),
+            'zwsp_y_texto.docx': self.ooxml('word/document.xml', texto='​Hola'),
+            'b.doc': self.ole('WordDocument'), 'mini.doc': self.ole_mini('WordDocument'),
+        }
+        return falsos, sin_decidir, buenos
+
+    def test_ronda11_lo_que_no_se_ve_no_es_contenido(self):
+        falsos, sin_decidir, buenos = self.muestras_r11()
+        vistos = self._tandas({**falsos, **sin_decidir, **buenos})
+        self.assertEqual({k: (vistos[k].get('integro'), vistos[k].get('defecto')) for k in falsos if vistos[k].get('integro') is not False}, {}, 'lo que no se ve no es contenido')
+        self.assertEqual({k: vistos[k].get('integro') for k in sin_decidir}, {k: None for k in sin_decidir}, 'sin ToUnicode: sin comprobar, nunca íntegro')
+        self.assertEqual({k: (vistos[k].get('integro'), vistos[k].get('defecto')) for k in buenos if vistos[k].get('integro') is not True}, {}, 'lo que se ve, sí')
 
     def test_nombres_con_apostrofo(self):
         """Ronda 6, G2-E: «O'Brien.pdf» entero (no «Brien.pdf»), también entre comillas simples."""
