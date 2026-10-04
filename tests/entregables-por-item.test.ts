@@ -29,9 +29,9 @@ const INSTR = 'Crea tres documentos: informe.docx, presupuesto.xlsx y carta.pdf,
 const sha = (c: string) => c.repeat(64);
 
 type A = Record<string, unknown>;
-const ok = (nombre: string, tipo: string, s: string, extra: A = {}): A => ({ ruta: `${ESP}/Documents/${nombre}`, existe: true, bytes: 2048, sha256: sha(s), reciente: true, mencionado: true, tipo, integro: true, integro_v: 11, ...extra });
+const ok = (nombre: string, tipo: string, s: string, extra: A = {}): A => ({ ruta: `${ESP}/Documents/${nombre}`, existe: true, bytes: 2048, sha256: sha(s), reciente: true, mencionado: true, tipo, integro: true, integro_v: 12, ...extra });
 const falta = (nombre: string): A => ({ ruta: nombre, existe: false, bytes: 0, sha256: null, mencionado: true });
-const suelto = (nombre: string, tipo: string, s: string): A => ({ ruta: `${ESP}/${nombre}`, existe: true, bytes: 300, sha256: sha(s), reciente: true, mencionado: false, tipo, integro: true, integro_v: 11 });
+const suelto = (nombre: string, tipo: string, s: string): A => ({ ruta: `${ESP}/${nombre}`, existe: true, bytes: 300, sha256: sha(s), reciente: true, mencionado: false, tipo, integro: true, integro_v: 12 });
 
 const TRES_OK = [ok('informe.docx', 'docx', '1'), ok('presupuesto.xlsx', 'xlsx', '2'), ok('carta.pdf', 'pdf', '3')];
 
@@ -202,7 +202,7 @@ test('un mismo archivo no cumple dos cosas pedidas', () => {
 
 test('«3 PDFs»: runtime.log no cuenta; 2 de 3 no basta; un .pdf que por dentro es texto no es un PDF; 3 PDFs de verdad sí', () => {
   const instr = 'Descarga las facturas y guarda 3 PDFs en Descargas';
-  const pdf = (n: string, s: string, tipo = 'pdf') => ({ ruta: `${ESP}/Downloads/${n}`, existe: true, bytes: 5000, sha256: sha(s), reciente: true, tipo, integro: true, integro_v: 11 });
+  const pdf = (n: string, s: string, tipo = 'pdf') => ({ ruta: `${ESP}/Downloads/${n}`, existe: true, bytes: 5000, sha256: sha(s), reciente: true, tipo, integro: true, integro_v: 12 });
   const solo = cerrar(instr, [suelto('runtime.log', 'texto', '9')]);
   assert.equal(solo.c.estado, 'partial', 'un log no es un PDF');
   assert.equal(solo.criterios.length, 3);
@@ -291,7 +291,7 @@ test('otros cierres: la evidencia va a SU criterio (investigar), y el encargo na
 
 /* ------------------------------------------------------------------ revisión independiente: los huecos */
 
-const pdfNuevo = (n: string, s: string, carpeta = 'Downloads'): A => ({ ruta: `${ESP}/${carpeta}/${n}`, existe: true, bytes: 4000, sha256: sha(s), reciente: true, tipo: 'pdf', integro: true, integro_v: 11 });
+const pdfNuevo = (n: string, s: string, carpeta = 'Downloads'): A => ({ ruta: `${ESP}/${carpeta}/${n}`, existe: true, bytes: 4000, sha256: sha(s), reciente: true, tipo: 'pdf', integro: true, integro_v: 12 });
 const etiquetas = (r: { items: { nombre?: string; extensiones: string[] }[] }) => r.items.map((i) => i.nombre ?? i.extensiones.join('|'));
 
 test('revisión 1: plurales y capturas también piden archivos; una misión de archivos nunca se completa por el texto', async () => {
@@ -319,7 +319,7 @@ test('revisión 1: plurales y capturas también piden archivos; una misión de a
   assert.equal(dos.criterios.length, 2);
   const cap = cerrar('Haz una captura de pantalla de la página', [], 'Listo, ya la hice.');
   assert.equal(cap.c.estado, 'partial');
-  const conCap = cerrar('Haz una captura de pantalla de la página', [{ ruta: `${ESP}/Pictures/captura.png`, existe: true, bytes: 9000, sha256: sha('c'), reciente: true, tipo: 'png', integro: true, integro_v: 11 }], 'Listo, ya la hice.');
+  const conCap = cerrar('Haz una captura de pantalla de la página', [{ ruta: `${ESP}/Pictures/captura.png`, existe: true, bytes: 9000, sha256: sha('c'), reciente: true, tipo: 'png', integro: true, integro_v: 12 }], 'Listo, ya la hice.');
   assert.equal(conCap.c.estado, 'completed', 'con la captura de verdad, sí');
 });
 
@@ -331,7 +331,7 @@ test('revisión 2a: el archivo de origen («convierte datos.csv», «lee informe
   assert.deepEqual(etiquetas(requisitosDeEntrega('Convierte datos.csv a informe.pdf')), ['informe.pdf'], 'el destino con nombre sí');
   assert.deepEqual(etiquetas(requisitosDeEntrega('Resume reporte.pdf en un documento de Word')), ['docx|doc|odt|rtf'], 'resumir: el origen no, el Word sí');
   assert.deepEqual(etiquetas(requisitosDeEntrega('Abre el PDF del reglamento y dime qué dice')), [''], 'leer un PDF no es entregarlo');
-  const datos: A = { ruta: `${ESP}/datos.csv`, existe: true, bytes: 100, sha256: sha('d'), reciente: false, mencionado: true, tipo: 'texto', integro: true, integro_v: 11 };
+  const datos: A = { ruta: `${ESP}/datos.csv`, existe: true, bytes: 100, sha256: sha('d'), reciente: false, mencionado: true, tipo: 'texto', integro: true, integro_v: 12 };
   const bien = cerrar('Convierte datos.csv a PDF', [datos, pdfNuevo('datos.pdf', '1')], 'Listo, ya lo convertí.');
   assert.equal(bien.c.estado, 'completed', 'un PDF nuevo cumple; el CSV de origen (viejo) no estorba');
   assert.equal(cerrar('Convierte datos.csv a PDF', [datos], 'Listo.').c.estado, 'partial', 'sin el PDF, no');
@@ -495,7 +495,7 @@ test('servidor: «guarda 3 PDFs» y el nodo solo encontró runtime.log → no qu
 
 /* ------------------------------------------------------------------ «tres archivos»: lo genérico también son archivos */
 
-const nuevoEn = (n: string, tipo: string, s: string): A => ({ ruta: `${ESP}/Documents/${n}`, existe: true, bytes: 900, sha256: sha(s), reciente: true, tipo, integro: true, integro_v: 11 });
+const nuevoEn = (n: string, tipo: string, s: string): A => ({ ruta: `${ESP}/Documents/${n}`, existe: true, bytes: 900, sha256: sha(s), reciente: true, tipo, integro: true, integro_v: 12 });
 const TRES_GENERICOS = [nuevoEn('resumen.txt', 'texto', '1'), nuevoEn('datos.csv', 'texto', '2'), nuevoEn('portada.png', 'png', '3')];
 
 test('genéricos: «crea tres archivos», «save three files»… piden archivos; sin decir cuántos no es seguro', async () => {
@@ -581,7 +581,7 @@ test('servidor: «crea tres archivos» con cero archivos → la frase dice 0 de 
 /* ------------------------------------------------------------------ ronda 3: reglas de diseño (R1–R5) */
 
 const VERBOSO = 'Listo, ya quedó todo lo que pediste con el contenido del sitio del proveedor de septiembre.';
-const arch = (ruta: string, tipo: string, s: string, extra: A = {}): A => ({ ruta: `${ESP}/${ruta}`, existe: true, bytes: 3000, sha256: sha(s), reciente: true, tipo, integro: true, integro_v: 11, ...extra });
+const arch = (ruta: string, tipo: string, s: string, extra: A = {}): A => ({ ruta: `${ESP}/${ruta}`, existe: true, bytes: 3000, sha256: sha(s), reciente: true, tipo, integro: true, integro_v: 12, ...extra });
 
 test('R1: un archivo mencionado que no existe nunca deja completar, tampoco por «dato»', () => {
   const dato = cerrar('Busca el horario del banco', [{ ruta: 'horario.txt', existe: false, bytes: 0, sha256: null, mencionado: true }], 'Abre de 9 a 4 de lunes a viernes; lo dejé anotado en horario.txt');
@@ -1254,27 +1254,28 @@ test('ronda 8 · servidor: la frase y el HECHO de una respondida no dicen que no
 
 /* ------------------------------------------------------------------ ronda 9 */
 
-test('ronda 9 · G4: «íntegro» de un nodo viejo (sin la marca del validador, o con la 8 o la 9) queda sin comprobar; con la 10, sí (ronda 10)', async () => {
+test('ronda 9 · G4: «íntegro» de un nodo viejo (sin la marca del validador, o con la 8 o la 9) queda sin comprobar; con la 12, sí (ronda 12)', async () => {
   const q = 'Guarda una captura de pantalla como captura.png en Documentos';
   const png = (extra: A): A[] => [{ ruta: `${ESP}/Documents/captura.png`, existe: true, bytes: 45, sha256: sha('a'), reciente: true, mencionado: true, tipo: 'png', magia: '89504e470d0a1a0a', integro: true, ...extra }];
-  for (const extra of [{}, { integro_v: 8 }, { integro_v: 9 }, { integro_v: 10 }, { integro_v: '11' }, { integro_v: 0 }]) {
+  for (const extra of [{}, { integro_v: 8 }, { integro_v: 9 }, { integro_v: 10 }, { integro_v: 11 }, { integro_v: '12' }, { integro_v: 0 }]) {
     const c = cerrar(q, png(extra), 'Listo, guardé captura.png.');
     assert.equal(c.c.estado, 'partial', JSON.stringify(extra));
     assert.equal(evaluarEntrega(mision(q, png(extra), 'Listo, guardé captura.png.')).comprobada, false);
     assert.match(c.texto, /validador/, 'dice por qué no lo cree');
   }
-  assert.equal(cerrar(q, png({ integro_v: 11 }), 'Listo, guardé captura.png.').c.estado, 'completed');
   assert.equal(cerrar(q, png({ integro_v: 12 }), 'Listo, guardé captura.png.').c.estado, 'completed');
+  assert.equal(cerrar(q, png({ integro_v: 13 }), 'Listo, guardé captura.png.').c.estado, 'completed');
   // Lo que dice «dañado» sí se cree aunque sea de un validador viejo (más estricto no es).
   assert.equal(cerrar(q, png({ integro: false, defecto: 'le falta IDAT' }), 'Listo.').c.estado, 'partial');
   // El servidor deja pasar la marca del nodo (archivosDe) y decide con ella.
   const { entregaDe } = (await import('../server/computadora')) as any;
   const t = (extra: A) => ({ id: 't1', respuesta: 'Listo, guardé captura.png.', pasos: [], archivos: png(extra) });
-  assert.equal(entregaDe(q, t({ integro_v: 11 })).comprobada, true);
+  assert.equal(entregaDe(q, t({ integro_v: 12 })).comprobada, true);
+  assert.equal(entregaDe(q, t({ integro_v: 11 })).comprobada, false, 'el validador de la ronda 11 aceptaba un ZIP con un PDF en blanco dentro');
   assert.equal(entregaDe(q, t({ integro_v: 10 })).comprobada, false, 'el validador de la ronda 10 aceptaba PDF de Chrome con espacios');
   assert.equal(entregaDe(q, t({})).comprobada, false);
   assert.equal(entregaDe(q, t({ integro_v: 8 })).comprobada, false);
-  assert.equal((durables as any).VALIDADOR_MIN, 11);
+  assert.equal((durables as any).VALIDADOR_MIN, 12);
 });
 
 test('ronda 9 · menor 1: la investigación «respondida» tampoco afirma que no hubo efecto en su recibo', async () => {
@@ -1416,6 +1417,184 @@ test('ronda 11 · G1 propiedad: «número o enumeración + documentos + en forma
     if (c.c.estado === 'completed') malos.push(q);
   }
   assert.deepEqual(malos.slice(0, 15), [], `${malos.length} completaron con un solo archivo`);
+});
+
+/* ------------------------------------------------------------------ ronda 12 */
+
+// Los casos de la revisión 11 (c1, c3, c4 y c5): [pedido, cuántos pide].
+const REVISION_12: [string, number][] = [
+  // c1
+  ['Escribe 3 cartas en Word', 3], ['Guarda los 3 informes en PDF', 3], ['Escribe en Word un informe, un presupuesto y una carta', 3],
+  ['Haz cartas para Ana, Bruno y Carla en Word', 3], ['Haz una carta para Ana, otra para Bruno y otra para Carla, en Word', 3],
+  ['Haz una carta en Word para Ana y Bruno', 2], ['Haz una carta en Word para cada uno: Ana, Bruno y Carla', 3],
+  ['Haz una carta en Word por cada cliente: Ana, Bruno y Carla', 3], ['Crea un Word por persona: Ana, Bruno y Carla', 3],
+  ['Prepara el informe en PDF, y también el presupuesto', 2], ['Prepara el informe en PDF. También el presupuesto.', 2],
+  ['Haz el informe en PDF. Luego haz el presupuesto en PDF.', 2], ['Haz el informe en PDF y luego haz el presupuesto igual', 2],
+  ['Exporta a PDF el informe de enero y el de febrero', 2], ['Exporta a PDF los informes de enero y febrero', 2],
+  ['Pasa a PDF el informe de enero, el de febrero y el de marzo', 3], ['Genera un PDF para enero y otro para febrero', 2],
+  ['Genera un PDF por mes del trimestre', 3], ['Genera un PDF de cada mes: enero, febrero, marzo', 3],
+  ['Haz un PDF con la factura de Ana y uno con la de Bruno', 2], ['Haz la carta de Ana en Word y la de Bruno', 2],
+  ['Haz la carta de Ana en Word y la de Bruno también', 2], ['Pon en Word la carta de Ana; la de Bruno igual', 2],
+  ['Make three letters in Word', 3], ['Write a letter for Ana and one for Bruno in Word', 2], ['Write letters to Ana and Bruno as Word documents', 2],
+  ['Save a PDF of the report and the budget, separately', 2], ['Convierte a PDF el informe y el presupuesto por separado', 2],
+  ['Haz en PDF el informe y el presupuesto, cada uno en su archivo', 2], ['Un PDF para el informe y un PDF para el presupuesto', 2],
+  ['Quiero el informe en PDF y el presupuesto en PDF', 2], ['Quiero el informe y el presupuesto en PDF', 2], ['Exporta el informe y el presupuesto a PDF', 2],
+  ['Haz el doble de cartas en Word', 2], ['Escribe un par de cartas en Word', 2], ['Escribe un par de PDF', 2], ['Escribe una docena de cartas en Word', 12],
+  ['Escribe trece cartas en Word', 13], ['Escribe 3 cartas, en Word', 3], ['Escribe 3 en Word: cartas para clientes', 3],
+  ['Necesito cartas en Word para mis 3 clientes', 3], ['Necesito una carta en Word para cada uno de mis 3 clientes', 3],
+  ['Haz la carta en Word tres veces, una por cliente', 3], ['Repite la carta en Word para Ana, Bruno y Carla', 3], ['Duplica la carta en Word para Bruno', 2],
+  ['Haz una carta en Word para Ana. Haz otra para Bruno.', 2], ['Haz una carta en Word para Ana. Y otra para Bruno.', 2], ['Haz una carta en Word para Ana\nOtra para Bruno', 2],
+  ['Escribe una carta en Word para Ana y otra igual para Bruno', 2], ['Hazme un Excel y un Word', 2], ['Dame la carta en Word en dos versiones: formal e informal', 2],
+  ['Dame la carta en Word, versión formal e informal', 2], ['Dame la carta en Word en español e inglés', 2], ['Traduce la carta al inglés y al francés y guárdalas en Word', 2],
+  ['Guarda en PDF cada página del informe por separado (son 5)', 5], ['Saca captura de pantalla de google.com y de bing.com en PNG', 2],
+  ['Toma capturas en PNG de google.com y bing.com', 2], ['Toma una captura en PNG de google.com y de bing.com', 2], ['Escribe 3 cartas en formato Word', 3],
+  ['Escribe tres cartas de presentación en Word', 3], ['Crea las cartas de Ana, Bruno y Carla en Word', 3], ['Crea en Word la carta de Ana, Bruno y Carla', 3],
+  // c3
+  ['Pasa a PDF el contrato de Ana y el de Bruno', 2], ['Convierte a Word la carta de enero y la de febrero', 2], ['Exporta en PDF el informe de ventas y también el de gastos', 2],
+  ['Haz en Excel la tabla de enero y la de febrero', 2], ['Saca en PDF la factura 101 y la 102', 2], ['Guarda en PDF la factura de Ana y la de Bruno', 2],
+  ['Imprime a PDF la página de inicio y la de contacto', 2], ['Toma una captura en PNG de la página de inicio y otra de la de contacto', 2],
+  ['Haz una captura en PNG del inicio y del contacto', 2], ['Pasa a PDF la carta, el contrato y la factura', 3], ['Pasa a PDF la carta y el contrato', 2],
+  ['Crea un PDF para Ana y uno para Bruno', 2], ['Crea un PDF para Ana y otro para Bruno', 2], ['Crea un Word para Ana y uno más para Bruno', 2],
+  ['Haz un Excel para cada sucursal: Centro y Norte', 2], ['Haz un Excel por sucursal (Centro, Norte, Sur)', 3], ['Genera el PDF de la factura de cada cliente', 2],
+  ['Genera en PDF las facturas', 2], ['Genera en PDF la factura de todos los clientes', 2], ['Pasa a PDF los dos contratos', 2], ['Pasa a PDF ambos contratos', 2],
+  ['Pasa a PDF el contrato, ambos', 2], ['Haz el informe en PDF y en Word', 2], ['Haz el informe en PDF y Word', 2], ['Guárdalo en PDF y también en Word', 2],
+  ['Escribe la carta en Word y luego pásala a PDF', 2], ['Haz el informe en Word y una copia en PDF', 2], ['Haz el informe en PDF y una copia', 2],
+  ['Haz el informe en PDF, dos copias', 2], ['Haz el informe en PDF por duplicado', 2], ['Haz el informe en PDF y el mismo en Word', 2],
+  ['Write the report in PDF and the invoice', 2], ['Export to PDF the report and the invoice', 2], ['Export the January report and the February one to PDF', 2],
+  ['Save the report as PDF and the invoice too', 2], ['Make a PDF for Ana and one for Bruno', 2], ['Make one PDF per client: Ana, Bruno', 2],
+  ['Make a PDF for each client: Ana and Bruno', 2],
+  // c4
+  ['Haz las notas en Word', 2], ['Escribe los poemas en Word', 2], ['Pasa a PDF las minutas', 2], ['Guarda en PDF las nóminas de octubre', 2],
+  ['Haz en Word las circulares para los vecinos', 2], ['Escribe los artículos en Word', 2], ['Haz los diplomas en PDF', 2], ['Haz las etiquetas en PDF', 2],
+  ['Exporta en PDF los capítulos del libro', 2], ['Pon en Excel las listas de asistencia', 2], ['Haz los ejercicios en Word', 2], ['Pasa a PDF los manuales', 2],
+  ['Guarda las recetas en PDF', 2], ['Guarda los exámenes en PDF', 2], ['Haz los comunicados en Word', 2], ['Write the essays in Word', 2], ['Save the articles as PDF', 2],
+  ['Export the chapters to PDF', 2], ['Save the notes as PDF', 2], ['Haz las boletas de los 5 alumnos en PDF', 5], ['Haz la boleta de cada alumno en PDF', 2],
+  ['Haz la boleta de los alumnos en PDF', 2], ['Haz la boleta de Ana y Bruno en PDF', 2],
+  // c5
+  ['Exporta en PDF el informe de enero y el de febrero', 2], ['Pasa en PDF el contrato de Ana y el de Bruno', 2], ['Convierte en Word la carta de enero y la de febrero', 2],
+];
+type Pedido12 = { seguro: boolean; items: { cantidadSegura?: boolean; inverificable?: boolean; extensiones: string[] }[] };
+const pedido12 = (q: string): Pedido12 => (durables as any).requisitosDeEntrega(q);
+/** La métrica de la revisión: con todo «seguro», menos cosas que las pedidas (y nada inverificable) completa con menos. */
+const subcuenta = (q: string, n: number) => {
+  const r = pedido12(q);
+  return r.seguro && r.items.every((i) => i.cantidadSegura) && r.items.length < n && !r.items.some((i) => i.inverificable);
+};
+const extDelPedido = (q: string) => (/word/i.test(q) ? 'docx' : /excel/i.test(q) ? 'xlsx' : /png|captura/i.test(q) ? 'png' : 'pdf');
+/** De punta a punta como en producción: la misión lleva los requisitos combinados y el pedido de la persona. */
+function cerrar12(q: string, archivos: A[]) {
+  const m = { ...mision(q, archivos, 'Listo, ya quedaron los archivos.'), requisitos: (durables as any).requisitosCombinados(q, q), pedidoPersona: q } as unknown as MisionComputadoraMin;
+  return { e: evaluarEntrega(m as any) as any, c: reconciliarConComputadora(tarea(q), m, T0 + 60_000)! };
+}
+
+test('ronda 12 · los casos de la revisión: ninguno queda con 1 seguro ni completa de punta a punta con UN archivo', () => {
+  const malos = REVISION_12.filter(([q, n]) => subcuenta(q, n)).map(([q]) => q);
+  assert.deepEqual(malos, [], 'ninguno cuenta menos de lo pedido con todo seguro');
+  const completan = REVISION_12.filter(([q]) => {
+    const ext = extDelPedido(q);
+    return cerrar12(q, [arch(`Documents/uno.${ext}`, EXT_TIPO[ext], '1')]).c.estado === 'completed';
+  }).map(([q]) => q);
+  assert.deepEqual(completan, [], 'con UN archivo, ninguno completa');
+});
+
+test('ronda 12 · con lo correcto, completan (e2e-conteo3 de la revisión)', () => {
+  const casos: [string, A[]][] = [
+    ['Haz 3 informes en PDF y comprímelos en un ZIP', [arch('Documents/i1.pdf', 'pdf', 'a'), arch('Documents/i2.pdf', 'pdf', 'b'), arch('Documents/i3.pdf', 'pdf', 'c'), arch('Documents/informes.zip', 'zip', 'd')]],
+    ['Une el informe y el presupuesto en un solo PDF', [arch('Documents/unido.pdf', 'pdf', 'e')]],
+    ['Haz un PDF que tenga el informe y el presupuesto', [arch('Documents/unido.pdf', 'pdf', 'f')]],
+    ['Write a letter for Ana and one for Bruno in Word', [arch('Documents/ana.docx', 'docx', '1'), arch('Documents/bruno.docx', 'docx', '2')]],
+  ];
+  for (const [q, a] of casos) {
+    const { e, c } = cerrar12(q, a);
+    assert.deepEqual([e.comprobada, c.estado], [true, 'completed'], `${q}: ${JSON.stringify(e.items.map((i: any) => i.etiqueta))}`);
+  }
+  // Y con uno menos, no.
+  assert.notEqual(cerrar12(casos[0][0], casos[0][1].slice(1)).c.estado, 'completed', 'faltando un PDF no completa');
+  assert.notEqual(cerrar12(casos[0][0], casos[0][1].slice(0, 3)).c.estado, 'completed', 'sin el ZIP no completa');
+  assert.notEqual(cerrar12(casos[3][0], casos[3][1].slice(0, 1)).c.estado, 'completed', 'con una carta no completa');
+});
+
+test('ronda 12 · A-D: núcleo plural, «a PDF», «uno/otra», «por persona», lo explícito y los números', () => {
+  const cuenta = (q: string) => {
+    const r = pedido12(q);
+    return r.seguro && r.items.every((i) => i.cantidadSegura) ? r.items.length : null;
+  };
+  // A. Un núcleo plural sin número que lo cuente: sin cantidad.
+  for (const q of ['Haz las notas en Word', 'Escribe los artículos en Word', 'Haz los diplomas en PDF', 'Guarda en PDF las nóminas de octubre', 'Pasa a PDF los manuales',
+                   'Save the articles as PDF', 'Haz los flurbos en Word', 'Escribe las zentas en PDF', 'Save the blorks as PDF', 'Toma capturas en PNG del sitio'])
+    assert.equal(cuenta(q), null, q);
+  assert.notEqual(cuenta('Haz las boletas de los 5 alumnos en PDF'), 1, 'el 5 cuenta alumnos: null o 5, nunca 1');
+  // …pero los plurales de un complemento no cuentan, ni los singulares que acaban en s.
+  for (const q of ['Haz el informe de ventas y gastos en PDF', 'Escribe una carta para los clientes en Word', 'Haz el análisis en PDF', 'Haz la tesis en Word',
+                   'Haz el informe del mes en PDF', 'Haz una tabla con los precios en Excel', 'Haz el informe de los últimos 3 meses en PDF', 'Escribe la carta para Carlos en Word'])
+    assert.equal(cuenta(q), 1, q);
+  // B. «a PDF» en español es «en PDF».
+  assert.equal(cuenta('Exporta a PDF el informe de enero y el de febrero'), 2);
+  assert.equal(cuenta('Pasa a PDF el informe de enero, el de febrero y el de marzo'), 3);
+  assert.equal(cuenta('Exporta la tabla a Excel'), 1);
+  assert.equal(cuenta('Make a PDF of the report'), 1, 'en inglés, «a» es el artículo');
+  // C. «uno» tras una conjunción, «por persona», las oraciones que siguen.
+  assert.equal(cuenta('Haz un PDF con la factura de Ana y uno con la de Bruno'), 2);
+  assert.equal(cuenta('Crea un Word para Ana y uno más para Bruno'), 2);
+  assert.equal(cuenta('Make a PDF for Ana and one for Bruno'), 2);
+  assert.equal(cuenta('Haz un informe en Word y uno en PDF'), 2, 'el «uno en PDF» es del PDF: 1 Word y 1 PDF');
+  for (const q of ['Genera un PDF por mes del trimestre', 'Haz el informe en PDF por duplicado', 'Make a report per client in PDF', 'Haz una carta en Word por persona'])
+    assert.equal(cuenta(q), null, q);
+  assert.equal(cuenta('Crea un Word por persona: Ana, Bruno y Carla'), 3);
+  assert.equal(cuenta('Haz un Excel por sucursal (Centro, Norte, Sur)'), 3);
+  assert.equal(cuenta('Mándame el informe en PDF por correo'), 1, '«por correo» es el medio, no «uno por»');
+  for (const q of ['Haz una carta en Word para Ana. Y otra para Bruno.', 'Haz una carta en Word para Ana\nOtra para Bruno', 'Pon en Word la carta de Ana; la de Bruno igual'])
+    assert.notEqual(cuenta(q), 1, q);
+  assert.equal(cuenta('Haz una carta en Word para Ana. Luego mándala.'), 1, 'una oración que no sigue el pedido no lo cambia');
+  // D. Lo explícito gana: un solo PDF aunque lleve varias cosas dentro.
+  for (const q of ['Une el informe y el presupuesto en un solo PDF', 'Pon el informe y la carta en un único PDF', 'Pon todo en un PDF', 'Merge the report and the budget into a single PDF',
+                   'Make one PDF with the report and the budget', 'Haz un PDF que tenga el informe y el presupuesto', 'Haz un PDF con el informe, el presupuesto y la carta',
+                   'Mete en un ZIP las cartas de Ana, Bruno y Carla'])
+    assert.equal(cuenta(q), 1, q);
+  assert.equal(cuenta('Write a letter for Ana and one for Bruno in Word'), 2);
+  const zip = pedido12('Haz 3 informes en PDF y comprímelos en un ZIP');
+  assert.equal(zip.seguro, true);
+  assert.deepEqual(zip.items.map((i) => i.extensiones.join('|')).sort(), ['pdf', 'pdf', 'pdf', 'zip'], 'cada formato con su conteo');
+  assert.ok([null, 2].includes(cuenta('Dame la carta en Word, versión formal e informal')), 'null o 2, nunca 3');
+  // Los números con palabras.
+  const nums: [string, number][] = [['Escribe trece cartas en Word', 13], ['Escribe quince cartas en Word', 15], ['Escribe dieciséis cartas en Word', 16],
+    ['Escribe veinte cartas en Word', 20], ['Escribe una docena de cartas en Word', 12], ['Escribe media docena de cartas en Word', 6],
+    ['Write eleven letters in Word', 11], ['Write a dozen letters in Word', 12], ['Write twenty letters in Word', 20], ['Escribe once cartas en Word', 11]];
+  for (const [q, n] of nums) assert.ok([null, n].includes(cuenta(q)), `${q}: ${cuenta(q)}`);
+  for (const [q, n] of nums) assert.ok(!subcuenta(q, n), q);
+});
+
+test('ronda 12 · propiedad: plurales inventados y «a PDF» nunca completan con UN archivo; lo singular sí', () => {
+  const r = azar(1212);
+  const elegir = <T,>(xs: T[]) => xs[Math.floor(r() * xs.length)];
+  const silaba = () => elegir(['flur', 'zen', 'blor', 'tra', 'mun', 'quel', 'dap', 'ros', 'vin', 'pel']) + elegir(['bo', 'ta', 'ko', 'ne', 'mi', 'ru']);
+  const fmts: [string, string][] = [['Word', 'docx'], ['PDF', 'pdf'], ['Excel', 'xlsx']];
+  const malos: string[] = [];
+  const singularesMal: string[] = [];
+  for (let i = 0; i < 300; i++) {
+    const [fmt, ext] = elegir(fmts);
+    const ingles = r() < 0.3;
+    const raiz = silaba();
+    const plural = ingles ? `${raiz}s` : /[aeiou]$/.test(raiz) ? `${raiz}s` : `${raiz}es`;
+    const det = ingles ? elegir(['the', 'my', 'these']) : elegir(['los', 'las', 'unos', 'estos', 'mis', 'tus']);
+    const verbo = ingles ? elegir(['Make', 'Write', 'Save', 'Export']) : elegir(['Haz', 'Escribe', 'Guarda', 'Exporta', 'Pasa', 'Convierte']);
+    const prep = ingles ? elegir(['in', 'as']) : elegir(['en', 'a']);
+    const q = r() < 0.5 ? `${verbo} ${det} ${plural} ${prep} ${fmt}` : `${verbo} ${prep} ${fmt} ${det} ${plural}`;
+    if (cerrar12(q, [arch(`Documents/uno.${ext}`, EXT_TIPO[ext], '1')]).c.estado === 'completed') malos.push(q);
+    // «a PDF» con una enumeración de sintagmas con determinante: N.
+    if (!ingles) {
+      const sing = ['el informe', 'la carta', 'el contrato', 'la factura', 'el recibo'];
+      const k = 2 + Math.floor(r() * 3);
+      const cosas = sing.slice(0, k);
+      const q2 = `${verbo} a ${fmt} ${cosas.slice(0, -1).join(', ')} y ${cosas[k - 1]}`;
+      if (subcuenta(q2, k)) malos.push(q2);
+      // Lo singular con «a PDF» sigue siendo 1 seguro (y completa con su archivo).
+      const q3 = `${verbo} a ${fmt} ${elegir(sing)}`;
+      if (cerrar12(q3, [arch(`Documents/uno.${ext}`, EXT_TIPO[ext], '1')]).c.estado !== 'completed') singularesMal.push(q3);
+    }
+  }
+  assert.deepEqual(malos.slice(0, 15), [], `${malos.length} completaron con un solo archivo`);
+  assert.deepEqual(singularesMal.slice(0, 15), [], `${singularesMal.length} singulares no completaron con su archivo`);
 });
 
 test('ronda 3: lo legítimo de un archivo sigue completando', () => {

@@ -92,7 +92,7 @@ test('el nodo comprobó el archivo (existe, bytes, sha256, de esta misión) → 
   const m = mision({
     instruccion,
     resultado: 'Listo, guardé el archivo informe.odt en Documentos.',
-    archivos: [{ ruta: '/home/computeruse/Documents/informe.odt', existe: true, bytes: 2048, sha256: SHA, reciente: true, mencionado: true, tipo: 'odt', integro: true, integro_v: 11 }],
+    archivos: [{ ruta: '/home/computeruse/Documents/informe.odt', existe: true, bytes: 2048, sha256: SHA, reciente: true, mencionado: true, tipo: 'odt', integro: true, integro_v: 12 }],
   });
   const c = reconciliarConComputadora(tareaDeEncargo(instruccion), m, T0 + 60_000)!;
   assert.equal(c.estado, 'completed');
@@ -195,7 +195,7 @@ test('servidor: el nodo dice «Listo, guardé informe.odt» y no lo comprobó �
 
 test('servidor: el nodo comprobó informe.odt (existe, bytes, sha256) → la misión queda ok y el HECHO lo dice', async () => {
   const n = await nodo('Listo, guardé el archivo informe.odt en Documentos.', {
-    archivos: [{ ruta: '/home/computeruse/Documents/informe.odt', existe: true, bytes: 4096, sha256: SHA, reciente: true, mencionado: true, tipo: 'odt', integro: true, integro_v: 11 }],
+    archivos: [{ ruta: '/home/computeruse/Documents/informe.odt', existe: true, bytes: 4096, sha256: SHA, reciente: true, mencionado: true, tipo: 'odt', integro: true, integro_v: 12 }],
   });
   try {
     await conNodo(n.url, async () => {
