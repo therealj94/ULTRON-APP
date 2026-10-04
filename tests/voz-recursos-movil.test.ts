@@ -164,6 +164,10 @@ function sdkFalso(o: { conectaSolo?: boolean } = {}) {
     error(m: string) {
       ops?.onError?.(m);
     },
+    /** El otro lado corta (ElevenLabs por inactividad, la red): desconexión natural, sin que nadie cuelgue. */
+    cortar() {
+      if (estado === 'conectando' || estado === 'conectada') desconectar();
+    },
   };
   return sdk;
 }
@@ -184,15 +188,15 @@ function timersFalsos() {
   };
 }
 
-function montar(o: { permiso?: Promise<{ token: string; pase: string }>; conectaSolo?: boolean } = {}) {
+function montar(o: { permiso?: Promise<{ token: string; pase: string }>; conectaSolo?: boolean; gen?: number; eventos?: string[]; silenciada?: () => boolean } = {}) {
   const sdk = sdkFalso({ conectaSolo: o.conectaSolo });
   const t = timersFalsos();
   const recursos = new ContadorRecursos();
-  const eventos: string[] = [];
+  const eventos: string[] = o.eventos || [];
   let resolverPermiso!: (v: { token: string; pase: string }) => void;
   const permiso = o.permiso || new Promise<{ token: string; pase: string }>((r) => (resolverPermiso = r));
   const cerrar = abrirSesionVoz({
-    gen: 7,
+    gen: o.gen ?? 7,
     conv: () => sdk.conv,
     permiso: () => permiso,
     cbs: () => ({
@@ -204,7 +208,7 @@ function montar(o: { permiso?: Promise<{ token: string; pase: string }>; conecta
       onFin: (g, pase) => eventos.push(`fin:${g}:${pase}`),
       onPermiso: (g) => eventos.push(`permiso:${g}`),
     }),
-    silenciada: () => false,
+    silenciada: o.silenciada || (() => false),
     abierta: { current: false },
     hablando: { current: false },
     reloj: () => 0,
@@ -303,4 +307,113 @@ test('el contador: tomar y soltar es idempotente y nombra lo que quedó vivo', (
   assert.equal(r.cuenta(), 1);
   b();
   assert.equal(r.cuenta(), 0);
+});
+
+/*
+ * A4 en el teléfono (auditoría del 4-oct, paquete P2): la misma regla que la web. Una desconexión NATURAL
+ * (la corta el otro lado) o un error dejaban `vivo` en true hasta que React desmontara la sesión: en ese hueco
+ * un «speaking», un mensaje o una interrupción tardíos llegaban a la UI con la MISMA generación, y el reloj de
+ * la boca seguía latiendo. Ahora toda terminación es una sola: después de ella nada de esa sesión llega a la
+ * UI, al estado, al audio ni a los niveles, y lo propio (reloj, conexión) vuelve a cero.
+ */
+function inyectarTardios(m: ReturnType<typeof montar>) {
+  const ops = m.sdk.ops()!;
+  ops.onModeChange?.({ mode: 'speaking' });
+  ops.onMessage?.({ message: 'tarde de la IA', source: 'ai' });
+  ops.onMessage?.({ message: 'tarde de la persona', source: 'user' });
+  ops.onInterruption?.();
+  ops.onConnect?.();
+  ops.onModeChange?.({ mode: 'listening' });
+  ops.onError?.('tarde');
+  ops.onDisconnect?.();
+  m.t.latir();
+}
+
+test('A4 móvil: desconexión natural es terminal: lo tardío no toca nada y el reloj de la boca se para', async () => {
+  const m = montar({ conectaSolo: true });
+  m.resolverPermiso();
+  await tic();
+  m.sdk.ops()?.onModeChange?.({ mode: 'speaking' });
+  m.t.latir();
+  assert.equal(m.t.vivos(), 1);
+  m.sdk.cortar();
+  assert.equal(m.eventos.filter((e) => e === 'estado:7:cerrada').length, 1, 'se avisa «cerrada» una vez');
+  assert.deepEqual(m.ceros(), CERO, 'reloj, conexión, pistas y oyentes a cero sin esperar a que React desmonte');
+  const antes = m.eventos.length;
+  inyectarTardios(m);
+  await tic();
+  assert.deepEqual(m.eventos.slice(antes), [], 'ningún estado, mensaje, interrupción ni nivel de la sesión terminada');
+  // Y desmontar después (React) no repite nada: ni otro fin, ni «cerrando» de un audio que ya se soltó.
+  m.cerrar();
+  await tic();
+  assert.deepEqual(m.eventos.slice(antes), []);
+  assert.deepEqual(m.eventos.filter((e) => e.startsWith('fin:')), ['fin:7:pase-1'], 'el servidor se entera una vez');
+  assert.deepEqual(m.eventos.filter((e) => e.startsWith('audio:')), ['audio:7:toma', 'audio:7:suelta']);
+});
+
+test('A4 móvil: un error con la sesión conectada también es terminal (se cuelga, lo tardío no cuenta, recursos a cero)', async () => {
+  const m = montar({ conectaSolo: true });
+  m.resolverPermiso();
+  await tic();
+  m.sdk.ops()?.onModeChange?.({ mode: 'speaking' });
+  m.sdk.error('ice failed');
+  assert.ok(m.eventos.includes('estado:7:error'));
+  assert.ok(m.sdk.r.finesPedidos >= 1, 'la sesión del error se cuelga ya');
+  const antes = m.eventos.length;
+  inyectarTardios(m);
+  await tic();
+  const tarde = m.eventos.slice(antes).filter((e) => !/^audio:7:(cerrando|suelta)$/.test(e) && !/^fin:7:/.test(e));
+  assert.deepEqual(tarde, [], 'nada de la sesión del error llega a la UI');
+  assert.deepEqual(m.ceros(), CERO);
+  m.cerrar();
+  assert.deepEqual(m.eventos.filter((e) => e.startsWith('fin:')), ['fin:7:pase-1']);
+});
+
+test('A4 móvil: tras terminar la vieja, la sesión NUEVA sí avisa (y la vieja sigue sin avisar)', async () => {
+  const eventos: string[] = [];
+  const vieja = montar({ conectaSolo: true, gen: 7, eventos });
+  vieja.resolverPermiso();
+  await tic();
+  vieja.sdk.cortar();
+  const nueva = montar({ conectaSolo: true, gen: 8, eventos });
+  nueva.resolverPermiso({ token: 'tok', pase: 'pase-2' });
+  await tic();
+  const antes = eventos.length;
+  inyectarTardios(vieja);
+  nueva.sdk.ops()?.onModeChange?.({ mode: 'speaking' });
+  nueva.sdk.ops()?.onMessage?.({ message: 'hola de la nueva', source: 'ai' });
+  const despues = eventos.slice(antes).filter((e) => !e.startsWith('niveles'));
+  assert.deepEqual(despues, ['estado:8:hablando', 'mensaje:8:ultron:hola de la nueva']);
+  nueva.cerrar();
+  await tic();
+  assert.deepEqual(nueva.ceros(), CERO);
+  assert.deepEqual(vieja.ceros(), CERO);
+});
+
+test('móvil: callar la salida de la llamada no cuelga; vuelve el volumen al terminar la frase (respetando el silencio)', async () => {
+  let silenciada = false;
+  const m = montar({ conectaSolo: true, silenciada: () => silenciada });
+  m.resolverPermiso();
+  await tic();
+  const callar = m.cerrar.callarSalida;
+  assert.equal(typeof callar, 'function', 'la sesión expone cómo callar su salida');
+  assert.deepEqual(callar(), { ok: true }, 'escuchando: no suena nada, nada que bajar');
+  assert.deepEqual(m.sdk.r.volumen, []);
+  m.sdk.ops()?.onModeChange?.({ mode: 'speaking' });
+  assert.deepEqual(callar(), { ok: true });
+  assert.deepEqual(m.sdk.r.volumen, [0]);
+  assert.equal(m.sdk.r.finesPedidos, 0, 'callar no cuelga');
+  m.sdk.ops()?.onModeChange?.({ mode: 'listening' });
+  assert.deepEqual(m.sdk.r.volumen, [0, 1], 'la frase siguiente se oye');
+  // Con la conversación silenciada, al terminar la frase el volumen se queda en 0 (silenciar sigue mandando).
+  m.sdk.ops()?.onModeChange?.({ mode: 'speaking' });
+  silenciada = true;
+  callar();
+  m.sdk.ops()?.onModeChange?.({ mode: 'listening' });
+  assert.deepEqual(m.sdk.r.volumen, [0, 1, 0, 0]);
+  m.cerrar();
+  await tic();
+  assert.deepEqual(m.ceros(), CERO);
+  assert.equal(callar().ok, true, 'tras colgar no hay nada que suene');
+  assert.deepEqual(m.sdk.r.volumen, [0, 1, 0, 0], 'el SDK de la sesión terminada no se toca');
 });

@@ -12,14 +12,14 @@ import { onLip, desbloquearAudio, audioDesbloqueado } from './03-voz/player';
 import { clipDeEmocion, clipDeTexto, saludoDe, saludoHora, siguienteChiste } from './03-voz/banco';
 import { useOido } from './03-voz/useOido';
 import { RegistroVoz } from '../mobile/src/lib/interrupcion';
-import { ConversacionEnVivo, type EstadoEnVivo } from './03-voz/enVivo';
+import { ConversacionEnVivo, type ControlesEnVivo, type EstadoEnVivo } from './03-voz/enVivo';
 import { opinarTurno, pedirTurnoStream } from './04-cerebro/turno';
 import { detectarIntencion } from './04-cerebro/intenciones';
 import { grabFrame, achicarFoto } from './04-cerebro/grabFrame';
 import { fijarCuentaMemoria, guardarHecho, olvidarTodo } from './09-estado/memoria';
 import { guardarTokenMesa, headersMesa } from './10-infra/sesionCliente';
 import { escucharAvisosTocados } from './10-infra/abrirDesdeAviso';
-import { ejecutarControl, interpretarControl, puertosWeb, respuestaAclaracion, type ControlVoz } from './03-voz/controles';
+import { botonMicrofonoWeb, ejecutarControl, interpretarControl, puertosWeb, respuestaAclaracion, type ControlVoz } from './03-voz/controles';
 import { escucharVueltaGenesis } from './10-infra/genesisWeb';
 import { aplicarVersionNueva, registrarPwa } from './10-infra/pwa';
 import { AvisoVersion } from './07-pantallas/AvisoVersion';
@@ -788,11 +788,11 @@ export default function App() {
       // cosas distintas; cada uno toca solo lo suyo. «Para» a secas con más de una cosa viva pregunta cuál.
       const correrControles = (cs: ControlVoz[]) => {
         for (const c of cs) {
-          if (c === 'detener_audio' || c === 'interrumpir') {
-            callarTodo();
-            turnoCallado.current = turnoEnCurso.current;
-            continue;
-          }
+          // Callar también corta lo que falte del turno en camino (no se dice), como siempre.
+          if (c === 'detener_audio' || c === 'interrumpir') turnoCallado.current = turnoEnCurso.current;
+          // P2: callar pasa por los puertos: la voz de la mesa (callarTodo) Y, con la llamada abierta, lo que la
+          // llamada está diciendo (callarSalida). El TTS de la mesa no es el audio de la llamada. Silenciar el
+          // micrófono es el de la llamada, sin colgar. Nada de esto toca la tarea durable.
           const vigente = deEstaCuenta();
           void ejecutarControl(
             c,
@@ -824,8 +824,9 @@ export default function App() {
         aclaracionWeb.current = ctl.opciones;
         return void decir(ctl.pregunta, { emocion: 'neutral' });
       }
-      // «Cállate» sigue por el `callar` de siempre (con su «está bien» si la interrumpió).
-      if (ctl && ctl.control !== 'detener_audio') return void correrControles([ctl.control]);
+      // «Cállate» sigue por el `callar` de siempre (con su «está bien» si la interrumpió); con la llamada abierta va
+      // por los controles, que callan también la salida de la llamada (P2).
+      if (ctl && (ctl.control !== 'detener_audio' || vivoRef.current?.ocupada())) return void correrControles([ctl.control]);
       const it = detectarIntencion(cmd);
       switch (it.tipo) {
         case 'callar':
@@ -986,6 +987,8 @@ export default function App() {
    * conversación. Si no abre, queda el micrófono de siempre.
    */
   const [enVivo, setEnVivo] = useState<EstadoEnVivo>('cerrada');
+  /** Lo que la llamada sabe hacer ahora (silenciar su micrófono sin colgar) y cómo está: el botón anuncia solo eso. */
+  const [vivoCtl, setVivoCtl] = useState<ControlesEnVivo>({ silenciable: false, silenciado: false });
   const vivoRef = useRef<ConversacionEnVivo | null>(null);
   const vivoCbs = useRef({ conv, showBubble, setFace });
   vivoCbs.current = { conv, showBubble, setFace };
@@ -1018,6 +1021,7 @@ export default function App() {
           // La voz llega con sus etiquetas de audio ([laughs], [warmly]): se oyen, no se leen.
           else cb.aura(quitarExpresiones(texto).trim(), 'lista');
         },
+        onControles: setVivoCtl,
       });
     }
     return vivoRef.current;
@@ -1120,12 +1124,23 @@ export default function App() {
     void opinarTurno(opinion.id, v);
     setOpinion({ id: opinion.id, estado: 'gracias' });
   };
+  /**
+   * El botón del micrófono (P2): sin llamada, el oído de la mesa; con la llamada abierta, el micrófono de ESA
+   * sesión (silenciar sin colgar / volver a escuchar), solo si la llamada sabe hacerlo; si no, se apaga y lo dice.
+   */
+  const botonMic = botonMicrofonoWeb({ vivoAbierta, silenciable: vivoCtl.silenciable, silenciado: vivoCtl.silenciado, micEnabled, escuchando });
   const alternarMic = () => {
+    if (botonMic.modo === 'no_disponible') return;
+    playSfx('tap', soundFxEnabled);
+    if (botonMic.modo === 'llamada') {
+      const r = vivoRef.current?.silenciarMic(!vivoCtl.silenciado);
+      if (r && !r.ok && r.detalle) showBubble(r.detalle, 6000);
+      return;
+    }
     if (face === 'SLEEPING') despertar();
     setMicEnabled((v) => !v);
-    playSfx('tap', soundFxEnabled);
   };
-  const etiquetaMic = micEnabled ? (escuchando ? 'Micrófono abierto: te está escuchando' : 'Micrófono abierto') : 'Micrófono apagado';
+  const etiquetaMic = botonMic.etiqueta;
   const nombreVisible = usuario.authenticated ? usuario.name : '';
   /** Conversar / Trabajar: un radiogroup con flechas. */
   const MODOS_MESA: Array<{ id: ModoMesa; label: string; Icono: typeof Mic }> = [
@@ -1370,8 +1385,15 @@ export default function App() {
                       pedir(t);
                     }}
                     despues={
-                      <button type="button" onClick={alternarMic} aria-pressed={micEnabled} aria-label={etiquetaMic} className={`aura-mic chico ${micEnabled ? 'abierto' : ''} ${escuchando ? 'escuchando' : ''}`}>
-                        {micEnabled ? <Mic className="w-5 h-5" aria-hidden="true" /> : <MicOff className="w-5 h-5" aria-hidden="true" />}
+                      <button
+                        type="button"
+                        onClick={alternarMic}
+                        disabled={botonMic.disabled}
+                        aria-pressed={botonMic.activo}
+                        aria-label={etiquetaMic}
+                        className={`aura-mic chico ${botonMic.activo ? 'abierto' : ''} ${escuchando && botonMic.modo === 'mesa' ? 'escuchando' : ''}`}
+                      >
+                        {botonMic.activo ? <Mic className="w-5 h-5" aria-hidden="true" /> : <MicOff className="w-5 h-5" aria-hidden="true" />}
                       </button>
                     }
                   />
@@ -1410,8 +1432,15 @@ export default function App() {
                   {/* En un teléfono angosto entran los cuatro botones: «Escribir» queda con su ícono. */}
                   <span className="hidden min-[420px]:inline">Escribir</span>
                 </button>
-                <button type="button" onClick={alternarMic} disabled={vivoAbierta} aria-pressed={micEnabled} aria-label={etiquetaMic} className={`aura-mic ${micEnabled ? 'abierto' : ''} ${escuchando ? 'escuchando' : ''}`}>
-                  {micEnabled ? <Mic className="w-7 h-7" aria-hidden="true" /> : <MicOff className="w-7 h-7" aria-hidden="true" />}
+                <button
+                  type="button"
+                  onClick={alternarMic}
+                  disabled={botonMic.disabled}
+                  aria-pressed={botonMic.activo}
+                  aria-label={etiquetaMic}
+                  className={`aura-mic ${botonMic.activo ? 'abierto' : ''} ${escuchando && botonMic.modo === 'mesa' ? 'escuchando' : ''}`}
+                >
+                  {botonMic.activo ? <Mic className="w-7 h-7" aria-hidden="true" /> : <MicOff className="w-7 h-7" aria-hidden="true" />}
                 </button>
                 <button type="button" onClick={alternarEnVivo} aria-pressed={vivoAbierta} aria-label={vivoAbierta ? 'Colgar la conversación en vivo' : 'Hablar en vivo'} className={`aura-primario ${vivoAbierta ? 'en-vivo' : ''}`}>
                   {vivoAbierta ? <PhoneOff className="w-5 h-5" aria-hidden="true" /> : <AudioLines className="w-5 h-5" aria-hidden="true" />}

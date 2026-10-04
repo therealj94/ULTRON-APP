@@ -4,8 +4,9 @@
  * Qué significa cada uno y cómo se reconoce está en lib/controlesVoz.ts (la copia de lib/controles-voz.ts).
  * Aquí está el CÓMO, con puertos que se inyectan (sin React Native: las pruebas usan dobles):
  *
- *   · detener_audio → para la voz de la mesa y su cola (lib/tts.ts) y cierra la boca; NO silencia el
- *     micrófono ni toca la llamada ni la tarea;
+ *   · detener_audio → para la voz de la mesa y su cola (lib/tts.ts) y cierra la boca; en la llamada calla
+ *     también lo que la conversación está diciendo (callarLlamada, P2), sin colgar; NO silencia el
+ *     micrófono ni toca la tarea;
  *   · colgar → cuelga la llamada del avatar (compa/llamadaCiclo.ts); la tarea de su computadora sigue;
  *   · tarea → su computadora por las rutas que ya existen (`/api/computadora/tareas/:id/parar|pausar|
  *     reanudar|control`), con lo que su servicio sabe hacer (controlesPc). Cancelar NO cuelga.
@@ -116,16 +117,26 @@ export function puertosTelefono(d: {
   cerrarBoca: () => void;
   soltarPausaMicrofono: () => void;
   enLlamada: () => boolean;
+  /**
+   * Callar lo que la conversación en vivo está diciendo, sin colgar (P2; compa/sesionVoz.ts, callarSalida):
+   * la voz de la mesa no es el audio de la llamada. Sin esto, en la llamada callar lo dice (no finge).
+   */
+  callarLlamada?: () => ResultadoPuerto;
   colgar: () => ResultadoPuerto;
   api: ApiMin;
 }): PuertosControl {
   return {
-    pararAudio: async () => {
+    pararAudio: async (): Promise<ResultadoPuerto> => {
       await d.pararVozMesa();
       d.cerrarBoca();
       // La voz cortada no llama a su onEnd: si la mesa había pausado su micrófono para hablar, se suelta
       // (sin eso quedaba sorda). En la llamada el micrófono es de la conversación: no se toca.
-      if (!d.enLlamada()) d.soltarPausaMicrofono();
+      if (!d.enLlamada()) {
+        d.soltarPausaMicrofono();
+        return { ok: true };
+      }
+      if (!d.callarLlamada) return { ok: false, detalle: 'Callé mi voz, pero no puedo callar el audio de la llamada.' };
+      return d.callarLlamada();
     },
     colgar: () => d.colgar(),
     tarea: (que) => controlarTareaPc(que, d.api),
