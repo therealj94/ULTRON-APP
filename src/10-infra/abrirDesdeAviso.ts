@@ -10,6 +10,8 @@ export function destinoDeAviso(abrir: unknown): DestinoAviso | null {
   switch (String(abrir || '')) {
     case 'computadora':
     case 'misiones':
+    // «Terminé de investigar» (server/investigar.ts): el resultado está en sus tareas, que se ven trabajando.
+    case 'tareas':
       return 'trabajar';
     case 'mesa':
       return 'conversar';

@@ -25,7 +25,8 @@ export type Herramienta =
   | 'calculos-mina' // ley, tonelaje, onzas, recuperación, strip ratio, cutoff
   | 'concesiones' // fichas de concesiones y permisos
   | 'correo' // revisar y contestar su correo, de cualquier proveedor (server/correo.ts)
-  | 'computadora'; // su propia computadora en la nube: navegar, llenar formularios, comparar (scripts/nodo-computadora)
+  | 'computadora' // su propia computadora en la nube: navegar, llenar formularios, comparar (scripts/nodo-computadora)
+  | 'investigar'; // investigar en segundo plano con su tarea en el panel y el aviso al teléfono (server/investigar.ts)
 
 export type PerfilCerebro = {
   /** Identificador corto, el valor de ULTRON_PERFIL. */

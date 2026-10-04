@@ -471,6 +471,8 @@ test('teléfono: lo que manda el servidor se lee tal cual; lo que no es de AURA 
   assert.equal(L.leerDatos({ aura: 'push', tipo: 'otro', id: 'x', para: YO }), null);
   assert.equal(L.leerDatos({ aura: 'push', tipo: 'mensaje', id: 'x', para: 'jose@ordenglobal.org' }), null, '`para` es un seudónimo, nunca un correo');
   assert.equal(llega({ tipo: 'mensaje', id: 'm2', texto: 'x', abrir: 'https://malo' })?.abrir, '', 'abrir solo lo conocido');
+  // «Terminé de investigar» (server/investigar.ts) abre sus Tareas.
+  assert.equal(llega({ tipo: 'mensaje', id: 'inv-tk_1', titulo: 'Terminé de investigar', texto: '«Copán»: listo.', abrir: 'tareas' })?.abrir, 'tareas');
 });
 
 test('teléfono: solo se enseña a su dueño, una vez; la llamada es la de un recordatorio con el motivo', () => {

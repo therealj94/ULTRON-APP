@@ -75,6 +75,8 @@ import {
   type SalidaEnvio,
 } from './server/trabajos';
 import type { MisionComputadoraMin } from './lib/tareas-durables';
+import { avisosInvestigacion, configurarInvestigacion, confirmarAvisosInvestigacion, empezarInvestigacion, investigacionDisponible } from './server/investigar';
+import { trozoPromete, trozoPrometeUOfrece, vigilarPromesas, type PasoVigilado } from './lib/promesas';
 import { primeraVezEvento } from './lib/envios';
 import { respuestaFija } from './lib/respuestas-fijas';
 import {
@@ -1533,6 +1535,17 @@ montarRutasTrabajos(app, {
     descartar: (correo, canal, ambito, intento) => resolverBorradorDesdePanel(correo, canal, ambito, intento, 'no'),
   },
 });
+// Investigar en segundo plano (server/investigar.ts): las mismas piezas que `web` y `leer` (con urlPublica), el
+// mismo cerebro de las vueltas del harness (redactarConCerebro) y el aviso al teléfono (y al navegador).
+configurarInvestigacion({
+  buscar: (q) => buscarWeb(q, 5),
+  leer: async (url) => {
+    const pub = await urlPublica(url);
+    return pub.ok === false ? '' : leerPagina(pub.url, 2200);
+  },
+  redactar: (o) => redactarConCerebro(o.system, o.prompt, o.senal),
+  avisar: (correo, o) => avisarPush(correo, o),
+});
 montarRutasApp(app, {
   exigirMesa,
   limitar,
@@ -2694,6 +2707,10 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   const ambitoTurno = aparatoValido(body?.aparato) || String(body?.origen || (opciones.voz ? 'voz' : canal)).slice(0, 40);
   // Lo que un envío confirmado en la voz terminó después de contestar (el resultado real, una vez).
   if (duenoComputadora) hechos.push(...avisosDeEnvio(duenoComputadora, ambitoTurno));
+  // Lo que investigó en segundo plano (server/investigar.ts): lo que terminó y no se le dijo, y lo que sigue
+  // corriendo. Se da por dicho solo si el modelo contesta con estos hechos (como lo de su computadora).
+  const deLaInvestigacion = duenoComputadora ? avisosInvestigacion(duenoComputadora) : null;
+  if (deLaInvestigacion) hechos.push(...deLaInvestigacion.hechos.map((h) => neutralizarMarca(h)));
   // Un «sí» puede mandar un borrador o soltar a su computadora: antes se deja anotado en el turno durable
   // (AUR06, persistir antes de actuar). Si este proceso ya no es el dueño del turno, no se resuelve nada aquí.
   const turnoVigente = duenoComputadora && respuestaAlBorrador(message) === 'si' ? await efectoDelTurno('decision') : true;
@@ -3203,6 +3220,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     whatsapp: conWhatsapp,
     sesion: !!duenoComputadora,
     triaje: !!duenoComputadora && conWhatsapp,
+    investigar: !!duenoComputadora && investigacionDisponible(),
   };
   const reglasAppManos = [manosAqui, menuAqui, reglasDeManos(idiomaManos)].filter(Boolean).join('\n');
   const fijoManos = piezasDelTurno({ ...argsPiezas, reglasApp: reglasAppManos }).fijo;
@@ -3261,6 +3279,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
       : null,
     // Lo que su computadora terminó y va en los hechos: se da por dicho solo si el modelo contesta con ellos.
     avisoComputadora: deLaComputadora ? { quien: duenoComputadora, ids: deLaComputadora.ids } : null,
+    // Lo mismo con lo que terminó de investigar.
+    avisoInvestigacion: deLaInvestigacion?.ids.length ? { quien: duenoComputadora, ids: deLaInvestigacion.ids } : null,
     // De quién es el turno, verificado (sesión o Telegram): sus correos y su computadora.
     dueno: duenoComputadora,
     // En qué conversación (teléfono, web, voz): el borrador de correo es de esta, no de otra.
@@ -3744,6 +3764,9 @@ async function correrHerramientaPedida(
       tarea: (arg) => (dueno ? correrTareaConEstado(dueno, ambito, arg) : Promise.resolve(fallo('HARNESS tarea: solo con sesión. Pídele que entre con su cuenta.'))),
       // Sus saldos de Veta Wallet (solo lectura, con la dirección pública que conectó en la app).
       cartera: (arg) => correrCarteraConEstado(dueno, arg),
+      // Investigar en segundo plano (server/investigar.ts): la tarea durable existe ANTES del recibo «empezada».
+      investigar: (arg) =>
+        dueno ? empezarInvestigacion({ dueno, ambito, arg }) : Promise.resolve(fallo('HARNESS investigar: solo para alguien con sesión (la tarea y el aviso son suyos). No empecé nada: pídele que entre con su cuenta.')),
     },
     extraerPython(reply),
     nivel
@@ -3813,6 +3836,32 @@ async function decisionDelBorrador(r: ResultadoHerramienta, dueno: string, ambit
   return r;
 }
 
+/**
+ * El cerebro grande redacta algo fuera de un turno (el resumen de una investigación, server/investigar.ts): el
+ * mismo camino de las vueltas del harness. Primero el cerebro con manos (sin herramientas: solo redacta); si no
+ * contesta, o la deja a medias, el Qwen del nodo.
+ */
+async function redactarConCerebro(system: string, prompt: string, senal: AbortSignal): Promise<{ ok: boolean; texto: string; modelo?: string; error?: string }> {
+  if (cerebroRapidoActivo()) {
+    let texto = '';
+    let modelo = '';
+    let entera = true;
+    try {
+      for await (const pieza of hablarConManos([{ role: 'system', content: system }, { role: 'user', content: prompt }], [], senal, { maxTokens: 1400 })) {
+        if ('modelo' in pieza) modelo = pieza.modelo;
+        else if ('texto' in pieza) texto += pieza.texto;
+        else if ('fin' in pieza && pieza.fin.estado !== 'completo') entera = false;
+      }
+      if (texto.trim() && entera) return { ok: true, texto, modelo };
+    } catch (e: any) {
+      if (senal.aborted) return { ok: false, texto: '', error: 'cortado' };
+      console.warn('[investigar] el cerebro con manos no redactó; sigue Qwen:', String(e?.message || e).slice(0, 120));
+    }
+  }
+  const q = await preguntarQwen(system, prompt, [], [], senal);
+  return q.ok ? { ok: true, texto: q.reply, modelo: q.modelo } : { ok: false, texto: '', error: q.error };
+}
+
 /** El tope de tiempo de una llamada, sumado a la señal del turno (interrupción) si la hay. */
 function conTope(senal: AbortSignal | undefined, ms: number): AbortSignal {
   return senal ? AbortSignal.any([senal, AbortSignal.timeout(ms)]) : AbortSignal.timeout(ms);
@@ -3851,7 +3900,7 @@ async function bucleHarness(o: {
   preguntar?: PreguntarVuelta;
   /** El reloj del turno entero (lib/presupuesto.ts): sin tiempo no se empieza otra herramienta (EXEC04). */
   reloj?: Presupuesto;
-}): Promise<{ reply: string; via: string; estado: EstadoRespuesta; motivo?: string; modelo?: string; proveedor?: string; herramientas: number; memorizable: boolean }> {
+}): Promise<{ reply: string; via: string; estado: EstadoRespuesta; motivo?: string; modelo?: string; proveedor?: string; herramientas: number; memorizable: boolean; pasos: PasoVigilado[] }> {
   // El bucle vive en lib/harness.ts (correrBucleHarness, probado sin red); aquí van sus piezas de verdad.
   const h = await correrBucleHarness({
     reply: o.reply,
@@ -3891,6 +3940,8 @@ async function bucleHarness(o: {
     ...(h.modelo ? { modelo: h.modelo, proveedor: h.proveedor } : {}),
     herramientas: h.pasos.length,
     memorizable: h.memorizable,
+    // Lo que de verdad corrió (con su estado y lo que trajo): la guarda de promesas del final del turno (lib/promesas.ts).
+    pasos: h.pasos.map((x) => ({ herramienta: x.herramienta, estado: x.estado, resumen: x.resumen })),
   };
 }
 
@@ -4211,9 +4262,14 @@ async function correrTurnoInterno(body: any, opciones: OpcionesTurno = {}): Prom
     return guardar({ ...base, reply: sinCerebro(p.datos), emocion: 'preocupado', via: 'tools-fallback', mode, ms: Date.now() - t0, herramientas: tools, error: q1.error });
   }
   if (p.avisoComputadora) confirmarAvisos(p.avisoComputadora.quien, p.avisoComputadora.ids);
+  if (p.avisoInvestigacion) confirmarAvisosInvestigacion(p.avisoInvestigacion.quien, p.avisoInvestigacion.ids);
   const h = await bucleHarness({ reply: q1.reply, system, message, hechos, hilo, tools, mando, senal: p.senal, nivel: p.nivel, contexto: p.contexto, espacio: p.espacio, computadora: p.computadora, dueno: p.dueno, ambito: p.ambito, reloj });
   memorizable = h.memorizable;
-  let reply = h.reply;
+  // La guarda de promesas (lib/promesas.ts): lo prometido sin herramienta que lo empezara no se entrega; con
+  // resultados de una búsqueda, se usan; el volcado `HARNESS …` nunca sale (José, 4-oct).
+  const vigilada = vigilarPromesas(h.reply, { pasos: h.pasos, acciones: extraerAcciones(h.reply).acciones.length, idioma: p.idioma === 'en' ? 'en' : 'es' });
+  if (vigilada.cambiada) console.log(`[promesas] corregida (${vigilada.motivos.join(', ')}) via ${h.via}`);
+  let reply = vigilada.texto;
   let via = h.via;
   let cierre: Cierre = h.estado === 'completo' ? COMPLETO : { estado: h.estado, motivo: h.motivo };
   const quien1 = quienContesto(via, h.modelo || q1.modelo, h.proveedor || q1.proveedor);
@@ -4691,10 +4747,12 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       }
       // Una frase que da algo por hecho («ya lo mandé», «listo, enviado») no se dice mientras el turno
       // puede todavía pedir la herramienta: lo dice el resultado real. Se retiene hasta el final.
+      // Tampoco una que promete trabajo («voy a buscar», «te aviso», «ya está encendida»; lib/promesas.ts): se
+      // dice solo si una herramienta del turno lo empezó (la guarda del final decide; José, 4-oct).
       if (retenido) return;
       // Soltar solo hasta la última frase cerrada; lo que queda puede ser una línea de pedido.
       const corte = puntoDeCorte(cuerpo, enviado);
-      if (corte > enviado && DA_POR_HECHO.test(cuerpo.slice(enviado, corte + 1))) {
+      if (corte > enviado && (DA_POR_HECHO.test(cuerpo.slice(enviado, corte + 1)) || trozoPromete(cuerpo.slice(enviado, corte + 1)))) {
         retenido = true;
         return;
       }
@@ -4894,6 +4952,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     }
     // El modelo contestó con los hechos: lo que terminó su computadora ya quedó dicho.
     if (full.trim() && !senal?.aborted && p.avisoComputadora) confirmarAvisos(p.avisoComputadora.quien, p.avisoComputadora.ids);
+    if (full.trim() && !senal?.aborted && p.avisoInvestigacion) confirmarAvisosInvestigacion(p.avisoInvestigacion.quien, p.avisoInvestigacion.ids);
     // Sin precalentar aquí: el espacio de la persona ya guarda TODO lo leído en este turno (system e
     // historial). Precalentar solo el system lo recortaba y el turno siguiente releía el historial.
     if (emocion === null) {
@@ -4906,6 +4965,8 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     let cierre: Cierre = COMPLETO;
     let autor: { modelo?: string; proveedor?: string } = porRapido ? { modelo: modeloManos || modeloRapido(), proveedor: 'bedrock' } : { modelo: ULTRON_NODO_MODELO, proveedor: 'nodo' };
     let corrioHerramienta = false;
+    /** Lo que de verdad corrió en el turno: la guarda de promesas del final (lib/promesas.ts) lo mira. */
+    let pasosTurno: PasoVigilado[] = [];
     if (pedido) {
       /*
        * La vuelta del harness también habla en cuanto hay una frase (antes se generaba entera en silencio
@@ -4915,16 +4976,25 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       let base = enviado > 0 ? cuerpo.slice(0, enviado) : '';
       let dichoH = '';
       let rondaH = 0;
+      /** En esta vuelta se vio una promesa o una oferta de buscar: lo demás de la vuelta espera a la guarda. */
+      let retenidaH = false;
       const alTexto = (acc: string, ronda: number) => {
         if (ronda !== rondaH) {
           if (dichoH) base = dichoH;
           dichoH = '';
           rondaH = ronda;
+          retenidaH = false;
         }
         const t = decibleHasta(extraerEmocion(acc).texto);
-        if (/PEDIR_HERRAMIENTA/i.test(t)) return;
+        if (/PEDIR_HERRAMIENTA/i.test(t) || retenidaH) return;
         const corte = puntoDeCorte(t, dichoH.length);
         if (corte + 1 <= dichoH.length) return;
+        // Con el resultado de la herramienta ya en los HECHOS, «voy a buscar…» o «¿quieres que busque…?» no se
+        // dicen: la vuelta correctora del harness o la guarda del final ponen lo que de verdad hay (José, 4-oct).
+        if (trozoPrometeUOfrece(t.slice(dichoH.length, corte + 1))) {
+          retenidaH = true;
+          return;
+        }
         // Leyendo un resultado en voz es donde más se alarga: el mismo tope.
         if (topeVoz && dichoH.length >= topeVoz) {
           topado = true;
@@ -4949,6 +5019,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       if (h.modelo) autor = { modelo: h.modelo, proveedor: h.proveedor };
       corrioHerramienta = h.herramientas > 0;
       memorizable = h.memorizable;
+      pasosTurno = h.pasos;
       const decible = extraerAcciones(reply).texto;
       if (topado && dichoH && decible.startsWith(dichoH)) enviado = decible.length;
       else if (dichoH) {
@@ -4960,6 +5031,28 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       } else if (enviado > 0 && !decible.startsWith(cuerpo.slice(0, enviado))) {
         soltar('replace', decible);
         enviado = decible.length;
+      }
+    }
+    /*
+     * LA GUARDA DE PROMESAS (lib/promesas.ts; José, 4-oct): lo que promete trabajo y ninguna herramienta de ESTE
+     * turno empezó («voy a buscar», «te aviso por PULSE2CHAT», «ya está encendida») no se entrega; con resultados
+     * de una búsqueda en el turno, la respuesta los usa; el volcado `HARNESS …` nunca sale. Vale igual si contestó
+     * el cerebro con manos o, sin él, el Qwen del nodo (que no tiene las herramientas como tales).
+     */
+    if (reply) {
+      const antes = extraerAcciones(reply).texto;
+      const v = vigilarPromesas(reply, { pasos: pasosTurno, acciones: extraerAcciones(reply).acciones.length, idioma });
+      if (v.cambiada) {
+        console.log(`[promesas] corregida (${v.motivos.join(', ')}) via ${via}`);
+        reg.marca('promesa-corregida');
+        reply = v.texto;
+        const ahora = extraerAcciones(reply).texto;
+        // Lo ya dicho que no sigue igual se reemplaza (en la voz, lo retenido nunca sonó).
+        if (enviado > 0 && !ahora.startsWith(antes.slice(0, enviado))) {
+          soltar('replace', ahora);
+          enviado = ahora.length;
+          topado = false;
+        }
       }
     }
     // Si el modelo no dijo nada, lo que se dice ya no es suyo: sin acciones.

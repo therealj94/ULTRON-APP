@@ -223,3 +223,60 @@ describe('Harness: presupuesto común del turno (EXEC04)', () => {
     assert.equal(h.proveedor, 'nodo');
   });
 });
+
+describe('Harness: la vuelta usa lo que trajo la búsqueda y el volcado nunca sale (José, 4-oct)', () => {
+  const WEB = async () => 'HARNESS web "hitos Honduras":\n1. Independencia, 1821 — Honduras se independizó el 15 de septiembre de 1821. [https://ejemplo.test/1821]\n2. Copán — Gran ciudad maya del período clásico. [https://ejemplo.test/copan]';
+
+  it('harness-parcial: buscó y ninguna vuelta contestó → lo que trajo dicho como persona, sin «HARNESS web …»', async () => {
+    const { runners } = runnersFalsos({ web: WEB });
+    const manos = cerebroFalso([new Error('AbortError: Request aborted')]);
+    const qwen = cerebroFalso([{ ok: false, reply: '', error: 'Qwen no contestó' }]);
+    const h = await correrBucleHarness({ reply: 'Va, te aviso cuando termine.\nPEDIR_HERRAMIENTA: web hitos Honduras', hechos: [], tools: [], correr: (ped) => resolverPedidoConEstado(ped, runners), preguntar: manos.preguntar, respaldo: qwen.preguntar });
+    assert.equal(h.via, 'harness-parcial');
+    assert.ok(!/HARNESS|https?:\/\//.test(h.reply), h.reply);
+    assert.match(h.reply, /Esto encontré\./);
+    assert.match(h.reply, /1821/);
+  });
+
+  it('con resultados, la vuelta que solo pregunta «¿quieres que busque…?» recibe UNA vuelta correctora', async () => {
+    const { runners } = runnersFalsos({ web: WEB });
+    const cerebro = cerebroFalso([
+      { ok: true, reply: '¿Querés que busque los hitos más importantes de Honduras? Puedo traerte datos concretos.' },
+      { ok: true, reply: 'Honduras se independizó en 1821 y Copán fue una gran ciudad maya del período clásico.' },
+    ]);
+    const hechos: string[] = [];
+    const h = await correrBucleHarness({ reply: 'PEDIR_HERRAMIENTA: web hitos Honduras', hechos, tools: [], correr: (ped) => resolverPedidoConEstado(ped, runners), respaldo: cerebro.preguntar });
+    assert.equal(h.corregida, 'vuelta');
+    assert.match(h.reply, /^Honduras se independizó en 1821/);
+    assert.match(cerebro.vistos[0].at(-1)!, /contesta YA/, 'el resultado va con la nota de contestar con él');
+    assert.match(cerebro.vistos[1].at(-1)!, /^NOTA DEL SISTEMA: YA buscaste/);
+    assert.equal(h.estado, 'completo');
+  });
+
+  it('si la correctora también promete (o no hay tiempo), contesta un resumen hecho con los resultados', async () => {
+    const { runners } = runnersFalsos({ web: WEB });
+    const cerebro = cerebroFalso([
+      { ok: true, reply: 'Voy a buscar los hitos clave de Honduras desde Copán hasta hoy.' },
+      { ok: true, reply: 'Voy a buscar los hitos clave de Honduras desde Copán hasta hoy.' },
+    ]);
+    const h = await correrBucleHarness({ reply: 'PEDIR_HERRAMIENTA: web hitos Honduras', hechos: [], tools: [], correr: (ped) => resolverPedidoConEstado(ped, runners), respaldo: cerebro.preguntar });
+    assert.equal(h.corregida, 'resumen');
+    assert.match(h.reply, /^Esto encontré\./);
+    assert.ok(!/voy a buscar/i.test(h.reply));
+    const sinTiempo = cerebroFalso([{ ok: true, reply: 'Voy a buscar los hitos clave de Honduras.' }]);
+    let t = 0;
+    const reloj = { alcanza: () => t++ < 1 };
+    const h2 = await correrBucleHarness({ reply: 'PEDIR_HERRAMIENTA: web hitos Honduras', hechos: [], tools: [], reloj, correr: (ped) => resolverPedidoConEstado(ped, runners), respaldo: sinTiempo.preguntar });
+    assert.equal(h2.corregida, 'resumen');
+    assert.equal(sinTiempo.vistos.length, 1, 'sin tiempo no se pide otra vuelta');
+  });
+
+  it('una vuelta que contesta con los datos no se toca', async () => {
+    const { runners } = runnersFalsos({ web: WEB });
+    const cerebro = cerebroFalso([{ ok: true, reply: 'Honduras se independizó en 1821. ¿Quieres que busque más sobre Copán?' }]);
+    const h = await correrBucleHarness({ reply: 'PEDIR_HERRAMIENTA: web hitos Honduras', hechos: [], tools: [], correr: (ped) => resolverPedidoConEstado(ped, runners), respaldo: cerebro.preguntar });
+    assert.equal(h.corregida, undefined);
+    assert.equal(cerebro.vistos.length, 1);
+    assert.match(h.reply, /1821/);
+  });
+});

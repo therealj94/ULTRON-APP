@@ -51,6 +51,12 @@ export const FICHA: Record<PlataformaManos, readonly Mano[]> = {
     { de: 'cartera', es: 'decirte cuánto tienes en tu Veta Wallet', en: 'tell you what’s in your Veta Wallet', ejemplo: { es: '«¿cuánto tengo en mi wallet?»', en: '“how much is in my wallet?”' } },
     { de: 'pagar', es: 'dejarte listo un envío de ORIGEN por PULSE2CHAT para que lo firmes en Veta Wallet', en: 'prepare an ORIGEN payment over PULSE2CHAT for you to sign in Veta Wallet', ejemplo: { es: '«mándale 5 ORIGEN a Ana»', en: '“send Ana 5 ORIGEN”' } },
     { de: 'web', es: 'buscar en internet', en: 'search the web' },
+    {
+      de: 'investigar',
+      es: 'investigar algo a fondo y avisarte con una notificación cuando termine',
+      en: 'research something in depth and notify you on your phone when it’s done',
+      ejemplo: { es: '«investígame la historia de Copán y me avisas»', en: '“research the history of Copán and let me know”' },
+    },
     { de: 'vision', es: 'ver por la cámara y decirte qué hay', en: 'see through the camera and tell you what’s there' },
     { de: 'metales', es: 'darte el precio del oro', en: 'give you gold and silver prices' },
     { de: 'fx', es: 'convertir lempiras a dólares', en: 'convert lempiras to dollars' },
@@ -100,8 +106,8 @@ export const FICHA: Record<PlataformaManos, readonly Mano[]> = {
 /** Lo que una plataforma NO hace (para que nunca lo ofrezca). */
 const NO_AQUI: Record<PlataformaManos, { es: string; en: string }> = {
   app: {
-    es: 'no manejas la computadora de la persona (eso es AURA para Windows): la tuya es otra, en la nube, y nunca pagas ni pones contraseñas con ella',
-    en: 'you do not control the person’s computer (that is AURA for Windows): yours is a separate one in the cloud, and you never pay or enter passwords with it',
+    es: 'no manejas la computadora de la persona (eso es AURA para Windows): la tuya es otra, en la nube, y nunca pagas ni pones contraseñas con ella; tampoco puedes escribirle tú por PULSE2CHAT (ahí no hay un chat tuyo): lo que termina después se le avisa con una notificación al teléfono y queda en Tareas',
+    en: 'you do not control the person’s computer (that is AURA for Windows): yours is a separate one in the cloud, and you never pay or enter passwords with it; you also cannot write to them on PULSE2CHAT yourself (there is no chat of yours there): what finishes later is a phone notification and stays in Tasks',
   },
   web: {
     es: 'desde la web no llamas, no mandas mensajes de PULSE2CHAT, no pones recordatorios ni lees chats (eso lo hace la app del teléfono); si te lo piden, dilo y ofrece hacerlo desde la app',
