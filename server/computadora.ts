@@ -556,6 +556,11 @@ type Mision = {
   pregunta?: { tareaId: string; texto: string; desde: number; id: string | null; huella?: string | null; reemplazoDe?: string } | null;
   /** Se quedó a medias y se le ofreció seguir: su «sí» la sigue (hasta aquí vale). */
   ofreceSeguir?: number;
+  /**
+   * Novena ronda: desde qué tarea ya se siguió (o se está siguiendo) la misión. Seguir es idempotente por ronda: un
+   * segundo intento desde la misma última tarea (la voz retenida, el botón «Seguir», «sigue») no lanza nada.
+   */
+  seguidaDesde?: string;
   /** Cuántas veces la persona dijo «sigue» después de un final a medias. */
   rondas: number;
   /** Pasos útiles de las tareas anteriores de la misión. */
@@ -1910,23 +1915,36 @@ export async function resolverPreguntaComputadora(quien: string, mensaje: string
       : `COMPUTADORA: dijo que no a «${p.texto}»; tu computadora no lo hace y sigue sin eso. Díselo en una frase.`;
   }
   const o = ofrece!;
+  // La ronda que se decidió seguir: la de su última tarea (novena ronda: seguir es idempotente por ronda).
+  const desde = o.tareas.at(-1) ?? '';
   o.ofreceSeguir = undefined;
   if (r === 'no') return `COMPUTADORA: no quiere que sigas con «${o.instruccion.slice(0, 120)}». Dile que está bien, que ahí queda.`;
   if (retener) {
     retener.alDescartar(() => {
       o.ofreceSeguir = Date.now();
     });
-    retener.hacer(() => void seguirMision(o).catch(() => undefined));
-  } else if (!(await seguirMision(o).catch(() => null))) {
+    // En la voz se sigue al confirmar el turno: se vuelve a mirar que sea la misma ronda y que siga a medias (si en
+    // medio la persona tocó «Seguir», ya se siguió: no se sigue otra vez).
+    retener.hacer(() => {
+      if ((o.tareas.at(-1) ?? '') !== desde || !o.final || o.final.ok) return;
+      void seguirMision(o, false, desde).catch(() => undefined);
+    });
+  } else if (!(await seguirMision(o, false, desde).catch(() => null))) {
     return `COMPUTADORA: quiso que siguieras con «${o.instruccion.slice(0, 120)}», pero tu computadora no contestó. Díselo con honestidad.`;
   }
   return `COMPUTADORA: dijo que sí; tu computadora sigue con «${o.instruccion.slice(0, 120)}» desde donde quedó. Dile que ya sigues y que mire la pantalla.`;
 }
 
 /** Sigue una misión que quedó a medias, desde donde quedó la pantalla (el «sí» a «¿sigo?» o el botón «Seguir»). */
-export async function seguirMision(m: Mision, conTexto = false): Promise<Encargo | null> {
+export async function seguirMision(m: Mision, conTexto = false, desdeTarea?: string): Promise<Encargo | null> {
   if (m.rondas >= MAX_RONDAS) return null;
-  const anterior = ENCARGOS.get(m.tareas[m.tareas.length - 1] ?? '');
+  // Novena ronda: una vez por ronda. Desde la última tarea de la misión; si quien llama la vio con otra (ya se siguió) o
+  // alguien ya la está siguiendo desde esta, no se lanza nada.
+  const ultima = m.tareas[m.tareas.length - 1] ?? '';
+  if (desdeTarea !== undefined && desdeTarea !== ultima) return null;
+  if (m.seguidaDesde === ultima) return null;
+  m.seguidaDesde = ultima;
+  const anterior = ENCARGOS.get(ultima);
   m.rondas++;
   m.ofreceSeguir = undefined;
   m.pasosPrevios += anterior?.terminada ? pasosUtiles(anterior.terminada) : 0;
@@ -1950,6 +1968,7 @@ export async function seguirMision(m: Mision, conTexto = false): Promise<Encargo
     Object.assign(m, finAntes);
     m.rondas--;
     m.ofreceSeguir = Date.now();
+    m.seguidaDesde = undefined;
     return null;
   }
   e.soltada = Date.now();
@@ -2477,8 +2496,11 @@ export function montarRutasComputadora(app: import('express').Express, d: DepsRu
     if (!m || m.quien !== correo) return noEsSuya(res);
     if (!m.final || m.final.ok) return res.status(409).json({ error: 'Esa misión no quedó a medias.', honesto: true });
     if (m.rondas >= MAX_RONDAS) return res.status(409).json({ error: 'Ya la seguí varias veces; mejor pídemela de nuevo con más detalle.', honesto: true });
-    const e = await seguirMision(m, true);
-    if (!e) return res.status(502).json({ error: 'La computadora no contestó; prueba en un momento.', honesto: true });
+    // Novena ronda: desde la ronda que la persona ve (su última tarea); si ya se siguió desde ahí, no se sigue otra vez.
+    const desde = m.tareas.at(-1) ?? '';
+    if (m.seguidaDesde === desde) return res.status(409).json({ error: 'Ya la estoy siguiendo.', honesto: true });
+    const e = await seguirMision(m, true, desde);
+    if (!e) return res.status(m.seguidaDesde === desde ? 409 : 502).json({ error: m.seguidaDesde === desde ? 'Ya la estoy siguiendo.' : 'La computadora no contestó; prueba en un momento.', honesto: true });
     return res.json({ id: e.id, honesto: true });
   });
 }

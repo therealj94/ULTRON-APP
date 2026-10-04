@@ -18,7 +18,7 @@ import { analizarRespuesta, decidirPendiente, type DecisionPendiente, type TipoD
 import type { RetencionAcciones } from './voz-agente';
 
 /** Lo que la app (PULSE2CHAT) tiene esperando el «sí» de un turno anterior: un mensaje, una llamada, un recordatorio. */
-export type AppEsperando = { que: string; para: string; cuando?: number; huella?: string };
+export type AppEsperando = { que: string; para: string; cuando?: number; huella?: string; video?: boolean };
 
 export type OpcionesDecisionTurno = {
   /** De quién es la decisión (la sesión del turno). */
@@ -84,7 +84,7 @@ export function pendientesDelTurno(o: { dueno: string; ambito: string; whatsapp:
     const propia = c.para.length > 0 && c.para.every((x) => x.trim().toLowerCase() === o.dueno.trim().toLowerCase());
     // Quinta ronda: su asunto y su texto son su `tema` (no la identifican, pero si lo nombrado cuadra con el tema de otra,
     // se pregunta: «el de la luz»).
-    out.push({ origen: 'correo', tipo: 'correo', destino: `${(c.nombres || []).join(' ')} ${c.para.join(' ')}`.trim(), ...(c.para.length > 1 ? { destinatarios: [...c.para] } : {}), ...(propia ? { propia: true } : {}), tema: `${c.asunto} ${c.texto}`, desde: c.desde, id: c.intento, huella: c.huella });
+    out.push({ origen: 'correo', tipo: 'correo', destino: `${(c.nombres || []).join(' ')} ${c.para.join(' ')}`.trim(), ...(c.para.length > 1 ? { destinatarios: [...c.para] } : {}), ...(propia ? { propia: true } : {}), tema: `${c.asunto} ${c.texto}`, desde: c.desde, ...(c.proveedorCuenta ? { proveedorCuenta: c.proveedorCuenta } : {}), id: c.intento, huella: c.huella });
   }
   const w = o.whatsapp ? borradorWhatsappDe(o.dueno, o.ambito) : null;
   if (w && !w.soloPanel) {
@@ -95,7 +95,7 @@ export function pendientesDelTurno(o: { dueno: string; ambito: string; whatsapp:
   for (const p of preguntasComputadora(o.dueno, o.ambito)) out.push({ origen: 'computadora', tipo: 'computadora', texto: p.texto, id: p.tareaId, ...(p.version !== undefined ? { huella: p.version } : {}) });
   if (o.app) {
     const tipo = TIPO_APP[o.app.que] ?? 'mensaje';
-    out.push({ origen: 'app', tipo, destino: o.app.para, ...(tipo === 'recordatorio' || tipo === 'cancelar_recordatorio' ? { texto: o.app.para } : {}), ...(o.app.cuando ? { cuando: o.app.cuando } : {}), ...(tipo === 'chat' ? { discreta: true } : {}), ...(o.app.huella ? { huella: o.app.huella } : {}) });
+    out.push({ origen: 'app', tipo, destino: o.app.para, ...(tipo === 'recordatorio' || tipo === 'cancelar_recordatorio' ? { texto: o.app.para } : {}), ...(o.app.cuando ? { cuando: o.app.cuando } : {}), ...(tipo === 'chat' ? { discreta: true } : {}), ...(o.app.huella ? { huella: o.app.huella } : {}), ...(o.app.video !== undefined ? { video: o.app.video } : {}) });
   }
   return out;
 }

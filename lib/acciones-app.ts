@@ -713,7 +713,7 @@ export function propuestaAnterior(correo: string, ahora = Date.now()): Propuesta
  * `contexto` del teléfono, también un borrador escrito en el chat abierto (revisión 4-oct: un «sí, mándalo» puede ser
  * para ese).
  */
-export function appEsperandoDe(correo: string, contexto?: ContextoApp | null, ahora = Date.now()): { que: string; para: string; huella: string } | null {
+export function appEsperandoDe(correo: string, contexto?: ContextoApp | null, ahora = Date.now()): { que: string; para: string; huella: string; video?: boolean } | null {
   const conNombre = (para: string) => {
     const c = (contexto?.contactos || []).find((x) => x.correo === para);
     return c ? `${c.nombre} <${c.correo}>` : para;
@@ -723,7 +723,7 @@ export function appEsperandoDe(correo: string, contexto?: ContextoApp | null, ah
   const b = pendienteAnterior(correo, ahora);
   if (b) return { que: 'mensaje', para: conNombre(b.para), huella: JSON.stringify(['mensaje', b.para, b.texto]) };
   const p = propuestaAnterior(correo, ahora);
-  if (p) return { ...(p.tipo === 'llamar' ? { que: 'llamar', para: p.nombre || p.con } : { que: p.tipo, para: p.texto }), huella: JSON.stringify(['propuesta', p]) };
+  if (p) return { ...(p.tipo === 'llamar' ? { que: 'llamar', para: p.nombre || p.con, video: !!p.video } : { que: p.tipo, para: p.texto }), huella: JSON.stringify(['propuesta', p]) };
   const abierto = contexto?.chatAbierto;
   if (abierto?.correo && String(contexto?.borrador || '').trim()) return { que: 'borrador', para: `${abierto.nombre} <${abierto.correo}>`, huella: JSON.stringify(['borrador', abierto.correo, contexto?.borrador]) };
   return null;
@@ -1179,7 +1179,7 @@ export function decisionesApp(o: { contexto?: ContextoApp | null; pendiente?: { 
   const out: DecisionApp[] = [];
   if (o.pendiente) out.push({ de: 'pendiente', tipo: 'mensaje', destino: `${nombre(o.pendiente.para)} ${o.pendiente.para}`.trim() });
   const p = o.propuesta;
-  if (p) out.push(p.tipo === 'llamar' ? { de: 'propuesta', tipo: 'llamar', destino: `${p.nombre || nombre(p.con)} ${p.con}`.trim() } : { de: 'propuesta', tipo: p.tipo, texto: p.texto, cuando: p.cuando });
+  if (p) out.push(p.tipo === 'llamar' ? { de: 'propuesta', tipo: 'llamar', destino: `${p.nombre || nombre(p.con)} ${p.con}`.trim(), video: !!p.video } : { de: 'propuesta', tipo: p.tipo, texto: p.texto, cuando: p.cuando });
   const abierto = o.contexto?.chatAbierto;
   if (abierto?.correo && String(o.contexto?.borrador || '').trim() && abierto.correo !== o.pendiente?.para) {
     out.push({ de: 'chat', tipo: 'chat', destino: `${abierto.nombre || nombre(abierto.correo)} ${abierto.correo}`.trim(), discreta: true });

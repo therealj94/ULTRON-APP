@@ -52,6 +52,13 @@ export type DecisionPendiente = {
   grupo?: boolean;
   /** Desde qué cuenta sale (un correo): «por gmail» solo coincide si es de Gmail (o si va a una de Gmail). */
   desde?: string;
+  /**
+   * Novena ronda: el proveedor que DECLARA la cuenta conectada («gmail» por su servidor smtp.gmail.com, «outlook» por la
+   * entrada de Microsoft u Office 365), para las cuentas de dominio propio (Workspace, 365). Sin él, no se adivina.
+   */
+  proveedorCuenta?: string;
+  /** Una llamada propuesta: si es videollamada («sí, videollamada» solo identifica esa). */
+  video?: boolean;
   id?: string;
 };
 
@@ -151,7 +158,7 @@ const NOMBRES: Record<TipoDecision, Set<string>> = {
   computadora: set('computadora compu pc maquina ordenador computer pregunta'),
   mensaje: set('pulse pulse2chat chat'),
   chat: set('pulse pulse2chat chat escribi escrito'),
-  llamar: set('llamada videollamada llama llamale llamala llamalo llamar marcale marcala marcalo call comunicame'),
+  llamar: set('llamada llama llamale llamala llamalo llamar marcale marcala marcalo call comunicame'),
   recordatorio: set('recordatorio recordatorios reminder alarma recuerdame recordar ponlo ponmelo ponselo guardalo agendalo programalo'),
   cancelar_recordatorio: set('recordatorio recordatorios reminder cancelalo cancelala quitalo quitala borralo borrala eliminalo cancel delete remove'),
 };
@@ -475,9 +482,26 @@ function nombresDe(p: DecisionPendiente): NombreDestino[] {
   return out.filter((n, i) => out.findIndex((m) => m.completo === n.completo) === i);
 }
 
+/**
+ * Las palabras de un texto (una pregunta, un tema) que pueden nombrar algo: sin las comunes ni números, PERO con los
+ * nombres de proveedor (novena ronda: «¿Inicio sesión en Gmail?» habla de Gmail; «gmail» no se recorta ahí).
+ */
+function fichasDeTexto(texto: string | undefined): string[] {
+  return normalizarRespuesta(texto || '')
+    .split(' ')
+    .filter((x) => x && !/\d/.test(x) && (FAMILIA_PROVEEDOR[x] || (!COMUNES.has(x) && x.length >= 3)));
+}
+
 /** Lo que IDENTIFICA a una decisión sin contar los nombres: si es una pregunta o un recordatorio, su texto. */
 function fichasDelTexto(p: DecisionPendiente): string[] {
-  return p.tipo === 'computadora' || p.tipo === 'recordatorio' || p.tipo === 'cancelar_recordatorio' ? fichasDe(p.texto, true).filter((x) => !/\d/.test(x)) : [];
+  return p.tipo === 'computadora' || p.tipo === 'recordatorio' || p.tipo === 'cancelar_recordatorio' ? fichasDeTexto(p.texto) : [];
+}
+
+/** ¿La ficha `w` está en estas palabras de un texto? Un proveedor cuenta por su familia («google» y «gmail»). */
+function enTexto(w: string, fichas: string[]): boolean {
+  if (fichas.includes(w)) return true;
+  const fam = FAMILIA_PROVEEDOR[w];
+  return !!fam && fichas.some((f) => FAMILIA_PROVEEDOR[f] === fam);
 }
 
 /** Las palabras de la hora de un recordatorio (hora de Honduras): «5», «17», los minutos, «pm». */
@@ -492,7 +516,8 @@ function fichasHora(cuando: number | undefined): string[] {
 /** ¿Esta ficha identifica a esta decisión (su canal, su acción, su destinatario o correo, su hora, el propio)? */
 function esDe(w: string, p: DecisionPendiente): boolean {
   if (w === YO_PROPIO) return !!p.propia;
-  if (PROVEEDORES[w]) return esDelProveedor(w, p);
+  if (PROVEEDORES[w]) return esDelProveedor(w, p) || enTexto(w, fichasDelTexto(p));
+  if (DE_VIDEO.has(w)) return p.tipo === 'llamar' && !!p.video;
   if (w.startsWith('email:')) return direccionesDe(p).includes(w.slice(6));
   if (NOMBRES[p.tipo].has(w)) return true;
   if (DE_MENSAJE.has(w) && TIPOS_MENSAJE.has(p.tipo)) return true;
@@ -507,13 +532,20 @@ function esDe(w: string, p: DecisionPendiente): boolean {
 function tocaA(w: string, q: DecisionPendiente): boolean {
   if (DE_CANAL.has(w)) return false;
   if (esDe(w, q)) return true;
-  return [...fichasDe(q.tema, true), ...fichasDe(q.texto, true)].filter((x) => !/\d/.test(x)).includes(w);
+  return enTexto(w, [...fichasDeTexto(q.tema), ...fichasDeTexto(q.texto)]);
 }
 
 /**
  * Octava ronda: el nombre de un PROVEEDOR de correo no es el canal. Solo identifica un correo cuya dirección (a quién va)
  * o cuya cuenta (desde) es de ese proveedor.
  */
+/** La familia de cada nombre de proveedor («google» y «gmail» son lo mismo). */
+const FAMILIA_PROVEEDOR: Record<string, string> = {
+  gmail: 'gmail', google: 'gmail', googlemail: 'gmail',
+  outlook: 'outlook', hotmail: 'outlook', microsoft: 'outlook', office: 'outlook', office365: 'outlook',
+  yahoo: 'yahoo', ymail: 'yahoo',
+  icloud: 'icloud',
+};
 const PROVEEDORES: Record<string, string[]> = {
   gmail: ['gmail.com', 'googlemail.com'],
   google: ['gmail.com', 'googlemail.com'],
@@ -527,14 +559,21 @@ const PROVEEDORES: Record<string, string[]> = {
 function esDelProveedor(w: string, p: DecisionPendiente): boolean {
   const dominios = PROVEEDORES[w];
   if (!dominios || p.tipo !== 'correo') return false;
+  // La cuenta conectada que declara su proveedor (Workspace, 365 con dominio propio).
+  if (p.proveedorCuenta && FAMILIA_PROVEEDOR[p.proveedorCuenta] === FAMILIA_PROVEEDOR[w]) return true;
   const dirs = [...direccionesDe(p), ...correosDe(p.desde)];
   return dirs.some((d) => dominios.some((dom) => d.endsWith(`@${dom}`)));
 }
 
+/** «videollamada», «video»: solo una llamada propuesta que es videollamada. */
+const DE_VIDEO = set('videollamada videollamadas video videocall');
+
 /** ¿Esta ficha es de la decisión sin contar sus nombres (canal, correo, número, hora, texto, el propio)? */
 function esDeSinNombre(w: string, p: DecisionPendiente): boolean {
   if (w === YO_PROPIO) return !!p.propia;
-  if (PROVEEDORES[w]) return esDelProveedor(w, p);
+  if (PROVEEDORES[w]) return esDelProveedor(w, p) || enTexto(w, fichasDelTexto(p));
+  if (DE_VIDEO.has(w)) return p.tipo === 'llamar' && !!p.video;
+  if (enTexto(w, fichasDelTexto(p))) return true;
   if (w.startsWith('email:')) return direccionesDe(p).includes(w.slice(6));
   if (NOMBRES[p.tipo].has(w)) return true;
   if (DE_MENSAJE.has(w) && TIPOS_MENSAJE.has(p.tipo)) return true;
