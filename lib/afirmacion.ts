@@ -180,7 +180,7 @@ const COMUNES = set('com net org hn test example gmail hotmail outlook yahoo par
 
 /** Minúsculas, sin tildes ni signos (sin colapsar nada: «Lee» sigue siendo «lee»). */
 export function normalizarRespuesta(mensaje: string): string {
-  return String(mensaje || '')
+  return juntarDigitos(String(mensaje || ''))
     .toLowerCase()
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
@@ -200,8 +200,19 @@ function correosDe(texto: string | undefined): string[] {
  * Las fichas del mensaje: «👍» y «✅» como «sí», «él» (con tilde) como pronombre, los correos (también dictados: «ana
  * arroba example punto test») como una sola ficha `email:…`.
  */
+/**
+ * Undécima ronda: los dígitos separados por guion, espacio o punto son UN número («44-55» → «4455», «9999-4455» →
+ * «99994455»), si juntos tienen al menos 4 (una hora «5.30» no se toca).
+ */
+function juntarDigitos(s: string): string {
+  return s.replace(/\d+(?:[\s.\-]\d+)+/g, (m) => {
+    const j = m.replace(/[\s.\-]/g, '');
+    return j.length >= 4 ? j : m;
+  });
+}
+
 function fichasDelMensaje(mensaje: string): string[] {
-  let s = String(mensaje || '')
+  let s = juntarDigitos(String(mensaje || ''))
     .replace(/[\u{1F44D}\u{1F44C}\u{2705}\u{2714}\u{2611}]/gu, ' si ')
     .replace(/[\u{1F44E}\u{274C}\u{274E}]/gu, ' no ')
     .toLowerCase()
@@ -538,6 +549,8 @@ function tocaA(w: string, q: DecisionPendiente): boolean {
   if (familia) return esDe(w, q) || ajenas.some((x) => familia.has(x));
   if (DE_CANAL.has(w)) return false;
   if (esDe(w, q)) return true;
+  // Un número de al menos 4 dígitos cuadra también por su final («4455» con «99994455»).
+  if (/^\d{4,}$/.test(w) && ajenas.some((x) => /^\d{4,}$/.test(x) && (x.endsWith(w) || w.endsWith(x)))) return true;
   return enTexto(w, ajenas);
 }
 
@@ -551,8 +564,11 @@ function palabrasDeTema(texto: string | undefined): string[] {
 /** Las palabras de un mismo canal (el correo y sus proveedores; WhatsApp; la llamada…). null: no es un canal. */
 function familiaDeCanal(w: string): Set<string> | null {
   if (NOMBRES.correo.has(w)) return new Set([...NOMBRES.correo, ...Object.keys(FAMILIA_PROVEEDOR)]);
-  for (const t of ['whatsapp', 'llamar'] as const) if (NOMBRES[t].has(w)) return NOMBRES[t];
-  return null;
+  // Undécima ronda: CUALQUIER palabra de canal (computadora, compu, pc, recordatorio, alarma, chat, llamada, mensaje…).
+  const familia = new Set<string>();
+  for (const t of Object.keys(NOMBRES) as TipoDecision[]) if (NOMBRES[t].has(w)) for (const x of NOMBRES[t]) familia.add(x);
+  if (DE_MENSAJE.has(w)) for (const x of DE_MENSAJE) familia.add(x);
+  return familia.size ? familia : null;
 }
 
 /**
