@@ -14,7 +14,7 @@ AU-RA y Ojos no cambian. La web no tiene a Claudio ni a ANT-ONIO.
 
 ## Los clips
 
-Son 17 por avatar, 34 en total, en `mobile/assets/avatares/video/`. Cada uno dura 5 s, mide 720×1280 y va en H.264 sin audio, con *faststart*. Pesa unos 300 KB, y los 34 juntos 10,3 MB. Van en la actualización OTA y funcionan sin red.
+Son 17 por avatar, 34 en total, en `mobile/assets/avatares/video/`. Cada uno dura 5 s (120 cuadros a 24 por segundo), mide 720×1280 y va en H.264 sin audio, con *faststart* y un solo cuadro clave. Pesan de 200 a 370 KB, y los 34 juntos 9,3 MB. Van en la actualización OTA y funcionan sin red.
 
 | Clip | Clase | Cuándo |
 |---|---|---|
@@ -40,7 +40,7 @@ Son 17 por avatar, 34 en total, en `mobile/assets/avatares/video/`. Cada uno dur
 
 - Entre los fondos gana lo que más se nota: `habla` > `lee` > `piensa` > `teclea` > `escucha` > `reposo`. Leer gana a pensar porque el correo se abre mientras el cerebro piensa; si le preguntás algo con la computadora trabajando, piensa primero.
 - Un golpe no se repite antes de 8 s.
-- Si el avatar empieza a hablar en medio de un golpe, el golpe sigue hasta 1,8 s y después pasa a `habla`. Los golpes por lo que dice llegan con la frase, así que asiente o niega 1,8 s y sigue hablando.
+- Si el avatar empieza a hablar en medio de un golpe, el golpe va a su ritmo 1 s y después pide `habla`; el gesto no se corta: lo termina más rápido hasta el reposo y ahí habla (ver «El cambio de clip»). Los golpes por lo que dice llegan con la frase: asiente o niega y sigue hablando, con la boca en marcha unos 2,4 s después de la frase. Si cuando llega la frase el clip de antes iba por la mitad de su gesto, el golpe no alcanza a verse y se salta: la boca primero. (El recorrido de Windows, que sí corta el golpe, sigue con 1,8 s: `GOLPE_ANTES_DE_HABLAR_MS`; el teléfono usa `GOLPE_ANTES_DE_HABLAR_SIN_CORTE_MS`.)
 - Con «reducir movimiento» no hay golpes. Los fondos nuevos sí se ven.
 - Dormido (silenciado) no espera: se queda en el reposo.
 
@@ -52,38 +52,97 @@ Son 17 por avatar, 34 en total, en `mobile/assets/avatares/video/`. Cada uno dur
 - Un golpe pedido vale 1,5 s. Un cuerpo que aparece después no hace golpes viejos.
 - Las fuentes se conectan con el primer cuerpo en video y se sueltan con el último.
 
-**La vista** está en `mobile/src/avatares/video/CuerpoVideo.tsx` y usa dos capas de `expo-av`:
+**La vista** está en `mobile/src/avatares/video/CuerpoVideo.tsx` y usa dos capas de `expo-av`. Solo ejecuta lo que decide la mezcla (`transicion.ts`, abajo):
 
-- El clip nuevo arranca invisible y se funde encima en 220 ms cuando ya tiene su primer cuadro.
-- Si el primer cuadro tarda más de 700 ms, se funde igual.
-- Un golpe avisa 320 ms antes de terminar, para que el fondo que sigue ya esté listo.
-- Todos los clips empiezan y terminan en la misma pose, así que cualquier cambio engancha sin salto.
+- Cada clip se monta quieto (`shouldPlay={false}`, sin `positionMillis`) y se pone en marcha o cambia de ritmo con la API del reproductor (`playAsync`, `setRateAsync`). Las props de estado no cambian nunca después de montar, así que expo-av no las vuelve a aplicar a mitad de un clip.
+- Un golpe avisa 900 ms antes de terminar, para que el fondo que sigue se cargue mientras el golpe llega al reposo.
 - Los bordes se funden con el color de fondo del avatar.
 - Si un video falla, vuelven las fotos durante el resto de la sesión.
 
-## Calidad medida
+## El cambio de clip (sin saltos)
 
-Las mediciones son PSNR entre cuadros.
+José vio que el avatar «glitchea» al cambiar de gesto (4-oct). Esto es lo que había y lo que se cambió.
+
+### Lo que había (medido)
+
+Las medidas son la diferencia media por píxel (0-255) en 360×640, contra la foto base (el cuadro 0 del reposo). Entre dos codificaciones de la misma foto da 1,1 a 1,4: ese es el piso del ruido.
+
+1. **Las puntas de los clips están bien.** El primer y el último cuadro de los 34 están en la foto base: 1,05 a 1,62 (SSIM 0,97 a 0,99). Encuadre, escala, brillo y color iguales en todos (brillo ±0,05).
+2. **El medio de cada clip, no.** De 0,5 s a 4,2 s cada uno hace su gesto y se aparta de la foto base: 7 a 20 (el máximo de cada clip). Por ejemplo, `piensa` (la mano en el mentón) 14,7; `escucha` (la cámara se acerca) 14,1; `celebra` 20,5. Entre dos cuadros seguidos del mismo clip hay 0,5 a 5.
+3. **El reproductor cambiaba en cualquier momento.** El clip nuevo entraba desde su cuadro 0 apenas cargaba, con un fundido lineal de 220 ms. Si el viejo iba por la mitad, durante el fundido se veían dos zorros encimados: 10 a 15 de diferencia en los casos de la evidencia. Un golpe que se cortaba a 1,8 s para hablar: 7 a 16,7. **Esto era el glitch.**
+4. **Carreras en las capas** (`CuerpoVideo.tsx` de antes):
+   - `onReadyForDisplay` de expo-av en Android llega al cargar (`VideoView.java`, en `onLoadSuccess`), antes del primer cuadro. Cuando la capa nueva iba abajo, se ponía entera y la de arriba se desvanecía: si el primer cuadro todavía no estaba, se veía el fondo por un instante.
+   - Si no avisaba en 2,5 s, se fundía igual, aunque la capa estuviera vacía.
+   - Un pedido en medio de un fundido ponía la capa vieja a 0 de golpe: un fogonazo del fondo.
+5. **La costura de los bucles.** Los últimos cuadros de cada fondo están casi quietos (0,02 a 0,3 entre cuadros) y al volver al cuadro 0 había un salto de 1,2 a 1,6. Es textura: el final del GOP comprimido contra el cuadro clave nuevo.
+6. **El «bombeo» de los cuadros clave.** Cada 2 s (cuadros 48 y 96) la textura saltaba. En los momentos quietos se nota: hasta 17 veces el salto normal en `claudio-duda` y 11 en `antonio-sorpresa`.
+
+### Lo que se cambió
+
+**La mezcla**, en `mobile/src/avatares/video/transicion.ts`, es pura y está probada:
+
+- **Cambia solo en el reposo.** `reposos.ts` dice, para cada clip, cuánto dura su reposo del principio y desde dónde empieza el del final (a ≤ 2,5 de su cuadro 0). Por ejemplo, `claudio-piensa` está en reposo hasta 0,42 s y desde 4,46 s.
+  - Si el clip de ahora está en reposo, el nuevo entra ya.
+  - Si no, el de ahora termina su gesto hasta el reposo. Mientras tanto, el nuevo se carga quieto en su cuadro 0 y arranca justo al llegar.
+  - Termina a su ritmo si no hay apuro. Si lo hay, acelera para llegar a tiempo: un fondo nuevo, hasta 2× para llegar en ~2 s; un golpe o hablar, hasta 2,5× para llegar en ~0,9 s.
+  - Al llegar vuelve a su ritmo.
+- **Nunca muestra una capa que no dibuja.** El fundido arranca cuando la posición del clip nuevo avanzó 60 ms en marcha, no con `onReadyForDisplay`. Dura 260 ms, con curva suave, siempre sobre la vieja entera.
+- **Los pedidos que llegan a destiempo:**
+  - Uno que llega en medio de un fundido espera a que termine.
+  - Uno que llega mientras el nuevo carga, o mientras arranca invisible, lo reemplaza: nadie lo vio.
+  - Lo que se ve no se vuelve a montar.
+- **Si un clip no arranca:** si no carga o no dibuja en 2,5 s, se monta otra vez. Si tampoco, se queda el de antes; si era un golpe, el guion no se queda esperando.
+- **«Reducir movimiento»:** nunca acelera. Si empezó a hablar y el reposo queda a más de 1,5 s, funde ahí mismo, más lento (450 ms).
+
+**Los clips**, rehechos con `mobile/scripts/avatares-video/procesar.py` a partir de los originales (guardados fuera del repo):
+
+- **La cola.** Los últimos 8 cuadros (1/3 s) se funden con curva suave hacia el cuadro 0 del mismo clip. El último cuadro queda en la foto base: el bucle cierra sin salto y cada golpe termina exactamente en reposo. El cuadro 0 no se toca.
+- **Un solo cuadro clave** (el 0): sin bombeo a mitad del clip. Ya no hace falta buscar dentro de un clip, porque siempre arranca en el 0.
+- **x264 sin dejar derivar los cuadros quietos** (`fast-pskip=0:dct-decimate=0:deadzone-inter=6:deadzone-intra=6`).
+- Todo en YUV, sin pasar por RGB: brillo igual (±0,02). Contra el original dan 44 a 45 dB de media (mínimo 40,1).
+
+### Antes y después
+
+| Medida | Antes | Después |
+|---|---|---|
+| Diferencia de pose durante el fundido de un cambio (casos de la evidencia) | 10,2 a 15,0 | 1,7 a 2,3 (piso del ruido) |
+| Cambios fuera del reposo, en 3 min de pedidos al azar (prueba) | casi todos | 0 (con «reducir movimiento», solo al empezar a hablar lejos del reposo) |
+| Primer / último cuadro contra la foto base | 1,05–1,34 / 1,22–1,62 | 1,13–1,43 / 0,84–1,47 |
+| Costura del bucle (fondos) | 1,21–1,62 (37,7–39,3 dB) | 0,84–1,13 (39,3–40,2 dB) |
+| Costura del bucle, solo forma (90×160) | 0,84–1,25 | 0,43–0,62 |
+| Bombeo de los cuadros clave a mitad del clip | hasta 17× el salto normal | ninguno (un solo cuadro clave) |
+| Peso de los 34 | 10,3 MB | 9,3 MB |
+| Habla después de un golpe | a 1,8 s, cortando el gesto | ~2,4 s, con el gesto terminado (acelerado) |
+| Habla desde un fondo a la mitad | en cuanto cargaba (~0,3 s), con salto | al llegar al reposo: ~0,9 s (máximo ~1,8 s) |
+
+Lo que queda de la costura es la textura nueva del cuadro clave (~40 dB entre dos cuadros), del orden del ruido de compresión. Bajarlo pediría archivos más pesados.
+
+Las medidas, la evidencia (tiras PNG antes/después, MP4 lado a lado y GIF) y los originales se generaron fuera del repo con los scripts de `mobile/scripts/avatares-video/`:
+
+```
+pip install numpy pillow scikit-image imageio-ffmpeg
+python mobile/scripts/avatares-video/medir.py <carpeta> medidas.json     # puntas, costura, deriva, encuadre
+python mobile/scripts/avatares-video/procesar.py <originales> mobile/assets/avatares/video 29
+python mobile/scripts/avatares-video/reposos.py mobile/assets/avatares/video mobile/src/avatares/video/reposos.ts 2.5
+```
+
+Al rehacer un clip, hay que correr también `reposos.py`. La prueba revisa que la tabla tenga los 34 clips y que la duración de cada MP4 coincida con ella.
+
+### Lo que solo se ve en el teléfono
+
+- Cuánto tarda en cargar un clip (se supuso 120-370 ms) y que `playAsync` desde quieto arranque sin saltar el primer cuadro.
+- Que `setRateAsync` a 2-2,5× se vea fluido en el Samsung de José (ExoPlayer salta cuadros si no da abasto).
+- Que el bucle de ExoPlayer (`REPEAT_MODE_ALL`) no meta una pausa en la costura.
+
+## Calidad de los clips generados
+
+Las mediciones de cuando se generaron, en PSNR entre cuadros, con los originales:
 
 | Medida | Resultado | Referencia |
 |---|---|---|
-| Costura del bucle (primer cuadro contra último) | 36,4 a 39,5 dB en los 18 primeros; 36,7 a 39,5 dB en los 16 nuevos (35,8 a 37,8 dB ya comprimidos) | Invisible; a mitad de un clip, el mismo cuadro da unos 18 dB |
+| Costura del bucle (primer cuadro contra último) | 36,4 a 39,5 dB en los 18 primeros; 36,7 a 39,5 dB en los 16 nuevos (35,8 a 37,8 dB ya comprimidos) | A mitad de un clip, el mismo cuadro da unos 18 dB |
 | Inicio de cada clip contra inicio del reposo | 37 a 39 dB; 36,4 a 37,0 dB en los nuevos | Todos parten de la misma pose |
-| Compresión (CRF 29) contra el original | 42,5 dB | |
 | Salto mayor entre dos cuadros seguidos (los nuevos) | 22 a 30 dB | Sin cortes: el peor es `celebra`, que mueve rápido los brazos, y se reparte parejo en todo el gesto |
-
-La costura de cada clip nuevo, ya comprimido:
-
-| Clip | Claudio | ANT-ONIO |
-|---|---|---|
-| `teclea` | 282 KB · 37,1 dB | 297 KB · 35,8 dB |
-| `lee` | 290 KB · 37,1 dB | 289 KB · 37,2 dB |
-| `espera` | 330 KB · 37,4 dB | 305 KB · 36,7 dB |
-| `celebra` | 369 KB · 36,8 dB | 394 KB · 36,1 dB |
-| `asiente` | 277 KB · 37,8 dB | 277 KB · 37,3 dB |
-| `niega` | 305 KB · 37,5 dB | 277 KB · 36,2 dB |
-| `duda` | 317 KB · 37,7 dB | 286 KB · 36,4 dB |
-| `despide` | 280 KB · 36,9 dB | 298 KB · 37,3 dB |
 
 ## Cómo se hicieron
 
@@ -96,7 +155,7 @@ Se hicieron en ElevenLabs, en el flujo «Claudio y ANT-ONIO» (`XTd06qsdi9FFs8nh
    - un texto que describe solo el movimiento y termina con «Locked static camera… starts and ends in exactly the same pose… plain dark charcoal background».
 
    Cada nodo lleva el nombre de su archivo (`claudio-teclea`, `antonio-lee`…). Ojo: si el nodo se crea con la foto conectada desde el principio, la toma como referencia (`images`) y no como primer y último cuadro. Hay que crearlo sin conectar, conectar los dos puertos a mano y poner 9:16 y 5 s, porque viene en 16:9 y 10 s y costaría el doble.
-3. **Compresión**, con un ffmpeg cualquiera:
+3. **Compresión.** Desde el 4-oct se hace con `mobile/scripts/avatares-video/procesar.py`, que también pone la cola hacia la foto base y deja un solo cuadro clave (ver «El cambio de clip»). Antes se usaba esto:
 
    ```
    ffmpeg -i original.mp4 -an -c:v libx264 -profile:v main -level 3.1 -pix_fmt yuv420p \
@@ -106,9 +165,10 @@ Se hicieron en ElevenLabs, en el flujo «Claudio y ANT-ONIO» (`XTd06qsdi9FFs8nh
 Para agregar o rehacer un clip:
 
 1. Generalo con la misma foto base como primer y último cuadro.
-2. Comprimilo con el comando de arriba.
+2. Guardá el original fuera del repo y procesalo con `procesar.py <originales> mobile/assets/avatares/video 29 <avatar>-<clip>.mp4`.
 3. Agregalo a `CLIPS_VIDEO` (en `guion.ts`) y a `clips.ts`.
-4. Corré la prueba, que revisa que estén los 34 archivos, su peso, el *faststart* y que `clips.ts` los pida:
+4. Volvé a generar `reposos.ts` con `reposos.py`.
+5. Corré la prueba, que revisa que estén los 34 archivos, su peso, el *faststart*, que `clips.ts` los pida y que `reposos.ts` coincida con cada MP4:
 
    ```
    cd mobile && npx tsx src/avatares/pruebas/video.prueba.mjs

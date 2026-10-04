@@ -2,8 +2,9 @@
  * EL GUION DEL VIDEO: qué clip de Claudio o ANT-ONIO se ve en cada momento.
  *
  * Son 17 clips de 5 s por avatar, generados a partir de una sola foto base (scripts y prompts en
- * docs/avatares-video.md). Todos empiezan y terminan en esa misma pose, así que cualquier clip
- * engancha con cualquier otro sin salto. Hay dos clases:
+ * docs/avatares-video.md). Todos empiezan y terminan en esa misma pose (en el medio cada uno hace lo
+ * suyo): el cambio de un clip a otro se hace ahí, en el reposo, y eso lo resuelve transicion.ts. Esto
+ * solo decide QUÉ clip toca. Hay dos clases:
  *
  *  · de FONDO, que se repiten mientras dura el estado: reposo, escucha, habla, piensa, teclea (su
  *    computadora trabaja), lee (un correo o un WhatsApp) y espera (un rato sin nada que hacer);
@@ -100,8 +101,18 @@ export type Reproduccion = { clip: ClipVideo; bucle: boolean; n: number };
 
 /** El mismo golpe no se repite antes de esto (una risa por chiste, no tres). */
 export const ENFRIAR_GOLPE_MS = 8000;
-/** Si empieza a hablar con un golpe en pantalla, se le deja terminar el gesto hasta esto; luego habla. */
+/**
+ * Si empieza a hablar con un golpe en pantalla, se le deja terminar el gesto hasta esto; luego pide «habla».
+ * Es lo de siempre para un cuerpo que CORTA el golpe ahí (el recorrido de Windows).
+ */
 export const GOLPE_ANTES_DE_HABLAR_MS = 1800;
+/**
+ * Lo mismo en el teléfono, que ya no corta el gesto por la mitad (la pose saltaba): la mezcla
+ * (transicion.ts) lo termina más rápido hasta el reposo y recién ahí habla. Por eso se pide antes: con
+ * 1 s el golpe se ve entero y la boca arranca ~2,4 s después de la frase (con 1,8 s serían ~3 s). Si el
+ * golpe todavía no había llegado a verse (el clip de antes no había vuelto al reposo), se salta.
+ */
+export const GOLPE_ANTES_DE_HABLAR_SIN_CORTE_MS = 1000;
 /**
  * Un fondo nuevo tiene que durar esto antes de cambiar de clip. La voz suelta «hablando» entre frase y
  * frase (y la mesa pasa por escucha → piensa en un instante): sin esta espera, cada pausa era un fundido
@@ -121,6 +132,8 @@ type Opciones = {
   /** «Reducir movimiento»: solo los de fondo, sin golpes. */
   reducido?: boolean;
   ahora?: () => number;
+  /** Cuánto va un golpe antes de pedir «habla» (GOLPE_ANTES_DE_HABLAR_MS; el teléfono, que no corta el gesto: GOLPE_ANTES_DE_HABLAR_SIN_CORTE_MS). */
+  golpeAntesDeHablarMs?: number;
 };
 
 /**
@@ -130,6 +143,7 @@ type Opciones = {
 export class DirectorVideo {
   private readonly hay: ReadonlySet<ClipVideo>;
   private readonly reducido: boolean;
+  private readonly golpeAntesDeHablar: number;
   private readonly ahora: () => number;
   private actual: Reproduccion;
   private desde = 0;
@@ -145,6 +159,7 @@ export class DirectorVideo {
   constructor(o: Opciones) {
     this.hay = new Set(o.hay);
     this.reducido = !!o.reducido;
+    this.golpeAntesDeHablar = o.golpeAntesDeHablarMs ?? GOLPE_ANTES_DE_HABLAR_MS;
     this.ahora = o.ahora || Date.now;
     this.actual = { clip: 'reposo', bucle: true, n: 0 };
     this.desde = this.ahora();
@@ -208,7 +223,7 @@ export class DirectorVideo {
     const fondo = this.fondo(this.estadoVisto);
     if (!this.actual.bucle) {
       // Un golpe en pantalla: termina su gesto, salvo que empiece a hablar y ya haya durado lo suyo.
-      if (fondo === 'habla' && this.ahora() - this.desde >= GOLPE_ANTES_DE_HABLAR_MS) return this.poner('habla', true);
+      if (fondo === 'habla' && this.ahora() - this.desde >= this.golpeAntesDeHablar) return this.poner('habla', true);
       return null;
     }
     return this.pedirFondo(fondo);
@@ -247,7 +262,7 @@ export class DirectorVideo {
    */
   msParaHablar(): number | null {
     if (this.actual.bucle || !this.estadoVisto || this.fondo(this.estadoVisto) !== 'habla') return null;
-    return Math.max(0, GOLPE_ANTES_DE_HABLAR_MS - (this.ahora() - this.desde));
+    return Math.max(0, this.golpeAntesDeHablar - (this.ahora() - this.desde));
   }
 
   /**
