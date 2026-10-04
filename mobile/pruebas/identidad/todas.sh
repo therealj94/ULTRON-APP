@@ -8,7 +8,7 @@
 cd "$(dirname "$0")" || exit 1
 node construir.cjs || exit 1
 fallos=0
-for t in sesion perfil recordatorios ota chat cifrado intento alta turno; do
+for t in sesion perfil recordatorios ota chat cifrado intento alta turno tardia; do
   echo "\n══ $t"
   timeout 120 node "$t.cjs" || fallos=$((fallos + 1))
 done

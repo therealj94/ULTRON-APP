@@ -15,7 +15,7 @@ import { loadCreds, loadMesaToken, loadSession, saveMesaToken } from './storage'
 import { quitarExpresiones } from './expresiones';
 import { cabecerasAparato } from './aparato';
 import { generacionCuenta, sigueVigente } from './cuenta';
-import { guardarTokenDeEntrada, intentoVigente, vencida, type Intento } from './intentoEntrada';
+import { esVencida, guardarTokenDeEntrada, intentoVigente, vencida, type Intento } from './intentoEntrada';
 import { avatarActual } from '../avatares/actual';
 import { idiomaActual } from '../i18n';
 import { etiquetasDeVista, vistaDeEtiquetas, vistaDeRespuesta, type FocoVision, type VistaCamara } from './vistaCamara';
@@ -132,6 +132,9 @@ async function pedirApi<T>(path: string, init: RequestInit | undefined, limite: 
       },
     });
     const data = await res.json().catch(() => ({}));
+    // La respuesta llegó cuando ya hay otra sesión (salió, venció o entró otra persona): era de la anterior y no se
+    // entrega a nadie (punto 3 de la revisión del 4-oct: una respuesta tardía de A no llena el estado de B).
+    if (!sigueVigente(gen)) throw vencida();
     if (!res.ok) {
       if (res.status === 429 && reintentar) {
         const espera = esperaDe429(res);
@@ -347,6 +350,8 @@ export type Turn = { rol: 'usuario' | 'ultron'; texto: string };
 export type ChatResult = {
   /** Para leer (burbuja, hilo): sin expresiones de voz. */
   reply: string;
+  /** Era de una sesión que ya no está (salió o entró otra persona): no se dice ni se hace nada con él. */
+  vencida?: boolean;
   /** Para decir: con sus [risa], [suspiro]… Un servidor viejo no lo manda y vale `reply`. */
   voz?: string;
   emocion: Emocion;
@@ -446,6 +451,8 @@ export async function turno(opts: TurnoOpts): Promise<ChatResult> {
     const voz = data.voz ? pelarEtiqueta(String(data.voz)).texto.trim() : undefined;
     return { reply: quitarExpresiones(pelado.texto).trim(), voz, emocion, mode: data.mode, ms: data.ms, via: data.via, error: data.error, acciones: data.acciones, ...(data.parcial === true ? { parcial: true } : {}), ...(Array.isArray(data.tareas) ? { tareas: data.tareas } : {}) };
   } catch (e: any) {
+    // De una sesión que ya no está: quien llamó no dice nada (ni «sin conexión») a la persona de ahora.
+    if (esVencida(e)) return { reply: '', emocion: 'neutral', error: e.message, vencida: true };
     return { reply: '', emocion: 'neutral', error: e?.message || 'Sin conexión al cerebro' };
   }
 }
@@ -554,6 +561,16 @@ export function turnoStream(opts: TurnoOpts, h: StreamHandlers): { promise: Prom
     };
     /** `final`: la conexión ya cerró, así que el último bloque (sin línea en blanco detrás) también cuenta. */
     const consume = (final = false) => {
+      // Cada trozo vuelve a mirar la sesión: si cambió, el turno de la anterior se corta aquí y nada más se entrega.
+      if (!sigueVigente(gen)) {
+        try {
+          xhr.abort();
+        } catch {
+          /* */
+        }
+        fail(vencida());
+        return;
+      }
       const text = xhr.responseText || '';
       if (text.length <= seen) return;
       const chunk = text.slice(seen);
@@ -574,6 +591,7 @@ export function turnoStream(opts: TurnoOpts, h: StreamHandlers): { promise: Prom
       if (xhr.status === 429) return fail(new Error('HTTP 429'));
       if (xhr.status < 200 || xhr.status >= 300) return fail(new Error(`HTTP ${xhr.status}`));
       consume(true);
+      if (settled) return;
       const reply = String((done && done.reply) || quitarExpresiones(full)).trim();
       const voz = String((done && done.voz) || full).trim() || reply;
       if (!reply && !voz) return fail(new Error((done && done.error) || 'stream vacío'));

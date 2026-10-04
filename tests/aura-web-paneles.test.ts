@@ -142,6 +142,17 @@ test('al cerrar, el foco vuelve a quien abrió (si sigue en la página)', () => 
 const DIST = process.env.AURA_DIST || path.join(process.cwd(), 'dist');
 const CHROMIUM = [process.env.AURA_CHROMIUM, '/opt/pw-browsers/chromium'].find((x) => x && fs.existsSync(x));
 const hayDist = fs.existsSync(path.join(DIST, 'index.html'));
+/**
+ * En CI el navegador es OBLIGATORIO (punto 4 de la revisión del 4-oct): con AURA_EXIGIR_NAVEGADOR=1 estas pruebas
+ * no se saltan nunca; sin Chromium o sin dist/ fallan, y el control bloquea la aprobación en vez de quedar omitido.
+ */
+const EXIGIR_NAVEGADOR = process.env.AURA_EXIGIR_NAVEGADOR === '1';
+const sinNavegador = !CHROMIUM ? 'sin Chromium de Playwright (AURA_CHROMIUM o /opt/pw-browsers)' : !hayDist ? 'sin dist/: correr la compilación antes' : '';
+const saltoNavegador: string | false = EXIGIR_NAVEGADOR ? false : sinNavegador || false;
+
+test('el navegador real está disponible cuando se exige (CI)', { skip: EXIGIR_NAVEGADOR ? false : 'solo con AURA_EXIGIR_NAVEGADOR=1' }, () => {
+  assert.equal(sinNavegador, '', `la regresión de navegador no puede omitirse: ${sinNavegador}`);
+});
 
 function servir(o: { conSesion?: boolean } = { conSesion: true }): Promise<{ url: string; cerrar: () => void }> {
   const tipos: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.json': 'application/json', '.mp3': 'audio/mpeg', '.webmanifest': 'application/manifest+json', '.wasm': 'application/wasm' };
@@ -164,7 +175,7 @@ function servir(o: { conSesion?: boolean } = { conSesion: true }): Promise<{ url
 
 test(
   'en el navegador: paneles cerrados, foco de Escribir y de Ajustes',
-  { skip: !CHROMIUM ? 'sin Chromium de Playwright (AURA_CHROMIUM o /opt/pw-browsers)' : !hayDist ? 'sin dist/: correr la compilación antes' : false, timeout: 120000 },
+  { skip: saltoNavegador, timeout: 120000 },
   async (t) => {
     const { chromium } = await import('playwright');
     const srv = await servir();
@@ -247,7 +258,7 @@ test(
 
 test(
   'en el navegador, sin sesión: solo la puerta de entrar (sin mesa, sin micrófono, no se cierra)',
-  { skip: !CHROMIUM ? 'sin Chromium de Playwright (AURA_CHROMIUM o /opt/pw-browsers)' : !hayDist ? 'sin dist/: correr la compilación antes' : false, timeout: 120000 },
+  { skip: saltoNavegador, timeout: 120000 },
   async (t) => {
     const { chromium } = await import('playwright');
     const srv = await servir({ conSesion: false });
@@ -271,7 +282,7 @@ test(
 
 test(
   'en el navegador: vence la sesión de A y entra B → nada del historial de A viaja ni se ve (bloqueo 4, revisión del 4-oct)',
-  { skip: !CHROMIUM ? 'sin Chromium de Playwright (AURA_CHROMIUM o /opt/pw-browsers)' : !hayDist ? 'sin dist/: correr la compilación antes' : false, timeout: 120000 },
+  { skip: saltoNavegador, timeout: 120000 },
   async (t) => {
     const { chromium } = await import('playwright');
     const cuerpos: any[] = [];
@@ -342,5 +353,133 @@ test(
     const deBea = cuerpos[cuerpos.length - 1];
     assert.ok(Array.isArray(deBea.historial), 'el turno lleva su historial');
     assert.doesNotMatch(JSON.stringify(deBea), /PIÑA-7781|clave secreta/, 'el historial que viaja al cerebro no trae nada de Ana');
+  }
+);
+
+test(
+  'en el navegador: la respuesta tardía de A llega cuando ya entró B → no se ve, no se dice, no viaja desde B (punto 3, revisión del 4-oct)',
+  { skip: saltoNavegador, timeout: 120000 },
+  async (t) => {
+    const { chromium } = await import('playwright');
+    const cuerpos: any[] = [];
+    let quien: 'ana' | 'bea' | null = 'ana';
+    let soltarTardia: (() => void) | null = null;
+    const tardiaLista = new Promise<void>((r) => (soltarTardia = r));
+    let pidioAna: (() => void) | null = null;
+    const anaPidio = new Promise<void>((r) => (pidioAna = r));
+    const tipos: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.wasm': 'application/wasm' };
+    const srv = http.createServer((req, res) => {
+      const u = new URL(req.url || '/', 'http://x');
+      const json = (o: unknown, s = 200) => (res.writeHead(s, { 'Content-Type': 'application/json' }), res.end(JSON.stringify(o)));
+      const leer = () => new Promise<string>((r) => { let b = ''; req.on('data', (c) => (b += c)); req.on('end', () => r(b)); });
+      if (u.pathname === '/api/health') return json({ qwen: { vivo: true } });
+      if (u.pathname === '/api/nodo/listo') return json({ listo: true });
+      if (u.pathname === '/api/genesis/config') return json({ disponible: false });
+      if (u.pathname === '/api/ultron/sesion')
+        return json(quien === 'ana' ? { authenticated: true, user: { nombre: 'Ana', rol: 'Junta', correo: 'ana@ejemplo.com' } } : quien === 'bea' ? { authenticated: true, user: { nombre: 'Bea', rol: 'Junta', correo: 'bea@ejemplo.com' } } : { authenticated: false });
+      if (u.pathname === '/api/ultron/salir') {
+        quien = null;
+        return json({ ok: true });
+      }
+      if (u.pathname === '/api/ultron/entrar') {
+        quien = 'bea';
+        return json({ ok: true, token: 'token-de-bea', miembro: { nombre: 'Bea', rol: 'Junta', correo: 'bea@ejemplo.com' } });
+      }
+      if (u.pathname === '/api/turno/stream') {
+        return void leer().then(async (b) => {
+          const cuerpo = JSON.parse(b || '{}');
+          cuerpos.push(cuerpo);
+          res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+          const enviar = (ev: string, d: unknown) => {
+            try {
+              res.write(`event: ${ev}\ndata: ${JSON.stringify(d)}\n\n`);
+            } catch {
+              /* el cliente ya cortó */
+            }
+          };
+          if (cuerpos.length === 1) {
+            // El turno de Ana: el servidor tarda; su respuesta llega cuando Bea ya entró.
+            enviar('emocion', { emocion: 'neutral' });
+            pidioAna!();
+            await tardiaLista;
+            const r = 'Ana, tu código secreto es PIÑA-7781.';
+            enviar('delta', { text: r });
+            enviar('done', { reply: r, voz: r, emocion: 'neutral', trazaId: 'traza-de-ana' });
+            try {
+              res.end();
+            } catch {
+              /* */
+            }
+            return;
+          }
+          const r = 'Hola, Bea.';
+          enviar('done', { reply: r, voz: r, emocion: 'neutral' });
+          res.end();
+        });
+      }
+      if (u.pathname.startsWith('/api/')) return json({}, 404);
+      let f = path.join(DIST, decodeURIComponent(u.pathname));
+      if (!f.startsWith(DIST) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(DIST, 'index.html');
+      res.writeHead(200, { 'Content-Type': tipos[path.extname(f)] || 'application/octet-stream' });
+      fs.createReadStream(f).pipe(res);
+    });
+    const url = await new Promise<string>((r) => srv.listen(0, '127.0.0.1', () => r(`http://127.0.0.1:${(srv.address() as any).port}`)));
+    const b = await chromium.launch({ executablePath: CHROMIUM, args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader'] });
+    t.after(async () => {
+      soltarTardia!();
+      await b.close();
+      srv.close();
+    });
+    const p = await b.newPage({ viewport: { width: 1280, height: 800 } });
+    // Lo que AU-RA manda a la voz (servidor /api/tts o voz del navegador): nada de Ana puede sonar para Bea.
+    const dicho: string[] = [];
+    await p.exposeFunction('__dicho', (s: string) => dicho.push(s));
+    await p.addInitScript(() => {
+      const hablar = window.speechSynthesis?.speak?.bind(window.speechSynthesis);
+      if (hablar) window.speechSynthesis.speak = (u: SpeechSynthesisUtterance) => ((window as any).__dicho(u.text), hablar(u));
+    });
+    await p.route('**/api/tts**', async (r) => {
+      dicho.push(r.request().postData() || '');
+      await r.fulfill({ status: 404, body: '' });
+    });
+    await p.goto(url + '/', { waitUntil: 'networkidle' });
+    await p.waitForSelector('#ultron-arranque[aria-hidden="true"]', { timeout: 20000 });
+    const escribir = async (texto: string) => {
+      if (!(await p.locator('#dock-cmd-input').count())) {
+        await p.getByRole('button', { name: 'Escribir', exact: true }).focus();
+        await p.keyboard.press('Enter');
+        await p.waitForSelector('#dock-cmd-input');
+      }
+      await p.locator('#dock-cmd-input').fill(texto);
+      await p.locator('#dock-cmd-input').press('Enter');
+    };
+    // 1) Ana pide algo; el servidor se queda pensando.
+    await escribir('Dime el código secreto de Ana');
+    await anaPidio;
+    await p.keyboard.press('Escape').catch(() => {});
+    // 2) Ana cierra sesión mientras su turno sigue en vuelo.
+    await p.getByRole('button', { name: 'Sesión de Ana' }).click();
+    await p.getByRole('button', { name: /Cerrar sesión/ }).click();
+    await p.waitForSelector('#aura-acceso-titulo', { timeout: 15000 });
+    // 3) Entra Bea.
+    await p.getByRole('button', { name: /Soy de la junta/ }).click().catch(() => {});
+    await p.locator('input[type="email"]').fill('bea@ejemplo.com');
+    await p.locator('input[type="password"]').fill('clave-de-bea');
+    await p.locator('form button[type="submit"]').click();
+    await p.waitForSelector('#ultron-app-root[data-modo]', { timeout: 15000 });
+    // 4) Ahora llega la respuesta tardía de Ana.
+    soltarTardia!();
+    await p.waitForTimeout(2500);
+    const pantalla = await p.locator('body').innerText();
+    assert.doesNotMatch(pantalla, /PIÑA-7781/, 'la respuesta tardía de Ana no aparece para Bea');
+    assert.doesNotMatch(pantalla, /código secreto de Ana/, 'tampoco lo que pidió Ana');
+    // 5) Bea escribe: nada de Ana viaja con su turno.
+    await escribir('Hola');
+    await p.waitForFunction(() => document.body.innerText.includes('Hola, Bea'), null, { timeout: 15000 });
+    const deBea = cuerpos[cuerpos.length - 1];
+    assert.equal(cuerpos.length, 2, 'solo dos turnos: el de Ana y el de Bea');
+    assert.doesNotMatch(JSON.stringify(deBea), /PIÑA-7781|código secreto|traza-de-ana/, 'el turno de Bea no lleva nada de Ana');
+    assert.doesNotMatch(await p.locator('body').innerText(), /PIÑA-7781/, 'ni después del turno de Bea');
+    assert.ok(!dicho.some((s) => /PIÑA|7781/.test(s)), `nada de Ana se mandó a la voz (${dicho.length} envíos a voz)`);
   }
 );

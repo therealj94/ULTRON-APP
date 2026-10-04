@@ -117,15 +117,48 @@ jobs:
       - name: Pruebas (tanda ${{ matrix.tanda }}/4)
         run: npx tsx --test --test-concurrency=1 $(node scripts/qa/repartir-pruebas.mjs ${{ matrix.tanda }} 4)
 
-  # El nombre de siempre («web») para quien espere ese check: verde solo si las cuatro tandas lo están.
+  # Las regresiones en un navegador REAL (punto 4 de la revisión del 4-oct): cambio de cuenta, respuesta tardía de otra
+  # cuenta, puerta sin sesión y paneles. Obligatorias: con AURA_EXIGIR_NAVEGADOR=1 no se saltan; sin Chromium o sin
+  # dist/ fallan, y si alguna aparece omitida este trabajo falla y «web» no queda verde.
+  navegador:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NODE_ENV: test
+      ULTRON_MEMORIA_BUCKET: ""
+      AWS_ACCESS_KEY_ID: ""
+      AWS_SECRET_ACCESS_KEY: ""
+      AURA_EXIGIR_NAVEGADOR: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Chromium y sus dependencias del sistema
+        run: |
+          npx playwright install --with-deps chromium
+          echo "AURA_CHROMIUM=$(node -e "process.stdout.write(require('playwright').chromium.executablePath())")" >> "$GITHUB_ENV"
+      - run: npm run build
+      - name: Regresiones en navegador real (obligatorias)
+        run: |
+          set -o pipefail
+          npx tsx --test --test-concurrency=1 tests/aura-web-paneles.test.ts | tee navegador.tap
+          grep -q '^# fail 0$' navegador.tap
+          # Ninguna omitida: una prueba de navegador saltada no cuenta como validada.
+          grep -q '^# skipped 0$' navegador.tap || { echo "::error::hay pruebas de navegador omitidas"; exit 1; }
+
+  # El nombre de siempre («web») para quien espere ese check: verde solo si las cuatro tandas y el navegador lo están.
   web:
-    needs: pruebas
+    needs: [pruebas, navegador]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: ¿Pasaron las cuatro tandas?
+      - name: ¿Pasaron las cuatro tandas y el navegador?
         env:
           RESULTADO: ${{ needs.pruebas.result }}
+          NAVEGADOR: ${{ needs.navegador.result }}
         run: |
-          echo "tandas: $RESULTADO"
-          [ "$RESULTADO" = "success" ]
+          echo "tandas: $RESULTADO · navegador: $NAVEGADOR"
+          [ "$RESULTADO" = "success" ] && [ "$NAVEGADOR" = "success" ]

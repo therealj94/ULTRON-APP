@@ -16,6 +16,7 @@ import { CamaraVision, DORMIDO_PERIODO_MS, SERVIDOR_CADA_MS, SERVIDOR_DORMIDO_MS
 import { DeskMenu } from '../components/DeskMenu';
 import type { Escena, MotorVision } from '../lib/escena';
 import type { DeskPresence, FaceState, Mode, SessionUser } from '../config';
+import { esVencida } from '../lib/intentoEntrada';
 import { api, CANCIONES_LOCAL, healthCheck, listCanciones, nuevoIdTurno, olvidarMemoriaServidor, rememberFact, turno, turnoStream, verCamara, type Cancion, type Turn } from '../lib/api';
 import { faceForEmocion, type Emocion } from '../lib/emocion';
 import { GENEROS, generoPorId, interpretar, type Gag } from '../lib/intenciones';
@@ -473,6 +474,14 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   /** Cortar el turno en curso (el stream) y marcar que se canceló: «callar» no espera al cerebro. */
   const abortTurno = useRef<(() => void) | null>(null);
   const turnoCancelado = useRef(false);
+  // La mesa se va (salió, venció o entró otra persona): el turno en vuelo se corta y lo que llegue ya no se dice ni se hace.
+  useEffect(
+    () => () => {
+      turnoCancelado.current = true;
+      abortTurno.current?.();
+    },
+    []
+  );
   /**
    * La persona interrumpió a AU-RA hablándole encima: lo que alcanzó a oír de la respuesta. Viaja con el
    * próximo pedido para que el cerebro sepa dónde quedó y conteste «Va, dime» en vez de repetirse.
@@ -1070,10 +1079,11 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
               settle();
               return;
             }
-          } catch {
+          } catch (e) {
             if (speaker) (speaker as StreamSpeaker).cancel();
             cancelMmm();
-            if (turnoCancelado.current) return;
+            // De una sesión que ya no está (salió o entró otra persona): ni se repite por JSON ni se dice nada.
+            if (turnoCancelado.current || esVencida(e)) return;
             // Si el stream ya se comió más de 20 s, el servidor sí tiene stream y está lento: repetir la
             // misma espera con JSON (70 s, y otro intento) dejaba a la mesa «pensando» unos 3 minutos.
             if (Date.now() - t0Turno > 20_000) {
@@ -1089,12 +1099,12 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         if (!reacted) setFace('THINKING');
         let out = await turno(base);
         cancelMmm();
-        if (turnoCancelado.current) return;
+        if (turnoCancelado.current || out.vencida) return;
         const failed = (r: { error?: string; reply?: string }) => !!(r.error || !r.reply);
         if (failed(out) && Date.now() - t0Turno < 30_000) {
           await new Promise((r) => setTimeout(r, 800));
           out = await turno(base);
-          if (turnoCancelado.current) return;
+          if (turnoCancelado.current || out.vencida) return;
         }
         setToolHint('');
         emitirAccionesDelTurno(out);

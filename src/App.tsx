@@ -185,7 +185,7 @@ export default function App() {
   const [panelTareas, setPanelTareas] = useState(false);
   const [tareaEnfocada, setTareaEnfocada] = useState<string | null>(null);
   const [propuestaCampo, setPropuestaCampo] = useState<{ texto: string; n: number } | null>(null);
-  const trabajos = useTrabajosWeb({ conSesion: usuario.authenticated, panelAbierto: panelTareas });
+  const trabajos = useTrabajosWeb({ conSesion: usuario.authenticated, cuenta: cuentaActiva, panelAbierto: panelTareas });
   const trabajosRef = useRef(trabajos.ahora);
   trabajosRef.current = trabajos.ahora;
   const tareasPorId = React.useMemo(() => Object.fromEntries(trabajos.tareas.map((t) => [t.id, t])), [trabajos.tareas]);
@@ -399,11 +399,29 @@ export default function App() {
   const correoCuenta = useRef('');
   const [ofreceAvisos, setOfreceAvisos] = useState(false);
   const [activandoAvisos, setActivandoAvisos] = useState(false);
+  /**
+   * La generación de la cuenta (punto 3 de la revisión del 4-oct): sube cada vez que la cuenta cambia (salir, vencer,
+   * entrar otra). Todo lo que se pidió antes la captura con `deEstaCuenta()` y, al volver, comprueba que sigue siendo
+   * la misma antes de tocar la conversación, el historial, la voz o el panel: una respuesta tardía de A no llena a B.
+   */
+  const genCuenta = useRef(0);
+  const deEstaCuenta = () => {
+    const g = genCuenta.current;
+    return () => genCuenta.current === g;
+  };
   function fijarCuenta(correo: string | null | undefined) {
     const nueva = String(correo || '').trim().toLowerCase();
     // Cambió la cuenta (cerró sesión, venció, o entró otra persona): nada de la anterior se queda en esta pestaña.
     // Ni el historial que viaja al cerebro como contexto, ni lo de Genesis a medias, ni fotos ni la opinión abierta.
     if (nueva !== correoCuenta.current) {
+      genCuenta.current++;
+      // Lo que siga en vuelo de la anterior se corta: el turno (su stream), la voz en cola y la conversación en vivo.
+      turnoEnCurso.current?.abort();
+      turnoEnCurso.current = null;
+      turnoCallado.current = null;
+      aclaracionWeb.current = null;
+      callarTodo();
+      vivoRef.current?.cerrar();
       historialRef.current = [];
       pendienteGenesis.current = '';
       setPhotos([]);
@@ -586,6 +604,8 @@ export default function App() {
       turnoEnCurso.current?.abort();
       const ac = new AbortController();
       turnoEnCurso.current = ac;
+      // De qué cuenta es este turno: si cambia mientras llega, su respuesta no toca nada (punto 3, revisión del 4-oct).
+      const vigente = deEstaCuenta();
       // El turno en la conversación: su estado va cambiando con lo que manda el servidor.
       const idTurno = conv.aura('', 'pensando');
       let dicho = '';
@@ -608,7 +628,7 @@ export default function App() {
       // etiqueta de audio v4 (mobile/src/compa/etiquetasVoz.ts). Antes eran tres clips fijos («Mmm…
       // déjame ver»), a los 1,4 s: José, «es molesto después de un rato».
       const relleno = setTimeout(() => {
-        if (turnoEnCurso.current !== ac || turnoCallado.current === ac || colaRef.current.length > 0 || hablando.current) return;
+        if (!vigente() || turnoEnCurso.current !== ac || turnoCallado.current === ac || colaRef.current.length > 0 || hablando.current) return;
         const estado = image ? 'mirando' : estadoDeEspera(cmd);
         const f = fraseDeEstado(estado, 'aura', 'es');
         // `neutral`: la etiqueta ya la eligió vozDeEspera; con la emoción el servidor le sumaba su tono.
@@ -622,7 +642,7 @@ export default function App() {
         // Frases cerradas ya (src/03-voz/frases.ts): la que terminó en punto sale sin esperar al siguiente trozo.
         const { listas, resto } = cortarFrases(pendiente, final);
         pendiente = resto;
-        if (turnoCallado.current === ac) return;
+        if (!vigente() || turnoCallado.current === ac) return;
         for (const p of listas) colaRef.current.push({ texto: p, emocion: emo });
         if (colaRef.current.length) void bombear();
       };
@@ -642,11 +662,13 @@ export default function App() {
           },
           {
             onTools: (tools) => {
+              if (!vigente()) return;
               const t = tareaDeHerramientas(tools);
               if (t) hacerTarea(t, cmd);
               conv.actualizar(idTurno, { herramientas: tools, estado: 'usando' } as any);
             },
             onEmocion: (e) => {
+              if (!vigente()) return;
               emo = e;
               setEmocion(e);
               const c = caraDeEmocion(e);
@@ -655,6 +677,7 @@ export default function App() {
               if (clip && (e === 'risa' || e === 'sorpresa') && turnoCallado.current !== ac) colaRef.current.push({ texto: clip.id, emocion: e });
             },
             onDelta: (t) => {
+              if (!vigente()) return;
               clearTimeout(relleno);
               huboTexto = true;
               pendiente += t;
@@ -663,6 +686,7 @@ export default function App() {
               conv.actualizar(idTurno, { texto: quitarExpresiones(dicho).trim(), estado: 'respondiendo' } as any);
             },
             onReplace: (t) => {
+              if (!vigente()) return;
               if (turnoCallado.current !== ac) {
                 colaRef.current = [];
                 callar();
@@ -676,6 +700,8 @@ export default function App() {
           }
         );
         clearTimeout(relleno);
+        // Otra cuenta ya está aquí: la respuesta de la anterior se descarta entera (ni burbuja, ni historial, ni voz).
+        if (!vigente()) return;
         if (turnoEnCurso.current !== ac) {
           cerrarTurno({ estado: 'interrumpida' });
           resultadoAccion('', 'interrumpido');
@@ -717,6 +743,7 @@ export default function App() {
         }
       } catch (e: any) {
         clearTimeout(relleno);
+        if (!vigente()) return;
         if (e?.name === 'AbortError') {
           cerrarTurno({ estado: 'interrumpida' });
           resultadoAccion('', 'interrumpido');
@@ -757,6 +784,7 @@ export default function App() {
             turnoCallado.current = turnoEnCurso.current;
             continue;
           }
+          const vigente = deEstaCuenta();
           void ejecutarControl(
             c,
             puertosWeb({
@@ -771,7 +799,7 @@ export default function App() {
               },
             })
           ).then((r) => {
-            if (!r.ok && r.detalle) decir(r.detalle, { emocion: 'neutral' });
+            if (vigente() && !r.ok && r.detalle) decir(r.detalle, { emocion: 'neutral' });
           });
         }
       };
@@ -805,26 +833,29 @@ export default function App() {
           hacerTarea('anotar');
           pendienteGenesis.current = it.hecho;
           // «Anotado» solo con el recibo del servidor (09-estado/memoria.ts).
-          void guardarHecho(it.hecho, { usuario: usuario.name }).then((r) =>
-            r.remoto === 'ok'
-              ? decir('Anotado. Si es de la junta, decime «actualiza el cerebro» y queda en Genesis Core.', { emocion: 'orgullo' })
-              : r.remoto === 'sin-sesion'
-                ? decir('Para recordarlo necesito que entres con tu cuenta.', { emocion: 'neutral' })
-                : decir('No pude guardarlo en el servidor. Probá de nuevo en un momento.', { emocion: 'neutral' })
-          );
+          {
+            // El recibo de una cuenta que ya salió no se dice a la siguiente (punto 3, revisión del 4-oct).
+            const vigente = deEstaCuenta();
+            void guardarHecho(it.hecho, { usuario: usuario.name }).then((r) => {
+              if (!vigente()) return;
+              if (r.remoto === 'ok') decir('Anotado. Si es de la junta, decime «actualiza el cerebro» y queda en Genesis Core.', { emocion: 'orgullo' });
+              else if (r.remoto === 'sin-sesion') decir('Para recordarlo necesito que entres con tu cuenta.', { emocion: 'neutral' });
+              else decir('No pude guardarlo en el servidor. Probá de nuevo en un momento.', { emocion: 'neutral' });
+            });
+          }
           return;
         case 'genesis': {
           const hecho = pendienteGenesis.current || historialRef.current.filter((h) => h.rol === 'user').slice(-1)[0]?.texto || '';
           if (!hecho) return void decir('Decime el hecho primero y después «actualiza el cerebro».', { emocion: 'curioso' });
           hacerTarea('anotar');
           pendienteGenesis.current = '';
-          void guardarHecho(`[Genesis] ${hecho}`, { usuario: usuario.name, junta: true }).then((r) =>
-            r.remoto === 'ok'
-              ? decir('Quedó en Genesis Core. La próxima pregunta ya lo usa.', { emocion: 'orgullo' })
-              : r.remoto === 'sin-sesion'
-                ? decir('Para guardarlo en Genesis Core necesito que entres con tu cuenta.', { emocion: 'neutral' })
-                : decir('No pude guardarlo en Genesis Core. Probá de nuevo en un momento.', { emocion: 'neutral' })
-          );
+          const vigente = deEstaCuenta();
+          void guardarHecho(`[Genesis] ${hecho}`, { usuario: usuario.name, junta: true }).then((r) => {
+            if (!vigente()) return;
+            if (r.remoto === 'ok') decir('Quedó en Genesis Core. La próxima pregunta ya lo usa.', { emocion: 'orgullo' });
+            else if (r.remoto === 'sin-sesion') decir('Para guardarlo en Genesis Core necesito que entres con tu cuenta.', { emocion: 'neutral' });
+            else decir('No pude guardarlo en Genesis Core. Probá de nuevo en un momento.', { emocion: 'neutral' });
+          });
           return;
         }
         case 'cantar': {
@@ -1462,13 +1493,13 @@ export default function App() {
             historialRef.current = [];
             setSettingsOpen(false);
             // «Empezamos de cero» solo si el servidor confirmó que olvidó; si no, se dice qué pasó.
-            void olvidarTodo({ usuario: usuario.name }).then((r) =>
-              r.remoto === 'ok'
-                ? decir('Listo. Empezamos de cero.', { emocion: 'neutral' })
-                : r.remoto === 'sin-sesion'
-                  ? decir('Borré lo de esta pantalla. Para olvidar lo guardado en tu cuenta tenés que entrar.', { emocion: 'neutral' })
-                  : decir('Borré lo de esta pantalla, pero el servidor no confirmó el borrado. Probá de nuevo en un momento.', { emocion: 'neutral' })
-            );
+            const vigente = deEstaCuenta();
+            void olvidarTodo({ usuario: usuario.name }).then((r) => {
+              if (!vigente()) return;
+              if (r.remoto === 'ok') decir('Listo. Empezamos de cero.', { emocion: 'neutral' });
+              else if (r.remoto === 'sin-sesion') decir('Borré lo de esta pantalla. Para olvidar lo guardado en tu cuenta tenés que entrar.', { emocion: 'neutral' });
+              else decir('Borré lo de esta pantalla, pero el servidor no confirmó el borrado. Probá de nuevo en un momento.', { emocion: 'neutral' });
+            });
           }}
         />
 

@@ -73,8 +73,17 @@ function useReducirMovimiento(): boolean {
 }
 
 /** Las tareas de la sesión: sondeo con la pestaña visible, reductor puro e indicador estable. */
-export function useTrabajosWeb(o: { conSesion: boolean; panelAbierto: boolean }) {
+export function useTrabajosWeb(o: { conSesion: boolean; cuenta?: string | null; panelAbierto: boolean }) {
   const [s, despachar] = useReducer(reducir, undefined, estadoInicial);
+  // De qué cuenta es lo que se pide (punto 3, revisión del 4-oct): si cambia mientras una lista viene en camino, esa
+  // lista era de la otra persona y no se aplica.
+  const clave = o.conSesion ? String(o.cuenta || '') : '';
+  const gen = useRef(0);
+  const claveVista = useRef(clave);
+  if (claveVista.current !== clave) {
+    claveVista.current = clave;
+    gen.current++;
+  }
   const [visible, setVisible] = useState(() => typeof document === 'undefined' || document.visibilityState !== 'hidden');
   const [ind, setInd] = useState<Indicador | null>(null);
   const reducido = useReducirMovimiento();
@@ -90,16 +99,24 @@ export function useTrabajosWeb(o: { conSesion: boolean; panelAbierto: boolean })
     return () => document.removeEventListener('visibilitychange', f);
   }, []);
 
+  const claveEfecto = useRef(clave);
+
   const refrescar = useCallback(async () => {
+    const g = gen.current;
     const r = await clienteTrabajos.listar();
+    if (g !== gen.current) return;
     if (r.ok === true) despachar({ tipo: 'lista', tareas: r.tareas, en: Date.now() });
     else if (r.sinSesion) despachar({ tipo: 'sin-sesion' });
     else despachar({ tipo: 'error', mensaje: r.mensaje, en: Date.now() });
   }, []);
 
   useEffect(() => {
-    // Sin sesión no hay tareas de nadie: se vacía (no quedan las de la cuenta anterior).
-    if (!o.conSesion) return void despachar({ tipo: 'sin-sesion' });
+    // Sin sesión no hay tareas de nadie: se vacía (no quedan las de la cuenta anterior). Otra cuenta empieza vacía también.
+    if (claveEfecto.current !== clave || !o.conSesion) {
+      claveEfecto.current = clave;
+      despachar({ tipo: 'sin-sesion' });
+    }
+    if (!o.conSesion) return;
     if (!visible) return;
     let vivo = true;
     let t: ReturnType<typeof setTimeout> | undefined;
@@ -122,7 +139,7 @@ export function useTrabajosWeb(o: { conSesion: boolean; panelAbierto: boolean })
       clearTimeout(t);
       ya.current = () => undefined;
     };
-  }, [o.conSesion, o.panelAbierto, visible, refrescar]);
+  }, [o.conSesion, clave, o.panelAbierto, visible, refrescar]);
 
   const texto = textoIndicador(res);
   useEffect(() => {
