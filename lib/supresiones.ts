@@ -248,13 +248,14 @@ function raiz(w: string): string {
 
 /**
  * El texto de un derivado (un resumen, un turno del tramo) sin las palabras de lo borrado: cada una se
- * cambia por «[olvidado]». Si no hay nada que tapar, el mismo texto.
+ * cambia por «[olvidado]» (o por `marca`: la vista autorizada tapa lo LIMITADO con «[reservado]», sin
+ * borrarlo de ningún almacén). Si no hay nada que tapar, el mismo texto.
  */
-export function limpiarTexto(texto: string, terminos: readonly string[][]): string {
+export function limpiarTexto(texto: string, terminos: readonly (readonly string[])[], marca = OLVIDADO): string {
   if (!texto || !terminos.length) return texto;
   const todas = new Set(terminos.flat());
   if (!todas.size) return texto;
-  return texto.replace(/[\p{L}\p{N}]+/gu, (w) => (todas.has(raiz(w)) ? OLVIDADO : w));
+  return texto.replace(/[\p{L}\p{N}]+/gu, (w) => (todas.has(raiz(w)) ? marca : w));
 }
 
 /** Solo pruebas: como tras un redespliegue. */

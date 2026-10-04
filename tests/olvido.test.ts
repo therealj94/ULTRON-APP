@@ -32,6 +32,10 @@ Object.assign(process.env, {
   ULTRON_EPISODIOS_DIR: path.join(dir, 'ep'),
   ULTRON_SUPRESIONES_DIR: path.join(dir, 'su'),
   ULTRON_PERFILES_DIR: path.join(dir, 'pe'),
+  ULTRON_INICIATIVA_DIR: path.join(dir, 'in'),
+  ULTRON_MISIONES_DIR: path.join(dir, 'mi'),
+  ULTRON_AVISOS_DIR: path.join(dir, 'av'),
+  ULTRON_MEMORIA_MIEMBROS_DIR: path.join(dir, 'mm'),
   ULTRON_SESIONES_CERRADAS_ARCHIVO: path.join(dir, 'cerradas.json'),
   ULTRON_SESION_SECRETO: 'secreto-de-prueba-largo-para-las-sesiones-olvido',
   ULTRON_MEMORIA_BUCKET: 'cubo-prueba',
@@ -381,4 +385,100 @@ test('borrar todo: una marca de todo; nada de antes vuelve por ningún camino, l
   await espera(5);
   await K.incorporarDatos(p, [{ categoria: 'trabajo', dato: 'Abrió una ferretería', clave: 'empresa:ferreteria' }], { fuente: 'reglas' });
   assert.equal(datosDe((await pedir('/api/cerebro/conocer', { token: tok })).j).length, 1, 'lo que cuenta después sí se aprende');
+});
+
+/* ── P1 / A1: «No usarlo» respeta TODAS las copias activas (perfil, lo que sé, iniciativa, voz) ───────────── */
+
+const I = await import('../lib/iniciativa');
+const { proponerPara, bloqueIniciativaTurno } = await import('../server/iniciativa');
+const CIUDAD = /Puerto Sintetico/;
+/** 14:00 en Honduras: fuera de horas quietas. */
+const TARDE_HN = Date.parse('2026-10-05T20:00:00Z');
+
+/** El contexto de texto (system + mensaje del turno), como lo arma el turno con el perfil que se usa. */
+async function contextoTexto(p: string) {
+  const perfil = await P.leerPerfil(p);
+  const pz = piezasDelTurno({ nivel: 'miembro', canal: 'mesa', modo: 'normal', mando: false, quien: null, quienMem: null, hechos: [], bloquePerfil: P.lineaPerfil(perfil), conocer: K.bloqueConocer(p, false, {}), conocerFirma: K.firmaConocer(p) });
+  return `${pz.fijo}\n${pz.delTurno}`;
+}
+/** El de voz: el system corto y el perfil del camino rápido (la caché, sin esperar a S3). */
+function contextoVoz(p: string) {
+  const pz = piezasDelTurno({ nivel: 'miembro', canal: 'mesa', modo: 'normal', mando: false, quien: null, quienMem: null, hechos: [], compacto: true, bloquePerfil: P.lineaPerfil(P.perfilEnCache(p) ?? null), conocer: K.bloqueConocer(p, true, {}), conocerFirma: K.firmaConocer(p) });
+  return `${pz.fijo}\n${pz.delTurno}`;
+}
+/** El de la iniciativa: lo que el modelo lee para pensar propuestas, y lo que el turno le pasa de ella. */
+async function contextoIniciativa(p: string) {
+  const perfil = await P.leerPerfil(p);
+  return `${I.contextoIniciativa({ correo: p }, { perfil, ahora: TARDE_HN, zona: 'America/Tegucigalpa' })}\n${await bloqueIniciativaTurno(p, perfil)}`;
+}
+
+test('A1 «No usarlo» por la ruta real: ni el perfil, ni lo que sé, ni la voz ni la iniciativa lo usan; la ficha sí; tras reinicio igual; reactivar lo devuelve', async () => {
+  const p = 'no-usarlo@prueba.local';
+  const tok = sesion(p);
+  assert.equal((await pedir('/api/perfil', { method: 'PUT', token: tok, body: JSON.stringify({ encuesta: { vive: 'Puerto Sintetico', comida: 'Baleadas' } }) })).status, 200);
+  const alta = await pedir('/api/cerebro/conocer', { method: 'POST', token: tok, body: JSON.stringify({ categoria: 'rutinas', dato: 'Vive en Puerto Sintetico', clave: 'vive', origen: 'primeravez' }) });
+  assert.equal(alta.status, 200, JSON.stringify(alta.j));
+  const id = alta.j.dato.id as string;
+  await K.precargarConocer(p);
+  // Control positivo: antes de limitar, el dato está en todos los contextos.
+  assert.match(await contextoTexto(p), CIUDAD);
+  assert.match(contextoVoz(p), CIUDAD);
+  assert.match(await contextoIniciativa(p), CIUDAD);
+
+  const r = await pedir(`/api/cerebro/conocer/${id}`, { method: 'PATCH', token: tok, body: JSON.stringify({ alcance: 'limitado' }) });
+  assert.equal(r.status, 200);
+  assert.equal(r.j.dato.alcance, 'limitado');
+  assert.equal(r.j.durable, true, 'el alcance queda en el estado durable del dato');
+
+  const comprobar = async (cuando: string) => {
+    const texto = await contextoTexto(p);
+    assert.doesNotMatch(texto, CIUDAD, `${cuando}: texto`);
+    assert.match(texto, /Baleadas/, `${cuando}: lo demás del perfil se sigue usando`);
+    assert.doesNotMatch(contextoVoz(p), CIUDAD, `${cuando}: voz`);
+    const ini = await contextoIniciativa(p);
+    assert.doesNotMatch(ini, CIUDAD, `${cuando}: iniciativa`);
+    assert.doesNotMatch(ini, /AÚN NO SABES DE SU VIDA: [^.]*dónde vive/, `${cuando}: limitado no es «no lo sé»: no se lo vuelve a preguntar`);
+    // La ficha editable (la app: «Tu perfil» y «Lo que sé de ti») sí lo enseña: limitar no es borrar.
+    const ficha = (await pedir('/api/perfil', { token: tok })).j;
+    assert.equal(ficha.perfil.encuesta.vive, 'Puerto Sintetico', `${cuando}: la ficha del perfil lo muestra`);
+    const sabe = datosDe((await pedir('/api/cerebro/conocer', { token: tok })).j).find((d: any) => d.id === id);
+    assert.equal(sabe?.alcance, 'limitado', `${cuando}: lo que sé de ti lo muestra limitado`);
+    assert.equal(sabe?.dato, 'Vive en Puerto Sintetico');
+  };
+  await comprobar('después de «No usarlo»');
+  // La propuesta de iniciativa que se piensa de verdad (proponerPara → modelo): tampoco lo lee.
+  let leido = '';
+  await proponerPara({ correo: p }, { modelo: async (_s: string, u: string) => ((leido = u), '[]'), reloj: () => TARDE_HN });
+  assert.ok(leido.length > 0, 'el modelo de la iniciativa se consultó');
+  assert.doesNotMatch(leido, CIUDAD, 'proponerPara');
+
+  // Reinicio (sin cachés): la limitación sale del estado durable del dato, no de una caché.
+  reiniciar();
+  assert.doesNotMatch(P.lineaPerfil(P.perfilEnCache(p) ?? null), CIUDAD, 'tras reiniciar, sin caché, el camino rápido no lo arriesga');
+  await E.precargarCerebro(p);
+  await comprobar('tras reiniciar');
+
+  // Reactivar («general») vuelve a permitir el uso.
+  const g = await pedir(`/api/cerebro/conocer/${id}`, { method: 'PATCH', token: tok, body: JSON.stringify({ alcance: 'general' }) });
+  assert.equal(g.status, 200);
+  assert.match(await contextoTexto(p), CIUDAD, 'reactivado: texto');
+  assert.match(contextoVoz(p), CIUDAD, 'reactivado: voz');
+  assert.match(await contextoIniciativa(p), CIUDAD, 'reactivado: iniciativa');
+});
+
+test('A1 «No usarlo» sin clave común: una respuesta del perfil que repite el dato limitado tampoco se usa; el cumpleaños aprendido limita el `cumple`', async () => {
+  const p = 'sin-clave@prueba.local';
+  const tok = sesion(p);
+  await pedir('/api/perfil', { method: 'PUT', token: tok, body: JSON.stringify({ cumple: '03-14', encuesta: { otros: 'Tengo una finca en Puerto Sintetico', musica: 'Punta' } }) });
+  const a = await K.agregarDato(p, 'otros', 'Tiene una finca en Puerto Sintetico');
+  const b = await K.agregarDato(p, 'fechas', 'Su cumpleaños es el 14 de marzo', 'cumpleanos propio');
+  await O.limitar(p, a.dato.id, 'limitado');
+  await O.limitar(p, b.dato.id, 'limitado');
+  const linea = P.lineaPerfil(await P.leerPerfil(p));
+  assert.doesNotMatch(linea, CIUDAD);
+  assert.doesNotMatch(linea, /marzo|Cumple años/);
+  assert.match(linea, /Punta/);
+  const ficha = (await pedir('/api/perfil', { token: tok })).j.perfil;
+  assert.equal(ficha.cumple, '03-14');
+  assert.equal(ficha.encuesta.otros, 'Tengo una finca en Puerto Sintetico');
 });

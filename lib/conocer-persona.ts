@@ -27,7 +27,7 @@
  * El borrado y la corrección que tocan varios almacenes los orquesta lib/olvido.ts.
  */
 import { bloqueConTope, clavePersona, CajonNoDisponible, crearCajones, esSecreto, extraerJson, linea, nuevoId, parecido, plegar, preguntarModelo } from './cerebro-comun';
-import { datoSuprimido, precargarSupresiones, relojSupresiones, tumbasDe, tumbasEnCache, type Tumba } from './supresiones';
+import { datoSuprimido, limpiarTexto, precargarSupresiones, relojSupresiones, terminosDe, tumbasDe, tumbasEnCache, type Tumba } from './supresiones';
 
 export const CATEGORIAS = ['familia', 'trabajo', 'metas', 'gustos', 'salud', 'rutinas', 'fechas', 'personas', 'otros'] as const;
 export type Categoria = (typeof CATEGORIAS)[number];
@@ -507,6 +507,59 @@ function vivosEnCache(persona: string): Dato[] | null {
 export function datosConocidos(persona: string): Dato[] {
   const ds = vivosEnCache(persona);
   return ds ? [...ds].sort((a, b) => b.confianza - a.confianza || b.visto - a.visto) : [];
+}
+
+/* ------------------------------------------------------------------ lo limitado: la vista autorizada (P1/A1) */
+
+/**
+ * «No usarlo» (alcance `limitado`) no es borrar: el dato se queda en la ficha editable («Lo que sé de ti»,
+ * la respuesta del perfil) y vuelve a usarse al reactivarlo. Pero ninguna COPIA ACTIVA lo usa: ni este
+ * bloque, ni su respuesta del perfil (lib/perfil-persona.ts perfilDeUso), ni los resúmenes de antes o lo
+ * último que dijo cuando van al modelo (textoAutorizado), ni lo que lee la iniciativa. La lista sale del
+ * estado DURABLE del dato (el cajón en disco/S3), no de una caché: sobrevive a un reinicio.
+ */
+export const RESERVADO = '[reservado]';
+const esLimitado = (d: Dato) => d.alcance === 'limitado';
+
+/** Los datos que la persona limitó, leídos del almacén (y sin lo suprimido). null: no se pudo leer (falla cerrado). Nunca lanza. */
+export async function datosLimitados(persona: string): Promise<Dato[] | null> {
+  const c = clavePersona(persona);
+  if (!c) return [];
+  try {
+    const [l, tumbas] = await Promise.all([cajones.leer(c), tumbasDe(c)]);
+    if (!l.ok) return null;
+    return vivos(l.valor.datos, tumbas).filter(esLimitado);
+  } catch {
+    return null;
+  }
+}
+
+/** Lo mismo desde la caché, sin esperar. null si todavía no está (se carga para la próxima): sin saberlo, no se arriesga. */
+export function datosLimitadosEnCache(persona: string): Dato[] | null {
+  const clave = clavePersona(persona);
+  if (!clave) return [];
+  if (!cajones.enCache(clave)) void cajones.leer(clave).catch(() => undefined);
+  const ds = vivosEnCache(persona);
+  return ds ? ds.filter(esLimitado) : null;
+}
+
+/** Los datos que AURA puede USAR (de la caché): los conocidos sin lo limitado. */
+export function datosUsables(persona: string): Dato[] {
+  return datosConocidos(persona).filter((d) => !esLimitado(d));
+}
+
+/** Las palabras que identifican lo limitado, para taparlo en el texto de los derivados («Vive en Tela» → [«tela»]). */
+export function terminosReservados(datos: readonly Dato[]): string[][] {
+  return datos.map((d) => terminosDe(d.dato, d.clave)).filter((t) => t.length > 0);
+}
+
+/**
+ * Un texto derivado (un resumen de antes, lo último que dijo) como puede entrar al modelo: sin las palabras de
+ * lo limitado («[reservado]»). `terminos` null = no se pudo saber qué está limitado: no entra nada.
+ */
+export function textoAutorizado(texto: string, terminos: readonly (readonly string[])[] | null): string {
+  if (terminos === null) return '';
+  return limpiarTexto(texto, terminos, RESERVADO);
 }
 
 export function precargarConocer(persona: string): Promise<void> {

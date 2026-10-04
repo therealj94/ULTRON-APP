@@ -25,17 +25,21 @@ import type express from 'express';
 import { hiloDe } from '../lib/memoria';
 import { hiloMiembro } from '../lib/memoria-miembro';
 import { miembrosUltron, quienEs } from '../lib/junta';
-import { iniciativaDe, leerPerfil, type Perfil } from '../lib/perfil-persona';
+import { iniciativaDe, leerPerfil, reservasDe, type PerfilDeUso } from '../lib/perfil-persona';
 import {
   enHorasQuietas,
   evidenciaDe,
   leerEstadoIniciativa,
   lineaPorConocer,
+  observacionDe,
   responderPropuesta,
   revalidarPropuesta,
   siguientePropuesta,
   type ContextoIniciativa,
+  type FuenteContada,
   type ModeloCorto,
+  type Observacion,
+  type Observaciones,
   type PersonaIniciativa,
   type Propuesta,
   type RespuestaPropuesta,
@@ -67,10 +71,13 @@ import {
 import { fechaValida, instanteDeLocal } from '../lib/zona-horaria';
 
 /**
- * Cuántas cosas sin leer tiene en sus canales (server.ts lo sabe; aquí no se importan correo ni WhatsApp).
- * null = esa fuente está conectada pero no se pudo leer; `desconectadas` = las que dejaron de responder.
+ * Lo que se vio de sus canales. `observaciones` (server/fuentes-iniciativa.ts, el adaptador productivo) dice el
+ * ESTADO de cada fuente: vigente con su número, empty, unavailable, disconnected o not_configured. La forma vieja
+ * (null = conectada pero no se pudo leer; `desconectadas` = las que dejaron de responder) se sigue entendiendo.
  */
-export type Contadores = { correoSinLeer?: number | null; whatsappSinLeer?: number | null; desconectadas?: string[] };
+export type Contadores = { observaciones?: Observaciones; correoSinLeer?: number | null; whatsappSinLeer?: number | null; desconectadas?: string[] };
+/** El adaptador de contadores: el MISMO para las rutas y para el reloj (componerIniciativa). Solo de SU dueño. */
+export type FuenteContadores = (correo: string) => Promise<Contadores> | Contadores;
 
 export type DepsIniciativa = {
   exigirMesa: express.RequestHandler;
@@ -78,7 +85,7 @@ export type DepsIniciativa = {
   sesionDe: (req: express.Request) => { correo: string; nombre?: string } | null;
   /** Para empujar una propuesta nueva al teléfono (o a Telegram). El GET no lo usa: ya la devuelve. */
   alProponer?: (correo: string, propuesta: Propuesta) => unknown;
-  contadores?: (correo: string) => Promise<Contadores> | Contadores;
+  contadores?: FuenteContadores;
   /** Junta o miembro (server/nivel.ts nivelDeCorreo). Solo da tono a las propuestas. */
   nivelDe?: (correo: string) => 'junta' | 'miembro';
   /** Pruebas: otro modelo (o null, sin modelo). */
@@ -120,7 +127,7 @@ export function correrMisionTurnoConEstado(dueno: string, arg: string) {
  * Lo del turno para la iniciativa en la conversación: sus misiones abiertas y lo que aún no sabe de su
  * vida. Va en HECHOS (o en el bloque de la app), nunca en el system: cambia. Nunca lanza.
  */
-export async function bloqueIniciativaTurno(dueno: string, perfil?: Perfil | null): Promise<string> {
+export async function bloqueIniciativaTurno(dueno: string, perfil?: PerfilDeUso | null): Promise<string> {
   const correo = duenoMisiones(dueno);
   if (!correo) return '';
   const p = perfil === undefined ? await leerPerfil(correo).catch(() => null) : perfil;
@@ -159,8 +166,9 @@ export async function proponerPara(
     perfil,
     misiones: fuentes.misiones,
     hilo: hiloPara(persona.correo),
-    correoSinLeer: fuentes.correoSinLeer,
-    whatsappSinLeer: fuentes.whatsappSinLeer,
+    // Lo que limitó («No usarlo»), del estado durable: tampoco entra por lo último que dijo (null: no se supo → sin hilo).
+    reservas: await reservasDe(persona.correo),
+    observaciones: fuentes.observaciones,
     ...(fuentes.desconectadas ? { desconectadas: fuentes.desconectadas } : {}),
     zona: prefs.zona,
     quietas: prefs.quietas,
@@ -173,30 +181,54 @@ export async function proponerPara(
   return { ...r, iniciativa };
 }
 
-/** Lo que se lee de sus fuentes AHORA: misiones (null si no se pudieron leer), contadores y perfil. */
-async function fuentesAhora(correo: string, d: Pick<DepsIniciativa, 'contadores'>, perfil?: Perfil | null) {
+/**
+ * Lo que se vio de correo y WhatsApp, con su estado, a partir de lo que devolvió el adaptador. Si el adaptador
+ * FALLÓ, cada fuente queda `unavailable` (nunca «0 sin leer», nunca vigente); si no hay adaptador, no se observó
+ * nada (y una propuesta que dependa de esas fuentes no es vigente). Nunca se busca en otra cuenta.
+ */
+export function observacionesDe(c: Contadores | null, ahora: number): Observaciones {
+  const out: Observaciones = {};
+  for (const f of ['correo', 'whatsapp'] as FuenteContada[]) {
+    const o: Observacion | undefined = c === null ? { estado: 'unavailable', visto: ahora } : observacionDe(c, f);
+    if (o) out[f] = o;
+  }
+  return out;
+}
+
+/** Lo que se lee de sus fuentes AHORA: misiones (null si no se pudieron leer), lo observado por el adaptador y el perfil. */
+async function fuentesAhora(correo: string, d: Pick<DepsIniciativa, 'contadores' | 'reloj'>, perfil?: PerfilDeUso | null) {
+  const ahora = d.reloj ? d.reloj() : Date.now();
   const leidas = await leerMisiones(correo);
-  // Si quien cuenta falla, no se sabe nada (undefined): no es lo mismo que una fuente desconectada (null).
-  const contadores: Contadores = d.contadores ? await Promise.resolve(d.contadores(correo)).catch(() => ({}) as Contadores) : {};
+  // Si quien cuenta FALLA, la fuente no se pudo leer (unavailable): nunca es 0 ni «siguen igual».
+  let contadores: Contadores | null = {};
+  if (d.contadores) {
+    try {
+      contadores = await Promise.resolve(d.contadores(correo));
+    } catch {
+      contadores = null;
+    }
+  }
+  const observaciones = observacionesDe(contadores, ahora);
+  const desconectadas = [...new Set([...(contadores?.desconectadas || []), ...(['correo', 'whatsapp'] as const).filter((f) => observaciones[f]?.estado === 'disconnected')])];
   return {
     misiones: leidas.ok ? leidas.misiones : null,
-    correoSinLeer: contadores.correoSinLeer,
-    whatsappSinLeer: contadores.whatsappSinLeer,
-    desconectadas: contadores.desconectadas,
+    observaciones,
+    desconectadas: desconectadas.length ? desconectadas : undefined,
     perfil: perfil === undefined ? await leerPerfil(correo).catch(() => null) : perfil,
   };
 }
 
 /**
  * REVALIDAR JUSTO ANTES DE AVISAR: la propuesta tiene que seguir pendiente (no contestada, no retirada) y su
- * evidencia valer con las fuentes leídas ahora. Lo que no se pudo leer no se da por bueno.
+ * evidencia valer con las fuentes leídas ahora, con el MISMO adaptador que la pensó. Lo que no se pudo leer no
+ * se da por bueno.
  */
-export async function revalidarAhora(correo: string, p: Propuesta, d: Pick<DepsIniciativa, 'contadores'>, ahora: number): Promise<Revalidacion> {
+export async function revalidarAhora(correo: string, p: Propuesta, d: Pick<DepsIniciativa, 'contadores' | 'reloj'>, ahora: number): Promise<Revalidacion> {
   const est = await leerEstadoIniciativa(correo);
-  if (!est.ok) return { vigente: false, motivo: 'fuente_desconectada' };
+  if (!est.ok) return { vigente: false, motivo: 'fuente_no_disponible' };
   if (est.estado.pendiente?.id !== p.id) return { vigente: false, motivo: 'resuelta' };
-  const f = await fuentesAhora(correo, d);
-  return revalidarPropuesta(p, { misiones: f.misiones, correoSinLeer: f.correoSinLeer, whatsappSinLeer: f.whatsappSinLeer, perfil: f.perfil, ...(f.desconectadas ? { desconectadas: f.desconectadas } : {}) }, ahora);
+  const f = await fuentesAhora(correo, { contadores: d.contadores, reloj: () => ahora });
+  return revalidarPropuesta(p, { misiones: f.misiones, observaciones: f.observaciones, perfil: f.perfil, ...(f.desconectadas ? { desconectadas: f.desconectadas } : {}) }, ahora);
 }
 
 /** La propuesta como la ve la app, con lo necesario para «ver la propuesta»: por qué, el paso, el permiso y hasta cuándo. */
@@ -493,4 +525,19 @@ export function arrancarIniciativa(o: {
   const t = setInterval(() => void vuelta().catch(() => undefined), o.cadaMs ?? CADA_MS_INICIATIVA);
   t.unref?.();
   return { parar: () => clearInterval(t), vuelta };
+}
+
+/* ------------------------------------------------------------------ la composición (P1/A2) */
+
+/**
+ * UN adaptador de contadores (server/fuentes-iniciativa.ts contadoresProductivos en server.ts) para las rutas
+ * (GET /api/iniciativa: revalida antes de MOSTRAR) y para el reloj (revalida antes de ENTREGAR). Así lo que se
+ * ve al pensar y lo que se ve al despachar salen de la misma fuente, y ninguno de los dos se monta sin ella.
+ */
+export function componerIniciativa(o: { contadores: FuenteContadores }) {
+  return {
+    contadores: o.contadores,
+    montarRutas: (app: express.Express, d: Omit<DepsIniciativa, 'contadores'>) => montarRutasIniciativa(app, { ...d, contadores: o.contadores }),
+    arrancar: (r: Omit<Parameters<typeof arrancarIniciativa>[0], 'contadores'>) => arrancarIniciativa({ ...r, contadores: o.contadores }),
+  };
 }

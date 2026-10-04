@@ -22,8 +22,10 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { campoPerfilDeDato } from './clave-comun';
+import { datosLimitados, datosLimitadosEnCache, RESERVADO, terminosReservados, type Dato } from './conocer-persona';
 import { s3GetJson, s3Listo, s3PutJson } from './s3';
-import { campoSuprimido, tumbasDe, type Tumba } from './supresiones';
+import { campoSuprimido, limpiarTexto, terminosDe, tumbasDe, type Tumba } from './supresiones';
 
 export type Tema = 'oscuro' | 'claro' | 'sistema';
 export type AvatarPerfil = 'ojos' | 'aura' | 'claudio' | 'antonio';
@@ -398,13 +400,71 @@ export async function leerPerfilSeguro(correo: string): Promise<{ ok: true; perf
   return { ok: true, perfil: p };
 }
 
+/* ------------------------------------------------------------------ la vista autorizada (P1/A1) */
+
 /**
- * El perfil de un correo, o null si no tiene o no se pudo leer (para LEER: el prompt, GET /api/perfil).
- * Para escribir encima, leerPerfilSeguro.
+ * El perfil como se USA (el prompt de texto y de voz, la iniciativa): sin lo que la persona marcó «No usarlo».
+ * `limitados`: los campos que se quitaron (`encuesta.vive`, `cumple`): AURA ya lo sabe, así que no lo vuelve a
+ * preguntar. `reservas`: las palabras de lo limitado, para taparlas en otros textos que van al modelo.
+ * Es solo para LEER: nunca se guarda (la ficha editable es leerPerfilSeguro, y la escritura parte de ella).
  */
-export async function leerPerfil(correo: string): Promise<Perfil | null> {
+export type PerfilDeUso = Perfil & { readonly limitados?: readonly string[]; readonly reservas?: readonly (readonly string[])[] };
+
+const CAMPOS_PERFIL_DE_USO = [...CAMPOS_ENCUESTA.map((k) => `encuesta.${k}`), 'cumple'];
+
+/**
+ * Pura. `limitados`: los datos de «lo que sé de ti» con alcance limitado; null = no se pudieron leer, y entonces
+ * falla cerrado: sin la encuesta ni el cumpleaños (quedan como «limitados»: tampoco se preguntan de nuevo).
+ * Un campo queda fuera si repite un dato limitado por su clave común («Dónde vives» ↔ «Vive en Tela»,
+ * lib/clave-comun.ts) o por sus palabras (un «Vive en Tela» sin clave cubre la respuesta «Tela»); en lo que
+ * queda, las palabras de lo limitado se tapan («[reservado]»). Sin nada limitado, el mismo objeto.
+ */
+export function perfilDeUso(p: Perfil | null | undefined, limitados: readonly Dato[] | null): PerfilDeUso | null {
+  if (!p) return null;
+  if (limitados === null) {
+    const r: PerfilDeUso = { ...p, encuesta: {}, limitados: CAMPOS_PERFIL_DE_USO };
+    delete (r as Perfil).cumple;
+    return r;
+  }
+  if (!limitados.length) return p;
+  const reservas = terminosReservados(limitados);
+  const campos = new Set<string>();
+  for (const d of limitados) {
+    const c = campoPerfilDeDato(d);
+    if (c) campos.add(c);
+  }
+  for (const k of CAMPOS_ENCUESTA) {
+    const v = p.encuesta[k];
+    if (!v || campos.has(`encuesta.${k}`)) continue;
+    const propias = terminosDe(v);
+    if (propias.length && reservas.some((t) => t.every((w) => propias.includes(w)) || propias.every((w) => t.includes(w)))) campos.add(`encuesta.${k}`);
+  }
+  const encuesta: Encuesta = {};
+  for (const k of CAMPOS_ENCUESTA) {
+    const v = p.encuesta[k];
+    if (!v || campos.has(`encuesta.${k}`)) continue;
+    encuesta[k] = limpiarTexto(v, reservas, RESERVADO);
+  }
+  const r: PerfilDeUso = { ...p, encuesta, limitados: [...campos], reservas };
+  if (campos.has('cumple')) delete (r as Perfil).cumple;
+  return r;
+}
+
+/** Las palabras de lo que la persona limitó (del estado durable), o null si no se pudo leer. Nunca lanza. */
+export async function reservasDe(correo: string): Promise<string[][] | null> {
+  const ds = await datosLimitados(correo);
+  return ds ? terminosReservados(ds) : null;
+}
+
+/**
+ * El perfil de un correo PARA USARLO (el prompt de texto y de voz, la iniciativa): la vista autorizada
+ * (perfilDeUso), con lo limitado leído del estado durable de «lo que sé de ti». null si no tiene o no se pudo
+ * leer. La ficha editable (GET /api/perfil) y la escritura usan leerPerfilSeguro.
+ */
+export async function leerPerfil(correo: string): Promise<PerfilDeUso | null> {
   const r = await leerPerfilSeguro(correo);
-  return r.ok ? r.perfil : null;
+  if (!r.ok || !r.perfil) return null;
+  return perfilDeUso(r.perfil, await datosLimitados(correo));
 }
 
 /** No se pudo leer el perfil guardado (S3 caído): no se escribe encima de lo que no se vio. */
@@ -415,9 +475,15 @@ export class PerfilNoDisponible extends Error {
   }
 }
 
-/** Lo que haya en caché, sin esperar a nada (para el camino más rápido de la voz). */
-export function perfilEnCache(correo: string): Perfil | null | undefined {
-  return cache.get(correoNormal(correo));
+/**
+ * Lo que haya en caché, sin esperar a nada (para el camino más rápido de la voz), ya como VISTA AUTORIZADA:
+ * si lo limitado todavía no está en caché, sin la encuesta ni el cumpleaños (no se arriesga). undefined: no
+ * está en caché.
+ */
+export function perfilEnCache(correo: string): PerfilDeUso | null | undefined {
+  const c = correoNormal(correo);
+  if (!cache.has(c)) return undefined;
+  return perfilDeUso(cache.get(c) ?? null, datosLimitadosEnCache(c));
 }
 
 /** Guarda el perfil entero. `durable` dice si llegó a S3. */
