@@ -762,6 +762,150 @@ test('ronda 4 · 5: «descomprime facturas.zip» no pide el ZIP como entregable'
   assert.equal(c.c.estado, 'partial', 'sin poder comprobar qué salió del ZIP, queda sin comprobar');
 });
 
+/* ------------------------------------------------------------------ ronda 5: cerrado por defecto */
+
+const INFORMATIVA = 'Listo, ya quedó: son 120 mil lempiras de ventas en marzo de 2025, con la gráfica y los datos del proveedor.';
+
+test('ronda 5 · 1: producir algo que no se reconoce da «lo que pediste» sin tipo verificable; nunca verificado', () => {
+  for (const q of ['Hazme una gráfica de ventas', 'Crea un diagrama del proceso', 'Diseña un logo para la tienda', 'Graba un audio con el saludo', 'Hazme un video corto', 'Crea la factura de Ana']) {
+    const r = requisitosDeEntrega(q);
+    assert.ok(r.items.some((i: any) => /lo que pediste/.test(i.etiqueta ?? '')), `${q}: ${JSON.stringify(r.items)}`);
+    assert.equal(cerrar(q, [], INFORMATIVA).c.estado, 'partial', q);
+    assert.equal(evaluarEntrega(mision(q, [], INFORMATIVA)).comprobada, false, q);
+  }
+  // Ni con un archivo que parezca serlo: no se sabe comprobar «una gráfica».
+  assert.equal(cerrar('Hazme una gráfica de ventas', [arch('Pictures/grafica.png', 'png', '1')], INFORMATIVA).c.estado, 'partial');
+  // Dato + producción: solo se completa si la producción se verifica (aquí no se puede).
+  assert.equal(cerrar('Dime cuánto vendimos en marzo y hazme una gráfica', [], INFORMATIVA).c.estado, 'partial');
+  // Si no se puede decidir, no es dato.
+  assert.equal(cerrar('Haz las cuentas de enero, febrero y marzo', [], 'Enero 10, febrero 12 y marzo 15: total 37.').c.estado, 'partial');
+});
+
+test('ronda 5 · 2: una extensión conocida obliga a entrega; nunca es dato', () => {
+  for (const q of ['Lee informe.pdf y dime qué dice', '¿Qué dice contrato.docx en la cláusula 3?', 'Dime cuántas filas tiene ventas.xlsx']) {
+    assert.notEqual(evaluarEntrega(mision(q, [], INFORMATIVA)).tipo, 'dato', q);
+    assert.equal(cerrar(q, [], INFORMATIVA).c.estado, 'partial', q);
+  }
+});
+
+test('ronda 5 · 3: operaciones sobre archivos con los nombres quitados («facturas.zip» no es el verbo «zip»)', () => {
+  const extraido = (n: string, s: string) => arch(`Downloads/${n}`, 'texto', s);
+  const casos: [string, A[]][] = [
+    ['Descomprime facturas.zip', [arch('Downloads/facturas.zip', 'zip', 'a', { mencionado: true, reciente: false }), extraido('facturas-enero.csv', '1')]],
+    ['Unzip reports.zip', [arch('Downloads/reports.zip', 'zip', 'a', { mencionado: true, reciente: false }), extraido('reports-2024.csv', '1')]],
+    ['Extrae fotos.zip', [arch('Downloads/fotos.zip', 'zip', 'a', { mencionado: true, reciente: false }), arch('Downloads/fotos/copan.png', 'png', '1')]],
+    ['Mueve respaldo.zip a la carpeta 2024', [arch('2024/respaldo.zip', 'zip', 'a', { mencionado: true, reciente: false })]],
+    ['Copia respaldo.zip a la carpeta respaldos', [arch('respaldo.zip', 'zip', 'a', { mencionado: true, reciente: false }), arch('respaldos/respaldo.zip', 'zip', 'b', { mencionado: true })]],
+  ];
+  for (const [q, a] of casos) {
+    const e = evaluarEntrega(mision(q, a, INFORMATIVA));
+    assert.equal(e.tipo, 'accion', q);
+    assert.equal(e.comprobada, false, q);
+    assert.equal(cerrar(q, a, INFORMATIVA).c.estado, 'partial', q);
+  }
+  // La instrucción del modelo en inglés combinada con lo que dijo la persona.
+  const req = combinar4('Unzip reports.zip into the reports folder', 'Descomprime reports.zip');
+  assert.equal(conRequisitos('Unzip reports.zip into the reports folder', req, [arch('Downloads/reports.zip', 'zip', 'a', { mencionado: true, reciente: false }), arch('reports/reports-2024.csv', 'texto', '1')]).comprobada, false);
+  // La copia estricta sigue: misma huella en la carpeta pedida.
+  assert.equal(cerrar('Copia respaldo.zip a la carpeta respaldos', [arch('respaldo.zip', 'zip', 'a', { mencionado: true, reciente: false }), arch('respaldos/respaldo.zip', 'zip', 'a', { mencionado: true })], 'Listo.').c.estado, 'completed');
+});
+
+test('ronda 5 · 4: nombres con acentos, paréntesis, comillas y espacios', () => {
+  const nombre = (q: string) => requisitosDeEntrega(q).items.map((i) => i.nombre);
+  assert.deepEqual(nombre('Crea cotización.xlsx con los precios'), ['cotización.xlsx']);
+  assert.deepEqual(nombre('Guarda reporte (1).pdf en Documentos'), ['reporte (1).pdf']);
+  assert.deepEqual(nombre('Crea reporte (versión final).docx'), ['reporte (versión final).docx']);
+  assert.deepEqual(nombre('Crea «informe final.pdf» con el resumen'), ['informe final.pdf']);
+  assert.deepEqual(nombre('Guarda "mis notas.txt"'), ['mis notas.txt']);
+  assert.equal(cerrar('Crea cotización.xlsx con los precios', [arch('Documents/cotización.xlsx', 'xlsx', '1', { mencionado: true })], 'Listo.').c.estado, 'completed');
+  assert.equal(cerrar('Crea cotización.xlsx con los precios', [arch('Documents/n.xlsx', 'xlsx', '1')], 'Listo.').c.estado, 'partial', '«n.xlsx» no es cotización.xlsx');
+  // Sin comillas: «informe final.pdf» o «final.pdf». Solo la frase completa cumple.
+  const q = 'Guarda el informe final.pdf';
+  assert.equal(cerrar(q, [arch('Documents/final.pdf', 'pdf', '1', { mencionado: true })], 'Listo.').c.estado, 'partial');
+  assert.equal(cerrar(q, [{ ruta: 'final.pdf', existe: false, bytes: 0, sha256: null, mencionado: true }, arch('Documents/informe final.pdf', 'pdf', '1')], 'Listo.').c.estado, 'completed');
+});
+
+test('ronda 5 · 5: carpetas con espacios, completas y exactas', () => {
+  const q = 'Guarda informe.pdf en la carpeta Facturas 2024';
+  assert.equal(requisitosDeEntrega(q).items[0].carpeta, 'facturas 2024');
+  assert.equal(cerrar(q, [arch('Documents/Facturas 2024/informe.pdf', 'pdf', '1', { mencionado: true })], 'Listo.').c.estado, 'completed');
+  assert.equal(cerrar(q, [arch('Documents/Facturas/informe.pdf', 'pdf', '1', { mencionado: true })], 'Listo.').c.estado, 'partial', 'una carpeta parecida no');
+  assert.equal(cerrar(q, [arch('Documents/Facturas 2023/informe.pdf', 'pdf', '1', { mencionado: true })], 'Listo.').c.estado, 'partial');
+  const q2 = 'Hazme 2 PDFs y guárdalos en Documentos/Facturas 2024';
+  assert.deepEqual(requisitosDeEntrega(q2).items.map((i) => i.carpeta), ['documents/facturas 2024', 'documents/facturas 2024']);
+  assert.equal(cerrar(q2, [arch('Documents/Facturas 2024/a.pdf', 'pdf', '1'), arch('Documents/Facturas 2024/b.pdf', 'pdf', '2')], 'Listo.').c.estado, 'completed');
+});
+
+/** Un generador con semilla fija (mulberry32): las mismas combinaciones en cada corrida. */
+function azar(semilla: number) {
+  let a = semilla >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+test('ronda 5 · propiedad: «verbo de producir + objeto» con cero archivos nunca queda comprobado', () => {
+  const verbos = ['crea', 'créame', 'haz', 'hazme', 'genera', 'prepara', 'prepárame', 'arma', 'ármame', 'diseña', 'dibuja', 'graba', 'escribe', 'redacta', 'exporta', 'guarda', 'descarga', 'baja', 'imprime', 'copia', 'mueve', 'renombra', 'borra', 'descomprime', 'comprime', 'sube', 'envía', 'make', 'create', 'generate'];
+  const objetos = [
+    'una gráfica de ventas', 'un diagrama de flujo', 'un logo nuevo', 'un audio con el saludo', 'un video corto', 'la factura de Ana', 'el reporte mensual', 'una tabla de precios', 'un resumen de la reunión', 'una presentación para el lunes',
+    'un PDF con el contrato', 'tres PDFs', 'una hoja de cálculo', 'dos capturas de pantalla', 'un archivo', 'tres archivos', 'el documento final', 'una carta para el banco', 'un póster', 'un folleto',
+    'una invitación', 'un calendario', 'una lista de compras', 'un presupuesto', 'una cotización', 'un mapa del sitio', 'un plano', 'un menú', 'una portada', 'un certificado',
+    'un flurbo azul', 'la zentaria de Ana', 'un quorbo', 'tres blivets', 'el trámite de Pedro', 'un glimmer', 'la cosa de ayer', 'un wobble', 'dos snarks', 'un prixel',
+    'informe.docx', 'cotización.xlsx', 'reporte (1).pdf', 'fotos.zip', 'datos.csv', 'notas.txt', 'portada.png', 'respaldo.zip', 'contrato final.pdf', 'plan 2025.pptx',
+    'a chart', 'a logo', 'a report', 'two PDFs', 'a spreadsheet', 'a screenshot', 'the invoice', 'a video', 'three files', 'a diagram',
+  ];
+  assert.equal(verbos.length, 30);
+  assert.equal(objetos.length, 60);
+  const r = azar(20261004);
+  const malos: string[] = [];
+  for (let i = 0; i < 300; i++) {
+    const q = `${verbos[Math.floor(r() * verbos.length)]} ${objetos[Math.floor(r() * objetos.length)]}`;
+    for (const resp of ['Listo, ya está', 'Listo, ya está: quedó con 3 páginas y los datos de 2025 del proveedor.']) {
+      const e = evaluarEntrega(mision(q, [], resp));
+      const c = reconciliarConComputadora(tarea(q), mision(q, [], resp), T0 + 60_000);
+      if (e.comprobada || c?.estado === 'completed' || deComputadora(mision(q, [], resp), T0 + 60_000).state === 'completed') malos.push(`${q} | ${resp}`);
+    }
+  }
+  assert.deepEqual(malos, [], `se completaron sin entrega: ${malos.slice(0, 10).join(' · ')}`);
+});
+
+test('ronda 5 · propiedad inversa: 30 consultas puras sí se completan con el dato', () => {
+  const consultas = [
+    '¿Cuánto es el tipo de cambio hoy?', 'Dime qué tiempo hace en Tegucigalpa', '¿Cuál es el horario del banco?', 'Busca y dime el precio del oro', 'Averigua cuánto cuesta el pasaje a San Pedro Sula',
+    '¿Qué dice la página principal del BCH?', 'Explica qué es el impuesto sobre ventas', 'Lee la noticia principal y dime de qué trata', 'Resume la página del SAR y dime lo importante', '¿Quién ganó el partido de anoche?',
+    '¿Cuándo abre la oficina del RNP?', '¿Dónde queda la agencia más cercana?', 'Dime cuántos habitantes tiene Copán', '¿Cuánto cuesta la gasolina súper?', 'Busca el clima de mañana y dime',
+    '¿Qué hora es en Madrid?', 'Dime el teléfono de la alcaldía', '¿Cuál es la tasa de interés del banco?', 'Averigua si abre el museo el domingo', '¿Cuánto mide el pico Bonito?',
+    'What is the exchange rate today?', 'Tell me the weather in Tegucigalpa', 'How much is the bus ticket?', 'Which bank has the lowest rate?', 'Find and tell me the price of coffee',
+    'Explain what the page says', '¿Qué precio tiene el café hoy?', 'Dime cuál es la capital de Belice', '¿Cuántos días faltan para el feriado?', 'Busca y dime quién es el ministro de salud',
+  ];
+  assert.equal(consultas.length, 30);
+  const noCompletan = consultas.filter((q) => cerrar(q, undefined, 'Son 24.70 lempiras según el Banco Central, actualizado hoy a las 10:00.').c.estado !== 'completed');
+  assert.deepEqual(noCompletan, []);
+});
+
+test('ronda 5 · texto en el chat: un resumen, una traducción o una lista que van en la respuesta SON la entrega', () => {
+  const resumen =
+    'La noticia cuenta que el Banco Central subió la tasa de política monetaria medio punto. La medida busca frenar la inflación, que llegó al 5,8 por ciento en septiembre. Los bancos comerciales ajustarán sus tasas de préstamo en las próximas semanas.';
+  assert.equal(cerrar('Hazme un resumen de la noticia', undefined, resumen).c.estado, 'completed', 'el resumen está en la respuesta');
+  assert.equal(cerrar('Hazme un resumen de la noticia', undefined, 'Listo, ya está').c.estado, 'partial', 'un acuse no es un resumen');
+  assert.equal(cerrar('Hazme un resumen de la noticia', undefined, 'Listo, ya está, hice el resumen como pediste.').c.estado, 'partial');
+  const pdf = evaluarEntrega(mision('Hazme un resumen en PDF', [], resumen));
+  assert.equal(pdf.tipo, 'archivo', 'en PDF es un archivo');
+  assert.equal(pdf.comprobada, false);
+  const traduccion = 'Here is the translation: The Central Bank raised the monetary policy rate by half a point to curb inflation, which reached 5.8 percent in September.';
+  assert.equal(cerrar('Tradúceme esto al inglés: el Banco Central subió la tasa medio punto para frenar la inflación', undefined, traduccion).c.estado, 'completed');
+  assert.equal(cerrar('Haz un resumen y una gráfica', undefined, resumen).c.estado, 'partial', 'la gráfica no va en el texto');
+  assert.equal(cerrar('Dame una lista de 5 ideas para el negocio', undefined, '1. Vender café en línea con entrega a domicilio. 2. Ofrecer cursos de barismo. 3. Abrir un puesto en el mercado. 4. Hacer suscripciones mensuales. 5. Vender a oficinas.').c.estado, 'completed');
+  // Lo que ya estaba: un correo va por su borrador; una acción en pantalla queda sin comprobar.
+  assert.equal(cerrar('Escribe un correo a Ana con el resumen', undefined, resumen).c.estado, 'partial');
+  assert.equal(cerrar('Abre YouTube y pon música', undefined, resumen).c.estado, 'partial');
+  assert.equal(cerrar('Hazme un resumen y guárdalo', undefined, resumen).c.estado, 'partial', 'guardarlo es un archivo');
+});
+
 test('ronda 3: lo legítimo de un archivo sigue completando', () => {
   const casos: [string, A[]][] = [
     ['Crea informe.docx', [ok('informe.docx', 'docx', '1')]],
