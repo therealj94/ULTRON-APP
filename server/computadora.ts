@@ -1896,7 +1896,11 @@ export async function resolverPreguntaComputadora(quien: string, mensaje: string
     // nodo pregunta ahora (otra propuesta bajo el mismo id, otro destino: no se contesta con este «sí»).
     const hacer = () => confirmarAtado(p.tareaId, r === 'si', { id: p.id, huella: p.huella ?? null }).then(() => alResponder(p.tareaId, p.id));
     if (retener) {
+      // Décima ronda: un descarte repone la pregunta solo si nadie la contestó por otro camino (el botón de la app) ni
+      // apareció otra, ni la tarea terminó.
       retener.alDescartar(() => {
+        const e = ENCARGOS.get(p.tareaId);
+        if (m.pregunta || !e || e.cerrada || (e.contestada && e.contestada.id === p.id)) return;
         m.pregunta = p;
       });
       retener.hacer(() => void hacer().catch(() => undefined));
@@ -1922,8 +1926,9 @@ export async function resolverPreguntaComputadora(quien: string, mensaje: string
   o.ofreceSeguir = undefined;
   if (r === 'no') return `COMPUTADORA: no quiere que sigas con «${o.instruccion.slice(0, 120)}». Dile que está bien, que ahí queda.`;
   if (retener) {
+    // Décima ronda: un descarte repone «¿sigo?» solo si es la misma ronda y nadie la siguió por otro camino.
     retener.alDescartar(() => {
-      o.ofreceSeguir = Date.now();
+      if ((o.tareas.at(-1) ?? '') === desde && o.seguidaDesde !== desde && o.final && !o.final.ok) o.ofreceSeguir = Date.now();
     });
     // En la voz se sigue al confirmar el turno: se vuelve a mirar que sea la misma ronda y que siga a medias (si en
     // medio la persona tocó «Seguir», ya se siguió: no se sigue otra vez).
@@ -1943,6 +1948,8 @@ export async function seguirMision(m: Mision, conTexto = false, desdeTarea?: str
   // Novena ronda: una vez por ronda. Desde la última tarea de la misión; si quien llama la vio con otra (ya se siguió) o
   // alguien ya la está siguiendo desde esta, no se lanza nada.
   const ultima = m.tareas[m.tareas.length - 1] ?? '';
+  // Décima ronda: solo una misión que quedó a medias (una ronda en vuelo, `final` sin poner, o una que salió bien, no).
+  if (!m.final || m.final.ok) return null;
   if (desdeTarea !== undefined && desdeTarea !== ultima) return null;
   if (m.seguidaDesde === ultima) return null;
   m.seguidaDesde = ultima;

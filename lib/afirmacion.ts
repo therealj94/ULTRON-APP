@@ -530,9 +530,29 @@ function esDe(w: string, p: DecisionPendiente): boolean {
 
 /** ¿Esta ficha cuadra con el destino o el texto/tema de OTRA decisión? (los canales genéricos no cuentan aquí). */
 function tocaA(w: string, q: DecisionPendiente): boolean {
+  // Décima ronda: en el tema o el texto AJENO cuentan todas las palabras (también las cortas y los números: «Bo»,
+  // «4455», «las 5»), sin las de enlace. Un canal dicho cuenta si el texto de la otra habla de ese canal («el correo»
+  // con «mail.google.com» o «Gmail»).
+  const ajenas = [...palabrasDeTema(q.tema), ...palabrasDeTema(q.texto)];
+  const familia = familiaDeCanal(w);
+  if (familia) return esDe(w, q) || ajenas.some((x) => familia.has(x));
   if (DE_CANAL.has(w)) return false;
   if (esDe(w, q)) return true;
-  return enTexto(w, [...fichasDeTexto(q.tema), ...fichasDeTexto(q.texto)]);
+  return enTexto(w, ajenas);
+}
+
+/** Las palabras de un tema o un texto ajeno: todas, sin las de enlace (artículos y preposiciones). */
+function palabrasDeTema(texto: string | undefined): string[] {
+  return normalizarRespuesta(texto || '')
+    .split(' ')
+    .filter((x) => x && !ENLACE.has(x));
+}
+
+/** Las palabras de un mismo canal (el correo y sus proveedores; WhatsApp; la llamada…). null: no es un canal. */
+function familiaDeCanal(w: string): Set<string> | null {
+  if (NOMBRES.correo.has(w)) return new Set([...NOMBRES.correo, ...Object.keys(FAMILIA_PROVEEDOR)]);
+  for (const t of ['whatsapp', 'llamar'] as const) if (NOMBRES[t].has(w)) return NOMBRES[t];
+  return null;
 }
 
 /**
