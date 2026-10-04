@@ -567,7 +567,8 @@ export function vistaTarea(reg: RegistroTarea, ahora = Date.now()): TaskSnapshot
     origin: reg.origen,
     ...(reg.objetivoId ? { goalId: reg.objetivoId } : {}),
     controls: {
-      pause: !terminal && PAUSABLES.has(reg.estado),
+      // Una investigación en segundo plano no se pausa (corre de un tirón con su tope); se puede cancelar.
+      pause: !terminal && PAUSABLES.has(reg.estado) && !esInvestigacion(reg),
       resume: reg.estado === 'paused',
       cancel: !terminal && reg.estado !== 'cancelling',
       ...(reg.enlace?.tipo === 'computadora' ? { open: 'computadora' as const } : {}),
@@ -787,6 +788,41 @@ export function reconciliarConComputadora(reg: RegistroTarea, m: MisionComputado
   if (estado === reg.estado && paso === (reg.pasoActual ?? null) && JSON.stringify(prog) === JSON.stringify(reg.progreso ?? null)) return null;
   if (!transicionValida(reg.estado, estado)) return null;
   return { estado, pasoActual: paso, progreso: prog };
+}
+
+/* ------------------------------------------------------------------ la investigación en segundo plano */
+
+/**
+ * Investigar en segundo plano (server/investigar.ts): una tarea durable con `entorno` servidor/investigacion que
+ * trabaja el mismo proceso que la creó, con un tope de tiempo duro. Cada paso deja su latido (pasoActual y
+ * progreso cambian). Si el proceso se reinicia a mitad, nadie la cierra: pasado el tope y un margen sin latido,
+ * se cierra `failed` con la verdad (solo leía la web: no hay efecto que reconciliar ni nada que repetir a ciegas).
+ */
+export const TOPE_INVESTIGACION_MS = 3 * 60_000;
+export const MARGEN_INVESTIGACION_MS = 60_000;
+export const ENTORNO_INVESTIGACION: Entorno = { kind: 'servidor', id: 'investigacion', displayName: 'AURA investigando' };
+
+export const esInvestigacion = (reg: Pick<RegistroTarea, 'entorno'>) => reg.entorno?.kind === 'servidor' && reg.entorno?.id === ENTORNO_INVESTIGACION.id;
+
+/** El cambio que cierra una investigación que nadie está trabajando (el proceso se reinició). null si sigue viva. */
+export function reconciliarInvestigacion(reg: RegistroTarea, ahora: number, topeMs = TOPE_INVESTIGACION_MS): Cambio | null {
+  if (!esInvestigacion(reg) || esTerminal(reg.estado)) return null;
+  const ultimo = Math.max(reg.latido ?? 0, reg.actualizada);
+  if (ahora - ultimo <= topeMs + MARGEN_INVESTIGACION_MS) return null;
+  return {
+    estado: 'failed',
+    pasoActual: null,
+    criterios: reg.criterios.map((c) => ({ ...c, estado: 'not_met' as const, evidencias: [] })),
+    resultado: {
+      id: `${reg.id}:resultado`,
+      resumen: 'Se interrumpió: el servidor se reinició mientras investigaba y no terminó. No quedó resultado; pídemela otra vez si la quieres.',
+      evidencias: [],
+      parcial: [],
+      pendiente: ['Volver a pedir la investigación'],
+      t: ahora,
+    },
+    eventos: [{ type: 'operation.receipt', payload: { operationId: reg.id, state: 'failed', effect: 'none', motivo: 'sin-latido' } }],
+  };
 }
 
 /* ------------------------------------------------------------------ resumen para el indicador */

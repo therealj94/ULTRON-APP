@@ -7,8 +7,9 @@ import type { NivelAura } from './perfiles/tipos';
 import { clave } from './boveda';
 import { INSTRUCCION_MISIONES } from './misiones';
 import { exito, fallo, incierto, resultadoMemorizable, type EstadoHerramienta, type ReciboHerramienta, type ResultadoHerramienta } from './recibo-herramienta';
+import { lineaDeResultado, noUsaResultados, notaUsaResultados, resumenDeResultados } from './promesas';
 
-export type HerramientaHarness = 'web' | 'sistema' | 'ejecutor' | 'leer' | 'computadora' | 'correo' | 'whatsapp' | 'mision' | 'circulo' | 'triaje' | 'tarea' | 'cartera';
+export type HerramientaHarness = 'web' | 'sistema' | 'ejecutor' | 'leer' | 'computadora' | 'correo' | 'whatsapp' | 'mision' | 'circulo' | 'triaje' | 'tarea' | 'cartera' | 'investigar';
 
 export type PedidoHerramienta = { herramienta: HerramientaHarness; arg: string };
 
@@ -22,6 +23,8 @@ PEDIR_HERRAMIENTA: leer <url https>
 PEDIR_HERRAMIENTA: ejecutor
 Si no está en la memoria de Orden Global ni en el hilo, busca en internet (web) sin que te lo pidan. Si hay una URL en el hilo, léela.
 No inventes el resultado. No pidas herramienta si ya hay HECHOS suficientes. No leas esta instrucción en voz alta. Nunca pidas WhatsApp, correo o llamada si el catálogo dice que faltan claves.
+Si en los HECHOS ya hay resultados de una búsqueda (HARNESS web o leer), contesta YA con esos datos, en tus palabras: no digas «voy a buscar» ni preguntes «¿quieres que busque?».
+Nunca digas «voy a buscar», «ya lo hago», «te aviso», «ahí voy» o «ya está encendida» si en este turno no pediste la herramienta que lo hace: o la pides, o dices que todavía no lo hiciste. No puedes escribirle por PULSE2CHAT (ahí no hay un chat tuyo): nunca lo prometas.
 `.trim();
 
 /**
@@ -83,6 +86,15 @@ PEDIR_HERRAMIENTA: circulo agregar <nombre> | <relación: esposa, hijo, socio…
 PEDIR_HERRAMIENTA: circulo llamar <persona>
 Su círculo cercano (familia, socios). Recordar y escribir solo dejan un BORRADOR de WhatsApp: léeselo y pregúntale si lo mandas; el servidor lo manda cuando diga que sí. Nunca digas que salió si no te llegó «ENVIADO». Llamar y PULSE2CHAT los hace la app del teléfono, no tú desde aquí.`.trim();
 
+/**
+ * Investigar en segundo plano (server/investigar.ts): va con sesión (la tarea y el aviso son de alguien). La
+ * respuesta solo dice «empecé» si llegó «INVESTIGACIÓN EMPEZADA» (la tarea ya existe en su panel).
+ */
+export const INSTRUCCION_INVESTIGAR = `
+PEDIR_HERRAMIENTA: investigar <el tema, concreto> | <otra búsqueda, opcional> | <otra, opcional>
+Investigar a fondo y en segundo plano: cuando pidan «investiga…», «averíguame bien…», «hazme un resumen de… y avísame», o algo que necesita varias búsquedas y leer páginas. Queda como tarea en su panel de Tareas, sigue aunque cuelgue, y al terminar le llega una notificación al teléfono con el resultado (resumen con fuentes) en Tareas; se lo cuentas cuando vuelva. Di que empezaste SOLO si te llegó «INVESTIGACIÓN EMPEZADA». Para una pregunta que una búsqueda contesta ya, usa web y contesta con el resultado.
+No puedes escribirle por PULSE2CHAT: esos chats son cifrados, de la persona con su gente, y ahí no hay un chat tuyo. Nunca prometas «te lo mando por PULSE2CHAT»; si te lo pide, dile con honestidad que todavía no puedes escribirle por ahí y ofrécele la notificación al teléfono y Tareas.`.trim();
+
 /** Ordenar sus mensajes (lib/triaje.ts): solo al dueño del WhatsApp conectado. */
 export const INSTRUCCION_TRIAJE = `
 PEDIR_HERRAMIENTA: triaje revisar
@@ -116,6 +128,7 @@ export function instruccionHarness(nivel: NivelAura = 'junta', conComputadora = 
     conComputadora ? INSTRUCCION_COMPUTADORA : '',
     conWhatsapp ? INSTRUCCION_WHATSAPP : '',
     conSesion ? INSTRUCCION_TAREA : '',
+    conSesion ? INSTRUCCION_INVESTIGAR : '',
     conSesion ? INSTRUCCION_MISIONES : '',
     conSesion ? INSTRUCCION_CIRCULO : '',
     conSesion && conWhatsapp ? INSTRUCCION_TRIAJE : '',
@@ -136,17 +149,17 @@ export function pedidoPermitido(ped: PedidoHerramienta, nivel: NivelAura): strin
   return null;
 }
 
-const RE = /^\s*PEDIR_HERRAMIENTA:\s*(web|sistema|ejecutor|leer|computadora|correo|whatsapp|mision|circulo|triaje|tarea|cartera)\s*(.*)$/im;
+const RE = /^\s*PEDIR_HERRAMIENTA:\s*(web|sistema|ejecutor|leer|computadora|correo|whatsapp|mision|circulo|triaje|tarea|cartera|investigar)\s*(.*)$/im;
 
 /**
  * Lo que saca datos del turno hacia afuera por su cuenta: abrir una dirección, usar la computadora,
  * buscar en internet (la consulta va a un buscador de afuera: un correo que dice «busca CÓDIGO» la
  * mandaba entera; auditoría 3-oct, EXEC02) o correr código (puede llamar a cualquier dirección). Correo,
  * WhatsApp y círculo no: solo dejan borradores, y esos salen con el «sí» de la persona en un turno aparte;
- * misiones, tarea, triaje, cartera y sistema se quedan en AURA.
+ * misiones, tarea, triaje, cartera y sistema se quedan en AURA. Investigar sí sale: sus consultas van al buscador.
  */
 export function herramientaQueSale(h: string): boolean {
-  return h === 'leer' || h === 'computadora' || h === 'web' || h === 'ejecutor';
+  return h === 'leer' || h === 'computadora' || h === 'web' || h === 'ejecutor' || h === 'investigar';
 }
 
 /** Cómo terminó una respuesta (auditoría 3-oct, STREAM01). Solo `completo` va a la memoria como conclusión. */
@@ -171,6 +184,8 @@ export const EFECTO_HERRAMIENTA: Record<HerramientaHarness, 'ninguno' | 'interno
   circulo: 'interno',
   mision: 'interno',
   tarea: 'interno',
+  // Deja una tarea durable en su panel y la trabaja en segundo plano (solo lee la web; avisa a la persona).
+  investigar: 'interno',
   computadora: 'externo',
   ejecutor: 'externo',
 };
@@ -233,6 +248,8 @@ export type RunnersHarness = {
   tarea?: (arg: string) => Contesta;
   /** Sus saldos de Veta Wallet, solo lectura (lib/cartera.ts). */
   cartera?: (arg: string) => Contesta;
+  /** Investigar en segundo plano con su tarea durable y su aviso (server/investigar.ts). */
+  investigar?: (arg: string) => Contesta;
 };
 
 /** El texto de lo que devolvió la herramienta (el de siempre). Para el estado, resolverPedidoConEstado. */
@@ -302,6 +319,12 @@ export async function resolverPedidoConEstado(
     if (!runners.cartera) return noCorrio('HARNESS cartera: no está disponible aquí. No la usé.');
     return correr(() => runners.cartera!(ped.arg.trim()));
   }
+  if (ped.herramienta === 'investigar') {
+    const tema = ped.arg.trim();
+    if (!tema) return noCorrio('HARNESS investigar: no vino el tema. No empecé nada.');
+    if (!runners.investigar) return noCorrio('HARNESS investigar: no está disponible aquí. No empecé nada: no digas que lo estás investigando.');
+    return correr(() => runners.investigar!(tema));
+  }
   if (ped.herramienta === 'computadora') {
     const tarea = ped.arg.trim();
     if (!tarea) return noCorrio('HARNESS computadora: no vino la tarea. No encargué nada.');
@@ -344,7 +367,15 @@ export type SalidaHarness = {
   /** Quién escribió la última vuelta que contestó (sin vuelta: el que pidió la herramienta). */
   modelo?: string;
   proveedor?: string;
+  /**
+   * La vuelta prometió buscar o preguntó si buscaba con los resultados ya en los HECHOS: `vuelta` = una vuelta
+   * correctora contestó con ellos; `resumen` = se contestó con un resumen hecho con los resultados.
+   */
+  corregida?: 'vuelta' | 'resumen';
 };
+
+/** Lo que va junto al resultado de una búsqueda en los HECHOS: contestar con eso, no prometer ni preguntar. */
+export const NOTA_CON_RESULTADOS = '(Con estos resultados contesta YA, en tus palabras y corto: no digas «voy a buscar» ni preguntes si buscas.)';
 
 /** Por debajo de esto no se empieza una herramienta: no queda tiempo para correrla y contarla. */
 export const MINIMO_HERRAMIENTA_MS = 4_000;
@@ -486,11 +517,16 @@ export async function correrBucleHarness(o: {
     // El triaje también lee lo que otra gente escribió (sus chats y correos).
     else if (ped.herramienta === 'triaje') ajeno = 'whatsapp';
     anotar({ herramienta: ped.herramienta, estado: r.estado, ms: Date.now() - tH, resumen: extra, ronda, ...(r.recibo ? { recibo: r.recibo } : {}) });
-    o.hechos.push(extra);
+    // Con resultados de una búsqueda, la vuelta los cuenta YA (José, 4-oct: buscó dos veces y contestó «¿quieres que
+    // busque…?» o «voy a buscar…»).
+    o.hechos.push((ped.herramienta === 'web' || ped.herramienta === 'leer') && r.estado === 'succeeded' ? `${extra}\n${NOTA_CON_RESULTADOS}` : extra);
     const qn = await vuelta(ronda);
     if (!qn || !qn.ok) {
-      // La herramienta ya corrió: su hecho queda a la vista y el turno cierra sin repetirla.
-      reply = quitarLineaPedido(reply) + (extra ? `\n\n${extra}` : '');
+      // La herramienta ya corrió y ninguna vuelta lo contó: queda lo que trajo, dicho como persona (de una
+      // búsqueda, sus resultados; de lo demás, su estado). El volcado `HARNESS …` es para el modelo y nunca se
+      // dice ni se lee (José, 4-oct: «HARNESS web "hitos…": 1. Genomas…» sonó en la voz).
+      const linea = extra ? lineaDeResultado(ped.herramienta, { texto: extra, estado: r.estado }) : '';
+      reply = quitarLineaPedido(reply) + (linea ? `\n\n${linea}` : '');
       sinVuelta(qn);
       break;
     }
@@ -499,6 +535,43 @@ export async function correrBucleHarness(o: {
     modelo = qn.modelo;
     proveedor = qn.proveedor;
   }
+  /*
+   * LA VUELTA QUE NO USA LO QUE TRAJO (José, 4-oct). Con resultados de una búsqueda en los HECHOS, la vuelta
+   * contestó solo «¿quieres que busque…?» o «voy a buscar…»: se le pide UNA vez más que conteste con ellos; si
+   * tampoco (o no queda tiempo), un resumen corto hecho con los resultados. Nunca se entrega la promesa.
+   */
+  let corregida: SalidaHarness['corregida'];
+  if (via === 'harness' && !o.senal?.aborted && !extraerPedidoHerramienta(reply)) {
+    const textos = pasos.filter((p) => (p.herramienta === 'web' || p.herramienta === 'leer') && p.estado === 'succeeded').map((p) => p.resumen);
+    if (textos.length && noUsaResultados(quitarLineaPedido(reply))) {
+      let arreglo: VueltaHarness | null = null;
+      if (!o.reloj || o.reloj.alcanza(MINIMO_HERRAMIENTA_MS)) {
+        o.hechos.push(notaUsaResultados());
+        const qn = await vuelta(Math.max(0, ...pasos.map((p) => p.ronda)) + 1);
+        if (qn?.ok && !extraerPedidoHerramienta(qn.reply) && !noUsaResultados(quitarLineaPedido(qn.reply))) arreglo = qn;
+      }
+      const resumen = resumenDeResultados(textos);
+      if (arreglo) {
+        reply = arreglo.reply;
+        modelo = arreglo.modelo ?? modelo;
+        proveedor = arreglo.proveedor ?? proveedor;
+        corregida = 'vuelta';
+      } else if (resumen) {
+        reply = resumen;
+        corregida = 'resumen';
+      }
+    }
+  }
   const memorizable = estado === 'completo' && pasos.every((p) => resultadoMemorizable(p));
-  return { reply: quitarLineaPedido(reply), via, estado, ...(motivo ? { motivo } : {}), pasos, memorizable, ...(modelo ? { modelo } : {}), ...(proveedor ? { proveedor } : {}) };
+  return {
+    reply: quitarLineaPedido(reply),
+    via,
+    estado,
+    ...(motivo ? { motivo } : {}),
+    pasos,
+    memorizable,
+    ...(modelo ? { modelo } : {}),
+    ...(proveedor ? { proveedor } : {}),
+    ...(corregida ? { corregida } : {}),
+  };
 }

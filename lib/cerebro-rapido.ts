@@ -38,6 +38,12 @@ function conf() {
     region: String(process.env.CEREBRO_VOZ_REGION || 'us-west-2'),
     /** Sin la primera palabra en este rato, contesta Qwen. */
     primeraMs: Number(process.env.CEREBRO_VOZ_PRIMERA_MS || 2500),
+    /**
+     * Lo mismo para el de respaldo, que es el ÚLTIMO con herramientas: si tampoco contesta, el turno cae al Qwen
+     * del nodo, que no las tiene como tales (José, 4-oct: «[cerebro manos] no contestó; sigue Qwen: AbortError»
+     * dos veces en tres minutos, y ese turno contestó de memoria). Por omisión, una vez y media la del principal.
+     */
+    respaldoPrimeraMs: Number(process.env.CEREBRO_VOZ_RESPALDO_PRIMERA_MS || 0),
   };
 }
 
@@ -204,11 +210,13 @@ export async function* hablarConManos(mensajes: MensajeChat[], herramientas: Too
   if (!messages.length) throw new Error('sin mensaje de la persona');
   const modelos = [c.modelo, modeloRespaldo()].filter((m, i, a): m is string => !!m && a.indexOf(m) === i);
   let ultimoError: unknown = null;
-  for (const modelo of modelos) {
+  for (const [i, modelo] of modelos.entries()) {
     const corte = new AbortController();
     const alCortar = () => corte.abort();
     senal?.addEventListener('abort', alCortar, { once: true });
-    const vence = setTimeout(() => corte.abort(new Error('sin primera señal a tiempo')), c.primeraMs);
+    // El de respaldo es el último con herramientas antes del Qwen del nodo: un poco más de margen para la primera señal.
+    const primera = i === 0 ? c.primeraMs : c.respaldoPrimeraMs > 0 ? c.respaldoPrimeraMs : Math.round(c.primeraMs * 1.5);
+    const vence = setTimeout(() => corte.abort(new Error('sin primera señal a tiempo')), primera);
     // Ya con algo útil, un silencio largo a media respuesta también corta (antes solo se vigilaba la primera
     // señal; auditoría de Codex del 3-oct).
     let quieto: ReturnType<typeof setTimeout> | null = null;

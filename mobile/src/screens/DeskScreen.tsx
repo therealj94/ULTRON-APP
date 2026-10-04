@@ -123,6 +123,7 @@ import { refsDeTurno } from '../lib/trabajos';
 import { avisarTrabajos, useTrabajos } from '../trabajos/useTrabajos';
 import { IndicadorTrabajos } from '../trabajos/IndicadorTrabajos';
 import { PanelTrabajos } from '../trabajos/PanelTrabajos';
+import { escucharPedidoPanel, tomarPedidoPanel } from '../trabajos/abrirPanel';
 
 type Props = {
   user: SessionUser;
@@ -382,6 +383,14 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   // servidor es la fuente de verdad y, al volver, la misma tarea (mismo id) sigue con su estado.
   const [panelTrabajos, setPanelTrabajos] = useState(false);
   const trabajos = useTrabajos({ activo: mesaActiva || panelTrabajos, panelAbierto: panelTrabajos, idioma: idioma === 'en' ? 'en' : 'es' });
+  // Un aviso tocado pidió sus tareas («Terminé de investigar»): el panel se abre al montarse la mesa o al instante.
+  useEffect(() => {
+    const abrir = () => {
+      if (tomarPedidoPanel()) setPanelTrabajos(true);
+    };
+    abrir();
+    return escucharPedidoPanel(abrir);
+  }, []);
 
   // Su computadora: se pregunta despacio (rápido mientras trabaja) con la mesa a la vista. Mientras
   // trabaja, la mesa lo dice arriba con «Ver»; al terminar, «terminó · ver el resultado» un rato.
