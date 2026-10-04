@@ -5,8 +5,9 @@
  * llamada o un recordatorio propuestos, lo escrito en el chat abierto) se ejecuta:
  *
  *   · SIN PREGUNTAR (el atajo): solo si, tras normalizar (minúsculas, sin tildes ni signos, «👍»/«✅» como «sí») y quitar
- *     un conjunto CERRADO de fichas —las afirmaciones (AFIRMA) y la cortesía (CORTESIA, y «señor» o el nombre del avatar
- *     solo como vocativo suelto)—, NO QUEDA NINGUNA ficha. Cualquier otra ficha (él, «al señor», «Bueno», «Lee», una
+ *     un conjunto CERRADO de fichas —las afirmaciones (AFIRMA; «claro» salvo detrás de «a/al/para», donde es el contacto
+ *     Claro) y la cortesía (CORTESIA, y «señor» o el nombre del avatar solo como vocativo suelto)—, NO QUEDA NINGUNA
+ *     ficha. Cualquier otra ficha (él, «al señor», «Bueno», «Lee», una
  *     hora, un número, un nombre, un canal, una palabra desconocida) significa que el atajo no ejecuta.
  *   · EN EL TURNO COMPLETO: lo que sobra (sin las palabras de enlace) tiene que identificar sin dudas UNA decisión:
  *     su destinatario (nombre del contacto o correo exacto, también dictado: «arroba», «punto»), su canal, o ambos, y a
@@ -96,6 +97,8 @@ const A_MI = set('mandamelo mandamela mandamelos enviamelo enviamela enviamelos 
 const ENLACE = set('a al el la los las lo de del por para to the y and e en con via o this that it of for');
 /** Detrás de estas, lo que sigue es a quién va («a Aura», «al señor», «para mí», «to me»). */
 const PREP_DESTINO = set('a al para pa to for con de');
+/** Detrás de estas, «claro» es el contacto Claro, no un sí. */
+const PREP_CLARO = set('a al para pa to for');
 /** Pronombres: nunca identifican a nadie. («él» con tilde se marca antes de quitar tildes.) */
 const PRONOMBRES = set('pronel ella ellos ellas le les him her them');
 /** «a mí», «para mí», «to me», «a mi correo». */
@@ -216,7 +219,10 @@ export type Analisis = {
   plural: boolean;
   /** Un pronombre (él, ella, le, him…): nunca identifica a nadie. */
   pronombre: boolean;
-  /** El nombre del avatar donde iría un vocativo, pero es un contacto o un destino: no se sabe si es a quién va. */
+  /**
+   * El nombre del avatar (o «claro») donde iría un vocativo, pero es un contacto o un destino: no se sabe si es a quién
+   * va.
+   */
   avatarDudoso: boolean;
   /** Un destino propio («a mí», «mándamelo»). */
   propio: boolean;
@@ -279,8 +285,15 @@ export function analizarRespuesta(mensaje: string, o: { conocidos?: Iterable<str
   u.forEach((x, i) => {
     const antes = u[i - 1]?.w;
     const trasPrep = !!antes && PREP_DESTINO.has(antes);
-    // «claro» afirma solo sola o al principio (detrás de otra cosa puede ser un nombre: «ok, Claro», «a Claro»).
-    if (x.k === 'si' && x.w === 'claro' && (trasPrep || !u.slice(0, i).every((y) => y.k === 'cortesia' || y.k === 'vocativo'))) x.k = 'ficha';
+    // «claro» afirma en cualquier posición («sí, claro», «ok, claro»), SALVO justo detrás de a/al/para/pa/to/for (el
+    // contacto Claro: «sí, a Claro»), o si Claro es un contacto o un destino y va como vocativo suelto: no se sabe.
+    if (x.k === 'si' && x.w === 'claro') {
+      if (antes && PREP_CLARO.has(antes)) x.k = 'ficha';
+      else if (conocidos.has('claro') && (u.slice(0, i).every(blanda) || u.slice(i + 1).every(blanda))) {
+        avatarDudoso = true;
+        x.k = 'ficha';
+      }
+    }
     if (x.k === 'vocativo') {
       const suelto = !trasPrep && (u.slice(0, i).every(blanda) || u.slice(i + 1).every(blanda));
       if (!suelto) x.k = 'ficha';

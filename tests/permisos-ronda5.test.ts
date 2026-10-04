@@ -51,7 +51,8 @@ const BRUNO = chat('50477773333@s.whatsapp.net', 'Bruno', '+50477773333');
 const TIGO = chat('50477770001@s.whatsapp.net', 'Tigo', '+50477770001');
 const ANTONIO = chat('50477770002@s.whatsapp.net', 'Antonio', '+50477770002');
 const PAZ = chat('50477770003@s.whatsapp.net', 'Paz', '+50477770003');
-const CHATS = [BRUNO, TIGO, ANTONIO, PAZ];
+const CLARO = chat('50477770004@s.whatsapp.net', 'Claro', '+50477770004');
+const CHATS = [BRUNO, TIGO, ANTONIO, PAZ, CLARO];
 
 async function conEntorno<R>(lista: any[], fn: (e: { mandados: Envio[]; enviados: Array<{ chat: string; texto: string }> }) => Promise<R>): Promise<R> {
   const enviados: Array<{ chat: string; texto: string }> = [];
@@ -349,7 +350,7 @@ function azar(semilla: number) {
 /** 200 palabras comunes del español y nombres (ninguna de cortesía, ningún sí, ningún nombre del avatar). */
 const DICCIONARIO = (
   'Ana Bruno Carla Luz Paz Lee Mario Pedro Juan María José Luis Carlos Sofía Lucía Elena Rosa Diego Pablo Andrés ' +
-  'Jorge Miguel Laura Marta Teresa Raúl Óscar Hugo Iván Nora Olga Rita Tigo Claro Bueno Esperanza Rocío Ángel Cruz Mar ' +
+  'Jorge Miguel Laura Marta Teresa Raúl Óscar Hugo Iván Nora Olga Rita Tigo Bueno Celia Esperanza Rocío Ángel Cruz Mar ' +
   'Sol Flor Blanca Dolores Pilar Victoria Gloria Leo Noé Abel Ada Eva Ema Iris Inés Beto Chepe Toño Lupe Memo Nacho ' +
   'casa perro gato agua mañana tarde noche hoy lunes martes viernes cinco diez 5 10 300 hora reunión factura pago banco ' +
   'tienda carro trabajo oficina jefe mamá papá hermano amigo doctor cita médico escuela niños comida cena almuerzo café ' +
@@ -399,4 +400,56 @@ test('ronda 5 (propiedad): una afirmación más UNA palabra de un diccionario de
     }
   });
   assert.deepEqual(fallos.slice(0, 40), [], `${fallos.length} fallos de ${combos.length} combinaciones`);
+});
+
+/* ------------------------------------------------------------------ ajuste: «claro» */
+
+test('ronda 5 (ajuste «claro»): «sí, claro», «ok, claro», «claro, dale»… confirman; «a Claro» o el contacto Claro preguntan', async () => {
+  const confirman = ['sí, claro', 'claro que sí', 'sí claro, mándalo', 'ok, claro', 'claro, dale'];
+  const fallos: string[] = [];
+  // La app: el atajo con un borrador para Ana.
+  for (const frase of confirman) {
+    const r = APP.ordenPorReglas(frase, { pendiente: PEND_ANA, contexto: CTX });
+    if (r?.accion?.tipo !== 'enviar') fallos.push(`atajo «${frase}»: ${JSON.stringify(r?.accion ?? null)}`);
+  }
+  await conEntorno([], async ({ mandados, enviados }) => {
+    // El servidor: un correo para Ana, una vez.
+    for (const frase of [...confirman, 'sí, a Claro']) {
+      C._olvidarCorreo();
+      const antes = mandados.length;
+      await C.correrCorreo(JOSE, 'escribir ana@example.test | Informe | Va el informe.', 'tel');
+      const r = await turno(frase);
+      await turno(frase);
+      const efectos = mandados.length - antes;
+      const debe = frase === 'sí, a Claro' ? 0 : 1;
+      if (efectos !== debe || (debe === 0 && !PREGUNTA.test(r.hechos.join('\n')))) fallos.push(`servidor «${frase}»: efectos=${efectos}`);
+    }
+    // «mándaselo a Claro» con un WhatsApp para Tigo: pregunta.
+    W._olvidarWhatsapp();
+    await W.correrWhatsapp(JOSE, 'responder Tigo | Ya pagué.', 'tel');
+    const r1 = await turno('mándaselo a Claro');
+    if (enviados.length !== 0 || !PREGUNTA.test(r1.hechos.join('\n'))) fallos.push(`«mándaselo a Claro» con Tigo: enviados=${enviados.length}`);
+    // «sí, claro» con un WhatsApp para el contacto Claro y otro (correo) para Ana: pregunta.
+    W._olvidarWhatsapp();
+    C._olvidarCorreo();
+    const m0 = mandados.length;
+    await W.correrWhatsapp(JOSE, 'responder Claro | Quiero cambiar de plan.', 'tel');
+    await C.correrCorreo(JOSE, 'escribir ana@example.test | Informe | Va.', 'tel');
+    const r2 = await turno('sí, claro', { conocidos: ['Ana', 'Claro'] });
+    if (enviados.length !== 0 || mandados.length !== m0 || !PREGUNTA.test(r2.hechos.join('\n'))) fallos.push(`«sí, claro» con Claro y Ana: enviados=${enviados.length} mandados=${mandados.length - m0}`);
+  });
+  // La función única: el contacto Claro como vocativo solo no confirma nada.
+  const A = await import('../lib/afirmacion');
+  const claroWA: any = { tipo: 'whatsapp', destino: 'Claro (+50477770004)' };
+  const ana: any = { tipo: 'correo', destino: 'Ana <ana@example.test>' };
+  for (const [frase, ps, tipo] of [
+    ['Claro, sí', [claroWA], 'preguntar'],
+    ['sí, a Claro', [claroWA], 'ejecutar'],
+    ['sí, claro', [ana], 'ejecutar'],
+    ['ok, claro', [ana], 'ejecutar'],
+  ] as Array<[string, any[], string]>) {
+    const d: any = A.decidirPendiente(frase, ps);
+    if (d.tipo !== tipo) fallos.push(`función «${frase}»: esperaba ${tipo}, dio ${d.tipo}`);
+  }
+  assert.deepEqual(fallos, []);
 });
