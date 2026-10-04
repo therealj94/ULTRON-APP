@@ -28,6 +28,8 @@ import {
   anotarPropuesta,
   aparatoValido,
   appEsperandoDe,
+  alConfirmarAccionesApp,
+  avisosAppDe,
   mismaEsperaApp,
   avisoReemplazoApp,
   DICHO_ACTUALIZAR,
@@ -2711,6 +2713,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   const ambitoTurno = ambitoDelTurno(body, opciones);
   // Lo que un envío confirmado en la voz terminó después de contestar (el resultado real, una vez).
   if (duenoComputadora) hechos.push(...avisosDeEnvio(duenoComputadora, ambitoTurno));
+  // Novena ronda: lo de la app que no salió al confirmar el turno de voz (cambió lo que esperaba): una vez.
+  if (correoApp) hechos.push(...avisosAppDe(ambitoApp(correoApp, body?.aparato)));
   // Lo que investigó en segundo plano (server/investigar.ts): lo que terminó y no se le dijo, y lo que sigue
   // corriendo. Se da por dicho solo si el modelo contesta con estos hechos (como lo de su computadora).
   const deLaInvestigacion = duenoComputadora ? avisosInvestigacion(duenoComputadora) : null;
@@ -4090,9 +4094,12 @@ async function ordenDeApp(body: any, opciones: OpcionesTurno = {}): Promise<{ de
   // Llamar y recordar se preguntan primero: la propuesta espera el «sí» del turno siguiente.
   // El evento (con su id) va por el canal del aparato y el MISMO va en la respuesta del turno: la
   // app deduplica por id y no hace la acción dos veces (Beto recibió dos mensajes, 29-sep).
+  const vistaApp = appEsperandoDe(amb, contexto);
+  const propuestaVista = propuestaAnterior(amb);
   const { eventos, frenadas } = await empujarDelTurno(correo, [...(orden.accion ? [orden.accion] : []), ...(orden.mas || [])], {
     aparato: aparatoValido(body?.aparato),
     retener: opciones.retener,
+    atada: { vista: vistaApp, contexto, propuesta: propuestaVista },
     antes:
       orden.propuesta || orden.soltarPropuesta || orden.aclaracion || orden.soltarAclaracion || orden.confirmarCambio
         ? () => {
@@ -4139,25 +4146,39 @@ function empezarTurnoDeCuenta(body: any, opciones: OpcionesTurno = {}) {
 async function empujarDelTurno(
   correo: string,
   todas: AccionApp[],
-  o: { aparato: string | null; retener?: RetencionAcciones; antes?: () => void; despues?: () => void }
+  o: {
+    aparato: string | null;
+    retener?: RetencionAcciones;
+    antes?: () => void;
+    despues?: () => void;
+    /**
+     * Novena ronda: lo que vio la decisión de lo que espera la app (su versión) y la propuesta que esperaba. Las acciones
+     * que lo cumplen salen solo si al emitirlas espera exactamente eso, y una sola vez (alConfirmarAccionesApp).
+     */
+    atada?: { vista: { huella?: string } | null; contexto: ContextoApp | null; propuesta: Propuesta | null };
+  }
 ): Promise<{ eventos: EventoAccion[]; frenadas: AccionApp[] }> {
   // Lo que deja algo afuera (mandar, marcar, agendar) se persiste en el turno ANTES de empujarlo (revisión
   // externa, 4-oct): sin registro durable, en un turno sin efectos o ya de otro proceso, no sale. Así un
   // reintento del turno no lo vuelve a mandar con otro id.
   const { salen: acciones, frenadas } = await accionesQueSalen(todas, (que) => efectoDelTurno(que));
+  const amb = ambitoApp(correo, o.aparato);
   if (!o.retener) {
+    // Fuera de la voz, al momento: también una sola vez por decisión.
+    const salen = o.atada ? alConfirmarAccionesApp(amb, o.atada, acciones.map((accion) => ({ id: '', accion }))).map((e) => e.accion) : acciones;
     o.antes?.();
-    const eventos = acciones.map((a) => empujarAccion(correo, a, { aparato: o.aparato }).evento);
+    const eventos = salen.map((a) => empujarAccion(correo, a, { aparato: o.aparato }).evento);
     o.despues?.();
     return { eventos, frenadas };
   }
   // Nada que hacer: el turno no espera ninguna confirmación (la respuesta cierra al terminar).
   if (!acciones.length && !o.antes && !o.despues) return { eventos: [], frenadas };
   const eventos = acciones.map((accion) => ({ id: nuevoIdAccion(), accion }));
-  const amb = ambitoApp(correo, o.aparato);
   o.retener.hacer(() => {
+    // Novena ronda: al confirmar el turno se vuelve a mirar lo que espera la app (y que esta decisión no salió ya).
+    const salen = o.atada ? alConfirmarAccionesApp(amb, o.atada, eventos) : eventos;
     o.antes?.();
-    for (const e of eventos) if (!repetidaEnVoz(amb, e.accion)) empujarAccion(correo, e.accion, { aparato: o.aparato, id: e.id });
+    for (const e of salen) if (!repetidaEnVoz(amb, e.accion)) empujarAccion(correo, e.accion, { aparato: o.aparato, id: e.id });
     o.despues?.();
   });
   return { eventos, frenadas };
@@ -4212,6 +4233,7 @@ async function accionesDelCerebro(
     aparato: p.aparato,
     retener: p.retener,
     despues: propuesta ? () => anotarPropuesta(amb, propuesta) : undefined,
+    atada: { vista: appEsperandoDe(amb, p.contextoApp), contexto: p.contextoApp, propuesta: previa },
   });
   const RE_PROMESA_ENVIO = /[¡!]?\s*(listo,?\s*)?(ya\s+)?(est[aá]\s+)?(enviad[oa]|mandad[oa])\s*[!.]?|va,?\s*lo\s+mando\.?/gi;
   // Una acción con efecto que no salió porque el turno no quedó registrado: se dice, sin la promesa de hecho.
