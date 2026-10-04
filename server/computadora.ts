@@ -1772,7 +1772,12 @@ export function preguntasComputadora(quien: string, ambito?: string): { tareaId:
   if (!quien) return [];
   const ps = misionesConPregunta(quien, ambito).map((m) => ({ tareaId: m.pregunta!.tareaId, texto: m.pregunta!.texto, version: versionPregunta(m.pregunta!) }));
   const ofrece = ps.length ? null : misionQueOfreceSeguir(quien, ambito);
-  return ofrece ? [{ tareaId: ofrece.tareas.at(-1) ?? '', texto: `¿sigo con «${ofrece.instruccion.slice(0, 120)}»?` }] : ps;
+  return ofrece ? [{ tareaId: ofrece.tareas.at(-1) ?? '', texto: `¿sigo con «${ofrece.instruccion.slice(0, 120)}»?`, version: versionSeguir(ofrece) }] : ps;
+}
+
+/** La versión de «¿sigo con…?» (octava ronda): la misión y el momento en que lo ofreció. */
+function versionSeguir(m: Pick<Mision, 'id' | 'ofreceSeguir'>): string {
+  return `seguir|${m.id}|${m.ofreceSeguir ?? ''}`;
 }
 
 function misionQueOfreceSeguir(quien: string, ambito?: string): Mision | null {
@@ -1837,6 +1842,16 @@ export async function resolverPreguntaComputadora(quien: string, mensaje: string
   // Séptima ronda (G1-N1): lo decidido fue ESA versión de la pregunta; si mientras tanto cambió, no se contesta.
   if (opciones.version !== undefined && m?.pregunta && versionPregunta(m.pregunta) !== opciones.version) {
     return `COMPUTADORA: NO contesté nada: mientras se decidía, su computadora cambió la pregunta (ahora: «${m.pregunta.texto}»). Léesela y pregúntale de nuevo.`;
+  }
+  // Octava ronda: lo decidido ya no existe (la misión terminó o se fue la pregunta mientras se registraba el efecto).
+  // Nunca se cae a otra cosa (no se sigue la misión con un «sí» que era para una pregunta, ni al revés).
+  const decidida = opciones.elegida !== undefined || opciones.version !== undefined;
+  if (decidida) {
+    const eraSeguir = !!opciones.version?.startsWith('seguir|');
+    const sigue = eraSeguir && !m && !enEsta.length ? misionQueOfreceSeguir(quien, opciones.ambito) : null;
+    if (eraSeguir ? !sigue || versionSeguir(sigue) !== opciones.version : !m) {
+      return 'COMPUTADORA: NO hice nada: mientras se decidía, lo que esperaba su respuesta ya no está (la tarea terminó o cambió). No se contestó ni se siguió nada. Dile cómo quedó y pregúntale de nuevo qué quiere.';
+    }
   }
   const ofrece = m || enEsta.length ? null : misionQueOfreceSeguir(quien, opciones.ambito);
   if (!m && !ofrece) return null;
