@@ -165,7 +165,7 @@ type Borrador = {
  * `soloPanel` (AUR08): siguió con otra cosa; espera la decisión del panel hasta que venza y el chat ya no lo resuelve.
  * `reemplazoDe` (revisión 4-oct): reemplazó a otro que esperaba su «sí» en el mismo turno; a quién iba ese.
  */
-type BorradorGuardado = Borrador & VigenciaBorrador & { huella: string; repeticionAceptada?: string; soloPanel?: boolean; reemplazoDe?: string };
+type BorradorGuardado = Borrador & VigenciaBorrador & { huella: string; repeticionAceptada?: string; soloPanel?: boolean; reemplazoDe?: string; huellaAnterior?: string };
 
 const digitos = (s: string | undefined) => String(s || '').replace(/\D/g, '');
 
@@ -371,9 +371,9 @@ function guardarBorrador(quien: string, ambito: string, b: Borrador): ResultadoH
   const previo = BORRADORES.get(k);
   // Desde cero: nada del de antes (ni su aceptación de repetir, que era de ESE chat) pasa a este.
   const reemplazo = reemplazoPendiente(previo, huella, quien, previo ? destinoWhatsapp(previo) : '');
-  BORRADORES.set(k, { ...b, ...(numero ? { numero } : {}), ...vigencia, huella, ...(reemplazo ? { reemplazoDe: reemplazo } : {}) });
+  BORRADORES.set(k, { ...b, ...(numero ? { numero } : {}), ...vigencia, huella, ...(reemplazo ? reemplazo : {}) });
   const para = destinoWhatsapp({ ...b, numero });
-  const aviso = reemplazo ? `OJO: este borrador REEMPLAZA al que esperaba para ${reemplazo}, que ya NO se manda. Díselo claro: el que espera ahora es para ${para}. Antes de mandarlo le vuelvo a confirmar a quién va.\n` : '';
+  const aviso = reemplazo ? `OJO: este borrador REEMPLAZA al que esperaba para ${reemplazo.reemplazoDe}, que ya NO se manda. Díselo claro: el que espera ahora es para ${para}. Antes de mandarlo le vuelvo a confirmar a quién va.\n` : '';
   return exito(`BORRADOR DE WHATSAPP (NO enviado) para ${para}:\n${b.texto}\n${aviso}Léeselo tal cual (di a quién va) y pregúntale si lo mandas. Solo se manda si dice que sí; si quiere cambios, haz otro borrador.`, {
     efecto: 'borrador',
     proveedor: 'whatsapp',

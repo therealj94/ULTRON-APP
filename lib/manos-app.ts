@@ -40,7 +40,12 @@ import type { ContextoApp, Contacto, Resolucion } from './acciones-app';
  * audio, colgar y la tarea (pausar, seguir, cancelar, tomar el control). Sin ella, «cállate» sigue siendo
  * `silencio` (lo que entiende un APK viejo).
  */
-export const MANOS = ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame', 'cartera', 'pagar', 'controles'] as const;
+/**
+ * `enviar_exacto` (permisos exactos, revisión 4-oct): el teléfono comprueba, antes de mandar, que su borrador sea el
+ * texto que la persona aprobó (`enviar.texto`). Sin ella (un APK u OTA de antes, que ignora ese texto) el servidor NO le
+ * manda ningún `enviar`: el contenido aprobado no se podría hacer cumplir.
+ */
+export const MANOS = ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame', 'cartera', 'pagar', 'controles', 'enviar_exacto'] as const;
 export type Mano = (typeof MANOS)[number];
 
 export const CAMPOS_PERFIL = ['apodo', 'cumple', 'vive', 'trabajo', 'familia', 'gustos', 'comida', 'musica', 'otros'] as const;

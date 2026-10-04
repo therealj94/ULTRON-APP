@@ -550,6 +550,11 @@ type Mision = {
   idioma: 'es' | 'en';
   motor: MotorNodo;
   aparato: string | null;
+  /**
+   * La conversación que la encargó (la del turno: el aparato, la web, la voz). Permisos exactos (revisión 4-oct): sus
+   * preguntas se contestan por el chat de ESA conversación; en otra, un «sí» no es para ellas (ahí están los botones).
+   */
+  ambito?: string | null;
   maxPasos: number;
 };
 const ENCARGOS = new Map<string, Encargo>();
@@ -1479,6 +1484,8 @@ async function crearEncargo(o: {
   quien: string;
   motor: MotorNodo;
   aparato: string | null;
+  /** La conversación del turno que la encargó (ver Mision.ambito). */
+  ambito?: string | null;
   idioma: 'es' | 'en';
   maxPasos: number;
   vuelta: number;
@@ -1516,6 +1523,7 @@ async function crearEncargo(o: {
     idioma: o.idioma,
     motor: o.motor,
     aparato: o.aparato,
+    ambito: o.ambito ?? o.aparato ?? null,
     maxPasos: o.maxPasos,
   };
   m.tareas.push(creada.id);
@@ -1607,6 +1615,8 @@ export async function encargarTarea(o: {
   maxPasos?: number;
   /** El teléfono del turno (x-aura-aparato). */
   aparato?: string | null;
+  /** La conversación del turno (server.ts ambitoDelTurno); sin ella, la del aparato. */
+  ambito?: string | null;
   idioma?: 'es' | 'en';
   /** Encargada desde la app (sin turno): el teléfono dice el plan en voz al empezar. */
   decirPlan?: boolean;
@@ -1623,7 +1633,7 @@ export async function encargarTarea(o: {
   const plan = { pasos: separado.plan ?? planDeMision(instruccion, idioma), delCerebro: !!separado.plan };
   let e: Encargo;
   let nota = '';
-  const base = { instruccion, paraNodo: prepararMision(instruccion, idioma), quien: o.quien, aparato: o.aparato ?? null, idioma, maxPasos: o.maxPasos ?? 25, vuelta: 0, plan, pedido: o.pedido };
+  const base = { instruccion, paraNodo: prepararMision(instruccion, idioma), quien: o.quien, aparato: o.aparato ?? null, ambito: o.ambito ?? o.aparato ?? null, idioma, maxPasos: o.maxPasos ?? 25, vuelta: 0, plan, pedido: o.pedido };
   try {
     try {
       e = await crearConReintento({ ...base, motor: o.motor });
@@ -1716,11 +1726,16 @@ export function fraseDePlan(plan: readonly string[], idioma: 'es' | 'en' = 'es')
   return idioma === 'en' ? `On it. My plan: ${lista}.` : `Va. Mi plan: ${lista}.`;
 }
 
-/** Las misiones de esta persona que esperan su sí ahora, si la pregunta sigue valiendo (la más reciente primero). */
-function misionesConPregunta(quien: string): Mision[] {
+/**
+ * Las misiones de esta persona que esperan su sí ahora, si la pregunta sigue valiendo (la más reciente primero). Con
+ * `ambito`, solo las que encargó ESA conversación (revisión 4-oct: una pregunta de otra pantalla no vuelve ambiguo el
+ * «sí» de esta, ni se contesta desde aquí).
+ */
+function misionesConPregunta(quien: string, ambito?: string): Mision[] {
   const out: Mision[] = [];
   for (const id of [...(HISTORIAL.get(quien) ?? [])].reverse()) {
     const m = MISIONES.get(id);
+    if (ambito !== undefined && (m?.ambito ?? null) !== ambito) continue;
     if (m?.pregunta && !m.final && Date.now() - m.pregunta.desde < PREGUNTA_VALE_MS && !out.includes(m)) out.push(m);
   }
   return out;
@@ -1730,16 +1745,17 @@ function misionesConPregunta(quien: string): Mision[] {
  * Lo que su computadora espera que conteste por el chat (permisos exactos, 4-oct): cada pregunta (antes de algo
  * sensible) y el «¿sigo?» de una misión a medias. Con más de una, un «sí» suelto no decide cuál (server/decision-turno.ts).
  */
-export function preguntasComputadora(quien: string): { tareaId: string; texto: string }[] {
+export function preguntasComputadora(quien: string, ambito?: string): { tareaId: string; texto: string }[] {
   if (!quien) return [];
-  const ps = misionesConPregunta(quien).map((m) => ({ tareaId: m.pregunta!.tareaId, texto: m.pregunta!.texto }));
-  const ofrece = ps.length ? null : misionQueOfreceSeguir(quien);
+  const ps = misionesConPregunta(quien, ambito).map((m) => ({ tareaId: m.pregunta!.tareaId, texto: m.pregunta!.texto }));
+  const ofrece = ps.length ? null : misionQueOfreceSeguir(quien, ambito);
   return ofrece ? [{ tareaId: ofrece.tareas.at(-1) ?? '', texto: `¿sigo con «${ofrece.instruccion.slice(0, 120)}»?` }] : ps;
 }
 
-function misionQueOfreceSeguir(quien: string): Mision | null {
+function misionQueOfreceSeguir(quien: string, ambito?: string): Mision | null {
   const id = (HISTORIAL.get(quien) ?? []).at(-1);
   const m = id ? MISIONES.get(id) : null;
+  if (m && ambito !== undefined && (m.ambito ?? null) !== ambito) return null;
   return m?.ofreceSeguir && Date.now() - m.ofreceSeguir < SEGUIR_VALE_MS ? m : null;
 }
 
@@ -1784,11 +1800,13 @@ type Retener = { hacer: (f: () => void) => void; alDescartar: (f: () => void) =>
  * AQUÍ (lo hace el servidor, no el modelo) y vuelve el HECHO para que AURA lo diga. Otra cosa: null (la
  * pregunta sigue esperando, y la app tiene los botones). En la voz, espera a que el turno se confirme.
  */
-export async function resolverPreguntaComputadora(quien: string, mensaje: string, retener?: Retener): Promise<string | null> {
+export async function resolverPreguntaComputadora(quien: string, mensaje: string, retener?: Retener, opciones: { ambito?: string; elegida?: string } = {}): Promise<string | null> {
   if (!quien) return null;
-  const conPregunta = misionesConPregunta(quien);
+  // `ambito`: solo las de esta conversación. `elegida`: la tarea cuya pregunta nombró la persona (server/decision-turno.ts).
+  const enEsta = misionesConPregunta(quien, opciones.ambito);
+  const conPregunta = opciones.elegida ? enEsta.filter((x) => x.pregunta?.tareaId === opciones.elegida) : enEsta;
   const m = conPregunta[0] ?? null;
-  const ofrece = m ? null : misionQueOfreceSeguir(quien);
+  const ofrece = m || enEsta.length ? null : misionQueOfreceSeguir(quien, opciones.ambito);
   if (!m && !ofrece) return null;
   // Las marcas del propio teléfono («[[lectura:…]]», «[[sigues]]») no son la persona.
   if (/^\s*\[\[/.test(String(mensaje || ''))) return null;

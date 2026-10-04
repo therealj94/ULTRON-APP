@@ -29,6 +29,7 @@ import {
   aparatoValido,
   appEsperandoDe,
   avisoReemplazoApp,
+  DICHO_ACTUALIZAR,
   confirmarCambioApp,
   contextoDe,
   decibleHasta,
@@ -68,6 +69,7 @@ import { quitarExpresiones } from './lib/expresiones';
 import { puntoDeCorte } from './lib/trozos';
 import { claveTurno, efectoDelTurno, enTurnoUnico, idTurnoValido, reclamarTurno, turnoSinEfectos, type TurnoGuardado } from './server/turno-unico';
 import { atajoDeAppBloqueado, resolverBorradorDesdePanel, resolverDecisionesDelTurno } from './server/decision-turno';
+import { puedeMano } from './lib/manos-app';
 import {
   abrirDecisionDeBorrador,
   abrirEncargoComputadora,
@@ -2716,7 +2718,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   // computadora) lo resuelve el servidor aquí (server/decision-turno.ts), no el modelo.
   // Permisos exactos (4-oct): lo que espera la app cuenta para saber si un «sí» es ambiguo; si lo es (o nombró otra
   // cosa), lo de la app tampoco sale en este turno (appBloqueada → accionesDelCerebro).
-  const appEsperando = correoApp ? appEsperandoDe(ambitoApp(correoApp, body?.aparato)) : null;
+  // Con el contexto del teléfono: un borrador escrito en el chat abierto también espera (revisión 4-oct).
+  const appEsperando = correoApp ? appEsperandoDe(ambitoApp(correoApp, body?.aparato), contextoApp) : null;
   const decision = await resolverDecisionesDelTurno({
     dueno: duenoComputadora,
     ambito: ambitoTurno,
@@ -3747,7 +3750,7 @@ async function correrHerramientaPedida(
         if (orden !== null) return orden;
         // Trabajo durable (AUR08): la tarea existe ANTES de encargar, y la respuesta del turno la enlaza.
         const ref = await abrirEncargoComputadora(compu.quien, ambito, tarea);
-        const r = await encargarTarea({ instruccion: tarea, quien: compu.quien, motor: compu.motor, esperaMs: compu.esperaMs, senal, aparato: compu.aparato, idioma: compu.idioma });
+        const r = await encargarTarea({ instruccion: tarea, quien: compu.quien, motor: compu.motor, esperaMs: compu.esperaMs, senal, aparato: compu.aparato, ambito, idioma: compu.idioma });
         const hecha = r.tarea?.estado === 'hecha';
         // La tarea durable pasa a «reviso el resultado» si el nodo terminó; la reconciliación decide si se comprobó.
         await cerrarEncargoComputadora(compu.quien, ref, { misionId: r.id || null, estado: !r.id ? 'failed' : hecha ? 'succeeded' : 'unknown', texto: r.hecho });
@@ -4061,6 +4064,8 @@ async function ordenDeApp(body: any, opciones: OpcionesTurno = {}): Promise<{ de
     esperaLayaMs: opciones.voz ? Math.min(250, TOPE_PASO_VOZ_MS) : undefined,
   });
   if (!orden || (!orden.accion && !orden.propuesta && !orden.soltarPropuesta && !orden.soloDecir)) return null;
+  // Revisión 4-oct: un `enviar` sin el texto aprobado nunca sale por el atajo (el teléfono no tendría qué comprobar).
+  if (orden.accion?.tipo === 'enviar' && !orden.accion.texto) return null;
   // «Llámame» dicho EN la llamada del avatar: ya están hablando (no suena otra encima).
   if (opciones.voz && orden.accion?.tipo === 'llamame') {
     orden.accion = null;
@@ -4202,6 +4207,11 @@ async function accionesDelCerebro(
     // El borrador reemplazó a otro del mismo turno: este «sí» no lo mandó; se dice a quién va ahora y el siguiente vale.
     if (pendiente?.reemplazoDe && !p.appBloqueada) {
       const aviso = avisoReemplazoApp(amb, pendiente, p.idioma, p.retener);
+      return { texto: `${sinPromesa} ${aviso}`.trim(), acciones: eventos, sustituido: true };
+    }
+    // Un teléfono que no comprueba el texto aprobado (sin la mano `enviar_exacto`): no recibe ningún `enviar`.
+    if (hayBorrador && !p.appBloqueada && !puedeMano(p.contextoApp, 'enviar_exacto')) {
+      const aviso = p.idioma === 'en' ? DICHO_ACTUALIZAR.en : DICHO_ACTUALIZAR.es;
       return { texto: `${sinPromesa} ${aviso}`.trim(), acciones: eventos, sustituido: true };
     }
     if (p.appBloqueada && hayBorrador) {

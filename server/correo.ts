@@ -84,6 +84,8 @@ type BorradorGuardado = Borrador &
      * ser para ese, así que no manda este; pide confirmarlo nombrando a quién va ahora.
      */
     reemplazoDe?: string;
+    /** La huella del borrador que la persona oyó antes del cambio: volver EXACTAMENTE a ese quita la marca. */
+    huellaAnterior?: string;
   };
 export type VigenciaBorrador = { dueno: string; vence: number; intento: string };
 const BORRADORES = new Map<string, BorradorGuardado>();
@@ -426,9 +428,19 @@ async function escribir(quien: string, ambito: string, para: string, asunto: str
  * ahí, se armaron dos en el mismo turno y la persona pudo oír los dos: su «sí» no es de este sin confirmarlo.
  * Devuelve a quién iba el de antes (correo y WhatsApp).
  */
-export function reemplazoPendiente(previo: { soloPanel?: boolean; huella: string; dueno: string; vence: number } | undefined, huella: string, quien: string, para: string): string | null {
-  if (!previo || previo.soloPanel || motivoBorrador(previo, quien) || previo.huella === huella) return null;
-  return para;
+export function reemplazoPendiente(
+  previo: { soloPanel?: boolean; huella: string; dueno: string; vence: number; reemplazoDe?: string; huellaAnterior?: string } | undefined,
+  huella: string,
+  quien: string,
+  para: string
+): { reemplazoDe: string; huellaAnterior: string } | null {
+  if (!previo || previo.soloPanel || motivoBorrador(previo, quien)) return null;
+  // Revisión 4-oct: la obligación de confirmar el destino nuevo SIGUE aunque el borrador se regenere, se edite o se
+  // repita (antes se comparaba contra el de Bruno, ya marcado, y la marca se perdía). Solo la quita un «sí» informado
+  // (aceptarCambio) o volver exactamente al borrador que la persona había oído.
+  if (previo.reemplazoDe) return previo.huellaAnterior && huella === previo.huellaAnterior ? null : { reemplazoDe: previo.reemplazoDe, huellaAnterior: previo.huellaAnterior || previo.huella };
+  if (previo.huella === huella) return null;
+  return { reemplazoDe: para, huellaAnterior: previo.huella };
 }
 
 /** El borrador queda esperando su «sí»: el recibo es `borrador` con su id de intento (nada salió todavía). */
@@ -440,9 +452,9 @@ function guardarBorrador(quien: string, ambito: string, b: Borrador, nota = ''):
   const previo = BORRADORES.get(k);
   // Se arma desde cero: nada del de antes (ni su aceptación de repetir, que era de ESE destinatario) pasa a este.
   const reemplazo = reemplazoPendiente(previo, huella, quien, previo ? `${previo.para.join(', ')} — «${previo.asunto}»` : '');
-  BORRADORES.set(k, { ...b, ...vigencia, huella, ...(reemplazo ? { reemplazoDe: reemplazo } : {}) });
+  BORRADORES.set(k, { ...b, ...vigencia, huella, ...(reemplazo ? reemplazo : {}) });
   const aviso = reemplazo
-    ? `OJO: este borrador REEMPLAZA al que esperaba para ${reemplazo}, que ya NO se manda. Díselo claro: el que espera ahora es para ${b.para.join(', ')}. Antes de mandarlo le vuelvo a confirmar a quién va.\n`
+    ? `OJO: este borrador REEMPLAZA al que esperaba para ${reemplazo.reemplazoDe}, que ya NO se manda. Díselo claro: el que espera ahora es para ${b.para.join(', ')}. Antes de mandarlo le vuelvo a confirmar a quién va.\n`
     : '';
   return exito(
     `BORRADOR (NO enviado) desde ${b.desde} para ${b.para.join(', ')}${b.cc?.length ? ` (con copia a ${b.cc.join(', ')})` : ''} — «${b.asunto}»:\n${b.texto}\n` +

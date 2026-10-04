@@ -622,8 +622,11 @@ export function confirmarCambioApp(correo: string, ahora = Date.now()) {
  * El modelo pidió enviar un borrador que reemplazó a otro del mismo turno: no salió. Devuelve lo que se dice (a quién
  * va ahora) y deja que el «sí» siguiente valga para este.
  */
-export function avisoReemplazoApp(correo: string, pendiente: { para: string; reemplazoDe?: string }, idioma: 'es' | 'en', _retener?: { hacer: (f: () => void) => void; alDescartar: (f: () => void) => void }): string {
-  confirmarCambioApp(correo);
+export function avisoReemplazoApp(correo: string, pendiente: { para: string; reemplazoDe?: string }, idioma: 'es' | 'en', retener?: { hacer: (f: () => void) => void; alDescartar: (f: () => void) => void }): string {
+  // En la voz, «ya se le dijo a quién va» vale solo si el turno se confirma (revisión 4-oct): un turno descartado (la
+  // frase seguía) no le dijo nada, y la marca de reemplazo se queda.
+  if (retener) retener.hacer(() => confirmarCambioApp(correo));
+  else confirmarCambioApp(correo);
   return idioma === 'en'
     ? `I haven't sent it: it changed (it was ${pendiente.reemplazoDe}; now it's the message to ${pendiente.para}). Should I send it to ${pendiente.para}?`
     : `No lo mandé todavía: cambió (antes era ${pendiente.reemplazoDe}; ahora es el mensaje para ${pendiente.para}). ¿Se lo mando a ${pendiente.para}?`;
@@ -705,13 +708,23 @@ export function propuestaAnterior(correo: string, ahora = Date.now()): Propuesta
   return v.reemplazoDe ? { ...p, reemplazoDe: v.reemplazoDe } : p;
 }
 
-/** Lo que espera la app de un turno anterior (su borrador o su propuesta), para saber si un «sí» es ambiguo. */
-export function appEsperandoDe(correo: string, ahora = Date.now()): { que: string; para: string } | null {
+/**
+ * Lo que espera la app de un turno anterior (su borrador o su propuesta), para saber si un «sí» es ambiguo. Con el
+ * `contexto` del teléfono, también un borrador escrito en el chat abierto (revisión 4-oct: un «sí, mándalo» puede ser
+ * para ese).
+ */
+export function appEsperandoDe(correo: string, contexto?: ContextoApp | null, ahora = Date.now()): { que: string; para: string } | null {
+  const conNombre = (para: string) => {
+    const c = (contexto?.contactos || []).find((x) => x.correo === para);
+    return c ? `${c.nombre} <${c.correo}>` : para;
+  };
   const b = pendienteAnterior(correo, ahora);
-  if (b) return { que: 'mensaje', para: b.para };
+  if (b) return { que: 'mensaje', para: conNombre(b.para) };
   const p = propuestaAnterior(correo, ahora);
-  if (!p) return null;
-  return p.tipo === 'llamar' ? { que: 'llamar', para: p.nombre || p.con } : { que: p.tipo, para: p.texto };
+  if (p) return p.tipo === 'llamar' ? { que: 'llamar', para: p.nombre || p.con } : { que: p.tipo, para: p.texto };
+  const abierto = contexto?.chatAbierto;
+  if (abierto?.correo && String(contexto?.borrador || '').trim()) return { que: 'borrador', para: `${abierto.nombre} <${abierto.correo}>` };
+  return null;
 }
 
 export function soltarPropuesta(correo: string) {
@@ -1164,6 +1177,12 @@ export function ordenPorReglas(
   return m.tipo === 'propuesta' ? { accion: null, decir: m.decir, via: 'reglas', propuesta: m.propuesta } : { accion: m.accion, decir: m.decir, via: 'reglas' };
 }
 
+/** Lo que se dice cuando el teléfono no sabe comprobar el texto aprobado (sin la mano `enviar_exacto`). */
+export const DICHO_ACTUALIZAR = {
+  es: 'No lo mando desde aquí: tu app tiene que actualizarse para mandar exactamente lo que apruebas. Mientras, tócalo tú en el chat.',
+  en: "I won't send it from here: your app needs an update so it sends exactly what you approve. Meanwhile, tap send in the chat.",
+} as const;
+
 /** «Antes era X; ahora es Y. ¿Lo hago?»: lo que reemplazó a otra cosa del mismo turno se confirma antes de hacerlo. */
 function dichoDeReemplazo(antes: string, ahora: string, idioma: 'es' | 'en'): string {
   return idioma === 'en'
@@ -1233,10 +1252,16 @@ function reglasDeSiempre(q: string, o: OpcionesReglas): OrdenRapida | null {
       if (o.pendiente?.reemplazoDe) {
         return { accion: null, decir: dichoDeReemplazo(o.pendiente.reemplazoDe, `${o.idioma === 'en' ? 'the message to' : 'el mensaje para'} ${o.pendiente.para}`, o.idioma === 'en' ? 'en' : 'es'), via: 'reglas', soloDecir: true, confirmarCambio: true };
       }
+      // Revisión 4-oct: un `enviar` siempre lleva el texto aprobado, y solo a un teléfono que lo comprueba antes de mandar.
+      if (!puedeMano(o.contexto, 'enviar_exacto')) return { accion: null, decir: o.idioma === 'en' ? DICHO_ACTUALIZAR.en : DICHO_ACTUALIZAR.es, via: 'reglas', soloDecir: true };
       // El de AU-RA sale con el texto que la persona oyó (el teléfono no manda otro contenido con este «sí»).
       if (o.pendiente) return hecho({ tipo: 'enviar', para: o.pendiente.para, texto: o.pendiente.texto }, d.enviar);
-      const para = o.contexto?.chatAbierto?.correo;
-      return hecho(para ? { tipo: 'enviar', para } : { tipo: 'enviar' }, d.enviar);
+      // El que la persona escribió en el chat abierto: a ESE chat y con ESE texto (el que el teléfono reportó). Sin chat
+      // abierto o sin texto no hay qué aprobar: nada.
+      const abierto = o.contexto?.chatAbierto?.correo;
+      const escrito = String(o.contexto?.borrador || '');
+      if (!abierto || !escrito.trim()) return null;
+      return hecho({ tipo: 'enviar', para: abierto, texto: escrito }, d.enviar);
     }
     if (o.pendiente && /^(no|nop|mejor no|borralo|borrala|descartalo|descartala|no lo envies|no lo mandes|cancela|cancelalo|olvidalo|delete it|cancel|don ?t send it|no thanks)$/.test(q)) {
       return hecho({ tipo: 'descartar' }, d.descartar);
@@ -1701,7 +1726,8 @@ export function prepararAcciones(
       continue;
     }
     if (a.tipo === 'enviar') {
-      if (enviado || !o.pendiente || conRedactar || !confirmaEnvio(o.mensaje)) continue;
+      // Solo a un teléfono que comprueba el texto aprobado antes de mandar (revisión 4-oct).
+      if (enviado || !o.pendiente || conRedactar || !confirmaEnvio(o.mensaje) || !puedeMano(o.contexto, 'enviar_exacto')) continue;
       enviado = true;
       // Al destinatario de ESE borrador y con SU texto: el teléfono no manda otro contenido con este «sí».
       out.push({ tipo: 'enviar', para: o.pendiente.para, texto: o.pendiente.texto });

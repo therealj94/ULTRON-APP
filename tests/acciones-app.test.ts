@@ -50,7 +50,8 @@ const CONTACTOS = [
   { correo: 'ana.lopez@x.com', nombre: 'Ana López' },
   { correo: 'ana.ruiz@x.com', nombre: 'Ana Ruiz' },
 ];
-const ctx: ContextoApp = { pantalla: 'chats', contactos: CONTACTOS };
+// `enviar_exacto`: un teléfono que comprueba el texto aprobado antes de mandar (sin ella no recibe ningún «enviar»).
+const ctx: ContextoApp = { pantalla: 'chats', contactos: CONTACTOS, manos: ['enviar_exacto'] };
 
 test('validarAccion: solo las formas del contrato; lo demás es null', () => {
   assert.deepEqual(validarAccion({ tipo: 'atras' }), { tipo: 'atras' });
@@ -239,10 +240,15 @@ test('el camino rápido por reglas: las órdenes simples y claras, y nada que se
 
 test('el camino rápido con un borrador: «sí» lo manda (y se dice «Va, lo mando»: la app confirma cuando sale), «no» lo borra; sin borrador, «sí» no es nada', () => {
   const pendiente = { para: 'beto@x.com', texto: 'Llego tarde' };
-  const si = ordenPorReglas('sí', { pendiente });
+  const si = ordenPorReglas('sí', { pendiente, contexto: ctx });
   assert.deepEqual(si?.accion, { tipo: 'enviar', para: 'beto@x.com', texto: 'Llego tarde' });
   assert.equal(si?.decir, 'Va, lo mando.');
-  assert.deepEqual(ordenPorReglas('envíalo', { contexto: { ...ctx, borrador: 'hola', chatAbierto: CONTACTOS[1] } })?.accion, { tipo: 'enviar', para: 'mama@x.com' });
+  // Lo que la persona escribió en el chat abierto sale con ESE texto (revisión 4-oct: ningún «enviar» sin texto aprobado).
+  assert.deepEqual(ordenPorReglas('envíalo', { contexto: { ...ctx, borrador: 'hola', chatAbierto: CONTACTOS[1] } })?.accion, { tipo: 'enviar', para: 'mama@x.com', texto: 'hola' });
+  // Un teléfono que no comprueba el texto (sin la mano `enviar_exacto`): no recibe el «enviar»; se le pide actualizar.
+  const viejo = ordenPorReglas('sí', { pendiente, contexto: { ...ctx, manos: [] } });
+  assert.equal(viejo?.accion, null);
+  assert.match(viejo!.decir, /actualizarse/);
   assert.equal(ordenPorReglas('sí', { contexto: { ...ctx, borrador: 'hola' } }), null, 'un «sí» suelto sin borrador de AURA no manda lo que la persona escribía');
   assert.deepEqual(ordenPorReglas('no lo mandes', { pendiente })?.accion, { tipo: 'descartar' });
   assert.equal(ordenPorReglas('sí'), null);

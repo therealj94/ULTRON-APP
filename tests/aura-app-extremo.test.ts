@@ -383,7 +383,8 @@ test('acciones: el camino rápido va al canal del teléfono sin el 27B; «escrí
     const ctx = await fetch(`${BASE}/api/app/contexto`, {
       method: 'POST',
       headers: h(),
-      body: JSON.stringify({ pantalla: 'chats', contactos: [{ correo: 'beto@x.com', nombre: 'Beto Pérez' }, { correo: 'mama@x.com', nombre: 'Mamá' }] }),
+      // `enviar_exacto`: el teléfono comprueba el texto aprobado antes de mandar (sin ella no recibe ningún «enviar»).
+      body: JSON.stringify({ pantalla: 'chats', contactos: [{ correo: 'beto@x.com', nombre: 'Beto Pérez' }, { correo: 'mama@x.com', nombre: 'Mamá' }], manos: ['enviar_exacto'] }),
     });
     assert.equal(ctx.status, 200);
 

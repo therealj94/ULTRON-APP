@@ -14,6 +14,7 @@ import { borradorDe, resolverBorrador, respuestaAlBorrador } from './correo';
 import { borradorWhatsappDe, destinoWhatsapp, resolverBorradorWhatsapp, whatsappPermitido } from './whatsapp';
 import { preguntasComputadora, resolverPreguntaComputadora, respuestaSiNo } from './computadora';
 import { cerrarDecisionPorChat, clasificarEnvio, type SalidaEnvio } from './trabajos';
+import { confirmaEnvio } from '../lib/acciones-app';
 import type { RetencionAcciones } from './voz-agente';
 
 /** Lo que la app (PULSE2CHAT) tiene esperando el «sí» de un turno anterior: un mensaje, una llamada, un recordatorio. */
@@ -52,7 +53,7 @@ export type SalidaDecisionTurno = {
 /* ------------------------------------------------------------------ ¿a qué contesta este «sí»? */
 
 /** Una decisión que espera su «sí» en esta conversación. `para`: a quién va (o lo que pregunta su computadora). */
-export type PendienteTurno = { tipo: 'correo' | 'whatsapp' | 'computadora' | 'app'; para: string; que?: string };
+export type PendienteTurno = { tipo: 'correo' | 'whatsapp' | 'computadora' | 'app'; para: string; que?: string; /** computadora: la tarea de esa pregunta. */ id?: string };
 
 /**
  * Lo que un «sí» del chat podría resolver en este turno, en esta conversación: el borrador de correo y el de WhatsApp
@@ -66,7 +67,8 @@ export function pendientesDelTurno(o: { dueno: string; ambito: string; whatsapp:
   if (c && !c.soloPanel) out.push({ tipo: 'correo', para: c.para.join(', ') });
   const w = o.whatsapp ? borradorWhatsappDe(o.dueno, o.ambito) : null;
   if (w && !w.soloPanel) out.push({ tipo: 'whatsapp', para: destinoWhatsapp(w) });
-  for (const p of preguntasComputadora(o.dueno)) out.push({ tipo: 'computadora', para: p.texto });
+  // Solo las de ESTA conversación (revisión 4-oct): una pregunta de otra pantalla no vuelve ambiguo este «sí».
+  for (const p of preguntasComputadora(o.dueno, o.ambito)) out.push({ tipo: 'computadora', para: p.texto, id: p.tareaId });
   if (o.app) out.push({ tipo: 'app', para: o.app.para, que: o.app.que });
   return out;
 }
@@ -99,24 +101,53 @@ function nombra(q: string, p: PendienteTurno): boolean {
   return fichas.some((f) => q.includes(` ${f} `));
 }
 
+/** Lo que acompaña a un «sí» sin nombrar nada («sí, mándalo ya, por favor»). */
+const RELLENO = new Set(
+  ('si sip sii claro dale ok okay okey listo va bueno perfecto correcto exacto asi esta bien hazlo adelante envialo enviala ' +
+    'enviaselo mandalo mandala mandaselo envia manda enviar mandar mandalos envialos de una por favor porfa porfis please gracias ' +
+    'ya ahora mismo pues rapido el la lo los las le de del al a y que eso esto ese esa este esta yes yeah yep sure go ahead do it ' +
+    'send confirmo sigue siguele continua seguro obvio contesta contestale responde hacelo hagalo').split(' ')
+);
+
 /**
- * Con varias decisiones esperando, un «sí» solo vale si nombra exactamente una (por su canal o por a quién va); si no,
- * es ambiguo. Antes se aplicaba a todas (mandaba el correo Y el WhatsApp) o a la primera que hubiera.
+ * ¿El mensaje nombra OTRA cosa que no es esta decisión? (revisión 4-oct: con una sola esperando, «sí, a Bruno» con un
+ * correo para Ana, o «sí, el de WhatsApp» con solo un correo, no lo mandaban… y sí lo mandaban). Otro canal, o palabras
+ * propias (un nombre) que no son de esta decisión.
  */
-/**
- * ¿El camino rápido de la app (server.ts ordenDeApp) NO puede resolver este turno? Si además de lo que espera la app
- * espera otra decisión en el servidor, el «sí» lo decide el turno completo.
- */
-export function atajoDeAppBloqueado(o: { dueno: string; ambito: string; whatsapp: boolean; appEspera: boolean; mensaje?: string; contexto?: unknown }): boolean {
-  return o.appEspera && pendientesDelTurno({ dueno: o.dueno, ambito: o.ambito, whatsapp: o.whatsapp }).length > 0;
+function nombraOtra(q: string, p: PendienteTurno): boolean {
+  if (nombra(q, p)) return false;
+  if ((Object.keys(NOMBRES) as PendienteTurno['tipo'][]).some((t) => t !== p.tipo && NOMBRES[t].test(q))) return true;
+  return q
+    .trim()
+    .split(/\s+/)
+    .some((w) => w && !RELLENO.has(w) && !/^\d+$/.test(w));
 }
 
-export function elegirPendiente(mensaje: string, ps: PendienteTurno[]): { tipo: 'uno'; p: PendienteTurno } | { tipo: 'ninguno' } | { tipo: 'ambiguo' } {
+/**
+ * Con varias decisiones esperando, un «sí» solo vale si nombra exactamente una (por su canal o por a quién va); si no,
+ * es ambiguo. Con una sola, vale salvo que nombre otra cosa (`no-coincide`). Antes se aplicaba a todas (mandaba el
+ * correo Y el WhatsApp) o a la que hubiera.
+ */
+export function elegirPendiente(mensaje: string, ps: PendienteTurno[]): { tipo: 'uno'; p: PendienteTurno } | { tipo: 'ninguno' } | { tipo: 'ambiguo' } | { tipo: 'no-coincide'; p: PendienteTurno } {
   if (!ps.length) return { tipo: 'ninguno' };
-  if (ps.length === 1) return { tipo: 'uno', p: ps[0] };
   const q = normal(mensaje);
+  if (ps.length === 1) return nombraOtra(q, ps[0]) ? { tipo: 'no-coincide', p: ps[0] } : { tipo: 'uno', p: ps[0] };
   const nombrados = ps.filter((p) => nombra(q, p));
   return nombrados.length === 1 ? { tipo: 'uno', p: nombrados[0] } : { tipo: 'ambiguo' };
+}
+
+/**
+ * ¿El camino rápido de la app (server.ts ordenDeApp) NO puede resolver este turno? (revisión 4-oct) Si espera otra
+ * decisión en el servidor (un correo, un WhatsApp, la pregunta de su computadora en esta conversación) y el mensaje es
+ * un «sí», o la app tiene algo esperando (su borrador, su propuesta, o un borrador escrito en el chat abierto), lo decide
+ * el turno completo, que pregunta cuál si no lo dice. Antes, con el borrador del chat abierto, «sí, mándalo» salía
+ * por el atajo y el correo ni se miraba.
+ */
+export function atajoDeAppBloqueado(o: { dueno: string; ambito: string; whatsapp: boolean; appEspera: boolean; mensaje?: string; contexto?: { borrador?: string | null } | null }): boolean {
+  if (!pendientesDelTurno({ dueno: o.dueno, ambito: o.ambito, whatsapp: o.whatsapp }).length) return false;
+  const m = String(o.mensaje || '');
+  const afirma = respuestaAlBorrador(m) === 'si' || respuestaSiNo(m) === 'si' || confirmaEnvio(m);
+  return o.appEspera || !!String(o.contexto?.borrador || '').trim() || afirma;
 }
 
 function decirPendiente(p: PendienteTurno): string {
@@ -124,6 +155,7 @@ function decirPendiente(p: PendienteTurno): string {
   if (p.tipo === 'whatsapp') return `el WhatsApp a ${p.para}`;
   if (p.tipo === 'computadora') return `lo que pregunta su computadora («${p.para}»)`;
   if (p.que === 'llamar' || p.que === 'llamada') return `la llamada a ${p.para}`;
+  if (p.que === 'borrador') return `el borrador que está escrito en el chat de ${p.para}`;
   return p.que === 'mensaje' ? `el mensaje del chat para ${p.para}` : `el recordatorio «${p.para}»`;
 }
 
@@ -140,7 +172,14 @@ export async function resolverDecisionesDelTurno(o: OpcionesDecisionTurno): Prom
   if (!turnoVigente) hechos.push('HECHO: este turno no quedó registrado para mandar nada (o ya lo atiende otro proceso del servidor). NO se mandó ningún borrador ni se soltó la computadora. No digas que se envió: dile que lo intente otra vez en un momento.');
   // Permisos exactos (4-oct): ¿a QUÉ contesta este «sí»? Con varias decisiones esperando, solo a la que nombre.
   const pendientes = dueno && turnoVigente && diceSi ? pendientesDelTurno({ dueno, ambito, whatsapp: o.whatsapp, app: o.app }) : [];
-  const eleccion = pendientes.length > 1 ? elegirPendiente(message, pendientes) : null;
+  const eleccion = pendientes.length ? elegirPendiente(message, pendientes) : null;
+  if (eleccion?.tipo === 'no-coincide') {
+    hechos.push(
+      `HECHO: dijo «${message.slice(0, 80)}», pero lo único que espera su decisión es ${decirPendiente(eleccion.p)}, y lo que nombró no es eso. ` +
+        'NO hice nada (no se mandó ni se contestó nada). Pregúntale si es eso lo que quiere —que lo diga— o qué otra cosa quería.'
+    );
+    return { hechos, turnoVigente: !!turnoVigente, delCorreo: null, delWhatsapp: null, deLaPregunta: null, ambiguo: true, appBloqueada: !!o.app };
+  }
   if (eleccion?.tipo === 'ambiguo') {
     hechos.push(
       `HECHO: dijo «sí», pero hay ${pendientes.length} cosas esperando su decisión: ${pendientes.map((p, i) => `${i + 1}) ${decirPendiente(p)}`).join('; ')}. ` +
@@ -149,6 +188,7 @@ export async function resolverDecisionesDelTurno(o: OpcionesDecisionTurno): Prom
     return { hechos, turnoVigente: !!turnoVigente, delCorreo: null, delWhatsapp: null, deLaPregunta: null, ambiguo: true, appBloqueada: !!o.app };
   }
   const solo = eleccion?.tipo === 'uno' ? eleccion.p.tipo : null;
+  const elegida = eleccion?.tipo === 'uno' && eleccion.p.tipo === 'computadora' ? eleccion.p.id : undefined;
   const toca = (t: PendienteTurno['tipo']) => !solo || solo === t;
   // En la voz el envío espera a que el turno se confirme (retener): un «sí…» especulativo no manda.
   // El borrador que esperaba (su id de intento): si el chat lo resuelve, su decisión del panel se cierra con
@@ -169,7 +209,7 @@ export async function resolverDecisionesDelTurno(o: OpcionesDecisionTurno): Prom
   if (delWhatsapp && intentoWhatsapp && !sigueWhatsapp) void cerrarDecisionPorChat(dueno, intentoWhatsapp, respuestaAlBorrador(message), delWhatsapp).catch(() => undefined);
   // Su computadora se detuvo a pedir su sí (o le ofreció seguir): el «sí» o el «no» lo resuelve el servidor
   // (server/computadora.ts). Si había un borrador esperando, ese «sí» era para el borrador.
-  const deLaPregunta = dueno && turnoVigente && toca('computadora') && !delCorreo && !delWhatsapp ? await resolverPreguntaComputadora(dueno, message, retener) : null;
+  const deLaPregunta = dueno && turnoVigente && toca('computadora') && !delCorreo && !delWhatsapp ? await resolverPreguntaComputadora(dueno, message, retener, { ambito, ...(elegida ? { elegida } : {}) }) : null;
   if (deLaPregunta) hechos.push(deLaPregunta);
   // Un «sí» que no tiene a qué contestar (el borrador venció, el servidor se reinició o nunca se armó): que
   // el modelo no lo tome por un envío y diga «enviado» por el historial (José, 3-oct).

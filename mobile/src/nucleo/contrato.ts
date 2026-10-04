@@ -147,8 +147,12 @@ export type AccionApp =
 
 export type CampoPerfil = 'apodo' | 'cumple' | keyof Encuesta;
 
-/** Las manos que este teléfono sabe hacer: van en el contexto para que el servidor las ofrezca. */
-export const MANOS_APP = ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame', 'cartera', 'pagar', 'controles'] as const;
+/**
+ * Las manos que este teléfono sabe hacer: van en el contexto para que el servidor las ofrezca. `enviar_exacto` (permisos
+ * exactos, 4-oct): este teléfono comprueba que su borrador sea el texto aprobado (`enviar.texto`) antes de mandarlo; sin
+ * ella el servidor no le da ningún `enviar`.
+ */
+export const MANOS_APP = ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame', 'cartera', 'pagar', 'controles', 'enviar_exacto'] as const;
 export type Mano = (typeof MANOS_APP)[number];
 
 /** Un recordatorio puesto en el teléfono (lo cuenta en el contexto para decirlo y cancelarlo por voz). */

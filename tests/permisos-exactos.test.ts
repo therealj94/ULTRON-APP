@@ -434,12 +434,14 @@ async function conNodo<T>(o: { sinPropuesta?: boolean }, fn: (n: Awaited<ReturnT
 }
 
 const preguntasVistas = (avisos: AvisoApp[]) => avisos.filter((a) => a.fase === 'confirmar');
+/** La conversación del turno (la de `turno()`): las preguntas de la computadora son de la conversación que la encargó. */
+const EN_TEL: any = { ambito: 'tel' };
 const PREG_ANA = 'Voy a tocar «Enviar» (para ana@example.test). ¿Lo hago?';
 const PREG_BRUNO = 'Voy a tocar «Enviar» (para bruno@example.test). ¿Lo hago?';
 
 test('computadora: preguntó por Ana y, antes del «sí», la propuesta pasó a Bruno → el «sí» del chat NO contesta la de Bruno; informado, una vez', async () => {
   await conNodo({}, async (n, avisos) => {
-    const r = await PC.encargarTarea({ instruccion: 'Manda el mensaje a Ana', quien: JOSE, motor: 'holo', esperaMs: 0 });
+    const r = await PC.encargarTarea({ instruccion: 'Manda el mensaje a Ana', quien: JOSE, motor: 'holo', esperaMs: 0, ...EN_TEL });
     n.preguntar(r.id!, PREG_ANA, 'p1', 'hA');
     await hasta(() => preguntasVistas(avisos).length === 1);
     n.preguntar(r.id!, PREG_BRUNO, 'p2', 'hB');
@@ -456,7 +458,7 @@ test('computadora: preguntó por Ana y, antes del «sí», la propuesta pasó a 
 
 test('computadora: la MISMA pregunta (mismo id) cambia de contenido antes del «sí» → ni el chat ni la app la contestan con el sí de antes', async () => {
   await conNodo({}, async (n, avisos) => {
-    const r = await PC.encargarTarea({ instruccion: 'Manda el mensaje a Ana', quien: JOSE, motor: 'holo', esperaMs: 0 });
+    const r = await PC.encargarTarea({ instruccion: 'Manda el mensaje a Ana', quien: JOSE, motor: 'holo', esperaMs: 0, ...EN_TEL });
     n.preguntar(r.id!, PREG_ANA, 'p1', 'hA');
     await hasta(() => preguntasVistas(avisos).length === 1);
     n.preguntar(r.id!, 'Voy a tocar «Enviar» (para ana@example.test; por L 5,000). ¿Lo hago?', 'p1', 'hA2');
@@ -486,8 +488,8 @@ test('computadora: la MISMA pregunta (mismo id) cambia de contenido antes del «
 
 test('computadora: dos misiones esperan su sí a la vez → un «sí» suelto no contesta ninguna (pregunta cuál)', async () => {
   await conNodo({}, async (n, avisos) => {
-    const a = await PC.encargarTarea({ instruccion: 'Manda el mensaje a Ana', quien: JOSE, motor: 'holo', esperaMs: 0 });
-    const b = await PC.encargarTarea({ instruccion: 'Manda el mensaje a Bruno', quien: JOSE, motor: 'holo', esperaMs: 0 });
+    const a = await PC.encargarTarea({ instruccion: 'Manda el mensaje a Ana', quien: JOSE, motor: 'holo', esperaMs: 0, ...EN_TEL });
+    const b = await PC.encargarTarea({ instruccion: 'Manda el mensaje a Bruno', quien: JOSE, motor: 'holo', esperaMs: 0, ...EN_TEL });
     n.preguntar(a.id!, PREG_ANA, 'p1', 'hA');
     n.preguntar(b.id!, PREG_BRUNO, 'p2', 'hB');
     await hasta(() => preguntasVistas(avisos).length === 2);
@@ -499,7 +501,7 @@ test('computadora: dos misiones esperan su sí a la vez → un «sí» suelto no
 
 test('computadora: sin la huella de la propuesta (nodo de antes) el «sí» no se manda', async () => {
   await conNodo({ sinPropuesta: true }, async (n, avisos) => {
-    const r = await PC.encargarTarea({ instruccion: 'Manda el mensaje a Ana', quien: JOSE, motor: 'holo', esperaMs: 0 });
+    const r = await PC.encargarTarea({ instruccion: 'Manda el mensaje a Ana', quien: JOSE, motor: 'holo', esperaMs: 0, ...EN_TEL });
     n.preguntar(r.id!, PREG_ANA, 'p1', null);
     await hasta(() => preguntasVistas(avisos).length === 1);
     await turno('sí');
@@ -508,6 +510,9 @@ test('computadora: sin la huella de la propuesta (nodo de antes) el «sí» no s
 });
 
 /* ================================================================== la app del teléfono (PULSE2CHAT) */
+
+/** Un teléfono que sabe comprobar el texto aprobado antes de mandar (la mano `enviar_exacto`). */
+const CTX_APP: any = { pantalla: 'chats', contactos: [], manos: ['enviar_exacto'] };
 
 test('app: dos borradores en el mismo turno (Ana y luego Bruno) → el «sí» no manda el de Bruno; informado, sale UNA vez con el texto aprobado', () => {
   APP._reiniciarAccionesApp();
@@ -519,18 +524,18 @@ test('app: dos borradores en el mismo turno (Ana y luego Bruno) → el «sí» n
   APP.abrirTurnoApp(amb);
   const enviosDe = (xs: Array<{ tipo: string }>) => xs.filter((x) => x.tipo === 'enviar');
   // El camino rápido («sí») y el del cerebro (el modelo pide enviar): ninguno manda a Bruno con el sí de Ana.
-  const rapida = APP.ordenPorReglas('sí', { pendiente: APP.pendienteDe(amb) });
+  const rapida = APP.ordenPorReglas('sí', { pendiente: APP.pendienteDe(amb), contexto: CTX_APP });
   assert.notEqual(rapida?.accion?.tipo, 'enviar', 'el camino rápido no manda');
-  assert.equal(enviosDe(APP.prepararAcciones([{ tipo: 'enviar' }], { mensaje: 'sí, envíalo', pendiente: APP.pendienteAnterior(amb) })).length, 0, 'el del cerebro tampoco');
+  assert.equal(enviosDe(APP.prepararAcciones([{ tipo: 'enviar' }], { mensaje: 'sí, envíalo', pendiente: APP.pendienteAnterior(amb), contexto: CTX_APP })).length, 0, 'el del cerebro tampoco');
   // Ya se le dijo a quién va ahora: el «sí» del turno siguiente es para Bruno.
   assert.equal(rapida?.confirmarCambio, true, 'le dice a quién va ahora');
   APP.confirmarCambioApp(amb);
   APP.abrirTurnoApp(amb);
-  const ok = APP.prepararAcciones([{ tipo: 'enviar' }], { mensaje: 'sí, envíalo', pendiente: APP.pendienteAnterior(amb) });
+  const ok = APP.prepararAcciones([{ tipo: 'enviar' }], { mensaje: 'sí, envíalo', pendiente: APP.pendienteAnterior(amb), contexto: CTX_APP });
   assert.deepEqual(enviosDe(ok), [{ tipo: 'enviar', para: 'bruno@example.test', texto: 'Llego a las 3' }], 'a Bruno, con el texto que oyó');
   APP.empujarAccion(yo, ok[0], { aparato: 'tel-1' });
   APP.abrirTurnoApp(amb);
-  assert.equal(enviosDe(APP.prepararAcciones([{ tipo: 'enviar' }], { mensaje: 'sí, envíalo', pendiente: APP.pendienteAnterior(amb) })).length, 0, 'una sola vez');
+  assert.equal(enviosDe(APP.prepararAcciones([{ tipo: 'enviar' }], { mensaje: 'sí, envíalo', pendiente: APP.pendienteAnterior(amb), contexto: CTX_APP })).length, 0, 'una sola vez');
 });
 
 test('app: «enviar» lleva el texto aprobado (el teléfono no manda otro contenido con ese «sí»)', () => {
@@ -540,7 +545,7 @@ test('app: «enviar» lleva el texto aprobado (el teléfono no manda otro conten
   APP.abrirTurnoApp(amb);
   APP.empujarAccion(yo, { tipo: 'redactar', para: 'ana@example.test', texto: 'Nos vemos el lunes' }, { aparato: 'tel-1' });
   APP.abrirTurnoApp(amb);
-  const r = APP.ordenPorReglas('sí', { pendiente: APP.pendienteDe(amb) });
+  const r = APP.ordenPorReglas('sí', { pendiente: APP.pendienteDe(amb), contexto: CTX_APP });
   assert.deepEqual(r?.accion, { tipo: 'enviar', para: 'ana@example.test', texto: 'Nos vemos el lunes' });
 });
 
@@ -600,4 +605,159 @@ test('aprobaciones: lo mismo pedido por OTRA persona no se junta con la solicitu
       else process.env[k] = v;
     }
   }
+});
+
+/* ================================================================== revisión independiente (4-oct) */
+
+const BRUNO_P2C = { correo: 'bruno@example.test', nombre: 'Bruno' };
+/** El teléfono con el chat de Bruno abierto y un borrador escrito ahí (no de AU-RA). */
+const CTX_BRUNO: any = { pantalla: 'chats', contactos: [BRUNO_P2C], chatAbierto: BRUNO_P2C, borrador: 'Hola Bruno, ¿cómo vas?', manos: ['enviar_exacto'] };
+
+test('R1 atajo de la app: un correo para Ana espera y el teléfono tiene un borrador en el chat de Bruno → «sí, mándalo» no sale por el atajo ni manda el correo (pregunta cuál)', async () => {
+  await conEntorno({}, async ({ mandados }) => {
+    APP._reiniciarAccionesApp();
+    const amb = APP.ambitoApp(JOSE, 'tel');
+    APP.abrirTurnoApp(amb);
+    await C.correrCorreo(JOSE, 'escribir ana@example.test | Hola | Hola Ana.', 'tel');
+    // El turno completo: el borrador del teléfono es otra decisión que espera; el «sí» no dice cuál.
+    const r = await turno('sí, mándalo', { app: (APP.appEsperandoDe as any)(amb, CTX_BRUNO) });
+    assert.equal(mandados.length, 0, 'el «sí, mándalo» pudo ser para el borrador de Bruno: no sale el correo a Ana');
+    assert.match(r.hechos.join('\n'), /cuál/i);
+    assert.equal(r.appBloqueada, true, 'ni el de la app');
+    // El atajo (camino rápido de la app) no resuelve este turno: hay otra decisión esperando en el servidor.
+    assert.equal(T.atajoDeAppBloqueado({ dueno: JOSE, ambito: 'tel', whatsapp: true, appEspera: !!APP.appEsperandoDe(amb), mensaje: 'sí, mándalo', contexto: CTX_BRUNO }), true);
+  });
+});
+
+test('R1 atajo de la app: un «enviar» del borrador del chat abierto sale con SU texto; sin chat abierto, o sin un teléfono que compruebe el texto, no sale', () => {
+  assert.deepEqual(APP.ordenPorReglas('sí, mándalo', { contexto: CTX_BRUNO })?.accion, { tipo: 'enviar', para: 'bruno@example.test', texto: 'Hola Bruno, ¿cómo vas?' });
+  assert.notEqual(APP.ordenPorReglas('sí, mándalo', { contexto: { ...CTX_BRUNO, chatAbierto: null } })?.accion?.tipo, 'enviar', 'sin a quién: nada');
+  const viejo = { ...CTX_BRUNO, manos: [] };
+  const pendiente = { para: 'ana@example.test', texto: 'Hola Ana' };
+  assert.notEqual(APP.ordenPorReglas('sí', { pendiente, contexto: viejo })?.accion?.tipo, 'enviar', 'un teléfono que no comprueba el texto no recibe un «enviar»');
+  assert.notEqual(APP.ordenPorReglas('sí, mándalo', { contexto: viejo })?.accion?.tipo, 'enviar');
+  assert.deepEqual(APP.prepararAcciones([{ tipo: 'enviar' }], { mensaje: 'sí, envíalo', pendiente, contexto: viejo }), [], 'tampoco por el camino del cerebro');
+  assert.deepEqual(APP.prepararAcciones([{ tipo: 'enviar' }], { mensaje: 'sí, envíalo', pendiente, contexto: CTX_BRUNO }), [{ tipo: 'enviar', para: 'ana@example.test', texto: 'Hola Ana' }]);
+});
+
+test('R2 una sola decisión: «sí, a Bruno» o «sí, el de WhatsApp» con un correo para Ana NO lo manda (pregunta); «sí, mándalo» sí, UNA vez', async () => {
+  await conEntorno({}, async ({ mandados }) => {
+    await C.correrCorreo(JOSE, 'escribir ana@example.test | Hola | Hola Ana.', 'tel');
+    const r1 = await turno('sí, a Bruno');
+    assert.equal(mandados.length, 0, 'nombró a otro destinatario');
+    assert.match(r1.hechos.join('\n'), /ana@example\.test/);
+    const r2 = await turno('sí, el de WhatsApp');
+    assert.equal(mandados.length, 0, 'nombró otro canal');
+    assert.ok(r2.hechos.length);
+    assert.ok(C.borradorDe(JOSE, 'tel'), 'el correo sigue esperando su propia decisión');
+    await turno('sí, mándalo');
+    await turno('sí');
+    assert.deepEqual(mandados.map((m) => m.para), [['ana@example.test']], 'el «sí» legítimo manda exactamente una vez');
+  });
+});
+
+test('R3 computadora: una pregunta de OTRA conversación no vuelve ambiguo el «sí» de esta (el correo para Ana sale una vez)', async () => {
+  await conNodo({}, async (n, avisos) => {
+    await conEntorno({}, async ({ mandados }) => {
+      const r = await PC.encargarTarea({ instruccion: 'Manda el mensaje a Bruno', quien: JOSE, motor: 'holo', esperaMs: 0, aparato: 'tel-otro', ambito: 'tel-otro' } as any);
+      n.preguntar(r.id!, PREG_BRUNO, 'p9', 'h9');
+      await hasta(() => preguntasVistas(avisos).length === 1);
+      await C.correrCorreo(JOSE, 'escribir ana@example.test | Hola | Hola Ana.', 'tel');
+      const d = await turno('sí');
+      assert.deepEqual(mandados.map((m) => m.para), [['ana@example.test']], 'en esta conversación solo esperaba el correo');
+      assert.equal(n.efectos.length, 0, 'y la pregunta de la otra conversación no se contestó');
+      assert.equal(d.ambiguo, false);
+    });
+  });
+});
+
+test('R3 computadora: dos preguntas en esta conversación → «sí, la de Ana» contesta ESA, una vez (antes se negaba sin salida)', async () => {
+  await conNodo({}, async (n, avisos) => {
+    const a = await PC.encargarTarea({ instruccion: 'Manda el mensaje a Ana', quien: JOSE, motor: 'holo', esperaMs: 0, ...EN_TEL });
+    const b = await PC.encargarTarea({ instruccion: 'Manda el mensaje a Bruno', quien: JOSE, motor: 'holo', esperaMs: 0, ...EN_TEL });
+    n.preguntar(a.id!, PREG_ANA, 'p1', 'hA');
+    n.preguntar(b.id!, PREG_BRUNO, 'p2', 'hB');
+    await hasta(() => preguntasVistas(avisos).length === 2);
+    await turno('sí, la de Ana');
+    assert.deepEqual(n.efectos, [{ tarea: a.id, pregunta_id: 'p1', propuesta: 'hA' }], 'contesta la que nombró');
+    await turno('sí, la de Ana');
+    assert.equal(n.efectos.length, 1, 'una sola vez; la de Bruno no se contesta con un «sí» que nombra a Ana');
+  });
+});
+
+test('R3 computadora: una sola pregunta en esta conversación → el «sí» legítimo la contesta una vez', async () => {
+  await conNodo({}, async (n, avisos) => {
+    const r = await PC.encargarTarea({ instruccion: 'Manda el mensaje a Ana', quien: JOSE, motor: 'holo', esperaMs: 0, ...EN_TEL });
+    n.preguntar(r.id!, PREG_ANA, 'p1', 'hA');
+    await hasta(() => preguntasVistas(avisos).length === 1);
+    await turno('sí');
+    await turno('sí');
+    assert.deepEqual(n.efectos, [{ tarea: r.id, pregunta_id: 'p1', propuesta: 'hA' }]);
+  });
+});
+
+test('R5 correo: Ana → Bruno y el borrador para Bruno se REGENERA (una y dos veces, y editado) → el «sí» no manda y avisa que ahora es Bruno; el segundo, informado, UNA vez', async () => {
+  for (const regeneraciones of [['Hola.'], ['Hola.', 'Hola.'], ['Hola, ¿cómo estás?']]) {
+    await conEntorno({}, async ({ mandados }) => {
+      await C.correrCorreo(JOSE, 'escribir ana@example.test | X | Hola.', 'tel');
+      await C.correrCorreo(JOSE, 'escribir bruno@example.test | X | Hola.', 'tel');
+      for (const t of regeneraciones) await C.correrCorreo(JOSE, `escribir bruno@example.test | X | ${t}`, 'tel');
+      const r1 = await turno('sí');
+      assert.equal(mandados.length, 0, `regenerado ${regeneraciones.length} vez/veces: el «sí» pudo ser para Ana`);
+      assert.match(r1.hechos.join('\n'), /bruno@example\.test/, 'avisa a quién va ahora');
+      assert.match(r1.hechos.join('\n'), /ana@example\.test/, 'y a quién iba el que oyó');
+      await turno('sí');
+      await turno('sí');
+      assert.deepEqual(mandados.map((m) => m.para), [['bruno@example.test']], 'informado: una sola vez');
+    });
+  }
+});
+
+test('R5 correo: si el borrador vuelve exactamente al de Ana (lo que oyó), el «sí» lo manda a Ana sin pedir otra confirmación', async () => {
+  await conEntorno({}, async ({ mandados }) => {
+    await C.correrCorreo(JOSE, 'escribir ana@example.test | X | Hola.', 'tel');
+    await C.correrCorreo(JOSE, 'escribir bruno@example.test | X | Hola.', 'tel');
+    await C.correrCorreo(JOSE, 'escribir ana@example.test | X | Hola.', 'tel');
+    await turno('sí');
+    assert.deepEqual(mandados.map((m) => m.para), [['ana@example.test']]);
+  });
+});
+
+test('R5 WhatsApp: Ana → Bruno y el borrador para Bruno se REGENERA (una y dos veces, y editado) → el «sí» no manda y avisa; el segundo, informado, UNA vez', async () => {
+  for (const regeneraciones of [['Hola.'], ['Hola.', 'Hola.'], ['Hola, ¿cómo estás?']]) {
+    await conEntorno({}, async ({ enviados }) => {
+      await W.correrWhatsapp(JOSE, 'responder Ana | Hola.', 'tel');
+      await W.correrWhatsapp(JOSE, 'responder Bruno | Hola.', 'tel');
+      for (const t of regeneraciones) await W.correrWhatsapp(JOSE, `responder Bruno | ${t}`, 'tel');
+      const r1 = await turno('sí');
+      assert.equal(enviados.length, 0, `regenerado ${regeneraciones.length} vez/veces: el «sí» pudo ser para Ana`);
+      assert.match(r1.hechos.join('\n'), /Bruno/);
+      assert.match(r1.hechos.join('\n'), /Ana/, 'y a quién iba el que oyó');
+      await turno('sí');
+      await turno('sí');
+      assert.deepEqual(enviados.map((e) => e.chat), [BRUNO.jid], 'informado: una sola vez');
+    });
+  }
+});
+
+test('R4 voz: el aviso de «cambió el borrador» espera a que el turno se confirme; si se descarta, la marca de reemplazo vuelve', () => {
+  APP._reiniciarAccionesApp();
+  const yo = 'voz@example.test';
+  const amb = APP.ambitoApp(yo, 'tel-1');
+  APP.abrirTurnoApp(amb);
+  APP.empujarAccion(yo, { tipo: 'redactar', para: 'ana@example.test', texto: 'Llego a las 3' }, { aparato: 'tel-1' });
+  APP.empujarAccion(yo, { tipo: 'redactar', para: 'bruno@example.test', texto: 'Llego a las 3' }, { aparato: 'tel-1' });
+  APP.abrirTurnoApp(amb);
+  const pend = APP.pendienteAnterior(amb)!;
+  assert.ok(pend.reemplazoDe);
+  const r: { hacer: Array<() => void>; descartar: Array<() => void> } = { hacer: [], descartar: [] };
+  const retener = { hacer: (f: () => void) => void r.hacer.push(f), alDescartar: (f: () => void) => void r.descartar.push(f) };
+  APP.avisoReemplazoApp(amb, pend, 'es', retener);
+  // El turno de voz se descarta (la frase seguía): no se le dijo nada; la marca sigue.
+  for (const f of r.descartar) f();
+  assert.ok(APP.pendienteDe(amb)?.reemplazoDe, 'la marca de reemplazo no se pierde con un turno descartado');
+  // Confirmado: ahora sí, el «sí» siguiente es para Bruno.
+  APP.avisoReemplazoApp(amb, APP.pendienteDe(amb)!, 'es', retener);
+  for (const f of r.hacer) f();
+  assert.equal(APP.pendienteDe(amb)?.reemplazoDe, undefined);
 });
