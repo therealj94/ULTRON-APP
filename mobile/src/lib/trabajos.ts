@@ -46,7 +46,8 @@ export type DecisionVista = {
   kind: string;
   question: string;
   why: string;
-  proposal: { action: string; account?: string; recipient?: string; data: string[]; amount?: string; recurrence?: string; scope: string };
+  /** `text` y `subject`: el texto entero del borrador y su asunto (servidor nuevo), para la ventana de decisión y Editar. */
+  proposal: { action: string; account?: string; recipient?: string; data: string[]; amount?: string; recurrence?: string; scope: string; text?: string; subject?: string };
   options: OpcionVista[];
   createdAt: string;
   expiresAt?: string;
@@ -244,13 +245,23 @@ export function grupos(xs: TareaVista[], ahora = Date.now()): { decisiones: Tare
   return { decisiones, esperan, activas, recientes: recientes.slice(0, MAX_RECIENTES) };
 }
 
+/**
+ * Las decisiones pospuestas que siguen esperando (José, 5-oct: «Luego» no las esconde para siempre). Aparte de `resumen`
+ * (su forma no cambia): solo para que el indicador no desaparezca mientras quede algo para después.
+ */
+export function pospuestas(xs: TareaVista[], ahora = Date.now()): number {
+  return xs.filter((t) => !t.terminal && t.state === 'awaiting_approval' && !!t.decision && pospuesta(t, ahora)).length;
+}
+
 /** «Necesito una decisión · 1» antes que «Trabajando · 2»; nada activo → null (no se muestra). */
-export function textoIndicador(r: { trabajando: number; decisiones: number; esperan?: number }, idioma: 'es' | 'en' = 'es'): string | null {
+export function textoIndicador(r: { trabajando: number; decisiones: number; esperan?: number; pospuestas?: number }, idioma: 'es' | 'en' = 'es'): string | null {
   if (r.decisiones > 0) return idioma === 'en' ? `I need a decision · ${r.decisiones}` : `Necesito una decisión · ${r.decisiones}`;
   if (r.trabajando > 0) return idioma === 'en' ? `Working · ${r.trabajando}` : `Trabajando · ${r.trabajando}`;
   // La tarea en curso de la conversación: no trabaja por detrás, pero tiene que poder abrirse (pausarla, cancelarla).
   // Sin indicador no había cómo llegar al panel. Quieto: nada de «Trabajando» ni movimiento (movimientoIndicador).
   if (r.esperan && r.esperan > 0) return idioma === 'en' ? `Waiting for you · ${r.esperan}` : `Espera que sigas · ${r.esperan}`;
+  // Lo que dejó «para luego»: sigue a un toque (antes, pospuesta sin fecha, no quedaba ningún camino para volver a verla).
+  if (r.pospuestas && r.pospuestas > 0) return idioma === 'en' ? `Saved for later · ${r.pospuestas}` : `Para después · ${r.pospuestas}`;
   return null;
 }
 
@@ -410,6 +421,8 @@ export function mensajeDeError(codigo: string | undefined, idioma: 'es' | 'en' =
     opcion: 'Esa opción no se ofreció. No hice nada.',
     'no-pausable': 'Ahora espera tu decisión; no hay trabajo que pausar.',
     'abrir-computadora': 'Eso se hace en la vista de tu computadora.',
+    'no-editable': 'Esta propuesta no se edita aquí: contéstala con sus opciones.',
+    texto: 'El texto no puede quedar vacío ni ser tan largo. No cambié nada.',
     red: 'No pude hablar con el servidor. No sé si llegó: vuelve a mirar antes de repetir.',
   };
   const en: Record<string, string> = {
@@ -423,6 +436,8 @@ export function mensajeDeError(codigo: string | undefined, idioma: 'es' | 'en' =
     opcion: 'That option was not offered. Nothing was done.',
     'no-pausable': 'It is waiting for your decision; nothing to pause.',
     'abrir-computadora': 'That is done from your computer view.',
+    'no-editable': 'This proposal cannot be edited here: answer it with its options.',
+    texto: 'The text cannot be empty or that long. Nothing changed.',
     red: 'Could not reach the server. Check again before retrying.',
   };
   const m = (idioma === 'en' ? en : es)[String(codigo || '')];
@@ -555,6 +570,15 @@ export function crearClienteTrabajos(pedir: Pedir) {
     /** La opción EXACTA que se tocó, ligada a la decisión y a la versión que se vio. */
     decidir: (t: Pick<TareaVista, 'id' | 'version' | 'decisionId' | 'decision'>, opcion: string, extra: { hasta?: string } = {}) =>
       post(`/api/trabajos/${enc(t.id)}/decisiones`, { decisionId: t.decisionId || t.decision?.id || '', expectedVersion: t.version, opcion, ...(extra.hasta ? { hasta: extra.hasta } : {}) }),
+    /**
+     * «Editar» de la ventana de decisión (José, 5-oct): el texto nuevo del borrador que se ve, ligado a la decisión y a la
+     * versión que se vio. Vuelve la tarea con una decisión NUEVA para ese texto (hay que volver a decir que sí): nada sale.
+     */
+    editar: (t: Pick<TareaVista, 'id' | 'version' | 'decisionId' | 'decision'>, cambios: { texto: string; asunto?: string }) =>
+      post(`/api/trabajos/${enc(t.id)}/editar`, { decisionId: t.decisionId || t.decision?.id || '', expectedVersion: t.version, texto: cambios.texto, ...(cambios.asunto !== undefined ? { asunto: cambios.asunto } : {}) }),
+    /** La ventana avisa qué decisión muestra (o que la soltó): un «sí» dicho mientras se ve es para ESA. */
+    enPantalla: (t: Pick<TareaVista, 'id' | 'decisionId' | 'decision'>, visible: boolean, o: { renovar?: boolean } = {}) =>
+      post(`/api/trabajos/${enc(t.id)}/en-pantalla`, { decisionId: t.decisionId || t.decision?.id || '', visible, ...(visible && o.renovar ? { renovar: true } : {}) }),
     pausar: (id: string) => post(`/api/trabajos/${enc(id)}/pausar`),
     reanudar: (id: string) => post(`/api/trabajos/${enc(id)}/reanudar`),
     cancelar: (id: string) => post(`/api/trabajos/${enc(id)}/cancelar`),

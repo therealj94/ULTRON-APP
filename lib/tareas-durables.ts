@@ -130,7 +130,11 @@ export type Decision = {
   tipo: 'aprobar-accion' | 'elegir' | 'continuar-tarea';
   pregunta: string;
   porque: string;
-  propuesta: { accion: string; cuenta?: string; destinatario?: string; datos: string[]; importe?: string; recurrencia?: string; alcance: string };
+  /**
+   * `texto` y `asunto` (José, 5-oct): el texto ENTERO del borrador y su asunto, para que la ventana de decisión lo
+   * muestre tal cual y se pueda editar (en `datos` va recortado). Solo informativos: lo que se aprueba es la huella.
+   */
+  propuesta: { accion: string; cuenta?: string; destinatario?: string; datos: string[]; importe?: string; recurrencia?: string; alcance: string; texto?: string; asunto?: string };
   opciones: Opcion[];
   creada: number;
   caduca?: number;
@@ -1514,7 +1518,7 @@ export type TaskSnapshot = {
     kind: Decision['tipo'];
     question: string;
     why: string;
-    proposal: { action: string; account?: string; recipient?: string; data: string[]; amount?: string; recurrence?: string; scope: string };
+    proposal: { action: string; account?: string; recipient?: string; data: string[]; amount?: string; recurrence?: string; scope: string; text?: string; subject?: string };
     options: { id: string; label: string; effect: string; risk: Opcion['riesgo'] }[];
     createdAt: string;
     expiresAt?: string;
@@ -1543,7 +1547,17 @@ export function vistaDecision(d: Decision | null | undefined, ahora: number): Ta
     kind: d.tipo,
     question: d.pregunta,
     why: d.porque,
-    proposal: { action: d.propuesta.accion, ...(d.propuesta.cuenta ? { account: d.propuesta.cuenta } : {}), ...(d.propuesta.destinatario ? { recipient: d.propuesta.destinatario } : {}), data: d.propuesta.datos, ...(d.propuesta.importe ? { amount: d.propuesta.importe } : {}), ...(d.propuesta.recurrencia ? { recurrence: d.propuesta.recurrencia } : {}), scope: d.propuesta.alcance },
+    proposal: {
+      action: d.propuesta.accion,
+      ...(d.propuesta.cuenta ? { account: d.propuesta.cuenta } : {}),
+      ...(d.propuesta.destinatario ? { recipient: d.propuesta.destinatario } : {}),
+      data: d.propuesta.datos,
+      ...(d.propuesta.importe ? { amount: d.propuesta.importe } : {}),
+      ...(d.propuesta.recurrencia ? { recurrence: d.propuesta.recurrencia } : {}),
+      scope: d.propuesta.alcance,
+      ...(typeof d.propuesta.texto === 'string' ? { text: d.propuesta.texto } : {}),
+      ...(typeof d.propuesta.asunto === 'string' ? { subject: d.propuesta.asunto } : {}),
+    },
     options: opciones.map((o) => ({ id: o.id, label: o.etiqueta, effect: o.efecto, risk: o.riesgo })),
     createdAt: iso(d.creada)!,
     ...(d.caduca ? { expiresAt: iso(d.caduca) } : {}),

@@ -15,6 +15,7 @@ import {
   indicadorEstable,
   lista,
   MINIMO_INDICADOR_MS,
+  pospuestas,
   reducir,
   resumen,
   sondeoTrabajosMs,
@@ -38,12 +39,30 @@ const pedir: Pedir = async (ruta, init) => {
 export const clienteTrabajos = crearClienteTrabajos(pedir);
 
 const oyentes = new Set<() => void>();
-/** Algo cambió (un turno creó o tocó tareas): que se pregunte ya. */
-export function avisarTrabajos() {
+/**
+ * Lo que enlazó la respuesta del último turno (los ids de sus tareas) y cuándo: la ventana de decisión pone primero lo
+ * que AU-RA acaba de preguntar (mobile/src/lib/decisionesMesa.ts `colaVentana`).
+ */
+let delUltimoTurno: { ids: string[]; t: number } = { ids: [], t: 0 };
+export const tareasDelUltimoTurno = () => delUltimoTurno;
+
+/** La ventana de decisión está a la vista (useVentanaDecision): el sondeo va al paso del panel abierto. */
+let ventanaAbierta = false;
+export function marcarVentanaAbierta(si: boolean) {
+  ventanaAbierta = si;
+}
+
+/**
+ * Algo cambió: que se pregunte ya. José (5-oct): después de CADA turno (no solo cuando enlaza tareas): un «sí» o un «no»
+ * dicho resuelve una decisión en el servidor y la ventana tiene que cerrarse o pasar a la siguiente, nunca quedarse con
+ * una que ya se decidió. `ids`: las tareas que enlazó la respuesta (si las hay).
+ */
+export function avisarTrabajos(ids?: string[]) {
+  if (ids && ids.length) delUltimoTurno = { ids: ids.slice(0, 5), t: Date.now() };
   for (const f of oyentes) f();
 }
 
-export function useTrabajos(o: { activo: boolean; panelAbierto: boolean; idioma: 'es' | 'en' }) {
+export function useTrabajos(o: { activo: boolean; panelAbierto: boolean; idioma: 'es' | 'en'; rapido?: boolean }) {
   const [s, despachar] = useReducer(reducir, undefined, estadoInicial);
   const [reducido, setReducido] = useState(false);
   const [ind, setInd] = useState<Indicador | null>(null);
@@ -96,7 +115,8 @@ export function useTrabajos(o: { activo: boolean; panelAbierto: boolean; idioma:
       } finally {
         enVuelo = false;
       }
-      if (vivo) t = setTimeout(vuelta, sondeoTrabajosMs(resRef.current, o.panelAbierto));
+      // Con la ventana de decisión a la vista, como con el panel abierto: lo dicho por voz se refleja pronto.
+      if (vivo) t = setTimeout(vuelta, sondeoTrabajosMs(resRef.current, o.panelAbierto || !!o.rapido || ventanaAbierta));
     };
     void vuelta();
     const ya = () => void vuelta();
@@ -106,10 +126,12 @@ export function useTrabajos(o: { activo: boolean; panelAbierto: boolean; idioma:
       clearTimeout(t);
       oyentes.delete(ya);
     };
-  }, [o.activo, o.panelAbierto, refrescar]);
+  }, [o.activo, o.panelAbierto, o.rapido, refrescar]);
 
-  // El indicador estable: si el texto cambió muy pronto, se vuelve a mirar al cumplir el mínimo.
-  const texto = textoIndicador(res, o.idioma);
+  // El indicador estable: si el texto cambió muy pronto, se vuelve a mirar al cumplir el mínimo. Lo pospuesto también
+  // lo mantiene (José, 5-oct: «Luego» no lo esconde para siempre).
+  const nPospuestas = useMemo(() => pospuestas(tareas, reloj), [tareas, reloj]);
+  const texto = textoIndicador({ ...res, pospuestas: nPospuestas }, o.idioma);
   useEffect(() => {
     setInd((prev) => indicadorEstable(prev, texto, Date.now()));
     const t = setTimeout(() => setInd((prev) => indicadorEstable(prev, texto, Date.now())), MINIMO_INDICADOR_MS + 50);

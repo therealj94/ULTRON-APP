@@ -45,14 +45,19 @@ type Props = {
   onRefrescar: () => void;
   /** «Editar»: lo que se propone escribir en el chat («Cambia el correo para Ana: »). */
   onEditar: (sugerencia: string) => void;
+  /**
+   * José (5-oct): «Editar» un borrador con su texto entero se hace en la ventana de decisión (el texto, aquí mismo, y se
+   * vuelve a mostrar para su «sí»). true si la ventana lo tomó; si no, Editar sigue como antes (sugerencia en el chat).
+   */
+  onEditarAqui?: (t: TareaVista) => boolean;
   onAbrirComputadora: () => void;
 };
 
-export function PanelTrabajos({ visible, onCerrar, tareas, aviso, reducido, idioma, onTarea, onRefrescar, onEditar, onAbrirComputadora }: Props) {
+export function PanelTrabajos({ visible, onCerrar, tareas, aviso, reducido, idioma, onTarea, onRefrescar, onEditar, onEditarAqui, onAbrirComputadora }: Props) {
   const g = useMemo(() => grupos(tareas), [tareas]);
   const vacio = !g.decisiones.length && !g.esperan.length && !g.activas.length && !g.recientes.length;
   const variasDecisiones = g.decisiones.length > 1;
-  const comun = { reducido, idioma, onTarea, onRefrescar, onEditar, onAbrirComputadora, variasDecisiones };
+  const comun = { reducido, idioma, onTarea, onRefrescar, onEditar, onEditarAqui, onAbrirComputadora, variasDecisiones };
   return (
     <Hoja visible={visible} onCerrar={onCerrar} titulo={tr('Tareas', 'Tasks')} subtitulo={tr('Cerrar esto no cancela nada: siguen en marcha.', 'Closing this cancels nothing: they keep going.')}>
       {aviso ? (
@@ -74,7 +79,7 @@ export function PanelTrabajos({ visible, onCerrar, tareas, aviso, reducido, idio
   );
 }
 
-type Comun = Pick<Props, 'reducido' | 'idioma' | 'onTarea' | 'onRefrescar' | 'onEditar' | 'onAbrirComputadora'> & { variasDecisiones: boolean };
+type Comun = Pick<Props, 'reducido' | 'idioma' | 'onTarea' | 'onRefrescar' | 'onEditar' | 'onEditarAqui' | 'onAbrirComputadora'> & { variasDecisiones: boolean };
 
 function Seccion({ titulo, tareas, ...c }: Comun & { titulo: string; tareas: TareaVista[] }) {
   return (
@@ -89,7 +94,7 @@ function Seccion({ titulo, tareas, ...c }: Comun & { titulo: string; tareas: Tar
   );
 }
 
-function TarjetaTarea({ t, reducido, idioma, onTarea, onRefrescar, onEditar, onAbrirComputadora, variasDecisiones }: Comun & { t: TareaVista }) {
+function TarjetaTarea({ t, reducido, idioma, onTarea, onRefrescar, onEditar, onEditarAqui, onAbrirComputadora, variasDecisiones }: Comun & { t: TareaVista }) {
   const tema = useTema();
   const [ocupado, setOcupado] = useState(false);
   const [aviso, setAviso] = useState<string | null>(null);
@@ -146,7 +151,7 @@ function TarjetaTarea({ t, reducido, idioma, onTarea, onRefrescar, onEditar, onA
         </Texto>
       ) : null}
       {t.currentStep && !t.terminal ? <Texto v="chica">{t.currentStep}</Texto> : null}
-      {t.decision && !t.terminal ? <TarjetaDecision t={t} idioma={idioma} variasTareas={variasDecisiones} onResultado={tras} onEditar={onEditar} /> : null}
+      {t.decision && !t.terminal ? <TarjetaDecision t={t} idioma={idioma} variasTareas={variasDecisiones} onResultado={tras} onEditar={onEditar} onEditarAqui={onEditarAqui} /> : null}
       {t.result ? <TarjetaResultado t={t} /> : null}
       {aviso ? (
         <Texto v="chica" color="aviso" accessibilityLiveRegion="polite">
@@ -176,7 +181,7 @@ function Dato({ k, v }: { k: string; v?: string }) {
   );
 }
 
-function TarjetaDecision({ t, idioma, variasTareas, onResultado, onEditar }: { t: TareaVista; idioma: 'es' | 'en'; variasTareas: boolean; onResultado: (r: ResultadoAccion) => void; onEditar: (s: string) => void }) {
+function TarjetaDecision({ t, idioma, variasTareas, onResultado, onEditar, onEditarAqui }: { t: TareaVista; idioma: 'es' | 'en'; variasTareas: boolean; onResultado: (r: ResultadoAccion) => void; onEditar: (s: string) => void; onEditarAqui?: (t: TareaVista) => boolean }) {
   const tema = useTema();
   const d = t.decision!;
   // Desde cuándo se ve ESTA decisión: la opción con efecto se arma ARMADO_MS después.
@@ -197,6 +202,8 @@ function TarjetaDecision({ t, idioma, variasTareas, onResultado, onEditar }: { t
   const caduca = d.expiresAt ? new Date(d.expiresAt) : null;
   const elegir = async (id: string, conEfecto: boolean) => {
     if (!puedeActivar({ conEfecto }, { aparecio: aparecio.current, ahora: Date.now(), via: 'toque' })) return;
+    // Editar con el texto entero: en la ventana de decisión (nada se tira; se vuelve a mostrar para su «sí»).
+    if (id === 'editar' && onEditarAqui?.(t)) return;
     setOcupado(id);
     try {
       const r = await clienteTrabajos.decidir(t, id);
