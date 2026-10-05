@@ -164,3 +164,15 @@ test('guarda: una acción ajena en el mismo turno (Ajustes, un borrador) no resp
   const recordatorio = vigilarPromesas('Te aviso a las cinco.', { pasos: [], acciones: 1 });
   assert.equal(recordatorio.cambiada, false, '«te aviso» de un recordatorio (acción de la app) vale');
 });
+
+test('revisión del 5-oct (GRAVE-2): lo dicho en pasado sobre otro turno no es promesa (ni la guarda ni la corrección local lo tocan)', async () => {
+  const { corregirPromesaSinHerramienta, prometeSinHacer } = await import('../lib/cerebro-manos');
+  for (const t of ['Sí, ya te lo mandé hace rato.', 'Ese correo se lo mandé ayer a las cinco.', 'Lo puse esta mañana, ya está.']) {
+    assert.equal(clasificarPromesas(t).promete, false, `guarda: ${t}`);
+    assert.equal(vigilarPromesas(t, { pasos: [] }).cambiada, false, `guarda: ${t}`);
+    assert.equal(prometeSinHacer(t), false, `promesa nueva: ${t}`);
+    assert.equal(corregirPromesaSinHerramienta(t).cambiada, false, `corrección local: ${t}`);
+  }
+  // «Listo, ya te lo mandé» sin nada que lo ponga antes sigue siendo dar por hecho algo de este turno.
+  assert.equal(prometeSinHacer('Listo, ya te lo mandé.'), true);
+});

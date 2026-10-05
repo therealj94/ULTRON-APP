@@ -190,3 +190,91 @@ test('el modelo sabe: «el último correo» → correo leer último (harness y c
   const t = herramientasDelTurno({ app: false, manos: [], sistema: false, computadora: false, correo: true, whatsapp: false, sesion: true, triaje: false } as any).find((x: any) => x.toolSpec?.name === 'correo') as any;
   assert.match(String(t?.toolSpec?.description || ''), /«el último correo»[^.]*leer «último»/);
 });
+
+/* ------------------------------------------------------------------ revisión del 5-oct (MEDIO-1, MEDIO-2, MENOR) */
+
+test('MEDIO-1: pideUltimoCorreo no confunde «la última semana», «la última vez», el último DE alguien ni lo enviado', () => {
+  const tabla: Array<[string, boolean]> = [
+    // Sigue siendo «el último correo» (uno solo, de cualquiera).
+    ['revisa el último correo que recibí', true],
+    ['el más reciente', true],
+    ['lo último que me llegó', true],
+    ['my latest email', true],
+    ['the last email I got', true],
+    // Un rango de tiempo o «la última vez» es la lista, no el último.
+    ['revisa mis correos de la última semana', false],
+    ['revisa mis correos de la última hora', false],
+    ['revisa mis correos, la última vez no me dijiste nada', false],
+    ['revisa mis correos del último mes', false],
+    // El último de alguien es OTRO pedido (lo resuelve `correo leer` con la referencia).
+    ['el último correo que me mandó Ana', false],
+    ['el último correo que me mandó el banco', false],
+    ['léeme lo último que me escribió Ana', false],
+    // Lo enviado no es lo recibido.
+    ['el último correo enviado', false],
+    ['the last email I sent', false],
+  ];
+  const mal = tabla.filter(([frase, esperado]) => C.pideUltimoCorreo(frase) !== esperado).map(([frase, esperado]) => `«${frase}» debía ser ${esperado}`);
+  assert.deepEqual(mal, []);
+});
+
+test('MEDIO-2: leer un correo (o seguir) deja un recibo de LECTURA: la voz lo dice entero, con su «¿sigo?»', async () => {
+  await preparar();
+  try {
+    const r = await C.correrCorreoConEstado(YO, 'leer el último', AMB);
+    assert.equal(r.recibo?.lectura, true, 'leer: recibo de lectura');
+    const ultimo = await C.correrCorreoConEstado(YO, 'revisar', AMB, { pedido: 'revisa el último correo que recibí' });
+    assert.equal(ultimo.recibo?.lectura, true, 'el camino de «el último correo»: recibo de lectura');
+    const lista = await C.correrCorreoConEstado(YO, 'revisar', AMB, { pedido: 'revisa mis correos' });
+    assert.notEqual(lista.recibo?.lectura, true, 'la lista no es una lectura');
+  } finally {
+    C._buzonDePrueba(null);
+  }
+  // Un correo largo: «correo seguir» también es lectura.
+  _olvidarCuentas();
+  _olvidarTareas();
+  C._olvidarCorreo();
+  const largo = 'Le escribo para confirmarle los detalles del envío de la próxima semana, que incluye los repuestos del molino y las piezas de la bomba. '.repeat(12);
+  const g = buzon({ [TRABAJO]: [{ uid: 21, de: 'Proveedor', deCorreo: 'p@x.invalid', asunto: 'Envío', fecha: hace(3), noLeido: true, texto: largo }] });
+  C._buzonDePrueba(g.b);
+  try {
+    await agregarCuenta(YO, TRABAJO, PROV('empresa.invalid'), 'clave');
+    const r = await C.correrCorreoConEstado(YO, 'leer el último', AMB);
+    assert.equal(r.recibo?.lectura, true);
+    const s = await C.correrCorreoConEstado(YO, 'seguir', AMB);
+    assert.equal(s.estado, 'succeeded', s.texto);
+    assert.equal(s.recibo?.lectura, true, 'seguir: recibo de lectura');
+    // Con ese recibo en el turno, la voz no lleva tope: el trozo entero (600) y el «¿sigo?» se dicen.
+    const M: Record<string, any> = await import('../lib/cerebro-manos');
+    assert.equal(typeof M.pasoSinTopeDeVoz, 'function', 'existe pasoSinTopeDeVoz');
+    assert.equal(M.pasoSinTopeDeVoz({ herramienta: 'correo', estado: s.estado, recibo: s.recibo }), true);
+    const trozo = largo.slice(0, 600).trim();
+    const dicho = `Es del proveedor, sobre el envío. ${trozo} ¿Sigo?`;
+    const tope = M.pasoSinTopeDeVoz({ herramienta: 'correo', estado: r.estado, recibo: r.recibo }) ? 0 : M.topeDeVoz('revisa el último correo', true);
+    assert.equal(M.recorteDeVoz(dicho, tope), dicho, 'se dice entero: el trozo completo y «¿Sigo?»');
+  } finally {
+    C._buzonDePrueba(null);
+  }
+});
+
+test('MENOR: un correo con fecha falsa en el futuro (spam) no pasa por «el último»', async () => {
+  _olvidarCuentas();
+  _olvidarTareas();
+  C._olvidarCorreo();
+  const futuro = new Date(Date.now() + 5 * 365 * 24 * 3600_000).toISOString();
+  const g = buzon({
+    [TRABAJO]: [
+      { uid: 31, de: 'Premio Seguro', deCorreo: 'spam@x.invalid', asunto: '¡GANASTE!', fecha: futuro, noLeido: true, texto: 'Reclama tu premio.' },
+      { uid: 30, de: 'Ana Paz', deCorreo: 'ana@paz.invalid', asunto: 'Planilla', fecha: hace(2), noLeido: true, texto: 'Te mando la planilla.' },
+    ],
+  });
+  C._buzonDePrueba(g.b);
+  try {
+    await agregarCuenta(YO, TRABAJO, PROV('empresa.invalid'), 'clave');
+    const r = await C.correrCorreoConEstado(YO, 'leer el último', AMB);
+    assert.match(r.texto, /«Planilla»/, r.texto);
+    assert.doesNotMatch(r.texto, /GANASTE/);
+  } finally {
+    C._buzonDePrueba(null);
+  }
+});

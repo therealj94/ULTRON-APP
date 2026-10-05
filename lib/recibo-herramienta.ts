@@ -48,6 +48,12 @@ export type ReciboHerramienta = {
    * del proveedor: así una caída no se confunde con «no hay nada» ni una parcial con el total.
    */
   cuentas?: CuentaConsultada[];
+  /**
+   * Revisión del 5-oct (MEDIO-2): el resultado trae algo para LEERLE a la persona tal cual (un correo abierto, el trozo
+   * siguiente, un chat de WhatsApp). En voz se dice entero, sin el tope (lib/cerebro-manos.ts pasoSinTopeDeVoz): con
+   * tope se cortaba el final del trozo y el «¿sigo?», y ese texto ya no se decía nunca.
+   */
+  lectura?: boolean;
 };
 
 /** Lo que se sabe de cada cuenta en una lectura (P4). */
