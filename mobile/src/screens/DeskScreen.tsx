@@ -129,7 +129,7 @@ import { escucharPedidoPanel, tomarPedidoPanel } from '../trabajos/abrirPanel';
 import { clienteTrabajos } from '../trabajos/useTrabajos';
 import { alCambiarPrimer, anotarPrimer, leerPrimerDe } from '../primeravez/medida';
 import { SirvioPrimera } from '../primeravez/SirvioPrimera';
-import { clasificarTurno, debePreguntar, queRecuperar, trasSoloRepetir, type PrimerResultado } from '../lib/primerResultado';
+import { avancePrimer, clasificarTurno, debePreguntar, queRecuperar, seguirTareasPrimer, trasSoloRepetir, type PrimerResultado } from '../lib/primerResultado';
 
 type Props = {
   user: SessionUser;
@@ -2377,23 +2377,28 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     };
   }, [user.correo]);
 
-  // La respuesta abrió tareas durables: el resultado es el de esas tareas (las de /api/trabajos, la fuente de
-  // verdad; también tras reabrir). Las que no están en la lista se preguntan una por una.
+  // La respuesta abrió tareas durables: el resultado es el de TODAS esas tareas (las de /api/trabajos, la fuente de
+  // verdad; también tras reabrir). Las que no están en la lista (o vienen «sin confirmar») se preguntan una por una;
+  // una que no se pudo leer (503, 404, red) queda SIN LEER, no se descarta (auditoría del 5-oct, R1): el
+  // clasificador no cierra hasta tenerlas todas. Lo leído va atado a este turno y a estos ids, y a esta sesión.
   const idsPrimer = primer?.estado === 'en-tarea' ? (primer.tareas || []).join(',') : '';
+  const turnoPrimer = primer?.estado === 'en-tarea' ? primer.idTurno : undefined;
   useEffect(() => {
     if (!idsPrimer) return;
     let vivo = true;
-    void (async () => {
-      const ids = idsPrimer.split(',');
-      const vistas = trabajos.tareas.filter((t) => ids.includes(t.id));
-      const faltan = ids.filter((id) => !vistas.some((t) => t.id === id));
-      const leidas = faltan.length ? (await Promise.all(faltan.map((id) => clienteTrabajos.ver(id)))).filter((t): t is NonNullable<typeof t> => !!t) : [];
-      if (vivo) void anotarPrimer(user.correo, { tipo: 'tareas', tareas: [...vistas, ...leidas] });
-    })();
+    const gen = generacionCuenta();
+    void seguirTareasPrimer({
+      ids: idsPrimer.split(','),
+      idTurno: turnoPrimer,
+      lista: trabajos.tareas,
+      leer: (id) => clienteTrabajos.leer(id),
+      vigente: () => vivo && sigueVigente(gen),
+      anotar: (ev) => void anotarPrimer(user.correo, ev),
+    });
     return () => {
       vivo = false;
     };
-  }, [idsPrimer, trabajos.tareas, user.correo]);
+  }, [idsPrimer, turnoPrimer, trabajos.tareas, user.correo]);
 
   const opinarPrimer = useCallback(
     (sirvio: boolean) => {
@@ -2405,7 +2410,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     },
     [primer?.trazaId, user.correo]
   );
-  const preguntaPrimer = debePreguntar(primer) ? <SirvioPrimera registro={primer!} onOpinar={opinarPrimer} /> : null;
+  // Con resultado, «¿Te sirvió?»; esperando tareas con alguna ya terminada, el progreso (sin pregunta ni cierre).
+  const avance = avancePrimer(primer);
+  const preguntaPrimer = debePreguntar(primer) || (avance && avance.listas > 0) ? <SirvioPrimera registro={primer!} onOpinar={opinarPrimer} /> : null;
 
   const sendDraft = () => {
     const t = draft.trim();
