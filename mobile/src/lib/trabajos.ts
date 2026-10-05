@@ -209,15 +209,17 @@ export const esperaQueSigas = (t: Pick<TareaVista, 'terminal' | 'state' | 'decis
  * parcial y no estaba en ella) NO cuenta como «trabajando» (revisión 10, MENOR-F): no se sabe si sigue viva, y contarla
  * dejaba el indicador girando mientras la lista seguía incompleta. Se sigue viendo en el panel, marcada «sin confirmar».
  */
-export function resumen(xs: TareaVista[], ahora = Date.now()): { trabajando: number; decisiones: number } {
+export function resumen(xs: TareaVista[], ahora = Date.now()): { trabajando: number; decisiones: number; esperan: number } {
   let trabajando = 0;
   let decisiones = 0;
+  let esperan = 0;
   for (const t of xs) {
     if (t.terminal || t.state === 'paused') continue;
     if (esperaDecision(t, ahora)) decisiones++;
-    else if (t.state !== 'awaiting_approval' && !t.sinConfirmar && !esperaQueSigas(t)) trabajando++;
+    else if (esperaQueSigas(t)) esperan++;
+    else if (t.state !== 'awaiting_approval' && !t.sinConfirmar) trabajando++;
   }
-  return { trabajando, decisiones };
+  return { trabajando, decisiones, esperan };
 }
 
 /** Cuántas recientes (terminadas) se muestran. */
@@ -243,9 +245,12 @@ export function grupos(xs: TareaVista[], ahora = Date.now()): { decisiones: Tare
 }
 
 /** «Necesito una decisión · 1» antes que «Trabajando · 2»; nada activo → null (no se muestra). */
-export function textoIndicador(r: { trabajando: number; decisiones: number }, idioma: 'es' | 'en' = 'es'): string | null {
+export function textoIndicador(r: { trabajando: number; decisiones: number; esperan?: number }, idioma: 'es' | 'en' = 'es'): string | null {
   if (r.decisiones > 0) return idioma === 'en' ? `I need a decision · ${r.decisiones}` : `Necesito una decisión · ${r.decisiones}`;
   if (r.trabajando > 0) return idioma === 'en' ? `Working · ${r.trabajando}` : `Trabajando · ${r.trabajando}`;
+  // La tarea en curso de la conversación: no trabaja por detrás, pero tiene que poder abrirse (pausarla, cancelarla).
+  // Sin indicador no había cómo llegar al panel. Quieto: nada de «Trabajando» ni movimiento (movimientoIndicador).
+  if (r.esperan && r.esperan > 0) return idioma === 'en' ? `Waiting for you · ${r.esperan}` : `Espera que sigas · ${r.esperan}`;
   return null;
 }
 

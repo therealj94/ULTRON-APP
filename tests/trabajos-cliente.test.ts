@@ -134,17 +134,17 @@ test('reductor (revisión 9): una lista PARCIAL no borra las que no se pudieron 
 test('resumen (revisión 10, MENOR-F): una tarea «sin confirmar» de una lista parcial no cuenta como «trabajando» ni hace girar el indicador', () => {
   // La lista completa: dos trabajando.
   let s = reducir(estadoInicial(), { tipo: 'lista', tareas: [tarea({ id: 'a' }), tarea({ id: 'b' })], en: T0 });
-  assert.deepEqual(resumen(Object.values(s.porId), T0), { trabajando: 2, decisiones: 0 });
+  assert.deepEqual(resumen(Object.values(s.porId), T0), { trabajando: 2, decisiones: 0, esperan: 0 });
   // Parcial: «b» no vino. Queda a la vista, pero ya no es «Trabajando · 2».
   s = reducir(s, { tipo: 'lista', tareas: [tarea({ id: 'a', state: 'completed', terminal: true, version: 2 })], en: T0 + 1, completo: false });
   assert.equal(s.porId.b.sinConfirmar, true);
   const r = resumen(Object.values(s.porId), T0 + 1);
-  assert.deepEqual(r, { trabajando: 0, decisiones: 0 }, 'la que no se pudo leer no se cuenta como trabajando');
+  assert.deepEqual(r, { trabajando: 0, decisiones: 0, esperan: 0 }, 'la que no se pudo leer no se cuenta como trabajando');
   assert.equal(textoIndicador(r), null, 'sin nada confirmado activo, el indicador no dice «Trabajando»');
   assert.equal(movimientoIndicador(r, false), false, 'y no gira mientras la lista sigue parcial');
   // La siguiente lista la confirma: vuelve a contar.
   s = reducir(s, { tipo: 'lista', tareas: [tarea({ id: 'a', state: 'completed', terminal: true, version: 2 }), tarea({ id: 'b', version: 2 })], en: T0 + 2, completo: true });
-  assert.deepEqual(resumen(Object.values(s.porId), T0 + 2), { trabajando: 1, decisiones: 0 });
+  assert.deepEqual(resumen(Object.values(s.porId), T0 + 2), { trabajando: 1, decisiones: 0, esperan: 0 });
 });
 
 test('cliente (revisión 9): `completo:false` y el aviso llegan; un servidor que pagina se sigue y lo que no se trae es PARCIAL', async () => {
@@ -224,7 +224,7 @@ test('la tarea en curso que espera que sigas: su propio grupo, «Espera que siga
   assert.equal(giraTarea(vivo), true);
   assert.equal(ultimaSenal(espera, T0), '', 'sin «última señal»: nada trabaja por detrás');
   assert.equal(ultimaSenal(vivo, T0), 'hace 1 min');
-  assert.deepEqual(resumen([espera], T0), { trabajando: 0, decisiones: 0 }, 'el indicador no dice «Trabajando»');
+  assert.deepEqual(resumen([espera], T0), { trabajando: 0, decisiones: 0, esperan: 1 }, 'el indicador no dice «Trabajando»: dice «Espera que sigas»');
   // Sin la marca (otra réplica del servidor), la tarea en curso en espera sin decisión también es «espera que sigas».
   const { awaitingInput: _fuera, ...sinMarca } = espera;
   assert.equal(esperaQueSigas(sinMarca as TareaVista), true);
@@ -234,7 +234,7 @@ test('la tarea en curso que espera que sigas: su propio grupo, «Espera que siga
   assert.equal(giraTarea(vieja), false);
   assert.equal(ultimaSenal(vieja, T0), '');
   assert.deepEqual(grupos([vieja], T0).esperan.map((t) => t.id), ['tc-vieja']);
-  assert.deepEqual(resumen([vieja], T0), { trabajando: 0, decisiones: 0 });
+  assert.deepEqual(resumen([vieja], T0), { trabajando: 0, decisiones: 0, esperan: 1 });
   // Una durable `running` sigue siendo trabajo de verdad.
   assert.equal(esperaQueSigas(tarea({ id: 'd', state: 'running' })), false);
   // Una pausada no espera que sigas: está en pausa (Reanudar).
@@ -247,9 +247,14 @@ test('indicador: decisión antes que trabajo; nada activo → no se muestra', ()
   assert.equal(textoIndicador({ trabajando: 2, decisiones: 0 }), 'Trabajando · 2');
   assert.equal(textoIndicador({ trabajando: 2, decisiones: 1 }), 'Necesito una decisión · 1');
   assert.equal(textoIndicador({ trabajando: 0, decisiones: 3 }, 'en'), 'I need a decision · 3');
+  // La tarea en curso que espera que sigas: indicador quieto para poder abrir el panel (pausar, cancelar), nunca «Trabajando».
+  assert.equal(textoIndicador({ trabajando: 0, decisiones: 0, esperan: 1 }), 'Espera que sigas · 1');
+  assert.equal(textoIndicador({ trabajando: 1, decisiones: 0, esperan: 1 }), 'Trabajando · 1');
+  assert.equal(textoIndicador({ trabajando: 0, decisiones: 0, esperan: 2 }, 'en'), 'Waiting for you · 2');
+  assert.equal(movimientoIndicador({ trabajando: 0, decisiones: 0 }, false), false);
   assert.equal(textoIndicador({ trabajando: 0, decisiones: 0 }), null);
   const xs = [tarea({ id: 'a' }), tarea({ id: 'b', state: 'waiting_resource' }), tarea({ id: 'c', state: 'awaiting_approval', decision: decision({ postponed: true }) }), tarea({ id: 'd', state: 'failed', terminal: true })];
-  assert.deepEqual(resumen(xs, T0), { trabajando: 2, decisiones: 0 });
+  assert.deepEqual(resumen(xs, T0), { trabajando: 2, decisiones: 0, esperan: 0 });
 });
 
 test('indicador estable: no cambia en cada sondeo (mínimo entre cambios), pero sube una decisión al momento', () => {
