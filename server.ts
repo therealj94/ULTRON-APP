@@ -5465,7 +5465,9 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     // duro (revisión independiente del 5-oct, MENOR-E): preguntaFinal ya deja fuera las largas, citadas y retóricas.
     if (topado && !preguntaDicha) {
       const q = preguntaFinal(decible);
-      if (q && enviado <= decible.lastIndexOf(q) && (!topeDelTurno || enviado + 1 + q.length <= duroDeVoz(topeDelTurno))) {
+      // Tercera revisión (5-oct): sin el «cabe en el tope duro». El stream ya puede haber dicho casi todo el tope y la
+      // pregunta quedaba fuera; preguntaFinal la limita a 120 caracteres, así que el exceso está acotado.
+      if (q && enviado <= decible.lastIndexOf(q)) {
         soltar('delta', ` ${q}`);
         preguntaDicha = true;
       }

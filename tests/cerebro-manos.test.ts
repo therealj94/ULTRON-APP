@@ -585,9 +585,25 @@ test('GRAVE-A: lo que también dice PARA CUÁNDO («para mañana en la mañana»
   // Lo de otro turno, con una marca de pasado clara, sigue sin ser promesa.
   for (const t of ['Sí, ya te lo mandé hace rato.', 'Ese correo se lo mandé ayer a las cinco.', 'Lo puse esta mañana, ya está.', 'Te lo mandé el lunes pasado.', 'Ya te lo mandé hace un rato para que lo revises.', 'I already sent it yesterday.'])
     assert.equal(M.prometeSinHacer(t), false, t);
-  // Una marca de antes con algo que la pone en el futuro: no la saca de las promesas.
-  assert.equal(M.prometeSinHacer('Hace rato te puse la alarma para mañana.'), true);
-  assert.equal(M.prometeSinHacer('Ayer te agendé la cita para el lunes.'), true);
+  // Tercera revisión (5-oct): con una marca de pasado clara, lo dicho es de otro turno aunque diga para cuándo (marcarlo
+  // lanzaba una re-pregunta oculta que podía volver a poner la alarma, o «Eso todavía no lo hice»).
+  for (const t of ['Ayer te puse la alarma a las 5.', 'Hace rato te puse la alarma para las 5.', 'Ayer te agendé la cita para el lunes.'])
+    assert.equal(M.prometeSinHacer(t), false, t);
+});
+
+test('tercera revisión (5-oct): con un borrador esperando solo se perdona lo del borrador; el tope solo cae si el turno lo toca', async () => {
+  const M: Record<string, any> = await import('../lib/cerebro-manos');
+  const base = { promesa: { correccion: 'local', cumplida: false, candidatas: [], ms: 0 }, usoManos: false, pasos: [], borradorPendiente: true, mensaje: 'pon una alarma a las 6' };
+  // Lo del borrador queda; lo demás que da por hecho, se corrige aunque venga en la misma frase.
+  assert.equal(M.debeCorregirSinHerramienta({ ...base, dicho: '¿Lo mando?' }), false);
+  assert.equal(M.debeCorregirSinHerramienta({ ...base, dicho: 'Ahí está el borrador; ya te puse la alarma también.' }), true);
+  assert.equal(M.debeCorregirSinHerramienta({ ...base, dicho: 'Listo, te puse la alarma, ¿lo mando?' }), true);
+  // La charla de siempre con algo pendiente: con tope.
+  for (const mensaje of ['¿cómo está el clima?', 'otra vez el clima', 'cambia de tema', 'repite el chiste', 'confírmame la hora del vuelo'])
+    assert.equal(M.vozCompletaDelTurno({ esperaba: true, resolvio: false, mensaje }), false, mensaje);
+  // Lo que sí pide lo pendiente: entero.
+  for (const mensaje of ['léeme el correo para Ana', '¿y el correo de Ana?', 'dile que mejor el jueves', 'read me the draft', 'léemelo otra vez', 'mándalo'])
+    assert.equal(M.vozCompletaDelTurno({ esperaba: true, resolvio: false, mensaje }), true, mensaje);
 });
 
 test('MEDIO-B: que algo espere su «sí» no quita el tope en todos los turnos; solo si el turno lo toca', async () => {
@@ -719,8 +735,12 @@ test('MENOR-E: la pregunta final no es una citada, retórica ni larga; con emoji
   }
 });
 
-test('MENOR-E: server.ts no pega la pregunta final si pasa del tope duro', async () => {
+test('tercera revisión (5-oct): en el stream la pregunta final se dice siempre (preguntaFinal la limita a 120)', async () => {
   const fs = await import('node:fs');
   const src = fs.readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
-  assert.match(src, /enviado \+ 1 \+ q\.length <= duroDeVoz\(topeDelTurno\)/);
+  assert.doesNotMatch(src, /enviado \+ 1 \+ q\.length <= duroDeVoz\(topeDelTurno\)/, 'sin la condición que la dejaba fuera');
+  assert.match(src, /if \(q && enviado <= decible\.lastIndexOf\(q\)\) \{/);
+  const M: Record<string, any> = await import('../lib/cerebro-manos');
+  const q = M.preguntaFinal('x '.repeat(200) + '¿Te llamo a Ana a las 5?');
+  assert.ok(q && q.length <= 120, String(q));
 });

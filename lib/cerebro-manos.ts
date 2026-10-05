@@ -495,7 +495,13 @@ function esDeAntes(frase: string): boolean {
     re.lastIndex = Math.max(fin, m.index + 1);
   }
   if (!hay) return false;
-  return !DEL_FUTURO.test(resto + p.slice(desde));
+  // Tercera revisión (5-oct): con una marca de pasado clara, la frase cuenta lo de antes aunque diga para cuándo
+  // («Ayer te puse la alarma a las 5», «Hace rato te agendé la cita para el lunes»): eso es verdad de otro turno, y
+  // marcarlo como promesa lanzaba una re-pregunta oculta (que podía volver a poner la alarma) o «Eso todavía no lo
+  // hice». Las promesas falsas de GRAVE-A no traen marca de pasado («Listo, te puse el recordatorio para mañana en la
+  // mañana»): «en la mañana» y «más temprano» ya no son marcas de antes, así que siguen siendo promesas.
+  void resto;
+  return true;
 }
 export function prometeSinHacer(texto: string): boolean {
   // También lo que lib/promesas.ts reconoce como trabajo o aviso prometido («voy a investigar», «ahí voy»,
@@ -663,7 +669,11 @@ const DEL_BORRADOR = /¿[^?]*\b(lo|la|los|las)\s+(mando|envio|mandamos|enviamos|
 const YA_SALIO = /\b(mande|envie|mandado|enviado|salio|sent)\b/;
 function deEseBorrador(frase: string): boolean {
   const p = plano(frase);
-  return DEL_BORRADOR.test(p) && !YA_SALIO.test(p.replace(/¿[^?]*\?/g, ' '));
+  if (!DEL_BORRADOR.test(p) || YA_SALIO.test(p.replace(/¿[^?]*\?/g, ' '))) return false;
+  // Tercera revisión (5-oct): se perdona solo lo del borrador. Sin esas palabras, si lo que queda todavía da por hecha
+  // otra acción («Ahí está el borrador; ya te puse la alarma también», «Listo, te puse la alarma, ¿lo mando?»), no.
+  const resto = p.replace(new RegExp(DEL_BORRADOR.source, 'g'), ' ');
+  return !prometeSinHacer(resto);
 }
 
 /**
@@ -803,7 +813,11 @@ export function topeDeVoz(mensaje: string, voz: boolean, o: { confirmacion?: boo
  * (`vozRecortada`). Lo escrito a mano en la caja del chat (`contexto.borrador`) NO es algo que espere su «sí».
  */
 const SOBRE_LO_PENDIENTE =
-  /\b(leemelo|leemela|leemelos|leelo|leela|releemelo|releelo|relee|repitemelo|repitemela|repitelo|repitela|repite|repetir|otra vez|de nuevo|como (quedo|va|dice|lo dejaste|esta)|que (dice|decia|pusiste|escribiste|le pusiste|va a decir|dijiste)|el borrador|ese (mensaje|correo|borrador|whatsapp)|cambia(le|lo|la|r)?|ponle|pon que|quita(le|lo|la|r)?|agrega(le|r)?|anade(le)?|corrige(lo|la|le)?|mejor (dile|ponle|que)|mandalo|mandala|mandaselo|envialo|enviala|enviaselo|confirm\w*|read it( back| again)?|repeat( it)?|change it|send it|what does it say)\b/;
+  // Tercera revisión (5-oct): fuera las palabras sueltas de la charla de siempre («¿cómo está el clima?», «otra vez el
+  // clima», «cambia de tema», «repite el chiste», «confírmame la hora del vuelo»): solo con pronombre o nombrando lo
+  // pendiente. Y dentro lo que sí lo pide («léeme el correo para Ana», «¿y el correo de Ana?», «dile que mejor el
+  // jueves», "read me the draft").
+  /\b(leemelo|leemela|leemelos|leelo|leela|leeme (el|ese) (correo|mensaje|whatsapp|borrador)|releemelo|releelo|repitemelo|repitemela|repitelo|repitela|como (quedo|lo dejaste)|que (dice|decia|pusiste|escribiste|le pusiste|va a decir)( el (correo|mensaje|borrador))?$|el borrador|ese (mensaje|correo|borrador|whatsapp)|y el (correo|mensaje|whatsapp) (de|para) |el (correo|mensaje|whatsapp) para |cambiale|cambialo|cambiala|ponle|pon que|quitale|quitalo|quitala|agregale|anadele|corrigelo|corrigela|corrigele|mejor (dile|ponle|que)|dile que|mandalo|mandala|mandaselo|envialo|enviala|enviaselo|confirmalo|confirmala|read it( back| again)?|read me the draft|the draft|repeat it|change it|send it|what does it say)\b/;
 export function vozCompletaDelTurno(o: { esperaba: boolean; resolvio: boolean; mensaje: string }): boolean {
   if (o.resolvio) return true;
   return o.esperaba && SOBRE_LO_PENDIENTE.test(plano(o.mensaje));
