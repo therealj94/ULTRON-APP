@@ -3863,7 +3863,7 @@ async function correrHerramientaPedida(
       // Lo que devuelven (sus misiones, su círculo, su tarea) va al modelo por la vista del turno (revisión 11, MEDIO-2).
       mision: (arg) => (dueno ? correrMisionTurnoConEstado(dueno, arg, vista) : Promise.resolve(fallo('HARNESS mision: solo con sesión. Pídele que entre con su cuenta.'))),
       circulo: async (arg) => decisionDelBorrador(await correrCirculoConEstado(dueno, arg, ambito, {}, vista), dueno, ambito),
-      triaje: (arg) => correrTriajeConEstado(dueno, arg, ambito),
+      triaje: (arg) => correrTriajeConEstado(dueno, arg, ambito, undefined, vista),
       tarea: (arg) => (dueno ? correrTareaConEstado(dueno, ambito, arg, vista) : Promise.resolve(fallo('HARNESS tarea: solo con sesión. Pídele que entre con su cuenta.'))),
       // Sus saldos de Veta Wallet (solo lectura, con la dirección pública que conectó en la app).
       cartera: (arg) => correrCarteraConEstado(dueno, arg),
