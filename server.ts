@@ -3873,7 +3873,9 @@ async function correrHerramientaPedida(
       // Cada runner devuelve su estado y su recibo (AUR07): lo que no se pudo es `failed`, un borrador es un
       // recibo `borrador` (nada salió), lo parcial va `incompleto`. Ya no se deduce del tipo de herramienta.
       // Un borrador que espera su «sí» abre su decisión exacta en el panel de tareas (AUR08).
-      correo: async (arg) => decisionDelBorrador(await correrCorreoConEstado(dueno, arg, ambito), dueno, ambito),
+      // Con lo que la persona dijo en el turno (tal cual): «revisa el último correo que recibí» abre ese uno aunque el
+      // modelo pida `revisar` (José, 5-oct: se listaban los 12 sin leer y se abría una tarea de 12 pasos).
+      correo: async (arg) => decisionDelBorrador(await correrCorreoConEstado(dueno, arg, ambito, { pedido: compu?.pedido }), dueno, ambito),
       whatsapp: async (arg) => decisionDelBorrador(await correrWhatsappConEstado(dueno, arg, ambito), dueno, ambito),
       // Sus misiones, su círculo y sus mensajes ordenados: sin dueño (sin sesión) no hay de quién serían.
       // Lo que devuelven (sus misiones, su círculo, su tarea) va al modelo por la vista del turno (revisión 11, MEDIO-2).

@@ -1,6 +1,6 @@
 /**
  * LAS TAREAS DURABLES EN LA WEB (AUR08, sección 6): el indicador mínimo del encabezado, el panel de tareas
- * (pendientes de decisión, en marcha y recientes), la tarjeta de decisión exacta, la de resultado con
+ * (pendientes de decisión, las que esperan que sigas, en marcha y recientes), la tarjeta de decisión exacta, la de resultado con
  * evidencia y el enlace compacto que deja la burbuja del chat. La lógica es la del teléfono, tal cual
  * (mobile/src/lib/trabajos.ts, como ya se hace con mobile/src/lib/interrupcion).
  *
@@ -21,7 +21,8 @@ import {
   estadoInicial,
   etiquetaBoton,
   etiquetaEstado,
-  gira,
+  etiquetaTarea,
+  giraTarea,
   grupos,
   haceCuanto,
   indicadorEstable,
@@ -35,6 +36,7 @@ import {
   sondeoTrabajosMs,
   textoIndicador,
   textoProgreso,
+  ultimaSenal,
   type Indicador,
   type Pedir,
   type RefTarea,
@@ -226,7 +228,7 @@ export function EnlacesTareas({ refs, porId, onAbrir }: { refs: RefTarea[]; porI
             <div className="min-w-0 flex-1">
               <p className="text-[15px] font-semibold text-(--aura-tinta) truncate">{t?.title || r.title}</p>
               <p className="text-[13px] text-(--aura-tinta-2)">
-                {etiquetaEstado(estado)}
+                {t ? etiquetaTarea(t) : etiquetaEstado(estado)}
                 {t?.updatedAt || r.updatedAt ? ` · ${haceCuanto(t?.updatedAt || r.updatedAt)}` : ''}
               </p>
             </div>
@@ -265,7 +267,7 @@ export function PanelTrabajos({ abierto, onCerrar, tareas, aviso: avisoProp, red
   const avisoPublicado = useAvisoLista();
   const aviso = avisoProp !== undefined ? avisoProp : avisoPublicado;
   const g = useMemo(() => grupos(tareas), [tareas]);
-  const vacio = !g.decisiones.length && !g.activas.length && !g.recientes.length;
+  const vacio = !g.decisiones.length && !g.esperan.length && !g.activas.length && !g.recientes.length;
   useEffect(() => {
     if (!abierto || !enfoque) return;
     const r = requestAnimationFrame(() => document.getElementById(`tarea-${enfoque}`)?.scrollIntoView({ block: 'nearest', behavior: reducido ? 'auto' : 'smooth' }));
@@ -300,6 +302,8 @@ export function PanelTrabajos({ abierto, onCerrar, tareas, aviso: avisoProp, red
       )}
       {vacio && !aviso && <p className="text-[15px] text-(--aura-tinta-2)">No hay tareas en marcha. Cuando me pidas algo que tarde o necesite tu decisión, aparece aquí.</p>}
       {g.decisiones.length > 0 && <Seccion titulo="Necesitan tu decisión" tareas={g.decisiones} {...comun} />}
+      {/* La tarea en curso de la conversación: espera que sigas; no va en «En marcha» (eso es trabajo de fondo). */}
+      {g.esperan.length > 0 && <Seccion titulo="Esperan que sigas" tareas={g.esperan} {...comun} />}
       {g.activas.length > 0 && <Seccion titulo="En marcha" tareas={g.activas} {...comun} />}
       {g.recientes.length > 0 && <Seccion titulo="Recientes" tareas={g.recientes} {...comun} />}
     </Dialogo>
@@ -327,7 +331,7 @@ function TarjetaTarea({ t, reducido, onTarea, onRefrescar, onEditar, onAbrirEscr
   const [ocupado, setOcupado] = useState(false);
   const [aviso, setAviso] = useState<string | null>(null);
   const prog = textoProgreso(t.progress);
-  const senal = haceCuanto(t.lastHeartbeatAt || t.updatedAt);
+  const senal = ultimaSenal(t);
   const tras = (r: ResultadoAccion) => {
     if (r.ok === true) {
       setAviso(null);
@@ -355,8 +359,8 @@ function TarjetaTarea({ t, reducido, onTarea, onRefrescar, onEditar, onAbrirEscr
           {t.title}
         </h4>
         <span className={`text-[13px] font-semibold flex items-center gap-1.5 ${t.state === 'failed' || t.state === 'blocked' ? 'text-(--aura-error-texto)' : t.state === 'completed' ? 'text-(--aura-ok-texto)' : 'text-(--aura-tinta-2)'}`}>
-          {gira(t.state) && !t.sinConfirmar && !reducido && <span className="w-3 h-3 rounded-full border-2 border-current border-t-transparent animate-spin" aria-hidden="true" />}
-          {etiquetaEstado(t.state)}
+          {giraTarea(t) && !t.sinConfirmar && !reducido && <span className="w-3 h-3 rounded-full border-2 border-current border-t-transparent animate-spin" aria-hidden="true" />}
+          {etiquetaTarea(t)}
         </span>
       </div>
       {t.objective && t.objective !== t.title && <p className="text-[14px] text-(--aura-tinta-2)">{t.objective}</p>}

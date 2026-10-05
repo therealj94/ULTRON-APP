@@ -18,8 +18,12 @@ import {
   estadoInicial,
   etiquetaBoton,
   etiquetaEstado,
+  etiquetaTarea,
+  esperaQueSigas,
   grupos,
   gira,
+  giraTarea,
+  ultimaSenal,
   indicadorEstable,
   MAX_PAGINAS_TRABAJOS,
   mensajeDeError,
@@ -191,6 +195,50 @@ test('grupos del panel: pendientes de decisión, activas (con las pausadas) y re
   assert.deepEqual(g.decisiones.map((t) => t.id), ['d', 'b']);
   assert.deepEqual(g.activas.map((t) => t.id).sort(), ['p', 'r']);
   assert.deepEqual(g.recientes.map((t) => t.id), ['x', 'c'], 'la más nueva primero');
+});
+
+test('la tarea en curso que espera que sigas: su propio grupo, «Espera que sigas», sin spinner ni «última señal» (José, 5-oct)', () => {
+  // Lo que manda el servidor ahora para una tarea en curso activa (lib/tareas-durables.ts deTareaEnCurso).
+  const espera = tarea({
+    id: 'tc',
+    source: 'tarea-en-curso',
+    state: 'awaiting_approval',
+    awaitingInput: true,
+    title: 'revisar los 12 correos sin leer',
+    environment: { kind: 'correo', id: 'mesa', displayName: 'Tu correo' },
+    progress: { done: 1, total: 12, unit: 'pasos' },
+    currentStep: 'Espera que sigas: dime «sigue» o «el siguiente». Lo que sigue: Beto — «Planos»',
+    updatedAt: new Date(T0 - 120_000).toISOString(),
+  });
+  const vivo = tarea({ id: 'r', state: 'running', lastHeartbeatAt: new Date(T0 - 60_000).toISOString() });
+  const g = grupos([espera, vivo], T0);
+  assert.deepEqual(g.esperan.map((t) => t.id), ['tc'], 'va en «Esperan que sigas»');
+  assert.deepEqual(g.activas.map((t) => t.id), ['r'], '«En marcha» es solo trabajo de verdad');
+  assert.deepEqual(g.decisiones, [], 'no es una decisión');
+  assert.equal(esperaQueSigas(espera), true);
+  assert.equal(esperaQueSigas(vivo), false);
+  assert.equal(etiquetaTarea(espera), 'Espera que sigas');
+  assert.equal(etiquetaTarea(espera, 'en'), 'Waiting for you');
+  assert.equal(etiquetaTarea(vivo), 'Trabajando', 'lo demás, la etiqueta de su estado');
+  assert.equal(giraTarea(espera), false, 'sin spinner');
+  assert.equal(giraTarea(vivo), true);
+  assert.equal(ultimaSenal(espera, T0), '', 'sin «última señal»: nada trabaja por detrás');
+  assert.equal(ultimaSenal(vivo, T0), 'hace 1 min');
+  assert.deepEqual(resumen([espera], T0), { trabajando: 0, decisiones: 0 }, 'el indicador no dice «Trabajando»');
+  // Sin la marca (otra réplica del servidor), la tarea en curso en espera sin decisión también es «espera que sigas».
+  const { awaitingInput: _fuera, ...sinMarca } = espera;
+  assert.equal(esperaQueSigas(sinMarca as TareaVista), true);
+  // Un servidor de antes la mandaba en `running`: una tarea en curso nunca trabaja por detrás, tampoco es «Trabajando».
+  const vieja = tarea({ ...sinMarca, id: 'tc-vieja', state: 'running', lastHeartbeatAt: new Date(T0 - 120_000).toISOString() } as TareaVista);
+  assert.equal(esperaQueSigas(vieja), true);
+  assert.equal(giraTarea(vieja), false);
+  assert.equal(ultimaSenal(vieja, T0), '');
+  assert.deepEqual(grupos([vieja], T0).esperan.map((t) => t.id), ['tc-vieja']);
+  assert.deepEqual(resumen([vieja], T0), { trabajando: 0, decisiones: 0 });
+  // Una durable `running` sigue siendo trabajo de verdad.
+  assert.equal(esperaQueSigas(tarea({ id: 'd', state: 'running' })), false);
+  // Una pausada no espera que sigas: está en pausa (Reanudar).
+  assert.equal(esperaQueSigas(tarea({ id: 'p', source: 'tarea-en-curso', state: 'paused' })), false);
 });
 
 /* ------------------------------------------------------------------ el indicador */

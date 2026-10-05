@@ -8,6 +8,7 @@
  *   PEDIR_HERRAMIENTA: correo revisar
  *   PEDIR_HERRAMIENTA: correo buscar <texto>
  *   PEDIR_HERRAMIENTA: correo leer <número, remitente o asunto>     («el 3», «Banco Atlántida», «el último de Ana»)
+ *   PEDIR_HERRAMIENTA: correo leer último                             (el más reciente de todas sus cuentas, sin lista ni tarea)
  *   PEDIR_HERRAMIENTA: correo seguir                                  (el trozo siguiente del que está leyendo)
  *   PEDIR_HERRAMIENTA: correo responder <número, remitente o nada> | <texto>
  *   PEDIR_HERRAMIENTA: correo responder-todos <…> | <texto>
@@ -465,10 +466,80 @@ async function ubicar(quien: string, ambito: string, ref: string, o: { siguiente
   return { ref: elegido.ref, resumen: elegido, cuentas: cuentasR };
 }
 
+/* ------------------------------------------------------------------ «el último correo que recibí» (José, 5-oct)
+ *
+ * Por voz a la mesa: «revisa el último correo que recibí». El cerebro pidió `correo revisar`, que listó los 12 sin leer
+ * y abrió una tarea en curso de 12 pasos que nadie quería. Ahora el servidor lo decide sin depender del modelo: si lo
+ * que dijo la persona en el turno pide EL último (uno solo), se abre el más reciente de todas sus cuentas (por fecha,
+ * leído o no), se dice a qué cuenta llegó y no se abre ninguna tarea. «Revisa mis correos» sigue listando.
+ */
+
+/** «el último / la última / lo último / mi último / el más reciente / el más nuevo», o «último correo», «correo más reciente». */
+const ULTIMO_ES = /\b(?:(?:el|la|lo|mi|su|tu)\s+(?:ultim[oa]|mas\s+reciente|mas\s+nuev[oa])|ultim[oa]\s+(?:correo|mail|email|e-mail|mensaje)|(?:correo|mail|email|e-mail|mensaje)\s+mas\s+(?:reciente|nuevo))\b/;
+/** "my latest email", "the last email", "most recent email", "newest email" (en singular: "emails" es la lista). */
+const ULTIMO_EN = /\b(?:(?:my|the)\s+(?:latest|last|newest|most\s+recent)\s+(?:e-?mail|mail|message)|(?:latest|newest|most\s+recent)\s+(?:e-?mail|mail))\b/;
+/**
+ * Lo que viene después y lo vuelve OTRO pedido: de un remitente («el último de Ana», "from Ana") o de un tema («sobre la
+ * factura»). Eso lo resuelve `correo leer` con la referencia. «de hoy», «de mi bandeja», «de mis correos» no cuentan.
+ */
+const DE_ALGUIEN = /\b(?:de|del|from)\s+(?!(?:hoy|ayer|today|yesterday|(?:mis?|my|the|la|el|su|tu)\s+(?:correos?|e-?mails?|mails?|bandeja|inbox|buzon))\b)\S|\b(?:sobre|acerca|about|regarding|asunto|subject)\b/;
+
+const limpioParaBuscar = (s: string) => plegar(s).replace(/[¡!¿?.,;:«»"'()]/g, ' ').replace(/\s+/g, ' ').trim();
+
+/**
+ * ¿Lo que dijo la persona pide EL último correo (uno solo, sin remitente ni tema)? «revisa el último correo que recibí»,
+ * «el más reciente», «lo último que me llegó», "check my latest email". No: «revisa mis correos», «los últimos
+ * correos», «el último de Ana».
+ */
+export function pideUltimoCorreo(texto: string): boolean {
+  const q = limpioParaBuscar(texto);
+  if (!q) return false;
+  const m = ULTIMO_ES.exec(q) || ULTIMO_EN.exec(q);
+  if (!m) return false;
+  return !DE_ALGUIEN.test(q.slice(m.index + m[0].length));
+}
+
+/** La referencia de `correo leer` es SOLO «el último» («último», «el más reciente», «el último correo que recibí», "latest"). */
+const SOLO_ULTIMO =
+  /^(?:(?:el|la|lo|mi|my|the)\s+)?(?:ultim[oa]|mas\s+reciente|mas\s+nuev[oa]|latest|newest|last|most\s+recent)(?:\s+(?:correo|mail|email|e-mail|mensaje|one))?(?:\s+que\s+(?:me\s+)?(?:llego|recibi|entro|mandaron|ha\s+llegado)|\s+(?:i\s+)?(?:got|received))?$/;
+const refEsElUltimo = (ref: string) => SOLO_ULTIMO.test(limpioParaBuscar(ref));
+
+/** Abre el más reciente de todas sus cuentas (por fecha, leído o no) y dice a cuál llegó. No abre ninguna tarea. */
+async function leerUltimo(quien: string, ambito: string): Promise<ResultadoHerramienta> {
+  const cuentas = await cuentasDe(quien);
+  if (!cuentas.length) return fallo(SIN_CUENTAS, 'sin-cuentas');
+  // Los pocos más nuevos de cada una (el UID más alto es el que llegó último); entre cuentas decide la fecha.
+  const consultas = await consultarCuentas(quien, cuentas, { n: 3 });
+  const cob = coberturaDe(consultas);
+  const cuentasR = cuentasDelRecibo(cob);
+  const caidas = cob.filter((x) => x.fallo).map((x) => falloEnPalabras(x.fallo!));
+  if (caidas.length === cuentas.length) return falloCon(`CORREO: no pude abrir ninguna de sus cuentas (${caidas.join('; ')}). No sé cuál es su último correo; díselo así, sin inventar, con el paso de cada cuenta.`, 'proveedor', { cuentas: cuentasR });
+  const todos = consultas.flatMap((x) => (x.ok ? x.lista : [])).sort((a, b) => b.fecha.localeCompare(a.fecha));
+  const faltaron = caidas.length ? ` OJO: no pude mirar ${caidas.join('; ')}; puede haber uno más nuevo ahí: díselo.` : '';
+  const el = todos[0];
+  if (!el) {
+    const miradas = cob.filter((x) => x.estado === 'consultada').map((x) => x.cuenta).join(', ');
+    return exito(`CORREO: no tiene ningún correo en la bandeja de entrada (miré ${miradas}).${faltaron}`, { efecto: 'ninguno', proveedor: 'imap', cuentas: cuentasR, ...(caidas.length ? { incompleto: true } : {}) });
+  }
+  // Si ya estaba en la lista numerada, conserva su número (y la tarea, si la hay, avanza con él).
+  const lista = LISTAS.get(llave(quien, ambito)) || [];
+  const i = lista.findIndex((x) => x.ref === el.ref);
+  const varias = cuentas.length > 1;
+  const aviso =
+    `ES EL ÚLTIMO QUE RECIBIÓ: el más reciente de ${varias ? `sus ${cuentas.length} cuentas` : 'su bandeja'}, leído o no${varias ? `; llegó a ${el.cuenta}: díselo` : ''}. ` +
+    'Pidió uno solo: léeselo; no le listes los demás ni abras una tarea.' +
+    faltaron;
+  return leerUbicado(quien, ambito, { ref: el.ref, ...(i >= 0 ? { n: i + 1 } : {}), resumen: el, aviso, ...(caidas.length ? { incompleto: true } : {}), cuentas: cuentasR });
+}
+
 /** Abre el correo y lo deja listo para leer: cuerpo limpio en trozos, adjuntos con nombre. */
 async function leerRef(quien: string, ambito: string, ref: string, o: { siguiente?: boolean } = {}): Promise<ResultadoHerramienta> {
   const u = await ubicar(quien, ambito, ref, o);
   if ('hecho' in u) return falloCon(u.hecho, u.codigo || 'referencia', u.cuentas ? { cuentas: u.cuentas } : {});
+  return leerUbicado(quien, ambito, u);
+}
+
+async function leerUbicado(quien: string, ambito: string, u: Exclude<Ubicado, { hecho: string }>): Promise<ResultadoHerramienta> {
   const ubic = await cuentaDeRef(quien, u.ref);
   if (!ubic) return fallo('CORREO: esa cuenta ya no está conectada.', 'no-disponible');
   let x: Mensaje | null;
@@ -505,7 +576,7 @@ async function leerRef(quien: string, ambito: string, ref: string, o: { siguient
     cuerpo ? `TEXTO (limpio: sin firma ni lo citado de correos anteriores${trozos.length > 1 ? `; en ${trozos.length} trozos` : ''}):\n${dados.join('\n')}` : 'TEXTO: no trae texto (solo el asunto' + (x.adjuntos.length ? ' y los adjuntos' : '') + ').',
     quedan ? `(Quedan ${quedan} trozos más: si quiere que sigas, PEDIR_HERRAMIENTA: correo seguir.)` : '',
     'CÓMO LEERLO: primero de quién es y el asunto («Es de Ana Paz, sobre la factura»); después el texto tal cual, con naturalidad, sin leer direcciones ni enlaces (di «trae un enlace a …»). ' +
-      'Hablando, lee el trozo 1 y pregunta «¿sigo?» antes del resto; escribiendo, dalo entero. Al terminar, pregúntale si le contesta o sigues con el siguiente.',
+      `Hablando, lee el trozo 1 y pregunta «¿sigo?» antes del resto; escribiendo, dalo entero. Al terminar, pregúntale si le contesta${lista.length ? ' o sigues con el siguiente' : ''}.`,
     AVISO_AJENO,
     avance,
   ]
@@ -1025,23 +1096,28 @@ export async function enviarBorradorAprobado(quien: string, b: BorradorGuardado,
  * «saltar 3», «responder 3|Ana| | texto», «responder-todos … | texto», «escribir a@b | asunto | texto».
  * Solo el texto (el de siempre); el estado y el recibo, con correrCorreoConEstado.
  */
-export async function correrCorreo(quien: string, arg: string, ambito = ''): Promise<string> {
-  return (await correrCorreoConEstado(quien, arg, ambito)).texto;
+export async function correrCorreo(quien: string, arg: string, ambito = '', o: { pedido?: string } = {}): Promise<string> {
+  return (await correrCorreoConEstado(quien, arg, ambito, o)).texto;
 }
 
 /**
  * El runner con su estado y su recibo (AUR07): lo que no se pudo hacer es `failed` (con su código), un
  * borrador es `succeeded` con recibo `borrador` (nada salió), lo leído con alguna cuenta caída va `incompleto`.
+ *
+ * `pedido`: lo que la persona dijo o escribió en este turno, tal cual (no la paráfrasis del modelo). Si pide «el último
+ * correo» y el modelo pidió `revisar`, se abre ese uno (no la lista ni una tarea de 12 pasos; José, 5-oct).
  */
-export async function correrCorreoConEstado(quien: string, arg: string, ambito = ''): Promise<ResultadoHerramienta> {
+export async function correrCorreoConEstado(quien: string, arg: string, ambito = '', o: { pedido?: string } = {}): Promise<ResultadoHerramienta> {
   if (!quien) return fallo('CORREO: solo con sesión. Pídele que entre con su cuenta.', 'sin-sesion');
   const [cabeza, ...partes] = String(arg || '').split('|').map((x) => x.trim());
   const m = cabeza.match(/^(\S+)\s*(.*)$/s);
   const verbo = plegar(m?.[1] || 'revisar');
   let resto = (m?.[2] || '').trim();
   try {
-    if (/^(revisar|revisa|nuevos|bandeja)$/.test(verbo)) return await revisar(quien, ambito);
+    if (/^(revisar|revisa|nuevos|bandeja)$/.test(verbo)) return pideUltimoCorreo(o.pedido || '') ? await leerUltimo(quien, ambito) : await revisar(quien, ambito);
     if (/^(buscar|busca)$/.test(verbo)) return resto ? await revisar(quien, ambito, resto) : fallo('CORREO: ¿qué busco? Falta el texto.', 'falta-dato');
+    // «El último» a secas: el más reciente de todas sus cuentas (con o sin lista).
+    if (/^(leer|lee|leeme|abrir|abre)$/.test(verbo) && resto && refEsElUltimo(resto)) return await leerUltimo(quien, ambito);
     // Sin decir cuál: el siguiente que falta (de la tarea, o el primero de la lista).
     if (/^(leer|lee|leeme|abrir|abre)$/.test(verbo)) return await leerRef(quien, ambito, resto, { siguiente: !resto });
     if (/^(siguiente|proximo|otro)$/.test(verbo)) return await leerRef(quien, ambito, '', { siguiente: true });
