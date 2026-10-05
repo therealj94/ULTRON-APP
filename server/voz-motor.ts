@@ -39,7 +39,8 @@
  */
 import crypto from 'crypto';
 import { EventEmitter } from 'events';
-import type http from 'http';
+import http from 'http';
+import type net from 'net';
 import type { Duplex } from 'stream';
 import type express from 'express';
 import { clave } from '../lib/boveda';
@@ -190,37 +191,95 @@ function rechazarUpgrade(socket: Duplex, codigo: number, texto: string) {
   socket.destroy();
 }
 
+/** Un marco de control (ping, pong, cierre) no puede traer más de 125 bytes ni partirse (RFC 6455 §5.5). */
+const MAX_CONTROL = 125;
+/** Lo que puede quedar sin salir hacia ElevenLabs: si no lee, la conexión se da por perdida (no se acumula). */
+export const MAX_COLA = 1024 * 1024;
+const utf8Estricto = new TextDecoder('utf-8', { fatal: true });
+
 /**
  * Una conexión WebSocket del lado del servidor: mensajes de texto (también partidos en fragmentos), ping y
- * cierre. Lo que manda el cliente tiene que venir enmascarado; nada de extensiones (sin compresión).
+ * cierre. Lo que manda el cliente tiene que venir enmascarado; nada de extensiones (sin compresión). Lo mal
+ * formado se cierra con su código (1002 protocolo, 1007 texto que no es UTF-8, 1009 demasiado grande); lo
+ * que llega se guarda a trozos y se junta una vez por marco (sin copiar todo en cada lectura); y si el otro
+ * lado no lee, se deja de leer lo suyo hasta que vacíe (y si la cola pasa de MAX_COLA, se suelta).
  */
 export class ConexionWs extends EventEmitter {
-  private buf: Buffer = Buffer.alloc(0);
+  /** Lo recibido que aún no forma un marco entero: los trozos tal como llegaron y su largo total. */
+  private trozos: Buffer[] = [];
+  private tam = 0;
+  /** Cuántos bytes hacen falta para intentar leer el marco que sigue. */
+  private necesito = 2;
   private fragmentos: Buffer[] = [];
   private enFragmento = false;
   /** El mensaje partido es de texto (uno binario se lee y se tira). */
   private fragmentoTexto = false;
   private tamFragmento = 0;
+  /** Se dejó de leer porque el otro lado no vacía lo que le mandamos. */
+  private pausada = false;
   abierta = true;
+  /** La última vez que llegó algo (cualquier marco, también un pong): para la inactividad. */
+  ultimaActividad = Date.now();
 
   constructor(private readonly s: Duplex, cabeza?: Buffer) {
     super();
     s.on('data', (d: Buffer) => this.datos(d));
     s.on('close', () => this.terminar());
     s.on('error', () => this.terminar());
+    s.on('drain', () => {
+      if (!this.pausada) return;
+      this.pausada = false;
+      s.resume();
+    });
     if (cabeza?.length) this.datos(cabeza);
   }
 
   private datos(d: Buffer) {
     if (!this.abierta) return;
-    this.buf = this.buf.length ? Buffer.concat([this.buf, d]) : d;
-    while (this.abierta && this.uno());
+    this.ultimaActividad = Date.now();
+    this.trozos.push(d);
+    this.tam += d.length;
+    while (this.abierta && this.tam >= this.necesito && this.uno());
+  }
+
+  /** Los primeros `n` bytes juntos, sin tocar los trozos (solo para la cabecera del marco: unos pocos). */
+  private primeros(n: number): Buffer {
+    const a = this.trozos[0];
+    if (a.length >= n) return a;
+    const junto = Buffer.alloc(Math.min(n, this.tam));
+    let p = 0;
+    for (const t of this.trozos) {
+      p += t.copy(junto, p, 0, Math.min(t.length, junto.length - p));
+      if (p >= junto.length) break;
+    }
+    return junto;
+  }
+
+  /** Saca los primeros `n` bytes (un marco entero): solo se juntan los trozos que lo forman. */
+  private tomar(n: number): Buffer {
+    let i = 0;
+    let t = 0;
+    while (t < n) t += this.trozos[i++].length;
+    const junto = i === 1 ? this.trozos[0] : Buffer.concat(this.trozos.slice(0, i), t);
+    this.trozos.splice(0, i);
+    if (t > n) this.trozos.unshift(junto.subarray(n));
+    this.tam -= n;
+    return junto.subarray(0, n);
+  }
+
+  /** El texto de un mensaje, o null si no es UTF-8 válido. */
+  private texto(b: Buffer): string | null {
+    try {
+      return utf8Estricto.decode(b);
+    } catch {
+      return null;
+    }
   }
 
   /** Lee un marco si ya llegó entero. */
   private uno(): boolean {
-    const b = this.buf;
-    if (b.length < 2) return false;
+    if (this.tam < 2) return false;
+    const b = this.primeros(Math.min(this.tam, 14));
     const fin = (b[0] & 0x80) !== 0;
     const op = b[0] & 0x0f;
     if (b[0] & 0x70) return this.cerrar(1002, 'rsv'), false;
@@ -228,22 +287,26 @@ export class ConexionWs extends EventEmitter {
     let largo = b[1] & 0x7f;
     let i = 2;
     if (largo === 126) {
-      if (b.length < 4) return false;
+      if (this.tam < 4) return (this.necesito = 4), false;
       largo = b.readUInt16BE(2);
       i = 4;
     } else if (largo === 127) {
-      if (b.length < 10) return false;
+      if (this.tam < 10) return (this.necesito = 10), false;
       if (b.readUInt32BE(2) !== 0) return this.cerrar(1009, 'grande'), false;
       largo = b.readUInt32BE(6);
       i = 10;
     }
     if (!conMascara) return this.cerrar(1002, 'sin mascara'), false;
-    if (largo > MAX_MENSAJE) return this.cerrar(1009, 'grande'), false;
-    if (b.length < i + 4 + largo) return false;
-    const mascara = b.subarray(i, i + 4);
-    const carga = Buffer.from(b.subarray(i + 4, i + 4 + largo));
+    // Un control partido o de más de 125 bytes no existe: se cierra antes de esperar su carga.
+    if (op >= 0x8 && (!fin || largo > MAX_CONTROL)) return this.cerrar(1002, 'control'), false;
+    if (largo > MAX_MENSAJE || (op === 0x0 && this.enFragmento && this.tamFragmento + largo > MAX_MENSAJE)) return this.cerrar(1009, 'grande'), false;
+    const total = i + 4 + largo;
+    if (this.tam < total) return (this.necesito = total), false;
+    this.necesito = 2;
+    const marco = this.tomar(total);
+    const mascara = marco.subarray(i, i + 4);
+    const carga = Buffer.from(marco.subarray(i + 4));
     for (let k = 0; k < carga.length; k++) carga[k] ^= mascara[k & 3];
-    this.buf = b.subarray(i + 4 + largo);
     if (op === 0x8) {
       const codigo = carga.length >= 2 ? carga.readUInt16BE(0) : 1000;
       this.cerrar(codigo >= 1000 && codigo < 5000 && codigo !== 1005 && codigo !== 1006 ? codigo : 1000);
@@ -257,7 +320,7 @@ export class ConexionWs extends EventEmitter {
     if (op === 0x1 || op === 0x2) {
       if (this.enFragmento) return this.cerrar(1002, 'fragmento'), false;
       if (fin) {
-        if (op === 0x1) this.emit('mensaje', carga.toString('utf8'));
+        if (op === 0x1) return this.mensaje(carga);
         return true;
       }
       this.enFragmento = true;
@@ -269,19 +332,26 @@ export class ConexionWs extends EventEmitter {
     if (op === 0x0) {
       if (!this.enFragmento) return this.cerrar(1002, 'continuacion'), false;
       this.tamFragmento += carga.length;
-      if (this.tamFragmento > MAX_MENSAJE) return this.cerrar(1009, 'grande'), false;
       const texto = this.fragmentoTexto;
       if (texto) this.fragmentos.push(carga);
       if (fin) {
         this.enFragmento = false;
-        const todo = Buffer.concat(this.fragmentos);
+        const todo = texto ? Buffer.concat(this.fragmentos, this.tamFragmento) : null;
         this.fragmentos = [];
-        if (texto) this.emit('mensaje', todo.toString('utf8'));
+        if (todo) return this.mensaje(todo);
       }
       return true;
     }
     this.cerrar(1002, 'opcode');
     return false;
+  }
+
+  /** Un mensaje de texto entero: si no es UTF-8, 1007. */
+  private mensaje(b: Buffer): boolean {
+    const t = this.texto(b);
+    if (t === null) return this.cerrar(1007, 'utf-8'), false;
+    this.emit('mensaje', t);
+    return true;
   }
 
   private marco(op: number, carga: Buffer) {
@@ -294,7 +364,13 @@ export class ConexionWs extends EventEmitter {
       cab.writeUInt32BE(n, 6);
     }
     try {
-      this.s.write(Buffer.concat([cab, carga]));
+      if (this.s.write(Buffer.concat([cab, carga]))) return;
+      // El otro lado no vacía: si la cola ya es grande, se suelta; si no, se deja de leer hasta que vacíe.
+      if ((this.s.writableLength ?? 0) > MAX_COLA) return this.soltar();
+      if (!this.pausada) {
+        this.pausada = true;
+        this.s.pause();
+      }
     } catch {
       this.terminar();
     }
@@ -304,6 +380,11 @@ export class ConexionWs extends EventEmitter {
     if (this.abierta) this.marco(0x1, Buffer.from(JSON.stringify(obj), 'utf8'));
   }
 
+  /** Un ping nuestro (para saber si el otro lado sigue): su pong cuenta como actividad. */
+  ping() {
+    if (this.abierta) this.marco(0x9, Buffer.alloc(0));
+  }
+
   cerrar(codigo = 1000, motivo = '') {
     if (!this.abierta) return;
     const m = Buffer.from(String(motivo).slice(0, 100), 'utf8');
@@ -311,6 +392,8 @@ export class ConexionWs extends EventEmitter {
     carga.writeUInt16BE(codigo, 0);
     m.copy(carga, 2);
     this.marco(0x8, carga);
+    // Se soltó al escribir el cierre (la cola estaba llena): ya se avisó.
+    if (!this.abierta) return;
     this.abierta = false;
     try {
       this.s.end();
@@ -320,6 +403,12 @@ export class ConexionWs extends EventEmitter {
     const h = setTimeout(() => this.s.destroy(), 2_000);
     h.unref?.();
     this.emit('cierre', codigo);
+  }
+
+  /** El otro lado no lee: ni el cierre le llegaría. Se corta la conexión. */
+  private soltar() {
+    this.s.destroy();
+    this.terminar();
   }
 
   private terminar() {
@@ -450,12 +539,19 @@ export type DepsSesionMotor = {
   paseCabecera: string;
   /** Espera el pase que el teléfono ató a esta conversación (null si no llega a tiempo). */
   esperarPase: (conversacion: string) => Promise<string | null>;
-  /** ¿Esta cuenta (la del pase) tiene el motor? Si no, la llamada se cierra. */
+  /** Llegó el `init` (la primera vez): de quién es la conversación, si vino `X-Pase`. */
+  anunciar?: (conversacion: string) => void;
+  /**
+   * ¿Esta cuenta (la del pase) tiene el motor? Se pregunta en CADA turno: si se le quita (la cuenta sale de
+   * `motorVozCuentas` o se apaga el servidor) a mitad de llamada, la llamada se cierra en el turno siguiente.
+   */
   permitido: (pase: string) => boolean;
   /** Para lo que mide el adaptador fuera de la ruta (asentir, duplicados, errores). */
   anotar?: (m: Omit<MedidaTurnoVoz, 'red'>) => void;
 };
 
+/** La conversación en los registros y las medidas: nunca su id tal cual. */
+const huella = (conversacion: string) => crypto.createHash('sha256').update(conversacion).digest('hex').slice(0, 10);
 const aplanar = (t: string) => quitarExpresiones(String(t || '')).replace(/\s+/g, ' ').trim().toLowerCase();
 const planaFrase = (t: string) => String(t || '').toLowerCase().replace(/\s+/g, ' ').trim();
 
@@ -496,11 +592,14 @@ export class SesionMotor {
   private ultimoEvento = -Infinity;
   private pase: Promise<string | null> | null = null;
   private soltarInit: ((c: string) => void) | null = null;
-  private iniciada: Promise<string>;
+  private alInit: Promise<string>;
+  /** Ya pasó una vez la comprobación de la cuenta (lo que falle después es que se le quitó el motor). */
   private comprobado = false;
+  /** Ya llegó el `init` (sin él, la conexión no dura: montarMotorVoz la cierra al vencer su plazo). */
+  iniciada = false;
 
   constructor(private readonly d: DepsSesionMotor) {
-    this.iniciada = new Promise((r) => (this.soltarInit = r));
+    this.alInit = new Promise((r) => (this.soltarInit = r));
   }
 
   /** El pase de esta llamada: el de la cabecera o el que ate el teléfono (esperando el `init`). */
@@ -508,7 +607,7 @@ export class SesionMotor {
     if (!this.pase) {
       this.pase = this.d.paseCabecera
         ? Promise.resolve(this.d.paseCabecera)
-        : Promise.race([this.iniciada.then((c) => this.d.esperarPase(c)), new Promise<null>((r) => setTimeout(() => r(null), VINCULAR_MS + 1_000).unref?.())]);
+        : Promise.race([this.alInit.then((c) => this.d.esperarPase(c)), new Promise<null>((r) => setTimeout(() => r(null), VINCULAR_MS + 1_000).unref?.())]);
     }
     return this.pase;
   }
@@ -526,7 +625,11 @@ export class SesionMotor {
     }
     switch (msg?.type) {
       case 'init':
+        // Una conexión es una conversación: un segundo `init` no la cambia.
+        if (this.iniciada) return;
+        this.iniciada = true;
         this.conversacion = String(msg.conversation_id || '').slice(0, 200);
+        this.d.anunciar?.(this.conversacion);
         this.soltarInit?.(this.conversacion);
         void this.comprobar();
         return;
@@ -544,7 +647,10 @@ export class SesionMotor {
     }
   }
 
-  /** Que la cuenta del pase tenga el motor; si no hay pase o no lo tiene, la llamada se cierra. */
+  /**
+   * Que la cuenta del pase tenga el motor, en cada turno; si no hay pase o no lo tiene, la llamada se cierra.
+   * Si lo tenía y se le quitó a mitad de llamada, se cierra sin error (1000): el turno siguiente ya no entra.
+   */
   private async comprobar(): Promise<string | null> {
     const pase = await this.paseDeLlamada();
     if (this.cerrada) return null;
@@ -552,13 +658,12 @@ export class SesionMotor {
       this.terminar(1008, 'sin pase');
       return null;
     }
-    if (!this.comprobado) {
-      if (!this.d.permitido(pase)) {
-        this.terminar(1008, 'motor no activo para esta cuenta');
-        return null;
-      }
-      this.comprobado = true;
+    if (!this.d.permitido(pase)) {
+      if (this.comprobado) this.terminar(1000, 'motor apagado para esta cuenta');
+      else this.terminar(1008, 'motor no activo para esta cuenta');
+      return null;
     }
+    this.comprobado = true;
     return pase;
   }
 
@@ -688,7 +793,7 @@ export class SesionMotor {
       this.d.anotar?.({
         motor: 'speech-engine',
         t: Date.now(),
-        conv: this.conversacion ? crypto.createHash('sha256').update(this.conversacion).digest('hex').slice(0, 10) : '',
+        conv: this.conversacion ? huella(this.conversacion) : '',
         primerTextoMs: null,
         cerebroMs: null,
         totalMs: 0,
@@ -718,6 +823,31 @@ export class SesionMotor {
 
 /* ------------------------------------------------------------------ las rutas */
 
+/** Sin `init` en este plazo, una conexión autenticada se cierra (no se queda abierta sin ser de nadie). */
+export const INICIO_MS = 10_000;
+/** Sin nada de ElevenLabs en este plazo (ni el pong a nuestro ping), la conexión se cierra. */
+export const INACTIVIDAD_MS = 60_000;
+
+/**
+ * Una petición con `Upgrade` que no es la del motor se atiende como una petición normal, como si el motor no
+ * escuchara (Node solo la da por `upgrade` si alguien escucha ese evento; si no, va a la app como cualquier
+ * otra). Así `GET /api/health` con esa cabecera sigue contestando con el motor encendido.
+ */
+function atenderComoPeticion(srv: http.Server, req: http.IncomingMessage, socket: Duplex, cabeza?: Buffer) {
+  // Lo que traiga cuerpo no se puede leer ya por aquí (el lector HTTP paró en la cabecera): se rechaza.
+  const conCuerpo = Number(req.headers['content-length'] || 0) > 0 || !!req.headers['transfer-encoding'];
+  if (conCuerpo) return rechazarUpgrade(socket, 400, 'Bad Request');
+  if (cabeza?.length) socket.unshift(cabeza);
+  const res = new http.ServerResponse(req);
+  res.shouldKeepAlive = false;
+  res.assignSocket(socket as net.Socket);
+  res.on('finish', () => {
+    res.detachSocket(socket as net.Socket);
+    socket.end();
+  });
+  srv.emit('request', req, res);
+}
+
 export type DepsMotor = {
   /** La ruta del LLM propio que devuelve montarVozAgente. */
   llm: express.RequestHandler;
@@ -730,8 +860,24 @@ export type DepsMotor = {
   apiKey?: () => string;
   /** Las pruebas acortan la espera del vínculo. */
   vincularMs?: number;
+  /** Las pruebas acortan el plazo del `init` y el de inactividad. */
+  inicioMs?: number;
+  inactividadMs?: number;
   /** Las pruebas cambian quién tiene el motor (por omisión, motorDe). */
   motorDe?: typeof motorDe;
+};
+
+/** Lo que se le contesta al teléfono que pidió el vínculo: atada, de otro, o sin llamada que espere. */
+type Pendiente = 'ok' | 'ocupada' | 'nadie';
+
+/** De quién es una conversación: ya no se vuelve a atar a otra cuenta. */
+type Atada = {
+  /** La cuenta (en minúsculas), o '' si dos cuentas la reclamaron antes de llegar (no es de ninguna). */
+  correo: string;
+  origen: 'cabecera' | 'telefono' | 'disputa';
+  hasta: number;
+  /** La llamada que la usa (para colgarla si otra cuenta la reclama después). */
+  sesion: SesionMotor | null;
 };
 
 /**
@@ -742,41 +888,80 @@ export function montarMotorVoz(app: express.Express, httpServer: http.Server | n
   const elMotor = d.motorDe ?? motorDe;
   const llave = d.apiKey ?? (() => clave('elevenlabs'));
   const esperaVinculo = d.vincularMs ?? VINCULAR_MS;
-  /** conversación de ElevenLabs → el pase que el teléfono ató, y quién espera ese vínculo. */
-  const vinculos = new Map<string, { pase: string; hasta: number }>();
-  const esperando = new Map<string, ((p: string) => void)[]>();
+  const plazoInicio = d.inicioMs ?? INICIO_MS;
+  const plazoInactividad = d.inactividadMs ?? INACTIVIDAD_MS;
+  /**
+   * EL VÍNCULO ES DE UN SOLO USO Y DE UNA SOLA CUENTA. Por conversación de ElevenLabs:
+   *  · `atadas`: de quién es ya (por la cabecera `X-Pase` o por el teléfono); nadie más la ata;
+   *  · `esperando`: LA conexión abierta que espera su pase (una por conversación, solo dentro del plazo);
+   *  · `pendientes`: el teléfono llegó antes que el `init`: su petición espera (el mismo plazo) a que esa
+   *    conexión pida su pase; si no llega, no se ata nada (no queda un vínculo suelto para una llamada futura).
+   * Solo se ata una conexión abierta que espera. Si otra cuenta reclama una conversación ya atada por el
+   * teléfono (o dos la reclaman a la vez), no se sabe quién es quién: 409 y la llamada se cuelga sin atender a
+   * nadie. La cabecera de ElevenLabs gana siempre: ningún vínculo la cambia.
+   */
+  const atadas = new Map<string, Atada>();
+  const esperando = new Map<string, { sesion: SesionMotor; listo: (p: string | null) => void }>();
+  const pendientes = new Map<string, { correo: string; pase: string; avisar: (r: Pendiente) => void }[]>();
   const sesiones = new Set<SesionMotor>();
 
-  const permitido = (pase: string) => {
-    const p = leerPase(pase);
-    return !!p && !!elMotor(p.correo, p.avatar, p.idioma);
+  const limpiar = (ahora = Date.now()) => {
+    for (const [k, v] of atadas) if (v.hasta <= ahora && (!v.sesion || v.sesion.cerrada)) atadas.delete(k);
+  };
+  const atar = (conversacion: string, a: Omit<Atada, 'hasta'>) => atadas.set(conversacion, { ...a, hasta: Date.now() + VINCULO_TTL_MS });
+  /** Contesta a los teléfonos que esperaban esa conversación (y ya no esperan). */
+  const avisarPendientes = (conversacion: string, r: Pendiente | ((correo: string) => Pendiente)) => {
+    const l = pendientes.get(conversacion);
+    pendientes.delete(conversacion);
+    for (const x of l || []) x.avisar(typeof r === 'function' ? r(x.correo) : r);
   };
 
-  const esperarPase = (conversacion: string): Promise<string | null> => {
-    const ya = vinculos.get(conversacion);
-    if (ya && ya.hasta > Date.now()) {
-      vinculos.delete(conversacion);
+  const esperarPase = (conversacion: string, sesion: SesionMotor): Promise<string | null> => {
+    limpiar();
+    // Ya es de alguien, u otra conexión la espera: esta no la usa (un solo uso).
+    if (!conversacion || atadas.has(conversacion) || esperando.has(conversacion)) return Promise.resolve(null);
+    // El teléfono ya lo pidió (y su petición sigue esperando): esta conexión es la que espera, se ata ya.
+    const ya = pendientes.get(conversacion)?.[0];
+    if (ya) {
+      atar(conversacion, { correo: ya.correo, origen: 'telefono', sesion });
+      avisarPendientes(conversacion, 'ok');
       return Promise.resolve(ya.pase);
     }
     return new Promise((listo) => {
       const h = setTimeout(() => {
-        const l = esperando.get(conversacion)?.filter((f) => f !== alVincular) || [];
-        if (l.length) esperando.set(conversacion, l);
-        else esperando.delete(conversacion);
+        if (esperando.get(conversacion)?.sesion === sesion) esperando.delete(conversacion);
         listo(null);
       }, esperaVinculo);
       h.unref?.();
-      const alVincular = (p: string) => {
-        clearTimeout(h);
-        listo(p);
-      };
-      esperando.set(conversacion, [...(esperando.get(conversacion) || []), alVincular]);
+      esperando.set(conversacion, {
+        sesion,
+        listo: (p) => {
+          clearTimeout(h);
+          listo(p);
+        },
+      });
     });
+  };
+
+  /** El permiso de la llamada: la cuenta se lee del pase la primera vez y su interruptor se mira en cada turno. */
+  const permisoDeLlamada = (fijarIdioma: (i: Idioma) => void) => {
+    let quien: { correo: string; avatar: AvatarVoz; idioma: Idioma } | null = null;
+    return (pase: string): boolean => {
+      if (!quien) {
+        const p = leerPase(pase);
+        if (!p || !elMotor(p.correo, p.avatar, p.idioma)) return false;
+        quien = { correo: p.correo, avatar: p.avatar, idioma: normalizarIdioma(p.idioma) };
+        fijarIdioma(quien.idioma);
+        return true;
+      }
+      // Después, solo el interruptor (servidor y cuenta): que el pase venza lo contesta la ruta, con su frase.
+      return !!elMotor(quien.correo, quien.avatar, quien.idioma);
+    };
   };
 
   /**
    * El teléfono ata su conversación de ElevenLabs a su pase (solo si ElevenLabs no reenvió `X-Pase`): con
-   * SU sesión y SU pase, así nadie habla como otra persona.
+   * SU sesión y SU pase, así nadie habla como otra persona. Una vez atada, ninguna otra cuenta la cambia.
    */
   app.post(`${RUTA_MOTOR}/vincular`, d.exigirMesaODesk, d.limitar(30, 60_000, 'voz-agente'), (req, res) => {
     if (!motorEncendido()) return res.status(404).json({ error: 'no está', honesto: true });
@@ -788,14 +973,59 @@ export function montarMotorVoz(app: express.Express, httpServer: http.Server | n
     if (!p || p.correo.toLowerCase() !== s.correo.toLowerCase()) return res.status(403).json({ error: 'ese pase no es tuyo', honesto: true });
     if (!elMotor(p.correo, p.avatar, p.idioma)) return res.status(403).json({ error: 'el motor nuevo no está activo para tu cuenta', honesto: true });
     if (!/^[A-Za-z0-9_-]{6,128}$/.test(conversacion)) return res.status(400).json({ error: 'conversación inválida', honesto: true });
-    const ahora = Date.now();
-    for (const [k, v] of vinculos) if (v.hasta <= ahora) vinculos.delete(k);
-    const quienes = esperando.get(conversacion);
-    if (quienes?.length) {
+    const correo = p.correo.toLowerCase();
+    limpiar();
+    const contestar = (r: Pendiente) =>
+      r === 'ok'
+        ? res.json({ ok: true, honesto: true })
+        : r === 'ocupada'
+          ? res.status(409).json({ error: 'esa conversación ya está vinculada', honesto: true })
+          : res.status(404).json({ error: 'no hay una llamada esperando esa conversación', honesto: true });
+    // Solo la huella de la conversación en el registro: ni la cuenta, ni el pase, ni lo dicho.
+    const avisar = (que: string) => console.warn(`[voz motor] vínculo rechazado (${que}): conversación ${huella(conversacion)}`);
+    const ya = atadas.get(conversacion);
+    if (ya) {
+      // La misma cuenta otra vez (un reintento del teléfono): nada cambia.
+      if (ya.correo && ya.correo === correo) return contestar('ok');
+      avisar(ya.origen === 'cabecera' ? 'la llamada ya trae su pase' : 'ya es de otra cuenta');
+      if (ya.origen === 'telefono') ya.sesion?.terminar(1008, 'vínculo en disputa');
+      return contestar('ocupada');
+    }
+    const espera = esperando.get(conversacion);
+    if (espera) {
       esperando.delete(conversacion);
-      for (const f of quienes) f(pase);
-    } else vinculos.set(conversacion, { pase, hasta: ahora + VINCULO_TTL_MS });
-    return res.json({ ok: true, honesto: true });
+      atar(conversacion, { correo, origen: 'telefono', sesion: espera.sesion });
+      espera.listo(pase);
+      return contestar('ok');
+    }
+    // Todavía no hay conexión que espere: el teléfono espera (el plazo del vínculo) a que llegue su `init`.
+    const antes = pendientes.get(conversacion) || [];
+    if (antes.some((x) => x.correo !== correo)) {
+      // Dos cuentas reclaman la misma conversación antes de que llegue: no es de ninguna.
+      atar(conversacion, { correo: '', origen: 'disputa', sesion: null });
+      avisarPendientes(conversacion, 'ocupada');
+      avisar('dos cuentas antes de la llamada');
+      return contestar('ocupada');
+    }
+    let contestado = false;
+    const yo = {
+      correo,
+      pase,
+      avisar: (r: Pendiente) => {
+        if (contestado) return;
+        contestado = true;
+        clearTimeout(h);
+        contestar(r);
+      },
+    };
+    const h = setTimeout(() => {
+      const l = (pendientes.get(conversacion) || []).filter((x) => x !== yo);
+      if (l.length) pendientes.set(conversacion, l);
+      else pendientes.delete(conversacion);
+      yo.avisar('nadie');
+    }, esperaVinculo);
+    h.unref?.();
+    pendientes.set(conversacion, [...antes, yo]);
   });
 
   /** La comparación de los dos caminos (server/voz-medidas.ts): solo el dueño. */
@@ -818,8 +1048,9 @@ export function montarMotorVoz(app: express.Express, httpServer: http.Server | n
       ruta = '';
     }
     if (ruta !== RUTA_MOTOR) {
-      // Otro WebSocket (el de Vite en desarrollo): no es nuestro. Si nadie más escucha, se suelta.
-      if (httpServer && httpServer.listenerCount('upgrade') <= 1) socket.destroy();
+      // Otro WebSocket (el de Vite en desarrollo) tiene su propio oyente: no es nuestro, no se toca. Si nadie
+      // más escucha, es una petición normal con esa cabecera: se atiende como sin el motor.
+      if (httpServer && httpServer.listenerCount('upgrade') <= 1) atenderComoPeticion(httpServer, req, socket, cabeza);
       return;
     }
     if (!motorEncendido()) return rechazarUpgrade(socket, 404, 'Not Found');
@@ -837,26 +1068,49 @@ export function montarMotorVoz(app: express.Express, httpServer: http.Server | n
     const ws = aceptarWebSocket(req, socket, cabeza);
     if (!ws) return;
     const paseCabecera = String(req.headers['x-pase'] || '');
-    const sesion = new SesionMotor({
+    const sesion: SesionMotor = new SesionMotor({
       llm: d.llm,
       enviar: (m) => ws.enviar(m),
       cerrar: (codigo, motivo) => ws.cerrar(codigo, motivo),
       ip: String(req.socket?.remoteAddress || 'elevenlabs'),
       paseCabecera,
-      esperarPase,
-      permitido: (pase) => {
-        const ok = permitido(pase);
-        const p = ok ? leerPase(pase) : null;
-        if (p) sesion.fijarIdioma(normalizarIdioma(p.idioma));
-        return ok;
+      esperarPase: (c) => esperarPase(c, sesion),
+      // Con `X-Pase`, la conversación es de esa cuenta (o de nadie, si el pase no vale): el teléfono no la cambia.
+      anunciar: (c) => {
+        if (!c || !paseCabecera) return;
+        const p = leerPase(paseCabecera);
+        const correo = p ? p.correo.toLowerCase() : '';
+        atar(c, { correo, origen: 'cabecera', sesion });
+        // El teléfono de la misma cuenta que esperaba: ya está (por la cabecera); el de otra: 409.
+        avisarPendientes(c, (de) => (correo && de === correo ? 'ok' : 'ocupada'));
       },
+      permitido: permisoDeLlamada((i) => sesion.fijarIdioma(i)),
       anotar: (m) => anotarTurnoVoz(m),
     });
     sesiones.add(sesion);
+    // Sin `init` a tiempo, o sin nada de ElevenLabs (ni el pong a nuestro ping), se cierra.
+    const hInicio = setTimeout(() => !sesion.iniciada && sesion.terminar(1008, 'sin init'), plazoInicio);
+    hInicio.unref?.();
+    const hLatido = setInterval(
+      () => {
+        const quieta = Date.now() - ws.ultimaActividad;
+        if (quieta >= plazoInactividad) sesion.terminar(1001, 'inactiva');
+        else if (quieta >= plazoInactividad / 2) ws.ping();
+      },
+      Math.max(20, Math.floor(plazoInactividad / 4))
+    );
+    hLatido.unref?.();
     ws.on('mensaje', (t: string) => void sesion.recibir(t).catch((e) => console.warn('[voz motor] mensaje', String(e?.message || e).slice(0, 120))));
     ws.on('cierre', () => {
+      clearTimeout(hInicio);
+      clearInterval(hLatido);
       sesiones.delete(sesion);
       sesion.terminar(1000, 'cerrada');
+      const e = esperando.get(sesion.conversacion);
+      if (e?.sesion === sesion) {
+        esperando.delete(sesion.conversacion);
+        e.listo(null);
+      }
     });
   };
   if (httpServer && motorEncendido()) httpServer.on('upgrade', alUpgrade);

@@ -103,8 +103,13 @@ mismo sitio, sin una línea duplicada:
   `Bearer` de hoy. Sin las dos, el WebSocket no se abre.
 - **Quién habla**: el pase viaja como hoy, como variable dinámica en la cabecera `X-Pase` (la documentación de
   `request_headers` acepta variables dinámicas). Si ElevenLabs no la reenviara, el teléfono ata la conversación
-  a su pase con su sesión (`POST /api/voz/motor/vincular`); sin pase en 6 s, se cuelga sin pensar. Además, la
-  cuenta del pase tiene que tener el interruptor: un pase de otra cuenta no entra por el motor.
+  a su pase con su sesión (`POST /api/voz/motor/vincular`); sin pase en 6 s, se cuelga sin pensar. El vínculo
+  es de un solo uso y de una sola cuenta: solo se ata una conexión abierta que espera su pase (el teléfono que
+  llega antes espera ese plazo; si no llega la conexión, 404 y nada queda atado); otra cuenta recibe 409 (y si
+  ya estaba atada por el teléfono, la llamada se cuelga: no se sabe quién habla); con `X-Pase`, la cabecera
+  gana siempre. Además, la cuenta del pase tiene que tener el interruptor, y se mira en **cada turno**: si se le
+  quita (o se apaga el servidor) a mitad de llamada, se cierra sin error. Sin `init` en 10 s, o sin nada de
+  ElevenLabs en 60 s (ni el pong a nuestro ping), la conexión se cierra.
 - **Interrupción**: un `event_id` nuevo mientras el turno anterior sigue saliendo suelta ese turno (la ruta
   corta su cerebro igual que cuando ElevenLabs corta la petición) y nada más sale con el id viejo; se anota
   como interrupción **nativa**. El mismo `event_id` otra vez no es otro turno.

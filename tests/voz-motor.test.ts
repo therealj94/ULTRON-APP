@@ -13,7 +13,10 @@
  *  · con el interruptor apagado (cuenta, servidor o avatar sin recurso) el camino de siempre no cambia;
  *  · lo de «No usarlo» no viaja: el cerebro recibe solo la última frase, igual que por el agente;
  *  · una acción del cerebro sigue esperando su confirmación (y una frase a medias no la hace);
- *  · el vínculo por el teléfono si ElevenLabs no reenvía el pase, ping/pong, cierre y la comparación.
+ *  · el vínculo por el teléfono si ElevenLabs no reenvía el pase, ping/pong, cierre y la comparación;
+ *  · el vínculo es de un solo uso y de una sola cuenta (409 si es de otra; `X-Pase` gana siempre; solo se
+ *    ata una conexión abierta que espera), el plazo del `init` y la inactividad, los marcos mal formados
+ *    (1002, 1007, 1009), la cola de salida, otra ruta con `Upgrade` y el permiso en cada turno.
  */
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -23,7 +26,8 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import express from 'express';
-import type { AddressInfo } from 'node:net';
+import net, { type AddressInfo } from 'node:net';
+import { Duplex } from 'node:stream';
 import { WebSocket } from 'undici';
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voz-motor-'));
@@ -75,7 +79,10 @@ function jwt(o: { iss?: string; sub?: string; exp?: number; iat?: number; alg?: 
 const LLAVE_MOTOR = () => secretoDerivado(M.ETIQUETA_SECRETO_MOTOR);
 
 type Cerebro = (t: TurnoVoz) => Promise<void>;
-async function montar(cerebro: Cerebro, o: { puenteMs?: number; confirmarAccionMs?: number; graciaReintentoMs?: number; vincularMs?: number; turnoMs?: number } = {}) {
+async function montar(
+  cerebro: Cerebro,
+  o: { puenteMs?: number; confirmarAccionMs?: number; graciaReintentoMs?: number; vincularMs?: number; turnoMs?: number; inicioMs?: number; inactividadMs?: number } = {}
+) {
   const vistos: TurnoVoz[] = [];
   const pedidas: string[] = [];
   const elevenFalso: typeof fetch = (async (url: any) => {
@@ -84,6 +91,7 @@ async function montar(cerebro: Cerebro, o: { puenteMs?: number; confirmarAccionM
   }) as any;
   const app = express();
   app.use(express.json({ limit: '1mb' }));
+  app.get('/api/health', (_q, r) => r.json({ ok: true }));
   const srv = http.createServer(app);
   const pasa: express.RequestHandler = (_q, _s, next) => next();
   const { llm } = VA.montarVozAgente(app, {
@@ -105,11 +113,21 @@ async function montar(cerebro: Cerebro, o: { puenteMs?: number; confirmarAccionM
     alTurno: MED.anotarDesdeRuta,
   });
   const mando: express.RequestHandler = (req, res, next) => (req.headers['x-mando'] === 'si' ? next() : res.status(403).json({ error: 'requiere mando' }));
-  const motor = M.montarMotorVoz(app, srv, { llm, exigirMesaODesk: pasa, exigirMando: mando, limitar: () => pasa, sesionDe, vincularMs: o.vincularMs ?? 400 });
+  const motor = M.montarMotorVoz(app, srv, {
+    llm,
+    exigirMesaODesk: pasa,
+    exigirMando: mando,
+    limitar: () => pasa,
+    sesionDe,
+    vincularMs: o.vincularMs ?? 400,
+    inicioMs: o.inicioMs,
+    inactividadMs: o.inactividadMs,
+  });
   srv.listen(0);
   await new Promise((r) => srv.once('listening', r));
   const puerto = (srv.address() as AddressInfo).port;
   return {
+    puerto,
     base: `http://127.0.0.1:${puerto}`,
     ws: `ws://127.0.0.1:${puerto}${M.RUTA_MOTOR}`,
     vistos,
@@ -702,6 +720,328 @@ test('ping → pong; `close` de ElevenLabs corta el turno en curso y cierra; un 
     await el.cerrado();
     await el.esperar(() => cortado);
     assert.ok(cortado, 'colgar corta el cerebro');
+  } finally {
+    await s.cerrar();
+  }
+});
+
+/* ------------------------------------------------------------------ el vínculo: un solo uso, una sola cuenta */
+
+const vincularA = (base: string, token: string, pase: string, conversacion: string) =>
+  fetch(`${base}${M.RUTA_MOTOR}/vincular`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-ultron-sesion': token }, body: JSON.stringify({ pase, conversacion }) });
+const respondeTeOigo = async (t: TurnoVoz) => {
+  t.enviar('delta', { text: 'Te oigo.', voz: 'Te oigo.' });
+  t.enviar('done', { reply: 'Te oigo.' });
+};
+
+test('vínculo: atada por una cuenta, otra recibe 409 y la llamada no se atiende como ella (se cuelga)', async () => {
+  const s = await montar(respondeTeOigo);
+  try {
+    const b = await persona();
+    const a = await persona();
+    const pb = (await abrir(s.base, b.token)).j.pase;
+    const pa = (await abrir(s.base, a.token)).j.pase;
+    const c = (await conectar(s.ws, cabecerasBuenas())) as ElevenFalso;
+    c.enviar({ type: 'init', conversation_id: 'conv_unica_b1' });
+    c.enviar(transcripcion(1, [['user', '¿me oyes?']]));
+    assert.equal((await vincularA(s.base, b.token, pb, 'conv_unica_b1')).status, 200);
+    assert.equal(await c.respuesta(1), 'Te oigo.');
+    assert.equal((await vincularA(s.base, b.token, pb, 'conv_unica_b1')).status, 200, 'la misma cuenta otra vez (reintento): nada cambia');
+    assert.equal((await vincularA(s.base, a.token, pa, 'conv_unica_b1')).status, 409, 'ya es de otra cuenta');
+    assert.equal((await c.cerrado()).codigo, 1008, 'en disputa no se sabe quién habla: se cuelga');
+    assert.deepEqual(
+      s.vistos.map((t) => t.persona.correo),
+      [b.correo],
+      'ningún turno se atendió como la otra cuenta'
+    );
+  } finally {
+    await s.cerrar();
+  }
+});
+
+test('vínculo: solo se ata una conexión abierta que espera; sin ella, nada queda atado para después', async () => {
+  const s = await montar(respondeTeOigo, { vincularMs: 250 });
+  try {
+    const a = await persona();
+    const pa = (await abrir(s.base, a.token)).j.pase;
+    // Nadie espera esa conversación: el teléfono espera el plazo y no se ata nada.
+    const v = await vincularA(s.base, a.token, pa, 'conv_futura_1');
+    assert.equal(v.status, 404);
+    const c = (await conectar(s.ws, cabecerasBuenas())) as ElevenFalso;
+    c.enviar({ type: 'init', conversation_id: 'conv_futura_1' });
+    c.enviar(transcripcion(1, [['user', 'frase de otra persona']]));
+    assert.equal((await c.cerrado()).codigo, 1008, 'la llamada que llega después no hereda el vínculo viejo');
+    assert.equal(s.vistos.length, 0);
+    // El teléfono un poco antes que el `init` (dentro del plazo): espera y queda atada a esa conexión.
+    const pedido = vincularA(s.base, a.token, pa, 'conv_carrera_1');
+    await dormir(50);
+    const d = (await conectar(s.ws, cabecerasBuenas())) as ElevenFalso;
+    d.enviar({ type: 'init', conversation_id: 'conv_carrera_1' });
+    d.enviar(transcripcion(1, [['user', 'hola']]));
+    assert.equal((await pedido).status, 200);
+    assert.equal(await d.respuesta(1), 'Te oigo.');
+    assert.equal(s.vistos[0].persona.correo, a.correo);
+    d.cerrar();
+  } finally {
+    await s.cerrar();
+  }
+});
+
+test('vínculo: dos cuentas reclaman la misma conversación antes del `init`: 409 a las dos y no es de nadie', async () => {
+  const s = await montar(respondeTeOigo, { vincularMs: 400 });
+  try {
+    const b = await persona();
+    const a = await persona();
+    const pb = (await abrir(s.base, b.token)).j.pase;
+    const pa = (await abrir(s.base, a.token)).j.pase;
+    const vb = vincularA(s.base, b.token, pb, 'conv_disputa_1');
+    await dormir(30);
+    const va = vincularA(s.base, a.token, pa, 'conv_disputa_1');
+    await dormir(30);
+    const c = (await conectar(s.ws, cabecerasBuenas())) as ElevenFalso;
+    c.enviar({ type: 'init', conversation_id: 'conv_disputa_1' });
+    c.enviar(transcripcion(1, [['user', 'frase privada de B']]));
+    assert.equal((await vb).status, 409);
+    assert.equal((await va).status, 409, 'el último no gana');
+    assert.equal((await c.cerrado()).codigo, 1008);
+    assert.equal(s.vistos.length, 0, 'no se atendió como ninguna');
+  } finally {
+    await s.cerrar();
+  }
+});
+
+test('vínculo: con X-Pase la llamada es de esa cuenta; el teléfono de otra no la cambia (409)', async () => {
+  const s = await montar(respondeTeOigo);
+  try {
+    const b = await persona();
+    const a = await persona();
+    const pb = (await abrir(s.base, b.token)).j.pase;
+    const pa = (await abrir(s.base, a.token)).j.pase;
+    const c = (await conectar(s.ws, cabecerasBuenas(pb))) as ElevenFalso;
+    c.enviar({ type: 'init', conversation_id: 'conv_cabecera_1' });
+    await dormir(50);
+    assert.equal((await vincularA(s.base, a.token, pa, 'conv_cabecera_1')).status, 409);
+    assert.equal((await vincularA(s.base, b.token, pb, 'conv_cabecera_1')).status, 200, 'el teléfono de la misma cuenta: ya está');
+    c.enviar(transcripcion(1, [['user', 'hola']]));
+    assert.equal(await c.respuesta(1), 'Te oigo.');
+    assert.deepEqual(
+      s.vistos.map((t) => t.persona.correo),
+      [b.correo]
+    );
+    c.cerrar();
+  } finally {
+    await s.cerrar();
+  }
+});
+
+/* ------------------------------------------------------------------ la conexión: plazos y marcos */
+
+/** Una conexión WebSocket a mano (para mandar marcos mal formados y leer los del servidor tal cual). */
+async function aMano(puerto: number, cabeceras: Record<string, string>, ruta = M.RUTA_MOTOR) {
+  const s = net.connect(puerto, '127.0.0.1');
+  let buf = Buffer.alloc(0);
+  let cabecera = '';
+  const marcos: { op: number; carga: Buffer }[] = [];
+  let cerrado = false;
+  s.on('error', () => undefined);
+  s.on('close', () => (cerrado = true));
+  s.on('data', (d) => {
+    buf = Buffer.concat([buf, d]);
+    if (!cabecera) {
+      const i = buf.indexOf('\r\n\r\n');
+      if (i < 0) return;
+      cabecera = buf.subarray(0, i).toString();
+      buf = buf.subarray(i + 4);
+    }
+    // Los marcos del servidor (sin máscara).
+    for (;;) {
+      if (buf.length < 2) return;
+      let largo = buf[1] & 0x7f;
+      let i = 2;
+      if (largo === 126) {
+        if (buf.length < 4) return;
+        largo = buf.readUInt16BE(2);
+        i = 4;
+      } else if (largo === 127) {
+        if (buf.length < 10) return;
+        largo = buf.readUInt32BE(6);
+        i = 10;
+      }
+      if (buf.length < i + largo) return;
+      marcos.push({ op: buf[0] & 0x0f, carga: Buffer.from(buf.subarray(i, i + largo)) });
+      buf = buf.subarray(i + largo);
+    }
+  });
+  const lineas = [`GET ${ruta} HTTP/1.1`, 'Host: x', 'Upgrade: websocket', 'Connection: Upgrade', 'Sec-WebSocket-Version: 13', `Sec-WebSocket-Key: ${crypto.randomBytes(16).toString('base64')}`];
+  for (const [k, v] of Object.entries(cabeceras)) lineas.push(`${k}: ${v}`);
+  s.write(lineas.join('\r\n') + '\r\n\r\n');
+  const esperar = async <T>(f: () => T | undefined | false, ms = 3_000): Promise<T> => {
+    const hasta = Date.now() + ms;
+    for (;;) {
+      const v = f();
+      if (v) return v;
+      if (Date.now() > hasta) throw new Error(`no llegó a tiempo: ${cabecera.split('\r\n')[0]} · marcos ${marcos.map((m) => m.op).join(',')}`);
+      await dormir(15);
+    }
+  };
+  await esperar(() => cabecera || (cerrado && 'cerrado'));
+  return {
+    s,
+    cabecera: () => cabecera,
+    marcos,
+    cerrado: () => cerrado,
+    esperar,
+    /** El código del cierre que mandó el servidor (o null si no mandó ninguno). */
+    codigoCierre: () => {
+      const c = marcos.find((m) => m.op === 0x8);
+      return c && c.carga.length >= 2 ? c.carga.readUInt16BE(0) : null;
+    },
+  };
+}
+/** Un marco como lo manda un cliente (enmascarado). */
+function marcoCliente(op: number, carga: Buffer, fin = true) {
+  const n = carga.length;
+  const b0 = (fin ? 0x80 : 0) | op;
+  let cab: Buffer;
+  if (n < 126) cab = Buffer.from([b0, 0x80 | n]);
+  else if (n < 65536) cab = Buffer.from([b0, 0x80 | 126, n >> 8, n & 0xff]);
+  else {
+    cab = Buffer.alloc(10);
+    cab[0] = b0;
+    cab[1] = 0x80 | 127;
+    cab.writeUInt32BE(n, 6);
+  }
+  const m = crypto.randomBytes(4);
+  const c = Buffer.from(carga);
+  for (let k = 0; k < c.length; k++) c[k] ^= m[k & 3];
+  return Buffer.concat([cab, m, c]);
+}
+const textoCliente = (o: unknown) => marcoCliente(0x1, Buffer.from(JSON.stringify(o)));
+
+test('sin `init` a tiempo, una conexión autenticada se cierra; sin nada de ElevenLabs (ni el pong), también', async () => {
+  const s = await montar(async () => {}, { inicioMs: 200, inactividadMs: 400 });
+  try {
+    const yo = await persona();
+    const { j } = await abrir(s.base, yo.token);
+    const sinInit = await aMano(s.puerto, cabecerasBuenas(j.pase));
+    assert.match(sinInit.cabecera(), / 101 /);
+    await sinInit.esperar(() => sinInit.cerrado(), 2_000);
+    assert.equal(sinInit.codigoCierre(), 1008, 'sin init no queda abierta sin ser de nadie');
+    // Con init, pero que nunca contesta: primero un ping nuestro, luego se cierra.
+    const muda = await aMano(s.puerto, cabecerasBuenas(j.pase));
+    muda.s.write(textoCliente({ type: 'init', conversation_id: 'conv_muda_01' }));
+    await muda.esperar(() => muda.cerrado(), 3_000);
+    assert.ok(muda.marcos.some((m) => m.op === 0x9), 'antes de cerrar, un ping');
+    assert.equal(muda.codigoCierre(), 1001);
+    // El cliente de verdad contesta el ping con su pong: sigue abierta pasado el plazo.
+    const viva = await llamada(s, j.pase);
+    await dormir(900);
+    assert.equal(viva.cerradoCon, null, 'el pong cuenta como actividad');
+    viva.cerrar();
+  } finally {
+    await s.cerrar();
+  }
+});
+
+test('marcos mal formados: control grande o partido → 1002; texto que no es UTF-8 → 1007; demasiado grande → 1009', async () => {
+  const s = await montar(async () => {});
+  try {
+    const yo = await persona();
+    const { j } = await abrir(s.base, yo.token);
+    const casos: [string, Buffer[], number][] = [
+      ['ping de más de 125 bytes', [marcoCliente(0x9, Buffer.alloc(200_000, 0x41))], 1002],
+      ['ping sin FIN', [marcoCliente(0x9, Buffer.from('hola'), false)], 1002],
+      ['texto que no es UTF-8', [marcoCliente(0x1, Buffer.from([0xff, 0xfe, 0xfd]))], 1007],
+      ['UTF-8 partido mal entre fragmentos', [marcoCliente(0x1, Buffer.from([0x68, 0xc3]), false), marcoCliente(0x0, Buffer.from([0x28]))], 1007],
+      ['un marco más grande que el máximo', [marcoCliente(0x1, Buffer.alloc(M.MAX_MENSAJE + 1, 0x20))], 1009],
+      ['fragmentos que juntos pasan el máximo', [marcoCliente(0x1, Buffer.alloc(M.MAX_MENSAJE - 10, 0x20), false), marcoCliente(0x0, Buffer.alloc(100, 0x20))], 1009],
+    ];
+    for (const [nombre, marcos, codigo] of casos) {
+      const c = await aMano(s.puerto, cabecerasBuenas(j.pase));
+      for (const m of marcos) c.s.write(m);
+      await c.esperar(() => c.codigoCierre() !== null || c.cerrado(), 5_000);
+      assert.equal(c.codigoCierre(), codigo, nombre);
+      assert.equal(c.marcos.some((m) => m.op === 0xa), false, `${nombre}: no se devuelve como pong`);
+      c.s.destroy();
+    }
+    // Lo bien formado sigue igual: texto partido en fragmentos y en trozos de un byte.
+    const c = await aMano(s.puerto, cabecerasBuenas(j.pase));
+    const ping = Buffer.from(JSON.stringify({ type: 'ping' }));
+    const partes = Buffer.concat([marcoCliente(0x1, ping.subarray(0, 5), false), marcoCliente(0x9, Buffer.from('x')), marcoCliente(0x0, ping.subarray(5))]);
+    for (let i = 0; i < partes.length; i++) c.s.write(partes.subarray(i, i + 1));
+    await c.esperar(() => c.marcos.find((m) => m.op === 0x1 && m.carga.toString() === '{"type":"pong"}'));
+    assert.ok(c.marcos.some((m) => m.op === 0xa && m.carga.toString() === 'x'), 'el ping de control en medio se contesta');
+    assert.equal(c.codigoCierre(), null);
+    c.s.destroy();
+  } finally {
+    await s.cerrar();
+  }
+});
+
+test('la cola de salida: si el otro lado no lee se deja de leer lo suyo, y pasada la cola la conexión se suelta', async () => {
+  let pausado = 0;
+  // Un socket que nunca termina de escribir (el otro lado no lee).
+  const s = new Duplex({ read() {}, write() {}, writableHighWaterMark: 1024 });
+  const pausar = s.pause.bind(s);
+  s.pause = () => (pausado++, pausar());
+  const ws = new M.ConexionWs(s);
+  let cierre: number | null = null;
+  ws.on('cierre', (c: number) => (cierre = c));
+  ws.enviar({ type: 'agent_response', content: 'x'.repeat(4_000) });
+  assert.equal(pausado, 1, 'se deja de leer mientras no vacíe');
+  assert.equal(ws.abierta, true);
+  ws.enviar({ type: 'agent_response', content: 'x'.repeat(M.MAX_COLA) });
+  assert.equal(ws.abierta, false, 'la cola pasó del máximo: se suelta');
+  assert.equal(s.destroyed, true);
+  assert.equal(cierre, 1006);
+});
+
+test('con el motor encendido, una petición con `Upgrade` a otra ruta se atiende como siempre (/api/health contesta)', async () => {
+  const s = await montar(async () => {});
+  try {
+    const respuesta = await new Promise<string>((listo, mal) => {
+      const c = net.connect(s.puerto, '127.0.0.1');
+      let todo = '';
+      c.on('data', (d) => (todo += d.toString()));
+      c.on('close', () => listo(todo));
+      c.on('error', mal);
+      c.write(['GET /api/health HTTP/1.1', 'Host: x', 'Upgrade: websocket', 'Connection: Upgrade', '', ''].join('\r\n'));
+    });
+    assert.match(respuesta, /^HTTP\/1\.1 200 /, `contestó: ${respuesta.slice(0, 80) || '(cortada sin respuesta)'}`);
+    assert.ok(respuesta.endsWith('{"ok":true}'), 'con el cuerpo de la app');
+  } finally {
+    await s.cerrar();
+  }
+});
+
+test('el permiso se mira en cada turno: si se le quita el motor a la cuenta (o al servidor) a mitad de llamada, se cierra', async () => {
+  const s = await montar(respondeTeOigo);
+  try {
+    const yo = await persona();
+    const { j } = await abrir(s.base, yo.token);
+    const el = await llamada(s, j.pase);
+    el.enviar(transcripcion(1, [['user', 'hola']]));
+    assert.equal(await el.respuesta(1), 'Te oigo.');
+    conMotor.splice(conMotor.indexOf(yo.correo), 1);
+    await fijarInterruptores({ motorVozCuentas: conMotor });
+    el.enviar(transcripcion(2, [['user', 'y ahora?']]));
+    assert.equal((await el.cerrado()).codigo, 1000, 'se cierra sin error');
+    assert.equal(s.vistos.length, 1, 'el turno siguiente ya no entra');
+    // El servidor apagado a mitad de llamada: igual.
+    const otro = await persona();
+    const o = await abrir(s.base, otro.token);
+    const el2 = await llamada(s, o.j.pase);
+    el2.enviar(transcripcion(1, [['user', 'hola']]));
+    assert.equal(await el2.respuesta(1), 'Te oigo.');
+    const antes = process.env.AURA_MOTOR_VOZ;
+    delete process.env.AURA_MOTOR_VOZ;
+    try {
+      el2.enviar(transcripcion(2, [['user', 'sigues?']]));
+      assert.equal((await el2.cerrado()).codigo, 1000);
+    } finally {
+      process.env.AURA_MOTOR_VOZ = antes;
+    }
+    assert.equal(s.vistos.length, 2);
   } finally {
     await s.cerrar();
   }
