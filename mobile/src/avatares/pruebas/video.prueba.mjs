@@ -3,7 +3,9 @@
  *   el guion (qué clip toca con cada estado, los golpes de una vez, su enfriamiento, cuándo vuelve al
  *   fondo, «reducir movimiento»), las pistas (su computadora teclea, lee un mensaje, la espera, los golpes
  *   por lo que dijo o pasó), el encuadre (la franja de la cara se ve entera y sin huecos), la zona del
- *   toque, y que los 34 clips existen, son livianos y están en clips.ts.
+ *   toque, y que los 34 clips existen, son livianos y están en clips.ts. La mezcla de capas (transicion.ts)
+ *   con un teléfono de mentira, la mano del sable (manos.ts, `manoLibreMs`), el guion que se queda con su
+ *   clip mientras el sable está en la mano (`sostener`) y ráfagas de toques de punta a punta.
  *
  *   cd mobile && npx tsx src/avatares/pruebas/video.prueba.mjs
  */
@@ -19,6 +21,7 @@ import {
   ESPERA_DURA_MS,
   ESPERA_TRAS_MS,
   GOLPE_ANTES_DE_HABLAR_MS,
+  GOLPE_ANTES_DE_HABLAR_SIN_CORTE_MS,
   GOLPE_VIGENTE_MS,
   SOLTAR_HABLA_MS,
   VENTANAS,
@@ -27,6 +30,26 @@ import {
   fondoDe,
   zonaVideo,
 } from '../video/guion.ts';
+import {
+  ANTES_DEL_FIN_MS,
+  DIBUJANDO_MS,
+  ESPERA_MAX_MS,
+  FUNDIDO_FORZADO_MS,
+  FUNDIDO_MS,
+  LLEGAR_MS,
+  MezclaCapas,
+  RITMO_MAX,
+  manoLibre,
+  faltaReposo,
+  planear,
+  restanteReposo,
+  tramos,
+} from '../video/transicion.ts';
+import { FPS_VIDEO, REPOSOS } from '../video/reposos.ts';
+import { MANO_FUERA } from '../video/manos.ts';
+import { MotorToques } from '../video/efectos/toques.ts';
+import { Agenda, ESPERA_MANO_MS, GolpesDeToque, sacarSable } from '../video/efectos/agenda.ts';
+import { CORTE_MS } from '../video/efectos/escena.ts';
 import { createRequire } from 'node:module';
 import { ESTADO_INICIAL } from '../../avatar3d/tipos.ts';
 import { estadoDesdeMesa } from '../../avatar3d/contrato.ts';
@@ -343,6 +366,21 @@ prueba('si empieza a hablar en medio de un golpe, lo deja terminar su gesto y lu
   assert.equal(d.golpe('saluda'), null, 'acaba de saludar: no repite');
 });
 
+prueba('en el teléfono (sin cortar el gesto) el golpe pide «habla» al segundo; Windows sigue con 1,8 s', () => {
+  const { d, r } = nuevo({ golpeAntesDeHablarMs: GOLPE_ANTES_DE_HABLAR_SIN_CORTE_MS });
+  d.golpe('asiente');
+  assert.equal(d.estado(est({ hablando: true })), null);
+  assert.equal(d.msParaHablar(), GOLPE_ANTES_DE_HABLAR_SIN_CORTE_MS);
+  r.pasar(GOLPE_ANTES_DE_HABLAR_SIN_CORTE_MS);
+  assert.equal(d.revisar().clip, 'habla');
+  const w = nuevo();
+  w.d.golpe('asiente');
+  w.d.estado(est({ hablando: true }));
+  assert.equal(w.d.msParaHablar(), GOLPE_ANTES_DE_HABLAR_MS, 'sin la opción, lo de siempre');
+  const vista = fs.readFileSync(path.resolve(AQUI, '../video/CuerpoVideo.tsx'), 'utf8');
+  assert.match(vista, /golpeAntesDeHablarMs: GOLPE_ANTES_DE_HABLAR_SIN_CORTE_MS/);
+});
+
 prueba('hablar a mitad de un golpe: dice cuánto falta y al cumplirse pasa a hablar sin otro estado (Codex en #106)', () => {
   const { d, r } = nuevo();
   d.golpe('saluda');
@@ -443,6 +481,666 @@ prueba('en la APK el clip se reproduce desde un archivo (expo-asset), nunca desd
   assert.match(vista, /downloadAsync\(\)/);
   assert.match(vista, /source=\{\{ uri: uris\[/);
   assert.doesNotMatch(vista, /source=\{clips\[/, 'el require crudo no va al reproductor');
+});
+
+/* ── el cambio de clip (transicion.ts) ───────────────────────────────────────────────────── */
+
+const T = (clip, bucle = esDeFondo(clip), avatar = 'claudio') => tramos(avatar, clip, bucle);
+
+prueba('reposos.ts: los 34 clips, con su reposo al principio y al final, y duran lo que dice la tabla', () => {
+  const dir = path.resolve(AQUI, '../../../assets/avatares/video');
+  for (const a of ['claudio', 'antonio']) {
+    for (const c of CLIPS_VIDEO) {
+      const [n, hasta, desde] = REPOSOS[a][c];
+      assert.ok(n >= 96 && n <= 144, `${a}-${c}: ${n} cuadros`);
+      assert.ok(hasta >= 5, `${a}-${c}: arranca en reposo por lo menos 5 cuadros (${hasta})`);
+      assert.ok(desde > hasta && desde <= n - 6, `${a}-${c}: termina en reposo por lo menos 6 cuadros (${desde}/${n})`);
+      // La duración del MP4 (mvhd, que con faststart está al principio) es la de la tabla.
+      const b = fs.readFileSync(path.join(dir, `${a}-${c}.mp4`)).subarray(0, 64 * 1024);
+      const i = b.indexOf('mvhd');
+      assert.ok(i > 0, `${a}-${c}: sin mvhd`);
+      const v1 = b[i + 4] === 1;
+      const escala = b.readUInt32BE(i + (v1 ? 24 : 16));
+      const dura = v1 ? Number(b.readBigUInt64BE(i + 28)) : b.readUInt32BE(i + 20);
+      assert.ok(Math.abs(dura / escala - n / FPS_VIDEO) < 0.06, `${a}-${c}: dura ${(dura / escala).toFixed(3)} s y la tabla dice ${n} cuadros`);
+    }
+  }
+});
+
+prueba('el reposo de un clip: al principio y al final; un golpe terminado se queda quieto; un bucle sigue', () => {
+  const t = T('piensa');
+  assert.ok(restanteReposo(t, 0) > 0, 'arranca en reposo');
+  assert.equal(restanteReposo(t, 2000), 0, 'a los 2 s tiene la mano en el mentón');
+  assert.ok(restanteReposo(t, t.desdeMs + 10) > t.hastaMs, 'el final sigue con el principio de la vuelta siguiente');
+  assert.equal(faltaReposo(t, 2000), t.desdeMs - 2000);
+  const g = T('saluda');
+  assert.equal(restanteReposo(g, g.durMs), Infinity, 'un golpe terminado se queda en su último cuadro: reposo');
+  assert.equal(faltaReposo(g, g.durMs), 0);
+});
+
+prueba('planear: en reposo entra ya; si no, termina el gesto (más rápido si empezó a hablar); «reducir movimiento» no acelera', () => {
+  const t = T('piensa');
+  assert.deepEqual(planear(null, 0, 'reposo', false).modo, 'ya', 'nada en pantalla: ya');
+  assert.equal(planear(t, 100, 'habla', false).modo, 'ya', 'recién empieza: todavía en reposo');
+  const h = planear(t, 2000, 'habla', false);
+  assert.equal(h.modo, 'volver');
+  assert.ok(h.ritmo > 1 && h.ritmo <= RITMO_MAX.habla, `acelera para hablar (${h.ritmo}×)`);
+  assert.ok(h.esperaMs <= (t.desdeMs - 2000) / 2.4 + 1, `llega rápido (${Math.round(h.esperaMs)} ms)`);
+  const f = planear(t, t.desdeMs - 600, 'escucha', false);
+  assert.deepEqual([f.modo, f.ritmo], ['volver', 1], 'un fondo nuevo, cerca del reposo: a su ritmo');
+  const lejos = planear(t, 800, 'reposo', false);
+  assert.ok(lejos.ritmo <= RITMO_MAX.fondo && lejos.esperaMs <= LLEGAR_MS.fondo + 1, `un fondo lejos: hasta ${RITMO_MAX.fondo}×, en ~2 s (${lejos.ritmo}×)`);
+  // «Reducir movimiento»: nunca acelera; si empezó a hablar y el reposo está lejos, funde despacio sin esperar.
+  const rh = planear(t, 1000, 'habla', true);
+  assert.deepEqual([rh.modo, rh.ritmo, rh.fundidoMs], ['fundir', 1, FUNDIDO_FORZADO_MS]);
+  const rc = planear(t, t.desdeMs - 1000, 'habla', true);
+  assert.deepEqual([rc.modo, rc.ritmo], ['volver', 1], 'si el reposo está cerca, lo espera');
+  const rf = planear(t, 1000, 'escucha', true);
+  assert.deepEqual([rf.modo, rf.ritmo], ['volver', 1]);
+});
+
+/**
+ * Un teléfono de mentira para la mezcla: dos reproductores que cargan en `cargaMs`, avanzan a su ritmo,
+ * cuentan su posición cada 100 ms (como expo-av) y se quedan quietos al final de un golpe. Revisa en
+ * cada orden lo que se vería en pantalla.
+ */
+function telefono({ avatar = 'claudio', reducido = false, cargaMs = 180, noCarga = () => false } = {}) {
+  const r = reloj(0);
+  const jug = [null, null];
+  const ordenes = [];
+  const problemas = [];
+  const trabados = [];
+  let fundido = null; // el que está en curso
+  const historial = [];
+  let visible = null; // la capa que se ve entera
+  let prox = null;
+  let m;
+  const posReal = (j) => j.pos;
+  const ordenar = (o) => {
+    const t = r.ahora();
+    ordenes.push({ t, ...o });
+    const j = jug[o.capa];
+    switch (o.tipo) {
+      case 'montar':
+        if (o.capa === visible) problemas.push(`${t}: montó encima de la capa que se ve`);
+        if (fundido && fundido.capa === o.capa) problemas.push(`${t}: montó en la capa que se está fundiendo`);
+        jug[o.capa] = { clave: o.clave, r: o.r, cargaEn: noCarga(o.r) ? Infinity : t + cargaMs, cargado: false, enMarcha: false, pos: 0, ritmo: 1, ultimo: t, dur: tramos(avatar, o.r.clip, o.r.bucle).durMs };
+        break;
+      case 'quitar':
+        if (o.capa === visible) problemas.push(`${t}: quitó la capa que se ve`);
+        if (fundido && fundido.capa === o.capa) problemas.push(`${t}: quitó la capa a mitad del fundido`);
+        jug[o.capa] = null;
+        break;
+      case 'tocar':
+        if (!j?.cargado) problemas.push(`${t}: tocó un clip sin cargar`);
+        j.enMarcha = true;
+        break;
+      case 'ritmo':
+        if (j) j.ritmo = o.ritmo;
+        if (reducido && o.ritmo > 1) problemas.push(`${t}: aceleró con «reducir movimiento»`);
+        break;
+      case 'fundir': {
+        if (fundido) problemas.push(`${t}: un fundido encima de otro`);
+        if (!j?.enMarcha || j.pos < DIBUJANDO_MS) problemas.push(`${t}: fundió un clip que todavía no dibuja`);
+        const otra = o.capa === 0 ? 1 : 0;
+        if (o.sobre === 'capa') {
+          const a = jug[otra];
+          if (!a) problemas.push(`${t}: fundió sobre una capa vacía`);
+          else if (o.ms !== FUNDIDO_FORZADO_MS && restanteReposo(tramos(avatar, a.r.clip, a.r.bucle), posReal(a)) <= 0)
+            problemas.push(`${t}: cambió de ${a.r.clip} (en ${Math.round(a.pos)} ms, fuera del reposo) a ${j.r.clip}`);
+          if (j.pos > tramos(avatar, j.r.clip, j.r.bucle).hastaMs) problemas.push(`${t}: el nuevo ya salió de su reposo al fundirse`);
+        }
+        fundido = { t, capa: o.capa, hasta: t + o.ms, ms: o.ms, sobre: o.sobre, de: o.sobre === 'capa' ? jug[otra]?.r.clip : null, a: j.r.clip, posVieja: jug[otra]?.pos };
+        historial.push(fundido);
+        break;
+      }
+      case 'listo':
+        visible = o.capa;
+        fundido = null;
+        break;
+    }
+  };
+  m = new MezclaCapas({ avatar, reducido: () => reducido, ahora: r.ahora, ordenar, trabado: (clip, definitivo) => trabados.push([clip, definitivo]) });
+  const reprogramar = () => {
+    const ms = m.msParaRevisar();
+    prox = ms === null ? null : r.ahora() + ms;
+  };
+  const tic = () => {
+    const t = r.ahora();
+    jug.forEach((j, i) => {
+      if (!j) return;
+      if (!j.cargado && t >= j.cargaEn) {
+        j.cargado = true;
+        m.cargado(i, j.clave);
+        reprogramar();
+      }
+      if (j.enMarcha) {
+        j.pos += 10 * j.ritmo;
+        if (j.r.bucle) j.pos %= j.dur;
+        else if (j.pos >= j.dur) {
+          j.pos = j.dur;
+          j.enMarcha = false;
+        }
+      }
+      if (j.cargado && t - j.ultimo >= 100) {
+        j.ultimo = t;
+        m.estado(i, j.clave, j.pos, j.enMarcha);
+        reprogramar();
+      }
+    });
+    if (prox !== null && t >= prox) {
+      m.revisar();
+      reprogramar();
+    }
+  };
+  const pasar = (ms) => {
+    for (let k = 0; k < ms; k += 10) {
+      r.pasar(10);
+      tic();
+    }
+  };
+  const pedir = (clip, n) => {
+    m.pedir({ clip, bucle: esDeFondo(clip), n });
+    reprogramar();
+  };
+  const fundidos = () => historial;
+  return { m, r, jug, pasar, pedir, ordenes, fundidos, problemas, trabados, get visible() { return visible; } };
+}
+
+/** Pone un clip en pantalla y lo deja llegar a `pos` ms. */
+function conClip(clip, pos, o) {
+  const tel = telefono(o);
+  tel.pedir(clip, 1);
+  tel.pasar(600);
+  assert.equal(tel.m.actual?.clip, clip);
+  const j = tel.jug[tel.visible];
+  tel.pasar(Math.max(0, Math.round((pos - j.pos) / 10) * 10));
+  return tel;
+}
+
+prueba('la mezcla: el primero aparece sobre las fotos recién cuando dibuja', () => {
+  const tel = telefono();
+  tel.pedir('reposo', 1);
+  assert.deepEqual(tel.ordenes.map((o) => o.tipo), ['montar'], 'se monta quieto');
+  tel.pasar(150);
+  assert.ok(!tel.ordenes.some((o) => o.tipo === 'tocar'), 'todavía cargando');
+  tel.pasar(400);
+  const f = tel.fundidos();
+  assert.equal(f.length, 1);
+  assert.equal(f[0].sobre, 'respaldo');
+  assert.equal(tel.visible, 0);
+  assert.deepEqual(tel.problemas, []);
+});
+
+prueba('la mezcla: de un fondo a la mitad a otro fondo, termina su gesto y cambia en el reposo', () => {
+  const tel = conClip('piensa', 2000);
+  tel.pedir('escucha', 2);
+  const plan = tel.m.plan;
+  assert.equal(plan.modo, 'volver');
+  tel.pasar(300);
+  assert.ok(!tel.ordenes.some((o) => o.tipo === 'tocar' && o.capa === 1), 'el nuevo ya cargó pero espera, quieto');
+  tel.pasar(3000);
+  const f = tel.fundidos().at(-1);
+  assert.equal(f.a, 'escucha');
+  assert.ok(f.posVieja >= T('piensa').desdeMs, `cambió con piensa en reposo (${f.posVieja} ms)`);
+  assert.equal(tel.m.actual.clip, 'escucha');
+  assert.deepEqual(tel.problemas, []);
+});
+
+prueba('la mezcla: empezó a hablar con piensa a la mitad: lo termina rápido (≤2,5×) y habla en ~1 s', () => {
+  const tel = conClip('piensa', 1500);
+  const t0 = tel.r.ahora();
+  tel.pedir('habla', 2);
+  const ritmo = tel.ordenes.find((o) => o.tipo === 'ritmo' && o.capa === tel.visible);
+  assert.ok(ritmo && ritmo.ritmo > 1 && ritmo.ritmo <= RITMO_MAX.habla, 'acelera el gesto que está haciendo');
+  tel.pasar(2500);
+  const f = tel.fundidos().at(-1);
+  assert.equal(f.a, 'habla');
+  assert.ok(f.t - t0 <= 1500, `habla a los ${f.t - t0} ms`);
+  assert.ok(tel.ordenes.some((o) => o.tipo === 'ritmo' && o.ritmo === 1 && o.t <= f.t), 'al llegar al reposo vuelve a su ritmo');
+  assert.deepEqual(tel.problemas, []);
+});
+
+prueba('la mezcla: golpe → habla: no se corta el gesto; lo termina y pasa a hablar en el reposo', () => {
+  for (const golpe of ['saluda', 'celebra', 'asiente', 'duda']) {
+    const tel = conClip(golpe, GOLPE_ANTES_DE_HABLAR_SIN_CORTE_MS);
+    const t0 = tel.r.ahora();
+    tel.pedir('habla', 2);
+    tel.pasar(3000);
+    const f = tel.fundidos().at(-1);
+    assert.equal(f.a, 'habla', golpe);
+    assert.ok(f.posVieja >= T(golpe).desdeMs, `${golpe}: cambió en el reposo (${f.posVieja} ms ≥ ${Math.round(T(golpe).desdeMs)})`);
+    const tope = (T(golpe).desdeMs - GOLPE_ANTES_DE_HABLAR_SIN_CORTE_MS) / RITMO_MAX.habla + 300;
+    assert.ok(f.t - t0 <= tope, `${golpe}: habla a los ${f.t - t0} ms (tope ${Math.round(tope)})`);
+    assert.deepEqual(tel.problemas, [], golpe);
+  }
+});
+
+prueba('la mezcla: el golpe que avisa antes de terminar se queda quieto en su último cuadro hasta el cambio', () => {
+  const tel = conClip('risa', 5000 - ANTES_DEL_FIN_MS);
+  tel.pedir('reposo', 2);
+  tel.pasar(1500);
+  const f = tel.fundidos().at(-1);
+  assert.equal(f.a, 'reposo');
+  assert.ok(f.posVieja >= T('risa').desdeMs);
+  assert.deepEqual(tel.problemas, []);
+});
+
+prueba('la mezcla: cambios rápidos A→B→C mientras B carga: B nunca se ve, queda C', () => {
+  const tel = conClip('reposo', 4700);
+  tel.pedir('escucha', 2);
+  tel.pasar(50);
+  tel.pedir('piensa', 3);
+  tel.pasar(30);
+  tel.pedir('habla', 4);
+  tel.pasar(1500);
+  assert.deepEqual(tel.fundidos().map((f) => f.a), ['reposo', 'habla'], 'ni escucha ni piensa llegaron a verse');
+  assert.equal(tel.m.actual.n, 4);
+  assert.deepEqual(tel.problemas, []);
+});
+
+prueba('la mezcla: un pedido en medio de un fundido espera a que termine (sin apagar la capa vieja de golpe)', () => {
+  const tel = conClip('reposo', 4700);
+  tel.pedir('escucha', 2);
+  // Hasta que arranque el fundido de escucha…
+  for (let k = 0; k < 100 && !tel.m.fundiendo; k++) tel.pasar(10);
+  assert.ok(tel.m.fundiendo);
+  tel.pedir('piensa', 3);
+  assert.equal(tel.m.destino.clip, 'piensa');
+  tel.pasar(100);
+  assert.ok(!tel.ordenes.some((o) => o.tipo === 'quitar' && o.t <= tel.r.ahora() && tel.m.fundiendo), 'nada se quita a mitad');
+  tel.pasar(6000);
+  assert.equal(tel.m.actual.clip, 'piensa');
+  assert.deepEqual(tel.problemas, []);
+});
+
+prueba('la mezcla: lo que ya se ve no se vuelve a montar; el mismo fondo otra vez no hace nada', () => {
+  const tel = conClip('escucha', 2000);
+  const antes = tel.ordenes.length;
+  tel.pedir('escucha', 7);
+  tel.pedir('escucha', 8);
+  assert.equal(tel.ordenes.length, antes);
+  // Pedir algo y arrepentirse antes de que entre: el entrante se descarta y el de ahora vuelve a su ritmo.
+  tel.pedir('habla', 9);
+  tel.pedir('escucha', 10);
+  assert.equal(tel.m.destino.clip, 'escucha');
+  assert.equal(tel.jug[tel.visible].ritmo, 1);
+  tel.pasar(3000);
+  assert.equal(tel.fundidos().length, 1, 'no hubo cambio');
+  assert.deepEqual(tel.problemas, []);
+});
+
+prueba('la mezcla: «reducir movimiento» nunca acelera; para hablar lejos del reposo funde despacio, ya', () => {
+  const tel = conClip('piensa', 1500, { reducido: true });
+  const t0 = tel.r.ahora();
+  tel.pedir('habla', 2);
+  tel.pasar(800);
+  const f = tel.fundidos().at(-1);
+  assert.equal(f.a, 'habla');
+  assert.equal(f.ms, FUNDIDO_FORZADO_MS);
+  assert.ok(f.t - t0 < 600);
+  // Un fondo sí espera al reposo, a su ritmo.
+  const q = conClip('piensa', 1500, { reducido: true });
+  q.pedir('escucha', 2);
+  q.pasar(4000);
+  const g = q.fundidos().at(-1);
+  assert.equal(g.ms, FUNDIDO_MS);
+  assert.ok(g.posVieja >= T('piensa').desdeMs);
+  assert.deepEqual([...tel.problemas, ...q.problemas], []);
+});
+
+prueba('la mezcla: un clip que no carga se monta otra vez y, si tampoco, se queda el de antes (sin hueco)', () => {
+  const tel = conClip('reposo', 4700, { noCarga: (r) => r.clip === 'risa' });
+  tel.pedir('risa', 2);
+  tel.pasar(ESPERA_MAX_MS * 2 + 500);
+  assert.deepEqual(tel.trabados, [['risa', false], ['risa', true]]);
+  assert.equal(tel.m.actual.clip, 'reposo', 'sigue el reposo, entero');
+  assert.equal(tel.m.destino.clip, 'reposo');
+  assert.equal(tel.jug[1], null, 'la capa del que no cargó quedó libre');
+  tel.pedir('escucha', 3);
+  tel.pasar(6000);
+  assert.equal(tel.m.actual.clip, 'escucha', 'lo siguiente entra normal');
+  assert.deepEqual(tel.problemas, []);
+});
+
+prueba('la mezcla: 3 minutos de pedidos al azar (también a mitad de fundidos y cargas): nunca un hueco ni un salto de pose', () => {
+  for (const reducido of [false, true]) {
+    for (const avatar of ['claudio', 'antonio']) {
+      let semilla = 7;
+      const azar = () => ((semilla = (semilla * 1103515245 + 12345) % 2 ** 31) / 2 ** 31);
+      const tel = telefono({ avatar, reducido, cargaMs: 120 + Math.floor(azar() * 250) });
+      let n = 1;
+      tel.pedir('reposo', n);
+      for (let t = 0; t < 180_000; ) {
+        const paso = Math.floor(azar() * 3000) + 10;
+        tel.pasar(paso);
+        t += paso;
+        const clip = CLIPS_VIDEO[Math.floor(azar() * CLIPS_VIDEO.length)];
+        tel.pedir(clip, ++n);
+      }
+      tel.pasar(8000);
+      assert.deepEqual(tel.problemas, [], `${avatar}${reducido ? ' (reducido)' : ''}`);
+      assert.equal(tel.m.actual.n, n, 'queda el último pedido');
+      if (reducido) assert.ok(!tel.ordenes.some((o) => o.tipo === 'ritmo' && o.ritmo > 1));
+      const forzados = tel.fundidos().filter((f) => f.ms === FUNDIDO_FORZADO_MS).length;
+      if (!reducido) assert.equal(forzados, 0, 'sin «reducir movimiento» todos los cambios son en el reposo');
+    }
+  }
+});
+
+prueba('guion + mezcla: una conversación entera (escucha, piensa, «¡Listo!» con asiente, habla, escucha) sin saltos de pose', () => {
+  for (const avatar of ['claudio', 'antonio']) {
+    const tel = telefono({ avatar });
+    const d = new DirectorVideo({ hay: CLIPS_VIDEO, ahora: tel.r.ahora, golpeAntesDeHablarMs: GOLPE_ANTES_DE_HABLAR_SIN_CORTE_MS });
+    let avisado = -1;
+    const decidir = (rep) => rep && tel.pedir(rep.clip, rep.n);
+    // Lo que hace CuerpoVideo: los relojes del guion y el aviso del golpe antes de terminar.
+    const correr = (ms) => {
+      for (let k = 0; k < ms; k += 10) {
+        tel.pasar(10);
+        if (d.msParaRevisar() === 0) decidir(d.revisar());
+        const a = tel.m.actual;
+        const j = tel.visible === null ? null : tel.jug[tel.visible];
+        if (a && !a.bucle && j && avisado !== a.n && j.pos >= j.dur - ANTES_DEL_FIN_MS) {
+          avisado = a.n;
+          decidir(d.termino(a.n));
+        }
+      }
+    };
+    decidir(d.estado(est()));
+    tel.pedir(d.reproduccion.clip, d.reproduccion.n);
+    correr(3000);
+    decidir(d.estado(est({ escuchando: true })));
+    correr(2300);
+    decidir(d.estado(est({ escuchando: true, pensando: true })));
+    correr(1700);
+    const habla = tel.r.ahora();
+    decidir(d.estado(est({ hablando: true })));
+    decidir(d.pistas({ teclea: false, lee: false, golpe: { clip: 'asiente', n: 1, en: tel.r.ahora() } }));
+    correr(6000);
+    decidir(d.estado(est({ escuchando: true })));
+    correr(6000);
+    const vistos = tel.fundidos().map((f) => f.a);
+    // LINEA=1: la línea de tiempo (cuándo, desde qué clip y en qué ms de él, a cuál; los cambios de ritmo).
+    if (process.env.LINEA)
+      console.log(avatar, `habla en ${habla}:`, tel.fundidos().map((f) => `${f.t} ${f.de ?? 'fotos'}@${Math.round(f.posVieja ?? 0)}→${f.a}`).join(' | '), '· ritmo', tel.ordenes.filter((o) => o.tipo === 'ritmo').map((o) => `${o.t}:×${o.ritmo}`).join(' '));
+    assert.deepEqual(tel.problemas, [], avatar);
+    for (const c of ['escucha', 'habla']) assert.ok(vistos.includes(c), `${avatar}: se vio ${c} (${vistos.join(' → ')})`);
+    assert.equal(tel.m.actual.clip, 'escucha');
+    // Escucha iba por la mitad: tarda ~1 s en volver al reposo y para entonces ya toca hablar. El asiente
+    // no llegó a verse y se salta: la boca primero.
+    assert.ok(!vistos.includes('asiente'), `${avatar}: ${vistos.join(' → ')}`);
+    const h = tel.fundidos().find((f) => f.a === 'habla');
+    assert.ok(h.t - habla <= 1500, `${avatar}: habla a los ${h.t - habla} ms de la frase`);
+  }
+});
+
+prueba('guion + mezcla: «¡Listo!» con el clip de antes en reposo: asiente se ve entero y después habla', () => {
+  const tel = conClip('piensa', 4500);
+  const d = new DirectorVideo({ hay: CLIPS_VIDEO, ahora: tel.r.ahora, golpeAntesDeHablarMs: GOLPE_ANTES_DE_HABLAR_SIN_CORTE_MS });
+  d.estado(est({ pensando: true }));
+  const t0 = tel.r.ahora();
+  let rep = d.estado(est({ hablando: true }));
+  rep = d.pistas({ teclea: false, lee: false, golpe: { clip: 'asiente', n: 1, en: t0 } }) || rep;
+  tel.pedir(rep.clip, rep.n);
+  for (let k = 0; k < 4000; k += 10) {
+    tel.pasar(10);
+    if (d.msParaRevisar() === 0) {
+      const x = d.revisar();
+      if (x) tel.pedir(x.clip, x.n);
+    }
+  }
+  const [a, h] = tel.fundidos().slice(-2);
+  assert.deepEqual([a.a, h.a], ['asiente', 'habla']);
+  assert.ok(a.t - t0 <= 400, `asiente a los ${a.t - t0} ms`);
+  assert.ok(h.posVieja >= T('asiente').desdeMs, 'el asiente terminó su gesto (acelerado) antes de hablar');
+  assert.ok(h.t - t0 <= 2800, `habla a los ${h.t - t0} ms`);
+  assert.deepEqual(tel.problemas, []);
+});
+
+/* ── la mano del sable ───────────────────────────────────────────────────────────────────── */
+
+/**
+ * ¿La mano del sable está fuera de su lugar en este clip, en `pos` ms? (lo que mide manos.py). `holgura`:
+ * los cuadros de más que manos.py suma a cada lado (HOLGURA); sin ellos, lo medido de verdad.
+ */
+const manoFuera = (avatar, clip, pos, holgura = true) => {
+  const f = MANO_FUERA[avatar][clip];
+  const k = Math.floor((pos * FPS_VIDEO) / 1000);
+  const h = holgura ? 0 : 2;
+  return !!f && k >= f[0] + h && k <= f[1] - h;
+};
+
+prueba('manos.ts: cada tramo cabe en su clip; niega, reposo y escucha no mueven la mano; la risa, celebrar y hablar sí', () => {
+  for (const a of ['claudio', 'antonio']) {
+    for (const [c, f] of Object.entries(MANO_FUERA[a])) {
+      assert.ok(CLIPS_VIDEO.includes(c), `${a}: ${c} no es un clip`);
+      assert.ok(f[0] >= 0 && f[1] >= f[0] && f[1] < REPOSOS[a][c][0], `${a}-${c}: [${f}]`);
+      // En el reposo del principio (la foto base) la mano está en su lugar.
+      assert.ok(f[0] >= Math.min(REPOSOS[a][c][1], 6) - 1, `${a}-${c}: la mano se va antes de salir del reposo (${f[0]})`);
+    }
+    for (const c of ['niega', 'reposo', 'escucha']) assert.equal(MANO_FUERA[a][c], undefined, `${a}-${c} mueve la mano`);
+    for (const c of ['risa', 'celebra', 'habla', 'piensa', 'teclea']) assert.ok(MANO_FUERA[a][c], `${a}-${c} no mueve la mano`);
+  }
+});
+
+prueba('manoLibre: antes del gesto, durante (0), después; un bucle vuelve a empezar; un golpe terminado cuenta poco', () => {
+  const [a, b] = MANO_FUERA.claudio.risa.map((k) => (k * 1000) / FPS_VIDEO);
+  assert.equal(manoLibre('claudio', 'risa', false, 0), a);
+  assert.equal(manoLibre('claudio', 'risa', false, (a + b) / 2), 0);
+  const final = manoLibre('claudio', 'risa', false, 4900);
+  assert.ok(final > 0 && final < 1000, `al final del golpe viene un fondo que no se sabe (${final})`);
+  assert.equal(manoLibre('claudio', 'niega', true, 1234), Infinity, 'niega en bucle: nunca se va');
+  assert.ok(manoLibre('claudio', 'niega', false, 0) >= 5000, 'niega entero');
+  const [ha] = MANO_FUERA.claudio.habla.map((k) => (k * 1000) / FPS_VIDEO);
+  assert.ok(Math.abs(manoLibre('claudio', 'habla', true, 4990) - (10 + ha)) < 1, 'el bucle de habla vuelve a su principio');
+});
+
+prueba('manoLibreMs: con lo que se ve y lo que entra (en el reposo); la risa a la mitad no; sin video, 0', () => {
+  assert.equal(telefono().m.manoLibreMs(), 0, 'todavía las fotos');
+  assert.equal(conClip('reposo', 2000).m.manoLibreMs(), Infinity, 'el reposo no mueve la mano');
+  assert.equal(conClip('risa', 2000).m.manoLibreMs(), 0, 'la risa tiene la mano en la panza');
+  // La risa casi al final de su reposo del principio, con niega pedido: niega todavía tiene que cargar y no
+  // llega al reposo de ahora: el cambio es al final de la risa, y la mano se va antes.
+  const tel = conClip('risa', 400);
+  tel.pedir('niega', 9);
+  assert.ok(tel.m.manoLibreMs() < 1000, `no promete la mano (${tel.m.manoLibreMs()})`);
+  // El reposo con niega pedido: la mano aguanta hasta el cambio y niega no la mueve.
+  const r = conClip('reposo', 2000);
+  r.pedir('niega', 9);
+  assert.ok(r.m.manoLibreMs() >= 5000, `${r.m.manoLibreMs()}`);
+  // Y después del cambio, sigue.
+  r.pasar(3000);
+  assert.equal(r.m.actual.clip, 'niega');
+  assert.ok(r.m.manoLibreMs() > 1500);
+  assert.deepEqual(r.problemas, []);
+});
+
+prueba('sostener: mientras el sable está en la mano, ni golpes, ni «habla», ni otro fondo; al soltar vuelve a mirar', () => {
+  const { r, d } = nuevo({ golpeAntesDeHablarMs: GOLPE_ANTES_DE_HABLAR_SIN_CORTE_MS });
+  d.estado(est());
+  assert.equal(d.pistas({ teclea: false, lee: false, golpe: { clip: 'niega', n: 1, en: r.ahora() } }).clip, 'niega');
+  assert.equal(d.sostener(3000), null);
+  assert.equal(d.pistas({ teclea: false, lee: false, golpe: { clip: 'asiente', n: 2, en: r.ahora() } }), null, 'otro golpe no le saca la mano');
+  assert.equal(d.estado(est({ hablando: true })), null, 'la frase de molesto no lo pasa a «habla»');
+  r.pasar(1500);
+  assert.equal(d.revisar(), null);
+  assert.equal(d.msParaRevisar(), 1500, 'el reloj de soltar');
+  r.pasar(1500);
+  const x = d.revisar();
+  assert.deepEqual([x?.clip, x?.bucle], ['habla', true], 'soltó: sigue hablando, ahora sí «habla»');
+  // Soltar antes (la capa se tapó): vuelve a mirar ya.
+  const n = nuevo();
+  n.d.estado(est());
+  n.d.sostener(5000);
+  n.d.estado(est({ escuchando: true }));
+  n.r.pasar(ASENTAR_FONDO_MS + 10);
+  assert.equal(n.d.revisar(), null);
+  assert.equal(n.d.sostener(0), null, 'el fondo nuevo empieza a asentarse');
+  n.r.pasar(ASENTAR_FONDO_MS + 10);
+  assert.equal(n.d.revisar()?.clip, 'escucha');
+  // Un golpe que termina durante lo sostenido vuelve a su fondo (el sable ya contaba con eso).
+  const g = nuevo();
+  g.d.estado(est());
+  const golpe = g.d.pistas({ teclea: false, lee: false, golpe: { clip: 'niega', n: 1, en: g.r.ahora() } });
+  g.d.sostener(3000);
+  assert.equal(g.d.termino(golpe.n)?.clip, 'reposo');
+});
+
+/**
+ * Una ráfaga de cuatro toques de punta a punta, con el guion, la mezcla, el motor de los toques y la agenda
+ * del sable, armados como en CuerpoVideo + CapaEfectos. Devuelve cuándo y cómo salió el sable y cada
+ * instante en que, con el sable en la mano, la mano del clip que se veía estaba en otro lado.
+ */
+function rafagaDePuntaAPunta(avatar, semilla) {
+  let s = semilla;
+  const azar = () => (s = (s * 1664525 + 1013904223) % 4294967296) / 4294967296;
+  const tel = telefono({ avatar, cargaMs: 120 + Math.floor(azar() * 250) });
+  const d = new DirectorVideo({ hay: CLIPS_VIDEO, ahora: tel.r.ahora, golpeAntesDeHablarMs: GOLPE_ANTES_DE_HABLAR_SIN_CORTE_MS });
+  let avisado = -1;
+  let golpes = 0;
+  const decidir = (rep) => rep && tel.pedir(rep.clip, rep.n);
+  // La agenda, con el reloj de la prueba.
+  const pendientes = [];
+  const agenda = new Agenda({
+    poner: (ms, f) => {
+      const x = { t: tel.r.ahora() + ms, f };
+      pendientes.push(x);
+      return x;
+    },
+    quitar: (x) => {
+      const i = pendientes.indexOf(x);
+      if (i >= 0) pendientes.splice(i, 1);
+    },
+  });
+  const cuerpo = { manoLibreMs: () => tel.m.manoLibreMs(), sostener: (ms) => decidir(d.sostener(ms)) };
+  const motor = new MotorToques({ avatar, rng: azar });
+  const golpesToque = new GolpesDeToque(agenda, (clip) => decidir(d.pistas({ ...actividad, golpe: { clip, n: ++golpes, en: tel.r.ahora() } })));
+  let sable = null;
+  let cortes = 0;
+  const malas = [];
+  const correr = (ms) => {
+    for (let k = 0; k < ms; k += 10) {
+      tel.pasar(10);
+      for (const x of pendientes.filter((p) => p.t <= tel.r.ahora())) {
+        pendientes.splice(pendientes.indexOf(x), 1);
+        x.f();
+      }
+      if (d.msParaRevisar() === 0) decidir(d.revisar());
+      const a = tel.m.actual;
+      const j = tel.visible === null ? null : tel.jug[tel.visible];
+      if (a && !a.bucle && j && avisado !== a.n && j.pos >= j.dur - ANTES_DEL_FIN_MS) {
+        avisado = a.n;
+        decidir(d.termino(a.n));
+      }
+      // Con el sable en la mano: la mano del clip que se ve (y del que se funde encima) en su lugar.
+      if (sable && sable.anclaje === 'mano' && tel.r.ahora() < sable.hasta) {
+        for (const c of [0, 1]) {
+          const jj = tel.jug[c];
+          // La que se ve entera, con la holgura; la de abajo de un fundido (se va apagando), lo medido.
+          const arriba = c === tel.visible && !(tel.m.fundiendo && tel.jug[1 - c]?.enMarcha);
+          const seVe = c === tel.visible || (tel.m.fundiendo && jj?.enMarcha);
+          if (jj && seVe && manoFuera(avatar, jj.r.clip, jj.pos, arriba || c !== tel.visible)) malas.push(`${tel.r.ahora() - sable.desde} ms: ${jj.r.clip} en ${Math.round(jj.pos)}`);
+        }
+      }
+    }
+  };
+  const fondos = ['reposo', 'reposo', 'escucha', 'teclea', 'lee', 'espera'];
+  const fondo = fondos[Math.floor(azar() * fondos.length)];
+  const actividad = { teclea: fondo === 'teclea', lee: fondo === 'lee' };
+  // Antes de la ráfaga, a veces, un toque suelto con su golpe (que puede seguir a la vista).
+  const antes = azar() < 0.5;
+  decidir(d.estado(est({ escuchando: fondo === 'escucha' })));
+  decidir(d.pistas({ ...actividad, golpe: null }));
+  if (fondo === 'espera') {
+    tel.r.pasar(ESPERA_TRAS_MS);
+    decidir(d.revisar());
+  }
+  tel.pedir(d.reproduccion.clip, d.reproduccion.n);
+  correr(600 + Math.floor(azar() * 5000));
+  if (antes) {
+    golpesToque.toque(motor.tocar(tel.r.ahora(), {}, 'cabeza', 100, 100));
+    correr(2300 + Math.floor(azar() * 2000));
+  }
+  // Cuatro toques con el ritmo de un dedo (150-550 ms entre uno y otro), como lo hace CapaEfectos.
+  const paso = 150 + Math.floor(azar() * 400);
+  let r = null;
+  for (let i = 0; i < 4; i++) {
+    r = motor.tocar(tel.r.ahora(), {}, azar() < 0.5 ? 'cabeza' : 'panza', 100, 100);
+    golpesToque.toque(r);
+    if (i < 3) correr(paso);
+  }
+  if (r.tipo !== 'secuencia' || r.efecto !== 'espada') return null;
+  const t4 = tel.r.ahora();
+  sacarSable(agenda, {
+    ahora: tel.r.ahora,
+    lugar: 'cuerpo',
+    sutil: false,
+    externo: false,
+    necesitaMs: 3200,
+    cuerpo,
+    arrancar: (a) => (sable = { ...a, desde: tel.r.ahora(), hasta: tel.r.ahora() + 3200 }),
+    // Se desvanece en CORTE_MS: hasta ahí se sigue viendo.
+    cortar: () => {
+      cortes++;
+      sable.hasta = Math.min(sable.hasta, tel.r.ahora() + CORTE_MS);
+    },
+  });
+  // La frase de molesto: empieza enseguida y dura ~1,4 s.
+  correr(300);
+  decidir(d.estado(est({ hablando: true })));
+  correr(1400);
+  decidir(d.estado(est()));
+  correr(6000);
+  return { tel, sable, malas, esperoMs: sable ? sable.desde - t4 : Infinity, pendientes, fondo, cortes };
+}
+
+prueba('ráfagas de punta a punta: el sable en la mano solo con la mano en su lugar, sin saltos de pose y sin esperar de más', () => {
+  const esperas = [];
+  let enMano = 0;
+  let n = 0;
+  let cortados = 0;
+  for (const avatar of ['claudio', 'antonio'])
+    for (let k = 1; k <= 120; k++) {
+      const x = rafagaDePuntaAPunta(avatar, k * 7919);
+      if (!x) continue; // salieron los blasters (o el descanso): no esperan la mano
+      n++;
+      assert.ok(x.sable, `${avatar} #${k}: el sable no salió`);
+      assert.deepEqual(x.malas, [], `${avatar} #${k} (${x.fondo}): el sable quedó en el aire`);
+      assert.deepEqual(x.tel.problemas, [], `${avatar} #${k}`);
+      assert.ok(x.esperoMs <= ESPERA_MANO_MS + 10, `${avatar} #${k}: esperó ${x.esperoMs} ms`);
+      assert.equal(x.pendientes.length, 0, 'ningún reloj de la agenda quedó colgado');
+      esperas.push(x.esperoMs);
+      if (x.sable.anclaje === 'mano') enMano++;
+      cortados += x.cortes;
+    }
+  esperas.sort((a, b) => a - b);
+  const mediana = esperas[Math.floor(esperas.length / 2)];
+  if (process.env.LINEA) console.log(`en la mano ${enMano}/${n} (cortados antes ${cortados}); espera mediana ${mediana} ms, p90 ${esperas[Math.floor(esperas.length * 0.9)]} ms, máx ${esperas[esperas.length - 1]} ms`);
+  assert.ok(enMano >= n * 0.85, `casi siempre en la mano (${enMano}/${n})`);
+  assert.ok(cortados <= n * 0.05, `el corte de emergencia es raro (${cortados}/${n})`);
+  assert.ok(mediana <= 900, `la espera típica es corta (${mediana} ms)`);
+});
+
+prueba('la vista: monta quieto, sin positionMillis ni props que cambien, y no funde con onReadyForDisplay', () => {
+  const vista = fs.readFileSync(path.resolve(AQUI, '../video/CuerpoVideo.tsx'), 'utf8');
+  assert.match(vista, /shouldPlay=\{false\}/);
+  assert.doesNotMatch(vista, /positionMillis=\{/);
+  assert.doesNotMatch(vista, /\brate=\{/);
+  assert.doesNotMatch(vista, /onReadyForDisplay=/, 'en Android llega antes del primer cuadro');
+  assert.match(vista, /playAsync\(\)/);
+  assert.match(vista, /setRateAsync\(/);
+  assert.match(vista, /new MezclaCapas\(/);
+  // Al terminar el fundido la capa nueva queda entera ANTES de quitar la de abajo (sin un cuadro con fondo).
+  assert.match(vista, /case 'listo':[\s\S]{0,200}?op\[o\.capa\]\.value = 1;/);
+  // Desmontado, lo que llegue tarde del reproductor no programa nada.
+  assert.match(vista, /if \(!montado\.current\) return;\s*const ms = mezcla\.current!\.msParaRevisar\(\);/);
+  assert.match(vista, /if \(!s\.isLoaded \|\| !montado\.current\) return;/);
+  assert.match(vista, /useEffect\(\(\) => \(\) => void \(reloj\.current && clearTimeout\(reloj\.current\)\), \[\]\)/);
+  assert.match(vista, /useEffect\(\(\) => \(\) => void \(relojGuion\.current && clearTimeout\(relojGuion\.current\)\), \[\]\)/);
+  // La capa de efectos pregunta por la mano y pide quedarse con el clip.
+  assert.match(vista, /manoLibreMs: \(\) => \(enVivoRef\.current \? mezcla\.current!\.manoLibreMs\(\) : 0\)/);
+  assert.match(vista, /sostener: \(ms: number\) => decidirRef\.current\(director\.current!\.sostener\(ms\)\)/);
 });
 
 let fallas = 0;

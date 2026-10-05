@@ -105,6 +105,7 @@ jobs:
           npx tsx src/avatar3d/pruebas/avatar3d.prueba.mjs
           npx tsx src/avatar3d/pruebas/sincronia.prueba.mjs
           npx tsx src/avatares/pruebas/video.prueba.mjs
+          npx tsx src/avatares/pruebas/efectos.prueba.mjs
           npx tsx src/recorrido/pruebas/recorrido.prueba.mjs
           npx tsx src/whatsapp/pruebas/whatsapp.prueba.mjs
           npx tsx pruebas/mesa/mesa.prueba.mjs
