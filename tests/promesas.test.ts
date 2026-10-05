@@ -176,3 +176,15 @@ test('revisión del 5-oct (GRAVE-2): lo dicho en pasado sobre otro turno no es p
   // «Listo, ya te lo mandé» sin nada que lo ponga antes sigue siendo dar por hecho algo de este turno.
   assert.equal(prometeSinHacer('Listo, ya te lo mandé.'), true);
 });
+
+test('revisión independiente del 5-oct (GRAVE-A): «para mañana en la mañana», «para el lunes», «más temprano, a las 5» no son de antes', async () => {
+  const { corregirPromesaSinHerramienta, prometeSinHacer } = await import('../lib/cerebro-manos');
+  // Promesas falsas que con 3e163da se corregían y con ee5cfb0 pasaban como «cosas de otro turno».
+  for (const t of ['Listo, te puse el recordatorio para mañana en la mañana.', 'Ya te agendé la cita para el lunes.', 'Te puse la alarma más temprano, a las 5.']) {
+    assert.equal(prometeSinHacer(t), true, `promesa nueva: ${t}`);
+    assert.equal(corregirPromesaSinHerramienta(t).cambiada, true, `corrección local: ${t}`);
+  }
+  // Lo de otro turno sigue sin ser promesa.
+  assert.equal(prometeSinHacer('Sí, ya te lo mandé hace rato.'), false);
+  assert.equal(corregirPromesaSinHerramienta('Sí, ya te lo mandé hace rato.').cambiada, false);
+});

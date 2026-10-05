@@ -50,8 +50,8 @@ export type ReciboHerramienta = {
   cuentas?: CuentaConsultada[];
   /**
    * Revisión del 5-oct (MEDIO-2): el resultado trae algo para LEERLE a la persona tal cual (un correo abierto, el trozo
-   * siguiente, un chat de WhatsApp). En voz se dice entero, sin el tope (lib/cerebro-manos.ts pasoSinTopeDeVoz): con
-   * tope se cortaba el final del trozo y el «¿sigo?», y ese texto ya no se decía nunca.
+   * siguiente, un chat de WhatsApp). En voz lleva el tope de lectura (lib/cerebro-manos.ts topeTrasPaso, 650: un trozo
+   * y su «¿sigo?»); el tope corto cortaba el final del trozo, y sin ningún tope sonaban hasta 2 800 caracteres (MENOR-D).
    */
   lectura?: boolean;
 };

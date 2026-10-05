@@ -246,12 +246,20 @@ test('MEDIO-2: leer un correo (o seguir) deja un recibo de LECTURA: la voz lo di
     assert.equal(s.recibo?.lectura, true, 'seguir: recibo de lectura');
     // Con ese recibo en el turno, la voz no lleva tope: el trozo entero (600) y el «¿sigo?» se dicen.
     const M: Record<string, any> = await import('../lib/cerebro-manos');
-    assert.equal(typeof M.pasoSinTopeDeVoz, 'function', 'existe pasoSinTopeDeVoz');
-    assert.equal(M.pasoSinTopeDeVoz({ herramienta: 'correo', estado: s.estado, recibo: s.recibo }), true);
+    // Revisión independiente del 5-oct (MENOR-D): una lectura ya no quita el tope; lleva el de lectura (650), donde caben
+    // el trozo entero (600) y su «¿sigo?», pero no los 2 800 caracteres que puede traer el turno.
+    assert.equal(typeof M.topeTrasPaso, 'function', 'existe topeTrasPaso');
+    assert.equal(M.topeTrasPaso(M.topeDeVoz('sigue', true), { herramienta: 'correo', estado: s.estado, recibo: s.recibo }), M.TOPE_VOZ_LECTURA);
     const trozo = largo.slice(0, 600).trim();
     const dicho = `Es del proveedor, sobre el envío. ${trozo} ¿Sigo?`;
-    const tope = M.pasoSinTopeDeVoz({ herramienta: 'correo', estado: r.estado, recibo: r.recibo }) ? 0 : M.topeDeVoz('revisa el último correo', true);
+    const tope = M.topeTrasPaso(M.topeDeVoz('revisa el último correo', true), { herramienta: 'correo', estado: r.estado, recibo: r.recibo });
     assert.equal(M.recorteDeVoz(dicho, tope), dicho, 'se dice entero: el trozo completo y «¿Sigo?»');
+    // Lo que trae `correo leer` (hasta 2 800 caracteres): el principio y el «¿Sigo?», sin pasar de 650.
+    assert.ok(r.texto.length > 1500, String(r.texto.length));
+    const todo = `Es del proveedor, sobre el envío. ${largo.slice(0, 2800).trim()} ¿Sigo?`;
+    const voz = M.recorteDeVoz(todo, tope);
+    assert.ok(voz.length <= M.TOPE_VOZ_LECTURA, String(voz.length));
+    assert.match(voz, /¿Sigo\?$/);
   } finally {
     C._buzonDePrueba(null);
   }
@@ -274,6 +282,34 @@ test('MENOR: un correo con fecha falsa en el futuro (spam) no pasa por «el últ
     const r = await C.correrCorreoConEstado(YO, 'leer el último', AMB);
     assert.match(r.texto, /«Planilla»/, r.texto);
     assert.doesNotMatch(r.texto, /GANASTE/);
+  } finally {
+    C._buzonDePrueba(null);
+  }
+});
+
+test('MENOR-F (revisión independiente del 5-oct): «el último correo de la mañana» es el último, no uno «de» alguien', () => {
+  const tabla: Array<[string, boolean]> = [
+    ['el último correo de la mañana', true],
+    ['léeme el último correo de esta tarde', true],
+    ['el último correo de anoche', true],
+    ['el último correo de hoy', true],
+    ['my latest email from this morning', true],
+    // Un remitente sigue siendo OTRO pedido (lo resuelve `correo leer` con la referencia).
+    ['el último correo de Ana', false],
+    ['el último correo del banco', false],
+    ['el último correo de la empresa', false],
+  ];
+  const mal = tabla.filter(([frase, esperado]) => C.pideUltimoCorreo(frase) !== esperado).map(([frase, esperado]) => `«${frase}» debía ser ${esperado}`);
+  assert.deepEqual(mal, []);
+});
+
+test('MENOR-F: «el último correo de la mañana» abre el último (sin lista ni tarea)', async () => {
+  await preparar();
+  try {
+    const r = await C.correrCorreoConEstado(YO, 'revisar', AMB, { pedido: 'revisa el último correo de la mañana' });
+    assert.equal(r.estado, 'succeeded', r.texto);
+    assert.match(r.texto, /ES EL ÚLTIMO QUE RECIBIÓ/, r.texto);
+    assert.equal(tareaDe(YO, AMB), null, 'no abre una tarea');
   } finally {
     C._buzonDePrueba(null);
   }

@@ -493,9 +493,12 @@ const OTRO_PEDIDO =
 const ULTIMO_EN = /\b(?:(?:my|the)\s+(?:latest|last|newest|most\s+recent)\s+(?:e-?mail|mail|message)|(?:latest|newest|most\s+recent)\s+(?:e-?mail|mail))\b/;
 /**
  * Lo que viene después y lo vuelve OTRO pedido: de un remitente («el último de Ana», "from Ana") o de un tema («sobre la
- * factura»). Eso lo resuelve `correo leer` con la referencia. «de hoy», «de mi bandeja», «de mis correos» no cuentan.
+ * factura»). Eso lo resuelve `correo leer` con la referencia. «de hoy», «de mi bandeja», «de mis correos» no cuentan, ni
+ * un momento del día o del calendario («de la mañana», «de esta tarde», «del mes»: revisión independiente del 5-oct,
+ * MENOR-F, «el último correo de la mañana» caía en la lista como si «la mañana» fuera quien lo mandó).
  */
-const DE_ALGUIEN = /\b(?:de|del|from)\s+(?!(?:hoy|ayer|today|yesterday|(?:mis?|my|the|la|el|su|tu)\s+(?:correos?|e-?mails?|mails?|bandeja|inbox|buzon))\b)\S|\b(?:sobre|acerca|about|regarding|asunto|subject)\b/;
+const DE_ALGUIEN =
+  /\b(?:de|del|from)\s+(?!(?:hoy|ayer|anoche|today|yesterday|tonight|(?:(?:la|el|esta|este|this)\s+)?(?:manana|tarde|noche|semana|mes|morning|afternoon|evening|night|week|month)|(?:mis?|my|the|la|el|su|tu)\s+(?:correos?|e-?mails?|mails?|bandeja|inbox|buzon))\b)\S|\b(?:sobre|acerca|about|regarding|asunto|subject)\b/;
 
 const limpioParaBuscar = (s: string) => plegar(s).replace(/[¡!¿?.,;:«»"'()]/g, ' ').replace(/\s+/g, ' ').trim();
 
@@ -607,7 +610,8 @@ async function leerUbicado(quien: string, ambito: string, u: Exclude<Ubicado, { 
   ]
     .filter(Boolean)
     .join('\n');
-  // `lectura`: lo que trae se le lee tal cual; en voz va entero, con su «¿sigo?» (revisión del 5-oct, MEDIO-2).
+  // `lectura`: lo que trae se le lee tal cual (revisión del 5-oct, MEDIO-2); en voz, con el tope de lectura: un trozo y
+  // su «¿sigo?», no los 2 800 caracteres que caben aquí (revisión independiente, MENOR-D; lib/cerebro-manos.ts topeTrasPaso).
   return exito(texto, { efecto: 'ninguno', proveedor: 'imap', referencia: u.ref, lectura: true, ...(u.incompleto ? { incompleto: true } : {}), ...(u.cuentas ? { cuentas: u.cuentas } : {}) });
 }
 

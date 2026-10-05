@@ -470,11 +470,12 @@ test('GRAVE-1: un turno con borrador o confirmación no lleva tope (se dice ente
   assert.equal(M.topeDeVoz('léemelo otra vez', true, { confirmacion: true }), 0);
   assert.equal(M.topeDeVoz('sí', true, { confirmacion: true }), 0);
   assert.equal(M.topeDeVoz('cómo va la planta', true, { confirmacion: false }), TOPE_VOZ_CHARS);
-  // El turno armó un borrador (recibo `borrador`) o leyó un correo / un chat (recibo de lectura): sin tope.
+  // El turno armó un borrador (recibo `borrador`): sin tope. Una lectura ya no lo quita: lleva el tope de lectura
+  // (revisión independiente del 5-oct, MENOR-D; ver su prueba abajo).
   assert.equal(typeof M.pasoSinTopeDeVoz, 'function', 'existe pasoSinTopeDeVoz');
   assert.equal(M.pasoSinTopeDeVoz({ herramienta: 'whatsapp', estado: 'succeeded', recibo: { efecto: 'borrador', referencia: 'w1' } }), true);
   assert.equal(M.pasoSinTopeDeVoz({ herramienta: 'correo', estado: 'succeeded', recibo: { efecto: 'borrador', referencia: 'c1' } }), true);
-  assert.equal(M.pasoSinTopeDeVoz({ herramienta: 'correo', estado: 'succeeded', recibo: { efecto: 'ninguno', lectura: true } }), true);
+  assert.equal(M.pasoSinTopeDeVoz({ herramienta: 'correo', estado: 'succeeded', recibo: { efecto: 'ninguno', lectura: true } }), false);
   assert.equal(M.pasoSinTopeDeVoz({ herramienta: 'web', estado: 'succeeded', recibo: { efecto: 'ninguno' } }), false);
   assert.equal(M.pasoSinTopeDeVoz({ herramienta: 'correo', estado: 'failed', recibo: { efecto: 'ninguno', codigo: 'proveedor' } }), false);
   // Un borrador en el chat de la app (chat_aura redactar) también.
@@ -494,14 +495,15 @@ test('GRAVE-1: server.ts quita el tope en turnos de borrador, confirmación o le
   const turno = src.slice(src.indexOf('async function turnoEnVivo('), src.indexOf("app.get('/api/taller'"));
   // Lo que espera su «sí» al empezar el turno (o lo que el turno resolvió) quita el tope desde el principio.
   assert.match(turno, /topeDeVoz\(message, !!opciones\.voz, \{ confirmacion: p\.vozCompleta \}\)/);
-  // Un paso del harness con borrador o lectura lo quita antes de que la vuelta hable.
-  assert.match(turno, /alPaso: \(paso\) => \{\s*if \(pasoSinTopeDeVoz\(paso\)\) sinTope\(\)/);
+  // Un paso del harness con borrador lo quita (y una lectura lo sube al de lectura: MENOR-D) antes de que la vuelta hable.
+  assert.match(turno, /alPaso: \(paso\) => subirTope\(topeTrasPaso\(topeDelTurno, paso\)\)/);
   // El prompt hablado: la línea nueva (con la salvedad), y no va en un turno de confirmación.
   assert.match(src, /if \(topeDeVoz\(message, !!opciones\.voz, \{ confirmacion: vozCompleta \}\) > 0\) hechos\.push\(lineaRespuestaHablada\(/);
   assert.ok(!/RESPUESTA HABLADA: esto se dice en voz alta\. Dos o tres frases cortas como mucho/.test(src), 'la línea vieja (sin salvedad) ya no está');
-  // El respaldo JSON: sin tope si el turno fue de borrador, confirmación o lectura.
+  // El respaldo JSON: sin tope si el turno fue de borrador o confirmación (una lectura, con el de lectura: MENOR-D).
   const json = src.slice(src.indexOf("app.post('/api/turno', "), src.indexOf("app.post('/api/turno', ") + 4000);
-  assert.match(json, /out\.vozCompleta \? 0 :/);
+  assert.match(json, /recorteDeVoz\(out\.voz, topeDelJson\(out, /);
+  assert.match(src, /function topeDelJson\([^)]*\): number \{\s*if \(out\.vozCompleta\) return 0;/);
 });
 
 test('GRAVE-2: un «NADA» a la re-pregunta se respeta (no se corrige como antes de la mesa rápida)', async () => {
@@ -521,15 +523,16 @@ test('GRAVE-2: la corrección local solo va cuando de verdad no pasó nada', asy
   assert.equal(typeof M.debeCorregirSinHerramienta, 'function', 'existe debeCorregirSinHerramienta');
   const local = { correccion: 'local', cumplida: false, candidatas: [], ms: 0 };
   const repregunta = { correccion: 'repregunta', cumplida: false, candidatas: ['whatsapp'], ms: 900 };
-  const base = { usoManos: false, borradorPendiente: false, pasos: [] };
+  // `dicho`: lo que respondió (de ahí sale qué prometió; revisión independiente del 5-oct, MEDIO-C).
+  const base = { usoManos: false, borradorPendiente: false, pasos: [], dicho: 'Va, te lo mando.' };
   assert.equal(M.debeCorregirSinHerramienta({ ...base, promesa: local }), true, 'ninguna herramienta lo cumple: se corrige');
   assert.equal(M.debeCorregirSinHerramienta({ ...base, promesa: repregunta }), true, 're-preguntó y no usó ninguna');
   assert.equal(M.debeCorregirSinHerramienta({ ...base, promesa: null }), false, 'no prometió');
   // Escenario B del revisor: la re-pregunta contestó «NADA» → como antes del cambio, el texto queda.
   assert.equal(M.debeCorregirSinHerramienta({ ...base, promesa: { ...repregunta, nada: true } }), false);
   // Escenario A: un borrador de un turno anterior; «léemelo otra vez» → lo lee y pregunta «¿Lo mando?».
-  assert.equal(M.debeCorregirSinHerramienta({ ...base, borradorPendiente: true, promesa: local }), false);
-  // Una herramienta del turno terminó bien: no se le dice «no lo hice».
+  assert.equal(M.debeCorregirSinHerramienta({ ...base, borradorPendiente: true, promesa: local, dicho: BORRADOR_ANA }), false);
+  // Una herramienta del turno que cumple lo prometido terminó bien: no se le dice «no lo hice».
   assert.equal(M.debeCorregirSinHerramienta({ ...base, pasos: [{ herramienta: 'correo', estado: 'succeeded' }], promesa: repregunta }), false);
   assert.equal(M.debeCorregirSinHerramienta({ ...base, usoManos: true, promesa: local }), false);
 });
@@ -561,6 +564,163 @@ test('GRAVE-2: server.ts pasa por debeCorregirSinHerramienta (NADA, borrador pen
   const fs = await import('node:fs');
   const src = fs.readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
   const turno = src.slice(src.indexOf('async function turnoEnVivo('), src.indexOf("app.get('/api/taller'"));
-  assert.match(turno, /debeCorregirSinHerramienta\(\{ promesa, usoManos, borradorPendiente: hayBorradorPendiente\(\), pasos: pasosTurno \}\)/);
-  assert.match(turno, /corregirPromesaSinHerramienta\(reply, idioma === 'en' \? 'en' : 'es', \{ sinHerramienta: promesa\?\.correccion === 'local' \}\)/);
+  // Revisión independiente (MEDIO-C): con lo dicho y el mensaje; la corrección perdona solo lo del borrador pendiente.
+  assert.match(turno, /const borradorPendiente = hayBorradorPendiente\(\);/);
+  assert.match(turno, /debeCorregirSinHerramienta\(\{ promesa, usoManos, borradorPendiente, pasos: pasosTurno, dicho: antes, mensaje: message \}\)/);
+  assert.match(turno, /corregirPromesaSinHerramienta\(reply, idioma === 'en' \? 'en' : 'es', \{ sinHerramienta: promesa\?\.correccion === 'local', borradorPendiente \}\)/);
+});
+
+/* ------------------------------------------------------------------ revisión independiente del 5-oct (GRAVE-A … MENOR-E) */
+
+test('GRAVE-A: lo que también dice PARA CUÁNDO («para mañana en la mañana», «para el lunes», «más temprano, a las 5») sigue siendo promesa', async () => {
+  const M: Record<string, any> = await import('../lib/cerebro-manos');
+  // Con 3e163da estas eran promesas; con ee5cfb0 pasaban por «cosas de antes» y nadie las corregía.
+  const falsas = ['Listo, te puse el recordatorio para mañana en la mañana.', 'Ya te agendé la cita para el lunes.', 'Te puse la alarma más temprano, a las 5.'];
+  for (const t of falsas) {
+    assert.equal(M.prometeSinHacer(t), true, t);
+    const c = M.corregirPromesaSinHerramienta(t, 'es');
+    assert.equal(c.cambiada, true, `se corrige: ${t}`);
+    assert.match(c.texto, /todavía no lo hice/i, c.texto);
+  }
+  // Lo de otro turno, con una marca de pasado clara, sigue sin ser promesa.
+  for (const t of ['Sí, ya te lo mandé hace rato.', 'Ese correo se lo mandé ayer a las cinco.', 'Lo puse esta mañana, ya está.', 'Te lo mandé el lunes pasado.', 'Ya te lo mandé hace un rato para que lo revises.', 'I already sent it yesterday.'])
+    assert.equal(M.prometeSinHacer(t), false, t);
+  // Una marca de antes con algo que la pone en el futuro: no la saca de las promesas.
+  assert.equal(M.prometeSinHacer('Hace rato te puse la alarma para mañana.'), true);
+  assert.equal(M.prometeSinHacer('Ayer te agendé la cita para el lunes.'), true);
+});
+
+test('MEDIO-B: que algo espere su «sí» no quita el tope en todos los turnos; solo si el turno lo toca', async () => {
+  const M: Record<string, any> = await import('../lib/cerebro-manos');
+  assert.equal(typeof M.vozCompletaDelTurno, 'function', 'existe vozCompletaDelTurno');
+  const esperando = { esperaba: true, resolvio: false };
+  // Un borrador espera (vive 15 min) y pregunta otra cosa: con tope, y la línea «RESPUESTA HABLADA» va.
+  assert.equal(M.vozCompletaDelTurno({ ...esperando, mensaje: '¿qué pasó con el dólar?' }), false);
+  assert.equal(M.topeDeVoz('¿qué pasó con el dólar?', true, { confirmacion: M.vozCompletaDelTurno({ ...esperando, mensaje: '¿qué pasó con el dólar?' }) }), TOPE_VOZ_CHARS);
+  const larga = 'El dólar cerró hoy en 24,70 lempiras, un poco arriba de ayer, y el Banco Central dice que la subasta fue normal. '.repeat(10);
+  assert.ok(larga.length > 1000);
+  assert.ok(M.recorteDeVoz(larga, TOPE_VOZ_CHARS).length <= M.TOPE_VOZ_DURO, 'no lee 1 000+ caracteres');
+  // Pide releerlo, cambiarlo o confirmarlo: va entero.
+  for (const m of ['léemelo otra vez', '¿cómo quedó?', '¿qué dice el borrador?', 'cámbiale la hora a las 5', 'mándalo', 'read it back'])
+    assert.equal(M.vozCompletaDelTurno({ ...esperando, mensaje: m }), true, m);
+  // Lo resolvió (la regla única eligió, preguntó cuál, o un «sí»/«no» al borrador): va entero.
+  assert.equal(M.vozCompletaDelTurno({ esperaba: true, resolvio: true, mensaje: 'sí' }), true);
+  // Nada esperaba: no hay confirmación que valga.
+  assert.equal(M.vozCompletaDelTurno({ esperaba: false, resolvio: false, mensaje: '¿cómo quedó?' }), false);
+});
+
+test('MEDIO-B: server.ts decide la voz entera por lo que el turno toca, y lo escrito en la caja del chat no espera su «sí»', async () => {
+  const fs = await import('node:fs');
+  const src = fs.readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
+  const prep = src.slice(src.indexOf('async function prepararTurno('), src.indexOf('async function respuestaChica('));
+  assert.doesNotMatch(prep, /const vozCompleta = esperabaSi \|\|/, 'esperar no basta');
+  assert.match(prep, /const appPreguntada = appEsperando && appEsperando\.que !== 'borrador' \? appEsperando : null;/);
+  assert.match(prep, /const esperabaSi =\s*!!appPreguntada \|\|/);
+  assert.match(prep, /const resolvioPendiente = decision\.respondio \|\| decision\.ambiguo \|\| !!deLaPregunta \|\| \(!!\(delCorreo \|\| delWhatsapp\) && respuestaAlBorrador\(message\) !== null\);/);
+  assert.match(prep, /const vozCompleta = vozCompletaDelTurno\(\{ esperaba: esperabaSi, resolvio: resolvioPendiente, mensaje: message \}\);/);
+});
+
+test('MEDIO-C: con un borrador esperando, solo se perdona lo de ESE borrador; lo demás falso se corrige', async () => {
+  const M: Record<string, any> = await import('../lib/cerebro-manos');
+  const local = { correccion: 'local', cumplida: false, candidatas: [], ms: 0 };
+  const base = { usoManos: false, borradorPendiente: true, pasos: [], promesa: local };
+  // «Listo, te puse la alarma» sin ninguna herramienta de alarma: se corrige aunque espere un borrador.
+  assert.equal(M.debeCorregirSinHerramienta({ ...base, dicho: 'Listo, te puse la alarma.' }), true);
+  const c = M.corregirPromesaSinHerramienta('Listo, te puse la alarma. ¿Lo mando?', 'es', { borradorPendiente: true });
+  assert.equal(c.cambiada, true);
+  assert.doesNotMatch(c.texto, /te puse la alarma/, c.texto);
+  assert.match(c.texto, /¿Lo mando\?/, 'lo del borrador queda');
+  // «Ya te lo mandé» con el borrador esperando es falso (solo sale con su «sí»).
+  assert.equal(M.debeCorregirSinHerramienta({ ...base, dicho: 'Listo, ya te lo mandé.' }), true);
+  // Leerlo y preguntar si se manda es verdad: no se toca (tampoco lo que dice el borrador citado).
+  for (const d of [BORRADOR_ANA, 'Te lo leo otra vez: «Hola Ana, te llamo mañana para lo del camión.» ¿Se lo envío así?', 'Ahí está el borrador. ¿Lo mando?']) {
+    assert.equal(M.debeCorregirSinHerramienta({ ...base, dicho: d }), false, d);
+    assert.equal(M.corregirPromesaSinHerramienta(d, 'es', { borradorPendiente: true }).cambiada, false, d);
+  }
+});
+
+test('MEDIO-C: una herramienta que terminó bien solo cuenta si es de las que cumplirían lo prometido', async () => {
+  const M: Record<string, any> = await import('../lib/cerebro-manos');
+  const local = { correccion: 'local', cumplida: false, candidatas: [], ms: 0 };
+  const base = { usoManos: false, borradorPendiente: false, promesa: local };
+  // Buscó el clima (bien) y dijo «te puse el recordatorio» sin ponerlo: se corrige.
+  assert.equal(M.debeCorregirSinHerramienta({ ...base, pasos: [{ herramienta: 'web', estado: 'succeeded' }], dicho: 'Mañana llueve en Tegucigalpa. Te puse el recordatorio.' }), true);
+  // El correo que se mandó de verdad sí respalda «te lo mando».
+  assert.equal(M.debeCorregirSinHerramienta({ ...base, pasos: [{ herramienta: 'correo', estado: 'succeeded' }], dicho: 'Va, te lo mando.' }), false);
+  // Una herramienta que falló no respalda nada.
+  assert.equal(M.debeCorregirSinHerramienta({ ...base, pasos: [{ herramienta: 'correo', estado: 'failed' }], dicho: 'Va, te lo mando.' }), true);
+});
+
+test('MENOR-D: una lectura lleva el tope de lectura (un trozo y su «¿sigo?»), no queda sin tope', async () => {
+  const M: Record<string, any> = await import('../lib/cerebro-manos');
+  assert.equal(typeof M.topeTrasPaso, 'function', 'existe topeTrasPaso');
+  assert.equal(M.TOPE_VOZ_LECTURA, 650);
+  const lectura = { herramienta: 'correo', estado: 'succeeded', recibo: { efecto: 'ninguno', lectura: true } };
+  const web = { herramienta: 'web', estado: 'succeeded', recibo: { efecto: 'ninguno' } };
+  const borrador = { herramienta: 'whatsapp', estado: 'succeeded', recibo: { efecto: 'borrador' } };
+  assert.equal(M.topeTrasPaso(TOPE_VOZ_CHARS, lectura), 650);
+  assert.equal(M.topeTrasPaso(TOPE_VOZ_CHARS, web), TOPE_VOZ_CHARS);
+  assert.equal(M.topeTrasPaso(TOPE_VOZ_CHARS, borrador), 0);
+  assert.equal(M.topeTrasPaso(0, lectura), 0, 'sin tope (pidió «completo») sigue sin tope');
+  assert.equal(M.topeTrasPaso(TOPE_VOZ_CHARS, { ...lectura, estado: 'failed' }), TOPE_VOZ_CHARS);
+  // Lectura y búsqueda en el mismo turno: el total sigue en 650 (antes, la lectura quitaba el tope a todo).
+  assert.equal([web, lectura, web].reduce((t, p) => M.topeTrasPaso(t, p), TOPE_VOZ_CHARS), 650);
+  // Un correo de 2 800 caracteres: se dice el principio y el «¿sigo?», sin pasar de 650.
+  const cuerpo = 'Le escribo para confirmarle los detalles del envío de la próxima semana, que incluye los repuestos del molino. '.repeat(25);
+  const dicho = `Es del proveedor, sobre el envío. ${cuerpo.slice(0, 2800)} ¿Sigo?`;
+  const tope = M.topeTrasPaso(TOPE_VOZ_CHARS, lectura);
+  const voz = M.recorteDeVoz(dicho, tope);
+  assert.ok(voz.length <= 650, String(voz.length));
+  assert.ok(voz.length > M.TOPE_VOZ_DURO, 'un trozo entero, más que el tope corto');
+  assert.ok(voz.startsWith('Es del proveedor'));
+  assert.match(voz, /¿Sigo\?$/);
+});
+
+test('MENOR-D: server.ts usa el tope de lectura (stream, harness y respaldo JSON)', async () => {
+  const fs = await import('node:fs');
+  const src = fs.readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
+  const turno = src.slice(src.indexOf('async function turnoEnVivo('), src.indexOf("app.get('/api/taller'"));
+  assert.match(turno, /alPaso: \(paso\) => subirTope\(topeTrasPaso\(topeDelTurno, paso\)\)/);
+  assert.doesNotMatch(turno, /TOPE_VOZ_DURO/, 'el duro va con el tope del turno (duroDeVoz)');
+  assert.match(turno, /hasta > duroDeVoz\(topeDelTurno\)/);
+  assert.match(src, /vozPasos: \{ borrador: h\.pasos\.some\(pasoSinTopeDeVoz\), lectura: h\.pasos\.some\(pasoDeLectura\) \}/);
+  assert.doesNotMatch(src, /sinTopeDeVoz: h\.pasos\.some/);
+  assert.match(src, /return out\.vozLectura \? topeConLectura\(tope\) : tope;/);
+});
+
+test('MENOR-E: la pregunta final no es una citada, retórica ni larga; con emoji o una frase corta detrás, sí', async () => {
+  const M: Record<string, any> = await import('../lib/cerebro-manos');
+  const relleno = 'El correo de hoy trae varias cosas sobre la planta, el transporte de la semana y los pagos pendientes. '.repeat(5);
+  // (1) Citada: la pregunta es de Ana, no de AU-RA.
+  const citada = `${relleno}Ana te escribe: «¿Puedes venir mañana?»`;
+  assert.equal(M.preguntaFinal(citada), '');
+  assert.doesNotMatch(M.recorteDeVoz(citada, TOPE_VOZ_CHARS), /¿Puedes venir mañana\?/);
+  assert.equal(M.preguntaFinal(`${relleno}Ana dice: "¿Vienes?"`), '');
+  // (2) Retórica.
+  for (const r of ['¿Quién no quiere un día libre?', 'Es buena noticia, ¿no?', '¿Sabes qué?', "Who doesn't love a day off?"]) assert.equal(M.preguntaFinal(`${relleno}${r}`), '', r);
+  assert.equal(M.preguntaFinal(`${relleno}¿No quieres que se lo mande?`), '¿No quieres que se lo mande?', 'una pregunta de verdad que empieza por «no»');
+  // (3) Larga: no se pega, y lo dicho nunca pasa del tope duro.
+  const larga = '¿Quieres que te arme un resumen de todos los correos de la planta y del transporte de esta semana, con los pagos pendientes y lo que falta firmar, para mandárselo a Beto?';
+  assert.ok(larga.length > 120);
+  assert.equal(M.preguntaFinal(`${relleno}${larga}`), '');
+  assert.ok(M.recorteDeVoz(`${relleno}${larga}`, TOPE_VOZ_CHARS).length <= M.TOPE_VOZ_DURO);
+  // (4) Emoji o una frase corta detrás: la pregunta se conserva.
+  assert.equal(M.preguntaFinal(`${relleno}¿Lo mando? 😊`), '¿Lo mando? 😊');
+  assert.equal(M.preguntaFinal(`${relleno}¿Lo mando? Avísame.`), '¿Lo mando? Avísame.');
+  assert.match(M.recorteDeVoz(`${relleno}¿Lo mando? 😊`, TOPE_VOZ_CHARS), /¿Lo mando\? 😊$/);
+  assert.match(M.recorteDeVoz(`${relleno}¿Lo mando? Avísame.`, TOPE_VOZ_CHARS), /¿Lo mando\? Avísame\.$/);
+  // Una frase larga detrás ya no es «la pregunta final».
+  assert.equal(M.preguntaFinal(`${relleno}¿Lo mando? Si no, lo dejamos para mañana con calma y lo revisamos juntos.`), '');
+  // Nunca pasa del tope duro, sea cual sea el largo de la pregunta.
+  for (let n = 5; n <= 400; n += 5) {
+    const q = `¿${'a'.repeat(n)}?`;
+    const v = M.recorteDeVoz(`${relleno}${q}`, TOPE_VOZ_CHARS);
+    assert.ok(v.length <= M.TOPE_VOZ_DURO, `${n}: ${v.length}`);
+  }
+});
+
+test('MENOR-E: server.ts no pega la pregunta final si pasa del tope duro', async () => {
+  const fs = await import('node:fs');
+  const src = fs.readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
+  assert.match(src, /enviado \+ 1 \+ q\.length <= duroDeVoz\(topeDelTurno\)/);
 });

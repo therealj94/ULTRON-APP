@@ -358,7 +358,8 @@ async function leer(quien: string, ambito: string, ref: string): Promise<Resulta
   ]
     .filter(Boolean)
     .join('\n');
-  // `lectura`: se le leen los mensajes tal cual; en voz van enteros, con su «¿sigo?» (revisión del 5-oct, MEDIO-2).
+  // `lectura`: se le leen los mensajes tal cual (revisión del 5-oct, MEDIO-2); en voz, con el tope de lectura (hasta 15
+  // mensajes no caben en voz: lo primero y su «¿sigo?»; revisión independiente, MENOR-D, lib/cerebro-manos.ts topeTrasPaso).
   return exito(texto, { efecto: 'ninguno', proveedor: 'whatsapp', referencia: c.jid, lectura: true });
 }
 
