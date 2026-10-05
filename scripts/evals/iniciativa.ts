@@ -21,7 +21,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-type Rel = { versionH?: number; tipo: string; id?: string; motivo?: string };
+/** `valor`: el número contado que afirma la propuesta (correo, WhatsApp), su ancla (A2). */
+type Rel = { versionH?: number; tipo: string; id?: string; motivo?: string; valor?: number };
 type MisionRel = { id: string; estado: string; actualizadaH: number; venceH?: number; pasos?: boolean[] };
 type Alcance = Partial<Record<'app' | 'push' | 'correo' | 'llamada', number>>;
 type Pasada = { despuesH: number; alcance?: Alcance; simultaneas?: number; replicaNueva?: boolean; reencolar?: boolean };
@@ -150,7 +151,7 @@ export async function evaluarIniciativa(o: { archivo?: string; modo?: 'aur12' | 
         ...(q.fuente.tipo === 'perfil' ? { campo: q.fuente.id } : {}),
         evidencia: {
           porQue: 'caso sintético',
-          fuente: { tipo: q.fuente.tipo as any, ...(q.fuente.id ? { id: q.fuente.id } : {}), ...(q.fuente.versionH !== undefined ? { version: ahora + q.fuente.versionH * H } : {}), ...(q.fuente.motivo ? { motivo: q.fuente.motivo } : {}), visto: creada },
+          fuente: { tipo: q.fuente.tipo as any, ...(q.fuente.id ? { id: q.fuente.id } : {}), ...(q.fuente.versionH !== undefined ? { version: ahora + q.fuente.versionH * H } : {}), ...(q.fuente.valor !== undefined ? { valor: q.fuente.valor } : {}), ...(q.fuente.motivo ? { motivo: q.fuente.motivo } : {}), visto: creada },
           paso: 'Preparar; nada sale sin su sí.',
           permiso: (q.permiso as any) || 'ninguno',
           caduca: ahora + (q.caducaH ?? 20) * H,

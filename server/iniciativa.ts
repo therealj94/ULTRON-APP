@@ -34,7 +34,7 @@ import {
   lineaPorConocer,
   observacionDe,
   responderPropuesta,
-  revalidarPropuesta,
+  revalidarPendiente,
   siguientePropuesta,
   type ContextoIniciativa,
   type FuenteContada,
@@ -231,13 +231,22 @@ async function fuentesAhora(correo: string, d: Pick<DepsIniciativa, 'contadores'
  * REVALIDAR JUSTO ANTES DE AVISAR: la propuesta tiene que seguir pendiente (no contestada, no retirada) y su
  * evidencia valer con las fuentes leídas ahora, con el MISMO adaptador que la pensó. Lo que no se pudo leer no
  * se da por bueno.
+ *
+ * A2 (5-oct): se revalida la versión GUARDADA (lib/iniciativa.ts revalidarPendiente, en un paso del cajón), no la
+ * copia que trae la outbox; si el número contado cambió (3→1), se regenera desde lo observado y se devuelve esa
+ * versión en `propuesta` para que el despacho entregue ESA, una sola vez (mismo id, mismo sello).
  */
 export async function revalidarAhora(correo: string, p: Propuesta, d: Pick<DepsIniciativa, 'contadores' | 'reloj'>, ahora: number): Promise<Revalidacion> {
   const est = await leerEstadoIniciativa(correo);
   if (!est.ok) return { vigente: false, motivo: 'fuente_no_disponible' };
   if (est.estado.pendiente?.id !== p.id) return { vigente: false, motivo: 'resuelta' };
   const f = await fuentesAhora(correo, { contadores: d.contadores, reloj: () => ahora });
-  return revalidarPropuesta(p, { misiones: f.misiones, observaciones: f.observaciones, perfil: f.perfil, ...(f.desconectadas ? { desconectadas: f.desconectadas } : {}) }, ahora);
+  try {
+    return await revalidarPendiente(correo, p.id, { misiones: f.misiones, observaciones: f.observaciones, perfil: f.perfil, ...(f.desconectadas ? { desconectadas: f.desconectadas } : {}) }, ahora);
+  } catch (e) {
+    if (e instanceof AlmacenNoDisponible) return { vigente: false, motivo: 'fuente_no_disponible' };
+    throw e;
+  }
 }
 
 /** La propuesta como la ve la app, con lo necesario para «ver la propuesta»: por qué, el paso, el permiso y hasta cuándo. */
@@ -250,6 +259,8 @@ export function propuestaParaApp(p: Propuesta) {
     pedido: p.pedido,
     prioridad: p.prioridad,
     creada: p.creada,
+    // Sube cuando se regeneró con el número de ahora (A2): la app reemplaza la tarjeta del mismo id.
+    rev: p.rev || 1,
     ...(p.misionId ? { misionId: p.misionId } : {}),
     clase: claseDe(p),
     porQue: e.porQue || 'Una idea para ti.',
@@ -264,7 +275,7 @@ export function propuestaParaApp(p: Propuesta) {
  * la acción ('iniciativa'); el tipo de la propuesta va en `clase`.
  */
 export function accionIniciativa(p: Propuesta) {
-  return { tipo: 'iniciativa' as const, id: p.id, texto: p.texto, pedido: p.pedido, clase: p.tipo, prioridad: p.prioridad, creada: p.creada, ...(p.misionId ? { misionId: p.misionId } : {}) };
+  return { tipo: 'iniciativa' as const, id: p.id, texto: p.texto, pedido: p.pedido, clase: p.tipo, prioridad: p.prioridad, creada: p.creada, rev: p.rev || 1, ...(p.misionId ? { misionId: p.misionId } : {}) };
 }
 
 /** La misión como la ve la app (con su número entre las abiertas, si está abierta). */
