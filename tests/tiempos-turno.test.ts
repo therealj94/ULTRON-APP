@@ -59,9 +59,12 @@ test('prepararTurno arranca la clasificación y lo de la cuenta YA, a la par de 
   assert.match(prep, /const tareasPedidas = correoApp \? precargarTareas\(correoApp\)/);
 });
 
-test('un turno hablado con tope le pide al modelo dos o tres frases (y ofrecer el resto); si pidió algo largo, no', () => {
+test('un turno hablado con tope le pide al modelo dos o tres frases (y ofrecer el resto); si pidió algo largo, no', async () => {
   const src = fs.readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
   const prep = src.slice(src.indexOf('async function prepararTurno('), src.indexOf('async function respuestaChica('));
-  assert.match(prep, /if \(topeDeVoz\(message, !!opciones\.voz\) > 0\)\s*hechos\.push\(/);
-  assert.match(prep, /RESPUESTA HABLADA: esto se dice en voz alta\. Dos o tres frases cortas como mucho/);
+  // Revisión del 5-oct (GRAVE-1): en un turno de confirmación no va, y la línea deja fuera borradores y confirmaciones.
+  assert.match(prep, /if \(topeDeVoz\(message, !!opciones\.voz, \{ confirmacion: vozCompleta \}\) > 0\)\s*hechos\.push\(lineaRespuestaHablada\(/);
+  const { lineaRespuestaHablada } = await import('../lib/cerebro-manos');
+  assert.match(lineaRespuestaHablada('es'), /RESPUESTA HABLADA: esto se dice en voz alta\. Dos o tres frases cortas como mucho/);
+  assert.match(lineaRespuestaHablada('es'), /salvo borradores y confirmaciones: esos se dicen completos/);
 });

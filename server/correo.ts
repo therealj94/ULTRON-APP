@@ -474,8 +474,21 @@ async function ubicar(quien: string, ambito: string, ref: string, o: { siguiente
  * leído o no), se dice a qué cuenta llegó y no se abre ninguna tarea. «Revisa mis correos» sigue listando.
  */
 
-/** «el último / la última / lo último / mi último / el más reciente / el más nuevo», o «último correo», «correo más reciente». */
-const ULTIMO_ES = /\b(?:(?:el|la|lo|mi|su|tu)\s+(?:ultim[oa]|mas\s+reciente|mas\s+nuev[oa])|ultim[oa]\s+(?:correo|mail|email|e-mail|mensaje)|(?:correo|mail|email|e-mail|mensaje)\s+mas\s+(?:reciente|nuevo))\b/;
+/**
+ * «el último / mi último / el más reciente / el más nuevo», o «último correo», «correo más reciente». «la última» y «lo
+ * último» solo con una palabra de correo o «que me llegó / que recibí» detrás (revisión del 5-oct, MEDIO-1: «de la última
+ * semana» o «la última vez no me dijiste nada» abrían el más nuevo de cualquiera como «ES EL ÚLTIMO»).
+ */
+const ULTIMO_ES =
+  /\b(?:(?:el|mi|su|tu)\s+(?:ultim[oa]|mas\s+reciente|mas\s+nuev[oa])|(?:la|lo)\s+(?:ultim[oa]|mas\s+reciente|mas\s+nuev[oa])(?=\s+(?:correo|mail|email|e-mail|mensaje|que\s+(?:me\s+)?(?:llego|recibi|entro|ha\s+llegado)\b))|ultim[oa]\s+(?:correo|mail|email|e-mail|mensaje)|(?:correo|mail|email|e-mail|mensaje)\s+mas\s+(?:reciente|nuevo))\b/;
+/** Lo que sigue y lo vuelve un rango de tiempo («el último mes», «la última semana», «la última vez»): eso es la lista. */
+const ES_TIEMPO = /^\s*(?:semana|semanas|hora|horas|vez|veces|mes|meses|dia|dias|ano|anos|rato|minuto|minutos|noche|manana|tarde|quincena|week|weeks|hour|hours|day|days|month|months|time)\b/;
+/**
+ * Lo que sigue y lo vuelve OTRO pedido: de alguien en concreto («que me mandó Ana», «que me escribió el banco», "Ana
+ * sent me") o lo enviado por la persona («enviado», "I sent"). Eso no es «el último que recibí».
+ */
+const OTRO_PEDIDO =
+  /\bque\s+(?:me\s+)?(?:mando|escribio|envio|reenvio)\s+\S|\b(?:enviad[oa]s?|mandad[oa]s?\s+por\s+mi|que\s+(?:yo\s+)?(?:mande|envie|escribi)|sent|i\s+(?:sent|wrote))\b/;
 /** "my latest email", "the last email", "most recent email", "newest email" (en singular: "emails" es la lista). */
 const ULTIMO_EN = /\b(?:(?:my|the)\s+(?:latest|last|newest|most\s+recent)\s+(?:e-?mail|mail|message)|(?:latest|newest|most\s+recent)\s+(?:e-?mail|mail))\b/;
 /**
@@ -496,13 +509,17 @@ export function pideUltimoCorreo(texto: string): boolean {
   if (!q) return false;
   const m = ULTIMO_ES.exec(q) || ULTIMO_EN.exec(q);
   if (!m) return false;
-  return !DE_ALGUIEN.test(q.slice(m.index + m[0].length));
+  const despues = q.slice(m.index + m[0].length);
+  return !DE_ALGUIEN.test(despues) && !ES_TIEMPO.test(despues) && !OTRO_PEDIDO.test(despues);
 }
 
 /** La referencia de `correo leer` es SOLO «el último» («último», «el más reciente», «el último correo que recibí», "latest"). */
 const SOLO_ULTIMO =
   /^(?:(?:el|la|lo|mi|my|the)\s+)?(?:ultim[oa]|mas\s+reciente|mas\s+nuev[oa]|latest|newest|last|most\s+recent)(?:\s+(?:correo|mail|email|e-mail|mensaje|one))?(?:\s+que\s+(?:me\s+)?(?:llego|recibi|entro|mandaron|ha\s+llegado)|\s+(?:i\s+)?(?:got|received))?$/;
 const refEsElUltimo = (ref: string) => SOLO_ULTIMO.test(limpioParaBuscar(ref));
+
+/** Cuánto en el futuro se le cree a la fecha de un correo (relojes un poco adelantados); más que eso, es falsa. */
+const FUTURO_TOLERADO_MS = 10 * 60_000;
 
 /** Abre el más reciente de todas sus cuentas (por fecha, leído o no) y dice a cuál llegó. No abre ninguna tarea. */
 async function leerUltimo(quien: string, ambito: string): Promise<ResultadoHerramienta> {
@@ -514,7 +531,15 @@ async function leerUltimo(quien: string, ambito: string): Promise<ResultadoHerra
   const cuentasR = cuentasDelRecibo(cob);
   const caidas = cob.filter((x) => x.fallo).map((x) => falloEnPalabras(x.fallo!));
   if (caidas.length === cuentas.length) return falloCon(`CORREO: no pude abrir ninguna de sus cuentas (${caidas.join('; ')}). No sé cuál es su último correo; díselo así, sin inventar, con el paso de cada cuenta.`, 'proveedor', { cuentas: cuentasR });
-  const todos = consultas.flatMap((x) => (x.ok ? x.lista : [])).sort((a, b) => b.fecha.localeCompare(a.fecha));
+  // La fecha decide, pero una del futuro (más de 10 min: un encabezado Date falsificado, típico del spam) no cuenta: si
+  // no, ese correo sería siempre «el último» (revisión del 5-oct, MENOR). La lista ya usa la hora en que lo recibió el
+  // servidor (INTERNALDATE) cuando la hay; esto cubre cuando no. Sin fecha creíble, va después de los que sí la tienen.
+  const limite = Date.now() + FUTURO_TOLERADO_MS;
+  const cuando = (r: Resumen) => {
+    const t = Date.parse(r.fecha);
+    return Number.isFinite(t) && t <= limite ? t : -Infinity;
+  };
+  const todos = consultas.flatMap((x) => (x.ok ? x.lista : [])).sort((a, b) => (cuando(a) === cuando(b) ? 0 : cuando(a) > cuando(b) ? -1 : 1));
   const faltaron = caidas.length ? ` OJO: no pude mirar ${caidas.join('; ')}; puede haber uno más nuevo ahí: díselo.` : '';
   const el = todos[0];
   if (!el) {
@@ -582,7 +607,8 @@ async function leerUbicado(quien: string, ambito: string, u: Exclude<Ubicado, { 
   ]
     .filter(Boolean)
     .join('\n');
-  return exito(texto, { efecto: 'ninguno', proveedor: 'imap', referencia: u.ref, ...(u.incompleto ? { incompleto: true } : {}), ...(u.cuentas ? { cuentas: u.cuentas } : {}) });
+  // `lectura`: lo que trae se le lee tal cual; en voz va entero, con su «¿sigo?» (revisión del 5-oct, MEDIO-2).
+  return exito(texto, { efecto: 'ninguno', proveedor: 'imap', referencia: u.ref, lectura: true, ...(u.incompleto ? { incompleto: true } : {}), ...(u.cuentas ? { cuentas: u.cuentas } : {}) });
 }
 
 /** «Sigue»: el trozo siguiente del correo que está leyendo. */
@@ -599,7 +625,7 @@ function seguirLectura(quien: string, ambito: string): ResultadoHerramienta {
   const quedan = lec.trozos.length - lec.dado;
   return exito(
     `CORREO (sigue el de ${lec.de || lec.deCorreo}, «${lec.asunto}») — trozo ${i + 1} de ${lec.trozos.length}:\n${lec.trozos[i]}\n${quedan ? `(Quedan ${quedan}; pregunta si sigues.)` : '(Es el final del correo: pregúntale si le contesta o sigues con el siguiente.)'}\n${AVISO_AJENO}`,
-    { efecto: 'ninguno', referencia: lec.ref }
+    { efecto: 'ninguno', referencia: lec.ref, lectura: true }
   );
 }
 

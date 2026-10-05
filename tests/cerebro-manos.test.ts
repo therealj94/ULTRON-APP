@@ -443,3 +443,124 @@ test('5-oct: server.ts aplica el tope también a lo que sale de golpe (replace, 
   const json = src.slice(src.indexOf("app.post('/api/turno', "), src.indexOf("app.post('/api/turno', ") + 4000);
   assert.match(json, /voz: turnoHablado\(body\) \? recorteDeVoz\(out\.voz/);
 });
+
+/* ------------------------------------------------------------------ revisión del 5-oct: GRAVE-1 y GRAVE-2 */
+
+// «contéstale a Ana que todo bien pero que el transporte se duplicó»: el borrador entero y la pregunta (322 caracteres).
+const BORRADOR_ANA =
+  'Le dejé listo el WhatsApp para Ana: «Hola Ana, todo bien por aquí, gracias por preguntar. Solo una cosa: el transporte de esta semana se duplicó, porque hubo que mandar dos viajes del camión a la planta. Si quieres lo vemos el lunes con calma y te paso los recibos de los dos viajes para que los revises.» ¿Lo mando?';
+
+test('GRAVE-1: con tope, la pregunta final a la persona («¿Lo mando?») siempre se dice', async () => {
+  const M: Record<string, any> = await import('../lib/cerebro-manos');
+  assert.ok(BORRADOR_ANA.length > 300, String(BORRADOR_ANA.length));
+  const dicho = M.recorteDeVoz(BORRADOR_ANA, TOPE_VOZ_CHARS);
+  assert.match(dicho, /¿Lo mando\?$/, `la pregunta se oye: «${dicho}»`);
+  // Una respuesta larga que termina en pregunta: lo primero y la pregunta, nunca solo el principio.
+  const larga = `${'El banco dice que la tarjeta vence pronto y que hay que pasar a renovarla. '.repeat(8)}¿Quieres que te lo recuerde mañana?`;
+  const d2 = M.recorteDeVoz(larga, TOPE_VOZ_CHARS);
+  assert.ok(d2.length < larga.length, 'sí recorta');
+  assert.ok(d2.startsWith('El banco dice'), 'empieza por lo primero');
+  assert.match(d2, /¿Quieres que te lo recuerde mañana\?$/);
+  assert.ok(d2.length <= M.TOPE_VOZ_DURO + 2, String(d2.length));
+});
+
+test('GRAVE-1: un turno con borrador o confirmación no lleva tope (se dice entero); lo de antes sigue igual', async () => {
+  const M: Record<string, any> = await import('../lib/cerebro-manos');
+  // Hay algo esperando su «sí» (un borrador de correo/WhatsApp, una llamada o un recordatorio por confirmar).
+  assert.equal(M.topeDeVoz('léemelo otra vez', true, { confirmacion: true }), 0);
+  assert.equal(M.topeDeVoz('sí', true, { confirmacion: true }), 0);
+  assert.equal(M.topeDeVoz('cómo va la planta', true, { confirmacion: false }), TOPE_VOZ_CHARS);
+  // El turno armó un borrador (recibo `borrador`) o leyó un correo / un chat (recibo de lectura): sin tope.
+  assert.equal(typeof M.pasoSinTopeDeVoz, 'function', 'existe pasoSinTopeDeVoz');
+  assert.equal(M.pasoSinTopeDeVoz({ herramienta: 'whatsapp', estado: 'succeeded', recibo: { efecto: 'borrador', referencia: 'w1' } }), true);
+  assert.equal(M.pasoSinTopeDeVoz({ herramienta: 'correo', estado: 'succeeded', recibo: { efecto: 'borrador', referencia: 'c1' } }), true);
+  assert.equal(M.pasoSinTopeDeVoz({ herramienta: 'correo', estado: 'succeeded', recibo: { efecto: 'ninguno', lectura: true } }), true);
+  assert.equal(M.pasoSinTopeDeVoz({ herramienta: 'web', estado: 'succeeded', recibo: { efecto: 'ninguno' } }), false);
+  assert.equal(M.pasoSinTopeDeVoz({ herramienta: 'correo', estado: 'failed', recibo: { efecto: 'ninguno', codigo: 'proveedor' } }), false);
+  // Un borrador en el chat de la app (chat_aura redactar) también.
+  assert.equal(M.accionConBorrador(`Le escribo a Beto. ¿Lo envío?\n${lineaDeHerramienta('chat_aura', { accion: 'redactar', con: 'Beto', texto: 'Llego tarde' })}`), true);
+  assert.equal(M.accionConBorrador(`Va.\n${lineaDeHerramienta('abrir_pantalla', { pantalla: 'ajustes' })}`), false);
+  // Sin tope, el borrador de Ana se dice entero.
+  assert.equal(M.recorteDeVoz(BORRADOR_ANA, 0), BORRADOR_ANA);
+  // La línea del prompt hablado no aplica a borradores ni confirmaciones.
+  assert.equal(typeof M.lineaRespuestaHablada, 'function', 'existe lineaRespuestaHablada');
+  assert.match(M.lineaRespuestaHablada('es'), /salvo borradores y confirmaciones: esos se dicen completos/);
+  assert.match(M.lineaRespuestaHablada('en'), /except drafts and confirmations/i);
+});
+
+test('GRAVE-1: server.ts quita el tope en turnos de borrador, confirmación o lectura (stream, done y JSON)', async () => {
+  const fs = await import('node:fs');
+  const src = fs.readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
+  const turno = src.slice(src.indexOf('async function turnoEnVivo('), src.indexOf("app.get('/api/taller'"));
+  // Lo que espera su «sí» al empezar el turno (o lo que el turno resolvió) quita el tope desde el principio.
+  assert.match(turno, /topeDeVoz\(message, !!opciones\.voz, \{ confirmacion: p\.vozCompleta \}\)/);
+  // Un paso del harness con borrador o lectura lo quita antes de que la vuelta hable.
+  assert.match(turno, /alPaso: \(paso\) => \{\s*if \(pasoSinTopeDeVoz\(paso\)\) sinTope\(\)/);
+  // El prompt hablado: la línea nueva (con la salvedad), y no va en un turno de confirmación.
+  assert.match(src, /if \(topeDeVoz\(message, !!opciones\.voz, \{ confirmacion: vozCompleta \}\) > 0\) hechos\.push\(lineaRespuestaHablada\(/);
+  assert.ok(!/RESPUESTA HABLADA: esto se dice en voz alta\. Dos o tres frases cortas como mucho/.test(src), 'la línea vieja (sin salvedad) ya no está');
+  // El respaldo JSON: sin tope si el turno fue de borrador, confirmación o lectura.
+  const json = src.slice(src.indexOf("app.post('/api/turno', "), src.indexOf("app.post('/api/turno', ") + 4000);
+  assert.match(json, /out\.vozCompleta \? 0 :/);
+});
+
+test('GRAVE-2: un «NADA» a la re-pregunta se respeta (no se corrige como antes de la mesa rápida)', async () => {
+  const M: Record<string, any> = await import('../lib/cerebro-manos');
+  const repreguntar = (piezas: any[]) => () =>
+    (async function* () {
+      for (const p of piezas) yield p;
+    })();
+  const r = await M.cumplirLoDicho({ dicho: 'Va, te lo mando.', disponibles: ['whatsapp'], mensaje: 'mándale a Ana que llego tarde', repreguntar: repreguntar([{ modelo: 'zai.glm-5' }, { texto: 'NADA' }]), usar: () => true });
+  assert.equal(r.correccion, 'repregunta');
+  assert.equal(r.cumplida, false);
+  assert.equal(r.nada, true, 'el modelo dijo que no prometió nada');
+});
+
+test('GRAVE-2: la corrección local solo va cuando de verdad no pasó nada', async () => {
+  const M: Record<string, any> = await import('../lib/cerebro-manos');
+  assert.equal(typeof M.debeCorregirSinHerramienta, 'function', 'existe debeCorregirSinHerramienta');
+  const local = { correccion: 'local', cumplida: false, candidatas: [], ms: 0 };
+  const repregunta = { correccion: 'repregunta', cumplida: false, candidatas: ['whatsapp'], ms: 900 };
+  const base = { usoManos: false, borradorPendiente: false, pasos: [] };
+  assert.equal(M.debeCorregirSinHerramienta({ ...base, promesa: local }), true, 'ninguna herramienta lo cumple: se corrige');
+  assert.equal(M.debeCorregirSinHerramienta({ ...base, promesa: repregunta }), true, 're-preguntó y no usó ninguna');
+  assert.equal(M.debeCorregirSinHerramienta({ ...base, promesa: null }), false, 'no prometió');
+  // Escenario B del revisor: la re-pregunta contestó «NADA» → como antes del cambio, el texto queda.
+  assert.equal(M.debeCorregirSinHerramienta({ ...base, promesa: { ...repregunta, nada: true } }), false);
+  // Escenario A: un borrador de un turno anterior; «léemelo otra vez» → lo lee y pregunta «¿Lo mando?».
+  assert.equal(M.debeCorregirSinHerramienta({ ...base, borradorPendiente: true, promesa: local }), false);
+  // Una herramienta del turno terminó bien: no se le dice «no lo hice».
+  assert.equal(M.debeCorregirSinHerramienta({ ...base, pasos: [{ herramienta: 'correo', estado: 'succeeded' }], promesa: repregunta }), false);
+  assert.equal(M.debeCorregirSinHerramienta({ ...base, usoManos: true, promesa: local }), false);
+});
+
+test('GRAVE-2: «desde aquí no tengo cómo» solo cuando no hay herramienta que lo haga', async () => {
+  const { corregirPromesaSinHerramienta } = await import('../lib/cerebro-manos');
+  const sin = corregirPromesaSinHerramienta('Va, te llamo en un minuto.', 'es', { sinHerramienta: true } as any);
+  assert.match(sin.texto, /desde aquí no tengo cómo/);
+  // La herramienta existía (se le pidió y no la usó): decir «no tengo cómo» sería falso.
+  const con = corregirPromesaSinHerramienta('Va, te llamo en un minuto.', 'es', { sinHerramienta: false } as any);
+  assert.equal(con.cambiada, true);
+  assert.doesNotMatch(con.texto, /no tengo cómo/, con.texto);
+  assert.match(con.texto, /todavía no lo hice/i);
+  const en = corregirPromesaSinHerramienta("Sure, I'll call you in a minute.", 'en', { sinHerramienta: false } as any);
+  assert.doesNotMatch(en.texto, /can't do it from here/, en.texto);
+});
+
+test('GRAVE-2: lo que ya pasó en otro turno («ya te lo mandé hace rato») no es una promesa nueva ni se borra', async () => {
+  const { corregirPromesaSinHerramienta, prometeSinHacer } = await import('../lib/cerebro-manos');
+  for (const t of ['Sí, ya te lo mandé hace rato.', 'Ese correo se lo mandé ayer a las cinco.', 'Lo puse esta mañana, ya está.', 'I already sent it earlier today.'])
+    assert.equal(prometeSinHacer(t), false, t);
+  const c = corregirPromesaSinHerramienta('Sí, ya te lo mandé hace rato.');
+  assert.deepEqual(c, { texto: 'Sí, ya te lo mandé hace rato.', cambiada: false });
+  // Sin nada que diga que fue antes, «ya lo mandé» sigue siendo dar por hecho algo de ESTE turno.
+  for (const t of ['Listo, ya te lo mandé.', 'Ya lo puse.', 'Va, te llamo en treinta segundos.']) assert.equal(prometeSinHacer(t), true, t);
+});
+
+test('GRAVE-2: server.ts pasa por debeCorregirSinHerramienta (NADA, borrador pendiente, pasos del turno)', async () => {
+  const fs = await import('node:fs');
+  const src = fs.readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
+  const turno = src.slice(src.indexOf('async function turnoEnVivo('), src.indexOf("app.get('/api/taller'"));
+  assert.match(turno, /debeCorregirSinHerramienta\(\{ promesa, usoManos, borradorPendiente: hayBorradorPendiente\(\), pasos: pasosTurno \}\)/);
+  assert.match(turno, /corregirPromesaSinHerramienta\(reply, idioma === 'en' \? 'en' : 'es', \{ sinHerramienta: promesa\?\.correccion === 'local' \}\)/);
+});

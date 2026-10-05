@@ -358,7 +358,8 @@ async function leer(quien: string, ambito: string, ref: string): Promise<Resulta
   ]
     .filter(Boolean)
     .join('\n');
-  return exito(texto, { efecto: 'ninguno', proveedor: 'whatsapp', referencia: c.jid });
+  // `lectura`: se le leen los mensajes tal cual; en voz van enteros, con su «¿sigo?» (revisión del 5-oct, MEDIO-2).
+  return exito(texto, { efecto: 'ninguno', proveedor: 'whatsapp', referencia: c.jid, lectura: true });
 }
 
 /** El borrador queda esperando su «sí»: recibo `borrador` con su id de intento (nada salió todavía). */

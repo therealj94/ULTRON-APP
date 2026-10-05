@@ -433,12 +433,20 @@ const PROMESA = new RegExp(
     '\\b(te|le|lo|la) (llamo|marco|timbro|aviso|recuerdo|pongo|abro|mando|envio|escribo|busco|reviso|leo)\\b',
     '\\bahi te (llamo|marco|suena|va|pongo|lo)\\b',
     '\\bvoy a (llamar|marcar|poner|programar|mandar|enviar|escribir|abrir|buscar|revisar|leer)',
-    '\\b(ya )?(te |lo |la )?(lo |la )?(puse|programe|agende|abri|mande|envie|llame)\\b',
     '\\bqueda(ria)? (el |tu |puesto el )?(recordatorio|aviso|llamada)',
     "\\b(i'?ll|i will) (call|remind|text|send|open|set|search)\\b",
   ].join('|'),
   'i'
 );
+/** Dar por hecho («ya lo puse», «te lo mandé»): cuenta como de ESTE turno salvo que la frase diga que fue antes. */
+const DADO_POR_HECHO = /\b(ya )?(te |lo |la )?(lo |la )?(puse|programe|agende|abri|mande|envie|llame)\b/i;
+/**
+ * Lo que la ubica ANTES de este turno (revisión del 5-oct, GRAVE-2): «Sí, ya te lo mandé hace rato» sobre un correo
+ * que de verdad salió en otro turno no es una promesa nueva ni algo que este turno deba haber hecho; antes se borraba
+ * y se cambiaba por «Eso todavía no lo hice».
+ */
+const DE_ANTES =
+  /\b(hace (un )?(rato|ratito|momento|poco|tiempo|\d+|un|una|dos|tres|unos|unas|varios|varias)|ayer|anoche|antier|antes de ayer|esta manana|en la manana|hoy temprano|mas temprano|el (lunes|martes|miercoles|jueves|viernes|sabado|domingo)( pasado)?|la (semana|vez) pasada|el (mes|ano) pasado|la otra vez|el otro dia|en la conversacion anterior|earlier|yesterday|last (night|week|time)|this morning|ago|the other day)\b/i;
 export function prometeSinHacer(texto: string): boolean {
   // También lo que lib/promesas.ts reconoce como trabajo o aviso prometido («voy a investigar», «ahí voy»,
   // «empiezo ya», «te aviso cuando termine»): José, 4-oct. Un estado de su computadora («ya está encendida»)
@@ -451,7 +459,9 @@ export function prometeSinHacer(texto: string): boolean {
   // Una oferta («¿Te busco recetas?», «¿Quieres que te llame?») no es una promesa; «¿Lo envío?» sí: dice
   // que el mensaje ya está listo.
   const sinOfertas = plano.replace(/¿[^?]*\?/g, (q) => (/¿\s*(se\s+)?(lo|la)\s+(envio|mando)\b/i.test(q) ? q : ' '));
-  return PROMESA.test(sinOfertas);
+  if (PROMESA.test(sinOfertas)) return true;
+  // Dar por hecho, frase por frase: lo que la frase sitúa antes de este turno («hace rato», «ayer») no cuenta.
+  return frases(sinOfertas).some((f) => DADO_POR_HECHO.test(f) && !DE_ANTES.test(f));
 }
 
 /** La nota que se le da al cerebro cuando prometió sin usar la herramienta (no se dice en voz alta). */
@@ -530,7 +540,14 @@ export function herramientasQueCumplen(dicho: string, disponibles: readonly stri
   return [...pedidas];
 }
 
-export type CumplirLoDicho = { correccion: 'local' | 'repregunta'; cumplida: boolean; candidatas: string[]; ms: number };
+export type CumplirLoDicho = {
+  correccion: 'local' | 'repregunta';
+  cumplida: boolean;
+  candidatas: string[];
+  ms: number;
+  /** La re-pregunta contestó «NADA»: el modelo dice que no prometió nada (como antes de la mesa rápida, el texto queda). */
+  nada?: boolean;
+};
 
 /**
  * DIJO QUE LO HACÍA Y NO USÓ LA HERRAMIENTA («ahí te llamo» y no llamaba): si alguna herramienta del turno lo
@@ -553,11 +570,36 @@ export async function cumplirLoDicho(o: {
   const candidatas = herramientasQueCumplen(o.dicho, o.disponibles, { mensaje: o.mensaje, anterior: o.anterior });
   if (!candidatas.length) return { correccion: 'local', cumplida: false, candidatas, ms: 0 };
   let cumplida = false;
+  let texto = '';
   for await (const pieza of o.repreguntar()) {
+    if ('texto' in pieza) texto += pieza.texto;
     if (!('herramienta' in pieza)) continue;
     if (o.usar(pieza.herramienta)) cumplida = true;
   }
-  return { correccion: 'repregunta', cumplida, candidatas, ms: Date.now() - t0 };
+  // «Si de verdad no prometiste nada, responde solo: NADA» (notaDeCumplir): sin herramienta y con NADA, el modelo
+  // dice que no prometía nada (un «¿Lo mando?» de un borrador que ya existe, un «ya te lo mandé hace rato»).
+  const nada = !cumplida && /(^|[^A-ZÁÉÍÓÚÑ])NADA([^A-ZÁÉÍÓÚÑ]|$)/.test(texto.replace(/\[[^\]]{0,30}\]/g, ' '));
+  return { correccion: 'repregunta', cumplida, candidatas, ms: Date.now() - t0, ...(nada ? { nada: true } : {}) };
+}
+
+/**
+ * ¿Se corrige aquí, sin red, lo que prometió sin herramienta? (revisión del 5-oct, GRAVE-2: la corrección quitaba
+ * cosas verdaderas). Solo si de verdad no pasó nada en este turno:
+ *  · prometió (`promesa`) y ninguna herramienta lo cumplió, ni al principio ni al pedírsela (`usoManos`);
+ *  · la re-pregunta NO contestó «NADA» (si el modelo dice que no prometía nada, el texto queda, como antes);
+ *  · no hay un borrador esperando su «sí» («léemelo otra vez» → lo lee y pregunta «¿Lo mando?»: eso es verdad);
+ *  · ninguna herramienta del turno terminó bien (`pasos`): con algo hecho, «no lo hice» sería falso.
+ */
+export function debeCorregirSinHerramienta(o: {
+  promesa: CumplirLoDicho | null | undefined;
+  usoManos: boolean;
+  borradorPendiente: boolean;
+  pasos: ReadonlyArray<{ herramienta?: string; estado?: string }>;
+}): boolean {
+  const p = o.promesa;
+  if (!p || p.cumplida || o.usoManos || p.nada) return false;
+  if (o.borradorPendiente) return false;
+  return !o.pasos.some((x) => x.estado === 'succeeded');
 }
 
 /**
@@ -567,7 +609,10 @@ export async function cumplirLoDicho(o: {
  * «ya lo puse», «queda el recordatorio», «¿lo envío?» sin borrador) y se dice con honradez que no se hizo.
  * Las líneas ACCION_APP / PEDIR_HERRAMIENTA y la etiqueta de ánimo del principio no se tocan.
  */
-export function corregirPromesaSinHerramienta(texto: string, idioma: 'es' | 'en' = 'es'): { texto: string; cambiada: boolean } {
+export function corregirPromesaSinHerramienta(texto: string, idioma: 'es' | 'en' = 'es', o: { sinHerramienta?: boolean } = {}): { texto: string; cambiada: boolean } {
+  // «Desde aquí no tengo cómo» solo es verdad si ninguna herramienta del turno lo hace (`correccion: 'local'`); si la
+  // había y no la usó al pedírsela, se dice que no se hizo, sin inventar que no se puede (revisión del 5-oct, GRAVE-2).
+  const sinHerramienta = o.sinHerramienta !== false;
   const original = String(texto || '');
   const emo = /^\s*\[[^\]]{0,30}\]\s*/.exec(original)?.[0] || '';
   const lineas = original.slice(emo.length).split('\n');
@@ -589,7 +634,13 @@ export function corregirPromesaSinHerramienta(texto: string, idioma: 'es' | 'en'
     );
   if (!quito) return { texto: original, cambiada: false };
   const resto = dichas.filter(Boolean).join('\n').replace(/[ \t]{2,}/g, ' ').trim();
-  const honrado = idioma === 'en' ? "I haven't done that: I can't do it from here yet." : 'Eso todavía no lo hice: desde aquí no tengo cómo.';
+  const honrado = sinHerramienta
+    ? idioma === 'en'
+      ? "I haven't done that: I can't do it from here yet."
+      : 'Eso todavía no lo hice: desde aquí no tengo cómo.'
+    : idioma === 'en'
+      ? "I haven't done that yet."
+      : 'Eso todavía no lo hice.';
   const maquina = lineas.filter(esMaquina);
   const final = `${emo}${[resto, honrado].filter(Boolean).join(' ')}${maquina.length ? `\n${maquina.join('\n')}` : ''}`.trim();
   return { texto: final, cambiada: final !== original };
@@ -608,23 +659,76 @@ export const TOPE_VOZ_CHARS = 220;
 export const TOPE_VOZ_DURO = 450;
 const PIDE_LARGO =
   /\b(cu[eé]nta(me)?|un cuento|una historia|l[eé]e(me|lo|la|los|las)?|lee\b|l[eé]eme(lo|la|los|las)?|l[eé]elo|l[eé]ela|sigue leyendo|segu[ií] leyendo|contin[uú]a( leyendo)?|lo que falta|completo|completa|entero|entera|todo el correo|expl[ií]ca(me)?\s.*(detalle|a fondo|completo)|en detalle|a fondo|paso a paso|todos los pasos|la lista completa|res[uú]me(me|n)?\s.*(todo|completo)|ora\b|oremos|oraci[oó]n|reza|c[aá]nta(me|nos)?|poema|tell me a story|read (it|me|this)|keep reading|the whole thing|step by step|in detail|pray|sing)\b/i;
-export function topeDeVoz(mensaje: string, voz: boolean): number {
-  if (!voz) return 0;
+/**
+ * `confirmacion` (revisión del 5-oct, GRAVE-1): algo espera su «sí» en esta conversación (un borrador de correo o
+ * de WhatsApp, una llamada o un recordatorio por confirmar, la pregunta de su computadora) o el turno lo acaba de
+ * resolver. Eso se dice ENTERO: con tope, «contéstale a Ana que…» sonaba hasta la mitad del borrador, el «¿Lo
+ * mando?» no se oía y José podía decir «sí» a un mensaje que no escuchó completo.
+ */
+export function topeDeVoz(mensaje: string, voz: boolean, o: { confirmacion?: boolean } = {}): number {
+  if (!voz || o.confirmacion) return 0;
   return PIDE_LARGO.test(String(mensaje || '')) ? 0 : TOPE_VOZ_CHARS;
 }
 
 /**
- * Hasta dónde se DICE un texto con el tope de voz `tope` (0 = entero): frases enteras mientras lo dicho no
- * llegue a `tope`, sin empezar una que pase de TOPE_VOZ_DURO. Si la primera frase sola ya lo pasa, se corta
- * en la última pausa (coma, punto y coma, dos puntos o espacio) antes del tope duro. Devuelve siempre un
- * PRINCIPIO exacto del texto (lo que ya sonó y lo que falta se comparan con startsWith).
+ * ¿Este paso del harness quita el tope del turno? (revisión del 5-oct, GRAVE-1 y MEDIO-2). Se mira lo que de
+ * verdad corrió (su recibo), no las palabras de la persona:
+ *  · un borrador que espera su «sí» (recibo `borrador`: correo, WhatsApp, su círculo): el texto entero y el
+ *    «¿Lo mando?» se dicen, o diría «sí» a medio mensaje;
+ *  · una lectura (recibo con `lectura`: `correo leer`, `correo seguir`, «el último correo», un chat de
+ *    WhatsApp): el trozo es de 600 caracteres y el tope duro de 450 cortaba su final y el «¿sigo?»; después
+ *    `correo seguir` saltaba al trozo 2 y ese texto no se decía nunca.
+ * Un paso fallido no quita nada (no hay nada que leer ni que confirmar).
  */
-export function recorteDeVoz(texto: string, tope: number, duro = TOPE_VOZ_DURO): string {
-  const t = String(texto || '');
-  if (!tope || t.length <= tope) return t;
+export function pasoSinTopeDeVoz(paso: { herramienta?: string; estado?: string; recibo?: { efecto?: string; lectura?: boolean } }): boolean {
+  if (!paso || paso.estado === 'failed') return false;
+  return paso.recibo?.efecto === 'borrador' || paso.recibo?.lectura === true;
+}
+
+/**
+ * ¿El texto del turno deja un borrador en el chat de la app (`ACCION_APP` «redactar», de chat_aura)? Es un borrador
+ * que espera su «sí» como el de correo o WhatsApp: se dice entero (revisión del 5-oct, GRAVE-1).
+ */
+export function accionConBorrador(texto: string): boolean {
+  return /^\s*ACCION_APP\s*:\s*\{[^\n]*"tipo"\s*:\s*"redactar"/im.test(String(texto || ''));
+}
+
+/**
+ * La línea del turno hablado para el modelo (que escriba corto lo que se dice). Borradores y confirmaciones no
+ * entran: se dicen completos (revisión del 5-oct, GRAVE-1: «dos o tres frases» empujaba a recortar el borrador).
+ */
+export function lineaRespuestaHablada(idioma: 'es' | 'en' = 'es'): string {
+  return idioma === 'en'
+    ? 'SPOKEN ANSWER: this is said out loud. Two or three short sentences at most (about 15 seconds), except drafts and confirmations: those are said in full (the whole message and the question). If there is more (a long email, a list), say the main point and offer to read the rest.'
+    : 'RESPUESTA HABLADA: esto se dice en voz alta. Dos o tres frases cortas como mucho (unos 15 segundos), salvo borradores y confirmaciones: esos se dicen completos (el mensaje entero y la pregunta). Si hay más (un correo largo, una lista), di lo principal y ofrece leer el resto.';
+}
+
+/**
+ * La pregunta con la que termina el texto (su última frase, si acaba en «?»), tal cual está en el texto; '' si
+ * no termina en pregunta. Es lo que se le pregunta a la persona («¿Lo mando?», «¿sigo?», «¿Te llamo a las 5?»).
+ */
+export function preguntaFinal(texto: string): string {
+  const t = String(texto || '').trimEnd();
+  const fs = frases(t);
+  // Un cierre suelto («» », «”», «)») es de la frase de antes: la pregunta llega hasta él.
+  let i = fs.length - 1;
+  let cola = '';
+  while (i >= 0 && SOLO_CIERRE.test(fs[i])) cola = fs[i--] + cola;
+  if (i < 0) return '';
+  const f = fs[i] + cola;
+  return /\?[\s»”"')\]]*$/.test(f.trimEnd()) ? f.trim() : '';
+}
+
+/** Una «frase» que solo cierra la anterior (comillas, paréntesis) o espacio. */
+const SOLO_CIERRE = /^[\s»”"')\]]*$/;
+
+/** Un principio exacto de `t`: frases enteras hasta `tope`, sin pasar de `duro` (la primera, cortada en una pausa). */
+function principioDeVoz(t: string, tope: number, duro: number): string {
+  if (t.length <= tope) return t;
   let dicho = '';
   for (const f of frases(t)) {
-    if (dicho.length >= tope) break;
+    // El cierre de la frase dicha («»», «)») va con ella aunque ya se llegó al tope.
+    if (dicho.length >= tope && !SOLO_CIERRE.test(f)) break;
     if (dicho && (dicho + f).trimEnd().length > duro) break;
     dicho += f;
   }
@@ -633,4 +737,32 @@ export function recorteDeVoz(texto: string, tope: number, duro = TOPE_VOZ_DURO):
   const pausa = Math.max(c.lastIndexOf(', '), c.lastIndexOf('; '), c.lastIndexOf(': '));
   const fin = pausa > tope / 2 ? pausa + 1 : c.lastIndexOf(' ') > 0 ? c.lastIndexOf(' ') : duro;
   return t.slice(0, fin);
+}
+
+/**
+ * Lo que se DICE de un texto con el tope de voz `tope` (0 = entero):
+ *  · `hasta`: el largo del PRINCIPIO exacto del texto que se dice de corrido (frases enteras mientras no llegue a
+ *    `tope`, sin empezar una que pase de TOPE_VOZ_DURO; si la primera frase sola lo pasa, cortada en la última
+ *    pausa). Lo que ya sonó y lo que falta se siguen comparando con startsWith sobre este principio.
+ *  · `decir`: ese principio y, si el texto termina en una pregunta a la persona que quedó fuera, esa pregunta
+ *    (revisión del 5-oct, GRAVE-1): nunca se corta el «¿Lo mando?» ni el «¿sigo?». `conPregunta` dice si se añadió.
+ */
+export function vozRecortada(texto: string, tope: number, duro = TOPE_VOZ_DURO): { decir: string; hasta: number; conPregunta: boolean } {
+  const t = String(texto || '');
+  if (!tope || t.length <= tope) return { decir: t, hasta: t.length, conPregunta: false };
+  const q = preguntaFinal(t);
+  if (!q) {
+    const p = principioDeVoz(t, tope, duro);
+    return { decir: p, hasta: p.length, conPregunta: false };
+  }
+  // Con pregunta final: lo primero (dejando sitio a la pregunta dentro del tope duro) y la pregunta.
+  const cuerpo = t.slice(0, t.lastIndexOf(q));
+  const p = principioDeVoz(cuerpo, tope, Math.max(tope, duro - q.length - 1));
+  if (p.trimEnd().length >= cuerpo.trimEnd().length) return { decir: t, hasta: t.length, conPregunta: false };
+  return { decir: `${p.trimEnd()} ${q}`, hasta: p.length, conPregunta: true };
+}
+
+/** Lo que se dice de `texto` con el tope `tope` (ver `vozRecortada`): el principio y, si quedó fuera, la pregunta final. */
+export function recorteDeVoz(texto: string, tope: number, duro = TOPE_VOZ_DURO): string {
+  return vozRecortada(texto, tope, duro).decir;
 }
