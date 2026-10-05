@@ -105,12 +105,33 @@ export function guardarTokenMesa(token: string) {
   renovarInstalacionWeb();
   if (!token) void purgarCuentaPwa().catch(() => undefined);
   const s = store();
-  if (!s) return;
+  if (s) {
+    try {
+      if (token) s.setItem(KEY, token);
+      else s.removeItem(KEY);
+    } catch {
+      /* private mode */
+    }
+  }
+  if (token) anunciarRecepcion(token);
+}
+
+/**
+ * Recién entrada una sesión (correo y clave, Genesis, enlace de correo, cambio de clave): qué build corre esta pestaña
+ * se anota YA, con una comprobación de sesión que lleva `x-aura-cliente` (revisión del 5-oct). Antes solo la llevaba
+ * la comprobación del arranque, y quien abría la web sin sesión y entraba no quedaba anotado hasta recargar: las
+ * demás peticiones no la llevan. Va una vez por sesión guardada (aquí), nunca en cada petición; el servidor la anota
+ * antes de las rutas, en la cuenta de ESTA sesión, con su freno por instalación y por cuenta de siempre
+ * (server/build-rutas.ts montarRecepcion). Sin id posible (sin almacenamiento) no se manda nada. Nunca lanza ni espera:
+ * la entrada no depende de esto.
+ */
+function anunciarRecepcion(token: string) {
   try {
-    if (token) s.setItem(KEY, token);
-    else s.removeItem(KEY);
+    const cliente = cabeceraCliente(token);
+    if (!Object.keys(cliente).length || typeof fetch !== 'function') return;
+    void fetch('/api/ultron/sesion', { headers: { 'x-ultron-sesion': token, ...cliente } }).catch(() => undefined);
   } catch {
-    /* private mode */
+    /* sin red: la próxima apertura lo anota */
   }
 }
 
@@ -141,7 +162,8 @@ export function headersMesa(): Record<string, string> {
 
 /**
  * Las cabeceras de la comprobación de sesión al abrir (GET /api/ultron/sesion): la sesión y, con ella, qué build web
- * corre esta pestaña (`x-aura-cliente`, 10-infra/recepcion.ts). Solo esa petición la lleva.
+ * corre esta pestaña (`x-aura-cliente`, 10-infra/recepcion.ts). Solo esa petición la lleva (y la que sale sola al
+ * guardar una sesión nueva: anunciarRecepcion).
  */
 export function headersComprobarSesion(): Record<string, string> {
   const t = tokenMesa();

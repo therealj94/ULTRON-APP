@@ -359,3 +359,42 @@ test('ruta: el teléfono y la web de José se anotan en SU cuenta; /api/build se
   // Sin sesión ni clave: 401, como antes.
   assert.equal((await fetch(`${base}/api/build`)).status, 401);
 });
+
+test('web, de punta a punta (revisión del 5-oct): entrar con la pestaña abierta anota la instalación sin recargar', async () => {
+  // La web real (src/10-infra/sesionCliente.ts) en un navegador de mentira cuyo fetch relativo va a este servidor, que
+  // tiene la comprobación de sesión de siempre detrás de montarRecepcion.
+  app.get('/api/ultron/sesion', (req, res) => res.json({ authenticated: !!sesionDe(req) }));
+  const m = new Map<string, string>();
+  const local = { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, String(v)), removeItem: (k: string) => void m.delete(k) };
+  const fetchReal = globalThis.fetch;
+  const previos = { window: (globalThis as any).window, localStorage: (globalThis as any).localStorage, sessionStorage: (globalThis as any).sessionStorage };
+  Object.assign(globalThis, {
+    window: { localStorage: local, sessionStorage: local, location: { protocol: 'http:' }, matchMedia: () => ({ matches: false }) },
+    localStorage: local,
+    sessionStorage: local,
+    fetch: (u: any, i?: any) => fetchReal(typeof u === 'string' && u.startsWith('/') ? `${base}${u}` : u, i),
+  });
+  try {
+    const S = await import('../src/10-infra/sesionCliente');
+    // Abrió la PWA sin sesión: el arranque no mandó nada. Ahora entra con correo y clave: el login solo guarda el token.
+    assert.deepEqual(S.headersComprobarSesion(), {});
+    const nueva = emitirSesion({ correo: 'nueva@x.com', nombre: 'Nueva', rol: 'Junta' }, { comunidad: true }).token;
+    S.guardarTokenMesa(nueva);
+    await esperarEscritura('nueva@x.com', 1);
+    const l = await R.clientesDe('nueva@x.com', almacen);
+    assert.ok(l.ok);
+    assert.equal(l.clientes.length, 1, 'su web quedó anotada en su cuenta, sin recargar');
+    assert.equal(l.clientes[0].plataforma, 'web');
+    // Cambia de cuenta sin recargar: la otra cuenta también queda anotada, en la suya.
+    S.guardarTokenMesa('');
+    const segunda = emitirSesion({ correo: 'segunda@x.com', nombre: 'Segunda', rol: 'Junta' }, { comunidad: true }).token;
+    S.guardarTokenMesa(segunda);
+    await esperarEscritura('segunda@x.com', 1);
+    const l2 = await R.clientesDe('segunda@x.com', almacen);
+    assert.ok(l2.ok && l2.clientes.length === 1 && l2.clientes[0].plataforma === 'web', 'la cuenta nueva tiene su instalación');
+    const l1 = await R.clientesDe('nueva@x.com', almacen);
+    assert.ok(l1.ok && l1.clientes.length === 1, 'la de antes no recibe la instalación de la siguiente');
+  } finally {
+    Object.assign(globalThis, { ...previos, fetch: fetchReal });
+  }
+});

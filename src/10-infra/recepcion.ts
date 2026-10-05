@@ -1,7 +1,8 @@
 /**
  * QUÉ BUILD WEB CORRE ESTA PESTAÑA, PARA EL SERVIDOR (evidencia de operación, 5-oct): la cabecera `x-aura-cliente`
- * (formato en lib/recepcion-clientes.ts). Va SOLO en la comprobación de sesión que la web ya hace al abrir
- * (App.tsx y, tras entrar, AccesoModal.tsx): José abre AURA y el servidor sabe qué build le llegó, sin peticiones nuevas.
+ * (formato en lib/recepcion-clientes.ts). Va SOLO en la comprobación de sesión: la que la web ya hace al abrir (App.tsx)
+ * y la que sale una vez al guardar una sesión nueva (sesionCliente.guardarTokenMesa: entrar con clave, Genesis, enlace de
+ * correo o cambio de clave), así quien entra con la pestaña abierta queda anotado sin recargar. Ninguna otra petición.
  *
  * El SHA es el de la página que se cargó: el build lo escribe en `<meta name="aura-build">` de index.html
  * (scripts/pwa/vite-build-info.ts). La navegación va primero a la red (el service worker), así que la página y su JS
