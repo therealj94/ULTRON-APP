@@ -98,6 +98,7 @@ import { avatarActual } from '../avatares/actual';
 import { orientar } from '../lib/orientacion';
 import { esperarFrame } from '../lib/esperarFrame';
 import { COMENTARIOS, Comentarista, resumenVista, type FocoVision, type VistaCamara } from '../lib/vistaCamara';
+import { ladoValido, pedidoDeVista, type Lado } from '../lib/vistaEnVivo';
 import { VisorCamara, type EstadoVisor } from '../components/VisorCamara';
 import { HojaComputadora } from '../ajustes/Computadora';
 import { hojasAhora, suscribirHojas } from '../app/hojas';
@@ -307,6 +308,10 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const cerrarVisorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** La vista de la cámara visible para apuntar («léeme esto», «¿qué es esto?») mientras mira. */
   const [previaCamara, setPreviaCamara] = useState(false);
+  /** «Lo que veo» (José, 5-oct): la vista en vivo con lo reconocido, abierta por la persona (botón o voz). */
+  const [vistaCamara, setVistaCamara] = useState(false);
+  /** La cámara de la mesa: frontal (te ve a ti) o trasera. Se guarda en los ajustes. */
+  const [ladoCamara, setLadoCamara] = useState<Lado>('frontal');
   const [menuOpen, setMenuOpen] = useState(false);
   /** El selector de avatar abierto desde el menú (al entrar se elige en App, antes de la mesa). */
   const [eligiendo, setEligiendo] = useState<'menu' | null>(null);
@@ -782,6 +787,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   }, [apagarCamara, camara, encenderCamara]);
 
   const camaraRef = useRef(camara);
+  const cambiarLadoRef = useRef<(l: Lado) => void>(() => {});
   const encenderCamaraRef = useRef(encenderCamara);
   encenderCamaraRef.current = encenderCamara;
   const apagarCamaraRef = useRef(apagarCamara);
@@ -794,10 +800,24 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     camaraEncendida: visionOn && !!camPerm?.granted,
     mesaVisible,
     grabFrame,
+    lado: ladoCamara,
+    vistaAbierta: vistaCamara || previaCamara,
     decir: (t, e) => say(t, e === 'feliz' ? 'HAPPY' : e === 'preocupado' ? 'CONCERNED' : e === 'curioso' ? 'CURIOUS' : 'IDLE', { emocion: e && e !== 'neutral' ? e : 'neutral' }),
     encenderCamara: () => encenderCamara('temporal'),
   });
   carasRef.current = caras;
+
+  /** Cambiar de cámara (botón de «Lo que veo» o por voz): se guarda para la próxima. */
+  const cambiarLado = useCallback((l: Lado) => {
+    setLadoCamara(l);
+    void saveSettings({ camaraLado: l });
+    miga(`mesa: cámara ${l}`);
+  }, []);
+  cambiarLadoRef.current = cambiarLado;
+  const ladoCamaraRef = useRef(ladoCamara);
+  ladoCamaraRef.current = ladoCamara;
+  const vistaCamaraRef = useRef(vistaCamara);
+  vistaCamaraRef.current = vistaCamara;
 
   /**
    * «Olvidar» (menú o voz): borra la memoria de largo plazo de quien está en la mesa, no la de los
@@ -1231,6 +1251,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   useEffect(() => {
     if (visionOn && mesaVisible) return;
     setPreviaCamara(false);
+    setVistaCamara(false);
     cerrarVisor();
   }, [visionOn, mesaVisible, cerrarVisor]);
   useEffect(() => () => void (cerrarVisorTimer.current && clearTimeout(cerrarVisorTimer.current)), []);
@@ -1419,6 +1440,26 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         }
         // Las caras (con permiso): «conóceme», «te presento a…», «olvida a…» y el «sí» de quien presentaron.
         if (await caras.manejar(cmd)) return;
+        // «Lo que veo» y la cámara de atrás: «muéstrame lo que ves», «cierra la vista», «cámara trasera»,
+        // «voltea la cámara». Con la cámara apagada, la prende solo por ahora (lo pidió para ver).
+        const pv = pedidoDeVista(cmd, { vistaAbierta: vistaCamaraRef.current });
+        if (pv) {
+          if (pv === 'cerrar') {
+            setVistaCamara(false);
+            return void (await say(tr('Listo, cierro la vista. Sigo mirando.', 'Done, view closed. I’m still looking.'), 'IDLE'));
+          }
+          const lado: Lado = pv === 'trasera' ? 'trasera' : pv === 'frontal' ? 'frontal' : pv === 'voltear' ? (ladoCamaraRef.current === 'frontal' ? 'trasera' : 'frontal') : ladoCamaraRef.current;
+          if (lado !== ladoCamaraRef.current) cambiarLado(lado);
+          if (!camara.encendida() && !(await encenderCamara('temporal'))) return void (await say(tr('Necesito permiso de cámara para ver.', 'I need camera permission to see.'), 'CONCERNED', { emocion: 'preocupado' }));
+          setVistaCamara(true);
+          const dicho =
+            pv === 'abrir'
+              ? tr('Mira: esto es lo que veo. Las caras llevan su recuadro.', 'Look: this is what I see. Faces get a box.')
+              : lado === 'trasera'
+              ? tr('Cámara trasera: ahora veo lo que tienes delante.', 'Back camera: now I see what’s in front of you.')
+              : tr('Cámara frontal: otra vez te veo a ti.', 'Front camera: I see you again.');
+          return void (await say(dicho, 'SCAN'));
+        }
         // La cámara por voz: «puedes verme», «mírame» → ¿solo ahora o siempre?; «apaga la cámara».
         const pc = intent.tipo === 'vision_on' ? 'encender' : pedidoDeCamara(cmd);
         if (pc === 'encender') {
@@ -1886,6 +1927,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       setMicMuted(s.micMuted);
       // La cámara arranca apagada salvo que esta persona haya elegido «siempre» (y haya permiso).
       camara.arrancar(prefiereSiempre(s.camaraSiempre, user.correo) && !!camPerm?.granted);
+      setLadoCamara(ladoValido(s.camaraLado));
       // La primera vez (o cuando el recorrido creció): la ventana con «Empezar» / «Después».
       const verTutorial = tocaOfrecerRecorrido(s, user.correo);
       setModoMesa(s.modoMesa === 'trabajar' ? 'trabajar' : 'charlar');
@@ -2062,7 +2104,6 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       setVerPersona((v) => (v === hay ? v : hay));
       const att = !hay ? 0 : e.principal?.mirando ? 1 : 0.5;
       setAtencion((a) => (a === att ? a : att));
-      carasRef.current?.observar(e.personas, e.eventos.includes('llego'));
       if (!e.eventos.length || conversandoRef.current) return;
       const calm = !handling.current && !speakingRef.current;
       for (const ev of e.eventos) {
@@ -2199,7 +2240,18 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
           setDicho({ texto: m.texto.trim(), n: Date.now() });
           // La cámara por voz también en la conversación en vivo: ahí no se pregunta «¿solo ahora o
           // siempre?» (contesta el agente), así que es «solo ahora»; el agente se entera de lo que pasó.
-          const pc = pedidoDeCamara(m.texto);
+          // «Lo que veo» y la cámara de atrás también ahí (solo si la cámara ya está encendida).
+          const pv = camaraRef.current.encendida() ? pedidoDeVista(m.texto, { vistaAbierta: vistaCamaraRef.current }) : null;
+          if (pv === 'cerrar') setVistaCamara(false);
+          else if (pv) {
+            const lado: Lado = pv === 'trasera' ? 'trasera' : pv === 'frontal' ? 'frontal' : pv === 'voltear' ? (ladoCamaraRef.current === 'frontal' ? 'trasera' : 'frontal') : ladoCamaraRef.current;
+            if (lado !== ladoCamaraRef.current) {
+              cambiarLadoRef.current(lado);
+              vozRef.current.avisarAgente(lado === 'trasera' ? '[app] Ahora la cámara es la TRASERA: lo que ve no es quien mira la pantalla.' : '[app] Ahora la cámara es la frontal.');
+            }
+            setVistaCamara(true);
+          }
+          const pc = pv ? null : pedidoDeCamara(m.texto);
           if (pc === 'encender' && !camaraRef.current.encendida()) {
             void encenderCamaraRef.current('temporal').then((ok) => vozRef.current.avisarAgente(ok ? '[app] Cámara encendida solo por ahora (10 min).' : '[app] No se pudo encender la cámara (sin permiso).'));
           } else if ((pc === 'apagar' || pc === 'apagar_siempre') && camaraRef.current.encendida()) {
@@ -2635,6 +2687,34 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const cuadroW = horizontal ? Math.round(anchoPantalla * (trabajando ? 0.34 : 0.42)) : anchoPantalla;
   const cuadroH = horizontal ? altoPantalla : Math.round(Math.min(anchoPantalla * 0.95, altoPantalla * (trabajando ? 0.3 : 0.44)));
   const cajaCara = enCuadro ? { w: cuadroW, h: cuadroH } : undefined;
+  /** La cámara mirando de verdad (la misma condición con que se monta CamaraVision). */
+  const camaraActiva = visionOn && !!camPerm?.granted && mesaActiva && !enLlamada;
+  /** «Lo que veo»: con la cámara encendida, un botón para ver lo que mira y lo que reconoce. */
+  const botonVista =
+    camaraActiva && !vistaCamara && !previaCamara ? (
+      <Pressable
+        onPress={() => setVistaCamara(true)}
+        hitSlop={8}
+        style={[styles.verCamara, enCuadro && styles.verCamaraCuadro]}
+        accessibilityRole="button"
+        accessibilityLabel={tr('Ver lo que veo con la cámara', 'See what the camera sees')}
+      >
+        <View style={[styles.verCamaraPunto, { backgroundColor: verPersona ? T.activo : T.texto3 }]} />
+        <Text style={styles.verCamaraTexto}>{tr('Lo que veo', 'What I see')}</Text>
+      </Pressable>
+    ) : null;
+  /*
+   * Dónde va «Lo que veo»: en el lugar del avatar. Con el chat (cuadro), el cuadro entero del avatar; a
+   * pantalla completa, debajo del estado y por encima de la barra y del subtítulo en vertical, o un panel
+   * grande a la derecha en horizontal. Nunca sobre el chat ni el teclado.
+   */
+  const marcoVista = enCuadro
+    ? horizontal
+      ? { left: 0, top: 0, width: cuadroW, height: altoPantalla }
+      : { left: 0, top: 0, width: anchoPantalla, height: cuadroH }
+    : horizontal
+    ? { left: Math.round(anchoPantalla * 0.42), top: 52, width: Math.round(anchoPantalla * 0.56), height: Math.max(140, altoPantalla - 52 - (altoAbajo + 12)) }
+    : { left: 12, top: 92, width: anchoPantalla - 24, height: Math.max(160, altoPantalla - 92 - (altoAbajo + 84)) };
 
   // Qué cara se ve. El Guardián: sus ojos celestes de siempre (la cara clásica). AU-RA: el orbe (o los
   // anillos dorados de Skia si los eligió); si lo elegido falló, lo siguiente: orbe → anillos → clásica.
@@ -2733,7 +2813,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         // Habla solo con audio de verdad: el de la mesa o el del agente en la conversación fluida. Sin audio,
         // piensa mientras el turno sigue (o la voz se prepara); si no, la cara decide (escucha, reposo…).
         voz={{ sonando: audioMesa.sonando, agenteHabla: conversando && estadoConv === 'hablando', pensando: status === 'thinking' || audioMesa.preparando }}
-        mirada={{ x: gaze.x, y: gaze.y, activa: verPersona }}
+        mirada={{ x: gaze.x, y: gaze.y, activa: verPersona && ladoCamara === 'frontal' }}
         respaldo={fotosCara}
         onTap={() => onTap('face', 0, 0)}
         onLongPress={onLongPress}
@@ -2897,9 +2977,20 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         onObjects={onObjectsStable}
         onVista={onVista}
         observar={settings.proactive}
-        previa={previaCamara}
+        vista={previaCamara || vistaCamara}
+        marcoVista={marcoVista}
+        lado={ladoCamara}
+        onVoltear={() => cambiarLado(ladoCamara === 'frontal' ? 'trasera' : 'frontal')}
+        onCerrarVista={() => {
+          setVistaCamara(false);
+          setPreviaCamara(false);
+        }}
+        seguidor={caras.seguidor}
+        caras={caras}
         onMotor={setVisionMotor}
       />
+      {/* Con el chat, el botón de «Lo que veo» va arriba a la izquierda del cuadro del avatar. */}
+      {enCuadro ? botonVista : null}
       {enCuadro ? (
         <>
           <View
@@ -2951,13 +3042,17 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         {/* «¿Te sirvió?» del primer resultado: abajo, por encima de la barra y del subtítulo (hasta tres líneas), sin tapar lo que dice la persona arriba. */}
         {!!preguntaPrimer && <View style={[styles.primerFlota, { bottom: altoAbajo + 100 }]}>{preguntaPrimer}</View>}
 
-        <View pointerEvents="none" style={styles.hud}>
-          <View style={[styles.hudDot, { backgroundColor: dotColor }]} />
-          <Text style={styles.hudText}>
-            {de(avatarPorId(avatarId).nombre)} · {statusLabel}
-            {verPersona ? (visionMotor === 'mlkit' ? tr(' · te veo', ' · I see you') : tr(' · alguien', ' · someone')) : ''}
-            {!online ? tr(' · sin cerebro', ' · offline') : ''}
-          </Text>
+        {/* El estado y, al lado, «Lo que veo» (en la misma fila: no se encima con lo que dice la persona, debajo). */}
+        <View pointerEvents="box-none" style={styles.hudFila}>
+          <View pointerEvents="none" style={styles.hud}>
+            <View style={[styles.hudDot, { backgroundColor: dotColor }]} />
+            <Text style={styles.hudText}>
+              {de(avatarPorId(avatarId).nombre)} · {statusLabel}
+              {verPersona ? (visionMotor === 'mlkit' && ladoCamara === 'frontal' ? tr(' · te veo', ' · I see you') : tr(' · alguien', ' · someone')) : ''}
+              {!online ? tr(' · sin cerebro', ' · offline') : ''}
+            </Text>
+          </View>
+          {botonVista}
         </View>
 
         {/* Lo que dice la persona: arriba a la derecha, como su lado de un chat (mientras habla, en cursiva;
@@ -3214,10 +3309,8 @@ const styles = StyleSheet.create({
   primerCuadro: { position: 'absolute', bottom: 10, left: 10, right: 10, alignItems: 'center', zIndex: 36 },
   primerFlota: { position: 'absolute', left: 16, right: 16, alignItems: 'center', zIndex: 36 },
   cuadro: { overflow: 'hidden', backgroundColor: '#000', position: 'relative' },
+  hudFila: { position: 'absolute', top: 12, left: 16, right: 140, flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
   hud: {
-    position: 'absolute',
-    top: 12,
-    left: 16,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
@@ -3228,6 +3321,23 @@ const styles = StyleSheet.create({
     ...SOMBRA,
   },
   hudDot: { width: 8, height: 8, borderRadius: 4 },
+  // «Lo que veo»: al lado del estado (o arriba a la izquierda del cuadro del avatar), lejos de la barra y del teclado.
+  verCamara: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    backgroundColor: 'rgba(18,19,22,0.82)',
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.28)',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    zIndex: 38,
+    elevation: 12,
+  },
+  verCamaraCuadro: { position: 'absolute', top: 10, left: 10 },
+  verCamaraPunto: { width: 8, height: 8, borderRadius: 4 },
+  verCamaraTexto: { color: '#F2EEE8', fontSize: 13, fontWeight: '800' },
   hudText: { color: T.texto2, fontSize: 13, fontWeight: '600' },
   bubbleFloat: { position: 'absolute', left: 90, right: 90, alignItems: 'center' },
   bubbleVertical: { left: 16, right: 16 },

@@ -3,8 +3,10 @@
  * la persona tiene el reconocimiento activado y la cámara encendida en la mesa; al apagar cualquiera
  * de las dos, se desmonta y no queda nada corriendo.
  *
- * `analizar(jpegBase64)` → las caras de esa foto con su vector de 128 números. La foto entra, se
- * analiza en la WebView y se suelta; no se guarda en ningún lado.
+ * `analizar(jpegBase64, cajas?)` → las caras de esa foto con su vector de 128 números. Con `cajas` (las de
+ * ML Kit de esa misma foto, en fracciones) analiza un recorte agrandado de cada una y dice de cuál es cada
+ * vector (`indice`): ve mejor las caras chicas o lejanas. La foto entra, se analiza en la WebView y se
+ * suelta; no se guarda en ningún lado.
  */
 import { forwardRef, useCallback, useImperativeHandle, useRef } from 'react';
 import { StyleSheet, View } from 'react-native';
@@ -18,7 +20,7 @@ const ESPERA_MS = 25_000;
 
 export type ControlMotorCaras = {
   /** null: el motor no está listo o falló (se dice «no pude ver bien»). */
-  analizar: (jpegBase64: string) => Promise<CaraVista[] | null>;
+  analizar: (jpegBase64: string, cajas?: { x: number; y: number; w: number; h: number }[]) => Promise<CaraVista[] | null>;
   listo: () => boolean;
 };
 
@@ -63,7 +65,7 @@ export const MotorCaras = forwardRef<ControlMotorCaras, Props>(function MotorCar
     ref,
     () => ({
       listo: () => listo.current,
-      analizar: (b64) =>
+      analizar: (b64, cajas) =>
         new Promise<CaraVista[] | null>((resolver) => {
           if (!web.current || !b64) return resolver(null);
           const id = ++n.current;
@@ -74,7 +76,8 @@ export const MotorCaras = forwardRef<ControlMotorCaras, Props>(function MotorCar
             clearTimeout(t);
             resolver(r);
           });
-          web.current.injectJavaScript(`window.__caras&&window.__caras(${JSON.stringify({ tipo: 'analizar', id, imagen: b64 })});true;`);
+          const cs = cajas?.length ? { cajas: cajas.map((c) => ({ x: +c.x.toFixed(4), y: +c.y.toFixed(4), w: +c.w.toFixed(4), h: +c.h.toFixed(4) })) } : {};
+          web.current.injectJavaScript(`window.__caras&&window.__caras(${JSON.stringify({ tipo: 'analizar', id, imagen: b64, ...cs })});true;`);
         }),
     }),
     []

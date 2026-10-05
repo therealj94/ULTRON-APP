@@ -95,6 +95,8 @@ export type AppSettings = {
   camaraSiempre: Record<string, boolean>;
   /** Quién activó el reconocimiento de caras (por correo → cuándo). Sin esto no se analiza ninguna cara. */
   carasActivas: Record<string, number>;
+  /** La cámara de la mesa: la frontal (te ve a ti) o la trasera (lo que tienes delante). Se cambia con «voltea la cámara». */
+  camaraLado?: 'frontal' | 'trasera';
   /** Quién ya vio (o saltó para siempre) el recorrido de primera vez (por correo). */
   tutorialVisto: Record<string, boolean>;
   /** Qué versión del recorrido vio cada quien (por correo; tutorial/pasos.ts VERSION_RECORRIDO). */

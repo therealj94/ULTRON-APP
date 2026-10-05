@@ -3,7 +3,8 @@
  * CORREO, y el correo sale de la sesión firmada, nunca de lo que mande el teléfono.
  *
  *   GET    /api/caras        → { personas: CaraConocida[] }
- *   POST   /api/caras        { nombre, relacion, vectores, consentimiento } → { persona }
+ *   POST   /api/caras        { nombre, relacion, vectores, consentimiento, parentesco? } → { persona }
+ *   POST   /api/caras/:id/muestras { vectores } → { ok, muestras } (aprender con el uso)
  *   DELETE /api/caras/:id    → { ok, nombre }
  *   DELETE /api/caras        → { ok, borradas }
  */
@@ -19,9 +20,15 @@ export async function listarCaras(): Promise<CaraConocida[]> {
   return Array.isArray(r?.personas) ? r.personas : [];
 }
 
-export async function guardarCara(o: { nombre: string; relacion: Relacion; vectores: number[][]; consentimiento: Consentimiento }): Promise<CaraConocida> {
+export async function guardarCara(o: { nombre: string; relacion: Relacion; vectores: number[][]; consentimiento: Consentimiento; parentesco?: string }): Promise<CaraConocida> {
   const r = await api<{ persona: CaraConocida }>(RUTA_CARAS, { method: 'POST', body: JSON.stringify(o) }, 15_000);
   return r.persona;
+}
+
+/** Aprender con el uso: 1-2 vectores más para alguien que ya está guardado. Devuelve cuántas muestras tiene. */
+export async function sumarMuestrasCara(id: string, vectores: number[][]): Promise<number> {
+  const r = await api<{ ok: boolean; muestras: number }>(`${RUTA_CARAS}/${encodeURIComponent(id)}/muestras`, { method: 'POST', body: JSON.stringify({ vectores }) }, 12_000);
+  return r.muestras;
 }
 
 export async function olvidarCara(id: string): Promise<string> {
