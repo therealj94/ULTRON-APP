@@ -14,7 +14,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { almacenDurable, PROCESO_DURABLE, type AlmacenDurable } from './durable';
+import { almacenDurable, huellaDueno, PROCESO_DURABLE, type AlmacenDurable } from './durable';
 import { VALIDADOR_MIN } from './entregables';
 import { pushConfigurado } from './push';
 import { pushWebConfigurado } from './push-web';
@@ -163,11 +163,26 @@ export type SaludAlmacen = {
   detalle?: string;
 };
 
-/** Una lista de una sola clave bajo `salud/` (lo que el inventario de tareas necesita poder hacer). Nunca lanza. */
+/**
+ * El dueño sintético de la sonda: su carpeta de tareas tiene la MISMA forma que la de cualquier dueño
+ * (`tareas/<huella de 40 hex>`), pero nadie inicia sesión con un correo `.invalid`, así que está vacía.
+ */
+const DUENO_SONDA_LISTADO = 'sonda-listado@aura.invalid';
+/** `ESPACIO_TAREAS` de lib/tareas-durables.ts (no se importa: ese módulo arrastra mucho más que la salud). */
+const ESPACIO_TAREAS_SONDA = 'tareas';
+export const prefijoSondaListado = () => `${ESPACIO_TAREAS_SONDA}/${huellaDueno(DUENO_SONDA_LISTADO)}`;
+
+/**
+ * Una lista de UNA sola clave en el espacio de las tareas, con la misma forma de prefijo que usa el inventario
+ * (`tareas/<huella>`, lib/tareas-durables.ts `prefijoTareas`). Revisión 13: antes se probaba `salud/`, y un permiso de
+ * listar acotado por prefijo (p. ej. `s3:prefix` solo para `salud/*`, o solo para `tareas/*`) daba «ok» sin que el
+ * inventario pudiera listar, o al revés. Lo listado no sale de aquí (solo si contestó): el campo público sigue siendo
+ * ok/denegado/sin-fuente. Nunca lanza.
+ */
 async function sondearListado(a: AlmacenDurable): Promise<'ok' | 'denegado' | 'sin-fuente'> {
   if (!a.listar) return 'sin-fuente';
   try {
-    const l = await a.listar('salud', { max: 1 });
+    const l = await a.listar(prefijoSondaListado(), { max: 1 });
     return l.ok ? 'ok' : 'denegado';
   } catch {
     return 'denegado';

@@ -22,20 +22,27 @@ import test, { afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
-import { _usarAlmacenDurable, almacenDisco, huellaDueno, type AlmacenDurable } from '../lib/durable';
+import { _usarAlmacenDurable, almacenDisco, almacenEnMemoria, huellaDueno, type AlmacenDurable } from '../lib/durable';
 import {
   crearTarea,
   diagnosticarInventarioTareas,
   ESQUEMA_INVENTARIO,
   leerRespaldoIndiceTareas,
+  listarTareas,
   listarTareasPagina,
+  MAX_HISTORIAL_INDICE,
+  _olvidarEsperasListado,
+  asegurarEnIndice,
   reconciliarInventarioTareas,
   revertirReconciliacionTareas,
 } from '../lib/tareas-durables';
 import { montarRutasTrabajos } from '../server/trabajos';
 import { conS3Falso, type S3Falso } from './s3-condicional-falso';
 
-afterEach(() => _usarAlmacenDurable(null));
+afterEach(() => {
+  _usarAlmacenDurable(null);
+  _olvidarEsperasListado();
+});
 
 function arnes() {
   const app = express();
@@ -404,6 +411,8 @@ test('A7: índice ausente → se reconstruye desde el inventario (activas y term
       assert.equal(caida.json.inventario.estado, 'error');
       assert.ok(caida.json.aviso);
       s3.fallaListado.si = null;
+      // Revisión 13: el fallo se recuerda unos minutos (no se vuelve a listar en cada lectura); pasados, se completa.
+      _olvidarEsperasListado();
       const l = await h.pedir('/api/trabajos', yo);
       assert.equal(l.status, 200);
       assert.deepEqual(new Set(l.json.tareas.map((t: any) => t.id)), new Set(ids));
@@ -435,6 +444,7 @@ test('A7: fallo pasajero del almacén (listado o lectura de un huérfano) conser
       assert.equal(a.json.completo, false);
       assert.equal(a.json.inventario.estado, 'error');
       s3.fallaListado.si = null;
+      _olvidarEsperasListado(); // revisión 13: como si hubieran pasado los minutos de espera tras el listado fallido
       s3.fallaLectura.si = (clave) => clave.endsWith(`/${ids[4]}.json`);
       const b = await h.pedir('/api/trabajos', yo);
       assert.equal(b.json.tareas.length, 4);
@@ -599,7 +609,7 @@ test('A7: dueño incorrecto → 404, y ni la lista, ni el conteo, ni el log deja
       const b = await h.pedir('/api/trabajos', beto);
       assert.equal(b.status, 200);
       assert.deepEqual(b.json.tareas, []);
-      assert.deepEqual(b.json.conteo, { activas: 0, terminadas: 0, indice: 0, noLeidas: 0 });
+      assert.deepEqual(b.json.conteo, { activas: 0, terminadas: 0, indice: 0, noLeidas: 0, recortadas: 0 });
       assert.equal(b.json.completo, true, 'lo de otro dueño (con su huella) se descarta: el inventario de Beto está completo');
       assert.equal((await h.pedir(`/api/trabajos/${ids[1]}`, beto)).status, 404, 'ni aunque el objeto esté en su carpeta');
       assert.equal((await h.pedir(`/api/trabajos/${ids[0]}`, beto)).status, 404);
@@ -612,7 +622,7 @@ test('A7: dueño incorrecto → 404, y ni la lista, ni el conteo, ni el log deja
       const c = await h.pedir('/api/trabajos', cajon);
       assert.equal(c.status, 200);
       assert.deepEqual(c.json.tareas, []);
-      assert.deepEqual(c.json.conteo, { activas: 0, terminadas: 0, indice: 0, noLeidas: 0 });
+      assert.deepEqual(c.json.conteo, { activas: 0, terminadas: 0, indice: 0, noLeidas: 0, recortadas: 0 });
       assert.equal(c.json.completo, false);
       assert.equal(c.json.inventario.estado, 'sin-verificar');
       for (const r of [b, c]) {
@@ -706,5 +716,164 @@ test('A7: el disco también inventaría (readdir) por dueño; un almacén sin en
     }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/* ------------------------------------------------------------------ revisión 13 */
+
+const NUEVA = { entorno: { kind: 'chat' as const, id: 'api', displayName: 'AURA' }, origen: { kind: 'api' as const } };
+const MIN = 60_000;
+
+/** Un almacén en memoria cuyo listado se puede negar (como S3 sin `s3:ListBucket`) y que cuenta los LIST. */
+function memoriaContada() {
+  const m = almacenEnMemoria();
+  const c = { listados: 0, niega: false };
+  const listar = m.listar!.bind(m);
+  const a: AlmacenDurable & { objetos: Map<string, string> } = Object.assign(m, {
+    listar: async (prefijo: string, o?: { desde?: string | null; max?: number }) => {
+      c.listados++;
+      return c.niega ? { ok: false as const, detalle: 'S3 403: AccessDenied' } : listar(prefijo, o);
+    },
+  });
+  return { a, c };
+}
+
+test('revisión 13 (A7): listado denegado → 21 lecturas de la lista (páginas y la del borrador del chat) hacen UN LIST; se reintenta entre 5 y 15 min, y mientras tanto es honesta', async () => {
+  const { a, c } = memoriaContada();
+  const yo = 'denegado@ejemplo.test';
+  const T = 1_800_000_000_000;
+  const cr = await crearTarea(yo, { requestId: 'r13-den', titulo: 'Una', ...NUEVA }, { almacen: a, ahora: T });
+  assert.ok(cr.ok);
+  c.niega = true;
+  for (let i = 0; i < 20; i++) {
+    const p = await listarTareasPagina(yo, i % 2 ? { limite: 5, ahora: T + i * 3000 } : { ahora: T + i * 3000 }, a);
+    assert.ok(p.ok);
+    if (p.ok) {
+      assert.equal(p.completo, false);
+      assert.equal(p.reconciliado, false);
+      assert.equal(p.inventario, 'error');
+      assert.equal(p.tareas.length, 1, 'lo que hay se ve igual');
+    }
+  }
+  // La ruta del borrador del chat (abrirDecisionDeBorrador) lee con listarTareas: tampoco lista otra vez.
+  _usarAlmacenDurable(a);
+  const l = await listarTareas(yo, a);
+  assert.ok(l.ok && !l.completo && !l.reconciliado);
+  assert.equal(c.listados, 1, `21 lecturas → ${c.listados} LIST (antes, 21)`);
+  // Antes de 5 min, nada; a los 15 min, se reintenta (una vez) y, si sigue negado, espera otra vez.
+  await listarTareasPagina(yo, { ahora: T + 5 * MIN - 1 }, a);
+  assert.equal(c.listados, 1);
+  await listarTareasPagina(yo, { ahora: T + 15 * MIN + 1 }, a);
+  assert.equal(c.listados, 2, 'pasada la espera, se vuelve a intentar');
+  await listarTareasPagina(yo, { ahora: T + 15 * MIN + 3000 }, a);
+  assert.equal(c.listados, 2);
+  // Otro dueño no hereda la espera de este.
+  await crearTarea('otro-den@ejemplo.test', { requestId: 'r13-den-2', titulo: 'Otra', ...NUEVA }, { almacen: a, ahora: T });
+  await listarTareasPagina('otro-den@ejemplo.test', { ahora: T + 15 * MIN + 3000 }, a);
+  assert.equal(c.listados, 3);
+  // Al sanar (pasada la espera) se reconcilia; desde ahí, ni un LIST más por mucho que se consulte.
+  c.niega = false;
+  const sana = await listarTareasPagina(yo, { ahora: T + 31 * MIN }, a);
+  assert.ok(sana.ok && sana.completo && sana.reconciliado);
+  const tras = c.listados;
+  for (let i = 0; i < 20; i++) await listarTareasPagina(yo, { ahora: T + 32 * MIN + i * 3000 }, a);
+  assert.equal(c.listados, tras, 'un dueño reconciliado no se vuelve a listar en cada lectura');
+  // La operación puede forzar el paso aunque haya espera.
+  c.niega = true;
+  await crearTarea('forzar@ejemplo.test', { requestId: 'r13-f', titulo: 'F', ...NUEVA }, { almacen: a, ahora: T });
+  await reconciliarInventarioTareas('forzar@ejemplo.test', { ahora: T }, a);
+  const n = c.listados;
+  assert.equal((await reconciliarInventarioTareas('forzar@ejemplo.test', { ahora: T + 1000 }, a)).estado, 'error');
+  assert.equal(c.listados, n);
+  await reconciliarInventarioTareas('forzar@ejemplo.test', { ahora: T + 2000, forzar: true }, a);
+  assert.equal(c.listados, n + 1);
+});
+
+/** Crea `n` tareas y las deja TERMINADAS (objeto intacto), como tras días de uso. */
+async function terminadas(a: AlmacenDurable & { objetos: Map<string, string> }, yo: string, n: number, T: number): Promise<string[]> {
+  const ids: string[] = [];
+  for (let i = 0; i < n; i++) {
+    const r = await crearTarea(yo, { requestId: `r13-${i}`, titulo: `t${i}`, ...NUEVA }, { almacen: a, ahora: T + i });
+    assert.ok(r.ok);
+    if (r.ok) ids.push(r.tarea.id);
+  }
+  const carpeta = `tareas/${huellaDueno(yo)}/`;
+  for (const [k, v] of [...a.objetos]) {
+    if (!k.startsWith(carpeta)) continue;
+    const reg = JSON.parse(v);
+    reg.estado = 'completed';
+    reg.actualizada = T + 10_000 + Number(String(reg.requestId).slice(4));
+    a.objetos.set(k, JSON.stringify(reg));
+  }
+  return ids;
+}
+
+test('revisión 13 (A7): 205 terminadas → el índice guarda 200 y `conteo.recortadas` dice las 5 que el tope dejó fuera (también tras rehacer el índice); con alguna, la ruta lo avisa aunque esté completa', async () => {
+  const T = Date.now() - 3_600_000;
+  // 1) Índice perdido: el inventario lo rehace con las 205 y el tope deja 200.
+  {
+    const a = almacenEnMemoria();
+    const yo = 'legado-cap@ejemplo.test';
+    await terminadas(a, yo, MAX_HISTORIAL_INDICE + 5, T);
+    a.objetos.delete(`tareas/indice/${huellaDueno(yo)}/lista`);
+    let p: Awaited<ReturnType<typeof listarTareasPagina>> | null = null;
+    for (let i = 0; i < 5; i++) p = await listarTareasPagina(yo, { presupuesto: { porListado: 1000, listados: 3, lecturas: 1000 } }, a);
+    assert.ok(p && p.ok);
+    if (p && p.ok) {
+      assert.equal(p.tareas.length, MAX_HISTORIAL_INDICE);
+      assert.equal(p.completo, true);
+      assert.equal(p.conteo.indice, MAX_HISTORIAL_INDICE);
+      assert.equal(p.conteo.recortadas, 5, JSON.stringify(p.conteo));
+    }
+  }
+  // 2) Índice intacto: al saberse terminadas, el recorte se cuenta en la MISMA respuesta; leer por su id una recortada
+  //    (vuelve al índice y el tope saca otra) no la cuenta dos veces.
+  {
+    const a = almacenEnMemoria();
+    const yo = 'intacto-cap@ejemplo.test';
+    const ids = await terminadas(a, yo, MAX_HISTORIAL_INDICE + 3, T);
+    const p = await listarTareasPagina(yo, {}, a);
+    assert.ok(p.ok);
+    if (p.ok) assert.equal(p.conteo.recortadas, 3, JSON.stringify(p.conteo));
+    const q = await listarTareasPagina(yo, {}, a);
+    assert.ok(q.ok);
+    if (q.ok) {
+      assert.equal(q.conteo.indice, MAX_HISTORIAL_INDICE);
+      assert.equal(q.conteo.recortadas, 3);
+      assert.equal(q.completo, true);
+    }
+    const vieja = JSON.parse(a.objetos.get(`tareas/${huellaDueno(yo)}/${ids[0]}`)!);
+    await asegurarEnIndice(yo, vieja, a);
+    const r = await listarTareasPagina(yo, {}, a);
+    assert.ok(r.ok);
+    if (r.ok) assert.equal(r.conteo.recortadas, 3, 'la que volvió y la que salió no suman');
+    // Un dueño sin recortes: 0, no ausente.
+    await crearTarea('pocas@ejemplo.test', { requestId: 'r13-p', titulo: 'p', ...NUEVA }, { almacen: a });
+    const s = await listarTareasPagina('pocas@ejemplo.test', {}, a);
+    assert.ok(s.ok);
+    if (s.ok) assert.equal(s.conteo.recortadas, 0);
+  }
+  // 3) La ruta: `completo: true` con `conteo.recortadas` y un aviso que lo dice; sin recortes, ni aviso.
+  {
+    const a = almacenEnMemoria();
+    _usarAlmacenDurable(a);
+    const yo = 'ruta-cap@ejemplo.test';
+    await terminadas(a, yo, MAX_HISTORIAL_INDICE + 2, Date.now() - 60_000);
+    const h = arnes();
+    try {
+      await h.pedir('/api/trabajos', yo);
+      const r = await h.pedir('/api/trabajos', yo);
+      assert.equal(r.status, 200);
+      assert.equal(r.json.completo, true);
+      assert.equal(r.json.conteo.recortadas, 2);
+      assert.match(r.json.aviso, /200 tareas terminadas más recientes: 2 terminadas más antiguas ya no salen/);
+      await crearTarea('ruta-pocas@ejemplo.test', { requestId: 'r13-rp', titulo: 'p', ...NUEVA }, { almacen: a });
+      const s = await h.pedir('/api/trabajos', 'ruta-pocas@ejemplo.test');
+      assert.equal(s.json.completo, true);
+      assert.equal(s.json.conteo.recortadas, 0);
+      assert.equal(s.json.aviso, undefined);
+    } finally {
+      h.cerrar();
+    }
   }
 });

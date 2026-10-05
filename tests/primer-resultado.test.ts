@@ -23,6 +23,8 @@ import {
   lineaMetrica,
   MAX_TAREAS_PRIMER,
   metricas,
+  NO_ENCONTRADA_LECTURAS,
+  NO_ENCONTRADA_MS,
   nuevoPrimer,
   OBJETIVO_MS,
   queRecuperar,
@@ -604,4 +606,71 @@ test('la copia del teléfono dice exactamente lo mismo que lib/', async () => {
   assert.equal(cuerpo('../mobile/src/lib/primerResultado.ts'), cuerpo('../lib/primer-resultado.ts'), 'la copia del teléfono es la misma (salvo su cabecera)');
   assert.equal(MOVIL.clavePrimer('a@b.c'), clavePrimer('a@b.c'));
   assert.equal(MOVIL.VIDA_TURNO_MS, VIDA_TURNO_MS);
+});
+
+test('R1 (revisión 13): un 404 SOSTENIDO (3 lecturas seguidas en ≥10 min) da la tarea por no encontrada → parcial con ella en lo que faltó, nunca útil; un 404 suelto o una racha cortada no bastan', async () => {
+  assert.equal(NO_ENCONTRADA_LECTURAS, 3);
+  assert.equal(NO_ENCONTRADA_MS, 10 * 60_000);
+  assert.equal(MOVIL.NO_ENCONTRADA_MS, NO_ENCONTRADA_MS);
+  // A terminada con evidencia en la lista; B da 404 (la ruta no existe en el transporte) en cada lectura.
+  const red = transporte({ '/api/trabajos': { status: 200, json: { tareas: [vista('A', 'completed', { evidencia: true })], completo: true } } });
+  const t1 = T0 + 120_000;
+  let r = enTareaAB();
+  // Tres 404 seguidos en pocos segundos: siguen «1 de 2» (puede ser que otra réplica aún no la vea).
+  for (const t of [t1, t1 + 3000, t1 + 6000]) r = (await vueltaMesa(r, red.pedir, t)).r;
+  assert.equal(r.estado, 'en-tarea');
+  assert.deepEqual(r.avance?.find((a) => a.id === 'B'), { id: 'B', estado: 'sin-leer', ausente: { veces: 3, desde: t1 } });
+  assert.deepEqual(avancePrimer(r), { listas: 1, total: 2, sinLeer: 1 });
+  // La racha sobrevive a cerrar y reabrir la app (lo guardado por cuenta).
+  r = leerPrimer(JSON.stringify(r), r.cuenta)!;
+  assert.deepEqual(r.avance?.find((a) => a.id === 'B')?.ausente, { veces: 3, desde: t1 });
+  // A los 10 min de la primera, otro 404: no encontrada → parcial (nunca útil), con ella en lo que faltó.
+  const v = await vueltaMesa(r, red.pedir, t1 + NO_ENCONTRADA_MS);
+  assert.equal(v.r.estado, 'parcial', JSON.stringify(v.r));
+  assert.equal(v.r.verificado, false);
+  assert.ok(v.r.faltantes?.includes('una tarea que ya no encuentro'), JSON.stringify(v.r.faltantes));
+  assert.deepEqual(v.r.avance, [
+    { id: 'A', estado: 'completada', evidencia: true },
+    { id: 'B', estado: 'no-encontrada' },
+  ]);
+  assert.equal(v.r.cobertura, 'completa');
+  assert.equal(hayResultado(v.r), true);
+  assert.equal(metricas(v.r).util, false);
+  assert.equal(metricas(v.r).verificado, false);
+  // Cerrado: lo guardado se relee igual (el estado nuevo es válido) y ya no vuelve a «en tarea».
+  assert.equal(leerPrimer(JSON.stringify(v.r), v.r.cuenta)?.avance?.[1].estado, 'no-encontrada');
+
+  // Una racha CORTADA (un 503 o un fallo de red en medio) vuelve a empezar: dos 404, un 503 y un 404 a los 11 min → sigue.
+  const rutas: Record<string, Resp> = { '/api/trabajos': { status: 200, json: { tareas: [vista('A', 'completed', { evidencia: true })], completo: true } } };
+  const red2 = transporte(rutas);
+  let c = enTareaAB();
+  c = (await vueltaMesa(c, red2.pedir, t1)).r;
+  c = (await vueltaMesa(c, red2.pedir, t1 + 3000)).r;
+  rutas['/api/trabajos/B'] = { status: 503, json: { error: 'no disponible', code: 'almacen_no_disponible' } };
+  c = (await vueltaMesa(c, red2.pedir, t1 + 6000)).r;
+  assert.equal(c.avance?.find((a) => a.id === 'B')?.ausente, undefined, 'el 503 corta la racha');
+  delete rutas['/api/trabajos/B'];
+  c = (await vueltaMesa(c, red2.pedir, t1 + 11 * 60_000)).r;
+  assert.equal(c.estado, 'en-tarea');
+  assert.deepEqual(c.avance?.find((a) => a.id === 'B')?.ausente, { veces: 1, desde: t1 + 11 * 60_000 });
+  // Dos 404 separados por 20 min tampoco: hacen falta tres.
+  let d = enTareaAB();
+  d = (await vueltaMesa(d, red.pedir, t1)).r;
+  d = (await vueltaMesa(d, red.pedir, t1 + 20 * 60_000)).r;
+  assert.equal(d.estado, 'en-tarea');
+  // Si B aparece (se lee) después de la racha, cuenta lo leído: aquí terminó con evidencia → útil.
+  const red3 = transporte({ '/api/trabajos': { status: 200, json: { tareas: [vista('A', 'completed', { evidencia: true }), vista('B', 'completed', { evidencia: true })], completo: true } } });
+  const e = (await vueltaMesa(r, red3.pedir, t1 + NO_ENCONTRADA_MS)).r;
+  assert.equal(e.estado, 'util');
+  // La única tarea del pedido, no encontrada: no es un resultado (fallida: lo siguiente que mande es un reintento).
+  let u: PrimerResultado | null = aplicar(primeraVez(), { tipo: 'enviar', idTurno: 't9', texto: PETICION }, T0 + 70_000);
+  u = aplicar(u, { tipo: 'turno', idTurno: 't9', resultado: clasificarTurno({ reply: 'Voy.', tareas: [{ id: 'B', state: 'running' }] }) }, T0 + 75_000)!;
+  const vacia = transporte({ '/api/trabajos': { status: 200, json: { tareas: [], completo: true } } });
+  for (const t of [t1, t1 + 5 * 60_000, t1 + NO_ENCONTRADA_MS]) u = (await vueltaMesa(u!, vacia.pedir, t)).r;
+  assert.equal(u!.estado, 'fallida');
+  assert.equal(u!.motivo, 'no encuentro la tarea');
+  assert.equal(hayResultado(u), false);
+  // Las dos copias (lib y teléfono) cierran igual.
+  const ev: EventoPrimer = { tipo: 'tareas', tareas: [vista('A', 'completed', { evidencia: true })], ids: ['A', 'B'], idTurno: 't1', noExisten: ['B'] };
+  assert.deepEqual(MOVIL.aplicar(r, ev, t1 + NO_ENCONTRADA_MS), aplicar(r, ev, t1 + NO_ENCONTRADA_MS));
 });

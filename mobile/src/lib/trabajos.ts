@@ -405,7 +405,7 @@ export type Pedir = (ruta: string, init?: { method?: string; body?: string }) =>
 /** Leer una tarea por su id: no es lo mismo «no existe» (404) que «no pude leerla» (503, red, respuesta rara). */
 export type LecturaTareaVista = { estado: 'ok'; tarea: TareaVista } | { estado: 'no-existe' } | { estado: 'error'; status?: number; sinSesion?: boolean };
 
-export type ResultadoAccion ={ ok: true; tarea: TareaVista | null; sugerencia?: string; repetida?: boolean } | { ok: false; codigo: string; mensaje: string; tarea?: TareaVista | null };
+export type ResultadoAccion = { ok: true; tarea: TareaVista | null; sugerencia?: string; repetida?: boolean } | { ok: false; codigo: string; mensaje: string; tarea?: TareaVista | null };
 
 const enc = encodeURIComponent;
 

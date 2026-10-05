@@ -434,15 +434,30 @@ type MarcaInventario = { v: number; t: number; fuente: AlmacenDurable['tipo']; r
  * índice, en la misma escritura CAS que lo que agrega: si el índice se pierde o lo rehace otro, el avance se va con él
  * y el recorrido empieza de nuevo (nunca se marca reconciliado con la mitad de un recorrido sobre otro índice).
  */
-type PaseInventario = { ronda: string; desde: string | null; revisadas: number; agregadas: number; sinVerificar: number; inicio: number; actualizado: number; fin?: number };
-/** `inventario`/`pase`: A7. Un servidor de antes los ignora (y al reescribir el índice los pierde: vuelve a «sin reconciliar»). */
-type Indice = { v: 1 | 2; ids: EntradaIndice[]; inventario?: MarcaInventario; pase?: PaseInventario };
+type PaseInventario = { ronda: string; desde: string | null; revisadas: number; agregadas: number; sinVerificar: number; inicio: number; actualizado: number; fin?: number; /** Las suyas vistas en el recorrido (en el índice o recuperadas): para contar las recortadas al terminar. */ propias?: number };
+/**
+ * `inventario`/`pase`: A7. Un servidor de antes los ignora (y al reescribir el índice los pierde: vuelve a «sin reconciliar»).
+ * `recortadas` (revisión 13): cuántas tareas TERMINADAS de este dueño existen todavía pero el tope del historial
+ * (MAX_HISTORIAL_INDICE) ya no lista. Sube con cada recorte; el inventario, al terminar un recorrido entero, la deja en lo
+ * que contó (lo que encontró menos lo que el índice guarda). Una terminada que vuelve al índice (se leyó por su id) la
+ * descuenta. Es una cuenta, no una lista de ids (esas ya no están en el índice).
+ */
+type Indice = { v: 1 | 2; ids: EntradaIndice[]; inventario?: MarcaInventario; pase?: PaseInventario; recortadas?: number };
 
 /** Recorta el índice: todas las que pueden seguir activas y las MAX_HISTORIAL_INDICE terminadas más recientes. */
 function recortarIndice(ids: EntradaIndice[]): EntradaIndice[] {
   const terminadas = ids.filter((x) => x.fin).sort((x, y) => y.fin! - x.fin!);
   const fuera = new Set(terminadas.slice(MAX_HISTORIAL_INDICE).map((x) => x.id));
   return fuera.size ? ids.filter((x) => !fuera.has(x.id)) : ids;
+}
+
+/** El índice con `ids` recortados, y la cuenta de las que el recorte dejó fuera sumada a `recortadas`. */
+function conRecorte(ix: Indice | null, ids: EntradaIndice[]): Indice {
+  const quedan = recortarIndice(ids);
+  const fuera = ids.length - quedan.length;
+  const recortadas = (Number(ix?.recortadas) || 0) + fuera;
+  const { recortadas: _r, ...resto } = ix || ({} as Partial<Indice>);
+  return { ...resto, v: 2, ids: quedan, ...(recortadas > 0 ? { recortadas } : {}) };
 }
 
 async function indexar(dueno: string, id: string, ahora: number, a: AlmacenDurable): Promise<{ ok: true } | { ok: false; detalle: string }> {
@@ -455,7 +470,7 @@ async function indexar(dueno: string, id: string, ahora: number, a: AlmacenDurab
         const ids = ix?.ids || [];
         if (ids.some((x) => x.id === id)) return undefined;
         // Lo demás del índice (la marca y el avance del inventario) se conserva: anotar una tarea nueva no lo invalida.
-        return { ...(ix || {}), v: 2, ids: recortarIndice([{ id, t: ahora }, ...ids]) };
+        return conRecorte(ix, [{ id, t: ahora }, ...ids]);
       },
       a
     );
@@ -471,16 +486,20 @@ async function indexar(dueno: string, id: string, ahora: number, a: AlmacenDurab
  * llevan más de un día (una creación que se cayó a medias) y dentro una tarea que existe y no estaba (`agregar`).
  * Lo mejor posible: si falla, el índice queda como estaba (nunca se pierde una activa por esto).
  */
-async function repararIndice(dueno: string, r: { fines?: Map<string, number>; podar?: Set<string>; agregar?: EntradaIndice }, a: AlmacenDurable): Promise<void> {
-  if (!r.fines?.size && !r.podar?.size && !r.agregar) return;
-  await modificarDurable<Indice>(
+async function repararIndice(dueno: string, r: { fines?: Map<string, number>; podar?: Set<string>; agregar?: EntradaIndice }, a: AlmacenDurable): Promise<Indice | null> {
+  if (!r.fines?.size && !r.podar?.size && !r.agregar) return null;
+  // Devuelve el índice que quedó escrito (null si no cambió o falló): la lista cuenta con él lo que el recorte dejó fuera.
+  const w = await modificarDurable<Indice>(
     claveIndice(dueno),
     (ix) => {
       let ids = ix?.ids || [];
       let cambio = false;
+      let base = ix;
       if (r.agregar && !ids.some((x) => x.id === r.agregar!.id)) {
         ids = [r.agregar, ...ids];
         cambio = true;
+        // Una terminada que no estaba es (casi siempre) una que el tope recortó: vuelve, y deja de contarse como recortada.
+        if (r.agregar.fin && Number(ix?.recortadas) > 0) base = { ...ix!, recortadas: Number(ix!.recortadas) - 1 };
       }
       ids = ids.flatMap((x) => {
         if (r.podar?.has(x.id)) {
@@ -494,10 +513,11 @@ async function repararIndice(dueno: string, r: { fines?: Map<string, number>; po
         }
         return [x];
       });
-      return cambio ? { ...(ix || {}), v: 2, ids: recortarIndice(ids) } : undefined;
+      return cambio ? conRecorte(base, ids) : undefined;
     },
     a
-  ).catch(() => undefined);
+  ).catch(() => null);
+  return w && w.ok === true && w.cambiado ? w.valor : null;
 }
 
 /** La tarea id de una petición ya reservada (sin crear nada). null si no hay. */
@@ -577,6 +597,49 @@ export type PresupuestoInventario = { porListado: number; listados: number; lect
 const PRESUPUESTO_INVENTARIO: PresupuestoInventario = { porListado: 1000, listados: 3, lecturas: 40 };
 /** Un recorrido que terminó con objetos sin verificar no se repite en cada lectura: espera esto. */
 const REINTENTO_SIN_VERIFICAR_MS = 15 * 60_000;
+
+/**
+ * Revisión 13 (A7): un listado que falla (p. ej. S3 sin `s3:ListBucket`: un 403 que no se arregla solo) no se repite en
+ * cada lectura de la lista. Antes cada GET /api/trabajos, cada página y la ruta del borrador del chat volvían a pedir el
+ * LIST (21 lecturas → 21 LIST; el teléfono consulta cada 3 s). Ahora el fallo se recuerda POR DUEÑO entre 5 y 15 min (al
+ * azar, para que las réplicas y los dueños no reintenten todos a la vez) y, mientras tanto, la lista contesta sin listar y
+ * honesta: `inventario: 'error'`, `reconciliado: false`, `completo: false`.
+ *
+ * Vive en la memoria de este proceso (cada réplica lo recuerda por su cuenta: a lo más un LIST por dueño, réplica y
+ * ventana) y por almacén (las pruebas usan varios). Un dueño ya reconciliado no lista nunca: la marca `inventario` del
+ * índice lo dice antes de llegar aquí, y solo se vuelve a recorrer si el índice la pierde (lo reescribió un servidor de
+ * antes, o se rehízo).
+ */
+const ESPERA_LISTADO_MIN_MS = 5 * 60_000;
+const ESPERA_LISTADO_MAX_MS = 15 * 60_000;
+const MAX_ESPERAS_LISTADO = 5_000;
+let esperasListado = new WeakMap<AlmacenDurable, Map<string, number>>();
+
+/** Hasta cuándo no se vuelve a listar a este dueño (0 si se puede ya). */
+function esperaListado(dueno: string, a: AlmacenDurable, ahora: number): number {
+  const hasta = esperasListado.get(a)?.get(huellaDueno(dueno)) ?? 0;
+  return hasta > ahora ? hasta : 0;
+}
+
+function recordarFalloListado(dueno: string, a: AlmacenDurable, ahora: number) {
+  let m = esperasListado.get(a);
+  if (!m) esperasListado.set(a, (m = new Map()));
+  // Acotado: primero se van las vencidas; si aun así no cabe, la más vieja (un Map recorre en orden de inserción).
+  if (m.size >= MAX_ESPERAS_LISTADO) {
+    for (const [k, v] of m) if (v <= ahora) m.delete(k);
+    if (m.size >= MAX_ESPERAS_LISTADO) m.delete(m.keys().next().value!);
+  }
+  const h = huellaDueno(dueno);
+  m.delete(h);
+  m.set(h, ahora + ESPERA_LISTADO_MIN_MS + Math.floor(Math.random() * (ESPERA_LISTADO_MAX_MS - ESPERA_LISTADO_MIN_MS)));
+}
+
+const olvidarFalloListado = (dueno: string, a: AlmacenDurable) => esperasListado.get(a)?.delete(huellaDueno(dueno));
+
+/** Solo pruebas: olvida las esperas por listados fallidos (como si hubieran pasado los minutos). */
+export function _olvidarEsperasListado() {
+  esperasListado = new WeakMap();
+}
 
 const indiceReconciliado = (ix: Indice | null | undefined) => !!ix?.inventario && Number(ix.inventario.v) >= ESQUEMA_INVENTARIO;
 const claveRespaldo = (dueno: string) => claveDe(ESPACIO_RESPALDO_INDICE, dueno, `antes-de-inventario-v${ESQUEMA_INVENTARIO}`);
@@ -693,7 +756,7 @@ export async function diagnosticarInventarioTareas(
  */
 export async function reconciliarInventarioTareas(
   dueno: string,
-  o: { ahora?: number; modo?: ModoReconciliacion; presupuesto?: Partial<PresupuestoInventario> } = {},
+  o: { ahora?: number; modo?: ModoReconciliacion; presupuesto?: Partial<PresupuestoInventario>; /** Operación: no espera tras un listado fallido. */ forzar?: boolean } = {},
   a: AlmacenDurable = almacenDurable()
 ): Promise<ResultadoInventario> {
   const modo = o.modo ?? modoReconciliacion();
@@ -705,11 +768,16 @@ export async function reconciliarInventarioTareas(
   if (ix.ok === false) return nada('error');
   const indice = ix.valor;
   if (indiceReconciliado(indice)) return nada('reconciliado');
+  // Revisión 13: el último listado de este dueño falló hace poco: no se vuelve a pedir todavía (la incertidumbre se conserva).
+  if (!o.forzar && esperaListado(dueno, a, ahora)) return nada('error');
   const presupuesto = { ...PRESUPUESTO_INVENTARIO, ...(o.presupuesto || {}) };
   const enIndice = new Set((indice?.ids || []).map((x) => x.id));
   if (modo === 'diagnostico') {
     const d = await diagnosticarTramo(dueno, enIndice, null, presupuesto, a);
-    if (d.ok === false) avisarInventario('diagnóstico', d.detalle);
+    if (d.ok === false) {
+      avisarInventario('diagnóstico', d.detalle);
+      if (!d.sinFuente) recordarFalloListado(dueno, a, ahora);
+    } else olvidarFalloListado(dueno, a);
     return nada('diagnostico', d.ok ? { recuperables: d.propuesta.length } : {});
   }
   let pase = indice?.pase;
@@ -723,8 +791,10 @@ export async function reconciliarInventarioTareas(
   const d = await diagnosticarTramo(dueno, enIndice, desde, presupuesto, a);
   if (d.ok === false) {
     avisarInventario(d.sinFuente ? 'sin fuente' : 'listado', d.detalle);
+    if (!d.sinFuente) recordarFalloListado(dueno, a, ahora);
     return nada(d.sinFuente ? 'sin-fuente' : 'error');
   }
+  olvidarFalloListado(dueno, a);
   if (d.fallo) avisarInventario('lectura', d.fallo);
   if (d.hasta === desde && !d.agotado) return nada(d.fallo ? 'error' : 'en-curso');
   if (d.propuesta.length) {
@@ -757,13 +827,17 @@ export async function reconciliarInventarioTareas(
       const revisadas = (previo?.revisadas ?? 0) + d.revisadas;
       const sinVerificar = (previo?.sinVerificar ?? 0) + d.sinVerificar;
       const total = (previo?.agregadas ?? 0) + agregadas;
+      const propias = (previo?.propias ?? 0) + d.enIndice + d.propuesta.length;
       const { pase: _p, inventario: _i, ...resto } = actual || ({ v: 2, ids: [] } as Indice);
       const base: Indice = { ...resto, v: 2, ids: fusion };
       if (d.agotado && sinVerificar === 0) {
         marcado = true;
-        return { ...base, inventario: { v: ESQUEMA_INVENTARIO, t: ahora, fuente: a.tipo, ronda, revisadas, agregadas: total } };
+        // Revisión 13: las suyas que el recorrido vio y el tope dejó fuera. Las que ya contaba el índice (recortadas antes)
+        // las vuelve a ver el recorrido: se toma la mayor de las dos cuentas, nunca la suma (no se cuenta dos veces).
+        const recortadas = Math.max(Number(resto.recortadas) || 0, propias - fusion.length);
+        return { ...base, ...(recortadas > 0 ? { recortadas } : {}), inventario: { v: ESQUEMA_INVENTARIO, t: ahora, fuente: a.tipo, ronda, revisadas, agregadas: total } };
       }
-      return { ...base, pase: { ronda, desde: d.hasta, revisadas, agregadas: total, sinVerificar, inicio: previo?.inicio ?? ahora, actualizado: ahora, ...(d.agotado ? { fin: ahora } : {}) } };
+      return { ...base, pase: { ronda, desde: d.hasta, revisadas, agregadas: total, sinVerificar, inicio: previo?.inicio ?? ahora, actualizado: ahora, propias, ...(d.agotado ? { fin: ahora } : {}) } };
     },
     a
   );
@@ -825,7 +899,13 @@ export type PaginaTareas = {
   reconciliado: boolean;
   inventario: EstadoInventario;
   siguiente: string | null;
-  conteo: { activas: number; terminadas: number; indice: number; noLeidas: number };
+  /**
+   * `recortadas` (revisión 13): tareas TERMINADAS de este dueño que siguen existiendo (su objeto no se borra) pero que el
+   * tope del historial (MAX_HISTORIAL_INDICE terminadas más recientes) ya no lista. No son un fallo ni hacen la lista
+   * incompleta: `completo: true` dice que se leyó todo lo que la lista guarda; `recortadas` dice cuántas terminadas,
+   * más viejas, quedaron fuera a propósito. Es una cota baja (no hay ids: esas ya no están en el índice). 0 si ninguna.
+   */
+  conteo: { activas: number; terminadas: number; indice: number; noLeidas: number; recortadas: number };
 };
 /** `reconciliar: false`: no da el paso de inventario (solo lee). `presupuesto`: cuánto trabaja ese paso. */
 export type OpcionesLista = { limite?: number; cursor?: string | null; recientesMs?: number; ahora?: number; reconciliar?: boolean; presupuesto?: Partial<PresupuestoInventario> };
@@ -899,7 +979,7 @@ export async function listarTareasPagina(dueno: string, o: OpcionesLista = {}, a
       tareas.push(l.tarea);
     });
   }
-  await repararIndice(dueno, { fines, podar }, a);
+  const reparado = await repararIndice(dueno, { fines, podar }, a);
   const quedan = i < candidatas.length;
   const total = indice?.ids.length ?? 0;
   const terminadas = (indice?.ids || []).filter((x) => x.fin || fines.has(x.id)).length;
@@ -913,7 +993,7 @@ export async function listarTareasPagina(dueno: string, o: OpcionesLista = {}, a
     reconciliado,
     inventario,
     siguiente: quedan && ultima ? escribirCursor(ultima) : null,
-    conteo: { activas: total - terminadas - sinObjeto.size, terminadas, indice: total, noLeidas: noLeidas.length },
+    conteo: { activas: total - terminadas - sinObjeto.size, terminadas, indice: total, noLeidas: noLeidas.length, recortadas: Math.max(0, Math.floor(Number((reparado ?? indice)?.recortadas) || 0)) },
   };
 }
 

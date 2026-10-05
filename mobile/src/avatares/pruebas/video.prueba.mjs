@@ -1143,6 +1143,28 @@ prueba('la vista: monta quieto, sin positionMillis ni props que cambien, y no fu
   assert.match(vista, /sostener: \(ms: number\) => decidirRef\.current\(director\.current!\.sostener\(ms\)\)/);
 });
 
+prueba('revisión 13: cambiar de avatar en el mismo lugar monta guion y mezcla NUEVOS (key={avatar}); la mezcla de uno no sirve para el otro', () => {
+  // La mezcla está atada a su avatar: la misma reproducción da otra mano y otros reposos en el otro cuerpo.
+  const distintos = CLIPS_VIDEO.filter((c) => REPOSOS.claudio[c] && REPOSOS.antonio[c] && manoLibre('claudio', c, false, 0) !== manoLibre('antonio', c, false, 0));
+  assert.ok(distintos.length > 0, 'algún clip tiene la mano en otro tiempo en cada avatar');
+  // Con el teléfono de mentira: el mismo golpe, en el mismo punto, promete otra mano según el avatar de la mezcla.
+  const vistos = distintos.map((c) => [c, conClip(c, 0, { avatar: 'claudio' }).m.manoLibreMs(), conClip(c, 0, { avatar: 'antonio' }).m.manoLibreMs()]);
+  assert.ok(
+    vistos.some(([, a, b]) => a !== b),
+    `reusar la mezcla de Claudio con ANT-ONIO daría la mano de Claudio: ${JSON.stringify(vistos)}`
+  );
+  // Por eso la vista no se queda con las de antes: el componente exportado monta uno nuevo por avatar…
+  const vista = fs.readFileSync(path.resolve(AQUI, '../video/CuerpoVideo.tsx'), 'utf8');
+  assert.match(vista, /export const CuerpoVideo = forwardRef<ControlVideo, Props>\(function CuerpoVideo\(props, ref\) \{\s*return <CuerpoVideoDe key=\{props\.avatar\} \{\.\.\.props\} ref=\{ref\} \/>;/);
+  // …y el de adentro (el único que crea guion y mezcla) sigue creándolos una vez por montaje.
+  const adentro = vista.slice(vista.indexOf('const CuerpoVideoDe'));
+  assert.ok(vista.indexOf('const CuerpoVideoDe') > 0);
+  assert.match(adentro, /if \(!director\.current\) \{\s*\/\/[^\n]*\n\s*const d = new DirectorVideo\(/);
+  assert.match(adentro, /if \(!mezcla\.current\)\s*mezcla\.current = new MezclaCapas\(\{\s*avatar,/);
+  assert.equal((vista.match(/new DirectorVideo\(/g) || []).length, 1);
+  assert.equal((vista.match(/new MezclaCapas\(/g) || []).length, 1);
+});
+
 let fallas = 0;
 for (const [nombre, f] of pruebas) {
   try {

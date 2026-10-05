@@ -30,10 +30,27 @@ export type ConectarPrimer = 'no-ofrecida' | 'vista' | 'saltada';
 
 export type EsfuerzoPrimer = { toques: number; saltos: number; atras: number; conectar: ConectarPrimer };
 
-/** Lo que se sabe de UNA tarea esperada: sin leer ≠ en curso ≠ terminada (y cómo). */
-export type EstadoCobertura = 'sin-leer' | 'en-curso' | 'completada' | 'respondida' | 'parcial' | 'fallida';
-const COBERTURAS: readonly EstadoCobertura[] = ['sin-leer', 'en-curso', 'completada', 'respondida', 'parcial', 'fallida'];
-export type AvanceTarea = { id: string; estado: EstadoCobertura; evidencia?: true };
+/**
+ * Lo que se sabe de UNA tarea esperada: sin leer ≠ en curso ≠ terminada (y cómo). `no-encontrada` (revisión 13): el
+ * servidor dijo 404 de forma SOSTENIDA (ver NO_ENCONTRADA_LECTURAS / NO_ENCONTRADA_MS): cuenta como una tarea que no dio
+ * resultado (va en `faltantes`), nunca como éxito.
+ */
+export type EstadoCobertura = 'sin-leer' | 'en-curso' | 'completada' | 'respondida' | 'parcial' | 'fallida' | 'no-encontrada';
+const COBERTURAS: readonly EstadoCobertura[] = ['sin-leer', 'en-curso', 'completada', 'respondida', 'parcial', 'fallida', 'no-encontrada'];
+/**
+ * `ausente` (solo en una `sin-leer`): cuántas lecturas SEGUIDAS dieron 404 y desde cuándo. Cualquier otra cosa (se leyó,
+ * o la lectura falló por red/503) corta la racha: solo un «no existe» repetido cuenta.
+ */
+export type AvanceTarea = { id: string; estado: EstadoCobertura; evidencia?: true; ausente?: { veces: number; desde: number } };
+
+/**
+ * Revisión 13 (R1): un 404 dejaba el primer pedido «en tarea» para siempre («1 de 2»). La salida: una tarea esperada que
+ * da 404 en al menos NO_ENCONTRADA_LECTURAS lecturas seguidas a lo largo de al menos NO_ENCONTRADA_MS se da por
+ * `no-encontrada`. Con las demás terminadas, el pedido se cierra PARCIAL con ella en `faltantes` (si todas faltan, fallida):
+ * nunca útil. Un 404 suelto (la tarea aún no se ve en otra réplica, la lista vino corta) no basta.
+ */
+export const NO_ENCONTRADA_LECTURAS = 3;
+export const NO_ENCONTRADA_MS = 10 * 60_000;
 
 /**
  * Con qué se cerró el resultado: `completa` (todas las tareas esperadas, terminales), `excedida` (el turno abrió más
@@ -169,7 +186,11 @@ export function leerPrimer(raw: string | null | undefined, cuenta: string): Prim
     for (const a of j.avance) {
       const id = a && typeof a === 'object' ? unaLinea(a.id, 80) : '';
       if (!id || !COBERTURAS.includes(a.estado) || avance.some((x) => x.id === id)) continue;
-      avance.push(a.evidencia === true ? { id, estado: a.estado, evidencia: true } : { id, estado: a.estado });
+      const x: AvanceTarea = a.evidencia === true ? { id, estado: a.estado, evidencia: true } : { id, estado: a.estado };
+      const veces = Math.floor(num(a.ausente?.veces) ?? 0);
+      const desde = num(a.ausente?.desde);
+      if (a.estado === 'sin-leer' && veces > 0 && desde !== undefined) x.ausente = { veces, desde };
+      avance.push(x);
       if (avance.length >= MAX_TAREAS_PRIMER) break;
     }
     if (avance.length) r.avance = avance;
@@ -265,11 +286,15 @@ export function coberturaTareas(tareas: readonly TareaPrimer[], ids: readonly st
  * útil (verificado solo si TODAS traen evidencia); `respondida` → útil sin comprobar; parcial → lo que faltó; fallida o
  * cancelada → falta esa tarea. Todas mal → fallida. `sinSeguir` (las que el turno abrió de más): nunca útil completo.
  */
-export function clasificarTareas(tareas: readonly TareaPrimer[], ids?: readonly string[], sinSeguir = 0): ClaseResultado {
+export function clasificarTareas(tareas: readonly TareaPrimer[], ids?: readonly string[], sinSeguir = 0, noEncontradas: readonly string[] = []): ClaseResultado {
   const xs = validas(tareas);
   const esperadas = unicos(ids?.length ? ids : xs.map((t) => t.id));
   if (!esperadas.length) return { clase: 'pendiente' };
-  const cub = esperadas.map((id) => cubrirUna(id, xs));
+  // Revisión 13: una que no se pudo leer y que ya se dio por no encontrada (404 sostenido) cuenta como terminada sin resultado.
+  const cub = esperadas.map((id) => {
+    const c = cubrirUna(id, xs);
+    return c.avance.estado === 'sin-leer' && noEncontradas.includes(id) ? { avance: { id, estado: 'no-encontrada' as const }, t: null } : c;
+  });
   const avance = cub.map((c) => c.avance);
   if (cub.some((c) => c.avance.estado === 'sin-leer' || c.avance.estado === 'en-curso')) return { clase: 'pendiente', avance };
   let ok = 0;
@@ -285,10 +310,11 @@ export function clasificarTareas(tareas: readonly TareaPrimer[], ids?: readonly 
       parciales++;
       const p = (t?.result?.partial || []).map((x) => unaLinea(x, 120)).filter(Boolean);
       faltantes.push(...(p.length ? p : [unaLinea(t?.title, 120) || 'una parte de la tarea']));
-    } else faltantes.push(unaLinea(t?.title, 120) || 'la tarea');
+    } else if (a.estado === 'no-encontrada') faltantes.push('una tarea que ya no encuentro');
+    else faltantes.push(unaLinea(t?.title, 120) || 'la tarea');
   }
   if (ok === cub.length && !(sinSeguir > 0)) return { clase: 'util', verificado: verificadas === cub.length, avance };
-  if (!ok && !parciales) return { clase: 'fallida', motivo: 'la tarea no terminó', avance };
+  if (!ok && !parciales) return { clase: 'fallida', motivo: avance.every((a) => a.estado === 'no-encontrada') ? 'no encuentro la tarea' : 'la tarea no terminó', avance };
   return { clase: 'parcial', faltantes: faltantes.slice(0, 5), verificado: false, avance };
 }
 
@@ -327,7 +353,7 @@ export type EventoPrimer =
    * Lo que se pudo leer de las tareas. `ids` e `idTurno`: para QUÉ intento se leyó; si el registro ya espera otras
    * tareas u otro turno (reabrió, mandó otra vez), lo que llega tarde no cuenta.
    */
-  | { tipo: 'tareas'; tareas: readonly TareaPrimer[]; ids?: readonly string[]; idTurno?: string }
+  | { tipo: 'tareas'; tareas: readonly TareaPrimer[]; ids?: readonly string[]; idTurno?: string; /** Las que dieron 404 en ESTA vuelta (revisión 13). */ noExisten?: readonly string[] }
   | { tipo: 'opinar'; sirvio: boolean };
 
 const TERMINAL: readonly EstadoPrimer[] = ['util', 'parcial'];
@@ -374,6 +400,31 @@ const mismoConjunto = (a: readonly string[], b: readonly string[]) => {
   return x.length === y.length && x.every((id) => y.includes(id));
 };
 
+/**
+ * Las rachas de 404 tras esta vuelta (revisión 13). Por cada tarea esperada que sigue sin leerse: si esta vuelta dijo
+ * «no existe», la racha suma una (y guarda desde cuándo); si no lo dijo (se leyó, o falló por red/503), se corta. Con
+ * NO_ENCONTRADA_LECTURAS seguidas a lo largo de NO_ENCONTRADA_MS, pasa a `perdidas`. Una que ya estaba `no-encontrada`
+ * sigue así mientras no se vuelva a leer (si aparece, cuenta lo leído).
+ */
+function rachasAusencia(r: PrimerResultado, ev: { tareas: readonly TareaPrimer[]; noExisten?: readonly string[] }, ahora: number): { perdidas: string[]; rachas: Map<string, { veces: number; desde: number }> } {
+  const xs = validas(ev.tareas);
+  const perdidas: string[] = [];
+  const rachas = new Map<string, { veces: number; desde: number }>();
+  for (const p of coberturaGuardada(r)) {
+    if (cubrirUna(p.id, xs).avance.estado !== 'sin-leer') continue;
+    if (p.estado === 'no-encontrada') {
+      perdidas.push(p.id);
+      continue;
+    }
+    if (!ev.noExisten?.includes(p.id)) continue;
+    const veces = (p.ausente?.veces ?? 0) + 1;
+    const desde = p.ausente?.desde ?? ahora;
+    if (veces >= NO_ENCONTRADA_LECTURAS && ahora - desde >= NO_ENCONTRADA_MS) perdidas.push(p.id);
+    else rachas.set(p.id, { veces, desde });
+  }
+  return { perdidas, rachas };
+}
+
 /** Aplica un evento. Lo que no corresponde al estado actual no cambia nada (devuelve el mismo objeto). */
 export function aplicar(r: PrimerResultado | null, ev: EventoPrimer, ahora: number): PrimerResultado | null {
   if (!r) return r;
@@ -417,10 +468,11 @@ export function aplicar(r: PrimerResultado | null, ev: EventoPrimer, ahora: numb
       // Leído para otro intento (otro turno u otras tareas): llega tarde y no cuenta.
       if (ev.idTurno && r.idTurno && ev.idTurno !== r.idTurno) return r;
       if (ev.ids && !mismoConjunto(ev.ids, r.tareas)) return r;
-      const c = clasificarTareas(ev.tareas, r.tareas, r.sinSeguir);
+      const aus = rachasAusencia(r, ev, ahora);
+      const c = clasificarTareas(ev.tareas, r.tareas, r.sinSeguir, aus.perdidas);
       if (c.clase !== 'pendiente') return conResultado(r, c, ahora);
-      // Falta alguna: se guarda el progreso (lo que ya terminó se ve), sin cerrar nada.
-      const avance = c.avance || [];
+      // Falta alguna: se guarda el progreso (lo que ya terminó se ve, y la racha de 404 de las que no), sin cerrar nada.
+      const avance = (c.avance || []).map((a) => (a.estado === 'sin-leer' && aus.rachas.has(a.id) ? { ...a, ausente: aus.rachas.get(a.id)! } : a));
       return JSON.stringify(avance) === JSON.stringify(r.avance || []) ? r : { ...r, avance };
     }
     case 'opinar': {
@@ -459,7 +511,8 @@ export type LecturaTarea = { estado: 'ok'; tarea: TareaPrimer } | { estado: 'no-
 /**
  * Lo que la mesa (DeskScreen) junta para el evento `tareas`: por cada id esperado, la tarea de la lista del panel si
  * es de fiar (no `sinConfirmar`, o terminal), y si no, leída por su id. Una lectura que falla (503, red), un 404 o una
- * respuesta con OTRO id no aportan nada: esa tarea queda sin leer (`sinLeer` / `noExisten`), nunca terminada.
+ * respuesta con OTRO id no aportan nada: esa tarea queda sin leer (`sinLeer` / `noExisten`), nunca terminada. Los 404
+ * (`noExisten`) van en el evento: solo una racha sostenida de ellos la da por no encontrada (`rachasAusencia`).
  * Las de la lista que no se esperan no pasan (ajenas). Nunca lanza.
  */
 export async function reunirTareasPrimer(
@@ -507,7 +560,7 @@ export async function seguirTareasPrimer(o: {
   if (!ids.length) return false;
   const r = await reunirTareasPrimer(ids, o.lista, o.leer);
   if (!o.vigente()) return false;
-  o.anotar({ tipo: 'tareas', tareas: r.tareas, ids, ...(o.idTurno ? { idTurno: o.idTurno } : {}) });
+  o.anotar({ tipo: 'tareas', tareas: r.tareas, ids, ...(o.idTurno ? { idTurno: o.idTurno } : {}), ...(r.noExisten.length ? { noExisten: r.noExisten } : {}) });
   return true;
 }
 
