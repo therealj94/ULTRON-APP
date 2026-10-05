@@ -13,6 +13,8 @@ import {
   archivoFoto,
   chatDeContacto,
   codigoLegibleWA,
+  dirCacheWA,
+  entradasAjenasWA,
   entradaWA,
   errorVincularWA,
   pasosCodigoWA,
@@ -510,6 +512,29 @@ prueba('antes de vincular, el consentimiento; el código de 8 letras grande, par
   assert.match(pantalla, /Mejor con QR \(desde otro teléfono o la PC\)/);
   assert.match(pantalla, /!cupoLleno && \(\(modo === 'codigo'/, 'con el cupo lleno no se ofrece pedir otra vez');
   assert.match(pantalla, /tr\('Agregar mi WhatsApp', 'Add my WhatsApp'\)/);
+});
+
+prueba('revisión del 5-oct: el caché de fotos y archivos es de UNA cuenta y se borra al salir', () => {
+  // Una carpeta por cuenta (el seudónimo, sin el correo); sin nadie dentro o sin disco, ninguna.
+  assert.equal(dirCacheWA('file:///cache/', 'u0011aabb'), 'file:///cache/whatsapp/u0011aabb/');
+  assert.equal(dirCacheWA('file:///cache/', ''), '');
+  assert.equal(dirCacheWA(null, 'u0011aabb'), '');
+  assert.equal(dirCacheWA('file:///cache/', '../x'), 'file:///cache/whatsapp/x/', 'nada de «..» ni «/»');
+  assert.notEqual(dirCacheWA('c/', 'u1') + archivoCache('504@s.whatsapp.net', 'M1', 'imagen'), dirCacheWA('c/', 'u2') + archivoCache('504@s.whatsapp.net', 'M1', 'imagen'), 'el mismo chat y mensaje en dos cuentas: dos archivos');
+  // Al cambiar de cuenta: se borra todo lo que no es de quien entró (también lo de antes, que iba sin cuenta); al salir, todo.
+  assert.deepEqual(entradasAjenasWA(['u1', 'u2', 'm-504-M1.jpg', 'foto-504.jpg'], 'u2'), ['u1', 'm-504-M1.jpg', 'foto-504.jpg']);
+  assert.deepEqual(entradasAjenasWA(['u1', 'u2'], ''), ['u1', 'u2']);
+  // medios.ts lo usa: carpeta por cuenta, memoria y disco soltados al cambiar de cuenta, y nada de la anterior que llegue tarde.
+  const medios = fs.readFileSync(path.join(AQUI, '..', 'medios.ts'), 'utf8');
+  assert.match(medios, /const dirActual = \(\) => dirCacheWA\(FS\.cacheDirectory, seudonimoActual\(\)\)/);
+  assert.match(medios, /alCambiarCuenta\(\(\) => \{\s*MEDIA\.clear\(\);\s*MEDIA_EN_VUELO\.clear\(\);\s*FOTOS\.clear\(\);\s*FOTOS_EN_VUELO\.clear\(\);[\s\S]*?limpiarAjenas\(\);/);
+  assert.match(medios, /entradasAjenasWA\(entradas, quien\)/);
+  assert.match(medios, /if \(sigueVigente\(gen\)\) MEDIA\.set\(clave, uri\);/);
+  assert.doesNotMatch(medios, /`\$\{FS\.cacheDirectory\}whatsapp\/` : '';\s*let dirListo: Promise/, 'ya no hay una carpeta común');
+  // La sesión: salir y entrar otra persona abren una generación nueva (lib/cuenta.ts), lo que dispara la limpieza.
+  const sesion = fs.readFileSync(path.join(AQUI, '..', '..', 'app', 'sesion.ts'), 'utf8');
+  assert.match(sesion, /export function salirDeLaSesion\(\) \{[\s\S]*?fijarUsuario\(null\);/);
+  assert.match(sesion, /export function fijarUsuario[\s\S]*?fijarCuenta\(u\?\.correo \?\? null\);/);
 });
 
 let ok = 0;

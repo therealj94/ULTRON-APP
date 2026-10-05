@@ -503,7 +503,7 @@ func apiCon(t *testing.T, clave string, cuenta *cuentaFalsa, alm *Almacen) (http
 	must(t, err)
 	dir := filepath.Join(reg.raiz, ClaveLegado)
 	must(t, os.MkdirAll(dir, 0o700))
-	reg.cuentas[ClaveLegado] = &Espacio{clave: ClaveLegado, dir: dir, cuenta: cuenta, almacen: alm}
+	reg.cuentas[ClaveLegado] = &Espacio{clave: ClaveLegado, dir: dir, cuenta: cuenta, almacen: alm, creada: reg.ahora()}
 	return (&API{clave: clave, cuentas: reg}).Rutas(), reg
 }
 

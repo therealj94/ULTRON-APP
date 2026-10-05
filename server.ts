@@ -2813,18 +2813,21 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
    * appEsperandoDe da como `borrador`) NO: no es nada que AU-RA le preguntó (revisión independiente, MEDIO-B).
    */
   const appPreguntada = appEsperando && appEsperando.que !== 'borrador' ? appEsperando : null;
+  // ¿Tiene su WhatsApp aquí? (no suspendida; revisión del 5-oct). La marca firmada de comunidad, la de la sesión del turno.
+  const comunidadTurno = !!correoApp && duenoComputadora === correoApp && body?.sesion?.comunidad === true;
+  const whatsappTurno = !!duenoComputadora && (await whatsappPermitido(duenoComputadora, comunidadTurno ? { comunidad: true } : {}));
   const esperabaSi =
     !!appPreguntada ||
     (!!duenoComputadora &&
       (!!borradorDe(duenoComputadora, ambitoTurno) ||
         !!borradorWhatsappDe(duenoComputadora, ambitoTurno) ||
-        pendientesDelTurno({ dueno: duenoComputadora, ambito: ambitoTurno, whatsapp: whatsappPermitido(duenoComputadora), app: appPreguntada }).length > 0));
+        pendientesDelTurno({ dueno: duenoComputadora, ambito: ambitoTurno, whatsapp: whatsappTurno, app: appPreguntada }).length > 0));
   const decision = await resolverDecisionesDelTurno({
     dueno: duenoComputadora,
     ambito: ambitoTurno,
     mensaje: message,
     retener: opciones.retener,
-    whatsapp: !!duenoComputadora && whatsappPermitido(duenoComputadora),
+    whatsapp: whatsappTurno,
     appEspera: !!(correoApp && pendienteAnterior(ambitoApp(correoApp, body?.aparato))),
     app: appEsperando,
     conocidos: (contextoApp?.contactos || []).map((c) => c.nombre),
@@ -3353,7 +3356,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   // «piensa paso a paso» va en el mensaje del turno cuando la pregunta lo pide.
   const userTurno = mensajeHilo || message;
   // Su WhatsApp: a quien lo tiene vinculado aquí (cada cuenta el suyo; a los dueños, como siempre). Con tope corto.
-  const conWhatsapp = !!duenoComputadora && (await whatsappOfrecido(duenoComputadora));
+  const conWhatsapp = !!duenoComputadora && (await whatsappOfrecido(duenoComputadora, 400, comunidadTurno ? { comunidad: true } : {}));
   const compuesto = construirMensajes({ personalidad: personalidadSistema, user: userTurno, canal, historial: hilo, nivel, harness: true, cot: false, whatsapp: conWhatsapp, sesion: !!duenoComputadora });
   // También en las tareas de código: el system ya no lo lleva (cot: false), así que va siempre aquí.
   const cotTurno = requiereCot(userTurno);
@@ -4205,7 +4208,7 @@ async function ordenDeApp(body: any, opciones: OpcionesTurno = {}): Promise<{ de
   // Permisos exactos (4-oct): si además de lo que espera la app espera otra decisión (un borrador de correo o de
   // WhatsApp, la pregunta de su computadora), el «sí» no se resuelve aquí por la app: lo decide el turno completo
   // (server/decision-turno.ts), que pregunta cuál si no lo dice.
-  if (atajoDeAppBloqueado({ dueno: correo, ambito: ambitoDelTurno(body, opciones), whatsapp: whatsappPermitido(correo), appEspera: !!appEsperandoDe(amb), mensaje: message, contexto })) return null;
+  if (atajoDeAppBloqueado({ dueno: correo, ambito: ambitoDelTurno(body, opciones), whatsapp: await whatsappPermitido(correo, body?.sesion?.comunidad === true ? { comunidad: true } : {}), appEspera: !!appEsperandoDe(amb), mensaje: message, contexto })) return null;
   // `pendienteDe` aquí ya es solo el borrador del turno anterior: abrirTurnoApp soltó cualquier otro.
   // Lo mismo la propuesta (llamar, recordar): solo la del turno anterior puede cumplirse con un «sí».
   // En el idioma en que le hablaron: «go back» con la app en español se contesta en inglés (la

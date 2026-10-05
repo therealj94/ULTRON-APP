@@ -5,10 +5,14 @@
  * aparece agregar whatsapp… ni les aparece whatsapp en donde está todo».
  *
  * Quién: toda cuenta cuya sesión abre AU-RA (la junta, quien se aprobó, el miembro de la comunidad) puede agregar
- * SU WhatsApp (WHATSAPP_ABIERTO=0 lo cierra y vuelve a ser solo de WHATSAPP_DUENOS). Cada una ve y toca solo el
+ * SU WhatsApp si WHATSAPP_ABIERTO=1 (sin fijarla, o con 0, es solo de WHATSAPP_DUENOS: cerrado por omisión). Cada una ve y toca solo el
  * suyo: cada pedido al puente lleva la clave de SU cuenta (X-Cuenta, un HMAC que sale de la sesión; nunca el
  * correo) y el puente guarda cada cuenta en su carpeta. Las cuentas de WHATSAPP_DUENOS usan el de antes
  * («legado»: el de José, que sigue vinculado sin volver a vincular).
+ *
+ * Revisión de seguridad del 5-oct: el puente contesta con el eco de la cuenta (X-Cuenta-Eco) y, salvo «legado», nada
+ * sin ese eco pasa a la persona (un puente devuelto a la versión de una sola cuenta ignora X-Cuenta); /vincular tiene
+ * tope por IP y por cuenta; una cuenta suspendida no usa WhatsApp; sin WHATSAPP_CUENTA_SECRETO solo los dueños.
  *
  * La app y Windows (lo que la persona toca: ella escribió el mensaje y tocó «Enviar»):
  *   GET  /api/whatsapp/estado            disponible, permitido, vinculado, el QR o el código mientras vincula
@@ -37,6 +41,8 @@ import { iniciarTarea, marcarPaso } from '../lib/tarea-en-curso';
 import type { RetencionAcciones } from './voz-agente';
 import { exito, fallo, incierto, type ResultadoHerramienta } from '../lib/recibo-herramienta';
 import { sesionAbreAura } from './seguridad';
+import { cuentaSuspendida, cuentasDisponibles } from './cuentas';
+import { claveConexion } from './veta-entrar';
 import { enviarUnaVez, huellaAprobacion, idMensajeWADeOperacion, operacionDeBorrador, type Reconciliacion, type ResultadoEnvio, type SalidaEnvio } from '../lib/envios';
 
 export type ChatWA = {
@@ -81,24 +87,110 @@ export function esDuenoWhatsapp(correo: string): boolean {
   return !!persona && (duenos.includes(normal(persona.id)) || persona.correos.some((c) => duenos.includes(normal(c))));
 }
 
-/** ¿Cualquier cuenta de AU-RA puede agregar su WhatsApp? Sí, salvo WHATSAPP_ABIERTO=0 (entonces solo los dueños). */
+/**
+ * ¿Cualquier cuenta de AU-RA puede agregar su WhatsApp? Solo con WHATSAPP_ABIERTO=1 (revisión del 5-oct: cerrado por
+ * omisión; sin fijarla, o con 0, solo los dueños). Una variable que se perdió en Render no abre el WhatsApp a todos.
+ */
 export function whatsappAbierto(): boolean {
-  return clave('whatsapp_abierto') !== '0';
+  return /^(1|si|sí|true)$/i.test(clave('whatsapp_abierto').trim());
+}
+
+/**
+ * Las sesiones firmadas de la comunidad que se vieron hace poco (correo → cuándo). El cerebro corre sin la marca de la
+ * sesión: sin ella, un correo fuera del padrón NO se da por bueno (revisión del 5-oct), salvo que una sesión firmada
+ * con la marca haya pasado por aquí (las rutas de la app o el turno, server.ts) en las últimas horas.
+ */
+const COMUNIDAD_VISTA = new Map<string, number>();
+const COMUNIDAD_VIVE_MS = 12 * 3600_000;
+
+function comunidadVista(q: string): boolean {
+  const t = COMUNIDAD_VISTA.get(q);
+  if (t && Date.now() - t < COMUNIDAD_VIVE_MS) return true;
+  if (t) COMUNIDAD_VISTA.delete(q);
+  return false;
+}
+
+/** Lo que no pregunta a nadie: dueño, WhatsApp abierto y si su sesión abre AU-RA. `comunidad`: true solo si viene firmada. */
+function permitidoPorAcceso(q: string, comunidad: boolean | undefined): boolean {
+  if (esDuenoWhatsapp(q)) return true;
+  if (!whatsappAbierto()) return false;
+  if (comunidad === true) {
+    if (COMUNIDAD_VISTA.size >= 5000) for (const k of [...COMUNIDAD_VISTA.keys()].slice(0, 1000)) COMUNIDAD_VISTA.delete(k);
+    COMUNIDAD_VISTA.set(q, Date.now());
+  }
+  return sesionAbreAura(q, comunidad ?? comunidadVista(q));
+}
+
+/** ¿Está suspendida? (server/cuentas.ts; sin base de cuentas, nadie lo está). Las pruebas ponen otra. */
+type ConsultaSuspension = (correo: string) => Promise<boolean>;
+const suspensionDeCuentas: ConsultaSuspension = async (c) => (cuentasDisponibles() ? cuentaSuspendida(c) : false);
+let consultarSuspension: ConsultaSuspension = suspensionDeCuentas;
+/** Lo último que se supo de cada correo (30 s, para no preguntarle a la base en cada pedido de la lista de fotos). */
+const SUSPENDIDAS = new Map<string, { t: number; si: boolean }>();
+const SUSPENSION_VIVE_MS = 30_000;
+
+/** true / false, o null si no se puede saber ahora (la base no contesta y no hay nada reciente). */
+async function suspendida(q: string): Promise<boolean | null> {
+  const visto = SUSPENDIDAS.get(q);
+  if (visto && Date.now() - visto.t < SUSPENSION_VIVE_MS) return visto.si;
+  try {
+    const si = await consultarSuspension(q);
+    if (SUSPENDIDAS.size >= 5000) SUSPENDIDAS.clear();
+    SUSPENDIDAS.set(q, { t: Date.now(), si });
+    return si;
+  } catch {
+    return visto ? visto.si : null;
+  }
+}
+
+/** Solo pruebas: otra consulta de suspensión (`null` vuelve a la de server/cuentas.ts). */
+export function _suspensionWhatsappDePrueba(f: ConsultaSuspension | null) {
+  consultarSuspension = f || suspensionDeCuentas;
+  SUSPENDIDAS.clear();
 }
 
 /**
  * ¿Esta cuenta puede tener SU WhatsApp aquí? Los dueños siempre; con WhatsApp abierto, toda sesión que abre AU-RA
  * (server/seguridad.ts sesionAbreAura: la junta y quien se aprobó en el padrón, o el miembro de la comunidad; nunca un
- * código temporal de Electrum ni alguien a quien el padrón deja fuera). `comunidad`: la marca firmada de la sesión;
- * las rutas la pasan tal cual. Sin ella (el cerebro, que ya corre con una sesión que pasó la mesa) se da por buena.
+ * código temporal de Electrum ni alguien a quien el padrón deja fuera). Nunca una cuenta suspendida (revisión del
+ * 5-oct; si no se puede saber, solo los dueños). `comunidad`: la marca firmada de la sesión; las rutas la pasan tal
+ * cual. Sin ella (el cerebro, Telegram) un correo fuera del padrón no pasa, salvo que una sesión firmada con la marca
+ * se haya visto hace poco (COMUNIDAD_VISTA).
  */
-export function whatsappPermitido(correo: string, o: { comunidad?: boolean } = {}): boolean {
+export async function whatsappPermitido(correo: string, o: { comunidad?: boolean } = {}): Promise<boolean> {
   const q = normal(correo);
-  if (!q) return false;
-  if (esDuenoWhatsapp(q)) return true;
-  if (!whatsappAbierto()) return false;
-  return sesionAbreAura(q, o.comunidad ?? true);
+  if (!q || !permitidoPorAcceso(q, o.comunidad)) return false;
+  const s = await suspendida(q);
+  return s === null ? esDuenoWhatsapp(q) : !s;
 }
+
+/** Lo mismo sin esperar (lib/circulo.ts, que no puede): con lo que ya se sabe de la suspensión. Mandar lo vuelve a mirar. */
+export function whatsappPermitidoSabido(correo: string): boolean {
+  const q = normal(correo);
+  return !!q && permitidoPorAcceso(q, undefined) && SUSPENDIDAS.get(q)?.si !== true;
+}
+
+/** Si la junta o el padrón (o un dueño): puede usar los lugares guardados del puente (WHATSAPP_RESERVA_JUNTA). */
+function prioridadJunta(correo: string): boolean {
+  const q = normal(correo);
+  return !!q && (esDuenoWhatsapp(q) || sesionAbreAura(q, false));
+}
+
+/** Lo mínimo de WHATSAPP_CUENTA_SECRETO: con menos, desde los nombres de carpeta del puente se podría adivinar. */
+const MIN_SECRETO_CUENTAS = 24;
+
+/** Con qué se firma la clave de cada cuenta ('' si falta o es corta: entonces solo los dueños). */
+function secretoCuentas(): string {
+  const s = clave('whatsapp_cuenta_secreto');
+  return s.length >= MIN_SECRETO_CUENTAS ? s : '';
+}
+
+/** ¿Hay con qué firmar la clave de cada cuenta? Sin WHATSAPP_CUENTA_SECRETO (24+), solo los dueños («legado»). */
+export function whatsappParaTodosConfigurado(): boolean {
+  return !!secretoCuentas();
+}
+
+export const AVISO_SIN_SECRETO = 'WhatsApp para todos no está configurado en el servidor (falta WHATSAPP_CUENTA_SECRETO, de 24 caracteres o más): por ahora solo lo usan los dueños. No toqué nada.';
 
 /** La cuenta de los dueños en el puente: el WhatsApp de antes, que sigue vinculado sin volver a vincular. */
 export const CUENTA_LEGADO = 'legado';
@@ -106,14 +198,14 @@ export const CUENTA_LEGADO = 'legado';
 /**
  * La clave de la cuenta en el puente (cabecera X-Cuenta): «legado» para los dueños; para los demás, un HMAC de quién es
  * (la persona del padrón, para que sus varios correos den el mismo WhatsApp; si no está en el padrón, su correo) con
- * WHATSAPP_CUENTA_SECRETO (o la clave del puente). El puente nunca ve el correo: solo esta clave opaca, que usa de
- * nombre de carpeta. Vacía si no hay quién o no hay con qué firmar.
+ * WHATSAPP_CUENTA_SECRETO (nunca la clave del puente: revisión del 5-oct). El puente nunca ve el correo: solo esta
+ * clave opaca, que usa de nombre de carpeta. Vacía si no hay quién o no hay con qué firmar.
  */
 export function claveCuentaWhatsapp(correo: string): string {
   const q = normal(correo);
   if (!q) return '';
   if (esDuenoWhatsapp(q)) return CUENTA_LEGADO;
-  const secreto = clave('whatsapp_cuenta_secreto');
+  const secreto = secretoCuentas();
   if (!secreto) return '';
   const persona = personaPorCorreoExacto(q);
   const quien = persona ? `persona:${normal(persona.id)}` : `correo:${q}`;
@@ -173,13 +265,14 @@ export function cupoDeEnvioWhatsapp(quien: string, ahora = Date.now()): string |
 
 /**
  * ¿El puente separa cuentas? Uno de antes (de una sola cuenta) ignora X-Cuenta y le daría a cualquiera el WhatsApp de
- * José: mientras no se actualice, solo la cuenta «legado» pasa. El nuevo lo dice en /salud (`maxCuentas`). Un «sí» se
- * recuerda; un «no» se vuelve a preguntar a los 30 s.
+ * José: mientras no se actualice, solo la cuenta «legado» pasa. El nuevo lo dice en /salud (`maxCuentas`). Esto es solo
+ * el filtro barato de antes de preguntar: lo que de verdad decide es el eco de la cuenta en CADA respuesta (MEDIO-1:
+ * si el puente se devuelve a uno de antes después de un «sí», el primer pedido sin eco se rechaza y esto vuelve a «no»).
+ * Un «sí» se vuelve a preguntar a los 5 minutos; un «no», a los 30 s.
  */
 let multicuenta: { t: number; si: boolean } | null = null;
 async function puenteConCuentas(): Promise<boolean> {
-  if (multicuenta?.si) return true;
-  if (multicuenta && Date.now() - multicuenta.t < 30_000) return false;
+  if (multicuenta && Date.now() - multicuenta.t < (multicuenta.si ? 300_000 : 30_000)) return multicuenta.si;
   let si = false;
   try {
     const r = await fetch(`${conf().url}/salud`, { signal: AbortSignal.timeout(5000) });
@@ -197,15 +290,53 @@ const AVISO_PUENTE_VIEJO = 'El puente de WhatsApp todavía es de una sola cuenta
 /** La clave de la cuenta para un pedido al puente; lanza si no hay, o si el puente todavía no separa cuentas. */
 async function cuentaParaPedir(quien: string): Promise<string> {
   const cuenta = claveCuentaWhatsapp(quien);
-  if (!cuenta) throw new ErrorPuente('No sé de qué cuenta es este WhatsApp (falta la sesión).', 403);
+  if (!cuenta) {
+    // Sin WHATSAPP_CUENTA_SECRETO no se firma con la clave del puente (revisión del 5-oct): solo los dueños.
+    if (normal(quien) && !esDuenoWhatsapp(quien) && !whatsappParaTodosConfigurado()) throw new ErrorPuente(AVISO_SIN_SECRETO, 503, false, 'whatsapp_para_todos_sin_configurar');
+    throw new ErrorPuente('No sé de qué cuenta es este WhatsApp (falta la sesión).', 403);
+  }
   if (cuenta !== CUENTA_LEGADO && !(await puenteConCuentas())) throw new ErrorPuente(AVISO_PUENTE_VIEJO, 503, false, 'PUENTE_VIEJO');
   return cuenta;
 }
 
-/** Un pedido al puente, siempre de UNA cuenta (la de `quien`): sin cuenta no sale nada. */
+/** La cabecera con que el puente dice de qué cuenta es la respuesta (servicios/whatsapp-puente/api.go). */
+const CABECERA_ECO = 'x-cuenta-eco';
+
+/** ¿La respuesta es de ESA cuenta? «legado» no lo necesita: con un puente de antes, el de antes ES el de los dueños. */
+const ecoValido = (r: Response, cuenta: string) => cuenta === CUENTA_LEGADO || r.headers.get(CABECERA_ECO) === cuenta;
+
+/**
+ * Una respuesta sin el eco de su cuenta: el puente no separa cuentas (lo devolvieron a uno de antes) y lo que contestó
+ * puede ser el WhatsApp de otro. No pasa nada de eso, y hasta volver a preguntar a /salud, ninguna otra cuenta sale.
+ */
+function sinEco(r: Response | null): ErrorPuente {
+  if (r) void r.body?.cancel().catch(() => {});
+  multicuenta = { t: Date.now(), si: false };
+  console.warn('[whatsapp] el puente contestó sin el eco de la cuenta (¿una versión de una sola cuenta?): no pasa nada de otra cuenta que no sea «legado»');
+  return new ErrorPuente(AVISO_PUENTE_VIEJO, 503, false, 'PUENTE_VIEJO');
+}
+
+/**
+ * Antes de algo con efecto (enviar, vincular, leído, desvincular) de una cuenta que no es «legado»: una pregunta sin
+ * efecto (/estado) que tiene que volver con su eco. Si el puente es uno de antes, el envío NUNCA le llega (saldría
+ * del WhatsApp de otro). Lo que falla aquí no mandó nada.
+ */
+async function comprobarEco(c: ReturnType<typeof conf>, cuenta: string, ms: number): Promise<void> {
+  let r: Response;
+  try {
+    r = await fetch(`${c.url}/estado`, { headers: { authorization: `Bearer ${c.clave}`, 'x-cuenta': cuenta }, signal: AbortSignal.timeout(ms) });
+  } catch (e: any) {
+    throw new ErrorPuente(`No pude comprobar el puente de WhatsApp antes de hacerlo (${String(e?.message || e).slice(0, 80)}); no hice nada.`, 503);
+  }
+  if (!ecoValido(r, cuenta)) throw sinEco(r);
+  void r.body?.cancel().catch(() => {});
+}
+
+/** Un pedido al puente, siempre de UNA cuenta (la de `quien`): sin cuenta no sale nada, y sin su eco no vuelve nada. */
 async function pedir<T = any>(quien: string, ruta: string, init: RequestInit & { ms?: number } = {}): Promise<T> {
   const c = conf();
   const cuenta = await cuentaParaPedir(quien);
+  if (cuenta !== CUENTA_LEGADO && String(init.method || 'GET').toUpperCase() !== 'GET') await comprobarEco(c, cuenta, Math.min(init.ms ?? 8000, 8000));
   let r: Response;
   try {
     r = await fetch(`${c.url}${ruta}`, {
@@ -216,6 +347,8 @@ async function pedir<T = any>(quien: string, ruta: string, init: RequestInit & {
   } catch (e: any) {
     throw new ErrorPuente(`El puente de WhatsApp no contestó (${String(e?.message || e).slice(0, 80)}).`, 503, true);
   }
+  // MEDIO-1: ni el cuerpo ni el código de error de una respuesta sin el eco de SU cuenta.
+  if (!ecoValido(r, cuenta)) throw sinEco(r);
   let texto = '';
   try {
     texto = await r.text();
@@ -283,10 +416,11 @@ export function whatsappVinculadoSabido(quien: string): boolean {
 
 /**
  * ¿Se le ofrece al cerebro la herramienta `whatsapp` (y el triaje)? A quien puede tener su WhatsApp aquí y lo tiene
- * vinculado. A los dueños, como siempre (si no está vinculado, la herramienta le dice que lo vincule).
+ * vinculado. A los dueños, como siempre (si no está vinculado, la herramienta le dice que lo vincule). `comunidad`: la
+ * marca firmada de la sesión del turno, si se tiene.
  */
-export async function whatsappOfrecido(quien: string, ms = 400): Promise<boolean> {
-  if (!quien || !whatsappDisponible() || !whatsappPermitido(quien)) return false;
+export async function whatsappOfrecido(quien: string, ms = 400, o: { comunidad?: boolean } = {}): Promise<boolean> {
+  if (!quien || !whatsappDisponible() || !(await whatsappPermitido(quien, o))) return false;
   if (esDuenoWhatsapp(quien)) return true;
   return whatsappVinculadoRapido(quien, ms);
 }
@@ -705,7 +839,7 @@ function hechoDeEnvioWA(b: BorradorGuardado, r: ResultadoEnvio<DatosEnvioWA>): R
  * las pruebas (otra réplica con la misma copia). Con `ambito`, un borrador alterado vuelve como decisión nueva.
  */
 export async function enviarBorradorWhatsappAprobado(quien: string, b: BorradorGuardado, o: { ambito?: string; desdePanel?: boolean } = {}): Promise<ResultadoHerramienta> {
-  if (!whatsappPermitido(quien)) return fallo('WHATSAPP: no lo mandé: esta cuenta ya no tiene su WhatsApp.', 'no-disponible');
+  if (!(await whatsappPermitido(quien))) return fallo('WHATSAPP: no lo mandé: esta cuenta ya no tiene su WhatsApp.', 'no-disponible');
   if (!b.huella || huellaWhatsapp(b) !== b.huella) {
     const k = o.ambito !== undefined ? llave(quien, o.ambito) : '';
     if (k && !BORRADORES.has(k)) {
@@ -771,7 +905,7 @@ export async function correrWhatsapp(quien: string, arg: string, ambito = ''): P
 export async function correrWhatsappConEstado(quien: string, arg: string, ambito = ''): Promise<ResultadoHerramienta> {
   if (!quien) return fallo('WHATSAPP: solo con sesión. Pídele que entre con su cuenta.', 'sin-sesion');
   if (!whatsappDisponible()) return fallo('WHATSAPP: no está conectado en este servidor. No lo usé; dilo con naturalidad.', 'no-disponible');
-  if (!whatsappPermitido(quien)) return fallo('WHATSAPP: esta cuenta no tiene WhatsApp conectado aquí. No lo usé.', 'no-disponible');
+  if (!(await whatsappPermitido(quien))) return fallo('WHATSAPP: esta cuenta no tiene WhatsApp conectado aquí. No lo usé.', 'no-disponible');
   const [cabeza, ...partes] = String(arg || '').split('|').map((x) => x.trim());
   const m = cabeza.match(/^(\S+)\s*(.*)$/s);
   const verbo = (m?.[1] || 'revisar').toLowerCase();
@@ -801,7 +935,39 @@ export function _olvidarWhatsapp() {
   NOMBRES_CHATS.clear();
   VINCULADOS.clear();
   ENVIOS.clear();
+  INTENTOS_VINCULAR.clear();
+  SUSPENDIDAS.clear();
   multicuenta = null;
+}
+
+/** Pruebas: también las sesiones de la comunidad que se vieron (COMUNIDAD_VISTA). */
+export function _olvidarSesionesWhatsapp() {
+  COMUNIDAD_VISTA.clear();
+}
+
+/**
+ * Los intentos de /vincular (revisión del 5-oct, MEDIO-2): por IP (de cualquier identidad; IPv6 por su /64,
+ * server/veta-entrar.ts claveConexion) y por cuenta. Así unas cuantas identidades de usar y tirar no llenan el cupo del
+ * puente desde un mismo lugar (y lo que abran vence solo a los 3 minutos, en el puente).
+ */
+const INTENTOS_VINCULAR = new Map<string, number[]>();
+const TOPES_VINCULAR = { porIp: 5, porCuenta: 8, ventanaMs: 15 * 60_000 };
+
+/** 0 si se puede (y lo cuenta en cada llave); si no, en cuántos segundos. Ninguna llave se gasta si otra está llena. */
+export function cupoDeVincular(llaves: Array<[string, number]>, ahora = Date.now()): number {
+  let espera = 0;
+  const vigentes = llaves.map(([k, max]) => {
+    const xs = (INTENTOS_VINCULAR.get(k) || []).filter((t) => ahora - t < TOPES_VINCULAR.ventanaMs);
+    if (xs.length >= max) espera = Math.max(espera, Math.ceil((xs[xs.length - max] + TOPES_VINCULAR.ventanaMs - ahora) / 1000));
+    return [k, xs] as const;
+  });
+  if (espera > 0) {
+    for (const [k, xs] of vigentes) INTENTOS_VINCULAR.set(k, xs);
+    return espera;
+  }
+  if (INTENTOS_VINCULAR.size >= 10_000) for (const k of [...INTENTOS_VINCULAR.keys()].slice(0, 2000)) INTENTOS_VINCULAR.delete(k);
+  for (const [k, xs] of vigentes) INTENTOS_VINCULAR.set(k, [...xs, ahora]);
+  return 0;
 }
 
 /** Los nombres de sus chats (por cuenta), un rato: para saber quién más se llama así sin pedirlos en cada turno. */
@@ -851,17 +1017,18 @@ type Deps = {
 
 export function montarRutasWhatsapp(app: express.Express, d: Deps) {
   const correoDe = (req: express.Request) => normal(d.sesionDe(req)?.correo || '');
-  const permitidoDe = (req: express.Request) => {
+  const permitidoDe = async (req: express.Request) => {
     const s = d.sesionDe(req);
-    return !!s && whatsappPermitido(s.correo, { comunidad: !!s.comunidad });
+    return !!s && (await whatsappPermitido(s.correo, { comunidad: !!s.comunidad }));
   };
   /** Solo una cuenta que puede tener su WhatsApp aquí, y con el puente configurado. Devuelve false si ya contestó. */
-  const puede = (req: express.Request, res: express.Response): boolean => {
+  const puede = async (req: express.Request, res: express.Response): Promise<boolean> => {
     const correo = correoDe(req);
     res.setHeader('Cache-Control', 'no-store');
     if (!correo) return void res.status(401).json({ error: 'Entra con tu sesión.', code: 'sesion_requerida', honesto: true }), false;
-    if (!permitidoDe(req)) return void res.status(403).json({ error: 'Esta cuenta no puede tener WhatsApp aquí.', code: 'whatsapp_no_permitido', honesto: true }), false;
+    if (!(await permitidoDe(req))) return void res.status(403).json({ error: 'Esta cuenta no puede tener WhatsApp aquí.', code: 'whatsapp_no_permitido', honesto: true }), false;
     if (!whatsappDisponible()) return void res.status(503).json({ error: 'WhatsApp todavía no está conectado en el servidor.', code: 'whatsapp_sin_puente', honesto: true }), false;
+    if (!esDuenoWhatsapp(correo) && !whatsappParaTodosConfigurado()) return void res.status(503).json({ error: AVISO_SIN_SECRETO, code: 'whatsapp_para_todos_sin_configurar', honesto: true }), false;
     return true;
   };
   const responderError = (res: express.Response, e: any) => {
@@ -874,7 +1041,7 @@ export function montarRutasWhatsapp(app: express.Express, d: Deps) {
     const correo = correoDe(req);
     res.setHeader('Cache-Control', 'no-store');
     if (!correo) return res.status(401).json({ error: 'Entra con tu sesión.', code: 'sesion_requerida', honesto: true });
-    const permitido = permitidoDe(req);
+    const permitido = await permitidoDe(req);
     const disponible = whatsappDisponible();
     if (!permitido || !disponible) return res.json({ disponible, permitido, vinculado: false, honesto: true });
     try {
@@ -885,11 +1052,22 @@ export function montarRutasWhatsapp(app: express.Express, d: Deps) {
   });
 
   app.post('/api/whatsapp/vincular', d.exigirMesa, d.limitar(10), async (req, res) => {
-    if (!puede(req, res)) return;
+    if (!(await puede(req, res))) return;
     const correo = correoDe(req);
     const telefono = String(req.body?.telefono || '').replace(/[^\d+]/g, '').slice(0, 20);
+    // Por IP (cualquier identidad) y por cuenta, además del límite de la ruta. Los dueños no abren un lugar nuevo.
+    const cuenta = claveCuentaWhatsapp(correo);
+    if (cuenta && cuenta !== CUENTA_LEGADO) {
+      const espera = cupoDeVincular([
+        [`ip:${claveConexion(req.ip)}`, TOPES_VINCULAR.porIp],
+        [`cuenta:${cuenta}`, TOPES_VINCULAR.porCuenta],
+      ]);
+      if (espera) return res.status(429).setHeader('Retry-After', String(espera)).json({ error: 'Demasiados intentos de vincular WhatsApp desde aquí. Espera unos minutos y prueba otra vez.', code: 'whatsapp_limite_vincular', honesto: true });
+    }
     try {
-      const r = await pedir(correo, '/vincular', { method: 'POST', body: JSON.stringify(telefono ? { telefono } : {}), ms: 30_000 });
+      // La prioridad (los lugares guardados para la junta) la decide SOLO el servidor: nada del pedido de la app pasa.
+      const prioridad: Record<string, string> = prioridadJunta(correo) ? { 'x-cuenta-prioridad': 'junta' } : {};
+      const r = await pedir(correo, '/vincular', { method: 'POST', body: JSON.stringify(telefono ? { telefono } : {}), ms: 30_000, headers: prioridad });
       VINCULADOS.delete(claveCuentaWhatsapp(correo));
       return res.json({ ...r, honesto: true });
     } catch (e) {
@@ -898,7 +1076,7 @@ export function montarRutasWhatsapp(app: express.Express, d: Deps) {
   });
 
   app.post('/api/whatsapp/desvincular', d.exigirMesa, d.limitar(5), async (req, res) => {
-    if (!puede(req, res)) return;
+    if (!(await puede(req, res))) return;
     const correo = correoDe(req);
     try {
       await pedir(correo, '/desvincular', { method: 'POST', body: '{}' });
@@ -911,7 +1089,7 @@ export function montarRutasWhatsapp(app: express.Express, d: Deps) {
   });
 
   app.get('/api/whatsapp/chats', d.exigirMesa, d.limitar(120), async (req, res) => {
-    if (!puede(req, res)) return;
+    if (!(await puede(req, res))) return;
     const limite = Math.min(300, Math.max(1, Math.floor(Number(req.query.limite)) || 100));
     try {
       return res.json({ chats: await chatsWA(correoDe(req), String(req.query.buscar || '').slice(0, 60), limite), honesto: true });
@@ -921,7 +1099,7 @@ export function montarRutasWhatsapp(app: express.Express, d: Deps) {
   });
 
   app.get('/api/whatsapp/mensajes', d.exigirMesa, d.limitar(180), async (req, res) => {
-    if (!puede(req, res)) return;
+    if (!(await puede(req, res))) return;
     const chat = String(req.query.chat || '');
     if (!chat) return res.status(400).json({ error: 'Falta el chat.', honesto: true });
     try {
@@ -933,7 +1111,7 @@ export function montarRutasWhatsapp(app: express.Express, d: Deps) {
 
   // Lo que la persona escribió y tocó «Enviar» en la app o en Windows: sale directo (eso ES su «sí»).
   app.post('/api/whatsapp/enviar', d.exigirMesa, d.limitar(40), async (req, res) => {
-    if (!puede(req, res)) return;
+    if (!(await puede(req, res))) return;
     const chat = String(req.body?.chat || '');
     const texto = String(req.body?.texto || '');
     if (!chat || !texto.trim()) return res.status(400).json({ error: 'Falta el chat o el texto.', honesto: true });
@@ -976,7 +1154,7 @@ export function montarRutasWhatsapp(app: express.Express, d: Deps) {
   });
 
   app.post('/api/whatsapp/leido', d.exigirMesa, d.limitar(120), async (req, res) => {
-    if (!puede(req, res)) return;
+    if (!(await puede(req, res))) return;
     const chat = String(req.body?.chat || '');
     if (!chat) return res.status(400).json({ error: 'Falta el chat.', honesto: true });
     try {
@@ -1002,6 +1180,8 @@ export function montarRutasWhatsapp(app: express.Express, d: Deps) {
     }
     try {
       const r = await fetch(`${c.url}${ruta}`, { headers: { authorization: `Bearer ${c.clave}`, 'x-cuenta': cuenta }, signal: AbortSignal.timeout(o.ms) });
+      // MEDIO-1: la foto o el archivo de otra cuenta (un puente de antes) no pasa: ni el cuerpo ni su error.
+      if (!ecoValido(r, cuenta)) return responderError(res, sinEco(r));
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
         return res.status(r.status === 401 ? 503 : r.status).json({ error: String((j as any)?.error || `HTTP ${r.status}`).slice(0, 160), ...((j as any)?.codigo ? { code: String((j as any).codigo) } : {}), honesto: true });
@@ -1011,8 +1191,14 @@ export function montarRutasWhatsapp(app: express.Express, d: Deps) {
         void r.body?.cancel().catch(() => {});
         return res.status(413).json({ error: o.grande, honesto: true });
       }
-      res.setHeader('Content-Type', r.headers.get('content-type') || o.tipo);
-      res.setHeader('Cache-Control', 'private, max-age=3600');
+      const tipo = r.headers.get('content-type') || o.tipo;
+      res.setHeader('Content-Type', tipo);
+      // Revisión del 5-oct: lo de WhatsApp de cada cuenta no se guarda en ninguna caché (ni de un proxy ni compartida
+      // entre sesiones del mismo aparato): la app lo guarda ella, por cuenta (mobile/src/whatsapp/medios.ts).
+      res.setHeader('Cache-Control', 'private, no-store');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      // Lo que no es imagen, audio o video (un documento, una página, un SVG) se baja; nunca se abre como página aquí.
+      if (!/^(image\/(?!svg)|audio\/|video\/)/i.test(tipo)) res.setHeader('Content-Disposition', 'attachment');
       return res.end(Buffer.from(await r.arrayBuffer()));
     } catch (e) {
       return responderError(res, new ErrorPuente(`El puente de WhatsApp no contestó (${String((e as any)?.message || e).slice(0, 80)}).`, 503));
@@ -1021,21 +1207,21 @@ export function montarRutasWhatsapp(app: express.Express, d: Deps) {
 
   // Si el archivo ya venció en WhatsApp, el puente se lo pide al teléfono y espera (hasta ~80 s en total).
   app.get('/api/whatsapp/media', d.exigirMesa, d.limitar(60), async (req, res) => {
-    if (!puede(req, res)) return;
+    if (!(await puede(req, res))) return;
     const ruta = `/media?chat=${encodeURIComponent(String(req.query.chat || ''))}&id=${encodeURIComponent(String(req.query.id || ''))}`;
     return pasarArchivo(res, correoDe(req), ruta, { max: MAX_MEDIA, ms: 90_000, grande: 'Ese archivo pesa más de 16 MB: ábrelo en tu teléfono.', tipo: 'application/octet-stream' });
   });
 
   // La lista pide muchas a la vez: el límite es amplio (el puente las guarda un día y pregunta pocas a la vez).
   app.get('/api/whatsapp/foto', d.exigirMesa, d.limitar(600), async (req, res) => {
-    if (!puede(req, res)) return;
+    if (!(await puede(req, res))) return;
     const chat = String(req.query.chat || '').slice(0, 120);
     if (!chat) return res.status(400).json({ error: 'Falta el chat.', honesto: true });
     return pasarArchivo(res, correoDe(req), `/foto?chat=${encodeURIComponent(chat)}`, { max: MAX_FOTO, ms: 30_000, grande: 'Esa foto pesa demasiado.', tipo: 'image/jpeg' });
   });
 
   app.get('/api/whatsapp/contactos', d.exigirMesa, d.limitar(60), async (req, res) => {
-    if (!puede(req, res)) return;
+    if (!(await puede(req, res))) return;
     const buscar = String(req.query.buscar || '').slice(0, 60);
     const limite = Math.min(500, Math.max(1, Math.floor(Number(req.query.limite)) || 100));
     try {

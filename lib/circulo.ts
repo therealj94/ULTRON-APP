@@ -21,7 +21,7 @@
  */
 import { clave as claveBoveda } from './boveda';
 import { clavePersona, CajonNoDisponible, crearCajones, linea, nuevoId, plegar } from './cerebro-comun';
-import { borradorWhatsappParaConEstado, cuentaWhatsappVinculada, esDuenoWhatsapp, whatsappDisponible, whatsappPermitido, whatsappVinculadoSabido } from '../server/whatsapp';
+import { borradorWhatsappParaConEstado, cuentaWhatsappVinculada, esDuenoWhatsapp, whatsappDisponible, whatsappPermitidoSabido, whatsappVinculadoSabido } from '../server/whatsapp';
 import { exito, fallo, type ResultadoHerramienta } from './recibo-herramienta';
 import { resultadoAutorizado, vistaDePersona, type VistaTexto } from './conocer-persona';
 
@@ -344,7 +344,7 @@ export function capacidadesCirculo(dueno: string): { whatsapp: boolean; llamada:
   let wa = false;
   try {
     // Su WhatsApp, si lo tiene vinculado aquí (lo que supo el turno al empezar); el de los dueños, como siempre.
-    wa = whatsappDisponible() && whatsappPermitido(dueno) && (esDuenoWhatsapp(dueno) || whatsappVinculadoSabido(dueno));
+    wa = whatsappDisponible() && whatsappPermitidoSabido(dueno) && (esDuenoWhatsapp(dueno) || whatsappVinculadoSabido(dueno));
   } catch {
     wa = false;
   }

@@ -221,7 +221,7 @@ export async function resolverBorradorDesdePanel(correo: string, canal: 'correo'
   const b = canal === 'correo' ? borradorDe(correo, ambito) : borradorWhatsappDe(correo, ambito);
   if (!b || b.intento !== intento) return { estado: 'stale', resumen: 'El borrador ya no era el aprobado; no se envió nada.' };
   if (respuesta === 'sí' && (!huella || !b.huella || b.huella !== huella)) return { estado: 'stale', resumen: 'Lo que espera ya no es lo que aprobaste (otro destinatario, cuenta o contenido); no se envió nada.' };
-  if (canal === 'whatsapp' && !whatsappPermitido(correo)) return { estado: 'failed', resumen: 'WHATSAPP: no lo mandé: esta cuenta ya no tiene su WhatsApp.' };
+  if (canal === 'whatsapp' && !(await whatsappPermitido(correo))) return { estado: 'failed', resumen: 'WHATSAPP: no lo mandé: esta cuenta ya no tiene su WhatsApp.' };
   const como = { desdePanel: true, ...(huella ? { huella } : {}) };
   const hecho = canal === 'correo' ? await resolverBorrador(correo, ambito, respuesta, undefined, como) : await resolverBorradorWhatsapp(correo, ambito, respuesta, undefined, como);
   if (hecho === null) return { estado: 'stale', resumen: 'El borrador ya no estaba esperando; no se envió nada.' };

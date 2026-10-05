@@ -26,6 +26,10 @@ package main
 //
 // Los errores van con `error` (para la persona) y, cuando sirve para decidir, `codigo`: SIN_CUENTA (falta la
 // cabecera o no tiene la forma), SIN_VINCULAR (esa cuenta no tiene WhatsApp aquí), CUPO_LLENO.
+//
+// Toda respuesta de una cuenta (también sus errores) lleva X-Cuenta-Eco: <la clave de X-Cuenta> (revisión del 5-oct,
+// MEDIO-1). Un puente de antes no la pone: el servidor de AU-RA no deja pasar nada de una cuenta que no sea «legado»
+// sin ese eco (si el puente vuelve a una versión de una sola cuenta, nadie recibe el WhatsApp de otro).
 
 import (
 	"crypto/subtle"
@@ -97,6 +101,13 @@ type API struct {
 
 // La cabecera con la cuenta de AU-RA de cada pedido.
 const CabeceraCuenta = "X-Cuenta"
+
+// La respuesta dice de qué cuenta es (el servidor de AU-RA la exige a toda cuenta que no sea «legado»).
+const CabeceraEco = "X-Cuenta-Eco"
+
+// La pone SOLO el servidor de AU-RA en /vincular cuando la cuenta es de la junta o del padrón («junta»): puede usar los
+// lugares guardados (WHATSAPP_RESERVA_JUNTA). Nadie más llega al puente (red privada y clave).
+const CabeceraPrioridad = "X-Cuenta-Prioridad"
 
 // El id que AU-RA le pone a un mensaje (AUR13): como los de WhatsApp Web, 3EB0 + hexadecimal en mayúsculas.
 var idDeAura = regexp.MustCompile(`^3EB0[0-9A-F]{16,40}$`)
@@ -314,7 +325,7 @@ func (a *API) vincular(w http.ResponseWriter, r *http.Request, clave string) {
 			return
 		}
 	}
-	e, err := a.cuentas.ObtenerOCrear(clave)
+	e, err := a.cuentas.ObtenerOCrear(clave, r.Header.Get(CabeceraPrioridad) == "junta")
 	if err != nil {
 		fallo(w, codigoDe(err), err)
 		return
@@ -393,7 +404,8 @@ func (a *API) con(f http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// Con la clave del puente y la cuenta de AU-RA (X-Cuenta) bien formada. Sin ella no se toca ninguna cuenta.
+// Con la clave del puente y la cuenta de AU-RA (X-Cuenta) bien formada. Sin ella no se toca ninguna cuenta. Toda
+// respuesta de aquí en adelante lleva el eco de la cuenta (X-Cuenta-Eco).
 func (a *API) conClave(f func(w http.ResponseWriter, r *http.Request, clave string)) http.HandlerFunc {
 	return a.con(func(w http.ResponseWriter, r *http.Request) {
 		clave := strings.TrimSpace(r.Header.Get(CabeceraCuenta))
@@ -401,6 +413,7 @@ func (a *API) conClave(f func(w http.ResponseWriter, r *http.Request, clave stri
 			escribir(w, 400, map[string]any{"error": "falta la cuenta de AU-RA (o no tiene la forma esperada)", "codigo": "SIN_CUENTA"})
 			return
 		}
+		w.Header().Set(CabeceraEco, clave)
 		f(w, r, clave)
 	})
 }

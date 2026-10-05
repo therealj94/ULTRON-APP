@@ -438,6 +438,21 @@ export function archivoFoto(chat: string): string {
 }
 
 /**
+ * La carpeta del caché de WhatsApp de UNA cuenta (revisión del 5-oct): `<caché>whatsapp/<seudónimo>/`. El seudónimo
+ * (lib/cuenta.ts seudonimoDe: un hash, sin el correo) separa lo de cada persona en un teléfono compartido: el mismo
+ * chat y el mismo id de mensaje en dos cuentas no dan el mismo archivo. Sin nadie dentro, no hay carpeta ('').
+ */
+export function dirCacheWA(base: string | null | undefined, seudonimo: string): string {
+  const s = String(seudonimo || '').replace(/[^a-zA-Z0-9_-]/g, '');
+  return base && s ? `${base}whatsapp/${s}/` : '';
+}
+
+/** Lo que hay que borrar de `<caché>whatsapp/` al cambiar de cuenta: todo lo que no es la carpeta de quien entró ahora. */
+export function entradasAjenasWA(entradas: string[], seudonimo: string): string[] {
+  return entradas.filter((e) => !seudonimo || e !== seudonimo);
+}
+
+/**
  * Una fila de espera: a lo más `max` tareas a la vez (las fotos de perfil de la lista no salen todas
  * juntas). Lo que entra último sale primero: lo que se acaba de mostrar en pantalla va antes.
  */

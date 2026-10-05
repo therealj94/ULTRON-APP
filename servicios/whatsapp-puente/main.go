@@ -4,7 +4,8 @@
 // (sin dirección pública: solo el servidor de AU-RA lo alcanza por la red interna) y además pide clave.
 //
 // Variables: PUENTE_CLAVE (obligatoria), DATOS (carpeta del disco, /data), PORT (8080),
-// WHATSAPP_MAX_CUENTAS (cuántas cuentas caben; 25).
+// WHATSAPP_MAX_CUENTAS (cuántas cuentas caben; 25), WHATSAPP_RESERVA_JUNTA (de esas, cuántas solo para la junta y el
+// padrón; 2), NIVEL_LOG (INFO; el de whatsmeow va siempre en WARN: en INFO escribe números y JIDs).
 //
 // Hecho con whatsmeow (la librería de WhatsApp Web multi-dispositivo; la misma que usa
 // lharries/whatsapp-mcp). No es una API oficial de Meta: José lo eligió sabiendo el riesgo.
@@ -12,11 +13,13 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -24,23 +27,59 @@ import (
 	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
+// Lo que el puente lee del entorno al arrancar.
+type Config struct {
+	clave   string
+	datos   string
+	puerto  string
+	max     int
+	reserva int
+	nivel   string
+}
+
+// MinClavePuente: lo mínimo de PUENTE_CLAVE. Con varias cuentas, la clave es lo único (además de la red privada) que
+// separa el WhatsApp de cada persona de quien llegue al puente: sin ella, o corta, el puente NO arranca (revisión del
+// 5-oct; nunca «abierto por omisión»).
+const MinClavePuente = 24
+
+// Lee y valida la configuración (sin tocar el disco). Error: el puente no debe arrancar.
+func configDelEntorno(env func(string) string) (Config, error) {
+	o := func(k, def string) string {
+		if v := strings.TrimSpace(env(k)); v != "" {
+			return v
+		}
+		return def
+	}
+	c := Config{clave: env("PUENTE_CLAVE"), datos: o("DATOS", "/data"), puerto: o("PORT", "8080"), nivel: o("NIVEL_LOG", "INFO")}
+	if len(c.clave) < MinClavePuente {
+		return c, fmt.Errorf("falta PUENTE_CLAVE (%d caracteres o más): sin ella no se arranca con varias cuentas", MinClavePuente)
+	}
+	max, err := strconv.Atoi(o("WHATSAPP_MAX_CUENTAS", "25"))
+	if err != nil || max < 1 {
+		max = 25
+	}
+	c.max = max
+	reserva, err := strconv.Atoi(o("WHATSAPP_RESERVA_JUNTA", "2"))
+	if err != nil || reserva < 0 {
+		reserva = 2
+	}
+	c.reserva = reserva
+	return c, nil
+}
+
 func main() {
-	log := waLog.Stdout("puente", envO("NIVEL_LOG", "INFO"), false)
-	clave := os.Getenv("PUENTE_CLAVE")
-	if len(clave) < 24 {
-		log.Errorf("falta PUENTE_CLAVE (24 caracteres o más)")
+	conf, err := configDelEntorno(os.Getenv)
+	log := waLog.Stdout("puente", conf.nivel, false)
+	if err != nil {
+		log.Errorf("%v", err)
 		os.Exit(1)
 	}
-	datos := envO("DATOS", "/data")
+	clave, datos, max := conf.clave, conf.datos, conf.max
 	if err := os.MkdirAll(datos, 0o700); err != nil {
 		log.Errorf("no pude crear %s: %v", datos, err)
 		os.Exit(1)
 	}
 	ctx := context.Background()
-	max, err := strconv.Atoi(envO("WHATSAPP_MAX_CUENTAS", "25"))
-	if err != nil || max < 1 {
-		max = 25
-	}
 	cuentas, err := NuevoRegistro(datos, max, log, func(clave, dir string, alm *Almacen) (Cuenta, error) {
 		return NuevaCuentaWA(ctx, filepath.Join(dir, "sesion.db"), filepath.Join(dir, "fotos"), alm, log.Sub(nombreLog(clave)))
 	})
@@ -48,10 +87,17 @@ func main() {
 		log.Errorf("cuentas: %v", err)
 		os.Exit(1)
 	}
+	cuentas.Reservar(conf.reserva)
 	// Solo las que ya estaban vinculadas se reconectan (cada una aparte); las demás nacen en su primer /vincular.
 	cuentas.Cargar()
+	// Las vinculaciones que no terminan sueltan su lugar aunque nadie vuelva a pedir /vincular.
+	go func() {
+		for range time.Tick(30 * time.Second) {
+			cuentas.Barrer()
+		}
+	}()
 	api := &API{clave: clave, cuentas: cuentas}
-	srv := &http.Server{Addr: ":" + envO("PORT", "8080"), Handler: api.Rutas(), ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Addr: ":" + conf.puerto, Handler: api.Rutas(), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		log.Infof("escuchando en %s", srv.Addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -66,11 +112,4 @@ func main() {
 	defer cancel()
 	_ = srv.Shutdown(c)
 	cuentas.CerrarTodo()
-}
-
-func envO(k, def string) string {
-	if v := os.Getenv(k); v != "" {
-		return v
-	}
-	return def
 }

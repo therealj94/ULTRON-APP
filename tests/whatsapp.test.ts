@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import express, { type RequestHandler } from 'express';
-import { montarRutasWhatsapp, correrWhatsapp, resolverBorradorWhatsapp, borradorWhatsappDe, whatsappPermitido, _olvidarWhatsapp } from '../server/whatsapp';
+import { montarRutasWhatsapp, correrWhatsapp, resolverBorradorWhatsapp, borradorWhatsappDe, whatsappPermitido, _olvidarWhatsapp, _olvidarSesionesWhatsapp } from '../server/whatsapp';
 import { extraerPedidoHerramienta, instruccionHarness, resolverPedido } from '../lib/harness';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -52,7 +52,9 @@ async function puenteFalso(vinculado = true, otros: { chats?: any[]; mensajes?: 
     req.on('data', (c) => (datos += c));
     req.on('end', () => {
       pedidos.push(`${req.method} ${req.url}`);
-      const json = (code: number, j: unknown) => (res.writeHead(code, { 'content-type': 'application/json' }), res.end(JSON.stringify(j)));
+      // Como el puente nuevo: cada respuesta de una cuenta lleva su eco (X-Cuenta-Eco); uno de antes (`viejo`), no.
+      const eco = (): Record<string, string> => (!otros.viejo && /^(legado|[a-f0-9]{32,64})$/.test(String(req.headers['x-cuenta'] || '')) ? { 'x-cuenta-eco': String(req.headers['x-cuenta']) } : {});
+      const json = (code: number, j: unknown) => (res.writeHead(code, { 'content-type': 'application/json', ...eco() }), res.end(JSON.stringify(j)));
       const u = new URL(req.url!, 'http://x');
       // /salud sin clave; un puente de antes (`viejo`) no dice maxCuentas.
       if (u.pathname === '/salud') return json(200, otros.viejo ? { ok: true } : { ok: true, cuentas: otras.size + 1, maxCuentas: otros.max ?? 25 });
@@ -139,8 +141,13 @@ function sinT(s: string) {
   return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 }
 
-async function conPuente<T>(url: string | null, duenos: string, fn: () => Promise<T>, abierto?: '0' | '1'): Promise<T> {
-  const antes = { u: process.env.WHATSAPP_PUENTE_URL, c: process.env.WHATSAPP_PUENTE_CLAVE, d: process.env.WHATSAPP_DUENOS, a: process.env.WHATSAPP_ABIERTO };
+/** El secreto de las claves de cada cuenta (en producción ya está fijado; sin él solo los dueños tienen WhatsApp). */
+const SECRETO_CUENTAS = 'secreto-de-cuentas-de-prueba-de-24+';
+
+/** `abierto`: WHATSAPP_ABIERTO ('1' si no se dice: la prueba de cada cuenta; `null`, sin fijarla). */
+async function conPuente<T>(url: string | null, duenos: string, fn: () => Promise<T>, abierto: '0' | '1' | null = '1'): Promise<T> {
+  const antes = { u: process.env.WHATSAPP_PUENTE_URL, c: process.env.WHATSAPP_PUENTE_CLAVE, d: process.env.WHATSAPP_DUENOS, a: process.env.WHATSAPP_ABIERTO, s: process.env.WHATSAPP_CUENTA_SECRETO };
+  process.env.WHATSAPP_CUENTA_SECRETO = SECRETO_CUENTAS;
   if (abierto) process.env.WHATSAPP_ABIERTO = abierto;
   else delete process.env.WHATSAPP_ABIERTO;
   if (url) {
@@ -152,14 +159,16 @@ async function conPuente<T>(url: string | null, duenos: string, fn: () => Promis
   }
   process.env.WHATSAPP_DUENOS = duenos;
   _olvidarWhatsapp();
+  _olvidarSesionesWhatsapp();
   try {
     return await fn();
   } finally {
-    for (const [k, v] of [['WHATSAPP_PUENTE_URL', antes.u], ['WHATSAPP_PUENTE_CLAVE', antes.c], ['WHATSAPP_DUENOS', antes.d], ['WHATSAPP_ABIERTO', antes.a]] as const) {
+    for (const [k, v] of [['WHATSAPP_PUENTE_URL', antes.u], ['WHATSAPP_PUENTE_CLAVE', antes.c], ['WHATSAPP_DUENOS', antes.d], ['WHATSAPP_ABIERTO', antes.a], ['WHATSAPP_CUENTA_SECRETO', antes.s]] as const) {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
     }
     _olvidarWhatsapp();
+    _olvidarSesionesWhatsapp();
   }
 }
 
@@ -234,7 +243,7 @@ test('la app: foto de perfil y contactos, solo para su dueño; número de cada c
       const foto = await como(JOSE, ruta);
       assert.equal(foto.status, 200);
       assert.equal(foto.headers.get('content-type'), 'image/jpeg');
-      assert.equal(foto.headers.get('cache-control'), 'private, max-age=3600');
+      assert.equal(foto.headers.get('cache-control'), 'private, no-store', 'sin caché compartida (revisión del 5-oct)');
       assert.equal(await foto.text(), 'FOTO');
       const sin = await como(JOSE, '/api/whatsapp/foto?chat=120363@g.us');
       assert.equal(sin.status, 404, 'sin foto: 404 tal cual');
@@ -299,7 +308,13 @@ test('el puente cae o tiene otra clave: error claro, sin colgarse', async () => 
 test('el cerebro: revisa, lee por nombre, deja borrador y solo con el «sí» se manda; un mensaje que ordena no manda nada', async () => {
   const p = await puenteFalso();
   await conPuente(p.url, JOSE, async () => {
-    // Otra cuenta va por SU WhatsApp (no el de José): sin vincular, se le dice que lo agregue; nada de José.
+    // Un correo fuera del padrón sin la marca firmada de comunidad (revisión del 5-oct): el cerebro no lo da por bueno.
+    const intruso = await correrWhatsapp('intruso@x.hn', 'revisar');
+    assert.match(intruso, /no tiene WhatsApp conectado aquí/);
+    assert.doesNotMatch(intruso, /Beto/);
+    // Con la marca (su sesión firmada pasó por la app), va por SU WhatsApp (no el de José): sin vincular, se le dice
+    // que lo agregue; nada de José.
+    assert.equal(await whatsappPermitido('intruso@x.hn', { comunidad: true }), true);
     const otro = await correrWhatsapp('intruso@x.hn', 'revisar');
     assert.match(otro, /todavía no tiene su WhatsApp vinculado aquí.*Agregar mi WhatsApp/);
     assert.doesNotMatch(otro, /Beto/);
@@ -403,9 +418,9 @@ test('el harness: pide «whatsapp …» y la instrucción solo va a quien tiene 
     null,
     'a@x.hn,b@x.hn',
     async () => {
-      assert.ok(whatsappPermitido('B@x.hn'));
-      assert.ok(!whatsappPermitido('c@x.hn'));
-      assert.ok(!whatsappPermitido(''));
+      assert.ok(await whatsappPermitido('B@x.hn'));
+      assert.ok(!(await whatsappPermitido('c@x.hn')));
+      assert.ok(!(await whatsappPermitido('')));
     },
     '0'
   );
@@ -414,10 +429,10 @@ test('el harness: pide «whatsapp …» y la instrucción solo va a quien tiene 
     null,
     'jose',
     async () => {
-      assert.ok(whatsappPermitido('j.ordonez@ordenglobal.org'));
-      assert.ok(whatsappPermitido('jose@ordenglobal.org'));
-      assert.ok(!whatsappPermitido('m.ordonez@ordenglobal.org'));
-      assert.ok(!whatsappPermitido('jose@otro.hn'));
+      assert.ok(await whatsappPermitido('j.ordonez@ordenglobal.org'));
+      assert.ok(await whatsappPermitido('jose@ordenglobal.org'));
+      assert.ok(!(await whatsappPermitido('m.ordonez@ordenglobal.org')));
+      assert.ok(!(await whatsappPermitido('jose@otro.hn')));
     },
     '0'
   );
@@ -794,13 +809,12 @@ test('la clave de cada cuenta en el puente: legado para los dueños; para los de
     assert.notEqual(claveCuentaWhatsapp(MEDARDO), a);
     assert.equal(claveCuentaWhatsapp('medardo@ordenglobal.org'), claveCuentaWhatsapp(MEDARDO), 'la misma persona del padrón, el mismo WhatsApp');
     assert.equal(claveCuentaWhatsapp(''), '');
-    // Otro secreto, otra clave (WHATSAPP_CUENTA_SECRETO manda sobre la clave del puente).
+    // Otro secreto, otra clave; sin secreto, ninguna (nunca la clave del puente: revisión del 5-oct). Los dueños, igual.
     process.env.WHATSAPP_CUENTA_SECRETO = 'otro-secreto-de-cuentas-de-24+';
-    try {
-      assert.notEqual(claveCuentaWhatsapp(ANA), a);
-    } finally {
-      delete process.env.WHATSAPP_CUENTA_SECRETO;
-    }
+    assert.notEqual(claveCuentaWhatsapp(ANA), a);
+    delete process.env.WHATSAPP_CUENTA_SECRETO;
+    assert.equal(claveCuentaWhatsapp(ANA), '');
+    assert.equal(claveCuentaWhatsapp(JOSE), 'legado');
   });
   // Si José figura por su id del padrón, también va al legado; sin dueños, su persona tiene su propia clave.
   await conPuente('http://127.0.0.1:9', 'jose', async () => assert.equal(claveCuentaWhatsapp('jose@ordenglobal.org'), 'legado'));

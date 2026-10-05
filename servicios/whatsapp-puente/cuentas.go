@@ -13,6 +13,11 @@ package main
 //   - Se conectan a pedido: al arrancar solo se reconectan las que tienen sesión; una carpeta sin sesión (una
 //     vinculación que quedó a medias) se borra.
 //   - Tope: WHATSAPP_MAX_CUENTAS (25). Lleno, /vincular de una cuenta nueva contesta CUPO_LLENO.
+//   - Los últimos WHATSAPP_RESERVA_JUNTA (2) lugares son solo para la junta y el padrón: el servidor de AU-RA lo dice
+//     con X-Cuenta-Prioridad: junta (solo él llega al puente, con su clave). «legado» siempre tiene prioridad.
+//   - Una vinculación que no termina (sin sesión) vence a los 3 minutos de abrirse y suelta su lugar, aunque siga
+//     «vinculando» y aunque el cupo esté lleno (revisión del 5-oct, MEDIO-2: si no, unas pocas identidades de
+//     usar y tirar llenaban el cupo). Se barre en cada /vincular y cada 30 s (main.go).
 
 import (
 	"errors"
@@ -22,6 +27,7 @@ import (
 	"regexp"
 	"sort"
 	"sync"
+	"time"
 
 	waLog "go.mau.fi/whatsmeow/util/log"
 )
@@ -35,12 +41,18 @@ const ClaveLegado = "legado"
 
 var ErrCupoLleno = errors.New("el puente de WhatsApp ya tiene todas las cuentas que caben; avísale al administrador de AU-RA")
 
+// Cuánto puede durar una vinculación sin terminar (sin sesión guardada), contado desde que se abrió su cuenta. Lo que
+// tarda WhatsApp en agotar los QR (~2 min y medio) más un margen; volver a pedir el código no lo estira.
+const VenceVinculacion = 3 * time.Minute
+
 // Lo que tiene una cuenta de AU-RA en el puente: su WhatsApp, su almacén y su carpeta.
 type Espacio struct {
 	clave   string
 	dir     string
 	cuenta  Cuenta
 	almacen *Almacen
+	// Cuándo se abrió (el primer /vincular, o al arrancar): una vinculación sin sesión vence contada desde aquí.
+	creada time.Time
 	// Los envíos con id van de uno en uno (AUR13): buscar si ya salió y mandarlo no se cruzan. Por cuenta.
 	enviando sync.Mutex
 }
@@ -53,7 +65,9 @@ type Registro struct {
 	mu      sync.Mutex
 	raiz    string // DATOS/cuentas
 	max     int
+	reserva int // los últimos lugares, solo para la junta y el padrón (Reservar)
 	log     waLog.Logger
+	ahora   func() time.Time
 	abrir   AbrirCuenta
 	cuentas map[string]*Espacio
 }
@@ -70,7 +84,21 @@ func NuevoRegistro(datos string, max int, log waLog.Logger, abrir AbrirCuenta) (
 	if err := migrarLegado(datos, raiz, log); err != nil {
 		return nil, err
 	}
-	return &Registro{raiz: raiz, max: max, log: log, abrir: abrir, cuentas: map[string]*Espacio{}}, nil
+	return &Registro{raiz: raiz, max: max, log: log, abrir: abrir, ahora: time.Now, cuentas: map[string]*Espacio{}}, nil
+}
+
+// Guarda los últimos `n` lugares del cupo para la junta y el padrón (WHATSAPP_RESERVA_JUNTA). Nunca el cupo entero:
+// queda al menos un lugar para cualquiera.
+func (r *Registro) Reservar(n int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if n > r.max-1 {
+		n = r.max - 1
+	}
+	if n < 0 {
+		n = 0
+	}
+	r.reserva = n
 }
 
 // Lo de la cuenta de antes, en la raíz del disco. Se mueve (mismo disco: rename, sin copiar) a cuentas/legado.
@@ -155,20 +183,27 @@ func (r *Registro) Obtener(clave string) (*Espacio, bool) {
 	return e, ok
 }
 
-// La de esa clave; si no existe, la crea (solo /vincular), si cabe.
-func (r *Registro) ObtenerOCrear(clave string) (*Espacio, error) {
+// La de esa clave; si no existe, la crea (solo /vincular), si cabe. `prioridad`: es de la junta o del padrón (puede
+// usar los lugares guardados); «legado» siempre. Antes, barre las vinculaciones vencidas (también la suya: así una
+// cuenta que se quedó a medias vuelve a empezar con su plazo entero).
+func (r *Registro) ObtenerOCrear(clave string, prioridad bool) (*Espacio, error) {
 	if !claveValida.MatchString(clave) {
 		return nil, errors.New("clave de cuenta inválida")
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.barrerVencidas()
 	if e, ok := r.cuentas[clave]; ok {
 		return e, nil
 	}
-	if len(r.cuentas) >= r.max {
+	tope := r.max
+	if !prioridad && clave != ClaveLegado {
+		tope = r.max - r.reserva
+	}
+	if len(r.cuentas) >= tope {
 		r.liberarAMedias()
 	}
-	if len(r.cuentas) >= r.max {
+	if len(r.cuentas) >= tope {
 		return nil, ErrCupoLleno
 	}
 	e, err := r.abrirEspacio(clave)
@@ -177,6 +212,29 @@ func (r *Registro) ObtenerOCrear(clave string) (*Espacio, error) {
 	}
 	r.cuentas[clave] = e
 	return e, nil
+}
+
+// El barrido periódico (main.go): suelta las vinculaciones vencidas. Devuelve cuántas.
+func (r *Registro) Barrer() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.barrerVencidas()
+}
+
+// Las que llevan más de VenceVinculacion sin sesión (nunca terminaron de vincular, o las desvincularon desde el
+// teléfono) se sueltan y se borran, aunque sigan «vinculando». Una con sesión nunca. Con r.mu tomado.
+func (r *Registro) barrerVencidas() int {
+	ahora := r.ahora()
+	n := 0
+	for k, e := range r.cuentas {
+		if !e.cuenta.TieneSesion() && ahora.Sub(e.creada) >= VenceVinculacion {
+			r.log.Infof("cuenta %s: la vinculación venció sin terminar: se borra", nombreLog(k))
+			delete(r.cuentas, k)
+			_ = r.soltar(e)
+			n++
+		}
+	}
+	return n
 }
 
 // Con el cupo lleno, antes de decir que no: las que empezaron a vincular y no terminaron (sin sesión y sin
@@ -247,7 +305,7 @@ func (r *Registro) abrirEspacio(clave string) (*Espacio, error) {
 		alm.Cerrar()
 		return nil, err
 	}
-	return &Espacio{clave: clave, dir: dir, cuenta: c, almacen: alm}, nil
+	return &Espacio{clave: clave, dir: dir, cuenta: c, almacen: alm, creada: r.ahora()}, nil
 }
 
 // Cierra la cuenta y borra su carpeta (la sesión, los chats y las fotos).

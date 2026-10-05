@@ -282,7 +282,7 @@ async function sugerirConModelo(xs: Clasificada[], modelo: ModeloTexto): Promise
 /** Sus chats de WhatsApp (los 40 más recientes; de los directos sin leer, los últimos mensajes). */
 export async function fuenteWhatsapp(dueno: string): Promise<ConversacionTriaje[]> {
   if (!whatsappDisponible()) throw new Error('no está conectado en este servidor');
-  if (!whatsappPermitido(dueno)) throw new Error('esta cuenta no tiene WhatsApp conectado');
+  if (!(await whatsappPermitido(dueno))) throw new Error('esta cuenta no tiene WhatsApp conectado');
   const e = await estadoWA(dueno);
   if (!e.vinculado) throw new Error('WhatsApp todavía no está vinculado');
   const chats = await chatsWA(dueno, '', 40);
@@ -431,7 +431,7 @@ export async function correrTriajeConEstado(dueno: string, arg: string, _ambito 
   if (!dueno) return fallo('TRIAJE: solo con sesión. Pídele que entre con su cuenta.', 'sin-sesion');
   const v = plegar(String(arg || '').split(/\s+/)[0] || 'revisar');
   const canal: 'todo' | 'whatsapp' | 'correo' = /^(whatsapp|wa|chats)$/.test(v) ? 'whatsapp' : /^(correo|correos|email|mail)$/.test(v) ? 'correo' : 'todo';
-  if (canal === 'whatsapp' && !fuentes?.whatsapp && !(whatsappDisponible() && whatsappPermitido(dueno))) return fallo('TRIAJE: su WhatsApp no está conectado aquí. No lo revisé; dilo con naturalidad.', 'no-disponible');
+  if (canal === 'whatsapp' && !fuentes?.whatsapp && !(whatsappDisponible() && (await whatsappPermitido(dueno)))) return fallo('TRIAJE: su WhatsApp no está conectado aquí. No lo revisé; dilo con naturalidad.', 'no-disponible');
   try {
     // Lo que va al modelo nombra a su círculo por la vista de lo que limitó (revisión 12); sin la del turno, la lee.
     const r = await triar(dueno, { canal, fuentes, vista: vista ?? (await vistaDePersona(dueno)) });
