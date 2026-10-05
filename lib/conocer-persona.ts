@@ -562,6 +562,18 @@ export function textoAutorizado(texto: string, terminos: readonly (readonly stri
   return limpiarTexto(texto, terminos, RESERVADO);
 }
 
+/**
+ * La vista autorizada para los textos personales que van al modelo (su memoria, su hilo, sus misiones):
+ * `texto` tapa lo limitado; `sabe` false = no se pudo saber qué está limitado, y entonces `texto` no deja
+ * pasar nada (fallo cerrado). La arma server/contexto-turno.ts (vistaAutorizada) y la reciben las memorias
+ * (lib/memoria.ts, lib/memoria-miembro.ts) y la iniciativa.
+ */
+export type VistaTexto = { readonly sabe: boolean; texto(s: string): string };
+
+export function vistaDeTerminos(terminos: readonly (readonly string[])[] | null): VistaTexto {
+  return { sabe: terminos !== null, texto: (s: string) => textoAutorizado(s, terminos) };
+}
+
 export function precargarConocer(persona: string): Promise<void> {
   const clave = clavePersona(persona);
   return Promise.all([cajones.leer(clave), precargarSupresiones(clave)]).then(

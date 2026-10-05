@@ -10,6 +10,7 @@ import { miembrosUltron, nombreDe, puedeCambiarSistema, quienEs, type MiembroId 
 import { bucketMemoria, s3GetJson, s3Listo, s3PutJson } from './s3';
 import { capasHilo, type HiloMemoria } from './conversacion';
 import type { NivelAura } from './perfiles/tipos';
+import type { VistaTexto } from './conocer-persona';
 
 export type CanalMem = 'mesa' | 'telegram' | 'sistema';
 
@@ -227,8 +228,14 @@ export function hiloDe(quien: MiembroId | null): TurnoMem[] {
 /** Lo que la persona pidió guardar a propósito (y no por nombrar «la mina» o «la junta»). */
 const PEDIDO_DE_RECORDAR = /\b(recuerda|record[aá]|acu[eé]rdate|guarda|anota|apunta|no olvides)\b/i;
 
-/** `hilo`: qué parte de la conversación reciente va en este bloque (lib/conversacion.ts HiloMemoria). */
-export function promptMemoria(quien: MiembroId | null, opts: { nivel?: NivelAura; nombre?: string; hilo?: HiloMemoria } = {}): string {
+/**
+ * `hilo`: qué parte de la conversación reciente va en este bloque (lib/conversacion.ts HiloMemoria).
+ * `vista`: lo que la persona marcó «No usarlo» (server/contexto-turno.ts vistaAutorizada). Pasa por ella lo
+ * SUYO —su memoria privada y su hilo—; sin saber qué está limitado, no entra nada de eso. Los hechos
+ * compartidos de la junta y los cambios del sistema son de la organización, no datos personales: no se tocan.
+ * El turno siempre la da.
+ */
+export function promptMemoria(quien: MiembroId | null, opts: { nivel?: NivelAura; nombre?: string; hilo?: HiloMemoria; vista?: VistaTexto } = {}): string {
   /*
    * Un miembro de la comunidad (entró por Genesis abierto, no está en el padrón) no tiene cajón aquí
    * y no ve NADA de la junta: ni sus hechos compartidos, ni los cambios que pidió, ni la memoria de
@@ -245,7 +252,15 @@ export function promptMemoria(quien: MiembroId | null, opts: { nivel?: NivelAura
   const a = cache || leerDisco();
   const id = quien;
   const nombre = nombreDe(id);
-  const privada = (id && a.perfiles[id]) || { corta: [], larga: [] };
+  const cruda = (id && a.perfiles[id]) || { corta: [], larga: [] };
+  const vista = opts.vista;
+  const aut = (s: string) => (vista ? vista.texto(s) : s);
+  const privada = {
+    larga: cruda.larga.map((h) => ({ ...h, hecho: aut(h.hecho) })).filter((h) => h.hecho.trim()),
+    corta: cruda.corta.map((t) => ({ ...t, texto: aut(t.texto) })).filter((t) => t.texto.trim()),
+  };
+  // Sin saber qué limitó, no se dice «nada aún» (no es que no haya): no está disponible en este turno.
+  const sinVista = vista && !vista.sabe ? '(no disponible en este turno: no pude confirmar lo que marcó «No usarlo»)' : '';
   const capas = capasHilo(privada.corta);
   const hilo = opts.hilo || 'todo';
   const hechosYo = privada.larga.map((h) => `- ${h.hecho}`).join('\n');
@@ -264,12 +279,12 @@ export function promptMemoria(quien: MiembroId | null, opts: { nivel?: NivelAura
   return [
     `HABLAS CON: ${nombre}. No mezcles la conversación privada del otro miembro.`,
     id
-      ? `MEMORIA LARGA / PRIVADA DE ${nombre.toUpperCase()}:\n${hechosYo || '(nada aún)'}`
+      ? `MEMORIA LARGA / PRIVADA DE ${nombre.toUpperCase()}:\n${hechosYo || sinVista || '(nada aún)'}`
       : 'No identifiqué si es José, Medardo, Carlos o Mayra. No recito memoria privada de nadie.',
     acceso,
     `HECHOS COMPARTIDOS DE LA JUNTA:\n${hechosJunta || '(nada)'}`,
-    hilo === 'todo' ? `HILO CORTO CON ${nombre.toUpperCase()} (lo último; «esto» es esto, no lo sueltes):\n${capas.corto || '(nada)'}` : '',
-    `CONVERSACIÓN MEDIANA CON ${nombre.toUpperCase()} (sigue el hilo, no la del otro):\n${capas.mediano || '(nada)'}`,
+    hilo === 'todo' ? `HILO CORTO CON ${nombre.toUpperCase()} (lo último; «esto» es esto, no lo sueltes):\n${capas.corto || sinVista || '(nada)'}` : '',
+    `CONVERSACIÓN MEDIANA CON ${nombre.toUpperCase()} (sigue el hilo, no la del otro):\n${capas.mediano || sinVista || '(nada)'}`,
     `CAMBIOS RECIENTES (quién los pidió):\n${cambios || '(nada)'}`,
   ]
     .filter(Boolean)
