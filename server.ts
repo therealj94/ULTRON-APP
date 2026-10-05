@@ -113,7 +113,7 @@ import {
 } from './server/computadora';
 import { avisosDeEnvio, borradorDe, correrCorreoConEstado, montarRutasCorreo, respuestaAlBorrador } from './server/correo';
 import { accionTareaPorId, bloqueTarea, correrTareaConEstado, precargarTareas, resolverTareaEnCurso, tareaDe, tareasDePersona } from './lib/tarea-en-curso';
-import { borradorWhatsappDe, correrWhatsappConEstado, destinoWhatsapp, montarRutasWhatsapp, whatsappDisponible, whatsappPermitido } from './server/whatsapp';
+import { borradorWhatsappDe, correrWhatsappConEstado, destinoWhatsapp, montarRutasWhatsapp, whatsappDisponible, whatsappOfrecido, whatsappPermitido } from './server/whatsapp';
 import { accionIniciativa, bloqueIniciativaTurno, componerIniciativa, correrMisionTurnoConEstado, duenoMisiones } from './server/iniciativa';
 import { contadoresProductivos } from './server/fuentes-iniciativa';
 import { bloquesPersonales, precargarVista, vistaAutorizada, vistaDeHerramientas } from './server/contexto-turno';
@@ -3331,7 +3331,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   // El system no cambia según la frase: el harness va siempre (antes se quitaba en «¿cómo estás?») y el
   // «piensa paso a paso» va en el mensaje del turno cuando la pregunta lo pide.
   const userTurno = mensajeHilo || message;
-  const conWhatsapp = !!duenoComputadora && whatsappDisponible() && whatsappPermitido(duenoComputadora);
+  // Su WhatsApp: a quien lo tiene vinculado aquí (cada cuenta el suyo; a los dueños, como siempre). Con tope corto.
+  const conWhatsapp = !!duenoComputadora && (await whatsappOfrecido(duenoComputadora));
   const compuesto = construirMensajes({ personalidad: personalidadSistema, user: userTurno, canal, historial: hilo, nivel, harness: true, cot: false, whatsapp: conWhatsapp, sesion: !!duenoComputadora });
   // También en las tareas de código: el system ya no lo lleva (cot: false), así que va siempre aquí.
   const cotTurno = requiereCot(userTurno);

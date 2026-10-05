@@ -39,10 +39,15 @@ const ENV: Record<string, string[]> = {
   // La computadora de los agentes (scripts/nodo-computadora): https://<ip>.sslip.io/api y su clave.
   computadora_url: ['COMPUTADORA_URL'],
   computadora_clave: ['COMPUTADORA_CLAVE'],
-  // El WhatsApp personal (servicios/whatsapp-puente, servicio privado de Render) y quién lo puede ver.
+  // El WhatsApp personal (servicios/whatsapp-puente, servicio privado de Render; uno por cuenta de AU-RA).
+  // WHATSAPP_DUENOS: las cuentas que usan el WhatsApp de antes (el «legado», el de José). WHATSAPP_ABIERTO=0 lo
+  // cierra a todos los demás. La clave de cada cuenta en el puente es un HMAC con WHATSAPP_CUENTA_SECRETO (si
+  // falta, con la clave del puente: cambiarla sin fijar la otra deja a cada cuenta sin su WhatsApp guardado).
   whatsapp_url: ['WHATSAPP_PUENTE_URL'],
   whatsapp_clave: ['WHATSAPP_PUENTE_CLAVE'],
   whatsapp_duenos: ['WHATSAPP_DUENOS'],
+  whatsapp_abierto: ['WHATSAPP_ABIERTO'],
+  whatsapp_cuenta_secreto: ['WHATSAPP_CUENTA_SECRETO', 'WHATSAPP_PUENTE_CLAVE'],
   // Avisos web (la AU-RA instalada en un iPhone): el par VAPID P-256 en base64url (lib/push-web.ts).
   webpush_publica: ['WEB_PUSH_VAPID_PUBLICA'],
   webpush_privada: ['WEB_PUSH_VAPID_PRIVADA'],
