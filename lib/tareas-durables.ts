@@ -20,7 +20,8 @@
  *  · El índice de un dueño solo se da por COMPLETO cuando su inventario se reconcilió (A7, auditoría del 5-oct): un
  *    índice de antes (v1, o uno que se perdió y se rehízo) puede no tener todas sus tareas aunque cada id que trae se
  *    lea bien. El inventario enumera los objetos `tareas/<huella>/…` de ESE dueño, comprueba que cada uno es suyo y
- *    anota (solo agrega, con CAS) los que faltaban. Ver «inventario» más abajo.
+ *    anota (solo agrega, con CAS) los que faltaban. Ver «inventario» más abajo. Operación puede revertirlo por dueño
+ *    (`revertirReconciliacionTareas`: precisa, deja la marca `revertido` y no se rehace sola hasta que se reactive).
  *
  * Reglas (sección 8):
  *  · El dueño sale de la sesión del servidor; aquí siempre es un parámetro, nunca un campo del cuerpo.
@@ -426,9 +427,28 @@ export async function crearTarea(dueno: string, d: NuevaTarea, o: Opciones = {})
  * El índice de un dueño. `fin`: cuándo se supo que terminó (solo esas se recortan, las más viejas primero). Una entrada
  * sin `fin` es «puede seguir activa» (las del índice v1 no lo traen): la lista la lee y, si ya terminó, la repara.
  */
-type EntradaIndice = { id: string; t: number; fin?: number; /** A7: la ronda de inventario que la recuperó (para revertir). */ rec?: string };
-/** A7: constancia de que el inventario de este dueño se recorrió ENTERO y lo que faltaba quedó anotado. */
-type MarcaInventario = { v: number; t: number; fuente: AlmacenDurable['tipo']; ronda: string; revisadas: number; agregadas: number };
+type EntradaIndice = {
+  id: string;
+  t: number;
+  fin?: number;
+  /** A7: la ronda de inventario que la recuperó (para revertir). */
+  rec?: string;
+  /** Cuándo la recuperó (para revertir: si el objeto cambió después, ya es historial propio). Las de a46b496 no lo traen. */
+  rt?: number;
+};
+/**
+ * A7: constancia de que el inventario de este dueño se recorrió ENTERO y lo que faltaba quedó anotado. `dr`: cuánto subió
+ * `recortadas` al marcarlo (lo que contó el inventario; la reversión lo descuenta). Las marcas de a46b496 no lo traen.
+ */
+type MarcaInventario = { v: number; t: number; fuente: AlmacenDurable['tipo']; ronda: string; revisadas: number; agregadas: number; dr?: number };
+/**
+ * Revisión externa sobre a46b496: constancia de que operación REVIRTIÓ la reconciliación de este dueño. Vive en el índice
+ * (no en la memoria de una réplica): mientras esté y su `gen` llegue a la generación vigente
+ * (`AURA_RECONCILIAR_TAREAS_GENERACION`), ninguna réplica vuelve a reconciliar a este dueño ni a agregarle nada. Se quita
+ * con `reactivarReconciliacionTareas` (un dueño) o subiendo la generación (todos). `restaurado`: ya se devolvió lo que el
+ * recorte del inventario sacó del índice de antes (no se repite). `respaldo`: de qué respaldo salió eso.
+ */
+type MarcaReversion = { v: 1; t: number; gen: number; ronda: string | null; respaldo: string; restaurado: boolean; quitadas: number; conservadas: number; restauradas: number; pendientes: number };
 /**
  * A7: un recorrido del inventario a medias (reanudable): hasta qué clave se revisó sin dudas y lo que se lleva. Vive EN el
  * índice, en la misma escritura CAS que lo que agrega: si el índice se pierde o lo rehace otro, el avance se va con él
@@ -441,8 +461,11 @@ type PaseInventario = { ronda: string; desde: string | null; revisadas: number; 
  * (MAX_HISTORIAL_INDICE) ya no lista. Sube con cada recorte; el inventario, al terminar un recorrido entero, la deja en lo
  * que contó (lo que encontró menos lo que el índice guarda). Una terminada que vuelve al índice (se leyó por su id) la
  * descuenta. Es una cuenta, no una lista de ids (esas ya no están en el índice).
+ * `revertido`/`reversiones` (revisión externa sobre a46b496): la reconciliación de este dueño se revirtió (y cuántas veces,
+ * para que cada generación de inventario guarde su propio respaldo). Un servidor de antes los conserva al escribir (copia
+ * el resto del índice) pero no los respeta: ver docs/entregas/ROLLBACK-COORDINADO.md §7.
  */
-type Indice = { v: 1 | 2; ids: EntradaIndice[]; inventario?: MarcaInventario; pase?: PaseInventario; recortadas?: number };
+type Indice = { v: 1 | 2; ids: EntradaIndice[]; inventario?: MarcaInventario; pase?: PaseInventario; recortadas?: number; revertido?: MarcaReversion; reversiones?: number };
 
 /** Recorta el índice: todas las que pueden seguir activas y las MAX_HISTORIAL_INDICE terminadas más recientes. */
 function recortarIndice(ids: EntradaIndice[]): EntradaIndice[] {
@@ -570,6 +593,11 @@ export async function asegurarEnIndice(dueno: string, reg: Pick<RegistroTarea, '
  * Interruptor: `AURA_RECONCILIAR_TAREAS` = `agregar` (por omisión: agrega lo que falta) · `diagnostico` (inventaría y
  * compara, no escribe nada) · `off` (ni lista). Con `diagnostico` u `off` el índice nunca se marca reconciliado: la lista
  * sigue diciendo `completo: false` (no se fabrica la garantía apagando el interruptor).
+ *
+ * Reversión por dueño (`revertirReconciliacionTareas`, más abajo): quita lo agregado que no tuvo actividad, devuelve lo
+ * que el recorte sacó y deja `revertido` en el índice; con esa marca (y `gen` ≥ `AURA_RECONCILIAR_TAREAS_GENERACION`) el
+ * dueño queda `inventario: 'revertido'` y nadie lo vuelve a reconciliar hasta `reactivarReconciliacionTareas` o una
+ * generación nueva.
  */
 
 export type ModoReconciliacion = 'agregar' | 'diagnostico' | 'apagado';
@@ -585,12 +613,23 @@ export function modoReconciliacion(env: NodeJS.ProcessEnv = process.env): ModoRe
 }
 
 /**
+ * La generación de inventario vigente (`AURA_RECONCILIAR_TAREAS_GENERACION`, entero ≥ 1; 1 por omisión). Un dueño revertido
+ * en la generación N no se vuelve a reconciliar mientras la vigente sea ≤ N; subirla reactiva a todos los revertidos de
+ * una vez (cada uno se reconcilia en su siguiente lectura). Para uno solo: `reactivarReconciliacionTareas`.
+ */
+export function generacionReconciliacion(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Math.floor(Number(String(env.AURA_RECONCILIAR_TAREAS_GENERACION ?? '').trim()));
+  return Number.isFinite(n) && n >= 1 ? n : 1;
+}
+
+/**
  * Cómo está el inventario de un dueño. Solo `reconciliado` permite `completo: true`; los demás son honestos sobre por qué
  * no: `en-curso` (recorrido a medias, se sigue en la próxima lectura) · `sin-verificar` (hay objetos en su carpeta cuya
  * pertenencia no se pudo demostrar: no se adoptan ni se cuentan) · `sin-fuente` (el almacén no enumera) · `apagado` /
- * `diagnostico` (el interruptor) · `error` (el almacén no contestó: la incertidumbre se conserva).
+ * `diagnostico` (el interruptor) · `error` (el almacén no contestó: la incertidumbre se conserva) · `revertido`
+ * (operación revirtió la reconciliación de este dueño: no se reconcilia hasta que la reactive).
  */
-export type EstadoInventario = 'reconciliado' | 'en-curso' | 'sin-verificar' | 'sin-fuente' | 'apagado' | 'diagnostico' | 'error';
+export type EstadoInventario = 'reconciliado' | 'en-curso' | 'sin-verificar' | 'sin-fuente' | 'apagado' | 'diagnostico' | 'error' | 'revertido';
 export type ResultadoInventario = { estado: EstadoInventario; escribio: boolean; agregadas: number; recuperables?: number };
 /** Cuánto trabajo hace UNA lectura de la lista mientras el inventario no está reconciliado (el resto, en la siguiente). */
 export type PresupuestoInventario = { porListado: number; listados: number; lecturas: number };
@@ -642,7 +681,14 @@ export function _olvidarEsperasListado() {
 }
 
 const indiceReconciliado = (ix: Indice | null | undefined) => !!ix?.inventario && Number(ix.inventario.v) >= ESQUEMA_INVENTARIO;
-const claveRespaldo = (dueno: string) => claveDe(ESPACIO_RESPALDO_INDICE, dueno, `antes-de-inventario-v${ESQUEMA_INVENTARIO}`);
+/** ¿Operación revirtió a este dueño y la reversión sigue en pie para la generación `gen`? */
+const indiceRevertido = (ix: Indice | null | undefined, gen: number) => !!ix?.revertido && Number(ix.revertido.gen) >= gen;
+/**
+ * El respaldo del índice de antes de cada generación de inventario de un dueño: la primera (nunca revertida) usa la clave de
+ * siempre (`antes-de-inventario-v1`); tras la reversión número n, la siguiente reconciliación guarda el suyo en `…-r<n>`.
+ */
+const sufijoRespaldo = (reversiones: unknown) => (Number(reversiones) > 0 ? `-r${Math.floor(Number(reversiones))}` : '');
+const claveRespaldo = (dueno: string, sufijo = '') => claveDe(ESPACIO_RESPALDO_INDICE, dueno, `antes-de-inventario-v${ESQUEMA_INVENTARIO}${sufijo}`);
 const prefijoTareas = (dueno: string) => `${ESPACIO_TAREAS}/${huellaDueno(dueno)}`;
 /** Un id de tarea tal como lo escribe `crearTarea` (lo que no lo es no es una tarea: no entra al inventario). */
 const ES_ID_TAREA = /^(?!h_)[A-Za-z0-9-][A-Za-z0-9_-]{3,63}$/;
@@ -764,10 +810,13 @@ export async function reconciliarInventarioTareas(
   const nada = (estado: EstadoInventario, extra: Partial<ResultadoInventario> = {}): ResultadoInventario => ({ estado, escribio: false, agregadas: 0, ...extra });
   if (modo === 'apagado') return nada('apagado');
   if (!a.listar) return nada('sin-fuente');
+  const gen = generacionReconciliacion();
   const ix = await leerDurable<Indice>(claveIndice(dueno), a).catch((e) => ({ ok: false as const, detalle: String(e?.message || e) }));
   if (ix.ok === false) return nada('error');
   const indice = ix.valor;
   if (indiceReconciliado(indice)) return nada('reconciliado');
+  // Revertido por operación (la marca está en el índice: la ven todas las réplicas): ni se lista ni se agrega nada.
+  if (indiceRevertido(indice, gen)) return nada('revertido');
   // Revisión 13: el último listado de este dueño falló hace poco: no se vuelve a pedir todavía (la incertidumbre se conserva).
   if (!o.forzar && esperaListado(dueno, a, ahora)) return nada('error');
   const presupuesto = { ...PRESUPUESTO_INVENTARIO, ...(o.presupuesto || {}) };
@@ -798,15 +847,15 @@ export async function reconciliarInventarioTareas(
   if (d.fallo) avisarInventario('lectura', d.fallo);
   if (d.hasta === desde && !d.agotado) return nada(d.fallo ? 'error' : 'en-curso');
   if (d.propuesta.length) {
-    // El índice como estaba ANTES de que el inventario le agregara nada (una sola vez por dueño y esquema).
-    const resp = await crearUnaVez(claveRespaldo(dueno), { v: 1, t: ahora, ronda, indice: indice ?? null }, a);
+    // El índice como estaba ANTES de que el inventario le agregara nada (una sola vez por dueño, esquema y generación).
+    const resp = await crearUnaVez(claveRespaldo(dueno, sufijoRespaldo(indice?.reversiones)), { v: 1, t: ahora, ronda, indice: indice ?? null }, a);
     if (resp.ok === false) {
       avisarInventario('respaldo', resp.detalle);
       return nada('error');
     }
   }
   let agregadas = 0;
-  let aborto: 'ya' | 'otro' | null = null;
+  let aborto: 'ya' | 'otro' | 'revertido' | null = null;
   let marcado = false;
   const w = await modificarDurable<Indice>(
     claveIndice(dueno),
@@ -815,27 +864,31 @@ export async function reconciliarInventarioTareas(
       aborto = null;
       marcado = false;
       if (indiceReconciliado(actual)) return void (aborto = 'ya');
+      // Operación revirtió mientras esta réplica listaba: lo que encontró no se escribe (ni aunque fuera su primer tramo).
+      if (indiceRevertido(actual, gen)) return void (aborto = 'revertido');
       const p0 = actual?.pase;
       // El recorrido tiene que seguir siendo este y estar donde se dejó; si no, no se escribe nada.
       if (pase ? !p0 || p0.fin || p0.ronda !== ronda || (p0.desde ?? null) !== desde : p0 && !p0.fin) return void (aborto = 'otro');
       const previo = pase && p0 ? p0 : null;
       const ids = actual?.ids || [];
       const ya = new Set(ids.map((x) => x.id));
-      const nuevas = d.propuesta.filter((x) => !ya.has(x.id)).map((x) => ({ ...x, rec: ronda }));
+      const nuevas = d.propuesta.filter((x) => !ya.has(x.id)).map((x) => ({ ...x, rec: ronda, rt: ahora }));
       const fusion = nuevas.length ? recortarIndice([...ids, ...nuevas]) : ids;
       agregadas = fusion.filter((x) => !ya.has(x.id)).length;
       const revisadas = (previo?.revisadas ?? 0) + d.revisadas;
       const sinVerificar = (previo?.sinVerificar ?? 0) + d.sinVerificar;
       const total = (previo?.agregadas ?? 0) + agregadas;
       const propias = (previo?.propias ?? 0) + d.enIndice + d.propuesta.length;
-      const { pase: _p, inventario: _i, ...resto } = actual || ({ v: 2, ids: [] } as Indice);
+      // Una reversión de una generación anterior (la vigente es mayor) deja de valer en cuanto esta generación escribe.
+      const { pase: _p, inventario: _i, revertido: _r, ...resto } = actual || ({ v: 2, ids: [] } as Indice);
       const base: Indice = { ...resto, v: 2, ids: fusion };
       if (d.agotado && sinVerificar === 0) {
         marcado = true;
         // Revisión 13: las suyas que el recorrido vio y el tope dejó fuera. Las que ya contaba el índice (recortadas antes)
         // las vuelve a ver el recorrido: se toma la mayor de las dos cuentas, nunca la suma (no se cuenta dos veces).
-        const recortadas = Math.max(Number(resto.recortadas) || 0, propias - fusion.length);
-        return { ...base, ...(recortadas > 0 ? { recortadas } : {}), inventario: { v: ESQUEMA_INVENTARIO, t: ahora, fuente: a.tipo, ronda, revisadas, agregadas: total } };
+        const antes = Number(resto.recortadas) || 0;
+        const recortadas = Math.max(antes, propias - fusion.length);
+        return { ...base, ...(recortadas > 0 ? { recortadas } : {}), inventario: { v: ESQUEMA_INVENTARIO, t: ahora, fuente: a.tipo, ronda, revisadas, agregadas: total, dr: recortadas - antes } };
       }
       return { ...base, pase: { ronda, desde: d.hasta, revisadas, agregadas: total, sinVerificar, inicio: previo?.inicio ?? ahora, actualizado: ahora, propias, ...(d.agotado ? { fin: ahora } : {}) } };
     },
@@ -846,38 +899,235 @@ export async function reconciliarInventarioTareas(
     return nada('error');
   }
   if (aborto === 'ya') return nada('reconciliado');
+  if (aborto === 'revertido') return nada('revertido');
   if (aborto === 'otro') return nada('en-curso');
   const estado: EstadoInventario = marcado ? 'reconciliado' : d.agotado ? 'sin-verificar' : d.fallo ? 'error' : 'en-curso';
   return { estado, escribio: w.cambiado, agregadas };
 }
 
 /**
- * REVERSIÓN (A7): quita del índice las entradas que agregó el inventario (`rec`) y su marca/avance. No borra objetos ni
- * toca las demás entradas (las que anotaron la creación o la lectura por id). La copia de antes queda en
- * `tareas/indice-respaldo/<huella>/antes-de-inventario-v1` (`leerRespaldoIndiceTareas`). Para que no se vuelva a
- * reconciliar sola, antes `AURA_RECONCILIAR_TAREAS=off` (o `diagnostico`).
+ * Desde cuándo una entrada recuperada cuenta «sin actividad»: su `rt`; en las de a46b496 (sin `rt`), el inicio de su ronda
+ * (`inv_<ms en base 36><6 hex>`), que es anterior a la recuperación (así se conserva de más, nunca de menos). Sin
+ * ninguno de los dos, 0: cualquier objeto cuenta como «con actividad» y la entrada se queda.
  */
-export async function revertirReconciliacionTareas(dueno: string, a: AlmacenDurable = almacenDurable()): Promise<{ ok: true; quitadas: number } | { ok: false; detalle: string }> {
-  let quitadas = 0;
+function recuperadaEn(x: EntradaIndice): number {
+  if (Number.isFinite(x.rt)) return Number(x.rt);
+  const m = /^inv_([0-9a-z]+)[0-9a-f]{6}$/.exec(String(x.rec || ''));
+  const t = m ? parseInt(m[1], 36) : NaN;
+  return Number.isFinite(t) ? t : 0;
+}
+
+type Lectura = { ok: true; tarea: RegistroTarea | null } | { ok: false };
+/** Lee varias tareas del dueño (de a 10; comprobando el dueño como `leerTarea`). Un fallo es `ok: false`, nunca «no existe». */
+async function leerTareas(dueno: string, ids: string[], a: AlmacenDurable): Promise<Map<string, Lectura>> {
+  const m = new Map<string, Lectura>();
+  for (let i = 0; i < ids.length; i += 10) {
+    const tanda = ids.slice(i, i + 10);
+    const leidas = await Promise.all(tanda.map((id) => leerTarea(dueno, id, a).catch(() => ({ ok: false as const, detalle: '' }))));
+    tanda.forEach((id, j) => {
+      const l = leidas[j];
+      m.set(id, l.ok ? { ok: true, tarea: l.tarea } : { ok: false });
+    });
+  }
+  return m;
+}
+
+/** JSON con las claves ordenadas (para saber si una escritura cambiaría algo sin depender del orden de las claves). */
+const canonico = (v: unknown) => JSON.stringify(v, (_k, x) => (x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([p], [q]) => (p < q ? -1 : 1))) : x));
+
+export type ResultadoReversion =
+  | {
+      ok: true;
+      /** Entradas del inventario sin actividad desde que se recuperaron: salen del índice (el objeto se queda). */
+      quitadas: number;
+      /** Entradas del inventario cuyo objeto cambió después: se quedan como historial propio (sin la marca `rec`). */
+      conservadas: number;
+      /** Entradas del índice de antes que el recorte del inventario había sacado y vuelven. */
+      restauradas: number;
+      /** Lo que no se pudo leer (se queda tal cual, con su marca): repetir la reversión lo termina. */
+      pendientes: number;
+      /** Ya estaba revertido y no había nada más que hacer (no se escribió nada). */
+      ya: boolean;
+    }
+  | { ok: false; detalle: string };
+
+/**
+ * REVERSIÓN de la reconciliación del inventario de un dueño (A7; revisión externa sobre a46b496: «el historial puede quedar
+ * incompleto o reaparecer una tarea recuperada»). Operación, no una ruta. Regla:
+ *   · sale del índice SOLO lo que agregó el inventario (`rec`) y no tuvo actividad desde que se recuperó: su objeto no
+ *     cambió (`actualizada`) después de `rt`. Una recuperada que después avanzó, terminó o se canceló ya es historial
+ *     propio: se queda (sin `rec`). Lo que no se pudo leer se queda con su marca (`pendientes`) y no se quita a ciegas;
+ *   · vuelve lo que el recorte del historial sacó del índice de antes al agregar lo recuperado (del respaldo de esa
+ *     generación, solo si el objeto existe y es de este dueño), y se recorta otra vez con el tope;
+ *   · `recortadas` pierde lo que había contado el inventario (`dr`) y lo que vuelve; suma lo que el recorte saque ahora;
+ *   · todo en UNA fusión CAS sobre el índice ACTUAL (nunca una foto vieja): lo creado, cambiado o anotado después de la
+ *     reconciliación —o durante esta reversión— se queda; el orden y los cursores salen de las entradas, que no cambian;
+ *   · deja la marca `revertido` en el índice (la ven todas las réplicas): la lista dice `inventario: 'revertido'`,
+ *     `reconciliado: false`, `completo: false`, y ninguna réplica vuelve a reconciliar ni a agregar nada a este dueño
+ *     hasta que operación lo reactive (`reactivarReconciliacionTareas`, o una generación nueva:
+ *     `AURA_RECONCILIAR_TAREAS_GENERACION`). Ya no hace falta apagar `AURA_RECONCILIAR_TAREAS` antes;
+ *   · idempotente y reanudable: repetirla termina lo pendiente; si no queda nada, no escribe (`ya: true`).
+ * Nunca borra objetos ni el respaldo. Una tarea quitada que alguien lee por su id (`GET /api/trabajos/:id`) vuelve a
+ * anotarse como siempre (`asegurarEnIndice`: es uso, no inventario).
+ */
+export async function revertirReconciliacionTareas(dueno: string, a: AlmacenDurable = almacenDurable(), o: { ahora?: number } = {}): Promise<ResultadoReversion> {
+  const ahora = o.ahora ?? Date.now();
+  const gen = generacionReconciliacion();
+  const total = { quitadas: 0, conservadas: 0, restauradas: 0 };
+  let pendientes = 0;
+  let escribio = false;
+  for (let vuelta = 0; vuelta < 3; vuelta++) {
+    const l = await leerDurable<Indice>(claveIndice(dueno), a).catch((e) => ({ ok: false as const, detalle: String(e?.message || e) }));
+    if (l.ok === false) return { ok: false, detalle: l.detalle };
+    const ix = l.valor;
+    const previa = ix?.revertido;
+    // 1. Lo que agregó el inventario: ¿tuvo actividad desde que se recuperó?
+    const recs = (ix?.ids || []).filter((x) => x.rec);
+    const lecturas = await leerTareas(dueno, recs.map((x) => x.id), a);
+    const decision = new Map<string, { rec: string; quitar: boolean; desde: number }>();
+    const sinLeer = new Set<string>();
+    for (const x of recs) {
+      const v = lecturas.get(x.id);
+      if (!v || v.ok === false) {
+        sinLeer.add(x.id);
+        continue;
+      }
+      const desde = recuperadaEn(x);
+      decision.set(x.id, { rec: String(x.rec), quitar: !v.tarea || v.tarea.actualizada <= desde, desde });
+    }
+    // 2. Lo que el recorte del inventario sacó del índice de antes (una vez por reversión; se reintenta si algo no se leyó).
+    const devolver: EntradaIndice[] = [];
+    let restauroCompleto = true;
+    let r0: number | null = null;
+    if (!previa?.restaurado) {
+      const r = await leerDurable<{ indice: Indice | null }>(claveRespaldo(dueno, previa?.respaldo ?? sufijoRespaldo(ix?.reversiones)), a).catch(() => ({ ok: false as const }));
+      if (r.ok === false) restauroCompleto = false;
+      else if (r.valor) {
+        r0 = Number(r.valor.indice?.recortadas) || 0;
+        const ya = new Set((ix?.ids || []).map((x) => x.id));
+        const faltan = (r.valor.indice?.ids || []).filter((x) => x && typeof x.id === 'string' && !x.rec && !ya.has(x.id)).map((x) => x.id);
+        const vistas = await leerTareas(dueno, faltan, a);
+        for (const id of faltan) {
+          const v = vistas.get(id)!;
+          if (v.ok === false) restauroCompleto = false;
+          // Solo vuelve lo que existe y es de este dueño (una entrada sin objeto se podó a propósito).
+          else if (v.tarea) devolver.push({ id, t: v.tarea.creada, ...(esTerminal(v.tarea.estado) ? { fin: v.tarea.actualizada } : {}) });
+        }
+      }
+    }
+    // 3. La fusión CAS sobre el índice actual.
+    let c = { quitadas: 0, conservadas: 0, restauradas: 0, pendientes: 0, sinDecidir: 0 };
+    const quitadas: string[] = [];
+    const w = await modificarDurable<Indice>(
+      claveIndice(dueno),
+      (actual) => {
+        c = { quitadas: 0, conservadas: 0, restauradas: 0, pendientes: 0, sinDecidir: 0 };
+        quitadas.length = 0;
+        const ids: EntradaIndice[] = [];
+        for (const x of actual?.ids || []) {
+          if (!x.rec) {
+            ids.push(x);
+            continue;
+          }
+          const d = decision.get(x.id);
+          if (!d || d.rec !== x.rec) {
+            // Sin leer, o una entrada que no estaba en la lectura (la agregó otro entretanto): se queda, y se vuelve a mirar.
+            ids.push(x);
+            if (!d && sinLeer.has(x.id)) c.pendientes++;
+            else c.sinDecidir++;
+            continue;
+          }
+          if (d.quitar) {
+            c.quitadas++;
+            quitadas.push(x.id);
+            continue;
+          }
+          c.conservadas++;
+          const { rec: _rec, rt: _rt, ...propia } = x;
+          ids.push(propia);
+        }
+        const presentes = new Set(ids.map((x) => x.id));
+        const nuevas = devolver.filter((x) => !presentes.has(x.id));
+        const quedan = recortarIndice([...ids, ...nuevas]);
+        const siguen = new Set(quedan.map((x) => x.id));
+        const vuelven = nuevas.filter((x) => siguen.has(x.id));
+        c.restauradas = vuelven.length;
+        const cur = Number(actual?.recortadas) || 0;
+        // Lo que había contado el inventario al marcar (`dr`); en una marca de a46b496, lo que subió desde el respaldo.
+        const dr = actual?.inventario ? (Number.isFinite(actual.inventario.dr) ? Number(actual.inventario.dr) : r0 !== null ? Math.max(0, cur - r0) : 0) : 0;
+        const recortadas = Math.max(0, cur - dr - vuelven.filter((x) => x.fin).length) + ids.filter((x) => !siguen.has(x.id)).length;
+        const { inventario: _i, pase: _p, revertido: prev, recortadas: _rc, ...resto } = actual || ({ v: 2, ids: [] } as Indice);
+        const marca: MarcaReversion = {
+          v: 1,
+          t: prev?.t ?? ahora,
+          gen: Math.max(gen, Number(prev?.gen) || 0),
+          ronda: actual?.inventario?.ronda ?? actual?.pase?.ronda ?? prev?.ronda ?? null,
+          respaldo: prev?.respaldo ?? sufijoRespaldo(actual?.reversiones),
+          restaurado: !!prev?.restaurado || restauroCompleto,
+          quitadas: (prev?.quitadas || 0) + c.quitadas,
+          conservadas: (prev?.conservadas || 0) + c.conservadas,
+          restauradas: (prev?.restauradas || 0) + c.restauradas,
+          pendientes: c.pendientes + c.sinDecidir,
+        };
+        const reversiones = (Number(actual?.reversiones) || 0) + (prev ? 0 : 1);
+        const nuevo: Indice = { ...resto, v: 2, ids: quedan, ...(recortadas > 0 ? { recortadas } : {}), revertido: marca, reversiones };
+        return canonico(nuevo) === canonico(actual) ? undefined : nuevo;
+      },
+      a
+    );
+    if (w.ok === false) return { ok: false, detalle: w.detalle };
+    pendientes = c.pendientes + c.sinDecidir;
+    if (w.cambiado) {
+      escribio = true;
+      total.quitadas += c.quitadas;
+      total.conservadas += c.conservadas;
+      total.restauradas += c.restauradas;
+      // 4. Una quitada que cambió entre su lectura y la escritura vuelve (sin marca: ya es propia). Lo mejor posible.
+      const otra = await leerTareas(dueno, quitadas, a);
+      for (const id of quitadas) {
+        const v = otra.get(id);
+        if (!v || v.ok === false || !v.tarea || v.tarea.actualizada <= decision.get(id)!.desde) continue;
+        const reg = v.tarea;
+        const e: EntradaIndice = { id, t: reg.creada, ...(esTerminal(reg.estado) ? { fin: reg.actualizada } : {}) };
+        const re = await modificarDurable<Indice>(claveIndice(dueno), (ix2) => (ix2?.ids.some((x) => x.id === id) ? undefined : conRecorte(ix2, [e, ...(ix2?.ids || [])])), a).catch(() => null);
+        if (re && re.ok) {
+          total.quitadas--;
+          total.conservadas++;
+        }
+      }
+    }
+    if (!c.sinDecidir) break;
+  }
+  return { ok: true, ...total, pendientes, ya: !escribio };
+}
+
+/**
+ * Reactiva la reconciliación de UN dueño revertido: quita la marca `revertido` del índice (CAS) y su siguiente lectura de
+ * la lista vuelve a inventariar (y agrega, con su propio respaldo, lo que falte). Para todos los revertidos de una vez:
+ * subir `AURA_RECONCILIAR_TAREAS_GENERACION`. `reactivado: false` si no estaba revertido.
+ */
+export async function reactivarReconciliacionTareas(dueno: string, a: AlmacenDurable = almacenDurable()): Promise<{ ok: true; reactivado: boolean } | { ok: false; detalle: string }> {
+  let reactivado = false;
   const r = await modificarDurable<Indice>(
     claveIndice(dueno),
     (ix) => {
-      quitadas = 0;
-      if (!ix) return undefined;
-      const ids = ix.ids.filter((x) => !x.rec);
-      quitadas = ix.ids.length - ids.length;
-      if (!quitadas && !ix.inventario && !ix.pase) return undefined;
-      const { inventario: _i, pase: _p, ...resto } = ix;
-      return { ...resto, ids };
+      reactivado = false;
+      if (!ix?.revertido) return undefined;
+      reactivado = true;
+      const { revertido: _r, ...resto } = ix;
+      return resto;
     },
     a
   );
-  return r.ok === false ? { ok: false, detalle: r.detalle } : { ok: true, quitadas };
+  return r.ok === false ? { ok: false, detalle: r.detalle } : { ok: true, reactivado };
 }
 
-/** El respaldo del índice de antes del inventario (`valor: null` si el inventario nunca le agregó nada). */
-export async function leerRespaldoIndiceTareas(dueno: string, a: AlmacenDurable = almacenDurable()) {
-  return leerDurable<{ v: 1; t: number; ronda: string; indice: Indice | null }>(claveRespaldo(dueno), a);
+/**
+ * El respaldo del índice de antes del inventario (`valor: null` si el inventario nunca le agregó nada). `reversion`: el de
+ * la generación que siguió a esa reversión (0, por omisión, es el de la primera: `antes-de-inventario-v1`).
+ */
+export async function leerRespaldoIndiceTareas(dueno: string, a: AlmacenDurable = almacenDurable(), reversion = 0) {
+  return leerDurable<{ v: 1; t: number; ronda: string; indice: Indice | null }>(claveRespaldo(dueno, sufijoRespaldo(reversion)), a);
 }
 
 /**
@@ -933,8 +1183,9 @@ export async function listarTareasPagina(dueno: string, o: OpcionesLista = {}, a
   const ahora = o.ahora ?? Date.now();
   // A7: mientras el inventario no esté reconciliado, cada lectura da un paso (acotado). Lo que encuentre entra al índice
   // ANTES de leer la página; si el paso falla, la página se lee igual y dice `reconciliado: false`.
-  let inventario: EstadoInventario = indiceReconciliado(indice) ? 'reconciliado' : 'en-curso';
-  if (inventario !== 'reconciliado' && o.reconciliar !== false) {
+  // Revertido por operación: ni se intenta (la lista lo dice; no se reconcilia hasta que se reactive).
+  let inventario: EstadoInventario = indiceReconciliado(indice) ? 'reconciliado' : indiceRevertido(indice, generacionReconciliacion()) ? 'revertido' : 'en-curso';
+  if (inventario === 'en-curso' && o.reconciliar !== false) {
     const r = await reconciliarInventarioTareas(dueno, { ahora, presupuesto: o.presupuesto }, a).catch((): ResultadoInventario => ({ estado: 'error', escribio: false, agregadas: 0 }));
     inventario = r.estado;
     if (r.escribio || r.estado === 'reconciliado') {

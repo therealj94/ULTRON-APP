@@ -14,7 +14,7 @@
  * que le falta una entrada (objeto intacto) nunca da 40 de 41 con `completo:true`: el inventario por dueño (enumeración
  * del almacén + comprobación del dueño dentro de cada objeto) la recupera, o la lista dice `reconciliado:false`.
  * Regresiones: 41 sanas, huérfano legado, índice ausente, fallo pasajero, varias páginas, reanudación, repetición,
- * creación concurrente, dueño incorrecto (404 y sin fugas), interruptor, reversión y disco.
+ * creación concurrente, dueño incorrecto (404 y sin fugas), interruptor, reversión (precisa, sin reaparecer) y disco.
  *
  * S3 condicional sintético (tests/s3-condicional-falso.ts): nada sale de la máquina.
  */
@@ -35,6 +35,8 @@ import {
   asegurarEnIndice,
   reconciliarInventarioTareas,
   revertirReconciliacionTareas,
+  reactivarReconciliacionTareas,
+  cambiarTarea,
 } from '../lib/tareas-durables';
 import { montarRutasTrabajos } from '../server/trabajos';
 import { conS3Falso, type S3Falso } from './s3-condicional-falso';
@@ -643,7 +645,7 @@ test('A7: dueño incorrecto → 404, y ni la lista, ni el conteo, ni el log deja
   });
 });
 
-test('A7: reversión: quita solo lo que agregó el inventario, conserva el respaldo y los objetos; con el interruptor apagado no se rehace', async () => {
+test('A7: reversión: quita solo lo que agregó el inventario, conserva el respaldo y los objetos; no se rehace sola (ni con el interruptor encendido) hasta que operación la reactiva', async () => {
   await conS3Falso(async (s3) => {
     const h = arnes();
     const yo = 'revertir@ejemplo.test';
@@ -654,7 +656,8 @@ test('A7: reversión: quita solo lo que agregó el inventario, conserva el respa
       assert.equal((await h.pedir('/api/trabajos', yo)).json.tareas.length, 5);
       await conEntorno('off', async () => {
         const r = await revertirReconciliacionTareas(yo);
-        assert.deepEqual(r, { ok: true, quitadas: 1 });
+        assert.ok(r.ok);
+        if (r.ok) assert.deepEqual([r.quitadas, r.conservadas, r.pendientes], [1, 0, 0]);
         const ix = leerIndice(s3, yo);
         assert.equal(ix.inventario, undefined);
         assert.equal(ix.ids.length, 4);
@@ -667,9 +670,17 @@ test('A7: reversión: quita solo lo que agregó el inventario, conserva el respa
         assert.equal(l.json.completo, false, 'revertido: vuelve a ser honesto, no completo');
         assert.equal((await revertirReconciliacionTareas(yo)).ok, true, 'revertir otra vez no rompe nada');
       });
+      // Revisión externa (a46b496): antes, con el interruptor encendido, la siguiente lectura volvía a agregar lo revertido.
       const otra = await h.pedir('/api/trabajos', yo);
-      assert.equal(otra.json.tareas.length, 5, 'con el interruptor encendido, se reconcilia otra vez');
-      assert.equal(otra.json.completo, true);
+      assert.equal(otra.json.tareas.length, 4, 'revertida por decisión: la siguiente lectura no la vuelve a agregar');
+      assert.equal(otra.json.completo, false);
+      assert.equal(otra.json.inventario.estado, 'revertido');
+      assert.equal(objetosDe(s3, yo), 5);
+      const re = await reactivarReconciliacionTareas(yo);
+      assert.ok(re.ok && re.reactivado);
+      const tras = await h.pedir('/api/trabajos', yo);
+      assert.equal(tras.json.tareas.length, 5, 'reactivada por operación, se reconcilia otra vez');
+      assert.equal(tras.json.completo, true);
     } finally {
       h.cerrar();
     }
@@ -876,4 +887,290 @@ test('revisión 13 (A7): 205 terminadas → el índice guarda 200 y `conteo.reco
       h.cerrar();
     }
   }
+});
+
+/* ------------------------------------------------------------------ revisión externa sobre a46b496: reversión precisa */
+
+/*
+ * «Al revertir la recuperación de tareas, el historial puede quedar incompleto o reaparecer una tarea recuperada.»
+ * Regla: la reversión quita del índice SOLO las entradas que agregó el inventario y que no tuvieron actividad después
+ * (el objeto no cambió desde que se recuperó); una recuperada que cambió (avanzó, terminó, la cancelaron) ya es historial
+ * propio y se queda. Devuelve lo que el recorte del inventario sacó del índice de antes, deja la marca «revertido» en el
+ * índice (vale para todas las réplicas) y la reconciliación no vuelve a agregar nada hasta que operación la reactiva.
+ */
+const HORA = 3_600_000;
+const claveIndiceMem = (quien: string) => `tareas/indice/${huellaDueno(quien)}/lista`;
+const indiceMem = (a: { objetos: Map<string, string> }, quien: string) => JSON.parse(a.objetos.get(claveIndiceMem(quien)) ?? 'null');
+const objetosMem = (a: { objetos: Map<string, string> }, quien: string) => [...a.objetos.keys()].filter((k) => k.startsWith(`tareas/${huellaDueno(quien)}/`)).length;
+/** Otra réplica: el mismo almacén, pero otro objeto (otra memoria de proceso: esperas, cachés). */
+const otraReplica = (a: AlmacenDurable): AlmacenDurable => ({ ...a });
+
+/** `n` tareas; el índice queda como uno legado (v1) sin las de `perdidas`, y la lista lo reconcilia en T + 1 h. */
+async function reconciliadaConPerdidas(a: AlmacenDurable & { objetos: Map<string, string> }, yo: string, n: number, perdidas: number[], T: number): Promise<string[]> {
+  const ids: string[] = [];
+  for (let i = 0; i < n; i++) {
+    const r = await crearTarea(yo, { requestId: `rv-${i}`, titulo: `Tarea ${i}`, ...NUEVA }, { almacen: a, ahora: T + i });
+    assert.ok(r.ok);
+    if (r.ok) ids.push(r.tarea.id);
+  }
+  const fuera = new Set(perdidas.map((i) => ids[i]));
+  const ix = indiceMem(a, yo);
+  a.objetos.set(claveIndiceMem(yo), JSON.stringify({ v: 1, ids: ix.ids.filter((x: any) => !fuera.has(x.id)).map((x: any) => ({ id: x.id, t: x.t })) }));
+  const p = await listarTareasPagina(yo, { ahora: T + HORA }, a);
+  assert.ok(p.ok && p.reconciliado && p.tareas.length === n, 'el inventario recupera las perdidas');
+  return ids;
+}
+
+async function conVariable<T>(nombre: string, valor: string | undefined, f: () => Promise<T>): Promise<T> {
+  const antes = process.env[nombre];
+  if (valor === undefined) delete process.env[nombre];
+  else process.env[nombre] = valor;
+  try {
+    return await f();
+  } finally {
+    if (antes === undefined) delete process.env[nombre];
+    else process.env[nombre] = antes;
+  }
+}
+
+test('reversión precisa: la recuperada con actividad después se conserva y la que no, sale; lo creado después se queda; el historial queda completo', async () => {
+  const a = almacenEnMemoria();
+  const yo = 'rv-actividad@ejemplo.test';
+  const T = Date.now() - 10 * HORA;
+  const ids = await reconciliadaConPerdidas(a, yo, 6, [1, 2, 3], T);
+  // ids[1]: la cancelan después de recuperada (terminó: es historial). ids[2]: avanza. ids[3]: nadie la toca.
+  const c = await cambiarTarea(yo, ids[1], () => ({ estado: 'cancelled' }), { almacen: a, ahora: T + 2 * HORA });
+  assert.ok(c.ok && c.cambiado);
+  const p = await cambiarTarea(yo, ids[2], () => ({ pasoActual: 'Sigo con esto' }), { almacen: a, ahora: T + 2 * HORA });
+  assert.ok(p.ok && p.cambiado);
+  const nueva = await crearTarea(yo, { requestId: 'rv-nueva', titulo: 'Creada después', ...NUEVA }, { almacen: a, ahora: T + 3 * HORA });
+  assert.ok(nueva.ok);
+  const objetos = objetosMem(a, yo);
+  const r = await revertirReconciliacionTareas(yo, a, { ahora: T + 4 * HORA });
+  assert.ok(r.ok);
+  if (r.ok) assert.deepEqual([r.quitadas, r.conservadas, r.pendientes], [1, 2, 0]);
+  const ix = indiceMem(a, yo);
+  const en = new Set(ix.ids.map((x: any) => x.id));
+  const quedan = [ids[0], ids[1], ids[2], ids[4], ids[5], nueva.ok ? nueva.tarea.id : ''];
+  for (const id of quedan) assert.ok(en.has(id), `la reversión perdió ${id}: ${JSON.stringify(ix.ids)}`);
+  assert.ok(!en.has(ids[3]), 'la recuperada sin actividad sale');
+  assert.equal(ix.ids.filter((x: any) => x.rec).length, 0, 'las conservadas ya no llevan la marca del inventario');
+  assert.equal(ix.inventario, undefined);
+  assert.equal(objetosMem(a, yo), objetos, 'ningún objeto borrado ni creado');
+  const l = await listarTareasPagina(yo, { ahora: T + 5 * HORA }, a);
+  assert.ok(l.ok);
+  if (l.ok) {
+    assert.deepEqual(new Set(l.tareas.map((t) => t.id)), new Set(quedan), 'el historial (la cancelada incluida) sigue en la lista');
+    assert.equal(l.conteo.indice, 6);
+    assert.equal(l.conteo.terminadas, 1);
+    assert.equal(l.completo, false);
+    assert.equal(l.reconciliado, false);
+    assert.equal(l.inventario, 'revertido');
+  }
+});
+
+test('tras revertir, ninguna lectura vuelve a agregar lo revertido (misma réplica, otra réplica sin memoria, la ruta) aunque el interruptor siga en «agregar»', async () => {
+  const a = almacenEnMemoria();
+  _usarAlmacenDurable(a);
+  const yo = 'rv-reaparece@ejemplo.test';
+  const T = Date.now() - 10 * HORA;
+  const ids = await reconciliadaConPerdidas(a, yo, 4, [2], T);
+  const r = await revertirReconciliacionTareas(yo, a, { ahora: T + 2 * HORA });
+  assert.ok(r.ok && r.quitadas === 1);
+  for (const alm of [a, otraReplica(a)]) {
+    _olvidarEsperasListado();
+    const l = await listarTareasPagina(yo, { ahora: T + 3 * HORA }, alm);
+    assert.ok(l.ok);
+    if (l.ok) {
+      assert.ok(!l.tareas.some((t) => t.id === ids[2]), 'la revertida reapareció');
+      assert.equal(l.tareas.length, 3);
+      assert.equal(l.completo, false);
+      assert.equal(l.reconciliado, false);
+      assert.equal(l.inventario, 'revertido');
+    }
+    assert.equal((await reconciliarInventarioTareas(yo, { ahora: T + 3 * HORA, forzar: true }, alm)).estado, 'revertido', 'ni forzando el paso');
+  }
+  const ix = indiceMem(a, yo);
+  assert.ok(!ix.ids.some((x: any) => x.id === ids[2]));
+  assert.ok(ix.revertido, 'la marca vive en el índice (la ven todas las réplicas)');
+  const h = arnes();
+  try {
+    const l = await h.pedir('/api/trabajos', yo);
+    assert.equal(l.status, 200);
+    assert.equal(l.json.completo, false);
+    assert.equal(l.json.reconciliado, false);
+    assert.equal(l.json.inventario.estado, 'revertido');
+    assert.match(l.json.aviso, /se revirtió por decisión/);
+    assert.ok(!l.json.tareas.some((t: any) => t.id === ids[2]));
+  } finally {
+    h.cerrar();
+  }
+});
+
+test('una réplica que estaba recorriendo el inventario cuando operación revirtió no agrega nada al escribir', async () => {
+  const a = almacenEnMemoria();
+  const yo = 'rv-carrera@ejemplo.test';
+  const T = Date.now() - 10 * HORA;
+  const ids: string[] = [];
+  for (let i = 0; i < 3; i++) {
+    const c = await crearTarea(yo, { requestId: `rv-c-${i}`, titulo: `c${i}`, ...NUEVA }, { almacen: a, ahora: T + i });
+    assert.ok(c.ok);
+    if (c.ok) ids.push(c.tarea.id);
+  }
+  const ix = indiceMem(a, yo);
+  a.objetos.set(claveIndiceMem(yo), JSON.stringify({ v: 1, ids: ix.ids.filter((x: any) => x.id !== ids[1]).map((x: any) => ({ id: x.id, t: x.t })) }));
+  let revertida = false;
+  const b: AlmacenDurable = {
+    ...a,
+    listar: async (prefijo, o) => {
+      const l = await a.listar!(prefijo, o);
+      // Entre el listado de esta réplica y su escritura, operación revierte (en otra réplica).
+      if (!revertida) {
+        revertida = true;
+        const r = await revertirReconciliacionTareas(yo, a, { ahora: T + HORA });
+        assert.ok(r.ok);
+      }
+      return l;
+    },
+  };
+  const r = await reconciliarInventarioTareas(yo, { ahora: T + HORA }, b);
+  assert.equal(r.estado, 'revertido');
+  assert.equal(r.agregadas, 0);
+  const despues = indiceMem(a, yo);
+  assert.ok(!despues.ids.some((x: any) => x.id === ids[1]), 'la escritura de la réplica atrasada no la agregó');
+  assert.ok(despues.revertido);
+});
+
+test('reversión concurrente con la creación de una tarea: la nueva se queda (fusión CAS sobre el índice actual, nunca una foto vieja)', async () => {
+  const a = almacenEnMemoria();
+  const yo = 'rv-concurrente@ejemplo.test';
+  const T = Date.now() - 10 * HORA;
+  const ids = await reconciliadaConPerdidas(a, yo, 4, [1], T);
+  let nueva = '';
+  const b: AlmacenDurable = {
+    ...a,
+    cas: async (clave, valor, etag) => {
+      if (!nueva && clave === claveIndiceMem(yo)) {
+        const c = await crearTarea(yo, { requestId: 'rv-concurrente-nueva', titulo: 'Entre medias', ...NUEVA }, { almacen: a, ahora: T + 2 * HORA });
+        assert.ok(c.ok);
+        if (c.ok) nueva = c.tarea.id;
+      }
+      return a.cas(clave, valor, etag);
+    },
+  };
+  const r = await revertirReconciliacionTareas(yo, b, { ahora: T + 2 * HORA });
+  assert.ok(r.ok && r.quitadas === 1);
+  const en = new Set(indiceMem(a, yo).ids.map((x: any) => x.id));
+  assert.ok(nueva && en.has(nueva), 'la tarea creada durante la reversión sigue en el índice');
+  assert.ok(!en.has(ids[1]));
+  assert.equal(en.size, 4);
+});
+
+test('revertir es idempotente y reanudable: una lectura fallida deja esa entrada (y la reversión pendiente); repetir la termina; repetir otra vez no escribe', async () => {
+  const a = almacenEnMemoria();
+  const yo = 'rv-idempotente@ejemplo.test';
+  const T = Date.now() - 10 * HORA;
+  const ids = await reconciliadaConPerdidas(a, yo, 5, [1, 2], T);
+  const b: AlmacenDurable = { ...a, leer: async (clave) => (clave.endsWith(`/${ids[2]}`) ? { ok: false as const, detalle: 'S3 500' } : a.leer(clave)) };
+  const r1 = await revertirReconciliacionTareas(yo, b, { ahora: T + 2 * HORA });
+  assert.ok(r1.ok);
+  if (r1.ok) assert.deepEqual([r1.quitadas, r1.pendientes], [1, 1], 'la que no se pudo leer no se quita a ciegas');
+  let ix = indiceMem(a, yo);
+  assert.ok(ix.ids.some((x: any) => x.id === ids[2] && x.rec), 'sigue, con su marca, para la próxima vuelta');
+  assert.ok(!ix.ids.some((x: any) => x.id === ids[1]));
+  assert.ok(ix.revertido);
+  const l = await listarTareasPagina(yo, { ahora: T + 3 * HORA }, a);
+  assert.ok(l.ok && l.inventario === 'revertido' && !l.tareas.some((t) => t.id === ids[1]), 'a medias tampoco se rehace');
+  const r2 = await revertirReconciliacionTareas(yo, a, { ahora: T + 4 * HORA });
+  assert.ok(r2.ok);
+  if (r2.ok) assert.deepEqual([r2.quitadas, r2.pendientes], [1, 0]);
+  ix = indiceMem(a, yo);
+  assert.ok(!ix.ids.some((x: any) => x.rec));
+  assert.equal(ix.ids.length, 3);
+  const foto = a.objetos.get(claveIndiceMem(yo));
+  const r3 = await revertirReconciliacionTareas(yo, a, { ahora: T + 5 * HORA });
+  assert.ok(r3.ok);
+  if (r3.ok) assert.deepEqual([r3.quitadas, r3.conservadas, r3.restauradas, r3.pendientes, r3.ya], [0, 0, 0, 0, true]);
+  assert.equal(a.objetos.get(claveIndiceMem(yo)), foto, 'revertir otra vez no reescribe el índice');
+  assert.equal(objetosMem(a, yo), 5);
+});
+
+test('revertir después de que el tope del historial recortara: vuelven las del índice de antes y las cuentas (índice, terminadas, recortadas) quedan coherentes', async () => {
+  const a = almacenEnMemoria();
+  const yo = 'rv-recorte@ejemplo.test';
+  const T = Date.now() - 100 * HORA;
+  const ids = await terminadas(a, yo, MAX_HISTORIAL_INDICE + 5, T);
+  // Un índice de antes con las 200 terminadas más viejas (con su fin), al que le faltan las 5 más nuevas.
+  a.objetos.set(claveIndiceMem(yo), JSON.stringify({ v: 2, ids: ids.slice(0, MAX_HISTORIAL_INDICE).map((id, i) => ({ id, t: T + i, fin: T + 10_000 + i })) }));
+  const p = await listarTareasPagina(yo, { ahora: T + HORA }, a);
+  assert.ok(p.ok && p.reconciliado);
+  if (p.ok) {
+    // El inventario agregó las 5 nuevas y el tope sacó las 5 más viejas del índice de antes.
+    assert.equal(p.conteo.indice, MAX_HISTORIAL_INDICE);
+    assert.equal(p.conteo.recortadas, 5);
+    assert.ok(ids.slice(-5).every((id) => p.tareas.some((t) => t.id === id)));
+  }
+  const r = await revertirReconciliacionTareas(yo, a, { ahora: T + 2 * HORA });
+  assert.ok(r.ok);
+  if (r.ok) assert.deepEqual([r.quitadas, r.restauradas, r.pendientes], [5, 5, 0]);
+  const q = await listarTareasPagina(yo, { ahora: T + 3 * HORA }, a);
+  assert.ok(q.ok);
+  if (q.ok) {
+    assert.deepEqual(new Set(q.tareas.map((t) => t.id)), new Set(ids.slice(0, MAX_HISTORIAL_INDICE)), 'el historial de antes, entero');
+    assert.equal(q.conteo.indice, MAX_HISTORIAL_INDICE);
+    assert.equal(q.conteo.terminadas, MAX_HISTORIAL_INDICE);
+    assert.equal(q.conteo.recortadas, 0, 'lo que contó el inventario se va con él');
+    assert.equal(q.inventario, 'revertido');
+  }
+  assert.equal(objetosMem(a, yo), MAX_HISTORIAL_INDICE + 5);
+});
+
+test('reactivar: dueño a dueño (reactivarReconciliacionTareas) o para todos subiendo AURA_RECONCILIAR_TAREAS_GENERACION, la reconciliación vuelve a funcionar', async () => {
+  const a = almacenEnMemoria();
+  const yo = 'rv-reactivar@ejemplo.test';
+  const T = Date.now() - 10 * HORA;
+  const ids = await reconciliadaConPerdidas(a, yo, 4, [1], T);
+  assert.ok((await revertirReconciliacionTareas(yo, a, { ahora: T + 2 * HORA })).ok);
+  let l = await listarTareasPagina(yo, { ahora: T + 3 * HORA }, a);
+  assert.ok(l.ok && l.inventario === 'revertido' && l.tareas.length === 3);
+  const re = await reactivarReconciliacionTareas(yo, a);
+  assert.ok(re.ok && re.reactivado);
+  assert.equal(indiceMem(a, yo).revertido, undefined);
+  l = await listarTareasPagina(yo, { ahora: T + 4 * HORA }, a);
+  assert.ok(l.ok && l.reconciliado && l.completo && l.tareas.some((t) => t.id === ids[1]), 'reactivada, la recupera otra vez');
+  assert.ok(indiceMem(a, yo).ids.some((x: any) => x.id === ids[1] && x.rec), 'y otra vez es reversible');
+  // Otra reversión; esta vez se reactiva para todos con la generación (sin tocar dueño a dueño).
+  const r2 = await revertirReconciliacionTareas(yo, a, { ahora: T + 5 * HORA });
+  assert.ok(r2.ok && r2.quitadas === 1);
+  l = await listarTareasPagina(yo, { ahora: T + 6 * HORA }, a);
+  assert.ok(l.ok && l.inventario === 'revertido');
+  await conVariable('AURA_RECONCILIAR_TAREAS_GENERACION', '2', async () => {
+    const m = await listarTareasPagina(yo, { ahora: T + 7 * HORA }, otraReplica(a));
+    assert.ok(m.ok && m.reconciliado && m.tareas.some((t) => t.id === ids[1]), 'una generación nueva reconcilia otra vez');
+    // Y lo que se revierta en esa generación queda revertido hasta la siguiente.
+    assert.ok((await revertirReconciliacionTareas(yo, a, { ahora: T + 8 * HORA })).ok);
+    const n = await listarTareasPagina(yo, { ahora: T + 9 * HORA }, a);
+    assert.ok(n.ok && n.inventario === 'revertido' && !n.tareas.some((t) => t.id === ids[1]));
+    assert.equal(indiceMem(a, yo).revertido.gen, 2);
+  });
+  assert.equal((await reactivarReconciliacionTareas(yo, a)).ok, true);
+  assert.equal(objetosMem(a, yo), 4);
+});
+
+test('revertir a un dueño no toca el índice ni las tareas de otro', async () => {
+  const a = almacenEnMemoria();
+  const T = Date.now() - 10 * HORA;
+  const ana = 'rv-ana@ejemplo.test';
+  const beto = 'rv-beto@ejemplo.test';
+  const deAna = await reconciliadaConPerdidas(a, ana, 3, [1], T);
+  await reconciliadaConPerdidas(a, beto, 3, [0], T);
+  const foto = a.objetos.get(claveIndiceMem(ana));
+  const r = await revertirReconciliacionTareas(beto, a, { ahora: T + 2 * HORA });
+  assert.ok(r.ok && r.quitadas === 1);
+  assert.equal(a.objetos.get(claveIndiceMem(ana)), foto, 'el índice de Ana, intacto');
+  const l = await listarTareasPagina(ana, { ahora: T + 3 * HORA }, a);
+  assert.ok(l.ok && l.reconciliado && l.completo);
+  if (l.ok) assert.deepEqual(new Set(l.tareas.map((t) => t.id)), new Set(deAna));
+  assert.equal(objetosMem(a, ana), 3);
+  assert.equal(objetosMem(a, beto), 3);
 });

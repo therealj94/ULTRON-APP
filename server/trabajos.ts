@@ -797,7 +797,9 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
       ? ''
       : l.inventario === 'en-curso'
         ? 'Estoy revisando tus tareas antiguas: puede faltar alguna en esta lista mientras termino.'
-        : 'No pude confirmar que esta lista tenga todas tus tareas antiguas: las que ves son reales, pero puede faltar alguna.';
+        : l.inventario === 'revertido'
+          ? 'La revisión de tus tareas antiguas se revirtió por decisión de mantenimiento: las que ves son reales, pero puede faltar alguna.'
+          : 'No pude confirmar que esta lista tenga todas tus tareas antiguas: las que ves son reales, pero puede faltar alguna.';
     const recortadas = Number(l.conteo.recortadas) || 0;
     const avisoRecortadas = recortadas
       ? `Tu lista guarda solo tus ${MAX_HISTORIAL_INDICE} tareas terminadas más recientes: ${recortadas === 1 ? 'una terminada más antigua ya no sale' : `${recortadas} terminadas más antiguas ya no salen`} aquí.`
