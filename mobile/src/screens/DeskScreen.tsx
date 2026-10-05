@@ -128,6 +128,9 @@ import { avisarTrabajos, useTrabajos } from '../trabajos/useTrabajos';
 import { IndicadorTrabajos } from '../trabajos/IndicadorTrabajos';
 import { PanelTrabajos } from '../trabajos/PanelTrabajos';
 import { escucharPedidoPanel, tomarPedidoPanel } from '../trabajos/abrirPanel';
+// La ventana de decisión de la mesa (José, 5-oct): Sí · No · Editar, también por voz, en orden.
+import { useVentanaDecision } from '../trabajos/useVentanaDecision';
+import { VentanaDecision } from '../trabajos/VentanaDecision';
 import { clienteTrabajos } from '../trabajos/useTrabajos';
 import { alCambiarPrimer, anotarPrimer, leerPrimerDe } from '../primeravez/medida';
 import { SirvioPrimera } from '../primeravez/SirvioPrimera';
@@ -208,8 +211,9 @@ export function DeskScreen(props: Props) {
 /** Las acciones que el cerebro decidió en el turno de la mesa van al bus (la app las hace). */
 function emitirAccionesDelTurno(r: unknown) {
   for (const a of accionesDelTurno(r)) emitir('accion', a);
-  // El turno creó o tocó tareas durables (AUR08): el indicador las pregunta ya, sin esperar al sondeo.
-  if (refsDeTurno(r).length) avisarTrabajos();
+  // Después de CADA turno se preguntan las tareas (AUR08; José, 5-oct): las que creó o tocó, y una decisión que un «sí»
+  // o un «no» dicho acaba de resolver (la ventana de decisión se cierra o pasa a la siguiente; nunca queda una vieja).
+  avisarTrabajos(refsDeTurno(r).map((x) => x.id));
 }
 
 function Mesa({ user, onLogout, recienElegido = false }: Props) {
@@ -2567,6 +2571,21 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     })();
   };
 
+  // ── Ventana de decisión (José, 5-oct) ──────────────────────────────────────────────────────────────────────────
+  // Lo que espera su «sí» (un WhatsApp, un correo, lo del taller, la pregunta de su computadora) aparece encima de la
+  // mesa, de a una y en orden. Espera a que no haya nada encima (chat, panel, recorrido, su computadora).
+  const ventana = useVentanaDecision({
+    trabajos,
+    activa: mesaVisible && !tutorialAbierto && !panelTrabajos && !menuOpen && !masAbierto && !pcAbierta && !pcVivoAbierta && !eligiendo && !visor && !hojaCerebro && !preguntasAbiertas,
+    idioma: idiomaActual() === 'en' ? 'en' : 'es',
+    conversando: () => conversandoRef.current,
+    hablando: () => speakingRef.current,
+    decir: (texto) => void say(texto, 'IDLE'),
+    mandarTurno: (texto) => mandarTurnoRef.current(texto),
+    pc: pcEstado?.actual ? { id: pcEstado.actual.id, estado: pcEstado.actual.estado, instruccion: pcEstado.actual.instruccion, pasos: pcEstado.actual.pasos } : null,
+  });
+  // ── fin ventana de decisión ─────────────────────────────────────────────────────────────────────────────────────
+
   const onObjectsStable = useCallback((labels: string[]) => setObjects(labels), []);
 
   // Borde derecho: tocar o arrastrar hacia la izquierda abre el menú (la cara deja libre esa franja).
@@ -2913,7 +2932,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
           >
             {caraEntrando}
             {/* El indicador de tareas va arriba del cuadro del avatar: no tapa la cabecera del chat ni el teclado. */}
-            <IndicadorTrabajos texto={trabajos.indicador} resumen={trabajos.resumen} reducido={trabajos.reducido} onAbrir={() => setPanelTrabajos(true)} style={styles.trabajosCuadro} />
+            <IndicadorTrabajos texto={trabajos.indicador} resumen={trabajos.resumen} reducido={trabajos.reducido} onAbrir={() => (ventana.abrirDesdeIndicador() ? undefined : setPanelTrabajos(true))} style={styles.trabajosCuadro} />
             {!!preguntaPrimer && <View style={styles.primerCuadro}>{preguntaPrimer}</View>}
           </View>
           <View style={{ flex: 1 }}>
@@ -2947,7 +2966,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       {!enCuadro && (
         <>
         {/* «Trabajando · 2» / «Necesito una decisión · 1»: arriba a la derecha, frente al estado; nunca abajo con el teclado. */}
-        <IndicadorTrabajos texto={trabajos.indicador} resumen={trabajos.resumen} reducido={trabajos.reducido} onAbrir={() => setPanelTrabajos(true)} style={styles.trabajos} />
+        <IndicadorTrabajos texto={trabajos.indicador} resumen={trabajos.resumen} reducido={trabajos.reducido} onAbrir={() => (ventana.abrirDesdeIndicador() ? undefined : setPanelTrabajos(true))} style={styles.trabajos} />
         {/* «¿Te sirvió?» del primer resultado: abajo, por encima de la barra y del subtítulo (hasta tres líneas), sin tapar lo que dice la persona arriba. */}
         {!!preguntaPrimer && <View style={[styles.primerFlota, { bottom: altoAbajo + 100 }]}>{preguntaPrimer}</View>}
 
@@ -3046,11 +3065,20 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
           setDraft(sugerencia);
           if (!enCuadro) setMenuOpen(true);
         }}
+        // Editar el texto en la ventana de decisión (José, 5-oct): se cierra el panel y la ventana lo abre listo.
+        onEditarAqui={(t) => {
+          const tomada = ventana.abrirParaEditar(t.id);
+          if (tomada) setPanelTrabajos(false);
+          return tomada;
+        }}
         onAbrirComputadora={() => {
           setPanelTrabajos(false);
           setPcAbierta(true);
         }}
       />
+
+      {/* La ventana de decisión (José, 5-oct): Sí · No · Editar, también por voz; cerrarla es «Luego». */}
+      <VentanaDecision v={ventana} nombreAvatar={de(avatarPorId(avatarId).nombre)} />
 
       {/* Su computadora trabaja (o acaba de terminar): se dice arriba, con «Ver». */}
       {pcAviso && !pcAbierta && !pcVivoAbierta && !tutorialAbierto ? (

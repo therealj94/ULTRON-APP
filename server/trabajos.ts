@@ -1134,7 +1134,7 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
     const b = (req.body || {}) as Record<string, unknown>;
     const id = String(req.params.id || '');
     if (b.visible === false) {
-      soltarEnPantalla(dueno, id);
+      soltarEnPantalla(dueno, id, typeof b.decisionId === 'string' && b.decisionId ? b.decisionId : undefined);
       return res.json({ registrada: false, honesto: true });
     }
     const decisionId = String(b.decisionId || '');

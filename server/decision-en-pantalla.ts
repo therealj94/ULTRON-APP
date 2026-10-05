@@ -71,11 +71,15 @@ export function enPantallaDe(dueno: string, ambito: string, ahora = Date.now()):
   return e.ambito === String(ambito || '') ? e : null;
 }
 
-/** Se cerró la ventana (o se decidió): deja de estar a la vista. Con `tareaId`, solo si era esa. */
-export function soltarEnPantalla(dueno: string, tareaId?: string) {
+/**
+ * Se cerró la ventana (o se decidió): deja de estar a la vista. Con `tareaId`, solo si era esa; con `decisionId`, solo si
+ * era ESA decisión (soltar la versión vieja de una tarea no suelta la nueva que la ventana acaba de mostrar).
+ */
+export function soltarEnPantalla(dueno: string, tareaId?: string, decisionId?: string) {
   const e = VISTAS.get(llave(dueno));
   if (!e) return;
   if (tareaId && e.tareaId !== tareaId) return;
+  if (decisionId && e.decisionId !== decisionId) return;
   VISTAS.delete(llave(dueno));
 }
 

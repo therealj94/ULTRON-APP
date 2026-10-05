@@ -1091,7 +1091,10 @@ test('en pantalla: la ventana registra SU decisión (borrador), una vieja es 409
     assert.equal((await h.pedir(`/api/trabajos/${t.id}/en-pantalla`, yo, { decisionId: t.decisionId, visible: true, renovar: true })).json.registrada, false);
     assert.equal(enPantallaDe(yo, 'telefono'), null);
     await h.pedir(`/api/trabajos/${t.id}/en-pantalla`, yo, { decisionId: t.decisionId, visible: true });
-    await h.pedir(`/api/trabajos/${t.id}/en-pantalla`, yo, { visible: false });
+    // Soltar OTRA decisión de la misma tarea (la versión vieja que la ventana dejó de mostrar) no suelta esta.
+    await h.pedir(`/api/trabajos/${t.id}/en-pantalla`, yo, { decisionId: 'dc_version_vieja', visible: false });
+    assert.equal(enPantallaDe(yo, 'telefono')?.decisionId, t.decisionId);
+    await h.pedir(`/api/trabajos/${t.id}/en-pantalla`, yo, { decisionId: t.decisionId, visible: false });
     assert.equal(enPantallaDe(yo, 'telefono'), null);
     // Decidida (rechazada) deja de estar a la vista.
     await h.pedir(`/api/trabajos/${t.id}/en-pantalla`, yo, { decisionId: t.decisionId, visible: true });

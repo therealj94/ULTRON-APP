@@ -43,6 +43,7 @@ import {
   type ResultadoAccion,
   type TareaVista,
 } from '../../mobile/src/lib/trabajos';
+import { cuerpoEdicion, empezarEdicion, MAX_EDITAR, puedeGuardar, type Edicion } from '../../mobile/src/lib/decisionesMesa';
 
 const pedir: Pedir = async (ruta, init) => {
   const r = await fetch(ruta, { method: init?.method || 'GET', body: init?.body, headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...headersMesa() } });
@@ -427,10 +428,38 @@ function TarjetaDecision({ t, varias, onResultado, onEditar }: { t: TareaVista; 
     return () => clearTimeout(r);
   }, [d.id]);
   const ops = opcionesTarjeta(d);
+  // José (5-oct): «Editar» cambia el texto aquí mismo (si el servidor manda el texto entero del borrador). Al guardar
+  // vuelve otra decisión para ESE texto: hay que volver a aprobarla. Nada sale al editar. Sin texto entero, como antes.
+  const item = { tipo: 'tarea' as const, clave: `${t.id}:${d.id}`, id: t.id, tarea: t, creada: 0 };
+  const [edicion, setEdicion] = useState<Edicion | null>(null);
+  const [avisoEdicion, setAvisoEdicion] = useState<string | null>(null);
+  useEffect(() => {
+    setEdicion(null);
+    setAvisoEdicion(null);
+  }, [d.id]);
+  const guardar = async () => {
+    if (!edicion || !puedeGuardar(edicion) || ocupado) return;
+    setOcupado('guardar');
+    try {
+      const r = await clienteTrabajos.editar(t, cuerpoEdicion(edicion));
+      if (r.ok === true) setEdicion(null);
+      else setAvisoEdicion(r.mensaje);
+      onResultado(r);
+    } finally {
+      setOcupado(null);
+    }
+  };
   const elegir = async (id: string, conEfecto: boolean) => {
     const via = porTeclado.current === id ? 'enter' : 'toque';
     porTeclado.current = null;
     if (!puedeActivar({ conEfecto }, { aparecio: aparecio.current, ahora: Date.now(), via, escribioHace: Date.now() - ultimaTecla })) return;
+    if (id === 'editar') {
+      const e = empezarEdicion(item);
+      if (e) {
+        setEdicion(e);
+        return;
+      }
+    }
     setOcupado(id);
     try {
       const r = await clienteTrabajos.decidir(t, id);
@@ -469,7 +498,35 @@ function TarjetaDecision({ t, varias, onResultado, onEditar }: { t: TareaVista; 
         </p>
       ))}
       {d.postponed && <p className="text-[13px] text-(--aura-tinta-2)">Pospuesta: sigue esperando, sin aprobar.</p>}
-      <ul className="flex flex-col gap-2 pt-1" role="list">
+      {edicion && (
+        <div className="flex flex-col gap-2">
+          {edicion.asunto !== undefined && (
+            <label className="flex flex-col gap-1 text-[14px] text-(--aura-tinta-2)">
+              Asunto
+              <input className="aura-campo" value={edicion.asunto} maxLength={200} onChange={(e) => setEdicion({ ...edicion, asunto: e.target.value })} />
+            </label>
+          )}
+          <label className="flex flex-col gap-1 text-[14px] text-(--aura-tinta-2)">
+            Texto (lo que se va a enviar)
+            <textarea className="aura-campo min-h-[120px]" value={edicion.texto} maxLength={MAX_EDITAR} onChange={(e) => setEdicion({ ...edicion, texto: e.target.value })} autoFocus />
+          </label>
+          <p className="text-[13px] text-(--aura-tinta-2)">No se envía al guardar: te lo vuelvo a mostrar para que lo apruebes.</p>
+          {avisoEdicion && (
+            <p className="text-[13px] text-(--aura-alerta,#b45309)" role="alert">
+              {avisoEdicion}
+            </p>
+          )}
+          <div className="flex gap-2">
+            <button type="button" className="aura-secundario" disabled={!puedeGuardar(edicion) || !!ocupado} onClick={() => void guardar()}>
+              {ocupado === 'guardar' ? 'Un momento…' : 'Guardar y revisar'}
+            </button>
+            <button type="button" className="aura-chip" disabled={!!ocupado} onClick={() => setEdicion(null)}>
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
+      <ul className={edicion ? 'hidden' : 'flex flex-col gap-2 pt-1'} role="list">
         {ops.map((o) => (
           <li key={o.id} className="flex flex-col gap-0.5">
             <button
