@@ -25,14 +25,17 @@ import { ecoMesa, mensajeVoz } from '../compa/canales';
 import { VARIANTE } from '../variante';
 import { fijarDatosBuild } from './recepcion';
 import { datosDeExpo } from './recepcionDescriptor';
-import { QUIETO_TRAS_TRABAJO_MS, decidirAplicar, marcarActividad, motivosParaNoRecargar, necesitaApkNueva, prepararRecarga, registrarTrabajoActivo, type Momento } from './barreraOta';
+import { QUIETO_TRAS_TRABAJO_MS, VENTANA_ARRANQUE_MS, decidirAplicar, marcarActividad, motivosParaNoRecargar, necesitaApkNueva, prepararRecarga, registrarTrabajoActivo, type Momento } from './barreraOta';
 
 /** Entre preguntas con la app delante. */
 const ENTRE_BUSQUEDAS_MS = 15 * 60_000;
 /** Al volver a la app, como mínimo esto desde la última pregunta (no martillar al servidor). */
 const MIN_ENTRE_BUSQUEDAS_MS = 5 * 60_000;
-/** La primera, un poco después de montar: el nativo acaba de preguntar al arrancar. */
-const PRIMERA_BUSQUEDA_MS = 10_000;
+/**
+ * La primera, al montar (José, 5-oct: el aviso salía hasta llegar al avatar). El nativo ya preguntó al arrancar,
+ * pero lo que baja él se usa en el siguiente arranque en frío; esta pregunta lo trae y lo aplica ya.
+ */
+const PRIMERA_BUSQUEDA_MS = 500;
 /** Cada cuánto se mira si toca preguntar o si la app está quieta para aplicar. */
 const TIC_MS = 30_000;
 
@@ -144,6 +147,9 @@ export function useActualizacionAlVolver() {
     let buscando = false;
     let pospuestoPor = '';
     let relojFin: ReturnType<typeof setTimeout> | null = null;
+    const montadoEn = Date.now();
+    /** ¿Todavía es «recién abierta»? Entonces lo descargado se aplica sin esperar (momento `arranque`). */
+    const recienAbierta = () => Date.now() - montadoEn < VENTANA_ARRANQUE_MS;
 
     const intentar = (momento: Momento, fueraMs?: number) => {
       const motivos = motivosParaNoRecargar();
@@ -166,7 +172,7 @@ export function useActualizacionAlVolver() {
           if (!f?.isNew) return;
           miga('ota: actualización descargada');
           pendiente.current = true;
-          intentar('quieto');
+          intentar(recienAbierta() ? 'arranque' : 'quieto');
         })
         .catch(() => {})
         .finally(() => {
@@ -174,6 +180,8 @@ export function useActualizacionAlVolver() {
         });
     };
 
+    // Ya había una descargada de antes (la bajó el nativo en otro arranque): recién abierta, se aplica ya.
+    if (pendiente.current) intentar('arranque');
     const primera = setTimeout(() => buscar(0), PRIMERA_BUSQUEDA_MS);
     const tic = setInterval(() => {
       if (AppState.currentState !== 'active') return;

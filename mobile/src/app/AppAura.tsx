@@ -179,8 +179,9 @@ export function AppAura() {
             <Pila.Screen name="Conversacion" component={Conversacion} />
           </Pila.Navigator>
         </NavigationContainer>
-        {/* «Actualización lista · Reiniciar» (lib/ota.ts), solo con la sesión abierta. */}
-        {enSesion && <AvisoActualizacion />}
+        {/* «Actualización lista · Reiniciar» (lib/ota.ts) en TODAS las pantallas, también antes de entrar (José, 5-oct:
+            salía hasta llegar al avatar). */}
+        <AvisoActualizacion />
         {/* Su computadora en vivo (se abre sola al empezar una tarea) y sus correos, encima de cualquier pantalla. */}
         {enSesion && <ComputadoraEnVivo />}
         {/* Su cartera de Veta Wallet y «Enviar dinero» (cartera/): se abren desde un chat, el menú o por voz. */}

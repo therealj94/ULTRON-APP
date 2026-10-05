@@ -254,7 +254,11 @@ prueba('nada queda encima del paso para tragarse los toques', () => {
   assert.ok(sesion, 'RUTAS_DE_SESION');
   assert.ok(!/PrimeraVez/.test(sesion[1]), 'PrimeraVez no es una ruta de sesión');
   const app = leer('app/AppAura.tsx');
-  for (const capa of ['<AvisoActualizacion />', '<ComputadoraEnVivo />', '<HojasCartera />']) assert.ok(app.includes(`{enSesion && ${capa}}`), capa);
+  for (const capa of ['<ComputadoraEnVivo />', '<HojasCartera />']) assert.ok(app.includes(`{enSesion && ${capa}}`), capa);
+  // La pastilla de la actualización sí va en todas las pantallas (José, 5-oct), pero no tapa toques: su capa deja
+  // pasar todo lo que no sea la pastilla misma (arriba al centro, chica).
+  assert.ok(app.includes('<AvisoActualizacion />'), 'AvisoActualizacion en todas las pantallas');
+  assert.match(leer('app/AvisoActualizacion.tsx'), /pointerEvents="box-none"/);
   assert.match(app, /conCompanera=\{enSesion\}/);
 });
 

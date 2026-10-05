@@ -36,7 +36,14 @@ export const TRABAJO_CADUCA_MS = 10 * 60_000;
 /** Un aviso del bus (`llamada`, `voz`) sin su cierre deja de frenar tras esto. */
 export const AVISO_CADUCA_MS = 5 * 60_000;
 
-export type Momento = 'volver' | 'quieto' | 'fin-trabajo' | 'boton';
+/**
+ * `arranque` (José, 5-oct: «apenas abra la app aparezca el de actualizar, porque sale hasta que uno está en el
+ * avatar»): recién abierta la app (VENTANA_ARRANQUE_MS) todavía no hay nada entre manos, así que lo descargado se
+ * aplica en el acto, sin esperar a que esté quieta ni a que vuelva de fuera. Lo vivo (teclado, llamada…) sí frena.
+ */
+export type Momento = 'volver' | 'quieto' | 'fin-trabajo' | 'boton' | 'arranque';
+/** Cuánto dura «recién abierta» para aplicar sin esperar. */
+export const VENTANA_ARRANQUE_MS = 60_000;
 
 const trabajos = new Map<string, () => boolean | number>();
 /** Desde cuándo el bus dice que hay llamada / que la conversación tiene el audio (0 = no). */

@@ -73,6 +73,12 @@ const { ok, fin } = require('../chat/comun.cjs');
   CONTRATO.emitir('llamada', { activa: false, video: false });
   quitarRepetido();
 
+  /* ── O8 (José, 5-oct): recién abierta, lo descargado se aplica ya; lo vivo sigue frenando ── */
+  ok('O8: recién abierta (arranque), aplica aunque la acaben de tocar', B.decidirAplicar({ pendiente: true, momento: 'arranque', quietoMs: 0, motivos: [] }) === 'aplicar');
+  ok('O8: recién abierta pero escribiendo (teclado), pospone', B.decidirAplicar({ pendiente: true, momento: 'arranque', quietoMs: 0, motivos: ['teclado'] }) === 'posponer');
+  ok('O8: sin nada descargado, nada', B.decidirAplicar({ pendiente: false, momento: 'arranque', motivos: [] }) === 'nada');
+  ok('O8: la ventana de «recién abierta» es corta (≤ 2 min)', B.VENTANA_ARRANQUE_MS > 0 && B.VENTANA_ARRANQUE_MS <= 120_000, String(B.VENTANA_ARRANQUE_MS));
+
   /* ── O5: ¿APK nueva? ───────────────────────────────────────────────────────────────── */
   const h1 = 'a'.repeat(40);
   const h2 = 'b'.repeat(40);
