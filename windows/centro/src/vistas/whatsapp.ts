@@ -1,10 +1,12 @@
 /**
  * WHATSAPP PERSONAL en el Centro (José, 2-oct: «una opción aparte de PULSE2CHAT, slide y cambia»). Vive al
- * lado de PULSE2CHAT en la misma sección (vistas/mensajeria.ts pone el cambio entre los dos) y solo existe
- * para la cuenta dueña: si `whatsapp.estado` dice permitido=false, ni la pestaña se ve.
+ * lado de PULSE2CHAT en la misma sección (vistas/mensajeria.ts pone el cambio entre los dos). Cada cuenta de AU-RA
+ * puede agregar SU WhatsApp (José, 5-oct); el permiso lo decide el servidor: si `whatsapp.estado` dice
+ * permitido=false, ni la pestaña se ve.
  *
  * Tres caras:
- *   · VINCULAR: el QR grande para escanear con el teléfono (se refresca solo, preguntando cada ~3 s mientras
+ *   · VINCULAR: primero acepta qué implica (lo que se guarda, que se borra al desvincular, el riesgo) con «Acepto y
+ *     vincular»; luego el QR grande para escanear con el teléfono (se refresca solo, preguntando cada ~3 s mientras
  *     vincula) o, con «Vincular con número», el código de 8 letras para escribir en el teléfono.
  *   · LISTA + CONVERSACIÓN (dos paneles, como PULSE2CHAT y con sus mismas piezas): buscar, sin leer, grupos,
  *     hora de Honduras; burbujas (las mías a la derecha), fotos en miniatura que se abren en grande, notas de
@@ -123,6 +125,8 @@ export function vistaWhatsApp(inicial: F.EstadoWA): PanelWA {
   let faseActual: F.Fase | '' = '';
   let seVeSeccion = false;
   let qrPedido = false;
+  // ¿Aceptó lo que implica vincular? (una vez por panel; a media vinculación ya aceptó).
+  let consentido = false;
   let relojEstado: ReturnType<typeof setTimeout> | null = null;
   const noLeidos = almacen(0);
   const faseA = almacen<F.Fase>(F.fase(inicial));
@@ -267,6 +271,12 @@ export function vistaWhatsApp(inicial: F.EstadoWA): PanelWA {
       ),
     );
 
+    const aceptar = boton(T('Acepto y vincular', 'I agree, link it'), () => {
+      consentido = true;
+      pintar();
+      if (modo === 'qr' && F.pedirQr(est, qrPedido, consentido)) void pedirVinculo(false);
+    }, { tipo: 'acento' });
+
     async function pedirVinculo(conNumero: boolean) {
       if (pidiendo) return;
       let telefono: string | undefined;
@@ -300,6 +310,16 @@ export function vistaWhatsApp(inicial: F.EstadoWA): PanelWA {
 
     function pintar() {
       vacio(caja);
+      // Antes de nada, lo que implica (a media vinculación ya lo aceptó).
+      const falta = !consentido && !est.vinculando && !est.qr && !est.codigo;
+      cambiarModo.hidden = falta;
+      if (falta) {
+        formNumero.hidden = true;
+        paso3.textContent = T('Toca «Vincular un dispositivo».', 'Tap “Link a device”.');
+        nota.textContent = '';
+        caja.append(h('div', { class: 'wa-qr-espera' }, h('p', null, F.textoConsentimiento(en())), aceptar));
+        return;
+      }
       caja.classList.toggle('numero', modo === 'numero');
       formNumero.hidden = modo !== 'numero' || !!est.codigo;
       cambiarModo.querySelector('span')!.textContent = modo === 'qr' ? T('Vincular con número', 'Link with phone number') : T('Usar el código QR', 'Use the QR code');
@@ -327,7 +347,7 @@ export function vistaWhatsApp(inicial: F.EstadoWA): PanelWA {
     }
 
     pintar();
-    if (F.pedirQr(est, qrPedido)) void pedirVinculo(false);
+    if (F.pedirQr(est, qrPedido, consentido)) void pedirVinculo(false);
     return { el, actualizar: pintar };
   }
 

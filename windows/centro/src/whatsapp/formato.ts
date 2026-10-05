@@ -245,10 +245,19 @@ export function sondeoEstado(e: EstadoWA | null | undefined): number {
 
 /**
  * ¿Hay que pedir un QR nuevo? Al llegar a «vincular» sin QR ni código ni vinculación en curso (una vez: si el
- * QR vence, la persona toca «Otro QR»; el servidor limita /vincular a 10 por minuto).
+ * QR vence, la persona toca «Otro QR»; el servidor limita /vincular a 10 por minuto). Y solo si ya aceptó lo que
+ * implica (`consentido`): ahora cualquier cuenta de AU-RA puede agregar su WhatsApp (José, 5-oct), y pedir un QR
+ * le abre una cuenta en el puente; abrir el panel no lo hace solo.
  */
-export function pedirQr(e: EstadoWA | null | undefined, yaPedido: boolean): boolean {
-  return fase(e) === 'vincular' && !yaPedido && !e!.qr && !e!.codigo && !e!.vinculando;
+export function pedirQr(e: EstadoWA | null | undefined, yaPedido: boolean, consentido: boolean): boolean {
+  return consentido && fase(e) === 'vincular' && !yaPedido && !e!.qr && !e!.codigo && !e!.vinculando;
+}
+
+/** Lo que acepta antes de vincular (lo mismo que en la app: mobile/src/whatsapp/logica.ts textoConsentimientoWA). */
+export function textoConsentimiento(en = false): string {
+  return en
+    ? 'Your WhatsApp messages are stored on the AU-RA server so you can see and answer them here. You can unlink it whenever you want (everything is erased). This connection isn’t official for WhatsApp and it could limit your account.'
+    : 'Tus mensajes de WhatsApp se guardan en el servidor de AU-RA para que puedas verlos y contestarlos aquí. Puedes desvincularlo cuando quieras (se borra todo). WhatsApp no es oficial con esta conexión y podría limitar tu cuenta.';
 }
 
 /** El código de vincular, legible: «ABCDEFGH» → «ABCD-EFGH». */

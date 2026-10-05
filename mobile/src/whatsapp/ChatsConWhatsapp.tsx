@@ -3,11 +3,14 @@
  * de lado o tocando la pestaña (José, 2-oct: «una opción aparte de PULSE2CHAT, slide y cambia»; y «otra
  * sección de los correos al par de WhatsApp y PULSE2CHAT»).
  *
- * WhatsApp solo aparece si esta cuenta tiene su WhatsApp (server/whatsapp.ts, WHATSAPP_DUENOS). Correos
+ * WhatsApp: cada cuenta de AU-RA puede agregar el suyo (server/whatsapp.ts; José, 5-oct: «No aparece agregar
+ * whatsapp… ni les aparece whatsapp en donde está todo»). Sin vincular, la pestaña dice «+ WhatsApp» y abre «Agregar
+ * mi WhatsApp» (whatsapp/PantallaWhatsapp.tsx); vinculado, la de siempre. Si el servidor no deja (o no tiene
+ * WhatsApp), no aparece (logica.ts entradaWA). Correos
  * está para todos (correo/PantallaCorreos.tsx): sin cuentas conectadas explica cómo conectar una. Veta
  * Wallet también (cartera/PantallaCartera.tsx; José, 3-oct): saldos, enviar, recibir y abrir la wallet.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import { useTema } from '../nucleo/tema';
 import { tr } from '../i18n';
@@ -16,7 +19,7 @@ import { PantallaCorreos } from '../correo/PantallaCorreos';
 import { PantallaCartera } from '../cartera/PantallaCartera';
 import { PantallaWhatsapp } from './PantallaWhatsapp';
 import * as API from './api';
-import { vistaDe, type EstadoWA } from './logica';
+import { entradaWA, type EstadoWA } from './logica';
 
 const REINTENTOS_MS = [3_000, 10_000, 30_000, 60_000];
 
@@ -62,7 +65,11 @@ export function ChatsConWhatsapp({ onAbrir, onAtras, enWhatsapp = false }: Props
     };
   }, []);
 
-  const conWhatsapp = !!estado && vistaDe(estado) !== 'oculto';
+  // La pantalla de WhatsApp avisa cada estado; aquí solo importa si cambia qué se ve (al vincular: «+ WhatsApp» →
+  // «WhatsApp»). Estable, para no reiniciar su sondeo en cada dibujo.
+  const alEstado = useCallback((e: EstadoWA) => setEstado((antes) => (entradaWA(antes) === entradaWA(e) ? antes : e)), []);
+  const entrada = entradaWA(estado);
+  const conWhatsapp = entrada !== 'oculto';
   const paginas = paginasDe(conWhatsapp);
   const indice = Math.max(0, paginas.indexOf(pagina));
 
@@ -82,7 +89,7 @@ export function ChatsConWhatsapp({ onAbrir, onAtras, enWhatsapp = false }: Props
     deslizador.current?.scrollTo({ x: i * width, animated: animado });
   }
 
-  const cambio = <Pestanas p={p} paginas={paginas} pagina={pagina} noLeidosWA={noLeidosWA} noLeidosCorreo={noLeidosCorreo} onCambiar={(n) => ir(n)} />;
+  const cambio = <Pestanas p={p} paginas={paginas} pagina={pagina} noLeidosWA={noLeidosWA} noLeidosCorreo={noLeidosCorreo} agregarWA={entrada === 'agregar'} onCambiar={(n) => ir(n)} />;
   const alSoltar = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const i = Math.round(e.nativeEvent.contentOffset.x / Math.max(1, width));
     setPagina(paginas[Math.min(paginas.length - 1, Math.max(0, i))]);
@@ -103,7 +110,7 @@ export function ChatsConWhatsapp({ onAbrir, onAtras, enWhatsapp = false }: Props
       </View>
       {conWhatsapp ? (
         <View style={{ width, flex: 1 }}>
-          <PantallaWhatsapp onAtras={onAtras} cambio={cambio} activa={pagina === 'whatsapp'} estadoInicial={estado} onNoLeidos={setNoLeidosWA} />
+          <PantallaWhatsapp onAtras={onAtras} cambio={cambio} activa={pagina === 'whatsapp'} estadoInicial={estado} onNoLeidos={setNoLeidosWA} onEstado={alEstado} />
         </View>
       ) : null}
       <View style={{ width, flex: 1 }}>
@@ -118,10 +125,13 @@ export function ChatsConWhatsapp({ onAbrir, onAtras, enWhatsapp = false }: Props
 
 const VERDE_WA = '#25D366';
 
-function Pestanas({ p, paginas, pagina, noLeidosWA, noLeidosCorreo, onCambiar }: { p: ReturnType<typeof useTema>; paginas: Pagina[]; pagina: Pagina; noLeidosWA: number; noLeidosCorreo: number; onCambiar: (n: Pagina) => void }) {
-  const opciones: Record<Pagina, { texto: string; punto?: number; color?: string; sobre?: string; leer?: string }> = {
+function Pestanas({ p, paginas, pagina, noLeidosWA, noLeidosCorreo, agregarWA, onCambiar }: { p: ReturnType<typeof useTema>; paginas: Pagina[]; pagina: Pagina; noLeidosWA: number; noLeidosCorreo: number; agregarWA: boolean; onCambiar: (n: Pagina) => void }) {
+  const opciones: Record<Pagina, { texto: string; punto?: number; color?: string; sobre?: string; leer?: string; etiqueta?: string }> = {
     pulse: { texto: 'PULSE2CHAT' },
-    whatsapp: { texto: 'WhatsApp', punto: noLeidosWA, color: VERDE_WA, sobre: '#062B16', leer: tr(`${noLeidosWA} chats sin leer`, `${noLeidosWA} unread chats`) },
+    // Sin vincular todavía: «+ WhatsApp» (se lee «Agregar mi WhatsApp»).
+    whatsapp: agregarWA
+      ? { texto: '+ WhatsApp', color: VERDE_WA, sobre: '#062B16', etiqueta: tr('Agregar mi WhatsApp', 'Add my WhatsApp') }
+      : { texto: 'WhatsApp', punto: noLeidosWA, color: VERDE_WA, sobre: '#062B16', leer: tr(`${noLeidosWA} chats sin leer`, `${noLeidosWA} unread chats`) },
     correos: { texto: tr('Correos', 'Email'), punto: noLeidosCorreo, leer: tr(`${noLeidosCorreo} correos sin leer`, `${noLeidosCorreo} unread emails`) },
     cartera: { texto: 'Veta Wallet' },
   };
@@ -138,7 +148,7 @@ function Pestanas({ p, paginas, pagina, noLeidosWA, noLeidosCorreo, onCambiar }:
             onPress={() => onCambiar(n)}
             accessibilityRole="tab"
             accessibilityState={{ selected: activa }}
-            accessibilityLabel={o.punto ? `${o.texto}, ${o.leer}` : o.texto}
+            accessibilityLabel={o.etiqueta || (o.punto ? `${o.texto}, ${o.leer}` : o.texto)}
             style={[st.opcion, activa && { backgroundColor: fondo }]}
           >
             <Text style={[st.texto, { color: activa ? sobre : p.texto2 }, paginas.length > 2 && st.textoChico, paginas.length > 3 && st.textoMini]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
