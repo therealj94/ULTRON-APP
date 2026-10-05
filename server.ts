@@ -172,6 +172,7 @@ import { turnoElectrum } from './server/electrum/turno';
 import { estadoLaya, saludLaya } from './lib/laya';
 import { ES_ELECTRUM, ES_ULTRON, PAGINA_RAIZ, PLATAFORMA, rutaPermitida } from './lib/plataforma';
 import { manifiestoEntrega, sondearAlmacen } from './lib/build';
+import { montarRecepcion, montarRutaBuild } from './server/build-rutas';
 import { codigosActivos } from './server/cuentas';
 import {
   claveHiloDe,
@@ -194,7 +195,7 @@ import {
   procesarElectrumTelegram,
   registrarWebhookElectrum,
 } from './server/electrum/telegram';
-import { identidadDe, exigirPlataforma, esInvitado, plataformaAutorizada, sesionAbreAura, esDeComunidad } from './server/seguridad';
+import { identidadDe, exigirPlataforma, esInvitado, plataformaAutorizada, sesionAbreAura, esDeComunidad, DOMINIO_CODIGO } from './server/seguridad';
 import { asegurarCuentaMiembro, cuentaDe, cuentasDisponibles, crearSolicitud, entrarConCuenta, cuentaSuspendida, mantenerCuentasAlDia } from './server/cuentas';
 import { aprobadores, montarRutasCuentas, plantilla } from './server/cuentas-rutas';
 import { montarRutasGenesis } from './server/genesis';
@@ -338,6 +339,18 @@ app.use('/api', (req, res, next) => {
 });
 
 /*
+ * QUÉ BUILD CORRE CADA APARATO (evidencia de operación, 5-oct): la cabecera `x-aura-cliente` de la app y la web se
+ * anota en la cuenta de la SESIÓN, sin esperar y como mucho cada 10 min por instalación (lib/recepcion-clientes.ts).
+ * Sin cabecera o sin sesión no se anota nada. Los códigos temporales de la demo no son cuentas: no se anotan.
+ */
+function cuentaDeRecepcion(req: express.Request): string | null {
+  const s = sesionDe(req);
+  const c = String(s?.correo || '').trim().toLowerCase();
+  return c && !c.endsWith(DOMINIO_CODIGO) ? c : null;
+}
+montarRecepcion(app, { cuentaDe: cuentaDeRecepcion });
+
+/*
  * DE QUÉ ORGANIZACIÓN ES LA PETICIÓN (auditoría H14). Todo `/api/electrum` corre dentro de su
  * ámbito: las consultas de documentos, capas y carteras filtran solas por él. Los invitados de la
  * demo miran lo de la casa (H06, decidido por José).
@@ -457,18 +470,19 @@ alAvisar(async (ap, que) => {
  * y banderas no secretas, y además el SHA y la hora del servidor, el SHA del build web que se sirve (dist/aura-build.json),
  * lo que el nodo de la computadora dice de sí en /salud (huella, validador, capacidades; «desconocido» si no contesta),
  * el validador mínimo que exige el servidor, las versiones de esquema y la salud del almacén durable (leer y escribir).
- * Detrás de la sesión de mesa: el público ya tiene el commit corto en /api/health.
+ * Detrás de la sesión de mesa: el público ya tiene el commit corto en /api/health. Y `clientes`: qué build corre cada
+ * aparato de la cuenta de la sesión, comparado con lo publicado (server/build-rutas.ts, lib/recepcion-clientes.ts).
  */
-app.get('/api/build', exigirMesa, limitar(30), async (_req, res) => {
-  res.setHeader('Cache-Control', 'no-store');
-  const [m, almacen] = await Promise.all([
+montarRutaBuild(app, {
+  exigirMesa,
+  limitar,
+  cuentaDe: cuentaDeRecepcion,
+  manifiesto: () =>
     manifiestoEntrega(
       { plataforma: ES_ELECTRUM ? 'electrum' : 'aura', banderas: { computadora: computadoraConfigurada(), codigosElectrum: ES_ELECTRUM && codigosActivos() } },
       { nodo: computadoraConfigurada() ? () => estadoComputadora() : async () => ({ configurada: false, ok: false }) }
     ),
-    sondearAlmacen(),
-  ]);
-  return res.json({ ...m, almacen, honesto: true });
+  almacenSalud: () => sondearAlmacen(),
 });
 
 app.get('/api/health', async (req, res) => {
