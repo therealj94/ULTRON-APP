@@ -307,3 +307,139 @@ test('STREAM02: una herramienta pedida con tool_use cierra como completa', async
     }
   );
 });
+
+/* ------------------------------------------------------------------ 5-oct: la mesa del teléfono, más rápida */
+
+// Las herramientas de un teléfono con sesión y la app, SIN las manos de llamar ni de recordatorio (como el de
+// José si no las declaró): ahí «te llamo en 30 segundos» no lo cumple ninguna herramienta.
+const conSesion: ManosDelTurno = { ...nada, app: true, sesion: true, investigar: true };
+const conLlamar: ManosDelTurno = { ...conSesion, manos: ['llamame', 'recordatorio'] };
+
+test('5-oct: qué herramienta del turno cumpliría la promesa se decide sin red (vacío = ninguna)', async () => {
+  const { herramientasQueCumplen } = await import('../lib/cerebro-manos');
+  const sin = nombres(conSesion);
+  const con = nombres(conLlamar);
+  // Sin la mano de llamar ni la de recordatorio: nada que hacer con eso.
+  assert.deepEqual(herramientasQueCumplen('[EMO: feliz] Va, te llamo en 30 segundos.', sin, { mensaje: 'llámame en 30 segundos' }), []);
+  assert.deepEqual(herramientasQueCumplen('Listo, queda el recordatorio para mañana.', sin, { mensaje: 'recuérdame mañana lo del banco' }), []);
+  // Con ellas, sí (y solo las que hacen eso).
+  assert.deepEqual(herramientasQueCumplen('[EMO: feliz] Va, te llamo en 30 segundos.', con, { mensaje: 'llámame en 30 segundos' }), ['llamarme']);
+  assert.ok(herramientasQueCumplen('Listo, queda el recordatorio para mañana.', con, { mensaje: 'recuérdame mañana' }).includes('recordatorio'));
+  // Buscar siempre se puede (buscar_web va en todo turno).
+  assert.ok(herramientasQueCumplen('Déjame buscarlo.', sin, { mensaje: '¿quién ganó el partido?' }).includes('buscar_web'));
+  // Una frase genérica se juzga por lo que se pidió; un «te aviso» de relleno en una charla, por nada.
+  assert.deepEqual(herramientasQueCumplen('Ahí voy.', sin, { mensaje: '¿cómo estás?' }), []);
+  assert.deepEqual(herramientasQueCumplen('Claro, te aviso cuando termine.', sin, { mensaje: '¿cómo estás?' }), []);
+  assert.deepEqual(herramientasQueCumplen('Claro, te aviso cuando termine.', sin, { mensaje: 'investiga el precio del cacao' }), ['investigar']);
+  assert.deepEqual(herramientasQueCumplen('Ahí voy.', con, { mensaje: 'llámame' }), ['llamarme']);
+  // Un «sí» a una propuesta de AU-RA: lo pedido es lo que ella propuso.
+  assert.deepEqual(herramientasQueCumplen('Va, ahí voy.', con, { mensaje: 'sí', anterior: '¿Te llamo en diez minutos?' }), ['llamarme']);
+});
+
+test('5-oct: sin herramienta que lo cumpla NO hay segunda vuelta al modelo; con ella, sí (una)', async () => {
+  const { cumplirLoDicho } = await import('../lib/cerebro-manos');
+  let vueltas = 0;
+  const repreguntar = (piezas: any[]) => () =>
+    (async function* () {
+      vueltas++;
+      for (const p of piezas) yield p;
+    })();
+  const usadas: string[] = [];
+  const usar = (h: { nombre: string }) => (usadas.push(h.nombre), true);
+
+  const local = await cumplirLoDicho({ dicho: 'Va, te llamo en 30 segundos.', disponibles: nombres(conSesion), mensaje: 'llámame en 30 segundos', repreguntar: repreguntar([{ texto: 'NADA' }]), usar });
+  assert.equal(vueltas, 0, 'no se volvió a preguntar: no había herramienta');
+  assert.deepEqual(local, { correccion: 'local', cumplida: false, candidatas: [], ms: 0 });
+
+  const cumplida = await cumplirLoDicho({
+    dicho: 'Va, te llamo en 30 segundos.',
+    disponibles: nombres(conLlamar),
+    mensaje: 'llámame en 30 segundos',
+    repreguntar: repreguntar([{ modelo: 'zai.glm-5' }, { herramienta: { nombre: 'llamarme', input: { en_segundos: 30 } } }]),
+    usar,
+  });
+  assert.equal(vueltas, 1);
+  assert.equal(cumplida.correccion, 'repregunta');
+  assert.equal(cumplida.cumplida, true);
+  assert.deepEqual(usadas, ['llamarme']);
+
+  const negada = await cumplirLoDicho({ dicho: 'Va, te llamo.', disponibles: nombres(conLlamar), mensaje: 'llámame', repreguntar: repreguntar([{ texto: 'NADA' }]), usar });
+  assert.equal(vueltas, 2);
+  assert.deepEqual([negada.correccion, negada.cumplida], ['repregunta', false], 'no la usó: lo prometido no pasó');
+});
+
+test('5-oct: corregida sin segunda vuelta, la respuesta nunca deja un «te llamo» / «ya lo puse» / «lo estoy haciendo» falso', async () => {
+  const { corregirPromesaSinHerramienta, prometeSinHacer } = await import('../lib/cerebro-manos');
+  const { vigilarPromesas } = await import('../lib/promesas');
+  const casos = [
+    '[EMO: feliz] Va, te llamo en 30 segundos.',
+    'Listo, queda el recordatorio para mañana a las cinco.',
+    'El clima está bonito hoy. Ya lo puse.',
+    'Claro, te aviso cuando termine.',
+    'Ahí voy, en eso estoy.',
+    'Ya lo estoy haciendo. Te cuento cuando tenga algo.',
+    "Sure, I'll call you in a minute.",
+  ];
+  for (const t of casos) {
+    const idioma = /Sure/.test(t) ? 'en' : 'es';
+    const c = corregirPromesaSinHerramienta(t, idioma);
+    const v = vigilarPromesas(c.texto, { pasos: [], acciones: 0, idioma });
+    assert.equal(prometeSinHacer(v.texto), false, `${t} → ${v.texto}`);
+    assert.ok(v.texto.trim().length > 10, `queda algo honrado que decir: ${t} → ${v.texto}`);
+  }
+  // Lo que no promete queda, la etiqueta de ánimo y las líneas de la máquina también.
+  const c = corregirPromesaSinHerramienta('[EMO: feliz] El clima está bonito hoy. Ya lo puse.\nACCION_APP: {"tipo":"atras"}');
+  assert.equal(c.cambiada, true);
+  assert.equal(c.texto, '[EMO: feliz] El clima está bonito hoy. Eso todavía no lo hice: desde aquí no tengo cómo.\nACCION_APP: {"tipo":"atras"}');
+  // Una respuesta normal no se toca.
+  assert.deepEqual(corregirPromesaSinHerramienta('[EMO: neutral] La inflación es cuando suben los precios.'), { texto: '[EMO: neutral] La inflación es cuando suben los precios.', cambiada: false });
+});
+
+test('5-oct: server.ts no vuelve a preguntar a ciegas: pasa por cumplirLoDicho y corrige sin red cuando no hay herramienta', async () => {
+  const fs = await import('node:fs');
+  const src = fs.readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
+  const turno = src.slice(src.indexOf('async function turnoEnVivo('), src.indexOf("app.get('/api/taller'"));
+  assert.ok(!/for await \(const pieza of hablarConManos\(vuelta/.test(turno), 'la segunda vuelta ya no se pide directo');
+  assert.match(turno, /cumplirLoDicho\(\{/);
+  assert.match(turno, /corregirPromesaSinHerramienta\(reply/);
+});
+
+test('5-oct: tope de voz: «léemelo completo» y «sigue leyendo» no tienen tope; una respuesta normal sí', () => {
+  for (const largo of ['léemelo completo', 'léelo entero', 'sigue leyendo', 'continúa', 'léeme el correo de Ana', 'lee mi último correo', 'keep reading'])
+    assert.equal(topeDeVoz(largo, true), 0, largo);
+  for (const corto of ['¿qué dice el correo de Ana?', 'cómo va la planta', '¿quién ganó el partido?']) assert.equal(topeDeVoz(corto, true), TOPE_VOZ_CHARS, corto);
+});
+
+test('5-oct: lo que se dice con tope: frases enteras hasta TOPE_VOZ_CHARS, nunca más de TOPE_VOZ_DURO, y siempre un principio exacto', async () => {
+  const { recorteDeVoz, TOPE_VOZ_DURO } = await import('../lib/cerebro-manos');
+  // La respuesta de 1 100 caracteres del registro del 5-oct («dijo 1100 de 1100»): ~70 s de voz.
+  const larga = 'El correo es del banco y dice que tu tarjeta vence pronto. '.repeat(19).trim();
+  assert.ok(larga.length >= 1100);
+  const dicho = recorteDeVoz(larga, TOPE_VOZ_CHARS);
+  assert.ok(larga.startsWith(dicho));
+  assert.ok(dicho.length >= TOPE_VOZ_CHARS && dicho.length <= TOPE_VOZ_DURO, String(dicho.length));
+  assert.match(dicho.trimEnd(), /\.$/, 'termina en frase');
+  // Una sola frase larguísima: se corta en una pausa antes del tope duro.
+  const sinPunto = 'una lista de cosas, '.repeat(60);
+  const d2 = recorteDeVoz(sinPunto, TOPE_VOZ_CHARS);
+  assert.ok(sinPunto.startsWith(d2) && d2.length <= TOPE_VOZ_DURO && d2.length > TOPE_VOZ_CHARS / 2, String(d2.length));
+  // Sin tope o corta: entera.
+  assert.equal(recorteDeVoz(larga, 0), larga);
+  assert.equal(recorteDeVoz('Corta y clara.', TOPE_VOZ_CHARS), 'Corta y clara.');
+});
+
+test('5-oct: server.ts aplica el tope también a lo que sale de golpe (replace, lo retenido, el done) y el registro dice lo de verdad dicho', async () => {
+  const fs = await import('node:fs');
+  const src = fs.readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
+  const turno = src.slice(src.indexOf('async function turnoEnVivo('), src.indexOf("app.get('/api/taller'"));
+  // Antes: `soltar('replace', decible)` y `soltar('replace', ahora)` mandaban la respuesta ENTERA a la voz.
+  assert.ok(!/soltar\('replace', (decible|ahora)\)/.test(turno), 'ningún replace manda el texto entero sin tope');
+  // Antes: con tope y la vuelta del harness, `enviado = decible.length` hacía decir al registro «1100 de 1100».
+  assert.ok(!/enviado = decible\.length;/.test(turno), 'enviado no finge que se dijo todo');
+  assert.match(turno, /recorteDeVoz\(/);
+  // El `done` de un turno con tope lleva en `voz` solo lo que se dice (el texto entero va en `reply`).
+  assert.match(turno, /voz: vozConTope\(/);
+  // Y el respaldo JSON de la mesa (/api/turno) también, si el turno fue dictado por voz.
+  const json = src.slice(src.indexOf("app.post('/api/turno', "), src.indexOf("app.post('/api/turno', ") + 4000);
+  assert.match(json, /voz: turnoHablado\(body\) \? recorteDeVoz\(out\.voz/);
+});

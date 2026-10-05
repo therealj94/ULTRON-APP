@@ -18,7 +18,8 @@ import type { Tool } from '@aws-sdk/client-bedrock-runtime';
 import type { DocumentType } from '@smithy/types';
 import { partesHN, RECORDATORIO_MIN_MS } from './manos-app';
 import type { Mano } from './manos-app';
-import { clasificarPromesas } from './promesas';
+import type { PiezaManos } from './cerebro-rapido';
+import { clasificarFrase, clasificarPromesas, frases, plano } from './promesas';
 
 /** Lo que este turno puede hacer (lo arma server.ts con el contexto del teléfono y la cuenta). */
 export type ManosDelTurno = {
@@ -461,16 +462,175 @@ export function notaDeCumplir(idioma: 'es' | 'en' = 'es'): string {
 }
 
 /**
+ * ¿QUÉ HERRAMIENTA DEL TURNO PODRÍA CUMPLIR LO PROMETIDO? (José, 5-oct, APK 5.3.0: un turno de la mesa tardó
+ * 7,5 s en hablar; el registro decía «prometió sin herramienta; no había herramienta que usar»). Antes, toda
+ * promesa sin herramienta costaba una segunda vuelta entera al modelo (mismo system, mismo hilo) aunque en el
+ * turno no hubiera ninguna herramienta que hiciera eso: segundos de silencio para terminar en «NADA».
+ *
+ * Aquí se decide sin red: de cada frase que promete se saca QUÉ promete (llamar, recordar, mandar, abrir,
+ * buscar, leer…) y se cruza con las herramientas que de verdad tiene este turno. Una frase genérica («ahí
+ * voy», «en eso estoy») se juzga por lo que la persona pidió (su mensaje y lo último que dijo AU-RA, por si es
+ * un «sí» a una propuesta). Vacío = ninguna lo cumple: se corrige el texto aquí, sin volver a preguntar.
+ * Ante la duda dice que sí hay (se vuelve a preguntar como siempre): equivocarse hacia ese lado solo cuesta tiempo.
+ */
+const QUE_PROMETE: Array<[RegExp, string[]]> = [
+  [/\b(recuerd|recordatorio|record|alarma|desperta|timer|program|agend|remind)/, ['recordatorio', 'llamarme']],
+  [/\b(mand|envi|escrib|redact|borrador|whatsapp|correo|mensaje|send|text|message|email)/, ['chat_aura', 'whatsapp', 'correo', 'circulo']],
+  [/\b(abr|open|pantalla|ajustes)/, ['abrir_pantalla', 'abrir_cartera', 'chat_aura']],
+  [/\b(busc|investig|averig|consult|indag|rastre|recopil|search|research|look|find|dig)/, ['buscar_web', 'investigar', 'buscar_en_chats', 'leer_pagina', 'computadora']],
+  [/\b(revis|lee|leer|leo|leyendo|read|review|check|chec)/, ['correo', 'whatsapp', 'leer_mensajes', 'ordenar_mensajes', 'leer_pagina', 'buscar_web', 'mision']],
+  [/\b(pon|puse|set)\b|\b(pongo|poner|pondre)/, ['recordatorio', 'llamarme']],
+  [/\b(encend|prend)|\b(computadora|compu|pc)\b/, ['computadora']],
+  [/\b(tema|oscuro|modo claro|idioma|ingles|espanol|callo|callate|silencio|avatar|pantalla completa|atras)\b/, ['ajustar_app', 'cambiar_idioma']],
+  [/\b(guard|anot|apunt|save|note)/, ['recordar_de_mi', 'mision', 'tarea']],
+  [/\b(pag|cartera|wallet|saldo)/, ['preparar_pago', 'abrir_cartera', 'cartera_saldo']],
+  [/\b(mision|tarea)/, ['mision', 'tarea']],
+];
+
+/**
+ * «Te aviso» lo respalda algo que sigue después del turno y avisa (una investigación, su computadora, un
+ * recordatorio…), pero solo si se pidió algo así: un «te aviso» de relleno en una charla no merece otra vuelta.
+ */
+const AVISA = /\b(avis|notific|let you know|notify|get back to you)/;
+const RESPALDAN_AVISO = ['investigar', 'recordatorio', 'llamarme', 'computadora', 'mision', 'tarea'];
+
+const LLAMARLA = /\bte (lo |la )?(llamo|marco|timbro|llamare|marcare)\b|\bahi te (llamo|marco|suena)\b|\b(llamame|marcame|timbrame)\b|\bcall (you|me)\b/;
+
+/** Las herramientas que harían lo que dice un texto (por sus verbos), sin mirar si el turno las tiene. */
+function herramientasPara(texto: string): Set<string> {
+  const p = plano(texto);
+  const out = new Set<string>();
+  for (const [re, hs] of QUE_PROMETE) if (re.test(p)) for (const h of hs) out.add(h);
+  // Llamar: «te llamo» / «llámame» es que AU-RA la llame a ella; «le marco a Beto», llamar a otro.
+  if (LLAMARLA.test(p)) out.add('llamarme');
+  else if (/\b(llam|marc|timbr|call)/.test(p)) for (const h of ['llamar_contacto', 'circulo']) out.add(h);
+  return out;
+}
+
+/** Las frases del texto que prometen o dan por hecho (lo mismo que mira `prometeSinHacer`, frase por frase). */
+function frasesQuePrometen(texto: string): string[] {
+  return frases(String(texto || '')).filter((f) => f.trim() && prometeSinHacer(f));
+}
+
+/** Las herramientas de `disponibles` que cumplirían lo que `dicho` promete (vacío = ninguna: no hay segunda vuelta). */
+export function herramientasQueCumplen(dicho: string, disponibles: readonly string[], contexto: { mensaje?: string; anterior?: string } = {}): string[] {
+  const hay = new Set(disponibles);
+  const pedidas = new Set<string>();
+  const marcadas = frasesQuePrometen(dicho);
+  const pedido = herramientasPara(`${contexto.mensaje || ''}\n${contexto.anterior || ''}`);
+  // Si la promesa solo se ve en el texto entero (partida entre frases), se mira el texto entero.
+  for (const f of marcadas.length ? marcadas : [String(dicho || '')]) {
+    let hs = herramientasPara(f);
+    // «Te aviso cuando termine»: lo que avisa, si lo que se pidió es algo que sigue después (investigar, recordar…).
+    if (AVISA.test(plano(f))) for (const h of RESPALDAN_AVISO) if (pedido.has(h)) hs.add(h);
+    // «Ahí voy», «en eso estoy», «ya lo hago»: qué es «eso» lo dice lo que se pidió.
+    if (!hs.size && !AVISA.test(plano(f))) hs = pedido;
+    for (const h of hs) if (hay.has(h)) pedidas.add(h);
+  }
+  return [...pedidas];
+}
+
+export type CumplirLoDicho = { correccion: 'local' | 'repregunta'; cumplida: boolean; candidatas: string[]; ms: number };
+
+/**
+ * DIJO QUE LO HACÍA Y NO USÓ LA HERRAMIENTA («ahí te llamo» y no llamaba): si alguna herramienta del turno lo
+ * cumple, se le pide al modelo una vez, en silencio, que la use (`repreguntar`; cada herramienta que pida pasa
+ * por `usar`). Si ninguna lo cumple, NO hay segunda vuelta (era una ida y vuelta entera al modelo para nada):
+ * `correccion: 'local'` y quien llama corrige el texto con `corregirPromesaSinHerramienta`. Lo mismo si la
+ * vuelta no usó ninguna (`cumplida: false`): lo prometido no pasó y no se entrega como hecho.
+ */
+export async function cumplirLoDicho(o: {
+  dicho: string;
+  disponibles: readonly string[];
+  mensaje?: string;
+  /** Lo último que dijo AU-RA (un «sí» a su propuesta es pedir eso). */
+  anterior?: string;
+  repreguntar: () => AsyncIterable<PiezaManos>;
+  /** Una herramienta pedida en la segunda vuelta; true si se pudo usar. */
+  usar: (h: { nombre: string; input: Record<string, unknown> }) => boolean;
+}): Promise<CumplirLoDicho> {
+  const t0 = Date.now();
+  const candidatas = herramientasQueCumplen(o.dicho, o.disponibles, { mensaje: o.mensaje, anterior: o.anterior });
+  if (!candidatas.length) return { correccion: 'local', cumplida: false, candidatas, ms: 0 };
+  let cumplida = false;
+  for await (const pieza of o.repreguntar()) {
+    if (!('herramienta' in pieza)) continue;
+    if (o.usar(pieza.herramienta)) cumplida = true;
+  }
+  return { correccion: 'repregunta', cumplida, candidatas, ms: Date.now() - t0 };
+}
+
+/**
+ * La corrección sin segunda vuelta: ninguna herramienta del turno hace lo prometido, así que lo prometido no
+ * pasó. Lo que `vigilarPromesas` (lib/promesas.ts) ya sabe decir (trabajo, avisos, su computadora, PULSE2CHAT)
+ * lo corrige ella al final del turno; aquí se quita lo demás que da por hecho o promete una acción («te llamo»,
+ * «ya lo puse», «queda el recordatorio», «¿lo envío?» sin borrador) y se dice con honradez que no se hizo.
+ * Las líneas ACCION_APP / PEDIR_HERRAMIENTA y la etiqueta de ánimo del principio no se tocan.
+ */
+export function corregirPromesaSinHerramienta(texto: string, idioma: 'es' | 'en' = 'es'): { texto: string; cambiada: boolean } {
+  const original = String(texto || '');
+  const emo = /^\s*\[[^\]]{0,30}\]\s*/.exec(original)?.[0] || '';
+  const lineas = original.slice(emo.length).split('\n');
+  const esMaquina = (l: string) => /^\s*(ACCION_APP|PEDIR_HERRAMIENTA)\s*:/i.test(l);
+  let quito = false;
+  const dichas = lineas
+    .filter((l) => !esMaquina(l))
+    .map((l) =>
+      frases(l)
+        .filter((f) => {
+          // Lo de trabajo o aviso lo corrige la guarda del final con sus palabras («Todavía no lo empecé…»).
+          if (clasificarFrase(f).some((t) => t === 'trabajo' || t === 'aviso')) return true;
+          if (!prometeSinHacer(f)) return true;
+          quito = true;
+          return false;
+        })
+        .join('')
+        .trim()
+    );
+  if (!quito) return { texto: original, cambiada: false };
+  const resto = dichas.filter(Boolean).join('\n').replace(/[ \t]{2,}/g, ' ').trim();
+  const honrado = idioma === 'en' ? "I haven't done that: I can't do it from here yet." : 'Eso todavía no lo hice: desde aquí no tengo cómo.';
+  const maquina = lineas.filter(esMaquina);
+  const final = `${emo}${[resto, honrado].filter(Boolean).join(' ')}${maquina.length ? `\n${maquina.join('\n')}` : ''}`.trim();
+  return { texto: final, cambiada: final !== original };
+}
+
+/**
  * EL TOPE DE LO QUE SE DICE EN VOZ (José, 3-oct: «habla y le tengo que interrumpir»; en la llamada de ese
- * día una respuesta sonó 26 segundos). La regla del prompt pide una o dos frases, pero leyendo resultados el
- * cerebro se alarga. En voz, cuando lo ya dicho llega a este largo, termina en la frase completa y no sigue
- * (unos 12–18 s de voz). Si la persona pidió algo largo a propósito (un cuento, que le lea algo, paso a
- * paso, una oración, una canción), no hay tope. Escrito, tampoco. Devuelve 0 si no hay tope.
+ * día una respuesta sonó 26 segundos; 5-oct: «la voz aún siento poco lenta»). La regla del prompt pide una o
+ * dos frases, pero leyendo resultados el cerebro se alarga. En voz, cuando lo ya dicho llega a TOPE_VOZ_CHARS,
+ * termina en la frase completa y no sigue; y nunca pasa de TOPE_VOZ_DURO (unas 2–3 frases, ~25 s como mucho):
+ * una frase que lo pasaría no se empieza. El texto entero sigue en la respuesta (`reply`), para leerlo en
+ * pantalla. Si la persona pidió algo largo a propósito (un cuento, que le lea algo «completo», que siga
+ * leyendo, paso a paso, una oración, una canción), no hay tope. Escrito, tampoco. Devuelve 0 si no hay tope.
  */
 export const TOPE_VOZ_CHARS = 220;
+export const TOPE_VOZ_DURO = 450;
 const PIDE_LARGO =
-  /\b(cu[eé]nta(me)?|un cuento|una historia|l[eé]e(me|lo|la|los|las)?|lee\b|l[eé]eme|expl[ií]ca(me)?\s.*(detalle|a fondo|completo)|en detalle|a fondo|paso a paso|todos los pasos|la lista completa|res[uú]me(me|n)?\s.*(todo|completo)|ora\b|oremos|oraci[oó]n|reza|c[aá]nta(me|nos)?|poema|tell me a story|read (it|me|this)|step by step|in detail|pray|sing)\b/i;
+  /\b(cu[eé]nta(me)?|un cuento|una historia|l[eé]e(me|lo|la|los|las)?|lee\b|l[eé]eme(lo|la|los|las)?|l[eé]elo|l[eé]ela|sigue leyendo|segu[ií] leyendo|contin[uú]a( leyendo)?|lo que falta|completo|completa|entero|entera|todo el correo|expl[ií]ca(me)?\s.*(detalle|a fondo|completo)|en detalle|a fondo|paso a paso|todos los pasos|la lista completa|res[uú]me(me|n)?\s.*(todo|completo)|ora\b|oremos|oraci[oó]n|reza|c[aá]nta(me|nos)?|poema|tell me a story|read (it|me|this)|keep reading|the whole thing|step by step|in detail|pray|sing)\b/i;
 export function topeDeVoz(mensaje: string, voz: boolean): number {
   if (!voz) return 0;
   return PIDE_LARGO.test(String(mensaje || '')) ? 0 : TOPE_VOZ_CHARS;
+}
+
+/**
+ * Hasta dónde se DICE un texto con el tope de voz `tope` (0 = entero): frases enteras mientras lo dicho no
+ * llegue a `tope`, sin empezar una que pase de TOPE_VOZ_DURO. Si la primera frase sola ya lo pasa, se corta
+ * en la última pausa (coma, punto y coma, dos puntos o espacio) antes del tope duro. Devuelve siempre un
+ * PRINCIPIO exacto del texto (lo que ya sonó y lo que falta se comparan con startsWith).
+ */
+export function recorteDeVoz(texto: string, tope: number, duro = TOPE_VOZ_DURO): string {
+  const t = String(texto || '');
+  if (!tope || t.length <= tope) return t;
+  let dicho = '';
+  for (const f of frases(t)) {
+    if (dicho.length >= tope) break;
+    if (dicho && (dicho + f).trimEnd().length > duro) break;
+    dicho += f;
+  }
+  if (dicho.trimEnd().length <= duro) return dicho;
+  const c = t.slice(0, duro);
+  const pausa = Math.max(c.lastIndexOf(', '), c.lastIndexOf('; '), c.lastIndexOf(': '));
+  const fin = pausa > tope / 2 ? pausa + 1 : c.lastIndexOf(' ') > 0 ? c.lastIndexOf(' ') : duro;
+  return t.slice(0, fin);
 }

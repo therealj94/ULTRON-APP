@@ -284,7 +284,7 @@ export function lineaDeResultado(herramienta: string, r: { texto: string; estado
 /* ------------------------------------------------------------------ la guarda del final del turno */
 
 /** Lo que se sabe de cada herramienta del turno (los pasos del harness). */
-export type PasoVigilado = { herramienta: string; estado: string; resumen?: string };
+export type PasoVigilado = { herramienta: string; estado: string; resumen?: string; /** Lo que tardó (la línea de tiempos del turno). */ ms?: number };
 
 export type ContextoVigilancia = {
   pasos: PasoVigilado[];
