@@ -376,6 +376,13 @@ export type ChatResult = {
   idTurno?: string;
   /** Las tareas durables que el turno creó o cambió (AUR08, lib/trabajos.ts `refsDeTurno`). Un servidor viejo no las manda. */
   tareas?: unknown[];
+  /** La traza del turno en el servidor: con ella se dice «me sirvió / no me sirvió» (`opinarTurno`). */
+  trazaId?: string;
+  /**
+   * Todavía no hay respuesta: el mismo turno sigue en curso en el servidor (409 `enCurso`) o se está
+   * reconciliando tras una caída (`reconciliando`). No es un resultado (lib/primerResultado.ts).
+   */
+  pendiente?: boolean;
 };
 
 type TurnoOpts = {
@@ -414,6 +421,20 @@ type TurnoOpts = {
   interrumpido?: { oido: string };
 };
 
+/**
+ * «Me sirvió» (1) o «no me sirvió» (-1) sobre una respuesta, con la traza que trajo el turno (la misma ruta que
+ * usa la web: POST /api/cognitivo/trazas/:id/opinion). Opcional: si falla, no pasa nada.
+ */
+export async function opinarTurno(trazaId: string, valor: 1 | -1): Promise<boolean> {
+  if (!trazaId) return false;
+  try {
+    const r = await api<{ ok?: boolean }>(`/api/cognitivo/trazas/${encodeURIComponent(trazaId)}/opinion`, { method: 'POST', body: JSON.stringify({ valor }) }, 10_000);
+    return !!r?.ok;
+  } catch {
+    return false;
+  }
+}
+
 /** Un id para el turno de una frase (sin módulos nativos: no tiene que ser criptográfico, solo no repetirse). */
 export function nuevoIdTurno(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
@@ -451,11 +472,24 @@ export async function turno(opts: TurnoOpts, gen = generacionCuenta()): Promise<
     const pelado = pelarEtiqueta(String(data.reply || ''));
     const emocion = data.emocion ? normalizarEmocion(data.emocion) : pelado.emocion || 'neutral';
     const voz = data.voz ? pelarEtiqueta(String(data.voz)).texto.trim() : undefined;
-    return { reply: quitarExpresiones(pelado.texto).trim(), voz, emocion, mode: data.mode, ms: data.ms, via: data.via, error: data.error, acciones: data.acciones, ...(data.parcial === true ? { parcial: true } : {}), ...(Array.isArray(data.tareas) ? { tareas: data.tareas } : {}) };
+    return {
+      reply: quitarExpresiones(pelado.texto).trim(),
+      voz,
+      emocion,
+      mode: data.mode,
+      ms: data.ms,
+      via: data.via,
+      error: data.error,
+      acciones: data.acciones,
+      ...(data.parcial === true ? { parcial: true } : {}),
+      ...(Array.isArray(data.tareas) ? { tareas: data.tareas } : {}),
+      ...(typeof data.trazaId === 'string' && data.trazaId ? { trazaId: data.trazaId } : {}),
+      ...(data.reconciliando === true ? { pendiente: true } : {}),
+    };
   } catch (e: any) {
     // De una sesión que ya no está: quien llamó no dice nada (ni «sin conexión») a la persona de ahora.
     if (esVencida(e)) return { reply: '', emocion: 'neutral', error: e.message, vencida: true };
-    return { reply: '', emocion: 'neutral', error: e?.message || 'Sin conexión al cerebro' };
+    return { reply: '', emocion: 'neutral', error: e?.message || 'Sin conexión al cerebro', ...(e?.status === 409 && e?.data?.enCurso ? { pendiente: true } : {}) };
   }
 }
 
@@ -557,9 +591,11 @@ export function turnoStream(opts: TurnoOpts, h: StreamHandlers): { promise: Prom
           acciones: data.acciones,
           ...(data.parcial === true ? { parcial: true } : {}),
           ...(Array.isArray(data.tareas) ? { tareas: data.tareas } : {}),
+          ...(typeof data.trazaId === 'string' && data.trazaId ? { trazaId: data.trazaId } : {}),
+          ...(data.reconciliando === true ? { pendiente: true } : {}),
           cierre: 'done',
         };
-      } else if (ev === 'error') done = { reply: quitarExpresiones(full), voz: full, emocion: emocion || 'neutral', error: String(data.error || 'error'), ...(full.trim() ? { parcial: true } : {}), cierre: 'error' };
+      } else if (ev === 'error') done = { reply: quitarExpresiones(full), voz: full, emocion: emocion || 'neutral', error: String(data.error || 'error'), ...(full.trim() ? { parcial: true } : {}), ...(data.enCurso === true ? { pendiente: true } : {}), cierre: 'error' };
     };
     /** `final`: la conexión ya cerró, así que el último bloque (sin línea en blanco detrás) también cuenta. */
     const consume = (final = false) => {
