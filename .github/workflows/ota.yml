@@ -117,7 +117,10 @@ jobs:
             echo "✗ ${ULTRON_APP}: requiere APK nueva (huella $RT ≠ ${PUBLICADA:-ninguna})" >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      # `--json`: lo que publicó EAS (updateId, grupo, runtime) sale por stdout para la ficha; los avisos de eas siguen
+      # en el log (van por stderr). Si eas falla, el paso falla en rojo como siempre.
       - name: Publicar OTA
+        id: publicar
         if: inputs.accion != 'volver-a-la-apk' && steps.apk.outputs.compatible == 'true'
         working-directory: mobile
         env:
@@ -130,11 +133,14 @@ jobs:
             --channel production \
             --platform android \
             --message "$(printf '%s' "$MENSAJE" | head -n1 | cut -c1-200) (${GITHUB_SHA::7})" \
-            --non-interactive
+            --non-interactive \
+            --json > "$RUNNER_TEMP/eas-update.json"
+          cat "$RUNNER_TEMP/eas-update.json"
 
       # Marcha atrás de emergencia: las APK de esta huella dejan de usar cualquier OTA y vuelven al
       # JS con el que se compilaron. Para volver a una OTA anterior concreta: `eas update:republish`.
       - name: Volver al JS de la APK
+        id: volver
         if: inputs.accion == 'volver-a-la-apk'
         working-directory: mobile
         env:
@@ -146,3 +152,84 @@ jobs:
             --runtime-version "${{ steps.runtime.outputs.runtime }}" \
             --message "Vuelta al JS de la APK (${GITHUB_SHA::7})" \
             --non-interactive
+
+      # La ficha de ESTA publicación (scripts/qa/manifiesto-ota.mjs), para que el servidor sepa qué updateId esperar
+      # en cada teléfono (GET /api/build → clientes; lib/ota-publicada.ts). Solo si se publicó algo. Si la salida de
+      # eas no trae lo esperado, falla en ROJO: la OTA salió, pero sin ficha /api/build no la puede comparar.
+      - name: Ficha de la OTA publicada
+        if: steps.publicar.outcome == 'success' || steps.volver.outcome == 'success'
+        working-directory: mobile
+        env:
+          RT: ${{ steps.runtime.outputs.runtime }}
+          VOLVER: ${{ steps.volver.outcome == 'success' }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/ficha-ota"
+          SALIDA="$RUNNER_TEMP/ficha-ota/ota-${ULTRON_APP}.json"
+          if [ "$VOLVER" = "true" ]; then
+            node ../scripts/qa/manifiesto-ota.mjs entrada --variante "$ULTRON_APP" --canal "$EXPO_CANAL" --runtime "$RT" --commit "$GITHUB_SHA" --embebido > "$SALIDA"
+          else
+            node ../scripts/qa/manifiesto-ota.mjs entrada --variante "$ULTRON_APP" --canal "$EXPO_CANAL" --runtime "$RT" --commit "$GITHUB_SHA" --eas "$RUNNER_TEMP/eas-update.json" > "$SALIDA" \
+              || { echo "::error title=OTA publicada sin ficha (${ULTRON_APP})::La OTA salió, pero no se pudo armar su ficha: /api/build no podrá compararla. Ver la salida de eas update arriba."; exit 1; }
+          fi
+          cat "$SALIDA"
+
+      - uses: actions/upload-artifact@v4
+        if: steps.publicar.outcome == 'success' || steps.volver.outcome == 'success'
+        with:
+          name: ficha-ota-${{ matrix.variante }}
+          path: ${{ runner.temp }}/ficha-ota/
+          if-no-files-found: error
+          retention-days: 7
+
+  # Sube la ficha (ota-aura.json) al Release fijo «aura-ota», como aura-windows.yml sube el instalador a «aura-windows»:
+  # en un trabajo aparte, el único que escribe, sin npm ni el token de Expo. La URL pública que lee el servidor:
+  #   https://github.com/<owner>/<repo>/releases/download/aura-ota/ota-aura.json
+  # Se fusiona con la ficha publicada (la otra app y los runtimes anteriores siguen). Corre aunque una de las dos apps
+  # haya fallado (la otra sí publicó); sin fichas nuevas (cambio nativo en las dos) no toca nada. Si la subida falla,
+  # este trabajo queda en ROJO: la OTA salió, pero /api/build seguirá comparando con la ficha anterior.
+  ficha:
+    needs: ota
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && needs.ota.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/qa
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ficha-ota-*
+          path: fichas
+          merge-multiple: true
+
+      - name: Subir la ficha de la OTA al Release «aura-ota»
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          fichas=(fichas/*.json)
+          if [ "${#fichas[@]}" -eq 0 ]; then
+            echo "Sin OTA nueva en este commit: la ficha del Release «aura-ota» queda como estaba." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          notas="Ficha de la última OTA publicada por app y runtime (la escribe .github/workflows/ota.yml; la lee el servidor para GET /api/build). No es una versión para descargar: las APK están en el Release «latest»."
+          if ! gh release view aura-ota >/dev/null 2>&1; then
+            gh release create aura-ota --title "AURA · OTA publicada" --notes "$notas" --latest=false
+          fi
+          mkdir -p actual
+          # La lista primero (si falla, rojo); un `gh … | grep -q` dentro del if se tragaría el fallo.
+          assets=$(gh release view aura-ota --json assets --jq '.assets[].name')
+          if grep -qx 'ota-aura.json' <<<"$assets"; then
+            # Si está y no baja, rojo: subir solo lo de hoy borraría la otra app de la ficha.
+            gh release download aura-ota --pattern ota-aura.json --dir actual
+          fi
+          node scripts/qa/manifiesto-ota.mjs fusionar --actual actual/ota-aura.json --salida ota-aura.json "${fichas[@]}"
+          cat ota-aura.json
+          gh release upload aura-ota ota-aura.json --clobber
+          echo "✓ Ficha de la OTA subida: https://github.com/${GH_REPO}/releases/download/aura-ota/ota-aura.json" >> "$GITHUB_STEP_SUMMARY"

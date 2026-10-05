@@ -17,17 +17,25 @@ guarda por cuenta. Pasos:
    (en el teléfono, abrir la mesa basta: pide su perfil). En la web, recargar la página una vez después de entrar.
 2. Con la sesión de **esa misma cuenta**, abrir `/api/build` y guardar `clientes` y `recepcion` del JSON. Cada cuenta ve
    solo sus aparatos; la clave de mesa sin sesión no ve a nadie (`recepcion.cuenta: false`).
-3. Por aparato, `clientes[]` dice: `plataforma`, `version`/`build` (los de la configuración con la que se armó el JS),
-   `runtime` (la huella nativa de la APK), `updateId` + `canal` + `embebido` (`true` = JS de fábrica de la APK, `false`
+3. Por aparato, `clientes[]` dice: `plataforma`, `version`/`buildConfig` (los de la configuración con la que se armó
+   el JS: en una OTA, los de app.json al publicarla; `build`, el del binario instalado, solo si el cliente lo sabe — el
+   teléfono hoy no), `runtime` (la huella nativa de la APK), `updateId` + `canal` + `embebido` (`true` = JS de fábrica de la APK, `false`
    = OTA) + `creada` (cuándo se publicó esa OTA), `webSha` (web), `os` (versión mayor), `instalacion` (6 letras para
    distinguir aparatos, no para identificarlos) y `visto` (última vez; se actualiza como mucho cada 10 min, o en el acto
    si cambió el build).
-4. `esperado` / `recibido`: en la web se compara con `web.sha` que sirve el servidor → `sí` / `no`. En el teléfono el
-   servidor **no** sabe qué OTA se publicó (la publica EAS desde `.github/workflows/ota.yml`), así que sale
-   `esperado: desconocido`, `recibido: desconocido`: se compara a mano el `updateId` con el de la publicación (la línea
-   «Publicar OTA» de la ejecución de `ota.yml`, o `eas update:list --branch production`) y el `runtime` con
-   `runtime-ultron.txt` del Release «latest». Windows todavía no manda su build (ver `windows/README.md`): se identifica
-   a mano (fila de abajo).
+4. `esperado` / `recibido`: en la web se compara con `web.sha` que sirve el servidor → `sí` / `no`. En el teléfono se
+   compara con la **ficha de la OTA publicada**: tras publicar, `.github/workflows/ota.yml` sube `ota-aura.json` al
+   Release «aura-ota» (updateId, runtime, commit y fecha por app) y el servidor la lee (se guarda 10 min). Con la
+   ficha disponible (`recepcion.otaFuente: release`) **no hace falta comparar el `updateId` a mano**: `recibido: sí`
+   = corre la OTA publicada para su runtime; `no` lleva `motivo` y `explicacion` (`embebido-sin-ota`: JS de la APK, la
+   OTA aún no llegó o no se aplicó — reabrir la app; `ota-anterior` / `otra-ota`; `otro-runtime`: lo publicado es para
+   otra APK). `recepcion.esperado.ota` lista lo publicado. Si `otaFuente: no-disponible`, se comparó con la última
+   ficha buena (`otaLeida` dice de cuándo) o, sin ninguna, sale `desconocido`: entonces sí a mano, como antes (la línea
+   «Publicar OTA» de la ejecución de `ota.yml` o `eas update:list --branch production`, y el `runtime` contra
+   `runtime-ultron.txt` del Release «latest»). Windows todavía no manda su build (ver `windows/README.md`): se
+   identifica a mano (fila de abajo).
+5. Todo `clientes` es **evidencia declarada** (`evidencia: 'declarada'`): lo dice cada aparato, sin firma. Basta para
+   saber qué corren los aparatos propios de la prueba; no es una prueba ante terceros.
 
 Privacidad: solo datos del build y un id de instalación al azar que se renueva al salir o cambiar de cuenta (en el
 servidor se guarda su hash con la huella de la cuenta). Nada del aparato (modelo, serie), ni ubicación, ni contenido;
@@ -39,8 +47,8 @@ servidor se guarda su hash con la huella de la cuenta). Nada del aparato (modelo
 | Web | `/api/build` → `web.sha` y `web.hora` (de `dist/aura-build.json`) | |
 | Esquema y banderas | `/api/build` → `esquema`, `validadorMinimo`, `banderas` (no secretas) y `almacen.ok` | |
 | Computadora (nodo) | `/api/build` → `nodo.hash`, `nodo.validador`, `nodo.capacidades` (lo mismo que dice el nodo en `/salud` → `hash`). Comparar con `sha256sum scripts/nodo-computadora/agente.py \| cut -c1-16` del SHA revisado | |
-| App Android (APK) | `/api/build` → `clientes[]` con `plataforma: android`: `runtime` (contra `runtime-ultron.txt` del Release) y `version`/`build`; en el aparato, Ajustes de Android → Aplicaciones → AU-RA (versión y versionCode; hoy 5.3.0 / 53) | |
-| Actualización OTA | `/api/build` → `clientes[]`: `updateId`, `canal`, `embebido`, `creada` y `visto` (comparar a mano con el updateId publicado: el servidor no lo sabe). En el aparato, Ajustes de AU-RA, junto a «Cerrar sesión»: `OTA xxxxxxxx` (primeros 8 del `updateId`) · fecha · `runtime`; «JS de la APK» si no hay OTA | |
+| App Android (APK) | `/api/build` → `clientes[]` con `plataforma: android`: `runtime` (contra `runtime-ultron.txt` del Release) y `version`/`buildConfig`; en el aparato, Ajustes de Android → Aplicaciones → AU-RA (versión y versionCode; hoy 5.3.0 / 53) | |
+| Actualización OTA | `/api/build` → `clientes[]`: `recibido` (+ `motivo`) contra la ficha publicada, `updateId`, `canal`, `embebido`, `creada` y `visto` (a mano solo si `recepcion.otaFuente` no es `release`). En el aparato, Ajustes de AU-RA, junto a «Cerrar sesión»: `OTA xxxxxxxx` (primeros 8 del `updateId`) · fecha · `runtime`; «JS de la APK» si no hay OTA | |
 | Web en cada aparato | `/api/build` → `clientes[]` con `plataforma: web`: `webSha` y `recibido` (`sí` si es el `web.sha` que se sirve) | |
 | Instalador Windows | Nombre y `Get-FileHash -Algorithm SHA256` del `.exe` del instalador; commit del release que lo publicó | |
 | iPhone | Ajustes → General → Información: versión de iOS; Safari o la PWA en pantalla de inicio | |

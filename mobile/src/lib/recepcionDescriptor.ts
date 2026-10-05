@@ -7,12 +7,21 @@
  * así se prueba en node. Solo va lo del BUILD: plataforma, versión y número de build, runtimeVersion (la huella
  * nativa), la OTA (updateId, canal, si es el JS de fábrica, cuándo se publicó) y la versión mayor del sistema. Nada del
  * aparato (ni modelo, ni marca, ni serie), ni ubicación, ni contenido.
+ *
+ * NÚMERO DE BUILD, CON SU NOMBRE (revisión del 5-oct, H7): el de expoConfig es el de la CONFIGURACIÓN con la que se
+ * armó el JS que corre (en una OTA, el de app.json al publicarla), no el del binario instalado: va como `bc`. El del
+ * binario (`b`) solo va si alguien lo sabe de verdad: expo-application (`nativeBuildVersion`) no está instalado y
+ * agregarlo cambiaría la huella nativa (APK nueva), y expo-constants 18 ya no lo da. Hoy no va; `datosDeExpo` lo toma
+ * de `application` si algún día se le pasa.
  */
 
 export type DatosBuild = {
   plataforma: 'android' | 'ios';
   version?: string | null;
-  build?: string | number | null;
+  /** El número de build de la configuración del JS (expoConfig): `bc`. */
+  buildConfig?: string | number | null;
+  /** El número de build del binario instalado, solo si se sabe de verdad: `b`. */
+  buildNativo?: string | number | null;
   runtime?: string | null;
   updateId?: string | null;
   canal?: string | null;
@@ -26,6 +35,7 @@ const FORMAS = {
   i: /^[A-Za-z0-9-]{8,64}$/,
   v: /^[0-9A-Za-z][0-9A-Za-z.+-]{0,31}$/,
   b: /^[0-9]{1,10}$/,
+  bc: /^[0-9A-Za-z][0-9A-Za-z.]{0,15}$/,
   rt: /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/,
   u: /^[0-9A-Fa-f][0-9A-Fa-f-]{7,63}$/,
   c: /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/,
@@ -43,7 +53,8 @@ export function descriptorCliente(d: DatosBuild, instalacion: string): string {
     if (t && FORMAS[k].test(t)) pares.push(`${k}=${t}`);
   };
   poner('v', d.version);
-  poner('b', d.build);
+  poner('b', d.buildNativo);
+  poner('bc', d.buildConfig);
   poner('rt', d.runtime);
   poner('u', d.updateId);
   poner('c', d.canal);
@@ -60,6 +71,8 @@ export type ModulosBuild = {
   updates?: { isEnabled?: boolean; updateId?: string | null; runtimeVersion?: string | null; channel?: string | null; isEmbeddedLaunch?: boolean; createdAt?: Date | null } | null;
   constants?: { expoConfig?: { version?: string | null; android?: { versionCode?: number | null } | null; ios?: { buildNumber?: string | null } | null } | null } | null;
   platform: { OS: string; Version?: string | number; constants?: object | null };
+  /** expo-application, si algún día está (hoy no: cambiaría la huella nativa). */
+  application?: { nativeBuildVersion?: string | null } | null;
 };
 
 /** La versión MAYOR del sistema: en Android la de la versión («14»), no el nivel de API; en iOS «17.4» → 17. */
@@ -71,8 +84,8 @@ export function sistemaMayor(p: ModulosBuild['platform']): string | null {
 
 /**
  * Los datos del build a partir de expo-updates, expo-constants y Platform. Sin expo-updates activo (desarrollo, un
- * build sin OTA) van solo la versión y el sistema. `version`/`build` son los de la configuración con la que se armó el
- * JS que corre (en una OTA, la de app.json al publicarla); la huella nativa real es `runtime`.
+ * build sin OTA) van solo la versión y el sistema. `version`/`buildConfig` son los de la configuración con la que se
+ * armó el JS que corre (en una OTA, la de app.json al publicarla); la huella nativa real es `runtime`.
  */
 export function datosDeExpo(m: ModulosBuild): DatosBuild | null {
   const plataforma = m.platform.OS === 'ios' ? 'ios' : m.platform.OS === 'android' ? 'android' : null;
@@ -82,7 +95,8 @@ export function datosDeExpo(m: ModulosBuild): DatosBuild | null {
   return {
     plataforma,
     version: cfg?.version ?? null,
-    build: plataforma === 'android' ? (cfg?.android?.versionCode ?? null) : (cfg?.ios?.buildNumber ?? null),
+    buildConfig: plataforma === 'android' ? (cfg?.android?.versionCode ?? null) : (cfg?.ios?.buildNumber ?? null),
+    buildNativo: m.application?.nativeBuildVersion ?? null,
     runtime: u?.runtimeVersion ?? null,
     updateId: u?.updateId ?? null,
     canal: u?.channel ?? null,
