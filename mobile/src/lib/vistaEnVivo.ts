@@ -12,7 +12,8 @@
  *    confirmado («José · tú», «Ana · tu esposa») o «Persona», y «mirando» en la de quien mira la pantalla;
  *    los objetos con caja del servidor (otro estilo) solo mientras la vista es fresca.
  *  · `lineaEstado`: la línea de abajo («Te veo · mirando la pantalla», «No veo a nadie», «Reconociendo…»).
- *  · `pedidoDeVista`: «muéstrame lo que ves», «cierra la vista», «cámara trasera», «voltea la cámara».
+ *  · `pedidoDeVista`: «muéstrame lo que ves», «cierra la vista», «cámara trasera», «voltea la cámara»
+ *    («cierra la cámara» es apagarla: lib/camaraModo.ts).
  *  · `ladoValido`: la cámara elegida, guardada en los ajustes (frontal si no hay nada o es basura).
  *
  * Privacidad: la vista y sus recuadros se ven solo en este teléfono; nada de esto sale de él.
@@ -128,9 +129,11 @@ export type PedidoVista = 'abrir' | 'cerrar' | 'trasera' | 'frontal' | 'voltear'
 const sinTildes = (t: string) => String(t || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 
 /**
- * ¿Pide ver la cámara, cerrarla o cambiar de cámara? «Cierra la cámara» con la vista ABIERTA cierra la
- * vista (la cámara sigue mirando); con la vista cerrada no es de aquí: lo atiende lib/camaraModo.ts
- * (apagarla), como siempre.
+ * ¿Pide ver la cámara, cerrar la vista o cambiar de cámara? «Cierra / quita / apaga la cámara» NO es de
+ * aquí, ni con la vista abierta: es apagarla (lib/camaraModo.ts), y apagada la vista se cierra sola. Antes,
+ * con la vista abierta, cerraba solo la vista y la cámara seguía mirando sin que la persona lo supiera
+ * (revisión del 5-oct). Solo cierran la vista «cierra la vista», «ya no me muestres…» y, con la vista
+ * abierta, «oculta / esconde la cámara» (ocultar no es apagar). `vistaAbierta` queda para eso.
  */
 export function pedidoDeVista(texto: string, o: { vistaAbierta: boolean } = { vistaAbierta: false }): PedidoVista | null {
   const t = sinTildes(texto)
@@ -143,7 +146,7 @@ export function pedidoDeVista(texto: string, o: { vistaAbierta: boolean } = { vi
   if (/\bcamara (frontal|delantera|de adelante|de enfrente|del frente|de selfie)\b|\b(usa|pon|cambia a|pasa a) la (de adelante|frontal|delantera)\b|\b(front|selfie) camera\b/.test(t)) return 'frontal';
   if (/\b(voltea|gira|cambia|invierte|da vuelta a|dale la vuelta a) (la )?camara\b|\bcambia de camara\b|\b(flip|switch) (the )?camera\b/.test(t)) return 'voltear';
   if (/\b(cierra|quita|oculta|esconde) (la vista|lo que ves|la vista de la camara)\b|\bya no (me )?(muestres|ensenes) (la camara|lo que ves)\b|\b(close|hide) (the )?(view|camera view)\b/.test(t)) return 'cerrar';
-  if (o.vistaAbierta && /\b(cierra|quita|oculta|esconde) (la )?camara\b/.test(t)) return 'cerrar';
+  if (o.vistaAbierta && /\b(oculta|esconde) (la )?camara\b/.test(t)) return 'cerrar';
   // «Abre la cámara» es encenderla (camaraModo); «abre la vista» sí es esto.
   if (/\b(muestrame|ensename|dejame ver|quiero ver) (lo que (ves|estas viendo|miras)|la camara|tu camara|la vista|como me ves|lo que reconoces)\b|\babre (la vista|lo que ves)\b|\bshow me (what you see|the camera)\b/.test(t)) return 'abrir';
   return null;

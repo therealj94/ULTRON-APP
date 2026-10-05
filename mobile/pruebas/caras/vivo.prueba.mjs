@@ -242,10 +242,17 @@ prueba('voz: «muéstrame lo que ves», «cierra la vista», «cámara trasera /
   for (const t of ['cámara frontal', 'la cámara de adelante', 'front camera']) assert.equal(pedidoDeVista(t), 'frontal', t);
   for (const t of ['voltea la cámara', 'cambia de cámara', 'gira la cámara', 'flip the camera']) assert.equal(pedidoDeVista(t), 'voltear', t);
   for (const t of ['¿qué ves?', 'léeme esto', 'apaga la cámara', 'abre la cámara', 'no me veas', 'hola']) assert.equal(pedidoDeVista(t), null, t);
-  // «Cierra la cámara»: con la vista abierta la cierra (la cámara sigue); cerrada, es apagarla, como siempre.
-  assert.equal(pedidoDeVista('cierra la cámara', { vistaAbierta: true }), 'cerrar');
-  assert.equal(pedidoDeVista('cierra la cámara', { vistaAbierta: false }), null);
-  assert.equal(pedidoDeCamara('cierra la cámara'), 'apagar');
+  // «Cierra / quita / apaga la cámara» es APAGARLA siempre (lib/camaraModo.ts; apagada, la vista se cierra
+  // sola), también con la vista abierta: antes cerraba solo la vista y la cámara seguía mirando (revisión
+  // del 5-oct). Solo «cierra la vista», «ya no me muestres…» (u «oculta la cámara») cierra la vista.
+  for (const abierta of [true, false]) {
+    for (const t of ['cierra la cámara', 'Quita la cámara', 'apaga la cámara', 'close the camera']) {
+      assert.equal(pedidoDeVista(t, { vistaAbierta: abierta }), null, `${t} (vista ${abierta ? 'abierta' : 'cerrada'})`);
+      assert.match(String(pedidoDeCamara(t)), /^apagar/, t);
+    }
+  }
+  for (const t of ['cierra la vista', 'ya no me muestres lo que ves', 'oculta la cámara']) assert.equal(pedidoDeVista(t, { vistaAbierta: true }), 'cerrar', t);
+  assert.equal(pedidoDeCamara('cierra la vista'), null, 'cerrar la vista no apaga la cámara');
   assert.equal(pedidoDeCamara('abre la cámara'), 'encender', '«abre la cámara» sigue siendo encenderla');
 });
 
