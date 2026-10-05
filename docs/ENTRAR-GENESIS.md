@@ -184,7 +184,16 @@ correo (`CORREO_NO_VERIFICADO`), la cuenta sigue sin atar después de atarla, o 
 (404, 5xx, `GENESIS_RED`, sin red), **no se detiene**: manda el token de acceso de la wallet UNA vez a
 `POST /api/veta/entrar {token}` (con las cabeceras de aparato de siempre, por `api()`). Nunca la contraseña.
 Una clave mala, el freno de la wallet, una identidad rechazada o bloqueada (`GID_NO_DISPONIBLE`) o de otra
-persona (`GID_AJENO`, `CUENTA_NO_ATADA`) **no** pasan por aquí.
+persona (`GID_AJENO`, `CUENTA_NO_ATADA`) **no** pasan por aquí desde la app. Ojo (revisión de seguridad del 5-oct):
+eso lo filtra la APP; el servidor no consulta Genesis por correo, así que quien llame a `/api/veta/entrar` directo
+con un token auténtico de la wallet entra como miembro aunque su Genesis ID esté rechazado. Lo que sí impone el
+servidor: el bloqueo de la propia wallet (403 de `/users/userDate`), las suspensiones de AU-RA por la identidad
+`veta:` **y por el correo de la wallet** (quien suspendieron por su cuenta de correo o de Genesis no entra por aquí),
+`AURA_VETA_ABIERTO`, y los topes:
+- por conexión (IPv4, o IPv6 por /64) y por dirección;
+- a lo más 4 preguntas a la wallet a la vez, con una cola corta (más allá, 503 «ocupada»);
+- un token que la wallet rechazó no se le vuelve a preguntar en 10 minutos (por su huella);
+- un 429 de la wallet se dice «ocupada», no «vuelve a entrar».
 
 El servidor (`server/veta-entrar.ts`, montado en `server.ts` junto a Genesis):
 

@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
-import { cargaJwt, esIdVeta, idVeta, montarRutasVeta, ROL_MIEMBRO_VETA, walletApi } from '../server/veta-entrar';
+import { cargaJwt, claveConexion, esIdVeta, idVeta, montarRutasVeta, ROL_MIEMBRO_VETA, walletApi, _reiniciarVeta } from '../server/veta-entrar';
 import { nivelDeCorreo, rolVisible } from '../server/nivel';
 
 const DIRECCION = '0xAbCdEf0123456789abcdef0123456789ABCDEF01';
@@ -42,6 +42,7 @@ test.before(async () => {
 test.after(() => new Promise<void>((r) => walletSrv.close(() => r())));
 
 test.beforeEach(() => {
+  _reiniciarVeta();
   delete process.env.AURA_VETA_ABIERTO;
   pedidasALaWallet.length = 0;
   respWallet = { status: 200, body: { username: 'ana@prueba.local', email: 'ana@prueba.local', phone: '', country: 'HN', name: 'ana maría lópez' } };
@@ -75,6 +76,7 @@ async function montar(o: Opciones = {}) {
       sesiones.push({ ...u, comunidad: !!op?.comunidad });
       return { token: 'sesion-aura-' + sesiones.length };
     },
+    maxConexion: o.maxIp,
     suspendida: async (id) => (o.suspendidas || []).includes(id),
     registrarMiembro: async (m) => void cuentas.push(m),
     sembrarPerfil: async (id, g) => void perfiles.push({ id, ...g }),
@@ -240,7 +242,9 @@ test('topes: por conexión y por dirección (contado solo con el token ya confir
     const otra = tokenDe({ address: '0x' + '1'.repeat(40) });
     for (let i = 0; i < 12; i++) assert.equal((await m.entrar({ token: otra })).status, 401);
     respWallet = { status: 200, body: { email: 'b@prueba.local', name: 'Beto' } };
-    assert.equal((await m.entrar({ token: otra })).status, 200, 'la otra dirección sigue con su cupo entero');
+    // Un token nuevo de esa dirección (el rechazado se recuerda 10 min por su huella: un 401 de la wallet no se arregla solo).
+    const nueva = tokenDe({ address: '0x' + '1'.repeat(40) });
+    assert.equal((await m.entrar({ token: nueva })).status, 200, 'la otra dirección sigue con su cupo entero');
   } finally {
     await m.cerrar();
   }
@@ -263,4 +267,44 @@ test('identidades y carga: la dirección EVM en minúsculas; nada más es una id
   assert.equal(cargaJwt(TOKEN)?.address, DIRECCION);
   assert.equal(cargaJwt('a.%%%.c'), null);
   assert.match(walletApi(), /^http:\/\/127\.0\.0\.1:\d+$/, 'sin barra final');
+});
+
+
+/* ------------------------------------------------------------------ revisión de seguridad del 5-oct */
+
+test('MEDIO-1: suspendida por el correo de la wallet (su cuenta de correo o de Genesis) tampoco entra por aquí', async () => {
+  const m = await montar({ suspendidas: ['ana@prueba.local'] });
+  try {
+    const r = await m.entrar({ token: TOKEN });
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.equal(r.body.codigo, 'SUSPENDIDA');
+    assert.equal(m.sesiones.length, 0);
+  } finally {
+    await m.cerrar();
+  }
+});
+
+test('MEDIO-3: un 429 de la wallet es «ocupada» (503), no «vuelve a entrar»; un token rechazado no se vuelve a preguntar', async () => {
+  const m = await montar();
+  try {
+    respWallet = { status: 429, body: { message: 'too many' } };
+    const r = await m.entrar({ token: TOKEN });
+    assert.equal(r.status, 503);
+    assert.equal(r.body.codigo, 'WALLET_OCUPADA');
+    // Un token falso: la wallet lo rechaza una vez; el segundo intento con el mismo no le llega.
+    const falso = tokenDe({ userId: 'x', address: DIRECCION, exp: Math.floor(Date.now() / 1000) + 600 });
+    respWallet = { status: 401, body: { message: 'invalid token' } };
+    pedidasALaWallet.length = 0;
+    assert.equal((await m.entrar({ token: falso })).status, 401);
+    assert.equal((await m.entrar({ token: falso })).status, 401);
+    assert.equal(pedidasALaWallet.length, 1, 'el rechazo se recuerda por la huella del token');
+  } finally {
+    await m.cerrar();
+  }
+});
+
+test('MEDIO-3: el tope por conexión agrupa IPv6 por /64 (rotar dentro de la /64 no lo salta)', () => {
+  assert.equal(claveConexion('2001:db8:1:2:aaaa::1'), claveConexion('2001:db8:1:2:bbbb::9'));
+  assert.notEqual(claveConexion('2001:db8:1:2::1'), claveConexion('2001:db8:1:3::1'));
+  assert.equal(claveConexion('::ffff:10.0.0.7'), '10.0.0.7');
 });

@@ -52,6 +52,62 @@ export const ESPERA_SEMBRAR_MS = 1500;
 
 const JWT = /^[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}$/;
 
+/*
+ * Revisión de seguridad del 5-oct (MEDIO-3): todas las preguntas a la wallet salen por la IP de AU-RA, y la
+ * wallet admite unas 100 por minuto por IP. Un atacante con tokens inventados (pasan las comprobaciones
+ * locales) podía agotarlo y dejar la entrada cerrada para todos. Por eso:
+ *   · a lo más WALLET_EN_VUELO preguntas a la vez (y una cola corta; más allá, 503 honesto);
+ *   · un token que la wallet rechazó no se vuelve a preguntar en un rato (por su huella, nunca el token);
+ *   · el tope por conexión agrupa IPv6 por /64 (rotar dentro de una /64 no lo salta);
+ *   · un 429 de la wallet es «está ocupada» (503), no «vuelve a entrar».
+ */
+export const WALLET_EN_VUELO = 4;
+export const WALLET_COLA = 16;
+const RECHAZO_MS = 10 * 60_000;
+let enVuelo = 0;
+const esperando: Array<() => void> = [];
+const rechazados = new Map<string, number>();
+const huellaToken = (t: string) => crypto.createHash('sha256').update(t).digest('hex');
+async function turnoWallet(): Promise<(() => void) | null> {
+  if (enVuelo >= WALLET_EN_VUELO) {
+    if (esperando.length >= WALLET_COLA) return null;
+    await new Promise<void>((ok) => esperando.push(ok));
+  }
+  enVuelo++;
+  let soltado = false;
+  return () => {
+    if (soltado) return;
+    soltado = true;
+    enVuelo--;
+    esperando.shift()?.();
+  };
+}
+function rechazadoHace(h: string): boolean {
+  const t = rechazados.get(h);
+  if (!t) return false;
+  if (Date.now() - t > RECHAZO_MS) {
+    rechazados.delete(h);
+    return false;
+  }
+  return true;
+}
+function anotarRechazo(h: string) {
+  if (rechazados.size >= 5000) for (const k of [...rechazados.keys()].slice(0, 1000)) rechazados.delete(k);
+  rechazados.set(h, Date.now());
+}
+/** La clave del tope por conexión: IPv4 entera; IPv6 por su /64. */
+export function claveConexion(ip: unknown): string {
+  const s = String(ip || '').replace(/^::ffff:/, '');
+  if (!s.includes(':')) return s;
+  return s.split(':').slice(0, 4).join(':') + '::/64';
+}
+/** Solo pruebas: vacía la memoria de rechazos y la cola. */
+export function _reiniciarVeta() {
+  rechazados.clear();
+  enVuelo = 0;
+  esperando.length = 0;
+}
+
 /** ¿Es una identidad de Veta Wallet (`veta:<dirección>`)? */
 export function esIdVeta(id: unknown): boolean {
   return typeof id === 'string' && id.startsWith(PREFIJO_VETA) && idVeta(id.slice(PREFIJO_VETA.length)) === id;
@@ -101,6 +157,8 @@ export type DepsVeta = {
   sembrarPerfil?: (id: string, g: { apodo: string }) => Promise<unknown>;
   fetch?: typeof fetch;
   esperaSembrarMs?: number;
+  /** Entradas por conexión (IPv4, o IPv6 por /64) cada 15 minutos; por omisión MAX_ENTRADAS. */
+  maxConexion?: number;
 };
 
 type Salida = { status: number; body: Record<string, unknown> };
@@ -112,6 +170,10 @@ export function montarRutasVeta(app: Express, d: DepsVeta) {
     let token = typeof req.body?.token === 'string' ? req.body.token : '';
     // Que ningún middleware ni manejador de errores de después vea el token en el cuerpo.
     if (req.body && typeof req.body === 'object') delete req.body.token;
+    if (!d.cupo(`veta-conexion:${claveConexion(req.ip)}`, d.maxConexion ?? MAX_ENTRADAS, VENTANA_MS)) {
+      token = '';
+      return res.status(429).json({ ok: false, codigo: 'LIMITE', error: 'Demasiados intentos desde esta conexión. Espera 15 minutos.' });
+    }
     const r = await entrar(token);
     token = '';
     return res.status(r.status).json(r.body);
@@ -125,7 +187,11 @@ export function montarRutasVeta(app: Express, d: DepsVeta) {
     if (!id) return fallo(401, 'TOKEN_INVALIDO', 'Veta Wallet no confirmó tu sesión. Vuelve a entrar.');
     if (Number(carga?.exp) && Number(carga?.exp) * 1000 < Date.now()) return fallo(401, 'TOKEN_INVALIDO', 'Tu sesión de Veta Wallet venció. Vuelve a entrar.');
 
-    // 1. ¿Es auténtico? Solo la wallet lo sabe.
+    // 1. ¿Es auténtico? Solo la wallet lo sabe. Un token que ya rechazó no se le vuelve a preguntar.
+    const hTok = huellaToken(token);
+    if (rechazadoHace(hTok)) return fallo(401, 'TOKEN_INVALIDO', 'Veta Wallet no confirmó tu sesión. Vuelve a entrar.');
+    const soltar = await turnoWallet();
+    if (!soltar) return fallo(503, 'WALLET_OCUPADA', 'Hay muchas entradas a la vez. Vuelve a intentar en un momento.');
     let r: Response;
     try {
       r = await (d.fetch ?? fetch)(`${walletApi()}/users/userDate`, {
@@ -135,10 +201,18 @@ export function montarRutasVeta(app: Express, d: DepsVeta) {
     } catch {
       // Sin el detalle del error: no hace falta y no se arriesga a que lleve la cabecera.
       console.error('[veta] la wallet no contestó a tiempo');
+      soltar();
       return fallo(503, 'WALLET_CAIDA', 'Veta Wallet no respondió. Vuelve a intentar en un momento.');
     }
-    // 2. El token ya no hace falta para nada más: se suelta aquí.
+    // 2. El token ya no hace falta para nada más: se suelta aquí, y el turno con la wallet también (lo que sigue
+    //    ya no le pregunta nada; leer el cuerpo no ocupa a la wallet).
     token = '';
+    soltar();
+    if (r.status === 429) {
+      soltar();
+      console.error('[veta] la wallet dice que vamos muy rápido (429)');
+      return fallo(503, 'WALLET_OCUPADA', 'Veta Wallet está ocupada. Vuelve a intentar en un momento.');
+    }
     if (r.status >= 500) {
       console.error(`[veta] la wallet contestó HTTP ${r.status}`);
       return fallo(503, 'WALLET_CAIDA', 'Veta Wallet no respondió. Vuelve a intentar en un momento.');
@@ -146,11 +220,21 @@ export function montarRutasVeta(app: Express, d: DepsVeta) {
     // 403: la wallet la tiene bloqueada (el bloqueo del ecosistema en Genesis). No es «vuelve a entrar».
     if (r.status === 403) return fallo(403, 'BLOQUEADA', 'Tu cuenta de Veta Wallet no puede usarse para entrar ahora.');
     const j: any = r.ok ? await r.json().catch(() => null) : null;
+    soltar();
     const correoWallet = typeof j?.email === 'string' ? j.email.trim() : '';
-    if (!r.ok || !correoWallet.includes('@')) return fallo(401, 'TOKEN_INVALIDO', 'Veta Wallet no confirmó tu sesión. Vuelve a entrar.');
+    if (!r.ok || !correoWallet.includes('@')) {
+      if (r.status === 401 || r.status === 400 || r.ok) anotarRechazo(hTok);
+      return fallo(401, 'TOKEN_INVALIDO', 'Veta Wallet no confirmó tu sesión. Vuelve a entrar.');
+    }
 
-    // 3. Suspendida, tope por dirección y la sesión de miembro.
-    if (d.suspendida && (await d.suspendida(id).catch(() => false))) return fallo(403, 'SUSPENDIDA', 'Esta cuenta está suspendida.');
+    // 3. Suspendida (por su identidad Y por el correo de la wallet: quien suspendieron con su cuenta de correo
+    //    o de Genesis no la esquiva entrando por aquí —revisión de seguridad del 5-oct, MEDIO-1—; el correo solo
+    //    sirve para negar, nunca para dar), tope por dirección y la sesión de miembro.
+    if (d.suspendida) {
+      const correoN = correoWallet.toLowerCase();
+      const [porId, porCorreo] = await Promise.all([d.suspendida(id).catch(() => false), d.suspendida(correoN).catch(() => false)]);
+      if (porId || porCorreo) return fallo(403, 'SUSPENDIDA', 'Esta cuenta está suspendida.');
+    }
     if (!d.cupo(`veta-entrar:${id}`, MAX_ENTRADAS, VENTANA_MS)) return fallo(429, 'LIMITE', 'Demasiados intentos con esta cuenta. Espera 15 minutos.');
     // El nombre de la cuenta; si no puso ninguno, algo del correo para saludar (solo para saludar: el
     // correo no identifica a nadie aquí). `username` no sirve: la wallet le pone el correo entero.

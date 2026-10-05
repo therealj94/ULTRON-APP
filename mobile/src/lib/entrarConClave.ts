@@ -251,7 +251,8 @@ function pedirPase(d: Dependencias<unknown>, base: string, token: string, reto: 
 /** La base sin barra final (y la de siempre si viene vacía o sin https). */
 export function baseWallet(walletApi: string | null | undefined): string {
   const b = String(walletApi || '').trim().replace(/\/+$/, '');
-  return /^https?:\/\//.test(b) ? b : WALLET_API_POR_OMISION;
+  // Solo https (revisión de seguridad del 5-oct): por http la contraseña viajaría en claro.
+  return /^https:\/\//.test(b) ? b : WALLET_API_POR_OMISION;
 }
 
 /**
