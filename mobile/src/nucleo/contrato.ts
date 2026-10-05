@@ -97,7 +97,8 @@ export type AccionApp =
   /** Deja el borrador escrito en el chat con esa persona, sin enviarlo. AURA lo lee en voz alta. */
   | { tipo: 'redactar'; para: string; texto: string }
   /** Envía el borrador que está escrito (en el chat abierto o el de `para`). */
-  | { tipo: 'enviar'; para?: string }
+  /** `texto`: el que la persona aprobó (lo pone el servidor). Si el borrador ya dice otra cosa, no se manda. */
+  | { tipo: 'enviar'; para?: string; texto?: string }
   /** Borra el borrador sin enviarlo. */
   | { tipo: 'descartar' }
   /** true = AURA se calla y deja de escuchar; false = vuelve. */
@@ -146,8 +147,12 @@ export type AccionApp =
 
 export type CampoPerfil = 'apodo' | 'cumple' | keyof Encuesta;
 
-/** Las manos que este teléfono sabe hacer: van en el contexto para que el servidor las ofrezca. */
-export const MANOS_APP = ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame', 'cartera', 'pagar', 'controles'] as const;
+/**
+ * Las manos que este teléfono sabe hacer: van en el contexto para que el servidor las ofrezca. `enviar_exacto` (permisos
+ * exactos, 4-oct): este teléfono comprueba que su borrador sea el texto aprobado (`enviar.texto`) antes de mandarlo; sin
+ * ella el servidor no le da ningún `enviar`.
+ */
+export const MANOS_APP = ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame', 'cartera', 'pagar', 'controles', 'enviar_exacto'] as const;
 export type Mano = (typeof MANOS_APP)[number];
 
 /** Un recordatorio puesto en el teléfono (lo cuenta en el contexto para decirlo y cancelarlo por voz). */

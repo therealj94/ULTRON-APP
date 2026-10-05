@@ -27,7 +27,7 @@ import type express from 'express';
 import { clave } from '../lib/boveda';
 import { personaPorCorreoExacto } from '../lib/acceso';
 import crypto from 'node:crypto';
-import { decidirBorradorConEstado, fechaHN, motivoBorrador, motivoPanel, reemplazoPendiente, respuestaAlBorrador, vigenciaNueva, type ComoResolver, type VigenciaBorrador } from './correo';
+import { decidirBorradorConEstado, fechaHN, motivoBorrador, motivoCambioDecidido, motivoPanel, reemplazoPendiente, respuestaAlBorrador, vigenciaNueva, type ComoResolver, type VigenciaBorrador } from './correo';
 import { iniciarTarea, marcarPaso } from '../lib/tarea-en-curso';
 import type { RetencionAcciones } from './voz-agente';
 import { exito, fallo, incierto, type ResultadoHerramienta } from '../lib/recibo-herramienta';
@@ -156,6 +156,8 @@ type Borrador = {
   cuenta?: string;
   /** El número del chat («+50499990000»), para decirlo en el borrador: el «sí» aprueba ESE número, no un nombre. */
   numero?: string;
+  /** Permisos exactos (sexta ronda): va a un grupo; un «sí» solo lo identifica por su nombre completo. */
+  grupo?: boolean;
 };
 /**
  * Guardado con su dueño, su vencimiento y su intento: el «sí» manda ESE mensaje a ESE chat (auditoría 3-oct, COM01)
@@ -165,7 +167,7 @@ type Borrador = {
  * `soloPanel` (AUR08): siguió con otra cosa; espera la decisión del panel hasta que venza y el chat ya no lo resuelve.
  * `reemplazoDe` (revisión 4-oct): reemplazó a otro que esperaba su «sí» en el mismo turno; a quién iba ese.
  */
-type BorradorGuardado = Borrador & VigenciaBorrador & { huella: string; repeticionAceptada?: string; soloPanel?: boolean; reemplazoDe?: string };
+type BorradorGuardado = Borrador & VigenciaBorrador & { huella: string; repeticionAceptada?: string; soloPanel?: boolean; reemplazoDe?: string; huellaAnterior?: string };
 
 const digitos = (s: string | undefined) => String(s || '').replace(/\D/g, '');
 
@@ -224,9 +226,14 @@ async function buscarChat(quien: string, ambito: string, ref: string): Promise<H
   // Por número («el 9999-0000», «+504 9999 0000»): el chat cuyo número termina así.
   const digitos = q.replace(/\D/g, '');
   if (digitos.length >= 7 && digitos.length >= q.replace(/\s/g, '').length - 2) {
-    const porNumero = (cs: ChatWA[]) => cs.find((c) => !!c.numero && c.numero.replace(/\D/g, '').endsWith(digitos)) || null;
+    // Permisos exactos (4-oct): dos chats cuyo número termina igual (otro país, otro código) no se resuelven por el
+    // primero que aparece: se pregunta cuál.
+    const porNumero = (cs: ChatWA[]): Hallazgo => {
+      const xs = distintos(cs.filter((c) => !!c.numero && c.numero.replace(/\D/g, '').endsWith(digitos)));
+      return xs.length > 1 ? { varios: xs } : xs[0] ? { chat: xs[0] } : null;
+    };
     const c = porNumero(lista) || porNumero(await chatsWA(digitos, 5).catch(() => []));
-    if (c) return { chat: c };
+    if (c) return c;
   }
   // Primero en la última lista que se le leyó; si no está, en todos sus chats.
   const hallar = (cs: ChatWA[]): Hallazgo => {
@@ -357,6 +364,8 @@ async function leer(quien: string, ambito: string, ref: string): Promise<Resulta
 /** El borrador queda esperando su «sí»: recibo `borrador` con su id de intento (nada salió todavía). */
 function guardarBorrador(quien: string, ambito: string, b: Borrador): ResultadoHerramienta {
   if (!b.texto.trim()) return fallo('WHATSAPP: el borrador vino vacío. Pregúntale qué quiere decir.', 'falta-dato');
+  // Permisos exactos (4-oct): el «sí» autoriza mandar desde UNA cuenta vinculada; sin saber cuál, no hay borrador.
+  if (!digitos(b.cuenta)) return fallo('WHATSAPP: no armé el borrador: no pude comprobar desde qué cuenta de WhatsApp saldría (el puente no dijo el número vinculado). No se mandó nada; dile que lo intente en un momento.', 'cuenta-desconocida');
   const vigencia = vigenciaNueva(quien, b.creado, BORRADOR_VIVE_MS);
   const k = llave(quien, ambito);
   const huella = huellaWhatsapp(b);
@@ -364,9 +373,9 @@ function guardarBorrador(quien: string, ambito: string, b: Borrador): ResultadoH
   const previo = BORRADORES.get(k);
   // Desde cero: nada del de antes (ni su aceptación de repetir, que era de ESE chat) pasa a este.
   const reemplazo = reemplazoPendiente(previo, huella, quien, previo ? destinoWhatsapp(previo) : '');
-  BORRADORES.set(k, { ...b, ...(numero ? { numero } : {}), ...vigencia, huella, ...(reemplazo ? { reemplazoDe: reemplazo } : {}) });
+  BORRADORES.set(k, { ...b, ...(numero ? { numero } : {}), ...vigencia, huella, ...(reemplazo ? reemplazo : {}) });
   const para = destinoWhatsapp({ ...b, numero });
-  const aviso = reemplazo ? `OJO: este borrador REEMPLAZA al que esperaba para ${reemplazo}, que ya NO se manda. Díselo claro: el que espera ahora es para ${para}. Antes de mandarlo le vuelvo a confirmar a quién va.\n` : '';
+  const aviso = reemplazo ? `OJO: este borrador REEMPLAZA al que esperaba para ${reemplazo.reemplazoDe}, que ya NO se manda. Díselo claro: el que espera ahora es para ${para}. Antes de mandarlo le vuelvo a confirmar a quién va.\n` : '';
   return exito(`BORRADOR DE WHATSAPP (NO enviado) para ${para}:\n${b.texto}\n${aviso}Léeselo tal cual (di a quién va) y pregúntale si lo mandas. Solo se manda si dice que sí; si quiere cambios, haz otro borrador.`, {
     efecto: 'borrador',
     proveedor: 'whatsapp',
@@ -380,7 +389,7 @@ async function responder(quien: string, ambito: string, ref: string, texto: stri
   if (typeof c === 'string') return fallo(c.replace('Revisa primero (whatsapp revisar) o dime el nombre', 'Pídele el nombre'), 'referencia');
   const lista = LISTAS.get(llave(quien, ambito)) || [];
   const i = lista.findIndex((x) => x.jid === c.jid);
-  const borrador = guardarBorrador(quien, ambito, { chat: c.jid, nombre: c.nombre || c.jid, texto: texto.trim(), creado: Date.now(), ...(c.numero ? { numero: c.numero } : {}), ...(cuenta ? { cuenta } : {}) });
+  const borrador = guardarBorrador(quien, ambito, { chat: c.jid, nombre: c.nombre || c.jid, texto: texto.trim(), creado: Date.now(), ...(c.numero ? { numero: c.numero } : {}), ...(cuenta ? { cuenta } : {}), ...(c.grupo || /@g\.us$/.test(c.jid) ? { grupo: true } : {}) });
   // El paso queda «contestado» solo si el borrador quedó.
   const avance = i >= 0 && borrador.estado === 'succeeded' ? marcarPaso(quien, ambito, 'whatsapp', i, 'hecho', 'contestado').texto : '';
   return avance ? { ...borrador, texto: `${borrador.texto}\n${avance}` } : borrador;
@@ -432,6 +441,9 @@ export async function resolverBorradorWhatsapp(quien: string, ambito: string, me
 /** Lo mismo, con el estado y el recibo del envío (AUR13: aceptado / fallido / incierto, con su operationId). */
 export async function resolverBorradorWhatsappConEstado(quien: string, ambito: string, mensaje: string, retener?: RetencionAcciones, como: ComoResolver = {}): Promise<ResultadoHerramienta | null> {
   const b = borradorWhatsappDe(quien, ambito);
+  // G1-N1: atado a lo decidido. Si cambió, no sale nada (ni se aparta ni se descarta el nuevo) y se pregunta de nuevo.
+  const cambio = motivoCambioDecidido(b, b ? huellaWhatsapp(b) : null, como);
+  if (cambio) return como.decidido ? fallo(`WHATSAPP: NO se mandó ni se descartó nada: ${cambio}${b ? ` (ahora espera uno para ${destinoWhatsapp(b)})` : ''}. Pregúntale de nuevo qué quiere hacer.`, 'cambio') : null;
   if (!b || (b.soloPanel && !como.desdePanel)) return null;
   const k = llave(quien, ambito);
   // «Aprobar» del panel: solo lo que mostró la tarjeta (el chat exacto, el texto y la cuenta). Un «no» siempre vale.
@@ -445,7 +457,7 @@ export async function resolverBorradorWhatsappConEstado(quien: string, ambito: s
     canal: 'WHATSAPP',
     para: destinoWhatsapp(b),
     quitar: () => BORRADORES.delete(k),
-    ...(como.desdePanel ? {} : { apartar: () => void (b.soloPanel = true), reemplazoDe: b.reemplazoDe, aceptarCambio: () => void delete b.reemplazoDe }),
+    ...(como.desdePanel ? {} : { apartar: () => void (b.soloPanel = true), reemplazoDe: b.reemplazoDe, aceptarCambio: () => void delete b.reemplazoDe, reponerCambio: ((antes) => () => void (b.reemplazoDe = antes))(b.reemplazoDe) }),
     // Un turno de voz descartado lo repone, pero nunca encima de otro borrador (quizá a otro chat) armado después.
     reponer: () => {
       if (!BORRADORES.has(k) && !motivoBorrador(b, quien)) BORRADORES.set(k, b);
@@ -544,7 +556,12 @@ export async function enviarBorradorWhatsappAprobado(quien: string, b: BorradorG
     return fallo(`WHATSAPP: NO lo mandé: no pude comprobar su WhatsApp (${String(e?.message || e).slice(0, 100)}). Dile que lo intente en un momento.`, 'proveedor');
   }
   if (!est.vinculado) return fallo('WHATSAPP: NO lo mandé: su WhatsApp ya no está vinculado. Dile que lo vuelva a vincular.', 'no-disponible');
-  if (b.cuenta && est.numero && digitos(b.cuenta) !== digitos(est.numero)) {
+  // Permisos exactos (4-oct): el «sí» autoriza mandar desde ESA cuenta. Si no se supo con cuál se armó, o no se sabe
+  // cuál está vinculada ahora, no hay con qué comparar: no sale (antes, sin cuenta, salía desde la que hubiera).
+  if (!digitos(b.cuenta) || !digitos(est.numero)) {
+    return fallo('WHATSAPP: NO se mandó: no pude comprobar que su WhatsApp vinculado sea la misma cuenta con la que se armó el borrador. Dile que lo revise (Ajustes → WhatsApp) y, si lo quiere mandar, arma otro borrador y pregúntale.', 'cuenta-desconocida');
+  }
+  if (digitos(b.cuenta) !== digitos(est.numero)) {
     return fallo(`WHATSAPP: NO se mandó: la cuenta de WhatsApp vinculada cambió (el borrador se armó con ${b.cuenta} y ahora está ${est.numero}). Si lo quiere mandar desde la nueva, arma otro borrador y pregúntale.`, 'cuenta-cambiada');
   }
   const operacion = operacionDeBorrador('whatsapp', b.intento);
@@ -612,6 +629,43 @@ export async function correrWhatsappConEstado(quien: string, arg: string, ambito
 export function _olvidarWhatsapp() {
   LISTAS.clear();
   BORRADORES.clear();
+  NOMBRES_CHATS.clear();
+}
+
+/** Los nombres de sus chats (por cuenta), un rato: para saber quién más se llama así sin pedirlos en cada turno. */
+const NOMBRES_CHATS = new Map<string, { t: number; nombres: string[]; completo: boolean }>();
+const NOMBRES_CHATS_VIVE_MS = 60_000;
+
+/**
+ * Permisos exactos (sexta ronda, M1-B): los nombres de las PERSONAS de sus chats de WhatsApp (no los grupos), para que el
+ * servidor sepa, sin el teléfono, que «Antonio» es un contacto. Con un tope corto (`ms`): si el puente tarda o falla,
+ * vuelve lo último que supo (o nada) y el turno sigue. Nunca lanza.
+ */
+export async function nombresDeChats(quien: string, ms = 400): Promise<string[]> {
+  return (await conocidosDeChats(quien, ms)).nombres;
+}
+
+/**
+ * Lo mismo, diciendo si la lista está COMPLETA (séptima ronda, G1-m1): `completo: false` si el puente no contestó a
+ * tiempo (o falló) y no hay una lista buena reciente. Entonces nadie sabe si hay otra «Ana»: un nombre que no sea el
+ * completo del destino hace preguntar.
+ */
+export async function conocidosDeChats(quien: string, ms = 400): Promise<{ nombres: string[]; completo: boolean }> {
+  const k = normal(quien);
+  const guardado = NOMBRES_CHATS.get(k);
+  if (guardado && Date.now() - guardado.t < NOMBRES_CHATS_VIVE_MS) return { nombres: guardado.nombres, completo: guardado.completo };
+  try {
+    const j = await pedir<{ chats: ChatWA[] }>('/chats?limite=200', { ms });
+    const nombres = (j.chats || []).filter((c) => !c.grupo && !/@g\.us$/.test(c.jid) && c.nombre).map((c) => c.nombre);
+    NOMBRES_CHATS.set(k, { t: Date.now(), nombres, completo: true });
+    return { nombres, completo: true };
+  } catch {
+    // Si el puente no contesta, no se le vuelve a esperar en cada turno: lo último que se supo vale un rato más, pero
+    // como lista incompleta.
+    const nombres = guardado?.nombres || [];
+    NOMBRES_CHATS.set(k, { t: Date.now(), nombres, completo: false });
+    return { nombres, completo: false };
+  }
 }
 
 /* ------------------------------------------------------------------ rutas para la app y Windows */

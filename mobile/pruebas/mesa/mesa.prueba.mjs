@@ -450,7 +450,7 @@ prueba('su computadora a pantalla completa (AUR09): visor propio desde la tarea,
   assert.match(vivo, /puedeAbrir: \(\) => !vozRef\.current\?\.vista\.suspendida && !visorAbierto\(\)/);
   assert.match(vivo, /<VisorComputadora tareaSeguida=\{companero\.tareaId\} \/>/);
   assert.doesNotMatch(fuente('compa/computadora.ts'), /abrirVisor/);
-  assert.match(fuente('ajustes/Computadora.tsx'), /setTimeout\(\(\) => abrirVisor\(id\), 320\)/, 'se abre desde la tarea (tras irse la hoja)');
+  assert.match(fuente('ajustes/Computadora.tsx'), /setTimeout\(\(\) => abrirVisor\(id, marca\), 320\)/, 'se abre desde la tarea (tras irse la hoja), con la marca de la cuenta que lo pidió');
   // La sesión sobrevive a cerrar y reabrir: el mismo cliente, el mismo control y el mismo encuadre.
   const envio = async () => ({ secuencia: 1, estado: 'hecha', ts: 0, frame_seq: 1, epoca: 1 });
   abrirVisor('tarea-v1');

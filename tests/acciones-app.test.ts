@@ -50,7 +50,8 @@ const CONTACTOS = [
   { correo: 'ana.lopez@x.com', nombre: 'Ana López' },
   { correo: 'ana.ruiz@x.com', nombre: 'Ana Ruiz' },
 ];
-const ctx: ContextoApp = { pantalla: 'chats', contactos: CONTACTOS };
+// `enviar_exacto`: un teléfono que comprueba el texto aprobado antes de mandar (sin ella no recibe ningún «enviar»).
+const ctx: ContextoApp = { pantalla: 'chats', contactos: CONTACTOS, manos: ['enviar_exacto'] };
 
 test('validarAccion: solo las formas del contrato; lo demás es null', () => {
   assert.deepEqual(validarAccion({ tipo: 'atras' }), { tipo: 'atras' });
@@ -162,8 +163,10 @@ test('enviar: solo con un «sí» explícito que abre la frase; la duda no enví
   for (const no of ['no', 'no lo envíes', 'espera', 'todavía no', 'sí, pero todavía no', 'si puedes, cámbialo a las 8', "don't send it", 'mejor cámbialo', '', 'manda saludos a Pedro']) {
     assert.equal(confirmaEnvio(no), false, no);
   }
-  // Las afirmaciones débiles se dicen a cualquier cosa: no envían.
-  for (const debil of ['ok', 'okay', 'va', 'dale', 'claro', 'perfecto', 'de acuerdo', 'sure']) assert.equal(confirmaEnvio(debil), false, debil);
+  // Cuarta ronda de permisos exactos: «dale», «ok», «va» valen igual en la app que en el correo (lib/afirmacion.ts).
+  for (const si of ['ok', 'okay', 'va', 'dale', 'claro', 'perfecto', 'de acuerdo', 'sure', '👍']) assert.equal(confirmaEnvio(si), true, si);
+  // Una pregunta nunca es la confirmación.
+  for (const pregunta of ['¿sí?', '¿ok?', 'sí o qué']) assert.equal(confirmaEnvio(pregunta), false, pregunta);
   // La orden de redactar no es a la vez la confirmación: la persona no oyó el texto todavía.
   for (const orden of ['escríbele a mamá que ya voy y mándalo', 'dile a Beto que llego tarde y envíalo', 'mándale un mensaje a Ana que sí voy, mándalo']) {
     assert.equal(confirmaEnvio(orden), false, orden);
@@ -183,11 +186,12 @@ test('prepararAcciones: el nombre pasa a correo y un «enviar» sin confirmació
   ]);
   const pendiente = { para: 'beto@x.com', texto: 'Llego tarde' };
   const conSi = prepararAcciones([{ tipo: 'enviar', para: 'Beto' }], { mensaje: 'sí, envíalo', contexto: ctx, pendiente });
-  assert.deepEqual(conSi, [{ tipo: 'enviar', para: 'beto@x.com' }]);
+  // Con el texto que la persona oyó (permisos exactos, 4-oct): el teléfono no manda otro contenido con ese «sí».
+  assert.deepEqual(conSi, [{ tipo: 'enviar', para: 'beto@x.com', texto: 'Llego tarde' }]);
   // Sin un borrador de un turno anterior, «enviar» no sale aunque haya «sí».
   assert.deepEqual(prepararAcciones([{ tipo: 'enviar', para: 'Beto' }], { mensaje: 'sí, envíalo', contexto: ctx }), []);
   // El destinatario es el del borrador, diga lo que diga el modelo.
-  assert.deepEqual(prepararAcciones([{ tipo: 'enviar', para: 'Ana López' }], { mensaje: 'sí', contexto: ctx, pendiente }), [{ tipo: 'enviar', para: 'beto@x.com' }]);
+  assert.deepEqual(prepararAcciones([{ tipo: 'enviar', para: 'Ana López' }], { mensaje: 'sí', contexto: ctx, pendiente }), [{ tipo: 'enviar', para: 'beto@x.com', texto: 'Llego tarde' }]);
   // Con «sí», un redactar NUEVO + enviar en el mismo turno: se redacta, no se envía (nadie oyó ese texto).
   assert.deepEqual(
     prepararAcciones([{ tipo: 'redactar', para: 'Mamá', texto: 'Ya voy' }, { tipo: 'enviar', para: 'Mamá' }], { mensaje: 'sí', contexto: ctx, pendiente }),
@@ -238,15 +242,21 @@ test('el camino rápido por reglas: las órdenes simples y claras, y nada que se
 
 test('el camino rápido con un borrador: «sí» lo manda (y se dice «Va, lo mando»: la app confirma cuando sale), «no» lo borra; sin borrador, «sí» no es nada', () => {
   const pendiente = { para: 'beto@x.com', texto: 'Llego tarde' };
-  const si = ordenPorReglas('sí', { pendiente });
-  assert.deepEqual(si?.accion, { tipo: 'enviar', para: 'beto@x.com' });
+  const si = ordenPorReglas('sí', { pendiente, contexto: ctx });
+  assert.deepEqual(si?.accion, { tipo: 'enviar', para: 'beto@x.com', texto: 'Llego tarde' });
   assert.equal(si?.decir, 'Va, lo mando.');
-  assert.deepEqual(ordenPorReglas('envíalo', { contexto: { ...ctx, borrador: 'hola', chatAbierto: CONTACTOS[1] } })?.accion, { tipo: 'enviar', para: 'mama@x.com' });
+  // Lo que la persona escribió en el chat abierto sale con ESE texto (revisión 4-oct: ningún «enviar» sin texto aprobado).
+  assert.deepEqual(ordenPorReglas('envíalo', { contexto: { ...ctx, borrador: 'hola', chatAbierto: CONTACTOS[1] } })?.accion, { tipo: 'enviar', para: 'mama@x.com', texto: 'hola' });
+  // Un teléfono que no comprueba el texto (sin la mano `enviar_exacto`): no recibe el «enviar»; se le pide actualizar.
+  const viejo = ordenPorReglas('sí', { pendiente, contexto: { ...ctx, manos: [] } });
+  assert.equal(viejo?.accion, null);
+  assert.match(viejo!.decir, /actualizarse/);
   assert.equal(ordenPorReglas('sí', { contexto: { ...ctx, borrador: 'hola' } }), null, 'un «sí» suelto sin borrador de AURA no manda lo que la persona escribía');
   assert.deepEqual(ordenPorReglas('no lo mandes', { pendiente })?.accion, { tipo: 'descartar' });
   assert.equal(ordenPorReglas('sí'), null);
-  // Las afirmaciones débiles no envían ni con un borrador de AU-RA.
-  for (const debil of ['ok', 'okay', 'va', 'dale', 'claro']) assert.equal(ordenPorReglas(debil, { pendiente }), null, debil);
+  // Cuarta ronda: «ok», «dale», «va» valen como el «sí» (igual que en el correo): con el borrador de AU-RA, sale.
+  for (const si2 of ['ok', 'okay', 'va', 'dale', 'claro']) assert.deepEqual(ordenPorReglas(si2, { pendiente, contexto: ctx })?.accion, { tipo: 'enviar', para: 'beto@x.com', texto: 'Llego tarde' }, si2);
+  assert.equal(ordenPorReglas('¿sí?', { pendiente, contexto: ctx })?.accion?.tipo === 'enviar', false, 'una pregunta no envía');
   // «no» / «cancela» no borran lo que la persona escribió a mano: solo un borrador de AU-RA.
   for (const no of ['no', 'nop', 'cancela', 'bórralo']) {
     assert.equal(ordenPorReglas(no, { contexto: { ...ctx, borrador: 'lo que escribí yo', chatAbierto: CONTACTOS[0] } }), null, no);

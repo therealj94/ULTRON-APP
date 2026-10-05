@@ -207,18 +207,14 @@ test('whatsapp: sin sesión / sin puente → failed con código (antes contaban 
   assert.deepEqual([noHay.estado, noHay.recibo?.codigo], ['failed', 'no-disponible']);
 });
 
-test('círculo: recordatorio rechazado (4xx) → failed; caída/tiempo → unknown (no se repite); enviado → confirmado; borrador → borrador', async () => {
+test('círculo: un recordatorio (aun con el permiso guardado) y un mensaje → borrador (nada sale sin su «sí»); a nadie → failed', async () => {
   const dueno = 'maria@x.com';
   const { persona: p } = await C.agregarPersona(dueno, { nombre: 'Luis', relacion: 'esposo', canales: { whatsapp: '+50488887777' } });
   await C.actualizarPersona(dueno, p.id, { permisos: { recordatorios: 'permitido' } }, { permitirPermisos: true });
-  const conEnvio = (enviar: () => Promise<unknown>) => ({ whatsappListo: () => true, enviar, borrador: () => 'BORRADOR' });
-  const rechazado = await C.correrCirculoConEstado(dueno, 'recordar Luis | la pastilla', '', conEnvio(async () => Promise.reject(Object.assign(new Error('número inválido'), { status: 400 }))));
-  assert.equal(rechazado.estado, 'failed');
-  const caido = await C.correrCirculoConEstado(dueno, 'recordar Luis | la pastilla', '', conEnvio(async () => Promise.reject(Object.assign(new Error('El puente de WhatsApp no contestó'), { status: 503 }))));
-  assert.equal(caido.estado, 'unknown', 'pudo haber salido: no se dice que no, ni se repite');
-  assert.match(caido.texto, /No sé si le llegó/);
-  const ok = await C.correrCirculoConEstado(dueno, 'recordar Luis | la pastilla', '', conEnvio(async () => undefined));
-  assert.deepEqual([ok.estado, ok.recibo?.efecto, ok.recibo?.proveedor], ['succeeded', 'confirmado', 'whatsapp']);
+  const conEnvio = (_enviar: () => Promise<unknown>) => ({ whatsappListo: () => true, borrador: () => 'BORRADOR' });
+  // Permisos exactos (revisión externa, 4-oct): el permiso permanente por clase («recordatorio») ya no manda nada solo.
+  const rec = await C.correrCirculoConEstado(dueno, 'recordar Luis | la pastilla', '', conEnvio(async () => undefined));
+  assert.deepEqual([rec.estado, rec.recibo?.efecto], ['succeeded', 'borrador']);
   const b = await C.correrCirculoConEstado(dueno, 'escribir Luis | te quiero', '', conEnvio(async () => undefined));
   assert.deepEqual([b.estado, b.recibo?.efecto], ['succeeded', 'borrador']);
   const nadie = await C.correrCirculoConEstado(dueno, 'escribir Pedro | hola', '', conEnvio(async () => undefined));

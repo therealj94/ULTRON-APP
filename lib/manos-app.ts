@@ -32,6 +32,7 @@
  * Buscar ni eso: solo dice los nombres de los chats donde encontró la palabra.
  */
 import type { ContextoApp, Contacto, Resolucion } from './acciones-app';
+import { confirmaDecision } from './afirmacion';
 
 /* ------------------------------------------------------------------ las formas */
 
@@ -40,7 +41,12 @@ import type { ContextoApp, Contacto, Resolucion } from './acciones-app';
  * audio, colgar y la tarea (pausar, seguir, cancelar, tomar el control). Sin ella, «cállate» sigue siendo
  * `silencio` (lo que entiende un APK viejo).
  */
-export const MANOS = ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame', 'cartera', 'pagar', 'controles'] as const;
+/**
+ * `enviar_exacto` (permisos exactos, revisión 4-oct): el teléfono comprueba, antes de mandar, que su borrador sea el
+ * texto que la persona aprobó (`enviar.texto`). Sin ella (un APK u OTA de antes, que ignora ese texto) el servidor NO le
+ * manda ningún `enviar`: el contenido aprobado no se podría hacer cumplir.
+ */
+export const MANOS = ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame', 'cartera', 'pagar', 'controles', 'enviar_exacto'] as const;
 export type Mano = (typeof MANOS)[number];
 
 export const CAMPOS_PERFIL = ['apodo', 'cumple', 'vive', 'trabajo', 'familia', 'gustos', 'comida', 'musica', 'otros'] as const;
@@ -869,27 +875,14 @@ export function esAfirmacionSola(mensaje: string): boolean {
 }
 
 /**
- * ¿Este mensaje confirma la propuesta? Las mismas exigencias que el «sí» de un borrador: un «sí» que
- * ABRE la frase, el verbo explícito («llámale», «ponlo»), o un «ok / okey / dale / va» que es TODO el
- * mensaje (esAfirmacionSola). Un «no», «espera», «pero», «mejor» u «otra» en cualquier parte lo deja sin
- * hacer: «sí, pero llama a Ana» no es permiso para llamar a Beto.
+ * ¿Este mensaje confirma la propuesta, sola? Una afirmación pura («sí», «okey», «dale», «sí, por favor») o el verbo
+ * de la propuesta («llámale», «ponlo»). Un «no», «espera», «pero», «mejor», otro nombre u otra hora lo deja sin
+ * hacer: «sí, pero llama a Ana» no es permiso para llamar a Beto. Lo que nombra a quién o cuándo lo decide el turno
+ * completo (prepararAcciones, con la misma regla).
  */
 export function confirmaPropuesta(tipo: Propuesta['tipo'], mensaje: string): boolean {
-  const crudo = String(mensaje || '').trim().toLowerCase();
-  const q = plegar(crudo).replace(/[^a-z0-9ñ\s]+/g, ' ').replace(/\s+/g, ' ').trim();
-  if (!q) return false;
-  if (esAfirmacionSola(crudo)) return true;
-  // Para cancelar un recordatorio, «cancélalo» / «bórralo» es el «sí».
-  if (tipo === 'cancelar_recordatorio') {
-    if (/\b(no|nop|nel|todavia|aun|espera|esperate|pero|mejor|otra|otro|dejalo|don ?t|not|wait|but|instead|keep)\b/.test(q)) return false;
-    if (/^[¡!\s]*(sí|sip|simón)(?=[\s,.!;:]|$)/.test(crudo) || /^[¡!\s]*si\s*([,.!;:]|$)/.test(crudo) || /^(sip|simon|yes|claro que si)\b/.test(q)) return true;
-    return /^(si )?(dale )?(cancelalo|cancelala|quitalo|quitala|borralo|borrala|eliminalo|cancel it|delete it|remove it)( ya| pues| porfa| por favor)?$/.test(q);
-  }
-  if (/\b(no|nop|nel|todavia|aun|espera|esperate|cancela|cancelalo|pero|mejor|otra|otro|don ?t|not|wait|cancel|but|instead|hold on)\b/.test(q)) return false;
-  if (/^[¡!\s]*(sí|sip|simón)(?=[\s,.!;:]|$)/.test(crudo) || /^[¡!\s]*si\s*([,.!;:]|$)/.test(crudo) || /^(sip|simon|yes|claro que si)\b/.test(q)) return true;
-  if (/^si (por favor|claro|dale)\b/.test(q)) return true;
-  if (tipo === 'llamar') return /^(si )?(dale )?(llamale|llamala|llamalo|marcale|marcala|marcalo|comunicame|call (him|her|them)|yes call)( ya| pues| porfa| por favor)?$/.test(q);
-  return /^(si )?(dale )?(ponlo|ponmelo|ponselo|guardalo|agendalo|programalo|hazlo|set it|yes set it)( ya| pues| porfa| por favor)?$/.test(q);
+  // Permisos exactos (tercera ronda): la regla única (lib/afirmacion.ts).
+  return confirmaDecision(tipo, mensaje);
 }
 
 /** «no», «mejor no», «cancela»: la propuesta se suelta. (Para cancelar un recordatorio, «déjalo» es el no.) */

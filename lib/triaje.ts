@@ -21,6 +21,7 @@
  */
 import { comoDato, haceCuanto, linea, plegar, preguntarModelo, extraerJson, type ModeloTexto } from './cerebro-comun';
 import { circuloDe, delCirculo, etiquetaDe, type MiembroCirculo } from './circulo';
+import { vistaDePersona, type VistaTexto } from './conocer-persona';
 import { consultarModeloLote } from './laya';
 import { listar } from './correo/buzon';
 import { leerCuentasSeguro } from './correo/cuentas';
@@ -111,7 +112,10 @@ function sinContestar(c: ConversacionTriaje): MensajeTriaje[] {
  * Clasifica una conversación con reglas (y lo que diga Laya, si vino). Determinista: lo mismo entra, lo
  * mismo sale.
  */
-export function clasificar(c: ConversacionTriaje, o: { circulo?: MiembroCirculo[]; laya?: Record<string, number> | null; nombresDueno?: string[]; ahora?: number } = {}): Clasificada {
+export function clasificar(
+  c: ConversacionTriaje,
+  o: { circulo?: MiembroCirculo[]; laya?: Record<string, number> | null; nombresDueno?: string[]; ahora?: number; vista?: VistaTexto } = {}
+): Clasificada {
   const ahora = o.ahora ?? Date.now();
   const pend = sinContestar(c);
   const texto = plegar([c.asunto || '', ...pend.map((m) => m.texto), pend.length ? '' : c.ultimo].join(' \n '));
@@ -120,6 +124,10 @@ export function clasificar(c: ConversacionTriaje, o: { circulo?: MiembroCirculo[
   const intenciones = new Set<Intencion>();
   let s = 0;
   const persona = o.circulo?.length ? delCirculo(o.circulo, { nombre: c.nombre, numero: c.numero, correo: c.deCorreo, jid: c.canal === 'whatsapp' ? c.id : undefined }) : null;
+  // Cómo se nombra a esa persona en lo que va al modelo (revisión 12): la etiqueta del círculo («Valentina (su
+  // hija)») es memoria de AURA, así que pasa por la vista de lo que limitó. Si la toca (o no se sabe qué limitó),
+  // va el nombre que dio el proveedor. El puntaje no cambia: sigue siendo alguien de su círculo.
+  const nombrePersona = persona ? etiquetaVisible(persona, c, o.vista) : '';
   const esperaDesde = pend.length ? pend[0].hora || c.hora : undefined;
   const directo = !c.grupo;
 
@@ -130,7 +138,7 @@ export function clasificar(c: ConversacionTriaje, o: { circulo?: MiembroCirculo[
   if (c.noLeidos > 0) s += directo ? Math.min(5, c.noLeidos) * 0.3 : Math.min(c.noLeidos, 50) * 0.01;
   if (persona) {
     s += 4;
-    motivos.push(`es ${etiquetaDe(persona)}`);
+    motivos.push(`es ${nombrePersona}`);
     if (FAMILIA_REL.has(persona.relacion)) {
       s += 1;
       intenciones.add('familia');
@@ -212,9 +220,17 @@ export function clasificar(c: ConversacionTriaje, o: { circulo?: MiembroCirculo[
     puntaje: Math.round(s * 10) / 10,
     motivos,
     ...(esperaDesde && pend.length ? { esperaDesde } : {}),
-    ...(persona ? { circulo: etiquetaDe(persona) } : {}),
+    ...(persona ? { circulo: nombrePersona } : {}),
     ...(L ? { laya: L } : {}),
   };
+}
+
+/** La etiqueta del círculo si la vista la deja pasar entera; si no, el nombre del proveedor (sin vista: la etiqueta, como antes). */
+function etiquetaVisible(persona: MiembroCirculo, c: ConversacionTriaje, vista?: VistaTexto): string {
+  const etiqueta = etiquetaDe(persona);
+  if (!vista) return etiqueta;
+  if (vista.sabe && vista.texto(etiqueta) === etiqueta) return etiqueta;
+  return linea(c.nombre || c.numero || c.deCorreo || 'un contacto', 80);
 }
 
 const ORDEN: Importancia[] = ['urgente', 'importante', 'normal', 'ruido'];
@@ -332,7 +348,7 @@ async function layaPorOmision(textos: string[]): Promise<Array<Record<string, nu
  * Revisa y ordena. `canal`: 'todo' (WhatsApp y correo), 'whatsapp' o 'correo'. Nunca lanza: lo que no se
  * pudo revisar va en `errores` y se dice.
  */
-export async function triar(dueno: string, o: { canal?: 'todo' | 'whatsapp' | 'correo'; fuentes?: FuentesTriaje } = {}): Promise<ResultadoTriaje> {
+export async function triar(dueno: string, o: { canal?: 'todo' | 'whatsapp' | 'correo'; fuentes?: FuentesTriaje; vista?: VistaTexto } = {}): Promise<ResultadoTriaje> {
   const f = o.fuentes || {};
   const canal = o.canal || 'todo';
   const ahora = f.ahora ?? Date.now();
@@ -355,7 +371,7 @@ export async function triar(dueno: string, o: { canal?: 'todo' | 'whatsapp' | 'c
   // Laya sobre lo que espera respuesta (o el último mensaje).
   const textos = todas.map((c) => linea([c.asunto || '', ...sinContestar(c).map((m) => m.texto)].join(' ') || c.ultimo, 700));
   const laya = f.laya === null ? null : textos.length ? await (f.laya || layaPorOmision)(textos).catch(() => null) : null;
-  const clasificadas = ordenar(todas.map((c, i) => clasificar(c, { circulo, laya: laya?.[i] || null, nombresDueno: f.nombresDueno, ahora })));
+  const clasificadas = ordenar(todas.map((c, i) => clasificar(c, { circulo, laya: laya?.[i] || null, nombresDueno: f.nombresDueno, ahora, vista: o.vista })));
   // Respuestas sugeridas para lo importante (máximo 5).
   const top = clasificadas.filter((c) => (c.importancia === 'urgente' || c.importancia === 'importante') && !c.intenciones.includes('estafa')).slice(0, 5);
   const modelo = f.modelo === undefined ? preguntarModelo : f.modelo;
@@ -403,21 +419,22 @@ export function resumenTriaje(p: Record<Importancia, Clasificada[]>, o: { errore
 export { INSTRUCCION_TRIAJE } from './harness';
 
 /** El runner del harness: «revisar» (todo), «whatsapp», «correo». Solo el texto. */
-export async function correrTriaje(dueno: string, arg: string, _ambito = '', fuentes?: FuentesTriaje): Promise<string> {
-  return (await correrTriajeConEstado(dueno, arg, _ambito, fuentes)).texto;
+export async function correrTriaje(dueno: string, arg: string, _ambito = '', fuentes?: FuentesTriaje, vista?: VistaTexto): Promise<string> {
+  return (await correrTriajeConEstado(dueno, arg, _ambito, fuentes, vista)).texto;
 }
 
 /**
  * El runner con su estado y su recibo (AUR07): si no se pudo revisar ninguna fuente es `failed` (no «nada
  * nuevo»); si alguna falló, lo traído va `incompleto` (sirve para contestar, no se memoriza como conclusión).
  */
-export async function correrTriajeConEstado(dueno: string, arg: string, _ambito = '', fuentes?: FuentesTriaje): Promise<ResultadoHerramienta> {
+export async function correrTriajeConEstado(dueno: string, arg: string, _ambito = '', fuentes?: FuentesTriaje, vista?: VistaTexto): Promise<ResultadoHerramienta> {
   if (!dueno) return fallo('TRIAJE: solo con sesión. Pídele que entre con su cuenta.', 'sin-sesion');
   const v = plegar(String(arg || '').split(/\s+/)[0] || 'revisar');
   const canal: 'todo' | 'whatsapp' | 'correo' = /^(whatsapp|wa|chats)$/.test(v) ? 'whatsapp' : /^(correo|correos|email|mail)$/.test(v) ? 'correo' : 'todo';
   if (canal === 'whatsapp' && !fuentes?.whatsapp && !(whatsappDisponible() && whatsappPermitido(dueno))) return fallo('TRIAJE: su WhatsApp no está conectado aquí. No lo revisé; dilo con naturalidad.', 'no-disponible');
   try {
-    const r = await triar(dueno, { canal, fuentes });
+    // Lo que va al modelo nombra a su círculo por la vista de lo que limitó (revisión 12); sin la del turno, la lee.
+    const r = await triar(dueno, { canal, fuentes, vista: vista ?? (await vistaDePersona(dueno)) });
     const revisadas = [r.revisado.whatsapp, r.revisado.correo].filter(Boolean).length;
     if (!revisadas && r.errores.length) return fallo(`${r.resumen}\nNo pude revisar ninguna fuente: no digas que no hay nada nuevo.`, 'proveedor');
     return exito(r.resumen, { efecto: 'ninguno', proveedor: 'triaje', ...(r.errores.length ? { incompleto: true } : {}) });

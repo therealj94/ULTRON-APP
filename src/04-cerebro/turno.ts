@@ -24,6 +24,8 @@ export type Turno = {
   trazaId?: string;
   /** Las tareas durables que el turno creó o cambió (AUR08). Un servidor viejo no las manda. */
   tareas?: unknown[];
+  /** Lo que el taller dejó esperando aprobación (revisión 10, MEDIO-C). Un servidor viejo no lo manda. */
+  propuestaTaller?: unknown;
 };
 
 export type PeticionTurno = {
@@ -128,6 +130,7 @@ export async function pedirTurnoStream(opts: PeticionTurno, ev: EventosTurno = {
         via: data?.via,
         trazaId: data?.trazaId,
         ...(Array.isArray(data?.tareas) ? { tareas: data.tareas } : {}),
+        ...(data?.propuestaTaller && typeof data.propuestaTaller === 'object' ? { propuestaTaller: data.propuestaTaller } : {}),
         honesto: true,
       };
     } else if (evento === 'error') {

@@ -162,6 +162,48 @@ test('0.3 con sesión de AU-RA el turno sí llega (junta del padrón y miembro d
   }
 });
 
+test('R1 (revisión 9): «solo repetir» nunca corre un turno: sin respuesta guardada, 404 no_existe; con ella, la misma respuesta', async () => {
+  const h = { 'x-ultron-sesion': sesion('aura.prueba@ordenglobal.org') };
+  const serie = Date.now().toString(36);
+  // El pedido nunca llegó al servidor (la app se cerró antes): al reabrir pregunta solo por su idTurno.
+  const marca = `SOLOREPETIR-NUNCA-${serie}`;
+  const id = `nunca-${serie}`;
+  for (const ruta of ['/api/turno/repetir', '/api/turno']) {
+    const r = await turno(ruta, { message: PREGUNTA(marca), idTurno: id, soloRepetir: true }, h);
+    assert.equal(r.status, 404, `${ruta}: ${await r.clone().text()}`);
+    assert.equal(((await r.json()) as any).codigo, 'no_existe');
+  }
+  const s = await turno('/api/turno/stream', { message: PREGUNTA(marca), idTurno: id, soloRepetir: true }, h);
+  const sse = await s.text();
+  assert.match(sse, /event: error/);
+  assert.match(sse, /no_existe/);
+  assert.doesNotMatch(sse, /event: done/);
+  assert.equal(llego(marca), false, 'ningún turno nuevo llegó al nodo sin que la persona tocara nada');
+  // Sin sesión, tampoco.
+  assert.equal((await turno('/api/turno/repetir', { idTurno: id })).status, 401);
+
+  // El pedido sí llegó y contestó: «solo repetir» devuelve ESA respuesta, sin volver al nodo.
+  const marca2 = `SOLOREPETIR-HECHO-${serie}`;
+  const id2 = `hecho-${serie}`;
+  const r1 = await turno('/api/turno', { message: PREGUNTA(marca2), idTurno: id2 }, h);
+  assert.equal(r1.status, 200, await r1.clone().text());
+  const j1 = (await r1.json()) as any;
+  assert.ok(j1.reply, 'el turno contestó');
+  const veces = alNodo.filter((c) => c.includes(marca2)).length;
+  assert.ok(veces > 0);
+  const r2 = await turno('/api/turno/repetir', { idTurno: id2 }, h);
+  assert.equal(r2.status, 200, await r2.clone().text());
+  const j2 = (await r2.json()) as any;
+  assert.equal(j2.repetido, true);
+  assert.equal(j2.reply, j1.reply);
+  const r3 = await turno('/api/turno', { message: PREGUNTA(marca2), idTurno: id2, soloRepetir: true }, h);
+  assert.equal(((await r3.json()) as any).reply, j1.reply);
+  assert.equal(alNodo.filter((c) => c.includes(marca2)).length, veces, 'repetir no vuelve a preguntarle al nodo');
+  // Otra persona con el mismo idTurno no recibe la respuesta de esta.
+  const ajena = await turno('/api/turno/repetir', { idTurno: id2 }, { 'x-ultron-sesion': sesion('ana.comunidad@gmail.com') });
+  assert.equal(ajena.status, 404);
+});
+
 test('hallazgo de Codex en #104: un correo fuera del padrón SIN sesión de comunidad no corre turnos', async () => {
   // Así queda el token de alguien que sacaron del padrón: firmado y vigente, pero no lo emitió AU-RA
   // como miembro de la comunidad. Antes contaba como miembro y abría la mesa.

@@ -109,7 +109,7 @@ test('circulo recordar / escribir: borrador de WhatsApp a la persona correcta; s
   assert.match(await C.correrCirculo('', 'listar'), /solo con sesión/);
 });
 
-test('permiso permanente de recordatorios: solo desde la app; sale sin preguntar con tope por día', async () => {
+test('permiso permanente de recordatorios: solo desde la app; y ya no manda nada sin preguntar (permisos exactos, 4-oct)', async () => {
   const dueno = 'maria@x.com';
   const { persona: p } = await C.agregarPersona(dueno, { nombre: 'Luis', relacion: 'esposo', canales: { whatsapp: '+50488887777' } });
   assert.match(await C.correrCirculo(dueno, 'agregar Luis | esposo | 88887777'), /guardé a Luis/);
@@ -124,12 +124,12 @@ test('permiso permanente de recordatorios: solo desde la app; sale sin preguntar
   const luego = await C.correrCirculo(dueno, 'recordar Luis | Recoger a los niños | a las 4', '', deps);
   assert.match(luego, /^BORRADOR OJO: no puedo programar el envío para más tarde/);
   assert.equal(enviados.length, 0, 'no le escribió a Luis ahora');
-  for (let i = 0; i < C.MAX_RECORDATORIOS_DIA; i++) assert.match(await C.correrCirculo(dueno, `recordar Luis | Recoger a los niños ${i}`, '', deps), /^RECORDATORIO ENVIADO por WhatsApp a Luis \(su esposo\)/);
-  assert.equal(enviados.length, C.MAX_RECORDATORIOS_DIA);
-  assert.equal(enviados[0].chat, '50488887777@s.whatsapp.net');
-  assert.equal(await C.correrCirculo(dueno, 'recordar Luis | otra más', '', deps), 'BORRADOR', 'pasado el tope, vuelve a preguntar');
+  // Permisos exactos (revisión externa, 4-oct): el permiso guardado era por CLASE («recordatorio» a Luis, cualquier
+  // texto). Ya no autoriza nada: cada recordatorio queda en borrador y sale solo con su «sí» a ese texto.
+  for (let i = 0; i < 4; i++) assert.equal(await C.correrCirculo(dueno, `recordar Luis | Recoger a los niños ${i}`, '', deps), 'BORRADOR');
   assert.equal(await C.correrCirculo(dueno, 'escribir Luis | te quiero', '', deps), 'BORRADOR', 'un mensaje que no es recordatorio siempre pregunta');
-  assert.equal(enviados.length, C.MAX_RECORDATORIOS_DIA);
+  assert.equal(enviados.length, 0, 'nada salió sin su «sí»');
+  assert.equal(borradores[1].chat, '50488887777@s.whatsapp.net', 'al número guardado');
 });
 
 /* ------------------------------------------------------------------ rutas */

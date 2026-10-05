@@ -75,7 +75,7 @@ export function esAccionApp(a: any): a is AccionApp {
     case 'redactar':
       return txt(a.para, 200) && txt(a.texto);
     case 'enviar':
-      return a.para === undefined || txt(a.para, 200);
+      return (a.para === undefined || txt(a.para, 200)) && (a.texto === undefined || txt(a.texto));
     case 'silencio':
       return typeof a.valor === 'boolean';
     case 'presencia':

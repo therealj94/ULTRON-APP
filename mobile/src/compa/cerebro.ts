@@ -400,7 +400,7 @@ export function cuerpoPersona(b: BorradorPersona, id?: string, idioma: Idioma = 
   return { ok: true, cuerpo };
 }
 
-/** «AURA puede mandarle recordatorios sin preguntarme» (solo se da desde la app: POST /api/circulo). */
+/** El antiguo «recordatorios sin preguntarme»: el servidor lo guarda pero ya no autoriza ningún envío (permisos exactos, 4-oct). */
 export function cuerpoPermiso(id: string, permitido: boolean): Record<string, unknown> {
   return { id, permisos: { recordatorios: permitido ? 'permitido' : 'preguntar' } };
 }

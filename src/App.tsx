@@ -4,6 +4,9 @@ import { FaceCanvas, caraDeEmocion } from './02-cara';
 import type { Gesto } from './02-cara/gestos';
 import { caraDeTexto } from './02-cara/emocion';
 import { DockDrawer, SettingsSheet, nombreModo, Arranque, AccesoModal, UltronVaultModal, VisionOverlay, PhotoCaptureModal, CameraCountdownModal, MenuMas } from './07-pantallas';
+import type { Tab as TabAjustes } from './07-pantallas/SettingsSheet';
+import type { VistaAura } from './07-pantallas/TuAura';
+import { AvisoSinCorreo, cuantasCuentasCorreo, pedidoConPegado, quiereLeerCorreo } from './07-pantallas/AvisoSinCorreo';
 import type { Escena } from './02-cara/vision/escena';
 import { playSfx } from './03-voz/audio';
 import { hablar, cantar, callar, precargar, setVozActiva, type Dicho, type Vecinos } from './03-voz/hablar';
@@ -12,14 +15,14 @@ import { onLip, desbloquearAudio, audioDesbloqueado } from './03-voz/player';
 import { clipDeEmocion, clipDeTexto, saludoDe, saludoHora, siguienteChiste } from './03-voz/banco';
 import { useOido } from './03-voz/useOido';
 import { RegistroVoz } from '../mobile/src/lib/interrupcion';
-import { ConversacionEnVivo, type EstadoEnVivo } from './03-voz/enVivo';
+import { ConversacionEnVivo, type ControlesEnVivo, type EstadoEnVivo } from './03-voz/enVivo';
 import { opinarTurno, pedirTurnoStream } from './04-cerebro/turno';
 import { detectarIntencion } from './04-cerebro/intenciones';
 import { grabFrame, achicarFoto } from './04-cerebro/grabFrame';
 import { fijarCuentaMemoria, guardarHecho, olvidarTodo } from './09-estado/memoria';
 import { guardarTokenMesa, headersMesa } from './10-infra/sesionCliente';
 import { escucharAvisosTocados } from './10-infra/abrirDesdeAviso';
-import { ejecutarControl, interpretarControl, puertosWeb, respuestaAclaracion, type ControlVoz } from './03-voz/controles';
+import { botonMicrofonoWeb, ejecutarControl, interpretarControl, puertosWeb, respuestaAclaracion, type ControlVoz } from './03-voz/controles';
 import { escucharVueltaGenesis } from './10-infra/genesisWeb';
 import { aplicarVersionNueva, registrarPwa } from './10-infra/pwa';
 import { AvisoVersion } from './07-pantallas/AvisoVersion';
@@ -37,11 +40,12 @@ import './11-sala/tema.css';
 import { enlaceEnLaUrl, quitarEnlaceDeLaUrl, type EnlaceUrl } from './cuentas/Cuentas';
 import { useTema } from './01-diseno/useTema';
 import { useConversacion, type EntradaAccion } from './13-trabajo/conversacion';
-import { accionSensibleDe, resultadoDe } from './13-trabajo/accionSensible';
+import { accionSensibleDe, coincideConServidor, propuestaValida, resultadoDe, type AccionSensible, type PropuestaServidor } from './13-trabajo/accionSensible';
 import { Conversacion } from './13-trabajo/Conversacion';
 import { Compositor } from './13-trabajo/Compositor';
 import { Inicio, EJEMPLOS_INICIO } from './13-trabajo/Inicio';
-import { IndicadorTrabajos, PanelTrabajos, useTrabajosWeb } from './13-trabajo/Trabajos';
+import { IndicadorTrabajos, PanelTrabajos, clienteTrabajos, useTrabajosWeb } from './13-trabajo/Trabajos';
+import { VisorEscritorio, abrirEscritorio, olvidarVisor, useVisorEscritorioAbierto } from './13-trabajo/VisorEscritorio';
 import { refsDeTurno } from '../mobile/src/lib/trabajos';
 
 /** Conversar: la sala entera. Trabajar: avatar chico y la conversación con sus resultados. */
@@ -146,6 +150,16 @@ export default function App() {
   const [dockOpen, setDockOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [masOpen, setMasOpen] = useState(false);
+  /** P4: abrir Ajustes en un destino (Más → Tus correos; leer el correo sin cuenta → Tus correos). */
+  const [ajustesEn, setAjustesEn] = useState<{ tab: TabAjustes; vista?: VistaAura; n: number } | null>(null);
+  const abrirAjustesEn = useCallback((tab: TabAjustes, vista?: VistaAura) => {
+    setAjustesEn((x) => ({ tab, vista, n: (x?.n || 0) + 1 }));
+    setSettingsOpen(true);
+  }, []);
+  /** P4: pidió leer el correo y el servidor confirmó que no hay ninguna cuenta: el aviso con sus tres salidas. */
+  const [sinCorreo, setSinCorreo] = useState<string | null>(null);
+  /** P4: el pedido que espera a que conecte un correo; «Retomar» lo manda tal cual. */
+  const [pedidoCorreo, setPedidoCorreo] = useState<string | null>(null);
   const [modoMesa, setModoMesa] = useState<ModoMesa>(() => (lee('aura_modo_mesa', 'conversar') === 'trabajar' ? 'trabajar' : 'conversar'));
   useEffect(() => guarda('aura_modo_mesa', modoMesa), [modoMesa]);
   const { preferencia: preferenciaTema, setPreferencia: setPreferenciaTema, tema, variables: variablesTema } = useTema();
@@ -185,7 +199,11 @@ export default function App() {
   const [panelTareas, setPanelTareas] = useState(false);
   const [tareaEnfocada, setTareaEnfocada] = useState<string | null>(null);
   const [propuestaCampo, setPropuestaCampo] = useState<{ texto: string; n: number } | null>(null);
-  const trabajos = useTrabajosWeb({ conSesion: usuario.authenticated, panelAbierto: panelTareas });
+  const trabajos = useTrabajosWeb({ conSesion: usuario.authenticated, cuenta: cuentaActiva, panelAbierto: panelTareas });
+  // El visor del escritorio de su computadora (U1, auditoría del 4-oct): el mismo de la app, abierto desde la tarea.
+  const escritorioAbierto = useVisorEscritorioAbierto();
+  const cuentaDelEscritorio = usuario.authenticated ? cuentaActiva : null;
+  useEffect(() => olvidarVisor(), [cuentaDelEscritorio]);
   const trabajosRef = useRef(trabajos.ahora);
   trabajosRef.current = trabajos.ahora;
   const tareasPorId = React.useMemo(() => Object.fromEntries(trabajos.tareas.map((t) => [t.id, t])), [trabajos.tareas]);
@@ -353,10 +371,12 @@ export default function App() {
   useEffect(() => {
     let vivo = true;
     const t0 = Date.now();
+    // Si mientras llega esta respuesta la cuenta ya cambió (entró alguien por la puerta, o salió), es tardía: no fija nada.
+    const vigente = deEstaCuenta();
     fetch('/api/ultron/sesion', { headers: headersMesa() })
       .then((r) => r.json())
       .then((d) => {
-        if (!vivo) return;
+        if (!vivo || !vigente()) return;
         if (d.authenticated && d.user) {
           setUsuario({ name: d.user.nombre || '', role: d.user.rol || 'Junta Directiva · Orden Global', authenticated: true });
           // La memoria larga de este navegador es POR CUENTA (09-estado/memoria.ts).
@@ -366,7 +386,7 @@ export default function App() {
       })
       .catch(() => {
         // Sin respuesta no se abre la mesa a ciegas: la puerta (que reintenta al entrar).
-        if (vivo) setSesionVista('no');
+        if (vivo && vigente()) setSesionVista('no');
       });
     setEstadoArranque('buscando el cerebro');
     Promise.race([fetch('/api/health').then((r) => r.json()).catch(() => null), new Promise((r) => setTimeout(() => r(null), 2500))]).then((h: any) => {
@@ -399,11 +419,29 @@ export default function App() {
   const correoCuenta = useRef('');
   const [ofreceAvisos, setOfreceAvisos] = useState(false);
   const [activandoAvisos, setActivandoAvisos] = useState(false);
+  /**
+   * La generación de la cuenta (punto 3 de la revisión del 4-oct): sube cada vez que la cuenta cambia (salir, vencer,
+   * entrar otra). Todo lo que se pidió antes la captura con `deEstaCuenta()` y, al volver, comprueba que sigue siendo
+   * la misma antes de tocar la conversación, el historial, la voz o el panel: una respuesta tardía de A no llena a B.
+   */
+  const genCuenta = useRef(0);
+  const deEstaCuenta = () => {
+    const g = genCuenta.current;
+    return () => genCuenta.current === g;
+  };
   function fijarCuenta(correo: string | null | undefined) {
     const nueva = String(correo || '').trim().toLowerCase();
     // Cambió la cuenta (cerró sesión, venció, o entró otra persona): nada de la anterior se queda en esta pestaña.
     // Ni el historial que viaja al cerebro como contexto, ni lo de Genesis a medias, ni fotos ni la opinión abierta.
     if (nueva !== correoCuenta.current) {
+      genCuenta.current++;
+      // Lo que siga en vuelo de la anterior se corta: el turno (su stream), la voz en cola y la conversación en vivo.
+      turnoEnCurso.current?.abort();
+      turnoEnCurso.current = null;
+      turnoCallado.current = null;
+      aclaracionWeb.current = null;
+      callarTodo();
+      vivoRef.current?.cerrar();
       historialRef.current = [];
       pendienteGenesis.current = '';
       setPhotos([]);
@@ -418,8 +456,15 @@ export default function App() {
   const activarLosAvisos = async () => {
     if (!correoCuenta.current || activandoAvisos) return;
     setActivandoAvisos(true);
+    const vigente = deEstaCuenta();
     const r = await activarAvisos(correoCuenta.current);
     setActivandoAvisos(false);
+    if (!vigente()) {
+      // Cambió la cuenta mientras se pedía el permiso: los avisos vuelven a ser de la cuenta de ahora (o de nadie) y el
+      // resultado de la anterior no se le dice a la siguiente (revisión independiente del 4-oct).
+      void cuentaDeAvisos(correoCuenta.current || null);
+      return;
+    }
     setOfreceAvisos(false);
     if (r === 'activados') decir('Listo: te aviso aunque AU-RA esté cerrada.', { emocion: 'feliz' });
     else if (r === 'denegado') decir('Sin permiso no te puedo avisar con la app cerrada. Lo puedes activar en Ajustes del teléfono.', { emocion: 'neutral' });
@@ -576,8 +621,56 @@ export default function App() {
   const aclaracionWeb = useRef<ControlVoz[] | null>(null);
   /** El turno que viene lo dijo en voz alta (el oído), no lo escribió: el servidor le pone los topes de la voz. */
   const habladoRef = useRef(false);
+
+  /**
+   * Aprueba en el servidor la decisión de una tarjeta (revisión 10, MEDIO-C): POST /api/trabajos/:tarea/decisiones con su
+   * id y su versión. El servidor la ejecuta una sola vez y solo si sigue siendo exactamente lo propuesto (cuenta,
+   * acción, destino, contenido); si no, contesta que no hizo nada.
+   */
+  const aprobarEnServidor = useCallback(
+    async (id: string, ref: { tarea: string; decision: string; version: number }) => {
+      const r = await clienteTrabajos.decidir({ id: ref.tarea, version: ref.version, decisionId: ref.decision }, 'aprobar');
+      const ts = Date.now();
+      if (r.ok === false) {
+        conv.actualizar<EntradaAccion>(id, { estado: 'fallida', resultado: r.mensaje, tsResultado: ts });
+      } else {
+        const t = r.tarea;
+        // «Hecho» solo con el recibo del canal (la tarea completada); lo demás no se da por hecho.
+        const estado = t?.state === 'completed' ? 'hecha' : t?.state === 'failed' || t?.state === 'cancelled' || t?.state === 'blocked' ? 'fallida' : 'sin-confirmar';
+        const resumen = t?.result?.summary || t?.currentStep || (estado === 'sin-confirmar' ? 'No sé todavía cómo terminó: míralo en tus tareas antes de repetirlo.' : '');
+        conv.actualizar<EntradaAccion>(id, { estado, resultado: resumen, tsResultado: ts });
+      }
+      trabajosRef.current();
+    },
+    [conv.actualizar]
+  );
+
+  /**
+   * Lo que el servidor dejó esperando para la tarjeta que se confirmó. Si es EXACTAMENTE lo que la persona vio y
+   * confirmó (acción, canal, contenido), ese «Confirmar y enviar» aprueba esa decisión; si el servidor lo entendió
+   * distinto, la tarjeta enseña lo del servidor y vuelve a pedir confirmar (entonces aprueba esa decisión, sin otro turno).
+   */
+  const atarPropuesta = useCallback(
+    (id: string, accion: AccionSensible, p: PropuestaServidor) => {
+      const servidor = { tarea: p.tarea, decision: p.decision, version: p.version };
+      if (coincideConServidor(accion, p)) {
+        conv.actualizar<EntradaAccion>(id, { servidor });
+        void aprobarEnServidor(id, servidor);
+        return;
+      }
+      conv.actualizar<EntradaAccion>(id, {
+        estado: 'propuesta',
+        servidor,
+        accion: { ...accion, titulo: p.titulo || accion.titulo, destinatario: p.destinatario || accion.destinatario, contenido: p.contenido },
+        resultado: undefined,
+      });
+      decir('El servidor lo entendió un poco distinto. Revisá la tarjeta y confirmá otra vez.', { emocion: 'neutral' });
+    },
+    [conv.actualizar, aprobarEnServidor, decir]
+  );
+
   const pensar = useCallback(
-    async (cmd: string, o: { imagen?: string; accionId?: string } = {}) => {
+    async (cmd: string, o: { imagen?: string; accionId?: string; accion?: AccionSensible } = {}) => {
       const hablado = habladoRef.current;
       habladoRef.current = false;
       const cortada = interrumpidaTurnoRef.current;
@@ -586,6 +679,8 @@ export default function App() {
       turnoEnCurso.current?.abort();
       const ac = new AbortController();
       turnoEnCurso.current = ac;
+      // De qué cuenta es este turno: si cambia mientras llega, su respuesta no toca nada (punto 3, revisión del 4-oct).
+      const vigente = deEstaCuenta();
       // El turno en la conversación: su estado va cambiando con lo que manda el servidor.
       const idTurno = conv.aura('', 'pensando');
       let dicho = '';
@@ -608,7 +703,7 @@ export default function App() {
       // etiqueta de audio v4 (mobile/src/compa/etiquetasVoz.ts). Antes eran tres clips fijos («Mmm…
       // déjame ver»), a los 1,4 s: José, «es molesto después de un rato».
       const relleno = setTimeout(() => {
-        if (turnoEnCurso.current !== ac || turnoCallado.current === ac || colaRef.current.length > 0 || hablando.current) return;
+        if (!vigente() || turnoEnCurso.current !== ac || turnoCallado.current === ac || colaRef.current.length > 0 || hablando.current) return;
         const estado = image ? 'mirando' : estadoDeEspera(cmd);
         const f = fraseDeEstado(estado, 'aura', 'es');
         // `neutral`: la etiqueta ya la eligió vozDeEspera; con la emoción el servidor le sumaba su tono.
@@ -622,7 +717,7 @@ export default function App() {
         // Frases cerradas ya (src/03-voz/frases.ts): la que terminó en punto sale sin esperar al siguiente trozo.
         const { listas, resto } = cortarFrases(pendiente, final);
         pendiente = resto;
-        if (turnoCallado.current === ac) return;
+        if (!vigente() || turnoCallado.current === ac) return;
         for (const p of listas) colaRef.current.push({ texto: p, emocion: emo });
         if (colaRef.current.length) void bombear();
       };
@@ -642,11 +737,13 @@ export default function App() {
           },
           {
             onTools: (tools) => {
+              if (!vigente()) return;
               const t = tareaDeHerramientas(tools);
               if (t) hacerTarea(t, cmd);
               conv.actualizar(idTurno, { herramientas: tools, estado: 'usando' } as any);
             },
             onEmocion: (e) => {
+              if (!vigente()) return;
               emo = e;
               setEmocion(e);
               const c = caraDeEmocion(e);
@@ -655,6 +752,7 @@ export default function App() {
               if (clip && (e === 'risa' || e === 'sorpresa') && turnoCallado.current !== ac) colaRef.current.push({ texto: clip.id, emocion: e });
             },
             onDelta: (t) => {
+              if (!vigente()) return;
               clearTimeout(relleno);
               huboTexto = true;
               pendiente += t;
@@ -663,6 +761,7 @@ export default function App() {
               conv.actualizar(idTurno, { texto: quitarExpresiones(dicho).trim(), estado: 'respondiendo' } as any);
             },
             onReplace: (t) => {
+              if (!vigente()) return;
               if (turnoCallado.current !== ac) {
                 colaRef.current = [];
                 callar();
@@ -676,6 +775,8 @@ export default function App() {
           }
         );
         clearTimeout(relleno);
+        // Otra cuenta ya está aquí: la respuesta de la anterior se descarta entera (ni burbuja, ni historial, ni voz).
+        if (!vigente()) return;
         if (turnoEnCurso.current !== ac) {
           cerrarTurno({ estado: 'interrumpida' });
           resultadoAccion('', 'interrumpido');
@@ -704,7 +805,9 @@ export default function App() {
         const tareasTurno = refsDeTurno(data);
         cerrarTurno({ texto, estado: 'lista', ms: data.ms, trazaId: data.trazaId, ...(tareasTurno.length ? { tareas: tareasTurno } : {}) });
         if (tareasTurno.length) trabajosRef.current();
-        resultadoAccion(texto);
+        // El servidor no ejecuta lo que sale desde el turno: deja una propuesta. La tarjeta confirmada la aprueba.
+        if (o.accionId && o.accion && propuestaValida(data.propuestaTaller)) atarPropuesta(o.accionId, o.accion, data.propuestaTaller);
+        else resultadoAccion(texto);
         if (data.emocion) emo = data.emocion;
         // Sin stream (el servidor contestó en JSON) no llegó ningún trozo: se dice la respuesta entera.
         if (!huboTexto) pendiente = String(data.voz || texto);
@@ -717,6 +820,7 @@ export default function App() {
         }
       } catch (e: any) {
         clearTimeout(relleno);
+        if (!vigente()) return;
         if (e?.name === 'AbortError') {
           cerrarTurno({ estado: 'interrumpida' });
           resultadoAccion('', 'interrumpido');
@@ -728,7 +832,7 @@ export default function App() {
         resultadoAccion('');
       }
     },
-    [mode, usuario.name, visionEnabled, soundFxEnabled, decir, bombear, callarTodo, hacerTarea, conv.aura, conv.actualizar]
+    [mode, usuario.name, visionEnabled, soundFxEnabled, decir, bombear, callarTodo, hacerTarea, conv.aura, conv.actualizar, atarPropuesta]
   );
 
   /** Si el cerebro todavía no está, lo avisa y devuelve true (el turno no sale). */
@@ -752,11 +856,12 @@ export default function App() {
       // cosas distintas; cada uno toca solo lo suyo. «Para» a secas con más de una cosa viva pregunta cuál.
       const correrControles = (cs: ControlVoz[]) => {
         for (const c of cs) {
-          if (c === 'detener_audio' || c === 'interrumpir') {
-            callarTodo();
-            turnoCallado.current = turnoEnCurso.current;
-            continue;
-          }
+          // Callar también corta lo que falte del turno en camino (no se dice), como siempre.
+          if (c === 'detener_audio' || c === 'interrumpir') turnoCallado.current = turnoEnCurso.current;
+          // P2: callar pasa por los puertos: la voz de la mesa (callarTodo) Y, con la llamada abierta, lo que la
+          // llamada está diciendo (callarSalida). El TTS de la mesa no es el audio de la llamada. Silenciar el
+          // micrófono es el de la llamada, sin colgar. Nada de esto toca la tarea durable.
+          const vigente = deEstaCuenta();
           void ejecutarControl(
             c,
             puertosWeb({
@@ -771,7 +876,7 @@ export default function App() {
               },
             })
           ).then((r) => {
-            if (!r.ok && r.detalle) decir(r.detalle, { emocion: 'neutral' });
+            if (vigente() && !r.ok && r.detalle) decir(r.detalle, { emocion: 'neutral' });
           });
         }
       };
@@ -787,8 +892,9 @@ export default function App() {
         aclaracionWeb.current = ctl.opciones;
         return void decir(ctl.pregunta, { emocion: 'neutral' });
       }
-      // «Cállate» sigue por el `callar` de siempre (con su «está bien» si la interrumpió).
-      if (ctl && ctl.control !== 'detener_audio') return void correrControles([ctl.control]);
+      // «Cállate» sigue por el `callar` de siempre (con su «está bien» si la interrumpió); con la llamada abierta va
+      // por los controles, que callan también la salida de la llamada (P2).
+      if (ctl && (ctl.control !== 'detener_audio' || vivoRef.current?.ocupada())) return void correrControles([ctl.control]);
       const it = detectarIntencion(cmd);
       switch (it.tipo) {
         case 'callar':
@@ -805,26 +911,29 @@ export default function App() {
           hacerTarea('anotar');
           pendienteGenesis.current = it.hecho;
           // «Anotado» solo con el recibo del servidor (09-estado/memoria.ts).
-          void guardarHecho(it.hecho, { usuario: usuario.name }).then((r) =>
-            r.remoto === 'ok'
-              ? decir('Anotado. Si es de la junta, decime «actualiza el cerebro» y queda en Genesis Core.', { emocion: 'orgullo' })
-              : r.remoto === 'sin-sesion'
-                ? decir('Para recordarlo necesito que entres con tu cuenta.', { emocion: 'neutral' })
-                : decir('No pude guardarlo en el servidor. Probá de nuevo en un momento.', { emocion: 'neutral' })
-          );
+          {
+            // El recibo de una cuenta que ya salió no se dice a la siguiente (punto 3, revisión del 4-oct).
+            const vigente = deEstaCuenta();
+            void guardarHecho(it.hecho, { usuario: usuario.name }).then((r) => {
+              if (!vigente()) return;
+              if (r.remoto === 'ok') decir('Anotado. Si es de la junta, decime «actualiza el cerebro» y queda en Genesis Core.', { emocion: 'orgullo' });
+              else if (r.remoto === 'sin-sesion') decir('Para recordarlo necesito que entres con tu cuenta.', { emocion: 'neutral' });
+              else decir('No pude guardarlo en el servidor. Probá de nuevo en un momento.', { emocion: 'neutral' });
+            });
+          }
           return;
         case 'genesis': {
           const hecho = pendienteGenesis.current || historialRef.current.filter((h) => h.rol === 'user').slice(-1)[0]?.texto || '';
           if (!hecho) return void decir('Decime el hecho primero y después «actualiza el cerebro».', { emocion: 'curioso' });
           hacerTarea('anotar');
           pendienteGenesis.current = '';
-          void guardarHecho(`[Genesis] ${hecho}`, { usuario: usuario.name, junta: true }).then((r) =>
-            r.remoto === 'ok'
-              ? decir('Quedó en Genesis Core. La próxima pregunta ya lo usa.', { emocion: 'orgullo' })
-              : r.remoto === 'sin-sesion'
-                ? decir('Para guardarlo en Genesis Core necesito que entres con tu cuenta.', { emocion: 'neutral' })
-                : decir('No pude guardarlo en Genesis Core. Probá de nuevo en un momento.', { emocion: 'neutral' })
-          );
+          const vigente = deEstaCuenta();
+          void guardarHecho(`[Genesis] ${hecho}`, { usuario: usuario.name, junta: true }).then((r) => {
+            if (!vigente()) return;
+            if (r.remoto === 'ok') decir('Quedó en Genesis Core. La próxima pregunta ya lo usa.', { emocion: 'orgullo' });
+            else if (r.remoto === 'sin-sesion') decir('Para guardarlo en Genesis Core necesito que entres con tu cuenta.', { emocion: 'neutral' });
+            else decir('No pude guardarlo en Genesis Core. Probá de nuevo en un momento.', { emocion: 'neutral' });
+          });
           return;
         }
         case 'cantar': {
@@ -891,25 +1000,34 @@ export default function App() {
   );
 
   /**
-   * La puerta de todo lo que pide la persona (voz, Escribir, ejemplos). Queda en la conversación; si
-   * sale del sistema (mandar, avisar urgente, llamar) no se despacha: se propone en una tarjeta y
-   * espera Confirmar. Lo demás sigue por `comando`, igual que siempre.
+   * LA PUERTA (revisión 9): si lo pedido sale del sistema (mandar, avisar urgente, llamar) no se despacha: se propone
+   * en una tarjeta y espera Confirmar. Desde la revisión 10 el servidor tampoco lo hace desde el turno (deja una propuesta
+   * que se aprueba con su id y versión): esta tarjeta enseña qué se autoriza y su Confirmar es esa aprobación.
+   * Devuelve true si propuso (y entonces no debe salir nada más).
    */
-  const pedir = useCallback(
-    (raw: string, hablado = false) => {
-      const cmd = raw.trim();
-      if (!cmd) return;
-      habladoRef.current = hablado;
-      conv.persona(cmd);
+  const proponerSiSale = useCallback(
+    (cmd: string): boolean => {
       const accion = accionSensibleDe(cmd);
-      if (accion) {
-        ultimaInteraccion.current = Date.now();
-        conv.proponer(accion, cmd);
-        // La tarjeta vive en la superficie de trabajo: se pasa ahí para que se vea qué se autoriza.
-        setModoMesa('trabajar');
-        decir('Antes de hacerlo, revisá la tarjeta: a quién va, qué dice, y confirmá.', { emocion: 'neutral' });
-        return;
-      }
+      if (!accion) return false;
+      ultimaInteraccion.current = Date.now();
+      conv.proponer(accion, cmd);
+      // La tarjeta vive en la superficie de trabajo: se pasa ahí para que se vea qué se autoriza.
+      setModoMesa('trabajar');
+      decir('Antes de hacerlo, revisá la tarjeta: a quién va, qué dice, y confirmá.', { emocion: 'neutral' });
+      return true;
+    },
+    [conv.proponer, decir]
+  );
+
+  /**
+   * El ÚNICO camino de un pedido de la persona hacia `comando` (y de ahí al cerebro): pasa SIEMPRE por la puerta.
+   * Ningún camino la salta: ni el del correo (tenga o no cuentas), ni «Retomar» tras conectar uno, ni lo pegado.
+   * Nadie más llama a `comando`; lo confirmado en la tarjeta va por `confirmarAccion`.
+   */
+  const despachar = useCallback(
+    (cmd: string, hablado: boolean) => {
+      if (proponerSiSale(cmd)) return;
+      habladoRef.current = hablado;
       enComando.current = true;
       try {
         comando(cmd);
@@ -917,7 +1035,42 @@ export default function App() {
         enComando.current = false;
       }
     },
-    [comando, decir, conv.persona, conv.proponer]
+    [comando, proponerSiSale]
+  );
+
+  /**
+   * Todo lo que pide la persona (voz, Escribir, ejemplos, «Retomar», lo pegado). Queda en la conversación; lo que sale
+   * del sistema se propone en su tarjeta ANTES de cualquier otra cosa; lo demás sigue por `despachar`.
+   */
+  const pedir = useCallback(
+    (raw: string, hablado = false, o: { sinChequeoCorreo?: boolean; retomado?: boolean } = {}) => {
+      const cmd = raw.trim();
+      if (!cmd) return;
+      habladoRef.current = hablado;
+      // Retomar el pedido que esperaba un correo: ya está en la conversación, no se repite la burbuja.
+      if (!o.retomado) conv.persona(cmd);
+      // Primero la puerta: «revisa mi correo y mandame un resumen por Telegram» es un envío aunque también lea el
+      // correo; no espera a saber cuántas cuentas hay ni pasa por el aviso sin correo.
+      if (proponerSiSale(cmd)) return;
+      // P4: pedir leer el correo sin ninguna cuenta no termina en «conéctalo en Ajustes» sin salida: si el servidor
+      // CONFIRMA que no hay cuentas, se ofrece conectar (y retomar esto mismo), pegar el contenido u omitir. Si no se
+      // pudo saber (503, red), el pedido sigue normal (por la puerta, como todo).
+      if (!o.sinChequeoCorreo && usuario.authenticated && quiereLeerCorreo(cmd)) {
+        const vigente = deEstaCuenta();
+        void cuantasCuentasCorreo().then((n) => {
+          if (!vigente()) return;
+          if (n === 0) {
+            ultimaInteraccion.current = Date.now();
+            setSinCorreo(cmd);
+            return;
+          }
+          despachar(cmd, hablado);
+        });
+        return;
+      }
+      despachar(cmd, hablado);
+    },
+    [despachar, proponerSiSale, conv.persona, usuario.authenticated]
   );
 
   const confirmarAccion = useCallback(
@@ -926,10 +1079,15 @@ export default function App() {
       if (!e || e.estado !== 'propuesta') return;
       conv.actualizar<EntradaAccion>(id, { estado: 'enviando' });
       playSfx('tap', soundFxEnabled);
-      // El taller del servidor hace el envío sin despertar al modelo: no se espera al cerebro.
-      void pensar(e.pedido, { accionId: id });
+      // Con la decisión del servidor ya atada a la tarjeta, confirmar es aprobar ESA decisión (revisión 10, MEDIO-C).
+      if (e.servidor) {
+        void aprobarEnServidor(id, e.servidor);
+        return;
+      }
+      // Si no, el pedido va al servidor, que deja la propuesta (no la ejecuta) y la tarjeta la aprueba al volver.
+      void pensar(e.pedido, { accionId: id, accion: e.accion });
     },
-    [conv.entradas, conv.actualizar, pensar, soundFxEnabled]
+    [conv.entradas, conv.actualizar, pensar, soundFxEnabled, aprobarEnServidor]
   );
 
   const cancelarAccion = useCallback(
@@ -946,6 +1104,8 @@ export default function App() {
    * conversación. Si no abre, queda el micrófono de siempre.
    */
   const [enVivo, setEnVivo] = useState<EstadoEnVivo>('cerrada');
+  /** Lo que la llamada sabe hacer ahora (silenciar su micrófono sin colgar) y cómo está: el botón anuncia solo eso. */
+  const [vivoCtl, setVivoCtl] = useState<ControlesEnVivo>({ silenciable: false, silenciado: false });
   const vivoRef = useRef<ConversacionEnVivo | null>(null);
   const vivoCbs = useRef({ conv, showBubble, setFace });
   vivoCbs.current = { conv, showBubble, setFace };
@@ -978,6 +1138,7 @@ export default function App() {
           // La voz llega con sus etiquetas de audio ([laughs], [warmly]): se oyen, no se leen.
           else cb.aura(quitarExpresiones(texto).trim(), 'lista');
         },
+        onControles: setVivoCtl,
       });
     }
     return vivoRef.current;
@@ -1074,18 +1235,29 @@ export default function App() {
       {bubble.texto}
     </div>
   );
-  const hayDialogo = dockOpen || settingsOpen || masOpen || accesoOpen || vaultOpen || photosOpen || cameraOpen || panelTareas;
+  const hayDialogo = dockOpen || settingsOpen || masOpen || accesoOpen || vaultOpen || photosOpen || cameraOpen || panelTareas || !!sinCorreo || escritorioAbierto;
   const opinar = (v: 1 | -1) => {
     if (!opinion) return;
     void opinarTurno(opinion.id, v);
     setOpinion({ id: opinion.id, estado: 'gracias' });
   };
+  /**
+   * El botón del micrófono (P2): sin llamada, el oído de la mesa; con la llamada abierta, el micrófono de ESA
+   * sesión (silenciar sin colgar / volver a escuchar), solo si la llamada sabe hacerlo; si no, se apaga y lo dice.
+   */
+  const botonMic = botonMicrofonoWeb({ vivoAbierta, silenciable: vivoCtl.silenciable, silenciado: vivoCtl.silenciado, micEnabled, escuchando });
   const alternarMic = () => {
+    if (botonMic.modo === 'no_disponible') return;
+    playSfx('tap', soundFxEnabled);
+    if (botonMic.modo === 'llamada') {
+      const r = vivoRef.current?.silenciarMic(!vivoCtl.silenciado);
+      if (r && !r.ok && r.detalle) showBubble(r.detalle, 6000);
+      return;
+    }
     if (face === 'SLEEPING') despertar();
     setMicEnabled((v) => !v);
-    playSfx('tap', soundFxEnabled);
   };
-  const etiquetaMic = micEnabled ? (escuchando ? 'Micrófono abierto: te está escuchando' : 'Micrófono abierto') : 'Micrófono apagado';
+  const etiquetaMic = botonMic.etiqueta;
   const nombreVisible = usuario.authenticated ? usuario.name : '';
   /** Conversar / Trabajar: un radiogroup con flechas. */
   const MODOS_MESA: Array<{ id: ModoMesa; label: string; Icono: typeof Mic }> = [
@@ -1330,8 +1502,15 @@ export default function App() {
                       pedir(t);
                     }}
                     despues={
-                      <button type="button" onClick={alternarMic} aria-pressed={micEnabled} aria-label={etiquetaMic} className={`aura-mic chico ${micEnabled ? 'abierto' : ''} ${escuchando ? 'escuchando' : ''}`}>
-                        {micEnabled ? <Mic className="w-5 h-5" aria-hidden="true" /> : <MicOff className="w-5 h-5" aria-hidden="true" />}
+                      <button
+                        type="button"
+                        onClick={alternarMic}
+                        disabled={botonMic.disabled}
+                        aria-pressed={botonMic.activo}
+                        aria-label={etiquetaMic}
+                        className={`aura-mic chico ${botonMic.activo ? 'abierto' : ''} ${escuchando && botonMic.modo === 'mesa' ? 'escuchando' : ''}`}
+                      >
+                        {botonMic.activo ? <Mic className="w-5 h-5" aria-hidden="true" /> : <MicOff className="w-5 h-5" aria-hidden="true" />}
                       </button>
                     }
                   />
@@ -1370,8 +1549,15 @@ export default function App() {
                   {/* En un teléfono angosto entran los cuatro botones: «Escribir» queda con su ícono. */}
                   <span className="hidden min-[420px]:inline">Escribir</span>
                 </button>
-                <button type="button" onClick={alternarMic} disabled={vivoAbierta} aria-pressed={micEnabled} aria-label={etiquetaMic} className={`aura-mic ${micEnabled ? 'abierto' : ''} ${escuchando ? 'escuchando' : ''}`}>
-                  {micEnabled ? <Mic className="w-7 h-7" aria-hidden="true" /> : <MicOff className="w-7 h-7" aria-hidden="true" />}
+                <button
+                  type="button"
+                  onClick={alternarMic}
+                  disabled={botonMic.disabled}
+                  aria-pressed={botonMic.activo}
+                  aria-label={etiquetaMic}
+                  className={`aura-mic ${botonMic.activo ? 'abierto' : ''} ${escuchando && botonMic.modo === 'mesa' ? 'escuchando' : ''}`}
+                >
+                  {botonMic.activo ? <Mic className="w-7 h-7" aria-hidden="true" /> : <MicOff className="w-7 h-7" aria-hidden="true" />}
                 </button>
                 <button type="button" onClick={alternarEnVivo} aria-pressed={vivoAbierta} aria-label={vivoAbierta ? 'Colgar la conversación en vivo' : 'Hablar en vivo'} className={`aura-primario ${vivoAbierta ? 'en-vivo' : ''}`}>
                   {vivoAbierta ? <PhoneOff className="w-5 h-5" aria-hidden="true" /> : <AudioLines className="w-5 h-5" aria-hidden="true" />}
@@ -1422,6 +1608,26 @@ export default function App() {
           onToggleSleep={() => (face === 'SLEEPING' ? despertar() : dormir())}
           onToggleKioskFrame={() => setIsKioskFrame((v) => !v)}
           onToggleFullscreen={toggleFullscreen}
+          onAbrirTuAura={(v) => abrirAjustesEn('aura', v)}
+        />
+
+        <AvisoSinCorreo
+          pedido={sinCorreo}
+          onConectar={() => {
+            // A la pantalla que SÍ existe (Ajustes → Tu AURA → Tus correos); el pedido queda esperando para retomarlo.
+            setPedidoCorreo(sinCorreo);
+            setSinCorreo(null);
+            abrirAjustesEn('aura', 'correos');
+          }}
+          onPegar={(texto) => {
+            const p = sinCorreo;
+            setSinCorreo(null);
+            if (p) pedir(pedidoConPegado(p, texto), false, { sinChequeoCorreo: true, retomado: true });
+          }}
+          onOmitir={() => {
+            setSinCorreo(null);
+            decir('Listo, lo dejamos. Cuando quieras, conectá tu correo en Ajustes → Tu AURA → Tus correos, o pegame el texto.', { emocion: 'neutral' });
+          }}
         />
 
         <SettingsSheet
@@ -1439,6 +1645,15 @@ export default function App() {
           estadoCerebro={estadoCerebro}
           estadoArranque={estadoArranque}
           hayConversacion={conv.entradas.length > 0}
+          abrirEn={ajustesEn}
+          pedidoPendiente={pedidoCorreo}
+          onRetomarPedido={() => {
+            const p = pedidoCorreo;
+            setPedidoCorreo(null);
+            setSettingsOpen(false);
+            // El MISMO pedido, tal cual: ya hay correo conectado, así que va directo al cerebro.
+            if (p) pedir(p, false, { sinChequeoCorreo: true, retomado: true });
+          }}
           onVaciarConversacion={conv.vaciar}
           onClose={() => setSettingsOpen(false)}
           onSelectMode={(m) => {
@@ -1462,13 +1677,13 @@ export default function App() {
             historialRef.current = [];
             setSettingsOpen(false);
             // «Empezamos de cero» solo si el servidor confirmó que olvidó; si no, se dice qué pasó.
-            void olvidarTodo({ usuario: usuario.name }).then((r) =>
-              r.remoto === 'ok'
-                ? decir('Listo. Empezamos de cero.', { emocion: 'neutral' })
-                : r.remoto === 'sin-sesion'
-                  ? decir('Borré lo de esta pantalla. Para olvidar lo guardado en tu cuenta tenés que entrar.', { emocion: 'neutral' })
-                  : decir('Borré lo de esta pantalla, pero el servidor no confirmó el borrado. Probá de nuevo en un momento.', { emocion: 'neutral' })
-            );
+            const vigente = deEstaCuenta();
+            void olvidarTodo({ usuario: usuario.name }).then((r) => {
+              if (!vigente()) return;
+              if (r.remoto === 'ok') decir('Listo. Empezamos de cero.', { emocion: 'neutral' });
+              else if (r.remoto === 'sin-sesion') decir('Borré lo de esta pantalla. Para olvidar lo guardado en tu cuenta tenés que entrar.', { emocion: 'neutral' });
+              else decir('Borré lo de esta pantalla, pero el servidor no confirmó el borrado. Probá de nuevo en un momento.', { emocion: 'neutral' });
+            });
           }}
         />
 
@@ -1526,7 +1741,20 @@ export default function App() {
             setPropuestaCampo((p) => ({ texto: sugerencia, n: (p?.n || 0) + 1 }));
             if (modoMesa !== 'trabajar') setDockOpen(true);
           }}
+          onAbrirEscritorio={(t) => {
+            // El visor se abre solo cuando la persona lo pide; cerrarlo vuelve aquí sin tocar la tarea.
+            // Si la cuenta cambió mientras se buscaba la tarea, nada de la anterior se abre ni se dice en esta sesión.
+            const vigente = deEstaCuenta();
+            void abrirEscritorio(t.environment.id).then((aviso) => {
+              if (!vigente()) return;
+              if (aviso) decir(aviso, { emocion: 'neutral' });
+              else setPanelTareas(false);
+            });
+          }}
         />
+
+        {/* El escritorio de su computadora a toda la ventana (no el fullscreen de la app): volver lo cierra sin cancelar nada. */}
+        {usuario.authenticated ? <VisorEscritorio /> : null}
 
         <PhotoCaptureModal isOpen={photosOpen} onClose={() => setPhotosOpen(false)} photos={photos} onDeletePhoto={(id) => setPhotos((p) => p.filter((x) => x.id !== id))} onTriggerNewPhoto={() => { setPhotosOpen(false); setCameraOpen(true); }} />
 

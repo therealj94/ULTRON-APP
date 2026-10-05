@@ -383,7 +383,8 @@ test('acciones: el camino rápido va al canal del teléfono sin el 27B; «escrí
     const ctx = await fetch(`${BASE}/api/app/contexto`, {
       method: 'POST',
       headers: h(),
-      body: JSON.stringify({ pantalla: 'chats', contactos: [{ correo: 'beto@x.com', nombre: 'Beto Pérez' }, { correo: 'mama@x.com', nombre: 'Mamá' }] }),
+      // `enviar_exacto`: el teléfono comprueba el texto aprobado antes de mandar (sin ella no recibe ningún «enviar»).
+      body: JSON.stringify({ pantalla: 'chats', contactos: [{ correo: 'beto@x.com', nombre: 'Beto Pérez' }, { correo: 'mama@x.com', nombre: 'Mamá' }], manos: ['enviar_exacto'] }),
     });
     assert.equal(ctx.status, 200);
 
@@ -441,7 +442,7 @@ test('acciones: el camino rápido va al canal del teléfono sin el 27B; «escrí
     alNodo.length = 0;
     const si = await turno('sí');
     assert.equal(si.reply, 'Va, lo mando.');
-    assert.deepEqual(si.acciones.map((e: any) => e.accion), [{ tipo: 'enviar', para: 'beto@x.com' }]);
+    assert.deepEqual(si.acciones.map((e: any) => e.accion), [{ tipo: 'enviar', para: 'beto@x.com', texto: 'Llego tarde' }], 'con el texto que oyó (permisos exactos, 4-oct)');
     assert.equal(alNodo.length, 0);
     assert.ok(await espera(() => tel.acciones().some((a) => a.tipo === 'enviar')));
   } finally {
@@ -449,7 +450,7 @@ test('acciones: el camino rápido va al canal del teléfono sin el 27B; «escrí
   }
 });
 
-test('el «sí» solo en el turno siguiente; «y mándalo» redacta y pregunta; ok/dale no envían', { skip: !listo }, async () => {
+test('el «sí» solo en el turno siguiente; «y mándalo» redacta y pregunta; «dale» vale como el sí, una vez; «¿sí?» no envía', { skip: !listo }, async () => {
   const tel = await canal();
   const enviados = () => tel.acciones().filter((a) => a.tipo === 'enviar').length;
   try {
@@ -463,19 +464,25 @@ test('el «sí» solo en el turno siguiente; «y mándalo» redacta y pregunta; 
     contestar = () => '[EMO: neutral] ¿Qué cosa?\nACCION_APP: {"tipo":"enviar","para":"Beto"}';
     const tarde = await turno('sí');
     assert.deepEqual(tarde.acciones, [], 'un turno de por medio suelta el borrador');
-    // «ok» / «dale» al borrador del turno anterior: tampoco.
+    // Una pregunta («¿sí?») al borrador del turno anterior: no envía.
     contestar = () => redactar;
     await turno('escríbele a Beto que llego tarde');
     contestar = () => '[EMO: neutral] ¿Lo envío?\nACCION_APP: {"tipo":"enviar","para":"Beto"}';
+    const pregunta = await turno('¿sí?');
+    assert.deepEqual(pregunta.acciones, [], '«¿sí?» no es un «sí» para enviar');
+    // Cuarta ronda de permisos exactos: «dale» vale igual que en el correo (lib/afirmacion.ts): sale UNA vez, con su texto.
+    contestar = () => redactar;
+    await turno('escríbele a Beto que llego tarde');
+    contestar = () => '[EMO: neutral] Va.\nACCION_APP: {"tipo":"enviar","para":"Beto"}';
     const dale = await turno('dale');
-    assert.deepEqual(dale.acciones, [], '«dale» no es un «sí» para enviar');
+    assert.deepEqual(dale.acciones.map((e: any) => e.accion), [{ tipo: 'enviar', para: 'beto@x.com', texto: 'Llego tarde' }], '«dale» manda el borrador');
     // «escríbele… y mándalo»: el cerebro pide redactar Y enviar en la misma respuesta → solo redacta.
     contestar = () =>
       '[EMO: neutral] Le escribo a Mamá: “Ya voy”. ¿Lo envío?\nACCION_APP: {"tipo":"redactar","para":"Mamá","texto":"Ya voy"}\nACCION_APP: {"tipo":"enviar","para":"Mamá"}';
     const junto = await turno('escríbele a mi mamá que ya voy y mándalo');
     assert.deepEqual(junto.acciones.map((e: any) => e.accion.tipo), ['redactar']);
     await new Promise((r) => setTimeout(r, 100));
-    assert.equal(enviados(), antes, 'nada se envió');
+    assert.equal(enviados(), antes + 1, 'solo el del «dale»');
   } finally {
     await tel.cerrar();
   }

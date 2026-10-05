@@ -21,6 +21,7 @@ import {
   grupos,
   gira,
   indicadorEstable,
+  MAX_PAGINAS_TRABAJOS,
   mensajeDeError,
   movimientoIndicador,
   opcionesTarjeta,
@@ -97,6 +98,84 @@ test('reductor: un fallo de red no borra lo que había; la lista completa sí qu
   // Sin sesión: se vacía (no se ven tareas de la cuenta anterior).
   s = reducir(s, { tipo: 'sin-sesion' });
   assert.deepEqual(s.porId, {});
+});
+
+test('reductor (revisión 9): una lista PARCIAL no borra las que no se pudieron leer; quedan «sin confirmar» con su aviso', () => {
+  let s = reducir(estadoInicial(), { tipo: 'lista', tareas: [tarea({ id: 'a' }), tarea({ id: 'b', currentStep: 'paso 2' })], en: T0 });
+  assert.equal(s.aviso, null);
+  const aviso = 'No pude leer una de tus tareas en este momento; no es que no exista.';
+  s = reducir(s, { tipo: 'lista', tareas: [tarea({ id: 'a', version: 2 })], en: T0 + 1, completo: false, aviso });
+  assert.deepEqual(Object.keys(s.porId).sort(), ['a', 'b'], 'la que no se pudo leer sigue a la vista');
+  assert.equal(s.porId.b.sinConfirmar, true, 'marcada «sin confirmar»');
+  assert.equal(s.porId.b.currentStep, 'paso 2', 'con lo último que se supo');
+  assert.equal(s.porId.a.version, 2);
+  assert.equal(s.porId.a.sinConfirmar, undefined, 'la que vino está confirmada');
+  assert.equal(s.aviso, aviso, 'el aviso del servidor queda en el estado (los paneles lo pintan)');
+  assert.equal(s.error, null);
+  // Parcial sin aviso del servidor: igual se avisa.
+  s = reducir(s, { tipo: 'lista', tareas: [tarea({ id: 'a', version: 2 })], en: T0 + 2, completo: false });
+  assert.ok(s.aviso && /no pude/i.test(s.aviso));
+  assert.equal(s.porId.b.sinConfirmar, true);
+  // La tarea leída por su id la confirma.
+  s = reducir(s, { tipo: 'una', tarea: tarea({ id: 'b', version: 1, currentStep: 'paso 2' }), en: T0 + 3 });
+  assert.equal(s.porId.b.sinConfirmar, undefined);
+  // Otra parcial y luego una COMPLETA sin «b»: ahí sí se quita, y el aviso se va.
+  s = reducir(s, { tipo: 'lista', tareas: [tarea({ id: 'a', version: 2 })], en: T0 + 4, completo: false, aviso });
+  assert.equal(s.porId.b.sinConfirmar, true);
+  s = reducir(s, { tipo: 'lista', tareas: [tarea({ id: 'a', version: 3 })], en: T0 + 5, completo: true });
+  assert.deepEqual(Object.keys(s.porId), ['a']);
+  assert.equal(s.aviso, null);
+});
+
+test('resumen (revisión 10, MENOR-F): una tarea «sin confirmar» de una lista parcial no cuenta como «trabajando» ni hace girar el indicador', () => {
+  // La lista completa: dos trabajando.
+  let s = reducir(estadoInicial(), { tipo: 'lista', tareas: [tarea({ id: 'a' }), tarea({ id: 'b' })], en: T0 });
+  assert.deepEqual(resumen(Object.values(s.porId), T0), { trabajando: 2, decisiones: 0 });
+  // Parcial: «b» no vino. Queda a la vista, pero ya no es «Trabajando · 2».
+  s = reducir(s, { tipo: 'lista', tareas: [tarea({ id: 'a', state: 'completed', terminal: true, version: 2 })], en: T0 + 1, completo: false });
+  assert.equal(s.porId.b.sinConfirmar, true);
+  const r = resumen(Object.values(s.porId), T0 + 1);
+  assert.deepEqual(r, { trabajando: 0, decisiones: 0 }, 'la que no se pudo leer no se cuenta como trabajando');
+  assert.equal(textoIndicador(r), null, 'sin nada confirmado activo, el indicador no dice «Trabajando»');
+  assert.equal(movimientoIndicador(r, false), false, 'y no gira mientras la lista sigue parcial');
+  // La siguiente lista la confirma: vuelve a contar.
+  s = reducir(s, { tipo: 'lista', tareas: [tarea({ id: 'a', state: 'completed', terminal: true, version: 2 }), tarea({ id: 'b', version: 2 })], en: T0 + 2, completo: true });
+  assert.deepEqual(resumen(Object.values(s.porId), T0 + 2), { trabajando: 1, decisiones: 0 });
+});
+
+test('cliente (revisión 9): `completo:false` y el aviso llegan; un servidor que pagina se sigue y lo que no se trae es PARCIAL', async () => {
+  // Parcial del servidor.
+  let c = crearClienteTrabajos(async () => ({ status: 200, json: { tareas: [tarea({ id: 'a' })], completo: false, aviso: 'No pude leer una de tus tareas.' } }));
+  let r = await c.listar();
+  assert.ok(r.ok && !r.completo && r.aviso === 'No pude leer una de tus tareas.');
+  // Páginas: se siguen con el cursor (sin repetir ninguna) y la lista queda completa.
+  const rutas: string[] = [];
+  c = crearClienteTrabajos(async (ruta) => {
+    rutas.push(ruta);
+    const cur = new URL(ruta, 'http://x').searchParams.get('cursor');
+    if (!cur) return { status: 200, json: { tareas: [tarea({ id: 'a' }), tarea({ id: 'b' })], completo: true, siguiente: 'c1' } };
+    if (cur === 'c1') return { status: 200, json: { tareas: [tarea({ id: 'b' }), tarea({ id: 'c' })], completo: true, siguiente: null } };
+    return { status: 500, json: {} };
+  });
+  r = await c.listar();
+  assert.ok(r.ok);
+  if (!r.ok) return;
+  assert.deepEqual(r.tareas.map((t) => t.id), ['a', 'b', 'c']);
+  assert.equal(r.completo, true);
+  assert.equal(r.aviso, undefined);
+  assert.ok(rutas[1].includes('cursor=c1') && rutas.every((x) => /estados=respondida/.test(x)), rutas.join(' '));
+  // Una página que falla: lo traído vale, pero la lista es PARCIAL (no «eso es todo»).
+  c = crearClienteTrabajos(async (ruta) =>
+    new URL(ruta, 'http://x').searchParams.get('cursor') ? { status: 503, json: { error: 'caído' } } : { status: 200, json: { tareas: [tarea({ id: 'a' })], completo: true, siguiente: 'c1' } }
+  );
+  r = await c.listar();
+  assert.ok(r.ok && !r.completo && !!r.aviso && r.tareas.length === 1);
+  // Más páginas de las que se siguen en un sondeo: PARCIAL, con aviso.
+  let n = 0;
+  c = crearClienteTrabajos(async () => ({ status: 200, json: { tareas: [tarea({ id: `t${n++}` })], completo: true, siguiente: `c${n}` } }));
+  r = await c.listar();
+  assert.ok(r.ok && !r.completo && /más tareas/.test(r.aviso || ''));
+  assert.equal(r.ok && r.tareas.length, MAX_PAGINAS_TRABAJOS);
 });
 
 test('grupos del panel: pendientes de decisión, activas (con las pausadas) y recientes', () => {
@@ -205,7 +284,7 @@ test('cliente: decide con decisionId + expectedVersion + opción exacta; un 409 
   const llamadas: { ruta: string; cuerpo?: any }[] = [];
   const pedir = async (ruta: string, init?: { method?: string; body?: string }) => {
     llamadas.push({ ruta, cuerpo: init?.body ? JSON.parse(init.body) : undefined });
-    if (ruta.endsWith('/decisiones')) return { status: 409, json: { codigo: 'version', error: 'cambió', tarea: tarea({ id: 'a', version: 9 }) } };
+    if (ruta.split('?')[0].endsWith('/decisiones')) return { status: 409, json: { codigo: 'version', error: 'cambió', tarea: tarea({ id: 'a', version: 9 }) } };
     return { status: 200, json: { tareas: [tarea({ id: 'a' })], resumen: { trabajando: 1, decisiones: 0 } } };
   };
   const c = crearClienteTrabajos(pedir);
@@ -213,13 +292,14 @@ test('cliente: decide con decisionId + expectedVersion + opción exacta; un 409 
   assert.equal(l.ok && l.tareas.length, 1);
   const t = tarea({ id: 'a', version: 4, decision: decision(), decisionId: 'dc_1' });
   const r = await c.decidir(t, 'aprobar');
-  assert.deepEqual(llamadas.at(-1), { ruta: '/api/trabajos/a/decisiones', cuerpo: { decisionId: 'dc_1', expectedVersion: 4, opcion: 'aprobar' } });
+  // Ronda 7: el cliente dice que conoce el estado «respondida» en cada petición.
+  assert.deepEqual(llamadas.at(-1), { ruta: '/api/trabajos/a/decisiones?estados=respondida', cuerpo: { decisionId: 'dc_1', expectedVersion: 4, opcion: 'aprobar' } });
   assert.equal(r.ok, false);
   if (r.ok) return;
   assert.equal(r.codigo, 'version');
   assert.equal(r.tarea?.version, 9);
   await c.cancelar('a');
-  assert.equal(llamadas.at(-1)!.ruta, '/api/trabajos/a/cancelar');
+  assert.equal(llamadas.at(-1)!.ruta, '/api/trabajos/a/cancelar?estados=respondida');
 });
 
 test('cliente: 401 y 403 (sesión sin correo) son «sin dueño»: se vacía, no es un error de red', async () => {

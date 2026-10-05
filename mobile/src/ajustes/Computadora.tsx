@@ -31,6 +31,7 @@ import {
   aCoordenadas,
   controlesPc,
   estadoEnPalabras,
+  entregablesEnPalabras,
   finalEnPalabras,
   haceCuanto,
   marcaPlan,
@@ -50,7 +51,7 @@ import {
   type TareaPc,
 } from '../compa/computadora';
 import { abrirHoja, hayAnfitrion } from '../app/hojas';
-import { abrirVisor } from '../app/visor';
+import { abrirVisor, marcaVisor } from '../app/visor';
 
 type PropsHoja = { visible: boolean; onCerrar: () => void; nombreAvatar: string };
 
@@ -463,9 +464,11 @@ export function HojaComputadoraVivo({
                 variante="secundario"
                 onPress={() => {
                   const id = tarea.id;
+                  // De esta cuenta: si en la espera cambió, el visor de la anterior no se abre.
+                  const marca = marcaVisor();
                   onCerrar();
                   // La hoja termina de irse antes de abrir el visor (iOS no presenta un Modal mientras otro se va).
-                  setTimeout(() => abrirVisor(id), 320);
+                  setTimeout(() => abrirVisor(id, marca), 320);
                 }}
               />
             ) : null}
@@ -673,8 +676,8 @@ export function HojaComputadoraVivo({
             <Texto v="chicaFuerte">{tr('Misiones recientes', 'Recent missions')}</Texto>
             {historial.map((h) => (
               <Pressable key={h.id} onPress={() => void abrirDelHistorial(h.id)} accessibilityRole="button" style={[s.historia, { borderColor: tema.borde }]}>
-                <Texto v="chicaFuerte" style={[s.marca, { color: h.ok ? tema.exito : h.ok === false ? tema.aviso : tema.acento }]}>
-                  {h.ok ? '✓' : h.ok === false ? '✕' : '●'}
+                <Texto v="chicaFuerte" style={[s.marca, { color: h.ok ? tema.exito : h.respondida ? tema.acento : h.ok === false ? tema.aviso : tema.acento }]}>
+                  {h.ok ? '✓' : h.respondida ? '?' : h.ok === false ? '✕' : '●'}
                 </Texto>
                 <View style={{ flex: 1 }}>
                   <Texto v="chica" numberOfLines={1}>
@@ -737,6 +740,16 @@ function TarjetaFinal({
               {f.texto}
             </Texto>
           )}
+          {f.entregables?.length ? (
+            // Cada cosa pedida con su marca: lo comprobado con su archivo, lo que falta o no es lo pedido, lo sin comprobar.
+            <View style={{ gap: 2 }} accessibilityLabel={tr('Lo que pediste, uno por uno', 'What you asked for, one by one')}>
+              {entregablesEnPalabras(f.entregables).map((linea, i) => (
+                <Texto key={f.entregables![i].id} v="chica" color={f.entregables![i].estado === 'verified' ? 'texto2' : 'aviso'} selectable>
+                  {linea}
+                </Texto>
+              ))}
+            </View>
+          ) : null}
           {f.sinComprobar ? (
             <Texto v="chica" color="aviso">
               {f.sinComprobar}

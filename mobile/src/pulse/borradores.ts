@@ -18,6 +18,7 @@ import * as CHATS from './chats';
 import * as SecureStore from 'expo-secure-store';
 import { antesDeRecargar, registrarTrabajoActivo } from '../lib/barreraOta';
 import { armarAlijo, restaurarAlijo } from './borradoresRecarga';
+import { mismoTextoAprobado } from './elegirContacto';
 
 export type Borrador = { texto: string; deVoz: boolean; en: number };
 export type Contacto = { correo: string; nombre: string };
@@ -187,7 +188,7 @@ export const VENTANA_REPETIDO_MS = 5_000;
  * El borrador sale del almacén ANTES de esperar al relevo (así nadie más lo encuentra para mandarlo
  * otra vez) y vuelve a su sitio si el envío falla, salvo que mientras tanto se haya escrito otro.
  */
-export function enviarBorrador(correo?: string): Promise<ResultadoEnvio> {
+export function enviarBorrador(correo?: string, aprobado?: string): Promise<ResultadoEnvio> {
   const c = (correo || abierto?.correo || ultimoRedactado || '').toLowerCase();
   if (!c) return Promise.resolve({ ok: false, detalle: 'No hay ningún chat abierto ni borrador pendiente.' });
   const ya = enCurso.get(c);
@@ -197,6 +198,10 @@ export function enviarBorrador(correo?: string): Promise<ResultadoEnvio> {
     const hace = recientes.get(c);
     if (hace && Date.now() - hace.en < VENTANA_REPETIDO_MS) return Promise.resolve(hace.r);
     return Promise.resolve({ ok: false, detalle: 'No hay borrador para enviar en ese chat.' });
+  }
+  // Permisos exactos (4-oct): el «sí» aprobó UN texto (el que AURA leyó). Si el borrador ya dice otra cosa, no sale.
+  if (!mismoTextoAprobado(b.texto, aprobado)) {
+    return Promise.resolve({ ok: false, detalle: 'No lo envié: el borrador cambió desde que lo aprobaste. Revísalo y envíalo tú, o pídeme otro.' });
   }
   const eraUltimo = ultimoRedactado === c;
   quitar(c);
@@ -259,7 +264,7 @@ async function manejar(a: AccionApp) {
       }
       correo = c.correo;
     }
-    const r = await enviarBorrador(correo);
+    const r = await enviarBorrador(correo, typeof a.texto === 'string' ? a.texto : undefined);
     emitir('hecho', { accion: a, ok: r.ok, detalle: r.detalle });
     return;
   }

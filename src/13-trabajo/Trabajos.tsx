@@ -10,12 +10,13 @@
  *    después de aparecer, no responde a Enter y no se activa si se acaba de escribir en otro campo.
  *  · Con «reducir movimiento», nada gira ni late.
  */
-import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from 'react';
 import { X } from 'lucide-react';
 import { Dialogo } from '../07-pantallas/Dialogo';
 import { headersMesa } from '../10-infra/sesionCliente';
 import {
   ARMADO_MS,
+  criteriosEnPalabras,
   crearClienteTrabajos,
   estadoInicial,
   etiquetaBoton,
@@ -47,6 +48,28 @@ const pedir: Pedir = async (ruta, init) => {
 };
 export const clienteTrabajos = crearClienteTrabajos(pedir);
 
+/**
+ * El aviso de la última lista PARCIAL (revisión 9, MEDIO-1): lo publica `useTrabajosWeb` y lo lee `PanelTrabajos` aunque
+ * quien los une (App.tsx) no lo pase como prop. null si la última lista vino completa (o no hay sesión).
+ */
+let avisoLista: string | null = null;
+const oyentesAviso = new Set<() => void>();
+function ponerAvisoLista(a: string | null) {
+  if (a === avisoLista) return;
+  avisoLista = a;
+  for (const f of oyentesAviso) f();
+}
+function useAvisoLista(): string | null {
+  return useSyncExternalStore(
+    (f) => {
+      oyentesAviso.add(f);
+      return () => oyentesAviso.delete(f);
+    },
+    () => avisoLista,
+    () => null
+  );
+}
+
 /** La última vez que se escribió en un campo de la página (para no aceptar una tarjeta que apareció mientras tanto). */
 let ultimaTecla = 0;
 if (typeof document !== 'undefined') {
@@ -73,8 +96,17 @@ function useReducirMovimiento(): boolean {
 }
 
 /** Las tareas de la sesión: sondeo con la pestaña visible, reductor puro e indicador estable. */
-export function useTrabajosWeb(o: { conSesion: boolean; panelAbierto: boolean }) {
+export function useTrabajosWeb(o: { conSesion: boolean; cuenta?: string | null; panelAbierto: boolean }) {
   const [s, despachar] = useReducer(reducir, undefined, estadoInicial);
+  // De qué cuenta es lo que se pide (punto 3, revisión del 4-oct): si cambia mientras una lista viene en camino, esa
+  // lista era de la otra persona y no se aplica.
+  const clave = o.conSesion ? String(o.cuenta || '') : '';
+  const gen = useRef(0);
+  const claveVista = useRef(clave);
+  if (claveVista.current !== clave) {
+    claveVista.current = clave;
+    gen.current++;
+  }
   const [visible, setVisible] = useState(() => typeof document === 'undefined' || document.visibilityState !== 'hidden');
   const [ind, setInd] = useState<Indicador | null>(null);
   const reducido = useReducirMovimiento();
@@ -90,16 +122,25 @@ export function useTrabajosWeb(o: { conSesion: boolean; panelAbierto: boolean })
     return () => document.removeEventListener('visibilitychange', f);
   }, []);
 
+  const claveEfecto = useRef(clave);
+
   const refrescar = useCallback(async () => {
+    const g = gen.current;
     const r = await clienteTrabajos.listar();
-    if (r.ok === true) despachar({ tipo: 'lista', tareas: r.tareas, en: Date.now() });
+    if (g !== gen.current) return;
+    // Una lista parcial (`completo: false`) no borra las que no se pudieron leer: quedan «sin confirmar» y el aviso se ve.
+    if (r.ok === true) despachar({ tipo: 'lista', tareas: r.tareas, en: Date.now(), completo: r.completo, aviso: r.aviso });
     else if (r.sinSesion) despachar({ tipo: 'sin-sesion' });
     else despachar({ tipo: 'error', mensaje: r.mensaje, en: Date.now() });
   }, []);
 
   useEffect(() => {
-    // Sin sesión no hay tareas de nadie: se vacía (no quedan las de la cuenta anterior).
-    if (!o.conSesion) return void despachar({ tipo: 'sin-sesion' });
+    // Sin sesión no hay tareas de nadie: se vacía (no quedan las de la cuenta anterior). Otra cuenta empieza vacía también.
+    if (claveEfecto.current !== clave || !o.conSesion) {
+      claveEfecto.current = clave;
+      despachar({ tipo: 'sin-sesion' });
+    }
+    if (!o.conSesion) return;
     if (!visible) return;
     let vivo = true;
     let t: ReturnType<typeof setTimeout> | undefined;
@@ -122,7 +163,10 @@ export function useTrabajosWeb(o: { conSesion: boolean; panelAbierto: boolean })
       clearTimeout(t);
       ya.current = () => undefined;
     };
-  }, [o.conSesion, o.panelAbierto, visible, refrescar]);
+  }, [o.conSesion, clave, o.panelAbierto, visible, refrescar]);
+
+  const avisoVista = s.aviso ?? null;
+  useEffect(() => ponerAvisoLista(avisoVista), [avisoVista]);
 
   const texto = textoIndicador(res);
   useEffect(() => {
@@ -131,11 +175,18 @@ export function useTrabajosWeb(o: { conSesion: boolean; panelAbierto: boolean })
     return () => clearTimeout(t);
   }, [texto]);
 
-  const aplicar = useCallback((t: TareaVista | null | undefined) => {
-    if (t) despachar({ tipo: 'una', tarea: t, en: Date.now() });
-  }, []);
+  // Cada cuenta tiene su propio `aplicar`: un botón (Aprobar, Pausar…) que se pulsó con A guarda el de A, y si su respuesta
+  // llega cuando ya está B, la tarea de A no entra al panel de B (revisión independiente del 4-oct).
+  const genVista = gen.current;
+  const aplicar = useCallback(
+    (t: TareaVista | null | undefined) => {
+      if (genVista !== gen.current) return;
+      if (t) despachar({ tipo: 'una', tarea: t, en: Date.now() });
+    },
+    [genVista]
+  );
 
-  return { tareas, resumen: res, indicador: ind?.texto ?? null, reducido, refrescar, ahora: () => ya.current(), aplicar, error: s.error };
+  return { tareas, resumen: res, indicador: ind?.texto ?? null, reducido, refrescar, ahora: () => ya.current(), aplicar, error: s.error, aviso: avisoVista };
 }
 
 /* ------------------------------------------------------------------ el indicador */
@@ -195,15 +246,24 @@ type PropsPanel = {
   abierto: boolean;
   onCerrar: () => void;
   tareas: TareaVista[];
+  /** La última lista vino parcial: lo que dijo el servidor. Sin pasarla, se usa la que publicó `useTrabajosWeb`. */
+  aviso?: string | null;
   reducido: boolean;
   enfoque: string | null;
   onTarea: (t: TareaVista | null | undefined) => void;
   onRefrescar: () => void;
   onEditar: (sugerencia: string) => void;
+  /** «Abrir el escritorio» de una tarea de su computadora (13-trabajo/VisorEscritorio.tsx). */
+  onAbrirEscritorio?: (t: TareaVista) => void;
 };
 
-export function PanelTrabajos({ abierto, onCerrar, tareas, reducido, enfoque, onTarea, onRefrescar, onEditar }: PropsPanel) {
+/** ¿Esta tarea tiene un escritorio que abrir? La de su computadora, mientras sigue. */
+export const tieneEscritorio = (t: Pick<TareaVista, 'terminal' | 'controls' | 'environment'>) => !t.terminal && (t.controls.open === 'computadora' || t.environment?.kind === 'computadora');
+
+export function PanelTrabajos({ abierto, onCerrar, tareas, aviso: avisoProp, reducido, enfoque, onTarea, onRefrescar, onEditar, onAbrirEscritorio }: PropsPanel) {
   const cerrar = useRef<HTMLButtonElement | null>(null);
+  const avisoPublicado = useAvisoLista();
+  const aviso = avisoProp !== undefined ? avisoProp : avisoPublicado;
   const g = useMemo(() => grupos(tareas), [tareas]);
   const vacio = !g.decisiones.length && !g.activas.length && !g.recientes.length;
   useEffect(() => {
@@ -211,7 +271,7 @@ export function PanelTrabajos({ abierto, onCerrar, tareas, reducido, enfoque, on
     const r = requestAnimationFrame(() => document.getElementById(`tarea-${enfoque}`)?.scrollIntoView({ block: 'nearest', behavior: reducido ? 'auto' : 'smooth' }));
     return () => cancelAnimationFrame(r);
   }, [abierto, enfoque, reducido]);
-  const comun = { reducido, onTarea, onRefrescar, onEditar, varias: g.decisiones.length > 1 };
+  const comun = { reducido, onTarea, onRefrescar, onEditar, onAbrirEscritorio, varias: g.decisiones.length > 1 };
   return (
     <Dialogo
       abierto={abierto}
@@ -233,7 +293,12 @@ export function PanelTrabajos({ abierto, onCerrar, tareas, reducido, enfoque, on
           <X className="w-5 h-5" aria-hidden="true" />
         </button>
       </div>
-      {vacio && <p className="text-[15px] text-(--aura-tinta-2)">No hay tareas en marcha. Cuando me pidas algo que tarde o necesite tu decisión, aparece aquí.</p>}
+      {aviso && (
+        <p id="aura-tareas-aviso" className="text-[14px] text-(--aura-error-texto)" role="status">
+          {aviso}
+        </p>
+      )}
+      {vacio && !aviso && <p className="text-[15px] text-(--aura-tinta-2)">No hay tareas en marcha. Cuando me pidas algo que tarde o necesite tu decisión, aparece aquí.</p>}
       {g.decisiones.length > 0 && <Seccion titulo="Necesitan tu decisión" tareas={g.decisiones} {...comun} />}
       {g.activas.length > 0 && <Seccion titulo="En marcha" tareas={g.activas} {...comun} />}
       {g.recientes.length > 0 && <Seccion titulo="Recientes" tareas={g.recientes} {...comun} />}
@@ -241,7 +306,7 @@ export function PanelTrabajos({ abierto, onCerrar, tareas, reducido, enfoque, on
   );
 }
 
-type Comun = { reducido: boolean; onTarea: PropsPanel['onTarea']; onRefrescar: () => void; onEditar: (s: string) => void; varias: boolean };
+type Comun = { reducido: boolean; onTarea: PropsPanel['onTarea']; onRefrescar: () => void; onEditar: (s: string) => void; onAbrirEscritorio?: (t: TareaVista) => void; varias: boolean };
 
 function Seccion({ titulo, tareas, ...c }: Comun & { titulo: string; tareas: TareaVista[] }) {
   return (
@@ -258,7 +323,7 @@ function Seccion({ titulo, tareas, ...c }: Comun & { titulo: string; tareas: Tar
   );
 }
 
-function TarjetaTarea({ t, reducido, onTarea, onRefrescar, onEditar, varias }: Comun & { t: TareaVista }) {
+function TarjetaTarea({ t, reducido, onTarea, onRefrescar, onEditar, onAbrirEscritorio, varias }: Comun & { t: TareaVista }) {
   const [ocupado, setOcupado] = useState(false);
   const [aviso, setAviso] = useState<string | null>(null);
   const prog = textoProgreso(t.progress);
@@ -290,12 +355,13 @@ function TarjetaTarea({ t, reducido, onTarea, onRefrescar, onEditar, varias }: C
           {t.title}
         </h4>
         <span className={`text-[13px] font-semibold flex items-center gap-1.5 ${t.state === 'failed' || t.state === 'blocked' ? 'text-(--aura-error-texto)' : t.state === 'completed' ? 'text-(--aura-ok-texto)' : 'text-(--aura-tinta-2)'}`}>
-          {gira(t.state) && !reducido && <span className="w-3 h-3 rounded-full border-2 border-current border-t-transparent animate-spin" aria-hidden="true" />}
+          {gira(t.state) && !t.sinConfirmar && !reducido && <span className="w-3 h-3 rounded-full border-2 border-current border-t-transparent animate-spin" aria-hidden="true" />}
           {etiquetaEstado(t.state)}
         </span>
       </div>
       {t.objective && t.objective !== t.title && <p className="text-[14px] text-(--aura-tinta-2)">{t.objective}</p>}
       <p className="text-[13px] text-(--aura-tinta-2)">{[t.environment.displayName, prog, senal ? `última señal ${senal}` : ''].filter(Boolean).join(' · ')}</p>
+      {t.sinConfirmar && <p className="text-[13px] font-semibold text-(--aura-error-texto)">Sin confirmar: no pude leerla ahora; es lo último que supe, no es que ya no exista.</p>}
       {t.currentStep && !t.terminal && <p className="text-[14px] text-(--aura-tinta)">{t.currentStep}</p>}
       {t.decision && !t.terminal && <TarjetaDecision t={t} varias={varias} onResultado={tras} onEditar={onEditar} />}
       {t.result && <TarjetaResultado t={t} />}
@@ -306,6 +372,11 @@ function TarjetaTarea({ t, reducido, onTarea, onRefrescar, onEditar, varias }: C
       )}
       {!t.terminal && (
         <div className="flex flex-wrap gap-2 pt-1">
+          {onAbrirEscritorio && tieneEscritorio(t) && (
+            <button type="button" className="aura-secundario" onClick={() => onAbrirEscritorio(t)} aria-label={`Abrir el escritorio de tu computadora: ${t.title}`}>
+              Abrir el escritorio
+            </button>
+          )}
           {t.controls.pause && (
             <button type="button" className="aura-secundario" disabled={ocupado} onClick={() => void control(() => clienteTrabajos.pausar(t.id))}>
               Pausar
@@ -422,10 +493,23 @@ function TarjetaDecision({ t, varias, onResultado, onEditar }: { t: TareaVista; 
 
 function TarjetaResultado({ t }: { t: TareaVista }) {
   const r = t.result!;
+  const pedidos = criteriosEnPalabras(t.acceptance);
   return (
     <div className="rounded-[14px] border border-(--aura-borde) p-3 flex flex-col gap-1.5">
       <p className="aura-sobretitulo">Resultado</p>
       <p className="text-[15px] text-(--aura-tinta) aura-seleccionable [overflow-wrap:anywhere]">{r.summary}</p>
+      {pedidos.length > 0 && (
+        <>
+          <p className="text-[13px] font-semibold text-(--aura-tinta-2)">Lo que pediste, uno por uno</p>
+          <ul className="flex flex-col gap-1 text-[14px]" role="list">
+            {pedidos.map((c) => (
+              <li key={c.id} className={`[overflow-wrap:anywhere] ${c.estado === 'verified' ? 'text-(--aura-tinta)' : 'text-(--aura-error-texto)'}`}>
+                {c.texto}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
       {r.evidence.length > 0 && (
         <>
           <p className="text-[13px] font-semibold text-(--aura-tinta-2)">Lo que lo acredita</p>

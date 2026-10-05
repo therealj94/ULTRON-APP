@@ -223,10 +223,13 @@ const GENERICAS = new Set(
 
 /**
  * Las palabras que identifican un dato, para encontrarlo en el texto de los derivados («Vive en Tela» →
- * ["tela"]; «Su hija se llama Lucía» → ["lucia"]). Sin palabras propias (todo plantilla), vacío.
+ * ["tela"]; «Su hija se llama Lucía» → ["lucia"]). Sin palabras propias (todo plantilla), vacío. De la clave
+ * solo se descarta la categoría (lo de antes de «:»): el valor («hija:lucia» → «lucia») es justo lo que
+ * identifica el dato.
  */
 export function terminosDe(texto: string, clave?: string): string[] {
-  const fuera = new Set(palabras(String(clave || '').replace(/[:_]/g, ' ')));
+  const k = String(clave || '');
+  const fuera = new Set(palabras((k.includes(':') ? k.slice(0, k.indexOf(':')) : k).replace(/_/g, ' ')));
   const ws = palabras(texto).filter((w) => !GENERICAS.has(w) && !fuera.has(w));
   return [...new Set(ws)].slice(0, 12);
 }
@@ -248,13 +251,14 @@ function raiz(w: string): string {
 
 /**
  * El texto de un derivado (un resumen, un turno del tramo) sin las palabras de lo borrado: cada una se
- * cambia por «[olvidado]». Si no hay nada que tapar, el mismo texto.
+ * cambia por «[olvidado]» (o por `marca`: la vista autorizada tapa lo LIMITADO con «[reservado]», sin
+ * borrarlo de ningún almacén). Si no hay nada que tapar, el mismo texto.
  */
-export function limpiarTexto(texto: string, terminos: readonly string[][]): string {
+export function limpiarTexto(texto: string, terminos: readonly (readonly string[])[], marca = OLVIDADO): string {
   if (!texto || !terminos.length) return texto;
   const todas = new Set(terminos.flat());
   if (!todas.size) return texto;
-  return texto.replace(/[\p{L}\p{N}]+/gu, (w) => (todas.has(raiz(w)) ? OLVIDADO : w));
+  return texto.replace(/[\p{L}\p{N}]+/gu, (w) => (todas.has(raiz(w)) ? marca : w));
 }
 
 /** Solo pruebas: como tras un redespliegue. */

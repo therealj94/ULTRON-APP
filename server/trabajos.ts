@@ -2,7 +2,7 @@
  * LAS TAREAS DURABLES EN EL SERVIDOR (AUR08): las rutas del panel de tareas y los ganchos con que el chat
  * crea la tarea ANTES de hacer el trabajo durable y la enlaza desde su respuesta.
  *
- *   GET  /api/trabajos                          → { tareas: TaskSnapshot[], resumen: {trabajando, decisiones} }
+ *   GET  /api/trabajos[?limite&cursor]          → { tareas: TaskSnapshot[], resumen: {trabajando, decisiones}, completo, siguiente, conteo, aviso? }
  *   GET  /api/trabajos/:id                      → { tarea }
  *   GET  /api/trabajos/:id/eventos?desde=N      → { eventos, cursor, resync, tarea }   (polling con cursor)
  *   POST /api/trabajos {requestId, titulo, objetivo?}                  → { tarea } (201 nueva, 200 la misma)
@@ -34,6 +34,8 @@ import { almacenDurable, ejecutarUnaVez, hashArgumentos, reservarPedido } from '
 import {
   cambiarTarea,
   crearTarea,
+  criteriosCumplidos,
+  criteriosDeEncargo,
   deComputadora,
   ENTORNO_INVESTIGACION,
   esInvestigacion,
@@ -41,8 +43,10 @@ import {
   ESPACIO_PEDIDOS,
   esTerminal,
   eventosDesde,
+  asegurarEnIndice,
   leerTarea,
   listarTareas,
+  listarTareasPagina,
   opcionesAprobacion,
   reconciliarConComputadora,
   reconciliarInvestigacion,
@@ -52,6 +56,7 @@ import {
   validarDecision,
   vistaTarea,
   type Cambio,
+  type Criterio,
   type Decision,
   type Evidencia,
   type MisionComputadoraMin,
@@ -60,12 +65,14 @@ import {
   type RegistroTarea,
   type TareaEnCursoMin,
   type TaskSnapshot,
+  type VinculoTaller,
 } from '../lib/tareas-durables';
+import type { PropuestaAbierta, PropuestaTaller } from '../lib/taller';
 
 /* ------------------------------------------------------------------ tipos */
 
 /** Lo que enlaza la respuesta del chat: una tarjeta compacta (título, estado, última actualización). */
-export type RefTarea = { id: string; title: string; state: TaskSnapshot['state']; version: number; updatedAt: string };
+export type RefTarea = { id: string; title: string; state: TaskSnapshot['state']; version: number; updatedAt: string; estadoReal?: TaskSnapshot['state'] };
 
 /** Cómo terminó un envío aprobado: `stale` = el borrador ya no era ese (no se envió nada). */
 export type SalidaEnvio = { estado: 'succeeded' | 'failed' | 'unknown' | 'stale'; resumen: string; referencia?: string };
@@ -84,7 +91,18 @@ export type DepsTrabajos = {
   };
   /** Las misiones de su computadora (server/computadora.ts; solo se lee y se pausa/para). */
   computadora?: {
+    /**
+     * P5/A6: antes de leer sus misiones, que esta réplica las tenga (las rehidrata de lo durable si las encargó otra
+     * réplica o antes de un reinicio). false (o que lance): no se pudieron leer; entonces una tarea enlazada NO se da por
+     * perdida (no se reconcilia contra «no está»).
+     */
+    preparar?(correo: string): Promise<boolean>;
     misiones(correo: string): MisionComputadoraMin[];
+    /**
+     * Revisión 9: una misión por su id aunque ya no esté entre las recientes de `misiones` (el historial guarda pocas): la
+     * lee de lo durable, del dueño y solo para leer. null: no existe; 'almacen': no se pudo mirar (no se da por perdida).
+     */
+    buscar?(correo: string, id: string): Promise<MisionComputadoraMin | null | 'almacen'>;
     /** Con el dueño: solo se toca una misión que esté en SU historial. */
     pausar?(correo: string, misionId: string): Promise<unknown>;
     reanudar?(correo: string, misionId: string): Promise<unknown>;
@@ -98,6 +116,15 @@ export type DepsTrabajos = {
     vigente(correo: string, canal: 'correo' | 'whatsapp', ambito: string): { intento: string; huella?: string } | null;
     enviar(correo: string, canal: 'correo' | 'whatsapp', ambito: string, intento: string, huella: string): Promise<SalidaEnvio>;
     descartar(correo: string, canal: 'correo' | 'whatsapp', ambito: string, intento: string): Promise<unknown>;
+  };
+  /**
+   * Lo que el taller de la junta propuso (revisión 10, MEDIO-C; lib/taller.ts). `vigente`: ¿la cuenta que aprueba puede
+   * y el vínculo sigue siendo exactamente lo aprobado (huella recalculada)? `ejecutar`: lo hace con los argumentos
+   * congelados (se llama dentro de `ejecutarUnaVez`: una sola vez por tarea + decisión).
+   */
+  taller?: {
+    vigente(correo: string, v: VinculoTaller): boolean;
+    ejecutar(correo: string, v: VinculoTaller): Promise<SalidaEnvio>;
   };
 };
 
@@ -114,7 +141,43 @@ const trozo = (v: unknown, max: number) => {
 };
 
 function refDe(reg: RegistroTarea): RefTarea {
-  return { id: reg.id, title: reg.titulo, state: reg.estado, version: reg.version, updatedAt: new Date(reg.actualizada).toISOString() };
+  // El enlace de la burbuja va a cualquier app: «respondida» sale como «partial» (terminal, sin comprobar). La app
+  // nueva pinta el estado de verdad con la tarea que lee de /api/trabajos.
+  const state = reg.estado === 'respondida' ? 'partial' : reg.estado;
+  return { id: reg.id, title: reg.titulo, state, version: reg.version, updatedAt: new Date(reg.actualizada).toISOString(), ...(state !== reg.estado ? { estadoReal: reg.estado } : {}) };
+}
+
+/** Lo que pide la app para ver los estados nuevos (ronda 7): `?estados=respondida` o la cabecera `x-aura-estados`. */
+export const ESTADOS_NUEVOS = 'respondida';
+
+/**
+ * Compatibilidad con las apps de antes (ronda 7): no conocen el estado terminal `respondida`. Para ellas, cada tarea
+ * `respondida` sale como `partial` (terminal y sin comprobar: nunca «completada», nunca un error ni algo que sigue
+ * trabajando) con `estadoReal: 'respondida'`. La app que conoce el estado (`conoce`) recibe todo tal cual.
+ */
+export function compatEstados<T>(cuerpo: T, conoce: boolean): T {
+  if (conoce) return cuerpo;
+  const ver = (v: unknown, hondo: number): unknown => {
+    if (hondo > 8 || !v || typeof v !== 'object') return v;
+    if (Array.isArray(v)) return v.map((x) => ver(x, hondo + 1));
+    const o = v as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const [k, x] of Object.entries(o)) out[k] = ver(x, hondo + 1);
+    if (o.state === 'respondida') {
+      out.state = 'partial';
+      out.estadoReal = 'respondida';
+    }
+    return out;
+  };
+  return ver(cuerpo, 0) as T;
+}
+
+/** ¿Esta petición viene de una app que conoce los estados nuevos? */
+export function conoceEstadosNuevos(req: Pick<express.Request, 'query' | 'headers'>): boolean {
+  const q = req.query?.estados;
+  const h = req.headers?.['x-aura-estados'];
+  const dice = (v: unknown) => String(Array.isArray(v) ? v.join(',') : v ?? '').split(',').map((x) => x.trim()).includes(ESTADOS_NUEVOS);
+  return dice(q) || dice(h);
 }
 
 /** Una tarea terminada hace más que esto ya no sale en «recientes». */
@@ -166,7 +229,7 @@ const conCorreo = (c: string) => {
  * Antes de encargar a su computadora: la tarea durable, ya «running». Si el almacén no contesta se avisa y
  * el encargo sigue como antes (el turno ya dejó registrado su efecto en server/turno-unico.ts).
  */
-export async function abrirEncargoComputadora(duenoCorreo: string, ambito: string, instruccion: string): Promise<RefTarea | null> {
+export async function abrirEncargoComputadora(duenoCorreo: string, ambito: string, instruccion: string, pedidoPersona?: string | null): Promise<RefTarea | null> {
   const dueno = conCorreo(duenoCorreo);
   if (!dueno || !linea(instruccion, 10)) return null;
   const { requestId, turnoId } = pedidoDelTurno('computadora', instruccion);
@@ -178,7 +241,8 @@ export async function abrirEncargoComputadora(duenoCorreo: string, ambito: strin
       estado: 'running',
       entorno: { kind: 'computadora', id: 'pendiente', displayName: 'Tu computadora' },
       pasoActual: 'Se lo encargo a tu computadora',
-      criterios: [{ id: 'resultado', texto: 'Tu computadora termina y lo entregado se comprueba (el dato que pediste, la página que abrió o el archivo que ella misma encontró); «listo» no basta', obligatorio: true }],
+      // Si pide dejar archivos, un criterio por cosa pedida (cada uno se comprobará con SU archivo); si no, el resultado.
+      criterios: criteriosDeEncargo(instruccion, pedidoPersona),
       origen: { kind: 'chat', ...(turnoId ? { turnoId } : {}), conversacion: linea(ambito, 80) },
       condicionParada: 'Termina con resultado, falla, la paras tú, o deja de dar noticias.',
     });
@@ -272,7 +336,8 @@ export async function avanzarInvestigacion(duenoCorreo: string, id: string, paso
 }
 
 export type CierreInvestigacion = {
-  estado: 'completed' | 'partial' | 'failed';
+  /** `respondida` (ronda 8): un resumen con fuentes leídas responde, no comprueba. `completed` se trata igual. */
+  estado: 'respondida' | 'completed' | 'partial' | 'failed';
   resumen: string;
   fuentes: { titulo: string; url: string }[];
   parcial?: string[];
@@ -280,24 +345,29 @@ export type CierreInvestigacion = {
 };
 
 /**
- * Cierra la investigación con lo que de verdad quedó: `completed` solo con resumen y al menos una fuente (la
- * evidencia de su criterio); sin fuentes, `partial`. Devuelve la tarea cerrada, o `cerrada` si ya era terminal
- * (la cancelaste: no se le avisa nada), o null si el almacén no contestó.
+ * Cierra la investigación con lo que de verdad quedó. Ronda 8: un resumen con fuentes RESPONDE, no comprueba: queda
+ * `respondida` (terminal, su criterio sin verificar, como cualquier respuesta), nunca `completed`; sin fuentes,
+ * `partial`. Devuelve la tarea cerrada, o `cerrada` si ya era terminal (la cancelaste: no se le avisa nada), o null si
+ * el almacén no contestó.
  */
 export async function cerrarInvestigacion(duenoCorreo: string, id: string, r: CierreInvestigacion): Promise<RefTarea | 'cerrada' | null> {
   const dueno = conCorreo(duenoCorreo);
   if (!dueno) return null;
   const ahora = Date.now();
   const evidencias: Evidencia[] = r.fuentes.slice(0, 8).map((f, i) => ({ id: `${id}:fuente:${i}`, tipo: 'enlace', etiqueta: trozo(f.titulo || f.url, 120), ref: String(f.url).slice(0, 500) }));
-  const estado = r.estado === 'completed' && !evidencias.length ? 'partial' : r.estado;
+  const responde = (r.estado === 'completed' || r.estado === 'respondida') && evidencias.length > 0;
   const c = await cambiarTarea(dueno, id, (reg): Cambio | null => {
     if (!esInvestigacion(reg)) return null;
-    const ok = estado === 'completed';
+    // Responder no verifica: sus criterios quedan «sin comprobar» (unknown), con las fuentes como evidencia del resultado.
+    // Si se pidió algo más que el resumen con fuentes (otro criterio obligatorio, p. ej. una tabla), queda partial.
+    const criterios = reg.criterios.map((x) => (x.obligatorio ? { ...x, estado: responde ? ('unknown' as const) : ('not_met' as const), evidencias: [] } : x));
+    const otros = reg.criterios.some((x) => x.obligatorio && x.id !== 'fuentes');
+    const final = responde ? (otros ? 'partial' : 'respondida') : r.estado === 'completed' || r.estado === 'respondida' ? 'partial' : r.estado;
     return {
-      estado,
+      estado: final,
       pasoActual: null,
       ...(reg.progreso ? { progreso: { ...reg.progreso, hechos: reg.progreso.total } } : {}),
-      criterios: reg.criterios.map((x) => (x.obligatorio ? { ...x, estado: ok ? ('verified' as const) : ('not_met' as const), evidencias: ok ? evidencias.map((e) => e.id) : [] } : x)),
+      criterios,
       resultado: {
         id: `${reg.id}:resultado`,
         resumen: trozo(r.resumen, 1800),
@@ -306,7 +376,7 @@ export async function cerrarInvestigacion(duenoCorreo: string, id: string, r: Ci
         pendiente: (r.pendiente || []).map((x) => trozo(x, 200)).slice(0, 4),
         t: ahora,
       },
-      eventos: [{ type: 'operation.receipt', payload: { operationId: reg.id, state: estado === 'failed' ? 'failed' : 'succeeded', effect: 'none', fuentes: evidencias.length } }],
+      eventos: [{ type: 'operation.receipt', payload: { operationId: reg.id, state: final === 'failed' ? 'failed' : final === 'respondida' ? 'answered' : 'partial', effect: final === 'failed' ? 'none' : 'unknown', fuentes: evidencias.length } }],
     };
   }).catch(() => null);
   if (!c) return null;
@@ -408,6 +478,80 @@ export async function abrirDecisionDeBorrador(duenoCorreo: string, ambito: strin
   }
 }
 
+/* ------------------------------------------------------------------ ganchos: lo que propone el taller */
+
+/** Cuánto espera una propuesta del taller su aprobación (revisión 10, MEDIO-C). */
+export const VIGENCIA_PROPUESTA_TALLER_MS = 10 * 60_000;
+
+/** Las opciones de lo que propone el taller: confirmar nunca es la primera ni la preseleccionada. */
+function opcionesTaller(accion: string, destinatario: string): Decision['opciones'] {
+  return [
+    { id: 'posponer', etiqueta: 'Posponer', efecto: 'No hace nada. La propuesta sigue esperando hasta que decidas o caduque.', riesgo: 'sin-efecto' },
+    { id: 'rechazar', etiqueta: 'Rechazar', efecto: 'No se hace y queda constancia.', riesgo: 'sin-efecto' },
+    { id: 'aprobar', etiqueta: 'Confirmar y enviar', efecto: `${accion}: ${destinatario}, una sola vez, tal como se muestra.`, riesgo: 'efecto' },
+  ];
+}
+
+/**
+ * El taller reconoció algo que sale a los canales de la junta (Telegram, WhatsApp, correo, aviso urgente, nota de voz,
+ * llamada) y NO lo hace sin aprobación (lib/taller.ts): queda una tarea durable con su decisión exacta, atada a la cuenta
+ * (el dueño de la tarea), a la versión (la de la tarea) y al vínculo con la huella. Se aprueba por
+ * POST /api/trabajos/:id/decisiones (la tarjeta de la web, el panel de tareas de la web y del teléfono). Una vez por
+ * turno y contenido (`requestId`): el reintento del mismo turno ve la misma propuesta.
+ */
+export async function abrirDecisionDeTaller(duenoCorreo: string, p: PropuestaTaller, vigenciaMs = VIGENCIA_PROPUESTA_TALLER_MS): Promise<PropuestaAbierta | null> {
+  const dueno = conCorreo(duenoCorreo);
+  // La propuesta es de la cuenta que la pidió, y solo de ella.
+  if (!dueno || dueno !== p.cuenta) return null;
+  const ahora = Date.now();
+  const idTurno = contexto.getStore()?.idTurno;
+  const requestId = `taller-${idTurno || `${ahora.toString(36)}${crypto.randomBytes(4).toString('hex')}`}-${p.huella.slice(0, 16)}`;
+  const decision: Decision = {
+    id: `dt_${ahora.toString(36)}${crypto.randomBytes(4).toString('hex')}`,
+    tipo: 'aprobar-accion',
+    pregunta: `¿${p.titulo}?`,
+    porque: 'Sale a un canal de la junta: no lo hago sin que apruebes esta versión exacta.',
+    propuesta: {
+      accion: p.titulo,
+      cuenta: 'Canales de la junta (configurados en el servidor)',
+      destinatario: trozo(p.destinatario, 160),
+      datos: [`Contenido: «${trozo(p.contenido, 400)}»`],
+      alcance: 'Solo esto, una vez y sin cambios. No autoriza envíos futuros.',
+    },
+    opciones: opcionesTaller(p.titulo, trozo(p.destinatario, 120)),
+    creada: ahora,
+    caduca: ahora + vigenciaMs,
+    planVersion: 1,
+    vinculo: { tipo: 'taller', accion: p.accion, args: p.args, cuenta: p.cuenta, quien: p.quien, huella: p.huella, version: p.version },
+  };
+  try {
+    const r = await crearTarea(dueno, {
+      requestId,
+      titulo: trozo(p.titulo, 90),
+      objetivo: `${p.titulo} si lo apruebas`,
+      estado: 'awaiting_approval',
+      entorno: { kind: 'servidor', id: 'taller', displayName: 'Taller de la junta' },
+      pasoActual: 'Esperando tu confirmación',
+      criterios: [{ id: 'envio', texto: 'El canal confirma que lo recibió', obligatorio: true }],
+      decision,
+      origen: { kind: 'chat', ...(idTurno ? { turnoId: idTurno } : {}) },
+      condicionParada: 'Lo apruebas y el canal responde, lo rechazas, o la propuesta caduca.',
+    });
+    if (r.ok === false) {
+      console.warn('[trabajos] no pude dejar la propuesta del taller:', r.detalle.slice(0, 120));
+      return null;
+    }
+    anotar(r.tarea);
+    const d = r.tarea.decision;
+    // Ya existía (reintento del mismo turno): vale solo si sigue esperando y es exactamente esta.
+    if (r.tarea.estado !== 'awaiting_approval' || !d || d.vinculo?.tipo !== 'taller' || d.vinculo.huella !== p.huella) return null;
+    return { tarea: r.tarea.id, decision: d.id, version: r.tarea.version, caduca: d.caduca ?? ahora + vigenciaMs };
+  } catch (e: any) {
+    console.warn('[trabajos] no pude dejar la propuesta del taller:', String(e?.message || e).slice(0, 120));
+    return null;
+  }
+}
+
 /**
  * Lo que devolvió el servidor al mandar un borrador (server/correo.ts `decidirBorrador`): solo sus prefijos
  * FIJOS cuentan como éxito o fallo; cualquier otra cosa (el «se manda en cuanto termine» de la voz, un texto
@@ -424,16 +568,27 @@ function evidenciaDeEnvio(id: string, resumen: string, referencia?: string): Evi
   return [{ id: `${id}:recibo`, tipo: 'recibo', etiqueta: trozo(resumen, 200), ...(referencia ? { ref: trozo(referencia, 200) } : {}) }];
 }
 
+/**
+ * La evidencia va a SU criterio (`id`): ese queda verificado con ella; cualquier otro obligatorio que esta evidencia no
+ * prueba queda «sin comprobar» (nunca se copia la misma lista a todos los criterios). Los opcionales, como estaban.
+ */
+function soloSuCriterio(criterios: Criterio[], id: string, ev: Evidencia[]): Criterio[] {
+  return criterios.map((c) => (c.id === id ? { ...c, estado: ev.length ? 'verified' : 'not_met', evidencias: ev.map((e) => e.id) } : c.obligatorio ? { ...c, estado: c.estado === 'verified' ? 'verified' : 'unknown', evidencias: c.estado === 'verified' ? c.evidencias : [] } : c));
+}
+
 /** El cambio que deja un envío terminado (por el panel o por el chat). */
 function cambioDeEnvio(reg: RegistroTarea, estado: 'succeeded' | 'failed' | 'unknown' | 'stale', resumen: string, operacion: string, referencia?: string): Cambio {
   const ahora = Date.now();
   if (estado === 'succeeded') {
     const ev = evidenciaDeEnvio(operacion, resumen, referencia);
+    // El recibo del proveedor prueba el ENVÍO (su criterio), no cualquier otro criterio que la tarea tuviera.
+    const criterios = soloSuCriterio(reg.criterios, 'envio', ev);
+    const todo = criteriosCumplidos(criterios, ev);
     return {
-      estado: 'completed',
+      estado: todo ? 'completed' : 'partial',
       pasoActual: null,
-      criterios: reg.criterios.map((c) => ({ ...c, estado: 'verified', evidencias: ev.map((e) => e.id) })),
-      resultado: { id: `${reg.id}:resultado`, resumen: trozo(resumen, 300), evidencias: ev, parcial: [], pendiente: [], t: ahora },
+      criterios,
+      resultado: { id: `${reg.id}:resultado`, resumen: trozo(resumen, 300), evidencias: ev, parcial: todo ? [] : ['El envío se confirmó; lo demás que pedía esta tarea no se pudo comprobar con ese recibo.'], pendiente: [], t: ahora },
       eventos: [{ type: 'operation.receipt', payload: { operationId: operacion, state: 'succeeded', effect: 'confirmed' } }],
     };
   }
@@ -492,9 +647,22 @@ export async function cerrarDecisionPorChat(duenoCorreo: string, intento: string
  * Lleva una tarea durable a lo que dicen sus fuentes (su computadora, el borrador) y guarda solo si cambió.
  * Nunca lanza: si no se pudo, devuelve la que había.
  */
-async function reconciliar(dueno: string, reg: RegistroTarea, d: DepsTrabajos, ahora: number): Promise<RegistroTarea> {
+async function reconciliar(dueno: string, reg: RegistroTarea, d: DepsTrabajos, ahora: number, computadoraLeida = true): Promise<RegistroTarea> {
   if (esTerminal(reg.estado)) return reg;
-  const misiones = reg.enlace?.tipo === 'computadora' && d.computadora ? d.computadora.misiones(dueno) : null;
+  // Sin poder leer sus misiones (el almacén no contestó), una tarea enlazada se deja como está: «no la encuentro» no es «se perdió».
+  if (reg.enlace?.tipo === 'computadora' && !computadoraLeida) return reg;
+  let misiones = reg.enlace?.tipo === 'computadora' && d.computadora ? d.computadora.misiones(dueno) : null;
+  // Revisión 9: la misión enlazada puede ser más vieja que las recientes que da `misiones`. Antes de declararla perdida se
+  // busca por su id en lo durable; si existe, se reconcilia con su estado real; si no se pudo mirar, no se toca la tarea.
+  if (reg.enlace?.tipo === 'computadora' && misiones && d.computadora?.buscar) {
+    const id = reg.enlace.id;
+    if (!misiones.some((m) => m.id === id || m.tareaId === id)) {
+      const b = await d.computadora.buscar(dueno, id).catch(() => 'almacen' as const);
+      if (b === 'almacen') return reg;
+      if (b) misiones = [...misiones, b];
+    }
+  }
+  const leidas = misiones;
   const vigente = (canal: 'correo' | 'whatsapp', ambito: string) => (d.borradores ? d.borradores.vigente(dueno, canal, ambito) : undefined);
   const r = await cambiarTarea(
     dueno,
@@ -502,15 +670,23 @@ async function reconciliar(dueno: string, reg: RegistroTarea, d: DepsTrabajos, a
     (x): Cambio | null => {
       // Una investigación que nadie trabaja ya (el proceso se reinició): se cierra con la verdad.
       if (esInvestigacion(x)) return reconciliarInvestigacion(x, ahora);
-      if (x.enlace?.tipo === 'computadora' && misiones) {
+      if (x.enlace?.tipo === 'computadora' && leidas) {
         const id = x.enlace.id;
-        return reconciliarConComputadora(x, misiones.find((m) => m.id === id || m.tareaId === id) ?? null, ahora);
+        return reconciliarConComputadora(x, leidas.find((m) => m.id === id || m.tareaId === id) ?? null, ahora);
       }
       const dec = x.decision;
+      // Lo que propuso el taller: caducada, o ya no es lo que se propuso (otro destino configurado, la cuenta ya no es de
+      // la junta), no se ofrece más. No se hizo nada.
+      if (x.estado === 'awaiting_approval' && dec?.vinculo?.tipo === 'taller') {
+        if (dec.caduca && ahora > dec.caduca) return { estado: 'blocked', pasoActual: 'La propuesta caducó sin hacerse. Si aún lo quieres, pídelo otra vez.' };
+        if (d.taller && !d.taller.vigente(dueno, dec.vinculo)) {
+          return { estado: 'blocked', pasoActual: 'Lo propuesto ya no es lo que se puede aprobar (cambió el destino o la cuenta). No se hizo nada.', decision: { ...dec, caduca: Math.min(dec.caduca ?? ahora, ahora - 1) } };
+        }
+      }
       if (x.estado === 'awaiting_approval' && dec?.vinculo?.tipo === 'borrador') {
         if (dec.caduca && ahora > dec.caduca) return { estado: 'blocked', pasoActual: 'La propuesta caducó sin enviarse. Si aún lo quieres, pide un borrador nuevo.' };
         const v = vigente(dec.vinculo.canal, dec.vinculo.ambito);
-        if (v !== undefined && (v?.intento !== dec.vinculo.intento || (v.huella !== undefined && v.huella !== dec.vinculo.hash))) {
+        if (v !== undefined && (v?.intento !== dec.vinculo.intento || !v.huella || v.huella !== dec.vinculo.hash)) {
           return {
             estado: 'blocked',
             pasoActual: 'El borrador ya no está esperando (se resolvió en otro lado o el servidor se reinició). No se envió nada desde aquí.',
@@ -542,7 +718,19 @@ const ID_VALIDO = /^[A-Za-z0-9_:.-]{3,96}$/;
 
 export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
   const ahora = () => (d.reloj ? d.reloj() : Date.now());
+  // Antes de las rutas: una app de antes recibe `respondida` como `partial` (compatEstados).
+  app.use('/api/trabajos', (req, res, next) => {
+    if (conoceEstadosNuevos(req)) return next();
+    const json = res.json.bind(res);
+    res.json = ((cuerpo: unknown) => json(compatEstados(cuerpo, false))) as typeof res.json;
+    return next();
+  });
   const correoDe = (req: express.Request) => conCorreo(String(d.sesionDe(req)?.correo || ''));
+  /** Que esta réplica tenga las misiones de su computadora (P5/A6). true si se pudieron leer (o no hay de dónde). */
+  const prepararComputadora = async (dueno: string): Promise<boolean> => {
+    if (!d.computadora?.preparar) return true;
+    return d.computadora.preparar(dueno).then((x) => x !== false, () => false);
+  };
   /**
    * Sin sesión, 401 (la app renueva o pide entrar). Con sesión pero sin correo (no hay de quién serían las
    * tareas), 403: un 401 ahí haría que la app intentara renovar la sesión en cada sondeo.
@@ -553,9 +741,9 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
   /** `conReconciliar: false` para decidir: se valida contra lo que vio la persona, no contra un cambio de ahora. */
   async function buscar(dueno: string, id: string, conReconciliar = true): Promise<Encontrada> {
     if (!ID_VALIDO.test(id)) return { tipo: 'no' };
-    const l = await leerTarea(dueno, id).catch(() => ({ ok: false as const, detalle: '' }));
+    const [l, pc] = await Promise.all([leerTarea(dueno, id).catch(() => ({ ok: false as const, detalle: '' })), prepararComputadora(dueno)]);
     if (l.ok === false) return { tipo: 'almacen' };
-    if (l.tarea) return { tipo: 'durable', reg: conReconciliar ? await reconciliar(dueno, l.tarea, d, ahora()) : l.tarea };
+    if (l.tarea) return { tipo: 'durable', reg: conReconciliar ? await reconciliar(dueno, l.tarea, d, ahora(), pc) : l.tarea };
     const t = d.tareaEnCurso?.listar(dueno).find((x) => x.id === id);
     if (t) return { tipo: 'tc', t };
     const m = d.computadora?.misiones(dueno).find((x) => x.id === id);
@@ -565,21 +753,46 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
 
   const vista = (e: Encontrada): TaskSnapshot | null => (e.tipo === 'durable' ? vistaTarea(e.reg, ahora()) : e.tipo === 'tc' ? deTareaEnCurso(e.t) : e.tipo === 'pc' ? deComputadora(e.m, ahora()) : null);
 
+  /**
+   * GET /api/trabajos[?limite=N&cursor=C] (P5/A7). Sin `limite` (las apps de siempre): TODAS las que pueden seguir
+   * activas y las terminadas en RECIENTES_MS; ya no hay un tope de 40 que esconda una activa. Con `limite` (1..100): una
+   * página y `siguiente` (el cursor de la próxima; null si no hay más). Siempre:
+   *   · `completo`: false si alguna tarea del índice (o el historial de su computadora) no se pudo leer, con `aviso` y
+   *     `conteo.noLeidas`. Un fallo del almacén nunca es «no hay tareas»: si además no queda nada que mostrar, 503;
+   *   · `conteo`: { activas, terminadas, indice, noLeidas } según el índice (las activas nunca se recortan).
+   * Las tareas en curso de las conversaciones y las misiones de su computadora van en la primera página.
+   */
   app.get('/api/trabajos', d.exigirMesa, d.limitar(90), async (req, res) => {
     const dueno = correoDe(req);
     if (!dueno) return sinDueno(req, res);
     res.setHeader('Cache-Control', 'no-store');
     const t = ahora();
-    const l = await listarTareas(dueno).catch((e) => ({ ok: false as const, detalle: String(e?.message || e) }));
+    const limite = req.query.limite !== undefined ? Math.max(1, Math.min(100, Math.floor(Number(req.query.limite)) || 20)) : undefined;
+    const cursor = typeof req.query.cursor === 'string' && req.query.cursor.length <= 400 ? req.query.cursor : null;
+    const [l, pc] = await Promise.all([
+      listarTareasPagina(dueno, { limite, cursor, recientesMs: RECIENTES_MS, ahora: t }).catch((e) => ({ ok: false as const, detalle: String(e?.message || e) })),
+      prepararComputadora(dueno),
+    ]);
     if (l.ok === false) return almacenCaido(res);
-    const durables = await Promise.all(l.tareas.filter((x) => !esTerminal(x.estado) || t - x.actualizada < RECIENTES_MS).map((x) => reconciliar(dueno, x, d, t)));
+    const durables = await Promise.all(l.tareas.map((x) => reconciliar(dueno, x, d, t, pc)));
     const enlazadas = new Set(durables.flatMap((x) => (x.enlace?.tipo === 'computadora' ? [x.enlace.id] : [])));
+    const primera = !cursor;
     const tareas: TaskSnapshot[] = [
       ...durables.map((x) => vistaTarea(x, t)),
-      ...(d.tareaEnCurso?.listar(dueno) || []).map(deTareaEnCurso),
-      ...(d.computadora?.misiones(dueno) || []).filter((m) => !enlazadas.has(m.id) && !enlazadas.has(m.tareaId)).map((m) => deComputadora(m, t)),
+      ...(primera ? (d.tareaEnCurso?.listar(dueno) || []).map(deTareaEnCurso) : []),
+      ...(primera ? (d.computadora?.misiones(dueno) || []).filter((m) => !enlazadas.has(m.id) && !enlazadas.has(m.tareaId)).map((m) => deComputadora(m, t)) : []),
     ].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
-    return res.json({ tareas, resumen: resumenTareas(tareas, t), generado: new Date(t).toISOString(), honesto: true });
+    const completo = l.completo && pc;
+    const faltan = l.conteo.noLeidas;
+    const aviso = completo
+      ? undefined
+      : [faltan ? `No pude leer ${faltan === 1 ? 'una de tus tareas' : `${faltan} de tus tareas`} en este momento; no es que no exista${faltan === 1 ? '' : 'n'}.` : '', pc ? '' : 'No pude leer el historial de tu computadora en este momento.']
+          .filter(Boolean)
+          .join(' ');
+    const cuerpo = { tareas, resumen: resumenTareas(tareas, t), generado: new Date(t).toISOString(), completo, siguiente: l.siguiente, conteo: l.conteo, ...(aviso ? { aviso } : {}), honesto: true };
+    // Nada que mostrar y algo que no se pudo leer: no es «0 tareas». Una app de antes ve el error de siempre.
+    if (!completo && !tareas.length) return res.status(503).json({ ...cuerpo, error: aviso || 'No pude leer tus tareas en este momento. Prueba otra vez en un rato.', code: 'almacen_no_disponible' });
+    return res.json(cuerpo);
   });
 
   app.get('/api/trabajos/:id', d.exigirMesa, d.limitar(120), async (req, res) => {
@@ -588,6 +801,8 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
     res.setHeader('Cache-Control', 'no-store');
     const e = await buscar(dueno, String(req.params.id || ''));
     if (e.tipo === 'almacen') return almacenCaido(res);
+    // Leída por su id: si no estaba en el índice (una de antes de P5 que el tope sacó), se vuelve a anotar.
+    if (e.tipo === 'durable') await asegurarEnIndice(dueno, e.reg).catch(() => undefined);
     const v = vista(e);
     return v ? res.json({ tarea: v, honesto: true }) : noEsta(res);
   });
@@ -696,6 +911,31 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
       return res.json({ tarea: vistaTarea(r.reg, ahora()), sugerencia, honesto: true });
     }
 
+    // Lo que propuso el taller (revisión 10, MEDIO-C): se ejecuta exactamente lo aprobado, una vez, si sigue siéndolo.
+    const vincT = decision.vinculo?.tipo === 'taller' ? decision.vinculo : null;
+    if (vincT) {
+      if (!d.taller) return res.status(503).json({ error: 'Ahora no puedo hacerlo desde aquí. No se hizo nada.', honesto: true });
+      // Justo antes del efecto: la cuenta que aprueba es la que lo pidió y la huella recalculada (contenido, destino
+      // configurado, versión) es la aprobada. Si no, no se hace y la propuesta deja de ofrecerse.
+      if (!d.taller.vigente(dueno, vincT)) {
+        const fresca = await reconciliar(dueno, e.reg, d, ahora());
+        return res.status(409).json({ error: 'Lo que espera ya no es lo que aprobaste: no hice nada. Pídelo otra vez si aún lo quieres.', codigo: 'propuesta-cambiada', tarea: vistaTarea(fresca, ahora()), honesto: true });
+      }
+      const operacion = `tarea-${e.reg.id}-${decision.id}`;
+      const r = await aplicar({ resolver: { ...resolver, operacion }, decision: null, estado: 'running', pasoActual: 'Haciendo lo que aprobaste…' });
+      if (!r.ok) return r.resp();
+      const salida = await ejecutarUnaVez<SalidaEnvio>({ dueno, requestId: operacion, tipo: `taller.${vincT.accion}`, argsHash: vincT.huella }, async () => {
+        const s = await d.taller!.ejecutar(dueno, vincT);
+        const estado = s.estado === 'stale' ? 'failed' : s.estado;
+        return { estado, resultado: s, recibo: { efecto: estado === 'succeeded' ? 'confirmed' : estado === 'unknown' ? 'possible' : 'none', proveedor: `taller.${vincT.accion}`, detalle: trozo(s.resumen, 160) } };
+      });
+      const s: SalidaEnvio = salida.corrio && salida.resultado ? salida.resultado : { estado: 'unknown', resumen: 'No supe cómo terminó: no lo repito a ciegas.' };
+      const fin = await cambiarTarea(dueno, e.reg.id, (reg) => cambioDeEnvio(reg, s.estado, s.resumen, operacion, s.referencia)).catch(() => null);
+      const reg = fin && fin.ok ? fin.tarea : r.reg;
+      anotar(reg);
+      return res.json({ tarea: vistaTarea(reg, ahora()), operacion, resultado: { estado: s.estado, resumen: trozo(s.resumen, 300) }, honesto: true });
+    }
+
     // aprobar (o elegir): con vínculo de borrador, se ejecuta exactamente lo aprobado, una vez.
     if (!vinc) {
       const r = await aplicar({ resolver, decision: null, estado: 'running', pasoActual: `Elegiste: ${opcion.etiqueta}` });
@@ -704,9 +944,10 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
     }
     if (!d.borradores) return res.status(503).json({ error: 'Ahora no puedo enviar desde aquí.', honesto: true });
     // Justo antes del efecto: ¿el borrador que espera es EXACTAMENTE el aprobado? (invariante 4) El mismo intento y la
-    // misma huella (destinatario, cuenta y contenido): una aprobación para Ana no manda a Bruno.
+    // misma huella (destinatario, cuenta y contenido): una aprobación para Ana no manda a Bruno. Sin huella del que
+    // espera no hay con qué compararlo: se bloquea (permisos exactos, 4-oct; antes, sin huella, pasaba).
     const espera = d.borradores.vigente(dueno, vinc.canal, vinc.ambito);
-    if (espera?.intento !== vinc.intento || (espera.huella !== undefined && espera.huella !== vinc.hash)) {
+    if (espera?.intento !== vinc.intento || !espera.huella || espera.huella !== vinc.hash) {
       const fresca = await reconciliar(dueno, e.reg, d, ahora());
       return res.status(409).json({ error: 'Esa propuesta ya no es la que espera: no envié nada. Mira la actual o pide una nueva.', codigo: 'propuesta-cambiada', tarea: vistaTarea(fresca, ahora()), honesto: true });
     }

@@ -183,8 +183,19 @@ export async function crearAprobacion(o: {
     contexto: { destino: o.destino ?? null, hechos: o.hechos ?? null },
   };
   try {
-    // La misma acción pedida dos veces seguidas no abre dos solicitudes: se devuelve la que ya espera.
-    const ya = (await listarAprobaciones({ plataforma: o.plataforma, estado: 'pendiente', limite: 200 })).find((x) => x.huella === ap.huella);
+    // La misma acción pedida dos veces seguidas no abre dos solicitudes: se devuelve la que ya espera. «La misma» es la
+    // huella exacta (plataforma, herramienta y argumentos) Y quien la pidió, a qué destino y con qué regla y firmas
+    // (permisos exactos, 4-oct): antes, lo mismo pedido por OTRA persona caía en la solicitud de la primera, y esa
+    // segunda persona podía firmar «la de otro» (que en realidad también era suya), saltándose los cuatro ojos.
+    const ya = (await listarAprobaciones({ plataforma: o.plataforma, estado: 'pendiente', limite: 200 })).find(
+      (x) =>
+        x.huella === ap.huella &&
+        huellaDe(x.plataforma, x.herramienta, x.argumentos) === x.huella &&
+        (x.pedida_por ?? null) === (ap.pedida_por ?? null) &&
+        (x.contexto?.destino ?? null) === (ap.contexto?.destino ?? null) &&
+        x.regla === ap.regla &&
+        x.necesarias === ap.necesarias
+    );
     if (ya) return ya;
     await guardarNueva(ap);
   } catch (e: any) {

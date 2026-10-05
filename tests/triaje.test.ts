@@ -121,3 +121,31 @@ test('correrTriaje: el runner del cerebro', async () => {
   assert.match(r, /whatsapp responder <nombre> \| <texto>/);
   assert.ok(T.INSTRUCCION_TRIAJE.startsWith('PEDIR_HERRAMIENTA: triaje revisar'));
 });
+
+test('revisión 12: la etiqueta del círculo pasa por la vista de lo que limitó (si la toca, va el nombre del proveedor)', async () => {
+  const conv: Conv = {
+    canal: 'whatsapp',
+    id: '50499990000@s.whatsapp.net',
+    nombre: '+504 9999-0000',
+    numero: '+50499990000',
+    grupo: false,
+    noLeidos: 2,
+    hora: AHORA - 60_000,
+    ultimo: '¿Me pasas a buscar a la escuela?',
+    ultimoMio: false,
+    mensajes: [{ mio: false, texto: '¿Me pasas a buscar a la escuela?', hora: AHORA - 60_000 }],
+  };
+  const hija = [{ ...circulo[0], id: 'vale', nombre: 'Valentina', alias: [], relacion: 'hija' as const }];
+  const fuentes = { whatsapp: async () => [conv], correo: null, laya: null, modelo: null, circulo: hija, ahora: AHORA };
+  // «Su hija se llama Valentina» limitado: la vista tapa la frase que la nombra.
+  const limitada = { sabe: true, texto: (s: string) => (/valentina/i.test(s) ? '[dato reservado]' : s) };
+  const tapado = await T.correrTriajeConEstado('dueno@prueba.local', 'whatsapp', '', fuentes as any, limitada);
+  assert.doesNotMatch(tapado.texto, /Valentina|su hija/i, tapado.texto);
+  assert.match(tapado.texto, /\+504 9999-0000/, 'la nombra como la da el proveedor');
+  // Sin saber qué limitó: tampoco la etiqueta del círculo (falla cerrado).
+  const noSabe = await T.correrTriajeConEstado('dueno@prueba.local', 'whatsapp', '', fuentes as any, { sabe: false, texto: () => '' });
+  assert.doesNotMatch(noSabe.texto, /Valentina/i, noSabe.texto);
+  // Control: nada limitado → la etiqueta del círculo, como siempre.
+  const libre = await T.correrTriajeConEstado('dueno@prueba.local', 'whatsapp', '', fuentes as any, { sabe: true, texto: (s: string) => s });
+  assert.match(libre.texto, /Valentina/, libre.texto);
+});

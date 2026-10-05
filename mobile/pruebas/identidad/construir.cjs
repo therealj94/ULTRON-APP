@@ -51,6 +51,8 @@ const piezas = {
   // De quién es cada intento de entrar (AUTH03) y la entrada con Genesis que lo usa.
   INTENTO: 'lib/intentoEntrada',
   GENESIS: 'lib/genesis',
+  // El visor de la computadora (revisión 9): lo de A no queda abierto, escrito ni reanudable para B.
+  VISOR: 'app/visor',
 };
 const lineas = Object.entries(piezas)
   .filter(([, r]) => fs.existsSync(path.join(SRC, r + '.ts')))

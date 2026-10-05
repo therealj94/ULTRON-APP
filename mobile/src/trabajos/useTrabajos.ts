@@ -56,7 +56,8 @@ export function useTrabajos(o: { activo: boolean; panelAbierto: boolean; idioma:
   const refrescar = useCallback(async () => {
     const r = await clienteTrabajos.listar();
     const t = Date.now();
-    if (r.ok) despachar({ tipo: 'lista', tareas: r.tareas, en: t });
+    // Una lista parcial (`completo: false`) no borra las que no se pudieron leer: quedan «sin confirmar» y el aviso se ve.
+    if (r.ok) despachar({ tipo: 'lista', tareas: r.tareas, en: t, completo: r.completo, aviso: r.aviso });
     else if (r.sinSesion) despachar({ tipo: 'sin-sesion' });
     else despachar({ tipo: 'error', mensaje: r.mensaje, en: t });
     setReloj(t);
@@ -115,7 +116,7 @@ export function useTrabajos(o: { activo: boolean; panelAbierto: boolean; idioma:
     return () => clearTimeout(t);
   }, [texto]);
 
-  return { tareas, resumen: res, indicador: ind?.texto ?? null, reducido, refrescar, aplicar, error: s.error, cargado: s.cargado };
+  return { tareas, resumen: res, indicador: ind?.texto ?? null, reducido, refrescar, aplicar, error: s.error, aviso: s.aviso ?? null, cargado: s.cargado };
 }
 
 export type Trabajos = ReturnType<typeof useTrabajos>;

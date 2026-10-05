@@ -15,7 +15,7 @@ import { loadCreds, loadMesaToken, loadSession, saveMesaToken } from './storage'
 import { quitarExpresiones } from './expresiones';
 import { cabecerasAparato } from './aparato';
 import { generacionCuenta, sigueVigente } from './cuenta';
-import { guardarTokenDeEntrada, intentoVigente, vencida, type Intento } from './intentoEntrada';
+import { esVencida, guardarTokenDeEntrada, intentoVigente, vencida, type Intento } from './intentoEntrada';
 import { avatarActual } from '../avatares/actual';
 import { idiomaActual } from '../i18n';
 import { etiquetasDeVista, vistaDeEtiquetas, vistaDeRespuesta, type FocoVision, type VistaCamara } from './vistaCamara';
@@ -132,6 +132,9 @@ async function pedirApi<T>(path: string, init: RequestInit | undefined, limite: 
       },
     });
     const data = await res.json().catch(() => ({}));
+    // La respuesta llegó cuando ya hay otra sesión (salió, venció o entró otra persona): era de la anterior y no se
+    // entrega a nadie (punto 3 de la revisión del 4-oct: una respuesta tardía de A no llena el estado de B).
+    if (!sigueVigente(gen)) throw vencida();
     if (!res.ok) {
       if (res.status === 429 && reintentar) {
         const espera = esperaDe429(res);
@@ -347,6 +350,8 @@ export type Turn = { rol: 'usuario' | 'ultron'; texto: string };
 export type ChatResult = {
   /** Para leer (burbuja, hilo): sin expresiones de voz. */
   reply: string;
+  /** Era de una sesión que ya no está (salió o entró otra persona): no se dice ni se hace nada con él. */
+  vencida?: boolean;
   /** Para decir: con sus [risa], [suspiro]… Un servidor viejo no lo manda y vale `reply`. */
   voz?: string;
   emocion: Emocion;
@@ -371,6 +376,13 @@ export type ChatResult = {
   idTurno?: string;
   /** Las tareas durables que el turno creó o cambió (AUR08, lib/trabajos.ts `refsDeTurno`). Un servidor viejo no las manda. */
   tareas?: unknown[];
+  /** La traza del turno en el servidor: con ella se dice «me sirvió / no me sirvió» (`opinarTurno`). */
+  trazaId?: string;
+  /**
+   * Todavía no hay respuesta: el mismo turno sigue en curso en el servidor (409 `enCurso`) o se está
+   * reconciliando tras una caída (`reconciliando`). No es un resultado (lib/primerResultado.ts).
+   */
+  pendiente?: boolean;
 };
 
 type TurnoOpts = {
@@ -403,11 +415,45 @@ type TurnoOpts = {
    */
   idTurno?: string;
   /**
+   * R1 (revisión 9): pedir SOLO la respuesta guardada de ese `idTurno` (el primer pedido que quedó sin respuesta al
+   * cerrar la app). El servidor nunca corre el cerebro con esto: repite lo guardado o dice que no existe.
+   */
+  soloRepetir?: boolean;
+  /**
    * La persona le habló encima a la respuesta anterior y AU-RA se calló (lib/interrupcion.ts): lo que
    * alcanzó a oír. El servidor abre con un acuse corto («Va, dime») en vez de repetirse (lib/interrumpida.ts).
    */
   interrumpido?: { oido: string };
 };
+
+/**
+ * «Me sirvió» (1) o «no me sirvió» (-1) sobre una respuesta, con la traza que trajo el turno (la misma ruta que
+ * usa la web: POST /api/cognitivo/trazas/:id/opinion). Opcional: si falla, no pasa nada.
+ */
+export async function opinarTurno(trazaId: string, valor: 1 | -1): Promise<boolean> {
+  if (!trazaId) return false;
+  try {
+    const r = await api<{ ok?: boolean }>(`/api/cognitivo/trazas/${encodeURIComponent(trazaId)}/opinion`, { method: 'POST', body: JSON.stringify({ valor }) }, 10_000);
+    return !!r?.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * «Solo repetir» (R1, revisión 9): ¿el servidor tiene la respuesta de ese idTurno? POST /api/turno/repetir nunca corre
+ * un turno (una ruta propia: un servidor de antes contesta 404 en vez de correr uno nuevo). Devuelve el estado y el
+ * cuerpo tal cual (lo interpreta lib/primerResultado.ts `trasSoloRepetir`); null sin red.
+ */
+export async function consultarTurnoGuardado(idTurno: string): Promise<{ status: number; json: any } | null> {
+  try {
+    const json = await api<any>('/api/turno/repetir', { method: 'POST', body: JSON.stringify({ idTurno, idioma: idiomaActual() }), headers: { 'x-aura-origen': 'app' } }, 80_000);
+    return { status: 200, json };
+  } catch (e: any) {
+    if (typeof e?.status === 'number') return { status: e.status, json: e.data || {} };
+    return null;
+  }
+}
 
 /** Un id para el turno de una frase (sin módulos nativos: no tiene que ser criptográfico, solo no repetirse). */
 export function nuevoIdTurno(): string {
@@ -430,6 +476,7 @@ function turnoBody(opts: TurnoOpts) {
     ...(opts.hablado ? { hablado: true } : {}),
     ...(opts.soloRapido ? { soloRapido: true } : {}),
     ...(opts.idTurno ? { idTurno: opts.idTurno } : {}),
+    ...(opts.soloRepetir && opts.idTurno ? { soloRepetir: true } : {}),
     ...(opts.interrumpido ? { interrumpido: { oido: String(opts.interrumpido.oido || '').slice(-400) } } : {}),
     // Con quién habla la persona y en qué idioma: el cerebro contesta como ese avatar y en esa lengua.
     avatar: avatarActual(),
@@ -438,15 +485,32 @@ function turnoBody(opts: TurnoOpts) {
 }
 
 /** Un turno con el cerebro (Qwen 27B). `image` = data URL jpeg opcional para preguntas visuales. */
-export async function turno(opts: TurnoOpts): Promise<ChatResult> {
+export async function turno(opts: TurnoOpts, gen = generacionCuenta()): Promise<ChatResult> {
   try {
-    const data = await api<any>('/api/turno', { method: 'POST', body: turnoBody(opts), headers: { 'x-aura-origen': 'app' } }, 70_000);
+    // `gen`: la sesión a la que pertenece el turno. Un reintento que la mesa hace después (tras una pausa) pasa la de su
+    // primer intento: si en medio salió A y entró B, no sale con el cuerpo de A y el token de B, vuelve «vencida».
+    const data = await pedirApi<any>('/api/turno', { method: 'POST', body: turnoBody(opts), headers: { 'x-aura-origen': 'app' } }, Date.now() + 70_000, true, gen);
     const pelado = pelarEtiqueta(String(data.reply || ''));
     const emocion = data.emocion ? normalizarEmocion(data.emocion) : pelado.emocion || 'neutral';
     const voz = data.voz ? pelarEtiqueta(String(data.voz)).texto.trim() : undefined;
-    return { reply: quitarExpresiones(pelado.texto).trim(), voz, emocion, mode: data.mode, ms: data.ms, via: data.via, error: data.error, acciones: data.acciones, ...(data.parcial === true ? { parcial: true } : {}), ...(Array.isArray(data.tareas) ? { tareas: data.tareas } : {}) };
+    return {
+      reply: quitarExpresiones(pelado.texto).trim(),
+      voz,
+      emocion,
+      mode: data.mode,
+      ms: data.ms,
+      via: data.via,
+      error: data.error,
+      acciones: data.acciones,
+      ...(data.parcial === true ? { parcial: true } : {}),
+      ...(Array.isArray(data.tareas) ? { tareas: data.tareas } : {}),
+      ...(typeof data.trazaId === 'string' && data.trazaId ? { trazaId: data.trazaId } : {}),
+      ...(data.reconciliando === true ? { pendiente: true } : {}),
+    };
   } catch (e: any) {
-    return { reply: '', emocion: 'neutral', error: e?.message || 'Sin conexión al cerebro' };
+    // De una sesión que ya no está: quien llamó no dice nada (ni «sin conexión») a la persona de ahora.
+    if (esVencida(e)) return { reply: '', emocion: 'neutral', error: e.message, vencida: true };
+    return { reply: '', emocion: 'neutral', error: e?.message || 'Sin conexión al cerebro', ...(e?.status === 409 && e?.data?.enCurso ? { pendiente: true } : {}) };
   }
 }
 
@@ -548,12 +612,24 @@ export function turnoStream(opts: TurnoOpts, h: StreamHandlers): { promise: Prom
           acciones: data.acciones,
           ...(data.parcial === true ? { parcial: true } : {}),
           ...(Array.isArray(data.tareas) ? { tareas: data.tareas } : {}),
+          ...(typeof data.trazaId === 'string' && data.trazaId ? { trazaId: data.trazaId } : {}),
+          ...(data.reconciliando === true ? { pendiente: true } : {}),
           cierre: 'done',
         };
-      } else if (ev === 'error') done = { reply: quitarExpresiones(full), voz: full, emocion: emocion || 'neutral', error: String(data.error || 'error'), ...(full.trim() ? { parcial: true } : {}), cierre: 'error' };
+      } else if (ev === 'error') done = { reply: quitarExpresiones(full), voz: full, emocion: emocion || 'neutral', error: String(data.error || 'error'), ...(full.trim() ? { parcial: true } : {}), ...(data.enCurso === true ? { pendiente: true } : {}), cierre: 'error' };
     };
     /** `final`: la conexión ya cerró, así que el último bloque (sin línea en blanco detrás) también cuenta. */
     const consume = (final = false) => {
+      // Cada trozo vuelve a mirar la sesión: si cambió, el turno de la anterior se corta aquí y nada más se entrega.
+      if (!sigueVigente(gen)) {
+        try {
+          xhr.abort();
+        } catch {
+          /* */
+        }
+        fail(vencida());
+        return;
+      }
       const text = xhr.responseText || '';
       if (text.length <= seen) return;
       const chunk = text.slice(seen);
@@ -574,6 +650,7 @@ export function turnoStream(opts: TurnoOpts, h: StreamHandlers): { promise: Prom
       if (xhr.status === 429) return fail(new Error('HTTP 429'));
       if (xhr.status < 200 || xhr.status >= 300) return fail(new Error(`HTTP ${xhr.status}`));
       consume(true);
+      if (settled) return;
       const reply = String((done && done.reply) || quitarExpresiones(full)).trim();
       const voz = String((done && done.voz) || full).trim() || reply;
       if (!reply && !voz) return fail(new Error((done && done.error) || 'stream vacío'));
@@ -585,7 +662,8 @@ export function turnoStream(opts: TurnoOpts, h: StreamHandlers): { promise: Prom
     // Cancelar (el usuario dijo «callar») rechaza ya, sin depender de cómo cierre el XHR al abortarlo.
     cancelar = () => fail(new Error('cancelado'));
     xhr.ontimeout = () =>
-      full ? finish({ reply: quitarExpresiones(full).trim(), voz: full.trim(), emocion: emocion || 'neutral', error: 'timeout', parcial: true, cierre: 'timeout', ...idTurno }) : fail(new Error('timeout'));
+      // Salió o entró otra persona mientras esperaba: lo que alcanzó a llegar de la anterior no se entrega.
+      !sigueVigente(gen) ? fail(vencida()) : full ? finish({ reply: quitarExpresiones(full).trim(), voz: full.trim(), emocion: emocion || 'neutral', error: 'timeout', parcial: true, cierre: 'timeout', ...idTurno }) : fail(new Error('timeout'));
     const payload = turnoBody(opts);
     void Promise.all([loadMesaToken(), cabecerasAparato(true).catch(() => ({}) as Record<string, string>)]).then(([t, extra]) => {
       if (settled) return;

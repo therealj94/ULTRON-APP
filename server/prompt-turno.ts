@@ -44,6 +44,12 @@ export type PiezasTurno = {
   /** La memoria del miembro en modo 'firma' (con quién habla y lo que pidió recordar). */
   memoriaMiembroFirma?: string;
   /**
+   * La memoria del turno YA POR LA VISTA AUTORIZADA (server/contexto-turno.ts bloquesPersonales): la del
+   * miembro o la de la junta, sin lo que la persona marcó «No usarlo». Con ella, manda sobre todo lo de
+   * arriba y aquí no se lee ninguna memoria. server.ts siempre la da; lo demás queda para pruebas y scripts.
+   */
+  memoria?: { completa: string; firma: string };
+  /**
    * El hilo de la conversación va como mensajes del turno (server.ts mensajesQwen). Entonces el hilo
    * corto no se repite en la memoria del system: ya está en los mensajes, y dentro del system cambiaba
    * en cada turno.
@@ -122,12 +128,18 @@ ${perfil.conocimiento}
 
 ${recuerdos}
 ${miembro ? '' : `${hechosCatalogo()}\n`}`;
-  const memoriaFirma = miembro && p.memoriaMiembro ? p.memoriaMiembroFirma ?? p.memoriaMiembro : promptMemoria(p.quienMem, { nivel: p.nivel, nombre: p.nombre, hilo: 'firma' });
+  const memoriaFirma = p.memoria
+    ? p.memoria.firma
+    : miembro && p.memoriaMiembro
+      ? p.memoriaMiembroFirma ?? p.memoriaMiembro
+      : promptMemoria(p.quienMem, { nivel: p.nivel, nombre: p.nombre, hilo: 'firma' });
   const memoria = p.compacto
     ? memoriaFirma
-    : miembro && p.memoriaMiembro
-      ? p.memoriaMiembro
-      : promptMemoria(p.quienMem, { nivel: p.nivel, nombre: p.nombre, hilo: p.hiloEnMensajes ? 'mediano' : 'todo' });
+    : p.memoria
+      ? p.memoria.completa
+      : miembro && p.memoriaMiembro
+        ? p.memoriaMiembro
+        : promptMemoria(p.quienMem, { nivel: p.nivel, nombre: p.nombre, hilo: p.hiloEnMensajes ? 'mediano' : 'todo' });
   const app = p.reglasApp?.trim() ? `\n\n${p.reglasApp.trim()}` : '';
   const fijo = `${cabeza}${memoria}${p.conocer?.trim() ? `\n\n${p.conocer.trim()}` : ''}${app}`;
   // Lo fijo sin la conversación ni lo guardado solo: si esto no cambió, el system de antes sigue valiendo

@@ -27,6 +27,7 @@
  * El borrado y la corrección que tocan varios almacenes los orquesta lib/olvido.ts.
  */
 import { bloqueConTope, clavePersona, CajonNoDisponible, crearCajones, esSecreto, extraerJson, linea, nuevoId, parecido, plegar, preguntarModelo } from './cerebro-comun';
+import { reservaDe, textoReservado, tocaReserva, type Reserva, type Reservas } from './reservas';
 import { datoSuprimido, precargarSupresiones, relojSupresiones, tumbasDe, tumbasEnCache, type Tumba } from './supresiones';
 
 export const CATEGORIAS = ['familia', 'trabajo', 'metas', 'gustos', 'salud', 'rutinas', 'fechas', 'personas', 'otros'] as const;
@@ -284,12 +285,22 @@ export async function incorporarDatos(persona: string, nuevos: DatoNuevo[], o: {
     const t = o.dicho ?? ahora;
     const entran = nuevos.filter((n) => !datoSuprimido(tumbas, { categoria: categoriaDe(n.categoria), clave: n.clave, dato: String(n.dato || ''), t: n.dicho ?? t }, { entrante: true }));
     if (!entran.length) return { agregados: 0, guardado: true };
+    const fuente = o.fuente || 'reglas';
     const { resultado } = await cajones.modificar(clave, (c) => {
       purgar(c, tumbas);
+      // Lo que la persona limitó, del cajón mismo (no de una caché). Lo que AURA vuelve a aprender y lo repite
+      // («Se mudó a Puerto Sintetico» con otra categoría o clave) nunca entra como general: solo puede poner al
+      // día el mismo dato limitado (sigue limitado); si no, no se guarda. No se guarda como otra copia limitada
+      // a propósito: esa copia, que la persona nunca limitó, seguiría tapando el dato cuando lo reactive.
+      const reservas = terminosReservados(c.datos.filter(esLimitado));
       let agregados = 0;
       for (const n of entran.slice(0, 20)) {
+        if (fuente !== 'manual' && datoReservado({ dato: String(n.dato || ''), clave: n.clave }, reservas)) {
+          const mismo = mismoDato(c, categoriaDe(n.categoria), n.clave ? plegar(linea(n.clave, 60)) : undefined, linea(n.dato, 240));
+          if (!mismo || !esLimitado(mismo)) continue;
+        }
         const antes = c.datos.length;
-        if (juntarUno(c, n, o.fuente || 'reglas', ahora) && c.datos.length > antes) agregados++;
+        if (juntarUno(c, n, fuente, ahora) && c.datos.length > antes) agregados++;
       }
       return agregados;
     });
@@ -509,6 +520,122 @@ export function datosConocidos(persona: string): Dato[] {
   return ds ? [...ds].sort((a, b) => b.confianza - a.confianza || b.visto - a.visto) : [];
 }
 
+/* ------------------------------------------------------------------ lo limitado: la vista autorizada (P1/A1) */
+
+/**
+ * «No usarlo» (alcance `limitado`) no es borrar: el dato se queda en la ficha editable («Lo que sé de ti»,
+ * la respuesta del perfil) y vuelve a usarse al reactivarlo. Pero ninguna COPIA ACTIVA lo usa: ni este
+ * bloque, ni su respuesta del perfil (lib/perfil-persona.ts perfilDeUso), ni los resúmenes de antes o lo
+ * último que dijo cuando van al modelo (textoAutorizado), ni lo que lee la iniciativa. La lista sale del
+ * estado DURABLE del dato (el cajón en disco/S3), no de una caché: sobrevive a un reinicio. Qué frase lo
+ * repite lo decide UNA regla (lib/reservas.ts tocaReserva), la misma para todos esos caminos.
+ */
+export const RESERVADO = '[dato reservado]';
+const esLimitado = (d: Dato) => d.alcance === 'limitado';
+
+/** Los datos que la persona limitó, leídos del almacén (y sin lo suprimido). null: no se pudo leer (falla cerrado). Nunca lanza. */
+export async function datosLimitados(persona: string): Promise<Dato[] | null> {
+  const c = clavePersona(persona);
+  if (!c) return [];
+  try {
+    const [l, tumbas] = await Promise.all([cajones.leer(c), tumbasDe(c)]);
+    if (!l.ok) return null;
+    return vivos(l.valor.datos, tumbas).filter(esLimitado);
+  } catch {
+    return null;
+  }
+}
+
+/** Lo mismo desde la caché, sin esperar. null si todavía no está (se carga para la próxima): sin saberlo, no se arriesga. */
+export function datosLimitadosEnCache(persona: string): Dato[] | null {
+  const clave = clavePersona(persona);
+  if (!clave) return [];
+  if (!cajones.enCache(clave)) void cajones.leer(clave).catch(() => undefined);
+  const ds = vivosEnCache(persona);
+  return ds ? ds.filter(esLimitado) : null;
+}
+
+/**
+ * Los datos que AURA puede USAR (de la caché): los conocidos sin lo limitado ni lo que lo repite (una copia
+ * general aprendida antes de limitarlo, o con otra categoría o clave).
+ */
+export function datosUsables(persona: string): Dato[] {
+  const ds = datosConocidos(persona);
+  const reservas = terminosReservados(ds.filter(esLimitado));
+  return ds.filter((d) => !esLimitado(d) && !datoReservado(d, reservas));
+}
+
+/** Las reservas de lo limitado (lib/reservas.ts): con qué se reconoce cada dato en otro texto. */
+export function terminosReservados(datos: readonly Dato[]): Reserva[] {
+  return datos.map((d) => reservaDe(d.dato, d.clave)).filter((r): r is Reserva => r !== null);
+}
+
+/** ¿Este dato (su texto y el valor de su clave) repite algo limitado? La misma regla que las frases. */
+export function datoReservado(d: { dato: string; clave?: string }, reservas: Reservas): boolean {
+  if (!reservas.length) return false;
+  const k = String(d.clave || '');
+  const valor = k.includes(':') ? k.slice(k.indexOf(':') + 1) : '';
+  return tocaReserva(valor ? `${d.dato} ${valor}` : d.dato, reservas);
+}
+
+/**
+ * Un texto de lo suyo (un resumen de antes, lo último que dijo, un hecho de su memoria) como puede entrar al
+ * modelo: la frase que repite algo limitado sale entera («[dato reservado]»; lib/reservas.ts). `reservas`
+ * null = no se pudo saber qué está limitado: no entra nada.
+ */
+export function textoAutorizado(texto: string, reservas: Reservas | null): string {
+  if (reservas === null) return '';
+  return textoReservado(texto, reservas, RESERVADO);
+}
+
+/**
+ * La vista autorizada para los textos personales que van al modelo (su memoria, su hilo, sus misiones):
+ * `texto` saca lo limitado; `sabe` false = no se pudo saber qué está limitado, y entonces `texto` no deja
+ * pasar nada (fallo cerrado). La arma server/contexto-turno.ts (vistaAutorizada) y la reciben las memorias
+ * (lib/memoria.ts, lib/memoria-miembro.ts) y la iniciativa. `reservas`: con qué decide (null si no sabe).
+ */
+export type VistaTexto = { readonly sabe: boolean; texto(s: string): string; readonly reservas?: Reservas | null };
+
+export function vistaDeTerminos(reservas: Reservas | null): VistaTexto {
+  return { sabe: reservas !== null, reservas, texto: (s: string) => textoAutorizado(s, reservas) };
+}
+
+/** La vista de lo que `persona` limitó, desde la caché (la misma que arma server/contexto-turno.ts vistaAutorizada). */
+export function vistaEnCache(persona: string): VistaTexto {
+  const limitados = persona ? datosLimitadosEnCache(persona) : [];
+  return vistaDeTerminos(limitados ? terminosReservados(limitados) : null);
+}
+
+/** Lo mismo leyendo antes de disco/S3 lo que limitó (un runner puede esperar): sin leerlo no sabría y fallaría cerrado. */
+export async function vistaDePersona(persona: string): Promise<VistaTexto> {
+  if (persona) await precargarConocer(persona);
+  return vistaEnCache(persona);
+}
+
+/**
+ * Lo que devuelve una herramienta con lo suyo (sus misiones, su círculo, su tarea en curso) como puede llegar al
+ * modelo (revisión 11, MEDIO-2): por la misma vista que lo demás del turno. La frase que repite algo limitado sale
+ * entera («[dato reservado]»); sin saber qué está limitado no sale nada de lo suyo. El estado y el recibo no cambian
+ * (lo hecho, hecho está). Lo que la persona ve en Ajustes (las rutas REST de sus listas) no pasa por aquí.
+ */
+export function resultadoAutorizado<R extends { texto: string; estado?: string; recibo?: { efecto?: string } }>(r: R, vista: VistaTexto, etiqueta: string): R {
+  if (!vista.sabe) {
+    // Sin el detalle, lo que importa para no mentir: si no se pudo, si no se sabe cómo terminó, si quedó guardado.
+    const porque = 'el detalle no te lo enseño ahora: no sé todavía qué marcó «No usarlo»';
+    const texto =
+      r.estado === 'failed'
+        ? `${etiqueta}: no se pudo (${porque}). No digas que quedó hecho.`
+        : r.estado === 'unknown'
+          ? `${etiqueta}: no sé cómo terminó (${porque}). No digas que quedó hecho ni lo repitas.`
+          : r.recibo?.efecto === 'guardado'
+            ? `${etiqueta}: quedó guardado (${porque}). Díselo así, sin inventar el detalle.`
+            : `${etiqueta}: ahora mismo no puedo enseñarte lo suyo (${porque}). Dilo así y ofrece intentarlo en un momento.`;
+    return { ...r, texto };
+  }
+  const texto = vista.texto(String(r.texto || ''));
+  return texto === r.texto ? r : { ...r, texto };
+}
+
 export function precargarConocer(persona: string): Promise<void> {
   const clave = clavePersona(persona);
   return Promise.all([cajones.leer(clave), precargarSupresiones(clave)]).then(
@@ -588,7 +715,7 @@ const ORDEN_CATEGORIAS: Categoria[] = ['familia', 'fechas', 'trabajo', 'personas
  * recitarlos. Es estable entre turnos (cambia cuando aprende algo): va en lo fijo del prompt, fuera de la
  * firma (server/prompt-turno.ts), para no obligar al nodo a releer todo cada vez que aprende algo.
  */
-export function bloqueConocer(persona: string, compacto = false, o: { nombre?: string; conPregunta?: boolean; ahora?: number } = {}): string {
+export function bloqueConocer(persona: string, compacto = false, o: { nombre?: string; conPregunta?: boolean; ahora?: number; reservas?: Reservas | null } = {}): string {
   const clave = clavePersona(persona);
   const c = cajones.enCache(clave);
   // Sin caché: se carga para el próximo turno (el de ahora no espera a S3).
@@ -596,8 +723,12 @@ export function bloqueConocer(persona: string, compacto = false, o: { nombre?: s
   // Sin las marcas de supresión en caché tampoco: no se arriesga a decir algo borrado.
   const ds = vivosEnCache(persona);
   if (c && !ds) return '';
-  // Lo limitado se guarda y se ve en la app, pero AURA no lo usa.
-  const usables = (ds || []).filter((d) => d.alcance !== 'limitado');
+  // Quien llama sin saber qué está limitado (la vista del turno falló cerrado): nada de lo suyo.
+  if (o.reservas === null) return '';
+  // Lo limitado se guarda y se ve en la app, pero AURA no lo usa; tampoco un dato general que lo repite (lo
+  // aprendido otra vez con otra categoría o clave): por la misma regla que la vista del turno.
+  const reservas: Reservas = [...terminosReservados((ds || []).filter(esLimitado)), ...(o.reservas || [])];
+  const usables = (ds || []).filter((d) => d.alcance !== 'limitado' && !datoReservado(d, reservas));
   if (!c || !usables.length) {
     if (compacto || !o.conPregunta) return '';
     const p = preguntaPendiente(persona, o.ahora);

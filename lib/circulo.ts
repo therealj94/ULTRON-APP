@@ -6,9 +6,10 @@
  * Cada persona: nombre, relación, por dónde se le escribe (WhatsApp, PULSE2CHAT, teléfono, correo) y qué
  * permisos le dio José. La regla de la casa no cambia: a la familia NO se le escribe sin el «sí» de José.
  * `circulo recordar` y `circulo escribir` dejan un BORRADOR de WhatsApp (server/whatsapp.ts), el mismo
- * que manda el servidor cuando el turno siguiente es un «sí» claro. Solo si José lo pidió EXPLÍCITAMENTE
- * desde su app (POST /api/circulo con permisos.recordatorios = 'permitido'), un RECORDATORIO a esa persona
- * sale sin preguntar (con tope por día). El cerebro no puede dar ese permiso: la herramienta no lo toca.
+ * que manda el servidor cuando el turno siguiente es un «sí» claro. Permisos exactos (revisión externa, 4-oct): ya no
+ * hay excepciones por clase de acción. El ajuste `permisos.recordatorios = 'permitido'` (POST /api/circulo, solo José
+ * desde su app) se sigue guardando, pero no autoriza ningún envío: un recordatorio también sale solo con su «sí» a ESE
+ * texto.
  *
  * Lo que de verdad se puede desde el servidor (dicho tal cual, sin teatro):
  *   · WhatsApp: sí, si su WhatsApp está vinculado (server/whatsapp.ts), con borrador y «sí».
@@ -20,8 +21,9 @@
  */
 import { clave as claveBoveda } from './boveda';
 import { clavePersona, CajonNoDisponible, crearCajones, linea, nuevoId, plegar } from './cerebro-comun';
-import { borradorWhatsappParaConEstado, cuentaWhatsappVinculada, enviarWA, whatsappDisponible, whatsappPermitido } from '../server/whatsapp';
-import { exito, fallo, incierto, type ResultadoHerramienta } from './recibo-herramienta';
+import { borradorWhatsappParaConEstado, cuentaWhatsappVinculada, whatsappDisponible, whatsappPermitido } from '../server/whatsapp';
+import { exito, fallo, type ResultadoHerramienta } from './recibo-herramienta';
+import { resultadoAutorizado, vistaDePersona, type VistaTexto } from './conocer-persona';
 
 export const RELACIONES = ['esposa', 'esposo', 'pareja', 'hija', 'hijo', 'madre', 'padre', 'hermana', 'hermano', 'familia', 'amigo', 'amiga', 'socio', 'socia', 'asistente', 'otro'] as const;
 export type Relacion = (typeof RELACIONES)[number];
@@ -53,8 +55,6 @@ type Envio = { persona: string; t: number };
 type CajonCirculo = { version: 1; personas: MiembroCirculo[]; envios: Envio[] };
 
 export const MAX_CIRCULO = 60;
-/** Recordatorios con permiso permanente que salen sin preguntar, por persona y por día. */
-export const MAX_RECORDATORIOS_DIA = 3;
 
 const SINONIMOS: Record<string, Relacion> = {
   mujer: 'esposa',
@@ -368,8 +368,6 @@ export { INSTRUCCION_CIRCULO } from './harness';
 type DepsCirculo = {
   whatsappListo?: (dueno: string) => boolean;
   borrador?: (dueno: string, ambito: string, b: { chat: string; nombre: string; texto: string }) => string;
-  enviar?: (chat: string, texto: string) => Promise<unknown>;
-  ahora?: number;
 };
 
 function canalWhatsapp(p: MiembroCirculo): string | null {
@@ -381,7 +379,7 @@ function lineaPersona(p: MiembroCirculo, i: number): string {
   const canales = [p.canales.whatsapp ? `WhatsApp ${p.canales.whatsapp}` : '', p.canales.telefono && p.canales.telefono !== p.canales.whatsapp ? `tel. ${p.canales.telefono}` : '', p.canales.pulse2chat ? 'PULSE2CHAT' : '', p.canales.correo ? 'correo' : '']
     .filter(Boolean)
     .join(', ');
-  return `${i + 1}. ${p.nombre} — ${p.relacion}${canales ? ` (${canales})` : ' (sin canal guardado)'}${p.permisos.recordatorios === 'permitido' ? ' · recordatorios sin preguntar' : ''}`;
+  return `${i + 1}. ${p.nombre} — ${p.relacion}${canales ? ` (${canales})` : ' (sin canal guardado)'}`;
 }
 
 /**
@@ -397,7 +395,13 @@ export async function correrCirculo(dueno: string, arg: string, ambito = '', d: 
  * El runner con su estado y su recibo (AUR07). Un recordatorio que salió es `confirmado`; uno que el puente
  * rechazó (4xx) es `failed`; uno que se despachó y no se supo (caída, tiempo) es `unknown`: no se repite a ciegas.
  */
-export async function correrCirculoConEstado(dueno: string, arg: string, ambito = '', d: DepsCirculo = {}): Promise<ResultadoHerramienta> {
+export async function correrCirculoConEstado(dueno: string, arg: string, ambito = '', d: DepsCirculo = {}, vista?: VistaTexto): Promise<ResultadoHerramienta> {
+  const r = await correrCirculoCrudo(dueno, arg, ambito, d);
+  // Lo que devuelve va al modelo: por la vista de lo que la persona limitó (revisión 11, MEDIO-2). `vista`: la del turno.
+  return dueno ? resultadoAutorizado(r, vista ?? (await vistaDePersona(dueno)), 'CÍRCULO') : r;
+}
+
+async function correrCirculoCrudo(dueno: string, arg: string, ambito: string, d: DepsCirculo): Promise<ResultadoHerramienta> {
   if (!dueno) return fallo('CÍRCULO: solo con sesión. Pídele que entre con su cuenta.', 'sin-sesion');
   const [cabeza, ...partes] = String(arg || '').split('|').map((x) => x.trim());
   const m = cabeza.match(/^(\S+)\s*(.*)$/s);
@@ -445,33 +449,10 @@ export async function correrCirculoConEstado(dueno: string, arg: string, ambito 
       return fallo(`CÍRCULO: no puedo escribirle a ${etiquetaDe(p)} desde aquí: ${porQue}. ${p.canales.pulse2chat ? `Por PULSE2CHAT lo hace la app del teléfono («escríbele a ${p.nombre}»).` : 'Desde la app del teléfono puede escribirle por PULSE2CHAT.'} No digas que se mandó.`, 'no-disponible');
     }
     const aviso = cuando ? ` OJO: no puedo programar el envío para más tarde desde el servidor; si dice que sí, sale ahora. Si prefiere que salga a esa hora, ofrécele ponerse un recordatorio en su teléfono para mandarlo.` : '';
-    // Permiso permanente para recordatorios (solo lo da José desde su app): sale sin preguntar, con tope.
-    // Uno para más tarde («a las 4») no: el servidor no programa envíos y saldría ya; va al borrador con el
-    // aviso (Codex en #128).
-    if (esRecordatorio && !cuando && p.permisos.recordatorios === 'permitido') {
-      const ahora = d.ahora ?? Date.now();
-      const k = clavePersona(dueno);
-      const hoy = (cajones.enCache(k)?.envios || []).filter((e) => e.persona === p.id && ahora - e.t < 86_400_000).length;
-      if (hoy < MAX_RECORDATORIOS_DIA) {
-        const corto = linea(texto, 300);
-        try {
-          await (d.enviar || enviarWA)(chat, corto);
-        } catch (e: any) {
-          const porque = String(e?.message || e).slice(0, 120);
-          const status = Number(e?.status) || 0;
-          // El puente lo rechazó (4xx): no salió. Una caída o un tiempo agotado pudo haberlo mandado igual.
-          if (status >= 400 && status < 500) return fallo(`CÍRCULO: NO se pudo mandar el recordatorio a ${etiquetaDe(p)} (${porque}). Díselo con honestidad.`, 'proveedor');
-          return incierto(`CÍRCULO: mandé el recordatorio a ${etiquetaDe(p)} pero el WhatsApp no confirmó (${porque}). No sé si le llegó: no lo vuelvas a mandar sin preguntarle; dile que lo revise en su WhatsApp.`, { proveedor: 'whatsapp', referencia: chat });
-        }
-        await cajones
-          .modificar(k, (c) => {
-            c.envios.push({ persona: p.id, t: ahora });
-          })
-          .catch(() => undefined);
-        return exito(`RECORDATORIO ENVIADO por WhatsApp a ${etiquetaDe(p)} (José le dio permiso permanente para recordatorios): «${corto}». Díselo en una frase.`, { efecto: 'confirmado', proveedor: 'whatsapp', referencia: chat });
-      }
-      // Pasado el tope del día, vuelve a preguntar.
-    }
+    // Permisos exactos (revisión externa, 4-oct): el «permiso permanente para recordatorios» ya NO manda nada sin
+    // preguntar. Era un permiso por CLASE de acción (cualquier texto que el modelo llamara «recordatorio», a esa
+    // persona): ninguna aprobación aprobaba ESE contenido. Ahora todo va al borrador y sale con su «sí» a ese texto.
+    // El ajuste se sigue guardando y mostrando (la app lo manda), pero no autoriza ningún envío.
     // El borrador va al jid del número GUARDADO (nunca a un chat buscado por nombre) y desde la cuenta vinculada ahora:
     // el «sí» autoriza ESE número desde ESA cuenta (revisión 4-oct).
     const b = d.borrador

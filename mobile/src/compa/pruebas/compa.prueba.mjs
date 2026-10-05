@@ -1072,12 +1072,16 @@ prueba('puente: recibe acciones por trozos, descarta las malas, reconecta con La
     alAccion: (a) => recibidas.push(a),
     esperar: (f, ms) => {
       esperas.push(ms);
-      const t = setTimeout(f, Math.min(ms, 30));
+      // Las esperas de reconexión se acortan; el vigía de silencio (90 s) no: acortado a 30 ms, con la máquina cargada
+      // saltaba entre dos trozos del mismo evento y la prueba perdía la primera conexión (no es lo que se prueba).
+      const t = setTimeout(f, ms >= 60_000 ? ms : Math.min(ms, 30));
       return () => clearTimeout(t);
     },
   });
   puente.arrancar();
-  await dormir(400);
+  // Hasta que llegue lo esperado (con tope): un plazo fijo de 400 ms no alcanzaba con la máquina cargada.
+  for (let t = 0; t < 5000 && !(recibidas.length >= 3 && conexion >= 2); t += 25) await dormir(25);
+  await dormir(100); // lo que llegara de más (un repetido) también se ve
   puente.parar();
   s.close();
   assert.deepEqual(recibidas, [{ tipo: 'abrir', pantalla: 'ajustes' }, { tipo: 'redactar', para: 'Mamá', texto: 'Llego tarde' }, { tipo: 'enviar' }]);
@@ -1211,7 +1215,7 @@ prueba('manos: el contexto le dice al servidor qué manos sabe hacer este teléf
   const ctx = new ContextoApp({ enviar: async (c) => enviados.push(c), contactos: async () => [], escuchar: () => () => {}, esperar: (f) => (f(), () => {}) });
   const c = await ctx.enviarAhora(true);
   // `controles` (AUR10): los controles de voz separados (detener audio, colgar, la tarea).
-  assert.deepEqual([...c.manos], ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame', 'cartera', 'pagar', 'controles']);
+  assert.deepEqual([...c.manos], ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame', 'cartera', 'pagar', 'controles', 'enviar_exacto'], 'enviar_exacto: comprueba el texto aprobado antes de mandar (permisos exactos)');
   assert.deepEqual([...c.manos], [...MANOS_APP]);
 });
 
@@ -2615,9 +2619,15 @@ prueba('ánimo: mientras hay llamada del avatar la compañera no se ve; al colga
 prueba('«llámame» en la mesa: lo reconoce el intérprete del teléfono (sin red), medido; «llámame Chepe» no', async () => {
   const { interpretar } = await import('../../lib/intenciones.ts');
   for (const f of ['llámame', 'Aura, llámame porfa', 'hazme una llamada', '¿me llamas?', 'call me', 'give me a call please']) {
-    const t0 = performance.now();
-    const i = interpretar(f);
-    const ms = performance.now() - t0;
+    // El costo propio del intérprete (el mejor de 5 intentos): una sola medición la infla el planificador cuando la
+    // máquina está cargada (en CI con varias tandas llegó a 17 ms), sin que el intérprete sea más lento.
+    let ms = Infinity;
+    let i = interpretar(f);
+    for (let k = 0; k < 5; k++) {
+      const t0 = performance.now();
+      i = interpretar(f);
+      ms = Math.min(ms, performance.now() - t0);
+    }
     assert.equal(i.tipo, 'llamame', f);
     assert.ok(ms < 5, `${f}: ${ms.toFixed(3)} ms`);
   }

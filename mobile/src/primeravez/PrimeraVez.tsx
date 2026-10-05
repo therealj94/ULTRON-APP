@@ -18,6 +18,10 @@
  * recorre SU plan (flujo.ts pasosDelPlan: la cuenta y los permisos solo si el objetivo los necesita). El
  * objetivo se guarda aparte (no va al perfil) para retomarlo, y quien iba a mitad con la versión de antes
  * retoma donde estaba (las claves v3 y v2 de siempre, flujo.ts pasoRetomado).
+ *
+ * EL PRIMER RESULTADO, MEDIDO (auditoría del 4-oct, P4 · R1; medida.ts): la petición que queda en la mesa es
+ * un borrador, no el resultado. Aquí se abre el registro de la cuenta (cuándo empezó), se cuentan los toques
+ * (seguir, saltar, atrás; si saltó conectar) y se deja la petición; la mesa sigue hasta el resultado de verdad.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BackHandler, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
@@ -53,6 +57,7 @@ import {
   type PasoId,
 } from './flujo';
 import { anotarEnConocer } from '../bienvenida/conocer';
+import { anotarPrimer, empezarPrimer } from './medida';
 import { PasoApodo } from './pasos/PasoApodo';
 import { PasoAura } from './pasos/PasoAura';
 import { PasoAvatar } from './pasos/PasoAvatar';
@@ -101,6 +106,8 @@ export function PrimeraVez(_: Props) {
   // Retomar donde se quedó (si Android cerró la app a la mitad), con su objetivo.
   useEffect(() => {
     if (!usuario) return;
+    // El primer resultado empieza a contar aquí (si ya había empezado, se conserva su inicio).
+    void empezarPrimer(usuario.correo);
     void (async () => {
       const [v3, v2, obj] = await Promise.all([
         AsyncStorage.getItem(CLAVE_PASO(usuario.correo)),
@@ -164,12 +171,18 @@ export function PrimeraVez(_: Props) {
     setAvatarVoz(b.avatar);
     // El miniresultado: la primera petición queda escrita en la mesa (no se manda sola).
     marcarPrimeraPeticion(peticionInicial(b, idioma === 'en' ? 'en' : 'es'));
+    // Y queda anotada en el registro de la cuenta (para medir y para recuperarla si se cierra la app): es un
+    // borrador, no el resultado. Se espera para que la mesa ya la encuentre preparada.
+    if (usuario) {
+      await anotarPrimer(usuario.correo, { tipo: 'toque', accion: 'seguir', paso });
+      await anotarPrimer(usuario.correo, { tipo: 'preparar', peticion: peticionInicial(b, idioma === 'en' ? 'en' : 'es') });
+    }
     // La mesa lee el avatar y el idioma de los ajustes del teléfono al abrirse: que ya estén.
     await saveSettings({ avatar: b.avatar, avatarElegido: true }).catch(() => {});
     if (usuario) await AsyncStorage.multiRemove([CLAVE_PASO(usuario.correo), CLAVE_PASO_V2(usuario.correo), CLAVE_OBJETIVO(usuario.correo)]).catch(() => {});
     marcarRecienElegido(true);
     reiniciarA('Mesa', { recienElegido: true });
-  }, [b, terminando, usuario, idioma]);
+  }, [b, terminando, usuario, idioma, paso]);
 
   const avanzar = useCallback(() => {
     if (!puedeSeguir(paso, b)) {
@@ -181,15 +194,17 @@ export function PrimeraVez(_: Props) {
     if (c) guardarPerfil(c);
     // También en «lo que sé de ti» (sin esperar; si falla, el perfil ya lo tiene).
     void anotarEnConocer(paso, b);
+    if (usuario) void anotarPrimer(usuario.correo, { tipo: 'toque', accion: 'seguir', paso });
     vibrar('seleccion');
     ir(siguienteEn(plan, paso), 1);
-  }, [paso, b, plan, ir, terminar]);
+  }, [paso, b, plan, ir, terminar, usuario]);
 
   const volver = useCallback(() => {
     if (i === 0) return false;
+    if (usuario) void anotarPrimer(usuario.correo, { tipo: 'toque', accion: 'atras', paso });
     ir(anteriorEn(plan, paso), -1);
     return true;
-  }, [i, plan, paso, ir]);
+  }, [i, plan, paso, ir, usuario]);
 
   /** Saltar deja en blanco lo de este paso (aunque se hubiera tocado algún chip) y sigue en el plan que queda. */
   const saltar = () => {
@@ -203,6 +218,7 @@ export function PrimeraVez(_: Props) {
     else if (paso === 'restriccion') nb = { ...b, restriccion: undefined };
     tocado.current = true;
     setB(nb);
+    if (usuario) void anotarPrimer(usuario.correo, { tipo: 'toque', accion: 'saltar', paso });
     vibrar('seleccion');
     ir(siguienteEn(pasosDelPlan(nb), paso), 1);
   };
@@ -218,6 +234,7 @@ export function PrimeraVez(_: Props) {
       delete e[q.campo];
       setB((x) => ({ ...x, encuesta: e }));
     }
+    if (usuario) void anotarPrimer(usuario.correo, { tipo: 'toque', accion: 'saltar', paso });
     vibrar('seleccion');
     ir('iniciativa', 1);
   };

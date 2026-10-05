@@ -15,6 +15,7 @@ import assert from 'node:assert/strict';
 import { MANOS } from '../lib/manos-app';
 import { MANOS_APP } from '../mobile/src/nucleo/contrato';
 import { accionDeControlMesa, aplicarAccionControl, controlDeAccion, controlarTareaPc, estadoControlesDe, type ApiMin } from '../mobile/src/compa/controles';
+import * as controlesMovil from '../mobile/src/compa/controles';
 
 test('el contrato del teléfono: declara `controles` (la misma lista que el servidor) y valida las acciones nuevas', async () => {
   // El puente de acciones se carga sin que tsc de la raíz lo siga (es código de la app, con su tsconfig estricto).
@@ -145,4 +146,42 @@ test('la mesa: callar sigue callando; colgar y la tarea son controles; con audio
   assert.equal(interpretar('para', { enConocer: true }).tipo, 'callar');
   assert.equal(interpretar('ya está', { enConocer: true }).tipo, 'conocer_salir');
   assert.equal(interpretar('para mañana necesito el informe').tipo, 'cerebro');
+});
+
+/*
+ * P2 (auditoría del 4-oct): en la llamada, «cállate» calla TAMBIÉN la salida de la llamada (compa/sesionVoz.ts,
+ * callarSalida); la voz de la mesa (lib/tts.ts) no es el audio de la llamada. Callar no cuelga ni toca la tarea.
+ */
+function telefono(o: { enLlamada: boolean; callarLlamada?: 'ok' | 'falla' | 'sin' }) {
+  const tocado: string[] = [];
+  const p = controlesMovil.puertosTelefono({
+    pararVozMesa: () => void tocado.push('voz-mesa'),
+    cerrarBoca: () => void tocado.push('boca'),
+    soltarPausaMicrofono: () => void tocado.push('soltar-mic-mesa'),
+    enLlamada: () => o.enLlamada,
+    colgar: () => (tocado.push('colgar'), { ok: true }),
+    api: async (ruta: string) => (tocado.push(`api:${ruta}`), { configurada: true, actual: null }),
+    ...(o.callarLlamada === 'sin'
+      ? {}
+      : { callarLlamada: () => (tocado.push('salida-llamada'), o.callarLlamada === 'falla' ? { ok: false, detalle: 'No pude callar la llamada.' } : { ok: true }) }),
+  } as any);
+  return { p, tocado };
+}
+
+test('P2 móvil: en la llamada, detener el audio calla la salida de la llamada además de la voz de la mesa; no cuelga ni toca la tarea', async () => {
+  let t = telefono({ enLlamada: true, callarLlamada: 'ok' });
+  const r = await aplicarAccionControl({ tipo: 'detener_audio' }, t.p);
+  assert.equal(r.ok, true);
+  assert.deepEqual(t.tocado, ['voz-mesa', 'boca', 'salida-llamada'], 'el micrófono de la llamada no se toca; tampoco la tarea');
+  // Sin llamada: solo la voz de la mesa (y se suelta su pausa del micrófono), nunca la llamada.
+  t = telefono({ enLlamada: false, callarLlamada: 'ok' });
+  await aplicarAccionControl({ tipo: 'detener_audio' }, t.p);
+  assert.deepEqual(t.tocado, ['voz-mesa', 'boca', 'soltar-mic-mesa']);
+  // La llamada no se pudo callar: se dice (no es un «listo» de más).
+  t = telefono({ enLlamada: true, callarLlamada: 'falla' });
+  const f = await aplicarAccionControl({ tipo: 'detener_audio' }, t.p);
+  assert.deepEqual([f.ok, f.detalle], [false, 'No pude callar la llamada.']);
+  t = telefono({ enLlamada: true, callarLlamada: 'sin' });
+  const s = await aplicarAccionControl({ tipo: 'detener_audio' }, t.p);
+  assert.equal(s.ok, false, 'sin cómo callar la llamada, no se finge');
 });

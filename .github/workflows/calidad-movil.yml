@@ -89,7 +89,8 @@ jobs:
         run: npm run typecheck
 
       # Los arneses del teléfono: identidad y aislamiento, costuras entre frentes, chat, llamadas,
-      # la compañera, el avatar, la sincronía de la boca, la mesa y el oído (la secuencia de José).
+      # la compañera, el avatar, la sincronía de la boca, la mesa y el oído (la secuencia de José). El visor de la
+      # computadora va MONTADO (pruebas/visor: el lote de teclado por los manejadores reales del componente).
       - name: Arneses de la app
         working-directory: mobile
         run: |
@@ -98,6 +99,7 @@ jobs:
           sh pruebas/costuras/todas.sh
           sh pruebas/chat/todas.sh
           sh pruebas/veta/todas.sh
+          sh pruebas/visor/todas.sh
           node pruebas/llamadas/pruebas.js
           npx tsx src/compa/pruebas/compa.prueba.mjs
           npx tsx src/avatar3d/pruebas/avatar3d.prueba.mjs

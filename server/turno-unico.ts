@@ -61,6 +61,8 @@ export type TurnoGuardado = {
   proveedor?: string;
   /** Las tareas durables que el turno creó o cambió (server/trabajos.ts, AUR08): el reintento las enlaza igual. */
   tareas?: { id: string; title: string; state: string; version: number; updatedAt: string }[];
+  /** Lo que el taller dejó esperando aprobación (revisión 10, MEDIO-C): el reintento lo devuelve igual. */
+  propuestaTaller?: unknown;
 };
 
 /** El registro durable de un turno (lib/durable.ts). */
@@ -131,6 +133,13 @@ export type Terminar = ((r: TurnoGuardado | null) => Promise<void>) & {
 };
 
 export type Reclamo = { previo: TurnoGuardado } | { terminar: Terminar } | { enCurso: true } | { desconocido: { efectos: string[] } };
+
+/**
+ * «Solo repetir» (revisión 9, R1): lo que se sabe de un turno SIN reclamarlo. Nunca da `terminar` (nunca corre el
+ * cerebro): la respuesta guardada (`previo`), que sigue en curso (`enCurso`, tras esperar como un reintento), que quedó
+ * incierto (`desconocido`), o `noExiste` (ese turno no llegó, terminó sin respuesta y sin efectos, o no se pudo mirar).
+ */
+export type Consulta = { previo: TurnoGuardado } | { enCurso: true } | { desconocido: { efectos: string[] } } | { noExiste: true; motivo: 'no_existe' | 'sin_id' | 'sin_almacen' };
 
 /** El dueño durable de un turno en este proceso. */
 type Propio = {
@@ -425,8 +434,60 @@ export function crearTurnosUnicos(opciones: Partial<Config> & { proceso?: string
     return turnos.has(clave) ? { enCurso: true } : reclamarAqui(clave, tope);
   }
 
+  /**
+   * «Solo repetir» (revisión 9, R1): la app reabre con un pedido que mandó y no vio contestado, y pregunta por ESE
+   * idTurno. Si el pedido nunca llegó, NO se corre un turno nuevo sin que la persona toque nada: se contesta `noExiste`
+   * y la app le devuelve el texto a la caja. No escribe nada en el almacén (no reclama ni toma el lease).
+   */
+  async function consultarTurno(clave: string | null, esperaMs = ESPERA_MAX_MS): Promise<Consulta> {
+    if (!clave) return { noExiste: true, motivo: 'sin_id' };
+    const tope = cfg.ahora() + esperaMs;
+    // En este proceso: el Map (en curso aquí, o recién hecho).
+    podar();
+    const e = turnos.get(clave);
+    if (e) {
+      if (e.desconocido) return { desconocido: { efectos: e.desconocido } };
+      let reloj: ReturnType<typeof setTimeout> | undefined;
+      const limite = new Promise<null>((r) => (reloj = setTimeout(() => r(null), Math.max(0, tope - cfg.ahora()))));
+      const previo = await Promise.race([e.promesa.catch(() => null), limite]).finally(() => clearTimeout(reloj));
+      if (previo) return { previo };
+      if (e.desconocido) return { desconocido: { efectos: e.desconocido } };
+      if (turnos.get(clave) === e && !e.hecho) return { enCurso: true };
+    }
+    // En el almacén durable (otra réplica, o antes de un reinicio): solo se LEE.
+    const { quien, id } = partir(clave);
+    let a: AlmacenDurable;
+    let k: string;
+    try {
+      a = cfg.almacen();
+      k = claveDe('turnos', quien, id);
+    } catch {
+      return { noExiste: true, motivo: 'sin_almacen' };
+    }
+    for (;;) {
+      const l = await a.leer<RegistroTurno>(k).catch(() => ({ ok: false as const, detalle: '' }));
+      if (l.ok === false) return { noExiste: true, motivo: 'sin_almacen' };
+      const reg = l.valor;
+      if (!reg) return { noExiste: true, motivo: 'no_existe' };
+      const conEfectos = (reg.efectos || []).length > 0;
+      if (reg.estado === 'hecho' && reg.resultado) return { previo: reg.resultado };
+      if (reg.estado === 'desconocido') return { desconocido: { efectos: reg.efectos } };
+      const t = cfg.ahora();
+      const vencido = reg.estado === 'en-curso' && reg.vence <= t;
+      // Su dueño murió (o terminó sin respuesta) después de despachar algo: incierto, como lo diría un reintento.
+      if ((vencido || reg.estado === 'libre' || reg.estado === 'hecho') && conEfectos) return { desconocido: { efectos: reg.efectos } };
+      // Terminó sin respuesta y sin efectos, o su dueño murió sin hacer nada: no hay nada guardado que repetir.
+      if (reg.estado === 'libre' || reg.estado === 'hecho' || vencido) return { noExiste: true, motivo: 'no_existe' };
+      // En curso en otro proceso con su lease vigente: se espera, como un reintento, hasta el tope.
+      const queda = tope - cfg.ahora();
+      if (queda <= 0) return { enCurso: true };
+      await pausa(Math.min(cfg.sondeoMs, queda));
+    }
+  }
+
   return {
     reclamarTurno,
+    consultarTurno,
     /** Pruebas: como un reinicio (o la muerte) del proceso: sin Map, sin renovar leases y con otra identidad. */
     olvidar() {
       turnos.clear();
@@ -452,6 +513,11 @@ const principal = crearTurnosUnicos();
 
 export function reclamarTurno(clave: string | null, esperaMs = ESPERA_MAX_MS): Promise<Reclamo> {
   return principal.reclamarTurno(clave, esperaMs);
+}
+
+/** «Solo repetir» (revisión 9, R1): la respuesta guardada de ese turno, sin correr nunca uno nuevo. */
+export function consultarTurno(clave: string | null, esperaMs = ESPERA_MAX_MS): Promise<Consulta> {
+  return principal.consultarTurno(clave, esperaMs);
 }
 
 /* ------------------------------------------------------------------ efectos del turno en curso */

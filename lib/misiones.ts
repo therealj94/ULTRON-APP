@@ -20,6 +20,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { s3GetJson, s3Listo, s3PutJson } from './s3';
 import { exito, fallo, type ResultadoHerramienta } from './recibo-herramienta';
+import { resultadoAutorizado, vistaDePersona, type VistaTexto } from './conocer-persona';
 import { fechaValida, finDelDiaLocal, ZONA_POR_OMISION, zonaValida } from './zona-horaria';
 
 /* ------------------------------------------------------------------ cajón seguro por correo */
@@ -549,8 +550,17 @@ export async function correrMision(dueno: string, arg: string, ahora = Date.now(
 /** Lo guardado: si no quedó en S3, el recibo lo dice y no se memoriza como hecho firme (AUR07). */
 const guardado = (numero: number | undefined, durable: boolean) => ({ efecto: 'guardado' as const, proveedor: 'misiones', ...(numero ? { referencia: `mision-${numero}` } : {}), durable, ...(durable ? {} : { incompleto: true }) });
 
-/** El runner con su estado y su recibo (AUR07): lo que no se pudo es `failed` con su código; lo guardado, `guardado`. */
-export async function correrMisionConEstado(dueno: string, arg: string, ahora = Date.now()): Promise<ResultadoHerramienta> {
+/**
+ * El runner con su estado y su recibo (AUR07): lo que no se pudo es `failed` con su código; lo guardado, `guardado`.
+ * Lo que devuelve va al modelo: pasa por la vista de lo que la persona limitó (revisión 11, MEDIO-2). `vista`: la del
+ * turno (server.ts); sin ella, la de `dueno` leída aquí.
+ */
+export async function correrMisionConEstado(dueno: string, arg: string, ahora = Date.now(), vista?: VistaTexto): Promise<ResultadoHerramienta> {
+  const r = await correrMisionCruda(dueno, arg, ahora);
+  return dueno ? resultadoAutorizado(r, vista ?? (await vistaDePersona(dueno)), 'MISIONES') : r;
+}
+
+async function correrMisionCruda(dueno: string, arg: string, ahora: number): Promise<ResultadoHerramienta> {
   if (!dueno) return fallo('MISIONES: solo con sesión. Pídele que entre con su cuenta.', 'sin-sesion');
   const [cabeza = '', ...partes] = String(arg || '').split('|').map((x) => x.trim());
   const m = cabeza.match(/^(\S+)\s*(.*)$/s);

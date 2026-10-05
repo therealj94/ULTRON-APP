@@ -164,13 +164,19 @@ test('teclado: el texto va compuesto al confirmar (IME), con acentos y emoji ent
   // Lo que hace un teclado con composición (Android/iOS): el campo cambia varias veces antes del texto final.
   for (const parcial of ['c', 'ca', 'caf', 'cafe', 'café']) assert.deepEqual(b.cambiar(parcial, []), null);
   assert.deepEqual(b.confirmar(false), [{ type: 'text_commit', payload: { texto: 'café' } }], 'una sola entrada, la final');
-  assert.deepEqual(b.confirmar(false), [], 'ya se mandó');
+  assert.deepEqual(b.confirmar(false), [], 'va en camino: no sale otra vez');
+  // A3: el campo no se vacía al confirmar, sino cuando el lote dice que llegó (tests/teclado-remoto-lote.test.ts).
+  assert.equal(b.texto, 'café');
+  b.aplicado();
+  assert.equal(b.texto, '');
   b.cambiar('café ☕ 👨‍👩‍👧', []);
   assert.deepEqual(b.confirmar(true), [
     { type: 'text_commit', payload: { texto: 'café ☕ 👨‍👩‍👧' } },
     { type: 'key', payload: { tecla: 'enter', mods: [] } },
   ]);
+  b.aplicado();
   assert.deepEqual(b.confirmar(true), [{ type: 'key', payload: { tecla: 'enter', mods: [] } }], 'campo vacío: solo Enter');
+  b.aplicado();
   // Pegar varias líneas: texto, Enter, texto (los saltos son la tecla Enter, no caracteres).
   b.cambiar('uno\ndos', []);
   assert.deepEqual(b.confirmar(false).map((e) => e.type), ['text_commit', 'key', 'text_commit']);
@@ -278,7 +284,8 @@ test('sesión: secuencia por control, un ACK por entrada, lo bloqueado no gasta 
   // Se cortó la red: lo que estaba en cola no se reenvía; al volver se sueltan teclas (release_all) y se pide imagen.
   s.mods.alternar('shift');
   falla = Object.assign(new Error('sin red'), { status: undefined });
-  assert.deepEqual(await s.entrada('key', { tecla: 'tab', mods: [] }), { ok: false, motivo: 'desconectado' });
+  // Salió y no volvió el ACK: «incierta» (A3), no se sabe si se aplicó y no se repite sola.
+  assert.deepEqual(await s.entrada('key', { tecla: 'tab', mods: [] }), { ok: false, motivo: 'desconectado', incierta: true });
   assert.deepEqual(s.mods.activos(), [], 'el modificador pulsado se suelta al perder la red');
   falla = null;
   const antes = enviadas.length;

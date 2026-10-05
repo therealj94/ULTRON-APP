@@ -8,8 +8,9 @@ on:
   pull_request:
   push:
     branches: [main]
+    # La web importa módulos de mobile/src (p. ej. mobile/src/lib/trabajos): un cambio solo en mobile/ también se
+    # prueba aquí, con su navegador.
     paths-ignore:
-      - "mobile/**"
       - "**.md"
 
 concurrency:
@@ -117,15 +118,80 @@ jobs:
       - name: Pruebas (tanda ${{ matrix.tanda }}/4)
         run: npx tsx --test --test-concurrency=1 $(node scripts/qa/repartir-pruebas.mjs ${{ matrix.tanda }} 4)
 
-  # El nombre de siempre («web») para quien espere ese check: verde solo si las cuatro tandas lo están.
+  # Las regresiones en un navegador REAL (punto 4 de la revisión del 4-oct): cambio de cuenta, respuesta tardía de otra
+  # cuenta, puerta sin sesión y paneles. Obligatorias: con AURA_EXIGIR_NAVEGADOR=1 no se saltan; sin Chromium o sin
+  # dist/ fallan, y si alguna aparece omitida este trabajo falla y «web» no queda verde.
+  navegador:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NODE_ENV: test
+      ULTRON_MEMORIA_BUCKET: ""
+      AWS_ACCESS_KEY_ID: ""
+      AWS_SECRET_ACCESS_KEY: ""
+      AURA_EXIGIR_NAVEGADOR: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Chromium y sus dependencias del sistema
+        run: |
+          npx playwright install --with-deps chromium
+          echo "AURA_CHROMIUM=$(node -e "process.stdout.write(require('playwright').chromium.executablePath())")" >> "$GITHUB_ENV"
+      - run: npm run build
+      - name: Regresiones en navegador real (obligatorias)
+        run: |
+          set -o pipefail
+          npx tsx --test --test-concurrency=1 tests/aura-web-paneles.test.ts | tee navegador.tap
+          grep -q '^# fail 0$' navegador.tap
+          # Ninguna omitida, pendiente ni cancelada: una prueba de navegador que no corrió no cuenta como validada.
+          grep -q '^# skipped 0$' navegador.tap || { echo "::error::hay pruebas de navegador omitidas"; exit 1; }
+          grep -q '^# todo 0$' navegador.tap || { echo "::error::hay pruebas de navegador marcadas como pendientes"; exit 1; }
+          grep -q '^# cancelled 0$' navegador.tap || { echo "::error::hay pruebas de navegador canceladas"; exit 1; }
+          # Y que de verdad corrieran: un archivo vacío también da «fail 0».
+          corridas=$(sed -n 's/^# pass \([0-9]*\)$/\1/p' navegador.tap)
+          [ "${corridas:-0}" -ge 15 ] || { echo "::error::solo pasaron ${corridas:-0} pruebas de navegador (mínimo 15)"; exit 1; }
+
+  # El nodo de la computadora (scripts/nodo-computadora/agente.py, Python): sus pruebas son solo con la biblioteca
+  # estándar y antes no corrían en ninguna CI (auditoría del 4-oct, matriz de superficies).
+  nodo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # Revisión 9: un control que pasa con 0 pruebas no prueba nada. Se exige el «OK» final de unittest y al menos
+      # MIN_PRUEBAS pruebas corridas («Ran N tests»); si se borran o dejan de descubrirse, el check falla.
+      - name: Pruebas del nodo (agente.py)
+        working-directory: scripts/nodo-computadora
+        env:
+          MIN_PRUEBAS: "100"
+        run: |
+          set -euo pipefail
+          python3 -m py_compile agente.py
+          python3 test_agente.py 2>&1 | tee "$RUNNER_TEMP/salida-nodo.txt"
+          n=$(sed -n 's/^Ran \([0-9][0-9]*\) tests\{0,1\} in .*/\1/p' "$RUNNER_TEMP/salida-nodo.txt" | tail -n 1)
+          n=${n:-0}
+          echo "pruebas del nodo: $n (mínimo $MIN_PRUEBAS)"
+          grep -Eq '^OK( \(.*\))?$' "$RUNNER_TEMP/salida-nodo.txt" || { echo "::error::las pruebas del nodo no terminaron con OK"; exit 1; }
+          [ "$n" -ge "$MIN_PRUEBAS" ] || { echo "::error::solo $n pruebas del nodo (mínimo $MIN_PRUEBAS)"; exit 1; }
+
+  # El nombre de siempre («web») para quien espere ese check: verde solo si las cuatro tandas, el navegador y el nodo lo están.
   web:
-    needs: pruebas
+    needs: [pruebas, navegador, nodo]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: ¿Pasaron las cuatro tandas?
+      - name: ¿Pasaron las cuatro tandas y el navegador?
         env:
           RESULTADO: ${{ needs.pruebas.result }}
+          NAVEGADOR: ${{ needs.navegador.result }}
+          NODO: ${{ needs.nodo.result }}
         run: |
-          echo "tandas: $RESULTADO"
-          [ "$RESULTADO" = "success" ]
+          echo "tandas: $RESULTADO · navegador: $NAVEGADOR · nodo: $NODO"
+          [ "$RESULTADO" = "success" ] && [ "$NAVEGADOR" = "success" ] && [ "$NODO" = "success" ]

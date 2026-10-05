@@ -221,7 +221,7 @@ export function montarRutasCerebroContinuo(app: express.Express, d: Deps) {
     }
   });
 
-  // José en su app: aquí, y solo aquí, puede dar el permiso permanente para recordatorios.
+  // José en su app: aquí, y solo aquí, se guarda permisos.recordatorios. Ya no autoriza ningún envío (permisos exactos, 4-oct).
   app.post('/api/circulo', d.exigirMesa, d.limitar(30), async (req, res) => {
     const c = quien(req, res);
     if (!c) return;

@@ -25,6 +25,8 @@
  *  · `completed` exige que cada criterio obligatorio esté verificado CON evidencia; si falta, es `partial`.
  *    Evidencia es lo que se comprobó, no lo que el modelo dice: «listo», «hecho» o «guardé el archivo» no cuentan
  *    (`evaluarEntrega`: el archivo lo comprueba el nodo; la página, un paso hecho; el dato pedido, la respuesta que lo trae).
+ *  · Cada cosa pedida es SU criterio con SU evidencia (lib/entregables.ts): tres documentos son tres criterios, un archivo
+ *    cumple a lo más uno, y una evidencia que no está en el resultado (o una de archivo copiada a varios) no cuenta.
  *  · Cada mutación pedida por la persona trae `expectedVersion`; conflicto devuelve el snapshot actual.
  *  · Progreso solo con denominador real («3 de 5 pasos hechos»); nunca un porcentaje inventado.
  *  · Nada aquí guarda contraseñas ni tokens; del borrador se guarda lo que se le mostró (destinatario,
@@ -40,6 +42,9 @@ import {
   reservarPedido,
   type AlmacenDurable,
 } from './durable';
+import { compararEntrega, comprobarCopia, esConsulta, esOperacionDeArchivos, esTextoEnChat, faltaEnPalabras, nombresEn, remiteAOtroLugar, respuestaConTexto, textoSinAcuses, requisitosCombinados, requisitosDeEntrega, type ArchivoNodo, type ItemEntrega, type PedidoEntrega } from './entregables';
+
+export { esConsulta, esOperacionDeArchivos, nombresEn, requisitosCombinados, requisitosDeEntrega, VALIDADOR_MIN, type ArchivoNodo, type ItemEntrega, type PedidoEntrega } from './entregables';
 
 /* ------------------------------------------------------------------ estados */
 
@@ -58,6 +63,9 @@ export const ESTADOS_TAREA = [
   'reconciling',
   'verifying',
   'completed',
+  // Ronda 7: terminó RESPONDIENDO (una consulta o un texto en el chat). Terminal, pero NUNCA comprobada ni completada:
+  // «te respondí con lo que encontré; si además pediste algo, eso NO está comprobado» (ronda 8: nunca «no hice nada»).
+  'respondida',
   'partial',
   'failed',
   'blocked',
@@ -66,7 +74,7 @@ export const ESTADOS_TAREA = [
 ] as const;
 export type EstadoTarea = (typeof ESTADOS_TAREA)[number];
 
-export const TERMINALES: ReadonlySet<EstadoTarea> = new Set<EstadoTarea>(['completed', 'partial', 'failed', 'cancelled']);
+export const TERMINALES: ReadonlySet<EstadoTarea> = new Set<EstadoTarea>(['completed', 'respondida', 'partial', 'failed', 'cancelled']);
 export const esTerminal = (e: EstadoTarea) => TERMINALES.has(e);
 /** Los que se pueden pausar (un trabajo vivo, no uno que ya espera a la persona ni uno que se está cerrando). */
 const PAUSABLES: ReadonlySet<EstadoTarea> = new Set<EstadoTarea>(['created', 'planning', 'queued', 'waiting_resource', 'running', 'verifying', 'blocked', 'reconciling']);
@@ -99,7 +107,16 @@ export type Opcion = { id: OpcionId; etiqueta: string; efecto: string; riesgo: '
 /** A qué está ligada la aprobación: lo exacto que se ejecuta (y que se vuelve a mirar antes de hacerlo). */
 export type Vinculo =
   | { tipo: 'borrador'; canal: 'correo' | 'whatsapp'; ambito: string; intento: string; hash: string }
-  | { tipo: 'tarea-en-curso'; ambito: string; tareaId: string };
+  | { tipo: 'tarea-en-curso'; ambito: string; tareaId: string }
+  | VinculoTaller;
+
+/**
+ * Lo que el taller de la junta propone y solo hace con su aprobación (revisión 10, MEDIO-C; lib/taller.ts): la acción,
+ * sus argumentos CONGELADOS (lo que se ejecuta es esto, no lo que se vuelva a entender del chat), la cuenta que la pidió,
+ * quién era en el padrón y la `huella` (cuenta + acción + destino configurado + contenido + versión). Si al aprobar la
+ * huella recalculada no es la misma (otro contenido, otro destino, otra cuenta), no se ejecuta.
+ */
+export type VinculoTaller = { tipo: 'taller'; accion: string; args: Record<string, unknown>; cuenta: string; quien: string | null; huella: string; version: number };
 
 export type Decision = {
   id: string;
@@ -169,8 +186,14 @@ export type RegistroTarea = {
 
 /** Cuántos eventos se guardan con la tarea (el resto se reconstruye con el snapshot). */
 export const MAX_EVENTOS = 60;
-/** Cuántas tareas durables recuerda el índice de cada dueño. */
-export const MAX_INDICE = 40;
+/**
+ * Cuántas tareas TERMINADAS recuerda el índice de cada dueño (P5/A7). Las que no se sabe que terminaron no se recortan
+ * nunca: antes el índice guardaba las 40 más nuevas y la 41.ª tarea activa sacaba a la primera, que seguía en cola.
+ */
+export const MAX_HISTORIAL_INDICE = 200;
+/** Versión del esquema de la tarea durable y de su índice (va en el manifiesto de entrega). */
+export const ESQUEMA_TAREAS = 1;
+export const ESQUEMA_INDICE = 2;
 export const ESPACIO_TAREAS = 'tareas';
 export const ESPACIO_PEDIDOS = 'tareas/pedidos';
 export const ESPACIO_INDICE = 'tareas/indice';
@@ -191,9 +214,29 @@ const claveIndice = (dueno: string) => claveDe(ESPACIO_INDICE, dueno, 'lista');
 
 /* ------------------------------------------------------------------ reglas puras */
 
-/** ¿Cada criterio obligatorio quedó verificado con al menos una evidencia? (invariante 5). */
-export function criteriosCumplidos(criterios: Criterio[]): boolean {
-  return criterios.filter((c) => c.obligatorio).every((c) => c.estado === 'verified' && c.evidencias.length > 0);
+/**
+ * ¿Cada criterio obligatorio quedó verificado con SU evidencia? (invariante 5). Con las evidencias del resultado
+ * (`evidencias`), además: cada id que cita un criterio existe en el resultado, y una evidencia de ARCHIVO respalda a lo
+ * más un criterio obligatorio (un archivo no cumple dos cosas pedidas; una lista compartida copiada a todos no vale).
+ */
+export function criteriosCumplidos(criterios: Criterio[], evidencias?: Evidencia[] | null): boolean {
+  const obligatorios = criterios.filter((c) => c.obligatorio);
+  if (!obligatorios.every((c) => c.estado === 'verified' && c.evidencias.length > 0)) return false;
+  if (!evidencias) return true;
+  const porId = new Map(evidencias.map((e) => [e.id, e]));
+  const archivos = new Set<string>();
+  for (const c of obligatorios) {
+    for (const id of c.evidencias) {
+      const e = porId.get(id);
+      if (!e) return false;
+      if (e.tipo === 'archivo') {
+        const clave = e.ref || e.id;
+        if (archivos.has(clave)) return false;
+        archivos.add(clave);
+      }
+    }
+  }
+  return true;
 }
 
 export type Cambio = {
@@ -230,7 +273,8 @@ export function aplicarCambio(reg: RegistroTarea, c: Cambio, ahora: number): { o
   }
   if (!transicionValida(reg.estado, a)) return { ok: false, motivo: 'transicion' };
   const criterios = c.criterios ?? reg.criterios;
-  if (a === 'completed' && !criteriosCumplidos(criterios)) return { ok: false, motivo: 'sin-evidencia' };
+  const resultado = c.resultado !== undefined ? c.resultado : reg.resultado;
+  if (a === 'completed' && !criteriosCumplidos(criterios, resultado ? resultado.evidencias : null)) return { ok: false, motivo: 'sin-evidencia' };
   const n: RegistroTarea = JSON.parse(JSON.stringify(reg));
   const eventos: { type: EventoTarea['type']; payload: Record<string, unknown> }[] = [];
   if (a !== reg.estado) {
@@ -351,26 +395,84 @@ export async function crearTarea(dueno: string, d: NuevaTarea, o: Opciones = {})
   if (!d.requestId || !d.titulo) return { ok: false, motivo: 'invalida', detalle: 'falta requestId o título' };
   const r = await reservarPedido({ espacio: ESPACIO_PEDIDOS, dueno, requestId: d.requestId, propuesto: idNuevo('tk'), almacen: a });
   if (r.ok === false) return { ok: false, motivo: 'almacen', detalle: r.detalle };
+  // P5/A7: el índice ANTES que el objeto. Una tarea que existe siempre está en su índice (antes se escribía la tarea, el
+  // índice fallaba con un aviso en el log y la tarea «creada» no salía nunca en la lista). Si el índice no se puede
+  // escribir, no se crea la tarea: el reintento del mismo pedido reserva el MISMO id y la deja anotada y creada. Una
+  // entrada sin objeto (se cayó entre las dos escrituras) no es una tarea: la lista la salta y la poda con el tiempo.
+  const ix = await indexar(dueno, r.id, ahora, a);
+  if (ix.ok === false) return { ok: false, motivo: 'almacen', detalle: `no pude anotar la tarea en tu índice; no la creé (${ix.detalle.slice(0, 100)})` };
   // Si quien reservó murió antes de escribir la tarea, el siguiente la escribe con el MISMO id.
   const c = await crearUnaVez(claveTarea(dueno, r.id), registroNuevo(r.id, d, ahora), a);
   if (c.ok === false) return { ok: false, motivo: 'almacen', detalle: c.detalle };
-  await indexar(dueno, r.id, ahora, a);
   return { ok: true, creada: c.creado, tarea: c.valor };
 }
 
-type Indice = { v: 1; ids: { id: string; t: number }[] };
+/**
+ * El índice de un dueño. `fin`: cuándo se supo que terminó (solo esas se recortan, las más viejas primero). Una entrada
+ * sin `fin` es «puede seguir activa» (las del índice v1 no lo traen): la lista la lee y, si ya terminó, la repara.
+ */
+type EntradaIndice = { id: string; t: number; fin?: number };
+type Indice = { v: 1 | 2; ids: EntradaIndice[] };
 
-async function indexar(dueno: string, id: string, ahora: number, a: AlmacenDurable) {
-  const r = await modificarDurable<Indice>(
+/** Recorta el índice: todas las que pueden seguir activas y las MAX_HISTORIAL_INDICE terminadas más recientes. */
+function recortarIndice(ids: EntradaIndice[]): EntradaIndice[] {
+  const terminadas = ids.filter((x) => x.fin).sort((x, y) => y.fin! - x.fin!);
+  const fuera = new Set(terminadas.slice(MAX_HISTORIAL_INDICE).map((x) => x.id));
+  return fuera.size ? ids.filter((x) => !fuera.has(x.id)) : ids;
+}
+
+async function indexar(dueno: string, id: string, ahora: number, a: AlmacenDurable): Promise<{ ok: true } | { ok: false; detalle: string }> {
+  let ultimo = '';
+  // Un fallo pasajero del almacén se reintenta una vez (los conflictos ya los reintenta modificarDurable).
+  for (let i = 0; i < 2; i++) {
+    const r = await modificarDurable<Indice>(
+      claveIndice(dueno),
+      (ix) => {
+        const ids = ix?.ids || [];
+        if (ids.some((x) => x.id === id)) return undefined;
+        return { v: 2, ids: recortarIndice([{ id, t: ahora }, ...ids]) };
+      },
+      a
+    );
+    if (r.ok === true) return { ok: true };
+    ultimo = r.detalle;
+  }
+  console.warn('[tareas] no pude anotar la tarea en el índice (no se crea):', ultimo.slice(0, 120));
+  return { ok: false, detalle: ultimo };
+}
+
+/**
+ * Repara el índice con lo que se aprendió al leer: `fin` para las que ya terminaron, fuera las entradas sin objeto que
+ * llevan más de un día (una creación que se cayó a medias) y dentro una tarea que existe y no estaba (`agregar`).
+ * Lo mejor posible: si falla, el índice queda como estaba (nunca se pierde una activa por esto).
+ */
+async function repararIndice(dueno: string, r: { fines?: Map<string, number>; podar?: Set<string>; agregar?: EntradaIndice }, a: AlmacenDurable): Promise<void> {
+  if (!r.fines?.size && !r.podar?.size && !r.agregar) return;
+  await modificarDurable<Indice>(
     claveIndice(dueno),
     (ix) => {
-      const ids = ix?.ids || [];
-      if (ids.some((x) => x.id === id)) return undefined;
-      return { v: 1, ids: [{ id, t: ahora }, ...ids].slice(0, MAX_INDICE) };
+      let ids = ix?.ids || [];
+      let cambio = false;
+      if (r.agregar && !ids.some((x) => x.id === r.agregar!.id)) {
+        ids = [r.agregar, ...ids];
+        cambio = true;
+      }
+      ids = ids.flatMap((x) => {
+        if (r.podar?.has(x.id)) {
+          cambio = true;
+          return [];
+        }
+        const fin = r.fines?.get(x.id);
+        if (fin && !x.fin) {
+          cambio = true;
+          return [{ ...x, fin }];
+        }
+        return [x];
+      });
+      return cambio ? { v: 2, ids: recortarIndice(ids) } : undefined;
     },
     a
-  );
-  if (r.ok === false) console.warn('[tareas] no pude anotar la tarea en el índice:', r.detalle.slice(0, 120));
+  ).catch(() => undefined);
 }
 
 /** La tarea id de una petición ya reservada (sin crear nada). null si no hay. */
@@ -388,14 +490,106 @@ export async function leerTarea(dueno: string, id: string, a: AlmacenDurable = a
   return { ok: true, tarea: l.valor };
 }
 
-/** Las durables del dueño, la más nueva primero. `ok: false` si el índice no se pudo leer. */
-export async function listarTareas(dueno: string, a: AlmacenDurable = almacenDurable()): Promise<{ ok: true; tareas: RegistroTarea[] } | { ok: false; detalle: string }> {
+/**
+ * Una tarea que se leyó directamente por su id (la app la tenía de una respuesta del chat): si existe y no estaba en el
+ * índice (una tarea de antes de P5 que el tope de 40 sacó), se vuelve a anotar. Así el índice es REPARABLE.
+ */
+export async function asegurarEnIndice(dueno: string, reg: Pick<RegistroTarea, 'id' | 'creada' | 'estado' | 'actualizada'>, a: AlmacenDurable = almacenDurable()): Promise<void> {
+  const ix = await leerDurable<Indice>(claveIndice(dueno), a).catch(() => null);
+  if (!ix || ix.ok === false || ix.valor?.ids.some((x) => x.id === reg.id)) return;
+  await repararIndice(dueno, { agregar: { id: reg.id, t: reg.creada, ...(esTerminal(reg.estado) ? { fin: reg.actualizada } : {}) } }, a);
+}
+
+/**
+ * Una página de la lista (P5/A7). `completo: false` si alguna tarea del índice no se pudo leer (`noLeidas`): un fallo del
+ * almacén NUNCA es «no hay tareas». `siguiente`: el cursor de la página que sigue (null si no hay más). Orden estable:
+ * primero las que pueden seguir activas (la más nueva primero) y después las terminadas (la que terminó más tarde
+ * primero). Con `recientesMs`, las terminadas hace más que eso no se devuelven (siguen en el índice, son historial).
+ */
+export type PaginaTareas = {
+  ok: true;
+  tareas: RegistroTarea[];
+  noLeidas: string[];
+  completo: boolean;
+  siguiente: string | null;
+  conteo: { activas: number; terminadas: number; indice: number; noLeidas: number };
+};
+export type OpcionesLista = { limite?: number; cursor?: string | null; recientesMs?: number; ahora?: number };
+
+type Cursor = { s: 'a' | 'h'; k: number; id: string };
+const leerCursor = (c: string | null | undefined): Cursor | null => {
+  if (!c) return null;
+  try {
+    const x = JSON.parse(Buffer.from(String(c), 'base64url').toString('utf8'));
+    return (x?.s === 'a' || x?.s === 'h') && Number.isFinite(x.k) && typeof x.id === 'string' ? { s: x.s, k: x.k, id: x.id } : null;
+  } catch {
+    return null;
+  }
+};
+const escribirCursor = (c: Cursor) => Buffer.from(JSON.stringify(c)).toString('base64url');
+/** Dónde va cada entrada en el orden de la lista. */
+const posicion = (x: EntradaIndice): Cursor => (x.fin ? { s: 'h', k: x.fin, id: x.id } : { s: 'a', k: x.t, id: x.id });
+/** ¿`p` va antes que `q`? Activas antes que historial; dentro, la clave mayor primero; empate, por id. */
+const antes = (p: Cursor, q: Cursor) => (p.s !== q.s ? p.s === 'a' : p.k !== q.k ? p.k > q.k : p.id < q.id);
+
+export async function listarTareasPagina(dueno: string, o: OpcionesLista = {}, a: AlmacenDurable = almacenDurable()): Promise<PaginaTareas | { ok: false; detalle: string }> {
   const ix = await leerDurable<Indice>(claveIndice(dueno), a);
   if (ix.ok === false) return { ok: false, detalle: ix.detalle };
-  const ids = ix.valor?.ids || [];
-  const leidas = await Promise.all(ids.map((x) => leerTarea(dueno, x.id, a)));
-  const tareas = leidas.flatMap((l) => (l.ok && l.tarea ? [l.tarea] : []));
-  return { ok: true, tareas: tareas.sort((x, y) => y.actualizada - x.actualizada) };
+  const ahora = o.ahora ?? Date.now();
+  const limite = o.limite && o.limite > 0 ? Math.floor(o.limite) : Infinity;
+  const desde = leerCursor(o.cursor);
+  const corte = o.recientesMs !== undefined ? ahora - o.recientesMs : -Infinity;
+  const entradas = (ix.valor?.ids || []).map((x) => ({ x, p: posicion(x) })).sort((u, v) => (antes(u.p, v.p) ? -1 : 1));
+  // Las terminadas fuera de `recientesMs` no se leen: ya se sabe que no van.
+  const candidatas = entradas.filter((e) => !(e.x.fin && e.x.fin < corte) && (!desde || antes(desde, e.p)));
+  const tareas: RegistroTarea[] = [];
+  const noLeidas: string[] = [];
+  const fines = new Map<string, number>();
+  const podar = new Set<string>();
+  const sinObjeto = new Set<string>();
+  let ultima: Cursor | null = null;
+  let i = 0;
+  // De a 10 en paralelo, hasta llenar la página.
+  while (i < candidatas.length && tareas.length < limite) {
+    const tanda = candidatas.slice(i, i + Math.min(10, Math.max(1, limite === Infinity ? 10 : limite - tareas.length)));
+    i += tanda.length;
+    const leidas = await Promise.all(tanda.map((e) => leerTarea(dueno, e.x.id, a).catch((err) => ({ ok: false as const, detalle: String(err?.message || err) }))));
+    tanda.forEach((e, j) => {
+      const l = leidas[j];
+      ultima = e.p;
+      if (l.ok === false) {
+        noLeidas.push(e.x.id);
+        return;
+      }
+      if (!l.tarea) {
+        sinObjeto.add(e.x.id);
+        if (ahora - e.x.t > 86_400_000) podar.add(e.x.id);
+        return;
+      }
+      if (esTerminal(l.tarea.estado) && !e.x.fin) fines.set(e.x.id, l.tarea.actualizada);
+      if (esTerminal(l.tarea.estado) && l.tarea.actualizada < corte) return;
+      tareas.push(l.tarea);
+    });
+  }
+  await repararIndice(dueno, { fines, podar }, a);
+  const quedan = i < candidatas.length;
+  const total = ix.valor?.ids.length ?? 0;
+  const terminadas = (ix.valor?.ids || []).filter((x) => x.fin || fines.has(x.id)).length;
+  return {
+    ok: true,
+    tareas,
+    noLeidas,
+    completo: noLeidas.length === 0,
+    siguiente: quedan && ultima ? escribirCursor(ultima) : null,
+    conteo: { activas: total - terminadas - sinObjeto.size, terminadas, indice: total, noLeidas: noLeidas.length },
+  };
+}
+
+/** Las durables del dueño (todas las del índice), la más nueva primero. `ok: false` si el índice no se pudo leer. */
+export async function listarTareas(dueno: string, a: AlmacenDurable = almacenDurable()): Promise<{ ok: true; tareas: RegistroTarea[]; noLeidas: string[]; completo: boolean } | { ok: false; detalle: string }> {
+  const p = await listarTareasPagina(dueno, {}, a);
+  if (p.ok === false) return p;
+  return { ok: true, tareas: p.tareas.sort((x, y) => y.actualizada - x.actualizada), noLeidas: p.noLeidas, completo: p.completo };
 }
 
 /* ------------------------------------------------------------------ cambiar */
@@ -435,7 +629,11 @@ export async function cambiarTarea(
   );
   if (r.ok === false) return { ok: false, motivo: 'almacen', detalle: r.detalle, tarea: visto };
   if (motivo) return { ok: false, motivo, tarea: visto };
-  return { ok: true, tarea: (r.valor as RegistroTarea | null) || visto!, cambiado };
+  const final = (r.valor as RegistroTarea | null) || visto!;
+  // Terminó: su entrada del índice pasa a historial (solo esas se recortan). Si no se puede anotar, queda como «puede
+  // seguir activa» (la lista la lee y lo repara): nunca al revés.
+  if (cambiado && visto && !esTerminal(visto.estado) && esTerminal(final.estado)) await repararIndice(dueno, { fines: new Map([[id, final.actualizada]]) }, a);
+  return { ok: true, tarea: final, cambiado };
 }
 
 /* ------------------------------------------------------------------ decisiones */
@@ -657,13 +855,6 @@ export function deTareaEnCurso(t: TareaEnCursoMin): TaskSnapshot {
   };
 }
 
-/**
- * Un archivo que el NODO comprobó al terminar (agente.py `comprobar_archivos`): dentro del espacio de trabajo de la
- * misión, con su tamaño y su sha256. `reciente`: cambió durante esta misión. `mencionado`: lo nombraban la instrucción
- * o la respuesta. `fuera`: lo nombrado caía fuera del espacio (no se miró). Nunca sale del texto del modelo.
- */
-export type ArchivoNodo = { ruta: string; existe: boolean; bytes: number; sha256: string | null; reciente?: boolean; mencionado?: boolean; fuera?: boolean };
-
 /** Lo mínimo de una misión de su computadora (server/computadora.ts: historialDe + vistaMision). */
 export type MisionComputadoraMin = {
   id: string;
@@ -682,6 +873,10 @@ export type MisionComputadoraMin = {
   datos?: { clave: string; valor: string }[];
   /** Lo que el nodo comprobó en su espacio de trabajo al terminar. undefined/null: no se comprobó (un nodo de antes). */
   archivos?: ArchivoNodo[] | null;
+  /** Lo que se pidió, calculado UNA vez al crear la misión con lo que pidió la persona (R5). Sin él, de la instrucción. */
+  requisitos?: PedidoEntrega | null;
+  /** Lo que pidió la PERSONA en su turno (G2-C): la acción, el archivo o el producto cuentan si aparecen en cualquiera de las dos. */
+  pedidoPersona?: string | null;
 };
 
 /** El estado del nodo en el vocabulario de la sección 6. */
@@ -727,7 +922,7 @@ const EXT_ARCHIVO = 'odt|ods|odp|odg|docx?|xlsx?|pptx?|pdf|txt|csv|tsv|md|rtf|ht
 const RE_PIDE_GUARDAR = /\b(guarda(lo|la|los|las|me|melo|mela)?|guardar(lo|la|los|las)?|guardes|descarga(lo|la|los|las|me)?|descargar(lo|la|los|las)?|bajate|exporta(lo|la|los)?|exportar(lo|la)?|save|download|export)\b/;
 /** …o crear un documento, una hoja, un PDF (con nombre de archivo o sin él). */
 const RE_PIDE_CREAR = new RegExp(
-  `\\b(crea|crear|creame|haz|hazme|escribe|escribir|escribeme|genera|generar|arma|armame|prepara|preparame|redacta|make|create|write|generate|draft)\\b[^.;\\n]{0,60}?(\\b(documento|archivo|hoja( de calculo)?|planilla|presentacion|pdf|carpeta|word|excel|document|file|spreadsheet|presentation|folder)\\b|[\\w-][\\w.-]*\\.(${EXT_ARCHIVO})(?![\\w-]))`
+  `\\b(crea|crear|creame|haz|hazme|escribe|escribir|escribeme|genera|generar|arma|armame|prepara|preparame|redacta|toma|tomame|saca|sacame|make|create|write|generate|draft|take)\\b[^.;\\n]{0,60}?(\\b(documentos?|archivos?|hojas?( de calculo)?|planillas?|presentacion(es)?|pdfs?|carpetas?|words?|excel(es|s)?|capturas?|imagen(es)?|fotos?|screenshots?|images?|documents?|files?|spreadsheets?|presentations?|folders?)\\b|[\\w-][\\w.-]*\\.(${EXT_ARCHIVO})(?![\\w-]))`
 );
 /** La respuesta dice que dejó un archivo. */
 const RE_DICE_ARCHIVO =
@@ -749,10 +944,18 @@ const RELLENO = new Set(
   ).split(' ')
 );
 
-/** ¿Pide (o dice que dejó) un archivo? */
-export function pideArchivo(instruccion: string, respuesta?: string | null): boolean {
+/**
+ * ¿Pide (o dice que dejó) un archivo? También si de la instrucción salen entregables concretos (nombres que se entregan,
+ * «tres PDFs», «una captura», «las facturas de enero, febrero y marzo»): una misión de archivos NUNCA se comprueba con
+ * el texto de la respuesta (revisión independiente).
+ */
+export function pideArchivo(instruccion: string, respuesta?: string | null, pedido?: PedidoEntrega | null): boolean {
+  if (pedido && pedido.explicitos > 0) return true;
+  // Una extensión conocida obliga a entrega: nunca es un dato (ronda 5).
+  if (nombresEn(sinUrls(String(instruccion || ''))).length) return true;
   const p = plegar(sinUrls(String(instruccion || '')));
-  return RE_PIDE_GUARDAR.test(p) || RE_PIDE_CREAR.test(p) || RE_DICE_ARCHIVO.test(plegar(sinUrls(String(respuesta || ''))));
+  if (RE_PIDE_GUARDAR.test(p) || RE_PIDE_CREAR.test(p) || RE_DICE_ARCHIVO.test(plegar(sinUrls(String(respuesta || ''))))) return true;
+  return requisitosDeEntrega(instruccion).explicitos > 0;
 }
 
 /** ¿Pide una acción con efecto afuera (enviar, publicar, llenar un formulario…)? Eso no se comprueba desde aquí. */
@@ -767,52 +970,126 @@ export function respuestaInformativa(respuesta: string | null | undefined): bool
   return palabras.filter((w) => w.length >= 3 && !RELLENO.has(w)).length >= 3;
 }
 
-/** ¿El nodo comprobó este archivo? Existe, más de 0 bytes, sha256 de verdad, de esta misión y dentro de su espacio. */
+/**
+ * ¿El archivo está íntegro? Existe, más de 0 bytes, sha256 de verdad, de ESTA misión y dentro de su espacio. Es solo la
+ * integridad: que sea lo pedido (nombre, tipo por dentro, cuántos) lo decide `evaluarEntrega` requisito por requisito.
+ */
 export function archivoComprobado(a: unknown): boolean {
   const x = a as ArchivoNodo | null;
-  if (!x || typeof x !== 'object' || x.existe !== true || x.fuera === true || x.reciente === false) return false;
+  if (!x || typeof x !== 'object' || x.existe !== true || x.fuera === true || x.reciente !== true) return false;
   const ruta = typeof x.ruta === 'string' ? x.ruta : '';
   if (!ruta || ruta.length > 400 || /[\u0000-\u001f]/.test(ruta) || /(^|\/)\.\.(\/|$)/.test(ruta)) return false;
   return Number.isFinite(x.bytes) && x.bytes > 0 && typeof x.sha256 === 'string' && /^[0-9a-f]{64}$/.test(x.sha256);
 }
 
-const nombreDe = (ruta: string) => texto(String(ruta).split('/').filter(Boolean).pop() || ruta, 80);
+/**
+ * Lo que se sabe de lo entregado: si se comprobó, qué lo comprueba y, si no, qué falta (dicho con honestidad).
+ * `items`: cada cosa pedida con su estado y su archivo (solo para archivos); `hechos` de `total` pedidos. `revisado`:
+ * el nodo revisó sus archivos al terminar (false: un nodo de antes o no pudo mirar; nada de archivos se comprobó).
+ */
+export type Entrega = {
+  comprobada: boolean;
+  tipo: 'archivo' | 'accion' | 'dato';
+  evidencias: Evidencia[];
+  falta: string | null;
+  items: ItemEntrega[];
+  hechos: number;
+  total: number;
+  revisado: boolean;
+  /**
+   * Ronda 7: terminó RESPONDIENDO (una consulta pura o un texto en el chat que vino en la respuesta). Nunca es
+   * `comprobada`: se cierra `respondida`, no `completed`.
+   */
+  respondida?: boolean;
+};
 
-/** Lo que se sabe de lo entregado: si se comprobó, qué lo comprueba y, si no, qué falta (dicho con honestidad). */
-export type Entrega = { comprobada: boolean; tipo: 'archivo' | 'accion' | 'dato'; evidencias: Evidencia[]; falta: string | null };
+/**
+ * Lo que se le dice a la persona cuando se respondió (ronda 8, G-B): NUNCA afirma que no hubo efecto. La misión corrió
+ * en la computadora, que pudo tocar cosas; si además se pidió una acción, no está comprobada.
+ */
+export const SOLO_RESPONDI = 'Te respondí con lo que encontré. Si además pediste que hiciera algo, eso NO está comprobado: revisa antes de darlo por hecho.';
+export const SOLO_RESPONDI_EN = 'I answered with what I found. If you also asked me to do something, that is NOT verified: check before taking it as done.';
 
-export function evaluarEntrega(m: Pick<MisionComputadoraMin, 'id' | 'instruccion' | 'resultado' | 'enlaces' | 'datos' | 'archivos'>): Entrega {
+/** El id de la evidencia de un requisito verificado: uno por requisito, nunca compartido. */
+const idEvidenciaItem = (misionId: string, itemId: string) => `${misionId}:archivo:${itemId}`;
+
+export function evaluarEntrega(m: Pick<MisionComputadoraMin, 'id' | 'instruccion' | 'resultado' | 'enlaces' | 'datos' | 'archivos' | 'requisitos'> & { pedidoPersona?: string | null }): Entrega {
   const abiertas: Evidencia[] = (m.enlaces || []).slice(0, 6).map((u, i) => ({ id: `${m.id}:enlace:${i}`, tipo: 'enlace', etiqueta: texto(u, 120), ref: u }));
   const lista = Array.isArray(m.archivos) ? m.archivos : null;
-  if (pideArchivo(m.instruccion, m.resultado)) {
-    if (!lista) return { comprobada: false, tipo: 'archivo', evidencias: abiertas, falta: 'Tu computadora dice que dejó el archivo, pero no pude comprobarlo: no revisó sus archivos al terminar.' };
-    const buenos = lista.filter(archivoComprobado);
-    // Lo que nombró y no está (o no es de esta misión) pesa: que haya otro archivo no lo suple.
-    const malos = lista.filter((a) => !archivoComprobado(a) && (a?.mencionado || a?.existe !== true));
-    if (!buenos.length || malos.length) {
-      const nombres = [...new Set(malos.map((a) => nombreDe(a?.ruta)))].slice(0, 3);
-      const falta = nombres.length
-        ? `No encontré ${nombres.map((n) => `«${n}»`).join(', ')} en tu computadora (en su carpeta de trabajo y hecho en esta misión): no pude comprobar que quedó guardado.`
-        : 'No encontré ningún archivo nuevo en tu computadora: no pude comprobar que quedó guardado.';
-      return { comprobada: false, tipo: 'archivo', evidencias: abiertas, falta };
+  // R1: un archivo que se nombró (el modelo dijo «guardé X», o la instrucción lo usa) y no existe no deja completar por
+  // ningún camino; la misión se evalúa como de archivos y ese archivo es un criterio no cumplido.
+  // G2-C: lo que pidió la persona y lo que encargó el modelo; la acción, el archivo o el producto cuentan si aparecen en
+  // cualquiera de las dos, la consulta solo si lo es en ambas.
+  const pedidoPersona = m.pedidoPersona ?? m.requisitos?.pedidoPersona ?? null;
+  const textos = [m.instruccion, pedidoPersona].filter((x): x is string => !!x && !!String(x).trim());
+  const req = m.requisitos || (pedidoPersona ? requisitosCombinados(m.instruccion, pedidoPersona) : null);
+  // «el informe final.pdf»: si existe «informe final.pdf», que «final.pdf» no esté no es un nombrado que falte.
+  const alternativas = (req || requisitosDeEntrega(m.instruccion)).items.filter((r) => r.alternativa);
+  const resuelto = (a: ArchivoNodo) => alternativas.some((r) => r.nombre!.toLowerCase() === String(a.ruta).split('/').pop()!.toLowerCase() && (lista || []).some((b) => b.existe === true && String(b.ruta).split('/').pop()!.toLowerCase() === r.alternativa!.toLowerCase()));
+  const nombradoQueFalta = (lista || []).some((a) => a && a.mencionado === true && a.existe !== true && !resuelto(a));
+  // Copiar, mover, renombrar, borrar o descomprimir: ACCIONES sobre archivos que ya existen. El texto no las comprueba;
+  // solo una copia que el nodo muestre en la carpeta pedida con la MISMA huella que el original (comprobarCopia).
+  // Si lo que pidió la persona (R5) trae entregables concretos, se comprueban esos (camino de archivos).
+  if (textos.some((t) => esOperacionDeArchivos(t)) && !(req && req.explicitos > 0)) {
+    const copia = !nombradoQueFalta && lista ? comprobarCopia(m.instruccion, lista) : null;
+    if (copia) {
+      const ev: Evidencia = { id: `${m.id}:copia`, tipo: 'archivo', etiqueta: texto(`${copia.detalle} (lo comprobó tu computadora)`, 200), ref: texto(copia.destino.ruta, 300) };
+      return { comprobada: true, tipo: 'accion', evidencias: [ev, ...abiertas], falta: null, items: [], hechos: 1, total: 1, revisado: true };
     }
-    const archivos: Evidencia[] = buenos.slice(0, 6).map((a, i) => ({
-      id: `${m.id}:archivo:${i}`,
-      tipo: 'archivo',
-      etiqueta: `${nombreDe(a.ruta)} · ${a.bytes} bytes · sha256 ${a.sha256!.slice(0, 12)}… (lo comprobó tu computadora)`,
-      ref: texto(a.ruta, 300),
-    }));
-    return { comprobada: true, tipo: 'archivo', evidencias: [...archivos, ...abiertas], falta: null };
+    return {
+      comprobada: false,
+      tipo: 'accion',
+      evidencias: abiertas,
+      falta: 'Tu computadora dice que lo hizo (copiar, mover, renombrar, borrar o descomprimir), pero no pude comprobarlo: revísalo antes de darlo por hecho.',
+      items: [],
+      hechos: 0,
+      total: 1,
+      revisado: !!lista,
+    };
   }
-  if (pideAccion(m.instruccion)) {
-    return { comprobada: false, tipo: 'accion', evidencias: abiertas, falta: 'Tu computadora dice que lo hizo, pero no pude comprobarlo desde aquí: revísalo antes de darlo por hecho.' };
+  if (nombradoQueFalta || textos.some((t) => pideArchivo(t, m.resultado, req))) {
+    // Cada cosa pedida, por separado: su archivo (a lo más uno), su tipo por dentro, de esta misión, en su carpeta.
+    const { items, seguro, sobran } = compararEntrega(m.instruccion, lista, req);
+    const pedidos = items.filter((i) => i.origen === 'pedido');
+    const hechos = pedidos.filter((i) => i.estado === 'verified').length;
+    const comprobada = seguro && items.length > 0 && items.every((i) => i.estado === 'verified');
+    const archivos: Evidencia[] = items
+      .filter((i) => i.estado === 'verified' && i.archivo)
+      .map((i) => ({
+        id: idEvidenciaItem(m.id, i.id),
+        tipo: 'archivo',
+        etiqueta: texto(`${i.detalle.startsWith(`${i.etiqueta} `) ? '' : `${i.etiqueta}: `}${i.detalle} (lo comprobó tu computadora)`, 200),
+        ref: texto(i.archivo!.ruta, 300),
+      }));
+    return { comprobada, tipo: 'archivo', evidencias: [...archivos, ...abiertas], falta: comprobada ? null : faltaEnPalabras(items, sobran, !lista), items, hechos, total: pedidos.length, revisado: !!lista };
+  }
+  if (textos.some((t) => pideAccion(t))) {
+    return { comprobada: false, tipo: 'accion', evidencias: abiertas, falta: 'Tu computadora dice que lo hizo, pero no pude comprobarlo desde aquí: revísalo antes de darlo por hecho.', items: [], hechos: 0, total: 1, revisado: true };
+  }
+  // Cerrado por defecto (ronda 5): solo una CONSULTA pura se completa con el texto. Lo que no se puede decidir no es dato.
+  // Texto que va en la respuesta misma («hazme un resumen de la noticia», «tradúceme esto»): la respuesta ES la entrega,
+  // si trae el texto (no un acuse: «Listo, ya está» no es un resumen).
+  // El texto en el chat solo vale si ninguna de las dos pide otra cosa (cada una es texto en el chat o una consulta).
+  const textoEnChat = textos.some((t) => esTextoEnChat(t, req)) && textos.every((t) => esTextoEnChat(t, req) || esConsulta(t));
+  // Ronda 7: si la respuesta remite a otro lugar («lo dejé abierto en el navegador», «está en la pantalla»), el texto no
+  // vino en la respuesta: no es la entrega (partial), ni siquiera «respondida».
+  if ((textoEnChat || textos.every((t) => esConsulta(t))) && remiteAOtroLugar(m.resultado)) {
+    return { comprobada: false, tipo: 'dato', evidencias: abiertas, falta: 'El texto no vino en la respuesta: tu computadora dice que lo dejó en otro lugar (la pantalla, una ventana, el navegador), y eso no lo puedo comprobar.', items: [], hechos: 0, total: 1, revisado: true };
+  }
+  if (textoEnChat && !(respuestaInformativa(textoSinAcuses(String(m.resultado || ''))) && respuestaConTexto(m.resultado, m.datos))) {
+    return { comprobada: false, tipo: 'dato', evidencias: abiertas, falta: m.resultado ? 'Tu computadora dice que terminó, pero su respuesta no trae el texto que pediste: no pude comprobarlo.' : 'Terminó sin el texto que pediste.', items: [], hechos: 0, total: 1, revisado: true };
+  }
+  if (!textoEnChat && !textos.every((t) => esConsulta(t))) {
+    return { comprobada: false, tipo: 'accion', evidencias: abiertas, falta: 'No sé comprobar desde aquí lo que pediste: no es una consulta que se responda con un dato, ni dejó algo que tu computadora pueda revisar.', items: [], hechos: 0, total: 1, revisado: true };
   }
   if (!respuestaInformativa(m.resultado)) {
-    return { comprobada: false, tipo: 'dato', evidencias: abiertas, falta: m.resultado ? 'Tu computadora dice que terminó, pero no trajo lo que pediste: no pude comprobarlo.' : 'Terminó sin un resultado que lo compruebe.' };
+    return { comprobada: false, tipo: 'dato', evidencias: abiertas, falta: m.resultado ? 'Tu computadora dice que terminó, pero no trajo lo que pediste: no pude comprobarlo.' : 'Terminó sin un resultado que lo compruebe.', items: [], hechos: 0, total: 1, revisado: true };
   }
-  const ev: Evidencia[] = [{ id: `${m.id}:respuesta`, tipo: 'dato', etiqueta: `Lo que encontró: ${texto(m.resultado, 190)}` }];
+  // Ronda 7: lo que se responde con el texto NO es una entrega verificada. Queda `respondida` (terminal, nunca
+  // comprobada): SOLO_RESPONDI. Nunca afirma que no hubo efecto (ronda 8).
+  const ev: Evidencia[] = [{ id: `${m.id}:respuesta`, tipo: 'dato', etiqueta: `Lo que respondió (sin comprobar): ${texto(m.resultado, 170)}` }];
   (m.datos || []).slice(0, 6).forEach((d, i) => ev.push({ id: `${m.id}:dato:${i}`, tipo: 'dato', etiqueta: `${texto(d.clave, 40)}: ${texto(d.valor, 120)}` }));
-  return { comprobada: true, tipo: 'dato', evidencias: [...ev, ...abiertas], falta: null };
+  return { comprobada: false, respondida: true, tipo: 'dato', evidencias: [...ev, ...abiertas], falta: SOLO_RESPONDI, items: [], hechos: 0, total: 1, revisado: true };
 }
 
 /** La evidencia de una misión terminada: solo lo que se comprobó (evaluarEntrega). */
@@ -820,24 +1097,71 @@ export function evidenciaDeComputadora(m: MisionComputadoraMin): Evidencia[] {
   return evaluarEntrega(m).evidencias;
 }
 
+const TEXTO_RESULTADO = 'Tu computadora termina y lo entregado se comprueba (el dato que pediste, la página que abrió o el archivo que ella misma encontró); «listo» no basta';
+
+/** El criterio de una cosa pedida: qué tiene que cumplir para contar. */
+function textoCriterio(r: { etiqueta: string; origen: 'pedido' | 'respuesta' }): string {
+  return r.origen === 'respuesta'
+    ? texto(`${r.etiqueta}: que exista en su carpeta de trabajo`, 200)
+    : texto(`${r.etiqueta}: existe en su carpeta de trabajo, no está vacío, es del tipo pedido por dentro y lo hizo esta misión`, 200);
+}
+
 /**
- * Cómo cierra una misión terminada: `completed` solo si el nodo terminó, no dijo que quedó a medias y lo entregado se
- * comprobó; si terminó sin poder comprobarlo, `partial` con el porqué (nunca el «Listo» del modelo como resumen).
+ * Los criterios de aceptación de un encargo a la computadora ANTES de empezar: si pide dejar archivos, uno por cosa
+ * pedida (lib/entregables.ts `requisitosDeEntrega`); si no, el resultado comprobado.
  */
-function cierreDeComputadora(m: MisionComputadoraMin): { estado: EstadoTarea; ok: boolean; entrega: Entrega; evidencias: Evidencia[]; resumen: string; parcial: string[] } {
+export function criteriosDeEncargo(instruccion: string, pedidoPersona?: string | null): { id: string; texto: string; obligatorio: boolean }[] {
+  const req = requisitosCombinados(instruccion, pedidoPersona);
+  if (esOperacionDeArchivos(instruccion) || !pideArchivo(instruccion, null, req)) return [{ id: 'resultado', texto: TEXTO_RESULTADO, obligatorio: true }];
+  return req.items.map((r) => ({ id: r.id, texto: textoCriterio(r), obligatorio: true }));
+}
+
+/**
+ * Los criterios de una misión terminada, CADA UNO con su estado y su evidencia: un archivo pedido es verificado solo
+ * con SU archivo comprobado; lo que no se pudo comprobar queda `unknown`, lo que falta o no es lo pedido, `not_met`.
+ * Sin archivos de por medio, un solo criterio: el dato comprobado (verified), la acción con efecto afuera (unknown) o nada (not_met).
+ */
+function criteriosDeMision(m: Pick<MisionComputadoraMin, 'id'>, entrega: Entrega, evidencias: Evidencia[], termino: boolean): Criterio[] {
+  if (entrega.tipo === 'archivo') {
+    return entrega.items.map((i) => {
+      const id = idEvidenciaItem(m.id, i.id);
+      const ok = termino && i.estado === 'verified' && evidencias.some((e) => e.id === id);
+      const estado: Criterio['estado'] = ok ? 'verified' : !termino ? 'not_met' : i.estado === 'verified' ? 'unknown' : i.estado;
+      return { id: i.id, texto: textoCriterio(i), obligatorio: true, estado, evidencias: ok ? [id] : [] };
+    });
+  }
+  const ok = termino && entrega.comprobada;
+  const estado: Criterio['estado'] = ok ? 'verified' : termino && (entrega.tipo === 'accion' || entrega.respondida) ? 'unknown' : 'not_met';
+  return [{ id: 'resultado', texto: TEXTO_RESULTADO, obligatorio: true, estado, evidencias: ok ? evidencias.map((e) => e.id) : [] }];
+}
+
+/**
+ * Cómo cierra una misión terminada: `completed` solo si el nodo terminó, no dijo que quedó a medias y CADA cosa pedida
+ * se comprobó; si no, `partial` con el porqué de cada una (nunca el «Listo» del modelo como resumen).
+ */
+function cierreDeComputadora(m: MisionComputadoraMin): { estado: EstadoTarea; ok: boolean; entrega: Entrega; evidencias: Evidencia[]; criterios: Criterio[]; resumen: string; parcial: string[] } {
   const base = estadoDeComputadora(m);
   const entrega = evaluarEntrega(m);
   const termino = m.estado === 'hecha';
-  const ok = termino && m.ok !== false && entrega.comprobada;
-  const estado: EstadoTarea = ok ? 'completed' : base === 'verifying' || base === 'partial' ? 'partial' : base;
-  const sinComprobar = estado === 'partial' && termino && !entrega.comprobada;
-  const resumen = sinComprobar
-    ? `Tu computadora dice que terminó${m.resultado ? ` («${texto(m.resultado, 160)}»)` : ''}, pero no pude comprobarlo.`
-    : texto(m.resultado || (estado === 'cancelled' ? 'La paraste antes de terminar.' : estado === 'failed' ? 'Tu computadora no pudo hacerlo.' : 'Terminó, pero sin un resultado que lo acredite.'), 300);
-  const parcial = estado === 'partial' ? [sinComprobar && entrega.falta ? entrega.falta : 'No completó todo lo pedido.'] : [];
   // Sin terminar (parada, falló), su texto es el error: solo cuentan las páginas que abrió.
   const evidencias = termino ? entrega.evidencias : entrega.evidencias.filter((e) => e.tipo === 'enlace');
-  return { estado, ok, entrega, evidencias, resumen: texto(resumen, 300), parcial };
+  const criterios = criteriosDeMision(m, entrega, evidencias, termino);
+  const ok = termino && m.ok !== false && entrega.comprobada && criteriosCumplidos(criterios, evidencias);
+  // Respondida: terminó, no dijo que quedó a medias, y lo que se pidió se respondió. NO dice que no hubo efecto (ronda 8):
+  // la computadora corrió y pudo tocar cosas; su recibo es «possible», como cualquier misión sin comprobar.
+  const respondida = !ok && termino && m.ok !== false && !!entrega.respondida;
+  const estado: EstadoTarea = ok ? 'completed' : respondida ? 'respondida' : base === 'verifying' || base === 'partial' ? 'partial' : base;
+  const sinComprobar = estado === 'partial' && termino && !entrega.comprobada;
+  const dijo = (n: number) => (m.resultado ? ` («${texto(m.resultado, n)}»)` : '');
+  const resumen = respondida
+    ? `${SOLO_RESPONDI} Lo que respondió: ${texto(m.resultado, 220)}`
+    : sinComprobar
+    ? entrega.tipo === 'archivo' && entrega.total > 0
+      ? `Tu computadora dice que terminó${dijo(120)}, pero no pude comprobarlo todo: ${entrega.hechos} de ${entrega.total} de lo que pediste.`
+      : `Tu computadora dice que terminó${dijo(160)}, pero no pude comprobarlo.`
+    : texto(m.resultado || (estado === 'cancelled' ? 'La paraste antes de terminar.' : estado === 'failed' ? 'Tu computadora no pudo hacerlo.' : 'Terminó, pero sin un resultado que lo acredite.'), 300);
+  const parcial = estado === 'partial' ? [sinComprobar && entrega.falta ? texto(entrega.falta, 600) : 'No completó todo lo pedido.'] : [];
+  return { estado, ok, entrega, evidencias, criterios, resumen: texto(resumen, 300), parcial };
 }
 
 function progresoDePlan(plan?: { estado: string }[]): Progreso | null {
@@ -854,6 +1178,9 @@ export function deComputadora(m: MisionComputadoraMin, ahora = Date.now()): Task
   const terminal = esTerminal(estado);
   const actual = m.plan?.find((p) => p.estado === 'actual' || p.estado === 'espera');
   const prog = progresoDePlan(m.plan);
+  // Cada cosa pedida es su propio criterio, con su estado y SU evidencia (nunca una lista copiada a todos).
+  const pendientes = m.requisitos && pideArchivo(m.instruccion, null, m.requisitos) ? m.requisitos.items.map((r) => ({ id: r.id, texto: textoCriterio(r), obligatorio: true })) : criteriosDeEncargo(m.instruccion);
+  const criterios: Criterio[] = cierre && terminal ? cierre.criterios : pendientes.map((c) => ({ ...c, estado: 'pending' as const, evidencias: [] }));
   return {
     id: m.id,
     version: m.inicio + m.segundos,
@@ -862,7 +1189,7 @@ export function deComputadora(m: MisionComputadoraMin, ahora = Date.now()): Task
     source: 'computadora',
     title: texto(m.instruccion, 100) || 'Tu computadora',
     objective: texto(m.instruccion, 400),
-    acceptance: [{ id: 'resultado', text: 'La computadora termina y lo entregado se comprueba (el dato pedido, la página que abrió o el archivo que encontró)', required: true, status: estado === 'completed' ? 'verified' : terminal ? 'not_met' : 'pending', evidenceIds: estado === 'completed' ? ev.map((e) => e.id) : [] }],
+    acceptance: criterios.map((c) => ({ id: c.id, text: c.texto, required: c.obligatorio, status: c.estado, evidenceIds: c.evidencias })),
     environment: { kind: 'computadora', id: m.tareaId, displayName: 'Tu computadora' },
     ...(m.pregunta ? { currentStep: `Espera tu sí: ${texto(m.pregunta, 160)}` } : actual ? { currentStep: texto(actual.texto, 160) } : {}),
     progress: prog ? { done: prog.hechos, total: prog.total, unit: prog.unidad } : null,
@@ -880,15 +1207,38 @@ export function deComputadora(m: MisionComputadoraMin, ahora = Date.now()): Task
 
 /**
  * El cambio que lleva una tarea durable enlazada a su misión de la computadora hasta lo que la misión dice.
- * null si no hay nada que cambiar. Una misión que terminó bien con lo entregado COMPROBADO completa la tarea
- * (evaluarEntrega: «Listo» no es evidencia); terminada sin poder comprobarlo, `partial` con «no pude
- * comprobarlo»; parada, `cancelled`.
+ * null si no hay nada que cambiar. Completa la tarea solo si CADA cosa pedida quedó comprobada con SU evidencia
+ * (evaluarEntrega: «Listo» no es evidencia, y un archivo cumple a lo más una cosa); si no, `partial` con el estado de
+ * cada una; parada, `cancelled`. Los criterios obligatorios pasan a ser los de la misión (uno por cosa pedida); los
+ * opcionales se conservan.
  */
+/** Cuánto puede quedarse una tarea enlazada «reconciling» sin que su misión aparezca antes de cerrarse como incierta. */
+export const RECONCILIAR_MAX_MS = 30 * 60_000;
+
 export function reconciliarConComputadora(reg: RegistroTarea, m: MisionComputadoraMin | null, ahora: number): Cambio | null {
   if (esTerminal(reg.estado)) return null;
   if (!m) {
-    // La misión ya no está (el servidor se reinició y su memoria se fue): no se sabe cómo terminó.
-    if (reg.estado === 'reconciling') return null;
+    // La misión no está en ningún lado (P5: las misiones son durables, así que esto es una tarea de antes de P5 o una
+    // misión que el almacén perdió): no se sabe cómo terminó. Primero se reconcilia; si pasado RECONCILIAR_MAX_MS sigue sin
+    // aparecer, se cierra con la verdad —no se sabe si hubo efecto— en lugar de quedarse «reconciling» para siempre.
+    // Nunca «completed»: no hay evidencia.
+    if (reg.estado === 'reconciling') {
+      if (ahora - reg.actualizada < RECONCILIAR_MAX_MS) return null;
+      return {
+        estado: 'failed',
+        pasoActual: null,
+        criterios: reg.criterios.map((c) => (c.obligatorio ? { ...c, estado: 'unknown' as const, evidencias: [] } : c)),
+        resultado: {
+          id: `${reg.id}:resultado`,
+          resumen: 'No pude confirmar cómo terminó en tu computadora: pudo haber hecho cambios. Revísala antes de pedírmelo otra vez; no lo repito a ciegas.',
+          evidencias: [],
+          parcial: [],
+          pendiente: ['Revisar en tu computadora qué quedó hecho'],
+          t: ahora,
+        },
+        eventos: [{ type: 'operation.receipt', payload: { operationId: reg.enlace?.id ?? reg.id, state: 'unknown', effect: 'possible', motivo: 'sin-mision' } }],
+      };
+    }
     if (ahora - reg.actualizada < 90_000) return null;
     return { estado: 'reconciling', pasoActual: 'No puedo confirmar cómo terminó en tu computadora; reviso antes de repetir nada.' };
   }
@@ -896,15 +1246,15 @@ export function reconciliarConComputadora(reg: RegistroTarea, m: MisionComputado
   const prog = progresoDePlan(m.plan);
   const actual = m.plan?.find((p) => p.estado === 'actual' || p.estado === 'espera');
   if (estado === 'verifying' || estado === 'partial' || estado === 'cancelled' || estado === 'failed') {
-    const { estado: final, ok, evidencias: ev, resumen, parcial } = cierreDeComputadora(m);
-    const criterios = reg.criterios.map((c) => (c.obligatorio ? { ...c, estado: ok ? ('verified' as const) : ('not_met' as const), evidencias: ok ? ev.map((e) => e.id) : [] } : c));
+    const { estado: final, ok, evidencias: ev, criterios: deMision, resumen, parcial } = cierreDeComputadora(m);
+    const criterios = [...deMision, ...reg.criterios.filter((c) => !c.obligatorio && !deMision.some((d) => d.id === c.id))];
     return {
       estado: final,
       criterios,
       progreso: prog,
       pasoActual: null,
       resultado: { id: `${reg.id}:resultado`, resumen, evidencias: ev, parcial, pendiente: [], t: ahora },
-      eventos: [{ type: 'operation.receipt', payload: { operationId: m.tareaId, state: final === 'completed' ? 'succeeded' : final === 'cancelled' ? 'cancelled' : 'failed', effect: ok ? 'confirmed' : 'possible' } }],
+      eventos: [{ type: 'operation.receipt', payload: { operationId: m.tareaId, state: final === 'completed' ? 'succeeded' : final === 'respondida' ? 'answered' : final === 'cancelled' ? 'cancelled' : 'failed', effect: ok ? 'confirmed' : 'possible' } }],
     };
   }
   // Pidió la pausa y el nodo todavía está vaciando la barrera: sigue «pausing» hasta que el nodo diga «pausada».

@@ -190,7 +190,9 @@ test('reglas · la propuesta espera el «sí»: «sí» / «llámale» la cumple
   assert.equal(no?.decir, 'Va, no llamo.');
   // Contestar «¿Le marco a Mamá?» con «ok», «okey», «dale» o «va» es un sí (José, 3-oct); a media frase o con un «pero», no.
   for (const si2 of ['ok', 'Okey.', 'dale', 'va', 'claro', 'perfecto', 'ok pues']) assert.equal(ordenPorReglas(si2, { contexto: conManos, propuesta: p, ahora: AHORA })?.accion?.tipo, 'llamar', `«${si2}» marca`);
-  for (const no2 of ['ok pero a Beto', 'ajá', 'mhm', 'dale, mejor no', 'ok, espera']) assert.notEqual(ordenPorReglas(no2, { contexto: conManos, propuesta: p, ahora: AHORA })?.accion?.tipo, 'llamar', `«${no2}» no marca`);
+  // Cuarta ronda: «ajá» sí es un sí (lib/afirmacion.ts); «mhm», una pregunta o un «pero», no.
+  assert.equal(ordenPorReglas('ajá', { contexto: conManos, propuesta: p, ahora: AHORA })?.accion?.tipo, 'llamar');
+  for (const no2 of ['ok pero a Beto', 'mhm', '¿ok?', 'dale, mejor no', 'ok, espera']) assert.notEqual(ordenPorReglas(no2, { contexto: conManos, propuesta: p, ahora: AHORA })?.accion?.tipo, 'llamar', `«${no2}» no marca`);
   assert.equal(confirmaPropuesta('llamar', 'sí, pero llama a Ana'), false, '«pero» no es permiso');
   assert.equal(confirmaPropuesta('llamar', 'si puedes más tarde'), false, '«si» sin tilde abriendo condicional');
   assert.equal(confirmaPropuesta('llamar', 'Sí, por favor'), true);

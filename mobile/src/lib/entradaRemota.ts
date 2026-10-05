@@ -18,6 +18,9 @@
  *    a más de 2 s se avisa, y lo riesgoso (clics, Enter, Supr, combinaciones) espera una imagen de ahora.
  *  · La sesión (`SesionRemota`): cada entrada lleva sesión, cliente, época, secuencia y viewport; una a la vez, con
  *    su ACK; lo bloqueado no gasta secuencia y, tras reconectar, lo que no se confirmó NO se reenvía.
+ *  · El lote de teclado (`LoteTeclado`, auditoría A3 del 4-oct): un texto con su Enter, o un pegado de varias líneas,
+ *    sale como una secuencia que espera el ACK y la imagen de después antes del siguiente evento; ante un rechazo,
+ *    una desconexión o un cambio de control se pausa y conserva lo que falta, y lo incierto no se repite solo.
  */
 
 /* ------------------------------------------------------------------ coordenadas: una sola capa */
@@ -339,6 +342,11 @@ export type EventoTeclado = { type: 'text_commit'; payload: { texto: string } } 
  */
 export class BufferTeclado {
   texto = '';
+  /**
+   * El texto del lote que está saliendo (auditoría A3): no se borra hasta saber cómo le fue. Mientras no es null el
+   * campo queda quieto (no se edita ni se confirma otra vez); `aplicado` lo vacía, `devolver` lo deja editable.
+   */
+  enviando: string | null = null;
 
   /** El campo cambió: devuelve la combinación para mandar YA (Ctrl/Alt + letra), o null. */
   cambiar(nuevo: string, mods: readonly Mod[]): EventoTeclado | null {
@@ -354,18 +362,60 @@ export class BufferTeclado {
     return null;
   }
 
-  /** Confirmar (botón Enviar o la tecla de retorno del teclado): el texto compuesto en trozos, con Enter si `conEnter`. */
+  /**
+   * Confirmar (botón Enviar o la tecla de retorno del teclado): el texto compuesto en trozos, con Enter si `conEnter`.
+   * El campo NO se vacía aquí (antes sí, y lo que no llegaba se perdía): queda como `enviando` hasta que el lote diga
+   * cómo le fue. Con un lote en camino no sale otro.
+   */
   confirmar(conEnter: boolean): EventoTeclado[] {
-    const out: EventoTeclado[] = [];
-    const lineas = this.texto.split(/\r\n|\r|\n/);
-    lineas.forEach((l, i) => {
-      if (i > 0) out.push({ type: 'key', payload: { tecla: 'enter', mods: [] } });
-      for (const trozo of trocearTexto(normalizarTexto(l), 500)) out.push({ type: 'text_commit', payload: { texto: trozo } });
-    });
-    if (conEnter) out.push({ type: 'key', payload: { tecla: 'enter', mods: [] } });
-    this.texto = '';
+    if (this.enviando != null) return [];
+    const out = eventosDeTexto(this.texto, conEnter);
+    if (out.length) this.enviando = this.texto;
     return out;
   }
+
+  /** Todo llegó: el campo queda vacío. */
+  aplicado() {
+    this.texto = '';
+    this.enviando = null;
+  }
+
+  /** El lote está en pausa: el campo enseña lo que falta (sigue quieto hasta seguir o recuperar). */
+  mostrarPendiente(t: string) {
+    this.texto = t;
+  }
+
+  /** Lo que no llegó vuelve al campo, editable. */
+  devolver(t: string) {
+    this.texto = t;
+    this.enviando = null;
+  }
+}
+
+/** El texto como eventos: cada línea en trozos de text_commit y cada salto como la tecla Enter (más Enter al final si se pidió). */
+export function eventosDeTexto(texto: string, conEnter: boolean): EventoTeclado[] {
+  const out: EventoTeclado[] = [];
+  const lineas = String(texto ?? '').split(/\r\n|\r|\n/);
+  lineas.forEach((l, i) => {
+    if (i > 0) out.push({ type: 'key', payload: { tecla: 'enter', mods: [] } });
+    for (const trozo of trocearTexto(normalizarTexto(l), 500)) out.push({ type: 'text_commit', payload: { texto: trozo } });
+  });
+  if (conEnter) out.push({ type: 'key', payload: { tecla: 'enter', mods: [] } });
+  return out;
+}
+
+/** Al revés: los eventos de texto como se ven en el campo (Enter = salto de línea; el Enter final aparte). */
+export function textoDeEventos(eventos: readonly EventoTeclado[]): { texto: string; conEnter: boolean } {
+  let texto = '';
+  let conEnter = false;
+  eventos.forEach((e, i) => {
+    if (e.type === 'text_commit') texto += e.payload.texto;
+    else if (e.payload.tecla === 'enter' && !e.payload.mods.length) {
+      if (i === eventos.length - 1) conEnter = true;
+      else texto += '\n';
+    }
+  });
+  return { texto, conEnter };
 }
 
 /* ------------------------------------------------------------------ frescura y control */
@@ -444,7 +494,13 @@ export type EntradaRemota = {
   payload: Record<string, unknown>;
 };
 export type AckEntrada = { secuencia: number; estado: string; ts: number; frame_seq: number; epoca: number; duplicada?: boolean };
-export type ResultadoEntrada = { ok: true; ack: AckEntrada } | { ok: false; motivo: string; error?: string };
+/**
+ * `incierta`: salió y no se sabe si se aplicó (se cortó la red esperando el ACK, o el servidor dice que el nodo no
+ * contestó). Lo incierto no se repite solo: la persona mira la pantalla y decide (auditoría A3).
+ */
+export type ResultadoEntrada = { ok: true; ack: AckEntrada } | { ok: false; motivo: string; error?: string; incierta?: true };
+/** Lo que espera la imagen de después: llegó, o por qué no (se cortó, otro tomó el control, se acabó el plazo). */
+export type EsperaImagen = { ok: true } | { ok: false; motivo: string };
 
 /** Un id de cliente para este visor (el servidor lo liga a la sesión: solo no da autoridad). */
 export function nuevoClienteId(): string {
@@ -469,6 +525,8 @@ export class SesionRemota {
   private cadena: Promise<unknown> = Promise.resolve();
   private soltarAlVolver = false;
   private reloj: () => number;
+  /** Quien espera una imagen de después (el lote de teclado): se le avisa con cada cambio. */
+  private esperas = new Set<() => void>();
 
   constructor(private o: { tareaId: string; clientId: string; enviar: (e: EntradaRemota) => Promise<AckEntrada>; reloj?: () => number; alCambio?: () => void }) {
     this.reloj = o.reloj ?? Date.now;
@@ -476,6 +534,11 @@ export class SesionRemota {
 
   get clientId() {
     return this.o.clientId;
+  }
+
+  /** Cambia con cada control nuevo, pérdida del control o corte de red: lo de antes ya no sigue solo. */
+  get generacionActual() {
+    return this.generacion;
   }
 
   /** Se tomó el control (o se recuperó desde aquí): esta época, secuencia nueva, todo suelto y una imagen nueva. */
@@ -521,6 +584,43 @@ export class SesionRemota {
     this.pedirResync();
   }
 
+  /**
+   * Espera, como mucho `plazoMs`, la imagen que pide lo riesgoso (Enter, un clic): una de después de la última entrada,
+   * de esta época y de menos de 2 s. La guarda de frame fresco NO se relaja: esto solo espera a que se cumpla. Si en
+   * medio se corta la red o cambia el control, se deja de esperar y se dice por qué.
+   */
+  esperarImagen(plazoMs: number, cancelada?: () => string | null): Promise<EsperaImagen> {
+    const gen = this.generacion;
+    const epoca0 = this.epoca;
+    return new Promise<EsperaImagen>((resolve) => {
+      let hecho = false;
+      let reloj: ReturnType<typeof setTimeout> | null = null;
+      const fin = (r: EsperaImagen) => {
+        if (hecho) return;
+        hecho = true;
+        if (reloj) clearTimeout(reloj);
+        this.esperas.delete(mirar);
+        resolve(r);
+      };
+      const mirar = () => {
+        const c = cancelada?.();
+        if (c) return fin({ ok: false, motivo: c });
+        if (this.epoca == null) return fin({ ok: false, motivo: 'sin_control' });
+        if (this.epoca !== epoca0) return fin({ ok: false, motivo: 'epoca_cambio' });
+        if (gen !== this.generacion) return fin({ ok: false, motivo: 'desconectado' });
+        if (!this.bloqueo('key', { tecla: 'enter', mods: [] })) fin({ ok: true });
+      };
+      this.esperas.add(mirar);
+      mirar();
+      if (!hecho) reloj = setTimeout(() => fin({ ok: false, motivo: this.bloqueo('key', { tecla: 'enter', mods: [] }) || 'sin_imagen' }), Math.max(0, plazoMs));
+    });
+  }
+
+  /** Que quien espera una imagen vuelva a mirar ya (p. ej. porque se pausó lo que esperaba). */
+  despertar() {
+    for (const f of [...this.esperas]) f();
+  }
+
   /** Volvió la red: si había control, se sueltan teclas y botones allá también (con una secuencia nueva). */
   async alReconectar(): Promise<void> {
     if (!this.soltarAlVolver || this.epoca == null) return;
@@ -560,16 +660,241 @@ export class SesionRemota {
       const code: string | undefined = err?.data?.code;
       const status: number | undefined = err?.status;
       if (!status) {
+        // Salió y no volvió el ACK: no se sabe si se aplicó (A3: la incertidumbre se conserva, no se repite sola).
         this.alDesconectar();
-        return { ok: false, motivo: 'desconectado' };
+        return { ok: false, motivo: 'desconectado', incierta: true };
       }
       // Cualquier error suelta los modificadores armados (no quedan «pegados» para la tecla siguiente).
       this.mods.soltarTodo();
       if (code === 'cliente' || code === 'epoca_revocada' || code === 'sin_control' || code === 'epoca_cambio') this.sinControl();
       else if (code === 'viewport' || code === 'incierta') this.pedirResync();
       this.cambio();
-      return { ok: false, motivo: code || `http_${status}`, error: String(err?.message || '') };
+      // 4xx: el servidor o el nodo la rechazó (no se aplicó). 5xx o «incierta»: pudo aplicarse o no.
+      const incierta = code === 'incierta' || status >= 500;
+      return { ok: false, motivo: code || `http_${status}`, error: String(err?.message || ''), ...(incierta ? { incierta: true as const } : {}) };
     }
+  }
+
+  private cambio() {
+    this.despertar();
+    try {
+      this.o.alCambio?.();
+    } catch {
+      /* un oyente roto no rompe nada */
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ el lote de teclado (auditoría A3) */
+
+/** Cuánto espera el lote la imagen de después antes de pausarse (con el control, la captura va cada ~0,7 s). */
+export const PLAZO_IMAGEN_MS = 5000;
+
+export type FaseLote = 'libre' | 'enviando' | 'esperando_imagen' | 'pausada';
+export type ResultadoLote = { ok: true; aplicados: number } | { ok: false; motivo: string; aplicados: number; pendientes: number; incierto: boolean };
+
+const ENTER_SONDA = { tecla: 'enter', mods: [] as Mod[] };
+const MOTIVOS_GUARDA = new Set(['tras_entrada', 'resync', 'viejo', 'sin_frame']);
+
+/**
+ * Lo que se escribe de una vez (un texto, un pegado de varias líneas, el Enter de después) como UNA secuencia:
+ *
+ *  · cada evento espera su ACK antes del siguiente, y lo riesgoso (Enter) o lo que sigue a un Enter espera además la
+ *    imagen de después (la guarda de frame fresco de `SesionRemota` se cumple esperando, no se quita);
+ *  · un rechazo PAUSA el lote y conserva lo no aplicado (nada se vacía antes de saber cómo le fue): se puede seguir o
+ *    recuperar al campo;
+ *  · si se corta la red, otro toma el control o se cierra la vista, se pausa; nada sigue solo al volver;
+ *  · lo incierto (salió y no volvió el ACK) queda aparte: no se repite hasta que la persona mire la pantalla y diga
+ *    si llegó (`resolverIncierto`). Así un Enter nunca sale dos veces sin reconciliar;
+ *  · `privado` (entrada segura): lo pendiente no se enseña en avisos y se tira al salir de la entrada segura.
+ */
+export class LoteTeclado {
+  pendientes: EventoTeclado[] = [];
+  aplicados = 0;
+  incierto: EventoTeclado | null = null;
+  motivo: string | null = null;
+  privado = false;
+  private fase: FaseLote = 'libre';
+  private corriendo: Promise<ResultadoLote> | null = null;
+  private trasRiesgosa = false;
+  private pausaPedida: string | null = null;
+
+  constructor(private o: { sesion: SesionRemota; pedirImagen?: () => void; plazoImagenMs?: number; alCambio?: () => void }) {}
+
+  estado(): FaseLote {
+    return this.fase;
+  }
+
+  /** Mandando o esperando la imagen: lo demás (clics, teclas sueltas, otro texto) espera a que termine. */
+  ocupado(): boolean {
+    return this.fase === 'enviando' || this.fase === 'esperando_imagen';
+  }
+
+  /** Hay algo sin terminar (en marcha, en pausa o incierto). */
+  abierto(): boolean {
+    return this.ocupado() || this.fase === 'pausada' || this.pendientes.length > 0 || !!this.incierto;
+  }
+
+  agregar(eventos: readonly EventoTeclado[], o: { privado?: boolean } = {}) {
+    if (!this.abierto()) {
+      this.aplicados = 0;
+      this.trasRiesgosa = false;
+      this.privado = false;
+    }
+    if (o.privado) this.privado = true;
+    for (const e of eventos) this.pendientes.push(e.type === 'key' ? { type: 'key', payload: { tecla: e.payload.tecla, mods: [...e.payload.mods] } } : { type: 'text_commit', payload: { texto: e.payload.texto } });
+    this.cambio();
+  }
+
+  /** Manda lo pendiente, uno a uno, hasta terminar o pausarse. Una sola vuelta a la vez. */
+  correr(): Promise<ResultadoLote> {
+    if (this.corriendo) return this.corriendo;
+    this.pausaPedida = null;
+    this.motivo = null;
+    const r = this.vuelta().finally(() => {
+      this.corriendo = null;
+    });
+    this.corriendo = r;
+    return r;
+  }
+
+  /** Seguir tras una pausa. Con algo incierto sin resolver no sale nada (primero mirar la pantalla y decir si llegó). */
+  reanudar(): Promise<ResultadoLote> {
+    if (this.corriendo) return this.corriendo;
+    if (this.incierto) return Promise.resolve(this.pausa('incierto'));
+    return this.correr();
+  }
+
+  /** Pausar desde fuera (se cerró la vista, se fue la app atrás): lo que va en camino termina; lo siguiente espera. */
+  pausar(motivo: string) {
+    if (this.ocupado()) {
+      this.pausaPedida = motivo;
+      this.o.sesion.despertar(); // si esperaba la imagen, deja de esperar ya (y el Enter no sale)
+    } else if (this.pendientes.length || this.incierto) this.pausa(motivo);
+  }
+
+  /**
+   * La persona miró la pantalla: `llego` true, lo incierto cuenta como hecho; false, vuelve al principio de lo pendiente
+   * (y saldrá, una sola vez, cuando toque «Seguir»).
+   */
+  resolverIncierto(llego: boolean) {
+    const e = this.incierto;
+    if (!e || this.ocupado()) return;
+    this.incierto = null;
+    if (llego) {
+      this.aplicados += 1;
+      this.trasRiesgosa = esRiesgosa(e.type, e.payload);
+    } else this.pendientes.unshift(e);
+    if (!this.pendientes.length) this.cerrar();
+    this.cambio();
+  }
+
+  /** Lo que falta, como se ve en el campo (sin lo incierto, que se resuelve aparte). */
+  textoPendiente(): { texto: string; conEnter: boolean } {
+    return textoDeEventos(this.pendientes);
+  }
+
+  /** Saca lo pendiente para editarlo en el campo (lo incierto sigue esperando respuesta). */
+  recuperar(): { texto: string; conEnter: boolean } {
+    if (this.ocupado()) return { texto: '', conEnter: false };
+    const t = this.textoPendiente();
+    this.pendientes = [];
+    if (!this.incierto) this.cerrar();
+    this.cambio();
+    return t;
+  }
+
+  /** Tirar todo lo que falta (también lo incierto). Lo de la entrada segura se tira así al terminarla. */
+  descartar() {
+    this.pendientes = [];
+    if (this.ocupado()) {
+      this.pausaPedida = 'descartado';
+      this.o.sesion.despertar();
+      return;
+    }
+    this.incierto = null;
+    this.cerrar();
+    this.cambio();
+  }
+
+  private cerrar() {
+    this.fase = 'libre';
+    this.motivo = null;
+    this.privado = false;
+  }
+
+  private pausa(motivo: string): ResultadoLote {
+    this.fase = 'pausada';
+    this.motivo = motivo;
+    this.cambio();
+    return { ok: false, motivo, aplicados: this.aplicados, pendientes: this.pendientes.length, incierto: !!this.incierto };
+  }
+
+  private descartado(): ResultadoLote {
+    this.pausaPedida = null;
+    this.pendientes = [];
+    this.incierto = null;
+    const aplicados = this.aplicados;
+    this.cerrar();
+    this.cambio();
+    return { ok: false, motivo: 'descartado', aplicados, pendientes: 0, incierto: false };
+  }
+
+  private async vuelta(): Promise<ResultadoLote> {
+    const s = this.o.sesion;
+    // Si en medio se corta la red o cambia el control (aunque lo que iba en camino llegara), lo siguiente ya no sale solo.
+    const gen = s.generacionActual;
+    let reintentosGuarda = 0;
+    while (this.pendientes.length) {
+      if (this.pausaPedida === 'descartado') return this.descartado();
+      if (this.pausaPedida) return this.pausa(this.pausaPedida);
+      if (s.epoca == null) return this.pausa('sin_control');
+      if (s.generacionActual !== gen) return this.pausa('desconectado');
+      const ev = this.pendientes[0];
+      // Enter (y lo que viene después de un Enter) espera la imagen de después de lo anterior.
+      if ((esRiesgosa(ev.type, ev.payload) || this.trasRiesgosa) && s.bloqueo('key', ENTER_SONDA)) {
+        this.fase = 'esperando_imagen';
+        this.cambio();
+        this.o.pedirImagen?.();
+        const w = await s.esperarImagen(this.o.plazoImagenMs ?? PLAZO_IMAGEN_MS, () => this.pausaPedida);
+        if (this.pausaPedida === 'descartado') return this.descartado();
+        if (this.pausaPedida) return this.pausa(this.pausaPedida);
+        if (w.ok === false) return this.pausa(w.motivo);
+      }
+      this.fase = 'enviando';
+      this.cambio();
+      const r = await s.entrada(ev.type, ev.payload);
+      if (this.pendientes[0] === ev) this.pendientes.shift();
+      if (r.ok === true) {
+        this.aplicados += 1;
+        this.trasRiesgosa = esRiesgosa(ev.type, ev.payload);
+        reintentosGuarda = 0;
+        this.o.pedirImagen?.();
+        continue;
+      }
+      // (sin narrowing en el tsconfig de la web, que no es strict: se nombra el caso de fallo)
+      const no = r as Extract<ResultadoEntrada, { ok: false }>;
+      if (this.pausaPedida === 'descartado') return this.descartado();
+      if (no.incierta) {
+        this.incierto = ev;
+        return this.pausa(no.motivo);
+      }
+      // No se aplicó: vuelve al principio de lo pendiente.
+      this.pendientes.unshift(ev);
+      // La guarda saltó entre la espera y el envío (llegó otra entrada antes): se espera otra vez, pocas veces.
+      if (MOTIVOS_GUARDA.has(no.motivo) && reintentosGuarda < 2) {
+        reintentosGuarda += 1;
+        this.trasRiesgosa = true;
+        continue;
+      }
+      return this.pausa(no.motivo);
+    }
+    if (this.pausaPedida === 'descartado') return this.descartado();
+    this.pausaPedida = null;
+    const aplicados = this.aplicados;
+    this.cerrar();
+    this.cambio();
+    return { ok: true, aplicados };
   }
 
   private cambio() {
@@ -579,4 +904,64 @@ export class SesionRemota {
       /* un oyente roto no rompe nada */
     }
   }
+}
+
+/**
+ * La secuencia de «Enviar» del visor (la misma en la app y en la web): el texto del campo sale como un lote; si todo
+ * llega, el campo se vacía; si se pausa, el campo enseña lo que falta y sigue quieto hasta seguir o recuperar.
+ */
+export async function confirmarEscritura(buffer: BufferTeclado, lote: LoteTeclado, conEnter: boolean, o: { privado?: boolean } = {}): Promise<ResultadoLote> {
+  if (lote.abierto() || buffer.enviando != null) return { ok: false, motivo: 'ocupado', aplicados: 0, pendientes: lote.pendientes.length, incierto: !!lote.incierto };
+  const eventos = buffer.confirmar(conEnter);
+  if (!eventos.length) return { ok: true, aplicados: 0 };
+  lote.agregar(eventos, o);
+  return trasLote(buffer, lote, await lote.correr());
+}
+
+/** Seguir el lote en pausa (botón «Seguir»), con el mismo trato del campo. */
+export async function seguirEscritura(buffer: BufferTeclado, lote: LoteTeclado): Promise<ResultadoLote> {
+  return trasLote(buffer, lote, await lote.reanudar());
+}
+
+/** Lo incierto, resuelto por la persona tras mirar la pantalla («Sí llegó» / «No llegó»). */
+export function resolverEscritura(buffer: BufferTeclado, lote: LoteTeclado, llego: boolean) {
+  lote.resolverIncierto(llego);
+  if (buffer.enviando == null) return;
+  if (!lote.abierto()) buffer.aplicado();
+  else buffer.mostrarPendiente(lote.textoPendiente().texto);
+}
+
+/** Recuperar al campo, editable, lo que no llegó (botón «Editar»). */
+export function recuperarEscritura(buffer: BufferTeclado, lote: LoteTeclado): { texto: string; conEnter: boolean } {
+  if (lote.ocupado()) return { texto: buffer.texto, conEnter: false };
+  const t = lote.recuperar();
+  buffer.devolver(t.texto);
+  return t;
+}
+
+/** Tirar lo que falta (y vaciar el campo): al terminar la entrada segura o si la persona lo pide. */
+export function descartarEscritura(buffer: BufferTeclado, lote: LoteTeclado) {
+  lote.descartar();
+  buffer.aplicado();
+}
+
+function trasLote(buffer: BufferTeclado, lote: LoteTeclado, r: ResultadoLote): ResultadoLote {
+  if (r.ok === true || (r as Extract<ResultadoLote, { ok: false }>).motivo === 'descartado') buffer.aplicado();
+  else if (buffer.enviando != null) buffer.mostrarPendiente(lote.textoPendiente().texto);
+  return r;
+}
+
+/** Qué decir de un lote en pausa (es, en). Con entrada segura nunca se repite el texto. */
+export function avisoDeLote(lote: Pick<LoteTeclado, 'motivo' | 'incierto' | 'privado' | 'pendientes'>): [string, string] | null {
+  if (lote.incierto) {
+    const que = lote.incierto.type === 'key' ? '⏎' : lote.privado ? '•••' : `«${Array.from(lote.incierto.payload.texto).slice(0, 40).join('')}»`;
+    return [`No sé si llegó ${que}. Mira la pantalla y dime si llegó: no lo repito sin que lo digas.`, `I don’t know whether ${que} arrived. Look at the screen and tell me: I won’t repeat it until you say so.`];
+  }
+  const m = lote.motivo || '';
+  if (!m) return null;
+  if (m === 'desconectado') return ['Se cortó la conexión: lo que falta espera. Toca «Seguir» cuando vuelva.', 'The connection dropped: the rest is waiting. Tap “Resume” once it is back.'];
+  if (m === 'sin_control' || m === 'epoca_cambio' || m === 'cliente' || m === 'epoca_revocada') return ['Ya no tienes el control: lo que falta espera, sin mandarse.', 'You no longer have control: the rest is waiting, unsent.'];
+  if (m === 'cerrado') return ['Lo que faltaba quedó guardado: toca «Seguir» para mandarlo.', 'What was left is kept: tap “Resume” to send it.'];
+  if (m === 'sin_imagen' || MOTIVOS_GUARDA.has(m)) return ['No llegó la imagen de ahora: lo que falta espera. Toca «Seguir» para intentarlo otra vez.', 'The current image didn’t arrive: the rest is waiting. Tap “Resume” to try again.'];
+  return ['No se aplicó: lo que falta quedó guardado. Toca «Seguir» o «Editar».', 'It wasn’t applied: the rest is kept. Tap “Resume” or “Edit”.'];
 }

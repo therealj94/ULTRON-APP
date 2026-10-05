@@ -11,13 +11,36 @@ import { dictarSistema, notaDeVoz, pideNotaDeVoz } from './voz';
 import { puedeCambiarSistema, type MiembroId } from './junta';
 import type { Nivel } from './acceso';
 import type { NivelAura } from './perfiles/tipos';
-import { autorizar, textoDeDecision, type Efecto } from './cognitivo/politica';
+import { autorizar, evaluar, textoDeDecision, type Efecto } from './cognitivo/politica';
 import { registrarEjecutor } from './cognitivo/aprobaciones';
+import crypto from 'node:crypto';
+import { claveDe, crearUnaVez, hashArgumentos, leerDurable } from './durable';
+import { nivelDe, personaPorId } from './acceso';
+import type { VinculoTaller } from './tareas-durables';
 
-export type TallerOut = { hechos: string[]; tools: string[]; decir?: string };
+/**
+ * `propuesta`: lo que quedó esperando la aprobación de la persona (revisión 10, MEDIO-C). El cliente lo enseña y, al
+ * confirmar, aprueba ESA decisión (POST /api/trabajos/:tarea/decisiones con su id y versión).
+ */
+export type TallerOut = { hechos: string[]; tools: string[]; decir?: string; propuesta?: PropuestaTallerVista };
 
 function publicBase() {
   return (process.env.PUBLIC_BASE || process.env.RENDER_EXTERNAL_URL || '').replace(/\/$/, '');
+}
+
+/**
+ * ¿Pide solo LEER el correo? (revisión 10, MENOR-D). Leer, buscar, abrir, revisar o enseñar correos —o preguntar si hay—
+ * sin un verbo que mande, avise o llame: «Lee los correos marcados como urgente», «busca el correo con el PDF», «abre el
+ * correo con el pdf de telegram». Antes «urgente», «pdf» o el nombre de un canal dentro de lo que se busca lo volvían un
+ * aviso urgente o un envío. Con un verbo de salida sigue siendo sensible («revisa mi correo y mándame un resumen por
+ * Telegram», «avísame urgente si hay correo de Ana», «llámame si hay correos»). `l`: en minúsculas y sin tildes.
+ * La misma regla está en src/13-trabajo/accionSensible.ts (tests/taller-aprobacion.test.ts compara las dos).
+ */
+export function soloLeeCorreo(l: string): boolean {
+  if (!/\b(correos?|e-?mails?|mails?|gmail|bandeja|inbox)\b/.test(l)) return false;
+  const lee = /\b(lee(?:me|r)?|lea|busca(?:me|r)?|encuentra(?:me)?|muestra(?:me)?|ensena(?:me)?|abre(?:me)?|revisa(?:me|r)?|resume(?:me)?|tengo|hay|cuantos|cuales)\b/.test(l);
+  const sale = /\b(envia(?:me|le|lo|la|r)?|manda(?:me|le|lo|la|r)?|reenvia\w*|avisa(?:me|le|nos|r)?|alerta|notifica\w*|llama(?:me|nos|le|r)?|haz una llamada|hacer una llamada|call me)\b/.test(l);
+  return lee && !sale;
 }
 
 export function parsePedido(raw: string): {
@@ -27,6 +50,8 @@ export function parsePedido(raw: string): {
 } {
   const q = String(raw || '').trim();
   const l = q.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  // Leer, buscar o enseñar el correo sin pedir mandar ni avisar nada no sale del sistema (revisión 10, MENOR-D).
+  const lee = soloLeeCorreo(l);
   const canal: 'telegram' | 'whatsapp' | 'correo' | null = /telegram|tg\b/.test(l)
     ? 'telegram'
     : /whats?app|\bwsp\b|\bwa\b/.test(l)
@@ -44,14 +69,14 @@ export function parsePedido(raw: string): {
     return { accion: 'sistema', canal, texto: q };
   }
   // Envío gana a "llamada": el cuerpo de un PDF/Telegram puede listar canales pendientes.
-  if (/\b(envia|envía|manda|mandale|mandame|mándame)\b/.test(l) || (canal && /\bpdf\b/.test(l))) {
+  if (!lee && (/\b(envia|envía|manda|mandale|mandame|mándame)\b/.test(l) || (canal && /\bpdf\b/.test(l)))) {
     return { accion: 'enviar', canal, texto: q };
   }
-  if (/\b(haz un pdf|genera(?:r)? (un )?pdf|pdf de)\b/.test(l)) return { accion: 'pdf', canal, texto: q };
-  if (/\b(urgente|avisame|alerta junta)\b/.test(l) || (canal === 'telegram' && /\b(llama(?:me|nos)?|ll[aá]mame|llamanos)\b/.test(l))) {
+  if (!lee && /\b(haz un pdf|genera(?:r)? (un )?pdf|pdf de)\b/.test(l)) return { accion: 'pdf', canal, texto: q };
+  if (!lee && (/\b(urgente|avisame|alerta junta)\b/.test(l) || (canal === 'telegram' && /\b(llama(?:me|nos)?|ll[aá]mame|llamanos)\b/.test(l)))) {
     return { accion: 'urgente', canal: canal || 'telegram', texto: q };
   }
-  if (/\b(llama(?:me)?|ll[aá]mame|haz una llamada|hacer una llamada|call me)\b/.test(l)) {
+  if (!lee && /\b(llama(?:me)?|ll[aá]mame|haz una llamada|hacer una llamada|call me)\b/.test(l)) {
     return { accion: 'llamar', canal, texto: q };
   }
   if (/\b(pendientes|tareas|lista de tareas)\b/.test(l) && !/\b(anota|agrega|apunta|recuerda)\b/.test(l)) {
@@ -139,6 +164,20 @@ export const ACCIONES_TALLER: Record<string, { efecto: Efecto; correr: (a: Recor
       return t ? { ok: true, texto: `TAREA CERRADA [${t.id}]: ${t.texto}` } : { ok: false, texto: `No encontré la tarea ${a.id}.` };
     },
   },
+  /**
+   * La captura de una página al grupo de la junta (revisión 11, MEDIO-1). La imagen exacta que se propuso queda guardada
+   * por su sha256 (`guardarFotoTaller`) y `a.foto` es ese hash: entra en la huella. Al aprobar se manda ESA imagen, y solo
+   * si sus bytes siguen dando el mismo hash.
+   */
+  foto: {
+    efecto: 'externo',
+    async correr(a) {
+      const buf = await leerFotoTaller(String(a.foto || ''));
+      if (!buf) return { ok: false, texto: 'TELEGRAM: no encontré la captura que aprobaste (o ya no es la misma imagen). No mandé nada.' };
+      const r = await canales.telegramFoto({ buf, caption: String(a.texto || '') || 'Captura de AU-RA' });
+      return { ok: r.ok, texto: `TELEGRAM: ${r.detalle}` };
+    },
+  },
   enviar: {
     efecto: 'externo',
     async correr(a) {
@@ -169,6 +208,34 @@ export const ACCIONES_TALLER: Record<string, { efecto: Efecto; correr: (a: Recor
     },
   },
 };
+
+/* ------------------------------------------------------------------ la captura que espera aprobación */
+
+/** El dueño (fijo) de las capturas guardadas: se guardan por su contenido, no por quién las pidió. */
+const DUENO_FOTOS = 'taller-capturas';
+/** La captura más grande que se guarda para proponerla (una página entera en JPEG cabe de sobra). */
+const MAX_FOTO_BYTES = 6 * 1024 * 1024;
+const shaFoto = (buf: Buffer) => crypto.createHash('sha256').update(buf).digest('hex');
+
+/**
+ * Guarda los bytes exactos de una captura en lo durable (S3 con varias réplicas; si no, el disco) por su sha256 y lo
+ * devuelve. null: no se pudo guardar (o es demasiado grande): entonces no se propone nada.
+ */
+export async function guardarFotoTaller(buf: Buffer): Promise<string | null> {
+  if (!Buffer.isBuffer(buf) || !buf.length || buf.length > MAX_FOTO_BYTES) return null;
+  const sha = shaFoto(buf);
+  const r = await crearUnaVez(claveDe('taller/capturas', DUENO_FOTOS, sha), { sha, b64: buf.toString('base64') }).catch(() => null);
+  return r?.ok ? sha : null;
+}
+
+/** Los bytes de la captura `sha`, solo si siguen dando ese hash. */
+export async function leerFotoTaller(sha: string): Promise<Buffer | null> {
+  if (!/^[a-f0-9]{64}$/.test(sha)) return null;
+  const l = await leerDurable<{ sha: string; b64: string }>(claveDe('taller/capturas', DUENO_FOTOS, sha)).catch(() => null);
+  if (!l || l.ok === false || !l.valor || typeof l.valor.b64 !== 'string') return null;
+  const buf = Buffer.from(l.valor.b64, 'base64');
+  return shaFoto(buf) === sha ? buf : null;
+}
 
 // Lo aprobado en la cola lo ejecuta el servidor con estas mismas funciones.
 for (const [nombre, a] of Object.entries(ACCIONES_TALLER)) registrarEjecutor(`taller.${nombre}`, (args) => a.correr(args));
@@ -205,7 +272,147 @@ export type ContextoTaller = {
    * turno sin efectos o ya de otro proceso) y un reintento la repetiría (revisión externa, 4-oct).
    */
   antesDeEfecto?: (herramienta: string) => Promise<boolean>;
+  /**
+   * La cuenta de la sesión firmada que pide (su correo). Lo que sale a los canales de la junta queda propuesto a ESTA
+   * cuenta y solo ella lo aprueba (revisión 10, MEDIO-C). Sin cuenta no hay a quién atar la aprobación: no se hace.
+   */
+  cuenta?: string | null;
+  /**
+   * Deja la propuesta esperando su aprobación (server/trabajos.ts `abrirDecisionDeTaller`: una tarea durable con su
+   * decisión exacta, la misma que el panel de tareas de la web y del teléfono enseñan). null: no se pudo dejar.
+   */
+  proponer?: (p: PropuestaTaller) => Promise<PropuestaAbierta | null>;
 };
+
+/* ------------------------------------------------------------------ propuestas con aprobación exacta */
+
+/**
+ * LO QUE SALE A LOS CANALES DE LA JUNTA NO SE HACE SIN APROBACIÓN (revisión 10, MEDIO-C). La tarjeta «Confirmar» vivía
+ * solo en la web: la app o un POST directo a /api/turno llegaban hasta el envío. Ahora el SERVIDOR no ejecuta Telegram,
+ * WhatsApp, correo, aviso urgente, nota de voz ni llamada desde el chat: deja una propuesta (una tarea durable con su
+ * decisión, lib/tareas-durables.ts) atada a la cuenta, la acción, el destino configurado, el contenido y la versión
+ * (`huellaTaller`). Se ejecuta solo al aprobar ESA decisión (POST /api/trabajos/:id/decisiones: su id, su versión, la
+ * sesión de la misma cuenta), una sola vez (`ejecutarUnaVez` por tarea + decisión), antes de que caduque, y solo si la
+ * huella recalculada al ejecutar es la misma. Otro contenido o destino es otra propuesta y otra aprobación.
+ */
+export const ACCIONES_CON_APROBACION: ReadonlySet<string> = new Set(['voz_estado', 'urgente', 'llamada', 'enviar', 'foto']);
+/** La versión del formato de la propuesta: entra en la huella (una propuesta de otro formato no se ejecuta). */
+export const VERSION_PROPUESTA_TALLER = 1;
+/** Lo más largo que se propone (y se manda) como contenido. */
+const MAX_CONTENIDO = 2000;
+
+export type CanalPropuesta = 'telegram' | 'whatsapp' | 'correo' | 'telefono';
+
+/** Lo que se propone: el vínculo exacto (lo que se ejecutará) y cómo se le enseña a la persona. */
+export type PropuestaTaller = Omit<VinculoTaller, 'tipo'> & { canal: CanalPropuesta; titulo: string; destinatario: string; contenido: string };
+/** La decisión que quedó esperando: con su id y su versión se aprueba. */
+export type PropuestaAbierta = { tarea: string; decision: string; version: number; caduca: number };
+/** Lo que el cliente recibe en el turno (`propuestaTaller`). */
+export type PropuestaTallerVista = PropuestaAbierta & { accion: string; canal: CanalPropuesta; titulo: string; destinatario: string; contenido: string };
+
+const DESTINO_TALLER: Record<CanalPropuesta, string> = {
+  telegram: 'Grupo de Telegram de la junta (el chat configurado en el servidor)',
+  whatsapp: 'WhatsApp de la junta (el número configurado en el servidor)',
+  correo: 'Correo de la organización (la dirección configurada en el servidor)',
+  telefono: 'Teléfono de la junta configurado en el servidor (llamada de Twilio)',
+};
+const NOMBRE_CANAL: Record<'telegram' | 'whatsapp' | 'correo', string> = { telegram: 'Telegram', whatsapp: 'WhatsApp', correo: 'correo' };
+
+function canalDeAccion(accion: string, args: Record<string, unknown>): CanalPropuesta {
+  if (accion === 'enviar') return (['telegram', 'whatsapp', 'correo'] as const).find((c) => c === args.canal) || 'telegram';
+  return accion === 'llamada' ? 'telefono' : 'telegram';
+}
+
+/**
+ * A dónde va de verdad, según la configuración del servidor de AHORA (no se guarda: entra en la huella). Si entre la
+ * propuesta y la aprobación cambia el chat, el número o el correo configurado, la huella cambia y no se ejecuta.
+ */
+function destinoConfigurado(accion: string, args: Record<string, unknown>): Record<string, string> {
+  const canal = canalDeAccion(accion, args);
+  const tg = clave('telegram_chat');
+  if (canal === 'telegram') return { canal, chat: tg };
+  if (canal === 'whatsapp') return { canal, a: process.env.JEFE_WHATSAPP || '', desde: process.env.TWILIO_WHATSAPP_FROM || '' };
+  if (canal === 'correo') return { canal, a: process.env.MAIL_TO_JEFE || process.env.MAIL_FROM || '', desde: process.env.MAIL_FROM || '' };
+  // La llamada, si Twilio no la hace, avisa por Telegram (ACCIONES_TALLER.llamada): los dos destinos cuentan.
+  return { canal, a: process.env.JEFE_TELEFONO || '', desde: process.env.TWILIO_VOICE_FROM || '', respaldo: tg };
+}
+
+/** La huella de lo que se aprueba: cuenta, acción, argumentos (contenido), destino configurado y versión. */
+export function huellaTaller(p: { cuenta: string; accion: string; args: Record<string, unknown>; version: number }): string {
+  return hashArgumentos({ v: p.version, cuenta: String(p.cuenta || '').trim().toLowerCase(), herramienta: `taller.${p.accion}`, args: p.args, destino: destinoConfigurado(p.accion, p.args) });
+}
+
+/** Cómo se le enseña la acción a la persona (los mismos textos que la tarjeta de la web, src/13-trabajo/accionSensible.ts). */
+function describirAccion(accion: string, args: Record<string, unknown>): { canal: CanalPropuesta; titulo: string; destinatario: string; contenido: string } {
+  const canal = canalDeAccion(accion, args);
+  const texto = String(args.texto || '');
+  if (accion === 'voz_estado') return { canal, titulo: 'Mandar una nota de voz con el estado del sistema', destinatario: DESTINO_TALLER.telegram, contenido: 'El estado de los nodos, dicho con la voz de AU-RA.' };
+  if (accion === 'urgente') return { canal, titulo: 'Avisar urgente a la junta', destinatario: `${DESTINO_TALLER.telegram}, como aviso urgente`, contenido: texto };
+  if (accion === 'llamada') return { canal, titulo: 'Hacer una llamada', destinatario: DESTINO_TALLER.telefono, contenido: texto };
+  if (accion === 'foto') return { canal, titulo: 'Mandar la captura de la página por Telegram', destinatario: DESTINO_TALLER.telegram, contenido: `${texto || 'Captura de AU-RA'} (imagen ${String(args.foto || '').slice(0, 12)})` };
+  const c = canal === 'telefono' ? 'telegram' : canal;
+  return { canal, titulo: `Mandar ${args.pdf ? 'un PDF' : 'un mensaje'} por ${NOMBRE_CANAL[c]}`, destinatario: DESTINO_TALLER[canal], contenido: texto };
+}
+
+/**
+ * ¿Lo aprobado sigue siendo exactamente esto? La cuenta que aprueba es la que lo pidió, la acción es de las que piden
+ * aprobación, la versión es la de este servidor y la huella recalculada AHORA (contenido y destino configurado) es la
+ * misma que se aprobó.
+ */
+export function vinculoTallerVigente(v: VinculoTaller | null | undefined, cuenta: string): boolean {
+  if (!v || v.tipo !== 'taller' || !ACCIONES_CON_APROBACION.has(v.accion)) return false;
+  const c = String(cuenta || '').trim().toLowerCase();
+  if (!c || v.cuenta !== c || v.version !== VERSION_PROPUESTA_TALLER) return false;
+  return huellaTaller({ cuenta: v.cuenta, accion: v.accion, args: v.args, version: v.version }) === v.huella;
+}
+
+/**
+ * Ejecuta lo aprobado (server/trabajos.ts, dentro de `ejecutarUnaVez`): vuelve a mirar el vínculo y las reglas con la
+ * identidad de quien lo pidió, y corre la acción con los argumentos congelados. `stale`: ya no es lo aprobado (no se hizo).
+ */
+export async function ejecutarAprobadoTaller(v: VinculoTaller, o: { cuenta: string }): Promise<{ estado: 'succeeded' | 'failed' | 'stale'; resumen: string }> {
+  if (!vinculoTallerVigente(v, o.cuenta)) return { estado: 'stale', resumen: 'Lo que espera ya no es lo que aprobaste (otro contenido, destino o cuenta). No mandé nada.' };
+  const nombre = v.accion as keyof typeof ACCIONES_TALLER;
+  const accion = ACCIONES_TALLER[nombre];
+  const persona = personaPorId(v.quien);
+  const d = await autorizar({
+    herramienta: `taller.${nombre}`,
+    efecto: accion.efecto,
+    plataforma: 'ultron',
+    args: v.args,
+    quien: v.quien,
+    nivel: persona ? nivelDe(persona, 'ultron') : null,
+    // Se aprueba con la sesión firmada de esa misma cuenta (server/trabajos.ts).
+    prueba: 'sesion',
+    canal: 'mesa',
+    riesgo: null,
+    destino: 'junta',
+  });
+  if (d.veredicto !== 'permitir') return { estado: 'failed', resumen: textoDeDecision({ herramienta: nombre }, d) };
+  const r = await accion.correr(v.args);
+  return { estado: r.ok ? 'succeeded' : 'failed', resumen: r.texto };
+}
+
+/** Deja la propuesta (sin ejecutar nada) y devuelve lo que se le dice a la persona. */
+async function proponerTaller(nombre: keyof typeof ACCIONES_TALLER, args: Record<string, unknown>, ctx: ContextoTaller): Promise<ResultadoAccion & { decision: string; propuesta?: PropuestaTallerVista }> {
+  const cuenta = String(ctx.cuenta || '').trim().toLowerCase();
+  if (!cuenta.includes('@') || !ctx.proponer) {
+    return { ok: false, decision: 'aprobacion', texto: 'No lo hice: esto sale a los canales de la junta y solo lo hago cuando lo confirmas en la mesa o en la app, con tu sesión. No mandé nada.' };
+  }
+  const congelados = { ...args, ...(typeof args.texto === 'string' ? { texto: args.texto.slice(0, MAX_CONTENIDO) } : {}) };
+  const version = VERSION_PROPUESTA_TALLER;
+  const huella = huellaTaller({ cuenta, accion: nombre, args: congelados, version });
+  const desc = describirAccion(nombre, congelados);
+  const abierta = await ctx.proponer({ accion: nombre, args: congelados, cuenta, quien: ctx.quien ?? null, huella, version, ...desc }).catch(() => null);
+  if (!abierta) return { ok: false, decision: 'aprobacion', texto: 'No lo hice: no pude dejar la propuesta para que la confirmes, así que no mandé nada. Pídemelo otra vez en un momento.' };
+  const minutos = Math.max(1, Math.round((abierta.caduca - Date.now()) / 60_000));
+  return {
+    ok: false,
+    decision: 'aprobacion',
+    texto: `Necesito tu confirmación antes de hacerlo: ${desc.titulo.charAt(0).toLowerCase()}${desc.titulo.slice(1)} — ${desc.destinatario}. Todavía no he mandado nada; confírmalo en la tarjeta o en tus tareas (vale ${minutos} min).`,
+    propuesta: { ...abierta, accion: nombre, ...desc },
+  };
+}
 
 /**
  * Lo que el modelo sabe cuando un miembro pide algo que solo es del taller de la junta. Deja claro
@@ -237,12 +444,12 @@ const FUERA_DE_LA_VOZ = new Set(['redeploy', 'mantenimiento', 'voz', 'urgente', 
  * Pasa la acción por las reglas y, si la dejan, la corre. Si no, devuelve el texto de la decisión
  * (bloqueada, o en espera de aprobación con su número de solicitud).
  */
-async function conPermiso(nombre: keyof typeof ACCIONES_TALLER, args: Record<string, unknown>, ctx: ContextoTaller): Promise<ResultadoAccion & { decision?: string }> {
+async function conPermiso(nombre: keyof typeof ACCIONES_TALLER, args: Record<string, unknown>, ctx: ContextoTaller): Promise<ResultadoAccion & { decision?: string; propuesta?: PropuestaTallerVista }> {
   const accion = ACCIONES_TALLER[nombre];
-  const d = await autorizar({
+  const pedido = {
     herramienta: `taller.${nombre}`,
     efecto: accion.efecto,
-    plataforma: 'ultron',
+    plataforma: 'ultron' as const,
     args,
     quien: ctx.quien ?? null,
     nivel: ctx.nivel ?? null,
@@ -251,9 +458,16 @@ async function conPermiso(nombre: keyof typeof ACCIONES_TALLER, args: Record<str
     riesgo: ctx.riesgo ?? null,
     // Todo lo que el taller manda va a los canales propios configurados (el grupo, el correo y el
     // WhatsApp de la junta). No hay forma de darle un destinatario arbitrario desde el chat.
-    destino: accion.efecto === 'externo' ? 'junta' : null,
-  });
+    destino: accion.efecto === 'externo' ? ('junta' as const) : null,
+  };
+  // Lo que sale a los canales de la junta no corre desde el chat (revisión 10, MEDIO-C): si las reglas lo dejarían, se
+  // PROPONE y espera la aprobación exacta de esta cuenta. Si no lo dejarían (bloqueo, revisión de la junta), se cuenta
+  // como siempre: `autorizar` lo audita o lo deja en la cola de firmas.
+  if (ACCIONES_CON_APROBACION.has(nombre) && evaluar(pedido).veredicto === 'permitir') return proponerTaller(nombre, args, ctx);
+  const d = await autorizar(pedido);
   if (d.veredicto !== 'permitir') return { ok: false, texto: textoDeDecision({ herramienta: nombre }, d), decision: d.veredicto };
+  // Una regla pudo cambiar entre `evaluar` y `autorizar` (el tope por hora): aun así, lo que pide aprobación no corre aquí.
+  if (ACCIONES_CON_APROBACION.has(nombre)) return proponerTaller(nombre, args, ctx);
   // Persistir antes de actuar: sin dejarlo registrado en el turno, no se hace (un reintento lo repetiría).
   if (accion.efecto !== 'lectura' && ctx.antesDeEfecto && !(await ctx.antesDeEfecto(`taller.${nombre}`).catch(() => false))) {
     return { ok: false, texto: 'No lo hice: no pude dejar registrado este turno, así que no se mandó ni se cambió nada. Pídemelo otra vez en un momento.' };
@@ -261,13 +475,37 @@ async function conPermiso(nombre: keyof typeof ACCIONES_TALLER, args: Record<str
   return accion.correr(args);
 }
 
+/**
+ * La captura de una página que se pidió mandar al grupo de la junta (revisión 11, MEDIO-1). Antes server.ts la publicaba
+ * con `telegramFoto` en cuanto alguien con mando decía «captura» o «screenshot», sin propuesta ni aprobación. Ahora es una
+ * acción del taller como las demás: se guarda la imagen exacta (su sha256 va en los argumentos y por tanto en la huella)
+ * y queda PROPUESTA a la cuenta; se manda una vez, al aprobar esa decisión. Sin cuenta, sin almacén o con las reglas en
+ * contra, no sale nada. La respuesta del chat sigue diciendo lo que la página contiene.
+ */
+export async function proponerCapturaTaller(foto: { buf: Buffer; titulo?: string; url: string }, ctx: ContextoTaller): Promise<{ texto: string; propuesta?: PropuestaTallerVista }> {
+  if (ctx.nivelAura === 'miembro') return { texto: TALLER_SOLO_JUNTA };
+  if (ctx.soloConsulta) return { texto: 'Desde la conversación de voz no mando capturas al grupo. Pídemelo escrito en la mesa.' };
+  const sha = await guardarFotoTaller(foto.buf);
+  if (!sha) return { texto: 'No dejé la captura para mandarla: no pude guardarla. No mandé nada al grupo.' };
+  const texto = String(foto.titulo || foto.url || '').replace(/\s+/g, ' ').trim().slice(0, 300) || 'Captura de AU-RA';
+  const r = await conPermiso('foto', { foto: sha, texto, url: String(foto.url || '').slice(0, 500) }, ctx);
+  return { texto: r.texto, ...(r.propuesta ? { propuesta: r.propuesta } : {}) };
+}
+
 export async function despacharTaller(message: string, opts?: ContextoTaller): Promise<TallerOut> {
   const p = parsePedido(message);
   if (!p.accion || cedeALaApp(p, message, opts?.manosApp)) return { hechos: [], tools: [] };
   const tools: string[] = [];
   const hechos: string[] = [];
-  const out = (decir?: string): TallerOut => ({ hechos, tools, decir });
+  let propuesta: PropuestaTallerVista | undefined;
+  const out = (decir?: string): TallerOut => ({ hechos, tools, decir, ...(propuesta ? { propuesta } : {}) });
   const ctx: ContextoTaller = opts || {};
+  /** `conPermiso`, guardando la propuesta que quedó esperando aprobación (va en la respuesta del turno). */
+  const permiso = async (nombre: keyof typeof ACCIONES_TALLER, args: Record<string, unknown>) => {
+    const r = await conPermiso(nombre, args, ctx);
+    if (r.propuesta) propuesta = r.propuesta;
+    return r;
+  };
   /*
    * Un miembro no llega a NINGUNA acción del taller: ni a las que leen (sistema, bóveda, pendientes de
    * la junta) ni a las que mandan (Telegram, WhatsApp o correo de la organización, llamadas de Twilio,
@@ -325,14 +563,14 @@ export async function despacharTaller(message: string, opts?: ContextoTaller): P
 
   if (p.accion === 'voz') {
     tools.push('voz');
-    const r = await conPermiso('voz_estado', {}, ctx);
+    const r = await permiso('voz_estado', {});
     hechos.push(`VOZ TELEGRAM: ${r.texto}`);
     return out(r.texto);
   }
 
   if (p.accion === 'urgente') {
     tools.push('urgente');
-    const r = await conPermiso('urgente', { texto: extraerCuerpo(p.texto) || 'AU-RA te necesita. Es urgente.' }, ctx);
+    const r = await permiso('urgente', { texto: extraerCuerpo(p.texto) || 'AU-RA te necesita. Es urgente.' });
     hechos.push(`URGENTE TELEGRAM: ${r.texto}`);
     hechos.push('El bot de Telegram no hace llamada de teléfono. Llamada real = Twilio (caja llamada).');
     return out(r.texto);
@@ -340,7 +578,7 @@ export async function despacharTaller(message: string, opts?: ContextoTaller): P
 
   if (p.accion === 'redeploy') {
     tools.push('redeploy');
-    const r = await conPermiso('redeploy', {}, ctx);
+    const r = await permiso('redeploy', {});
     hechos.push(`REDEPLOY MESA: ${r.texto}`);
     return out(r.texto);
   }
@@ -355,21 +593,21 @@ export async function despacharTaller(message: string, opts?: ContextoTaller): P
 
   if (p.accion === 'tarea') {
     tools.push('tareas');
-    const r = await conPermiso('tarea_anotar', { texto: p.texto, usuario: opts?.usuario || null }, ctx);
+    const r = await permiso('tarea_anotar', { texto: p.texto, usuario: opts?.usuario || null });
     hechos.push(r.ok ? `${r.texto}. ${resumenTareas()}` : r.texto);
     return out(r.ok ? `Anotado: ${p.texto}` : r.texto);
   }
 
   if (p.accion === 'hecho') {
     tools.push('tareas');
-    const r = await conPermiso('tarea_cerrar', { id: p.texto }, ctx);
+    const r = await permiso('tarea_cerrar', { id: p.texto });
     hechos.push(r.texto);
     return out(r.ok ? r.texto.replace(/^TAREA CERRADA \[[^\]]+\]: /, 'Cerrada: ') : r.decision ? r.texto : 'No encontré esa tarea.');
   }
 
   if (p.accion === 'llamar') {
     tools.push('llamada');
-    const r = await conPermiso('llamada', { texto: extraerCuerpo(p.texto) || 'Hola, te llama AU-RA.' }, ctx);
+    const r = await permiso('llamada', { texto: extraerCuerpo(p.texto) || 'Hola, te llama AU-RA.' });
     hechos.push(`LLAMADA: ${r.texto}`);
     return out(r.texto);
   }
@@ -386,7 +624,7 @@ export async function despacharTaller(message: string, opts?: ContextoTaller): P
     }
     if (quierePdf) tools.push('pdf');
     tools.push(canal);
-    const r = await conPermiso('enviar', { canal, texto: cuerpo, pdf: quierePdf }, ctx);
+    const r = await permiso('enviar', { canal, texto: cuerpo, pdf: quierePdf });
     hechos.push(r.texto);
     return out(r.texto.replace(/^(TELEGRAM|WHATSAPP|CORREO): /, ''));
   }

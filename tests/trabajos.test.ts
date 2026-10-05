@@ -287,7 +287,9 @@ function arnes(o: { salida?: SalidaEnvio; tc?: TareaEnCursoMin[]; misiones?: Mis
     borradores: {
       vigente: (_c, canal, ambito) => {
         const i = o.vigente ? o.vigente(canal, ambito) : 'int-1';
-        const huella = o.huellaVigente?.();
+        // Como los borradores de verdad, el que espera dice su huella (la del fixture: `h-<intento>`). Sin huella, el
+        // panel no aprueba nada (permisos exactos, 4-oct).
+        const huella = o.huellaVigente ? o.huellaVigente() : i ? `h-${i}` : undefined;
         return i ? { intento: i, ...(huella !== undefined ? { huella } : {}) } : null;
       },
       enviar: async (_c, _canal, _ambito, _intento, huella) => {
@@ -313,7 +315,7 @@ function arnes(o: { salida?: SalidaEnvio; tc?: TareaEnCursoMin[]; misiones?: Mis
   return { ll, pedir, cerrar: () => srv.close() };
 }
 
-const borrador = (intento = 'int-1', vence = Date.now() + 15 * 60_000) => ({ canal: 'correo' as const, intento, para: ['ana@ejemplo.com'], desde: 'yo@ejemplo.com', asunto: 'Fechas de la reunión', texto: 'Hola Ana, ¿martes o jueves?', vence });
+const borrador = (intento = 'int-1', vence = Date.now() + 15 * 60_000) => ({ canal: 'correo' as const, intento, para: ['ana@ejemplo.com'], desde: 'yo@ejemplo.com', asunto: 'Fechas de la reunión', texto: 'Hola Ana, ¿martes o jueves?', vence, huella: `h-${intento}` });
 
 test('rutas: sin sesión 401; la persona sale de la sesión; otro no ve ni toca mis tareas', async () => {
   _usarAlmacenDurable(almacenEnMemoria());
@@ -680,23 +682,37 @@ test('el chat crea la tarea ANTES de encargar a la computadora, la enlaza en la 
   await cerrarEncargoComputadora(yo, r4, { misionId: 'mis_4', estado: 'succeeded' });
   const r5 = await abrirEncargoComputadora(yo, 'web', 'Crea el documento informe.odt y guárdalo');
   await cerrarEncargoComputadora(yo, r5, { misionId: 'mis_5', estado: 'succeeded' });
+  // Las misiones dicen lo mismo que se encargó: solo una CONSULTA se completa con el dato (ronda 5, cerrado por defecto).
   const h2 = arnes({
     misiones: [
-      { id: 'mis_2', tareaId: 'mis_2', instruccion: 'horario', estado: 'hecha', ok: true, inicio: T0, segundos: 40, resultado: 'Abre de 9 a 4', enlaces: ['https://banco.ejemplo/horario'] },
-      { id: 'mis_3', tareaId: 'mis_3', instruccion: 'clima', estado: 'hecha', ok: true, inicio: T0, segundos: 40, resultado: 'Soleado, 28 grados', enlaces: [] },
-      { id: 'mis_4', tareaId: 'mis_4', instruccion: 'tasa', estado: 'hecha', ok: true, inicio: T0, segundos: 40, resultado: null, enlaces: [] },
+      { id: 'mis_2', tareaId: 'mis_2', instruccion: 'Busca el horario del banco', estado: 'hecha', ok: true, inicio: T0, segundos: 40, resultado: 'Abre de 9 a 4', enlaces: ['https://banco.ejemplo/horario'] },
+      { id: 'mis_3', tareaId: 'mis_3', instruccion: 'Busca el clima', estado: 'hecha', ok: true, inicio: T0, segundos: 40, resultado: 'Soleado, 28 grados', enlaces: [] },
+      { id: 'mis_4', tareaId: 'mis_4', instruccion: 'Busca la tasa del día', estado: 'hecha', ok: true, inicio: T0, segundos: 40, resultado: null, enlaces: [] },
       // «Listo, lo guardé» sin que el nodo lo comprobara (revisión externa, 4-oct).
       { id: 'mis_5', tareaId: 'mis_5', instruccion: 'Crea el documento informe.odt y guárdalo', estado: 'hecha', ok: true, inicio: T0, segundos: 40, resultado: 'Listo, guardé informe.odt.', enlaces: [] },
       { id: 'mis_suelta', tareaId: 'mis_suelta', instruccion: 'otra cosa', estado: 'trabajando', ok: null, inicio: T0, segundos: 5, resultado: null },
     ],
   });
   try {
-    const l = (await h2.pedir('/api/trabajos', yo)).json.tareas as any[];
+    // Ronda 7: una app que conoce el estado nuevo lo pide; la consulta respondida queda «respondida», no completed.
+    const l = (await h2.pedir('/api/trabajos?estados=respondida', yo)).json.tareas as any[];
     const t2 = l.find((x) => x.id === r2!.id);
     const t3 = l.find((x) => x.id === r3!.id);
-    assert.equal(t2.state, 'completed');
+    assert.equal(t2.state, 'respondida');
+    assert.equal(t2.terminal, true);
     assert.ok(t2.result.evidence.some((e: any) => e.ref === 'https://banco.ejemplo/horario'));
-    assert.equal(t3.state, 'completed', 'la respuesta con el dato que se pidió es el resultado (no un «listo»)');
+    assert.match(t2.result.summary, /Te respondí con lo que encontré\. Si además pediste que hiciera algo, eso NO está comprobado/);
+    assert.doesNotMatch(t2.result.summary, /no hice/);
+    assert.equal(t3.state, 'respondida', 'la respuesta con el dato que se pidió se responde (no un «listo»), sin comprobar');
+    assert.notEqual(t3.acceptance[0].status, 'verified');
+    // Una app de ANTES (sin `estados`): la misma tarea llega como «partial» terminal con el estado de verdad aparte;
+    // nunca «completed», nunca un estado que no conoce ni algo que sigue trabajando.
+    const viejo = (await h2.pedir('/api/trabajos', yo)).json.tareas as any[];
+    const v2 = viejo.find((x) => x.id === r2!.id);
+    assert.deepEqual({ state: v2.state, estadoReal: v2.estadoReal, terminal: v2.terminal }, { state: 'partial', estadoReal: 'respondida', terminal: true });
+    assert.ok(!viejo.some((x) => x.state === 'respondida'));
+    const una = (await h2.pedir(`/api/trabajos/${r3!.id}`, yo)).json.tarea;
+    assert.deepEqual({ state: una.state, estadoReal: una.estadoReal }, { state: 'partial', estadoReal: 'respondida' });
     const t4 = l.find((x) => x.id === r4!.id);
     assert.equal(t4.state, 'partial', '«hecha» sin nada que lo acredite no es completed');
     assert.ok(t4.result.partial.length > 0);

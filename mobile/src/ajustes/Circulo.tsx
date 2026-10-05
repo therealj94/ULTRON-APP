@@ -4,9 +4,8 @@
  * la lógica en compa/cerebro.ts). José (2-oct): «conecta con mi familia».
  *
  *   · Cada persona: nombre, relación y WhatsApp; tocarla la edita (o la quita).
- *   · «AURA puede mandarle recordatorios sin preguntarme»: el permiso permanente (permisos.recordatorios).
- *     Solo se da aquí, desde la app: AURA no puede dárselo sola. Sin él, cada mensaje queda como borrador
- *     hasta tu «sí».
+ *   · Cada mensaje (recordatorios incluidos) queda como borrador hasta tu «sí» a ESE texto. El antiguo interruptor
+ *     «recordatorios sin preguntarme» se quitó (permisos exactos, revisión 4-oct): ya no autorizaba nada en el servidor.
  *   · Llamar a otra persona se hace desde el teléfono: AURA no puede llamarle a nadie desde el servidor.
  *
  * Una hoja de toda la app (app/hojas.ts → app/HojasCerebro.tsx). Agregar y editar van dentro de la misma
@@ -17,12 +16,11 @@ import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
 import { api } from '../lib/api';
 import { idiomaActual, tr } from '../i18n';
 import { MEDIDA, useTema } from '../nucleo/tema';
-import { Boton, Campo, Chip, Hoja, Icono, Interruptor, Texto, vibrar } from '../ui';
+import { Boton, Campo, Chip, Hoja, Icono, Texto, vibrar } from '../ui';
 import {
   RELACIONES,
   borradorDe,
   circuloDe,
-  cuerpoPermiso,
   cuerpoPersona,
   nombreRelacion,
   numeroLegible,
@@ -116,18 +114,6 @@ export function HojaCirculo({ visible, onCerrar }: Props) {
     }
   };
 
-  const permitir = async (p: PersonaCirculo, si: boolean) => {
-    const recordatorios = si ? 'permitido' : 'preguntar';
-    setPersonas((l) => (l || []).map((x) => (x.id === p.id ? { ...x, permisos: { ...x.permisos, recordatorios } } : x)));
-    try {
-      await api('/api/circulo', { method: 'POST', body: JSON.stringify(cuerpoPermiso(p.id, si)) }, 15_000);
-    } catch (e: any) {
-      vibrar('aviso');
-      setError(e?.message || tr('No pude cambiar el permiso.', 'I couldn’t change the permission.'));
-      void leer();
-    }
-  };
-
   const editando = modo.tipo === 'editar' ? (modo.id ? personas?.find((p) => p.id === modo.id) || null : null) : null;
   const nueva = modo.tipo === 'editar' && !modo.id;
 
@@ -218,16 +204,6 @@ export function HojaCirculo({ visible, onCerrar }: Props) {
                   </View>
                   <Icono nombre="lapiz" tam={18} color={tema.texto3} />
                 </Pressable>
-                <View style={[s.permiso, { borderTopColor: tema.borde }]}>
-                  <Texto v="chica" style={{ flex: 1 }}>
-                    {tr('AURA puede mandarle recordatorios sin preguntarme', 'AURA can send them reminders without asking me')}
-                  </Texto>
-                  <Interruptor
-                    valor={p.permisos.recordatorios === 'permitido'}
-                    onCambiar={(v) => void permitir(p, v)}
-                    etiqueta={tr(`Recordatorios a ${p.nombre} sin preguntar`, `Reminders to ${p.nombre} without asking`)}
-                  />
-                </View>
               </View>
             ))
           )}
@@ -239,8 +215,8 @@ export function HojaCirculo({ visible, onCerrar }: Props) {
           <Boton titulo={tr('Agregar a alguien', 'Add someone')} icono="mas" variante="secundario" onPress={() => editar(null)} />
           <Texto v="mini" color="texto3">
             {tr(
-              'Los mensajes a tu gente quedan como borrador hasta tu «sí», salvo los recordatorios que permitas arriba (hasta 3 al día por persona).',
-              'Messages to your people stay as drafts until you say “yes”, except the reminders you allow above (up to 3 a day per person).'
+              'Los mensajes a tu gente, recordatorios incluidos, quedan como borrador hasta tu «sí» a ese texto.',
+              'Messages to your people, reminders included, stay as drafts until you say “yes” to that exact text.'
             )}
             {puede && !puede.whatsapp ? tr(' Tu WhatsApp no está conectado en el servidor, así que por ahora no se le pueden mandar.', ' Your WhatsApp isn’t connected on the server, so they can’t be sent for now.') : ''}
           </Texto>
@@ -257,7 +233,6 @@ const s = StyleSheet.create({
   tarjeta: { borderWidth: 1, borderRadius: MEDIDA.radio.l, overflow: 'hidden' },
   persona: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: MEDIDA.espacio.m },
   inicial: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
-  permiso: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: MEDIDA.espacio.m, paddingVertical: MEDIDA.espacio.s, borderTopWidth: StyleSheet.hairlineWidth },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   botones: { flexDirection: 'row', gap: MEDIDA.espacio.s },
 });

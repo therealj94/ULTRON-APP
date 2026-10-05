@@ -1,0 +1,12 @@
+{
+  "//": "Solo para la web: src/App.tsx y src/13-trabajo/VisorEscritorio.tsx importan visor.ts (el visor de la computadora, P3). Vite usa el tsconfig más cercano y el de mobile/ extiende expo/tsconfig.base, que no existe donde no se instalan las dependencias del teléfono (la CI de la web, Render). El tsc del teléfono y Metro siguen usando mobile/tsconfig.json. Igual que mobile/src/lib/tsconfig.json.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "jsx": "react-jsx",
+    "skipLibCheck": true,
+    "noEmit": true
+  }
+}
