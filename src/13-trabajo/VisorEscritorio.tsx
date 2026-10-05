@@ -21,7 +21,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExtern
 import { headersMesa } from '../10-infra/sesionCliente';
 import { registrarTrabajoActivo, avisarTrabajoLibre } from '../10-infra/trabajoActivo';
 import { enfocables, saltoDeTab } from '../07-pantallas/foco';
-import { abrirVisor, cerrarVisor, sesionDe, soltarImagen, soltarOyente, suscribirVisor, tecladoDe, visorAhora } from '../../mobile/src/app/visor';
+import { abrirVisor, cerrarVisor, marcaVisor, sesionDe, soltarImagen, soltarOyente, suscribirVisor, tecladoDe, visorAhora } from '../../mobile/src/app/visor';
+// Olvidarlo al cambiar de cuenta (App.tsx) y mirarlo desde fuera: por aquí, el MISMO estado de módulo que abre el visor.
+export { olvidarVisor, visorAhora } from '../../mobile/src/app/visor';
 import { respuestaPc, trabajando, type EstadoPc, type TareaPc } from '../../mobile/src/compa/computadora';
 import {
   FRAME_VIEJO_MS,
@@ -61,10 +63,13 @@ const AZUL = '#5aa9ff';
 
 /** Abre el visor de la tarea de la computadora que corresponde a esta tarea durable. Devuelve un aviso si no se pudo. */
 export async function abrirEscritorio(entornoId: string | null | undefined): Promise<string | null> {
+  // De quién es (revisión 9): si la cuenta cambió mientras se buscaba la tarea, el visor de la anterior no se abre.
+  // Quien llamó comprueba su cuenta antes de decir nada (App.tsx, deEstaCuenta).
+  const marca = marcaVisor();
   try {
     const id = await tareaDelEscritorio(entornoId, pedir);
     if (!id) return 'Tu computadora no tiene una tarea abierta ahora.';
-    abrirVisor(id);
+    abrirVisor(id, marca);
     return null;
   } catch (e: any) {
     return e?.status ? String(e.message || 'No pude abrir el escritorio.') : 'Tu computadora no contestó. Prueba otra vez en un momento.';

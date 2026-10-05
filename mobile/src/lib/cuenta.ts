@@ -11,10 +11,13 @@
  * Sin React ni nada nativo (lo prueban las pruebas en node). Lo fija la sesión (app/sesion.ts).
  */
 import { sha256 } from '@noble/hashes/sha2';
+import { _reiniciarGeneracion, abrirGeneracion, generacionCuenta } from './generacionCuenta';
+
+// El contador y sus oyentes viven en lib/generacionCuenta.ts (sin dependencias: el visor, que también compila la
+// web, se ata a él). Aquí se reexportan: quien ya los usaba desde lib/cuenta no cambia.
+export { alCambiarCuenta, generacionCuenta, sigueVigente } from './generacionCuenta';
 
 let correo = '';
-let generacion = 0;
-const oyentes = new Set<() => void>();
 
 const normal = (c: string | null | undefined) => String(c || '').trim().toLowerCase();
 
@@ -26,40 +29,16 @@ export function fijarCuenta(c: string | null | undefined, o: { nueva?: boolean }
   const n = normal(c);
   if (n !== correo || o.nueva) {
     correo = n;
-    generacion++;
-    // En el acto, sin esperar a nada: lo que tenga sesiones propias (Veta Wallet) corta lo que tenía en
-    // vuelo y suelta lo que tenía en memoria antes de que la persona nueva vea una sola pantalla.
-    for (const f of [...oyentes]) {
-      try {
-        f();
-      } catch {
-        /* un oyente roto no deja la cuenta a medias */
-      }
-    }
+    // En el acto, sin esperar a nada: lo que tenga sesiones propias (Veta Wallet, el visor de la computadora) corta
+    // lo que tenía en vuelo y suelta lo que tenía en memoria antes de que la persona nueva vea una sola pantalla.
+    return abrirGeneracion();
   }
-  return generacion;
-}
-
-/** Avisa cada cambio de generación (salir, entrar otra persona, o la misma de nuevo). Devuelve cómo dejar de oír. */
-export function alCambiarCuenta(f: () => void): () => void {
-  oyentes.add(f);
-  return () => {
-    oyentes.delete(f);
-  };
+  return generacionCuenta();
 }
 
 /** El correo de quien está dentro, o '' si no hay nadie. */
 export function correoCuenta(): string {
   return correo;
-}
-
-export function generacionCuenta(): number {
-  return generacion;
-}
-
-/** ¿Sigue vigente la generación que se capturó al empezar? */
-export function sigueVigente(g: number): boolean {
-  return g === generacion;
 }
 
 /**
@@ -88,5 +67,5 @@ export function seudonimoActual(): string {
 /** Solo pruebas. */
 export function _reiniciarCuenta() {
   correo = '';
-  generacion = 0;
+  _reiniciarGeneracion();
 }
