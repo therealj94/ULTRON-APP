@@ -165,7 +165,7 @@ import { alAvisar, comandoDeAprobacion, reconciliarAprobaciones, resumenParaAvis
 import { hechoCerebro, lineas as lineasCerebro } from './lib/cerebro';
 import { lineasPorSignificado } from './lib/cognitivo/conocimiento-semantico';
 import { herramientaActiva, herramientaPermitida, perfilPara, type NivelAura } from './lib/perfiles';
-import { exigirJunta, nivelDeCorreo, nivelDePeticion, rolVisible, ROL_MIEMBRO } from './server/nivel';
+import { exigirJunta, nivelDeCorreo, nivelDePeticion, rolVisible } from './server/nivel';
 import { anotarVoz, fraseTopeVoz, msDeHabla, restanteVozMs } from './server/tope-voz';
 import { resolverCalculoMina } from './lib/minas/calculos';
 import { responderConcesion } from './lib/minas/concesiones';
@@ -201,6 +201,8 @@ import { identidadDe, exigirPlataforma, esInvitado, plataformaAutorizada, sesion
 import { asegurarCuentaMiembro, cuentaDe, cuentasDisponibles, crearSolicitud, entrarConCuenta, cuentaSuspendida, mantenerCuentasAlDia } from './server/cuentas';
 import { aprobadores, montarRutasCuentas, plantilla } from './server/cuentas-rutas';
 import { montarRutasGenesis } from './server/genesis';
+import { montarRutasVeta } from './server/veta-entrar';
+import { gastarCupo } from './server/seguridad';
 import { montarEnlacesApp } from './server/enlaces-app';
 import { enviarCorreo } from './lib/correo-ses';
 import { montarRutasBiblioteca } from './server/electrum/biblioteca-rutas';
@@ -1816,7 +1818,8 @@ function nombreYRolDe(correo: string, nombreCuenta?: string) {
 /** El rol que se enseña de una sesión viva: el nivel de HOY manda sobre el rol que se firmó al entrar. */
 function rolDeSesion(s: { correo: string; rol: string }) {
   if (ES_ELECTRUM) return s.rol;
-  return nivelDeCorreo(s.correo) === 'miembro' ? ROL_MIEMBRO : s.rol;
+  // El de miembro sale de rolVisible: «Miembro · Genesis ID» o, sin Genesis, «Miembro · Veta Wallet».
+  return nivelDeCorreo(s.correo) === 'miembro' ? rolVisible(s.correo, 'miembro') : s.rol;
 }
 
 // El panel de infraestructura de lo que sabe Dr Electrum (carpetas, estados, releer, importar).
@@ -1894,6 +1897,24 @@ if (!ES_ELECTRUM) {
       }
       return true;
     },
+  });
+
+  /*
+   * Entrar solo con Veta Wallet, sin Genesis ID (José, 5-oct): el teléfono hizo login en la wallet y manda
+   * su token de acceso UNA vez; se comprueba con la wallet y se suelta. Sesión de MIEMBRO con identidad
+   * `veta:<dirección>` (nunca el correo, nunca junta). AURA_VETA_ABIERTO=0 lo cierra. Ver
+   * server/veta-entrar.ts y docs/ENTRAR-GENESIS.md (caso f).
+   */
+  montarRutasVeta(app, {
+    limitar,
+    cupo: (clave, max, ventanaMs) => gastarCupo(clave, max, ventanaMs),
+    emitirSesion,
+    suspendida: async (id) => (cuentasDisponibles() ? cuentaSuspendida(id) : false),
+    registrarMiembro: async ({ id, nombre }) => {
+      if (!cuentasDisponibles()) return;
+      if (await asegurarCuentaMiembro(id, nombre, '', id)) console.log('[veta] cuenta de miembro abierta');
+    },
+    sembrarPerfil: (id, g) => sembrarDesdeGenesis(id, { apodo: g.apodo }),
   });
 }
 

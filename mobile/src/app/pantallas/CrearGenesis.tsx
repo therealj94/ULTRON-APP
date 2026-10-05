@@ -17,6 +17,9 @@
  * la web» abre Veta Wallet en `/#verificar`, la misma verificación en la web (sin sesión, pasa antes
  * por la puerta de registro).
  *
+ * «Entrar sin Genesis ID» vuelve a «Entrar»: con el correo y la contraseña de Veta Wallet se entra como
+ * miembro aunque no haya Genesis ID (docs/ENTRAR-GENESIS.md, caso f).
+ *
  * `motivo: 'sin-gid'`: llegó aquí porque la wallet contestó que no tiene Genesis ID (Entrar.tsx); se
  * dice arriba, para que no parezca que la entrada simplemente falló. (Quien lo tiene y está en
  * verificación NO llega aquí: Entrar le muestra su propia tarjeta.)
@@ -145,6 +148,12 @@ export function CrearGenesis({ navigation, route }: Props) {
           <Boton titulo={tr('Abrir la app Orden Global', 'Open the Orden Global app')} icono="wallet" variante="secundario" onPress={() => void abrirAppOrdenGlobal()} />
           <Boton titulo={tr('Registrarme en la web', 'Sign up on the web')} icono="globo" variante="secundario" onPress={() => void abrirWebRegistro()} />
           <Boton titulo={tr('Ya tengo mi Genesis ID', 'I already have my Genesis ID')} variante="fantasma" onPress={() => navigation.navigate('Entrar', { reintentar: Date.now() })} />
+          {/* Sin Genesis ID también se entra, como miembro, con la cuenta de Veta Wallet (docs/ENTRAR-GENESIS.md, caso f). */}
+          <Boton
+            titulo={tr('Entrar sin Genesis ID, con mi cuenta de Veta Wallet', 'Sign in without a Genesis ID, with my Veta Wallet account')}
+            variante="fantasma"
+            onPress={() => navigation.navigate('Entrar')}
+          />
         </Aparecer>
       </View>
     </PantallaConCabecera>
