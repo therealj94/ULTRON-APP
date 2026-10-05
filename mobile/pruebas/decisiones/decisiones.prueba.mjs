@@ -31,6 +31,7 @@ import {
   pedidoRehacer,
   puedeGuardar,
   seAbreSola,
+  tareaEnPantalla,
   textoPosicion,
   tieneLuego,
 } from '../../src/lib/decisionesMesa.ts';
@@ -327,6 +328,16 @@ prueba('editar: el texto entero; no se guarda vacío ni sin cambios; el correo l
   assert.deepEqual(cuerpoEdicion({ ...ec, asunto: 'Fechas nuevas' }), { texto: 'Hola', asunto: 'Fechas nuevas' });
   const [t] = colaVentana({ tareas: [taller('t')], ahora: T0 });
   assert.equal(empezarEdicion(t), null, 'lo que no se edita, no se edita');
+});
+
+prueba('revisión (MENOR a): mientras edita, el servidor no tiene nada «a la vista» (un «sí» dicho no manda el texto viejo)', () => {
+  const [item] = colaVentana({ tareas: [borrador({ id: 'a' })], ahora: T0 });
+  assert.equal(tareaEnPantalla(item, null)?.id, 'a', 'viéndola: se registra');
+  const e = empezarEdicion(item);
+  assert.equal(tareaEnPantalla(item, e), null, 'editando: se suelta');
+  assert.equal(tareaEnPantalla(item, { ...e, clave: 'otra:dc' })?.id, 'a', 'una edición de otra decisión no cuenta');
+  const [p] = colaVentana({ tareas: [], pc, ahora: T0 + 6000 });
+  assert.equal(tareaEnPantalla(p, null), null, 'la pregunta de su computadora no va por aquí');
 });
 
 console.log('Indicador y cliente');

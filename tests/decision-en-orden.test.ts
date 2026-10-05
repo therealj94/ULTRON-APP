@@ -306,7 +306,7 @@ test('causa 5: también un apartado que vence esperando en orden', async () => {
 
 /* ------------------------------------------------------------------ 6. lo que sigue, en orden */
 
-test('causa 6: terminada una, menciona lo que sigue (lo más viejo primero) UNA vez, y su «sí» siguiente es para eso', async () => {
+test('causa 6: terminada una, menciona lo que sigue (lo más viejo primero) UNA vez; el «sí» lo manda solo con la ventana a la vista', async () => {
   await conEntorno(async ({ mandados, enviados }) => {
     await waParaBruno();
     await turno('¿qué hora es?'); // el de Bruno queda apartado
@@ -314,45 +314,147 @@ test('causa 6: terminada una, menciona lo que sigue (lo más viejo primero) UNA 
     const r = await turno('sí'); // solo el correo espera en el chat: sale
     assert.deepEqual(mandados.map((m) => m.para), [['ana@example.test']]);
     assert.match(r.hechos.join('\n'), /PENDIENTE EN ORDEN:.*WhatsApp para Bruno/s, 'menciona lo que quedó atrás');
+    assert.match(r.hechos.join('\n'), /ventana de decisión/, 'dice dónde se aprueba');
+    // Revisión independiente (G2): la mención es SOLO información; aunque AU-RA lo nombre, un «sí» suelto no lo manda.
     const r2 = await turno('sí', { dijoAntes: 'Listo, el correo para Ana salió. Quedó pendiente el WhatsApp para Bruno, ¿lo envío?' });
-    assert.deepEqual(enviados.map((e) => e.chat), [BRUNO.jid], `el «sí» siguiente es para lo que acaba de preguntar: ${r2.hechos.join(' | ')}`);
-    assert.doesNotMatch(r2.hechos.join('\n'), /PENDIENTE EN ORDEN/, 'ya no queda nada: no insiste');
+    assert.equal(enviados.length, 0, `la mención no autoriza nada: ${r2.hechos.join(' | ')}`);
+    // Con la ventana mostrándolo (lo ve: a quién y el texto exacto), su «sí» sí lo manda.
+    const b = W.borradorWhatsappDe(JOSE, 'tel')!;
+    DP.fijarEnPantalla(JOSE, { canal: 'whatsapp', ambito: 'tel', intento: b.intento, huella: b.huella, tareaId: 'tk_b', decisionId: 'dc_b', via: 'pantalla' });
+    const r3 = await turno('sí');
+    assert.deepEqual(enviados.map((e) => e.chat), [BRUNO.jid], r3.hechos.join(' | '));
+    assert.doesNotMatch(r3.hechos.join('\n'), /PENDIENTE EN ORDEN/, 'ya no queda nada: no insiste');
   });
 });
 
-test('causa 6 (seguridad): si AU-RA NO llegó a preguntar por lo pendiente (su respuesta no lo nombra), un «sí» suelto no lo manda', async () => {
+test('G2 (revisión): «Listo, le mandé el correo a Bruno. ¿Algo más?» → «sí» NO manda el WhatsApp apartado para Bruno', async () => {
   await conEntorno(async ({ mandados, enviados }) => {
     await waParaBruno();
     await turno('¿qué hora es?');
-    await correoParaAna();
-    await turno('sí');
+    await C.correrCorreo(JOSE, 'escribir bruno@example.test | Hola | Te mando el informe.', 'tel');
+    await turno('sí'); // sale el correo a Bruno; se menciona el WhatsApp para Bruno
     assert.equal(mandados.length, 1);
-    // El modelo contestó otra cosa («¿te leo el clima?») y no mencionó a Bruno: ese «sí» no es para el WhatsApp.
-    const r = await turno('sí', { dijoAntes: 'Listo, salió el correo. ¿Te leo el clima de hoy?' });
-    assert.equal(enviados.length, 0, 'no sale lo que no se preguntó');
+    const r = await turno('sí', { dijoAntes: 'Listo, le mandé el correo a Bruno. ¿Algo más?' });
+    assert.equal(enviados.length, 0, 'nadie preguntó por el WhatsApp: no sale');
     assert.match(r.hechos.join('\n'), /NO se mandó nada/);
   });
 });
 
-test('causa 6: una pregunta MÁS NUEVA (otro borrador armado después) le gana a la mención: un «no» suelto pregunta cuál, no descarta lo mencionado', async () => {
+test('causa 6: no insiste: lo mismo no se menciona dos veces, y un «no» va a lo único que espera en el chat (no a lo mencionado)', async () => {
   await conEntorno(async ({ mandados, enviados }) => {
     await waParaBruno();
     await turno('otra cosa');
     await correoParaAna();
     await turno('sí'); // sale el correo y menciona el de Bruno
-    const bruno = W.apartadosWhatsappDe(JOSE, 'tel')[0] || W.borradorWhatsappDe(JOSE, 'tel');
+    const bruno = W.borradorWhatsappDe(JOSE, 'tel')!;
     await C.correrCorreo(JOSE, 'escribir carla@example.test | Hola | Nos vemos.', 'tel');
-    // AU-RA sí mencionó a Bruno, pero DESPUÉS se armó el correo a Carla (la pregunta más nueva).
-    const r = await turno('no', { dijoAntes: 'Quedó pendiente el WhatsApp para Bruno, ¿lo envío? Y te dejé listo el correo para Carla.' });
-    assert.equal(r.ambiguo, true, `pregunta cuál: ${r.hechos.join(' | ')}`);
-    assert.ok(W.borradorWhatsappPorIntento(JOSE, 'tel', bruno!.intento), 'el de Bruno no se descartó en silencio');
-    assert.ok(C.borradorDe(JOSE, 'tel'), 'el de Carla tampoco');
+    const r = await turno('no');
+    assert.ok(W.borradorWhatsappPorIntento(JOSE, 'tel', bruno.intento), 'el de Bruno sigue esperando');
+    assert.equal(C.borradorDe(JOSE, 'tel'), null, 'el «no» fue para el de Carla (el único que esperaba en el chat)');
     assert.doesNotMatch(r.hechos.join('\n'), /PENDIENTE EN ORDEN/, 'no insiste con lo ya mencionado');
     assert.equal(mandados.length, 1);
     assert.equal(enviados.length, 0);
   });
 });
 
+/* ------------------------------------------------------------------ revisión independiente */
+
+test('G1 (revisión): con un apartado a la vista y una pregunta NUEVA de la app (recordatorio), un «sí» no manda el de la ventana: pregunta cuál', async () => {
+  await conEntorno(async ({ enviados }) => {
+    await waParaBruno();
+    await turno('otra cosa');
+    const b = W.borradorWhatsappDe(JOSE, 'tel')!;
+    const vista = vistaDe('whatsapp', b);
+    const app = { que: 'recordatorio', para: 'tomar la pastilla a las 8', huella: 'h-rec' };
+    const si = await turno('sí', { enPantalla: vista, app, appEspera: true });
+    assert.equal(enviados.length, 0, 'el «sí» pudo ser para el recordatorio que AU-RA acaba de proponer');
+    assert.equal(si.ambiguo, true);
+    assert.equal(si.appBloqueada, true, 'tampoco sale el recordatorio sin decir cuál');
+    const no = await turno('no', { enPantalla: vista, app, appEspera: true });
+    assert.equal(no.ambiguo, true);
+    assert.ok(W.borradorWhatsappPorIntento(JOSE, 'tel', b.intento), 'un «no» tampoco descarta el de la ventana');
+  });
+});
+
+test('G1 (revisión): una pregunta de su computadora es más nueva que lo que se ve (conLaVista no elige la ventana)', () => {
+  const analisis = { pura: true, negativaPura: false, niega: false } as any;
+  const ventana = { origen: 'whatsapp', tipo: 'whatsapp', aVista: true, creado: 1000, id: 'w' } as any;
+  const compu = { origen: 'computadora', tipo: 'computadora', texto: '¿Confirmo el pago?', id: 't1' } as any;
+  const d = T.conLaVista({ tipo: 'preguntar', motivo: 'ambiguo', candidatos: [ventana, compu], negativa: false, analisis }, { t: 5000 });
+  assert.equal(d.tipo, 'preguntar');
+  const dNo = T.conLaVista({ tipo: 'preguntar', motivo: 'ambiguo', candidatos: [ventana, compu], negativa: true, analisis: { ...analisis, pura: false, negativaPura: true, niega: true } }, { t: 5000 });
+  assert.equal(dNo.tipo, 'preguntar');
+  // Solo borradores, la ventana más nueva: sí elige la de la ventana.
+  const otro = { origen: 'correo', tipo: 'correo', creado: 500, id: 'c' } as any;
+  assert.equal(T.conLaVista({ tipo: 'preguntar', motivo: 'ambiguo', candidatos: [ventana, otro], negativa: false, analisis }, { t: 5000 }).tipo, 'ejecutar');
+});
+
+test('G3 (revisión): reescribir el mensaje para la MISMA persona reemplaza también la versión que esperaba entre los apartados (no salen dos)', async () => {
+  await conEntorno(async ({ enviados }) => {
+    await waParaBruno('Llego a las 5.');
+    const v1 = W.borradorWhatsappDe(JOSE, 'tel')!;
+    await turno('otra cosa');
+    await waParaTigo(); // Bruno v1 pasa a los apartados
+    await turno('otra cosa más'); // Tigo también se aparta
+    const r = await waParaBruno('Llego a las 6.'); // versión nueva para Bruno
+    assert.match(r, /REEMPLAZA/);
+    const brunos = [W.borradorWhatsappDe(JOSE, 'tel'), ...W.apartadosWhatsappDe(JOSE, 'tel')].filter((x) => x && x.chat === BRUNO.jid);
+    assert.deepEqual(brunos.map((x) => x!.texto), ['Llego a las 6.'], 'una sola versión para Bruno');
+    const vieja = await T.resolverBorradorDesdePanel(JOSE, 'whatsapp', 'tel', v1.intento, 'sí', v1.huella);
+    assert.equal(vieja.estado, 'stale', 'la versión vieja ya no se puede mandar');
+    assert.equal(enviados.length, 0);
+  });
+});
+
+test('G3 (revisión): lo mismo con el correo (mismos destinatarios en otro orden)', async () => {
+  await conEntorno(async ({ mandados }) => {
+    await C.correrCorreo(JOSE, 'escribir ana@example.test, bruno@example.test | Junta | Versión 1.', 'tel');
+    const v1 = C.borradorDe(JOSE, 'tel')!;
+    await turno('otra cosa');
+    await C.correrCorreo(JOSE, 'escribir carla@example.test | Otro | Para Carla.', 'tel');
+    await turno('otra cosa más');
+    await C.correrCorreo(JOSE, 'escribir bruno@example.test, ana@example.test | Junta | Versión 2.', 'tel');
+    const juntas = [C.borradorDe(JOSE, 'tel'), ...C.apartadosCorreoDe(JOSE, 'tel')].filter((x) => x && x.asunto === 'Junta');
+    assert.deepEqual(juntas.map((x) => x!.texto), ['Versión 2.']);
+    assert.equal((await T.resolverBorradorDesdePanel(JOSE, 'correo', 'tel', v1.intento, 'sí', v1.huella)).estado, 'stale');
+    assert.equal(mandados.length, 0);
+  });
+});
+
+test('M2 (revisión): un turno de voz que se descarta deshace el cambio de lugar del apartado a la vista (el otro sigue esperando en el chat)', async () => {
+  await conEntorno(async ({ enviados }) => {
+    await waParaBruno();
+    await turno('otra cosa');
+    await waParaTigo(); // Bruno → apartados; Tigo en el lugar principal, esperando en el chat
+    const bruno = W.apartadosWhatsappDe(JOSE, 'tel')[0];
+    const tigo = W.borradorWhatsappDe(JOSE, 'tel')!;
+    const descartes: Array<() => void> = [];
+    const hacer: Array<() => void> = [];
+    await turno('sí, el de Bruno', { enPantalla: vistaDe('whatsapp', bruno), retener: { hacer: (f: () => void) => void hacer.push(f), alDescartar: (f: () => void) => void descartes.push(f), recordar: () => undefined } });
+    // La frase seguía: el turno se descarta.
+    for (const f of descartes) f();
+    assert.equal(enviados.length, 0);
+    const principal = W.borradorWhatsappDe(JOSE, 'tel');
+    assert.equal(principal?.intento, tigo.intento, 'Tigo vuelve al lugar principal');
+    assert.ok(!principal?.soloPanel, 'y sigue esperando en el chat');
+    assert.deepEqual(W.apartadosWhatsappDe(JOSE, 'tel').map((x) => x.intento), [bruno.intento], 'Bruno vuelve a su lugar en la fila');
+  });
+});
+
+test('MENOR c (revisión): si la voz dice que quien habla NO es el dueño, su «sí» no manda nada (ni su «no» descarta): pide el sí del dueño', async () => {
+  await conEntorno(async ({ enviados }) => {
+    await waParaBruno();
+    const r = await turno('sí', { escena: 'Por la voz, habla Ana (tu esposa), no José. Hay una persona frente a la cámara.' });
+    assert.equal(enviados.length, 0);
+    assert.match(r.hechos.join('\n'), /quien habla es Ana, no José \(la persona dueña de la cuenta\)\. NO hice nada/);
+    assert.ok(W.borradorWhatsappDe(JOSE, 'tel'), 'el borrador sigue esperando');
+    await turno('no', { escena: 'Por la voz, habla Ana (tu esposa), no José.' });
+    assert.ok(W.borradorWhatsappDe(JOSE, 'tel') && !W.borradorWhatsappDe(JOSE, 'tel')!.soloPanel, 'ni se descarta ni se aparta');
+    // El dueño (sin esa escena) sí lo manda.
+    await turno('sí');
+    assert.equal(enviados.length, 1);
+  });
+});
 /* ------------------------------------------------------------------ 7. editar */
 
 test('causa 7: editar deja un borrador NUEVO (otro intento y huella) con el texto editado; el viejo ya no se manda', async () => {

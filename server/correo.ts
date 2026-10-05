@@ -745,10 +745,15 @@ function guardarBorrador(quien: string, ambito: string, b: Borrador, nota = ''):
   // Lo que quedó atrás (José, 5-oct): un apartado para el panel (siguió con otra cosa) ya no se pisa en silencio. Si va a
   // OTROS destinatarios, espera en orden con los apartados; si va a los mismos, este es su versión nueva y se le dice.
   let version = '';
+  const mismos = (x: { para: string[] }) => JSON.stringify(direccionesCanon(x.para)) === JSON.stringify(direccionesCanon(b.para));
   if (previo && previo.soloPanel && !motivoBorrador(previo, quien)) {
-    if (JSON.stringify(direccionesCanon(previo.para)) === JSON.stringify(direccionesCanon(b.para))) version = `Este borrador REEMPLAZA al que esperaba en su panel para ${b.para.join(', ')} («${resumenTexto(previo.asunto, 60)}»): ese ya no se manda. Díselo en una frase.\n`;
+    if (mismos(previo)) version = `Este borrador REEMPLAZA al que esperaba en su panel para ${b.para.join(', ')} («${resumenTexto(previo.asunto, 60)}»): ese ya no se manda. Díselo en una frase.\n`;
     else APARTADOS.apartar(k, previo);
   }
+  // Revisión independiente (G3): las versiones viejas para los MISMOS destinatarios que esperaban entre los apartados
+  // también quedan reemplazadas (antes seguían ahí y podían salir las dos).
+  const viejas = APARTADOS.quitarDonde(k, mismos);
+  if (viejas.length && !version) version = `Este borrador REEMPLAZA al que esperaba en su panel para ${b.para.join(', ')} («${resumenTexto(viejas[viejas.length - 1].asunto, 60)}»): ese ya no se manda. Díselo en una frase.\n`;
   BORRADORES.set(k, { ...b, ...vigencia, huella, ...(reemplazo ? reemplazo : {}) });
   const aviso =
     (reemplazo
@@ -821,16 +826,25 @@ export function borradorCorreoPorIntento(quien: string, ambito: string, intento:
  * La persona contesta a un apartado que tiene a la vista (la ventana de decisión de la mesa) por el chat o la voz: pasa al
  * lugar principal para que el «sí»/«no» siga el camino de siempre. Lo que estaba ahí pasa a los apartados (no se pierde).
  */
-export function promoverApartadoCorreo(quien: string, ambito: string, intento: string): boolean {
+export function promoverApartadoCorreo(quien: string, ambito: string, intento: string): (() => void) | null {
   const k = llave(quien, ambito);
   const actual = borradorDe(quien, ambito);
-  if (actual?.intento === intento) return true;
+  if (actual?.intento === intento) return () => undefined;
   const b = APARTADOS.porIntento(k, quien, intento);
-  if (!b) return false;
+  if (!b) return null;
   APARTADOS.quitar(k, intento);
   if (actual) APARTADOS.apartar(k, { ...actual, soloPanel: true });
   BORRADORES.set(k, b);
-  return true;
+  // Revisión independiente (M2): un turno de voz que se descarta deja todo como estaba (cada uno en su lugar).
+  return () => {
+    const ahora = BORRADORES.get(k);
+    if (ahora && ahora.intento !== intento) return;
+    if (actual) {
+      APARTADOS.quitar(k, actual.intento);
+      BORRADORES.set(k, actual);
+    } else BORRADORES.delete(k);
+    if (!motivoBorrador(b, quien)) APARTADOS.apartar(k, b);
+  };
 }
 
 /** «Aprobar» o «Rechazar» de la tarjeta para un APARTADO: las mismas comprobaciones que el panel y el envío una vez. */

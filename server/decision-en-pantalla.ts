@@ -1,8 +1,8 @@
 /**
  * LA DECISIÓN QUE LA PERSONA TIENE A LA VISTA (José, 5-oct: «que me salga el pop up y me pregunte… y pueda decirlo
  * hablado»). La ventana de decisión de la mesa (mobile/src/trabajos/VentanaDecision.tsx) avisa qué borrador está
- * mostrando (POST /api/trabajos/:id/en-pantalla, server/trabajos.ts); AU-RA también la fija cuando ella misma pregunta por
- * algo que quedó pendiente. Es «la pregunta más reciente».
+ * mostrando (POST /api/trabajos/:id/en-pantalla, server/trabajos.ts). Solo la ventana: que AU-RA mencione algo pendiente
+ * no lo pone a la vista (revisión independiente, G2).
  *
  * Para qué sirve (server/decision-turno.ts): un «sí» o un «no» PURO dicho mientras se ve esa ventana es para ESA decisión
  * —su intento y su huella exactos—, aunque esperen otras (antes se preguntaba «¿cuál?») o aunque estuviera apartada para
@@ -20,13 +20,11 @@ export type EnPantalla = {
   huella: string;
   tareaId: string;
   decisionId: string;
-  /** Quién la puso a la vista: la ventana de la mesa, o AU-RA al preguntar por lo pendiente. */
-  via: 'pantalla' | 'mencion';
   /**
-   * A quién va (para `mencion`): esa pregunta vale solo si AU-RA de verdad la hizo, es decir, si su respuesta anterior
-   * nombra a esa persona (server/decision-turno.ts). Si el modelo no la mencionó, un «sí» no la manda.
+   * Quién la puso a la vista: solo la ventana de la mesa. Revisión independiente (G2): que AU-RA mencione algo pendiente
+   * ya no lo pone «a la vista» (un «sí» suelto después de una mención no manda nada).
    */
-  para?: string;
+  via: 'pantalla';
   /** Cuándo se puso a la vista (lo que se compara con una pregunta más nueva). */
   t: number;
   /** La última vez que la ventana dijo que sigue a la vista (la caducidad). */

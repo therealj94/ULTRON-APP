@@ -76,7 +76,7 @@ import { redirigirADominio } from './server/dominio';
 import { quitarExpresiones } from './lib/expresiones';
 import { puntoDeCorte } from './lib/trozos';
 import { claveTurno, consultarTurno, efectoDelTurno, enTurnoUnico, idTurnoValido, reclamarTurno, turnoSinEfectos, type TurnoGuardado } from './server/turno-unico';
-import { atajoDeAppBloqueado, pendientesDelTurno, resolverBorradorDesdePanel, resolverDecisionesDelTurno } from './server/decision-turno';
+import { atajoDeAppBloqueado, otraVozDe, pendientesDelTurno, resolverBorradorDesdePanel, resolverDecisionesDelTurno } from './server/decision-turno';
 import { puedeMano } from './lib/manos-app';
 import {
   abrirDecisionDeBorrador,
@@ -204,7 +204,7 @@ import { identidadDe, exigirPlataforma, esInvitado, plataformaAutorizada, sesion
 import { asegurarCuentaMiembro, cuentaDe, cuentasDisponibles, crearSolicitud, entrarConCuenta, cuentaSuspendida, mantenerCuentasAlDia } from './server/cuentas';
 import { aprobadores, montarRutasCuentas, plantilla } from './server/cuentas-rutas';
 import { montarRutasGenesis } from './server/genesis';
-import { montarRutasVeta } from './server/veta-entrar';
+import { esIdVeta, montarRutasVeta } from './server/veta-entrar';
 import { gastarCupo } from './server/seguridad';
 import { montarEnlacesApp } from './server/enlaces-app';
 import { enviarCorreo } from './lib/correo-ses';
@@ -2853,8 +2853,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     app: appEsperando,
     conocidos: (contextoApp?.contactos || []).map((c) => c.nombre),
     registrarEfecto: () => efectoDelTurno('decision'),
-    // Lo que AU-RA dijo antes: si mencionó algo pendiente («¿lo envío?»), el «sí» es para eso solo si de verdad lo nombró.
-    dijoAntes: [...hiloPrevio].reverse().find((t) => t.rol !== 'user')?.texto,
+    // La escena del teléfono: si la voz reconoce a OTRA persona (no la dueña), su «sí» no decide nada de la cuenta.
+    escena: String(body?.escena || '').slice(0, 400),
   });
   hechos.push(...decision.hechos);
   const { delCorreo, delWhatsapp, deLaPregunta } = decision;
@@ -3991,7 +3991,8 @@ async function correrHerramientaPedida(
  */
 async function decisionDelBorrador(r: ResultadoHerramienta, dueno: string, ambito: string): Promise<ResultadoHerramienta> {
   const intento = r.recibo?.efecto === 'borrador' ? r.recibo.referencia : undefined;
-  if (!intento || !dueno.includes('@')) return r;
+  // Un correo o una identidad de Veta Wallet (`veta:0x…`): los miembros que entran con su billetera también tienen tarjetas.
+  if (!intento || !(dueno.includes('@') || esIdVeta(dueno))) return r;
   // AU-RA acaba de preguntar por ESTE borrador: es la pregunta más reciente. Lo que la ventana de decisión mostraba antes
   // deja de valer para un «sí» suelto hasta que la ventana vuelva a decir qué muestra (server/decision-en-pantalla.ts).
   olvidarEnPantallaDeConversacion(dueno, ambito);
@@ -4237,6 +4238,8 @@ async function ordenDeApp(body: any, opciones: OpcionesTurno = {}): Promise<{ de
   // Permisos exactos (4-oct): si además de lo que espera la app espera otra decisión (un borrador de correo o de
   // WhatsApp, la pregunta de su computadora), el «sí» no se resuelve aquí por la app: lo decide el turno completo
   // (server/decision-turno.ts), que pregunta cuál si no lo dice.
+  // La voz reconoce a OTRA persona (no la dueña): el atajo no cumple nada de la cuenta; el turno completo pide su sí.
+  if (otraVozDe(body?.escena)) return null;
   if (atajoDeAppBloqueado({ dueno: correo, ambito: ambitoDelTurno(body, opciones), whatsapp: await whatsappPermitido(correo, body?.sesion?.comunidad === true ? { comunidad: true } : {}), appEspera: !!appEsperandoDe(amb), mensaje: message, contexto })) return null;
   // `pendienteDe` aquí ya es solo el borrador del turno anterior: abrirTurnoApp soltó cualquier otro.
   // Lo mismo la propuesta (llamar, recordar): solo la del turno anterior puede cumplirse con un «sí».
