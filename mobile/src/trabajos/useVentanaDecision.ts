@@ -30,6 +30,7 @@ import {
   pedidoRehacer,
   puedeGuardar,
   seAbreSola,
+  tareaEnPantalla,
   tieneLuego,
   textoPosicion,
   type BotonVentana,
@@ -152,7 +153,8 @@ export function useVentanaDecision(o: Opciones) {
   }, [clave]);
 
   // El servidor sabe qué se ve (un «sí» dicho mientras tanto es para ESTA); se renueva mientras siga a la vista.
-  const visto = abierta && actual?.tipo === 'tarea' ? actual.tarea : null;
+  // Mientras edita, nada está «a la vista» para el servidor (un «sí» dicho no manda el texto viejo).
+  const visto = abierta ? tareaEnPantalla(actual, edicion) : null;
   const vistoClave = visto ? actual!.clave : '';
   useEffect(() => {
     if (!visto) return;

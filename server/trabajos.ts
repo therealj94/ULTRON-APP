@@ -72,6 +72,7 @@ import {
 } from '../lib/tareas-durables';
 import type { PropuestaAbierta, PropuestaTaller } from '../lib/taller';
 import { fijarEnPantalla, renovarEnPantalla, soltarEnPantalla } from './decision-en-pantalla';
+import { esIdVeta } from './veta-entrar';
 
 /* ------------------------------------------------------------------ tipos */
 
@@ -239,9 +240,13 @@ function pedidoDelTurno(tipo: string, clave: string): { requestId: string; turno
   return { requestId: `${tipo}-${crypto.randomUUID()}` };
 }
 
+/**
+ * De quién son las tareas: un correo o, revisión independiente (MENOR b), una identidad de Veta Wallet (`veta:0x…`, los
+ * miembros que entran solo con su billetera). Antes estos no tenían tarjetas de decisión.
+ */
 const conCorreo = (c: string) => {
   const s = String(c || '').trim().toLowerCase();
-  return s.includes('@') ? s : '';
+  return s.includes('@') || esIdVeta(s) ? s : '';
 };
 
 /* ------------------------------------------------------------------ ganchos: la computadora */
@@ -457,7 +462,30 @@ const destinatarioDe = (b: Pick<BorradorParaDecidir, 'para'>) => trozo(Array.isA
 function esOtraVersionDelMismo(t: RegistroTarea, ambito: string, b: BorradorParaDecidir): boolean {
   const d = t.decision;
   const v = d?.vinculo?.tipo === 'borrador' ? d.vinculo : null;
-  return !!v && (t.estado === 'awaiting_approval' || t.estado === 'blocked') && v.canal === b.canal && v.ambito === ambito && v.intento !== b.intento && d!.propuesta.destinatario === destinatarioDe(b);
+  // Revisión independiente (G3): la misma cuenta que los borradores (server/correo.ts: los mismos destinatarios en
+  // cualquier orden y sin importar mayúsculas; WhatsApp: el mismo chat, que su tarjeta dice igual).
+  return !!v && (t.estado === 'awaiting_approval' || t.estado === 'blocked') && v.canal === b.canal && v.ambito === ambito && v.intento !== b.intento && destinoCanon(d!.propuesta.destinatario) === destinoCanon(destinatarioDe(b));
+}
+
+/** Un destinatario de tarjeta, comparable: «B@x.com, a@x.com» y «a@x.com, b@x.com» son el mismo. */
+const destinoCanon = (s: string | undefined) =>
+  String(s || '')
+    .split(',')
+    .map((x) => x.trim().toLowerCase())
+    .filter(Boolean)
+    .sort()
+    .join(',');
+
+/** Las otras tarjetas de versiones viejas del mismo mensaje (si quedó más de una) se cierran: no se envió ninguna. */
+async function cerrarVersionesViejas(dueno: string, ids: string[]) {
+  for (const id of ids) {
+    const c = await cambiarTarea(dueno, id, (reg): Cambio | null =>
+      esTerminal(reg.estado)
+        ? null
+        : { estado: 'cancelled', pasoActual: null, decision: null, resultado: { id: `${reg.id}:resultado`, resumen: 'La reemplazó una versión nueva del mismo mensaje; esta no se envió.', evidencias: [], parcial: [], pendiente: [], t: Date.now() } }
+    ).catch(() => null);
+    if (c && c.ok) anotar(c.tarea);
+  }
 }
 
 /**
@@ -498,7 +526,8 @@ export async function abrirDecisionDeBorrador(duenoCorreo: string, ambito: strin
     // «bloqueada: ya no está esperando» y la nueva); ahora la versión nueva vuelve a la tarjeta que ya tenía a la vista
     // (otra versión del plan, otra decisión: un «Aprobar» de la vieja no manda la nueva). El borrador viejo ya no espera:
     // server/correo.ts y server/whatsapp.ts lo reemplazan al armar uno al mismo destino.
-    const misma = lista.ok ? lista.tareas.find((t) => esOtraVersionDelMismo(t, amb, b)) : undefined;
+    const versiones = lista.ok ? lista.tareas.filter((t) => esOtraVersionDelMismo(t, amb, b)).sort((x, y) => y.actualizada - x.actualizada) : [];
+    const misma = versiones[0];
     if (misma) {
       const r = await reservarPedido({ espacio: ESPACIO_PEDIDOS, dueno, requestId, propuesto: misma.id });
       if (r.ok && r.id === misma.id) {
@@ -507,6 +536,7 @@ export async function abrirDecisionDeBorrador(duenoCorreo: string, ambito: strin
         );
         if (c.ok) {
           anotar(c.tarea);
+          await cerrarVersionesViejas(dueno, versiones.slice(1).map((x) => x.id));
           return refDe(c.tarea);
         }
       }

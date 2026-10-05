@@ -688,10 +688,15 @@ function guardarBorrador(quien: string, ambito: string, b: Borrador): ResultadoH
   // Lo que quedó atrás (José, 5-oct): un apartado para el panel (siguió con otra cosa) ya no se pisa en silencio. Si va a
   // OTRO chat, espera en orden con los apartados; si es el mismo chat, este es su versión nueva y se le dice.
   let nota = '';
+  const mismoChat = (x: { chat: string }) => String(x.chat).toLowerCase() === String(b.chat).toLowerCase();
   if (previo && previo.soloPanel && !motivoBorrador(previo, quien)) {
-    if (String(previo.chat).toLowerCase() === String(b.chat).toLowerCase()) nota = `Este borrador REEMPLAZA al que esperaba en su panel para el mismo chat («${resumenTexto(previo.texto)}»): ese ya no se manda. Díselo en una frase.\n`;
+    if (mismoChat(previo)) nota = `Este borrador REEMPLAZA al que esperaba en su panel para el mismo chat («${resumenTexto(previo.texto)}»): ese ya no se manda. Díselo en una frase.\n`;
     else APARTADOS.apartar(k, previo);
   }
+  // Revisión independiente (G3): las versiones viejas para el MISMO chat que esperaban entre los apartados también quedan
+  // reemplazadas (antes seguían ahí y podían salir las dos).
+  const viejas = APARTADOS.quitarDonde(k, mismoChat);
+  if (viejas.length && !nota) nota = `Este borrador REEMPLAZA al que esperaba en su panel para el mismo chat («${resumenTexto(viejas[viejas.length - 1].texto)}»): ese ya no se manda. Díselo en una frase.\n`;
   BORRADORES.set(k, { ...b, ...(numero ? { numero } : {}), ...vigencia, huella, ...(reemplazo ? reemplazo : {}) });
   const para = destinoWhatsapp({ ...b, numero });
   const aviso = reemplazo ? `OJO: este borrador REEMPLAZA al que esperaba para ${reemplazo.reemplazoDe}, que ya NO se manda. Díselo claro: el que espera ahora es para ${para}. Antes de mandarlo le vuelvo a confirmar a quién va.\n` : '';
@@ -772,16 +777,25 @@ export function borradorWhatsappPorIntento(quien: string, ambito: string, intent
  * lugar principal para que el «sí»/«no» siga el camino de siempre (vigencia, huella, la voz que espera a confirmar el
  * turno). Lo que estaba ahí pasa a los apartados (no se pierde). true si quedó en el lugar principal.
  */
-export function promoverApartadoWhatsapp(quien: string, ambito: string, intento: string): boolean {
+export function promoverApartadoWhatsapp(quien: string, ambito: string, intento: string): (() => void) | null {
   const k = llave(quien, ambito);
   const actual = borradorWhatsappDe(quien, ambito);
-  if (actual?.intento === intento) return true;
+  if (actual?.intento === intento) return () => undefined;
   const b = APARTADOS.porIntento(k, quien, intento);
-  if (!b) return false;
+  if (!b) return null;
   APARTADOS.quitar(k, intento);
   if (actual) APARTADOS.apartar(k, { ...actual, soloPanel: true });
   BORRADORES.set(k, b);
-  return true;
+  // Revisión independiente (M2): un turno de voz que se descarta deja todo como estaba (cada uno en su lugar).
+  return () => {
+    const ahora = BORRADORES.get(k);
+    if (ahora && ahora.intento !== intento) return;
+    if (actual) {
+      APARTADOS.quitar(k, actual.intento);
+      BORRADORES.set(k, actual);
+    } else BORRADORES.delete(k);
+    if (!motivoBorrador(b, quien)) APARTADOS.apartar(k, b);
+  };
 }
 
 /**

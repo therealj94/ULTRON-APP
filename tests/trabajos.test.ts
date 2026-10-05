@@ -1106,6 +1106,40 @@ test('en pantalla: la ventana registra SU decisión (borrador), una vieja es 409
   }
 });
 
+test('revisión (MENOR b): un miembro que entra solo con Veta Wallet (`veta:0x…`) también tiene su tarjeta de decisión y la ve', async () => {
+  _usarAlmacenDurable(almacenEnMemoria());
+  const veta = `veta:0x${'ab'.repeat(20)}`;
+  const h = arnes();
+  try {
+    const ref = await abrirDecisionDeBorrador(veta, 'telefono', borrador('int-veta'));
+    assert.ok(ref, 'se abre la tarjeta');
+    const l = await h.pedir('/api/trabajos', veta);
+    assert.equal(l.status, 200);
+    assert.equal(l.json.tareas.length, 1);
+    assert.equal((await h.pedir('/api/trabajos', `veta:0x${'cd'.repeat(20)}`)).json.tareas.length, 0, 'de nadie más');
+    assert.equal((await h.pedir('/api/trabajos', 'veta:no-es-una-billetera')).status, 403, 'algo que no es una identidad no es dueño de nada');
+  } finally {
+    h.cerrar();
+  }
+});
+
+test('revisión (G3): la versión nueva para los MISMOS destinatarios (en otro orden) vuelve a la misma tarjeta', async () => {
+  _usarAlmacenDurable(almacenEnMemoria());
+  const yo = correo();
+  let vigente = 'int-o1';
+  const h = arnes({ vigente: () => vigente });
+  try {
+    const a = await abrirDecisionDeBorrador(yo, 'telefono', { ...borrador('int-o1'), para: ['Bruno@ejemplo.com', 'ana@ejemplo.com'] });
+    vigente = 'int-o2';
+    const b = await abrirDecisionDeBorrador(yo, 'telefono', { ...borrador('int-o2'), para: ['ana@ejemplo.com', 'bruno@ejemplo.com'], texto: 'Versión 2' });
+    assert.equal(b!.id, a!.id, 'no quedan dos tarjetas del mismo mensaje');
+    const l = await h.pedir('/api/trabajos', yo);
+    assert.equal(l.json.tareas.filter((t: any) => !t.terminal).length, 1);
+  } finally {
+    h.cerrar();
+  }
+});
+
 test('vistaTarea no expone el vínculo ni el dueño', () => {
   const r = registroNuevo('tk_prueba5', nueva('m-5'), T0);
   const v = vistaTarea(r, T0) as any;

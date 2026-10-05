@@ -15,7 +15,7 @@ import { apartadosWhatsappDe, borradorWhatsappDe, borradorWhatsappPorIntento, co
 import { preguntasComputadora, resolverPreguntaComputadora } from './computadora';
 import { cerrarDecisionPorChat, clasificarEnvio, type SalidaEnvio } from './trabajos';
 import { analizarRespuesta, decidirPendiente, type Decidido, type DecisionPendiente, type TipoDecision } from '../lib/afirmacion';
-import { enPantallaDe, fijarEnPantalla, type EnPantalla } from './decision-en-pantalla';
+import { enPantallaDe, type EnPantalla } from './decision-en-pantalla';
 import { llaveConversacion, resumenTexto, tomarVencidos } from './borradores-cola';
 import type { RetencionAcciones } from './voz-agente';
 
@@ -48,8 +48,11 @@ export type OpcionesDecisionTurno = {
    * preguntar). Sin pasarlo, el que dice server/decision-en-pantalla.ts; `null`: ninguno.
    */
   enPantalla?: EnPantalla | null;
-  /** Lo que AU-RA dijo en su respuesta anterior: una pendiente que mencionó vale para el «sí» solo si de verdad la nombró. */
-  dijoAntes?: string;
+  /**
+   * La escena del turno (la cámara y las voces del teléfono). Si dice que por la voz habla OTRA persona, no la dueña
+   * («Por la voz, habla Ana (tu esposa), no José»: lib/voces-miembro.ts), su «sí» o su «no» no deciden nada de la cuenta.
+   */
+  escena?: string;
 };
 
 export type SalidaDecisionTurno = {
@@ -80,33 +83,24 @@ export type SalidaDecisionTurno = {
  */
 export type PendienteTurno = DecisionPendiente & { origen: 'correo' | 'whatsapp' | 'computadora' | 'app'; huella?: string; aVista?: boolean; apartado?: boolean; creado?: number };
 
-const plano = (s: string) =>
-  String(s || '')
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase();
-
 /**
- * ¿Su respuesta anterior (`dijo`) nombra a quien va (`para`: «Bruno (+504…)», «ana@ejemplo.com»)? Por el nombre de pila (o
- * lo de antes de la arroba), como palabra entera.
+ * El borrador que la persona tiene a la vista en la ventana de decisión: el que se pasa, o el del registro
+ * (server/decision-en-pantalla.ts). Revisión independiente (G2): solo la ventana de verdad; que AU-RA haya MENCIONADO algo
+ * pendiente no lo pone «a la vista» (un «sí» suelto de después no lo manda).
  */
-export function nombraA(dijo: string | undefined, para: string | undefined): boolean {
-  const nombre = plano(String(para || '').replace(/\([^)]*\)/g, ' ')).split(/[\s@.,;<>]+/).find((x) => x.length >= 2);
-  if (!dijo || !nombre) return false;
-  return new RegExp(`(^|[^a-z0-9])${nombre.replace(/[^a-z0-9]/g, '')}($|[^a-z0-9])`).test(plano(dijo));
+function vistaDe(o: { dueno: string; ambito: string; enPantalla?: EnPantalla | null }): EnPantalla | null {
+  const v = o.enPantalla === undefined ? enPantallaDe(o.dueno, o.ambito) : o.enPantalla && o.enPantalla.ambito === o.ambito ? o.enPantalla : null;
+  return v && v.via === 'pantalla' ? v : null;
 }
 
 /**
- * El borrador que la persona tiene a la vista: el que se pasa, o el del registro (server/decision-en-pantalla.ts). Lo que
- * puso AU-RA al mencionar algo pendiente (`mencion`) vale solo si su respuesta anterior (`dijoAntes`) de verdad lo nombró:
- * si el modelo no lo preguntó, un «sí» suelto no lo manda.
+ * ¿La escena dice que por la voz habla OTRA persona, no la dueña? (la misma frase que lee lib/voces-miembro.ts
+ * reglaQuienHabla). Quién habla y de quién es la cuenta, o null.
  */
-function vistaDe(o: { dueno: string; ambito: string; enPantalla?: EnPantalla | null; dijoAntes?: string }): EnPantalla | null {
-  // Una vista que se pasa ya viene decidida (el turno la validó); la del registro se valida aquí.
-  if (o.enPantalla !== undefined) return o.enPantalla && o.enPantalla.ambito === o.ambito ? o.enPantalla : null;
-  const v = enPantallaDe(o.dueno, o.ambito);
-  if (v && v.via === 'mencion' && !nombraA(o.dijoAntes, v.para)) return null;
-  return v;
+export function otraVozDe(escena: string | undefined): { quien: string; duena: string } | null {
+  const e = String(escena || '');
+  const m = /\bPor la voz, habla ([^,.;()]{1,60})(?: \([^)]{0,40}\))?, no ([^,.;()]{1,60})/i.exec(e) || /\bBy voice, ([^,.;()]{1,60}) is speaking(?: \([^)]{0,40}\))?, not ([^,.;()]{1,60})/i.exec(e);
+  return m ? { quien: m[1].trim(), duena: m[2].trim() } : null;
 }
 
 const esLaVista = (v: EnPantalla | null, canal: 'correo' | 'whatsapp', b: { intento: string; huella: string }) => !!v && v.canal === canal && v.intento === b.intento && v.huella === b.huella;
@@ -195,13 +189,16 @@ export function conLaVista<P extends PendienteTurno>(d: Decidido<P>, vista: Pick
   // Una pregunta MÁS NUEVA que lo que se veía (AU-RA armó otro borrador después): la vista ya no es la pregunta más
   // reciente; se pregunta cuál.
   if (d.candidatos.some((p) => p !== vistas[0] && (p.creado ?? 0) >= vista.t)) return d;
+  // Revisión independiente (G1): lo que espera la app (un mensaje, una llamada, un recordatorio) y la pregunta de su
+  // computadora son preguntas del último turno de AU-RA: siempre más nuevas que lo que se ve. Ni el «sí» ni el «no».
+  if (d.candidatos.some((p) => p !== vistas[0] && (p.origen === 'app' || p.origen === 'computadora'))) return d;
   return d.analisis.niega ? { tipo: 'no', p: vistas[0], analisis: d.analisis } : { tipo: 'ejecutar', p: vistas[0], analisis: d.analisis };
 }
 
 /* ------------------------------------------------------------------ lo que quedó pendiente, en orden */
 
 /** Un borrador que sigue esperando su decisión en esta conversación (el principal o un apartado), para decirlo en orden. */
-export type PendienteEnOrden = { canal: 'correo' | 'whatsapp'; intento: string; huella: string; creado: number; para: string; texto: string };
+export type PendienteEnOrden = { canal: 'correo' | 'whatsapp'; intento: string; huella: string; creado: number; para: string; texto: string; enChat: boolean };
 
 /**
  * Lo que sigue esperando su decisión en esta conversación, del más viejo al más nuevo: los borradores de correo y de
@@ -211,10 +208,11 @@ export function pendientesEnOrden(dueno: string, ambito: string, whatsapp: boole
   if (!dueno) return [];
   const out: PendienteEnOrden[] = [];
   const c = borradorDe(dueno, ambito);
-  for (const b of [...(c ? [c] : []), ...apartadosCorreoDe(dueno, ambito)]) out.push({ canal: 'correo', intento: b.intento, huella: b.huella, creado: b.creado, para: b.para.join(', '), texto: b.asunto || b.texto });
+  // `enChat`: el del lugar principal sin apartar (se le leyó y su «sí» del chat lo resuelve); lo demás, solo su tarjeta.
+  for (const b of [...(c ? [c] : []), ...apartadosCorreoDe(dueno, ambito)]) out.push({ canal: 'correo', intento: b.intento, huella: b.huella, creado: b.creado, para: b.para.join(', '), texto: b.asunto || b.texto, enChat: b === c && !b.soloPanel });
   if (whatsapp) {
     const w = borradorWhatsappDe(dueno, ambito);
-    for (const b of [...(w ? [w] : []), ...apartadosWhatsappDe(dueno, ambito)]) out.push({ canal: 'whatsapp', intento: b.intento, huella: b.huella, creado: b.creado, para: destinoWhatsapp(b), texto: b.texto });
+    for (const b of [...(w ? [w] : []), ...apartadosWhatsappDe(dueno, ambito)]) out.push({ canal: 'whatsapp', intento: b.intento, huella: b.huella, creado: b.creado, para: destinoWhatsapp(b), texto: b.texto, enChat: b === w && !b.soloPanel });
   }
   return out.sort((a, b) => a.creado - b.creado);
 }
@@ -242,7 +240,7 @@ export async function resolverDecisionesDelTurno(o: OpcionesDecisionTurno): Prom
   const nada = (extra: Partial<SalidaDecisionTurno> = {}): SalidaDecisionTurno => ({ hechos, turnoVigente: true, delCorreo: null, delWhatsapp: null, deLaPregunta: null, ambiguo: false, appBloqueada: false, respondio: false, ...extra });
   if (!dueno) return nada();
   // Lo que la persona tiene a la vista (la ventana de decisión de la mesa, o lo que AU-RA acaba de preguntar).
-  const vista = vistaDe({ dueno, ambito, enPantalla: o.enPantalla, dijoAntes: o.dijoAntes });
+  const vista = vistaDe({ dueno, ambito, enPantalla: o.enPantalla });
   // Lo que espera cuando la persona contestó (lo que estaba contestando).
   const pendientes = pendientesDelTurno({ dueno, ambito, whatsapp: o.whatsapp, app: o.app, enPantalla: vista });
   // Lo que quedó atrás (José, 5-oct): un borrador que venció sin decidirse se dice una vez («¿lo rehago?»), no desaparece.
@@ -262,6 +260,15 @@ export async function resolverDecisionesDelTurno(o: OpcionesDecisionTurno): Prom
   }
   // La regla única; con varias esperando, un «sí»/«no» puro es para la que tiene a la vista (conLaVista).
   const d = conLaVista(decidirPendiente(message, pendientes, { conocidos, conocidosIncompletos: !deChats.completo }), vista);
+  // Revisión independiente (MENOR c): la voz reconoció a OTRA persona (no la dueña). Su «sí» no manda lo de la cuenta ni
+  // su «no» lo descarta: nada cambia y se pide la confirmación de la dueña (su voz, o tocar Sí en su ventana).
+  const otraVoz = otraVozDe(o.escena);
+  if (otraVoz && (d.tipo === 'ejecutar' || d.tipo === 'no')) {
+    hechos.push(
+      `HECHO: dijo «${message.slice(0, 80)}», pero la voz dice que quien habla es ${otraVoz.quien}, no ${otraVoz.duena} (la persona dueña de la cuenta). NO hice nada: ni se mandó, ni se descartó, ni se contestó lo que esperaba (${decirPendiente(d.p)}). Dile con amabilidad que eso lo confirma ${otraVoz.duena}: con su voz o tocando «Sí» en su ventana de decisión.`
+    );
+    return nada({ ambiguo: true, appBloqueada: !!o.app, appVista: o.app ?? null });
+  }
   const efecto = d.tipo === 'ejecutar' && d.p.origen !== 'app';
   // Un «sí» que va a mandar un borrador o soltar a su computadora: antes se deja anotado en el turno durable (AUR06,
   // persistir antes de actuar). Si este proceso ya no es el dueño del turno, no se resuelve nada aquí.
@@ -298,10 +305,7 @@ export async function resolverDecisionesDelTurno(o: OpcionesDecisionTurno): Prom
   const vistoWhatsapp = vistoDe('whatsapp');
   // Un apartado elegido (lo tenía a la vista) pasa al lugar principal: su «sí» sigue el camino de siempre (vigencia,
   // huella, la voz que espera a confirmar el turno) y lo que estaba ahí pasa a los apartados, sin perderse.
-  if (elegido?.apartado && elegido.id) {
-    if (elegido.origen === 'correo') promoverApartadoCorreo(dueno, ambito, elegido.id);
-    else if (elegido.origen === 'whatsapp') promoverApartadoWhatsapp(dueno, ambito, elegido.id);
-  }
+  const deshacerPromocion = elegido?.apartado && elegido.id ? (elegido.origen === 'correo' ? promoverApartadoCorreo(dueno, ambito, elegido.id) : elegido.origen === 'whatsapp' ? promoverApartadoWhatsapp(dueno, ambito, elegido.id) : null) : null;
   /**
    * Su tarea del panel se cierra con lo que de verdad pasó (AUR08, sin doble efecto). En el chat, al resolver. En la voz
    * (José, 5-oct), el «no» al resolver y el «sí» cuando el envío por fin sale (después de contestar, al confirmarse el
@@ -322,6 +326,9 @@ export async function resolverDecisionesDelTurno(o: OpcionesDecisionTurno): Prom
   const delWhatsapp = o.whatsapp && toca('whatsapp') && vistoWhatsapp ? await resolverBorradorWhatsapp(dueno, ambito, respuesta, retener, atado(vistoWhatsapp)) : null;
   if (delWhatsapp) hechos.push(delWhatsapp);
   cerrarSiToca(vistoWhatsapp, delWhatsapp, !!vistoWhatsapp?.id && borradorWhatsappDe(dueno, ambito)?.intento === vistoWhatsapp.id);
+  // Revisión independiente (M2): en la voz, si el turno se descarta (la frase seguía), el cambio de lugar se deshace. Se
+  // anota DESPUÉS del resolvedor: corre después de su «reponer» y deja cada borrador donde estaba.
+  if (retener && deshacerPromocion) retener.alDescartar(deshacerPromocion);
   // Su computadora se detuvo a pedir su sí (o le ofreció seguir): solo la que eligió la regla (o, sin elección, como
   // siempre: un mensaje que no es respuesta no la toca).
   const elegida = elegido?.origen === 'computadora' ? elegido.id : undefined;
@@ -346,10 +353,14 @@ export async function resolverDecisionesDelTurno(o: OpcionesDecisionTurno): Prom
     if (sig && mencionarUnaVez(llaveConversacion(dueno, ambito), sig.intento)) {
       const que = sig.canal === 'correo' ? `el correo para ${sig.para} («${resumenTexto(sig.texto, 60)}»)` : `el WhatsApp para ${sig.para} («${resumenTexto(sig.texto, 60)}»)`;
       const mas = quedan.length > 1 ? ` Después de ese quedan ${quedan.length - 1} más en su panel; no los enumeres.` : '';
+      // Revisión independiente (G2): mencionarlo es SOLO información. Lo que espera en el chat (el borrador que se le leyó y
+      // no apartó) se resuelve con su «sí» como siempre; un apartado, solo con la ventana de decisión a la vista (ahí ve a
+      // quién va y el texto exacto) o tocando Sí: un «sí» suelto después de la mención no lo manda.
       hechos.push(
-        `PENDIENTE EN ORDEN: después de decir lo de ahora, menciónale en UNA frase lo que sigue esperando su decisión: ${que}, y pregúntale si lo envía («Quedó pendiente ${que.replace(/ \(«.*$/, '')}, ¿lo envío?»). Si dice que sí, sale ESE (el servidor lo manda, no tú). No lo repitas si ya lo dijo.${mas}`
+        sig.enChat
+          ? `PENDIENTE EN ORDEN: después de decir lo de ahora, menciónale en UNA frase que sigue esperando su decisión ${que}, y pregúntale si lo envía. Si dice que sí, sale ESE (el servidor lo manda, no tú). No lo repitas si ya lo dijo.${mas}`
+          : `PENDIENTE EN ORDEN: después de decir lo de ahora, menciónale en UNA frase que quedó pendiente ${que} y que está en su ventana de decisión (y en su panel de tareas) para que lo apruebe ahí (Sí · No · Editar) o diga «sí» mientras la ve. NO le preguntes «¿lo envío?» como si un «sí» suelto lo mandara: así no sale. No lo repitas si ya lo dijo.${mas}`
       );
-      fijarEnPantalla(dueno, { canal: sig.canal, ambito, intento: sig.intento, huella: sig.huella, tareaId: '', decisionId: '', via: 'mencion', para: sig.para });
     }
   }
   return nada({ delCorreo, delWhatsapp, deLaPregunta, appBloqueada: !!o.app && !!elegido && elegido.origen !== 'app', respondio: !!elegido, appVista: o.app ?? null });

@@ -306,6 +306,17 @@ export function cuerpoEdicion(e: Edicion): { texto: string; asunto?: string } {
   return { texto: e.texto.trim(), ...(e.asunto !== undefined && e.asunto.trim() !== (e.asuntoOriginal ?? '').trim() ? { asunto: e.asunto.trim() } : {}) };
 }
 
+/**
+ * Qué decisión se le dice al servidor que está a la vista (POST en-pantalla). Revisión independiente (MENOR a): mientras
+ * se EDITA, ninguna: lo que se ve ya no es lo que va a salir, y un «sí» dicho entonces mandaría el texto viejo. Al
+ * guardar, la versión nueva se vuelve a mostrar (y a registrar); al cancelar, vuelve la de antes.
+ */
+export function tareaEnPantalla(item: ItemVentana | null, edicion: Edicion | null): TareaVista | null {
+  if (!item || item.tipo !== 'tarea') return null;
+  if (edicion && edicion.clave === item.clave) return null;
+  return item.tarea;
+}
+
 /** ¿La edición sigue siendo de lo que se ve? (si cambió la decisión mientras escribía, no se guarda a ciegas). */
 export const edicionVigente = (e: Edicion | null, item: ItemVentana | null) => !!e && !!item && e.clave === item.clave;
 

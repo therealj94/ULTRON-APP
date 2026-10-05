@@ -75,6 +75,20 @@ export class ApartadosBorradores<B extends BorradorEnCola> {
     return b;
   }
 
+  /**
+   * Saca todos los que cumplen `cond` (revisión independiente, G3: una versión nueva para la MISMA persona reemplaza también
+   * las versiones viejas que esperaban aquí; si no, podían salir las dos). Devuelve los que sacó.
+   */
+  quitarDonde(llave: string, cond: (b: B) => boolean): B[] {
+    const xs = this.m.get(llave) || [];
+    const fuera = xs.filter(cond);
+    if (!fuera.length) return [];
+    const quedan = xs.filter((x) => !cond(x));
+    if (quedan.length) this.m.set(llave, quedan);
+    else this.m.delete(llave);
+    return fuera;
+  }
+
   /** Cambia uno en su sitio (la persona editó el texto): el de `intento` por `nuevo`. */
   reemplazar(llave: string, intento: string, nuevo: B): boolean {
     const xs = this.m.get(llave) || [];
