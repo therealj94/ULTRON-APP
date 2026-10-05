@@ -8,22 +8,26 @@
  *    Ana» si las caras no están activas): AU-RA le pregunta a Ana en voz alta y solo un «sí» empieza a oír
  *    sus frases. «Olvida la voz de Ana», «olvida mi voz», «olvida todas las voces», «¿de quién conoces la
  *    voz?», «¿quién está hablando?».
- *  · Con voces guardadas, cada frase terminada se manda a reconocer SIN esperar (el turno no se demora);
- *    lo reconocido entra a la escena del turno mientras está fresco.
+ *  · Con voces guardadas, cada frase se manda a reconocer en cuanto se CIERRA (antes de que llegue su
+ *    texto) y el turno de ESA frase espera su resultado hasta `ESPERA_VOZ_TURNO_MS` (350 ms; casi siempre
+ *    ya llegó). Si no, el turno sale sin decir quién habla: nunca con lo de la frase anterior (revisión del
+ *    5-oct, M1). Con una consulta en curso, la frase nueva queda en fila (la última), no se tira.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert } from 'react-native';
 import { idiomaActual, tr } from '../i18n';
 import { loadSettings, saveSettings } from '../lib/storage';
 import { miga } from '../lib/reporte';
-import { turboOyenteAudio } from '../lib/speechTurbo';
+import { turboOyenteAudio, turboOyenteCierre } from '../lib/speechTurbo';
 import {
   AUDIO_VIGENTE_MS,
+  IdentificadorVoz,
   Inscripcion,
   MIN_TROZOS_QUIEN,
   UltimaVoz,
   conVocesActivas,
   esCancelar,
+  fraseQuienHabla,
   nombreCon,
   pedidoDeVoces,
   recortarFrase,
@@ -56,10 +60,14 @@ export type ApiVoces = {
   abrirOpciones: () => void;
   /** Lo dicho: si era de voces (o una frase para aprender, o el «sí»), lo atiende y devuelve true. */
   manejar: (dicho: string) => Promise<boolean>;
-  /** Para la escena del turno: «Por la voz, habla Ana…» (vacío si no hay nada fresco y seguro). */
-  escena: () => string;
-  /** El audio PCM de una frase terminada (trozos de 0,1 s en base64) y su texto. */
-  alTerminarFrase: (trozos: string[], texto: string) => void;
+  /**
+   * Para el turno de la frase oída en `oidaEn` (0 si se escribió): «Por la voz, habla Ana…» y, si es alguien
+   * que no es la dueña, su id para el servidor (`quienHabla`). Espera lo de ESA frase hasta
+   * `ESPERA_VOZ_TURNO_MS`; vacío si no hay nada seguro de esa frase.
+   */
+  paraTurno: (oidaEn: number) => Promise<{ frase: string; quienHabla?: { id: string } }>;
+  /** El audio PCM de una frase terminada (trozos de 0,1 s en base64), su texto y su id. */
+  alTerminarFrase: (trozos: string[], texto: string, id?: number) => void;
 };
 
 export function useVoces(o: Opciones): ApiVoces {
@@ -68,7 +76,27 @@ export function useVoces(o: Opciones): ApiVoces {
   const inscripcion = useRef(new Inscripcion()).current;
   const ultima = useRef(new UltimaVoz()).current;
   const frase = useRef<{ trozos: string[]; t: number } | null>(null);
-  const consulta = useRef<Promise<void> | null>(null);
+  /** Lo último que se supo, solo de una frase más nueva que la anterior sabida (para «¿quién habla?»). */
+  const ultimoIdSabido = useRef(0);
+  const identificador = useRef<IdentificadorVoz | null>(null);
+  if (!identificador.current) {
+    identificador.current = new IdentificadorVoz(
+      (trozos) =>
+        quienHabla(wavDeFrase(trozos)).catch((e) => {
+          miga(`voces: no pude reconocer (${String((e as Error)?.message || e).slice(0, 60)})`);
+          throw e;
+        }),
+      (id, persona) => {
+        if (persona === undefined || id < ultimoIdSabido.current) return;
+        ultimoIdSabido.current = id;
+        ultima.poner(persona);
+        if (persona) miga(`voces: habló ${persona.relacion === 'yo' ? 'la dueña' : 'un conocido'}`);
+      }
+    );
+  }
+  const ident = identificador.current;
+  /** Frases sin id del oído (no debería pasar): ids negativos para no chocar con los del oído. */
+  const sinId = useRef(0);
   const op = useRef(o);
   op.current = o;
   const conocidasRef = useRef<VozGuardada[]>([]);
@@ -95,43 +123,51 @@ export function useVoces(o: Opciones): ApiVoces {
     if (activas && conocidas === null) void refrescar();
   }, [activas, conocidas, refrescar]);
 
-  /** ¿Quién dijo esta frase? Sin esperar; el resultado queda para la escena (y para «¿quién habla?»). */
+  /**
+   * ¿Quién dijo la frase `id`? Se consulta ya (o queda en fila); lo que no se reconoce (aprendiendo una voz,
+   * sin voces conocidas, muy corta) queda «sin dato»: su turno no dice quién habla.
+   */
   const identificar = useCallback(
-    (trozos: string[]) => {
-      if (consulta.current) return;
-      const p = quienHabla(wavDeFrase(trozos))
-        .then((r) => {
-          if (r.motivo === 'muy_corta' || r.motivo === 'silencio') return;
-          ultima.poner(r.persona);
-          if (r.persona) miga(`voces: habló ${r.persona.relacion === 'yo' ? 'la dueña' : 'un conocido'} (${r.similitud})`);
-        })
-        .catch((e) => miga(`voces: no pude reconocer (${String((e as Error)?.message || e).slice(0, 60)})`))
-        .finally(() => {
-          if (consulta.current === p) consulta.current = null;
-        });
-      consulta.current = p;
+    (id: number, recortada: string[]) => {
+      // Mientras aprende una voz, la frase es para eso (no se identifica).
+      if (inscripcion.pendiente() || !conocidasRef.current.length || recortada.length < MIN_TROZOS_QUIEN) return ident.sinDato(id);
+      ident.oir(id, recortada);
     },
-    [ultima]
+    [ident, inscripcion]
+  );
+
+  /** La frase se cerró (todavía sin texto): a reconocer ya, así el turno casi nunca espera. */
+  const alCerrarFrase = useCallback(
+    (id: number, trozos: string[]) => {
+      if (!activasRef.current || !trozos.length) return;
+      identificar(id, recortarFrase(trozos));
+    },
+    [identificar]
   );
 
   const alTerminarFrase = useCallback(
-    (trozos: string[], _texto: string) => {
+    (trozos: string[], _texto: string, id?: number) => {
       if (!activasRef.current || !trozos.length) return;
       const recortada = recortarFrase(trozos);
       frase.current = { trozos: recortada, t: Date.now() };
-      // Mientras aprende una voz, la frase es para eso (no se identifica).
-      if (inscripcion.pendiente()) return;
-      if (conocidasRef.current.length && recortada.length >= MIN_TROZOS_QUIEN) identificar(recortada);
+      const n = typeof id === 'number' ? id : --sinId.current;
+      // Si no se oyó al cerrarse (otra versión del oído, o las voces se activaron en medio), ahora.
+      if (!ident.conocida(n)) identificar(n, recortada);
+      ident.entregada(n, Date.now());
     },
-    [identificar, inscripcion]
+    [ident, identificar]
   );
 
-  // El oído Turbo le pasa el audio de cada frase entregada, solo con las voces activadas.
+  // El oído Turbo le pasa el audio de cada frase (al cerrarse y al entregarse), solo con las voces activadas.
   useEffect(() => {
     if (!activas) return;
-    turboOyenteAudio((trozos, texto) => alTerminarFrase(trozos, texto));
-    return () => turboOyenteAudio(null);
-  }, [activas, alTerminarFrase]);
+    turboOyenteCierre((id, trozos) => alCerrarFrase(id, trozos));
+    turboOyenteAudio((trozos, texto, id) => alTerminarFrase(trozos, texto, id));
+    return () => {
+      turboOyenteCierre(null);
+      turboOyenteAudio(null);
+    };
+  }, [activas, alCerrarFrase, alTerminarFrase]);
 
   /** El audio de la frase que se acaba de decir (null si este oído no lo da o ya no es de ahora). */
   const tomarFrase = () => {
@@ -176,8 +212,9 @@ export function useVoces(o: Opciones): ApiVoces {
     activasRef.current = false;
     setActivas(false);
     ultima.olvidar();
+    ident.olvidar();
     inscripcion.terminar();
-  }, [inscripcion, ultima]);
+  }, [ident, inscripcion, ultima]);
 
   const borrarTodas = useCallback(async () => {
     try {
@@ -185,11 +222,12 @@ export function useVoces(o: Opciones): ApiVoces {
       setConocidas([]);
       conocidasRef.current = [];
       ultima.olvidar();
+      ident.olvidar();
       await op.current.decir(tr(`Listo, olvidé ${n === 1 ? 'la voz' : `las ${n} voces`} que conocía.`, `Done, I forgot ${n === 1 ? 'the voice' : `the ${n} voices`} I knew.`));
     } catch {
       await op.current.decir(tr('No pude borrarlas ahora. Inténtalo con conexión.', 'I couldn’t erase them now. Try again when online.'), 'preocupado');
     }
-  }, [ultima]);
+  }, [ident, ultima]);
 
   const confirmarBorrarTodas = useCallback(() => {
     Alert.alert(tr('¿Olvidar todas las voces?', 'Forget all voices?'), tr('Se borran de tu cuenta los números de todas las voces que conozco. No se puede deshacer.', 'The numbers for every voice I know are erased from your account. This can’t be undone.'), [
@@ -350,6 +388,7 @@ export function useVoces(o: Opciones): ApiVoces {
             await olvidarVoz(c.id);
             await refrescar();
             ultima.olvidar();
+            ident.olvidar();
             await a.decir(p.tipo === 'olvidar_mia' ? tr('Listo, olvidé tu voz.', 'Done, I forgot your voice.') : tr(`Listo, olvidé la voz de ${c.nombre}.`, `Done, I forgot ${c.nombre}’s voice.`));
           } catch {
             await a.decir(tr('No pude borrarla ahora. Inténtalo con conexión.', 'I couldn’t erase it now. Try again when online.'), 'preocupado');
@@ -380,7 +419,7 @@ export function useVoces(o: Opciones): ApiVoces {
             return true;
           }
           // La pregunta misma es una frase: si se está reconociendo, se espera un momento.
-          if (consulta.current) await Promise.race([consulta.current, new Promise((r) => setTimeout(r, 6_000))]);
+          await ident.esperarUltima(6_000);
           const r = ultima.fresca(15_000);
           if (r === undefined) {
             await a.decir(tr('Dime una frase un poco más larga y te digo quién habla.', 'Say a slightly longer sentence and I’ll tell you who’s speaking.'));
@@ -400,15 +439,21 @@ export function useVoces(o: Opciones): ApiVoces {
       return false;
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activar, conocidas, confirmarBorrarTodas, guardarInscripcion, inscripcion, refrescar, sinTurbo, ultima]
+    [activar, conocidas, confirmarBorrarTodas, guardarInscripcion, ident, inscripcion, refrescar, sinTurbo, ultima]
   );
 
-  const escena = useCallback(() => {
-    if (!activasRef.current) return '';
-    return ultima.escena(op.current.nombre, idiomaActual() === 'en');
-  }, [ultima]);
+  const paraTurno = useCallback(
+    async (oidaEn: number): Promise<{ frase: string; quienHabla?: { id: string } }> => {
+      // Sin voces activas o sin conocidas no hay nada que esperar (el turno no se demora ni un milisegundo).
+      if (!activasRef.current || !conocidasRef.current.length || !oidaEn) return { frase: '' };
+      const p = await ident.paraTurno(oidaEn);
+      if (!p) return { frase: '' };
+      return { frase: fraseQuienHabla(p, op.current.nombre, idiomaActual() === 'en'), ...(p.relacion === 'conocido' ? { quienHabla: { id: p.id } } : {}) };
+    },
+    [ident]
+  );
 
   const estadoTexto = !activas ? tr('Apagado', 'Off') : conocidas?.length ? tr(`Conozco ${conocidas.length}`, `I know ${conocidas.length}`) : tr('Activado', 'On');
 
-  return { activas, estadoTexto, abrirOpciones, manejar, escena, alTerminarFrase };
+  return { activas, estadoTexto, abrirOpciones, manejar, paraTurno, alTerminarFrase };
 }

@@ -935,3 +935,37 @@ test('un puente de antes (una sola cuenta) no le da a nadie el WhatsApp de José
     }
   }).finally(() => p.cerrar());
 });
+
+test('un puente colgado en /salud no demora el turno más que su tope: la pregunta sigue de fondo y llena lo sabido', async () => {
+  const pedidos: string[] = [];
+  let soltarSalud: (() => void) | null = null;
+  const srv = http.createServer((req, res) => {
+    pedidos.push(`${req.method} ${req.url}`);
+    const cuenta = String(req.headers['x-cuenta'] || '');
+    const json = (j: unknown) => (res.writeHead(200, { 'content-type': 'application/json', ...(cuenta ? { 'x-cuenta-eco': cuenta } : {}) }), res.end(JSON.stringify(j)));
+    // /salud se cuelga hasta que la prueba lo suelte (como un puente atascado arrancando).
+    if (req.url === '/salud') return void (soltarSalud = () => json({ ok: true, cuentas: 2, maxCuentas: 25 }));
+    if (req.url === '/estado') return json({ vinculado: true, conectado: true, vinculando: false, registrada: true });
+    return json({});
+  });
+  await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+  const url = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
+  try {
+    await conPuente(url, JOSE, async () => {
+      const t0 = Date.now();
+      const [a, b] = await Promise.all([W13.whatsappOfrecido(ANA, 400, { comunidad: true }), W13.whatsappOfrecido(ANA, 400, { comunidad: true })]);
+      const tardo = Date.now() - t0;
+      assert.deepEqual([a, b], [false, false], 'sin saber si el puente separa cuentas, no se ofrece (lo prudente)');
+      assert.ok(tardo < 1200, `el turno esperó ${tardo} ms (tope 400): antes, hasta 5 s`);
+      assert.equal(pedidos.filter((p) => p === 'GET /salud').length, 1, 'una sola pregunta a /salud aunque haya dos turnos');
+      // El puente contesta tarde: lo que dijo queda sabido para el turno siguiente, sin volver a preguntar.
+      soltarSalud!();
+      await new Promise((r) => setTimeout(r, 50));
+      assert.equal(await W13.whatsappOfrecido(ANA, 400, { comunidad: true }), true, 'la pregunta de fondo llenó lo sabido');
+      assert.equal(pedidos.filter((p) => p === 'GET /salud').length, 1);
+    });
+  } finally {
+    srv.closeAllConnections();
+    await new Promise<void>((r) => srv.close(() => r()));
+  }
+});

@@ -29,5 +29,7 @@ export const turboVivo = () => motor.vivo();
 export const turboOirEncima = (on: boolean) => motor.setOirEncima(on);
 export const turboTomarTurno = () => motor.tomarTurno();
 export const turboOyendoEncima = () => motor.oyendoEncima();
-/** El audio PCM de cada frase entregada (trozos de 0,1 s en base64), justo antes de su texto: las voces. */
-export const turboOyenteAudio = (fn: ((trozos: string[], texto: string) => void) | null) => motor.setOyenteAudio(fn);
+/** El audio PCM de cada frase entregada (trozos de 0,1 s en base64), justo antes de su texto, con su id: las voces. */
+export const turboOyenteAudio = (fn: ((trozos: string[], texto: string, id?: number) => void) | null) => motor.setOyenteAudio(fn);
+/** El audio de cada frase al cerrarse (antes del texto), con su id: las voces empiezan a reconocer ahí. */
+export const turboOyenteCierre = (fn: ((id: number, trozos: string[]) => void) | null) => motor.setOyenteCierre(fn);

@@ -44,6 +44,7 @@ import { entrarConGenesis, entrarConVetaWallet, escucharVueltaTardia, recuperarC
 import { WALLET_WEB, correoValido } from '../../lib/entrarConClave';
 import { abrirAppOrdenGlobal, abrirTiendaOrdenGlobal } from './CrearGenesis';
 import { miga } from '../../lib/reporte';
+import { registrarTrabajoActivo } from '../../lib/barreraOta';
 import { tr, useIdioma } from '../../i18n';
 import { MEDIDA, useTema } from '../../nucleo/tema';
 import { Aparecer, Aura, Boton, BotonCheck, Campo, Icono, SelectorIdioma, Texto, vibrar, type NombreIcono } from '../../ui';
@@ -240,6 +241,8 @@ export function Entrar({ navigation, route }: Props) {
   const refClave = useRef<TextInput>(null);
   // Un solo envío a la vez aunque el «go» del teclado y el botón lleguen juntos.
   const enviandoRef = useRef(false);
+  /** Cuándo escribió por última vez en el formulario (0 si está vacío): la OTA no recarga encima. */
+  const escritoEn = useRef(0);
 
   const entrarClave = async () => {
     if (enviandoRef.current || estadoRef.current.tipo === 'esperando' || estadoRef.current.tipo === 'exito') return;
@@ -296,6 +299,10 @@ export function Entrar({ navigation, route }: Props) {
   // pantalla viva, también con «Crea tu Genesis ID» encima. alVolver va por ref: siempre el de ahora.
   const estadoRef = useRef(estado);
   estadoRef.current = estado;
+  // Entrando (revisión del 5-oct): con algo escrito (la hora del último toque: caduca como un borrador, ver
+  // lib/barreraOta.ts), enviando o esperando a la wallet, la actualización por aire no recarga encima, ni
+  // al abrir la app (`arranque`). La entrada con la wallet en curso la frena también lib/genesis.ts.
+  useEffect(() => registrarTrabajoActivo('entrando', () => (enviandoRef.current || estadoRef.current.tipo === 'esperando' ? true : escritoEn.current || false)), []);
   const alVolverRef = useRef(alVolver);
   alVolverRef.current = alVolver;
   useEffect(() => escucharVueltaTardia((r) => void alVolverRef.current(r)), []);
@@ -412,6 +419,7 @@ export function Entrar({ navigation, route }: Props) {
             value={correo}
             onChangeText={(t) => {
               setCorreo(t);
+              escritoEn.current = t || clave ? Date.now() : 0;
               if (errorClave) setErrorClave(null);
             }}
             placeholder={tr('tu@correo.com', 'you@email.com')}
@@ -433,6 +441,7 @@ export function Entrar({ navigation, route }: Props) {
             value={clave}
             onChangeText={(t) => {
               setClave(t);
+              escritoEn.current = t || correo ? Date.now() : 0;
               if (errorClave) setErrorClave(null);
             }}
             autoComplete="password"

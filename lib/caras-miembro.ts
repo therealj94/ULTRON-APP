@@ -16,7 +16,9 @@
  *     lista cerrada; el teléfono lo usa para decirle al cerebro «Reconozco a Ana (tu esposa)»;
  *   · aprende con el uso (`sumarMuestras`, POST /api/caras/:id/muestras): cuando el teléfono reconoce a
  *     alguien con mucha seguridad, a veces suma esa toma (luz, lentes). Con tope: sale la muestra más
- *     redundante (`podarMuestras`), no la más vieja a ciegas.
+ *     redundante (`podarMuestras`), no la más vieja a ciegas;
+ *   · los cambios de una cuenta van de a uno (`unoALaVez`): una muestra que llega mientras se olvida a
+ *     esa persona no la hace volver.
  *
  * Se guarda como la memoria de los miembros (lib/memoria-miembro.ts): caché del proceso, disco
  * (`data/caras/`, o ULTRON_CARAS_DIR) y S3 (`ultron/caras/<huella>.json`) para sobrevivir a un
@@ -62,6 +64,24 @@ export function _s3DePrueba(o: Partial<typeof s3> | null) {
 
 const cache = new Map<string, CajonCaras>();
 const colas = new Map<string, Promise<void>>();
+/** Un cambio a la vez por cuenta (leer → cambiar → guardar), ver `unoALaVez`. */
+const candados = new Map<string, Promise<unknown>>();
+
+/**
+ * Los cambios de una cuenta van en fila: cada uno lee el cajón DESPUÉS de que el anterior lo guardó. Sin
+ * esto, «olvida a Ana» y una muestra que el teléfono suma a Ana en el mismo momento leían el mismo cajón;
+ * si la muestra guardaba última, Ana volvía (la revisión del 5-oct). Uno que falla no traba a los demás.
+ */
+function unoALaVez<T>(c: string, fn: () => Promise<T>): Promise<T> {
+  const previo = candados.get(c) || Promise.resolve();
+  const paso = previo.then(fn);
+  const cola = paso.catch(() => undefined);
+  candados.set(c, cola);
+  void cola.then(() => {
+    if (candados.get(c) === cola) candados.delete(c);
+  });
+  return paso;
+}
 
 const correoNormal = (c: string) => String(c || '').trim().toLowerCase();
 const vacio = (): CajonCaras => ({ version: 1, personas: [] });
@@ -240,24 +260,26 @@ export function validarMuestras(b: { vectores?: unknown } | undefined): { ok: tr
  */
 export async function agregarCara(correo: string, alta: Exclude<ReturnType<typeof validarAlta>, { ok: false }>): Promise<PersonaCara> {
   const c = correoNormal(correo);
-  const cajon = await cargarCaras(c);
-  const clave = (n: string) => n.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-  const ahora = Date.now();
-  const i = cajon.personas.findIndex((p) => (alta.relacion === 'yo' ? p.relacion === 'yo' : p.relacion === 'conocido' && clave(p.nombre) === clave(alta.nombre)));
-  let persona: PersonaCara;
-  const personas = [...cajon.personas];
-  if (i >= 0) {
-    const p = personas[i];
-    const parentesco = alta.parentesco || p.parentesco;
-    persona = { ...p, nombre: alta.nombre, ...(parentesco ? { parentesco } : {}), vectores: podarMuestras([...p.vectores, ...alta.vectores]), consentimiento: alta.consentimiento, actualizado: ahora };
-    personas[i] = persona;
-  } else {
-    if (personas.length >= MAX_PERSONAS) throw new RangeError(`Ya conozco ${MAX_PERSONAS} caras; olvida alguna para agregar otra.`);
-    persona = { id: crypto.randomBytes(9).toString('base64url'), nombre: alta.nombre, relacion: alta.relacion, ...(alta.parentesco ? { parentesco: alta.parentesco } : {}), vectores: podarMuestras(alta.vectores), consentimiento: alta.consentimiento, creado: ahora, actualizado: ahora };
-    personas.push(persona);
-  }
-  await guardar(c, { version: 1, personas });
-  return persona;
+  return unoALaVez(c, async () => {
+    const cajon = await cargarCaras(c);
+    const clave = (n: string) => n.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    const ahora = Date.now();
+    const i = cajon.personas.findIndex((p) => (alta.relacion === 'yo' ? p.relacion === 'yo' : p.relacion === 'conocido' && clave(p.nombre) === clave(alta.nombre)));
+    let persona: PersonaCara;
+    const personas = [...cajon.personas];
+    if (i >= 0) {
+      const p = personas[i];
+      const parentesco = alta.parentesco || p.parentesco;
+      persona = { ...p, nombre: alta.nombre, ...(parentesco ? { parentesco } : {}), vectores: podarMuestras([...p.vectores, ...alta.vectores]), consentimiento: alta.consentimiento, actualizado: ahora };
+      personas[i] = persona;
+    } else {
+      if (personas.length >= MAX_PERSONAS) throw new RangeError(`Ya conozco ${MAX_PERSONAS} caras; olvida alguna para agregar otra.`);
+      persona = { id: crypto.randomBytes(9).toString('base64url'), nombre: alta.nombre, relacion: alta.relacion, ...(alta.parentesco ? { parentesco: alta.parentesco } : {}), vectores: podarMuestras(alta.vectores), consentimiento: alta.consentimiento, creado: ahora, actualizado: ahora };
+      personas.push(persona);
+    }
+    await guardar(c, { version: 1, personas });
+    return persona;
+  });
 }
 
 /**
@@ -266,37 +288,43 @@ export async function agregarCara(correo: string, alta: Exclude<ReturnType<typeo
  */
 export async function sumarMuestras(correo: string, id: string, vectores: number[][]): Promise<PersonaCara | null> {
   const c = correoNormal(correo);
-  const cajon = await cargarCaras(c);
-  const i = cajon.personas.findIndex((x) => x.id === id);
-  if (i < 0) return null;
-  const personas = [...cajon.personas];
-  const persona = { ...personas[i], vectores: podarMuestras([...personas[i].vectores, ...vectores]), actualizado: Date.now() };
-  personas[i] = persona;
-  await guardar(c, { version: 1, personas });
-  return persona;
+  return unoALaVez(c, async () => {
+    const cajon = await cargarCaras(c);
+    const i = cajon.personas.findIndex((x) => x.id === id);
+    if (i < 0) return null;
+    const personas = [...cajon.personas];
+    const persona = { ...personas[i], vectores: podarMuestras([...personas[i].vectores, ...vectores]), actualizado: Date.now() };
+    personas[i] = persona;
+    await guardar(c, { version: 1, personas });
+    return persona;
+  });
 }
 
 /** Olvida una persona por id. null si no estaba. */
 export async function olvidarCara(correo: string, id: string): Promise<PersonaCara | null> {
   const c = correoNormal(correo);
-  const cajon = await cargarCaras(c);
-  const p = cajon.personas.find((x) => x.id === id) || null;
-  if (!p) return null;
-  await guardar(c, { version: 1, personas: cajon.personas.filter((x) => x.id !== id) });
-  return p;
+  return unoALaVez(c, async () => {
+    const cajon = await cargarCaras(c);
+    const p = cajon.personas.find((x) => x.id === id) || null;
+    if (!p) return null;
+    await guardar(c, { version: 1, personas: cajon.personas.filter((x) => x.id !== id) });
+    return p;
+  });
 }
 
 /** Olvida todas las caras de este correo. Devuelve cuántas había. */
 export async function olvidarTodasLasCaras(correo: string): Promise<number> {
   const c = correoNormal(correo);
-  let n = 0;
-  try {
-    n = (await cargarCaras(c)).personas.length;
-  } catch {
-    /* sin leer, se borra igual: borrar nunca debe fallar por no poder contar */
-  }
-  await guardar(c, vacio());
-  return n;
+  return unoALaVez(c, async () => {
+    let n = 0;
+    try {
+      n = (await cargarCaras(c)).personas.length;
+    } catch {
+      /* sin leer, se borra igual: borrar nunca debe fallar por no poder contar */
+    }
+    await guardar(c, vacio());
+    return n;
+  });
 }
 
 /** Para pruebas. */

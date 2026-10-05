@@ -57,6 +57,7 @@ import Constants from 'expo-constants';
 import { aB64 } from '../pulse/candado';
 import * as RELEVO from '../pulse/relevo';
 import { baseWallet, entrarConClave, errorDeWallet, pedirRecuperacion, type Pedir } from './entrarConClave';
+import { empezarTrabajo } from './barreraOta';
 
 const CAJON = 'aura.genesis.pendiente';
 /** La vuelta de siempre (esquema propio): la que usa la wallet si no se le pide otra. */
@@ -103,13 +104,18 @@ export type OpcionesEntrada = { web?: boolean };
 let enCurso = 0;
 /** Una vuelta tardía a la vez (la https y la `ultronfp://` pueden llegar las dos). */
 let canjeandoTardia = false;
-/** Corre `f` contando como entrada en curso. */
+/**
+ * Corre `f` contando como entrada en curso. Mientras tanto la actualización por aire no recarga la app
+ * (lib/barreraOta.ts, `entrada-wallet`): recargar a media entrada perdía la vuelta de la wallet.
+ */
 async function enCursoMientras<T>(f: () => Promise<T>): Promise<T> {
   enCurso++;
+  const soltar = empezarTrabajo('entrada-wallet');
   try {
     return await f();
   } finally {
     enCurso = Math.max(0, enCurso - 1);
+    soltar();
   }
 }
 

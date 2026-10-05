@@ -14,6 +14,7 @@
  *    con las cajas de ML Kit; el motor analiza un recorte agrandado de cada cara y cada resultado es un
  *    voto para esa cara (`Seguidor`). El nombre sale con 2 de 3 votos. Ritmo: enseguida al llegar alguien,
  *    ~2,5 s con la vista «Lo que veo» abierta o con alguien sin nombre, ~8 s si no (antes, cada 20 s).
+ *    Sin ML Kit (respaldo del servidor), la foto de cada subida va entera al motor (`recibirFotoRespaldo`).
  *  · Aprende con el uso: con un reconocimiento muy seguro y ya confirmado, a veces suma esa toma a la
  *    persona (servidor, con tope y quitando la más redundante): se adapta a la luz y a los lentes.
  *  · A un conocido se le saluda una vez por sesión, y el cerebro recibe «Reconozco a Ana (tu esposa)».
@@ -45,7 +46,7 @@ import {
   type CaraVista,
   type Reconocida,
 } from './caras';
-import { Seguidor, tocaReconocer, type CajaN } from './seguimiento';
+import { Seguidor, VistoRespaldo, tocaReconocer, tocaReconocerRespaldo, type CajaN } from './seguimiento';
 import { guardarCara, listarCaras, olvidarCara, olvidarTodasLasCaras, sumarMuestrasCara } from './api';
 
 /** Lo que vale lo reconocido para el cerebro (visto hace menos que esto). */
@@ -94,6 +95,10 @@ export type ApiCaras = {
   quiereFoto: (ts: number) => boolean;
   /** La foto del bucle para reconocer: se analiza y se suelta. */
   recibirFoto: (f: FotoCaras) => void;
+  /** Sin ML Kit (respaldo del servidor): ¿quiere la foto entera para reconocer? (cada RESPALDO.cadaMs) */
+  quiereFotoRespaldo: (ts: number) => boolean;
+  /** La foto del respaldo, sin cajas: el motor busca las caras; lo que sale va a la escena un rato. */
+  recibirFotoRespaldo: (f: { b64: string; ts: number }) => void;
 };
 
 export function useCaras(o: Opciones): ApiCaras {
@@ -105,6 +110,8 @@ export function useCaras(o: Opciones): ApiCaras {
   /** El parentesco dicho al presentar («mi esposa Ana»), hasta su «sí». */
   const parentescoPendiente = useRef<string | undefined>(undefined);
   const seguidor = useRef(new Seguidor()).current;
+  /** Sin ML Kit no hay pistas: lo que vio la última foto del respaldo (revisión del 5-oct, M3). */
+  const respaldo = useRef(new VistoRespaldo()).current;
   const saludados = useRef(new Set<string>());
   const analizando = useRef(false);
   const ultimaMirada = useRef(0);
@@ -140,8 +147,9 @@ export function useCaras(o: Opciones): ApiCaras {
     if (!montarMotor) {
       setMotorListo(false);
       seguidor.olvidar();
+      respaldo.olvidar();
     }
-  }, [montarMotor, seguidor]);
+  }, [montarMotor, respaldo, seguidor]);
   const reconoce = montarMotor && motorListo && !!conocidas?.length;
   const reconoceRef = useRef(reconoce);
   reconoceRef.current = reconoce;
@@ -234,6 +242,7 @@ export function useCaras(o: Opciones): ApiCaras {
     await saveSettings({ carasActivas: conCarasActivas(s.carasActivas, op.current.correo, false) });
     setActivas(false);
     seguidor.olvidar();
+    respaldo.olvidar();
     presentacion.terminar();
     if (borrar) {
       try {
@@ -256,6 +265,7 @@ export function useCaras(o: Opciones): ApiCaras {
             .then((n) => {
               setConocidas([]);
               seguidor.olvidar();
+              respaldo.olvidar();
               return op.current.decir(tr(`Listo, olvidé ${n === 1 ? 'la cara' : `las ${n} caras`} que conocía.`, `Done, I forgot ${n === 1 ? 'the face' : `the ${n} faces`} I knew.`));
             })
             .catch(() => op.current.decir(tr('No pude borrarlas ahora. Inténtalo con conexión.', 'I couldn’t erase them now. Try again when online.'), 'preocupado')),
@@ -385,6 +395,7 @@ export function useCaras(o: Opciones): ApiCaras {
             await olvidarCara(c.id);
             await refrescar();
             seguidor.olvidar(c.id);
+            respaldo.olvidar(c.id);
             aprendido.current.delete(c.id);
             await a.decir(p.tipo === 'olvidar_mia' ? tr('Listo, olvidé tu cara.', 'Done, I forgot your face.') : tr(`Listo, olvidé a ${c.nombre}.`, `Done, I forgot ${c.nombre}.`));
           } catch {
@@ -495,11 +506,50 @@ export function useCaras(o: Opciones): ApiCaras {
     [aprender, seguidor]
   );
 
+  /**
+   * Sin ML Kit (respaldo del servidor): la foto entera de cada subida (12 s; 30 s dormida), sin cajas. El
+   * motor busca las caras; sin votos (no hay pistas), cada toma vale por sí sola para la escena un rato
+   * (RESPALDO.frescoMs). Antes, sin ML Kit no se reconocía a nadie de forma continua.
+   */
+  const quiereFotoRespaldo = useCallback(
+    (ts: number) => tocaReconocerRespaldo({ ahora: ts, ultima: ultimaMirada.current, ocupado: analizando.current || !motor.current?.listo(), reconoce: reconoceRef.current }),
+    []
+  );
+  const recibirFotoRespaldo = useCallback(
+    (f: { b64: string; ts: number }) => {
+      if (analizando.current || !motor.current?.listo()) return;
+      analizando.current = true;
+      ultimaMirada.current = f.ts;
+      void (async () => {
+        try {
+          const caras = await motor.current?.analizar(f.b64);
+          if (!caras) return;
+          const r = caras.map((c) => identificar(c.vector, conocidasRef.current)).filter((x): x is Reconocida => !!x);
+          respaldo.poner(r, caras.length - r.length, Date.now());
+          // Al conocido presentado se le saluda una vez por sesión (a la dueña no: ya está hablando).
+          const nuevo = r.find((x) => x.relacion === 'conocido' && !saludados.current.has(sinTildes(x.nombre)));
+          if (nuevo) {
+            saludados.current.add(sinTildes(nuevo.nombre));
+            void op.current.decir(tr(`¡Hola, ${nuevo.nombre}!`, `Hi, ${nuevo.nombre}!`), 'feliz');
+          }
+        } catch (e) {
+          miga(`caras: el respaldo no pudo reconocer (${String((e as Error)?.message || e).slice(0, 60)})`);
+        } finally {
+          analizando.current = false;
+        }
+      })();
+    },
+    [respaldo]
+  );
+
   const escena = useCallback(() => {
     if (!reconoceRef.current) return '';
-    const p = seguidor.presentes(Date.now(), FRESCO_MS);
-    return frasePresentes(p.r, p.desconocidas, false, op.current.lado === 'trasera');
-  }, [seguidor]);
+    const ahora = Date.now();
+    const p = seguidor.presentes(ahora, FRESCO_MS);
+    // Con ML Kit, lo votado; sin él (no hay pistas), lo que vio la última foto del respaldo.
+    const q = p.r.length || p.desconocidas ? p : respaldo.presentes(ahora);
+    return frasePresentes(q.r, q.desconocidas, false, op.current.lado === 'trasera');
+  }, [respaldo, seguidor]);
 
   const estadoTexto = !activas ? tr('Apagado', 'Off') : conocidas?.length ? tr(`Conozco a ${conocidas.length}`, `I know ${conocidas.length}`) : tr('Activado', 'On');
 
@@ -508,5 +558,5 @@ export function useCaras(o: Opciones): ApiCaras {
     [montarMotor]
   );
 
-  return { activas, estadoTexto, motor: nodoMotor, abrirOpciones, manejar, escena, seguidor, reconoce, quiereFoto, recibirFoto };
+  return { activas, estadoTexto, motor: nodoMotor, abrirOpciones, manejar, escena, seguidor, reconoce, quiereFoto, recibirFoto, quiereFotoRespaldo, recibirFotoRespaldo };
 }

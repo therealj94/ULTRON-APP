@@ -23,7 +23,7 @@ import { cargarMiembro, fotoMemoriaMiembro, guardarHechoMiembro, hiloMiembro, ol
 import { montarRutasApp } from './server/app-rutas';
 import { montarRutasCaras } from './server/caras-rutas';
 import { montarRutasVoces } from './server/voces-rutas';
-import { reglaQuienHabla } from './lib/voces-miembro';
+import { reglaQuienHablaDeTurno } from './lib/voces-miembro';
 import { avisarComputadoraPorPush, avisarPush, llamarPorPush, montarRutasPush, proponerPorPush } from './server/push';
 import { montarRutasWindows, instruccionWindows } from './server/windows-rutas';
 import { actualizarPerfil, leerPerfil, perfilEnCache, sembrarDesdeGenesis, type Perfil } from './lib/perfil-persona';
@@ -3115,10 +3115,12 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     if (escena) {
       hechos.push(`ESCENA (tu cámara, ahora mismo): ${escena}${preguntaPorVer ? '' : ' (úsalo solo si viene al caso; no lo recites sin motivo).'}`);
       tools.push('escena');
-      // Las voces (mobile/src/voces): si la voz dice que quien pide NO es la dueña, lo privado no se le lee.
-      const quienHabla = reglaQuienHabla(escena);
-      if (quienHabla) hechos.push(quienHabla);
     }
+    // Las voces (mobile/src/voces): si la voz dice que quien pide NO es la dueña, lo privado no se le lee. Sale de la
+    // escena o del campo aparte `quienHabla` (solo de la app con sesión y con una voz guardada de ESA cuenta): una
+    // escena larga ya no se come la regla. Solo agrega cuidado.
+    const quienHabla = await reglaQuienHablaDeTurno({ escena, quienHabla: body?.quienHabla, origen: body?.origen, sesion: body?.sesion });
+    if (quienHabla) hechos.push(quienHabla);
     const image = body?.image;
     // Lo que la cámara de la app ya vio con orden (/api/vision/analyze modo estructurado): el hecho
     // viene hecho y la foto no se vuelve a subir ni a analizar. Es texto del propio teléfono de quien

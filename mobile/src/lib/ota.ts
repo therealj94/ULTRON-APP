@@ -153,10 +153,12 @@ export function useActualizacionAlVolver() {
 
     const intentar = (momento: Momento, fueraMs?: number) => {
       const motivos = motivosParaNoRecargar();
-      const que = decidirAplicar({ pendiente: !!pendiente.current, momento, fueraMs, motivos });
+      // La app fuera (la pestaña de la wallet o de Genesis delante): nunca se recarga por detrás.
+      const activa = AppState.currentState === 'active';
+      const que = decidirAplicar({ pendiente: !!pendiente.current, momento, fueraMs, motivos, activa });
       if (que === 'aplicar') return recargar(momento);
       // Hay trabajo entre manos: no se corta. Una miga por cada motivo distinto, no una por tic.
-      const k = que === 'posponer' ? motivos.join(', ') : '';
+      const k = que === 'posponer' ? [...motivos, ...(activa ? [] : ['app-fuera'])].join(', ') : '';
       if (k && k !== pospuestoPor) miga(`ota: pospuesta (${k})`);
       pospuestoPor = k;
     };
@@ -186,7 +188,8 @@ export function useActualizacionAlVolver() {
     const tic = setInterval(() => {
       if (AppState.currentState !== 'active') return;
       buscar(ENTRE_BUSQUEDAS_MS);
-      intentar('quieto');
+      // Pospuesta al abrir (estaba entrando): en cuanto termina, todavía «recién abierta», se aplica.
+      intentar(recienAbierta() ? 'arranque' : 'quieto');
     }, TIC_MS);
 
     const sub = AppState.addEventListener('change', (s: AppStateStatus) => {

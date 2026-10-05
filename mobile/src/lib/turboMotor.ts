@@ -156,7 +156,7 @@ export class MotorTurbo {
   private conectando = false;
   private cola: string[] = [];
   /** Frases cerradas que esperan su texto. `tragar`: no es de la persona (eco oído encima): no se entrega. */
-  private pendientes: { trozos: string[]; vence: ReturnType<typeof setTimeout>; tragar?: boolean; m?: Medida }[] = [];
+  private pendientes: { trozos: string[]; vence: ReturnType<typeof setTimeout>; tragar?: boolean; m?: Medida; id?: number }[] = [];
   private inactivo: ReturnType<typeof setTimeout> | null = null;
   private fallosVivo = 0;
   private sinVivoHasta = 0;
@@ -183,17 +183,37 @@ export class MotorTurbo {
 
   /**
    * Quien quiere el AUDIO de cada frase entregada (las voces, mobile/src/voces: ¿quién habló?). Se llama
-   * con los trozos PCM de la frase justo antes de `onFinal`, solo para las frases que sí se entregan.
+   * con los trozos PCM de la frase justo antes de `onFinal`, solo para las frases que sí se entregan, y con
+   * el id de la frase (el mismo que dio `setOyenteCierre`).
    * Aparte de los callbacks: la fachada (lib/speech.ts) los reemplaza enteros.
    */
-  private oyenteAudio: ((trozos: string[], texto: string) => void) | null = null;
-  setOyenteAudio(fn: ((trozos: string[], texto: string) => void) | null) {
+  private oyenteAudio: ((trozos: string[], texto: string, id?: number) => void) | null = null;
+  setOyenteAudio(fn: ((trozos: string[], texto: string, id?: number) => void) | null) {
     this.oyenteAudio = fn;
   }
-  private darAudio(trozos: string[], texto: string) {
+  private darAudio(trozos: string[], texto: string, id?: number) {
     if (!this.oyenteAudio || !trozos.length) return;
     try {
-      this.oyenteAudio(trozos, texto);
+      this.oyenteAudio(trozos, texto, id);
+    } catch {
+      /* el oyente nunca rompe la frase */
+    }
+  }
+  /**
+   * El audio de cada frase en cuanto se CIERRA (al callar), antes de que Turbo devuelva el texto (revisión
+   * del 5-oct, M1): las voces empiezan a reconocer ahí y su resultado suele estar listo cuando el turno de
+   * ESA frase se arma. El id es el que después trae `setOyenteAudio`; una frase cerrada que al final no se
+   * entrega (texto vacío) solo deja un resultado que nadie usa. Las tragadas (su eco) no pasan.
+   */
+  private oyenteCierre: ((id: number, trozos: string[]) => void) | null = null;
+  private idFrase = 0;
+  setOyenteCierre(fn: ((id: number, trozos: string[]) => void) | null) {
+    this.oyenteCierre = fn;
+  }
+  private darCierre(id: number, trozos: string[]) {
+    if (!this.oyenteCierre || !trozos.length) return;
+    try {
+      this.oyenteCierre(id, trozos);
     } catch {
       /* el oyente nunca rompe la frase */
     }
@@ -491,17 +511,20 @@ export class MotorTurbo {
     this.trozosFrase = [];
     this.prerollo = [];
     this.parcial = '';
+    const id = ++this.idFrase;
     if (this.ws || this.conectando) {
       this.enviarAudio(SILENCIO_COMMIT_B64, true);
       const p = {
         trozos,
         m,
+        id,
         vence: setTimeout(() => this.vencioFinal(p), this.t.esperaFinalMs),
       };
       this.pendientes.push(p);
     } else {
-      this.respaldo(trozos, m);
+      this.respaldo(trozos, m, id);
     }
+    this.darCierre(id, trozos);
     this.programarInactivo();
   }
 
@@ -645,7 +668,7 @@ export class MotorTurbo {
       }
       const todo = `${this.prefijo}${texto}`;
       this.prefijo = '';
-      this.entregar(todo, p.trozos, p.m);
+      this.entregar(todo, p.trozos, p.m, p.id);
       return;
     }
     if (/error|exceeded|limited|throttl/i.test(tipo)) {
@@ -680,7 +703,7 @@ export class MotorTurbo {
     this.pendientes = [];
     for (const p of pendientes) {
       clearTimeout(p.vence);
-      this.respaldo(p.trozos, p.m);
+      this.respaldo(p.trozos, p.m, p.id);
     }
     if (contarFallo) this.contarFalloVivo();
     // A media frase: se reconecta y se vuelve a mandar todo lo que va de la frase.
@@ -700,7 +723,7 @@ export class MotorTurbo {
     this.pendientes = [];
     for (const p of pendientes) {
       clearTimeout(p.vence);
-      this.respaldo(p.trozos, p.m);
+      this.respaldo(p.trozos, p.m, p.id);
     }
   }
 
@@ -744,7 +767,7 @@ export class MotorTurbo {
   }
 
   // ── entregar la frase ─────────────────────────────────────────────────────────────────────────
-  private entregar(textoTurbo: string, trozos: string[], m?: Medida) {
+  private entregar(textoTurbo: string, trozos: string[], m?: Medida, id?: number) {
     const g = this.gen;
     this.cadena = this.cadena
       .then(async () => {
@@ -766,7 +789,7 @@ export class MotorTurbo {
         }
         if (g === this.gen && this.quiere && !this.pausado) {
           this.medir(m, via);
-          this.darAudio(trozos, texto);
+          this.darAudio(trozos, texto, id);
           this.cb.onFinal?.(texto);
         }
       })
@@ -774,7 +797,7 @@ export class MotorTurbo {
   }
 
   /** La frase entera por /api/stt (el servidor la oye con Turbo y, si es de dinero, la confirma). */
-  private respaldo(trozos: string[], m?: Medida) {
+  private respaldo(trozos: string[], m?: Medida, id?: number) {
     if (trozos.length < 3) return;
     const g = this.gen;
     this.cadena = this.cadena
@@ -783,7 +806,7 @@ export class MotorTurbo {
         const texto = limpiarFinal((await this.conTope(this.deps.transcribirWav(wavDeTrozos(trozos), false), 16_000)) || '');
         if (texto && g === this.gen && this.quiere && !this.pausado) {
           this.medir(m, 'respaldo');
-          this.darAudio(trozos, texto);
+          this.darAudio(trozos, texto, id);
           this.cb.onFinal?.(texto);
         }
       })

@@ -3,14 +3,17 @@
  *
  * Cómo funciona (el audio no se guarda en ningún lado):
  *  1. El oído Turbo (lib/turboMotor.ts) ya tiene el audio PCM de cada frase (trozos de 0,1 s, 16 kHz):
- *     es lo que manda a ElevenLabs para entenderla. Con las voces activadas, al entregar la frase también
- *     se la pasa a las voces (`setOyenteAudio`), recortada a `MAX_TROZOS_FRASE` (~8 s).
+ *     es lo que manda a ElevenLabs para entenderla. Con las voces activadas, en cuanto la frase se CIERRA
+ *     (al callar, antes de que Turbo devuelva el texto) se la pasa a las voces (`setOyenteCierre`, con su
+ *     id), recortada a `MAX_TROZOS_FRASE` (~8 s); al entregarla, otra vez con el mismo id (`setOyenteAudio`).
  *  2. El teléfono la manda al servidor (POST /api/voces/quien), que saca 192 números de esa voz
  *     (sherpa-onnx, lib/voces-motor.ts), los compara con las voces guardadas de ESTA cuenta y descarta
- *     el audio. Sin esperar: el turno sale igual, y el resultado sirve desde la frase siguiente.
- *  3. Si reconoce a alguien con seguridad (umbral + margen sobre la segunda), la escena del turno dice
- *     «Por la voz, habla Ana (esposa de José), no José» durante `FRESCO_MS`; el cerebro sabe entonces que
- *     lo privado de José no se le lee a Ana (server.ts, reglaQuienHabla).
+ *     el audio (`IdentificadorVoz`: una consulta a la vez; en fila, la última frase, nunca se tira).
+ *  3. El turno de ESA frase espera su resultado hasta `ESPERA_VOZ_TURNO_MS` (350 ms). Si reconoce a alguien
+ *     con seguridad (umbral + margen sobre la segunda), la escena del turno EMPIEZA por «Por la voz, habla
+ *     Ana (esposa de José), no José» y el id de Ana viaja aparte (`quienHabla`); el cerebro sabe entonces que
+ *     lo privado de José no se le lee a Ana (lib/voces-miembro.ts, reglaQuienHablaDeTurno). Si no llegó a
+ *     tiempo, ese turno no dice quién habla: nunca lo de la frase anterior (revisión del 5-oct, M1).
  *
  * Solo con el oído Turbo: el del teléfono (Google) no entrega audio, y el de la nube graba m4a (AAC),
  * que habría que decodificar; la conversación en vivo (voz-agente) manda el micrófono por WebRTC a
@@ -228,7 +231,8 @@ export function nombreCon(p: PersonaVoz, en = false): string {
 
 /**
  * El último resultado de «¿quién habló?». Cada frase identificada lo reemplaza (también un «no sé»: si
- * habló alguien que no conozco, ya no vale lo de antes); solo vale `FRESCO_MS`.
+ * habló alguien que no conozco, ya no vale lo de antes); solo vale `FRESCO_MS`. Solo para contestar
+ * «¿quién está hablando?»: la escena de un turno usa lo de SU frase (`IdentificadorVoz`).
  */
 export class UltimaVoz {
   private r: { persona: PersonaVoz | null; t: number } | null = null;
@@ -248,6 +252,183 @@ export class UltimaVoz {
     const p = this.fresca();
     return p ? fraseQuienHabla(p, duena, en) : '';
   }
+}
+
+/* ── quién dijo ESTA frase, para su turno (revisión del 5-oct, M1) ───────────────────────────── */
+
+/**
+ * Lo más que el turno espera lo de su frase. El servidor saca la huella en ~50-120 ms; con la red del
+ * teléfono, la respuesta suele llegar antes de que el turno se arme, porque la consulta sale al CERRARSE la
+ * frase (lib/turboMotor.ts `setOyenteCierre`), mientras Turbo todavía devuelve el texto. Si no llegó en
+ * esto, el turno sale sin decir quién habla: nunca con lo de la frase anterior. Sin voces activas (o sin
+ * voces conocidas) no se espera nada.
+ */
+export const ESPERA_VOZ_TURNO_MS = 350;
+/** Una frase entregada a menos de esto de cuando se oyó el turno es la de ese turno. */
+export const CASA_FRASE_MS = 1_500;
+/** Las frases que se recuerdan (las de los últimos turnos). */
+const FRASES_RECORDADAS = 6;
+
+export type RespuestaQuienHabla = { persona: PersonaVoz | null; motivo?: string };
+/** Lo sabido de una frase: la persona, null («no la conozco»), o undefined (no se pudo saber). */
+type SabidoFrase = { persona: PersonaVoz | null | undefined };
+type EstadoFrase = { id: number; trozos?: string[]; enCurso?: boolean; sabido?: SabidoFrase; entregadaEn?: number; esperas: Array<() => void> };
+
+/**
+ * Quién dijo cada frase, por su id (el del oído Turbo). Antes el reconocimiento iba sin esperar y el turno
+ * leía «lo último reconocido» (45 s): casi siempre era lo de la frase ANTERIOR, así que el primer pedido de
+ * Ana justo después de José salía como de José. Y mientras había una consulta en curso, las frases
+ * nuevas se tiraban.
+ *
+ *  · `oir`: el audio de una frase (al cerrarse). Se consulta YA; con una consulta en curso queda en fila la
+ *    ÚLTIMA (la que esperaba antes queda «sin dato»): nunca se tira la frase nueva.
+ *  · `entregada`: la frase llegó como turno (cuándo).
+ *  · `paraTurno(oidaEn)`: lo de la frase de ESE turno, esperando hasta `ESPERA_VOZ_TURNO_MS`. undefined si
+ *    no hay frase, no se pudo o no llegó a tiempo: el turno no dice quién habla. Un resultado tardío queda
+ *    para SU frase (un reintento del mismo turno), nunca para la siguiente.
+ */
+export class IdentificadorVoz {
+  private frases: EstadoFrase[] = [];
+  private consultando = false;
+  private enFila: EstadoFrase | null = null;
+  constructor(
+    private consultar: (trozos: string[]) => Promise<RespuestaQuienHabla>,
+    private alSaber?: (id: number, persona: PersonaVoz | null | undefined) => void
+  ) {}
+
+  private de(id: number, crear = false): EstadoFrase | null {
+    let f = this.frases.find((x) => x.id === id) || null;
+    if (!f && crear) {
+      f = { id, esperas: [] };
+      this.frases = [...this.frases, f].slice(-FRASES_RECORDADAS);
+    }
+    return f;
+  }
+
+  private saber(f: EstadoFrase, persona: PersonaVoz | null | undefined) {
+    if (f.sabido) return;
+    f.sabido = { persona };
+    for (const r of f.esperas.splice(0)) r();
+    try {
+      this.alSaber?.(f.id, persona);
+    } catch {
+      /* quien escucha nunca rompe el reconocimiento */
+    }
+  }
+
+  private lanzar(f: EstadoFrase) {
+    const trozos = f.trozos || [];
+    f.trozos = undefined;
+    f.enCurso = true;
+    this.consultando = true;
+    void Promise.resolve()
+      .then(() => this.consultar(trozos))
+      .then(
+        (r) => (r?.motivo === 'muy_corta' || r?.motivo === 'silencio' ? undefined : r?.persona ?? null),
+        () => undefined
+      )
+      .then((p) => {
+        f.enCurso = false;
+        this.saber(f, p);
+        this.consultando = false;
+        const sigue = this.enFila;
+        this.enFila = null;
+        if (sigue) this.lanzar(sigue);
+      });
+  }
+
+  /** El audio de la frase `id`: se reconoce ya, o queda en fila (solo la última). */
+  oir(id: number, trozos: string[]) {
+    const f = this.de(id, true)!;
+    if (f.sabido || f.trozos || f.enCurso) return;
+    f.trozos = trozos;
+    if (!this.consultando) return this.lanzar(f);
+    if (this.enFila) {
+      this.enFila.trozos = undefined;
+      this.saber(this.enFila, undefined);
+    }
+    this.enFila = f;
+  }
+
+  /** Una frase que no se reconoce (muy corta, aprendiendo una voz): su turno no dice quién habla. */
+  sinDato(id: number) {
+    const f = this.de(id, true)!;
+    if (this.enFila === f) this.enFila = null;
+    f.trozos = undefined;
+    this.saber(f, undefined);
+  }
+
+  /** La frase `id` llegó como turno. */
+  entregada(id: number, en: number) {
+    this.de(id, true)!.entregadaEn = en;
+  }
+
+  /** ¿Ya se oyó (o se sabe) esta frase? */
+  conocida(id: number): boolean {
+    const f = this.de(id);
+    return !!f && (!!f.sabido || !!f.trozos || !!f.enCurso);
+  }
+
+  /** La frase del turno oído en `oidaEn` (la entregada más cerca, a menos de `CASA_FRASE_MS`). */
+  private delTurno(oidaEn: number): EstadoFrase | null {
+    if (!(oidaEn > 0)) return null;
+    let mejor: EstadoFrase | null = null;
+    for (const f of this.frases) {
+      if (f.entregadaEn === undefined || Math.abs(f.entregadaEn - oidaEn) > CASA_FRASE_MS) continue;
+      if (!mejor || Math.abs(f.entregadaEn - oidaEn) <= Math.abs(mejor.entregadaEn! - oidaEn)) mejor = f;
+    }
+    return mejor;
+  }
+
+  /** Lo de la frase del turno oído en `oidaEn`, esperando hasta `ms`. */
+  async paraTurno(oidaEn: number, ms = ESPERA_VOZ_TURNO_MS): Promise<PersonaVoz | null | undefined> {
+    const f = this.delTurno(oidaEn);
+    if (!f) return undefined;
+    if (!f.sabido && ms > 0) {
+      let reloj: ReturnType<typeof setTimeout> | undefined;
+      await new Promise<void>((r) => {
+        f.esperas.push(r);
+        reloj = setTimeout(r, ms);
+      });
+      clearTimeout(reloj);
+    }
+    return f.sabido?.persona;
+  }
+
+  /** Lo sabido de la frase más nueva que ya se sabe (para «¿quién habla?»). */
+  ultima(): { id: number; persona: PersonaVoz | null } | null {
+    for (let i = this.frases.length - 1; i >= 0; i--) {
+      const f = this.frases[i];
+      if (f.sabido && f.sabido.persona !== undefined) return { persona: f.sabido.persona, id: f.id };
+    }
+    return null;
+  }
+
+  /** Espera (hasta `ms`) a saber la frase entregada más nueva. */
+  async esperarUltima(ms: number): Promise<void> {
+    const f = [...this.frases].reverse().find((x) => x.entregadaEn !== undefined);
+    if (!f || f.sabido) return;
+    let reloj: ReturnType<typeof setTimeout> | undefined;
+    await new Promise<void>((r) => {
+      f.esperas.push(r);
+      reloj = setTimeout(r, ms);
+    });
+    clearTimeout(reloj);
+  }
+
+  olvidar() {
+    this.frases = [];
+    this.enFila = null;
+  }
+}
+
+/**
+ * La escena del turno: quién habla por la voz PRIMERO. El teléfono corta la escena a 300 letras y el
+ * servidor a 400; con la voz al final, una descripción larga de la cámara se comía la frase y la regla
+ * «no le leas lo privado de José» desaparecía sin aviso. Además viaja aparte (`quienHabla`, lib/api.ts).
+ */
+export function escenaDelTurno(o: { voz?: string; camara?: string; caras?: string }): string | undefined {
+  return [o.voz, o.caras, o.camara].map((x) => String(x || '').trim()).filter(Boolean).join(' ') || undefined;
 }
 
 /* ── ¿activó el reconocimiento? (por persona, en los ajustes del teléfono) ────────────────── */

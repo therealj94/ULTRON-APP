@@ -11,7 +11,8 @@
  *   · aprender: elegir 5 muestras distintas de las poses, el tope con la más redundante afuera, y cuándo
  *     se aprende con el uso (src/caras/caras.ts); el parentesco hasta la frase para el cerebro;
  *   · costuras leídas del código: la foto del bucle va al motor de caras (sin segunda foto), la frontal
- *     se dibuja espejada, la trasera no mueve los ojos del avatar, y el motor usa las cajas de ML Kit.
+ *     se dibuja espejada, la trasera no mueve los ojos del avatar, y el motor usa las cajas de ML Kit;
+ *   · sin ML Kit (respaldo del servidor) también se reconoce seguido, sin pedir la foto por dos vías.
  *
  *   cd mobile && npx tsx pruebas/caras/vivo.prueba.mjs
  */
@@ -20,7 +21,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { VISTA_FRESCA_MS, cajaEnPantalla, cajaNormal, etiquetaCara, ladoValido, lineaEstado, marcasEnVivo, marcoParaFoto, pedidoDeVista } from '../../src/lib/vistaEnVivo.ts';
-import { CONFIRMAR, MANTENER_MS, PERDIDA_MS, RECONOCER, Seguidor, VIVA_MS, decidirIdentidad, iou, tocaReconocer } from '../../src/caras/seguimiento.ts';
+import { CONFIRMAR, MANTENER_MS, PERDIDA_MS, RECONOCER, RESPALDO, Seguidor, VIVA_MS, VistoRespaldo, decidirIdentidad, iou, tocaReconocer, tocaReconocerRespaldo } from '../../src/caras/seguimiento.ts';
 import { APRENDER, MAX_MUESTRAS, MUESTRAS_APRENDER, POSES, UMBRAL, debeAprender, distancia, elegirMuestras, frasePresentes, identificar, parentescoValido, sumarMuestras } from '../../src/caras/caras.ts';
 import { pedidoDeCamara } from '../../src/lib/camaraModo.ts';
 
@@ -242,10 +243,17 @@ prueba('voz: «muéstrame lo que ves», «cierra la vista», «cámara trasera /
   for (const t of ['cámara frontal', 'la cámara de adelante', 'front camera']) assert.equal(pedidoDeVista(t), 'frontal', t);
   for (const t of ['voltea la cámara', 'cambia de cámara', 'gira la cámara', 'flip the camera']) assert.equal(pedidoDeVista(t), 'voltear', t);
   for (const t of ['¿qué ves?', 'léeme esto', 'apaga la cámara', 'abre la cámara', 'no me veas', 'hola']) assert.equal(pedidoDeVista(t), null, t);
-  // «Cierra la cámara»: con la vista abierta la cierra (la cámara sigue); cerrada, es apagarla, como siempre.
-  assert.equal(pedidoDeVista('cierra la cámara', { vistaAbierta: true }), 'cerrar');
-  assert.equal(pedidoDeVista('cierra la cámara', { vistaAbierta: false }), null);
-  assert.equal(pedidoDeCamara('cierra la cámara'), 'apagar');
+  // «Cierra / quita / apaga la cámara» es APAGARLA siempre (lib/camaraModo.ts; apagada, la vista se cierra
+  // sola), también con la vista abierta: antes cerraba solo la vista y la cámara seguía mirando (revisión
+  // del 5-oct). Solo «cierra la vista», «ya no me muestres…» (u «oculta la cámara») cierra la vista.
+  for (const abierta of [true, false]) {
+    for (const t of ['cierra la cámara', 'Quita la cámara', 'apaga la cámara', 'close the camera']) {
+      assert.equal(pedidoDeVista(t, { vistaAbierta: abierta }), null, `${t} (vista ${abierta ? 'abierta' : 'cerrada'})`);
+      assert.match(String(pedidoDeCamara(t)), /^apagar/, t);
+    }
+  }
+  for (const t of ['cierra la vista', 'ya no me muestres lo que ves', 'oculta la cámara']) assert.equal(pedidoDeVista(t, { vistaAbierta: true }), 'cerrar', t);
+  assert.equal(pedidoDeCamara('cierra la vista'), null, 'cerrar la vista no apaga la cámara');
   assert.equal(pedidoDeCamara('abre la cámara'), 'encender', '«abre la cámara» sigue siendo encenderla');
 });
 
@@ -326,6 +334,30 @@ prueba('costuras: la foto del bucle va al motor de caras (sin segunda foto), con
   const mesa = leer('src/screens/DeskScreen.tsx');
   assert.match(mesa, /activa: verPersona && ladoCamara === 'frontal'/, 'los ojos del avatar solo siguen con la frontal');
   assert.match(mesa, /vista=\{previaCamara \|\| vistaCamara\}/, 'apuntar para leer usa la misma vista');
+});
+
+prueba('sin ML Kit (respaldo del servidor) también se reconoce seguido, y con ML Kit no se pide dos veces (revisión del 5-oct, M3)', () => {
+  // Cuándo: sin cajas no hay pistas que votar; cada foto del respaldo (12 s) basta, con su ritmo y nunca dos a la vez.
+  assert.ok(RESPALDO.cadaMs > 0 && RESPALDO.cadaMs <= 12_000 && RESPALDO.frescoMs >= 2 * 12_000, JSON.stringify(RESPALDO));
+  assert.equal(tocaReconocerRespaldo({ ahora: 100_000, ultima: 0, ocupado: false, reconoce: true }), true);
+  assert.equal(tocaReconocerRespaldo({ ahora: 100_000, ultima: 0, ocupado: true, reconoce: true }), false, 'nunca dos a la vez');
+  assert.equal(tocaReconocerRespaldo({ ahora: 100_000, ultima: 0, ocupado: false, reconoce: false }), false, 'sin caras activas o sin conocidas, nada');
+  assert.equal(tocaReconocerRespaldo({ ahora: 100_000, ultima: 100_000 - RESPALDO.cadaMs + 1, ocupado: false, reconoce: true }), false);
+  // Lo visto por el respaldo vale para la escena mientras es fresco (una foto cada 12-30 s) y se olvida al pedirlo.
+  const v = new VistoRespaldo();
+  const ana = { id: 'a', nombre: 'Ana', relacion: 'conocido', parentesco: 'esposa', distancia: 0.3, desde: 0, ultimoVoto: 0 };
+  v.poner([ana], 1, 1000);
+  assert.deepEqual(v.presentes(1000 + RESPALDO.frescoMs - 1), { r: [ana], desconocidas: 1 });
+  assert.deepEqual(v.presentes(1000 + RESPALDO.frescoMs + 1), { r: [], desconocidas: 0 });
+  v.poner([ana], 0, 5000);
+  v.olvidar('a');
+  assert.deepEqual(v.presentes(5001), { r: [], desconocidas: 0 }, '«olvida a Ana» la quita ya');
+  // Las costuras: el bucle ofrece la foto a las caras por el respaldo SOLO sin ML Kit (con ML Kit va por onCaras).
+  const cv = leer('src/components/CamaraVision.tsx');
+  assert.match(cv, /if \(mlOk\.current\) \{[\s\S]*?cb\.current\.onCaras\([\s\S]*?\} else pedir = cb\.current\.onFotoRespaldo\(Date\.now\(\)\);/, 'una sola vía por foto');
+  const uc = leer('src/caras/useCaras.tsx');
+  assert.match(uc, /motor\.current\?\.analizar\(f\.b64\)/, 'sin cajas, el motor busca las caras en la foto');
+  assert.match(uc, /respaldo\.presentes\(/, 'lo del respaldo entra a la escena');
 });
 
 for (const [nombre, f] of pruebas) {

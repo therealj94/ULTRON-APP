@@ -270,33 +270,72 @@ export function cupoDeEnvioWhatsapp(quien: string, ahora = Date.now()): string |
  * el filtro barato de antes de preguntar: lo que de verdad decide es el eco de la cuenta en CADA respuesta (MEDIO-1:
  * si el puente se devuelve a uno de antes después de un «sí», el primer pedido sin eco se rechaza y esto vuelve a «no»).
  * Un «sí» se vuelve a preguntar a los 5 minutos; un «no», a los 30 s.
+ *
+ * `topeMs` (el turno, revisión del 5-oct): quien no puede esperar los 5 s de /salud (whatsappOfrecido, 400 ms) espera
+ * solo su tope; si /salud no contestó, vuelve `null` («no se sabe»: no se ofrece nada) y la pregunta SIGUE de fondo
+ * hasta llenar lo sabido para el turno siguiente. Una sola pregunta a la vez, aunque lleguen varios turnos.
  */
 let multicuenta: { t: number; si: boolean } | null = null;
-async function puenteConCuentas(): Promise<boolean> {
+let sondeo: Promise<boolean> | null = null;
+const SALUD_MS = 5000;
+
+function sondearPuente(): Promise<boolean> {
+  if (sondeo) return sondeo;
+  const desde = Date.now();
+  const p = (async () => {
+    let si = false;
+    try {
+      const r = await fetch(`${conf().url}/salud`, { signal: AbortSignal.timeout(SALUD_MS) });
+      const j: any = await r.json().catch(() => null);
+      si = r.ok && typeof j?.maxCuentas === 'number';
+    } catch {
+      si = false;
+    }
+    // Un «sin eco» llegado mientras tanto (sinEco) manda: esta respuesta ya es vieja.
+    if (!multicuenta || multicuenta.t <= desde) multicuenta = { t: Date.now(), si };
+    return multicuenta.si;
+  })();
+  sondeo = p;
+  void p.finally(() => {
+    if (sondeo === p) sondeo = null;
+  });
+  return p;
+}
+
+async function puenteConCuentas(topeMs?: number): Promise<boolean | null> {
   if (multicuenta && Date.now() - multicuenta.t < (multicuenta.si ? 300_000 : 30_000)) return multicuenta.si;
-  let si = false;
+  const p = sondearPuente();
+  if (topeMs === undefined) return p;
+  let reloj: ReturnType<typeof setTimeout> | undefined;
+  const tope = new Promise<null>((r) => {
+    reloj = setTimeout(() => r(null), Math.max(0, topeMs));
+    reloj.unref?.();
+  });
   try {
-    const r = await fetch(`${conf().url}/salud`, { signal: AbortSignal.timeout(5000) });
-    const j: any = await r.json().catch(() => null);
-    si = r.ok && typeof j?.maxCuentas === 'number';
-  } catch {
-    si = false;
+    return await Promise.race([p, tope]);
+  } finally {
+    clearTimeout(reloj);
   }
-  multicuenta = { t: Date.now(), si };
-  return si;
 }
 
 const AVISO_PUENTE_VIEJO = 'El puente de WhatsApp todavía es de una sola cuenta: hay que actualizarlo antes de que cada cuenta agregue el suyo. No toqué nada.';
 
-/** La clave de la cuenta para un pedido al puente; lanza si no hay, o si el puente todavía no separa cuentas. */
-async function cuentaParaPedir(quien: string): Promise<string> {
+/**
+ * La clave de la cuenta para un pedido al puente; lanza si no hay, o si el puente todavía no separa cuentas. `topeMs`:
+ * lo más que se espera a saberlo (ver puenteConCuentas); sin saberlo a tiempo, lanza «no contestó» (nada salió).
+ */
+async function cuentaParaPedir(quien: string, topeMs?: number): Promise<string> {
   const cuenta = claveCuentaWhatsapp(quien);
   if (!cuenta) {
     // Sin WHATSAPP_CUENTA_SECRETO no se firma con la clave del puente (revisión del 5-oct): solo los dueños.
     if (normal(quien) && !esDuenoWhatsapp(quien) && !whatsappParaTodosConfigurado()) throw new ErrorPuente(AVISO_SIN_SECRETO, 503, false, 'whatsapp_para_todos_sin_configurar');
     throw new ErrorPuente('No sé de qué cuenta es este WhatsApp (falta la sesión).', 403);
   }
-  if (cuenta !== CUENTA_LEGADO && !(await puenteConCuentas())) throw new ErrorPuente(AVISO_PUENTE_VIEJO, 503, false, 'PUENTE_VIEJO');
+  if (cuenta !== CUENTA_LEGADO) {
+    const si = await puenteConCuentas(topeMs);
+    if (si === null) throw new ErrorPuente('El puente de WhatsApp no contestó a tiempo (todavía no sé si separa cuentas); no hice nada.', 503, true);
+    if (!si) throw new ErrorPuente(AVISO_PUENTE_VIEJO, 503, false, 'PUENTE_VIEJO');
+  }
   return cuenta;
 }
 
@@ -333,17 +372,23 @@ async function comprobarEco(c: ReturnType<typeof conf>, cuenta: string, ms: numb
   void r.body?.cancel().catch(() => {});
 }
 
-/** Un pedido al puente, siempre de UNA cuenta (la de `quien`): sin cuenta no sale nada, y sin su eco no vuelve nada. */
-async function pedir<T = any>(quien: string, ruta: string, init: RequestInit & { ms?: number } = {}): Promise<T> {
+/**
+ * Un pedido al puente, siempre de UNA cuenta (la de `quien`): sin cuenta no sale nada, y sin su eco no vuelve nada.
+ * `hasta` (epoch ms): el tope de TODO el pedido, también lo que se espera a saber si el puente separa cuentas (el turno
+ * tiene 400 ms; antes /salud solo podía llevarse 5 s).
+ */
+async function pedir<T = any>(quien: string, ruta: string, init: RequestInit & { ms?: number; hasta?: number } = {}): Promise<T> {
+  const { ms: msPedido, hasta, ...resto } = init;
   const c = conf();
-  const cuenta = await cuentaParaPedir(quien);
-  if (cuenta !== CUENTA_LEGADO && String(init.method || 'GET').toUpperCase() !== 'GET') await comprobarEco(c, cuenta, Math.min(init.ms ?? 8000, 8000));
+  const cuenta = await cuentaParaPedir(quien, hasta === undefined ? undefined : hasta - Date.now());
+  const quedan = (ms: number) => (hasta === undefined ? ms : Math.max(1, Math.min(ms, hasta - Date.now())));
+  if (cuenta !== CUENTA_LEGADO && String(resto.method || 'GET').toUpperCase() !== 'GET') await comprobarEco(c, cuenta, quedan(Math.min(msPedido ?? 8000, 8000)));
   let r: Response;
   try {
     r = await fetch(`${c.url}${ruta}`, {
-      ...init,
-      headers: { authorization: `Bearer ${c.clave}`, 'content-type': 'application/json', ...(init.headers || {}), 'x-cuenta': cuenta },
-      signal: AbortSignal.timeout(init.ms ?? 20_000),
+      ...resto,
+      headers: { authorization: `Bearer ${c.clave}`, 'content-type': 'application/json', ...(resto.headers || {}), 'x-cuenta': cuenta },
+      signal: AbortSignal.timeout(quedan(msPedido ?? 20_000)),
     });
   } catch (e: any) {
     throw new ErrorPuente(`El puente de WhatsApp no contestó (${String(e?.message || e).slice(0, 80)}).`, 503, true);
@@ -400,7 +445,7 @@ export async function whatsappVinculadoRapido(quien: string, ms = 400): Promise<
   const visto = VINCULADOS.get(k);
   if (visto && Date.now() - visto.t < VINCULADO_VIVE_MS) return visto.vinculado;
   try {
-    const e = await pedir<EstadoPuente>(quien, '/estado', { ms });
+    const e = await pedir<EstadoPuente>(quien, '/estado', { ms, hasta: Date.now() + ms });
     anotarVinculado(quien, !!e?.vinculado);
     return !!e?.vinculado;
   } catch {
@@ -1049,6 +1094,7 @@ export function _olvidarWhatsapp() {
   INTENTOS_VINCULAR.clear();
   SUSPENDIDAS.clear();
   multicuenta = null;
+  sondeo = null;
 }
 
 /** Pruebas: también las sesiones de la comunidad que se vieron (COMUNIDAD_VISTA). */
@@ -1104,7 +1150,7 @@ export async function conocidosDeChats(quien: string, ms = 400): Promise<{ nombr
   const guardado = NOMBRES_CHATS.get(k);
   if (guardado && Date.now() - guardado.t < NOMBRES_CHATS_VIVE_MS) return { nombres: guardado.nombres, completo: guardado.completo };
   try {
-    const j = await pedir<{ chats: ChatWA[] }>(quien, '/chats?limite=200', { ms });
+    const j = await pedir<{ chats: ChatWA[] }>(quien, '/chats?limite=200', { ms, hasta: Date.now() + ms });
     const nombres = (j.chats || []).filter((c) => !c.grupo && !/@g\.us$/.test(c.jid) && c.nombre).map((c) => c.nombre);
     NOMBRES_CHATS.set(k, { t: Date.now(), nombres, completo: true });
     return { nombres, completo: true };

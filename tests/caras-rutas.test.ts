@@ -35,6 +35,7 @@ const { montarRutasCaras } = await import('../server/caras-rutas');
 const { emitirSesion, sesionDe, exigirMesa } = await import('../server/seguridad');
 const { huellaCaras, _olvidarCacheCaras, _s3DePrueba, MAX_MUESTRAS, podarMuestras } = await import('../lib/caras-miembro');
 const movil = await import('../mobile/src/caras/caras');
+const carasLib = await import('../lib/caras-miembro');
 
 const app = express();
 app.use(express.json({ limit: '2mb' }));
@@ -202,6 +203,39 @@ test('olvidar de verdad: una por id y después todas; el archivo tampoco las tie
   assert.deepEqual(JSON.parse(fs.readFileSync(archivo('maria@ordenglobal.org'), 'utf8')).personas, []);
   // Las del miembro siguen ahí.
   assert.deepEqual((await listar(miembro.token)).map((p) => p.nombre), ['José']);
+});
+
+test('olvidar y sumar muestras a la vez: la cara olvidada no resucita (un cambio a la vez por cuenta)', async () => {
+  const correo = 'carrera@ordenglobal.org';
+  const quien = emitirSesion({ correo, nombre: 'Carrera', rol: 'Junta' }, { comunidad: true });
+  const guardado: Record<string, unknown> = {};
+  // S3 lento: la ventana entre leer el cajón y guardarlo queda abierta (como en producción).
+  _s3DePrueba({ listo: () => true, put: async (k: string, j: unknown) => (await new Promise((r) => setTimeout(r, 30)), (guardado[k] = j), { ok: true, detalle: '' }) });
+  try {
+    for (const caliente of [true, false]) {
+      const r = await post(quien.token, { nombre: 'Beto', relacion: 'conocido', vectores: [vec(41)], consentimiento: { como: 'voz', frase: 'sí, recuérdame' } });
+      assert.equal(r.status, 200);
+      const id = ((await r.json()) as any).persona.id;
+      // Sin caché (un redespliegue): las dos leen el cajón a la vez.
+      if (!caliente) _olvidarCacheCaras();
+      const [olvidada, sumada] = await Promise.all([carasLib.olvidarCara(correo, id), carasLib.sumarMuestras(correo, id, [vec(42)])]);
+      assert.equal(olvidada?.id, id, 'se olvidó');
+      assert.equal(sumada, null, 'sumar después de olvidar no encuentra a nadie');
+      assert.deepEqual(await listar(quien.token), [], `no resucita (${caliente ? 'con' : 'sin'} caché)`);
+      assert.deepEqual((Object.values(guardado).at(-1) as any).personas, [], 'tampoco en S3');
+      _olvidarCacheCaras();
+      assert.deepEqual(await listar(quien.token), [], 'ni en el disco');
+    }
+    // Una que falla no traba la cola de la cuenta: la siguiente pasa.
+    const r = await post(quien.token, { nombre: 'Luis', relacion: 'conocido', vectores: [vec(43)], consentimiento: { como: 'voz', frase: 'sí' } });
+    const id = ((await r.json()) as any).persona.id;
+    _s3DePrueba({ listo: () => true, put: async () => ({ ok: false, detalle: 'S3 503' }) });
+    await assert.rejects(carasLib.olvidarCara(correo, id));
+    _s3DePrueba({ listo: () => true, put: async (k: string, j: unknown) => ((guardado[k] = j), { ok: true, detalle: '' }) });
+    assert.equal((await carasLib.olvidarCara(correo, id))?.id, id);
+  } finally {
+    _s3DePrueba(null);
+  }
 });
 
 test('si S3 no guarda, borrar no se confirma (503) y al reintentar con S3 sano se borra de verdad', async () => {
