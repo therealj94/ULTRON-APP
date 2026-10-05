@@ -155,9 +155,23 @@ jobs:
           corridas=$(sed -n 's/^# pass \([0-9]*\)$/\1/p' navegador.tap)
           [ "${corridas:-0}" -ge 15 ] || { echo "::error::solo pasaron ${corridas:-0} pruebas de navegador (mínimo 15)"; exit 1; }
 
-  # El nombre de siempre («web») para quien espere ese check: verde solo si las cuatro tandas y el navegador lo están.
+  # El nodo de la computadora (scripts/nodo-computadora/agente.py, Python): sus pruebas son solo con la biblioteca
+  # estándar y antes no corrían en ninguna CI (auditoría del 4-oct, matriz de superficies).
+  nodo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Pruebas del nodo (agente.py)
+        working-directory: scripts/nodo-computadora
+        run: python3 -m py_compile agente.py && python3 test_agente.py
+
+  # El nombre de siempre («web») para quien espere ese check: verde solo si las cuatro tandas, el navegador y el nodo lo están.
   web:
-    needs: [pruebas, navegador]
+    needs: [pruebas, navegador, nodo]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -165,6 +179,7 @@ jobs:
         env:
           RESULTADO: ${{ needs.pruebas.result }}
           NAVEGADOR: ${{ needs.navegador.result }}
+          NODO: ${{ needs.nodo.result }}
         run: |
-          echo "tandas: $RESULTADO · navegador: $NAVEGADOR"
-          [ "$RESULTADO" = "success" ] && [ "$NAVEGADOR" = "success" ]
+          echo "tandas: $RESULTADO · navegador: $NAVEGADOR · nodo: $NODO"
+          [ "$RESULTADO" = "success" ] && [ "$NAVEGADOR" = "success" ] && [ "$NODO" = "success" ]

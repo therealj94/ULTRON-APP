@@ -12,7 +12,7 @@ correr el guion físico de [PRUEBAS-REALES.md](PRUEBAS-REALES.md) (sección 6) c
 
 | Superficie | Qué es | Quién mueve el ratón/teclado | Pruebas automáticas (en CI) | Estado en aparato físico |
 |---|---|---|---|---|
-| **Linux remoto** (nodo `agente.py`) | Escritorio Linux (Firefox, LibreOffice) en un contenedor del nodo; AURA trabaja ahí y la persona puede tomar el control | `xdotool` dentro del contenedor, por el árbitro de `agente.py` | `tests/computadora*.test.ts`, `tests/permisos-*.test.ts` (nodo de mentira que habla como `agente.py`); `scripts/nodo-computadora/test_agente.py` **no** está en CI (se corre a mano) | Sin corrida física registrada con el lote nuevo |
+| **Linux remoto** (nodo `agente.py`) | Escritorio Linux (Firefox, LibreOffice) en un contenedor del nodo; AURA trabaja ahí y la persona puede tomar el control | `xdotool` dentro del contenedor, por el árbitro de `agente.py` | `tests/computadora*.test.ts`, `tests/permisos-*.test.ts` (nodo de mentira que habla como `agente.py`); `scripts/nodo-computadora/test_agente.py` (job `nodo` de la CI web, parte del check `web`) | Sin corrida física registrada con el lote nuevo |
 | **App Expo** (Android) | El visor dedicado `mobile/src/app/VisorComputadora.tsx` sobre el Linux remoto | La persona, desde el teléfono, vía `/api/computadora/tareas/:id/entrada` | `tests/visor-computadora.test.ts`, `tests/teclado-remoto-lote.test.ts` (lógica pura) y **`mobile/pruebas/visor/` (el componente MONTADO)** en `calidad-movil.yml` | Sin verificar en un Android físico |
 | **App Expo** (iOS) | No existe build de iOS: `app.config.js`/`eas.json` no declaran iOS y no hay workflow | — | — | No aplica: en iPhone se usa la web/PWA |
 | **Web / PWA** | El mismo visor adaptado al navegador: `src/13-trabajo/VisorEscritorio.tsx` (reutiliza `mobile/src/app/visor.ts` y `mobile/src/lib/entradaRemota.ts`) | La persona, desde el navegador, por la misma ruta de entradas | `tests/aura-web-paneles.test.ts` en Chromium real (`web.yml`, `AURA_EXIGIR_NAVEGADOR=1`) | Chromium de CI sí; **Safari/iPhone y PWA instalada sin verificar** |
@@ -40,7 +40,7 @@ correr el guion físico de [PRUEBAS-REALES.md](PRUEBAS-REALES.md) (sección 6) c
   `tests/permisos-exactos.test.ts`, `tests/efecto-una-vez.test.ts`: el servidor contra un nodo de mentira con el
   contrato de `agente.py` (control por cliente, «sí» atado a la propuesta exacta, efectos una vez).
 - `scripts/nodo-computadora/test_agente.py` (104 casos, sin escritorio ni GPU): `python3 -m unittest
-  scripts/nodo-computadora/test_agente.py`. **No corre en ningún workflow**: hay que correrlo a mano en cada entrega.
+  scripts/nodo-computadora/test_agente.py`. Corre en el job `nodo` de `.github/workflows/web.yml`, y el check `web` exige que pase.
 
 **Sin verificar en aparato**
 
