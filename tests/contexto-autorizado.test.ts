@@ -65,7 +65,8 @@ test('A1 composición del turno (texto y voz): perfil, lo que sé y los resúmen
   const p = 'compone@prueba.local';
   await P.actualizarPerfil(p, { encuesta: { vive: 'Puerto Sintetico', comida: 'Baleadas' } });
   const { dato } = await O.anotarDatoManual(p, { categoria: 'rutinas', dato: 'Vive en Puerto Sintetico', clave: 'vive', origen: 'primeravez' });
-  sembrarEpisodio(p, 'Contó que vive en Puerto Sintetico y que sale a la pesca los sábados.', Date.now() - 86_400_000);
+  // Por frases: la que nombra lo limitado sale entera; la otra se queda (ronda 10).
+  sembrarEpisodio(p, 'Contó que vive en Puerto Sintetico. Sale a la pesca los sábados.', Date.now() - 86_400_000);
   reiniciar();
   await P.leerPerfil(p);
   await E.precargarCerebro(p);
@@ -111,7 +112,7 @@ test('A1 la iniciativa tampoco lee lo limitado en lo último que dijo ni en sus 
   const { dato } = await O.anotarDatoManual(p, { categoria: 'rutinas', dato: 'Vive en Puerto Sintetico', clave: 'vive' });
   await O.limitar(p, dato.id, 'limitado');
   const perfil = await P.leerPerfil(p);
-  const hilo = [{ rol: 'user', texto: 'vivo en Puerto Sintetico, cerca del muelle' }];
+  const hilo = [{ rol: 'user', texto: 'vivo en Puerto Sintetico. Me gusta caminar cerca del muelle' }];
   const ctx = I.contextoIniciativa({ correo: p }, { perfil, hilo, reservas: await P.reservasDe(p) });
   assert.doesNotMatch(ctx, CIUDAD);
   assert.match(ctx, /muelle/, 'lo demás de lo que dijo sigue');
@@ -176,7 +177,8 @@ test('GRAVE-3 miembro: lo limitado que pidió recordar y lo que dijo en el hilo 
   // «recuerda que…» en la mesa: el teléfono lo manda en `memoria` y server.ts lo guarda como hecho del miembro.
   await M.guardarHechoMiembro(p, 'Recuerda que vivo en Puerto Sintetico');
   await M.guardarHechoMiembro(p, 'Recuerda que mi perro se llama Canelo');
-  await M.recordarTurnoMiembro({ correo: p, rol: 'user', texto: 'Te cuento que vivo en Puerto Sintetico y que Canelo ladra mucho', esperar: true });
+  // Por frases (ronda 10): la que nombra lo limitado sale entera, la otra se queda.
+  await M.recordarTurnoMiembro({ correo: p, rol: 'user', texto: 'Te cuento que vivo en Puerto Sintetico. Canelo ladra mucho', esperar: true });
   await M.recordarTurnoMiembro({ correo: p, rol: 'ultron', texto: 'Qué bonito Puerto Sintetico; saludos a Canelo.', esperar: true });
   const hiloCrudo = () => M.hiloMiembro(p).map((t) => ({ rol: t.rol, texto: t.texto }));
   const arma = (compacto: boolean) => turnoConMemoria({ dueno: p, nivel: 'miembro', correoMem: p, quienMem: null, hiloCrudo: hiloCrudo(), compacto, message: 'hola' });
@@ -274,11 +276,12 @@ test('MENOR iniciativa: sin saber qué limitó (reservas null), sus misiones y l
   assert.ok(!respaldo.some((p) => /ninguna misión activa/i.test(p.evidencia?.porQue || '')), 'no afirma que no tiene misiones');
   // El perfil de uso que falló cerrado (con `limitados` y sin `reservas`) también cuenta como «no se sabe».
   assert.doesNotMatch(I.contextoIniciativa({ correo: 'a@b.c' }, { ahora, misiones: [m], perfil: { encuesta: {}, limitados: ['encuesta.vive'] } as any }), CIUDAD);
-  // Sabiendo qué limitó: la misión entra con lo limitado tapado, y el respaldo no la ofrece con «[reservado]».
+  // Sabiendo qué limitó: la frase de la misión que lo nombra sale entera, y el respaldo no la ofrece con
+  // «[dato reservado]».
   const con = { ...sin, reservas: [['puerto', 'sintetico']] };
   const ctxCon = I.contextoIniciativa({ correo: 'a@b.c' }, con);
   assert.doesNotMatch(ctxCon, CIUDAD);
-  assert.match(ctxCon, /Mudanza a \[reservado\]/);
+  assert.match(ctxCon, /\[dato reservado\]/);
   assert.doesNotMatch(JSON.stringify(I.propuestasDeRespaldo({ correo: 'a@b.c' }, con)), /Sintetico|reservado/);
   // Sin nada limitado, igual que antes.
   assert.match(I.contextoIniciativa({ correo: 'a@b.c' }, { ...sin, reservas: [] }), CIUDAD);
@@ -298,4 +301,104 @@ test('MENOR iniciativa en el chat: las misiones del turno (bloqueIniciativaTurno
   const ciega = await SI.bloqueIniciativaTurno(p, null, { sabe: false, texto: () => '' });
   assert.doesNotMatch(ciega, /Sintetico|muelle/);
   assert.match(ciega, /no las tengo a mano/, 'se dice que no están, no que no tiene');
+});
+
+/* ------------------------------------------------------------------ ronda 10: por frase, con la clave, variantes y lo reaprendido */
+
+const CORTES = '¿Qué tipo de concesión necesito para el puerto de Cortés?';
+
+/**
+ * Un dato limitado y lo que la persona dijo de él (lo pidió recordar y quedó en su hilo), junto con lo general
+ * (su perro, la pregunta del puerto de Cortés). Devuelve lo que el turno le da al modelo, antes y después de
+ * limitarlo, en texto y en voz.
+ */
+async function limitadoEnSuMemoria(p: string, d: { categoria: string; dato: string; clave: string }, dichos: string[]) {
+  const { dato } = await O.anotarDatoManual(p, { ...d, origen: 'primeravez' });
+  for (const t of [...dichos, 'mi perro se llama Canelo', CORTES]) {
+    await M.guardarHechoMiembro(p, `José: ${t}`);
+    await M.recordarTurnoMiembro({ correo: p, rol: 'user', texto: t, esperar: true });
+  }
+  const arma = (compacto: boolean) => turnoConMemoria({ dueno: p, nivel: 'miembro', correoMem: p, quienMem: null, hiloCrudo: M.hiloMiembro(p).map((t) => ({ rol: t.rol, texto: t.texto })), compacto, message: 'hola' });
+  const antes = await arma(false);
+  await O.limitar(p, dato.id, 'limitado');
+  return { antes, texto: await arma(false), voz: await arma(true), dato };
+}
+
+test('R10 GRAVE-A: lo que solo se nombra por el valor de su clave, una empresa, una variante («diabético») o lo escrito junto no llega al prompt; lo general sí', async () => {
+  const casos = [
+    { p: 'r10-hija@prueba.local', d: { categoria: 'familia', dato: 'Su hija se llama Valentina', clave: 'hija:valentina' }, dichos: ['mi hija Valentina está enferma'], patron: /Valentina/ },
+    { p: 'r10-empresa@prueba.local', d: { categoria: 'trabajo', dato: 'Trabaja en Minera Sintetica', clave: 'empresa:minera sintetica' }, dichos: ['trabajo en Minera Sintetica desde 2020'], patron: /Sintetica/i },
+    { p: 'r10-salud@prueba.local', d: { categoria: 'salud', dato: 'Tiene diabetes tipo 2', clave: 'salud' }, dichos: ['soy diabético desde 2019', 'me inyecto insulina por la diabetes'], patron: /diab|insulina/i },
+    { p: 'r10-junto@prueba.local', d: { categoria: 'rutinas', dato: 'Vive en Puerto Sintetico', clave: 'vive' }, dichos: ['me mudé a PuertoSintetico', 'vivo en Pto. Sintético'], patron: /Sint[eé]tico/i },
+  ];
+  for (const c of casos) {
+    const r = await limitadoEnSuMemoria(c.p, c.d, c.dichos);
+    assert.match(r.antes.todo, c.patron, `${c.d.dato}: control, antes de limitarlo entra`);
+    for (const [que, t] of [['texto', r.texto], ['voz', r.voz]] as const) {
+      assert.doesNotMatch(t.todo, c.patron, `${c.d.dato} (${que}): ni lo que pidió recordar, ni su hilo`);
+      assert.match(t.todo, PERRO, `${c.d.dato} (${que}): lo general sigue`);
+      assert.ok(t.todo.includes(CORTES), `${c.d.dato} (${que}): la pregunta del puerto de Cortés sigue entera`);
+    }
+  }
+  assert.equal(intentosDeRed, 0);
+});
+
+test('R10 MEDIO-B: lo que AURA vuelve a aprender con otra categoría o clave no se guarda como general; una copia general de antes tampoco entra; lo que no lo repite sigue general', async () => {
+  const p = 'r10-reaprende@prueba.local';
+  const { dato } = await O.anotarDatoManual(p, { categoria: 'rutinas', dato: 'Vive en Puerto Sintetico', clave: 'vive', origen: 'primeravez' });
+  // Una copia general aprendida ANTES de limitarlo (otra categoría y otra clave).
+  await K.incorporarDatos(p, [{ categoria: 'familia', dato: 'Su familia vive con él en Puerto Sintetico', clave: 'hogar', confianza: 0.9 }], { fuente: 'modelo' });
+  await O.limitar(p, dato.id, 'limitado');
+  // Después, el que resume el tramo (lib/episodios.ts → incorporarDatos) lo vuelve a aprender con otras palabras.
+  await K.incorporarDatos(
+    p,
+    [
+      { categoria: 'otros', dato: 'Se mudó hace poco a Puerto Sintetico con su familia', clave: 'ciudad', confianza: 0.9 },
+      { categoria: 'gustos', dato: 'Le gusta la pesca de los sábados', confianza: 0.9 },
+    ],
+    { fuente: 'modelo' }
+  );
+  const sabe = await K.queSeDe(p);
+  const todos = Object.values(sabe.porCategoria).flat();
+  assert.ok(!todos.some((d) => /mudó/.test(d.dato) && d.alcance === 'general'), 'lo reaprendido no se guarda como general');
+  assert.equal(todos.find((d) => /pesca/.test(d.dato))?.alcance, 'general', 'lo que no lo repite, general');
+  // Las reglas sobre lo que dice ahora («vivo en Puerto Sintetico»): tampoco se guarda aparte como general.
+  const porReglas = K.datosPorReglas([{ rol: 'user', texto: 'Mi casa nueva: vivo en Puerto Sintetico' }]).map((d) => ({ ...d, categoria: 'otros', clave: 'casa' }));
+  assert.ok(porReglas.length, 'las reglas lo sacan');
+  await K.incorporarDatos(p, porReglas, { fuente: 'reglas' });
+  assert.ok(!Object.values((await K.queSeDe(p)).porCategoria).flat().some((d) => d.alcance === 'general' && /Sintetico/.test(d.dato) && d.categoria !== 'familia'), 'lo que dijo ahora no vuelve como general');
+  await CT.precargarVista(p);
+  for (const compacto of [false, true]) {
+    const t = await turno(p, compacto);
+    assert.doesNotMatch(t.todo, CIUDAD, `${compacto ? 'voz' : 'texto'}: ni lo reaprendido ni la copia general de antes`);
+    if (!compacto) assert.match(t.conocer, /pesca/, 'lo que sé sigue con lo general');
+  }
+  // Lo que «ya sabe» al resumir el próximo tramo tampoco lo lleva.
+  assert.ok(!K.datosUsables(p).some((d) => /Sintetico/.test(d.dato)));
+  assert.ok(K.datosUsables(p).some((d) => /pesca/.test(d.dato)));
+  // Reactivado, vuelve (el dato y la copia de antes).
+  await O.limitar(p, dato.id, 'general');
+  assert.match((await turno(p, false)).todo, CIUDAD, 'reactivado');
+});
+
+test('R10 MENOR-E: una palabra común de lo limitado («tipo», «puerto») no saca nada por sí sola', async () => {
+  const p = 'r10-comun@prueba.local';
+  sembrarEpisodio(p, 'Habló del tipo de cambio del lempira. Preguntó por el puerto de Cortés.', Date.now() - 86_400_000);
+  const a = await O.anotarDatoManual(p, { categoria: 'salud', dato: 'Tiene diabetes tipo 2', clave: 'salud' });
+  const b = await O.anotarDatoManual(p, { categoria: 'rutinas', dato: 'Vive en Puerto Sintetico', clave: 'vive' });
+  await O.anotarDatoManual(p, { categoria: 'trabajo', dato: 'Trabaja en la concesión de El Corpus', clave: 'oficio' });
+  await M.guardarHechoMiembro(p, 'Recuerda que el lunes reviso qué tipo de permiso pide la concesión');
+  await M.recordarTurnoMiembro({ correo: p, rol: 'user', texto: CORTES, esperar: true });
+  await O.limitar(p, a.dato.id, 'limitado');
+  await O.limitar(p, b.dato.id, 'limitado');
+  await E.precargarCerebro(p);
+  const r = await turnoConMemoria({ dueno: p, nivel: 'miembro', correoMem: p, quienMem: null, hiloCrudo: M.hiloMiembro(p).map((t) => ({ rol: t.rol, texto: t.texto })), compacto: false, message: 'hola' });
+  assert.ok(r.todo.includes('qué tipo de permiso pide la concesión'), 'lo que pidió recordar sigue entero');
+  assert.ok(r.todo.includes(CORTES), 'su hilo sigue entero');
+  assert.match(r.todo, /tipo de cambio del lempira\. Preguntó por el puerto de Cortés\./, 'el resumen de antes sigue entero');
+  assert.match(r.todo, /El Corpus/, 'un dato general sigue');
+  assert.doesNotMatch(r.todo, /reservado/, 'nada se reservó');
+  assert.equal(CT.vistaAutorizada(p).texto(CORTES), CORTES);
+  // Y lo limitado sí sale, la frase entera, aunque venga junto a lo general.
+  assert.equal(CT.vistaAutorizada(p).texto('Me inyecto insulina por la diabetes. ¿Y el puerto de Cortés?'), '[dato reservado] ¿Y el puerto de Cortés?');
 });
