@@ -402,6 +402,9 @@ export function sondeoTrabajosMs(r: { trabajando: number; decisiones: number }, 
 
 export type Pedir = (ruta: string, init?: { method?: string; body?: string }) => Promise<{ status: number; json: any }>;
 
+/** Leer una tarea por su id: no es lo mismo «no existe» (404) que «no pude leerla» (503, red, respuesta rara). */
+export type LecturaTareaVista = { estado: 'ok'; tarea: TareaVista } | { estado: 'no-existe' } | { estado: 'error'; status?: number; sinSesion?: boolean };
+
 export type ResultadoAccion = { ok: true; tarea: TareaVista | null; sugerencia?: string; repetida?: boolean } | { ok: false; codigo: string; mensaje: string; tarea?: TareaVista | null };
 
 const enc = encodeURIComponent;
@@ -481,6 +484,26 @@ export function crearClienteTrabajos(pedir: Pedir) {
       const aviso = avisos.join(' ');
       return { ok: true, tareas, completo, ...(aviso ? { aviso } : {}) };
     },
+    /**
+     * UNA tarea por su id, diciendo qué pasó (auditoría del 5-oct, R1): `ok` (y es ESA tarea), `no-existe` (404: no
+     * está, o no es de esta cuenta) o `error` (503, red, sesión, una respuesta sin tarea o con otro id). Un error no
+     * dice nada de la tarea: ni que terminó ni que no.
+     */
+    async leer(id: string): Promise<LecturaTareaVista> {
+      let r: { status: number; json: any };
+      try {
+        r = await pedir(conEstados(`/api/trabajos/${enc(id)}`), { method: 'GET' });
+      } catch {
+        return { estado: 'error' };
+      }
+      if (r.status === 200) {
+        const t = r.json?.tarea;
+        return t && typeof t === 'object' && t.id === id ? { estado: 'ok', tarea: t as TareaVista } : { estado: 'error', status: r.status };
+      }
+      if (r.status === 404) return { estado: 'no-existe' };
+      return { estado: 'error', status: r.status, ...(r.status === 401 || r.status === 403 ? { sinSesion: true } : {}) };
+    },
+    /** Lo de siempre: la tarea, o null si no se pudo (no distingue por qué; para eso, `leer`). */
     async ver(id: string): Promise<TareaVista | null> {
       try {
         const r = await pedir(conEstados(`/api/trabajos/${enc(id)}`), { method: 'GET' });

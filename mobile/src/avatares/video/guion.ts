@@ -2,8 +2,9 @@
  * EL GUION DEL VIDEO: qué clip de Claudio o ANT-ONIO se ve en cada momento.
  *
  * Son 17 clips de 5 s por avatar, generados a partir de una sola foto base (scripts y prompts en
- * docs/avatares-video.md). Todos empiezan y terminan en esa misma pose, así que cualquier clip
- * engancha con cualquier otro sin salto. Hay dos clases:
+ * docs/avatares-video.md). Todos empiezan y terminan en esa misma pose (en el medio cada uno hace lo
+ * suyo): el cambio de un clip a otro se hace ahí, en el reposo, y eso lo resuelve transicion.ts. Esto
+ * solo decide QUÉ clip toca. Hay dos clases:
  *
  *  · de FONDO, que se repiten mientras dura el estado: reposo, escucha, habla, piensa, teclea (su
  *    computadora trabaja), lee (un correo o un WhatsApp) y espera (un rato sin nada que hacer);
@@ -100,8 +101,18 @@ export type Reproduccion = { clip: ClipVideo; bucle: boolean; n: number };
 
 /** El mismo golpe no se repite antes de esto (una risa por chiste, no tres). */
 export const ENFRIAR_GOLPE_MS = 8000;
-/** Si empieza a hablar con un golpe en pantalla, se le deja terminar el gesto hasta esto; luego habla. */
+/**
+ * Si empieza a hablar con un golpe en pantalla, se le deja terminar el gesto hasta esto; luego pide «habla».
+ * Es lo de siempre para un cuerpo que CORTA el golpe ahí (el recorrido de Windows).
+ */
 export const GOLPE_ANTES_DE_HABLAR_MS = 1800;
+/**
+ * Lo mismo en el teléfono, que ya no corta el gesto por la mitad (la pose saltaba): la mezcla
+ * (transicion.ts) lo termina más rápido hasta el reposo y recién ahí habla. Por eso se pide antes: con
+ * 1 s el golpe se ve entero y la boca arranca ~2,4 s después de la frase (con 1,8 s serían ~3 s). Si el
+ * golpe todavía no había llegado a verse (el clip de antes no había vuelto al reposo), se salta.
+ */
+export const GOLPE_ANTES_DE_HABLAR_SIN_CORTE_MS = 1000;
 /**
  * Un fondo nuevo tiene que durar esto antes de cambiar de clip. La voz suelta «hablando» entre frase y
  * frase (y la mesa pasa por escucha → piensa en un instante): sin esta espera, cada pausa era un fundido
@@ -121,6 +132,8 @@ type Opciones = {
   /** «Reducir movimiento»: solo los de fondo, sin golpes. */
   reducido?: boolean;
   ahora?: () => number;
+  /** Cuánto va un golpe antes de pedir «habla» (GOLPE_ANTES_DE_HABLAR_MS; el teléfono, que no corta el gesto: GOLPE_ANTES_DE_HABLAR_SIN_CORTE_MS). */
+  golpeAntesDeHablarMs?: number;
 };
 
 /**
@@ -130,6 +143,7 @@ type Opciones = {
 export class DirectorVideo {
   private readonly hay: ReadonlySet<ClipVideo>;
   private readonly reducido: boolean;
+  private readonly golpeAntesDeHablar: number;
   private readonly ahora: () => number;
   private actual: Reproduccion;
   private desde = 0;
@@ -141,10 +155,15 @@ export class DirectorVideo {
   private actividad: Actividad = SIN_ACTIVIDAD;
   /** El último golpe de las pistas que ya se vio (hecho o no). */
   private golpePista = -1;
+  /** Hasta cuándo se queda con el clip que tiene (el sable de luz en la mano: `sostener`). */
+  private sostenidoHasta = 0;
+  /** Se soltó lo sostenido y falta volver a mirar el estado. */
+  private porSoltar = false;
 
   constructor(o: Opciones) {
     this.hay = new Set(o.hay);
     this.reducido = !!o.reducido;
+    this.golpeAntesDeHablar = o.golpeAntesDeHablarMs ?? GOLPE_ANTES_DE_HABLAR_MS;
     this.ahora = o.ahora || Date.now;
     this.actual = { clip: 'reposo', bucle: true, n: 0 };
     this.desde = this.ahora();
@@ -177,9 +196,35 @@ export class DirectorVideo {
     return antes === undefined || this.ahora() - antes >= ENFRIAR_GOLPE_MS;
   }
 
+  /**
+   * Se queda con el clip que tiene (y con el que ya pidió) durante `ms`: ni golpes nuevos, ni «habla», ni
+   * otro fondo. Lo pide la capa de efectos mientras el sable de luz está en la mano del video (la mano se
+   * iría con cualquier otro gesto y el sable quedaría en el aire). Al terminar (`revisar`, con su reloj en
+   * `msParaRevisar`) vuelve a mirar el estado de ahora. 0 lo suelta ya. Lo que llegó en medio se pierde
+   * (un golpe vale GOLPE_VIGENTE_MS); el «terminó» de un golpe sí cuenta: vuelve al fondo.
+   */
+  sostener(ms: number): Reproduccion | null {
+    const antes = this.sostenido();
+    this.sostenidoHasta = ms > 0 ? this.ahora() + ms : 0;
+    if (ms > 0) {
+      this.porSoltar = true;
+      return null;
+    }
+    return antes ? this.soltar() : null;
+  }
+
+  private sostenido(): boolean {
+    return this.ahora() < this.sostenidoHasta;
+  }
+
+  private soltar(): Reproduccion | null {
+    this.porSoltar = false;
+    return this.decidir(null);
+  }
+
   /** Un golpe pedido desde fuera (al aparecer en la pantalla, saluda). */
   golpe(c: ClipVideo): Reproduccion | null {
-    if (esDeFondo(c) || !this.golpeDisponible(c)) return null;
+    if (esDeFondo(c) || this.sostenido() || !this.golpeDisponible(c)) return null;
     return this.poner(c, false);
   }
 
@@ -203,12 +248,13 @@ export class DirectorVideo {
 
   /** Con lo que se sabe ahora (y quizá un golpe pedido): qué clip toca. */
   private decidir(golpe: ClipVideo | null | undefined): Reproduccion | null {
+    if (this.sostenido()) return null;
     if (this.golpeDisponible(golpe) && !(golpe === this.actual.clip && !this.actual.bucle)) return this.poner(golpe, false);
 
     const fondo = this.fondo(this.estadoVisto);
     if (!this.actual.bucle) {
       // Un golpe en pantalla: termina su gesto, salvo que empiece a hablar y ya haya durado lo suyo.
-      if (fondo === 'habla' && this.ahora() - this.desde >= GOLPE_ANTES_DE_HABLAR_MS) return this.poner('habla', true);
+      if (fondo === 'habla' && this.ahora() - this.desde >= this.golpeAntesDeHablar) return this.poner('habla', true);
       return null;
     }
     return this.pedirFondo(fondo);
@@ -236,6 +282,7 @@ export class DirectorVideo {
 
   /** Si hay un fondo pedido que se está asentando: cuánto falta (ms). La vista pone un reloj y llama a `revisar()`. */
   msParaFondo(): number | null {
+    if (this.sostenido()) return null;
     if (!this.actual.bucle || !this.fondoPedido) return null;
     return Math.max(0, this.esperaPara(this.fondoPedido) - (this.ahora() - this.pedidoDesde));
   }
@@ -246,8 +293,9 @@ export class DirectorVideo {
    * con el golpe (sin mover la boca) hasta que el clip terminaba, casi 5 s después.
    */
   msParaHablar(): number | null {
+    if (this.sostenido()) return null;
     if (this.actual.bucle || !this.estadoVisto || this.fondo(this.estadoVisto) !== 'habla') return null;
-    return Math.max(0, GOLPE_ANTES_DE_HABLAR_MS - (this.ahora() - this.desde));
+    return Math.max(0, this.golpeAntesDeHablar - (this.ahora() - this.desde));
   }
 
   /**
@@ -255,6 +303,7 @@ export class DirectorVideo {
    * volver al reposo. null: no toca (hay algo que hacer, está dormido o no tiene el clip).
    */
   msParaEspera(): number | null {
+    if (this.sostenido()) return null;
     if (!this.actual.bucle || this.fondoPedido || !this.hay.has('espera')) return null;
     if (this.fondo(this.estadoVisto) !== 'reposo' || this.estadoVisto?.silenciado) return null;
     const pasado = this.ahora() - this.desde;
@@ -265,12 +314,15 @@ export class DirectorVideo {
 
   /** El próximo reloj que la vista tiene que poner (y al cumplirse, llamar a `revisar()`); null: ninguno. */
   msParaRevisar(): number | null {
-    const relojes = [this.msParaHablar(), this.msParaFondo(), this.msParaEspera()].filter((m): m is number => m !== null);
+    const soltar = this.sostenido() ? this.sostenidoHasta - this.ahora() : this.porSoltar ? 0 : null;
+    const relojes = [soltar, this.msParaHablar(), this.msParaFondo(), this.msParaEspera()].filter((m): m is number => m !== null);
     return relojes.length ? Math.min(...relojes) : null;
   }
 
   /** Vuelve a mirar el último estado (se cumplió el reloj de `msParaRevisar`). */
   revisar(): Reproduccion | null {
+    if (this.sostenido()) return null;
+    if (this.porSoltar) return this.soltar();
     const falta = this.msParaHablar();
     if (falta === 0) return this.poner('habla', true);
     const fondo = this.fondoPedido;

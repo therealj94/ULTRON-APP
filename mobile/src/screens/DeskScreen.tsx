@@ -129,7 +129,7 @@ import { escucharPedidoPanel, tomarPedidoPanel } from '../trabajos/abrirPanel';
 import { clienteTrabajos } from '../trabajos/useTrabajos';
 import { alCambiarPrimer, anotarPrimer, leerPrimerDe } from '../primeravez/medida';
 import { SirvioPrimera } from '../primeravez/SirvioPrimera';
-import { clasificarTurno, debePreguntar, queRecuperar, trasSoloRepetir, type PrimerResultado } from '../lib/primerResultado';
+import { avancePrimer, clasificarTurno, debePreguntar, queRecuperar, seguirTareasPrimer, trasSoloRepetir, type PrimerResultado } from '../lib/primerResultado';
 
 type Props = {
   user: SessionUser;
@@ -1568,6 +1568,34 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     }
   }, [onAudio, settle, showBubble]);
 
+  /**
+   * Claudio y ANT-ONIO en video: cuatro toques seguidos sacaron el sable de luz o los blasters
+   * (avatares/video/efectos). Llega EN VEZ del onTap de ese cuarto toque: dice una frase corta de molesto,
+   * de las de siempre (lineas.ts; sale de la caché de audio después de la primera vez). La capa ya decidió
+   * que el avatar estaba tranquilo al empezar la ráfaga; aquí no se pisa una conversación, una llamada ni
+   * otra reacción en curso (el «ya, ya»).
+   */
+  const onRafagaVideo = useCallback(
+    (efecto: 'espada' | 'blasters') => {
+      pausarMirada();
+      const ahora = Date.now();
+      lastUserAt.current = ahora;
+      lastTapAt.current = ahora;
+      recentTaps.current = [];
+      // La ráfaga ya se desahogó (como después del blaster de la mesa): sin esto, unos toques más disparaban
+      // el blaster del enojo (irritación ≥ 0,92) apenas terminaba el sable, dos secuencias seguidas.
+      irritationRef.current = Math.min(irritationRef.current, 0.25);
+      setIrritation(irritationRef.current);
+      if (conversandoRef.current || enLlamadaRef.current || presenceRef.current === 'sleep' || handling.current) return;
+      handling.current = true;
+      setFace('ANGRY');
+      void say(pick(lineas(efecto === 'blasters' ? 'angry' : 'annoy')), 'ANGRY', { emocion: 'molesto' }).finally(() => {
+        handling.current = false;
+      });
+    },
+    [pausarMirada, say]
+  );
+
   const onTap = useCallback(
     (zone: TouchZone, _x: number, _y: number) => {
       pausarMirada();
@@ -2377,23 +2405,28 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     };
   }, [user.correo]);
 
-  // La respuesta abrió tareas durables: el resultado es el de esas tareas (las de /api/trabajos, la fuente de
-  // verdad; también tras reabrir). Las que no están en la lista se preguntan una por una.
+  // La respuesta abrió tareas durables: el resultado es el de TODAS esas tareas (las de /api/trabajos, la fuente de
+  // verdad; también tras reabrir). Las que no están en la lista (o vienen «sin confirmar») se preguntan una por una;
+  // una que no se pudo leer (503, 404, red) queda SIN LEER, no se descarta (auditoría del 5-oct, R1): el
+  // clasificador no cierra hasta tenerlas todas. Lo leído va atado a este turno y a estos ids, y a esta sesión.
   const idsPrimer = primer?.estado === 'en-tarea' ? (primer.tareas || []).join(',') : '';
+  const turnoPrimer = primer?.estado === 'en-tarea' ? primer.idTurno : undefined;
   useEffect(() => {
     if (!idsPrimer) return;
     let vivo = true;
-    void (async () => {
-      const ids = idsPrimer.split(',');
-      const vistas = trabajos.tareas.filter((t) => ids.includes(t.id));
-      const faltan = ids.filter((id) => !vistas.some((t) => t.id === id));
-      const leidas = faltan.length ? (await Promise.all(faltan.map((id) => clienteTrabajos.ver(id)))).filter((t): t is NonNullable<typeof t> => !!t) : [];
-      if (vivo) void anotarPrimer(user.correo, { tipo: 'tareas', tareas: [...vistas, ...leidas] });
-    })();
+    const gen = generacionCuenta();
+    void seguirTareasPrimer({
+      ids: idsPrimer.split(','),
+      idTurno: turnoPrimer,
+      lista: trabajos.tareas,
+      leer: (id) => clienteTrabajos.leer(id),
+      vigente: () => vivo && sigueVigente(gen),
+      anotar: (ev) => void anotarPrimer(user.correo, ev),
+    });
     return () => {
       vivo = false;
     };
-  }, [idsPrimer, trabajos.tareas, user.correo]);
+  }, [idsPrimer, turnoPrimer, trabajos.tareas, user.correo]);
 
   const opinarPrimer = useCallback(
     (sirvio: boolean) => {
@@ -2405,7 +2438,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     },
     [primer?.trazaId, user.correo]
   );
-  const preguntaPrimer = debePreguntar(primer) ? <SirvioPrimera registro={primer!} onOpinar={opinarPrimer} /> : null;
+  // Con resultado, «¿Te sirvió?»; esperando tareas con alguna ya terminada, el progreso (sin pregunta ni cierre).
+  const avance = avancePrimer(primer);
+  const preguntaPrimer = debePreguntar(primer) || (avance && avance.listas > 0) ? <SirvioPrimera registro={primer!} onOpinar={opinarPrimer} /> : null;
 
   const sendDraft = () => {
     const t = draft.trim();
@@ -2660,6 +2695,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         onLongPress={onLongPress}
         activo={mesaActiva && !tutorialAbierto && !(llamadaActiva(voz.ciclo) && !voz.llamada.minimizada)}
         senal={senalAtajo}
+        conversando={vozOcupa}
+        ataque={attack}
+        onRafaga={onRafagaVideo}
       />
     ) : (
       fotosCara

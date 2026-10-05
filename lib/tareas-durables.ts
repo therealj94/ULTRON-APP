@@ -17,6 +17,10 @@
  *    escrituras condicionales; sin S3, el disco), bajo `tareas/<huella del dueño>/<id>`, con un índice por
  *    dueño. Crear es «una vez» por dueño + requestId (`reservarPedido` + `crearUnaVez`); cada cambio es
  *    compare-and-set y guarda estado y evento en la MISMA escritura (no hay outbox que se desincronice).
+ *  · El índice de un dueño solo se da por COMPLETO cuando su inventario se reconcilió (A7, auditoría del 5-oct): un
+ *    índice de antes (v1, o uno que se perdió y se rehízo) puede no tener todas sus tareas aunque cada id que trae se
+ *    lea bien. El inventario enumera los objetos `tareas/<huella>/…` de ESE dueño, comprueba que cada uno es suyo y
+ *    anota (solo agrega, con CAS) los que faltaban. Ver «inventario» más abajo.
  *
  * Reglas (sección 8):
  *  · El dueño sale de la sesión del servidor; aquí siempre es un parámetro, nunca un campo del cuerpo.
@@ -37,6 +41,7 @@ import {
   almacenDurable,
   claveDe,
   crearUnaVez,
+  huellaDueno,
   leerDurable,
   modificarDurable,
   reservarPedido,
@@ -157,6 +162,11 @@ export type EventoTarea = {
 export type RegistroTarea = {
   v: 1;
   id: string;
+  /**
+   * A7: la huella del dueño (`huellaDueno`, nunca el correo). La traen las tareas creadas desde esta versión; el
+   * inventario la exige igual a la de quien pregunta. Las de antes no la tienen (ver `pertenencia`). No sale al cliente.
+   */
+  dueno?: string;
   requestId: string;
   version: number;
   estado: EstadoTarea;
@@ -197,6 +207,10 @@ export const ESQUEMA_INDICE = 2;
 export const ESPACIO_TAREAS = 'tareas';
 export const ESPACIO_PEDIDOS = 'tareas/pedidos';
 export const ESPACIO_INDICE = 'tareas/indice';
+/** A7: versión del inventario que marca un índice como reconciliado (subirla obliga a reconciliar otra vez). */
+export const ESQUEMA_INVENTARIO = 1;
+/** A7: la copia del índice tal como estaba ANTES de la primera reconciliación que le agregó algo (para revertir). */
+export const ESPACIO_RESPALDO_INDICE = 'tareas/indice-respaldo';
 
 const texto = (v: unknown, max: number) =>
   String(v ?? '')
@@ -401,8 +415,9 @@ export async function crearTarea(dueno: string, d: NuevaTarea, o: Opciones = {})
   // entrada sin objeto (se cayó entre las dos escrituras) no es una tarea: la lista la salta y la poda con el tiempo.
   const ix = await indexar(dueno, r.id, ahora, a);
   if (ix.ok === false) return { ok: false, motivo: 'almacen', detalle: `no pude anotar la tarea en tu índice; no la creé (${ix.detalle.slice(0, 100)})` };
-  // Si quien reservó murió antes de escribir la tarea, el siguiente la escribe con el MISMO id.
-  const c = await crearUnaVez(claveTarea(dueno, r.id), registroNuevo(r.id, d, ahora), a);
+  // Si quien reservó murió antes de escribir la tarea, el siguiente la escribe con el MISMO id. Con la huella de su dueño
+  // dentro (A7): el inventario no se fía solo de la carpeta en que está el objeto.
+  const c = await crearUnaVez(claveTarea(dueno, r.id), { ...registroNuevo(r.id, d, ahora), dueno: huellaDueno(dueno) }, a);
   if (c.ok === false) return { ok: false, motivo: 'almacen', detalle: c.detalle };
   return { ok: true, creada: c.creado, tarea: c.valor };
 }
@@ -411,14 +426,38 @@ export async function crearTarea(dueno: string, d: NuevaTarea, o: Opciones = {})
  * El índice de un dueño. `fin`: cuándo se supo que terminó (solo esas se recortan, las más viejas primero). Una entrada
  * sin `fin` es «puede seguir activa» (las del índice v1 no lo traen): la lista la lee y, si ya terminó, la repara.
  */
-type EntradaIndice = { id: string; t: number; fin?: number };
-type Indice = { v: 1 | 2; ids: EntradaIndice[] };
+type EntradaIndice = { id: string; t: number; fin?: number; /** A7: la ronda de inventario que la recuperó (para revertir). */ rec?: string };
+/** A7: constancia de que el inventario de este dueño se recorrió ENTERO y lo que faltaba quedó anotado. */
+type MarcaInventario = { v: number; t: number; fuente: AlmacenDurable['tipo']; ronda: string; revisadas: number; agregadas: number };
+/**
+ * A7: un recorrido del inventario a medias (reanudable): hasta qué clave se revisó sin dudas y lo que se lleva. Vive EN el
+ * índice, en la misma escritura CAS que lo que agrega: si el índice se pierde o lo rehace otro, el avance se va con él
+ * y el recorrido empieza de nuevo (nunca se marca reconciliado con la mitad de un recorrido sobre otro índice).
+ */
+type PaseInventario = { ronda: string; desde: string | null; revisadas: number; agregadas: number; sinVerificar: number; inicio: number; actualizado: number; fin?: number; /** Las suyas vistas en el recorrido (en el índice o recuperadas): para contar las recortadas al terminar. */ propias?: number };
+/**
+ * `inventario`/`pase`: A7. Un servidor de antes los ignora (y al reescribir el índice los pierde: vuelve a «sin reconciliar»).
+ * `recortadas` (revisión 13): cuántas tareas TERMINADAS de este dueño existen todavía pero el tope del historial
+ * (MAX_HISTORIAL_INDICE) ya no lista. Sube con cada recorte; el inventario, al terminar un recorrido entero, la deja en lo
+ * que contó (lo que encontró menos lo que el índice guarda). Una terminada que vuelve al índice (se leyó por su id) la
+ * descuenta. Es una cuenta, no una lista de ids (esas ya no están en el índice).
+ */
+type Indice = { v: 1 | 2; ids: EntradaIndice[]; inventario?: MarcaInventario; pase?: PaseInventario; recortadas?: number };
 
 /** Recorta el índice: todas las que pueden seguir activas y las MAX_HISTORIAL_INDICE terminadas más recientes. */
 function recortarIndice(ids: EntradaIndice[]): EntradaIndice[] {
   const terminadas = ids.filter((x) => x.fin).sort((x, y) => y.fin! - x.fin!);
   const fuera = new Set(terminadas.slice(MAX_HISTORIAL_INDICE).map((x) => x.id));
   return fuera.size ? ids.filter((x) => !fuera.has(x.id)) : ids;
+}
+
+/** El índice con `ids` recortados, y la cuenta de las que el recorte dejó fuera sumada a `recortadas`. */
+function conRecorte(ix: Indice | null, ids: EntradaIndice[]): Indice {
+  const quedan = recortarIndice(ids);
+  const fuera = ids.length - quedan.length;
+  const recortadas = (Number(ix?.recortadas) || 0) + fuera;
+  const { recortadas: _r, ...resto } = ix || ({} as Partial<Indice>);
+  return { ...resto, v: 2, ids: quedan, ...(recortadas > 0 ? { recortadas } : {}) };
 }
 
 async function indexar(dueno: string, id: string, ahora: number, a: AlmacenDurable): Promise<{ ok: true } | { ok: false; detalle: string }> {
@@ -430,7 +469,8 @@ async function indexar(dueno: string, id: string, ahora: number, a: AlmacenDurab
       (ix) => {
         const ids = ix?.ids || [];
         if (ids.some((x) => x.id === id)) return undefined;
-        return { v: 2, ids: recortarIndice([{ id, t: ahora }, ...ids]) };
+        // Lo demás del índice (la marca y el avance del inventario) se conserva: anotar una tarea nueva no lo invalida.
+        return conRecorte(ix, [{ id, t: ahora }, ...ids]);
       },
       a
     );
@@ -446,16 +486,20 @@ async function indexar(dueno: string, id: string, ahora: number, a: AlmacenDurab
  * llevan más de un día (una creación que se cayó a medias) y dentro una tarea que existe y no estaba (`agregar`).
  * Lo mejor posible: si falla, el índice queda como estaba (nunca se pierde una activa por esto).
  */
-async function repararIndice(dueno: string, r: { fines?: Map<string, number>; podar?: Set<string>; agregar?: EntradaIndice }, a: AlmacenDurable): Promise<void> {
-  if (!r.fines?.size && !r.podar?.size && !r.agregar) return;
-  await modificarDurable<Indice>(
+async function repararIndice(dueno: string, r: { fines?: Map<string, number>; podar?: Set<string>; agregar?: EntradaIndice }, a: AlmacenDurable): Promise<Indice | null> {
+  if (!r.fines?.size && !r.podar?.size && !r.agregar) return null;
+  // Devuelve el índice que quedó escrito (null si no cambió o falló): la lista cuenta con él lo que el recorte dejó fuera.
+  const w = await modificarDurable<Indice>(
     claveIndice(dueno),
     (ix) => {
       let ids = ix?.ids || [];
       let cambio = false;
+      let base = ix;
       if (r.agregar && !ids.some((x) => x.id === r.agregar!.id)) {
         ids = [r.agregar, ...ids];
         cambio = true;
+        // Una terminada que no estaba es (casi siempre) una que el tope recortó: vuelve, y deja de contarse como recortada.
+        if (r.agregar.fin && Number(ix?.recortadas) > 0) base = { ...ix!, recortadas: Number(ix!.recortadas) - 1 };
       }
       ids = ids.flatMap((x) => {
         if (r.podar?.has(x.id)) {
@@ -469,10 +513,11 @@ async function repararIndice(dueno: string, r: { fines?: Map<string, number>; po
         }
         return [x];
       });
-      return cambio ? { v: 2, ids: recortarIndice(ids) } : undefined;
+      return cambio ? conRecorte(base, ids) : undefined;
     },
     a
-  ).catch(() => undefined);
+  ).catch(() => null);
+  return w && w.ok === true && w.cambiado ? w.valor : null;
 }
 
 /** La tarea id de una petición ya reservada (sin crear nada). null si no hay. */
@@ -487,8 +532,12 @@ export async function leerTarea(dueno: string, id: string, a: AlmacenDurable = a
   if (!/^[A-Za-z0-9_-]{4,64}$/.test(String(id || ''))) return { ok: true, tarea: null };
   const l = await leerDurable<RegistroTarea>(claveTarea(dueno, id), a);
   if (l.ok === false) return { ok: false, detalle: l.detalle };
-  return { ok: true, tarea: l.valor };
+  // A7: si el objeto dice de quién es y no es de quien pregunta, para él no existe (404), esté en la carpeta que esté.
+  return { ok: true, tarea: l.valor && !esDeOtro(l.valor, dueno) ? l.valor : null };
 }
+
+/** ¿El registro trae la huella de OTRO dueño? (Las tareas de antes no la traen: para ellas no se puede decir.) */
+const esDeOtro = (reg: Pick<RegistroTarea, 'dueno'>, dueno: string) => reg.dueno !== undefined && reg.dueno !== huellaDueno(dueno);
 
 /**
  * Una tarea que se leyó directamente por su id (la app la tenía de una respuesta del chat): si existe y no estaba en el
@@ -500,9 +549,344 @@ export async function asegurarEnIndice(dueno: string, reg: Pick<RegistroTarea, '
   await repararIndice(dueno, { agregar: { id: reg.id, t: reg.creada, ...(esTerminal(reg.estado) ? { fin: reg.actualizada } : {}) } }, a);
 }
 
+/* ------------------------------------------------------------------ inventario (A7) */
+
+/*
+ * A7 (auditoría del 5-oct): con un índice v1 al que le faltaba la entrada de UNA tarea (el objeto intacto), la lista
+ * devolvía 40 de 41 con `completo: true`: «completo» solo decía que los ids del índice se leyeron, no que el índice
+ * tuviera todas las tareas. Aquí se separan las dos verdades:
+ *   · «leí bien esta página» (`paginaLeida`: ningún id del índice falló al leerse);
+ *   · «el inventario de este dueño está reconciliado» (`reconciliado`: el índice trae la marca `inventario`, que solo se
+ *     pone después de recorrer ENTERA la fuente de inventario).
+ * `completo` = las dos. Sin la marca, la lista dice `reconciliado: false` y no promete nada, aunque cada id se lea bien.
+ *
+ * La fuente de inventario es la enumeración del almacén (`AlmacenDurable.listar`: ListObjectsV2 en S3, readdir en el
+ * disco) sobre `tareas/<huella del dueño>/`: un prefijo POR DUEÑO (`claveDe`), así que nunca se listan objetos de otro.
+ * Aun así, la carpeta no basta: cada objeto que no está en el índice se lee y se comprueba que es de este dueño
+ * (`pertenencia`). Las fases van separadas: inventario y comparación (`diagnosticarTramo`, solo lee) → propuesta (las
+ * entradas que faltan) → aplicar (`reconciliarInventarioTareas`: respaldo del índice, y luego una fusión CAS que solo
+ * AGREGA; nunca reemplaza el índice con una foto vieja ni borra objetos).
+ *
+ * Interruptor: `AURA_RECONCILIAR_TAREAS` = `agregar` (por omisión: agrega lo que falta) · `diagnostico` (inventaría y
+ * compara, no escribe nada) · `off` (ni lista). Con `diagnostico` u `off` el índice nunca se marca reconciliado: la lista
+ * sigue diciendo `completo: false` (no se fabrica la garantía apagando el interruptor).
+ */
+
+export type ModoReconciliacion = 'agregar' | 'diagnostico' | 'apagado';
+export function modoReconciliacion(env: NodeJS.ProcessEnv = process.env): ModoReconciliacion {
+  const v = String(env.AURA_RECONCILIAR_TAREAS ?? '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '');
+  if (['0', 'off', 'no', 'false', 'apagado'].includes(v)) return 'apagado';
+  if (v === 'diagnostico' || v === 'solo-diagnostico') return 'diagnostico';
+  return 'agregar';
+}
+
 /**
- * Una página de la lista (P5/A7). `completo: false` si alguna tarea del índice no se pudo leer (`noLeidas`): un fallo del
- * almacén NUNCA es «no hay tareas». `siguiente`: el cursor de la página que sigue (null si no hay más). Orden estable:
+ * Cómo está el inventario de un dueño. Solo `reconciliado` permite `completo: true`; los demás son honestos sobre por qué
+ * no: `en-curso` (recorrido a medias, se sigue en la próxima lectura) · `sin-verificar` (hay objetos en su carpeta cuya
+ * pertenencia no se pudo demostrar: no se adoptan ni se cuentan) · `sin-fuente` (el almacén no enumera) · `apagado` /
+ * `diagnostico` (el interruptor) · `error` (el almacén no contestó: la incertidumbre se conserva).
+ */
+export type EstadoInventario = 'reconciliado' | 'en-curso' | 'sin-verificar' | 'sin-fuente' | 'apagado' | 'diagnostico' | 'error';
+export type ResultadoInventario = { estado: EstadoInventario; escribio: boolean; agregadas: number; recuperables?: number };
+/** Cuánto trabajo hace UNA lectura de la lista mientras el inventario no está reconciliado (el resto, en la siguiente). */
+export type PresupuestoInventario = { porListado: number; listados: number; lecturas: number };
+const PRESUPUESTO_INVENTARIO: PresupuestoInventario = { porListado: 1000, listados: 3, lecturas: 40 };
+/** Un recorrido que terminó con objetos sin verificar no se repite en cada lectura: espera esto. */
+const REINTENTO_SIN_VERIFICAR_MS = 15 * 60_000;
+
+/**
+ * Revisión 13 (A7): un listado que falla (p. ej. S3 sin `s3:ListBucket`: un 403 que no se arregla solo) no se repite en
+ * cada lectura de la lista. Antes cada GET /api/trabajos, cada página y la ruta del borrador del chat volvían a pedir el
+ * LIST (21 lecturas → 21 LIST; el teléfono consulta cada 3 s). Ahora el fallo se recuerda POR DUEÑO entre 5 y 15 min (al
+ * azar, para que las réplicas y los dueños no reintenten todos a la vez) y, mientras tanto, la lista contesta sin listar y
+ * honesta: `inventario: 'error'`, `reconciliado: false`, `completo: false`.
+ *
+ * Vive en la memoria de este proceso (cada réplica lo recuerda por su cuenta: a lo más un LIST por dueño, réplica y
+ * ventana) y por almacén (las pruebas usan varios). Un dueño ya reconciliado no lista nunca: la marca `inventario` del
+ * índice lo dice antes de llegar aquí, y solo se vuelve a recorrer si el índice la pierde (lo reescribió un servidor de
+ * antes, o se rehízo).
+ */
+const ESPERA_LISTADO_MIN_MS = 5 * 60_000;
+const ESPERA_LISTADO_MAX_MS = 15 * 60_000;
+const MAX_ESPERAS_LISTADO = 5_000;
+let esperasListado = new WeakMap<AlmacenDurable, Map<string, number>>();
+
+/** Hasta cuándo no se vuelve a listar a este dueño (0 si se puede ya). */
+function esperaListado(dueno: string, a: AlmacenDurable, ahora: number): number {
+  const hasta = esperasListado.get(a)?.get(huellaDueno(dueno)) ?? 0;
+  return hasta > ahora ? hasta : 0;
+}
+
+function recordarFalloListado(dueno: string, a: AlmacenDurable, ahora: number) {
+  let m = esperasListado.get(a);
+  if (!m) esperasListado.set(a, (m = new Map()));
+  // Acotado: primero se van las vencidas; si aun así no cabe, la más vieja (un Map recorre en orden de inserción).
+  if (m.size >= MAX_ESPERAS_LISTADO) {
+    for (const [k, v] of m) if (v <= ahora) m.delete(k);
+    if (m.size >= MAX_ESPERAS_LISTADO) m.delete(m.keys().next().value!);
+  }
+  const h = huellaDueno(dueno);
+  m.delete(h);
+  m.set(h, ahora + ESPERA_LISTADO_MIN_MS + Math.floor(Math.random() * (ESPERA_LISTADO_MAX_MS - ESPERA_LISTADO_MIN_MS)));
+}
+
+const olvidarFalloListado = (dueno: string, a: AlmacenDurable) => esperasListado.get(a)?.delete(huellaDueno(dueno));
+
+/** Solo pruebas: olvida las esperas por listados fallidos (como si hubieran pasado los minutos). */
+export function _olvidarEsperasListado() {
+  esperasListado = new WeakMap();
+}
+
+const indiceReconciliado = (ix: Indice | null | undefined) => !!ix?.inventario && Number(ix.inventario.v) >= ESQUEMA_INVENTARIO;
+const claveRespaldo = (dueno: string) => claveDe(ESPACIO_RESPALDO_INDICE, dueno, `antes-de-inventario-v${ESQUEMA_INVENTARIO}`);
+const prefijoTareas = (dueno: string) => `${ESPACIO_TAREAS}/${huellaDueno(dueno)}`;
+/** Un id de tarea tal como lo escribe `crearTarea` (lo que no lo es no es una tarea: no entra al inventario). */
+const ES_ID_TAREA = /^(?!h_)[A-Za-z0-9-][A-Za-z0-9_-]{3,63}$/;
+
+let avisadoInventario = 0;
+/** Un aviso en el log a lo más cada 10 min, sin correo, huella, ids ni títulos (solo qué falló). */
+function avisarInventario(que: string, detalle: string) {
+  const t = Date.now();
+  if (t - avisadoInventario < 600_000) return;
+  avisadoInventario = t;
+  console.warn(`[tareas] inventario sin reconciliar (${que}):`, String(detalle || '').replace(/[0-9a-f]{16,}/gi, '…').replace(/tk_[a-z0-9]+/gi, 'tk_…').slice(0, 120));
+}
+
+type Pertenencia = { tipo: 'propia'; reg: RegistroTarea } | { tipo: 'ajena' } | { tipo: 'sin-prueba' } | { tipo: 'nada' } | { tipo: 'error'; detalle: string };
+
+/**
+ * ¿El objeto `id` de la carpeta de este dueño es de verdad suyo? Se lee por su clave canónica (`claveTarea(dueno, id)`)
+ * y se exige que diga ser la tarea `id`. Después:
+ *   · si trae `dueno` (las creadas desde A7): tiene que ser exactamente la huella de quien pregunta; otra → `ajena`;
+ *   · si no lo trae (las de antes, que nunca lo guardaron): la reserva de su pedido (`tareas/pedidos/<huella>/<requestId>`,
+ *     escrita en la misma creación autenticada) tiene que apuntar a ESTE id. Sin esa segunda constancia → `sin-prueba`
+ *     (no se adopta y el inventario queda sin reconciliar).
+ * Un fallo al leer es `error` (no es «no es suya» ni «no existe»).
+ */
+async function pertenencia(dueno: string, id: string, a: AlmacenDurable): Promise<Pertenencia> {
+  // Crudo (no `leerTarea`, que ya esconde las de otro): aquí hay que distinguir «de otro» de «no existe».
+  const l = await leerDurable<RegistroTarea>(claveTarea(dueno, id), a).catch((e) => ({ ok: false as const, detalle: String(e?.message || e) }));
+  if (l.ok === false) return { tipo: 'error', detalle: l.detalle };
+  const reg = l.valor;
+  if (!reg) return { tipo: 'nada' };
+  if (typeof reg !== 'object' || reg.v !== 1 || reg.id !== id || typeof reg.requestId !== 'string' || !reg.requestId) return { tipo: 'sin-prueba' };
+  if (reg.dueno !== undefined) return reg.dueno === huellaDueno(dueno) ? { tipo: 'propia', reg } : { tipo: 'ajena' };
+  const p = await leerDurable<{ id?: unknown }>(claveDe(ESPACIO_PEDIDOS, dueno, reg.requestId), a).catch((e) => ({ ok: false as const, detalle: String(e?.message || e) }));
+  if (p.ok === false) return { tipo: 'error', detalle: p.detalle };
+  return p.valor && String(p.valor.id) === id ? { tipo: 'propia', reg } : { tipo: 'sin-prueba' };
+}
+
+/**
+ * Inventario + comparación de un TRAMO (solo lee; no escribe nada). Desde la clave que sigue a `desde`, enumera la carpeta
+ * del dueño; lo que ya está en el índice no se lee; lo que falta se lee y se comprueba (`pertenencia`). `propuesta`: las
+ * entradas que habría que agregar (solo de las suyas). `hasta`: la última clave revisada SIN dudas (de ahí se reanuda):
+ * un fallo de lectura para el tramo justo antes de esa clave. `agotado`: se llegó al final de la fuente sin fallos.
+ */
+type Tramo =
+  | { ok: true; revisadas: number; enIndice: number; propuesta: EntradaIndice[]; ajenas: number; sinVerificar: number; hasta: string | null; agotado: boolean; fallo?: string }
+  | { ok: false; sinFuente: boolean; detalle: string };
+
+async function diagnosticarTramo(dueno: string, enIndice: Set<string>, desde: string | null, p: PresupuestoInventario, a: AlmacenDurable): Promise<Tramo> {
+  if (!a.listar) return { ok: false, sinFuente: true, detalle: `el almacén ${a.tipo} no enumera` };
+  const prefijo = prefijoTareas(dueno);
+  const r = { revisadas: 0, enIndice: 0, propuesta: [] as EntradaIndice[], ajenas: 0, sinVerificar: 0 };
+  let hasta = desde;
+  let lecturas = 0;
+  for (let n = 0; n < Math.max(1, p.listados); n++) {
+    const l = await a.listar(prefijo, { desde: hasta, max: p.porListado }).catch((e) => ({ ok: false as const, detalle: String(e?.message || e) }));
+    if (l.ok === false) return hasta === desde ? { ok: false, sinFuente: false, detalle: l.detalle } : { ok: true, ...r, hasta, agotado: false, fallo: l.detalle };
+    for (let i = 0; i < l.claves.length; i += 10) {
+      const tanda = l.claves.slice(i, i + 10).map((clave) => {
+        const id = clave.slice(prefijo.length + 1);
+        return { clave, id, leer: ES_ID_TAREA.test(id) && !enIndice.has(id) };
+      });
+      const porLeer = tanda.filter((x) => x.leer).length;
+      if (porLeer && lecturas > 0 && lecturas + porLeer > p.lecturas) return { ok: true, ...r, hasta, agotado: false };
+      lecturas += porLeer;
+      const vistas = await Promise.all(tanda.map((x) => (x.leer ? pertenencia(dueno, x.id, a) : null)));
+      for (let j = 0; j < tanda.length; j++) {
+        const x = tanda[j];
+        const v = vistas[j];
+        if (v?.tipo === 'error') return { ok: true, ...r, hasta, agotado: false, fallo: v.detalle };
+        hasta = x.clave;
+        if (!ES_ID_TAREA.test(x.id)) continue;
+        r.revisadas++;
+        if (!v) r.enIndice++;
+        else if (v.tipo === 'propia') r.propuesta.push({ id: x.id, t: v.reg.creada, ...(esTerminal(v.reg.estado) ? { fin: v.reg.actualizada } : {}) });
+        else if (v.tipo === 'ajena') r.ajenas++;
+        else if (v.tipo === 'sin-prueba') r.sinVerificar++;
+      }
+    }
+    if (!l.truncado) return { ok: true, ...r, hasta, agotado: true };
+  }
+  return { ok: true, ...r, hasta, agotado: false };
+}
+
+/**
+ * Diagnóstico completo, SOLO LECTURA (para revisar antes de aplicar o con `AURA_RECONCILIAR_TAREAS=diagnostico`): recorre
+ * toda la carpeta del dueño y devuelve qué se agregaría. No escribe nada. Es del servidor (operación), no de una ruta.
+ */
+export async function diagnosticarInventarioTareas(
+  dueno: string,
+  a: AlmacenDurable = almacenDurable()
+): Promise<{ ok: true; reconciliado: boolean; revisadas: number; enIndice: number; propuesta: EntradaIndice[]; ajenas: number; sinVerificar: number; agotado: boolean; fallo?: string } | { ok: false; sinFuente: boolean; detalle: string }> {
+  const ix = await leerDurable<Indice>(claveIndice(dueno), a);
+  if (ix.ok === false) return { ok: false, sinFuente: false, detalle: ix.detalle };
+  const d = await diagnosticarTramo(dueno, new Set((ix.valor?.ids || []).map((x) => x.id)), null, { porListado: 1000, listados: 100_000, lecturas: Infinity }, a);
+  if (d.ok === false) return d;
+  const { hasta: _h, ...resto } = d;
+  return { ...resto, reconciliado: indiceReconciliado(ix.valor) };
+}
+
+/**
+ * Un paso de la reconciliación del inventario de un dueño (idempotente y reanudable). Lo llama la lista mientras el índice
+ * no está reconciliado; también se puede llamar aparte. Cada paso:
+ *   1. lee el índice; si ya está reconciliado, nada;
+ *   2. inventaría y compara un tramo desde donde quedó el recorrido (`pase.desde`), sin escribir;
+ *   3. si hay algo que agregar, guarda UNA vez el índice tal como estaba antes (respaldo para revertir);
+ *   4. fusiona con CAS: agrega solo lo que falta (lo que otro anotó entretanto se queda), avanza el recorrido y, si se
+ *      llegó al final sin dudas, pone la marca `inventario`. Si el índice ya no es el del recorrido (se perdió, otro avanzó),
+ *      no escribe: la próxima lectura sigue o empieza otra vez.
+ * Un fallo en cualquier punto deja el índice como estaba (o con el avance hasta lo último revisado sin dudas): nunca se
+ * marca reconciliado sin haber recorrido toda la fuente.
+ */
+export async function reconciliarInventarioTareas(
+  dueno: string,
+  o: { ahora?: number; modo?: ModoReconciliacion; presupuesto?: Partial<PresupuestoInventario>; /** Operación: no espera tras un listado fallido. */ forzar?: boolean } = {},
+  a: AlmacenDurable = almacenDurable()
+): Promise<ResultadoInventario> {
+  const modo = o.modo ?? modoReconciliacion();
+  const ahora = o.ahora ?? Date.now();
+  const nada = (estado: EstadoInventario, extra: Partial<ResultadoInventario> = {}): ResultadoInventario => ({ estado, escribio: false, agregadas: 0, ...extra });
+  if (modo === 'apagado') return nada('apagado');
+  if (!a.listar) return nada('sin-fuente');
+  const ix = await leerDurable<Indice>(claveIndice(dueno), a).catch((e) => ({ ok: false as const, detalle: String(e?.message || e) }));
+  if (ix.ok === false) return nada('error');
+  const indice = ix.valor;
+  if (indiceReconciliado(indice)) return nada('reconciliado');
+  // Revisión 13: el último listado de este dueño falló hace poco: no se vuelve a pedir todavía (la incertidumbre se conserva).
+  if (!o.forzar && esperaListado(dueno, a, ahora)) return nada('error');
+  const presupuesto = { ...PRESUPUESTO_INVENTARIO, ...(o.presupuesto || {}) };
+  const enIndice = new Set((indice?.ids || []).map((x) => x.id));
+  if (modo === 'diagnostico') {
+    const d = await diagnosticarTramo(dueno, enIndice, null, presupuesto, a);
+    if (d.ok === false) {
+      avisarInventario('diagnóstico', d.detalle);
+      if (!d.sinFuente) recordarFalloListado(dueno, a, ahora);
+    } else olvidarFalloListado(dueno, a);
+    return nada('diagnostico', d.ok ? { recuperables: d.propuesta.length } : {});
+  }
+  let pase = indice?.pase;
+  if (pase?.fin) {
+    // Terminó con objetos sin verificar: no se repite en cada lectura.
+    if (ahora - pase.fin < REINTENTO_SIN_VERIFICAR_MS) return nada('sin-verificar');
+    pase = undefined;
+  }
+  const ronda = pase?.ronda ?? `inv_${ahora.toString(36)}${crypto.randomBytes(3).toString('hex')}`;
+  const desde = pase?.desde ?? null;
+  const d = await diagnosticarTramo(dueno, enIndice, desde, presupuesto, a);
+  if (d.ok === false) {
+    avisarInventario(d.sinFuente ? 'sin fuente' : 'listado', d.detalle);
+    if (!d.sinFuente) recordarFalloListado(dueno, a, ahora);
+    return nada(d.sinFuente ? 'sin-fuente' : 'error');
+  }
+  olvidarFalloListado(dueno, a);
+  if (d.fallo) avisarInventario('lectura', d.fallo);
+  if (d.hasta === desde && !d.agotado) return nada(d.fallo ? 'error' : 'en-curso');
+  if (d.propuesta.length) {
+    // El índice como estaba ANTES de que el inventario le agregara nada (una sola vez por dueño y esquema).
+    const resp = await crearUnaVez(claveRespaldo(dueno), { v: 1, t: ahora, ronda, indice: indice ?? null }, a);
+    if (resp.ok === false) {
+      avisarInventario('respaldo', resp.detalle);
+      return nada('error');
+    }
+  }
+  let agregadas = 0;
+  let aborto: 'ya' | 'otro' | null = null;
+  let marcado = false;
+  const w = await modificarDurable<Indice>(
+    claveIndice(dueno),
+    (actual) => {
+      agregadas = 0;
+      aborto = null;
+      marcado = false;
+      if (indiceReconciliado(actual)) return void (aborto = 'ya');
+      const p0 = actual?.pase;
+      // El recorrido tiene que seguir siendo este y estar donde se dejó; si no, no se escribe nada.
+      if (pase ? !p0 || p0.fin || p0.ronda !== ronda || (p0.desde ?? null) !== desde : p0 && !p0.fin) return void (aborto = 'otro');
+      const previo = pase && p0 ? p0 : null;
+      const ids = actual?.ids || [];
+      const ya = new Set(ids.map((x) => x.id));
+      const nuevas = d.propuesta.filter((x) => !ya.has(x.id)).map((x) => ({ ...x, rec: ronda }));
+      const fusion = nuevas.length ? recortarIndice([...ids, ...nuevas]) : ids;
+      agregadas = fusion.filter((x) => !ya.has(x.id)).length;
+      const revisadas = (previo?.revisadas ?? 0) + d.revisadas;
+      const sinVerificar = (previo?.sinVerificar ?? 0) + d.sinVerificar;
+      const total = (previo?.agregadas ?? 0) + agregadas;
+      const propias = (previo?.propias ?? 0) + d.enIndice + d.propuesta.length;
+      const { pase: _p, inventario: _i, ...resto } = actual || ({ v: 2, ids: [] } as Indice);
+      const base: Indice = { ...resto, v: 2, ids: fusion };
+      if (d.agotado && sinVerificar === 0) {
+        marcado = true;
+        // Revisión 13: las suyas que el recorrido vio y el tope dejó fuera. Las que ya contaba el índice (recortadas antes)
+        // las vuelve a ver el recorrido: se toma la mayor de las dos cuentas, nunca la suma (no se cuenta dos veces).
+        const recortadas = Math.max(Number(resto.recortadas) || 0, propias - fusion.length);
+        return { ...base, ...(recortadas > 0 ? { recortadas } : {}), inventario: { v: ESQUEMA_INVENTARIO, t: ahora, fuente: a.tipo, ronda, revisadas, agregadas: total } };
+      }
+      return { ...base, pase: { ronda, desde: d.hasta, revisadas, agregadas: total, sinVerificar, inicio: previo?.inicio ?? ahora, actualizado: ahora, propias, ...(d.agotado ? { fin: ahora } : {}) } };
+    },
+    a
+  );
+  if (w.ok === false) {
+    avisarInventario('índice', w.detalle);
+    return nada('error');
+  }
+  if (aborto === 'ya') return nada('reconciliado');
+  if (aborto === 'otro') return nada('en-curso');
+  const estado: EstadoInventario = marcado ? 'reconciliado' : d.agotado ? 'sin-verificar' : d.fallo ? 'error' : 'en-curso';
+  return { estado, escribio: w.cambiado, agregadas };
+}
+
+/**
+ * REVERSIÓN (A7): quita del índice las entradas que agregó el inventario (`rec`) y su marca/avance. No borra objetos ni
+ * toca las demás entradas (las que anotaron la creación o la lectura por id). La copia de antes queda en
+ * `tareas/indice-respaldo/<huella>/antes-de-inventario-v1` (`leerRespaldoIndiceTareas`). Para que no se vuelva a
+ * reconciliar sola, antes `AURA_RECONCILIAR_TAREAS=off` (o `diagnostico`).
+ */
+export async function revertirReconciliacionTareas(dueno: string, a: AlmacenDurable = almacenDurable()): Promise<{ ok: true; quitadas: number } | { ok: false; detalle: string }> {
+  let quitadas = 0;
+  const r = await modificarDurable<Indice>(
+    claveIndice(dueno),
+    (ix) => {
+      quitadas = 0;
+      if (!ix) return undefined;
+      const ids = ix.ids.filter((x) => !x.rec);
+      quitadas = ix.ids.length - ids.length;
+      if (!quitadas && !ix.inventario && !ix.pase) return undefined;
+      const { inventario: _i, pase: _p, ...resto } = ix;
+      return { ...resto, ids };
+    },
+    a
+  );
+  return r.ok === false ? { ok: false, detalle: r.detalle } : { ok: true, quitadas };
+}
+
+/** El respaldo del índice de antes del inventario (`valor: null` si el inventario nunca le agregó nada). */
+export async function leerRespaldoIndiceTareas(dueno: string, a: AlmacenDurable = almacenDurable()) {
+  return leerDurable<{ v: 1; t: number; ronda: string; indice: Indice | null }>(claveRespaldo(dueno), a);
+}
+
+/**
+ * Una página de la lista (P5/A7). Dos verdades separadas (A7, auditoría del 5-oct):
+ *   · `paginaLeida`: false si alguna tarea del índice no se pudo leer (`noLeidas`): un fallo del almacén NUNCA es «no hay
+ *     tareas»;
+ *   · `reconciliado`: el inventario de este dueño se recorrió entero y el índice tiene todo lo que encontró (`inventario`
+ *     dice cómo está si no). Un índice de antes no es completo solo porque sus ids se lean bien.
+ * `completo` = las dos. `siguiente`: el cursor de la página que sigue (null si no hay más). Orden estable:
  * primero las que pueden seguir activas (la más nueva primero) y después las terminadas (la que terminó más tarde
  * primero). Con `recientesMs`, las terminadas hace más que eso no se devuelven (siguen en el índice, son historial).
  */
@@ -511,10 +895,20 @@ export type PaginaTareas = {
   tareas: RegistroTarea[];
   noLeidas: string[];
   completo: boolean;
+  paginaLeida: boolean;
+  reconciliado: boolean;
+  inventario: EstadoInventario;
   siguiente: string | null;
-  conteo: { activas: number; terminadas: number; indice: number; noLeidas: number };
+  /**
+   * `recortadas` (revisión 13): tareas TERMINADAS de este dueño que siguen existiendo (su objeto no se borra) pero que el
+   * tope del historial (MAX_HISTORIAL_INDICE terminadas más recientes) ya no lista. No son un fallo ni hacen la lista
+   * incompleta: `completo: true` dice que se leyó todo lo que la lista guarda; `recortadas` dice cuántas terminadas,
+   * más viejas, quedaron fuera a propósito. Es una cota baja (no hay ids: esas ya no están en el índice). 0 si ninguna.
+   */
+  conteo: { activas: number; terminadas: number; indice: number; noLeidas: number; recortadas: number };
 };
-export type OpcionesLista = { limite?: number; cursor?: string | null; recientesMs?: number; ahora?: number };
+/** `reconciliar: false`: no da el paso de inventario (solo lee). `presupuesto`: cuánto trabaja ese paso. */
+export type OpcionesLista = { limite?: number; cursor?: string | null; recientesMs?: number; ahora?: number; reconciliar?: boolean; presupuesto?: Partial<PresupuestoInventario> };
 
 type Cursor = { s: 'a' | 'h'; k: number; id: string };
 const leerCursor = (c: string | null | undefined): Cursor | null => {
@@ -533,13 +927,27 @@ const posicion = (x: EntradaIndice): Cursor => (x.fin ? { s: 'h', k: x.fin, id: 
 const antes = (p: Cursor, q: Cursor) => (p.s !== q.s ? p.s === 'a' : p.k !== q.k ? p.k > q.k : p.id < q.id);
 
 export async function listarTareasPagina(dueno: string, o: OpcionesLista = {}, a: AlmacenDurable = almacenDurable()): Promise<PaginaTareas | { ok: false; detalle: string }> {
-  const ix = await leerDurable<Indice>(claveIndice(dueno), a);
-  if (ix.ok === false) return { ok: false, detalle: ix.detalle };
+  const leido = await leerDurable<Indice>(claveIndice(dueno), a);
+  if (leido.ok === false) return { ok: false, detalle: leido.detalle };
+  let indice = leido.valor;
   const ahora = o.ahora ?? Date.now();
+  // A7: mientras el inventario no esté reconciliado, cada lectura da un paso (acotado). Lo que encuentre entra al índice
+  // ANTES de leer la página; si el paso falla, la página se lee igual y dice `reconciliado: false`.
+  let inventario: EstadoInventario = indiceReconciliado(indice) ? 'reconciliado' : 'en-curso';
+  if (inventario !== 'reconciliado' && o.reconciliar !== false) {
+    const r = await reconciliarInventarioTareas(dueno, { ahora, presupuesto: o.presupuesto }, a).catch((): ResultadoInventario => ({ estado: 'error', escribio: false, agregadas: 0 }));
+    inventario = r.estado;
+    if (r.escribio || r.estado === 'reconciliado') {
+      const otra = await leerDurable<Indice>(claveIndice(dueno), a).catch(() => null);
+      if (otra && otra.ok) indice = otra.valor;
+      // La marca se cree solo si está en el índice que se va a leer (otro pudo reescribirlo entretanto).
+      if (r.estado === 'reconciliado' && !indiceReconciliado(indice)) inventario = 'en-curso';
+    }
+  }
   const limite = o.limite && o.limite > 0 ? Math.floor(o.limite) : Infinity;
   const desde = leerCursor(o.cursor);
   const corte = o.recientesMs !== undefined ? ahora - o.recientesMs : -Infinity;
-  const entradas = (ix.valor?.ids || []).map((x) => ({ x, p: posicion(x) })).sort((u, v) => (antes(u.p, v.p) ? -1 : 1));
+  const entradas = (indice?.ids || []).map((x) => ({ x, p: posicion(x) })).sort((u, v) => (antes(u.p, v.p) ? -1 : 1));
   // Las terminadas fuera de `recientesMs` no se leen: ya se sabe que no van.
   const candidatas = entradas.filter((e) => !(e.x.fin && e.x.fin < corte) && (!desde || antes(desde, e.p)));
   const tareas: RegistroTarea[] = [];
@@ -571,25 +979,29 @@ export async function listarTareasPagina(dueno: string, o: OpcionesLista = {}, a
       tareas.push(l.tarea);
     });
   }
-  await repararIndice(dueno, { fines, podar }, a);
+  const reparado = await repararIndice(dueno, { fines, podar }, a);
   const quedan = i < candidatas.length;
-  const total = ix.valor?.ids.length ?? 0;
-  const terminadas = (ix.valor?.ids || []).filter((x) => x.fin || fines.has(x.id)).length;
+  const total = indice?.ids.length ?? 0;
+  const terminadas = (indice?.ids || []).filter((x) => x.fin || fines.has(x.id)).length;
+  const reconciliado = inventario === 'reconciliado';
   return {
     ok: true,
     tareas,
     noLeidas,
-    completo: noLeidas.length === 0,
+    completo: noLeidas.length === 0 && reconciliado,
+    paginaLeida: noLeidas.length === 0,
+    reconciliado,
+    inventario,
     siguiente: quedan && ultima ? escribirCursor(ultima) : null,
-    conteo: { activas: total - terminadas - sinObjeto.size, terminadas, indice: total, noLeidas: noLeidas.length },
+    conteo: { activas: total - terminadas - sinObjeto.size, terminadas, indice: total, noLeidas: noLeidas.length, recortadas: Math.max(0, Math.floor(Number((reparado ?? indice)?.recortadas) || 0)) },
   };
 }
 
 /** Las durables del dueño (todas las del índice), la más nueva primero. `ok: false` si el índice no se pudo leer. */
-export async function listarTareas(dueno: string, a: AlmacenDurable = almacenDurable()): Promise<{ ok: true; tareas: RegistroTarea[]; noLeidas: string[]; completo: boolean } | { ok: false; detalle: string }> {
+export async function listarTareas(dueno: string, a: AlmacenDurable = almacenDurable()): Promise<{ ok: true; tareas: RegistroTarea[]; noLeidas: string[]; completo: boolean; reconciliado: boolean } | { ok: false; detalle: string }> {
   const p = await listarTareasPagina(dueno, {}, a);
   if (p.ok === false) return p;
-  return { ok: true, tareas: p.tareas.sort((x, y) => y.actualizada - x.actualizada), noLeidas: p.noLeidas, completo: p.completo };
+  return { ok: true, tareas: p.tareas.sort((x, y) => y.actualizada - x.actualizada), noLeidas: p.noLeidas, completo: p.completo, reconciliado: p.reconciliado };
 }
 
 /* ------------------------------------------------------------------ cambiar */
@@ -615,8 +1027,8 @@ export async function cambiarTarea(
     (reg) => {
       motivo = null;
       cambiado = false;
-      visto = reg || undefined;
-      if (!reg) return void (motivo = 'no-existe');
+      visto = reg && !esDeOtro(reg, dueno) ? reg : undefined;
+      if (!reg || !visto) return void (motivo = 'no-existe');
       if (o.expectedVersion !== undefined && reg.version !== o.expectedVersion) return void (motivo = 'version');
       const c = cambio(reg);
       if (!c) return undefined;

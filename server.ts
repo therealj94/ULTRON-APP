@@ -13,6 +13,8 @@ import { JUNTA, buildPersonality, decodeDataUrl, normalizarCorreo, buscarWeb, le
 import { hablar, abrirVozEnVivo, pasarVozEnVivo, cantar, orar, repertorio, cancionPorPedido, estadoVoz, saludVoz, vozDe, sinEtiquetas } from './server/voz';
 import { lineaAvatar, normalizarAvatar, normalizarIdioma, NOMBRE_AVATAR, type AvatarVoz } from './server/eleven';
 import { montarVozAgente, type RetencionAcciones, type TurnoVoz } from './server/voz-agente';
+import { montarMotorVoz, motorDe } from './server/voz-motor';
+import { anotarDesdeRuta } from './server/voz-medidas';
 import { interruptor } from './lib/interruptores';
 import { LIMITES_TEXTO, LIMITES_VOZ, fijoDeLaConversacion, piezasDelTurno, renovarFijo, ventanaDelHilo } from './server/prompt-turno';
 import { ESPACIO_COMUN, espacioDe } from './lib/espacio-nodo';
@@ -149,7 +151,7 @@ import { COT_FORZADO, esTareaDeCodigo, requiereCot } from './lib/prompts/cot';
 import { extraerEmocion, normalizarEmocion, type Emocion } from './lib/emocion';
 import { cabeceraAlineacion } from './lib/alineacion';
 import { enTurno, iniciarTraza, trazaActual } from './lib/cognitivo/traza';
-import { montarRutasCognitivas } from './server/cognitivo';
+import { exigirMandoAqui, montarRutasCognitivas } from './server/cognitivo';
 import { montarMcp } from './server/mcp';
 import { autorizar, textoDeDecision } from './lib/cognitivo/politica';
 import { clasificar } from './lib/cognitivo/clasificador';
@@ -482,7 +484,7 @@ app.get('/api/health', async (req, res) => {
   // P5: `ok` dice que hay servidor (la app decide con él si está en línea); NO que el almacén durable esté sano. Eso va
   // aparte: una lectura y una escritura reales (con caché de 30 s), sin detalle para quien no tiene sesión.
   const a = await sondearAlmacen();
-  const almacen = autorizado ? a : { ok: a.ok, tipo: a.tipo, comprobado: a.comprobado };
+  const almacen = autorizado ? a : { ok: a.ok, tipo: a.tipo, comprobado: a.comprobado, ...(a.listado ? { listado: a.listado } : {}) };
   if (!autorizado) {
     return res.json({
       ok: true,
@@ -4576,7 +4578,7 @@ function turnoEnVivoConTraza(body: any, salida: SalidaEnVivo, opciones: Opciones
 }
 
 /* Conversación fluida (ElevenLabs Agents con nuestro cerebro): server/voz-agente.ts. */
-montarVozAgente(app, {
+const { llm: rutaLlmVoz } = montarVozAgente(app, {
   exigirMesaODesk,
   limitar,
   sesionDe,
@@ -4584,7 +4586,16 @@ montarVozAgente(app, {
   // La frase que el teléfono repite solo al reconectarse no despacha nada con efecto: el turno de antes pudo
   // haberlo hecho ya (revisión externa, 4-oct). Contesta igual; si la persona lo quiere, lo pide otra vez.
   turno: (t: TurnoVoz) => (t.reconexion ? enTurnoUnico(turnoSinEfectos('la voz se reconectó y repitió sola la última frase'), () => turnoVozEnVivo(t)) : turnoVozEnVivo(t)),
+  // El prototipo de Speech Engine (docs/voz/SPEECH-ENGINE.md): apagado para todos salvo motor + cuenta.
+  motorDe,
+  // La medida de cada turno (sin contenido), para comparar los dos caminos: server/voz-medidas.ts.
+  alTurno: anotarDesdeRuta,
 });
+/*
+ * El prototipo de Speech Engine (server/voz-motor.ts): cada turno pasa por la MISMA ruta del LLM propio
+ * (rutaLlmVoz), con el mismo cerebro (`turno` de arriba). Sin AURA_MOTOR_VOZ=speech-engine no escucha nada.
+ */
+montarMotorVoz(app, httpServer, { llm: rutaLlmVoz, exigirMesaODesk, exigirMando: exigirMandoAqui, limitar, sesionDe });
 
 /** El turno de la conversación de voz (server/voz-agente.ts), en proceso. */
 function turnoVozEnVivo(t: TurnoVoz): Promise<void> {

@@ -98,3 +98,42 @@ test('P5: la salud del almacén durable se comprueba leyendo y escribiendo (un /
   const medio = await B.sondearAlmacen(soloLee, { forzar: true });
   assert.equal(medio.ok, false, 'leer sin poder escribir no es sano');
 });
+
+test('revisión 13 (A7): la sonda de listado lista UNA clave en el espacio de las tareas (no en `salud/`), sin enseñar lo listado', async () => {
+  const B: any = await import('../lib/build');
+  const { almacenEnMemoria } = await import('../lib/durable');
+  const { ESPACIO_TAREAS } = await import('../lib/tareas-durables');
+  /** Un permiso de listar acotado por prefijo (como `s3:prefix` en la política del bucket). */
+  const acotado = (permitido: (prefijo: string) => boolean) => {
+    const m = almacenEnMemoria();
+    const pedidos: { prefijo: string; max?: number }[] = [];
+    const listar = m.listar!.bind(m);
+    // Un objeto de tarea de alguien en el almacén: la salud nunca debe contarlo ni enseñarlo.
+    m.objetos.set(`${ESPACIO_TAREAS}/${'a'.repeat(40)}/tk_secreta`, JSON.stringify({ v: 1, titulo: 'secreto' }));
+    return {
+      pedidos,
+      a: Object.assign(m, {
+        listar: async (prefijo: string, o?: { desde?: string | null; max?: number }) => {
+          pedidos.push({ prefijo, max: o?.max });
+          return permitido(prefijo) ? listar(prefijo, o) : { ok: false as const, detalle: 'S3 403: AccessDenied' };
+        },
+      }),
+    };
+  };
+  // Solo se deja listar `salud/`: antes daba «ok» aunque el inventario de tareas no pudiera listar.
+  const soloSalud = acotado((p) => p === 'salud' || p.startsWith('salud/'));
+  const r1 = await B.sondearAlmacen(soloSalud.a, { forzar: true });
+  assert.equal(r1.ok, true, 'leer y escribir siguen decidiendo la salud');
+  assert.equal(r1.listado, 'denegado', 'el inventario no podría listar: no es «ok»');
+  // Solo se deja listar `tareas/*` (lo que el inventario necesita): «ok».
+  const soloTareas = acotado((p) => p.startsWith(`${ESPACIO_TAREAS}/`));
+  const r2 = await B.sondearAlmacen(soloTareas.a, { forzar: true });
+  assert.equal(r2.listado, 'ok');
+  assert.equal(soloTareas.pedidos.length, 1);
+  const { prefijo, max } = soloTareas.pedidos[0];
+  assert.equal(max, 1, 'una sola clave');
+  assert.match(prefijo, new RegExp(`^${ESPACIO_TAREAS}/[0-9a-f]{40}$`), 'la misma forma que la carpeta de un dueño');
+  assert.equal(prefijo, B.prefijoSondaListado());
+  assert.doesNotMatch(JSON.stringify(r2), /tk_|secreto|tareas\//, 'lo listado no sale en la salud');
+  assert.deepEqual(['ok', 'denegado', 'sin-fuente'].includes(r2.listado), true);
+});

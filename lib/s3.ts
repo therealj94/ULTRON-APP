@@ -183,6 +183,28 @@ export async function s3PutJsonCondicional(
   return { ok: r.ok, etag: r.cabeceras?.etag || null, conflicto: r.status === 412 || r.status === 409, status: r.status, detalle: r.detalle };
 }
 
+/**
+ * Las claves de un nivel bajo `prefijo` en el cubo de la memoria (ListObjectsV2 con `delimiter=/`), en orden de clave,
+ * empezando DESPUÉS de `desde` (`start-after`: reanudable sin guardar el token de S3). A7 (lib/tareas-durables.ts): es
+ * el inventario de las tareas de UN dueño. Necesita el permiso `s3:ListBucket` sobre el cubo (limitado al prefijo
+ * `ultron/durable/`); sin él S3 contesta 403 y esto es `ok: false`: no se sabe, no se da por vacío.
+ */
+export async function s3ListarClaves(
+  prefijo: string,
+  o: { desde?: string | null; max?: number; timeoutMs?: number } = {}
+): Promise<{ ok: true; claves: string[]; truncado: boolean } | { ok: false; detalle: string }> {
+  const query: Record<string, string> = { 'list-type': '2', prefix: prefijo, delimiter: '/', 'max-keys': String(Math.max(1, Math.min(1000, Math.floor(o.max || 1000)))) };
+  if (o.desde) query['start-after'] = o.desde;
+  const r = await s3({ method: 'GET', key: '', query, timeoutMs: o.timeoutMs ?? 8000 });
+  if (!r.ok) return { ok: false, detalle: r.detalle };
+  const xml = r.body.toString('utf8');
+  if (!/<ListBucketResult[\s>]/.test(xml)) return { ok: false, detalle: 'S3 contestó un listado ilegible' };
+  const claves = entreEtiquetas(xml, 'Contents')
+    .map((c) => desescaparXml(entreEtiquetas(c, 'Key')[0] || ''))
+    .filter((k) => k.startsWith(prefijo));
+  return { ok: true, claves, truncado: entreEtiquetas(xml, 'IsTruncated')[0] === 'true' };
+}
+
 /* ------------------------------------------------------------ cubo de expedientes (Dr Electrum) */
 
 export type ObjetoS3 = { key: string; bytes: number; modificado: string };

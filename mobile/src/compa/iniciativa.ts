@@ -24,6 +24,8 @@ export type AccionIniciativa = {
   clase: string;
   prioridad: number;
   creada: number;
+  /** Revisión (A2): la misma propuesta regenerada en el servidor con el número de ahora. */
+  rev?: number;
   misionId?: string;
 };
 
@@ -36,6 +38,8 @@ export type PropuestaAura = {
   clase: string;
   prioridad: number;
   creada: number;
+  /** Revisión: sube cuando el servidor la regeneró (p. ej. «tres correos» → «1 correo»). Sin ella, 1. */
+  rev?: number;
   misionId?: string;
 };
 
@@ -63,6 +67,7 @@ export function esAccionIniciativa(a: any): a is AccionIniciativa {
   if (a.clase !== undefined && typeof a.clase !== 'string') return false;
   if (a.prioridad !== undefined && (typeof a.prioridad !== 'number' || !Number.isFinite(a.prioridad))) return false;
   if (a.creada !== undefined && (typeof a.creada !== 'number' || !Number.isFinite(a.creada))) return false;
+  if (a.rev !== undefined && (typeof a.rev !== 'number' || !Number.isInteger(a.rev) || a.rev < 1)) return false;
   return a.misionId === undefined || (typeof a.misionId === 'string' && a.misionId.length <= 64);
 }
 
@@ -76,6 +81,7 @@ function normalizar(x: any, clase: unknown): PropuestaAura {
     creada: Number.isFinite(Number(x.creada)) ? Number(x.creada) : 0,
   };
   if (typeof x.misionId === 'string' && x.misionId) p.misionId = x.misionId;
+  if (Number.isInteger(x.rev) && x.rev > 1) p.rev = x.rev;
   return p;
 }
 
@@ -143,7 +149,7 @@ export function etiquetaClase(clase: string, idioma: 'es' | 'en' = 'es'): string
   }
 }
 
-export type ResultadoOferta = 'nueva' | 'repetida' | 'contestada' | 'caducada' | 'vieja';
+export type ResultadoOferta = 'nueva' | 'actualizada' | 'repetida' | 'contestada' | 'caducada' | 'vieja';
 
 /**
  * LA COLA DE PROPUESTAS: a lo sumo UNA a la vista. La misma (mismo id) no se duplica; una ya contestada
@@ -187,7 +193,14 @@ export class ColaPropuestas {
   ofrecer(p: PropuestaAura): ResultadoOferta {
     if (this.yaContestada(p.id)) return 'contestada';
     if (p.creada && this.reloj() - p.creada > CADUCA_MS) return 'caducada';
-    if (this.actual?.id === p.id) return 'repetida';
+    if (this.actual?.id === p.id) {
+      // La misma, regenerada en el servidor con el número de ahora (A2): se reemplaza la tarjeta (no es otra ni se
+      // anuncia como nueva). Una revisión igual o más vieja (un empuje que llegó tarde) no pisa la de ahora.
+      if ((p.rev || 1) <= (this.actual.rev || 1)) return 'repetida';
+      this.actual = p;
+      this.avisar();
+      return 'actualizada';
+    }
     if (this.actual && p.creada && this.actual.creada && p.creada < this.actual.creada) return 'vieja';
     this.actual = p;
     this.avisar();

@@ -28,8 +28,9 @@
  * la fuente que se vio y su versión, el siguiente paso seguro, el permiso que haría falta y cuándo caduca).
  * Antes de entregarla —la de la cola, la pospuesta con «luego», la pendiente— se REVALIDA contra las fuentes
  * leídas en ese momento (`revalidarPropuesta`): un asunto resuelto, una fuente que no se pudo leer o una idea
- * caducada no se entregan. Las horas quietas y el «día» son los de la zona IANA de la persona
- * (lib/zona-horaria.ts; Honduras por omisión). Cómo y cuándo se AVISA fuera de la app (canal, presupuesto,
+ * caducada no se entregan; un número contado que cambió (A2, 5-oct: «tres correos» y ahora hay uno) no se entrega
+ * tal cual: se regenera desde lo observado, con el mismo id (no es otro aviso). Las horas quietas y el «día» son
+ * los de la zona IANA de la persona (lib/zona-horaria.ts; Honduras por omisión). Cómo y cuándo se AVISA fuera de la app (canal, presupuesto,
  * outbox deduplicada) vive en lib/avisos.ts. La iniciativa prepara; no envía nada en nombre de nadie: una
  * propuesta cuyo `pedido` mande, publique o comparta algo directamente se descarta.
  */
@@ -68,6 +69,11 @@ export type Propuesta = {
   evidencia?: EvidenciaPropuesta;
   /** «Luego» con fecha: no se vuelve a entregar antes de este instante. */
   noAntesDe?: number;
+  /**
+   * Revisión (A2, 5-oct): sube cada vez que el hecho contado cambió y la propuesta se REGENERÓ desde la observación
+   * vigente. Mismo id: es la misma propuesta y el mismo aviso (no autoriza otro). Sin ella, la primera (1).
+   */
+  rev?: number;
 };
 
 /**
@@ -80,6 +86,12 @@ export type FuentePropuesta = {
   tipo: 'mision' | 'correo' | 'whatsapp' | 'perfil' | 'reloj' | 'modelo' | 'bloqueo' | 'ninguna';
   id?: string;
   version?: number;
+  /**
+   * El HECHO CONTADO que la propuesta afirma (cuántos sin leer, correo y WhatsApp), tal como se observó: su ancla
+   * (A2, 5-oct). `version` es la de la fuente (su contrato; el adaptador la da en cada observación). Lo guardado
+   * antes no lo trae: sin él no se sabe qué número dice el texto, y no se da por vigente (revalidarPropuesta).
+   */
+  valor?: number;
   /** vencida | por_vencer | estancada (misiones). */
   motivo?: string;
   /** La consulta que la sostiene (`sin_leer` para correo y WhatsApp). */
@@ -470,6 +482,35 @@ export function sinLeerVigente(o: Observacion | undefined): number | null {
   return o?.estado === 'vigente' && Number(o.valor) > 0 ? Math.floor(Number(o.valor)) : null;
 }
 
+/**
+ * La fuente de un hecho contado, anclada a lo que se vio (A2, 5-oct): el número (`valor`) y la versión que da la
+ * fuente (su contrato; sin ella, el número). Antes la versión se fijaba al número y se perdía la de la fuente.
+ */
+export function fuenteContada(fuente: FuenteContada, o: Observacion, ahora: number): FuentePropuesta {
+  const n = sinLeerVigente(o) || 0;
+  const v = Number(o.version);
+  return { tipo: fuente, consulta: 'sin_leer', valor: n, version: o.version !== undefined && Number.isFinite(v) ? v : n, visto: Number(o.visto) > 0 ? Number(o.visto) : ahora };
+}
+
+/**
+ * Lo que se dice de un hecho contado, SIEMPRE desde la observación (plantilla determinista). Es lo único que se usa
+ * para regenerar una propuesta cuyo número cambió: nunca se cambian dígitos dentro del texto libre del modelo, que
+ * puede traer otras afirmaciones atadas al número viejo.
+ */
+export function textoContado(fuente: FuenteContada, n: number): { texto: string; pedido: string; porQue: string; paso: string; permiso: PermisoPropuesta } {
+  if (fuente === 'correo') {
+    const cuantos = n === 1 ? '1 correo sin leer' : `${n} correos sin leer`;
+    return { texto: `Tienes ${cuantos}. ¿Te resumo lo importante?`, pedido: 'Sí, revisa mi correo y resúmeme lo importante.', porQue: `Hay ${cuantos}.`, paso: 'Leer y resumirte lo importante; no respondo nada.', permiso: 'leer_correo' };
+  }
+  return {
+    texto: `Tienes ${n === 1 ? '1 chat de WhatsApp sin leer' : `${n} chats de WhatsApp sin leer`}. ¿Te cuento quién escribió?`,
+    pedido: 'Sí, revisa mi WhatsApp y dime quién me escribió.',
+    porQue: `Hay ${n === 1 ? '1 chat sin leer' : `${n} chats sin leer`}.`,
+    paso: 'Decirte quién escribió; no contesto a nadie.',
+    permiso: 'leer_whatsapp',
+  };
+}
+
 /** Un dato que el servidor vio y en el que una propuesta puede apoyarse: su fuente (objeto o consulta, versión, fecha) y hasta cuándo vale. */
 export type Candidato = { fuente: FuentePropuesta; caduca: number; misionId?: string; campo?: string; titulo?: string };
 
@@ -484,8 +525,9 @@ export function candidatosDe(ctxDado: ContextoIniciativa, ahora = ctxDado.ahora 
   const ctx = contextoAutorizado(ctxDado);
   const out = new Map<string, Candidato>();
   for (const f of ['correo', 'whatsapp'] as const) {
-    const n = sinLeerVigente(observacionDe(ctx, f));
-    if (n) out.set(f, { fuente: { tipo: f, consulta: 'sin_leer', version: n, visto: ahora }, caduca: ahora + CADUCA_PENDIENTE_MS });
+    const o = observacionDe(ctx, f);
+    // Anclada al número Y a la versión de la fuente (A2): lo que se revalida después es eso.
+    if (o && sinLeerVigente(o)) out.set(f, { fuente: fuenteContada(f, o, ahora), caduca: ahora + CADUCA_PENDIENTE_MS });
   }
   const pend = new Map(pendientesDe(ctx.misiones || [], ahora).map((x) => [x.mision.id, x.motivo]));
   for (const m of (ctx.misiones || []).filter((x) => x.estado === 'activa').slice(0, 6)) {
@@ -667,25 +709,13 @@ export function propuestasDeRespaldo(persona: PersonaIniciativa, ctxDado: Contex
     });
   }
   // Solo lo que se LEYÓ y tiene algo (vigente): una fuente caída, desconectada o sin observar no da «tienes N».
-  const correo = sinLeerVigente(observacionDe(ctx, 'correo'));
-  if (correo) {
-    nueva({
-      tipo: 'ayuda',
-      prioridad: 2,
-      texto: `Tienes ${correo} correos sin leer. ¿Te resumo lo importante?`,
-      pedido: 'Sí, revisa mi correo y resúmeme lo importante.',
-      evidencia: ev({ tipo: 'correo', consulta: 'sin_leer', version: correo }, `Hay ${correo} correos sin leer.`, 'Leer y resumirte lo importante; no respondo nada.', 'leer_correo', ahora + CADUCA_PENDIENTE_MS),
-    });
-  }
-  const whatsapp = sinLeerVigente(observacionDe(ctx, 'whatsapp'));
-  if (whatsapp) {
-    nueva({
-      tipo: 'ayuda',
-      prioridad: 2,
-      texto: `Tienes ${whatsapp} chats de WhatsApp sin leer. ¿Te cuento quién escribió?`,
-      pedido: 'Sí, revisa mi WhatsApp y dime quién me escribió.',
-      evidencia: ev({ tipo: 'whatsapp', consulta: 'sin_leer', version: whatsapp }, `Hay ${whatsapp} chats sin leer.`, 'Decirte quién escribió; no contesto a nadie.', 'leer_whatsapp', ahora + CADUCA_PENDIENTE_MS),
-    });
+  // La misma plantilla que regenera (textoContado), anclada al número y a la versión que se vieron (A2).
+  for (const f of ['correo', 'whatsapp'] as const) {
+    const o = observacionDe(ctx, f);
+    const n = sinLeerVigente(o);
+    if (!o || !n) continue;
+    const t = textoContado(f, n);
+    nueva({ tipo: 'ayuda', prioridad: 2, texto: t.texto, pedido: t.pedido, evidencia: { porQue: t.porQue, fuente: fuenteContada(f, o, ahora), paso: t.paso, permiso: t.permiso, caduca: ahora + CADUCA_PENDIENTE_MS } });
   }
   for (const campo of porConocer(ctx.perfil)) {
     const q = PREGUNTA_POR_CAMPO[campo];
@@ -739,8 +769,12 @@ export type FuentesVigentes = {
  * está configurada o no se pudo leer; no se observó la fuente al revalidar; o nunca tuvo una fuente que
  * sostenga lo que afirma (lo guardado con fuente «modelo»).
  */
-export type MotivoNoVigente = 'caducada' | 'resuelta' | 'fuente_desconectada' | 'fuente_no_configurada' | 'fuente_no_disponible' | 'sin_observacion' | 'sin_fuente';
-export type Revalidacion = { vigente: true } | { vigente: false; motivo: MotivoNoVigente };
+export type MotivoNoVigente = 'caducada' | 'resuelta' | 'fuente_desconectada' | 'fuente_no_configurada' | 'fuente_no_disponible' | 'sin_observacion' | 'sin_fuente' | 'hecho_cambiado' | 'sin_anclaje';
+/**
+ * `propuesta`: la versión que vale AHORA, cuando no es la que se revalidó (la guardada ya se regeneró, o se regeneró
+ * en este paso). Quien entrega entrega ESA, con el mismo id (lib/avisos.ts procesarOutbox).
+ */
+export type Revalidacion = { vigente: true; propuesta?: Propuesta } | { vigente: false; motivo: MotivoNoVigente };
 
 /** La evidencia de una propuesta (las guardadas antes de AUR12 no la traen: caducan al día de creadas). */
 export function evidenciaDe(p: Propuesta): EvidenciaPropuesta {
@@ -756,6 +790,11 @@ export function evidenciaDe(p: Propuesta): EvidenciaPropuesta {
  * falló) no es vigente; desconectada, no configurada o caída tampoco, cada una con su motivo; un error nunca
  * es «0 sin leer». Lo guardado con fuente «modelo» que afirma un hecho de una fuente (correo, WhatsApp, su
  * misión) nunca se ancló a ella: no vale. Una pregunta para conocerle o una idea sin hecho valen hasta caducar.
+ *
+ * A2 (5-oct): una observación positiva NO basta. El hecho contado tiene que CONCORDAR con el anclado: el mismo número
+ * (`valor`) y, si la fuente da versión, la misma versión. Si cambió (3→1, 1→3, otra versión), `hecho_cambiado`; si lo
+ * guardado no trae el número (estado anterior), `sin_anclaje`; una fuente «vigente» sin número no se da por buena. En
+ * los dos primeros casos se puede regenerar desde la observación (revalidarORegenerar); tal cual, no vale.
  */
 export function revalidarPropuesta(p: Propuesta, f: FuentesVigentes, ahora = Date.now()): Revalidacion {
   const e = evidenciaDe(p);
@@ -764,8 +803,17 @@ export function revalidarPropuesta(p: Propuesta, f: FuentesVigentes, ahora = Dat
     const o = observacionDe(f, fuente);
     if (!o) return { vigente: false, motivo: 'sin_observacion' };
     switch (o.estado) {
-      case 'vigente':
-        return o.valor !== undefined && !(Number(o.valor) > 0) ? { vigente: false, motivo: 'resuelta' } : { vigente: true };
+      case 'vigente': {
+        if (o.valor !== undefined && !(Number(o.valor) > 0)) return { vigente: false, motivo: 'resuelta' };
+        const n = sinLeerVigente(o);
+        // «Vigente» sin número: no se puede comprobar lo que el texto cuenta.
+        if (n === null) return { vigente: false, motivo: 'fuente_no_disponible' };
+        const ancla = Number(e.fuente.valor);
+        if (!(ancla > 0)) return { vigente: false, motivo: 'sin_anclaje' };
+        if (ancla !== n) return { vigente: false, motivo: 'hecho_cambiado' };
+        if (o.version !== undefined && e.fuente.version !== undefined && Number(o.version) !== Number(e.fuente.version)) return { vigente: false, motivo: 'hecho_cambiado' };
+        return { vigente: true };
+      }
       case 'empty':
         return { vigente: false, motivo: 'resuelta' };
       case 'disconnected':
@@ -815,6 +863,50 @@ export function revalidarPropuesta(p: Propuesta, f: FuentesVigentes, ahora = Dat
     default:
       return { vigente: true };
   }
+}
+
+/**
+ * La propuesta de un hecho contado, REGENERADA desde la observación vigente (A2): texto, pedido, por qué, paso,
+ * permiso y fuente salen de la plantilla (textoContado) y de lo observado; nada del texto anterior se conserva. Se
+ * queda con su id, su tipo, su prioridad, cuándo se creó y se entregó y su caducidad (regenerar no la alarga ni la
+ * convierte en otra propuesta u otro aviso), y sube su `rev`. null si no hay nada vigente que contar o ya caducó.
+ */
+export function regenerarContada(p: Propuesta, f: FuentesVigentes, ahora = Date.now()): Propuesta | null {
+  const e = evidenciaDe(p);
+  const fuente = e.fuente.tipo;
+  if ((fuente !== 'correo' && fuente !== 'whatsapp') || ahora >= e.caduca) return null;
+  const o = observacionDe(f, fuente);
+  const n = sinLeerVigente(o);
+  if (!o || n === null) return null;
+  const t = textoContado(fuente, n);
+  return {
+    ...p,
+    texto: t.texto,
+    pedido: t.pedido,
+    rev: Math.max(1, Math.floor(Number(p.rev) || 1)) + 1,
+    evidencia: { porQue: t.porQue, fuente: fuenteContada(fuente, o, ahora), paso: t.paso, permiso: t.permiso, caduca: e.caduca, ...(e.urgente ? { urgente: true } : {}) },
+  };
+}
+
+/**
+ * Revalida y, si lo único que pasó es que el hecho contado cambió (o lo guardado no traía su número), la REGENERA
+ * desde lo observado ahora. Puro. Lo que no vale por otra razón (caducada, resuelta, fuente caída…) no se regenera.
+ */
+export function revalidarORegenerar(p: Propuesta, f: FuentesVigentes, ahora = Date.now()): { vigente: true; propuesta: Propuesta; regenerada: boolean } | { vigente: false; motivo: MotivoNoVigente } {
+  const r = revalidarPropuesta(p, f, ahora);
+  if (r.vigente) return { vigente: true, propuesta: p, regenerada: false };
+  const motivo = (r as { motivo: MotivoNoVigente }).motivo;
+  if (motivo === 'hecho_cambiado' || motivo === 'sin_anclaje') {
+    const q = regenerarContada(p, f, ahora);
+    if (q && revalidarPropuesta(q, f, ahora).vigente) return { vigente: true, propuesta: q, regenerada: true };
+  }
+  return { vigente: false, motivo };
+}
+
+/** La entrada del historial dice lo que la persona tiene delante (para no repetirlo). */
+function anotarRegenerada(e: EstadoIniciativa, p: Propuesta) {
+  const h = e.historial.find((x) => x.id === p.id);
+  if (h) h.texto = p.texto;
 }
 
 /** Las fuentes del contexto, tal como las pasó quien llama. */
@@ -882,6 +974,7 @@ function sanearEvidencia(x: any): EvidenciaPropuesta | undefined {
   const fuente: FuentePropuesta = { tipo: tipos.includes(f.tipo) ? f.tipo : 'modelo', visto: Number(f.visto) || 0 };
   if (f.id) fuente.id = textoLinea(f.id, 40);
   if (Number.isFinite(Number(f.version)) && f.version !== null && f.version !== undefined) fuente.version = Number(f.version);
+  if (Number.isFinite(Number(f.valor)) && Number(f.valor) > 0) fuente.valor = Math.floor(Number(f.valor));
   if (f.motivo) fuente.motivo = textoLinea(f.motivo, 20);
   if (f.consulta) fuente.consulta = textoLinea(f.consulta, 20);
   const caduca = Number(x.caduca);
@@ -914,6 +1007,7 @@ function sanearPropuesta(x: any): Propuesta | null {
   const ev = sanearEvidencia(x?.evidencia);
   if (ev) p.evidencia = ev;
   if (Number(x?.noAntesDe) > 0) p.noAntesDe = Number(x.noAntesDe);
+  if (Number.isInteger(Number(x?.rev)) && Number(x.rev) > 1) p.rev = Number(x.rev);
   return p;
 }
 
@@ -1038,7 +1132,8 @@ export type ResultadoSiguiente = { propuesta: Propuesta | null; nueva: boolean; 
  * toca (ajuste, horas quietas de SU zona, tope del día, ritmo con su backoff), la primera de la cola que
  * no esté repetida y SIGA VIGENTE con las fuentes de ahora, o una nueva pensada ahora. La que se entrega
  * queda pendiente y en el historial. La pendiente también se revalida: un asunto que se resolvió mientras
- * tanto se retira («resuelta») en vez de volver a mostrarse.
+ * tanto se retira («resuelta») en vez de volver a mostrarse; un número que cambió (A2: 3→1) se regenera desde lo
+ * observado y se devuelve la MISMA propuesta actualizada (`motivo: 'actualizada'`, `nueva: false`).
  *
  * Lanza AlmacenNoDisponible si su estado no se pudo leer (no se escribe nada).
  */
@@ -1051,11 +1146,27 @@ export async function siguientePropuesta(persona: PersonaIniciativa, ctx: Contex
   // Lo de la persona por la vista autorizada (contextoAutorizado), también para revalidar lo pendiente.
   ctx = contextoAutorizado(ctx);
   const fuentes = fuentesDe(ctx);
-  const vale = (p: Propuesta) => !ctx.excluir?.(p) && revalidarPropuesta(p, fuentes, ahora).vigente;
+  // La versión que vale AHORA (A2): la misma si su hecho sigue igual; regenerada desde lo observado si el número
+  // cambió; null si no vale o la persona la apagó (también ya regenerada).
+  const vigente = (p: Propuesta): Propuesta | null => {
+    if (ctx.excluir?.(p)) return null;
+    const r = revalidarORegenerar(p, fuentes, ahora);
+    return r.vigente && !ctx.excluir?.(r.propuesta) ? r.propuesta : null;
+  };
   const { resultado } = await almacen.modificar(persona.correo, async (e): Promise<ResultadoSiguiente> => {
     caducar(e, ahora);
     if (e.pendiente) {
-      if (vale(e.pendiente)) return { propuesta: e.pendiente, nueva: false, motivo: 'pendiente' };
+      const actual = vigente(e.pendiente);
+      if (actual) {
+        // Regenerada: la MISMA propuesta (mismo id, misma entrega y caducidad) con el hecho de ahora. No es nueva:
+        // no cuenta en el ritmo ni en el tope del día y no se encola otro aviso (quien llama solo encola lo nuevo).
+        if (actual !== e.pendiente) {
+          e.pendiente = actual;
+          anotarRegenerada(e, actual);
+          return { propuesta: actual, nueva: false, motivo: 'actualizada' };
+        }
+        return { propuesta: e.pendiente, nueva: false, motivo: 'pendiente' };
+      }
       anotarSalida(e, e.pendiente.id, ctx.excluir?.(e.pendiente) ? 'suprimida' : 'resuelta', ahora);
       e.pendiente = null;
     }
@@ -1063,14 +1174,15 @@ export async function siguientePropuesta(persona: PersonaIniciativa, ctx: Contex
     const t = tocaProponer(e, nivel, ahora, reloj);
     if (!t.toca) return { propuesta: null, nueva: false, motivo: t.motivo };
     let origen: ResultadoSiguiente['origen'] = 'cola';
-    // Revalidar la cola: lo resuelto, lo caducado o lo apagado se va; lo pospuesto espera su fecha.
-    e.cola = quitarRepetidas(e.cola, e.historial, ahora).filter(vale);
+    // Revalidar la cola: lo resuelto, lo caducado o lo apagado se va; lo pospuesto espera su fecha; un número que
+    // cambió se regenera desde lo observado.
+    e.cola = quitarRepetidas(e.cola, e.historial, ahora).flatMap((q) => vigente(q) || []);
     const i = e.cola.findIndex((q) => !q.noAntesDe || q.noAntesDe <= ahora);
     let p = i >= 0 ? e.cola.splice(i, 1)[0] : null;
     if (!p) {
       const r = await pensarPropuestas(persona, { ...ctx, ahora, historial: e.historial });
       origen = r.origen;
-      const nuevas = r.propuestas.filter(vale);
+      const nuevas = r.propuestas.flatMap((q) => vigente(q) || []);
       p = nuevas[0] || null;
       e.cola = [...e.cola, ...nuevas.slice(1)].slice(0, 5);
     }
@@ -1087,6 +1199,29 @@ export async function siguientePropuesta(persona: PersonaIniciativa, ctx: Contex
     if (p.misionId) h.misionId = p.misionId;
     e.historial = [...e.historial, h].slice(-MAX_HISTORIAL);
     return { propuesta: p, nueva: true, motivo: 'nueva', origen };
+  });
+  return resultado;
+}
+
+/**
+ * REVALIDAR LO QUE SE VA A AVISAR contra lo GUARDADO (A2; el despacho, lib/avisos.ts procesarOutbox vía
+ * server/iniciativa.ts revalidarAhora). En UN paso del cajón de la persona (el mismo candado que siguientePropuesta y
+ * responderPropuesta): tiene que seguir siendo LA pendiente (contestada, retirada o reemplazada → `resuelta`); se
+ * revalida la versión guardada, no la copia de la outbox (que pudo quedar vieja); si el número cambió, se regenera y
+ * se guarda ahí mismo. Devuelve en `propuesta` la versión a entregar (mismo id: el sello y la fila de la outbox, que
+ * van por id, siguen dejando UNA entrega). Lo que no vale no se toca aquí: lo retira la próxima siguientePropuesta.
+ * Lanza AlmacenNoDisponible si el estado no se pudo leer.
+ */
+export async function revalidarPendiente(correo: string, id: string, f: FuentesVigentes, ahora = Date.now()): Promise<Revalidacion> {
+  const { resultado } = await almacen.modificar(correo, (e): Revalidacion => {
+    if (!e.pendiente || e.pendiente.id !== String(id || '')) return { vigente: false, motivo: 'resuelta' };
+    const r = revalidarORegenerar(e.pendiente, f, ahora);
+    if (!r.vigente) return r;
+    if (r.regenerada) {
+      e.pendiente = r.propuesta;
+      anotarRegenerada(e, r.propuesta);
+    }
+    return { vigente: true, propuesta: r.propuesta };
   });
   return resultado;
 }

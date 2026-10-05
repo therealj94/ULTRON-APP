@@ -14,11 +14,11 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { almacenDurable, PROCESO_DURABLE, type AlmacenDurable } from './durable';
+import { almacenDurable, huellaDueno, PROCESO_DURABLE, type AlmacenDurable } from './durable';
 import { VALIDADOR_MIN } from './entregables';
 import { pushConfigurado } from './push';
 import { pushWebConfigurado } from './push-web';
-import { ESQUEMA_INDICE, ESQUEMA_TAREAS } from './tareas-durables';
+import { ESQUEMA_INDICE, ESQUEMA_INVENTARIO, ESQUEMA_TAREAS, modoReconciliacion } from './tareas-durables';
 
 /** Versiones de los contratos entre piezas; se suben cuando cambia la forma de lo que viaja. */
 export const CONTRATOS = {
@@ -35,9 +35,10 @@ export const CONTRATOS = {
 /**
  * Las versiones de lo que se GUARDA (P5): si una versión vieja del servidor lee datos de una nueva, tiene que poder
  * decir qué esquema encontró. `misionesComputadora` 1: la misión durable de server/computadora.ts (P5/A6);
- * `indiceTareas` 2: el índice con `fin` (P5/A7; el v1 se sigue leyendo).
+ * `indiceTareas` 2: el índice con `fin` (P5/A7; el v1 se sigue leyendo); `inventarioTareas` 1: la marca de inventario
+ * reconciliado del índice (A7, auditoría del 5-oct).
  */
-export const ESQUEMA = { tareas: ESQUEMA_TAREAS, indiceTareas: ESQUEMA_INDICE, misionesComputadora: 1 } as const;
+export const ESQUEMA = { tareas: ESQUEMA_TAREAS, indiceTareas: ESQUEMA_INDICE, inventarioTareas: ESQUEMA_INVENTARIO, misionesComputadora: 1 } as const;
 
 export type ManifiestoBuild = {
   commit: string | null;
@@ -66,6 +67,8 @@ export function manifiestoBuild(o: { plataforma: 'aura' | 'electrum'; banderas?:
       push: pushConfigurado(),
       pushWeb: pushWebConfigurado(),
       serviceWorker: String(env.AURA_SW ?? '1').trim() !== '0',
+      // A7: ¿la reconciliación del inventario de tareas puede escribir (agregar lo que falta)? `AURA_RECONCILIAR_TAREAS`.
+      reconciliarTareas: modoReconciliacion(env) === 'agregar',
       ...(o.banderas || {}),
     },
   };
@@ -143,7 +146,48 @@ export async function manifiestoEntrega(
 
 /* ------------------------------------------------------------------ P5: ¿lee y escribe el almacén durable? */
 
-export type SaludAlmacen = { ok: boolean; tipo: string; multiReplica: boolean; lectura: boolean; escritura: boolean; ms: number; comprobado: string; detalle?: string };
+/**
+ * `listado`: si el almacén deja enumerar (A7, inventario de tareas por dueño). «ok» = una lista real contestó; «denegado» =
+ * el almacén lo rechazó (p. ej. sin `s3:ListBucket`): el inventario de tareas queda «sin reconciliar» y lo dice; «sin-fuente»
+ * = este almacén no sabe listar. No cambia `ok` (leer y escribir siguen siendo lo que decide la salud del almacén).
+ */
+export type SaludAlmacen = {
+  ok: boolean;
+  tipo: string;
+  multiReplica: boolean;
+  lectura: boolean;
+  escritura: boolean;
+  listado?: 'ok' | 'denegado' | 'sin-fuente';
+  ms: number;
+  comprobado: string;
+  detalle?: string;
+};
+
+/**
+ * El dueño sintético de la sonda: su carpeta de tareas tiene la MISMA forma que la de cualquier dueño
+ * (`tareas/<huella de 40 hex>`), pero nadie inicia sesión con un correo `.invalid`, así que está vacía.
+ */
+const DUENO_SONDA_LISTADO = 'sonda-listado@aura.invalid';
+/** `ESPACIO_TAREAS` de lib/tareas-durables.ts (no se importa: ese módulo arrastra mucho más que la salud). */
+const ESPACIO_TAREAS_SONDA = 'tareas';
+export const prefijoSondaListado = () => `${ESPACIO_TAREAS_SONDA}/${huellaDueno(DUENO_SONDA_LISTADO)}`;
+
+/**
+ * Una lista de UNA sola clave en el espacio de las tareas, con la misma forma de prefijo que usa el inventario
+ * (`tareas/<huella>`, lib/tareas-durables.ts `prefijoTareas`). Revisión 13: antes se probaba `salud/`, y un permiso de
+ * listar acotado por prefijo (p. ej. `s3:prefix` solo para `salud/*`, o solo para `tareas/*`) daba «ok» sin que el
+ * inventario pudiera listar, o al revés. Lo listado no sale de aquí (solo si contestó): el campo público sigue siendo
+ * ok/denegado/sin-fuente. Nunca lanza.
+ */
+async function sondearListado(a: AlmacenDurable): Promise<'ok' | 'denegado' | 'sin-fuente'> {
+  if (!a.listar) return 'sin-fuente';
+  try {
+    const l = await a.listar(prefijoSondaListado(), { max: 1 });
+    return l.ok ? 'ok' : 'denegado';
+  } catch {
+    return 'denegado';
+  }
+}
 
 let ultimoSondeo: { en: number; r: SaludAlmacen } | null = null;
 let sondeando: Promise<SaludAlmacen> | null = null;
@@ -181,7 +225,8 @@ export async function sondearAlmacen(a: AlmacenDurable = almacenDurable(), o: { 
       if (w.ok === false) return fin(true, false, w.detalle || 'conflicto al escribir');
       const despues = await a.leer<{ marca: string }>(clave);
       if (despues.ok === false) return fin(false, true, despues.detalle);
-      return despues.valor?.marca === marca ? fin(true, true) : fin(false, true, 'lo leído no es lo escrito');
+      if (despues.valor?.marca !== marca) return fin(false, true, 'lo leído no es lo escrito');
+      return { ...fin(true, true), listado: await sondearListado(a) };
     } catch (e: any) {
       return fin(false, false, String(e?.message || e));
     }

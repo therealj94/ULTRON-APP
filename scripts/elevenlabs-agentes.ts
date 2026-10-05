@@ -83,7 +83,7 @@ async function secreto(conservar = false): Promise<string> {
   return nuevo.secret_id;
 }
 
-const PRIMERA: Record<AvatarVoz, Record<Idioma, string>> = {
+export const PRIMERA: Record<AvatarVoz, Record<Idioma, string>> = {
   ojos: { es: 'Te escucho.', en: 'I’m listening.' },
   aura: { es: 'Aquí estoy. Te escucho.', en: 'I’m here. I’m listening.' },
   claudio: { es: '¡Aquí estoy! Cuéntame.', en: 'I’m here! Tell me.' },
@@ -108,7 +108,7 @@ export const RELLENOS: Record<'es' | 'en', string[]> = {
   en: ['Hmm… let me see.', 'Let me check.', 'One sec.', 'Hmm…'],
 };
 
-const ASENTIR: Record<Idioma, string[]> = {
+export const ASENTIR: Record<Idioma, string[]> = {
   es: ['ajá', 'sí', 'ok', 'okay', 'mhm', 'claro', 'ya', 'exacto', 'ah ok', 'vale'],
   en: ['uh-huh', 'yeah', 'yes', 'ok', 'okay', 'mhm', 'right', 'sure', 'got it'],
 };

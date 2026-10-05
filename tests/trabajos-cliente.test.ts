@@ -318,3 +318,20 @@ test('refsDeTurno: la respuesta del chat enlaza sus tareas; un servidor viejo no
   const r = refsDeTurno({ tareas: [{ id: 'tk_1', title: 'Correo para Ana', state: 'awaiting_approval', version: 1, updatedAt: '2026-10-03T15:00:00Z' }, { id: '' }] });
   assert.deepEqual(r.map((x) => x.id), ['tk_1']);
 });
+
+test('cliente (revisión 13): `conteo.recortadas` con su aviso en una lista COMPLETA no la vuelve parcial ni marca nada «sin confirmar»', async () => {
+  const c = crearClienteTrabajos(async () => ({
+    status: 200,
+    json: { tareas: [tarea({ id: 'a' })], completo: true, conteo: { activas: 1, terminadas: 200, indice: 201, noLeidas: 0, recortadas: 5 }, aviso: 'Tu lista guarda solo tus 200 tareas terminadas más recientes: 5 terminadas más antiguas ya no salen aquí.' },
+  }));
+  const r = await c.listar();
+  assert.ok(r.ok);
+  if (!r.ok) return;
+  assert.equal(r.completo, true, 'las recortadas no hacen la lista incompleta');
+  // El reductor: completa manda (quita lo que ya no viene, sin «sin confirmar») y no muestra el aviso como fallo.
+  let s = reducir(estadoInicial(), { tipo: 'lista', tareas: [tarea({ id: 'a' }), tarea({ id: 'vieja' })], en: T0 });
+  s = reducir(s, { tipo: 'lista', tareas: r.tareas, en: T0 + 1, completo: r.completo, aviso: r.aviso });
+  assert.deepEqual(s.orden, ['a']);
+  assert.equal(s.porId.a.sinConfirmar, undefined);
+  assert.equal(s.aviso, null);
+});

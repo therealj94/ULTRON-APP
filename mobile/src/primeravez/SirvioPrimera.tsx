@@ -3,16 +3,35 @@
  * pedido ya dio algo (útil o parcial; nunca por la petición escrita en la caja). Es la misma pregunta que la
  * web hace sobre la última respuesta (src/13-trabajo/Conversacion.tsx). Si el resultado fue parcial, dice
  * QUÉ faltó (la fuente o la parte), para que no quede escondido.
+ *
+ * Mientras el primer pedido espera sus tareas y alguna ya terminó (auditoría del 5-oct, R1), solo el progreso
+ * («1 de 2 tareas listas»): sin pregunta, porque el resultado todavía no es el de todas.
  */
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { tr } from '../i18n';
 import { useTema } from '../nucleo/tema';
-import type { PrimerResultado } from '../lib/primerResultado';
+import { avancePrimer, type PrimerResultado } from '../lib/primerResultado';
 
 type Props = { registro: PrimerResultado; onOpinar: (sirvio: boolean) => void };
 
 export function SirvioPrimera({ registro, onOpinar }: Props) {
   const tema = useTema();
+  const avance = avancePrimer(registro);
+  if (avance) {
+    const espera = avance.sinLeer
+      ? tr(`No pude leer ${avance.sinLeer === 1 ? 'una de ellas' : `${avance.sinLeer} de ellas`}; lo sigo intentando.`, `Couldn’t read ${avance.sinLeer} of them; still trying.`)
+      : tr('Espero a las demás antes de darlo por terminado.', 'Waiting for the rest before calling it done.');
+    return (
+      <View style={[s.caja, { backgroundColor: tema.superficie2, borderColor: tema.borde }]} accessibilityRole="summary" accessibilityLiveRegion="polite">
+        <Text style={[s.pregunta, { color: tema.texto }]} numberOfLines={2}>
+          {tr(`Tu primer pedido: ${avance.listas} de ${avance.total} tareas listas.`, `Your first request: ${avance.listas} of ${avance.total} tasks done.`)}
+        </Text>
+        <Text style={[s.faltan, { color: tema.texto2 }]} numberOfLines={2}>
+          {espera}
+        </Text>
+      </View>
+    );
+  }
   const faltan = registro.estado === 'parcial' ? registro.faltantes || [] : [];
   return (
     <View style={[s.caja, { backgroundColor: tema.superficie2, borderColor: tema.borde }]} accessibilityRole="summary">

@@ -7,10 +7,10 @@
  * hubiera video; la mesa (CuerpoMesa) y la llamada (CuerpoLlamada) ya elegían el video. Ahora todos
  * eligen igual, aquí.
  */
-import { forwardRef, useState, type ReactNode } from 'react';
+import { forwardRef, useState, type ForwardedRef, type ReactNode } from 'react';
 import { AvatarVivo, type ControlCuerpo } from './AvatarVivo';
 import type { PropsCuerpo } from './contrato';
-import { CuerpoVideo } from '../avatares/video/CuerpoVideo';
+import { CuerpoVideo, type ControlVideo } from '../avatares/video/CuerpoVideo';
 import { hayVideo } from '../avatares/video/clips';
 import { OrbeMini } from './OrbeMini';
 
@@ -27,7 +27,8 @@ export const CuerpoElegido = forwardRef<ControlCuerpo, Props>(function CuerpoEle
   // AU-RA es su orbe (José, 3-oct: «en chat sigue saliendo el aura viejo»): ni el robot 3D ni la figurita dorada.
   if (avatar === 'aura') return <OrbeMini lado={Math.min(ancho, alto)} estado={estado} activo={activo} />;
   if (hayVideo(avatar) && !sinVideo) {
-    return <CuerpoVideo ref={ref} avatar={avatar} camara={camara} estado={estado} ancho={ancho} alto={alto} respaldo={respaldo} activo={activo} saludar={saludar} onFallo={() => setSinVideo(true)} />;
+    // El video da más que ControlCuerpo (la mano del sable, sostener el clip): aquí solo se usa la zona.
+    return <CuerpoVideo ref={ref as ForwardedRef<ControlVideo>} avatar={avatar} camara={camara} estado={estado} ancho={ancho} alto={alto} respaldo={respaldo} activo={activo} saludar={saludar} onFallo={() => setSinVideo(true)} />;
   }
   return <AvatarVivo ref={ref} avatar={avatar} camara={camara} estado={estado} ancho={ancho} alto={alto} fpsMax={fpsMax} respaldo={respaldo} activo={activo} />;
 });

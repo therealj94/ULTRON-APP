@@ -2,7 +2,7 @@
  * LAS TAREAS DURABLES EN EL SERVIDOR (AUR08): las rutas del panel de tareas y los ganchos con que el chat
  * crea la tarea ANTES de hacer el trabajo durable y la enlaza desde su respuesta.
  *
- *   GET  /api/trabajos[?limite&cursor]          → { tareas: TaskSnapshot[], resumen: {trabajando, decisiones}, completo, siguiente, conteo, aviso? }
+ *   GET  /api/trabajos[?limite&cursor]          → { tareas: TaskSnapshot[], resumen: {trabajando, decisiones}, completo, reconciliado, inventario, siguiente, conteo, aviso? }
  *   GET  /api/trabajos/:id                      → { tarea }
  *   GET  /api/trabajos/:id/eventos?desde=N      → { eventos, cursor, resync, tarea }   (polling con cursor)
  *   POST /api/trabajos {requestId, titulo, objetivo?}                  → { tarea } (201 nueva, 200 la misma)
@@ -47,6 +47,7 @@ import {
   leerTarea,
   listarTareas,
   listarTareasPagina,
+  MAX_HISTORIAL_INDICE,
   opcionesAprobacion,
   reconciliarConComputadora,
   reconciliarInvestigacion,
@@ -759,7 +760,13 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
    * página y `siguiente` (el cursor de la próxima; null si no hay más). Siempre:
    *   · `completo`: false si alguna tarea del índice (o el historial de su computadora) no se pudo leer, con `aviso` y
    *     `conteo.noLeidas`. Un fallo del almacén nunca es «no hay tareas»: si además no queda nada que mostrar, 503;
-   *   · `conteo`: { activas, terminadas, indice, noLeidas } según el índice (las activas nunca se recortan).
+   *   · A7: `completo` también es false mientras el inventario del dueño no esté reconciliado (`reconciliado: false`,
+   *     `inventario.estado` y un `aviso`), aunque cada tarea del índice se haya leído: un índice de antes podía no
+   *     tenerlas todas. Eso no es un fallo de lectura: 200 con lo que hay (también si no hay nada), nunca 503;
+   *   · `conteo`: { activas, terminadas, indice, noLeidas, recortadas } según el índice (las activas nunca se recortan).
+   *     `recortadas` (revisión 13): terminadas más viejas que siguen existiendo pero que el tope del historial ya no lista.
+   *     No hacen la lista incompleta (`completo` puede ser true), pero no se callan: con alguna, va un `aviso` que lo dice.
+   *     Una app de antes ignora el campo (y el aviso de una lista completa: solo lo muestra con `completo: false`).
    * Las tareas en curso de las conversaciones y las misiones de su computadora van en la primera página.
    */
   app.get('/api/trabajos', d.exigirMesa, d.limitar(90), async (req, res) => {
@@ -784,14 +791,37 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
     ].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
     const completo = l.completo && pc;
     const faltan = l.conteo.noLeidas;
+    // A7: «leí bien la página» y «tu inventario está reconciliado» son dos cosas. Sin reconciliar, lo que se ve es real
+    // pero no se promete que esté todo (ni se confunde con una lista vacía: va con su aviso).
+    const avisoInventario = l.reconciliado
+      ? ''
+      : l.inventario === 'en-curso'
+        ? 'Estoy revisando tus tareas antiguas: puede faltar alguna en esta lista mientras termino.'
+        : 'No pude confirmar que esta lista tenga todas tus tareas antiguas: las que ves son reales, pero puede faltar alguna.';
+    const recortadas = Number(l.conteo.recortadas) || 0;
+    const avisoRecortadas = recortadas
+      ? `Tu lista guarda solo tus ${MAX_HISTORIAL_INDICE} tareas terminadas más recientes: ${recortadas === 1 ? 'una terminada más antigua ya no sale' : `${recortadas} terminadas más antiguas ya no salen`} aquí.`
+      : '';
     const aviso = completo
-      ? undefined
-      : [faltan ? `No pude leer ${faltan === 1 ? 'una de tus tareas' : `${faltan} de tus tareas`} en este momento; no es que no exista${faltan === 1 ? '' : 'n'}.` : '', pc ? '' : 'No pude leer el historial de tu computadora en este momento.']
+      ? avisoRecortadas || undefined
+      : [faltan ? `No pude leer ${faltan === 1 ? 'una de tus tareas' : `${faltan} de tus tareas`} en este momento; no es que no exista${faltan === 1 ? '' : 'n'}.` : '', pc ? '' : 'No pude leer el historial de tu computadora en este momento.', avisoInventario, avisoRecortadas]
           .filter(Boolean)
           .join(' ');
-    const cuerpo = { tareas, resumen: resumenTareas(tareas, t), generado: new Date(t).toISOString(), completo, siguiente: l.siguiente, conteo: l.conteo, ...(aviso ? { aviso } : {}), honesto: true };
-    // Nada que mostrar y algo que no se pudo leer: no es «0 tareas». Una app de antes ve el error de siempre.
-    if (!completo && !tareas.length) return res.status(503).json({ ...cuerpo, error: aviso || 'No pude leer tus tareas en este momento. Prueba otra vez en un rato.', code: 'almacen_no_disponible' });
+    const cuerpo = {
+      tareas,
+      resumen: resumenTareas(tareas, t),
+      generado: new Date(t).toISOString(),
+      completo,
+      reconciliado: l.reconciliado,
+      inventario: { estado: l.inventario },
+      siguiente: l.siguiente,
+      conteo: l.conteo,
+      ...(aviso ? { aviso } : {}),
+      honesto: true,
+    };
+    // Nada que mostrar y algo que no se pudo LEER: no es «0 tareas». Una app de antes ve el error de siempre. (Un inventario
+    // sin reconciliar con todo leído no es un fallo de lectura: 200 con `completo: false` y su aviso.)
+    if ((!l.paginaLeida || !pc) && !tareas.length) return res.status(503).json({ ...cuerpo, error: aviso || 'No pude leer tus tareas en este momento. Prueba otra vez en un rato.', code: 'almacen_no_disponible' });
     return res.json(cuerpo);
   });
 
