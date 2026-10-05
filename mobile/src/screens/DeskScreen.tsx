@@ -20,6 +20,7 @@ import { esVencida } from '../lib/intentoEntrada';
 import { generacionCuenta, sigueVigente } from '../lib/cuenta';
 import { api, CANCIONES_LOCAL, consultarTurnoGuardado, healthCheck, listCanciones, nuevoIdTurno, olvidarMemoriaServidor, opinarTurno, rememberFact, turno, turnoStream, verCamara, type Cancion, type ChatResult, type Turn } from '../lib/api';
 import { faceForEmocion, type Emocion } from '../lib/emocion';
+import { clasificarFallo, migaFalloTurno, reintentarFallo } from '../lib/falloTurno';
 import { GENEROS, generoPorId, interpretar, type Gag } from '../lib/intenciones';
 import { ayuda, CONOCER_CORE, CONOCER_QUESTIONS, fechaLocal, horaLocal, preguntaConocer } from '../lib/knowledge';
 import { lineas, lineasGag } from '../lib/lineas';
@@ -1017,6 +1018,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       };
       turnoCancelado.current = false;
       const t0Turno = Date.now();
+      /** Por qué cayó el stream (su error, nunca lo que dijo la persona): va en la miga si el turno no trae respuesta. */
+      let errorStream: string | null | undefined = opts?.image ? undefined : null;
       try {
         // 1) Streaming: la cara reacciona con `emocion` antes del primer delta y habla por oraciones.
         if (!opts?.image) {
@@ -1118,15 +1121,19 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
               settle();
               return;
             }
+            errorStream = result.error || `sin texto (${result.cierre || 'sin cierre'})`;
           } catch (e) {
             if (speaker) (speaker as StreamSpeaker).cancel();
             cancelMmm();
             // De una sesión que ya no está (salió o entró otra persona): ni se repite por JSON ni se dice nada.
             if (turnoCancelado.current || esVencida(e)) return;
+            errorStream = String((e as Error)?.message || e || 'error');
             // Si el stream ya se comió más de 20 s, el servidor sí tiene stream y está lento: repetir la
             // misma espera con JSON (70 s, y otro intento) dejaba a la mesa «pensando» unos 3 minutos.
             if (Date.now() - t0Turno > 20_000) {
               paraPrimer = { reply: '', error: 'timeout' };
+              // Por qué, en los logs del servidor y ya (no al próximo aviso): el error del stream, sin texto de la persona.
+              reportarEstado(migaFalloTurno({ dijo: 'hilo', idTurno, ms: Date.now() - t0Turno, stream: errorStream }));
               setToolHint('');
               await say(tr('Se me fue el hilo pensando eso. ¿Me lo repites?', 'I lost my train of thought on that. Could you repeat it?'), 'CONFUSED', { emocion: 'preocupado' });
               return;
@@ -1138,21 +1145,27 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         // 2) JSON clásico (visión o servidor sin stream).
         if (!reacted) setFace('THINKING');
         let out = await turno(base, genTurno);
+        let intentosJson = 1;
         cancelMmm();
         if (turnoCancelado.current || out.vencida) return;
         const failed = (r: { error?: string; reply?: string }) => !!(r.error || !r.reply);
-        if (failed(out) && Date.now() - t0Turno < 30_000) {
+        // Un 429 no se repite: pedirApi ya esperó lo que pidió el servidor, y otro pedido gastaría otro turno.
+        if (failed(out) && reintentarFallo(out) && Date.now() - t0Turno < 30_000) {
           await new Promise((r) => setTimeout(r, 800));
           if (turnoCancelado.current || !sigueVigente(genTurno)) return;
           out = await turno(base, genTurno);
+          intentosJson += 1;
           if (turnoCancelado.current || out.vencida) return;
         }
         setToolHint('');
         emitirAccionesDelTurno(out);
         paraPrimer = out;
         if (failed(out)) {
-          const auth = /sesión|privado|401/i.test(String(out.error || ''));
-          if (auth) {
+          const clase = clasificarFallo(out);
+          // José, 5-oct: «No alcanzo al cerebro remoto» sin nada en los logs. La miga dice qué pasó en cada
+          // camino (error, HTTP, código; sin lo que dijo la persona) y se manda YA, no al próximo aviso.
+          reportarEstado(migaFalloTurno({ dijo: clase, idTurno, ms: Date.now() - t0Turno, stream: errorStream, json: out, intentosJson }));
+          if (clase === 'sesion') {
             setOnline(true);
             await say(tr('Se me cerró la sesión de la mesa. Entra de nuevo y te oigo.', 'My desk session closed. Sign in again and I’ll hear you.'), 'CONCERNED', { emocion: 'preocupado' });
             Alert.alert(tr('Sesión cerrada', 'Session closed'), tr('Tu sesión de la mesa se cerró. Entra de nuevo para seguir.', 'Your desk session closed. Sign in again to continue.'), [
@@ -1161,10 +1174,21 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
             ]);
             return;
           }
+          // El servidor llegó y dijo la verdad: sigue con ese mismo turno (409) o va muy rápido (429). Se dice eso
+          // (su frase honesta), no «no alcanzo al cerebro»: el cerebro está, y la mesa sigue en línea.
+          if (clase === 'en-curso' || clase === 'rapido') {
+            const honesta =
+              out.error && !/^HTTP \d+$/.test(out.error)
+                ? out.error
+                : clase === 'en-curso'
+                  ? tr('Sigo con eso que me pediste. Dame un momento y pregúntame otra vez.', 'I’m still working on that. Give me a moment and ask me again.')
+                  : tr('Vas muy rápido. Dame un minuto y seguimos.', 'You’re going too fast. Give me a minute and we’ll continue.');
+            await say(honesta, 'CONCERNED', { emocion: 'preocupado' });
+            return;
+          }
           setOnline(false);
           // Sin red de verdad (el teléfono no llega a nada): la frase corta de siempre (lib/frases.ts), que sale de la caché de audio.
-          const sinRed = /network|red\b|conexi[oó]n|timeout|abort/i.test(String(out.error || ''));
-          await say(sinRed ? frase('sinconexion') : tr('No alcanzo al cerebro remoto ahora. Sigo contigo con lo básico.', 'I can’t reach the remote brain right now. I’m still here with the basics.'), 'CONFUSED', { emocion: 'preocupado' });
+          await say(clase === 'sin-red' ? frase('sinconexion') : tr('No alcanzo al cerebro remoto ahora. Sigo contigo con lo básico.', 'I can’t reach the remote brain right now. I’m still here with the basics.'), 'CONFUSED', { emocion: 'preocupado' });
           return;
         }
         setOnline(true);

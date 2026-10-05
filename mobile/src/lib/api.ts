@@ -387,6 +387,9 @@ export type ChatResult = {
    * reconciliando tras una caída (`reconciliando`). No es un resultado (lib/primerResultado.ts).
    */
   pendiente?: boolean;
+  /** Solo un turno que falló por JSON: el estado HTTP y el código del servidor (para la miga, lib/falloTurno.ts). */
+  status?: number;
+  codigo?: string;
 };
 
 type TurnoOpts = {
@@ -514,7 +517,17 @@ export async function turno(opts: TurnoOpts, gen = generacionCuenta()): Promise<
   } catch (e: any) {
     // De una sesión que ya no está: quien llamó no dice nada (ni «sin conexión») a la persona de ahora.
     if (esVencida(e)) return { reply: '', emocion: 'neutral', error: e.message, vencida: true };
-    return { reply: '', emocion: 'neutral', error: e?.message || 'Sin conexión al cerebro', ...(e?.status === 409 && e?.data?.enCurso ? { pendiente: true } : {}) };
+    // El estado y el código del servidor viajan con el fallo: la mesa los deja en su miga (lib/falloTurno.ts).
+    const status = typeof e?.status === 'number' ? e.status : undefined;
+    const codigo = e?.data?.code || e?.data?.codigo;
+    return {
+      reply: '',
+      emocion: 'neutral',
+      error: e?.message || 'Sin conexión al cerebro',
+      ...(status ? { status } : {}),
+      ...(codigo ? { codigo: String(codigo) } : {}),
+      ...(e?.status === 409 && e?.data?.enCurso ? { pendiente: true } : {}),
+    };
   }
 }
 

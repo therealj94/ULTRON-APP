@@ -8,6 +8,7 @@ import { createServer as createViteServer } from 'vite';
 import { crearComprobadorListo } from './lib/nodo-listo';
 import { modoDesarrollo } from './lib/entorno';
 import { sanearDiag } from './lib/diag-saneador';
+import { anotarEventoTurno, medirTurno } from './server/registro-turno';
 import { autocuraDe, fetchNodo, saludNodo, nodoConfigurado, precalentarSistema, NODO_URL as ULTRON_NODO_URL, NODO_SECRETO as ULTRON_NODO_SECRETO, NODO_MODELO as ULTRON_NODO_MODELO } from './lib/nodo';
 import { JUNTA, buildPersonality, decodeDataUrl, normalizarCorreo, buscarWeb, leerPagina } from './server/desk';
 import { hablar, abrirVozEnVivo, pasarVozEnVivo, cantar, orar, repertorio, cancionPorPedido, estadoVoz, saludVoz, vozDe, sinEtiquetas } from './server/voz';
@@ -125,7 +126,7 @@ import { correrTriajeConEstado } from './lib/triaje';
 import { fichaManosPrompt } from './lib/manos-ficha';
 import { fichaMenuPrompt } from './lib/menu-app';
 import { conApodoDelTurno, lineaApodoPendiente } from './lib/apodo';
-import { emitirSesion, borrarSesion, cerrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica, mesaAutorizada, cuerpoHttp, gastarCupo, esperaEntrada, anotarFalloEntrada, anotarExitoEntrada, cargarSesionesCerradas } from './server/seguridad';
+import { emitirSesion, borrarSesion, cerrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica, mesaAutorizada, cuerpoHttp, cupoPorFrase, esperaEntrada, anotarFalloEntrada, anotarExitoEntrada, cargarSesionesCerradas } from './server/seguridad';
 import { canales, leerPdf, telegramFoto, telegramVoz } from './lib/canales';
 import { catalogoCanales, fotoSistema } from './lib/sistema';
 import { despacharTaller, ejecutarAprobadoTaller, hechosCatalogo, proponerCapturaTaller, vinculoTallerVigente, type PropuestaTallerVista } from './lib/taller';
@@ -2569,13 +2570,12 @@ const TURNOS_MIEMBRO_MIN = Math.max(1, Number(process.env.TURNOS_MIEMBRO_MIN) ||
  * El cupo por PERSONA de los miembros: muchos teléfonos de la comunidad pueden salir por la misma IP
  * (una red móvil) y uno solo puede rotar de IP. La junta sigue solo con el cupo por IP de siempre.
  */
-function cupoDeMiembro(req: express.Request, res: express.Response, next: express.NextFunction) {
+// Por FRASE (server/seguridad.ts, cupoPorFrase): los reintentos de la app con el mismo idTurno no gastan otra vez.
+const cupoDeMiembro = cupoPorFrase((req) => {
   const s = sesionDe(req);
-  if (!s || ES_ELECTRUM || nivelDeCorreo(s.correo) !== 'miembro') return next();
-  if (gastarCupo(`turno-miembro:${s.correo.toLowerCase()}`, TURNOS_MIEMBRO_MIN)) return next();
-  res.setHeader('Retry-After', '60');
-  return res.status(429).json({ error: 'Vas muy rápido. Dame un minuto y seguimos.', code: 'demasiados_turnos', honesto: true });
-}
+  if (!s || ES_ELECTRUM || nivelDeCorreo(s.correo) !== 'miembro') return null;
+  return `turno-miembro:${s.correo.toLowerCase()}`;
+}, TURNOS_MIEMBRO_MIN);
 
 /**
  * El correo con que se guarda la memoria personal de un MIEMBRO (lib/memoria-miembro.ts): el de su
@@ -4508,7 +4508,8 @@ app.post('/api/turno/repetir', exigirMesaODesk, limitar(60), async (req, res) =>
   return responderSoloRepetir(req, res, await consultarTurno(claveDelTurno(req, body)));
 });
 
-app.post('/api/turno', exigirMesaODesk, limitar(60), cupoDeMiembro, async (req, res) => {
+// medirTurno va primero: un turno que falla (también por la sesión o el cupo) o tarda deja UNA línea, sin contenido.
+app.post('/api/turno', medirTurno('json'), exigirMesaODesk, limitar(60), cupoDeMiembro, async (req, res) => {
   const body = cuerpoTurnoHttp(req);
   // R1 (revisión 9): con `soloRepetir` solo se lee lo guardado de ese idTurno; nunca se corre el cerebro.
   if ((body as Record<string, unknown>).soloRepetir === true) return responderSoloRepetir(req, res, await consultarTurno(claveDelTurno(req, body)));
@@ -4634,7 +4635,7 @@ function turnoVozEnVivo(t: TurnoVoz): Promise<void> {
  * Aplica el mismo harness que /api/turno: si el 27B pide una herramienta, se corre y se
  * vuelve a preguntar; el usuario nunca oye «PEDIR_HERRAMIENTA» ni lee «ACCION_APP».
  */
-app.post('/api/turno/stream', exigirMesaODesk, limitar(60), cupoDeMiembro, async (req, res) => {
+app.post('/api/turno/stream', medirTurno('stream'), exigirMesaODesk, limitar(60), cupoDeMiembro, async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store, no-transform');
   res.setHeader('X-Accel-Buffering', 'no');
@@ -4647,6 +4648,8 @@ app.post('/api/turno/stream', exigirMesaODesk, limitar(60), cupoDeMiembro, async
   });
   const body = cuerpoTurnoHttp(req);
   const escribir = (evento: string, datos: unknown) => {
+    // Cómo terminó (el `error` o el `done`), para la línea del turno que falla (server/registro-turno.ts).
+    anotarEventoTurno(res.locals.notasTurno, evento, datos);
     if (!corte.signal.aborted && !res.writableEnded) res.write(`event: ${evento}\ndata: ${JSON.stringify(datos)}\n\n`);
   };
   // Un reintento de la app con el mismo `idTurno` (server/turno-unico.ts): si ese turno sigue en curso
