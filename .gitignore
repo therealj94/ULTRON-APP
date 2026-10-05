@@ -32,3 +32,6 @@ windows/centro/node_modules/
 build-server/
 # Lo durable sin S3 (lib/durable.ts: turnos, operaciones, leases): estado local, nunca al repositorio.
 data/durable/
+# Las voces que conoce AURA (lib/voces-miembro.ts: números de cada cuenta) y el modelo que se baja solo.
+data/voces/
+data/modelos-voz/

@@ -181,6 +181,24 @@ export class MotorTurbo {
     this.cb = cb;
   }
 
+  /**
+   * Quien quiere el AUDIO de cada frase entregada (las voces, mobile/src/voces: ¿quién habló?). Se llama
+   * con los trozos PCM de la frase justo antes de `onFinal`, solo para las frases que sí se entregan.
+   * Aparte de los callbacks: la fachada (lib/speech.ts) los reemplaza enteros.
+   */
+  private oyenteAudio: ((trozos: string[], texto: string) => void) | null = null;
+  setOyenteAudio(fn: ((trozos: string[], texto: string) => void) | null) {
+    this.oyenteAudio = fn;
+  }
+  private darAudio(trozos: string[], texto: string) {
+    if (!this.oyenteAudio || !trozos.length) return;
+    try {
+      this.oyenteAudio(trozos, texto);
+    } catch {
+      /* el oyente nunca rompe la frase */
+    }
+  }
+
   // ── lo que pide la fachada (lib/speech.ts) ────────────────────────────────────────────────────
   activar() {
     this.quiere = true;
@@ -748,6 +766,7 @@ export class MotorTurbo {
         }
         if (g === this.gen && this.quiere && !this.pausado) {
           this.medir(m, via);
+          this.darAudio(trozos, texto);
           this.cb.onFinal?.(texto);
         }
       })
@@ -764,6 +783,7 @@ export class MotorTurbo {
         const texto = limpiarFinal((await this.conTope(this.deps.transcribirWav(wavDeTrozos(trozos), false), 16_000)) || '');
         if (texto && g === this.gen && this.quiere && !this.pausado) {
           this.medir(m, 'respaldo');
+          this.darAudio(trozos, texto);
           this.cb.onFinal?.(texto);
         }
       })

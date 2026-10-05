@@ -97,6 +97,8 @@ export type AppSettings = {
   carasActivas: Record<string, number>;
   /** La cámara de la mesa: la frontal (te ve a ti) o la trasera (lo que tienes delante). Se cambia con «voltea la cámara». */
   camaraLado?: 'frontal' | 'trasera';
+  /** Quién activó el reconocimiento de voces (por correo → cuándo). Sin esto no sale ningún audio a las voces. */
+  vocesActivas: Record<string, number>;
   /** Quién ya vio (o saltó para siempre) el recorrido de primera vez (por correo). */
   tutorialVisto: Record<string, boolean>;
   /** Qué versión del recorrido vio cada quien (por correo; tutorial/pasos.ts VERSION_RECORRIDO). */
@@ -132,6 +134,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   idioma: 'es',
   camaraSiempre: {},
   carasActivas: {},
+  vocesActivas: {},
   tutorialVisto: {},
   recorridoVisto: {},
   recorridoPospuesto: {},

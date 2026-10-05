@@ -22,6 +22,8 @@ import { ESPACIO_COMUN, espacioDe } from './lib/espacio-nodo';
 import { cargarMiembro, fotoMemoriaMiembro, guardarHechoMiembro, hiloMiembro, olvidarMiembro, recordarTurnoMiembro } from './lib/memoria-miembro';
 import { montarRutasApp } from './server/app-rutas';
 import { montarRutasCaras } from './server/caras-rutas';
+import { montarRutasVoces } from './server/voces-rutas';
+import { reglaQuienHabla } from './lib/voces-miembro';
 import { avisarComputadoraPorPush, avisarPush, llamarPorPush, montarRutasPush, proponerPorPush } from './server/push';
 import { montarRutasWindows, instruccionWindows } from './server/windows-rutas';
 import { actualizarPerfil, leerPerfil, perfilEnCache, sembrarDesdeGenesis, type Perfil } from './lib/perfil-persona';
@@ -292,7 +294,7 @@ app.use(redirigirADominio);
 const leerJson = express.json({ limit: '1mb' });
 const leerJsonGrande = express.json({ limit: '12mb' });
 /** AU-RA: turnos con foto o PDF, la visión y el oído (el teléfono manda el audio dos veces, en base64). */
-const CUERPO_GRANDE_AURA = ['/api/turno', '/api/turno/stream', '/api/vision/analyze', '/api/stt'];
+const CUERPO_GRANDE_AURA = ['/api/turno', '/api/turno/stream', '/api/vision/analyze', '/api/stt', '/api/voces/aprender'];
 /** Dr Electrum: foto, audio, el mapa del informe, el polígono del área y las cargas por lote. */
 const CUERPO_GRANDE_ELECTRUM = ['/api/electrum/ver', '/api/electrum/oir', '/api/electrum/informe', '/api/electrum/area/analizar', '/api/electrum/area/informe', '/api/electrum/muestras/cargar', '/api/electrum/satelite/cargar'];
 function cuerpoGrandePermitido(req: express.Request): boolean {
@@ -1606,6 +1608,8 @@ montarRutasApp(app, {
 
 // Las caras que conoce AURA, con permiso y por persona (solo números, nunca fotos).
 montarRutasCaras(app, { exigirMesa, limitar, sesionDe });
+// Las voces que conoce AURA (quién habla), con permiso y por persona (solo números, nunca el audio).
+montarRutasVoces(app, { exigirMesa, limitar, sesionDe });
 // Avisos al teléfono con la app cerrada (FCM): registrar el token, quitarlo, probar y estado (server/push.ts).
 montarRutasPush(app, { exigirMesa, limitar, sesionDe });
 
@@ -3087,11 +3091,14 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
       hechos.push('Responde con lo que dicen las fuentes y el hilo. Si el usuario dijo «esto», es el tema o la URL anterior. No pidas otra vez el enlace. Si las fuentes no contestan, dilo.');
     }
     // Escena que la cámara local ya interpretó (MediaPipe en la web, ML Kit en la APK): quién está y qué hace.
-    const escena = String(body?.escena || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+    const escena = String(body?.escena || '').replace(/\s+/g, ' ').trim().slice(0, 400);
     const preguntaPorVer = /\b(qu[eé] ves|qu[eé] hay aqu[ií]|qui[eé]n (est[aá]|hay|anda)( aqu[ií]| ah[ií]| conmigo)?|me ves|c[oó]mo me ves|estoy solo|cu[aá]ntos somos|qu[eé] cara tengo|me veo)\b/.test(q);
     if (escena) {
       hechos.push(`ESCENA (tu cámara, ahora mismo): ${escena}${preguntaPorVer ? '' : ' (úsalo solo si viene al caso; no lo recites sin motivo).'}`);
       tools.push('escena');
+      // Las voces (mobile/src/voces): si la voz dice que quien pide NO es la dueña, lo privado no se le lee.
+      const quienHabla = reglaQuienHabla(escena);
+      if (quienHabla) hechos.push(quienHabla);
     }
     const image = body?.image;
     // Lo que la cámara de la app ya vio con orden (/api/vision/analyze modo estructurado): el hecho
