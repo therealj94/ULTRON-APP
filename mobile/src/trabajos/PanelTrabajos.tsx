@@ -1,7 +1,8 @@
 /**
- * EL PANEL DE TAREAS (AUR08, sección 6): lo que AURA hace por ti fuera del turno, en tres grupos —
- * pendientes de decisión, activas y recientes— con su objetivo, dónde se hace, el paso actual, el progreso
- * real («3 de 5 pasos», nunca un porcentaje), la última señal, los controles y el resultado.
+ * EL PANEL DE TAREAS (AUR08, sección 6): lo que AURA hace por ti fuera del turno, en cuatro grupos —
+ * pendientes de decisión, las que esperan que sigas (la tarea en curso de la conversación: no trabaja por detrás),
+ * activas y recientes— con su objetivo, dónde se hace, el paso actual, el progreso real («3 de 5 pasos», nunca un
+ * porcentaje), la última señal (nunca en una que te espera), los controles y el resultado.
  *
  * Cerrar el panel NO cancela nada (lo dice arriba). Cada control llama al servidor y pinta lo que el
  * servidor contesta (el backend es la fuente de verdad); un error es recuperable y dice que no se ejecutó.
@@ -19,13 +20,13 @@ import {
   ARMADO_MS,
   criteriosEnPalabras,
   etiquetaBoton,
-  etiquetaEstado,
-  gira,
+  etiquetaTarea,
+  giraTarea,
   grupos,
-  haceCuanto,
   opcionesTarjeta,
   puedeActivar,
   textoProgreso,
+  ultimaSenal,
   type ResultadoAccion,
   type TareaVista,
 } from '../lib/trabajos';
@@ -49,7 +50,7 @@ type Props = {
 
 export function PanelTrabajos({ visible, onCerrar, tareas, aviso, reducido, idioma, onTarea, onRefrescar, onEditar, onAbrirComputadora }: Props) {
   const g = useMemo(() => grupos(tareas), [tareas]);
-  const vacio = !g.decisiones.length && !g.activas.length && !g.recientes.length;
+  const vacio = !g.decisiones.length && !g.esperan.length && !g.activas.length && !g.recientes.length;
   const variasDecisiones = g.decisiones.length > 1;
   const comun = { reducido, idioma, onTarea, onRefrescar, onEditar, onAbrirComputadora, variasDecisiones };
   return (
@@ -65,6 +66,8 @@ export function PanelTrabajos({ visible, onCerrar, tareas, aviso, reducido, idio
         </Texto>
       ) : null}
       {g.decisiones.length ? <Seccion titulo={tr('Necesitan tu decisión', 'Need your decision')} tareas={g.decisiones} {...comun} /> : null}
+      {/* La tarea en curso de la conversación: espera que sigas; no va en «En marcha» (eso es trabajo de fondo). */}
+      {g.esperan.length ? <Seccion titulo={tr('Esperan que sigas', 'Waiting for you')} tareas={g.esperan} {...comun} /> : null}
       {g.activas.length ? <Seccion titulo={tr('En marcha', 'In progress')} tareas={g.activas} {...comun} /> : null}
       {g.recientes.length ? <Seccion titulo={tr('Recientes', 'Recent')} tareas={g.recientes} {...comun} /> : null}
     </Hoja>
@@ -91,7 +94,7 @@ function TarjetaTarea({ t, reducido, idioma, onTarea, onRefrescar, onEditar, onA
   const [ocupado, setOcupado] = useState(false);
   const [aviso, setAviso] = useState<string | null>(null);
   const prog = textoProgreso(t.progress, idioma);
-  const senal = haceCuanto(t.lastHeartbeatAt || t.updatedAt, Date.now(), idioma);
+  const senal = ultimaSenal(t, Date.now(), idioma);
   const tras = (r: ResultadoAccion) => {
     if (r.ok) {
       setAviso(null);
@@ -123,9 +126,9 @@ function TarjetaTarea({ t, reducido, idioma, onTarea, onRefrescar, onEditar, onA
           {t.title}
         </Texto>
         <View style={s.estado}>
-          {gira(t.state) && !t.sinConfirmar && !reducido ? <ActivityIndicator size="small" color={tema.texto3} /> : null}
+          {giraTarea(t) && !t.sinConfirmar && !reducido ? <ActivityIndicator size="small" color={tema.texto3} /> : null}
           <Texto v="chicaFuerte" color={t.state === 'failed' || t.state === 'blocked' ? 'aviso' : t.state === 'completed' ? 'exito' : 'texto2'}>
-            {etiquetaEstado(t.state, idioma)}
+            {etiquetaTarea(t, idioma)}
           </Texto>
         </View>
       </View>

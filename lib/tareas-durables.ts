@@ -1502,6 +1502,12 @@ export type TaskSnapshot = {
   planVersion: number;
   lastEventSequence: number;
   lastHeartbeatAt?: string;
+  /**
+   * La tarea en curso de una conversación que espera que la persona siga (José, 5-oct): va en `awaiting_approval` SIN
+   * decisión (no trabaja por detrás ni pide aprobar nada) y con esta marca, para que el panel diga «Espera que sigas»
+   * en vez de «Trabajando» con spinner. Una app de antes la ve como una espera (sin spinner ni «Trabajando · 1»).
+   */
+  awaitingInput?: true;
   decisionId?: string;
   decision?: {
     id: string;
@@ -1613,12 +1619,20 @@ export type TareaEnCursoMin = {
 /**
  * La tarea en curso de una conversación como TaskSnapshot (mismo id). Su versión es su `actualizado`
  * (cambia en cada cambio). «preguntando» es una decisión con tres respuestas concretas.
+ *
+ * Activa NO es `running` (José, 5-oct: «EN MARCHA · Trabajando · última señal hace 2 min» y no pasaba nada): la tarea
+ * en curso es de la conversación y avanza solo cuando la persona habla («sigue», «el siguiente»). Va en
+ * `awaiting_approval` sin decisión, con `awaitingInput` y el paso dicho como lo que espera; sin `lastHeartbeatAt`,
+ * porque no hay nada trabajando por detrás que dé señales. Pausar y Cancelar siguen igual.
  */
 export function deTareaEnCurso(t: TareaEnCursoMin): TaskSnapshot {
   const hechos = t.pasos.filter((p) => p.estado !== 'pendiente').length;
   const sig = t.pasos.findIndex((p, i) => p.estado === 'pendiente' && i > t.actual);
   const siguiente = sig >= 0 ? sig : t.pasos.findIndex((p) => p.estado === 'pendiente');
-  const estado: EstadoTarea = t.estado === 'pausada' ? 'paused' : t.estado === 'preguntando' ? 'awaiting_approval' : 'running';
+  const espera = t.estado === 'activa';
+  const estado: EstadoTarea = t.estado === 'pausada' ? 'paused' : 'awaiting_approval';
+  const paso = siguiente >= 0 ? t.pasos[siguiente].etiqueta : '';
+  const pasoActual = espera ? `Espera que sigas: dime «sigue» o «el siguiente»${paso ? `. Lo que sigue: ${paso}` : ''}` : paso ? `Sigue: ${paso}` : '';
   const cosa = t.tipo === 'correo' ? 'los correos' : t.tipo === 'whatsapp' ? 'los mensajes' : 'esta tarea';
   const decision: TaskSnapshot['decision'] =
     t.estado === 'preguntando'
@@ -1648,11 +1662,11 @@ export function deTareaEnCurso(t: TareaEnCursoMin): TaskSnapshot {
     objective: t.titulo,
     acceptance: [{ id: 'pasos', text: `Ver los ${t.pasos.length} pasos`, required: true, status: hechos === t.pasos.length ? 'unknown' : 'pending', evidenceIds: [] }], // sin evidencia nunca es «verified»
     environment: { kind: t.tipo === 'correo' ? 'correo' : t.tipo === 'whatsapp' ? 'whatsapp' : 'chat', id: t.ambito, displayName: t.tipo === 'correo' ? 'Tu correo' : t.tipo === 'whatsapp' ? 'Tu WhatsApp' : 'Esta conversación' },
-    ...(siguiente >= 0 ? { currentStep: `Sigue: ${t.pasos[siguiente].etiqueta}` } : {}),
+    ...(pasoActual ? { currentStep: pasoActual } : {}),
     progress: { done: hechos, total: t.pasos.length, unit: 'pasos' },
     planVersion: 1,
     lastEventSequence: 0,
-    lastHeartbeatAt: new Date(t.actualizado).toISOString(),
+    ...(espera ? { awaitingInput: true as const } : {}),
     ...(decision ? { decisionId: decision.id } : {}),
     decision,
     result: null,
@@ -2116,7 +2130,8 @@ export function reconciliarInvestigacion(reg: RegistroTarea, ahora: number, tope
 /**
  * «Trabajando · 2», «Necesito una decisión · 1»: lo cuenta el servidor igual que el cliente
  * (mobile/src/lib/trabajos.ts `resumen`). Una tarea bloqueada o con la propuesta caducada pide decisión
- * (no «trabaja»); una pospuesta o en pausa no cuenta: no está trabajando ni te está esperando.
+ * (no «trabaja»); una pospuesta o en pausa no cuenta: no está trabajando ni te está esperando. La tarea en curso que
+ * espera que sigas (`awaiting_approval` sin decisión, `awaitingInput`) tampoco: no trabaja por detrás ni pide decidir.
  */
 export function resumenTareas(xs: Pick<TaskSnapshot, 'state' | 'terminal' | 'decision'>[], ahora = Date.now()): { trabajando: number; decisiones: number } {
   let trabajando = 0;

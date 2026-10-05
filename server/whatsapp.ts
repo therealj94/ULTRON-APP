@@ -358,7 +358,9 @@ async function leer(quien: string, ambito: string, ref: string): Promise<Resulta
   ]
     .filter(Boolean)
     .join('\n');
-  return exito(texto, { efecto: 'ninguno', proveedor: 'whatsapp', referencia: c.jid });
+  // `lectura`: se le leen los mensajes tal cual (revisión del 5-oct, MEDIO-2); en voz, con el tope de lectura (hasta 15
+  // mensajes no caben en voz: lo primero y su «¿sigo?»; revisión independiente, MENOR-D, lib/cerebro-manos.ts topeTrasPaso).
+  return exito(texto, { efecto: 'ninguno', proveedor: 'whatsapp', referencia: c.jid, lectura: true });
 }
 
 /** El borrador queda esperando su «sí»: recibo `borrador` con su id de intento (nada salió todavía). */

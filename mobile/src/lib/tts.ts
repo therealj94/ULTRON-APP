@@ -32,6 +32,7 @@ import { quitarExpresiones, soloExpresiones } from './expresiones';
 import type { AvatarId } from '../avatares/catalogo';
 import { avatarActual, fijarAvatar } from '../avatares/actual';
 import { senalVoz } from '../avatar3d/senalVoz';
+import { vozSonando } from '../avatar3d/sonando';
 import { ADELANTO_MS, BocaAlineada, Envolvente, PASO_BOCA_MS, RelojReproduccion, leerAlineacion, type AlineacionAudio } from '../avatar3d/sincronia';
 import { idiomaActual } from '../i18n';
 import { RegistroVoz } from './interrupcion';
@@ -449,6 +450,8 @@ function playPrepared(sound: Audio.Sound, my: number, maxMs = 25_000, meta: Play
       if (guard) clearTimeout(guard);
       if (current === sound) current = null;
       if (soltarActual === end) soltarActual = null;
+      // Calló (terminó, la cortaron o falló): el cuerpo deja de hablar (avatar3d/sonando.ts).
+      vozSonando.sonar(sound, false);
       void sound.unloadAsync().catch(() => {});
       resolve();
     };
@@ -459,10 +462,14 @@ function playPrepared(sound: Audio.Sound, my: number, maxMs = 25_000, meta: Play
     fraccionActual = fraccion;
     if (meta.text && kind !== 'sing') registroVoz.empezo(meta.text);
     sound.setOnPlaybackStatusUpdate((st) => {
+      if (done) return;
       if (!st.isLoaded) {
+        vozSonando.sonar(sound, false);
         if ((st as any).error) end();
         return;
       }
+      // El cuerpo habla mientras el reproductor dice que suena: no al pedir el audio, ni pausado o cargando.
+      vozSonando.sonar(sound, !!st.isPlaying && !st.didJustFinish);
       reloj.aviso(st.positionMillis || 0, Date.now(), st.isPlaying);
       if (st.durationMillis) duracion = st.durationMillis;
       if (st.durationMillis && !guard) {
@@ -497,6 +504,8 @@ export async function stopSpeaking() {
   }
   // La espera de esa frase se suelta ya (quien hablaba sigue con el turno siguiente), no al guard.
   soltar?.();
+  // Nada suena ni se prepara: el cuerpo deja de hablar ya (avatar3d/sonando.ts).
+  vozSonando.callar();
 }
 
 function beginSpeak() {
@@ -665,6 +674,9 @@ export async function speak(
   const my = gen;
   const perf = opts?.performance || 'speak';
   const emocion = opts?.emocion || 'neutral';
+  // Pidió decir algo y el audio todavía no suena: el cuerpo piensa (no habla) hasta la primera sílaba.
+  const locucion = {};
+  vozSonando.preparar(locucion, true);
   opts?.onStart?.();
   await ensureAudioMode();
   beginSpeak();
@@ -702,12 +714,14 @@ export async function speak(
       }
       if (!spoke) {
         spoke = true;
+        vozSonando.preparar(locucion, false);
         opts?.onAudioStart?.();
       }
       await playPrepared(sound, my, perf === 'sing' ? 120_000 : 25_000, { text: sentences[i], kind: perf === 'sing' ? 'sing' : emocion === 'oracion' ? 'pray' : 'speak' });
     }
     return spoke;
   } finally {
+    vozSonando.preparar(locucion, false);
     if (nextPrepared) void nextPrepared.then((s) => s?.unloadAsync().catch(() => {}));
     endSpeak();
     if (my === gen) opts?.onEnd?.();

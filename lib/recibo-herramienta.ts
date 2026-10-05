@@ -48,6 +48,12 @@ export type ReciboHerramienta = {
    * del proveedor: así una caída no se confunde con «no hay nada» ni una parcial con el total.
    */
   cuentas?: CuentaConsultada[];
+  /**
+   * Revisión del 5-oct (MEDIO-2): el resultado trae algo para LEERLE a la persona tal cual (un correo abierto, el trozo
+   * siguiente, un chat de WhatsApp). En voz lleva el tope de lectura (lib/cerebro-manos.ts topeTrasPaso, 650: un trozo
+   * y su «¿sigo?»); el tope corto cortaba el final del trozo, y sin ningún tope sonaban hasta 2 800 caracteres (MENOR-D).
+   */
+  lectura?: boolean;
 };
 
 /** Lo que se sabe de cada cuenta en una lectura (P4). */

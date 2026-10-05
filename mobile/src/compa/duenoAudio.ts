@@ -78,6 +78,11 @@ export type DepsOidoMesa = {
   /** ¿La persona quiere el micrófono de la mesa abierto? (no lo silenció ella). */
   micQuerido: () => boolean;
   /**
+   * ¿Lo silenció ella? (el botón, guardado entre sesiones). Distingue en la miga ese silencio del oído que
+   * todavía no se abrió (al arrancar, antes del permiso): antes los dos salían «silenciado por la persona».
+   */
+  silenciadoPorPersona?: () => boolean;
+  /**
    * Espera a que la conversación en vivo suelte el audio del teléfono (VozProvider.esperarAudioLibre,
    * con tope). Si falta, el oído se reabre en el acto.
    */
@@ -161,7 +166,8 @@ export class OidoMesa {
           });
       }
     }
-    this.d.miga?.(`oído de la mesa: lo toma (${nuevo})${this.d.micQuerido() ? '' : ' (silenciado por la persona)'}`);
+    const porQue = this.d.micQuerido() ? '' : this.d.silenciadoPorPersona?.() === false ? ' (todavía sin abrir: arranque o sin permiso)' : ' (silenciado por la persona)';
+    this.d.miga?.(`oído de la mesa: lo toma (${nuevo})${porQue}`);
     return 'toma';
   }
 
@@ -347,4 +353,18 @@ export function motivoFalloVoz(detalle?: string, en = false): string {
   if (/permis|permission|micr[oó]fono|microphone|not-allowed/.test(d)) return t('no tengo permiso del micrófono', 'I don’t have microphone permission');
   if (/abort|timeout|network|red\b|conexi[oó]n|failed to fetch|fetch failed|webrtc|ice/.test(d)) return t('no hay buena conexión', 'the connection is poor');
   return t('no pude conectar', 'I couldn’t connect');
+}
+
+/**
+ * El saludo al abrir la mesa. Si la persona dejó el micrófono en silencio en otra sesión, sigue en silencio
+ * (se guarda a propósito: una recarga por OTA o un cierre no le abre solo un micrófono que ella cerró), pero
+ * se DICE: antes arrancaba sorda sin avisar y solo lo decía la etiqueta «Silenciado» de abajo (José, 5-oct:
+ * «micrófono, hay algo no está bien»).
+ */
+export function saludoArranque(saludo: string, o: { micSilenciado: boolean; en: boolean }): string {
+  if (!o.micSilenciado) return saludo;
+  const aviso = o.en
+    ? 'Heads up: my microphone is still muted from last time. Tap the microphone and I’ll hear you.'
+    : 'Ojo: tengo el micrófono en silencio desde la última vez. Toca el micrófono y te oigo.';
+  return `${saludo} ${aviso}`;
 }

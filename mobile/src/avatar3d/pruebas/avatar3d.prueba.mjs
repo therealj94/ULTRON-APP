@@ -261,7 +261,7 @@ prueba('nodos: la boca de la voz sale de sus seis formas (O/U redonda, E/I ancha
 prueba('mesa: la cara de la mesa (FaceState + emoción del turno) → el estado del cuerpo 3D', () => {
   assert.equal(estadoDesdeMesa('IDLE', 'neutral').expresion, 'tranquila');
   assert.equal(estadoDesdeMesa('IDLE', 'feliz').expresion, 'contenta', 'en reposo, la emoción del turno afina la cara');
-  const habla = estadoDesdeMesa('SPEAKING', 'molesto');
+  const habla = estadoDesdeMesa('SPEAKING', 'molesto', { voz: { sonando: true } });
   assert.equal(habla.hablando, true);
   assert.equal(habla.expresion, 'enojada');
   assert.equal(estadoDesdeMesa('LAUGH', 'triste').expresion, 'encantada', 'una cara explícita de la mesa manda sobre la emoción');
@@ -272,6 +272,61 @@ prueba('mesa: la cara de la mesa (FaceState + emoción del turno) → el estado 
   const mira = estadoDesdeMesa('IDLE', 'neutral', { mirar: { x: 0.4, y: -0.2, activa: true }, gesto: { nombre: 'toque_cabeza', n: 3 } });
   assert.deepEqual(mira.mirar, { x: 0.4, y: -0.2, activa: true });
   assert.deepEqual(mira.gesto, { nombre: 'toque_cabeza', n: 3 });
+});
+
+prueba('mesa (José, 5-oct: «el animado habla cuando no está diciendo nada»): la boca va con el AUDIO, nunca con la cara', () => {
+  // La cara SPEAKING llega antes que la voz (la emoción del turno, `say` antes de pedir el audio): sin audio, no habla.
+  const sinAudio = estadoDesdeMesa('SPEAKING', 'neutral', { voz: { sonando: false } });
+  assert.equal(sinAudio.hablando, false, 'cara de hablar sin nada sonando: no habla');
+  const esperando = estadoDesdeMesa('SPEAKING', 'neutral', { voz: { sonando: false, pensando: true } });
+  assert.deepEqual([esperando.hablando, esperando.pensando], [false, true], 'el turno sigue (o la voz se prepara): piensa');
+  assert.equal(estadoDesdeMesa('SING', 'canto', { voz: { sonando: false } }).hablando, false, 'cantar tampoco antes de que suene');
+  // Suena la voz: habla, con la cara que sea (antes «No alcanzo al cerebro…» con CONFUSED sonaba con el cuerpo quieto).
+  for (const cara of ['SPEAKING', 'HAPPY', 'CONFUSED', 'LAUGH', 'PRAY', 'CONCERNED']) {
+    const e = estadoDesdeMesa(cara, 'neutral', { voz: { sonando: true, pensando: true } });
+    assert.deepEqual([cara, e.hablando, e.pensando], [cara, true, false], `${cara} con audio: habla (y no piensa)`);
+  }
+  // La conversación fluida: la voz del agente no pasa por tts; su «hablando» (el SDK) es el audio.
+  assert.equal(estadoDesdeMesa('SPEAKING', 'neutral', { voz: { sonando: false, agenteHabla: true } }).hablando, true);
+  // Sin saber del audio, nunca habla por la cara.
+  assert.equal(estadoDesdeMesa('SPEAKING', 'molesto').hablando, false);
+});
+
+prueba('mesa: ¿suena la voz? (lib/tts → avatar3d/sonando): de que el audio suena a que termina, se corta o falla', async () => {
+  const { VozSonando } = await import('../sonando.ts');
+  const v = new VozSonando();
+  const vistos = [];
+  const quitar = v.escuchar(() => vistos.push(v.ahora()));
+  const inicial = v.ahora();
+  assert.deepEqual(inicial, { sonando: false, preparando: false });
+  assert.equal(v.ahora(), inicial, 'la misma foto mientras no cambia (useSyncExternalStore)');
+  const loc = {};
+  v.preparar(loc, true);
+  assert.deepEqual(v.ahora(), { sonando: false, preparando: true }, 'pidió el audio: todavía no suena');
+  const a = {};
+  const b = {};
+  v.sonar(a, true);
+  v.preparar(loc, false);
+  assert.deepEqual(v.ahora(), { sonando: true, preparando: false });
+  v.sonar(a, true);
+  v.sonar(b, true);
+  v.sonar(a, false);
+  assert.equal(v.ahora().sonando, true, 'otro audio sigue sonando');
+  v.sonar(b, false);
+  assert.equal(v.ahora().sonando, false, 'terminó (o se pausó, o falló)');
+  v.sonar(a, false);
+  v.preparar(loc, true);
+  v.sonar(b, true);
+  v.callar();
+  assert.deepEqual(v.ahora(), { sonando: false, preparando: false }, 'stopSpeaking: todo calla de golpe');
+  assert.deepEqual(
+    vistos.map((x) => `${x.sonando ? 'S' : '-'}${x.preparando ? 'P' : '-'}`),
+    ['-P', 'SP', 'S-', '--', '-P', 'SP', '--'],
+    'avisa solo cuando cambia'
+  );
+  quitar();
+  v.sonar(a, true);
+  assert.equal(vistos.length, 7, 'desanotado no recibe');
 });
 
 prueba('mapeo: zonas por nombre de nodo, por posición (3D sin colisionadores) y en la figurita 2D', () => {

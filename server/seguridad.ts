@@ -564,6 +564,43 @@ export function gastarCupo(claveCupo: string, max: number, ventanaMs = 60_000, a
   return true;
 }
 
+/** Cuántos pedidos de UNA frase (mismo idTurno) entran con un solo lugar del cupo: el stream y sus dos reintentos por JSON. */
+export const PEDIDOS_POR_FRASE = 3;
+/** Las frases ya cobradas: «clave|idTurno» → cuándo se cobró y cuántos pedidos lleva. */
+const frasesCobradas = new Map<string, { t: number; n: number }>();
+
+/**
+ * El cupo de turnos por PERSONA, contado por FRASE. La mesa del teléfono manda una frase por el stream y, si
+ * se cae, la repite por JSON (y otra vez) con el MISMO idTurno; el servidor no la corre dos veces
+ * (server/turno-unico.ts), pero el cupo cobraba cada pedido: tres lugares por frase, y el último reintento
+ * podía volver 429 «demasiados_turnos» —la mesa decía «No alcanzo al cerebro remoto»— (José, 5-oct).
+ * Ahora una frase gasta un lugar y sus reintentos entran sin gastar, hasta PEDIDOS_POR_FRASE: un id que se
+ * repite sin fin vuelve a gastar. `clave` null: esa petición no tiene cupo por persona (la junta).
+ */
+export function cupoPorFrase(clave: (req: Request) => string | null, max: number, ventanaMs = 60_000) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const k = clave(req);
+    if (!k) return next();
+    const id = typeof req.body?.idTurno === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(req.body.idTurno) ? req.body.idTurno : '';
+    const ahora = Date.now();
+    const frase = id ? `${k}|${id}` : '';
+    const previa = frase ? frasesCobradas.get(frase) : undefined;
+    if (previa && ahora - previa.t < ventanaMs && previa.n < PEDIDOS_POR_FRASE) {
+      previa.n += 1;
+      return next();
+    }
+    if (gastarCupo(k, max, ventanaMs, ahora)) {
+      if (frase) {
+        frasesCobradas.set(frase, { t: ahora, n: 1 });
+        if (frasesCobradas.size > 5000) for (const [f, v] of frasesCobradas) if (ahora - v.t >= ventanaMs) frasesCobradas.delete(f);
+      }
+      return next();
+    }
+    res.setHeader('Retry-After', String(Math.ceil(ventanaMs / 1000)));
+    return res.status(429).json({ error: 'Vas muy rápido. Dame un minuto y seguimos.', code: 'demasiados_turnos', honesto: true });
+  };
+}
+
 /**
  * Devuelve el lugar que se gastó en `marca` (el `ahora` con que se llamó a gastarCupo): un turno que no
  * llegó a ser turno, la frase a medias del especulativo. Se quita ESA entrada y no la última: si después

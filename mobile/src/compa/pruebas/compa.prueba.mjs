@@ -1654,6 +1654,29 @@ prueba('vigilante del oído: las cuentas vuelven a cero cuando el oído vuelve a
   assert.equal(s.nativo, n0 + 2);
 });
 
+prueba('micrófono (José, 5-oct: «hay algo no está bien»): la miga dice POR QUÉ no abre el oído — silenciado por la persona o todavía sin abrir', async () => {
+  const dueno = await import('../duenoAudio.ts');
+  const tomar = (deps) => {
+    const m = mesaSimulada();
+    const migas = [];
+    Object.assign(m.deps, deps, { miga: (t) => migas.push(t) });
+    const oido = new dueno.OidoMesa(m.deps);
+    oido.fijar('nadie');
+    oido.aplicar('mesa');
+    return migas.at(-1);
+  };
+  // Al arrancar el oído todavía no se abrió (el permiso no volvió): NO es que la persona lo silenciara.
+  assert.equal(tomar({ micQuerido: () => false, silenciadoPorPersona: () => false }), 'oído de la mesa: lo toma (mesa) (todavía sin abrir: arranque o sin permiso)');
+  assert.equal(tomar({ micQuerido: () => false, silenciadoPorPersona: () => true }), 'oído de la mesa: lo toma (mesa) (silenciado por la persona)');
+  assert.equal(tomar({ micQuerido: () => true, silenciadoPorPersona: () => false }), 'oído de la mesa: lo toma (mesa)');
+  // El silencio que la persona dejó puesto en otra sesión se DICE al arrancar (no se queda sordo callado).
+  assert.equal(typeof dueno.saludoArranque, 'function', 'duenoAudio exporta saludoArranque');
+  assert.equal(dueno.saludoArranque('Hola, José.', { micSilenciado: false, en: false }), 'Hola, José.');
+  const es = dueno.saludoArranque('Hola, José.', { micSilenciado: true, en: false });
+  assert.match(es, /^Hola, José\. .*micrófono.*silencio.*toca/i);
+  assert.match(dueno.saludoArranque('Hi, José.', { micSilenciado: true, en: true }), /^Hi, José\. .*microphone.*muted.*tap/i);
+});
+
 prueba('al colgar la llamada del avatar, la mesa reabre su oído cuando la voz soltó el audio (Android: el stop tardío lo mataba)', async () => {
   const m = mesaSimulada();
   const reabiertos = [];

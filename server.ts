@@ -8,6 +8,7 @@ import { createServer as createViteServer } from 'vite';
 import { crearComprobadorListo } from './lib/nodo-listo';
 import { modoDesarrollo } from './lib/entorno';
 import { sanearDiag } from './lib/diag-saneador';
+import { anotarEventoTurno, medirTurno } from './server/registro-turno';
 import { autocuraDe, fetchNodo, saludNodo, nodoConfigurado, precalentarSistema, NODO_URL as ULTRON_NODO_URL, NODO_SECRETO as ULTRON_NODO_SECRETO, NODO_MODELO as ULTRON_NODO_MODELO } from './lib/nodo';
 import { JUNTA, buildPersonality, decodeDataUrl, normalizarCorreo, buscarWeb, leerPagina } from './server/desk';
 import { hablar, abrirVozEnVivo, pasarVozEnVivo, cantar, orar, repertorio, cancionPorPedido, estadoVoz, saludVoz, vozDe, sinEtiquetas } from './server/voz';
@@ -73,7 +74,7 @@ import { redirigirADominio } from './server/dominio';
 import { quitarExpresiones } from './lib/expresiones';
 import { puntoDeCorte } from './lib/trozos';
 import { claveTurno, consultarTurno, efectoDelTurno, enTurnoUnico, idTurnoValido, reclamarTurno, turnoSinEfectos, type TurnoGuardado } from './server/turno-unico';
-import { atajoDeAppBloqueado, resolverBorradorDesdePanel, resolverDecisionesDelTurno } from './server/decision-turno';
+import { atajoDeAppBloqueado, pendientesDelTurno, resolverBorradorDesdePanel, resolverDecisionesDelTurno } from './server/decision-turno';
 import { puedeMano } from './lib/manos-app';
 import {
   abrirDecisionDeBorrador,
@@ -125,15 +126,16 @@ import { correrTriajeConEstado } from './lib/triaje';
 import { fichaManosPrompt } from './lib/manos-ficha';
 import { fichaMenuPrompt } from './lib/menu-app';
 import { conApodoDelTurno, lineaApodoPendiente } from './lib/apodo';
-import { emitirSesion, borrarSesion, cerrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica, mesaAutorizada, cuerpoHttp, gastarCupo, esperaEntrada, anotarFalloEntrada, anotarExitoEntrada, cargarSesionesCerradas } from './server/seguridad';
+import { emitirSesion, borrarSesion, cerrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica, mesaAutorizada, cuerpoHttp, cupoPorFrase, esperaEntrada, anotarFalloEntrada, anotarExitoEntrada, cargarSesionesCerradas } from './server/seguridad';
 import { canales, leerPdf, telegramFoto, telegramVoz } from './lib/canales';
 import { catalogoCanales, fotoSistema } from './lib/sistema';
 import { despacharTaller, ejecutarAprobadoTaller, hechosCatalogo, proponerCapturaTaller, vinculoTallerVigente, type PropuestaTallerVista } from './lib/taller';
 import { listarTareas } from './lib/tareas';
 import { ejecutarCodigo, ejecutorActivo } from './lib/ejecutor';
 import { construirMensajes, extraerPython } from './lib/qwen';
-import { computadoraDisponible, correoDisponible, correrBucleHarness, extraerPedidoHerramienta, incierto, MINIMO_HERRAMIENTA_MS, quitarLineaPedido, resolverPedidoConEstado, type EstadoRespuesta, type ResultadoHerramienta, type VueltaHarness } from './lib/harness';
-import { herramientasDelTurno, lineaDeHerramienta, notaDeCumplir, prometeSinHacer, reglasDeManos, topeDeVoz, type ManosDelTurno } from './lib/cerebro-manos';
+import { computadoraDisponible, correoDisponible, correrBucleHarness, extraerPedidoHerramienta, incierto, MINIMO_HERRAMIENTA_MS, quitarLineaPedido, resolverPedidoConEstado, type EstadoRespuesta, type PasoHarness, type ResultadoHerramienta, type VueltaHarness } from './lib/harness';
+import { accionConBorrador, corregirPromesaSinHerramienta, cumplirLoDicho, debeCorregirSinHerramienta, duroDeVoz, herramientasDelTurno, lineaDeHerramienta, lineaRespuestaHablada, notaDeCumplir, pasoDeLectura, pasoSinTopeDeVoz, preguntaFinal, prometeSinHacer, recorteDeVoz, reglasDeManos, topeConLectura, topeDeVoz, topeTrasPaso, vozCompletaDelTurno, vozRecortada, type CumplirLoDicho, type ManosDelTurno } from './lib/cerebro-manos';
+import { lineaTiemposTurno, type MedidaTurno } from './lib/tiempos-turno';
 import { correrCarteraConEstado } from './lib/cartera';
 import { notaDeVoz, pideNotaDeVoz } from './lib/voz';
 import { iniciarCentinela } from './lib/centinela';
@@ -2569,13 +2571,12 @@ const TURNOS_MIEMBRO_MIN = Math.max(1, Number(process.env.TURNOS_MIEMBRO_MIN) ||
  * El cupo por PERSONA de los miembros: muchos teléfonos de la comunidad pueden salir por la misma IP
  * (una red móvil) y uno solo puede rotar de IP. La junta sigue solo con el cupo por IP de siempre.
  */
-function cupoDeMiembro(req: express.Request, res: express.Response, next: express.NextFunction) {
+// Por FRASE (server/seguridad.ts, cupoPorFrase): los reintentos de la app con el mismo idTurno no gastan otra vez.
+const cupoDeMiembro = cupoPorFrase((req) => {
   const s = sesionDe(req);
-  if (!s || ES_ELECTRUM || nivelDeCorreo(s.correo) !== 'miembro') return next();
-  if (gastarCupo(`turno-miembro:${s.correo.toLowerCase()}`, TURNOS_MIEMBRO_MIN)) return next();
-  res.setHeader('Retry-After', '60');
-  return res.status(429).json({ error: 'Vas muy rápido. Dame un minuto y seguimos.', code: 'demasiados_turnos', honesto: true });
-}
+  if (!s || ES_ELECTRUM || nivelDeCorreo(s.correo) !== 'miembro') return null;
+  return `turno-miembro:${s.correo.toLowerCase()}`;
+}, TURNOS_MIEMBRO_MIN);
 
 /**
  * El correo con que se guarda la memoria personal de un MIEMBRO (lib/memoria-miembro.ts): el de su
@@ -2634,6 +2635,14 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   const perfilPedido: Promise<Perfil | null> = correoApp
     ? aTiempoParaVoz(voz, 'perfil', leerPerfil(correoApp).catch(() => null), perfilEnCache(correoApp) ?? null)
     : Promise.resolve(null);
+  /*
+   * Lo que solo depende del mensaje o del correo arranca YA, a la par de la memoria (José, 5-oct: «la voz aún
+   * siento poco lenta»): la clasificación (Laya, una llamada a la T4) y la lectura de lo limitado y de su tarea
+   * en curso. Antes iban una detrás de otra, cada una con su tope de voz; se esperan más abajo, donde se usan.
+   */
+  const clasPedida = clasificar(message, 'ultron', { voz });
+  const vistaPedida = correoApp ? precargarVista(correoApp).catch(() => undefined) : null;
+  const tareasPedidas = correoApp ? precargarTareas(correoApp).catch(() => undefined) : null;
   await aTiempoParaVoz(voz, 'memoria', cargarMemoria().then(() => undefined), undefined);
   /*
    * Junta o miembro (server/nivel.ts). Lo pone el servidor en el cuerpo (cuerpoTurnoHttp, la voz,
@@ -2677,7 +2686,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
    * sabe, resúmenes, su memoria (lo que pidió recordar) y la conversación que va como mensajes—. Se lee lo
    * limitado antes de tocar el hilo (hablando, con tope: sin saberlo a tiempo, lo suyo no entra).
    */
-  await aTiempoParaVoz(voz, 'lo limitado', precargarVista(duenoComputadora), undefined);
+  // Con la cuenta del teléfono, la lectura ya va en camino desde el principio del turno (vistaPedida).
+  await aTiempoParaVoz(voz, 'lo limitado', vistaPedida && duenoComputadora === correoApp ? vistaPedida : precargarVista(duenoComputadora), undefined);
   const vista = vistaAutorizada(duenoComputadora);
   const clienteHilo = vista.turnos(
     Array.isArray(body?.historial)
@@ -2747,7 +2757,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   const cercanasPedidas = !delCerebro && !esSaludoCorto(message) ? cercanasDe() : null;
   // La decisión rápida: tipo de tarea, riesgo, agente, si es un intento de torcer al sistema.
   // Hablando, Laya tiene un tope más corto: la voz no espera.
-  const clas = await clasificar(message, 'ultron', { voz });
+  const clas = await clasPedida;
   trazaActual()?.clasificacion(clas);
   trazaActual()?.agente(nombreAgente(clas.agente));
 
@@ -2775,6 +2785,19 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   // cosa), lo de la app tampoco sale en este turno (appBloqueada → accionesDelCerebro).
   // Con el contexto del teléfono: un borrador escrito en el chat abierto también espera (revisión 4-oct).
   const appEsperando = correoApp ? appEsperandoDe(ambitoApp(correoApp, body?.aparato), contextoApp) : null;
+  /*
+   * ¿Algo esperaba su «sí» al empezar el turno? (revisión del 5-oct, GRAVE-1): un borrador de correo o de WhatsApp
+   * (también el apartado para el panel), la pregunta de su computadora, o lo que espera la app (una llamada, un
+   * recordatorio, un mensaje de AU-RA). Lo escrito a mano en la caja del chat abierto (`contexto.borrador`, que
+   * appEsperandoDe da como `borrador`) NO: no es nada que AU-RA le preguntó (revisión independiente, MEDIO-B).
+   */
+  const appPreguntada = appEsperando && appEsperando.que !== 'borrador' ? appEsperando : null;
+  const esperabaSi =
+    !!appPreguntada ||
+    (!!duenoComputadora &&
+      (!!borradorDe(duenoComputadora, ambitoTurno) ||
+        !!borradorWhatsappDe(duenoComputadora, ambitoTurno) ||
+        pendientesDelTurno({ dueno: duenoComputadora, ambito: ambitoTurno, whatsapp: whatsappPermitido(duenoComputadora), app: appPreguntada }).length > 0));
   const decision = await resolverDecisionesDelTurno({
     dueno: duenoComputadora,
     ambito: ambitoTurno,
@@ -2788,13 +2811,22 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   });
   hechos.push(...decision.hechos);
   const { delCorreo, delWhatsapp, deLaPregunta } = decision;
+  /*
+   * El turno es de confirmación: en voz, sin tope (GRAVE-1). Revisión independiente del 5-oct (MEDIO-B): solo si el
+   * turno TOCA lo que esperaba —lo resolvió (la regla única eligió o preguntó cuál, un «sí»/«no» al borrador, la
+   * pregunta de su computadora) o pide releerlo, cambiarlo o confirmarlo—. Que algo espere no basta: un borrador vive
+   * 15 min y «¿qué pasó con el dólar?» se decía entero. `delCorreo` / `delWhatsapp` llegan también cuando siguió con otra
+   * cosa (el borrador se aparta para el panel): ese hecho no es tocarlo.
+   */
+  const resolvioPendiente = decision.respondio || decision.ambiguo || !!deLaPregunta || (!!(delCorreo || delWhatsapp) && respuestaAlBorrador(message) !== null);
+  const vozCompleta = vozCompletaDelTurno({ esperaba: esperabaSi, resolvio: resolvioPendiente, mensaje: message });
 
   // La tarea de varios pasos en curso (lib/tarea-en-curso.ts): si pide otra cosa a mitad, AU-RA pregunta
   // antes de cambiar; si ya contestó, el servidor la pausa, la sigue o la descarta. Va en los HECHOS hasta
   // terminarla (en la voz, una línea), y con ella el turno es del modelo grande, no del chico.
   let conTarea = false;
   if (duenoComputadora) {
-    await aTiempoParaVoz(voz, 'tarea en curso', precargarTareas(duenoComputadora), undefined);
+    await aTiempoParaVoz(voz, 'tarea en curso', tareasPedidas && duenoComputadora === correoApp ? tareasPedidas : precargarTareas(duenoComputadora), undefined);
     const alBorrador = !!(delCorreo || delWhatsapp) && (decision.respondio || respuestaAlBorrador(message) !== null);
     const deLaTarea = await resolverTareaEnCurso(duenoComputadora, ambitoTurno, message, { borradorResuelto: alBorrador || !!deLaPregunta, retener: opciones.retener });
     // Su tarea va al modelo por la vista del turno (revisión 11, MEDIO-2): lo que limitó no entra por aquí tampoco.
@@ -2994,6 +3026,10 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     // En voz, si el cerebro tarda, la app ya dice por él una frase corta de espera (el puente de
     // server/voz-agente.ts, con el banco de mobile/src/compa/frasesEstado.ts): la respuesta no repite otra.
     if (voz) hechos.push('VOZ: si tardas, ya se dijo por ti una frase corta de espera («déjame ver…»). No empieces con muletillas de espera («mmm», «a ver», «déjame revisar», «un momento»): ve directo a la respuesta.');
+    // Lo que se dice tiene tope (lib/cerebro-manos.ts topeDeVoz): que el modelo ya lo escriba corto (José, 5-oct: una
+    // respuesta de 1 100 caracteres son ~70 s de voz). Si pidió algo largo a propósito («léemelo completo»), no va; en
+    // un turno de confirmación tampoco, y la línea misma deja fuera borradores y confirmaciones (GRAVE-1).
+    if (topeDeVoz(message, !!opciones.voz, { confirmacion: vozCompleta }) > 0) hechos.push(lineaRespuestaHablada(idiomaTurno === 'en' ? 'en' : 'es'));
     const red = pedidoRed(message, hiloPrevio);
     if (red && voz) {
       // La búsqueda previa era lo que hacía esperar 3-4 s a la voz antes de la primera palabra (CI del
@@ -3342,6 +3378,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     foto,
     directo,
     directoVia: decirTaller ? 'taller' : soloCalculo ? 'calculo-mina' : directo ? 'market' : null,
+    // Turno de confirmación (un borrador o algo que esperaba su «sí»): en voz se dice entero (GRAVE-1).
+    vozCompleta,
     propuestaTaller,
     system,
     contexto,
@@ -3873,7 +3911,9 @@ async function correrHerramientaPedida(
       // Cada runner devuelve su estado y su recibo (AUR07): lo que no se pudo es `failed`, un borrador es un
       // recibo `borrador` (nada salió), lo parcial va `incompleto`. Ya no se deduce del tipo de herramienta.
       // Un borrador que espera su «sí» abre su decisión exacta en el panel de tareas (AUR08).
-      correo: async (arg) => decisionDelBorrador(await correrCorreoConEstado(dueno, arg, ambito), dueno, ambito),
+      // Con lo que la persona dijo en el turno (tal cual): «revisa el último correo que recibí» abre ese uno aunque el
+      // modelo pida `revisar` (José, 5-oct: se listaban los 12 sin leer y se abría una tarea de 12 pasos).
+      correo: async (arg) => decisionDelBorrador(await correrCorreoConEstado(dueno, arg, ambito, { pedido: compu?.pedido }), dueno, ambito),
       whatsapp: async (arg) => decisionDelBorrador(await correrWhatsappConEstado(dueno, arg, ambito), dueno, ambito),
       // Sus misiones, su círculo y sus mensajes ordenados: sin dueño (sin sesión) no hay de quién serían.
       // Lo que devuelven (sus misiones, su círculo, su tarea) va al modelo por la vista del turno (revisión 11, MEDIO-2).
@@ -3963,6 +4003,8 @@ async function bucleHarness(o: {
   alTarea?: (herramienta: string) => void;
   /** La respuesta de cada vuelta a trozos, mientras el modelo la escribe (`ronda` empieza en 1). */
   alTexto?: (acumulado: string, ronda: number) => void;
+  /** Cada herramienta al terminar, con su recibo, ANTES de la vuelta que la cuenta (la voz quita el tope, GRAVE-1). */
+  alPaso?: (p: PasoHarness) => void;
   /** Su computadora (prepararTurno): de quién, qué motor, cuánto espera. */
   computadora?: TurnoComputadora;
   /** De quién es el turno (verificado): sus correos. */
@@ -3975,7 +4017,7 @@ async function bucleHarness(o: {
   preguntar?: PreguntarVuelta;
   /** El reloj del turno entero (lib/presupuesto.ts): sin tiempo no se empieza otra herramienta (EXEC04). */
   reloj?: Presupuesto;
-}): Promise<{ reply: string; via: string; estado: EstadoRespuesta; motivo?: string; modelo?: string; proveedor?: string; herramientas: number; memorizable: boolean; pasos: PasoVigilado[] }> {
+}): Promise<{ reply: string; via: string; estado: EstadoRespuesta; motivo?: string; modelo?: string; proveedor?: string; herramientas: number; memorizable: boolean; pasos: PasoVigilado[]; vozPasos: { borrador: boolean; lectura: boolean } }> {
   // El bucle vive en lib/harness.ts (correrBucleHarness, probado sin red); aquí van sus piezas de verdad.
   const h = await correrBucleHarness({
     reply: o.reply,
@@ -3992,7 +4034,7 @@ async function bucleHarness(o: {
     respaldo: (hechos, alTexto) => preguntarQwen(o.system, o.message, hechos, o.hilo, o.reloj ? o.reloj.senalCon(o.senal) : o.senal, o.nivel, o.contexto, o.espacio, alTexto),
     alTarea: o.alTarea,
     alTexto: o.alTexto,
-    alPaso: (p) =>
+    alPaso: (p) => {
       trazaActual()?.paso({
         herramienta: p.herramienta,
         ok: p.estado === 'succeeded',
@@ -4001,7 +4043,9 @@ async function bucleHarness(o: {
         resumen: p.resumen,
         ronda: p.ronda,
         ...(p.recibo ? { recibo: { efecto: p.recibo.efecto, proveedor: p.recibo.proveedor, codigo: p.recibo.codigo, durable: p.recibo.durable, incompleto: p.recibo.incompleto } } : {}),
-      }),
+      });
+      o.alPaso?.(p);
+    },
     limpiar: neutralizarMarca,
     // Persistir antes de actuar (AUR06): la herramienta con efecto queda anotada en el turno durable; si este
     // proceso ya no es su dueño (otro lo tomó), no corre.
@@ -4016,7 +4060,10 @@ async function bucleHarness(o: {
     herramientas: h.pasos.length,
     memorizable: h.memorizable,
     // Lo que de verdad corrió (con su estado y lo que trajo): la guarda de promesas del final del turno (lib/promesas.ts).
-    pasos: h.pasos.map((x) => ({ herramienta: x.herramienta, estado: x.estado, resumen: x.resumen })),
+    pasos: h.pasos.map((x) => ({ herramienta: x.herramienta, estado: x.estado, resumen: x.resumen, ms: x.ms })),
+    // Un borrador que espera su «sí» va entero (GRAVE-1); una lectura (correo, chat) lleva el tope de lectura, un trozo
+    // y su «¿sigo?» (revisión independiente del 5-oct, MENOR-D).
+    vozPasos: { borrador: h.pasos.some(pasoSinTopeDeVoz), lectura: h.pasos.some(pasoDeLectura) },
   };
 }
 
@@ -4046,6 +4093,13 @@ type SalidaTurno = {
   proveedor?: string;
   /** Lo que el taller dejó esperando aprobación (revisión 10, MEDIO-C): el cliente la enseña y aprueba esa decisión. */
   propuestaTaller?: PropuestaTallerVista;
+  /**
+   * El turno fue de confirmación o dejó un borrador (revisión del 5-oct, GRAVE-1): en voz (`voz` del respaldo JSON de
+   * la mesa) se dice entero, sin tope. Solo para el servidor: no va en el JSON.
+   */
+  vozCompleta?: boolean;
+  /** Leyó un correo o un chat: en voz, el tope de lectura (un trozo y su «¿sigo?»; MENOR-D). Solo para el servidor. */
+  vozLectura?: boolean;
 };
 
 /** Cómo cerró un turno: `completo`, o a medias con su motivo (STREAM01). */
@@ -4385,12 +4439,16 @@ async function correrTurnoInterno(body: any, opciones: OpcionesTurno = {}): Prom
   // `memorizable` (AUR07): si una herramienta del turno falló, quedó incierta o trajo datos parciales, la
   // respuesta tampoco va a su memoria como conclusión, aunque el turno haya cerrado `completo`.
   let memorizable = true;
+  /** Turno de confirmación o de borrador: en voz se dice entero (revisión del 5-oct, GRAVE-1). */
+  let vozCompleta = !!p.vozCompleta;
+  /** Turno que leyó un correo o un chat: en voz, el tope de lectura (MENOR-D). */
+  let vozLectura = false;
   const guardar = async (out: Omit<SalidaTurno, 'emocion' | 'voz' | 'acciones'> & { emocion?: Emocion }, delModelo = false): Promise<SalidaTurno> => {
     const app = await accionesDelCerebro(out.reply, p, delModelo);
     const e = extraerEmocion(app.texto);
     const estado: EstadoRespuesta = out.estado ?? (out.error ? 'error' : 'completo');
     // Lo que quedó esperando aprobación (una captura para el grupo, revisión 11) vuelve aunque conteste el modelo.
-    const final: SalidaTurno = { ...(p.propuestaTaller ? { propuestaTaller: p.propuestaTaller } : {}), ...out, estado, reply: quitarExpresiones(e.texto).trim(), voz: e.texto.trim(), emocion: out.emocion || e.emocion, acciones: app.acciones };
+    const final: SalidaTurno = { ...(p.propuestaTaller ? { propuestaTaller: p.propuestaTaller } : {}), ...out, estado, reply: quitarExpresiones(e.texto).trim(), voz: e.texto.trim(), emocion: out.emocion || e.emocion, acciones: app.acciones, ...(vozCompleta ? { vozCompleta: true } : {}), ...(vozLectura ? { vozLectura: true } : {}) };
     if (final.reply && estado === 'completo' && memorizable) await recordarSegunNivel(body, { quienMem, rol: 'ultron', texto: final.reply, canal }, opciones.retener);
     return final;
   };
@@ -4412,6 +4470,10 @@ async function correrTurnoInterno(body: any, opciones: OpcionesTurno = {}): Prom
   if (p.avisoInvestigacion) confirmarAvisosInvestigacion(p.avisoInvestigacion.quien, p.avisoInvestigacion.ids);
   const h = await bucleHarness({ reply: q1.reply, system, message, hechos, hilo, tools, mando, senal: p.senal, nivel: p.nivel, contexto: p.contexto, espacio: p.espacio, computadora: p.computadora, dueno: p.dueno, ambito: p.ambito, vista: p.vistaHerramientas, reloj });
   memorizable = h.memorizable;
+  // Un borrador o una confirmación: si el turno fue dictado por voz, lo que se dice va entero (GRAVE-1). Una lectura,
+  // con el tope de lectura (MENOR-D).
+  vozCompleta ||= h.vozPasos.borrador || accionConBorrador(h.reply);
+  vozLectura = h.vozPasos.lectura;
   // La guarda de promesas (lib/promesas.ts): lo prometido sin herramienta que lo empezara no se entrega; con
   // resultados de una búsqueda, se usan; el volcado `HARNESS …` nunca sale (José, 4-oct).
   const vigilada = vigilarPromesas(h.reply, { pasos: h.pasos, acciones: extraerAcciones(h.reply).acciones.length, idioma: p.idioma === 'en' ? 'en' : 'es' });
@@ -4508,7 +4570,18 @@ app.post('/api/turno/repetir', exigirMesaODesk, limitar(60), async (req, res) =>
   return responderSoloRepetir(req, res, await consultarTurno(claveDelTurno(req, body)));
 });
 
-app.post('/api/turno', exigirMesaODesk, limitar(60), cupoDeMiembro, async (req, res) => {
+/**
+ * El tope de lo que se dice en el respaldo JSON de un turno hablado (lib/cerebro-manos.ts topeDeVoz): sin tope si fue de
+ * borrador o de confirmación (GRAVE-1); con el de lectura si leyó un correo o un chat (revisión independiente, MENOR-D).
+ */
+function topeDelJson(out: Pick<SalidaTurno, 'vozCompleta' | 'vozLectura'>, mensaje: string): number {
+  if (out.vozCompleta) return 0;
+  const tope = topeDeVoz(mensaje, true);
+  return out.vozLectura ? topeConLectura(tope) : tope;
+}
+
+// medirTurno va primero: un turno que falla (también por la sesión o el cupo) o tarda deja UNA línea, sin contenido.
+app.post('/api/turno', medirTurno('json'), exigirMesaODesk, limitar(60), cupoDeMiembro, async (req, res) => {
   const body = cuerpoTurnoHttp(req);
   // R1 (revisión 9): con `soloRepetir` solo se lee lo guardado de ese idTurno; nunca se corre el cerebro.
   if ((body as Record<string, unknown>).soloRepetir === true) return responderSoloRepetir(req, res, await consultarTurno(claveDelTurno(req, body)));
@@ -4535,7 +4608,10 @@ app.post('/api/turno', exigirMesaODesk, limitar(60), cupoDeMiembro, async (req, 
   const parcial = !!out.estado && out.estado !== 'completo';
   const g: TurnoGuardado = {
     reply: out.reply,
-    voz: out.voz,
+    // Dictado por voz desde la app (el respaldo de la mesa cuando el stream falla, o una foto): lo que se dice, con
+    // el mismo tope que el stream (lib/cerebro-manos.ts recorteDeVoz); el texto entero va en `reply`.
+    // Un turno de borrador o confirmación se dice entero (GRAVE-1); uno de lectura, con el tope de lectura (MENOR-D).
+    voz: turnoHablado(body) ? recorteDeVoz(out.voz, topeDelJson(out, String((body as Record<string, unknown>).message || (body as Record<string, unknown>).text || ''))).trim() : out.voz,
     emocion: out.emocion,
     via: out.via,
     mode: out.mode,
@@ -4634,7 +4710,7 @@ function turnoVozEnVivo(t: TurnoVoz): Promise<void> {
  * Aplica el mismo harness que /api/turno: si el 27B pide una herramienta, se corre y se
  * vuelve a preguntar; el usuario nunca oye «PEDIR_HERRAMIENTA» ni lee «ACCION_APP».
  */
-app.post('/api/turno/stream', exigirMesaODesk, limitar(60), cupoDeMiembro, async (req, res) => {
+app.post('/api/turno/stream', medirTurno('stream'), exigirMesaODesk, limitar(60), cupoDeMiembro, async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store, no-transform');
   res.setHeader('X-Accel-Buffering', 'no');
@@ -4647,6 +4723,8 @@ app.post('/api/turno/stream', exigirMesaODesk, limitar(60), cupoDeMiembro, async
   });
   const body = cuerpoTurnoHttp(req);
   const escribir = (evento: string, datos: unknown) => {
+    // Cómo terminó (el `error` o el `done`), para la línea del turno que falla (server/registro-turno.ts).
+    anotarEventoTurno(res.locals.notasTurno, evento, datos);
     if (!corte.signal.aborted && !res.writableEnded) res.write(`event: ${evento}\ndata: ${JSON.stringify(datos)}\n\n`);
   };
   // Un reintento de la app con el mismo `idTurno` (server/turno-unico.ts): si ese turno sigue en curso
@@ -4752,13 +4830,18 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
   const idioma = normalizarIdioma(body?.idioma);
   // Un solo reloj para el turno entero (EXEC04): las llamadas al cerebro y las herramientas miran lo que queda.
   const reloj = presupuesto(PRESUPUESTO_TURNO_MS);
+  /** Dónde se van los segundos del turno (lib/tiempos-turno.ts): una línea en el log al terminar, sin texto. */
+  const medida: MedidaTurno = { inicio: Date.now(), herramientas: [], hablado: !!opciones.voz || !!opciones.presupuestoVoz, camino: opciones.alTarea ? 'llamada' : 'mesa' };
   const send = (event: string, data: unknown) => {
     if (!senal?.aborted) salida.enviar(event, data);
   };
   // Cada trozo sale dos veces: `text` para leer (sin expresiones; es lo único que entienden las APK
   // viejas) y `voz` con sus [risa]… para la voz. Los clientes nuevos hablan `voz` y enseñan `text`.
   const soltar = (evento: 'delta' | 'replace', texto: string) => {
-    if (texto.trim()) trazaActual()?.marca('primer-texto');
+    if (texto.trim()) {
+      trazaActual()?.marca('primer-texto');
+      medida.primerTexto ??= Date.now();
+    }
     send(evento, { text: quitarExpresiones(texto), voz: texto });
   };
 
@@ -4819,6 +4902,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
 
   const p = await prepararTurno(body, opciones);
   trazaActual()?.marca('preparado');
+  medida.preparado = Date.now();
   if (!p.message) {
     send('error', { error: FRASE_FALLO.vacio[idioma], codigo: 'vacio' });
     reg.cerrar({ error: 'message vacío' });
@@ -4834,6 +4918,15 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
   // `corrioHerramienta`: si la persona ya se fue, el `done` igual se guarda para su reintento (no la repite).
   // `memorizable` (AUR07): una herramienta fallida, incierta o con datos parciales no deja la respuesta en su memoria.
   let memorizable = true;
+  // En voz, lo que se dice tiene tope (lib/cerebro-manos.ts topeDeVoz / recorteDeVoz). El `done` también lleva en
+  // `voz` solo lo que se dice (un cliente que no oyó nada del stream lo dice desde ahí, y antes lo decía ENTERO);
+  // el texto entero va en `reply`, para leerlo en pantalla.
+  // Un turno de confirmación (un borrador o algo que esperaba su «sí») no lleva tope (revisión del 5-oct, GRAVE-1), y
+  // se le quita a mitad del turno si una herramienta deja un borrador o lee un correo o un chat (`sinTope`, abajo).
+  let topeDelTurno = topeDeVoz(message, !!opciones.voz, { confirmacion: p.vozCompleta });
+  const vozConTope = (texto: string) => recorteDeVoz(texto, topeDelTurno).trim();
+  /** Un borrador de correo o de WhatsApp espera su «sí» en esta conversación (de este turno o de uno anterior). */
+  const hayBorradorPendiente = () => !!p.dueno && !!(borradorDe(p.dueno, p.ambito) || borradorWhatsappDe(p.dueno, p.ambito));
   const terminar = async (texto: string, via: string, emocion: Emocion, delModelo = false, cierre: Cierre = COMPLETO, quien?: { modelo?: string; proveedor?: string }, corrioHerramienta = false) => {
     const app = await accionesDelCerebro(texto, p, delModelo);
     // El modelo contestó solo con la acción: la frase de esa acción sale también como texto (la voz
@@ -4847,7 +4940,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     reg.cerrar({ respuesta: leido, emocion, via, ...(parcial ? { error: fin.motivo || fin.estado } : {}) });
     const datos = {
       reply: leido,
-      voz: app.texto.trim(),
+      voz: vozConTope(app.texto.trim()),
       emocion,
       ms: Date.now() - t0,
       via,
@@ -4861,6 +4954,8 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       ...(p.propuestaTaller ? { propuestaTaller: p.propuestaTaller } : {}),
     };
     send('done', datos);
+    // Una línea por turno de la mesa: dónde se fueron los segundos (sin lo que dijo ni lo que contestó).
+    console.log(lineaTiemposTurno(reg.id, medida));
     if (senal?.aborted && corrioHerramienta) salida.resultado?.(datos);
     if (leido && !parcial && !senal?.aborted && memorizable) await recordarSegunNivel(body, { quienMem, rol: 'ultron', texto: leido, canal }, opciones.retener);
     salida.fin();
@@ -4869,7 +4964,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
   if (p.directo) {
     const emo = extraerEmocion(p.directo);
     send('emocion', { emocion: emo.emocion });
-    soltar('delta', emo.texto);
+    soltar('delta', recorteDeVoz(emo.texto, topeDelTurno));
     return terminar(emo.texto, p.directoVia === 'taller' ? 'taller' : 'tools', emo.emocion);
   }
   {
@@ -4878,7 +4973,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       // El modelo chico no conoce la app: si escribe la marca, se dice rota y no hace nada.
       const emo = extraerEmocion(neutralizarMarca(chica));
       send('emocion', { emocion: emo.emocion });
-      soltar('delta', emo.texto);
+      soltar('delta', recorteDeVoz(emo.texto, topeDelTurno));
       return terminar(emo.texto, 'modelo-chico', emo.emocion);
     }
   }
@@ -4913,8 +5008,22 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     // escribir y mucho antes de correrla): la voz sabe YA que va a tardar.
     let tareaAvisada = false;
     // En voz, lo que se dice tiene tope (lib/cerebro-manos.ts topeDeVoz): pasado, se termina en la frase y no sigue.
-    const topeVoz = topeDeVoz(message, !!opciones.voz);
     let topado = false;
+    /** La pregunta final («¿Lo mando?», «¿sigo?») ya se dijo aparte, después de lo recortado (GRAVE-1). */
+    let preguntaDicha = false;
+    /**
+     * El turno resultó de borrador o de confirmación (revisión del 5-oct, GRAVE-1): desde aquí no hay tope (`nuevo` 0);
+     * o leyó un correo o un chat (revisión independiente, MENOR-D): el tope sube al de lectura, un trozo y su «¿sigo?».
+     * Lo que se retuvo por el tope de antes sale al final (lo dicho hasta ahora es un principio exacto: sigue de ahí).
+     */
+    const subirTope = (nuevo: number) => {
+      if (!topeDelTurno || (nuevo !== 0 && nuevo <= topeDelTurno)) return;
+      topeDelTurno = nuevo;
+      topado = false;
+    };
+    const sinTope = () => subirTope(0);
+    /** Prometió sin herramienta: cómo se resolvió (lib/cerebro-manos.ts cumplirLoDicho). null = no prometió. */
+    let promesa: CumplirLoDicho | null = null;
     const avisarPedido = (texto: string) => {
       if (tareaAvisada || !opciones.alTarea) return;
       const ped = extraerPedidoHerramienta(texto);
@@ -4935,6 +5044,8 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
         emocion = extraerEmocion(full).emocion;
         send('emocion', { emocion });
       }
+      // Un borrador en el chat de la app (chat_aura redactar) espera su «sí»: se dice entero (GRAVE-1).
+      if (topeDelTurno && accionConBorrador(full)) sinTope();
       // Lo decible: sin las líneas ACCION_APP (ni la que se está escribiendo), que son para la app.
       cuerpo = decibleHasta(extraerEmocion(full).texto);
       if (/PEDIR_HERRAMIENTA/i.test(cuerpo)) {
@@ -4954,12 +5065,20 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
         return;
       }
       if (corte > enviado) {
-        if (topeVoz && enviado >= topeVoz) {
+        if (topeDelTurno && enviado >= topeDelTurno) {
           topado = true;
           return;
         }
-        soltar('delta', cuerpo.slice(enviado, corte + 1));
-        enviado = corte + 1;
+        let hasta = corte + 1;
+        // Nunca pasa del tope duro: la frase que lo pasaría no se empieza; si es la primera, se corta en una pausa.
+        // (Aquí solo el principio exacto: la pregunta final, si quedó fuera, se dice al terminar el turno.)
+        if (topeDelTurno && hasta > duroDeVoz(topeDelTurno)) {
+          topado = true;
+          hasta = enviado > 0 ? enviado : vozRecortada(cuerpo.slice(0, hasta), topeDelTurno).hasta;
+          if (hasta <= enviado) return;
+        }
+        soltar('delta', cuerpo.slice(enviado, hasta));
+        enviado = hasta;
       }
     };
 
@@ -4987,6 +5106,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     if (usarManos) {
       // La re-pregunta de «prometió y no lo hizo» va después de una respuesta ya completa: si esa falla, no es corte.
       let enRepregunta = false;
+      const tModelo = Date.now();
       try {
         for await (const pieza of hablarConManos(mensajesManos(p.systemManos, message, hechos, hilo, p.contexto), herramientasManos, senal)) {
           if ('modelo' in pieza) {
@@ -5001,6 +5121,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
             continue;
           }
           reg.marca('nodo');
+          medida.primeraFicha ??= Date.now();
           if ('texto' in pieza) procesar(pieza.texto);
           else {
             const linea = lineaDeHerramienta(pieza.herramienta.nombre, pieza.herramienta.input, Date.now(), opcionesManos(p.manosTurno));
@@ -5010,29 +5131,48 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
             } else console.warn('[cerebro manos] herramienta mal pedida', pieza.herramienta.nombre, JSON.stringify(pieza.herramienta.input).slice(0, 200));
           }
         }
+        medida.modeloMs = Date.now() - tModelo;
         /*
-         * DIJO QUE LO HACÍA Y NO USÓ LA HERRAMIENTA («ahí te llamo» y no llamaba): se le pide una vez, en
-         * silencio, la herramienta que corresponde. Lo que ya dijo queda dicho; si ahora la usa, se cumple.
+         * DIJO QUE LO HACÍA Y NO USÓ LA HERRAMIENTA («ahí te llamo» y no llamaba): si alguna herramienta de ESTE
+         * turno lo cumple, se le pide una vez, en silencio; lo que ya dijo queda dicho y, si ahora la usa, se
+         * cumple. Si ninguna lo cumple (José, 5-oct: 7,5 s hasta la primera palabra por una segunda vuelta que
+         * terminó en «NADA»), no se vuelve a preguntar: el texto se corrige aquí, sin red (abajo, con la guarda).
          */
         if (porRapido && !usoManos && !senal?.aborted && prometeSinHacer(full)) {
           const dicho = extraerAcciones(extraerEmocion(full).texto).texto.trim();
-          const vuelta = [
-            ...mensajesManos(p.systemManos, message, hechos, hilo, p.contexto),
-            { role: 'assistant', content: dicho },
-            { role: 'user', content: notaDeCumplir(idioma) },
-          ];
-          let cumplida = false;
           enRepregunta = true;
-          for await (const pieza of hablarConManos(vuelta, herramientasManos, senal)) {
-            if (!('herramienta' in pieza)) continue;
-            const linea = lineaDeHerramienta(pieza.herramienta.nombre, pieza.herramienta.input, Date.now(), opcionesManos(p.manosTurno));
-            if (!linea) continue;
-            cumplida = usoManos = true;
-            procesar(`\n${linea}\n`);
-          }
-          console.log(`[cerebro manos] prometió sin herramienta; ${cumplida ? 'la usó al pedírsela' : 'no había herramienta que usar'}`);
+          promesa = await cumplirLoDicho({
+            dicho,
+            disponibles: herramientasManos.map((t) => String(t.toolSpec?.name || '')),
+            mensaje: message,
+            anterior: [...hilo].reverse().find((m) => m.role === 'assistant')?.content,
+            repreguntar: () =>
+              hablarConManos(
+                [...mensajesManos(p.systemManos, message, hechos, hilo, p.contexto), { role: 'assistant', content: dicho }, { role: 'user', content: notaDeCumplir(idioma) }],
+                herramientasManos,
+                senal
+              ),
+            usar: (h) => {
+              const linea = lineaDeHerramienta(h.nombre, h.input, Date.now(), opcionesManos(p.manosTurno));
+              if (!linea) return false;
+              usoManos = true;
+              procesar(`\n${linea}\n`);
+              return true;
+            },
+          });
+          medida.correccion = promesa.correccion;
+          if (promesa.correccion === 'repregunta') medida.repreguntaMs = promesa.ms;
+          console.log(
+            `[cerebro manos] prometió sin herramienta; ${promesa.correccion === 'local' ? 'ninguna herramienta del turno lo cumple: se corrige sin volver a preguntar' : promesa.cumplida ? 'la usó al pedírsela' : 'no usó ninguna al pedírsela'}`
+          );
         }
       } catch (e: any) {
+        medida.modeloMs ??= Date.now() - tModelo;
+        // La segunda vuelta falló: lo prometido tampoco pasó (salvo que alcanzara a usar la herramienta).
+        if (enRepregunta && !promesa) {
+          promesa = { correccion: 'repregunta', cumplida: usoManos, candidatas: [], ms: 0 };
+          medida.correccion = 'repregunta';
+        }
         // Sin Bedrock (permiso, red, tarde, cortado a media respuesta): si ya se DIJO algo o se pidió una mano,
         // se queda con eso; si solo llegó la etiqueta de ánimo o media frase sin decir, se descarta y contesta
         // Qwen (auditoría de Codex del 3-oct: un trozo sin decir no puede impedir el respaldo ni pasar por éxito).
@@ -5051,6 +5191,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       }
     }
     if (!porRapido) {
+      const tNodo = Date.now();
       const r = await fetchNodo(`${ULTRON_NODO_URL}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-ultron-secreto': ULTRON_NODO_SECRETO },
@@ -5080,6 +5221,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
         if (l.error) errorNodo = l.error;
         if (l.trozo) {
           reg.marca('nodo');
+          medida.primeraFicha ??= Date.now();
           procesar(l.trozo);
         }
         if (l.done) {
@@ -5110,6 +5252,8 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       // La última línea cuenta aunque no traiga salto: ahí suele venir el error o el `done` (STREAM01).
       linea(buf + dec.decode());
       buf = '';
+      // Bedrock que falló antes de decir nada y luego el nodo: los dos cuentan como «modelo».
+      medida.modeloMs = (medida.modeloMs || 0) + (Date.now() - tNodo);
       if (!terminoNodo && !errorNodo && !senal?.aborted) errorNodo = 'el nodo cerró el stream sin «done»';
     }
     if (errorNodo) {
@@ -5192,12 +5336,18 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
           retenidaH = true;
           return;
         }
-        // Leyendo un resultado en voz es donde más se alarga: el mismo tope.
-        if (topeVoz && dichoH.length >= topeVoz) {
+        // Leyendo un resultado en voz es donde más se alarga: el mismo tope (salvo borrador o lectura: `sinTope`).
+        if (topeDelTurno && dichoH.length >= topeDelTurno) {
           topado = true;
           return;
         }
-        const nuevo = t.slice(0, corte + 1);
+        let nuevo = t.slice(0, corte + 1);
+        // Tampoco aquí pasa del tope duro: la frase que lo pasaría no se empieza (la primera, cortada en una pausa).
+        if (topeDelTurno && nuevo.length > duroDeVoz(topeDelTurno)) {
+          topado = true;
+          if (dichoH) return;
+          nuevo = nuevo.slice(0, vozRecortada(nuevo, topeDelTurno).hasta);
+        }
         if (dichoH) soltar('delta', nuevo.slice(dichoH.length));
         else if (base && !nuevo.startsWith(base)) soltar('replace', nuevo);
         else if (nuevo.length > base.length) soltar('delta', nuevo.slice(base.length));
@@ -5206,7 +5356,33 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       };
       // La vuelta del harness la escribe el mismo cerebro que pidió la herramienta (con sus manos).
       const preguntar = porRapido ? preguntarConManos(p.systemManos, herramientasManos, opcionesManos(p.manosTurno), message, hilo, p.nivel, p.contexto, reloj.senalCon(senal)) : undefined;
-      const h = await bucleHarness({ reply, system, message, hechos, hilo, tools, mando, senal, nivel: p.nivel, contexto: p.contexto, espacio: p.espacio, alTarea: opciones.alTarea, alTexto, computadora: p.computadora, dueno: p.dueno, ambito: p.ambito, vista: p.vistaHerramientas, preguntar, reloj });
+      const tHarness = Date.now();
+      const h = await bucleHarness({
+        reply,
+        system,
+        message,
+        hechos,
+        hilo,
+        tools,
+        mando,
+        senal,
+        nivel: p.nivel,
+        contexto: p.contexto,
+        espacio: p.espacio,
+        alTarea: opciones.alTarea,
+        alTexto,
+        // Un borrador que espera su «sí»: sin tope ANTES de que la vuelta hable (GRAVE-1). Una lectura (correo, chat): el
+        // tope de lectura, un trozo y su «¿sigo?», no los 2 800 caracteres que puede traer (MENOR-D).
+        alPaso: (paso) => subirTope(topeTrasPaso(topeDelTurno, paso)),
+        computadora: p.computadora,
+        dueno: p.dueno,
+        ambito: p.ambito,
+        vista: p.vistaHerramientas,
+        preguntar,
+        reloj,
+      });
+      medida.harnessMs = Date.now() - tHarness;
+      medida.herramientas = h.pasos.map((x) => ({ nombre: x.herramienta, ms: x.ms }));
       const e = extraerEmocion(h.reply);
       emocion = e.emocion;
       send('emocion', { emocion });
@@ -5218,17 +5394,20 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       memorizable = h.memorizable;
       pasosTurno = h.pasos;
       const decible = extraerAcciones(reply).texto;
-      if (topado && dichoH && decible.startsWith(dichoH)) enviado = decible.length;
-      else if (dichoH) {
+      // Lo que se reemplaza en la voz lleva el mismo tope (antes iba ENTERO: una lectura de 1 100 caracteres, ~70 s).
+      // Con tope, `enviado` es lo de verdad dicho (antes, `decible.length`, y el registro decía «dijo 1100 de 1100»).
+      // `enviado` es el principio exacto dicho; si quedó fuera la pregunta final, va también en el replace (GRAVE-1).
+      const reemplazar = () => {
+        const v = vozRecortada(decible, topeDelTurno);
+        soltar('replace', v.decir);
+        enviado = v.hasta;
+        preguntaDicha = v.conPregunta;
+        if (v.hasta < decible.length) topado = true;
+      };
+      if (dichoH) {
         if (decible.startsWith(dichoH)) enviado = dichoH.length;
-        else {
-          soltar('replace', decible);
-          enviado = decible.length;
-        }
-      } else if (enviado > 0 && !decible.startsWith(cuerpo.slice(0, enviado))) {
-        soltar('replace', decible);
-        enviado = decible.length;
-      }
+        else reemplazar();
+      } else if (enviado > 0 && !decible.startsWith(cuerpo.slice(0, enviado))) reemplazar();
     }
     /*
      * LA GUARDA DE PROMESAS (lib/promesas.ts; José, 4-oct): lo que promete trabajo y ninguna herramienta de ESTE
@@ -5238,17 +5417,34 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
      */
     if (reply) {
       const antes = extraerAcciones(reply).texto;
+      // Prometió sin herramienta y ninguna lo cumplió (no había, o no la usó al pedírsela): lo que da por hecho
+      // o promete una acción («te llamo», «ya lo puse») sale aquí, sin red; lo de trabajo o aviso, en la guarda.
+      // Revisión del 5-oct (GRAVE-2): no si la re-pregunta contestó «NADA». «Desde aquí no tengo cómo» solo cuando ninguna
+      // herramienta del turno lo hace (`local`); si la había y no la usó, no se inventa eso. Revisión independiente
+      // (MEDIO-C): con un borrador esperando su «sí» solo se perdona lo de ESE borrador («¿Lo mando?», «te lo leo»), y
+      // solo cuenta una herramienta que terminó bien si es de las que cumplirían lo prometido (no el clima).
+      const locales: string[] = [];
+      const borradorPendiente = hayBorradorPendiente();
+      if (debeCorregirSinHerramienta({ promesa, usoManos, borradorPendiente, pasos: pasosTurno, dicho: antes, mensaje: message })) {
+        const c = corregirPromesaSinHerramienta(reply, idioma === 'en' ? 'en' : 'es', { sinHerramienta: promesa?.correccion === 'local', borradorPendiente });
+        if (c.cambiada) {
+          reply = c.texto;
+          locales.push('sin-herramienta');
+        }
+      }
       const v = vigilarPromesas(reply, { pasos: pasosTurno, acciones: extraerAcciones(reply).acciones.length, idioma });
-      if (v.cambiada) {
-        console.log(`[promesas] corregida (${v.motivos.join(', ')}) via ${via}`);
+      if (v.cambiada || locales.length) {
+        console.log(`[promesas] corregida (${[...locales, ...v.motivos].join(', ')}) via ${via}`);
         reg.marca('promesa-corregida');
         reply = v.texto;
         const ahora = extraerAcciones(reply).texto;
-        // Lo ya dicho que no sigue igual se reemplaza (en la voz, lo retenido nunca sonó).
+        // Lo ya dicho que no sigue igual se reemplaza (en la voz, lo retenido nunca sonó), con el mismo tope.
         if (enviado > 0 && !ahora.startsWith(antes.slice(0, enviado))) {
-          soltar('replace', ahora);
-          enviado = ahora.length;
-          topado = false;
+          const v = vozRecortada(ahora, topeDelTurno);
+          soltar('replace', v.decir);
+          enviado = v.hasta;
+          preguntaDicha = v.conPregunta;
+          topado = v.hasta < ahora.length;
         }
       }
     }
@@ -5256,9 +5452,30 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     const delModelo = !!reply;
     if (!reply) reply = sinCerebro(p.datos);
     const decible = delModelo ? extraerAcciones(reply).texto : reply;
-    // Topado en voz: lo que faltaba no se dice (queda en el texto de la respuesta, para leerlo).
-    if (topado) console.log(`[voz] tope: dijo ${enviado} de ${decible.length} caracteres`);
-    else if (decible.length > enviado) soltar('delta', decible.slice(enviado));
+    // Lo que falta sale con el mismo tope (lo retenido hasta aquí, una respuesta del modelo chico o del nodo: antes
+    // salía ENTERO). Topado en voz: lo que faltaba no se dice (queda en el texto de la respuesta, para leerlo).
+    if (!topado && decible.length > enviado) {
+      const hasta = Math.max(enviado, vozRecortada(decible, topeDelTurno).hasta);
+      if (hasta > enviado) soltar('delta', decible.slice(enviado, hasta));
+      enviado = hasta;
+      if (enviado < decible.length) topado = true;
+    }
+    // Recortado o no, la pregunta final a la persona («¿Lo mando?», «¿sigo?») siempre se oye (GRAVE-1): si no sonó
+    // ya, va después de lo dicho. Sin ella, José podía contestar «sí» a algo que no oyó preguntar. Nunca pasa del tope
+    // duro (revisión independiente del 5-oct, MENOR-E): preguntaFinal ya deja fuera las largas, citadas y retóricas.
+    if (topado && !preguntaDicha) {
+      const q = preguntaFinal(decible);
+      // Tercera revisión (5-oct): sin el «cabe en el tope duro». El stream ya puede haber dicho casi todo el tope y la
+      // pregunta quedaba fuera; preguntaFinal la limita a 120 caracteres, así que el exceso está acotado.
+      if (q && enviado <= decible.lastIndexOf(q)) {
+        soltar('delta', ` ${q}`);
+        preguntaDicha = true;
+      }
+    }
+    if (topado) {
+      medida.tope = { dicho: Math.min(enviado, decible.length), total: decible.length };
+      console.log(`[voz] tope: dijo ${Math.min(enviado, decible.length)} de ${decible.length} caracteres`);
+    }
     return terminar(reply, via, emocion, delModelo, cierre, delModelo ? autor : undefined, corrioHerramienta);
   } catch (err: any) {
     if (senal?.aborted) {

@@ -250,6 +250,73 @@ test('adaptador de la tarea en curso: mismo id, progreso con denominador real y 
   assert.ok(todos.acceptance.every((c) => c.status !== 'verified' || c.evidenceIds.length > 0));
 });
 
+test('la tarea en curso ACTIVA espera a la persona: no es trabajo de fondo («Trabajando» con spinner era mentira; José, 5-oct)', () => {
+  // Lo que vio José: «EN MARCHA · revisar los 12 correos sin leer · Trabajando · última señal hace 2 min» y nada pasaba.
+  // La tarea en curso avanza solo cuando la persona habla: es una espera suya, no algo que AURA hace por detrás.
+  const t: TareaEnCursoMin = {
+    id: 'tc_12',
+    ambito: 'mesa',
+    tipo: 'correo',
+    titulo: 'revisar los 12 correos sin leer',
+    pasos: [{ etiqueta: 'Ana — «Reunión»', estado: 'hecho' }, { etiqueta: 'Beto — «Planos»', estado: 'pendiente' }, { etiqueta: 'Caro — «Fotos»', estado: 'pendiente' }],
+    actual: 0,
+    estado: 'activa',
+    creado: T0,
+    actualizado: T0 + 10,
+  };
+  const s = deTareaEnCurso(t);
+  assert.notEqual(s.state, 'running', 'no «Trabajando»');
+  assert.equal(s.state, 'awaiting_approval', 'un estado de espera que ya existe (no se inventa otro)');
+  assert.equal(s.awaitingInput, true, 'espera que la persona siga, no una decisión');
+  assert.equal(s.decision, null, 'sin tarjeta de decisión');
+  assert.equal(s.lastHeartbeatAt, undefined, 'sin «última señal»: no hay nada trabajando por detrás');
+  assert.match(s.currentStep || '', /^Espera que sigas: dime «sigue» o «el siguiente»/);
+  assert.match(s.currentStep || '', /Beto — «Planos»/, 'dice cuál toca');
+  assert.deepEqual(s.controls, { pause: true, resume: false, cancel: true }, 'Pausar y Cancelar siguen');
+  assert.deepEqual(resumenTareas([s], T0), { trabajando: 0, decisiones: 0 }, 'el indicador no dice «Trabajando · 1»');
+  // En pausa: sigue en pausa (Reanudar), y tampoco es una espera de la persona.
+  const p = deTareaEnCurso({ ...t, estado: 'pausada' });
+  assert.equal(p.state, 'paused');
+  assert.equal(p.awaitingInput, undefined);
+  assert.deepEqual(p.controls, { pause: false, resume: true, cancel: true });
+  // Preguntando: la decisión de siempre (no cambia).
+  const q = deTareaEnCurso({ ...t, estado: 'preguntando', pedidoNuevo: 'busca vuelos' });
+  assert.equal(q.state, 'awaiting_approval');
+  assert.ok(q.decision);
+  assert.equal(q.awaitingInput, undefined);
+});
+
+test('la tarea en curso que espera a la persona: Pausar y Cancelar siguen llegando a la tarea en curso', async () => {
+  _usarAlmacenDurable(almacenEnMemoria());
+  const yo = correo();
+  const tc: TareaEnCursoMin = {
+    id: 'tc_espera',
+    ambito: 'mesa',
+    tipo: 'correo',
+    titulo: 'revisar los 3 correos sin leer',
+    pasos: [{ etiqueta: 'Ana', estado: 'pendiente' }, { etiqueta: 'Beto', estado: 'pendiente' }, { etiqueta: 'Caro', estado: 'pendiente' }],
+    actual: 0,
+    estado: 'activa',
+    creado: T0,
+    actualizado: T0 + 5,
+  };
+  const h = arnes({ tc: [tc] });
+  try {
+    const l = (await h.pedir('/api/trabajos', yo)).json;
+    assert.equal(l.tareas[0].state, 'awaiting_approval');
+    assert.equal(l.tareas[0].awaitingInput, true);
+    assert.deepEqual(l.resumen, { trabajando: 0, decisiones: 0 });
+    const p = await h.pedir('/api/trabajos/tc_espera/pausar', yo, {});
+    assert.equal(p.status, 200);
+    assert.equal(p.json.tarea.state, 'paused');
+    const c = await h.pedir('/api/trabajos/tc_espera/cancelar', yo, {});
+    assert.equal(c.status, 200);
+    assert.deepEqual(h.ll.accionesTc, ['tc_espera:pausar', 'tc_espera:descartar']);
+  } finally {
+    h.cerrar();
+  }
+});
+
 /* ------------------------------------------------------------------ rutas */
 
 type Llamadas = { enviar: number; descartar: number; accionesTc: string[]; pausarPc: string[]; pararPc: string[]; huellas: string[] };

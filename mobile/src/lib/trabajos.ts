@@ -75,6 +75,8 @@ export type TareaVista = {
   decision?: DecisionVista | null;
   result?: ResultadoVista | null;
   lastHeartbeatAt?: string;
+  /** La tarea en curso que espera que la persona siga (servidor: `awaiting_approval` sin decisión). Ver `esperaQueSigas`. */
+  awaitingInput?: boolean;
   nextCheckAt?: string;
   stopCondition?: string;
   createdAt?: string;
@@ -194,41 +196,61 @@ const pospuesta = (t: TareaVista, ahora: number) => !!t.decision?.postponed && (
 export const esperaDecision = (t: TareaVista, ahora = Date.now()) => !t.terminal && (t.state === 'blocked' || (t.state === 'awaiting_approval' && !!t.decision && !pospuesta(t, ahora)));
 
 /**
+ * La tarea en curso de la conversación que ESPERA QUE SIGAS (José, 5-oct): avanza solo cuando la persona habla («sigue»,
+ * «el siguiente»), así que no es trabajo de fondo ni una decisión. Nada de «Trabajando», spinner ni «última señal»: se
+ * pinta aparte, «Espera que sigas». El servidor la manda en `awaiting_approval` sin decisión con `awaitingInput`; un
+ * servidor de antes la mandaba en `running`: también lo es (una tarea en curso nunca trabaja por detrás).
+ */
+export const esperaQueSigas = (t: Pick<TareaVista, 'terminal' | 'state' | 'decision' | 'source' | 'awaitingInput'>) =>
+  !t.terminal && !t.decision && (t.state === 'awaiting_approval' ? t.awaitingInput === true || t.source === 'tarea-en-curso' : t.state === 'running' && t.source === 'tarea-en-curso');
+
+/**
  * Igual que el servidor (lib/tareas-durables.ts `resumenTareas`). Una tarea `sinConfirmar` (la última lista vino
  * parcial y no estaba en ella) NO cuenta como «trabajando» (revisión 10, MENOR-F): no se sabe si sigue viva, y contarla
  * dejaba el indicador girando mientras la lista seguía incompleta. Se sigue viendo en el panel, marcada «sin confirmar».
  */
-export function resumen(xs: TareaVista[], ahora = Date.now()): { trabajando: number; decisiones: number } {
+export function resumen(xs: TareaVista[], ahora = Date.now()): { trabajando: number; decisiones: number; esperan: number } {
   let trabajando = 0;
   let decisiones = 0;
+  let esperan = 0;
   for (const t of xs) {
     if (t.terminal || t.state === 'paused') continue;
     if (esperaDecision(t, ahora)) decisiones++;
+    else if (esperaQueSigas(t)) esperan++;
     else if (t.state !== 'awaiting_approval' && !t.sinConfirmar) trabajando++;
   }
-  return { trabajando, decisiones };
+  return { trabajando, decisiones, esperan };
 }
 
 /** Cuántas recientes (terminadas) se muestran. */
 export const MAX_RECIENTES = 8;
 
-export function grupos(xs: TareaVista[], ahora = Date.now()): { decisiones: TareaVista[]; activas: TareaVista[]; recientes: TareaVista[] } {
+/**
+ * Los grupos del panel: las que necesitan tu decisión, las que esperan que sigas (la tarea en curso de la conversación),
+ * las que están en marcha (trabajo de verdad, y las pausadas) y las recientes.
+ */
+export function grupos(xs: TareaVista[], ahora = Date.now()): { decisiones: TareaVista[]; esperan: TareaVista[]; activas: TareaVista[]; recientes: TareaVista[] } {
   const decisiones: TareaVista[] = [];
+  const esperan: TareaVista[] = [];
   const activas: TareaVista[] = [];
   const recientes: TareaVista[] = [];
   for (const t of xs) {
     if (t.terminal || TERMINALES.has(t.state)) recientes.push(t);
     else if (esperaDecision(t, ahora)) decisiones.push(t);
+    else if (esperaQueSigas(t)) esperan.push(t);
     else activas.push(t);
   }
   recientes.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
-  return { decisiones, activas, recientes: recientes.slice(0, MAX_RECIENTES) };
+  return { decisiones, esperan, activas, recientes: recientes.slice(0, MAX_RECIENTES) };
 }
 
 /** «Necesito una decisión · 1» antes que «Trabajando · 2»; nada activo → null (no se muestra). */
-export function textoIndicador(r: { trabajando: number; decisiones: number }, idioma: 'es' | 'en' = 'es'): string | null {
+export function textoIndicador(r: { trabajando: number; decisiones: number; esperan?: number }, idioma: 'es' | 'en' = 'es'): string | null {
   if (r.decisiones > 0) return idioma === 'en' ? `I need a decision · ${r.decisiones}` : `Necesito una decisión · ${r.decisiones}`;
   if (r.trabajando > 0) return idioma === 'en' ? `Working · ${r.trabajando}` : `Trabajando · ${r.trabajando}`;
+  // La tarea en curso de la conversación: no trabaja por detrás, pero tiene que poder abrirse (pausarla, cancelarla).
+  // Sin indicador no había cómo llegar al panel. Quieto: nada de «Trabajando» ni movimiento (movimientoIndicador).
+  if (r.esperan && r.esperan > 0) return idioma === 'en' ? `Waiting for you · ${r.esperan}` : `Espera que sigas · ${r.esperan}`;
   return null;
 }
 
@@ -286,6 +308,15 @@ export function etiquetaEstado(s: EstadoTarea, idioma: 'es' | 'en' = 'es'): stri
   return idioma === 'en' ? e[1] : e[0];
 }
 
+/** La etiqueta de UNA tarea: «Espera que sigas» si espera a la persona (no «Trabajando» ni «Espera tu decisión»). */
+export function etiquetaTarea(t: Pick<TareaVista, 'terminal' | 'state' | 'decision' | 'source' | 'awaitingInput'>, idioma: 'es' | 'en' = 'es'): string {
+  if (esperaQueSigas(t)) return idioma === 'en' ? 'Waiting for you' : 'Espera que sigas';
+  return etiquetaEstado(t.state, idioma);
+}
+
+/** ¿Esta tarea lleva algo que gira? Como `gira`, pero nunca la que espera que sigas (esperarte no es trabajar). */
+export const giraTarea = (t: Pick<TareaVista, 'terminal' | 'state' | 'decision' | 'source' | 'awaitingInput'>) => gira(t.state) && !esperaQueSigas(t);
+
 /** «3 de 5 páginas comprobadas». Sin denominador real, null (no se inventa un avance). */
 export function textoProgreso(p: TareaVista['progress'], idioma: 'es' | 'en' = 'es'): string | null {
   if (!p || !(p.total > 0) || !(p.done >= 0)) return null;
@@ -300,6 +331,15 @@ export function criteriosEnPalabras(acc: TareaVista['acceptance'] | undefined): 
   if (!acc || acc.length < 2) return [];
   const marca = (s: string) => (s === 'verified' ? '✓' : s === 'not_met' ? '✗' : s === 'unknown' ? '?' : '·');
   return acc.map((c) => ({ id: c.id, estado: c.status, texto: `${marca(c.status)} ${String(c.text).split(/:\s/)[0].slice(0, 120)}` }));
+}
+
+/**
+ * «hace 2 min» para la «última señal» de una tarea; '' si espera que sigas (no hay nada trabajando por detrás que dé
+ * señales: decir «última señal hace 2 min» sugería que algo corría).
+ */
+export function ultimaSenal(t: Pick<TareaVista, 'terminal' | 'state' | 'decision' | 'source' | 'awaitingInput' | 'lastHeartbeatAt' | 'updatedAt'>, ahora = Date.now(), idioma: 'es' | 'en' = 'es'): string {
+  if (esperaQueSigas(t)) return '';
+  return haceCuanto(t.lastHeartbeatAt || t.updatedAt, ahora, idioma);
 }
 
 /** «hace 2 min», para «última señal». */
