@@ -1,7 +1,8 @@
 /**
  * Pruebas en Node de lo que AURA propone sola y de lo que lleva de la persona (sin teléfono):
  *   la propuesta empujada o leída del servidor (validar y normalizar), la cola que no duplica ni repite
- *   lo contestado, qué se manda con cada botón, el sondeo, el puente de acciones que la deja pasar, y las
+ *   lo contestado, qué se manda con cada botón, el sondeo (un `propuesta: null` más nuevo retira la tarjeta; uno
+ *   fuera de orden, un error o un timeout no), el puente de acciones que la deja pasar, y las
  *   cuentas de las hojas de misiones, lo que sabe de ti y tu círculo (compa/cerebro.ts).
  *
  *   cd mobile && npx tsx src/compa/pruebas/iniciativa.prueba.mjs
@@ -14,6 +15,7 @@ import {
   cuerpoRespuesta,
   esAccionIniciativa,
   etiquetaClase,
+  leerSondeo,
   pedidoAMandar,
   propuestaDeAccion,
   propuestaDeServidor,
@@ -45,6 +47,11 @@ import {
   venceEnPalabras,
 } from '../cerebro.ts';
 import { esAccionApp, accionesDelTurno } from '../acciones.ts';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const MOVIL = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 
 let fallos = 0;
 let n = 0;
@@ -198,6 +205,130 @@ prueba('cola: otra persona en el teléfono empieza de cero; la misma no', () => 
   assert.equal(c.ahora(), null);
   assert.equal(c.ultimoSondeo, 0);
   assert.equal(c.yaContestada('p_1a2b3c4d5e6f'), false);
+});
+
+/* ── el sondeo (GET /api/iniciativa): «ya no hay» retira; fuera de orden o con fallo, nada ──────── */
+
+const TRES = 'Tienes 3 correos sin leer. ¿Te resumo lo importante?';
+const ok = (cuerpo) => ({ ok: true, cuerpo });
+const conTres = (o = {}) => ok({ propuesta: { ...accion(), tipo: 'ayuda', texto: TRES, observada: AHORA - 30_000, ...o }, motivo: 'pendiente', iniciativa: 'media', honesto: true });
+const ninguna = (motivo = 'sin_ideas') => ok({ propuesta: null, motivo, iniciativa: 'media', honesto: true });
+/** La mesa con la tarjeta de «3 correos» a la vista (llegó por un GET anterior). */
+const mesaConTres = () => {
+  const c = new ColaPropuestas(() => AHORA);
+  assert.equal(c.terminarSondeo(c.empezarSondeo(), conTres()), 'nueva');
+  assert.equal(c.ahora().texto, TRES);
+  return c;
+};
+
+prueba('sondeo: leer el cuerpo distingue «no hay» (propuesta:null) de una respuesta rota o un fallo', () => {
+  assert.equal(leerSondeo(conTres()).tipo, 'propuesta');
+  assert.equal(leerSondeo(ninguna()).tipo, 'ninguna');
+  assert.equal(leerSondeo(ninguna('horas_quietas')).tipo, 'ninguna');
+  assert.equal(leerSondeo({ ok: false }).tipo, 'fallo', 'sin red, no-2xx o tope de tiempo: api() lanzó');
+  assert.equal(leerSondeo(ok({})).tipo, 'invalida', 'JSON roto: api() devuelve {} (sin la clave propuesta)');
+  assert.equal(leerSondeo(ok(null)).tipo, 'invalida');
+  assert.equal(leerSondeo(ok('<html>502</html>')).tipo, 'invalida');
+  assert.equal(leerSondeo(ok({ propuesta: { id: 'p_1a2b3c4d5e6f', texto: 'hola' } })).tipo, 'invalida', 'propuesta mal formada no es «no hay»');
+  assert.equal(leerSondeo(ok({ propuesta: undefined })).tipo, 'invalida');
+  assert.equal(leerSondeo(ok({ error: 'Entra con tu sesión.' })).tipo, 'invalida');
+});
+
+prueba('sondeo: una respuesta exitosa más nueva con propuesta:null retira la tarjeta de «3 correos»', () => {
+  const c = mesaConTres();
+  let avisos = 0;
+  c.suscribir(() => avisos++);
+  assert.equal(c.terminarSondeo(c.empezarSondeo(), ninguna()), 'retirada');
+  assert.equal(c.ahora(), null, 'el hecho ya no vale: la tarjeta se va');
+  assert.equal(avisos, 1, 'la mesa se redibuja una vez');
+  // Retirada no es contestada: si el servidor la vuelve a tener pendiente (p. ej. tras las horas quietas), sale otra vez.
+  assert.equal(c.yaContestada('p_1a2b3c4d5e6f'), false);
+  assert.equal(c.terminarSondeo(c.empezarSondeo(), conTres()), 'nueva');
+});
+
+prueba('sondeo (fuera de orden): el GET viejo con «3 correos» que llega DESPUÉS del null más nuevo no la resucita', () => {
+  const c = mesaConTres();
+  const viejo = c.empezarSondeo();
+  const nuevo = c.empezarSondeo();
+  assert.equal(c.terminarSondeo(nuevo, ninguna()), 'retirada');
+  assert.equal(c.terminarSondeo(viejo, conTres()), 'fuera_de_orden');
+  assert.equal(c.ahora(), null, 'la tarjeta no vuelve');
+  // Ni con una revisión o lectura más nueva en su cuerpo: lo que manda es el orden de las consultas.
+  const viejo2 = c.empezarSondeo();
+  const nuevo2 = c.empezarSondeo();
+  assert.equal(c.terminarSondeo(nuevo2, ninguna()), 'sin_cambio');
+  assert.equal(c.terminarSondeo(viejo2, conTres({ rev: 9, observada: AHORA })), 'fuera_de_orden');
+  assert.equal(c.ahora(), null);
+});
+
+prueba('sondeo (fuera de orden): el null viejo que llega DESPUÉS de una propuesta más nueva no la quita', () => {
+  const c = new ColaPropuestas(() => AHORA);
+  const viejo = c.empezarSondeo();
+  const nuevo = c.empezarSondeo();
+  assert.equal(c.terminarSondeo(nuevo, conTres()), 'nueva');
+  assert.equal(c.terminarSondeo(viejo, ninguna()), 'fuera_de_orden');
+  assert.equal(c.ahora()?.texto, TRES, 'la tarjeta sigue');
+  // También con la tarjeta ya a la vista y la más nueva confirmándola.
+  const c2 = mesaConTres();
+  const v2 = c2.empezarSondeo();
+  const n2 = c2.empezarSondeo();
+  assert.equal(c2.terminarSondeo(n2, conTres()), 'repetida');
+  assert.equal(c2.terminarSondeo(v2, ninguna()), 'fuera_de_orden');
+  assert.equal(c2.ahora()?.texto, TRES);
+});
+
+prueba('sondeo: un null de una consulta que empezó ANTES de que la tarjeta llegara por el canal de acciones no la quita', () => {
+  const c = new ColaPropuestas(() => AHORA);
+  const t = c.empezarSondeo();
+  assert.equal(c.ofrecer(propuestaDeAccion(accion({ texto: TRES }))), 'nueva', 'empujada mientras el GET iba en camino');
+  assert.equal(c.terminarSondeo(t, ninguna()), 'sin_cambio');
+  assert.equal(c.ahora()?.texto, TRES);
+  // La siguiente consulta, ya con la tarjeta a la vista, sí decide.
+  assert.equal(c.terminarSondeo(c.empezarSondeo(), ninguna()), 'retirada');
+  assert.equal(c.ahora(), null);
+});
+
+prueba('sondeo: un error, la red caída, un no-2xx, un cuerpo roto o el tope de tiempo NO retiran la tarjeta', () => {
+  const c = mesaConTres();
+  const antes = c.ahora();
+  for (const r of [{ ok: false }, ok({}), ok(null), ok('<html>502</html>'), ok({ error: 'x' }), ok({ propuesta: { id: 'p_1a2b3c4d5e6f' } })]) {
+    assert.equal(c.terminarSondeo(c.empezarSondeo(), r), 'fallo', JSON.stringify(r));
+    assert.equal(c.ahora(), antes, `sigue la última válida tras ${JSON.stringify(r)}`);
+  }
+  // Un fallo más nuevo no tapa la última respuesta válida: el null que empezó antes y llegó después sí decide.
+  const viejo = c.empezarSondeo();
+  const nuevo = c.empezarSondeo();
+  assert.equal(c.terminarSondeo(nuevo, { ok: false }), 'fallo');
+  assert.equal(c.terminarSondeo(viejo, ninguna()), 'retirada');
+  assert.equal(c.ahora(), null);
+  // Y al revés: un fallo viejo no deshace nada.
+  const c2 = mesaConTres();
+  const v2 = c2.empezarSondeo();
+  assert.equal(c2.terminarSondeo(c2.empezarSondeo(), conTres()), 'repetida');
+  assert.equal(c2.terminarSondeo(v2, { ok: false }), 'fallo');
+  assert.equal(c2.ahora()?.texto, TRES);
+});
+
+prueba('sondeo: lo que estaba en camino para la persona anterior no toca la mesa de la nueva', () => {
+  const c = new ColaPropuestas(() => AHORA);
+  c.paraPersona('jose@ejemplo.com');
+  const deJose = c.empezarSondeo();
+  const deJose2 = c.empezarSondeo();
+  c.paraPersona('ana@ejemplo.com');
+  assert.equal(c.terminarSondeo(c.empezarSondeo(), conTres({ id: 'p_aaaaaa111111' })), 'nueva');
+  assert.equal(c.terminarSondeo(deJose, ninguna()), 'fuera_de_orden');
+  assert.equal(c.terminarSondeo(deJose2, conTres({ id: 'p_bbbbbb222222' })), 'fuera_de_orden');
+  assert.equal(c.ahora()?.id, 'p_aaaaaa111111');
+});
+
+prueba('sondeo: la mesa (DeskScreen) pasa cada GET por la cola en orden, también el null y el fallo', () => {
+  const desk = fs.readFileSync(path.join(MOVIL, 'src/screens/DeskScreen.tsx'), 'utf8');
+  const i = desk.indexOf("'/api/iniciativa', { method: 'GET' }");
+  assert.ok(i > 0, 'la mesa sigue preguntando por GET /api/iniciativa');
+  const tramo = desk.slice(Math.max(0, i - 600), i + 600);
+  assert.match(tramo, /propuestas\.empezarSondeo\(\)/, 'cada consulta toma su turno antes de salir');
+  assert.match(tramo, /propuestas\.terminarSondeo\(/, 'y su respuesta (o su fallo) se decide en la cola');
+  assert.doesNotMatch(tramo, /if \(vivo && p\)/, 'el null ya no se tira sin mirar');
 });
 
 /* ── los botones y el sondeo ─────────────────────────────────────────────────────────────────── */
