@@ -441,7 +441,17 @@ type EntradaIndice = {
  * `recortadas` al marcarlo (lo que contó el inventario; informativo: la reversión descuenta lo que de verdad vuelve). Las
  * marcas de a46b496 no lo traen.
  */
-type MarcaInventario = { v: number; t: number; fuente: AlmacenDurable['tipo']; ronda: string; revisadas: number; agregadas: number; dr?: number };
+type MarcaInventario = {
+  v: number;
+  t: number;
+  fuente: AlmacenDurable['tipo'];
+  ronda: string;
+  revisadas: number;
+  agregadas: number;
+  dr?: number;
+  /** Revisión sobre 8b9e9ca: el respaldo de SU ciclo (sufijo de `claveRespaldo`); la reversión usa este, no lo recalcula. */
+  respaldo?: string;
+};
 /**
  * Revisión externa sobre a46b496: constancia de que operación REVIRTIÓ la reconciliación de este dueño. Vive en el índice
  * (no en la memoria de una réplica): mientras esté y su `gen` llegue a la generación vigente
@@ -449,13 +459,39 @@ type MarcaInventario = { v: number; t: number; fuente: AlmacenDurable['tipo']; r
  * con `reactivarReconciliacionTareas` (un dueño) o subiendo la generación (todos). `restaurado`: ya se devolvió lo que el
  * recorte del inventario sacó del índice de antes (no se repite). `respaldo`: de qué respaldo salió eso.
  */
-type MarcaReversion = { v: 1; t: number; gen: number; ronda: string | null; respaldo: string; restaurado: boolean; quitadas: number; conservadas: number; restauradas: number; pendientes: number };
+type MarcaReversion = {
+  v: 1;
+  t: number;
+  gen: number;
+  ronda: string | null;
+  respaldo: string;
+  restaurado: boolean;
+  quitadas: number;
+  conservadas: number;
+  restauradas: number;
+  pendientes: number;
+  /** Revisión sobre 8b9e9ca: lo que falta devolver del índice de antes (no se pudo leer); 0 con `restaurado`. */
+  porRestaurar?: number;
+};
 /**
  * A7: un recorrido del inventario a medias (reanudable): hasta qué clave se revisó sin dudas y lo que se lleva. Vive EN el
  * índice, en la misma escritura CAS que lo que agrega: si el índice se pierde o lo rehace otro, el avance se va con él
  * y el recorrido empieza de nuevo (nunca se marca reconciliado con la mitad de un recorrido sobre otro índice).
  */
-type PaseInventario = { ronda: string; desde: string | null; revisadas: number; agregadas: number; sinVerificar: number; inicio: number; actualizado: number; fin?: number; /** Las suyas vistas en el recorrido (en el índice o recuperadas): para contar las recortadas al terminar. */ propias?: number };
+type PaseInventario = {
+  ronda: string;
+  desde: string | null;
+  revisadas: number;
+  agregadas: number;
+  sinVerificar: number;
+  inicio: number;
+  actualizado: number;
+  fin?: number;
+  /** Las suyas vistas en el recorrido (en el índice o recuperadas): para contar las recortadas al terminar. */
+  propias?: number;
+  /** El respaldo del ciclo de este recorrido (ver `MarcaInventario.respaldo`). */
+  respaldo?: string;
+};
 /**
  * `inventario`/`pase`: A7. Un servidor de antes los ignora (y al reescribir el índice los pierde: vuelve a «sin reconciliar»).
  * `recortadas` (revisión 13): cuántas tareas TERMINADAS de este dueño existen todavía pero el tope del historial
@@ -689,6 +725,11 @@ const indiceRevertido = (ix: Indice | null | undefined, gen: number) => !!ix?.re
  * siempre (`antes-de-inventario-v1`); tras la reversión número n, la siguiente reconciliación guarda el suyo en `…-r<n>`.
  */
 const sufijoRespaldo = (reversiones: unknown) => (Number(reversiones) > 0 ? `-r${Math.floor(Number(reversiones))}` : '');
+/**
+ * Revisión externa sobre 8b9e9ca: el respaldo del ciclo que hay que revertir. El que anotó la reconciliación (o la reversión
+ * ya empezada) manda; solo un índice de antes de esta revisión (sin anotarlo) lo deduce del número de reversiones.
+ */
+const respaldoDe = (ix: Indice | null | undefined): string => ix?.revertido?.respaldo ?? ix?.inventario?.respaldo ?? ix?.pase?.respaldo ?? sufijoRespaldo(ix?.reversiones);
 const claveRespaldo = (dueno: string, sufijo = '') => claveDe(ESPACIO_RESPALDO_INDICE, dueno, `antes-de-inventario-v${ESQUEMA_INVENTARIO}${sufijo}`);
 const prefijoTareas = (dueno: string) => `${ESPACIO_TAREAS}/${huellaDueno(dueno)}`;
 /** Un id de tarea tal como lo escribe `crearTarea` (lo que no lo es no es una tarea: no entra al inventario). */
@@ -838,6 +879,12 @@ export async function reconciliarInventarioTareas(
   }
   const ronda = pase?.ronda ?? `inv_${ahora.toString(36)}${crypto.randomBytes(3).toString('hex')}`;
   const desde = pase?.desde ?? null;
+  // Revisión externa sobre 8b9e9ca: el CICLO (cuántas reversiones lleva el índice) de la foto con la que trabaja este paso.
+  // Una réplica que se quedó colgada en el LIST mientras otra reconciliaba, operación revertía y reactivaba, trae una foto
+  // de un ciclo anterior: su respaldo es el de ese ciclo y lo que agregue no lo podría revertir el ciclo vigente (dejaba
+  // 199 de 200). Esa réplica no escribe nada (ni el respaldo de un ciclo que ya pasó cuenta para el vigente).
+  const ciclo = Number(indice?.reversiones) || 0;
+  const respaldo = sufijoRespaldo(ciclo);
   const d = await diagnosticarTramo(dueno, enIndice, desde, presupuesto, a);
   if (d.ok === false) {
     avisarInventario(d.sinFuente ? 'sin fuente' : 'listado', d.detalle);
@@ -849,14 +896,14 @@ export async function reconciliarInventarioTareas(
   if (d.hasta === desde && !d.agotado) return nada(d.fallo ? 'error' : 'en-curso');
   if (d.propuesta.length) {
     // El índice como estaba ANTES de que el inventario le agregara nada (una sola vez por dueño, esquema y generación).
-    const resp = await crearUnaVez(claveRespaldo(dueno, sufijoRespaldo(indice?.reversiones)), { v: 1, t: ahora, ronda, indice: indice ?? null }, a);
+    const resp = await crearUnaVez(claveRespaldo(dueno, respaldo), { v: 1, t: ahora, ronda, indice: indice ?? null }, a);
     if (resp.ok === false) {
       avisarInventario('respaldo', resp.detalle);
       return nada('error');
     }
   }
   let agregadas = 0;
-  let aborto: 'ya' | 'otro' | 'revertido' | null = null;
+  let aborto: 'ya' | 'otro' | 'revertido' | 'ciclo' | null = null;
   let marcado = false;
   const w = await modificarDurable<Indice>(
     claveIndice(dueno),
@@ -867,6 +914,8 @@ export async function reconciliarInventarioTareas(
       if (indiceReconciliado(actual)) return void (aborto = 'ya');
       // Operación revirtió mientras esta réplica listaba: lo que encontró no se escribe (ni aunque fuera su primer tramo).
       if (indiceRevertido(actual, gen)) return void (aborto = 'revertido');
+      // Otro ciclo (operación revirtió, y quizá reactivó, desde la foto de este paso): nada de lo suyo vale ya.
+      if ((Number(actual?.reversiones) || 0) !== ciclo) return void (aborto = 'ciclo');
       const p0 = actual?.pase;
       // El recorrido tiene que seguir siendo este y estar donde se dejó; si no, no se escribe nada.
       if (pase ? !p0 || p0.fin || p0.ronda !== ronda || (p0.desde ?? null) !== desde : p0 && !p0.fin) return void (aborto = 'otro');
@@ -889,9 +938,9 @@ export async function reconciliarInventarioTareas(
         // las vuelve a ver el recorrido: se toma la mayor de las dos cuentas, nunca la suma (no se cuenta dos veces).
         const antes = Number(resto.recortadas) || 0;
         const recortadas = Math.max(antes, propias - fusion.length);
-        return { ...base, ...(recortadas > 0 ? { recortadas } : {}), inventario: { v: ESQUEMA_INVENTARIO, t: ahora, fuente: a.tipo, ronda, revisadas, agregadas: total, dr: recortadas - antes } };
+        return { ...base, ...(recortadas > 0 ? { recortadas } : {}), inventario: { v: ESQUEMA_INVENTARIO, t: ahora, fuente: a.tipo, ronda, revisadas, agregadas: total, dr: recortadas - antes, respaldo } };
       }
-      return { ...base, pase: { ronda, desde: d.hasta, revisadas, agregadas: total, sinVerificar, inicio: previo?.inicio ?? ahora, actualizado: ahora, propias, ...(d.agotado ? { fin: ahora } : {}) } };
+      return { ...base, pase: { ronda, desde: d.hasta, revisadas, agregadas: total, sinVerificar, inicio: previo?.inicio ?? ahora, actualizado: ahora, propias, respaldo, ...(d.agotado ? { fin: ahora } : {}) } };
     },
     a
   );
@@ -901,7 +950,7 @@ export async function reconciliarInventarioTareas(
   }
   if (aborto === 'ya') return nada('reconciliado');
   if (aborto === 'revertido') return nada('revertido');
-  if (aborto === 'otro') return nada('en-curso');
+  if (aborto === 'otro' || aborto === 'ciclo') return nada('en-curso');
   const estado: EstadoInventario = marcado ? 'reconciliado' : d.agotado ? 'sin-verificar' : d.fallo ? 'error' : 'en-curso';
   return { estado, escribio: w.cambiado, agregadas };
 }
@@ -945,9 +994,14 @@ export type ResultadoReversion =
       conservadas: number;
       /** Entradas del índice de antes que el recorte del inventario había sacado y vuelven. */
       restauradas: number;
-      /** Lo que no se pudo leer (se queda tal cual, con su marca): repetir la reversión lo termina. */
+      /**
+       * Lo que no se pudo leer (se queda tal cual, con su marca) MÁS lo que falta devolver del índice de antes (revisión
+       * sobre 8b9e9ca: nunca 0 mientras `restaurado` sea false): repetir la reversión lo termina.
+       */
       pendientes: number;
-      /** Ya estaba revertido y no había nada más que hacer (no se escribió nada). */
+      /** Lo del índice de antes que el recorte sacó ya volvió (o no había nada que devolver). false: repetir la reversión. */
+      restaurado: boolean;
+      /** Ya estaba revertido y no había nada más que hacer (no se escribió nada y no queda nada pendiente). */
       ya: boolean;
       /**
        * Ese dueño no tiene índice ni respaldo de inventario (¿el correo está bien escrito?): no había nada que revertir y
@@ -998,6 +1052,7 @@ export async function revertirReconciliacionTareas(dueno: string, a: AlmacenDura
   let pendientes = 0;
   let escribio = false;
   let sinRespaldo = false;
+  let restaurado = true;
   for (let vuelta = 0; vuelta < 3; vuelta++) {
     const l = await leerDurable<Indice>(claveIndice(dueno), a).catch((e) => ({ ok: false as const, detalle: String(e?.message || e) }));
     if (l.ok === false) return { ok: false, detalle: l.detalle };
@@ -1007,7 +1062,7 @@ export async function revertirReconciliacionTareas(dueno: string, a: AlmacenDura
       // no se escribe nada: la marca `revertido` sobre un índice vacío bloquearía a ese dueño (H4).
       const r = await leerDurable<{ indice: Indice | null }>(claveRespaldo(dueno, sufijoRespaldo(undefined)), a).catch((e) => ({ ok: false as const, detalle: String(e?.message || e) }));
       if (r.ok === false) return { ok: false, detalle: r.detalle };
-      if (!r.valor) return { ok: true, quitadas: 0, conservadas: 0, restauradas: 0, pendientes: 0, ya: true, sinIndice: true };
+      if (!r.valor) return { ok: true, quitadas: 0, conservadas: 0, restauradas: 0, pendientes: 0, restaurado: true, ya: true, sinIndice: true };
     }
     const previa = ix?.revertido;
     // 1. Lo que agregó el inventario: ¿tuvo actividad desde que se recuperó? ¿Terminó?
@@ -1017,8 +1072,8 @@ export async function revertirReconciliacionTareas(dueno: string, a: AlmacenDura
       // solo se guarda al agregar). No hay nada que revertir ni que bloquear (un reconciliado no se vuelve a recorrer): no
       // se escribe nada, tampoco la marca `revertido` (convertiría un «reconciliado» honesto en «revertido» sin motivo).
       // Sin la marca `inventario` sí se escribe: es el bloqueo PREVIO (una réplica a mitad de recorrido no agrega nada).
-      const r = await leerDurable<{ indice: Indice | null }>(claveRespaldo(dueno, sufijoRespaldo(ix.reversiones)), a).catch(() => ({ ok: false as const }));
-      if (r.ok && !r.valor) return { ok: true, quitadas: 0, conservadas: 0, restauradas: 0, pendientes: 0, ya: true, nadaQueRevertir: true };
+      const r = await leerDurable<{ indice: Indice | null }>(claveRespaldo(dueno, respaldoDe(ix)), a).catch(() => ({ ok: false as const }));
+      if (r.ok && !r.valor) return { ok: true, quitadas: 0, conservadas: 0, restauradas: 0, pendientes: 0, restaurado: true, ya: true, nadaQueRevertir: true };
     }
     const lecturas = await leerTareas(dueno, recs.map((x) => x.id), a);
     const decision = new Map<string, { rec: string; quitar: boolean; desde: number }>();
@@ -1036,9 +1091,16 @@ export async function revertirReconciliacionTareas(dueno: string, a: AlmacenDura
     // 2. Lo que el recorte del inventario sacó del índice de antes (una vez por reversión; se reintenta si algo no se leyó).
     const devolver: EntradaIndice[] = [];
     let restauroCompleto = true;
+    // Cuántas del índice de antes faltan por devolver porque no se pudieron leer (un respaldo ilegible cuenta 1: no se
+    // sabe cuántas trae, pero no son 0).
+    let porRestaurar = 0;
+    const respLeido = respaldoDe(ix);
     if (!previa?.restaurado) {
-      const r = await leerDurable<{ indice: Indice | null }>(claveRespaldo(dueno, previa?.respaldo ?? sufijoRespaldo(ix?.reversiones)), a).catch(() => ({ ok: false as const }));
-      if (r.ok === false) restauroCompleto = false;
+      const r = await leerDurable<{ indice: Indice | null }>(claveRespaldo(dueno, respLeido), a).catch(() => ({ ok: false as const }));
+      if (r.ok === false) {
+        restauroCompleto = false;
+        porRestaurar = 1;
+      }
       else if (!r.valor) {
         // Sin respaldo no vuelve nada: lo que el recorte sacó sigue contado en `recortadas` (no se calla). Se dice, si el
         // inventario agregó algo (solo entonces escribe el respaldo: sin agregar, no hay nada que devolver).
@@ -1051,7 +1113,10 @@ export async function revertirReconciliacionTareas(dueno: string, a: AlmacenDura
         const vistas = await leerTareas(dueno, faltan, a);
         for (const id of faltan) {
           const v = vistas.get(id)!;
-          if (v.ok === false) restauroCompleto = false;
+          if (v.ok === false) {
+            restauroCompleto = false;
+            porRestaurar++;
+          }
           // Solo vuelve lo que existe y es de este dueño (una entrada sin objeto se podó a propósito).
           else if (v.tarea) devolver.push({ id, t: v.tarea.creada, ...(esTerminal(v.tarea.estado) ? { fin: v.tarea.actualizada } : {}) });
         }
@@ -1059,12 +1124,16 @@ export async function revertirReconciliacionTareas(dueno: string, a: AlmacenDura
     }
     // 3. La fusión CAS sobre el índice actual.
     let c = { quitadas: 0, conservadas: 0, restauradas: 0, pendientes: 0, sinDecidir: 0 };
+    let marcaFinal: MarcaReversion | null = null;
     const quitadas: string[] = [];
     const w = await modificarDurable<Indice>(
       claveIndice(dueno),
       (actual) => {
         c = { quitadas: 0, conservadas: 0, restauradas: 0, pendientes: 0, sinDecidir: 0 };
         quitadas.length = 0;
+        // El respaldo que se leyó tiene que ser el del índice que se escribe; si otro ciclo se coló, se vuelve a mirar.
+        const coincide = respaldoDe(actual) === respLeido;
+        if (!actual?.revertido?.restaurado && !coincide) c.sinDecidir++;
         const ids: EntradaIndice[] = [];
         for (const x of actual?.ids || []) {
           if (!x.rec) {
@@ -1106,13 +1175,15 @@ export async function revertirReconciliacionTareas(dueno: string, a: AlmacenDura
           t: prev?.t ?? ahora,
           gen: Math.max(gen, Number(prev?.gen) || 0),
           ronda: actual?.inventario?.ronda ?? actual?.pase?.ronda ?? prev?.ronda ?? null,
-          respaldo: prev?.respaldo ?? sufijoRespaldo(actual?.reversiones),
-          restaurado: !!prev?.restaurado || restauroCompleto,
+          respaldo: respaldoDe(actual),
+          restaurado: !!prev?.restaurado || (restauroCompleto && coincide),
           quitadas: (prev?.quitadas || 0) + c.quitadas,
           conservadas: (prev?.conservadas || 0) + c.conservadas,
           restauradas: (prev?.restauradas || 0) + c.restauradas,
           pendientes: c.pendientes + c.sinDecidir,
         };
+        if (!marca.restaurado) marca.porRestaurar = Math.max(1, porRestaurar);
+        marcaFinal = marca;
         const reversiones = (Number(actual?.reversiones) || 0) + (prev ? 0 : 1);
         const nuevo: Indice = { ...resto, v: 2, ids: quedan, ...(recortadas > 0 ? { recortadas } : {}), revertido: marca, reversiones };
         return canonico(nuevo) === canonico(actual) ? undefined : nuevo;
@@ -1120,7 +1191,8 @@ export async function revertirReconciliacionTareas(dueno: string, a: AlmacenDura
       a
     );
     if (w.ok === false) return { ok: false, detalle: w.detalle };
-    pendientes = c.pendientes + c.sinDecidir;
+    restaurado = !!marcaFinal?.restaurado;
+    pendientes = c.pendientes + c.sinDecidir + (restaurado ? 0 : marcaFinal?.porRestaurar || 1);
     if (w.cambiado) {
       escribio = true;
       total.quitadas += c.quitadas;
@@ -1142,7 +1214,8 @@ export async function revertirReconciliacionTareas(dueno: string, a: AlmacenDura
     }
     if (!c.sinDecidir) break;
   }
-  return { ok: true, ...total, pendientes, ya: !escribio, ...(sinRespaldo ? { sinRespaldo: true as const } : {}) };
+  // Revisión externa sobre 8b9e9ca: «ya» solo si no se escribió nada Y no queda nada pendiente (restauración incluida).
+  return { ok: true, ...total, pendientes, restaurado, ya: !escribio && pendientes === 0, ...(sinRespaldo ? { sinRespaldo: true as const } : {}) };
 }
 
 /**

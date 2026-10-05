@@ -198,9 +198,19 @@ o reaparecer una tarea recuperada»):
   el índice y no en la memoria de una réplica, **ninguna réplica vuelve a reconciliar a ese dueño ni le agrega nada**,
   aunque `AURA_RECONCILIAR_TAREAS` siga en `agregar` (una réplica que estaba a mitad de recorrido tampoco: su escritura
   se descarta). Ya no hace falta apagar el interruptor antes.
-- Devuelve `{ ok, quitadas, conservadas, restauradas, pendientes, ya }` (más `sinIndice`, `nadaQueRevertir` o
-  `sinRespaldo` cuando aplican). Es idempotente y reanudable: si
-  `pendientes > 0`, se repite cuando el almacén conteste; si no queda nada, no escribe (`ya: true`).
+- Devuelve `{ ok, quitadas, conservadas, restauradas, pendientes, restaurado, ya }` (más `sinIndice`,
+  `nadaQueRevertir` o `sinRespaldo` cuando aplican). Es idempotente y reanudable: si `pendientes > 0`, se repite cuando
+  el almacén conteste; si no queda nada, no escribe (`ya: true`).
+- **Restauración incompleta** (revisión sobre 8b9e9ca): si no se pudo leer el respaldo o alguna de las tareas que hay
+  que devolver, la marca queda `restaurado: false` con `porRestaurar` y el resultado dice `restaurado: false`,
+  `pendientes ≥ 1` y `ya: false`, aunque esa vuelta no haya escrito nada. Nunca `pendientes: 0` ni `ya: true` con la
+  restauración a medias. Repetir la reversión cuando el almacén conteste la termina; las activas y las modificadas se
+  quedan en todas las vueltas.
+- **Ciclos** (revisión sobre 8b9e9ca): cada reconciliación trabaja con la foto del índice de UN ciclo (el número de
+  reversiones que lleva) y anota en el índice el respaldo de ese ciclo (`inventario.respaldo` / `pase.respaldo`). Si al
+  escribir el índice ya está en otro ciclo (operación revirtió, y quizá reactivó, mientras esa réplica esperaba el
+  LIST), no escribe nada. Antes una réplica así agregaba con el respaldo del ciclo anterior y la siguiente reversión
+  dejaba 199 de las 200 entradas originales. La reversión usa el respaldo anotado, no lo recalcula.
 - **Nunca borra objetos** de tareas ni el respaldo.
 
 **Volver a activarla:**
