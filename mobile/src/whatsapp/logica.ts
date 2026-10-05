@@ -17,6 +17,8 @@ export type EstadoWA = {
   qr?: string;
   codigo?: string;
   vinculando?: boolean;
+  /** false: esta cuenta nunca empezó a vincular su WhatsApp en el servidor (el puente no tiene nada suyo). */
+  registrada?: boolean;
   error?: string;
 };
 
@@ -73,6 +75,69 @@ export function vistaDe(e: EstadoWA | null): VistaWA {
   if (!e.disponible) return 'sin_puente';
   if (!e.vinculado) return e.error ? 'caido' : 'vincular';
   return 'listo';
+}
+
+/* ── agregar su WhatsApp (José, 5-oct: «No aparece agregar whatsapp… ni les aparece whatsapp en donde está todo») ── */
+
+/**
+ * Qué se ve de WhatsApp en Chats (la pestaña) y en Ajustes. Cada cuenta de AU-RA puede agregar SU WhatsApp:
+ *   · «agregar»: puede y todavía no lo tiene → «Agregar mi WhatsApp» (en Ajustes) y la pestaña «+ WhatsApp».
+ *   · «whatsapp»: ya lo tiene (o el puente no contestó: puede que sí; la pantalla lo dice sin pedir vincular).
+ *   · «oculto»: no se sabe todavía, esta cuenta no puede, o el servidor no tiene WhatsApp (nada que agregar).
+ */
+export type EntradaWA = 'oculto' | 'agregar' | 'whatsapp';
+
+export function entradaWA(e: EstadoWA | null): EntradaWA {
+  if (!e || !e.permitido || !e.disponible) return 'oculto';
+  if (e.vinculado || e.error) return 'whatsapp';
+  return 'agregar';
+}
+
+/** Lo que acepta antes de vincular (la tarjeta de consentimiento). */
+export function textoConsentimientoWA(idioma: 'es' | 'en' = 'es'): string {
+  return idioma === 'en'
+    ? 'Your WhatsApp messages are stored on the AU-RA server so you can see and answer them here. You can unlink it whenever you want (everything is erased). This connection isn’t official for WhatsApp and it could limit your account.'
+    : 'Tus mensajes de WhatsApp se guardan en el servidor de AU-RA para que puedas verlos y contestarlos aquí. Puedes desvincularlo cuando quieras (se borra todo). WhatsApp no es oficial con esta conexión y podría limitar tu cuenta.';
+}
+
+/**
+ * ¿Toca la tarjeta de consentimiento o ya vincular? Primero acepta; si ya hay una vinculación en curso (el código o el
+ * QR a la vista), ya aceptó antes: no se le vuelve a preguntar a media vinculación.
+ */
+export function pasoVincularWA(e: EstadoWA | null, aceptado: boolean): 'consentimiento' | 'vincular' {
+  if (aceptado || e?.vinculando || e?.codigo || e?.qr) return 'vincular';
+  return 'consentimiento';
+}
+
+/** Los pasos en el teléfono para escribir el código (vincular en el MISMO teléfono). */
+export function pasosCodigoWA(idioma: 'es' | 'en' = 'es'): string[] {
+  return idioma === 'en'
+    ? ['Open WhatsApp → Linked devices.', 'Tap “Link a device”.', 'Tap “Link with phone number instead”.', 'Type this code. This screen changes by itself once it’s linked.']
+    : ['Abre WhatsApp → Dispositivos vinculados.', 'Toca «Vincular un dispositivo».', 'Toca «Vincular con número de teléfono».', 'Escribe este código. Aquí cambia solo cuando quede vinculado.'];
+}
+
+/** El código de 8 letras, legible y para copiar: «ABCDEFGH» → «ABCD-EFGH» (WhatsApp acepta los dos). */
+export function codigoLegibleWA(codigo?: string): string {
+  const c = String(codigo || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return c.length === 8 ? `${c.slice(0, 4)}-${c.slice(4)}` : String(codigo || '').toUpperCase();
+}
+
+/**
+ * Lo que se dice si vincular falla. CUPO_LLENO: el servidor llegó a su tope de cuentas; se dice tal cual (no es la red
+ * ni culpa suya, y reintentar no sirve) y `cupoLleno` deja de ofrecer «Pedir el código».
+ */
+export function errorVincularWA(e: { status?: number; message?: string; data?: { code?: string; error?: string } } | null | undefined, idioma: 'es' | 'en' = 'es'): { texto: string; cupoLleno: boolean } {
+  if (e?.data?.code === 'CUPO_LLENO' || e?.status === 507) {
+    return {
+      cupoLleno: true,
+      texto:
+        idioma === 'en'
+          ? 'There’s no room for more WhatsApp accounts on AU-RA right now: the server reached its limit. Nothing was linked. Let José or the board know so they can raise it.'
+          : e?.data?.error || e?.message || 'Ahora mismo no caben más WhatsApp en AU-RA: el servidor llegó a su tope de cuentas. No se vinculó nada. Avísale a José o a la junta para que amplíen el cupo.',
+    };
+  }
+  // Lo demás, como siempre: lo que dijo el servidor (o el número mal escrito) tal cual.
+  return { cupoLleno: false, texto: e?.message || (idioma === 'en' ? 'WhatsApp didn’t answer. Try again.' : 'WhatsApp no contestó. Prueba otra vez.') };
 }
 
 /** «0:12», «3:05», «1:02:03». */

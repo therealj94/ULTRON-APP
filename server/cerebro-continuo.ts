@@ -34,7 +34,7 @@ import { episodiosDe } from '../lib/episodios';
 import { anotarDatoManual, corregir, limitar, reanudarSupresiones, suprimir, suprimirTodo } from '../lib/olvido';
 import { PerfilNoDisponible } from '../lib/perfil-persona';
 import { triar, type FuentesTriaje } from '../lib/triaje';
-import { whatsappPermitido } from './whatsapp';
+import { esDuenoWhatsapp, whatsappPermitido, whatsappVinculadoRapido } from './whatsapp';
 
 type Deps = {
   exigirMesa: express.RequestHandler;
@@ -42,7 +42,7 @@ type Deps = {
   sesionDe: (req: express.Request) => { correo: string; nombre?: string } | null;
   /** Pruebas: las fuentes del triaje (sin red). */
   fuentesTriaje?: FuentesTriaje;
-  /** Pruebas: quién es dueño del WhatsApp (por omisión server/whatsapp.ts whatsappPermitido). */
+  /** Pruebas: quién tiene su WhatsApp aquí (por omisión: los dueños, y quien lo tiene vinculado; server/whatsapp.ts). */
   esDuenoWhatsapp?: (correo: string) => boolean;
 };
 
@@ -254,8 +254,9 @@ export function montarRutasCerebroContinuo(app: express.Express, d: Deps) {
   app.get('/api/triaje', d.exigirMesa, d.limitar(10), async (req, res) => {
     const c = quien(req, res);
     if (!c) return;
-    const dueno = d.esDuenoWhatsapp || whatsappPermitido;
-    if (!dueno(c)) return res.status(403).json({ error: 'El triaje de mensajes es solo para el dueño del WhatsApp conectado.', code: 'triaje_no_permitido', honesto: true });
+    // Su WhatsApp: los dueños (el de antes) y cada cuenta que tiene el suyo vinculado aquí.
+    const tiene = d.esDuenoWhatsapp ? d.esDuenoWhatsapp(c) : esDuenoWhatsapp(c) || (whatsappPermitido(c) && (await whatsappVinculadoRapido(c, 2000)));
+    if (!tiene) return res.status(403).json({ error: 'El triaje de mensajes es para quien tiene su WhatsApp vinculado aquí (agrégalo en Chats o en Ajustes).', code: 'triaje_no_permitido', honesto: true });
     const q = String(req.query.canal || 'todo');
     const canal = q === 'whatsapp' || q === 'correo' ? q : 'todo';
     try {

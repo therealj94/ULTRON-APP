@@ -47,6 +47,8 @@ type CuentaWA struct {
 	grupos     atomic.Bool // ya se trajeron los nombres de todos los grupos
 	fotos      *CacheFotos
 	web        *http.Client
+	fin        chan struct{} // se cierra al cerrar la cuenta (se fue o se apaga el puente): el ordenador termina
+	cerrar     sync.Once
 }
 
 func NuevaCuentaWA(ctx context.Context, rutaSesion, dirFotos string, alm *Almacen, log waLog.Logger) (*CuentaWA, error) {
@@ -60,15 +62,19 @@ func NuevaCuentaWA(ctx context.Context, rutaSesion, dirFotos string, alm *Almace
 	if err != nil {
 		return nil, err
 	}
-	c := &CuentaWA{contenedor: cont, alm: alm, log: log, orden: make(chan struct{}, 1), web: &http.Client{Timeout: 15 * time.Second}}
+	c := &CuentaWA{contenedor: cont, alm: alm, log: log, orden: make(chan struct{}, 1), fin: make(chan struct{}), web: &http.Client{Timeout: 15 * time.Second}}
 	c.fotos = NuevaCacheFotos(dirFotos, c.traerFoto)
 	c.usar(dev)
 	go c.ordenador()
 	if dev.ID != nil {
-		// Ya estaba vinculado: se reconecta solo (whatsmeow reintenta si se cae la red).
-		if err := c.cli.Connect(); err != nil {
-			log.Warnf("no conecté al arrancar: %v", err)
-		}
+		// Ya estaba vinculado: se reconecta solo (whatsmeow reintenta si se cae la red). Aparte: al arrancar con
+		// varias cuentas, ninguna espera a que otra termine de conectar.
+		cli := c.cli
+		go func() {
+			if err := cli.Connect(); err != nil {
+				log.Warnf("no conecté al arrancar: %v", err)
+			}
+		}()
 		// Lo guardado antes de esta versión (o antes de saber el número de un LID) se ordena ya.
 		c.pedirOrden()
 	}
@@ -230,6 +236,28 @@ func (c *CuentaWA) olvidar() {
 	c.fotos.Borrar()
 	c.nombres.Clear()
 	c.grupos.Store(false)
+}
+
+// ¿Tiene una sesión guardada (está vinculada, aunque ahora no esté conectada)? Al arrancar, solo estas se
+// reconectan; una carpeta sin sesión es una vinculación que quedó a medias.
+func (c *CuentaWA) TieneSesion() bool {
+	return c.cliente().Store.ID != nil
+}
+
+// Suelta la cuenta (sin desvincular): se desconecta de WhatsApp, termina lo que corre aparte y cierra la
+// sesión guardada. Lo usa el registro al desvincular (antes de borrar la carpeta) y al apagar el puente.
+func (c *CuentaWA) Cerrar() {
+	c.cerrar.Do(func() {
+		if c.fin != nil {
+			close(c.fin)
+		}
+		cli := c.cliente()
+		cli.Disconnect()
+		cli.RemoveEventHandlers()
+		if c.contenedor != nil {
+			_ = c.contenedor.Close()
+		}
+	})
 }
 
 func (c *CuentaWA) cliente() *whatsmeow.Client {
@@ -882,8 +910,17 @@ func (c *CuentaWA) pedirOrden() {
 }
 
 func (c *CuentaWA) ordenador() {
-	for range c.orden {
-		time.Sleep(3 * time.Second) // la historia llega en tandas: se junta lo que llegue mientras
+	for {
+		select {
+		case <-c.fin:
+			return
+		case <-c.orden:
+		}
+		select { // la historia llega en tandas: se junta lo que llegue mientras
+		case <-c.fin:
+			return
+		case <-time.After(3 * time.Second):
+		}
 		select {
 		case <-c.orden:
 		default:

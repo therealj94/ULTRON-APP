@@ -21,7 +21,7 @@
  */
 import { clave as claveBoveda } from './boveda';
 import { clavePersona, CajonNoDisponible, crearCajones, linea, nuevoId, plegar } from './cerebro-comun';
-import { borradorWhatsappParaConEstado, cuentaWhatsappVinculada, whatsappDisponible, whatsappPermitido } from '../server/whatsapp';
+import { borradorWhatsappParaConEstado, cuentaWhatsappVinculada, esDuenoWhatsapp, whatsappDisponible, whatsappPermitido, whatsappVinculadoSabido } from '../server/whatsapp';
 import { exito, fallo, type ResultadoHerramienta } from './recibo-herramienta';
 import { resultadoAutorizado, vistaDePersona, type VistaTexto } from './conocer-persona';
 
@@ -343,7 +343,8 @@ export function capacidadesCirculo(dueno: string): { whatsapp: boolean; llamada:
   const twilio = !!(claveBoveda('twilio_sid') && claveBoveda('twilio_tok') && claveBoveda('twilio_voz') && claveBoveda('jefe_tel'));
   let wa = false;
   try {
-    wa = whatsappDisponible() && whatsappPermitido(dueno);
+    // Su WhatsApp, si lo tiene vinculado aquí (lo que supo el turno al empezar); el de los dueños, como siempre.
+    wa = whatsappDisponible() && whatsappPermitido(dueno) && (esDuenoWhatsapp(dueno) || whatsappVinculadoSabido(dueno));
   } catch {
     wa = false;
   }
@@ -457,7 +458,7 @@ async function correrCirculoCrudo(dueno: string, arg: string, ambito: string, d:
     // el «sí» autoriza ESE número desde ESA cuenta (revisión 4-oct).
     const b = d.borrador
       ? exito(d.borrador(dueno, ambito, { chat, nombre: etiquetaDe(p), texto }), { efecto: 'borrador', proveedor: 'whatsapp' })
-      : borradorWhatsappParaConEstado(dueno, ambito, { chat, nombre: etiquetaDe(p), texto, cuenta: await cuentaWhatsappVinculada() });
+      : borradorWhatsappParaConEstado(dueno, ambito, { chat, nombre: etiquetaDe(p), texto, cuenta: await cuentaWhatsappVinculada(dueno) });
     return aviso ? { ...b, texto: `${b.texto}${aviso}` } : b;
   } catch (e: any) {
     if (e instanceof ErrorCirculo) return fallo(`CÍRCULO: ${e.message}`, 'rechazado');

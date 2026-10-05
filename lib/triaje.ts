@@ -283,9 +283,9 @@ async function sugerirConModelo(xs: Clasificada[], modelo: ModeloTexto): Promise
 export async function fuenteWhatsapp(dueno: string): Promise<ConversacionTriaje[]> {
   if (!whatsappDisponible()) throw new Error('no está conectado en este servidor');
   if (!whatsappPermitido(dueno)) throw new Error('esta cuenta no tiene WhatsApp conectado');
-  const e = await estadoWA();
+  const e = await estadoWA(dueno);
   if (!e.vinculado) throw new Error('WhatsApp todavía no está vinculado');
-  const chats = await chatsWA('', 40);
+  const chats = await chatsWA(dueno, '', 40);
   const out: ConversacionTriaje[] = chats.map((c) => ({
     canal: 'whatsapp',
     id: c.jid,
@@ -302,7 +302,7 @@ export async function fuenteWhatsapp(dueno: string): Promise<ConversacionTriaje[
   await Promise.all(
     leer.map(async (c) => {
       try {
-        const { mensajes } = await mensajesWA(c.id, 8);
+        const { mensajes } = await mensajesWA(dueno, c.id, 8);
         c.mensajes = mensajes.filter((m) => !m.eliminado).map((m) => ({ mio: m.mio, texto: m.texto || `[${m.tipo}]`, hora: m.hora, de: m.nombreDe }));
       } catch {
         /* sin el hilo, con el último mensaje */

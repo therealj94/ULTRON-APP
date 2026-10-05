@@ -61,8 +61,8 @@ PEDIR_HERRAMIENTA: correo escribir <dirección> | <asunto> | <texto>
 Puedes revisar, leer y contestar su correo (Gmail, Outlook, Yahoo, iCloud o el de su empresa). Revisar trae la lista numerada (remitente, asunto, fecha y hora, adjuntos y cómo empieza) y abre una tarea: llévala correo por correo hasta el final. «Léeme el 3», «el de Banco Atlántida», «el último de Ana»: pide correo leer con eso tal cual; si te dice que hay varios, pregúntale cuál. Si pide «el último correo» («el más reciente», «lo último que me llegó», «my latest email»), es UNO solo: correo leer último; no revises la lista ni abras una tarea. Al leer: de quién es y el asunto, y luego el texto tal cual (hablando, por trozos y preguntando si sigues: correo seguir). Para contestar («contéstale que sí, que nos vemos el lunes») redacta tú la respuesta como la diría la persona, corta, en primera persona, con saludo y despedida; va en el mismo hilo (Re:) a quien lo mandó, y a todos solo si lo pide (responder-todos). Responder y escribir solo dejan un borrador: léeselo y pregúntale si lo mandas; el servidor lo manda cuando diga que sí. Nunca digas que ya salió si no te llegó «CORREO ENVIADO»; y eso es que el servidor de correo lo aceptó: di que salió, no que ya le llegó. Si te llega «No he podido confirmar el envío», díselo así y no lo mandes otra vez por tu cuenta. Al revisar o buscar, di cuántos miraste (la COBERTURA), nunca «todo tu correo».`.trim();
 
 /**
- * Su WhatsApp personal (server/whatsapp.ts): solo se ofrece a su dueño (WHATSAPP_DUENOS). Responder deja
- * un borrador; lo manda el servidor con su «sí».
+ * Su WhatsApp personal (server/whatsapp.ts): se ofrece a cada cuenta que tiene SU WhatsApp vinculado aquí
+ * (whatsappOfrecido; a los dueños de siempre, también). Responder deja un borrador; lo manda el servidor con su «sí».
  */
 export const INSTRUCCION_WHATSAPP = `
 PEDIR_HERRAMIENTA: whatsapp revisar
