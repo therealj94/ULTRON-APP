@@ -255,3 +255,50 @@ test('memoria: el doble determinista cumple lo mismo (para quien use el módulo 
   const [x, y] = await Promise.all([crearUnaVez(clave, 1, a), crearUnaVez(clave, 2, a)]);
   assert.ok(x.ok && y.ok && [x.creado, y.creado].filter(Boolean).length === 1);
 });
+
+/* ------------------------------------------------------------------ A7: enumeración por prefijo */
+
+const conMemoria = async (f: (a: AlmacenDurable) => Promise<void>) => f(almacenEnMemoria());
+const prefijoDe = (dueno: string) => claveDe('pruebas', dueno, 'x').split('/').slice(0, 2).join('/');
+for (const [nombre, con] of [...almacenes, ['memoria', conMemoria] as [string, typeof conMemoria]]) {
+  test(`${nombre}: listar enumera UN nivel bajo el prefijo de un dueño, en orden, reanudable con «desde» y por tramos`, async () => {
+    await con(async (a) => {
+      assert.equal(typeof a.listar, 'function');
+      const ana = prefijoDe('ana@orden.org');
+      for (const id of ['c-3', 'a-1', 'b-2']) assert.ok((await crearUnaVez(claveDe('pruebas', 'ana@orden.org', id), { id }, a)).ok);
+      assert.ok((await crearUnaVez(claveDe('pruebas', 'beto@orden.org', 'z-9'), { id: 'z-9' }, a)).ok);
+      assert.ok((await crearUnaVez(`${ana}/hondo/d-4`, { id: 'd-4' }, a)).ok);
+      const todo = await a.listar!(ana);
+      assert.ok(todo.ok);
+      if (!todo.ok) return;
+      assert.deepEqual(
+        todo.claves,
+        ['a-1', 'b-2', 'c-3'].map((x) => `${ana}/${x}`),
+        'solo las de ese dueño y ese nivel, en orden'
+      );
+      assert.equal(todo.truncado, false);
+      const tramo1 = await a.listar!(ana, { max: 2 });
+      assert.ok(tramo1.ok && tramo1.truncado && tramo1.claves.length === 2);
+      const tramo2 = await a.listar!(ana, { desde: tramo1.ok ? tramo1.claves[1] : null, max: 2 });
+      assert.ok(tramo2.ok && !tramo2.truncado);
+      if (tramo2.ok) assert.deepEqual(tramo2.claves, [`${ana}/c-3`]);
+      const vacio = await a.listar!(prefijoDe('nadie@orden.org'));
+      assert.ok(vacio.ok && vacio.claves.length === 0, 'un prefijo sin nada es una lista vacía, no un error');
+    });
+  });
+}
+
+test('s3: listar va con ListObjectsV2 (prefijo + delimitador) bajo ultron/durable/; S3 caído al listar es ok:false, nunca «vacío»', async () => {
+  await conS3Falso(async (s3) => {
+    const a = almacenS3();
+    assert.ok((await crearUnaVez(claveDe('pruebas', 'ana@orden.org', 'a-1'), { id: 1 }, a)).ok);
+    const pre = prefijoDe('ana@orden.org');
+    let prefijoVisto = '';
+    s3.alListar.f = (p) => void (prefijoVisto = p);
+    assert.ok((await a.listar!(pre)).ok);
+    assert.equal(prefijoVisto, `ultron/durable/${pre}/`);
+    s3.fallaListado.si = () => true;
+    const caido = await a.listar!(pre);
+    assert.equal(caido.ok, false);
+  });
+});

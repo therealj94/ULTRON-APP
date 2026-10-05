@@ -18,7 +18,7 @@ import { almacenDurable, PROCESO_DURABLE, type AlmacenDurable } from './durable'
 import { VALIDADOR_MIN } from './entregables';
 import { pushConfigurado } from './push';
 import { pushWebConfigurado } from './push-web';
-import { ESQUEMA_INDICE, ESQUEMA_TAREAS } from './tareas-durables';
+import { ESQUEMA_INDICE, ESQUEMA_INVENTARIO, ESQUEMA_TAREAS, modoReconciliacion } from './tareas-durables';
 
 /** Versiones de los contratos entre piezas; se suben cuando cambia la forma de lo que viaja. */
 export const CONTRATOS = {
@@ -35,9 +35,10 @@ export const CONTRATOS = {
 /**
  * Las versiones de lo que se GUARDA (P5): si una versión vieja del servidor lee datos de una nueva, tiene que poder
  * decir qué esquema encontró. `misionesComputadora` 1: la misión durable de server/computadora.ts (P5/A6);
- * `indiceTareas` 2: el índice con `fin` (P5/A7; el v1 se sigue leyendo).
+ * `indiceTareas` 2: el índice con `fin` (P5/A7; el v1 se sigue leyendo); `inventarioTareas` 1: la marca de inventario
+ * reconciliado del índice (A7, auditoría del 5-oct).
  */
-export const ESQUEMA = { tareas: ESQUEMA_TAREAS, indiceTareas: ESQUEMA_INDICE, misionesComputadora: 1 } as const;
+export const ESQUEMA = { tareas: ESQUEMA_TAREAS, indiceTareas: ESQUEMA_INDICE, inventarioTareas: ESQUEMA_INVENTARIO, misionesComputadora: 1 } as const;
 
 export type ManifiestoBuild = {
   commit: string | null;
@@ -66,6 +67,8 @@ export function manifiestoBuild(o: { plataforma: 'aura' | 'electrum'; banderas?:
       push: pushConfigurado(),
       pushWeb: pushWebConfigurado(),
       serviceWorker: String(env.AURA_SW ?? '1').trim() !== '0',
+      // A7: ¿la reconciliación del inventario de tareas puede escribir (agregar lo que falta)? `AURA_RECONCILIAR_TAREAS`.
+      reconciliarTareas: modoReconciliacion(env) === 'agregar',
       ...(o.banderas || {}),
     },
   };
