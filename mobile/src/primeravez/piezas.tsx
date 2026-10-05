@@ -2,20 +2,20 @@
  * Piezas que comparten los pasos de la primera vez (y Ajustes):
  *
  *   EncabezadoPaso   la etiqueta dorada, el título grande en serif y la explicación
- *   SelectorCumple   el cumpleaños sin año: los meses en una fila que se desliza y los días en una
- *                    cuadrícula de botones redondos (el 29 de febrero existe; el 31 de abril no)
+ *   SelectorCumple   el cumpleaños sin año: los 12 meses a la vista en 3 filas y los días en filas de 7
+ *                    (el 29 de febrero existe; el 31 de abril no), con «Quitar fecha»
  *   VistaAvatar      el avatar vivo: su cara (los ojos que parpadean y miran, o la foto de Claudio)
  *                    dentro de su aura, con los colores del avatar
  */
-import { useEffect, useRef } from 'react';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { useEffect } from 'react';
+import { Pressable, StyleSheet, View } from 'react-native';
 import Animated, { Easing, useAnimatedStyle, useSharedValue, withDelay, withRepeat, withSequence, withSpring, withTiming } from 'react-native-reanimated';
 import { tr, useIdioma } from '../i18n';
 import { MEDIDA, useTema } from '../nucleo/tema';
 import { avatarPorId, type AvatarId } from '../avatares/catalogo';
 import { fotosRetrato } from '../avatares/ClaudioRetrato';
-import { Aparecer, Aura, Texto, vibrar } from '../ui';
-import { DIAS_POR_MES } from './flujo';
+import { Aparecer, Aura, Boton, Texto, vibrar } from '../ui';
+import { SIN_CUMPLE, diasDelMes, elegirDia, elegirMes, faltaEnCumple, type SeleccionCumple } from './flujo';
 
 export function EncabezadoPaso({ etiqueta, titulo, texto, centro }: { etiqueta?: string; titulo: string; texto?: string; centro?: boolean }) {
   return (
@@ -47,27 +47,42 @@ export function EncabezadoPaso({ etiqueta, titulo, texto, centro }: { etiqueta?:
 
 const MESES_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
 const MESES_EN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const MESES_LARGOS_ES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+const MESES_LARGOS_EN = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
-function Redondo({ texto, activo, onPress, ancho }: { texto: string; activo: boolean; onPress: () => void; ancho?: number }) {
+/** Columnas de cada cuadrícula: los 12 meses en 3 filas de 4; los días en filas de 7, como un calendario. */
+const COLUMNAS_MES = 4;
+const COLUMNAS_DIA = 7;
+
+/** [1..n] en filas de `columnas` (la última se rellena con huecos para que las celdas midan lo mismo). */
+function enFilas(n: number, columnas: number): (number | null)[][] {
+  const filas: (number | null)[][] = [];
+  for (let i = 0; i < n; i += columnas) filas.push(Array.from({ length: columnas }, (_, j) => (i + j < n ? i + j + 1 : null)));
+  return filas;
+}
+
+/** Una celda de la cuadrícula: ocupa su parte de la fila (flex 1), nunca se sale de la pantalla. */
+function Celda({ texto, activo, onPress, etiqueta }: { texto: string; activo: boolean; onPress: () => void; etiqueta?: string }) {
   const tema = useTema();
   const e = useSharedValue(1);
   const a = useAnimatedStyle(() => ({ transform: [{ scale: e.value }] }));
   useEffect(() => {
-    if (activo) e.value = withSequence(withTiming(1.12, { duration: 110 }), withSpring(1, MEDIDA.resorte.vivo));
+    if (activo) e.value = withSequence(withTiming(1.08, { duration: 110 }), withSpring(1, MEDIDA.resorte.vivo));
   }, [activo, e]);
   return (
-    <Animated.View style={a}>
+    <Animated.View style={[s.celda, a]}>
       <Pressable
         onPress={() => {
           vibrar('seleccion');
           onPress();
         }}
-        style={[s.redondo, ancho ? { width: ancho, borderRadius: 14 } : null, { backgroundColor: activo ? tema.acento : tema.superficie, borderColor: activo ? tema.acento : tema.borde }]}
+        style={[s.boton, { backgroundColor: activo ? tema.acento : tema.superficie, borderColor: activo ? tema.acento : tema.borde }]}
         accessibilityRole="button"
+        accessibilityLabel={etiqueta || texto}
         accessibilityState={{ selected: activo }}
-        hitSlop={2}
+        hitSlop={3}
       >
-        <Texto v="chicaFuerte" color={activo ? 'sobreAcento' : 'texto'}>
+        <Texto v="chicaFuerte" color={activo ? 'sobreAcento' : 'texto'} numberOfLines={1}>
           {texto}
         </Texto>
       </Pressable>
@@ -75,38 +90,71 @@ function Redondo({ texto, activo, onPress, ancho }: { texto: string; activo: boo
   );
 }
 
+/**
+ * EL CUMPLEAÑOS: los 12 meses a la vista (3 filas de 4, sin una fila escondida que haya que deslizar) y los
+ * días en filas de 7 que caben en el ancho de cualquier teléfono. Se puede empezar por el mes o por el día:
+ * nada se apaga ni deja de responder (antes los días quedaban inertes hasta tener mes, y en la primera vez
+ * el mes no llegaba a quedar: José, 5-oct). Cambiar a un mes donde el día no existe suelta el día (el 31
+ * en abril). «Quitar fecha» lo deja en blanco: es opcional. Las reglas viven en flujo.ts (elegirMes,
+ * elegirDia, diasDelMes) para probarlas en node.
+ *
+ * Controlado: quien lo usa guarda la selección A MEDIAS (mes sin día) y la devuelve en `mes`/`dia`.
+ */
 export function SelectorCumple({ mes, dia, onCambiar }: { mes: number | null; dia: number | null; onCambiar: (mes: number | null, dia: number | null) => void }) {
   const idioma = useIdioma();
   const meses = idioma === 'en' ? MESES_EN : MESES_ES;
-  const lista = useRef<ScrollView>(null);
-  useEffect(() => {
-    if (mes) setTimeout(() => lista.current?.scrollTo({ x: Math.max(0, (mes - 2) * 64), animated: false }), 0);
-    // Solo al montar: después la persona desliza a gusto.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  const dias = mes ? DIAS_POR_MES[mes - 1] : 31;
+  const largos = idioma === 'en' ? MESES_LARGOS_EN : MESES_LARGOS_ES;
+  const sel: SeleccionCumple = { mes, dia };
+  const cambiar = (n: SeleccionCumple) => onCambiar(n.mes, n.dia);
+  const falta = faltaEnCumple(sel);
+  const aviso =
+    falta === 'dia'
+      ? tr('Ahora elige el día.', 'Now pick the day.')
+      : falta === 'mes'
+        ? tr('Ahora elige el mes.', 'Now pick the month.')
+        : null;
   return (
     <View style={{ gap: MEDIDA.espacio.l }}>
       <View style={{ gap: 8 }}>
         <Texto v="chicaFuerte" color="texto2">
           {tr('Mes', 'Month')}
         </Texto>
-        <ScrollView ref={lista} horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingRight: 8 }}>
-          {meses.map((m, i) => (
-            <Redondo key={m} texto={m} ancho={56} activo={mes === i + 1} onPress={() => onCambiar(i + 1, dia && dia <= DIAS_POR_MES[i] ? dia : null)} />
-          ))}
-        </ScrollView>
+        {enFilas(12, COLUMNAS_MES).map((fila, f) => (
+          <View key={f} style={s.fila}>
+            {fila.map((m, j) =>
+              m ? (
+                <Celda key={m} texto={meses[m - 1]} etiqueta={largos[m - 1]} activo={mes === m} onPress={() => cambiar(elegirMes(sel, m))} />
+              ) : (
+                <View key={`h${j}`} style={s.celda} />
+              )
+            )}
+          </View>
+        ))}
       </View>
-      <View style={{ gap: 8, opacity: mes ? 1 : 0.45 }} pointerEvents={mes ? 'auto' : 'none'}>
+      <View style={{ gap: 8 }}>
         <Texto v="chicaFuerte" color="texto2">
           {tr('Día', 'Day')}
         </Texto>
-        <View style={s.dias}>
-          {Array.from({ length: dias }, (_, i) => (
-            <Redondo key={i} texto={String(i + 1)} activo={dia === i + 1} onPress={() => onCambiar(mes, i + 1)} />
-          ))}
-        </View>
+        {enFilas(diasDelMes(mes), COLUMNAS_DIA).map((fila, f) => (
+          <View key={f} style={s.fila}>
+            {fila.map((d, j) =>
+              d ? (
+                <Celda key={d} texto={String(d)} activo={dia === d} onPress={() => cambiar(elegirDia(sel, d))} />
+              ) : (
+                <View key={`h${j}`} style={s.celda} />
+              )
+            )}
+          </View>
+        ))}
       </View>
+      {(!!aviso || falta !== 'todo') && (
+        <View style={s.pie}>
+          <Texto v="chica" color="texto2" style={{ flex: 1 }}>
+            {aviso || ''}
+          </Texto>
+          {falta !== 'todo' && <Boton titulo={tr('Quitar fecha', 'Clear date')} variante="fantasma" tam="chico" onPress={() => cambiar(SIN_CUMPLE)} />}
+        </View>
+      )}
     </View>
   );
 }
@@ -161,6 +209,8 @@ export function VistaAvatar({ id, tam }: { id: AvatarId; tam: number }) {
 }
 
 const s = StyleSheet.create({
-  redondo: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth * 2 },
-  dias: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  fila: { flexDirection: 'row', gap: 6 },
+  celda: { flex: 1, minWidth: 0 },
+  boton: { height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 2, borderWidth: StyleSheet.hairlineWidth * 2 },
+  pie: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 42 },
 });

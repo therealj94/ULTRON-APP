@@ -35,7 +35,7 @@ import { AVATARES, avatarPorId, type AvatarId } from '../avatares/catalogo';
 import { MiniAvatar } from '../avatares/MiniAvatar';
 import { Aparecer, Boton, Campo, Chip, Fila, Grupo, Hoja, Interruptor, PantallaConCabecera, Segmentado, Tarjeta, Texto, elegirIdioma, fijarHapticos, useHapticos, vibrar } from '../ui';
 import { fuenteDisplay } from '../ui/tipografia';
-import { armarCumple, leerCumple } from '../primeravez/flujo';
+import { SIN_CUMPLE, cumpleDeSeleccion, seleccionDeCumple, type SeleccionCumple } from '../primeravez/flujo';
 import { ListaPermisos } from '../primeravez/ListaPermisos';
 import { HojaCorreos, useCuentasCorreo } from './Correos';
 import { HojaComputadora } from './Computadora';
@@ -79,7 +79,8 @@ export function Ajustes({ navigation }: Props) {
   const hapticos = useHapticos();
   const [hoja, setHoja] = useState<HojaAbierta>(null);
   const [apodo, setApodo] = useState(perfil?.apodo || '');
-  const [cumple, setCumple] = useState<{ mes: number | null; dia: number | null }>({ mes: null, dia: null });
+  // La selección a medias (el mes sin el día) del selector del cumpleaños; se guarda solo completa.
+  const [cumple, setCumple] = useState<SeleccionCumple>(SIN_CUMPLE);
   const [permisosOk, setPermisosOk] = useState<number | null>(null);
   const [alarma, setAlarma] = useState<EstadoAlarma | null>(null);
   const { cuentas: correos } = useCuentasCorreo(hoja === 'correos');
@@ -103,10 +104,7 @@ export function Ajustes({ navigation }: Props) {
 
   const abrir = (h: HojaAbierta) => {
     if (h === 'apodo') setApodo(perfil?.apodo || '');
-    if (h === 'cumple') {
-      const c = leerCumple(perfil?.cumple);
-      setCumple({ mes: c?.mes ?? null, dia: c?.dia ?? null });
-    }
+    if (h === 'cumple') setCumple(seleccionDeCumple(perfil?.cumple));
     setHoja(h);
   };
 
@@ -340,9 +338,9 @@ export function Ajustes({ navigation }: Props) {
           <SelectorCumple mes={cumple.mes} dia={cumple.dia} onCambiar={(mes, dia) => setCumple({ mes, dia })} />
           <Boton
             titulo={tr('Guardar', 'Save')}
-            deshabilitado={!cumple.mes || !cumple.dia}
+            deshabilitado={!cumpleDeSeleccion(cumple)}
             onPress={() => {
-              const c = cumple.mes && cumple.dia ? armarCumple(cumple.mes, cumple.dia) : undefined;
+              const c = cumpleDeSeleccion(cumple);
               if (!c) return;
               guardarPerfil({ cumple: c });
               vibrar('exito');
