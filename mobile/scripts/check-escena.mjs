@@ -10,7 +10,10 @@
  *  - corte corto: un cuadro perdido no deja `principal` en null ni dice «No veo a nadie ahora.»;
  *  - alisado (EMA) del giro de cabeza antes de la histéresis de `mirando`/`cabeza`;
  *  - modo «inmediato» (cara dormida) y respaldo por etiquetas del servidor;
- *  - frases en español, en primera persona (AU-RA habla), sin inventar identidad.
+ *  - frases en español, en primera persona (AU-RA habla), sin inventar identidad;
+ *  - «a veces no sabía que lo miraba» (José, 5-oct): la ventana de `mirando` corrida hacia la pantalla
+ *    (la cámara está arriba de ella) y el `minFaceSize` de ML Kit que perdía caras a ~1,8 m;
+ *  - la cámara trasera: sin espejo, sin `mirando` y la frase lo dice.
  *
  *   node scripts/check-escena.mjs
  */
@@ -27,7 +30,10 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'escena-'));
 const file = path.join(tmp, 'escena.mjs');
 fs.writeFileSync(file, js);
 const M = await import(pathToFileURL(file).href);
-const { MaquinaEscena, describirEscena, ladoDesdeUltron, espejarX, normalizarY, dimensionesMlkit, observacionMlkit, anguloEsperado, fovDiagonalDesdeHorizontal, escenaDesdeEtiquetas, UMBRALES, FOV_DIAGONAL_GRADOS } = M;
+const { MaquinaEscena, describirEscena, ladoDesdeUltron, espejarX, normalizarY, dimensionesMlkit, observacionMlkit, anguloEsperado, fovDiagonalDesdeHorizontal, escenaDesdeEtiquetas, UMBRALES, UMBRALES_FOTOS, FOV_DIAGONAL_GRADOS } = M;
+const { desfasePantalla, anchoCaraRelativo, distanciaDeCara, MIN_CARA_MLKIT } = M;
+/** El yaw en horizontal pierde el desfase de la cámara de costado (sin signo): ver «A veces no sabía que lo miraba». */
+const yawHorizontal = (crudo, tam, w, h) => Math.sign(crudo) * Math.max(0, Math.abs(crudo) - desfasePantalla(tam, w, h));
 
 let fails = 0;
 const check = (nombre, ok, detalle = '') => {
@@ -63,7 +69,7 @@ check('dimensiones: cuadro portrait → tal cual', JSON.stringify(dimensionesMlk
   {
     // yaw absoluto = -yawAngle = -12; se descuenta el ángulo con que la cámara ve ese punto (cx≈0,19 → ≈ -19,6°).
     const esp = anguloEsperado(o.cara.cx, o.cara.cy, 640, 480);
-    check('observacionMlkit: yaw invertido y relativo (−yawAngle − esperado)', Math.abs(o.cara.yaw - (-12 - esp.yaw)) < 1e-9 && Math.abs(o.cara.pitch - (-3 - esp.pitch)) < 1e-9, `yaw=${o.cara.yaw.toFixed(1)} esp=${esp.yaw.toFixed(1)}`);
+    check('observacionMlkit: yaw invertido y relativo (−yawAngle − esperado − desfase de costado)', Math.abs(o.cara.yaw - yawHorizontal(-12 - esp.yaw, o.cara.tam, 640, 480)) < 1e-9 && Math.abs(o.cara.pitch - (-3 - esp.pitch)) < 1e-9, `yaw=${o.cara.yaw.toFixed(1)} esp=${esp.yaw.toFixed(1)}`);
   }
   check('observacionMlkit: sonrisa y parpadeo', o.cara.sonrisa === 0.9 && Math.abs(o.cara.parpadeo - 0.1) < 1e-9, `parpadeo=${o.cara.parpadeo}`);
   const vacio = observacionMlkit([], 640, 480, 'landscape-right', 1);
@@ -97,7 +103,9 @@ console.log('\n— Ángulo esperado (mirada relativa a la cámara) —');
   check('…y la máquina la da por mirando la pantalla (a mi izquierda)', ultima.principal.mirando === true && /a mi izquierda, mirando la pantalla/.test(ultima.descripcion), ultima.descripcion);
   const centroGirado = [{ ...borde[0], bounds: { x: 256, y: 160, width: 128, height: 160 } }];
   const oc = observacionMlkit(centroGirado, 640, 480, 'portrait', 0);
-  check('misma cabeza girada 22° pero en el centro → no mira (yaw ≈ -22)', Math.abs(oc.cara.yaw + 22) < 1e-9 && Math.abs(oc.cara.yaw) > UMBRALES.miraYawOn);
+  check('misma cabeza girada 22° pero en el centro → yaw ≈ -(22 − desfase de costado)', Math.abs(oc.cara.yaw - yawHorizontal(-22, oc.cara.tam, 640, 480)) < 1e-9, oc.cara.yaw.toFixed(1));
+  const muyGirada = observacionMlkit([{ ...centroGirado[0], yawAngle: 30 }], 640, 480, 'portrait', 0);
+  check('…y girada 30° en el centro no mira (|yaw| > miraYawOn)', Math.abs(muyGirada.cara.yaw) > UMBRALES.miraYawOn, muyGirada.cara.yaw.toFixed(1));
   // Y el mismo caso al otro lado del cuadro (cx ≈ 0,85 → para AU-RA «a mi derecha»).
   const bordeDer = [{ ...borde[0], bounds: { x: 480, y: 160, width: 128, height: 160 }, yawAngle: -22 }];
   const md = new MaquinaEscena();
@@ -105,6 +113,80 @@ console.log('\n— Ángulo esperado (mirada relativa a la cámara) —');
   for (let t = 0; t <= 1200; t += 100) ud = md.procesar(observacionMlkit(bordeDer, 640, 480, 'portrait', t));
   check('borde opuesto mirando a la cámara → mirando=true, «a mi derecha»', ud.principal.mirando === true && /a mi derecha, mirando la pantalla/.test(ud.descripcion), ud.descripcion);
   check('la frase de la máquina nunca habla de «tu» lado', !/\btu\b|a tu (derecha|izquierda)/.test(ultima.descripcion + ' ' + ud.descripcion), ud.descripcion);
+}
+
+console.log('\n— «A veces no sabía que lo miraba»: la pantalla está debajo de la cámara —');
+{
+  // Teléfono en vertical (foto 720×1280). La cámara va ~6 cm arriba de la pantalla: quien mira la cara del
+  // avatar baja la cabeza unos grados respecto a la línea hacia la cámara, más cuanto más cerca.
+  const W = 720;
+  const H = 1280;
+  const cerca = desfasePantalla(0.45, W, H);
+  const media = desfasePantalla(0.25, W, H);
+  const lejos = desfasePantalla(0.1, W, H);
+  check('desfase: cerca > media > lejos, y nunca más de 12°', cerca > media && media > lejos && cerca <= 12 && lejos > 0, `${cerca.toFixed(1)} / ${media.toFixed(1)} / ${lejos.toFixed(1)}`);
+  check('distancia por el tamaño de cara: 0,45 del alto ≈ 30-40 cm; 0,1 ≈ 1,4-1,8 m', distanciaDeCara(0.45, W, H) > 0.28 && distanciaDeCara(0.45, W, H) < 0.42 && distanciaDeCara(0.1, W, H) > 1.3 && distanciaDeCara(0.1, W, H) < 1.9, `${distanciaDeCara(0.45, W, H).toFixed(2)} m / ${distanciaDeCara(0.1, W, H).toFixed(2)} m`);
+  // Teléfono en la mano (~28 cm: cara = 50 % del alto), ojos a la altura de la pantalla (la cara sale algo
+  // por DEBAJO del centro de la foto, cy ≈ 0,62). Relativo a la línea hacia la cámara, quien mira la pantalla
+  // da un pitch de unos −12° (la cámara está arriba) más el ruido de ML Kit 'fast': de −13 a −21.
+  const ruido = [-13, -19, -16, -21, -14, -18, -15, -20, -17, -13, -19, -16];
+  const caja = { x: 180, y: 474, width: 360, height: 640 };
+  const cx = (caja.x + caja.width / 2) / W;
+  const cy = (caja.y + caja.height / 2) / H;
+  const esp = anguloEsperado(cx, cy, W, H);
+  const caraCerca = (rel) => [{ bounds: caja, yawAngle: 0, pitchAngle: rel + esp.pitch, smilingProbability: 0, leftEyeOpenProbability: 1, rightEyeOpenProbability: 1 }];
+  const m = new MaquinaEscena(UMBRALES_FOTOS);
+  let e;
+  let cambios = 0;
+  let antes = null;
+  ruido.forEach((p, i) => {
+    e = m.procesar(observacionMlkit(caraCerca(p), W, H, 'portrait', i * 400), { inmediato: i === 0 });
+    if (antes !== null && e.principal && e.principal.mirando !== antes) cambios += 1;
+    if (e.principal) antes = e.principal.mirando;
+  });
+  check('cerca, mirando la pantalla con ruido: «mirando» (un solo cambio, el de encender) y sin parpadeos', e.principal?.mirando === true && cambios <= 1 && /mirando la pantalla/.test(e.descripcion), `${e.descripcion} (cambios ${cambios})`);
+  const corregidos = ruido.map((p) => observacionMlkit(caraCerca(p), W, H, 'portrait', 0).cara.pitch);
+  check('con el desfase, todas las muestras caen dentro de miraPitchOn', corregidos.every((p) => Math.abs(p) < UMBRALES.miraPitchOn), corregidos.map((p) => p.toFixed(0)).join(' '));
+  check('…sin él, 9 de 12 quedaban fuera (lo que veía José: «a veces no sabía que lo miraba»)', ruido.filter((p) => Math.abs(p) >= UMBRALES.miraPitchOn).length === 9);
+  const abajo = new MaquinaEscena(UMBRALES_FOTOS);
+  let ea;
+  for (let i = 0; i < 10; i++) ea = abajo.procesar(observacionMlkit(caraCerca(-38), W, H, 'portrait', i * 400), { inmediato: i === 0 });
+  check('mirando la mesa (cabeza −38°): no mira la pantalla', ea.principal?.mirando === false, ea.descripcion);
+  const arriba = new MaquinaEscena(UMBRALES_FOTOS);
+  let eu;
+  for (let i = 0; i < 10; i++) eu = arriba.procesar(observacionMlkit(caraCerca(24), W, H, 'portrait', i * 400), { inmediato: i === 0 });
+  check('mirando por encima del teléfono (+24°): no mira la pantalla', eu.principal?.mirando === false, eu.descripcion);
+}
+
+console.log('\n— Caras más lejos: minFaceSize de ML Kit —');
+{
+  // En vertical el ancho de la foto es el lado corto (720 de 720×1280): la cara de 15 cm cae de 0,12 pasando ~1,8 m.
+  const a = (d) => anchoCaraRelativo(d, 720, 1280);
+  check('a 60 cm la cara ocupa ≥ 0,25 del ancho', a(0.6) >= 0.25, a(0.6).toFixed(3));
+  check('a 2 m la cara es < 0,12 (el mínimo de antes la perdía) y > 0,08 (el de ahora la ve)', a(2) < 0.12 && a(2) > MIN_CARA_MLKIT, a(2).toFixed(3));
+  check('MIN_CARA_MLKIT = 0,08 (hasta ~2,7 m en vertical)', MIN_CARA_MLKIT === 0.08 && a(2.7) >= MIN_CARA_MLKIT * 0.97, a(2.7).toFixed(3));
+}
+
+console.log('\n— Cámara trasera —');
+{
+  const W = 720;
+  const H = 1280;
+  // Alguien a la izquierda de la foto, mirando a la cámara de atrás (de frente a ella).
+  const c = [{ bounds: { x: 60, y: 400, width: 220, height: 300 }, yawAngle: 0, pitchAngle: 0, smilingProbability: 0.9, leftEyeOpenProbability: 1, rightEyeOpenProbability: 1 }];
+  const m = new MaquinaEscena(UMBRALES_FOTOS);
+  let e;
+  const eventos = [];
+  for (let i = 0; i < 8; i++) {
+    e = m.procesar(observacionMlkit(c, W, H, 'portrait', i * 400, undefined, { trasera: true }), { inmediato: i === 0 });
+    eventos.push(...e.eventos);
+  }
+  check('trasera: llega, pero nunca «mirando» ni evento «mira»', e.personas === 1 && e.principal.mirando === false && !eventos.includes('mira'), JSON.stringify(eventos));
+  check('trasera: x sin espejo (izquierda de la foto → x negativa)', e.principal.x < -0.3, e.principal.x.toFixed(2));
+  check('trasera: la frase dice la cámara y el lado de la foto, sin «pantalla» ni «mi»', /^Con la cámara trasera veo a una persona, a la izquierda, sonriendo\.$/.test(e.descripcion) && e.trasera === true, e.descripcion);
+  check('trasera: sin nadie', describirEscena({ personas: 0, principal: null, motor: 'mlkit', trasera: true }) === 'Con la cámara trasera no veo a nadie ahora.');
+  check('trasera: dos personas', describirEscena({ personas: 2, principal: principal(), motor: 'mlkit', trasera: true }) === 'Con la cámara trasera veo a dos personas.');
+  const o = observacionMlkit(c, W, H, 'portrait', 0, undefined, { trasera: true });
+  check('trasera: sin desfase de pantalla (el pitch es solo relativo a la cámara)', Math.abs(o.cara.pitch - (0 - anguloEsperado(o.cara.cx, o.cara.cy, W, H).pitch)) < 1e-9);
 }
 
 console.log('\n— Descripción —');

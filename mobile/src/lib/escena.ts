@@ -25,6 +25,9 @@
  *  - Muestreo intermitente: con la cara dormida la cámara se apaga ~9,5 s de cada 12 s. El rato SIN
  *    observaciones es desconocido, no ausencia (`huecoMuestreoMs`): las marcas de tiempo se desplazan por
  *    la duración del hueco en vez de contarlo, así no hay `se_fue`/`llego` falsos al volver.
+ *  - Cámara TRASERA (`Observacion.trasera`): lo que ve no es quien está frente a la pantalla. Nada de
+ *    espejo (x = la foto tal cual), `mirando` siempre false (nadie «mira la pantalla» desde atrás) y la
+ *    frase lo dice: «Con la cámara trasera veo a…».
  */
 
 export type MotorVision = 'mlkit' | 'servidor' | 'ninguno';
@@ -63,6 +66,8 @@ export interface Escena {
   ts: number;
   /** Solo motor 'servidor': etiquetas que devolvió el nodo de visión (persona, taza, teléfono…). */
   etiquetas?: string[];
+  /** Con la cámara trasera: las personas no son quien mira la pantalla (sin mirada ni `mirando`). */
+  trasera?: boolean;
 }
 
 /**
@@ -72,6 +77,8 @@ export interface Observacion {
   ts: number;
   motor: MotorVision;
   personas: number;
+  /** Foto de la cámara TRASERA: sin espejo y sin `mirando` (ver arriba). */
+  trasera?: boolean;
   cara: null | {
     cx: number;
     cy: number;
@@ -188,6 +195,31 @@ export interface EstadoDescribible {
   principal: null | Principal;
   motor: MotorVision;
   etiquetas?: string[];
+  trasera?: boolean;
+}
+
+/** Lado con la cámara trasera: la foto tal cual (x sin espejar), como lo ve quien sostiene el teléfono. */
+export function ladoTrasera(x: number): 'a la izquierda' | 'a la derecha' | 'al centro' {
+  if (x < -UMBRALES.ladoX) return 'a la izquierda';
+  if (x > UMBRALES.ladoX) return 'a la derecha';
+  return 'al centro';
+}
+
+/**
+ * Con la cámara trasera: quién hay delante del teléfono (no de la pantalla). Sin mirada ni cabeza: no
+ * es quien habla con AU-RA. «Con la cámara trasera veo a una persona cerca, a la izquierda, sonriendo.»
+ */
+function describirTrasera(e: EstadoDescribible): string {
+  if (e.personas <= 0 || (!e.principal && e.personas < 2)) return 'Con la cámara trasera no veo a nadie ahora.';
+  if (e.personas >= 2 || !e.principal) return `Con la cámara trasera veo a ${palabraNumero(e.personas)} personas.`;
+  const p = e.principal;
+  let frase = 'Con la cámara trasera veo a una persona';
+  if (p.tam >= UMBRALES.cercaOn) frase += ' cerca';
+  else if (p.tam > 0 && p.tam <= UMBRALES.lejosOn) frase += ' lejos';
+  frase += ', ' + ladoTrasera(p.x);
+  if (p.ojosCerrados) frase += ', con los ojos cerrados';
+  else if (p.sonrisa >= UMBRALES.sonrieOn) frase += ', sonriendo';
+  return frase + '.';
 }
 
 /**
@@ -198,6 +230,7 @@ export interface EstadoDescribible {
  */
 export function describirEscena(e: EstadoDescribible): string {
   if (e.motor === 'ninguno') return 'La cámara está apagada.';
+  if (e.trasera && e.motor === 'mlkit') return describirTrasera(e);
   if (e.motor === 'servidor') {
     // El respaldo solo tiene etiquetas del nodo de visión (cada ~12 s): no afirma gestos ni posición.
     const et = (e.etiquetas || []).filter(Boolean);
@@ -312,6 +345,57 @@ export function anguloEsperado(cx: number, cy: number, w: number, h: number, fov
   };
 }
 
+/*
+ * «A VECES NO SABÍA QUE LO MIRABA» (José, 5-oct). Dos causas medidas con la geometría del teléfono:
+ *
+ *  1. La cámara frontal NO está en el centro de la pantalla: en vertical va arriba, ~6 cm por encima del
+ *     punto que se mira (la cara del avatar). Quien mira la pantalla baja la cabeza unos grados respecto a
+ *     la línea hacia la cámara, y más cuanto más cerca está: a 30 cm son ~11°, y con el ruido de ML Kit
+ *     'fast' (±5-6°) el pitch cruzaba a cada rato los 15° de `miraPitchOn`. `desfasePantalla` estima la
+ *     distancia por el tamaño de la cara y corre la ventana de `mirando` hacia la pantalla. En horizontal
+ *     la cámara queda a un LADO (no se sabe cuál sin leer la rotación): se tolera ese desfase en el yaw.
+ *  2. `minFaceSize` 0.12 (ancho de cara / ancho de foto): en vertical el lado corto de la foto abarca
+ *     ~39°, así que una cara de 15 cm baja de 0,12 pasando ~1,8 m (`anchoCaraRelativo`). Con 0,08 ML Kit
+ *     la sigue hasta ~2,7 m: ya no «se va» quien se echa atrás en la silla.
+ */
+
+/** Ancho mínimo de cara para ML Kit (fracción del ancho de la foto). Antes 0.12: ver arriba. */
+export const MIN_CARA_MLKIT = 0.08;
+/** Lo que mide una cara de verdad (m): ancho (sienes) y alto de la caja de ML Kit (cejas-barbilla). */
+export const ANCHO_CARA_M = 0.15;
+export const ALTO_CARA_M = 0.18;
+/** Cuánto está la cámara frontal por encima (vertical) o al lado (horizontal) de lo que se mira (m). */
+export const DESFASE_CAMARA_M = 0.06;
+/** La cabeza acompaña ~70 % del giro de la mirada (el resto lo ponen los ojos, que ML Kit no ve). */
+export const FRACCION_CABEZA = 0.7;
+
+/** Tangentes de medio campo horizontal y vertical para una foto w×h (modelo de agujero de alfiler). */
+function tangentes(w: number, h: number, fovDiagonal: number) {
+  const fov = fovDiagonal > 10 && fovDiagonal < 170 ? fovDiagonal : FOV_DIAGONAL_GRADOS;
+  const tanD = Math.tan((fov * Math.PI) / 360);
+  const diag = Math.hypot(w, h);
+  return { tanH: (tanD * w) / diag, tanV: (tanD * h) / diag };
+}
+
+/** Ancho relativo (cara / foto) de una cara a `distanciaM` metros en una foto w×h. */
+export function anchoCaraRelativo(distanciaM: number, w: number, h: number, fovDiagonal = FOV_DIAGONAL_GRADOS): number {
+  const { tanH } = tangentes(w > 0 ? w : 3, h > 0 ? h : 4, fovDiagonal);
+  return distanciaM > 0 ? ANCHO_CARA_M / (2 * distanciaM * tanH) : 1;
+}
+
+/** Distancia estimada (m) de una cara por su alto relativo `tam` en una foto w×h. */
+export function distanciaDeCara(tam: number, w: number, h: number, fovDiagonal = FOV_DIAGONAL_GRADOS): number {
+  const { tanV } = tangentes(w > 0 ? w : 3, h > 0 ? h : 4, fovDiagonal);
+  return ALTO_CARA_M / (2 * Math.max(0.02, tam) * tanV);
+}
+
+/** Grados que gira la cabeza (aprox.) para pasar de mirar la cámara a mirar la pantalla, a esa distancia. */
+export function desfasePantalla(tam: number, w: number, h: number, fovDiagonal = FOV_DIAGONAL_GRADOS): number {
+  if (!(tam > 0)) return 0;
+  const d = distanciaDeCara(tam, w, h, fovDiagonal);
+  return Math.min(12, ((Math.atan(DESFASE_CAMARA_M / d) * 180) / Math.PI) * FRACCION_CABEZA);
+}
+
 /**
  * Traduce las caras de ML Kit de un cuadro a una `Observacion`. La cara principal es la más grande.
  *  - ML Kit no da sorpresa ni apertura de boca sin landmarks/contornos: quedan en 0. (Sí reporta los
@@ -321,6 +405,9 @@ export function anguloEsperado(cx: number, cy: number, w: number, h: number, fov
  *    derecha». `pitchAngle` (Euler X) positivo = mira arriba, como la nuestra.
  *  - yaw/pitch salen RELATIVOS a la cámara: se descuenta `anguloEsperado(cx, cy)`, así quien está en un
  *    borde del cuadro mirando la pantalla da ≈ 0° y `mirando` funciona en toda la mesa.
+ *  - y relativos a la PANTALLA (`desfasePantalla`): en vertical se suma el desfase al pitch (quien mira la
+ *    pantalla, debajo de la cámara, da ≈ 0°); en horizontal se descuenta del yaw sin signo.
+ *  - `trasera`: la foto es de la cámara de atrás; se marca y la máquina no espeja ni da `mirando`.
  * @param fovDiagonal campo de visión diagonal del formato (grados); si no se conoce, el típico.
  */
 export function observacionMlkit(
@@ -329,14 +416,17 @@ export function observacionMlkit(
   frameH: number,
   orientacion: OrientacionCuadro,
   ts: number,
-  fovDiagonal: number = FOV_DIAGONAL_GRADOS
+  fovDiagonal: number = FOV_DIAGONAL_GRADOS,
+  opciones?: { trasera?: boolean }
 ): Observacion {
+  const trasera = !!opciones?.trasera;
   const { w, h } = dimensionesMlkit(frameW, frameH, orientacion);
   const validas = caras.filter((c) => c && c.bounds && c.bounds.width > 0 && c.bounds.height > 0);
-  if (!validas.length || w <= 0 || h <= 0) return { ts, motor: 'mlkit', personas: 0, cara: null };
+  if (!validas.length || w <= 0 || h <= 0) return { ts, motor: 'mlkit', personas: 0, cara: null, ...(trasera ? { trasera } : {}) };
   const p = validas.reduce((a, b) => (b.bounds.height > a.bounds.height ? b : a));
   const cx = clamp01((p.bounds.x + p.bounds.width / 2) / w);
   const cy = clamp01((p.bounds.y + p.bounds.height / 2) / h);
+  const tam = clamp01(p.bounds.height / h);
   const abiertoL = p.leftEyeOpenProbability;
   const abiertoR = p.rightEyeOpenProbability;
   const abiertos = [abiertoL, abiertoR].filter((v) => typeof v === 'number' && v >= 0);
@@ -344,16 +434,24 @@ export function observacionMlkit(
   const yawAbs = -(Number.isFinite(p.yawAngle) ? p.yawAngle : 0);
   const pitchAbs = Number.isFinite(p.pitchAngle) ? p.pitchAngle : 0;
   const esperado = anguloEsperado(cx, cy, w, h, fovDiagonal);
+  let yaw = yawAbs - esperado.yaw;
+  let pitch = pitchAbs - esperado.pitch;
+  if (!trasera) {
+    const desfase = desfasePantalla(tam, w, h, fovDiagonal);
+    if (h > w) pitch += desfase;
+    else if (w > h) yaw = Math.sign(yaw) * Math.max(0, Math.abs(yaw) - desfase);
+  }
   return {
     ts,
     motor: 'mlkit',
     personas: validas.length,
+    ...(trasera ? { trasera } : {}),
     cara: {
       cx,
       cy,
-      tam: clamp01(p.bounds.height / h),
-      yaw: yawAbs - esperado.yaw,
-      pitch: pitchAbs - esperado.pitch,
+      tam,
+      yaw,
+      pitch,
       sonrisa: p.smilingProbability >= 0 ? clamp01(p.smilingProbability) : 0,
       sorpresa: 0,
       bocaAbierta: 0,
@@ -490,8 +588,8 @@ export class MaquinaEscena {
         ev.push('llego');
       }
 
-      // --- suavizado de posición/tamaño (primera muestra directa, luego EMA)
-      const x = espejarX(o.cara.cx);
+      // --- suavizado de posición/tamaño (primera muestra directa, luego EMA). Trasera: sin espejo.
+      const x = o.trasera ? clamp11(o.cara.cx * 2 - 1) : espejarX(o.cara.cx);
       const y = normalizarY(o.cara.cy);
       const tam = clamp01(o.cara.tam);
       if (!this.suave) this.suave = { x, y, tam, yaw: o.cara.yaw, pitch: o.cara.pitch };
@@ -524,7 +622,8 @@ export class MaquinaEscena {
       const ap = Math.abs(pitch);
       const apuntaOn = ay < u.miraYawOn && ap < u.miraPitchOn;
       const apuntaOff = ay > u.miraYawOff || ap > u.miraPitchOff;
-      const candidato = this.mirando ? !apuntaOff : apuntaOn;
+      // Con la cámara trasera nadie «mira la pantalla»: se queda en false, sin eventos.
+      const candidato = o.trasera ? false : this.mirando ? !apuntaOff : apuntaOn;
       if (candidato === this.mirando) this.tMiraCandidato = null;
       else {
         if (this.tMiraCandidato === null) this.tMiraCandidato = ts;
@@ -556,7 +655,7 @@ export class MaquinaEscena {
         x: this.suave.x,
         y: this.suave.y,
         tam: this.suave.tam,
-        mirando: this.mirando,
+        mirando: this.mirando && !o.trasera,
         sonrisa,
         sorpresa: clamp01(o.cara.sorpresa),
         ojosCerrados,
@@ -616,9 +715,10 @@ export class MaquinaEscena {
       personas,
       principal: principalPublico,
       eventos: ev,
-      descripcion: describirEscena({ personas, principal: principalPublico, motor: o.motor }),
+      descripcion: describirEscena({ personas, principal: principalPublico, motor: o.motor, trasera: o.trasera }),
       motor: o.motor,
       ts,
+      ...(o.trasera ? { trasera: true } : {}),
     };
     this.ultimaEscena = escena;
     return escena;
