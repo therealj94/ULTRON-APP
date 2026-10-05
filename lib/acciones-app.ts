@@ -123,6 +123,8 @@ export type AccionIniciativa = {
   clase: string;
   prioridad: number;
   creada: number;
+  /** Revisión: la misma propuesta regenerada con el número de ahora (A2). La app reemplaza la tarjeta del mismo id. */
+  rev?: number;
   misionId?: string;
 };
 

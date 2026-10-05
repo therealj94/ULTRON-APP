@@ -10,7 +10,8 @@
  *     anterior NO alcanzó a nadie (la app no estaba escuchando); un aviso entregado e ignorado no autoriza
  *     perseguirla por otro canal, ni hoy ni mañana.
  *   · REVALIDAR justo antes de avisar: el despacho vuelve a leer las fuentes (`revalidar`) en el momento de
- *     entregar; lo resuelto, lo caducado o lo que no se pudo comprobar no sale.
+ *     entregar; lo resuelto, lo caducado o lo que no se pudo comprobar no sale. Si el número contado cambió (A2:
+ *     «tres correos» y ahora hay uno), sale la versión regenerada con el de ahora, en lugar de la vieja, nunca además.
  *   · CONTROLES: «menos avisos» (uno cada N días), «no sobre este tema», «no sobre esta clase», posponer con
  *     fecha, horario, canal y apagado. Apagar alcanza lo PENDIENTE: cancela lo encolado de esa clase y lo
  *     retira de la cola de la iniciativa (podarIniciativa), así no sale más tarde.
@@ -609,19 +610,22 @@ export async function procesarOutbox(correo: string, d: DepsDespacho): Promise<R
   });
 
   for (const x of porHacer) {
-    const p = x.propuesta!;
     let rev: Revalidacion;
     try {
-      rev = await d.revalidar(p);
+      rev = await d.revalidar(x.propuesta!);
     } catch {
       rev = { vigente: false, motivo: 'fuente_desconectada' };
     }
+    // La revalidación puede devolver la versión que vale AHORA (A2: el número cambió y se regeneró): se entrega ESA,
+    // nunca la copia vieja. Tiene que ser la misma propuesta (mismo id): otra no se cuela por esta fila.
+    if (rev.vigente && rev.propuesta && rev.propuesta.id !== x.propuestaId) rev = { vigente: false, motivo: 'resuelta' };
     if (!rev.vigente) {
       const motivo = (rev as { motivo: MotivoNoVigente }).motivo;
       await cerrar(x.clave, 'omitido', motivo, ['pendiente']);
       out.push({ propuestaId: x.propuestaId, entregado: false, motivo });
       continue;
     }
+    const p = rev.propuesta || x.propuesta!;
     const caduca = evidenciaDe(p).caduca;
     const { resultado: r } = await almacen.modificar(correo, (e): { canales: CanalAviso[]; urgente: boolean } | { motivo: ResultadoDespacho['motivo'] } => {
       const y = e.outbox.find((z) => z.clave === x.clave);
@@ -645,6 +649,8 @@ export async function procesarOutbox(correo: string, d: DepsDespacho): Promise<R
       y.reservadoEn = ahora;
       y.t = ahora;
       y.urgente = dec.urgente;
+      // Lo reservado es la versión revalidada (la que sale), no la que se encoló.
+      y.propuesta = p;
       return { canales: dec.canales, urgente: dec.urgente };
     });
     if ('motivo' in r) {

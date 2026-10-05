@@ -147,6 +147,23 @@ prueba('cola: una más nueva reemplaza a la de antes; una más vieja no; una cad
   assert.equal(c.ahora(), null);
 });
 
+prueba('cola (A2): la misma propuesta regenerada en el servidor (rev mayor) reemplaza la tarjeta sin anunciarse como nueva; una revisión vieja no la pisa', () => {
+  const c = new ColaPropuestas(() => AHORA);
+  let avisos = 0;
+  c.suscribir(() => avisos++);
+  assert.equal(c.ofrecer(propuestaDeAccion(accion({ texto: 'Tienes tres correos sin leer. ¿Te resumo lo importante?' }))), 'nueva');
+  const g = propuestaDeServidor({ propuesta: { ...accion(), tipo: 'ayuda', texto: 'Tienes 1 correo sin leer. ¿Te resumo lo importante?', rev: 2 }, motivo: 'actualizada' });
+  assert.equal(g.rev, 2);
+  assert.equal(c.ofrecer(g), 'actualizada');
+  assert.equal(c.ahora().texto, 'Tienes 1 correo sin leer. ¿Te resumo lo importante?');
+  assert.equal(avisos, 2, 'se redibuja con el número de ahora');
+  // El empuje viejo (rev 1) que llega tarde no vuelve a poner el «tres».
+  assert.equal(c.ofrecer(propuestaDeAccion(accion({ texto: 'Tienes tres correos sin leer. ¿Te resumo lo importante?' }))), 'repetida');
+  assert.equal(c.ahora().rev, 2);
+  assert.equal(esAccionIniciativa(accion({ rev: 0 })), false, 'una revisión inválida no pasa');
+  assert.equal(esAccionIniciativa(accion({ rev: 3 })), true);
+});
+
 prueba('cola: otra persona en el teléfono empieza de cero; la misma no', () => {
   const c = new ColaPropuestas(() => AHORA);
   c.paraPersona('Jose@Ejemplo.com');
