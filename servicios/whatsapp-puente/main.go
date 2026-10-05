@@ -48,7 +48,7 @@ func main() {
 		log.Errorf("cuentas: %v", err)
 		os.Exit(1)
 	}
-	// Solo las que ya estaban vinculadas se reconectan; las demás nacen en su primer /vincular.
+	// Solo las que ya estaban vinculadas se reconectan (cada una aparte); las demás nacen en su primer /vincular.
 	cuentas.Cargar()
 	api := &API{clave: clave, cuentas: cuentas}
 	srv := &http.Server{Addr: ":" + envO("PORT", "8080"), Handler: api.Rutas(), ReadHeaderTimeout: 10 * time.Second}

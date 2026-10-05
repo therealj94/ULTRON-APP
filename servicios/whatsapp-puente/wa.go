@@ -67,10 +67,14 @@ func NuevaCuentaWA(ctx context.Context, rutaSesion, dirFotos string, alm *Almace
 	c.usar(dev)
 	go c.ordenador()
 	if dev.ID != nil {
-		// Ya estaba vinculado: se reconecta solo (whatsmeow reintenta si se cae la red).
-		if err := c.cli.Connect(); err != nil {
-			log.Warnf("no conecté al arrancar: %v", err)
-		}
+		// Ya estaba vinculado: se reconecta solo (whatsmeow reintenta si se cae la red). Aparte: al arrancar con
+		// varias cuentas, ninguna espera a que otra termine de conectar.
+		cli := c.cli
+		go func() {
+			if err := cli.Connect(); err != nil {
+				log.Warnf("no conecté al arrancar: %v", err)
+			}
+		}()
 		// Lo guardado antes de esta versión (o antes de saber el número de un LID) se ordena ya.
 		c.pedirOrden()
 	}
