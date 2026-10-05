@@ -26,7 +26,7 @@ import { hiloDe } from '../lib/memoria';
 import { hiloMiembro } from '../lib/memoria-miembro';
 import { miembrosUltron, quienEs } from '../lib/junta';
 import { iniciativaDe, leerPerfil, reservasDe, type PerfilDeUso } from '../lib/perfil-persona';
-import { vistaDeTerminos, type VistaTexto } from '../lib/conocer-persona';
+import { vistaDePersona, vistaDeTerminos, type VistaTexto } from '../lib/conocer-persona';
 import {
   enHorasQuietas,
   evidenciaDe,
@@ -120,8 +120,9 @@ export function correrMisionTurno(dueno: string, arg: string): Promise<string> {
 }
 
 /** Lo mismo con su estado y su recibo (AUR07): `mision: (arg) => correrMisionTurnoConEstado(dueno, arg)`. */
-export function correrMisionTurnoConEstado(dueno: string, arg: string) {
-  return correrMisionConEstado(duenoMisiones(dueno), arg);
+export async function correrMisionTurnoConEstado(dueno: string, arg: string, vista?: VistaTexto) {
+  // Lo que limitó es de quien habla (`dueno`, la vista del turno), aunque sus misiones se guarden por su correo.
+  return correrMisionConEstado(duenoMisiones(dueno), arg, Date.now(), vista ?? (dueno ? await vistaDePersona(dueno) : undefined));
 }
 
 /**

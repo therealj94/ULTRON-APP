@@ -23,6 +23,7 @@ import { clave as claveBoveda } from './boveda';
 import { clavePersona, CajonNoDisponible, crearCajones, linea, nuevoId, plegar } from './cerebro-comun';
 import { borradorWhatsappParaConEstado, cuentaWhatsappVinculada, whatsappDisponible, whatsappPermitido } from '../server/whatsapp';
 import { exito, fallo, type ResultadoHerramienta } from './recibo-herramienta';
+import { resultadoAutorizado, vistaDePersona, type VistaTexto } from './conocer-persona';
 
 export const RELACIONES = ['esposa', 'esposo', 'pareja', 'hija', 'hijo', 'madre', 'padre', 'hermana', 'hermano', 'familia', 'amigo', 'amiga', 'socio', 'socia', 'asistente', 'otro'] as const;
 export type Relacion = (typeof RELACIONES)[number];
@@ -394,7 +395,13 @@ export async function correrCirculo(dueno: string, arg: string, ambito = '', d: 
  * El runner con su estado y su recibo (AUR07). Un recordatorio que salió es `confirmado`; uno que el puente
  * rechazó (4xx) es `failed`; uno que se despachó y no se supo (caída, tiempo) es `unknown`: no se repite a ciegas.
  */
-export async function correrCirculoConEstado(dueno: string, arg: string, ambito = '', d: DepsCirculo = {}): Promise<ResultadoHerramienta> {
+export async function correrCirculoConEstado(dueno: string, arg: string, ambito = '', d: DepsCirculo = {}, vista?: VistaTexto): Promise<ResultadoHerramienta> {
+  const r = await correrCirculoCrudo(dueno, arg, ambito, d);
+  // Lo que devuelve va al modelo: por la vista de lo que la persona limitó (revisión 11, MEDIO-2). `vista`: la del turno.
+  return dueno ? resultadoAutorizado(r, vista ?? (await vistaDePersona(dueno)), 'CÍRCULO') : r;
+}
+
+async function correrCirculoCrudo(dueno: string, arg: string, ambito: string, d: DepsCirculo): Promise<ResultadoHerramienta> {
   if (!dueno) return fallo('CÍRCULO: solo con sesión. Pídele que entre con su cuenta.', 'sin-sesion');
   const [cabeza, ...partes] = String(arg || '').split('|').map((x) => x.trim());
   const m = cabeza.match(/^(\S+)\s*(.*)$/s);

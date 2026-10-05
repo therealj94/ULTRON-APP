@@ -11,9 +11,11 @@
  * Ahora, por cada dato limitado, una RESERVA:
  *   · fuertes: lo que solo ya lo nombra: el valor de la clave (lo que va tras «:»; lo de antes es la
  *     categoría), los nombres propios que no son palabra común («Sintetico», «Valentina») y los números largos
- *     (un año). Si el dato no tiene nada de eso y le queda UNA sola palabra propia («diabetes»), esa.
+ *     (una cédula, un teléfono). Si el dato no tiene nada de eso y le queda UNA sola palabra propia
+ *     («diabetes»), esa.
  *   · terminos: las palabras propias del dato (sin vacías, sin las de plantilla, sin las comunes), más los
- *     nombres propios comunes («Puerto») y los números cortos: hacen falta DOS de la misma reserva.
+ *     nombres propios comunes («Puerto»), los nombres de pila muy comunes («María») y los números de menos de
+ *     seis cifras (un día, un año, una dosis): hacen falta DOS de la misma reserva, o uno con su etiqueta.
  *   · juntas: el nombre de varias palabras escrito junto («puertosintetico», «minerasintetica»).
  * Todo sin tildes ni mayúsculas, y por raíz: dos palabras casan si son iguales sin el plural o comparten un
  * principio de 5 letras o más que cubre casi toda la más corta («diabetes»/«diabético»/«diabética»).
@@ -21,8 +23,16 @@
  * Y se decide por FRASE (o línea, o turno, o dato), nunca por palabra: una frase que toca una reserva sale
  * entera y en su lugar queda «[dato reservado]»; una palabra común sola nunca dispara.
  *
+ * Y lo que solo no identifica a nadie (revisión 11, MENOR-G): un nombre de pila MUY común («María», «José», «Juan»…,
+ * `NOMBRES_COMUNES`) o una fecha o un número corto no son fuertes: limitar «esposa: María» tapaba «Envíale el contrato
+ * a Maria» o «La santa María», y limitar el cumpleaños «12 de marzo» tapaba «La reunión es el 12 de marzo». Ahora
+ * cuentan como un término propio y piden otro: otra palabra del dato o lo que ES el dato (`etiquetas`: «esposa», «mi
+ * mujer», «hija», «cumple», «nació»…). Una fecha («12 de marzo») cuenta como UN término (`compuestos`), no dos. Los
+ * nombres menos comunes («Valentina») y lo escrito junto siguen fuertes: ante la duda, se reserva.
+ *
  * Límite honesto: casa por palabras compartidas. Una paráfrasis sin ninguna palabra del dato («su niña está
- * malita» para «Su hija se llama Valentina») no se reconoce.
+ * malita» para «Su hija se llama Valentina») no se reconoce. Y con un nombre muy común limitado, «María me llamó»
+ * (sin decir que es su esposa) ya no se reserva.
  */
 import { plegar } from './cerebro-comun';
 
@@ -30,6 +40,10 @@ export type Reserva = {
   readonly fuertes: readonly string[];
   readonly terminos: readonly string[];
   readonly juntas: readonly string[];
+  /** Fechas del dato («12 de marzo», «marzo 12»), plegadas: cada una cuenta como UN término (revisión 11, MENOR-G). */
+  readonly compuestos?: readonly string[];
+  /** Lo que ES el dato («esposa», «mujer», «cumple», «nació»…): con un término propio, lo nombra; solas, no. */
+  readonly etiquetas?: readonly string[];
 };
 
 /**
@@ -78,6 +92,61 @@ const COMUNES = new Set(
   ).split(' ')
 );
 
+/**
+ * Nombres de pila MUY comunes: solos no dicen de quién se habla (hay una María en cada conversación). Del dato limitado
+ * cuentan como término (piden otra palabra o la etiqueta: «mi esposa María»). La lista es corta a propósito: un nombre
+ * que no está aquí («Valentina») sigue nombrando el dato él solo.
+ */
+const NOMBRES_COMUNES = new Set(
+  (
+    'maria jose juan ana luis carlos pedro manuel antonio francisco jesus miguel jorge david daniel pablo javier ' +
+    'rosa carmen elena laura marta lucia isabel sara'
+  ).split(' ')
+);
+
+const MESES = 'enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre';
+const MES_NUM = MESES.split('|').filter((m) => m !== 'setiembre');
+
+/**
+ * Lo que ES cada clase de dato y cómo se dice («mi mujer» es la esposa; «cumple», «nació» el cumpleaños). Sale de la
+ * categoría de la clave («esposa:maría», «cumpleanos propio») y de las palabras del dato («Su esposa se llama María»).
+ */
+const ETIQUETAS: Record<string, readonly string[]> = (() => {
+  const g: string[][] = [
+    ['esposa', 'mujer', 'senora', 'conyuge', 'pareja'],
+    ['esposo', 'marido', 'conyuge', 'pareja'],
+    ['pareja', 'novia', 'novio', 'esposa', 'esposo'],
+    ['novia', 'pareja'],
+    ['novio', 'pareja'],
+    ['hija', 'hijita', 'nena'],
+    ['hijo', 'hijito', 'nene'],
+    ['madre', 'mama', 'mami', 'mamita'],
+    ['mama', 'madre', 'mami', 'mamita'],
+    ['padre', 'papa', 'papi', 'papito'],
+    ['papa', 'padre', 'papi', 'papito'],
+    ['hermana', 'hermanita'],
+    ['hermano', 'hermanito'],
+    ['abuela', 'abuelita'],
+    ['abuelo', 'abuelito'],
+    ['nieta', 'nietecita'],
+    ['nieto', 'nietecito'],
+    ['tia'],
+    ['tio'],
+    ['prima'],
+    ['primo'],
+    ['suegra'],
+    ['suegro'],
+    ['cunada'],
+    ['cunado'],
+    ['sobrina'],
+    ['sobrino'],
+    ['cumpleanos', 'cumple', 'cumpleano', 'cumplo', 'cumplir', 'nacio', 'naci', 'nacimiento'],
+    ['cumple', 'cumpleanos', 'cumpleano', 'cumplo', 'cumplir', 'nacio', 'naci', 'nacimiento'],
+    ['nacio', 'cumple', 'cumpleanos', 'cumpleano', 'cumplo', 'cumplir', 'naci', 'nacimiento'],
+  ];
+  return Object.fromEntries(g.map((x) => [x[0], x]));
+})();
+
 /** La raíz simple (sin el plural): «telas» → «tela», «diabetes» → «diabet». */
 function raiz(w: string): string {
   return w.length > 4 && w.endsWith('es') ? w.slice(0, -2) : w.length > 3 && w.endsWith('s') ? w.slice(0, -1) : w;
@@ -117,6 +186,34 @@ function fichas(texto: string): Ficha[] {
 
 const esNumero = (w: string) => /^\d+$/.test(w);
 const juntar = (s: string) => plegar(s).replace(/[^a-z0-9]+/g, '');
+/** Un texto plegado con un solo espacio entre palabras y uno a cada lado (para buscar una fecha entera). */
+const espaciado = (s: string) => ` ${plegar(s).replace(/[^a-z0-9]+/g, ' ').trim()} `;
+/** Un número largo (una cédula, un teléfono) sí nombra solo; uno corto (un día, un año, una dosis) no. */
+const NUMERO_FUERTE = 6;
+
+/**
+ * Las fechas de un texto plegado («12 de marzo», «marzo 12», «03-12» en la clave), cada una en sus dos formas
+ * escritas, y las palabras que las forman (para no contarlas además como términos sueltos).
+ */
+function fechasDe(texto: string): { formas: string[]; palabras: Set<string> } {
+  const t = espaciado(texto);
+  const formas = new Set<string>();
+  const palabras = new Set<string>();
+  const anotar = (dia: string, mes: string) => {
+    const d = String(Number(dia));
+    formas.add(`${d} de ${mes}`);
+    formas.add(`${mes} ${d}`);
+    palabras.add(dia).add(d).add(mes);
+  };
+  for (const m of t.matchAll(new RegExp(`(?<= )(\\d{1,2}) (?:de )?(${MESES})(?= )`, 'g'))) anotar(m[1], m[2] === 'setiembre' ? 'septiembre' : m[2]);
+  for (const m of t.matchAll(new RegExp(`(?<= )(${MESES}) (\\d{1,2})(?= )`, 'g'))) anotar(m[2], m[1] === 'setiembre' ? 'septiembre' : m[1]);
+  // «03-14» (MM-DD, como guarda el perfil el cumpleaños).
+  for (const m of String(texto || '').matchAll(/\b(0?[1-9]|1[0-2])-(0?[1-9]|[12]\d|3[01])\b/g)) {
+    anotar(m[2], MES_NUM[Number(m[1]) - 1]);
+    palabras.add(m[1]);
+  }
+  return { formas: [...formas], palabras };
+}
 
 /** La reserva de un dato limitado. Null si no tiene nada que lo identifique (todo plantilla). */
 export function reservaDe(texto: string, clave?: string): Reserva | null {
@@ -125,31 +222,52 @@ export function reservaDe(texto: string, clave?: string): Reserva | null {
   const debiles = new Set<string>();
   const comunes = new Set<string>();
   const juntas = new Set<string>();
+  const etiquetas = new Set<string>();
   const anotarJunta = (ws: string[]) => {
     const j = ws.join('');
     if (ws.length >= 2 && j.length >= 8) juntas.add(j);
   };
+  const anotarEtiquetas = (w: string) => {
+    for (const e of ETIQUETAS[w] || []) etiquetas.add(e);
+  };
+  // Lo que solo no nombra a nadie: un nombre de pila muy común o un número corto (revisión 11, MENOR-G).
+  const flojo = (w: string) => NOMBRES_COMUNES.has(w) || (esNumero(w) && w.length < NUMERO_FUERTE);
   // El valor de la clave («hija:valentina» → «valentina»; «empresa:minera sintetica»): lo de antes de «:» es la
-  // categoría. Una clave sin «:» («vive», «cumpleanos propio», «esposa») es solo la categoría.
+  // categoría. Una clave sin «:» («vive», «cumpleanos propio», «esposa») es solo la categoría, y dice qué ES el dato.
   const k = String(clave || '');
   const dos = k.indexOf(':');
+  const categoria = fichas(dos >= 0 ? k.slice(0, dos) : k)[0]?.w || '';
+  anotarEtiquetas(categoria);
+  // Las fechas del dato y de la clave: cada una, UN término.
+  const fechas = fechasDe(`${texto} ${dos >= 0 ? k.slice(dos + 1) : ''}`);
   if (dos >= 0) {
     const ws = fichas(k.slice(dos + 1))
       .map((f) => f.w)
       .filter((w) => w.length >= 2 && !VACIAS.has(w));
-    for (const w of ws) (COMUNES.has(w) || PLANTILLA.has(w) || (esNumero(w) && w.length < 3) ? terminos : fuertes).add(w);
-    anotarJunta(ws);
+    for (const w of ws) {
+      if (fechas.palabras.has(w)) continue;
+      (COMUNES.has(w) || PLANTILLA.has(w) || flojo(w) ? terminos : fuertes).add(w);
+    }
+    anotarJunta(ws.filter((w) => !esNumero(w)));
   }
   let corrida: string[] = [];
   const cerrar = () => {
     anotarJunta(corrida);
     corrida = [];
   };
+  /** Las palabras de plantilla del dato («aniversario», «cumple»): con una fecha, dicen qué es esa fecha. */
+  const deLaPlantilla = new Set<string>();
   for (const f of fichas(texto)) {
     const w = f.w;
+    anotarEtiquetas(w);
+    if (PLANTILLA.has(w)) deLaPlantilla.add(w);
+    if (fechas.palabras.has(w)) {
+      cerrar();
+      continue;
+    }
     if (esNumero(w)) {
       cerrar();
-      (w.length >= 3 ? fuertes : debiles).add(w);
+      (w.length >= NUMERO_FUERTE ? fuertes : debiles).add(w);
       continue;
     }
     if (VACIAS.has(w) || w.length < 2) {
@@ -159,7 +277,7 @@ export function reservaDe(texto: string, clave?: string): Reserva | null {
     // Un nombre propio: con mayúscula y no abriendo la frase («Vive en Puerto Sintetico»).
     if (!f.inicio && /^\p{Lu}/u.test(f.orig)) {
       corrida.push(w);
-      (COMUNES.has(w) || PLANTILLA.has(w) ? terminos : fuertes).add(w);
+      (COMUNES.has(w) || PLANTILLA.has(w) || flojo(w) ? terminos : fuertes).add(w);
       continue;
     }
     cerrar();
@@ -168,15 +286,23 @@ export function reservaDe(texto: string, clave?: string): Reserva | null {
     else if (w.length >= 4) terminos.add(w);
   }
   cerrar();
-  // Sin nada propio («Cumple años el 12 de marzo»): lo común del dato, y entonces hacen falta dos.
-  const soloComunes = !fuertes.size && !terminos.size;
+  // Una fecha sin etiqueta conocida («Su aniversario es el 5 de junio»): lo que dice el dato de ella hace de etiqueta.
+  if (fechas.formas.length && !etiquetas.size) for (const w of deLaPlantilla) etiquetas.add(w);
+  // Una etiqueta no es además un término (la palabra «esposa» sola no nombra a la esposa).
+  for (const e of etiquetas) terminos.delete(e);
+  // Sin nada propio: lo común del dato, y entonces hacen falta dos.
+  const soloComunes = !fuertes.size && !terminos.size && !fechas.formas.length;
   if (soloComunes) for (const w of comunes) terminos.add(w);
-  // Una sola palabra que lo identifica («Tiene diabetes tipo 2» → «diabetes»): sola ya lo nombra. Si es común
-  // y va con un número corto («12 de marzo»), no: hacen falta los dos.
-  if (!fuertes.size && terminos.size === 1 && !(soloComunes && debiles.size)) fuertes.add([...terminos][0]);
+  // Una sola palabra que lo identifica («Tiene diabetes tipo 2» → «diabetes»): sola ya lo nombra. Si es común y va con
+  // un número corto, o es un nombre muy común o un número («esposa: María»), no: pide otra palabra o la etiqueta.
+  const unica = terminos.size === 1 ? [...terminos][0] : '';
+  if (!fuertes.size && unica && !fechas.formas.length && !flojo(unica) && !(soloComunes && debiles.size)) fuertes.add(unica);
   for (const w of debiles) terminos.add(w);
-  if (!fuertes.size && terminos.size < 2 && !juntas.size) return null;
-  return { fuertes: [...fuertes], terminos: [...terminos], juntas: [...juntas] };
+  const compuestos = fechas.formas;
+  // Lo que puede llegar a nombrarlo: un fuerte, lo escrito junto, dos términos (una fecha cuenta uno) o uno con su etiqueta.
+  const propios = terminos.size + (compuestos.length ? 1 : 0);
+  if (!fuertes.size && !juntas.size && propios < 2 && !(propios >= 1 && etiquetas.size)) return null;
+  return { fuertes: [...fuertes], terminos: [...terminos], juntas: [...juntas], compuestos, etiquetas: [...etiquetas] };
 }
 
 function comoReserva(r: Reserva | readonly string[]): Reserva {
@@ -190,8 +316,9 @@ const ETIQUETA = /^\s*(?:[-*•·]\s+)?(?:[\p{L}][\p{L}\p{N} ]{0,28}:\s+)?/u;
 
 /**
  * LA DECISIÓN: ¿este texto (una frase, un dato, un turno) repite algo limitado? Sí si nombra el valor de la
- * clave, un nombre propio o un número largo de un dato limitado, si lo escribe junto, o si trae dos de sus
- * palabras propias.
+ * clave, un nombre propio poco común o un número largo de un dato limitado, si lo escribe junto, si trae dos de
+ * sus palabras propias (una fecha entera cuenta una), o una de ellas con lo que ES el dato («mi esposa María»,
+ * «mi cumple es el 12 de marzo»).
  */
 export function tocaReserva(texto: string, reservas: Reservas): boolean {
   if (!reservas.length) return false;
@@ -199,12 +326,17 @@ export function tocaReserva(texto: string, reservas: Reservas): boolean {
   const ws = [...new Set(fichas(s).map((f) => f.w))];
   if (!ws.length) return false;
   const junto = juntar(s);
+  const esp = espaciado(s);
+  let todas: string[] | null = null;
   for (const x of reservas) {
     const r = comoReserva(x);
     if (r.juntas.some((j) => junto.includes(j))) return true;
     if (r.fuertes.some((t) => ws.some((w) => casa(w, t)))) return true;
-    let n = 0;
-    for (const t of r.terminos) if (ws.some((w) => casa(w, t)) && ++n >= 2) return true;
+    let n = r.compuestos?.some((c) => esp.includes(` ${c} `)) ? 1 : 0;
+    for (const t of r.terminos) if (ws.some((w) => casa(w, t))) n++;
+    if (n >= 2) return true;
+    // La etiqueta cuenta también en el rótulo del principio («Cumple años: 14 de marzo»).
+    if (n >= 1 && r.etiquetas?.some((e) => (todas ||= [...new Set(fichas(String(texto || '')).map((f) => f.w))]).some((w) => w === e || raiz(w) === raiz(e)))) return true;
   }
   return false;
 }

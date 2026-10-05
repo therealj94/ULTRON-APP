@@ -17,6 +17,7 @@
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -28,7 +29,9 @@ const RAIZ = path.resolve(import.meta.dirname, '..');
 const DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'taller-aprobacion-'));
 const JOSE = 'jose.prueba@ordenglobal.test';
 const MEDARDO = 'medardo.prueba@ordenglobal.test';
-const PADRON = [`jose | José Prueba | ${JOSE} | | ultron=mando`, `medardo | Medardo Prueba | ${MEDARDO} | | ultron=mando`].join('\n');
+/** El Telegram privado de José (el chat que pregunta en la prueba de la captura por Telegram). */
+const TG_JOSE = '777000111';
+const PADRON = [`jose | José Prueba | ${JOSE} | ${TG_JOSE} | ultron=mando`, `medardo | Medardo Prueba | ${MEDARDO} | | ultron=mando`].join('\n');
 const CANALES = {
   TELEGRAM_BOT_TOKEN: 'tok-de-prueba',
   TELEGRAM_CHAT_ID: '-100123',
@@ -252,6 +255,78 @@ test('web: el «Confirmar» de la tarjeta aprueba la propuesta del servidor solo
   assert.equal(S.propuestaValida(undefined), false, 'un servidor de antes no la manda');
 });
 
+/* ================================================================== la captura de una página (revisión 11, MEDIO-1) */
+
+/** Una «captura» de prueba: bytes cualquiera (el canal está espiado). */
+const FOTO = Buffer.from(Array.from({ length: 900 }, (_, i) => (i * 7) % 256));
+const shaDe = (b: Buffer) => crypto.createHash('sha256').update(b).digest('hex');
+
+test('MEDIO-1: la captura para el grupo de la junta queda PROPUESTA con el hash de la imagen en su huella; aprobada sale UNA vez', async () => {
+  await conAlmacen(async () => {
+    const p = panel();
+    try {
+      salidas.length = 0;
+      const r = await T.proponerCapturaTaller({ buf: FOTO, titulo: 'Example Domain', url: 'https://example.com/' }, ctxJunta());
+      assert.ok(r.propuesta, `devuelve la propuesta: ${r.texto}`);
+      assert.match(r.texto, /Necesito tu confirmación/);
+      assert.equal(r.propuesta!.accion, 'foto');
+      assert.equal(r.propuesta!.canal, 'telegram');
+      assert.deepEqual(salidas, [], 'proponer no publica nada');
+      const l = await TD.leerTarea(JOSE, r.propuesta!.tarea);
+      const v = (l.ok ? l.tarea!.decision?.vinculo : null) as any;
+      assert.equal(v.accion, 'foto');
+      assert.equal(v.args.foto, shaDe(FOTO), 'el sha256 de la imagen exacta va en los argumentos');
+      assert.equal(v.huella, T.huellaTaller({ cuenta: JOSE, accion: 'foto', args: v.args, version: v.version }));
+      assert.notEqual(v.huella, T.huellaTaller({ cuenta: JOSE, accion: 'foto', args: { ...v.args, foto: shaDe(Buffer.from('otra')) }, version: v.version }), 'otra imagen, otra huella');
+      // Otra cuenta no la aprueba; la dueña sí, y sale una vez.
+      assert.equal((await p.aprobar(r.propuesta!, MEDARDO)).status, 404);
+      const a = await p.aprobar(r.propuesta!);
+      assert.equal(a.status, 200, JSON.stringify(a.json).slice(0, 200));
+      assert.equal(a.json.tarea.state, 'completed');
+      assert.equal(salidas.length, 1);
+      assert.match(salidas[0], /api\.telegram\.org\/bot\*\*\*\/sendPhoto/);
+      assert.equal((await p.aprobar(r.propuesta!)).json.repetida, true);
+      assert.equal(salidas.length, 1, 'repetir la aprobación no la publica otra vez');
+    } finally {
+      p.cerrar();
+    }
+  });
+});
+
+test('MEDIO-1: otra imagen bajo la misma decisión, la imagen guardada cambiada, sin cuenta, un miembro o la voz → no sale nada', async () => {
+  await conAlmacen(async () => {
+    const p = panel();
+    try {
+      salidas.length = 0;
+      // El hash de los argumentos cambiado en el almacén: la huella ya no cuadra (409).
+      const r1 = (await T.proponerCapturaTaller({ buf: FOTO, url: 'https://example.com/' }, ctxJunta())).propuesta!;
+      const otra = Buffer.from('otra imagen cualquiera, más larga que la primera para que no coincida');
+      assert.ok(await T.guardarFotoTaller(otra));
+      const t1 = await TD.cambiarTarea(JOSE, r1.tarea, (reg) => ({ decision: { ...reg.decision!, vinculo: { ...(reg.decision!.vinculo as any), args: { ...(reg.decision!.vinculo as any).args, foto: shaDe(otra) } } } }));
+      const a1 = await p.aprobar({ ...r1, version: t1.ok ? t1.tarea.version : 0 });
+      assert.equal(a1.status, 409);
+      assert.equal(a1.json.codigo, 'propuesta-cambiada');
+      // Los bytes guardados cambiados (mismo nombre, otra imagen): no dan el hash aprobado y no se manda.
+      const foto2 = Buffer.from(FOTO.map((b) => (b + 1) % 256));
+      const r2 = (await T.proponerCapturaTaller({ buf: foto2, url: 'https://example.com/b' }, ctxJunta())).propuesta!;
+      const clave = D.claveDe('taller/capturas', 'taller-capturas', shaDe(foto2));
+      const leido = await D.leerDurable<any>(clave);
+      assert.ok(leido.ok && leido.valor);
+      assert.equal((await D.compararYGuardar(clave, { ...(leido as any).valor, b64: otra.toString('base64') }, (leido as any).etag)).ok, true);
+      const a2 = await p.aprobar(r2);
+      assert.notEqual(a2.json?.tarea?.state, 'completed', 'la imagen cambiada no se publica');
+      assert.deepEqual(salidas, [], 'nada salió');
+      for (const ctx of [ctxJunta({ cuenta: null }), ctxJunta({ proponer: async () => null }), ctxJunta({ nivelAura: 'miembro' }), ctxJunta({ soloConsulta: true })]) {
+        const r = await T.proponerCapturaTaller({ buf: FOTO, url: 'https://example.com/' }, ctx);
+        assert.equal(r.propuesta, undefined);
+      }
+      assert.deepEqual(salidas, []);
+    } finally {
+      p.cerrar();
+    }
+  });
+});
+
 /* ================================================================== el servidor de verdad: POST /api/turno */
 
 const PORT = 7760 + Math.floor(Math.random() * 30);
@@ -263,10 +338,22 @@ const nodo = http.createServer((req, res) => {
   req.resume();
   req.on('end', () => res.setHeader('Content-Type', 'application/json').end(JSON.stringify({ message: { content: 'Va bien.' } })));
 });
+/** El ojo del nodo (el navegador que abre la página y la fotografía), de mentira: `/foto` devuelve la imagen de prueba. */
+const pedidosOjo: string[] = [];
+const ojo = http.createServer((req, res) => {
+  req.resume();
+  req.on('end', () => {
+    pedidosOjo.push(String(req.url));
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify(req.url === '/foto' ? { imagen: FOTO.toString('base64') } : { titulo: 'Example Domain', texto: 'Example Domain. This domain is for use in documentation examples.' }));
+  });
+});
+const SECRETO_WEBHOOK = 'secreto-webhook-de-prueba-0123';
 const salidasServidor = () => (fs.existsSync(ESPIA) ? fs.readFileSync(ESPIA, 'utf8').trim().split('\n').filter(Boolean).map((x) => JSON.parse(x)) : []);
 
 before(async () => {
   await new Promise<void>((r) => nodo.listen(0, '127.0.0.1', r));
+  await new Promise<void>((r) => ojo.listen(0, '127.0.0.1', r));
   const cwd = path.join(DIR, 'servidor');
   fs.mkdirSync(cwd, { recursive: true });
   proc = spawn(process.execPath, ['--import', import.meta.resolve('tsx'), '--import', path.join(RAIZ, 'tests/fixtures/espia-canales.mjs'), path.join(RAIZ, 'server.ts')], {
@@ -284,6 +371,10 @@ before(async () => {
       ULTRON_NODO_URL: `http://127.0.0.1:${(nodo.address() as AddressInfo).port}`,
       ULTRON_NODO_SECRETO: 'prueba',
       ESPIA_CANALES_ARCHIVO: ESPIA,
+      ULTRON_OJO_URL: `http://127.0.0.1:${(ojo.address() as AddressInfo).port}`,
+      ULTRON_OJO_CLAVE: 'ojo-de-prueba',
+      TELEGRAM_WEBHOOK_SECRET: SECRETO_WEBHOOK,
+      ...(process.env.NODE_EXTRA_CA_CERTS ? { NODE_EXTRA_CA_CERTS: process.env.NODE_EXTRA_CA_CERTS } : {}),
       ...CANALES,
     },
     stdio: ['ignore', 'ignore', 'pipe'],
@@ -309,6 +400,8 @@ after(() => {
   }
   nodo.closeAllConnections?.();
   nodo.close();
+  ojo.closeAllConnections?.();
+  ojo.close();
 });
 
 test('servidor de verdad: POST /api/turno (y el stream) con las 4 frases → nada sale, vuelve la propuesta; aprobarla la hace UNA vez', { timeout: 180_000 }, async () => {
@@ -358,4 +451,58 @@ test('servidor de verdad: POST /api/turno (y el stream) con las 4 frases → nad
   const rj: any = await r.json();
   assert.ok(rj.propuestaTaller?.decision && rj.propuestaTaller.decision !== prop.decision, 'otra propuesta, no la aprobada');
   assert.equal(salidasServidor().length, 1, 'y nada sale sin aprobarla');
+});
+
+test('servidor de verdad (revisión 11, MEDIO-1): «haz una captura de …» desde la mesa no publica en el grupo; queda propuesta y aprobada sale UNA vez', { timeout: 180_000 }, async (t) => {
+  const { emitirSesion } = await import('../server/seguridad');
+  const hJose = { 'content-type': 'application/json', 'x-ultron-sesion': emitirSesion({ correo: JOSE, nombre: 'José Prueba', rol: 'Junta' }).token };
+  const pedir = (ruta: string, cuerpo: unknown) => fetchReal(`${BASE}${ruta}`, { method: 'POST', headers: hJose, body: JSON.stringify(cuerpo), signal: AbortSignal.timeout(90_000) });
+  const fotos = () => salidasServidor().filter((x: any) => /sendPhoto/.test(x.url));
+  const antes = fotos().length;
+  const r = await pedir('/api/turno', { message: 'haz una captura de https://example.com', idTurno: `prueba-captura-${Date.now().toString(36)}` });
+  const j: any = await r.json();
+  assert.equal(r.status, 200, JSON.stringify(j).slice(0, 200));
+  // La captura la toma el ojo después de comprobar que la página es pública (eso necesita red): sin red no hay foto que probar.
+  if (!pedidosOjo.includes('/foto')) return t.skip(`sin red para abrir example.com: el ojo no llegó a fotografiar (${JSON.stringify(j.herramientas)})`);
+  assert.ok((j.herramientas || []).includes('foto'), 'la página se fotografió');
+  assert.equal(fotos().length, antes, `sin aprobar, ninguna foto salió al grupo: ${JSON.stringify(fotos())}`);
+  const prop = j.propuestaTaller;
+  assert.ok(prop?.decision, `vuelve la propuesta de la captura: ${JSON.stringify(j).slice(0, 300)}`);
+  assert.equal(prop.accion, 'foto');
+  assert.ok((j.tareas || []).some((x: any) => x.id === prop.tarea && x.state === 'awaiting_approval'));
+  const decidir = () => pedir(`/api/trabajos/${prop.tarea}/decisiones`, { decisionId: prop.decision, expectedVersion: prop.version, opcion: 'aprobar' });
+  const a = await decidir();
+  const aj: any = await a.json();
+  assert.equal(a.status, 200, JSON.stringify(aj).slice(0, 300));
+  assert.equal(aj.tarea.state, 'completed');
+  const f = fotos().slice(antes);
+  assert.equal(f.length, 1, `aprobada, salió UNA foto: ${JSON.stringify(f)}`);
+  assert.match(f[0].cuerpo, new RegExp(`chat_id=${CANALES.TELEGRAM_CHAT_ID}`), 'al grupo configurado de la junta');
+  assert.match(f[0].cuerpo, new RegExp(`photo=sha256:${shaDe(FOTO)}`), 'la imagen exacta que se propuso');
+  assert.equal(((await (await decidir()).json()) as any).repetida, true);
+  assert.equal(fotos().length, antes + 1, 'repetir la aprobación no la publica otra vez');
+});
+
+test('servidor de verdad (revisión 11, MEDIO-1): pedida por Telegram, la captura se le contesta a ESE chat (no al grupo)', { timeout: 180_000 }, async (t) => {
+  const antes = salidasServidor().length;
+  const fotosOjo = pedidosOjo.filter((u) => u === '/foto').length;
+  const r = await fetchReal(`${BASE}/api/telegram/webhook`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-telegram-bot-api-secret-token': SECRETO_WEBHOOK },
+    body: JSON.stringify({ update_id: 900000 + Math.floor(Math.random() * 99999), message: { message_id: 5, chat: { id: Number(TG_JOSE), type: 'private' }, from: { id: Number(TG_JOSE), first_name: 'José' }, text: 'haz una captura de https://example.com' } }),
+  });
+  assert.equal(r.status, 200);
+  // El webhook contesta antes de correr el turno: se espera a que el bot le conteste el texto al chat.
+  let nuevas: any[] = [];
+  for (let i = 0; i < 360; i++) {
+    nuevas = salidasServidor().slice(antes);
+    if (nuevas.some((x) => /sendMessage/.test(x.url))) break;
+    await new Promise((res) => setTimeout(res, 250));
+  }
+  const fotos = nuevas.filter((x) => /sendPhoto/.test(x.url));
+  if (pedidosOjo.filter((u) => u === '/foto').length === fotosOjo) return t.skip('sin red para abrir example.com: el ojo no llegó a fotografiar');
+  assert.equal(fotos.length, 1, `una foto: ${JSON.stringify(nuevas)}`);
+  assert.match(fotos[0].cuerpo, new RegExp(`chat_id=${TG_JOSE}(&|$)`), 'al chat que la pidió');
+  assert.doesNotMatch(fotos[0].cuerpo, new RegExp(`chat_id=${CANALES.TELEGRAM_CHAT_ID}`), 'no al grupo de la junta');
+  assert.equal(nuevas.filter((x) => /sendPhoto/.test(x.url) && x.cuerpo.includes(`chat_id=${CANALES.TELEGRAM_CHAT_ID}`)).length, 0);
 });

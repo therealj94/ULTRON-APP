@@ -18,7 +18,7 @@
  */
 import { bloqueAbiertos } from '../lib/abiertos';
 import { bloqueConocer, datosLimitadosEnCache, firmaConocer, precargarConocer, terminosReservados, vistaDeTerminos, type Dato, type VistaTexto } from '../lib/conocer-persona';
-import type { Reserva } from '../lib/reservas';
+import { tocaReserva, type Reserva } from '../lib/reservas';
 import { bloqueEpisodios } from '../lib/episodios';
 import type { HiloMemoria } from '../lib/conversacion';
 import type { MiembroId } from '../lib/junta';
@@ -65,6 +65,19 @@ export function vistaAutorizada(dueno: string): VistaAutorizada {
         .map((t, i) => (actual !== undefined && i === ts.length - 1 && t.rol === 'user' && t.texto === actual ? t : { ...t, texto: base.texto(String(t.texto || '')) }))
         .filter((t) => String(t.texto || '').trim()),
   };
+}
+
+/**
+ * La vista para lo que devuelven las herramientas que el modelo pide en el turno (sus misiones, su círculo, su tarea
+ * en curso; revisión 11, MEDIO-2): la misma del turno, salvo lo que la persona nombra en lo que ACABA de decir. Si
+ * dice «escríbele a Valentina» o «¿cómo va la mudanza a Puerto Sintetico?», lo trae ella ahora (como su mensaje, que
+ * va tal cual en `turnos`), y el resultado de eso no se le tapa; lo demás que limitó sí. Sin saber qué limitó, nada.
+ */
+export function vistaDeHerramientas(vista: VistaAutorizada, actual: string): VistaTexto {
+  const rs = vista.reservas;
+  if (!vista.sabe || !rs?.length || !String(actual || '').trim()) return vista;
+  const quedan = rs.filter((r) => !tocaReserva(actual, [r]));
+  return quedan.length === rs.length ? vista : vistaDeTerminos(quedan);
 }
 
 /** De quién es la memoria del turno y cuánto hilo lleva (server.ts prepararTurno). */
