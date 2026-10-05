@@ -24,6 +24,11 @@
  *  · Un fallo del almacén no es «no existe»: se devuelve `ok: false` y quien llama decide (no se inventa).
  *  · Nada aquí guarda contraseñas, tokens ni textos privados: solo estados, ids, hashes y recibos.
  *
+ * Enumeración (A7, opcional en la interfaz): `listar(prefijo)` da las claves de UN nivel bajo un prefijo, en orden y por
+ * tramos reanudables (`desde`). En S3 es ListObjectsV2 y necesita `s3:ListBucket` sobre `ultron/durable/` (sin ese permiso
+ * contesta `ok: false`, nunca «vacío»); en el disco, readdir. Es la fuente del inventario de tareas por dueño
+ * (lib/tareas-durables.ts): las claves son `espacio/huella/id`, así que el prefijo de un dueño nunca trae lo de otro.
+ *
  * Limpieza: los objetos no se borran desde aquí (son pequeños). En el cubo conviene una regla de ciclo de
  * vida sobre el prefijo `ultron/durable/` (p. ej. expirar a los 30 días).
  *
@@ -48,12 +53,17 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { s3GetJsonConEtag, s3Listo, s3PutJsonCondicional } from './s3';
+import { s3GetJsonConEtag, s3ListarClaves, s3Listo, s3PutJsonCondicional } from './s3';
 
 /* ------------------------------------------------------------------ el almacén */
 
 export type Leido<T> = { ok: true; valor: T; etag: string } | { ok: true; valor: null; etag: null } | { ok: false; detalle: string };
 export type Escrito = { ok: true; etag: string } | { ok: false; conflicto: true; detalle?: string } | { ok: false; conflicto: false; detalle: string };
+/**
+ * Un tramo de claves bajo un prefijo (A7): claves durables (sin la raíz ni `.json`), en orden, las que siguen a `desde`.
+ * `truncado`: hay más después de la última. Un fallo es `ok: false` (nunca «no hay nada»).
+ */
+export type Listado = { ok: true; claves: string[]; truncado: boolean } | { ok: false; detalle: string };
 
 export interface AlmacenDurable {
   readonly tipo: 's3' | 'disco' | 'memoria';
@@ -64,6 +74,23 @@ export interface AlmacenDurable {
   crear(clave: string, valor: unknown): Promise<Escrito>;
   /** Escribe solo si el ETag sigue siendo ese. `conflicto` si cambió (o ya no existe). */
   cas(clave: string, valor: unknown, etag: string): Promise<Escrito>;
+  /**
+   * A7: enumera las claves de UN nivel bajo `prefijo/` (no las de subcarpetas), en orden de clave, a partir de la que
+   * sigue a `desde`, hasta `max`. Opcional: un almacén sin enumeración no puede hacer inventario y quien lo necesita lo
+   * dice (lib/tareas-durables.ts deja la lista «sin reconciliar»). Nunca lee el contenido ni cruza de prefijo.
+   */
+  listar?(prefijo: string, o?: { desde?: string | null; max?: number }): Promise<Listado>;
+}
+
+/** El orden de las claves al listar: el de S3 (por bytes de la clave entera, con su `.json`). */
+const ordenClave = (clave: string) => `${clave}.json`;
+const compararClaves = (x: string, y: string) => (ordenClave(x) < ordenClave(y) ? -1 : ordenClave(x) > ordenClave(y) ? 1 : 0);
+/** Lo común a disco y memoria: ordena, salta hasta `desde` y corta en `max`. */
+function tramo(claves: string[], o: { desde?: string | null; max?: number } = {}): Listado {
+  const max = Math.max(1, Math.floor(o.max || 1000));
+  const orden = claves.filter((k) => RE_CLAVE.test(k)).sort(compararClaves);
+  const resto = o.desde ? orden.filter((k) => compararClaves(k, o.desde!) > 0) : orden;
+  return { ok: true, claves: resto.slice(0, max), truncado: resto.length > max };
 }
 
 /** Una clave: segmentos cortos y limpios, sin «..» (va a S3 y al disco). */
@@ -101,6 +128,17 @@ export function almacenS3(prefijo = PREFIJO_S3, timeoutMs = TOPE_S3_MS): Almacen
       const r = await s3PutJsonCondicional(k(clave), valor, { siCoincide: etag }, timeoutMs).catch((e) => ({ ok: false, etag: null, conflicto: false, status: 0, detalle: String(e?.message || e) }));
       if (r.ok === true) return { ok: true, etag: r.etag || '' };
       return r.conflicto ? { ok: false, conflicto: true, detalle: r.detalle } : { ok: false, conflicto: false, detalle: r.detalle };
+    },
+    async listar(sub: string, o: { desde?: string | null; max?: number } = {}): Promise<Listado> {
+      const base = `${prefijo}/${validar(sub)}/`;
+      const r = await s3ListarClaves(base, { desde: o.desde ? k(o.desde) : null, max: o.max, timeoutMs }).catch((e) => ({ ok: false as const, detalle: String(e?.message || e) }));
+      if (r.ok === false) return { ok: false, detalle: r.detalle };
+      // Solo objetos `.json` de ese nivel; lo demás (otra cosa que alguien dejó ahí) no es una clave durable.
+      const claves = r.claves
+        .filter((x) => x.startsWith(base) && x.endsWith('.json'))
+        .map((x) => x.slice(prefijo.length + 1, -'.json'.length))
+        .filter((x) => RE_CLAVE.test(x) && !x.slice(sub.length + 1).includes('/'));
+      return { ok: true, claves, truncado: r.truncado };
     },
   };
 }
@@ -166,6 +204,17 @@ export function almacenDisco(dir?: string): AlmacenDurable {
         return { ok: false, conflicto: false, detalle: String(e?.message || e).slice(0, 160) };
       }
     },
+    async listar(prefijo: string, o: { desde?: string | null; max?: number } = {}): Promise<Listado> {
+      const enDisco = path.join(carpeta(), validar(prefijo));
+      try {
+        // Solo archivos `.json` de ese nivel (los `.tmp` de una escritura a medias no son objetos).
+        const nombres = fs.readdirSync(enDisco, { withFileTypes: true }).filter((e) => e.isFile() && e.name.endsWith('.json')).map((e) => `${prefijo}/${e.name.slice(0, -'.json'.length)}`);
+        return tramo(nombres, o);
+      } catch (e: any) {
+        if (e?.code === 'ENOENT') return { ok: true, claves: [], truncado: false };
+        return { ok: false, detalle: String(e?.message || e).slice(0, 160) };
+      }
+    },
   };
 }
 
@@ -192,6 +241,10 @@ export function almacenEnMemoria(): AlmacenDurable & { objetos: Map<string, stri
       const t = JSON.stringify(valor);
       objetos.set(clave, t);
       return { ok: true, etag: etagDe(t) };
+    },
+    async listar(prefijo: string, o: { desde?: string | null; max?: number } = {}): Promise<Listado> {
+      const base = `${validar(prefijo)}/`;
+      return tramo([...objetos.keys()].filter((k) => k.startsWith(base) && !k.slice(base.length).includes('/')), o);
     },
   };
 }
