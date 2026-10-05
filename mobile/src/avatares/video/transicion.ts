@@ -37,6 +37,7 @@
  */
 import { esDeFondo, type ClipVideo, type Reproduccion } from './guion';
 import { FPS_VIDEO, REPOSOS } from './reposos';
+import { MANO_FUERA } from './manos';
 
 export type AvatarVideo = 'claudio' | 'antonio';
 
@@ -50,6 +51,8 @@ export const DIBUJANDO_MS = 60;
 export const MARGEN_REPOSO_MS = 200;
 /** Un clip que en esto no carga o no dibuja se vuelve a montar una vez; si tampoco, se deja el de ahora. */
 export const ESPERA_MAX_MS = 2500;
+/** Lo que se supone que tarda en cargar un clip (para no prometer un cambio que no llega a hacerse en este reposo). */
+export const CARGA_ESTIMADA_MS = 500;
 /** Un golpe avisa esto antes de terminar, para que el fondo que sigue ya esté cargado cuando llegue al reposo. */
 export const ANTES_DEL_FIN_MS = 900;
 
@@ -87,6 +90,39 @@ export function faltaReposo(t: Tramos, pos: number): number {
   if (pos < t.desdeMs) return t.desdeMs - pos;
   // En el reposo del final sin margen (solo un bucle de reposo muy corto): el de la vuelta siguiente.
   return t.durMs - pos + t.desdeMs;
+}
+
+/* ── la mano del sable ───────────────────────────────────────────────────────────────────── */
+
+/**
+ * Lo menos que dura la mano en su lugar al empezar un fondo (el que viene después de un golpe, que todavía
+ * no se sabe cuál es): el primer cuadro en que se va, entre todos los fondos de ese avatar.
+ */
+const MANO_TRAS_GOLPE_MS: Record<AvatarVideo, number> = (() => {
+  const r = {} as Record<AvatarVideo, number>;
+  for (const av of ['claudio', 'antonio'] as const) {
+    const desde = (['reposo', 'escucha', 'habla', 'piensa', 'teclea', 'lee', 'espera'] as const).map((c) => MANO_FUERA[av][c]?.[0] ?? Infinity);
+    r[av] = (Math.min(...desde) * 1000) / FPS_VIDEO;
+  }
+  return r;
+})();
+
+/**
+ * Cuánto tiempo del clip (ms, a ritmo normal) sigue la mano que agarra el sable en su lugar de la foto
+ * base desde `pos` (manos.ts, medido en cada clip): 0 si ahora no está. Un bucle vuelve a empezar (y su
+ * principio es la foto base); un golpe que termina se queda quieto en la foto base, pero después viene un
+ * fondo que todavía no se sabe: se cuenta lo menos que dura la mano en cualquiera.
+ */
+export function manoLibre(avatar: AvatarVideo, clip: ClipVideo, bucle: boolean, pos: number): number {
+  const durMs = (REPOSOS[avatar][clip][0] * 1000) / FPS_VIDEO;
+  const f = MANO_FUERA[avatar][clip];
+  const despues = bucle ? Infinity : MANO_TRAS_GOLPE_MS[avatar];
+  if (!f) return bucle ? Infinity : Math.max(0, durMs - pos) + despues;
+  const a = (f[0] * 1000) / FPS_VIDEO;
+  const b = ((f[1] + 1) * 1000) / FPS_VIDEO;
+  if (pos < a) return a - pos;
+  if (pos < b) return 0;
+  return durMs - pos + (bucle ? a : despues);
 }
 
 export type Plan = {
@@ -362,6 +398,43 @@ export class MezclaCapas {
       }
     }
     return ms.length ? Math.max(16, Math.min(...ms)) : null;
+  }
+
+  /**
+   * Cuánto tiempo seguido (ms de reloj) va a estar la mano del sable en su lugar, con lo que se ve y lo que
+   * ya está pedido: el clip de ahora hasta su reposo (a su ritmo) y, si hay otro esperando, ese desde su
+   * cuadro 0. 0 si ahora no está, si no hay video todavía o si el cambio va a ser fuera del reposo (la pose
+   * salta). La capa de efectos lo mira para sacar el sable recién cuando quede en la mano (efectos/agenda.ts).
+   */
+  manoLibreMs(): number {
+    const i = this.fundido ? this.fundido.capa : this.frente;
+    if (i === null) return 0;
+    const c = this.capas[i]!;
+    const pos = this.posicion(i);
+    const libre = manoLibre(this.o.avatar, c.r.clip, c.r.bucle, pos);
+    const b = this.entrante ? this.capas[this.entrante.capa] : null;
+    const otro = this.cola ?? b?.r ?? null;
+    if (!otro) return libre / Math.max(0.1, c.ritmo);
+    if (this.entrante?.plan.modo === 'fundir') return 0;
+    // El cambio se hace en un reposo: la mano tiene que aguantar hasta ahí (tiempo del clip, sea cual sea el
+    // ritmo); después, el que entra desde su cuadro 0. Para no prometer de más, el clip llega lo más rápido que puede.
+    // Lo que tarda en poder arrancar: lo que queda del fundido (el pedido en cola espera) y la carga.
+    const demora = this.cola ? Math.max(0, (this.fundido?.termina ?? 0) - this.ahora()) + CARGA_ESTIMADA_MS : b?.fase === 'cargando' ? CARGA_ESTIMADA_MS : 0;
+    const hasta = this.esperaCambio(i, pos, demora);
+    if (libre < hasta) return libre / Math.max(0.1, c.ritmo);
+    return hasta / RITMO_MAX.golpe + manoLibre(this.o.avatar, otro.clip, otro.bucle, 0);
+  }
+
+  /**
+   * Cuánto le falta (tiempo del clip) a la capa `i` para el reposo donde se va a hacer el cambio. Si el que
+   * entra todavía tarda `demoraMs` en poder arrancar y el reposo de ahora no le alcanza, queda para el siguiente.
+   */
+  private esperaCambio(i: Indice, pos: number, demoraMs: number): number {
+    const t = this.tramosDe(i);
+    const restante = restanteReposo(t, pos);
+    if (restante >= MARGEN_REPOSO_MS + demoraMs) return 0;
+    if (restante > 0) return pos < t.hastaMs ? t.desdeMs - pos : t.durMs - pos + t.desdeMs;
+    return faltaReposo(t, pos);
   }
 
   /** Tapado (sin videos): todo vuelve a empezar; al volver, la vista pide otra vez el clip que toca. */

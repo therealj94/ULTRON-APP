@@ -10,26 +10,31 @@
  *    secuencia, que anima Reanimated): React no se re-renderiza durante la animación. El lienzo solo está
  *    montado mientras hay algo que pintar.
  *  · Una secuencia a la vez, y el descanso entre una y otra, los decide el motor (toques.ts).
+ *  · El sable en la mesa vertical sale cuando la mano del video está en su lugar, y mientras tanto el
+ *    video se queda con su clip; si no, sale desde el borde (agenda.ts, con `cuerpo`: la ref de CuerpoVideo).
  *  · Los sonidos son los de la app (lib/sfx.ts: respetan el ajuste «sonidos» y las llamadas) y solo con
- *    el avatar tranquilo; la vibración, con expo-haptics. Nada toca el micrófono ni la voz.
+ *    el avatar tranquilo; la vibración, la de la app (ui/hapticos.ts: respeta el ajuste «Vibración»).
+ *    Nada toca el micrófono ni la voz.
  *  · «Reducir movimiento»: el sable quieto, disparos quietos, sin sacudida (escena.ts).
- *  · Si la tapan (activo = false) o se desmonta, la secuencia se corta y no queda ningún reloj ni sonido
- *    programado.
+ *  · Si la tapan (activo = false), se desmonta o cambia de tamaño o de lugar (girar el teléfono: el sable
+ *    quedaría fuera de la mano), la secuencia se corta, el video deja de sostener su clip y no queda ningún
+ *    reloj ni sonido programado (todos van en la agenda).
  *  · Si el dibujo falla en el hilo de la interfaz, los efectos se apagan por el resto de la sesión (el
  *    avatar sigue igual) y queda una miga.
  */
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Canvas, Picture, Skia } from '@shopify/react-native-skia';
 import Animated, { Easing, cancelAnimation, useAnimatedStyle, useDerivedValue, useReducedMotion, useSharedValue, withTiming } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
-import * as Haptics from 'expo-haptics';
 import { playSfx } from '../../../lib/sfx';
+import { vibrar as vibrarApp } from '../../../ui/hapticos';
 import { miga } from '../../../lib/reporte';
 import { zonaVideo, type ClipVideo } from '../guion';
+import { Agenda, GolpesDeToque, sacarSable, type Cuerpo } from './agenda';
 import { ONDA_MS, camaraDe, encuadreDe, eventosDe, planBlasters, planEspada, planOnda, sacudida, type LugarEfectos, type Onda, type PlanBlasters, type PlanEspada, type Vibra } from './escena';
 import { grabarEscena, grabarVacio } from './pintar';
-import { MotorToques, type AvatarVideo, type Contexto, type Efecto, type Reaccion } from './toques';
+import { MotorToques, duracionEfecto, type AvatarVideo, type Contexto, type Efecto, type Reaccion } from './toques';
 
 export type ControlEfectos = {
   /** Un toque en (x, y) de la caja. Devuelve lo que hizo (null: apagada o tapada). */
@@ -52,6 +57,8 @@ type Props = {
   onGolpe?: (clip: ClipVideo) => void;
   /** Vibrar suave con cada toque (la mesa ya vibra en su onTap; la llamada no). */
   vibrarToques?: boolean;
+  /** El cuerpo en video (la ref de CuerpoVideo): dónde está la mano para el sable y quedarse con el clip. */
+  cuerpo?: RefObject<Cuerpo | null>;
   children: ReactNode;
 };
 
@@ -62,17 +69,17 @@ const QUEDA_MS = 3000;
 /** Si el dibujo falló una vez en esta sesión, no se vuelve a intentar. */
 let dibujoRoto = false;
 
-const vibrar = (v: Vibra) => void Haptics.impactAsync(v === 'media' ? Haptics.ImpactFeedbackStyle.Medium : Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+const vibrar = (v: Vibra) => vibrarApp(v === 'media' ? 'medio' : 'suave');
 
-export const CapaEfectos = forwardRef<ControlEfectos, Props>(function CapaEfectos({ avatar, lugar, ancho, alto, contexto, activo = true, ataque = null, onGolpe, vibrarToques = false, children }, ref) {
+export const CapaEfectos = forwardRef<ControlEfectos, Props>(function CapaEfectos({ avatar, lugar, ancho, alto, contexto, activo = true, ataque = null, onGolpe, vibrarToques = false, cuerpo, children }, ref) {
   const reducido = !!useReducedMotion();
   const motor = useMemo(() => new MotorToques({ avatar }), [avatar]);
   const [lienzo, setLienzo] = useState(false);
   const [roto, setRoto] = useState(dibujoRoto);
 
   // Lo último de cada prop, para los callbacks y relojes (sin rearmarlos en cada render de la mesa).
-  const vivo = useRef({ contexto, reducido, activo, onGolpe, vibrarToques, ancho, alto, lugar, avatar });
-  vivo.current = { contexto, reducido, activo, onGolpe, vibrarToques, ancho, alto, lugar, avatar };
+  const vivo = useRef({ contexto, reducido, activo, onGolpe, vibrarToques, ancho, alto, lugar, avatar, cuerpo });
+  vivo.current = { contexto, reducido, activo, onGolpe, vibrarToques, ancho, alto, lugar, avatar, cuerpo };
 
   const tSec = useSharedValue(-1);
   const plan = useSharedValue<PlanEspada | PlanBlasters | null>(null);
@@ -83,14 +90,13 @@ export const CapaEfectos = forwardRef<ControlEfectos, Props>(function CapaEfecto
   const tOndas = useMemo(() => [tOnda0, tOnda1, tOnda2] as const, [tOnda0, tOnda1, tOnda2]);
   const siguienteOnda = useRef(0);
 
-  const relojes = useRef(new Set<ReturnType<typeof setTimeout>>());
-  const despues = useCallback((ms: number, f: () => void) => {
-    const r = setTimeout(() => {
-      relojes.current.delete(r);
-      f();
-    }, ms);
-    relojes.current.add(r);
-  }, []);
+  const agenda = useMemo(() => new Agenda(), []);
+  const despues = useCallback((ms: number, f: () => void) => agenda.despues(ms, f), [agenda]);
+  const golpes = useMemo(() => new GolpesDeToque(agenda, (clip) => vivo.current.onGolpe?.(clip)), [agenda]);
+  /** Suelta el clip que el video sostiene por el sable (si lo hay). */
+  const soltarCuerpo = useRef<() => void>(() => {});
+  /** La secuencia cuyos sonidos siguen valiendo (un sable cortado antes ya no suena). */
+  const sonando = useRef<object | null>(null);
   /**
    * Hasta cuándo queda el lienzo montado: lo que dura lo pintado y un rato más (QUEDA_MS), para que una
    * seguidilla de toques no lo monte y desmonte en cada uno. Quieto no gasta: el cuadro solo se vuelve a
@@ -112,8 +118,11 @@ export const CapaEfectos = forwardRef<ControlEfectos, Props>(function CapaEfecto
 
   /** Corta todo: relojes, animaciones, lo pintado. */
   const cortar = useCallback(() => {
-    relojes.current.forEach(clearTimeout);
-    relojes.current.clear();
+    agenda.cortar();
+    golpes.olvidar();
+    sonando.current = null;
+    soltarCuerpo.current();
+    soltarCuerpo.current = () => {};
     cancelAnimation(tSec);
     tOndas.forEach((t) => {
       cancelAnimation(t);
@@ -124,7 +133,7 @@ export const CapaEfectos = forwardRef<ControlEfectos, Props>(function CapaEfecto
     ondas.value = [null, null, null];
     fin.current = 0;
     setLienzo(false);
-  }, [ondas, plan, tOndas, tSec]);
+  }, [agenda, golpes, ondas, plan, tOndas, tSec]);
 
   const hacer = useCallback(
     (r: Reaccion) => {
@@ -140,24 +149,53 @@ export const CapaEfectos = forwardRef<ControlEfectos, Props>(function CapaEfecto
         tOndas[i].value = withTiming(ONDA_MS, { duration: ONDA_MS, easing: Easing.linear });
         apagarCuando(ONDA_MS);
       }
-      if (r.golpe) v.onGolpe?.(r.golpe);
-      if (r.tipo === 'toque' && v.vibrarToques) void Haptics.selectionAsync().catch(() => {});
+      // El golpe del video: el de la ráfaga, ya; el de un toque suelto, cuando el dedo se queda quieto.
+      golpes.toque(r);
+      if (r.tipo === 'toque' && v.vibrarToques) vibrarApp('seleccion');
       if (r.tipo === 'secuencia') {
-        const p = r.efecto === 'espada' ? planEspada(v.avatar, v.lugar, W, H, r.sutil, r.reducido) : planBlasters(W, H, r.sutil, r.reducido);
-        plan.value = p;
-        cancelAnimation(tSec);
-        tSec.value = 0;
-        tSec.value = withTiming(p.dur, { duration: p.dur, easing: Easing.linear });
-        for (const e of eventosDe(p, r.sonido))
-          despues(e.t, () => {
-            if (e.sfx) playSfx(e.sfx);
-            if (e.vibra) vibrar(e.vibra);
+        const empezar = (p: PlanEspada | PlanBlasters) => {
+          const yo = {};
+          sonando.current = yo;
+          plan.value = p;
+          cancelAnimation(tSec);
+          tSec.value = 0;
+          tSec.value = withTiming(p.dur, { duration: p.dur, easing: Easing.linear });
+          for (const e of eventosDe(p, r.sonido))
+            despues(e.t, () => {
+              if (sonando.current !== yo) return;
+              if (e.sfx) playSfx(e.sfx);
+              if (e.vibra) vibrar(e.vibra);
+            });
+          apagarCuando(p.dur);
+          motor.mostrar(Date.now(), p.efecto, p.dur);
+          setLienzo(true);
+        };
+        if (r.efecto === 'blasters') empezar(planBlasters(W, H, r.sutil, r.reducido));
+        else {
+          // Lo de antes se suelta (una secuencia a la vez: lo anterior ya terminó o lo pidió la mesa encima).
+          soltarCuerpo.current();
+          soltarCuerpo.current = sacarSable(agenda, {
+            ahora: Date.now,
+            lugar: v.lugar,
+            sutil: r.sutil,
+            externo: r.externo,
+            necesitaMs: duracionEfecto('espada', r.sutil, r.reducido),
+            cuerpo: v.cuerpo?.current ?? null,
+            // Con el tamaño de ahora (la espera pudo durar un poco).
+            arrancar: (a) => empezar(planEspada(vivo.current.avatar, vivo.current.lugar, vivo.current.ancho, vivo.current.alto, r.sutil, r.reducido, a.anclaje)),
+            // La mano se va igual: el sable se desvanece ya (CORTE_MS) y lo que faltaba sonar no suena.
+            cortar: () => {
+              const p = plan.value;
+              if (p?.efecto !== 'espada') return;
+              sonando.current = null;
+              plan.value = { ...p, corte: Math.max(0, tSec.value) };
+            },
           });
-        apagarCuando(p.dur);
+        }
       }
       setLienzo(true);
     },
-    [apagarCuando, despues, ondas, plan, tOndas, tSec]
+    [agenda, apagarCuando, despues, golpes, motor, ondas, plan, tOndas, tSec]
   );
 
   const tocar = useCallback(
@@ -188,6 +226,15 @@ export const CapaEfectos = forwardRef<ControlEfectos, Props>(function CapaEfecto
     motor.cancelar(Date.now());
     cortar();
   }, [activo, cortar, motor]);
+  // Otro tamaño u otro lugar (girar el teléfono, otra cámara): lo pintado quedaría corrido; se corta.
+  const medida = `${ancho}x${alto}:${lugar}`;
+  const medidaAntes = useRef(medida);
+  useEffect(() => {
+    if (medidaAntes.current === medida) return;
+    medidaAntes.current = medida;
+    motor.cancelar(Date.now());
+    cortar();
+  }, [medida, cortar, motor]);
   // Al irse: ningún reloj ni sonido queda programado.
   useEffect(() => () => cortar(), [cortar]);
 

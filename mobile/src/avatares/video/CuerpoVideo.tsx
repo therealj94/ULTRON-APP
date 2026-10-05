@@ -19,6 +19,13 @@
  * cambian de ritmo con la API del reproductor (playAsync, setRateAsync): las props de estado no cambian
  * nunca después de montar, así que expo-av no vuelve a aplicarlas a mitad de un clip.
  *
+ * Para el sable de luz (efectos/CapaEfectos.tsx) su ref además dice cuánto va a estar la mano en su lugar
+ * (`manoLibreMs`, de la mezcla) y deja quedarse con el clip que tiene mientras el sable está en la mano
+ * (`sostener`, del guion).
+ *
+ * Nada queda andando al desmontarse: los relojes se apagan y lo que llegue tarde del reproductor (un
+ * último onPlaybackStatusUpdate, un onLoad) ya no programa nada.
+ *
  * El respaldo (las fotos de siempre) se ve debajo hasta que el primer clip terminó de aparecer, y se
  * queda solo si el video falla o el cuerpo está tapado (activo = false: sin decodificadores gastando
  * batería). Los bordes se funden con el color de fondo del avatar, para que no se vea un rectángulo.
@@ -37,6 +44,14 @@ import { CLIPS } from './clips';
 import { pistasVideo, suscribirPistas } from './pistas';
 import { CLIPS_VIDEO, DirectorVideo, encuadrar, GOLPE_ANTES_DE_HABLAR_SIN_CORTE_MS, VENTANAS, zonaVideo, type ClipVideo, type Reproduccion } from './guion';
 import { ANTES_DEL_FIN_MS, MezclaCapas, type Capa, type Indice, type Orden } from './transicion';
+
+/** Lo que la capa de efectos le puede preguntar y pedir al cuerpo en video (además de la zona del toque). */
+export type ControlVideo = ControlCuerpo & {
+  /** Cuánto tiempo seguido (ms) va a estar la mano del sable en su lugar de la foto base (0: ahora no, o no hay video). */
+  manoLibreMs: () => number;
+  /** Quedarse con el clip que tiene durante `ms` (sin golpes, sin «habla», sin otro fondo); 0 lo suelta. */
+  sostener: (ms: number) => void;
+};
 
 type Props = {
   avatar: 'claudio' | 'antonio';
@@ -83,7 +98,7 @@ function archivoDe(mod: number): Promise<string> {
   return p;
 }
 
-export const CuerpoVideo = forwardRef<ControlCuerpo, Props>(function CuerpoVideo({ avatar, camara, estado, ancho, alto, respaldo, activo = true, saludar = false, onFallo }, ref) {
+export const CuerpoVideo = forwardRef<ControlVideo, Props>(function CuerpoVideo({ avatar, camara, estado, ancho, alto, respaldo, activo = true, saludar = false, onFallo }, ref) {
   const clips = CLIPS[avatar];
   /** Los clips de este avatar ya copiados a archivo (null mientras se preparan: se ven las fotos). */
   const [uris, setUris] = useState<Partial<Record<ClipVideo, string>> | null>(null);
@@ -165,6 +180,8 @@ export const CuerpoVideo = forwardRef<ControlCuerpo, Props>(function CuerpoVideo
         break;
       }
       case 'listo':
+        // Entera antes de quitar la de abajo (el último cuadro del fundido puede no haber llegado a 1).
+        op[o.capa].value = 1;
         setVisto(true);
         break;
     }
@@ -185,10 +202,19 @@ export const CuerpoVideo = forwardRef<ControlCuerpo, Props>(function CuerpoVideo
     });
   const m = mezcla.current;
 
+  /** Montado: lo que llegue después de desmontar (un aviso tardío del reproductor) no programa nada. */
+  const montado = useRef(true);
+  useEffect(() => {
+    montado.current = true;
+    return () => {
+      montado.current = false;
+    };
+  }, []);
   const reloj = useRef<ReturnType<typeof setTimeout> | null>(null);
   const programar = useCallback(() => {
     if (reloj.current) clearTimeout(reloj.current);
     reloj.current = null;
+    if (!montado.current) return;
     const ms = mezcla.current!.msParaRevisar();
     if (ms !== null)
       reloj.current = setTimeout(() => {
@@ -212,6 +238,7 @@ export const CuerpoVideo = forwardRef<ControlCuerpo, Props>(function CuerpoVideo
   const relojGuion = useRef<ReturnType<typeof setTimeout> | null>(null);
   const armar = useRef(() => {});
   decidirRef.current = (r: Reproduccion | null) => {
+    if (!montado.current) return;
     if (r && enVivoRef.current) {
       mezcla.current!.pedir(r);
       programar();
@@ -252,7 +279,7 @@ export const CuerpoVideo = forwardRef<ControlCuerpo, Props>(function CuerpoVideo
 
   const alEstado = useCallback(
     (i: Indice, c: Capa, s: AVPlaybackStatus) => {
-      if (!s.isLoaded) return;
+      if (!s.isLoaded || !montado.current) return;
       const mz = mezcla.current!;
       mz.estado(i, c.clave, s.positionMillis, s.isPlaying);
       programar();
@@ -275,7 +302,15 @@ export const CuerpoVideo = forwardRef<ControlCuerpo, Props>(function CuerpoVideo
   }, []);
 
   const encuadre = useMemo(() => encuadrar(ancho, alto, VENTANAS[avatar][camara]), [ancho, alto, avatar, camara]);
-  useImperativeHandle(ref, () => ({ zonaEn: async (_x: number, y: number) => zonaVideo(y, encuadre, avatar) }), [encuadre, avatar]);
+  useImperativeHandle(
+    ref,
+    () => ({
+      zonaEn: async (_x: number, y: number) => zonaVideo(y, encuadre, avatar),
+      manoLibreMs: () => (enVivoRef.current ? mezcla.current!.manoLibreMs() : 0),
+      sostener: (ms: number) => decidirRef.current(director.current!.sostener(ms)),
+    }),
+    [encuadre, avatar]
+  );
 
   const estilo0 = useAnimatedStyle(() => ({ opacity: op0.value }));
   const estilo1 = useAnimatedStyle(() => ({ opacity: op1.value }));
@@ -298,6 +333,7 @@ export const CuerpoVideo = forwardRef<ControlCuerpo, Props>(function CuerpoVideo
           isMuted
           progressUpdateIntervalMillis={100}
           onLoad={() => {
+            if (!montado.current) return;
             mezcla.current!.cargado(i, c.clave);
             programar();
           }}

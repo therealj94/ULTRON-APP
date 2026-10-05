@@ -1582,6 +1582,10 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       lastUserAt.current = ahora;
       lastTapAt.current = ahora;
       recentTaps.current = [];
+      // La ráfaga ya se desahogó (como después del blaster de la mesa): sin esto, unos toques más disparaban
+      // el blaster del enojo (irritación ≥ 0,92) apenas terminaba el sable, dos secuencias seguidas.
+      irritationRef.current = Math.min(irritationRef.current, 0.25);
+      setIrritation(irritationRef.current);
       if (conversandoRef.current || enLlamadaRef.current || presenceRef.current === 'sleep' || handling.current) return;
       handling.current = true;
       setFace('ANGRY');

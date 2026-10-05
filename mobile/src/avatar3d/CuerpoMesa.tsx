@@ -20,7 +20,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, type LayoutChangeEvent } from 'react-native';
 import { AvatarVivo, type ControlCuerpo } from './AvatarVivo';
 import { estadoDesdeMesa } from './contrato';
-import { CuerpoVideo } from '../avatares/video/CuerpoVideo';
+import { CuerpoVideo, type ControlVideo } from '../avatares/video/CuerpoVideo';
 import { hayVideo } from '../avatares/video/clips';
 import { pedirGolpe } from '../avatares/video/pistas';
 import { CapaEfectos, type ControlEfectos } from '../avatares/video/efectos/CapaEfectos';
@@ -62,6 +62,8 @@ export function CuerpoMesa({ avatar, camara, face, emocion, mirada, respaldo, on
   const [sinVideo, setSinVideo] = useState(false);
   const cuerpo = useRef<ControlCuerpo>(null);
   const efectos = useRef<ControlEfectos>(null);
+  // El cuerpo en video: además de la zona del toque, le dice a la capa de efectos dónde está la mano del sable.
+  const video = useRef<ControlVideo>(null);
   const medir = (e: LayoutChangeEvent) => {
     const { width, height } = e.nativeEvent.layout;
     if (Math.abs(width - lugar.w) > 1 || Math.abs(height - lugar.h) > 1) setLugar({ w: Math.round(width), h: Math.round(height) });
@@ -87,7 +89,7 @@ export function CuerpoMesa({ avatar, camara, face, emocion, mirada, respaldo, on
       return;
     }
     onTap();
-    const zona = await cuerpo.current?.zonaEn(px, py);
+    const zona = await (conVideo ? video.current : cuerpo.current)?.zonaEn(px, py);
     if (!zona) return;
     const nombre = zona === 'mejilla' ? 'toque_mejilla' : zona === 'panza' ? 'toque_panza' : 'toque_cabeza';
     setGesto((g) => ({ nombre, n: (g?.n ?? 0) + 1 }));
@@ -104,8 +106,8 @@ export function CuerpoMesa({ avatar, camara, face, emocion, mirada, respaldo, on
     >
       {lugar.w > 0 && lugar.h > 0 ? (
         conVideo ? (
-          <CapaEfectos ref={efectos} avatar={avatar} lugar={camara} ancho={lugar.w} alto={lugar.h} contexto={contexto} activo={activo} ataque={ataque} onGolpe={pedirGolpe}>
-            <CuerpoVideo ref={cuerpo} avatar={avatar} camara={camara} estado={estado} ancho={lugar.w} alto={lugar.h} respaldo={respaldo} activo={activo} saludar onFallo={() => setSinVideo(true)} />
+          <CapaEfectos ref={efectos} avatar={avatar} lugar={camara} ancho={lugar.w} alto={lugar.h} contexto={contexto} activo={activo} ataque={ataque} onGolpe={pedirGolpe} cuerpo={video}>
+            <CuerpoVideo ref={video} avatar={avatar} camara={camara} estado={estado} ancho={lugar.w} alto={lugar.h} respaldo={respaldo} activo={activo} saludar onFallo={() => setSinVideo(true)} />
           </CapaEfectos>
         ) : (
           <AvatarVivo ref={cuerpo} avatar={avatar} camara={camara} estado={estado} ancho={lugar.w} alto={lugar.h} fpsMax={60} respaldo={respaldo} activo={activo} />

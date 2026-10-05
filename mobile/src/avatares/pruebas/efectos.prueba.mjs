@@ -3,7 +3,9 @@
  *   el motor de los toques (la ráfaga de 4, los toques sueltos y sus golpes variados, el descanso, una
  *   secuencia a la vez, lo sutil cuando habla / oye / conversa / está en la llamada, «reducir movimiento»,
  *   el ataque que pide la mesa), la escena (el sable en la mano, los disparos de borde a borde, la
- *   sacudida, los sonidos y la vibración) y que la capa no se quede con el dedo.
+ *   sacudida, los sonidos y la vibración), la agenda (el golpe de un toque suelto espera al dedo quieto; el
+ *   sable espera la mano del video, se queda con el clip, sale desde el borde si no llega o si la voz
+ *   manda, se desvanece si la mano se va igual; tapado, nada queda) y que la capa no se quede con el dedo.
  *
  *   cd mobile && npx tsx src/avatares/pruebas/efectos.prueba.mjs
  */
@@ -12,7 +14,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ENFRIAR_MS, GOLPE_ENTRE_MS, MotorToques, TOQUES_RAFAGA, VENTANA_MS, duracionEfecto, esSutil } from '../video/efectos/toques.ts';
-import { AGARRES, aCaja, encuadreDe, estadoEspada, estadoRayo, eventosDe, planBlasters, planEspada, planOnda, puntasEspada, sacudida } from '../video/efectos/escena.ts';
+import { AGARRES, AGARRES_BORDE, CORTE_MS, aCaja, encuadreDe, estadoEspada, estadoRayo, eventosDe, planBlasters, planEspada, planOnda, puntasEspada, sacudida } from '../video/efectos/escena.ts';
+import { Agenda, ESPERA_MANO_MS, GOLPE_TOQUE_ESPERA_MS, GolpesDeToque, MIRAR_MANO_MS, sacarSable } from '../video/efectos/agenda.ts';
 import { ENFRIAR_GOLPE_MS } from '../video/guion.ts';
 
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
@@ -193,6 +196,247 @@ prueba('tapado a mitad: la secuencia se da por terminada y nada queda «en curso
   assert.equal(m.tocar(1500, {}).enSecuencia, false);
 });
 
+prueba('cuatro toques: el contador vuelve a cero tras la ráfaga, si se tapa, y con toques separados nunca suma', () => {
+  const m = new MotorToques({ avatar: 'claudio', rng: fijo(0.5) });
+  assert.equal(rafaga(m, 0)[3].tipo, 'secuencia');
+  // Justo después: tres toques no completan otra ráfaga con los de antes.
+  const t = 750 + duracionEfecto('espada', false, false) + 50;
+  assert.ok(rafaga(m, t, TRANQUILO, 200, 3).every((x) => x.tipo === 'toque'));
+  // Tres toques, se tapa, uno más: no es ráfaga (el tapado borra la cuenta).
+  const m2 = new MotorToques({ avatar: 'claudio', rng: fijo(0.5) });
+  rafaga(m2, 0, TRANQUILO, 200, 3);
+  m2.cancelar(650);
+  assert.equal(m2.tocar(700, {}).tipo, 'toque');
+  // Toques de a uno, separados más que la ventana: nunca ráfaga.
+  const m3 = new MotorToques({ avatar: 'claudio', rng: fijo(0.5) });
+  for (let i = 0; i < 12; i++) assert.equal(m3.tocar(i * (VENTANA_MS / 3 + 50), {}).tipo, 'toque');
+});
+
+prueba('mostrar: si el sable esperó la mano, «en curso» dura hasta que se termina de ver (el ataque de la mesa no se encima)', () => {
+  const m = new MotorToques({ avatar: 'claudio', rng: fijo(0.5) });
+  const s = rafaga(m, 0)[3];
+  const dur = s.duracion;
+  m.mostrar(750 + 1500, 'espada', dur);
+  assert.ok(m.enCurso(750 + dur + 100), 'todavía se ve');
+  assert.equal(m.ataque(750 + dur + 100, 'blasters', {}), null, 'el blaster de la mesa no se encima');
+  assert.ok(!m.enCurso(750 + 1500 + dur + 1));
+  // Salió con otro efecto: lo de «nunca tres seguidas» cuenta lo que se vio.
+  const m2 = new MotorToques({ avatar: 'claudio', rng: fijo(0) });
+  rafaga(m2, 0);
+  m2.mostrar(750, 'blasters', 1000);
+  rafaga(m2, ENFRIAR_MS + 1000);
+  assert.equal(rafaga(m2, 2 * (ENFRIAR_MS + 1000))[3].efecto, 'espada', 'blasters, espada: el tercero puede ser espada otra vez');
+});
+
+/** Un reloj de mentira para la agenda. */
+function relojFalso() {
+  let t = 0;
+  const pendientes = [];
+  const reloj = {
+    poner: (ms, f) => {
+      const x = { t: t + ms, f };
+      pendientes.push(x);
+      return x;
+    },
+    quitar: (x) => {
+      const i = pendientes.indexOf(x);
+      if (i >= 0) pendientes.splice(i, 1);
+    },
+  };
+  const pasar = (ms) => {
+    const fin = t + ms;
+    for (;;) {
+      pendientes.sort((a, b) => a.t - b.t);
+      const x = pendientes[0];
+      if (!x || x.t > fin) break;
+      pendientes.shift();
+      t = x.t;
+      x.f();
+    }
+    t = fin;
+  };
+  return { reloj, pasar, ahora: () => t, pendientes };
+}
+
+prueba('el golpe de un toque suelto espera a que el dedo se quede quieto; la ráfaga lo descarta y trae el suyo', () => {
+  const r = relojFalso();
+  const agenda = new Agenda(r.reloj);
+  const pedidos = [];
+  const g = new GolpesDeToque(agenda, (c) => pedidos.push([r.ahora(), c]));
+  const toque = (golpe) => ({ tipo: 'toque', enSecuencia: false, x: 0, y: 0, sutil: false, reducido: false, golpe });
+  g.toque(toque('risa'));
+  r.pasar(GOLPE_TOQUE_ESPERA_MS - 1);
+  assert.deepEqual(pedidos, []);
+  r.pasar(1);
+  assert.deepEqual(pedidos, [[GOLPE_TOQUE_ESPERA_MS, 'risa']], 'un toque suelto: su golpe, al rato');
+  // Dos toques seguidos: el golpe se corre al último (uno solo).
+  g.toque(toque('duda'));
+  r.pasar(200);
+  g.toque(toque(null));
+  r.pasar(GOLPE_TOQUE_ESPERA_MS);
+  assert.deepEqual(pedidos.slice(1), [[GOLPE_TOQUE_ESPERA_MS + 200 + GOLPE_TOQUE_ESPERA_MS, 'duda']]);
+  // Una ráfaga: lo que esperaba se descarta y el niega del sable va ya.
+  g.toque(toque('celebra'));
+  r.pasar(150);
+  g.toque({ tipo: 'secuencia', efecto: 'espada', golpe: 'niega', x: 0, y: 0, sutil: false, reducido: false, n: 1, duracion: 3200, sonido: true, voz: true, externo: false });
+  r.pasar(2000);
+  assert.deepEqual(pedidos.slice(2).map((p) => p[1]), ['niega'], 'nunca la celebración a mitad del sable');
+  // Toques encima del sable: nada.
+  g.toque({ ...toque(null), enSecuencia: true });
+  r.pasar(2000);
+  assert.equal(pedidos.length, 3);
+  // Cortado (tapado, desmontado): nada queda esperando.
+  g.toque(toque('saluda'));
+  agenda.cortar();
+  g.olvidar();
+  r.pasar(2000);
+  assert.equal(pedidos.length, 3);
+  assert.equal(agenda.pendientes, 0);
+});
+
+/** Un cuerpo en video de mentira: la mano libre que diga la prueba y lo que se le pidió sostener. */
+function cuerpoFalso(r, libre) {
+  const c = { sostenido: [], manoLibreMs: () => libre(r.ahora()), sostener: (ms) => c.sostenido.push([r.ahora(), ms]) };
+  return c;
+}
+
+prueba('sacarSable: en la mesa vertical espera la mano (y sostiene el clip); si no llega, desde el borde y suelta', () => {
+  // La mano queda libre a los 600 ms: el sable sale en la mano y el video se queda con su clip lo que dura.
+  const r = relojFalso();
+  const agenda = new Agenda(r.reloj);
+  const c = cuerpoFalso(r, (t) => (t >= 600 ? 9000 : 0));
+  let a = null;
+  sacarSable(agenda, { ahora: r.ahora, lugar: 'cuerpo', sutil: false, externo: false, necesitaMs: 3200, cuerpo: c, arrancar: (x) => (a = { ...x, t: r.ahora() }) });
+  assert.equal(a, null, 'todavía no');
+  assert.deepEqual(c.sostenido[0], [0, ESPERA_MANO_MS + 3200], 'desde ya, nada le saca la mano');
+  r.pasar(1000);
+  assert.deepEqual([a.anclaje, a.t, a.esperoMs], ['mano', 600, 600]);
+  assert.deepEqual(c.sostenido[1], [600, 3200]);
+  r.pasar(4000);
+  assert.equal(agenda.pendientes, 0, 'después, ningún reloj');
+  // Nunca llega: a los ESPERA_MANO_MS sale desde el borde y suelta el clip.
+  const r2 = relojFalso();
+  const ag2 = new Agenda(r2.reloj);
+  const c2 = cuerpoFalso(r2, () => 0);
+  let b = null;
+  sacarSable(ag2, { ahora: r2.ahora, lugar: 'cuerpo', sutil: false, externo: false, necesitaMs: 3200, cuerpo: c2, arrancar: (x) => (b = { ...x, t: r2.ahora() }) });
+  r2.pasar(ESPERA_MANO_MS + 500);
+  assert.deepEqual([b.anclaje, b.t], ['borde', ESPERA_MANO_MS]);
+  assert.deepEqual(c2.sostenido.at(-1), [ESPERA_MANO_MS, 0], 'soltó');
+  assert.equal(ag2.pendientes, 0);
+});
+
+prueba('sacarSable: hablando o con el comando de voz, la voz manda (desde el borde, sin sostener); retrato y llamada, ya', () => {
+  for (const o of [
+    { sutil: true, externo: false },
+    { sutil: false, externo: true },
+  ]) {
+    const r = relojFalso();
+    const c = cuerpoFalso(r, () => Infinity);
+    let a = null;
+    sacarSable(new Agenda(r.reloj), { ahora: r.ahora, lugar: 'cuerpo', ...o, necesitaMs: 1700, cuerpo: c, arrancar: (x) => (a = x) });
+    assert.equal(a.anclaje, 'borde', JSON.stringify(o));
+    assert.deepEqual(c.sostenido, [], 'no le quita la boca a la frase');
+  }
+  for (const lugar of ['retrato', 'llamada']) {
+    const r = relojFalso();
+    const c = cuerpoFalso(r, () => 0);
+    let a = null;
+    sacarSable(new Agenda(r.reloj), { ahora: r.ahora, lugar, sutil: false, externo: false, necesitaMs: 3200, cuerpo: c, arrancar: (x) => (a = x) });
+    assert.deepEqual([a.anclaje, a.esperoMs], ['mano', 0], `${lugar}: la mano ya queda bajo el borde`);
+    assert.deepEqual(c.sostenido, []);
+  }
+  // Sin video que preguntar (el 3D): ya.
+  let a = null;
+  const r = relojFalso();
+  sacarSable(new Agenda(r.reloj), { ahora: r.ahora, lugar: 'cuerpo', sutil: false, externo: false, necesitaMs: 3200, cuerpo: null, arrancar: (x) => (a = x) });
+  assert.equal(a.anclaje, 'mano');
+});
+
+prueba('sacarSable: si la mano se va igual, el sable se desvanece antes; tapado a mitad, suelta el clip y nada queda', () => {
+  const r = relojFalso();
+  const agenda = new Agenda(r.reloj);
+  // Libre al empezar, pero a los 1500 ms la mano se va (un cambio que no llegó al reposo).
+  const c = cuerpoFalso(r, (t) => (t < 1200 ? 9000 : Math.max(0, 1500 - t)));
+  let cortado = null;
+  sacarSable(agenda, { ahora: r.ahora, lugar: 'cuerpo', sutil: false, externo: false, necesitaMs: 3200, cuerpo: c, arrancar: () => {}, cortar: () => (cortado = r.ahora()) });
+  r.pasar(4000);
+  assert.ok(cortado !== null && cortado + CORTE_MS <= 1500, `se apagó a tiempo (${cortado} + ${CORTE_MS} ms)`);
+  assert.ok(cortado >= 1500 - CORTE_MS - MIRAR_MANO_MS - 60, `y no mucho antes (${cortado})`);
+  assert.deepEqual(c.sostenido.at(-1), [cortado, 0], 'soltó el clip');
+  assert.equal(agenda.pendientes, 0);
+  // Tapado mientras espera: la capa corta la agenda y llama a soltar.
+  const r2 = relojFalso();
+  const ag2 = new Agenda(r2.reloj);
+  const c2 = cuerpoFalso(r2, () => 0);
+  let salio = false;
+  const soltar = sacarSable(ag2, { ahora: r2.ahora, lugar: 'cuerpo', sutil: false, externo: false, necesitaMs: 3200, cuerpo: c2, arrancar: () => (salio = true) });
+  r2.pasar(500);
+  ag2.cortar();
+  soltar();
+  soltar();
+  r2.pasar(5000);
+  assert.equal(salio, false, 'no sale después de tapado');
+  assert.deepEqual(c2.sostenido, [
+    [0, ESPERA_MANO_MS + 3200],
+    [500, 0],
+  ], 'suelta una sola vez');
+  assert.equal(ag2.pendientes, 0);
+});
+
+prueba('el sable desde el borde: la empuñadura bajo el borde de abajo, por fuera del cuerpo, y la hoja en la caja', () => {
+  for (const avatar of ['claudio', 'antonio']) {
+    for (const [W, H] of [
+      [390, 620],
+      [360, 540],
+    ]) {
+      const p = planEspada(avatar, 'cuerpo', W, H, false, false, 'borde');
+      const mano = aCaja(AGARRES[avatar].cuerpo.mano, encuadreDe(avatar, 'cuerpo', W, H));
+      assert.ok(p.pivote.y > H, `${avatar}: la empuñadura bajo el borde (${p.pivote.y.toFixed(0)} > ${H})`);
+      assert.ok(Math.abs(p.pivote.x - W / 2) > Math.abs(mano.x - W / 2), `${avatar}: más afuera que la mano`);
+      const e = estadoEspada(p, 2300);
+      const q = puntasEspada(p, e.ang, e.hoja);
+      assert.ok(q.px > 0 && q.px < W && q.py > H * 0.3 && q.py < H, `${avatar} ${W}×${H}: la hoja se ve (${q.px.toFixed(0)}, ${q.py.toFixed(0)})`);
+    }
+    assert.equal(AGARRES_BORDE[avatar].lado, AGARRES[avatar].cuerpo.lado, 'del mismo lado que su mano');
+    // En el retrato y la llamada el borde es lo mismo de siempre.
+    assert.deepEqual(planEspada(avatar, 'retrato', 560, 330, false, false, 'borde').pivote, planEspada(avatar, 'retrato', 560, 330, false, false).pivote);
+  }
+});
+
+prueba('acostado (retrato): la hoja nunca pasa por encima de la cara, ni en el tajo', () => {
+  // La cara en el cuadro del video (0..1): la cabeza de Claudio va de 0,09 a 0,38 de alto; la de ANT-ONIO, de 0,11 a 0,43.
+  const CARA = { claudio: { x0: 0.3, x1: 0.7, y0: 0.12, y1: 0.38 }, antonio: { x0: 0.3, x1: 0.7, y0: 0.14, y1: 0.43 } };
+  for (const avatar of ['claudio', 'antonio']) {
+    const e = encuadreDe(avatar, 'retrato', 560, 330);
+    const c = CARA[avatar];
+    const dentro = (x, y) => x > e.left + c.x0 * e.width && x < e.left + c.x1 * e.width && y > e.top + c.y0 * e.height && y < e.top + c.y1 * e.height;
+    for (const sutil of [false, true]) {
+      const p = planEspada(avatar, 'retrato', 560, 330, sutil, false);
+      for (let t = 0; t <= p.dur; t += 20) {
+        const s = estadoEspada(p, t);
+        if (!s.visible || s.hoja <= 0) continue;
+        const q = puntasEspada(p, s.ang, s.hoja);
+        for (let k = 0; k <= 10; k++) {
+          const x = q.bx + ((q.px - q.bx) * k) / 10;
+          const y = q.by + ((q.py - q.by) * k) / 10;
+          assert.ok(!dentro(x, y), `${avatar}${sutil ? ' sutil' : ''} t=${t}: la hoja pasa por la cara (${x.toFixed(0)}, ${y.toFixed(0)})`);
+        }
+      }
+    }
+  }
+});
+
+prueba('el corte: el sable se desvanece en CORTE_MS desde donde estaba, sin saltar de ángulo', () => {
+  const p = planEspada('claudio', 'cuerpo', 390, 620, false, false);
+  const c = { ...p, corte: 1200 };
+  assert.equal(estadoEspada(c, 1199).alfaHoja, estadoEspada(p, 1199).alfaHoja);
+  const medio = estadoEspada(c, 1200 + CORTE_MS / 2);
+  assert.ok(medio.alfaHoja > 0.3 && medio.alfaHoja < 0.7, `a media salida (${medio.alfaHoja})`);
+  assert.equal(medio.ang, estadoEspada(p, 1200 + CORTE_MS / 2).ang, 'el mismo ángulo: solo se apaga');
+  assert.equal(estadoEspada(c, 1200 + CORTE_MS + 1).visible, false);
+});
+
 /* ── la escena ───────────────────────────────────────────────────────────────────────────── */
 
 prueba('el sable va en la mano del video, en cualquier caja, y entra en la caja en reposo', () => {
@@ -298,7 +542,10 @@ prueba('la capa no toma toques y no toca el video ni el guion', () => {
   assert.ok((capa.match(/pointerEvents="none">/g) || []).length >= 2, 'la capa y la sacudida');
   assert.match(capa, /<Canvas[^>]*pointerEvents="none"/, 'el lienzo tampoco');
   assert.doesNotMatch(capa, /onStartShouldSetResponder|onPress|Pressable|GestureDetector/);
-  assert.match(capa, /relojes\.current\.forEach\(clearTimeout\)/, 'al irse corta los relojes');
+  assert.match(capa, /agenda\.cortar\(\);/, 'al irse corta los relojes (todos van en la agenda)');
+  assert.doesNotMatch(capa, /setTimeout|setInterval/, 'ningún reloj por fuera de la agenda');
+  assert.doesNotMatch(capa, /expo-haptics/, 'la vibración es la de la app (respeta el ajuste «Vibración»)');
+  assert.match(capa, /useEffect\(\(\) => \(\) => cortar\(\), \[cortar\]\)/, 'al desmontarse corta todo');
   assert.doesNotMatch(capa, /speak\(|Audio\.Recording|speech|micr/i, 'nada de voz ni micrófono');
   const llamada = fs.readFileSync(path.resolve(AQUI, '../../avatar3d/CuerpoLlamada.tsx'), 'utf8');
   assert.match(llamada, /onStartShouldSetResponderCapture=\{mirar\}/);

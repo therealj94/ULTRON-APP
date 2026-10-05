@@ -32,20 +32,45 @@ export type Pt = { x: number; y: number };
  * Claudio lo saca con la mano derecha de la pantalla y ANT-ONIO con la izquierda. La llamada usa la cámara
  * de retrato pero en un círculo, donde las esquinas no se ven: el sable entra más cerca del centro.
  */
-export type Agarre = { mano: Pt; lado: 1 | -1; angulo: number; largo: number };
+export type Agarre = {
+  mano: Pt;
+  lado: 1 | -1;
+  angulo: number;
+  largo: number;
+  /**
+   * Cuánto del tajo hacia el cuerpo se hace (1 entero). En el retrato la cara llena la caja: un tajo entero
+   * cruzaba la hoja por encima del ojo; ahí se queda afuera, por el costado de la cara.
+   */
+  adentro?: number;
+};
 export type LugarEfectos = Camara | 'llamada';
 export const AGARRES: Record<AvatarVideo, Record<LugarEfectos, Agarre>> = {
   claudio: {
     cuerpo: { mano: { x: 0.783, y: 0.712 }, lado: 1, angulo: 0.22, largo: 0.3 },
-    retrato: { mano: { x: 0.8, y: 0.6 }, lado: 1, angulo: -0.2, largo: 0.36 },
+    retrato: { mano: { x: 0.86, y: 0.6 }, lado: 1, angulo: 0.06, largo: 0.34, adentro: 0.25 },
     llamada: { mano: { x: 0.7, y: 0.58 }, lado: 1, angulo: -0.42, largo: 0.3 },
   },
   antonio: {
     cuerpo: { mano: { x: 0.24, y: 0.874 }, lado: -1, angulo: 0.22, largo: 0.3 },
-    retrato: { mano: { x: 0.21, y: 0.64 }, lado: -1, angulo: -0.16, largo: 0.38 },
+    retrato: { mano: { x: 0.15, y: 0.64 }, lado: -1, angulo: 0.06, largo: 0.36, adentro: 0.25 },
     llamada: { mano: { x: 0.3, y: 0.62 }, lado: -1, angulo: -0.42, largo: 0.32 },
   },
 };
+/**
+ * El sable sin la mano, en la mesa vertical: entra desde abajo, por fuera del cuerpo, como en el retrato.
+ * Es para cuando la mano no va a estar en su lugar (habla, piensa, teclea… o el comando de voz, que habla
+ * enseguida): un sable en el aire, lejos de la mano que gesticula, se veía suelto. La empuñadura queda
+ * bajo el borde (que se funde con el fondo) y la hoja sube casi derecha, apenas hacia el cuerpo.
+ */
+export const AGARRES_BORDE: Record<AvatarVideo, Agarre> = {
+  claudio: { mano: { x: 0.84, y: 1.03 }, lado: 1, angulo: -0.08, largo: 0.34 },
+  antonio: { mano: { x: 0.17, y: 1.03 }, lado: -1, angulo: -0.08, largo: 0.34 },
+};
+/** Dónde va el sable: en la mano del video, o desde el borde (en el retrato y la llamada la mano ya queda bajo el borde). */
+export type Anclaje = 'mano' | 'borde';
+/** ¿El sable de este lugar depende de que la mano esté en su lugar? Solo en la mesa vertical (cuerpo entero). */
+export const sableEnLaMano = (l: LugarEfectos) => l === 'cuerpo';
+
 /** La cámara del video en cada lugar (la llamada es el retrato). */
 export const camaraDe = (l: LugarEfectos): Camara => (l === 'llamada' ? 'retrato' : l);
 
@@ -90,15 +115,20 @@ export type PlanEspada = {
   mangoEntra: [number, number];
   mangoSale: [number, number];
   alfa: number;
+  /** Se apaga antes (la mano del video se iba: agenda.ts): desde este instante, en CORTE_MS. */
+  corte?: number;
 };
+
+/** Lo que tarda en desvanecerse el sable cuando se corta antes (la mano se va). */
+export const CORTE_MS = 180;
 
 /** El baile del sable: se enciende, amaga hacia afuera, tajo grande cruzando, vuelve, y lo sostiene molesto. */
 const CLAVES_COMPLETA = [0, 0, 900, 0, 1150, 0.65, 1500, -0.95, 1800, 0.35, 2050, 0.05, 3200, 0.05];
 const CLAVES_SUTIL = [0, 0, 480, 0, 780, 0.5, 1080, -0.1, 1700, -0.1];
 
-export function planEspada(avatar: AvatarVideo, lugar: LugarEfectos, W: number, H: number, sutil: boolean, reducido: boolean): PlanEspada {
+export function planEspada(avatar: AvatarVideo, lugar: LugarEfectos, W: number, H: number, sutil: boolean, reducido: boolean, anclaje: Anclaje = 'mano'): PlanEspada {
   const e = encuadreDe(avatar, camaraDe(lugar), W, H);
-  const a = AGARRES[avatar][lugar];
+  const a = anclaje === 'borde' && sableEnLaMano(lugar) ? AGARRES_BORDE[avatar] : AGARRES[avatar][lugar];
   const Hv = e.height;
   const c = COLORES[avatar];
   const base = {
@@ -116,10 +146,13 @@ export function planEspada(avatar: AvatarVideo, lugar: LugarEfectos, W: number, 
     color: c.espada,
     nucleo: c.nucleo,
   };
+  // El tajo hacia el cuerpo, recortado donde la cara llena la caja (retrato).
+  const k = a.adentro ?? 1;
+  const tajo = (claves: number[]) => (k === 1 ? claves : claves.map((v, i) => (i % 2 && v < 0 ? v * k : v)));
   if (reducido)
     return { ...base, claves: [0, 0, 2000, 0], encender: [0, 300], apagar: [1600, 1950], mangoEntra: [0, 300], mangoSale: [1600, 1950], alfa: sutil ? 0.75 : 1 };
-  if (sutil) return { ...base, claves: CLAVES_SUTIL, encender: [90, 330], apagar: [1150, 1380], mangoEntra: [0, 90], mangoSale: [1380, 1600], alfa: 0.82 };
-  return { ...base, claves: CLAVES_COMPLETA, encender: [140, 440], apagar: [2550, 2850], mangoEntra: [0, 140], mangoSale: [2850, 3150], alfa: 1 };
+  if (sutil) return { ...base, claves: tajo(CLAVES_SUTIL), encender: [90, 330], apagar: [1150, 1380], mangoEntra: [0, 90], mangoSale: [1380, 1600], alfa: 0.82 };
+  return { ...base, claves: tajo(CLAVES_COMPLETA), encender: [140, 440], apagar: [2550, 2850], mangoEntra: [0, 140], mangoSale: [2850, 3150], alfa: 1 };
 }
 
 export function suave(p: number): number {
@@ -180,12 +213,14 @@ export function estadoEspada(p: PlanEspada, t: number): EstadoEspada {
   'worklet';
   const entra = tramo(t, p.mangoEntra);
   const sale = tramo(t, p.mangoSale);
-  const alfaMango = entra * (1 - sale) * p.alfa;
+  // Cortado antes de tiempo: todo se desvanece rápido, sin saltar a otra pose.
+  const corte = p.corte === undefined ? 1 : 1 - tramo(t, [p.corte, p.corte + CORTE_MS]);
+  const alfaMango = entra * (1 - sale) * p.alfa * corte;
   const enc = tramo(t, p.encender);
   const apa = tramo(t, p.apagar);
   // Con «reducir movimiento» la hoja no crece: aparece y se va con un fundido.
   const hoja = p.reducido ? (enc > 0 && apa < 1 ? 1 : 0) : salida(enc) * (1 - suave(apa));
-  const alfaHoja = p.reducido ? enc * (1 - apa) * p.alfa : p.alfa;
+  const alfaHoja = (p.reducido ? enc * (1 - apa) * p.alfa : p.alfa) * corte;
   const ang = anguloEspada(p, t);
   const estela: number[] = [];
   let fuerzaEstela = 0;

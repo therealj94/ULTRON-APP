@@ -175,6 +175,17 @@ export class MotorToques {
     return this.empezar(ahora, efecto, pisaVoz(c), !!c.reducido, -1, -1, true);
   }
 
+  /**
+   * La capa sacó la secuencia recién `ahora` (el sable esperó a que la mano del video quedara en su lugar:
+   * agenda.ts) y quizá con otro efecto: lo «en curso» dura hasta que se termine de ver, y lo de «nunca tres
+   * veces seguidas lo mismo» cuenta lo que se vio. El descanso sigue contando desde la ráfaga.
+   */
+  mostrar(ahora: number, efecto: Efecto, duracion: number) {
+    if (!this.secuencia) return;
+    this.secuencia = { desde: this.secuencia.desde, hasta: Math.max(this.secuencia.hasta, ahora + duracion) };
+    if (this.efectos.length) this.efectos[this.efectos.length - 1] = efecto;
+  }
+
   /** El cuerpo se tapó o se fue: la secuencia en curso se da por terminada (el descanso sigue contando). */
   cancelar(ahora: number) {
     this.toques = [];

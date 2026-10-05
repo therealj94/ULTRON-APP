@@ -135,6 +135,12 @@ for (const avatar of AVATARES) {
   }
   // «Reducir movimiento»: el sable quieto y los disparos quietos.
   const L = LUGARES[0];
+  // Sin la mano (hablando, el comando de voz, o la mano no llegó a su lugar): desde el borde de abajo,
+  // sobre un cuadro de la risa (la mano en la panza: justo cuando no puede ir en la mano).
+  const pb = planEspada(avatar, L.lugar, L.W, L.H, false, false, 'borde');
+  for (const t of [1000, 2300]) guardar(`${avatar}-mesa-vertical-espada-borde-${t}`, `${avatar} sable desde el borde t=${t}`, render(avatar, 'risa', L, pb, t));
+  const ps = planEspada(avatar, L.lugar, L.W, L.H, true, false, 'borde');
+  guardar(`${avatar}-mesa-vertical-espada-borde-sutil`, `${avatar} sable desde el borde (sutil, hablando)`, render(avatar, 'risa', L, ps, 800));
   guardar(`${avatar}-reducido-espada`, `${avatar} reducir movimiento: sable`, render(avatar, 'niega', L, planEspada(avatar, L.lugar, L.W, L.H, false, true), 900));
   guardar(`${avatar}-reducido-blasters`, `${avatar} reducir movimiento: blasters`, render(avatar, 'reposo', L, planBlasters(L.W, L.H, false, true, semilla(3)), 400));
   // Las ondas de un toque: normal, sutil y molesto.

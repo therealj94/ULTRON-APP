@@ -155,6 +155,10 @@ export class DirectorVideo {
   private actividad: Actividad = SIN_ACTIVIDAD;
   /** El último golpe de las pistas que ya se vio (hecho o no). */
   private golpePista = -1;
+  /** Hasta cuándo se queda con el clip que tiene (el sable de luz en la mano: `sostener`). */
+  private sostenidoHasta = 0;
+  /** Se soltó lo sostenido y falta volver a mirar el estado. */
+  private porSoltar = false;
 
   constructor(o: Opciones) {
     this.hay = new Set(o.hay);
@@ -192,9 +196,35 @@ export class DirectorVideo {
     return antes === undefined || this.ahora() - antes >= ENFRIAR_GOLPE_MS;
   }
 
+  /**
+   * Se queda con el clip que tiene (y con el que ya pidió) durante `ms`: ni golpes nuevos, ni «habla», ni
+   * otro fondo. Lo pide la capa de efectos mientras el sable de luz está en la mano del video (la mano se
+   * iría con cualquier otro gesto y el sable quedaría en el aire). Al terminar (`revisar`, con su reloj en
+   * `msParaRevisar`) vuelve a mirar el estado de ahora. 0 lo suelta ya. Lo que llegó en medio se pierde
+   * (un golpe vale GOLPE_VIGENTE_MS); el «terminó» de un golpe sí cuenta: vuelve al fondo.
+   */
+  sostener(ms: number): Reproduccion | null {
+    const antes = this.sostenido();
+    this.sostenidoHasta = ms > 0 ? this.ahora() + ms : 0;
+    if (ms > 0) {
+      this.porSoltar = true;
+      return null;
+    }
+    return antes ? this.soltar() : null;
+  }
+
+  private sostenido(): boolean {
+    return this.ahora() < this.sostenidoHasta;
+  }
+
+  private soltar(): Reproduccion | null {
+    this.porSoltar = false;
+    return this.decidir(null);
+  }
+
   /** Un golpe pedido desde fuera (al aparecer en la pantalla, saluda). */
   golpe(c: ClipVideo): Reproduccion | null {
-    if (esDeFondo(c) || !this.golpeDisponible(c)) return null;
+    if (esDeFondo(c) || this.sostenido() || !this.golpeDisponible(c)) return null;
     return this.poner(c, false);
   }
 
@@ -218,6 +248,7 @@ export class DirectorVideo {
 
   /** Con lo que se sabe ahora (y quizá un golpe pedido): qué clip toca. */
   private decidir(golpe: ClipVideo | null | undefined): Reproduccion | null {
+    if (this.sostenido()) return null;
     if (this.golpeDisponible(golpe) && !(golpe === this.actual.clip && !this.actual.bucle)) return this.poner(golpe, false);
 
     const fondo = this.fondo(this.estadoVisto);
@@ -251,6 +282,7 @@ export class DirectorVideo {
 
   /** Si hay un fondo pedido que se está asentando: cuánto falta (ms). La vista pone un reloj y llama a `revisar()`. */
   msParaFondo(): number | null {
+    if (this.sostenido()) return null;
     if (!this.actual.bucle || !this.fondoPedido) return null;
     return Math.max(0, this.esperaPara(this.fondoPedido) - (this.ahora() - this.pedidoDesde));
   }
@@ -261,6 +293,7 @@ export class DirectorVideo {
    * con el golpe (sin mover la boca) hasta que el clip terminaba, casi 5 s después.
    */
   msParaHablar(): number | null {
+    if (this.sostenido()) return null;
     if (this.actual.bucle || !this.estadoVisto || this.fondo(this.estadoVisto) !== 'habla') return null;
     return Math.max(0, this.golpeAntesDeHablar - (this.ahora() - this.desde));
   }
@@ -270,6 +303,7 @@ export class DirectorVideo {
    * volver al reposo. null: no toca (hay algo que hacer, está dormido o no tiene el clip).
    */
   msParaEspera(): number | null {
+    if (this.sostenido()) return null;
     if (!this.actual.bucle || this.fondoPedido || !this.hay.has('espera')) return null;
     if (this.fondo(this.estadoVisto) !== 'reposo' || this.estadoVisto?.silenciado) return null;
     const pasado = this.ahora() - this.desde;
@@ -280,12 +314,15 @@ export class DirectorVideo {
 
   /** El próximo reloj que la vista tiene que poner (y al cumplirse, llamar a `revisar()`); null: ninguno. */
   msParaRevisar(): number | null {
-    const relojes = [this.msParaHablar(), this.msParaFondo(), this.msParaEspera()].filter((m): m is number => m !== null);
+    const soltar = this.sostenido() ? this.sostenidoHasta - this.ahora() : this.porSoltar ? 0 : null;
+    const relojes = [soltar, this.msParaHablar(), this.msParaFondo(), this.msParaEspera()].filter((m): m is number => m !== null);
     return relojes.length ? Math.min(...relojes) : null;
   }
 
   /** Vuelve a mirar el último estado (se cumplió el reloj de `msParaRevisar`). */
   revisar(): Reproduccion | null {
+    if (this.sostenido()) return null;
+    if (this.porSoltar) return this.soltar();
     const falta = this.msParaHablar();
     if (falta === 0) return this.poner('habla', true);
     const fondo = this.fondoPedido;
