@@ -139,7 +139,7 @@ export function vozOcupaMicrofono(v: VistaSesion): boolean {
 
 /** El plazo de la petición es el de la fase «permiso» del control (sesion.ts): los dos dicen lo mismo. */
 const pedirPermiso = (avatar: AvatarId, idioma: 'es' | 'en') =>
-  api<{ token: string; pase: string; cid?: string }>('/api/voz/agente', { method: 'POST', body: JSON.stringify({ avatar, idioma }) }, PERMISO_MAX_MS);
+  api<{ token: string; pase: string; cid?: string; motor?: string; primerMensaje?: string }>('/api/voz/agente', { method: 'POST', body: JSON.stringify({ avatar, idioma }) }, PERMISO_MAX_MS);
 
 /**
  * Va a hablar (abrió la app o volvió a ella): el cerebro deja leído su contexto y el primer turno no espera 4–8 s.
@@ -152,6 +152,13 @@ const precalentarCerebro = () => void api('/api/cerebro/calentar', { method: 'PO
 /** Se cerró una conversación: el servidor suelta lo suyo (opcional, sin esperar; si falla, vence solo). */
 const avisarCierre = (pase: string) =>
   void api('/api/voz/agente/cerrar', { method: 'POST', body: JSON.stringify({ pase }) }, 8_000).catch(() => undefined);
+
+/**
+ * Motor nuevo de la llamada (prototipo de Speech Engine): la conversación de ElevenLabs se ata al pase, por si
+ * ElevenLabs no reenvía `X-Pase`. Solo pasa si el permiso trajo `motor: 'speech-engine'`.
+ */
+const vincularMotor = (pase: string, conversacion: string) =>
+  void api('/api/voz/motor/vincular', { method: 'POST', body: JSON.stringify({ pase, conversacion }) }, 8_000).catch(() => undefined);
 
 /** Una sola para toda la app: la llamada escucha su aviso en el bus (`voz`). */
 const audioVoz = new AudioVoz((libre) => emitir('voz', { libre }));
@@ -694,6 +701,7 @@ export function VozProvider({ children, conCompanera = true }: Props) {
     else audioVoz.cerrando(gen);
   }, []);
   const alFin = useCallback((_gen: number, pase: string) => avisarCierre(pase), []);
+  const alVincular = useCallback((_gen: number, pase: string, conversacion: string) => vincularMotor(pase, conversacion), []);
   const alPermiso = useCallback((gen: number) => control.permisoListo(gen), [control]);
   const permiso = useCallback(async () => {
     const v = control.vista();
@@ -797,6 +805,7 @@ export function VozProvider({ children, conCompanera = true }: Props) {
           onAudio={alAudio}
           onFin={alFin}
           onPermiso={alPermiso}
+          onVincular={alVincular}
           controles={controles}
         />
       ) : null}

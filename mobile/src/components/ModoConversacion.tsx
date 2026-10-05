@@ -65,7 +65,7 @@ type Props = {
   gen: number;
   silenciada: boolean;
   /** El permiso de un solo uso (token de ElevenLabs + pase firmado de quién habla). */
-  permiso: () => Promise<{ token: string; pase: string; cid?: string }>;
+  permiso: () => Promise<{ token: string; pase: string; cid?: string; motor?: 'speech-engine'; primerMensaje?: string }>;
   onEstado: (gen: number, e: EstadoConversacion, detalle?: string) => void;
   /** Una frase terminada: la tuya (`usuario`) o la del avatar (`ultron`). */
   onMensaje: (gen: number, rol: 'usuario' | 'ultron', texto: string) => void;
@@ -87,6 +87,8 @@ type Props = {
    * (compa/sesion.ts, CALL02), y el control tiene que saber en cuál está.
    */
   onPermiso?: (gen: number) => void;
+  /** Motor nuevo (prototipo de Speech Engine): ata la conversación de ElevenLabs al pase. */
+  onVincular?: (gen: number, pase: string, conversacion: string) => void;
 };
 
 export function ModoConversacion(p: Props) {
@@ -100,12 +102,12 @@ export function ModoConversacion(p: Props) {
 /** Sin volumen real de la salida más de esto mientras habla, la boca sigue una envolvente de habla (lipsync.ts). */
 const SIN_VOLUMEN_MS = 600;
 
-function Sesion({ gen, silenciada, permiso, onEstado, onMensaje, onInterrupcion, onNiveles, controles, onAudio, onFin, onPermiso }: Props) {
+function Sesion({ gen, silenciada, permiso, onEstado, onMensaje, onInterrupcion, onNiveles, controles, onAudio, onFin, onPermiso, onVincular }: Props) {
   const conv = useConversation();
   /** Cuándo llegó lo último que ElevenLabs oyó de la persona (para la miga de cuánto tardó en hablar). */
   const oidoEn = useRef(0);
-  const cbs = useRef({ onEstado, onMensaje, onInterrupcion, onNiveles, permiso, onAudio, onFin, onPermiso });
-  cbs.current = { onEstado, onMensaje, onInterrupcion, onNiveles, permiso, onAudio, onFin, onPermiso };
+  const cbs = useRef({ onEstado, onMensaje, onInterrupcion, onNiveles, permiso, onAudio, onFin, onPermiso, onVincular });
+  cbs.current = { onEstado, onMensaje, onInterrupcion, onNiveles, permiso, onAudio, onFin, onPermiso, onVincular };
   const abierta = useRef(false);
   const hablando = useRef(false);
   const silencio = useRef(silenciada);

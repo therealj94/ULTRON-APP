@@ -23,6 +23,12 @@
  * suelta una vez y el micrófono silenciado y la salida callada vuelven a cero. Antes la desconexión natural
  * dejaba «cerrada» con los callbacks vivos: un «speaking» tardío la devolvía a «hablando».
  *
+ * EL MOTOR NUEVO (prototipo de Speech Engine, docs/voz/SPEECH-ENGINE.md): solo si el servidor lo dice en su
+ * respuesta (`motor: 'speech-engine'`, para una cuenta con el interruptor). Entonces se le pide al SDK la
+ * primera frase (`overrides.agent.firstMessage`: Speech Engine no tiene una propia) y, al conectar, se ata la
+ * conversación al pase (/api/voz/motor/vincular) por si ElevenLabs no reenvía `X-Pase`. Sin eso, nada cambia:
+ * las mismas opciones al SDK y las mismas peticiones de siempre.
+ *
  * Los controles de la llamada (P2): `silenciarMic` deja de mandar el micrófono de ESTA sesión sin colgar
  * (setMicMuted del SDK) y se puede volver a escuchar; `callarSalida` calla lo que la llamada está diciendo
  * (volumen 0) hasta que termina esa frase, y la siguiente se oye. Lo que el SDK no sepa hacer no se anuncia
@@ -38,6 +44,8 @@ export type EstadoEnVivo = 'cerrada' | 'conectando' | 'escuchando' | 'hablando' 
  */
 export type SesionAgente = {
   endSession: () => Promise<void> | void;
+  /** El id de la conversación en ElevenLabs (Conversation.getId del SDK); solo para el motor nuevo. */
+  getId?: () => string;
   setMicMuted?: (silenciado: boolean) => void;
   setVolume?: (o: { volume: number }) => void;
 };
@@ -45,7 +53,9 @@ export type OpcionesSesion = {
   conversationToken: string;
   connectionType: 'webrtc';
   dynamicVariables: Record<string, string>;
-  onConnect?: () => void;
+  /** Solo con el motor nuevo: la primera frase (Speech Engine no tiene una propia). */
+  overrides?: { agent: { firstMessage: string } };
+  onConnect?: (p?: { conversationId?: string }) => void;
   onDisconnect?: () => void;
   onError?: (mensaje: string) => void;
   onModeChange?: (m: { mode: string }) => void;
@@ -268,6 +278,17 @@ export class ConversacionEnVivo {
     }
     const pase = String(r.json.pase);
     this.pase = pase;
+    // El motor nuevo, solo si el servidor lo dijo (cuenta con el interruptor): sin eso, las opciones de siempre.
+    const motorNuevo = r.json.motor === 'speech-engine';
+    const primera = motorNuevo && typeof r.json.primerMensaje === 'string' ? r.json.primerMensaje.trim() : '';
+    let vinculada = false;
+    /** Ata la conversación de ElevenLabs al pase (una vez): el servidor sabe quién habla aunque no llegue `X-Pase`. */
+    const vincular = (id: unknown) => {
+      const conversacion = String(id || '');
+      if (!motorNuevo || vinculada || !conversacion || !vigente()) return;
+      vinculada = true;
+      void this.d.pedir('/api/voz/motor/vincular', { pase, conversacion }).catch(() => undefined);
+    };
     // 2) Conectar el WebRTC, con su plazo (hasta onConnect). Una sesión que aparece cuando esta apertura
     //    ya no vale se cuelga en cuanto llega.
     plazo.fase(CONECTAR_MAX_MS);
@@ -276,8 +297,10 @@ export class ConversacionEnVivo {
         conversationToken: String(r.json.token),
         connectionType: 'webrtc',
         dynamicVariables: { pase },
-        onConnect: () => {
+        ...(primera ? { overrides: { agent: { firstMessage: primera } } } : {}),
+        onConnect: (p) => {
           if (!vigente()) return;
+          vincular(p?.conversationId);
           plazo.listo();
           this.poner(gen, 'escuchando');
           this.anunciar();
@@ -318,6 +341,13 @@ export class ConversacionEnVivo {
       const s = await plazo.esperar(apertura);
       if (s === VENCIDO || !vigente()) return false;
       this.sesion = s;
+      if (motorNuevo && !vinculada && typeof s.getId === 'function') {
+        try {
+          vincular(s.getId());
+        } catch {
+          /* sin id todavía: lo trajo onConnect o no hace falta (X-Pase) */
+        }
+      }
       this.anunciar();
       return true;
     } catch (e: any) {
