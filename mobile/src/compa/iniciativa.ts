@@ -7,6 +7,8 @@
  * Una propuesta llega por dos caminos y es la MISMA (mismo id):
  *   · empujada por el servidor en el canal de acciones: {tipo:'iniciativa', id, texto, pedido, clase, …};
  *   · al abrir la app y cada ~20 min en primer plano: GET /api/iniciativa → {propuesta: {id, texto, tipo, …}}.
+ *     Un `{propuesta: null}` válido y más nuevo RETIRA la tarjeta (los «3 correos» ya se leyeron); un fallo, un
+ *     cuerpo roto o una respuesta más vieja no tocan nada (ColaPropuestas.terminarSondeo, decidirSondeo).
  * La mesa la muestra como tarjeta (components/TarjetaPropuesta.tsx) con «Sí, hazlo» / «Luego» / «No»
  * y contesta con POST /api/iniciativa/responder {id, respuesta}. Con «Sí», el `pedido` se manda como un
  * turno normal de la persona (el mismo camino del chat de la mesa) para que AURA lo haga con sus manos.
@@ -116,6 +118,59 @@ export function propuestaDeServidor(r: unknown): PropuestaAura | null {
   return normalizar(x, x.tipo ?? x.clase);
 }
 
+/**
+ * Lo que trajo un GET /api/iniciativa: el cuerpo de una respuesta 2xx, o que no se pudo (sin red, no-2xx, sesión
+ * caída o el tope de tiempo: `api()` lanza en todos esos casos).
+ */
+export type RespuestaSondeo = { ok: true; cuerpo: unknown } | { ok: false };
+
+/**
+ * Qué dice esa respuesta (revisión del 5-oct: «propuesta:null retira la tarjeta; distingue una retirada válida de un
+ * error o timeout»): una propuesta bien formada; `ninguna` SOLO si el servidor contestó bien y dijo `propuesta: null`
+ * (el hecho ya no vale, horas quietas, iniciativa apagada: no hay nada pendiente que mostrar); `invalida` si el
+ * cuerpo no se entiende (JSON roto → `api()` da {}, sin la clave; una propuesta mal formada); `fallo` si no llegó.
+ */
+export type LecturaSondeo = { tipo: 'propuesta'; propuesta: PropuestaAura } | { tipo: 'ninguna' } | { tipo: 'invalida' } | { tipo: 'fallo' };
+
+export function leerSondeo(r: RespuestaSondeo): LecturaSondeo {
+  if (!r.ok) return { tipo: 'fallo' };
+  const c = r.cuerpo;
+  if (!c || typeof c !== 'object' || Array.isArray(c) || !('propuesta' in c)) return { tipo: 'invalida' };
+  if ((c as { propuesta: unknown }).propuesta === null) return { tipo: 'ninguna' };
+  const p = propuestaDeServidor(c);
+  return p ? { tipo: 'propuesta', propuesta: p } : { tipo: 'invalida' };
+}
+
+/** El turno de una consulta: su número (sube en cada una) y cuántos cambios llevaba la tarjeta cuando salió. */
+export type TurnoSondeo = { n: number; cambios: number };
+
+/** Cómo quedó la tarjeta con una respuesta del sondeo. */
+export type ResultadoSondeo = ResultadoOferta | 'retirada' | 'sin_cambio' | 'fuera_de_orden' | 'fallo';
+
+export type DecisionSondeo =
+  | { hacer: 'ofrecer'; propuesta: PropuestaAura }
+  | { hacer: 'retirar' }
+  | { hacer: 'nada'; porque: 'sin_cambio' | 'fuera_de_orden' | 'fallo' };
+
+/**
+ * LA DECISIÓN DEL SONDEO (pura). Las consultas pueden terminar fuera de orden (la app vuelve de segundo plano con
+ * otra en camino, una tarda hasta el tope): solo decide una respuesta VÁLIDA más nueva que la última aplicada.
+ *   · Un fallo o un cuerpo que no se entiende no decide nada (queda la última tarjeta válida) ni cuenta para el orden.
+ *   · Una respuesta más vieja que la última aplicada no resucita ni retira nada.
+ *   · `propuesta: null` retira la tarjeta, salvo que la tarjeta haya cambiado DESPUÉS de que esa consulta salió
+ *     (llegó o se actualizó por el canal de acciones, o la persona contestó): ese null describe un momento anterior;
+ *     la próxima vuelta decide con lo de ahora.
+ *   · Una propuesta pasa por `ofrecer` (que ya cuida la misma, la contestada, la caducada y la versión vieja).
+ */
+export function decidirSondeo(e: { aplicado: number; cambios: number; hayTarjeta: boolean }, t: TurnoSondeo, r: RespuestaSondeo): DecisionSondeo {
+  const l = leerSondeo(r);
+  if (l.tipo === 'fallo' || l.tipo === 'invalida') return { hacer: 'nada', porque: 'fallo' };
+  if (t.n <= e.aplicado) return { hacer: 'nada', porque: 'fuera_de_orden' };
+  if (l.tipo === 'propuesta') return { hacer: 'ofrecer', propuesta: l.propuesta };
+  if (!e.hayTarjeta || e.cambios !== t.cambios) return { hacer: 'nada', porque: 'sin_cambio' };
+  return { hacer: 'retirar' };
+}
+
 /** ¿Toca preguntar otra vez? (nunca se preguntó, o ya pasó el rato del sondeo). */
 export function tocaSondear(ultimo: number, ahora: number, cadaMs = SONDEO_INICIATIVA_MS): boolean {
   return !ultimo || ahora - ultimo >= cadaMs;
@@ -182,6 +237,11 @@ export class ColaPropuestas {
   private oyentes = new Set<() => void>();
   /** Cuándo se preguntó por última vez (GET /api/iniciativa); la mesa lo usa para el sondeo. */
   ultimoSondeo = 0;
+  /** Cuántas veces cambió la tarjeta a la vista (cada aviso a los oyentes). */
+  private cambios = 0;
+  /** El número de la última consulta que salió y el de la última cuya respuesta se aplicó (decidirSondeo). */
+  private sondeoN = 0;
+  private sondeoAplicado = 0;
 
   constructor(private reloj: () => number = Date.now) {}
 
@@ -196,6 +256,7 @@ export class ColaPropuestas {
   };
 
   private avisar() {
+    this.cambios += 1;
     for (const f of [...this.oyentes]) {
       try {
         f();
@@ -225,6 +286,27 @@ export class ColaPropuestas {
     this.actual = p;
     this.avisar();
     return 'nueva';
+  }
+
+  /** Sale una consulta GET /api/iniciativa: se toma su turno ANTES de mandarla. */
+  empezarSondeo(): TurnoSondeo {
+    this.sondeoN += 1;
+    return { n: this.sondeoN, cambios: this.cambios };
+  }
+
+  /**
+   * Llegó la respuesta de esa consulta (o su fallo): se aplica según decidirSondeo. Un `propuesta: null` válido y en
+   * orden retira la tarjeta (no la marca como contestada: si el servidor la vuelve a tener pendiente, sale otra vez).
+   */
+  terminarSondeo(t: TurnoSondeo, r: RespuestaSondeo): ResultadoSondeo {
+    const d = decidirSondeo({ aplicado: this.sondeoAplicado, cambios: this.cambios, hayTarjeta: !!this.actual }, t, r);
+    if (d.hacer === 'nada' && d.porque !== 'sin_cambio') return d.porque;
+    this.sondeoAplicado = t.n;
+    if (d.hacer === 'ofrecer') return this.ofrecer(d.propuesta);
+    if (d.hacer === 'nada') return 'sin_cambio';
+    this.actual = null;
+    this.avisar();
+    return 'retirada';
   }
 
   /**
@@ -262,6 +344,8 @@ export class ColaPropuestas {
     this.actual = null;
     this.contestadas = [];
     this.ultimoSondeo = 0;
+    // Lo que iba en camino era de la persona anterior: llega «fuera de orden» y no toca nada.
+    this.sondeoAplicado = this.sondeoN;
     this.avisar();
   }
 
