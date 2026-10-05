@@ -125,6 +125,8 @@ export type AccionIniciativa = {
   creada: number;
   /** Revisión: la misma propuesta regenerada con el número de ahora (A2). La app reemplaza la tarjeta del mismo id. */
   rev?: number;
+  /** Cuándo se leyó el número que dice (correo, WhatsApp): una versión con una lectura más vieja no pisa la tarjeta. */
+  observada?: number;
   misionId?: string;
 };
 
