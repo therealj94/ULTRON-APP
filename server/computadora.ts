@@ -1076,17 +1076,22 @@ export function historialDe(quien: string) {
     .reverse()
     .map((id) => MISIONES.get(id))
     .filter((m): m is Mision => !!m)
-    .map((m) => ({
-      id: m.id,
-      tareaId: m.tareas[m.tareas.length - 1] ?? m.id,
-      instruccion: m.instruccion.slice(0, 200),
-      estado: m.final?.estado ?? ('trabajando' as EstadoTarea),
-      ok: m.final?.ok ?? null,
-      respondida: !!m.final?.respondida,
-      inicio: m.inicio,
-      segundos: Math.round(((m.fin ?? Date.now()) - m.inicio) / 1000),
-      resultado: (m.final?.respuesta || m.final?.error || '').slice(0, 160) || null,
-    }));
+    .map(entradaHistorial);
+}
+
+/** Una misión como entrada del historial (la pantalla de su computadora y el panel de tareas). */
+function entradaHistorial(m: Mision) {
+  return {
+    id: m.id,
+    tareaId: m.tareas[m.tareas.length - 1] ?? m.id,
+    instruccion: m.instruccion.slice(0, 200),
+    estado: m.final?.estado ?? ('trabajando' as EstadoTarea),
+    ok: m.final?.ok ?? null,
+    respondida: !!m.final?.respondida,
+    inicio: m.inicio,
+    segundos: Math.round(((m.fin ?? Date.now()) - m.inicio) / 1000),
+    resultado: (m.final?.respuesta || m.final?.error || '').slice(0, 160) || null,
+  };
 }
 
 export function misionDeTarea(id: string): Mision | null {
@@ -2402,30 +2407,54 @@ async function intentarSeguir(e: Encargo): Promise<void> {
 
 /* ---------------- rehidratar: reconstruir la misión de lo durable sin despachar nada */
 
+/** La misión de memoria que corresponde a un registro durable (sin tareas ni final todavía: los pone `aplicarRegistro`). */
+function misionBase(quien: string, r: RegistroMision): Mision {
+  return {
+    id: r.id,
+    quien,
+    instruccion: r.instruccion,
+    plan: r.plan,
+    planDelCerebro: r.planDelCerebro,
+    ...(r.requisitos ? { requisitos: r.requisitos } : {}),
+    ...(r.pedidoPersona ? { pedidoPersona: r.pedidoPersona } : {}),
+    inicio: r.inicio,
+    tareas: [],
+    indice: r.indice,
+    recibos: {},
+    rondas: r.rondas,
+    pasosPrevios: r.pasosPrevios,
+    idioma: r.idioma,
+    motor: r.motor,
+    aparato: r.aparato,
+    ambito: r.ambito ?? null,
+    maxPasos: r.maxPasos,
+    recuperada: true,
+  };
+}
+
+/**
+ * La misión de un registro durable SOLO PARA LEERLA (revisión 9): no entra a la memoria (no desplaza el historial de
+ * HISTORIAL_MAX), no crea encargos y no sigue nada. La usa el panel de tareas para una misión vieja que ya no está entre
+ * las recientes.
+ */
+function misionSoloLectura(quien: string, r: RegistroMision): Mision {
+  return {
+    ...misionBase(quien, r),
+    tareas: [...r.tareas],
+    recibos: { ...r.recibos },
+    pregunta: r.pregunta ?? null,
+    ...(r.ofreceSeguir ? { ofreceSeguir: r.ofreceSeguir } : {}),
+    ...(r.seguidaDesde ? { seguidaDesde: r.seguidaDesde } : {}),
+    estadoNodo: r.estadoNodo ?? null,
+    controles: [...(r.controles ?? [])],
+    ...(r.final ? { final: r.final, fin: r.fin } : {}),
+  };
+}
+
 function rehidratar(quien: string, r: RegistroMision): Mision {
   let m = MISIONES.get(r.id);
   if (!m || m.quien !== quien) {
-    m = {
-      id: r.id,
-      quien,
-      instruccion: r.instruccion,
-      plan: r.plan,
-      planDelCerebro: r.planDelCerebro,
-      ...(r.requisitos ? { requisitos: r.requisitos } : {}),
-      ...(r.pedidoPersona ? { pedidoPersona: r.pedidoPersona } : {}),
-      inicio: r.inicio,
-      tareas: [],
-      indice: r.indice,
-      recibos: {},
-      rondas: r.rondas,
-      pasosPrevios: r.pasosPrevios,
-      idioma: r.idioma,
-      motor: r.motor,
-      aparato: r.aparato,
-      ambito: r.ambito ?? null,
-      maxPasos: r.maxPasos,
-      recuperada: true,
-    };
+    m = misionBase(quien, r);
     anotarMision(m);
   }
   const ahora = Date.now();
@@ -2626,29 +2655,49 @@ async function controlConRecibo<R>(tareaId: string, accion: AccionControl, hacer
  * que el nodo comprobó al terminar (lib/tareas-durables.ts `evaluarEntrega` decide si eso comprueba lo pedido).
  */
 export function misionesParaTrabajos(correo: string): MisionComputadoraMin[] {
-  return historialDe(correo).map((h) => {
-    const m = misionDeTarea(h.tareaId) ?? MISIONES.get(h.id) ?? null;
-    const estado = m && !m.final && m.estadoNodo ? m.estadoNodo : h.estado;
-    const v = m ? vistaMision(m, estado) : null;
-    return {
-      id: h.id,
-      tareaId: h.tareaId,
-      instruccion: v?.instruccion ?? h.instruccion,
-      estado,
-      ok: h.ok,
-      inicio: h.inicio,
-      segundos: h.segundos,
-      // Un error nunca cuenta como evidencia de éxito: solo la respuesta de una misión que terminó bien.
-      resultado: v?.final ? (v.final.ok ? v.final.respuesta : v.final.respuesta || v.final.error) || null : h.resultado,
-      pregunta: v?.pregunta ?? null,
-      ...(v ? { plan: v.plan.map((p) => ({ texto: p.texto, estado: p.estado })) } : {}),
-      ...(v?.final ? { enlaces: v.final.visitados, datos: v.final.datos, archivos: v.final.archivos } : {}),
-      // Lo que se pidió, guardado al crear la misión (R5): no se recalcula con otro texto.
-      ...(m?.requisitos ? { requisitos: m.requisitos } : {}),
-      // Lo que pidió la persona (G2-C): la acción o el archivo que pidió cuentan aunque el modelo encargara solo la consulta.
-      ...(m?.pedidoPersona ? { pedidoPersona: m.pedidoPersona } : {}),
-    };
-  });
+  return historialDe(correo).map((h) => minParaTrabajos(h, misionDeTarea(h.tareaId) ?? MISIONES.get(h.id) ?? null));
+}
+
+function minParaTrabajos(h: ReturnType<typeof entradaHistorial>, m: Mision | null): MisionComputadoraMin {
+  const estado = m && !m.final && m.estadoNodo ? m.estadoNodo : h.estado;
+  const v = m ? vistaMision(m, estado) : null;
+  return {
+    id: h.id,
+    tareaId: h.tareaId,
+    instruccion: v?.instruccion ?? h.instruccion,
+    estado,
+    ok: h.ok,
+    inicio: h.inicio,
+    segundos: h.segundos,
+    // Un error nunca cuenta como evidencia de éxito: solo la respuesta de una misión que terminó bien.
+    resultado: v?.final ? (v.final.ok ? v.final.respuesta : v.final.respuesta || v.final.error) || null : h.resultado,
+    pregunta: v?.pregunta ?? null,
+    ...(v ? { plan: v.plan.map((p) => ({ texto: p.texto, estado: p.estado })) } : {}),
+    ...(v?.final ? { enlaces: v.final.visitados, datos: v.final.datos, archivos: v.final.archivos } : {}),
+    // Lo que se pidió, guardado al crear la misión (R5): no se recalcula con otro texto.
+    ...(m?.requisitos ? { requisitos: m.requisitos } : {}),
+    // Lo que pidió la persona (G2-C): la acción o el archivo que pidió cuentan aunque el modelo encargara solo la consulta.
+    ...(m?.pedidoPersona ? { pedidoPersona: m.pedidoPersona } : {}),
+  };
+}
+
+/**
+ * Una misión por su id (o el de una de sus tareas), aunque ya no esté entre las HISTORIAL_MAX recientes (revisión 9):
+ * primero la memoria; si no, su registro durable, bajo la huella de ESTA persona (una ajena nunca la encuentra) y solo
+ * para leer. null: no existe (o no es suya). 'almacen': no se pudo mirar; entonces la tarea enlazada NO se da por perdida.
+ */
+export async function misionParaTrabajos(correo: string, id: string): Promise<MisionComputadoraMin | null | 'almacen'> {
+  const q = String(correo || '').toLowerCase();
+  if (!q || !ID_TAREA.test(String(id || ''))) return null;
+  const enMemoria = misionesParaTrabajos(q).find((x) => x.id === id || x.tareaId === id);
+  if (enMemoria) return enMemoria;
+  const viva = misionDeTarea(id) ?? MISIONES.get(id) ?? null;
+  if (viva && viva.quien === q) return minParaTrabajos(entradaHistorial(viva), viva);
+  const l = await leerMisionDe(q, id);
+  if (l.ok === false) return 'almacen';
+  if (!l.r) return null;
+  const m = misionSoloLectura(q, l.r);
+  return minParaTrabajos(entradaHistorial(m), m);
 }
 
 /** Pausar, reanudar o parar desde el panel: solo una misión de ESTA persona (en memoria o en lo durable). */
@@ -2670,6 +2719,7 @@ export function adaptadorTrabajos() {
   return {
     preparar: (correo: string) => rehidratarHistorial(correo),
     misiones: misionesParaTrabajos,
+    buscar: misionParaTrabajos,
     pausar: (correo: string, id: string) => conMisionSuya(correo, id, (t) => conPausa(async () => (await controlConRecibo(t, 'pausar', () => pausarTarea(t))).r)),
     reanudar: (correo: string, id: string) => conMisionSuya(correo, id, (t) => conPausa(async () => (await controlConRecibo(t, 'reanudar', () => reanudarTarea(t))).r)),
     parar: (correo: string, id: string) => conMisionSuya(correo, id, async (t) => (await controlConRecibo(t, 'parar', () => pararTarea(t))).r),

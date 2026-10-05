@@ -336,3 +336,117 @@ test('una tarea enlazada cuya misión ya no existe en ningún lado no se queda �
   assert.match(String(c2.resultado?.resumen), /no pude confirmar/i);
   assert.ok(td.aplicarCambio(enReconciliar.reg, c2, tarde).ok);
 });
+
+test('revisión 9: una tarea enlazada a una misión más vieja que las HISTORIAL_MAX recientes se reconcilia con su estado real, no «no sé cómo terminó»', async () => {
+  const dur: any = await import('../lib/durable');
+  const pc: any = await import('../server/computadora');
+  const tr: any = await import('../server/trabajos');
+  const td: any = await import('../lib/tareas-durables');
+  const express = (await import('express')).default;
+  dur._usarAlmacenDurable(dur.almacenEnMemoria());
+  const yo = 'misiones-viejas@ejemplo.test';
+  const t0 = Date.now() - 3 * 3600_000;
+  const n = pc.HISTORIAL_MAX + 2;
+  const historial: { id: string; t: number }[] = [];
+  // 12 misiones durables, todas terminadas. La 1.ª (la más vieja) la PARÓ la persona; las demás solo respondieron.
+  for (let i = 1; i <= n; i++) {
+    const id = `nodo_viejo_${i}`;
+    const inicio = t0 + i * 60_000;
+    const parada = i === 1;
+    const registro = {
+      v: 1,
+      id,
+      instruccion: `Revisa la página sintética ${i}`,
+      plan: ['Abrir la página', 'Leerla'],
+      planDelCerebro: false,
+      inicio,
+      tareas: [id],
+      indice: 1,
+      recibos: {},
+      fin: inicio + 30_000,
+      final: {
+        estado: parada ? 'parada' : 'hecha',
+        ok: false,
+        respuesta: parada ? null : `La página ${i} dice «Hola».`,
+        error: parada ? 'La paraste tú.' : null,
+        captura: null,
+        segundos: 30,
+        pasos: 2,
+        visitados: [],
+        archivos: null,
+        comprobado: false,
+        respondida: !parada,
+        sinComprobar: null,
+        entregables: null,
+      },
+      pregunta: null,
+      rondas: 0,
+      pasosPrevios: 0,
+      idioma: 'es',
+      motor: 'holo',
+      aparato: null,
+      ambito: null,
+      maxPasos: 30,
+      estadoNodo: parada ? 'parada' : 'hecha',
+      controles: [],
+      version: 1,
+      actualizada: inicio + 30_000,
+    };
+    assert.ok((await dur.crearUnaVez(dur.claveDe('computadora/misiones', yo, id), registro)).ok);
+    historial.push({ id, t: inicio });
+  }
+  assert.ok((await dur.crearUnaVez(dur.claveDe('computadora/historial', yo, 'lista'), { v: 1, ids: historial })).ok);
+  // La tarea durable enlazada a la 1.ª misión, que quedó «reconciling» hace mucho (más que RECONCILIAR_MAX_MS).
+  const crear = await td.crearTarea(yo, {
+    requestId: 'mision-vieja-0001',
+    titulo: 'Revisa la página sintética 1',
+    estado: 'running',
+    entorno: { kind: 'computadora', id: 'nodo_viejo_1', displayName: 'Tu computadora' },
+    origen: { kind: 'chat' },
+    criterios: [{ id: 'resultado', texto: 'El resultado', obligatorio: true }],
+    enlace: { tipo: 'computadora', id: 'nodo_viejo_1' },
+  });
+  assert.ok(crear.ok, JSON.stringify(crear));
+  const tk = crear.tarea.id;
+  const c = await td.cambiarTarea(yo, tk, () => ({ estado: 'reconciling', pasoActual: 'No puedo confirmar cómo terminó en tu computadora; reviso antes de repetir nada.' }));
+  assert.ok(c.ok, JSON.stringify(c));
+  const tarde = Date.now() + td.RECONCILIAR_MAX_MS + 60_000;
+
+  const app = express();
+  app.use(express.json());
+  const pasa = (_q: any, _s: any, next: any) => next();
+  const adaptador = pc.adaptadorTrabajos();
+  tr.montarRutasTrabajos(app, {
+    exigirMesa: pasa,
+    limitar: () => pasa,
+    sesionDe: (req: any) => (req.headers['x-quien'] ? { correo: String(req.headers['x-quien']) } : null),
+    computadora: adaptador,
+    reloj: () => tarde,
+  });
+  const srv = app.listen(0, '127.0.0.1');
+  await new Promise((r) => srv.once('listening', r));
+  try {
+    const leer = async (ruta: string) => {
+      const r = await fetch(`http://127.0.0.1:${(srv.address() as AddressInfo).port}${ruta}`, { headers: { 'x-quien': yo, 'x-aura-estados': 'respondida' } });
+      return { status: r.status, j: (await r.json()) as any };
+    };
+    // Lo que el panel tiene en memoria: solo las HISTORIAL_MAX recientes; la 1.ª no está.
+    assert.equal(await adaptador.preparar(yo), true);
+    const recientes = adaptador.misiones(yo).map((m: any) => m.id);
+    assert.equal(recientes.length, pc.HISTORIAL_MAX);
+    assert.ok(!recientes.includes('nodo_viejo_1'), 'la misión enlazada ya no está entre las recientes');
+    const r = await leer(`/api/trabajos/${tk}`);
+    assert.equal(r.status, 200, JSON.stringify(r.j));
+    const t = r.j.tarea;
+    assert.equal(t.state, 'cancelled', `se reconcilia con el estado real de su misión (la paró la persona), no «no sé»: ${t.state} · ${t.result?.summary}`);
+    assert.doesNotMatch(String(t.result?.summary || ''), /no pude confirmar/i);
+    // Leerla fue solo para leer: no desplazó a las recientes de la memoria.
+    assert.deepEqual(adaptador.misiones(yo).map((m: any) => m.id), recientes);
+    // Otra cuenta no encuentra esa misión por su id.
+    assert.equal(await adaptador.buscar('otra-cuenta@ejemplo.test', 'nodo_viejo_1'), null);
+    assert.equal((await adaptador.buscar(yo, 'nodo_viejo_1'))?.estado, 'parada');
+  } finally {
+    srv.close();
+    dur._usarAlmacenDurable(null);
+  }
+});

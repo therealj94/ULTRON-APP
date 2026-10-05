@@ -80,6 +80,12 @@ export type TareaVista = {
   createdAt?: string;
   updatedAt: string;
   controls: { pause: boolean; resume: boolean; cancel: boolean; open?: 'computadora' };
+  /**
+   * Solo del cliente (revisión 9, MEDIO-1): la última lista del servidor vino PARCIAL (`completo: false`) y esta tarea no
+   * estaba en ella. Se queda a la vista con lo último que se supo, marcada «sin confirmar»: no se pudo leer, no es que
+   * ya no exista. La siguiente lista completa (o la tarea leída por su id) la confirma o la quita.
+   */
+  sinConfirmar?: boolean;
 };
 
 /** Lo que enlaza la respuesta del chat (`tareas` en el `done` o en el JSON del turno). */
@@ -93,16 +99,35 @@ const conEstados = (ruta: string) => `${ruta}${ruta.includes('?') ? '&' : '?'}${
 
 /* ------------------------------------------------------------------ el reductor */
 
-export type EstadoTrabajos = { porId: Record<string, TareaVista>; orden: string[]; cargado: boolean; error: string | null; actualizado: number };
+export type EstadoTrabajos = {
+  porId: Record<string, TareaVista>;
+  orden: string[];
+  cargado: boolean;
+  error: string | null;
+  actualizado: number;
+  /** El aviso de la última lista PARCIAL («No pude leer una de tus tareas…»); null si vino completa. */
+  aviso?: string | null;
+};
 
 export type AccionTrabajos =
-  | { tipo: 'lista'; tareas: TareaVista[]; en: number }
+  /** `completo: false` (lo dice el servidor o el cliente no pudo traer todas las páginas): la lista no es «eso es todo». */
+  | { tipo: 'lista'; tareas: TareaVista[]; en: number; completo?: boolean; aviso?: string }
   | { tipo: 'una'; tarea: TareaVista; en: number }
   | { tipo: 'quitar'; id: string }
   | { tipo: 'error'; mensaje: string; en: number }
   | { tipo: 'sin-sesion' };
 
-export const estadoInicial = (): EstadoTrabajos => ({ porId: {}, orden: [], cargado: false, error: null, actualizado: 0 });
+export const estadoInicial = (): EstadoTrabajos => ({ porId: {}, orden: [], cargado: false, error: null, actualizado: 0, aviso: null });
+
+/** Lo que se dice cuando la lista vino parcial y el servidor no explicó por qué. */
+export const AVISO_LISTA_PARCIAL = 'No pude leer todas tus tareas en este momento; las que no pude confirmar siguen a la vista con lo último que supe.';
+
+/** La tarea sin la marca «sin confirmar» (el servidor acaba de darla). */
+function confirmada(t: TareaVista): TareaVista {
+  if (!t.sinConfirmar) return t;
+  const { sinConfirmar: _fuera, ...resto } = t;
+  return resto;
+}
 
 /** ¿`nueva` puede reemplazar a `vieja`? Nunca hacia atrás en versión; nunca de terminal a vivo. */
 function gana(vieja: TareaVista | undefined, nueva: TareaVista): boolean {
@@ -120,19 +145,30 @@ function ordenar(porId: Record<string, TareaVista>): string[] {
 export function reducir(s: EstadoTrabajos, a: AccionTrabajos): EstadoTrabajos {
   switch (a.tipo) {
     case 'lista': {
-      // La lista completa manda en QUÉ tareas hay; cada una, con su versión, en CÓMO están.
+      // La lista COMPLETA manda en QUÉ tareas hay; cada una, con su versión, en CÓMO están.
       const porId: Record<string, TareaVista> = {};
       for (const t of a.tareas) {
         if (!t || typeof t.id !== 'string' || !t.id) continue;
         const vieja = s.porId[t.id];
-        porId[t.id] = gana(vieja, t) ? t : vieja;
+        porId[t.id] = gana(vieja, t) ? confirmada(t) : confirmada(vieja);
       }
-      return { porId, orden: ordenar(porId), cargado: true, error: null, actualizado: a.en };
+      // Una lista PARCIAL no dice qué tareas hay (revisión 9, MEDIO-1): las que ya se conocían y no vinieron se quedan
+      // con lo último que se supo, marcadas «sin confirmar». Nunca desaparecen en silencio.
+      const parcial = a.completo === false;
+      if (parcial) {
+        for (const id of Object.keys(s.porId)) {
+          if (porId[id]) continue;
+          const vieja = s.porId[id];
+          porId[id] = vieja.sinConfirmar ? vieja : { ...vieja, sinConfirmar: true };
+        }
+      }
+      const aviso = parcial ? (typeof a.aviso === 'string' && a.aviso.trim() ? a.aviso.trim() : AVISO_LISTA_PARCIAL) : null;
+      return { porId, orden: ordenar(porId), cargado: true, error: null, actualizado: a.en, aviso };
     }
     case 'una': {
       const vieja = s.porId[a.tarea.id];
       if (!gana(vieja, a.tarea)) return s;
-      const porId = { ...s.porId, [a.tarea.id]: a.tarea };
+      const porId = { ...s.porId, [a.tarea.id]: confirmada(a.tarea) };
       return { ...s, porId, orden: ordenar(porId), actualizado: a.en };
     }
     case 'quitar': {
@@ -366,6 +402,11 @@ export type ResultadoAccion = { ok: true; tarea: TareaVista | null; sugerencia?:
 
 const enc = encodeURIComponent;
 
+/** Cuántas páginas de GET /api/trabajos se siguen en un sondeo (un servidor que pagina por su cuenta). */
+export const MAX_PAGINAS_TRABAJOS = 5;
+const AVISO_PAGINA_NO_LEIDA = 'No pude traer todas tus tareas en este momento; las que no vinieron no es que no existan.';
+const AVISO_MAS_PAGINAS = 'Tienes más tareas de las que pude traer ahora; las que no vinieron no es que no existan.';
+
 /** Las llamadas del panel, sobre el transporte de cada cliente (la `api` del teléfono, `fetch` de la web). */
 export function crearClienteTrabajos(pedir: Pedir) {
   const post = async (ruta: string, cuerpo: Record<string, unknown> = {}): Promise<ResultadoAccion> => {
@@ -382,17 +423,59 @@ export function crearClienteTrabajos(pedir: Pedir) {
     /**
      * P5/A7: `completo: false` (con `aviso`) si el servidor no pudo leer alguna tarea: la lista que llega es parcial, no
      * «eso es todo». Un servidor de antes no lo manda (se toma como completa, como siempre).
+     *
+     * Revisión 9: si el servidor pagina (`siguiente`), se siguen las páginas hasta MAX_PAGINAS_TRABAJOS; si quedan más, o
+     * una página no se pudo leer, la lista va como PARCIAL (con su aviso), nunca como «eso es todo».
      */
     async listar(): Promise<{ ok: true; tareas: TareaVista[]; completo: boolean; aviso?: string } | { ok: false; sinSesion: boolean; mensaje: string }> {
+      let r: { status: number; json: any };
       try {
-        const r = await pedir(conEstados('/api/trabajos'), { method: 'GET' });
-        // 401: sin sesión; 403: sesión sin correo (no hay de quién serían). Las dos: no hay tareas que mostrar.
-        if (r.status === 401 || r.status === 403) return { ok: false, sinSesion: true, mensaje: 'sin sesión' };
-        if (r.status !== 200 || !Array.isArray(r.json?.tareas)) return { ok: false, sinSesion: false, mensaje: String(r.json?.error || r.status) };
-        return { ok: true, tareas: r.json.tareas as TareaVista[], completo: r.json.completo !== false, ...(typeof r.json.aviso === 'string' && r.json.aviso ? { aviso: r.json.aviso } : {}) };
+        r = await pedir(conEstados('/api/trabajos'), { method: 'GET' });
       } catch (e: any) {
         return { ok: false, sinSesion: false, mensaje: String(e?.message || e).slice(0, 120) };
       }
+      // 401: sin sesión; 403: sesión sin correo (no hay de quién serían). Las dos: no hay tareas que mostrar.
+      if (r.status === 401 || r.status === 403) return { ok: false, sinSesion: true, mensaje: 'sin sesión' };
+      if (r.status !== 200 || !Array.isArray(r.json?.tareas)) return { ok: false, sinSesion: false, mensaje: String(r.json?.error || r.status) };
+      const tareas: TareaVista[] = [];
+      const vistas = new Set<string>();
+      const avisos: string[] = [];
+      let completo = true;
+      const sumar = (j: any) => {
+        for (const t of j.tareas as TareaVista[]) {
+          if (!t || typeof t.id !== 'string' || vistas.has(t.id)) continue;
+          vistas.add(t.id);
+          tareas.push(t);
+        }
+        if (j.completo === false) completo = false;
+        if (typeof j.aviso === 'string' && j.aviso && !avisos.includes(j.aviso)) avisos.push(j.aviso);
+      };
+      sumar(r.json);
+      let siguiente: string | null = typeof r.json.siguiente === 'string' && r.json.siguiente ? r.json.siguiente : null;
+      let paginas = 1;
+      while (siguiente && paginas < MAX_PAGINAS_TRABAJOS) {
+        paginas++;
+        let p: { status: number; json: any } | null = null;
+        try {
+          p = await pedir(conEstados(`/api/trabajos?cursor=${enc(siguiente)}`), { method: 'GET' });
+        } catch {
+          p = null;
+        }
+        if (!p || p.status !== 200 || !Array.isArray(p.json?.tareas)) {
+          completo = false;
+          avisos.push(AVISO_PAGINA_NO_LEIDA);
+          siguiente = null;
+          break;
+        }
+        sumar(p.json);
+        siguiente = typeof p.json.siguiente === 'string' && p.json.siguiente ? p.json.siguiente : null;
+      }
+      if (siguiente) {
+        completo = false;
+        avisos.push(AVISO_MAS_PAGINAS);
+      }
+      const aviso = avisos.join(' ');
+      return { ok: true, tareas, completo, ...(aviso ? { aviso } : {}) };
     },
     async ver(id: string): Promise<TareaVista | null> {
       try {

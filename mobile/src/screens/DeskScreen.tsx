@@ -18,7 +18,7 @@ import type { Escena, MotorVision } from '../lib/escena';
 import type { DeskPresence, FaceState, Mode, SessionUser } from '../config';
 import { esVencida } from '../lib/intentoEntrada';
 import { generacionCuenta, sigueVigente } from '../lib/cuenta';
-import { api, CANCIONES_LOCAL, healthCheck, listCanciones, nuevoIdTurno, olvidarMemoriaServidor, opinarTurno, rememberFact, turno, turnoStream, verCamara, type Cancion, type ChatResult, type Turn } from '../lib/api';
+import { api, CANCIONES_LOCAL, consultarTurnoGuardado, healthCheck, listCanciones, nuevoIdTurno, olvidarMemoriaServidor, opinarTurno, rememberFact, turno, turnoStream, verCamara, type Cancion, type ChatResult, type Turn } from '../lib/api';
 import { faceForEmocion, type Emocion } from '../lib/emocion';
 import { GENEROS, generoPorId, interpretar, type Gag } from '../lib/intenciones';
 import { ayuda, CONOCER_CORE, CONOCER_QUESTIONS, fechaLocal, horaLocal, preguntaConocer } from '../lib/knowledge';
@@ -129,7 +129,7 @@ import { escucharPedidoPanel, tomarPedidoPanel } from '../trabajos/abrirPanel';
 import { clienteTrabajos } from '../trabajos/useTrabajos';
 import { alCambiarPrimer, anotarPrimer, leerPrimerDe } from '../primeravez/medida';
 import { SirvioPrimera } from '../primeravez/SirvioPrimera';
-import { clasificarTurno, debePreguntar, queRecuperar, type PrimerResultado } from '../lib/primerResultado';
+import { clasificarTurno, debePreguntar, queRecuperar, trasSoloRepetir, type PrimerResultado } from '../lib/primerResultado';
 
 type Props = {
   user: SessionUser;
@@ -261,7 +261,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
    */
   const [primer, setPrimer] = useState<PrimerResultado | null>(null);
   /** El primer pedido que quedó a medias al cerrar la app: se vuelve a pedir con su idTurno (askBrain). */
-  const turnoRecuperado = useRef<{ texto: string; idTurno: string } | null>(null);
+  const turnoRecuperado = useRef<{ texto: string; idTurno: string; soloRepetir?: boolean } | null>(null);
   const [listening, setListening] = useState(false);
   const [level, setLevel] = useState(0);
   /** El volumen del micrófono solo lo dibuja la cara clásica: con las otras no se re-renderiza por él. */
@@ -956,6 +956,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       const rec = turnoRecuperado.current;
       turnoRecuperado.current = null;
       const idTurno = rec && rec.texto === cmd ? rec.idTurno : nuevoIdTurno();
+      // R1 (revisión 9): recuperar es SOLO repetir lo guardado; el servidor nunca corre otro turno con esto.
+      const soloRepetir = !!(rec && rec.texto === cmd && rec.soloRepetir);
       // El primer resultado (R1): se anota el envío; si esta cuenta no está midiendo su primera vez, no hace nada.
       void anotarPrimer(user.correo, { tipo: 'enviar', idTurno, texto: cmd });
       /** Lo que volvió de verdad (o por qué no): al terminar se clasifica para el primer resultado. */
@@ -974,6 +976,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         hablado: ultimoHablado.current,
         // Uno por frase y el mismo en los reintentos de abajo: el servidor no corre la frase dos veces.
         idTurno,
+        ...(soloRepetir ? { soloRepetir: true } : {}),
         ...(interrumpidaTurno.current !== null ? { interrumpido: { oido: interrumpidaTurno.current } } : {}),
       };
       ultimoHablado.current = false;
@@ -2345,13 +2348,25 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       // Preparada o fallida: vuelve a la caja (lo manda la persona). Lo escrito después gana.
       if (q.accion === 'rellenar') setDraft((d) => (d.trim() ? d : q.texto));
       else if (q.accion === 'reconsultar') {
-        // Se mandó y se cerró la app antes de la respuesta: el mismo pedido con el MISMO idTurno, cuando la
-        // mesa ya está en pie. El servidor devuelve lo que ya tenía (o espera al turno que sigue); no se repite.
+        // Se mandó y se cerró la app antes de la respuesta. Primero se pregunta SOLO por ese idTurno (revisión 9, R1):
+        // si el servidor tiene su respuesta (o el turno sigue en curso), se pide con `soloRepetir` y la repite, sin correr
+        // otro. Si el pedido nunca llegó, NO corre un turno nuevo sin que la persona toque nada: vuelve a la caja.
         espera = setTimeout(() => {
           if (!vivo || !sigueVigente(gen)) return;
-          miga('primer resultado: recuperando el pedido pendiente');
-          turnoRecuperado.current = { texto: q.texto, idTurno: q.idTurno };
-          if (!mandarTurnoRef.current(q.texto)) turnoRecuperado.current = null;
+          void consultarTurnoGuardado(q.idTurno).then((resp) => {
+            if (!vivo || !sigueVigente(gen)) return;
+            const d = trasSoloRepetir(resp);
+            // Conversando, el texto iría a la voz (otro turno, sin idTurno): también vuelve a la caja.
+            if (d.accion === 'rellenar' || conversandoRef.current) {
+              miga(d.accion === 'rellenar' && d.noLlego ? 'primer resultado: el pedido no llegó; vuelve a la caja' : 'primer resultado: no pude recuperar el pedido; vuelve a la caja');
+              setDraft((x) => (x.trim() ? x : q.texto));
+              if (d.accion === 'rellenar' && d.noLlego) void anotarPrimer(user.correo, { tipo: 'turno', idTurno: q.idTurno, resultado: { clase: 'fallida', motivo: 'el pedido no llegó al servidor' } });
+              return;
+            }
+            miga('primer resultado: recuperando el pedido pendiente');
+            turnoRecuperado.current = { texto: q.texto, idTurno: q.idTurno, soloRepetir: true };
+            if (!mandarTurnoRef.current(q.texto)) turnoRecuperado.current = null;
+          });
         }, 1500);
       }
     });
@@ -2938,6 +2953,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         visible={panelTrabajos}
         onCerrar={() => setPanelTrabajos(false)}
         tareas={trabajos.tareas}
+        aviso={trabajos.aviso}
         reducido={trabajos.reducido}
         idioma={idioma === 'en' ? 'en' : 'es'}
         onTarea={trabajos.aplicar}

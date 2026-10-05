@@ -415,6 +415,11 @@ type TurnoOpts = {
    */
   idTurno?: string;
   /**
+   * R1 (revisión 9): pedir SOLO la respuesta guardada de ese `idTurno` (el primer pedido que quedó sin respuesta al
+   * cerrar la app). El servidor nunca corre el cerebro con esto: repite lo guardado o dice que no existe.
+   */
+  soloRepetir?: boolean;
+  /**
    * La persona le habló encima a la respuesta anterior y AU-RA se calló (lib/interrupcion.ts): lo que
    * alcanzó a oír. El servidor abre con un acuse corto («Va, dime») en vez de repetirse (lib/interrumpida.ts).
    */
@@ -432,6 +437,21 @@ export async function opinarTurno(trazaId: string, valor: 1 | -1): Promise<boole
     return !!r?.ok;
   } catch {
     return false;
+  }
+}
+
+/**
+ * «Solo repetir» (R1, revisión 9): ¿el servidor tiene la respuesta de ese idTurno? POST /api/turno/repetir nunca corre
+ * un turno (una ruta propia: un servidor de antes contesta 404 en vez de correr uno nuevo). Devuelve el estado y el
+ * cuerpo tal cual (lo interpreta lib/primerResultado.ts `trasSoloRepetir`); null sin red.
+ */
+export async function consultarTurnoGuardado(idTurno: string): Promise<{ status: number; json: any } | null> {
+  try {
+    const json = await api<any>('/api/turno/repetir', { method: 'POST', body: JSON.stringify({ idTurno, idioma: idiomaActual() }), headers: { 'x-aura-origen': 'app' } }, 80_000);
+    return { status: 200, json };
+  } catch (e: any) {
+    if (typeof e?.status === 'number') return { status: e.status, json: e.data || {} };
+    return null;
   }
 }
 
@@ -456,6 +476,7 @@ function turnoBody(opts: TurnoOpts) {
     ...(opts.hablado ? { hablado: true } : {}),
     ...(opts.soloRapido ? { soloRapido: true } : {}),
     ...(opts.idTurno ? { idTurno: opts.idTurno } : {}),
+    ...(opts.soloRepetir && opts.idTurno ? { soloRepetir: true } : {}),
     ...(opts.interrumpido ? { interrumpido: { oido: String(opts.interrumpido.oido || '').slice(-400) } } : {}),
     // Con quién habla la persona y en qué idioma: el cerebro contesta como ese avatar y en esa lengua.
     avatar: avatarActual(),

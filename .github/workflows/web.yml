@@ -165,9 +165,21 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      # Revisión 9: un control que pasa con 0 pruebas no prueba nada. Se exige el «OK» final de unittest y al menos
+      # MIN_PRUEBAS pruebas corridas («Ran N tests»); si se borran o dejan de descubrirse, el check falla.
       - name: Pruebas del nodo (agente.py)
         working-directory: scripts/nodo-computadora
-        run: python3 -m py_compile agente.py && python3 test_agente.py
+        env:
+          MIN_PRUEBAS: "100"
+        run: |
+          set -euo pipefail
+          python3 -m py_compile agente.py
+          python3 test_agente.py 2>&1 | tee "$RUNNER_TEMP/salida-nodo.txt"
+          n=$(sed -n 's/^Ran \([0-9][0-9]*\) tests\{0,1\} in .*/\1/p' "$RUNNER_TEMP/salida-nodo.txt" | tail -n 1)
+          n=${n:-0}
+          echo "pruebas del nodo: $n (mínimo $MIN_PRUEBAS)"
+          grep -Eq '^OK( \(.*\))?$' "$RUNNER_TEMP/salida-nodo.txt" || { echo "::error::las pruebas del nodo no terminaron con OK"; exit 1; }
+          [ "$n" -ge "$MIN_PRUEBAS" ] || { echo "::error::solo $n pruebas del nodo (mínimo $MIN_PRUEBAS)"; exit 1; }
 
   # El nombre de siempre («web») para quien espere ese check: verde solo si las cuatro tandas, el navegador y el nodo lo están.
   web:
