@@ -111,9 +111,10 @@ import {
   vistaMision,
   type MotorNodo,
 } from './server/computadora';
-import { avisosDeEnvio, borradorDe, correrCorreoConEstado, montarRutasCorreo, respuestaAlBorrador } from './server/correo';
+import { avisosDeEnvio, borradorCorreoPorIntento, borradorDe, correrCorreoConEstado, editarBorradorCorreo, montarRutasCorreo, respuestaAlBorrador } from './server/correo';
+import { olvidarEnPantallaDeConversacion } from './server/decision-en-pantalla';
 import { accionTareaPorId, bloqueTarea, correrTareaConEstado, precargarTareas, resolverTareaEnCurso, tareaDe, tareasDePersona } from './lib/tarea-en-curso';
-import { borradorWhatsappDe, correrWhatsappConEstado, destinoWhatsapp, montarRutasWhatsapp, whatsappDisponible, whatsappPermitido } from './server/whatsapp';
+import { borradorWhatsappDe, borradorWhatsappPorIntento, correrWhatsappConEstado, destinoWhatsapp, editarBorradorWhatsapp, montarRutasWhatsapp, whatsappDisponible, whatsappPermitido } from './server/whatsapp';
 import { accionIniciativa, bloqueIniciativaTurno, componerIniciativa, correrMisionTurnoConEstado, duenoMisiones } from './server/iniciativa';
 import { contadoresProductivos } from './server/fuentes-iniciativa';
 import { bloquesPersonales, precargarVista, vistaAutorizada, vistaDeHerramientas } from './server/contexto-turno';
@@ -1565,12 +1566,28 @@ montarRutasTrabajos(app, {
   // o antes de un reinicio); pausar y reanudar solo si el nodo sabe; cada control deja su recibo durable.
   computadora: adaptadorTrabajos(),
   borradores: {
-    vigente: (correo, canal, ambito) => {
-      const b = canal === 'correo' ? borradorDe(correo, ambito) : borradorWhatsappDe(correo, ambito);
+    // Con su intento (José, 5-oct): también un apartado que otro borrador desplazó (sigue esperando, en orden).
+    vigente: (correo, canal, ambito, intento) => {
+      const b = intento
+        ? canal === 'correo'
+          ? borradorCorreoPorIntento(correo, ambito, intento)
+          : borradorWhatsappPorIntento(correo, ambito, intento)
+        : canal === 'correo'
+          ? borradorDe(correo, ambito)
+          : borradorWhatsappDe(correo, ambito);
       return b ? { intento: b.intento, huella: b.huella } : null;
     },
     enviar: (correo, canal, ambito, intento, huella) => resolverBorradorDesdePanel(correo, canal, ambito, intento, 'sí', huella),
     descartar: (correo, canal, ambito, intento) => resolverBorradorDesdePanel(correo, canal, ambito, intento, 'no'),
+    // «Editar» de la ventana de decisión: el borrador nuevo (otro intento y huella) espera su propio «sí»; nada sale.
+    editar: (correo, canal, ambito, intento, huella, cambios) => {
+      if (canal === 'correo') {
+        const r = editarBorradorCorreo(correo, ambito, intento, huella, cambios);
+        return r.ok === false ? r : { ok: true, borrador: { canal, intento: r.borrador.intento, para: r.borrador.para, desde: r.borrador.desde, asunto: r.borrador.asunto, texto: r.borrador.texto, vence: r.borrador.vence, huella: r.borrador.huella } };
+      }
+      const r = editarBorradorWhatsapp(correo, ambito, intento, huella, cambios);
+      return r.ok === false ? r : { ok: true, borrador: { canal, intento: r.borrador.intento, para: destinoWhatsapp(r.borrador), texto: r.borrador.texto, vence: r.borrador.vence, huella: r.borrador.huella } };
+    },
   },
   // Lo que propuso el taller de la junta (revisión 10, MEDIO-C): lo aprueba la misma cuenta, si sigue en la junta y el
   // vínculo es exactamente lo aprobado; se ejecuta con los argumentos congelados, una vez.
@@ -2808,6 +2825,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     app: appEsperando,
     conocidos: (contextoApp?.contactos || []).map((c) => c.nombre),
     registrarEfecto: () => efectoDelTurno('decision'),
+    // Lo que AU-RA dijo antes: si mencionó algo pendiente («¿lo envío?»), el «sí» es para eso solo si de verdad lo nombró.
+    dijoAntes: [...hiloPrevio].reverse().find((t) => t.rol !== 'user')?.texto,
   });
   hechos.push(...decision.hechos);
   const { delCorreo, delWhatsapp, deLaPregunta } = decision;
@@ -3941,6 +3960,9 @@ async function correrHerramientaPedida(
 async function decisionDelBorrador(r: ResultadoHerramienta, dueno: string, ambito: string): Promise<ResultadoHerramienta> {
   const intento = r.recibo?.efecto === 'borrador' ? r.recibo.referencia : undefined;
   if (!intento || !dueno.includes('@')) return r;
+  // AU-RA acaba de preguntar por ESTE borrador: es la pregunta más reciente. Lo que la ventana de decisión mostraba antes
+  // deja de valer para un «sí» suelto hasta que la ventana vuelva a decir qué muestra (server/decision-en-pantalla.ts).
+  olvidarEnPantallaDeConversacion(dueno, ambito);
   const c = borradorDe(dueno, ambito);
   const w = borradorWhatsappDe(dueno, ambito);
   // La tarjeta dice a quién va de verdad (WhatsApp: el nombre Y el número del chat) y queda atada a la huella del borrador.
