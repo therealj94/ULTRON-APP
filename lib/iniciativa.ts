@@ -29,7 +29,8 @@
  * Antes de entregarla —la de la cola, la pospuesta con «luego», la pendiente— se REVALIDA contra las fuentes
  * leídas en ese momento (`revalidarPropuesta`): un asunto resuelto, una fuente que no se pudo leer o una idea
  * caducada no se entregan; un número contado que cambió (A2, 5-oct: «tres correos» y ahora hay uno) no se entrega
- * tal cual: se regenera desde lo observado, con el mismo id (no es otro aviso). Las horas quietas y el «día» son
+ * tal cual: se regenera desde lo observado, con el mismo id (no es otro aviso), y solo desde una lectura más nueva que
+ * la guardada (dos consultas pueden terminar fuera de orden: la vieja no pisa a la nueva). Las horas quietas y el «día» son
  * los de la zona IANA de la persona (lib/zona-horaria.ts; Honduras por omisión). Cómo y cuándo se AVISA fuera de la app (canal, presupuesto,
  * outbox deduplicada) vive en lib/avisos.ts. La iniciativa prepara; no envía nada en nombre de nadie: una
  * propuesta cuyo `pedido` mande, publique o comparta algo directamente se descarta.
@@ -98,6 +99,8 @@ export type FuentePropuesta = {
   consulta?: string;
   /** Cuándo se leyó. */
   visto: number;
+  /** El orden de la consulta que la leyó (Observacion.orden): desempata dos lecturas del mismo milisegundo. */
+  orden?: number;
 };
 
 /** Las fuentes que se CUENTAN con un adaptador del servidor (server/fuentes-iniciativa.ts). */
@@ -113,8 +116,40 @@ export type FuenteContada = 'correo' | 'whatsapp';
  */
 export type EstadoObservacion = 'vigente' | 'empty' | 'unavailable' | 'disconnected' | 'not_configured';
 export const ESTADOS_OBSERVACION: readonly EstadoObservacion[] = ['vigente', 'empty', 'unavailable', 'disconnected', 'not_configured'];
-export type Observacion = { estado: EstadoObservacion; valor?: number; version?: number; visto?: number };
+/**
+ * `visto`: cuándo EMPEZÓ la lectura (la hora que da la fuente o, si no la da, el inicio de la consulta en el servidor).
+ * `orden`: el número de la consulta (siguienteOrdenObservacion), creciente en el proceso. Con los dos se sabe cuál de
+ * dos lecturas es la más nueva aunque terminen fuera de orden (observacionMasNueva).
+ */
+export type Observacion = { estado: EstadoObservacion; valor?: number; version?: number; visto?: number; orden?: number };
 export type Observaciones = Partial<Record<FuenteContada, Observacion>>;
+
+let ordenObservacion = 0;
+/**
+ * El orden de una consulta a las fuentes contadas, tomado AL EMPEZARLA (server/iniciativa.ts fuentesAhora): crece en
+ * cada consulta de este proceso, así que también por persona. Solo desempata lecturas con la misma hora: entre
+ * réplicas no se compara con sentido, y entonces manda `visto`.
+ */
+export function siguienteOrdenObservacion(): number {
+  return ++ordenObservacion;
+}
+
+/**
+ * ¿La lectura `o` es MÁS NUEVA que la que ancló lo guardado (`ancla`)? (A2, revisión del 5-oct: «un contador
+ * actualizado puede volver a un valor antiguo cuando dos consultas terminan fuera de orden»). Primero la hora de la
+ * lectura (`visto`); con la misma hora, el orden de la consulta si los dos lo traen. Un empate, o una lectura sin
+ * hora, NO es más nueva: lo guardado se queda (determinista, sin ir y venir). Lo guardado antes de esto trae `visto`
+ * (o 0): una lectura con hora posterior sí lo supera.
+ */
+export function observacionMasNueva(o: Pick<Observacion, 'visto' | 'orden'> | undefined, ancla: Pick<FuentePropuesta, 'visto' | 'orden'>): boolean {
+  const vo = Number(o?.visto);
+  if (!(vo > 0)) return false;
+  const va = Number(ancla.visto) || 0;
+  if (vo !== va) return vo > va;
+  const oo = Number(o?.orden);
+  const oa = Number(ancla.orden);
+  return Number.isFinite(oo) && Number.isFinite(oa) && oo > oa;
+}
 
 /** Lo que haría falta si dice que sí: nada, leer su correo o su WhatsApp, o confirmar aparte un envío. */
 export type PermisoPropuesta = 'ninguno' | 'leer_correo' | 'leer_whatsapp' | 'confirmar_envio';
@@ -489,7 +524,16 @@ export function sinLeerVigente(o: Observacion | undefined): number | null {
 export function fuenteContada(fuente: FuenteContada, o: Observacion, ahora: number): FuentePropuesta {
   const n = sinLeerVigente(o) || 0;
   const v = Number(o.version);
-  return { tipo: fuente, consulta: 'sin_leer', valor: n, version: o.version !== undefined && Number.isFinite(v) ? v : n, visto: Number(o.visto) > 0 ? Number(o.visto) : ahora };
+  const orden = Number(o.orden);
+  return {
+    tipo: fuente,
+    consulta: 'sin_leer',
+    valor: n,
+    version: o.version !== undefined && Number.isFinite(v) ? v : n,
+    visto: Number(o.visto) > 0 ? Number(o.visto) : ahora,
+    // El orden de la lectura queda en el ancla: lo que se compare después se compara contra ESTA lectura.
+    ...(o.orden !== undefined && Number.isFinite(orden) ? { orden } : {}),
+  };
 }
 
 /**
@@ -891,14 +935,29 @@ export function regenerarContada(p: Propuesta, f: FuentesVigentes, ahora = Date.
 /**
  * Revalida y, si lo único que pasó es que el hecho contado cambió (o lo guardado no traía su número), la REGENERA
  * desde lo observado ahora. Puro. Lo que no vale por otra razón (caducada, resuelta, fuente caída…) no se regenera.
+ *
+ * El ORDEN de las lecturas (A2, revisión del 5-oct): dos consultas pueden terminar fuera de orden (un GET y el
+ * despacho, dos GET, dos réplicas). Quien llama pasa aquí lo GUARDADO (dentro del paso del cajón: es un guardado
+ * condicional), y:
+ *   · una lectura MÁS VIEJA (o del mismo instante) que la que ancló lo guardado no lo cambia ni lo retira: lo
+ *     guardado ya se comprobó con una lectura más nueva y se devuelve tal cual (la 3 que llega tarde no pisa al 1);
+ *   · solo una lectura MÁS NUEVA regenera (3→1→3 en orden sí sube cada vez);
+ *   · una lectura SIN hora no es más nueva: nunca regenera, y si no concuerda tampoco se da por buena (falla cerrado).
  */
 export function revalidarORegenerar(p: Propuesta, f: FuentesVigentes, ahora = Date.now()): { vigente: true; propuesta: Propuesta; regenerada: boolean } | { vigente: false; motivo: MotivoNoVigente } {
   const r = revalidarPropuesta(p, f, ahora);
   if (r.vigente) return { vigente: true, propuesta: p, regenerada: false };
   const motivo = (r as { motivo: MotivoNoVigente }).motivo;
-  if (motivo === 'hecho_cambiado' || motivo === 'sin_anclaje') {
-    const q = regenerarContada(p, f, ahora);
-    if (q && revalidarPropuesta(q, f, ahora).vigente) return { vigente: true, propuesta: q, regenerada: true };
+  const e = evidenciaDe(p);
+  const fuente = e.fuente.tipo;
+  if (motivo !== 'caducada' && (fuente === 'correo' || fuente === 'whatsapp')) {
+    const o = observacionDe(f, fuente);
+    // Con hora y no más nueva que la que ancló un número: es vieja. Lo guardado manda.
+    if (o && Number(o.visto) > 0 && Number(e.fuente.valor) > 0 && !observacionMasNueva(o, e.fuente)) return { vigente: true, propuesta: p, regenerada: false };
+    if ((motivo === 'hecho_cambiado' || motivo === 'sin_anclaje') && observacionMasNueva(o, e.fuente)) {
+      const q = regenerarContada(p, f, ahora);
+      if (q && revalidarPropuesta(q, f, ahora).vigente) return { vigente: true, propuesta: q, regenerada: true };
+    }
   }
   return { vigente: false, motivo };
 }
@@ -975,6 +1034,7 @@ function sanearEvidencia(x: any): EvidenciaPropuesta | undefined {
   if (f.id) fuente.id = textoLinea(f.id, 40);
   if (Number.isFinite(Number(f.version)) && f.version !== null && f.version !== undefined) fuente.version = Number(f.version);
   if (Number.isFinite(Number(f.valor)) && Number(f.valor) > 0) fuente.valor = Math.floor(Number(f.valor));
+  if (Number.isInteger(Number(f.orden)) && Number(f.orden) > 0) fuente.orden = Number(f.orden);
   if (f.motivo) fuente.motivo = textoLinea(f.motivo, 20);
   if (f.consulta) fuente.consulta = textoLinea(f.consulta, 20);
   const caduca = Number(x.caduca);
@@ -1133,7 +1193,8 @@ export type ResultadoSiguiente = { propuesta: Propuesta | null; nueva: boolean; 
  * no esté repetida y SIGA VIGENTE con las fuentes de ahora, o una nueva pensada ahora. La que se entrega
  * queda pendiente y en el historial. La pendiente también se revalida: un asunto que se resolvió mientras
  * tanto se retira («resuelta») en vez de volver a mostrarse; un número que cambió (A2: 3→1) se regenera desde lo
- * observado y se devuelve la MISMA propuesta actualizada (`motivo: 'actualizada'`, `nueva: false`).
+ * observado y se devuelve la MISMA propuesta actualizada (`motivo: 'actualizada'`, `nueva: false`). Solo si lo leído
+ * es MÁS NUEVO que lo que la ancló: una consulta más vieja que termina tarde devuelve lo guardado, sin tocarlo.
  *
  * Lanza AlmacenNoDisponible si su estado no se pudo leer (no se escribe nada).
  */
@@ -1210,6 +1271,8 @@ export async function siguientePropuesta(persona: PersonaIniciativa, ctx: Contex
  * revalida la versión guardada, no la copia de la outbox (que pudo quedar vieja); si el número cambió, se regenera y
  * se guarda ahí mismo. Devuelve en `propuesta` la versión a entregar (mismo id: el sello y la fila de la outbox, que
  * van por id, siguen dejando UNA entrega). Lo que no vale no se toca aquí: lo retira la próxima siguientePropuesta.
+ * Una lectura más vieja que la que ancló lo guardado (otro despacho u otro GET terminó antes con una más nueva) no
+ * lo regenera: se entrega lo guardado (revalidarORegenerar).
  * Lanza AlmacenNoDisponible si el estado no se pudo leer.
  */
 export async function revalidarPendiente(correo: string, id: string, f: FuentesVigentes, ahora = Date.now()): Promise<Revalidacion> {

@@ -26,6 +26,8 @@ export type AccionIniciativa = {
   creada: number;
   /** Revisión (A2): la misma propuesta regenerada en el servidor con el número de ahora. */
   rev?: number;
+  /** Cuándo se leyó el número que dice (correo, WhatsApp). Una versión con una lectura más vieja no pisa la tarjeta. */
+  observada?: number;
   misionId?: string;
 };
 
@@ -40,6 +42,8 @@ export type PropuestaAura = {
   creada: number;
   /** Revisión: sube cuando el servidor la regeneró (p. ej. «tres correos» → «1 correo»). Sin ella, 1. */
   rev?: number;
+  /** Cuándo se leyó en el servidor el número que dice (solo correo y WhatsApp). */
+  observada?: number;
   misionId?: string;
 };
 
@@ -68,6 +72,7 @@ export function esAccionIniciativa(a: any): a is AccionIniciativa {
   if (a.prioridad !== undefined && (typeof a.prioridad !== 'number' || !Number.isFinite(a.prioridad))) return false;
   if (a.creada !== undefined && (typeof a.creada !== 'number' || !Number.isFinite(a.creada))) return false;
   if (a.rev !== undefined && (typeof a.rev !== 'number' || !Number.isInteger(a.rev) || a.rev < 1)) return false;
+  if (a.observada !== undefined && (typeof a.observada !== 'number' || !Number.isFinite(a.observada) || a.observada <= 0)) return false;
   return a.misionId === undefined || (typeof a.misionId === 'string' && a.misionId.length <= 64);
 }
 
@@ -82,7 +87,21 @@ function normalizar(x: any, clase: unknown): PropuestaAura {
   };
   if (typeof x.misionId === 'string' && x.misionId) p.misionId = x.misionId;
   if (Number.isInteger(x.rev) && x.rev > 1) p.rev = x.rev;
+  if (typeof x.observada === 'number' && Number.isFinite(x.observada) && x.observada > 0) p.observada = x.observada;
   return p;
+}
+
+/**
+ * ¿`p` es una versión MÁS NUEVA que `actual` de la MISMA propuesta? (A2, revisión del 5-oct: «un contador actualizado
+ * puede volver a un valor antiguo cuando dos consultas terminan fuera de orden»). Si las dos dicen cuándo se leyó su
+ * número, manda la lectura más nueva (una más vieja no pisa, aunque traiga otra revisión: otra réplica pudo
+ * regenerarla); con la misma lectura o sin ella, la revisión mayor. Vale igual para el empuje y para el GET.
+ */
+export function versionMasNueva(p: Pick<PropuestaAura, 'rev' | 'observada'>, actual: Pick<PropuestaAura, 'rev' | 'observada'>): boolean {
+  const a = Number(p.observada);
+  const b = Number(actual.observada);
+  if (a > 0 && b > 0 && a !== b) return a > b;
+  return (p.rev || 1) > (actual.rev || 1);
 }
 
 export function propuestaDeAccion(a: AccionIniciativa): PropuestaAura {
@@ -195,8 +214,9 @@ export class ColaPropuestas {
     if (p.creada && this.reloj() - p.creada > CADUCA_MS) return 'caducada';
     if (this.actual?.id === p.id) {
       // La misma, regenerada en el servidor con el número de ahora (A2): se reemplaza la tarjeta (no es otra ni se
-      // anuncia como nueva). Una revisión igual o más vieja (un empuje que llegó tarde) no pisa la de ahora.
-      if ((p.rev || 1) <= (this.actual.rev || 1)) return 'repetida';
+      // anuncia como nueva). Una revisión igual o más vieja, o una lectura más vieja (un empuje o un GET que llegó
+      // tarde), no pisa la de ahora.
+      if (!versionMasNueva(p, this.actual)) return 'repetida';
       this.actual = p;
       this.avisar();
       return 'actualizada';
