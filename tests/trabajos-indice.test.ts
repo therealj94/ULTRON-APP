@@ -1506,3 +1506,29 @@ test('8b9e9ca-2b: si no se puede leer el RESPALDO al revertir, la reversión que
   if (r.ok) assert.deepEqual([r.restaurado, r.restauradas, r.pendientes], [true, 5, 0]);
   assert.deepEqual(new Set(indiceMem(a, yo).ids.map((x: any) => x.id)), new Set(ids.slice(0, MAX_HISTORIAL_INDICE)));
 });
+
+test('8b9e9ca-2c: una tarea del índice de antes dañada (nunca se lee) deja la reversión pendiente; operación la cierra a propósito con `aceptarIlegibles` y queda contada', async () => {
+  const a = almacenEnMemoria();
+  const yo = 'rest-danada@ejemplo.test';
+  const T = Date.now() - 100 * HORA;
+  const ids = await terminadas(a, yo, MAX_HISTORIAL_INDICE + 5, T);
+  a.objetos.set(claveIndiceMem(yo), JSON.stringify({ v: 2, ids: ids.slice(0, MAX_HISTORIAL_INDICE).map((id, i) => ({ id, t: T + i, fin: T + 10_000 + i })) }));
+  const p = await listarTareasPagina(yo, { ahora: T + HORA, presupuesto: PRESUPUESTO_ANCHO }, a);
+  assert.ok(p.ok && p.reconciliado);
+  a.objetos.set(`tareas/${huellaDueno(yo)}/${ids[0]}`, '{dañado');
+  for (let i = 0; i < 3; i++) {
+    const r = await revertirReconciliacionTareas(yo, a, { ahora: T + (2 + i) * HORA });
+    assert.ok(r.ok && r.pendientes >= 1 && !r.ya && !r.restaurado, `vuelta ${i}: ${JSON.stringify(r)}`);
+  }
+  const c = await revertirReconciliacionTareas(yo, a, { ahora: T + 6 * HORA, aceptarIlegibles: true });
+  assert.ok(c.ok);
+  if (c.ok) assert.deepEqual([c.restaurado, c.pendientes, c.ilegibles], [true, 0, 1]);
+  const q = await listarTareasPagina(yo, { ahora: T + 7 * HORA }, a);
+  assert.ok(q.ok);
+  if (q.ok) {
+    assert.equal(q.conteo.recortadas, 1, 'la dañada sigue contada, no se pierde en silencio');
+    assert.equal(q.conteo.indice, MAX_HISTORIAL_INDICE - 1);
+  }
+  const d = await revertirReconciliacionTareas(yo, a, { ahora: T + 8 * HORA });
+  assert.ok(d.ok && d.ya && d.pendientes === 0);
+});

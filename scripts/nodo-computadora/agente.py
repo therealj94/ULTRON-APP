@@ -821,7 +821,7 @@ def correr_claude(t):
                             if vistas > 3:
                                 dentro.clear()
                                 dentro.update(type='text', text='[screenshot evicted]')
-    t.cerrar('sin_pasos', error=f'Se acabaron los {t.max_pasos} pasos sin terminar.')
+    cerrar_sin_terminar(t, 'sin_pasos', f'Se acabaron los {t.max_pasos} pasos sin terminar.')
 
 
 # ------------------------------------------------------------------ archivos: lo que el nodo comprueba al terminar
@@ -2590,6 +2590,19 @@ def comprobar_archivos(t, respuesta):
     return archivos[:ARCHIVOS_MAX], None
 
 
+def cerrar_sin_terminar(t, estado, error):
+    """Ronda del 5-oct (prueba real E1: «crea tres documentos» se quedó sin pasos y no dijo cuáles faltaban): una tarea
+    que se acaba SIN terminar (sin pasos, parada o falló) también trae la comprobación de su espacio de trabajo, para
+    que la persona sepa qué quedó y qué falta. No cambia su estado: sigue sin terminar; si no se pudo mirar, lo dice."""
+    try:
+        archivos, error_arch = comprobar_archivos(t, None)
+    except Exception as e:
+        archivos, error_arch = None, str(e)[:200] or 'falló la comprobación'
+    with t.cambio:
+        t.archivos, t.archivos_error = archivos, error_arch
+    return t.cerrar(estado, error=error)
+
+
 def terminar_hecha(t, respuesta):
     """La tarea dice que terminó (`answer`). Antes de contarla «hecha», el nodo comprueba él mismo los archivos de su
     espacio de trabajo («guardé el archivo» es lo que dice el modelo, no prueba). Se anota ANTES del final: nadie ve
@@ -3100,7 +3113,7 @@ def correr(t: Tarea):
                         asentar(nombre, args)
                 t.resultado_paso(paso, hecho, incierto)
                 mensajes.append({'role': 'tool', 'tool_call_id': llamada.id, 'content': resultado})
-            t.cerrar('sin_pasos', error=f'Se acabaron los {t.max_pasos} pasos sin terminar.')
+            cerrar_sin_terminar(t, 'sin_pasos', f'Se acabaron los {t.max_pasos} pasos sin terminar.')
         except Detenida as d:
             t.cerrar('parada', error=str(d)[:300])
         except Exception as e:

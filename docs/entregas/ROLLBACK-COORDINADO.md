@@ -210,7 +210,12 @@ o reaparecer una tarea recuperada»):
   reversiones que lleva) y anota en el índice el respaldo de ese ciclo (`inventario.respaldo` / `pase.respaldo`). Si al
   escribir el índice ya está en otro ciclo (operación revirtió, y quizá reactivó, mientras esa réplica esperaba el
   LIST), no escribe nada. Antes una réplica así agregaba con el respaldo del ciclo anterior y la siguiente reversión
-  dejaba 199 de las 200 entradas originales. La reversión usa el respaldo anotado, no lo recalcula.
+  dejaba 199 de las 200 entradas originales. La reversión usa el respaldo anotado, no lo recalcula. Antes de escribir
+  el respaldo también se vuelve a mirar el ciclo. **Despliegue escalonado:** esta cerca solo la respetan los servidores
+  con esta revisión; mientras quede una réplica vieja, no se revierte (o se apaga antes `AURA_RECONCILIAR_TAREAS`).
+- **Un objeto dañado** (nunca se puede leer) deja la reversión pendiente para siempre a propósito. Para cerrarla,
+  operación llama `revertirReconciliacionTareas(correo, almacén, { aceptarIlegibles: true })`: lo ilegible queda
+  contado en `recortadas` y el resultado trae `ilegibles`.
 - **Nunca borra objetos** de tareas ni el respaldo.
 
 **Volver a activarla:**
