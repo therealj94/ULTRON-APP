@@ -482,7 +482,7 @@ app.get('/api/health', async (req, res) => {
   // P5: `ok` dice que hay servidor (la app decide con él si está en línea); NO que el almacén durable esté sano. Eso va
   // aparte: una lectura y una escritura reales (con caché de 30 s), sin detalle para quien no tiene sesión.
   const a = await sondearAlmacen();
-  const almacen = autorizado ? a : { ok: a.ok, tipo: a.tipo, comprobado: a.comprobado };
+  const almacen = autorizado ? a : { ok: a.ok, tipo: a.tipo, comprobado: a.comprobado, ...(a.listado ? { listado: a.listado } : {}) };
   if (!autorizado) {
     return res.json({
       ok: true,

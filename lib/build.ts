@@ -146,7 +146,33 @@ export async function manifiestoEntrega(
 
 /* ------------------------------------------------------------------ P5: ¿lee y escribe el almacén durable? */
 
-export type SaludAlmacen = { ok: boolean; tipo: string; multiReplica: boolean; lectura: boolean; escritura: boolean; ms: number; comprobado: string; detalle?: string };
+/**
+ * `listado`: si el almacén deja enumerar (A7, inventario de tareas por dueño). «ok» = una lista real contestó; «denegado» =
+ * el almacén lo rechazó (p. ej. sin `s3:ListBucket`): el inventario de tareas queda «sin reconciliar» y lo dice; «sin-fuente»
+ * = este almacén no sabe listar. No cambia `ok` (leer y escribir siguen siendo lo que decide la salud del almacén).
+ */
+export type SaludAlmacen = {
+  ok: boolean;
+  tipo: string;
+  multiReplica: boolean;
+  lectura: boolean;
+  escritura: boolean;
+  listado?: 'ok' | 'denegado' | 'sin-fuente';
+  ms: number;
+  comprobado: string;
+  detalle?: string;
+};
+
+/** Una lista de una sola clave bajo `salud/` (lo que el inventario de tareas necesita poder hacer). Nunca lanza. */
+async function sondearListado(a: AlmacenDurable): Promise<'ok' | 'denegado' | 'sin-fuente'> {
+  if (!a.listar) return 'sin-fuente';
+  try {
+    const l = await a.listar('salud', { max: 1 });
+    return l.ok ? 'ok' : 'denegado';
+  } catch {
+    return 'denegado';
+  }
+}
 
 let ultimoSondeo: { en: number; r: SaludAlmacen } | null = null;
 let sondeando: Promise<SaludAlmacen> | null = null;
@@ -184,7 +210,8 @@ export async function sondearAlmacen(a: AlmacenDurable = almacenDurable(), o: { 
       if (w.ok === false) return fin(true, false, w.detalle || 'conflicto al escribir');
       const despues = await a.leer<{ marca: string }>(clave);
       if (despues.ok === false) return fin(false, true, despues.detalle);
-      return despues.valor?.marca === marca ? fin(true, true) : fin(false, true, 'lo leído no es lo escrito');
+      if (despues.valor?.marca !== marca) return fin(false, true, 'lo leído no es lo escrito');
+      return { ...fin(true, true), listado: await sondearListado(a) };
     } catch (e: any) {
       return fin(false, false, String(e?.message || e));
     }
