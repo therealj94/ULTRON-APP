@@ -98,3 +98,53 @@ Las tareas que la versión anterior sacó del índice se reparan al leerlas por 
   y `almacen` dan los datos, pero las alertas siguen pendientes.
 - Si una réplica muere, su seguimiento lo retoma otra **cuando alguien consulta** (la app, el panel o una ruta), una vez
   vencido el lease. No hay un proceso que barra las misiones huérfanas al arrancar.
+
+## 6. Inventario de tareas por dueño (A7): lo que operación tiene que saber
+
+La lista de tareas solo dice `completo: true` cuando el inventario del dueño está reconciliado: se recorrió entera su
+carpeta `tareas/<huella>/` y el índice tiene todo lo que había (`lib/tareas-durables.ts`, «inventario (A7)»). Para eso
+el almacén tiene que poder **listar** (`s3:ListBucket` sobre `ultron/durable/tareas/`).
+
+- **Comprobar el permiso:** `almacen.listado` en la salud (`ok` / `denegado` / `sin-fuente`). Desde la revisión 13 la
+  sonda lista UNA clave bajo `tareas/<huella de un dueño sintético>`, la misma forma de prefijo que usa el inventario
+  (antes probaba `salud/`, y un permiso acotado por prefijo podía dar «ok» sin servir al inventario). No enseña nada
+  de lo listado.
+- **Si el listado falla** (p. ej. 403), cada réplica lo recuerda por dueño entre 5 y 15 minutos y no vuelve a pedir el
+  LIST en cada lectura; mientras tanto la lista contesta `completo: false`, `reconciliado: false`,
+  `inventario.estado: 'error'`, con su aviso. Arreglado el permiso, se reconcilia sola en la siguiente ventana.
+- **`conteo.recortadas`:** terminadas que siguen existiendo pero que el tope del historial (las 200 terminadas más
+  recientes) ya no lista. No hacen la lista incompleta; la ruta lo dice en `aviso`. No es un fallo.
+
+### Tareas legadas cuya reserva se borró (quedan «sin verificar» para siempre)
+
+Una tarea creada antes de A7 no guarda dentro la huella de su dueño. El inventario solo la adopta si la reserva de su
+pedido (`tareas/pedidos/<huella>/<requestId>`, escrita en la misma creación) apunta a ese id. Si esa reserva ya no existe
+—el caso típico: una regla de ciclo de vida del cubo (p. ej. expirar a los 30 días, ver `lib/durable.ts`) que borró
+`tareas/pedidos/…` pero no el objeto de la tarea, o lo borró antes— el objeto queda **sin verificar**:
+
+- no se adopta ni se cuenta, y el índice de ese dueño **nunca** se marca reconciliado: su lista dirá siempre
+  `completo: false` con `inventario.estado: 'sin-verificar'` y el aviso «puede faltar alguna»;
+- el recorrido entero (LIST de su carpeta y una lectura por objeto fuera del índice) se repite cada 15 minutos
+  mientras alguien consulte la lista.
+
+Cómo detectarlo: `diagnosticarInventarioTareas(correo)` (función de operación, solo lee) devuelve `sinVerificar > 0`; o
+el índice (`tareas/indice/<huella>/lista`) trae `pase.fin` con `pase.sinVerificar > 0` y sin `inventario`.
+
+Acción recomendada, en este orden:
+
+1. **Que no vuelva a pasar:** la regla de ciclo de vida no puede borrar las reservas antes que las tareas. Lo más
+   simple es que `tareas/` entero (objetos, `pedidos/` e `indice/`) tenga la misma regla, o excluir `tareas/pedidos/`
+   de la expiración. Nunca expirar `tareas/pedidos/` sola.
+2. **Para los objetos que ya quedaron sin reserva**, elige una:
+   - **Cuarentena (recomendada si no se puede demostrar de quién son):** copia cada objeto sin verificar a
+     `tareas-cuarentena/<huella>/<id>` (fuera de la carpeta del dueño) y después bórralo de `tareas/<huella>/`. El
+     siguiente recorrido termina sin dudas y el dueño queda reconciliado. La tarea no se pierde (sigue en la cuarentena)
+     pero deja de verse; si después se demuestra que era suya, se devuelve a su carpeta y se vuelve a anotar su reserva.
+   - **Restaurar la reserva (solo con prueba independiente de que es de ese dueño,** p. ej. registros del servidor de esa
+     fecha): escribe `tareas/pedidos/<huella>/<requestId>` = `{ "id": "<id>" }` con el `requestId` que trae el objeto.
+     El siguiente recorrido (pasados como mucho 15 minutos) la adopta. Que el objeto esté en la carpeta de esa huella NO
+     es prueba suficiente: es justo lo que A7 no da por bueno.
+   - **Aceptarlo:** si son pocas y viejas, se puede dejar así. La lista sigue siendo honesta (`completo: false` con su
+     aviso), con el coste del recorrido cada 15 minutos.
+3. No uses `AURA_RECONCILIAR_TAREAS=off` para «arreglarlo»: apaga el inventario para todos y la lista dice
+   `completo: false` siempre; no fabrica la garantía.

@@ -98,7 +98,17 @@ function archivoDe(mod: number): Promise<string> {
   return p;
 }
 
-export const CuerpoVideo = forwardRef<ControlVideo, Props>(function CuerpoVideo({ avatar, camara, estado, ancho, alto, respaldo, activo = true, saludar = false, onFallo }, ref) {
+/**
+ * Revisión 13: el guion (DirectorVideo: qué clips HAY) y la mezcla (MezclaCapas: reposos y mano del sable POR AVATAR) se
+ * crean una sola vez por montaje. Si el mismo lugar pasa de Claudio a ANT-ONIO sin desmontarse (la compañera y la mesa
+ * cambian el `avatar` en su sitio), se quedaban con los datos del anterior: la mano y los reposos de otro cuerpo. Con
+ * `key={avatar}` cambiar de avatar es montar uno nuevo (los relojes del anterior se apagan al desmontarse).
+ */
+export const CuerpoVideo = forwardRef<ControlVideo, Props>(function CuerpoVideo(props, ref) {
+  return <CuerpoVideoDe key={props.avatar} {...props} ref={ref} />;
+});
+
+const CuerpoVideoDe = forwardRef<ControlVideo, Props>(function CuerpoVideoDe({ avatar, camara, estado, ancho, alto, respaldo, activo = true, saludar = false, onFallo }, ref) {
   const clips = CLIPS[avatar];
   /** Los clips de este avatar ya copiados a archivo (null mientras se preparan: se ven las fotos). */
   const [uris, setUris] = useState<Partial<Record<ClipVideo, string>> | null>(null);

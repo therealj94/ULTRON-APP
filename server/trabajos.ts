@@ -47,6 +47,7 @@ import {
   leerTarea,
   listarTareas,
   listarTareasPagina,
+  MAX_HISTORIAL_INDICE,
   opcionesAprobacion,
   reconciliarConComputadora,
   reconciliarInvestigacion,
@@ -762,7 +763,10 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
    *   · A7: `completo` también es false mientras el inventario del dueño no esté reconciliado (`reconciliado: false`,
    *     `inventario.estado` y un `aviso`), aunque cada tarea del índice se haya leído: un índice de antes podía no
    *     tenerlas todas. Eso no es un fallo de lectura: 200 con lo que hay (también si no hay nada), nunca 503;
-   *   · `conteo`: { activas, terminadas, indice, noLeidas } según el índice (las activas nunca se recortan).
+   *   · `conteo`: { activas, terminadas, indice, noLeidas, recortadas } según el índice (las activas nunca se recortan).
+   *     `recortadas` (revisión 13): terminadas más viejas que siguen existiendo pero que el tope del historial ya no lista.
+   *     No hacen la lista incompleta (`completo` puede ser true), pero no se callan: con alguna, va un `aviso` que lo dice.
+   *     Una app de antes ignora el campo (y el aviso de una lista completa: solo lo muestra con `completo: false`).
    * Las tareas en curso de las conversaciones y las misiones de su computadora van en la primera página.
    */
   app.get('/api/trabajos', d.exigirMesa, d.limitar(90), async (req, res) => {
@@ -794,9 +798,13 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
       : l.inventario === 'en-curso'
         ? 'Estoy revisando tus tareas antiguas: puede faltar alguna en esta lista mientras termino.'
         : 'No pude confirmar que esta lista tenga todas tus tareas antiguas: las que ves son reales, pero puede faltar alguna.';
+    const recortadas = Number(l.conteo.recortadas) || 0;
+    const avisoRecortadas = recortadas
+      ? `Tu lista guarda solo tus ${MAX_HISTORIAL_INDICE} tareas terminadas más recientes: ${recortadas === 1 ? 'una terminada más antigua ya no sale' : `${recortadas} terminadas más antiguas ya no salen`} aquí.`
+      : '';
     const aviso = completo
-      ? undefined
-      : [faltan ? `No pude leer ${faltan === 1 ? 'una de tus tareas' : `${faltan} de tus tareas`} en este momento; no es que no exista${faltan === 1 ? '' : 'n'}.` : '', pc ? '' : 'No pude leer el historial de tu computadora en este momento.', avisoInventario]
+      ? avisoRecortadas || undefined
+      : [faltan ? `No pude leer ${faltan === 1 ? 'una de tus tareas' : `${faltan} de tus tareas`} en este momento; no es que no exista${faltan === 1 ? '' : 'n'}.` : '', pc ? '' : 'No pude leer el historial de tu computadora en este momento.', avisoInventario, avisoRecortadas]
           .filter(Boolean)
           .join(' ');
     const cuerpo = {
