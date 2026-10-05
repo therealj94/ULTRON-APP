@@ -29,3 +29,5 @@ export const turboVivo = () => motor.vivo();
 export const turboOirEncima = (on: boolean) => motor.setOirEncima(on);
 export const turboTomarTurno = () => motor.tomarTurno();
 export const turboOyendoEncima = () => motor.oyendoEncima();
+/** El audio PCM de cada frase entregada (trozos de 0,1 s en base64), justo antes de su texto: las voces. */
+export const turboOyenteAudio = (fn: ((trozos: string[], texto: string) => void) | null) => motor.setOyenteAudio(fn);

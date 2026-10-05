@@ -94,6 +94,7 @@ import { ESPERA_FRASE_MS, estadoDeEspera, fraseDeEstado, vozDeEspera } from '../
 import { ControlCamara, conPreferencia, pedidoDeCamara, prefiereSiempre, respuestaModoCamara, type EstadoCamara } from '../lib/camaraModo';
 import { marcoMesa, useMesaVisible, useModoPresencia } from '../avatar3d/usePresencia';
 import { useCaras, type ApiCaras } from '../caras/useCaras';
+import { useVoces, type ApiVoces } from '../voces/useVoces';
 import { avatarActual } from '../avatares/actual';
 import { orientar } from '../lib/orientacion';
 import { esperarFrame } from '../lib/esperarFrame';
@@ -542,6 +543,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const ultimoHablado = useRef(false);
   /** El reconocimiento de caras (se engancha más abajo, cuando ya existe `say`). */
   const carasRef = useRef<ApiCaras | null>(null);
+  /** Las voces: quién habla, por la voz (src/voces; se engancha junto a las caras). */
+  const vocesRef = useRef<ApiVoces | null>(null);
   const oidoMesa = useRef<OidoMesa | null>(null);
   if (!oidoMesa.current) {
     oidoMesa.current = new OidoMesa({
@@ -614,8 +617,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const escenaReciente = useCallback((): string | undefined => {
     const e = escenaRef.current;
     const quien = carasRef.current?.escena() || '';
+    const porVoz = vocesRef.current?.escena() || '';
     const d = escenaFresca(e) ? e.descripcion : '';
-    return [d, quien].filter(Boolean).join(' ') || undefined;
+    return [d, quien, porVoz].filter(Boolean).join(' ') || undefined;
   }, [escenaFresca]);
 
   // La burbuja y el hilo son para LEER: las expresiones de voz ([risa]…) se oyen, no se enseñan.
@@ -798,6 +802,16 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     encenderCamara: () => encenderCamara('temporal'),
   });
   carasRef.current = caras;
+  // ── voces (src/voces): quién habla, con permiso; el audio sale del oído Turbo ──
+  const voces = useVoces({
+    correo: user.correo,
+    nombre: user.name,
+    nombreAvatar: de(avatarPorId(avatar || 'aura').nombre),
+    carasActivas: caras.activas,
+    oidoTurbo: () => currentSttEngine() === 'turbo',
+    decir: (t, e) => say(t, e === 'feliz' ? 'HAPPY' : e === 'preocupado' ? 'CONCERNED' : e === 'curioso' ? 'CURIOUS' : 'IDLE', { emocion: e && e !== 'neutral' ? e : 'neutral' }),
+  });
+  vocesRef.current = voces;
 
   /**
    * «Olvidar» (menú o voz): borra la memoria de largo plazo de quien está en la mesa, no la de los
@@ -1418,6 +1432,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
           return void (await say(modo === 'siempre' ? tr('Listo: te veré siempre que entres. Dime «apaga la cámara» cuando quieras.', 'Done: I’ll see you every time you come in. Say “turn off the camera” anytime.') : tr('Listo, te veo. Me apago sola en diez minutos o al salir de la mesa.', 'Done, I can see you. I’ll turn off by myself in ten minutes or when you leave the desk.'), 'HAPPY', { emocion: 'feliz' }));
         }
         // Las caras (con permiso): «conóceme», «te presento a…», «olvida a…» y el «sí» de quien presentaron.
+        // Las voces (con permiso): «aprende mi voz», «aprende la voz de…», sus frases y el «sí», «¿quién habla?».
+        if (await vocesRef.current?.manejar(cmd)) return;
         if (await caras.manejar(cmd)) return;
         // La cámara por voz: «puedes verme», «mírame» → ¿solo ahora o siempre?; «apaga la cámara».
         const pc = intent.tipo === 'vision_on' ? 'encender' : pedidoDeCamara(cmd);
@@ -2811,6 +2827,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         return menuCamara();
       case 'caras':
         return caras.abrirOpciones();
+      case 'voces':
+        return voces.abrirOpciones();
       case 'avatar':
         return setEligiendo('menu');
       case 'tutorial':
@@ -3023,6 +3041,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         estadoCamara={textoCamara}
         camaraEncendida={visionOn}
         estadoCaras={caras.estadoTexto}
+        estadoVoces={voces.estadoTexto}
         trabajando={trabajando}
         conChat={enCuadro}
         estadoComputadora={pcEstado?.configurada ? estadoEnPalabras(pcEstado, idiomaActual() === 'en' ? 'en' : 'es').texto : null}

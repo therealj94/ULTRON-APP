@@ -8,6 +8,7 @@
  *   · Escribir          — el teclado y el menú de siempre;
  *   · Cámara            — apagada / solo ahora / siempre (lib/camaraModo.ts);
  *   · Caras             — reconocer a la persona y a quien presente, con permiso (src/caras);
+ *   · Voces             — saber por la voz quién habla (la dueña o su círculo), con permiso (src/voces);
  *   · Avatar            — cambiar con quién hablas;
  *   · Modo trabajo      — el avatar compacto y la conversación escrita debajo, para leer y volver a
  *                         consultar lo dicho (y «Modo charla» para volver al avatar grande);
@@ -35,7 +36,7 @@ import { Hoja } from '../ui/Hoja';
 import { Icono, type NombreIcono } from '../pulse/ui/Icono';
 import { Tocable } from '../pulse/ui/Tocable';
 
-export type OpcionMas = 'chat' | 'envivo' | 'escribir' | 'camara' | 'caras' | 'avatar' | 'modo' | 'misiones' | 'computadora' | 'tutorial' | 'ajustes';
+export type OpcionMas = 'chat' | 'envivo' | 'escribir' | 'camara' | 'caras' | 'voces' | 'avatar' | 'modo' | 'misiones' | 'computadora' | 'tutorial' | 'ajustes';
 
 type Props = {
   visible: boolean;
@@ -49,6 +50,8 @@ type Props = {
   camaraEncendida: boolean;
   /** Lo que se lee debajo de «Caras» («Apagado», «Conozco a 2»). */
   estadoCaras: string;
+  /** Lo que se lee debajo de «Voces» («Apagado», «Conozco 2»); sin él, no se muestra. */
+  estadoVoces?: string;
   /** La mesa está en modo trabajo (avatar compacto + la conversación escrita). */
   trabajando: boolean;
   /** Sin la barra de tres botones a la vista (el chat de la mesa): «Chats» también va aquí. */
@@ -78,6 +81,7 @@ export function HojaMas(p: Props) {
     { id: 'escribir', icono: 'teclado', titulo: tr('Escribir', 'Type'), sub: tr('El teclado y el menú', 'Keyboard and menu') },
     { id: 'camara', icono: p.camaraEncendida ? 'camara' : 'camaraNo', titulo: tr('Cámara', 'Camera'), sub: p.estadoCamara, activo: p.camaraEncendida },
     { id: 'caras', icono: 'caraId', titulo: tr('Caras', 'Faces'), sub: p.estadoCaras },
+    ...(p.estadoVoces != null ? [{ id: 'voces' as const, icono: 'microfono' as const, titulo: tr('Voces', 'Voices'), sub: p.estadoVoces }] : []),
     { id: 'avatar', icono: 'cambiar', titulo: tr('Avatar', 'Avatar'), sub: p.nombreAvatar },
     {
       id: 'modo',
