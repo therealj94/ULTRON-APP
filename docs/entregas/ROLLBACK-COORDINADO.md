@@ -187,14 +187,19 @@ o reaparecer una tarea recuperada»):
   historial no se pierde en silencio.
 - **Un dueño sin índice ni respaldo** (por ejemplo, un correo mal escrito) no tiene nada que revertir: no se escribe nada
   (ni la marca `revertido`, que lo dejaría bloqueado) y el resultado trae `sinIndice: true`. Revisa el correo.
+- **Un dueño reconciliado al que el inventario no agregó nada** (sin entradas `rec`, la marca `inventario` con
+  `agregadas: 0` y sin respaldo) tampoco tiene nada que revertir: no se escribe nada, tampoco la marca `revertido`, y el
+  resultado trae `nadaQueRevertir: true`. Un dueño de 3 tareas que ya estaba `reconciliado: true` lo sigue estando (antes
+  pasaba a `revertido` sin motivo). Un dueño con índice pero **sin** la marca `inventario` (aún no reconciliado, quizá con
+  un recorrido a medias) sí recibe la marca `revertido`: es el bloqueo previo, para que ninguna réplica le agregue nada.
 - Todo en una sola fusión CAS sobre el índice actual: lo que se creó, cambió o anotó después de la reconciliación (o
   durante la reversión) se queda.
 - Deja en el índice la marca `revertido` (`{ gen, t, quitadas, conservadas, restauradas, pendientes, … }`). Como vive en
   el índice y no en la memoria de una réplica, **ninguna réplica vuelve a reconciliar a ese dueño ni le agrega nada**,
   aunque `AURA_RECONCILIAR_TAREAS` siga en `agregar` (una réplica que estaba a mitad de recorrido tampoco: su escritura
   se descarta). Ya no hace falta apagar el interruptor antes.
-- Devuelve `{ ok, quitadas, conservadas, restauradas, pendientes, ya }` (más `sinIndice` o `sinRespaldo` cuando
-  aplican). Es idempotente y reanudable: si
+- Devuelve `{ ok, quitadas, conservadas, restauradas, pendientes, ya }` (más `sinIndice`, `nadaQueRevertir` o
+  `sinRespaldo` cuando aplican). Es idempotente y reanudable: si
   `pendientes > 0`, se repite cuando el almacén conteste; si no queda nada, no escribe (`ya: true`).
 - **Nunca borra objetos** de tareas ni el respaldo.
 

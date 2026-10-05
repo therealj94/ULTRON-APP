@@ -113,7 +113,36 @@ export type EstadoOta = {
   detalle?: string;
 };
 
-type Fetch = (url: string, init?: { signal?: AbortSignal; redirect?: 'follow'; headers?: Record<string, string> }) => Promise<{ ok: boolean; status: number; text(): Promise<string> }>;
+type RespuestaFetch = { ok: boolean; status: number; body?: ReadableStream<Uint8Array> | null; text(): Promise<string> };
+type Fetch = (url: string, init?: { signal?: AbortSignal; redirect?: 'follow'; headers?: Record<string, string> }) => Promise<RespuestaFetch>;
+
+/**
+ * El cuerpo como texto, leído por trozos y CORTADO en cuanto pasa de `tope` bytes (se cancela la descarga): una
+ * respuesta enorme, o una que no termina nunca, no se lee entera en memoria. Sin cuerpo en flujo (un fetch de
+ * pruebas), `text()` y la misma cuenta en bytes.
+ */
+export async function leerConTope(r: RespuestaFetch, tope: number): Promise<string> {
+  const demasiado = () => new Error('ficha demasiado grande');
+  if (!r.body) {
+    const t = await r.text();
+    if (Buffer.byteLength(t) > tope) throw demasiado();
+    return t;
+  }
+  const lector = r.body.getReader();
+  const trozos: Uint8Array[] = [];
+  let n = 0;
+  for (;;) {
+    const { done, value } = await lector.read();
+    if (done) break;
+    n += value.byteLength;
+    if (n > tope) {
+      await lector.cancel().catch(() => {});
+      throw demasiado();
+    }
+    trozos.push(value);
+  }
+  return Buffer.concat(trozos).toString('utf8');
+}
 
 export type OpcionesFuenteOta = {
   url?: string;
@@ -174,8 +203,8 @@ export class FuenteOta {
       try {
         const r = await this.fetchFn(this.url, { redirect: 'follow', signal: AbortSignal.timeout(this.timeoutMs), headers: { accept: 'application/json, application/octet-stream' } });
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        const texto = await r.text();
-        if (texto.length > TOPE_FICHA_BYTES) throw new Error('ficha demasiado grande');
+        // Leída con tope: pasado TOPE_FICHA_BYTES se corta la descarga (no se lee entera para después medirla).
+        const texto = await leerConTope(r, TOPE_FICHA_BYTES);
         const m = validarManifiestoOta(JSON.parse(texto));
         if (!m) throw new Error('la ficha no tiene la forma v1');
         this.bueno = { manifiesto: m, en: this.ahora() };

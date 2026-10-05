@@ -185,6 +185,8 @@ mando; `?desde=…&hasta=…` en ISO). Por cada etiqueta de red (`porRed`) y en 
 - `bloques`: cuántos bloques alternos de verdad hay en el tiempo (A-B-A-B = 4), entre las respuestas
   comparables: un tramo seguido de un mismo camino con **menos de 5** no cuenta (un cambio de paso suelto, 19 A ·
   1 B · 1 A · 19 B, son 2 bloques, no 4) y al quitarlo sus vecinos del mismo camino se juntan;
+- `pares`: los bloques vecinos tomados de dos en dos (1.º con 2.º, 3.º con 4.º…: un bloque A y uno B de la misma
+  hora) y en cuántos gana Speech Engine (`{ total, ganaSE }`; gana el par si el p50 de su primer audio es menor);
 - `veredicto`: `estado` (`insuficiente` · `adoptar` · `mantener`), `faltan` (qué evidencia falta), `motivos`
   (por qué no se adopta), y las banderas de la regla.
 
@@ -231,12 +233,19 @@ suman redes) y el total es `adoptar` solo si **todas** las redes lo son:
    turnos comparables (hay 14 de 20)»):
    - ≥ 20 respuestas **comparables** por camino;
    - de ≥ 5 **conversaciones distintas** por camino (20 turnos de una sola llamada no son una muestra);
-   - ≥ 5 interrupciones y ≥ 5 asentimientos a propósito anotados por camino;
+   - ≥ 5 interrupciones y ≥ 5 asentimientos a propósito anotados por camino, **parejos** entre los dos caminos:
+     de cada tipo, el camino con menos tiene al menos el 80 % de los del otro (±20 %). Con 10 interrupciones a
+     propósito en el agente y 5 en Speech Engine, los cortes a propósito pesan distinto y tapan cortes de verdad
+     (revisión 16, R16-3): `insuficiente`, «interrupciones a propósito desparejos (agente 10, speech-engine 5)»;
    - ≥ 4 bloques alternos en el tiempo (A-B-A-B), cada uno de **≥ 5 respuestas comparables**.
 2. Con evidencia, se adopta **solo si**:
    - el primer audio de las respuestas comparables es **mejor en p50 Y en p95**, por un margen que no sea ruido:
      **al menos 150 ms Y al menos el 10 %** del valor del agente (los dos a la vez: con p50 de 1 s hacen falta
      150 ms; con p95 de 3 s, 300 ms). Un empate dentro del margen es `mantener`;
+   - y además Speech Engine **gana en la mayoría de los pares de bloques** (`pares`: más de la mitad). Cada par pesa
+     uno, tenga los turnos que tenga: así el reparto de las horas no decide (revisión 16, R16-4, la paradoja de
+     Simpson: con 40 respuestas del agente y 5 de Speech Engine en la hora mala, y 5 y 100 en la buena, Speech
+     Engine «ganaba» junto aunque fuera peor en las dos horas; ahora gana 0 de 2 pares y es `mantener`);
    - y además **la respuesta de verdad no empeora**: `cerebroConCortados` (sin la frase de espera, con los
      cortados censurados) no es peor que el del agente en p50 **NI** en p95 más que ese mismo margen. El primer
      audio puede ser la frase de espera: una espera a 300 ms con el cerebro a 6 s no gana a un agente que
@@ -247,8 +256,10 @@ suman redes) y el total es `adoptar` solo si **todas** las redes lo son:
      `sinCerebro` ni **`cortados`** que el agente, en proporción a los turnos que esperaban respuesta (todo menos
      los «ajá»). Basta una para `mantener`. Esos turnos además no cuentan como respuestas ni bajan los
      percentiles. Los cortados cuentan porque si la persona corta más en un camino es, casi siempre, porque
-     tarda: sin contarlos, los turnos lentos que la persona corta desaparecían de la comparación (las 5
-     interrupciones a propósito son las mismas en los dos caminos);
+     tarda: sin contarlos, los turnos lentos que la persona corta desaparecían de la comparación. Antes de
+     comparar se **descuentan los cortes de las interrupciones a propósito** anotadas en cada camino
+     (`cortadosSinEjercicios`: de los cortados y de los turnos que esperaban respuesta), y por eso esos
+     ejercicios tienen que estar parejos (arriba);
    - y nada raro de oído (saludo, frases de espera, cortes), y las métricas de ElevenLabs de punta a punta (el
      script) en la misma dirección: eso lo mira José, el servidor no lo sabe.
 3. Si no, `mantener`: se queda el agente y el prototipo se apaga (sin tocar nada más). En cualquier caso, el

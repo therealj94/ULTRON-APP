@@ -1260,6 +1260,33 @@ test('H4: revertir a un dueño sin índice (un correo mal escrito) no escribe na
   assert.ok(l.ok && l.inventario !== 'revertido' && l.reconciliado, JSON.stringify(l.ok && l.inventario));
 });
 
+test('R16-2: revertir a un dueño CON índice al que el inventario nunca agregó nada no escribe nada ni lo deja «revertido» (`nadaQueRevertir`): reconciliado o sin reconciliar, sigue igual', async () => {
+  const a = almacenEnMemoria();
+  _usarAlmacenDurable(a);
+  // Reconciliado sin agregar nada (las 3 ya estaban en el índice): la marca dice `agregadas: 0` y no hay respaldo.
+  const yo = 'r16-2-tres@ejemplo.test';
+  for (let i = 0; i < 3; i++) assert.ok((await crearTarea(yo, { requestId: `r16-2-${i}`, titulo: `T${i}`, ...NUEVA }, { almacen: a })).ok);
+  const l0 = await listarTareasPagina(yo, {}, a);
+  assert.ok(l0.ok && l0.reconciliado, JSON.stringify(l0.ok && l0.inventario));
+  const antes = new Map(a.objetos);
+  const r = await revertirReconciliacionTareas(yo, a, { ahora: Date.now() });
+  assert.ok(r.ok);
+  if (r.ok) assert.deepEqual([r.quitadas, r.conservadas, r.restauradas, r.pendientes, r.ya, r.nadaQueRevertir, r.sinIndice], [0, 0, 0, 0, true, true, undefined]);
+  assert.deepEqual(new Map(a.objetos), antes, 'no se escribió nada');
+  assert.equal(indiceMem(a, yo).revertido, undefined, 'sin la marca `revertido`');
+  const l1 = await listarTareasPagina(yo, {}, a);
+  assert.ok(l1.ok && l1.reconciliado && l1.inventario === 'reconciliado' && l1.tareas.length === 3, JSON.stringify(l1.ok && l1.inventario));
+  // Sin reconciliar todavía (índice sin la marca `inventario`): sí se escribe `revertido`, el bloqueo previo (ninguna
+  // réplica le agregará nada; ver «una réplica que estaba recorriendo el inventario cuando operación revirtió…»).
+  const otro = 'r16-2-sin-marca@ejemplo.test';
+  const b = almacenEnMemoria();
+  assert.ok((await crearTarea(otro, { requestId: 'r16-2-b', titulo: 'B', ...NUEVA }, { almacen: b })).ok);
+  assert.equal(indiceMem(b, otro).inventario, undefined);
+  const rb = await revertirReconciliacionTareas(otro, b, { ahora: Date.now() });
+  assert.ok(rb.ok && !rb.nadaQueRevertir && !rb.ya);
+  assert.ok(indiceMem(b, otro).revertido);
+});
+
 test('H4: sin el respaldo del índice de antes, lo que el recorte sacó no puede volver y se sigue contando en `recortadas` (con su aviso); no se pierde en silencio', async () => {
   const a = almacenEnMemoria();
   _usarAlmacenDurable(a);
