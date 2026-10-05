@@ -13,7 +13,8 @@ import type { Nivel } from './acceso';
 import type { NivelAura } from './perfiles/tipos';
 import { autorizar, evaluar, textoDeDecision, type Efecto } from './cognitivo/politica';
 import { registrarEjecutor } from './cognitivo/aprobaciones';
-import { hashArgumentos } from './durable';
+import crypto from 'node:crypto';
+import { claveDe, crearUnaVez, hashArgumentos, leerDurable } from './durable';
 import { nivelDe, personaPorId } from './acceso';
 import type { VinculoTaller } from './tareas-durables';
 
@@ -163,6 +164,20 @@ export const ACCIONES_TALLER: Record<string, { efecto: Efecto; correr: (a: Recor
       return t ? { ok: true, texto: `TAREA CERRADA [${t.id}]: ${t.texto}` } : { ok: false, texto: `No encontré la tarea ${a.id}.` };
     },
   },
+  /**
+   * La captura de una página al grupo de la junta (revisión 11, MEDIO-1). La imagen exacta que se propuso queda guardada
+   * por su sha256 (`guardarFotoTaller`) y `a.foto` es ese hash: entra en la huella. Al aprobar se manda ESA imagen, y solo
+   * si sus bytes siguen dando el mismo hash.
+   */
+  foto: {
+    efecto: 'externo',
+    async correr(a) {
+      const buf = await leerFotoTaller(String(a.foto || ''));
+      if (!buf) return { ok: false, texto: 'TELEGRAM: no encontré la captura que aprobaste (o ya no es la misma imagen). No mandé nada.' };
+      const r = await canales.telegramFoto({ buf, caption: String(a.texto || '') || 'Captura de AU-RA' });
+      return { ok: r.ok, texto: `TELEGRAM: ${r.detalle}` };
+    },
+  },
   enviar: {
     efecto: 'externo',
     async correr(a) {
@@ -193,6 +208,34 @@ export const ACCIONES_TALLER: Record<string, { efecto: Efecto; correr: (a: Recor
     },
   },
 };
+
+/* ------------------------------------------------------------------ la captura que espera aprobación */
+
+/** El dueño (fijo) de las capturas guardadas: se guardan por su contenido, no por quién las pidió. */
+const DUENO_FOTOS = 'taller-capturas';
+/** La captura más grande que se guarda para proponerla (una página entera en JPEG cabe de sobra). */
+const MAX_FOTO_BYTES = 6 * 1024 * 1024;
+const shaFoto = (buf: Buffer) => crypto.createHash('sha256').update(buf).digest('hex');
+
+/**
+ * Guarda los bytes exactos de una captura en lo durable (S3 con varias réplicas; si no, el disco) por su sha256 y lo
+ * devuelve. null: no se pudo guardar (o es demasiado grande): entonces no se propone nada.
+ */
+export async function guardarFotoTaller(buf: Buffer): Promise<string | null> {
+  if (!Buffer.isBuffer(buf) || !buf.length || buf.length > MAX_FOTO_BYTES) return null;
+  const sha = shaFoto(buf);
+  const r = await crearUnaVez(claveDe('taller/capturas', DUENO_FOTOS, sha), { sha, b64: buf.toString('base64') }).catch(() => null);
+  return r?.ok ? sha : null;
+}
+
+/** Los bytes de la captura `sha`, solo si siguen dando ese hash. */
+export async function leerFotoTaller(sha: string): Promise<Buffer | null> {
+  if (!/^[a-f0-9]{64}$/.test(sha)) return null;
+  const l = await leerDurable<{ sha: string; b64: string }>(claveDe('taller/capturas', DUENO_FOTOS, sha)).catch(() => null);
+  if (!l || l.ok === false || !l.valor || typeof l.valor.b64 !== 'string') return null;
+  const buf = Buffer.from(l.valor.b64, 'base64');
+  return shaFoto(buf) === sha ? buf : null;
+}
 
 // Lo aprobado en la cola lo ejecuta el servidor con estas mismas funciones.
 for (const [nombre, a] of Object.entries(ACCIONES_TALLER)) registrarEjecutor(`taller.${nombre}`, (args) => a.correr(args));
@@ -252,7 +295,7 @@ export type ContextoTaller = {
  * sesión de la misma cuenta), una sola vez (`ejecutarUnaVez` por tarea + decisión), antes de que caduque, y solo si la
  * huella recalculada al ejecutar es la misma. Otro contenido o destino es otra propuesta y otra aprobación.
  */
-export const ACCIONES_CON_APROBACION: ReadonlySet<string> = new Set(['voz_estado', 'urgente', 'llamada', 'enviar']);
+export const ACCIONES_CON_APROBACION: ReadonlySet<string> = new Set(['voz_estado', 'urgente', 'llamada', 'enviar', 'foto']);
 /** La versión del formato de la propuesta: entra en la huella (una propuesta de otro formato no se ejecuta). */
 export const VERSION_PROPUESTA_TALLER = 1;
 /** Lo más largo que se propone (y se manda) como contenido. */
@@ -306,6 +349,7 @@ function describirAccion(accion: string, args: Record<string, unknown>): { canal
   if (accion === 'voz_estado') return { canal, titulo: 'Mandar una nota de voz con el estado del sistema', destinatario: DESTINO_TALLER.telegram, contenido: 'El estado de los nodos, dicho con la voz de AU-RA.' };
   if (accion === 'urgente') return { canal, titulo: 'Avisar urgente a la junta', destinatario: `${DESTINO_TALLER.telegram}, como aviso urgente`, contenido: texto };
   if (accion === 'llamada') return { canal, titulo: 'Hacer una llamada', destinatario: DESTINO_TALLER.telefono, contenido: texto };
+  if (accion === 'foto') return { canal, titulo: 'Mandar la captura de la página por Telegram', destinatario: DESTINO_TALLER.telegram, contenido: `${texto || 'Captura de AU-RA'} (imagen ${String(args.foto || '').slice(0, 12)})` };
   const c = canal === 'telefono' ? 'telegram' : canal;
   return { canal, titulo: `Mandar ${args.pdf ? 'un PDF' : 'un mensaje'} por ${NOMBRE_CANAL[c]}`, destinatario: DESTINO_TALLER[canal], contenido: texto };
 }
@@ -429,6 +473,23 @@ async function conPermiso(nombre: keyof typeof ACCIONES_TALLER, args: Record<str
     return { ok: false, texto: 'No lo hice: no pude dejar registrado este turno, así que no se mandó ni se cambió nada. Pídemelo otra vez en un momento.' };
   }
   return accion.correr(args);
+}
+
+/**
+ * La captura de una página que se pidió mandar al grupo de la junta (revisión 11, MEDIO-1). Antes server.ts la publicaba
+ * con `telegramFoto` en cuanto alguien con mando decía «captura» o «screenshot», sin propuesta ni aprobación. Ahora es una
+ * acción del taller como las demás: se guarda la imagen exacta (su sha256 va en los argumentos y por tanto en la huella)
+ * y queda PROPUESTA a la cuenta; se manda una vez, al aprobar esa decisión. Sin cuenta, sin almacén o con las reglas en
+ * contra, no sale nada. La respuesta del chat sigue diciendo lo que la página contiene.
+ */
+export async function proponerCapturaTaller(foto: { buf: Buffer; titulo?: string; url: string }, ctx: ContextoTaller): Promise<{ texto: string; propuesta?: PropuestaTallerVista }> {
+  if (ctx.nivelAura === 'miembro') return { texto: TALLER_SOLO_JUNTA };
+  if (ctx.soloConsulta) return { texto: 'Desde la conversación de voz no mando capturas al grupo. Pídemelo escrito en la mesa.' };
+  const sha = await guardarFotoTaller(foto.buf);
+  if (!sha) return { texto: 'No dejé la captura para mandarla: no pude guardarla. No mandé nada al grupo.' };
+  const texto = String(foto.titulo || foto.url || '').replace(/\s+/g, ' ').trim().slice(0, 300) || 'Captura de AU-RA';
+  const r = await conPermiso('foto', { foto: sha, texto, url: String(foto.url || '').slice(0, 500) }, ctx);
+  return { texto: r.texto, ...(r.propuesta ? { propuesta: r.propuesta } : {}) };
 }
 
 export async function despacharTaller(message: string, opts?: ContextoTaller): Promise<TallerOut> {

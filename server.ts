@@ -113,7 +113,8 @@ import { accionTareaPorId, bloqueTarea, correrTareaConEstado, precargarTareas, r
 import { borradorWhatsappDe, correrWhatsappConEstado, destinoWhatsapp, montarRutasWhatsapp, whatsappDisponible, whatsappPermitido } from './server/whatsapp';
 import { accionIniciativa, bloqueIniciativaTurno, componerIniciativa, correrMisionTurnoConEstado, duenoMisiones } from './server/iniciativa';
 import { contadoresProductivos } from './server/fuentes-iniciativa';
-import { bloquesPersonales, precargarVista, vistaAutorizada } from './server/contexto-turno';
+import { bloquesPersonales, precargarVista, vistaAutorizada, vistaDeHerramientas } from './server/contexto-turno';
+import type { VistaTexto } from './lib/conocer-persona';
 import { frenarIniciativa, pideApagarIniciativa, pideDejarDeProponer, type PersonaIniciativa } from './lib/iniciativa';
 import { montarRutasCerebroContinuo } from './server/cerebro-continuo';
 import { anotarTurnos, iniciarBarridoPausas, precargarCerebro } from './lib/episodios';
@@ -125,7 +126,7 @@ import { conApodoDelTurno, lineaApodoPendiente } from './lib/apodo';
 import { emitirSesion, borrarSesion, cerrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica, mesaAutorizada, cuerpoHttp, gastarCupo, esperaEntrada, anotarFalloEntrada, anotarExitoEntrada, cargarSesionesCerradas } from './server/seguridad';
 import { canales, leerPdf, telegramFoto, telegramVoz } from './lib/canales';
 import { catalogoCanales, fotoSistema } from './lib/sistema';
-import { despacharTaller, ejecutarAprobadoTaller, hechosCatalogo, vinculoTallerVigente, type PropuestaTallerVista } from './lib/taller';
+import { despacharTaller, ejecutarAprobadoTaller, hechosCatalogo, proponerCapturaTaller, vinculoTallerVigente, type PropuestaTallerVista } from './lib/taller';
 import { listarTareas } from './lib/tareas';
 import { ejecutarCodigo, ejecutorActivo } from './lib/ejecutor';
 import { construirMensajes, extraerPython } from './lib/qwen';
@@ -2780,8 +2781,9 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     await aTiempoParaVoz(voz, 'tarea en curso', precargarTareas(duenoComputadora), undefined);
     const alBorrador = !!(delCorreo || delWhatsapp) && (decision.respondio || respuestaAlBorrador(message) !== null);
     const deLaTarea = await resolverTareaEnCurso(duenoComputadora, ambitoTurno, message, { borradorResuelto: alBorrador || !!deLaPregunta, retener: opciones.retener });
-    const bloqueDeTarea = bloqueTarea(duenoComputadora, ambitoTurno, compacto);
-    hechos.push(...[deLaTarea, bloqueDeTarea].filter((x): x is string => !!x));
+    // Su tarea va al modelo por la vista del turno (revisión 11, MEDIO-2): lo que limitó no entra por aquí tampoco.
+    const bloqueDeTarea = bloqueTarea(duenoComputadora, ambitoTurno, compacto, vista);
+    hechos.push(...[deLaTarea ? vista.texto(deLaTarea) : '', bloqueDeTarea].filter((x): x is string => !!x));
     conTarea = !!deLaTarea || (tareaDe(duenoComputadora, ambitoTurno)?.estado ?? 'pausada') !== 'pausada';
   }
   // Su iniciativa (server/iniciativa.ts): sus misiones abiertas y lo que aún no sabe de su vida, para que
@@ -2937,15 +2939,38 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
         tools.push('pagina');
         if (page.foto) {
           tools.push('foto');
-          // Al grupo de la junta solo manda quien tiene mando (o se contesta al chat de Telegram que preguntó):
-          // si no, cualquiera sin sesión publicaba en el grupo la captura de la página que quisiera.
-          // Y nunca para un miembro: el Telegram es de la organización (herramientaPermitida).
-          if (herramientaPermitida(perfil, 'telegram', nivel) && !opciones.soloConsulta && (canal === 'telegram' || (mando && /telegram|captura|screenshot|m[aá]ndame (la )?foto/.test(q)))) {
-            // Publicar es un efecto: queda anotado en el turno antes (un reintento no la vuelve a publicar).
-            if (await efectoDelTurno('telegram')) {
-              const envio = await telegramFoto({ buf: page.foto, caption: page.titulo || page.url, chatId: body?.telegramChatId });
-              hechos.push(`FOTO TELEGRAM: ${envio.detalle}`);
-            } else hechos.push('FOTO TELEGRAM: no la mandé: no pude dejar registrado este turno. Dilo así.');
+          // Nunca para un miembro: el Telegram es de la organización (herramientaPermitida). Y nada desde la voz.
+          if (herramientaPermitida(perfil, 'telegram', nivel) && !opciones.soloConsulta) {
+            if (canal === 'telegram' && body?.telegramChatId) {
+              // El turno llegó por Telegram: la captura se le contesta a ESE chat que la pidió (es responderle, no
+              // publicar). Contestar es un efecto: queda anotado en el turno antes (un reintento no la repite).
+              if (await efectoDelTurno('telegram')) {
+                const envio = await telegramFoto({ buf: page.foto, caption: page.titulo || page.url, chatId: body.telegramChatId });
+                hechos.push(`FOTO TELEGRAM (al chat que la pidió): ${envio.detalle}`);
+              } else hechos.push('FOTO TELEGRAM: no la mandé: no pude dejar registrado este turno. Dilo así.');
+            } else if (mando && /telegram|captura|screenshot|m[aá]ndame (la )?foto/.test(q)) {
+              // Desde la mesa o la app, mandarla al grupo de la junta es PUBLICAR (revisión 11, MEDIO-1): antes salía con
+              // `telegramFoto` sin propuesta ni aprobación. Ahora es una acción del taller: queda propuesta a la cuenta de
+              // la sesión con el hash de la imagen exacta en su huella, y sale una vez al aprobar esa decisión.
+              const cap = await proponerCapturaTaller(
+                { buf: page.foto, titulo: page.titulo, url: page.url },
+                {
+                  usuario: nombre,
+                  quien,
+                  nivel: nivelTurno,
+                  prueba,
+                  canal,
+                  riesgo: clas.riesgo,
+                  soloConsulta: !!opciones.soloConsulta,
+                  nivelAura: herramientaPermitida(perfil, 'taller', nivel) ? 'junta' : 'miembro',
+                  antesDeEfecto: (herramienta) => efectoDelTurno(herramienta),
+                  cuenta: correoApp || null,
+                  proponer: (pp) => abrirDecisionDeTaller(correoApp, pp),
+                }
+              );
+              hechos.push(`FOTO TELEGRAM: ${neutralizarMarca(cap.texto)} La captura no salió al grupo; lo que la página dice sí se lo cuentas aquí.`);
+              if (cap.propuesta) propuestaTaller = cap.propuesta;
+            }
           }
         }
       }
@@ -3105,7 +3130,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     hechos.push(...taller.hechos.map(neutralizarMarca));
     tools.push(...taller.tools);
     decirTaller = taller.decir === undefined ? undefined : neutralizarMarca(taller.decir);
-    propuestaTaller = 'propuesta' in taller ? taller.propuesta : undefined;
+    // Una captura que ya quedó propuesta en este turno no se pierde si el taller no propuso nada.
+    if ('propuesta' in taller && taller.propuesta) propuestaTaller = taller.propuesta;
   } catch (e: any) {
     hechos.push(`Taller falló: ${String(e?.message || e).slice(0, 160)}.`);
   }
@@ -3348,6 +3374,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     dueno: duenoComputadora,
     // En qué conversación (teléfono, web, voz): el borrador de correo es de esta, no de otra.
     ambito: ambitoTurno,
+    // Lo que devuelvan sus herramientas (misiones, círculo, tarea) va al modelo por la vista del turno (revisión 11, MEDIO-2).
+    vistaHerramientas: vistaDeHerramientas(vista, message),
   };
 }
 
@@ -3759,7 +3787,8 @@ async function correrHerramientaPedida(
   compu?: TurnoComputadora,
   senal?: AbortSignal,
   dueno = '',
-  ambito = ''
+  ambito = '',
+  vista?: VistaTexto
 ): Promise<ResultadoHerramienta> {
   if (!ped) return { texto: 'HARNESS: pedido vacío.', estado: 'failed' };
   // Cada runner que sabe cómo terminó lo dice con su estado (EXEC03); antes se adivinaba por las palabras
@@ -3831,10 +3860,11 @@ async function correrHerramientaPedida(
       correo: async (arg) => decisionDelBorrador(await correrCorreoConEstado(dueno, arg, ambito), dueno, ambito),
       whatsapp: async (arg) => decisionDelBorrador(await correrWhatsappConEstado(dueno, arg, ambito), dueno, ambito),
       // Sus misiones, su círculo y sus mensajes ordenados: sin dueño (sin sesión) no hay de quién serían.
-      mision: (arg) => (dueno ? correrMisionTurnoConEstado(dueno, arg) : Promise.resolve(fallo('HARNESS mision: solo con sesión. Pídele que entre con su cuenta.'))),
-      circulo: async (arg) => decisionDelBorrador(await correrCirculoConEstado(dueno, arg, ambito), dueno, ambito),
+      // Lo que devuelven (sus misiones, su círculo, su tarea) va al modelo por la vista del turno (revisión 11, MEDIO-2).
+      mision: (arg) => (dueno ? correrMisionTurnoConEstado(dueno, arg, vista) : Promise.resolve(fallo('HARNESS mision: solo con sesión. Pídele que entre con su cuenta.'))),
+      circulo: async (arg) => decisionDelBorrador(await correrCirculoConEstado(dueno, arg, ambito, {}, vista), dueno, ambito),
       triaje: (arg) => correrTriajeConEstado(dueno, arg, ambito),
-      tarea: (arg) => (dueno ? correrTareaConEstado(dueno, ambito, arg) : Promise.resolve(fallo('HARNESS tarea: solo con sesión. Pídele que entre con su cuenta.'))),
+      tarea: (arg) => (dueno ? correrTareaConEstado(dueno, ambito, arg, vista) : Promise.resolve(fallo('HARNESS tarea: solo con sesión. Pídele que entre con su cuenta.'))),
       // Sus saldos de Veta Wallet (solo lectura, con la dirección pública que conectó en la app).
       cartera: (arg) => correrCarteraConEstado(dueno, arg),
       // Investigar en segundo plano (server/investigar.ts): la tarea durable existe ANTES del recibo «empezada».
@@ -3923,6 +3953,8 @@ async function bucleHarness(o: {
   dueno?: string;
   /** En qué conversación: su borrador de correo es de esta. */
   ambito?: string;
+  /** La vista del turno para lo que devuelven sus herramientas (server/contexto-turno.ts vistaDeHerramientas). */
+  vista?: VistaTexto;
   /** Quién escribe cada vuelta (el cerebro con manos); si no contesta, Qwen del nodo. */
   preguntar?: PreguntarVuelta;
   /** El reloj del turno entero (lib/presupuesto.ts): sin tiempo no se empieza otra herramienta (EXEC04). */
@@ -3938,7 +3970,7 @@ async function bucleHarness(o: {
     // La espera de su computadora no se lleva el tiempo de contar el resultado.
     correr: (ped, reply) => {
       const compu = o.computadora && o.reloj ? { ...o.computadora, esperaMs: Math.max(0, Math.min(o.computadora.esperaMs, o.reloj.queda() - RESERVA_VUELTA_MS)) } : o.computadora;
-      return correrHerramientaPedida(ped, reply, o.mando, o.nivel, compu, o.senal, o.dueno, o.ambito);
+      return correrHerramientaPedida(ped, reply, o.mando, o.nivel, compu, o.senal, o.dueno, o.ambito, o.vista);
     },
     preguntar: o.preguntar,
     respaldo: (hechos, alTexto) => preguntarQwen(o.system, o.message, hechos, o.hilo, o.reloj ? o.reloj.senalCon(o.senal) : o.senal, o.nivel, o.contexto, o.espacio, alTexto),
@@ -4341,7 +4373,8 @@ async function correrTurnoInterno(body: any, opciones: OpcionesTurno = {}): Prom
     const app = await accionesDelCerebro(out.reply, p, delModelo);
     const e = extraerEmocion(app.texto);
     const estado: EstadoRespuesta = out.estado ?? (out.error ? 'error' : 'completo');
-    const final: SalidaTurno = { ...out, estado, reply: quitarExpresiones(e.texto).trim(), voz: e.texto.trim(), emocion: out.emocion || e.emocion, acciones: app.acciones };
+    // Lo que quedó esperando aprobación (una captura para el grupo, revisión 11) vuelve aunque conteste el modelo.
+    const final: SalidaTurno = { ...(p.propuestaTaller ? { propuestaTaller: p.propuestaTaller } : {}), ...out, estado, reply: quitarExpresiones(e.texto).trim(), voz: e.texto.trim(), emocion: out.emocion || e.emocion, acciones: app.acciones };
     if (final.reply && estado === 'completo' && memorizable) await recordarSegunNivel(body, { quienMem, rol: 'ultron', texto: final.reply, canal }, opciones.retener);
     return final;
   };
@@ -4361,7 +4394,7 @@ async function correrTurnoInterno(body: any, opciones: OpcionesTurno = {}): Prom
   }
   if (p.avisoComputadora) confirmarAvisos(p.avisoComputadora.quien, p.avisoComputadora.ids);
   if (p.avisoInvestigacion) confirmarAvisosInvestigacion(p.avisoInvestigacion.quien, p.avisoInvestigacion.ids);
-  const h = await bucleHarness({ reply: q1.reply, system, message, hechos, hilo, tools, mando, senal: p.senal, nivel: p.nivel, contexto: p.contexto, espacio: p.espacio, computadora: p.computadora, dueno: p.dueno, ambito: p.ambito, reloj });
+  const h = await bucleHarness({ reply: q1.reply, system, message, hechos, hilo, tools, mando, senal: p.senal, nivel: p.nivel, contexto: p.contexto, espacio: p.espacio, computadora: p.computadora, dueno: p.dueno, ambito: p.ambito, vista: p.vistaHerramientas, reloj });
   memorizable = h.memorizable;
   // La guarda de promesas (lib/promesas.ts): lo prometido sin herramienta que lo empezara no se entrega; con
   // resultados de una búsqueda, se usan; el volcado `HARNESS …` nunca sale (José, 4-oct).
@@ -5148,7 +5181,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       };
       // La vuelta del harness la escribe el mismo cerebro que pidió la herramienta (con sus manos).
       const preguntar = porRapido ? preguntarConManos(p.systemManos, herramientasManos, opcionesManos(p.manosTurno), message, hilo, p.nivel, p.contexto, reloj.senalCon(senal)) : undefined;
-      const h = await bucleHarness({ reply, system, message, hechos, hilo, tools, mando, senal, nivel: p.nivel, contexto: p.contexto, espacio: p.espacio, alTarea: opciones.alTarea, alTexto, computadora: p.computadora, dueno: p.dueno, ambito: p.ambito, preguntar, reloj });
+      const h = await bucleHarness({ reply, system, message, hechos, hilo, tools, mando, senal, nivel: p.nivel, contexto: p.contexto, espacio: p.espacio, alTarea: opciones.alTarea, alTexto, computadora: p.computadora, dueno: p.dueno, ambito: p.ambito, vista: p.vistaHerramientas, preguntar, reloj });
       const e = extraerEmocion(h.reply);
       emocion = e.emocion;
       send('emocion', { emocion });

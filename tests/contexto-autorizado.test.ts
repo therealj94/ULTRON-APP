@@ -14,7 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'contexto-aut-'));
-for (const [k, v] of Object.entries({ ULTRON_CONOCER_DIR: 'co', ULTRON_EPISODIOS_DIR: 'ep', ULTRON_SUPRESIONES_DIR: 'su', ULTRON_PERFILES_DIR: 'pe', ULTRON_ABIERTOS_DIR: 'ab', ULTRON_INICIATIVA_DIR: 'in', ULTRON_MISIONES_DIR: 'mi', ULTRON_AVISOS_DIR: 'av', ULTRON_MEMORIA_MIEMBROS_DIR: 'mm' })) process.env[k] = path.join(dir, v);
+for (const [k, v] of Object.entries({ ULTRON_CONOCER_DIR: 'co', ULTRON_EPISODIOS_DIR: 'ep', ULTRON_SUPRESIONES_DIR: 'su', ULTRON_PERFILES_DIR: 'pe', ULTRON_ABIERTOS_DIR: 'ab', ULTRON_INICIATIVA_DIR: 'in', ULTRON_MISIONES_DIR: 'mi', ULTRON_AVISOS_DIR: 'av', ULTRON_MEMORIA_MIEMBROS_DIR: 'mm', ULTRON_CIRCULO_DIR: 'ci', ULTRON_TAREA_CURSO_DIR: 'tc' })) process.env[k] = path.join(dir, v);
 // La memoria de la junta (lib/memoria.ts) vive en <cwd>/data: la prueba trabaja en el disco temporal.
 process.chdir(dir);
 Object.assign(process.env, { ULTRON_MEMORIA_BUCKET: '', PERFIL_DISCO_DURABLE: '1' });
@@ -401,4 +401,133 @@ test('R10 MENOR-E: una palabra común de lo limitado («tipo», «puerto») no s
   assert.equal(CT.vistaAutorizada(p).texto(CORTES), CORTES);
   // Y lo limitado sí sale, la frase entera, aunque venga junto a lo general.
   assert.equal(CT.vistaAutorizada(p).texto('Me inyecto insulina por la diabetes. ¿Y el puerto de Cortés?'), '[dato reservado] ¿Y el puerto de Cortés?');
+});
+
+/* ================================================================== R11 MEDIO-2: lo que devuelven sus herramientas */
+
+const MI = await import('../lib/misiones');
+const CI = await import('../lib/circulo');
+const TC = await import('../lib/tarea-en-curso');
+
+test('R11 MEDIO-2 mision: «mision listar» (lo que el modelo pide a mitad del turno) no devuelve lo limitado; con la vista del turno tampoco; reactivado vuelve', async () => {
+  const p = 'r11-mision@prueba.local';
+  await MI.crearMision(p, { titulo: 'Mudanza a Puerto Sintetico', objetivo: 'Mudarme a Puerto Sintetico antes de diciembre', pasos: ['Buscar casa en Puerto Sintetico', 'Cambiar dirección'] });
+  await MI.crearMision(p, { titulo: 'Aprender a pescar', objetivo: 'Salir a pescar los sábados', pasos: ['Comprar caña'] });
+  const { dato } = await O.anotarDatoManual(p, { categoria: 'rutinas', dato: 'Vive en Puerto Sintetico', clave: 'vive', origen: 'primeravez' });
+  assert.match((await SI.correrMisionTurnoConEstado(p, 'listar')).texto, CIUDAD, 'control: sin limitar, la lista la nombra');
+  await O.limitar(p, dato.id, 'limitado');
+  await CT.precargarVista(p);
+  const vista = CT.vistaAutorizada(p);
+  for (const r of [await SI.correrMisionTurnoConEstado(p, 'listar'), await SI.correrMisionTurnoConEstado(p, 'listar', vista), await MI.correrMisionConEstado(p, 'listar')]) {
+    assert.doesNotMatch(r.texto, CIUDAD, `la lista no lo devuelve: ${r.texto}`);
+    assert.match(r.texto, /\[dato reservado\]/);
+    assert.match(r.texto, /Aprender a pescar/, 'lo que no lo toca sigue');
+    assert.equal(r.estado, 'succeeded', 'el estado no cambia');
+  }
+  // Crear una que lo nombra tampoco se lo devuelve (el recibo sí dice que quedó guardada).
+  const c = await SI.correrMisionTurnoConEstado(p, 'crear Vender la casa de Puerto Sintetico | antes de mudarme | anunciarla', vista);
+  assert.doesNotMatch(c.texto, CIUDAD);
+  assert.equal(c.recibo?.efecto, 'guardado');
+  // Lo que la persona nombra en lo que ACABA de decir no se le tapa en la respuesta a eso.
+  const ahora = CT.vistaDeHerramientas(vista, '¿Cómo va la mudanza a Puerto Sintetico?');
+  assert.match((await SI.correrMisionTurnoConEstado(p, 'listar', ahora)).texto, CIUDAD, 'lo trajo ella en este turno');
+  assert.doesNotMatch((await SI.correrMisionTurnoConEstado(p, 'listar', CT.vistaDeHerramientas(vista, '¿qué misiones tengo?'))).texto, CIUDAD);
+  // Sin saber qué limitó, nada de lo suyo.
+  const ciega = K.resultadoAutorizado({ texto: 'MISIONES ABIERTAS (1): Mudanza a Puerto Sintetico', estado: 'succeeded' as const }, K.vistaDeTerminos(null), 'MISIONES');
+  assert.doesNotMatch(ciega.texto, CIUDAD);
+  assert.match(ciega.texto, /no puedo enseñarte lo suyo/);
+  await O.limitar(p, dato.id, 'general');
+  assert.match((await SI.correrMisionTurnoConEstado(p, 'listar')).texto, CIUDAD, 'reactivado, vuelve');
+});
+
+test('R11 MEDIO-2 circulo: con «hija:valentina» limitado, «circulo listar» no devuelve a Valentina; lo demás de su gente sí', async () => {
+  const p = 'r11-circulo@prueba.local';
+  assert.match((await CI.correrCirculoConEstado(p, 'agregar Valentina | hija | +50499990000')).texto, /Valentina/, 'control: al guardarla');
+  await CI.correrCirculoConEstado(p, 'agregar Beto | compadre | +50499990001');
+  const { dato } = await O.anotarDatoManual(p, { categoria: 'familia', dato: 'Su hija se llama Valentina', clave: 'hija:valentina', origen: 'primeravez' });
+  assert.match((await CI.correrCirculoConEstado(p, 'listar')).texto, /Valentina/, 'control: sin limitar');
+  await O.limitar(p, dato.id, 'limitado');
+  await CT.precargarVista(p);
+  const vista = CT.vistaAutorizada(p);
+  for (const r of [await CI.correrCirculoConEstado(p, 'listar'), await CI.correrCirculoConEstado(p, 'listar', '', {}, vista)]) {
+    assert.doesNotMatch(r.texto, /Valentina/, `el círculo no la devuelve: ${r.texto}`);
+    assert.match(r.texto, /Beto/, 'su compadre sigue');
+  }
+  // «escríbele a Valentina»: lo pide ella ahora, y la respuesta a eso no se le tapa.
+  assert.match((await CI.correrCirculoConEstado(p, 'listar', '', {}, CT.vistaDeHerramientas(vista, 'escríbele a Valentina que llego tarde'))).texto, /Valentina/);
+});
+
+test('R11 MEDIO-2 tarea en curso: el bloque de los HECHOS y «tarea ver» pasan por la vista del turno', async () => {
+  const p = 'r11-tarea@prueba.local';
+  const { dato } = await O.anotarDatoManual(p, { categoria: 'rutinas', dato: 'Vive en Puerto Sintetico', clave: 'vive', origen: 'primeravez' });
+  await O.limitar(p, dato.id, 'limitado');
+  await CT.precargarVista(p);
+  await TC.precargarTareas(p);
+  TC.iniciarTarea(p, '', { tipo: 'otra', titulo: 'Mudanza a Puerto Sintetico: avisar a todos', pasos: ['Avisar al banco de Puerto Sintetico', 'Llamar a la mamá'] });
+  assert.match(TC.bloqueTarea(p, ''), CIUDAD, 'control: el bloque crudo');
+  const vista = CT.vistaAutorizada(p);
+  for (const compacto of [false, true]) {
+    const b = TC.bloqueTarea(p, '', compacto, vista);
+    assert.doesNotMatch(b, CIUDAD, `el bloque del turno (${compacto ? 'voz' : 'texto'}): ${b}`);
+    assert.match(b, /\[dato reservado\]/);
+  }
+  for (const r of [await TC.correrTareaConEstado(p, '', 'ver'), await TC.correrTareaConEstado(p, '', 'ver', vista), await TC.correrTareaConEstado(p, '', 'hecho 1', vista)]) {
+    assert.doesNotMatch(r.texto, CIUDAD, `la herramienta no lo devuelve: ${r.texto}`);
+  }
+  TC._olvidarTareas();
+});
+
+test('R11 MEDIO-2 un solo sitio: server.ts pasa la vista del turno al bloque de la tarea y a las herramientas con lo suyo', () => {
+  const src = fs.readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
+  assert.ok(/bloqueTarea\(duenoComputadora, ambitoTurno, compacto, vista\)/.test(src), 'el bloque de la tarea, por la vista');
+  assert.ok(/deLaTarea \? vista\.texto\(deLaTarea\)/.test(src), 'lo que contesta la tarea, por la vista');
+  assert.ok(/vistaHerramientas: vistaDeHerramientas\(vista, message\)/.test(src), 'la vista de las herramientas sale de la del turno');
+  assert.ok(/correrMisionTurnoConEstado\(dueno, arg, vista\)/.test(src), 'mision');
+  assert.ok(/correrCirculoConEstado\(dueno, arg, ambito, \{\}, vista\)/.test(src), 'circulo');
+  assert.ok(/correrTareaConEstado\(dueno, ambito, arg, vista\)/.test(src), 'tarea');
+  assert.equal((src.match(/vista: p\.vistaHerramientas/g) || []).length, 2, 'los dos caminos del harness (JSON y stream)');
+});
+
+test('R11 MENOR-G: un nombre de pila muy común o una fecha solos no reservan («Envíale el contrato a Maria», «La reunión es el 12 de marzo»); con lo que ES el dato, sí; lo de la ronda 10 sigue reservado', () => {
+  const limitados = [
+    ['Tiene diabetes tipo 2', 'salud'],
+    ['Vive en Puerto Sintetico', 'vive'],
+    ['Su hija se llama Valentina', 'hija:valentina'],
+    ['Trabaja en Minera Sintetica', 'empresa:minera sintetica'],
+    ['Su esposa se llama María', 'esposa:maría'],
+    ['Cumple años el 12 de marzo', 'cumpleanos'],
+    ['Toma metformina 850 mg', 'salud:metformina'],
+  ].map(([dato, clave], i) => ({ id: `d${i}`, categoria: 'familia', dato, clave, alcance: 'limitado' })) as any;
+  const v = K.vistaDeTerminos(K.terminosReservados(limitados));
+  // Pasan enteras: nada en ellas nombra lo limitado.
+  for (const f of [
+    'Envíale el contrato a Maria',
+    'La santa María',
+    'María Elena me llamó por la concesión',
+    'La reunión es el 12 de marzo',
+    'El 2 de mayo',
+    'marzo fue bueno para las ventas',
+    'Pagué 850 lempiras',
+    'mi esposa vino a la reunión',
+    '¿Cuál es el precio del oro hoy?',
+    'El puerto de Cortés cerró ayer',
+    'Tengo una reunión con Minera Aurífera',
+  ]) assert.equal(v.texto(f), f, `«${f}» no repite nada limitado`);
+  // Siguen reservadas: el nombre con lo que es («mi esposa María»), la fecha con «cumple»/«nací», lo de la ronda 10
+  // y un nombre que no es de los muy comunes («Valentina»: ante la duda, se reserva).
+  for (const f of [
+    'Mi esposa María está enferma',
+    'mi mujer Maria no vino',
+    'Mi cumple es el 12 de marzo',
+    'nací el 12 de marzo',
+    'Cumple años: 12 de marzo',
+    'mi hija Valentina está enferma',
+    'Valentina está enferma',
+    'trabajo en Minera Sintetica desde 2020',
+    'la minera sintética pagó',
+    'soy diabético desde 2019',
+    'me mudé a PuertoSintetico',
+    'vivo en Pto. Sintético',
+    'tomo la metformina en la mañana',
+  ]) assert.doesNotMatch(v.texto(f), /Mar[ií]a|marzo|Valentina|Sint[eé]tic|diab|metformina/i, `«${f}» sigue reservada`);
 });

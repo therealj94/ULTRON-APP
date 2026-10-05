@@ -600,6 +600,42 @@ export function vistaDeTerminos(reservas: Reservas | null): VistaTexto {
   return { sabe: reservas !== null, reservas, texto: (s: string) => textoAutorizado(s, reservas) };
 }
 
+/** La vista de lo que `persona` limitó, desde la caché (la misma que arma server/contexto-turno.ts vistaAutorizada). */
+export function vistaEnCache(persona: string): VistaTexto {
+  const limitados = persona ? datosLimitadosEnCache(persona) : [];
+  return vistaDeTerminos(limitados ? terminosReservados(limitados) : null);
+}
+
+/** Lo mismo leyendo antes de disco/S3 lo que limitó (un runner puede esperar): sin leerlo no sabría y fallaría cerrado. */
+export async function vistaDePersona(persona: string): Promise<VistaTexto> {
+  if (persona) await precargarConocer(persona);
+  return vistaEnCache(persona);
+}
+
+/**
+ * Lo que devuelve una herramienta con lo suyo (sus misiones, su círculo, su tarea en curso) como puede llegar al
+ * modelo (revisión 11, MEDIO-2): por la misma vista que lo demás del turno. La frase que repite algo limitado sale
+ * entera («[dato reservado]»); sin saber qué está limitado no sale nada de lo suyo. El estado y el recibo no cambian
+ * (lo hecho, hecho está). Lo que la persona ve en Ajustes (las rutas REST de sus listas) no pasa por aquí.
+ */
+export function resultadoAutorizado<R extends { texto: string; estado?: string; recibo?: { efecto?: string } }>(r: R, vista: VistaTexto, etiqueta: string): R {
+  if (!vista.sabe) {
+    // Sin el detalle, lo que importa para no mentir: si no se pudo, si no se sabe cómo terminó, si quedó guardado.
+    const porque = 'el detalle no te lo enseño ahora: no sé todavía qué marcó «No usarlo»';
+    const texto =
+      r.estado === 'failed'
+        ? `${etiqueta}: no se pudo (${porque}). No digas que quedó hecho.`
+        : r.estado === 'unknown'
+          ? `${etiqueta}: no sé cómo terminó (${porque}). No digas que quedó hecho ni lo repitas.`
+          : r.recibo?.efecto === 'guardado'
+            ? `${etiqueta}: quedó guardado (${porque}). Díselo así, sin inventar el detalle.`
+            : `${etiqueta}: ahora mismo no puedo enseñarte lo suyo (${porque}). Dilo así y ofrece intentarlo en un momento.`;
+    return { ...r, texto };
+  }
+  const texto = vista.texto(String(r.texto || ''));
+  return texto === r.texto ? r : { ...r, texto };
+}
+
 export function precargarConocer(persona: string): Promise<void> {
   const clave = clavePersona(persona);
   return Promise.all([cajones.leer(clave), precargarSupresiones(clave)]).then(

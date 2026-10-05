@@ -22,6 +22,7 @@
 import { agregarAbierto, cerrar as cerrarAbierto } from './abiertos';
 import { clavePersona, crearCajones, linea, nuevoId, palabras, plegar } from './cerebro-comun';
 import { exito, fallo, type ResultadoHerramienta } from './recibo-herramienta';
+import { resultadoAutorizado, vistaDePersona, type VistaTexto } from './conocer-persona';
 
 export type TipoTarea = 'correo' | 'whatsapp' | 'otra';
 export type EstadoPaso = 'pendiente' | 'hecho' | 'saltado';
@@ -545,9 +546,17 @@ export const TOPE_TAREA = { compacto: 260, normal: 900 };
 
 /**
  * TAREA EN CURSO, para los HECHOS del turno: qué es, en qué paso va y cuál sigue; o la que está en pausa.
- * La voz (`compacto`) lleva una línea. Vacío si no hay.
+ * La voz (`compacto`) lleva una línea. Vacío si no hay. `vista`: la del turno (server/contexto-turno.ts), y quien lo
+ * manda al modelo la pasa SIEMPRE (server.ts): la frase que repite algo que la persona limitó sale entera (revisión 11,
+ * MEDIO-2); si no se sabe qué limitó, no va la tarea. Sin vista es el bloque tal cual (lo usan las pruebas y
+ * `correrTareaConEstado`, que pasa el suyo por la vista al final).
  */
-export function bloqueTarea(persona: string, ambito = '', compacto = false): string {
+export function bloqueTarea(persona: string, ambito = '', compacto = false, vista?: VistaTexto): string {
+  const b = bloqueTareaCrudo(persona, ambito, compacto);
+  return b && vista ? vista.texto(b) : b;
+}
+
+function bloqueTareaCrudo(persona: string, ambito: string, compacto: boolean): string {
   const t = tareaDe(persona, ambito);
   if (!t) return '';
   const max = compacto ? TOPE_TAREA.compacto : TOPE_TAREA.normal;
@@ -596,7 +605,13 @@ export async function correrTarea(persona: string, ambito: string, arg: string):
 const CAMBIO = { efecto: 'guardado' as const, proveedor: 'tarea' };
 
 /** El runner con su estado y su recibo (AUR07): lo que no se pudo es `failed` con su código; un cambio, `guardado`. */
-export async function correrTareaConEstado(persona: string, ambito: string, arg: string): Promise<ResultadoHerramienta> {
+export async function correrTareaConEstado(persona: string, ambito: string, arg: string, vista?: VistaTexto): Promise<ResultadoHerramienta> {
+  const r = await correrTareaCruda(persona, ambito, arg);
+  // Lo que devuelve va al modelo: por la vista de lo que la persona limitó (revisión 11, MEDIO-2). `vista`: la del turno.
+  return clavePersona(persona) ? resultadoAutorizado(r, vista ?? (await vistaDePersona(persona)), 'TAREA') : r;
+}
+
+async function correrTareaCruda(persona: string, ambito: string, arg: string): Promise<ResultadoHerramienta> {
   const clave = clavePersona(persona);
   if (!clave) return fallo('TAREA: solo con sesión. Pídele que entre con su cuenta.', 'sin-sesion');
   await precargarTareas(persona);
