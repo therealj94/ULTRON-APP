@@ -20,11 +20,13 @@ import express from 'express';
 import type { AddressInfo } from 'node:net';
 
 process.env.ULTRON_SESION_SECRETO = 'secreto-de-prueba-largo-para-ota-publicada';
+// Este despliegue es AU-RA (lib/plataforma.ts): la ruta solo compara con las publicaciones de `ultron`.
+process.env.PLATAFORMA = 'ultron';
 process.env.ULTRON_MESA_CLAVE = 'clave-de-mesa-de-prueba-ota-publicada';
 const O = await import('../lib/ota-publicada');
 const R = await import('../lib/recepcion-clientes');
 const { almacenEnMemoria } = await import('../lib/durable');
-const { montarRecepcion, montarRutaBuild } = await import('../server/build-rutas');
+const { montarRecepcion, montarRutaBuild, esperadoDe } = await import('../server/build-rutas');
 const { exigirMesa, sesionDe, emitirSesion } = await import('../server/seguridad');
 const S = await import('../scripts/qa/manifiesto-ota.mjs');
 
@@ -108,15 +110,15 @@ const tel = (x: Partial<import('../lib/recepcion-clientes').RegistroCliente> = {
   ...x,
 });
 const pubs = O.validarManifiestoOta(FICHA)!.publicaciones;
-const comparar = (c: ReturnType<typeof tel>, ota: typeof pubs | null = pubs) => R.compararCliente(c, { webSha: 'desconocido', ota });
+const comparar = (c: ReturnType<typeof tel>, ota: typeof pubs | null = pubs, producto: 'ultron' | 'electrum' = 'ultron') => R.compararCliente(c, { webSha: 'desconocido', producto, ota });
 
 test('matriz: mismo runtime y misma OTA → sí', () => {
   const r = comparar(tel());
   assert.deepEqual([r.esperado, r.recibido, r.motivo], [OTA, 'sí', 'ota-recibida']);
   assert.match(r.explicacion!, /c0ffee0/);
   assert.equal(comparar(tel({ updateId: OTA.toUpperCase() })).recibido, 'sí', 'sin importar mayúsculas');
-  const e = comparar(tel({ runtime: RT_ELECTRUM, updateId: OTA_ELECTRUM }));
-  assert.deepEqual([e.esperado, e.recibido], [OTA_ELECTRUM, 'sí'], 'Electrum se encuentra por su runtime');
+  const e = comparar(tel({ runtime: RT_ELECTRUM, updateId: OTA_ELECTRUM }), pubs, 'electrum');
+  assert.deepEqual([e.esperado, e.recibido], [OTA_ELECTRUM, 'sí'], 'en su despliegue, Dr Electrum se encuentra por su runtime');
 });
 
 test('matriz: mismo runtime y una OTA anterior → no (ota-anterior); una distinta → no (otra-ota)', () => {
@@ -148,7 +150,8 @@ test('matriz: sin ficha → desconocido; sin runtime, otro canal, iOS sin OTA, s
   assert.deepEqual([ios.recibido, ios.motivo], ['desconocido', 'sin-ota-ios']);
   const sinId = comparar(tel({ updateId: null, embebido: null }));
   assert.deepEqual([sinId.esperado, sinId.recibido, sinId.motivo], [OTA, 'desconocido', 'sin-updateid']);
-  assert.equal(comparar(tel(), []).motivo, 'otro-canal', 'ficha vacía: nada publicado que comparar');
+  const vacia = comparar(tel(), []);
+  assert.deepEqual([vacia.esperado, vacia.recibido, vacia.motivo], ['desconocido', 'desconocido', 'sin-publicacion'], 'ficha vacía: nada publicado que comparar');
 });
 
 test('matriz: tras la marcha atrás (tipo embebido) se espera el JS de fábrica', () => {
@@ -162,6 +165,80 @@ test('matriz: tras la marcha atrás (tipo embebido) se espera el JS de fábrica'
 test('matriz: una APK vieja con otro runtime encuentra SU OTA (la ficha guarda varios runtimes)', () => {
   const dos = O.validarManifiestoOta({ v: 1, publicaciones: [pub(), pub({ runtimeVersion: RT_VIEJO, androidUpdateId: OTA_VIEJA, publicado: '2026-09-30T12:00:00.000Z' })] })!.publicaciones;
   assert.deepEqual([comparar(tel({ runtime: RT_VIEJO, updateId: OTA_VIEJA }), dos).recibido, comparar(tel({ runtime: RT_VIEJO, updateId: OTA_VIEJA }), dos).esperado], ['sí', OTA_VIEJA]);
+});
+
+/* ------------------------------------------------------------------ el producto (revisión del 5-oct) */
+// La ficha trae a propósito las dos apps (ultron y electrum). AU-RA nunca se compara con Dr Electrum, ni al revés,
+// aunque coincidan sus runtimes: se filtra por producto ANTES de mirar canal, runtime y updateId.
+
+const ficha = (...ps: Record<string, unknown>[]) => O.validarManifiestoOta({ v: 1, publicaciones: ps })!.publicaciones;
+const corto8 = (s: string) => s.slice(0, 8);
+
+test('producto: un teléfono de AU-RA cuyo runtime solo está en Dr Electrum nunca se compara ni se explica con Electrum', () => {
+  // La ficha de siempre: AU-RA en RT, Dr Electrum en RT_ELECTRUM.
+  const r = comparar(tel({ runtime: RT_ELECTRUM, updateId: OTA_ELECTRUM }));
+  assert.notEqual(r.esperado, OTA_ELECTRUM, 'nunca se espera la OTA de Dr Electrum');
+  assert.notEqual(r.recibido, 'sí');
+  assert.deepEqual([r.esperado, r.recibido, r.motivo], ['otro-runtime', 'no', 'otro-runtime'], 'contra lo publicado de AU-RA: es otra APK');
+  assert.ok(!r.explicacion!.includes(corto8(OTA_ELECTRUM)), 'la explicación no nombra la OTA de Dr Electrum');
+  assert.ok(r.explicacion!.includes(corto8(OTA)), 'nombra la última de AU-RA');
+  // Dr Electrum publicó DESPUÉS y el runtime del teléfono no está en ninguna: se explica con la última de AU-RA.
+  const electrumMasNueva = ficha(pub(), pub({ plataforma: 'electrum', runtimeVersion: RT_ELECTRUM, androidUpdateId: OTA_ELECTRUM, publicado: '2026-10-05T13:00:00.000Z' }));
+  assert.equal(electrumMasNueva[0].plataforma, 'electrum', 'la más reciente de la ficha es la de Dr Electrum');
+  const v = comparar(tel({ runtime: RT_VIEJO, updateId: EMBEBIDA, embebido: true }), electrumMasNueva);
+  assert.equal(v.motivo, 'otro-runtime');
+  assert.ok(!v.explicacion!.includes(corto8(OTA_ELECTRUM)) && !v.explicacion!.includes(corto8(RT_ELECTRUM)), `no se explica con Dr Electrum: ${v.explicacion}`);
+  assert.ok(v.explicacion!.includes(corto8(OTA)), 'se explica con la de AU-RA');
+  // Sin ninguna publicación de AU-RA: no hay con qué comparar (desconocido), aunque el runtime coincida con Electrum.
+  const soloElectrum = ficha(pub({ plataforma: 'electrum', runtimeVersion: RT_ELECTRUM, androidUpdateId: OTA_ELECTRUM }));
+  for (const c of [tel({ runtime: RT_ELECTRUM, updateId: OTA_ELECTRUM }), tel({ runtime: RT_VIEJO }), tel()]) {
+    const x = comparar(c, soloElectrum);
+    assert.deepEqual([x.esperado, x.recibido, x.motivo], ['desconocido', 'desconocido', 'sin-publicacion'], JSON.stringify(c.runtime));
+    assert.ok(!x.explicacion!.includes(corto8(OTA_ELECTRUM)));
+  }
+});
+
+test('producto: runtime coincidente entre AU-RA y Dr Electrum → AU-RA compara solo con el updateId de AU-RA', () => {
+  // Mismo runtime en las dos apps; la de Dr Electrum es más reciente (va primero en la ficha).
+  const comun = ficha(pub(), pub({ plataforma: 'electrum', androidUpdateId: OTA_ELECTRUM, publicado: '2026-10-05T13:00:00.000Z' }));
+  assert.equal(comun[0].plataforma, 'electrum');
+  const si = comparar(tel());
+  const siComun = comparar(tel(), comun);
+  assert.deepEqual([siComun.esperado, siComun.recibido, siComun.motivo], [OTA, 'sí', 'ota-recibida'], 'corre la de AU-RA: sí');
+  assert.equal(siComun.explicacion, si.explicacion);
+  const conLaDeElectrum = comparar(tel({ updateId: OTA_ELECTRUM, creada: null }), comun);
+  assert.deepEqual([conLaDeElectrum.esperado, conLaDeElectrum.recibido], [OTA, 'no'], 'la de Dr Electrum no cuenta como la publicada de AU-RA');
+  // Una entrada sin producto conocido (una ficha manipulada que se saltara la validación) no es de AU-RA.
+  const rara = [{ ...comun[1], plataforma: 'otra-app' as any, androidUpdateId: OTA_VIEJA }, ...comun];
+  assert.equal(comparar(tel({ updateId: OTA_VIEJA }), rara).esperado, OTA, 'lo de otra app no se compara');
+  assert.deepEqual(R.publicacionesDe(rara, 'ultron').map((p) => p.plataforma), ['ultron']);
+});
+
+test('producto: el despliegue de Dr Electrum solo considera las publicaciones de electrum', () => {
+  const r = comparar(tel({ runtime: RT_ELECTRUM, updateId: OTA_ELECTRUM }), pubs, 'electrum');
+  assert.deepEqual([r.esperado, r.recibido, r.motivo], [OTA_ELECTRUM, 'sí', 'ota-recibida']);
+  // Un teléfono con el runtime de AU-RA: para Electrum es otra APK, explicada con la última de Electrum.
+  const a = comparar(tel(), pubs, 'electrum');
+  assert.notEqual(a.esperado, OTA);
+  assert.deepEqual([a.esperado, a.recibido, a.motivo], ['otro-runtime', 'no', 'otro-runtime']);
+  assert.ok(a.explicacion!.includes(corto8(OTA_ELECTRUM)) && !a.explicacion!.includes(corto8(OTA)));
+  // Runtime coincidente: Electrum espera SU updateId.
+  const comun = ficha(pub({ publicado: '2026-10-05T13:00:00.000Z' }), pub({ plataforma: 'electrum', androidUpdateId: OTA_ELECTRUM }));
+  assert.deepEqual([comparar(tel({ updateId: OTA_ELECTRUM }), comun, 'electrum').esperado, comparar(tel({ updateId: OTA_ELECTRUM }), comun, 'electrum').recibido], [OTA_ELECTRUM, 'sí']);
+  assert.deepEqual([comparar(tel(), comun, 'electrum').esperado, comparar(tel(), comun, 'electrum').recibido], [OTA_ELECTRUM, 'no']);
+  // Sin publicaciones de Electrum: desconocido.
+  assert.equal(comparar(tel(), ficha(pub()), 'electrum').motivo, 'sin-publicacion');
+});
+
+test('producto: lo esperado de la ruta (esperadoDe) solo trae las publicaciones del despliegue', () => {
+  const m = { commit: 'x', web: { sha: 'desconocido', hora: null } } as any;
+  const estado = { fuente: 'release', manifiesto: O.validarManifiestoOta(FICHA), leido: t } as any;
+  const aura = esperadoDe(m, estado, 'ultron');
+  assert.equal(aura.producto, 'ultron');
+  assert.deepEqual(aura.ota!.map((p) => p.plataforma), ['ultron']);
+  const electrum = esperadoDe(m, estado, 'electrum');
+  assert.deepEqual(electrum.ota!.map((p) => p.androidUpdateId), [OTA_ELECTRUM]);
+  assert.equal(esperadoDe(m, { fuente: 'no-disponible', manifiesto: null, leido: null } as any, 'ultron').ota, null, 'sin ficha, sigue «desconocido»');
 });
 
 /* ------------------------------------------------------------------ la descarga */
@@ -350,8 +427,9 @@ test('ruta: /api/build compara cada teléfono con la ficha publicada (AURA_OTA_M
   }
   const j: any = await (await fetch(`${base}/api/build`, { headers: { 'x-ultron-sesion': jose } })).json();
   assert.equal(j.recepcion.otaFuente, 'release');
-  assert.equal(j.recepcion.esperado.ota.length, 2);
+  assert.equal(j.recepcion.esperado.ota.length, 1, 'solo lo publicado de AU-RA (la de Dr Electrum no es de este despliegue)');
   assert.equal(j.recepcion.esperado.ota[0].androidUpdateId, OTA);
+  assert.ok(j.recepcion.esperado.ota.every((p: any) => p.plataforma === 'ultron'));
   assert.match(j.recepcion.evidencia, /^declarada/);
   const por = (rt: string, e: boolean) => j.clientes.find((c: any) => c.runtime === rt && c.embebido === e);
   assert.deepEqual([por(RT, false).recibido, por(RT, false).motivo, por(RT, false).esperado], ['sí', 'ota-recibida', OTA]);

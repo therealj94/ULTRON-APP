@@ -23,6 +23,12 @@ function navegador(o: { ios: boolean; https: boolean; cookies?: Map<string, stri
   const escritas: string[] = [];
   const local = mapa();
   const sesion = mapa();
+  /** Las peticiones que la página hace por su cuenta (fetch de mentira: responde 200 y apunta). */
+  const pedidas: Array<{ url: string; headers: Record<string, string> }> = [];
+  const fetch = async (url: string, init?: { headers?: Record<string, string> }) => {
+    pedidas.push({ url: String(url), headers: { ...(init?.headers || {}) } });
+    return { ok: true, status: 200, json: async () => ({ authenticated: true }) };
+  };
   const document = {
     get cookie() {
       return [...cookies].map(([k, v]) => `${k}=${v}`).join('; ');
@@ -44,9 +50,10 @@ function navegador(o: { ios: boolean; https: boolean; cookies?: Map<string, stri
     sessionStorage: sesion,
     document,
     location: { protocol: o.https ? 'https:' : 'http:' },
+    fetch,
   });
   Object.defineProperty(globalThis, 'navigator', { value: navigator, configurable: true, writable: true });
-  return { cookies, escritas, local };
+  return { cookies, escritas, local, pedidas };
 }
 
 const S = await import('../src/10-infra/sesionCliente');
@@ -125,4 +132,42 @@ test('recepción (5-oct): solo la comprobación de sesión lleva qué build corr
   assert.equal(n.local.m.get('aura_recepcion_instalacion'), undefined, 'al salir se olvida');
   S.guardarTokenMesa(TOKEN);
   assert.notEqual(S.headersComprobarSesion()['x-aura-cliente'].split('i=')[1], id, 'la sesión nueva estrena id');
+});
+
+test('recepción tras entrar (revisión del 5-oct): la web anota su build en cuanto entra, sin recargar, una sola vez', () => {
+  // La PWA abierta SIN sesión: la comprobación del arranque no lleva nada (no hay a quién anotarlo).
+  const n = navegador({ ios: false, https: true });
+  assert.deepEqual(S.headersComprobarSesion(), {});
+  // Entrar con correo y clave (AccesoModal.entrar), Genesis (App.tsx) o un enlace de correo: todos guardan el token.
+  S.guardarTokenMesa(TOKEN);
+  const conCabecera = n.pedidas.filter((p) => p.headers['x-aura-cliente']);
+  assert.equal(conCabecera.length, 1, 'una petición con qué build corre, en el acto');
+  assert.equal(conCabecera[0].url, '/api/ultron/sesion', 'la comprobación de sesión de siempre (el servidor anota antes de las rutas)');
+  assert.equal(conCabecera[0].headers['x-ultron-sesion'], TOKEN, 'con la sesión recién dada: el servidor sabe de qué cuenta es');
+  assert.match(conCabecera[0].headers['x-aura-cliente'], /^v1;p=web;i=[A-Za-z0-9-]{8,64}$/);
+  const idA = conCabecera[0].headers['x-aura-cliente'].split('i=')[1];
+  assert.equal(n.local.m.get('aura_recepcion_instalacion'), idA, 'el id que se anunció es el de esta sesión');
+  // Lo demás que haga la pestaña sigue sin la cabecera: no es una petición más por cada llamada.
+  assert.deepEqual(S.headersMesa(), { 'x-ultron-sesion': TOKEN });
+  assert.equal(n.pedidas.length, 1, 'nada más se pidió');
+  // Salir no anuncia nada (no hay cuenta); entrar con OTRA cuenta anuncia de nuevo, con id nuevo y la sesión nueva.
+  S.guardarTokenMesa('');
+  assert.equal(n.pedidas.filter((p) => p.headers['x-aura-cliente']).length, 1, 'al salir no se manda');
+  const OTRO = 'eyJhbGciOiJIUzI1NiJ9.eyJjIjoibHVpc0B4LmhuIn0.otra_firma-456';
+  S.guardarTokenMesa(OTRO);
+  const tras = n.pedidas.filter((p) => p.headers['x-aura-cliente']);
+  assert.equal(tras.length, 2);
+  assert.equal(tras[1].headers['x-ultron-sesion'], OTRO, 'a la cuenta nueva');
+  assert.notEqual(tras[1].headers['x-aura-cliente'].split('i=')[1], idA, 'con el id estrenado para esa sesión');
+});
+
+test('recepción tras entrar: sin red o sin almacenamiento no rompe la entrada', () => {
+  const n = navegador({ ios: false, https: true });
+  (globalThis as any).fetch = () => {
+    throw new Error('sin red');
+  };
+  assert.doesNotThrow(() => S.guardarTokenMesa(TOKEN));
+  assert.equal(n.local.m.get('ultron_sesion_token'), TOKEN, 'la sesión quedó guardada igual');
+  (globalThis as any).fetch = async () => Promise.reject(new Error('sin red'));
+  assert.doesNotThrow(() => S.guardarTokenMesa(TOKEN));
 });
