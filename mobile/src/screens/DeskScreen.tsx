@@ -64,6 +64,7 @@ import { quitarExpresiones } from '../lib/expresiones';
 import { ClaudioRetrato, fotosRetrato } from '../avatares/ClaudioRetrato';
 import { ClaudioDePie, FOTOS_ANTONIO_PIE } from '../avatares/ClaudioDePie';
 import { CuerpoMesa } from '../avatar3d/CuerpoMesa';
+import { vozSonando } from '../avatar3d/sonando';
 import { leeConHerramientas, ponerLee } from '../avatares/video/pistas';
 import { hayModelo3D } from '../avatar3d/AvatarVivo';
 import { hayVideo } from '../avatares/video/clips';
@@ -374,6 +375,11 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   /** Hay una llamada: la mesa calla, no oye y apaga la cámara hasta colgar. */
   const enLlamadaRef = useRef(false);
   const micApagado = conversando ? convSilencio : micMuted;
+  /**
+   * ¿Suena la voz de la mesa? (lib/tts → avatar3d/sonando.ts). El cuerpo en video o 3D habla con ESTO, no
+   * con la cara: la cara SPEAKING llega antes que el audio (José, 5-oct: «habla cuando no está diciendo nada»).
+   */
+  const audioMesa = useSyncExternalStore(vozSonando.escuchar, vozSonando.ahora);
   /** La mesa es la pantalla que se ve (la pila nativa la deja montada debajo de los chats y Ajustes). */
   const mesaVisible = useMesaVisible();
   const mesaVisibleRef = useRef(mesaVisible);
@@ -2695,6 +2701,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         camara={reparto.pose === 'pie' ? 'cuerpo' : 'retrato'}
         face={face}
         emocion={emocion}
+        // Habla solo con audio de verdad: el de la mesa o el del agente en la conversación fluida. Sin audio,
+        // piensa mientras el turno sigue (o la voz se prepara); si no, la cara decide (escucha, reposo…).
+        voz={{ sonando: audioMesa.sonando, agenteHabla: conversando && estadoConv === 'hablando', pensando: status === 'thinking' || audioMesa.preparando }}
         mirada={{ x: gaze.x, y: gaze.y, activa: verPersona }}
         respaldo={fotosCara}
         onTap={() => onTap('face', 0, 0)}

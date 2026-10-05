@@ -55,6 +55,21 @@ export type ExtraEstado = {
   mirar?: EstadoAvatar['mirar'];
   gesto?: EstadoAvatar['gesto'];
   globo?: string;
+  /** Solo la mesa (estadoDesdeMesa): lo que de verdad suena. Sin esto, el cuerpo de la mesa no habla. */
+  voz?: VozMesa;
+};
+
+/**
+ * Lo que manda sobre la boca del cuerpo en la mesa: el AUDIO, no la cara (José, 5-oct: «habla cuando no
+ * está diciendo nada»; avatar3d/sonando.ts).
+ */
+export type VozMesa = {
+  /** Suena la voz de la mesa (lib/tts: el reproductor sonando; no al pedirla, ni después de callar). */
+  sonando: boolean;
+  /** La conversación fluida: el agente habla (su audio va por WebRTC, no por tts; lo dice el SDK). */
+  agenteHabla?: boolean;
+  /** El turno sigue (el cerebro piensa) o la voz se está preparando: sin audio, piensa. */
+  pensando?: boolean;
 };
 
 /** El ánimo de la compañera (animo.ts) → lo que cualquier cuerpo tiene que mostrar. */
@@ -119,17 +134,28 @@ const CARA_DE_EMOCION: Record<string, ExpresionAvatar> = {
   carino: 'timida',
 };
 
+/**
+ * ¿Habla o piensa el cuerpo de la mesa? Habla SOLO si suena algo (su voz o la del agente), con la cara que
+ * sea; la cara SPEAKING o SING sin audio no es hablar (llega antes que la voz, o se queda después). Sin
+ * audio piensa si la cara lo pide o si el turno sigue o la voz se prepara.
+ */
+export function bocaDeMesa(face: string, voz?: VozMesa): { hablando: boolean; pensando: boolean } {
+  const hablando = !!voz && (voz.sonando || !!voz.agenteHabla);
+  return { hablando, pensando: !hablando && (face === 'THINKING' || face === 'SCAN' || !!voz?.pensando) };
+}
+
 export function estadoDesdeMesa(face: string, emocion: string, x: ExtraEstado = {}): EstadoAvatar {
   const deCara = CARA_DE_MESA[face] || 'tranquila';
   const afinable = face === 'IDLE' || face === 'SPEAKING';
   const expresion = afinable ? CARA_DE_EMOCION[emocion] || deCara : deCara;
+  const { hablando, pensando } = bocaDeMesa(face, x.voz);
   return {
     ...ESTADO_INICIAL,
     expresion,
-    hablando: face === 'SPEAKING' || face === 'SING',
+    hablando,
     escuchando: face === 'LISTENING' || face === 'CURIOUS',
     silenciado: face === 'SLEEPING',
-    pensando: face === 'THINKING' || face === 'SCAN',
+    pensando,
     mirar: x.mirar || ESTADO_INICIAL.mirar,
     gesto: x.gesto ?? null,
     globo: x.globo || '',
