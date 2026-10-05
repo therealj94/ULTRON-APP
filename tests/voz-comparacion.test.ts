@@ -61,6 +61,14 @@ const ejercicios = (red = 'wifi', bien: Partial<Record<Motor, { interrupcion?: n
   return out;
 };
 
+/** Los turnos que cortan las interrupciones a propósito (`n` por camino; mientras hablaba: con su cerebro). */
+const cortesAProposito = (n: Partial<Record<Motor, number>> = {}, red = 'wifi') => {
+  const out: Medida[] = [];
+  for (const motor of ['agente', 'speech-engine'] as Motor[])
+    for (let i = 0; i < (n[motor] ?? 5); i++) out.push(m(motor, 3_000_000 + (motor === 'agente' ? 0 : 500) + i, motor === 'agente' ? 1500 : 1100, { cortado: true, red, conv: `${red}-${motor[0]}0-${i % 3}` }));
+  return out;
+};
+
 async function comparar(ms: Medida[], ej: import('../server/voz-medidas').EjercicioVoz[] = []) {
   MED._reiniciarMedidas();
   for (const x of ms) MED.anotarTurnoVoz(x);
@@ -288,6 +296,8 @@ test('cualquier regresión (errores, respaldos, repetidos, tardes, vacíos, solo
     const ms = prueba({ ag: 1500, se: 1100 });
     // Uno más (no uno cambiado): Speech Engine sigue con sus 20 comparables y el error va en su contra.
     ms.push(m('speech-engine', 1_000_000 + 25_500, 20, extra));
+    // R16-3: las 5 interrupciones a propósito anotadas cortan 5 turnos en cada camino (se descuentan de los cortados).
+    if (bandera === 'cortados') ms.push(...cortesAProposito());
     const r: any = await comparar(ms, ejercicios());
     assert.equal(r.total.veredicto.estado, 'mantener', `${bandera}: ${JSON.stringify(r.total.veredicto)}`);
     assert.deepEqual(r.porRed.wifi.veredicto.regresiones, [bandera], bandera);
@@ -310,4 +320,65 @@ test('un ejercicio mal formado no se anota', () => {
   const e = MED.anotarEjercicioVoz({ motor: 'agente', tipo: 'interrupcion', bien: false });
   assert.equal(e?.bien, false);
   assert.equal(MED._ejercicios().length, 1);
+});
+
+/* ------------------------------------------------------------------ revisión 16: R16-3 y R16-4 */
+
+/** Interrupciones a propósito en otra cantidad por camino (todas bien); 5 asentimientos por camino. */
+const ejerciciosN = (interrupciones: Record<Motor, number>, red = 'wifi') => {
+  const out: import('../server/voz-medidas').EjercicioVoz[] = [];
+  for (const motor of ['agente', 'speech-engine'] as Motor[]) {
+    for (let i = 0; i < interrupciones[motor]; i++) out.push({ motor, tipo: 'interrupcion', bien: true, t: 2_000_000 + i, red });
+    for (let i = 0; i < 5; i++) out.push({ motor, tipo: 'asentimiento', bien: true, t: 2_100_000 + i, red });
+  }
+  return out;
+};
+/** Cortes de impaciencia en Speech Engine: lo cortó la persona antes de que hablara el cerebro, a los 1100 ms. */
+const impaciencia = (n: number) => Array.from({ length: n }, (_, i) => m('speech-engine', 3_100_000 + i, null, { cortado: true, cerebroMs: null, totalMs: 1100, conv: `wifi-s0-${i % 3}` }));
+
+test('R16-3: 10 interrupciones a propósito en el agente contra 5 en Speech Engine ya no tapan 5 cortes de impaciencia: «insuficiente» (desparejos); y con ejercicios parejos los cortes a propósito se descuentan', async () => {
+  // La reproducción: 10 cortes a propósito en el agente; 5 a propósito + 5 de impaciencia en Speech Engine.
+  const ms = [...prueba({ ag: 1500, se: 1100 }), ...cortesAProposito({ agente: 10, 'speech-engine': 5 }), ...impaciencia(5)];
+  const r: any = await comparar(ms, ejerciciosN({ agente: 10, 'speech-engine': 5 }));
+  assert.equal(r.total.veredicto.estado, 'insuficiente', JSON.stringify(r.total.veredicto));
+  assert.ok(r.total.veredicto.faltan.some((f: string) => /interrupciones a propósito desparejos \(agente 10, speech-engine 5\)/.test(f)), r.total.veredicto.faltan.join(' | '));
+  // El control (5 contra 5): los 5 de impaciencia son una regresión.
+  const c: any = await comparar([...prueba({ ag: 1500, se: 1100 }), ...cortesAProposito(), ...impaciencia(5)], ejerciciosN({ agente: 5, 'speech-engine': 5 }));
+  assert.equal(c.total.veredicto.estado, 'mantener', JSON.stringify(c.total.veredicto));
+  assert.deepEqual(c.porRed.wifi.veredicto.regresiones, ['cortados']);
+  // Parejos (6 y 5, dentro del ±20 %): 6 cortes a propósito en el agente contra 5 + 1 de impaciencia ya no empatan.
+  const d: any = await comparar([...prueba({ ag: 1500, se: 1100 }), ...cortesAProposito({ agente: 6, 'speech-engine': 5 }), ...impaciencia(1)], ejerciciosN({ agente: 6, 'speech-engine': 5 }));
+  assert.equal(d.total.veredicto.estado, 'mantener', JSON.stringify(d.total.veredicto));
+  assert.deepEqual(d.porRed.wifi.veredicto.regresiones, ['cortados']);
+  assert.deepEqual(MED.cortadosSinEjercicios(d.porRed.wifi['speech-engine']), { cortados: 1, de: 21 });
+  assert.deepEqual(MED.cortadosSinEjercicios(d.porRed.wifi.agente), { cortados: 0, de: 20 });
+  // Y sin cortes de impaciencia, con ejercicios parejos, se adopta.
+  const ok: any = await comparar([...prueba({ ag: 1500, se: 1100 }), ...cortesAProposito()], ejerciciosN({ agente: 5, 'speech-engine': 5 }));
+  assert.equal(ok.total.veredicto.estado, 'adoptar', JSON.stringify(ok.total.veredicto));
+  assert.equal(MED.EJERCICIOS_PAREJOS, 0.8);
+});
+
+test('R16-4: la paradoja de Simpson (40 A y 5 B en la hora mala, 5 A y 100 B en la buena, B peor en las dos) ya no da «adoptar»; una ganancia de verdad en bloques parejos sí', async () => {
+  const ms: Medida[] = [];
+  let t = 1_000_000;
+  const bloque = (motor: Motor, n: number, base: number, b: number) => {
+    for (let i = 0; i < n; i++) ms.push(m(motor, (t += 1000), base + (i % 10) * 10, { conv: `wifi-${motor[0]}${b}-${i % 6}` }));
+  };
+  // Hora mala: el agente a ~2000 ms, Speech Engine a ~2200. Hora buena: el agente a ~800, Speech Engine a ~900.
+  bloque('agente', 40, 2000, 0);
+  bloque('speech-engine', 5, 2200, 0);
+  bloque('agente', 5, 800, 1);
+  bloque('speech-engine', 100, 900, 1);
+  const r: any = await comparar(ms, ejercicios());
+  const v = r.porRed.wifi.veredicto;
+  assert.equal(v.primerTextoP50Mejor, true, 'junto, Speech Engine parece mejor (el reparto de las horas)');
+  assert.equal(r.total.veredicto.estado, 'mantener', JSON.stringify(r.total.veredicto));
+  assert.deepEqual(r.porRed.wifi.pares, { total: 2, ganaSE: 0 });
+  assert.equal(v.ganaEnLaMayoriaDePares, false);
+  assert.ok(v.motivos.some((x: string) => /pares de bloques A\/B \(gana 0 de 2\)/.test(x)), v.motivos.join(' | '));
+  // Una ganancia de verdad, en tres pares de bloques parejos: gana los tres y se adopta.
+  const bien: any = await comparar(prueba({ ag: 1500, se: 1100, bloquesPorCamino: 3 }), ejercicios());
+  assert.deepEqual(bien.porRed.wifi.pares, { total: 3, ganaSE: 3 });
+  assert.equal(bien.total.veredicto.estado, 'adoptar', JSON.stringify(bien.total.veredicto));
+  assert.equal(bien.total.veredicto.ganaEnLaMayoriaDePares, true);
 });

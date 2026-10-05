@@ -166,7 +166,7 @@ test('matriz: una APK vieja con otro runtime encuentra SU OTA (la ficha guarda v
 
 /* ------------------------------------------------------------------ la descarga */
 
-type Respuesta = { status?: number; cuerpo?: string; lento?: number; redirige?: string };
+type Respuesta = { status?: number; cuerpo?: string; lento?: number; redirige?: string; sinFin?: boolean };
 let respuesta: Respuesta = { cuerpo: JSON.stringify(FICHA) };
 let pedidas = 0;
 const fichaSrv = http.createServer((req, res) => {
@@ -177,6 +177,14 @@ const fichaSrv = http.createServer((req, res) => {
     return res.end();
   }
   const r = respuesta;
+  if (r.sinFin) {
+    // Un cuerpo que no termina nunca: trozos de 16 KB hasta que el cliente cuelgue.
+    res.writeHead(200, { 'content-type': 'application/octet-stream' });
+    const trozo = Buffer.alloc(16 * 1024, 0x20);
+    const reloj = setInterval(() => res.write(trozo), 5);
+    res.on('close', () => clearInterval(reloj));
+    return;
+  }
   setTimeout(() => {
     res.writeHead(r.status ?? 200, { 'content-type': 'application/octet-stream' });
     res.end(r.cuerpo ?? '');
@@ -261,6 +269,47 @@ test('descarga: una ficha demasiado grande no se acepta', async () => {
   const e = await new O.FuenteOta({ url: URL_FICHA }).refrescar();
   assert.equal(e.fuente, 'no-disponible');
   assert.equal(e.manifiesto, null);
+});
+
+test('descarga: un cuerpo enorme se corta en los 64 KB, sin leerlo entero (uno que no termina tampoco espera al tope de tiempo)', async () => {
+  // Por la red: un cuerpo sin fin se corta al pasar el tope, mucho antes de los 3 s de espera.
+  respuesta = { sinFin: true };
+  const t0 = Date.now();
+  const e = await new O.FuenteOta({ url: URL_FICHA, timeoutMs: 3_000 }).refrescar();
+  assert.equal(e.fuente, 'no-disponible');
+  assert.match(e.detalle!, /demasiado grande/, e.detalle);
+  assert.ok(Date.now() - t0 < 2_500, `cortó sin esperar al tope de tiempo (${Date.now() - t0} ms)`);
+  // Con un cuerpo en flujo de 10 MB: se leen como mucho 64 KB más un trozo, se cancela, y text() ni se llama.
+  let leidos = 0;
+  let cancelado = false;
+  let entero = false;
+  const TROZO = 16 * 1024;
+  const cuerpo = new ReadableStream<Uint8Array>({
+    pull(c) {
+      if (leidos >= 10 * 1024 * 1024) return c.close();
+      leidos += TROZO;
+      c.enqueue(new Uint8Array(TROZO).fill(0x20));
+    },
+    cancel() {
+      cancelado = true;
+    },
+  });
+  const grande = new O.FuenteOta({
+    url: 'https://ficha.invalid/ota-aura.json',
+    fetch: async () => ({ ok: true, status: 200, body: cuerpo, text: async () => ((entero = true), 'x'.repeat(10 * 1024 * 1024)) }),
+  });
+  const g = await grande.refrescar();
+  assert.equal(g.fuente, 'no-disponible');
+  assert.match(g.detalle!, /demasiado grande/);
+  assert.equal(entero, false, 'no se leyó el cuerpo entero');
+  assert.equal(cancelado, true, 'la descarga se canceló');
+  assert.ok(leidos <= O.TOPE_FICHA_BYTES + 2 * TROZO, `leídos ${leidos} bytes`);
+  // Justo en el tope, sí se acepta.
+  const justa = JSON.stringify(FICHA);
+  const cabe = JSON.stringify({ ...FICHA, relleno: 'x'.repeat(O.TOPE_FICHA_BYTES - justa.length - 13) });
+  assert.equal(Buffer.byteLength(cabe), O.TOPE_FICHA_BYTES);
+  respuesta = { cuerpo: cabe };
+  assert.equal((await new O.FuenteOta({ url: URL_FICHA }).refrescar()).fuente, 'release');
 });
 
 /* ------------------------------------------------------------------ la ruta, con la ficha de mentira (por la variable) */

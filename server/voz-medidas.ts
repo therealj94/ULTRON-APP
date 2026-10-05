@@ -244,7 +244,8 @@ const CLAVE_EXCLUIDO: Record<Exclude<ClaseTurno, 'completo'>, keyof Excluidos> =
 /**
  * Lo que, si a Speech Engine le pasa más (en proporción), bloquea «adoptar». Los cortados también: si la
  * persona corta más en un camino es, casi siempre, porque tarda (y sin contarlos, los turnos lentos que la
- * persona corta desaparecían de los percentiles). Las interrupciones a propósito son las mismas en los dos.
+ * persona corta desaparecían de los percentiles). Los cortes de las interrupciones a propósito anotadas se
+ * descuentan antes de comparar (cortadosSinEjercicios), y esos ejercicios tienen que estar parejos (R16-3).
  */
 export const REGRESIONES = ['errores', 'respaldos', 'repetidos', 'tardes', 'vacios', 'soloEspera', 'sinCerebro', 'cortados'] as const;
 
@@ -283,6 +284,12 @@ export const MIN_ASENTIMIENTOS = 5;
 export const MIN_BLOQUES = 4;
 /** Un bloque cuenta solo con ≥5 respuestas comparables: un cambio de paso suelto (19 A, 1 B, 1 A, 19 B) no alterna. */
 export const MIN_TURNOS_BLOQUE = 5;
+/**
+ * Los ejercicios a propósito, PAREJOS entre caminos (revisión 16, R16-3): de cada tipo, el camino con menos tiene al
+ * menos el 80 % de los del otro (±20 %). Si no, los cortes a propósito pesan distinto en cada camino (10 en el agente
+ * contra 5 en Speech Engine tapaban 5 cortes de impaciencia) y el veredicto es «insuficiente».
+ */
+export const EJERCICIOS_PAREJOS = 0.8;
 /** Llamadas distintas (con respuestas comparables) por camino y por red: 20 turnos de UNA llamada no son una muestra. */
 export const MIN_CONVERSACIONES = 5;
 /**
@@ -366,26 +373,65 @@ export function resumir(ms: MedidaTurnoVoz[], ej: EjercicioVoz[] = []): ResumenC
 }
 
 /**
- * Cuántos bloques alternos de verdad hay (A-B-A-B = 4), en orden de tiempo, entre las respuestas
- * comparables: los tramos seguidos de un mismo camino con menos de MIN_TURNOS_BLOQUE no cuentan (un cambio
- * de paso suelto no es un bloque), y al quitarlos los tramos vecinos del mismo camino se juntan en uno.
+ * Los bloques alternos de verdad (A-B-A-B), en orden de tiempo, entre las respuestas comparables: los tramos
+ * seguidos de un mismo camino con menos de MIN_TURNOS_BLOQUE no cuentan (un cambio de paso suelto no es un
+ * bloque), y al quitarlos los tramos vecinos del mismo camino se juntan en uno (con sus respuestas).
  */
-export function contarBloques(ms: MedidaTurnoVoz[]): number {
+export function bloquesAlternos(ms: MedidaTurnoVoz[]): { motor: MotorVoz; ms: MedidaTurnoVoz[] }[] {
   const o = ms.filter((m) => claseTurno(m) === 'completo').sort((a, b) => a.t - b.t);
-  const tramos: { motor: MotorVoz; n: number }[] = [];
+  const tramos: { motor: MotorVoz; ms: MedidaTurnoVoz[] }[] = [];
   for (const m of o) {
     const ultimo = tramos[tramos.length - 1];
-    if (ultimo?.motor === m.motor) ultimo.n++;
-    else tramos.push({ motor: m.motor, n: 1 });
+    if (ultimo?.motor === m.motor) ultimo.ms.push(m);
+    else tramos.push({ motor: m.motor, ms: [m] });
   }
-  let n = 0;
-  let anterior: MotorVoz | null = null;
+  const bloques: { motor: MotorVoz; ms: MedidaTurnoVoz[] }[] = [];
   for (const tr of tramos) {
-    if (tr.n < MIN_TURNOS_BLOQUE || tr.motor === anterior) continue;
-    anterior = tr.motor;
-    n++;
+    if (tr.ms.length < MIN_TURNOS_BLOQUE) continue;
+    const ultimo = bloques[bloques.length - 1];
+    if (ultimo?.motor === tr.motor) ultimo.ms.push(...tr.ms);
+    else bloques.push({ motor: tr.motor, ms: [...tr.ms] });
   }
-  return n;
+  return bloques;
+}
+
+/** Cuántos bloques alternos de verdad hay (A-B-A-B = 4): ver bloquesAlternos. */
+export function contarBloques(ms: MedidaTurnoVoz[]): number {
+  return bloquesAlternos(ms).length;
+}
+
+/** Los pares de bloques vecinos (1.º con 2.º, 3.º con 4.º…) y en cuántos gana Speech Engine. */
+export type ParesBloques = { total: number; ganaSE: number };
+
+/**
+ * La comparación POR PARES de bloques vecinos (revisión 16, R16-4: la paradoja de Simpson). Juntar todas las
+ * respuestas de cada camino deja que el reparto de las horas decida: con 40 del agente y 5 de Speech Engine en la
+ * hora mala, y 5 del agente y 100 de Speech Engine en la buena, Speech Engine «ganaba» junto aunque perdiera en las
+ * dos horas. Cada par (A/B seguidos, la misma hora) pesa uno, tenga los turnos que tenga: Speech Engine gana el par
+ * si el p50 de su primer audio es menor que el del agente en ese par. Un bloque suelto al final no tiene par.
+ */
+export function paresDeBloques(ms: MedidaTurnoVoz[]): ParesBloques {
+  const b = bloquesAlternos(ms);
+  const p50 = (xs: MedidaTurnoVoz[]) => percentil(xs.map((m) => m.primerTextoMs).filter((x): x is number => x !== null), 50);
+  let total = 0;
+  let ganaSE = 0;
+  for (let i = 0; i + 1 < b.length; i += 2) {
+    const [ag, se] = b[i].motor === 'agente' ? [b[i], b[i + 1]] : [b[i + 1], b[i]];
+    const a = p50(ag.ms);
+    const s = p50(se.ms);
+    total++;
+    if (a !== null && s !== null && s < a) ganaSE++;
+  }
+  return { total, ganaSE };
+}
+
+/**
+ * Los cortados de un camino SIN los de sus interrupciones a propósito anotadas (R16-3): cada una corta un turno a
+ * sabiendas, no por impaciencia. Devuelve los que quedan y de cuántos turnos que esperaban respuesta.
+ */
+export function cortadosSinEjercicios(r: ResumenCamino): { cortados: number; de: number } {
+  const aProposito = Math.min(r.excluidos.cortados, r.ejercicios.interrupciones.hechas);
+  return { cortados: r.excluidos.cortados - aProposito, de: r.turnos - r.excluidos.asentimientos - aProposito };
 }
 
 /** ¿`nuevo` es mejor que `actual` por más que el ruido? (menos es mejor; los dos márgenes a la vez). */
@@ -417,6 +463,8 @@ export type Veredicto = {
   interrupcionesIgualOMas: boolean;
   asentimientosIgualOMas: boolean;
   regresiones: string[];
+  /** R16-4: Speech Engine gana en la mayoría de los pares de bloques vecinos (A/B de la misma hora). */
+  ganaEnLaMayoriaDePares: boolean;
   /** Solo informa: nunca enciende ni apaga nada. */
   consultivo: true;
 };
@@ -426,15 +474,17 @@ const cuantos = (n: number, uno: string, varios: string) => `${n} ${n === 1 ? un
 /**
  * La regla acordada con José, honesta, para UNA red. Primero la evidencia mínima por camino (≥ MIN_TURNOS
  * respuestas comparables de ≥ MIN_CONVERSACIONES llamadas distintas, ≥ MIN_INTERRUPCIONES interrupciones y
- * ≥ MIN_ASENTIMIENTOS asentimientos a propósito) y en ≥ MIN_BLOQUES bloques alternos de ≥ MIN_TURNOS_BLOQUE;
- * sin eso, «insuficiente» y qué falta. Con evidencia, se adopta SOLO si el primer audio de las respuestas
- * comparables es mejor en p50 Y en p95 por más que el margen, la respuesta de verdad (cerebro, sin la frase de
- * espera y con los cortados censurados) no es peor en p50 NI en p95 más que el margen, atiende las
- * interrupciones a propósito y aguanta los asentimientos al menos como el agente (en tasa), y no empeora
- * nada (REGRESIONES, cortados incluidos, en proporción a los turnos que esperaban respuesta). Si no,
- * «mantener» (el agente).
+ * ≥ MIN_ASENTIMIENTOS asentimientos a propósito, parejos entre caminos: EJERCICIOS_PAREJOS) y en ≥ MIN_BLOQUES
+ * bloques alternos de ≥ MIN_TURNOS_BLOQUE; sin eso, «insuficiente» y qué falta. Con evidencia, se adopta SOLO si
+ * el primer audio de las respuestas comparables es mejor en p50 Y en p95 por más que el margen, Speech Engine
+ * gana en la mayoría de los pares de bloques vecinos (`pares`, R16-4: que el reparto de las horas no decida), la
+ * respuesta de verdad (cerebro, sin la frase de espera y con los cortados censurados) no es peor en p50 NI en p95
+ * más que el margen, atiende las interrupciones a propósito y aguanta los asentimientos al menos como el agente
+ * (en tasa), y no empeora nada (REGRESIONES, cortados incluidos sin los de las interrupciones a propósito, en
+ * proporción a los turnos que esperaban respuesta). Si no, «mantener» (el agente). Sin `pares` (quien llama no
+ * tiene los bloques), esa condición no se mira.
  */
-export function veredicto(ag: ResumenCamino, se: ResumenCamino, bloques: number): Veredicto {
+export function veredicto(ag: ResumenCamino, se: ResumenCamino, bloques: number, pares?: ParesBloques): Veredicto {
   const faltan: string[] = [];
   for (const [motor, r] of [['agente', ag], ['speech-engine', se]] as const) {
     if (r.completos < MIN_TURNOS) faltan.push(`${motor}: faltan ${MIN_TURNOS - r.completos} turnos comparables (hay ${r.completos} de ${MIN_TURNOS})`);
@@ -444,6 +494,13 @@ export function veredicto(ag: ResumenCamino, se: ResumenCamino, bloques: number)
     if (fi > 0) faltan.push(`${motor}: faltan ${cuantos(fi, 'interrupción', 'interrupciones')} a propósito`);
     const fa = MIN_ASENTIMIENTOS - r.ejercicios.asentimientos.hechas;
     if (fa > 0) faltan.push(`${motor}: faltan ${cuantos(fa, 'asentimiento', 'asentimientos')} a propósito`);
+  }
+  // R16-3: los ejercicios a propósito, parejos (si no, sus cortes pesan distinto en cada camino).
+  for (const k of ['interrupciones', 'asentimientos'] as const) {
+    const a = ag.ejercicios[k].hechas;
+    const b = se.ejercicios[k].hechas;
+    if (Math.min(a, b) < EJERCICIOS_PAREJOS * Math.max(a, b))
+      faltan.push(`${k} a propósito desparejos (agente ${a}, speech-engine ${b}): hacen falta casi los mismos en los dos caminos (±${Math.round((1 - EJERCICIOS_PAREJOS) * 100)} %), si no sus cortes pesan distinto`);
   }
   if (bloques < MIN_BLOQUES) faltan.push(`faltan bloques alternos A-B-A-B de ≥${MIN_TURNOS_BLOQUE} turnos comparables (hay ${bloques} de ${MIN_BLOQUES}): que la hora no sesgue`);
   const p50 = mejorClaro(ag.primerTexto.p50, se.primerTexto.p50);
@@ -456,12 +513,21 @@ export function veredicto(ag: ResumenCamino, se: ResumenCamino, bloques: number)
   const asentimientos = tasaEj(se, 'asentimientos') >= tasaEj(ag, 'asentimientos');
   // Lo que esperaba respuesta: todo menos los «ajá».
   const esperaban = (r: ResumenCamino) => r.turnos - r.excluidos.asentimientos;
-  const regresiones: string[] = REGRESIONES.filter((k) => tasa(se.excluidos[k], esperaban(se)) > tasa(ag.excluidos[k], esperaban(ag)));
+  // Los cortados, sin los de las interrupciones a propósito (R16-3).
+  const tasaRegresion = (r: ResumenCamino, k: (typeof REGRESIONES)[number]) => {
+    if (k !== 'cortados') return tasa(r.excluidos[k], esperaban(r));
+    const c = cortadosSinEjercicios(r);
+    return tasa(c.cortados, c.de);
+  };
+  const regresiones: string[] = REGRESIONES.filter((k) => tasaRegresion(se, k) > tasaRegresion(ag, k));
+  // R16-4: por pares de bloques vecinos, Speech Engine gana en más de la mitad.
+  const mayoria = !pares || pares.ganaSE * 2 > pares.total;
   const suficientes = !faltan.length;
   const motivos: string[] = [];
   if (suficientes) {
     if (!p50) motivos.push(`primer audio p50 sin mejora clara (agente ${ag.primerTexto.p50} ms, speech-engine ${se.primerTexto.p50} ms)`);
     if (!p95) motivos.push(`primer audio p95 sin mejora clara (agente ${ag.primerTexto.p95} ms, speech-engine ${se.primerTexto.p95} ms)`);
+    if (!mayoria) motivos.push(`no gana en la mayoría de los pares de bloques A/B (gana ${pares!.ganaSE} de ${pares!.total}): lo junto lo decide el reparto de las horas`);
     if (!cb50) motivos.push(`respuesta de verdad p50 peor (agente ${ag.cerebroConCortados.p50} ms, speech-engine ${se.cerebroConCortados.p50} ms; sin la frase de espera, con los cortados)`);
     if (!cb95) motivos.push(`respuesta de verdad p95 peor (agente ${ag.cerebroConCortados.p95} ms, speech-engine ${se.cerebroConCortados.p95} ms; sin la frase de espera, con los cortados)`);
     if (!interrupciones) motivos.push('atiende peor las interrupciones a propósito');
@@ -482,6 +548,7 @@ export function veredicto(ag: ResumenCamino, se: ResumenCamino, bloques: number)
     interrupcionesIgualOMas: interrupciones,
     asentimientosIgualOMas: asentimientos,
     regresiones,
+    ganaEnLaMayoriaDePares: mayoria,
     consultivo: true,
   };
 }
@@ -507,6 +574,7 @@ export function combinarVeredictos(porRed: Record<string, Veredicto>): Veredicto
     interrupcionesIgualOMas: todas((v) => v.interrupcionesIgualOMas),
     asentimientosIgualOMas: todas((v) => v.asentimientosIgualOMas),
     regresiones: [...new Set(redes.flatMap(([, v]) => v.regresiones))],
+    ganaEnLaMayoriaDePares: todas((v) => v.ganaEnLaMayoriaDePares),
     consultivo: true,
   };
 }
@@ -519,7 +587,8 @@ function compararTramo(ms: MedidaTurnoVoz[], ej: EjercicioVoz[]) {
   const agente = resumir(de(ms, 'agente'), de(ej, 'agente'));
   const se = resumir(de(ms, 'speech-engine'), de(ej, 'speech-engine'));
   const bloques = contarBloques(ms);
-  return { agente, 'speech-engine': se, bloques, veredicto: veredicto(agente, se, bloques) };
+  const pares = paresDeBloques(ms);
+  return { agente, 'speech-engine': se, bloques, pares, veredicto: veredicto(agente, se, bloques, pares) };
 }
 
 /**
@@ -548,6 +617,7 @@ export async function comparacionVoz(o: { desde?: number; hasta?: number } = {})
       agente: todo.agente,
       'speech-engine': todo['speech-engine'],
       bloques: todo.bloques,
+      pares: todo.pares,
       veredicto: combinarVeredictos(Object.fromEntries(Object.entries(porRed).map(([r, x]) => [r, x.veredicto]))),
     },
     porRed,

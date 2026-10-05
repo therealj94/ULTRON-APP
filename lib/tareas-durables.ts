@@ -954,6 +954,11 @@ export type ResultadoReversion =
        * no se escribió nada, ni la marca `revertido` (que lo dejaría bloqueado).
        */
       sinIndice?: true;
+      /**
+       * R16-2: ese dueño está reconciliado, pero el inventario no le agregó nada (sin entradas `rec`, `agregadas: 0` en la
+       * marca, sin respaldo): no había nada que revertir y no se escribió nada, ni la marca `revertido`.
+       */
+      nadaQueRevertir?: true;
       /** No está el respaldo del índice de antes: lo que el recorte del inventario sacó no puede volver y sigue en `recortadas`. */
       sinRespaldo?: true;
     }
@@ -974,6 +979,8 @@ export type ResultadoReversion =
  *     antes se restaban `dr` y lo que vuelve, dos veces lo mismo); lo que no puede volver (sin respaldo, `sinRespaldo`)
  *     se sigue contando (H4: nunca se pierde historial sin que la cuenta lo diga);
  *   · un dueño sin índice ni respaldo (un correo mal escrito) no tiene nada que revertir: no se escribe nada (`sinIndice`);
+ *     tampoco uno RECONCILIADO al que el inventario no agregó nada (sin `rec`, `agregadas: 0` en la marca y sin respaldo):
+ *     sigue reconciliado (`nadaQueRevertir`, R16-2). Sin la marca `inventario` sí se escribe `revertido` (bloqueo previo);
  *   · todo en UNA fusión CAS sobre el índice ACTUAL (nunca una foto vieja): lo creado, cambiado o anotado después de la
  *     reconciliación —o durante esta reversión— se queda; el orden y los cursores salen de las entradas, que no cambian;
  *   · deja la marca `revertido` en el índice (la ven todas las réplicas): la lista dice `inventario: 'revertido'`,
@@ -1005,6 +1012,14 @@ export async function revertirReconciliacionTareas(dueno: string, a: AlmacenDura
     const previa = ix?.revertido;
     // 1. Lo que agregó el inventario: ¿tuvo actividad desde que se recuperó? ¿Terminó?
     const recs = (ix?.ids || []).filter((x) => x.rec);
+    if (indiceReconciliado(ix) && !previa && !escribio && !recs.length && !(Number(ix!.inventario!.agregadas) > 0)) {
+      // R16-2: reconciliado, pero el inventario no le agregó nada (ni entradas `rec`, ni cuenta en la marca, ni respaldo:
+      // solo se guarda al agregar). No hay nada que revertir ni que bloquear (un reconciliado no se vuelve a recorrer): no
+      // se escribe nada, tampoco la marca `revertido` (convertiría un «reconciliado» honesto en «revertido» sin motivo).
+      // Sin la marca `inventario` sí se escribe: es el bloqueo PREVIO (una réplica a mitad de recorrido no agrega nada).
+      const r = await leerDurable<{ indice: Indice | null }>(claveRespaldo(dueno, sufijoRespaldo(ix.reversiones)), a).catch(() => ({ ok: false as const }));
+      if (r.ok && !r.valor) return { ok: true, quitadas: 0, conservadas: 0, restauradas: 0, pendientes: 0, ya: true, nadaQueRevertir: true };
+    }
     const lecturas = await leerTareas(dueno, recs.map((x) => x.id), a);
     const decision = new Map<string, { rec: string; quitar: boolean; desde: number }>();
     const sinLeer = new Set<string>();
