@@ -338,8 +338,9 @@ export type Recuperacion =
 
 /**
  * Al abrir la mesa: qué hacer con el primer pedido que quedó a medias. Preparado o fallido → vuelve a la caja
- * (lo manda la persona). Enviado y dentro de la vida del turno → se pide otra vez con el mismo idTurno (el
- * servidor repite la respuesta, no corre otro turno). Enviado hace más → a la caja, no se repite solo.
+ * (lo manda la persona). Enviado y dentro de la vida del turno → se pregunta por ese idTurno en modo «solo
+ * repetir» (`soloRepetir`: el servidor da la respuesta guardada, nunca corre otro turno; ver `trasSoloRepetir`).
+ * Enviado hace más → a la caja, no se repite solo.
  */
 export function queRecuperar(r: PrimerResultado | null | undefined, ahora: number): Recuperacion {
   if (!r) return { accion: 'nada' };
@@ -351,6 +352,26 @@ export function queRecuperar(r: PrimerResultado | null | undefined, ahora: numbe
     return { accion: 'rellenar', texto: r.peticion };
   }
   return { accion: 'nada' };
+}
+
+/**
+ * Lo que contestó el servidor a «solo repetir» ese idTurno (revisión 9, R1), y qué se hace:
+ *  · 200 con respuesta (o `reconciliando`), o 409 «en curso» → `repetir`: se pide otra vez con `soloRepetir` y el
+ *    servidor da esa respuesta (o espera a ese turno); nunca corre uno nuevo.
+ *  · 404 `no_existe` → `rellenar` y `noLlego`: el pedido no llegó (o no dejó nada); vuelve a la caja y lo manda la
+ *    persona. Ningún turno nuevo corre sin que toque nada.
+ *  · sin red, un servidor de antes (POST /api/turno/repetir le da 404 sin `codigo`) o cualquier otra cosa → `rellenar`
+ *    sin saber.
+ */
+export type TrasRepetir = { accion: 'repetir' } | { accion: 'rellenar'; noLlego: boolean };
+export function trasSoloRepetir(r: { status: number; json?: unknown } | null | undefined): TrasRepetir {
+  if (!r) return { accion: 'rellenar', noLlego: false };
+  const j = (r.json && typeof r.json === 'object' ? r.json : {}) as { codigo?: unknown; enCurso?: unknown; reply?: unknown; repetido?: unknown; reconciliando?: unknown };
+  if (r.status === 404 && j.codigo === 'no_existe') return { accion: 'rellenar', noLlego: true };
+  if (r.status === 409 && j.enCurso === true) return { accion: 'repetir' };
+  // Solo una respuesta REPETIDA cuenta (la guardada de ese turno), nunca una recién corrida.
+  if (r.status === 200 && j.repetido === true && (typeof j.reply === 'string' || j.reconciliando === true)) return { accion: 'repetir' };
+  return { accion: 'rellenar', noLlego: false };
 }
 
 /* ── las métricas (sin contenido) ─────────────────────────────────────────────────────────── */

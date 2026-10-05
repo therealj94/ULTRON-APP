@@ -70,7 +70,7 @@ import { detectarIdioma } from './lib/idioma-detectar';
 import { redirigirADominio } from './server/dominio';
 import { quitarExpresiones } from './lib/expresiones';
 import { puntoDeCorte } from './lib/trozos';
-import { claveTurno, efectoDelTurno, enTurnoUnico, idTurnoValido, reclamarTurno, turnoSinEfectos, type TurnoGuardado } from './server/turno-unico';
+import { claveTurno, consultarTurno, efectoDelTurno, enTurnoUnico, idTurnoValido, reclamarTurno, turnoSinEfectos, type TurnoGuardado } from './server/turno-unico';
 import { atajoDeAppBloqueado, resolverBorradorDesdePanel, resolverDecisionesDelTurno } from './server/decision-turno';
 import { puedeMano } from './lib/manos-app';
 import {
@@ -4422,8 +4422,28 @@ function jsonDelTurno(g: TurnoGuardado, extra: Record<string, unknown> = {}) {
   };
 }
 
+/**
+ * «Solo repetir» (R1, revisión 9): la respuesta guardada de un idTurno, sin correr nunca un turno. La app lo pregunta al
+ * reabrir con un pedido que mandó y no vio contestado: si ese pedido no llegó, 404 `no_existe` y la app devuelve el
+ * texto a la caja (lo manda la persona). Misma forma que /api/turno cuando hay respuesta.
+ */
+function responderSoloRepetir(req: express.Request, res: express.Response, c: Awaited<ReturnType<typeof consultarTurno>>) {
+  if ('noExiste' in c) return res.status(404).json({ error: 'Ese pedido no me llegó (o no dejó respuesta). No lo corro solo: mándalo tú si aún lo quieres.', codigo: 'no_existe', motivo: c.motivo, noExiste: true, honesto: true });
+  if ('previo' in c) return res.json(jsonDelTurno(c.previo, { repetido: true }));
+  if ('desconocido' in c) return res.json(jsonDelTurno(turnoReconciliando(req.body?.idioma, c.desconocido.efectos), { reconciliando: true, repetido: true }));
+  return res.status(409).json({ error: FRASE_FALLO.enCurso[normalizarIdioma(req.body?.idioma)], codigo: 'en-curso', enCurso: true, honesto: true });
+}
+
+// Ruta propia (no un campo de /api/turno) para que un servidor de antes conteste 404 en vez de correr un turno nuevo.
+app.post('/api/turno/repetir', exigirMesaODesk, limitar(60), async (req, res) => {
+  const body = cuerpoTurnoHttp(req);
+  return responderSoloRepetir(req, res, await consultarTurno(claveDelTurno(req, body)));
+});
+
 app.post('/api/turno', exigirMesaODesk, limitar(60), cupoDeMiembro, async (req, res) => {
   const body = cuerpoTurnoHttp(req);
+  // R1 (revisión 9): con `soloRepetir` solo se lee lo guardado de ese idTurno; nunca se corre el cerebro.
+  if ((body as Record<string, unknown>).soloRepetir === true) return responderSoloRepetir(req, res, await consultarTurno(claveDelTurno(req, body)));
   // Un reintento de la app con el mismo `idTurno`: la misma respuesta, sin correr otro turno.
   const unico = await reclamarTurno(claveDelTurno(req, body));
   if ('previo' in unico) return res.json(jsonDelTurno(unico.previo, { repetido: true }));
@@ -4552,8 +4572,13 @@ app.post('/api/turno/stream', exigirMesaODesk, limitar(60), cupoDeMiembro, async
     if (!corte.signal.aborted && !res.writableEnded) res.write(`event: ${evento}\ndata: ${JSON.stringify(datos)}\n\n`);
   };
   // Un reintento de la app con el mismo `idTurno` (server/turno-unico.ts): si ese turno sigue en curso
-  // se espera; si ya contestó, se repite su respuesta tal cual, sin pasar otra vez por el cerebro.
-  const unico = await reclamarTurno(claveDelTurno(req, body));
+  // se espera; si ya contestó, se repite su respuesta tal cual, sin pasar otra vez por el cerebro. Con `soloRepetir`
+  // (R1, revisión 9) solo se lee lo guardado: si ese pedido no llegó, se dice y no se corre nada.
+  const unico = (body as Record<string, unknown>).soloRepetir === true ? await consultarTurno(claveDelTurno(req, body)) : await reclamarTurno(claveDelTurno(req, body));
+  if ('noExiste' in unico) {
+    escribir('error', { error: 'Ese pedido no me llegó (o no dejó respuesta). No lo corro solo: mándalo tú si aún lo quieres.', codigo: 'no_existe', motivo: unico.motivo, noExiste: true });
+    return res.end();
+  }
   // Lo corría un proceso que se cayó después de despachar algo (AUR06): se contesta eso, sin correr nada.
   const repetido = 'previo' in unico ? unico.previo : 'desconocido' in unico ? turnoReconciliando(req.body?.idioma, unico.desconocido.efectos) : null;
   if (repetido) {

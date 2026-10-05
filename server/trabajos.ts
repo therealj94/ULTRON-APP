@@ -96,6 +96,11 @@ export type DepsTrabajos = {
      */
     preparar?(correo: string): Promise<boolean>;
     misiones(correo: string): MisionComputadoraMin[];
+    /**
+     * Revisión 9: una misión por su id aunque ya no esté entre las recientes de `misiones` (el historial guarda pocas): la
+     * lee de lo durable, del dueño y solo para leer. null: no existe; 'almacen': no se pudo mirar (no se da por perdida).
+     */
+    buscar?(correo: string, id: string): Promise<MisionComputadoraMin | null | 'almacen'>;
     /** Con el dueño: solo se toca una misión que esté en SU historial. */
     pausar?(correo: string, misionId: string): Promise<unknown>;
     reanudar?(correo: string, misionId: string): Promise<unknown>;
@@ -561,7 +566,18 @@ async function reconciliar(dueno: string, reg: RegistroTarea, d: DepsTrabajos, a
   if (esTerminal(reg.estado)) return reg;
   // Sin poder leer sus misiones (el almacén no contestó), una tarea enlazada se deja como está: «no la encuentro» no es «se perdió».
   if (reg.enlace?.tipo === 'computadora' && !computadoraLeida) return reg;
-  const misiones = reg.enlace?.tipo === 'computadora' && d.computadora ? d.computadora.misiones(dueno) : null;
+  let misiones = reg.enlace?.tipo === 'computadora' && d.computadora ? d.computadora.misiones(dueno) : null;
+  // Revisión 9: la misión enlazada puede ser más vieja que las recientes que da `misiones`. Antes de declararla perdida se
+  // busca por su id en lo durable; si existe, se reconcilia con su estado real; si no se pudo mirar, no se toca la tarea.
+  if (reg.enlace?.tipo === 'computadora' && misiones && d.computadora?.buscar) {
+    const id = reg.enlace.id;
+    if (!misiones.some((m) => m.id === id || m.tareaId === id)) {
+      const b = await d.computadora.buscar(dueno, id).catch(() => 'almacen' as const);
+      if (b === 'almacen') return reg;
+      if (b) misiones = [...misiones, b];
+    }
+  }
+  const leidas = misiones;
   const vigente = (canal: 'correo' | 'whatsapp', ambito: string) => (d.borradores ? d.borradores.vigente(dueno, canal, ambito) : undefined);
   const r = await cambiarTarea(
     dueno,
@@ -569,9 +585,9 @@ async function reconciliar(dueno: string, reg: RegistroTarea, d: DepsTrabajos, a
     (x): Cambio | null => {
       // Una investigación que nadie trabaja ya (el proceso se reinició): se cierra con la verdad.
       if (esInvestigacion(x)) return reconciliarInvestigacion(x, ahora);
-      if (x.enlace?.tipo === 'computadora' && misiones) {
+      if (x.enlace?.tipo === 'computadora' && leidas) {
         const id = x.enlace.id;
-        return reconciliarConComputadora(x, misiones.find((m) => m.id === id || m.tareaId === id) ?? null, ahora);
+        return reconciliarConComputadora(x, leidas.find((m) => m.id === id || m.tareaId === id) ?? null, ahora);
       }
       const dec = x.decision;
       if (x.estado === 'awaiting_approval' && dec?.vinculo?.tipo === 'borrador') {

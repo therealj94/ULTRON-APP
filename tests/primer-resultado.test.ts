@@ -22,6 +22,7 @@ import {
   nuevoPrimer,
   OBJETIVO_MS,
   queRecuperar,
+  trasSoloRepetir,
   VIDA_TURNO_MS,
   type EventoPrimer,
   type PrimerResultado,
@@ -183,6 +184,27 @@ test('al reabrir se recupera el primer pedido pendiente', () => {
   const sin = aplicar(nuevoPrimer('ana@ejemplo.com', T0), { tipo: 'preparar', peticion: '' }, T0 + 1)!;
   assert.equal(sin.estado, 'sin-peticion');
   assert.equal(queRecuperar(sin, T0 + 2).accion, 'nada');
+});
+
+test('R1 (revisión 9): al reabrir, «solo repetir»; si el pedido no llegó vuelve a la caja y NADA corre solo', () => {
+  // Enviado y sin respuesta al cerrar: se pregunta por ese idTurno (no se manda otra vez a ciegas).
+  const env = aplicar(aplicar(primeraVez(), { tipo: 'preparar', peticion: PETICION }, T0 + 60_000)!, { tipo: 'enviar', idTurno: 't-abc', texto: PETICION }, T0 + 70_000)!;
+  assert.deepEqual(queRecuperar(env, T0 + 80_000), { accion: 'reconsultar', idTurno: 't-abc', texto: PETICION });
+  // El servidor no lo tiene: a la caja, sabiendo que no llegó.
+  assert.deepEqual(trasSoloRepetir({ status: 404, json: { codigo: 'no_existe', noExiste: true } }), { accion: 'rellenar', noLlego: true });
+  // Lo tiene (o lo dejó incierto): se repite con `soloRepetir`, nunca un turno nuevo.
+  assert.deepEqual(trasSoloRepetir({ status: 200, json: { reply: 'Te recomiendo la B.', repetido: true } }), { accion: 'repetir' });
+  assert.deepEqual(trasSoloRepetir({ status: 200, json: { reply: 'No sé si quedó hecho.', repetido: true, reconciliando: true } }), { accion: 'repetir' });
+  assert.deepEqual(trasSoloRepetir({ status: 409, json: { codigo: 'en-curso', enCurso: true } }), { accion: 'repetir' });
+  // Sin red, un servidor de antes (404 sin código, o un 200 que no es una respuesta repetida) o un error: a la caja sin saber.
+  for (const r of [null, undefined, { status: 404, json: {} }, { status: 200, json: { reply: 'recién corrido' } }, { status: 500, json: { error: 'x' } }, { status: 401, json: {} }]) {
+    assert.deepEqual(trasSoloRepetir(r as any), { accion: 'rellenar', noLlego: false }, JSON.stringify(r));
+  }
+  // «No llegó» marca el primer pedido como fallido: la próxima vez vuelve a la caja directamente.
+  const fallida = aplicar(env, { tipo: 'turno', idTurno: 't-abc', resultado: { clase: 'fallida', motivo: 'el pedido no llegó al servidor' } }, T0 + 90_000)!;
+  assert.equal(fallida.estado, 'fallida');
+  assert.deepEqual(queRecuperar(fallida, T0 + 100_000), { accion: 'rellenar', texto: PETICION });
+  assert.deepEqual(MOVIL.trasSoloRepetir({ status: 404, json: { codigo: 'no_existe' } }), { accion: 'rellenar', noLlego: true });
 });
 
 test('la copia del teléfono dice exactamente lo mismo que lib/', async () => {

@@ -303,3 +303,59 @@ test('AUR06: lo durable del turno va bajo turnos/<huella>/<idTurno> (sin el corr
   const _tipo: RegistroLease | null = null;
   void _tipo;
 });
+
+test('R1 (revisión 9): «solo repetir» un pedido que nunca llegó NO corre un turno ni deja nada en el almacén', async () => {
+  const { A, almacen } = replicas();
+  const clave = claveTurno('majo@orden.org', 'nunca-llego-01');
+  // Lo que hacía la app al reabrir: el mismo idTurno por la vía normal. Con un pedido que no llegó, eso CORRE un turno nuevo.
+  const { B } = replicas();
+  assert.ok('terminar' in (await B.reclamarTurno(clave, 20)), 'la vía normal corre un turno nuevo (el hallazgo)');
+  // «Solo repetir»: no hay nada guardado → noExiste, sin turno y sin escribir.
+  const r = await A.consultarTurno(clave, 20);
+  assert.ok('noExiste' in r && r.motivo === 'no_existe', JSON.stringify(r));
+  assert.ok(!('terminar' in r));
+  assert.equal((almacen as ReturnType<typeof almacenEnMemoria>).objetos.size, 0, 'consultar no reclama nada en el almacén');
+  // Sin idTurno, tampoco.
+  const sin = await A.consultarTurno(null, 20);
+  assert.ok('noExiste' in sin && sin.motivo === 'sin_id');
+});
+
+test('R1 (revisión 9): «solo repetir» da la respuesta guardada (aquí o en otra réplica), espera al turno en curso y respeta lo incierto', async () => {
+  const { A, B, reloj } = replicas();
+  // Hecho en A: B (otra réplica) lo lee del almacén; A, de su Map.
+  const hecho = claveTurno('majo@orden.org', 'repetir-hecho1');
+  const a = await A.reclamarTurno(hecho);
+  assert.ok('terminar' in a);
+  await a.terminar(respuesta('El informe quedó listo.'));
+  for (const T of [A, B]) {
+    const r = await T.consultarTurno(hecho, 20);
+    assert.ok('previo' in r && r.previo.reply === 'El informe quedó listo.', JSON.stringify(r));
+  }
+  // En curso en A: B espera y repite su respuesta cuando termina; nunca lo corre.
+  const enCurso = claveTurno('majo@orden.org', 'repetir-encurso');
+  const c = await A.reclamarTurno(enCurso);
+  assert.ok('terminar' in c);
+  setTimeout(() => void c.terminar(respuesta('Ya terminé.')), 30);
+  const esperado = await B.consultarTurno(enCurso, 2_000);
+  assert.ok('previo' in esperado && esperado.previo.reply === 'Ya terminé.', JSON.stringify(esperado));
+  // Sigue en curso pasado el tope: «en curso», no otro turno.
+  const largo = claveTurno('majo@orden.org', 'repetir-largo1');
+  assert.ok('terminar' in (await A.reclamarTurno(largo)));
+  assert.ok('enCurso' in (await B.consultarTurno(largo, 20)));
+  // Terminó sin respuesta y sin efectos: no hay nada que repetir (la app lo devuelve a la caja).
+  const libre = claveTurno('majo@orden.org', 'repetir-libre1');
+  const l = await A.reclamarTurno(libre);
+  assert.ok('terminar' in l);
+  await l.terminar(null);
+  const rl = await B.consultarTurno(libre, 20);
+  assert.ok('noExiste' in rl && rl.motivo === 'no_existe', JSON.stringify(rl));
+  // Su dueño murió después de despachar algo: incierto, nunca «no existe» (no se invita a mandarlo otra vez a ciegas).
+  const efecto = claveTurno('majo@orden.org', 'repetir-efecto');
+  const e = await A.reclamarTurno(efecto);
+  assert.ok('terminar' in e);
+  assert.equal(await e.terminar.efecto('correo'), true);
+  A.olvidar();
+  reloj.t += 1_500;
+  const re = await B.consultarTurno(efecto, 20);
+  assert.ok('desconocido' in re && re.desconocido.efectos[0] === 'correo', JSON.stringify(re));
+});

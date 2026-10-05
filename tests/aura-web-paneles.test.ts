@@ -669,6 +669,76 @@ test(
   }
 );
 
+test(
+  'en el navegador: una lista PARCIAL no hace desaparecer una tarea; queda «sin confirmar» y el aviso se ve (revisión 9)',
+  { skip: saltoNavegador, timeout: 120000 },
+  async (t) => {
+    const { chromium } = await import('playwright');
+    const ahoraIso = new Date().toISOString();
+    const tarea = (id: string, title: string) => ({
+      id,
+      version: 1,
+      state: 'running',
+      terminal: false,
+      source: 'durable',
+      title,
+      objective: title,
+      acceptance: [],
+      environment: { kind: 'chat', id: 'web', displayName: 'Esta conversación' },
+      currentStep: `Paso de ${title}`,
+      progress: null,
+      decision: null,
+      result: null,
+      createdAt: ahoraIso,
+      updatedAt: ahoraIso,
+      controls: { pause: true, resume: false, cancel: true },
+    });
+    const AVISO = 'No pude leer una de tus tareas en este momento; no es que no exista.';
+    let pedidas = 0;
+    const tipos: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.wasm': 'application/wasm' };
+    const srv = http.createServer((req, res) => {
+      const u = new URL(req.url || '/', 'http://x');
+      const json = (o: unknown, s = 200) => (res.writeHead(s, { 'Content-Type': 'application/json' }), res.end(JSON.stringify(o)));
+      if (u.pathname === '/api/health') return json({ qwen: { vivo: true } });
+      if (u.pathname === '/api/nodo/listo') return json({ listo: true });
+      if (u.pathname === '/api/genesis/config') return json({ disponible: false });
+      if (u.pathname === '/api/ultron/sesion') return json({ authenticated: true, user: { nombre: 'Ana', rol: 'Junta', correo: 'ana@ejemplo.com' } });
+      if (u.pathname === '/api/trabajos') {
+        pedidas++;
+        // La primera, completa; después el almacén no puede leer «Informe trimestral»: 200, completo:false y aviso (como el servidor de verdad).
+        if (pedidas === 1) return json({ tareas: [tarea('tarea-a', 'Busca vuelos a Madrid'), tarea('tarea-b', 'Informe trimestral')], completo: true, siguiente: null });
+        return json({ tareas: [tarea('tarea-a', 'Busca vuelos a Madrid')], completo: false, siguiente: null, aviso: AVISO, conteo: { activas: 2, terminadas: 0, indice: 2, noLeidas: 1 } });
+      }
+      if (u.pathname.startsWith('/api/')) return json({}, 404);
+      let f = path.join(DIST, decodeURIComponent(u.pathname));
+      if (!f.startsWith(DIST) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(DIST, 'index.html');
+      res.writeHead(200, { 'Content-Type': tipos[path.extname(f)] || 'application/octet-stream' });
+      fs.createReadStream(f).pipe(res);
+    });
+    const url = await new Promise<string>((r) => srv.listen(0, '127.0.0.1', () => r(`http://127.0.0.1:${(srv.address() as any).port}`)));
+    const b = await chromium.launch({ executablePath: CHROMIUM, args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader'] });
+    t.after(async () => {
+      await b.close();
+      srv.close();
+    });
+    const p = await b.newPage({ viewport: { width: 1280, height: 800 } });
+    await p.goto(url + '/', { waitUntil: 'networkidle' });
+    await p.waitForSelector('#ultron-arranque[aria-hidden="true"]', { timeout: 20000 });
+    await p.getByRole('button', { name: /Abrir el panel de tareas/ }).click({ timeout: 20000 });
+    await p.locator('#tarea-tarea-b').waitFor({ timeout: 10000 });
+    // Con el panel abierto y trabajo vivo se vuelve a preguntar en segundos: llega la parcial.
+    await p.waitForFunction(() => document.body.innerText.includes('No pude leer una de tus tareas'), null, { timeout: 15000 }).catch(() => undefined);
+    assert.ok(pedidas >= 2, `se volvió a preguntar (${pedidas})`);
+    const aviso = p.locator('#aura-panel-tareas [role="status"]', { hasText: AVISO });
+    assert.equal(await aviso.count(), 1, 'el aviso del servidor se ve en el panel');
+    assert.equal(await p.locator('#tarea-tarea-b').count(), 1, 'la tarea que no se pudo leer NO desaparece');
+    const b2 = await p.locator('#tarea-tarea-b').innerText();
+    assert.match(b2, /Sin confirmar/, 'marcada «sin confirmar»');
+    assert.match(b2, /Paso de Informe trimestral/, 'con lo último que se supo');
+    assert.doesNotMatch(await p.locator('#tarea-tarea-a').innerText(), /Sin confirmar/, 'la que vino está confirmada');
+  }
+);
+
 /* ------------------------------------------------- P4 / U1: correo, memoria del servidor e iniciativa en la web */
 
 type Pedida = { metodo: string; ruta: string; cuerpo: any };

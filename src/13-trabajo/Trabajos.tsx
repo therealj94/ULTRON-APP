@@ -10,7 +10,7 @@
  *    después de aparecer, no responde a Enter y no se activa si se acaba de escribir en otro campo.
  *  · Con «reducir movimiento», nada gira ni late.
  */
-import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from 'react';
 import { X } from 'lucide-react';
 import { Dialogo } from '../07-pantallas/Dialogo';
 import { headersMesa } from '../10-infra/sesionCliente';
@@ -47,6 +47,28 @@ const pedir: Pedir = async (ruta, init) => {
   return { status: r.status, json: await r.json().catch(() => ({})) };
 };
 export const clienteTrabajos = crearClienteTrabajos(pedir);
+
+/**
+ * El aviso de la última lista PARCIAL (revisión 9, MEDIO-1): lo publica `useTrabajosWeb` y lo lee `PanelTrabajos` aunque
+ * quien los une (App.tsx) no lo pase como prop. null si la última lista vino completa (o no hay sesión).
+ */
+let avisoLista: string | null = null;
+const oyentesAviso = new Set<() => void>();
+function ponerAvisoLista(a: string | null) {
+  if (a === avisoLista) return;
+  avisoLista = a;
+  for (const f of oyentesAviso) f();
+}
+function useAvisoLista(): string | null {
+  return useSyncExternalStore(
+    (f) => {
+      oyentesAviso.add(f);
+      return () => oyentesAviso.delete(f);
+    },
+    () => avisoLista,
+    () => null
+  );
+}
 
 /** La última vez que se escribió en un campo de la página (para no aceptar una tarjeta que apareció mientras tanto). */
 let ultimaTecla = 0;
@@ -106,7 +128,8 @@ export function useTrabajosWeb(o: { conSesion: boolean; cuenta?: string | null; 
     const g = gen.current;
     const r = await clienteTrabajos.listar();
     if (g !== gen.current) return;
-    if (r.ok === true) despachar({ tipo: 'lista', tareas: r.tareas, en: Date.now() });
+    // Una lista parcial (`completo: false`) no borra las que no se pudieron leer: quedan «sin confirmar» y el aviso se ve.
+    if (r.ok === true) despachar({ tipo: 'lista', tareas: r.tareas, en: Date.now(), completo: r.completo, aviso: r.aviso });
     else if (r.sinSesion) despachar({ tipo: 'sin-sesion' });
     else despachar({ tipo: 'error', mensaje: r.mensaje, en: Date.now() });
   }, []);
@@ -142,6 +165,9 @@ export function useTrabajosWeb(o: { conSesion: boolean; cuenta?: string | null; 
     };
   }, [o.conSesion, clave, o.panelAbierto, visible, refrescar]);
 
+  const avisoVista = s.aviso ?? null;
+  useEffect(() => ponerAvisoLista(avisoVista), [avisoVista]);
+
   const texto = textoIndicador(res);
   useEffect(() => {
     setInd((prev) => indicadorEstable(prev, texto, Date.now()));
@@ -160,7 +186,7 @@ export function useTrabajosWeb(o: { conSesion: boolean; cuenta?: string | null; 
     [genVista]
   );
 
-  return { tareas, resumen: res, indicador: ind?.texto ?? null, reducido, refrescar, ahora: () => ya.current(), aplicar, error: s.error };
+  return { tareas, resumen: res, indicador: ind?.texto ?? null, reducido, refrescar, ahora: () => ya.current(), aplicar, error: s.error, aviso: avisoVista };
 }
 
 /* ------------------------------------------------------------------ el indicador */
@@ -220,6 +246,8 @@ type PropsPanel = {
   abierto: boolean;
   onCerrar: () => void;
   tareas: TareaVista[];
+  /** La última lista vino parcial: lo que dijo el servidor. Sin pasarla, se usa la que publicó `useTrabajosWeb`. */
+  aviso?: string | null;
   reducido: boolean;
   enfoque: string | null;
   onTarea: (t: TareaVista | null | undefined) => void;
@@ -232,8 +260,10 @@ type PropsPanel = {
 /** ¿Esta tarea tiene un escritorio que abrir? La de su computadora, mientras sigue. */
 export const tieneEscritorio = (t: Pick<TareaVista, 'terminal' | 'controls' | 'environment'>) => !t.terminal && (t.controls.open === 'computadora' || t.environment?.kind === 'computadora');
 
-export function PanelTrabajos({ abierto, onCerrar, tareas, reducido, enfoque, onTarea, onRefrescar, onEditar, onAbrirEscritorio }: PropsPanel) {
+export function PanelTrabajos({ abierto, onCerrar, tareas, aviso: avisoProp, reducido, enfoque, onTarea, onRefrescar, onEditar, onAbrirEscritorio }: PropsPanel) {
   const cerrar = useRef<HTMLButtonElement | null>(null);
+  const avisoPublicado = useAvisoLista();
+  const aviso = avisoProp !== undefined ? avisoProp : avisoPublicado;
   const g = useMemo(() => grupos(tareas), [tareas]);
   const vacio = !g.decisiones.length && !g.activas.length && !g.recientes.length;
   useEffect(() => {
@@ -263,7 +293,12 @@ export function PanelTrabajos({ abierto, onCerrar, tareas, reducido, enfoque, on
           <X className="w-5 h-5" aria-hidden="true" />
         </button>
       </div>
-      {vacio && <p className="text-[15px] text-(--aura-tinta-2)">No hay tareas en marcha. Cuando me pidas algo que tarde o necesite tu decisión, aparece aquí.</p>}
+      {aviso && (
+        <p id="aura-tareas-aviso" className="text-[14px] text-(--aura-error-texto)" role="status">
+          {aviso}
+        </p>
+      )}
+      {vacio && !aviso && <p className="text-[15px] text-(--aura-tinta-2)">No hay tareas en marcha. Cuando me pidas algo que tarde o necesite tu decisión, aparece aquí.</p>}
       {g.decisiones.length > 0 && <Seccion titulo="Necesitan tu decisión" tareas={g.decisiones} {...comun} />}
       {g.activas.length > 0 && <Seccion titulo="En marcha" tareas={g.activas} {...comun} />}
       {g.recientes.length > 0 && <Seccion titulo="Recientes" tareas={g.recientes} {...comun} />}
@@ -326,6 +361,7 @@ function TarjetaTarea({ t, reducido, onTarea, onRefrescar, onEditar, onAbrirEscr
       </div>
       {t.objective && t.objective !== t.title && <p className="text-[14px] text-(--aura-tinta-2)">{t.objective}</p>}
       <p className="text-[13px] text-(--aura-tinta-2)">{[t.environment.displayName, prog, senal ? `última señal ${senal}` : ''].filter(Boolean).join(' · ')}</p>
+      {t.sinConfirmar && <p className="text-[13px] font-semibold text-(--aura-error-texto)">Sin confirmar: no pude leerla ahora; es lo último que supe, no es que ya no exista.</p>}
       {t.currentStep && !t.terminal && <p className="text-[14px] text-(--aura-tinta)">{t.currentStep}</p>}
       {t.decision && !t.terminal && <TarjetaDecision t={t} varias={varias} onResultado={tras} onEditar={onEditar} />}
       {t.result && <TarjetaResultado t={t} />}

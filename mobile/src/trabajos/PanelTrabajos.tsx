@@ -35,6 +35,8 @@ type Props = {
   visible: boolean;
   onCerrar: () => void;
   tareas: TareaVista[];
+  /** La última lista vino parcial (revisión 9): lo que dijo el servidor. Las que no vinieron siguen «sin confirmar». */
+  aviso?: string | null;
   reducido: boolean;
   idioma: 'es' | 'en';
   /** Lo que contestó el servidor: el panel lo pinta (y el indicador se recalcula). */
@@ -45,14 +47,19 @@ type Props = {
   onAbrirComputadora: () => void;
 };
 
-export function PanelTrabajos({ visible, onCerrar, tareas, reducido, idioma, onTarea, onRefrescar, onEditar, onAbrirComputadora }: Props) {
+export function PanelTrabajos({ visible, onCerrar, tareas, aviso, reducido, idioma, onTarea, onRefrescar, onEditar, onAbrirComputadora }: Props) {
   const g = useMemo(() => grupos(tareas), [tareas]);
   const vacio = !g.decisiones.length && !g.activas.length && !g.recientes.length;
   const variasDecisiones = g.decisiones.length > 1;
   const comun = { reducido, idioma, onTarea, onRefrescar, onEditar, onAbrirComputadora, variasDecisiones };
   return (
     <Hoja visible={visible} onCerrar={onCerrar} titulo={tr('Tareas', 'Tasks')} subtitulo={tr('Cerrar esto no cancela nada: siguen en marcha.', 'Closing this cancels nothing: they keep going.')}>
-      {vacio ? (
+      {aviso ? (
+        <Texto v="chica" color="aviso" accessibilityRole="alert" style={s.vacio}>
+          {aviso}
+        </Texto>
+      ) : null}
+      {vacio && !aviso ? (
         <Texto color="texto2" style={s.vacio}>
           {tr('No hay tareas en marcha. Cuando me pidas algo que tarde o necesite tu decisión, aparece aquí.', 'No tasks running. When you ask for something that takes time or needs your decision, it shows up here.')}
         </Texto>
@@ -130,6 +137,11 @@ function TarjetaTarea({ t, reducido, idioma, onTarea, onRefrescar, onEditar, onA
       <Texto v="chica" color="texto3">
         {[t.environment.displayName, prog, senal ? tr(`última señal ${senal}`, `last signal ${senal}`) : ''].filter(Boolean).join(' · ')}
       </Texto>
+      {t.sinConfirmar ? (
+        <Texto v="chica" color="aviso">
+          {tr('Sin confirmar: no pude leerla ahora; es lo último que supe, no es que ya no exista.', 'Unconfirmed: I could not read it just now; this is the last I knew, it is not gone.')}
+        </Texto>
+      ) : null}
       {t.currentStep && !t.terminal ? <Texto v="chica">{t.currentStep}</Texto> : null}
       {t.decision && !t.terminal ? <TarjetaDecision t={t} idioma={idioma} variasTareas={variasDecisiones} onResultado={tras} onEditar={onEditar} /> : null}
       {t.result ? <TarjetaResultado t={t} /> : null}
