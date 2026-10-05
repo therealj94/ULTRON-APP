@@ -127,6 +127,22 @@ test('reductor (revisión 9): una lista PARCIAL no borra las que no se pudieron 
   assert.equal(s.aviso, null);
 });
 
+test('resumen (revisión 10, MENOR-F): una tarea «sin confirmar» de una lista parcial no cuenta como «trabajando» ni hace girar el indicador', () => {
+  // La lista completa: dos trabajando.
+  let s = reducir(estadoInicial(), { tipo: 'lista', tareas: [tarea({ id: 'a' }), tarea({ id: 'b' })], en: T0 });
+  assert.deepEqual(resumen(Object.values(s.porId), T0), { trabajando: 2, decisiones: 0 });
+  // Parcial: «b» no vino. Queda a la vista, pero ya no es «Trabajando · 2».
+  s = reducir(s, { tipo: 'lista', tareas: [tarea({ id: 'a', state: 'completed', terminal: true, version: 2 })], en: T0 + 1, completo: false });
+  assert.equal(s.porId.b.sinConfirmar, true);
+  const r = resumen(Object.values(s.porId), T0 + 1);
+  assert.deepEqual(r, { trabajando: 0, decisiones: 0 }, 'la que no se pudo leer no se cuenta como trabajando');
+  assert.equal(textoIndicador(r), null, 'sin nada confirmado activo, el indicador no dice «Trabajando»');
+  assert.equal(movimientoIndicador(r, false), false, 'y no gira mientras la lista sigue parcial');
+  // La siguiente lista la confirma: vuelve a contar.
+  s = reducir(s, { tipo: 'lista', tareas: [tarea({ id: 'a', state: 'completed', terminal: true, version: 2 }), tarea({ id: 'b', version: 2 })], en: T0 + 2, completo: true });
+  assert.deepEqual(resumen(Object.values(s.porId), T0 + 2), { trabajando: 1, decisiones: 0 });
+});
+
 test('cliente (revisión 9): `completo:false` y el aviso llegan; un servidor que pagina se sigue y lo que no se trae es PARCIAL', async () => {
   // Parcial del servidor.
   let c = crearClienteTrabajos(async () => ({ status: 200, json: { tareas: [tarea({ id: 'a' })], completo: false, aviso: 'No pude leer una de tus tareas.' } }));

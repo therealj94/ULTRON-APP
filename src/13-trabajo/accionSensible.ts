@@ -2,7 +2,9 @@
  * ¿Lo que se pidió en la mesa sale del sistema? Mandar por Telegram, WhatsApp o correo, avisar
  * urgente a la junta, una nota de voz o una llamada: antes se hacían en cuanto el taller las
  * reconocía (lib/taller.ts). Ahora la mesa enseña primero una tarjeta con destinatario, contenido y
- * hora, y el turno solo sale al servidor cuando la persona pulsa Confirmar.
+ * hora, y el turno solo sale al servidor cuando la persona pulsa Confirmar. Desde la revisión 10 (MEDIO-C) el servidor
+ * tampoco lo ejecuta desde el turno: devuelve una propuesta (`propuestaTaller`) y el Confirmar aprueba ESA decisión
+ * (`coincideConServidor`), así que la app o un POST directo tampoco se la saltan.
  *
  * El reconocimiento copia el orden de `parsePedido` del taller (lo que no es un envío allí no puede
  * ser una tarjeta aquí); tests/aura-web-trabajo.test.ts compara los dos con las mismas frases para
@@ -55,12 +57,25 @@ const DESTINO: Record<CanalAccion, string> = {
 
 const NOMBRE: Record<'telegram' | 'whatsapp' | 'correo', string> = { telegram: 'Telegram', whatsapp: 'WhatsApp', correo: 'correo' };
 
+/**
+ * ¿Pide solo LEER el correo? (revisión 10, MENOR-D; la misma regla que `soloLeeCorreo` de lib/taller.ts). Leer, buscar,
+ * abrir, revisar o enseñar correos —o preguntar si hay— sin un verbo que mande, avise o llame no sale del sistema: «Lee
+ * los correos marcados como urgente» no es un aviso urgente ni «busca el correo con el PDF» un envío. `l`: plegado.
+ */
+export function soloLeeCorreo(l: string): boolean {
+  if (!/\b(correos?|e-?mails?|mails?|gmail|bandeja|inbox)\b/.test(l)) return false;
+  const lee = /\b(lee(?:me|r)?|lea|busca(?:me|r)?|encuentra(?:me)?|muestra(?:me)?|ensena(?:me)?|abre(?:me)?|revisa(?:me|r)?|resume(?:me)?|tengo|hay|cuantos|cuales)\b/.test(l);
+  const sale = /\b(envia(?:me|le|lo|la|r)?|manda(?:me|le|lo|la|r)?|reenvia\w*|avisa(?:me|le|nos|r)?|alerta|notifica\w*|llama(?:me|nos|le|r)?|haz una llamada|hacer una llamada|call me)\b/.test(l);
+  return lee && !sale;
+}
+
 /** La tarjeta que corresponde a lo pedido, o null si no sale nada del sistema. */
 export function accionSensibleDe(raw: string): AccionSensible | null {
   const q = String(raw || '').trim();
   if (!q) return null;
   const l = plegar(q);
   const canal = canalDe(l);
+  const lee = soloLeeCorreo(l);
   // Lo que el taller decide antes que un envío: bóveda, redespliegue, mantenimiento. No son tarjetas.
   if (/\b(boveda|cajas de (la )?boveda|abri la boveda|abre la boveda)\b/.test(l)) return null;
   if (/\b(redeploy|redespl(?:ie|ié|e)g\w*|reinicia(r)? la mesa|nuevo deploy)\b/.test(l)) return null;
@@ -76,7 +91,7 @@ export function accionSensibleDe(raw: string): AccionSensible | null {
   }
   if (/\b(mantenimiento|repara|arregla|diagnostico|diagnóstico)\b/.test(l)) return null;
   if (/\b(como esta|cómo está)\s+(el |la |los )?(sistema|mesa|servidor|plataforma|cerebro|nodos?|todo)\b|\b(estado del sistema|los nodos|salud del sistema|que nodos)\b/.test(l) || /^(status|salud)\b/.test(l)) return null;
-  if (/\b(envia|envía|manda|mandale|mandame|mándame)\b/.test(l) || (canal && /\bpdf\b/.test(l))) {
+  if (!lee && (/\b(envia|envía|manda|mandale|mandame|mándame)\b/.test(l) || (canal && /\bpdf\b/.test(l)))) {
     // Sin canal el taller no manda nada («No supe el canal»): no hay nada que autorizar.
     if (!canal) return null;
     const pdf = /\bpdf\b/.test(l);
@@ -89,7 +104,7 @@ export function accionSensibleDe(raw: string): AccionSensible | null {
     };
   }
   if (/\b(haz un pdf|genera(?:r)? (un )?pdf|pdf de)\b/.test(l)) return null;
-  if (/\b(urgente|avisame|alerta junta)\b/.test(l) || (canal === 'telegram' && /\b(llama(?:me|nos)?|ll[aá]mame|llamanos)\b/.test(l))) {
+  if (!lee && (/\b(urgente|avisame|alerta junta)\b/.test(l) || (canal === 'telegram' && /\b(llama(?:me|nos)?|ll[aá]mame|llamanos)\b/.test(l)))) {
     return {
       tipo: 'urgente',
       canal: 'telegram',
@@ -98,7 +113,7 @@ export function accionSensibleDe(raw: string): AccionSensible | null {
       contenido: cuerpoDe(q) || 'AU-RA te necesita. Es urgente.',
     };
   }
-  if (/\b(llama(?:me)?|ll[aá]mame|haz una llamada|hacer una llamada|call me)\b/.test(l)) {
+  if (!lee && /\b(llama(?:me)?|ll[aá]mame|haz una llamada|hacer una llamada|call me)\b/.test(l)) {
     return {
       tipo: 'llamar',
       canal: 'telefono',
@@ -108,6 +123,44 @@ export function accionSensibleDe(raw: string): AccionSensible | null {
     };
   }
   return null;
+}
+
+/**
+ * Lo que el servidor dejó esperando aprobación (`propuestaTaller` del turno, lib/taller.ts; revisión 10, MEDIO-C). Con
+ * su tarea, su decisión y su versión se aprueba (POST /api/trabajos/:tarea/decisiones), una sola vez.
+ */
+export type PropuestaServidor = {
+  tarea: string;
+  decision: string;
+  version: number;
+  caduca: number;
+  accion: string;
+  canal: string;
+  titulo: string;
+  destinatario: string;
+  contenido: string;
+};
+
+/** La acción del taller que corresponde a cada tarjeta. */
+const ACCION_DEL_TALLER: Record<TipoAccion, string> = { enviar: 'enviar', urgente: 'urgente', llamar: 'llamada', 'nota-voz': 'voz_estado' };
+
+/** ¿La propuesta llegó bien formada? (un servidor de antes no la manda; una rara no se aprueba). */
+export function propuestaValida(x: unknown): x is PropuestaServidor {
+  const p = x as PropuestaServidor;
+  return !!p && typeof p === 'object' && typeof p.tarea === 'string' && !!p.tarea && typeof p.decision === 'string' && !!p.decision && Number.isFinite(p.version) && typeof p.accion === 'string' && typeof p.canal === 'string' && typeof p.contenido === 'string';
+}
+
+/**
+ * ¿Lo que propone el servidor es EXACTAMENTE lo que la persona vio en la tarjeta y confirmó? La misma acción, el mismo
+ * canal y el mismo contenido (la nota de voz no tiene contenido escrito: su texto lo dicta el servidor al mandarla). Solo
+ * entonces el «Confirmar y enviar» que ya pulsó aprueba esa decisión; si no, la tarjeta enseña lo del servidor y pide
+ * confirmar otra vez.
+ */
+export function coincideConServidor(a: AccionSensible, p: PropuestaServidor): boolean {
+  if (ACCION_DEL_TALLER[a.tipo] !== p.accion || a.canal !== p.canal) return false;
+  if (a.tipo === 'nota-voz') return true;
+  const norma = (s: string) => plegar(s).replace(/\s+/g, ' ').trim();
+  return norma(a.contenido) === norma(p.contenido);
 }
 
 export type Resultado = { estado: 'hecha' | 'fallida' | 'espera' | 'sin-confirmar'; resumen: string };

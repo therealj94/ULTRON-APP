@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { textoAPdf } from '../lib/pdf';
-import { despacharTaller, parsePedido } from '../lib/taller';
+import { despacharTaller, ejecutarAprobadoTaller, huellaTaller, parsePedido, VERSION_PROPUESTA_TALLER } from '../lib/taller';
+
+/** Lo aprobado por la cuenta (revisión 10, MEDIO-C): el vínculo exacto con su huella, como lo deja la propuesta. */
+const aprobado = (accion: string, args: Record<string, unknown>) => {
+  const cuenta = 'jose@ordenglobal.test';
+  return { tipo: 'taller' as const, accion, args, cuenta, quien: 'jose', huella: huellaTaller({ cuenta, accion, args, version: VERSION_PROPUESTA_TALLER }), version: VERSION_PROPUESTA_TALLER };
+};
 import { agregarTarea, listarTareas, marcarTarea } from '../lib/tareas';
 import { catalogoCanales } from '../lib/sistema';
 
@@ -43,7 +49,13 @@ describe('Taller AU-RA', () => {
     delete process.env.TELEGRAM_CHAT_ID;
     const r = await despacharTaller('envía por telegram hola jefe');
     assert.ok(r.tools.includes('telegram'));
-    assert.match(r.decir || '', /Falta TELEGRAM/);
+    // Sin aprobación no se intenta nada (revisión 10, MEDIO-C), y lo dice.
+    assert.match(r.decir || '', /No lo hice/);
+    // Aprobado, sin clave: lo dice, no finge el envío.
+    const a = aprobado('enviar', { canal: 'telegram', texto: 'hola jefe', pdf: false });
+    const e = await ejecutarAprobadoTaller(a, { cuenta: a.cuenta });
+    assert.equal(e.estado, 'failed');
+    assert.match(e.resumen, /Falta TELEGRAM/);
     if (prevT !== undefined) process.env.TELEGRAM_BOT_TOKEN = prevT;
     if (prevC !== undefined) process.env.TELEGRAM_CHAT_ID = prevC;
   });
@@ -59,7 +71,11 @@ describe('Taller AU-RA', () => {
     delete process.env.QWEN_ENDPOINT_URL;
     const r = await despacharTaller('mándame audio del sistema');
     assert.ok(r.tools.includes('voz'));
-    assert.match(r.decir || '', /Falta TELEGRAM/);
+    assert.match(r.decir || '', /No lo hice/);
+    const a = aprobado('voz_estado', {});
+    const e = await ejecutarAprobadoTaller(a, { cuenta: a.cuenta });
+    assert.equal(e.estado, 'failed');
+    assert.match(e.resumen, /Falta TELEGRAM/);
     if (prevT !== undefined) process.env.TELEGRAM_BOT_TOKEN = prevT;
     if (prevC !== undefined) process.env.TELEGRAM_CHAT_ID = prevC;
     if (prevN !== undefined) process.env.ULTRON_NODO_URL = prevN;

@@ -355,7 +355,7 @@ function TarjetaTarea({ t, reducido, onTarea, onRefrescar, onEditar, onAbrirEscr
           {t.title}
         </h4>
         <span className={`text-[13px] font-semibold flex items-center gap-1.5 ${t.state === 'failed' || t.state === 'blocked' ? 'text-(--aura-error-texto)' : t.state === 'completed' ? 'text-(--aura-ok-texto)' : 'text-(--aura-tinta-2)'}`}>
-          {gira(t.state) && !reducido && <span className="w-3 h-3 rounded-full border-2 border-current border-t-transparent animate-spin" aria-hidden="true" />}
+          {gira(t.state) && !t.sinConfirmar && !reducido && <span className="w-3 h-3 rounded-full border-2 border-current border-t-transparent animate-spin" aria-hidden="true" />}
           {etiquetaEstado(t.state)}
         </span>
       </div>

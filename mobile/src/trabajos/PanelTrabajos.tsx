@@ -123,7 +123,7 @@ function TarjetaTarea({ t, reducido, idioma, onTarea, onRefrescar, onEditar, onA
           {t.title}
         </Texto>
         <View style={s.estado}>
-          {gira(t.state) && !reducido ? <ActivityIndicator size="small" color={tema.texto3} /> : null}
+          {gira(t.state) && !t.sinConfirmar && !reducido ? <ActivityIndicator size="small" color={tema.texto3} /> : null}
           <Texto v="chicaFuerte" color={t.state === 'failed' || t.state === 'blocked' ? 'aviso' : t.state === 'completed' ? 'exito' : 'texto2'}>
             {etiquetaEstado(t.state, idioma)}
           </Texto>

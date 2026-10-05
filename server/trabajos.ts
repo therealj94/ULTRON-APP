@@ -65,7 +65,9 @@ import {
   type RegistroTarea,
   type TareaEnCursoMin,
   type TaskSnapshot,
+  type VinculoTaller,
 } from '../lib/tareas-durables';
+import type { PropuestaAbierta, PropuestaTaller } from '../lib/taller';
 
 /* ------------------------------------------------------------------ tipos */
 
@@ -114,6 +116,15 @@ export type DepsTrabajos = {
     vigente(correo: string, canal: 'correo' | 'whatsapp', ambito: string): { intento: string; huella?: string } | null;
     enviar(correo: string, canal: 'correo' | 'whatsapp', ambito: string, intento: string, huella: string): Promise<SalidaEnvio>;
     descartar(correo: string, canal: 'correo' | 'whatsapp', ambito: string, intento: string): Promise<unknown>;
+  };
+  /**
+   * Lo que el taller de la junta propuso (revisión 10, MEDIO-C; lib/taller.ts). `vigente`: ¿la cuenta que aprueba puede
+   * y el vínculo sigue siendo exactamente lo aprobado (huella recalculada)? `ejecutar`: lo hace con los argumentos
+   * congelados (se llama dentro de `ejecutarUnaVez`: una sola vez por tarea + decisión).
+   */
+  taller?: {
+    vigente(correo: string, v: VinculoTaller): boolean;
+    ejecutar(correo: string, v: VinculoTaller): Promise<SalidaEnvio>;
   };
 };
 
@@ -467,6 +478,80 @@ export async function abrirDecisionDeBorrador(duenoCorreo: string, ambito: strin
   }
 }
 
+/* ------------------------------------------------------------------ ganchos: lo que propone el taller */
+
+/** Cuánto espera una propuesta del taller su aprobación (revisión 10, MEDIO-C). */
+export const VIGENCIA_PROPUESTA_TALLER_MS = 10 * 60_000;
+
+/** Las opciones de lo que propone el taller: confirmar nunca es la primera ni la preseleccionada. */
+function opcionesTaller(accion: string, destinatario: string): Decision['opciones'] {
+  return [
+    { id: 'posponer', etiqueta: 'Posponer', efecto: 'No hace nada. La propuesta sigue esperando hasta que decidas o caduque.', riesgo: 'sin-efecto' },
+    { id: 'rechazar', etiqueta: 'Rechazar', efecto: 'No se hace y queda constancia.', riesgo: 'sin-efecto' },
+    { id: 'aprobar', etiqueta: 'Confirmar y enviar', efecto: `${accion}: ${destinatario}, una sola vez, tal como se muestra.`, riesgo: 'efecto' },
+  ];
+}
+
+/**
+ * El taller reconoció algo que sale a los canales de la junta (Telegram, WhatsApp, correo, aviso urgente, nota de voz,
+ * llamada) y NO lo hace sin aprobación (lib/taller.ts): queda una tarea durable con su decisión exacta, atada a la cuenta
+ * (el dueño de la tarea), a la versión (la de la tarea) y al vínculo con la huella. Se aprueba por
+ * POST /api/trabajos/:id/decisiones (la tarjeta de la web, el panel de tareas de la web y del teléfono). Una vez por
+ * turno y contenido (`requestId`): el reintento del mismo turno ve la misma propuesta.
+ */
+export async function abrirDecisionDeTaller(duenoCorreo: string, p: PropuestaTaller, vigenciaMs = VIGENCIA_PROPUESTA_TALLER_MS): Promise<PropuestaAbierta | null> {
+  const dueno = conCorreo(duenoCorreo);
+  // La propuesta es de la cuenta que la pidió, y solo de ella.
+  if (!dueno || dueno !== p.cuenta) return null;
+  const ahora = Date.now();
+  const idTurno = contexto.getStore()?.idTurno;
+  const requestId = `taller-${idTurno || `${ahora.toString(36)}${crypto.randomBytes(4).toString('hex')}`}-${p.huella.slice(0, 16)}`;
+  const decision: Decision = {
+    id: `dt_${ahora.toString(36)}${crypto.randomBytes(4).toString('hex')}`,
+    tipo: 'aprobar-accion',
+    pregunta: `¿${p.titulo}?`,
+    porque: 'Sale a un canal de la junta: no lo hago sin que apruebes esta versión exacta.',
+    propuesta: {
+      accion: p.titulo,
+      cuenta: 'Canales de la junta (configurados en el servidor)',
+      destinatario: trozo(p.destinatario, 160),
+      datos: [`Contenido: «${trozo(p.contenido, 400)}»`],
+      alcance: 'Solo esto, una vez y sin cambios. No autoriza envíos futuros.',
+    },
+    opciones: opcionesTaller(p.titulo, trozo(p.destinatario, 120)),
+    creada: ahora,
+    caduca: ahora + vigenciaMs,
+    planVersion: 1,
+    vinculo: { tipo: 'taller', accion: p.accion, args: p.args, cuenta: p.cuenta, quien: p.quien, huella: p.huella, version: p.version },
+  };
+  try {
+    const r = await crearTarea(dueno, {
+      requestId,
+      titulo: trozo(p.titulo, 90),
+      objetivo: `${p.titulo} si lo apruebas`,
+      estado: 'awaiting_approval',
+      entorno: { kind: 'servidor', id: 'taller', displayName: 'Taller de la junta' },
+      pasoActual: 'Esperando tu confirmación',
+      criterios: [{ id: 'envio', texto: 'El canal confirma que lo recibió', obligatorio: true }],
+      decision,
+      origen: { kind: 'chat', ...(idTurno ? { turnoId: idTurno } : {}) },
+      condicionParada: 'Lo apruebas y el canal responde, lo rechazas, o la propuesta caduca.',
+    });
+    if (r.ok === false) {
+      console.warn('[trabajos] no pude dejar la propuesta del taller:', r.detalle.slice(0, 120));
+      return null;
+    }
+    anotar(r.tarea);
+    const d = r.tarea.decision;
+    // Ya existía (reintento del mismo turno): vale solo si sigue esperando y es exactamente esta.
+    if (r.tarea.estado !== 'awaiting_approval' || !d || d.vinculo?.tipo !== 'taller' || d.vinculo.huella !== p.huella) return null;
+    return { tarea: r.tarea.id, decision: d.id, version: r.tarea.version, caduca: d.caduca ?? ahora + vigenciaMs };
+  } catch (e: any) {
+    console.warn('[trabajos] no pude dejar la propuesta del taller:', String(e?.message || e).slice(0, 120));
+    return null;
+  }
+}
+
 /**
  * Lo que devolvió el servidor al mandar un borrador (server/correo.ts `decidirBorrador`): solo sus prefijos
  * FIJOS cuentan como éxito o fallo; cualquier otra cosa (el «se manda en cuanto termine» de la voz, un texto
@@ -590,6 +675,14 @@ async function reconciliar(dueno: string, reg: RegistroTarea, d: DepsTrabajos, a
         return reconciliarConComputadora(x, leidas.find((m) => m.id === id || m.tareaId === id) ?? null, ahora);
       }
       const dec = x.decision;
+      // Lo que propuso el taller: caducada, o ya no es lo que se propuso (otro destino configurado, la cuenta ya no es de
+      // la junta), no se ofrece más. No se hizo nada.
+      if (x.estado === 'awaiting_approval' && dec?.vinculo?.tipo === 'taller') {
+        if (dec.caduca && ahora > dec.caduca) return { estado: 'blocked', pasoActual: 'La propuesta caducó sin hacerse. Si aún lo quieres, pídelo otra vez.' };
+        if (d.taller && !d.taller.vigente(dueno, dec.vinculo)) {
+          return { estado: 'blocked', pasoActual: 'Lo propuesto ya no es lo que se puede aprobar (cambió el destino o la cuenta). No se hizo nada.', decision: { ...dec, caduca: Math.min(dec.caduca ?? ahora, ahora - 1) } };
+        }
+      }
       if (x.estado === 'awaiting_approval' && dec?.vinculo?.tipo === 'borrador') {
         if (dec.caduca && ahora > dec.caduca) return { estado: 'blocked', pasoActual: 'La propuesta caducó sin enviarse. Si aún lo quieres, pide un borrador nuevo.' };
         const v = vigente(dec.vinculo.canal, dec.vinculo.ambito);
@@ -816,6 +909,31 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
       const para = decision.propuesta.destinatario || '';
       const sugerencia = vinc ? (vinc.canal === 'correo' ? `Cambia el correo para ${para}: ` : `Cambia el WhatsApp para ${para}: `) : 'Cambia la propuesta: ';
       return res.json({ tarea: vistaTarea(r.reg, ahora()), sugerencia, honesto: true });
+    }
+
+    // Lo que propuso el taller (revisión 10, MEDIO-C): se ejecuta exactamente lo aprobado, una vez, si sigue siéndolo.
+    const vincT = decision.vinculo?.tipo === 'taller' ? decision.vinculo : null;
+    if (vincT) {
+      if (!d.taller) return res.status(503).json({ error: 'Ahora no puedo hacerlo desde aquí. No se hizo nada.', honesto: true });
+      // Justo antes del efecto: la cuenta que aprueba es la que lo pidió y la huella recalculada (contenido, destino
+      // configurado, versión) es la aprobada. Si no, no se hace y la propuesta deja de ofrecerse.
+      if (!d.taller.vigente(dueno, vincT)) {
+        const fresca = await reconciliar(dueno, e.reg, d, ahora());
+        return res.status(409).json({ error: 'Lo que espera ya no es lo que aprobaste: no hice nada. Pídelo otra vez si aún lo quieres.', codigo: 'propuesta-cambiada', tarea: vistaTarea(fresca, ahora()), honesto: true });
+      }
+      const operacion = `tarea-${e.reg.id}-${decision.id}`;
+      const r = await aplicar({ resolver: { ...resolver, operacion }, decision: null, estado: 'running', pasoActual: 'Haciendo lo que aprobaste…' });
+      if (!r.ok) return r.resp();
+      const salida = await ejecutarUnaVez<SalidaEnvio>({ dueno, requestId: operacion, tipo: `taller.${vincT.accion}`, argsHash: vincT.huella }, async () => {
+        const s = await d.taller!.ejecutar(dueno, vincT);
+        const estado = s.estado === 'stale' ? 'failed' : s.estado;
+        return { estado, resultado: s, recibo: { efecto: estado === 'succeeded' ? 'confirmed' : estado === 'unknown' ? 'possible' : 'none', proveedor: `taller.${vincT.accion}`, detalle: trozo(s.resumen, 160) } };
+      });
+      const s: SalidaEnvio = salida.corrio && salida.resultado ? salida.resultado : { estado: 'unknown', resumen: 'No supe cómo terminó: no lo repito a ciegas.' };
+      const fin = await cambiarTarea(dueno, e.reg.id, (reg) => cambioDeEnvio(reg, s.estado, s.resumen, operacion, s.referencia)).catch(() => null);
+      const reg = fin && fin.ok ? fin.tarea : r.reg;
+      anotar(reg);
+      return res.json({ tarea: vistaTarea(reg, ahora()), operacion, resultado: { estado: s.estado, resumen: trozo(s.resumen, 300) }, honesto: true });
     }
 
     // aprobar (o elegir): con vínculo de borrador, se ejecuta exactamente lo aprobado, una vez.

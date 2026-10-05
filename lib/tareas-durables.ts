@@ -107,7 +107,16 @@ export type Opcion = { id: OpcionId; etiqueta: string; efecto: string; riesgo: '
 /** A qué está ligada la aprobación: lo exacto que se ejecuta (y que se vuelve a mirar antes de hacerlo). */
 export type Vinculo =
   | { tipo: 'borrador'; canal: 'correo' | 'whatsapp'; ambito: string; intento: string; hash: string }
-  | { tipo: 'tarea-en-curso'; ambito: string; tareaId: string };
+  | { tipo: 'tarea-en-curso'; ambito: string; tareaId: string }
+  | VinculoTaller;
+
+/**
+ * Lo que el taller de la junta propone y solo hace con su aprobación (revisión 10, MEDIO-C; lib/taller.ts): la acción,
+ * sus argumentos CONGELADOS (lo que se ejecuta es esto, no lo que se vuelva a entender del chat), la cuenta que la pidió,
+ * quién era en el padrón y la `huella` (cuenta + acción + destino configurado + contenido + versión). Si al aprobar la
+ * huella recalculada no es la misma (otro contenido, otro destino, otra cuenta), no se ejecuta.
+ */
+export type VinculoTaller = { tipo: 'taller'; accion: string; args: Record<string, unknown>; cuenta: string; quien: string | null; huella: string; version: number };
 
 export type Decision = {
   id: string;

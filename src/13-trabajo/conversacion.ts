@@ -40,6 +40,11 @@ export type EntradaAccion = {
   estado: EstadoAccion;
   resultado?: string;
   tsResultado?: number;
+  /**
+   * La decisión que el servidor dejó esperando para ESTA tarjeta (revisión 10, MEDIO-C): con ella, «Confirmar y enviar»
+   * la aprueba (su tarea, su id y su versión) en vez de mandar el pedido otra vez.
+   */
+  servidor?: { tarea: string; decision: string; version: number };
 };
 export type Entrada = EntradaPersona | EntradaAura | EntradaAccion;
 

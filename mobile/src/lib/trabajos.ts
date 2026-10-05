@@ -193,14 +193,18 @@ const pospuesta = (t: TareaVista, ahora: number) => !!t.decision?.postponed && (
 /** Espera a la persona: una decisión vigente (no pospuesta) o una tarea bloqueada. */
 export const esperaDecision = (t: TareaVista, ahora = Date.now()) => !t.terminal && (t.state === 'blocked' || (t.state === 'awaiting_approval' && !!t.decision && !pospuesta(t, ahora)));
 
-/** Igual que el servidor (lib/tareas-durables.ts `resumenTareas`). */
+/**
+ * Igual que el servidor (lib/tareas-durables.ts `resumenTareas`). Una tarea `sinConfirmar` (la última lista vino
+ * parcial y no estaba en ella) NO cuenta como «trabajando» (revisión 10, MENOR-F): no se sabe si sigue viva, y contarla
+ * dejaba el indicador girando mientras la lista seguía incompleta. Se sigue viendo en el panel, marcada «sin confirmar».
+ */
 export function resumen(xs: TareaVista[], ahora = Date.now()): { trabajando: number; decisiones: number } {
   let trabajando = 0;
   let decisiones = 0;
   for (const t of xs) {
     if (t.terminal || t.state === 'paused') continue;
     if (esperaDecision(t, ahora)) decisiones++;
-    else if (t.state !== 'awaiting_approval') trabajando++;
+    else if (t.state !== 'awaiting_approval' && !t.sinConfirmar) trabajando++;
   }
   return { trabajando, decisiones };
 }
