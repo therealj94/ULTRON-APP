@@ -43,6 +43,7 @@ import { senalVoz } from '../avatar3d/senalVoz';
 import { Envolvente, PASO_BOCA_MS } from '../avatar3d/sincronia';
 import type { EstadoVoz } from '../compa/sesion';
 import { abrirSesionVoz, type CerrarSesionVoz, type ConvMin } from '../compa/sesionVoz';
+import type { VinculoMotor } from '../compa/vinculoMotor';
 
 export type EstadoConversacion = EstadoVoz;
 
@@ -87,8 +88,11 @@ type Props = {
    * (compa/sesion.ts, CALL02), y el control tiene que saber en cuál está.
    */
   onPermiso?: (gen: number) => void;
-  /** Motor nuevo (prototipo de Speech Engine): ata la conversación de ElevenLabs al pase. */
-  onVincular?: (gen: number, pase: string, conversacion: string) => void;
+  /**
+   * Motor nuevo (prototipo de Speech Engine): ata la conversación de ElevenLabs al pase. Si devuelve lo que
+   * contestó el servidor (compa/vinculoMotor.ts), un «no» honesto termina la sesión (compa/sesionVoz.ts).
+   */
+  onVincular?: (gen: number, pase: string, conversacion: string) => void | Promise<VinculoMotor | void>;
 };
 
 export function ModoConversacion(p: Props) {

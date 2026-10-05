@@ -107,9 +107,14 @@ mismo sitio, sin una línea duplicada:
   es de un solo uso y de una sola cuenta: solo se ata una conexión abierta que espera su pase (el teléfono que
   llega antes espera ese plazo; si no llega la conexión, 404 y nada queda atado); otra cuenta recibe 409 (y si
   ya estaba atada por el teléfono, la llamada se cuelga: no se sabe quién habla); con `X-Pase`, la cabecera
-  gana siempre. Además, la cuenta del pase tiene que tener el interruptor, y se mira en **cada turno**: si se le
+  gana siempre. Si ElevenLabs se reconecta con la **misma** conversación sin `X-Pase` (dentro de los 60 s del
+  vínculo), esa conexión se cuelga (1008: el vínculo no se hereda) y el teléfono que vuelva a pedirlo recibe
+  **410** `llamada-cerrada` (no un 200 engañoso); igual si la llamada atada ya se cerró. Cada error del vínculo
+  lleva `honesto: true` y su `codigo` (`llamada-cerrada`, `ocupada`, `sin-llamada`, `motor-apagado`,
+  `motor-no-activo`, `pase-ajeno`, `conversacion-invalida`, `sin-sesion`). Además, la cuenta del pase tiene que tener el interruptor, y se mira en **cada turno**: si se le
   quita (o se apaga el servidor) a mitad de llamada, se cierra sin error. Sin `init` en 10 s, o sin nada de
-  ElevenLabs en 60 s (ni el pong a nuestro ping), la conexión se cierra.
+  ElevenLabs en 60 s (ni el pong a nuestro ping), la conexión se cierra; si ElevenLabs medio-cierra el socket
+  (FIN sin marco de cierre: el servidor HTTP es `allowHalfOpen`), se cierra en el acto (1006), sin esperar esos 60 s.
 - **Interrupción**: un `event_id` nuevo mientras el turno anterior sigue saliendo suelta ese turno (la ruta
   corta su cerebro igual que cuando ElevenLabs corta la petición) y nada más sale con el id viejo; se anota
   como interrupción **nativa**. El mismo `event_id` otra vez no es otro turno.
@@ -123,7 +128,11 @@ mismo sitio, sin una línea duplicada:
 - **Clientes**: si `/api/voz/agente` trae `motor: 'speech-engine'`, la web (`src/03-voz/enVivo.ts`) y el
   teléfono (`mobile/src/compa/sesionVoz.ts`, `permiso.ts`, `VozProvider.tsx`, `ModoConversacion.tsx`) le piden
   al SDK la primera frase (`overrides.agent.firstMessage`, la misma que dicen hoy los agentes) y atan la
-  conversación al pase al conectar. Sin ese campo, nada cambia.
+  conversación al pase al conectar. Lo que contesta el vínculo se lee con honestidad (`vinculoMotor.ts`, igual en
+  los dos): solo un cuerpo del servidor con `honesto: true` y un `codigo` conocido concluye — entonces la llamada
+  se termina bien, diciendo por qué («esa llamada se cerró antes de quedar atada a tu cuenta; empieza otra») —;
+  un 404 sin cuerpo (un proxy), un 5xx, un 429 o sin red es pasajero: se reintenta (3 veces, 1 s entre una y
+  otra) y no se toma como respuesta. Sin ese campo, nada cambia.
 
 **Diferencias que quedan (honestas)**:
 
@@ -148,14 +157,41 @@ mismo sitio, sin una línea duplicada:
 
 ## 5. La prueba A/B y la regla de decisión
 
-**Qué se mide (los dos caminos, los mismos campos, en el mismo sitio)** — `GET /api/voz/comparacion` (solo
-mando; `?desde=…&hasta=…` en ISO):
+**El veredicto SOLO INFORMA.** `GET /api/voz/comparacion` calcula y devuelve `veredicto` (y `consultivo: true`,
+`aviso`), pero no enciende, apaga ni cambia nada: ni `AURA_MOTOR_VOZ`, ni `motorVozCuentas`, ni el agente. Eso lo
+decide José.
 
-- `primerTexto` p50/p95: desde que llega el turno hasta que el primer texto sale hacia la voz (la frase de
-  espera cuenta, es lo primero que se oye) · `cerebro` p50/p95: hasta lo primero del cerebro;
-- interrupciones `nativas` / `inferidas`, `repetidos`, `asentimientos`, `respaldos`, `errores`, `tardes`,
-  `cortados`, `puentes`, y cuántas conversaciones;
-- `veredicto`: la regla de abajo, ya calculada.
+**Qué se mide (los dos caminos, los mismos campos, en el mismo sitio)** — `GET /api/voz/comparacion` (solo
+mando; `?desde=…&hasta=…` en ISO). Por cada etiqueta de red (`porRed`) y en total:
+
+- `turnos`: todo lo anotado; **`completos`: las respuestas comparables**, las únicas que cuentan para el mínimo
+  y para los percentiles. Un turno es comparable solo si contestó el cerebro **principal** (no el de respaldo),
+  sin error, a tiempo, sin que lo cortaran, con algo del cerebro (no solo la frase de espera) y la persona no
+  solo asintió (`claseTurno` en `server/voz-medidas.ts`);
+- `excluidos`, cada turno en una sola clase: `asentimientos` («ajá» mientras hablaba, o un turno en el que la
+  persona solo asintió: la ruta lo mira en el sitio que comparten los dos caminos, sin guardar lo dicho),
+  `cortados`, `soloEspera` (solo la frase de espera), `vacios` (nada salió hacia la voz), `sinCerebro` (solo una
+  frase nuestra, «se me fue el hilo»), `errores`, `respaldos`, `tardes`, `repetidos` (reintento o evento
+  duplicado);
+- `primerTexto` p50/p95 **de las respuestas comparables**: desde que llega el turno hasta que el primer texto
+  sale hacia la voz (la frase de espera cuenta si después contestó el cerebro: es lo primero que se oye) ·
+  `cerebro` p50/p95, también solo de las comparables;
+- `ejercicios`: las interrupciones y los asentimientos **a propósito** (paso 4) y cuántos salieron bien;
+  `interrupciones` `nativas`/`inferidas` (las que vio el servidor, para mirar), `puentes`, conversaciones;
+- `bloques`: cuántos tramos seguidos de un mismo camino hay en el tiempo (A-B-A-B = 4);
+- `veredicto`: `estado` (`insuficiente` · `adoptar` · `mantener`), `faltan` (qué evidencia falta), `motivos`
+  (por qué no se adopta), y las banderas de la regla.
+
+**Los ejercicios a propósito se anotan** (el servidor no los ve todos: en el camino del agente, ElevenLabs se
+traga el «ajá» y nunca llega). Después de cada uno, con la sesión de José:
+
+```
+POST /api/voz/comparacion/ejercicio {"motor":"speech-engine","tipo":"interrupcion","bien":true}
+POST /api/voz/comparacion/ejercicio {"motor":"agente","tipo":"asentimiento","bien":false}
+```
+
+`bien` en una interrupción: se calló y siguió con lo nuevo, sin repetir; en un asentimiento: siguió sin cortarse.
+Llevan la red de la tanda actual.
 
 **Lo que el servidor no ve** (la red, el reconocimiento y la voz de ElevenLabs, que es justo donde Speech
 Engine podría ganar): `scripts/voz-comparar-eleven.ts` (solo lectura) resume las métricas por turno que
@@ -165,28 +201,41 @@ ElevenLabs guarda en cada conversación, más `interrupted` e `ignored_as_backch
 ELEVENLABS_API_KEY=… npx tsx scripts/voz-comparar-eleven.ts --agente agent_6801m3qbvv83fzgvg42eev85m8m5 --motor seng_… --desde 2026-10-07T15:00:00Z
 ```
 
-**Procedimiento** (la guía de muestras de la auditoría: **≥ 20 turnos por camino y por red**):
+**Procedimiento** (la guía de muestras de la auditoría: **≥ 20 respuestas comparables por camino y por red**):
 
 1. Misma persona, mismo teléfono, mismo avatar (AU-RA, español), mismo guion de preguntas para los dos caminos:
    10 preguntas cortas de charla, 6 que usan herramienta (precio, búsqueda, cálculo), 4 de las manos del
-   teléfono (recordatorio, llamada: comprobar que piden su «sí»).
+   teléfono (recordatorio, llamada: comprobar que piden su «sí»). Los «ajá» y los turnos cortados no cuentan:
+   hacen falta más de 20 turnos para tener 20 comparables.
 2. Por cada red (wifi de casa y datos móviles): etiquetarla (`POST /api/voz/comparacion/red {"red":"wifi"}`).
 3. En bloques alternos A-B-A-B (para que la hora no sesgue): bloque A con la cuenta fuera del interruptor
-   (agente), bloque B dentro (Speech Engine); cada bloque ~10 turnos, hasta ≥ 20 por camino en esa red.
+   (agente), bloque B dentro (Speech Engine); cada bloque ~10 turnos, hasta ≥ 20 comparables por camino en esa red.
 4. En cada camino y red, **5 interrupciones a propósito** (hablarle encima a mitad de una respuesta larga) y
-   **5 asentimientos** («ajá», «mjm») mientras habla. Anotar si alguna vez repitió algo o se quedó callada.
+   **5 asentimientos** («ajá», «mjm») mientras habla, cada uno anotado (`/api/voz/comparacion/ejercicio`).
+   Anotar también si alguna vez repitió algo o se quedó callada.
 5. Al terminar: `GET /api/voz/comparacion` y el script de arriba con la misma ventana de tiempo.
 
-**Regla de decisión** (la acordada): se adopta **solo si**
+**Regla de decisión** (honesta; `veredicto` en `server/voz-medidas.ts`). Cada red se decide por separado (no se
+suman redes) y el total es `adoptar` solo si **todas** las redes lo son:
 
-- hay ≥ 20 turnos por camino en cada red;
-- el primer audio es **mejor en p50 Y en p95** en las dos redes (nuestro `primerTexto` y las métricas de
-  ElevenLabs de punta a punta);
-- detecta **al menos las mismas** interrupciones (con las mismas 5 a propósito) y no corta por un «ajá»;
-- **sin regresiones**: ni más errores, ni más turnos tarde, ni repeticiones, ni más respaldos (en proporción),
-  y nada raro de oído (saludo, frases de espera, cortes).
-
-Si no gana claro, se queda el agente y el prototipo se apaga (sin tocar nada más).
+1. **Evidencia mínima** — si falta algo, `insuficiente` y `faltan` dice qué (p. ej. «4g: speech-engine: faltan 6
+   turnos comparables (hay 14 de 20)»):
+   - ≥ 20 respuestas **comparables** por camino;
+   - ≥ 5 interrupciones y ≥ 5 asentimientos a propósito anotados por camino;
+   - ≥ 4 bloques alternos en el tiempo (A-B-A-B).
+2. Con evidencia, se adopta **solo si**:
+   - el primer audio de las respuestas comparables es **mejor en p50 Y en p95**, por un margen que no sea ruido:
+     **al menos 150 ms Y al menos el 10 %** del valor del agente (los dos a la vez: con p50 de 1 s hacen falta
+     150 ms; con p95 de 3 s, 300 ms). Un empate dentro del margen es `mantener`;
+   - la tasa de interrupciones a propósito que salieron bien es **al menos** la del agente, y la de asentimientos
+     que no la cortaron también;
+   - **sin regresiones**: ni más `errores`, `respaldos`, `repetidos`, `tardes`, `vacios`, `soloEspera` ni
+     `sinCerebro` que el agente, en proporción a los turnos que esperaban respuesta (todo menos los «ajá»). Basta
+     una para `mantener`. Esos turnos además no cuentan como respuestas ni bajan los percentiles;
+   - y nada raro de oído (saludo, frases de espera, cortes), y las métricas de ElevenLabs de punta a punta (el
+     script) en la misma dirección: eso lo mira José, el servidor no lo sabe.
+3. Si no, `mantener`: se queda el agente y el prototipo se apaga (sin tocar nada más). En cualquier caso, el
+   veredicto no cambia nada por sí solo.
 
 ## 6. Lo que hay que hacer en ElevenLabs — **REQUIERE EL VISTO BUENO DE JOSÉ**
 

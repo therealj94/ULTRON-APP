@@ -49,7 +49,8 @@ import { quitarExpresiones } from '../lib/expresiones';
 import { mismoSecreto, secretoDerivado, type Sesion } from './seguridad';
 import { normalizarIdioma, type AvatarVoz, type Idioma } from './eleven';
 import { ETIQUETA_SECRETO_LLM, PHRASES, leerPase, ultimoDeLaPersona } from './voz-agente';
-import { anotarTurnoVoz, comparacionVoz, fijarRedVoz, marcarMotor, type Interrupcion, type MedidaTurnoVoz } from './voz-medidas';
+import { anotarEjercicioVoz, anotarTurnoVoz, comparacionVoz, fijarRedVoz, marcarMotor, type Interrupcion, type MedidaTurnoVoz } from './voz-medidas';
+import { esAsentimiento } from './voz-asentir';
 
 /* ------------------------------------------------------------------ la configuración */
 
@@ -103,42 +104,10 @@ export function motorDe(correo: string, avatar: AvatarVoz, idioma: Idioma): { id
 /* ------------------------------------------------------------------ asentir no es interrumpir */
 
 /**
- * Lo que es asentir mientras AURA habla: la misma lista que los agentes le dan a ElevenLabs
- * (scripts/elevenlabs-agentes.ts, ASENTIR → `interruption_ignore_terms`; una prueba mira que sigan iguales)
- * más sus variantes escritas («mjm», «aja»). En Speech Engine la lista también se le da al recurso (`turn`);
- * esto es la red por si igual llega como turno.
+ * Lo que es asentir (la lista y `esAsentimiento`) vive en server/voz-asentir.ts: la medida del turno
+ * (server/voz-medidas.ts) también lo usa, para no contar un «ajá» como una respuesta.
  */
-export const ASENTIR_MOTOR: Record<Idioma, string[]> = {
-  es: ['ajá', 'sí', 'ok', 'okay', 'mhm', 'claro', 'ya', 'exacto', 'ah ok', 'vale'],
-  en: ['uh-huh', 'yeah', 'yes', 'ok', 'okay', 'mhm', 'right', 'sure', 'got it'],
-};
-const VARIANTES_ASENTIR = ['aja', 'aha', 'aham', 'ajam', 'mjm', 'mm', 'mmm', 'hmm', 'mhmm', 'uh huh', 'si', 'ah', 'oh ok'];
-const plano = (t: string) =>
-  String(t || '')
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/[-–—]/g, ' ')
-    .replace(/[^a-z0-9ñ\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-const ASENTIR_PLANO = new Set([...ASENTIR_MOTOR.es, ...ASENTIR_MOTOR.en, ...VARIANTES_ASENTIR].map(plano));
-
-/** ¿La frase es solo asentir («Ajá.», «sí, sí», «mjm»)? Como mucho cuatro palabras, todas de asentir. */
-export function esAsentimiento(texto: string): boolean {
-  const p = plano(texto);
-  if (!p) return false;
-  if (ASENTIR_PLANO.has(p)) return true;
-  const palabras = p.split(' ');
-  if (palabras.length > 4) return false;
-  // «ah ok ah ok», «sí sí», «mjm, ajá»: cada palabra (o pareja) es de asentir.
-  for (let i = 0; i < palabras.length; ) {
-    if (i + 1 < palabras.length && ASENTIR_PLANO.has(`${palabras[i]} ${palabras[i + 1]}`)) i += 2;
-    else if (ASENTIR_PLANO.has(palabras[i])) i += 1;
-    else return false;
-  }
-  return true;
-}
+export { ASENTIR_MOTOR, esAsentimiento } from './voz-asentir';
 
 /* ------------------------------------------------------------------ la autenticidad */
 
@@ -226,6 +195,9 @@ export class ConexionWs extends EventEmitter {
     s.on('data', (d: Buffer) => this.datos(d));
     s.on('close', () => this.terminar());
     s.on('error', () => this.terminar());
+    // El otro lado medio-cerró (FIN sin marco de cierre). El socket del servidor HTTP es medio abierto
+    // (allowHalfOpen): sin esto la conexión seguiría «viva» hasta la inactividad (60 s) sin que nadie hable.
+    s.on('end', () => this.finDelOtro());
     s.on('drain', () => {
       if (!this.pausada) return;
       this.pausada = false;
@@ -414,6 +386,24 @@ export class ConexionWs extends EventEmitter {
   private terminar() {
     if (!this.abierta) return;
     this.abierta = false;
+    this.emit('cierre', 1006);
+  }
+
+  /**
+   * Ya no llega nada del otro lado (`end`): se cierra el nuestro también (y se suelta del todo poco después,
+   * por si no termina de cerrar). Sin marco de cierre es un cierre anormal (1006). Si ya habíamos cerrado
+   * nosotros, es lo que se esperaba: con los dos lados terminados el socket se cierra solo.
+   */
+  private finDelOtro() {
+    if (!this.abierta) return;
+    this.abierta = false;
+    try {
+      this.s.end();
+    } catch {
+      /* ya se fue */
+    }
+    const h = setTimeout(() => this.s.destroy(), 2_000);
+    h.unref?.();
     this.emit('cierre', 1006);
   }
 }
@@ -868,7 +858,7 @@ export type DepsMotor = {
 };
 
 /** Lo que se le contesta al teléfono que pidió el vínculo: atada, de otro, o sin llamada que espere. */
-type Pendiente = 'ok' | 'ocupada' | 'nadie';
+type Pendiente = 'ok' | 'ocupada' | 'nadie' | 'cerrada';
 
 /** De quién es una conversación: ya no se vuelve a atar a otra cuenta. */
 type Atada = {
@@ -878,6 +868,8 @@ type Atada = {
   hasta: number;
   /** La llamada que la usa (para colgarla si otra cuenta la reclama después). */
   sesion: SesionMotor | null;
+  /** ElevenLabs volvió a conectar con esta conversación (sin `X-Pase`) y se colgó: el vínculo era de un solo uso. */
+  reconexion?: boolean;
 };
 
 /**
@@ -918,8 +910,11 @@ export function montarMotorVoz(app: express.Express, httpServer: http.Server | n
 
   const esperarPase = (conversacion: string, sesion: SesionMotor): Promise<string | null> => {
     limpiar();
-    // Ya es de alguien, u otra conexión la espera: esta no la usa (un solo uso).
-    if (!conversacion || atadas.has(conversacion) || esperando.has(conversacion)) return Promise.resolve(null);
+    // Ya es de alguien, u otra conexión la espera: esta no la usa (un solo uso). Si ya estaba atada, queda
+    // anotado: el teléfono que vuelva a pedir el vínculo sabrá que esta llamada se colgó (410), no un 200.
+    const atada = conversacion ? atadas.get(conversacion) : undefined;
+    if (atada) atada.reconexion = true;
+    if (!conversacion || atada || esperando.has(conversacion)) return Promise.resolve(null);
     // El teléfono ya lo pidió (y su petición sigue esperando): esta conexión es la que espera, se ata ya.
     const ya = pendientes.get(conversacion)?.[0];
     if (ya) {
@@ -964,29 +959,34 @@ export function montarMotorVoz(app: express.Express, httpServer: http.Server | n
    * SU sesión y SU pase, así nadie habla como otra persona. Una vez atada, ninguna otra cuenta la cambia.
    */
   app.post(`${RUTA_MOTOR}/vincular`, d.exigirMesaODesk, d.limitar(30, 60_000, 'voz-agente'), (req, res) => {
-    if (!motorEncendido()) return res.status(404).json({ error: 'no está', honesto: true });
+    // Cada error lleva su `codigo`: el teléfono decide por él, no por el número (un 404 de un proxy no es este).
+    if (!motorEncendido()) return res.status(404).json({ error: 'no está', codigo: 'motor-apagado', honesto: true });
     const s = d.sesionDe(req);
-    if (!s) return res.status(401).json({ error: 'sesión requerida', honesto: true });
+    if (!s) return res.status(401).json({ error: 'sesión requerida', codigo: 'sin-sesion', honesto: true });
     const pase = String(req.body?.pase || '');
     const conversacion = String(req.body?.conversacion || '');
     const p = leerPase(pase);
-    if (!p || p.correo.toLowerCase() !== s.correo.toLowerCase()) return res.status(403).json({ error: 'ese pase no es tuyo', honesto: true });
-    if (!elMotor(p.correo, p.avatar, p.idioma)) return res.status(403).json({ error: 'el motor nuevo no está activo para tu cuenta', honesto: true });
-    if (!/^[A-Za-z0-9_-]{6,128}$/.test(conversacion)) return res.status(400).json({ error: 'conversación inválida', honesto: true });
+    if (!p || p.correo.toLowerCase() !== s.correo.toLowerCase()) return res.status(403).json({ error: 'ese pase no es tuyo', codigo: 'pase-ajeno', honesto: true });
+    if (!elMotor(p.correo, p.avatar, p.idioma)) return res.status(403).json({ error: 'el motor nuevo no está activo para tu cuenta', codigo: 'motor-no-activo', honesto: true });
+    if (!/^[A-Za-z0-9_-]{6,128}$/.test(conversacion)) return res.status(400).json({ error: 'conversación inválida', codigo: 'conversacion-invalida', honesto: true });
     const correo = p.correo.toLowerCase();
     limpiar();
     const contestar = (r: Pendiente) =>
       r === 'ok'
         ? res.json({ ok: true, honesto: true })
         : r === 'ocupada'
-          ? res.status(409).json({ error: 'esa conversación ya está vinculada', honesto: true })
-          : res.status(404).json({ error: 'no hay una llamada esperando esa conversación', honesto: true });
+          ? res.status(409).json({ error: 'esa conversación ya está vinculada', codigo: 'ocupada', honesto: true })
+          : r === 'cerrada'
+            ? res.status(410).json({ error: 'esa llamada ya se cerró (el vínculo es de un solo uso): empieza otra', codigo: 'llamada-cerrada', honesto: true })
+            : res.status(404).json({ error: 'no hay una llamada esperando esa conversación', codigo: 'sin-llamada', honesto: true });
     // Solo la huella de la conversación en el registro: ni la cuenta, ni el pase, ni lo dicho.
     const avisar = (que: string) => console.warn(`[voz motor] vínculo rechazado (${que}): conversación ${huella(conversacion)}`);
     const ya = atadas.get(conversacion);
     if (ya) {
-      // La misma cuenta otra vez (un reintento del teléfono): nada cambia.
-      if (ya.correo && ya.correo === correo) return contestar('ok');
+      // La misma cuenta otra vez: si su llamada sigue abierta, es un reintento del teléfono y nada cambia. Si
+      // ya se cerró, o ElevenLabs volvió a conectar con esta conversación sin `X-Pase` (y se colgó: el vínculo
+      // es de un solo uso), no hay llamada que atar: 410, no un 200 que haga creer que sigue.
+      if (ya.correo && ya.correo === correo) return contestar(ya.reconexion || !ya.sesion || ya.sesion.cerrada ? 'cerrada' : 'ok');
       avisar(ya.origen === 'cabecera' ? 'la llamada ya trae su pase' : 'ya es de otra cuenta');
       if (ya.origen === 'telefono') ya.sesion?.terminar(1008, 'vínculo en disputa');
       return contestar('ocupada');
@@ -1036,6 +1036,15 @@ export function montarMotorVoz(app: express.Express, httpServer: http.Server | n
   /** El dueño etiqueta la tanda que sigue («wifi», «4g»): así se compara por red. */
   app.post('/api/voz/comparacion/red', d.exigirMando, d.limitar(30), (req, res) => {
     res.json({ ok: true, red: fijarRedVoz(req.body?.red), honesto: true });
+  });
+  /**
+   * El dueño anota cada ejercicio a propósito (§5, paso 4) y si salió bien: `{"motor":"agente"|"speech-engine",
+   * "tipo":"interrupcion"|"asentimiento","bien":true|false}`. Sin ellos el veredicto se queda en «insuficiente».
+   */
+  app.post('/api/voz/comparacion/ejercicio', d.exigirMando, d.limitar(60), (req, res) => {
+    const e = anotarEjercicioVoz({ motor: req.body?.motor, tipo: req.body?.tipo, bien: req.body?.bien });
+    if (!e) return res.status(400).json({ ok: false, error: 'Falta motor (agente o speech-engine), tipo (interrupcion o asentimiento) y bien (true o false).', honesto: true });
+    res.json({ ok: true, ejercicio: e, honesto: true });
   });
 
   /** Quien prueba llaves a ciegas: se dice en el registro una vez cada 10 minutos (nunca la llave). */

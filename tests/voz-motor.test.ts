@@ -16,7 +16,9 @@
  *  · el vínculo por el teléfono si ElevenLabs no reenvía el pase, ping/pong, cierre y la comparación;
  *  · el vínculo es de un solo uso y de una sola cuenta (409 si es de otra; `X-Pase` gana siempre; solo se
  *    ata una conexión abierta que espera), el plazo del `init` y la inactividad, los marcos mal formados
- *    (1002, 1007, 1009), la cola de salida, otra ruta con `Upgrade` y el permiso en cada turno.
+ *    (1002, 1007, 1009), la cola de salida, otra ruta con `Upgrade` y el permiso en cada turno;
+ *  · revisión 14: una reconexión con la misma conversación sin `X-Pase` se cuelga y el teléfono recibe un 410
+ *    honesto (no un 200); cada error del vínculo trae su `codigo`; un medio cierre (`end`) cierra en el acto.
  */
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -834,7 +836,103 @@ test('vínculo: con X-Pase la llamada es de esa cuenta; el teléfono de otra no 
   }
 });
 
+test('vínculo (r14): reconectar con la misma conversación sin X-Pase se cuelga, y el teléfono recibe un 410 honesto, no un 200', async () => {
+  const s = await montar(respondeTeOigo);
+  try {
+    const a = await persona();
+    const pa = (await abrir(s.base, a.token)).j.pase;
+    const c1 = (await conectar(s.ws, cabecerasBuenas())) as ElevenFalso;
+    c1.enviar({ type: 'init', conversation_id: 'conv_reconecta_1' });
+    c1.enviar(transcripcion(1, [['user', 'hola']]));
+    const v1 = await vincularA(s.base, a.token, pa, 'conv_reconecta_1');
+    assert.equal(v1.status, 200);
+    assert.deepEqual(await v1.json(), { ok: true, honesto: true });
+    assert.equal(await c1.respuesta(1), 'Te oigo.');
+    // ElevenLabs se reconecta con la MISMA conversación (dentro de los 60 s del vínculo) y sin X-Pase.
+    c1.cerrar();
+    await c1.cerrado();
+    const c2 = (await conectar(s.ws, cabecerasBuenas())) as ElevenFalso;
+    c2.enviar({ type: 'init', conversation_id: 'conv_reconecta_1' });
+    c2.enviar(transcripcion(2, [['user', 'sigo aquí']]));
+    assert.equal((await c2.cerrado()).codigo, 1008, 'el vínculo es de un solo uso: la reconexión no lo hereda');
+    // El teléfono vuelve a pedir el vínculo: la llamada ya no existe, y se le dice.
+    const v2 = await vincularA(s.base, a.token, pa, 'conv_reconecta_1');
+    assert.equal(v2.status, 410, 'no un 200 engañoso');
+    const j2: any = await v2.json();
+    assert.equal(j2.codigo, 'llamada-cerrada');
+    assert.equal(j2.honesto, true);
+    assert.match(j2.error, /cerr/);
+    assert.equal(s.vistos.length, 1, 'la reconexión no se atendió');
+  } finally {
+    await s.cerrar();
+  }
+});
+
+test('vínculo: cada respuesta de error lleva su código honesto (el teléfono no adivina por el número)', async () => {
+  const s = await montar(respondeTeOigo, { vincularMs: 150 });
+  try {
+    const a = await persona();
+    const pa = (await abrir(s.base, a.token)).j.pase;
+    const nadie = await vincularA(s.base, a.token, pa, 'conv_nadie_1');
+    assert.equal(nadie.status, 404);
+    assert.deepEqual(await nadie.json(), { error: 'no hay una llamada esperando esa conversación', codigo: 'sin-llamada', honesto: true });
+    const b = await persona();
+    const pb = (await abrir(s.base, b.token)).j.pase;
+    const c = (await conectar(s.ws, cabecerasBuenas(pb))) as ElevenFalso;
+    c.enviar({ type: 'init', conversation_id: 'conv_codigo_1' });
+    await dormir(50);
+    const otra = await vincularA(s.base, a.token, pa, 'conv_codigo_1');
+    assert.equal(otra.status, 409);
+    assert.equal(((await otra.json()) as any).codigo, 'ocupada');
+    c.cerrar();
+  } finally {
+    await s.cerrar();
+  }
+});
+
 /* ------------------------------------------------------------------ la conexión: plazos y marcos */
+
+test('ConexionWs (r14): si el otro lado medio-cierra (end), la conexión se cierra ya, no al vencer la inactividad', async () => {
+  // Un socket medio abierto (allowHalfOpen, como el del servidor HTTP): llega el fin de su lado.
+  const s = new Duplex({ read() {}, write(_c, _e, cb) { cb(); }, allowHalfOpen: true });
+  const ws = new M.ConexionWs(s);
+  let cierre: number | null = null;
+  ws.on('cierre', (c: number) => (cierre = c));
+  s.push(null);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(ws.abierta, false, 'el otro lado ya no manda nada: la conexión no sigue viva');
+  assert.equal(cierre, 1006, 'cierre sin marco de cierre: anormal');
+  assert.equal(s.writableEnded, true, 'nuestro lado también se cierra');
+});
+
+test('con un ElevenLabs que medio-cierra la conexión, la llamada se suelta en el acto', async () => {
+  let cortado = false;
+  const s = await montar(
+    async (t) => {
+      t.enviar('delta', { text: 'Pienso…', voz: 'Pienso…' });
+      await new Promise<void>((r) => t.senal.addEventListener('abort', () => r(), { once: true }));
+      cortado = true;
+    },
+    { inactividadMs: 60_000 }
+  );
+  try {
+    const yo = await persona();
+    const { j } = await abrir(s.base, yo.token);
+    const c = await aMano(s.puerto, cabecerasBuenas(j.pase));
+    await c.esperar(() => /^HTTP\/1\.1 101/.test(c.cabecera()) || undefined);
+    c.s.write(marcoCliente(0x1, Buffer.from(JSON.stringify({ type: 'init', conversation_id: 'conv_medio_1' }))));
+    c.s.write(marcoCliente(0x1, Buffer.from(JSON.stringify(transcripcion(1, [['user', 'piensa']])))));
+    await c.esperar(() => c.marcos.find((m) => m.op === 0x1 && /Pienso/.test(m.carga.toString())));
+    const t0 = Date.now();
+    c.s.end(); // FIN sin marco de cierre: ElevenLabs medio-cierra
+    await c.esperar(() => c.cerrado(), 3_000);
+    assert.ok(Date.now() - t0 < 3_000, 'se cerró en el acto, no a los 60 s');
+    await c.esperar(() => cortado, 3_000);
+    assert.ok(cortado, 'el cerebro de ese turno se suelta');
+  } finally {
+    await s.cerrar();
+  }
+});
 
 /** Una conexión WebSocket a mano (para mandar marcos mal formados y leer los del servidor tal cual). */
 async function aMano(puerto: number, cabeceras: Record<string, string>, ruta = M.RUTA_MOTOR) {
@@ -1049,7 +1147,7 @@ test('el permiso se mira en cada turno: si se le quita el motor a la cuenta (o a
 
 /* ------------------------------------------------------------------ la comparación */
 
-test('la comparación: solo el dueño; los dos caminos con los mismos campos; la regla de decisión', async () => {
+test('la comparación: solo el dueño; los dos caminos con los mismos campos; los ejercicios a propósito; solo informa', async () => {
   const s = await montar(async () => {});
   try {
     assert.equal((await fetch(`${s.base}/api/voz/comparacion`)).status, 403);
@@ -1058,27 +1156,29 @@ test('la comparación: solo el dueño; los dos caminos con los mismos campos; la
     const j: any = await r.json();
     assert.ok(j.total.agente.turnos >= 1 && j.total['speech-engine'].turnos >= 1, `hay medidas de los dos caminos: ${JSON.stringify(j.total).slice(0, 400)}`);
     assert.equal(j.minimoPorCamino, 20);
+    assert.deepEqual(j.minimos, { turnosComparables: 20, interrupciones: 5, asentimientos: 5, bloques: 4 });
+    assert.equal(j.total.veredicto.estado, 'insuficiente', 'con lo de las pruebas no hay evidencia para decidir');
+    assert.equal(j.total.veredicto.adoptar, false);
+    assert.equal(j.consultivo, true);
+    assert.match(j.aviso, /no enciende ni apaga/);
     const red = await fetch(`${s.base}/api/voz/comparacion/red`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-mando': 'si' }, body: JSON.stringify({ red: 'WiFi casa!' }) });
     assert.equal(((await red.json()) as any).red, 'wificasa');
+    const ej = (cuerpo: unknown, mando = 'si') => fetch(`${s.base}/api/voz/comparacion/ejercicio`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-mando': mando }, body: JSON.stringify(cuerpo) });
+    assert.equal((await ej({ motor: 'agente', tipo: 'interrupcion', bien: true }, 'no')).status, 403, 'solo el dueño');
+    assert.equal((await ej({ motor: 'agente', tipo: 'interrupcion' })).status, 400, 'sin decir si salió bien no cuenta');
+    const bien = await ej({ motor: 'speech-engine', tipo: 'asentimiento', bien: true });
+    assert.equal(bien.status, 200);
+    assert.deepEqual(((await bien.json()) as any).ejercicio, { motor: 'speech-engine', tipo: 'asentimiento', bien: true, t: MED._ejercicios().at(-1)!.t, red: 'wificasa' });
+    const j2: any = await (await fetch(`${s.base}/api/voz/comparacion`, { headers: { 'x-mando': 'si' } })).json();
+    assert.equal(j2.porRed.wificasa['speech-engine'].ejercicios.asentimientos.hechas, 1);
+    assert.ok(j2.total.veredicto.faltan.some((f: string) => /^wificasa: speech-engine: faltan 4 asentimientos a propósito/.test(f)), j2.total.veredicto.faltan.join(' | '));
     MED.fijarRedVoz('');
   } finally {
     await s.cerrar();
   }
-  const m = (motor: 'agente' | 'speech-engine', primer: number, extra: Partial<import('../server/voz-medidas').MedidaTurnoVoz> = {}) => ({
-    motor, t: 0, conv: 'c', primerTextoMs: primer, cerebroMs: primer, totalMs: primer, puente: false, interrupcion: null, repetido: false, asentimiento: false, respaldo: false, error: false, tarde: false, cortado: false, red: '', ...extra,
-  });
-  const lista = (motor: 'agente' | 'speech-engine', base: number, k = 20, extra = {}) => Array.from({ length: k }, (_, i) => m(motor, base + i * 10, i < 3 ? { interrupcion: motor === 'agente' ? 'inferida' : 'nativa', ...extra } : extra));
-  const v = (a: any[], b: any[]) => MED.veredicto(MED.resumir(a), MED.resumir(b));
-  assert.equal(v(lista('agente', 800), lista('speech-engine', 600)).adoptar, true, 'mejor en p50 y p95, mismas interrupciones, sin regresiones');
-  assert.equal(v(lista('agente', 800, 19), lista('speech-engine', 600)).suficientes, false, 'menos de 20 turnos: no se decide');
-  assert.equal(v(lista('agente', 800), [...lista('speech-engine', 600, 18), m('speech-engine', 5_000), m('speech-engine', 5_000)]).primerTextoP95Mejor, false, 'p95 peor: no');
-  const conError = lista('speech-engine', 600);
-  conError[10] = { ...conError[10], error: true };
-  assert.deepEqual(v(lista('agente', 800), conError).regresiones, ['errores'], 'más errores: no');
-  const sinInterr = lista('speech-engine', 600).map((x) => ({ ...x, interrupcion: null }));
-  assert.equal(v(lista('agente', 800), sinInterr).interrupcionesIgualOMas, false, 'detecta menos interrupciones: no');
   assert.equal(MED.percentil([5, 1, 3, 2, 4], 50), 3);
   assert.equal(MED.percentil([], 95), null);
+  // La regla en detalle: tests/voz-comparacion.test.ts.
 });
 
 test('lo que mide ElevenLabs (scripts/voz-comparar-eleven.ts): percentiles por métrica e interrupciones, sin leer lo dicho', async () => {
