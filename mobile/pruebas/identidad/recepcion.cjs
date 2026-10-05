@@ -19,7 +19,7 @@ const { ok, fin } = require('../chat/comun.cjs');
   const mesa = globalThis.__mesa || (globalThis.__mesa = { token: '', creds: null, sesion: null });
   const ss = globalThis.__ss || (globalThis.__ss = { m: new Map(), fallarLectura: 0, fallarEscritura: 0 });
   const UUID = '0b9f3c2e-1a2b-4c3d-8e9f-0123456789ab';
-  const datos = { plataforma: 'android', version: '5.3.0', build: 53, runtime: 'f3a1c09e5b7d', updateId: UUID, canal: 'production', embebido: false, creada: new Date('2026-10-04T20:00:00Z'), os: '14' };
+  const datos = { plataforma: 'android', version: '5.3.0', buildConfig: 53, runtime: 'f3a1c09e5b7d', updateId: UUID, canal: 'production', embebido: false, creada: new Date('2026-10-04T20:00:00Z'), os: '14' };
   const enviadas = [];
   globalThis.fetch = async (_url, init = {}) => {
     enviadas.push(init.headers || {});
@@ -43,7 +43,7 @@ const { ok, fin } = require('../chat/comun.cjs');
   RECEPCION.fijarDatosBuild(() => datos);
   h = await pedir();
   const c = h['x-aura-cliente'] || '';
-  ok('RC1: con datos, va el build', c.startsWith('v1;p=android;v=5.3.0;b=53;rt=f3a1c09e5b7d;u=' + UUID + ';c=production;e=0;uc=2026-10-04T20:00:00.000Z;os=14;i='), c);
+  ok('RC1: con datos, va el build', c.startsWith('v1;p=android;v=5.3.0;bc=53;rt=f3a1c09e5b7d;u=' + UUID + ';c=production;e=0;uc=2026-10-04T20:00:00.000Z;os=14;i='), c);
   ok('RC1: junto con la sesión de siempre', h['x-ultron-sesion'] === 'tok-A');
   const idA = idDe(h);
   ok('RC2: con un id de instalación', /^[A-Za-z0-9-]{8,64}$/.test(idA), idA);

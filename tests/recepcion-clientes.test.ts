@@ -5,7 +5,12 @@
  *  · por cuenta, las últimas 10 instalaciones; el id crudo no se guarda (hash con la huella de la cuenta);
  *  · como mucho una escritura cada 10 min por instalación, salvo que cambie el build; un fallo deja reintentar;
  *  · GET /api/build: cada cuenta ve SOLO lo suyo; la clave de mesa sin sesión no ve a nadie; sin sesión, 401;
- *  · el SHA web se compara con el que sirve el servidor (sí/no); la OTA, «desconocido» (el servidor no la sabe);
+ *  · el SHA web se compara con el que sirve el servidor (sí/no); el teléfono contra la ficha de la OTA publicada
+ *    (lib/ota-publicada.ts; la matriz completa y la ruta con una ficha de mentira, en tests/ota-publicada.test.ts);
+ *    aquí la ficha está apagada (AURA_OTA_MANIFIESTO_URL=off) y el teléfono sale «desconocido»;
+ *  · por cuenta, como mucho 3 escrituras por minuto aunque rote el id de instalación (H6);
+ *  · el número de build de la configuración va como `bc`, no como el del binario (`b`, H7);
+ *  · todo lo de `clientes` sale con `evidencia: 'declarada'`;
  *  · sin cabecera (cliente viejo o apagado) no se anota nada;
  *  · el teléfono (mobile/src/lib/recepcionDescriptor.ts) y la web (src/10-infra/recepcion.ts) arman lo que el
  *    servidor entiende; la web renueva su id al cambiar la sesión y lleva el SHA de la página.
@@ -17,6 +22,8 @@ import type { AddressInfo } from 'node:net';
 
 process.env.ULTRON_SESION_SECRETO = 'secreto-de-prueba-largo-para-recepcion-clientes';
 process.env.ULTRON_MESA_CLAVE = 'clave-de-mesa-de-prueba-recepcion';
+// La ficha de la OTA, apagada: estas pruebas no salen a internet (la ficha se prueba en tests/ota-publicada.test.ts).
+process.env.AURA_OTA_MANIFIESTO_URL = 'off';
 const R = await import('../lib/recepcion-clientes');
 const { almacenEnMemoria } = await import('../lib/durable');
 const { montarRecepcion, montarRutaBuild } = await import('../server/build-rutas');
@@ -26,7 +33,7 @@ const W = await import('../src/10-infra/recepcion');
 
 const UUID = '0b9f3c2e-1a2b-4c3d-8e9f-0123456789ab';
 const RT = 'f3a1c09e5b7d2468ace013579bdf2468ace01357';
-const cab = (extra = '', i = 'inst-aaaa-0001') => `v1;p=android;v=5.3.0;b=53;rt=${RT};u=${UUID};c=production;e=0;uc=2026-10-04T20:00:00.000Z;os=14;i=${i}${extra}`;
+const cab = (extra = '', i = 'inst-aaaa-0001') => `v1;p=android;v=5.3.0;bc=53;rt=${RT};u=${UUID};c=production;e=0;uc=2026-10-04T20:00:00.000Z;os=14;i=${i}${extra}`;
 
 /* ------------------------------------------------------------------ la cabecera */
 
@@ -36,7 +43,8 @@ test('la cabecera completa se lee campo por campo', () => {
     instalacion: 'inst-aaaa-0001',
     plataforma: 'android',
     version: '5.3.0',
-    build: '53',
+    build: null,
+    buildConfig: '53',
     runtime: RT,
     updateId: UUID,
     canal: 'production',
@@ -57,9 +65,9 @@ test('sanea: lo que no tiene su forma se descarta; sin plataforma o id válidos,
   assert.equal(R.leerDescriptor('v1;p=android;i=corto'), null, 'id demasiado corto');
   assert.equal(R.leerDescriptor('v1;p=android;i=' + 'a'.repeat(65)), null, 'id demasiado largo');
   assert.equal(R.leerDescriptor('v1;p=web;i=inst-aaaa-0001;w=' + 'a'.repeat(R.TOPE_CABECERA)), null, 'cabecera demasiado larga');
-  const sucio = R.leerDescriptor('v1;p=android;i=inst-aaaa-0001;v=5.3.0 <script>;b=53a;rt=../../etc;u=no-es-hex!;c=prod uction;e=2;uc=ayer;os=1234;w=xyz;modelo=Pixel 8;serie=ABC')!;
+  const sucio = R.leerDescriptor('v1;p=android;i=inst-aaaa-0001;v=5.3.0 <script>;b=53a;bc=5 3;rt=../../etc;u=no-es-hex!;c=prod uction;e=2;uc=ayer;os=1234;w=xyz;modelo=Pixel 8;serie=ABC')!;
   assert.ok(sucio, 'el id y la plataforma bastan');
-  for (const k of ['version', 'build', 'runtime', 'updateId', 'canal', 'embebido', 'creada', 'os', 'webSha'] as const) assert.equal(sucio[k], null, `${k} sucio se descarta`);
+  for (const k of ['version', 'build', 'buildConfig', 'runtime', 'updateId', 'canal', 'embebido', 'creada', 'os', 'webSha'] as const) assert.equal(sucio[k], null, `${k} sucio se descarta`);
   assert.ok(!JSON.stringify(sucio).includes('Pixel') && !JSON.stringify(sucio).includes('ABC'), 'lo desconocido (modelo, serie) no entra');
   const repetida = R.leerDescriptor('v1;p=ios;i=inst-aaaa-0001;p=android;v=1.0.0;v=9.9.9')!;
   assert.equal(repetida.plataforma, 'ios', 'una clave repetida vale la primera vez');
@@ -68,6 +76,20 @@ test('sanea: lo que no tiene su forma se descarta; sin plataforma o id válidos,
   const futuro = R.leerDescriptor('v1;p=android;i=inst-aaaa-0001;uc=2099-01-01T00:00:00Z')!;
   assert.equal(futuro.creada, null, 'una fecha absurda no se guarda');
   assert.equal(R.leerDescriptor('v1;p=web;i=inst-aaaa-0001;w=ABCDEF1234567')!.webSha, 'abcdef1234567', 'hex en minúsculas');
+});
+
+test('H7: el build de la configuración (`bc`) y el del binario (`b`) van por separado, cada uno con su nombre', () => {
+  const d = R.leerDescriptor('v1;p=android;i=inst-aaaa-0001;b=54;bc=53')!;
+  assert.equal(d.build, '54', '`b` = binario instalado (solo si el cliente lo sabe)');
+  assert.equal(d.buildConfig, '53', '`bc` = la configuración con la que se armó el JS');
+  assert.equal(R.leerDescriptor('v1;p=ios;i=inst-aaaa-0001;bc=1.2.3')!.buildConfig, '1.2.3', 'iOS: buildNumber con puntos');
+  assert.notEqual(R.firmaBuild(d), R.firmaBuild(R.leerDescriptor('v1;p=android;i=inst-aaaa-0001;b=54;bc=55')!), 'cambiar `bc` es otro build');
+  const t = '2026-10-05T10:00:00.000Z';
+  const v = R.vistaClientes([{ ...d, instalacion: 'a'.repeat(16), primero: t, visto: t }], { webSha: 'desconocido' })[0];
+  assert.deepEqual([v.build, v.buildConfig], ['54', '53']);
+  // Un registro guardado antes de `bc` (sin el campo) se enseña con buildConfig null, sin romper.
+  const { buildConfig: _sin, ...viejo } = { ...d, instalacion: 'a'.repeat(16), primero: t, visto: t };
+  assert.equal(R.vistaClientes([viejo as any], { webSha: 'desconocido' })[0].buildConfig, null);
 });
 
 test('la firma del build cambia con el build, no con la instalación', () => {
@@ -116,6 +138,37 @@ test('el freno: una vez cada 10 min por instalación, salvo que cambie el build;
   assert.equal(f.tamano, 3, 'con tope');
 });
 
+test('H6: por cuenta, como mucho 3 escrituras por minuto aunque cada petición estrene un id de instalación', () => {
+  const f = new R.FrenoRecepcion();
+  const t = 1_000_000;
+  const escritas = Array.from({ length: 50 }, (_, n) => f.toca(`cuenta1:inst-${n}`, 'A', t + n * 100, 'cuenta1')).filter(Boolean).length;
+  assert.equal(escritas, R.MAX_ESCRITURAS_CUENTA, '50 ids distintos en 5 s: solo 3 escrituras');
+  assert.equal(f.toca('cuenta2:inst-0', 'A', t + 5000, 'cuenta2'), true, 'otra cuenta no queda frenada por la primera');
+  // Lo frenado por la cuenta no queda anotado: pasado el minuto, esa instalación escribe en su primera petición.
+  assert.equal(f.toca('cuenta1:inst-49', 'A', t + 4900 + 1, 'cuenta1'), false);
+  assert.equal(f.toca('cuenta1:inst-49', 'A', t + R.ESPACIO_CUENTA_MS, 'cuenta1'), true, 'pasado el minuto, sí');
+  // Un build nuevo (una OTA aplicada) también cuenta para la cuenta.
+  const g = new R.FrenoRecepcion();
+  for (let n = 0; n < 3; n++) assert.equal(g.toca('c:i', `B${n}`, t + n, 'c'), true, 'build nuevo en el acto');
+  assert.equal(g.toca('c:i', 'B9', t + 10, 'c'), false, 'el 4.º cambio en el mismo minuto espera');
+  // Un fallo de escritura no gasta el cupo de la cuenta.
+  g.olvidar('c:i', 'c');
+  assert.equal(g.toca('c:i', 'B9', t + 20, 'c'), true);
+});
+
+test('H6: registrar con ids rotando — la cuenta no pasa de 3 escrituras por minuto', async () => {
+  const a = almacenEnMemoria();
+  let escrituras = 0;
+  const contando = { ...a, crear: (...x: Parameters<typeof a.crear>) => (escrituras++, a.crear(...x)), cas: (...x: Parameters<typeof a.cas>) => (escrituras++, a.cas(...x)) };
+  const freno = new R.FrenoRecepcion();
+  const t = Date.parse('2026-10-05T10:00:00Z');
+  const r: string[] = [];
+  for (let n = 0; n < 50; n++) r.push(await R.registrarCliente('jose@x.com', cab('', `rota-${String(n).padStart(4, '0')}-zz`), { almacen: contando, freno, ahora: t + n * 50 }));
+  assert.equal(r.filter((x) => x === 'guardada').length, 3);
+  assert.equal(r.filter((x) => x === 'frenada').length, 47);
+  assert.equal(escrituras, 3, 'una escritura durable por guardada, no 50');
+});
+
 test('registrar: va a la cuenta de la sesión, frenado; sin cabecera o sin cuenta, nada; un fallo deja reintentar', async () => {
   const a = almacenEnMemoria();
   const freno = new R.FrenoRecepcion();
@@ -148,18 +201,20 @@ test('registrar: va a la cuenta de la sesión, frenado; sin cabecera o sin cuent
 
 test('comparar: web contra el SHA servido (sí/no); teléfono «desconocido» sin la OTA publicada; Windows «desconocido»', () => {
   const t = '2026-10-05T10:00:00.000Z';
-  const base = { instalacion: 'a'.repeat(16), primero: t, visto: t, version: null, build: null, runtime: RT, updateId: UUID, canal: 'production', embebido: false, creada: null, webSha: null, os: null };
+  const base = { instalacion: 'a'.repeat(16), primero: t, visto: t, version: null, build: null, buildConfig: null, runtime: RT, updateId: UUID, canal: 'production', embebido: false, creada: null, webSha: null, os: null };
   const SHA = '0123456789abcdef0123456789abcdef01234567';
   assert.deepEqual(R.compararCliente({ ...base, plataforma: 'web', webSha: '0123456' }, { webSha: SHA }), { esperado: SHA, recibido: 'sí' }, 'corto y completo son el mismo');
   assert.deepEqual(R.compararCliente({ ...base, plataforma: 'web', webSha: 'fedcba9876543' }, { webSha: SHA }), { esperado: SHA, recibido: 'no' });
   assert.deepEqual(R.compararCliente({ ...base, plataforma: 'web', webSha: null }, { webSha: SHA }), { esperado: SHA, recibido: 'desconocido' });
   assert.deepEqual(R.compararCliente({ ...base, plataforma: 'web', webSha: '0123456' }, { webSha: 'desconocido' }), { esperado: 'desconocido', recibido: 'desconocido' });
-  assert.deepEqual(R.compararCliente({ ...base, plataforma: 'android' }, { webSha: SHA }), { esperado: 'desconocido', recibido: 'desconocido' }, 'el servidor no sabe la OTA publicada: no inventa');
-  assert.deepEqual(R.compararCliente({ ...base, plataforma: 'android' }, { webSha: SHA, ota: { [RT]: UUID } }), { esperado: UUID, recibido: 'sí' });
-  assert.deepEqual(R.compararCliente({ ...base, plataforma: 'android' }, { webSha: SHA, ota: { [RT]: '1b9f3c2e-1a2b-4c3d-8e9f-0123456789ab' } }).recibido, 'no');
+  const sinFicha = R.compararCliente({ ...base, plataforma: 'android' }, { webSha: SHA });
+  assert.deepEqual([sinFicha.esperado, sinFicha.recibido, sinFicha.motivo], ['desconocido', 'desconocido', 'ficha-no-disponible'], 'sin la ficha de la OTA: no inventa');
   assert.deepEqual(R.compararCliente({ ...base, plataforma: 'windows' }, { webSha: SHA }), { esperado: 'desconocido', recibido: 'desconocido' });
   const v = R.vistaClientes([{ ...base, plataforma: 'android' }], { webSha: SHA })[0];
   assert.equal(v.instalacion, 'aaaaaa', 'solo 6 del hash, para distinguir aparatos');
+  assert.equal(v.evidencia, 'declarada', 'lo dice el cliente, sin firma');
+  assert.equal(v.motivo, 'ficha-no-disponible');
+  assert.equal(R.vistaClientes([{ ...base, plataforma: 'web', webSha: '0123456' }], { webSha: SHA })[0].motivo, null, 'la web no lleva motivo');
 });
 
 /* ------------------------------------------------------------------ los clientes arman lo que el servidor entiende */
@@ -180,7 +235,12 @@ test('teléfono: el descriptor sale de expo-updates/expo-constants/Platform y el
   // Sin expo-updates (desarrollo): solo versión y sistema; iOS «17.4» → 17.
   const ios = M.datosDeExpo({ updates: { isEnabled: false }, constants: { expoConfig: { version: '5.3.0', ios: { buildNumber: '7' } } }, platform: { OS: 'ios', Version: '17.4' } })!;
   const dios = R.leerDescriptor(M.descriptorCliente(ios, 'inst-aaaa-0001'))!;
-  assert.deepEqual([dios.plataforma, dios.version, dios.build, dios.updateId, dios.embebido, dios.os], ['ios', '5.3.0', '7', null, null, '17']);
+  assert.deepEqual([dios.plataforma, dios.version, dios.buildConfig, dios.build, dios.updateId, dios.embebido, dios.os], ['ios', '5.3.0', '7', null, null, null, '17']);
+  // H7: el build de expoConfig va como `bc` (configuración), nunca como `b` (binario); `b` solo si se sabe de verdad.
+  assert.ok(!/;b=/.test(h) && /;bc=53;/.test(h), 'el de la configuración, con su nombre');
+  const conNativo = M.datosDeExpo({ updates: null, constants: { expoConfig: { version: '5.3.0', android: { versionCode: 53 } } }, platform: { OS: 'android' }, application: { nativeBuildVersion: '54' } })!;
+  const dn = R.leerDescriptor(M.descriptorCliente(conNativo, 'inst-aaaa-0001'))!;
+  assert.deepEqual([dn.build, dn.buildConfig], ['54', '53'], 'si algún día hay expo-application, el del binario va aparte');
   assert.equal(M.datosDeExpo({ platform: { OS: 'web' } }), null, 'la web no usa este armador');
   assert.equal(M.descriptorCliente(datos, 'x'), '', 'sin id válido no se manda nada');
   const sucio = M.descriptorCliente({ ...datos, version: '5.3; i=otra', canal: 'prod;p=web' }, 'inst-aaaa-0001');
@@ -263,7 +323,10 @@ test('ruta: el teléfono y la web de José se anotan en SU cuenta; /api/build se
   assert.equal(j.recepcion.cuenta, true);
   assert.equal(j.recepcion.almacen, 'ok');
   assert.equal(j.recepcion.esperado.web, SHA_SERVIDO);
-  assert.equal(j.recepcion.esperado.ota, 'desconocido', 'la OTA publicada no la sabe el servidor: lo dice');
+  assert.equal(j.recepcion.esperado.ota, 'desconocido', 'sin la ficha de la OTA (apagada aquí): lo dice');
+  assert.equal(j.recepcion.otaFuente, 'no-disponible');
+  assert.match(j.recepcion.evidencia, /^declarada/);
+  assert.ok(j.clientes.every((c: any) => c.evidencia === 'declarada'));
   assert.equal(j.clientes.length, 2);
   const tel = j.clientes.find((c: any) => c.plataforma === 'android');
   const web = j.clientes.find((c: any) => c.plataforma === 'web');
