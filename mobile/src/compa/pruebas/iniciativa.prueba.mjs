@@ -164,6 +164,29 @@ prueba('cola (A2): la misma propuesta regenerada en el servidor (rev mayor) reem
   assert.equal(esAccionIniciativa(accion({ rev: 3 })), true);
 });
 
+prueba('cola (A2, fuera de orden): un GET o un empuje con una revisión vieja o una lectura más vieja no vuelve a poner el número de antes; uno más nuevo sí', () => {
+  const T = AHORA - 30_000;
+  const tres = 'Tienes 3 correos sin leer. ¿Te resumo lo importante?';
+  const uno = 'Tienes 1 correo sin leer. ¿Te resumo lo importante?';
+  const deGet = (o) => propuestaDeServidor({ propuesta: { ...accion(), tipo: 'ayuda', ...o }, motivo: 'pendiente' });
+  const c = new ColaPropuestas(() => AHORA);
+  assert.equal(c.ofrecer(deGet({ texto: tres, observada: T })), 'nueva');
+  assert.equal(c.ofrecer(propuestaDeAccion(accion({ texto: uno, rev: 2, observada: T + 2000 }))), 'actualizada', 'el despacho entregó el 1');
+  // Un GET que empezó antes y terminó después: revisión igual o menor, o una lectura más vieja aunque traiga otra revisión.
+  assert.equal(c.ofrecer(deGet({ texto: tres })), 'repetida', 'rev 1');
+  assert.equal(c.ofrecer(deGet({ texto: tres, rev: 2, observada: T + 1000 })), 'repetida', 'misma revisión, lectura más vieja');
+  assert.equal(c.ofrecer(deGet({ texto: tres, rev: 3, observada: T + 1000 })), 'repetida', 'otra réplica la regeneró con una lectura más vieja');
+  assert.equal(c.ahora().texto, uno);
+  // Uno más nuevo de verdad (3→1→3 en orden) sí la reemplaza; con la misma lectura, manda la revisión.
+  assert.equal(c.ofrecer(deGet({ texto: tres, rev: 2, observada: T + 3000 })), 'actualizada', 'lectura más nueva aunque la revisión sea igual');
+  assert.equal(c.ahora().texto, tres);
+  assert.equal(c.ofrecer(deGet({ texto: uno, rev: 3, observada: T + 3000 })), 'actualizada', 'misma lectura, revisión mayor');
+  assert.equal(c.ofrecer(deGet({ texto: tres, rev: 3, observada: T + 3000 })), 'repetida', 'misma lectura y revisión: nada');
+  assert.equal(esAccionIniciativa(accion({ observada: 0 })), false, 'una lectura inválida no pasa');
+  assert.equal(esAccionIniciativa(accion({ observada: 'ayer' })), false);
+  assert.equal(propuestaDeServidor({ propuesta: { ...accion(), tipo: 'ayuda', observada: -5 } }).observada, undefined);
+});
+
 prueba('cola: otra persona en el teléfono empieza de cero; la misma no', () => {
   const c = new ColaPropuestas(() => AHORA);
   c.paraPersona('Jose@Ejemplo.com');

@@ -53,6 +53,8 @@ const piezas = {
   GENESIS: 'lib/genesis',
   // El visor de la computadora (revisión 9): lo de A no queda abierto, escrito ni reanudable para B.
   VISOR: 'app/visor',
+  // Qué build corre el teléfono, en la cabecera x-aura-cliente de api() (evidencia de operación, 5-oct).
+  RECEPCION: 'lib/recepcion',
 };
 const lineas = Object.entries(piezas)
   .filter(([, r]) => fs.existsSync(path.join(SRC, r + '.ts')))

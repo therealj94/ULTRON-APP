@@ -333,6 +333,9 @@ export class VigilanteOido {
 export function motivoFalloVoz(detalle?: string, en = false): string {
   const d = String(detalle || '').toLowerCase();
   const t = (es: string, ing: string) => (en ? ing : es);
+  // El motor nuevo dijo, con su código, que esta llamada no se ató (va antes que los números: su 404/409/410
+  // honesto no es «el servidor no tiene la conversación en vivo»).
+  if (/v[ií]nculo del motor/.test(d)) return t('esa llamada se cerró antes de quedar atada a tu cuenta; empieza otra', 'that call closed before it was tied to your account; start a new one');
   if (/\b401\b|sesi[oó]n|entra de nuevo|sign in/.test(d)) return t('tu sesión venció; entra de nuevo', 'your session expired; sign in again');
   if (/\b404\b|not found|cannot post/.test(d)) return t('el servidor todavía no tiene la conversación en vivo (se estaba actualizando)', 'the server doesn’t have live conversation yet (it was updating)');
   if (/\b429\b|demasiad|too many|tope|cupo/.test(d)) return t('se acabaron los minutos de voz por ahora; prueba en un rato', 'voice minutes are used up for now; try again later');

@@ -2,7 +2,7 @@ import { Dialogo } from './Dialogo';
 import React, { useEffect, useState } from 'react';
 import { ShieldCheck, ShieldAlert, X, Lock, Mail, KeyRound, Globe, Loader2, LogOut } from 'lucide-react';
 import { playSfx } from '../03-voz/audio';
-import { enIconoInstalado, guardarTokenMesa, headersMesa } from '../10-infra/sesionCliente';
+import { enIconoInstalado, guardarTokenMesa, headersComprobarSesion, headersMesa } from '../10-infra/sesionCliente';
 import { iniciarEntradaGenesis } from '../10-infra/genesisWeb';
 import { CambiarClave, OlvideClave, PanelSolicitudes, PonerClave, SolicitarAcceso, solicitudesPendientes, type EnlaceUrl, type Tema } from '../cuentas/Cuentas';
 
@@ -172,7 +172,7 @@ export const AccesoModal: React.FC<Props> = ({ isOpen, enlace = null, usuario, s
               guardarTokenMesa(t);
               setEnlaceVivo(null);
               setVista('entrar');
-              const d = await fetch('/api/ultron/sesion', { headers: headersMesa() })
+              const d = await fetch('/api/ultron/sesion', { headers: headersComprobarSesion() })
                 .then((r) => r.json())
                 .catch(() => null);
               if (d?.authenticated) onAuthSuccess(d.user?.nombre || '', d.user?.rol || 'Junta Directiva · Orden Global', d.user?.correo);

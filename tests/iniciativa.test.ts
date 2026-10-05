@@ -912,6 +912,14 @@ test('A2 server.ts compone UN adaptador productivo y lo da a las rutas y al relo
 /** Lo que ve el adaptador: N sin leer (vigente) o nada (empty). La versión de la fuente es la del contador. */
 const obsCorreo = (n: number) => (n > 0 ? { observaciones: { correo: { estado: 'vigente' as const, valor: n, version: n } }, correoSinLeer: n } : { observaciones: { correo: { estado: 'empty' as const } }, correoSinLeer: 0 });
 const RE_TRES = /\btres\b|\b3\b/;
+/**
+ * Lo mismo con la hora de la lectura (la que da la fuente) y, si se da, el orden de la consulta. Lo puro solo
+ * regenera desde una lectura MÁS NUEVA que la guardada; una sin hora no lo es (por la ruta, el servidor la sella).
+ */
+const obsCorreoEn = (n: number, visto?: number, orden?: number) => {
+  const sello = { ...(visto !== undefined ? { visto } : {}), ...(orden !== undefined ? { orden } : {}) };
+  return { observaciones: { correo: n > 0 ? { estado: 'vigente' as const, valor: n, version: n, ...sello } : { estado: 'empty' as const, ...sello } } };
+};
 
 /** La ruta de verdad (componerIniciativa → GET /api/iniciativa) con un adaptador y un reloj que la prueba mueve. */
 async function rutaIniciativa(o: { contadores: () => unknown; reloj: () => number; modelo?: import('../lib/iniciativa').ModeloCorto | null; quien: string }) {
@@ -1102,9 +1110,11 @@ test('A2 caducidad: con el hecho cambiado y la evidencia vencida no se regenera 
   const p = s.propuesta!;
   const caduca = p.evidencia!.caduca;
   const f1 = obsCorreo(1);
-  const antes = ini.revalidarORegenerar(p, f1, caduca - 1);
+  // Lo puro regenera desde una lectura más nueva que la guardada (con su hora); por la ruta, el servidor la sella.
+  const antes = ini.revalidarORegenerar(p, obsCorreoEn(1, caduca - 1), caduca - 1);
   assert.ok(antes.vigente && antes.regenerada);
   if (antes.vigente) assert.equal(antes.propuesta.evidencia!.caduca, caduca, 'la misma caducidad');
+  assert.deepEqual(ini.revalidarORegenerar(p, obsCorreoEn(1, caduca), caduca), { vigente: false, motivo: 'caducada' });
   assert.deepEqual(ini.revalidarORegenerar(p, f1, caduca), { vigente: false, motivo: 'caducada' });
   assert.deepEqual(ini.revalidarORegenerar(p, obsCorreo(3), caduca), { vigente: false, motivo: 'caducada' });
   // Por el despacho: encolada, y la outbox corre después de caducar con el contador en 1.
@@ -1278,7 +1288,9 @@ test('A2 contrato del contador (puro): valor y versión; 3→1 y 1→3 cambian e
   assert.deepEqual(ini.revalidarPropuesta(p, obsCorreo(5), TARDE + H), { vigente: false, motivo: 'hecho_cambiado' });
   assert.deepEqual(ini.revalidarPropuesta(p, { observaciones: { correo: { estado: 'vigente', valor: 3, version: 9 } } }, TARDE + H), { vigente: false, motivo: 'hecho_cambiado' }, 'la fuente dice que es otra versión');
   assert.deepEqual(ini.revalidarPropuesta(p, { observaciones: { correo: { estado: 'vigente' } } }, TARDE + H), { vigente: false, motivo: 'fuente_no_disponible' }, 'vigente sin número: no se puede comprobar lo contado');
-  const r = ini.revalidarORegenerar(p, obsCorreo(1), TARDE + H);
+  // Regenerar pide una lectura más nueva que la guardada: con su hora (sin hora no lo es; por la ruta se sella).
+  assert.deepEqual(ini.revalidarORegenerar(p, obsCorreo(1), TARDE + H), { vigente: false, motivo: 'hecho_cambiado' }, 'sin hora de lectura no regenera');
+  const r = ini.revalidarORegenerar(p, obsCorreoEn(1, TARDE + H), TARDE + H);
   assert.ok(r.vigente && r.regenerada);
   if (r.vigente) {
     assert.equal(r.propuesta.id, p.id);
@@ -1290,14 +1302,370 @@ test('A2 contrato del contador (puro): valor y versión; 3→1 y 1→3 cambian e
     assert.equal(r.propuesta.entregada, p.entregada);
     assert.deepEqual(ini.revalidarORegenerar(r.propuesta, obsCorreo(1), TARDE + 2 * H), { vigente: true, propuesta: r.propuesta, regenerada: false }, 'regenerada y estable: la misma');
   }
-  const v9 = ini.revalidarORegenerar(p, { observaciones: { correo: { estado: 'vigente', valor: 3, version: 9 } } }, TARDE + H);
+  const v9 = ini.revalidarORegenerar(p, { observaciones: { correo: { estado: 'vigente', valor: 3, version: 9, visto: TARDE + H } } }, TARDE + H);
   assert.ok(v9.vigente && v9.regenerada && v9.propuesta.evidencia!.fuente.version === 9 && v9.propuesta.texto === p.texto);
   // WhatsApp, igual.
   const w = ini.propuestasDeRespaldo({ correo: 'x@ejemplo.com' }, { ahora: TARDE, whatsappSinLeer: 2, modelo: null }).find((x) => x.evidencia?.fuente.tipo === 'whatsapp')!;
-  const w1 = ini.revalidarORegenerar(w, { whatsappSinLeer: 1 }, TARDE + H);
+  assert.equal(ini.revalidarORegenerar(w, { whatsappSinLeer: 1 }, TARDE + H).vigente, false, 'la forma vieja no trae hora: no regenera');
+  const w1 = ini.revalidarORegenerar(w, { observaciones: { whatsapp: { estado: 'vigente', valor: 1, visto: TARDE + H } } }, TARDE + H);
   assert.ok(w1.vigente && w1.regenerada && w1.propuesta.texto === 'Tienes 1 chat de WhatsApp sin leer. ¿Te cuento quién escribió?');
   // 3→0, desconectada, sin observar: nada que regenerar.
   assert.deepEqual(ini.revalidarORegenerar(p, obsCorreo(0), TARDE + H), { vigente: false, motivo: 'resuelta' });
   assert.deepEqual(ini.revalidarORegenerar(p, { desconectadas: ['correo'], correoSinLeer: null }, TARDE + H), { vigente: false, motivo: 'fuente_desconectada' });
   assert.deepEqual(ini.revalidarORegenerar(p, {}, TARDE + H), { vigente: false, motivo: 'sin_observacion' });
+});
+
+/* ------------------------------------------------------------------ A2 (5-oct, revisión): el contador no vuelve atrás cuando dos consultas terminan fuera de orden */
+
+/** Espera (sin dormir a ciegas) a que se cumpla algo que pasa en otra petición. */
+async function esperarQue(cond: () => boolean, que = 'la condición') {
+  for (let i = 0; i < 2000 && !cond(); i++) await new Promise((r) => setTimeout(r, 2));
+  assert.ok(cond(), `esperando ${que}`);
+}
+
+/** Consultas a las fuentes que la prueba suelta cuando quiere: así dos terminan fuera de orden. */
+function consultasControladas(primera: unknown) {
+  let fijo: unknown = primera;
+  const abiertas: { soltar: (v: unknown) => void }[] = [];
+  return {
+    contadores: () => (fijo !== undefined ? fijo : new Promise((soltar) => abiertas.push({ soltar }))),
+    abiertas,
+    /** Desde aquí cada consulta queda abierta hasta que la prueba la suelte. */
+    controlar: () => {
+      fijo = undefined;
+    },
+  };
+}
+
+test('A2 fuera de orden GET+GET (adaptador real): la consulta más nueva (1) termina primero y la más vieja (3) después; lo devuelto y lo guardado siguen en 1', async () => {
+  const { crearContadores } = await import('../server/fuentes-iniciativa');
+  const a = correo();
+  let ahora = TARDE;
+  const lecturas: { soltar: (n: number) => void }[] = [];
+  let inmediato: number | null = 3;
+  const contar = crearContadores({
+    correo: { cuentas: async () => ({ ok: true as const, cuentas: [{ id: 'c1', correo: a }] }), noLeidos: () => (inmediato !== null ? Promise.resolve(inmediato) : new Promise<number>((soltar) => lecturas.push({ soltar }))) },
+    reloj: () => ahora,
+  });
+  const r = await rutaIniciativa({ contadores: () => contar(a), reloj: () => ahora, quien: a, modelo: null });
+  try {
+    const g0 = await r.get();
+    assert.match(g0.propuesta?.texto || '', /\b3 correos sin leer\b/);
+    inmediato = null;
+    ahora += 60_000;
+    const vieja = r.get();
+    await esperarQue(() => lecturas.length === 1, 'la consulta vieja');
+    ahora += 60_000;
+    const nueva = r.get();
+    await esperarQue(() => lecturas.length === 2, 'la consulta nueva');
+    lecturas[1].soltar(1);
+    const gN = await nueva;
+    assert.match(gN.propuesta?.texto || '', /\b1 correo sin leer\b/);
+    assert.equal(gN.propuesta.rev, 2);
+    assert.equal(gN.motivo, 'actualizada');
+    lecturas[0].soltar(3);
+    const gV = await vieja;
+    assert.equal(gV.propuesta?.id, g0.propuesta.id, 'la misma propuesta');
+    assert.doesNotMatch(gV.propuesta.texto, RE_TRES, `la consulta vieja no devuelve el 3: ${gV.propuesta.texto}`);
+    assert.match(gV.propuesta.texto, /\b1 correo sin leer\b/, 'devuelve la versión guardada más nueva');
+    assert.equal(gV.propuesta.rev, 2, 'ni sube la revisión');
+    assert.equal(gV.motivo, 'pendiente');
+    // La app recibe cuándo se leyó el número (la tarjeta no deja que una lectura más vieja la pise).
+    assert.equal(gN.propuesta.observada, TARDE + 2 * 60_000);
+    assert.equal(gV.propuesta.observada, TARDE + 2 * 60_000);
+    const est = await estadoDe(a);
+    assert.equal(SI.accionIniciativa(est.pendiente!).observada, TARDE + 2 * 60_000, 'también por el canal de acciones');
+    assert.equal(est.pendiente?.evidencia?.fuente.valor, 1, 'lo guardado sigue anclado al 1');
+    assert.equal(est.pendiente?.rev, 2);
+    assert.equal(est.pendiente?.evidencia?.fuente.visto, TARDE + 2 * 60_000, 'anclado a la lectura más nueva');
+    assert.equal(est.hoy, 1, 'ninguna alerta de más');
+  } finally {
+    r.cerrar();
+  }
+});
+
+/** El reloj pensó con 3 y encoló el aviso; desde ahí cada consulta queda abierta hasta que la prueba la suelte. */
+async function pendienteEncolada(a: string, reloj: () => number, consultas: ReturnType<typeof consultasControladas>) {
+  const s = await SI.proponerPara({ correo: a }, { contadores: consultas.contadores as any, modelo: null, reloj });
+  assert.ok(s.nueva && s.propuesta);
+  assert.match(s.propuesta!.texto, /\b3 correos sin leer\b/);
+  await av.encolarAviso(a, s.propuesta!, reloj());
+  consultas.controlar();
+  return s.propuesta!;
+}
+
+test('A2 fuera de orden GET+despacho: el despacho (más nuevo, 1) entrega el 1 y el GET (más viejo, 3) que termina después devuelve el 1; al revés, el despacho viejo no pisa lo guardado', async () => {
+  // GET viejo, despacho nuevo.
+  {
+    const a = correo();
+    let ahora = TARDE;
+    const q = consultasControladas(obsCorreoEn(3));
+    const r = await rutaIniciativa({ contadores: q.contadores, reloj: () => ahora, quien: a, modelo: null });
+    try {
+      const p = await pendienteEncolada(a, () => ahora, q);
+      ahora += 60_000;
+      const get = r.get();
+      await esperarQue(() => q.abiertas.length === 1, 'la consulta del GET');
+      ahora += 60_000;
+      const entregas: import('../lib/iniciativa').Propuesta[] = [];
+      const t = ahora;
+      const despacho = av.procesarOutbox(a, { revalidar: (x) => SI.revalidarAhora(a, x, { contadores: q.contadores as any }, t), entregadores: { app: (_c, x) => (entregas.push(x.propuesta), 1), push: (_c, x) => (entregas.push(x.propuesta), 1) }, sello: av.selloLocal({ dir: null }), ahora: t });
+      await esperarQue(() => q.abiertas.length === 2, 'la consulta del despacho');
+      q.abiertas[1].soltar(obsCorreoEn(1));
+      await despacho;
+      assert.equal(entregas.length, 1, 'una sola entrega');
+      assert.match(entregas[0].texto, /\b1 correo sin leer\b/);
+      q.abiertas[0].soltar(obsCorreoEn(3));
+      const g = await get;
+      assert.equal(g.propuesta?.id, p.id);
+      assert.doesNotMatch(g.propuesta.texto, RE_TRES, `el GET viejo no devuelve el 3: ${g.propuesta.texto}`);
+      assert.match(g.propuesta.texto, /\b1 correo sin leer\b/);
+      assert.equal(g.propuesta.rev, 2);
+      const est = await estadoDe(a);
+      assert.equal(est.pendiente?.evidencia?.fuente.valor, 1);
+      assert.equal(est.pendiente?.texto, entregas[0].texto, 'lo guardado es lo entregado');
+    } finally {
+      r.cerrar();
+    }
+  }
+  // Despacho viejo, GET nuevo.
+  {
+    const a = correo();
+    let ahora = TARDE;
+    const q = consultasControladas(obsCorreoEn(3));
+    const r = await rutaIniciativa({ contadores: q.contadores, reloj: () => ahora, quien: a, modelo: null });
+    try {
+      const p = await pendienteEncolada(a, () => ahora, q);
+      ahora += 60_000;
+      const entregas: import('../lib/iniciativa').Propuesta[] = [];
+      const t = ahora;
+      const despacho = av.procesarOutbox(a, { revalidar: (x) => SI.revalidarAhora(a, x, { contadores: q.contadores as any }, t), entregadores: { app: (_c, x) => (entregas.push(x.propuesta), 1), push: (_c, x) => (entregas.push(x.propuesta), 1) }, sello: av.selloLocal({ dir: null }), ahora: t });
+      await esperarQue(() => q.abiertas.length === 1, 'la consulta del despacho');
+      ahora += 60_000;
+      const get = r.get();
+      await esperarQue(() => q.abiertas.length === 2, 'la consulta del GET');
+      q.abiertas[1].soltar(obsCorreoEn(1));
+      const g = await get;
+      assert.match(g.propuesta?.texto || '', /\b1 correo sin leer\b/);
+      q.abiertas[0].soltar(obsCorreoEn(3));
+      const res = await despacho;
+      assert.equal(entregas.length, 0, 'ya la vio en la app: el push no repite el aviso');
+      assert.equal(res[0]?.motivo, 'duplicado');
+      const est = await estadoDe(a);
+      assert.equal(est.pendiente?.id, p.id);
+      assert.doesNotMatch(est.pendiente?.texto || '', RE_TRES, `el despacho viejo no vuelve a guardar el 3: ${est.pendiente?.texto}`);
+      assert.equal(est.pendiente?.evidencia?.fuente.valor, 1);
+      assert.equal(est.pendiente?.rev, 2);
+    } finally {
+      r.cerrar();
+    }
+  }
+});
+
+test('A2 fuera de orden despacho+despacho (dos réplicas sobre el mismo estado y el mismo sello): entrega UNA vez el 1 y el despacho viejo no deja el 3 guardado', async () => {
+  const a = correo();
+  let ahora = TARDE;
+  const q = consultasControladas(obsCorreoEn(3));
+  const p = await pendienteEncolada(a, () => ahora, q);
+  const sello = av.selloLocal({ dir: path.join(dir, 'sellos-fuera-de-orden') });
+  const entregas: import('../lib/iniciativa').Propuesta[] = [];
+  const despachar = (t: number) => av.procesarOutbox(a, { revalidar: (x) => SI.revalidarAhora(a, x, { contadores: q.contadores as any }, t), entregadores: { app: (_c, x) => (entregas.push(x.propuesta), 1), push: (_c, x) => (entregas.push(x.propuesta), 1) }, sello, ahora: t });
+  ahora += 60_000;
+  const viejo = despachar(ahora);
+  await esperarQue(() => q.abiertas.length === 1, 'la consulta de la réplica vieja');
+  ahora += 60_000;
+  const nuevo = despachar(ahora);
+  await esperarQue(() => q.abiertas.length === 2, 'la consulta de la réplica nueva');
+  q.abiertas[1].soltar(obsCorreoEn(1));
+  await nuevo;
+  q.abiertas[0].soltar(obsCorreoEn(3));
+  await viejo;
+  assert.equal(entregas.length, 1, JSON.stringify(entregas.map((x) => x.texto)));
+  assert.match(entregas[0].texto, /\b1 correo sin leer\b/);
+  const est = await estadoDe(a);
+  assert.equal(est.pendiente?.id, p.id);
+  assert.doesNotMatch(est.pendiente?.texto || '', RE_TRES, `lo guardado no vuelve al 3: ${est.pendiente?.texto}`);
+  assert.equal(est.pendiente?.evidencia?.fuente.valor, 1);
+  assert.equal(est.pendiente?.rev, 2);
+  assert.equal(est.hoy, 1);
+});
+
+test('A2 orden de las lecturas (puro): 3→1→3 en orden sube cada vez; una lectura más vieja no cambia ni retira lo guardado; empate de hora lo decide el orden y, sin él, se queda lo guardado; una lectura sin hora no regenera', () => {
+  const T = TARDE;
+  const p = ini.propuestasDeRespaldo({ correo: 'x@ejemplo.com' }, { ahora: T, ...obsCorreoEn(3, T, 10), modelo: null }).find((x) => x.evidencia?.fuente.tipo === 'correo')!;
+  assert.deepEqual({ valor: p.evidencia!.fuente.valor, visto: p.evidencia!.fuente.visto, orden: (p.evidencia!.fuente as any).orden }, { valor: 3, visto: T, orden: 10 }, 'el ancla guarda la hora y el orden de la lectura');
+  // 3→1→3 en orden: cada lectura más nueva regenera (rev 2, rev 3).
+  const r1 = ini.revalidarORegenerar(p, obsCorreoEn(1, T + 1000, 11), T + H);
+  assert.ok(r1.vigente && r1.regenerada && r1.propuesta.rev === 2 && /\b1 correo sin leer\b/.test(r1.propuesta.texto));
+  const p1 = (r1 as { propuesta: import('../lib/iniciativa').Propuesta }).propuesta;
+  const r2 = ini.revalidarORegenerar(p1, obsCorreoEn(3, T + 2000, 12), T + H);
+  assert.ok(r2.vigente && r2.regenerada && r2.propuesta.rev === 3 && /\b3 correos sin leer\b/.test(r2.propuesta.texto), 'una subida legítima en orden sí actualiza');
+  // Una lectura más vieja que la que ancló lo guardado: lo guardado se queda tal cual (ni se regenera ni se retira).
+  for (const vieja of [obsCorreoEn(3, T + 500, 99), obsCorreoEn(0, T + 500, 99), obsCorreoEn(7, T)]) {
+    assert.deepEqual(ini.revalidarORegenerar(p1, vieja, T + H), { vigente: true, propuesta: p1, regenerada: false }, JSON.stringify(vieja));
+  }
+  // Empate de hora: decide el orden de la consulta; sin orden (o el mismo), se queda lo guardado.
+  assert.deepEqual(ini.revalidarORegenerar(p1, obsCorreoEn(3, T + 1000, 10), T + H), { vigente: true, propuesta: p1, regenerada: false }, 'misma hora, orden menor');
+  assert.deepEqual(ini.revalidarORegenerar(p1, obsCorreoEn(3, T + 1000, 11), T + H), { vigente: true, propuesta: p1, regenerada: false }, 'misma hora, mismo orden');
+  assert.deepEqual(ini.revalidarORegenerar(p1, obsCorreoEn(3, T + 1000), T + H), { vigente: true, propuesta: p1, regenerada: false }, 'misma hora, sin orden');
+  const e12 = ini.revalidarORegenerar(p1, obsCorreoEn(3, T + 1000, 12), T + H);
+  assert.ok(e12.vigente && e12.regenerada && e12.propuesta.rev === 3, 'misma hora, orden mayor: es más nueva');
+  assert.deepEqual(ini.revalidarORegenerar(p1, obsCorreoEn(0, T + 1000, 12), T + H), { vigente: false, motivo: 'resuelta' }, 'misma hora, orden mayor, vacía: resuelta');
+  // Sin hora de lectura: no es más nueva que lo guardado. Nunca regenera; si no concuerda, tampoco se da por buena.
+  assert.deepEqual(ini.revalidarORegenerar(p1, obsCorreoEn(3), T + H), { vigente: false, motivo: 'hecho_cambiado' });
+  assert.deepEqual(ini.revalidarORegenerar(p1, { correoSinLeer: 3 }, T + H), { vigente: false, motivo: 'hecho_cambiado' }, 'la forma vieja tampoco trae hora');
+  assert.deepEqual(ini.revalidarORegenerar(p1, obsCorreoEn(1), T + H), { vigente: true, propuesta: p1, regenerada: false }, 'sin hora pero concuerda: vale');
+  assert.deepEqual(ini.revalidarORegenerar(p1, obsCorreoEn(0), T + H), { vigente: false, motivo: 'resuelta' }, 'sin hora y vacía: no se muestra (falla cerrado)');
+  // Caducada: ni una lectura vieja la sostiene.
+  assert.deepEqual(ini.revalidarORegenerar(p1, obsCorreoEn(3, T + 500, 99), p1.evidencia!.caduca), { vigente: false, motivo: 'caducada' });
+});
+
+test('A2 fuera de orden con un adaptador que no da hora, por la ruta: el servidor sella la consulta al empezar (hora y orden) y la más vieja tampoco pisa a la más nueva, aun en el mismo milisegundo', async () => {
+  const a = correo();
+  const ahora = TARDE;
+  const q = consultasControladas({ correoSinLeer: 3 });
+  const r = await rutaIniciativa({ contadores: q.contadores, reloj: () => ahora, quien: a, modelo: null });
+  try {
+    const g0 = await r.get();
+    assert.match(g0.propuesta?.texto || '', /\b3 correos sin leer\b/);
+    q.controlar();
+    // Las dos consultas empiezan en el MISMO milisegundo: el orden de la consulta desempata.
+    const vieja = r.get();
+    await esperarQue(() => q.abiertas.length === 1, 'la consulta vieja');
+    const nueva = r.get();
+    await esperarQue(() => q.abiertas.length === 2, 'la consulta nueva');
+    q.abiertas[1].soltar({ correoSinLeer: 1 });
+    assert.match((await nueva).propuesta?.texto || '', /\b1 correo sin leer\b/);
+    q.abiertas[0].soltar({ correoSinLeer: 3 });
+    const gV = await vieja;
+    assert.match(gV.propuesta?.texto || '', /\b1 correo sin leer\b/, `la vieja devuelve lo guardado: ${gV.propuesta?.texto}`);
+    const est = await estadoDe(a);
+    assert.equal(est.pendiente?.evidencia?.fuente.valor, 1);
+    assert.equal(est.pendiente?.evidencia?.fuente.visto, TARDE, 'la hora del inicio de la consulta');
+    assert.ok(Number((est.pendiente?.evidencia?.fuente as any).orden) > 0, 'y su orden');
+  } finally {
+    r.cerrar();
+  }
+});
+
+/* ------------------------------------------------------------------ revisión externa (5-oct): H1 y H2 */
+
+test('H1: una lectura NEGATIVA más nueva (vacía, desconectada, sin configurar, caída) queda anotada en el estado; la vieja de «2» que termina después no regenera ni entrega «Tienes 2 correos»', async () => {
+  const T = TARDE;
+  for (const [estado, motivo] of [
+    ['empty', 'resuelta'],
+    ['disconnected', 'fuente_desconectada'],
+    ['not_configured', 'fuente_no_configurada'],
+    ['unavailable', 'fuente_no_disponible'],
+  ] as const) {
+    const c = correo();
+    const s = await ini.siguientePropuesta({ correo: c }, { ahora: T, ...obsCorreoEn(3, T, 10), modelo: null });
+    const p = s.propuesta!;
+    assert.match(p.texto, /\b3 correos sin leer\b/);
+    // La de las t+5 (negativa) termina primero: no deja nada guardado en la propuesta, pero queda anotada.
+    const r5 = await ini.revalidarPendiente(c, p.id, { observaciones: { correo: { estado, visto: T + 5000, orden: 12 } } }, T + 6000);
+    assert.deepEqual(r5, { vigente: false, motivo }, estado);
+    // Durable: otra réplica (o un reinicio) la sigue viendo.
+    ini._olvidarCacheIniciativa();
+    // La de las t+3 («2») termina después: es más vieja que la anotada y no decide nada.
+    const r3 = await ini.revalidarPendiente(c, p.id, obsCorreoEn(2, T + 3000, 11), T + 7000);
+    assert.deepEqual(r3, { vigente: false, motivo }, `${estado}: la vieja no regenera`);
+    const est = await estadoDe(c);
+    assert.equal(est.pendiente?.evidencia?.fuente.valor, 3, `${estado}: lo guardado no se tocó`);
+    assert.deepEqual(est.lecturas?.correo, { estado, visto: T + 5000, orden: 12 }, `${estado}: la anotada sigue siendo la más nueva`);
+    // Por el GET (la vieja llega por ahí): tampoco sale «Tienes 2», ni regenerada ni pensada de nuevo.
+    const g = await ini.siguientePropuesta({ correo: c }, { ahora: T + 8000, ...obsCorreoEn(2, T + 3000, 11), modelo: null });
+    assert.doesNotMatch(g.propuesta?.texto || '', /\b2 correos? sin leer\b/, `${estado}: ${g.propuesta?.texto}`);
+  }
+  // Una lectura MÁS NUEVA que la anotada sí vuelve a decidir (la subida legítima no se pierde).
+  const c = correo();
+  const p = (await ini.siguientePropuesta({ correo: c }, { ahora: T, ...obsCorreoEn(3, T, 10), modelo: null })).propuesta!;
+  assert.equal((await ini.revalidarPendiente(c, p.id, obsCorreoEn(0, T + 5000, 12), T + 6000)).vigente, false);
+  const r = await ini.revalidarPendiente(c, p.id, obsCorreoEn(2, T + 9000, 13), T + 9500);
+  assert.ok(r.vigente && /\b2 correos sin leer\b/.test(r.propuesta?.texto || ''), JSON.stringify(r));
+  assert.deepEqual((await estadoDe(c)).lecturas?.correo, { estado: 'vigente', valor: 2, version: 2, visto: T + 9000, orden: 13 });
+});
+
+test('H2: un ancla del futuro (reloj adelantado) no vuelve «vieja» a toda lectura real; desconectada, sin configurar o caída nunca sostienen lo guardado; la hora de una lectura se acota a ahora + 2 min (con aviso)', async () => {
+  const T = TARDE;
+  const deCorreo = (obs: object) => ini.propuestasDeRespaldo({ correo: 'x@ejemplo.com' }, { ahora: T, ...obs, modelo: null }).find((x) => x.evidencia?.fuente.tipo === 'correo')!;
+  const negativas = [
+    ['disconnected', 'fuente_desconectada'],
+    ['not_configured', 'fuente_no_configurada'],
+    ['unavailable', 'fuente_no_disponible'],
+  ] as const;
+  // Guardada antes de acotar las horas, con un ancla una hora en el futuro.
+  const p = deCorreo(obsCorreoEn(3, T + H, 10));
+  assert.equal(p.evidencia!.fuente.visto, T + H);
+  const t = T + 60_000;
+  for (const [estado, motivo] of negativas) {
+    assert.deepEqual(ini.revalidarORegenerar(p, { observaciones: { correo: { estado, visto: t, orden: 11 } } }, t), { vigente: false, motivo }, `ancla del futuro, ${estado}`);
+  }
+  // Una lectura real (vacía o con otro número) ya no es «vieja» frente a esa ancla.
+  assert.deepEqual(ini.revalidarORegenerar(p, obsCorreoEn(0, t, 11), t), { vigente: false, motivo: 'resuelta' });
+  const r1 = ini.revalidarORegenerar(p, obsCorreoEn(1, t, 11), t);
+  assert.ok(r1.vigente && r1.regenerada && /\b1 correo sin leer\b/.test(r1.propuesta.texto));
+  if (r1.vigente) assert.equal(r1.propuesta.evidencia!.fuente.visto, t);
+  // Con un ancla normal: una lectura vieja desconectada, sin configurar o caída tampoco sostiene lo guardado…
+  const q = deCorreo(obsCorreoEn(3, T, 10));
+  for (const [estado, motivo] of negativas) {
+    assert.deepEqual(ini.revalidarORegenerar(q, { observaciones: { correo: { estado, visto: T - 1000, orden: 9 } } }, T + 1000), { vigente: false, motivo }, `lectura vieja, ${estado}`);
+  }
+  // …y una vieja que sí leyó la fuente (vacía o con número) sigue sin pisarla (regla de siempre).
+  assert.deepEqual(ini.revalidarORegenerar(q, obsCorreoEn(0, T - 1000, 9), T + 1000), { vigente: true, propuesta: q, regenerada: false });
+  assert.deepEqual(ini.revalidarORegenerar(q, obsCorreoEn(7, T - 1000, 9), T + 1000), { vigente: true, propuesta: q, regenerada: false });
+  // Al recibirla, una hora más allá de ahora + 2 min se acota a ahora y se avisa en el registro.
+  const c = correo();
+  const avisos: string[] = [];
+  const orig = console.warn;
+  console.warn = (...a: unknown[]) => void avisos.push(a.map(String).join(' '));
+  let s: Awaited<ReturnType<typeof ini.siguientePropuesta>>;
+  try {
+    s = await ini.siguientePropuesta({ correo: c }, { ahora: T, ...obsCorreoEn(3, T + H, 10), modelo: null });
+  } finally {
+    console.warn = orig;
+  }
+  assert.equal(s.propuesta!.evidencia!.fuente.visto, T, 'el ancla queda en ahora, no en el futuro');
+  assert.ok(avisos.some((x) => /en el futuro/.test(x)), JSON.stringify(avisos));
+  assert.equal((await estadoDe(c)).lecturas?.correo?.visto, T, 'también la lectura anotada');
+  // La lectura real siguiente sí la actualiza (antes quedaba «vieja» frente al ancla del futuro y se entregaba el 3).
+  const r = await ini.revalidarPendiente(c, s.propuesta!.id, obsCorreoEn(1, T + 60_000, 11), T + 60_000);
+  assert.ok(r.vigente && /\b1 correo sin leer\b/.test(r.propuesta?.texto || ''), JSON.stringify(r));
+  // Dentro del margen se respeta tal cual.
+  const d = correo();
+  const sd = await ini.siguientePropuesta({ correo: d }, { ahora: T, ...obsCorreoEn(3, T + 90_000, 10), modelo: null });
+  assert.equal(sd.propuesta!.evidencia!.fuente.visto, T + 90_000);
+  assert.equal(ini.MARGEN_FUTURO_MS, 2 * 60_000);
+});
+
+/* ------------------------------------------------------------------ revisión 16: R16-1 */
+
+test('R16-1: la lectura ANOTADA por una réplica con el reloj +10 min no manda sobre la vacía o la desconectada real: vale como sin hora y la sustituye la de ahora', async () => {
+  const T = TARDE;
+  const ADELANTO = 10 * 60_000;
+  for (const [estado, motivo] of [
+    ['empty', 'resuelta'],
+    ['disconnected', 'fuente_desconectada'],
+  ] as const) {
+    // La réplica adelantada propone «3 correos» y anota su lectura con SU hora (para ella, dentro del margen).
+    const c = correo();
+    const s = await ini.siguientePropuesta({ correo: c }, { ahora: T + ADELANTO, ...obsCorreoEn(3, T + ADELANTO, 10), modelo: null });
+    const p = s.propuesta!;
+    assert.match(p.texto, /\b3 correos sin leer\b/);
+    assert.equal((await estadoDe(c)).lecturas?.correo?.visto, T + ADELANTO);
+    ini._olvidarCacheIniciativa();
+    // Otra réplica, con la hora real, lee la fuente vacía o desconectada: ya no se entrega «Tienes 3 correos».
+    const r = await ini.revalidarPendiente(c, p.id, { observaciones: { correo: { estado, visto: T + 1000, orden: 11 } } }, T + 1000);
+    assert.deepEqual(r, { vigente: false, motivo }, estado);
+    assert.deepEqual((await estadoDe(c)).lecturas?.correo, { estado, visto: T + 1000, orden: 11 }, `${estado}: la anotada del futuro se sustituye`);
+    // Por el GET tampoco.
+    const g = await ini.siguientePropuesta({ correo: c }, { ahora: T + 2000, observaciones: { correo: { estado, visto: T + 2000, orden: 12 } }, modelo: null });
+    assert.doesNotMatch(g.propuesta?.texto || '', /\b3 correos sin leer\b/, `${estado}: ${g.propuesta?.texto}`);
+  }
+  // Dentro del margen la anotada se sigue respetando: una más vieja que llega tarde no decide (H1 de siempre).
+  const c = correo();
+  const p = (await ini.siguientePropuesta({ correo: c }, { ahora: T + 60_000, ...obsCorreoEn(3, T + 60_000, 10), modelo: null })).propuesta!;
+  const r = await ini.revalidarPendiente(c, p.id, obsCorreoEn(0, T + 1000, 11), T + 1000);
+  assert.ok(r.vigente && /\b3 correos sin leer\b/.test(r.propuesta?.texto || ''), JSON.stringify(r));
+  assert.equal((await estadoDe(c)).lecturas?.correo?.visto, T + 60_000);
 });

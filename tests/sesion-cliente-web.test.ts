@@ -110,3 +110,19 @@ test('icono instalado: se sabe (para pedir entrar ahí dentro, con su explicaci�
   (globalThis.navigator as any).standalone = true;
   assert.equal(S.enIconoInstalado(), true);
 });
+
+test('recepción (5-oct): solo la comprobación de sesión lleva qué build corre; el id se renueva al cambiar la sesión', () => {
+  const n = navegador({ ios: false, https: true });
+  assert.deepEqual(S.headersComprobarSesion(), {}, 'sin sesión, nada');
+  S.guardarTokenMesa(TOKEN);
+  const h = S.headersComprobarSesion();
+  assert.equal(h['x-ultron-sesion'], TOKEN);
+  assert.match(h['x-aura-cliente'], /^v1;p=web;i=[A-Za-z0-9-]{8,64}$/, 'sin meta del build (desarrollo), sin `w`');
+  assert.deepEqual(S.headersMesa(), { 'x-ultron-sesion': TOKEN }, 'las demás peticiones, como siempre');
+  const id = h['x-aura-cliente'].split('i=')[1];
+  assert.equal(S.headersComprobarSesion()['x-aura-cliente'].split('i=')[1], id, 'estable con la misma sesión');
+  S.guardarTokenMesa('');
+  assert.equal(n.local.m.get('aura_recepcion_instalacion'), undefined, 'al salir se olvida');
+  S.guardarTokenMesa(TOKEN);
+  assert.notEqual(S.headersComprobarSesion()['x-aura-cliente'].split('i=')[1], id, 'la sesión nueva estrena id');
+});

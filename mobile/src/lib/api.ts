@@ -4,7 +4,8 @@
  *   POST /api/memoria (requiere sesión) · GET|POST /api/cantar · POST /api/orar · GET /api/capacidades · GET /api/health
  * Toda llamada pasa por api(): manda la cabecera de sesión y, si el servidor responde 401, renueva el
  * token con las credenciales guardadas y reintenta una vez. También dice qué teléfono es
- * (`x-aura-aparato`, ver aparato.ts); los turnos, además, que salen de la app (`x-aura-origen: app`).
+ * (`x-aura-aparato`, ver aparato.ts); los turnos, además, que salen de la app (`x-aura-origen: app`). Y qué build
+ * corre (`x-aura-cliente`, ver recepcion.ts): con eso el servidor confirma que la OTA o la APK llegó.
  * Cada petición es de la sesión que la armó (su generación, lib/cuenta.ts): si la persona cambia
  * mientras viaja, ni se reintenta ni se renueva el token por ella (auditoría del 3-oct, AUTH01).
  */
@@ -14,6 +15,7 @@ import { normalizarEmocion, pelarEtiqueta, type Emocion } from './emocion';
 import { loadCreds, loadMesaToken, loadSession, saveMesaToken } from './storage';
 import { quitarExpresiones } from './expresiones';
 import { cabecerasAparato } from './aparato';
+import { cabeceraCliente } from './recepcion';
 import { generacionCuenta, sigueVigente } from './cuenta';
 import { esVencida, guardarTokenDeEntrada, intentoVigente, vencida, type Intento } from './intentoEntrada';
 import { avatarActual } from '../avatares/actual';
@@ -118,6 +120,7 @@ async function pedirApi<T>(path: string, init: RequestInit | undefined, limite: 
   try {
     const token = await loadMesaToken();
     const aparato = await cabecerasAparato().catch(() => ({}));
+    const cliente = await cabeceraCliente();
     // Justo antes de transmitir: ¿sigue dentro la sesión que armó este cuerpo?
     if (!sigueVigente(gen)) throw vencida();
     const res = await fetch(`${API_BASE}${path}`, {
@@ -127,6 +130,7 @@ async function pedirApi<T>(path: string, init: RequestInit | undefined, limite: 
         'Content-Type': 'application/json',
         Accept: 'application/json',
         ...aparato,
+        ...cliente,
         ...(token ? { 'x-ultron-sesion': token } : {}),
         ...(init?.headers || {}),
       },

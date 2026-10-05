@@ -15,6 +15,7 @@
  * del service worker que pudieran ser suyas, la memoria local por cuenta, la conversación de la pestaña.
  */
 import { purgarCuentaPwa } from './purgaPwa';
+import { cabeceraCliente, renovarInstalacionWeb } from './recepcion';
 const KEY = 'ultron_sesion_token';
 /** La cookie espejo de iOS. */
 export const COOKIE_ESPEJO = 'aura_sesion_ios';
@@ -100,6 +101,8 @@ function leerEspejo(): string {
 
 export function guardarTokenMesa(token: string) {
   escribirEspejo(token);
+  // La sesión cambió (entrar, salir, otra cuenta): el id de instalación que ve el servidor se renueva (10-infra/recepcion.ts).
+  renovarInstalacionWeb();
   if (!token) void purgarCuentaPwa().catch(() => undefined);
   const s = store();
   if (!s) return;
@@ -134,4 +137,13 @@ export function tokenMesa(): string {
 export function headersMesa(): Record<string, string> {
   const t = tokenMesa();
   return t ? { 'x-ultron-sesion': t } : {};
+}
+
+/**
+ * Las cabeceras de la comprobación de sesión al abrir (GET /api/ultron/sesion): la sesión y, con ella, qué build web
+ * corre esta pestaña (`x-aura-cliente`, 10-infra/recepcion.ts). Solo esa petición la lleva.
+ */
+export function headersComprobarSesion(): Record<string, string> {
+  const t = tokenMesa();
+  return t ? { 'x-ultron-sesion': t, ...cabeceraCliente(t) } : {};
 }

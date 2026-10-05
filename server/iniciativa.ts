@@ -35,6 +35,7 @@ import {
   observacionDe,
   responderPropuesta,
   revalidarPendiente,
+  siguienteOrdenObservacion,
   siguientePropuesta,
   type ContextoIniciativa,
   type FuenteContada,
@@ -204,10 +205,28 @@ export function observacionesDe(c: Contadores | null, ahora: number): Observacio
   return out;
 }
 
+/**
+ * Cada lectura queda SELLADA con cuándo empezó la consulta y su orden (A2, revisión del 5-oct): la hora que dio la
+ * fuente si la dio (server/fuentes-iniciativa.ts la toma al empezar) o, si no, la de este inicio; y el orden de esta
+ * consulta. Así, si dos consultas terminan fuera de orden, la más vieja no pisa lo que ya guardó la más nueva
+ * (lib/iniciativa.ts revalidarORegenerar). No cambia ningún estado ni número.
+ */
+export function sellarObservaciones(obs: Observaciones, inicio: number, orden: number): Observaciones {
+  const out: Observaciones = {};
+  for (const f of Object.keys(obs) as FuenteContada[]) {
+    const o = obs[f];
+    if (!o) continue;
+    out[f] = { ...o, visto: Number(o.visto) > 0 ? Number(o.visto) : inicio, orden: Number.isInteger(o.orden) && Number(o.orden) > 0 ? Number(o.orden) : orden };
+  }
+  return out;
+}
+
 /** Lo que se lee de sus fuentes AHORA: misiones (null si no se pudieron leer), lo observado por el adaptador y el perfil. */
 async function fuentesAhora(correo: string, d: Pick<DepsIniciativa, 'contadores' | 'reloj'>, perfil?: PerfilDeUso | null) {
-  const ahora = d.reloj ? d.reloj() : Date.now();
   const leidas = await leerMisiones(correo);
+  // El inicio de ESTA consulta (antes de esperar al adaptador): lo que ordena las lecturas si terminan fuera de orden.
+  const ahora = d.reloj ? d.reloj() : Date.now();
+  const orden = siguienteOrdenObservacion();
   // Si quien cuenta FALLA, la fuente no se pudo leer (unavailable): nunca es 0 ni «siguen igual».
   let contadores: Contadores | null = {};
   if (d.contadores) {
@@ -217,7 +236,7 @@ async function fuentesAhora(correo: string, d: Pick<DepsIniciativa, 'contadores'
       contadores = null;
     }
   }
-  const observaciones = observacionesDe(contadores, ahora);
+  const observaciones = sellarObservaciones(observacionesDe(contadores, ahora), ahora, orden);
   const desconectadas = [...new Set([...(contadores?.desconectadas || []), ...(['correo', 'whatsapp'] as const).filter((f) => observaciones[f]?.estado === 'disconnected')])];
   return {
     misiones: leidas.ok ? leidas.misiones : null,
@@ -234,7 +253,8 @@ async function fuentesAhora(correo: string, d: Pick<DepsIniciativa, 'contadores'
  *
  * A2 (5-oct): se revalida la versión GUARDADA (lib/iniciativa.ts revalidarPendiente, en un paso del cajón), no la
  * copia que trae la outbox; si el número contado cambió (3→1), se regenera desde lo observado y se devuelve esa
- * versión en `propuesta` para que el despacho entregue ESA, una sola vez (mismo id, mismo sello).
+ * versión en `propuesta` para que el despacho entregue ESA, una sola vez (mismo id, mismo sello). Si otra consulta
+ * más nueva (un GET, otra réplica) ya guardó su número, esta lectura más vieja no lo pisa: se entrega lo guardado.
  */
 export async function revalidarAhora(correo: string, p: Propuesta, d: Pick<DepsIniciativa, 'contadores' | 'reloj'>, ahora: number): Promise<Revalidacion> {
   const est = await leerEstadoIniciativa(correo);
@@ -249,6 +269,15 @@ export async function revalidarAhora(correo: string, p: Propuesta, d: Pick<DepsI
   }
 }
 
+/**
+ * Cuándo se leyó el número que dice una propuesta de un hecho contado (correo, WhatsApp). La app no deja que una
+ * versión con una lectura más vieja pise la tarjeta del mismo id, venga por el GET o por el canal de acciones.
+ */
+function observadaDe(p: Propuesta): { observada?: number } {
+  const f = evidenciaDe(p).fuente;
+  return (f.tipo === 'correo' || f.tipo === 'whatsapp') && Number(f.visto) > 0 ? { observada: Number(f.visto) } : {};
+}
+
 /** La propuesta como la ve la app, con lo necesario para «ver la propuesta»: por qué, el paso, el permiso y hasta cuándo. */
 export function propuestaParaApp(p: Propuesta) {
   const e = evidenciaDe(p);
@@ -261,6 +290,7 @@ export function propuestaParaApp(p: Propuesta) {
     creada: p.creada,
     // Sube cuando se regeneró con el número de ahora (A2): la app reemplaza la tarjeta del mismo id.
     rev: p.rev || 1,
+    ...observadaDe(p),
     ...(p.misionId ? { misionId: p.misionId } : {}),
     clase: claseDe(p),
     porQue: e.porQue || 'Una idea para ti.',
@@ -275,7 +305,7 @@ export function propuestaParaApp(p: Propuesta) {
  * la acción ('iniciativa'); el tipo de la propuesta va en `clase`.
  */
 export function accionIniciativa(p: Propuesta) {
-  return { tipo: 'iniciativa' as const, id: p.id, texto: p.texto, pedido: p.pedido, clase: p.tipo, prioridad: p.prioridad, creada: p.creada, rev: p.rev || 1, ...(p.misionId ? { misionId: p.misionId } : {}) };
+  return { tipo: 'iniciativa' as const, id: p.id, texto: p.texto, pedido: p.pedido, clase: p.tipo, prioridad: p.prioridad, creada: p.creada, rev: p.rev || 1, ...observadaDe(p), ...(p.misionId ? { misionId: p.misionId } : {}) };
 }
 
 /** La misión como la ve la app (con su número entre las abiertas, si está abierta). */
@@ -531,7 +561,8 @@ export function arrancarIniciativa(o: {
             if (r.nueva && r.propuesta) await encolarAviso(correo, r.propuesta, ahora);
           }
           // Lo encolado (también lo que esperaba el fin de sus horas quietas) se revalida y se despacha.
-          const hechos = await procesarOutbox(correo, { revalidar: (q) => revalidarAhora(correo, q, o, ahora), entregadores, sello: o.sello, ahora });
+          // Se revalida con la hora de ESE momento (no la del inicio de la vuelta): es la que sella la lectura.
+          const hechos = await procesarOutbox(correo, { revalidar: (q) => revalidarAhora(correo, q, o, o.reloj ? o.reloj() : Date.now()), entregadores, sello: o.sello, ahora });
           entregadas += hechos.filter((h) => h.entregado).length;
         } catch (e: any) {
           if (!(e instanceof AlmacenNoDisponible)) console.warn('[iniciativa] no pude proponer', String(e?.message || e).slice(0, 120));

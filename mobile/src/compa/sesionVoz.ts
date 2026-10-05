@@ -27,7 +27,10 @@
  *
  * EL MOTOR NUEVO (prototipo de Speech Engine, docs/voz/SPEECH-ENGINE.md): solo si el permiso lo trae
  * (`motor: 'speech-engine'`). Entonces se le pide al SDK la primera frase (`overrides.agent.firstMessage`) y, al
- * conectar, `onVincular` ata la conversación de ElevenLabs al pase. Sin eso, las mismas opciones de siempre.
+ * conectar, `onVincular` ata la conversación de ElevenLabs al pase. Si el servidor contesta un «no» honesto (con
+ * su código: la llamada ya se cerró, es de otra cuenta, no hay llamada esperando… compa/vinculoMotor.ts), la
+ * sesión se termina como un error, con el porqué (`vínculo del motor: …`), en vez de quedarse abierta y muda; lo
+ * pasajero (un 404 sin cuerpo de un proxy, sin red) no la toca. Sin eso, las mismas opciones de siempre.
  *
  * `cerrar.callarSalida()` (P2): calla lo que la conversación está diciendo AHORA (volumen 0) sin colgar ni
  * silenciar el micrófono; cuando termina esa frase el volumen vuelve (a 0 si está silenciada) y la siguiente
@@ -35,6 +38,7 @@
  */
 import type { EstadoVoz } from './sesion';
 import type { ContadorRecursos } from './recursos';
+import type { VinculoMotor } from './vinculoMotor';
 
 /** Lo que se le pasa al SDK al abrir (lo poco que se usa de `startSession`). */
 export type OpcionesConv = {
@@ -71,8 +75,11 @@ export type CallbacksSesionVoz = {
   onAudio?: (gen: number, que: 'toma' | 'suelta' | 'cerrando') => void;
   onFin?: (gen: number, pase: string) => void;
   onPermiso?: (gen: number) => void;
-  /** Motor nuevo: ata la conversación de ElevenLabs (su id) al pase de esta sesión, una vez. */
-  onVincular?: (gen: number, pase: string, conversacion: string) => void;
+  /**
+   * Motor nuevo: ata la conversación de ElevenLabs (su id) al pase de esta sesión, una vez. Si devuelve lo que
+   * contestó el servidor, un `fin` termina esta sesión (si sigue siendo la de ahora).
+   */
+  onVincular?: (gen: number, pase: string, conversacion: string) => void | Promise<VinculoMotor | void>;
 };
 
 export type DepsSesionVoz = {
@@ -186,6 +193,27 @@ export function abrirSesionVoz(d: DepsSesionVoz): CerrarSesionVoz {
     return { ok: true };
   };
 
+  /** Motor nuevo: el vínculo, y lo que dijo el servidor. Un «no» honesto termina esta sesión; lo pasajero, no. */
+  const vincular = (conversacion: string, paseDe: string) => {
+    let v: void | Promise<VinculoMotor | void> | undefined;
+    try {
+      v = d.cbs().onVincular?.(gen, paseDe, conversacion);
+    } catch {
+      return;
+    }
+    if (!v || typeof (v as any).then !== 'function') return;
+    (v as Promise<VinculoMotor | void>).then(
+      (x) => {
+        if (!x || !vivo) return;
+        if (x.que === 'fin') {
+          d.miga(`motor nuevo: el servidor no ató la llamada (${x.codigo})`);
+          terminar(true, { e: 'error', detalle: `vínculo del motor: ${x.motivo}` });
+        } else if (x.que === 'transitorio') d.miga(`motor nuevo: el vínculo no tuvo respuesta clara (${x.detalle}); decide el servidor`);
+      },
+      () => undefined
+    );
+  };
+
   void (async () => {
     avisar('conectando');
     try {
@@ -208,7 +236,7 @@ export function abrirSesionVoz(d: DepsSesionVoz): CerrarSesionVoz {
         onConnect: (p) => {
           // Conectó cuando ya se había colgado: no queda abierta al lado (ni micrófono ni minutos).
           if (!vivo) return pedirFin();
-          if (motorNuevo && p?.conversationId) d.cbs().onVincular?.(gen, r.pase, String(p.conversationId));
+          if (motorNuevo && p?.conversationId) vincular(String(p.conversationId), r.pase);
           d.abierta.current = true;
           if (d.silenciada()) {
             try {

@@ -114,6 +114,9 @@ el almacén tiene que poder **listar** (`s3:ListBucket` sobre `ultron/durable/ta
   `inventario.estado: 'error'`, con su aviso. Arreglado el permiso, se reconcilia sola en la siguiente ventana.
 - **`conteo.recortadas`:** terminadas que siguen existiendo pero que el tope del historial (las 200 terminadas más
   recientes) ya no lista. No hacen la lista incompleta; la ruta lo dice en `aviso`. No es un fallo.
+- **`inventario.estado: 'revertido'`:** operación revirtió la reconciliación de ese dueño (§7). La lista dice
+  `completo: false`, `reconciliado: false` y un aviso («se revirtió por decisión de mantenimiento… puede faltar alguna»),
+  y no se vuelve a reconciliar hasta que operación la reactive. No es un fallo del almacén.
 
 ### Tareas legadas cuya reserva se borró (quedan «sin verificar» para siempre)
 
@@ -148,3 +151,76 @@ Acción recomendada, en este orden:
      aviso), con el coste del recorrido cada 15 minutos.
 3. No uses `AURA_RECONCILIAR_TAREAS=off` para «arreglarlo»: apaga el inventario para todos y la lista dice
    `completo: false` siempre; no fabrica la garantía.
+
+## 7. Revertir la reconciliación del inventario de un dueño (A7) y volver a activarla
+
+Para cuando lo que agregó la reconciliación de un dueño no debía estar en su lista. Son funciones de operación de
+`lib/tareas-durables.ts`; no hay ruta HTTP. Se ejecutan a mano desde una consola del servidor que tenga las mismas
+variables del almacén (`ULTRON_MEMORIA_BUCKET` y las credenciales `AWS_*`, o `ULTRON_DURABLE_DIR` en disco), por
+ejemplo:
+
+```bash
+npx tsx -e "import('./lib/tareas-durables').then((m) => m.revertirReconciliacionTareas('correo@dueño')).then((r) => console.log(r))"
+```
+
+**Qué hace `revertirReconciliacionTareas(correo)`** (revisión externa sobre a46b496: «el historial puede quedar incompleto
+o reaparecer una tarea recuperada»):
+
+- Quita del índice **solo** las entradas que agregó el inventario (`rec`), cuya tarea **ya terminó** y que **no tuvieron
+  actividad** desde que se recuperaron: el objeto de la tarea no cambió (`actualizada`) después de recuperarse (`rt`; en
+  las entradas de a46b496, que no traen `rt`, se toma el inicio de su ronda, que es anterior: se conserva de más, nunca
+  de menos). Una entrada sin objeto también sale.
+- Una recuperada que **sigue activa** (no terminó) es trabajo vivo: **se queda**, sin la marca `rec`, aunque nadie la
+  haya tocado. Volver a esconderla es justo el fallo que A7 arregló.
+- Una recuperada que después avanzó, terminó o se canceló **ya es historial propio**: se queda, sin la marca `rec`.
+- Una entrada cuyo objeto no se pudo leer se queda tal cual (`pendientes`): nunca se quita a ciegas.
+- Devuelve al índice lo que el tope del historial sacó del índice de antes al agregar lo recuperado (del respaldo
+  `tareas/indice-respaldo/<huella>/antes-de-inventario-v1`, solo si el objeto existe y es de ese dueño) y recorta otra
+  vez.
+- `conteo.recortadas`: lo que contó el inventario (`dr`) son las terminadas que su recorte sacó del índice de antes. Las
+  que vuelven dejan de contarse **una sola vez** (antes se descontaban dos veces y la cuenta bajaba con cada ciclo de
+  reactivar y revertir). Las que no pueden volver se siguen contando. Se suma lo que el recorte saque ahora. Ejemplo:
+  con 10 recortadas de antes y 5 tareas perdidas, al reconciliar quedan 15 y al revertir vuelven a quedar 10, en cada
+  ciclo.
+- **Sin el respaldo** (se borró o nunca se escribió), no vuelve nada de lo recortado: esas terminadas siguen contadas en
+  `conteo.recortadas` (la lista lo avisa) y el resultado trae `sinRespaldo: true` (y un aviso en el registro). El
+  historial no se pierde en silencio.
+- **Un dueño sin índice ni respaldo** (por ejemplo, un correo mal escrito) no tiene nada que revertir: no se escribe nada
+  (ni la marca `revertido`, que lo dejaría bloqueado) y el resultado trae `sinIndice: true`. Revisa el correo.
+- **Un dueño reconciliado al que el inventario no agregó nada** (sin entradas `rec`, la marca `inventario` con
+  `agregadas: 0` y sin respaldo) tampoco tiene nada que revertir: no se escribe nada, tampoco la marca `revertido`, y el
+  resultado trae `nadaQueRevertir: true`. Un dueño de 3 tareas que ya estaba `reconciliado: true` lo sigue estando (antes
+  pasaba a `revertido` sin motivo). Un dueño con índice pero **sin** la marca `inventario` (aún no reconciliado, quizá con
+  un recorrido a medias) sí recibe la marca `revertido`: es el bloqueo previo, para que ninguna réplica le agregue nada.
+- Todo en una sola fusión CAS sobre el índice actual: lo que se creó, cambió o anotó después de la reconciliación (o
+  durante la reversión) se queda.
+- Deja en el índice la marca `revertido` (`{ gen, t, quitadas, conservadas, restauradas, pendientes, … }`). Como vive en
+  el índice y no en la memoria de una réplica, **ninguna réplica vuelve a reconciliar a ese dueño ni le agrega nada**,
+  aunque `AURA_RECONCILIAR_TAREAS` siga en `agregar` (una réplica que estaba a mitad de recorrido tampoco: su escritura
+  se descarta). Ya no hace falta apagar el interruptor antes.
+- Devuelve `{ ok, quitadas, conservadas, restauradas, pendientes, ya }` (más `sinIndice`, `nadaQueRevertir` o
+  `sinRespaldo` cuando aplican). Es idempotente y reanudable: si
+  `pendientes > 0`, se repite cuando el almacén conteste; si no queda nada, no escribe (`ya: true`).
+- **Nunca borra objetos** de tareas ni el respaldo.
+
+**Volver a activarla:**
+
+- Un dueño: `reactivarReconciliacionTareas(correo)` quita la marca `revertido`. En su siguiente lectura de la lista se
+  vuelve a inventariar y se agrega lo que falte, con su propio respaldo (`…-v1-r<n>` tras la reversión número n), así
+  que se puede volver a revertir.
+- Todos los revertidos a la vez: subir `AURA_RECONCILIAR_TAREAS_GENERACION` (entero, 1 por omisión) en el servicio y
+  redesplegar. Una reversión hecha en la generación N solo bloquea mientras la vigente sea ≤ N. Lo que se revierta en la
+  generación nueva queda bloqueado hasta la siguiente.
+
+**Límites:**
+
+- La regla de actividad mira la `actualizada` del objeto. Leer una tarea no es actividad. Pero una tarea quitada que
+  alguien abre por su id (`GET /api/trabajos/:id`) vuelve a anotarse como siempre (es uso, no inventario).
+- Si una tarea quitada cambia justo entre la lectura de la reversión y su escritura, se vuelve a anotar al comprobarla
+  inmediatamente después. Si cambia más tarde, sigue fuera de la lista hasta que alguien la abra por su id.
+- Un servidor anterior a esta revisión conserva la marca `revertido` al escribir el índice, pero no la respeta: si corre
+  con `AURA_RECONCILIAR_TAREAS=agregar`, puede volver a agregar lo revertido. Durante un despliegue mixto, deja esas
+  réplicas con `AURA_RECONCILIAR_TAREAS=off`.
+- `conteo.recortadas` es una cuenta, no una lista de ids. Si alguien borra a mano el objeto de una terminada recortada
+  que no pudo volver, la cuenta puede quedar con una de más hasta que se reactive y se vuelva a inventariar. El código nunca
+  borra objetos de tareas.
