@@ -175,10 +175,16 @@ mando; `?desde=…&hasta=…` en ISO). Por cada etiqueta de red (`porRed`) y en 
   duplicado);
 - `primerTexto` p50/p95 **de las respuestas comparables**: desde que llega el turno hasta que el primer texto
   sale hacia la voz (la frase de espera cuenta si después contestó el cerebro: es lo primero que se oye) ·
-  `cerebro` p50/p95, también solo de las comparables;
+  `cerebro` p50/p95, también solo de las comparables: hasta lo primero de **la respuesta de verdad** (sin la
+  frase de espera ni su muletilla) · **`cerebroConCortados`** p50/p95 (la que usa la regla): las comparables
+  **más los cortados**; un cortado antes de que hablara el cerebro entra con lo que llevaba esperando
+  (`totalMs`), una observación censurada (habría tardado eso o más), y `censurados` dice cuántos;
 - `ejercicios`: las interrupciones y los asentimientos **a propósito** (paso 4) y cuántos salieron bien;
-  `interrupciones` `nativas`/`inferidas` (las que vio el servidor, para mirar), `puentes`, conversaciones;
-- `bloques`: cuántos tramos seguidos de un mismo camino hay en el tiempo (A-B-A-B = 4);
+  `interrupciones` `nativas`/`inferidas` (las que vio el servidor, para mirar), `puentes`, `conversaciones` y
+  `conversacionesComparables` (las que tienen al menos una respuesta comparable: las que cuentan);
+- `bloques`: cuántos bloques alternos de verdad hay en el tiempo (A-B-A-B = 4), entre las respuestas
+  comparables: un tramo seguido de un mismo camino con **menos de 5** no cuenta (un cambio de paso suelto, 19 A ·
+  1 B · 1 A · 19 B, son 2 bloques, no 4) y al quitarlo sus vecinos del mismo camino se juntan;
 - `veredicto`: `estado` (`insuficiente` · `adoptar` · `mantener`), `faltan` (qué evidencia falta), `motivos`
   (por qué no se adopta), y las banderas de la regla.
 
@@ -201,7 +207,8 @@ ElevenLabs guarda en cada conversación, más `interrupted` e `ignored_as_backch
 ELEVENLABS_API_KEY=… npx tsx scripts/voz-comparar-eleven.ts --agente agent_6801m3qbvv83fzgvg42eev85m8m5 --motor seng_… --desde 2026-10-07T15:00:00Z
 ```
 
-**Procedimiento** (la guía de muestras de la auditoría: **≥ 20 respuestas comparables por camino y por red**):
+**Procedimiento** (la guía de muestras de la auditoría: **≥ 20 respuestas comparables de ≥ 5 llamadas distintas
+por camino y por red**):
 
 1. Misma persona, mismo teléfono, mismo avatar (AU-RA, español), mismo guion de preguntas para los dos caminos:
    10 preguntas cortas de charla, 6 que usan herramienta (precio, búsqueda, cálculo), 4 de las manos del
@@ -209,7 +216,9 @@ ELEVENLABS_API_KEY=… npx tsx scripts/voz-comparar-eleven.ts --agente agent_680
    hacen falta más de 20 turnos para tener 20 comparables.
 2. Por cada red (wifi de casa y datos móviles): etiquetarla (`POST /api/voz/comparacion/red {"red":"wifi"}`).
 3. En bloques alternos A-B-A-B (para que la hora no sesgue): bloque A con la cuenta fuera del interruptor
-   (agente), bloque B dentro (Speech Engine); cada bloque ~10 turnos, hasta ≥ 20 comparables por camino en esa red.
+   (agente), bloque B dentro (Speech Engine); cada bloque ~10 turnos (**≥ 5 comparables**, si no el bloque no
+   cuenta) repartidos en varias llamadas (colgar y volver a llamar), hasta ≥ 20 comparables de ≥ 5 llamadas por
+   camino en esa red.
 4. En cada camino y red, **5 interrupciones a propósito** (hablarle encima a mitad de una respuesta larga) y
    **5 asentimientos** («ajá», «mjm») mientras habla, cada uno anotado (`/api/voz/comparacion/ejercicio`).
    Anotar también si alguna vez repitió algo o se quedó callada.
@@ -221,17 +230,25 @@ suman redes) y el total es `adoptar` solo si **todas** las redes lo son:
 1. **Evidencia mínima** — si falta algo, `insuficiente` y `faltan` dice qué (p. ej. «4g: speech-engine: faltan 6
    turnos comparables (hay 14 de 20)»):
    - ≥ 20 respuestas **comparables** por camino;
+   - de ≥ 5 **conversaciones distintas** por camino (20 turnos de una sola llamada no son una muestra);
    - ≥ 5 interrupciones y ≥ 5 asentimientos a propósito anotados por camino;
-   - ≥ 4 bloques alternos en el tiempo (A-B-A-B).
+   - ≥ 4 bloques alternos en el tiempo (A-B-A-B), cada uno de **≥ 5 respuestas comparables**.
 2. Con evidencia, se adopta **solo si**:
    - el primer audio de las respuestas comparables es **mejor en p50 Y en p95**, por un margen que no sea ruido:
      **al menos 150 ms Y al menos el 10 %** del valor del agente (los dos a la vez: con p50 de 1 s hacen falta
      150 ms; con p95 de 3 s, 300 ms). Un empate dentro del margen es `mantener`;
+   - y además **la respuesta de verdad no empeora**: `cerebroConCortados` (sin la frase de espera, con los
+     cortados censurados) no es peor que el del agente en p50 **NI** en p95 más que ese mismo margen. El primer
+     audio puede ser la frase de espera: una espera a 300 ms con el cerebro a 6 s no gana a un agente que
+     contesta de verdad a 800 ms;
    - la tasa de interrupciones a propósito que salieron bien es **al menos** la del agente, y la de asentimientos
      que no la cortaron también;
-   - **sin regresiones**: ni más `errores`, `respaldos`, `repetidos`, `tardes`, `vacios`, `soloEspera` ni
-     `sinCerebro` que el agente, en proporción a los turnos que esperaban respuesta (todo menos los «ajá»). Basta
-     una para `mantener`. Esos turnos además no cuentan como respuestas ni bajan los percentiles;
+   - **sin regresiones**: ni más `errores`, `respaldos`, `repetidos`, `tardes`, `vacios`, `soloEspera`,
+     `sinCerebro` ni **`cortados`** que el agente, en proporción a los turnos que esperaban respuesta (todo menos
+     los «ajá»). Basta una para `mantener`. Esos turnos además no cuentan como respuestas ni bajan los
+     percentiles. Los cortados cuentan porque si la persona corta más en un camino es, casi siempre, porque
+     tarda: sin contarlos, los turnos lentos que la persona corta desaparecían de la comparación (las 5
+     interrupciones a propósito son las mismas en los dos caminos);
    - y nada raro de oído (saludo, frases de espera, cortes), y las métricas de ElevenLabs de punta a punta (el
      script) en la misma dirección: eso lo mira José, el servidor no lo sabe.
 3. Si no, `mantener`: se queda el agente y el prototipo se apaga (sin tocar nada más). En cualquier caso, el

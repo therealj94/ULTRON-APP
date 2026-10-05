@@ -3,9 +3,11 @@
  *
  * Un asentimiento («ajá»), un turno cortado, una frase de espera sola, una respuesta vacía, un error o un
  * turno sin respuesta del cerebro NO son respuestas: no cuentan para el mínimo ni para los percentiles del
- * primer audio, y los errores y respaldos cuentan EN CONTRA. Sin la evidencia mínima (≥20 turnos comparables,
- * ≥5 interrupciones y ≥5 asentimientos a propósito por camino y por red, en bloques alternos) el veredicto es
- * «insuficiente» y dice qué falta. Y el veredicto solo informa: nunca enciende ni apaga nada.
+ * primer audio, y los errores, respaldos y cortados cuentan EN CONTRA. La respuesta de verdad (el cerebro, sin la
+ * frase de espera, con los cortados) no puede empeorar. Sin la evidencia mínima (≥20 turnos comparables de ≥5
+ * conversaciones, ≥5 interrupciones y ≥5 asentimientos a propósito por camino y por red, en ≥4 bloques alternos
+ * de ≥5 turnos) el veredicto es «insuficiente» y dice qué falta. Y el veredicto solo informa: nunca enciende ni
+ * apaga nada.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -47,7 +49,8 @@ function prueba(o: { ag: number; se: number; k?: number; red?: string; t0?: numb
   const ms: Medida[] = [];
   for (let b = 0; b < (o.bloquesPorCamino ?? 2); b++)
     for (const motor of ['agente', 'speech-engine'] as Motor[])
-      for (let i = 0; i < k; i++) ms.push(m(motor, (t += 1000), (motor === 'agente' ? o.ag : o.se) + i * 10, { red }));
+      // Varias llamadas por bloque (tres), como en la prueba de verdad: ≥5 conversaciones por camino y por red.
+      for (let i = 0; i < k; i++) ms.push(m(motor, (t += 1000), (motor === 'agente' ? o.ag : o.se) + i * 10, { red, conv: `${red}-${motor[0]}${b}-${i % 3}` }));
   return ms;
 }
 const ejercicios = (red = 'wifi', bien: Partial<Record<Motor, { interrupcion?: number; asentimiento?: number }>> = {}) => {
@@ -92,6 +95,81 @@ test('la ruta marca como asentimiento el turno cuya última frase de la persona 
   assert.equal(a.asentimiento, true);
   assert.equal(b.asentimiento, false);
   assert.equal(JSON.stringify(MED._medidas()).includes('oro'), false, 'nada de lo dicho');
+});
+
+/* ------------------------------------------------------------------ la reproducción del hallazgo H5 */
+
+test('REPRODUCCIÓN H5 (a): un primer audio rápido que es solo la frase de espera, con el cerebro a 6 s, ya no da «adoptar»', async () => {
+  // Speech Engine dice la frase de espera a 300 ms, pero la respuesta de verdad llega a ~6 s; el agente, 800/800.
+  const ms = prueba({ ag: 800, se: 300 });
+  for (const x of ms) if (x.motor === 'speech-engine') Object.assign(x, { puente: true, cerebroMs: 6_000 + (x.primerTextoMs ?? 0), totalMs: 7_000 });
+  const r: any = await comparar(ms, ejercicios());
+  const v = r.porRed.wifi.veredicto;
+  assert.equal(r.total.veredicto.estado, 'mantener', JSON.stringify(r.total.veredicto));
+  assert.equal(v.primerTextoP50Mejor, true, 'el primer audio sí mejora (es la frase de espera)');
+  assert.equal(v.cerebroP50NoPeor, false);
+  assert.equal(v.cerebroP95NoPeor, false);
+  assert.ok(v.motivos.some((x: string) => /respuesta de verdad p50/.test(x)), v.motivos.join(' | '));
+  // La frase de espera rápida con el cerebro igual que el agente (dentro del margen) sí puede ganar.
+  const ok = prueba({ ag: 1500, se: 300 });
+  for (const x of ok) if (x.motor === 'speech-engine') Object.assign(x, { puente: true, cerebroMs: 1_600 + (x.primerTextoMs ?? 0) - 300 });
+  const r2: any = await comparar(ok, ejercicios());
+  assert.equal(r2.total.veredicto.estado, 'adoptar', JSON.stringify(r2.total.veredicto));
+});
+
+test('REPRODUCCIÓN H5 (b): 40 turnos lentos (4 s) que la persona cortó ya no desaparecen: no da «adoptar»', async () => {
+  const ms = prueba({ ag: 1500, se: 1100 });
+  // Los cortó la persona antes de que hablara el cerebro: sin primer texto, sin cerebro, 4 s esperando.
+  for (let i = 0; i < 40; i++)
+    ms.push(m('speech-engine', 1_000_000 + 10_000 + i * 10, null, { cortado: true, cerebroMs: null, totalMs: 4_000, conv: `wifi-s0-${i % 3}` }));
+  const r: any = await comparar(ms, ejercicios());
+  const v = r.porRed.wifi.veredicto;
+  assert.equal(r.total.veredicto.estado, 'mantener', JSON.stringify(r.total.veredicto));
+  assert.ok(v.regresiones.includes('cortados'), 'más cortados que el agente es una regresión');
+  assert.equal(r.porRed.wifi['speech-engine'].cerebroConCortados.censurados, 40, 'los cortados entran como observaciones censuradas');
+  assert.equal(r.porRed.wifi['speech-engine'].cerebroConCortados.p50, 4_000, 'con lo que llevaban esperando (cota por debajo)');
+  assert.equal(v.cerebroP50NoPeor, false);
+  // La misma proporción de cortados en los dos caminos (rápidos) no es una regresión.
+  const igual = prueba({ ag: 1500, se: 1100 });
+  for (const motor of ['agente', 'speech-engine'] as Motor[])
+    igual.push(m(motor, 1_000_000 + (motor === 'agente' ? 5_500 : 15_500), 900, { cortado: true, conv: `wifi-${motor[0]}0-0` }));
+  const r2: any = await comparar(igual, ejercicios());
+  assert.deepEqual(r2.porRed.wifi.veredicto.regresiones, []);
+  assert.equal(r2.total.veredicto.estado, 'adoptar', JSON.stringify(r2.total.veredicto));
+});
+
+test('REPRODUCCIÓN H5 (c): 20 turnos de UNA sola conversación por camino ya no bastan: «insuficiente»', async () => {
+  const ms = prueba({ ag: 1500, se: 1100 }).map((x) => ({ ...x, conv: x.motor === 'agente' ? 'a1' : 's1' }));
+  const r: any = await comparar(ms, ejercicios());
+  assert.equal(r.total.veredicto.estado, 'insuficiente', JSON.stringify(r.total.veredicto));
+  assert.equal(r.porRed.wifi['speech-engine'].conversacionesComparables, 1);
+  for (const motor of ['agente', 'speech-engine'])
+    assert.ok(r.total.veredicto.faltan.some((f: string) => f.includes(`${motor}:`) && /4 conversaciones/.test(f)), r.total.veredicto.faltan.join(' | '));
+  assert.equal(MED.MIN_CONVERSACIONES, 5);
+});
+
+test('REPRODUCCIÓN H5 (d): un cambio de paso (19 A, 1 B, 1 A, 19 B) no son 4 bloques alternos: «insuficiente»', async () => {
+  const ms: Medida[] = [];
+  let t = 1_000_000;
+  const tramo = (motor: Motor, n: number, b: number) => {
+    for (let i = 0; i < n; i++) ms.push(m(motor, (t += 1000), (motor === 'agente' ? 1500 : 1100) + i * 10, { conv: `wifi-${motor[0]}${b}-${i % 6}` }));
+  };
+  tramo('agente', 19, 0);
+  tramo('speech-engine', 1, 0);
+  tramo('agente', 1, 1);
+  tramo('speech-engine', 19, 1);
+  const r: any = await comparar(ms, ejercicios());
+  assert.equal(r.total.veredicto.estado, 'insuficiente', JSON.stringify(r.total.veredicto));
+  assert.equal(r.porRed.wifi.bloques, 2, 'los tramos de menos de 5 turnos no cuentan como bloque');
+  assert.deepEqual(
+    r.total.veredicto.faltan.map((f: string) => f.replace(/\(.*/, '')),
+    ['wifi: faltan bloques alternos A-B-A-B de ≥5 turnos comparables '],
+    'solo faltan bloques'
+  );
+  // Cuatro bloques de 5 (el mínimo por bloque) sí valen.
+  assert.equal(MED.contarBloques(prueba({ ag: 1500, se: 1100, k: 5 })), 4);
+  assert.equal(MED.contarBloques(prueba({ ag: 1500, se: 1100, k: 4 })), 0);
+  assert.equal(MED.MIN_TURNOS_BLOQUE, 5);
 });
 
 /* ------------------------------------------------------------------ lo que no es una respuesta */
@@ -204,6 +282,8 @@ test('cualquier regresión (errores, respaldos, repetidos, tardes, vacíos, solo
     ['tardes', { tarde: true }],
     ['vacios', { primerTextoMs: null, cerebroMs: null }],
     ['soloEspera', { puente: true, cerebroMs: null }],
+    // H5: los cortados también (si la persona corta más en un camino, casi siempre es porque tarda).
+    ['cortados', { cortado: true }],
   ] as [string, Partial<Medida>][]) {
     const ms = prueba({ ag: 1500, se: 1100 });
     // Uno más (no uno cambiado): Speech Engine sigue con sus 20 comparables y el error va en su contra.

@@ -10,7 +10,8 @@
  *  · primerTextoMs: desde que llegó el turno hasta que el primer texto salió hacia la voz (la frase de
  *    espera cuenta: es lo primero que se oye). Es lo que el servidor puede medir del «primer audio»; el
  *    tiempo de red y de voz de ElevenLabs se mira en sus métricas por turno (scripts/voz-comparar-eleven.ts).
- *  · cerebroMs: hasta lo primero del cerebro (sin la frase de espera).
+ *  · cerebroMs: hasta lo primero del cerebro (sin la frase de espera ni su muletilla): la respuesta de
+ *    verdad. La regla lo exige además del primer audio: una frase de espera rápida no tapa un cerebro lento.
  *  · interrupcion: 'nativa' si el camino lo supo por un evento suyo (Speech Engine: llegó un turno con
  *    `event_id` mayor mientras el anterior seguía saliendo), 'inferida' si se dedujo (el corte de la
  *    conexión o la respuesta recortada en el historial). null: este turno no cortó a ninguno.
@@ -21,8 +22,10 @@
  *
  * LA COMPARACIÓN ES HONESTA (claseTurno, veredicto): solo las respuestas completas del cerebro principal
  * cuentan como respuestas y alimentan los percentiles del primer audio; asentimientos, cortados, solo la
- * frase de espera, vacíos, errores, respaldos, tardes y repetidos se cuentan aparte, y los fallos cuentan EN
- * CONTRA. Sin la evidencia mínima por camino y por red el veredicto es «insuficiente». Y SOLO INFORMA.
+ * frase de espera, vacíos, errores, respaldos, tardes y repetidos se cuentan aparte, y los fallos (también
+ * los cortados) cuentan EN CONTRA. La respuesta de verdad (cerebroMs) no puede empeorar, y los cortados
+ * entran en ella con lo que llevaban esperando. Sin la evidencia mínima por camino y por red (turnos,
+ * conversaciones, bloques alternos de verdad, ejercicios) el veredicto es «insuficiente». Y SOLO INFORMA.
  *
  * Vive en memoria (las últimas MAX_MEDIDAS) y, solo mientras el motor está encendido (la prueba A/B) y hay
  * S3, se guarda cada GUARDAR_MS: un redespliegue a mitad de la prueba no la borra. Con el motor apagado no
@@ -238,8 +241,12 @@ const CLAVE_EXCLUIDO: Record<Exclude<ClaseTurno, 'completo'>, keyof Excluidos> =
   repetido: 'repetidos',
   sinCerebro: 'sinCerebro',
 };
-/** Lo que, si a Speech Engine le pasa más (en proporción), bloquea «adoptar». Los cortados no: los corta la persona. */
-export const REGRESIONES = ['errores', 'respaldos', 'repetidos', 'tardes', 'vacios', 'soloEspera', 'sinCerebro'] as const;
+/**
+ * Lo que, si a Speech Engine le pasa más (en proporción), bloquea «adoptar». Los cortados también: si la
+ * persona corta más en un camino es, casi siempre, porque tarda (y sin contarlos, los turnos lentos que la
+ * persona corta desaparecían de los percentiles). Las interrupciones a propósito son las mismas en los dos.
+ */
+export const REGRESIONES = ['errores', 'respaldos', 'repetidos', 'tardes', 'vacios', 'soloEspera', 'sinCerebro', 'cortados'] as const;
 
 /* ------------------------------------------------------------------ los ejercicios a propósito */
 
@@ -274,7 +281,14 @@ export const MIN_INTERRUPCIONES = 5;
 export const MIN_ASENTIMIENTOS = 5;
 /** Bloques alternos (A-B-A-B) en el tiempo: que la hora o el día no sesguen la comparación. */
 export const MIN_BLOQUES = 4;
-/** El margen para que «mejor» no sea ruido: en p50 Y en p95, al menos 150 ms Y al menos el 10 %. */
+/** Un bloque cuenta solo con ≥5 respuestas comparables: un cambio de paso suelto (19 A, 1 B, 1 A, 19 B) no alterna. */
+export const MIN_TURNOS_BLOQUE = 5;
+/** Llamadas distintas (con respuestas comparables) por camino y por red: 20 turnos de UNA llamada no son una muestra. */
+export const MIN_CONVERSACIONES = 5;
+/**
+ * El margen para que «mejor» no sea ruido: en p50 Y en p95, al menos 150 ms Y al menos el 10 %. El mismo
+ * margen dice cuánto puede empeorar la respuesta de verdad sin que cuente (noPeor).
+ */
 export const MARGEN_MS = 150;
 export const MARGEN_RELATIVO = 0.1;
 
@@ -286,9 +300,17 @@ export type ResumenCamino = {
   /** Las respuestas comparables: las únicas que cuentan para el mínimo y para los percentiles. */
   completos: number;
   conversaciones: number;
+  /** Las conversaciones con al menos una respuesta comparable: las que cuentan para MIN_CONVERSACIONES. */
+  conversacionesComparables: number;
   /** El primer audio y el cerebro, SOLO de las respuestas comparables. */
   primerTexto: { p50: number | null; p95: number | null };
   cerebro: { p50: number | null; p95: number | null };
+  /**
+   * La respuesta de verdad (cerebroMs, sin la frase de espera) de las comparables MÁS los cortados: un
+   * cortado antes de que hablara el cerebro entra con lo que llevaba esperando (totalMs), una observación
+   * censurada (la respuesta habría tardado eso o más: es una cota por debajo). Es la que usa la regla.
+   */
+  cerebroConCortados: { p50: number | null; p95: number | null; censurados: number };
   excluidos: Excluidos;
   puentes: number;
   /** Las que vio el servidor (en cualquier turno): para mirar; la regla usa los ejercicios a propósito. */
@@ -312,6 +334,10 @@ export function resumir(ms: MedidaTurnoVoz[], ej: EjercicioVoz[] = []): ResumenC
   }
   const pt = completos.map((m) => m.primerTextoMs).filter((x): x is number => x !== null);
   const cb = completos.map((m) => m.cerebroMs).filter((x): x is number => x !== null);
+  // Los cortados no desaparecen de la latencia: con su cerebro si llegó a hablar, si no con lo que esperaron.
+  const cortados = ms.filter((m) => claseTurno(m) === 'cortado');
+  const cbc = [...cb, ...cortados.map((m) => m.cerebroMs ?? m.totalMs)];
+  const censurados = cortados.filter((m) => m.cerebroMs === null).length;
   const nativas = ms.filter((m) => m.interrupcion === 'nativa').length;
   const inferidas = ms.filter((m) => m.interrupcion === 'inferida').length;
   const de = (tipo: EjercicioVoz['tipo']) => {
@@ -322,8 +348,10 @@ export function resumir(ms: MedidaTurnoVoz[], ej: EjercicioVoz[] = []): ResumenC
     turnos: ms.length,
     completos: completos.length,
     conversaciones: new Set(ms.map((m) => m.conv).filter(Boolean)).size,
+    conversacionesComparables: new Set(completos.map((m) => m.conv).filter(Boolean)).size,
     primerTexto: { p50: percentil(pt, 50), p95: percentil(pt, 95) },
     cerebro: { p50: percentil(cb, 50), p95: percentil(cb, 95) },
+    cerebroConCortados: { p50: percentil(cbc, 50), p95: percentil(cbc, 95), censurados },
     excluidos,
     puentes: ms.filter((m) => m.puente).length,
     interrupciones: { nativas, inferidas, total: nativas + inferidas },
@@ -337,11 +365,26 @@ export function resumir(ms: MedidaTurnoVoz[], ej: EjercicioVoz[] = []): ResumenC
   };
 }
 
-/** Cuántos tramos seguidos del mismo camino hay, en orden de tiempo (A-B-A-B = 4), entre las respuestas comparables. */
+/**
+ * Cuántos bloques alternos de verdad hay (A-B-A-B = 4), en orden de tiempo, entre las respuestas
+ * comparables: los tramos seguidos de un mismo camino con menos de MIN_TURNOS_BLOQUE no cuentan (un cambio
+ * de paso suelto no es un bloque), y al quitarlos los tramos vecinos del mismo camino se juntan en uno.
+ */
 export function contarBloques(ms: MedidaTurnoVoz[]): number {
   const o = ms.filter((m) => claseTurno(m) === 'completo').sort((a, b) => a.t - b.t);
+  const tramos: { motor: MotorVoz; n: number }[] = [];
+  for (const m of o) {
+    const ultimo = tramos[tramos.length - 1];
+    if (ultimo?.motor === m.motor) ultimo.n++;
+    else tramos.push({ motor: m.motor, n: 1 });
+  }
   let n = 0;
-  for (let i = 0; i < o.length; i++) if (i === 0 || o[i].motor !== o[i - 1].motor) n++;
+  let anterior: MotorVoz | null = null;
+  for (const tr of tramos) {
+    if (tr.n < MIN_TURNOS_BLOQUE || tr.motor === anterior) continue;
+    anterior = tr.motor;
+    n++;
+  }
   return n;
 }
 
@@ -349,6 +392,12 @@ export function contarBloques(ms: MedidaTurnoVoz[]): number {
 export function mejorClaro(actual: number | null, nuevo: number | null): boolean {
   if (actual === null || nuevo === null) return false;
   return actual - nuevo >= Math.max(MARGEN_MS, MARGEN_RELATIVO * actual);
+}
+
+/** ¿`nuevo` no es peor que `actual` más allá del ruido? (el mismo margen; sin datos, no se sabe: no). */
+export function noPeor(actual: number | null, nuevo: number | null): boolean {
+  if (actual === null || nuevo === null) return false;
+  return nuevo - actual < Math.max(MARGEN_MS, MARGEN_RELATIVO * actual);
 }
 
 export type EstadoVeredicto = 'insuficiente' | 'adoptar' | 'mantener';
@@ -362,6 +411,9 @@ export type Veredicto = {
   motivos: string[];
   primerTextoP50Mejor: boolean;
   primerTextoP95Mejor: boolean;
+  /** La respuesta de verdad (sin la frase de espera, con los cortados) no empeora más que el margen. */
+  cerebroP50NoPeor: boolean;
+  cerebroP95NoPeor: boolean;
   interrupcionesIgualOMas: boolean;
   asentimientosIgualOMas: boolean;
   regresiones: string[];
@@ -373,24 +425,32 @@ const cuantos = (n: number, uno: string, varios: string) => `${n} ${n === 1 ? un
 
 /**
  * La regla acordada con José, honesta, para UNA red. Primero la evidencia mínima por camino (≥ MIN_TURNOS
- * respuestas comparables, ≥ MIN_INTERRUPCIONES interrupciones y ≥ MIN_ASENTIMIENTOS asentimientos a
- * propósito) y en bloques alternos; sin eso, «insuficiente» y qué falta. Con evidencia, se adopta SOLO si el
- * primer audio de las respuestas comparables es mejor en p50 Y en p95 por más que el margen, atiende las
+ * respuestas comparables de ≥ MIN_CONVERSACIONES llamadas distintas, ≥ MIN_INTERRUPCIONES interrupciones y
+ * ≥ MIN_ASENTIMIENTOS asentimientos a propósito) y en ≥ MIN_BLOQUES bloques alternos de ≥ MIN_TURNOS_BLOQUE;
+ * sin eso, «insuficiente» y qué falta. Con evidencia, se adopta SOLO si el primer audio de las respuestas
+ * comparables es mejor en p50 Y en p95 por más que el margen, la respuesta de verdad (cerebro, sin la frase de
+ * espera y con los cortados censurados) no es peor en p50 NI en p95 más que el margen, atiende las
  * interrupciones a propósito y aguanta los asentimientos al menos como el agente (en tasa), y no empeora
- * nada (REGRESIONES, en proporción a los turnos que esperaban respuesta). Si no, «mantener» (el agente).
+ * nada (REGRESIONES, cortados incluidos, en proporción a los turnos que esperaban respuesta). Si no,
+ * «mantener» (el agente).
  */
 export function veredicto(ag: ResumenCamino, se: ResumenCamino, bloques: number): Veredicto {
   const faltan: string[] = [];
   for (const [motor, r] of [['agente', ag], ['speech-engine', se]] as const) {
     if (r.completos < MIN_TURNOS) faltan.push(`${motor}: faltan ${MIN_TURNOS - r.completos} turnos comparables (hay ${r.completos} de ${MIN_TURNOS})`);
+    const fc = MIN_CONVERSACIONES - r.conversacionesComparables;
+    if (fc > 0) faltan.push(`${motor}: faltan ${cuantos(fc, 'conversación distinta', 'conversaciones distintas')} con respuestas comparables (hay ${r.conversacionesComparables} de ${MIN_CONVERSACIONES})`);
     const fi = MIN_INTERRUPCIONES - r.ejercicios.interrupciones.hechas;
     if (fi > 0) faltan.push(`${motor}: faltan ${cuantos(fi, 'interrupción', 'interrupciones')} a propósito`);
     const fa = MIN_ASENTIMIENTOS - r.ejercicios.asentimientos.hechas;
     if (fa > 0) faltan.push(`${motor}: faltan ${cuantos(fa, 'asentimiento', 'asentimientos')} a propósito`);
   }
-  if (bloques < MIN_BLOQUES) faltan.push(`faltan bloques alternos A-B-A-B (hay ${bloques} de ${MIN_BLOQUES}): que la hora no sesgue`);
+  if (bloques < MIN_BLOQUES) faltan.push(`faltan bloques alternos A-B-A-B de ≥${MIN_TURNOS_BLOQUE} turnos comparables (hay ${bloques} de ${MIN_BLOQUES}): que la hora no sesgue`);
   const p50 = mejorClaro(ag.primerTexto.p50, se.primerTexto.p50);
   const p95 = mejorClaro(ag.primerTexto.p95, se.primerTexto.p95);
+  // El primer audio puede ser la frase de espera: la respuesta de verdad tampoco puede empeorar.
+  const cb50 = noPeor(ag.cerebroConCortados.p50, se.cerebroConCortados.p50);
+  const cb95 = noPeor(ag.cerebroConCortados.p95, se.cerebroConCortados.p95);
   const tasaEj = (r: ResumenCamino, k: 'interrupciones' | 'asentimientos') => tasa(r.ejercicios[k].bien, r.ejercicios[k].hechas);
   const interrupciones = tasaEj(se, 'interrupciones') >= tasaEj(ag, 'interrupciones');
   const asentimientos = tasaEj(se, 'asentimientos') >= tasaEj(ag, 'asentimientos');
@@ -402,6 +462,8 @@ export function veredicto(ag: ResumenCamino, se: ResumenCamino, bloques: number)
   if (suficientes) {
     if (!p50) motivos.push(`primer audio p50 sin mejora clara (agente ${ag.primerTexto.p50} ms, speech-engine ${se.primerTexto.p50} ms)`);
     if (!p95) motivos.push(`primer audio p95 sin mejora clara (agente ${ag.primerTexto.p95} ms, speech-engine ${se.primerTexto.p95} ms)`);
+    if (!cb50) motivos.push(`respuesta de verdad p50 peor (agente ${ag.cerebroConCortados.p50} ms, speech-engine ${se.cerebroConCortados.p50} ms; sin la frase de espera, con los cortados)`);
+    if (!cb95) motivos.push(`respuesta de verdad p95 peor (agente ${ag.cerebroConCortados.p95} ms, speech-engine ${se.cerebroConCortados.p95} ms; sin la frase de espera, con los cortados)`);
     if (!interrupciones) motivos.push('atiende peor las interrupciones a propósito');
     if (!asentimientos) motivos.push('se corta con más asentimientos a propósito');
     for (const k of regresiones) motivos.push(`más ${k} que el agente (en proporción)`);
@@ -415,6 +477,8 @@ export function veredicto(ag: ResumenCamino, se: ResumenCamino, bloques: number)
     motivos,
     primerTextoP50Mejor: p50,
     primerTextoP95Mejor: p95,
+    cerebroP50NoPeor: cb50,
+    cerebroP95NoPeor: cb95,
     interrupcionesIgualOMas: interrupciones,
     asentimientosIgualOMas: asentimientos,
     regresiones,
@@ -438,6 +502,8 @@ export function combinarVeredictos(porRed: Record<string, Veredicto>): Veredicto
     motivos,
     primerTextoP50Mejor: todas((v) => v.primerTextoP50Mejor),
     primerTextoP95Mejor: todas((v) => v.primerTextoP95Mejor),
+    cerebroP50NoPeor: todas((v) => v.cerebroP50NoPeor),
+    cerebroP95NoPeor: todas((v) => v.cerebroP95NoPeor),
     interrupcionesIgualOMas: todas((v) => v.interrupcionesIgualOMas),
     asentimientosIgualOMas: todas((v) => v.asentimientosIgualOMas),
     regresiones: [...new Set(redes.flatMap(([, v]) => v.regresiones))],
@@ -488,6 +554,8 @@ export async function comparacionVoz(o: { desde?: number; hasta?: number } = {})
     redActual: red,
     minimoPorCamino: MIN_TURNOS,
     minimos: { turnosComparables: MIN_TURNOS, interrupciones: MIN_INTERRUPCIONES, asentimientos: MIN_ASENTIMIENTOS, bloques: MIN_BLOQUES },
+    /** Cómo tiene que estar repartida la muestra: llamadas distintas por camino y respuestas por bloque. */
+    minimosMuestra: { conversaciones: MIN_CONVERSACIONES, turnosPorBloque: MIN_TURNOS_BLOQUE },
     margen: { ms: MARGEN_MS, relativo: MARGEN_RELATIVO },
     consultivo: true,
     aviso: AVISO_CONSULTIVO,
