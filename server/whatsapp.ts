@@ -171,11 +171,41 @@ export function cupoDeEnvioWhatsapp(quien: string, ahora = Date.now()): string |
   return null;
 }
 
+/**
+ * ¿El puente separa cuentas? Uno de antes (de una sola cuenta) ignora X-Cuenta y le daría a cualquiera el WhatsApp de
+ * José: mientras no se actualice, solo la cuenta «legado» pasa. El nuevo lo dice en /salud (`maxCuentas`). Un «sí» se
+ * recuerda; un «no» se vuelve a preguntar a los 30 s.
+ */
+let multicuenta: { t: number; si: boolean } | null = null;
+async function puenteConCuentas(): Promise<boolean> {
+  if (multicuenta?.si) return true;
+  if (multicuenta && Date.now() - multicuenta.t < 30_000) return false;
+  let si = false;
+  try {
+    const r = await fetch(`${conf().url}/salud`, { signal: AbortSignal.timeout(5000) });
+    const j: any = await r.json().catch(() => null);
+    si = r.ok && typeof j?.maxCuentas === 'number';
+  } catch {
+    si = false;
+  }
+  multicuenta = { t: Date.now(), si };
+  return si;
+}
+
+const AVISO_PUENTE_VIEJO = 'El puente de WhatsApp todavía es de una sola cuenta: hay que actualizarlo antes de que cada cuenta agregue el suyo. No toqué nada.';
+
+/** La clave de la cuenta para un pedido al puente; lanza si no hay, o si el puente todavía no separa cuentas. */
+async function cuentaParaPedir(quien: string): Promise<string> {
+  const cuenta = claveCuentaWhatsapp(quien);
+  if (!cuenta) throw new ErrorPuente('No sé de qué cuenta es este WhatsApp (falta la sesión).', 403);
+  if (cuenta !== CUENTA_LEGADO && !(await puenteConCuentas())) throw new ErrorPuente(AVISO_PUENTE_VIEJO, 503, false, 'PUENTE_VIEJO');
+  return cuenta;
+}
+
 /** Un pedido al puente, siempre de UNA cuenta (la de `quien`): sin cuenta no sale nada. */
 async function pedir<T = any>(quien: string, ruta: string, init: RequestInit & { ms?: number } = {}): Promise<T> {
   const c = conf();
-  const cuenta = claveCuentaWhatsapp(quien);
-  if (!cuenta) throw new ErrorPuente('No sé de qué cuenta es este WhatsApp (falta la sesión).', 403);
+  const cuenta = await cuentaParaPedir(quien);
   let r: Response;
   try {
     r = await fetch(`${c.url}${ruta}`, {
@@ -771,6 +801,7 @@ export function _olvidarWhatsapp() {
   NOMBRES_CHATS.clear();
   VINCULADOS.clear();
   ENVIOS.clear();
+  multicuenta = null;
 }
 
 /** Los nombres de sus chats (por cuenta), un rato: para saber quién más se llama así sin pedirlos en cada turno. */
@@ -963,8 +994,12 @@ export function montarRutasWhatsapp(app: express.Express, d: Deps) {
   /** Pasa un archivo del puente tal cual (con su tipo), sin juntar en memoria nada sin tamaño o más grande que `max`. De SU cuenta. */
   async function pasarArchivo(res: express.Response, quien: string, ruta: string, o: { max: number; ms: number; grande: string; tipo: string }) {
     const c = conf();
-    const cuenta = claveCuentaWhatsapp(quien);
-    if (!cuenta) return res.status(403).json({ error: 'No sé de qué cuenta es este WhatsApp (falta la sesión).', honesto: true });
+    let cuenta: string;
+    try {
+      cuenta = await cuentaParaPedir(quien);
+    } catch (e) {
+      return responderError(res, e);
+    }
     try {
       const r = await fetch(`${c.url}${ruta}`, { headers: { authorization: `Bearer ${c.clave}`, 'x-cuenta': cuenta }, signal: AbortSignal.timeout(o.ms) });
       if (!r.ok) {

@@ -32,7 +32,7 @@ const ahora = Date.now();
  * /vincular, sin nada; una prueba las marca vinculadas y les pone chats. `max`: cuántas caben (CUPO_LLENO).
  */
 type OtraCuenta = { vinculado: boolean; chats: any[]; mensajes: any[]; enviados: Array<{ chat: string; texto: string }> };
-async function puenteFalso(vinculado = true, otros: { chats?: any[]; mensajes?: any[]; max?: number } = {}) {
+async function puenteFalso(vinculado = true, otros: { chats?: any[]; mensajes?: any[]; max?: number; viejo?: boolean } = {}) {
   const enviados: Array<{ chat: string; texto: string }> = [];
   const pedidos: string[] = [];
   /** Cada pedido con la cuenta que dijo (X-Cuenta). */
@@ -53,8 +53,12 @@ async function puenteFalso(vinculado = true, otros: { chats?: any[]; mensajes?: 
     req.on('end', () => {
       pedidos.push(`${req.method} ${req.url}`);
       const json = (code: number, j: unknown) => (res.writeHead(code, { 'content-type': 'application/json' }), res.end(JSON.stringify(j)));
-      if (req.headers.authorization !== `Bearer ${CLAVE}`) return json(401, { error: 'clave' });
       const u = new URL(req.url!, 'http://x');
+      // /salud sin clave; un puente de antes (`viejo`) no dice maxCuentas.
+      if (u.pathname === '/salud') return json(200, otros.viejo ? { ok: true } : { ok: true, cuentas: otras.size + 1, maxCuentas: otros.max ?? 25 });
+      if (req.headers.authorization !== `Bearer ${CLAVE}`) return json(401, { error: 'clave' });
+      // Un puente de antes ignora la cuenta: todo es el WhatsApp de José.
+      if (otros.viejo && u.pathname === '/chats') return json(200, { chats });
       // Como el puente: sin cuenta (o con una mal formada) no se toca nada.
       const cuenta = String(req.headers['x-cuenta'] || '');
       cuentas.push(cuenta);
@@ -689,7 +693,8 @@ const MEDARDO = 'm.ordonez@ordenglobal.org'; // de la junta (en el padrón, con 
 
 test('cada cuenta: puede agregar SU WhatsApp («Agregar mi WhatsApp»), va por su propia clave y nunca ve el de otro', async () => {
   const p = await puenteFalso();
-  await conPuente(p.url, JOSE, async () => {
+  try {
+    await conPuente(p.url, JOSE, async () => {
     const { como, cerrar } = await appDePrueba();
     try {
       // Antes de vincular: puede agregarlo (permitido), no está vinculado y el puente no tiene nada suyo.
@@ -755,8 +760,10 @@ test('cada cuenta: puede agregar SU WhatsApp («Agregar mi WhatsApp»), va por s
       }
     },
     '0'
-  );
-  await p.cerrar();
+    );
+  } finally {
+    await p.cerrar();
+  }
 });
 
 test('el puente lleno: CUPO_LLENO honesto, no se vincula nada', async () => {
@@ -773,8 +780,7 @@ test('el puente lleno: CUPO_LLENO honesto, no se vincula nada', async () => {
     } finally {
       await cerrar();
     }
-  });
-  await p.cerrar();
+  }).finally(() => p.cerrar());
 });
 
 test('la clave de cada cuenta en el puente: legado para los dueños; para los demás un HMAC estable, sin el correo, igual para los correos de una misma persona', async () => {
@@ -890,4 +896,28 @@ test('los avisos de iniciativa: quien nunca agregó su WhatsApp no tiene nada «
     // El de José (legado), como siempre: sin vincular es «desconectado».
     assert.equal((await contar({ vinculado: false, conectado: false, registrada: false })(JOSE)).observaciones.whatsapp.estado, 'disconnected');
   });
+});
+
+test('un puente de antes (una sola cuenta) no le da a nadie el WhatsApp de José: solo pasa «legado» hasta actualizarlo', async () => {
+  const p = await puenteFalso(true, { viejo: true });
+  await conPuente(p.url, JOSE, async () => {
+    const { como, cerrar } = await appDePrueba();
+    try {
+      const r = await como(ANA, '/api/whatsapp/chats', {}, true);
+      assert.equal(r.status, 503);
+      const j = await r.json();
+      assert.equal(j.code, 'PUENTE_VIEJO');
+      assert.match(j.error, /todavía es de una sola cuenta.*No toqué nada/);
+      assert.equal((await como(ANA, '/api/whatsapp/foto?chat=50499990000@s.whatsapp.net', {}, true)).status, 503, 'ni las fotos');
+      assert.equal((await como(ANA, '/api/whatsapp/vincular', { method: 'POST', body: '{}' }, true)).status, 503, 'ni vincular');
+      assert.ok(!p.cuentas.some((k) => k !== 'legado'), 'con otra cuenta no llegó ni un pedido al puente viejo');
+      assert.match(await correrWhatsapp(ANA, 'revisar'), /falló \(El puente de WhatsApp todavía es de una sola cuenta/);
+      assert.equal(await W13.whatsappOfrecido(ANA), false);
+      // José sigue igual con el puente de antes.
+      const cj = await (await como(JOSE, '/api/whatsapp/chats')).json();
+      assert.deepEqual(cj.chats.map((c: any) => c.nombre), ['Beto', 'Familia']);
+    } finally {
+      await cerrar();
+    }
+  }).finally(() => p.cerrar());
 });
