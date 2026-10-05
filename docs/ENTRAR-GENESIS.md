@@ -6,19 +6,21 @@ no, entra como **miembro** de la comunidad (nunca como junta) y se le abre su cu
 primera vez. Si tiene la wallet pero no Genesis ID, la wallet la lleva a sacarlo y **al terminar la
 devuelve sola a AU-RA** con la entrada completa.
 
-AU-RA nunca ve la contraseña de la wallet, la frase semilla ni los fondos: recibe un **pase** de
-Genesis ID que la persona autoriza en su wallet.
+El servidor de AU-RA nunca ve la contraseña de la wallet, la frase semilla ni los fondos: recibe un
+**pase** de Genesis ID que la persona autoriza en su wallet. Desde el 5-oct también se entra **con el
+correo y la contraseña de Veta Wallet** dentro de la app (caso e: el teléfono habla directo con la wallet)
+y, **sin Genesis ID**, como miembro con la sola cuenta de la wallet (caso f).
 
 ## Las piezas y dónde vive cada una
 
 | Pieza | Repositorio y archivo | Despliegue |
 |---|---|---|
-| App AU-RA (botón, reto, vuelta, pantallas) | ULTRON-APP · `mobile/src/lib/genesis.ts`, `mobile/src/app/pantallas/{Entrar,CrearGenesis,Intro}.tsx` | APK / OTA de AU-RA FP |
-| Servidor AU-RA (canje del pase, cuenta de miembro) | ULTRON-APP · `server/genesis.ts`, `server/cuentas.ts`, `server.ts` | aura-fp.onrender.com |
+| App AU-RA (botón, reto, vuelta, pantallas, correo y contraseña de la wallet) | ULTRON-APP · `mobile/src/lib/{genesis,entrarConClave}.ts`, `mobile/src/app/pantallas/{Entrar,CrearGenesis,Intro}.tsx` | APK / OTA de AU-RA FP |
+| Servidor AU-RA (canje del pase, cuenta de miembro, entrada sin Genesis) | ULTRON-APP · `server/genesis.ts`, `server/veta-entrar.ts`, `server/cuentas.ts`, `server.ts` | aura-fp.onrender.com |
 | Vuelta por https (App Link) | ULTRON-APP · `server/enlaces-app.ts` (`/sso`, `/.well-known/assetlinks.json`) | aura-fp.onrender.com |
 | App Orden Global (consentimiento, alta de Genesis ID) | express-js-on-vercel · `orden-global-app/src/screens/PaseAura.js`, `src/auraSso.js`, `src/screens/Onboard.js` (Kyc) | APK `com.ordenglobal.app` |
 | Web de Veta Wallet (`#sso-aura`) | express-js-on-vercel · `apps-web/veta-wallet/app.js` | app.vetawallet.com |
-| Backend de la wallet (`POST /genesis/sso/token`) | express-js-on-vercel · `infra/veta-wallet-backend/lib/genesisPuente.js` (copia vieja: veta-wallet-backend- · `lib/genesisPuente.js`) | Heroku `vetawallet-…` |
+| Backend de la wallet (`POST /auth/login`, `POST /genesis/sso/token`, `GET /users/userDate`) | express-js-on-vercel · `infra/veta-wallet-backend/lib/genesisPuente.js` (copia vieja: veta-wallet-backend- · `lib/genesisPuente.js`) | Heroku `vetawallet-…` |
 | Genesis ID (`/api/v1/sso/token`, `/api/v1/sso/verificar`) | express-js-on-vercel · `genesis-id/` | genesis-id.onrender.com |
 
 > El repo `Ordenglobalfinale` (`apps/veta-wallet-mobile`) **no** es esta wallet: es otra app
@@ -124,7 +126,100 @@ para no hacer esperar: si tardan, entra igual y terminan en segundo plano; si fa
 José la puede suspender poniendo `estado = 'suspendida'` en `cuentas.cuenta`: desde ahí la
 entrada con Genesis le contesta `SUSPENDIDA`.
 
-### (e) Pase vencido, gastado o reto malo
+### (e) Con su correo y su contraseña de Veta Wallet, sin la app
+
+José, 5-oct, después de probarlo con otra gente: «el log in con veta wallet no deja a otros usuarios,
+necesito puedan poner su contraseña y entrar bien como en vetawallet.com». Quien no tenía la app Orden
+Global se quedaba entre pestañas. Ahora lo primero de «Entrar» es **«Entrar con tu cuenta de Veta
+Wallet»**: correo y contraseña (con el ojito, autocompletar `email`/`password`, «ir» en el teclado),
+«¿Olvidaste tu contraseña?» y «¿No tienes cuenta? Créala en Veta Wallet». «Abrir mi wallet» (casos a–c)
+queda debajo como alternativa.
+
+Todo lo hace **el teléfono contra el backend de la wallet** (`mobile/src/lib/entrarConClave.ts`, lógica
+pura; `entrarConVetaWallet` en `genesis.ts`), igual que la web de la wallet en `#sso-aura`:
+
+1. `nuevoReto()` de siempre (verificador + huella);
+2. `POST {WALLET_API}/auth/login {email, password}` → `{token, refreshToken, user}`;
+3. `POST {WALLET_API}/genesis/sso/token {aud:['aura','pulse2chat'], reto}` con `Bearer <token>` →
+   `{token: <pase>}`. Si contesta `CUENTA_NO_VINCULADA`, se ata (`POST /genesis/vincular`) y se pide UNA vez
+   más, como la web;
+4. el pase sigue por **el mismo canje** que la vuelta (`canjearPase` → `POST /api/genesis/entrar {pase,
+   verificador}`, chat, primera vez o mesa).
+
+- **La contraseña** va del teléfono a la wallet y a nadie más: nunca al servidor de AU-RA, nunca a un
+  registro ni a SecureStore; la pantalla la borra de su estado al terminar (también si falló).
+- **El token de la wallet** se usa y se suelta. **No** se llama a `/auth/logout`: sube la versión de sesión
+  y cerraría TODAS las sesiones de la persona en la wallet. Vence solo (40 min).
+- `WALLET_API`: `extra.walletApi` si existe; si no, `https://vetawallet-1a2e38ac52b1.herokuapp.com`. No se
+  añadió a `app.config.js` a propósito: `extra` entra en la huella (`runtimeVersion: fingerprint`) y la OTA
+  dejaría de llegar a las APK instaladas.
+- Tope de 15 s por llamada. Mensajes: 401/400 → «Correo o contraseña incorrectos»; 429 (la wallet: 20 cada
+  15 min por IP, contando juntos login y recuperación) → «Demasiados intentos; espera 15 minutos»;
+  `CORREO_NO_VERIFICADO` → «Confirma tu correo en Veta Wallet»; sin red / tope → «No pude comunicarme con
+  Veta Wallet» / «tardó demasiado». Los códigos del puente se traducen con la misma tabla que la web de la
+  wallet (`codigoAura`) y caen en los tratos de siempre (`errorDeWallet`): sin Genesis ID → «Crea tu Genesis
+  ID», en revisión → su tarjeta… cuando el caso (f) está cerrado; con (f) abierto, entra igual.
+- «¿Olvidaste tu contraseña?»: con el correo escrito, `POST {WALLET_API}/auth/recuperarPassword {email}` (lo
+  mismo que la web; contesta igual exista o no la cuenta) y la tarjeta «Revisa tu correo». Sin correo, o si
+  la wallet no contesta, abre `https://app.vetawallet.com` (sin sesión, su puerta es el login con «¿Olvidaste
+  tu contraseña?»). La web de la wallet no tiene una dirección propia para la recuperación (`#recuperar` o
+  similar): si se le añade, el enlace puede ir directo.
+- «¿No tienes cuenta?»: la web de la wallet con el pedido de AU-RA (`#sso-aura`, caso c): ahí se crea la
+  cuenta y vuelve sola.
+- Si la persona es **administradora** de la wallet, entrar así reemplaza su sesión de administración en la
+  wallet (`isAdmin.js` guarda UNA sesión por administrador; pasa igual al entrar en la web).
+
+**La web de AU-RA (navegador) NO puede hacer esto todavía**: el backend de la wallet solo deja llamarse
+desde `www.vetawallet.com`, `vetawallet.com` y `app.vetawallet.com` (`allowedOrigins` en
+`infra/veta-wallet-backend/app.js`, ~línea 78), y `https://aura-fp.onrender.com` no está. El teléfono no
+tiene ese problema (una app no manda `Origin`). La web sigue con la vuelta por la wallet (casos a–c) hasta
+que se añada ese origen en el backend de la wallet (otro repositorio, otro despliegue).
+
+### (f) Solo con Veta Wallet, sin Genesis ID
+
+José, 5-oct: «Que entren solo con Veta Wallet, sin Genesis ID». Después del login del caso (e), el teléfono
+**intenta primero el pase de Genesis** (si sale, todo como siempre: conserva los niveles del padrón). Si no
+sale porque no tiene Genesis ID (`GID_SIN_IDENTIDAD`), lo tiene en revisión (`GID_PENDIENTE`), no confirmó su
+correo (`CORREO_NO_VERIFICADO`), la cuenta sigue sin atar después de atarla, o el pase no está disponible
+(404, 5xx, `GENESIS_RED`, sin red), **no se detiene**: manda el token de acceso de la wallet UNA vez a
+`POST /api/veta/entrar {token}` (con las cabeceras de aparato de siempre, por `api()`). Nunca la contraseña.
+Una clave mala, el freno de la wallet, una identidad rechazada o bloqueada (`GID_NO_DISPONIBLE`) o de otra
+persona (`GID_AJENO`, `CUENTA_NO_ATADA`) **no** pasan por aquí.
+
+El servidor (`server/veta-entrar.ts`, montado en `server.ts` junto a Genesis):
+
+1. `GET {AURA_WALLET_API}/users/userDate` con `Authorization: Bearer <token>` (10 s). La wallet comprueba la
+   firma, que la cuenta exista y no esté borrada, la versión de sesión (revocación), que la dirección del
+   token sea la de la cuenta y que Genesis no la tenga bloqueada. Solo un 200 con correo cuenta;
+2. lee la carga del JWT sin comprobar la firma (la acaba de comprobar la wallet): `address` y `verify`;
+3. **suelta el token**: no se guarda, no se registra (ni recortado), no se reenvía, no hay `/auth/logout`;
+4. abre una sesión de **miembro** como la de Genesis abierto (comunidad, cerebro público, sin taller ni
+   Telegram de la organización), con rol **«Miembro · Veta Wallet»** e identidad **`veta:<dirección>`** —la
+   dirección EVM en minúsculas—, **nunca el correo**: el correo de una wallet puede estar sin confirmar, y con
+   él cualquiera se quedaría con la cuenta de AU-RA de otra persona. Por eso **nunca** da nivel de junta ni
+   del padrón aunque el correo coincida (la junta entra con «correo y clave» o con Genesis ID). La cuenta de
+   miembro (`cuentas.cuenta`, `correo = veta:…`, `aprobada_por = veta:…`) y el perfil (solo el apodo: el
+   nombre de la wallet no está verificado y no sale como «Genesis compartió contigo») se abren con el mismo
+   tope de 1,5 s;
+5. topes: 10 cada 15 min por conexión y 10 cada 15 min por dirección (contado después de que la wallet
+   confirme el token: antes, cualquiera podría agotarle el cupo a otra dirección con un token inventado).
+   Suspendida (`estado = 'suspendida'` en `cuentas.cuenta` para `veta:…`) → 403 `SUSPENDIDA`;
+   `AURA_VETA_ABIERTO=0` → 403 `VETA_CERRADO` (y la app dice lo de Genesis, como antes); la wallet con 401 →
+   401 `TOKEN_INVALIDO`; con 403 → `BLOQUEADA`; caída → 503 `WALLET_CAIDA`.
+
+El chat PULSE2CHAT **no** se conecta por aquí (su alta pide un pase de Genesis ID): la app entra igual, sin
+decir nada roto, y la pantalla de chats ofrece conectarlo después. Lo que hoy se ata a un correo (la
+iniciativa de «personas recientes», borradores de correo/WhatsApp del dueño) no aplica a estas sesiones.
+
+**Nota de seguridad.** AU-RA ve el token de acceso de la wallet durante UNA llamada y lo descarta. Con ese
+token, durante sus 40 minutos, se puede operar la wallet de la persona; por eso no se guarda ni se registra.
+El arreglo limpio es un **pase de la wallet con destino AU-RA**: un endpoint pequeño en el backend de la
+wallet que firme `{address, email, aud:'aura', reto, exp}` con un secreto compartido con AU-RA (o con su
+clave privada), para que AU-RA nunca vea un token que abre la wallet. No se hizo porque desplegar el backend
+de la wallet necesita a José: la app de Heroku `vetawallet` corre un commit que no está en
+`express-js-on-vercel`, así que no está claro cuál es la fuente de verdad.
+
+### (g) Pase vencido, gastado o reto malo
 
 Nada de esto cambió con la puerta abierta:
 
@@ -151,6 +246,8 @@ En ninguno de estos casos se abre sesión ni cuenta de miembro.
 | `CUENTAS_DB_URL` (o la cognitiva / Electrum) | aura-fp | Base donde se abre la cuenta de miembro. Sin base, el miembro entra igual (sin fila). |
 | `AURA_WALLET_WEB` | aura-fp | Web de la wallet (por omisión `https://app.vetawallet.com`). |
 | `ANDROID_CERT_SHA256` | aura-fp | Huella del certificado de la APK para el App Link de la vuelta https. |
+| `AURA_WALLET_API` | aura-fp | Backend de Veta Wallet al que se le pregunta si un token vale (`/users/userDate`, caso f). Por omisión `https://vetawallet-1a2e38ac52b1.herokuapp.com`. |
+| `AURA_VETA_ABIERTO` | aura-fp | Entrada solo con Veta Wallet, sin Genesis ID (caso f). **Abierta por omisión**; `0` / `false` / `no` la cierra. |
 | `GENESIS_API_KEY` | backend de la wallet | Clave de la app de la wallet en Genesis. |
 
 ## Pruebas
@@ -159,7 +256,13 @@ En ninguno de estos casos se abre sesión ni cuenta de miembro.
   cuenta y apodo, padrón, apartado del padrón, suspendida, `AURA_GENESIS_ABIERTO=0`, pase gastado /
   de otra app / sin reto / sin verificar, topes) y `tests/cuentas.test.ts` (la cuenta de miembro
   contra Postgres de verdad; se salta sin base).
+- Servidor, caso f: `npx tsx --test tests/veta-entrar.test.ts` (token auténtico → miembro `veta:<dirección>`;
+  401 de la wallet; correo del padrón por aquí sigue miembro; el token no sale en la consola ni en lo
+  guardado; `AURA_VETA_ABIERTO=0`; suspendida, bloqueada, wallet caída; topes por conexión y por dirección).
 - App: `mobile/pruebas/chat/todas.sh` — `vuelta.cjs` (casos b y c, vuelta tardía, arranque en
-  frío con un pedido de 25 minutos) y `sso.cjs`.
+  frío con un pedido de 25 minutos), `sso.cjs` y `clave.cjs` (casos e y f por el `genesis.ts` real: login,
+  pase, canje de siempre; sin Genesis ID el token va una vez a `/api/veta/entrar`; la contraseña nunca llega
+  a AU-RA). Y `npx tsx src/lib/pruebas/entrarConClave.prueba.mjs` (la lógica pura con un fetch de mentira:
+  401, 429, sin Genesis, correo sin confirmar, sin atar, red, tope de 15 s, recuperación).
 - Wallet: `orden-global-app/pruebas/probar-aura-sso.cjs` y
   `apps-web/veta-wallet/pruebas/sso-aura-*.mjs` (express-js-on-vercel).

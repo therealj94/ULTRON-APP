@@ -89,7 +89,9 @@ jobs:
         run: npm run typecheck
 
       # Los arneses del teléfono: identidad y aislamiento, costuras entre frentes, chat, llamadas,
-      # la compañera, el avatar, la sincronía de la boca, la mesa y el oído (la secuencia de José). El visor de la
+      # la compañera, el avatar, la sincronía de la boca, la mesa, la entrada con la cuenta de Veta Wallet
+      # (correo y contraseña directo a la wallet; sin Genesis ID, el token una vez a AU-RA; la integración
+      # con genesis.ts va en pruebas/chat/clave.cjs) y el oído (la secuencia de José). El visor de la
       # computadora va MONTADO (pruebas/visor: el lote de teclado por los manejadores reales del componente).
       - name: Arneses de la app
         working-directory: mobile
@@ -110,4 +112,5 @@ jobs:
           npx tsx src/recorrido/pruebas/recorrido.prueba.mjs
           npx tsx src/whatsapp/pruebas/whatsapp.prueba.mjs
           npx tsx pruebas/mesa/mesa.prueba.mjs
+          npx tsx src/lib/pruebas/entrarConClave.prueba.mjs
           sh pruebas/oido/todas.sh
