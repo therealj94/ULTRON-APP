@@ -174,3 +174,37 @@ export function tocaReconocer(o: { ahora: number; ultima: number; nueva: boolean
   const cada = o.porConfirmar ? RECONOCER.confirmarMs : o.vistaAbierta || o.sinIdentificar ? RECONOCER.atentoMs : RECONOCER.calmaMs;
   return o.ahora - o.ultima >= cada;
 }
+
+/* ── sin ML Kit: el respaldo del servidor (revisión del 5-oct, M3) ───────────────────────────── */
+
+/**
+ * Sin ML Kit (no está, o falló 3 veces) la cámara manda una foto al servidor cada 12 s (30 s dormida) y no
+ * hay cajas ni pistas que votar. Antes, ahí no se reconocía a nadie de forma continua (solo con «¿quién
+ * soy?»). Ahora esa MISMA foto se ofrece también al motor de caras (que busca las caras él mismo), como
+ * mucho cada `cadaMs`, y lo que sale vale para la escena del turno `frescoMs` (2,5× el ritmo del respaldo).
+ * Con ML Kit esto no corre: cada foto va por UNA sola vía (onCaras con ML Kit, onFotoRespaldo sin él).
+ */
+export const RESPALDO = { cadaMs: 10_000, frescoMs: 30_000 };
+
+export function tocaReconocerRespaldo(o: { ahora: number; ultima: number; ocupado: boolean; reconoce: boolean }): boolean {
+  return o.reconoce && !o.ocupado && o.ahora - o.ultima >= RESPALDO.cadaMs;
+}
+
+export type PresenteRespaldo = Pick<Reconocida, 'id' | 'nombre' | 'relacion' | 'parentesco'>;
+
+/** Lo que vio el respaldo (sin votos: una toma; sin pistas: no se dibuja, solo va a la escena). */
+export class VistoRespaldo {
+  private v: { r: PresenteRespaldo[]; desconocidas: number; t: number } | null = null;
+  poner(r: PresenteRespaldo[], desconocidas: number, t: number) {
+    this.v = { r, desconocidas, t };
+  }
+  presentes(ts: number, frescoMs = RESPALDO.frescoMs): { r: PresenteRespaldo[]; desconocidas: number } {
+    if (!this.v || ts - this.v.t > frescoMs) return { r: [], desconocidas: 0 };
+    return { r: this.v.r, desconocidas: this.v.desconocidas };
+  }
+  olvidar(id?: string) {
+    if (!this.v) return;
+    if (!id) this.v = null;
+    else this.v = { ...this.v, r: this.v.r.filter((x) => x.id !== id) };
+  }
+}

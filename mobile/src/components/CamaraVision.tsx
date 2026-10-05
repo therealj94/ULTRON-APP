@@ -27,7 +27,9 @@
  * vaya al servidor.
  *
  * Motor 'servidor' (respaldo): si ML Kit no está o falla 3 veces seguidas, se vuelve al de antes
- * —una foto cada 12 s (30 s dormida) al servidor—, pero ya con la foto chica.
+ * —una foto cada 12 s (30 s dormida) al servidor—, pero ya con la foto chica. Esa misma foto también va
+ * al motor de caras (`onFotoRespaldo`, sin cajas: el motor las busca) para seguir reconociendo sin ML Kit;
+ * con ML Kit la foto va por `onCaras` y nunca por las dos vías.
  *
  * Antes (hasta 4.3) la cámara tomaba la foto a la resolución completa del sensor cada 12 s y la
  * mandaba entera en base64: el teléfono se calentaba, gastaba datos y el servidor pagaba por
@@ -141,8 +143,18 @@ export type CamaraVisionProps = {
   onCerrarVista?: () => void;
   /** Las caras seguidas entre fotos con su nombre votado (useCaras): se actualiza aquí, foto a foto. */
   seguidor?: Seguidor;
-  /** Reconocer caras con la foto del bucle (useCaras): si la quiere y qué hacer con ella. */
-  caras?: { reconoce: boolean; quiereFoto: (ts: number) => boolean; recibirFoto: (f: FotoCaras) => void };
+  /**
+   * Reconocer caras con la foto del bucle (useCaras): si la quiere y qué hacer con ella. Con ML Kit, con sus
+   * cajas (`quiereFoto`/`recibirFoto`); sin ML Kit (respaldo del servidor), la foto entera
+   * (`quiereFotoRespaldo`/`recibirFotoRespaldo`). Cada foto va por UNA sola vía.
+   */
+  caras?: {
+    reconoce: boolean;
+    quiereFoto: (ts: number) => boolean;
+    recibirFoto: (f: FotoCaras) => void;
+    quiereFotoRespaldo?: (ts: number) => boolean;
+    recibirFotoRespaldo?: (f: { b64: string; ts: number }) => void;
+  };
   /** Cambio de motor real en uso. */
   onMotor?: (m: MotorVision) => void;
 };
@@ -179,10 +191,15 @@ type MotorProps = {
   onCaras: (caras: CaraMlkit[], w: number, h: number) => { personas: number; pedir?: (b64: string) => void };
   /** ML Kit no está o dejó de responder: a partir de aquí solo el servidor. */
   onSinDetector: () => void;
+  /**
+   * Sin ML Kit (respaldo del servidor): si el motor de caras quiere ESTA foto entera (sin cajas), a quién
+   * dársela. Con ML Kit no se llama (las caras van por `onCaras`).
+   */
+  onFotoRespaldo: (ts: number) => ((b64: string) => void) | undefined;
   onVista: (v: VistaCamara) => void;
 };
 
-function CamaraMotor({ activa, dormido, observar, lado, vista, capa, grabRef, onCaras, onSinDetector, onVista }: MotorProps) {
+function CamaraMotor({ activa, dormido, observar, lado, vista, capa, grabRef, onCaras, onSinDetector, onFotoRespaldo, onVista }: MotorProps) {
   const ref = useRef<CameraView>(null);
   const listaRef = useRef(false);
   /** El tamaño de foto de CADA cámara (la frontal y la trasera ofrecen tamaños distintos). '' = el de fábrica. */
@@ -203,8 +220,8 @@ function CamaraMotor({ activa, dormido, observar, lado, vista, capa, grabRef, on
   dormidoRef.current = dormido;
   const observarRef = useRef(observar);
   observarRef.current = observar;
-  const cb = useRef({ onCaras, onSinDetector, onVista });
-  cb.current = { onCaras, onSinDetector, onVista };
+  const cb = useRef({ onCaras, onSinDetector, onFotoRespaldo, onVista });
+  cb.current = { onCaras, onSinDetector, onFotoRespaldo, onVista };
 
   const tomar = useCallback(async (opciones: { base64: boolean; quality: number }): Promise<(Foto & { base64?: string }) | null> => {
     if (!ref.current || !listaRef.current) return null;
@@ -328,7 +345,7 @@ function CamaraMotor({ activa, dormido, observar, lado, vista, capa, grabRef, on
                 cb.current.onSinDetector();
               }
             }
-          }
+          } else pedir = cb.current.onFotoRespaldo(Date.now());
           const dormida = dormidoRef.current;
           const cadaServidor = intervaloServidor({ mlkit: mlOk.current, dormida, conPersona, necesitaEscena: observarRef.current, sinCambios });
           const subir = !subiendo && Date.now() - ultimoServidor >= cadaServidor;
@@ -524,6 +541,12 @@ export function CamaraVision({
     conDetector.current = false;
   }, []);
 
+  // Sin ML Kit: la foto del respaldo también va al motor de caras (si la quiere), para seguir reconociendo.
+  const onFotoRespaldo = useCallback((ts: number) => {
+    if (!cb.current.caras?.quiereFotoRespaldo?.(ts)) return undefined;
+    return (b64: string) => cb.current.caras?.recibirFotoRespaldo?.({ b64, ts });
+  }, []);
+
   // La vista del nodo de visión: objetos y comentarios siempre; la presencia solo si no hay ML Kit
   // (con ML Kit, quién está delante lo sabe el teléfono, y mejor).
   const onVistaMotor = useCallback(
@@ -617,6 +640,7 @@ export function CamaraVision({
       grabRef={grabRef}
       onCaras={onCaras}
       onSinDetector={onSinDetector}
+      onFotoRespaldo={onFotoRespaldo}
       onVista={onVistaMotor}
     />
   );
