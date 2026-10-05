@@ -55,4 +55,17 @@ del nodo se prueban otra vez tras desplegarlo (sección 4).
 
 ## 4. Después del despliegue de esta ronda
 
-Se anota aquí al desplegar: SHA en producción, hash del nodo y la repetición de E1 con la revisión de archivos.
+**Nodo desplegado** (5-oct, 15:58 UTC, por SSM con md5, compilación, salud y vuelta atrás automática): `hash
+1afc8ac6db633836` = sha256 (16 hex) de `scripts/nodo-computadora/agente.py` de esta rama; validador 12, mismas
+capacidades. Respaldo del anterior en el nodo: `/opt/computadora/agente.py.antes-20261005-155849`.
+
+| # | Prueba | Versión | Resultado | Estado |
+|---|---|---|---|---|
+| E1 (repetida) | «Crea tres documentos…» | nodo `1afc8ac6` | Otra vez **no lo logró** (`sin_pasos`, 31 pasos, 277 s), pero ahora el nodo **dice cuáles faltan**: `informe.docx`, `presupuesto.xlsx` y `carta.pdf`, los tres con `existe: false` y `archivos_error: null`. El servidor lo dirá como «Falta: …» cuando se despliegue esta rama | probado: honesto y con detalle; la capacidad del modelo local sigue siendo el límite |
+
+La capacidad de la computadora para hacer documentos de oficina con el modelo local (Holo 3.1 9B) es baja: en dos
+intentos reales no guardó ninguno de los tres (abre LibreOffice, se enreda en el diálogo «Guardar como»). Eso no se
+arregla con código del servidor; las opciones son el motor `claude` del nodo (necesita `ANTHROPIC_API_KEY` en el nodo
+y la decisión de José por el costo) o darle al agente una herramienta que cree archivos de oficina directamente.
+
+El SHA del servidor en producción tras fusionar se anota en el informe de entrega.
