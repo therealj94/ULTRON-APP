@@ -33,7 +33,7 @@ export type DepsContadores<C extends CuentaMinima = CuentaMinima> = {
   };
   whatsapp?: {
     /** ¿Puede tener su WhatsApp aquí? (whatsappPermitido). Si no, ni se mira. */
-    permitido: (dueno: string) => boolean;
+    permitido: (dueno: string) => boolean | Promise<boolean>;
     /** ¿Hay puente configurado? */
     disponible: () => boolean;
     /** El de ESA cuenta. `registrada: false`: nunca empezó a vincular (no es «se desconectó»). */
@@ -97,7 +97,7 @@ export function crearContadores<C extends CuentaMinima = CuentaMinima>(d: DepsCo
   async function whatsapp(dueno: string, visto: number): Promise<Observacion> {
     const w = d.whatsapp;
     // Solo el WhatsApp de su dueño: a nadie más se le mira (ni como respaldo).
-    if (!w || !w.permitido(dueno) || !w.disponible()) return { estado: 'not_configured', visto };
+    if (!w || !w.disponible() || !(await w.permitido(dueno))) return { estado: 'not_configured', visto };
     try {
       const e = await conTope(w.estado(dueno), tope);
       // Quien nunca agregó su WhatsApp no tiene nada «desconectado» que avisarle.
