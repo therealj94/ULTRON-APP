@@ -45,8 +45,7 @@ import { Conversacion } from './13-trabajo/Conversacion';
 import { Compositor } from './13-trabajo/Compositor';
 import { Inicio, EJEMPLOS_INICIO } from './13-trabajo/Inicio';
 import { IndicadorTrabajos, PanelTrabajos, useTrabajosWeb } from './13-trabajo/Trabajos';
-import { VisorEscritorio, abrirEscritorio, useVisorEscritorioAbierto } from './13-trabajo/VisorEscritorio';
-import { olvidarVisor } from '../mobile/src/app/visor';
+import { VisorEscritorio, abrirEscritorio, olvidarVisor, useVisorEscritorioAbierto } from './13-trabajo/VisorEscritorio';
 import { refsDeTurno } from '../mobile/src/lib/trabajos';
 
 /** Conversar: la sala entera. Trabajar: avatar chico y la conversación con sus resultados. */
@@ -951,9 +950,46 @@ export default function App() {
   );
 
   /**
-   * La puerta de todo lo que pide la persona (voz, Escribir, ejemplos). Queda en la conversación; si
-   * sale del sistema (mandar, avisar urgente, llamar) no se despacha: se propone en una tarjeta y
-   * espera Confirmar. Lo demás sigue por `comando`, igual que siempre.
+   * LA PUERTA (revisión 9): si lo pedido sale del sistema (mandar, avisar urgente, llamar) no se despacha: se propone
+   * en una tarjeta y espera Confirmar. El taller del servidor ejecuta lo que reconoce, así que esta tarjeta es el freno.
+   * Devuelve true si propuso (y entonces no debe salir nada más).
+   */
+  const proponerSiSale = useCallback(
+    (cmd: string): boolean => {
+      const accion = accionSensibleDe(cmd);
+      if (!accion) return false;
+      ultimaInteraccion.current = Date.now();
+      conv.proponer(accion, cmd);
+      // La tarjeta vive en la superficie de trabajo: se pasa ahí para que se vea qué se autoriza.
+      setModoMesa('trabajar');
+      decir('Antes de hacerlo, revisá la tarjeta: a quién va, qué dice, y confirmá.', { emocion: 'neutral' });
+      return true;
+    },
+    [conv.proponer, decir]
+  );
+
+  /**
+   * El ÚNICO camino de un pedido de la persona hacia `comando` (y de ahí al cerebro): pasa SIEMPRE por la puerta.
+   * Ningún camino la salta: ni el del correo (tenga o no cuentas), ni «Retomar» tras conectar uno, ni lo pegado.
+   * Nadie más llama a `comando`; lo confirmado en la tarjeta va por `confirmarAccion`.
+   */
+  const despachar = useCallback(
+    (cmd: string, hablado: boolean) => {
+      if (proponerSiSale(cmd)) return;
+      habladoRef.current = hablado;
+      enComando.current = true;
+      try {
+        comando(cmd);
+      } finally {
+        enComando.current = false;
+      }
+    },
+    [comando, proponerSiSale]
+  );
+
+  /**
+   * Todo lo que pide la persona (voz, Escribir, ejemplos, «Retomar», lo pegado). Queda en la conversación; lo que sale
+   * del sistema se propone en su tarjeta ANTES de cualquier otra cosa; lo demás sigue por `despachar`.
    */
   const pedir = useCallback(
     (raw: string, hablado = false, o: { sinChequeoCorreo?: boolean; retomado?: boolean } = {}) => {
@@ -962,9 +998,12 @@ export default function App() {
       habladoRef.current = hablado;
       // Retomar el pedido que esperaba un correo: ya está en la conversación, no se repite la burbuja.
       if (!o.retomado) conv.persona(cmd);
+      // Primero la puerta: «revisa mi correo y mandame un resumen por Telegram» es un envío aunque también lea el
+      // correo; no espera a saber cuántas cuentas hay ni pasa por el aviso sin correo.
+      if (proponerSiSale(cmd)) return;
       // P4: pedir leer el correo sin ninguna cuenta no termina en «conéctalo en Ajustes» sin salida: si el servidor
       // CONFIRMA que no hay cuentas, se ofrece conectar (y retomar esto mismo), pegar el contenido u omitir. Si no se
-      // pudo saber (503, red), el pedido sigue normal.
+      // pudo saber (503, red), el pedido sigue normal (por la puerta, como todo).
       if (!o.sinChequeoCorreo && usuario.authenticated && quiereLeerCorreo(cmd)) {
         const vigente = deEstaCuenta();
         void cuantasCuentasCorreo().then((n) => {
@@ -974,33 +1013,13 @@ export default function App() {
             setSinCorreo(cmd);
             return;
           }
-          habladoRef.current = hablado;
-          enComando.current = true;
-          try {
-            comando(cmd);
-          } finally {
-            enComando.current = false;
-          }
+          despachar(cmd, hablado);
         });
         return;
       }
-      const accion = accionSensibleDe(cmd);
-      if (accion) {
-        ultimaInteraccion.current = Date.now();
-        conv.proponer(accion, cmd);
-        // La tarjeta vive en la superficie de trabajo: se pasa ahí para que se vea qué se autoriza.
-        setModoMesa('trabajar');
-        decir('Antes de hacerlo, revisá la tarjeta: a quién va, qué dice, y confirmá.', { emocion: 'neutral' });
-        return;
-      }
-      enComando.current = true;
-      try {
-        comando(cmd);
-      } finally {
-        enComando.current = false;
-      }
+      despachar(cmd, hablado);
     },
-    [comando, decir, conv.persona, conv.proponer, usuario.authenticated]
+    [despachar, proponerSiSale, conv.persona, usuario.authenticated]
   );
 
   const confirmarAccion = useCallback(
@@ -1668,7 +1687,10 @@ export default function App() {
           }}
           onAbrirEscritorio={(t) => {
             // El visor se abre solo cuando la persona lo pide; cerrarlo vuelve aquí sin tocar la tarea.
+            // Si la cuenta cambió mientras se buscaba la tarea, nada de la anterior se abre ni se dice en esta sesión.
+            const vigente = deEstaCuenta();
             void abrirEscritorio(t.environment.id).then((aviso) => {
+              if (!vigente()) return;
               if (aviso) decir(aviso, { emocion: 'neutral' });
               else setPanelTareas(false);
             });

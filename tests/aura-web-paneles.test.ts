@@ -917,6 +917,175 @@ test(
   }
 );
 
+/**
+ * LA PUERTA NO SE SALTA POR EL CORREO (revisión 9, GRAVE-1). Antes, si el pedido mencionaba leer el correo y había
+ * alguna cuenta, iba directo al cerebro sin pasar por la tarjeta «Confirmar»; el taller del servidor ejecuta lo que
+ * reconoce, así que «revisa mi correo y mándame un resumen por Telegram» salía sin confirmar. Sin cuentas, en vez de la
+ * tarjeta salía el aviso «sin correo», y «Retomar» o «Pegar» lo mandaban también sin ella.
+ */
+const FRASES_QUE_SALEN = [
+  'Revisa mi correo y mándame un resumen por Telegram',
+  'Avísame urgente si hay correo nuevo de Ana',
+  'Llámame si hay correos nuevos',
+  'Lee mi correo y mandame lo importante por whatsapp',
+];
+for (const conCuentas of [true, false]) {
+  test(
+    `en el navegador: leer el correo + mandar/avisar/llamar → la tarjeta Confirmar primero y nada al cerebro (${conCuentas ? 'con' : 'sin'} cuentas de correo; revisión 9)`,
+    { skip: saltoNavegador, timeout: 180000 },
+    async (t) => {
+      const { chromium } = await import('playwright');
+      const s = servidorP4({ cuentas: conCuentas ? [{ id: 'c1', correo: 'casa@prueba.invalid' }] : [] });
+      const url = await s.url;
+      const b = await chromium.launch({ executablePath: CHROMIUM, args: ['--disable-3d-apis'] });
+      t.after(async () => {
+        await b.close();
+        s.cerrar();
+      });
+      const p = await b.newPage({ viewport: { width: 1280, height: 800 } });
+      p.setDefaultTimeout(10000);
+      await p.goto(url + '/', { waitUntil: 'networkidle' });
+      await p.waitForSelector('#ultron-arranque[aria-hidden="true"]', { timeout: 20000 });
+      const escribir = async (texto: string) => {
+        // En «trabajar» (donde vive la tarjeta) el campo es el de la superficie; si no, el de Escribir.
+        let campo = p.locator('#aura-trabajo-campo');
+        if (!(await campo.count())) {
+          if (!(await p.locator('#dock-cmd-input').count())) {
+            await p.getByRole('button', { name: 'Escribir', exact: true }).focus();
+            await p.keyboard.press('Enter');
+            await p.waitForSelector('#dock-cmd-input');
+          }
+          campo = p.locator('#dock-cmd-input');
+        }
+        await campo.fill(texto);
+        await campo.press('Enter');
+      };
+      const tarjetas = p.locator('article', { hasText: 'Acción que sale del sistema' });
+      const aviso = p.locator('[role="dialog"][aria-labelledby="aura-sin-correo-titulo"]');
+
+      for (const [i, frase] of FRASES_QUE_SALEN.entries()) {
+        await escribir(frase);
+        await p.waitForFunction((n) => document.querySelectorAll('article').length > 0 && [...document.querySelectorAll('article')].filter((a) => a.textContent?.includes('Acción que sale del sistema')).length >= n, i + 1, { timeout: 10000 }).catch(() => {});
+        // Lo que viniera por el camino del correo (contar cuentas, el turno) tiene tiempo de llegar.
+        await p.waitForTimeout(700);
+        assert.equal(s.turnos.length, 0, `«${frase}»: nada salió al cerebro antes de confirmar (salió: ${s.turnos.map((x) => x.message).join(' | ')})`);
+        assert.equal(await aviso.count(), 0, `«${frase}»: no pasa por el aviso sin correo`);
+        assert.equal(await tarjetas.count(), i + 1, `«${frase}»: aparece la tarjeta Confirmar`);
+      }
+      const ultima = tarjetas.last();
+      assert.match(await ultima.innerText(), /WhatsApp/, 'la tarjeta dice por dónde sale');
+
+      // Confirmar sí lo manda (una vez, el mismo pedido).
+      await ultima.getByRole('button', { name: /Confirmar y enviar/ }).click();
+      for (let k = 0; k < 50 && s.turnos.length < 1; k++) await p.waitForTimeout(200);
+      assert.equal(s.turnos.length, 1, 'confirmado, sale');
+      assert.equal(s.turnos[0].message, FRASES_QUE_SALEN[3]);
+
+      // Control: leer el correo a secas sigue el camino del correo, sin tarjeta.
+      await escribir('Revisa mi correo de hoy');
+      if (conCuentas) {
+        for (let k = 0; k < 50 && s.turnos.length < 2; k++) await p.waitForTimeout(200);
+        assert.equal(s.turnos.length, 2, 'con cuentas, leer el correo va al cerebro');
+        assert.equal(s.turnos[1].message, 'Revisa mi correo de hoy');
+      } else {
+        await aviso.waitFor({ timeout: 10000 });
+        assert.equal(s.turnos.length, 1, 'sin cuentas, ofrece conectar (no manda nada)');
+        await aviso.getByRole('button', { name: /Omitir/ }).click();
+      }
+      assert.ok(s.pedidas.some((x) => x.ruta === '/api/correo/cuentas'), 'el control sí preguntó por las cuentas');
+      assert.equal(await tarjetas.count(), FRASES_QUE_SALEN.length, 'leer el correo a secas no propone ninguna tarjeta');
+    }
+  );
+}
+
+test(
+  'en el navegador: «Retomar» tras conectar un correo y «Pegar el contenido» también pasan por la tarjeta (revisión 9)',
+  { skip: saltoNavegador, timeout: 180000 },
+  async (t) => {
+    const { chromium } = await import('playwright');
+    const s = servidorP4({ cuentas: [], conectarOk: true });
+    const url = await s.url;
+    const b = await chromium.launch({ executablePath: CHROMIUM, args: ['--disable-3d-apis'] });
+    t.after(async () => {
+      await b.close();
+      s.cerrar();
+    });
+    const p = await b.newPage({ viewport: { width: 1280, height: 800 } });
+    p.setDefaultTimeout(10000);
+    await p.goto(url + '/', { waitUntil: 'networkidle' });
+    await p.waitForSelector('#ultron-arranque[aria-hidden="true"]', { timeout: 20000 });
+    const escribir = async (texto: string) => {
+      if (!(await p.locator('#dock-cmd-input').count())) {
+        await p.getByRole('button', { name: 'Escribir', exact: true }).focus();
+        await p.keyboard.press('Enter');
+        await p.waitForSelector('#dock-cmd-input');
+      }
+      await p.locator('#dock-cmd-input').fill(texto);
+      await p.locator('#dock-cmd-input').press('Enter');
+    };
+    const aviso = p.locator('[role="dialog"][aria-labelledby="aura-sin-correo-titulo"]');
+    const tarjetas = p.locator('article', { hasText: 'Acción que sale del sistema' });
+
+    // a) Lo pegado trae «llámame»: el pedido compuesto sale del sistema → tarjeta, no turno.
+    await escribir('Léeme mi correo');
+    await aviso.waitFor({ timeout: 10000 });
+    await aviso.getByRole('button', { name: /Pegar el contenido/ }).click();
+    await aviso.getByLabel(/Contenido del correo/).fill('Llámame urgente cuando leas esto.');
+    await aviso.getByRole('button', { name: /Seguir con lo pegado/ }).click();
+    await tarjetas.first().waitFor({ timeout: 10000 });
+    await p.waitForTimeout(700);
+    assert.equal(s.turnos.length, 0, 'lo pegado que pide avisar no sale sin confirmar');
+
+    // b) «Retomar» tras conectar: el mismo pedido, por la puerta. Uno que sale del sistema ya no llega al aviso (la
+    //    tarjeta va antes, arriba); aquí, uno que no sale: va al cerebro, sin tarjeta.
+    await p.keyboard.press('Escape').catch(() => {});
+    const campo = (await p.locator('#aura-trabajo-campo').count()) ? p.locator('#aura-trabajo-campo') : p.locator('#dock-cmd-input');
+    await campo.fill('Revisa mi correo de hoy');
+    await campo.press('Enter');
+    await aviso.waitFor({ timeout: 10000 });
+    await aviso.getByRole('button', { name: /Conectar un correo/ }).click();
+    const panel = p.locator('#aura-panel-aura');
+    await panel.getByRole('heading', { name: 'Tus correos' }).waitFor({ timeout: 10000 });
+    await panel.getByLabel('Tu dirección de correo').fill('nuevo@prueba.invalid');
+    await panel.getByRole('button', { name: 'Continuar' }).click();
+    await panel.getByLabel(/Clave/).fill('clave-sintetica');
+    await panel.getByRole('button', { name: 'Conectar', exact: true }).click();
+    await panel.getByRole('button', { name: /Retomar/ }).click();
+    for (let k = 0; k < 50 && s.turnos.length < 1; k++) await p.waitForTimeout(200);
+    assert.equal(s.turnos.length, 1, 'retomado, sale');
+    assert.equal(s.turnos[0].message, 'Revisa mi correo de hoy');
+    assert.equal(await tarjetas.count(), 1, 'sin tarjeta nueva para leer a secas');
+  }
+);
+
+test('escritorio web: si la cuenta cambia mientras se busca la tarea, el visor de la anterior no se abre (revisión 9)', async () => {
+  // El estado del visor por VisorEscritorio (el mismo módulo que lo abre; importado por otro camino, tsx podría cargar
+  // otra copia del estado de mobile/).
+  const V = await import('../src/13-trabajo/VisorEscritorio');
+  const { abrirEscritorio } = V;
+  const fetchAntes = globalThis.fetch;
+  const respuesta = () => new Response(JSON.stringify({ mision: { tareaId: 'tarea-de-ana' } }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  try {
+    V.olvidarVisor();
+    let soltar: () => void = () => {};
+    globalThis.fetch = (() => new Promise<Response>((r) => (soltar = () => r(respuesta())))) as typeof fetch;
+    const abriendo = abrirEscritorio('mis_ana');
+    await new Promise((r) => setTimeout(r, 10));
+    // Lo que hace App.tsx cuando cambia la cuenta (salió A, entró B).
+    V.olvidarVisor();
+    soltar();
+    await abriendo;
+    assert.deepEqual(V.visorAhora(), { abierto: false, tareaId: null }, 'la búsqueda de A no abre su visor con B dentro');
+    // Control: sin cambio de cuenta, abre.
+    globalThis.fetch = (async () => respuesta()) as typeof fetch;
+    assert.equal(await abrirEscritorio('mis_ana'), null);
+    assert.deepEqual(V.visorAhora(), { abierto: true, tareaId: 'tarea-de-ana' });
+  } finally {
+    globalThis.fetch = fetchAntes;
+    V.olvidarVisor();
+  }
+});
+
 /* ------------------------------------------------- el escritorio de su computadora en la web (U1, auditoría del 4-oct) */
 
 test('escritorio web: teclas físicas de la lista blanca, la rueda en pasos y qué tarea de la computadora se abre', async () => {

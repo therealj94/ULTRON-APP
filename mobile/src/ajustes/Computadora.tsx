@@ -51,7 +51,7 @@ import {
   type TareaPc,
 } from '../compa/computadora';
 import { abrirHoja, hayAnfitrion } from '../app/hojas';
-import { abrirVisor } from '../app/visor';
+import { abrirVisor, marcaVisor } from '../app/visor';
 
 type PropsHoja = { visible: boolean; onCerrar: () => void; nombreAvatar: string };
 
@@ -464,9 +464,11 @@ export function HojaComputadoraVivo({
                 variante="secundario"
                 onPress={() => {
                   const id = tarea.id;
+                  // De esta cuenta: si en la espera cambió, el visor de la anterior no se abre.
+                  const marca = marcaVisor();
                   onCerrar();
                   // La hoja termina de irse antes de abrir el visor (iOS no presenta un Modal mientras otro se va).
-                  setTimeout(() => abrirVisor(id), 320);
+                  setTimeout(() => abrirVisor(id, marca), 320);
                 }}
               />
             ) : null}
