@@ -265,3 +265,17 @@ test('presencia: paseo, lado o completa; otra cosa es error; un perfil guardado 
   assert.equal(leido!.apodo, 'José');
   assert.equal(leido!.presencia, undefined);
 });
+
+test('perfil de uso («No usarlo», ronda 10): la respuesta que repite lo limitado sale entera, aunque esté escrita junto o con otra clave; una palabra común sola no saca nada', async () => {
+  const { perfilDeUso } = await import('../lib/perfil-persona');
+  const lim = (dato: string, clave: string, categoria = 'otros') => ({ id: dato, categoria, dato, clave, alcance: 'limitado' }) as any;
+  const p = perfilInicial();
+  p.encuesta = { vive: 'Tegucigalpa', trabajo: 'Gerente en MineraSintetica', gustos: 'La pesca y el puerto de Cortés', otros: 'Le pongo insulina por ser diabético', comida: '¿Qué tipo de baleada? La sencilla' };
+  const u = perfilDeUso(p, [lim('Trabaja en Minera Sintetica', 'empresa:minera sintetica'), lim('Tiene diabetes tipo 2', 'salud', 'salud'), lim('Vive en Puerto Sintetico', 'ciudad:puerto sintetico')])!;
+  assert.equal(u.encuesta.trabajo, undefined, 'escrita junto, con la empresa en la clave');
+  assert.equal(u.encuesta.otros, undefined, '«diabético» por «diabetes»');
+  assert.equal(u.encuesta.vive, 'Tegucigalpa', 'lo que no lo repite sigue');
+  assert.equal(u.encuesta.gustos, 'La pesca y el puerto de Cortés', '«puerto» solo no basta');
+  assert.equal(u.encuesta.comida, '¿Qué tipo de baleada? La sencilla', '«tipo» solo no basta, y nada se tapa a medias');
+  assert.ok(u.limitados?.includes('encuesta.trabajo') && u.limitados.includes('encuesta.otros'), 'quedan como sabidos: no se vuelven a preguntar');
+});

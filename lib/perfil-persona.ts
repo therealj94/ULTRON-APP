@@ -23,9 +23,10 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { campoPerfilDeDato } from './clave-comun';
-import { datosLimitados, datosLimitadosEnCache, RESERVADO, terminosReservados, type Dato } from './conocer-persona';
+import { datosLimitados, datosLimitadosEnCache, terminosReservados, type Dato } from './conocer-persona';
+import { tocaReserva, type Reserva } from './reservas';
 import { s3GetJson, s3Listo, s3PutJson } from './s3';
-import { campoSuprimido, limpiarTexto, terminosDe, tumbasDe, type Tumba } from './supresiones';
+import { campoSuprimido, tumbasDe, type Tumba } from './supresiones';
 
 export type Tema = 'oscuro' | 'claro' | 'sistema';
 export type AvatarPerfil = 'ojos' | 'aura' | 'claudio' | 'antonio';
@@ -405,10 +406,11 @@ export async function leerPerfilSeguro(correo: string): Promise<{ ok: true; perf
 /**
  * El perfil como se USA (el prompt de texto y de voz, la iniciativa): sin lo que la persona marcó «No usarlo».
  * `limitados`: los campos que se quitaron (`encuesta.vive`, `cumple`): AURA ya lo sabe, así que no lo vuelve a
- * preguntar. `reservas`: las palabras de lo limitado, para taparlas en otros textos que van al modelo.
- * Es solo para LEER: nunca se guarda (la ficha editable es leerPerfilSeguro, y la escritura parte de ella).
+ * preguntar. `reservas`: con qué se reconoce lo limitado (lib/reservas.ts), para sacarlo de otros textos que
+ * van al modelo. Es solo para LEER: nunca se guarda (la ficha editable es leerPerfilSeguro, y la escritura
+ * parte de ella).
  */
-export type PerfilDeUso = Perfil & { readonly limitados?: readonly string[]; readonly reservas?: readonly (readonly string[])[] };
+export type PerfilDeUso = Perfil & { readonly limitados?: readonly string[]; readonly reservas?: readonly Reserva[] };
 
 const CAMPOS_PERFIL_DE_USO = [...CAMPOS_ENCUESTA.map((k) => `encuesta.${k}`), 'cumple'];
 
@@ -416,8 +418,9 @@ const CAMPOS_PERFIL_DE_USO = [...CAMPOS_ENCUESTA.map((k) => `encuesta.${k}`), 'c
  * Pura. `limitados`: los datos de «lo que sé de ti» con alcance limitado; null = no se pudieron leer, y entonces
  * falla cerrado: sin la encuesta ni el cumpleaños (quedan como «limitados»: tampoco se preguntan de nuevo).
  * Un campo queda fuera si repite un dato limitado por su clave común («Dónde vives» ↔ «Vive en Tela»,
- * lib/clave-comun.ts) o por sus palabras (un «Vive en Tela» sin clave cubre la respuesta «Tela»); en lo que
- * queda, las palabras de lo limitado se tapan («[reservado]»). Sin nada limitado, el mismo objeto.
+ * lib/clave-comun.ts) o si la respuesta lo repite (un «Vive en Tela» sin clave cubre la respuesta «Tela»; la
+ * misma regla que las frases, lib/reservas.ts tocaReserva). Lo que queda va tal cual: una palabra común
+ * suelta no basta para quitar nada. Sin nada limitado, el mismo objeto.
  */
 export function perfilDeUso(p: Perfil | null | undefined, limitados: readonly Dato[] | null): PerfilDeUso | null {
   if (!p) return null;
@@ -435,23 +438,21 @@ export function perfilDeUso(p: Perfil | null | undefined, limitados: readonly Da
   }
   for (const k of CAMPOS_ENCUESTA) {
     const v = p.encuesta[k];
-    if (!v || campos.has(`encuesta.${k}`)) continue;
-    const propias = terminosDe(v);
-    if (propias.length && reservas.some((t) => t.every((w) => propias.includes(w)) || propias.every((w) => t.includes(w)))) campos.add(`encuesta.${k}`);
+    if (v && !campos.has(`encuesta.${k}`) && tocaReserva(v, reservas)) campos.add(`encuesta.${k}`);
   }
   const encuesta: Encuesta = {};
   for (const k of CAMPOS_ENCUESTA) {
     const v = p.encuesta[k];
     if (!v || campos.has(`encuesta.${k}`)) continue;
-    encuesta[k] = limpiarTexto(v, reservas, RESERVADO);
+    encuesta[k] = v;
   }
   const r: PerfilDeUso = { ...p, encuesta, limitados: [...campos], reservas };
   if (campos.has('cumple')) delete (r as Perfil).cumple;
   return r;
 }
 
-/** Las palabras de lo que la persona limitó (del estado durable), o null si no se pudo leer. Nunca lanza. */
-export async function reservasDe(correo: string): Promise<string[][] | null> {
+/** Las reservas de lo que la persona limitó (del estado durable), o null si no se pudo leer. Nunca lanza. */
+export async function reservasDe(correo: string): Promise<Reserva[] | null> {
   const ds = await datosLimitados(correo);
   return ds ? terminosReservados(ds) : null;
 }

@@ -292,3 +292,38 @@ test('«Borrar todo lo que te conté» olvida todo lo aprendido de esa persona y
   assert.equal(C.bloqueConocer('borra@x.com').includes('Lucía'), false, 'ya no entra al prompt');
   assert.equal((await C.queSeDe('queda@x.com')).total, 1, 'lo de otra persona no se toca');
 });
+
+test('«No usarlo» (ronda 10): lo limitado no le llega al modelo que resume, ni en la conversación; lo que reaprende de ello no se guarda como general', async () => {
+  const p = 'limitado-tramo@x.com';
+  const { dato } = await C.agregarDato(p, 'salud', 'Tiene diabetes tipo 2', 'salud');
+  await C.limitarDato(p, dato.id, 'limitado');
+  const vistos: string[] = [];
+  _usarModeloPrueba(async (system, user) => {
+    if (system !== E.SISTEMA_TRAMO) return null;
+    vistos.push(user);
+    return JSON.stringify({
+      resumen: 'Habló de su salud.\nPreguntó qué tipo de cemento usar.',
+      temas: ['cemento'],
+      personas: [],
+      abiertos: [],
+      hechos: [],
+      datos: [
+        { categoria: 'otros', dato: 'Es diabético desde 2019', clave: 'enfermedad', confianza: 0.9 },
+        { categoria: 'gustos', dato: 'Le gusta la pesca de los sábados', confianza: 0.9 },
+      ],
+    });
+  });
+  const t0 = Date.now() - 2 * 3600_000;
+  const turnos = charla(16, t0);
+  turnos[0] = { rol: 'user', texto: 'Soy diabético desde 2019. ¿Qué tipo de cemento uso para la casa?', t: t0 };
+  for (const par of [0, 2, 4, 6, 8, 10, 12, 14]) await E.anotarTurnos(p, turnos.slice(par, par + 2), { nombre: 'José' });
+  await E.esperarResumenes(p);
+  await espera();
+  assert.ok(vistos.length, 'el modelo resumió');
+  assert.doesNotMatch(vistos.join('\n'), /diab/i, 'ni lo que ya sabe ni la conversación lo llevan');
+  assert.match(vistos.join('\n'), /¿Qué tipo de cemento uso para la casa\?/, 'lo demás de la conversación sigue entero');
+  const todos = Object.values((await C.queSeDe(p)).porCategoria).flat();
+  assert.ok(!todos.some((d) => /diab/i.test(d.dato) && d.alcance === 'general'), 'lo reaprendido no entra como general');
+  assert.ok(todos.some((d) => /pesca/.test(d.dato) && d.alcance === 'general'), 'lo que no lo repite, sí');
+  assert.doesNotMatch(C.bloqueConocer(p), /diab/i);
+});

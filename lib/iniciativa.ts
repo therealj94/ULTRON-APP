@@ -39,6 +39,7 @@ import { ESPACIO_COMUN } from './espacio-nodo';
 import { cajonPorCorreo, lineasMisiones, pendientesDe, parecido, textoLinea, type Mision } from './misiones';
 import { CAMPOS_ENCUESTA, INICIATIVA_POR_OMISION, type NivelIniciativa, type Perfil, type PerfilDeUso } from './perfil-persona';
 import { RESERVADO, textoAutorizado } from './conocer-persona';
+import type { Reservas } from './reservas';
 import { enQuietas, fechaLocal, instanteDeLocal, partesLocales, QUIETAS_POR_OMISION, ZONA_POR_OMISION, zonaValida, type Quietas } from './zona-horaria';
 
 /* ------------------------------------------------------------------ tipos */
@@ -132,10 +133,11 @@ export type ContextoIniciativa = {
   /** Sus últimos turnos (lo más reciente al final). */
   hilo?: { rol: string; texto: string }[];
   /**
-   * Las palabras de lo que la persona limitó («No usarlo»): se tapan en lo que lee el modelo (lo último que
-   * dijo, sus misiones). null: no se pudo saber, y entonces su hilo no entra. Sin darlo, las del perfil.
+   * Con qué se reconoce lo que la persona limitó («No usarlo», lib/reservas.ts): la frase que lo repite sale de
+   * lo que lee el modelo (lo último que dijo, sus misiones). null: no se pudo saber, y entonces su hilo no
+   * entra. Sin darlo, las del perfil.
    */
-  reservas?: readonly (readonly string[])[] | null;
+  reservas?: Reservas | null;
   /** Lo que se vio de sus fuentes contadas, con su estado (server/fuentes-iniciativa.ts). Manda sobre lo de abajo. */
   observaciones?: Observaciones;
   /**
@@ -297,11 +299,12 @@ export function lineaPorConocer(perfil: PerfilDeUso | null | undefined): string 
 }
 
 /**
- * Las palabras de lo que limitó («No usarlo»): las que dio quien llama o, sin darlas, las de su perfil de uso.
+ * Con qué se reconoce lo que limitó («No usarlo», lib/reservas.ts): lo que dio quien llama o, sin darlo, lo de
+ * su perfil de uso.
  * null = no se sabe (lo dijo quien llama, o el perfil vino de la vista que falló cerrado: con `limitados` y sin
  * `reservas`, lib/perfil-persona.ts perfilDeUso).
  */
-function reservasDeCtx(ctx: ContextoIniciativa): readonly (readonly string[])[] | null {
+function reservasDeCtx(ctx: ContextoIniciativa): Reservas | null {
   if (ctx.reservas !== undefined) return ctx.reservas;
   if (ctx.perfil?.reservas) return ctx.perfil.reservas;
   return ctx.perfil?.limitados ? null : [];
@@ -319,7 +322,7 @@ const autorizarMision = (m: Mision, aut: (s: string) => string): Mision => ({
 
 /**
  * El contexto como la iniciativa lo puede USAR (P1/A1; revisión del 5-oct): lo de la persona sin lo que limitó.
- * Sus misiones y lo último que dijo, con las palabras de lo limitado tapadas («[reservado]»). Sin saber qué
+ * Sus misiones y lo último que dijo, sin las frases que repiten lo limitado («[dato reservado]»). Sin saber qué
  * limitó (reservas null) se falla cerrado y se dice la verdad del estado: sus misiones quedan NO DISPONIBLES
  * (null: no se leen, no se proponen, no sirven de fuente, y revalidarPropuesta da `fuente_no_disponible`) y su
  * hilo no entra. Lo que se le muestra a la persona (la ficha de misiones) no pasa por aquí. Idempotente.
@@ -632,7 +635,7 @@ export function propuestasDeRespaldo(persona: PersonaIniciativa, ctxDado: Contex
   };
   const ms = ctx.misiones || [];
   for (const { mision: m, motivo, dias } of pendientesDe(ms, ahora)) {
-    // Una misión que nombra lo limitado no se le ofrece con «[reservado]» en la frase: se salta.
+    // Una misión que nombra lo limitado no se le ofrece con «[dato reservado]» en la frase: se salta.
     if ([m.titulo, m.proximoPaso].some((x) => x.includes(RESERVADO))) continue;
     const paso = m.proximoPaso ? ` Lo siguiente era «${textoLinea(m.proximoPaso, 70)}».` : '';
     const porQue = motivo === 'estancada' ? `«${textoLinea(m.titulo, 50)}» lleva ${dias} días sin avance.` : motivo === 'vencida' ? `«${textoLinea(m.titulo, 50)}» ya pasó de su fecha y sigue abierta.` : `«${textoLinea(m.titulo, 50)}» vence en menos de un día y sigue abierta.`;

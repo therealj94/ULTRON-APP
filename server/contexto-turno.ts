@@ -12,10 +12,13 @@
  *
  * Sale del estado durable del dato (precargarVista lo lee de disco/S3 antes de tocar el hilo) y, sin esperar
  * (la voz), de la caché: si lo limitado todavía no está en caché, no se arriesga nada (fallo cerrado).
- * La iniciativa usa las mismas palabras (lib/perfil-persona.ts reservasDe → textoAutorizado).
+ * Qué frase repite algo limitado lo decide UNA regla (lib/reservas.ts tocaReserva): por frase, línea, turno o
+ * dato, nunca por palabra suelta; la frase sale entera («[dato reservado]»). La iniciativa usa la misma
+ * (lib/perfil-persona.ts reservasDe → textoAutorizado).
  */
 import { bloqueAbiertos } from '../lib/abiertos';
 import { bloqueConocer, datosLimitadosEnCache, firmaConocer, precargarConocer, terminosReservados, vistaDeTerminos, type Dato, type VistaTexto } from '../lib/conocer-persona';
+import type { Reserva } from '../lib/reservas';
 import { bloqueEpisodios } from '../lib/episodios';
 import type { HiloMemoria } from '../lib/conversacion';
 import type { MiembroId } from '../lib/junta';
@@ -25,13 +28,15 @@ import { lineaPerfil, perfilDeUso, type Perfil, type PerfilDeUso } from '../lib/
 import type { NivelAura } from '../lib/perfiles/tipos';
 
 /**
- * La vista autorizada de una persona en este turno. `texto` tapa lo limitado («[reservado]»); `turnos`
- * pasa un hilo por ella (los turnos que quedan vacíos se van). `sabe` false: lo limitado aún no está en
- * caché, y entonces no deja pasar nada de lo suyo.
+ * La vista autorizada de una persona en este turno. `texto` saca la frase que repite algo limitado («[dato
+ * reservado]»); `turnos` pasa un hilo por ella (los turnos que quedan vacíos se van). `sabe` false: lo
+ * limitado aún no está en caché, y entonces no deja pasar nada de lo suyo.
  */
 export type VistaAutorizada = VistaTexto & {
   readonly dueno: string;
   readonly limitados: readonly Dato[] | null;
+  /** Con qué se reconoce lo limitado (lib/reservas.ts); null si no se sabe. */
+  readonly reservas: readonly Reserva[] | null;
   /**
    * Un hilo por la vista. `actual`: lo que acaba de decir; si es el último turno de la persona, va tal cual
    * (no es memoria: lo está diciendo ahora, y el turno lo reconoce para no repetirlo).
@@ -47,10 +52,12 @@ export function precargarVista(dueno: string): Promise<void> {
 /** `dueno`: de quién es la memoria del turno (el correo de la app o el de la junta). Sin dueño, nada limitado. Pura respecto a la red. */
 export function vistaAutorizada(dueno: string): VistaAutorizada {
   const limitados = dueno ? datosLimitadosEnCache(dueno) : [];
-  const base = vistaDeTerminos(limitados ? terminosReservados(limitados) : null);
+  const reservas = limitados ? terminosReservados(limitados) : null;
+  const base = vistaDeTerminos(reservas);
   return {
     dueno,
     limitados,
+    reservas,
     sabe: base.sabe,
     texto: base.texto,
     turnos: (ts, actual) =>
@@ -122,10 +129,11 @@ export function bloquesPersonales(o: {
   const cerebro = dueno ? [bloqueAbiertos(dueno, o.compacto), bloqueEpisodios(dueno, o.consulta, o.compacto)].filter(Boolean).join('\n\n') : '';
   return {
     bloquePerfil: lineaPerfil(perfil),
-    conocer: dueno ? bloqueConocer(dueno, o.compacto, { nombre: o.nombre, conPregunta: o.conPregunta }) : '',
+    // Lo que sabe de ella, por la misma regla: ni lo limitado ni un dato general que lo repite.
+    conocer: dueno ? bloqueConocer(dueno, o.compacto, { nombre: o.nombre, conPregunta: o.conPregunta, reservas: vista.reservas }) : '',
     conocerFirma: dueno ? firmaConocer(dueno) : undefined,
-    // Los resúmenes de antes y lo que quedó a medias, sin las palabras de lo limitado; sin saber qué está
-    // limitado, no entran (como bloqueEpisodios sin las marcas de supresión).
+    // Los resúmenes de antes y lo que quedó a medias, sin las frases que repiten lo limitado; sin saber qué
+    // está limitado, no entran (como bloqueEpisodios sin las marcas de supresión).
     bloqueCerebro: cerebro ? vista.texto(cerebro) : '',
     // Lo que pidió recordar y su hilo (miembro o junta), por la misma vista (revisión del 5-oct, GRAVE-3).
     ...(o.memoria ? { memoria: memoriaPorLaVista(o.memoria, vista) } : {}),

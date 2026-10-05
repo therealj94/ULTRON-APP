@@ -36,7 +36,7 @@ import {
   palabras,
   preguntarModelo,
 } from './cerebro-comun';
-import { datosPorReglas, datosUsables, incorporarDatos, interpretarDatos, precargarConocer, type DatoNuevo } from './conocer-persona';
+import { datosLimitados, datosPorReglas, datosUsables, incorporarDatos, interpretarDatos, precargarConocer, terminosReservados, textoAutorizado, type DatoNuevo } from './conocer-persona';
 import { redactar } from './cognitivo/base';
 import { coseno, embeddingsConfigurados, fundirPorRango, vectorDe, vectorizar } from './cognitivo/embeddings';
 import { limpiarTexto, precargarSupresiones, terminosVigentes, tumbasDe, tumbasEnCache, type Tumba } from './supresiones';
@@ -396,10 +396,15 @@ async function resumirYGuardar(clave: string, tramo: TurnoEp[]): Promise<Episodi
     .slice(0, 25)
     .map((d) => `- ${d.dato}`)
     .join('\n');
-  const charla = tramo.map((t) => `${t.rol === 'user' ? nombre || 'Persona' : 'AU-RA'}: ${linea(t.texto, 600)}`).join('\n');
+  // Ni en la conversación ni en lo pendiente: la frase que repite algo limitado no le llega (lib/reservas.ts).
+  // Sin poder leer lo limitado (del estado durable), lanza y el tramo se reintenta entero.
+  const limitados = await datosLimitados(clave);
+  if (limitados === null) throw new CajonNoDisponible('lo que marcaste «No usarlo»');
+  const reservas = terminosReservados(limitados);
+  const charla = tramo.map((t) => `${t.rol === 'user' ? nombre || 'Persona' : 'AU-RA'}: ${linea(textoAutorizado(t.texto, reservas), 600)}`).join('\n');
   const user = [
     nombre ? `PERSONA: ${nombre}` : '',
-    `PENDIENTES:\n${abiertos.map((a) => `${a.id}: ${a.texto}`).join('\n') || '(ninguno)'}`,
+    `PENDIENTES:\n${abiertos.map((a) => `${a.id}: ${textoAutorizado(a.texto, reservas)}`).join('\n') || '(ninguno)'}`,
     `LO QUE YA SABES DE ELLA (no lo repitas salvo que cambie):\n${sabidos || '(nada)'}`,
     `CONVERSACIÓN (${diaHN(tramo[0]?.t || Date.now())}):\n${charla}`,
   ]

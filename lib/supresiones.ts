@@ -223,10 +223,13 @@ const GENERICAS = new Set(
 
 /**
  * Las palabras que identifican un dato, para encontrarlo en el texto de los derivados («Vive en Tela» →
- * ["tela"]; «Su hija se llama Lucía» → ["lucia"]). Sin palabras propias (todo plantilla), vacío.
+ * ["tela"]; «Su hija se llama Lucía» → ["lucia"]). Sin palabras propias (todo plantilla), vacío. De la clave
+ * solo se descarta la categoría (lo de antes de «:»): el valor («hija:lucia» → «lucia») es justo lo que
+ * identifica el dato.
  */
 export function terminosDe(texto: string, clave?: string): string[] {
-  const fuera = new Set(palabras(String(clave || '').replace(/[:_]/g, ' ')));
+  const k = String(clave || '');
+  const fuera = new Set(palabras((k.includes(':') ? k.slice(0, k.indexOf(':')) : k).replace(/_/g, ' ')));
   const ws = palabras(texto).filter((w) => !GENERICAS.has(w) && !fuera.has(w));
   return [...new Set(ws)].slice(0, 12);
 }
