@@ -19,7 +19,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, type LayoutChangeEvent } from 'react-native';
 import { AvatarVivo, type ControlCuerpo } from './AvatarVivo';
-import { estadoDesdeMesa } from './contrato';
+import { estadoDesdeMesa, type VozMesa } from './contrato';
 import { CuerpoVideo, type ControlVideo } from '../avatares/video/CuerpoVideo';
 import { hayVideo } from '../avatares/video/clips';
 import { pedirGolpe } from '../avatares/video/pistas';
@@ -34,6 +34,11 @@ type Props = {
   camara: Camara;
   face: string;
   emocion: string;
+  /**
+   * Lo que de verdad suena (avatar3d/sonando.ts y la conversación fluida): el cuerpo habla SOLO con esto,
+   * nunca por la cara (José, 5-oct: «habla cuando no está diciendo nada»). Sin audio, `pensando` lo pone a pensar.
+   */
+  voz: VozMesa;
   mirada: { x: number; y: number; activa: boolean };
   /** Las fotos de siempre: lo que se ve sin 3D. */
   respaldo: ReactNode;
@@ -54,7 +59,7 @@ type Props = {
   onRafaga?: (efecto: Efecto) => void;
 };
 
-export function CuerpoMesa({ avatar, camara, face, emocion, mirada, respaldo, onTap, onLongPress, activo = true, senal = 0, conversando = false, ataque = null, onRafaga }: Props) {
+export function CuerpoMesa({ avatar, camara, face, emocion, voz, mirada, respaldo, onTap, onLongPress, activo = true, senal = 0, conversando = false, ataque = null, onRafaga }: Props) {
   const [lugar, setLugar] = useState({ w: 0, h: 0 });
   const [gesto, setGesto] = useState<EstadoAvatar['gesto']>(null);
   // Si el video no se puede usar en este teléfono, el cuerpo 3D (que mueve brazos y cuerpo) en vez de
@@ -72,7 +77,11 @@ export function CuerpoMesa({ avatar, camara, face, emocion, mirada, respaldo, on
   useEffect(() => {
     if (senal > 0) setGesto((g) => ({ nombre: 'senalar', n: (g?.n ?? 0) + 1 }));
   }, [senal]);
-  const estado = useMemo(() => estadoDesdeMesa(face, emocion, { mirar: { x, y, activa }, gesto }), [face, emocion, x, y, activa, gesto]);
+  const { sonando, agenteHabla = false, pensando = false } = voz;
+  const estado = useMemo(
+    () => estadoDesdeMesa(face, emocion, { mirar: { x, y, activa }, gesto, voz: { sonando, agenteHabla, pensando } }),
+    [face, emocion, x, y, activa, gesto, sonando, agenteHabla, pensando]
+  );
 
   const conVideo = hayVideo(avatar) && !sinVideo;
   const contexto = useMemo(

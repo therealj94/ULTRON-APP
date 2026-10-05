@@ -64,6 +64,8 @@ const AQUI = path.dirname(fileURLToPath(import.meta.url));
 const pruebas = [];
 const prueba = (nombre, f) => pruebas.push([nombre, f]);
 const est = (x = {}) => ({ ...ESTADO_INICIAL, ...x });
+/** La voz de la mesa sonando de verdad (lib/tts → avatar3d/sonando): solo así habla el cuerpo de la mesa. */
+const SUENA = { voz: { sonando: true } };
 
 function reloj(t0 = 1_000_000) {
   let t = t0;
@@ -285,12 +287,37 @@ prueba('con la mesa de verdad: escucha, piensa y habla, en bucle', () => {
   d.estado(estadoDesdeMesa('THINKING', 'neutral'));
   r.pasar(ASENTAR_FONDO_MS);
   assert.equal(d.revisar().clip, 'piensa');
-  const h = d.estado(estadoDesdeMesa('SPEAKING', 'neutral'));
+  const h = d.estado(estadoDesdeMesa('SPEAKING', 'neutral', SUENA));
   assert.deepEqual([h.clip, h.bucle], ['habla', true], 'empezar a hablar no espera');
-  assert.equal(d.estado(estadoDesdeMesa('SPEAKING', 'neutral')), null, 'el mismo estado no reinicia el clip');
+  assert.equal(d.estado(estadoDesdeMesa('SPEAKING', 'neutral', SUENA)), null, 'el mismo estado no reinicia el clip');
   assert.equal(d.estado(estadoDesdeMesa('IDLE', 'neutral')), null, 'dejar de hablar espera más');
   r.pasar(SOLTAR_HABLA_MS);
   assert.equal(d.revisar().clip, 'reposo');
+});
+
+prueba('la mesa de verdad (José, 5-oct): sin audio no hay «habla»; habla cuando suena y deja de hablar al callar', () => {
+  const { d, r } = nuevo();
+  const clips = [];
+  const ver = (x) => x && clips.push(x.clip);
+  // Pregunta: el cerebro piensa (status «thinking»).
+  ver(d.estado(estadoDesdeMesa('THINKING', 'neutral', { voz: { sonando: false, pensando: true } })));
+  r.pasar(ASENTAR_FONDO_MS);
+  ver(d.revisar());
+  // Llega la emoción del turno (neutral → cara SPEAKING) y los primeros trozos: el audio todavía se pide.
+  for (let i = 0; i < 8; i++) {
+    ver(d.estado(estadoDesdeMesa('SPEAKING', 'neutral', { voz: { sonando: false, pensando: true } })));
+    r.pasar(400);
+    ver(d.revisar());
+  }
+  assert.ok(!clips.includes('habla'), `sin audio no habla (vio: ${clips.join(' → ')})`);
+  assert.equal(d.reproduccion.clip, 'piensa', 'mientras espera la voz, piensa');
+  // Suena: habla en el acto, aunque la cara sea otra (CONFUSED: «No alcanzo al cerebro remoto…»).
+  const h = d.estado(estadoDesdeMesa('CONFUSED', 'preocupado', { voz: { sonando: true } }));
+  assert.equal(h?.clip, 'habla', 'empieza a sonar: habla ya');
+  // Termina el audio pero la cara sigue en SPEAKING (settle todavía no corrió, o se cayó la voz): deja de hablar.
+  d.estado(estadoDesdeMesa('SPEAKING', 'neutral', { voz: { sonando: false } }));
+  r.pasar(SOLTAR_HABLA_MS);
+  assert.notEqual(d.revisar()?.clip ?? d.reproduccion.clip, 'habla', 'callado de verdad: ya no habla');
 });
 
 prueba('las pausas entre frases no cambian el clip (el parpadeo que vio José el 2-oct)', () => {
@@ -316,9 +343,9 @@ prueba('las pausas entre frases no cambian el clip (el parpadeo que vio José el
 
 prueba('las emociones del turno hacen su golpe una vez y vuelven al fondo', () => {
   const { d, r } = nuevo();
-  const g = d.estado(estadoDesdeMesa('SPEAKING', 'risa'));
+  const g = d.estado(estadoDesdeMesa('SPEAKING', 'risa', SUENA));
   assert.deepEqual([g.clip, g.bucle], ['risa', false], 'se ríe primero');
-  assert.equal(d.estado(estadoDesdeMesa('SPEAKING', 'risa')), null, 'la misma emoción no repite el golpe');
+  assert.equal(d.estado(estadoDesdeMesa('SPEAKING', 'risa', SUENA)), null, 'la misma emoción no repite el golpe');
   r.pasar(5000);
   const f = d.termino(g.n);
   assert.deepEqual([f.clip, f.bucle], ['habla', true], 'terminado el golpe, sigue hablando');

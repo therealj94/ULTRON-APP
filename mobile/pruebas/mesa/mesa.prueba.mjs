@@ -474,6 +474,55 @@ prueba('su computadora a pantalla completa (AUR09): visor propio desde la tarea,
   assert.deepEqual([...new Set(imports)].sort(), ['react', 'react-native', 'react-native-safe-area-context']);
 });
 
+/* ── el turno sin respuesta (José, 5-oct: «No alcanzo al cerebro remoto» sin nada en los logs) ── */
+
+prueba('turno sin respuesta: qué se dice según lo que pasó (409 en curso y 429 no son «no alcanzo al cerebro»)', async () => {
+  const { clasificarFallo, reintentarFallo } = await import('../../src/lib/falloTurno.ts');
+  assert.equal(clasificarFallo({ error: 'HTTP 502', status: 502 }), 'sin-cerebro');
+  assert.equal(clasificarFallo({ error: 'el nodo no contestó: timeout', status: 502 }), 'sin-cerebro', 'llegó al servidor: no es «sin red» aunque diga timeout');
+  assert.equal(clasificarFallo({ error: 'Network request failed' }), 'sin-red');
+  assert.equal(clasificarFallo({ error: 'Aborted' }), 'sin-red');
+  assert.equal(clasificarFallo({ error: 'AU-RA es privado. Entra con sesión de junta.', status: 401 }), 'sesion');
+  assert.equal(clasificarFallo({ error: 'Sigo con eso que me pediste…', status: 409, pendiente: true }), 'en-curso');
+  assert.equal(clasificarFallo({ error: 'Vas muy rápido. Dame un minuto y seguimos.', status: 429, codigo: 'demasiados_turnos' }), 'rapido');
+  assert.equal(clasificarFallo({ reply: '' }), 'sin-cerebro', 'sin error ni respuesta');
+  assert.equal(reintentarFallo({ status: 429 }), false, 'un 429 no se repite (gastaría otro turno)');
+  assert.equal(reintentarFallo({ status: 502 }), true);
+});
+
+prueba('turno sin respuesta: la miga dice el error del stream y del JSON (HTTP, código), sin lo que dijo la persona', async () => {
+  const { migaFalloTurno } = await import('../../src/lib/falloTurno.ts');
+  const out = { reply: '', voz: '', emocion: 'neutral', error: 'el nodo no contestó', status: 502, via: 'qwen' };
+  const m = migaFalloTurno({ dijo: 'sin-cerebro', idTurno: 'mf2k9ab-c0ffee1234', ms: 4321, stream: 'HTTP 502', json: out, intentosJson: 2 });
+  assert.equal(m, 'mesa: turno sin respuesta → sin-cerebro (id …b-c0ffee1234, 4.3 s) · stream: «HTTP 502» · json×2: HTTP 502 vía qwen «el nodo no contestó»');
+  const hilo = migaFalloTurno({ dijo: 'hilo', idTurno: 'x1-abcdefgh', ms: 21000, stream: 'timeout' });
+  assert.equal(hilo, 'mesa: turno sin respuesta → hilo (id …x1-abcdefgh, 21.0 s) · stream: «timeout»');
+  assert.match(migaFalloTurno({ dijo: 'en-curso', idTurno: 'y', ms: 0, json: { status: 409, codigo: 'en-curso' } }), /json×1: HTTP 409 código en-curso/);
+  assert.ok(!/stream/.test(migaFalloTurno({ dijo: 'sin-red', idTurno: 'z', ms: 0, json: { error: 'red' } })), 'con imagen no hubo stream: no se nombra');
+  assert.ok(migaFalloTurno({ dijo: 'sin-cerebro', idTurno: 'z', ms: 0, stream: 'a\n'.repeat(200) }).length < 160, 'corta (las migas se recortan a 160)');
+});
+
+prueba('turno sin respuesta: la mesa deja la miga y la MANDA ya en los dos caminos (sin respuesta y «se me fue el hilo»)', () => {
+  const src = fs.readFileSync(path.join(RAIZ, 'mobile/src/screens/DeskScreen.tsx'), 'utf8');
+  const hilo = src.indexOf('Se me fue el hilo pensando eso');
+  const sinCerebro = src.indexOf('No alcanzo al cerebro remoto ahora');
+  assert.ok(hilo > 0 && sinCerebro > 0);
+  const antesDe = (i) => src.slice(Math.max(0, i - 2500), i);
+  assert.match(antesDe(hilo), /reportarEstado\(migaFalloTurno\(\{ dijo: 'hilo'/, '«se me fue el hilo» manda su miga');
+  assert.match(antesDe(sinCerebro), /reportarEstado\(migaFalloTurno\(\{ dijo: clase,[^}]*json: out/, 'el fallo por JSON manda su miga con el resultado');
+  assert.match(antesDe(sinCerebro), /clase === 'en-curso' \|\| clase === 'rapido'/, '409/429: la frase honesta del servidor');
+  // Nada de lo que dijo la persona: la miga no recibe `cmd` ni `base`.
+  for (const m of src.matchAll(/migaFalloTurno\(\{[^}]*\}\)/g)) assert.ok(!/\bcmd\b|\bbase\b|message/.test(m[0]), m[0]);
+});
+
+prueba('micrófono silenciado de otra sesión (José, 5-oct): se guarda, pero al abrir la mesa se DICE y queda en las migas', () => {
+  const src = fs.readFileSync(path.join(RAIZ, 'mobile/src/screens/DeskScreen.tsx'), 'utf8');
+  assert.match(src, /micMutedRef\.current = s\.micMuted;/, 'el silencio guardado se respeta (una recarga no abre sola el micrófono)');
+  assert.match(src, /await say\(saludoArranque\([^)]*micSilenciado: micOk && s\.micMuted/, 'el saludo lo dice');
+  assert.match(src, /miga\('micrófono: arranca silenciado/, 'y queda en las migas');
+  assert.match(src, /silenciadoPorPersona: \(\) => micMutedRef\.current/, 'la miga del oído distingue el silencio de la persona del oído sin abrir');
+});
+
 for (const [nombre, f] of pruebas) {
   n += 1;
   try {
