@@ -746,7 +746,12 @@ type Pedida = { metodo: string; ruta: string; cuerpo: any };
  * Un servidor de prueba con sesión y las APIs de verdad que usa la web (las mismas que la app Expo): cuentas de
  * correo, la bandeja por cuenta, «lo que sé de ti» y las preferencias de avisos. Todo sintético, sin red de afuera.
  */
-function servidorP4(o: { cuentas: Array<{ id: string; correo: string }>; caida?: string; conectarOk?: boolean }) {
+/**
+ * `taller` (revisión 10, MEDIO-C): el turno de lo que sale contesta como el servidor de ahora —no lo hace, deja la
+ * propuesta (`propuestaTaller`)— y POST /api/trabajos/:id/decisiones la aprueba. `contenidoServidor`: lo que el servidor
+ * dice que mandaría (si no, el mismo cuerpo que la tarjeta).
+ */
+function servidorP4(o: { cuentas: Array<{ id: string; correo: string }>; caida?: string; conectarOk?: boolean; taller?: { contenidoServidor?: string } }) {
   const pedidas: Pedida[] = [];
   const turnos: any[] = [];
   const cuentas = [...o.cuentas];
@@ -774,7 +779,7 @@ function servidorP4(o: { cuentas: Array<{ id: string; correo: string }>; caida?:
     if (u.pathname === '/api/genesis/config') return json({ disponible: false });
     if (u.pathname === '/api/capacidades') return json({ capacidades: [] });
     if (u.pathname === '/api/ultron/sesion') return json({ authenticated: true, user: { nombre: 'Ana', rol: 'Junta', correo: 'ana@ejemplo.com' } });
-    if (/^\/api\/(correo|cerebro|avisos|perfil)/.test(u.pathname) || u.pathname === '/api/turno/stream') {
+    if (/^\/api\/(correo|cerebro|avisos|perfil)/.test(u.pathname) || u.pathname === '/api/turno/stream' || (o.taller && /^\/api\/trabajos\/[^/]+\/decisiones$/.test(u.pathname))) {
       return void leer().then((cuerpo) => {
         pedidas.push({ metodo, ruta: u.pathname + u.search, cuerpo });
         if (u.pathname === '/api/correo/cuentas' && metodo === 'GET') return json({ cuentas: cuentas.map((c) => ({ ...c, proveedor: { nombre: 'Sintético', auth: 'clave' } })), microsoft: false, honesto: true });
@@ -806,6 +811,18 @@ function servidorP4(o: { cuentas: Array<{ id: string; correo: string }>; caida?:
         if (u.pathname === '/api/avisos/preferencias' && metodo === 'POST') {
           prefs = { ...prefs, ...cuerpo };
           return json({ preferencias: prefs, cancelados: 0, retiradas: 0, honesto: true });
+        }
+        if (o.taller && /^\/api\/trabajos\/[^/]+\/decisiones$/.test(u.pathname)) {
+          const t = { id: 'tk_1', version: 3, state: 'completed', terminal: true, source: 'durable', title: 'Mandar un mensaje por Telegram', objective: '', acceptance: [], environment: { kind: 'servidor', id: 'taller', displayName: 'Taller' }, decision: null, result: { id: 'r', summary: 'TELEGRAM: Mensaje enviado a chat -100.', evidence: [], partial: [], pending: [], at: new Date().toISOString() }, updatedAt: new Date().toISOString(), controls: { pause: false, resume: false, cancel: false } };
+          return json({ tarea: t, honesto: true });
+        }
+        if (u.pathname === '/api/turno/stream' && o.taller && /telegram/i.test(String(cuerpo.message || ''))) {
+          turnos.push(cuerpo);
+          const contenido = o.taller.contenidoServidor ?? String(cuerpo.message).replace(/^manda\s+por telegram\s*/i, '').trim();
+          const propuestaTaller = { tarea: 'tk_1', decision: 'dt_1', version: 1, caduca: Date.now() + 600_000, accion: 'enviar', canal: 'telegram', titulo: 'Mandar un mensaje por Telegram', destinatario: 'Grupo de Telegram de la junta (el chat configurado en el servidor)', contenido };
+          const r = 'Necesito tu confirmación antes de hacerlo. Todavía no he mandado nada.';
+          res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+          return res.end(`event: done\ndata: ${JSON.stringify({ reply: r, voz: r, emocion: 'neutral', via: 'taller', propuestaTaller })}\n\n`);
         }
         if (u.pathname === '/api/turno/stream') {
           turnos.push(cuerpo);
@@ -1064,6 +1081,59 @@ for (const conCuentas of [true, false]) {
       }
       assert.ok(s.pedidas.some((x) => x.ruta === '/api/correo/cuentas'), 'el control sí preguntó por las cuentas');
       assert.equal(await tarjetas.count(), FRASES_QUE_SALEN.length, 'leer el correo a secas no propone ninguna tarjeta');
+    }
+  );
+}
+
+/**
+ * «CONFIRMAR Y ENVIAR» APRUEBA LA DECISIÓN DEL SERVIDOR (revisión 10, MEDIO-C). El servidor ya no hace lo que sale desde
+ * el turno: deja una propuesta con su tarea, su decisión y su versión. La tarjeta la aprueba (POST
+ * /api/trabajos/:tarea/decisiones) solo si es exactamente lo que enseñó; si el servidor lo entendió distinto, la tarjeta
+ * enseña lo del servidor y pide confirmar otra vez, y entonces aprueba esa decisión sin otro turno.
+ */
+for (const distinto of [false, true]) {
+  test(
+    `en el navegador: «Confirmar y enviar» aprueba la propuesta del servidor con su id y versión (${distinto ? 'el servidor lo entendió distinto: se confirma otra vez' : 'la misma: se aprueba'}; revisión 10)`,
+    { skip: saltoNavegador, timeout: 180000 },
+    async (t) => {
+      const { chromium } = await import('playwright');
+      const s = servidorP4({ cuentas: [], taller: distinto ? { contenidoServidor: 'que la junta es el martes' } : {} });
+      const url = await s.url;
+      const b = await chromium.launch({ executablePath: CHROMIUM, args: ['--disable-3d-apis'] });
+      t.after(async () => {
+        await b.close();
+        s.cerrar();
+      });
+      const p = await b.newPage({ viewport: { width: 1280, height: 800 } });
+      p.setDefaultTimeout(10000);
+      await p.goto(url + '/', { waitUntil: 'networkidle' });
+      await p.waitForSelector('#ultron-arranque[aria-hidden="true"]', { timeout: 20000 });
+      await p.getByRole('button', { name: 'Escribir', exact: true }).focus();
+      await p.keyboard.press('Enter');
+      await p.waitForSelector('#dock-cmd-input');
+      await p.locator('#dock-cmd-input').fill('manda por telegram que la junta es mañana a las 9');
+      await p.locator('#dock-cmd-input').press('Enter');
+      const tarjeta = p.locator('article', { hasText: 'Acción que sale del sistema' }).last();
+      await tarjeta.waitFor();
+      assert.equal(s.turnos.length, 0, 'nada sale antes de confirmar');
+      const decisiones = () => s.pedidas.filter((x) => /^\/api\/trabajos\/[^/]+\/decisiones/.test(x.ruta));
+      await tarjeta.getByRole('button', { name: /Confirmar y enviar/ }).click();
+      for (let k = 0; k < 50 && s.turnos.length < 1; k++) await p.waitForTimeout(200);
+      assert.equal(s.turnos.length, 1, 'el pedido va al servidor una vez (y el servidor solo lo propone)');
+      if (distinto) {
+        await p.waitForFunction(() => [...document.querySelectorAll('article')].some((a) => a.textContent?.includes('que la junta es el martes')), undefined, { timeout: 10000 });
+        await p.waitForTimeout(400);
+        assert.equal(decisiones().length, 0, 'lo del servidor no es lo que enseñó la tarjeta: no se aprueba solo');
+        assert.match(await tarjeta.innerText(), /que la junta es el martes/, 'la tarjeta enseña lo que el servidor mandaría');
+        await tarjeta.getByRole('button', { name: /Confirmar y enviar/ }).click();
+      }
+      for (let k = 0; k < 50 && decisiones().length < 1; k++) await p.waitForTimeout(200);
+      assert.equal(decisiones().length, 1, 'se aprueba la decisión del servidor, una vez');
+      const d = decisiones()[0];
+      assert.equal(d.ruta.split('?')[0], '/api/trabajos/tk_1/decisiones');
+      assert.deepEqual({ decisionId: d.cuerpo.decisionId, expectedVersion: d.cuerpo.expectedVersion, opcion: d.cuerpo.opcion }, { decisionId: 'dt_1', expectedVersion: 1, opcion: 'aprobar' });
+      assert.equal(s.turnos.length, 1, 'confirmar otra vez no manda otro turno');
+      await p.waitForFunction(() => [...document.querySelectorAll('article')].some((a) => a.textContent?.includes('Hecho: el canal lo confirmó')), undefined, { timeout: 10000 });
     }
   );
 }

@@ -40,11 +40,11 @@ import './11-sala/tema.css';
 import { enlaceEnLaUrl, quitarEnlaceDeLaUrl, type EnlaceUrl } from './cuentas/Cuentas';
 import { useTema } from './01-diseno/useTema';
 import { useConversacion, type EntradaAccion } from './13-trabajo/conversacion';
-import { accionSensibleDe, resultadoDe } from './13-trabajo/accionSensible';
+import { accionSensibleDe, coincideConServidor, propuestaValida, resultadoDe, type AccionSensible, type PropuestaServidor } from './13-trabajo/accionSensible';
 import { Conversacion } from './13-trabajo/Conversacion';
 import { Compositor } from './13-trabajo/Compositor';
 import { Inicio, EJEMPLOS_INICIO } from './13-trabajo/Inicio';
-import { IndicadorTrabajos, PanelTrabajos, useTrabajosWeb } from './13-trabajo/Trabajos';
+import { IndicadorTrabajos, PanelTrabajos, clienteTrabajos, useTrabajosWeb } from './13-trabajo/Trabajos';
 import { VisorEscritorio, abrirEscritorio, olvidarVisor, useVisorEscritorioAbierto } from './13-trabajo/VisorEscritorio';
 import { refsDeTurno } from '../mobile/src/lib/trabajos';
 
@@ -621,8 +621,56 @@ export default function App() {
   const aclaracionWeb = useRef<ControlVoz[] | null>(null);
   /** El turno que viene lo dijo en voz alta (el oído), no lo escribió: el servidor le pone los topes de la voz. */
   const habladoRef = useRef(false);
+
+  /**
+   * Aprueba en el servidor la decisión de una tarjeta (revisión 10, MEDIO-C): POST /api/trabajos/:tarea/decisiones con su
+   * id y su versión. El servidor la ejecuta una sola vez y solo si sigue siendo exactamente lo propuesto (cuenta,
+   * acción, destino, contenido); si no, contesta que no hizo nada.
+   */
+  const aprobarEnServidor = useCallback(
+    async (id: string, ref: { tarea: string; decision: string; version: number }) => {
+      const r = await clienteTrabajos.decidir({ id: ref.tarea, version: ref.version, decisionId: ref.decision }, 'aprobar');
+      const ts = Date.now();
+      if (r.ok === false) {
+        conv.actualizar<EntradaAccion>(id, { estado: 'fallida', resultado: r.mensaje, tsResultado: ts });
+      } else {
+        const t = r.tarea;
+        // «Hecho» solo con el recibo del canal (la tarea completada); lo demás no se da por hecho.
+        const estado = t?.state === 'completed' ? 'hecha' : t?.state === 'failed' || t?.state === 'cancelled' || t?.state === 'blocked' ? 'fallida' : 'sin-confirmar';
+        const resumen = t?.result?.summary || t?.currentStep || (estado === 'sin-confirmar' ? 'No sé todavía cómo terminó: míralo en tus tareas antes de repetirlo.' : '');
+        conv.actualizar<EntradaAccion>(id, { estado, resultado: resumen, tsResultado: ts });
+      }
+      trabajosRef.current();
+    },
+    [conv.actualizar]
+  );
+
+  /**
+   * Lo que el servidor dejó esperando para la tarjeta que se confirmó. Si es EXACTAMENTE lo que la persona vio y
+   * confirmó (acción, canal, contenido), ese «Confirmar y enviar» aprueba esa decisión; si el servidor lo entendió
+   * distinto, la tarjeta enseña lo del servidor y vuelve a pedir confirmar (entonces aprueba esa decisión, sin otro turno).
+   */
+  const atarPropuesta = useCallback(
+    (id: string, accion: AccionSensible, p: PropuestaServidor) => {
+      const servidor = { tarea: p.tarea, decision: p.decision, version: p.version };
+      if (coincideConServidor(accion, p)) {
+        conv.actualizar<EntradaAccion>(id, { servidor });
+        void aprobarEnServidor(id, servidor);
+        return;
+      }
+      conv.actualizar<EntradaAccion>(id, {
+        estado: 'propuesta',
+        servidor,
+        accion: { ...accion, titulo: p.titulo || accion.titulo, destinatario: p.destinatario || accion.destinatario, contenido: p.contenido },
+        resultado: undefined,
+      });
+      decir('El servidor lo entendió un poco distinto. Revisá la tarjeta y confirmá otra vez.', { emocion: 'neutral' });
+    },
+    [conv.actualizar, aprobarEnServidor, decir]
+  );
+
   const pensar = useCallback(
-    async (cmd: string, o: { imagen?: string; accionId?: string } = {}) => {
+    async (cmd: string, o: { imagen?: string; accionId?: string; accion?: AccionSensible } = {}) => {
       const hablado = habladoRef.current;
       habladoRef.current = false;
       const cortada = interrumpidaTurnoRef.current;
@@ -757,7 +805,9 @@ export default function App() {
         const tareasTurno = refsDeTurno(data);
         cerrarTurno({ texto, estado: 'lista', ms: data.ms, trazaId: data.trazaId, ...(tareasTurno.length ? { tareas: tareasTurno } : {}) });
         if (tareasTurno.length) trabajosRef.current();
-        resultadoAccion(texto);
+        // El servidor no ejecuta lo que sale desde el turno: deja una propuesta. La tarjeta confirmada la aprueba.
+        if (o.accionId && o.accion && propuestaValida(data.propuestaTaller)) atarPropuesta(o.accionId, o.accion, data.propuestaTaller);
+        else resultadoAccion(texto);
         if (data.emocion) emo = data.emocion;
         // Sin stream (el servidor contestó en JSON) no llegó ningún trozo: se dice la respuesta entera.
         if (!huboTexto) pendiente = String(data.voz || texto);
@@ -782,7 +832,7 @@ export default function App() {
         resultadoAccion('');
       }
     },
-    [mode, usuario.name, visionEnabled, soundFxEnabled, decir, bombear, callarTodo, hacerTarea, conv.aura, conv.actualizar]
+    [mode, usuario.name, visionEnabled, soundFxEnabled, decir, bombear, callarTodo, hacerTarea, conv.aura, conv.actualizar, atarPropuesta]
   );
 
   /** Si el cerebro todavía no está, lo avisa y devuelve true (el turno no sale). */
@@ -951,7 +1001,8 @@ export default function App() {
 
   /**
    * LA PUERTA (revisión 9): si lo pedido sale del sistema (mandar, avisar urgente, llamar) no se despacha: se propone
-   * en una tarjeta y espera Confirmar. El taller del servidor ejecuta lo que reconoce, así que esta tarjeta es el freno.
+   * en una tarjeta y espera Confirmar. Desde la revisión 10 el servidor tampoco lo hace desde el turno (deja una propuesta
+   * que se aprueba con su id y versión): esta tarjeta enseña qué se autoriza y su Confirmar es esa aprobación.
    * Devuelve true si propuso (y entonces no debe salir nada más).
    */
   const proponerSiSale = useCallback(
@@ -1028,10 +1079,15 @@ export default function App() {
       if (!e || e.estado !== 'propuesta') return;
       conv.actualizar<EntradaAccion>(id, { estado: 'enviando' });
       playSfx('tap', soundFxEnabled);
-      // El taller del servidor hace el envío sin despertar al modelo: no se espera al cerebro.
-      void pensar(e.pedido, { accionId: id });
+      // Con la decisión del servidor ya atada a la tarjeta, confirmar es aprobar ESA decisión (revisión 10, MEDIO-C).
+      if (e.servidor) {
+        void aprobarEnServidor(id, e.servidor);
+        return;
+      }
+      // Si no, el pedido va al servidor, que deja la propuesta (no la ejecuta) y la tarjeta la aprueba al volver.
+      void pensar(e.pedido, { accionId: id, accion: e.accion });
     },
-    [conv.entradas, conv.actualizar, pensar, soundFxEnabled]
+    [conv.entradas, conv.actualizar, pensar, soundFxEnabled, aprobarEnServidor]
   );
 
   const cancelarAccion = useCallback(

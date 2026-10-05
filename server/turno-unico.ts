@@ -61,6 +61,8 @@ export type TurnoGuardado = {
   proveedor?: string;
   /** Las tareas durables que el turno creó o cambió (server/trabajos.ts, AUR08): el reintento las enlaza igual. */
   tareas?: { id: string; title: string; state: string; version: number; updatedAt: string }[];
+  /** Lo que el taller dejó esperando aprobación (revisión 10, MEDIO-C): el reintento lo devuelve igual. */
+  propuestaTaller?: unknown;
 };
 
 /** El registro durable de un turno (lib/durable.ts). */

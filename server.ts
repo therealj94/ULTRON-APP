@@ -75,6 +75,7 @@ import { atajoDeAppBloqueado, resolverBorradorDesdePanel, resolverDecisionesDelT
 import { puedeMano } from './lib/manos-app';
 import {
   abrirDecisionDeBorrador,
+  abrirDecisionDeTaller,
   abrirEncargoComputadora,
   cerrarEncargoComputadora,
   enTurnoConTrabajos,
@@ -124,7 +125,7 @@ import { conApodoDelTurno, lineaApodoPendiente } from './lib/apodo';
 import { emitirSesion, borrarSesion, cerrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica, mesaAutorizada, cuerpoHttp, gastarCupo, esperaEntrada, anotarFalloEntrada, anotarExitoEntrada, cargarSesionesCerradas } from './server/seguridad';
 import { canales, leerPdf, telegramFoto, telegramVoz } from './lib/canales';
 import { catalogoCanales, fotoSistema } from './lib/sistema';
-import { despacharTaller, hechosCatalogo } from './lib/taller';
+import { despacharTaller, ejecutarAprobadoTaller, hechosCatalogo, vinculoTallerVigente, type PropuestaTallerVista } from './lib/taller';
 import { listarTareas } from './lib/tareas';
 import { ejecutarCodigo, ejecutorActivo } from './lib/ejecutor';
 import { construirMensajes, extraerPython } from './lib/qwen';
@@ -1552,6 +1553,12 @@ montarRutasTrabajos(app, {
     enviar: (correo, canal, ambito, intento, huella) => resolverBorradorDesdePanel(correo, canal, ambito, intento, 'sí', huella),
     descartar: (correo, canal, ambito, intento) => resolverBorradorDesdePanel(correo, canal, ambito, intento, 'no'),
   },
+  // Lo que propuso el taller de la junta (revisión 10, MEDIO-C): lo aprueba la misma cuenta, si sigue en la junta y el
+  // vínculo es exactamente lo aprobado; se ejecuta con los argumentos congelados, una vez.
+  taller: {
+    vigente: (correo, v) => nivelDeCorreo(correo) === 'junta' && vinculoTallerVigente(v, correo),
+    ejecutar: (correo, v) => ejecutarAprobadoTaller(v, { cuenta: correo }),
+  },
 });
 // Investigar en segundo plano (server/investigar.ts): las mismas piezas que `web` y `leer` (con urlPublica), el
 // mismo cerebro de las vueltas del harness (redactarConCerebro) y el aviso al teléfono (y al navegador).
@@ -2807,6 +2814,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   const foto: string | null = null;
   const tools: string[] = conTarea ? ['tarea'] : [];
   let decirTaller: string | undefined;
+  /** Lo que el taller dejó esperando la aprobación de la persona (revisión 10, MEDIO-C): va en la respuesta. */
+  let propuestaTaller: PropuestaTallerVista | undefined;
   /** Un cálculo de mina se dice tal cual: parafrasear un número es arruinarlo. */
   let calculoMina: string | null = null;
 
@@ -3069,6 +3078,10 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
       manosApp: conApp ? contextoApp?.manos : undefined,
       // Lo que manda o cambia el taller queda anotado en el turno durable antes de hacerse (AUR06; revisión 4-oct).
       antesDeEfecto: (herramienta) => efectoDelTurno(herramienta),
+      // Lo que sale a los canales de la junta no se hace desde el turno: queda propuesto a la cuenta de la sesión y se
+      // hace al aprobar esa decisión exacta (revisión 10, MEDIO-C). Sin sesión con correo (Telegram), no se propone.
+      cuenta: correoApp || null,
+      proponer: (pp) => abrirDecisionDeTaller(correoApp, pp),
     }).then(async (t) => {
       if (t.tools.length) {
         await registrarCambio({
@@ -3092,6 +3105,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     hechos.push(...taller.hechos.map(neutralizarMarca));
     tools.push(...taller.tools);
     decirTaller = taller.decir === undefined ? undefined : neutralizarMarca(taller.decir);
+    propuestaTaller = 'propuesta' in taller ? taller.propuesta : undefined;
   } catch (e: any) {
     hechos.push(`Taller falló: ${String(e?.message || e).slice(0, 160)}.`);
   }
@@ -3286,6 +3300,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     foto,
     directo,
     directoVia: decirTaller ? 'taller' : soloCalculo ? 'calculo-mina' : directo ? 'market' : null,
+    propuestaTaller,
     system,
     contexto,
     systemManos,
@@ -3981,6 +3996,8 @@ type SalidaTurno = {
   /** Quién escribió la respuesta de verdad (EXEC04): no se adivina por `via`. */
   modelo?: string;
   proveedor?: string;
+  /** Lo que el taller dejó esperando aprobación (revisión 10, MEDIO-C): el cliente la enseña y aprueba esa decisión. */
+  propuestaTaller?: PropuestaTallerVista;
 };
 
 /** Cómo cerró un turno: `completo`, o a medias con su motivo (STREAM01). */
@@ -4330,7 +4347,7 @@ async function correrTurnoInterno(body: any, opciones: OpcionesTurno = {}): Prom
   };
   if (p.directo) {
     const via = p.directoVia === 'taller' ? 'taller' : p.directoVia === 'calculo-mina' ? 'calculo-mina' : 'gold-api/er-api';
-    return guardar({ ...base, reply: p.directo, via, mode, ms: Date.now() - t0, herramientas: tools });
+    return guardar({ ...base, reply: p.directo, via, mode, ms: Date.now() - t0, herramientas: tools, ...(p.propuestaTaller ? { propuestaTaller: p.propuestaTaller } : {}) });
   }
   // Lo simple y sin riesgo lo contesta el modelo chico de la T4 (si está activo); si falla, Qwen.
   const chica = await respuestaChica(p);
@@ -4417,6 +4434,8 @@ function jsonDelTurno(g: TurnoGuardado, extra: Record<string, unknown> = {}) {
     ...(g.parcial ? { parcial: true, ...(g.motivo ? { motivo: g.motivo } : {}) } : {}),
     // Las tareas durables del turno (AUR08): campo nuevo y opcional; una app vieja lo ignora.
     ...(g.tareas?.length ? { tareas: g.tareas } : {}),
+    // Lo que el taller dejó esperando aprobación (revisión 10, MEDIO-C): opcional; una app vieja lo ignora.
+    ...(g.propuestaTaller ? { propuestaTaller: g.propuestaTaller } : {}),
     ...extra,
     honesto: true,
   };
@@ -4479,6 +4498,7 @@ app.post('/api/turno', exigirMesaODesk, limitar(60), cupoDeMiembro, async (req, 
     ...(parcial ? { parcial: true, ...(out.motivo ? { motivo: out.motivo } : {}) } : {}),
     ...(out.modelo ? { modelo: out.modelo, proveedor: out.proveedor } : {}),
     ...(trabajos.refs.length ? { tareas: trabajos.refs } : {}),
+    ...(out.propuestaTaller ? { propuestaTaller: out.propuestaTaller } : {}),
   };
   unico.terminar(out.reply && !out.error ? g : null);
   if (out.error && !out.reply) {
@@ -4632,6 +4652,7 @@ app.post('/api/turno/stream', exigirMesaODesk, limitar(60), cupoDeMiembro, async
             ...(hecho.parcial === true ? { parcial: true, ...(hecho.motivo ? { motivo: String(hecho.motivo) } : {}) } : {}),
             ...(hecho.modelo ? { modelo: String(hecho.modelo), proveedor: String(hecho.proveedor || '') } : {}),
             ...(Array.isArray(hecho.tareas) && hecho.tareas.length ? { tareas: hecho.tareas } : {}),
+            ...(hecho.propuestaTaller ? { propuestaTaller: hecho.propuestaTaller } : {}),
           }
         : null
     );
@@ -4778,6 +4799,8 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       ...(parcial ? { parcial: true, ...(fin.motivo ? { motivo: fin.motivo } : {}) } : {}),
       modelo: autor.modelo,
       proveedor: autor.proveedor,
+      // Lo que el taller dejó esperando aprobación (revisión 10, MEDIO-C).
+      ...(p.propuestaTaller ? { propuestaTaller: p.propuestaTaller } : {}),
     };
     send('done', datos);
     if (senal?.aborted && corrioHerramienta) salida.resultado?.(datos);
