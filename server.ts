@@ -16,7 +16,7 @@ import { montarVozAgente, type RetencionAcciones, type TurnoVoz } from './server
 import { interruptor } from './lib/interruptores';
 import { LIMITES_TEXTO, LIMITES_VOZ, fijoDeLaConversacion, piezasDelTurno, renovarFijo, ventanaDelHilo } from './server/prompt-turno';
 import { ESPACIO_COMUN, espacioDe } from './lib/espacio-nodo';
-import { cargarMiembro, fotoMemoriaMiembro, guardarHechoMiembro, hiloMiembro, olvidarMiembro, promptMemoriaMiembro, recordarTurnoMiembro } from './lib/memoria-miembro';
+import { cargarMiembro, fotoMemoriaMiembro, guardarHechoMiembro, hiloMiembro, olvidarMiembro, recordarTurnoMiembro } from './lib/memoria-miembro';
 import { montarRutasApp } from './server/app-rutas';
 import { montarRutasCaras } from './server/caras-rutas';
 import { avisarComputadoraPorPush, avisarPush, llamarPorPush, montarRutasPush, proponerPorPush } from './server/push';
@@ -112,7 +112,7 @@ import { accionTareaPorId, bloqueTarea, correrTareaConEstado, precargarTareas, r
 import { borradorWhatsappDe, correrWhatsappConEstado, destinoWhatsapp, montarRutasWhatsapp, whatsappDisponible, whatsappPermitido } from './server/whatsapp';
 import { accionIniciativa, bloqueIniciativaTurno, componerIniciativa, correrMisionTurnoConEstado, duenoMisiones } from './server/iniciativa';
 import { contadoresProductivos } from './server/fuentes-iniciativa';
-import { bloquesPersonales } from './server/contexto-turno';
+import { bloquesPersonales, precargarVista, vistaAutorizada } from './server/contexto-turno';
 import { frenarIniciativa, pideApagarIniciativa, pideDejarDeProponer, type PersonaIniciativa } from './lib/iniciativa';
 import { montarRutasCerebroContinuo } from './server/cerebro-continuo';
 import { anotarTurnos, iniciarBarridoPausas, precargarCerebro } from './lib/episodios';
@@ -231,7 +231,6 @@ import { memoriaSinLeer,
   fotoMemoria,
   guardarHechoQuien,
   olvidarQuien,
-  promptMemoria,
   recordarTurno,
   registrarCambio,
   resolverQuien,
@@ -2647,14 +2646,29 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     // En la memoria de este proceso ya; la copia a disco y S3 sigue en la cola sin retrasar la respuesta.
     await aTiempoParaVoz(voz, 'hilo', recordarSegunNivel(body, { quienMem, rol: 'user', texto: message, canal, esperar: false }, opciones.retener), undefined);
   }
-  const clienteHilo = Array.isArray(body?.historial)
-    ? (body.historial as any[]).map((x) => ({
-        rol: String(x?.rol || x?.role || 'user'),
-        texto: String(x?.texto || x?.content || ''),
-      }))
-    : [];
+  // De quién es lo personal del turno: su memoria, su computadora, su iniciativa (y lo que limitó).
+  const duenoComputadora = correoApp || quienMem || '';
+  /*
+   * «No usarlo» (server/contexto-turno.ts): UNA vista decide qué de lo suyo llega al modelo —perfil, lo que
+   * sabe, resúmenes, su memoria (lo que pidió recordar) y la conversación que va como mensajes—. Se lee lo
+   * limitado antes de tocar el hilo (hablando, con tope: sin saberlo a tiempo, lo suyo no entra).
+   */
+  await aTiempoParaVoz(voz, 'lo limitado', precargarVista(duenoComputadora), undefined);
+  const vista = vistaAutorizada(duenoComputadora);
+  const clienteHilo = vista.turnos(
+    Array.isArray(body?.historial)
+      ? (body.historial as any[]).map((x) => ({
+          rol: String(x?.rol || x?.role || 'user'),
+          texto: String(x?.texto || x?.content || ''),
+        }))
+      : [],
+    message
+  );
   const memoriaHilo = miembro ? hiloMiembro(correoMem) : hiloDe(quienMem);
-  const durable = memoriaHilo.map((t) => ({ rol: t.rol, texto: t.texto }));
+  const durable = vista.turnos(
+    memoriaHilo.map((t) => ({ rol: t.rol, texto: t.texto })),
+    message
+  );
   const hiloTodo = durable.length >= 2 ? durable : [...clienteHilo, ...durable];
   const hiloPrevio = hiloTodo.filter(
     (t, i) => !(i === hiloTodo.length - 1 && t.rol === 'user' && t.texto === message)
@@ -2719,7 +2733,6 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   // Ánimo, urgencia, estafa o alguien en riesgo, si Laya lo vio: guía de tono para la respuesta.
   hechos.push(...guiasDeClasificacion(clas));
   // Lo que su computadora terminó después de que el turno anterior dejó de esperar (server/computadora.ts).
-  const duenoComputadora = correoApp || quienMem || '';
   const deLaComputadora = duenoComputadora ? avisosPendientes(duenoComputadora) : null;
   if (deLaComputadora) hechos.push(neutralizarMarca(deLaComputadora.hecho));
   // Un correo que esperaba su «sí» o su «no» (server/correo.ts): lo manda (o lo descarta) el servidor, aquí.
@@ -2768,7 +2781,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   // AU-RA proponga en la conversación. Y si pide que deje de proponer, se frena el reloj.
   if (duenoComputadora) {
     if (correoApp) anotarPersonaReciente(correoApp, nombre, nivel);
-    const ini = await aTiempoParaVoz(voz, 'iniciativa', bloqueIniciativaTurno(duenoComputadora, perfilEnCache(correoApp) ?? undefined).catch(() => ''), '');
+    const ini = await aTiempoParaVoz(voz, 'iniciativa', bloqueIniciativaTurno(duenoComputadora, perfilEnCache(correoApp) ?? undefined, vista).catch(() => ''), '');
     if (ini) hechos.push(ini);
     if (message && (pideDejarDeProponer(message) || pideApagarIniciativa(message))) {
       const correoIni = duenoMisiones(duenoComputadora);
@@ -3150,7 +3163,17 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   // Sin apodo elegido, AURA se lo pregunta (una vez, con naturalidad) y lo recuerda.
   // Lo personal del turno como VISTA AUTORIZADA (server/contexto-turno.ts): lo que la persona marcó «No usarlo»
   // no entra ni por su perfil, ni por lo que AU-RA sabe de ella, ni por los resúmenes de antes (texto y voz).
-  const personal = bloquesPersonales({ dueno: duenoComputadora, perfil: perfilPersona, compacto, nombre: comoLeDecimos, consulta: message, conPregunta: !compacto });
+  // También su memoria (la del miembro o la de la junta: lo que pidió recordar y su hilo), por la misma vista.
+  const personal = bloquesPersonales({
+    dueno: duenoComputadora,
+    perfil: perfilPersona,
+    compacto,
+    nombre: comoLeDecimos,
+    consulta: message,
+    conPregunta: !compacto,
+    vista,
+    memoria: { nivel, quienMem, correoMem, nombre: comoLeDecimos, hiloEnMensajes: hilo.length > 0 },
+  });
   const bloquePerfil = [personal.bloquePerfil, correoApp ? lineaApodoPendiente(perfilPersona, idiomaTurno === 'en' ? 'en' : 'es', { nombre }) : ''].filter(Boolean).join('\n');
   // Las reglas de la app van en el system (iguales turno a turno, el nodo no las relee); en el mensaje
   // del turno, solo lo de este momento: dónde está, sus contactos, lo que espera su «sí», la hora.
@@ -3185,8 +3208,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     reglasApp,
     lineaAvatar: lineaAvatar(normalizarAvatar(body?.avatar), normalizarIdioma(body?.idioma)),
     hechos,
-    memoriaMiembro: correoMem ? promptMemoriaMiembro(correoMem, comoLeDecimos, hilo.length ? 'mediano' : 'todo') : undefined,
-    memoriaMiembroFirma: correoMem ? promptMemoriaMiembro(correoMem, comoLeDecimos, 'firma') : undefined,
+    // La memoria del turno ya por la vista autorizada (server/contexto-turno.ts): aquí no se lee ninguna.
+    memoria: personal.memoria,
     hiloEnMensajes: hilo.length > 0,
     compacto,
     bloqueCerebro: bloqueCerebro ? neutralizarMarca(bloqueCerebro) : '',

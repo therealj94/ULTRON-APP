@@ -38,7 +38,7 @@ import { fetchNodo, NODO_MODELO, NODO_SECRETO, NODO_URL } from './nodo';
 import { ESPACIO_COMUN } from './espacio-nodo';
 import { cajonPorCorreo, lineasMisiones, pendientesDe, parecido, textoLinea, type Mision } from './misiones';
 import { CAMPOS_ENCUESTA, INICIATIVA_POR_OMISION, type NivelIniciativa, type Perfil, type PerfilDeUso } from './perfil-persona';
-import { textoAutorizado } from './conocer-persona';
+import { RESERVADO, textoAutorizado } from './conocer-persona';
 import { enQuietas, fechaLocal, instanteDeLocal, partesLocales, QUIETAS_POR_OMISION, ZONA_POR_OMISION, zonaValida, type Quietas } from './zona-horaria';
 
 /* ------------------------------------------------------------------ tipos */
@@ -296,34 +296,80 @@ export function lineaPorConocer(perfil: PerfilDeUso | null | undefined): string 
   return faltan.length ? `AÚN NO SABES DE SU VIDA: ${faltan.join(', ')}. Si viene al caso, una sola pregunta personal en la conversación.` : '';
 }
 
+/**
+ * Las palabras de lo que limitó («No usarlo»): las que dio quien llama o, sin darlas, las de su perfil de uso.
+ * null = no se sabe (lo dijo quien llama, o el perfil vino de la vista que falló cerrado: con `limitados` y sin
+ * `reservas`, lib/perfil-persona.ts perfilDeUso).
+ */
+function reservasDeCtx(ctx: ContextoIniciativa): readonly (readonly string[])[] | null {
+  if (ctx.reservas !== undefined) return ctx.reservas;
+  if (ctx.perfil?.reservas) return ctx.perfil.reservas;
+  return ctx.perfil?.limitados ? null : [];
+}
+
+const autorizarMision = (m: Mision, aut: (s: string) => string): Mision => ({
+  ...m,
+  titulo: aut(m.titulo),
+  objetivo: aut(m.objetivo),
+  ...(m.porque !== undefined ? { porque: aut(m.porque) } : {}),
+  proximoPaso: aut(m.proximoPaso),
+  pasos: m.pasos.map((p) => ({ ...p, texto: aut(p.texto) })),
+  notas: m.notas.map((n) => ({ ...n, texto: aut(n.texto) })),
+});
+
+/**
+ * El contexto como la iniciativa lo puede USAR (P1/A1; revisión del 5-oct): lo de la persona sin lo que limitó.
+ * Sus misiones y lo último que dijo, con las palabras de lo limitado tapadas («[reservado]»). Sin saber qué
+ * limitó (reservas null) se falla cerrado y se dice la verdad del estado: sus misiones quedan NO DISPONIBLES
+ * (null: no se leen, no se proponen, no sirven de fuente, y revalidarPropuesta da `fuente_no_disponible`) y su
+ * hilo no entra. Lo que se le muestra a la persona (la ficha de misiones) no pasa por aquí. Idempotente.
+ */
+export function contextoAutorizado<T extends ContextoIniciativa>(ctx: T): T {
+  const reservas = reservasDeCtx(ctx);
+  if (reservas === null) return { ...ctx, reservas: null, misiones: ctx.misiones === undefined ? undefined : null, hilo: [] };
+  if (!reservas.length) return ctx;
+  const aut = (s: string) => textoAutorizado(String(s || ''), reservas);
+  return {
+    ...ctx,
+    reservas,
+    ...(ctx.misiones ? { misiones: ctx.misiones.map((m) => autorizarMision(m, aut)) } : {}),
+    ...(ctx.hilo ? { hilo: ctx.hilo.map((t) => ({ ...t, texto: aut(t.texto) })).filter((t) => t.texto.trim()) } : {}),
+  };
+}
+
 /** El contexto compacto para pensar propuestas. Lo de la persona va como dato. */
-export function contextoIniciativa(persona: PersonaIniciativa, ctx: ContextoIniciativa = {}): string {
+export function contextoIniciativa(persona: PersonaIniciativa, ctxDado: ContextoIniciativa = {}): string {
+  // Lo limitado («No usarlo») no entra por ningún lado: ni el perfil (ya viene sin ello), ni lo último que dijo,
+  // ni sus misiones, ni lo ya propuesto. Sin saber qué está limitado (null), nada de eso entra.
+  const ctx = contextoAutorizado(ctxDado);
   const ahora = ctx.ahora ?? Date.now();
   const zona = zonaValida(ctx.zona) || ZONA;
   const { hora, minuto } = horaEn(ahora, zona);
   const nombre = textoLinea(ctx.perfil?.apodo || persona.nombre || '', 40) || 'la persona';
-  // Lo limitado («No usarlo») no entra por ningún lado: ni el perfil (ya viene sin ello), ni lo último que dijo,
-  // ni sus misiones. Sin saber qué está limitado (null), su hilo no entra.
-  const reservas = ctx.reservas !== undefined ? ctx.reservas : ctx.perfil?.reservas || [];
-  const aut = (s: string) => (reservas === null ? s : textoAutorizado(s, reservas));
+  const reservas = reservasDeCtx(ctx);
+  const aut = (s: string) => textoAutorizado(s, reservas);
   const l: string[] = [`AHORA: ${String(hora).padStart(2, '0')}:${String(minuto).padStart(2, '0')} ${zona === ZONA ? 'en Honduras' : `en su zona (${zona})`}, de ${momentoDelDia(hora)}.`, `PERSONA: ${nombre}${persona.nivel === 'junta' ? ' (junta directiva de Orden Global)' : persona.nivel === 'miembro' ? ' (miembro de la comunidad de Orden Global)' : ''}.`];
   const ms = ctx.misiones || [];
-  const lineas = lineasMisiones(ms, ahora).slice(0, 6).map(aut);
-  l.push(lineas.length ? `MISIONES ABIERTAS:\n${lineas.join('\n')}` : 'MISIONES ABIERTAS: ninguna.');
+  const lineas = lineasMisiones(ms, ahora).slice(0, 6);
+  l.push(
+    ctx.misiones === null
+      ? 'MISIONES ABIERTAS: no disponibles ahora (no se pudieron leer o no se pudo confirmar lo que la persona limitó). No digas que no tiene ni propongas sobre ellas.'
+      : lineas.length
+        ? `MISIONES ABIERTAS:\n${lineas.join('\n')}`
+        : 'MISIONES ABIERTAS: ninguna.'
+  );
   const pend = pendientesDe(ms, ahora).slice(0, 3);
-  if (pend.length) l.push(aut(`PIDEN ATENCIÓN: ${pend.map((p) => `«${p.mision.titulo}» (${p.motivo.replace('_', ' ')})`).join('; ')}.`));
+  if (pend.length) l.push(`PIDEN ATENCIÓN: ${pend.map((p) => `«${p.mision.titulo}» (${p.motivo.replace('_', ' ')})`).join('; ')}.`);
   const faltan = porConocer(ctx.perfil);
   if (faltan.length) l.push(`AÚN NO SABES DE SU VIDA: ${faltan.map((k) => NOMBRE_CAMPO[k] || k).join(', ')}.`);
   const e = (ctx.perfil?.encuesta || {}) as Record<string, string | undefined>;
   const sabe = CAMPOS_ENCUESTA.filter((k) => e[k]).map((k) => `${NOMBRE_CAMPO[k] || k}: ${textoLinea(e[k], 80)}`);
   if (sabe.length) l.push(`LO QUE YA SABES: ${sabe.join('; ')}.`);
-  const temas =
-    reservas === null
-      ? []
-      : (ctx.hilo || [])
-          .filter((t) => t.rol === 'user')
-          .slice(-3)
-          .map((t) => `«${aut(textoLinea(t.texto, 100))}»`);
+  // El hilo ya viene por la vista (contextoAutorizado): sin saber qué limitó, vacío.
+  const temas = (ctx.hilo || [])
+    .filter((t) => t.rol === 'user')
+    .slice(-3)
+    .map((t) => `«${textoLinea(t.texto, 100)}»`);
   if (temas.length) l.push(`LO ÚLTIMO QUE TE DIJO: ${temas.join('; ')}.`);
   const canales: string[] = [];
   const correo = sinLeerVigente(observacionDe(ctx, 'correo'));
@@ -333,7 +379,11 @@ export function contextoIniciativa(persona: PersonaIniciativa, ctx: ContextoInic
   if (canales.length) l.push(`SUS CANALES: ${canales.join('; ')}.`);
   const ids = [...candidatosDe(ctx, ahora).keys()];
   l.push(`IDS DE FUENTE: ${ids.length ? ids.join(', ') : '(ninguno)'}.`);
-  const ya = recientes(ctx.historial || [], ahora).map((h) => `«${aut(textoLinea(h.texto, 90))}»${h.respuesta === 'no' ? ' (dijo que no)' : ''}`);
+  // Lo ya propuesto por la misma vista: sin saber qué limitó no entra (no repetirlo lo cuida quitarRepetidas).
+  const ya = recientes(ctx.historial || [], ahora)
+    .map((h) => ({ h, texto: aut(textoLinea(h.texto, 90)) }))
+    .filter((x) => x.texto.trim())
+    .map(({ h, texto }) => `«${texto}»${h.respuesta === 'no' ? ' (dijo que no)' : ''}`);
   if (ya.length) l.push(`YA PROPUESTO (no lo repitas): ${ya.slice(-8).join('; ')}.`);
   return l.join('\n');
 }
@@ -426,7 +476,9 @@ export type Candidato = { fuente: FuentePropuesta; caduca: number; misionId?: st
  * propuestas del modelo tienen que apuntar a uno de estos (sanearPropuestas): lo que dice el modelo no es
  * evidencia de un hecho.
  */
-export function candidatosDe(ctx: ContextoIniciativa, ahora = ctx.ahora ?? Date.now()): Map<string, Candidato> {
+export function candidatosDe(ctxDado: ContextoIniciativa, ahora = ctxDado.ahora ?? Date.now()): Map<string, Candidato> {
+  // Sus misiones por la vista autorizada: sin saber qué limitó, ninguna es candidata.
+  const ctx = contextoAutorizado(ctxDado);
   const out = new Map<string, Candidato>();
   for (const f of ['correo', 'whatsapp'] as const) {
     const n = sinLeerVigente(observacionDe(ctx, f));
@@ -557,7 +609,9 @@ export function quitarRepetidas(ps: Propuesta[], historial: EntradaHistorial[], 
  * mañana, su correo o WhatsApp sin leer, una pregunta para conocerle y, si no hay nada, ofrecerle una
  * misión. Ya filtradas contra lo propuesto hace poco.
  */
-export function propuestasDeRespaldo(persona: PersonaIniciativa, ctx: ContextoIniciativa = {}): Propuesta[] {
+export function propuestasDeRespaldo(persona: PersonaIniciativa, ctxDado: ContextoIniciativa = {}): Propuesta[] {
+  // Sus misiones por la vista autorizada: sin saber qué limitó, no se propone sobre ellas.
+  const ctx = contextoAutorizado(ctxDado);
   const ahora = ctx.ahora ?? Date.now();
   const zona = zonaValida(ctx.zona) || ZONA;
   const { hora } = horaEn(ahora, zona);
@@ -578,6 +632,8 @@ export function propuestasDeRespaldo(persona: PersonaIniciativa, ctx: ContextoIn
   };
   const ms = ctx.misiones || [];
   for (const { mision: m, motivo, dias } of pendientesDe(ms, ahora)) {
+    // Una misión que nombra lo limitado no se le ofrece con «[reservado]» en la frase: se salta.
+    if ([m.titulo, m.proximoPaso].some((x) => x.includes(RESERVADO))) continue;
     const paso = m.proximoPaso ? ` Lo siguiente era «${textoLinea(m.proximoPaso, 70)}».` : '';
     const porQue = motivo === 'estancada' ? `«${textoLinea(m.titulo, 50)}» lleva ${dias} días sin avance.` : motivo === 'vencida' ? `«${textoLinea(m.titulo, 50)}» ya pasó de su fecha y sigue abierta.` : `«${textoLinea(m.titulo, 50)}» vence en menos de un día y sigue abierta.`;
     nueva({
@@ -635,7 +691,8 @@ export function propuestasDeRespaldo(persona: PersonaIniciativa, ctx: ContextoIn
     nueva({ tipo: 'conocer', prioridad: 3, campo, texto: q.texto, pedido: q.pedido, evidencia: ev({ tipo: 'perfil', id: campo }, `Aún no sé ${NOMBRE_CAMPO[campo] || campo}; me ayuda a proponerte mejor.`, 'Escucharte y anotarlo en tu perfil (lo puedes borrar).', 'ninguno', ahora + CADUCA_COLA_MS) });
     if (out.length > antes) break;
   }
-  if (!ms.some((m) => m.estado === 'activa')) {
+  // Sin poder leerlas (o sin saber qué limitó), no se afirma «no tienes ninguna misión activa».
+  if (ctx.misiones !== null && !ms.some((m) => m.estado === 'activa')) {
     nueva({
       tipo: 'mision',
       prioridad: 3,
@@ -773,7 +830,8 @@ function fuentesDe(ctx: ContextoIniciativa): FuentesVigentes {
  * De una a tres propuestas para la persona: primero el modelo (con tope de tiempo), validadas y sin
  * repetir lo propuesto hace poco; si el modelo no está o no trae nada útil, el respaldo fijo.
  */
-export async function pensarPropuestas(persona: PersonaIniciativa, ctx: ContextoIniciativa = {}): Promise<{ propuestas: Propuesta[]; origen: 'modelo' | 'respaldo' }> {
+export async function pensarPropuestas(persona: PersonaIniciativa, ctxDado: ContextoIniciativa = {}): Promise<{ propuestas: Propuesta[]; origen: 'modelo' | 'respaldo' }> {
+  const ctx = contextoAutorizado(ctxDado);
   const ahora = ctx.ahora ?? Date.now();
   const modelo = ctx.modelo === undefined ? preguntarModeloCorto : ctx.modelo;
   if (modelo) {
@@ -987,6 +1045,8 @@ export async function siguientePropuesta(persona: PersonaIniciativa, ctx: Contex
   const reloj: RelojPersona = { zona: ctx.zona, quietas: ctx.quietas };
   if (nivel === 'apagada') return { propuesta: null, nueva: false, motivo: 'apagada' };
   if (enHorasQuietas(ahora, reloj)) return { propuesta: null, nueva: false, motivo: 'horas_quietas' };
+  // Lo de la persona por la vista autorizada (contextoAutorizado), también para revalidar lo pendiente.
+  ctx = contextoAutorizado(ctx);
   const fuentes = fuentesDe(ctx);
   const vale = (p: Propuesta) => !ctx.excluir?.(p) && revalidarPropuesta(p, fuentes, ahora).vigente;
   const { resultado } = await almacen.modificar(persona.correo, async (e): Promise<ResultadoSiguiente> => {

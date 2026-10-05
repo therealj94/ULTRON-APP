@@ -26,6 +26,7 @@ import { hiloDe } from '../lib/memoria';
 import { hiloMiembro } from '../lib/memoria-miembro';
 import { miembrosUltron, quienEs } from '../lib/junta';
 import { iniciativaDe, leerPerfil, reservasDe, type PerfilDeUso } from '../lib/perfil-persona';
+import { vistaDeTerminos, type VistaTexto } from '../lib/conocer-persona';
 import {
   enHorasQuietas,
   evidenciaDe,
@@ -126,12 +127,19 @@ export function correrMisionTurnoConEstado(dueno: string, arg: string) {
 /**
  * Lo del turno para la iniciativa en la conversación: sus misiones abiertas y lo que aún no sabe de su
  * vida. Va en HECHOS (o en el bloque de la app), nunca en el system: cambia. Nunca lanza.
+ *
+ * Sus misiones pasan por la vista autorizada (lo que marcó «No usarlo» se tapa): la del turno
+ * (server/contexto-turno.ts vistaAutorizada) o, sin ella, la que sale del estado durable (reservasDe). Sin
+ * saber qué limitó, sus misiones no entran: se dice que no están a mano, no que no tiene.
  */
-export async function bloqueIniciativaTurno(dueno: string, perfil?: PerfilDeUso | null): Promise<string> {
+export async function bloqueIniciativaTurno(dueno: string, perfil?: PerfilDeUso | null, vista?: VistaTexto): Promise<string> {
   const correo = duenoMisiones(dueno);
   if (!correo) return '';
   const p = perfil === undefined ? await leerPerfil(correo).catch(() => null) : perfil;
-  return [await bloqueMisiones(correo), lineaPorConocer(p)].filter(Boolean).join('\n');
+  const v = vista ?? vistaDeTerminos(await reservasDe(correo).catch(() => null));
+  const misiones = await bloqueMisiones(correo);
+  const deMisiones = !misiones ? '' : v.sabe ? v.texto(misiones) : 'MISIONES DE LA PERSONA: no las tengo a mano en este turno. No digas que no tiene ni inventes cuáles son.';
+  return [deMisiones, lineaPorConocer(p)].filter(Boolean).join('\n');
 }
 
 /** Sus últimos turnos: los de la junta en lib/memoria.ts, los de un miembro en lib/memoria-miembro.ts. */

@@ -18,6 +18,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import type { VistaTexto } from './conocer-persona';
 import { capasHilo, type HiloMemoria } from './conversacion';
 import { s3GetJson, s3Listo, s3PutJson } from './s3';
 
@@ -209,22 +210,31 @@ export async function olvidarMiembro(correo: string): Promise<{ durable: boolean
 }
 
 /** Lo que va al prompt: con quién habla, lo que pidió recordar y su hilo. Nada de nadie más. */
-/** `hilo`: como en lib/memoria.ts promptMemoria ('todo', 'mediano' o 'firma'; lib/conversacion.ts). */
-export function promptMemoriaMiembro(correo: string, nombre?: string, hilo: HiloMemoria = 'todo'): string {
+/**
+ * `hilo`: como en lib/memoria.ts promptMemoria ('todo', 'mediano' o 'firma'; lib/conversacion.ts).
+ * `vista`: lo que la persona marcó «No usarlo» (server/contexto-turno.ts vistaAutorizada): sus hechos y su
+ * hilo pasan por ella; sin saber qué está limitado, no entra nada de lo suyo. El turno siempre la da.
+ */
+export function promptMemoriaMiembro(correo: string, nombre?: string, hilo: HiloMemoria = 'todo', vista?: VistaTexto): string {
   const cajon = cache.get(correoNormal(correo)) || vacio();
   const n = String(nombre || '').trim() || 'un miembro de la comunidad';
-  const capas = capasHilo(cajon.corta);
+  const aut = (s: string) => (vista ? vista.texto(s) : s);
+  const larga = cajon.larga.map((h) => aut(h.hecho)).filter((s) => s.trim());
+  const corta = cajon.corta.map((t) => ({ ...t, texto: aut(t.texto) })).filter((t) => t.texto.trim());
+  // Sin saber qué limitó, no se dice «nada aún» (no es que no haya): no está disponible en este turno.
+  const sinVista = vista && !vista.sabe ? '(no disponible en este turno: no pude confirmar lo que marcó «No usarlo»)' : '';
+  const capas = capasHilo(corta);
   // El hilo se etiqueta como lo que es: la persona, no «Junta».
   const miembro = (s: string) => s.replace(/^Junta: /gm, 'Miembro: ');
   const hablas = `HABLAS CON: ${n}, miembro de la comunidad de Orden Global (no es de la junta). Esta memoria es solo suya.`;
   // Lo de un miembro solo se guarda cuando lo pide («recuerda que…»): entra entero en la firma.
-  const pidio = `LO QUE ${n.toUpperCase()} TE PIDIÓ RECORDAR:\n${cajon.larga.map((h) => `- ${h.hecho}`).join('\n') || '(nada aún)'}`;
+  const pidio = `LO QUE ${n.toUpperCase()} TE PIDIÓ RECORDAR:\n${larga.map((h) => `- ${h}`).join('\n') || sinVista || '(nada aún)'}`;
   if (hilo === 'firma') return [hablas, pidio].join('\n');
   return [
     hablas,
     pidio,
-    hilo === 'todo' ? `HILO CORTO CON ${n.toUpperCase()} (lo último; «esto» es esto):\n${miembro(capas.corto) || '(nada)'}` : '',
-    `CONVERSACIÓN MEDIANA CON ${n.toUpperCase()}:\n${miembro(capas.mediano) || '(nada)'}`,
+    hilo === 'todo' ? `HILO CORTO CON ${n.toUpperCase()} (lo último; «esto» es esto):\n${miembro(capas.corto) || sinVista || '(nada)'}` : '',
+    `CONVERSACIÓN MEDIANA CON ${n.toUpperCase()}:\n${miembro(capas.mediano) || sinVista || '(nada)'}`,
   ]
     .filter(Boolean)
     .join('\n');
