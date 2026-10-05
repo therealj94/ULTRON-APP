@@ -20,7 +20,7 @@ import { opinarTurno, pedirTurnoStream } from './04-cerebro/turno';
 import { detectarIntencion } from './04-cerebro/intenciones';
 import { grabFrame, achicarFoto } from './04-cerebro/grabFrame';
 import { fijarCuentaMemoria, guardarHecho, olvidarTodo } from './09-estado/memoria';
-import { guardarTokenMesa, headersMesa } from './10-infra/sesionCliente';
+import { guardarTokenMesa, headersComprobarSesion, headersMesa } from './10-infra/sesionCliente';
 import { escucharAvisosTocados } from './10-infra/abrirDesdeAviso';
 import { botonMicrofonoWeb, ejecutarControl, interpretarControl, puertosWeb, respuestaAclaracion, type ControlVoz } from './03-voz/controles';
 import { escucharVueltaGenesis } from './10-infra/genesisWeb';
@@ -373,7 +373,9 @@ export default function App() {
     const t0 = Date.now();
     // Si mientras llega esta respuesta la cuenta ya cambió (entró alguien por la puerta, o salió), es tardía: no fija nada.
     const vigente = deEstaCuenta();
-    fetch('/api/ultron/sesion', { headers: headersMesa() })
+    // Con la sesión va qué build web corre esta pestaña (10-infra/recepcion.ts): así se confirma desde el servidor que la
+    // entrega llegó, solo con abrir AURA.
+    fetch('/api/ultron/sesion', { headers: headersComprobarSesion() })
       .then((r) => r.json())
       .then((d) => {
         if (!vivo || !vigente()) return;

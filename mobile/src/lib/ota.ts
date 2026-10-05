@@ -16,12 +16,15 @@
  *     «Instala la APK nueva». La huella de la última APK de main está en el Release «latest».
  */
 import { useEffect, useRef, useSyncExternalStore } from 'react';
-import { AppState, Keyboard, type AppStateStatus } from 'react-native';
+import { AppState, Keyboard, Platform, type AppStateStatus } from 'react-native';
 import * as Updates from 'expo-updates';
+import Constants from 'expo-constants';
 import { cierreIntencional, miga } from './reporte';
 import { escuchar } from '../nucleo/contrato';
 import { ecoMesa, mensajeVoz } from '../compa/canales';
 import { VARIANTE } from '../variante';
+import { fijarDatosBuild } from './recepcion';
+import { datosDeExpo } from './recepcionDescriptor';
 import { QUIETO_TRAS_TRABAJO_MS, decidirAplicar, marcarActividad, motivosParaNoRecargar, necesitaApkNueva, prepararRecarga, registrarTrabajoActivo, type Momento } from './barreraOta';
 
 /** Entre preguntas con la app delante. */
@@ -47,6 +50,12 @@ registrarTrabajoActivo('aura-habla', () => {
 });
 ecoMesa.escuchar(() => marcarActividad());
 mensajeVoz.escuchar(() => marcarActividad());
+
+/* ── qué build corre, para el servidor (lib/recepcion.ts: la cabecera x-aura-cliente de api()) ─────── */
+
+// Se lee en cada petición (barato: son constantes del módulo nativo). Tras una recarga por OTA, el JS nuevo vuelve a
+// cargar este módulo y la primera petición ya dice el updateId nuevo.
+fijarDatosBuild(() => datosDeExpo({ updates: Updates, constants: Constants, platform: Platform }));
 
 /* ── estado para la pantalla: ¿hay que instalar la APK nueva? ─────────────────────────────── */
 

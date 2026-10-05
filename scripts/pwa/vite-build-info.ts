@@ -21,12 +21,30 @@ export function revisionDelBuild(env: NodeJS.ProcessEnv = process.env, git: () =
   }
 }
 
+/**
+ * La meta con el SHA en el HTML del build (evidencia de operación, 5-oct): la página sabe de qué build salió y lo dice
+ * al servidor en la comprobación de sesión (src/10-infra/recepcion.ts). Va en el HTML y no en el JS a propósito: con el
+ * SHA dentro del JS, cada despliegue (aunque no tocara la web) cambiaría el paquete y la lista del service worker, y la
+ * web pediría «Recargar» sin motivo. La navegación va primero a la red, así que el HTML y su JS son del mismo build.
+ */
+export function conMetaBuild(html: string, sha: string): string {
+  if (!/^[0-9a-f]{7,40}$/i.test(sha) || html.includes('name="aura-build"')) return html;
+  const meta = `<meta name="aura-build" content="${sha}">`;
+  return /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, (h) => `${h}\n    ${meta}`) : html;
+}
+
 export function infoBuildWeb(): Plugin {
+  // Una revisión por build: la misma en aura-build.json y en la meta de cada página.
+  let sha: string | null = null;
+  const revision = () => (sha ??= revisionDelBuild());
   return {
     name: 'aura-build-info',
     apply: 'build',
+    transformIndexHtml(html) {
+      return conMetaBuild(html, revision());
+    },
     generateBundle() {
-      this.emitFile({ type: 'asset', fileName: 'aura-build.json', source: JSON.stringify({ sha: revisionDelBuild(), hora: new Date().toISOString() }) + '\n' });
+      this.emitFile({ type: 'asset', fileName: 'aura-build.json', source: JSON.stringify({ sha: revision(), hora: new Date().toISOString() }) + '\n' });
     },
   };
 }

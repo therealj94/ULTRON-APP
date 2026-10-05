@@ -137,3 +137,22 @@ test('revisión 13 (A7): la sonda de listado lista UNA clave en el espacio de la
   assert.doesNotMatch(JSON.stringify(r2), /tk_|secreto|tareas\//, 'lo listado no sale en la salud');
   assert.deepEqual(['ok', 'denegado', 'sin-fuente'].includes(r2.listado), true);
 });
+
+test('recepción (5-oct): el build pone su SHA en una meta del HTML (no en el JS) y el mismo en aura-build.json', async () => {
+  const { conMetaBuild, infoBuildWeb } = await import('../scripts/pwa/vite-build-info');
+  const SHA = '0123456789abcdef0123456789abcdef01234567';
+  const html = '<!doctype html>\n<html lang="es">\n  <head>\n    <meta charset="UTF-8" />\n  </head>\n  <body></body>\n</html>';
+  const con = conMetaBuild(html, SHA);
+  assert.match(con, /<head>\n\s*<meta name="aura-build" content="0123456789abcdef0123456789abcdef01234567">/);
+  assert.equal(conMetaBuild(con, SHA), con, 'una sola vez');
+  assert.equal(conMetaBuild(html, 'desconocido'), html, 'sin SHA de verdad no se inventa una meta');
+  assert.equal(conMetaBuild(html, 'abc" onload="x'), html, 'nada que no sea hex entra en el HTML');
+  // El plugin usa UNA revisión para las dos cosas.
+  const p: any = infoBuildWeb();
+  const html2 = p.transformIndexHtml(html);
+  const emitidos: any[] = [];
+  p.generateBundle.call({ emitFile: (f: any) => emitidos.push(f) });
+  const json = JSON.parse(emitidos[0].source);
+  if (json.sha === 'desconocido') assert.equal(html2, html);
+  else assert.ok(html2.includes(`content="${json.sha}"`), 'la meta y aura-build.json dicen el mismo SHA');
+});
