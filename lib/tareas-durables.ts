@@ -438,7 +438,8 @@ type EntradaIndice = {
 };
 /**
  * A7: constancia de que el inventario de este dueño se recorrió ENTERO y lo que faltaba quedó anotado. `dr`: cuánto subió
- * `recortadas` al marcarlo (lo que contó el inventario; la reversión lo descuenta). Las marcas de a46b496 no lo traen.
+ * `recortadas` al marcarlo (lo que contó el inventario; informativo: la reversión descuenta lo que de verdad vuelve). Las
+ * marcas de a46b496 no lo traen.
  */
 type MarcaInventario = { v: number; t: number; fuente: AlmacenDurable['tipo']; ronda: string; revisadas: number; agregadas: number; dr?: number };
 /**
@@ -948,18 +949,31 @@ export type ResultadoReversion =
       pendientes: number;
       /** Ya estaba revertido y no había nada más que hacer (no se escribió nada). */
       ya: boolean;
+      /**
+       * Ese dueño no tiene índice ni respaldo de inventario (¿el correo está bien escrito?): no había nada que revertir y
+       * no se escribió nada, ni la marca `revertido` (que lo dejaría bloqueado).
+       */
+      sinIndice?: true;
+      /** No está el respaldo del índice de antes: lo que el recorte del inventario sacó no puede volver y sigue en `recortadas`. */
+      sinRespaldo?: true;
     }
   | { ok: false; detalle: string };
 
 /**
  * REVERSIÓN de la reconciliación del inventario de un dueño (A7; revisión externa sobre a46b496: «el historial puede quedar
  * incompleto o reaparecer una tarea recuperada»). Operación, no una ruta. Regla:
- *   · sale del índice SOLO lo que agregó el inventario (`rec`) y no tuvo actividad desde que se recuperó: su objeto no
- *     cambió (`actualizada`) después de `rt`. Una recuperada que después avanzó, terminó o se canceló ya es historial
- *     propio: se queda (sin `rec`). Lo que no se pudo leer se queda con su marca (`pendientes`) y no se quita a ciegas;
+ *   · sale del índice SOLO lo que agregó el inventario (`rec`), ya TERMINÓ y no tuvo actividad desde que se recuperó: su
+ *     objeto no cambió (`actualizada`) después de `rt`. Una recuperada que después avanzó, terminó o se canceló ya es
+ *     historial propio: se queda (sin `rec`). Una recuperada que sigue ACTIVA (no terminó) es trabajo vivo: se queda
+ *     también, aunque nadie la tocara (revisión externa H4: esconderla otra vez es justo lo que A7 arregló). Lo que no se
+ *     pudo leer se queda con su marca (`pendientes`) y no se quita a ciegas. Una sin objeto sale;
  *   · vuelve lo que el recorte del historial sacó del índice de antes al agregar lo recuperado (del respaldo de esa
  *     generación, solo si el objeto existe y es de este dueño), y se recorta otra vez con el tope;
- *   · `recortadas` pierde lo que había contado el inventario (`dr`) y lo que vuelve; suma lo que el recorte saque ahora;
+ *   · `recortadas` deja de contar las terminadas que vuelven y suma lo que el recorte saque ahora. Lo que contó el
+ *     inventario (`dr`) es lo que su recorte sacó del índice de antes: lo que de eso vuelve se descuenta UNA vez (H3:
+ *     antes se restaban `dr` y lo que vuelve, dos veces lo mismo); lo que no puede volver (sin respaldo, `sinRespaldo`)
+ *     se sigue contando (H4: nunca se pierde historial sin que la cuenta lo diga);
+ *   · un dueño sin índice ni respaldo (un correo mal escrito) no tiene nada que revertir: no se escribe nada (`sinIndice`);
  *   · todo en UNA fusión CAS sobre el índice ACTUAL (nunca una foto vieja): lo creado, cambiado o anotado después de la
  *     reconciliación —o durante esta reversión— se queda; el orden y los cursores salen de las entradas, que no cambian;
  *   · deja la marca `revertido` en el índice (la ven todas las réplicas): la lista dice `inventario: 'revertido'`,
@@ -976,12 +990,20 @@ export async function revertirReconciliacionTareas(dueno: string, a: AlmacenDura
   const total = { quitadas: 0, conservadas: 0, restauradas: 0 };
   let pendientes = 0;
   let escribio = false;
+  let sinRespaldo = false;
   for (let vuelta = 0; vuelta < 3; vuelta++) {
     const l = await leerDurable<Indice>(claveIndice(dueno), a).catch((e) => ({ ok: false as const, detalle: String(e?.message || e) }));
     if (l.ok === false) return { ok: false, detalle: l.detalle };
     const ix = l.valor;
+    if (!ix) {
+      // Sin índice: solo hay algo que revertir si queda el respaldo de una reconciliación (lo que se devuelve). Si tampoco,
+      // no se escribe nada: la marca `revertido` sobre un índice vacío bloquearía a ese dueño (H4).
+      const r = await leerDurable<{ indice: Indice | null }>(claveRespaldo(dueno, sufijoRespaldo(undefined)), a).catch((e) => ({ ok: false as const, detalle: String(e?.message || e) }));
+      if (r.ok === false) return { ok: false, detalle: r.detalle };
+      if (!r.valor) return { ok: true, quitadas: 0, conservadas: 0, restauradas: 0, pendientes: 0, ya: true, sinIndice: true };
+    }
     const previa = ix?.revertido;
-    // 1. Lo que agregó el inventario: ¿tuvo actividad desde que se recuperó?
+    // 1. Lo que agregó el inventario: ¿tuvo actividad desde que se recuperó? ¿Terminó?
     const recs = (ix?.ids || []).filter((x) => x.rec);
     const lecturas = await leerTareas(dueno, recs.map((x) => x.id), a);
     const decision = new Map<string, { rec: string; quitar: boolean; desde: number }>();
@@ -993,17 +1015,22 @@ export async function revertirReconciliacionTareas(dueno: string, a: AlmacenDura
         continue;
       }
       const desde = recuperadaEn(x);
-      decision.set(x.id, { rec: String(x.rec), quitar: !v.tarea || v.tarea.actualizada <= desde, desde });
+      // Una activa (no terminó) es trabajo vivo: no sale aunque no tuviera actividad (H4).
+      decision.set(x.id, { rec: String(x.rec), quitar: !v.tarea || (esTerminal(v.tarea.estado) && v.tarea.actualizada <= desde), desde });
     }
     // 2. Lo que el recorte del inventario sacó del índice de antes (una vez por reversión; se reintenta si algo no se leyó).
     const devolver: EntradaIndice[] = [];
     let restauroCompleto = true;
-    let r0: number | null = null;
     if (!previa?.restaurado) {
       const r = await leerDurable<{ indice: Indice | null }>(claveRespaldo(dueno, previa?.respaldo ?? sufijoRespaldo(ix?.reversiones)), a).catch(() => ({ ok: false as const }));
       if (r.ok === false) restauroCompleto = false;
-      else if (r.valor) {
-        r0 = Number(r.valor.indice?.recortadas) || 0;
+      else if (!r.valor) {
+        // Sin respaldo no vuelve nada: lo que el recorte sacó sigue contado en `recortadas` (no se calla). Se dice, si el
+        // inventario agregó algo (solo entonces escribe el respaldo: sin agregar, no hay nada que devolver).
+        const agrego = recs.length > 0 || Number(ix?.inventario?.agregadas) > 0 || Number(ix?.inventario?.dr) > 0;
+        if (agrego && !sinRespaldo) console.warn('[tareas] revertir: no está el respaldo del índice de antes; lo que el recorte sacó no vuelve y sigue contado en «recortadas»');
+        sinRespaldo ||= agrego;
+      } else {
         const ya = new Set((ix?.ids || []).map((x) => x.id));
         const faltan = (r.valor.indice?.ids || []).filter((x) => x && typeof x.id === 'string' && !x.rec && !ya.has(x.id)).map((x) => x.id);
         const vistas = await leerTareas(dueno, faltan, a);
@@ -1053,9 +1080,11 @@ export async function revertirReconciliacionTareas(dueno: string, a: AlmacenDura
         const vuelven = nuevas.filter((x) => siguen.has(x.id));
         c.restauradas = vuelven.length;
         const cur = Number(actual?.recortadas) || 0;
-        // Lo que había contado el inventario al marcar (`dr`); en una marca de a46b496, lo que subió desde el respaldo.
-        const dr = actual?.inventario ? (Number.isFinite(actual.inventario.dr) ? Number(actual.inventario.dr) : r0 !== null ? Math.max(0, cur - r0) : 0) : 0;
-        const recortadas = Math.max(0, cur - dr - vuelven.filter((x) => x.fin).length) + ids.filter((x) => !siguen.has(x.id)).length;
+        // Lo que había contado el inventario al marcar (`dr`) son las que su recorte sacó del índice de antes: las que
+        // vuelven dejan de contarse (una vez: cur − dr + (dr − las que vuelven)), las que no pueden volver (sin respaldo,
+        // sin poder leerlas) se siguen contando (H3/H4). Solo las terminadas se recortan (y se cuentan). Más lo que el
+        // recorte saque ahora de lo que ya estaba.
+        const recortadas = Math.max(0, cur - vuelven.filter((x) => x.fin).length) + ids.filter((x) => !siguen.has(x.id)).length;
         const { inventario: _i, pase: _p, revertido: prev, recortadas: _rc, ...resto } = actual || ({ v: 2, ids: [] } as Indice);
         const marca: MarcaReversion = {
           v: 1,
@@ -1086,7 +1115,7 @@ export async function revertirReconciliacionTareas(dueno: string, a: AlmacenDura
       const otra = await leerTareas(dueno, quitadas, a);
       for (const id of quitadas) {
         const v = otra.get(id);
-        if (!v || v.ok === false || !v.tarea || v.tarea.actualizada <= decision.get(id)!.desde) continue;
+        if (!v || v.ok === false || !v.tarea || (esTerminal(v.tarea.estado) && v.tarea.actualizada <= decision.get(id)!.desde)) continue;
         const reg = v.tarea;
         const e: EntradaIndice = { id, t: reg.creada, ...(esTerminal(reg.estado) ? { fin: reg.actualizada } : {}) };
         const re = await modificarDurable<Indice>(claveIndice(dueno), (ix2) => (ix2?.ids.some((x) => x.id === id) ? undefined : conRecorte(ix2, [e, ...(ix2?.ids || [])])), a).catch(() => null);
@@ -1098,7 +1127,7 @@ export async function revertirReconciliacionTareas(dueno: string, a: AlmacenDura
     }
     if (!c.sinDecidir) break;
   }
-  return { ok: true, ...total, pendientes, ya: !escribio };
+  return { ok: true, ...total, pendientes, ya: !escribio, ...(sinRespaldo ? { sinRespaldo: true as const } : {}) };
 }
 
 /**

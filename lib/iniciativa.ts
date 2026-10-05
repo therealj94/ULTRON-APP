@@ -809,6 +809,37 @@ export type FuentesVigentes = {
 };
 
 /**
+ * Hasta cuánto en el FUTURO se acepta la hora de una lectura (A2, revisión externa del 5-oct, H2). Un reloj adelantado (el
+ * de la fuente o el de una réplica) dejaba un ancla «del futuro» que volvía vieja a toda lectura real posterior. Más allá
+ * de este margen, la hora de la lectura se acota a AHORA (y se avisa en el registro).
+ */
+export const MARGEN_FUTURO_MS = 2 * 60_000;
+
+/**
+ * Las fuentes con la hora de cada lectura acotada a MARGEN_FUTURO_MS (más allá, la de ahora). Pura salvo el aviso al
+ * registro (`avisar`: lo da quien recibe la lectura, una vez por paso; revalidarORegenerar acota en silencio).
+ */
+export function acotarFuentes(f: FuentesVigentes, ahora: number, avisar = false): FuentesVigentes {
+  if (!f.observaciones) return f;
+  let obs: Observaciones | undefined;
+  for (const k of ['correo', 'whatsapp'] as const) {
+    const o = f.observaciones[k];
+    if (!o || !(Number(o.visto) > ahora + MARGEN_FUTURO_MS)) continue;
+    if (avisar) console.warn(`[iniciativa] la lectura de ${k} trae una hora ${Math.round((Number(o.visto) - ahora) / 1000)} s en el futuro: se toma la de ahora`);
+    (obs ||= { ...f.observaciones })[k] = { ...o, visto: ahora };
+  }
+  return obs ? { ...f, observaciones: obs } : f;
+}
+
+/**
+ * El ancla de lo guardado para ORDENAR lecturas. Una hora del futuro más allá del margen (guardada antes de acotarlas, o
+ * con un reloj adelantado) no vale como hora: cuenta como sin hora (0) y cualquier lectura con hora la supera (H2).
+ */
+function anclaOrdenable(f: FuentePropuesta, ahora: number): Pick<FuentePropuesta, 'visto' | 'orden'> {
+  return Number(f.visto) > ahora + MARGEN_FUTURO_MS ? { visto: 0 } : f;
+}
+
+/**
  * Por qué ya no vale: caducó; el asunto se resolvió (lo leyó, cerró la misión); la fuente se desconectó, no
  * está configurada o no se pudo leer; no se observó la fuente al revalidar; o nunca tuvo una fuente que
  * sostenga lo que afirma (lo guardado con fuente «modelo»).
@@ -943,8 +974,15 @@ export function regenerarContada(p: Propuesta, f: FuentesVigentes, ahora = Date.
  *     guardado ya se comprobó con una lectura más nueva y se devuelve tal cual (la 3 que llega tarde no pisa al 1);
  *   · solo una lectura MÁS NUEVA regenera (3→1→3 en orden sí sube cada vez);
  *   · una lectura SIN hora no es más nueva: nunca regenera, y si no concuerda tampoco se da por buena (falla cerrado).
+ * Revisión externa (H2): lo de «la vieja no lo retira» vale solo para una lectura que LEYÓ la fuente (con número o
+ * vacía). Una fuente desconectada, sin configurar o que no se pudo leer nunca sostiene lo guardado: se retira o se
+ * espera con sus reglas de siempre. La hora de las lecturas se acota (MARGEN_FUTURO_MS) y un ancla guardada con una
+ * hora del futuro no ordena nada (cualquier lectura con hora la supera).
+ * Quien guarda (siguientePropuesta, revalidarPendiente) pasa aquí, además, la lectura MÁS NUEVA que se haya visto de
+ * cada fuente (H1, recordarLecturas): una vieja que llega tarde no decide nada, aunque la nueva fuera vacía o caída.
  */
-export function revalidarORegenerar(p: Propuesta, f: FuentesVigentes, ahora = Date.now()): { vigente: true; propuesta: Propuesta; regenerada: boolean } | { vigente: false; motivo: MotivoNoVigente } {
+export function revalidarORegenerar(p: Propuesta, fDada: FuentesVigentes, ahora = Date.now()): { vigente: true; propuesta: Propuesta; regenerada: boolean } | { vigente: false; motivo: MotivoNoVigente } {
+  const f = acotarFuentes(fDada, ahora);
   const r = revalidarPropuesta(p, f, ahora);
   if (r.vigente) return { vigente: true, propuesta: p, regenerada: false };
   const motivo = (r as { motivo: MotivoNoVigente }).motivo;
@@ -952,9 +990,10 @@ export function revalidarORegenerar(p: Propuesta, f: FuentesVigentes, ahora = Da
   const fuente = e.fuente.tipo;
   if (motivo !== 'caducada' && (fuente === 'correo' || fuente === 'whatsapp')) {
     const o = observacionDe(f, fuente);
-    // Con hora y no más nueva que la que ancló un número: es vieja. Lo guardado manda.
-    if (o && Number(o.visto) > 0 && Number(e.fuente.valor) > 0 && !observacionMasNueva(o, e.fuente)) return { vigente: true, propuesta: p, regenerada: false };
-    if ((motivo === 'hecho_cambiado' || motivo === 'sin_anclaje') && observacionMasNueva(o, e.fuente)) {
+    const ancla = anclaOrdenable(e.fuente, ahora);
+    // Con hora, que LEYÓ la fuente y no más nueva que la que ancló un número: es vieja. Lo guardado manda.
+    if (o && (o.estado === 'vigente' || o.estado === 'empty') && Number(o.visto) > 0 && Number(e.fuente.valor) > 0 && !observacionMasNueva(o, ancla)) return { vigente: true, propuesta: p, regenerada: false };
+    if ((motivo === 'hecho_cambiado' || motivo === 'sin_anclaje') && observacionMasNueva(o, ancla)) {
       const q = regenerarContada(p, f, ahora);
       if (q && revalidarPropuesta(q, f, ahora).vigente) return { vigente: true, propuesta: q, regenerada: true };
     }
@@ -1023,7 +1062,51 @@ export type EstadoIniciativa = {
   luegoHasta?: number;
   /** Fuentes caídas de las que ya se avisó (fuente → cuándo). Se borra al volver: otra caída se avisa otra vez. */
   bloqueos?: Record<string, number>;
+  /**
+   * La lectura MÁS NUEVA que se vio de cada fuente contada, SEA CUAL SEA su resultado (con número, vacía, desconectada,
+   * sin configurar o caída), con su hora y su orden (revisión externa del 5-oct, H1). Una lectura más vieja que esta no
+   * decide nada: se revalida con esta (recordarLecturas). Así la de «2» de las t+3 que termina tarde no revive un número
+   * que la vacía de las t+5 ya desmintió, aunque esa vacía no dejara nada guardado.
+   */
+  lecturas?: Observaciones;
 };
+
+/** Una lectura como se anota en el estado: su estado, su hora y su orden; el número y la versión si los trae. */
+function sanearLectura(l: any): Observacion | null {
+  if (!l || !ESTADOS_OBSERVACION.includes(l.estado) || !(Number(l.visto) > 0)) return null;
+  const o: Observacion = { estado: l.estado, visto: Number(l.visto) };
+  if (l.estado === 'vigente' && Number(l.valor) > 0) o.valor = Math.floor(Number(l.valor));
+  if (l.version !== undefined && l.version !== null && Number.isFinite(Number(l.version))) o.version = Number(l.version);
+  if (Number.isInteger(Number(l.orden)) && Number(l.orden) > 0) o.orden = Number(l.orden);
+  return o;
+}
+
+/**
+ * H1: anota en el estado la lectura más nueva de cada fuente contada y devuelve las fuentes con la que VALE: la que
+ * llega, si es más nueva que la anotada (o la misma); la anotada, si la que llega es MÁS VIEJA. Se anota cualquier
+ * resultado, no solo los que dejan algo guardado. Una lectura sin hora no se ordena: ni se anota ni se sustituye (sus
+ * reglas de siempre: nunca regenera y falla cerrado).
+ */
+function recordarLecturas(e: EstadoIniciativa, f: FuentesVigentes): FuentesVigentes {
+  let obs: Observaciones | undefined;
+  let desconectadas = f.desconectadas;
+  for (const k of ['correo', 'whatsapp'] as const) {
+    const o = observacionDe(f, k);
+    if (!o || !(Number(o.visto) > 0)) continue;
+    const m = e.lecturas?.[k];
+    const marca = { visto: Number(m?.visto) || 0, orden: m?.orden };
+    if (!m || observacionMasNueva(o, marca)) {
+      const l = sanearLectura(o);
+      if (l) (e.lecturas ||= {})[k] = l;
+    } else if (observacionMasNueva(m, { visto: Number(o.visto), orden: o.orden })) {
+      // Llegó tarde: decide la más nueva que ya se vio (también para «desconectada», que se cuenta aparte).
+      (obs ||= { ...(f.observaciones || {}) })[k] = { ...m };
+      if (m.estado === 'disconnected') desconectadas = desconectadas?.includes(k) ? desconectadas : [...(desconectadas || []), k];
+      else desconectadas = desconectadas?.filter((x) => x !== k);
+    }
+  }
+  return obs ? { ...f, observaciones: obs, ...(desconectadas ? { desconectadas } : {}) } : f;
+}
 
 function sanearEvidencia(x: any): EvidenciaPropuesta | undefined {
   if (!x || typeof x !== 'object') return undefined;
@@ -1088,6 +1171,11 @@ function sanearEstado(x: any): EstadoIniciativa {
   for (const [k, v] of Object.entries(x?.bloqueos && typeof x.bloqueos === 'object' ? x.bloqueos : {})) {
     if (/^[a-z]{2,20}$/.test(k) && Number(v) > 0) (bloqueos ||= {})[k] = Number(v);
   }
+  let lecturas: Observaciones | undefined;
+  for (const k of ['correo', 'whatsapp'] as const) {
+    const l = sanearLectura(x?.lecturas?.[k]);
+    if (l) (lecturas ||= {})[k] = l;
+  }
   return {
     version: 1,
     pendiente: x?.pendiente ? sanearPropuesta(x.pendiente) : null,
@@ -1099,6 +1187,7 @@ function sanearEstado(x: any): EstadoIniciativa {
     hoy: Math.max(0, Math.floor(Number(x?.hoy) || 0)),
     ...(Number(x?.luegoHasta) > 0 ? { luegoHasta: Number(x.luegoHasta) } : {}),
     ...(bloqueos ? { bloqueos } : {}),
+    ...(lecturas ? { lecturas } : {}),
   };
 }
 
@@ -1206,15 +1295,19 @@ export async function siguientePropuesta(persona: PersonaIniciativa, ctx: Contex
   if (enHorasQuietas(ahora, reloj)) return { propuesta: null, nueva: false, motivo: 'horas_quietas' };
   // Lo de la persona por la vista autorizada (contextoAutorizado), también para revalidar lo pendiente.
   ctx = contextoAutorizado(ctx);
-  const fuentes = fuentesDe(ctx);
-  // La versión que vale AHORA (A2): la misma si su hecho sigue igual; regenerada desde lo observado si el número
-  // cambió; null si no vale o la persona la apagó (también ya regenerada).
-  const vigente = (p: Propuesta): Propuesta | null => {
-    if (ctx.excluir?.(p)) return null;
-    const r = revalidarORegenerar(p, fuentes, ahora);
-    return r.vigente && !ctx.excluir?.(r.propuesta) ? r.propuesta : null;
-  };
+  // La hora de cada lectura, acotada (H2): un reloj adelantado no deja anclas del futuro.
+  const acotadas = acotarFuentes(fuentesDe(ctx), ahora, true);
   const { resultado } = await almacen.modificar(persona.correo, async (e): Promise<ResultadoSiguiente> => {
+    // H1: de cada fuente vale la lectura MÁS NUEVA que se haya visto (anotada en el estado), no una vieja que llega tarde.
+    const fuentes = recordarLecturas(e, acotadas);
+    const ctxL: typeof ctx = { ...ctx, ...(fuentes.observaciones ? { observaciones: fuentes.observaciones } : {}), ...(fuentes.desconectadas ? { desconectadas: fuentes.desconectadas } : {}) };
+    // La versión que vale AHORA (A2): la misma si su hecho sigue igual; regenerada desde lo observado si el número
+    // cambió; null si no vale o la persona la apagó (también ya regenerada).
+    const vigente = (p: Propuesta): Propuesta | null => {
+      if (ctx.excluir?.(p)) return null;
+      const r = revalidarORegenerar(p, fuentes, ahora);
+      return r.vigente && !ctx.excluir?.(r.propuesta) ? r.propuesta : null;
+    };
     caducar(e, ahora);
     if (e.pendiente) {
       const actual = vigente(e.pendiente);
@@ -1231,7 +1324,7 @@ export async function siguientePropuesta(persona: PersonaIniciativa, ctx: Contex
       anotarSalida(e, e.pendiente.id, ctx.excluir?.(e.pendiente) ? 'suprimida' : 'resuelta', ahora);
       e.pendiente = null;
     }
-    revisarBloqueos(e, ctx, ahora);
+    revisarBloqueos(e, ctxL, ahora);
     const t = tocaProponer(e, nivel, ahora, reloj);
     if (!t.toca) return { propuesta: null, nueva: false, motivo: t.motivo };
     let origen: ResultadoSiguiente['origen'] = 'cola';
@@ -1241,7 +1334,7 @@ export async function siguientePropuesta(persona: PersonaIniciativa, ctx: Contex
     const i = e.cola.findIndex((q) => !q.noAntesDe || q.noAntesDe <= ahora);
     let p = i >= 0 ? e.cola.splice(i, 1)[0] : null;
     if (!p) {
-      const r = await pensarPropuestas(persona, { ...ctx, ahora, historial: e.historial });
+      const r = await pensarPropuestas(persona, { ...ctxL, ahora, historial: e.historial });
       origen = r.origen;
       const nuevas = r.propuestas.flatMap((q) => vigente(q) || []);
       p = nuevas[0] || null;
@@ -1273,10 +1366,14 @@ export async function siguientePropuesta(persona: PersonaIniciativa, ctx: Contex
  * van por id, siguen dejando UNA entrega). Lo que no vale no se toca aquí: lo retira la próxima siguientePropuesta.
  * Una lectura más vieja que la que ancló lo guardado (otro despacho u otro GET terminó antes con una más nueva) no
  * lo regenera: se entrega lo guardado (revalidarORegenerar).
+ * H1: lo leído queda anotado en el estado (recordarLecturas), aunque no valga: una vacía o una caída más nueva que
+ * aquí no retira nada sigue mandando sobre la lectura más vieja que termine después.
  * Lanza AlmacenNoDisponible si el estado no se pudo leer.
  */
-export async function revalidarPendiente(correo: string, id: string, f: FuentesVigentes, ahora = Date.now()): Promise<Revalidacion> {
+export async function revalidarPendiente(correo: string, id: string, fDada: FuentesVigentes, ahora = Date.now()): Promise<Revalidacion> {
+  const acotadas = acotarFuentes(fDada, ahora, true);
   const { resultado } = await almacen.modificar(correo, (e): Revalidacion => {
+    const f = recordarLecturas(e, acotadas);
     if (!e.pendiente || e.pendiente.id !== String(id || '')) return { vigente: false, motivo: 'resuelta' };
     const r = revalidarORegenerar(e.pendiente, f, ahora);
     if (!r.vigente) return r;
