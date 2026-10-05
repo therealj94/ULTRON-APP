@@ -61,6 +61,7 @@ import { callarAvisoQueSuena, contestadaEnPantalla, depsRecordatorios, perdidaEn
 import { ALTO_PILDORA, LlamadaAvatar, type VistaLlamada } from './LlamadaAvatar';
 import { callarTimbre, sonarTimbre } from './timbre';
 import { AudioVoz } from './audioVoz';
+import { vincularConReintentos, type VinculoMotor } from './vinculoMotor';
 import { cabecerasAparato } from '../lib/aparato';
 import { registrarTrabajoActivo } from '../lib/barreraOta';
 import { escucharCuenta } from '../pulse/relevo';
@@ -155,10 +156,18 @@ const avisarCierre = (pase: string) =>
 
 /**
  * Motor nuevo de la llamada (prototipo de Speech Engine): la conversación de ElevenLabs se ata al pase, por si
- * ElevenLabs no reenvía `X-Pase`. Solo pasa si el permiso trajo `motor: 'speech-engine'`.
+ * ElevenLabs no reenvía `X-Pase`. Solo pasa si el permiso trajo `motor: 'speech-engine'`. Lo que contesta se lee
+ * con honestidad (compa/vinculoMotor.ts): un «no» del servidor con su código termina la llamada (sesionVoz);
+ * un 404 sin cuerpo de un proxy, un 5xx o sin red es pasajero y se reintenta.
  */
-const vincularMotor = (pase: string, conversacion: string) =>
-  void api('/api/voz/motor/vincular', { method: 'POST', body: JSON.stringify({ pase, conversacion }) }, 8_000).catch(() => undefined);
+const vincularMotor = (pase: string, conversacion: string): Promise<VinculoMotor> =>
+  vincularConReintentos(async () => {
+    try {
+      return { status: 200, json: await api('/api/voz/motor/vincular', { method: 'POST', body: JSON.stringify({ pase, conversacion }) }, 8_000) };
+    } catch (e: any) {
+      return { status: Number(e?.status) || 0, json: e?.data ?? null };
+    }
+  });
 
 /** Una sola para toda la app: la llamada escucha su aviso en el bus (`voz`). */
 const audioVoz = new AudioVoz((libre) => emitir('voz', { libre }));

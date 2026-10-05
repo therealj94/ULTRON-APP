@@ -26,8 +26,11 @@
  * EL MOTOR NUEVO (prototipo de Speech Engine, docs/voz/SPEECH-ENGINE.md): solo si el servidor lo dice en su
  * respuesta (`motor: 'speech-engine'`, para una cuenta con el interruptor). Entonces se le pide al SDK la
  * primera frase (`overrides.agent.firstMessage`: Speech Engine no tiene una propia) y, al conectar, se ata la
- * conversación al pase (/api/voz/motor/vincular) por si ElevenLabs no reenvía `X-Pase`. Sin eso, nada cambia:
- * las mismas opciones al SDK y las mismas peticiones de siempre.
+ * conversación al pase (/api/voz/motor/vincular) por si ElevenLabs no reenvía `X-Pase`. Lo que contesta se lee
+ * con honestidad (src/03-voz/vinculoMotor.ts): si el servidor dice, con su código, que esa llamada ya no se va a
+ * atar (se cerró, es de otra cuenta…), la llamada se termina bien y dice por qué; un error pasajero (un 404 de
+ * un proxy, sin red) se reintenta y no se toma como respuesta. Sin eso, nada cambia: las mismas opciones al SDK
+ * y las mismas peticiones de siempre.
  *
  * Los controles de la llamada (P2): `silenciarMic` deja de mandar el micrófono de ESTA sesión sin colgar
  * (setMicMuted del SDK) y se puede volver a escuchar; `callarSalida` calla lo que la llamada está diciendo
@@ -35,6 +38,7 @@
  * (`puedeSilenciar`, `onControles`) ni se finge. Callar o colgar no tocan el trabajo durable.
  */
 import { avisarTrabajoLibre, registrarTrabajoActivo } from '../10-infra/trabajoActivo';
+import { vincularConReintentos } from './vinculoMotor';
 
 export type EstadoEnVivo = 'cerrada' | 'conectando' | 'escuchando' | 'hablando' | 'error';
 
@@ -287,7 +291,17 @@ export class ConversacionEnVivo {
       const conversacion = String(id || '');
       if (!motorNuevo || vinculada || !conversacion || !vigente()) return;
       vinculada = true;
-      void this.d.pedir('/api/voz/motor/vincular', { pase, conversacion }).catch(() => undefined);
+      void vincularConReintentos(
+        async () => {
+          const r = await this.d.pedir('/api/voz/motor/vincular', { pase, conversacion });
+          return { status: r.status, json: r.json };
+        },
+        { sigue: vigente }
+      ).then((v) => {
+        // El servidor dijo (con su código) que esta llamada no va a hablar como esta cuenta, y ya la cuelga: se
+        // termina aquí, diciendo por qué. Lo pasajero no se toma como respuesta (decide el servidor).
+        if (vigente() && v.que === 'fin') this.terminar('error', `La llamada en vivo se cerró (${v.motivo}). Abrila de nuevo para seguir.`);
+      });
     };
     // 2) Conectar el WebRTC, con su plazo (hasta onConnect). Una sesión que aparece cuando esta apertura
     //    ya no vale se cuelga en cuanto llega.
