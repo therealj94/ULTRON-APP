@@ -30,6 +30,12 @@ export type Interruptores = {
    * false: se quitan, como antes.
    */
   etiquetasVoz: boolean;
+  /**
+   * Las cuentas (correos) que prueban el motor nuevo de la llamada, Speech Engine (server/voz-motor.ts,
+   * docs/voz/SPEECH-ENGINE.md). Vacío: nadie, todo por el agente de siempre. Además hace falta el motor
+   * encendido en el servidor (AURA_MOTOR_VOZ=speech-engine); sin eso esta lista no hace nada.
+   */
+  motorVozCuentas: string[];
 };
 
 export const POR_OMISION: Interruptores = {
@@ -39,6 +45,7 @@ export const POR_OMISION: Interruptores = {
   puenteVozMs: 3_000,
   confirmarAccionVozMs: 1_000,
   etiquetasVoz: true,
+  motorVozCuentas: [],
 };
 
 /** Lo que se acepta de cada uno: los números con su rango (un valor fuera de rango no se guarda). */
@@ -59,6 +66,19 @@ let leyendo: Promise<void> | null = null;
 /** Sube con cada cambio guardado: una lectura que empezó antes no pisa lo recién guardado. */
 let generacion = 0;
 
+/** Una lista de correos: en minúsculas, sin repetir, como mucho MAX_CUENTAS; una lista con algo que no es correo no se guarda. */
+const MAX_CUENTAS = 50;
+function listaDeCorreos(v: unknown): string[] | null {
+  if (!Array.isArray(v) || v.length > MAX_CUENTAS) return null;
+  const out: string[] = [];
+  for (const x of v) {
+    const c = typeof x === 'string' ? x.trim().toLowerCase() : '';
+    if (!/^[^\s@]{1,64}@[^\s@]{1,190}\.[a-z]{2,24}$/.test(c)) return null;
+    if (!out.includes(c)) out.push(c);
+  }
+  return out;
+}
+
 /** Solo las claves conocidas y con el tipo y el rango correctos. Lo demás se descarta. */
 export function validar(cambios: unknown): Partial<Interruptores> {
   const out: Partial<Interruptores> = {};
@@ -67,7 +87,10 @@ export function validar(cambios: unknown): Partial<Interruptores> {
     if (!(k in POR_OMISION)) continue;
     const clave = k as keyof Interruptores;
     const base = POR_OMISION[clave];
-    if (typeof base === 'boolean' && typeof v === 'boolean') (out as any)[clave] = v;
+    if (Array.isArray(base)) {
+      const l = listaDeCorreos(v);
+      if (l) (out as any)[clave] = l;
+    } else if (typeof base === 'boolean' && typeof v === 'boolean') (out as any)[clave] = v;
     else if (typeof base === 'number' && typeof v === 'number' && Number.isFinite(v)) {
       const [min, max] = RANGOS[clave] ?? [-Infinity, Infinity];
       if (v >= min && v <= max) (out as any)[clave] = Math.round(v);
@@ -123,7 +146,7 @@ export async function fijarInterruptores(cambios: unknown): Promise<{ ok: boolea
   const guardados = leido.ok ? validar(leido.json) : {};
   const nuevos = { ...POR_OMISION, ...guardados, ...validos };
   // Solo lo que difiere de lo de siempre: si mañana cambia un valor por omisión, el JSON no lo tapa.
-  const guardar = Object.fromEntries(Object.entries(nuevos).filter(([k, v]) => POR_OMISION[k as keyof Interruptores] !== v));
+  const guardar = Object.fromEntries(Object.entries(nuevos).filter(([k, v]) => JSON.stringify(POR_OMISION[k as keyof Interruptores]) !== JSON.stringify(v)));
   const r = await almacen.guardar(CLAVE_S3, guardar);
   if (r.ok) {
     generacion++;

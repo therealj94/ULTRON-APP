@@ -25,6 +25,10 @@
  * `terminar()` nada de esta sesión llega a la UI, al estado, al audio ni a los niveles; solo se sigue
  * avisando que el audio quedó suelto (onDisconnect), que es lo que espera una llamada.
  *
+ * EL MOTOR NUEVO (prototipo de Speech Engine, docs/voz/SPEECH-ENGINE.md): solo si el permiso lo trae
+ * (`motor: 'speech-engine'`). Entonces se le pide al SDK la primera frase (`overrides.agent.firstMessage`) y, al
+ * conectar, `onVincular` ata la conversación de ElevenLabs al pase. Sin eso, las mismas opciones de siempre.
+ *
  * `cerrar.callarSalida()` (P2): calla lo que la conversación está diciendo AHORA (volumen 0) sin colgar ni
  * silenciar el micrófono; cuando termina esa frase el volumen vuelve (a 0 si está silenciada) y la siguiente
  * se oye. La voz de la mesa (lib/tts.ts) no es este audio.
@@ -37,7 +41,9 @@ export type OpcionesConv = {
   conversationToken: string;
   connectionType: 'webrtc';
   dynamicVariables: Record<string, string>;
-  onConnect?: () => void;
+  /** Solo con el motor nuevo: la primera frase (Speech Engine no tiene una propia). */
+  overrides?: { agent: { firstMessage: string } };
+  onConnect?: (p?: { conversationId?: string }) => void;
   onModeChange?: (m: { mode: string }) => void;
   onMessage?: (m: { message?: string; source?: string }) => void;
   onInterruption?: () => void;
@@ -65,13 +71,15 @@ export type CallbacksSesionVoz = {
   onAudio?: (gen: number, que: 'toma' | 'suelta' | 'cerrando') => void;
   onFin?: (gen: number, pase: string) => void;
   onPermiso?: (gen: number) => void;
+  /** Motor nuevo: ata la conversación de ElevenLabs (su id) al pase de esta sesión, una vez. */
+  onVincular?: (gen: number, pase: string, conversacion: string) => void;
 };
 
 export type DepsSesionVoz = {
   gen: number;
   /** El SDK (el de ahora: la referencia que se actualiza con cada render). */
   conv: () => ConvMin;
-  permiso: () => Promise<{ token: string; pase: string; cid?: string }>;
+  permiso: () => Promise<{ token: string; pase: string; cid?: string; motor?: 'speech-engine'; primerMensaje?: string }>;
   /** Los callbacks de ahora (cambian con cada render; se leen al avisar). */
   cbs: () => CallbacksSesionVoz;
   silenciada: () => boolean;
@@ -189,13 +197,18 @@ export function abrirSesionVoz(d: DepsSesionVoz): CerrarSesionVoz {
       d.cbs().onAudio?.(gen, 'toma');
       soltarConexion = d.recursos?.tomar('conexion', `voz gen ${gen}`) || (() => undefined);
       iniciada = true;
+      // El motor nuevo, solo si el permiso lo trae: sin eso, las opciones de siempre.
+      const motorNuevo = r.motor === 'speech-engine';
+      const primera = motorNuevo && typeof r.primerMensaje === 'string' ? r.primerMensaje.trim() : '';
       d.conv().startSession({
         conversationToken: r.token,
         connectionType: 'webrtc',
         dynamicVariables: { pase: r.pase },
-        onConnect: () => {
+        ...(primera ? { overrides: { agent: { firstMessage: primera } } } : {}),
+        onConnect: (p) => {
           // Conectó cuando ya se había colgado: no queda abierta al lado (ni micrófono ni minutos).
           if (!vivo) return pedirFin();
+          if (motorNuevo && p?.conversationId) d.cbs().onVincular?.(gen, r.pase, String(p.conversationId));
           d.abierta.current = true;
           if (d.silenciada()) {
             try {

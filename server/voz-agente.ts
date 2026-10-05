@@ -52,6 +52,7 @@ import { FiltroOrdenes, quitarMarcas } from '../lib/ordenes-pc';
 import { preguntaSigues, RE_LLAMADA, RE_SIGUES, saludoDeLlamada } from '../lib/manos-app';
 import { nivelDeCorreo, nivelMasEstrecho, nivelValido, type NivelAura } from './nivel';
 import { anotarVoz, fraseTopeVoz, restanteVozMs } from './tope-voz';
+import type { MedidaRuta } from './voz-medidas';
 // El banco de frases de estado es uno solo, el de la app (sin React Native: se empaqueta aquí igual).
 import {
   ESPERA_FRASE_MS,
@@ -812,9 +813,21 @@ type Deps = {
   rellenoAgenteMs?: number;
   /** Etiquetas de audio v4 en las frases de espera (frasesEstado.ts, vozDeEspera). Por omisión, sí. */
   etiquetas?: boolean;
+  /**
+   * EL PROTOTIPO DE SPEECH ENGINE (server/voz-motor.ts, docs/voz/SPEECH-ENGINE.md): para una cuenta con su
+   * interruptor encendido (y el motor encendido en el servidor), el recurso de Speech Engine que se abre en
+   * vez del agente, y la primera frase que el teléfono le pide decir. null (o sin esto): el agente de siempre,
+   * y la respuesta de /api/voz/agente no cambia en nada.
+   */
+  motorDe?: (correo: string, avatar: AvatarVoz, idioma: Idioma) => { id: string; primerMensaje: string } | null;
+  /**
+   * La medida de cada turno hablado (server/voz-medidas.ts): solo tiempos y banderas, sin contenido. No
+   * escribe nada en la respuesta: el stream sale igual con o sin ella.
+   */
+  alTurno?: (req: express.Request, m: MedidaRuta) => void;
 };
 
-const PHRASES = {
+export const PHRASES = {
   hilo: { es: 'Se me fue el hilo. ¿Me lo repites?', en: 'I lost my train of thought. Can you say it again?' },
   corte: { es: 'Perdón, se me cortó un segundo. ¿Me lo repites?', en: 'Sorry, I lost the connection for a second. Can you repeat that?' },
   vencida: { es: 'Llevamos un buen rato hablando y esta conversación se cerró. Tócame para empezar otra y seguimos.', en: "We've been talking for a while and this conversation closed. Tap me to start a new one and we'll keep going." },
@@ -825,7 +838,12 @@ const PHRASES = {
   rapido: { es: 'Dame un segundito, que me llegó todo junto. ¿Me lo repites?', en: 'Give me a second, it all came in at once. Can you say it again?' },
 };
 
-export function montarVozAgente(app: express.Express, d: Deps) {
+/**
+ * Monta las rutas de la conversación fluida. Devuelve la ruta del LLM propio (`llm`) para que el prototipo
+ * de Speech Engine (server/voz-motor.ts) pase cada turno por EXACTAMENTE el mismo camino: pase, sesión viva,
+ * nivel, cupos, minutos de voz, reintentos, turno especulativo, frase de espera y el mismo cerebro.
+ */
+export function montarVozAgente(app: express.Express, d: Deps): { llm: express.RequestHandler } {
   const pedir = d.fetch || fetch;
   const nivelDe = d.nivelDe || ((correo: string) => nivelDeCorreo(correo));
 
@@ -838,7 +856,10 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     if (!s) return res.status(401).json({ error: 'Entra de nuevo para hablar en conversación.', honesto: true });
     const avatar = normalizarAvatar(req.body?.avatar);
     const idioma = normalizarIdioma(req.body?.idioma);
-    const agente = agenteDe(avatar, idioma);
+    // El prototipo de Speech Engine, solo para una cuenta con su interruptor (y no por WebSocket, el .exe):
+    // con él apagado `motor` es null y todo sigue como siempre.
+    const motor = req.body?.transporte !== 'websocket' ? (d.motorDe?.(s.correo, avatar, idioma) ?? null) : null;
+    const agente = motor ? motor.id : agenteDe(avatar, idioma);
     const key = clave('elevenlabs');
     if (!agente || !key) return res.status(503).json({ error: 'La conversación fluida no está lista todavía.', honesto: true });
     // El nivel lo decide el servidor por el correo de la sesión, y va firmado en el pase.
@@ -873,7 +894,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
       d.calentar?.(s.correo);
       if (cerradas) console.log(`[voz agente] ${cerradas} conversación(es) vieja(s) cerrada(s) por el tope de ${MAX_CONVERSACIONES}`);
       // `restanteMs` (solo miembros): lo que le queda de voz hoy; el teléfono avisa antes de agotarlo.
-      return res.json({ ...(porSocket ? { url: permiso } : { token: permiso }), agente, avatar, idioma, pase: p.pase, cid: p.cid, vence: new Date(p.exp).toISOString(), ...(restante !== undefined ? { restanteMs: restante } : {}), honesto: true });
+      return res.json({ ...(porSocket ? { url: permiso } : { token: permiso }), agente, avatar, idioma, pase: p.pase, cid: p.cid, vence: new Date(p.exp).toISOString(), ...(restante !== undefined ? { restanteMs: restante } : {}), ...(motor ? { motor: 'speech-engine', primerMensaje: motor.primerMensaje } : {}), honesto: true });
     } catch (e: any) {
       console.warn('[voz agente] token', String(e?.name || 'error'));
       return res.status(502).json({ error: 'No pude abrir la conversación ahora. Intenta en un momento.', honesto: true });
@@ -988,6 +1009,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
       // Un reintento de la misma frase no es un turno nuevo.
       devolverCupo(claveTurnos, ahora);
       req.socket.setNoDelay?.(true);
+      medirTurno(req, conv.cid, { primerTextoMs: null, cerebroMs: null, totalMs: 0, puente: false, interrupcion: null, repetido: true, respaldo: false, error: false, tarde: false, cortado: false });
       await vivo.enganchar(res);
       return;
     }
@@ -1013,6 +1035,9 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     conv.idEnCurso = id;
     conv.algoEnCurso = false;
     const interrumpida = !reconexion && !!mensaje && (conv.cortada || asistenteTruncado(req.body?.messages, conv.anterior));
+    /** Para la medida del turno: si hubo error de adentro y si contestó el cerebro de respaldo. */
+    let huboError = false;
+    let porRespaldo = false;
     conv.cortada = false;
     conv.turnos++;
     // Un turno nuevo (la lectura que volvió del teléfono, o la persona que habló) quita el sonido de
@@ -1458,6 +1483,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
         if (conv.ambiente?.de === corte) ambiente(tr.sonido);
         if (tr.lenta && !(antes?.lenta && esperando)) programar(alEsperar, cuandoEsperar());
       } else if (evento === 'done') {
+        porRespaldo = /fallback|respaldo/i.test(String(datos?.via || '')) || datos?.respaldo === true;
         // Un corchete que quedó abierto al final del último trozo sale como texto (afinar lo limpia).
         if (algo && etiquetas.pendiente) decirCerebro(paraVoz('', true));
         if (!algo) decirCerebro(sinRelleno(paraVozEntera(String(datos?.voz ?? datos?.reply ?? '')).trim()));
@@ -1475,6 +1501,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
         terminado = true;
         avisarFin();
       } else if (evento === 'error') {
+        huboError = true;
         // Nunca se lee el error de adentro («Qwen no contestó», «message vacío»): una frase de persona.
         if (!algo) decir(PHRASES.hilo[pase.idioma]);
         terminado = true;
@@ -1549,6 +1576,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
       .then(
         () => avisarFin(),
         (e: any) => {
+          if (!senal.aborted) huboError = true;
           if (!senal.aborted) console.warn('[voz agente] turno', String(e?.message || e).slice(0, 160));
           if (!terminado && !senal.aborted && !algo) decir(PHRASES.corte[pase.idioma]);
           terminado = true;
@@ -1556,6 +1584,20 @@ export function montarVozAgente(app: express.Express, d: Deps) {
         }
       );
     await Promise.race([fin, t]);
+    /** La medida de este turno (sin contenido): la misma para los dos caminos de la llamada. */
+    const medir = (cortado: boolean, tarde: boolean) =>
+      medirTurno(req, conv.cid, {
+        primerTextoMs: primeroEn ? primeroEn - t0 : null,
+        cerebroMs: cerebroEn ? cerebroEn - t0 : null,
+        totalMs: Date.now() - t0,
+        puente: puenteDicho,
+        interrupcion: interrumpida ? 'inferida' : null,
+        repetido: false,
+        respaldo: porRespaldo,
+        error: huboError,
+        tarde,
+        cortado,
+      });
     for (const h of relojes) clearTimeout(h);
     relojes.clear();
     // El turno terminó (o lo cortaron): el sonido que puso este turno se quita.
@@ -1569,6 +1611,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
       cerrar();
       if (gracia) clearTimeout(gracia);
       if (conv.vivo === vivoDeEste) conv.vivo = null;
+      medir(true, false);
       return;
     }
     const porReloj = reloj.aborted && !terminado;
@@ -1620,10 +1663,22 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     cerrar();
     // Una línea por turno hablado, para ver la latencia real en el log (Render): la voz espera lo primero.
     const msDe = (t: number) => (t ? `${t - t0} ms` : '—');
+    medir(false, porReloj);
     console.log(`[voz] turno ${conv.cid.slice(0, 8)}: primer texto ${msDe(primeroEn)}${puenteDicho ? ' (espera)' : ''} · cerebro ${msDe(cerebroEn)} · total ${Date.now() - t0} ms${porReloj ? ' · TARDE' : ''}${accionesPedidas ? ` · acciones ${accionesPedidas} ${suerte}` : ''}`);
   };
   // ElevenLabs puede añadir /chat/completions a la URL o usarla tal cual: se aceptan las formas.
   app.post('/api/voz/llm', llm);
   app.post('/api/voz/llm/chat/completions', llm);
   app.post('/api/voz/llm/v1/chat/completions', llm);
+
+  /** La medida del turno, si hay quien la anote. Nunca rompe el turno ni toca la respuesta. */
+  function medirTurno(req: express.Request, cid: string, m: Omit<MedidaRuta, 'conv'>) {
+    if (!d.alTurno) return;
+    try {
+      d.alTurno(req, { ...m, conv: crypto.createHash('sha256').update(cid).digest('hex').slice(0, 10) });
+    } catch {
+      /* la medida no es el turno */
+    }
+  }
+  return { llm };
 }

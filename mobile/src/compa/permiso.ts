@@ -17,8 +17,12 @@ import type { Idioma } from '../i18n';
 
 /** `cid`: el id de la conversación en el servidor (lo devuelve /api/voz/agente desde la 5.0). */
 /** `restanteMs`: lo que le queda de voz hoy a un miembro (el servidor lo manda; la junta, sin tope). */
-export type Permiso = { token: string; pase: string; cid?: string; restanteMs?: number; avatar: AvatarId; idioma: Idioma; en: number };
-export type PedirPermiso = (avatar: AvatarId, idioma: Idioma) => Promise<{ token: string; pase: string; cid?: string; restanteMs?: number }>;
+/**
+ * `motor` y `primerMensaje`: solo si el servidor abrió el motor nuevo de la llamada (prototipo de Speech Engine,
+ * docs/voz/SPEECH-ENGINE.md, una cuenta con el interruptor). Sin ellos, todo como siempre.
+ */
+export type Permiso = { token: string; pase: string; cid?: string; restanteMs?: number; motor?: 'speech-engine'; primerMensaje?: string; avatar: AvatarId; idioma: Idioma; en: number };
+export type PedirPermiso = (avatar: AvatarId, idioma: Idioma) => Promise<{ token: string; pase: string; cid?: string; restanteMs?: number; motor?: string; primerMensaje?: string }>;
 
 export const VIDA_PERMISO_MS = 4 * 60_000;
 
@@ -58,6 +62,8 @@ export class Precalentador {
           pase: r.pase,
           ...(r.cid ? { cid: String(r.cid) } : {}),
           ...(Number.isFinite(r.restanteMs) ? { restanteMs: Number(r.restanteMs) } : {}),
+          ...(r.motor === 'speech-engine' ? { motor: 'speech-engine' as const } : {}),
+          ...(r.motor === 'speech-engine' && typeof r.primerMensaje === 'string' && r.primerMensaje.trim() ? { primerMensaje: r.primerMensaje.trim() } : {}),
           avatar: a,
           idioma: i,
           en: this.reloj(),
