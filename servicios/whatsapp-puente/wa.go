@@ -54,7 +54,7 @@ type CuentaWA struct {
 func NuevaCuentaWA(ctx context.Context, rutaSesion, dirFotos string, alm *Almacen, log waLog.Logger) (*CuentaWA, error) {
 	// Así se ve en «Dispositivos vinculados» del teléfono.
 	store.SetOSInfo("AU-RA", [3]uint32{1, 0, 0})
-	cont, err := sqlstore.New(ctx, "sqlite3", "file:"+rutaSesion+"?_foreign_keys=on&_busy_timeout=5000", log.Sub("sesion"))
+	cont, err := sqlstore.New(ctx, "sqlite3", "file:"+rutaSesion+"?_foreign_keys=on&_busy_timeout=5000", soloAvisos(log.Sub("sesion")))
 	if err != nil {
 		return nil, err
 	}
@@ -81,8 +81,18 @@ func NuevaCuentaWA(ctx context.Context, rutaSesion, dirFotos string, alm *Almace
 	return c, nil
 }
 
+// El registro de whatsmeow, solo avisos y errores (revisión del 5-oct): en INFO escribe el número vinculado y JIDs
+// («Successfully paired …»), y el registro de Render lo ve más gente que la dueña de esa cuenta.
+func soloAvisos(l waLog.Logger) waLog.Logger { return avisosDe{l} }
+
+type avisosDe struct{ waLog.Logger }
+
+func (avisosDe) Infof(string, ...any)        {}
+func (avisosDe) Debugf(string, ...any)       {}
+func (a avisosDe) Sub(m string) waLog.Logger { return avisosDe{a.Logger.Sub(m)} }
+
 func (c *CuentaWA) usar(dev *store.Device) {
-	c.cli = whatsmeow.NewClient(dev, c.log.Sub("cliente"))
+	c.cli = whatsmeow.NewClient(dev, soloAvisos(c.log.Sub("cliente")))
 	c.cli.EnableAutoReconnect = true
 	c.cli.AddEventHandler(c.evento)
 }
