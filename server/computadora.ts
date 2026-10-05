@@ -1242,7 +1242,8 @@ export function fraseDeFinal(mision: string, t: Tarea, idioma: 'es' | 'en' = 'es
   if (t.estado === 'sin_pasos') {
     const u = [...t.pasos].reverse().find((p) => p.accion !== 'answer' && p.accion !== 'escritorio_limpio');
     const donde = u ? ` ${en ? 'I stopped at' : 'Me quedé en'}: ${pasoEnPalabras(u, idioma).toLowerCase()}.` : '';
-    return en ? `I couldn't finish «${corto(mision, 80)}» on my computer.${donde} Want me to keep going?` : `No alcancé a terminar «${corto(mision, 80)}» en mi computadora.${donde} ¿Sigo?`;
+    const cuales = archivosSinTerminar(mision, t, en, requisitos);
+    return en ? `I couldn't finish «${corto(mision, 80)}» on my computer.${donde}${cuales} Want me to keep going?` : `No alcancé a terminar «${corto(mision, 80)}» en mi computadora.${donde}${cuales} ¿Sigo?`;
   }
   if (t.estado === 'fallo') return en ? `My computer failed: ${corto(t.error || 'no details', 120)}.` : `Mi computadora falló: ${corto(t.error || 'sin detalle', 120)}.`;
   if (t.error) return en ? `I stopped the computer task: ${corto(t.error, 120)}.` : `Paré lo de mi computadora: ${corto(t.error, 120)}.`;
@@ -1257,6 +1258,21 @@ function listaComprobados(ent: Entrega, max = 4): string {
     return `${n === i.etiqueta ? n : `${i.etiqueta}: ${n}`} (${i.archivo!.bytes} bytes)`;
   });
   return nombres.join(', ') + (xs.length > max ? ` y ${xs.length - max} más` : '');
+}
+
+/**
+ * Ronda del 5-oct (prueba real E1 en el nodo: «crea tres documentos» se quedó sin pasos sin decir cuáles faltaban): si
+ * el nodo revisó su espacio de trabajo al acabarse los pasos, cuáles de los archivos pedidos ya existen y cuáles faltan.
+ * Vacío si no se pidieron archivos o el nodo no pudo mirar (nunca se adivina).
+ */
+function archivosSinTerminar(mision: string, t: Tarea, en: boolean, requisitos?: PedidoEntrega | null): string {
+  if (!Array.isArray(t.archivos)) return '';
+  const ent = entregaDe(mision, t, requisitos);
+  if (ent.tipo !== 'archivo' || !ent.revisado || !ent.total) return '';
+  const hechos = listaComprobados(ent, 10);
+  const faltan = ent.items.filter((i) => i.estado !== 'verified').map((i) => i.etiqueta);
+  const partes = [hechos ? (en ? `Already there: ${hechos}.` : `Ya quedó: ${hechos}.`) : '', faltan.length ? (en ? `Missing: ${faltan.join(', ')}.` : `Falta: ${faltan.join(', ')}.`) : ''].filter(Boolean);
+  return partes.length ? ` ${partes.join(' ')}` : '';
 }
 
 function archivosEnPalabras(ent: Entrega, en: boolean): string {

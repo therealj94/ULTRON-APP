@@ -29,7 +29,9 @@ guarda por cuenta. Pasos:
    ficha disponible (`recepcion.otaFuente: release`) **no hace falta comparar el `updateId` a mano**: `recibido: sí`
    = corre la OTA publicada para su runtime; `no` lleva `motivo` y `explicacion` (`embebido-sin-ota`: JS de la APK, la
    OTA aún no llegó o no se aplicó — reabrir la app; `ota-anterior` / `otra-ota`; `otro-runtime`: lo publicado es para
-   otra APK). `recepcion.esperado.ota` lista lo publicado. Si `otaFuente: no-disponible`, se comparó con la última
+   otra APK). Solo cuenta lo publicado de **este** producto (AU-RA = `ultron`; Dr Electrum = `electrum`), aunque la
+   ficha traiga las dos apps y coincidan sus runtimes; sin nada del producto, `desconocido` con `sin-publicacion`.
+   `recepcion.esperado.ota` lista lo publicado de este producto. Si `otaFuente: no-disponible`, se comparó con la última
    ficha buena (`otaLeida` dice de cuándo) o, sin ninguna, sale `desconocido`: entonces sí a mano, como antes (la línea
    «Publicar OTA» de la ejecución de `ota.yml` o `eas update:list --branch production`, y el `runtime` contra
    `runtime-ultron.txt` del Release «latest»). Windows todavía no manda su build (ver `windows/README.md`): se

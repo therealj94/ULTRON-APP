@@ -108,10 +108,10 @@ import {
   esAccionIniciativa,
   pedidoAMandar,
   propuestaDeAccion,
-  propuestaDeServidor,
   propuestas,
   tocaSondear,
-  type ResultadoOferta,
+  type RespuestaSondeo,
+  type ResultadoSondeo,
   type ResultadoRespuesta,
   type RespuestaBoton,
 } from '../compa/iniciativa';
@@ -2458,7 +2458,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   }, [user.correo]);
 
   /** Llegó una nueva: con la mesa a la vista, un toque suave. En una conversación de voz (o hablando), en silencio. */
-  const avisarPropuesta = useCallback((r: ResultadoOferta) => {
+  const avisarPropuesta = useCallback((r: ResultadoSondeo) => {
     if (r === 'nueva' && mesaVisibleRef.current && !conversandoRef.current && !speakingRef.current) void haptic('light');
   }, []);
 
@@ -2481,12 +2481,18 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       propuestas.limpiarCaducada();
       if (tocaSondear(propuestas.ultimoSondeo, Date.now())) {
         propuestas.ultimoSondeo = Date.now();
+        // Cada consulta toma su turno antes de salir: si terminan fuera de orden, una vieja no resucita ni retira la
+        // tarjeta. Un `propuesta: null` válido y más nuevo la retira (el hecho ya no vale); un fallo no toca nada.
+        const turno = propuestas.empezarSondeo();
+        let res: RespuestaSondeo;
         try {
-          const p = propuestaDeServidor(await api('/api/iniciativa', { method: 'GET' }, TOPE_SONDEO_MS));
-          if (vivo && p) avisarPropuesta(propuestas.ofrecer(p));
+          res = { ok: true, cuerpo: await api('/api/iniciativa', { method: 'GET' }, TOPE_SONDEO_MS) };
         } catch {
-          /* sin red o sin la ruta todavía: la próxima vuelta */
+          /* sin red, sin la ruta todavía, un no-2xx o el tope de tiempo: queda la última tarjeta válida */
+          res = { ok: false };
         }
+        const r = propuestas.terminarSondeo(turno, res);
+        if (vivo) avisarPropuesta(r);
       }
       if (vivo) reloj = setTimeout(vuelta, SONDEO_INICIATIVA_MS);
     };

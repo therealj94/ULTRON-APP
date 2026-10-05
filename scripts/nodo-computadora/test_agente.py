@@ -1360,6 +1360,19 @@ class ArchivosComprobados(Base):
         self.assertEqual(t.estado, 'hecha')
         return t.resumen()
 
+    def test_sin_pasos_tambien_dice_que_archivos_hay_y_cuales_faltan(self):
+        """Prueba real E1 en el nodo (5-oct): «crea tres documentos» se quedó sin pasos y no dijo cuáles faltaban. Una
+        tarea que se acaba sin terminar también trae la revisión del espacio de trabajo; su estado sigue sin_pasos."""
+        t, _ = CicloGratis.correr_con(self, [('wait', {'seconds': 0})], 'Crea tres documentos: informe.docx, presupuesto.xlsx y carta.pdf')
+        t.max_pasos = 1
+        self.escribir('Documents/presupuesto.xlsx', b'PK\x03\x04 hoja')
+        agente.correr(t)
+        r = t.resumen()
+        self.assertEqual(r['estado'], 'sin_pasos', 'sigue sin terminar: revisar no la vuelve hecha')
+        self.assertIsNone(r['archivos_error'])
+        existe = {os.path.basename(a['ruta']): a['existe'] for a in r['archivos']}
+        self.assertEqual(existe, {'presupuesto.xlsx': True, 'informe.docx': False, 'carta.pdf': False})
+
     def test_dijo_listo_y_el_archivo_no_existe(self):
         r = self.correr_y_archivos('Listo, guardé el archivo informe.odt en Documentos.')
         self.assertIsNone(r['archivos_error'])

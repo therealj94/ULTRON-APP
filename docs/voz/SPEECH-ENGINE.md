@@ -1,5 +1,23 @@
 # Speech Engine: prototipo en paralelo (apagado para todos)
 
+> **Decisión (5-oct-2026, tras la revisión de 8b9e9ca): NO se adopta; se deja como está.** José pidió resolver si
+> conviene hacerlo y adaptarlo o dejarlo así. Se deja así, apagado para todos, porque:
+>
+> 1. **La interrupción empeoraría.** Speech Engine no tiene evento de interrupción: la señal es un `event_id` nuevo,
+>    que llega cuando la persona TERMINA su frase nueva. Hoy ElevenLabs corta la petición en cuanto le hablan encima
+>    y el cerebro se suelta antes (§1). Las interrupciones son justo lo que el revisor pide probar.
+> 2. **La ganancia esperada no alcanza la regla.** Lo único que promete es «puede mejorar la latencia», sin cifras;
+>    lo esperable es 0–0,3 s en p50 (§7), y la regla exige ≥ 150 ms Y ≥ 10 % en p50 y p95 (§5). En el camino de hoy
+>    lo que más pesa es el cerebro, que es el mismo en los dos caminos.
+> 3. **Se pierde la red de seguridad** de ElevenLabs (relleno si tardamos) y **cuesta más** (0,08 USD/min aparte).
+> 4. **Medirlo cuesta dinero y permisos**: crear el recurso en ElevenLabs y minutos pagados. Leer las métricas de
+>    las conversaciones actuales desde aquí (solo lectura) también pide aprobación.
+>
+> El código queda como está (apagado por tres interruptores, con sus pruebas) por si ElevenLabs agrega un evento de
+> interrupción real. Para reabrir la decisión: el procedimiento A/B de §5 con el visto bueno de José (§6). Lo que sí
+> se aprovecha ya en el camino de siempre: la medida por turno (`server/voz-medidas.ts`) y asentir sin interrumpir
+> (`interruption_ignore_terms`, que el agente de hoy también tiene).
+
 Estado: **prototipo listo en el código, apagado**. Para probarlo hace falta el visto bueno de José en
 ElevenLabs (sección 6). La regla acordada: probar en paralelo SIN tocar lo que funciona, detrás de un
 interruptor por cuenta (apagado para todos), medir los dos caminos y adoptarlo **solo si gana claro**.
