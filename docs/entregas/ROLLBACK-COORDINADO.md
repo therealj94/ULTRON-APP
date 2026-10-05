@@ -166,21 +166,35 @@ npx tsx -e "import('./lib/tareas-durables').then((m) => m.revertirReconciliacion
 **Qué hace `revertirReconciliacionTareas(correo)`** (revisión externa sobre a46b496: «el historial puede quedar incompleto
 o reaparecer una tarea recuperada»):
 
-- Quita del índice **solo** las entradas que agregó el inventario (`rec`) y que **no tuvieron actividad** desde que se
-  recuperaron: el objeto de la tarea no cambió (`actualizada`) después de recuperarse (`rt`; en las entradas de a46b496,
-  que no traen `rt`, se toma el inicio de su ronda, que es anterior: se conserva de más, nunca de menos).
+- Quita del índice **solo** las entradas que agregó el inventario (`rec`), cuya tarea **ya terminó** y que **no tuvieron
+  actividad** desde que se recuperaron: el objeto de la tarea no cambió (`actualizada`) después de recuperarse (`rt`; en
+  las entradas de a46b496, que no traen `rt`, se toma el inicio de su ronda, que es anterior: se conserva de más, nunca
+  de menos). Una entrada sin objeto también sale.
+- Una recuperada que **sigue activa** (no terminó) es trabajo vivo: **se queda**, sin la marca `rec`, aunque nadie la
+  haya tocado. Volver a esconderla es justo el fallo que A7 arregló.
 - Una recuperada que después avanzó, terminó o se canceló **ya es historial propio**: se queda, sin la marca `rec`.
 - Una entrada cuyo objeto no se pudo leer se queda tal cual (`pendientes`): nunca se quita a ciegas.
 - Devuelve al índice lo que el tope del historial sacó del índice de antes al agregar lo recuperado (del respaldo
   `tareas/indice-respaldo/<huella>/antes-de-inventario-v1`, solo si el objeto existe y es de ese dueño) y recorta otra
-  vez. `conteo.recortadas` pierde lo que había contado el inventario y lo que vuelve.
+  vez.
+- `conteo.recortadas`: lo que contó el inventario (`dr`) son las terminadas que su recorte sacó del índice de antes. Las
+  que vuelven dejan de contarse **una sola vez** (antes se descontaban dos veces y la cuenta bajaba con cada ciclo de
+  reactivar y revertir). Las que no pueden volver se siguen contando. Se suma lo que el recorte saque ahora. Ejemplo:
+  con 10 recortadas de antes y 5 tareas perdidas, al reconciliar quedan 15 y al revertir vuelven a quedar 10, en cada
+  ciclo.
+- **Sin el respaldo** (se borró o nunca se escribió), no vuelve nada de lo recortado: esas terminadas siguen contadas en
+  `conteo.recortadas` (la lista lo avisa) y el resultado trae `sinRespaldo: true` (y un aviso en el registro). El
+  historial no se pierde en silencio.
+- **Un dueño sin índice ni respaldo** (por ejemplo, un correo mal escrito) no tiene nada que revertir: no se escribe nada
+  (ni la marca `revertido`, que lo dejaría bloqueado) y el resultado trae `sinIndice: true`. Revisa el correo.
 - Todo en una sola fusión CAS sobre el índice actual: lo que se creó, cambió o anotó después de la reconciliación (o
   durante la reversión) se queda.
 - Deja en el índice la marca `revertido` (`{ gen, t, quitadas, conservadas, restauradas, pendientes, … }`). Como vive en
   el índice y no en la memoria de una réplica, **ninguna réplica vuelve a reconciliar a ese dueño ni le agrega nada**,
   aunque `AURA_RECONCILIAR_TAREAS` siga en `agregar` (una réplica que estaba a mitad de recorrido tampoco: su escritura
   se descarta). Ya no hace falta apagar el interruptor antes.
-- Devuelve `{ ok, quitadas, conservadas, restauradas, pendientes, ya }`. Es idempotente y reanudable: si
+- Devuelve `{ ok, quitadas, conservadas, restauradas, pendientes, ya }` (más `sinIndice` o `sinRespaldo` cuando
+  aplican). Es idempotente y reanudable: si
   `pendientes > 0`, se repite cuando el almacén conteste; si no queda nada, no escribe (`ya: true`).
 - **Nunca borra objetos** de tareas ni el respaldo.
 
@@ -202,5 +216,6 @@ o reaparecer una tarea recuperada»):
 - Un servidor anterior a esta revisión conserva la marca `revertido` al escribir el índice, pero no la respeta: si corre
   con `AURA_RECONCILIAR_TAREAS=agregar`, puede volver a agregar lo revertido. Durante un despliegue mixto, deja esas
   réplicas con `AURA_RECONCILIAR_TAREAS=off`.
-- `conteo.recortadas` tras revertir es una cota baja: en un índice reconciliado por a46b496 (sin `dr`) puede quedarse
-  corto, nunca largo.
+- `conteo.recortadas` es una cuenta, no una lista de ids. Si alguien borra a mano el objeto de una terminada recortada
+  que no pudo volver, la cuenta puede quedar con una de más hasta que se reactive y se vuelva a inventariar. El código nunca
+  borra objetos de tareas.
