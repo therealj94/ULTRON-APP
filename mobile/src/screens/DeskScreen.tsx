@@ -89,7 +89,7 @@ import type { PruebaId } from '../recorrido/guion';
 import { conRecorridoVisto, tocaOfrecerRecorrido } from '../tutorial/pasos';
 import { VentanaBienvenida } from '../bienvenida/VentanaBienvenida';
 import { abrirBienvenida } from '../bienvenida/estado';
-import { OidoMesa, VigilanteOido, duenoAudio, motivoFalloVoz, oidoPropio } from '../compa/duenoAudio';
+import { OidoMesa, VigilanteOido, duenoAudio, motivoFalloVoz, oidoPropio, saludoArranque } from '../compa/duenoAudio';
 import { ESPERA_FRASE_MS, estadoDeEspera, fraseDeEstado, vozDeEspera } from '../compa/frasesEstado';
 import { ControlCamara, conPreferencia, pedidoDeCamara, prefiereSiempre, respuestaModoCamara, type EstadoCamara } from '../lib/camaraModo';
 import { marcoMesa, useMesaVisible, useModoPresencia } from '../avatar3d/usePresencia';
@@ -557,6 +557,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       },
       // Solo si el oído ya se abrió una vez con el permiso (no se abre «a ciegas» al volver de otra pantalla).
       micQuerido: () => oidoListo.current && !micMutedRef.current,
+      silenciadoPorPersona: () => micMutedRef.current,
       // Al colgar, el oído se reabre cuando la conversación soltó de verdad el audio (como mucho 4 s).
       esperarAudioLibre: () => esperarAudioLibre(),
       miga,
@@ -1915,11 +1916,15 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         if (!oidoMesa.current?.oye()) void muteMic();
         setStatus('listening');
       } else setStatus(micOk ? 'muted' : 'offline');
+      // El silencio se guarda entre sesiones (a propósito: una recarga no abre sola un micrófono que la persona
+      // cerró); que quede en las migas y que el saludo lo diga, para que no parezca que no oye.
+      if (micOk && s.micMuted) miga('micrófono: arranca silenciado (la persona lo dejó así en otra sesión)');
 
       // El avatar se eligió al entrar (App): si es recién elegido, se presenta él mismo con su voz.
       handling.current = true;
       const saludo = saludoConNombre(user.name);
-      await say(recienElegido ? `${saludo} ${de(avatarPorId(s.avatar).presentacion)}` : saludo, 'HAPPY', { emocion: 'feliz' });
+      const conPresentacion = recienElegido ? `${saludo} ${de(avatarPorId(s.avatar).presentacion)}` : saludo;
+      await say(saludoArranque(conPresentacion, { micSilenciado: micOk && s.micMuted, en: idiomaActual() === 'en' }), 'HAPPY', { emocion: 'feliz' });
       handling.current = false;
       // Después del saludo la mesa sigue al teléfono: en vertical, cuadro con la cara y el chat
       // (Claudio se pone de pie).

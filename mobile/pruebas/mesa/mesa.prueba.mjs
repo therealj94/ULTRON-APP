@@ -515,6 +515,14 @@ prueba('turno sin respuesta: la mesa deja la miga y la MANDA ya en los dos camin
   for (const m of src.matchAll(/migaFalloTurno\(\{[^}]*\}\)/g)) assert.ok(!/\bcmd\b|\bbase\b|message/.test(m[0]), m[0]);
 });
 
+prueba('micrófono silenciado de otra sesión (José, 5-oct): se guarda, pero al abrir la mesa se DICE y queda en las migas', () => {
+  const src = fs.readFileSync(path.join(RAIZ, 'mobile/src/screens/DeskScreen.tsx'), 'utf8');
+  assert.match(src, /micMutedRef\.current = s\.micMuted;/, 'el silencio guardado se respeta (una recarga no abre sola el micrófono)');
+  assert.match(src, /await say\(saludoArranque\([^)]*micSilenciado: micOk && s\.micMuted/, 'el saludo lo dice');
+  assert.match(src, /miga\('micrófono: arranca silenciado/, 'y queda en las migas');
+  assert.match(src, /silenciadoPorPersona: \(\) => micMutedRef\.current/, 'la miga del oído distingue el silencio de la persona del oído sin abrir');
+});
+
 for (const [nombre, f] of pruebas) {
   n += 1;
   try {
