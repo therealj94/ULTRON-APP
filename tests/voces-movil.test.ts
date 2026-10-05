@@ -16,8 +16,11 @@ import { describe, it } from 'node:test';
 import {
   ESPERA_CONSENTIMIENTO_MS,
   ESPERA_MUESTRA_MS,
+  ESPERA_VOZ_TURNO_MS,
   FRESCO_MS,
+  IdentificadorVoz,
   Inscripcion,
+  escenaDelTurno,
   MAX_TROZOS_FRASE,
   UltimaVoz,
   conVocesActivas,
@@ -148,12 +151,114 @@ describe('Voces (teléfono): lo reconocido y la escena', () => {
     assert.equal(reglaQuienHabla(fraseQuienHabla(jose, 'José', true)), null);
   });
 
+  it('la frase de quién habla va PRIMERO: una escena larga (cortada por el teléfono y el servidor) no la pierde', () => {
+    const camara = 'Hay dos personas frente a la cámara, una sentada a la izquierda con una taza y otra de pie junto a la ventana; la luz es tenue y hay papeles sobre la mesa. '.repeat(4);
+    const caras = 'Reconozco a Ana (tu esposa) y a alguien que no conozco.';
+    const e = escenaDelTurno({ voz: fraseQuienHabla(ana, 'José'), camara, caras });
+    assert.ok(e.startsWith('Por la voz, habla Ana'), e.slice(0, 60));
+    // El teléfono corta a 300 (lib/api.ts turnoBody) y el servidor a 400 (server.ts): la regla sigue.
+    assert.ok(reglaQuienHabla(e.slice(0, 300)), 'la regla sobrevive al corte');
+    // Lo de antes (la voz al final) la perdía sin avisar.
+    assert.equal(reglaQuienHabla([camara, caras, fraseQuienHabla(ana, 'José')].join(' ').slice(0, 300)), null);
+    assert.equal(escenaDelTurno({}), undefined);
+    assert.equal(escenaDelTurno({ camara: 'Una persona.' }), 'Una persona.');
+  });
+
   it('activar es por persona', () => {
     let m = conVocesActivas({}, 'Jose@X.org', true, 5);
     assert.ok(vocesActivas(m, 'jose@x.org'));
     assert.ok(!vocesActivas(m, 'ana@x.org'));
     m = conVocesActivas(m, 'JOSE@x.org', false);
     assert.ok(!vocesActivas(m, 'jose@x.org'));
+  });
+});
+
+describe('Voces (teléfono): quién dijo ESTA frase (revisión del 5-oct, M1)', () => {
+  const ana = { id: 'a', nombre: 'Ana', relacion: 'conocido' as const, parentesco: 'esposa' };
+  const jose = { id: 'j', nombre: 'José', relacion: 'yo' as const };
+  const dormir = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  /** Un servidor de mentira: cada audio dice quién es y cuánto tarda en contestar. */
+  function banco() {
+    const llamadas: string[] = [];
+    const pendientes = new Map<string, { quien: typeof ana | typeof jose | null; ms: number; motivo?: string }>();
+    const id = new IdentificadorVoz(async (trozos) => {
+      const k = trozos[0];
+      llamadas.push(k);
+      const p = pendientes.get(k)!;
+      await dormir(p.ms);
+      return { persona: p.quien, motivo: p.motivo || (p.quien ? 'reconocida' : 'nadie_cerca') };
+    });
+    let n = 0;
+    /** Una frase: se cierra (empieza a reconocerse) y se entrega como turno `entregaTras` ms después. */
+    const frase = async (quien: typeof ana | typeof jose | null, ms: number, o: { entregaTras?: number; motivo?: string } = {}) => {
+      const k = `frase-${++n}`;
+      pendientes.set(k, { quien, ms, motivo: o.motivo });
+      const idFrase = n;
+      id.oir(idFrase, [k]);
+      if (o.entregaTras) await dormir(o.entregaTras);
+      const oidaEn = Date.now();
+      id.entregada(idFrase, oidaEn);
+      return oidaEn;
+    };
+    return { id, llamadas, frase };
+  }
+
+  it('el primer pedido de Ana justo después de José es de Ana (espera lo de SU frase, con tope)', async () => {
+    const b = banco();
+    const t1 = await b.frase(jose, 10, { entregaTras: 30 });
+    assert.deepEqual(await b.id.paraTurno(t1), jose);
+    // Ana habla enseguida; su resultado tarda ~120 ms (servidor + red): el turno lo espera.
+    const t2 = await b.frase(ana, 120);
+    const t0 = Date.now();
+    assert.deepEqual(await b.id.paraTurno(t2), ana, 'antes salía «José» (lo de la frase anterior)');
+    assert.ok(Date.now() - t0 < ESPERA_VOZ_TURNO_MS + 50);
+  });
+
+  it('si no llega a tiempo, el turno NO dice quién habla (nunca lo de la frase anterior); lo tardío vale solo para SU frase', async () => {
+    const b = banco();
+    const t1 = await b.frase(jose, 5, { entregaTras: 20 });
+    assert.deepEqual(await b.id.paraTurno(t1), jose);
+    const t2 = await b.frase(ana, 600);
+    const t0 = Date.now();
+    assert.equal(await b.id.paraTurno(t2), undefined, 'sin dato: no se reusa «José»');
+    const tardo = Date.now() - t0;
+    assert.ok(tardo >= ESPERA_VOZ_TURNO_MS - 20 && tardo < ESPERA_VOZ_TURNO_MS + 80, `esperó ${tardo} ms (tope ${ESPERA_VOZ_TURNO_MS})`);
+    await dormir(320);
+    // La frase siguiente (de alguien que no se reconoce) no hereda lo de Ana que llegó tarde.
+    const t3 = await b.frase(null, 5, { entregaTras: 20 });
+    assert.equal(await b.id.paraTurno(t3), null);
+    // Lo de Ana sí vale para SU frase (un reintento del mismo turno).
+    assert.deepEqual(await b.id.paraTurno(t2, 0), ana);
+    assert.deepEqual(b.id.ultima(), { persona: null, id: 3 });
+  });
+
+  it('nunca se pierde una frase: con una consulta en curso queda en fila la ÚLTIMA (reemplaza a la anterior)', async () => {
+    const b = banco();
+    await b.frase(jose, 80);
+    const t2 = await b.frase(jose, 5);
+    const t3 = await b.frase(ana, 5);
+    assert.equal(b.llamadas.length, 1, 'una consulta a la vez');
+    assert.equal(await b.id.paraTurno(t2, 10), undefined, 'la frase reemplazada no dice quién habla');
+    assert.deepEqual(await b.id.paraTurno(t3), ana, 'la última se reconoce en cuanto termina la anterior');
+    assert.deepEqual(b.llamadas, ['frase-1', 'frase-3']);
+  });
+
+  it('muy corta, silencio, error o sin audio: el turno no dice quién habla', async () => {
+    const b = banco();
+    const t1 = await b.frase(ana, 5, { motivo: 'muy_corta', entregaTras: 15 });
+    assert.equal(await b.id.paraTurno(t1), undefined);
+    b.id.sinDato(9);
+    b.id.entregada(9, Date.now());
+    assert.equal(await b.id.paraTurno(Date.now(), 10), undefined);
+    const roto = new IdentificadorVoz(async () => {
+      throw new Error('sin red');
+    });
+    roto.oir(1, ['x']);
+    roto.entregada(1, Date.now());
+    assert.equal(await roto.paraTurno(Date.now()), undefined);
+    // Escrito (sin frase oída cerca): nada.
+    assert.equal(await b.id.paraTurno(0), undefined);
+    assert.equal(await b.id.paraTurno(Date.now() + 60_000, 0), undefined);
   });
 });
 
@@ -258,6 +363,39 @@ describe('Voces (teléfono): el oído Turbo pasa el audio', () => {
     await espera(30);
     assert.equal(b.audios.length, 1);
     assert.equal(b.orden.at(-1), 'texto:lo que dijo por el respaldo');
+  });
+
+  it('el audio sale al CERRARSE la frase (antes del texto de Turbo), con el mismo id que la frase entregada', async () => {
+    const b = banco();
+    const cierres: Array<{ id: number; n: number }> = [];
+    b.motor.setOyenteCierre((id, trozos) => {
+      cierres.push({ id, n: trozos.length });
+      b.orden.push(`cierre:${id}`);
+    });
+    const ids: number[] = [];
+    b.motor.setOyenteAudio((trozos, texto, id) => {
+      ids.push(id!);
+      b.orden.push(`audio:${texto}`);
+    });
+    b.motor.activar();
+    await espera();
+    b.silencio(10);
+    b.voz(20);
+    await espera();
+    b.silencio(8);
+    assert.deepEqual(b.orden, ['cierre:1'], 'el audio para reconocer la voz sale antes de que Turbo conteste');
+    b.ws[0].decir({ message_type: 'committed_transcript', text: 'Léeme mis correos.' });
+    await espera(20);
+    assert.deepEqual(b.orden, ['cierre:1', 'audio:Léeme mis correos.', 'texto:Léeme mis correos.']);
+    assert.deepEqual(ids, [1]);
+    assert.ok(cierres[0].n >= 26);
+    // Otra frase: otro id.
+    b.voz(15);
+    await espera();
+    b.silencio(8);
+    b.ws[0].decir({ message_type: 'committed_transcript', text: 'Gracias.' });
+    await espera(20);
+    assert.deepEqual(ids, [1, 2]);
   });
 
   it('un oyente que falla no rompe la frase', async () => {

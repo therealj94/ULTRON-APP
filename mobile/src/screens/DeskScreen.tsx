@@ -95,6 +95,7 @@ import { ControlCamara, conPreferencia, pedidoDeCamara, prefiereSiempre, respues
 import { marcoMesa, useMesaVisible, useModoPresencia } from '../avatar3d/usePresencia';
 import { useCaras, type ApiCaras } from '../caras/useCaras';
 import { useVoces, type ApiVoces } from '../voces/useVoces';
+import { escenaDelTurno } from '../voces/voces';
 import { avatarActual } from '../avatares/actual';
 import { orientar } from '../lib/orientacion';
 import { esperarFrame } from '../lib/esperarFrame';
@@ -529,6 +530,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const interrumpidaTurno = useRef<string | null>(null);
   /** Cuándo entregó el oído la última frase (para medir cuánto tarda la respuesta en sonar). */
   const fraseOidaEn = useRef(0);
+  /** Cuándo se oyó la frase del turno en curso (0 si se escribió): las voces buscan quién dijo ESA frase. */
+  const oidaTurno = useRef(0);
   /** El mismo dato del pedido que espera en `pending` (si la persona habló mientras AU-RA contestaba). */
   const pendienteOidaEn = useRef(0);
   const turnosHablados = useRef(0);
@@ -622,14 +625,23 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     return Date.now() - e.ts <= ventana;
   }, []);
 
-  /** Descripción de la escena si es reciente y viene de un motor real; va en el body del turno. */
-  const escenaReciente = useCallback((): string | undefined => {
-    const e = escenaRef.current;
-    const quien = carasRef.current?.escena() || '';
-    const porVoz = vocesRef.current?.escena() || '';
-    const d = escenaFresca(e) ? e.descripcion : '';
-    return [d, quien, porVoz].filter(Boolean).join(' ') || undefined;
-  }, [escenaFresca]);
+  /**
+   * La escena del turno de la frase oída en `oidaEn` (0 si se escribió): quién habla por la voz PRIMERO
+   * (la escena se corta a 300/400 letras y la regla de «no le leas lo privado de la dueña» no puede caerse),
+   * lo que reconocen las caras y la descripción de la cámara si es reciente y de un motor real. Lo de la voz
+   * es de ESA frase: espera su resultado hasta ESPERA_VOZ_TURNO_MS (350 ms; casi siempre ya llegó porque se
+   * consultó al cerrarse la frase) y, si no llegó, no dice quién habla. `quienHabla` va también aparte en el
+   * cuerpo (el servidor lo usa aunque la escena llegue cortada).
+   */
+  const escenaReciente = useCallback(
+    async (oidaEn: number): Promise<{ escena?: string; quienHabla?: { id: string } }> => {
+      const voz = (await vocesRef.current?.paraTurno(oidaEn).catch(() => null)) || { frase: '' };
+      const e = escenaRef.current;
+      const escena = escenaDelTurno({ voz: voz.frase, caras: carasRef.current?.escena() || '', camara: escenaFresca(e) ? e.descripcion : '' });
+      return { escena, ...(voz.quienHabla ? { quienHabla: voz.quienHabla } : {}) };
+    },
+    [escenaFresca]
+  );
 
   // La burbuja y el hilo son para LEER: las expresiones de voz ([risa]…) se oyen, no se enseñan.
   const showBubble = useCallback(
@@ -1008,6 +1020,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       void anotarPrimer(user.correo, { tipo: 'enviar', idTurno, texto: cmd });
       /** Lo que volvió de verdad (o por qué no): al terminar se clasifica para el primer resultado. */
       let paraPrimer: Partial<ChatResult> | null = null;
+      // Quién dijo ESTA frase (las voces): como mucho 350 ms, y nada si las voces están apagadas.
+      const vista = await escenaReciente(oidaTurno.current);
       const base = {
         message: cmd,
         mode: modeRef.current,
@@ -1018,7 +1032,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         image: opts?.image,
         visto: opts?.visto,
         foco: opts?.foco,
-        escena: escenaReciente(),
+        escena: vista.escena,
+        ...(vista.quienHabla ? { quienHabla: vista.quienHabla } : {}),
         hablado: ultimoHablado.current,
         // Uno por frase y el mismo en los reintentos de abajo: el servidor no corre la frase dos veces.
         idTurno,
@@ -1413,6 +1428,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       }
       handling.current = true;
       fraseOidaEn.current = oidaEn;
+      oidaTurno.current = oidaEn;
       lastUserAt.current = Date.now();
       comentarista.usuarioHablo();
       // Lo que estaba vivo ANTES de cortar la voz: «para» decide sobre eso (AUR10).

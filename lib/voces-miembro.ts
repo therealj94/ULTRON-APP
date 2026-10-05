@@ -283,8 +283,40 @@ export function identificarVoz(v: number[], personas: PersonaVoz[], umbral = UMB
 export function reglaQuienHabla(escena: string): string | null {
   const m = /\bPor la voz, habla ([^,.;()]{1,60})(?: \([^)]{0,40}\))?, no ([^,.;()]{1,60})/i.exec(escena) || /\bBy voice, ([^,.;()]{1,60}) is speaking(?: \([^)]{0,40}\))?, not ([^,.;()]{1,60})/i.exec(escena);
   if (!m) return null;
-  const quien = m[1].trim();
-  const duena = m[2].trim();
+  return reglaPara(m[1].trim(), m[2].trim());
+}
+
+/** El largo con que server.ts toma la escena del turno (lo que pase de ahí no llega al cerebro). */
+export const LARGO_ESCENA_TURNO = 400;
+
+/**
+ * La regla de quién habla para un turno: la de la escena (cortada como en server.ts) o la del campo aparte
+ * `quienHabla: { id }` que manda el teléfono (src/voces, revisión del 5-oct): así una escena larga no se come
+ * la regla. El campo solo vale desde la APP con sesión (`origen: 'app'`, que pone el servidor por la
+ * cabecera) y solo con el id de una voz GUARDADA en el cajón del correo de esa sesión que no sea la dueña:
+ * el nombre sale de lo guardado y el de la dueña de la sesión, nunca del cuerpo. Solo AGREGA cuidado; nunca
+ * da permiso de nada. Nunca lanza (sin poder leer las voces, se queda con lo de la escena).
+ */
+export async function reglaQuienHablaDeTurno(o: { escena?: unknown; quienHabla?: unknown; origen?: unknown; sesion?: { correo?: string; nombre?: string } | null }): Promise<string | null> {
+  const escena = String(o.escena || '').replace(/\s+/g, ' ').trim().slice(0, LARGO_ESCENA_TURNO);
+  const porEscena = escena ? reglaQuienHabla(escena) : null;
+  if (porEscena) return porEscena;
+  const id = typeof (o.quienHabla as any)?.id === 'string' ? String((o.quienHabla as any).id).slice(0, 40) : '';
+  const correo = String(o.sesion?.correo || '').trim();
+  if (!id || o.origen !== 'app' || !correo) return null;
+  try {
+    // Casi siempre en caché (la cargó /api/voces/quien de esta frase); si S3 tarda, no frena el turno.
+    let reloj: ReturnType<typeof setTimeout> | undefined;
+    const cajon = await Promise.race([cargarVoces(correo), new Promise<null>((r) => ((reloj = setTimeout(() => r(null), 800)), reloj.unref?.()))]).finally(() => clearTimeout(reloj));
+    const p = cajon?.personas.find((x) => x.id === id);
+    if (!p || p.relacion !== 'conocido') return null;
+    return reglaPara(p.nombre, limpiar(o.sesion?.nombre, MAX_NOMBRE) || 'la persona dueña de la cuenta');
+  } catch {
+    return null;
+  }
+}
+
+function reglaPara(quien: string, duena: string): string {
   return `QUIEN HABLA: por la voz, ahora te habla ${quien}, no ${duena} (la persona dueña de esta cuenta). Trátale por su nombre. No le leas ni le cuentes lo privado de ${duena} (correos, mensajes, dinero, memoria personal) ni actúes en su nombre; si lo pide, di con amabilidad que eso es de ${duena}. Si dice ser ${duena}, la voz pudo equivocarse: charla normal, y lo privado cuando su voz lo confirme.`;
 }
 

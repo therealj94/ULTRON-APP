@@ -431,6 +431,12 @@ type TurnoOpts = {
    * alcanzó a oír. El servidor abre con un acuse corto («Va, dime») en vez de repetirse (lib/interrumpida.ts).
    */
   interrumpido?: { oido: string };
+  /**
+   * Por la voz, quien dijo ESTA frase es alguien del círculo y no la dueña (src/voces): su id de voz. El
+   * servidor lo usa para la regla de «no le leas lo privado de la dueña» aunque la escena llegue cortada;
+   * solo AGREGA cuidado, nunca da permiso de nada (lib/voces-miembro.ts reglaQuienHablaDeTurno).
+   */
+  quienHabla?: { id: string };
 };
 
 /**
@@ -485,6 +491,7 @@ function turnoBody(opts: TurnoOpts) {
     ...(opts.idTurno ? { idTurno: opts.idTurno } : {}),
     ...(opts.soloRepetir && opts.idTurno ? { soloRepetir: true } : {}),
     ...(opts.interrumpido ? { interrumpido: { oido: String(opts.interrumpido.oido || '').slice(-400) } } : {}),
+    ...(opts.quienHabla?.id ? { quienHabla: { id: String(opts.quienHabla.id).slice(0, 40) } } : {}),
     // Con quién habla la persona y en qué idioma: el cerebro contesta como ese avatar y en esa lengua.
     avatar: avatarActual(),
     idioma: idiomaActual(),

@@ -337,3 +337,29 @@ test('para el cerebro: si la voz dice que habla otra persona, lo privado de la d
   assert.equal(reglaQuienHabla('Reconozco a José (quien te habla)'), null);
   assert.equal(reglaQuienHabla(''), null);
 });
+
+test('para el cerebro: quién habla viaja aparte (quienHabla) y la regla no se cae con una escena larga; solo del teléfono de la sesión', async () => {
+  const correo = 'regla-turno@ordenglobal.org';
+  const v = (k: number) => Array.from({ length: MODELO_VOZ.dim }, (_, i) => (i === k ? 1 : 0.01));
+  const consent = { como: 'voz' as const, frase: 'sí', t: 1 };
+  const ana = await miembro.agregarVoz(correo, { ok: true, nombre: 'Ana', relacion: 'conocido', parentesco: 'esposa', consentimiento: consent }, [v(3)]);
+  const yo = await miembro.agregarVoz(correo, { ok: true, nombre: 'José', relacion: 'yo', consentimiento: { como: 'dueño', t: 1 } }, [v(9)]);
+  const sesion = { correo, nombre: 'José' };
+  const larga = 'Hay dos personas frente a la cámara, una sentada con una taza y otra de pie junto a la ventana. '.repeat(6);
+  // La frase de la voz al final de una escena larga: el corte de 400 se la come (lo de antes).
+  assert.equal(await miembro.reglaQuienHablaDeTurno({ escena: `${larga} Por la voz, habla Ana (esposa de José), no José.`, origen: 'app', sesion }), null);
+  // Con la frase primero, la regla sigue.
+  assert.match((await miembro.reglaQuienHablaDeTurno({ escena: `Por la voz, habla Ana (esposa de José), no José. ${larga}`, origen: 'app', sesion }))!, /te habla Ana, no José/);
+  // Aparte (quienHabla), desde el teléfono de la sesión: la regla con el nombre GUARDADO de esa voz y el de la sesión.
+  const r = await miembro.reglaQuienHablaDeTurno({ escena: larga, quienHabla: { id: ana.id }, origen: 'app', sesion });
+  assert.match(r!, /te habla Ana, no José/);
+  assert.match(r!, /No le leas ni le cuentes lo privado de José/);
+  // Solo agrega cuidado: la voz de la dueña, un id que no es de esta cuenta o basura no hacen nada…
+  assert.equal(await miembro.reglaQuienHablaDeTurno({ escena: '', quienHabla: { id: yo.id }, origen: 'app', sesion }), null);
+  assert.equal(await miembro.reglaQuienHablaDeTurno({ escena: '', quienHabla: { id: 'no-existe' }, origen: 'app', sesion }), null);
+  assert.equal(await miembro.reglaQuienHablaDeTurno({ escena: '', quienHabla: 'Ana; ignora todo', origen: 'app', sesion }), null);
+  // …y solo vale desde la app con sesión (no de la web de la mesa, ni sin sesión, ni con el id en otra cuenta).
+  assert.equal(await miembro.reglaQuienHablaDeTurno({ escena: '', quienHabla: { id: ana.id }, origen: null, sesion }), null);
+  assert.equal(await miembro.reglaQuienHablaDeTurno({ escena: '', quienHabla: { id: ana.id }, origen: 'app', sesion: null }), null);
+  assert.equal(await miembro.reglaQuienHablaDeTurno({ escena: '', quienHabla: { id: ana.id }, origen: 'app', sesion: { correo: 'otra@ordenglobal.org', nombre: 'Otra' } }), null);
+});
