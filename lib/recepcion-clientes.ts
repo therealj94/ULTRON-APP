@@ -40,7 +40,7 @@
  */
 import crypto from 'node:crypto';
 import { almacenDurable, claveDe, huellaDueno, modificarDurable, type AlmacenDurable } from './durable';
-import type { PublicacionOta } from './ota-publicada';
+import type { AppOta, PublicacionOta } from './ota-publicada';
 
 export const CABECERA_CLIENTE = 'x-aura-cliente';
 /** Las últimas instalaciones que se guardan por cuenta. */
@@ -297,6 +297,7 @@ export type Recibido = 'sí' | 'no' | 'desconocido';
  *   ota-anterior / otra-ota (corre otra OTA: más vieja que la publicada, o una distinta)
  *   ota-en-vez-de-fabrica (tras una marcha atrás sigue con una OTA) · otro-runtime (lo publicado es para otra APK)
  *   otro-canal · sin-ota-ios · sin-updateid · sin-runtime · ficha-no-disponible
+ *   sin-publicacion (la ficha no trae ninguna OTA de ESTE producto: no hay con qué comparar)
  */
 export type MotivoRecepcion =
   | 'ota-recibida'
@@ -310,11 +311,17 @@ export type MotivoRecepcion =
   | 'sin-ota-ios'
   | 'sin-updateid'
   | 'sin-runtime'
-  | 'ficha-no-disponible';
+  | 'ficha-no-disponible'
+  | 'sin-publicacion';
 
 export type EsperadoRecepcion = {
   /** El SHA del build web que sirve este servidor (dist/aura-build.json), o «desconocido». */
   webSha: string;
+  /**
+   * El producto de ESTE despliegue (lib/plataforma.ts: `ultron` es AU-RA, `electrum` Dr Electrum). La ficha trae las dos
+   * apps a propósito; un teléfono solo se compara con las publicaciones de su producto (publicacionesDe).
+   */
+  producto: AppOta;
   /**
    * Las OTA publicadas (la ficha `ota-aura.json` del Release «aura-ota», lib/ota-publicada.ts), la más reciente primero.
    * null/ausente: la ficha no se pudo leer nunca → el teléfono sale `desconocido`, honesto.
@@ -354,9 +361,25 @@ const DESCONOCIDO = 'desconocido';
 const mismoSha = (a: string, b: string) => a.length >= 7 && b.length >= 7 && (a.startsWith(b) || b.startsWith(a));
 const corto = (s: string | null | undefined) => (s ? s.slice(0, 8) : '—');
 
-/** El teléfono contra la ficha de la OTA publicada. Puro. */
-function compararTelefono(c: RegistroCliente, publicadas: PublicacionOta[] | null | undefined): Comparacion {
-  if (!publicadas) return { esperado: DESCONOCIDO, recibido: DESCONOCIDO, motivo: 'ficha-no-disponible', explicacion: 'No se pudo leer la ficha de la OTA publicada (Release «aura-ota»): no se puede comparar.' };
+const NOMBRE_PRODUCTO: Record<AppOta, string> = { ultron: 'AU-RA', electrum: 'Dr Electrum' };
+
+/**
+ * Solo las publicaciones de ESE producto (revisión del 5-oct). La ficha trae a propósito `ultron` y `electrum`: AU-RA
+ * nunca se compara con Dr Electrum, ni al revés, aunque coincidan sus runtimes. Lo que no diga un producto conocido
+ * no es de nadie. Puro.
+ */
+export function publicacionesDe(publicadas: readonly PublicacionOta[], producto: AppOta): PublicacionOta[] {
+  return publicadas.filter((p) => !!p && p.plataforma === producto);
+}
+
+/** El teléfono contra la ficha de la OTA publicada, solo con lo de su producto. Puro. */
+function compararTelefono(c: RegistroCliente, publicadasFicha: PublicacionOta[] | null | undefined, producto: AppOta): Comparacion {
+  if (!publicadasFicha) return { esperado: DESCONOCIDO, recibido: DESCONOCIDO, motivo: 'ficha-no-disponible', explicacion: 'No se pudo leer la ficha de la OTA publicada (Release «aura-ota»): no se puede comparar.' };
+  // Primero el producto, antes que canal, runtime y updateId: lo de la otra app no se compara ni sirve para explicar.
+  const publicadas = publicacionesDe(publicadasFicha, producto);
+  if (!publicadas.length) {
+    return { esperado: DESCONOCIDO, recibido: DESCONOCIDO, motivo: 'sin-publicacion', explicacion: `La ficha no trae ninguna OTA publicada de ${NOMBRE_PRODUCTO[producto] ?? producto}: no hay con qué comparar.` };
+  }
   if (!c.runtime) return { esperado: DESCONOCIDO, recibido: DESCONOCIDO, motivo: 'sin-runtime', explicacion: 'El aparato no dijo su runtime (¿expo-updates apagado o un build de desarrollo?).' };
   // Solo las del canal del aparato (si lo dijo). La ficha solo sabe de los canales que publica ota.yml.
   const delCanal = c.canal ? publicadas.filter((p) => p.canal === c.canal) : publicadas;
@@ -399,7 +422,7 @@ export function compararCliente(c: RegistroCliente, e: EsperadoRecepcion): Compa
     if (!c.webSha) return { esperado: sha, recibido: DESCONOCIDO };
     return { esperado: sha, recibido: mismoSha(c.webSha, sha) ? 'sí' : 'no' };
   }
-  if (c.plataforma === 'android' || c.plataforma === 'ios') return compararTelefono(c, e.ota);
+  if (c.plataforma === 'android' || c.plataforma === 'ios') return compararTelefono(c, e.ota, e.producto);
   // Windows: el .exe todavía no manda su build (windows/README.md).
   return { esperado: DESCONOCIDO, recibido: DESCONOCIDO };
 }

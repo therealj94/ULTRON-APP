@@ -6,7 +6,8 @@
  *       (lib/recepcion-clientes.ts), con `esperado` y `recibido` (sí | no | desconocido). Cada cuenta ve SOLO lo suyo:
  *       la clave de mesa sin sesión no es una cuenta y recibe `clientes: []` con `recepcion.cuenta: false`.
  *       En el teléfono, lo esperado sale de la ficha de la OTA publicada (lib/ota-publicada.ts: `ota-aura.json` del
- *       Release «aura-ota», que sube .github/workflows/ota.yml), con `motivo` y `explicacion`. La ficha se guarda 10 min
+ *       Release «aura-ota», que sube .github/workflows/ota.yml), con `motivo` y `explicacion`; solo las publicaciones del
+ *       producto de este despliegue (PLATAFORMA: `ultron` en AU-RA, `electrum` en Dr Electrum). La ficha se guarda 10 min
  *       y nunca frena la respuesta: si no se pudo leer, `recepcion.otaFuente: 'no-disponible'` (y, sin ninguna lectura
  *       buena, el teléfono en «desconocido»). Todo `clientes` es evidencia DECLARADA por el cliente, sin firma
  *       (`evidencia: 'declarada'`): diagnóstico de los aparatos propios, no prueba.
@@ -18,9 +19,10 @@
  */
 import type express from 'express';
 import type { ManifiestoEntrega, SaludAlmacen } from '../lib/build';
-import { CABECERA_CLIENTE, clientesDe, registrarCliente, vistaClientes, type EsperadoRecepcion } from '../lib/recepcion-clientes';
+import { CABECERA_CLIENTE, clientesDe, publicacionesDe, registrarCliente, vistaClientes, type EsperadoRecepcion } from '../lib/recepcion-clientes';
 import type { AlmacenDurable } from '../lib/durable';
-import { fuenteOtaDelProceso, type EstadoOta } from '../lib/ota-publicada';
+import { fuenteOtaDelProceso, type AppOta, type EstadoOta } from '../lib/ota-publicada';
+import { PLATAFORMA } from '../lib/plataforma';
 
 type Deps = {
   exigirMesa: express.RequestHandler;
@@ -35,11 +37,17 @@ type Deps = {
   esperado?: (m: ManifiestoEntrega, ota: EstadoOta) => EsperadoRecepcion;
   /** La ficha de la OTA publicada (si no, la del proceso: AURA_OTA_MANIFIESTO_URL o el Release «aura-ota»). */
   ota?: { obtener: () => Promise<EstadoOta> };
+  /** Solo pruebas: el producto de este despliegue (si no, el del proceso: PLATAFORMA, lib/plataforma.ts). */
+  producto?: AppOta;
 };
 
-/** Lo esperado: el SHA web que se sirve y las OTA de la ficha (null si nunca se pudo leer: «desconocido»). */
-export function esperadoDe(m: ManifiestoEntrega, ota?: EstadoOta): EsperadoRecepcion {
-  return { webSha: m.web.sha, ota: ota?.manifiesto ? ota.manifiesto.publicaciones : null };
+/**
+ * Lo esperado: el SHA web que se sirve y las OTA de la ficha DE ESTE PRODUCTO (null si nunca se pudo leer:
+ * «desconocido»). La ficha trae `ultron` y `electrum`: AU-RA solo se mide con las de `ultron` y Dr Electrum con las de
+ * `electrum`, aunque coincidan sus runtimes (revisión del 5-oct). compararCliente vuelve a filtrar por producto.
+ */
+export function esperadoDe(m: ManifiestoEntrega, ota?: EstadoOta, producto: AppOta = PLATAFORMA): EsperadoRecepcion {
+  return { webSha: m.web.sha, producto, ota: ota?.manifiesto ? publicacionesDe(ota.manifiesto.publicaciones, producto) : null };
 }
 
 const EVIDENCIA =
@@ -69,7 +77,7 @@ export function montarRutaBuild(app: express.Express, d: Deps) {
     // La ficha de la OTA nunca lanza ni espera de más (lo guardado; la primera vez, como mucho ESPERA_RUTA_MS).
     const ota = (d.ota ?? fuenteOtaDelProceso()).obtener().catch((): EstadoOta => ({ fuente: 'no-disponible', manifiesto: null, leido: null, detalle: 'error' }));
     const [m, almacen, registro, estadoOta] = await Promise.all([d.manifiesto(), d.almacenSalud(), cuenta ? clientesDe(cuenta, d.almacen) : Promise.resolve(null), ota]);
-    const esperado = (d.esperado ?? esperadoDe)(m, estadoOta);
+    const esperado = d.esperado ? d.esperado(m, estadoOta) : esperadoDe(m, estadoOta, d.producto ?? PLATAFORMA);
     const clientes = registro && registro.ok ? vistaClientes(registro.clientes, esperado) : [];
     const recepcion = {
       cuenta: !!cuenta,

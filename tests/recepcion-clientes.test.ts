@@ -85,11 +85,11 @@ test('H7: el build de la configuración (`bc`) y el del binario (`b`) van por se
   assert.equal(R.leerDescriptor('v1;p=ios;i=inst-aaaa-0001;bc=1.2.3')!.buildConfig, '1.2.3', 'iOS: buildNumber con puntos');
   assert.notEqual(R.firmaBuild(d), R.firmaBuild(R.leerDescriptor('v1;p=android;i=inst-aaaa-0001;b=54;bc=55')!), 'cambiar `bc` es otro build');
   const t = '2026-10-05T10:00:00.000Z';
-  const v = R.vistaClientes([{ ...d, instalacion: 'a'.repeat(16), primero: t, visto: t }], { webSha: 'desconocido' })[0];
+  const v = R.vistaClientes([{ ...d, instalacion: 'a'.repeat(16), primero: t, visto: t }], { webSha: 'desconocido', producto: 'ultron' })[0];
   assert.deepEqual([v.build, v.buildConfig], ['54', '53']);
   // Un registro guardado antes de `bc` (sin el campo) se enseña con buildConfig null, sin romper.
   const { buildConfig: _sin, ...viejo } = { ...d, instalacion: 'a'.repeat(16), primero: t, visto: t };
-  assert.equal(R.vistaClientes([viejo as any], { webSha: 'desconocido' })[0].buildConfig, null);
+  assert.equal(R.vistaClientes([viejo as any], { webSha: 'desconocido', producto: 'ultron' })[0].buildConfig, null);
 });
 
 test('la firma del build cambia con el build, no con la instalación', () => {
@@ -203,18 +203,18 @@ test('comparar: web contra el SHA servido (sí/no); teléfono «desconocido» si
   const t = '2026-10-05T10:00:00.000Z';
   const base = { instalacion: 'a'.repeat(16), primero: t, visto: t, version: null, build: null, buildConfig: null, runtime: RT, updateId: UUID, canal: 'production', embebido: false, creada: null, webSha: null, os: null };
   const SHA = '0123456789abcdef0123456789abcdef01234567';
-  assert.deepEqual(R.compararCliente({ ...base, plataforma: 'web', webSha: '0123456' }, { webSha: SHA }), { esperado: SHA, recibido: 'sí' }, 'corto y completo son el mismo');
-  assert.deepEqual(R.compararCliente({ ...base, plataforma: 'web', webSha: 'fedcba9876543' }, { webSha: SHA }), { esperado: SHA, recibido: 'no' });
-  assert.deepEqual(R.compararCliente({ ...base, plataforma: 'web', webSha: null }, { webSha: SHA }), { esperado: SHA, recibido: 'desconocido' });
-  assert.deepEqual(R.compararCliente({ ...base, plataforma: 'web', webSha: '0123456' }, { webSha: 'desconocido' }), { esperado: 'desconocido', recibido: 'desconocido' });
-  const sinFicha = R.compararCliente({ ...base, plataforma: 'android' }, { webSha: SHA });
+  assert.deepEqual(R.compararCliente({ ...base, plataforma: 'web', webSha: '0123456' }, { webSha: SHA, producto: 'ultron' }), { esperado: SHA, recibido: 'sí' }, 'corto y completo son el mismo');
+  assert.deepEqual(R.compararCliente({ ...base, plataforma: 'web', webSha: 'fedcba9876543' }, { webSha: SHA, producto: 'ultron' }), { esperado: SHA, recibido: 'no' });
+  assert.deepEqual(R.compararCliente({ ...base, plataforma: 'web', webSha: null }, { webSha: SHA, producto: 'ultron' }), { esperado: SHA, recibido: 'desconocido' });
+  assert.deepEqual(R.compararCliente({ ...base, plataforma: 'web', webSha: '0123456' }, { webSha: 'desconocido', producto: 'ultron' }), { esperado: 'desconocido', recibido: 'desconocido' });
+  const sinFicha = R.compararCliente({ ...base, plataforma: 'android' }, { webSha: SHA, producto: 'ultron' });
   assert.deepEqual([sinFicha.esperado, sinFicha.recibido, sinFicha.motivo], ['desconocido', 'desconocido', 'ficha-no-disponible'], 'sin la ficha de la OTA: no inventa');
-  assert.deepEqual(R.compararCliente({ ...base, plataforma: 'windows' }, { webSha: SHA }), { esperado: 'desconocido', recibido: 'desconocido' });
-  const v = R.vistaClientes([{ ...base, plataforma: 'android' }], { webSha: SHA })[0];
+  assert.deepEqual(R.compararCliente({ ...base, plataforma: 'windows' }, { webSha: SHA, producto: 'ultron' }), { esperado: 'desconocido', recibido: 'desconocido' });
+  const v = R.vistaClientes([{ ...base, plataforma: 'android' }], { webSha: SHA, producto: 'ultron' })[0];
   assert.equal(v.instalacion, 'aaaaaa', 'solo 6 del hash, para distinguir aparatos');
   assert.equal(v.evidencia, 'declarada', 'lo dice el cliente, sin firma');
   assert.equal(v.motivo, 'ficha-no-disponible');
-  assert.equal(R.vistaClientes([{ ...base, plataforma: 'web', webSha: '0123456' }], { webSha: SHA })[0].motivo, null, 'la web no lleva motivo');
+  assert.equal(R.vistaClientes([{ ...base, plataforma: 'web', webSha: '0123456' }], { webSha: SHA, producto: 'ultron' })[0].motivo, null, 'la web no lleva motivo');
 });
 
 /* ------------------------------------------------------------------ los clientes arman lo que el servidor entiende */
