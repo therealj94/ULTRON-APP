@@ -18,7 +18,7 @@ import type { Escena, MotorVision } from '../lib/escena';
 import type { DeskPresence, FaceState, Mode, SessionUser } from '../config';
 import { esVencida } from '../lib/intentoEntrada';
 import { generacionCuenta, sigueVigente } from '../lib/cuenta';
-import { api, CANCIONES_LOCAL, healthCheck, listCanciones, nuevoIdTurno, olvidarMemoriaServidor, rememberFact, turno, turnoStream, verCamara, type Cancion, type Turn } from '../lib/api';
+import { api, CANCIONES_LOCAL, healthCheck, listCanciones, nuevoIdTurno, olvidarMemoriaServidor, opinarTurno, rememberFact, turno, turnoStream, verCamara, type Cancion, type ChatResult, type Turn } from '../lib/api';
 import { faceForEmocion, type Emocion } from '../lib/emocion';
 import { GENEROS, generoPorId, interpretar, type Gag } from '../lib/intenciones';
 import { ayuda, CONOCER_CORE, CONOCER_QUESTIONS, fechaLocal, horaLocal, preguntaConocer } from '../lib/knowledge';
@@ -126,6 +126,10 @@ import { avisarTrabajos, useTrabajos } from '../trabajos/useTrabajos';
 import { IndicadorTrabajos } from '../trabajos/IndicadorTrabajos';
 import { PanelTrabajos } from '../trabajos/PanelTrabajos';
 import { escucharPedidoPanel, tomarPedidoPanel } from '../trabajos/abrirPanel';
+import { clienteTrabajos } from '../trabajos/useTrabajos';
+import { alCambiarPrimer, anotarPrimer, leerPrimerDe } from '../primeravez/medida';
+import { SirvioPrimera } from '../primeravez/SirvioPrimera';
+import { clasificarTurno, debePreguntar, queRecuperar, type PrimerResultado } from '../lib/primerResultado';
 
 type Props = {
   user: SessionUser;
@@ -250,6 +254,14 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const [draft, setDraft] = useState(() => tomarPrimeraPeticion());
   // Lo escrito sobrevive a una actualización por aire (UI01, 3-oct).
   useBorradorMesa(draft, setDraft);
+  /**
+   * EL PRIMER RESULTADO (auditoría del 4-oct, P4 · R1; primeravez/medida.ts): el registro de esta cuenta, si
+   * está midiendo su primera vez. La petición escrita en la caja no es el resultado: lo es la respuesta (o la
+   * tarea) que vuelve. Con resultado se pregunta una vez «¿Te sirvió?».
+   */
+  const [primer, setPrimer] = useState<PrimerResultado | null>(null);
+  /** El primer pedido que quedó a medias al cerrar la app: se vuelve a pedir con su idTurno (askBrain). */
+  const turnoRecuperado = useRef<{ texto: string; idTurno: string } | null>(null);
   const [listening, setListening] = useState(false);
   const [level, setLevel] = useState(0);
   /** El volumen del micrófono solo lo dibuja la cara clásica: con las otras no se re-renderiza por él. */
@@ -939,6 +951,15 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       setToolHint('');
       // La sesión a la que pertenece este turno: el JSON de respaldo y su reintento salen con ELLA o no salen.
       const genTurno = generacionCuenta();
+      // El primer pedido que quedó a medias al cerrar la app se pide con SU idTurno: el servidor repite la
+      // respuesta que ya tenía, sin correr otro turno (server/turno-unico.ts; lib/primer-resultado.ts).
+      const rec = turnoRecuperado.current;
+      turnoRecuperado.current = null;
+      const idTurno = rec && rec.texto === cmd ? rec.idTurno : nuevoIdTurno();
+      // El primer resultado (R1): se anota el envío; si esta cuenta no está midiendo su primera vez, no hace nada.
+      void anotarPrimer(user.correo, { tipo: 'enviar', idTurno, texto: cmd });
+      /** Lo que volvió de verdad (o por qué no): al terminar se clasifica para el primer resultado. */
+      let paraPrimer: Partial<ChatResult> | null = null;
       const base = {
         message: cmd,
         mode: modeRef.current,
@@ -952,7 +973,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         escena: escenaReciente(),
         hablado: ultimoHablado.current,
         // Uno por frase y el mismo en los reintentos de abajo: el servidor no corre la frase dos veces.
-        idTurno: nuevoIdTurno(),
+        idTurno,
         ...(interrumpidaTurno.current !== null ? { interrumpido: { oido: interrumpidaTurno.current } } : {}),
       };
       ultimoHablado.current = false;
@@ -1065,6 +1086,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
               }
             }
             emitirAccionesDelTurno(result);
+            paraPrimer = result;
             if (speaker) {
               (speaker as StreamSpeaker).end();
               await (speaker as StreamSpeaker).done;
@@ -1095,6 +1117,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
             // Si el stream ya se comió más de 20 s, el servidor sí tiene stream y está lento: repetir la
             // misma espera con JSON (70 s, y otro intento) dejaba a la mesa «pensando» unos 3 minutos.
             if (Date.now() - t0Turno > 20_000) {
+              paraPrimer = { reply: '', error: 'timeout' };
               setToolHint('');
               await say(tr('Se me fue el hilo pensando eso. ¿Me lo repites?', 'I lost my train of thought on that. Could you repeat it?'), 'CONFUSED', { emocion: 'preocupado' });
               return;
@@ -1117,6 +1140,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         }
         setToolHint('');
         emitirAccionesDelTurno(out);
+        paraPrimer = out;
         if (failed(out)) {
           const auth = /sesión|privado|401/i.test(String(out.error || ''));
           if (auth) {
@@ -1139,6 +1163,11 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         if (out.parcial) miga(`mesa: respuesta cortada (${out.via || 'json'})`);
         await say(out.voz || out.reply, faceForEmocion(out.emocion), { emocion: out.emocion, parcial: !!out.parcial });
       } finally {
+        // Cortado por la persona o de otra sesión: no es resultado ni fallo (queda enviada; lo siguiente que mande cuenta).
+        if (paraPrimer && !turnoCancelado.current && sigueVigente(genTurno)) {
+          const r = paraPrimer;
+          void anotarPrimer(user.correo, { tipo: 'turno', idTurno, resultado: clasificarTurno(r), trazaId: r.trazaId });
+        }
         cancelMmm();
         ponerLee(false);
         avisarMesa({ pensando: false });
@@ -2300,6 +2329,69 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const mandarTurnoRef = useRef(mandarTurno);
   mandarTurnoRef.current = mandarTurno;
 
+  /* ── el primer resultado: recuperar al reabrir, seguir sus tareas y el «¿Te sirvió?» ──────────── */
+
+  useEffect(() => {
+    let vivo = true;
+    const gen = generacionCuenta();
+    const quitar = alCambiarPrimer((correo, r) => {
+      if (vivo && correo === user.correo) setPrimer(r);
+    });
+    let espera: ReturnType<typeof setTimeout> | null = null;
+    void leerPrimerDe(user.correo).then((r) => {
+      if (!vivo || !sigueVigente(gen)) return;
+      setPrimer(r);
+      const q = queRecuperar(r, Date.now());
+      // Preparada o fallida: vuelve a la caja (lo manda la persona). Lo escrito después gana.
+      if (q.accion === 'rellenar') setDraft((d) => (d.trim() ? d : q.texto));
+      else if (q.accion === 'reconsultar') {
+        // Se mandó y se cerró la app antes de la respuesta: el mismo pedido con el MISMO idTurno, cuando la
+        // mesa ya está en pie. El servidor devuelve lo que ya tenía (o espera al turno que sigue); no se repite.
+        espera = setTimeout(() => {
+          if (!vivo || !sigueVigente(gen)) return;
+          miga('primer resultado: recuperando el pedido pendiente');
+          turnoRecuperado.current = { texto: q.texto, idTurno: q.idTurno };
+          if (!mandarTurnoRef.current(q.texto)) turnoRecuperado.current = null;
+        }, 1500);
+      }
+    });
+    return () => {
+      vivo = false;
+      quitar();
+      if (espera) clearTimeout(espera);
+    };
+  }, [user.correo]);
+
+  // La respuesta abrió tareas durables: el resultado es el de esas tareas (las de /api/trabajos, la fuente de
+  // verdad; también tras reabrir). Las que no están en la lista se preguntan una por una.
+  const idsPrimer = primer?.estado === 'en-tarea' ? (primer.tareas || []).join(',') : '';
+  useEffect(() => {
+    if (!idsPrimer) return;
+    let vivo = true;
+    void (async () => {
+      const ids = idsPrimer.split(',');
+      const vistas = trabajos.tareas.filter((t) => ids.includes(t.id));
+      const faltan = ids.filter((id) => !vistas.some((t) => t.id === id));
+      const leidas = faltan.length ? (await Promise.all(faltan.map((id) => clienteTrabajos.ver(id)))).filter((t): t is NonNullable<typeof t> => !!t) : [];
+      if (vivo) void anotarPrimer(user.correo, { tipo: 'tareas', tareas: [...vistas, ...leidas] });
+    })();
+    return () => {
+      vivo = false;
+    };
+  }, [idsPrimer, trabajos.tareas, user.correo]);
+
+  const opinarPrimer = useCallback(
+    (sirvio: boolean) => {
+      void haptic('light');
+      const traza = primer?.trazaId;
+      void anotarPrimer(user.correo, { tipo: 'opinar', sirvio });
+      // La misma señal que la web (`opinarTurno`): si hay traza del turno, también va al servidor.
+      if (traza) void opinarTurno(traza, sirvio ? 1 : -1);
+    },
+    [primer?.trazaId, user.correo]
+  );
+  const preguntaPrimer = debePreguntar(primer) ? <SirvioPrimera registro={primer!} onOpinar={opinarPrimer} /> : null;
+
   const sendDraft = () => {
     const t = draft.trim();
     if (!t) return;
@@ -2725,6 +2817,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
             {caraEntrando}
             {/* El indicador de tareas va arriba del cuadro del avatar: no tapa la cabecera del chat ni el teclado. */}
             <IndicadorTrabajos texto={trabajos.indicador} resumen={trabajos.resumen} reducido={trabajos.reducido} onAbrir={() => setPanelTrabajos(true)} style={styles.trabajosCuadro} />
+            {!!preguntaPrimer && <View style={styles.primerCuadro}>{preguntaPrimer}</View>}
           </View>
           <View style={{ flex: 1 }}>
             <ChatMesa
@@ -2758,6 +2851,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         <>
         {/* «Trabajando · 2» / «Necesito una decisión · 1»: arriba a la derecha, frente al estado; nunca abajo con el teclado. */}
         <IndicadorTrabajos texto={trabajos.indicador} resumen={trabajos.resumen} reducido={trabajos.reducido} onAbrir={() => setPanelTrabajos(true)} style={styles.trabajos} />
+        {/* «¿Te sirvió?» del primer resultado: abajo, por encima de la barra y del subtítulo (hasta tres líneas), sin tapar lo que dice la persona arriba. */}
+        {!!preguntaPrimer && <View style={[styles.primerFlota, { bottom: altoAbajo + 100 }]}>{preguntaPrimer}</View>}
 
         <View pointerEvents="none" style={styles.hud}>
           <View style={[styles.hudDot, { backgroundColor: dotColor }]} />
@@ -3018,6 +3113,8 @@ const styles = StyleSheet.create({
   // El indicador de tareas (AUR08): arriba a la derecha, a la altura del estado; el cuadro del chat lo lleva dentro.
   trabajos: { position: 'absolute', top: 12, right: 16, zIndex: 35 },
   trabajosCuadro: { position: 'absolute', top: 10, right: 10, zIndex: 35 },
+  primerCuadro: { position: 'absolute', bottom: 10, left: 10, right: 10, alignItems: 'center', zIndex: 36 },
+  primerFlota: { position: 'absolute', left: 16, right: 16, alignItems: 'center', zIndex: 36 },
   cuadro: { overflow: 'hidden', backgroundColor: '#000', position: 'relative' },
   hud: {
     position: 'absolute',
