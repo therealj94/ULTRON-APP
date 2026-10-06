@@ -14,6 +14,18 @@
  * Puro: el reloj y la voz se inyectan (tests/latencia-movil.test.ts).
  */
 
+/**
+ * EL ACUSE ANTES DEL SEGUNDO (José, 6-oct: «que sea tan rápido contestar una conversación que nadie note que es una IA»).
+ * La charla contesta en ~1–1,5 s (la ruta de charla del servidor, lib/cerebro-rapido.ts) y no necesita relleno antes de
+ * ESPERA_FRASE_MS. Lo que SIEMPRE tarda (buscar en internet, leer una página o un documento, revisar: herramientas de
+ * varios segundos) se acusa a los ACUSE_TAREA_MS, como una persona que dice «a ver…» mientras busca. Aquí solo el CUÁNDO;
+ * las palabras son del banco de frases (compa/frasesEstado.ts) y de quien narra el trabajo.
+ */
+export const ACUSE_TAREA_MS = 800;
+export function esperaDeRelleno(estado: string, base: number): number {
+  return /^(buscando|leyendo|revisando)$/.test(estado) ? Math.min(base, ACUSE_TAREA_MS) : base;
+}
+
 /** Lo que devuelve `carreraConCorte` si llegó primero el corte. */
 export const CORTADO: unique symbol = Symbol('cortado');
 
@@ -40,14 +52,14 @@ export class RellenoTurno {
     return { setTimeout: this.o.setTimeout || ((f, ms) => setTimeout(f, ms)), clearTimeout: this.o.clearTimeout || ((t) => clearTimeout(t)) };
   }
 
-  /** Arranca la espera (`inmediato`: con imagen, que siempre tarda, sale ya). */
-  programar(inmediato: boolean) {
+  /** Arranca la espera (`inmediato`: con imagen, que siempre tarda, sale ya; `esperaMs`: otra que la de siempre). */
+  programar(inmediato: boolean, esperaMs = this.o.esperaMs) {
     if (!this.soltar) return;
     if (inmediato) return this.pedir();
     this.timer = this.reloj.setTimeout(() => {
       this.timer = null;
       this.pedir();
-    }, this.o.esperaMs);
+    }, esperaMs);
   }
 
   private pedir() {

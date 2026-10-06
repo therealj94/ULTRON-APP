@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from '
 import { miga, reportarEstado } from '../lib/reporte';
 import { TrazaTurno } from '../lib/trazaTurno';
 import { arrancarPulso, pulsoJs } from '../lib/pulsoJs';
-import { RellenoTurno } from '../lib/relleno';
+import { RellenoTurno, esperaDeRelleno } from '../lib/relleno';
 // ── latencia de la voz: el turno especulativo (lib/turnoEspeculativo.ts) ──
 import { TurnoEspeculativo } from '../lib/turnoEspeculativo';
 import { cancelarTurnoEspeculativo, confirmarTurnoEspeculativo, type StreamHandlers, type TurnoOpts } from '../lib/api';
@@ -1118,7 +1118,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
           }).then((sono) => !sono && trazaTurno.marcar('rellenoTirado'));
         },
       });
-      relleno.programar(!!opts?.image);
+      // Lo que siempre tarda (buscar, leer, revisar) se acusa antes del segundo (lib/relleno.ts esperaDeRelleno).
+      relleno.programar(!!opts?.image, esperaDeRelleno(opts?.image ? 'mirando' : estadoDeEspera(cmd), ESPERA_FRASE_MS));
       const cancelMmm = () => relleno.respuesta();
       const applyMode = (m?: Mode) => {
         if (m && m !== 'CONOCER' && m !== modeRef.current) setMode(m);
