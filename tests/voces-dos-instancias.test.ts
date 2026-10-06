@@ -20,10 +20,13 @@ process.env.ULTRON_CARAS_DIR = path.join(dir, 'caras');
 process.env.ULTRON_MEMORIA_BUCKET = '';
 test.after(() => fs.rmSync(dir, { recursive: true, force: true }));
 
-const vocesA = await import('../lib/voces-miembro.ts?instancia=A');
-const vocesB = await import('../lib/voces-miembro.ts?instancia=B');
-const carasA = await import('../lib/caras-miembro.ts?instancia=A');
-const carasB = await import('../lib/caras-miembro.ts?instancia=B');
+type Voces = typeof import('../lib/voces-miembro');
+type Caras = typeof import('../lib/caras-miembro');
+const instancia = (modulo: string, quien: string) => import(`../lib/${modulo}.ts?instancia=${quien}`);
+const vocesA: Voces = await instancia('voces-miembro', 'A');
+const vocesB: Voces = await instancia('voces-miembro', 'B');
+const carasA: Caras = await instancia('caras-miembro', 'A');
+const carasB: Caras = await instancia('caras-miembro', 'B');
 const { MODELO_VOZ } = await import('../lib/voces-motor');
 assert.notEqual(vocesA, vocesB, 'dos instancias del módulo, cada una con su caché');
 
@@ -114,7 +117,19 @@ test('voces: la caché de una instancia vence — B deja de reconocer una voz bo
     assert.ok((await vocesB.cargarVoces(correo)).personas.some((p) => p.id === ana.id));
     await vocesA.olvidarVoz(correo, ana.id);
     await dormir(60);
-    assert.ok(!(await vocesB.cargarVoces(correo)).personas.some((p) => p.id === ana.id), 'pasada la vida de la caché, B lee S3');
+    // Vencida hace poco: contesta con lo que tenía y relee S3 por detrás (el «¿quién habla?» no espera a S3)…
+    await vocesB.cargarVoces(correo);
+    await dormir(20);
+    assert.ok(!(await vocesB.cargarVoces(correo)).personas.some((p) => p.id === ana.id), 'pasada la vida de la caché, B relee S3');
+    // …y mucho más vieja que su vida, espera a S3 antes de contestar.
+    const bea = await vocesA.agregarVoz(correo, altaVoz(vocesA, 'Bea'), [huella(5)]);
+    await dormir(60);
+    await vocesB.cargarVoces(correo);
+    await dormir(20);
+    assert.ok((await vocesB.cargarVoces(correo)).personas.some((p) => p.id === bea.id), 'B ya la ve');
+    await vocesA.olvidarVoz(correo, bea.id);
+    await dormir(250);
+    assert.ok(!(await vocesB.cargarVoces(correo)).personas.some((p) => p.id === bea.id), 'muy vieja: lee S3 antes de contestar');
   } finally {
     delete process.env.ULTRON_VOCES_CACHE_MS;
   }

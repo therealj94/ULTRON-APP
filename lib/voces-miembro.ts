@@ -162,7 +162,14 @@ export async function cargarVoces(correo: string): Promise<CajonVoces> {
   if (!c) return vacio();
   const hit = cache.get(c);
   const conS3 = s3Lee.listo();
-  if (hit && (!conS3 || Date.now() - (leidoEn.get(c) ?? 0) < vidaCache())) return hit;
+  const edad = Date.now() - (leidoEn.get(c) ?? 0);
+  if (hit && (!conS3 || edad < vidaCache())) return hit;
+  // Vencida hace poco: se contesta con lo que hay y se refresca por detrás (el «¿quién habla?» no espera a S3). Más
+  // vieja que eso, se espera a S3.
+  if (hit && edad < vidaCache() * 5) {
+    refrescar(c);
+    return hit;
+  }
   // Con S3, lo que vale es S3 (el disco es la copia de esta instancia, que otra pudo dejar atrás).
   let cajon = conS3 ? null : leerDeDisco(c);
   if (!cajon && conS3) {
@@ -181,6 +188,24 @@ export async function cargarVoces(correo: string): Promise<CajonVoces> {
   cache.set(c, final);
   leidoEn.set(c, Date.now());
   return final;
+}
+
+const refrescando = new Map<string, Promise<void>>();
+/** Relee S3 por detrás (una vez a la vez por cuenta); un cambio mientras tanto gana. Un fallo deja lo que había. */
+function refrescar(c: string) {
+  if (refrescando.has(c)) return;
+  const p = (async () => {
+    const g = generaciones.de(c);
+    const r = await s3Lee.get(claveS3(c)).catch((e) => ({ ok: false, json: null, detalle: String(e?.message || e), missing: false }));
+    if (!r.ok || generaciones.cambioDesde(c, g)) return;
+    const cajon = r.json ? sanear(r.json) : vacio();
+    cache.set(c, cajon);
+    leidoEn.set(c, Date.now());
+    escribirEnDisco(c, cajon);
+  })()
+    .catch(() => undefined)
+    .finally(() => refrescando.delete(c));
+  refrescando.set(c, p);
 }
 
 /**
