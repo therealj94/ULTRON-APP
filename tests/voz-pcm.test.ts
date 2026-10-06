@@ -29,6 +29,9 @@ const llamadas: Llamada[] = [];
 const fetchReal = globalThis.fetch;
 const claveAntes = process.env.ELEVENLABS_API_KEY;
 process.env.ELEVENLABS_API_KEY = 'xi-de-prueba';
+// La mesa cerrada como en producción: con NODE_ENV=test (el CI) y sin clave, mesaAutorizada abre el hueco de desarrollo
+// y cualquier ruta parecería autorizada (la prueba de «ruta EXACTA» no probaría nada).
+process.env.ULTRON_MESA_CLAVE ||= 'clave-de-mesa-de-prueba-voz-pcm-larga';
 globalThis.fetch = (async (entrada: any, init?: any) => {
   const url = String(entrada?.url || entrada);
   if (!url.startsWith('https://api.elevenlabs.io/')) return fetchReal(entrada, init);
