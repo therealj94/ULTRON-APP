@@ -15,7 +15,7 @@ const espera = (ms) => new Promise((r) => setTimeout(r, ms));
 const resp = (cuerpo, status = 200, cab = {}) => new Response(JSON.stringify(cuerpo), { status, headers: cab });
 
 (async () => {
-  const M = require(process.env.IDENTIDAD || './out/identidad.cjs');
+  const M = require('./paquete.cjs')();
   const { API, CUENTA, INTENTO, GENESIS } = M;
   const mesa = globalThis.__mesa;
   const rn = globalThis.__rn;

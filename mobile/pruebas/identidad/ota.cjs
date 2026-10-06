@@ -13,7 +13,7 @@
 const { ok, fin } = require('../chat/comun.cjs');
 
 (async () => {
-  const M = require(process.env.IDENTIDAD || './out/identidad.cjs');
+  const M = require('./paquete.cjs')();
   const { BARRERA: B, CONTRATO } = M;
   console.log('identidad · la actualización por aire\n');
   if (!B || !B.decidirAplicar) {

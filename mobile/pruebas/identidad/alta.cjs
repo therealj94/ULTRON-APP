@@ -12,7 +12,7 @@ const espera = (ms) => new Promise((r) => setTimeout(r, ms));
 const CAJON = 'aura.p2c.cuenta';
 
 (async () => {
-  const M = require(process.env.IDENTIDAD || './out/identidad.cjs');
+  const M = require('./paquete.cjs')();
   const { RELEVO, CUENTA } = M;
   const ss = globalThis.__ss;
   console.log('identidad · el alta del chat\n');

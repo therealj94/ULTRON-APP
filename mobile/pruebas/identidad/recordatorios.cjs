@@ -45,7 +45,7 @@ function notifeeFalso(o = {}) {
 }
 
 (async () => {
-  const M = require(process.env.IDENTIDAD || './out/identidad.cjs');
+  const M = require('./paquete.cjs')();
   const { RECORDATORIOS: R, CUENTA, BARRERA, CONTRATO } = M;
   console.log('identidad · los recordatorios\n');
   const ahora = Date.now();
