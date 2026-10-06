@@ -284,10 +284,17 @@ export const TOPE_CONSULTA_VOZ_MS = 4_000;
 export const CAUTELA_VOZ_MS = 15_000;
 
 export type RespuestaQuienHabla = { persona: PersonaVoz | null; motivo?: string };
-/** Lo que viaja aparte en el turno (lib/api.ts turnoBody): el id de la voz y, si es solo precaución, `reciente`. */
-export type QuienHablaTurno = { id: string; reciente?: true };
-/** Lo sabido de una frase: la persona, null («no la conozco»), o undefined (no se pudo saber). */
-type SabidoFrase = { persona: PersonaVoz | null | undefined };
+/**
+ * Lo que viaja aparte en el turno (lib/api.ts turnoBody): el id de la voz y, si es solo precaución, `reciente`. O,
+ * revisión del 6-oct (bloqueante 2), `desconocida`: la dueña tiene su voz guardada y esta frase, lo bastante larga, NO
+ * fue de ella ni de nadie conocido: el servidor contesta en modo invitado (server/modo-invitado.ts). Solo quita acceso.
+ */
+export type QuienHablaTurno = { id: string; reciente?: true } | { desconocida: true };
+/**
+ * Lo sabido de una frase: la persona, null («no la conozco»), o undefined (no se pudo saber). `desconocida`: el servidor
+ * comparó una frase de largo suficiente y no se parece a nadie guardado (`nadie_cerca`).
+ */
+type SabidoFrase = { persona: PersonaVoz | null | undefined; desconocida?: true };
 type EstadoFrase = { id: number; trozos?: string[]; enCurso?: boolean; sabido?: SabidoFrase; entregadaEn?: number; oidaEn: number; esperas: Array<() => void> };
 
 /**
@@ -331,9 +338,9 @@ export class IdentificadorVoz {
     return f;
   }
 
-  private saber(f: EstadoFrase, persona: PersonaVoz | null | undefined) {
+  private saber(f: EstadoFrase, persona: PersonaVoz | null | undefined, desconocida = false) {
     if (f.sabido) return;
-    f.sabido = { persona };
+    f.sabido = { persona, ...(persona === null && desconocida ? { desconocida: true as const } : {}) };
     // Quién habló hace poco, por cuándo se DIJO cada frase (un resultado tardío de una frase vieja no pisa a uno nuevo).
     if (persona?.relacion === 'yo') this.duenaEn = Math.max(this.duenaEn, f.oidaEn);
     else if (persona && (!this.otra || f.oidaEn >= this.otra.t)) this.otra = { persona, t: f.oidaEn };
@@ -356,12 +363,12 @@ export class IdentificadorVoz {
     void Promise.race([Promise.resolve().then(() => this.consultar(trozos)), tope])
       .finally(() => clearTimeout(reloj))
       .then(
-        (r) => (r?.motivo === 'muy_corta' || r?.motivo === 'silencio' ? undefined : r?.persona ?? null),
-        () => undefined
+        (r) => ({ p: r?.motivo === 'muy_corta' || r?.motivo === 'silencio' ? undefined : r?.persona ?? null, desconocida: !r?.persona && r?.motivo === 'nadie_cerca' }),
+        () => ({ p: undefined, desconocida: false })
       )
-      .then((p) => {
+      .then(({ p, desconocida }) => {
         f.enCurso = false;
-        this.saber(f, p);
+        this.saber(f, p, desconocida);
         this.consultando = false;
         const sigue = this.enFila;
         this.enFila = null;
@@ -427,6 +434,11 @@ export class IdentificadorVoz {
     return f.sabido?.persona;
   }
 
+  /** ¿La frase del turno oído en `oidaEn` se comparó y no es de nadie guardado (`nadie_cerca`)? */
+  desconocida(oidaEn: number): boolean {
+    return this.delTurno(oidaEn)?.sabido?.desconocida === true;
+  }
+
   /**
    * La precaución para el turno oído en `oidaEn` cuyo resultado no se supo: la última voz reconocida que NO es la dueña,
    * si se dijo hace menos de `ms` y la dueña no se reconoció después. null si no hay. Solo sirve para frenar.
@@ -472,19 +484,22 @@ export class IdentificadorVoz {
  * M1′): el id de la última voz que no es la dueña, con `reciente`, sin frase en la escena (no se sabe que hable ella).
  * Nunca da permiso: sin dato y con la dueña como la más reciente, no va nada.
  */
-export async function quienHablaDelTurno(ident: IdentificadorVoz, oidaEn: number, duena: string, en = false): Promise<{ frase: string; quienHabla?: QuienHablaTurno }> {
+export async function quienHablaDelTurno(ident: IdentificadorVoz, oidaEn: number, duena: string, en = false, duenaInscrita = false): Promise<{ frase: string; quienHabla?: QuienHablaTurno }> {
   const p = await ident.paraTurno(oidaEn);
   if (p) return { frase: fraseQuienHabla(p, duena, en), ...(p.relacion === 'conocido' ? { quienHabla: { id: p.id } } : {}) };
-  if (p === null) return { frase: '' };
+  // Revisión del 6-oct (bloqueante 2): con la voz de la dueña guardada, una frase larga que no es de nadie conocido es de
+  // un invitado (modo invitado en el servidor). Sin su voz guardada no se puede saber: nada.
+  if (p === null) return duenaInscrita && ident.desconocida(oidaEn) ? { frase: '', quienHabla: { desconocida: true } } : { frase: '' };
   const c = ident.cautela(oidaEn);
   return c ? { frase: '', quienHabla: { id: c.id, reciente: true } } : { frase: '' };
 }
 
 /** El campo `quienHabla` tal como viaja en el cuerpo del turno: el id (hasta 40) y `reciente` solo si es `true`. */
 export function campoQuienHabla(q: unknown): QuienHablaTurno | undefined {
-  const id = typeof (q as QuienHablaTurno)?.id === 'string' ? (q as QuienHablaTurno).id.slice(0, 40) : '';
-  if (!id) return undefined;
-  return (q as QuienHablaTurno).reciente === true ? { id, reciente: true } : { id };
+  const o = (q || {}) as { id?: unknown; reciente?: unknown; desconocida?: unknown };
+  const id = typeof o.id === 'string' ? o.id.slice(0, 40) : '';
+  if (!id) return o.desconocida === true ? { desconocida: true } : undefined;
+  return o.reciente === true ? { id, reciente: true } : { id };
 }
 
 /**

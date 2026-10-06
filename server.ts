@@ -77,6 +77,7 @@ import { quitarExpresiones } from './lib/expresiones';
 import { puntoDeCorte } from './lib/trozos';
 import { claveTurno, consultarTurno, efectoDelTurno, enTurnoUnico, idTurnoValido, reclamarTurno, turnoSinEfectos, type TurnoGuardado } from './server/turno-unico';
 import { atajoDeAppBloqueado, otraVozDe, pendientesDelTurno, resolverBorradorDesdePanel, resolverDecisionesDelTurno } from './server/decision-turno';
+import { avisoInvitado, conModoInvitado, hechoInvitado, manosDeInvitado, modoInvitadoDe } from './server/modo-invitado';
 import { puedeMano } from './lib/manos-app';
 import {
   abrirDecisionDeBorrador,
@@ -2669,6 +2670,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   const nombre = String(body?.usuario || body?.userName || '').trim().slice(0, 40);
   const canal: CanalMem = body?.canal === 'telegram' ? 'telegram' : 'mesa';
   const idiomaTurno = normalizarIdioma(body?.idioma);
+  // Revisión del 6-oct (bloqueante 2): habla un invitado; el cuerpo ya llega sin nada de la dueña (conModoInvitado).
+  const invitado = modoInvitadoDe(body);
   // El perfil y la app son de quien tiene sesión (o pase de voz): por correo, no por miembro de la junta.
   // El perfil se pide ya, a la par de la memoria (la primera vez puede ir a S3); se espera al armar el prompt.
   const correoApp = canal === 'mesa' && body?.sesion?.correo ? String(body.sesion.correo).toLowerCase() : '';
@@ -2945,7 +2948,9 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   // Contexto interno: el 27B lo usa para decidir, no para recitarlo. Los fallos de infraestructura
   // no se le cuentan a la junta en un saludo; solo si preguntan por el sistema (taller lo responde).
   hechos.push(
-    miembro
+    invitado
+      ? hechoInvitado(invitado, idiomaTurno === 'en' ? 'en' : 'es')
+      : miembro
       ? `CONTEXTO: hablas con ${nombre || 'un miembro de la comunidad'}, miembro de la comunidad de Orden Global (entró con su Genesis ID; no es de la junta). ` +
           'Web, oro, tipo de cambio, PDF, fotos y visión, su memoria personal y las acciones de su app (pantallas, mensajes, llamadas, recordatorios), sí. Taller, Telegram de la organización, estado de los sistemas y lo interno de la junta, no.'
       : `CONTEXTO INTERNO (no lo menciones salvo que te pregunten por el sistema): hablas con ${nombreDe(quien)}; ` +
@@ -3394,7 +3399,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   const userTurno = mensajeHilo || message;
   // Su WhatsApp: a quien lo tiene vinculado aquí (cada cuenta el suyo; a los dueños, como siempre). Con tope corto.
   const conWhatsapp = !!duenoComputadora && (await whatsappOfrecido(duenoComputadora, 400, comunidadTurno ? { comunidad: true } : {}));
-  const compuesto = construirMensajes({ personalidad: personalidadSistema, user: userTurno, canal, historial: hilo, nivel, harness: true, cot: false, whatsapp: conWhatsapp, sesion: !!duenoComputadora });
+  const compuesto = construirMensajes({ personalidad: personalidadSistema, user: userTurno, canal, historial: hilo, nivel, harness: true, cot: false, whatsapp: conWhatsapp, sesion: !!duenoComputadora, invitado: !!invitado });
   // También en las tareas de código: el system ya no lo lleva (cot: false), así que va siempre aquí.
   const cotTurno = requiereCot(userTurno);
   if (compuesto.meta.rag) tools.push('rag');
@@ -3418,6 +3423,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     triaje: !!duenoComputadora && conWhatsapp,
     investigar: !!duenoComputadora && investigacionDisponible(),
   };
+  // Un invitado: ninguna herramienta privada ni del teléfono de la dueña (server/modo-invitado.ts).
+  if (invitado) Object.assign(manosTurno, manosDeInvitado(manosTurno));
   const reglasAppManos = [manosAqui, menuAqui, reglasDeManos(idiomaManos)].filter(Boolean).join('\n');
   const fijoManos = piezasDelTurno({ ...argsPiezas, reglasApp: reglasAppManos }).fijo;
   const systemManos =
@@ -3492,6 +3499,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     ambito: ambitoTurno,
     // Lo que devuelvan sus herramientas (misiones, círculo, tarea) va al modelo por la vista del turno (revisión 11, MEDIO-2).
     vistaHerramientas: vistaDeHerramientas(vista, message),
+    invitado,
   };
 }
 
@@ -4489,6 +4497,8 @@ async function correrTurno(body: any, opciones: OpcionesTurno = {}): Promise<Sal
 }
 
 async function correrTurnoInterno(body: any, opciones: OpcionesTurno = {}): Promise<SalidaTurno> {
+  // Revisión del 6-oct (bloqueante 2): si habla un invitado, desde aquí el turno no tiene nada de la dueña.
+  body = await conModoInvitado(body);
   const t00 = Date.now();
   // Un solo reloj para el turno entero (EXEC04): cada llamada y cada herramienta mira lo que queda.
   const reloj = presupuesto(PRESUPUESTO_TURNO_MS);
@@ -4518,6 +4528,8 @@ async function correrTurnoInterno(body: any, opciones: OpcionesTurno = {}): Prom
     const estado: EstadoRespuesta = out.estado ?? (out.error ? 'error' : 'completo');
     // Lo que quedó esperando aprobación (una captura para el grupo, revisión 11) vuelve aunque conteste el modelo.
     const final: SalidaTurno = { ...(p.propuestaTaller ? { propuestaTaller: p.propuestaTaller } : {}), ...out, estado, reply: quitarExpresiones(e.texto).trim(), voz: e.texto.trim(), emocion: out.emocion || e.emocion, acciones: app.acciones, ...(vozCompleta ? { vozCompleta: true } : {}), ...(vozLectura ? { vozLectura: true } : {}) };
+    // Un invitado oye y ve que se le contesta en modo invitado (una frase, sin nada privado).
+    if (p.invitado && final.reply) Object.assign(final, { reply: `${avisoInvitado(p.idioma === 'en' ? 'en' : 'es')} ${final.reply}`, voz: `${avisoInvitado(p.idioma === 'en' ? 'en' : 'es')} ${final.voz}` });
     if (final.reply && estado === 'completo' && memorizable) await recordarSegunNivel(body, { quienMem, rol: 'ultron', texto: final.reply, canal }, opciones.retener);
     return final;
   };
@@ -4894,6 +4906,8 @@ export function turnoHablado(body: any): boolean {
 }
 
 async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTurno = {}) {
+  // Revisión del 6-oct (bloqueante 2): si habla un invitado, desde aquí el turno no tiene nada de la dueña.
+  body = await conModoInvitado(body);
   const reg = trazaActual()!;
   const senal = opciones.senal;
   const idioma = normalizarIdioma(body?.idioma);
@@ -4972,6 +4986,8 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
   const p = await prepararTurno(body, opciones);
   trazaActual()?.marca('preparado');
   medida.preparado = Date.now();
+  // Un invitado oye y ve primero que se le contesta en modo invitado (una frase, sin nada privado).
+  if (p.invitado && p.message) soltar('delta', `${avisoInvitado(idioma)} `);
   if (!p.message) {
     send('error', { error: FRASE_FALLO.vacio[idioma], codigo: 'vacio' });
     reg.cerrar({ error: 'message vacío' });

@@ -449,7 +449,8 @@ export function useVoces(o: Opciones): ApiVoces {
       if (!activasRef.current || !conocidasRef.current.length || !oidaEn) return { frase: '' };
       // Lo de ESA frase; si no se supo (un «sí» corto, la consulta tardó), la precaución de la última voz que no es la
       // dueña (revisión 7.5, M1′): solo frena, nunca da permiso.
-      return quienHablaDelTurno(ident, oidaEn, op.current.nombre, idiomaActual() === 'en');
+      // Con su voz guardada, una frase larga que no es de nadie conocido va como `desconocida` (modo invitado).
+      return quienHablaDelTurno(ident, oidaEn, op.current.nombre, idiomaActual() === 'en', conocidasRef.current.some((c) => c.relacion === 'yo'));
     },
     [ident]
   );

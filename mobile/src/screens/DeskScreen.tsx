@@ -95,7 +95,7 @@ import { ControlCamara, conPreferencia, pedidoDeCamara, prefiereSiempre, respues
 import { marcoMesa, useMesaVisible, useModoPresencia } from '../avatar3d/usePresencia';
 import { useCaras, type ApiCaras } from '../caras/useCaras';
 import { useVoces, type ApiVoces } from '../voces/useVoces';
-import { escenaDelTurno } from '../voces/voces';
+import { escenaDelTurno, type QuienHablaTurno } from '../voces/voces';
 import { avatarActual } from '../avatares/actual';
 import { orientar } from '../lib/orientacion';
 import { esperarFrame } from '../lib/esperarFrame';
@@ -635,7 +635,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
    * última voz que no es la dueña con `reciente` (revisión 7.5, M1′: un «sí» corto de Ana no manda lo de José).
    */
   const escenaReciente = useCallback(
-    async (oidaEn: number): Promise<{ escena?: string; quienHabla?: { id: string; reciente?: true } }> => {
+    async (oidaEn: number): Promise<{ escena?: string; quienHabla?: QuienHablaTurno }> => {
       const voz = (await vocesRef.current?.paraTurno(oidaEn).catch(() => null)) || { frase: '' };
       const e = escenaRef.current;
       const escena = escenaDelTurno({ voz: voz.frase, caras: carasRef.current?.escena() || '', camara: escenaFresca(e) ? e.descripcion : '' });
