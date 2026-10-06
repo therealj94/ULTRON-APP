@@ -64,7 +64,7 @@ import {
   type AppSettings,
   type SttEngine,
 } from '../lib/storage';
-import { playSfx, preloadSfx, setSfxEnabled } from '../lib/sfx';
+import { playSfx, preloadSfx, setSfxEnabled, sfxActivos } from '../lib/sfx';
 import { StreamSpeaker, fraccionSonando, registroVoz, setAvatarVoz, setSpeechLevelListener, speak, speakPrayer, speakReaccion, speakSong, stopSpeaking, type SongRequest } from '../lib/tts';
 import { frase, saludoConNombre, type FraseId } from '../lib/frases';
 import { de, idiomaActual, tr, useIdioma } from '../i18n';
@@ -98,6 +98,10 @@ import { VentanaBienvenida } from '../bienvenida/VentanaBienvenida';
 import { abrirBienvenida } from '../bienvenida/estado';
 import { OidoMesa, VigilanteOido, duenoAudio, motivoFalloVoz, oidoPropio, saludoArranque } from '../compa/duenoAudio';
 import { ESPERA_FRASE_MS, estadoDeEspera, fraseDeEstado, vozDeEspera } from '../compa/frasesEstado';
+// Mientras trabaja: la línea que cambia en su lugar y lo que dice de lo que de verdad hace (event: progreso).
+import { MemoriaNarrador } from '../compa/narrador';
+import { TrabajoMesa } from '../compa/trabajoMesa';
+import { reproductorAmbiente } from '../compa/ambienteSonido';
 import { ControlCamara, conPreferencia, pedidoDeCamara, prefiereSiempre, respuestaModoCamara, type EstadoCamara } from '../lib/camaraModo';
 import { marcoMesa, useMesaVisible, useModoPresencia } from '../avatar3d/usePresencia';
 import { useCaras, type ApiCaras } from '../caras/useCaras';
@@ -362,6 +366,10 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     return () => clearTimeout(t);
   }, [dicho]);
   const [toolHint, setToolHint] = useState('');
+  /** Lo que está haciendo ahora mientras trabaja (compa/trabajoMesa.ts): la línea suave del chat de la mesa. */
+  const [progresoMesa, setProgresoMesa] = useState('');
+  /** Las frases del narrador de esta mesa: ninguna se repite entre turnos (compa/narrador.ts). */
+  const memoriaNarrador = useRef(new MemoriaNarrador());
   const [winkSide, setWinkSide] = useState<'L' | 'R'>('L');
   const [canciones, setCanciones] = useState<Cancion[]>(CANCIONES_LOCAL);
   const [settings, setSettings] = useState<Pick<AppSettings, 'sttEngine' | 'proactive' | 'sfx' | 'interrumpir'>>({ sttEngine: 'turbo', proactive: true, sfx: true, interrumpir: false });
@@ -1089,6 +1097,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       // molesto después de un rato»).
       // Un relleno que todavía no empezó a sonar cuando llega el primer texto se tira (lib/relleno.ts): antes la respuesta
       // esperaba a que se bajara y sonara entero, ~1 s más de mediana con el cerebro sobre los 2,5 s (José, 6-oct).
+      /** El narrador del trabajo de este turno (nace con el stream; compa/trabajoMesa.ts). */
+      let trabajo: TrabajoMesa | null = null;
       const relleno = new RellenoTurno({
         esperaMs: ESPERA_FRASE_MS,
         decir: (corte) => {
@@ -1104,6 +1114,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
             hastaQue: corte,
             onAudioStart: () => {
               trazaTurno.marcar('rellenoSuena');
+              trabajo?.yaSeDijo();
               pauseMicForTts(true);
             },
             onEnd: () => !speakingRef.current && pauseMicForTts(false),
@@ -1141,6 +1152,29 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
             }
             return speaker;
           };
+          // Mientras trabaja (buscar, su correo, su computadora): la línea del chat y un comentario corto de lo que de
+          // verdad pasa, solo si nada más suena ni sonó en el turno (un speak encima cortaría el locutor de la respuesta).
+          trabajo = new TrabajoMesa({
+            avatar: avatarActual(),
+            idioma: idiomaActual() === 'en' ? 'en' : 'es',
+            memoria: memoriaNarrador.current,
+            puedeHablar: () => !speaker && !speakingRef.current && !turnoCancelado.current && !conversandoRef.current && !enLlamadaRef.current && !!oidoMesa.current?.puedeHablar(),
+            hablar: (texto, corte) =>
+              void speak(texto, {
+                emocion: 'neutral',
+                hastaQue: corte,
+                onAudioStart: () => pauseMicForTts(true),
+                onEnd: () => !speakingRef.current && pauseMicForTts(false),
+              }),
+            alLinea: (l) => {
+              setProgresoMesa(l);
+              setToolHint(l);
+            },
+            // El tecleo solo con el micrófono de la mesa en silencio: abierto, lo oiría el propio oído.
+            ambiente: reproductorAmbiente,
+            sonido: () => micMutedRef.current && sfxActivos() && !conversandoRef.current && !enLlamadaRef.current,
+          });
+          const trabajoTurno = trabajo;
           try {
             trazaTurno.marcar('envio');
             const st = turnoStream(base, {
@@ -1157,6 +1191,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
               onDelta: (piece) => {
                 trazaTurno.marcar('texto');
                 cancelMmm();
+                trabajoTurno.respuesta();
                 locutor().push(piece);
               },
               // El servidor corrigió lo dicho (auditoría del 3-oct, VOICE02): lo que no sonó del texto
@@ -1165,7 +1200,11 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
               onReplace: (texto) => {
                 trazaTurno.marcar('texto');
                 cancelMmm();
+                trabajoTurno.respuesta();
                 locutor().reemplazar(texto, tr('Corrijo:', 'Correction:'));
+              },
+              onProgreso: (e) => {
+                if (!turnoCancelado.current) trabajoTurno.evento(e);
               },
               onTools: (tools) => {
                 const t = tareaDeHerramientas(tools);
@@ -1180,6 +1219,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
             abortTurno.current = st.abort;
             let result = await st.promise.finally(() => {
               abortTurno.current = null;
+              trabajoTurno.terminar();
             });
             cancelMmm();
             if (turnoCancelado.current) {
@@ -3160,6 +3200,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
               onAccion={onAccion}
               nombreAvatar={de(avatarPorId(avatarId).nombre)}
               estado={statusLabel}
+              progreso={progresoMesa}
               colorEstado={dotColor}
               parcial={partial}
               borrador={draft}

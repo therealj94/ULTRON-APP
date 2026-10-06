@@ -48,13 +48,15 @@ const nodo = http.createServer((req, res) => {
     } catch {
       /* no era JSON */
     }
+    // Un turno que trabaja (progreso en el SSE): la primera vuelta pide la web; con su resultado, contesta.
+    const contenido = cuerpo.includes('BUSCA-WEB') && !cuerpo.includes('precio del cobre hoy') ? 'PEDIR_HERRAMIENTA: web precio del cobre hoy' : 'Va bien el proyecto.';
     if (j.stream) {
       res.setHeader('Content-Type', 'application/x-ndjson');
-      res.write(JSON.stringify({ message: { content: 'Va bien el proyecto.' }, done: false }) + '\n');
+      res.write(JSON.stringify({ message: { content: contenido }, done: false }) + '\n');
       return res.end(JSON.stringify({ message: { content: '' }, done: true }) + '\n');
     }
     res.setHeader('Content-Type', 'application/json');
-    res.end(JSON.stringify({ message: { content: 'Va bien el proyecto.' } }));
+    res.end(JSON.stringify({ message: { content: contenido } }));
   });
 });
 
@@ -205,4 +207,63 @@ test('invitado por el camino en vivo (SSE): tampoco llega nada privado, y lo pri
   assert.doesNotMatch(alModelo, PRIVADAS);
   const primerDelta = /event: delta\ndata: (.*)/.exec(sse);
   assert.ok(primerDelta && JSON.parse(primerDelta[1]).text.startsWith('Te respondo en modo invitado.'), sse.slice(0, 400));
+});
+
+/* ── el progreso del trabajo en el SSE (lib/progreso-trabajo.ts): formato, orden y nada privado para un invitado ── */
+
+const EVENTOS_SSE = new Set(['tools', 'emocion', 'delta', 'replace', 'done', 'error', 'progreso']);
+
+/** Los bloques del SSE, cada uno con su evento y su JSON (falla si alguno no tiene la forma de siempre). */
+function bloquesSSE(sse: string) {
+  return sse
+    .split('\n\n')
+    .filter((b) => b.trim())
+    .map((b) => {
+      const ev = /^event: (\w+)$/m.exec(b)?.[1];
+      const data = /^data: (.*)$/m.exec(b)?.[1];
+      assert.ok(ev && data !== undefined, `bloque sin la forma «event/data»: ${b}`);
+      assert.ok(EVENTOS_SSE.has(ev!), `evento desconocido: ${ev}`);
+      return { ev: ev!, data: JSON.parse(data!) };
+    });
+}
+
+async function turnoQueTrabaja(marca: string, extra: Record<string, unknown> = {}) {
+  const r = await fetch(`${BASE}/api/turno/stream`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-ultron-sesion': token, 'x-aura-origen': 'app', 'x-aura-aparato': 'tel-marta-1' },
+    body: JSON.stringify({ message: `cuéntame qué pasa con el cobre hoy ${marca}`, usuario: 'Marta', historial: [{ rol: 'user', texto: SECRETOS.hilo }], memoria: [SECRETOS.memoria], idTurno: `t-${marca}`, ...extra }),
+    signal: AbortSignal.timeout(60_000),
+  });
+  assert.equal(r.status, 200);
+  return bloquesSSE(await r.text());
+}
+
+test('progreso en el SSE (la dueña): `empece` de la web con su tema antes de la respuesta, su resultado, `listo` y el `done` intacto', async () => {
+  const b = await turnoQueTrabaja('BUSCA-WEB-DUENA');
+  const progreso = b.filter((x) => x.ev === 'progreso').map((x) => x.data);
+  assert.deepEqual(progreso[0], { fase: 'empece', herramienta: 'web', detalle_seguro: 'precio del cobre hoy', ronda: 1 }, JSON.stringify(b));
+  assert.ok(['nada', 'encontre'].includes(progreso[1]?.fase), JSON.stringify(progreso));
+  assert.equal(progreso.at(-1)?.fase, 'listo');
+  const i = (pred: (x: (typeof b)[number]) => boolean) => b.findIndex(pred);
+  const empece = i((x) => x.ev === 'progreso' && x.data.fase === 'empece');
+  const primerDelta = i((x) => x.ev === 'delta' || x.ev === 'replace');
+  const done = i((x) => x.ev === 'done');
+  assert.ok(empece >= 0 && done > empece, 'el progreso sale antes del done');
+  assert.ok(primerDelta === -1 || empece < primerDelta, 'y antes de lo que dice la respuesta');
+  assert.ok(b.slice(done + 1).every((x) => x.ev !== 'progreso'), 'nada de progreso después del done');
+  assert.equal(b.filter((x) => x.ev === 'done').length, 1);
+  assert.match(b[done].data.reply, /Va bien el proyecto/);
+  assert.doesNotMatch(JSON.stringify(progreso), /HARNESS|SECRETO|PEDIR/);
+});
+
+test('progreso en modo invitado: solo lo público, sin tema ni número (nada de la dueña)', async () => {
+  const b = await turnoQueTrabaja('BUSCA-WEB-INVITADO', { hablado: true, quienHabla: { desconocida: true } });
+  const progreso = b.filter((x) => x.ev === 'progreso').map((x) => x.data);
+  assert.ok(progreso.length >= 2, JSON.stringify(b));
+  for (const p of progreso) {
+    assert.ok(['web', 'leer'].includes(p.herramienta), JSON.stringify(p));
+    assert.equal(p.detalle_seguro, undefined, JSON.stringify(p));
+    assert.equal(p.n, undefined, JSON.stringify(p));
+  }
+  assert.doesNotMatch(JSON.stringify(b), /SECRETO-/);
 });

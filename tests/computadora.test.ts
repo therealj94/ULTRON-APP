@@ -396,6 +396,32 @@ test('al empezar, el teléfono del turno abre la vista en vivo; si terminó en e
   }
 });
 
+test('trabajo largo sin paso nuevo: el «sigo» dice el avance REAL del plan (sus recibos), sin repetir la misma frase', async () => {
+  const pasos = [
+    { n: 1, t: 1, accion: 'escritorio_limpio' },
+    { n: 2, t: 3, accion: 'open_url', args: { url: 'https://www.bch.hn/' } },
+  ];
+  const nodo = await nodoConGuion((_i, c) => (c >= 10 ? { estado: 'hecha', pasos: [...pasos, { n: 3, t: 30, accion: 'answer' }], respuesta: 'Compra 24.70.' } : { estado: 'trabajando', pasos }));
+  try {
+    await conNodo(nodo.url, () =>
+      conAvisos(async (vistos) => {
+        // conAvisos deja los tiempos cortos; aquí, además, el «sigo» sin paso nuevo cada 120 ms.
+        Object.assign(TIEMPOS_SEGUIR, { trabajandoCadaMs: 120 });
+        await encargarTarea({ instruccion: 'Entra a bch.hn y dime el dólar', quien: 'jose@x.hn', motor: 'holo', esperaMs: 50, aparato: 'tel-1' });
+        await hasta(() => vistos.some((v) => v.aviso.fase === 'termina'));
+        const frases = vistos.filter((v) => v.aviso.fase === 'paso').map((v) => String(v.aviso.texto));
+        const sigo = frases.filter((f) => /^(Sigo con eso|Todavía estoy en eso|Mi computadora sigue en eso|Voy avanzando|Aquí sigo)/.test(f));
+        assert.ok(sigo.length >= 1, `dice que sigue: ${frases.join(' | ')}`);
+        assert.ok(sigo.every((f) => /uno de tres|^Sigo con eso en mi computadora|^Todavía estoy en eso|^Mi computadora sigue/.test(f)), `con el avance de verdad (entró a bch.hn: uno de tres) o sin número: ${sigo.join(' | ')}`);
+        assert.ok(!sigo.some((f) => /dos de tres|tres de tres/.test(f)), 'nunca más de lo que se hizo');
+        assert.equal(new Set(frases).size, frases.length, `sin repetir la misma frase: ${frases.join(' | ')}`);
+      })
+    );
+  } finally {
+    await nodo.cerrar();
+  }
+});
+
 test('el turno dejó de esperar: se cuentan los avances y el resultado va al teléfono YA (no en el turno siguiente)', async () => {
   const pasos = [
     { n: 1, t: 1, accion: 'escritorio_limpio' },
@@ -854,7 +880,7 @@ test('confirmación: antes de algo sensible pausa y pregunta en la app y en voz;
         assert.equal(p.aviso.texto, 'Antes de seguir necesito tu sí. Voy a tocar «Enviar formulario». ¿Lo hago? Dime sí o no.', 'y AURA lo dice');
         await new Promise((r) => setTimeout(r, 300));
         assert.equal(vistos.filter((v) => v.aviso.fase === 'confirmar').length, 1, 'se pregunta una vez, no en cada consulta');
-        assert.ok(!vistos.some((v) => v.aviso.fase === 'paso' && v.aviso.texto === 'Sigo trabajando en mi computadora.'), 'esperando no se narra');
+        assert.ok(!vistos.some((v) => v.aviso.fase === 'paso' && /^(Sigo con eso|Todavía estoy en eso|Mi computadora sigue en eso|Voy avanzando|Aquí sigo)/.test(String(v.aviso.texto))), 'esperando no se narra');
         // Otra cosa no es respuesta: la pregunta sigue esperando.
         assert.equal(await resolverPreguntaComputadora('jose@x.hn', '¿y cuánto falta?'), null);
         assert.equal(await resolverPreguntaComputadora('otra@x.hn', 'sí'), null, 'el sí de otra persona no vale');

@@ -6,6 +6,7 @@ import { cuentaDeMemoria, leerLarga } from '../09-estado/memoria';
 import { headersMesa } from '../10-infra/sesionCliente';
 import type { Emocion } from '../../lib/emocion';
 import { quitarExpresiones } from '../../lib/expresiones';
+import { eventoProgresoValido, type EventoProgreso } from '../../mobile/src/compa/narrador';
 
 export type Turno = {
   /** Para leer: sin expresiones de voz. */
@@ -81,6 +82,8 @@ export type EventosTurno = {
   onEmocion?: (e: Emocion) => void;
   onDelta?: (texto: string) => void;
   onReplace?: (texto: string) => void;
+  /** Lo que está haciendo de verdad mientras trabaja (`event: progreso`, lib/progreso-trabajo.ts), ya validado. */
+  onProgreso?: (e: EventoProgreso) => void;
 };
 
 /**
@@ -135,6 +138,9 @@ export async function pedirTurnoStream(opts: PeticionTurno, ev: EventosTurno = {
       };
     } else if (evento === 'error') {
       error = String(data?.error || data?.message || 'error');
+    } else if (evento === 'progreso') {
+      const p = eventoProgresoValido(data);
+      if (p) ev.onProgreso?.(p);
     }
   };
   while (true) {

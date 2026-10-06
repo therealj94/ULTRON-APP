@@ -474,9 +474,12 @@ export function recordarPorPush(correo: string, texto: string, id?: string): Pro
   return enviarPush(correo, { tipo: 'recordatorio', texto, ...(id ? { id } : {}) });
 }
 
-/** Lo que terminó su computadora (server/computadora.ts): al tocarlo se abre la vista en vivo de esa tarea. */
-export function avisarComputadoraPorPush(correo: string, tareaId: string, texto: string): Promise<ResultadoPush> {
-  return enviarPush(correo, { tipo: 'computadora', id: tareaId, texto });
+/**
+ * Lo que terminó su computadora (server/computadora.ts): al tocarlo se abre la vista en vivo de esa tarea. `titulo`: cómo
+ * terminó de verdad (lib/progreso-trabajo.ts avisoFinalComputadora); una app vieja usa el suyo.
+ */
+export function avisarComputadoraPorPush(correo: string, tareaId: string, texto: string, o: { titulo?: string } = {}): Promise<ResultadoPush> {
+  return enviarPush(correo, { tipo: 'computadora', id: tareaId, texto, ...(o.titulo ? { titulo: o.titulo } : {}) });
 }
 
 /*
