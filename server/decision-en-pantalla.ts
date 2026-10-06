@@ -29,6 +29,11 @@ export type EnPantalla = {
   t: number;
   /** La última vez que la ventana dijo que sigue a la vista (la caducidad). */
   vivo: number;
+  /**
+   * Revisión del 6-oct (bloqueante 1): el aparato cuya ventana la muestra (`x-aura-aparato`). Un «sí» HABLADO desde otro
+   * aparato no queda atado a esta (server/decision-hablada.ts).
+   */
+  aparato?: string;
 };
 
 /** Cuánto vale sin que la app lo repita (la ventana lo renueva mientras está abierta). */
@@ -42,7 +47,7 @@ export function fijarEnPantalla(dueno: string, e: Omit<EnPantalla, 't' | 'vivo'>
   if (!llave(dueno) || !e.intento || !e.huella) return;
   // La misma decisión otra vez: no se vuelve «más nueva» (sigue siendo la de cuando apareció).
   const antes = VISTAS.get(llave(dueno));
-  const t = antes && antes.intento === e.intento && antes.huella === e.huella && antes.ambito === e.ambito ? antes.t : ahora;
+  const t = antes && antes.intento === e.intento && antes.huella === e.huella && antes.ambito === e.ambito && antes.aparato === e.aparato ? antes.t : ahora;
   VISTAS.set(llave(dueno), { ...e, t, vivo: ahora });
 }
 

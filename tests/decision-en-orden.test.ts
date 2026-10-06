@@ -255,7 +255,8 @@ test('causa 4: en la voz, el «sí» cierra su tarea del panel con lo que de ver
     assert.ok(ref);
     const hacer: Array<() => void> = [];
     const retener = { hacer: (f: () => void) => void hacer.push(f), alDescartar: () => undefined, recordar: () => undefined };
-    await turno('sí', { retener });
+    // Revisión del 6-oct (bloqueante 1): un «sí» hablado solo manda lo que la ventana muestra (aquí, ese WhatsApp).
+    await turno('sí', { retener, enPantalla: vistaDe('whatsapp', w) });
     assert.equal(enviados.length, 0, 'en la voz el envío espera a que se confirme el turno');
     for (const f of hacer) f(); // ElevenLabs confirmó el turno
     assert.ok(await esperar(() => enviados.length === 1), 'salió');
@@ -371,15 +372,17 @@ test('MENOR 4 (revisión 7.5): un turno de voz descartado no gasta la mención d
       const descartes: Array<() => void> = [];
       return { hacer, descartes, retener: { hacer: (f: () => void) => void hacer.push(f), alDescartar: (f: () => void) => void descartes.push(f), recordar: () => undefined } };
     };
+    // Revisión del 6-oct (bloqueante 1): un «sí» hablado solo manda lo que la ventana muestra (aquí, el correo a Ana).
+    const ana = vistaDe('correo', C.borradorDe(JOSE, 'tel')!);
     // La frase seguía: el turno especulativo se descarta (nada sale y la mención no se oyó).
     const a = voz();
-    const r1 = await turno('sí', { retener: a.retener });
+    const r1 = await turno('sí', { retener: a.retener, enPantalla: ana });
     assert.match(r1.hechos.join('\n'), /PENDIENTE EN ORDEN:.*WhatsApp para Bruno/s);
     for (const f of a.descartes) f();
     assert.equal(mandados.length, 0);
     // La frase entera: se vuelve a mencionar (antes ya estaba «dicha» y no se decía nunca).
     const b = voz();
-    const r2 = await turno('sí', { retener: b.retener });
+    const r2 = await turno('sí', { retener: b.retener, enPantalla: ana });
     assert.match(r2.hechos.join('\n'), /PENDIENTE EN ORDEN:.*WhatsApp para Bruno/s, 'el descartado no gastó la mención');
     for (const f of b.hacer) f();
     assert.ok(await esperar(() => mandados.length === 1), 'confirmado, sale el correo');

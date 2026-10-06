@@ -2860,6 +2860,10 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     quienHabla: body?.quienHabla,
     origen: body?.origen,
     sesion: body?.sesion,
+    // Revisión del 6-oct (bloqueante 1): un «sí» HABLADO solo manda lo que ese aparato muestra (server/decision-hablada.ts).
+    hablado: !!opciones.retener || body?.hablado === true,
+    decisionVista: body?.decisionVista,
+    aparato: body?.aparato,
   });
   hechos.push(...decision.hechos);
   const { delCorreo, delWhatsapp, deLaPregunta } = decision;
