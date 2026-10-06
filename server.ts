@@ -89,6 +89,7 @@ import {
   montarRutasTrabajos,
   nuevoContextoTrabajos,
 } from './server/trabajos';
+import { correrDocumento, montarRutasDocumentos } from './server/documentos';
 import { avisosInvestigacion, configurarInvestigacion, confirmarAvisosInvestigacion, empezarInvestigacion, investigacionDisponible } from './server/investigar';
 import { trozoPromete, trozoPrometeUOfrece, vigilarPromesas, type PasoVigilado } from './lib/promesas';
 import { vezDelEvento } from './lib/envios';
@@ -1579,6 +1580,8 @@ iniciativa.montarRutas(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(r
 montarRutasCerebroContinuo(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req) });
 // Las tareas durables y el panel de tareas (server/trabajos.ts, AUR08): adapta la tarea en curso de cada
 // conversación, las misiones de su computadora y los borradores que esperan su decisión.
+// Los documentos de oficina que genera AU-RA (server/documentos.ts): se bajan solo con la sesión de su dueño.
+montarRutasDocumentos(app, { exigirMesa, limitar, sesionDe: (req) => sesionDe(req) });
 montarRutasTrabajos(app, {
   exigirMesa,
   limitar,
@@ -3471,6 +3474,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     sesion: !!duenoComputadora,
     triaje: !!duenoComputadora && conWhatsapp,
     investigar: !!duenoComputadora && investigacionDisponible(),
+    // Crear Word, Excel y PDF con la API (server/documentos.ts): los archivos quedan en SU cuenta.
+    documentos: !!duenoComputadora,
   };
   // Un invitado: ninguna herramienta privada ni del teléfono de la dueña (server/modo-invitado.ts).
   if (invitado) Object.assign(manosTurno, manosDeInvitado(manosTurno));
@@ -4063,6 +4068,9 @@ async function correrHerramientaPedida(
       // Investigar en segundo plano (server/investigar.ts): la tarea durable existe ANTES del recibo «empezada».
       investigar: (arg) =>
         dueno ? empezarInvestigacion({ dueno, ambito, arg }) : Promise.resolve(fallo('HARNESS investigar: solo para alguien con sesión (la tarea y el aviso son suyos). No empecé nada: pídele que entre con su cuenta.')),
+      // Word, Excel y PDF por la API (FILE-01): generar → comprobar → entregar con recibo; los requisitos salen de lo que
+      // la persona pidió en este turno (tal cual), no de la paráfrasis del modelo.
+      documento: (arg) => correrDocumento({ dueno, arg, pedido: compu?.pedido, senal }),
     },
     extraerPython(reply),
     nivel

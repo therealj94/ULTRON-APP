@@ -249,6 +249,20 @@ const conCorreo = (c: string) => {
   return s.includes('@') || esIdVeta(s) ? s : '';
 };
 
+/* ------------------------------------------------------------------ ganchos: los documentos */
+
+/**
+ * Para los archivos de oficina (server/documentos.ts): el requestId del lote (por turno y contenido: el reintento del
+ * mismo turno retoma el MISMO lote y no entrega dos veces) y la tarea que la respuesta del turno enlaza.
+ */
+export function pedidoDeDocumentos(clave: string): { requestId: string; turnoId?: string } {
+  return pedidoDelTurno('documentos', clave);
+}
+export function anotarTareaDelTurno(reg: RegistroTarea | null | undefined): void {
+  anotar(reg);
+}
+export { conCorreo as duenoDeTareas };
+
 /* ------------------------------------------------------------------ ganchos: la computadora */
 
 /**
