@@ -672,3 +672,16 @@ test('causa 7: editar un correo (texto y asunto) y un apartado en su sitio', asy
     assert.match(String(mandados[0].texto), /informe corregido/);
   });
 });
+
+test('revisión 8 (MEDIO-1): decisionEsperando ve el borrador principal y también el apartado (el turno especulativo espera el «sí»)', async () => {
+  await conEntorno(async () => {
+    assert.equal(T.decisionEsperando(JOSE, 'tel'), false, 'nada esperando: la charla puede adelantarse');
+    await waParaBruno();
+    assert.equal(T.decisionEsperando(JOSE, 'tel'), true, 'el borrador en el lugar principal');
+    await turno('¿qué hora es en Madrid?'); // siguió con otra cosa: apartado para el panel
+    assert.equal(W.borradorWhatsappDe(JOSE, 'tel')?.soloPanel, true);
+    assert.equal(T.decisionEsperando(JOSE, 'tel'), true, 'apartado para el panel: un «no» dicho a la vista lo descartaría, así que también espera');
+    assert.equal(T.decisionEsperando('otra-persona@example.test', 'tel'), false, 'lo de José no hace esperar a otra cuenta');
+    assert.equal(T.decisionEsperando('', 'tel'), false);
+  });
+});

@@ -18,7 +18,9 @@ import { herramientasDelTurno, herramientasQueCumplen, lineaDeHerramienta, type 
 import { EFECTO_HERRAMIENTA, extraerPedidoHerramienta, instruccionHarness, resolverPedidoConEstado, resultadoMemorizable } from '../lib/harness';
 import { manosDeInvitado } from '../server/modo-invitado';
 import { correrDocumento, montarRutasDocumentos, resultadoDeLote } from '../server/documentos';
-import { enTurnoConTrabajos, nuevoContextoTrabajos } from '../server/trabajos';
+import { enTurnoConTrabajos, nuevoContextoTrabajos, pedidoDeDocumentos } from '../server/trabajos';
+import { idArchivo } from '../lib/oficina/almacen';
+import { conEnlacesDeDocumentos, duenoDelEnlace, enlaceDocumento, ENLACE_VIVE_MS, raizPublica } from '../server/enlace-documento';
 
 const ENTRADA = {
   archivos: [
@@ -119,7 +121,10 @@ test('GET /api/documentos/:id: solo el dueño de la sesión, MIME real, nombre s
   const arg = JSON.stringify({ archivos: [{ ...ENTRADA.archivos[1], nombre: 'cotización "final".xlsx' }] });
   const r = await enTurnoConTrabajos(ctx, () => correrDocumento({ dueno: 'marta@ejemplo.com', arg, pedido: 'hazme la cotización en Excel' }));
   assert.equal(r.estado, 'succeeded', r.texto);
-  const id = /\/api\/documentos\/(d_[0-9a-f]{24})/.exec(r.texto)![1];
+  // Revisión 8 (MEDIO-2): el texto para el modelo ya no dicta una ruta que nadie puede abrir; dice dónde se baja.
+  assert.doesNotMatch(r.texto, /\/api\/documentos/);
+  assert.match(r.texto, /tarjeta de la tarea/);
+  const id = idArchivo('marta@ejemplo.com', await enTurnoConTrabajos(ctx, async () => pedidoDeDocumentos(arg).requestId), 'cotización final.xlsx'); // el nombre ya saneado
 
   const app = express();
   montarRutasDocumentos(app, {
@@ -154,4 +159,68 @@ test('GET /api/documentos/:id: solo el dueño de la sesión, MIME real, nombre s
   } finally {
     await new Promise((ok) => srv.close(ok));
   }
+});
+
+test('revisión 8 (MEDIO-2): la tarjeta lleva un enlace https firmado que baja el archivo SIN cabeceras; solo ese archivo, esa cuenta y por 15 min', async () => {
+  const ctx = nuevoContextoTrabajos('turno-documentos-enlace-0003');
+  const arg = JSON.stringify({ archivos: [ENTRADA.archivos[1]] });
+  const r = await enTurnoConTrabajos(ctx, () => correrDocumento({ dueno: 'marta@ejemplo.com', arg, pedido: 'hazme el presupuesto en Excel' }));
+  assert.equal(r.estado, 'succeeded', r.texto);
+  const id = idArchivo('marta@ejemplo.com', await enTurnoConTrabajos(ctx, async () => pedidoDeDocumentos(arg).requestId), 'presupuesto.xlsx');
+
+  let autoridad: 'permitida' | 'suspendida' | 'desconocida' = 'permitida';
+  const app = express();
+  montarRutasDocumentos(app, {
+    exigirMesa: (_req, res) => void res.status(401).json({ error: 'sin sesión' }), // como en server.ts: sin sesión, la mesa no abre
+    limitar: () => (_req, _res, next) => next(),
+    sesionDe: () => null,
+    autoridad: async () => autoridad,
+  });
+  const srv = app.listen(0, '127.0.0.1');
+  await new Promise((ok) => srv.once('listening', ok));
+  const base = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
+  try {
+    // La tarjeta: la evidencia `archivo` (su ref es el id) sale con el enlace firmado; lo demás, igual.
+    const tarjeta = { id: 't1', result: { evidence: [{ id: 'ev-1', tipo: 'archivo', etiqueta: 'presupuesto.xlsx', ref: id }, { id: 'ev-2', tipo: 'dato', etiqueta: 'otra cosa', ref: 'x' }] } };
+    const conEnlace = conEnlacesDeDocumentos(tarjeta, 'Marta@Ejemplo.com', base);
+    const enlace = conEnlace.result.evidence[0].ref!;
+    assert.match(enlace, new RegExp(`^${base}/api/documentos/${id}\\?t=doc\\.`));
+    assert.equal(conEnlace.result.evidence[1].ref, 'x');
+    assert.equal(tarjeta.result.evidence[0].ref, id, 'no toca el registro');
+
+    const bien = await fetch(enlace);
+    assert.equal(bien.status, 200, 'baja sin ninguna cabecera');
+    assert.match(String(bien.headers.get('cache-control')), /no-store/);
+    assert.equal(bien.headers.get('referrer-policy'), 'no-referrer');
+    const cuerpo = Buffer.from(await bien.arrayBuffer());
+    assert.equal(crypto.createHash('sha256').update(cuerpo).digest('hex'), bien.headers.get('x-documento-sha256'));
+
+    const t = new URL(enlace).searchParams.get('t')!;
+    assert.equal((await fetch(`${base}/api/documentos/d_${'1'.repeat(24)}?t=${t}`)).status, 403, 'el enlace de un archivo no abre otro');
+    const deAna = enlaceDocumento('ana@ejemplo.com', id, base);
+    assert.equal((await fetch(deAna)).status, 404, 'firmado para otra cuenta: esa cuenta no tiene ese archivo');
+    const [p, cuerpoT, firma] = t.split('.');
+    const otroCuerpo = Buffer.from(JSON.stringify({ ...JSON.parse(Buffer.from(cuerpoT, 'base64url').toString()), e: Date.now() + 9e9 })).toString('base64url');
+    assert.equal((await fetch(`${base}/api/documentos/${id}?t=${p}.${otroCuerpo}.${firma}`)).status, 403, 'alargarle la vida rompe la firma');
+    assert.equal((await fetch(`${base}/api/documentos/${id}?t=basura`)).status, 403);
+    assert.equal((await fetch(`${base}/api/documentos/${id}`)).status, 401, 'sin enlace ni sesión, la puerta de siempre');
+    const viejo = enlaceDocumento('marta@ejemplo.com', id, base, Date.now() - ENLACE_VIVE_MS - 1000);
+    assert.equal((await fetch(viejo)).status, 403, 'vencido');
+    assert.equal(duenoDelEnlace(t, id, Date.now() + ENLACE_VIVE_MS + 1), null);
+
+    autoridad = 'suspendida';
+    assert.equal((await fetch(enlace)).status, 403, 'cuenta suspendida: no baja (SEC-04)');
+    autoridad = 'desconocida';
+    assert.equal((await fetch(enlace)).status, 503, 'sin poder comprobar la cuenta: no baja');
+  } finally {
+    await new Promise((ok) => srv.close(ok));
+  }
+});
+
+test('revisión 8 (MEDIO-2): la raíz del enlace es la pública (https), nunca un host raro', () => {
+  assert.equal(raizPublica('aura-fp.onrender.com', {}), 'https://aura-fp.onrender.com');
+  assert.equal(raizPublica('x', { RENDER_EXTERNAL_URL: 'https://aura-fp.onrender.com/' }), 'https://aura-fp.onrender.com');
+  assert.equal(raizPublica('evil.com/@x', {}), '');
+  assert.equal(raizPublica('', {}), '');
+  assert.equal(enlaceDocumento('marta@ejemplo.com', '../../package.json', 'https://x'), '');
 });

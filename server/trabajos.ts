@@ -29,6 +29,7 @@
  *   · `cerrarDecisionPorChat` cuando el «sí» o el «no» llegan por el chat (sin doble efecto).
  *   · `enTurnoConTrabajos` alrededor del turno: lo que se creó en él vuelve en la respuesta (`tareas`).
  */
+import { conEnlacesDeDocumentos, raizPublica } from './enlace-documento';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import crypto from 'node:crypto';
 import type express from 'express';
@@ -906,8 +907,9 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
     const durables = await Promise.all(l.tareas.map((x) => reconciliar(dueno, x, d, t, pc)));
     const enlazadas = new Set(durables.flatMap((x) => (x.enlace?.tipo === 'computadora' ? [x.enlace.id] : [])));
     const primera = !cursor;
+    const raiz = raizPublica(req.get('host'));
     const tareas: TaskSnapshot[] = [
-      ...durables.map((x) => vistaTarea(x, t)),
+      ...durables.map((x) => conEnlacesDeDocumentos(vistaTarea(x, t), dueno, raiz, t)),
       ...(primera ? (d.tareaEnCurso?.listar(dueno) || []).map(deTareaEnCurso) : []),
       ...(primera ? (d.computadora?.misiones(dueno) || []).filter((m) => !enlazadas.has(m.id) && !enlazadas.has(m.tareaId)).map((m) => deComputadora(m, t)) : []),
     ].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
@@ -958,7 +960,7 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
     // Leída por su id: si no estaba en el índice (una de antes de P5 que el tope sacó), se vuelve a anotar.
     if (e.tipo === 'durable') await asegurarEnIndice(dueno, e.reg).catch(() => undefined);
     const v = vista(e);
-    return v ? res.json({ tarea: v, honesto: true }) : noEsta(res);
+    return v ? res.json({ tarea: conEnlacesDeDocumentos(v, dueno, raizPublica(req.get('host'))), honesto: true }) : noEsta(res);
   });
 
   app.get('/api/trabajos/:id/eventos', d.exigirMesa, d.limitar(120), async (req, res) => {
@@ -972,7 +974,7 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
     if (e.tipo !== 'durable') return res.json({ eventos: [], cursor: 0, resync: true, tarea: v, honesto: true });
     const desde = Math.max(0, Math.floor(Number(req.query.desde) || 0));
     const ev = eventosDesde(e.reg, desde);
-    return res.json({ ...ev, tarea: v, honesto: true });
+    return res.json({ ...ev, tarea: conEnlacesDeDocumentos(v, dueno, raizPublica(req.get('host'))), honesto: true });
   });
 
   /** POST /tasks de la sección 17: crear una vez por requestId de la sesión. */

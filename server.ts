@@ -77,7 +77,7 @@ import { redirigirADominio } from './server/dominio';
 import { quitarExpresiones } from './lib/expresiones';
 import { puntoDeCorte } from './lib/trozos';
 import { claveTurno, consultarTurno, efectoDelTurno, enTurnoUnico, idTurnoValido, reclamarTurno, turnoSinEfectos, type TurnoGuardado } from './server/turno-unico';
-import { atajoDeAppBloqueado, otraVozDe, pendientesDelTurno, resolverBorradorDesdePanel, resolverDecisionesDelTurno } from './server/decision-turno';
+import { atajoDeAppBloqueado, decisionEsperando, otraVozDe, pendientesDelTurno, resolverBorradorDesdePanel, resolverDecisionesDelTurno } from './server/decision-turno';
 import { avisoInvitado, conModoInvitado, hechoInvitado, manosDeInvitado, modoInvitadoDe } from './server/modo-invitado';
 import { puedeMano } from './lib/manos-app';
 import {
@@ -4334,6 +4334,12 @@ function ambitoDelTurno(body: any, opciones: OpcionesTurno = {}): string {
   return aparatoValido(body?.aparato) || String(body?.origen || (opciones.voz ? 'voz' : canal)).slice(0, 40);
 }
 
+/** ¿Algo de la cuenta de este turno espera su decisión? (server/decision-turno.ts decisionEsperando; turno especulativo). */
+function hayDecisionEsperando(body: any, opciones: OpcionesTurno = {}): boolean {
+  const dueno = body?.canal !== 'telegram' && body?.sesion?.correo ? String(body.sesion.correo).toLowerCase() : '';
+  return !!dueno && decisionEsperando(dueno, ambitoDelTurno(body, opciones), ambitoApp(dueno, body?.aparato));
+}
+
 async function ordenDeApp(body: any, opciones: OpcionesTurno = {}): Promise<{ decir: string; acciones: EventoAccion[]; via: string } | null> {
   const correo = body?.canal !== 'telegram' && body?.sesion?.correo ? String(body.sesion.correo).toLowerCase() : '';
   const message = String(body?.message || body?.text || '').trim();
@@ -5049,7 +5055,10 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     return false;
   };
   // Lo que no es charla (pide hacer algo, o es un «sí»/«dale» que confirma algo) no empieza siquiera sin confirmar.
-  if (esp && !esSoloConversacion(String(body?.message || body?.text || '')) && !(await sigueEspeculativo())) return;
+  // Revisión 8 (MEDIO-1): tampoco si algo espera su decisión (un borrador, también el apartado para el panel, la pregunta
+  // de su computadora, lo que espera la app). «mejor no», «nel» o «déjame pensar» parecen charla, pero el «no» y el
+  // apartado se aplican en el acto: con la frase que seguía («…bueno, sí, mándalo») el borrador ya se habría borrado.
+  if (esp && (!esSoloConversacion(String(body?.message || body?.text || '')) || hayDecisionEsperando(body, opciones)) && !(await sigueEspeculativo())) return;
   // ── fin ──
   // Un solo reloj para el turno entero (EXEC04): las llamadas al cerebro y las herramientas miran lo que queda.
   const reloj = presupuesto(PRESUPUESTO_TURNO_MS);

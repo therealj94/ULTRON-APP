@@ -3,6 +3,7 @@
  *
  *   PEDIR_HERRAMIENTA: documento {"archivos":[{tipo, nombre, spec}, …]}   (o la herramienta nativa crear_documento)
  *   GET /api/documentos/:id    → los bytes, solo con la sesión de su dueño
+ *   GET /api/documentos/:id?t= → lo mismo con el enlace firmado de su tarjeta (server/enlace-documento.ts)
  *
  * La herramienta corre lib/oficina/entrega.ts (generar → validar → entregar con recibo) para el dueño VERIFICADO del
  * turno; sin sesión no hay de quién serían los archivos y no se hace nada. Un invitado (server/modo-invitado.ts) no la
@@ -18,20 +19,22 @@ import { abrirDescarga, disposicionDescarga } from '../lib/oficina/almacen';
 import { crearDocumentos, type ReciboLote } from '../lib/oficina/entrega';
 import { exito, fallo, type ResultadoHerramienta } from '../lib/recibo-herramienta';
 import { anotarTareaDelTurno, duenoDeTareas, pedidoDeDocumentos } from './trabajos';
+import { duenoDelEnlace } from './enlace-documento';
+import { comprobarAutoridad } from './autoridad-cuenta';
+import { identidadDelEntorno } from './seguridad';
 
 export type DepsDocumentos = {
   exigirMesa: express.RequestHandler;
   limitar: (max: number, ventanaMs?: number, grupo?: string) => express.RequestHandler;
   sesionDe: (req: express.Request) => { correo?: string } | null;
+  /** Pruebas: la autoridad de la cuenta de un enlace firmado (por omisión, la de SEC-04). */
+  autoridad?: (correo: string) => Promise<'permitida' | 'suspendida' | 'desconocida'>;
 };
 
 export function montarRutasDocumentos(app: express.Express, d: DepsDocumentos) {
-  app.get('/api/documentos/:id', d.exigirMesa, d.limitar(60), async (req, res) => {
-    res.setHeader('Cache-Control', 'private, no-store');
-    const sesion = d.sesionDe(req);
-    const dueno = duenoDeTareas(String(sesion?.correo || ''));
-    if (!dueno) return res.status(sesion ? 403 : 401).json({ error: sesion ? 'Tus documentos van con tu cuenta de correo.' : 'Entra con tu sesión.', code: sesion ? 'sin_correo' : 'sesion_requerida', honesto: true });
-    const r = await abrirDescarga(dueno, String(req.params.id || '')).catch((e) => ({ estado: 'almacen' as const, detalle: String(e?.message || e) }));
+  /** Los bytes del archivo `id` de `dueno` (ya decidido quién es), con todas sus comprobaciones. */
+  const servir = async (dueno: string, id: string, res: express.Response) => {
+    const r = await abrirDescarga(dueno, id).catch((e) => ({ estado: 'almacen' as const, detalle: String(e?.message || e) }));
     if (r.estado === 'no') return res.status(404).json({ error: 'No encuentro ese archivo en tu cuenta.', honesto: true });
     if (r.estado === 'vencido') return res.status(410).json({ error: `«${r.m.nombre}» ya venció (se guardan unos días). Pídemelo otra vez y lo hago de nuevo.`, honesto: true });
     if (r.estado === 'danado') return res.status(409).json({ error: `«${r.m.nombre}» no coincide con el que comprobé al hacerlo: no te lo doy así. Pídemelo otra vez.`, code: 'huella_distinta', honesto: true });
@@ -42,7 +45,39 @@ export function montarRutasDocumentos(app: express.Express, d: DepsDocumentos) {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Documento-Sha256', r.m.sha256);
     return res.end(r.datos);
+  };
+
+  /*
+   * Con el enlace firmado de la tarjeta (server/enlace-documento.ts): sin cabeceras, para que la app y la web lo abran en
+   * el navegador. La cuenta sale de la firma (para ESE id, sin vencer) y tiene que seguir con autoridad (SEC-04).
+   */
+  app.get('/api/documentos/:id', d.limitar(60), async (req, res, next) => {
+    if (req.query.t === undefined) return next();
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    const id = String(req.params.id || '');
+    const dueno = duenoDeTareas(duenoDelEnlace(req.query.t, id) || '');
+    if (!dueno) return res.status(403).json({ error: 'Ese enlace ya no vale (vence a los 15 minutos). Ábrelo otra vez desde la tarjeta de la tarea.', code: 'enlace_vencido', honesto: true });
+    const a = await (d.autoridad || autoridadDeEnlace)(dueno);
+    if (a === 'suspendida') return res.status(403).json({ error: 'Esta cuenta está suspendida.', code: 'cuenta_suspendida', honesto: true });
+    if (a === 'desconocida') return res.status(503).json({ error: 'No pude comprobar que tu cuenta sigue activa; prueba en un momento.', code: 'autoridad_desconocida', honesto: true });
+    return servir(dueno, id, res);
   });
+
+  app.get('/api/documentos/:id', d.exigirMesa, d.limitar(60), async (req, res) => {
+    res.setHeader('Cache-Control', 'private, no-store');
+    const sesion = d.sesionDe(req);
+    const dueno = duenoDeTareas(String(sesion?.correo || ''));
+    if (!dueno) return res.status(sesion ? 403 : 401).json({ error: sesion ? 'Tus documentos van con tu cuenta de correo.' : 'Entra con tu sesión.', code: sesion ? 'sin_correo' : 'sesion_requerida', honesto: true });
+    return servir(dueno, String(req.params.id || ''), res);
+  });
+}
+
+/** La autoridad de la cuenta de un enlace (la misma regla que exigirAutoridadVigente para una sesión). */
+async function autoridadDeEnlace(correo: string): Promise<'permitida' | 'suspendida' | 'desconocida'> {
+  const r = await comprobarAutoridad(correo).catch(() => ({ estado: 'desconocida' as const }));
+  if (r.estado === 'desconocida' && identidadDelEntorno(correo)) return 'permitida';
+  return r.estado;
 }
 
 /** El recibo del lote → lo que contesta la herramienta (texto para el modelo, estado y recibo para la traza). */

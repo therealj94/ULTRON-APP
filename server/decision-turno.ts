@@ -14,6 +14,7 @@ import { apartadosCorreoDe, borradorCorreoPorIntento, borradorDe, nombresRecient
 import { apartadosWhatsappDe, borradorWhatsappDe, borradorWhatsappPorIntento, conocidosDeChats, destinoWhatsapp, promoverApartadoWhatsapp, resolverApartadoWhatsapp, resolverBorradorWhatsapp, whatsappPermitido } from './whatsapp';
 import { preguntasComputadora, resolverPreguntaComputadora } from './computadora';
 import { cerrarDecisionPorChat, clasificarEnvio, type SalidaEnvio } from './trabajos';
+import { appEsperandoDe, contextoDe } from '../lib/acciones-app';
 import { analizarRespuesta, decidirPendiente, type Decidido, type DecisionPendiente, type TipoDecision } from '../lib/afirmacion';
 import { enPantallaDe, type EnPantalla } from './decision-en-pantalla';
 import { llaveConversacion, resumenTexto, tomarVencidos } from './borradores-cola';
@@ -235,6 +236,19 @@ export function pendientesEnOrden(dueno: string, ambito: string, whatsapp: boole
     for (const b of [...(w ? [w] : []), ...apartadosWhatsappDe(dueno, ambito)]) out.push({ canal: 'whatsapp', intento: b.intento, huella: b.huella, creado: b.creado, para: destinoWhatsapp(b), texto: b.texto, enChat: b === w && !b.soloPanel });
   }
   return out.sort((a, b) => a.creado - b.creado);
+}
+
+/**
+ * ¿Algo de esta cuenta espera su decisión? Un borrador de correo o de WhatsApp (también el apartado para el panel), la
+ * pregunta de su computadora, o lo que espera la app (`ambitoApp`, con lo escrito en el chat abierto). Revisión 8
+ * (MEDIO-1): con algo así, el turno especulativo de la voz no empieza antes del «sí» del teléfono —«mejor no», «nel» o
+ * «déjame pensar» parecen charla, pero el «no» y el apartado se aplican en el acto—. De más no daña (solo se espera la
+ * confirmación): WhatsApp cuenta aunque no se sepa si lo tiene.
+ */
+export function decisionEsperando(dueno: string, ambito: string, ambitoApp?: string): boolean {
+  if (!dueno) return false;
+  if (pendientesEnOrden(dueno, ambito, true).length || pendientesDelTurno({ dueno, ambito, whatsapp: true }).length) return true;
+  return !!ambitoApp && !!appEsperandoDe(ambitoApp, contextoDe(ambitoApp));
 }
 
 /**

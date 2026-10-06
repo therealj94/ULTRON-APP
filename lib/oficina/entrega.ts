@@ -476,7 +476,7 @@ async function cerrar(x: {
   }
 
   const lineaArchivo = (a: ReciboArchivo) =>
-    `${a.nombre}: ${CLASE[a.tipo]} de ${kb(a.bytes!)}${a.paginas ? ` (${a.paginas} pág.)` : ''}, comprobado por dentro (${(a.comprobaciones || []).filter((c) => c.ok).length} comprobaciones)${a.render?.estado === 'hecho' ? `, ${a.render.detalle}` : ''}; para bajar con su sesión en ${a.enlace}`;
+    `${a.nombre}: ${CLASE[a.tipo]} de ${kb(a.bytes!)}${a.paginas ? ` (${a.paginas} pág.)` : ''}, comprobado por dentro (${(a.comprobaciones || []).filter((c) => c.ok).length} comprobaciones)${a.render?.estado === 'hecho' ? `, ${a.render.detalle}` : ''}; se baja tocando su nombre en la tarjeta de la tarea (panel de Tareas)`;
   let texto: string;
   if (estado === 'completo') {
     texto = `DOCUMENTOS LISTOS Y COMPROBADOS (uno por uno): ${disponibles.map(lineaArchivo).join(' · ')}. Quedan en su panel de Tareas y en su cuenta ${Math.round(retencionMs() / 86_400_000)} días. Puedes decir que quedaron listos. No digas que se los mandaste por correo ni que ya los abrió: eso no lo sabes.`;

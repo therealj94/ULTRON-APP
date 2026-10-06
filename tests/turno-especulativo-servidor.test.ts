@@ -76,6 +76,50 @@ test('un pedido que no es charla («llámame en diez minutos») no llega ni al m
   assert.equal(s.acciones.length, accionesAntes);
 });
 
+/*
+ * Revisión 8 (MEDIO-1): «mejor no», «nel», «déjame pensar» parecen charla, pero con algo esperando su decisión el «no» y
+ * el apartado se aplicaban antes del «sí» del teléfono (y con «…bueno, sí, mándalo» el borrador ya estaba borrado).
+ * Ahora, con algo pendiente, ni la charla empieza sin confirmar; descartado, no llega nunca al modelo ni a las decisiones.
+ */
+/** El contexto del teléfono como lo deja servidor-falso.ts (tres contactos y sus manos), más lo que se pase. */
+const CONTACTOS = ['Ana', 'Beto', 'Mamá'].map((nombre, i) => ({ nombre, correo: `contacto${i}@ejemplo.org` }));
+const MANOS = ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame', 'controles'];
+const contexto = (cuerpo: Record<string, unknown>) => fetch(`${s.BASE}/api/app/contexto`, { method: 'POST', headers: s.h, body: JSON.stringify({ pantalla: 'chats', contactos: CONTACTOS, manos: MANOS, ...cuerpo }) });
+for (const frase of ['Mejor no.', 'Nel.', 'Mmm, déjame pensar.']) {
+  test(`con algo esperando su decisión, «${frase}» especulativo espera el «sí» del teléfono; descartado, no toca nada`, { skip: !s.listo }, async () => {
+    contestar = () => ({ texto: '[EMO: neutral] Va, como quieras.' });
+    await contexto({ chatAbierto: { nombre: 'Ana', correo: 'contacto0@ejemplo.org' }, borrador: 'Te veo a las cinco en el parque.' });
+    try {
+      const antes = s.pedidos.length;
+      const t = abrirTurno(s.BASE, s.h, { message: frase, hablado: true, idioma: 'es', avatar: 'aura', idTurno: id('pendiente'), especulativo: true });
+      await new Promise((r) => setTimeout(r, 500));
+      assert.equal(s.pedidos.length, antes, 'sin confirmar no se le preguntó al modelo');
+      assert.equal(t.hay('delta'), false, 'ni una palabra antes de confirmar');
+      t.cortar();
+      await new Promise((r) => setTimeout(r, 300));
+      assert.equal(s.pedidos.length, antes, 'descartado, nunca');
+    } finally {
+      await contexto({ pantalla: 'mesa' });
+    }
+  });
+}
+
+test('con algo esperando, el mismo «mejor no» confirmado sí corre (la espera no se come la respuesta)', { skip: !s.listo }, async () => {
+  contestar = () => ({ texto: '[EMO: neutral] Va, como quieras.' });
+  await contexto({ chatAbierto: { nombre: 'Ana', correo: 'contacto0@ejemplo.org' }, borrador: 'Te veo a las cinco en el parque.' });
+  try {
+    const idTurno = id('pendiente-ok');
+    const t = abrirTurno(s.BASE, s.h, { message: 'Mejor no.', hablado: true, idioma: 'es', avatar: 'aura', idTurno, especulativo: true });
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(t.hay('delta'), false);
+    assert.equal((await confirmar(idTurno)).estado, 'confirmado');
+    assert.ok(await esperarQue(() => t.hay('done')), 'confirmado, termina');
+    await t.fin;
+  } finally {
+    await contexto({ pantalla: 'mesa' });
+  }
+});
+
 test('sin `especulativo`, el turno de siempre no espera a nadie', { skip: !s.listo }, async () => {
   contestar = () => ({ texto: '[EMO: feliz] Claro que sí.' });
   const t = abrirTurno(s.BASE, s.h, { message: '¿Te gusta la música?', hablado: true, idioma: 'es', avatar: 'aura', idTurno: id('normal') });
