@@ -17,6 +17,8 @@ import { confirmarIntento, type Intento } from '../lib/intentoEntrada';
 import { salir as salirDelChat } from '../pulse/relevo';
 import { miga } from '../lib/reporte';
 import { reiniciarA } from './rutas';
+// Recién entró: la actualización por aire no recarga como `arranque` (revisión 7.5, MENOR 3).
+import { marcarEntradaLograda } from '../lib/barreraOta';
 
 /** Lo que Genesis ID compartió al entrar (si el servidor lo manda: `genesis` de /api/genesis/entrar). */
 export type Compartido = { nombre?: string | null; cumple?: string | null };
@@ -111,6 +113,7 @@ export async function entrarCon(u: SessionUser, compartido: Compartido | null, i
     if (!e.sigue()) return false;
     // Fijar a la persona abre su generación: desde aquí, cualquier intento anterior ya no escribe.
     fijarUsuario(s);
+    marcarEntradaLograda();
     return true;
   });
   if (!entro) {
