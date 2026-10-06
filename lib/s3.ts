@@ -153,6 +153,19 @@ export async function s3PutJson(key: string, json: unknown): Promise<{ ok: boole
   return { ok: r.ok, detalle: r.detalle };
 }
 
+/** Bytes tal cual en el cubo de la memoria (los archivos que genera AU-RA, lib/oficina/almacen.ts). */
+export async function s3PutBytes(key: string, datos: Buffer, tipo = 'application/octet-stream', timeoutMs = 30_000): Promise<{ ok: boolean; detalle: string }> {
+  const r = await s3({ method: 'PUT', key, body: datos, contentType: tipo, timeoutMs });
+  return { ok: r.ok, detalle: r.detalle };
+}
+
+/** Bytes del cubo de la memoria. 404 = `missing` (no existe), nunca un fallo disfrazado de vacío. */
+export async function s3GetBytes(key: string, timeoutMs = 30_000): Promise<{ ok: boolean; datos: Buffer | null; detalle: string; missing?: boolean }> {
+  const r = await s3({ method: 'GET', key, timeoutMs });
+  if (r.status === 404) return { ok: true, datos: null, detalle: 'vacío', missing: true };
+  return r.ok ? { ok: true, datos: r.body, detalle: 'ok' } : { ok: false, datos: null, detalle: r.detalle };
+}
+
 /** Un JSON con su ETag (para el compare-and-set de lib/durable.ts). 404 = `missing`, no un fallo. */
 export async function s3GetJsonConEtag(key: string, timeoutMs = 8000): Promise<{ ok: boolean; json: any | null; etag: string | null; detalle: string; missing?: boolean }> {
   const r = await s3({ method: 'GET', key, timeoutMs });

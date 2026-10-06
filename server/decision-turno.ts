@@ -14,11 +14,14 @@ import { apartadosCorreoDe, borradorCorreoPorIntento, borradorDe, nombresRecient
 import { apartadosWhatsappDe, borradorWhatsappDe, borradorWhatsappPorIntento, conocidosDeChats, destinoWhatsapp, promoverApartadoWhatsapp, resolverApartadoWhatsapp, resolverBorradorWhatsapp, whatsappPermitido } from './whatsapp';
 import { preguntasComputadora, resolverPreguntaComputadora } from './computadora';
 import { cerrarDecisionPorChat, clasificarEnvio, type SalidaEnvio } from './trabajos';
+import { appEsperandoDe, contextoDe } from '../lib/acciones-app';
 import { analizarRespuesta, decidirPendiente, type Decidido, type DecisionPendiente, type TipoDecision } from '../lib/afirmacion';
 import { enPantallaDe, type EnPantalla } from './decision-en-pantalla';
 import { llaveConversacion, resumenTexto, tomarVencidos } from './borradores-cola';
 import type { RetencionAcciones } from './voz-agente';
 import { otraVozDelTurno } from '../lib/voces-miembro';
+import { decisionVistaDelTurno, hechoSiNoEstaLigada, vistaHablada, type VistaHablada } from './decision-hablada';
+import { atadoAlPresentado, presentadoEnChat, type AtaduraEscrita } from './presentacion-decision';
 
 /** Lo que la app (PULSE2CHAT) tiene esperando el «sí» de un turno anterior: un mensaje, una llamada, un recordatorio. */
 export type AppEsperando = { que: string; para: string; cuando?: number; huella?: string; video?: boolean };
@@ -63,6 +66,14 @@ export type OpcionesDecisionTurno = {
   quienHabla?: unknown;
   origen?: unknown;
   sesion?: { correo?: string; nombre?: string } | null;
+  /**
+   * Revisión del 6-oct (bloqueante 1, server/decision-hablada.ts): el turno fue HABLADO (la voz de la mesa, el dictado,
+   * la conversación de voz; con `retener` también). Un «sí» hablado solo manda el borrador atado a la huella que ese
+   * aparato muestra: `decisionVista` (el campo del teléfono) o el registro de la ventana de ese `aparato`.
+   */
+  hablado?: boolean;
+  decisionVista?: unknown;
+  aparato?: unknown;
 };
 
 export type SalidaDecisionTurno = {
@@ -227,6 +238,49 @@ export function pendientesEnOrden(dueno: string, ambito: string, whatsapp: boole
   return out.sort((a, b) => a.creado - b.creado);
 }
 
+/**
+ * ¿Algo de esta cuenta espera su decisión? Un borrador de correo o de WhatsApp (también el apartado para el panel), la
+ * pregunta de su computadora, o lo que espera la app (`ambitoApp`, con lo escrito en el chat abierto). Revisión 8
+ * (MEDIO-1): con algo así, el turno especulativo de la voz no empieza antes del «sí» del teléfono —«mejor no», «nel» o
+ * «déjame pensar» parecen charla, pero el «no» y el apartado se aplican en el acto—. De más no daña (solo se espera la
+ * confirmación): WhatsApp cuenta aunque no se sepa si lo tiene.
+ */
+export function decisionEsperando(dueno: string, ambito: string, ambitoApp?: string): boolean {
+  if (!dueno) return false;
+  if (pendientesEnOrden(dueno, ambito, true).length || pendientesDelTurno({ dueno, ambito, whatsapp: true }).length) return true;
+  return !!ambitoApp && !!appEsperandoDe(ambitoApp, contextoDe(ambitoApp));
+}
+
+/**
+ * SEC-01: el «sí» escrito no estaba atado a lo último presentado. El HECHO vuelve a presentar ESA versión (a quién, desde
+ * dónde, el asunto y el texto exactos que esperan) para que se le lea y se le pregunte otra vez; desde ahora es lo último
+ * presentado en esta conversación (el próximo «sí» escrito, si es para esto, la manda; si se edita, se vuelve a preguntar).
+ */
+function representar(dueno: string, ambito: string, p: PendienteTurno, porQue: AtaduraEscrita, mensaje: string): string {
+  const motivo =
+    porQue === 'ventana_sin_autoridad'
+      ? 'lo último que su pantalla mostraba era la ventana de decisión, y ya no consta que la siga viendo (se cerró, venció o no se pudo renovar)'
+      : porQue === 'otra_version'
+        ? 'lo último que se le presentó no es esta versión (se editó o se le mostró otra cosa después)'
+        : 'no consta que esta versión exacta se le haya presentado (venció lo que se le leyó, o el servidor se reinició)';
+  let version = '';
+  if (p.origen === 'correo') {
+    const c = borradorCorreoPorIntento(dueno, ambito, p.id || '') || (borradorDe(dueno, ambito)?.intento === p.id ? borradorDe(dueno, ambito) : null);
+    if (c && c.huella === p.huella) {
+      version = `el correo desde ${c.desde} para ${c.para.join(', ')}${c.cc?.length ? ` (con copia a ${c.cc.join(', ')})` : ''} — «${c.asunto}»:\n${c.texto.slice(0, 2400)}`;
+      presentadoEnChat(dueno, ambito, { canal: 'correo', intento: c.intento, huella: c.huella });
+    }
+  } else {
+    const w = borradorWhatsappPorIntento(dueno, ambito, p.id || '') || (borradorWhatsappDe(dueno, ambito)?.intento === p.id ? borradorWhatsappDe(dueno, ambito) : null);
+    if (w && w.huella === p.huella) {
+      version = `el WhatsApp para ${destinoWhatsapp(w)}:\n${w.texto.slice(0, 2400)}`;
+      presentadoEnChat(dueno, ambito, { canal: 'whatsapp', intento: w.intento, huella: w.huella });
+    }
+  }
+  const que = version || decirPendiente(p);
+  return `HECHO: escribió «${mensaje.slice(0, 80)}», pero ${motivo}. NO se mandó nada. Lo que espera ahora es ${que}\nLéeselo tal cual (es lo que saldría) y pregúntale si lo manda. Solo sale si después dice que sí a ESTO; no digas que se envió.`;
+}
+
 /** De qué ya se le habló («quedó pendiente…»): una vez por borrador, para no insistir. */
 const MENCIONADOS = new Map<string, string[]>();
 const MAX_MENCIONADOS = 30;
@@ -258,8 +312,13 @@ export async function resolverDecisionesDelTurno(o: OpcionesDecisionTurno): Prom
   const hechos: string[] = [];
   const nada = (extra: Partial<SalidaDecisionTurno> = {}): SalidaDecisionTurno => ({ hechos, turnoVigente: true, delCorreo: null, delWhatsapp: null, deLaPregunta: null, ambiguo: false, appBloqueada: false, respondio: false, ...extra });
   if (!dueno) return nada();
-  // Lo que la persona tiene a la vista (la ventana de decisión de la mesa, o lo que AU-RA acaba de preguntar).
-  const vista = vistaDe({ dueno, ambito, enPantalla: o.enPantalla });
+  // Lo que la persona tiene a la vista (la ventana de decisión de la mesa, o lo que AU-RA acaba de preguntar). En un turno
+  // hablado, lo que dice el teléfono que muestra ESE aparato (o su registro): server/decision-hablada.ts.
+  const hablado = o.hablado === true || !!retener;
+  // SEC-01: lo escrito desde el teléfono con la ventana a la vista también trae `decisionVista` y se ata igual que lo hablado.
+  const campo = decisionVistaDelTurno(o.decisionVista);
+  const hv: VistaHablada | null = hablado || campo ? vistaHablada({ dueno, ambito, whatsapp: o.whatsapp, campo, aparato: o.aparato, registro: vistaDe({ dueno, ambito, enPantalla: o.enPantalla }) }) : null;
+  const vista = hv ? hv.vista : vistaDe({ dueno, ambito, enPantalla: o.enPantalla });
   // Lo que espera cuando la persona contestó (lo que estaba contestando).
   const pendientes = pendientesDelTurno({ dueno, ambito, whatsapp: o.whatsapp, app: o.app, enPantalla: vista });
   // Lo que quedó atrás (José, 5-oct): un borrador que venció sin decidirse se dice una vez («¿lo rehago?»), no desaparece.
@@ -292,6 +351,27 @@ export async function resolverDecisionesDelTurno(o: OpcionesDecisionTurno): Prom
       `HECHO: dijo «${message.slice(0, 80)}», pero ${porQue}: ni se mandó, ni se descartó, ni se contestó lo que esperaba (${decirPendiente(d.p)}). Dile con amabilidad que eso lo confirma ${otraVoz.duena}: con su voz (una frase un poco más larga, como «sí, mándalo») o tocando «Sí» en su ventana de decisión.`
     );
     return nada({ ambiguo: true, appBloqueada: !!o.app, appVista: o.app ?? null });
+  }
+  // Revisión del 6-oct (bloqueante 1): un «sí» HABLADO manda un correo o un WhatsApp solo si está atado a la huella exacta
+  // que ese aparato muestra. Si no (sin ventana, la de antes de editar, la de otro aparato), no se elige ni se manda nada.
+  if (hv && d.tipo === 'ejecutar' && (d.p.origen === 'correo' || d.p.origen === 'whatsapp')) {
+    const no = hechoSiNoEstaLigada(d.p, hv, message, decirPendiente(d.p), { escrito: !hablado });
+    if (no) {
+      hechos.push(no);
+      return nada({ ambiguo: true, appBloqueada: !!o.app, appVista: o.app ?? null });
+    }
+  }
+  // SEC-01 (el residual del chat ESCRITO): sin campo de la ventana, un «sí» escrito manda un correo o un WhatsApp solo si
+  // la última presentación de esta conversación (su texto en el chat, o la ventana mientras su registro vive) es
+  // EXACTAMENTE ese borrador. Si no, no se busca otro: se vuelve a presentar ESA versión y se pregunta.
+  if (!hv && d.tipo === 'ejecutar' && (d.p.origen === 'correo' || d.p.origen === 'whatsapp')) {
+    // Nombrar a cuál («sí, el correo») la identifica; aun así, ESA versión exacta tiene que habérsele presentado.
+    const nombrada = d.analisis.restos.length > 0;
+    const atadura = atadoAlPresentado({ dueno, ambito, p: d.p, ventana: vistaDe({ dueno, ambito, enPantalla: o.enPantalla }), nombrada });
+    if (atadura !== 'ok') {
+      hechos.push(representar(dueno, ambito, d.p, atadura, message));
+      return nada({ ambiguo: true, appBloqueada: !!o.app, appVista: o.app ?? null });
+    }
   }
   const efecto = d.tipo === 'ejecutar' && d.p.origen !== 'app';
   // Un «sí» que va a mandar un borrador o soltar a su computadora: antes se deja anotado en el turno durable (AUR06,

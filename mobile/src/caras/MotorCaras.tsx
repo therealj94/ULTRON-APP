@@ -12,6 +12,7 @@ import { forwardRef, useCallback, useImperativeHandle, useRef } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { miga } from '../lib/reporte';
+import { estadisticaCamara } from '../lib/estadisticaCamara';
 import { MOTOR_CARAS_HTML } from './motorCarasHtml';
 import { vectorValido, type CaraVista } from './caras';
 
@@ -29,7 +30,9 @@ type Props = { onEstado?: (e: 'cargando' | 'listo' | 'fallo', motivo?: string) =
 export const MotorCaras = forwardRef<ControlMotorCaras, Props>(function MotorCaras({ onEstado }, ref) {
   const web = useRef<WebView>(null);
   const listo = useRef(false);
-  const esperando = useRef(new Map<number, (r: CaraVista[] | null) => void>());
+  const esperando = useRef(new Map<number, (r: CaraVista[] | null, motorMs?: number) => void>());
+  /** Desde cuándo se monta (para la miga de «motor listo»: cuánto tardó en cargar y en calentarse). */
+  const montado = useRef(Date.now());
   const n = useRef(0);
   const cb = useRef(onEstado);
   cb.current = onEstado;
@@ -44,7 +47,8 @@ export const MotorCaras = forwardRef<ControlMotorCaras, Props>(function MotorCar
     if (m?.tipo === 'lista') {
       listo.current = true;
       cb.current?.('listo');
-      miga(`caras: motor listo (${m.motor})`);
+      const cal = typeof m.calentarMs === 'number' ? `, calentar ${m.calentarMs} ms` : '';
+      miga(`caras: motor listo (${m.motor}) en ${Date.now() - montado.current} ms${cal}`);
     } else if (m?.tipo === 'fallo') {
       listo.current = false;
       cb.current?.('fallo', m.motivo);
@@ -57,7 +61,7 @@ export const MotorCaras = forwardRef<ControlMotorCaras, Props>(function MotorCar
       esperando.current.delete(m.id);
       if (m.tipo === 'error') return f(null);
       const caras: CaraVista[] = (Array.isArray(m.caras) ? m.caras : []).filter((c: any) => vectorValido(c?.vector) && c?.caja);
-      f(caras);
+      f(caras, typeof m.ms === 'number' ? m.ms : undefined);
     }
   }, []);
 
@@ -69,11 +73,14 @@ export const MotorCaras = forwardRef<ControlMotorCaras, Props>(function MotorCar
         new Promise<CaraVista[] | null>((resolver) => {
           if (!web.current || !b64) return resolver(null);
           const id = ++n.current;
+          const t0 = Date.now();
           const t = setTimeout(() => {
             if (esperando.current.delete(id)) resolver(null);
           }, ESPERA_MS);
-          esperando.current.set(id, (r) => {
+          esperando.current.set(id, (r, motorMs) => {
             clearTimeout(t);
+            // Ida y vuelta (con el mensaje de ~100 KB a la WebView) y lo que tardó la WebView: el resumen de la cámara.
+            if (r) estadisticaCamara.analisis(Date.now() - t0, motorMs);
             resolver(r);
           });
           const cs = cajas?.length ? { cajas: cajas.map((c) => ({ x: +c.x.toFixed(4), y: +c.y.toFixed(4), w: +c.w.toFixed(4), h: +c.h.toFixed(4) })) } : {};

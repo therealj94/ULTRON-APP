@@ -122,11 +122,13 @@ async function conEntorno<R>(fn: (e: { mandados: Envio[]; enviados: Array<{ chat
   }
 }
 
-const turno = (mensaje: string, o: Record<string, unknown> = {}) => T.resolverDecisionesDelTurno({ dueno: JOSE, ambito: 'tel', mensaje, whatsapp: true, registrarEfecto: async () => true, ...o } as any);
+/** El teléfono de José: un «sí» hablado ata solo el registro de la ventana de ESTE aparato (revisión 7, MENOR). */
+const APARATO = 'telefono-de-jose-1';
+const turno = (mensaje: string, o: Record<string, unknown> = {}) => T.resolverDecisionesDelTurno({ dueno: JOSE, ambito: 'tel', mensaje, whatsapp: true, registrarEfecto: async () => true, aparato: APARATO, ...o } as any);
 const waParaBruno = (texto = 'Llego a las 5.') => W.correrWhatsapp(JOSE, `responder Bruno | ${texto}`, 'tel');
 const waParaTigo = (texto = 'Mañana pago la factura.') => W.correrWhatsapp(JOSE, `responder Tigo | ${texto}`, 'tel');
 const correoParaAna = (texto = 'Va el informe.') => C.correrCorreo(JOSE, `escribir ana@example.test | Informe | ${texto}`, 'tel');
-const vistaDe = (canal: 'correo' | 'whatsapp', b: { intento: string; huella: string }) => ({ canal, ambito: 'tel', intento: b.intento, huella: b.huella, tareaId: 'tk_x', decisionId: 'dc_x', via: 'pantalla' as const, t: Date.now() + 1 });
+const vistaDe = (canal: 'correo' | 'whatsapp', b: { intento: string; huella: string }) => ({ canal, ambito: 'tel', intento: b.intento, huella: b.huella, tareaId: 'tk_x', decisionId: 'dc_x', via: 'pantalla' as const, t: Date.now() + 1, aparato: APARATO });
 const esperar = async (cond: () => Promise<boolean> | boolean, ms = 2000) => {
   const fin = Date.now() + ms;
   while (Date.now() < fin) {
@@ -255,7 +257,8 @@ test('causa 4: en la voz, el «sí» cierra su tarea del panel con lo que de ver
     assert.ok(ref);
     const hacer: Array<() => void> = [];
     const retener = { hacer: (f: () => void) => void hacer.push(f), alDescartar: () => undefined, recordar: () => undefined };
-    await turno('sí', { retener });
+    // Revisión del 6-oct (bloqueante 1): un «sí» hablado solo manda lo que la ventana muestra (aquí, ese WhatsApp).
+    await turno('sí', { retener, enPantalla: vistaDe('whatsapp', w) });
     assert.equal(enviados.length, 0, 'en la voz el envío espera a que se confirme el turno');
     for (const f of hacer) f(); // ElevenLabs confirmó el turno
     assert.ok(await esperar(() => enviados.length === 1), 'salió');
@@ -371,15 +374,17 @@ test('MENOR 4 (revisión 7.5): un turno de voz descartado no gasta la mención d
       const descartes: Array<() => void> = [];
       return { hacer, descartes, retener: { hacer: (f: () => void) => void hacer.push(f), alDescartar: (f: () => void) => void descartes.push(f), recordar: () => undefined } };
     };
+    // Revisión del 6-oct (bloqueante 1): un «sí» hablado solo manda lo que la ventana muestra (aquí, el correo a Ana).
+    const ana = vistaDe('correo', C.borradorDe(JOSE, 'tel')!);
     // La frase seguía: el turno especulativo se descarta (nada sale y la mención no se oyó).
     const a = voz();
-    const r1 = await turno('sí', { retener: a.retener });
+    const r1 = await turno('sí', { retener: a.retener, enPantalla: ana });
     assert.match(r1.hechos.join('\n'), /PENDIENTE EN ORDEN:.*WhatsApp para Bruno/s);
     for (const f of a.descartes) f();
     assert.equal(mandados.length, 0);
     // La frase entera: se vuelve a mencionar (antes ya estaba «dicha» y no se decía nunca).
     const b = voz();
-    const r2 = await turno('sí', { retener: b.retener });
+    const r2 = await turno('sí', { retener: b.retener, enPantalla: ana });
     assert.match(r2.hechos.join('\n'), /PENDIENTE EN ORDEN:.*WhatsApp para Bruno/s, 'el descartado no gastó la mención');
     for (const f of b.hacer) f();
     assert.ok(await esperar(() => mandados.length === 1), 'confirmado, sale el correo');
@@ -665,5 +670,18 @@ test('causa 7: editar un correo (texto y asunto) y un apartado en su sitio', asy
     assert.equal(ok.estado, 'succeeded', ok.resumen);
     assert.equal(mandados[0].asunto, 'Informe v2');
     assert.match(String(mandados[0].texto), /informe corregido/);
+  });
+});
+
+test('revisión 8 (MEDIO-1): decisionEsperando ve el borrador principal y también el apartado (el turno especulativo espera el «sí»)', async () => {
+  await conEntorno(async () => {
+    assert.equal(T.decisionEsperando(JOSE, 'tel'), false, 'nada esperando: la charla puede adelantarse');
+    await waParaBruno();
+    assert.equal(T.decisionEsperando(JOSE, 'tel'), true, 'el borrador en el lugar principal');
+    await turno('¿qué hora es en Madrid?'); // siguió con otra cosa: apartado para el panel
+    assert.equal(W.borradorWhatsappDe(JOSE, 'tel')?.soloPanel, true);
+    assert.equal(T.decisionEsperando(JOSE, 'tel'), true, 'apartado para el panel: un «no» dicho a la vista lo descartaría, así que también espera');
+    assert.equal(T.decisionEsperando('otra-persona@example.test', 'tel'), false, 'lo de José no hace esperar a otra cuenta');
+    assert.equal(T.decisionEsperando('', 'tel'), false);
   });
 });

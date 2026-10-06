@@ -97,6 +97,8 @@ export type AppSettings = {
   carasActivas: Record<string, number>;
   /** La cámara de la mesa: la frontal (te ve a ti) o la trasera (lo que tienes delante). Se cambia con «voltea la cámara». */
   camaraLado?: 'frontal' | 'trasera';
+  /** «Cámara rápida (nueva)»: la cámara en vivo (modules/aura-camara). Sin elegir = encendida donde exista (lib/guardiaCamara.ts). */
+  camaraRapida?: boolean;
   /** Quién activó el reconocimiento de voces (por correo → cuándo). Sin esto no sale ningún audio a las voces. */
   vocesActivas: Record<string, number>;
   /** Quién ya vio (o saltó para siempre) el recorrido de primera vez (por correo). */

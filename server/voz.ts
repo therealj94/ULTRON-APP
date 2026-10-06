@@ -26,7 +26,7 @@ import type { Presupuesto } from '../lib/presupuesto';
 import type { AlineacionEleven } from '../lib/alineacion';
 import { s3GetJson, s3Listo, s3PutJson } from '../lib/s3';
 import { esFraseConocida } from '../lib/frases-conocidas';
-import { abrirEleven, conMuletillas, elevenListo, estabilidadDe, guionEleven, hablarEleven, modeloEleven, normalizarAvatar, normalizarIdioma, vozEleven, type AvatarVoz, type Idioma } from './eleven';
+import { abrirEleven, aceptaEtiquetas, conMuletillas, elevenListo, estabilidadDe, guionEleven, hablarEleven, modeloDeLocucion, normalizarAvatar, normalizarIdioma, vozEleven, type AvatarVoz, type Idioma } from './eleven';
 
 export type Performance = 'speak' | 'sing';
 
@@ -446,7 +446,7 @@ function pedidoEleven(o: {
   idioma?: Idioma;
   previo?: string;
   siguiente?: string;
-}): { voz: string; guion: string; clave: string; motor: string; estabilidad: number } | null {
+}): { voz: string; guion: string; clave: string; motor: string; estabilidad: number; modelo: string } | null {
   const idioma = o.idioma === 'en' ? 'en' : 'es';
   const voz = o.performance === 'speak' ? vozEleven(o.plataforma, o.avatar, idioma) : null;
   if (!voz || !elevenListo()) return null;
@@ -455,15 +455,20 @@ function pedidoEleven(o: {
   const humano = o.plataforma === 'electrum' ? conMuletillas(base, { primero: !o.previo, emocion: o.emocion }) : base;
   // En inglés no se pasan cifras ni unidades a palabras en español: ElevenLabs las lee solo.
   const preparar = idioma === 'en' ? (t: string) => afinarParaBocaIngles(t, MAX_GUION) : (t: string) => expresar(t, o.emocion, 'speak', { cifras: false });
+  // La primera frase corta y sin etiquetas va con el modelo rápido (server/eleven.ts modeloDeLocucion): sin etiquetas
+  // ni tono, que ese modelo leería en voz alta.
+  const modelo = modeloDeLocucion({ texto: base, previo: o.previo, plataforma: o.plataforma });
+  const etiquetas = aceptaEtiquetas(modelo);
   // El tono de la emoción solo en la primera frase de la respuesta (la que no tiene `previo`).
-  const guion = guionEleven(humano, o.emocion, preparar, { tono: !o.previo });
+  const conTono = guionEleven(humano, o.emocion, preparar, { tono: !o.previo && etiquetas });
+  const guion = etiquetas ? conTono : conTono.replace(/\[[^\]\n]*\]\s*/g, '').trim();
   if (!guion) return null;
   const estabilidad = estabilidadDe(o.emocion);
   const clave = crypto
     .createHash('sha1')
-    .update(`eleven|${modeloEleven()}|${voz}|${idioma}|${estabilidad}|${guion}|${(o.previo || '').slice(-300)}|${(o.siguiente || '').slice(0, 300)}`)
+    .update(`eleven|${modelo}|${voz}|${idioma}|${estabilidad}|${guion}|${(o.previo || '').slice(-300)}|${(o.siguiente || '').slice(0, 300)}`)
     .digest('hex');
-  return { voz, guion, clave, motor: `elevenlabs:${modeloEleven()}`, estabilidad };
+  return { voz, guion, clave, motor: `elevenlabs:${modelo}`, estabilidad, modelo };
 }
 
 /**
@@ -500,7 +505,7 @@ export async function abrirVozEnVivo(opts: {
     return { tipo: 'cache', habla: { audio: deS3.audio, contentType: deS3.contentType, motor: deS3.motor, cache: true, ms: 0 } };
   }
   // Sin el idioma, ElevenLabs leía todo como español (language_code 'es'), inglés incluido.
-  const r = await abrirEleven({ texto: p.guion, voz: p.voz, previo: opts.previo, siguiente: opts.siguiente, estabilidad: p.estabilidad, idioma });
+  const r = await abrirEleven({ texto: p.guion, voz: p.voz, previo: opts.previo, siguiente: opts.siguiente, estabilidad: p.estabilidad, idioma, modelo: p.modelo });
   if (!r?.body) return null;
   return {
     tipo: 'vivo',
@@ -607,7 +612,7 @@ export async function hablar(opts: {
         return { ...deS3, cache: true, ms: Date.now() - t0 };
       }
     }
-    const xi = await hablarEleven({ texto: xiPedido.guion, voz: xiPedido.voz, previo: opts.previo, siguiente: opts.siguiente, reloj: opts.presupuesto, estabilidad: xiPedido.estabilidad, idioma, tiempos: opts.tiempos });
+    const xi = await hablarEleven({ texto: xiPedido.guion, voz: xiPedido.voz, previo: opts.previo, siguiente: opts.siguiente, reloj: opts.presupuesto, estabilidad: xiPedido.estabilidad, idioma, tiempos: opts.tiempos, modelo: xiPedido.modelo });
     if (xi) {
       // null: se pidieron los tiempos y no vinieron (así lo guardado no los vuelve a pedir).
       const out = { ...xi, motor: xiPedido.motor, ...(opts.tiempos ? { alineacion: xi.alineacion ?? null } : {}) };

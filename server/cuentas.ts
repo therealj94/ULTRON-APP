@@ -25,6 +25,7 @@ import { configTls } from '../lib/ssl-base';
 import { exigirBaseDePrueba } from '../lib/base-de-pruebas';
 import { fijarCuentasAprobadas, personaPorCorreoExacto, type Nivel, type Plataforma } from '../lib/acceso';
 import { DOMINIO_CODIGO, fijarClaveCambiadaEn } from './seguridad';
+import { anotarEstadosDeCuentas, fijarRegistroSuspension } from './autoridad-cuenta';
 
 const scrypt = promisify(crypto.scrypt) as (clave: crypto.BinaryLike, sal: crypto.BinaryLike, largo: number, opciones: crypto.ScryptOptions) => Promise<Buffer>;
 
@@ -244,6 +245,8 @@ export async function recargarCuentas(): Promise<number> {
   );
   claveDesdePorCorreo.clear();
   for (const c of cuentas) if (c.claveDesde) claveDesdePorCorreo.set(c.correo, c.claveDesde);
+  // SEC-04: toda suspensión que se ve aquí corta al instante las sesiones ya emitidas de esa cuenta en este proceso.
+  anotarEstadosDeCuentas(cuentas);
   const ahora = Date.now();
   const vivos = [];
   for (const k of codigos) {
@@ -336,6 +339,8 @@ export async function cuentaSuspendida(correo: string): Promise<boolean> {
   const [f] = await q(`SELECT estado FROM cuentas.cuenta WHERE correo = $1`, [correo]);
   return f?.estado === 'suspendida';
 }
+// SEC-04: la autoridad de cada sesión (server/autoridad-cuenta.ts) pregunta aquí; «hay registro» = hay URL de cuentas.
+fijarRegistroSuspension(cuentaSuspendida, cuentasDisponibles);
 
 /** ¿Este correo puede pedir un enlace de clave? Solo si está EXACTO en el padrón o tiene cuenta activa. */
 export async function puedeRecuperar(correo: string): Promise<boolean> {

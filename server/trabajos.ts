@@ -29,6 +29,7 @@
  *   · `cerrarDecisionPorChat` cuando el «sí» o el «no» llegan por el chat (sin doble efecto).
  *   · `enTurnoConTrabajos` alrededor del turno: lo que se creó en él vuelve en la respuesta (`tareas`).
  */
+import { conEnlacesDeDocumentos, raizPublica } from './enlace-documento';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import crypto from 'node:crypto';
 import type express from 'express';
@@ -248,6 +249,20 @@ const conCorreo = (c: string) => {
   const s = String(c || '').trim().toLowerCase();
   return s.includes('@') || esIdVeta(s) ? s : '';
 };
+
+/* ------------------------------------------------------------------ ganchos: los documentos */
+
+/**
+ * Para los archivos de oficina (server/documentos.ts): el requestId del lote (por turno y contenido: el reintento del
+ * mismo turno retoma el MISMO lote y no entrega dos veces) y la tarea que la respuesta del turno enlaza.
+ */
+export function pedidoDeDocumentos(clave: string): { requestId: string; turnoId?: string } {
+  return pedidoDelTurno('documentos', clave);
+}
+export function anotarTareaDelTurno(reg: RegistroTarea | null | undefined): void {
+  anotar(reg);
+}
+export { conCorreo as duenoDeTareas };
 
 /* ------------------------------------------------------------------ ganchos: la computadora */
 
@@ -892,8 +907,9 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
     const durables = await Promise.all(l.tareas.map((x) => reconciliar(dueno, x, d, t, pc)));
     const enlazadas = new Set(durables.flatMap((x) => (x.enlace?.tipo === 'computadora' ? [x.enlace.id] : [])));
     const primera = !cursor;
+    const raiz = raizPublica(req.get('host'));
     const tareas: TaskSnapshot[] = [
-      ...durables.map((x) => vistaTarea(x, t)),
+      ...durables.map((x) => conEnlacesDeDocumentos(vistaTarea(x, t), dueno, raiz, t)),
       ...(primera ? (d.tareaEnCurso?.listar(dueno) || []).map(deTareaEnCurso) : []),
       ...(primera ? (d.computadora?.misiones(dueno) || []).filter((m) => !enlazadas.has(m.id) && !enlazadas.has(m.tareaId)).map((m) => deComputadora(m, t)) : []),
     ].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
@@ -944,7 +960,7 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
     // Leída por su id: si no estaba en el índice (una de antes de P5 que el tope sacó), se vuelve a anotar.
     if (e.tipo === 'durable') await asegurarEnIndice(dueno, e.reg).catch(() => undefined);
     const v = vista(e);
-    return v ? res.json({ tarea: v, honesto: true }) : noEsta(res);
+    return v ? res.json({ tarea: conEnlacesDeDocumentos(v, dueno, raizPublica(req.get('host'))), honesto: true }) : noEsta(res);
   });
 
   app.get('/api/trabajos/:id/eventos', d.exigirMesa, d.limitar(120), async (req, res) => {
@@ -958,7 +974,7 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
     if (e.tipo !== 'durable') return res.json({ eventos: [], cursor: 0, resync: true, tarea: v, honesto: true });
     const desde = Math.max(0, Math.floor(Number(req.query.desde) || 0));
     const ev = eventosDesde(e.reg, desde);
-    return res.json({ ...ev, tarea: v, honesto: true });
+    return res.json({ ...ev, tarea: conEnlacesDeDocumentos(v, dueno, raizPublica(req.get('host'))), honesto: true });
   });
 
   /** POST /tasks de la sección 17: crear una vez por requestId de la sesión. */
@@ -1155,6 +1171,9 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
       const fresca = await reconciliar(dueno, e.reg, d, ahora());
       return res.status(409).json({ error: 'La tarea cambió mientras editabas. No envié nada: mira cómo quedó.', codigo: 'version', tarea: vistaTarea(fresca, ahora()), honesto: true });
     }
+    // Revisión del 6-oct (bloqueante 1): lo que la ventana registró era el texto de ANTES; deja de valer. La ventana
+    // vuelve a registrar la versión nueva cuando la muestra (y solo esa se aprueba diciendo «sí»).
+    soltarEnPantalla(dueno, e.reg.id);
     anotar(c.tarea);
     return res.json({ tarea: vistaTarea(c.tarea, ahora()), editada: true, honesto: true });
   });
@@ -1195,7 +1214,8 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
     if (!vinc || e.reg.estado !== 'awaiting_approval') return res.json({ registrada: false, honesto: true });
     // Mientras se leía la tarea llegó un aviso más nuevo del mismo aparato (la «oculta»): ese gana.
     if (!sigueSiendoUltimaSecuencia(dueno, aparato, b.seq)) return res.json({ registrada: false, vieja: true, honesto: true });
-    fijarEnPantalla(dueno, { canal: vinc.canal, ambito: vinc.ambito, intento: vinc.intento, huella: vinc.hash, tareaId: e.reg.id, decisionId: dec.id, via: 'pantalla' });
+    const deAparato = typeof aparato === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(aparato.trim()) ? aparato.trim() : '';
+    fijarEnPantalla(dueno, { canal: vinc.canal, ambito: vinc.ambito, intento: vinc.intento, huella: vinc.hash, tareaId: e.reg.id, decisionId: dec.id, via: 'pantalla', ...(deAparato ? { aparato: deAparato } : {}) });
     return res.json({ registrada: true, honesto: true });
   });
 

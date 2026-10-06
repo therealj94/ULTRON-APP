@@ -54,6 +54,8 @@ export type DecisionVista = {
   expired: boolean;
   postponed: boolean;
   postponedUntil?: string;
+  /** La huella del borrador que muestra (servidor nuevo): va con un «sí» hablado (lib/decisionVista.ts). */
+  fingerprint?: string;
 };
 export type EvidenciaVista = { id: string; tipo: string; etiqueta: string; ref?: string };
 export type ResultadoVista = { id: string; summary: string; evidence: EvidenciaVista[]; partial: string[]; pending: string[]; at: string };
@@ -460,7 +462,7 @@ export type Pedir = (ruta: string, init?: { method?: string; body?: string }) =>
 /** Leer una tarea por su id: no es lo mismo «no existe» (404) que «no pude leerla» (503, red, respuesta rara). */
 export type LecturaTareaVista = { estado: 'ok'; tarea: TareaVista } | { estado: 'no-existe' } | { estado: 'error'; status?: number; sinSesion?: boolean };
 
-export type ResultadoAccion = { ok: true; tarea: TareaVista | null; sugerencia?: string; repetida?: boolean } | { ok: false; codigo: string; mensaje: string; tarea?: TareaVista | null };
+export type ResultadoAccion = { ok: true; tarea: TareaVista | null; sugerencia?: string; repetida?: boolean; registrada?: boolean } | { ok: false; codigo: string; mensaje: string; tarea?: TareaVista | null };
 
 const enc = encodeURIComponent;
 
@@ -481,7 +483,8 @@ export function crearClienteTrabajos(pedir: Pedir) {
   const post = async (ruta: string, cuerpo: Record<string, unknown> = {}): Promise<ResultadoAccion> => {
     try {
       const r = await pedir(conEstados(ruta), { method: 'POST', body: JSON.stringify(cuerpo) });
-      if (r.status >= 200 && r.status < 300) return { ok: true, tarea: r.json?.tarea ?? null, ...(r.json?.sugerencia ? { sugerencia: String(r.json.sugerencia) } : {}), ...(r.json?.repetida ? { repetida: true } : {}) };
+      // SEC-01: `registrada` (en-pantalla) viaja tal cual: un `false` es pérdida de autoridad de la ventana (lib/decisionVista.ts).
+      if (r.status >= 200 && r.status < 300) return { ok: true, tarea: r.json?.tarea ?? null, ...(r.json?.sugerencia ? { sugerencia: String(r.json.sugerencia) } : {}), ...(r.json?.repetida ? { repetida: true } : {}), ...(typeof r.json?.registrada === 'boolean' ? { registrada: r.json.registrada } : {}) };
       const codigo = String(r.json?.codigo || r.json?.code || r.status);
       return { ok: false, codigo, mensaje: mensajeDeError(codigo), tarea: r.json?.tarea ?? null };
     } catch {

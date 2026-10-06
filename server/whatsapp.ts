@@ -42,6 +42,7 @@ import type { RetencionAcciones } from './voz-agente';
 import { exito, fallo, incierto, type ResultadoHerramienta } from '../lib/recibo-herramienta';
 import { sesionAbreAura } from './seguridad';
 import { cuentaSuspendida, cuentasDisponibles } from './cuentas';
+import { presentadoEnChat } from './presentacion-decision';
 import { claveConexion } from './veta-entrar';
 import { enviarUnaVez, huellaAprobacion, idMensajeWADeOperacion, operacionDeBorrador, type Reconciliacion, type ResultadoEnvio, type SalidaEnvio } from '../lib/envios';
 import { anotarVencido, ApartadosBorradores, resumenTexto, textoEditado, vencioPorTiempo, type EdicionBorrador } from './borradores-cola';
@@ -126,28 +127,56 @@ function permitidoPorAcceso(q: string, comunidad: boolean | undefined): boolean 
 type ConsultaSuspension = (correo: string) => Promise<boolean>;
 const suspensionDeCuentas: ConsultaSuspension = async (c) => (cuentasDisponibles() ? cuentaSuspendida(c) : false);
 let consultarSuspension: ConsultaSuspension = suspensionDeCuentas;
-/** Lo último que se supo de cada correo (30 s, para no preguntarle a la base en cada pedido de la lista de fotos). */
-const SUSPENDIDAS = new Map<string, { t: number; si: boolean }>();
-const SUSPENSION_VIVE_MS = 30_000;
+/**
+ * Lo último que se supo de cada correo (30 s, para no preguntarle a la base en cada pedido de la lista de fotos).
+ * Revisión del 6-oct (bloqueante 3, «ningún acceso si no puede comprobarse la autorización»): una consulta que FALLA o
+ * tarda deja la marca `fallo` (no el «no suspendida» de antes) y nunca se usa un permiso viejo: ni pasado el TTL ni
+ * después de un fallo.
+ */
+type Visto = { t: number; si: boolean; fallo?: false } | { t: number; fallo: true };
+const SUSPENDIDAS = new Map<string, Visto>();
+export const SUSPENSION_VIVE_MS = 30_000;
+/** Lo más que se espera a la base; pasado esto, «no se pudo saber» (solo los dueños siguen). */
+export const TOPE_SUSPENSION_WA_MS = 3000;
+let topeSuspension = TOPE_SUSPENSION_WA_MS;
 
-/** true / false, o null si no se puede saber ahora (la base no contesta y no hay nada reciente). */
+/** Lo sabido y vigente (una consulta que contestó hace menos del TTL), o null. Un fallo nunca cuenta como sabido. */
+function suspensionVigente(q: string): boolean | null {
+  const v = SUSPENDIDAS.get(q);
+  if (!v || v.fallo === true || !(Date.now() - v.t < SUSPENSION_VIVE_MS)) return null;
+  return v.si;
+}
+
+/** true / false, o null si no se puede saber ahora (la base falló o tardó): NUNCA lo de antes. */
 async function suspendida(q: string): Promise<boolean | null> {
-  const visto = SUSPENDIDAS.get(q);
-  if (visto && Date.now() - visto.t < SUSPENSION_VIVE_MS) return visto.si;
+  const vigente = suspensionVigente(q);
+  if (vigente !== null) return vigente;
+  let reloj: ReturnType<typeof setTimeout> | undefined;
   try {
-    const si = await consultarSuspension(q);
+    const tope = new Promise<'tope'>((ok) => (reloj = setTimeout(() => ok('tope'), topeSuspension)));
+    const si = await Promise.race([Promise.resolve().then(() => consultarSuspension(q)), tope]);
+    if (si !== true && si !== false) throw new Error('sin respuesta');
     if (SUSPENDIDAS.size >= 5000) SUSPENDIDAS.clear();
     SUSPENDIDAS.set(q, { t: Date.now(), si });
     return si;
   } catch {
-    return visto ? visto.si : null;
+    SUSPENDIDAS.set(q, { t: Date.now(), fallo: true });
+    return null;
+  } finally {
+    clearTimeout(reloj);
   }
 }
 
 /** Solo pruebas: otra consulta de suspensión (`null` vuelve a la de server/cuentas.ts). */
-export function _suspensionWhatsappDePrueba(f: ConsultaSuspension | null) {
+export function _suspensionWhatsappDePrueba(f: ConsultaSuspension | null, o: { topeMs?: number } = {}) {
   consultarSuspension = f || suspensionDeCuentas;
+  topeSuspension = o.topeMs ?? TOPE_SUSPENSION_WA_MS;
   SUSPENDIDAS.clear();
+  SUSPENSION_EN_CURSO.clear();
+}
+/** Solo pruebas: envejece lo sabido de la suspensión (como si pasara el tiempo). */
+export function _envejecerSuspensionWhatsapp(ms: number) {
+  for (const v of SUSPENDIDAS.values()) v.t -= ms;
 }
 
 /**
@@ -162,13 +191,70 @@ export async function whatsappPermitido(correo: string, o: { comunidad?: boolean
   const q = normal(correo);
   if (!q || !permitidoPorAcceso(q, o.comunidad)) return false;
   const s = await suspendida(q);
+  // Sin poder saberlo: solo los dueños. Que lo es sale de WHATSAPP_DUENOS (la configuración del despliegue) y del
+  // padrón en memoria, nunca de la base que acaba de fallar; y si la base SÍ contesta «suspendida», tampoco ellos.
   return s === null ? esDuenoWhatsapp(q) : !s;
 }
 
-/** Lo mismo sin esperar (lib/circulo.ts, que no puede): con lo que ya se sabe de la suspensión. Mandar lo vuelve a mirar. */
+/**
+ * Lo que se acepta de la suspensión ya sabida en el camino caliente del turno, mientras se refresca por detrás. Corto a
+ * propósito (bloqueante 3, «ningún acceso si no puede comprobarse la autorización»): solo una consulta que CONTESTÓ, de
+ * hace menos de 2 min, y nunca después de un fallo.
+ */
+const SUSPENSION_RANCIA_MS = 120_000;
+/** Una sola consulta a la base por correo a la vez (el turno la pide desde tres sitios). */
+const SUSPENSION_EN_CURSO = new Map<string, Promise<boolean | null>>();
+function suspendidaCompartida(q: string): Promise<boolean | null> {
+  const ya = SUSPENSION_EN_CURSO.get(q);
+  if (ya) return ya;
+  const p = suspendida(q).finally(() => SUSPENSION_EN_CURSO.delete(q));
+  SUSPENSION_EN_CURSO.set(q, p);
+  return p;
+}
+
+/**
+ * ¿Su WhatsApp, para el TURNO? (ofrecer la herramienta, contar su borrador entre lo que espera su «sí»). José, 6-oct:
+ * «preparado» pasó de 9 a 24 ms de mediana porque cada turno hablado esperaba una consulta a la base de cuentas. Aquí:
+ *  · lo sabido (una consulta que contestó) de hace menos de 30 s vale tal cual (como whatsappPermitido);
+ *  · de hace menos de 2 min: se vuelve a preguntar y manda la respuesta (un fallo es «no se sabe»); solo si la base
+ *    tarda más de `ms` sin fallar, vale la última que contestó. Un fallo registrado nunca vale;
+ *  · sin nada vigente, se espera a lo más `ms`; si la base no contesta a tiempo, como si no se pudiera saber (solo los
+ *    dueños), igual que whatsappPermitido.
+ * Mandar (y aprobar desde el panel) sigue con whatsappPermitido, que espera a la base antes de que salga nada.
+ */
+export async function whatsappPermitidoTurno(correo: string, o: { comunidad?: boolean } = {}, ms = 250): Promise<boolean> {
+  const q = normal(correo);
+  if (!q || !permitidoPorAcceso(q, o.comunidad)) return false;
+  const visto = SUSPENDIDAS.get(q);
+  const edad = visto ? Date.now() - visto.t : Infinity;
+  let s: boolean | null;
+  if (visto && visto.fallo !== true && edad < SUSPENSION_VIVE_MS) s = visto.si;
+  else if (visto && visto.fallo !== true && edad < SUSPENSION_RANCIA_MS) {
+    // Se vuelve a preguntar; si contesta a tiempo (o FALLA), manda eso. Solo si la base tarda sin fallar vale lo de antes.
+    const anterior = visto.si;
+    let reloj: ReturnType<typeof setTimeout> | undefined;
+    const r = await Promise.race([suspendidaCompartida(q), new Promise<'tarde'>((ok) => ((reloj = setTimeout(() => ok('tarde'), ms)), reloj.unref?.()))]).finally(() => clearTimeout(reloj));
+    s = r === 'tarde' ? anterior : r;
+  } else {
+    let reloj: ReturnType<typeof setTimeout> | undefined;
+    s = await Promise.race([suspendidaCompartida(q), new Promise<null>((r) => ((reloj = setTimeout(() => r(null), ms)), reloj.unref?.()))]).finally(() => clearTimeout(reloj));
+  }
+  return s === null ? esDuenoWhatsapp(q) : !s;
+}
+
+/**
+ * Lo mismo sin esperar (lib/circulo.ts, que no puede). Un dueño: con lo que se sabe (salvo «suspendida»). Los demás:
+ * solo con una consulta que contestó «no suspendida» hace menos de SUSPENSION_VIVE_MS; sin ella (vieja, fallida o
+ * nunca hecha) es «no», y se pregunta por detrás para la próxima. Mandar lo vuelve a mirar igual (whatsappPermitido).
+ */
 export function whatsappPermitidoSabido(correo: string): boolean {
   const q = normal(correo);
-  return !!q && permitidoPorAcceso(q, undefined) && SUSPENDIDAS.get(q)?.si !== true;
+  if (!q || !permitidoPorAcceso(q, undefined)) return false;
+  const v = SUSPENDIDAS.get(q);
+  if (esDuenoWhatsapp(q)) return !(v && v.fallo !== true && v.si === true);
+  const vigente = suspensionVigente(q);
+  if (vigente === null) void suspendida(q).catch(() => undefined);
+  return vigente === false;
 }
 
 /** Si la junta o el padrón (o un dueño): puede usar los lugares guardados del puente (WHATSAPP_RESERVA_JUNTA). */
@@ -466,7 +552,8 @@ export function whatsappVinculadoSabido(quien: string): boolean {
  * marca firmada de la sesión del turno, si se tiene.
  */
 export async function whatsappOfrecido(quien: string, ms = 400, o: { comunidad?: boolean } = {}): Promise<boolean> {
-  if (!quien || !whatsappDisponible() || !(await whatsappPermitido(quien, o))) return false;
+  // Lo de la suspensión, como en el resto del turno (whatsappPermitidoTurno): sin esperar a la base si ya se sabe.
+  if (!quien || !whatsappDisponible() || !(await whatsappPermitidoTurno(quien, o))) return false;
   if (esDuenoWhatsapp(quien)) return true;
   return whatsappVinculadoRapido(quien, ms);
 }
@@ -743,6 +830,8 @@ function guardarBorrador(quien: string, ambito: string, b: Borrador): ResultadoH
   const viejas = APARTADOS.quitarDonde(k, mismoChat);
   if (viejas.length && !nota) nota = `Este borrador REEMPLAZA al que esperaba en su panel para el mismo chat («${resumenTexto(viejas[viejas.length - 1].texto)}»): ese ya no se manda. Díselo en una frase.\n`;
   BORRADORES.set(k, { ...b, ...(numero ? { numero } : {}), ...vigencia, huella, ...(reemplazo ? reemplazo : {}) });
+  // SEC-01: su texto exacto sale en la respuesta de este turno (y su tarjeta con la huella): es lo último presentado aquí.
+  presentadoEnChat(quien, ambito, { canal: 'whatsapp', intento: vigencia.intento, huella });
   const para = destinoWhatsapp({ ...b, numero });
   const aviso = reemplazo ? `OJO: este borrador REEMPLAZA al que esperaba para ${reemplazo.reemplazoDe}, que ya NO se manda. Díselo claro: el que espera ahora es para ${para}. Antes de mandarlo le vuelvo a confirmar a quién va.\n` : '';
   return exito(`BORRADOR DE WHATSAPP (NO enviado) para ${para}:\n${b.texto}\n${aviso}${nota}Léeselo tal cual (di a quién va) y pregúntale si lo mandas. Solo se manda si dice que sí; si quiere cambios, haz otro borrador.`, {

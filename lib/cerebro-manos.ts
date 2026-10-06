@@ -38,6 +38,8 @@ export type ManosDelTurno = {
   triaje: boolean;
   /** Con sesión y el servidor listo: investigar en segundo plano (server/investigar.ts). Sin el campo, con la sesión. */
   investigar?: boolean;
+  /** Con sesión: crear archivos de Word, Excel y PDF con la API (server/documentos.ts). Sin el campo, con la sesión. */
+  documentos?: boolean;
 };
 
 type Props = Record<string, unknown>;
@@ -151,11 +153,12 @@ export function herramientasDelTurno(d: ManosDelTurno): Tool[] {
     tool('leer_pagina', 'Leer una página web (una dirección https del hilo o que te dieron).', { url: str('La dirección https.') }, ['url'])
   );
   if (d.sistema) t.push(tool('estado_sistema', 'Ver el estado de los nodos y servicios de Orden Global (solo la junta).', {}));
+  const conDocumentos = d.sesion && d.documentos !== false;
   if (d.computadora)
     t.push(
       tool(
         'computadora',
-        'Usar TU computadora en la nube (Firefox, LibreOffice) para HACER algo en páginas: entrar a un sitio y buscar dentro, comparar páginas, sacar datos de una tabla, llenar un formulario; o cuando digan «usa tu computadora». La hace otro agente que no oyó la conversación: la misión va COMPLETA (sitio, qué hacer y qué traer). En su teléfono se abre sola la vista en vivo. Nunca para pagar, comprar ni poner contraseñas. Para una pregunta que una búsqueda contesta, usa buscar_web.',
+        `Usar TU computadora en la nube (Firefox, LibreOffice) para HACER algo en páginas: entrar a un sitio y buscar dentro, comparar páginas, sacar datos de una tabla, llenar un formulario; o cuando digan «usa tu computadora». La hace otro agente que no oyó la conversación: la misión va COMPLETA (sitio, qué hacer y qué traer). En su teléfono se abre sola la vista en vivo. Nunca para pagar, comprar ni poner contraseñas. Para una pregunta que una búsqueda contesta, usa buscar_web.${conDocumentos ? ' Para CREAR documentos de Word, Excel o PDF usa crear_documento, no la computadora.' : ''}`,
         {
           mision: str('La misión entera, o «parar», «pausar» o «seguir» para la que está en curso.'),
           plan: { type: 'array', items: { type: 'string' }, description: 'De 3 a 6 pasos cortos (ella los ve como lista).' },
@@ -245,11 +248,36 @@ export function herramientasDelTurno(d: ManosDelTurno): Tool[] {
         )
       );
   }
+  if (conDocumentos) t.push(herramientaDocumento());
   if (d.triaje)
     t.push(
       tool('ordenar_mensajes', 'Revisar sus mensajes (WhatsApp y correo), ordenarlos por importancia y sugerir respuestas cortas (borradores). «revisa mis mensajes», «¿qué tengo pendiente?».', { de: str('todo, whatsapp o correo.', { enum: ['todo', 'whatsapp', 'correo'] }) })
     );
   return t;
+}
+
+/**
+ * El esquema que llena el modelo para crear archivos (lib/oficina/spec.ts lo valida y normaliza). Compacto a propósito:
+ * va en cada turno hablado (tests/voz-presupuesto.test.ts) y la forma de `spec` cabe en una línea de su descripción.
+ */
+function herramientaDocumento(): Tool {
+  const spec = {
+    type: 'object',
+    description:
+      'Word/PDF: {titulo, subtitulo?, secciones:[{titulo, parrafos:[…], vinetas?:[…], tabla?:{cabecera:[…], filas:[[…]]}}]} o {carta:{lugar_fecha, destinatario:[…], asunto?, saludo, cuerpo:[…], despedida, firma:[…]}}. Excel: {titulo, cliente?, moneda:"L", partidas:[{concepto, unidad, cantidad, precio_unitario}], impuesto?:{nombre:"ISV", porcentaje:15}, descuento_porcentaje?, total_declarado? (solo si la persona dijo un total), notas?:[…]}: sin importes ni totales (los calcula el servidor). Todo completo y en español.',
+  };
+  return tool(
+    'crear_documento',
+    'Crear archivos de Word (.docx), Excel (.xlsx) o PDF en su cuenta («informe.docx, presupuesto.xlsx y carta.pdf»). TODOS los pedidos en UNA llamada, con sus nombres y el contenido completo escrito por ti; el servidor los genera, los comprueba y deja cada uno para bajar. Di que quedaron SOLO si dice «DOCUMENTOS LISTOS»; con «DOCUMENTOS A MEDIAS», qué quedó y qué falta. No uses la computadora para esto.',
+    {
+      archivos: {
+        type: 'array',
+        description: 'De 1 a 5.',
+        items: { type: 'object', properties: { tipo: str('docx, xlsx o pdf.', { enum: ['docx', 'xlsx', 'pdf'] }), nombre: str('Con su extensión.'), spec }, required: ['tipo', 'nombre', 'spec'] },
+      },
+    },
+    ['archivos']
+  );
 }
 
 /** Reglas cortas de las manos para el system del cerebro con herramientas (en lugar del protocolo de líneas). */
@@ -415,6 +443,14 @@ export function lineaDeHerramienta(nombre: string, input: Record<string, any> = 
     }
     case 'ordenar_mensajes':
       return pedido('triaje', i.de === 'whatsapp' || i.de === 'correo' ? i.de : 'revisar');
+    case 'crear_documento': {
+      // Uno suelto ({tipo, nombre, spec}) o varios ({archivos: […]}); la validación de verdad es del servidor (lib/oficina/spec.ts).
+      const archivos = Array.isArray(i.archivos) ? i.archivos : i.tipo ? [{ tipo: i.tipo, nombre: i.nombre, spec: i.spec ?? i }] : [];
+      if (!archivos.length) return null;
+      // Una sola línea: JSON.stringify escapa los saltos; U+2028/U+2029 cortan la línea para una expresión regular.
+      const json = JSON.stringify({ archivos: archivos.slice(0, 5) }).replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
+      return json.length <= 300_000 ? pedido('documento', json) : null;
+    }
     default:
       return null;
   }
@@ -439,7 +475,20 @@ const PROMESA = new RegExp(
   'i'
 );
 /** Dar por hecho («ya lo puse», «te lo mandé»): cuenta como de ESTE turno salvo que la frase diga que fue antes. */
-const DADO_POR_HECHO = /\b(ya )?(te |lo |la )?(lo |la )?(puse|programe|agende|abri|mande|envie|llame)\b/i;
+const DADO_POR_HECHO = new RegExp(
+  [
+    /\b(ya )?(te |lo |la )?(lo |la )?(puse|programe|agende|abri|mande|envie|llame)\b/.source,
+    // Revisión 7 (M1): lo que da por hecho un mensaje a otra persona sin decir «mandé» («Ya le respondí a Bruno», «le
+    // contesté», «le escribí», «le avisé», «le pasé tu mensaje», «se lo reenvié», «ya le llegó», «Bruno ya lo recibió»,
+    // «se fue el mensaje», «Ana ya tiene tu correo», «ya despaché el correo») o una gestión hecha («ya hice la
+    // reservación»). Solo con «le / les / se lo» (a otro): «ya te escribí» o «te avisé» a ella misma son charla.
+    /\b(le|les|se lo|se la|se los|se las) (respondi|conteste|escribi|avise|reenvie|hable|pase|comparti)\b/.source,
+    /\bya (respondi|conteste|reenvie|despache)\b|\b(lo|la|los|las) (reenvie|despache|comparti)\b|\bdespache\b/.source,
+    /\ble llego\b|\bya (lo|la|los|las) recibio\b|\bya tiene tu (mensaje|correo|whatsapp|recado)\b|\bse fue (el|tu|su) (mensaje|correo|whatsapp)\b/.source,
+    /\b(hice|ya hice) (la|el|tu|su) (reserva\w*|pedido|pago|cita|transferencia)\b|\breserve\b/.source,
+  ].join('|'),
+  'i'
+);
 /**
  * Lo que la ubica ANTES de este turno (revisión del 5-oct, GRAVE-2): «Sí, ya te lo mandé hace rato» sobre un correo
  * que de verdad salió en otro turno no es una promesa nueva ni algo que este turno deba haber hecho; antes se borraba
@@ -503,15 +552,78 @@ function esDeAntes(frase: string): boolean {
   void resto;
   return true;
 }
+/**
+ * Lo que AU-RA describe de su cámara en la MISMA respuesta («te leo lo que veo: una persona sonriendo», «te digo lo que
+ * hay»): lo hace ahí mismo, no promete nada. José, 6-oct (APK con la cámara prendida): «te leo…» contaba como promesa
+ * de leer correos o chats y lanzaba una re-pregunta de 3–4 s antes de hablar.
+ */
+const DESCRIBE_ESCENA = /\b(te|le)\s+(leo|digo|cuento|describo|reviso)\s+(lo que (veo|hay|tengo|alcanzo a ver|estoy viendo)|la escena|como te ves|quien (esta|hay)|que hay)\b/gi;
+
+/**
+ * Lo que hace SOLO el teléfono, con sus frases y sin pasar por el servidor (mobile/src/lib/camaraModo.ts y
+ * vistaEnVivo.ts, las caras y las voces): prender o apagar la cámara, la trasera o la frontal, «Lo que veo», aprender o
+ * reconocer caras y voces. Ninguna herramienta del cerebro lo hace: si lo da por hecho, no hay nada que pedirle en una
+ * segunda vuelta (era una ida y vuelta entera al modelo, 3–4,6 s, para terminar en «no usó ninguna»); se corrige aquí
+ * con la frase que sí sirve. Si la misma frase habla de algo que una herramienta sí hace (un correo, un recordatorio,
+ * una llamada…), cuenta como siempre.
+ */
+const DEL_TELEFONO = /\b(camara|camaras|lo que veo|lo que ves|como me ves|la vista|tu cara|las caras|caras|tu rostro|tu voz|mi voz|las voces|la voz de)\b/;
+// Revisión 7 (M2): también los verbos de mandar algo a alguien («avísale a Bruno», «le voy a escribir», «mándale»,
+// «contéstale»): con la cámara en la misma frase, el pedido de mensaje sigue siendo de una herramienta.
+const CON_HERRAMIENTA = /\b(correo|whatsapp|mensaje|chat|recordatorio|alarma|llam\w*|marc\w*|pantalla|ajustes|busc\w*|investig\w*|mision|tarea|pago|cartera|avis\w*|escrib\w*|mand\w*|envi\w*|contest\w*|respond\w*|reenvi\w*|redact\w*|borrador|recuerd\w*|record\w*|agend\w*|program\w*|reserv\w*|despach\w*)\b/;
+export function delTelefono(frase: string): boolean {
+  const p = plano(frase);
+  return DEL_TELEFONO.test(p) && !CON_HERRAMIENTA.test(p.replace(DEL_TELEFONO, ' '));
+}
+
+/* ── Revisión 7 (LANG-01): lo que NO afirma que AU-RA hizo algo ─────────────────────────────────────────────────────
+ * La corrección local reescribía frases verdaderas: «No le mandé nada», «Dijo que lo llame mañana», «Ana me pidió que le
+ * mande la factura», «Nunca abrí tu correo» salían como «Eso todavía no lo hice: desde aquí no tengo cómo». Antes de
+ * buscar promesas se tapa (con espacios, del mismo largo) lo que no es una afirmación de AU-RA:
+ *   · la negación, hasta el fin de su cláusula («No le mandé nada», «Nunca abrí tu correo», «Ni le escribí ni lo
+ *     llamé»; en «No te preocupes, ya se lo mandé» lo de después de la coma sigue contando);
+ *   · el discurso referido de otra persona («dijo / dice / pidió / quiere / contó / escribió … que …», «… según me dijo
+ *     Ana»): lo que va después es lo que dijo o quiere ella, no lo que hizo AU-RA. «Te dije que ya lo mandé» (yo) sí cuenta;
+ *   · lo citado («…», "…");
+ *   · lo que se entrega ahí mismo («Te mando el resumen: son 4 correos nuevos», «te leo: …»).
+ * Lo que sí afirma («Listo, ya se lo mandé a Bruno», «Te llamo en 30 segundos») se sigue corrigiendo; lo hecho de verdad
+ * lo dice el recibo de la herramienta (`debeCorregirSinHerramienta`, por `pasos`).
+ */
+const tapar = (m: string) => ' '.repeat(m.length);
+const NEGACION = /\b(no|nunca|jamas|tampoco|ni|todavia no|aun no|sin)\b[^,;:.!?«»"“”]*?(?=\s*(?:[,;:.!?]|\bpero\b|\bporque\b|\bsino\b|\by (?:ya|luego|despues|ahora)\b|$))/gi;
+const REFERIDO = /\b(dijo|dice|dicen|dijeron|pidio|pide|piden|pidieron|quiere|quieren|queria|querian|conto|cuenta|cuentan|escribio|escribe|escribieron|avisa|aviso que nos|pregunta|preguntaba|prefiere|espera|necesita|sugirio|recomendo|insiste|insistio|comenta)\s+(que|si)\b[^.;!?]*/gi;
+const SEGUN = /[^.;!?]*\bsegun (me |te |le |nos )?(dijo|dice|dicen|conto|cuenta|escribio|comento|aviso)\b[^.;!?]*/gi;
+const ENTREGA_AHI = /\b(te|le) (mando|paso|leo|cuento|digo|resumo|doy|dejo)\b[^.:!?¿]{0,40}:(?=\s*\S)/gi;
+export function sinLoQueNoAfirma(planoTexto: string): string {
+  return sinCitas(planoTexto).replace(SEGUN, tapar).replace(REFERIDO, tapar).replace(NEGACION, tapar).replace(ENTREGA_AHI, tapar);
+}
+
+/**
+ * ¿El trozo DA POR HECHA una acción de AU-RA en este turno («Ya le respondí a Bruno», «Listo, le avisé», «ya hice la
+ * reservación»)? Para retenerlo en el stream hasta que el recibo de la herramienta lo confirme (revisión 7, LANG-01: si
+ * hay que corregirlo, antes de que suene). Sin la negación, lo referido ni lo citado (`sinLoQueNoAfirma`); lo de antes
+ * de este turno («ayer», «hace rato») no.
+ */
+export function daPorHecho(trozo: string): boolean {
+  const limpio = sinLoQueNoAfirma(String(trozo || '').normalize('NFD').replace(/[̀-ͯ]/g, '')).replace(/¿[^?]*\?/g, ' ');
+  return frases(limpio).some((f) => DADO_POR_HECHO.test(f) && !esDeAntes(f));
+}
+
 export function prometeSinHacer(texto: string): boolean {
+  // Revisión 7 (LANG-01): sin la negación, lo referido, lo citado ni lo que se entrega ahí mismo (`sinLoQueNoAfirma`).
+  const limpio = sinLoQueNoAfirma(
+    String(texto || '')
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+  );
   // También lo que lib/promesas.ts reconoce como trabajo o aviso prometido («voy a investigar», «ahí voy»,
   // «empiezo ya», «te aviso cuando termine»): José, 4-oct. Un estado de su computadora («ya está encendida»)
   // no: pedirle «la herramienta de lo que dijiste» ahí encargaría una misión sin tarea; eso lo corrige la guarda.
-  if (clasificarPromesas(texto).tipos.some((t) => t === 'trabajo' || t === 'aviso')) return true;
-  const plano = String(texto || '')
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .replace(/\[[^\]]{0,30}\]/g, ' ');
+  if (clasificarPromesas(limpio).tipos.some((t) => t === 'trabajo' || t === 'aviso')) return true;
+  const plano = limpio
+    .replace(/\[[^\]]{0,30}\]/g, ' ')
+    // Lo que describe de su cámara en esta misma respuesta («te leo lo que veo: …») no es una promesa.
+    .replace(DESCRIBE_ESCENA, ' ');
   // Una oferta («¿Te busco recetas?», «¿Quieres que te llame?») no es una promesa; «¿Lo envío?» sí: dice
   // que el mensaje ya está listo.
   const sinOfertas = plano.replace(/¿[^?]*\?/g, (q) => (/¿\s*(se\s+)?(lo|la)\s+(envio|mando)\b/i.test(q) ? q : ' '));
@@ -541,7 +653,7 @@ export function notaDeCumplir(idioma: 'es' | 'en' = 'es'): string {
  */
 const QUE_PROMETE: Array<[RegExp, string[]]> = [
   [/\b(recuerd|recordatorio|record|alarma|desperta|timer|program|agend|remind)/, ['recordatorio', 'llamarme']],
-  [/\b(mand|envi|escrib|redact|borrador|whatsapp|correo|mensaje|send|text|message|email)/, ['chat_aura', 'whatsapp', 'correo', 'circulo']],
+  [/\b(mand|envi|escrib|redact|borrador|whatsapp|correo|mensaje|send|text|message|email|respond|contest|reenvi|despach|compart|recibi)|\ble llego\b|\b(les?|se lo|se la) (avis|pase)/, ['chat_aura', 'whatsapp', 'correo', 'circulo']],
   [/\b(abr|open|pantalla|ajustes)/, ['abrir_pantalla', 'abrir_cartera', 'chat_aura']],
   [/\b(busc|investig|averig|consult|indag|rastre|recopil|search|research|look|find|dig)/, ['buscar_web', 'investigar', 'buscar_en_chats', 'leer_pagina', 'computadora']],
   [/\b(revis|lee|leer|leo|leyendo|read|review|check|chec)/, ['correo', 'whatsapp', 'leer_mensajes', 'ordenar_mensajes', 'leer_pagina', 'buscar_web', 'mision']],
@@ -551,6 +663,8 @@ const QUE_PROMETE: Array<[RegExp, string[]]> = [
   [/\b(guard|anot|apunt|save|note)/, ['recordar_de_mi', 'mision', 'tarea']],
   [/\b(pag|cartera|wallet|saldo)/, ['preparar_pago', 'abrir_cartera', 'cartera_saldo']],
   [/\b(mision|tarea)/, ['mision', 'tarea']],
+  // Los archivos de oficina (server/documentos.ts): «voy a escribir el informe en Word», «te mando el presupuesto en Excel».
+  [/\b(documentos?|informe|presupuesto|cotizacion|docx|xlsx|hoja de calculo)\b/, ['crear_documento']],
 ];
 
 /**
@@ -569,7 +683,7 @@ function herramientasPara(texto: string): Set<string> {
   for (const [re, hs] of QUE_PROMETE) if (re.test(p)) for (const h of hs) out.add(h);
   // Llamar: «te llamo» / «llámame» es que AU-RA la llame a ella; «le marco a Beto», llamar a otro.
   if (LLAMARLA.test(p)) out.add('llamarme');
-  else if (/\b(llam|marc|timbr|call)/.test(p)) for (const h of ['llamar_contacto', 'circulo']) out.add(h);
+  else if (/\b(llam|marc|timbr|call)|\bles? hable\b/.test(p)) for (const h of ['llamar_contacto', 'circulo']) out.add(h);
   return out;
 }
 
@@ -579,13 +693,17 @@ function frasesQuePrometen(texto: string): string[] {
 }
 
 /** Las herramientas de `disponibles` que cumplirían lo que `dicho` promete (vacío = ninguna: no hay segunda vuelta). */
-export function herramientasQueCumplen(dicho: string, disponibles: readonly string[], contexto: { mensaje?: string; anterior?: string } = {}): string[] {
+export function herramientasQueCumplen(dicho: string, disponibles: readonly string[], contexto: { mensaje?: string; anterior?: string; borradorPendiente?: boolean } = {}): string[] {
   const hay = new Set(disponibles);
   const pedidas = new Set<string>();
   const marcadas = frasesQuePrometen(dicho);
   const pedido = herramientasPara(`${contexto.mensaje || ''}\n${contexto.anterior || ''}`);
+  const excusada = (f: string) => fraseSinSegundaVuelta(f, contexto);
+  const vivas = marcadas.filter((f) => !excusada(f));
+  // Todo lo que «prometía» era del teléfono o del borrador que ya espera: no hay herramienta que pedirle.
+  if (marcadas.length && !vivas.length) return [];
   // Si la promesa solo se ve en el texto entero (partida entre frases), se mira el texto entero.
-  for (const f of marcadas.length ? marcadas : [String(dicho || '')]) {
+  for (const f of marcadas.length ? vivas : excusada(String(dicho || '')) ? [] : [String(dicho || '')]) {
     let hs = herramientasPara(f);
     // «Te aviso cuando termine»: lo que avisa, si lo que se pidió es algo que sigue después (investigar, recordar…).
     if (AVISA.test(plano(f))) for (const h of RESPALDAN_AVISO) if (pedido.has(h)) hs.add(h);
@@ -618,12 +736,14 @@ export async function cumplirLoDicho(o: {
   mensaje?: string;
   /** Lo último que dijo AU-RA (un «sí» a su propuesta es pedir eso). */
   anterior?: string;
+  /** Un borrador (de correo, WhatsApp o el chat de la app) espera su «sí»: lo que se dice de él no se vuelve a pedir. */
+  borradorPendiente?: boolean;
   repreguntar: () => AsyncIterable<PiezaManos>;
   /** Una herramienta pedida en la segunda vuelta; true si se pudo usar. */
   usar: (h: { nombre: string; input: Record<string, unknown> }) => boolean;
 }): Promise<CumplirLoDicho> {
   const t0 = Date.now();
-  const candidatas = herramientasQueCumplen(o.dicho, o.disponibles, { mensaje: o.mensaje, anterior: o.anterior });
+  const candidatas = herramientasQueCumplen(o.dicho, o.disponibles, { mensaje: o.mensaje, anterior: o.anterior, borradorPendiente: o.borradorPendiente });
   if (!candidatas.length) return { correccion: 'local', cumplida: false, candidatas, ms: 0 };
   let cumplida = false;
   let texto = '';
@@ -665,7 +785,36 @@ function frasesConCitas(linea: string): Array<{ texto: string; propia: string }>
  * («¿Lo mando?», «¿Se lo envío así?»), leerlo («te lo leo otra vez») o señalarlo («ahí está el borrador»). Eso es verdad
  * mientras el borrador espera; «ya lo mandé» o «salió» no (el borrador solo sale con su «sí»).
  */
-const DEL_BORRADOR = /¿[^?]*\b(lo|la|los|las)\s+(mando|envio|mandamos|enviamos|mande|envie)\b[^?]*\?|\b(te|se)\s+(lo|la)\s+(leo|releo|repito|vuelvo a leer)\b|\bborrador\b|¿[^?]*\b(send|read) it\b[^?]*\?|\bthe draft\b/;
+/**
+ * Revisión 7 (M1): antes cada patrón de «espera su sí» perdonaba la frase hasta el punto (`[^.?!]*`), y con eso pasaban
+ * promesas falsas enteras («Ya le respondí a Bruno, si me dices que sí le mando otro»). Ahora se perdona solo la
+ * cláusula de la aprobación —la condición y, como mucho, «lo mando / te lo leo / y sale»—; lo demás de la frase pasa por
+ * `prometeSinHacer` completo («le mando otro» sigue siendo una promesa).
+ */
+const Y_SALE = /(\s*[,;:]?\s*(y\s+)?(yo\s+)?((se|te|le)\s+)?(lo|la|los|las)\s+(mando|envio|despacho|leo|releo)\b|\s*[,;:]?\s*(y\s+)?(sale|se va|se manda|se envia)\b)?/.source;
+const DEL_BORRADOR = new RegExp(
+  [
+    /¿[^?]*\b(lo|la|los|las)\s+(mando|envio|mandamos|enviamos|mande|envie)\b[^?]*\?|\b(te|se)\s+(lo|la)\s+(leo|releo|repito|vuelvo a leer)\b|\bborrador\b|¿[^?]*\b(send|read) it\b[^?]*\?|\bthe draft\b/.source,
+    // Revisión del 6-oct (la ventana de decisión): lo que sale CUANDO ella lo apruebe es verdad mientras el borrador
+    // espera («si me dices que sí, lo mando», «tócale Sí y sale», «está en tu ventana de decisión»).
+    /\b(si|cuando|en cuanto|apenas|nomas|nada mas)\b[^.?!,;]{0,40}?\b(dices|digas|toques|tocas|apruebes|apruebas|confirmes|confirmas)\b(\s+que\s+si\b|\s+si\b)?/.source + Y_SALE,
+    /\b(toca|tocale|tocas|toques|dale|di|dime|apruebalo|apruebala)\b[^.?!,;]{0,25}?\bsi\b/.source + Y_SALE,
+    /\b((esta|queda|quedo|lo tienes|la tienes|lo deje|la deje|te lo deje|te la deje)\s+)?(ahi\s+)?en (tu|la) ventana de decision\b|\bventana de decision\b/.source,
+    /\b(if|when|once) you (say|tap|approve|confirm)( yes| it)?\b(,?\s*(i'?ll|i will) send it\b)?/.source,
+  ].join('|')
+);
+
+/**
+ * Una frase que «promete» pero no merece una segunda vuelta al modelo (revisión del 6-oct: re-preguntas de 3–4,6 s en la
+ * voz que terminaban en «no usó ninguna»): lo que hace solo el teléfono (la cámara, «Lo que veo», caras, voces; también
+ * «va, la abro» cuando lo que pidió fue eso) y, con un borrador esperando su «sí», lo que se dice de ESE borrador
+ * («¿Lo mando?», «tócale Sí en tu ventana y sale»). Lo demás se le vuelve a pedir como siempre.
+ */
+function fraseSinSegundaVuelta(f: string, o: { mensaje?: string; borradorPendiente?: boolean }): boolean {
+  if (delTelefono(f)) return true;
+  if (o.mensaje && delTelefono(o.mensaje) && !CON_HERRAMIENTA.test(plano(f))) return true;
+  return !!o.borradorPendiente && deEseBorrador(f);
+}
 const YA_SALIO = /\b(mande|envie|mandado|enviado|salio|sent)\b/;
 function deEseBorrador(frase: string): boolean {
   const p = plano(frase);
@@ -725,7 +874,7 @@ export function debeCorregirSinHerramienta(o: {
   if (!p || p.cumplida || o.usoManos || p.nada) return false;
   const falsas = frasesACorregir(o.dicho, { borradorPendiente: o.borradorPendiente });
   if (!falsas.length) return false;
-  const cumplen = new Set([...p.candidatas, ...herramientasQueCumplen(falsas.join(' '), TODAS_LAS_MANOS, { mensaje: o.mensaje })]);
+  const cumplen = new Set([...p.candidatas, ...herramientasQueCumplen(falsas.join(' '), TODAS_LAS_MANOS, { mensaje: o.mensaje, borradorPendiente: o.borradorPendiente })]);
   return !o.pasos.some((x) => x.estado === 'succeeded' && pasoQueCumple(String(x.herramienta || ''), cumplen));
 }
 
@@ -737,7 +886,11 @@ export function debeCorregirSinHerramienta(o: {
  * Las líneas ACCION_APP / PEDIR_HERRAMIENTA y la etiqueta de ánimo del principio no se tocan, ni lo citado (el texto
  * de un borrador que se le lee). Con `borradorPendiente`, tampoco lo que se dice de ese borrador («¿Lo mando?»): MEDIO-C.
  */
-export function corregirPromesaSinHerramienta(texto: string, idioma: 'es' | 'en' = 'es', o: { sinHerramienta?: boolean; borradorPendiente?: boolean } = {}): { texto: string; cambiada: boolean } {
+export function corregirPromesaSinHerramienta(
+  texto: string,
+  idioma: 'es' | 'en' = 'es',
+  o: { sinHerramienta?: boolean; borradorPendiente?: boolean; mensaje?: string } = {}
+): { texto: string; cambiada: boolean } {
   // «Desde aquí no tengo cómo» solo es verdad si ninguna herramienta del turno lo hace (`correccion: 'local'`); si la
   // había y no la usó al pedírsela, se dice que no se hizo, sin inventar que no se puede (revisión del 5-oct, GRAVE-2).
   const sinHerramienta = o.sinHerramienta !== false;
@@ -746,17 +899,21 @@ export function corregirPromesaSinHerramienta(texto: string, idioma: 'es' | 'en'
   const lineas = original.slice(emo.length).split('\n');
   const esMaquina = (l: string) => /^\s*(ACCION_APP|PEDIR_HERRAMIENTA)\s*:/i.test(l);
   let quito = false;
+  /** Todo lo quitado era de la cámara, las caras o las voces (lo hace el teléfono con su frase). */
+  let soloDelTelefono = true;
   const dichas = lineas
     .filter((l) => !esMaquina(l))
     .map((l) =>
       frasesConCitas(l)
-        .filter(({ propia }) => {
+        .filter(({ propia, texto: tal }) => {
           // Lo de trabajo o aviso lo corrige la guarda del final con sus palabras («Todavía no lo empecé…»).
           if (clasificarFrase(propia).some((t) => t === 'trabajo' || t === 'aviso')) return true;
           if (!prometeSinHacer(propia)) return true;
           // El borrador que espera su «sí»: preguntar si se manda o leerlo es verdad (MEDIO-C).
           if (o.borradorPendiente && deEseBorrador(propia)) return true;
           quito = true;
+          // Con lo citado (el nombre de la vista, «Lo que veo») a la vista: también dice de qué habla.
+          if (!fraseSinSegundaVuelta(tal, { mensaje: o.mensaje })) soloDelTelefono = false;
           return false;
         })
         .map((f) => f.texto)
@@ -765,7 +922,13 @@ export function corregirPromesaSinHerramienta(texto: string, idioma: 'es' | 'en'
     );
   if (!quito) return { texto: original, cambiada: false };
   const resto = dichas.filter(Boolean).join('\n').replace(/[ \t]{2,}/g, ' ').trim();
-  const honrado = sinHerramienta
+  // Revisión del 6-oct: la cámara, «Lo que veo», las caras y las voces las maneja el teléfono con sus frases (ninguna
+  // herramienta del cerebro): se dice cómo pedírselo en vez de «desde aquí no tengo cómo».
+  const honrado = soloDelTelefono
+    ? idioma === 'en'
+      ? "I didn't do that: your phone does it when you say it plainly («turn on the camera», «back camera», «show me what you see») or from More."
+      : 'Eso no lo hice yo: lo hace tu teléfono cuando se lo dices tal cual («enciende la cámara», «cámara trasera», «muéstrame lo que ves», «aprende mi voz») o desde Más.'
+    : sinHerramienta
     ? idioma === 'en'
       ? "I haven't done that: I can't do it from here yet."
       : 'Eso todavía no lo hice: desde aquí no tengo cómo.'

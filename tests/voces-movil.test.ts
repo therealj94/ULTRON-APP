@@ -358,7 +358,9 @@ describe('Voces (teléfono): un «sí» corto después de otra voz (revisión 7.
     assert.equal(campoQuienHabla({ id: '' }), undefined);
     assert.equal(campoQuienHabla('Ana'), undefined);
     assert.equal(campoQuienHabla(undefined), undefined);
-    assert.equal(campoQuienHabla({ id: 'x'.repeat(80) })!.id.length, 40);
+    assert.equal((campoQuienHabla({ id: 'x'.repeat(80) }) as { id: string }).id.length, 40);
+    // Revisión del 6-oct (bloqueante 2): o solo `desconocida` (modo invitado), nada más.
+    assert.deepEqual(campoQuienHabla({ desconocida: true, nombre: 'x' }), { desconocida: true });
   });
 });
 

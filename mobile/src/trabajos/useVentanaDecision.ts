@@ -40,6 +40,7 @@ import {
 } from '../lib/decisionesMesa';
 import { respuestaPc, type TareaPc } from '../compa/computadora';
 import { clienteTrabajos, marcarVentanaAbierta, tareasDelUltimoTurno, type Trabajos } from './useTrabajos';
+import { campoDecisionVista, fijarDecisionVista, trasAvisoPantalla } from '../lib/decisionVista';
 
 /** Lo que el turno acaba de preguntar cuenta como «primero» este rato (después, la fila vuelve a ser por antigüedad). */
 const DEL_TURNO_MS = 10 * 60_000;
@@ -158,15 +159,25 @@ export function useVentanaDecision(o: Opciones) {
   // tarde (revisión 7.5, MENOR 2; lib/trabajos.ts enPantalla).
   const visto = abierta ? tareaEnPantalla(actual, edicion) : null;
   const vistoClave = visto ? actual!.clave : '';
+  // Revisión del 6-oct (bloqueante 1): lo que se ve (tarea, decisión y huella) va con el próximo turno HABLADO; mientras
+  // edita, o cerrada, nada (lib/decisionVista.ts, lib/api.ts turnoBody).
+  const huellaVista = visto?.decision?.fingerprint || '';
+  useEffect(() => {
+    fijarDecisionVista(visto ? campoDecisionVista(visto) : null);
+    return () => fijarDecisionVista(null);
+  }, [vistoClave, huellaVista]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!visto) return;
     const t = visto;
     void clienteTrabajos.enPantalla(t, true).then((r) => {
       // La decisión ya cambió (409 decision-vieja con la de ahora): se muestra la nueva.
       if (!r.ok && r.tarea) o.trabajos.aplicar(r.tarea);
+      // SEC-01: no quedó registrada (no espera un borrador, o llegó tarde): el «sí» no va atado a esto.
+      trasAvisoPantalla(campoDecisionVista(t), r);
     });
-    // Renovar no la revive si AU-RA preguntó otra cosa después (la pregunta más reciente es esa).
-    const cada = setInterval(() => void clienteTrabajos.enPantalla(t, true, { renovar: true }), RENOVAR_PANTALLA_MS);
+    // Renovar no la revive si AU-RA preguntó otra cosa después (la pregunta más reciente es esa). SEC-01: si la renovación
+    // dice `registrada: false`, se pierde la autoridad (se suelta el campo), no se toma como éxito.
+    const cada = setInterval(() => void clienteTrabajos.enPantalla(t, true, { renovar: true }).then((r) => trasAvisoPantalla(campoDecisionVista(t), r)), RENOVAR_PANTALLA_MS);
     return () => {
       clearInterval(cada);
       void clienteTrabajos.enPantalla(t, false);

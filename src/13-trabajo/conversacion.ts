@@ -29,6 +29,8 @@ export type EntradaAura = {
   trazaId?: string;
   /** Las tareas durables que dejó este turno (AUR08): la burbuja las enlaza aunque el panel esté cerrado. */
   tareas?: RefTarea[];
+  /** Lo que está haciendo AHORA mientras trabaja (mobile/src/compa/narrador.ts lineaDePantalla); se va con la respuesta. */
+  progreso?: string;
 };
 export type EntradaAccion = {
   id: string;

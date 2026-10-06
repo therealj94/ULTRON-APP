@@ -15,7 +15,10 @@
  *    voto para esa cara (`Seguidor`). El nombre sale con 2 de 3 votos. Ritmo: enseguida al llegar alguien,
  *    ~2,5 s con la vista «Lo que veo» abierta o con alguien sin nombre, ~8 s si no (antes, cada 20 s).
  *    Sin ML Kit (respaldo del servidor), la foto de cada subida va entera al motor (`recibirFotoRespaldo`).
- *  · Aprende con el uso: con un reconocimiento muy seguro y ya confirmado, a veces suma esa toma a la
+ *    El nombre sale enseguida con UN reconocimiento muy seguro (seguimiento.ts RAPIDO; José, 6-oct: «tarda en
+ *    reconocer»). Mientras la mesa piensa o habla (vista cerrada) no se reconoce, salvo a quien llega: así la voz no se
+ *    queda atrás (lib/camaraModo.ts ritmoFotos).
+ *  · Aprende con el uso: con un reconocimiento muy seguro y ya confirmado por 2 votos, a veces suma esa toma a la
  *    persona (servidor, con tope y quitando la más redundante): se adapta a la luz y a los lentes.
  *  · A un conocido se le saluda una vez por sesión, y el cerebro recibe «Reconozco a Ana (tu esposa)».
  */
@@ -24,6 +27,7 @@ import { Alert } from 'react-native';
 import { tr } from '../i18n';
 import { loadSettings, saveSettings } from '../lib/storage';
 import { miga } from '../lib/reporte';
+import { estadisticaCamara } from '../lib/estadisticaCamara';
 import type { FrameGrabber } from '../components/CamaraVision';
 import type { Lado } from '../lib/vistaEnVivo';
 import { MotorCaras, type ControlMotorCaras } from './MotorCaras';
@@ -37,7 +41,6 @@ import {
   debeAprender,
   elegirMuestras,
   esConsentimiento,
-  frasePresentes,
   identificar,
   masGrande,
   pedidoDeCaras,
@@ -46,7 +49,9 @@ import {
   type CaraVista,
   type Reconocida,
 } from './caras';
-import { Seguidor, VistoRespaldo, tocaReconocer, tocaReconocerRespaldo, type CajaN } from './seguimiento';
+import { CONFIRMAR, Seguidor, VistoRespaldo, tocaReconocer, tocaReconocerRespaldo, type CajaN } from './seguimiento';
+import { GeneracionCaras, analizarVigente } from './cercoReconocer';
+import { fraseEscenaCaras } from './escenaCaras';
 import { guardarCara, listarCaras, olvidarCara, olvidarTodasLasCaras, sumarMuestrasCara } from './api';
 
 /** Lo que vale lo reconocido para el cerebro (visto hace menos que esto). */
@@ -70,10 +75,23 @@ type Opciones = {
   decir: (texto: string, emocion?: 'feliz' | 'preocupado' | 'curioso' | 'neutral') => Promise<void>;
   /** Enciende la cámara «solo por ahora» (pide el permiso si falta). false si no se pudo. */
   encenderCamara: () => Promise<boolean>;
+  /** La mesa piensa o habla: con la vista cerrada no se reconoce (salvo a quien llega). */
+  ocupada?: () => boolean;
 };
 
-/** La foto del bucle de la cámara (base64) con las caras que ML Kit vio en ELLA, por pista. */
-export type FotoCaras = { b64: string; cajas: { pista: number; caja: CajaN }[]; ts: number };
+/**
+ * La foto del bucle de la cámara (base64) con las caras que ML Kit vio en ELLA, por pista. `tam` (cámara en
+ * vivo, components/CamaraVivo.tsx): la foto es un RECORTE de la cara, así que su caja no dice qué tan grande
+ * se veía; `tam` es su alto en la escala de las fotos de 720 px, para «aprender con el uso» (debeAprender).
+ */
+export type FotoCaras = {
+  b64: string;
+  cajas: { pista: number; caja: CajaN; tam?: number }[];
+  /** Hora de CAPTURA del cuadro (no de llegada). */
+  ts: number;
+  /** CAM-C: ¿sigue valiendo la cámara de donde salió? (época/lado de CamaraVivo); se mira al volver del motor. */
+  vigente?: () => boolean;
+};
 
 export type ApiCaras = {
   activas: boolean;
@@ -87,6 +105,8 @@ export type ApiCaras = {
   manejar: (dicho: string) => Promise<boolean>;
   /** Para la escena del turno: «Reconozco a …» (vacío si no hay nada fresco). */
   escena: () => string;
+  /** Revisión 7 (G2): cuándo se vio a la dueña confirmada por votos hace ≤ 10 s (0 si no): continuidad de la voz. */
+  duenaVistaEn: () => number;
   /** Las caras de la cámara entre fotos, con su nombre votado (lo actualiza CamaraVision, lo dibuja «Lo que veo»). */
   seguidor: Seguidor;
   /** Reconocer está andando (activado, motor listo y alguien guardado): sin esto, nadie tiene nombre. */
@@ -99,6 +119,10 @@ export type ApiCaras = {
   quiereFotoRespaldo: (ts: number) => boolean;
   /** La foto del respaldo, sin cajas: el motor busca las caras; lo que sale va a la escena un rato. */
   recibirFotoRespaldo: (f: { b64: string; ts: number }) => void;
+  /** El motor está analizando (la cámara en vivo no le pide otro recorte hasta que termine). */
+  ocupado: () => boolean;
+  /** La mesa piensa o habla: la cámara en vivo no repasa a quien ya tiene nombre (solo reconoce a quien llega). */
+  mesaOcupada: () => boolean;
 };
 
 export function useCaras(o: Opciones): ApiCaras {
@@ -110,6 +134,8 @@ export function useCaras(o: Opciones): ApiCaras {
   /** El parentesco dicho al presentar («mi esposa Ana»), hasta su «sí». */
   const parentescoPendiente = useRef<string | undefined>(undefined);
   const seguidor = useRef(new Seguidor()).current;
+  /** CAM-C: cambiar de cámara o de cuenta, apagar o borrar sube la generación; lo que vuelva del motor después, no vale. */
+  const generacion = useRef(new GeneracionCaras()).current;
   /** Sin ML Kit no hay pistas: lo que vio la última foto del respaldo (revisión del 5-oct, M3). */
   const respaldo = useRef(new VistoRespaldo()).current;
   const saludados = useRef(new Set<string>());
@@ -143,6 +169,7 @@ export function useCaras(o: Opciones): ApiCaras {
   }, [activas, conocidas, refrescar]);
 
   const montarMotor = activas && o.camaraEncendida && o.mesaVisible;
+  useEffect(() => generacion.subir(), [generacion, montarMotor, o.lado, o.correo]);
   useEffect(() => {
     if (!montarMotor) {
       setMotorListo(false);
@@ -241,6 +268,7 @@ export function useCaras(o: Opciones): ApiCaras {
     const s = await loadSettings();
     await saveSettings({ carasActivas: conCarasActivas(s.carasActivas, op.current.correo, false) });
     setActivas(false);
+    generacion.subir();
     seguidor.olvidar();
     respaldo.olvidar();
     presentacion.terminar();
@@ -264,6 +292,7 @@ export function useCaras(o: Opciones): ApiCaras {
           void olvidarTodasLasCaras()
             .then((n) => {
               setConocidas([]);
+              generacion.subir();
               seguidor.olvidar();
               respaldo.olvidar();
               return op.current.decir(tr(`Listo, olvidé ${n === 1 ? 'la cara' : `las ${n} caras`} que conocía.`, `Done, I forgot ${n === 1 ? 'the face' : `the ${n} faces`} I knew.`));
@@ -394,6 +423,7 @@ export function useCaras(o: Opciones): ApiCaras {
           try {
             await olvidarCara(c.id);
             await refrescar();
+            generacion.subir();
             seguidor.olvidar(c.id);
             respaldo.olvidar(c.id);
             aprendido.current.delete(c.id);
@@ -424,7 +454,7 @@ export function useCaras(o: Opciones): ApiCaras {
           // Lo ya confirmado por votos (fresco) basta; si no hay, una foto aparte.
           const ya = seguidor.presentes(Date.now(), 3000);
           let r: Pick<Reconocida, 'nombre' | 'relacion'>[] = ya.r;
-          let total = ya.r.length + ya.desconocidas;
+          let total = ya.r.length + ya.desconocidas + ya.pendientes;
           if (!ya.r.length) {
             const caras = ((await verCaras(1)) || [])[0] || [];
             r = caras.map((c) => identificar(c.vector, conocidasRef.current)).filter((x): x is Reconocida => !!x);
@@ -447,7 +477,7 @@ export function useCaras(o: Opciones): ApiCaras {
   const quiereFoto = useCallback(
     (ts: number) => {
       if (!reconoceRef.current || analizando.current || !motor.current?.listo() || !seguidor.visibles(ts).length) return false;
-      return tocaReconocer({
+      const o = {
         ahora: ts,
         ultima: ultimaMirada.current,
         nueva: seguidor.hayNueva(),
@@ -455,7 +485,11 @@ export function useCaras(o: Opciones): ApiCaras {
         vistaAbierta: op.current.vistaAbierta,
         sinIdentificar: seguidor.sinIdentificar(ts),
         ocupado: analizando.current,
-      });
+      };
+      if (tocaReconocer({ ...o, mesaOcupada: !!op.current.ocupada?.() })) return true;
+      // Le tocaba, pero la mesa pensaba o hablaba: queda en el resumen de la cámara («pausa»).
+      if (tocaReconocer(o)) estadisticaCamara.saltada();
+      return false;
     },
     [seguidor]
   );
@@ -481,9 +515,14 @@ export function useCaras(o: Opciones): ApiCaras {
       analizando.current = true;
       ultimaMirada.current = f.ts;
       seguidor.tomarNueva();
+      const gen = generacion.sello();
       void (async () => {
         try {
-          const caras = await motor.current?.analizar(f.b64, f.cajas.map((c) => c.caja));
+          // CAM-C: si en medio cambió la cámara/cuenta, se apagó o se borró algo, el resultado no se aplica.
+          const caras = await analizarVigente(
+            () => motor.current?.analizar(f.b64, f.cajas.map((c) => c.caja)),
+            () => generacion.vigente(gen) && reconoceRef.current && (f.vigente ? f.vigente() : true)
+          );
           if (!caras) return;
           for (const c of caras) {
             const de = typeof c.indice === 'number' ? f.cajas[c.indice] : null;
@@ -496,14 +535,16 @@ export function useCaras(o: Opciones): ApiCaras {
               void op.current.decir(tr(`¡Hola, ${v.identidad.nombre}!`, `Hi, ${v.identidad.nombre}!`), 'feliz');
             }
             const a = r ? aprendido.current.get(r.id) : undefined;
-            if (r && debeAprender(r, { confirmada: v.identidad?.id === r.id, tam: de.caja.h, ahora: Date.now(), ultima: a?.t, enSesion: a?.n || 0 })) void aprender(r, c.vector);
+            // Aprender pide la identidad confirmada por 2 votos: el nombre rápido de un solo voto no basta para guardar.
+            const confirmada = v.identidad?.id === r?.id && v.aFavor >= CONFIRMAR;
+            if (r && debeAprender(r, { confirmada, tam: de.tam ?? de.caja.h, ahora: Date.now(), ultima: a?.t, enSesion: a?.n || 0 })) void aprender(r, c.vector);
           }
         } finally {
           analizando.current = false;
         }
       })();
     },
-    [aprender, seguidor]
+    [aprender, generacion, seguidor]
   );
 
   /**
@@ -520,9 +561,10 @@ export function useCaras(o: Opciones): ApiCaras {
       if (analizando.current || !motor.current?.listo()) return;
       analizando.current = true;
       ultimaMirada.current = f.ts;
+      const gen = generacion.sello();
       void (async () => {
         try {
-          const caras = await motor.current?.analizar(f.b64);
+          const caras = await analizarVigente(() => motor.current?.analizar(f.b64), () => generacion.vigente(gen) && reconoceRef.current);
           if (!caras) return;
           const r = caras.map((c) => identificar(c.vector, conocidasRef.current)).filter((x): x is Reconocida => !!x);
           respaldo.poner(r, caras.length - r.length, Date.now());
@@ -539,7 +581,7 @@ export function useCaras(o: Opciones): ApiCaras {
         }
       })();
     },
-    [respaldo]
+    [generacion, respaldo]
   );
 
   const escena = useCallback(() => {
@@ -547,9 +589,12 @@ export function useCaras(o: Opciones): ApiCaras {
     const ahora = Date.now();
     const p = seguidor.presentes(ahora, FRESCO_MS);
     // Con ML Kit, lo votado; sin él (no hay pistas), lo que vio la última foto del respaldo.
-    const q = p.r.length || p.desconocidas ? p : respaldo.presentes(ahora);
-    return frasePresentes(q.r, q.desconocidas, false, op.current.lado === 'trasera');
+    const q = p.r.length || p.desconocidas || p.pendientes ? p : respaldo.presentes(ahora);
+    // CAM-F: también quien está a la vista sin identificar todavía (o con el nombre vencido).
+    return fraseEscenaCaras(q, false, op.current.lado === 'trasera');
   }, [respaldo, seguidor]);
+
+  const duenaVistaEn = useCallback(() => (reconoceRef.current ? seguidor.duenaConfirmadaEn(Date.now(), 10_000) : 0), [seguidor]);
 
   const estadoTexto = !activas ? tr('Apagado', 'Off') : conocidas?.length ? tr(`Conozco a ${conocidas.length}`, `I know ${conocidas.length}`) : tr('Activado', 'On');
 
@@ -558,5 +603,9 @@ export function useCaras(o: Opciones): ApiCaras {
     [montarMotor]
   );
 
-  return { activas, estadoTexto, motor: nodoMotor, abrirOpciones, manejar, escena, seguidor, reconoce, quiereFoto, recibirFoto, quiereFotoRespaldo, recibirFotoRespaldo };
+  // Cámara en vivo (CamaraVivo): ¿el motor sigue con el recorte anterior?
+  const ocupado = useCallback(() => analizando.current, []);
+  const mesaOcupada = useCallback(() => !!op.current.ocupada?.(), []);
+
+  return { activas, estadoTexto, motor: nodoMotor, abrirOpciones, manejar, escena, duenaVistaEn, seguidor, reconoce, quiereFoto, recibirFoto, quiereFotoRespaldo, recibirFotoRespaldo, ocupado, mesaOcupada };
 }

@@ -199,7 +199,8 @@ export function planear(p: DatosPush, o: { dueno: string; ahora: number; k: Cons
       return {
         que: 'mostrar',
         canales: [canalAvisos(k)],
-        aviso: avisoComun(p, k, tr('Terminé en mi computadora', 'Done on my computer'), p.texto || tr('Ya terminé la tarea.', 'I finished the task.')),
+        // El título lo pone el servidor según cómo terminó de verdad (nunca «Terminé» si no quedó); uno viejo no lo manda.
+        aviso: avisoComun(p, k, p.titulo || tr('Terminé en mi computadora', 'Done on my computer'), p.texto || tr('Ya terminé la tarea.', 'I finished the task.')),
       };
   }
 }
@@ -251,7 +252,8 @@ export function textoAlAbrir(p: DatosPush): string | null {
     case 'propuesta':
       return p.texto || null;
     case 'computadora':
-      return p.texto ? tr(`Terminé en mi computadora: ${p.texto}`, `I finished on my computer: ${p.texto}`) : null;
+      if (!p.texto) return null;
+      return p.titulo ? `${p.titulo}. ${p.texto}` : tr(`Terminé en mi computadora: ${p.texto}`, `I finished on my computer: ${p.texto}`);
     default:
       return null;
   }

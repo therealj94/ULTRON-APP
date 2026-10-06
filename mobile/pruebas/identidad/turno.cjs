@@ -122,6 +122,30 @@ const ev = (e, d) => `event: ${e}\ndata: ${JSON.stringify(d)}\n\n`;
   });
   ok('replace y cierre sin done: parcial con lo corregido', t.r.parcial === true && t.r.reply === 'No pude mandarlo.', JSON.stringify(t.r));
 
+  console.log('\nPROGRESO · lo que está haciendo mientras trabaja (event: progreso)\n');
+  {
+    const progreso = [];
+    const deltas = [];
+    const st = API.turnoStream(
+      { message: 'busca lo de Ana en mi correo', mode: 'conversar', userName: 'Ana', historial: [], idTurno: 'turno-0002' },
+      { onDelta: (p) => deltas.push(p), onProgreso: (e) => progreso.push(e) }
+    );
+    await espera(10);
+    const x = xhrs[xhrs.length - 1];
+    x.llega(ev('emocion', { emocion: 'neutral' }) + ev('progreso', { fase: 'empece', herramienta: 'correo', detalle_seguro: 'Ana', ronda: 1 }));
+    x.llega(ev('progreso', { fase: 'ejecutando', herramienta: 'correo' }) + ev('progreso', { fase: 'encontre', herramienta: 'correo', detalle_seguro: 'ana@x.hn', n: 2 }));
+    x.llega(ev('progreso', { fase: 'listo', herramienta: 'correo' }) + ev('delta', { text: 'Hay dos de Ana.', voz: 'Hay dos de Ana.' }) + ev('done', { reply: 'Hay dos de Ana.', via: 'prueba' }));
+    x.cierra();
+    const r = await Promise.race([st.promise.catch((e) => e), espera(500).then(() => 'colgado')]);
+    ok('progreso: llega validado a onProgreso, en orden (lo raro no entra; el detalle con @ se quita)', JSON.stringify(progreso) === JSON.stringify([{ fase: 'empece', herramienta: 'correo', detalle_seguro: 'Ana', ronda: 1 }, { fase: 'encontre', herramienta: 'correo', n: 2 }, { fase: 'listo', herramienta: 'correo' }]), JSON.stringify(progreso));
+    ok('…y el turno queda igual: la respuesta, completa, sin rastro del progreso', r.reply === 'Hay dos de Ana.' && r.cierre === 'done' && !r.parcial && deltas.join('') === 'Hay dos de Ana.', JSON.stringify(r));
+    t = await turno((y) => {
+      y.llega(ev('progreso', { fase: 'empece', herramienta: 'web' }) + ev('delta', { text: 'Listo.', voz: 'Listo.' }) + ev('done', { reply: 'Listo.' }));
+      y.cierra();
+    });
+    ok('sin quien escuche el progreso (una mesa vieja), lo ignora', t.r.reply === 'Listo.' && t.r.cierre === 'done', JSON.stringify(t.r));
+  }
+
   fin();
 })().catch((e) => {
   console.error('ERR', e);

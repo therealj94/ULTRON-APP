@@ -90,6 +90,8 @@ export function crearCajones<T>(o: {
 }): Cajones<T> {
   const cache = new Map<string, T>();
   const colas = new Map<string, Promise<unknown>>();
+  /** Cuántos cambios lleva cada clave: una lectura lenta que empezó antes de uno no pisa la caché. */
+  const generaciones = new Map<string, number>();
   const maxCache = o.maxEnCache ?? 1000;
   const carpeta = () => process.env[o.dirEnv] || o.carpetaPorOmision?.() || path.join(process.cwd(), 'data', o.dirPorOmision);
   const archivo = (clave: string) => path.join(carpeta(), `${huellaDe(o.nombre, clave)}.json`);
@@ -131,7 +133,11 @@ export function crearCajones<T>(o: {
     }
     let v = leerDisco(clave);
     if (!v && s3Listo()) {
+      const g = generaciones.get(clave) || 0;
       const r = await s3GetJson(claveS3(clave)).catch(() => ({ ok: false, json: null }) as { ok: boolean; json: unknown });
+      // Revisión del 6-oct: mientras S3 contestaba se guardó un cambio (modificar): lo leído es de antes y
+      // no va a la caché ni al disco, o el siguiente cambio partiría de lo viejo (lo borrado volvería).
+      if ((generaciones.get(clave) || 0) !== g) return leer(clave);
       if (r.ok && r.json) {
         v = o.sanear(r.json);
         escribirDisco(clave, v);
@@ -154,6 +160,7 @@ export function crearCajones<T>(o: {
       const copia = o.sanear(JSON.parse(JSON.stringify(l.valor)));
       const resultado = fn(copia);
       ponerEnCache(clave, copia);
+      generaciones.set(clave, (generaciones.get(clave) || 0) + 1);
       const enDisco = escribirDisco(clave, copia);
       if (!s3Listo()) return { valor: copia, resultado, durable: enDisco && discoDurable() };
       const r = await s3PutJson(claveS3(clave), copia).catch((e) => ({ ok: false, detalle: String(e?.message || e) }));

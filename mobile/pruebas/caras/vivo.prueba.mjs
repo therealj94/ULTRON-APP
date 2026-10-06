@@ -125,11 +125,11 @@ prueba('seguir: una foto sin la cara no la cierra; pasado PERDIDA_MS sí (y deja
   assert.notEqual(a3.id, a.id, 'tras mucho rato es otra pista');
 });
 
-prueba('votar: un acierto suelto no pone nombre; 2 de 3 sí; un «no sé» no lo borra; para cambiarlo hacen falta 2 de 3 de otro', () => {
+prueba('votar: un acierto suelto dudoso no pone nombre; 2 de 3 sí; un «no sé» no lo borra; para cambiarlo hacen falta 2 de 3 de otro', () => {
   const s = new Seguidor();
   const [p] = s.actualizar([{ x: 0.3, y: 0.3, w: 0.2, h: 0.2 }], 0);
-  let v = s.votar(p.id, reco('a', 'Ana'), 100);
-  assert.equal(v.identidad, null, 'con un voto, «Persona»');
+  let v = s.votar(p.id, reco('a', 'Ana', 0.42), 100);
+  assert.equal(v.identidad, null, 'con un voto dudoso (d 0,42), «Persona»');
   assert.ok(s.porConfirmar(100));
   v = s.votar(p.id, null, 1300);
   assert.equal(v.identidad, null);
@@ -143,6 +143,20 @@ prueba('votar: un acierto suelto no pone nombre; 2 de 3 sí; un «no sé» no lo
   assert.ok(!v.confirmo);
   v = s.votar(p.id, reco('b', 'Beto'), 10000);
   assert.equal(v.identidad?.nombre, 'Beto', 'dos de tres dicen Beto: es Beto');
+});
+
+prueba('votar (José, 6-oct: «tarda en reconocer»): un voto MUY seguro pone el nombre ya; con otro voto reciente por otra persona, no', () => {
+  const s = new Seguidor();
+  const [p] = s.actualizar([{ x: 0.3, y: 0.3, w: 0.2, h: 0.2 }], 0);
+  const v = s.votar(p.id, reco('a', 'Ana', 0.3), 100);
+  assert.equal(v.identidad?.nombre, 'Ana', 'd 0,30 y margen 0,30: al primer voto');
+  assert.ok(v.confirmo, 'cuenta como recién confirmada (el saludo una vez)');
+  assert.equal(v.aFavor, 1, 'pero un solo voto: no alcanza para aprender con el uso');
+  const s2 = new Seguidor();
+  const [q] = s2.actualizar([{ x: 0.3, y: 0.3, w: 0.2, h: 0.2 }], 0);
+  s2.votar(q.id, reco('b', 'Beto', 0.45), 100);
+  assert.equal(s2.votar(q.id, reco('a', 'Ana', 0.3), 1300).identidad, null, 'antes dijo Beto: se espera el desempate');
+  assert.equal(s2.votar(q.id, reco('a', 'Ana', 0.3, { margen: 0.05 }), 2500).identidad?.nombre, 'Ana', 'dos de tres dicen Ana (2 de 3, como siempre)');
 });
 
 prueba('votar: sin un voto a favor en MANTENER_MS (solo «no sé»), el nombre se suelta', () => {
@@ -205,7 +219,7 @@ prueba('dibujo: «José · tú», «Ana · tu esposa», «Persona»; «mirando»
   ];
   const v = { escena: '', lugar: '', personas: [], objetos: [{ nombre: 'taza', donde: '', caja: { x: 0.1, y: 0.7, w: 0.1, h: 0.1 } }, { nombre: 'libro', donde: '' }], textos: [], precios: [], principal: '', cajasFiables: true, formato: 'json' };
   const m = marcasEnVivo({ pistas, mirando: true, lado: 'frontal', vista: { v, ts: 0 }, ahora: 1000 });
-  assert.deepEqual(m.map((x) => [x.tipo, x.etiqueta, x.detalle || '']), [['cara', 'José · tú', 'mirando'], ['cara', 'Persona', ''], ['objeto', 'taza', '']]);
+  assert.deepEqual(m.map((x) => [x.tipo, x.etiqueta, x.detalle || '']), [['cara', 'José · tú', 'mirando'], ['cara', 'Persona', ''], ['objeto', 'taza', 'foto · hace 1 s']]); // CAM-G: de una foto, con su edad
   assert.ok(!marcasEnVivo({ pistas, mirando: true, lado: 'trasera', vista: null, ahora: 0 }).some((x) => x.detalle), 'con la trasera nadie «mira la pantalla»');
   assert.equal(marcasEnVivo({ pistas: [], mirando: false, lado: 'frontal', vista: { v, ts: 0 }, ahora: VISTA_FRESCA_MS + 1 }).length, 0, 'objetos viejos no');
   assert.equal(marcasEnVivo({ pistas: [], mirando: false, lado: 'frontal', vista: { v: { ...v, cajasFiables: false }, ts: 0 }, ahora: 0 }).length, 0, 'cajas no fiables: no se inventan recuadros');
@@ -317,9 +331,28 @@ prueba('identificar da el margen sobre el segundo y el parentesco; el parentesco
 
 /* ── costuras leídas del código ──────────────────────────────────────────────────────────── */
 
+prueba('costuras (José, 6-oct: «se queda atrasado con la voz»): pensando o hablando la cámara afloja, no reconoce (salvo a quien llega) ni sube; aprender pide 2 votos', () => {
+  const cv = leer('src/components/CamaraVision.tsx');
+  assert.match(cv, /ritmoFotos\(\{ dormida, conPersona, vista: vistaAbiertaRef\.current, ocupada, identificados \}\)/, 'el ritmo del bucle sale de ritmoFotos');
+  assert.match(cv, /intervaloServidor\(\{[^}]*ocupada \}\)/, 'sin subidas con la mesa ocupada');
+  assert.match(cv, /estadisticaCamara\.(foto|mlkit|lectura)\(/, 'mide cada paso');
+  assert.match(cv, /if \(estadisticaCamara\.toca\(ahora\)\)[\s\S]{0,200}miga\(l\)/, 'una miga por minuto');
+  const uc = leer('src/caras/useCaras.tsx');
+  assert.match(uc, /tocaReconocer\(\{ \.\.\.o, mesaOcupada: !!op\.current\.ocupada\?\.\(\) \}\)/, 'reconocer sabe si la mesa está ocupada');
+  assert.match(uc, /const confirmada = v\.identidad\?\.id === r\?\.id && v\.aFavor >= CONFIRMAR;/, 'el nombre rápido de un voto no basta para aprender');
+  const ds = leer('src/screens/DeskScreen.tsx');
+  assert.match(ds, /const mesaOcupada = useCallback\(\(\) => handling\.current \|\| speakingRef\.current, \[\]\);/);
+  assert.match(ds, /ocupada: mesaOcupada,/, 'a las caras');
+  assert.match(ds, /ocupada=\{mesaOcupada\}/, 'y a la cámara');
+  const mc = leer('src/caras/MotorCaras.tsx');
+  assert.match(mc, /estadisticaCamara\.analisis\(Date\.now\(\) - t0, motorMs\)/, 'ida y vuelta del motor de caras');
+  const html = leer('src/caras/motorCarasHtml.ts');
+  assert.match(html, /cargar\(\)\.then\(calentar\)\.then\(function \(ms\) \{ enviar\(\{ tipo: 'lista'/, 'se calienta antes de decir «lista»');
+});
+
 prueba('costuras: la foto del bucle va al motor de caras (sin segunda foto), con las cajas de ML Kit; la frontal se dibuja espejada', () => {
   const cv = leer('src/components/CamaraVision.tsx');
-  assert.match(cv, /if \(subir \|\| pedir\) b64 = await FileSystem\.readAsStringAsync\(foto\.uri/, 'la foto se lee una vez para el servidor y/o las caras');
+  assert.match(cv, /if \(subir \|\| pedir\) \{[^}]*b64 = await FileSystem\.readAsStringAsync\(foto\.uri/, 'la foto se lee una vez para el servidor y/o las caras');
   assert.match(cv, /borrar\(foto\.uri\);\n\s+if \(b64/, 'y se borra siempre');
   assert.match(cv, /minFaceSize: MIN_CARA_MLKIT/);
   assert.match(cv, /cajaEnPantalla\(mk\.caja, dims, m, lado === 'frontal'\)/, 'espejo solo con la frontal');
@@ -358,6 +391,65 @@ prueba('sin ML Kit (respaldo del servidor) también se reconoce seguido, y con M
   const uc = leer('src/caras/useCaras.tsx');
   assert.match(uc, /motor\.current\?\.analizar\(f\.b64\)/, 'sin cajas, el motor busca las caras en la foto');
   assert.match(uc, /respaldo\.presentes\(/, 'lo del respaldo entra a la escena');
+});
+
+/* ── revisión 7 (M5): el nombre de un voto con una sola persona guardada, y los ids cambiados ── */
+
+prueba('M5: con UNA sola persona guardada el margen no dice nada: un voto a 0,34 no pone nombre (hace falta ≤ 0,30 o 2 votos)', () => {
+  const ana = toma(3);
+  const unica = [{ id: 'a', nombre: 'Ana', relacion: 'conocido', vectores: [ana] }];
+  const r = identificar(ana, unica);
+  assert.equal(r?.unica, true, 'identificar marca que no había con quién comparar');
+  assert.equal(identificar(ana, [...unica, { id: 'b', nombre: 'Beto', relacion: 'conocido', vectores: [toma(99)] }])?.unica, undefined);
+  const s = new Seguidor();
+  const [p] = s.actualizar([{ x: 0.3, y: 0.3, w: 0.2, h: 0.2 }], 0);
+  assert.equal(s.votar(p.id, reco('a', 'Ana', 0.34, { margen: 1, unica: true }), 100).identidad, null, 'un voto a 0,34 con una sola guardada: «Persona»');
+  assert.equal(s.votar(p.id, reco('a', 'Ana', 0.34, { margen: 1, unica: true }), 1300).identidad?.nombre, 'Ana', 'con el segundo voto, sí');
+  const s2 = new Seguidor();
+  const [q] = s2.actualizar([{ x: 0.3, y: 0.3, w: 0.2, h: 0.2 }], 0);
+  assert.equal(s2.votar(q.id, reco('a', 'Ana', 0.28, { margen: 1, unica: true }), 100).identidad?.nombre, 'Ana', 'muy cerca (≤ 0,30): al primer voto');
+  const s3 = new Seguidor();
+  const [r3] = s3.actualizar([{ x: 0.3, y: 0.3, w: 0.2, h: 0.2 }], 0);
+  assert.equal(s3.votar(r3.id, reco('a', 'Ana', 0.34), 100).identidad?.nombre, 'Ana', 'con varias guardadas y margen 0,30, el voto rápido sigue igual');
+});
+
+prueba('M5: dos caras que se cruzan (ids que ML Kit pudo cambiar) pierden el nombre las dos y se miran YA, aunque la mesa piense', () => {
+  const s = new Seguidor();
+  const [a, b] = s.actualizar([{ x: 0.1, y: 0.3, w: 0.2, h: 0.2 }, { x: 0.6, y: 0.3, w: 0.2, h: 0.2 }], 0, [1, 2]);
+  for (const t of [0, 100]) {
+    s.votar(a.id, reco('a', 'Ana'), t);
+    s.votar(b.id, reco('b', 'Beto'), t);
+  }
+  assert.equal(a.identidad?.nombre, 'Ana');
+  assert.equal(b.identidad?.nombre, 'Beto');
+  s.tomarNueva();
+  // Se acercan hasta solaparse: los dos nombres se borran (los ids pueden salir cambiados).
+  s.actualizar([{ x: 0.3, y: 0.3, w: 0.2, h: 0.2 }, { x: 0.38, y: 0.3, w: 0.2, h: 0.2 }], 400, [1, 2]);
+  assert.equal(a.identidad, null);
+  assert.equal(b.identidad, null);
+  assert.ok(s.hayNueva(), 'se vuelve a mirar');
+  assert.ok(tocaReconocer({ ahora: 450, ultima: 440, nueva: s.hayNueva(), porConfirmar: false, vistaAbierta: false, sinIdentificar: true, ocupado: false, mesaOcupada: true }), 'ya, sin esperar a que la mesa termine');
+  // Un voto de una foto de ANTES del cruce (el análisis tardó) no cuenta.
+  s.votar(a.id, reco('a', 'Ana', 0.2), 300);
+  assert.equal(a.votos.length, 0, 'el voto viejo no entra');
+  // Se separan: otra vez sin nombre y a mirar.
+  s.votar(a.id, reco('b', 'Beto', 0.2), 500);
+  s.tomarNueva();
+  s.actualizar([{ x: 0.1, y: 0.3, w: 0.2, h: 0.2 }, { x: 0.6, y: 0.3, w: 0.2, h: 0.2 }], 800, [1, 2]);
+  assert.equal(a.identidad, null, 'al separarse se borra lo votado durante el cruce');
+  assert.ok(s.hayNueva());
+});
+
+prueba('M5 / G2: la dueña confirmada por 2 votos cuenta como presencia (fresca ≤ 10 s); un voto suelto o un conocido, no', () => {
+  const s = new Seguidor();
+  const [p] = s.actualizar([{ x: 0.3, y: 0.3, w: 0.2, h: 0.2 }], 0);
+  s.votar(p.id, reco('yo', 'José', 0.2, { relacion: 'yo' }), 100);
+  assert.equal(p.identidad?.nombre, 'José', 'nombre rápido de un voto');
+  assert.equal(s.duenaConfirmadaEn(200), 0, 'un voto no confirma presencia');
+  s.votar(p.id, reco('yo', 'José', 0.2, { relacion: 'yo' }), 300);
+  s.actualizar([{ x: 0.3, y: 0.3, w: 0.2, h: 0.2 }], 400);
+  assert.equal(s.duenaConfirmadaEn(500), 400);
+  assert.equal(s.duenaConfirmadaEn(400 + 10_001), 0, 'vieja: no');
 });
 
 for (const [nombre, f] of pruebas) {

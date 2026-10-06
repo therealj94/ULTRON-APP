@@ -1,4 +1,5 @@
 import { COMA_PRIMERA } from '../../lib/trozos';
+import { avanzarEstado, estadoInicial, siguienteCorte } from '../../mobile/src/lib/cortesVoz';
 
 /**
  * Cómo la mesa web parte en frases lo que llega del turno en stream, para ir diciéndolas sin esperar al
@@ -17,10 +18,21 @@ import { COMA_PRIMERA } from '../../lib/trozos';
 export const MIN_CORTE_COMA = COMA_PRIMERA;
 
 export function cortarFrases(pendiente: string, final = false): { listas: string[]; resto: string } {
-  const partes = pendiente.split(/(?<=[.!?…])\s+/);
-  const ultima = (partes[partes.length - 1] || '').trim();
-  const cerrada = /[.!?…]["»”')\]]*$/.test(ultima) || (/[,;:]$/.test(ultima) && ultima.length - 1 >= MIN_CORTE_COMA);
-  const todas = final || cerrada;
-  const listas = (todas ? partes : partes.slice(0, -1)).map((p) => p.trim()).filter(Boolean);
-  return { listas, resto: todas ? '' : partes[partes.length - 1] || '' };
+  // El mismo contrato que el servidor y la app (mobile/src/lib/cortesVoz.ts): lo que el servidor soltó
+  // hasta un corte se corta aquí en el mismo sitio, sin esperar al trozo siguiente. «Dr. Gómez» no se parte.
+  const listas: string[] = [];
+  let estado = estadoInicial();
+  let desde = 0;
+  for (let c = siguienteCorte(pendiente, 0, estado); c && c.fin > desde; c = siguienteCorte(pendiente, desde, estado)) {
+    const p = pendiente.slice(desde, c.fin).trim();
+    if (p) listas.push(p);
+    estado = avanzarEstado(estado, c);
+    desde = c.fin;
+  }
+  const resto = pendiente.slice(desde).trimStart();
+  if (final) {
+    if (resto.trim()) listas.push(resto.trim());
+    return { listas, resto: '' };
+  }
+  return { listas, resto };
 }

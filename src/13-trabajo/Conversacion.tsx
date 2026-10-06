@@ -55,7 +55,9 @@ export function nombresDeHerramientas(tools: readonly string[]): string[] {
 }
 
 /** La línea de estado de un turno de AU-RA, en palabras. */
-export function textoDeEstado(e: Pick<EntradaAura, 'estado' | 'herramientas' | 'ms' | 'tsFin' | 'ts'>): string {
+export function textoDeEstado(e: Pick<EntradaAura, 'estado' | 'herramientas' | 'ms' | 'tsFin' | 'ts'> & { progreso?: string; texto?: string }): string {
+  // Mientras trabaja y todavía no contesta: lo que de verdad está haciendo (una línea que cambia en su lugar).
+  if (e.progreso && (e.estado === 'pensando' || e.estado === 'usando' || (e.estado === 'respondiendo' && !e.texto))) return e.progreso;
   const usa = nombresDeHerramientas(e.herramientas);
   switch (e.estado) {
     case 'pensando':

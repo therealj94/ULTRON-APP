@@ -15,6 +15,9 @@
  *    su distancia al original (debe quedar bajo UMBRAL);
  *  · caras de personas DISTINTAS: su distancia (debe quedar sobre UMBRAL);
  *  · con `identificar` (src/caras/caras.ts), aciertos, confusiones y «no sé» al reconocer las variantes.
+ *  · el nombre al PRIMER voto (src/caras/seguimiento.ts RAPIDO): cuántas tomas de la misma cara lo alcanzan y que
+ *    ninguna pareja de personas distintas quede tan cerca;
+ *  · que el motor se calienta antes de decir «lista» (las redes ya compiladas: el primer análisis no tarda de más).
  *  · caras LEJANAS (la foto achicada dentro de una de 1280×720, como la del bucle de la cámara): la foto
  *    entera con el detector chico a 416 (lo de antes) contra los recortes agrandados de las cajas de ML Kit
  *    (lo de ahora, `cajas` en el mensaje): cuántas ve y reconoce cada uno, y que ninguno confunda nombres.
@@ -27,6 +30,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { MOTOR_CARAS_HTML, FACE_API_URL, MODELOS_URL, FACE_API_VERSION } from '../../src/caras/motorCarasHtml.ts';
 import { UMBRAL, distancia, identificar } from '../../src/caras/caras.ts';
+import { RAPIDO } from '../../src/caras/seguimiento.ts';
 
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
 const MOVIL = path.resolve(AQUI, '../..');
@@ -110,6 +114,7 @@ try {
   const lista = await esperar((m) => m.tipo === 'lista' || m.tipo === 'fallo');
   ok(lista?.tipo === 'lista', `carga face-api con la huella SRI y los tres modelos (${lista?.motor || lista?.motivo || 'sin respuesta'})`);
   if (lista?.tipo !== 'lista') throw new Error('no cargó');
+  ok(typeof lista.calentarMs === 'number', `se calienta antes de decir «lista» (${lista.calentarMs} ms)`);
 
   let n = 0;
   const analizar = async (b64, cajas) => {
@@ -187,6 +192,9 @@ try {
   const falsosRechazos = mismas.filter((d) => d >= UMBRAL).length;
   const falsasAceptaciones = distintas.filter((d) => d < UMBRAL).length;
   console.log(`[caras] con umbral ${UMBRAL}: ${falsosRechazos}/${mismas.length} rechazos falsos · ${falsasAceptaciones}/${distintas.length} aceptaciones falsas`);
+  const rapidas = mismas.filter((d) => d <= RAPIDO.dMax).length;
+  const distintasRapidas = distintas.filter((d) => d <= RAPIDO.dMax + RAPIDO.margenMin).length;
+  console.log(`[caras] nombre al primer voto (d ≤ ${RAPIDO.dMax}): ${rapidas}/${mismas.length} tomas de la misma cara · parejas distintas a menos de ${RAPIDO.dMax + RAPIDO.margenMin}: ${distintasRapidas}/${distintas.length}`);
   console.log(`[caras] identificar(): ${aciertos} aciertos · ${confusiones} confusiones · ${noSe} «no sé» · tiempo por foto: mediana ${med(tiempos)} ms (Chromium con SwiftShader, sin GPU)`);
   // ── caras LEJANAS: la foto de muestra achicada dentro de una foto de 1280×720 (como la del bucle) ──
   // Lo de antes (la foto entera con el detector chico a 416) contra lo de ahora (recortes agrandados de las
@@ -252,6 +260,8 @@ try {
   ok(mismas.length >= 10 && falsosRechazos / mismas.length <= 0.1, 'la misma cara en otra toma queda bajo el umbral (≤ 10 % de rechazos)');
   ok(falsasAceptaciones === 0, 'ninguna pareja de personas distintas queda bajo el umbral');
   ok(confusiones === 0, 'identificar() nunca llama a alguien con el nombre de otro');
+  ok(distintasRapidas === 0, 'el nombre al primer voto nunca queda al alcance de otra persona (distancia + margen)');
+  ok(rapidas / mismas.length >= 0.8, 'la mayoría de las tomas de la misma cara ponen el nombre al primer voto');
   ok(errores.length === 0, `sin errores de página${errores.length ? `: ${errores[0].slice(0, 120)}` : ''}`);
 } catch (e) {
   ok(false, `el motor corre entero (${String(e.message || e).slice(0, 160)})`);
