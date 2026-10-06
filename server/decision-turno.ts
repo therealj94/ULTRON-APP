@@ -10,8 +10,8 @@
  *
  * Exportado aparte para probarlo con efectos simulados (tests/permisos-exactos.test.ts, tests/permisos-ronda3.test.ts).
  */
-import { apartadosCorreoDe, borradorCorreoPorIntento, borradorDe, nombresRecientesCorreo, promoverApartadoCorreo, resolverApartadoCorreo, resolverBorrador } from './correo';
-import { apartadosWhatsappDe, borradorWhatsappDe, borradorWhatsappPorIntento, conocidosDeChats, destinoWhatsapp, promoverApartadoWhatsapp, resolverApartadoWhatsapp, resolverBorradorWhatsapp, whatsappPermitido } from './whatsapp';
+import { apartadosCorreoDe, borradorCorreoPorIntento, borradorDe, nombresRecientesCorreo, promoverApartadoCorreo, resolverApartadoCorreo, resolverBorrador, resolverBorradorConEstado } from './correo';
+import { apartadosWhatsappDe, borradorWhatsappDe, borradorWhatsappPorIntento, conocidosDeChats, destinoWhatsapp, promoverApartadoWhatsapp, resolverApartadoWhatsapp, resolverBorradorWhatsapp, resolverBorradorWhatsappConEstado, whatsappPermitido } from './whatsapp';
 import { preguntasComputadora, resolverPreguntaComputadora } from './computadora';
 import { cerrarDecisionPorChat, clasificarEnvio, type SalidaEnvio } from './trabajos';
 import { appEsperandoDe, contextoDe } from '../lib/acciones-app';
@@ -22,6 +22,7 @@ import type { RetencionAcciones } from './voz-agente';
 import { otraVozDelTurno } from '../lib/voces-miembro';
 import { decisionVistaDelTurno, hechoSiNoEstaLigada, vistaHablada, type VistaHablada } from './decision-hablada';
 import { atadoAlPresentado, presentadoEnChat, type AtaduraEscrita } from './presentacion-decision';
+import { reciboDeDecision, type ReciboEfecto } from '../lib/honestidad';
 
 /** Lo que la app (PULSE2CHAT) tiene esperando el «sí» de un turno anterior: un mensaje, una llamada, un recordatorio. */
 export type AppEsperando = { que: string; para: string; cuando?: number; huella?: string; video?: boolean };
@@ -93,6 +94,8 @@ export type SalidaDecisionTurno = {
    * solo si cuando salen espera exactamente eso (server.ts accionesDelCerebro, mismaEsperaApp).
    */
   appVista?: AppEsperando | null;
+  /** Lo que este «sí» de verdad mandó (o deja saliendo al confirmarse el turno de voz), con su recibo (lib/honestidad.ts). */
+  recibos?: ReciboEfecto[];
 };
 
 /* ------------------------------------------------------------------ lo que espera en esta conversación */
@@ -443,12 +446,21 @@ export async function resolverDecisionesDelTurno(o: OpcionesDecisionTurno): Prom
     if (retener) retener.hacer(cerrar);
     else cerrar();
   };
-  const delCorreo = toca('correo') && vistoCorreo ? await resolverBorrador(dueno, ambito, respuesta, retener, atado(vistoCorreo)) : null;
+  // Los recibos de lo que este «sí» de verdad mandó (o deja saliendo al confirmarse la voz): la guarda de honestidad
+  // (lib/honestidad.ts) solo deja decir «enviado» con uno de estos.
+  const recibos: ReciboEfecto[] = [];
+  const conCorreo = toca('correo') && vistoCorreo ? await resolverBorradorConEstado(dueno, ambito, respuesta, retener, atado(vistoCorreo)) : null;
+  const delCorreo = conCorreo?.texto ?? null;
+  const reciboCorreo = reciboDeDecision('correo', conCorreo, vistoCorreo?.destino);
+  if (reciboCorreo) recibos.push(reciboCorreo);
   if (delCorreo) hechos.push(delCorreo);
   // Si el mismo borrador sigue esperando (hay que confirmar a quién va, o repetir un envío incierto), su decisión del
   // panel queda abierta: no se cierra como si se hubiera decidido.
   cerrarSiToca(vistoCorreo, delCorreo, !!vistoCorreo?.id && borradorDe(dueno, ambito)?.intento === vistoCorreo.id);
-  const delWhatsapp = o.whatsapp && toca('whatsapp') && vistoWhatsapp ? await resolverBorradorWhatsapp(dueno, ambito, respuesta, retener, atado(vistoWhatsapp)) : null;
+  const conWhatsapp = o.whatsapp && toca('whatsapp') && vistoWhatsapp ? await resolverBorradorWhatsappConEstado(dueno, ambito, respuesta, retener, atado(vistoWhatsapp)) : null;
+  const delWhatsapp = conWhatsapp?.texto ?? null;
+  const reciboWhatsapp = reciboDeDecision('whatsapp', conWhatsapp, vistoWhatsapp?.destino);
+  if (reciboWhatsapp) recibos.push(reciboWhatsapp);
   if (delWhatsapp) hechos.push(delWhatsapp);
   cerrarSiToca(vistoWhatsapp, delWhatsapp, !!vistoWhatsapp?.id && borradorWhatsappDe(dueno, ambito)?.intento === vistoWhatsapp.id);
   // Revisión independiente (M2): en la voz, si el turno se descarta (la frase seguía), el cambio de lugar se deshace. Se
@@ -488,7 +500,7 @@ export async function resolverDecisionesDelTurno(o: OpcionesDecisionTurno): Prom
       );
     }
   }
-  return nada({ delCorreo, delWhatsapp, deLaPregunta, appBloqueada: !!o.app && !!elegido && elegido.origen !== 'app', respondio: !!elegido, appVista: o.app ?? null });
+  return nada({ delCorreo, delWhatsapp, deLaPregunta, appBloqueada: !!o.app && !!elegido && elegido.origen !== 'app', respondio: !!elegido, appVista: o.app ?? null, recibos });
 }
 
 /**

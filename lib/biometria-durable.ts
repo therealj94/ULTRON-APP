@@ -37,6 +37,15 @@ export const MAX_LAPIDAS = 500;
 /** Tope de lo que se acepta al leer (lo que este servicio escribe nunca pasa de MAX_LAPIDAS: se compacta al guardar). */
 const TOPE_LEIDO = MAX_LAPIDAS * 4;
 
+/**
+ * La hora de alta de alguien NUEVO: siempre después de «olvida todas» y de la marca de agua. Con la misma hora en
+ * milisegundos (un alta justo tras borrar, frecuente en un servidor rápido) contaba como de antes del borrado y no
+ * se guardaba (`aplicarLapidas` borra lo creado `<=` esas horas).
+ */
+export function horaDeAlta(d: Durable | null | undefined, ahora: number): number {
+  return Math.max(ahora, (Number(d?.borradoTodo) || 0) + 1, (Number(d?.marcaLapidas) || 0) + 1);
+}
+
 /** Lo durable de un JSON leído (rev, lápidas, borradoTodo, la marca de agua), saneado. */
 export function sanearDurable(x: any): Required<Pick<Durable, 'rev' | 'lapidas'>> & Pick<Durable, 'borradoTodo' | 'marcaLapidas' | 'vivosEnMarca'> {
   const rev = Number.isFinite(Number(x?.rev)) && Number(x?.rev) > 0 ? Math.floor(Number(x.rev)) : 0;

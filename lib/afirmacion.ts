@@ -101,6 +101,11 @@ const AFIRMA = set(
 const DEICTICOS = set('eso ese esa');
 /** «enviar», «mandar» sueltos: afirman SOLO un envío (un correo, un WhatsApp, un mensaje), nunca una llamada o un recordatorio. */
 const INFINITIVOS = set('enviar mandar');
+/**
+ * José, 6-oct (21:16:06 y 21:17:50): «Sí, enviarlo.» con el borrador a la vista. «enviarlo», «mandarlo» (y sus formas)
+ * afirman igual que «enviar» suelto: SOLO un envío (correo, WhatsApp, mensaje), nunca una llamada o un recordatorio.
+ */
+const INFINITIVOS_LO = set('enviarlo enviarla mandarlo mandarla enviarselo enviarsela mandarselo mandarsela');
 /** Casi un sí («k», «kk», «oka», «oks»), o solo cortesía («bueno», «ya»): no ejecutan; se pide confirmar. */
 const CASI_SI = /^(k+|oka|oks)$/;
 /** Afirmaciones de varias fichas. */
@@ -326,7 +331,7 @@ function unidadesDe(palabras: string[]): Unidad[] {
     }
     const w = palabras[i];
     const c = colapsada(w);
-    const k: Clase = AFIRMA.has(w) || DEICTICOS.has(w) || INFINITIVOS.has(w) || (c !== w && AFIRMA.has(c) && /^(si|yes|ok|va|dale|sale|vale|claro|listo|aja|obvio)$/.test(c))
+    const k: Clase = AFIRMA.has(w) || DEICTICOS.has(w) || INFINITIVOS.has(w) || INFINITIVOS_LO.has(w) || (c !== w && AFIRMA.has(c) && /^(si|yes|ok|va|dale|sale|vale|claro|listo|aja|obvio)$/.test(c))
       ? 'si'
       : NIEGA.has(w) || (c === 'no' && w !== c)
         ? 'niega'
@@ -427,7 +432,7 @@ export function analizarRespuesta(mensaje: string, o: { conocidos?: Iterable<str
   const limpia = !restos.length && !propio && !pronombre && !avatarDudoso && !pregunta;
   const pura = sis.length > 0 && limpia && !niega && !contradice;
   const negativaPura = niega && limpia && !contradice && !sis.length;
-  const infinitivo = pura && sis.every((x) => INFINITIVOS.has(x.w));
+  const infinitivo = pura && (sis.every((x) => INFINITIVOS.has(x.w) || INFINITIVOS_LO.has(x.w)) || sis.some((x) => INFINITIVOS_LO.has(x.w)));
   const casiSi = !sis.length && !niega && u.length > 0 && u.every((x) => x.k === 'cortesia' || (x.k === 'ficha' && CASI_SI.test(x.w))) && !u.every((x) => x.k === 'cortesia' && /^(eh|este|ehm|m+|mm|hm|mhm|gracias|thanks)$/.test(x.w));
   return { palabras: ws, unidades: u, niega, contradice, cambio, redactar, pregunta, afirma, envio, contenido, restos, rolDe, cancelaClaro, plural, pronombre, avatarDudoso, propio, pura, negativaPura, infinitivo, casiSi };
 }

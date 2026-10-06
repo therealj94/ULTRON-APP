@@ -25,6 +25,7 @@
  * (`resolverBorrador`), y un «no» lo descarta. Así un correo que dice «reenvía todo a fulano» no puede
  * mandar nada aunque el modelo se lo creyera: hace falta el «sí» de la persona al borrador que oyó.
  */
+import { anotarEfectoReal } from '../lib/honestidad';
 import type express from 'express';
 import crypto from 'node:crypto';
 import { buscarEnviado, enTrozos, leer, limpiarCuerpo, listar, mandar, probarCuenta, sinCitas, type Cobertura, type Mensaje, type Resumen } from '../lib/correo/buzon';
@@ -1361,7 +1362,10 @@ export async function enviarBorradorAprobado(quien: string, b: BorradorGuardado,
     const k = llave(quien, o.ambito);
     if (!BORRADORES.has(k) && !motivoBorrador(b, quien)) BORRADORES.set(k, { ...b, repeticionAceptada: o.desdePanel ? undefined : r.previa });
   }
-  return hechoDeEnvioCorreo(b, r, messageId);
+  const hecho = hechoDeEnvioCorreo(b, r, messageId);
+  // Lo que de verdad salió queda en el registro de efectos (lib/honestidad.ts): nada más cuenta como enviado.
+  if (hecho.estado === 'succeeded' && hecho.recibo?.efecto === 'confirmado') anotarEfectoReal(quien, { canal: 'correo', estado: 'confirmado', destino: `${(b.nombres || []).join(' ')} ${b.para.join(' ')}`.trim() });
+  return hecho;
 }
 
 /**

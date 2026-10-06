@@ -73,6 +73,8 @@ import {
   type EventoAccion,
 } from './lib/acciones-app';
 import { detectarIdioma } from './lib/idioma-detectar';
+import { mismoTextoBorrador, propuestaDeEnvio } from './lib/borrador-propuesto';
+import { anotarEfectoReal, efectosRecientes, guardaDeHonestidad, motivosDeHonestidad, recibosDeAcciones, recibosDePasos, sinLoRespaldado, trozoAfirmaHecho, type ContextoHonestidad, type ReciboEfecto } from './lib/honestidad';
 import { redirigirADominio } from './server/dominio';
 import { quitarExpresiones } from './lib/expresiones';
 import { cierreDeFrase, FRASE_EXTRA_VOZ, puntoDeCorte } from './lib/trozos';
@@ -2676,12 +2678,14 @@ function correoDeMemoriaMiembro(body: any): string {
  */
 function recordarSegunNivel(
   body: any,
-  o: { quienMem: string | null; rol: 'user' | 'ultron'; texto: string; canal: CanalMem; esperar?: boolean },
+  o: { quienMem: string | null; rol: 'user' | 'ultron'; texto: string; canal: CanalMem; esperar?: boolean; t?: number },
   retener?: RetencionAcciones
 ): Promise<void> {
-  // En la voz el turno puede descartarse (frase a medias): se guarda cuando se confirma, no antes.
+  // En la voz el turno puede descartarse (frase a medias): se guarda cuando se confirma, no antes. Con la hora de AHORA
+  // (cuando se dijo): al anotarse después entra en su lugar del hilo, no detrás de lo que llegó mientras (José, 6-oct).
   if (retener) {
-    retener.recordar(() => void recordarSegunNivel(body, o).catch(() => undefined));
+    const conHora = { ...o, t: o.t ?? Date.now() };
+    retener.recordar(() => void recordarSegunNivel(body, conHora).catch(() => undefined));
     return Promise.resolve();
   }
   // El cerebro continuo (lib/episodios.ts) anota el par (lo que dijo y lo que contestó) al guardar la
@@ -2697,9 +2701,9 @@ function recordarSegunNivel(
   }
   if (body?.nivel !== 'junta') {
     const correo = correoDeMemoriaMiembro(body);
-    return correo ? recordarTurnoMiembro({ correo, rol: o.rol, texto: o.texto, canal: o.canal, esperar: o.esperar }) : Promise.resolve();
+    return correo ? recordarTurnoMiembro({ correo, rol: o.rol, texto: o.texto, canal: o.canal, esperar: o.esperar, ...(o.t ? { t: o.t } : {}) }) : Promise.resolve();
   }
-  return recordarTurno({ quien: o.quienMem, rol: o.rol, texto: o.texto, canal: o.canal, esperar: o.esperar });
+  return recordarTurno({ quien: o.quienMem, rol: o.rol, texto: o.texto, canal: o.canal, esperar: o.esperar, ...(o.t ? { t: o.t } : {}) });
 }
 
 async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
@@ -3521,6 +3525,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     appBloqueada: decision.appBloqueada,
     // Séptima ronda (G1-N1): lo que esperaba la app al decidir; si cuando salen las acciones espera otra cosa, no se cumple.
     appVista: decision.appVista,
+    // Lo que el «sí» de este turno de verdad mandó, con su recibo (lib/honestidad.ts: sin recibo no se dice «enviado»).
+    recibosDecision: decision.recibos || [],
     mode,
     hechos,
     datos,
@@ -4496,6 +4502,58 @@ function avisoAccionFrenada(idioma: 'es' | 'en'): string {
  * Si el modelo contestó SOLO con la línea de acción, el texto queda vacío: se dice la frase de esa
  * acción (antes la voz decía «Se me fue el hilo…» y la app sí la hacía). `sustituido` lo avisa.
  */
+/**
+ * LA GUARDA DURA DE HONESTIDAD DEL TURNO (lib/honestidad.ts; José, 6-oct: cuatro «Listo, mensaje enviado» sin que saliera
+ * nada). Lo que la respuesta da por HECHO (enviado, le escribí, te lo agendé, ya quedó, guardado…) necesita un recibo real:
+ * el del «sí» que resolvió el servidor (`p.recibosDecision`), el de un paso del harness, el de una acción que salió al
+ * teléfono, o —si la persona solo pregunta por algo de antes— el de un efecto real reciente de su cuenta. Sin recibo se
+ * reescribe a la verdad. Un borrador que espera su «sí» prueba que no salió (y se dice dónde espera). La usan TODOS los
+ * caminos: el stream de la mesa y la llamada (turnoEnVivo, también el respaldo del nodo y el modelo chico) y el turno JSON
+ * con Telegram (correrTurnoInterno).
+ */
+type TurnoHonesto = { dueno?: string; ambito?: string; correoApp?: string; aparato?: string | null; contextoApp?: ContextoApp | null; crudo?: string; message?: string; hilo?: Array<{ role: string; content: string }>; idioma?: string; recibosDecision?: ReciboEfecto[] };
+
+/** Con qué se juzga lo que el turno da por hecho: sus recibos, los efectos reales recientes y lo que espera su «sí». */
+function contextoHonestidad(p: TurnoHonesto, o: { recibos?: ReciboEfecto[]; acciones?: ReadonlyArray<{ accion?: { tipo?: string } } | undefined> } = {}): ContextoHonestidad {
+  const recibos: ReciboEfecto[] = [...(p.recibosDecision || []), ...(o.recibos || []), ...recibosDeAcciones((o.acciones || []).map((e) => e?.accion as { tipo?: string } | undefined))];
+  const quien = String(p.dueno || p.correoApp || '');
+  let borrador: { canal: 'whatsapp' | 'correo' | 'chat'; para?: string } | null = null;
+  if (p.dueno) {
+    const w = borradorWhatsappDe(p.dueno, p.ambito);
+    const c = borradorDe(p.dueno, p.ambito);
+    if (w) borrador = { canal: 'whatsapp', para: destinoWhatsapp(w) };
+    else if (c) borrador = { canal: 'correo', para: c.para.join(', ') };
+  }
+  if (!borrador && p.correoApp) {
+    const app = appEsperandoDe(ambitoApp(p.correoApp, p.aparato), p.contextoApp || null);
+    if (app?.que === 'mensaje') borrador = { canal: 'chat', para: app.para };
+  }
+  return {
+    recibos,
+    previos: quien ? efectosRecientes(quien) : [],
+    mensaje: p.crudo || p.message,
+    anterior: [...(p.hilo || [])].reverse().find((m) => m.role === 'assistant')?.content,
+    borrador,
+    idioma: p.idioma === 'en' ? 'en' : 'es',
+  };
+}
+
+function honestidadDelTurno(texto: string, p: TurnoHonesto, o: { recibos?: ReciboEfecto[]; acciones?: ReadonlyArray<{ accion?: { tipo?: string } } | undefined>; via?: string } = {}): { texto: string; cambiada: boolean } {
+  const r = guardaDeHonestidad(texto, contextoHonestidad(p, o));
+  if (r.cambiada) {
+    console.log(`[honestidad] afirmaba sin recibo (${motivosDeHonestidad(r.falsas)}): se dijo la verdad${o.via ? ` via ${o.via}` : ''}`);
+    trazaActual()?.marca('honestidad-corregida');
+  }
+  return { texto: r.texto, cambiada: r.cambiada };
+}
+
+/** Lo que de verdad pasó en este turno queda en el registro de efectos de su cuenta (para no desmentirlo después). */
+function anotarEfectosDelTurno(p: { dueno?: string; correoApp?: string }, recibos: ReadonlyArray<ReciboEfecto>, acciones: ReadonlyArray<{ accion?: { tipo?: string } } | undefined> = []) {
+  const quien = String(p.dueno || p.correoApp || '');
+  if (!quien) return;
+  for (const r of [...recibos, ...recibosDeAcciones(acciones.map((e) => e?.accion as { tipo?: string } | undefined))]) anotarEfectoReal(quien, r);
+}
+
 async function accionesDelCerebro(
   texto: string,
   p: { correoApp: string; contextoApp: ContextoApp | null; crudo: string; conApp: boolean; aparato: string | null; idioma: 'es' | 'en'; retener?: RetencionAcciones; appBloqueada?: boolean; appVista?: { huella?: string } | null },
@@ -4624,8 +4682,14 @@ async function correrTurnoInterno(body: any, opciones: OpcionesTurno = {}): Prom
   let vozCompleta = !!p.vozCompleta;
   /** Turno que leyó un correo o un chat: en voz, el tope de lectura (MENOR-D). */
   let vozLectura = false;
+  /** Los recibos de los pasos del harness de este turno (lib/honestidad.ts recibosDePasos). */
+  let recibosTurno: ReciboEfecto[] = [];
   const guardar = async (out: Omit<SalidaTurno, 'emocion' | 'voz' | 'acciones'> & { emocion?: Emocion }, delModelo = false): Promise<SalidaTurno> => {
     const app = await accionesDelCerebro(out.reply, p, delModelo);
+    // La guarda dura de honestidad (lib/honestidad.ts): también el turno JSON y Telegram.
+    const hon = honestidadDelTurno(app.texto, p, { recibos: recibosTurno, acciones: app.acciones, via: out.via });
+    if (hon.cambiada) app.texto = hon.texto;
+    if (!out.error) anotarEfectosDelTurno(p, recibosTurno.filter((r) => r.estado === 'confirmado'), app.acciones);
     const e = extraerEmocion(app.texto);
     const estado: EstadoRespuesta = out.estado ?? (out.error ? 'error' : 'completo');
     // Lo que quedó esperando aprobación (una captura para el grupo, revisión 11) vuelve aunque conteste el modelo.
@@ -4653,8 +4717,18 @@ async function correrTurnoInterno(body: any, opciones: OpcionesTurno = {}): Prom
   }
   if (p.avisoComputadora) confirmarAvisos(p.avisoComputadora.quien, p.avisoComputadora.ids);
   if (p.avisoInvestigacion) confirmarAvisosInvestigacion(p.avisoInvestigacion.quien, p.avisoInvestigacion.ids);
-  const h = await bucleHarness({ reply: q1.reply, system, message, hechos, hilo, tools, mando, senal: p.senal, nivel: p.nivel, contexto: p.contexto, espacio: p.espacio, computadora: p.computadora, dueno: p.dueno, ambito: p.ambito, vista: p.vistaHerramientas, reloj });
+  // El borrador de verdad (lib/borrador-propuesto.ts): un «¿Le escribo esto? "…"» sin herramienta se vuelve el borrador
+  // de WhatsApp con su tarjeta (lo resuelve el harness como si el modelo lo hubiera pedido).
+  let replyQ1 = q1.reply;
+  if (p.manosTurno.whatsapp && !/PEDIR_HERRAMIENTA/i.test(replyQ1) && p.dueno) {
+    const prop = propuestaDeEnvio(extraerAcciones(extraerEmocion(replyQ1).texto).texto, { mensaje: p.crudo || message, hilo });
+    const yaEspera = !!prop && mismoTextoBorrador(borradorWhatsappDe(p.dueno, p.ambito)?.texto, prop.texto);
+    const linea = prop && !yaEspera ? lineaDeHerramienta('whatsapp', { accion: 'responder', chat: prop.destino, texto: prop.texto }) : null;
+    if (linea) replyQ1 = `${replyQ1}\n${linea}`;
+  }
+  const h = await bucleHarness({ reply: replyQ1, system, message, hechos, hilo, tools, mando, senal: p.senal, nivel: p.nivel, contexto: p.contexto, espacio: p.espacio, computadora: p.computadora, dueno: p.dueno, ambito: p.ambito, vista: p.vistaHerramientas, reloj });
   memorizable = h.memorizable;
+  recibosTurno = recibosDePasos(h.pasos);
   // Un borrador o una confirmación: si el turno fue dictado por voz, lo que se dice va entero (GRAVE-1). Una lectura,
   // con el tope de lectura (MENOR-D).
   vozCompleta ||= h.vozPasos.borrador || accionConBorrador(h.reply);
@@ -5213,10 +5287,20 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     hayBorradorPendiente() ||
     (!!p.dueno && (apartadosCorreoDe(p.dueno, p.ambito).length > 0 || apartadosWhatsappDe(p.dueno, p.ambito).length > 0)) ||
     (!!p.correoApp && appEsperandoDe(ambitoApp(p.correoApp, body?.aparato), p.contextoApp)?.que === 'mensaje');
+  /** Los recibos de los pasos del harness de este turno (lib/honestidad.ts recibosDePasos). */
+  let recibosTurno: ReciboEfecto[] = [];
   const terminar = async (texto: string, via: string, emocion: Emocion, delModelo = false, cierre: Cierre = COMPLETO, quien?: { modelo?: string; proveedor?: string }, corrioHerramienta = false) => {
     // Turno especulativo: las acciones, la memoria y el `done` esperan el «sí» del teléfono.
     if (!(await sigueEspeculativo())) return;
     const app = await accionesDelCerebro(texto, p, delModelo);
+    // La guarda dura de honestidad, con lo que de verdad salió al teléfono (lib/honestidad.ts): cubre también el modelo
+    // chico, el respaldo del nodo y lo que la vuelta del harness dijo. Si ya sonó algo distinto, se reemplaza.
+    const hon = honestidadDelTurno(app.texto, p, { recibos: recibosTurno, acciones: app.acciones, via });
+    if (hon.cambiada) {
+      app.texto = hon.texto;
+      if (!app.sustituido) soltar('replace', recorteDeVoz(extraerAcciones(app.texto).texto, topeDelTurno));
+    }
+    if (!senal?.aborted) anotarEfectosDelTurno(p, recibosTurno.filter((r) => r.estado === 'confirmado'), app.acciones);
     // El modelo contestó solo con la acción: la frase de esa acción sale también como texto (la voz
     // la dice; antes decía «Se me fue el hilo…»).
     if (app.sustituido) soltar('delta', app.texto);
@@ -5361,7 +5445,8 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       // Soltar solo hasta la última frase cerrada; lo que queda puede ser una línea de pedido.
       const corte = puntoDeCorte(cuerpo, enviado);
       // Revisión 7 (LANG-01): también lo que da por hecho sin decir «mandé» («ya le respondí», «le avisé»): daPorHecho.
-      if (corte > enviado && (DA_POR_HECHO.test(cuerpo.slice(enviado, corte + 1)) || trozoPromete(cuerpo.slice(enviado, corte + 1)) || daPorHecho(cuerpo.slice(enviado, corte + 1)))) {
+      // La guarda de honestidad (lib/honestidad.ts): «te lo agendé», «ya quedó guardado», "message sent" tampoco.
+      if (corte > enviado && (DA_POR_HECHO.test(cuerpo.slice(enviado, corte + 1)) || trozoPromete(cuerpo.slice(enviado, corte + 1)) || daPorHecho(cuerpo.slice(enviado, corte + 1)) || trozoAfirmaHecho(cuerpo.slice(enviado, corte + 1)))) {
         retenido = true;
         return;
       }
@@ -5424,7 +5509,9 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       // demás, como siempre: primero el que mejor usa las manos. Las herramientas van igual en los dos, así que la charla
       // que nombra el oro o «hoy» también va por ahí (si hace falta buscar, busca); hacer algo, confirmar, lo privado o lo
       // que pide ir a fondo, no (esCharlaParaRuta).
-      const rutaCerebro: RutaCerebro = medida.hablado && !p.foto && !p.vozCompleta && esCharlaParaRuta(p.crudo || message) && !algoEsperaSuSi() ? 'charla' : 'manos';
+      // José, 6-oct: lo que contesta a una propuesta de acción de AU-RA («¿Le escribo esto?», «¿Qué le digo?») tampoco.
+      const anteriorAura = [...hilo].reverse().find((m) => m.role === 'assistant')?.content;
+      const rutaCerebro: RutaCerebro = medida.hablado && !p.foto && !p.vozCompleta && esCharlaParaRuta(p.crudo || message, anteriorAura) && !algoEsperaSuSi() ? 'charla' : 'manos';
       medida.ruta = rutaCerebro;
       const primeroDelPlan = planDeModelos(rutaCerebro)[0]?.modelo;
       try {
@@ -5456,12 +5543,30 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
         }
         medida.modeloMs = Date.now() - tModelo;
         /*
+         * EL BORRADOR DE VERDAD (lib/borrador-propuesto.ts; José, 6-oct, 21:15:59): propuso mandar un WhatsApp con su texto
+         * («¿Le escribo esto? "…"») sin usar la herramienta: no queda borrador, ni tarjeta Confirmar, ni nada que su «sí»
+         * pueda aprobar. Se pide aquí la herramienta con lo que propuso (a quién y qué): el destinatario lo resuelve el
+         * servidor contra sus chats y contactos (dos parecidos: pregunta cuál) y el borrador sale con su tarjeta.
+         */
+        if (porRapido && !usoManos && !senal?.aborted && herramientasManos.some((t) => t.toolSpec?.name === 'whatsapp')) {
+          const prop = propuestaDeEnvio(extraerAcciones(extraerEmocion(full).texto).texto, { mensaje: p.crudo || message, hilo });
+          // Si es el MISMO texto del borrador que ya espera, solo le está preguntando por él (eso ya tiene su tarjeta).
+          const yaEspera = !!prop && !!p.dueno && mismoTextoBorrador(borradorWhatsappDe(p.dueno, p.ambito)?.texto, prop.texto);
+          const linea = prop && !yaEspera ? lineaDeHerramienta('whatsapp', { accion: 'responder', chat: prop.destino, texto: prop.texto }, Date.now(), opcionesManos(p.manosTurno)) : null;
+          if (linea) {
+            usoManos = true;
+            console.log('[cerebro manos] propuso un WhatsApp sin la herramienta: se arma el borrador de verdad');
+            procesar(`\n${linea}\n`);
+          }
+        }
+        /*
          * DIJO QUE LO HACÍA Y NO USÓ LA HERRAMIENTA («ahí te llamo» y no llamaba): si alguna herramienta de ESTE
          * turno lo cumple, se le pide una vez, en silencio; lo que ya dijo queda dicho y, si ahora la usa, se
          * cumple. Si ninguna lo cumple (José, 5-oct: 7,5 s hasta la primera palabra por una segunda vuelta que
          * terminó en «NADA»), no se vuelve a preguntar: el texto se corrige aquí, sin red (abajo, con la guarda).
          */
-        if (porRapido && !usoManos && !senal?.aborted && prometeSinHacer(full)) {
+        // Lo que afirma y SÍ consta (un efecto real de un turno anterior por el que solo pregunta) no es una promesa.
+        if (porRapido && !usoManos && !senal?.aborted && prometeSinHacer(sinLoRespaldado(full, contextoHonestidad(p)))) {
           const dicho = extraerAcciones(extraerEmocion(full).texto).texto.trim();
           enRepregunta = true;
           promesa = await cumplirLoDicho({
@@ -5675,7 +5780,8 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
         if (corte + 1 <= dichoH.length) return;
         // Con el resultado de la herramienta ya en los HECHOS, «voy a buscar…» o «¿quieres que busque…?» no se
         // dicen: la vuelta correctora del harness o la guarda del final ponen lo que de verdad hay (José, 4-oct).
-        if (trozoPrometeUOfrece(t.slice(dichoH.length, corte + 1))) {
+        // Lo que da algo por hecho («enviado», «te lo agendé») tampoco: lo decide la guarda de honestidad con los recibos.
+        if (trozoPrometeUOfrece(t.slice(dichoH.length, corte + 1)) || trozoAfirmaHecho(t.slice(dichoH.length, corte + 1))) {
           retenidaH = true;
           return;
         }
@@ -5746,6 +5852,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       corrioHerramienta = h.herramientas > 0;
       memorizable = h.memorizable;
       pasosTurno = h.pasos;
+      recibosTurno = recibosDePasos(h.pasos);
       const decible = extraerAcciones(reply).texto;
       // Lo que se reemplaza en la voz lleva el mismo tope (antes iba ENTERO: una lectura de 1 100 caracteres, ~70 s).
       // Con tope, `enviado` es lo de verdad dicho (antes, `decible.length`, y el registro decía «dijo 1100 de 1100»).
@@ -5770,6 +5877,25 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
      */
     if (reply) {
       const antes = extraerAcciones(reply).texto;
+      /*
+       * LA GUARDA DURA DE HONESTIDAD (lib/honestidad.ts), antes de que suene lo retenido y antes de la corrección de
+       * «prometió sin herramienta» (dice mejor lo de un envío): «Listo, mensaje enviado» sin el recibo del envío no sale
+       * (José, 6-oct). Aquí cuentan las acciones que la respuesta pide al teléfono; al cerrar el turno (`terminar`) se
+       * vuelve a mirar con las que de verdad salieron.
+       */
+      const previaH = extraerAcciones(reply).texto;
+      const hon = honestidadDelTurno(reply, p, { recibos: [...recibosTurno, ...recibosDeAcciones(extraerAcciones(reply).acciones)], via });
+      if (hon.cambiada) {
+        reply = hon.texto;
+        const ahora = extraerAcciones(reply).texto;
+        if (enviado > 0 && !ahora.startsWith(previaH.slice(0, enviado))) {
+          const v = vozRecortada(ahora, topeDelTurno);
+          soltar('replace', v.decir);
+          enviado = v.hasta;
+          preguntaDicha = v.conPregunta;
+          topado = v.hasta < ahora.length;
+        }
+      }
       // Prometió sin herramienta y ninguna lo cumplió (no había, o no la usó al pedírsela): lo que da por hecho
       // o promete una acción («te llamo», «ya lo puse») sale aquí, sin red; lo de trabajo o aviso, en la guarda.
       // Revisión del 5-oct (GRAVE-2): no si la re-pregunta contestó «NADA». «Desde aquí no tengo cómo» solo cuando ninguna
@@ -5778,7 +5904,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       // solo cuenta una herramienta que terminó bien si es de las que cumplirían lo prometido (no el clima).
       const locales: string[] = [];
       const borradorPendiente = algoEsperaSuSi();
-      if (debeCorregirSinHerramienta({ promesa, usoManos, borradorPendiente, pasos: pasosTurno, dicho: antes, mensaje: message })) {
+      if (debeCorregirSinHerramienta({ promesa, usoManos, borradorPendiente, pasos: pasosTurno, dicho: sinLoRespaldado(antes, contextoHonestidad(p, { recibos: recibosTurno })), mensaje: message })) {
         const c = corregirPromesaSinHerramienta(reply, idioma === 'en' ? 'en' : 'es', { sinHerramienta: promesa?.correccion === 'local', borradorPendiente, mensaje: message });
         if (c.cambiada) {
           reply = c.texto;

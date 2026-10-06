@@ -527,7 +527,7 @@ const DEL_FUTURO = new RegExp(
  * independiente del 5-oct (GRAVE-A): «en la mañana», «más temprano» o «el lunes» también dicen PARA CUÁNDO, y con
  * ellas promesas falsas («te puse el recordatorio para mañana en la mañana») pasaban por cosas de otro turno.
  */
-function esDeAntes(frase: string): boolean {
+export function esDeAntes(frase: string): boolean {
   const p = plano(frase);
   const re = new RegExp(DE_ANTES.source, 'g');
   let hay = false;
@@ -770,7 +770,7 @@ export function sinCitas(texto: string): string {
  * Las frases de una línea partidas sobre lo NO citado (una cita entera queda dentro de su frase): `texto` es la frase tal
  * cual y `propia`, la misma con lo citado tapado (lo que de verdad dice AU-RA). Unidas, las `texto` dan la línea exacta.
  */
-function frasesConCitas(linea: string): Array<{ texto: string; propia: string }> {
+export function frasesConCitas(linea: string): Array<{ texto: string; propia: string }> {
   const out: Array<{ texto: string; propia: string }> = [];
   let i = 0;
   for (const f of frases(sinCitas(linea))) {

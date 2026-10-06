@@ -23,7 +23,7 @@ import path from 'node:path';
 import { s3GetJson, s3GetJsonConEtag, s3Listo, s3PutJson, s3PutJsonCondicional } from './s3';
 import { MODELO_VOZ, similitud } from './voces-motor';
 import { filaPorCuenta, Generaciones } from './fila-por-cuenta';
-import { aplicarLapidas, BorradoDegradado, conLapidas, escribirLocal, fusionarCopias, sanearDurable, siguiente, type Durable } from './biometria-durable';
+import { aplicarLapidas, BorradoDegradado, conLapidas, escribirLocal, fusionarCopias, horaDeAlta, sanearDurable, siguiente, type Durable } from './biometria-durable';
 
 export const LARGO_HUELLA = MODELO_VOZ.dim;
 export const MAX_PERSONAS = 20;
@@ -357,7 +357,7 @@ export async function agregarVoz(correo: string, alta: AltaValida, vectores: num
       ...(alta.parentesco ? { parentesco: alta.parentesco } : {}),
       vectores: vectores.slice(-MAX_MUESTRAS),
       consentimiento: alta.consentimiento,
-      creado: ahora,
+      creado: horaDeAlta(cajon, ahora),
       actualizado: ahora,
     };
     personas.push(persona);

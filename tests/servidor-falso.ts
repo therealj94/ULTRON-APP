@@ -27,7 +27,18 @@ export const eventoBedrock = (tipo: string, cuerpo: unknown) =>
 export type RespuestaFalsa = { texto?: string; herramienta?: { nombre: string; input: Record<string, unknown> }; demoraMs?: number };
 export type PedidoBedrock = { modelo: string; body: any; en: number };
 
-export async function levantarServidor(o: { correo: string; env?: Record<string, string>; contestar: (ultimo: string, modelo: string) => RespuestaFalsa }) {
+/**
+ * `puente`: un puente de WhatsApp a medida (la ruta y el cuerpo; null = el de siempre). `nodo`: lo que contesta el Qwen del
+ * nodo (el respaldo cuando Bedrock no contesta). `contestar` recibe también el pedido entero (lo que vio el modelo).
+ * `fallaBedrock`: true = ese pedido contesta 500 (sin modelo de Bedrock: contesta el nodo).
+ */
+export async function levantarServidor(o: {
+  correo: string;
+  env?: Record<string, string>;
+  contestar: (ultimo: string, modelo: string, body: any) => RespuestaFalsa & { fallaBedrock?: boolean };
+  puente?: (u: URL, cuerpo: string) => { status: number; json: unknown } | null;
+  nodo?: (cuerpo: any) => string;
+}) {
   const RAIZ = process.cwd();
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'aura-servidor-falso-'));
   const SECRETO = 'secreto-de-prueba-largo-para-el-servidor-entero-5-0';
@@ -44,7 +55,11 @@ export async function levantarServidor(o: { correo: string; env?: Record<string,
       const body = JSON.parse(c || '{}');
       pedidos.push({ modelo, body, en: Date.now() });
       const ultimo = String(body.messages?.at(-1)?.content?.[0]?.text || '');
-      const r = o.contestar(ultimo, modelo);
+      const r = o.contestar(ultimo, modelo, body);
+      if (r.fallaBedrock) {
+        res.writeHead(500, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ message: 'falla de prueba' }));
+      }
       res.writeHead(200, { 'content-type': 'application/vnd.amazon.eventstream' });
       if (r.demoraMs) await new Promise((ok) => setTimeout(ok, r.demoraMs));
       if (res.closed || res.destroyed) return;
@@ -73,12 +88,18 @@ export async function levantarServidor(o: { correo: string; env?: Record<string,
       if (!JSON.parse(c || '{}').stream) return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ message: { content: '{}' } }));
       alNodo++;
       res.writeHead(200, { 'content-type': 'application/x-ndjson' });
-      res.end(JSON.stringify({ message: { content: '[EMO: neutral] Hola desde el nodo.' }, done: true }) + '\n');
+      const dicho = o.nodo ? o.nodo(JSON.parse(c || '{}')) : '[EMO: neutral] Hola desde el nodo.';
+      res.end(JSON.stringify({ message: { content: dicho }, done: true }) + '\n');
     });
   });
   const puente = http.createServer((req, res) => {
-    req.resume();
-    res.writeHead(200, { 'content-type': 'application/json', 'x-cuenta': String(req.headers['x-cuenta'] || '') }).end(JSON.stringify({ vinculado: true, conectado: true, chats: [] }));
+    let c = '';
+    req.on('data', (d) => (c += d));
+    req.on('end', () => {
+      const propio = o.puente?.(new URL(req.url || '/', 'http://puente'), c);
+      if (propio) return res.writeHead(propio.status, { 'content-type': 'application/json', 'x-cuenta': String(req.headers['x-cuenta'] || '') }).end(JSON.stringify(propio.json));
+      res.writeHead(200, { 'content-type': 'application/json', 'x-cuenta': String(req.headers['x-cuenta'] || '') }).end(JSON.stringify({ vinculado: true, conectado: true, chats: [] }));
+    });
   });
   const laya = http.createServer((req, res) => {
     req.resume();
@@ -95,7 +116,8 @@ export async function levantarServidor(o: { correo: string; env?: Record<string,
     env: {
       PATH: process.env.PATH || '',
       HOME: tmp,
-      NODE_ENV: 'production',
+      // Con NODE_ENV=test en las pruebas, el servidor también (lib/entorno.ts); sin él, como en producción.
+      NODE_ENV: process.env.NODE_ENV === 'test' ? 'test' : 'production',
       PORT: String(PORT),
       PLATAFORMA: 'ultron',
       ULTRON_SESION_SECRETO: SECRETO,

@@ -574,7 +574,9 @@ test('GRAVE-2: server.ts pasa por debeCorregirSinHerramienta (NADA, borrador pen
   // Revisión del 6-oct: «algo espera su sí» suma los apartados de la ventana de decisión y el mensaje listo de la app.
   assert.match(turno, /const borradorPendiente = algoEsperaSuSi\(\);/);
   assert.match(turno, /const algoEsperaSuSi = \(\) =>\s*hayBorradorPendiente\(\) \|\|/);
-  assert.match(turno, /debeCorregirSinHerramienta\(\{ promesa, usoManos, borradorPendiente, pasos: pasosTurno, dicho: antes, mensaje: message \}\)/);
+  // José, 6-oct (lib/honestidad.ts): lo que afirma y SÍ consta (un efecto real de un turno anterior) sale de lo que se
+  // corrige: «Sí, ya se lo mandé» a «¿ya se lo mandaste?» no se desmiente.
+  assert.match(turno, /debeCorregirSinHerramienta\(\{ promesa, usoManos, borradorPendiente, pasos: pasosTurno, dicho: sinLoRespaldado\(antes, contextoHonestidad\(p, \{ recibos: recibosTurno \}\)\), mensaje: message \}\)/);
   assert.match(turno, /corregirPromesaSinHerramienta\(reply, idioma === 'en' \? 'en' : 'es', \{ sinHerramienta: promesa\?\.correccion === 'local', borradorPendiente, mensaje: message \}\)/);
   // Y la re-pregunta tampoco se lanza por lo que se dice de eso.
   assert.match(turno, /borradorPendiente: algoEsperaSuSi\(\),\s*repreguntar:/);

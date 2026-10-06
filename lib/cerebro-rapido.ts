@@ -23,6 +23,7 @@
  */
 import { BedrockRuntimeClient, ConverseStreamCommand, type Message, type SystemContentBlock, type Tool } from '@aws-sdk/client-bedrock-runtime';
 import { anotarExito, anotarFallo, disponible } from './cognitivo/interruptor';
+import { analizarRespuesta } from './afirmacion';
 
 /**
  * GLM-5 (Z.ai) en Bedrock. Medido el 3-oct con el prompt REAL de AU-RA y los pedidos de José
@@ -324,11 +325,32 @@ const PIDE_ACCION = new RegExp(
 /** Lo que pide ir a fondo: ahí manda la calidad, no la latencia (va al de las manos, el que mejor razona). */
 const PIDE_PROFUNDIDAD = /\b(a fondo|en detalle|a detalle|detallad\w*|paso a paso|con calma|analiza\w*|analisis|profund\w*)\b/i;
 
-/** ¿Va por la ruta de charla? (lo decide server.ts junto con que sea hablado y que nada espere su «sí»). */
-export function esCharlaParaRuta(texto: string): boolean {
+/**
+ * Lo último que dijo AU-RA PROPONE o prepara una acción y espera la respuesta de la persona: «¿Le escribo esto?», «¿Lo
+ * envío?», «¿Qué le querés decir?», «¿A cuál de los dos?», «¿Te lo agendo?». José, 6-oct (21:15:57): «Viejo.» y «Bien,
+ * nada más» contestaban a eso y fueron por la charla (otro modelo, el más flojo con las manos); el del borrador inventó
+ * «Listo, mensaje enviado». Lo que sigue a una propuesta va al de las manos.
+ */
+const OFRECE_ACCION =
+  /¿[^?]*\b(escrib\w*|mand\w*|envi\w*|reenvi\w*|respond\w*|contest\w*|llam\w*|marc\w*|record\w*|recuerd\w*|agend\w*|program\w*|pong\w*|pon(go|emos|elo|selo)?|guard\w*|anot\w*|redact\w*|borrador|dig[oa]|decir|decirle|que le|a quien|a cual|cual de|para quien|send|call|remind|schedule|save|text)\b[^?]*\?/;
+export function anteriorOfreceAccion(anterior: string | undefined): boolean {
+  const p = String(anterior || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  // Lo citado (el texto del borrador que se le lee) no cuenta como pregunta de AU-RA.
+  return OFRECE_ACCION.test(p.replace(/«[^»\n]*»|“[^”\n]*”|"[^"\n]*"/g, ' '));
+}
+
+/**
+ * ¿Va por la ruta de charla? (lo decide server.ts junto con que sea hablado y que nada espere su «sí»). Nunca un «sí» /
+ * «dale» / «mándalo» (lib/afirmacion.ts) ni lo que contesta a una propuesta de acción de AU-RA (`anterior`).
+ */
+export function esCharlaParaRuta(texto: string, anterior?: string): boolean {
   const t = String(texto || '').trim();
   if (!t || t.length > 400) return false;
   const plano = t.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/ñ/gi, 'n');
+  // Un sí que confirma («sí», «sale», «simón», «de una», «envíalo»), no un «va» dentro de una pregunta («¿cómo va todo?»).
+  const a = analizarRespuesta(t);
+  const confirma = !a.pregunta && (a.pura || a.envio || (a.afirma && a.unidades.find((x) => x.k !== 'cortesia')?.k === 'si'));
+  if (confirma || anteriorOfreceAccion(anterior)) return false;
   return !PIDE_ACCION.test(plano) && !PIDE_PROFUNDIDAD.test(plano);
 }
 

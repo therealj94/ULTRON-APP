@@ -15,6 +15,7 @@
  * enseña correos. Un archivo por persona, para que la comunidad crezca sin reescribir un objeto enorme
  * en cada turno.
  */
+import { insertarTurno } from './hilo-orden';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -181,7 +182,7 @@ export function hiloMiembro(correo: string): TurnoMiembro[] {
  * Anota un turno en el hilo del miembro. Si la persona pide recordar algo («recuerda que…»), va a sus
  * hechos. `esperar: false` vuelve en cuanto está en la caché y deja el guardado en la cola.
  */
-export async function recordarTurnoMiembro(o: { correo: string; rol: 'user' | 'ultron'; texto: string; canal?: TurnoMiembro['canal']; esperar?: boolean }): Promise<void> {
+export async function recordarTurnoMiembro(o: { correo: string; rol: 'user' | 'ultron'; texto: string; canal?: TurnoMiembro['canal']; esperar?: boolean; t?: number }): Promise<void> {
   const c = correoNormal(o.correo);
   const texto = String(o.texto || '').trim().slice(0, 4000);
   if (!c || !texto) return;
@@ -192,8 +193,12 @@ export async function recordarTurnoMiembro(o: { correo: string; rol: 'user' | 'u
       console.warn('[memoria miembro] S3 no se pudo leer; no anoto el turno para no pisar su memoria');
       return null;
     }
-    const t = Date.now();
-    const cajon: CajonMiembro = { version: 1, corta: [...previo.corta, { rol: o.rol, texto, t, canal: o.canal || 'mesa' }].slice(-MAX_CORTA_MIEMBRO), larga: previo.larga };
+    const ahora = Date.now();
+    const t = o.t && Number.isFinite(o.t) && o.t <= ahora ? o.t : ahora;
+    // En su lugar por la hora (lib/hilo-orden.ts); la misma frase suya repetida hace un momento no se guarda dos veces.
+    const corta = insertarTurno(previo.corta, { rol: o.rol, texto, t, canal: o.canal || 'mesa' }, MAX_CORTA_MIEMBRO);
+    if (!corta) return null;
+    const cajon: CajonMiembro = { version: 1, corta, larga: previo.larga };
     if (o.rol === 'user' && esHechoDeMiembro(texto)) {
       cajon.larga = [{ hecho: texto.slice(0, 400), t }, ...previo.larga.filter((h) => h.hecho !== texto)].slice(0, MAX_LARGA_MIEMBRO);
     }
