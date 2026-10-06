@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { comprobarClavePropia, SIN_COMPROBAR as CLAVE_SIN_COMPROBAR } from './server/entrar-clave';
 import express from 'express';
 import http from 'http';
 import path from 'path';
@@ -1766,14 +1767,12 @@ app.post(['/api/electrum/entrar', '/api/ultron/entrar'], limitar(12), async (req
   /*
    * Primero la clave propia (server/cuentas.ts): quien ya se hizo una aquí —cambiándola, recuperándola
    * o al activar una cuenta aprobada— entra con esa y solo con esa. Quien no, sigue entrando por el
-   * cerebro remoto como siempre. Si la base de cuentas no contesta, se cae al remoto para no dejar
-   * a la junta afuera por una base caída.
+   * cerebro remoto como siempre. Si la base de cuentas no contesta, NO se entra (revisión 7, G3): el
+   * remoto no mira la suspensión, y una base caída no puede abrirle la puerta a una cuenta suspendida.
    */
   if (cuentasDisponibles()) {
-    const propia = await entrarConCuenta(correo, String(claveEntrada)).catch((e) => {
-      console.warn('[cuentas] base sin contestar en la entrada; sigo con el remoto:', String(e?.message || e).slice(0, 120));
-      return 'sin_clave' as const;
-    });
+    const propia = await comprobarClavePropia(entrarConCuenta, correo, String(claveEntrada));
+    if (propia === 'sin_comprobar') return res.status(503).json({ ...CLAVE_SIN_COMPROBAR, honesto: true });
     if (propia === 'mal') {
       anotarFalloEntrada(correo, ipEntrada);
       return res.status(401).json({ error: 'Correo o clave incorrectos.', codigo: 'NO_ENTRA' });
