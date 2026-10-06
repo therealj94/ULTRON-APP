@@ -600,6 +600,20 @@ prueba('G1 (costura): la mesa decide ANTES de leer/escribir la memoria y antes d
   assert.match(d, /paraTurno\(oidaEn, \{ caraDuenaEn:/, 'la cara de la dueña cuenta para la continuidad');
 });
 
+prueba('voz (auditoría 6-oct): la traza mide cuando el reproductor confirma; el stream roto se recupera con el MISMO idTurno y el locutor cancelado', () => {
+  const src = fs.readFileSync(path.join(RAIZ, 'mobile/src/screens/DeskScreen.tsx'), 'utf8');
+  assert.match(src, /if \(oida\) cuandoSuene\(\(\) => \{/, '«contestó con voz» se mide en el comienzo real (cuandoSuene), no al pedir play');
+  assert.match(src, /onAudioBajado: \(\) => trazaTurno\.marcar\('audio'\)/, '«tts» es el audio bajado, con su nombre');
+  assert.match(src, /onSuena: \(\) => trazaTurno\.marcar\('rellenoSuena'\)/, 'el relleno «suena» cuando el reproductor lo confirma');
+  // El catch del stream cancela el locutor (lib/tts.ts: inmediato, sin audio preparado que reviva) y el JSON sale
+  // con `base`, que lleva el idTurno del stream: el servidor devuelve ese turno sin repetir herramientas.
+  const cuerpo = src.slice(src.indexOf('const askBrain = useCallback('));
+  const catchStream = cuerpo.slice(cuerpo.indexOf('} catch (e) {'), cuerpo.indexOf('// 2) JSON clásico'));
+  assert.match(catchStream, /if \(speaker\) \(speaker as StreamSpeaker\)\.cancel\(\);/);
+  assert.match(cuerpo, /^\s+idTurno,$/m, 'el idTurno va en base');
+  assert.match(cuerpo.slice(cuerpo.indexOf('// 2) JSON clásico')), /let out = await turno\(base, genTurno\);/);
+});
+
 for (const [nombre, f] of pruebas) {
   n += 1;
   try {
