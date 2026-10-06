@@ -76,10 +76,13 @@ export function silencioParaCerrar(parcial: string): number {
  * Frases de dinero: se vuelven a oír con Scribe v2 antes de actuar (José, 2-oct: «Turbo + confirmar
  * dinero»). La misma expresión que lib/oido.ts del servidor (una prueba lo comprueba). Solo lo que mueve
  * o nombra dinero: antes cualquier número o «cuánto» («dime 2 ideas», «¿cuánto mide la Luna?») pagaba otra
- * transcripción de hasta 6 s (auditoría de Codex del 3-oct).
+ * transcripción de hasta 6 s (auditoría de Codex del 3-oct). Tampoco «origen» o «cartera» a secas (auditoría
+ * externa del 6-oct, VOZ-05: «¿Cuál es el origen del universo?», «¿Dónde está mi cartera?»): ORIGEN cuenta con una
+ * cantidad delante o con mandar/cuánto en la frase; la cartera, cuando se pregunta cuánto hay o se manda desde
+ * ella. Montos y destinatarios siguen confirmándose igual (datoSensibleDeDinero).
  */
 export const FRASE_DE_DINERO =
-  /\b(origen|auka|agka|veta|wallet|cartera|billetera|saldo|d[oó]lar\w*|lempira\w*|usd|pesos?|plata|dinero|monto|money|balance|dollars?|pag[aáoeu]\w*|pay\w*|transfi?er\w*|deposit\w*|cobr\w*|presta\w*)\b|\$|\b(envi[aáeé]\w*|env[ií]\w*|m[aá]nd\w*|send\w*)\b[^.?!]*\d/i;
+  /\b(auka|agka|veta|saldo|d[oó]lar\w*|lempira\w*|usd|pesos?|plata|dinero|monto|money|balance|dollars?|pag[aáoeu]\w*|pay\w*|transfi?er\w*|deposit\w*|cobr\w*|presta\w*)\b|\$|\b(envi[aáeé]\w*|env[ií]\w*|m[aá]nd\w*|send\w*)\b[^.?!]*\d|(\d|\b(un[oa]?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|veinte|cien|mil|mis|tus|sus))\s+origen\b|\b(envi[aáeé]\w*|env[ií]\w*|m[aá]nd\w*|send\w*|cu[aá]nt[oa]s?)\b[^.?!]*\borigen\b|\borigen\b[^.?!]*\b(envi[aáeé]\w*|env[ií]\w*|m[aá]nd\w*|send\w*|tengo|quedan?)\b|\b(cu[aá]nt\w*|how\s+much|envi[aáeé]\w*|env[ií]\w*|m[aá]nd\w*|send\w*|tengo\s+en|hay\s+en|quedan?\s+en)\b[^.?!]*\b(wallet|cartera|billetera)\b|\b(wallet|cartera|billetera)\b[^.?!]*(\d|\b(cu[aá]nt\w*|how\s+much|envi[aáeé]\w*|env[ií]\w*|m[aá]nd\w*|send\w*|hay|quedan?)\b)/i;
 
 export function esFraseDeDinero(texto: string): boolean {
   return FRASE_DE_DINERO.test(texto);
