@@ -471,7 +471,7 @@ test('MENOR 1 (revisión 7.5): un correo nuevo a la MISMA persona sobre OTRO asu
   });
 });
 
-test('MENOR 1 (revisión 7.5): el mismo asunto (con o sin «Re:»), la respuesta en el mismo hilo o «rehacer» sí son la versión nueva', async () => {
+test('MENOR 1 (revisión 7.5): el mismo asunto (con o sin «Re:») o «rehacer» sí son la versión nueva', async () => {
   await conEntorno(async ({ mandados }) => {
     // Mismo asunto (otra mayúscula, con «Re:»): reemplaza.
     await C.correrCorreo(JOSE, 'escribir ana@example.test | Informe | Versión 1.', 'tel');
@@ -486,6 +486,16 @@ test('MENOR 1 (revisión 7.5): el mismo asunto (con o sin «Re:»), la respuesta
     assert.deepEqual([C.borradorDe(JOSE, 'tel'), ...C.apartadosCorreoDe(JOSE, 'tel')].filter(Boolean).map((x) => x!.texto), ['Versión 3.']);
     assert.equal(mandados.length, 0);
   });
+});
+
+test('MENOR 1 (revisión 7.5): la respuesta en el mismo hilo es la misma versión; otro hilo con el mismo asunto, no', () => {
+  const ana = ['ana@example.test'];
+  assert.equal(C.esVersionDe({ para: ana, asunto: 'Re: Informe', enRespuestaA: '<h1@x>' }, { para: ana, asunto: 'Re: Informe (corregido)', enRespuestaA: '<h1@x>' }), true);
+  assert.equal(C.esVersionDe({ para: ana, asunto: 'Re: Hola', enRespuestaA: '<h1@x>' }, { para: ana, asunto: 'Re: Hola', enRespuestaA: '<h2@x>' }), false);
+  assert.equal(C.esVersionDe({ para: ana, asunto: 'Informe' }, { para: ['ANA@example.test'], asunto: 'Fwd: INFORME' }), true);
+  assert.equal(C.esVersionDe({ para: ana, asunto: 'Informe' }, { para: ana, asunto: 'Cena' }), false);
+  assert.equal(C.esVersionDe({ para: ana, asunto: 'Informe' }, { para: ana, asunto: 'Cena' }, true), true, 'rehacer');
+  assert.equal(C.esVersionDe({ para: ana, asunto: 'Informe' }, { para: ['bruno@example.test'], asunto: 'Informe' }, true), false, 'rehacer a otra persona no reemplaza');
 });
 
 test('MENOR 1 (revisión 7.5): WhatsApp: el mismo chat es la misma conversación (la versión nueva reemplaza); otro chat, quedan los dos', async () => {

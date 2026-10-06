@@ -750,7 +750,7 @@ export const asuntoCanon = (a: string | undefined) =>
  * respuesta en el mismo hilo, el mismo asunto (con o sin «Re:»), o que el modelo lo REHAGA a propósito (`correo rehacer`,
  * el «Rehaz el correo para Ana» de la ventana de decisión), aunque cambie el asunto.
  */
-function esVersionDe(x: Pick<Borrador, 'para' | 'asunto' | 'enRespuestaA'>, b: Pick<Borrador, 'para' | 'asunto' | 'enRespuestaA'>, rehacer = false): boolean {
+export function esVersionDe(x: Pick<Borrador, 'para' | 'asunto' | 'enRespuestaA'>, b: Pick<Borrador, 'para' | 'asunto' | 'enRespuestaA'>, rehacer = false): boolean {
   if (JSON.stringify(direccionesCanon(x.para)) !== JSON.stringify(direccionesCanon(b.para))) return false;
   if (rehacer) return true;
   if (x.enRespuestaA && b.enRespuestaA) return x.enRespuestaA === b.enRespuestaA;
