@@ -118,6 +118,7 @@ import {
 } from './server/computadora';
 import { apartadosCorreoDe, avisosDeEnvio, borradorCorreoPorIntento, borradorDe, correrCorreoConEstado, editarBorradorCorreo, montarRutasCorreo, respuestaAlBorrador } from './server/correo';
 import { olvidarEnPantallaDeConversacion } from './server/decision-en-pantalla';
+import { entregaDelTurno, presentacionesDelTurno } from './server/presentacion-decision';
 import { accionTareaPorId, bloqueTarea, correrTareaConEstado, precargarTareas, resolverTareaEnCurso, tareaDe, tareasDePersona } from './lib/tarea-en-curso';
 import { apartadosWhatsappDe, borradorWhatsappDe, borradorWhatsappPorIntento, correrWhatsappConEstado, destinoWhatsapp, editarBorradorWhatsapp, montarRutasWhatsapp, whatsappDisponible, whatsappOfrecido, whatsappPermitidoTurno } from './server/whatsapp';
 import { accionIniciativa, bloqueIniciativaTurno, componerIniciativa, correrMisionTurnoConEstado, duenoMisiones } from './server/iniciativa';
@@ -161,7 +162,7 @@ import { conAcuse, hechoInterrumpida, oidoAlInterrumpir } from './lib/interrumpi
 import { cerebroRapidoActivo, hablarConManos, modeloRapido, probarCerebroRapido } from './lib/cerebro-rapido';
 // ── latencia de la voz (turno especulativo, ruta de charla): server/turno-especulativo.ts, lib/cerebro-rapido.ts ──
 import { esCharlaParaRuta, esSoloConversacion, planDeModelos, type RutaCerebro } from './lib/cerebro-rapido';
-import { abrirEspeculativo, confirmarEspeculativo, descartarEspeculativo, type Especulativo } from './server/turno-especulativo';
+import { abrirEspeculativo, confirmarEspeculativoConDetalle, descartarEspeculativo, type Especulativo } from './server/turno-especulativo';
 import { TOPE_ENRIQUECER_VOZ_MS, plazoDeEnriquecer } from './server/enriquecer-voz';
 import { COT_FORZADO, esTareaDeCodigo, requiereCot } from './lib/prompts/cot';
 import { extraerEmocion, normalizarEmocion, type Emocion } from './lib/emocion';
@@ -217,7 +218,7 @@ import { asegurarCuentaMiembro, cuentaDe, cuentasDisponibles, crearSolicitud, en
 import { aprobadores, montarRutasCuentas, plantilla } from './server/cuentas-rutas';
 import { montarRutasGenesis } from './server/genesis';
 import { esIdVeta, montarRutasVeta } from './server/veta-entrar';
-import { gastarCupo, exigirAutoridadVigente } from './server/seguridad';
+import { gastarCupo, exigirAutoridadVigente, devolverCupoDeFrase } from './server/seguridad';
 import { describirPoliticaAutoridad } from './server/autoridad-cuenta';
 import { montarEnlacesApp } from './server/enlaces-app';
 import { enviarCorreo } from './lib/correo-ses';
@@ -4775,9 +4776,11 @@ app.post('/api/turno', medirTurno('json'), exigirMesaODesk, limitar(60), cupoDeM
   let out: Awaited<ReturnType<typeof correrTurno>>;
   // Las tareas durables que el turno cree (AUR08) vuelven en la respuesta: la burbuja las enlaza.
   const trabajos = nuevoContextoTrabajos(idTurnoValido((body as Record<string, unknown>).idTurno));
+  // Revisión 9 (MENOR 5): lo que el turno presenta cuenta cuando su respuesta sale (abajo, con el JSON).
+  const presentaciones = presentacionesDelTurno();
   try {
     // Dentro del turno, cada efecto pasa antes por efectoDelTurno (persistir antes de actuar; fencing).
-    out = await enTurnoConTrabajos(trabajos, () => enTurnoUnico(unico.terminar, () => correrTurno(body)));
+    out = await presentaciones.correr(() => enTurnoConTrabajos(trabajos, () => enTurnoUnico(unico.terminar, () => correrTurno(body))));
   } catch (e: any) {
     unico.terminar(null);
     // Sin esto la petición quedaba colgada: Express 4 no atrapa rechazos de handlers async.
@@ -4810,7 +4813,11 @@ app.post('/api/turno', medirTurno('json'), exigirMesaODesk, limitar(60), cupoDeM
     const code = out.error === 'message vacío' ? 400 : out.error.includes('configurado') ? 503 : 502;
     return res.status(code).json({ error: out.error, emocion: out.emocion, honesto: true });
   }
-  return res.json(jsonDelTurno(g, { foto: out.foto }));
+  res.json(jsonDelTurno(g, { foto: out.foto }));
+  // Entregada la respuesta (la persona no se fue antes): lo presentado en ella cuenta.
+  if (!res.destroyed) presentaciones.entregar();
+  else presentaciones.descartar();
+  return;
 });
 
 /**
@@ -4833,7 +4840,9 @@ type SalidaEnVivo = {
 /** El turno en vivo con su traza. Lo usan el SSE y la voz. Nunca lanza: avisa con un `error`. */
 function turnoEnVivoConTraza(body: any, salida: SalidaEnVivo, opciones: OpcionesTurno): Promise<void> {
   const reg = iniciarTraza({ plataforma: 'ultron', canal: 'mesa', pregunta: String(body?.message || body?.text || '') });
-  return enTurno(reg, () =>
+  // Revisión 9 (MENOR 5): lo que el turno presenta (el texto exacto de un borrador) cuenta cuando su `done` se entrega
+  // (terminar, abajo), no al armarlo: un turno cortado no deja nada «presentado» para un «sí» escrito.
+  return presentacionesDelTurno().correr(() => enTurno(reg, () =>
     turnoEnVivo(body, salida, opciones).catch((e) => {
       if (opciones.senal?.aborted) {
         reg.cerrar({ error: 'la persona interrumpió' });
@@ -4844,7 +4853,7 @@ function turnoEnVivoConTraza(body: any, salida: SalidaEnVivo, opciones: Opciones
       salida.enviar('error', { error: FRASE_FALLO.caido[normalizarIdioma(body?.idioma)], codigo: 'caido' });
       salida.fin();
     })
-  );
+  ));
 }
 
 /* Conversación fluida (ElevenLabs Agents con nuestro cerebro): server/voz-agente.ts. */
@@ -4997,7 +5006,11 @@ app.post('/api/turno/stream', medirTurno('stream'), exigirMesaODesk, limitar(60)
   if (especulativo && claveEsp) {
     res.on('close', () => descartarEspeculativo(claveEsp, 'el teléfono cortó el stream'));
     void especulativo.confirmado.then((ok) => {
-      if (!ok) corte.abort();
+      if (ok) return;
+      corte.abort();
+      // Revisión 9 (MENOR 3): la frase a medias que se descartó no fue un turno: su lugar en el cupo del miembro vuelve
+      // (con su propio tope contra abuso, server/seguridad.ts devolverCupoDeFrase).
+      devolverCupoDeFrase(res.locals.cupoFrase);
     });
   }
   // ── fin del turno especulativo ──
@@ -5031,7 +5044,10 @@ app.post('/api/turno/confirmar', exigirMesaODesk, limitar(120), (req, res) => {
     descartarEspeculativo(clave, 'el teléfono lo canceló');
     return res.json({ estado: 'descartado', honesto: true });
   }
-  return res.json({ estado: confirmarEspeculativo(clave), honesto: true });
+  // Revisión 9 (MENOR 2): si el stream todavía no registró su turno, la confirmación se guarda unos segundos y se aplica
+  // al abrirse (`anticipada`); el teléfono sigue esperando el stream en vez de cortarlo y perder la frase.
+  const r = confirmarEspeculativoConDetalle(clave);
+  return res.json({ estado: r.estado, ...(r.anticipada ? { anticipada: true } : {}), honesto: true });
 });
 
 /** Un turno dictado por voz (`hablado: true`) desde la app 5.0 o el .exe de Windows, con su cabecera. */
@@ -5218,6 +5234,13 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       ...(p.propuestaTaller ? { propuestaTaller: p.propuestaTaller } : {}),
     };
     send('done', datos);
+    // Revisión 9 (MENOR 5): el texto se entregó con el `done`: lo que el turno presentó cuenta desde ahora (en la voz,
+    // cuando el turno se confirma). Cortado (la persona se fue), no se entregó nada.
+    if (!senal?.aborted) {
+      const entregar = entregaDelTurno();
+      if (opciones.retener) opciones.retener.hacer(entregar);
+      else entregar();
+    }
     // La apertura de esta respuesta: la siguiente no abre con la misma muletilla (lib/habla-natural.ts).
     if (pulido) anotarApertura(claveHabla, pulido.apertura);
     // Una línea por turno de la mesa: dónde se fueron los segundos (sin lo que dijo ni lo que contestó).

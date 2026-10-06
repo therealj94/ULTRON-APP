@@ -439,6 +439,17 @@ export function identidadDelEntorno(correo: string): boolean {
 }
 
 /**
+ * La autoridad de una cuenta que llega SIN sesión en la cabecera —el pase de la voz (server/voz-agente.ts), el enlace
+ * firmado de un documento (server/documentos.ts)—, con la misma regla que exigirAutoridadVigente: `desconocida` falla
+ * cerrado salvo la identidad configurada en el despliegue (identidadDelEntorno). Nunca lanza.
+ */
+export async function autoridadSinSesion(correo: string): Promise<'permitida' | 'suspendida' | 'desconocida'> {
+  const r = await comprobarAutoridad(correo).catch(() => ({ estado: 'desconocida' as const }));
+  if (r.estado === 'desconocida' && identidadDelEntorno(correo)) return 'permitida';
+  return r.estado;
+}
+
+/**
  * Lo público e inocuo que sigue aunque no se pueda comprobar (o se sepa suspendida) la cuenta de la sesión: oír, la voz,
  * el canto, el diagnóstico (RUTAS_SIN_CEREBRO, sin datos de nadie ni efectos) y cerrar la sesión.
  */
@@ -657,6 +668,8 @@ export function cupoPorFrase(clave: (req: Request) => string | null, max: number
         frasesCobradas.set(frase, { t: ahora, n: 1 });
         if (frasesCobradas.size > 5000) for (const [f, v] of frasesCobradas) if (ahora - v.t >= ventanaMs) frasesCobradas.delete(f);
       }
+      // Revisión 9 (MENOR 3): lo cobrado, para devolverlo si el turno no llega a ser turno (devolverCupoDeFrase).
+      res.locals.cupoFrase = { clave: k, marca: ahora, frase, max, ventanaMs } satisfies CupoCobrado;
       return next();
     }
     res.setHeader('Retry-After', String(Math.ceil(ventanaMs / 1000)));
@@ -673,6 +686,24 @@ export function devolverCupo(claveCupo: string, marca: number) {
   const arr = hits.get(`cupo:${claveCupo}`);
   const i = arr ? arr.indexOf(marca) : -1;
   if (i >= 0) arr!.splice(i, 1);
+}
+
+/** Lo que cobró cupoPorFrase en una petición (`res.locals.cupoFrase`). */
+export type CupoCobrado = { clave: string; marca: number; frase: string; max: number; ventanaMs: number };
+
+/**
+ * Revisión 9 (MENOR 3): un turno especulativo que se descarta (la persona siguió hablando) no fue un turno: su lugar en
+ * el cupo por persona vuelve (y su frase deja de estar cobrada: si después llega de verdad, cobra una vez). El freno
+ * contra abuso sigue: a lo más DEVUELTOS_POR_CUPO veces el cupo por ventana; pasado eso, lo descartado sí cuenta (cada
+ * intento cuesta una llamada al modelo). Devuelve si lo devolvió.
+ */
+export const DEVUELTOS_POR_CUPO = 3;
+export function devolverCupoDeFrase(c: CupoCobrado | null | undefined): boolean {
+  if (!c?.clave) return false;
+  if (!gastarCupo(`devuelto:${c.clave}`, c.max * DEVUELTOS_POR_CUPO, c.ventanaMs)) return false;
+  devolverCupo(c.clave, c.marca);
+  if (c.frase && frasesCobradas.get(c.frase)?.t === c.marca) frasesCobradas.delete(c.frase);
+  return true;
 }
 
 /* ------------------------------------------------------- intentos de clave por cuenta */

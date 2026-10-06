@@ -17,7 +17,7 @@ import { cerrarDecisionPorChat, clasificarEnvio, type SalidaEnvio } from './trab
 import { appEsperandoDe, contextoDe } from '../lib/acciones-app';
 import { analizarRespuesta, decidirPendiente, type Decidido, type DecisionPendiente, type TipoDecision } from '../lib/afirmacion';
 import { enPantallaDe, type EnPantalla } from './decision-en-pantalla';
-import { llaveConversacion, resumenTexto, tomarVencidos } from './borradores-cola';
+import { anotarRechazoDePanel, gastarVencidos, llaveConversacion, resumenTexto, tomarVencidos, verVencidos } from './borradores-cola';
 import type { RetencionAcciones } from './voz-agente';
 import { otraVozDelTurno } from '../lib/voces-miembro';
 import { decisionVistaDelTurno, hechoSiNoEstaLigada, vistaHablada, type VistaHablada } from './decision-hablada';
@@ -322,8 +322,24 @@ export async function resolverDecisionesDelTurno(o: OpcionesDecisionTurno): Prom
   // Lo que espera cuando la persona contestó (lo que estaba contestando).
   const pendientes = pendientesDelTurno({ dueno, ambito, whatsapp: o.whatsapp, app: o.app, enPantalla: vista });
   // Lo que quedó atrás (José, 5-oct): un borrador que venció sin decidirse se dice una vez («¿lo rehago?»), no desaparece.
-  pendientesEnOrden(dueno, ambito, o.whatsapp);
-  hechos.push(...tomarVencidos(llaveConversacion(dueno, ambito)));
+  // Revisión 9 (MENOR 8): en la voz el aviso se gasta solo si el turno se confirma (como la mención, retener.hacer): un
+  // turno especulativo descartado no se oyó.
+  const enOrden = pendientesEnOrden(dueno, ambito, o.whatsapp);
+  const llaveConv = llaveConversacion(dueno, ambito);
+  const vencidos = retener ? verVencidos(llaveConv) : tomarVencidos(llaveConv);
+  if (retener && vencidos.length) retener.hacer(() => gastarVencidos(llaveConv, vencidos));
+  hechos.push(...vencidos);
+  /*
+   * Revisión 9 (EL FRENO DE LA VOZ): en la mesa del teléfono, con algo esperando decisión, el turno especulativo no empieza
+   * sin el «sí» del teléfono (server.ts turnoEnVivo, hayDecisionEsperando). En la conversación de voz eso no se puede: su
+   * confirmación llega DESPUÉS de la respuesta (ElevenLabs la sigue escuchando un momento). Ahí lo que resuelve una decisión
+   * se aplica en el acto —para que el resto del turno vea lo mismo que vería confirmado— y CADA cambio se repone si el
+   * turno se descarta (`alDescartar`: el «no» y el «sí» que quitaron el borrador, su apartado, el cambio de lugar, el
+   * «¿sigo?» de su computadora); lo que no se puede deshacer (cerrar su tarjeta del panel, gastar la mención o el aviso de
+   * lo vencido, mandar) espera a la confirmación (`hacer`). Y el turno pide esperar esa confirmación aunque no tenga
+   * acciones: sin eso un turno corto se daba por confirmado al terminar, antes de que llegara la frase que seguía.
+   */
+  if (retener && (pendientes.length || enOrden.length || vencidos.length)) retener.esperarConfirmacion?.();
   // Sexta ronda (M1-B): quién más se llama así. Los contactos del teléfono (si los mandó), las personas de sus chats de
   // WhatsApp (con un tope corto; sin teléfono, como en la web, son lo único que lo sabe) y quien le escribió hace poco.
   // Séptima ronda (G1-N1): se cargan ANTES de decidir, y si mientras tanto lo que espera cambió (otro turno de la misma
@@ -420,7 +436,12 @@ export async function resolverDecisionesDelTurno(o: OpcionesDecisionTurno): Prom
   const cerrarSiToca = (p: PendienteTurno | undefined, hecho: string | null, sigue: boolean) => {
     if (!hecho || !p?.id || sigue) return;
     if (retener && decision !== 'no') return;
-    void cerrarDecisionPorChat(dueno, p.id, decision, hecho).catch(() => undefined);
+    const id = p.id;
+    const cerrar = () => void cerrarDecisionPorChat(dueno, id, decision, hecho).catch(() => undefined);
+    // Revisión 9 (el freno de la voz): en la voz el «no» cierra su tarjeta cuando el turno se confirma; uno descartado
+    // («nel…» que seguía) la deja abierta, con el borrador repuesto.
+    if (retener) retener.hacer(cerrar);
+    else cerrar();
   };
   const delCorreo = toca('correo') && vistoCorreo ? await resolverBorrador(dueno, ambito, respuesta, retener, atado(vistoCorreo)) : null;
   if (delCorreo) hechos.push(delCorreo);
@@ -478,6 +499,9 @@ export async function resolverDecisionesDelTurno(o: OpcionesDecisionTurno): Prom
  * otro borrador desplazó (sigue esperando en orden), con las mismas comprobaciones.
  */
 export async function resolverBorradorDesdePanel(correo: string, canal: 'correo' | 'whatsapp', ambito: string, intento: string, respuesta: 'sí' | 'no', huella?: string): Promise<SalidaEnvio> {
+  // Revisión 9: rechazado en su panel o su ventana, ningún turno de voz descartado lo repone después (ni si ahora mismo
+  // un «no» hablado sin confirmar lo tiene quitado).
+  if (respuesta === 'no') anotarRechazoDePanel(intento);
   const principal = canal === 'correo' ? borradorDe(correo, ambito) : borradorWhatsappDe(correo, ambito);
   const b = principal && principal.intento === intento ? principal : canal === 'correo' ? borradorCorreoPorIntento(correo, ambito, intento) : borradorWhatsappPorIntento(correo, ambito, intento);
   if (!b || b.intento !== intento) return { estado: 'stale', resumen: 'El borrador ya no era el aprobado; no se envió nada.' };

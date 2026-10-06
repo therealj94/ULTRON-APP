@@ -20,6 +20,9 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voz-miembro-'));
 process.env.ULTRON_SESIONES_CERRADAS_ARCHIVO = path.join(dir, 'cerradas.json');
 process.env.ULTRON_SESION_SECRETO = 'secreto-de-prueba-largo-para-la-voz-de-miembros';
 process.env.ULTRON_MEMORIA_BUCKET = '';
+// Revisión 9 (MENOR 4): cada turno de la voz mira la autoridad vigente de la cuenta (SEC-04). Sin registro de cuentas,
+// el despliegue declara que no hay suspensiones (como AURA_SUSPENSIONES=ninguna en desarrollo).
+process.env.AURA_SUSPENSIONES = 'ninguna';
 process.env.ULTRON_PADRON = '';
 process.env.ELEVENLABS_API_KEY = 'xi-de-prueba';
 delete process.env.VOZ_MIEMBRO_MIN_DIA;

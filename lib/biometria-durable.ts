@@ -19,41 +19,70 @@
  *  · al arrancar no hace falta nada aparte: la primera lectura de cada cuenta ya aplica la precedencia antes de
  *    devolver nada (y repara la copia atrasada).
  * Lo que no se promete: borrar al instante respaldos inmutables fuera de este servicio.
+ *
+ * Revisión 9 (MENOR 6): las lápidas tenían tope (MAX_LAPIDAS, las más nuevas) y pasado el tope la más vieja se perdía: una
+ * copia vieja con esa persona la podía devolver. Ahora lo que sale del tope se COMPACTA en una marca de agua: `marcaLapidas`
+ * (la hora de la lápida más nueva que salió) y `vivosEnMarca` (los ids de quienes seguían vivos y habían nacido hasta esa
+ * hora: a lo más las personas del cajón, nada biométrico). Toda persona nacida hasta la marca que no está en esa lista ya
+ * murió, aunque su lápida ya no esté: ninguna copia ni respaldo la devuelve. Las lápidas nuevas siguen siendo por id.
  */
 import fs from 'node:fs';
 
 export type Lapida = { id: string; t: number };
-export type Durable = { rev?: number; lapidas?: Lapida[]; borradoTodo?: number };
+export type Durable = { rev?: number; lapidas?: Lapida[]; borradoTodo?: number; marcaLapidas?: number; vivosEnMarca?: string[] };
 type ConPersonas<P> = Durable & { personas: P[] };
 
-/** Cuántas lápidas se guardan (las más nuevas). Son ids al azar: con esto alcanza de sobra. */
+/** Cuántas lápidas por id se guardan (las más nuevas); las de antes quedan en la marca de agua (compactarLapidas). */
 export const MAX_LAPIDAS = 500;
+/** Tope de lo que se acepta al leer (lo que este servicio escribe nunca pasa de MAX_LAPIDAS: se compacta al guardar). */
+const TOPE_LEIDO = MAX_LAPIDAS * 4;
 
-/** Lo durable de un JSON leído (rev, lápidas, borradoTodo), saneado. */
-export function sanearDurable(x: any): Required<Pick<Durable, 'rev' | 'lapidas'>> & Pick<Durable, 'borradoTodo'> {
+/** Lo durable de un JSON leído (rev, lápidas, borradoTodo, la marca de agua), saneado. */
+export function sanearDurable(x: any): Required<Pick<Durable, 'rev' | 'lapidas'>> & Pick<Durable, 'borradoTodo' | 'marcaLapidas' | 'vivosEnMarca'> {
   const rev = Number.isFinite(Number(x?.rev)) && Number(x?.rev) > 0 ? Math.floor(Number(x.rev)) : 0;
   const lapidas = (Array.isArray(x?.lapidas) ? x.lapidas : [])
     .filter((l: any) => typeof l?.id === 'string' && l.id && Number.isFinite(Number(l?.t)))
     .map((l: any) => ({ id: String(l.id).slice(0, 40), t: Number(l.t) }))
-    .slice(-MAX_LAPIDAS);
+    .slice(-TOPE_LEIDO);
   const borradoTodo = Number(x?.borradoTodo) > 0 ? Number(x.borradoTodo) : undefined;
-  return { rev, lapidas, ...(borradoTodo ? { borradoTodo } : {}) };
+  const marcaLapidas = Number(x?.marcaLapidas) > 0 ? Number(x.marcaLapidas) : undefined;
+  const vivosEnMarca = marcaLapidas ? (Array.isArray(x?.vivosEnMarca) ? x.vivosEnMarca : []).filter((v: unknown) => typeof v === 'string' && v).map((v: string) => v.slice(0, 40)).slice(0, TOPE_LEIDO) : undefined;
+  return { rev, lapidas, ...(borradoTodo ? { borradoTodo } : {}), ...(marcaLapidas ? { marcaLapidas, vivosEnMarca } : {}) };
 }
 
-/** Quita a quien tenga lápida (por id) o se haya creado antes de un «olvida todas». */
+/**
+ * Quita a quien tenga lápida (por id), se haya creado antes de un «olvida todas», o haya nacido hasta la marca de agua y
+ * no esté entre los vivos de esa marca (su lápida se compactó).
+ */
 export function aplicarLapidas<P extends { id: string; creado?: number }>(personas: P[], d: Durable): P[] {
   const muertos = new Set((d.lapidas || []).map((l) => l.id));
   const todo = Number(d.borradoTodo) || 0;
-  return personas.filter((p) => !muertos.has(p.id) && !(todo && (Number(p.creado) || 0) <= todo));
+  const marca = Number(d.marcaLapidas) || 0;
+  const vivos = new Set(d.vivosEnMarca || []);
+  return personas.filter((p) => !muertos.has(p.id) && !(todo && (Number(p.creado) || 0) <= todo) && !(marca && (Number(p.creado) || 0) <= marca && !vivos.has(p.id)));
 }
 
 function unirLapidas(a: Lapida[] = [], b: Lapida[] = []): Lapida[] {
   const m = new Map<string, number>();
   for (const l of [...a, ...b]) m.set(l.id, Math.max(m.get(l.id) || 0, l.t));
-  return [...m.entries()]
-    .map(([id, t]) => ({ id, t }))
-    .sort((x, y) => x.t - y.t)
-    .slice(-MAX_LAPIDAS);
+  return [...m.entries()].map(([id, t]) => ({ id, t })).sort((x, y) => x.t - y.t);
+}
+
+/**
+ * Si pasan de MAX_LAPIDAS, las más viejas salen y quedan en la marca de agua: `marcaLapidas` sube a la hora de la más
+ * nueva que salió y `vivosEnMarca` pasa a ser quienes siguen vivos (en `personas`, el estado que vale, ya sin los
+ * muertos) y nacieron hasta esa hora. Así no se pierde ninguna muerte: una persona olvidada nació antes de su lápida, y
+ * si su lápida salió, nació hasta la marca y no está entre los vivos.
+ */
+export function compactarLapidas<P extends { id: string; creado?: number }>(d: Durable, personas: P[]): Durable {
+  const lapidas = [...(d.lapidas || [])].sort((x, y) => x.t - y.t);
+  if (lapidas.length <= MAX_LAPIDAS) return { ...d, lapidas };
+  const fuera = lapidas.slice(0, lapidas.length - MAX_LAPIDAS);
+  const marcaLapidas = Math.max(Number(d.marcaLapidas) || 0, ...fuera.map((l) => l.t));
+  const vivosEnMarca = aplicarLapidas(personas, d)
+    .filter((p) => (Number(p.creado) || 0) <= marcaLapidas)
+    .map((p) => p.id);
+  return { ...d, lapidas: lapidas.slice(-MAX_LAPIDAS), marcaLapidas, vivosEnMarca };
 }
 
 /**
@@ -70,10 +99,15 @@ export function fusionarCopias<P extends { id: string; creado?: number }, C exte
   const base = (s3 && rs >= rd ? s3 : disco) as C;
   const lapidas = unirLapidas(disco?.lapidas, s3?.lapidas);
   const borradoTodo = Math.max(Number(disco?.borradoTodo) || 0, Number(s3?.borradoTodo) || 0) || undefined;
-  const d: Durable = { lapidas, ...(borradoTodo ? { borradoTodo } : {}) };
-  const personas = aplicarLapidas(base.personas, d);
-  const cajon = { ...base, rev: Math.max(rd, rs), lapidas, ...(borradoTodo ? { borradoTodo } : {}), personas } as C;
-  const firma = (c: C | null) => (c ? JSON.stringify([Number(c.rev) || 0, c.personas.map((p) => p.id), (c.lapidas || []).length, c.borradoTodo || 0]) : '');
+  // Las lápidas de las dos, y la marca de agua de CADA una (revisión 9): lo que una ya compactó sigue muerto en la otra.
+  let personas = aplicarLapidas(base.personas, { lapidas, ...(borradoTodo ? { borradoTodo } : {}) });
+  for (const c of [disco, s3]) if (c?.marcaLapidas) personas = aplicarLapidas(personas, { marcaLapidas: c.marcaLapidas, vivosEnMarca: c.vivosEnMarca });
+  const marca = Math.max(Number(disco?.marcaLapidas) || 0, Number(s3?.marcaLapidas) || 0);
+  const vivos = marca ? personas.filter((p) => (Number(p.creado) || 0) <= marca).map((p) => p.id) : undefined;
+  const d = compactarLapidas({ lapidas, ...(borradoTodo ? { borradoTodo } : {}), ...(marca ? { marcaLapidas: marca, vivosEnMarca: vivos } : {}) }, personas);
+  const { rev: _r, lapidas: _l, borradoTodo: _b, marcaLapidas: _m, vivosEnMarca: _v, ...resto } = base;
+  const cajon = { ...resto, rev: Math.max(rd, rs), ...d, personas } as unknown as C;
+  const firma = (c: C | null) => (c ? JSON.stringify([Number(c.rev) || 0, c.personas.map((p) => p.id), (c.lapidas || []).length, c.borradoTodo || 0, c.marcaLapidas || 0, (c.vivosEnMarca || []).length]) : '');
   const final = firma(cajon);
   const atrasada: Array<'disco' | 's3'> = [];
   if (firma(disco) !== final) atrasada.push('disco');
@@ -86,7 +120,16 @@ export function fusionarCopias<P extends { id: string; creado?: number }, C exte
  * versión anterior), conservando las lápidas.
  */
 export function siguiente<C extends Durable>(previo: Durable | null | undefined, nuevo: C): C {
-  return { ...nuevo, rev: Math.max((Number(previo?.rev) || 0) + 1, Date.now()), lapidas: nuevo.lapidas ?? previo?.lapidas ?? [], ...(nuevo.borradoTodo ?? previo?.borradoTodo ? { borradoTodo: nuevo.borradoTodo ?? previo?.borradoTodo } : {}) };
+  const borradoTodo = nuevo.borradoTodo ?? previo?.borradoTodo;
+  const marcaLapidas = nuevo.marcaLapidas ?? previo?.marcaLapidas;
+  const d: Durable = {
+    lapidas: nuevo.lapidas ?? previo?.lapidas ?? [],
+    ...(borradoTodo ? { borradoTodo } : {}),
+    ...(marcaLapidas ? { marcaLapidas, vivosEnMarca: nuevo.vivosEnMarca ?? previo?.vivosEnMarca ?? [] } : {}),
+  };
+  // Revisión 9: pasado el tope, las lápidas viejas se compactan con las personas que se guardan (el estado que vale).
+  const personas = (nuevo as { personas?: unknown }).personas;
+  return { ...nuevo, rev: Math.max((Number(previo?.rev) || 0) + 1, Date.now()), ...(Array.isArray(personas) ? compactarLapidas(d, personas as Array<{ id: string; creado?: number }>) : d) };
 }
 
 /** Las lápidas de antes más estas (al olvidar a alguien). */
