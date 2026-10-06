@@ -47,7 +47,7 @@ const VISTA_TIC_MS = 500;
 const RECONOCER_TIC_MS = 200;
 const CALIDAD = { normal: 0.6, leer: 0.85, servidor: 0.5 } as const;
 
-type CarasVivo = NonNullable<CamaraVisionProps['caras']> & { ocupado?: () => boolean };
+type CarasVivo = NonNullable<CamaraVisionProps['caras']> & { ocupado?: () => boolean; mesaOcupada?: () => boolean };
 
 export type CamaraVivoProps = Omit<CamaraVisionProps, 'caras'> & {
   caras?: CarasVivo;
@@ -224,6 +224,9 @@ export function CamaraVivo({
     podarIntentos(intentos, vis);
     const p = elegirPistaParaReconocer(vis, intentos, ahora, { ocupado, reconoce: true, vistaAbierta: vistaRef.current, alto: (x) => x.caja.h * e.ih });
     if (!p) return;
+    // Mientras la mesa piensa o habla, solo se reconoce a quien llega: los repasos de quien ya tiene nombre esperan
+    // (la misma pausa que la cámara por fotos, useCaras.quiereFoto).
+    if (p.identidad && c.mesaOcupada?.()) return;
     // Sin trackingId solo se puede pedir «la más grande», y eso solo vale si hay una sola cara.
     if (p.ext === undefined && vis.length > 1) return;
     pidiendo.current = true;

@@ -526,6 +526,21 @@ prueba('micrófono silenciado de otra sesión (José, 5-oct): se guarda, pero al
   assert.match(src, /silenciadoPorPersona: \(\) => micMutedRef\.current/, 'la miga del oído distingue el silencio de la persona del oído sin abrir');
 });
 
+prueba('turno hablado (José, 6-oct: ~6 s con la cámara): la traza marca cada tramo y el relleno que no sonó no demora la respuesta', () => {
+  const src = fs.readFileSync(path.join(RAIZ, 'mobile/src/screens/DeskScreen.tsx'), 'utf8');
+  for (const m of ['pide', 'escena', 'envio', 'texto', 'audio', 'relleno', 'rellenoSuena', 'rellenoTirado']) assert.match(src, new RegExp(`trazaTurno\\.marcar\\('${m}'`), m);
+  assert.match(src, /trazaTurno\.empezar\(oidaEn\)/, 'empieza con la frase');
+  assert.match(src, /miga\(linea \|\| `mesa: contestó con voz/, 'la miga de siempre, con la traza detrás');
+  assert.match(src, /new RellenoTurno\(\{/, 'el relleno del turno');
+  assert.match(src, /hastaQue: corte,/, 'el primer texto corta el relleno que todavía no suena');
+  assert.match(src, /const cancelMmm = \(\) => relleno\.respuesta\(\);/);
+  assert.match(src, /useEffect\(\(\) => \(mesaActiva \? arrancarPulso\(\) : undefined\), \[mesaActiva\]\);/, 'el pulso de JS con la mesa viva');
+  const tts = fs.readFileSync(path.join(RAIZ, 'mobile/src/lib/tts.ts'), 'utf8');
+  assert.match(tts, /carreraConCorte\(sources\[i\], opts\?\.hastaQue\)/, 'speak: el corte gana a la descarga');
+  assert.match(tts, /if \(my !== gen \|\| cortado\) return spoke;/, 'cortado no empieza otra frase');
+  assert.match(tts, /Mientras termina lo que suena \(el relleno\), la primera frase ya se prepara/, 'el locutor prepara la primera mientras espera');
+});
+
 for (const [nombre, f] of pruebas) {
   n += 1;
   try {

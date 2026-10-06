@@ -15,7 +15,10 @@
  *    voto para esa cara (`Seguidor`). El nombre sale con 2 de 3 votos. Ritmo: enseguida al llegar alguien,
  *    ~2,5 s con la vista «Lo que veo» abierta o con alguien sin nombre, ~8 s si no (antes, cada 20 s).
  *    Sin ML Kit (respaldo del servidor), la foto de cada subida va entera al motor (`recibirFotoRespaldo`).
- *  · Aprende con el uso: con un reconocimiento muy seguro y ya confirmado, a veces suma esa toma a la
+ *    El nombre sale enseguida con UN reconocimiento muy seguro (seguimiento.ts RAPIDO; José, 6-oct: «tarda en
+ *    reconocer»). Mientras la mesa piensa o habla (vista cerrada) no se reconoce, salvo a quien llega: así la voz no se
+ *    queda atrás (lib/camaraModo.ts ritmoFotos).
+ *  · Aprende con el uso: con un reconocimiento muy seguro y ya confirmado por 2 votos, a veces suma esa toma a la
  *    persona (servidor, con tope y quitando la más redundante): se adapta a la luz y a los lentes.
  *  · A un conocido se le saluda una vez por sesión, y el cerebro recibe «Reconozco a Ana (tu esposa)».
  */
@@ -24,6 +27,7 @@ import { Alert } from 'react-native';
 import { tr } from '../i18n';
 import { loadSettings, saveSettings } from '../lib/storage';
 import { miga } from '../lib/reporte';
+import { estadisticaCamara } from '../lib/estadisticaCamara';
 import type { FrameGrabber } from '../components/CamaraVision';
 import type { Lado } from '../lib/vistaEnVivo';
 import { MotorCaras, type ControlMotorCaras } from './MotorCaras';
@@ -46,7 +50,7 @@ import {
   type CaraVista,
   type Reconocida,
 } from './caras';
-import { Seguidor, VistoRespaldo, tocaReconocer, tocaReconocerRespaldo, type CajaN } from './seguimiento';
+import { CONFIRMAR, Seguidor, VistoRespaldo, tocaReconocer, tocaReconocerRespaldo, type CajaN } from './seguimiento';
 import { guardarCara, listarCaras, olvidarCara, olvidarTodasLasCaras, sumarMuestrasCara } from './api';
 
 /** Lo que vale lo reconocido para el cerebro (visto hace menos que esto). */
@@ -70,6 +74,8 @@ type Opciones = {
   decir: (texto: string, emocion?: 'feliz' | 'preocupado' | 'curioso' | 'neutral') => Promise<void>;
   /** Enciende la cámara «solo por ahora» (pide el permiso si falta). false si no se pudo. */
   encenderCamara: () => Promise<boolean>;
+  /** La mesa piensa o habla: con la vista cerrada no se reconoce (salvo a quien llega). */
+  ocupada?: () => boolean;
 };
 
 /**
@@ -105,6 +111,8 @@ export type ApiCaras = {
   recibirFotoRespaldo: (f: { b64: string; ts: number }) => void;
   /** El motor está analizando (la cámara en vivo no le pide otro recorte hasta que termine). */
   ocupado: () => boolean;
+  /** La mesa piensa o habla: la cámara en vivo no repasa a quien ya tiene nombre (solo reconoce a quien llega). */
+  mesaOcupada: () => boolean;
 };
 
 export function useCaras(o: Opciones): ApiCaras {
@@ -453,7 +461,7 @@ export function useCaras(o: Opciones): ApiCaras {
   const quiereFoto = useCallback(
     (ts: number) => {
       if (!reconoceRef.current || analizando.current || !motor.current?.listo() || !seguidor.visibles(ts).length) return false;
-      return tocaReconocer({
+      const o = {
         ahora: ts,
         ultima: ultimaMirada.current,
         nueva: seguidor.hayNueva(),
@@ -461,7 +469,11 @@ export function useCaras(o: Opciones): ApiCaras {
         vistaAbierta: op.current.vistaAbierta,
         sinIdentificar: seguidor.sinIdentificar(ts),
         ocupado: analizando.current,
-      });
+      };
+      if (tocaReconocer({ ...o, mesaOcupada: !!op.current.ocupada?.() })) return true;
+      // Le tocaba, pero la mesa pensaba o hablaba: queda en el resumen de la cámara («pausa»).
+      if (tocaReconocer(o)) estadisticaCamara.saltada();
+      return false;
     },
     [seguidor]
   );
@@ -502,7 +514,9 @@ export function useCaras(o: Opciones): ApiCaras {
               void op.current.decir(tr(`¡Hola, ${v.identidad.nombre}!`, `Hi, ${v.identidad.nombre}!`), 'feliz');
             }
             const a = r ? aprendido.current.get(r.id) : undefined;
-            if (r && debeAprender(r, { confirmada: v.identidad?.id === r.id, tam: de.tam ?? de.caja.h, ahora: Date.now(), ultima: a?.t, enSesion: a?.n || 0 })) void aprender(r, c.vector);
+            // Aprender pide la identidad confirmada por 2 votos: el nombre rápido de un solo voto no basta para guardar.
+            const confirmada = v.identidad?.id === r?.id && v.aFavor >= CONFIRMAR;
+            if (r && debeAprender(r, { confirmada, tam: de.tam ?? de.caja.h, ahora: Date.now(), ultima: a?.t, enSesion: a?.n || 0 })) void aprender(r, c.vector);
           }
         } finally {
           analizando.current = false;
@@ -566,6 +580,7 @@ export function useCaras(o: Opciones): ApiCaras {
 
   // Cámara en vivo (CamaraVivo): ¿el motor sigue con el recorte anterior?
   const ocupado = useCallback(() => analizando.current, []);
+  const mesaOcupada = useCallback(() => !!op.current.ocupada?.(), []);
 
-  return { activas, estadoTexto, motor: nodoMotor, abrirOpciones, manejar, escena, seguidor, reconoce, quiereFoto, recibirFoto, quiereFotoRespaldo, recibirFotoRespaldo, ocupado };
+  return { activas, estadoTexto, motor: nodoMotor, abrirOpciones, manejar, escena, seguidor, reconoce, quiereFoto, recibirFoto, quiereFotoRespaldo, recibirFotoRespaldo, ocupado, mesaOcupada };
 }

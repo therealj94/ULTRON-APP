@@ -11,9 +11,12 @@
  *    que se sabe de qué pista es cada vector). Un nombre se CONFIRMA cuando ≥ 2 de los últimos 3 votos
  *    coinciden; se cambia solo si ≥ 2 de los últimos 3 dicen otro nombre. Los «no sé» no lo borran (una
  *    toma movida no hace olvidar a nadie) salvo que pase `MANTENER_MS` sin un voto a favor;
- *  · nunca se muestra un nombre con un solo voto: mejor «Persona» que el nombre equivocado;
+ *  · un nombre con un solo voto, solo si ese reconocimiento es MUY seguro (`RAPIDO`: distancia ≤ 0,38 y margen ≥ 0,12
+ *    sobre la segunda persona, sin otro voto reciente por otra; José, 6-oct: «tarda en reconocer»). Lo dudoso sigue
+ *    esperando el segundo voto: mejor «Persona» que el nombre equivocado. Un nombre ya puesto nunca cambia con uno solo;
  *  · `tocaReconocer`: cuándo mirar otra vez. Enseguida al llegar alguien, ~1,2 s si falta un voto para
- *    confirmar, ~2,5 s con la vista «Lo que veo» abierta o con alguien sin nombre, ~8 s si no.
+ *    confirmar, ~2,5 s con la vista «Lo que veo» abierta o con alguien sin nombre, ~8 s si no. Mientras la mesa piensa
+ *    o habla (vista cerrada) no se mira, salvo a quien llega (José, 6-oct: «se queda atrasado con la voz»).
  */
 import type { Reconocida, Relacion } from './caras';
 
@@ -30,9 +33,15 @@ export const CONFIRMAR = 2;
 /** Sin un voto a favor en este tiempo (solo «no sé»), el nombre confirmado se suelta. */
 export const MANTENER_MS = 30_000;
 export const RECONOCER = { llegadaMs: 0, confirmarMs: 1200, atentoMs: 2500, calmaMs: 8000 };
+/**
+ * El nombre con UN solo voto (sin nombre todavía en esa pista). En el Chromium de pruebas (pruebas/caras/navegador.mjs)
+ * la misma cara en otra toma queda en 0,11 de mediana (máx. 0,27) y dos personas distintas nunca bajan de 0,50: 0,38 deja
+ * margen de los dos lados. Con una sola persona guardada el margen es 1 (no hay segunda).
+ */
+export const RAPIDO = { dMax: 0.38, margenMin: 0.12 };
 
 export type Identidad = { id: string; nombre: string; relacion: Relacion; parentesco?: string; distancia: number; desde: number; ultimoVoto: number };
-export type Voto = { id: string | null; nombre?: string; relacion?: Relacion; parentesco?: string; distancia: number; ts: number };
+export type Voto = { id: string | null; nombre?: string; relacion?: Relacion; parentesco?: string; distancia: number; margen?: number; ts: number };
 /** `ext`: el trackingId de ML Kit de la cámara en vivo (modules/aura-camara), si la pista viene de ahí. */
 export type Pista = { id: number; caja: CajaN; visto: number; nacio: number; votos: Voto[]; identidad: Identidad | null; ext?: number };
 
@@ -47,8 +56,9 @@ export function iou(a: CajaN, b: CajaN): number {
 }
 
 /**
- * La identidad que dicen los votos (los últimos `VOTOS`): la que tenga ≥ `CONFIRMAR`. Si ninguna llega,
- * se queda la actual mientras no pase `MANTENER_MS` sin un voto a su favor.
+ * La identidad que dicen los votos (los últimos `VOTOS`): la que tenga ≥ `CONFIRMAR`. Sin nombre todavía, también UN voto
+ * muy seguro (`RAPIDO`) si ningún otro voto de la ventana dice otra persona. Si ninguna llega, se queda la actual mientras
+ * no pase `MANTENER_MS` sin un voto a su favor.
  */
 export function decidirIdentidad(votos: Voto[], actual: Identidad | null, ahora: number): Identidad | null {
   const ultimos = votos.slice(-VOTOS);
@@ -62,7 +72,12 @@ export function decidirIdentidad(votos: Voto[], actual: Identidad | null, ahora:
     if (actual && actual.id === v.id) return { ...actual, distancia: mejor, ultimoVoto: v.ts, nombre: v.nombre || actual.nombre, parentesco: v.parentesco ?? actual.parentesco };
     return { id: v.id!, nombre: v.nombre || '', relacion: v.relacion || 'conocido', ...(v.parentesco ? { parentesco: v.parentesco } : {}), distancia: mejor, desde: ahora, ultimoVoto: v.ts };
   }
-  if (!actual) return null;
+  if (!actual) {
+    const v = ultimos[ultimos.length - 1];
+    const seguro = !!v?.id && v.distancia <= RAPIDO.dMax && typeof v.margen === 'number' && v.margen >= RAPIDO.margenMin;
+    if (!seguro || ultimos.some((x) => x.id && x.id !== v.id)) return null;
+    return { id: v.id!, nombre: v.nombre || '', relacion: v.relacion || 'conocido', ...(v.parentesco ? { parentesco: v.parentesco } : {}), distancia: v.distancia, desde: ahora, ultimoVoto: v.ts };
+  }
   const aFavor = ultimos.filter((v) => v.id === actual.id).map((v) => v.ts);
   const ultimo = Math.max(actual.ultimoVoto, ...aFavor);
   return ahora - ultimo > MANTENER_MS ? null : { ...actual, ultimoVoto: ultimo };
@@ -129,14 +144,21 @@ export class Seguidor {
     });
   }
 
-  /** Un reconocimiento para la pista `id` (r null = «no sé quién es»). Devuelve la identidad que queda. */
-  votar(id: number, r: Reconocida | null, ts: number): { pista: Pista | null; identidad: Identidad | null; confirmo: boolean } {
+  /**
+   * Un reconocimiento para la pista `id` (r null = «no sé quién es»). Devuelve la identidad que queda y `aFavor`: cuántos
+   * de los últimos votos dicen esa identidad (aprender con el uso pide `CONFIRMAR`, nunca un acierto suelto).
+   */
+  votar(id: number, r: Reconocida | null, ts: number): { pista: Pista | null; identidad: Identidad | null; confirmo: boolean; aFavor: number } {
     const p = this.pistas.find((x) => x.id === id);
-    if (!p) return { pista: null, identidad: null, confirmo: false };
-    p.votos = [...p.votos, r ? { id: r.id, nombre: r.nombre, relacion: r.relacion, ...(r.parentesco ? { parentesco: r.parentesco } : {}), distancia: r.distancia, ts } : { id: null, distancia: 1, ts }].slice(-VOTOS);
+    if (!p) return { pista: null, identidad: null, confirmo: false, aFavor: 0 };
+    p.votos = [
+      ...p.votos,
+      r ? { id: r.id, nombre: r.nombre, relacion: r.relacion, ...(r.parentesco ? { parentesco: r.parentesco } : {}), distancia: r.distancia, ...(typeof r.margen === 'number' ? { margen: r.margen } : {}), ts } : { id: null, distancia: 1, ts },
+    ].slice(-VOTOS);
     const antes = p.identidad;
     p.identidad = decidirIdentidad(p.votos, antes, ts);
-    return { pista: p, identidad: p.identidad, confirmo: !!p.identidad && p.identidad.id !== antes?.id };
+    const aFavor = p.identidad ? p.votos.filter((v) => v.id === p.identidad!.id).length : 0;
+    return { pista: p, identidad: p.identidad, confirmo: !!p.identidad && p.identidad.id !== antes?.id, aFavor };
   }
 
   /** Las pistas que se ven ahora (para dibujar). */
@@ -193,10 +215,14 @@ export class Seguidor {
   }
 }
 
-/** ¿Toca analizar quién es? (nunca dos a la vez: `ocupado`). */
-export function tocaReconocer(o: { ahora: number; ultima: number; nueva: boolean; porConfirmar: boolean; vistaAbierta: boolean; sinIdentificar: boolean; ocupado: boolean }): boolean {
+/**
+ * ¿Toca analizar quién es? (nunca dos a la vez: `ocupado`). `mesaOcupada`: la mesa piensa o habla; con la vista cerrada
+ * se espera a que termine (salvo alguien que llega, que va primero).
+ */
+export function tocaReconocer(o: { ahora: number; ultima: number; nueva: boolean; porConfirmar: boolean; vistaAbierta: boolean; sinIdentificar: boolean; ocupado: boolean; mesaOcupada?: boolean }): boolean {
   if (o.ocupado) return false;
   if (o.nueva) return o.ahora - o.ultima >= RECONOCER.llegadaMs;
+  if (o.mesaOcupada && !o.vistaAbierta) return false;
   const cada = o.porConfirmar ? RECONOCER.confirmarMs : o.vistaAbierta || o.sinIdentificar ? RECONOCER.atentoMs : RECONOCER.calmaMs;
   return o.ahora - o.ultima >= cada;
 }

@@ -27,6 +27,25 @@ export const LOCAL_CON_PERSONA_MS = 330;
 export const LOCAL_SIN_PERSONA_MS = 1000;
 export const LOCAL_DORMIDA_MS = 2500;
 /**
+ * José, 6-oct (Samsung SM-S942B): con la cámara y las caras «se queda atrasado con la voz». Mientras la mesa PIENSA o
+ * HABLA (un turno en vuelo, su voz sonando) y la vista «Lo que veo» está cerrada, la cámara afloja: una foto cada
+ * `LOCAL_OCUPADA_MS` (los ojos siguen a la persona, más tranquilos) y sin reconocer caras (salvo a quien llega:
+ * caras/seguimiento.ts tocaReconocer). Con todos los de delante ya reconocidos y la vista cerrada, `LOCAL_IDENTIFICADA_MS`.
+ * Con la vista abierta la persona está mirando los recuadros: el ritmo de siempre.
+ */
+export const LOCAL_OCUPADA_MS = 800;
+export const LOCAL_IDENTIFICADA_MS = 500;
+
+/** Cada cuánto una foto del bucle con ML Kit (components/CamaraVision.tsx). */
+export function ritmoFotos(o: { dormida: boolean; conPersona: boolean; vista: boolean; ocupada: boolean; identificados: boolean }): number {
+  if (o.dormida) return LOCAL_DORMIDA_MS;
+  if (!o.conPersona) return LOCAL_SIN_PERSONA_MS;
+  if (o.vista) return LOCAL_CON_PERSONA_MS;
+  if (o.ocupada) return LOCAL_OCUPADA_MS;
+  if (o.identificados) return LOCAL_IDENTIFICADA_MS;
+  return LOCAL_CON_PERSONA_MS;
+}
+/**
  * Con ML Kit: cada cuánto se le pregunta al servidor qué hay en la mesa, como MÁXIMO. Desde la mejora de
  * la cámara la subida real la decide lib/vistaCamara.ts (intervaloServidor): ninguna sin «Comenta lo que
  * ve», y más espaciada si la escena no cambia. `trabajoPorMinuto` da el peor caso.
