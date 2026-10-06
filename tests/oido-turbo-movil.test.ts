@@ -136,7 +136,9 @@ function banco(opts: { permiso?: boolean; abreWs?: boolean; mic?: 'bien' | 'fall
       if (confirmar && opts.confirmarFalla) throw new Error('HTTP 502');
       return confirmar ? (opts.confirmado ?? '') : (opts.respaldo ?? 'texto del respaldo');
     },
-    tiempos: { esperaFinalMs: 60, confirmarMs: 200, inactivoMs: 10_000 },
+    // Aquí, el cierre solo por silencio (sin el sondeo del fin de turno semántico, que tiene sus propias pruebas en
+    // tests/oido-sondeo-movil.test.ts): lo que se prueba es lo de siempre, que también es el camino sin sondeo.
+    tiempos: { esperaFinalMs: 60, confirmarMs: 200, inactivoMs: 10_000, sondeoMs: 0 },
   });
   motor.setCallbacks({
     onFinal: (t) => finales.push(t),

@@ -4,7 +4,13 @@ import { TrazaTurno } from '../lib/trazaTurno';
 import { ControladorMirada } from '../lib/miradaAvatar';
 import { seMovioTelefono } from '../lib/cercoCamara';
 import { arrancarPulso, pulsoJs } from '../lib/pulsoJs';
-import { RellenoTurno } from '../lib/relleno';
+import { RellenoTurno, esperaDeRelleno } from '../lib/relleno';
+// ── latencia de la voz: el turno especulativo (lib/turnoEspeculativo.ts) ──
+import { TurnoEspeculativo } from '../lib/turnoEspeculativo';
+import { cancelarTurnoEspeculativo, confirmarTurnoEspeculativo, type StreamHandlers, type TurnoOpts } from '../lib/api';
+import { pedidoDeVoces } from '../voces/voces';
+import { pedidoDeCaras } from '../caras/caras';
+// ── fin ──
 import { guardarPerfil } from '../lib/perfil';
 import { AccessibilityInfo, Alert, AppState, Animated, BackHandler, Linking, PanResponder, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useKeepAwake } from 'expo-keep-awake';
@@ -558,6 +564,19 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const turnosHablados = useRef(0);
   /** Dónde se va el tiempo de cada turno hablado, de la frase a la voz (lib/trazaTurno.ts): una miga por turno. */
   const trazaTurno = useRef(new TrazaTurno()).current;
+  /**
+   * El turno especulativo (lib/turnoEspeculativo.ts): el oído avisa a los ~0,35 s de silencio que la idea parece cerrada
+   * y el turno empieza ya; askBrain lo toma si la frase final es esa (si no, se corta y el servidor no hace nada).
+   */
+  const especulativo = useRef(new TurnoEspeculativo<TurnoOpts, ChatResult>({ arrancar: (o, h) => turnoStream(o, h), confirmar: confirmarTurnoEspeculativo, cancelar: cancelarTurnoEspeculativo })).current;
+  /** El stream del turno: el especulativo de ESTA frase si sirve (con su idTurno, que pasa a ser el del turno), si no uno nuevo. */
+  const streamDelTurno = (base: TurnoOpts & { idTurno: string }, h: StreamHandlers) => {
+    const e = especulativo.tomar(base, h);
+    if (!e) return turnoStream(base, h);
+    base.idTurno = e.idTurno;
+    trazaTurno.dato('espMs', e.adelantoMs);
+    return e;
+  };
   const bubbleOp = useRef(new Animated.Value(0)).current;
   /** Última escena de la cámara local (descripción en español para el cerebro). */
   const escenaRef = useRef<Escena | null>(null);
@@ -1125,7 +1144,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
           }).then((sono) => !sono && trazaTurno.marcar('rellenoTirado'));
         },
       });
-      relleno.programar(!!opts?.image);
+      // Lo que siempre tarda (buscar, leer, revisar) se acusa antes del segundo (lib/relleno.ts esperaDeRelleno).
+      relleno.programar(!!opts?.image, esperaDeRelleno(opts?.image ? 'mirando' : estadoDeEspera(cmd), ESPERA_FRASE_MS));
       const cancelMmm = () => relleno.respuesta();
       const applyMode = (m?: Mode) => {
         if (m && m !== 'CONOCER' && m !== modeRef.current) setMode(m);
@@ -1181,7 +1201,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
           const trabajoTurno = trabajo;
           try {
             trazaTurno.marcar('envio');
-            const st = turnoStream(base, {
+            const st = streamDelTurno(base, {
               onEmocion: (e) => {
                 emocion = e;
                 reacted = true;
@@ -1739,6 +1759,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
             await askBrain(cmd);
         }
       } finally {
+        // Un turno especulativo que este pedido no tomó (lo atendió la mesa sin cerebro, u otra frase): se corta.
+        especulativo.cancelar();
         handling.current = false;
         idleStatus();
         const next = pending.current;
@@ -2016,8 +2038,34 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     },
     [handleCommand]
   );
+  /**
+   * El oído cree que la idea está cerrada (lib/finDeTurno.ts) pero todavía espera su silencio: si esa frase va a ir al
+   * cerebro tal cual (la mesa está libre y no es nada que la mesa atienda sola: cámara, caras, voces, un modo que espera
+   * respuesta), el turno empieza ya como especulativo. Sin quién habla por la voz: si la frase final trae a otra
+   * persona, askBrain no lo toma (lib/turnoEspeculativo.ts compara).
+   */
+  const intentarEspecular = useCallback(
+    (texto: string) => {
+      const cmd = texto.trim();
+      if (!cmd || micMutedRef.current || handling.current || speakingRef.current || turnoRecuperado.current) return;
+      if (presenceRef.current === 'sleep' || modeRef.current === 'CONOCER' || aclaracionMesa.current || esperaModoCamara.current || interrumpida.current !== null) return;
+      if (!oidoMesa.current?.puedeHablar()) return;
+      if (interpretar(cmd, { dormido: false, enConocer: false }).tipo !== 'cerebro') return;
+      if (pedidoDeVoces(cmd) || pedidoDeCaras(cmd) || pedidoDeVista(cmd, { vistaAbierta: vistaCamaraRef.current }) || pedidoDeCamara(cmd)) return;
+      const e = escenaRef.current;
+      const escena = escenaDelTurno({ voz: '', caras: carasRef.current?.escena() || '', camara: escenaFresca(e) ? e.descripcion : '' });
+      especulativo.empezar(
+        { message: cmd, mode: modeRef.current, userName: user.name, correo: user.correo, historial: [...historial.current, { rol: 'usuario' as const, texto: cmd }].slice(-12), memoria: longMemory.current, escena, hablado: true },
+        nuevoIdTurno()
+      );
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [escenaFresca, user]
+  );
   useEffect(() => {
     setSpeechCallbacks({
+      onEspeculativa: (t) => intentarEspecular(t),
+      onEspeculativaCancelada: () => especulativo.cancelar(),
       onSpeechStart: () => {
         if (!speakingRef.current && !handling.current) setFace('LISTENING');
       },
@@ -2070,7 +2118,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       onError: () => {},
       onEngineChange: (eng) => setSettings((p) => ({ ...p, sttEngine: eng })),
     });
-  }, [onSpeechFinal, logUltron]);
+  }, [onSpeechFinal, logUltron, intentarEspecular]);
 
   // ---------- Arranque ----------
   useEffect(() => {

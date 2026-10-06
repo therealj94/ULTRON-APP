@@ -5,7 +5,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { guionEleven, pausaPorFallo, VOZ_ELECTRUM_ELEVEN, VOCES_ELEVEN, vozEleven, _reiniciarFrenoEleven, elevenListo } from '../server/eleven';
+import { MODELO_PRIMERA_OMISION, guionEleven, pausaPorFallo, VOZ_ELECTRUM_ELEVEN, VOCES_ELEVEN, vozEleven, _reiniciarFrenoEleven, elevenListo } from '../server/eleven';
 import { abrirVozEnVivo, expresar, hablar } from '../server/voz';
 import { PROVEEDORES_OIDO, PROVEEDORES_OIDO_ELECTRUM, transcribirAudio, topeScribe, RESERVA_RESPALDO_MS } from '../lib/oido';
 import { presupuesto, PRESUPUESTO_OIDO_MS, MINIMO_UTIL_MS } from '../lib/presupuesto';
@@ -145,13 +145,14 @@ test('AU-RA FP habla con ElevenLabs: la voz del avatar y del idioma elegidos; Vo
       await conEleven(
         () => mp3(),
         async (llamadas) => {
+          // Una frase suelta y corta es una «primera frase»: va con el modelo rápido (tests/voz-primera-rapida.test.ts).
           const h = await hablar({ texto: 'Hola, soy Aura.', plataforma: 'ultron', sinCache: true });
-          assert.equal(h?.motor, 'elevenlabs:eleven_v4_turbo');
+          assert.equal(h?.motor, `elevenlabs:${MODELO_PRIMERA_OMISION}`);
           assert.equal(llamadas.length, 1);
           assert.ok(llamadas[0].url.includes(`/text-to-speech/${VOCES_ELEVEN.aura.es}/`));
           assert.equal(llamadas[0].cuerpo.language_code, 'es');
           const en = await hablar({ texto: 'Hi, I am your guardian. It is 25 degrees.', plataforma: 'ultron', avatar: 'ojos', idioma: 'en', sinCache: true });
-          assert.equal(en?.motor, 'elevenlabs:eleven_v4_turbo');
+          assert.equal(en?.motor, `elevenlabs:${MODELO_PRIMERA_OMISION}`);
           assert.ok(llamadas[1].url.includes(`/text-to-speech/${VOCES_ELEVEN.ojos.en}/`));
           assert.equal(llamadas[1].cuerpo.language_code, 'en');
           // En inglés las cifras no se vuelven palabras en español.
