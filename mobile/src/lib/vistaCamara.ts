@@ -357,10 +357,12 @@ export const SUBIDA = {
 /**
  * Cada cuánto subir una foto para ver la escena (Infinity = no subir). `necesitaEscena`: «Comenta lo
  * que ve» encendido. `sinCambios`: vistas seguidas iguales (cada una duplica la espera, hasta el techo).
+ * `ocupada`: la mesa piensa o habla (José, 6-oct): con ML Kit no se sube nada mientras tanto (el servidor está con el
+ * turno y el comentario se callaría igual); sin ML Kit el respaldo sigue, es lo único que dice si hay alguien.
  */
-export function intervaloServidor(o: { mlkit: boolean; dormida: boolean; conPersona: boolean; necesitaEscena: boolean; sinCambios: number }): number {
+export function intervaloServidor(o: { mlkit: boolean; dormida: boolean; conPersona: boolean; necesitaEscena: boolean; sinCambios: number; ocupada?: boolean }): number {
   if (!o.mlkit) return o.dormida ? SUBIDA.respaldoDormidaMs : SUBIDA.respaldoMs;
-  if (o.dormida || !o.necesitaEscena) return Infinity;
+  if (o.dormida || !o.necesitaEscena || o.ocupada) return Infinity;
   const base = o.conPersona ? SUBIDA.conPersonaMs : SUBIDA.sinPersonaMs;
   const techo = o.conPersona ? SUBIDA.conPersonaMaxMs : SUBIDA.sinPersonaMaxMs;
   return Math.min(techo, base * 2 ** Math.min(Math.max(0, o.sinCambios), 4));

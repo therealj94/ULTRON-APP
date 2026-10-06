@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { miga, reportarEstado } from '../lib/reporte';
+import { TrazaTurno } from '../lib/trazaTurno';
+import { arrancarPulso, pulsoJs } from '../lib/pulsoJs';
+import { RellenoTurno } from '../lib/relleno';
 import { guardarPerfil } from '../lib/perfil';
 import { AccessibilityInfo, Alert, AppState, Animated, BackHandler, Linking, PanResponder, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useKeepAwake } from 'expo-keep-awake';
@@ -278,6 +281,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const [micMuted, setMicMuted] = useState(false);
   /** La cámara arranca APAGADA (lib/camaraModo.ts): se enciende solo ahora o siempre, a pedido. */
   const [visionOn, setVisionOn] = useState(false);
+  const visionOnRef = useRef(false);
+  visionOnRef.current = visionOn;
   const camara = useRef(new ControlCamara()).current;
   const [estadoCamara, setEstadoCamara] = useState<EstadoCamara>(camara.estado());
   /** Se preguntó «¿solo ahora o siempre?» y se espera la respuesta. */
@@ -410,6 +415,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
    * la pila no gasta batería ni reinicia un micrófono que es de otro).
    */
   const mesaActiva = mesaVisible && appActiva;
+  // El pulso del hilo de JS (lib/pulsoJs.ts) mientras la mesa está viva: la traza del turno y el resumen de la cámara
+  // dicen cuánto se trabó (José, 6-oct: ¿la cámara traba la voz?).
+  useEffect(() => (mesaActiva ? arrancarPulso() : undefined), [mesaActiva]);
 
   // Las tareas durables (AUR08): el indicador mínimo y el panel. Cerrar el panel no cancela nada; el
   // servidor es la fuente de verdad y, al volver, la misma tarea (mismo id) sigue con su estado.
@@ -535,6 +543,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   /** El mismo dato del pedido que espera en `pending` (si la persona habló mientras AU-RA contestaba). */
   const pendienteOidaEn = useRef(0);
   const turnosHablados = useRef(0);
+  /** Dónde se va el tiempo de cada turno hablado, de la frase a la voz (lib/trazaTurno.ts): una miga por turno. */
+  const trazaTurno = useRef(new TrazaTurno()).current;
   const bubbleOp = useRef(new Animated.Value(0)).current;
   /** Última escena de la cámara local (descripción en español para el cerebro). */
   const escenaRef = useRef<Escena | null>(null);
@@ -636,7 +646,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
    */
   const escenaReciente = useCallback(
     async (oidaEn: number): Promise<{ escena?: string; quienHabla?: { id: string; reciente?: true } }> => {
+      const t0 = Date.now();
       const voz = (await vocesRef.current?.paraTurno(oidaEn).catch(() => null)) || { frase: '' };
+      trazaTurno.dato('vozMs', Date.now() - t0);
       const e = escenaRef.current;
       const escena = escenaDelTurno({ voz: voz.frase, caras: carasRef.current?.escena() || '', camara: escenaFresca(e) ? e.descripcion : '' });
       return { escena, ...(voz.quienHabla ? { quienHabla: voz.quienHabla } : {}) };
@@ -685,7 +697,10 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     // Cuánto tardó en contestar con voz desde que el oído entregó la frase (José, 3-oct: «tarda mucho»).
     // Cada pocos turnos hablados se mandan las migas: así se ve en los logs del servidor sin esperar un error.
     if (fraseOidaEn.current) {
-      miga(`mesa: contestó con voz ${Date.now() - fraseOidaEn.current} ms después de la frase`);
+      // La traza del turno (lib/trazaTurno.ts): la misma miga de siempre con cada tramo detrás (José, 6-oct: ~6 s con la cámara).
+      const ahora = Date.now();
+      const linea = trazaTurno.linea(ahora, { jsMax: pulsoJs.maxEntre(fraseOidaEn.current, ahora), camara: visionOnRef.current, caras: !!carasRef.current?.reconoce });
+      miga(linea || `mesa: contestó con voz ${ahora - fraseOidaEn.current} ms después de la frase`);
       fraseOidaEn.current = 0;
       turnosHablados.current += 1;
       if (turnosHablados.current === 3 || turnosHablados.current % 8 === 0) reportarEstado(`voz: ${turnosHablados.current} turnos hablados`);
@@ -814,7 +829,10 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const apagarCamaraRef = useRef(apagarCamara);
   apagarCamaraRef.current = apagarCamara;
 
+  /** La mesa piensa o habla (un turno en vuelo o su voz sonando): la cámara y las caras aflojan mientras tanto. */
+  const mesaOcupada = useCallback(() => handling.current || speakingRef.current, []);
   const caras = useCaras({
+    ocupada: mesaOcupada,
     correo: user.correo,
     nombre: user.name,
     nombreAvatar: de(avatarPorId(avatar || 'aura').nombre),
@@ -1004,6 +1022,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
 
   const askBrain = useCallback(
     async (cmd: string, opts?: { image?: string; visto?: string; foco?: FocoVision }) => {
+      trazaTurno.marcar('pide');
       setFace('THINKING');
       setStatus('thinking');
       avisarMesa({ pensando: true });
@@ -1023,6 +1042,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       let paraPrimer: Partial<ChatResult> | null = null;
       // Quién dijo ESTA frase (las voces): como mucho 350 ms, y nada si las voces están apagadas.
       const vista = await escenaReciente(oidaTurno.current);
+      trazaTurno.marcar('escena');
       const base = {
         message: cmd,
         mode: modeRef.current,
@@ -1054,20 +1074,31 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       // del avatar, sin repetir las últimas ni su arranque, y casi siempre con su etiqueta de audio v4
       // (compa/etiquetasVoz.ts). Antes eran dos fijas: «Mmm… déjame ver» y «Un momento» (José: «es
       // molesto después de un rato»).
-      const mmm = () => {
-        if (!oidoMesa.current?.puedeHablar()) return;
-        const quien = avatarActual();
-        const estado = opts?.image ? 'mirando' : estadoDeEspera(cmd);
-        const f = fraseDeEstado(estado, quien, idiomaActual() === 'en' ? 'en' : 'es');
-        // `neutral`: la etiqueta ya la eligió vozDeEspera (o ninguna, a propósito); con la emoción, el
-        // servidor le ponía además su tono y casi todas sonaban igual (auditoría externa, 1-oct).
-        void speak(vozDeEspera(f.texto, estado, quien), { emocion: 'neutral', onAudioStart: () => pauseMicForTts(true), onEnd: () => !speakingRef.current && pauseMicForTts(false) });
-      };
-      let mmmTimer: ReturnType<typeof setTimeout> | null = opts?.image ? (mmm(), null) : setTimeout(mmm, ESPERA_FRASE_MS);
-      const cancelMmm = () => {
-        if (mmmTimer) clearTimeout(mmmTimer);
-        mmmTimer = null;
-      };
+      // Un relleno que todavía no empezó a sonar cuando llega el primer texto se tira (lib/relleno.ts): antes la respuesta
+      // esperaba a que se bajara y sonara entero, ~1 s más de mediana con el cerebro sobre los 2,5 s (José, 6-oct).
+      const relleno = new RellenoTurno({
+        esperaMs: ESPERA_FRASE_MS,
+        decir: (corte) => {
+          if (!oidoMesa.current?.puedeHablar()) return;
+          trazaTurno.marcar('relleno');
+          const quien = avatarActual();
+          const estado = opts?.image ? 'mirando' : estadoDeEspera(cmd);
+          const f = fraseDeEstado(estado, quien, idiomaActual() === 'en' ? 'en' : 'es');
+          // `neutral`: la etiqueta ya la eligió vozDeEspera (o ninguna, a propósito); con la emoción, el
+          // servidor le ponía además su tono y casi todas sonaban igual (auditoría externa, 1-oct).
+          void speak(vozDeEspera(f.texto, estado, quien), {
+            emocion: 'neutral',
+            hastaQue: corte,
+            onAudioStart: () => {
+              trazaTurno.marcar('rellenoSuena');
+              pauseMicForTts(true);
+            },
+            onEnd: () => !speakingRef.current && pauseMicForTts(false),
+          }).then((sono) => !sono && trazaTurno.marcar('rellenoTirado'));
+        },
+      });
+      relleno.programar(!!opts?.image);
+      const cancelMmm = () => relleno.respuesta();
       const applyMode = (m?: Mode) => {
         if (m && m !== 'CONOCER' && m !== modeRef.current) setMode(m);
       };
@@ -1087,6 +1118,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
               speaker = new StreamSpeaker({
                 emocion,
                 onAudioStart: () => onAudio(faceForEmocion(emocion)),
+                onPrimerAudio: () => trazaTurno.marcar('audio'),
                 onSentence: (sentence) => {
                   showBubble(sentence);
                   // Con la mesa tapada lo dice la compañera: su globito lee lo mismo que suena.
@@ -1097,6 +1129,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
             return speaker;
           };
           try {
+            trazaTurno.marcar('envio');
             const st = turnoStream(base, {
               onEmocion: (e) => {
                 emocion = e;
@@ -1109,6 +1142,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
                 if (e === 'risa') void speakReaccion('risa', { onAudioStart: () => onAudio('LAUGH') });
               },
               onDelta: (piece) => {
+                trazaTurno.marcar('texto');
                 cancelMmm();
                 locutor().push(piece);
               },
@@ -1116,6 +1150,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
               // viejo se tira y se dice solo lo que falta de lo corregido; si ya sonó algo distinto, con
               // «Corrijo:» delante. El hilo guarda la respuesta corregida (el `done` la trae entera).
               onReplace: (texto) => {
+                trazaTurno.marcar('texto');
                 cancelMmm();
                 locutor().reemplazar(texto, tr('Corrijo:', 'Correction:'));
               },
@@ -1199,6 +1234,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
 
         // 2) JSON clásico (visión o servidor sin stream).
         if (!reacted) setFace('THINKING');
+        trazaTurno.marcar('envio');
         let out = await turno(base, genTurno);
         let intentosJson = 1;
         cancelMmm();
@@ -1430,6 +1466,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       handling.current = true;
       fraseOidaEn.current = oidaEn;
       oidaTurno.current = oidaEn;
+      trazaTurno.empezar(oidaEn);
       lastUserAt.current = Date.now();
       comentarista.usuarioHablo();
       // Lo que estaba vivo ANTES de cortar la voz: «para» decide sobre eso (AUR10).
@@ -3042,6 +3079,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         seguidor={caras.seguidor}
         caras={caras}
         onMotor={setVisionMotor}
+        ocupada={mesaOcupada}
       />
       {/* Con el chat, el botón de «Lo que veo» va arriba a la izquierda del cuadro del avatar. */}
       {enCuadro ? botonVista : null}

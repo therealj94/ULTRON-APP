@@ -125,11 +125,11 @@ prueba('seguir: una foto sin la cara no la cierra; pasado PERDIDA_MS sí (y deja
   assert.notEqual(a3.id, a.id, 'tras mucho rato es otra pista');
 });
 
-prueba('votar: un acierto suelto no pone nombre; 2 de 3 sí; un «no sé» no lo borra; para cambiarlo hacen falta 2 de 3 de otro', () => {
+prueba('votar: un acierto suelto dudoso no pone nombre; 2 de 3 sí; un «no sé» no lo borra; para cambiarlo hacen falta 2 de 3 de otro', () => {
   const s = new Seguidor();
   const [p] = s.actualizar([{ x: 0.3, y: 0.3, w: 0.2, h: 0.2 }], 0);
-  let v = s.votar(p.id, reco('a', 'Ana'), 100);
-  assert.equal(v.identidad, null, 'con un voto, «Persona»');
+  let v = s.votar(p.id, reco('a', 'Ana', 0.42), 100);
+  assert.equal(v.identidad, null, 'con un voto dudoso (d 0,42), «Persona»');
   assert.ok(s.porConfirmar(100));
   v = s.votar(p.id, null, 1300);
   assert.equal(v.identidad, null);
@@ -143,6 +143,20 @@ prueba('votar: un acierto suelto no pone nombre; 2 de 3 sí; un «no sé» no lo
   assert.ok(!v.confirmo);
   v = s.votar(p.id, reco('b', 'Beto'), 10000);
   assert.equal(v.identidad?.nombre, 'Beto', 'dos de tres dicen Beto: es Beto');
+});
+
+prueba('votar (José, 6-oct: «tarda en reconocer»): un voto MUY seguro pone el nombre ya; con otro voto reciente por otra persona, no', () => {
+  const s = new Seguidor();
+  const [p] = s.actualizar([{ x: 0.3, y: 0.3, w: 0.2, h: 0.2 }], 0);
+  const v = s.votar(p.id, reco('a', 'Ana', 0.3), 100);
+  assert.equal(v.identidad?.nombre, 'Ana', 'd 0,30 y margen 0,30: al primer voto');
+  assert.ok(v.confirmo, 'cuenta como recién confirmada (el saludo una vez)');
+  assert.equal(v.aFavor, 1, 'pero un solo voto: no alcanza para aprender con el uso');
+  const s2 = new Seguidor();
+  const [q] = s2.actualizar([{ x: 0.3, y: 0.3, w: 0.2, h: 0.2 }], 0);
+  s2.votar(q.id, reco('b', 'Beto', 0.45), 100);
+  assert.equal(s2.votar(q.id, reco('a', 'Ana', 0.3), 1300).identidad, null, 'antes dijo Beto: se espera el desempate');
+  assert.equal(s2.votar(q.id, reco('a', 'Ana', 0.3, { margen: 0.05 }), 2500).identidad?.nombre, 'Ana', 'dos de tres dicen Ana (2 de 3, como siempre)');
 });
 
 prueba('votar: sin un voto a favor en MANTENER_MS (solo «no sé»), el nombre se suelta', () => {
@@ -317,9 +331,28 @@ prueba('identificar da el margen sobre el segundo y el parentesco; el parentesco
 
 /* ── costuras leídas del código ──────────────────────────────────────────────────────────── */
 
+prueba('costuras (José, 6-oct: «se queda atrasado con la voz»): pensando o hablando la cámara afloja, no reconoce (salvo a quien llega) ni sube; aprender pide 2 votos', () => {
+  const cv = leer('src/components/CamaraVision.tsx');
+  assert.match(cv, /ritmoFotos\(\{ dormida, conPersona, vista: vistaAbiertaRef\.current, ocupada, identificados \}\)/, 'el ritmo del bucle sale de ritmoFotos');
+  assert.match(cv, /intervaloServidor\(\{[^}]*ocupada \}\)/, 'sin subidas con la mesa ocupada');
+  assert.match(cv, /estadisticaCamara\.(foto|mlkit|lectura)\(/, 'mide cada paso');
+  assert.match(cv, /if \(estadisticaCamara\.toca\(ahora\)\)[\s\S]{0,200}miga\(l\)/, 'una miga por minuto');
+  const uc = leer('src/caras/useCaras.tsx');
+  assert.match(uc, /tocaReconocer\(\{ \.\.\.o, mesaOcupada: !!op\.current\.ocupada\?\.\(\) \}\)/, 'reconocer sabe si la mesa está ocupada');
+  assert.match(uc, /const confirmada = v\.identidad\?\.id === r\?\.id && v\.aFavor >= CONFIRMAR;/, 'el nombre rápido de un voto no basta para aprender');
+  const ds = leer('src/screens/DeskScreen.tsx');
+  assert.match(ds, /const mesaOcupada = useCallback\(\(\) => handling\.current \|\| speakingRef\.current, \[\]\);/);
+  assert.match(ds, /ocupada: mesaOcupada,/, 'a las caras');
+  assert.match(ds, /ocupada=\{mesaOcupada\}/, 'y a la cámara');
+  const mc = leer('src/caras/MotorCaras.tsx');
+  assert.match(mc, /estadisticaCamara\.analisis\(Date\.now\(\) - t0, motorMs\)/, 'ida y vuelta del motor de caras');
+  const html = leer('src/caras/motorCarasHtml.ts');
+  assert.match(html, /cargar\(\)\.then\(calentar\)\.then\(function \(ms\) \{ enviar\(\{ tipo: 'lista'/, 'se calienta antes de decir «lista»');
+});
+
 prueba('costuras: la foto del bucle va al motor de caras (sin segunda foto), con las cajas de ML Kit; la frontal se dibuja espejada', () => {
   const cv = leer('src/components/CamaraVision.tsx');
-  assert.match(cv, /if \(subir \|\| pedir\) b64 = await FileSystem\.readAsStringAsync\(foto\.uri/, 'la foto se lee una vez para el servidor y/o las caras');
+  assert.match(cv, /if \(subir \|\| pedir\) \{[^}]*b64 = await FileSystem\.readAsStringAsync\(foto\.uri/, 'la foto se lee una vez para el servidor y/o las caras');
   assert.match(cv, /borrar\(foto\.uri\);\n\s+if \(b64/, 'y se borra siempre');
   assert.match(cv, /minFaceSize: MIN_CARA_MLKIT/);
   assert.match(cv, /cajaEnPantalla\(mk\.caja, dims, m, lado === 'frontal'\)/, 'espejo solo con la frontal');

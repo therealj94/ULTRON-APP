@@ -37,6 +37,7 @@ import { ADELANTO_MS, BocaAlineada, Envolvente, PASO_BOCA_MS, RelojReproduccion,
 import { idiomaActual } from '../i18n';
 import { RegistroVoz } from './interrupcion';
 import { faltaDecir } from './reemplazoVoz';
+import { CORTADO, carreraConCorte } from './relleno';
 
 type Perf = 'speak' | 'sing';
 
@@ -661,6 +662,12 @@ export async function speak(
     privado?: boolean;
     /** Con la voz de este avatar en vez del de la mesa (los anfitriones del recorrido). */
     voz?: AvatarId;
+    /**
+     * Si esto se cumple ANTES de que empiece a sonar, no suena nada (y la cola de voz se suelta enseguida); si ya suena,
+     * termina la frase en curso y no empieza la siguiente. Es el relleno del turno: el primer texto de la respuesta lo
+     * corta (lib/relleno.ts). Antes la respuesta esperaba a que el relleno se bajara y sonara entero.
+     */
+    hastaQue?: Promise<unknown>;
   }
 ): Promise<boolean> {
   const clean = cleanForSpeech(text);
@@ -691,16 +698,20 @@ export async function speak(
 
   let spoke = false;
   let nextPrepared: Promise<Audio.Sound | null> | null = null;
+  let cortado = false;
+  void opts?.hastaQue?.then(() => (cortado = true));
   try {
     for (let i = 0; i < sentences.length; i++) {
-      if (my !== gen) return spoke;
+      if (my !== gen || cortado) return spoke;
       launch(i + AHEAD);
       const sound = nextPrepared ? await nextPrepared : await (async () => {
-        const src = await sources[i];
+        // Mientras se baja la primera, el corte la gana: no se espera al servidor para no decirla.
+        const src = spoke ? await sources[i] : await carreraConCorte(sources[i], opts?.hastaQue);
+        if (src === CORTADO) return null;
         return src ? prepare(src) : null;
       })();
       nextPrepared = null;
-      if (my !== gen) {
+      if (my !== gen || cortado) {
         if (sound) void sound.unloadAsync().catch(() => {});
         return spoke;
       }
@@ -761,7 +772,10 @@ export class StreamSpeaker {
   private resolveDone!: () => void;
   readonly done: Promise<void>;
 
-  constructor(private opts: { emocion?: Emocion; onAudioStart?: () => void; onSentence?: (s: string) => void }) {
+  /**
+   * `onPrimerAudio`: el audio de la primera frase ya bajó (la traza del turno, lib/trazaTurno.ts).
+   */
+  constructor(private opts: { emocion?: Emocion; onAudioStart?: () => void; onSentence?: (s: string) => void; onPrimerAudio?: () => void }) {
     // Comparte generación con speak(): stopSpeaking() lo cancela; no corta un clip en curso.
     this.my = gen;
     this.done = new Promise<void>((r) => (this.resolveDone = r));
@@ -853,7 +867,9 @@ export class StreamSpeaker {
     const clave = `${previo || ''}\u0000${sentence}`;
     let p = this.sources.get(clave);
     if (!p) {
+      const primera = !this.sources.size;
       p = fetchSource(sentence, 'speak', this.opts.emocion || 'neutral', false, { previo });
+      if (primera && this.opts.onPrimerAudio) void p.then((src) => src && this.opts.onPrimerAudio?.());
       this.sources.set(clave, p);
     }
     return p;
@@ -869,7 +885,17 @@ export class StreamSpeaker {
   private async pump() {
     this.pumping = true;
     try {
-      if (!this.spoke) await lastSpeak.catch(() => {});
+      if (!this.spoke) {
+        // Mientras termina lo que suena (el relleno), la primera frase ya se prepara: al soltarse, suena sin esperar.
+        const primera = this.queue[0];
+        if (primera && !this.nextPrepared) {
+          this.nextPrepared = (async () => {
+            const src = await this.source(primera.texto, primera.previo);
+            return src ? prepare(src) : null;
+          })();
+        }
+        await lastSpeak.catch(() => {});
+      }
       while (this.queue.length && this.my === gen) {
         const { texto: sentence, previo, v } = this.queue.shift()!;
         const sound = this.nextPrepared

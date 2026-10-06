@@ -10,9 +10,15 @@
  *           Con `cajas` (las de ML Kit de esa misma foto) se analiza un recorte agrandado de cada una: las
  *           caras chicas o lejanas salen mucho mejor que buscándolas en la foto entera. Sin `cajas`, la foto
  *           entera (detector chico a 416).
- * Salida:   { tipo: 'lista' } · { tipo: 'caras', id, caras: [{ caja:{x,y,w,h} (0..1), vector:[128], puntaje, indice? }], ms }
+ * Salida:   { tipo: 'lista', motor, calentarMs } · { tipo: 'caras', id, caras: [{ caja:{x,y,w,h} (0..1), vector:[128], puntaje, indice? }], ms }
  *           · { tipo: 'error', id, motivo } · { tipo: 'fallo', motivo } (no cargó: sin WebGL, sin red)
  * La imagen no se guarda: se decodifica, se analiza y se suelta.
+ *
+ * Calentar (José, 6-oct: «tarda en reconocer»): antes de decir «lista», las tres redes corren una vez sobre un lienzo gris.
+ * La PRIMERA vez que corre cada red, WebGL compila sus programas: en el Chromium de pruebas el primer análisis de quien
+ * llegaba tardaba ~6,5 s y los siguientes ~1,7 s. Calentando al cargar (cuando se enciende la cámara, nadie espera), el
+ * primer análisis de verdad tarda como los demás (~0,7 s en esa prueba). Decodificar la foto en base64 cuesta ~1-2 ms: no
+ * hace falta pasarle el archivo.
  */
 export const FACE_API_VERSION = '1.7.15';
 export const FACE_API_URL = `https://cdn.jsdelivr.net/npm/@vladmandic/face-api@${FACE_API_VERSION}/dist/face-api.js`;
@@ -118,6 +124,25 @@ export const MOTOR_CARAS_HTML = `<!doctype html>
       }
     });
   };
-  cargar().then(function () { enviar({ tipo: 'lista', motor: faceapi.tf.getBackend() }); }, function (e) { enviar({ tipo: 'fallo', motivo: String((e && e.message) || e).slice(0, 160) }); });
+  async function calentar() {
+    var t = Date.now();
+    try {
+      var c = document.createElement('canvas');
+      c.width = c.height = LADO_RECORTE;
+      var g = c.getContext('2d');
+      g.fillStyle = '#808080';
+      g.fillRect(0, 0, LADO_RECORTE, LADO_RECORTE);
+      await faceapi.detectAllFaces(c, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.3 }));
+      var cara150 = document.createElement('canvas');
+      cara150.width = cara150.height = 150;
+      cara150.getContext('2d').drawImage(c, 0, 0, 150, 150);
+      await faceapi.detectFaceLandmarks(cara150);
+      await faceapi.computeFaceDescriptor(cara150);
+    } catch (e) {
+      /* calentar es solo para ganar tiempo: si falla, el primer análisis compila como antes */
+    }
+    return Date.now() - t;
+  }
+  cargar().then(calentar).then(function (ms) { enviar({ tipo: 'lista', motor: faceapi.tf.getBackend(), calentarMs: ms }); }, function (e) { enviar({ tipo: 'fallo', motivo: String((e && e.message) || e).slice(0, 160) }); });
 })();
 </script></body></html>`;

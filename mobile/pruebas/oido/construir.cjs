@@ -48,6 +48,8 @@ const piezas = {
   TTS: 'lib/tts',
   FRASES: 'lib/frases',
   FRASES_ESTADO: 'compa/frasesEstado',
+  // El relleno del turno que la respuesta corta si todavía no sonó (José, 6-oct).
+  RELLENO: 'lib/relleno',
 };
 // Lo que no exista en esa copia (p. ej. el ciclo de la llamada en main) se deja fuera.
 const lineas = Object.entries(piezas)
