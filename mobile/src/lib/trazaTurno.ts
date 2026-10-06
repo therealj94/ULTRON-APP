@@ -11,7 +11,11 @@
  *  · tts   el audio de la primera frase bajado (listo para preparar);
  *  · rel   el relleno («déjame ver») pedido > cuándo empezó a sonar (o «tirado»: llegó la respuesta antes de que sonara);
  *  · js    lo más que se trabó el hilo de JS durante el turno (lib/pulsoJs.ts);
- *  · cám   la cámara encendida (+caras: reconociendo).
+ *  · cám   la cámara encendida (+caras: reconociendo);
+ *  · esp   el turno ya venía corriendo como especulativo desde hacía N ms (lib/turnoEspeculativo.ts): empezó antes de
+ *          que el oído diera la frase por terminada.
+ *
+ * «Contestó con voz» es la respuesta (su primera frase empezando a sonar), nunca el relleno: el relleno va aparte en `rel`.
  *
  * El comienzo no cambia («mesa: contestó con voz N ms después de la frase»): lo que ya leía esas migas sigue igual. Sin
  * React Native: se prueba en Node (tests/latencia-movil.test.ts).
@@ -22,7 +26,7 @@ export type MarcaTurno = 'pide' | 'escena' | 'envio' | 'texto' | 'audio' | 'rell
 export class TrazaTurno {
   private t0 = 0;
   private marcas = new Map<MarcaTurno, number>();
-  private datos: { vozMs?: number } = {};
+  private datos: { vozMs?: number; espMs?: number } = {};
 
   /** La frase quedó lista (el oído la entregó) en `t0`. */
   empezar(t0: number) {
@@ -37,7 +41,7 @@ export class TrazaTurno {
     this.marcas.set(k, t);
   }
 
-  dato(k: 'vozMs', v: number) {
+  dato(k: 'vozMs' | 'espMs', v: number) {
     if (this.t0 && Number.isFinite(v)) this.datos[k] = Math.max(0, Math.round(v));
   }
 
@@ -67,6 +71,7 @@ export class TrazaTurno {
       const suenaRel = d('rellenoSuena');
       partes.push(suenaRel !== null ? `rel ${rel}>${suenaRel}` : d('rellenoTirado') !== null ? `rel ${rel} tirado` : `rel ${rel}`);
     }
+    if (this.datos.espMs !== undefined) partes.push(`esp ${this.datos.espMs}`);
     if (o.jsMax !== undefined && Number.isFinite(o.jsMax)) partes.push(`js ${Math.round(o.jsMax)}`);
     if (o.camara) partes.push(o.caras ? 'cám+caras' : 'cám');
     const total = Math.max(0, Math.round(suena - this.t0));
