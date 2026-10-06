@@ -231,10 +231,19 @@ export function pendientesEnOrden(dueno: string, ambito: string, whatsapp: boole
 const MENCIONADOS = new Map<string, string[]>();
 const MAX_MENCIONADOS = 30;
 
-function mencionarUnaVez(llave: string, intento: string): boolean {
-  const xs = MENCIONADOS.get(llave) || [];
-  if (xs.includes(intento)) return false;
-  MENCIONADOS.set(llave, [...xs, intento].slice(-MAX_MENCIONADOS));
+/**
+ * ¿Toca mencionarlo? (una vez por borrador). Revisión 7.5 (MENOR 4): la mención se GASTA solo si el turno cuenta. En la
+ * voz, con `retener`, se anota cuando el turno se confirma (`retener.hacer`): un turno especulativo que se descarta (la
+ * frase seguía) no se oyó, y antes dejaba la mención por dicha para siempre.
+ */
+function mencionarUnaVez(llave: string, intento: string, retener?: RetencionAcciones): boolean {
+  if ((MENCIONADOS.get(llave) || []).includes(intento)) return false;
+  const anotar = () => {
+    const xs = MENCIONADOS.get(llave) || [];
+    if (!xs.includes(intento)) MENCIONADOS.set(llave, [...xs, intento].slice(-MAX_MENCIONADOS));
+  };
+  if (retener) retener.hacer(anotar);
+  else anotar();
   return true;
 }
 
@@ -365,7 +374,7 @@ export async function resolverDecisionesDelTurno(o: OpcionesDecisionTurno): Prom
   if (elegido && elegido.origen !== 'app') {
     const quedan = pendientesEnOrden(dueno, ambito, o.whatsapp).filter((x) => x.intento !== elegido.id);
     const sig = quedan[0];
-    if (sig && mencionarUnaVez(llaveConversacion(dueno, ambito), sig.intento)) {
+    if (sig && mencionarUnaVez(llaveConversacion(dueno, ambito), sig.intento, retener)) {
       const que = sig.canal === 'correo' ? `el correo para ${sig.para} («${resumenTexto(sig.texto, 60)}»)` : `el WhatsApp para ${sig.para} («${resumenTexto(sig.texto, 60)}»)`;
       const mas = quedan.length > 1 ? ` Después de ese quedan ${quedan.length - 1} más en su panel; no los enumeres.` : '';
       // Revisión independiente (G2): mencionarlo es SOLO información. Lo que espera en el chat (el borrador que se le leyó y

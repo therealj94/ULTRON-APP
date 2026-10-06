@@ -361,6 +361,35 @@ test('causa 6: no insiste: lo mismo no se menciona dos veces, y un «no» va a l
   });
 });
 
+test('MENOR 4 (revisión 7.5): un turno de voz descartado no gasta la mención de lo pendiente; uno confirmado sí', async () => {
+  await conEntorno(async ({ mandados }) => {
+    await waParaBruno();
+    await turno('otra cosa'); // el de Bruno queda apartado
+    await correoParaAna();
+    const voz = () => {
+      const hacer: Array<() => void> = [];
+      const descartes: Array<() => void> = [];
+      return { hacer, descartes, retener: { hacer: (f: () => void) => void hacer.push(f), alDescartar: (f: () => void) => void descartes.push(f), recordar: () => undefined } };
+    };
+    // La frase seguía: el turno especulativo se descarta (nada sale y la mención no se oyó).
+    const a = voz();
+    const r1 = await turno('sí', { retener: a.retener });
+    assert.match(r1.hechos.join('\n'), /PENDIENTE EN ORDEN:.*WhatsApp para Bruno/s);
+    for (const f of a.descartes) f();
+    assert.equal(mandados.length, 0);
+    // La frase entera: se vuelve a mencionar (antes ya estaba «dicha» y no se decía nunca).
+    const b = voz();
+    const r2 = await turno('sí', { retener: b.retener });
+    assert.match(r2.hechos.join('\n'), /PENDIENTE EN ORDEN:.*WhatsApp para Bruno/s, 'el descartado no gastó la mención');
+    for (const f of b.hacer) f();
+    assert.ok(await esperar(() => mandados.length === 1), 'confirmado, sale el correo');
+    // Confirmado: ya no se insiste.
+    await correoParaAna('Otra versión.');
+    const r3 = await turno('sí');
+    assert.doesNotMatch(r3.hechos.join('\n'), /PENDIENTE EN ORDEN/, 'la mención confirmada sí se gastó');
+  });
+});
+
 /* ------------------------------------------------------------------ revisión independiente */
 
 test('G1 (revisión): con un apartado a la vista y una pregunta NUEVA de la app (recordatorio), un «sí» no manda el de la ventana: pregunta cuál', async () => {
