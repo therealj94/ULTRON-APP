@@ -97,6 +97,8 @@ export type ApiCaras = {
   manejar: (dicho: string) => Promise<boolean>;
   /** Para la escena del turno: «Reconozco a …» (vacío si no hay nada fresco). */
   escena: () => string;
+  /** Revisión 7 (G2): cuándo se vio a la dueña confirmada por votos hace ≤ 10 s (0 si no): continuidad de la voz. */
+  duenaVistaEn: () => number;
   /** Las caras de la cámara entre fotos, con su nombre votado (lo actualiza CamaraVision, lo dibuja «Lo que veo»). */
   seguidor: Seguidor;
   /** Reconocer está andando (activado, motor listo y alguien guardado): sin esto, nadie tiene nombre. */
@@ -571,6 +573,8 @@ export function useCaras(o: Opciones): ApiCaras {
     return frasePresentes(q.r, q.desconocidas, false, op.current.lado === 'trasera');
   }, [respaldo, seguidor]);
 
+  const duenaVistaEn = useCallback(() => (reconoceRef.current ? seguidor.duenaConfirmadaEn(Date.now(), 10_000) : 0), [seguidor]);
+
   const estadoTexto = !activas ? tr('Apagado', 'Off') : conocidas?.length ? tr(`Conozco a ${conocidas.length}`, `I know ${conocidas.length}`) : tr('Activado', 'On');
 
   const nodoMotor = useMemo(
@@ -582,5 +586,5 @@ export function useCaras(o: Opciones): ApiCaras {
   const ocupado = useCallback(() => analizando.current, []);
   const mesaOcupada = useCallback(() => !!op.current.ocupada?.(), []);
 
-  return { activas, estadoTexto, motor: nodoMotor, abrirOpciones, manejar, escena, seguidor, reconoce, quiereFoto, recibirFoto, quiereFotoRespaldo, recibirFotoRespaldo, ocupado, mesaOcupada };
+  return { activas, estadoTexto, motor: nodoMotor, abrirOpciones, manejar, escena, duenaVistaEn, seguidor, reconoce, quiereFoto, recibirFoto, quiereFotoRespaldo, recibirFotoRespaldo, ocupado, mesaOcupada };
 }

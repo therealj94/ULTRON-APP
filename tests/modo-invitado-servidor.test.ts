@@ -174,6 +174,22 @@ for (const [nombre, quienHabla] of [
   });
 }
 
+test('revisión 7 (G2): voz sin confirmar (`incierta`) → nada privado ni nombres de las caras al modelo, y sin «modo invitado» delante', async () => {
+  const marca = 'INCIERTA-1';
+  const escena = 'Reconozco a Bea (tu hermana), Marta (quien te habla). Una persona sonriendo.';
+  const { alModelo, respuesta } = await turno(marca, { hablado: true, quienHabla: { incierta: true }, escena });
+  for (const [que, s] of Object.entries(SECRETOS)) assert.ok(!alModelo.includes(s), `no recibe ${que}`);
+  assert.ok(!/\bBea\b|hermana/.test(alModelo), 'ni los nombres guardados de las caras');
+  assert.ok(!/\bMarta\b/.test(alModelo), 'ni el de la dueña');
+  assert.doesNotMatch(alModelo, PRIVADAS);
+  assert.match(alModelo, /MODO INVITADO \(voz sin confirmar\)/);
+  assert.match(alModelo, /No reconocí tu voz; dímelo con una frase un poco más larga/);
+  assert.doesNotMatch(JSON.parse(respuesta).reply, /^Te respondo en modo invitado/);
+  // La dueña con la misma escena: los nombres sí llegan (es su cámara).
+  const d = await turno('DUENA-ESCENA', { escena });
+  assert.match(d.alModelo, /Bea/);
+});
+
 test('invitado por el camino en vivo (SSE): tampoco llega nada privado, y lo primero que oye es «modo invitado»', async () => {
   const marca = 'INVITADO-SSE';
   const r = await fetch(`${BASE}/api/turno/stream`, {

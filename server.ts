@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { comprobarClavePropia, SIN_COMPROBAR as CLAVE_SIN_COMPROBAR } from './server/entrar-clave';
 import express from 'express';
 import http from 'http';
 import path from 'path';
@@ -138,7 +139,7 @@ import { listarTareas } from './lib/tareas';
 import { ejecutarCodigo, ejecutorActivo } from './lib/ejecutor';
 import { construirMensajes, extraerPython } from './lib/qwen';
 import { computadoraDisponible, correoDisponible, correrBucleHarness, extraerPedidoHerramienta, incierto, MINIMO_HERRAMIENTA_MS, quitarLineaPedido, resolverPedidoConEstado, type EstadoRespuesta, type PasoHarness, type ResultadoHerramienta, type VueltaHarness } from './lib/harness';
-import { accionConBorrador, corregirPromesaSinHerramienta, cumplirLoDicho, debeCorregirSinHerramienta, duroDeVoz, herramientasDelTurno, lineaDeHerramienta, lineaRespuestaHablada, notaDeCumplir, pasoDeLectura, pasoSinTopeDeVoz, preguntaFinal, prometeSinHacer, recorteDeVoz, reglasDeManos, topeConLectura, topeDeVoz, topeTrasPaso, vozCompletaDelTurno, vozRecortada, type CumplirLoDicho, type ManosDelTurno } from './lib/cerebro-manos';
+import { accionConBorrador, corregirPromesaSinHerramienta, cumplirLoDicho, daPorHecho, debeCorregirSinHerramienta, duroDeVoz, herramientasDelTurno, lineaDeHerramienta, lineaRespuestaHablada, notaDeCumplir, pasoDeLectura, pasoSinTopeDeVoz, preguntaFinal, prometeSinHacer, recorteDeVoz, reglasDeManos, topeConLectura, topeDeVoz, topeTrasPaso, vozCompletaDelTurno, vozRecortada, type CumplirLoDicho, type ManosDelTurno } from './lib/cerebro-manos';
 import { lineaTiemposTurno, type MedidaTurno } from './lib/tiempos-turno';
 import { reglasAppDelTurno } from './lib/prompt-voz';
 import { correrCarteraConEstado } from './lib/cartera';
@@ -1766,14 +1767,12 @@ app.post(['/api/electrum/entrar', '/api/ultron/entrar'], limitar(12), async (req
   /*
    * Primero la clave propia (server/cuentas.ts): quien ya se hizo una aquí —cambiándola, recuperándola
    * o al activar una cuenta aprobada— entra con esa y solo con esa. Quien no, sigue entrando por el
-   * cerebro remoto como siempre. Si la base de cuentas no contesta, se cae al remoto para no dejar
-   * a la junta afuera por una base caída.
+   * cerebro remoto como siempre. Si la base de cuentas no contesta, NO se entra (revisión 7, G3): el
+   * remoto no mira la suspensión, y una base caída no puede abrirle la puerta a una cuenta suspendida.
    */
   if (cuentasDisponibles()) {
-    const propia = await entrarConCuenta(correo, String(claveEntrada)).catch((e) => {
-      console.warn('[cuentas] base sin contestar en la entrada; sigo con el remoto:', String(e?.message || e).slice(0, 120));
-      return 'sin_clave' as const;
-    });
+    const propia = await comprobarClavePropia(entrarConCuenta, correo, String(claveEntrada));
+    if (propia === 'sin_comprobar') return res.status(503).json({ ...CLAVE_SIN_COMPROBAR, honesto: true });
     if (propia === 'mal') {
       anotarFalloEntrada(correo, ipEntrada);
       return res.status(401).json({ error: 'Correo o clave incorrectos.', codigo: 'NO_ENTRA' });
@@ -4564,7 +4563,9 @@ async function correrTurnoInterno(body: any, opciones: OpcionesTurno = {}): Prom
     // Lo que quedó esperando aprobación (una captura para el grupo, revisión 11) vuelve aunque conteste el modelo.
     const final: SalidaTurno = { ...(p.propuestaTaller ? { propuestaTaller: p.propuestaTaller } : {}), ...out, estado, reply: quitarExpresiones(e.texto).trim(), voz: e.texto.trim(), emocion: out.emocion || e.emocion, acciones: app.acciones, ...(vozCompleta ? { vozCompleta: true } : {}), ...(vozLectura ? { vozLectura: true } : {}) };
     // Un invitado oye y ve que se le contesta en modo invitado (una frase, sin nada privado).
-    if (p.invitado && final.reply) Object.assign(final, { reply: `${avisoInvitado(p.idioma === 'en' ? 'en' : 'es')} ${final.reply}`, voz: `${avisoInvitado(p.idioma === 'en' ? 'en' : 'es')} ${final.voz}` });
+    // Revisión 7 (G2): con la voz sin confirmar no hay aviso (puede ser ella con un «sí» corto; avisoInvitado da '').
+    const aviso = p.invitado ? avisoInvitado(p.idioma === 'en' ? 'en' : 'es', p.invitado) : '';
+    if (aviso && final.reply) Object.assign(final, { reply: `${aviso} ${final.reply}`, voz: `${aviso} ${final.voz}` });
     if (final.reply && estado === 'completo' && memorizable) await recordarSegunNivel(body, { quienMem, rol: 'ultron', texto: final.reply, canal }, opciones.retener);
     return final;
   };
@@ -5022,7 +5023,8 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
   trazaActual()?.marca('preparado');
   medida.preparado = Date.now();
   // Un invitado oye y ve primero que se le contesta en modo invitado (una frase, sin nada privado).
-  if (p.invitado && p.message) soltar('delta', `${avisoInvitado(idioma)} `);
+  // Revisión 7 (G2): con la voz sin confirmar, sin aviso (avisoInvitado da '').
+  if (p.invitado && p.message && avisoInvitado(idioma, p.invitado)) soltar('delta', `${avisoInvitado(idioma, p.invitado)} `);
   if (!p.message) {
     send('error', { error: FRASE_FALLO.vacio[idioma], codigo: 'vacio' });
     reg.cerrar({ error: 'message vacío' });
@@ -5190,7 +5192,8 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       if (retenido) return;
       // Soltar solo hasta la última frase cerrada; lo que queda puede ser una línea de pedido.
       const corte = puntoDeCorte(cuerpo, enviado);
-      if (corte > enviado && (DA_POR_HECHO.test(cuerpo.slice(enviado, corte + 1)) || trozoPromete(cuerpo.slice(enviado, corte + 1)))) {
+      // Revisión 7 (LANG-01): también lo que da por hecho sin decir «mandé» («ya le respondí», «le avisé»): daPorHecho.
+      if (corte > enviado && (DA_POR_HECHO.test(cuerpo.slice(enviado, corte + 1)) || trozoPromete(cuerpo.slice(enviado, corte + 1)) || daPorHecho(cuerpo.slice(enviado, corte + 1)))) {
         retenido = true;
         return;
       }

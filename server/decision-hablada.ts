@@ -11,7 +11,8 @@
  * mandaría un correo o un WhatsApp se ejecuta SOLO si está atado a la huella exacta del borrador que ese aparato muestra:
  *   1. el campo `decisionVista: { tareaId, decisionId, huella }` que manda el teléfono con la frase (solo mientras la
  *      ventana está a la vista y no se está editando: mobile/src/lib/decisionVista.ts), o, si no vino,
- *   2. el registro de la ventana (server/decision-en-pantalla.ts) de ESE aparato, vigente.
+ *   2. el registro de la ventana (server/decision-en-pantalla.ts) de ESE aparato, vigente (un registro sin aparato, o un
+ *      turno sin la cabecera del aparato, no ata nada).
  * La huella tiene que ser la de un borrador que espera AHORA en esa conversación. Sin atadura, con otra huella (la vieja
  * de antes de editar) o con un registro de otro aparato: no se elige nada, no sale nada y se le pide que mire la ventana.
  * Con varias esperando y sin un registro que diga desde cuándo se ve lo que dice el campo, se pregunta cuál.
@@ -66,9 +67,12 @@ export type VistaHablada = {
  * nueva): la del registro si es la misma; si no hay registro que lo diga, 0 (con varias esperando, se pregunta cuál).
  */
 export function vistaHablada(o: { dueno: string; ambito: string; whatsapp: boolean; campo: DecisionVistaTurno | null; aparato?: unknown; registro: EnPantalla | null; ahora?: number }): VistaHablada {
-  const aparato = typeof o.aparato === 'string' ? o.aparato : '';
-  const otroAparato = !!o.registro?.aparato && o.registro.aparato !== aparato;
-  const registro = o.registro && !otroAparato ? o.registro : null;
+  const aparato = typeof o.aparato === 'string' ? o.aparato.trim() : '';
+  // Revisión 7 (MENOR): el registro ata solo si dice de QUÉ aparato es y es este. Uno guardado sin la cabecera del
+  // aparato (o un turno que no la trae) no ata un «sí» dicho en otro teléfono de la misma cuenta.
+  const mismoAparato = !!o.registro?.aparato && !!aparato && o.registro.aparato === aparato;
+  const otroAparato = !!o.registro && !mismoAparato;
+  const registro = o.registro && mismoAparato ? o.registro : null;
   if (o.campo) {
     const b = borradorConHuella(o.dueno, o.ambito, o.campo.huella, o.whatsapp);
     if (!b) return { vista: null, ligada: null, campoSinBorrador: true, otroAparato };

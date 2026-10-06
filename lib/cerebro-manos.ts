@@ -439,7 +439,20 @@ const PROMESA = new RegExp(
   'i'
 );
 /** Dar por hecho («ya lo puse», «te lo mandé»): cuenta como de ESTE turno salvo que la frase diga que fue antes. */
-const DADO_POR_HECHO = /\b(ya )?(te |lo |la )?(lo |la )?(puse|programe|agende|abri|mande|envie|llame)\b/i;
+const DADO_POR_HECHO = new RegExp(
+  [
+    /\b(ya )?(te |lo |la )?(lo |la )?(puse|programe|agende|abri|mande|envie|llame)\b/.source,
+    // Revisión 7 (M1): lo que da por hecho un mensaje a otra persona sin decir «mandé» («Ya le respondí a Bruno», «le
+    // contesté», «le escribí», «le avisé», «le pasé tu mensaje», «se lo reenvié», «ya le llegó», «Bruno ya lo recibió»,
+    // «se fue el mensaje», «Ana ya tiene tu correo», «ya despaché el correo») o una gestión hecha («ya hice la
+    // reservación»). Solo con «le / les / se lo» (a otro): «ya te escribí» o «te avisé» a ella misma son charla.
+    /\b(le|les|se lo|se la|se los|se las) (respondi|conteste|escribi|avise|reenvie|hable|pase|comparti)\b/.source,
+    /\bya (respondi|conteste|reenvie|despache)\b|\b(lo|la|los|las) (reenvie|despache|comparti)\b|\bdespache\b/.source,
+    /\ble llego\b|\bya (lo|la|los|las) recibio\b|\bya tiene tu (mensaje|correo|whatsapp|recado)\b|\bse fue (el|tu|su) (mensaje|correo|whatsapp)\b/.source,
+    /\b(hice|ya hice) (la|el|tu|su) (reserva\w*|pedido|pago|cita|transferencia)\b|\breserve\b/.source,
+  ].join('|'),
+  'i'
+);
 /**
  * Lo que la ubica ANTES de este turno (revisión del 5-oct, GRAVE-2): «Sí, ya te lo mandé hace rato» sobre un correo
  * que de verdad salió en otro turno no es una promesa nueva ni algo que este turno deba haber hecho; antes se borraba
@@ -519,20 +532,59 @@ const DESCRIBE_ESCENA = /\b(te|le)\s+(leo|digo|cuento|describo|reviso)\s+(lo que
  * una llamada…), cuenta como siempre.
  */
 const DEL_TELEFONO = /\b(camara|camaras|lo que veo|lo que ves|como me ves|la vista|tu cara|las caras|caras|tu rostro|tu voz|mi voz|las voces|la voz de)\b/;
-const CON_HERRAMIENTA = /\b(correo|whatsapp|mensaje|chat|recordatorio|alarma|llam\w*|marc\w*|pantalla|ajustes|busc\w*|investig\w*|mision|tarea|pago|cartera)\b/;
+// Revisión 7 (M2): también los verbos de mandar algo a alguien («avísale a Bruno», «le voy a escribir», «mándale»,
+// «contéstale»): con la cámara en la misma frase, el pedido de mensaje sigue siendo de una herramienta.
+const CON_HERRAMIENTA = /\b(correo|whatsapp|mensaje|chat|recordatorio|alarma|llam\w*|marc\w*|pantalla|ajustes|busc\w*|investig\w*|mision|tarea|pago|cartera|avis\w*|escrib\w*|mand\w*|envi\w*|contest\w*|respond\w*|reenvi\w*|redact\w*|borrador|recuerd\w*|record\w*|agend\w*|program\w*|reserv\w*|despach\w*)\b/;
 export function delTelefono(frase: string): boolean {
   const p = plano(frase);
   return DEL_TELEFONO.test(p) && !CON_HERRAMIENTA.test(p.replace(DEL_TELEFONO, ' '));
 }
 
+/* ── Revisión 7 (LANG-01): lo que NO afirma que AU-RA hizo algo ─────────────────────────────────────────────────────
+ * La corrección local reescribía frases verdaderas: «No le mandé nada», «Dijo que lo llame mañana», «Ana me pidió que le
+ * mande la factura», «Nunca abrí tu correo» salían como «Eso todavía no lo hice: desde aquí no tengo cómo». Antes de
+ * buscar promesas se tapa (con espacios, del mismo largo) lo que no es una afirmación de AU-RA:
+ *   · la negación, hasta el fin de su cláusula («No le mandé nada», «Nunca abrí tu correo», «Ni le escribí ni lo
+ *     llamé»; en «No te preocupes, ya se lo mandé» lo de después de la coma sigue contando);
+ *   · el discurso referido de otra persona («dijo / dice / pidió / quiere / contó / escribió … que …», «… según me dijo
+ *     Ana»): lo que va después es lo que dijo o quiere ella, no lo que hizo AU-RA. «Te dije que ya lo mandé» (yo) sí cuenta;
+ *   · lo citado («…», "…");
+ *   · lo que se entrega ahí mismo («Te mando el resumen: son 4 correos nuevos», «te leo: …»).
+ * Lo que sí afirma («Listo, ya se lo mandé a Bruno», «Te llamo en 30 segundos») se sigue corrigiendo; lo hecho de verdad
+ * lo dice el recibo de la herramienta (`debeCorregirSinHerramienta`, por `pasos`).
+ */
+const tapar = (m: string) => ' '.repeat(m.length);
+const NEGACION = /\b(no|nunca|jamas|tampoco|ni|todavia no|aun no|sin)\b[^,;:.!?«»"“”]*?(?=\s*(?:[,;:.!?]|\bpero\b|\bporque\b|\bsino\b|\by (?:ya|luego|despues|ahora)\b|$))/gi;
+const REFERIDO = /\b(dijo|dice|dicen|dijeron|pidio|pide|piden|pidieron|quiere|quieren|queria|querian|conto|cuenta|cuentan|escribio|escribe|escribieron|avisa|aviso que nos|pregunta|preguntaba|prefiere|espera|necesita|sugirio|recomendo|insiste|insistio|comenta)\s+(que|si)\b[^.;!?]*/gi;
+const SEGUN = /[^.;!?]*\bsegun (me |te |le |nos )?(dijo|dice|dicen|conto|cuenta|escribio|comento|aviso)\b[^.;!?]*/gi;
+const ENTREGA_AHI = /\b(te|le) (mando|paso|leo|cuento|digo|resumo|doy|dejo)\b[^.:!?¿]{0,40}:(?=\s*\S)/gi;
+export function sinLoQueNoAfirma(planoTexto: string): string {
+  return sinCitas(planoTexto).replace(SEGUN, tapar).replace(REFERIDO, tapar).replace(NEGACION, tapar).replace(ENTREGA_AHI, tapar);
+}
+
+/**
+ * ¿El trozo DA POR HECHA una acción de AU-RA en este turno («Ya le respondí a Bruno», «Listo, le avisé», «ya hice la
+ * reservación»)? Para retenerlo en el stream hasta que el recibo de la herramienta lo confirme (revisión 7, LANG-01: si
+ * hay que corregirlo, antes de que suene). Sin la negación, lo referido ni lo citado (`sinLoQueNoAfirma`); lo de antes
+ * de este turno («ayer», «hace rato») no.
+ */
+export function daPorHecho(trozo: string): boolean {
+  const limpio = sinLoQueNoAfirma(String(trozo || '').normalize('NFD').replace(/[̀-ͯ]/g, '')).replace(/¿[^?]*\?/g, ' ');
+  return frases(limpio).some((f) => DADO_POR_HECHO.test(f) && !esDeAntes(f));
+}
+
 export function prometeSinHacer(texto: string): boolean {
+  // Revisión 7 (LANG-01): sin la negación, lo referido, lo citado ni lo que se entrega ahí mismo (`sinLoQueNoAfirma`).
+  const limpio = sinLoQueNoAfirma(
+    String(texto || '')
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+  );
   // También lo que lib/promesas.ts reconoce como trabajo o aviso prometido («voy a investigar», «ahí voy»,
   // «empiezo ya», «te aviso cuando termine»): José, 4-oct. Un estado de su computadora («ya está encendida»)
   // no: pedirle «la herramienta de lo que dijiste» ahí encargaría una misión sin tarea; eso lo corrige la guarda.
-  if (clasificarPromesas(texto).tipos.some((t) => t === 'trabajo' || t === 'aviso')) return true;
-  const plano = String(texto || '')
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
+  if (clasificarPromesas(limpio).tipos.some((t) => t === 'trabajo' || t === 'aviso')) return true;
+  const plano = limpio
     .replace(/\[[^\]]{0,30}\]/g, ' ')
     // Lo que describe de su cámara en esta misma respuesta («te leo lo que veo: …») no es una promesa.
     .replace(DESCRIBE_ESCENA, ' ');
@@ -565,7 +617,7 @@ export function notaDeCumplir(idioma: 'es' | 'en' = 'es'): string {
  */
 const QUE_PROMETE: Array<[RegExp, string[]]> = [
   [/\b(recuerd|recordatorio|record|alarma|desperta|timer|program|agend|remind)/, ['recordatorio', 'llamarme']],
-  [/\b(mand|envi|escrib|redact|borrador|whatsapp|correo|mensaje|send|text|message|email)/, ['chat_aura', 'whatsapp', 'correo', 'circulo']],
+  [/\b(mand|envi|escrib|redact|borrador|whatsapp|correo|mensaje|send|text|message|email|respond|contest|reenvi|despach|compart|recibi)|\ble llego\b|\b(les?|se lo|se la) (avis|pase)/, ['chat_aura', 'whatsapp', 'correo', 'circulo']],
   [/\b(abr|open|pantalla|ajustes)/, ['abrir_pantalla', 'abrir_cartera', 'chat_aura']],
   [/\b(busc|investig|averig|consult|indag|rastre|recopil|search|research|look|find|dig)/, ['buscar_web', 'investigar', 'buscar_en_chats', 'leer_pagina', 'computadora']],
   [/\b(revis|lee|leer|leo|leyendo|read|review|check|chec)/, ['correo', 'whatsapp', 'leer_mensajes', 'ordenar_mensajes', 'leer_pagina', 'buscar_web', 'mision']],
@@ -593,7 +645,7 @@ function herramientasPara(texto: string): Set<string> {
   for (const [re, hs] of QUE_PROMETE) if (re.test(p)) for (const h of hs) out.add(h);
   // Llamar: «te llamo» / «llámame» es que AU-RA la llame a ella; «le marco a Beto», llamar a otro.
   if (LLAMARLA.test(p)) out.add('llamarme');
-  else if (/\b(llam|marc|timbr|call)/.test(p)) for (const h of ['llamar_contacto', 'circulo']) out.add(h);
+  else if (/\b(llam|marc|timbr|call)|\bles? hable\b/.test(p)) for (const h of ['llamar_contacto', 'circulo']) out.add(h);
   return out;
 }
 
@@ -695,15 +747,22 @@ function frasesConCitas(linea: string): Array<{ texto: string; propia: string }>
  * («¿Lo mando?», «¿Se lo envío así?»), leerlo («te lo leo otra vez») o señalarlo («ahí está el borrador»). Eso es verdad
  * mientras el borrador espera; «ya lo mandé» o «salió» no (el borrador solo sale con su «sí»).
  */
+/**
+ * Revisión 7 (M1): antes cada patrón de «espera su sí» perdonaba la frase hasta el punto (`[^.?!]*`), y con eso pasaban
+ * promesas falsas enteras («Ya le respondí a Bruno, si me dices que sí le mando otro»). Ahora se perdona solo la
+ * cláusula de la aprobación —la condición y, como mucho, «lo mando / te lo leo / y sale»—; lo demás de la frase pasa por
+ * `prometeSinHacer` completo («le mando otro» sigue siendo una promesa).
+ */
+const Y_SALE = /(\s*[,;:]?\s*(y\s+)?(yo\s+)?((se|te|le)\s+)?(lo|la|los|las)\s+(mando|envio|despacho|leo|releo)\b|\s*[,;:]?\s*(y\s+)?(sale|se va|se manda|se envia)\b)?/.source;
 const DEL_BORRADOR = new RegExp(
   [
     /¿[^?]*\b(lo|la|los|las)\s+(mando|envio|mandamos|enviamos|mande|envie)\b[^?]*\?|\b(te|se)\s+(lo|la)\s+(leo|releo|repito|vuelvo a leer)\b|\bborrador\b|¿[^?]*\b(send|read) it\b[^?]*\?|\bthe draft\b/.source,
     // Revisión del 6-oct (la ventana de decisión): lo que sale CUANDO ella lo apruebe es verdad mientras el borrador
     // espera («si me dices que sí, lo mando», «tócale Sí y sale», «está en tu ventana de decisión»).
-    /\b(si|cuando|en cuanto|apenas|nomas|nada mas)\b[^.?!]{0,40}\b(dices|digas|toques|tocas|apruebes|apruebas|confirmes|confirmas)\b[^.?!]*/.source,
-    /\b(toca|tocale|tocas|toques|dale|di|dime|apruebalo|apruebala)\b[^.?!]{0,25}\bsi\b[^.?!]*/.source,
-    /\bventana de decision\b[^.?!]*/.source,
-    /\b(if|when|once) you (say|tap|approve|confirm)\b[^.?!]*/.source,
+    /\b(si|cuando|en cuanto|apenas|nomas|nada mas)\b[^.?!,;]{0,40}?\b(dices|digas|toques|tocas|apruebes|apruebas|confirmes|confirmas)\b(\s+que\s+si\b|\s+si\b)?/.source + Y_SALE,
+    /\b(toca|tocale|tocas|toques|dale|di|dime|apruebalo|apruebala)\b[^.?!,;]{0,25}?\bsi\b/.source + Y_SALE,
+    /\b((esta|queda|quedo|lo tienes|la tienes|lo deje|la deje|te lo deje|te la deje)\s+)?(ahi\s+)?en (tu|la) ventana de decision\b|\bventana de decision\b/.source,
+    /\b(if|when|once) you (say|tap|approve|confirm)( yes| it)?\b(,?\s*(i'?ll|i will) send it\b)?/.source,
   ].join('|')
 );
 

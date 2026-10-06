@@ -393,6 +393,65 @@ prueba('sin ML Kit (respaldo del servidor) también se reconoce seguido, y con M
   assert.match(uc, /respaldo\.presentes\(/, 'lo del respaldo entra a la escena');
 });
 
+/* ── revisión 7 (M5): el nombre de un voto con una sola persona guardada, y los ids cambiados ── */
+
+prueba('M5: con UNA sola persona guardada el margen no dice nada: un voto a 0,34 no pone nombre (hace falta ≤ 0,30 o 2 votos)', () => {
+  const ana = toma(3);
+  const unica = [{ id: 'a', nombre: 'Ana', relacion: 'conocido', vectores: [ana] }];
+  const r = identificar(ana, unica);
+  assert.equal(r?.unica, true, 'identificar marca que no había con quién comparar');
+  assert.equal(identificar(ana, [...unica, { id: 'b', nombre: 'Beto', relacion: 'conocido', vectores: [toma(99)] }])?.unica, undefined);
+  const s = new Seguidor();
+  const [p] = s.actualizar([{ x: 0.3, y: 0.3, w: 0.2, h: 0.2 }], 0);
+  assert.equal(s.votar(p.id, reco('a', 'Ana', 0.34, { margen: 1, unica: true }), 100).identidad, null, 'un voto a 0,34 con una sola guardada: «Persona»');
+  assert.equal(s.votar(p.id, reco('a', 'Ana', 0.34, { margen: 1, unica: true }), 1300).identidad?.nombre, 'Ana', 'con el segundo voto, sí');
+  const s2 = new Seguidor();
+  const [q] = s2.actualizar([{ x: 0.3, y: 0.3, w: 0.2, h: 0.2 }], 0);
+  assert.equal(s2.votar(q.id, reco('a', 'Ana', 0.28, { margen: 1, unica: true }), 100).identidad?.nombre, 'Ana', 'muy cerca (≤ 0,30): al primer voto');
+  const s3 = new Seguidor();
+  const [r3] = s3.actualizar([{ x: 0.3, y: 0.3, w: 0.2, h: 0.2 }], 0);
+  assert.equal(s3.votar(r3.id, reco('a', 'Ana', 0.34), 100).identidad?.nombre, 'Ana', 'con varias guardadas y margen 0,30, el voto rápido sigue igual');
+});
+
+prueba('M5: dos caras que se cruzan (ids que ML Kit pudo cambiar) pierden el nombre las dos y se miran YA, aunque la mesa piense', () => {
+  const s = new Seguidor();
+  const [a, b] = s.actualizar([{ x: 0.1, y: 0.3, w: 0.2, h: 0.2 }, { x: 0.6, y: 0.3, w: 0.2, h: 0.2 }], 0, [1, 2]);
+  for (const t of [0, 100]) {
+    s.votar(a.id, reco('a', 'Ana'), t);
+    s.votar(b.id, reco('b', 'Beto'), t);
+  }
+  assert.equal(a.identidad?.nombre, 'Ana');
+  assert.equal(b.identidad?.nombre, 'Beto');
+  s.tomarNueva();
+  // Se acercan hasta solaparse: los dos nombres se borran (los ids pueden salir cambiados).
+  s.actualizar([{ x: 0.3, y: 0.3, w: 0.2, h: 0.2 }, { x: 0.38, y: 0.3, w: 0.2, h: 0.2 }], 400, [1, 2]);
+  assert.equal(a.identidad, null);
+  assert.equal(b.identidad, null);
+  assert.ok(s.hayNueva(), 'se vuelve a mirar');
+  assert.ok(tocaReconocer({ ahora: 450, ultima: 440, nueva: s.hayNueva(), porConfirmar: false, vistaAbierta: false, sinIdentificar: true, ocupado: false, mesaOcupada: true }), 'ya, sin esperar a que la mesa termine');
+  // Un voto de una foto de ANTES del cruce (el análisis tardó) no cuenta.
+  s.votar(a.id, reco('a', 'Ana', 0.2), 300);
+  assert.equal(a.votos.length, 0, 'el voto viejo no entra');
+  // Se separan: otra vez sin nombre y a mirar.
+  s.votar(a.id, reco('b', 'Beto', 0.2), 500);
+  s.tomarNueva();
+  s.actualizar([{ x: 0.1, y: 0.3, w: 0.2, h: 0.2 }, { x: 0.6, y: 0.3, w: 0.2, h: 0.2 }], 800, [1, 2]);
+  assert.equal(a.identidad, null, 'al separarse se borra lo votado durante el cruce');
+  assert.ok(s.hayNueva());
+});
+
+prueba('M5 / G2: la dueña confirmada por 2 votos cuenta como presencia (fresca ≤ 10 s); un voto suelto o un conocido, no', () => {
+  const s = new Seguidor();
+  const [p] = s.actualizar([{ x: 0.3, y: 0.3, w: 0.2, h: 0.2 }], 0);
+  s.votar(p.id, reco('yo', 'José', 0.2, { relacion: 'yo' }), 100);
+  assert.equal(p.identidad?.nombre, 'José', 'nombre rápido de un voto');
+  assert.equal(s.duenaConfirmadaEn(200), 0, 'un voto no confirma presencia');
+  s.votar(p.id, reco('yo', 'José', 0.2, { relacion: 'yo' }), 300);
+  s.actualizar([{ x: 0.3, y: 0.3, w: 0.2, h: 0.2 }], 400);
+  assert.equal(s.duenaConfirmadaEn(500), 400);
+  assert.equal(s.duenaConfirmadaEn(400 + 10_001), 0, 'vieja: no');
+});
+
 for (const [nombre, f] of pruebas) {
   n += 1;
   try {

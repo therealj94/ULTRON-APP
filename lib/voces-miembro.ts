@@ -20,7 +20,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { s3GetJson, s3Listo, s3PutJson } from './s3';
+import { s3GetJson, s3GetJsonConEtag, s3Listo, s3PutJson, s3PutJsonCondicional } from './s3';
 import { MODELO_VOZ, similitud } from './voces-motor';
 import { filaPorCuenta, Generaciones } from './fila-por-cuenta';
 
@@ -55,15 +55,33 @@ export class VocesNoDisponibles extends Error {}
 /** S3 no guardó el cambio: un redeploy lo perdería (y volvería una voz «borrada»). */
 export class VocesNoGuardadas extends Error {}
 
-let s3 = { listo: s3Listo, put: s3PutJson };
-export function _s3DePrueba(o: Partial<typeof s3> | null) {
-  s3 = o ? { ...s3, ...o } : { listo: s3Listo, put: s3PutJson };
+/**
+ * Revisión 7 (M3): en un despliegue sin cortes corren DOS instancias un rato, cada una con su caché. Antes la caché no
+ * vencía nunca y cada cambio partía de ella: «olvida la voz de Ana» en una instancia y una muestra más de Bruno en la
+ * otra (con Ana todavía en su caché) hacían volver a Ana a S3. Ahora:
+ *   · cada cambio vuelve a leer S3 bajo el candado de la cuenta (no la caché) y guarda con la condición del ETag que
+ *     leyó (If-Match / If-None-Match): si otra instancia escribió entre medio, S3 contesta 412 y se vuelve a leer;
+ *   · la caché vence a los VIDA_CACHE_VOCES_MS (y con S3 configurado el disco local no se usa para leer: es la copia de
+ *     ESTA instancia, no la verdad), así que una instancia vieja deja de reconocer una voz borrada en otra.
+ * Las pruebas que inyectan solo `put`/`get` usan el camino sin condición (re-lectura bajo el candado igual).
+ */
+type S3Escribe = { listo: () => boolean; put: typeof s3PutJson; putCond?: typeof s3PutJsonCondicional };
+type S3Lee = { listo: () => boolean; get: typeof s3GetJson; getEtag?: typeof s3GetJsonConEtag };
+const S3_ESCRIBE: S3Escribe = { listo: s3Listo, put: s3PutJson, putCond: s3PutJsonCondicional };
+const S3_LEE: S3Lee = { listo: s3Listo, get: s3GetJson, getEtag: s3GetJsonConEtag };
+let s3: S3Escribe = S3_ESCRIBE;
+export function _s3DePrueba(o: Partial<S3Escribe> | null) {
+  s3 = o ? { ...S3_ESCRIBE, putCond: undefined, ...o } : S3_ESCRIBE;
 }
 /** La lectura de S3, inyectable aparte (las pruebas de carreras simulan un S3 lento). */
-let s3Lee = { listo: s3Listo, get: s3GetJson };
-export function _s3LecturaDePrueba(o: Partial<typeof s3Lee> | null) {
-  s3Lee = o ? { ...s3Lee, ...o } : { listo: s3Listo, get: s3GetJson };
+let s3Lee: S3Lee = S3_LEE;
+export function _s3LecturaDePrueba(o: Partial<S3Lee> | null) {
+  s3Lee = o ? { ...S3_LEE, getEtag: undefined, ...o } : S3_LEE;
 }
+/** Lo que vive la caché de una cuenta con S3 configurado (ULTRON_VOCES_CACHE_MS lo cambia). */
+export const VIDA_CACHE_VOCES_MS = 30_000;
+const vidaCache = () => Number(process.env.ULTRON_VOCES_CACHE_MS) || VIDA_CACHE_VOCES_MS;
+const leidoEn = new Map<string, number>();
 
 const cache = new Map<string, CajonVoces>();
 const colas = new Map<string, Promise<void>>();
@@ -143,9 +161,18 @@ export async function cargarVoces(correo: string): Promise<CajonVoces> {
   const c = correoNormal(correo);
   if (!c) return vacio();
   const hit = cache.get(c);
-  if (hit) return hit;
-  let cajon = leerDeDisco(c);
-  if (!cajon && s3Lee.listo()) {
+  const conS3 = s3Lee.listo();
+  const edad = Date.now() - (leidoEn.get(c) ?? 0);
+  if (hit && (!conS3 || edad < vidaCache())) return hit;
+  // Vencida hace poco: se contesta con lo que hay y se refresca por detrás (el «¿quién habla?» no espera a S3). Más
+  // vieja que eso, se espera a S3.
+  if (hit && edad < vidaCache() * 5) {
+    refrescar(c);
+    return hit;
+  }
+  // Con S3, lo que vale es S3 (el disco es la copia de esta instancia, que otra pudo dejar atrás).
+  let cajon = conS3 ? null : leerDeDisco(c);
+  if (!cajon && conS3) {
     const g = generaciones.de(c);
     const r = await s3Lee.get(claveS3(c)).catch((e) => ({ ok: false, json: null, detalle: String(e?.message || e), missing: false }));
     // Mientras S3 contestaba se guardó un cambio: lo leído es de antes; manda lo guardado.
@@ -159,24 +186,83 @@ export async function cargarVoces(correo: string): Promise<CajonVoces> {
   }
   const final = cajon || vacio();
   cache.set(c, final);
+  leidoEn.set(c, Date.now());
   return final;
 }
 
-function guardar(c: string, cajon: CajonVoces): Promise<void> {
+const refrescando = new Map<string, Promise<void>>();
+/** Relee S3 por detrás (una vez a la vez por cuenta); un cambio mientras tanto gana. Un fallo deja lo que había. */
+function refrescar(c: string) {
+  if (refrescando.has(c)) return;
+  const p = (async () => {
+    const g = generaciones.de(c);
+    const r = await s3Lee.get(claveS3(c)).catch((e) => ({ ok: false, json: null, detalle: String(e?.message || e), missing: false }));
+    if (!r.ok || generaciones.cambioDesde(c, g)) return;
+    const cajon = r.json ? sanear(r.json) : vacio();
+    cache.set(c, cajon);
+    leidoEn.set(c, Date.now());
+    escribirEnDisco(c, cajon);
+  })()
+    .catch(() => undefined)
+    .finally(() => refrescando.delete(c));
+  refrescando.set(c, p);
+}
+
+/**
+ * Lo que hay en S3 AHORA, para cambiarlo (bajo el candado de la cuenta, nunca la caché): con su ETag si este S3 sabe
+ * guardar con condición (`etag`: null = no existe todavía; undefined = sin condición). Sin S3, la caché/disco de siempre.
+ */
+async function leerParaCambiar(c: string): Promise<{ cajon: CajonVoces; etag?: string | null }> {
+  if (!s3Lee.listo()) return { cajon: await cargarVoces(c) };
+  if (s3Lee.getEtag && s3.putCond) {
+    const r = await s3Lee.getEtag(claveS3(c)).catch((e) => ({ ok: false, json: null, etag: null, detalle: String(e?.message || e), missing: false }));
+    if (!r.ok) throw new VocesNoDisponibles(String(r.detalle || 'S3 no contestó'));
+    const cajon = r.json ? sanear(r.json) : vacio();
+    cache.set(c, cajon);
+    leidoEn.set(c, Date.now());
+    return { cajon, etag: r.missing ? null : r.etag || undefined };
+  }
+  cache.delete(c);
+  return { cajon: await cargarVoces(c) };
+}
+
+/**
+ * Un cambio de la cuenta: leer S3 → cambiar → guardar con la condición de lo leído; si otra instancia escribió entre
+ * medio (412), se vuelve a leer y a aplicar. `fn` devuelve el cajón nuevo (o null si no hay nada que guardar).
+ */
+function cambiarCajon<T>(c: string, fn: (cajon: CajonVoces) => { cajon: CajonVoces | null; r: T }): Promise<T> {
+  return unoALaVez(c, async () => {
+    for (let intento = 0; intento < 4; intento++) {
+      const leido = await leerParaCambiar(c);
+      const { cajon, r } = fn(leido.cajon);
+      if (!cajon) return r;
+      if ((await guardar(c, cajon, leido.etag)) === 'ok') return r;
+    }
+    throw new VocesNoGuardadas('otra instancia cambió estas voces a la vez; intenta de nuevo');
+  });
+}
+
+function guardar(c: string, cajon: CajonVoces, etag?: string | null): Promise<'ok' | 'conflicto'> {
   cache.set(c, cajon);
   generaciones.cambio(c);
   const previa = colas.get(c) || Promise.resolve();
-  const paso = previa.then(async () => {
+  const paso = previa.then(async (): Promise<'ok' | 'conflicto'> => {
     // Primero lo durable (S3) y después el disco: si S3 falla no queda nada «adelantado».
     if (s3.listo()) {
-      const r = await s3.put(claveS3(c), cajon).catch((e) => ({ ok: false, detalle: String(e?.message || e) }));
+      const conCondicion = etag !== undefined && !!s3.putCond;
+      const r = conCondicion
+        ? await s3.putCond!(claveS3(c), cajon, etag ? { siCoincide: etag } : { siNoExiste: true }).catch((e) => ({ ok: false, conflicto: false, detalle: String(e?.message || e) }))
+        : await s3.put(claveS3(c), cajon).catch((e) => ({ ok: false, detalle: String(e?.message || e) }));
       if (!r.ok) {
-        console.warn('[voces] S3 no guardó', String((r as any).detalle || '').slice(0, 120));
         if (cache.get(c) === cajon) cache.delete(c);
+        if ((r as { conflicto?: boolean }).conflicto) return 'conflicto';
+        console.warn('[voces] S3 no guardó', String((r as any).detalle || '').slice(0, 120));
         throw new VocesNoGuardadas(String((r as any).detalle || 'S3 no guardó'));
       }
     }
     escribirEnDisco(c, cajon);
+    leidoEn.set(c, Date.now());
+    return 'ok';
   });
   const cola = paso.catch(() => undefined);
   colas.set(c, cola);
@@ -212,8 +298,7 @@ const clave = (n: string) => n.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g
 export async function agregarVoz(correo: string, alta: AltaValida, vectores: number[][]): Promise<PersonaVoz> {
   if (!vectores.length || !vectores.every(huellaValida)) throw new TypeError('huellas inválidas');
   const c = correoNormal(correo);
-  return unoALaVez(c, async () => {
-  const cajon = await cargarVoces(c);
+  return cambiarCajon(c, (cajon) => {
   const ahora = Date.now();
   const i = cajon.personas.findIndex((p) => (alta.relacion === 'yo' ? p.relacion === 'yo' : p.relacion === 'conocido' && clave(p.nombre) === clave(alta.nombre)));
   const personas = [...cajon.personas];
@@ -243,19 +328,16 @@ export async function agregarVoz(correo: string, alta: AltaValida, vectores: num
     };
     personas.push(persona);
   }
-  await guardar(c, { version: 1, modelo: MODELO_VOZ.id, personas });
-  return persona;
+  return { cajon: { version: 1, modelo: MODELO_VOZ.id, personas }, r: persona };
   });
 }
 
 export async function olvidarVoz(correo: string, id: string): Promise<PersonaVoz | null> {
   const c = correoNormal(correo);
-  return unoALaVez(c, async () => {
-    const cajon = await cargarVoces(c);
+  return cambiarCajon(c, (cajon) => {
     const p = cajon.personas.find((x) => x.id === id) || null;
-    if (!p) return null;
-    await guardar(c, { version: 1, modelo: MODELO_VOZ.id, personas: cajon.personas.filter((x) => x.id !== id) });
-    return p;
+    if (!p) return { cajon: null, r: null };
+    return { cajon: { version: 1, modelo: MODELO_VOZ.id, personas: cajon.personas.filter((x) => x.id !== id) }, r: p };
   });
 }
 
@@ -264,10 +346,12 @@ export async function olvidarTodasLasVoces(correo: string): Promise<number> {
   return unoALaVez(c, async () => {
     let n = 0;
     try {
+      cache.delete(c);
       n = (await cargarVoces(c)).personas.length;
     } catch {
       /* sin leer, se borra igual: borrar nunca debe fallar por no poder contar */
     }
+    // Vacío sin condición: borrar todo gana siempre (un cambio de otra instancia con lo de antes choca con su ETag).
     await guardar(c, vacio());
     return n;
   });
@@ -324,19 +408,35 @@ export type OtraVozTurno = { quien: string; duena: string; reciente: boolean };
  * Nunca lanza (sin poder leer las voces, null).
  */
 export async function otraVozDelTurno(o: { quienHabla?: unknown; origen?: unknown; sesion?: { correo?: string; nombre?: string } | null }): Promise<OtraVozTurno | null> {
+  const v = await vozDelTurno(o);
+  return v.tipo === 'otra' ? v.voz : null;
+}
+
+/**
+ * Revisión 7 (G2): lo que dice el campo `quienHabla: { id }` con sus tres salidas. `otra`: una voz guardada de esa cuenta
+ * que no es la dueña (con su nombre). `duena`: el id es el de la propia dueña. `sin_verificar`: vino un id de la app con
+ * sesión pero no se pudo comprobar (el cajón tardó más de 800 ms, S3 falló, o el id ya no está): el teléfono dijo que
+ * NO era la dueña y no se puede confirmar lo contrario → para el modo invitado cuenta como invitado (server/modo-invitado.ts).
+ * `ninguna`: no vino id, o no viene de la app con sesión. Nunca lanza.
+ */
+export type VozDelTurno = { tipo: 'ninguna' } | { tipo: 'duena' } | { tipo: 'otra'; voz: OtraVozTurno } | { tipo: 'sin_verificar'; reciente: boolean };
+export async function vozDelTurno(o: { quienHabla?: unknown; origen?: unknown; sesion?: { correo?: string; nombre?: string } | null }): Promise<VozDelTurno> {
   const q = o.quienHabla as { id?: unknown; reciente?: unknown } | null | undefined;
   const id = typeof q?.id === 'string' ? q.id.slice(0, 40) : '';
   const correo = String(o.sesion?.correo || '').trim();
-  if (!id || o.origen !== 'app' || !correo) return null;
+  if (!id || o.origen !== 'app' || !correo) return { tipo: 'ninguna' };
+  const reciente = q?.reciente === true;
   try {
     // Casi siempre en caché (la cargó /api/voces/quien de esta frase); si S3 tarda, no frena el turno.
     let reloj: ReturnType<typeof setTimeout> | undefined;
     const cajon = await Promise.race([cargarVoces(correo), new Promise<null>((r) => ((reloj = setTimeout(() => r(null), 800)), reloj.unref?.()))]).finally(() => clearTimeout(reloj));
-    const p = cajon?.personas.find((x) => x.id === id);
-    if (!p || p.relacion !== 'conocido') return null;
-    return { quien: p.nombre, duena: limpiar(o.sesion?.nombre, MAX_NOMBRE) || 'la persona dueña de la cuenta', reciente: q?.reciente === true };
+    if (!cajon) return { tipo: 'sin_verificar', reciente };
+    const p = cajon.personas.find((x) => x.id === id);
+    if (p?.relacion === 'yo') return { tipo: 'duena' };
+    if (!p) return { tipo: 'sin_verificar', reciente };
+    return { tipo: 'otra', voz: { quien: p.nombre, duena: limpiar(o.sesion?.nombre, MAX_NOMBRE) || 'la persona dueña de la cuenta', reciente } };
   } catch {
-    return null;
+    return { tipo: 'sin_verificar', reciente };
   }
 }
 
@@ -365,4 +465,5 @@ function reglaPrecaucion(quien: string, duena: string): string {
 /** Para pruebas. */
 export function _olvidarCacheVoces() {
   cache.clear();
+  leidoEn.clear();
 }

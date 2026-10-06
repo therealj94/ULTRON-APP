@@ -101,6 +101,7 @@ import { marcoMesa, useMesaVisible, useModoPresencia } from '../avatar3d/usePres
 import { useCaras, type ApiCaras } from '../caras/useCaras';
 import { useVoces, type ApiVoces } from '../voces/useVoces';
 import { escenaDelTurno, type QuienHablaTurno } from '../voces/voces';
+import { decidirPrivadoLocal, fraseNegarLocal, intencionPrivada, pedidoLocalPrivado } from '../lib/privadoLocal';
 import { avatarActual } from '../avatares/actual';
 import { orientar } from '../lib/orientacion';
 import { esperarFrame } from '../lib/esperarFrame';
@@ -649,10 +650,14 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const escenaReciente = useCallback(
     async (oidaEn: number): Promise<{ escena?: string; quienHabla?: QuienHablaTurno }> => {
       const t0 = Date.now();
-      const voz = (await vocesRef.current?.paraTurno(oidaEn).catch(() => null)) || { frase: '' };
+      // Revisión 7 (G2): la cara de la dueña confirmada cuenta para la continuidad de su voz.
+      const voz = (await vocesRef.current?.paraTurno(oidaEn, { caraDuenaEn: carasRef.current?.duenaVistaEn?.() || 0 }).catch(() => null)) || { frase: '' };
       trazaTurno.dato('vozMs', Date.now() - t0);
       const e = escenaRef.current;
-      const escena = escenaDelTurno({ voz: voz.frase, caras: carasRef.current?.escena() || '', camara: escenaFresca(e) ? e.descripcion : '' });
+      // Revisión 7 (G2): si no es la dueña (o no se sabe), la escena no lleva los nombres guardados (caras ni voces).
+      const escena = voz.quienHabla
+        ? escenaDelTurno({ camara: escenaFresca(e) ? e.descripcion : '' })
+        : escenaDelTurno({ voz: voz.frase, caras: carasRef.current?.escena() || '', camara: escenaFresca(e) ? e.descripcion : '' });
       return { escena, ...(voz.quienHabla ? { quienHabla: voz.quienHabla } : {}) };
     },
     [escenaFresca]
@@ -1512,6 +1517,22 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
           if (!(await encenderCamara(modo))) return void (await say(tr('Necesito permiso de cámara para verte.', 'I need camera permission to see you.'), 'CONCERNED', { emocion: 'preocupado' }));
           return void (await say(modo === 'siempre' ? tr('Listo: te veré siempre que entres. Dime «apaga la cámara» cuando quieras.', 'Done: I’ll see you every time you come in. Say “turn off the camera” anytime.') : tr('Listo, te veo. Me apago sola en diez minutos o al salir de la mesa.', 'Done, I can see you. I’ll turn off by myself in ten minutes or when you leave the desk.'), 'HAPPY', { emocion: 'feliz' }));
         }
+        // ── Revisión 7 (G1): lo que el teléfono resuelve solo y toca lo privado de la dueña pasa por «¿quién habla?»
+        // (src/lib/privadoLocal.ts): con su voz guardada, solo con su voz confirmada en esta frase o por continuidad.
+        const decidirLocal = () => decidirPrivadoLocal({ oidaEn, paraTurno: vocesRef.current?.paraTurno, caraDuenaEn: carasRef.current?.duenaVistaEn?.() || 0 });
+        if (pedidoLocalPrivado(cmd)) {
+          const d = await decidirLocal();
+          if (!d.permitido) return void (await say(fraseNegarLocal(d.quienHabla, idiomaActual() === 'en'), 'CONCERNED', { emocion: 'preocupado' }));
+        }
+        if (intencionPrivada(intent.tipo)) {
+          const d = await decidirLocal();
+          if (!d.permitido) {
+            // Lo que lee («¿qué sabes de mí?») va al servidor, que contesta en modo invitado; lo que escribe se niega aquí.
+            if (intent.tipo === 'que_recuerdas') return void (await askBrain(cmd));
+            return void (await say(fraseNegarLocal(d.quienHabla, idiomaActual() === 'en'), 'CONCERNED', { emocion: 'preocupado' }));
+          }
+        }
+        // ── fin revisión 7 (G1)
         // Las caras (con permiso): «conóceme», «te presento a…», «olvida a…» y el «sí» de quien presentaron.
         // Las voces (con permiso): «aprende mi voz», «aprende la voz de…», sus frases y el «sí», «¿quién habla?».
         if (await vocesRef.current?.manejar(cmd)) return;
@@ -1646,8 +1667,11 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
             }
             return void (await playClip(intent.id, 'HAPPY'));
           }
-          case 'saludo':
-            return void (await say(`${tr('Hola', 'Hi')}, ${user.name}. ${frase('aqui')}`, 'HAPPY', { emocion: 'feliz' }));
+          case 'saludo': {
+            // Revisión 7 (G1): el nombre de la dueña solo si es ella (o no hay voz guardada que diga otra cosa).
+            const ella = (await decidirLocal()).permitido;
+            return void (await say(`${tr('Hola', 'Hi')}${ella ? `, ${user.name}` : ''}. ${frase('aqui')}`, 'HAPPY', { emocion: 'feliz' }));
+          }
           case 'gracias': {
             const id = pick(['denada', 'cuandoquieras'] as const);
             return void (await playClip(id, 'HAPPY', { emocion: 'carino' }));

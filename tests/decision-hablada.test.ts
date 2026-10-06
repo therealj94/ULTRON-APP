@@ -328,3 +328,25 @@ test('el campo `decisionVista` solo ata: con otra forma se ignora, y nunca manda
     }
   });
 });
+
+test('revisión 7 (MENOR): un registro de la ventana guardado SIN la cabecera del aparato no ata un «sí» hablado de ningún aparato', async () => {
+  await conEntorno(async (e) => {
+    await waPara('Bruno', 'Llego a las 5.');
+    const w = W.borradorWhatsappDe(JOSE, 'tel')!;
+    const ref = await tarjeta(w);
+    const t = await tareaDe(e, ref.id);
+    // La ventana avisa sin `x-aura-aparato` (una app vieja, la web): queda un registro sin aparato.
+    assert.equal((await e.pedir(`/api/trabajos/${ref.id}/en-pantalla`, { decisionId: t.decisionId, visible: true }, { 'x-aura-aparato': '' })).json.registrada, true);
+    const r1 = await hablado('sí');
+    assert.equal(e.enviados.length, 0, `un «sí» dicho en este teléfono no queda atado a un registro sin aparato: ${r1.hechos.join(' | ')}`);
+    await hablado('sí', { aparato: 'otro-telefono' });
+    assert.equal(e.enviados.length, 0, 'ni en otro teléfono');
+    await hablado('sí', { aparato: undefined });
+    assert.equal(e.enviados.length, 0, 'ni en un turno sin la cabecera del aparato');
+    // El registro de ESTE aparato (con su cabecera) sí ata.
+    assert.equal((await e.pedir(`/api/trabajos/${ref.id}/en-pantalla`, { decisionId: t.decisionId, visible: true, seq: 1 })).json.registrada, true);
+    const r2 = await hablado('sí');
+    assert.equal(r2.respondio, true, r2.hechos.join(' | '));
+    assert.deepEqual(e.enviados.map((x) => x.chat), [BRUNO.jid]);
+  });
+});
