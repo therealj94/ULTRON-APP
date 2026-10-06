@@ -311,6 +311,15 @@ export function etiquetaV4(marca: string): string | null {
   return esEtiquetaIngles(k) ? k : null;
 }
 
+/**
+ * ¿El modelo actúa las etiquetas de audio ([laughs], [whispers])? Solo v3 y v4 (MODELO_ELEVEN, verificado el 1-oct). Con
+ * ELEVENLABS_MODELO en uno de antes (flash, turbo v2.5, multilingual v2) se leían en voz alta: `guionEleven` las quita
+ * (lib/habla-natural.ts, 6-oct).
+ */
+export function aceptaEtiquetas(modelo = modeloEleven()): boolean {
+  return /^eleven_v[3-9](_|$)/i.test(String(modelo || '').trim());
+}
+
 /** Cuántas etiquetas como mucho por trozo: más de eso suena a actor sobreactuando. */
 const MAX_ETIQUETAS = 4;
 
@@ -328,9 +337,10 @@ export function guionEleven(
    * (auditoría externa, 1-oct; ElevenLabs recomienda 1-2 etiquetas por línea). Quien tiene `previo`
    * (hay frase antes) no lo pone.
    */
-  o: { tono?: boolean } = {}
+  o: { tono?: boolean; modelo?: string } = {}
 ): string {
   const crudo = String(texto || '');
+  const conEtiquetas = aceptaEtiquetas(o.modelo ?? modeloEleven());
   const partes = crudo.split(/\[([^\]\n]{1,80})\]/);
   const salida: string[] = [];
   let etiquetas = 0;
@@ -350,7 +360,7 @@ export function guionEleven(
       }
       v4 = esEtiquetaIngles(k) ? k : '';
     }
-    if (!v4 || etiquetas >= MAX_ETIQUETAS) continue;
+    if (!v4 || !conEtiquetas || etiquetas >= MAX_ETIQUETAS) continue;
     etiquetas++;
     salida.push(`[${v4}]`);
   }
@@ -360,7 +370,7 @@ export function guionEleven(
     .replace(/\s{2,}/g, ' ')
     .trim();
   if (!/[\p{L}\p{N}]/u.test(guion.replace(/\[[^\]]*\]/g, ''))) return '';
-  const tono = o.tono === false ? undefined : TONO_V4[emocion];
+  const tono = o.tono === false || !conEtiquetas ? undefined : TONO_V4[emocion];
   if (tono && !guion.startsWith('[')) guion = `[${tono}] ${guion}`;
   return guion;
 }
