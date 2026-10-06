@@ -176,7 +176,7 @@ export const RUTA_CONTEXTO = '/api/app/contexto';
  * Los mismos nombres que compa/frasesEstado.ts (SONIDOS_AMBIENTE) y lib/acciones-app.ts.
  */
 export const EVENTO_AMBIENTE = 'ambiente';
-export type SonidoAmbiente = 'teclado' | 'papel' | 'lapiz';
+export type SonidoAmbiente = 'teclado' | 'papel' | 'lapiz' | 'clics' | 'pensando';
 export type Ambiente = { sonido: SonidoAmbiente | null; on: boolean };
 
 export type Contexto = {

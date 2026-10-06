@@ -17,6 +17,7 @@ import { cuentaInterrupcion, esInterrupcionReal, quitarEco } from './interrupcio
 import type { OrquestaMuletillas } from './muletillas';
 import { registroVoz } from './tts';
 import { miga } from './reporte';
+import { micEcoActivo } from './auraMic';
 
 export type SttEngine = 'turbo' | 'native' | 'cloud';
 
@@ -84,6 +85,23 @@ export function setEcoAlEscuchar(on: boolean) {
 /** El oído ignora lo que entra durante `ms` (el «mjm» sonando por la bocina). Solo Turbo sabe hacerlo. */
 export function ignorarTramoOido(ms: number) {
   if (engine === 'turbo') turbo.turboIgnorarTramo(ms);
+}
+
+/**
+ * LOS SONIDOS DE TRABAJO DE LA MESA (compa/trabajoMesa.ts) con el micrófono abierto: solo si el oído es Turbo y oye con
+ * el cancelador de eco del teléfono (el de las muletillas o el de «Interrumpir hablando»; si el micrófono está abierto
+ * ahora, que de verdad quedó activo): lo que se cuela queda por debajo y, con `setFondoPropio`, el umbral de voz sube
+ * mientras suena. El reconocedor del teléfono y la nube no tienen cancelador: el tecleo podría abrir una frase, así que
+ * con ellos no suenan.
+ */
+export function oidoAguantaFondo(): boolean {
+  if (engine !== 'turbo' || suspendido || !turbo.turboConCancelador()) return false;
+  // Abierto ahora: que el cancelador de verdad esté prendido. Cerrado un momento por su voz: vale lo que tendrá al reabrir.
+  return turbo.turboEscuchando() ? micEcoActivo() : true;
+}
+
+export function setFondoPropio(on: boolean) {
+  turbo.turboFondoPropio(on);
 }
 
 let engine: SttEngine = turboPosible() ? 'turbo' : 'native';
@@ -178,6 +196,8 @@ function wire() {
       if (engine !== 'turbo') return;
       void switchEngine(siguienteMotor('turbo')!, `Turbo no disponible (${reason})`, true);
     },
+    // El cancelador de eco de las muletillas falló y el oído siguió con la fuente de antes: que se vea en las migas.
+    onAviso: (t) => miga(t),
   });
 }
 

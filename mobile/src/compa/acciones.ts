@@ -119,7 +119,8 @@ export function esAccionApp(a: any): a is AccionApp {
   }
 }
 
-const SONIDOS = ['teclado', 'papel', 'lapiz'];
+/** Los mismos de compa/frasesEstado.ts (SONIDOS_AMBIENTE) y del servidor (lib/acciones-app.ts). */
+const SONIDOS = ['teclado', 'papel', 'lapiz', 'clics', 'pensando'];
 
 /** El `data` de un `event: ambiente`, validado: un sonido que no conozco es «sin sonido». */
 export function ambienteDe(d: any): Ambiente | null {

@@ -300,7 +300,9 @@ export function oyentesDe(correo: string): number {
 
 /**
  * EL SONIDO DE FONDO de la conversación (la «animación» sonora mientras AURA hace una tarea lenta):
- * tecleo al buscar, hojas al leer, lápiz al calcular. `on: false` lo para.
+ * tecleo al buscar, hojas al leer, lápiz al calcular, clics al usar su computadora y el murmullo suave
+ * mientras piensa. `on: false` lo para. Un teléfono con un JS de antes no conoce «clics» ni «pensando»:
+ * los toma como «sin sonido» (compa/acciones.ts ambienteDe) y no suena nada, nunca algo raro.
  *
  * NO es una acción: no pasa por `validarAccion` (el modelo no puede pedirlo con ACCION_APP), no queda
  * en el registro de reconexión (un sonido de hace diez segundos no se repite al volver) y no se
@@ -308,7 +310,7 @@ export function oyentesDe(correo: string): number {
  * teléfono que no lo conoce lo salta (solo lee `message`/`accion`). Va SOLO al aparato de la
  * conversación: sin aparato no va a nadie (no suena en el otro teléfono de la persona).
  */
-export const SONIDOS_AMBIENTE = ['teclado', 'papel', 'lapiz'] as const;
+export const SONIDOS_AMBIENTE = ['teclado', 'papel', 'lapiz', 'clics', 'pensando'] as const;
 export type SonidoAmbiente = (typeof SONIDOS_AMBIENTE)[number];
 export type EventoAmbiente = { sonido: SonidoAmbiente | null; on: boolean };
 

@@ -2,12 +2,13 @@
  * El oído Turbo con lo de verdad: el micrófono crudo (modules/aura-mic), el WebSocket de React Native y
  * el servidor de AU-RA (token de un solo uso y /api/stt). La lógica está en turboMotor.ts.
  */
-import { abrirMicCrudo, micCrudoDisponible } from './auraMic';
+import { abrirMicCrudo, micCrudoDisponible, micEcoActivo } from './auraMic';
 import { pedirPermisoTurbo, transcribirWav } from './api';
 import { MotorTurbo, type CallbacksTurbo, type InfoTrozo, type WsTurbo } from './turboMotor';
 
 const motor = new MotorTurbo({
   abrirMic: abrirMicCrudo,
+  ecoActivo: micEcoActivo,
   permiso: pedirPermisoTurbo,
   transcribirWav: (wav, confirmar) => transcribirWav(wav, confirmar),
   crearWs: (url) => new WebSocket(url) as unknown as WsTurbo,
@@ -30,6 +31,9 @@ export const turboOirEncima = (on: boolean) => motor.setOirEncima(on);
 /** Las muletillas (lib/asentir.ts): el cancelador de eco en el micrófono de escucha, el tramo a ignorar y cada trozo. */
 export const turboEcoAlEscuchar = (on: boolean) => motor.setEcoAlEscuchar(on);
 export const turboIgnorarTramo = (ms: number) => motor.ignorarTramo(ms);
+/** Suena un sonido de trabajo de la mesa (compa/trabajoMesa.ts): el umbral de voz sube mientras tanto. */
+export const turboFondoPropio = (on: boolean) => motor.setFondoPropio(on);
+export const turboConCancelador = () => motor.escuchaConCancelador();
 export const turboOyenteTrozo = (fn: ((i: InfoTrozo) => void) | null) => motor.setOyenteTrozo(fn);
 export const turboTomarTurno = () => motor.tomarTurno();
 export const turboOyendoEncima = () => motor.oyendoEncima();

@@ -75,7 +75,7 @@ import {
 import { detectarIdioma } from './lib/idioma-detectar';
 import { redirigirADominio } from './server/dominio';
 import { quitarExpresiones } from './lib/expresiones';
-import { puntoDeCorte } from './lib/trozos';
+import { cierreDeFrase, FRASE_EXTRA_VOZ, puntoDeCorte } from './lib/trozos';
 import { claveTurno, consultarTurno, efectoDelTurno, enTurnoUnico, idTurnoValido, reclamarTurno, turnoSinEfectos, type TurnoGuardado } from './server/turno-unico';
 import { atajoDeAppBloqueado, decisionEsperando, otraVozDe, pendientesDelTurno, resolverBorradorDesdePanel, resolverDecisionesDelTurno } from './server/decision-turno';
 import { avisoInvitado, conModoInvitado, hechoInvitado, manosDeInvitado, modoInvitadoDe } from './server/modo-invitado';
@@ -5366,6 +5366,14 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       }
       if (corte > enviado) {
         if (topeDelTurno && enviado >= topeDelTurno) {
+          // Llegó al tope: solo se para en un final de frase (lib/trozos.ts cierreDeFrase; José, 6-oct: «de repente
+          // falló» era la voz callando en la coma de una cláusula). Si la frase sigue llegando, se espera su punto.
+          const c = cierreDeFrase(cuerpo, enviado, { limite: duroDeVoz(topeDelTurno) + FRASE_EXTRA_VOZ });
+          if (c.estado === 'esperar') return;
+          if (c.hasta > enviado) {
+            soltar('delta', cuerpo.slice(enviado, c.hasta));
+            enviado = c.hasta;
+          }
           topado = true;
           return;
         }
@@ -5672,6 +5680,13 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
         }
         // Leyendo un resultado en voz es donde más se alarga: el mismo tope (salvo borrador o lectura: `sinTope`).
         if (topeDelTurno && dichoH.length >= topeDelTurno) {
+          // Como en el stream: se para en el final de la frase en curso, nunca en su coma (cierreDeFrase).
+          const c = cierreDeFrase(t, dichoH.length, { limite: duroDeVoz(topeDelTurno) + FRASE_EXTRA_VOZ });
+          if (c.estado === 'esperar') return;
+          if (c.hasta > dichoH.length) {
+            soltar('delta', t.slice(dichoH.length, c.hasta));
+            dichoH = t.slice(0, c.hasta);
+          }
           topado = true;
           return;
         }
@@ -5796,6 +5811,16 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       if (hasta > enviado) soltar('delta', decible.slice(enviado, hasta));
       enviado = hasta;
       if (enviado < decible.length) topado = true;
+    }
+    // Topado a media frase (el stream soltó hasta una coma, o la frase que pasaba del tope duro se quedó en su pausa): la
+    // frase en curso se termina antes de callar (lib/trozos.ts cierreDeFrase; José, 6-oct: «de repente falló»). Con la
+    // pregunta final ya dicha aparte no se toca: lo que sigue a lo dicho sonaría después de la pregunta.
+    if (topado && !preguntaDicha && enviado > 0 && enviado < decible.length) {
+      const c = cierreDeFrase(decible, enviado, { completo: true, limite: duroDeVoz(topeDelTurno) + FRASE_EXTRA_VOZ });
+      if (c.hasta > enviado) {
+        soltar('delta', decible.slice(enviado, c.hasta));
+        enviado = c.hasta;
+      }
     }
     // Recortado o no, la pregunta final a la persona («¿Lo mando?», «¿sigo?») siempre se oye (GRAVE-1): si no sonó
     // ya, va después de lo dicho. Sin ella, José podía contestar «sí» a algo que no oyó preguntar. Nunca pasa del tope
