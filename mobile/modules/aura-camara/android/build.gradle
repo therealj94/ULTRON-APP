@@ -25,4 +25,9 @@ dependencies {
   implementation "androidx.camera:camera-lifecycle:${camerax_version}"
   implementation "androidx.camera:camera-view:${camerax_version}"
   implementation "com.google.mlkit:face-detection:16.1.7"
+  // La vista es su propio LifecycleOwner (`override val lifecycle`): se compila contra el LifecycleOwner de Kotlin
+  // (lifecycle 2.6+). Sin esto, camera-lifecycle traía un lifecycle-common viejo (interfaz de Java con
+  // getLifecycle()) y el CI fallaba: «'lifecycle' overrides nothing». En la APK manda la versión más nueva del grafo.
+  implementation "androidx.lifecycle:lifecycle-common:2.6.2"
+  implementation "androidx.lifecycle:lifecycle-runtime:2.6.2"
 }
