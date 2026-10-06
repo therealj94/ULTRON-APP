@@ -71,6 +71,7 @@ import {
   type SttEngine,
 } from '../lib/storage';
 import { playSfx, preloadSfx, setSfxEnabled, sfxActivos } from '../lib/sfx';
+import { useMuletillasMesa } from '../lib/muletillasMesa';
 import { StreamSpeaker, cuandoSuene, fraccionSonando, registroVoz, setAvatarVoz, setSpeechLevelListener, speak, speakPrayer, speakReaccion, speakSong, stopSpeaking, type SongRequest } from '../lib/tts';
 import { frase, saludoConNombre, type FraseId } from '../lib/frases';
 import { de, idiomaActual, tr, useIdioma } from '../i18n';
@@ -627,6 +628,16 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     // el permiso ya pedido. El efecto de abajo corrige si el audio es de otro.
     oidoMesa.current.fijar('mesa');
   }
+
+  // Las muletillas («mjm», «ajá») mientras la persona habla largo (lib/asentir.ts, lib/muletillasMesa.ts): solo con el
+  // oído de la mesa, sin AU-RA hablando ni pensando un turno, y nunca en una llamada o con el micrófono silenciado.
+  useMuletillasMesa({
+    avatar,
+    idioma: idioma === 'en' ? 'en' : 'es',
+    hablando: () => speakingRef.current,
+    ocupada: () =>
+      micMutedRef.current || handling.current || conversandoRef.current || enLlamadaRef.current || !mesaVisibleRef.current || oidoMesa.current?.actual() !== 'mesa',
+  });
 
   useEffect(() => void (presenceRef.current = presence), [presence]);
   useEffect(() => void (modeRef.current = mode), [mode]);
