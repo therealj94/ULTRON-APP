@@ -23,7 +23,12 @@ const plana = (s: string) =>
     .replace(/[^a-z0-9ñ]+/g, ' ')
     .trim();
 
-/** ¿Dos frases de la persona son la misma? Iguales, o la misma salvo la primera palabra mal oída («Estamos/Vamos entonces…»). */
+/**
+ * ¿Dos frases de la persona son la misma? La frase ENTERA, normalizada. Revisión del 6-oct (MENOR): antes bastaba con que
+ * coincidiera todo menos la primera palabra, y «Sí, mándalo…» y «No, mándalo…» seguidas contaban como una (se perdía la
+ * segunda, que dice lo contrario). La única palabra que puede variar es una primera mal oída que RIMA con la otra
+ * («Vamos / Estamos entonces…»: las dos de 5 letras o más y con las mismas 3 últimas); un «sí», un «no» o un «ya» nunca.
+ */
 export function mismaFrase(a: string, b: string): boolean {
   const x = plana(a);
   const y = plana(b);
@@ -31,7 +36,9 @@ export function mismaFrase(a: string, b: string): boolean {
   if (x === y) return true;
   const xs = x.split(' ');
   const ys = y.split(' ');
-  return xs.length >= 4 && ys.length === xs.length && xs.slice(1).join(' ') === ys.slice(1).join(' ');
+  if (xs.length < 4 || ys.length !== xs.length || xs.slice(1).join(' ') !== ys.slice(1).join(' ')) return false;
+  const [p, q] = [xs[0], ys[0]];
+  return p.length >= 5 && q.length >= 5 && p.slice(-3) === q.slice(-3);
 }
 
 /**

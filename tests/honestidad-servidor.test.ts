@@ -131,6 +131,13 @@ test('3) con un borrador esperando su «sí», «enviado a … por WhatsApp» �
   assert.equal(enviados.length, 0, 'una pregunta no manda');
   assert.doesNotMatch(r.reply, AFIRMA_ENVIO, r.reply);
   assert.match(r.reply, /Todav[ií]a no lo envi[eé]: el mensaje para .*Rosa.* tarjeta de confirmaci[oó]n/);
+  // Revisión del 6-oct (G1): presentarlo para aprobarlo («Listo, quedó así: «…». ¿Lo envío?») con el borrador esperando
+  // no se reescribe, ni se pierde el texto que se le muestra.
+  guion = () => ({ texto: '[EMO: neutral] Listo, quedó así: «¿Cómo vamos, Rosa?». ¿Lo envío?' });
+  const p = await turno('Léemelo otra vez.');
+  assert.match(p.reply, /Listo, quedó así: «¿Cómo vamos, Rosa\?»\. ¿Lo envío\?/, p.reply);
+  assert.doesNotMatch(p.reply, /Todav[ií]a no/);
+  assert.equal(enviados.length, 0);
 });
 
 test('1) «¿Le escribo esto? "…"» sin herramienta → borrador de verdad; «Sí, enviarlo.» lo manda una vez, exacto', { skip: !s.listo }, async () => {
@@ -159,6 +166,10 @@ test('1) «¿Le escribo esto? "…"» sin herramienta → borrador de verdad; «
   guion = () => ({ texto: '[EMO: neutral] Sí, ya se lo mandé a Padrino.' });
   const pregunta = await turno('¿Ya se lo mandaste?');
   assert.match(pregunta.reply, /ya se lo mand[eé] a Padrino/);
+  // Revisión del 6-oct (M1): si solo agradece, tampoco («Perfecto, gracias» descartaba lo de antes).
+  guion = () => ({ texto: '[EMO: feliz] ¡De nada! Ya se lo mandé a Padrino.' });
+  const gracias = await turno('Perfecto, muchas gracias por la ayuda con mi padrino.');
+  assert.match(gracias.reply, /Ya se lo mand[eé] a Padrino/, gracias.reply);
   assert.equal(enviados.length, 1);
 });
 

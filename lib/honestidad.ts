@@ -19,6 +19,10 @@
  *    frase se reescribe a la verdad: «Todavía no lo envié: …». Un borrador que espera su «sí» prueba que NO salió.
  *  · `anotarEfectoReal` / `efectosRecientes`: lo que de verdad pasó (lo anotan los envíos aprobados de server/whatsapp.ts
  *    y server/correo.ts, y el turno con sus recibos), para no desmentir lo que sí se hizo en un turno anterior.
+ *
+ * Revisión independiente del 6-oct: la guarda es CONSERVADORA. Ante la duda no reescribe; solo actúa sobre lo que AU-RA
+ * afirma claramente que YA hizo ella, sin recibo. No toca lo que presenta un borrador para aprobarlo (G1), ni la lectura
+ * de datos o lo de terceros (G2); un «gracias» o un «ok» tras un envío real no lo desmiente, ni un apodo (M1).
  */
 import { plano } from './promesas';
 import { esDeAntes, frasesConCitas, sinCitas, sinLoQueNoAfirma } from './cerebro-manos';
@@ -107,41 +111,93 @@ export type Afirmacion = { frase: string; clase: Clase; canal?: 'whatsapp' | 'co
 /** Lo que va antes y la vuelve futura, condicional o de otro («para ser enviado», «quieres que le mande», «si lo agendo»). */
 const NO_ES_HECHO_ANTES = /\b(que|si|cuando|para|para ser|sera|seran|va a ser|van a ser|quedara|quedaria|puede ser|puedo|podria|quieres|queres|quiere|deseas|prefieres|antes de|hasta que|en cuanto|apenas|will be|to be|can be|should be|if|once|when|want me to)\s+(\S+\s+){0,2}$/;
 
-const ENVIO = [
-  /\b(enviad|mandad|reenviad|despachad)[oa]s?\b/,
+/*
+ * Revisión independiente del 6-oct (G2): solo cuenta lo que AU-RA dice de una acción SUYA. Un participio suelto no basta:
+ * «Tienes 3 mensajes enviados hoy», «Tu cita está agendada para el lunes», «Tienes la reunión con Pedro programada para
+ * mañana», «El correo de Ana fue enviado a las 3 pm» o «El oro ya salió a 2400» leen datos, no dicen que ella hizo nada.
+ * El participio cuenta cuando ABRE la cláusula, como mucho detrás de una interjección («Listo, mensaje enviado»,
+ * «Anotado», «Alarma programada para las 6») o como resultado de lo que se le pidió con «quedó / fue / ha sido» y sin dueño
+ * de otro («Tu WhatsApp quedó enviado»; «El correo DE ANA fue enviado» no). Las formas en primera persona («le mandé»,
+ * «te lo agendé», «ya le avisé», «acabo de mandarle», «le he escrito», "I sent") cuentan siempre.
+ */
+/** El principio de una cláusula, con las interjecciones que se le pegan («Listo,», «Sí,», «Ok,», "Done,", "All set,"). */
+const INI = String.raw`(?:^|[,;:]\s*)\s*[¡!]?\s*(?:(?:listo|ya esta|hecho|perfecto|ok|okey|okay|va|vale|dale|sale|claro|bien|bueno|si|de nada|con gusto|done|great|all set|sure|yep|yes|perfect|there you go)[,!.]?\s+)*`;
+/** Lo que AU-RA manda, agenda o guarda (el sujeto de «mensaje enviado», «alarma programada», «dato guardado»). */
+const COSA_ENVIO = '(?:mensaje|mensajito|whatsapp|wasap|correo|mail|email|e-mail|texto|recado|sms)';
+const COSA_REC = '(?:recordatorio|alarma|aviso|cita|evento|reunion|timer|temporizador|despertador)';
+const COSA_GUARDA = '(?:dato|datos|nota|perfil|preferencia|contacto|numero|direccion)';
+const ART = '(?:(?:el|la|tu|su) )?';
+/** Lo que, detrás del participio, dice CUÁNDO pasó (un dato que se lee, no lo que acaba de hacer): «enviado a las 3». */
+const NO_DATO = String.raw`(?!\s+(?:a las|ayer|anoche|hace|hoy a|el (?:lunes|martes|miercoles|jueves|viernes|sabado|domingo)|at \d|yesterday|on (?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)))`;
+const rx = (s: string) => new RegExp(s);
+
+/** Lo que dice que algo SALIÓ (no solo que se escribió o quedó): eso nunca se perdona por presentar un borrador (G1). */
+const SALIO = [
+  rx(String.raw`${INI}${ART}(?:${COSA_ENVIO} )?(?:ya )?(?:enviad|mandad|reenviad|despachad)[oa]s?\b${NO_DATO}`),
+  rx(String.raw`${INI}${ART}${COSA_ENVIO} (?:ya )?(?:quedo|queda|ha sido|fue|ya esta|ya quedo|ya fue) (?:enviad|mandad|reenviad)[oa]s?\b${NO_DATO}`),
   /\b(ya |listo,? )?(se |te |le |les )?(lo |la |los |las )?(envie|mande|reenvie|despache)\b/,
+  /\b(se lo |se la |se los |se las |le |les |te lo |te la |lo |la )?he (enviado|mandado|reenviado|hecho llegar)\b/,
+  /\bacabo de (mandar|enviar|reenviar)(le|les|selo|sela|te|telo|tela)?\b/,
+  /\b(se (lo|la|los|las)|le|les) hice llegar\b/,
+  rx(String.raw`${INI}(?:ya )?(?:salio|se fue|se envio|se mando)\b(?=\s*(?:$|[.,;:!…]|(?:tu|el|su) ${COSA_ENVIO}\b|(?:a|para) (?!las\b|los\b)[a-z]))`),
+  rx(String.raw`${INI}${ART}${COSA_ENVIO} (?:ya )?(?:salio|se fue|le llego)\b${NO_DATO}`),
+  // «Listo, ya le llegó.» suelto; «Ya le llegó el correo de Ana» lee un dato.
+  rx(String.raw`${INI}ya (?:le llego|les llego|lo recibio|la recibio|lo tiene|la tiene)\b(?=\s*(?:$|[.,;:!…]))`),
+  rx(String.raw`${INI}(?:(?:your|the|my) )?(?:message|text|email|e-mail|whatsapp|it|mail|msg)(?: has| have)?(?: been| was|'s| is)?(?: just| already)? (?:sent|delivered)\b${NO_DATO}`),
+  /\bi(?:'ve| have)? (just |already )?(sent|texted|emailed|messaged|forwarded)\b/,
+  // M3: "Ok, sent it", "All set, sent", "Sent!".
+  rx(String.raw`${INI}(?:just |already )?sent(?: it| them| the \w+| your \w+)?\b(?=\s*(?:$|[.,;:!…]|to\b))`),
+];
+const ENVIO = [
+  ...SALIO,
   /\b(le|les|se lo|se la|se los|se las|te lo|te la) (escribi|respondi|conteste|reenvie|pase)\b/,
   /\bya (le |les )?(escribi|respondi|conteste)\b/,
-  /\bya (salio|se fue|se envio|se mando|llego|le llego|lo recibio|la recibio|lo tiene)\b/,
-  /\bse (envio|mando)\b(?! (a las|en|dentro))/,
-  /\b(el|tu|su) (mensaje|whatsapp|correo|mail)( ya)? (salio|se fue|llego)\b/,
-  /\b(message|text|email|e-mail|whatsapp|it|mail|msg)( has| have)?( been| was|'s| is)?( just| already)? (sent|delivered)\b/,
-  /\bi(?:'ve| have)? (just |already )?(sent|texted|emailed|messaged|forwarded|replied to)\b/,
-  /^\s*[¡!]?\s*(done[,!.]?\s*)?sent\b/,
+  // M3: «Ya le avisé», «Ya le dije», «Le he escrito a Ana», «Acabo de escribirle».
+  /\b(le|les|se lo|se la|se los|se las) (avise|dije)\b/,
+  /\b(se lo |se la |le |les |te lo |te la )?he (escrito|respondido|contestado)\b/,
+  /\b(le|les|se lo|se la) he (avisado|dicho)\b/,
+  /\bacabo de (escribir|responder|contestar)(le|les|selo|sela|te|telo|tela)?\b/,
+  /\bacabo de (avisar|decir)(le|les|selo|sela)\b/,
+  /\bi(?:'ve| have)? (just |already )?(replied to|told (?!you\b)\w+|let (?!you\b)\w+ know)\b/,
 ];
 const RECORDATORIO = [
-  /\b(ya |listo,? )?(te |le |se )?(lo |la )?(agende|programe|puse)\b/,
-  /\b(agendad|programad)[oa]s?\b/,
-  /\b(recordatorio|alarma|aviso|cita|evento|timer|temporizador|despertador|reunion)\b[^.?!]{0,30}\b(quedo|esta|fue|queda|ya esta) (puest|cread|guardad|programad|agendad|list)/,
-  /\bya (quedo|esta) (puest|programad|agendad)[oa]\b/,
-  /\bte (llamo|marco|aviso|recuerdo)\b[^.?!]{0,40}\ba las \d/,
+  /\b(ya |listo,? )?(te |le |se )?(lo |la )?(agende|programe)\b/,
+  // «puse» solo con lo que se pone (la alarma, el recordatorio, «para mañana», «a las 6»): «Lo puse más formal» no (G1).
+  rx(String.raw`\b(?:te |le |se )?(?:lo |la )?puse\b(?=\s+(?:(?:la|una|el|un|tu) )?${COSA_REC}\b|\s+para\b|\s+a las \d|\s+en (?:tu |el )?(?:calendario|agenda)\b)`),
+  rx(String.raw`${INI}${ART}(?:${COSA_REC} )?(?:ya )?(?:agendad|programad)[oa]s?\b`),
+  rx(String.raw`${INI}${ART}${COSA_REC} (?:ya )?(?:quedo|queda|ha sido|fue|ya esta|ya quedo) (?:puest|cread|guardad|programad|agendad|list)[oa]s?\b`),
+  rx(String.raw`${INI}ya (?:quedo|esta) (?:puest|programad|agendad)[oa]\b`),
+  // «Te llamo a las 3» (lo que AU-RA dejó puesto); «Te recuerdo que a las 3 tienes la reunión» lee un dato (G2).
+  /\bte (llamo|marco|aviso)\b[^.?!]{0,40}\ba las \d/,
   /\breminder( is| has been|'s)? (set|scheduled|saved|created)\b/,
   /\bi(?:'ve| have)? (set|scheduled|added|created) (a |an |the |your )?(reminder|alarm|timer|appointment|event|meeting)\b/,
 ];
 const LLAMADA = [/\b(ya )?(le |te |la |lo )(llame|marque)\b/, /\bi (called|dialed|rang)\b/];
 const GUARDADO = [
   /\b(ya |listo,? )?(te |se )?(lo |la )?(guarde|anote|apunte|registre)\b/,
-  /\b(guardad|anotad|apuntad|registrad)[oa]s?\b/,
+  rx(String.raw`${INI}${ART}(?:${COSA_GUARDA} )?(?:ya )?(?:guardad|anotad|apuntad|registrad)[oa]s?\b`),
   /\b(i(?:'ve| have)? (saved|noted|stored)|(it'?s|it is|it has been) (saved|noted|stored))\b/,
 ];
+/** Detrás de «ya quedó» / «listo, quedó»: el fin, o lo que quedó HECHO. «Ya quedó claro», «quedó así: …» no (G1, G2). */
+const QUEDO_HECHO = String.raw`(?=\s*(?:$|[.,;:!…]|(?:list|hech|puest|agendad|programad|enviad|mandad|guardad|anotad)[oa]s?\b|todo\b))`;
 const GENERICO = [
-  /\bya quedo\b/,
+  rx(String.raw`\bya quedo\b${QUEDO_HECHO}`),
   /\b(ya esta|esta) hecho\b/,
-  /\blisto,? (ya )?(quedo|hecho)\b/,
+  rx(String.raw`\blisto,? (?:ya )?(?:quedo|hecho)\b${QUEDO_HECHO}`),
   /^\s*[¡!]?\s*hecho\s*[.!]*\s*$/,
   /\bya lo hice\b/,
   /\b(it'?s|it is) done\b|\ball done\b|\byou'?re all set\b/,
 ];
+
+/*
+ * G1: lo que PRESENTA un borrador para aprobarlo no afirma nada. «Listo, quedó así: «Hola Ana, llego a las 9». ¿Lo
+ * envío?», «Ya quedó el borrador para Ana: «…». ¿Lo envío?», «Lo puse más formal: «Estimada Ana…». ¿Lo mando?» se
+ * reescribían enteros (y se perdía el texto que se le mostraba). Una frase con su cita y una pregunta de aprobación
+ * después, o lo que habla del borrador mismo, se deja tal cual; lo que dice que algo SALIÓ («Ya se lo mandé»), no.
+ */
+const APRUEBA = /¿[^?]*\b((se |te |le )?(lo|la|los|las) (envio|mando|mandamos|enviamos|despacho|apruebas|confirmo|confirmas|dejo asi|cambio)|(te )?parece( bien)?|(asi )?(esta|queda) bien|le cambio algo|send it|shall i send|should i send|ok to send|good to go|sound good|looks? good)\b[^?]*\?/;
+const DEL_BORRADOR = /\b(borrador|draft)\b/;
+const CON_CITA = /[«"“]/;
 
 /** ¿Algún patrón aparece en `s` sin nada antes que lo vuelva futuro, condicional o de otro? */
 function hay(res: RegExp[], s: string): boolean {
@@ -183,46 +239,54 @@ function destinoDe(frase: string): string | undefined {
  * Las afirmaciones de un efecto hecho, frase por frase, fuera de lo citado, lo negado, lo referido y las preguntas.
  * `contexto`: lo que pidió la persona y lo último que dijo AU-RA (de qué habla un «ya quedó» suelto).
  */
-export function afirmacionesDeHecho(texto: string, contexto: { mensaje?: string; anterior?: string } = {}): Afirmacion[] {
+export function afirmacionesDeHecho(texto: string, contexto: { mensaje?: string; anterior?: string; borrador?: unknown } = {}): Afirmacion[] {
   const out: Afirmacion[] = [];
   // De qué habla un «ya quedó» suelto: primero el resto de la misma respuesta («Sí, ya quedó. Te llamo a las 3:19 para
   // recordarte…»), después lo que pidió la persona y lo último que dijo AU-RA.
   const propio = plano(sinCitas(String(texto || '').replace(/^\s*(ACCION_APP|PEDIR_HERRAMIENTA)\s*:.*$/gim, ' ')));
   const pedido = plano(`${contexto.mensaje || ''} ${contexto.anterior || ''}`);
-  for (const l of String(texto || '').split('\n')) {
-    if (/^\s*(ACCION_APP|PEDIR_HERRAMIENTA)\s*:/i.test(l)) continue;
-    for (const f of frasesConCitas(l)) {
-      const propia = f.propia;
-      if (!propia.trim() || /[¿?]/.test(propia)) continue;
-      // Lo que la frase misma sitúa antes («hace rato», «ayer», "earlier"): es de otro turno, no de este (como en
-      // lib/cerebro-manos.ts, revisión del 5-oct GRAVE-2). Salvo que la persona esté pidiendo o aprobando algo ahora.
-      if (esDeAntes(propia) && !pideAhora(contexto.mensaje)) continue;
-      const s = sinLoQueNoAfirma(plano(propia));
-      const resto = propio.replace(plano(propia), ' ');
-      const ctx = `${resto} ${pedido}`;
-      let clase: Clase | null = null;
-      if (hay(ENVIO, s)) clase = 'envio';
-      else if (hay(RECORDATORIO, s)) clase = 'recordatorio';
-      else if (hay(LLAMADA, s)) clase = 'llamada';
-      else if (hay(GUARDADO, s)) clase = 'guardado';
-      else if (hay(GENERICO, s)) clase = 'generico';
-      if (!clase) continue;
-      // «Ya quedó» o «te lo guardé» sueltos: de qué es lo dice la frase misma o, si no, lo que se habló.
-      if (clase === 'generico' || clase === 'guardado') {
-        const de = (x: string): Clase | null => (DE_ENVIO.test(x) ? 'envio' : DE_RECORDATORIO.test(x) ? 'recordatorio' : DE_LLAMADA.test(x) ? 'llamada' : DE_GUARDAR.test(x) ? 'guardado' : null);
-        const propiaDe = DE_ENVIO.test(s) ? 'envio' : DE_RECORDATORIO.test(s) ? 'recordatorio' : null;
-        clase = propiaDe ?? (clase === 'guardado' ? 'guardado' : (de(resto) ?? de(pedido) ?? 'generico'));
-      }
-      const a: Afirmacion = { frase: f.texto, clase };
-      if (clase === 'envio') {
-        const c = canalDe(s) || canalDe(ctx);
-        if (c) a.canal = c;
-        const d = destinoDe(f.texto);
-        if (d) a.destino = d;
-      }
-      out.push(a);
+  // Todas las frases en orden (para saber si después viene la pregunta de aprobación de un borrador que se presenta).
+  const todas = String(texto || '')
+    .split('\n')
+    .filter((l) => !/^\s*(ACCION_APP|PEDIR_HERRAMIENTA)\s*:/i.test(l))
+    .flatMap((l) => frasesConCitas(l));
+  const ahora = pideAhora(contexto.mensaje, contexto);
+  todas.forEach((f, i) => {
+    const propia = f.propia;
+    if (!propia.trim() || /[¿?]/.test(propia)) return;
+    // Lo que la frase misma sitúa antes («hace rato», «ayer», "earlier"): es de otro turno, no de este (como en
+    // lib/cerebro-manos.ts, revisión del 5-oct GRAVE-2). Salvo que la persona esté pidiendo o aprobando algo ahora.
+    if (esDeAntes(propia) && !ahora) return;
+    const s = sinLoQueNoAfirma(plano(propia));
+    const resto = propio.replace(plano(propia), ' ');
+    const ctx = `${resto} ${pedido}`;
+    let clase: Clase | null = null;
+    if (hay(ENVIO, s)) clase = 'envio';
+    else if (hay(RECORDATORIO, s)) clase = 'recordatorio';
+    else if (hay(LLAMADA, s)) clase = 'llamada';
+    else if (hay(GUARDADO, s)) clase = 'guardado';
+    else if (hay(GENERICO, s)) clase = 'generico';
+    if (!clase) return;
+    // G1: presenta un borrador para aprobarlo (con su cita y la pregunta después, o habla del borrador mismo): no afirma.
+    const aprueba = todas.slice(i + 1).some((x) => APRUEBA.test(plano(x.propia)));
+    const salio = hay(SALIO, s);
+    if (aprueba && (CON_CITA.test(f.texto) || !salio)) return;
+    if (!salio && DEL_BORRADOR.test(s)) return;
+    // «Ya quedó» o «te lo guardé» sueltos: de qué es lo dice la frase misma o, si no, lo que se habló.
+    if (clase === 'generico' || clase === 'guardado') {
+      const de = (x: string): Clase | null => (DE_ENVIO.test(x) ? 'envio' : DE_RECORDATORIO.test(x) ? 'recordatorio' : DE_LLAMADA.test(x) ? 'llamada' : DE_GUARDAR.test(x) ? 'guardado' : null);
+      const propiaDe = DE_ENVIO.test(s) ? 'envio' : DE_RECORDATORIO.test(s) ? 'recordatorio' : null;
+      clase = propiaDe ?? (clase === 'guardado' ? 'guardado' : (de(resto) ?? de(pedido) ?? 'generico'));
     }
-  }
+    const a: Afirmacion = { frase: f.texto, clase };
+    if (clase === 'envio') {
+      const c = canalDe(s) || canalDe(ctx);
+      if (c) a.canal = c;
+      const d = destinoDe(f.texto);
+      if (d) a.destino = d;
+    }
+    out.push(a);
+  });
   return out;
 }
 
@@ -235,35 +299,70 @@ export function trozoAfirmaHecho(trozo: string): boolean {
 
 const palabras = (s: string) => plano(s).split(/[^a-z0-9ñ]+/).filter((w) => w.length >= 3);
 
-/** ¿El recibo respalda esta afirmación? (su clase, su canal y, si los dos lo dicen, a quién). */
-function respalda(a: Afirmacion, r: ReciboEfecto): boolean {
-  if (r.estado !== 'confirmado') return false;
-  const okClase =
-    a.clase === 'envio'
-      ? (r.canal === 'whatsapp' || r.canal === 'correo' || r.canal === 'chat') && (!a.canal || a.canal === r.canal)
-      : a.clase === 'recordatorio'
-        ? r.canal === 'recordatorio' || r.canal === 'llamada'
-        : a.clase === 'llamada'
-          ? r.canal === 'llamada'
-          : a.clase === 'guardado'
-            ? r.canal === 'guardado' || r.canal === 'recordatorio'
-            : true;
-  if (!okClase) return false;
-  if (a.destino && r.destino) {
-    const de = new Set(palabras(r.destino));
-    if (!palabras(a.destino).some((w) => de.has(w))) return false;
-  }
-  return true;
+/*
+ * M1 (revisión del 6-oct): un nombre que no coincide no desmiente un envío real. «Ya se lo mandé a Papá» con el recibo de
+ * «Viejo +504…» (el mismo contacto con su apodo) o un nombre de menos de 3 letras («Bo», «Al») salían como «Todavía no lo
+ * envié». Solo cuenta como OTRA persona un nombre de verdad que no comparte ninguna palabra con el del recibo.
+ */
+const APODO = new Set('papa mama papi mami viejo vieja viejito viejita jefe jefa compadre comadre compa padrino madrina abuelo abuela abue tio tia hermano hermana hermanito hermanita hijo hija amor mor cielo esposo esposa marido mujer suegro suegra primo prima bro brother sis gordo gorda flaco flaca negro negra chele chela profe doc doctor doctora dad mom'.split(' '));
+/** ¿Los dos nombres son claramente de personas distintas? */
+function otraPersona(dicho: string, delRecibo: string): boolean {
+  const a = palabras(dicho);
+  const b = palabras(delRecibo).filter((w) => !/^\d+$/.test(w));
+  if (!a.length || !b.length) return false;
+  // Lo que AU-RA dice es un apodo («Papá», «mi viejo»): puede ser el mismo contacto guardado con otro nombre.
+  if (a.some((w) => APODO.has(w))) return false;
+  const de = new Set(b);
+  return !a.some((w) => de.has(w));
 }
 
-/** ¿El mensaje de la persona aprueba o pide hacer algo ahora («sí», «envíalo», «mándale…»)? Entonces lo de antes no cuenta. */
-function pideAhora(mensaje: string | undefined): boolean {
+/** ¿El recibo respalda esta afirmación? (su clase, su canal y, si los dos lo dicen y son claramente otro, a quién). */
+function respalda(a: Afirmacion, r: ReciboEfecto): boolean {
+  return mismaClase(a, r) && !(a.destino && r.destino && otraPersona(a.destino, r.destino));
+}
+
+/** ¿El recibo es de lo que afirma (clase y canal), sin mirar a quién? */
+function mismaClase(a: Afirmacion, r: ReciboEfecto): boolean {
+  if (r.estado !== 'confirmado') return false;
+  return a.clase === 'envio'
+    ? (r.canal === 'whatsapp' || r.canal === 'correo' || r.canal === 'chat') && (!a.canal || a.canal === r.canal)
+    : a.clase === 'recordatorio'
+      ? r.canal === 'recordatorio' || r.canal === 'llamada'
+      : a.clase === 'llamada'
+        ? r.canal === 'llamada'
+        : a.clase === 'guardado'
+          ? r.canal === 'guardado' || r.canal === 'recordatorio'
+          : true;
+}
+
+/** Lo último de AU-RA ofrecía una acción («¿Lo envío?», «¿Te lo agendo?», «¿Le escribo esto?»): un «sí» la aprueba. */
+const OFRECE_ACCION = /¿[^?]*\b(escrib\w*|mand\w*|envi\w*|reenvi\w*|respond\w*|contest\w*|llam\w*|marc\w*|record\w*|recuerd\w*|agend\w*|program\w*|pong\w*|pon(go|emos|elo|selo)?|guard\w*|anot\w*|send|call|remind|schedule|save|text)\b[^?]*\?/;
+/** Lo que pide hacer algo («mándale», «agéndalo», «ponme la alarma»), sin lo agradecido («gracias por mandarlo»). */
+const PIDE_VERBO = /\b(mand|envi|escrib|agend|program|recuerd|guard|anot|llam|marc|pon)\w*/;
+const AGRADECE = /\b(gracias|thanks|thank you|thx|te pasaste|muy amable)\b/;
+
+/**
+ * ¿El mensaje de la persona aprueba o pide hacer algo AHORA? Entonces lo de antes no respalda lo que se afirma. Un «sí»
+ * aprueba solo si había algo que aprobar (un borrador esperando o una acción que AU-RA acababa de ofrecer); «Perfecto,
+ * gracias» o «Ok» tras un envío real agradece o confirma lo hecho (M1: antes cualquier «sí» descartaba lo de antes y
+ * «¡De nada! Ya se lo mandé a Ana» salía como «Todavía no lo envié»).
+ */
+function pideAhora(mensaje: string | undefined, o: { anterior?: string; borrador?: unknown } = {}): boolean {
   const m = String(mensaje || '');
   if (!m.trim()) return false;
   const a = analizarRespuesta(m);
   if (a.pregunta) return false;
-  return (a.afirma && !a.niega) || /\b(mand|envi|escrib|agend|program|recuerd|guard|anot|llam|marc|pon)\w*/.test(plano(m));
+  const p = plano(m);
+  const pide = PIDE_VERBO.test(p.replace(/\b(por|for) \w+/g, ' '));
+  // «Gracias por mandarlo» agradece; «Gracias, ahora mándale a Pedro» pide otra cosa.
+  if (AGRADECE.test(p)) return pide;
+  if (a.envio || pide) return true;
+  if (!a.afirma || a.niega) return false;
+  return !!o.borrador || OFRECE_ACCION.test(plano(sinCitas(String(o.anterior || ''))));
 }
+
+/** Cuánto vale un efecto de antes cuando la persona solo agradece o confirma (si pregunta, `EFECTO_RECIENTE_MS`). */
+export const EFECTO_CORTESIA_MS = 10 * 60_000;
 
 export type ContextoHonestidad = {
   /** Los recibos de ESTE turno. */
@@ -277,7 +376,26 @@ export type ContextoHonestidad = {
   /** Un borrador de correo o de WhatsApp (o el mensaje de la app) espera su «sí»: prueba que no salió. */
   borrador?: { canal?: 'whatsapp' | 'correo' | 'chat'; para?: string } | null;
   idioma?: 'es' | 'en';
+  /** La hora del turno (pruebas). */
+  ahora?: number;
 };
+
+/**
+ * ¿Consta lo que afirma? Un recibo de ESTE turno, o un efecto real de antes si la persona no está pidiendo ni aprobando
+ * algo ahora (entonces la afirmación es de esto) y, para un envío, si no hay un borrador esperando (prueba que lo de
+ * ahora no salió). Lo de antes vale `EFECTO_RECIENTE_MS` si pregunta («¿ya se lo mandaste?») y `EFECTO_CORTESIA_MS` si
+ * agradece o confirma («Perfecto, gracias»).
+ */
+function respaldada(a: Afirmacion, ctx: ContextoHonestidad): boolean {
+  if (ctx.recibos.some((r) => respalda(a, r))) return true;
+  if (pideAhora(ctx.mensaje, ctx) || (a.clase === 'envio' && ctx.borrador)) return false;
+  const ahora = ctx.ahora ?? Date.now();
+  const ventana = /[¿?]/.test(String(ctx.mensaje || '')) ? EFECTO_RECIENTE_MS : EFECTO_CORTESIA_MS;
+  return (ctx.previos || []).some((r) => ahora - (r.t ?? ahora) <= ventana && respalda(a, r));
+}
+
+/** El nombre de un destino, sin el número («Padrino +50488881111» → «Padrino»). */
+const soloNombre = (d: string) => d.replace(/[+\d][\d\s()\-]{5,}/g, ' ').replace(/\S*@\S+/g, ' ').replace(/\s+/g, ' ').trim();
 
 export type ResultadoHonestidad = { texto: string; cambiada: boolean; falsas: Afirmacion[] };
 
@@ -285,6 +403,12 @@ export type ResultadoHonestidad = { texto: string; cambiada: boolean; falsas: Af
 function verdad(a: Afirmacion, ctx: ContextoHonestidad): string {
   const en = ctx.idioma === 'en';
   if (a.clase === 'envio') {
+    // Sí salió en este turno, pero a otra persona que la que dice: a quién fue de verdad.
+    const otro = a.destino ? ctx.recibos.find((r) => mismaClase(a, r) && r.destino && soloNombre(r.destino)) : undefined;
+    if (otro?.destino) {
+      const nombre = soloNombre(otro.destino);
+      return en ? `I sent it, but to ${nombre}, not to ${a.destino}.` : `Lo envié, pero a ${nombre}, no a ${a.destino}.`;
+    }
     if (ctx.recibos.some((r) => r.estado === 'en-curso' && (r.canal === 'whatsapp' || r.canal === 'correo')))
       return en ? "I'm sending it now; I'll confirm as soon as it goes out." : 'Lo estoy mandando ahora; te confirmo en cuanto salga.';
     const b = ctx.borrador;
@@ -317,12 +441,9 @@ export function guardaDeHonestidad(texto: string, ctx: ContextoHonestidad): Resu
   const original = String(texto || '');
   const emo = /^\s*\[[^\]]{0,30}\]\s*/.exec(original)?.[0] || '';
   // Las frases se miran sin la etiqueta de ánimo del principio (así coinciden con las que se reescriben).
-  const afirmaciones = afirmacionesDeHecho(original.slice(emo.length), { mensaje: ctx.mensaje, anterior: ctx.anterior });
+  const afirmaciones = afirmacionesDeHecho(original.slice(emo.length), { mensaje: ctx.mensaje, anterior: ctx.anterior, borrador: ctx.borrador });
   if (!afirmaciones.length) return { texto: original, cambiada: false, falsas: [] };
-  // Lo de un turno anterior cuenta solo si la persona no está pidiendo o aprobando algo AHORA (entonces la afirmación es
-  // de esto) y, para un envío, si no hay un borrador esperando (prueba que lo de ahora no salió).
-  const valePrevio = (a: Afirmacion) => !pideAhora(ctx.mensaje) && !(a.clase === 'envio' && ctx.borrador);
-  const falsas = afirmaciones.filter((a) => !ctx.recibos.some((r) => respalda(a, r)) && !(valePrevio(a) && (ctx.previos || []).some((r) => respalda(a, r))));
+  const falsas = afirmaciones.filter((a) => !respaldada(a, ctx));
   if (!falsas.length) return { texto: original, cambiada: false, falsas: [] };
   const lineas = original.slice(emo.length).split('\n');
   const dichas = new Set<string>();
@@ -361,10 +482,9 @@ export function guardaDeHonestidad(texto: string, ctx: ContextoHonestidad): Resu
  */
 export function sinLoRespaldado(texto: string, ctx: ContextoHonestidad): string {
   const original = String(texto || '');
-  const afirmaciones = afirmacionesDeHecho(original, { mensaje: ctx.mensaje, anterior: ctx.anterior });
+  const afirmaciones = afirmacionesDeHecho(original, { mensaje: ctx.mensaje, anterior: ctx.anterior, borrador: ctx.borrador });
   if (!afirmaciones.length) return original;
-  const valePrevio = (a: Afirmacion) => !pideAhora(ctx.mensaje) && !(a.clase === 'envio' && ctx.borrador);
-  const respaldadas = new Set(afirmaciones.filter((a) => ctx.recibos.some((r) => respalda(a, r)) || (valePrevio(a) && (ctx.previos || []).some((r) => respalda(a, r)))).map((a) => a.frase));
+  const respaldadas = new Set(afirmaciones.filter((a) => respaldada(a, ctx)).map((a) => a.frase));
   if (!respaldadas.size) return original;
   return original
     .split('\n')
