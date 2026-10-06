@@ -431,10 +431,19 @@ function vistaDeObjeto(j: any, opts: { cajasConfiables?: boolean }): VistaEstruc
 export function pareceErrorDeServicio(texto: string): boolean {
   const t = String(texto || '').trim();
   if (!t || t.length > 600) return false;
+  // Lo que la cámara LEE no es un aviso del servicio: la foto de una pantalla con «503 Service Unavailable» o un cartel
+  // con «Unauthorized» es contenido (revisión del 6-oct). Lo citado no cuenta, y una descripción en español tampoco.
+  // Un JSON de error («{"error":"insufficient_quota"}») ES el aviso: sus comillas no son una cita.
+  const sinCitas = /^[{[]/.test(t) ? t : t.replace(/["“”«»][^"“”«»]{0,300}["“”«»]/g, ' ');
+  const describe = /\b(se (lee|ve|observa|aprecia)|muestra|aparece|dice|pantalla|cartel|letrero|imagen|foto|hay)\b/i.test(sinCitas);
   // 402 / «Payment Required» / «insufficient credits» (revisión del 6-oct: cuando vuelvan los créditos de Hugging Face y
   // se acaben otra vez, el aviso llega así). El «402» solo con algo de error al lado: «L 402» en un cartel es un precio.
-  if (/\b(payment required|insufficient[ _-]?(credits?|quota|balance|funds))\b|\b(error|status|code|http)\s*[:=]?\s*402\b|\b402\s*[:-]?\s*(payment|client error)/i.test(t)) return true;
-  return /\b(depleted|included credits|pre-?paid credits|quota|rate.?limit|too many requests|unauthori[sz]ed|forbidden|invalid (api )?(key|token)|api key|exceeded|overloaded|service unavailable|internal server error|bad gateway|gateway time-?out|timed out|inference providers?|model .{0,40} (is )?(not supported|not found|currently loading))\b/i.test(t);
+  const proveedor =
+    /\b(payment required|insufficient[ _-]?(credits?|quota|balance|funds))\b|\b(error|status|code|http)\s*[:=]?\s*402\b|\b402\s*[:-]?\s*(payment|client error)/i.test(sinCitas) ||
+    /\b(depleted|included credits|pre-?paid credits|quota|rate.?limit|too many requests|invalid (api )?(key|token)|api key|inference providers?|model .{0,40} (is )?(not supported|not found|currently loading))\b/i.test(sinCitas);
+  if (proveedor && !describe) return true;
+  // Los genéricos (forbidden, timed out, exceeded…) solo si el texto EMPIEZA con ellos, como un aviso, no en medio de lo leído.
+  return /^\s*(\{?\s*"?(error|message|detail)"?\s*[:=]\s*"?)?(\d{3}\s*[:-]?\s*)?(unauthori[sz]ed|forbidden|exceeded|overloaded|service unavailable|internal server error|bad gateway|gateway time-?out|timed out|request timed out)\b/i.test(t);
 }
 
 /** ¿Quedó algo? Una vista vacía es como no haber visto. */

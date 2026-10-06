@@ -203,3 +203,16 @@ test('la descripción libre (PDF, prompt libre) tampoco toma un aviso del servic
   assert.equal(pareceErrorDeServicio('Un cartel dice «Total L 402.00».'), false, 'un 402 en un precio no es un aviso');
   assert.equal(pareceErrorDeServicio('Habitación 402, segundo piso.'), false);
 });
+
+test('lo que la cámara LEE no es un aviso del servicio: la foto de un error en pantalla o un cartel se describe, no se descarta', () => {
+  assert.equal(pareceErrorDeServicio('En la pantalla de la laptop se lee "503 Service Unavailable".'), false);
+  assert.equal(pareceErrorDeServicio('Un cartel en la puerta dice «Unauthorized access forbidden».'), false);
+  assert.equal(pareceErrorDeServicio('El documento indica que el plazo fue exceeded según el sistema.'), false);
+  assert.equal(pareceErrorDeServicio('La pantalla muestra el mensaje "You exceeded your current quota".'), false);
+  // Los avisos de verdad siguen siéndolo.
+  assert.equal(pareceErrorDeServicio('Service Unavailable'), true);
+  assert.equal(pareceErrorDeServicio('{"error": "Forbidden"}'), true);
+  assert.equal(pareceErrorDeServicio('503: Service Unavailable'), true);
+  assert.equal(pareceErrorDeServicio('Request timed out'), true);
+  assert.equal(pareceErrorDeServicio('You have depleted your monthly included credits. Purchase pre-paid credits to continue.'), true);
+});
