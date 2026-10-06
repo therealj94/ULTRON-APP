@@ -66,7 +66,8 @@ export type ApiVoces = {
    * que no es la dueña, su id para el servidor (`quienHabla`). Espera lo de ESA frase hasta
    * `ESPERA_VOZ_TURNO_MS`; vacío si no hay nada seguro de esa frase.
    */
-  paraTurno: (oidaEn: number) => Promise<{ frase: string; quienHabla?: QuienHablaTurno }>;
+  /** `caraDuenaEn`: cuándo las caras vieron a la dueña confirmada por votos (0 si no), para la continuidad (revisión 7, G2). */
+  paraTurno: (oidaEn: number, o?: { caraDuenaEn?: number }) => Promise<{ frase: string; quienHabla?: QuienHablaTurno }>;
   /** El audio PCM de una frase terminada (trozos de 0,1 s en base64), su texto y su id. */
   alTerminarFrase: (trozos: string[], texto: string, id?: number) => void;
 };
@@ -444,13 +445,14 @@ export function useVoces(o: Opciones): ApiVoces {
   );
 
   const paraTurno = useCallback(
-    async (oidaEn: number): Promise<{ frase: string; quienHabla?: QuienHablaTurno }> => {
+    async (oidaEn: number, o: { caraDuenaEn?: number } = {}): Promise<{ frase: string; quienHabla?: QuienHablaTurno }> => {
       // Sin voces activas o sin conocidas no hay nada que esperar (el turno no se demora ni un milisegundo).
       if (!activasRef.current || !conocidasRef.current.length || !oidaEn) return { frase: '' };
       // Lo de ESA frase; si no se supo (un «sí» corto, la consulta tardó), la precaución de la última voz que no es la
       // dueña (revisión 7.5, M1′): solo frena, nunca da permiso.
       // Con su voz guardada, una frase larga que no es de nadie conocido va como `desconocida` (modo invitado).
-      return quienHablaDelTurno(ident, oidaEn, op.current.nombre, idiomaActual() === 'en', conocidasRef.current.some((c) => c.relacion === 'yo'));
+      // Revisión 7 (G2): con su voz guardada, lo que no se confirma como suyo va como `incierta` (modo invitado).
+      return quienHablaDelTurno(ident, oidaEn, op.current.nombre, idiomaActual() === 'en', conocidasRef.current.some((c) => c.relacion === 'yo'), o);
     },
     [ident]
   );

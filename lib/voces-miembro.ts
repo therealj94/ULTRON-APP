@@ -408,19 +408,35 @@ export type OtraVozTurno = { quien: string; duena: string; reciente: boolean };
  * Nunca lanza (sin poder leer las voces, null).
  */
 export async function otraVozDelTurno(o: { quienHabla?: unknown; origen?: unknown; sesion?: { correo?: string; nombre?: string } | null }): Promise<OtraVozTurno | null> {
+  const v = await vozDelTurno(o);
+  return v.tipo === 'otra' ? v.voz : null;
+}
+
+/**
+ * Revisión 7 (G2): lo que dice el campo `quienHabla: { id }` con sus tres salidas. `otra`: una voz guardada de esa cuenta
+ * que no es la dueña (con su nombre). `duena`: el id es el de la propia dueña. `sin_verificar`: vino un id de la app con
+ * sesión pero no se pudo comprobar (el cajón tardó más de 800 ms, S3 falló, o el id ya no está): el teléfono dijo que
+ * NO era la dueña y no se puede confirmar lo contrario → para el modo invitado cuenta como invitado (server/modo-invitado.ts).
+ * `ninguna`: no vino id, o no viene de la app con sesión. Nunca lanza.
+ */
+export type VozDelTurno = { tipo: 'ninguna' } | { tipo: 'duena' } | { tipo: 'otra'; voz: OtraVozTurno } | { tipo: 'sin_verificar'; reciente: boolean };
+export async function vozDelTurno(o: { quienHabla?: unknown; origen?: unknown; sesion?: { correo?: string; nombre?: string } | null }): Promise<VozDelTurno> {
   const q = o.quienHabla as { id?: unknown; reciente?: unknown } | null | undefined;
   const id = typeof q?.id === 'string' ? q.id.slice(0, 40) : '';
   const correo = String(o.sesion?.correo || '').trim();
-  if (!id || o.origen !== 'app' || !correo) return null;
+  if (!id || o.origen !== 'app' || !correo) return { tipo: 'ninguna' };
+  const reciente = q?.reciente === true;
   try {
     // Casi siempre en caché (la cargó /api/voces/quien de esta frase); si S3 tarda, no frena el turno.
     let reloj: ReturnType<typeof setTimeout> | undefined;
     const cajon = await Promise.race([cargarVoces(correo), new Promise<null>((r) => ((reloj = setTimeout(() => r(null), 800)), reloj.unref?.()))]).finally(() => clearTimeout(reloj));
-    const p = cajon?.personas.find((x) => x.id === id);
-    if (!p || p.relacion !== 'conocido') return null;
-    return { quien: p.nombre, duena: limpiar(o.sesion?.nombre, MAX_NOMBRE) || 'la persona dueña de la cuenta', reciente: q?.reciente === true };
+    if (!cajon) return { tipo: 'sin_verificar', reciente };
+    const p = cajon.personas.find((x) => x.id === id);
+    if (p?.relacion === 'yo') return { tipo: 'duena' };
+    if (!p) return { tipo: 'sin_verificar', reciente };
+    return { tipo: 'otra', voz: { quien: p.nombre, duena: limpiar(o.sesion?.nombre, MAX_NOMBRE) || 'la persona dueña de la cuenta', reciente } };
   } catch {
-    return null;
+    return { tipo: 'sin_verificar', reciente };
   }
 }
 

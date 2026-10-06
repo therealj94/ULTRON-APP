@@ -4563,7 +4563,9 @@ async function correrTurnoInterno(body: any, opciones: OpcionesTurno = {}): Prom
     // Lo que quedó esperando aprobación (una captura para el grupo, revisión 11) vuelve aunque conteste el modelo.
     const final: SalidaTurno = { ...(p.propuestaTaller ? { propuestaTaller: p.propuestaTaller } : {}), ...out, estado, reply: quitarExpresiones(e.texto).trim(), voz: e.texto.trim(), emocion: out.emocion || e.emocion, acciones: app.acciones, ...(vozCompleta ? { vozCompleta: true } : {}), ...(vozLectura ? { vozLectura: true } : {}) };
     // Un invitado oye y ve que se le contesta en modo invitado (una frase, sin nada privado).
-    if (p.invitado && final.reply) Object.assign(final, { reply: `${avisoInvitado(p.idioma === 'en' ? 'en' : 'es')} ${final.reply}`, voz: `${avisoInvitado(p.idioma === 'en' ? 'en' : 'es')} ${final.voz}` });
+    // Revisión 7 (G2): con la voz sin confirmar no hay aviso (puede ser ella con un «sí» corto; avisoInvitado da '').
+    const aviso = p.invitado ? avisoInvitado(p.idioma === 'en' ? 'en' : 'es', p.invitado) : '';
+    if (aviso && final.reply) Object.assign(final, { reply: `${aviso} ${final.reply}`, voz: `${aviso} ${final.voz}` });
     if (final.reply && estado === 'completo' && memorizable) await recordarSegunNivel(body, { quienMem, rol: 'ultron', texto: final.reply, canal }, opciones.retener);
     return final;
   };
@@ -5021,7 +5023,8 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
   trazaActual()?.marca('preparado');
   medida.preparado = Date.now();
   // Un invitado oye y ve primero que se le contesta en modo invitado (una frase, sin nada privado).
-  if (p.invitado && p.message) soltar('delta', `${avisoInvitado(idioma)} `);
+  // Revisión 7 (G2): con la voz sin confirmar, sin aviso (avisoInvitado da '').
+  if (p.invitado && p.message && avisoInvitado(idioma, p.invitado)) soltar('delta', `${avisoInvitado(idioma, p.invitado)} `);
   if (!p.message) {
     send('error', { error: FRASE_FALLO.vacio[idioma], codigo: 'vacio' });
     reg.cerrar({ error: 'message vacío' });
