@@ -54,7 +54,7 @@ test('se ofrece solo con sesión y nunca a un invitado; la computadora remite a 
   assert.ok(!nombres({ ...MANOS, documentos: false }).includes('crear_documento'));
   assert.ok(!nombres(manosDeInvitado(MANOS)).includes('crear_documento'));
   const compu = herramientasDelTurno(MANOS).find((t) => t.toolSpec!.name === 'computadora')!;
-  assert.match(compu.toolSpec!.description!, /Para CREAR documentos de Word, Excel o PDF usa crear_documento/);
+  assert.match(compu.toolSpec!.description!, /Para CREAR documentos de Word, Excel, PowerPoint o PDF usa crear_documento/);
   const doc = herramientasDelTurno(MANOS).find((t) => t.toolSpec!.name === 'crear_documento')!;
   assert.match(doc.toolSpec!.description!, /TODOS los pedidos en UNA llamada/);
   // Dijo que lo hacía sin usar la herramienta («voy a escribir el informe…»): la segunda vuelta puede pedir crear_documento.
