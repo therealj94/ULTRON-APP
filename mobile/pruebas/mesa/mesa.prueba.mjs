@@ -599,7 +599,8 @@ prueba('G1: con la voz de la dueña guardada, una frase local privada sin su voz
 prueba('G1 (costura): la mesa decide ANTES de leer/escribir la memoria y antes de voces/caras; la escena sin nombres si no es la dueña', () => {
   const d = fs.readFileSync(path.join(RAIZ, 'mobile/src/screens/DeskScreen.tsx'), 'utf8');
   const gate = d.indexOf('if (intencionPrivada(intent.tipo))');
-  const gateVoces = d.indexOf('if (pedidoLocalPrivado(cmd))');
+  // Con el nombre que contesta a «¿cómo se llama?» en la misma puerta (aprender una cara lo pide la dueña, José 6-oct).
+  const gateVoces = d.indexOf('if (pedidoLocalPrivado(cmd) || caras.esperaNombre(cmd))');
   assert.ok(gate > 0 && gateVoces > 0, 'las dos puertas están');
   assert.ok(gateVoces < d.indexOf('if (await vocesRef.current?.manejar(cmd)) return;'), 'antes de las voces');
   assert.ok(gateVoces < d.indexOf('if (await caras.manejar(cmd)) return;'), 'antes de las caras');

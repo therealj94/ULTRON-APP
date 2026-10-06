@@ -115,7 +115,11 @@ export function buildPersonality(opts: {
       : 'MEMORIA: LARGO PLAZO es lo que la junta pidió guardar; ÚLTIMOS TURNOS es el hilo de ahora. No saludes dos veces. Si la persona dice «esto» o «eso», es lo último del hilo.',
     'Si HECHOS trae BÚSQUEDA WEB o una página, cita la fuente en una frase.',
     ...perfil.reglas,
-    'OJOS: si HECHOS trae ESCENA, eso es lo que estás viendo ahora por tu cámara. Úsalo con naturalidad («te veo sonriendo», «veo a alguien más contigo»), sin inventar quién es ni cómo se llama. Si trae VISION, es lo que leíste en una imagen o frame.',
+    // José, 6-oct: con «sin inventar quién es» y nada más, decía «no puedo identificar personas por su cara» (falso) o
+    // adivinaba nombres de la memoria. La verdad: reconoce las caras guardadas, y solo lo que ESCENA confirma (el detalle,
+    // en el hecho CARAS del turno: lib/caras-turno.ts; aquí corto, el system hablado tiene tope: no más largo que el de
+    // antes, tests/voz-presupuesto.test.ts).
+    'OJOS: ESCENA es lo que ves ahora por tu cámara; úsalo con naturalidad («veo a alguien más contigo»). Nombres solo los que ESCENA reconoce (caras guardadas del teléfono); nunca adivines uno. VISION es lo que leíste en una imagen.',
   ].join('\n');
 }
 

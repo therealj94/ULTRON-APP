@@ -115,6 +115,23 @@ export function identificar(vector: number[], conocidas: CaraConocida[]): Recono
   };
 }
 
+/**
+ * Las caras de UNA foto → quién es cada una: los nombres que el motor confirma y cuántas quedan sin nombre. Dos caras no
+ * pueden ser la misma persona: si las dos se parecen a la misma guardada, se queda con el nombre la más parecida y la otra
+ * cuenta como «sin nombre» (José, 6-oct: con su hija al lado, la escena no puede decir solo «Reconozco a José»).
+ */
+export function quienesEnFoto(caras: CaraVista[], conocidas: CaraConocida[]): { r: Reconocida[]; sinNombre: number } {
+  const porId = new Map<string, Reconocida>();
+  for (const c of caras) {
+    const r = identificar(c.vector, conocidas);
+    if (!r) continue;
+    const ya = porId.get(r.id);
+    if (!ya || r.distancia < ya.distancia) porId.set(r.id, r);
+  }
+  const r = [...porId.values()];
+  return { r, sinNombre: Math.max(0, caras.length - r.length) };
+}
+
 /* ── aprender: elegir muestras y aprender con el uso ────────────────────────────────────────── */
 
 /** El vector más «central» de una lista (menor suma de distancias a los demás). */
@@ -213,13 +230,26 @@ export function masGrande(caras: CaraVista[]): CaraVista | null {
 
 /**
  * La cara de la persona presentada: la más grande que NO es la dueña. Con una sola cara que es la
- * dueña, null (no se guarda a la dueña con otro nombre).
+ * dueña, null (no se guarda a la dueña con otro nombre). Con la dueña SIN guardar y más de una cara, null:
+ * no hay cómo saber cuál es ella (revisión del 6-oct: elegía la más grande, que suele ser la dueña, y la
+ * guardaba con el nombre de su hija). Con una sola cara y la dueña sin guardar, esa cara: quien ofrece aprender
+ * (aprenderPorVoz.ts) antes confirma que es la persona nueva y que la dueña no está en cuadro.
  */
 export function caraDelPresentado(caras: CaraVista[], conocidas: CaraConocida[]): CaraVista | null {
   const yo = conocidas.filter((c) => c.relacion === 'yo');
+  if (!yo.length && caras.length > 1) return null;
   const otras = caras.filter((c) => !yo.length || !identificar(c.vector, yo));
+  if (otras.length > 1) {
+    const area = (c: CaraVista) => c.caja.w * c.caja.h;
+    const [a, b] = [...otras].sort((x, y) => area(y) - area(x));
+    // Dos caras que no son la dueña, de tamaño parecido: no se sabe cuál es la presentada; mejor ninguna que guardar la
+    // cara equivocada con ese nombre (José, 6-oct: dos personas en la mesa).
+    if (area(a) < AMBIGUO_PRESENTADA * area(b)) return null;
+  }
   return masGrande(otras);
 }
+/** La presentada tiene que verse así de más grande que otra cara desconocida para elegirla sin dudar. */
+export const AMBIGUO_PRESENTADA = 1.6;
 
 /* ── por voz ─────────────────────────────────────────────────────────────────────────────── */
 
@@ -262,7 +292,13 @@ export type PedidoCaras =
   | { tipo: 'olvidar_mia' }
   | { tipo: 'olvidar_todas' }
   | { tipo: 'quien' }
-  | { tipo: 'lista' };
+  | { tipo: 'lista' }
+  /** «Reconoce a Bea», «¿reconoces a mi hija?», «aprende la cara de Bea»: mirar si está y, si no la conozco, aprenderla. */
+  | { tipo: 'reconocer'; nombre?: string; parentesco?: string }
+  /** «Me acompaña mi hija», «está conmigo mi esposo Beto»: alguien llegó; si no lo conozco, lo digo y ofrezco aprenderlo. */
+  | { tipo: 'acompanante'; parentesco?: string; nombre?: string };
+
+const esParentesco = (palabra: string) => Object.prototype.hasOwnProperty.call(PARENTESCOS, sinTildes(palabra));
 
 export function pedidoDeCaras(texto: string): PedidoCaras | null {
   const original = String(texto || '').trim();
@@ -291,18 +327,310 @@ export function pedidoDeCaras(texto: string): PedidoCaras | null {
     const nombre = nombreDe(original.slice(0, hasta), desde);
     // «Este es…», «ella es…», «conoce a…» solo si lo que sigue suena a nombre (con mayúscula, como lo
     // escribe el reconocedor de voz): «este es un buen día» no es una presentación.
-    if (nombre && (m || /^[A-ZÁÉÍÓÚÑ]/.test(nombre))) return { tipo: 'presentar', nombre, ...(parentesco ? { parentesco } : {}) };
+    // «Te presento a mi hija» (sin nombre): «hija» no es un nombre; la mesa pregunta cómo se llama (acompañante, abajo).
+    // «Te presento a esa» / «… a esta persona»: un pronombre no es un nombre (revisión del 6-oct).
+    if (nombre && esNombreDicho(nombre) && (m || /^[A-ZÁÉÍÓÚÑ]/.test(nombre))) return { tipo: 'presentar', nombre, ...(parentesco ? { parentesco } : {}) };
   }
   if (/\b(a quien(es)? conoces|que caras (conoces|tienes|guardaste)|a quien reconoces)\b/.test(t)) return { tipo: 'lista' };
   if (/\b(quien soy|me reconoces|sabes quien soy|quien esta (conmigo|aqui)|a quien ves)\b/.test(t)) return { tipo: 'quien' };
+  // José, 6-oct: «Reconoce a [su hija]» llegaba al cerebro, que contestaba «no puedo identificar personas por su cara»
+  // (falso: el motor de caras del teléfono reconoce a quien está guardado). Ahora lo atiende la mesa con el motor.
+  // «¿Quién es ella?» al final de la frase (no «¿quién es el presidente?»).
+  if (/\bquien es (ella|el|esta persona|este|esta|la otra persona|el otro|la otra)[\s?.!]*$/.test(t) || /\b((la|lo) reconoces|sabes quien es (ella|el)|reconoce(la|lo)|reconocer(la|lo))\b/.test(t)) return { tipo: 'quien' };
+  m = new RegExp(`\\b(?:reconoce(?:s)?|reconocer|(?:aprende(?:te)?|recuerda|guarda|memoriza) la cara de)\\s+(?:(?:a|al)\\s+)?(?:mi (${RE_PARENTESCO})\\b,?\\s*)?`).exec(t);
+  if (m) {
+    const desde = m.index + m[0].length;
+    let parentesco: string | undefined = m[1] ? PARENTESCOS[m[1]] : undefined;
+    let hasta = original.length;
+    const despues = new RegExp(`[,\\s]+mi (${RE_PARENTESCO})\\b`).exec(t.slice(desde));
+    if (despues) {
+      parentesco = parentesco || PARENTESCOS[despues[1]];
+      hasta = desde + despues.index;
+    }
+    const nombre = nombreDe(original.slice(0, hasta), desde);
+    // El nombre con mayúscula (como lo escribe el reconocedor de voz): «reconoce a la gente» no es un nombre.
+    const conNombre = !!nombre && /^[A-ZÁÉÍÓÚÑ]/.test(nombre) && esNombreDicho(nombre);
+    if (conNombre || parentesco) return { tipo: 'reconocer', ...(conNombre ? { nombre } : {}), ...(parentesco ? { parentesco } : {}) };
+  }
+  if (/\b(aprende(te)?|recuerda|guarda|memoriza) (su|esta) cara\b/.test(t)) return { tipo: 'reconocer' };
+  const acomp =
+    new RegExp(`\\b(?:me acompana(?:n)?|esta(?:n)? (?:aqui )?conmigo|vino conmigo|viene conmigo|vinieron conmigo|aqui esta|aqui tengo a|estoy con|te presento a)\\s+(?:a\\s+)?mi (${RE_PARENTESCO})\\b`).exec(t) ||
+    new RegExp(`\\bmi (${RE_PARENTESCO}) (?:me acompana|esta (?:aqui )?conmigo|esta aqui|vino conmigo|viene conmigo)\\b`).exec(t);
+  if (acomp) {
+    const parentesco = PARENTESCOS[acomp[1]];
+    // «Me acompaña mi hija Bea» / «… mi hija, que se llama Bea»: con el nombre dicho.
+    const fin = acomp.index + acomp[0].length;
+    const tras = /^[,\s]+(?:que se llama |se llama )?/.exec(t.slice(fin));
+    const nombre = tras ? nombreDicho(original, fin + tras[0].length) : '';
+    // Con «se llama» es un nombre seguro; si no, solo con mayúscula («… mi hija hoy» no es «Hoy»).
+    const conNombre = !!nombre && (/llama/.test(tras?.[0] || '') || /^[A-ZÁÉÍÓÚÑ]/.test(original.slice(fin + (tras ? tras[0].length : 0)).trim()));
+    return { tipo: 'acompanante', parentesco, ...(conNombre ? { nombre } : {}) };
+  }
   return null;
 }
 
-/** La respuesta a «¿te puedo recordar?». null: no dijo ni sí ni no (se toma como no). */
+/* ── aprender una cara que no conozco, por voz (José, 6-oct) ───────────────────────────────── */
+
+/**
+ * Lo que espera el nombre después de «veo a alguien que todavía no conozco, ¿cómo se llama?». Lo contesta la dueña (la
+ * mesa lo pasa por «¿quién habla?»); después la persona misma tiene que decir «sí» (Presentacion): sin eso no se guarda.
+ */
+export const ESPERA_NOMBRE_MS = 45_000;
+
+/**
+ * `soloNueva`: la dueña no tiene su cara guardada y a la vista hay UNA cara sin nombre, que puede ser la suya (revisión
+ * del 6-oct: «me acompaña mi hija» con la hija fuera de cuadro guardaba a la dueña como su hija). No se presenta a nadie
+ * hasta que la dueña confirme que esa cara es la persona nueva; `nombre`: el que dijo, esperando ese «sí».
+ */
+export type OfertaPendiente = { parentesco?: string; soloNueva?: boolean; nombre?: string };
+
+export class OfertaAprender {
+  private o: (OfertaPendiente & { hasta: number }) | null = null;
+  constructor(private reloj: () => number = Date.now) {}
+  empezar(parentesco?: string, extra: { soloNueva?: boolean; nombre?: string } = {}) {
+    this.o = {
+      ...(parentesco ? { parentesco } : {}),
+      ...(extra.soloNueva ? { soloNueva: true } : {}),
+      ...(extra.nombre ? { nombre: extra.nombre } : {}),
+      hasta: this.reloj() + ESPERA_NOMBRE_MS,
+    };
+  }
+  /** La oferta que espera respuesta (null si no hay o venció). */
+  pendiente(): OfertaPendiente | null {
+    if (!this.o) return null;
+    if (this.reloj() > this.o.hasta) {
+      this.o = null;
+      return null;
+    }
+    const { hasta: _hasta, ...resto } = this.o;
+    return resto;
+  }
+  terminar() {
+    this.o = null;
+  }
+}
+
+/**
+ * Palabras que no son un nombre aunque se digan solas (revisión del 6-oct: la espera del nombre tomaba «qué hora es» →
+ * «Hora», «esa» → «Esa», «la niña» → «Niña», «ahorita no» → «Ahorita», «olvida a Bea» → «Olvida»). Pronombres,
+ * artículos, personas sin nombre («niña», «mamá»…), adverbios, saludos, muletillas, verbos y órdenes; los parentescos,
+ * aparte (PARENTESCOS). Ante la duda, no es un nombre.
+ */
+const NO_NOMBRES = new Set(
+  [
+    // pronombres, demostrativos, artículos, preposiciones y conjunciones
+    'yo tu te ti el ella ellos ellas usted ustedes nosotros nosotras vos me se le lo la les los nos mi mis tus su sus esto este esta estos estas eso ese esa esos esas aquel aquella aquello aquellos aquellas alguien nadie nada todo toda todos todas otro otra otros otras uno una unos unas un al del de a en con sin sobre entre hasta desde por para y e o u ni pero sino que porque como cuando donde quien quienes cual cuales cuanto cuanta si no tambien tampoco',
+    // personas sin nombre
+    'nina nino ninas ninos nena nene bebe bebita bebito chica chico chicas chicos muchacha muchacho chamaca chamaco cipota cipote persona personas gente senor senora senorita senores mami papi mamita papito hombre mujer joven jovencita amiguita amiguito familia invitado invitada visita',
+    // adverbios, tiempo y lugar
+    'hoy ayer manana ahora ahorita luego despues antes ya aqui alli ahi aca alla bien mal muy mas menos casi siempre nunca jamas todavia aun tarde temprano rapido pronto quiza quizas tal vez igual asi entonces solo nomas apenas mismo misma',
+    // saludos, cortesía, muletillas y respuestas
+    'hola adios chao chau bye hello hi hey buenas buenos buena bueno noches dias tardes gracias porfa favor perdon disculpa disculpe claro vale ok okay listo dale va sale perfecto exacto cierto verdad seguro sip nop yes nope sure thanks please ah eh oh uh mmm hmm aja ey oye pues osea',
+    // verbos y órdenes
+    'apaga apagar enciende encender prende prender para parar calla callar callate silencio stop alto espera esperar sigue seguir olvida olvidar olvidate borra borrar mira mirar mirame oir escucha escuchame ven vete deja dejar dejalo pon poner quita quitar abre abrir cierra cerrar busca buscar llama llamar llamame cuelga colgar manda mandar envia enviar lee leer dime di dame haz hacer ayuda ayudame muestra muestrame canta cantar cuenta contar repite cancela cancelar sube baja voltea cambia despierta duerme descansa tengo tiene tienes es son soy eres esta estan estoy hay fue era ser estar quiero quieres puedo puedes sabes se creo pienso vamos voy vas',
+    // cosas de la mesa
+    'hora dia fecha tiempo clima camara foto cara caras voz nombre',
+  ]
+    .join(' ')
+    .split(' ')
+);
+/** Títulos que solo valen delante de un nombre («Don Pedro»), no solos. */
+const TITULOS = new Set('don dona doctor doctora dr dra profe profesor profesora ingeniero ingeniera licenciado licenciada'.split(' '));
+const PALABRA_NOMBRE = /^[A-Za-zÁÉÍÓÚÑÜáéíóúñü][A-Za-zÁÉÍÓÚÑÜáéíóúñü'-]{1,24}$/;
+
+/** ¿Esta palabra puede ser (parte de) un nombre propio? */
+export function pareceNombre(w: string): boolean {
+  const k = sinTildes(w);
+  if (!PALABRA_NOMBRE.test(w) || NO_NOMBRES.has(k) || TITULOS.has(k) || esParentesco(w)) return false;
+  // «Cállate», «dímelo», «olvídalo»: una orden con el pronombre pegado (lleva tilde), no un nombre.
+  if (/[áéíóú]/i.test(w) && k.length >= 5 && /(te|me|lo|nos)$/.test(k)) return false;
+  return true;
+}
+
+/** ¿Lo dicho tras «te presento a…» es un nombre? (la primera palabra, o un título y un nombre: «Don Pedro»). */
+function esNombreDicho(nombre: string): boolean {
+  const [a, b] = nombre.split(/\s+/);
+  if (!a) return false;
+  if (TITULOS.has(sinTildes(a))) return !!b && pareceNombre(b);
+  return pareceNombre(a);
+}
+
+/** Hasta 3 palabras de nombre desde `desde` (sin artículos, «mi», parentescos ni muletillas delante). '' si no hay. */
+function nombreDicho(original: string, desde: number): string {
+  const palabras = original
+    .slice(desde)
+    .replace(/[.,;:!?¿¡"«»]/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  const out: string[] = [];
+  for (const w of palabras) {
+    const k = sinTildes(w);
+    if (!out.length && (/^(a|al|la|el|mi|es|se|llama|que|pues)$/.test(k) || esParentesco(w))) continue;
+    if (!pareceNombre(w)) break;
+    out.push(w.charAt(0).toUpperCase() + w.slice(1));
+    if (out.length === 3) break;
+  }
+  return out.join(' ').slice(0, 60);
+}
+
+/** Las palabras de un nombre al principio de `palabras`: 1–2 con forma de nombre (o un título y uno o dos). [] si no. */
+function nombreAlInicio(palabras: string[]): string[] {
+  const out: string[] = [];
+  let i = 0;
+  let max = 2;
+  if (palabras[0] && TITULOS.has(sinTildes(palabras[0]))) {
+    if (!palabras[1] || !pareceNombre(palabras[1])) return [];
+    out.push(palabras[i++]);
+    max = 3;
+  }
+  while (i < palabras.length && out.length < max && pareceNombre(palabras[i])) out.push(palabras[i++]);
+  return out;
+}
+const conMayuscula = (ws: string[]) =>
+  ws
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ')
+    .slice(0, 60);
+
+export type RespuestaNombre = { tipo: 'nombre'; nombre: string; parentesco?: string } | { tipo: 'no' } | { tipo: 'si' };
+
+/** Muletillas que pueden ir delante de la respuesta («sí, se llama Bea», «pues Bea»). */
+const RE_MULETILLA = /^(?:(?:pues|bueno|si|claro|ah|eh|mira|oye|ok|okay|dale|va|ya) )+/;
+/** «Se llama…», «su nombre es…», «llámala…» (con «ella», «él» o «mi hija» delante). */
+const RE_SE_LLAMA = new RegExp(`^(?:(?:ella|el) |mi (${RE_PARENTESCO}) )?(?:se llama|su nombre es|llamala|llamalo) `);
+/** «Es Bea», «es mi hija Bea», «ella es Bea»: «es» al inicio. */
+const RE_ES = /^(?:(?:ella|el|esta|este|esa|ese) )?es /;
+/** Sin signos y con un solo espacio entre palabras (las dos formas, la dicha y la sin tildes, quedan palabra por palabra). */
+const limpia = (t: string) =>
+  t
+    .replace(/[.,;:!?¿¡"«»]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+/** ¿La respuesta trae el nombre con su marca («se llama Bea», «es Bea»)? A esa no la interrumpe una orden. */
+export function nombreConMarca(texto: string): boolean {
+  const resto = `${sinTildes(limpia(String(texto || '')))} `.replace(RE_MULETILLA, '');
+  return RE_SE_LLAMA.test(resto) || RE_ES.test(resto);
+}
+
+/**
+ * La respuesta de la dueña a «¿cómo se llama?», ESTRICTA (revisión del 6-oct): solo «se llama Bea» / «su nombre es
+ * Bea», «es Bea» / «es mi hija Bea» al inicio, o un nombre propio solo (1–2 palabras con forma de nombre: «Bea», «Bea
+ * María», «Bea, mi hija»). «No», «ahorita no», «mejor no»: no se aprende. Un «sí» sin nombre: hay que volver a
+ * preguntar. null: no contestó eso (una orden, una pregunta, otra frase: la oferta se suelta y la frase sigue su camino).
+ * Ante la duda, no es un nombre.
+ */
+export function nombreDeRespuesta(texto: string): RespuestaNombre | null {
+  const o = limpia(String(texto || ''));
+  const t = sinTildes(o);
+  if (!t) return null;
+  const pal = o.split(' ');
+  const k = t.split(' ');
+  const mul = RE_MULETILLA.exec(`${t} `);
+  const desde = mul ? mul[0].trim().split(' ').length : 0;
+  const resto = `${k.slice(desde).join(' ')} `;
+  /** El nombre desde la palabra `i` («mi hija» delante se salta) y las palabras que quedan después. */
+  const desdePalabra = (i: number) => {
+    let parentesco: string | undefined;
+    if (k[i] === 'mi' && k[i + 1] && esParentesco(k[i + 1])) {
+      parentesco = PARENTESCOS[k[i + 1]];
+      i += 2;
+    }
+    const n = nombreAlInicio(pal.slice(i));
+    return { n, parentesco, tras: k.slice(i + n.length) };
+  };
+  const parentescoTras = (tras: string[]) => (tras[0] === 'mi' && tras[1] && esParentesco(tras[1]) ? PARENTESCOS[tras[1]] : undefined);
+  const marca = RE_SE_LLAMA.exec(resto) || RE_ES.exec(resto);
+  if (marca) {
+    const r = desdePalabra(desde + marca[0].trim().split(' ').length);
+    const parentesco = (marca[1] ? PARENTESCOS[marca[1]] : undefined) || r.parentesco || parentescoTras(r.tras);
+    // Lo que siga al nombre no importa, salvo un «no» («se llama… no, mejor no»).
+    if (r.n.length && !r.tras.includes('no')) return { tipo: 'nombre', nombre: conMayuscula(r.n), ...(parentesco ? { parentesco } : {}) };
+  }
+  // «No», «ahorita no», «mejor no», «no, gracias»: una frase corta con un «no».
+  if (k.length - desde <= 5 && k.slice(desde).includes('no')) return { tipo: 'no' };
+  if (/^(dejalo|olvidalo|luego|despues|en otro momento|otro dia|ninguno|ninguna) /.test(resto)) return { tipo: 'no' };
+  if (!marca && desde < k.length) {
+    // El nombre solo: la frase entera es el nombre (1–2 palabras), o el nombre y «mi hija» detrás.
+    const r = desdePalabra(desde);
+    const parentesco = r.parentesco || parentescoTras(r.tras);
+    if (r.n.length && (!r.tras.length || (parentesco && r.tras.length === 2))) return { tipo: 'nombre', nombre: conMayuscula(r.n), ...(parentesco ? { parentesco } : {}) };
+  }
+  if (/^(si|sip|claro|dale|va|ok|okay|de acuerdo|esta bien|por favor|yes|sure)( |$)/.test(t) && k.length <= 4) return { tipo: 'si' };
+  return null;
+}
+
+/** ¿La frase de la mesa ofrece aprender una cara? (la dice la mesa o el cerebro: «¿cómo se llama? … la recuerdo»). */
+export function ofreceAprender(texto: string): boolean {
+  const t = sinTildes(String(texto || ''));
+  return /\bcomo se llama\b|\bwhat'?s (their|his|her) name\b/.test(t) && /\b(la|lo|te|le) recuerdo\b|\baprendo su cara\b|\bremember\b|\blearn (their|his|her) face\b/.test(t);
+}
+
+/** Lo que dice la mesa al ver a alguien que no conoce: la verdad y la oferta de aprenderlo (con su «sí» después). */
+export function fraseOfertaAprender(parentesco?: string, en = false): string {
+  if (en) return "I see someone I don't know yet. What's their name? If you want, I'll learn their face and remember it.";
+  return `Veo a alguien que todavía no conozco. ¿Cómo se llama${parentesco ? ` tu ${parentesco}` : ''}? Si quieres, aprendo su cara y la recuerdo.`;
+}
+
+/**
+ * Caras sin nombre a la vista y la dueña SIN su cara guardada (revisión del 6-oct): una de esas caras puede ser la suya.
+ * Con dos o más, no hay cómo saber cuál es la nueva: no se ofrece nada (`espera` false). Con una, se pide que confirme que
+ * esa cara es la persona nueva, sin ella en cuadro (`espera` true: OfertaAprender con `soloNueva`); con el nombre ya dicho,
+ * solo el «sí».
+ */
+export function ofertaSinDuena(sinNombre: number, p: { parentesco?: string; nombre?: string } = {}, en = false): { texto: string; espera: boolean } {
+  const quien = p.nombre || (p.parentesco ? (en ? `your ${p.parentesco}` : `tu ${p.parentesco}`) : en ? 'the new person' : 'la persona nueva');
+  if (sinNombre >= 2)
+    return {
+      texto: en
+        ? `I see faces I don't know, but I don't know you yet either, so I can't tell which one is ${quien}. First say “get to know me”, or have only ${quien} in front of the camera.`
+        : `Veo caras que no conozco, pero a ti todavía no te conozco, así que no sé cuál es ${p.nombre ? `la de ${p.nombre}` : quien}. Primero dime «conóceme», o que quede solo ${quien} frente a la cámara.`,
+      espera: false,
+    };
+  const base = en ? "I see a face I don't know, but I don't know you yet either: it could be yours." : 'Veo una cara que no conozco, pero a ti todavía no te conozco: puede ser la tuya.';
+  if (p.nombre)
+    return {
+      texto: en ? `${base} Is the only face in front of the camera ${p.nombre}'s, without you? Say “yes”.` : `${base} ¿La única cara frente a la cámara es la de ${p.nombre}, sin ti? Dime «sí».`,
+      espera: true,
+    };
+  return {
+    texto: en
+      ? `${base} If the one alone in front of the camera is ${quien}, without you, say “yes” and their name; if it's you, say “get to know me”.`
+      : `${base} Si la que está sola frente a la cámara es ${quien}, sin ti, dime «sí» y su nombre; si eres tú, di «conóceme».`,
+    espera: true,
+  };
+}
+
+type Quien = Pick<Reconocida, 'nombre' | 'relacion' | 'parentesco'>;
+
+/**
+ * «¿Quién está conmigo?», «¿quién es ella?»: los nombres que el motor de caras confirmó y, si hay alguien sin nombre, la
+ * verdad («alguien que todavía no conozco») con la oferta de aprenderlo. `ofrecer`: la mesa queda esperando el nombre.
+ */
+export function respuestaQuien(p: { r: Quien[]; sinNombre: number }, en = false): { texto: string; ofrecer: boolean } {
+  const sin = Math.max(0, p.sinNombre || 0);
+  if (!p.r.length && !sin) return { texto: en ? 'I don’t see anyone in front of the camera.' : 'No veo a nadie frente a la cámara.', ofrecer: false };
+  if (!p.r.length) return { texto: fraseOfertaAprender(undefined, en), ofrecer: true };
+  const quien = (x: Quien) =>
+    x.relacion === 'yo' ? (en ? `${x.nombre}: that’s you` : `${x.nombre}: eres tú`) : x.parentesco ? (en ? `${x.nombre}, your ${x.parentesco}` : `${x.nombre}, tu ${x.parentesco}`) : x.nombre;
+  const base = `${en ? 'I see' : 'Veo a'} ${p.r.map(quien).join(', ')}`;
+  if (!sin) return { texto: `${base}.`, ofrecer: false };
+  const oferta = en ? " What's their name? If you want, I'll learn their face and remember it." : ' ¿Cómo se llama? Si quieres, aprendo su cara y la recuerdo.';
+  return { texto: `${base}, ${en ? 'and someone I don’t know yet.' : 'y a alguien que todavía no conozco.'}${oferta}`, ofrecer: true };
+}
+
+/**
+ * La respuesta a «¿te puedo recordar?». null: no dijo ni sí ni no (se toma como no). Un «sí» con un «pero», un «no» o un
+ * «espera» detrás no es un «sí» («sí, pero no», «sí… no sé», «sí, espera»: revisión del 6-oct); «recuérdame» solo como
+ * respuesta entera («recuérdame lo del banco» es otra cosa).
+ */
 export function esConsentimiento(texto: string): 'si' | 'no' | null {
-  const t = sinTildes(String(texto || '')).trim();
-  if (/^(no|nop|mejor no|no gracias|prefiero que no|no quiero)\b/.test(t) || /\bno me (recuerdes|guardes)\b/.test(t)) return 'no';
-  if (/^(si|sip|claro|por supuesto|dale|va|ok|okay|de acuerdo|esta bien|acepto|puedes|yes|sure)\b/.test(t) || /\b(si,? (puedes|claro)|puedes recordarme|recuerdame)\b/.test(t)) return 'si';
+  const t = sinTildes(limpia(String(texto || '')));
+  if (/^(no|nop|nel|mejor no|no gracias|prefiero que no|no quiero)\b/.test(t) || /\bno me (recuerdes|guardes)\b/.test(t) || /\b(claro|por supuesto) que no\b/.test(t)) return 'no';
+  if (/\b(no|pero|aunque|espera|mejor|luego|despues|todavia|nunca|jamas|otro dia|manana)\b/.test(t) || t.split(' ').length > 8) return null;
+  if (/^(si|sip|claro|por supuesto|dale|va|ok|okay|de acuerdo|esta bien|acepto|puedes|yes|sure)\b/.test(t)) return 'si';
+  if (/^(si )?(puedes recordarme|recuerdame)( por favor| porfa)?$/.test(t)) return 'si';
   return null;
 }
 

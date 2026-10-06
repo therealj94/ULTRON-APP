@@ -32,6 +32,14 @@ export function pedidoLocalPrivado(cmd: string): boolean {
   return !!pedidoDeCaras(cmd);
 }
 
+/**
+ * Lo que, negado a un invitado, no se contesta con «eso es de la dueña» sino que va al servidor (que contesta en modo
+ * invitado): «me acompaña mi hija» es charla; para un invitado no ofrece aprender ninguna cara.
+ */
+export function negadoVaAlCerebro(cmd: string): boolean {
+  return pedidoDeCaras(cmd)?.tipo === 'acompanante';
+}
+
 export type DecisionLocal = { permitido: true } | { permitido: false; quienHabla: QuienHablaTurno };
 
 /**

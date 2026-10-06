@@ -107,7 +107,7 @@ export function podarIntentos(intentos: Map<number, IntentoPista>, vivas: Pista[
 }
 
 /** Lo que pasó con los recortes de UNA pista mientras no tuvo nombre (para la miga de «sin nombre»). */
-type CuentaPista = { analizados: number; sinCara: number; noSe: number; mejorD: number };
+type CuentaPista = { analizados: number; sinCara: number; noSe: number; mejorD: number; reconocidos: number; ajenos: number };
 
 /**
  * Por qué no sale el nombre: cuántos recortes se analizaron de esa pista, en cuántos el motor no encontró la cara y
@@ -117,22 +117,31 @@ type CuentaPista = { analizados: number; sinCara: number; noSe: number; mejorD: 
 export class DiagnosticoReconocer {
   private cuentas = new Map<number, CuentaPista>();
 
-  analizado(pista: number, r: { cara: boolean; reconocida: boolean; distancia?: number }) {
-    const c = this.cuentas.get(pista) || { analizados: 0, sinCara: 0, noSe: 0, mejorD: Infinity };
+  /** `ajeno`: el recorte salió con el nombre que ya tenía OTRA cara a la vista (seguimiento.ts votar: no se le dio). */
+  analizado(pista: number, r: { cara: boolean; reconocida: boolean; distancia?: number; ajeno?: boolean }) {
+    const c = this.cuentas.get(pista) || { analizados: 0, sinCara: 0, noSe: 0, mejorD: Infinity, reconocidos: 0, ajenos: 0 };
     c.analizados += 1;
     if (!r.cara) c.sinCara += 1;
     else if (!r.reconocida) {
       c.noSe += 1;
       if (typeof r.distancia === 'number' && r.distancia < c.mejorD) c.mejorD = r.distancia;
+    } else {
+      c.reconocidos += 1;
+      if (r.ajeno) c.ajenos += 1;
     }
     this.cuentas.set(pista, c);
   }
 
+  /**
+   * José, 6-oct: «9 recortes: 4 sin cara, 0 "no sé"» no decía qué pasó con los otros 5 (con nombre, pero la pista seguía
+   * sin él). Ahora la miga los cuenta, y cuántos daban el nombre de OTRA cara a la vista (dos personas, el mismo nombre).
+   */
   linea(pista: number, umbral: number): string {
     const c = this.cuentas.get(pista);
     if (!c) return 'ningún recorte analizado';
     const d = Number.isFinite(c.mejorD) ? ` (la más parecida a ${c.mejorD.toFixed(2)}; umbral ${umbral.toFixed(2)})` : '';
-    return `${c.analizados} recortes: ${c.sinCara} sin cara, ${c.noSe} «no sé»${d}`;
+    const ajenos = c.ajenos ? ` (${c.ajenos} con el nombre de otra cara a la vista)` : '';
+    return `${c.analizados} recortes: ${c.sinCara} sin cara, ${c.noSe} «no sé»${d}, ${c.reconocidos} con nombre${ajenos}`;
   }
 
   /** Las pistas que ya no se ven se olvidan. */
