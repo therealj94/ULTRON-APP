@@ -113,10 +113,10 @@ import {
   vistaMision,
   type MotorNodo,
 } from './server/computadora';
-import { avisosDeEnvio, borradorCorreoPorIntento, borradorDe, correrCorreoConEstado, editarBorradorCorreo, montarRutasCorreo, respuestaAlBorrador } from './server/correo';
+import { apartadosCorreoDe, avisosDeEnvio, borradorCorreoPorIntento, borradorDe, correrCorreoConEstado, editarBorradorCorreo, montarRutasCorreo, respuestaAlBorrador } from './server/correo';
 import { olvidarEnPantallaDeConversacion } from './server/decision-en-pantalla';
 import { accionTareaPorId, bloqueTarea, correrTareaConEstado, precargarTareas, resolverTareaEnCurso, tareaDe, tareasDePersona } from './lib/tarea-en-curso';
-import { borradorWhatsappDe, borradorWhatsappPorIntento, correrWhatsappConEstado, destinoWhatsapp, editarBorradorWhatsapp, montarRutasWhatsapp, whatsappDisponible, whatsappOfrecido, whatsappPermitido } from './server/whatsapp';
+import { apartadosWhatsappDe, borradorWhatsappDe, borradorWhatsappPorIntento, correrWhatsappConEstado, destinoWhatsapp, editarBorradorWhatsapp, montarRutasWhatsapp, whatsappDisponible, whatsappOfrecido, whatsappPermitidoTurno } from './server/whatsapp';
 import { accionIniciativa, bloqueIniciativaTurno, componerIniciativa, correrMisionTurnoConEstado, duenoMisiones } from './server/iniciativa';
 import { contadoresProductivos } from './server/fuentes-iniciativa';
 import { bloquesPersonales, precargarVista, vistaAutorizada, vistaDeHerramientas } from './server/contexto-turno';
@@ -139,6 +139,7 @@ import { construirMensajes, extraerPython } from './lib/qwen';
 import { computadoraDisponible, correoDisponible, correrBucleHarness, extraerPedidoHerramienta, incierto, MINIMO_HERRAMIENTA_MS, quitarLineaPedido, resolverPedidoConEstado, type EstadoRespuesta, type PasoHarness, type ResultadoHerramienta, type VueltaHarness } from './lib/harness';
 import { accionConBorrador, corregirPromesaSinHerramienta, cumplirLoDicho, debeCorregirSinHerramienta, duroDeVoz, herramientasDelTurno, lineaDeHerramienta, lineaRespuestaHablada, notaDeCumplir, pasoDeLectura, pasoSinTopeDeVoz, preguntaFinal, prometeSinHacer, recorteDeVoz, reglasDeManos, topeConLectura, topeDeVoz, topeTrasPaso, vozCompletaDelTurno, vozRecortada, type CumplirLoDicho, type ManosDelTurno } from './lib/cerebro-manos';
 import { lineaTiemposTurno, type MedidaTurno } from './lib/tiempos-turno';
+import { reglasAppDelTurno } from './lib/prompt-voz';
 import { correrCarteraConEstado } from './lib/cartera';
 import { notaDeVoz, pideNotaDeVoz } from './lib/voz';
 import { iniciarCentinela } from './lib/centinela';
@@ -2685,6 +2686,17 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   const clasPedida = clasificar(message, 'ultron', { voz });
   const vistaPedida = correoApp ? precargarVista(correoApp).catch(() => undefined) : null;
   const tareasPedidas = correoApp ? precargarTareas(correoApp).catch(() => undefined) : null;
+  /*
+   * Su WhatsApp (¿cuenta su borrador entre lo que espera su «sí»?, ¿se le ofrece la herramienta?) también arranca YA
+   * (revisión del 6-oct: «preparado» 9 → 24 ms de mediana, máximo 721, por esperar la base de cuentas en medio del
+   * turno). Con lo ya sabido de la suspensión no espera a nadie (server/whatsapp.ts whatsappPermitidoTurno); mandar
+   * vuelve a mirar antes de que salga nada.
+   */
+  const comunidadTurno = !!correoApp && body?.sesion?.comunidad === true;
+  const whatsappPedido = correoApp ? whatsappPermitidoTurno(correoApp, comunidadTurno ? { comunidad: true } : {}).catch(() => false) : null;
+  const ofrecidoPedido = correoApp ? whatsappOfrecido(correoApp, 400, comunidadTurno ? { comunidad: true } : {}).catch(() => false) : null;
+  // Quién habla por la voz (lib/voces-miembro.ts: la escena o el campo aparte, con las voces guardadas de la cuenta).
+  const quienHablaPedida = reglaQuienHablaDeTurno({ escena: body?.escena, quienHabla: body?.quienHabla, origen: body?.origen, sesion: body?.sesion }).catch(() => null);
   await aTiempoParaVoz(voz, 'memoria', cargarMemoria().then(() => undefined), undefined);
   /*
    * Junta o miembro (server/nivel.ts). Lo pone el servidor en el cuerpo (cuerpoTurnoHttp, la voz,
@@ -2835,8 +2847,9 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
    */
   const appPreguntada = appEsperando && appEsperando.que !== 'borrador' ? appEsperando : null;
   // ¿Tiene su WhatsApp aquí? (no suspendida; revisión del 5-oct). La marca firmada de comunidad, la de la sesión del turno.
-  const comunidadTurno = !!correoApp && duenoComputadora === correoApp && body?.sesion?.comunidad === true;
-  const whatsappTurno = !!duenoComputadora && (await whatsappPermitido(duenoComputadora, comunidadTurno ? { comunidad: true } : {}));
+  // Con la cuenta del teléfono, ya va en camino desde el principio del turno (whatsappPedido).
+  const whatsappTurno =
+    !!duenoComputadora && (await (whatsappPedido && duenoComputadora === correoApp ? whatsappPedido : whatsappPermitidoTurno(duenoComputadora, comunidadTurno ? { comunidad: true } : {})));
   const esperabaSi =
     !!appPreguntada ||
     (!!duenoComputadora &&
@@ -3124,7 +3137,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     // Las voces (mobile/src/voces): si la voz dice que quien pide NO es la dueña, lo privado no se le lee. Sale de la
     // escena o del campo aparte `quienHabla` (solo de la app con sesión y con una voz guardada de ESA cuenta): una
     // escena larga ya no se come la regla. Solo agrega cuidado.
-    const quienHabla = await reglaQuienHablaDeTurno({ escena, quienHabla: body?.quienHabla, origen: body?.origen, sesion: body?.sesion });
+    const quienHabla = await quienHablaPedida;
     if (quienHabla) hechos.push(quienHabla);
     const image = body?.image;
     // Lo que la cámara de la app ya vio con orden (/api/vision/analyze modo estructurado): el hecho
@@ -3389,7 +3402,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   // «piensa paso a paso» va en el mensaje del turno cuando la pregunta lo pide.
   const userTurno = mensajeHilo || message;
   // Su WhatsApp: a quien lo tiene vinculado aquí (cada cuenta el suyo; a los dueños, como siempre). Con tope corto.
-  const conWhatsapp = !!duenoComputadora && (await whatsappOfrecido(duenoComputadora, 400, comunidadTurno ? { comunidad: true } : {}));
+  const conWhatsapp = !!duenoComputadora && (await (ofrecidoPedido && duenoComputadora === correoApp ? ofrecidoPedido : whatsappOfrecido(duenoComputadora, 400, comunidadTurno ? { comunidad: true } : {})));
   const compuesto = construirMensajes({ personalidad: personalidadSistema, user: userTurno, canal, historial: hilo, nivel, harness: true, cot: false, whatsapp: conWhatsapp, sesion: !!duenoComputadora });
   // También en las tareas de código: el system ya no lo lleva (cot: false), así que va siempre aquí.
   const cotTurno = requiereCot(userTurno);
@@ -3414,8 +3427,20 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     triaje: !!duenoComputadora && conWhatsapp,
     investigar: !!duenoComputadora && investigacionDisponible(),
   };
-  const reglasAppManos = [manosAqui, menuAqui, reglasDeManos(idiomaManos)].filter(Boolean).join('\n');
+  // Hablando (revisión del 6-oct, lib/prompt-voz.ts): la ficha de lo que ofrece y el menú de la app solo si los pide;
+  // las reglas de MANOS (el «sí» antes de mandar, nunca decir que salió sin el resultado) van siempre. Bedrock no
+  // reutiliza lo leído, así que esto no le cuesta nada al turno siguiente; el system del nodo no cambia.
+  const reglasAppManos = reglasAppDelTurno({
+    voz: compacto,
+    manosAqui,
+    menuAqui,
+    reglasManos: reglasDeManos(idiomaManos),
+    mensaje: message,
+    anterior: [...hilo].reverse().find((m) => m.role === 'user')?.content,
+  });
   const fijoManos = piezasDelTurno({ ...argsPiezas, reglasApp: reglasAppManos }).fijo;
+  // En la voz, sin el «piensa paso a paso»: son dos o tres frases dichas en voz alta (los avisos de seguridad, sí).
+  const contextoManos = compacto ? [bloqueAvisos, piezas.contexto].filter(Boolean).join('\n\n') : contexto;
   const systemManos =
     body?.origen === 'windows'
       ? ''
@@ -3441,6 +3466,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     propuestaTaller,
     system,
     contexto,
+    contextoManos,
     systemManos,
     manosTurno,
     // Su espacio en el nodo: lo ya leído de esta persona está ahí (lib/espacio-nodo.ts).
@@ -3672,6 +3698,11 @@ async function calentarCerebroYa(correo: string): Promise<string> {
     if (r?.ok) duenoEspacio.set(espacio, k);
   });
   return 'precalentando';
+}
+
+/** Los caracteres de un pedido al modelo (system y mensajes), para la línea del turno. */
+function caracteresDe(mensajes: { content: string }[]): number {
+  return mensajes.reduce((n, m) => n + String(m.content || '').length, 0);
 }
 
 /** Cómo se presenta lo que dice la persona: «Junta:» a la junta, «Miembro:» a un miembro de la comunidad. */
@@ -4248,7 +4279,7 @@ async function ordenDeApp(body: any, opciones: OpcionesTurno = {}): Promise<{ de
   // La voz reconoce a OTRA persona (no la dueña): el atajo no cumple nada de la cuenta; el turno completo pide su sí. Con el
   // campo aparte `quienHabla` (también la precaución `reciente`, revisión 7.5 M1′), igual: lo valida el turno completo.
   if (otraVozDe(body?.escena) || typeof body?.quienHabla?.id === 'string') return null;
-  if (atajoDeAppBloqueado({ dueno: correo, ambito: ambitoDelTurno(body, opciones), whatsapp: await whatsappPermitido(correo, body?.sesion?.comunidad === true ? { comunidad: true } : {}), appEspera: !!appEsperandoDe(amb), mensaje: message, contexto })) return null;
+  if (atajoDeAppBloqueado({ dueno: correo, ambito: ambitoDelTurno(body, opciones), whatsapp: await whatsappPermitidoTurno(correo, body?.sesion?.comunidad === true ? { comunidad: true } : {}), appEspera: !!appEsperandoDe(amb), mensaje: message, contexto })) return null;
   // `pendienteDe` aquí ya es solo el borrador del turno anterior: abrirTurnoApp soltó cualquier otro.
   // Lo mismo la propuesta (llamar, recordar): solo la del turno anterior puede cumplirse con un «sí».
   // En el idioma en que le hablaron: «go back» con la app en español se contesta en inglés (la
@@ -4992,6 +5023,15 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
   const vozConTope = (texto: string) => recorteDeVoz(texto, topeDelTurno).trim();
   /** Un borrador de correo o de WhatsApp espera su «sí» en esta conversación (de este turno o de uno anterior). */
   const hayBorradorPendiente = () => !!p.dueno && !!(borradorDe(p.dueno, p.ambito) || borradorWhatsappDe(p.dueno, p.ambito));
+  /**
+   * Para «prometió sin herramienta» (revisión del 6-oct): además, un apartado que espera en su ventana de decisión y el
+   * mensaje que la app tiene listo esperando su «sí» (chat_aura redactar de un turno anterior). «¿Lo envío?», «tócale Sí
+   * y sale» hablan de eso: no son promesas nuevas ni merecen una segunda vuelta al modelo (3–4,6 s en la voz).
+   */
+  const algoEsperaSuSi = () =>
+    hayBorradorPendiente() ||
+    (!!p.dueno && (apartadosCorreoDe(p.dueno, p.ambito).length > 0 || apartadosWhatsappDe(p.dueno, p.ambito).length > 0)) ||
+    (!!p.correoApp && appEsperandoDe(ambitoApp(p.correoApp, body?.aparato), p.contextoApp)?.que === 'mensaje');
   const terminar = async (texto: string, via: string, emocion: Emocion, delModelo = false, cierre: Cierre = COMPLETO, quien?: { modelo?: string; proveedor?: string }, corrioHerramienta = false) => {
     const app = await accionesDelCerebro(texto, p, delModelo);
     // El modelo contestó solo con la acción: la frase de esa acción sale también como texto (la voz
@@ -5035,6 +5075,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
   {
     const chica = await respuestaChica(p);
     if (chica) {
+      medida.proveedor = 'chico';
       // El modelo chico no conoce la app: si escribe la marca, se dice rota y no hace nada.
       const emo = extraerEmocion(neutralizarMarca(chica));
       send('emocion', { emocion: emo.emocion });
@@ -5172,12 +5213,18 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       // La re-pregunta de «prometió y no lo hizo» va después de una respuesta ya completa: si esa falla, no es corte.
       let enRepregunta = false;
       const tModelo = Date.now();
+      // El tamaño de lo que se manda, para la línea del turno (lib/tiempos-turno.ts): prompt o proveedor, se sabe cuál.
+      const pedidoManos = mensajesManos(p.systemManos, message, hechos, hilo, p.contextoManos);
+      medida.prompt = { car: caracteresDe(pedidoManos), herramientas: herramientasManos.length, herramientasCar: JSON.stringify(herramientasManos).length };
       try {
-        for await (const pieza of hablarConManos(mensajesManos(p.systemManos, message, hechos, hilo, p.contexto), herramientasManos, senal)) {
+        for await (const pieza of hablarConManos(pedidoManos, herramientasManos, senal)) {
           if ('modelo' in pieza) {
             porRapido = true;
             modeloManos = pieza.modelo;
             reg.modelo(pieza.modelo);
+            medida.proveedor = 'bedrock';
+            medida.modelo = pieza.modelo;
+            medida.respaldo = pieza.modelo !== modeloRapido();
             continue;
           }
           // max_tokens, un filtro o la ventana llena: lo dicho queda, pero no es una respuesta terminada (STREAM02).
@@ -5211,9 +5258,10 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
             disponibles: herramientasManos.map((t) => String(t.toolSpec?.name || '')),
             mensaje: message,
             anterior: [...hilo].reverse().find((m) => m.role === 'assistant')?.content,
+            borradorPendiente: algoEsperaSuSi(),
             repreguntar: () =>
               hablarConManos(
-                [...mensajesManos(p.systemManos, message, hechos, hilo, p.contexto), { role: 'assistant', content: dicho }, { role: 'user', content: notaDeCumplir(idioma) }],
+                [...pedidoManos, { role: 'assistant', content: dicho }, { role: 'user', content: notaDeCumplir(idioma) }],
                 herramientasManos,
                 senal
               ),
@@ -5257,10 +5305,16 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     }
     if (!porRapido) {
       const tNodo = Date.now();
+      const pedidoNodo = mensajesQwen(system, message, hechos, hilo, p.nivel, p.contexto);
+      medida.prompt = { car: caracteresDe(pedidoNodo) };
+      medida.proveedor = 'nodo';
+      medida.modelo = ULTRON_NODO_MODELO;
+      // El Qwen del nodo contestó porque el cerebro con manos no pudo (si se intentó).
+      medida.respaldo = usarManos;
       const r = await fetchNodo(`${ULTRON_NODO_URL}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-ultron-secreto': ULTRON_NODO_SECRETO },
-        body: JSON.stringify({ model: ULTRON_NODO_MODELO, stream: true, messages: mensajesQwen(system, message, hechos, hilo, p.nivel, p.contexto), options: { id_slot: p.espacio } }),
+        body: JSON.stringify({ model: ULTRON_NODO_MODELO, stream: true, messages: pedidoNodo, options: { id_slot: p.espacio } }),
         signal: reloj.senalCon(senal, 60000),
       });
       // Solo un pedido que el nodo aceptó deja el espacio caliente (Codex en #126): si falló, el precalentado sigue valiendo.
@@ -5420,7 +5474,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
         dichoH = nuevo;
       };
       // La vuelta del harness la escribe el mismo cerebro que pidió la herramienta (con sus manos).
-      const preguntar = porRapido ? preguntarConManos(p.systemManos, herramientasManos, opcionesManos(p.manosTurno), message, hilo, p.nivel, p.contexto, reloj.senalCon(senal)) : undefined;
+      const preguntar = porRapido ? preguntarConManos(p.systemManos, herramientasManos, opcionesManos(p.manosTurno), message, hilo, p.nivel, p.contextoManos, reloj.senalCon(senal)) : undefined;
       const tHarness = Date.now();
       const h = await bucleHarness({
         reply,
@@ -5489,9 +5543,9 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       // (MEDIO-C): con un borrador esperando su «sí» solo se perdona lo de ESE borrador («¿Lo mando?», «te lo leo»), y
       // solo cuenta una herramienta que terminó bien si es de las que cumplirían lo prometido (no el clima).
       const locales: string[] = [];
-      const borradorPendiente = hayBorradorPendiente();
+      const borradorPendiente = algoEsperaSuSi();
       if (debeCorregirSinHerramienta({ promesa, usoManos, borradorPendiente, pasos: pasosTurno, dicho: antes, mensaje: message })) {
-        const c = corregirPromesaSinHerramienta(reply, idioma === 'en' ? 'en' : 'es', { sinHerramienta: promesa?.correccion === 'local', borradorPendiente });
+        const c = corregirPromesaSinHerramienta(reply, idioma === 'en' ? 'en' : 'es', { sinHerramienta: promesa?.correccion === 'local', borradorPendiente, mensaje: message });
         if (c.cambiada) {
           reply = c.texto;
           locales.push('sin-herramienta');
