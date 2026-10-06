@@ -53,6 +53,51 @@ export function suspenderSfx(on: boolean) {
   enLlamada = on;
 }
 
+/**
+ * Un clip de voz corto por el canal de efectos (las muletillas, lib/asentir.ts): no pasa por la voz de la mesa
+ * (lib/tts), así que no cuenta como «AU-RA hablando», no pausa el micrófono, no mueve la boca ni queda en lo dicho.
+ * No depende del ajuste «Efectos de sonido» (es su voz, no un efecto), pero en una llamada no suena.
+ */
+export type ClipEfecto = { sound: Audio.Sound; ms: number };
+
+/** Carga un clip (archivo del teléfono) a `volumen`; null si no carga o no se sabe cuánto dura. */
+export async function cargarClipEfecto(uri: string, volumen: number): Promise<ClipEfecto | null> {
+  try {
+    const { sound, status } = await Audio.Sound.createAsync({ uri }, { shouldPlay: false, volume: volumen });
+    const ms = status.isLoaded ? status.durationMillis || 0 : 0;
+    if (!ms) {
+      void sound.unloadAsync().catch(() => {});
+      return null;
+    }
+    return { sound, ms };
+  } catch {
+    return null;
+  }
+}
+
+/** Lo hace sonar desde el principio. false si no puede sonar ahora (una llamada). */
+export function sonarClipEfecto(c: ClipEfecto): boolean {
+  if (enLlamada) return false;
+  void (async () => {
+    try {
+      await c.sound.setPositionAsync(0);
+      await c.sound.playAsync();
+    } catch {
+      /* */
+    }
+  })();
+  return true;
+}
+
+/** Lo calla si estaba sonando (empieza a hablar AU-RA). */
+export function callarClipEfecto(c: ClipEfecto) {
+  void c.sound.stopAsync().catch(() => {});
+}
+
+export function soltarClipEfecto(c: ClipEfecto) {
+  void c.sound.unloadAsync().catch(() => {});
+}
+
 export function playSfx(name: SfxName) {
   if (!sfxEnabled || enLlamada) return;
   const s = pool.get(name);

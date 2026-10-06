@@ -116,3 +116,4 @@ jobs:
           npx tsx pruebas/camara/nativa.prueba.mjs
           npx tsx src/lib/pruebas/entrarConClave.prueba.mjs
           sh pruebas/oido/todas.sh
+          sh pruebas/muletillas/todas.sh

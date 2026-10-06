@@ -17,9 +17,10 @@ const { configMovil, montarConfigMovil } = await import('../server/movil-config'
 const { exigirMesa, limitar } = await import('../server/seguridad');
 const { configCamaraValida, ritmoNativo } = await import('../mobile/src/lib/camaraNativa');
 const { configVozValida } = await import('../mobile/src/lib/vozNativa');
+const { asentirRemotoValido } = await import('../mobile/src/lib/asentir');
 
-test('sin variables: la cámara nueva encendida y sin ajustes (los de fábrica del teléfono); la voz en streaming encendida', () => {
-  assert.deepEqual(configMovil({}), { camaraRapida: { activa: true }, vozStream: { activa: true } });
+test('sin variables: la cámara nueva encendida y sin ajustes (los de fábrica del teléfono); la voz en streaming encendida; las muletillas permitidas', () => {
+  assert.deepEqual(configMovil({}), { camaraRapida: { activa: true }, vozStream: { activa: true }, asentir: { activo: true } });
 });
 
 test('AURA_VOZ_STREAM=0 (o no/false/off) apaga la voz en streaming para todos; no toca la cámara; el teléfono lo entiende', () => {
@@ -33,6 +34,19 @@ test('AURA_VOZ_STREAM=0 (o no/false/off) apaga la voz en streaming para todos; n
   assert.deepEqual(configVozValida(null), { activa: true }, 'servidor viejo o sin red: encendida');
   assert.deepEqual(configVozValida({ camaraRapida: { activa: false } }), { activa: true }, 'un servidor que solo sabe de la cámara no apaga la voz');
   assert.deepEqual(configVozValida({ vozStream: { activa: 'no' } }), { activa: true }, 'basura: lo de fábrica');
+});
+
+test('AURA_ASENTIR=0 apaga las muletillas para todos sin APK, y el teléfono lo entiende (y no toca la cámara)', () => {
+  for (const v of ['0', 'no', 'false', 'OFF', ' apagado ']) {
+    const r = configMovil({ AURA_ASENTIR: v });
+    assert.equal(r.asentir.activo, false, v);
+    assert.equal(asentirRemotoValido({ ...r, honesto: true }), false, v);
+    assert.equal(r.camaraRapida.activa, true);
+  }
+  for (const v of ['1', 'si', '', 'true']) assert.equal(asentirRemotoValido(configMovil({ AURA_ASENTIR: v })), true, v);
+  assert.equal(asentirRemotoValido(null), true, 'sin dato (servidor viejo, sin red): permitidas');
+  assert.equal(asentirRemotoValido({ camaraRapida: { activa: false } }), true, 'un servidor de antes de las muletillas');
+  assert.equal(asentirRemotoValido({ asentir: { activo: 'no' } }), true, 'basura: lo de fábrica');
 });
 
 test('AURA_CAMARA_RAPIDA=0 (o no/false/off) la apaga; cualquier otra cosa la deja', () => {
@@ -67,7 +81,7 @@ test('GET /api/movil/config: con la clave de mesa contesta, sin caché; sin sesi
   const con = await fetch(`${base}/api/movil/config`, { headers: { 'x-ultron-mesa': process.env.ULTRON_MESA_CLAVE! } });
   assert.equal(con.status, 200);
   assert.equal(con.headers.get('cache-control'), 'no-store');
-  assert.deepEqual(await con.json(), { camaraRapida: { activa: false }, vozStream: { activa: true }, honesto: true });
+  assert.deepEqual(await con.json(), { camaraRapida: { activa: false }, vozStream: { activa: true }, asentir: { activo: true }, honesto: true });
 });
 
 test('server.ts monta la ruta', () => {

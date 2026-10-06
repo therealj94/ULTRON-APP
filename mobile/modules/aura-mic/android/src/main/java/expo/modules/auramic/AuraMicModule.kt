@@ -22,13 +22,18 @@ import kotlin.math.sqrt
  * volumen en dBFS, para que el teléfono decida cuándo hay voz y se los vaya pasando a Scribe mientras
  * la persona habla. Nada se guarda en disco.
  *
- * Fuente: «reconocimiento» (VOICE_RECOGNITION, la que Android afina para dictado) o «llamada»
- * (VOICE_COMMUNICATION, con cancelación de eco del propio teléfono: para oír mientras suena la voz).
+ * Fuente: «reconocimiento» (VOICE_RECOGNITION, la que Android afina para dictado), «llamada»
+ * (VOICE_COMMUNICATION, con cancelación de eco del propio teléfono: para oír mientras suena la voz) o
+ * «reconocimiento_eco» (la de dictado con el AcousticEchoCanceler pegado y nada más: ni supresor de ruido
+ * ni modo llamada, que en el Samsung de José tardaba en oír). Es para las muletillas de AU-RA (el «mjm»
+ * mientras la persona habla, mobile/src/lib/asentir.ts): `ecoActivo()` dice si el cancelador quedó
+ * prendido en la grabación de ahora (en algunos teléfonos no se deja pegar a la fuente de dictado: ahí
+ * las muletillas no suenan).
  */
 class AuraMicModule : Module() {
   private var grabador: AudioRecord? = null
   private var hilo: Thread? = null
-  private var eco: AcousticEchoCanceler? = null
+  @Volatile private var eco: AcousticEchoCanceler? = null
   private var ruido: NoiseSuppressor? = null
 
   @Volatile private var vuelta = 0
@@ -39,6 +44,22 @@ class AuraMicModule : Module() {
     Events("onTrozo", "onFallo")
 
     Function("disponible") { true }
+
+    Function("ecoDisponible") {
+      try {
+        AcousticEchoCanceler.isAvailable()
+      } catch (e: Exception) {
+        false
+      }
+    }
+
+    Function("ecoActivo") {
+      try {
+        eco?.enabled == true
+      } catch (e: Exception) {
+        false
+      }
+    }
 
     AsyncFunction("empezar") { frecuencia: Int, trozoMs: Int, fuente: String ->
       empezar(frecuencia, trozoMs, fuente)
@@ -79,9 +100,14 @@ class AuraMicModule : Module() {
       sendEvent("onFallo", mapOf("motivo" to "el micrófono está ocupado"))
       return false
     }
-    if (fuente == "llamada") {
+    if (fuente == "llamada" || fuente == "reconocimiento_eco") {
       try {
         if (AcousticEchoCanceler.isAvailable()) eco = AcousticEchoCanceler.create(g.audioSessionId)?.also { it.setEnabled(true) }
+      } catch (e: Exception) {
+      }
+    }
+    if (fuente == "llamada") {
+      try {
         if (NoiseSuppressor.isAvailable()) ruido = NoiseSuppressor.create(g.audioSessionId)?.also { it.setEnabled(true) }
       } catch (e: Exception) {
       }

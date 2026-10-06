@@ -1,11 +1,22 @@
 /**
  * ASENTIR MIENTRAS LA PERSONA HABLA (mobile/src/lib/asentir.ts): cuándo un «mjm» sí, cuándo no, cuántos, y que lo
- * que se coló al micrófono no quede en su frase. Apagado por omisión hasta que el micrófono de escucha vaya con
- * cancelación de eco (ver la cabecera del módulo).
+ * que se coló al micrófono no quede en su frase. Nunca sin cancelación de eco; encendido por omisión solo en Android con
+ * micrófono crudo y cancelador de eco (ver la cabecera del módulo). La orquesta con el oído: tests/muletillas.test.ts.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { AJUSTES_ASENTIR, ASENTIR_POR_OMISION, Asentidor, debeAsentir, quitarAsentimientos, type EstadoAsentir } from '../mobile/src/lib/asentir';
+import {
+  AJUSTES_ASENTIR,
+  ASENTIR_POR_OMISION,
+  Asentidor,
+  ajusteAsentirGuardado,
+  debeAsentir,
+  decidirAsentir,
+  frasesAsentir,
+  quitarAsentimientos,
+  textoParaVoz,
+  type EstadoAsentir,
+} from '../mobile/src/lib/asentir';
 
 const base: EstadoAsentir = { activo: true, ecoCancelado: true, auraHablando: false, parcial: 'y entonces fuimos a ver lo del terreno y', hablaMs: 8000, pausaMs: 500, ultimoMs: -Infinity, enTurno: 0, ahora: 100_000 };
 
@@ -65,6 +76,53 @@ test('uno cada diez segundos, dos por turno como mucho, nunca dos iguales seguid
   hablar(3000);
   assert.deepEqual(callar(600), [], 'tras una pausa larga, el rato vuelve a empezar');
   assert.ok(AJUSTES_ASENTIR.maxPorTurno === 2 && AJUSTES_ASENTIR.separacionMs === 10_000);
+});
+
+test('con el sondeo del fin de turno: solo si quedó colgando, y el «mjm» entero tiene que acabar antes del cierre', () => {
+  assert.ok(debeAsentir({ ...base, clase: 'incompleto' }));
+  assert.ok(!debeAsentir({ ...base, clase: 'dudoso' }), 'dudosa: se cierra a los 480 ms');
+  assert.ok(!debeAsentir({ ...base, clase: 'completo' }));
+  assert.ok(debeAsentir({ ...base, cierreMs: 1100, calladoMs: 500, tramoMs: 600 }), 'acaba justo al cierre');
+  assert.ok(!debeAsentir({ ...base, cierreMs: 1100, calladoMs: 600, tramoMs: 600 }), 'terminaría encima del cierre');
+  assert.ok(!debeAsentir({ ...base, cierreMs: 1000, tramoMs: 600 }), 'sin calladoMs cuenta la pausa (500 + 600 > 1000)');
+  // El Asentidor elige la palabra que tiene clip y cabe; sin clip, ninguna.
+  const a = new Asentidor({ activo: true, ecoCancelado: true, duracion: (f) => (f === 'okey' ? 300 : null) });
+  a.oir('y entonces le conté a mi hermano lo del negocio y');
+  let t = 0;
+  for (let i = 0; i < 80; i++) a.trozo(true, (t += 100));
+  const dichas: string[] = [];
+  for (let i = 0; i < 6; i++) {
+    const f = a.trozo(false, (t += 100), { clase: 'incompleto', cierreMs: 1100 });
+    if (f) dichas.push(f);
+  }
+  assert.deepEqual(dichas, ['okey']);
+  assert.equal(a.ultimoTramoMs, 300 + AJUSTES_ASENTIR.colaMs);
+  const sinClip = new Asentidor({ activo: true, ecoCancelado: true, duracion: () => null });
+  sinClip.oir('y entonces le conté a mi hermano lo del negocio y');
+  t = 0;
+  for (let i = 0; i < 80; i++) sinClip.trozo(true, (t += 100));
+  for (let i = 0; i < 6; i++) assert.equal(sinClip.trozo(false, (t += 100)), null);
+});
+
+test('encendidas por omisión solo en Android con micrófono crudo y cancelación de eco; el servidor y la persona las apagan', () => {
+  const tel = { android: true, microfonoCrudo: true, ecoDisponible: true, ajuste: null, remoto: true };
+  assert.deepEqual(decidirAsentir(tel), { encendidas: true, porOmision: true, motivo: 'encendidas' });
+  assert.equal(decidirAsentir({ ...tel, android: false }).motivo, 'sin_microfono_crudo', 'iOS: nunca');
+  assert.equal(decidirAsentir({ ...tel, android: false, ajuste: true }).encendidas, false, 'iOS: ni eligiéndolas');
+  assert.equal(decidirAsentir({ ...tel, microfonoCrudo: false }).encendidas, false, 'APK sin el micrófono crudo');
+  assert.deepEqual(decidirAsentir({ ...tel, ecoDisponible: false, ajuste: true }), { encendidas: false, porOmision: false, motivo: 'sin_cancelacion_de_eco' });
+  assert.equal(decidirAsentir({ ...tel, remoto: false }).motivo, 'apagadas_por_el_servidor');
+  assert.equal(decidirAsentir({ ...tel, ajuste: false }).motivo, 'apagadas_por_la_persona');
+  assert.equal(ajusteAsentirGuardado('1'), true);
+  assert.equal(ajusteAsentirGuardado('0'), false);
+  assert.equal(ajusteAsentirGuardado(null), null);
+  assert.equal(ajusteAsentirGuardado('x'), null);
+});
+
+test('lo que se le pide a la voz: palabras cortas en los dos idiomas, con su punto', () => {
+  assert.deepEqual([...frasesAsentir('es')], ['mjm', 'ajá', 'ya', 'okey']);
+  assert.deepEqual([...frasesAsentir('en')], ['mhm', 'yeah', 'right', 'okay']);
+  for (const i of ['es', 'en'] as const) for (const f of frasesAsentir(i)) assert.match(textoParaVoz(f), /^[A-ZÁ][\p{L}-]{0,7}\.$/u, f);
 });
 
 test('lo que se coló al micrófono sale de su frase (solo lo que AU-RA dijo, tantas veces como lo dijo)', () => {
