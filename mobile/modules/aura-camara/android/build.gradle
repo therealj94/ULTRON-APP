@@ -1,0 +1,28 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.auracamara'
+version = '1.0.0'
+
+android {
+  namespace "expo.modules.auracamara"
+  defaultConfig {
+    versionCode 1
+    versionName '1.0.0'
+  }
+}
+
+dependencies {
+  // Las MISMAS versiones que ya van en la APK: CameraX de expo-camera ~17 (su android/build.gradle,
+  // `camerax_version`) y ML Kit de @react-native-ml-kit/face-detection 2.0.1. Así no entra una segunda
+  // copia ni Gradle tiene que elegir entre dos. Sin TFLite ni modelos propios (licencias): reconocer
+  // sigue en la WebView de face-api (src/caras/MotorCaras.tsx).
+  def camerax_version = "1.5.0-rc01"
+  implementation "androidx.camera:camera-core:${camerax_version}"
+  implementation "androidx.camera:camera-camera2:${camerax_version}"
+  implementation "androidx.camera:camera-lifecycle:${camerax_version}"
+  implementation "androidx.camera:camera-view:${camerax_version}"
+  implementation "com.google.mlkit:face-detection:16.1.7"
+}

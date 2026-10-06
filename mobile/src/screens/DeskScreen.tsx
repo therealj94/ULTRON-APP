@@ -12,7 +12,9 @@ import type { PedidoCara } from '../cara/CaraSkia';
 import { CaraSegura } from '../cara/CaraSegura';
 import { textoTarea, tareaDeHerramientas, type Tarea } from '../lib/tareas';
 import { T, SOMBRA } from '../tema';
-import { CamaraVision, DORMIDO_PERIODO_MS, SERVIDOR_CADA_MS, SERVIDOR_DORMIDO_MS, type FrameGrabber } from '../components/CamaraVision';
+import { DORMIDO_PERIODO_MS, SERVIDOR_CADA_MS, SERVIDOR_DORMIDO_MS, type FrameGrabber } from '../components/CamaraVision';
+// La cámara de la mesa: la nueva en vivo o la de fotos (components/CamaraMesa.tsx decide; mismas props).
+import { CamaraMesa } from '../components/CamaraMesa';
 import { DeskMenu } from '../components/DeskMenu';
 import type { Escena, MotorVision } from '../lib/escena';
 import type { DeskPresence, FaceState, Mode, SessionUser } from '../config';
@@ -3022,7 +3024,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       style={[styles.root, !enOrbe && { backgroundColor: esClaudio ? tema.fondo : '#000' }, enCuadro && { flexDirection: horizontal ? 'row' : 'column' }]}
     >
       {/* La cámara solo con la mesa a la vista, sin llamada y encendida a pedido (apagada por omisión). */}
-      <CamaraVision
+      <CamaraMesa
         enabled={visionOn && !!camPerm?.granted && mesaActiva && !enLlamada}
         dormido={presence === 'sleep'}
         grabRef={grabFrame}

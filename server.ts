@@ -178,6 +178,7 @@ import { estadoLaya, saludLaya } from './lib/laya';
 import { ES_ELECTRUM, ES_ULTRON, PAGINA_RAIZ, PLATAFORMA, rutaPermitida } from './lib/plataforma';
 import { manifiestoEntrega, sondearAlmacen } from './lib/build';
 import { montarRecepcion, montarRutaBuild } from './server/build-rutas';
+import { montarConfigMovil } from './server/movil-config';
 import { codigosActivos } from './server/cuentas';
 import {
   claveHiloDe,
@@ -491,6 +492,9 @@ montarRutaBuild(app, {
     ),
   almacenSalud: () => sondearAlmacen(),
 });
+
+/** Interruptores remotos de la app (la cámara en vivo del teléfono): server/movil-config.ts. */
+montarConfigMovil(app, { exigirMesa, limitar });
 
 app.get('/api/health', async (req, res) => {
   // Sin sesión: solo lo que usan los clientes (vivo o no) y con la caché de 15 s. Las direcciones de
