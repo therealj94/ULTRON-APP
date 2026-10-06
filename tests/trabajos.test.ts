@@ -1176,6 +1176,30 @@ test('revisión (G3): la versión nueva para los MISMOS destinatarios (en otro o
   }
 });
 
+test('revisión 8.5 (MENOR 1): otro correo a la MISMA persona sobre otra cosa conserva su tarjeta si su borrador sigue esperando', async () => {
+  _usarAlmacenDurable(almacenEnMemoria());
+  const yo = correo();
+  const h = arnes();
+  try {
+    const esperan = new Set(['int-factura']);
+    const a = await abrirDecisionDeBorrador(yo, 'telefono', { ...borrador('int-factura'), asunto: 'Factura de septiembre' }, (i) => esperan.has(i));
+    esperan.add('int-reunion');
+    const b = await abrirDecisionDeBorrador(yo, 'telefono', { ...borrador('int-reunion'), asunto: 'Reunión del jueves' }, (i) => i !== 'int-reunion' && esperan.has(i));
+    assert.notEqual(b!.id, a!.id, 'la factura no pierde su tarjeta: son dos correos distintos');
+    const l = await h.pedir('/api/trabajos', yo);
+    assert.equal(l.json.tareas.filter((t: any) => !t.terminal).length, 2);
+    // Una versión nueva de verdad (el borrador viejo ya no espera: correo.ts lo quitó) sí vuelve a la misma tarjeta.
+    esperan.delete('int-reunion');
+    const c = await abrirDecisionDeBorrador(yo, 'telefono', { ...borrador('int-reunion2'), asunto: 'Reunión del jueves', texto: 'Versión 2' }, (i) => i !== 'int-reunion2' && esperan.has(i));
+    assert.equal(c!.id, b!.id);
+    const l2 = await h.pedir('/api/trabajos', yo);
+    const factura = l2.json.tareas.find((t: any) => t.id === a!.id);
+    assert.ok(factura && !factura.terminal, 'la tarjeta de la factura sigue abierta');
+  } finally {
+    h.cerrar();
+  }
+});
+
 test('vistaTarea no expone el vínculo ni el dueño', () => {
   const r = registroNuevo('tk_prueba5', nueva('m-5'), T0);
   const v = vistaTarea(r, T0) as any;

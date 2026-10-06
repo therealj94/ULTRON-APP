@@ -459,9 +459,12 @@ const destinatarioDe = (b: Pick<BorradorParaDecidir, 'para'>) => trozo(Array.isA
  * ¿Esta tarea espera (o se le bloqueó) la decisión de OTRA versión del mismo mensaje: mismo canal, misma conversación,
  * mismo destinatario, otro intento? (`blocked`: venció o se quedó sin borrador; la versión nueva la revive.)
  */
-function esOtraVersionDelMismo(t: RegistroTarea, ambito: string, b: BorradorParaDecidir): boolean {
+function esOtraVersionDelMismo(t: RegistroTarea, ambito: string, b: BorradorParaDecidir, sigueEsperando?: (intento: string) => boolean): boolean {
   const d = t.decision;
   const v = d?.vinculo?.tipo === 'borrador' ? d.vinculo : null;
+  // Revisión 8.5 (MENOR 1): si el borrador de esa tarjeta sigue esperando (otro correo a la misma persona sobre otra cosa:
+  // server/correo.ts esVersionDe lo dejó entre los apartados), NO es una versión vieja: conserva su tarjeta.
+  if (v && sigueEsperando?.(v.intento)) return false;
   // Revisión independiente (G3): la misma cuenta que los borradores (server/correo.ts: los mismos destinatarios en
   // cualquier orden y sin importar mayúsculas; WhatsApp: el mismo chat, que su tarjeta dice igual).
   return !!v && (t.estado === 'awaiting_approval' || t.estado === 'blocked') && v.canal === b.canal && v.ambito === ambito && v.intento !== b.intento && destinoCanon(d!.propuesta.destinatario) === destinoCanon(destinatarioDe(b));
@@ -493,7 +496,13 @@ async function cerrarVersionesViejas(dueno: string, ids: string[]) {
  * intento). Si esa conversación tenía una tarea esperando cambios («Editar»), la nueva propuesta vuelve a
  * ESA tarea con otra versión del plan.
  */
-export async function abrirDecisionDeBorrador(duenoCorreo: string, ambito: string, b: BorradorParaDecidir): Promise<RefTarea | null> {
+export async function abrirDecisionDeBorrador(
+  duenoCorreo: string,
+  ambito: string,
+  b: BorradorParaDecidir,
+  /** ¿El borrador de ese intento sigue esperando? (server.ts lo busca en correo/WhatsApp; sin esto, por destinatario como antes). */
+  sigueEsperando?: (intento: string) => boolean
+): Promise<RefTarea | null> {
   const dueno = conCorreo(duenoCorreo);
   if (!dueno || !b.intento) return null;
   const requestId = `borrador-${b.intento}`;
@@ -526,13 +535,13 @@ export async function abrirDecisionDeBorrador(duenoCorreo: string, ambito: strin
     // «bloqueada: ya no está esperando» y la nueva); ahora la versión nueva vuelve a la tarjeta que ya tenía a la vista
     // (otra versión del plan, otra decisión: un «Aprobar» de la vieja no manda la nueva). El borrador viejo ya no espera:
     // server/correo.ts y server/whatsapp.ts lo reemplazan al armar uno al mismo destino.
-    const versiones = lista.ok ? lista.tareas.filter((t) => esOtraVersionDelMismo(t, amb, b)).sort((x, y) => y.actualizada - x.actualizada) : [];
+    const versiones = lista.ok ? lista.tareas.filter((t) => esOtraVersionDelMismo(t, amb, b, sigueEsperando)).sort((x, y) => y.actualizada - x.actualizada) : [];
     const misma = versiones[0];
     if (misma) {
       const r = await reservarPedido({ espacio: ESPACIO_PEDIDOS, dueno, requestId, propuesto: misma.id });
       if (r.ok && r.id === misma.id) {
         const c = await cambiarTarea(dueno, misma.id, (reg) =>
-          esOtraVersionDelMismo(reg, amb, b) ? { estado: 'awaiting_approval', pasoActual: 'Esperando tu decisión sobre la versión nueva', planVersion: reg.planVersion + 1, decision: decisionDeBorrador(amb, b, reg.planVersion + 1, ahora) } : null
+          esOtraVersionDelMismo(reg, amb, b, sigueEsperando) ? { estado: 'awaiting_approval', pasoActual: 'Esperando tu decisión sobre la versión nueva', planVersion: reg.planVersion + 1, decision: decisionDeBorrador(amb, b, reg.planVersion + 1, ahora) } : null
         );
         if (c.ok) {
           anotar(c.tarea);

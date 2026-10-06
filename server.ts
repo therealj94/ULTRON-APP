@@ -4006,8 +4006,8 @@ async function decisionDelBorrador(r: ResultadoHerramienta, dueno: string, ambit
   const c = borradorDe(dueno, ambito);
   const w = borradorWhatsappDe(dueno, ambito);
   // La tarjeta dice a quién va de verdad (WhatsApp: el nombre Y el número del chat) y queda atada a la huella del borrador.
-  if (c?.intento === intento) await abrirDecisionDeBorrador(dueno, ambito, { canal: 'correo', intento, para: c.para, desde: c.desde, asunto: c.asunto, texto: c.texto, vence: c.vence, huella: c.huella });
-  else if (w?.intento === intento) await abrirDecisionDeBorrador(dueno, ambito, { canal: 'whatsapp', intento, para: destinoWhatsapp(w), texto: w.texto, vence: w.vence, huella: w.huella });
+  if (c?.intento === intento) await abrirDecisionDeBorrador(dueno, ambito, { canal: 'correo', intento, para: c.para, desde: c.desde, asunto: c.asunto, texto: c.texto, vence: c.vence, huella: c.huella }, (i) => i !== intento && !!borradorCorreoPorIntento(dueno, ambito, i));
+  else if (w?.intento === intento) await abrirDecisionDeBorrador(dueno, ambito, { canal: 'whatsapp', intento, para: destinoWhatsapp(w), texto: w.texto, vence: w.vence, huella: w.huella }, (i) => i !== intento && !!borradorWhatsappPorIntento(dueno, ambito, i));
   return r;
 }
 
