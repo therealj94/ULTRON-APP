@@ -15,6 +15,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { VISTA_TURNO, VistaFresca, vistaParaTurno, type RespuestaDeVista } from '../mobile/src/lib/vistaTurno';
 import { SubidaEscena } from '../mobile/src/lib/subidaEscena';
 import { CercoCamara } from '../mobile/src/lib/cercoCamara';
@@ -81,6 +82,51 @@ test('el servidor que no contesta (el 503 de 30 s del 6-oct) no traba el turno: 
   assert.equal(despues?.vista?.escena, vista().escena, 'lo que vuelva se aplica después (Lo que vi, la vista fresca)');
 });
 
+test('revisión del 6-oct: la vista que llega tarde se guarda con la cámara y la gente de cuando se SACÓ la foto', async () => {
+  let soltar: (r: RespuestaDeVista | null) => void = () => {};
+  const tarde = new Promise<RespuestaDeVista | null>((r) => (soltar = r));
+  let ahora = { lado: 'frontal', personas: 1 };
+  const io = { ahora: Date.now, foto: async () => B64, escena: () => ({ ...ahora }), ver: () => tarde };
+  const r = await vistaParaTurno(io, 'escena', { lado: 'frontal', personas: 1, guardadas: new VistaFresca(), esperaMs: 100 });
+  assert.equal(r.tipo, 'foto');
+  if (r.tipo !== 'foto') return;
+  // Mientras el servidor miraba: cambió a la trasera y llegó alguien.
+  ahora = { lado: 'trasera', personas: 2 };
+  soltar(respuesta());
+  await r.tarde;
+  assert.deepEqual(r.alSacar, { lado: 'frontal', personas: 1 }, 'lo de la foto, no lo del momento de la respuesta');
+  // Con la del turno a tiempo, igual.
+  const ok = await vistaParaTurno({ ahora: Date.now, foto: async () => B64, escena: () => ({ lado: 'trasera', personas: 0 }), ver: async () => respuesta() }, 'escena', { lado: 'trasera', guardadas: new VistaFresca(), esperaMs: 500 });
+  assert.equal(ok.tipo, 'vista');
+  if (ok.tipo === 'vista') assert.deepEqual(ok.alSacar, { lado: 'trasera', personas: 0 });
+  // Sin `escena` (quien no lo pasa): lo que pidió el turno.
+  const sin = await vistaParaTurno({ ahora: Date.now, foto: async () => B64, ver: async () => respuesta() }, 'escena', { lado: 'frontal', personas: 3, guardadas: new VistaFresca(), esperaMs: 500 });
+  if (sin.tipo === 'vista') assert.deepEqual(sin.alSacar, { lado: 'frontal', personas: 3 });
+  // DeskScreen guarda con eso (antes: `lado: ladoCamaraRef.current` y las personas del momento de la respuesta).
+  const desk = readFileSync(new URL('../mobile/src/screens/DeskScreen.tsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(desk, /vistaFresca\.guardar\(\{[^}]*lado: ladoCamaraRef\.current/, 'ninguna vista se guarda con el lado del momento de guardarla');
+  assert.match(desk, /vistaFresca\.guardar\(\{ vista: r\.vista, visto: r\.estructurada \? r\.visto : '', ts: tomadaEn, lado: ladoFoto, personas: personasFoto, foto \}\)/);
+  assert.match(desk, /lado: vt\.alSacar\.lado, personas: vt\.alSacar\.personas/);
+});
+
+test('revisión del 6-oct: la vista fresca (foto + lo visto) no sobrevive a un cambio de cuenta ni a desmontar la mesa', async () => {
+  const { vistaFresca } = await import('../mobile/src/lib/vistaTurno');
+  const { fijarCuenta, _reiniciarCuenta } = await import('../mobile/src/lib/cuenta');
+  _reiniciarCuenta();
+  fijarCuenta('ana@prueba.local');
+  const guardar = () => vistaFresca.guardar({ vista: vista(), visto: 'Escena de Ana.', ts: Date.now(), lado: 'frontal', personas: 1, foto: B64 });
+  guardar();
+  assert.ok(vistaFresca.fresca({ ahora: Date.now(), lado: 'frontal' }));
+  fijarCuenta('beto@prueba.local');
+  assert.equal(vistaFresca.ultimaVista(), null, 'entró otra persona: la foto y lo visto de Ana ya no están');
+  guardar();
+  fijarCuenta(null);
+  assert.equal(vistaFresca.ultimaVista(), null, 'al cerrar sesión, tampoco');
+  _reiniciarCuenta();
+  const desk = readFileSync(new URL('../mobile/src/screens/DeskScreen.tsx', import.meta.url), 'utf8');
+  assert.match(desk, /useEffect\(\(\) => \(\) => vistaFresca\.invalidar\(\), \[\]\);/, 'la mesa la suelta al desmontarse');
+});
+
 test('con los topes de la app: nunca más de ~1,5 s por la visión ni ~1,5 s por la foto, aunque nada conteste', async () => {
   assert.ok(VISTA_TURNO.esperaMs <= 1500 && VISTA_TURNO.fotoMs <= 1500);
   const t0 = Date.now();
@@ -141,6 +187,66 @@ test('sin «Comenta lo que ve»: una vista al abrir y otra solo cuando ML Kit ve
   ahora += SUBIDA.vivoMs;
   await s.tic();
   assert.equal(pedidos, 3);
+});
+
+test('revisión del 6-oct: mover el teléfono solo cuenta si se queda quieto en la posición nueva, y hay tope por hora', async () => {
+  let ahora = 100_000;
+  let movidaEn = 0;
+  let cambioEn = 0;
+  const subidas: number[] = [];
+  const descartes: string[] = [];
+  const s = new SubidaEscena(
+    {
+      ahora: () => ahora,
+      foto: async () => ({ b64: B64, ts: ahora, lado: 'frontal' }),
+      ver: async () => (subidas.push(ahora), vista(`escena ${subidas.length}`)),
+      estado: () => ({ dormida: false, personas: 1, necesitaEscena: false, ocupada: false, cambioEn, movidaEn }),
+      aplicar: () => {},
+      descartada: (m) => descartes.push(m),
+    },
+    new CercoCamara('frontal')
+  );
+  await s.tic();
+  assert.equal(subidas.length, 1, 'la primera vista');
+  // Caminando con el teléfono en la mano 2 minutos: se mueve cada segundo. Antes: una subida cada 15 s.
+  for (let i = 0; i < 120; i++) {
+    ahora += 1000;
+    movidaEn = ahora;
+    await s.tic();
+  }
+  assert.equal(subidas.length, 1, `en movimiento no se sube nada (${subidas.length - 1} de más)`);
+  // Se queda quieto en la posición nueva: una vista, cuando se asentó.
+  for (let i = 0; i < 5; i++) {
+    ahora += 1000;
+    await s.tic();
+  }
+  assert.equal(subidas.length, 2, 'asentado en la escena nueva: una vista');
+  assert.ok(subidas[1] - movidaEn >= SUBIDA.quietoTrasMoverMs, 'después de quedarse quieto');
+  // El tope por hora: una escena que cambia sin parar (ML Kit ve llegar e irse gente) no pasa de SUBIDA.vivoMaxHora.
+  const desde = ahora;
+  for (let i = 0; i < 3600; i++) {
+    ahora += 1000;
+    cambioEn = ahora - 1;
+    await s.tic();
+  }
+  const enLaHora = subidas.filter((t) => t > desde && t <= desde + 3_600_000).length;
+  assert.equal(SUBIDA.vivoMaxHora, 40, 'el tope documentado');
+  assert.ok(enLaHora <= SUBIDA.vivoMaxHora, `${enLaHora} subidas en una hora (antes, hasta 240)`);
+  assert.ok(enLaHora >= SUBIDA.vivoMaxHora - 2, `y sí sube hasta el tope (${enLaHora})`);
+  assert.equal(descartes.filter((m) => /tope de 40 subidas en vivo por hora/.test(m)).length >= 1, true, 'queda en las migas');
+  assert.ok(descartes.length < 10, 'una miga por vez que se llega al tope, no una por segundo');
+  // «Comenta lo que ve» (lo pidió la persona) no tiene este tope.
+  const conComenta: number[] = [];
+  let t2 = 100_000;
+  const s2 = new SubidaEscena(
+    { ahora: () => t2, foto: async () => ({ b64: B64, ts: t2, lado: 'frontal' }), ver: async () => (conComenta.push(t2), { ...vista(`c ${conComenta.length}`), lugar: `lugar ${conComenta.length}`, objetos: ['a', 'b', 'c'].map((x) => ({ nombre: `${x}${conComenta.length}`, donde: 'izquierda' })), personas: [] }), estado: () => ({ dormida: false, personas: 1, necesitaEscena: true, ocupada: false }), aplicar: () => {} },
+    new CercoCamara('frontal')
+  );
+  for (let i = 0; i < 3600; i++) {
+    await s2.tic();
+    t2 += 1000;
+  }
+  assert.ok(conComenta.length > SUBIDA.vivoMaxHora, `con «Comenta lo que ve», su ritmo de siempre (${conComenta.length})`);
 });
 
 test('con el servidor fallando (503 seguidos), cada fallo espacia la siguiente subida; al volver, el ritmo de siempre', async () => {

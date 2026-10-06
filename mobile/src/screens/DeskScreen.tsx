@@ -59,8 +59,8 @@ import {
   unmuteMic,
   volverANativoSiToca,
 } from '../lib/speech';
-import { SESION_APP, arranqueDelMicrofono, migaArranqueMic } from '../lib/silencioMesa';
-import { sesionesDeEsteArranque } from '../lib/silencioHeredado';
+import { arranqueDelMicrofono, migaArranqueMic } from '../lib/silencioMesa';
+import { silencioHeredado } from '../lib/silencioHeredado';
 import { GraciaFondo } from '../lib/appDelante';
 import { REFRESCO_AMBIENTE_MS, ambienteActivo, leerAmbiente, refrescarAmbienteRemoto, suscribirAmbiente } from '../lib/ambienteAjuste';
 import { TOPE_CORTADA } from '../lib/interrupcion';
@@ -1469,6 +1469,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     cerrarVisor();
   }, [visionOn, mesaVisible, cerrarVisor]);
   useEffect(() => () => void (cerrarVisorTimer.current && clearTimeout(cerrarVisorTimer.current)), []);
+  // Al desmontar la mesa (salir de la cuenta, otra ruta) la vista fresca (foto + lo visto, ~20 s) no sobrevive: la
+  // próxima mesa no contesta «¿qué ves?» con la escena de antes. El cambio de cuenta la suelta también (lib/vistaTurno.ts).
+  useEffect(() => () => vistaFresca.invalidar(), []);
 
   /**
    * «¿Qué ves?», «léeme esto», «¿cuánto dice el precio?», «¿qué es esto?». El turno NUNCA espera a la visión más de
@@ -1486,7 +1489,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     };
     let frame: string | null = null;
     let vt: VistaTurno | null = null;
-    const io = (foto: () => Promise<string | null>) => ({ ahora: Date.now, foto, ver: (b64: string, f: FocoVision) => verCamara(b64, f) });
+    // `escena`: la cámara y la gente al sacar la foto; con eso se guarda la vista aunque llegue tarde (lib/vistaTurno.ts).
+    const alSacar = () => ({ lado: ladoCamaraRef.current, personas: escenaRef.current?.personas ?? 0 });
+    const io = (foto: () => Promise<string | null>, escena = alSacar) => ({ ahora: Date.now, foto, escena, ver: (b64: string, f: FocoVision) => verCamara(b64, f) });
     const opciones = { lado: ladoCamaraRef.current, personas: escenaFresca(escenaRef.current) ? escenaRef.current.personas : undefined };
     if (apuntar) setPreviaCamara(true);
     try {
@@ -1511,9 +1516,11 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         } finally {
           setToolHint('');
         }
+        // Lo de cuando se sacó (ya está sacada: es ahora mismo, antes de esperar al servidor).
+        const alSacarFrame = alSacar();
         // La foto ya está: lo que diga el servidor tampoco traba el turno más de ~1,5 s.
         const listo = frame;
-        if (listo) vt = await vistaParaTurno(io(async () => listo), foco, { ...opciones, lado: ladoCamaraRef.current });
+        if (listo) vt = await vistaParaTurno(io(async () => listo, () => alSacarFrame), foco, { ...opciones, lado: alSacarFrame.lado });
       }
     } finally {
       setPreviaCamara(false);
@@ -1528,7 +1535,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         const etiquetas = etiquetasDeVista(vt.vista);
         if (etiquetas.length) setObjects(etiquetas);
         // Solo la de «¿qué ves?» queda como vista fresca: el hecho de «léeme esto» lleva otra instrucción.
-        if (vt.tipo === 'vista' && foco === 'escena') vistaFresca.guardar({ vista: vt.vista, visto: vt.visto, ts: Date.now() - vt.esperaMs, lado: ladoCamaraRef.current, personas: escenaRef.current?.personas ?? 0, foto: vt.foto });
+        if (vt.tipo === 'vista' && foco === 'escena') vistaFresca.guardar({ vista: vt.vista, visto: vt.visto, ts: Date.now() - vt.esperaMs, lado: vt.alSacar.lado, personas: vt.alSacar.personas, foto: vt.foto });
         await askBrain(pedido, { visto: vt.visto, foco });
         if (vt.foto) cerrarVisorEn(VISOR_MS);
         return;
@@ -1537,12 +1544,14 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       // se completa cuando vuelva el primer pedido; si no vuelve nada, se cierra solo (nada de una foto congelada).
       const foto = vt.foto;
       const tomadaEn = Date.now() - vt.esperaMs;
+      // La cámara y la gente de cuando se sacó: la respuesta puede llegar segundos después, con otra cámara u otra gente.
+      const { lado: ladoFoto, personas: personasFoto } = vt.alSacar;
       setVisor({ foto, vista: null, foco, mirando: true });
       void vt.tarde.then((r) => {
         setVisor((v) => (v && v.foto === foto ? (r?.vista ? { foto, vista: r.vista, foco, mirando: false } : null) : v));
         if (!r?.vista) return;
         if (r.etiquetas.length) setObjects(r.etiquetas);
-        if (foco === 'escena') vistaFresca.guardar({ vista: r.vista, visto: r.estructurada ? r.visto : '', ts: tomadaEn, lado: ladoCamaraRef.current, personas: escenaRef.current?.personas ?? 0, foto });
+        if (foco === 'escena') vistaFresca.guardar({ vista: r.vista, visto: r.estructurada ? r.visto : '', ts: tomadaEn, lado: ladoFoto, personas: personasFoto, foto });
       });
       await askBrain(pedido, { image: `data:image/jpeg;base64,${foto}`, foco });
       cerrarVisorEn(VISOR_MS);
@@ -2208,14 +2217,15 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     let alive = true;
     (async () => {
       const s = await loadSettings();
-      // El silencio vale solo en la sesión en que se puso (lib/silencioMesa.ts; José, 6-oct: «el micrófono falla»). Una
-      // recarga por OTA hereda la sesión de antes (lib/silencioHeredado.ts): no abre sola un micrófono que se cerró.
-      const arranqueMic = arranqueDelMicrofono(s, await sesionesDeEsteArranque());
+      // El silencio vale 8 h desde que se puso (lib/silencioMesa.ts SILENCIO_VIGENCIA_MS), aunque Android haya cerrado
+      // la app entretanto: dentro del plazo arranca silenciada; pasado, abierta (José, 6-oct: «el micrófono falla»). Las
+      // dos cosas se DICEN en el saludo. El silencio de la 5.6.0 (sin hora) tras su OTA: lib/silencioHeredado.ts.
+      const arranqueMic = arranqueDelMicrofono(s, Date.now(), await silencioHeredado());
       const silenciada = arranqueMic.silenciada;
       micMutedRef.current = silenciada;
       setMicMuted(silenciada);
-      if (arranqueMic.motivo === 'otra-sesion') void saveSettings({ micMuted: false, micMutedSesion: null });
-      else if (silenciada && s.micMutedSesion !== SESION_APP) void saveSettings({ micMutedSesion: SESION_APP });
+      if (arranqueMic.motivo === 'otra-sesion') void saveSettings({ micMuted: false, micMutedEn: null, micMutedSesion: null });
+      else if (silenciada && s.micMutedEn !== arranqueMic.desde) void saveSettings({ micMutedEn: arranqueMic.desde, micMutedSesion: null });
       // La cámara arranca apagada salvo que esta persona haya elegido «siempre» (y haya permiso).
       camara.arrancar(prefiereSiempre(s.camaraSiempre, user.correo) && !!camPerm?.granted);
       setLadoCamara(ladoValido(s.camaraLado));
@@ -2249,8 +2259,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         if (!oidoMesa.current?.oye()) void muteMic();
         setStatus('listening');
       } else setStatus(micOk ? 'muted' : 'offline');
-      // Un silencio de otra sesión ya no se arrastra (antes sí, y José lo vivía como «el micrófono falla»); uno de esta
-      // sesión se queda, se ve tachado y el saludo lo dice en voz alta. Los dos quedan en las migas.
+      // Un silencio vencido no se arrastra (antes sí, y José lo vivía como «el micrófono falla»); uno vigente se queda,
+      // se ve tachado y el saludo lo dice. Los dos quedan en las migas.
       const migaMic = micOk ? migaArranqueMic(arranqueMic) : '';
       if (migaMic) miga(migaMic);
 
@@ -2258,7 +2268,13 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       handling.current = true;
       const saludo = saludoConNombre(user.name);
       const conPresentacion = recienElegido ? `${saludo} ${de(avatarPorId(s.avatar).presentacion)}` : saludo;
-      await say(saludoArranque(conPresentacion, { micSilenciado: micOk && silenciada, en: idiomaActual() === 'en' }), 'HAPPY', { emocion: 'feliz' });
+      const micReabierto = micOk && arranqueMic.motivo === 'otra-sesion';
+      const textoSaludo = saludoArranque(conPresentacion, { micSilenciado: micOk && silenciada, micReabierto, en: idiomaActual() === 'en' });
+      // El aviso del micrófono (sigue en silencio, o el silencio venció) se VE siempre: el globo lo pone `say` y, si el
+      // saludo no va a sonar (conversación, llamada, el audio es de otro), también queda en el chat.
+      const sonaraSaludo = !conversandoRef.current && !enLlamadaRef.current && !!oidoMesa.current?.puedeHablar();
+      if (micOk && (silenciada || micReabierto) && !sonaraSaludo) logUltron(textoSaludo);
+      await say(textoSaludo, 'HAPPY', { emocion: 'feliz' });
       handling.current = false;
       // Después del saludo la mesa sigue al teléfono: en vertical, cuadro con la cara y el chat
       // (Claudio se pone de pie).
@@ -2662,8 +2678,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       }
       setMicMuted(true);
       setStatus('muted');
-      // Con la sesión: el silencio sigue si la mesa se vuelve a montar sin cerrar la app, no en el próximo arranque.
-      await saveSettings({ micMuted: true, micMutedSesion: SESION_APP });
+      // Con su hora: el silencio sigue 8 h aunque Android cierre la app (lib/silencioMesa.ts), y después vence.
+      await saveSettings({ micMuted: true, micMutedEn: Date.now(), micMutedSesion: null });
       await say(tr('Micrófono en silencio.', 'Microphone muted.'), 'IDLE');
     } else {
       const ok = await ensureSpeechPermissions();
@@ -2673,7 +2689,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       micMutedRef.current = false;
       setMicMuted(false);
       setStatus('listening');
-      await saveSettings({ micMuted: false, micMutedSesion: null });
+      await saveSettings({ micMuted: false, micMutedEn: null, micMutedSesion: null });
       await say(tr('Te escucho de nuevo.', 'I’m listening again.'), 'HAPPY', { emocion: 'feliz' });
     }
   };

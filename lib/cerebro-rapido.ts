@@ -541,7 +541,10 @@ export async function* hablarConManos(mensajes: MensajeChat[], herramientas: Too
       const estado: FinManos['estado'] = FIN_NORMAL.has(motivo) ? 'completo' : 'truncado';
       // Truncado sin haber dicho nada útil (solo la etiqueta, o una herramienta a medio escribir): falló este intento.
       if (estado === 'truncado' && ganador !== c) throw new Error(`Bedrock terminó sin contestar (${motivo})`);
-      // Terminó bien pero sin nada útil (solo la etiqueta): si nadie ganó, lo poco que dijo sale igual; quien llama decide.
+      // Terminó bien pero sin nada útil (solo «[EMO: neutral]», o vacío): mientras otra corrida siga viva, eso es un fallo
+      // de ESTA (y de la salud de su modelo), no una respuesta: antes ganaba y cortaba a la otra, que sí iba a contestar
+      // (revisión del 6-oct). Solo si es la última viva lo poco que dijo sale igual; quien llama decide.
+      if (ganador !== c && corridas.some((otra) => otra !== c && !otra.cancelada && !otra.terminada)) throw new Error(`Bedrock terminó sin nada útil (${motivo}) con otra corrida viva`);
       if (ganador !== c && !reclamar(c)) return;
       empujar({ corrida: c, fin: { motivo, estado } });
     } catch (e) {
@@ -581,6 +584,8 @@ export async function* hablarConManos(mensajes: MensajeChat[], herramientas: Too
     proximoEn = ahora + paso.primeraMs;
     void correr(c);
   };
+  /** Ya se cedió una vuelta al bucle de eventos antes de este lanzamiento (ver el empate, abajo). */
+  let cedido = false;
   const alInterrumpir = () => despertar?.();
   senal?.addEventListener('abort', alInterrumpir, { once: true });
   const cancelarTodas = (causa: (c: Corrida) => string) => {
@@ -635,6 +640,16 @@ export async function* hablarConManos(mensajes: MensajeChat[], herramientas: Too
       if (ahora >= proximoEn && ahora < limite) {
         const paso = siguientePaso();
         if (paso && t0 + totalMs - ahora >= MINIMO_INTENTO_MS) {
+          // Empate entre la primera señal de una corrida viva y el vencimiento de su espera (los dos en la misma vuelta
+          // del bucle de eventos): antes se lanzaba la cobertura y se cancelaba al instante (un pedido pagado de más).
+          // Se dejan correr los sucesos pendientes una vez (setImmediate: después de los relojes y la E/S de esta
+          // vuelta) y se vuelve a mirar; si nada llegó, se lanza.
+          if (vivas.length && !cedido) {
+            cedido = true;
+            await new Promise<void>((r) => setImmediate(r));
+            continue;
+          }
+          cedido = false;
           lanzar(paso);
           continue;
         }

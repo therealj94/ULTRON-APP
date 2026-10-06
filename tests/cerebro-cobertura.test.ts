@@ -381,6 +381,80 @@ describe('orden adaptativo según la salud de los últimos minutos', () => {
   });
 });
 
+describe('revisión del 6-oct: un fin sin nada útil no gana, y el empate no paga un pedido de más', () => {
+  it('una corrida que termina solo con «[EMO: neutral]» no corta a la otra que sí iba a contestar (y cuenta como fallo)', async () => {
+    process.env.CEREBRO_VOZ_PRIMERA_MS = '100';
+    process.env.CEREBRO_VOZ_LANZAMIENTOS = '2';
+    // GLM cierra limpio a los 250 ms sin decir nada (solo la etiqueta); Kimi, lanzado a los 100, contesta a los 400.
+    proveedor({ 'zai.glm-5': [texto(240, '[EMO: neutral] '), { en: 245, ev: { contentBlockStop: {} } }, fin(250)], 'moonshotai.kimi-k2.5': respuesta(300, '[EMO: feliz] Claro, son las tres.') });
+    for (let i = 0; i < M.FALLOS_PARA_DEGRADAR; i++) {
+      const r = await correr();
+      assert.equal(r.error, null, String(r.error?.message));
+      assert.equal(r.quien, 'moonshotai.kimi-k2.5', `vuelta ${i}: antes ganaba GLM con la etiqueta sola y Kimi se cancelaba`);
+      assert.equal(r.texto, '[EMO: feliz] Claro, son las tres.');
+      const glm = r.fin.intentos.find((x: any) => x.modelo === 'zai.glm-5');
+      assert.match(glm.causa, /sin nada útil/, 'el log dice por qué no cuenta');
+      assert.equal(registros.find((x) => x.modelo === 'moonshotai.kimi-k2.5')!.cortado, undefined, 'a Kimi no se le cortó');
+      registros = [];
+    }
+    assert.equal(M.modeloDegradado('zai.glm-5'), true, 'en la salud de su modelo cuenta como fallo');
+  });
+
+  it('si es la última viva, lo poco que dijo sale igual (quien llama decide)', async () => {
+    process.env.CEREBRO_VOZ_PRIMERA_MS = '500';
+    process.env.CEREBRO_VOZ_LANZAMIENTOS = '1';
+    proveedor({ 'zai.glm-5': [texto(40, '[EMO: neutral] '), fin(50)] });
+    const r = await correr();
+    assert.equal(r.error, null);
+    assert.equal(r.quien, 'zai.glm-5');
+    assert.equal(r.texto, '[EMO: neutral] ');
+    assert.equal(r.fin.estado, 'completo');
+  });
+
+  it('empate entre la primera señal y el vencimiento de la espera: no se lanza una cobertura que se cancela al instante', async () => {
+    process.env.CEREBRO_VOZ_PRIMERA_MS = '150';
+    // Un empate de verdad (en la MISMA vuelta del bucle de eventos): el primer trozo de GLM sale del mismo reloj que
+    // vence su espera, justo antes de que la cascada despierte. Así, sin depender de que dos relojes caigan en el mismo ms.
+    const setTimeoutOriginal = globalThis.setTimeout;
+    let liberar: (() => void) | null = null;
+    (globalThis as any).setTimeout = (f: (...a: unknown[]) => void, ms?: number, ...a: unknown[]) =>
+      setTimeoutOriginal(() => {
+        if (liberar && typeof ms === 'number' && ms >= 140 && ms <= 150) {
+          const l = liberar;
+          liberar = null;
+          l();
+        }
+        f(...a);
+      }, ms);
+    try {
+      for (let i = 0; i < 5; i++) {
+        // (la señal cae en el ms 150 o 151 de una espera de 150: que la salud no reordene los modelos entre vueltas)
+        M.reiniciarSaludModelos();
+        const lanzados: string[] = [];
+        (BedrockRuntimeClient.prototype as any).send = async function (cmd: any) {
+          const modelo = String(cmd.input.modelId);
+          lanzados.push(modelo);
+          const primero = modelo === 'zai.glm-5' ? new Promise<void>((r) => (liberar = r)) : Promise.resolve();
+          return {
+            stream: (async function* () {
+              await primero;
+              yield { contentBlockDelta: { delta: { text: `Hola, aquí ${modelo}.` } } };
+              yield { contentBlockStop: {} };
+              yield { messageStop: { stopReason: 'end_turn' } };
+            })(),
+          };
+        };
+        const r = await correr();
+        assert.equal(r.error, null);
+        assert.equal(r.quien, 'zai.glm-5');
+        assert.deepEqual(lanzados, ['zai.glm-5'], `vuelta ${i}: se lanzó un pedido de más (cancelado al instante)`);
+      }
+    } finally {
+      globalThis.setTimeout = setTimeoutOriginal;
+    }
+  });
+});
+
 after(() => {
   (BedrockRuntimeClient.prototype as any).send = original;
 });

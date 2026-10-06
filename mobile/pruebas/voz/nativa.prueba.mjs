@@ -426,10 +426,18 @@ prueba('la mesa: tts.ts usa el camino nuevo con sus guardas y stopSpeaking calla
   assert.match(leerRaiz('server/movil-config.ts'), /vozStream: \{ activa: !apagado\(env\.AURA_VOZ_STREAM\) \}/);
 });
 
-prueba('la versión: 5.5.0 (entra un módulo nativo nuevo) y versionCode nuevo', () => {
+// El módulo nativo de la voz entró con la 5.5.0 (versionCode 54). La versión se LEE de app.json (antes estaba fijada y
+// la prueba fallaba con cada APK nueva, 5.6.0/55 incluida): lo que se exige es que no baje de ahí y que sea coherente.
+prueba('la versión: desde la 5.5.0 (entró un módulo nativo nuevo), leída de app.json, con su versionCode', () => {
   const app = JSON.parse(leer('app.json'));
-  assert.equal(app.expo.version, '5.5.0');
-  assert.equal(app.expo.android.versionCode, 54);
+  const version = String(app.expo.version || '');
+  const codigo = app.expo.android.versionCode;
+  assert.match(version, /^\d+\.\d+\.\d+$/, `versión «${version}»`);
+  const [ma, mi, pa] = version.split('.').map(Number);
+  assert.ok(ma * 1e6 + mi * 1e3 + pa >= 5_005_000, `la versión ${version} es anterior a la 5.5.0 (la del módulo nativo de la voz)`);
+  assert.ok(Number.isInteger(codigo) && codigo >= 54, `versionCode ${codigo}: el de la 5.5.0 era 54`);
+  // Cada versión menor de la 5 subió un versionCode desde la 5.5.0/54 (5.6.0/55): si se sube una sin la otra, se dice.
+  if (ma === 5) assert.equal(codigo, 54 + (mi - 5), `5.${mi}.x va con versionCode ${54 + (mi - 5)}`);
 });
 
 for (const [nombre, f] of pruebas) {

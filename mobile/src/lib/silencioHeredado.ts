@@ -1,24 +1,23 @@
 /**
- * La recarga de una OTA no es una sesión nueva para el silencio del micrófono (lib/silencioMesa.ts): justo antes de
- * recargar (lib/barreraOta.ts antesDeRecargar) se apunta la sesión de ahora; el arranque que sigue la lee una vez, la
- * borra y, si llegó a tiempo (HEREDAR_MS), cuenta como la misma. Así un micrófono que la persona cerró no se abre solo
- * por una actualización; cerrar la app y volver a abrirla sí lo abre.
+ * El paso de la 5.6.0 al silencio con hora (lib/silencioMesa.ts). La 5.6.0 guardaba el silencio con su sesión, sin
+ * hora, y justo antes de recargar por una OTA apuntaba aquí `{ sesion, en }`. Si este código llega por esa OTA, el
+ * primer arranque lee lo apuntado una vez y lo borra: un silencio de esa sesión cuenta desde la hora de la recarga
+ * (y no se abre solo por la actualización). Este código ya no apunta nada: el silencio lleva su hora.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { antesDeRecargar } from './barreraOta';
-import { SESION_APP, sesionesDelSilencio } from './silencioMesa';
+import type { SilencioHeredado } from './silencioMesa';
 
 const CLAVE = 'aura.mic.sesionHeredada';
 
-antesDeRecargar('silencio-del-microfono', () => AsyncStorage.setItem(CLAVE, JSON.stringify({ sesion: SESION_APP, en: Date.now() })));
-
-/** Las sesiones que cuentan como esta al arrancar la mesa (lee y borra lo que dejó una recarga por OTA). */
-export async function sesionesDeEsteArranque(): Promise<string[]> {
+/** Lo que dejó la 5.6.0 antes de recargar (lo lee y lo borra), o null. */
+export async function silencioHeredado(): Promise<SilencioHeredado> {
   try {
     const crudo = await AsyncStorage.getItem(CLAVE);
-    if (crudo) await AsyncStorage.removeItem(CLAVE);
-    return sesionesDelSilencio(crudo ? JSON.parse(crudo) : null);
+    if (!crudo) return null;
+    await AsyncStorage.removeItem(CLAVE);
+    const j = JSON.parse(crudo);
+    return j && typeof j === 'object' ? j : null;
   } catch {
-    return [SESION_APP];
+    return null;
   }
 }

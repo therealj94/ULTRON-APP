@@ -58,9 +58,11 @@ export type AppSettings = {
   voiceId: string;
   micMuted: boolean;
   /**
-   * De qué sesión de la app es el silencio (lib/silencioMesa.ts SESION_APP): solo vale en ella. Un silencio guardado
-   * sin esto (de antes de la 5.5.1) o de otra sesión no se arrastra al arrancar (José, 6-oct: «el micrófono falla»).
+   * Cuándo se silenció (ms): el silencio vale lib/silencioMesa.ts SILENCIO_VIGENCIA_MS (8 h) desde ahí, aunque Android
+   * cierre la app entretanto; pasado eso la mesa arranca abierta (José, 6-oct: «el micrófono falla»).
    */
+  micMutedEn?: number | null;
+  /** Solo lectura: la sesión con que la 5.6.0 guardaba el silencio (sin hora). Ver lib/silencioHeredado.ts. */
   micMutedSesion?: string | null;
   visionEnabled: boolean;
   gazeEnabled: boolean;

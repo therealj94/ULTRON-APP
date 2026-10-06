@@ -407,7 +407,8 @@ export function CamaraVivo({
         ahora: Date.now,
         foto: () => conTope(fotoNativa(CALIDAD.servidor, true), FOTO_MAX_MS),
         ver: async (b64) => {
-          const r = await verCamara(b64, 'escena');
+          // `continuo`: el servidor la mira primero con Bedrock (no gasta los créditos del nodo del ojo).
+          const r = await verCamara(b64, 'escena', undefined, { continuo: true });
           respuestaServidor.current = r;
           return r?.vista ?? null;
         },
@@ -416,8 +417,10 @@ export function CamaraVivo({
           personas: ultimaEscena.current?.personas ?? 0,
           necesitaEscena: observarRef.current,
           ocupada: !!(cb.current.ocupada?.() || cb.current.caras?.mesaOcupada?.()),
-          // Moverse el teléfono también cambia lo que se ve (CAM-G).
-          cambioEn: Math.max(cambioEn.current, cb.current.movida?.() ?? 0),
+          cambioEn: cambioEn.current,
+          // Moverse el teléfono también cambia lo que se ve (CAM-G), pero cuenta solo cuando se queda quieto en la
+          // posición nueva y con el tope por hora (lib/subidaEscena.ts; revisión del 6-oct: hasta 240 subidas por hora).
+          movidaEn: cb.current.movida?.() ?? 0,
         }),
         aplicar: (vs) => {
           vistaServidor.current = vs;

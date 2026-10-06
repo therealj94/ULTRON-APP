@@ -431,6 +431,9 @@ function vistaDeObjeto(j: any, opts: { cajasConfiables?: boolean }): VistaEstruc
 export function pareceErrorDeServicio(texto: string): boolean {
   const t = String(texto || '').trim();
   if (!t || t.length > 600) return false;
+  // 402 / «Payment Required» / «insufficient credits» (revisión del 6-oct: cuando vuelvan los créditos de Hugging Face y
+  // se acaben otra vez, el aviso llega así). El «402» solo con algo de error al lado: «L 402» en un cartel es un precio.
+  if (/\b(payment required|insufficient[ _-]?(credits?|quota|balance|funds))\b|\b(error|status|code|http)\s*[:=]?\s*402\b|\b402\s*[:-]?\s*(payment|client error)/i.test(t)) return true;
   return /\b(depleted|included credits|pre-?paid credits|quota|rate.?limit|too many requests|unauthori[sz]ed|forbidden|invalid (api )?(key|token)|api key|exceeded|overloaded|service unavailable|internal server error|bad gateway|gateway time-?out|timed out|inference providers?|model .{0,40} (is )?(not supported|not found|currently loading))\b/i.test(t);
 }
 

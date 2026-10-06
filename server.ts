@@ -2110,7 +2110,8 @@ app.post('/api/vision/analyze', exigirMesaODesk, limitar(20), async (req, res) =
   // servidor según el foco (lib/vision-estructurada.ts). No lleva prompt libre, así que vale sin sesión.
   if (req.body?.modo === 'estructurado') {
     const foco = focoValido(req.body?.foco) || 'escena';
-    const r = await verEstructurado(String(base64Data), foco, { presupuesto: reloj });
+    // `continuo`: la subida en vivo de la cámara (sin nadie esperando): Bedrock primero (lib/vision.ts ordenOjos).
+    const r = await verEstructurado(String(base64Data), foco, { presupuesto: reloj, continuo: req.body?.continuo === true });
     if (r.fallo || !r.vista) {
       console.error(`[AU-RA] /vision/analyze estructurado falló (${r.via}) con ${String(base64Data).length} car.`);
       return res.status(503).json({ error: `${NO_PUDE_VER} Inténtalo de nuevo en un momento.`, via: ojoQueLeyo(r.via), honesto: true });

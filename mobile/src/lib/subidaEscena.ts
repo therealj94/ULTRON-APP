@@ -14,9 +14,13 @@
  *    instante.
  *  · Si el servidor no puede ver (503 seguidos, el 6-oct durante 10 min), cada fallo espacia la siguiente subida en
  *    vez de insistir cada 20 s.
+ *  · Sin pagar de más (revisión del 6-oct): mover el teléfono (`movidaEn`) solo cuenta como escena nueva cuando se
+ *    queda quieto `SUBIDA.quietoTrasMoverMs` en la posición nueva (caminar con él en la mano no sube nada), y las
+ *    subidas en vivo tienen un tope de `SUBIDA.vivoMaxHora` por hora. El servidor las mira primero con Bedrock
+ *    (`continuo`, lib/vision.ts ordenOjos).
  */
 import { ORIGEN, type CercoCamara, type VistaFechada } from './cercoCamara';
-import { intervaloServidor, mismaEscena, type VistaCamara } from './vistaCamara';
+import { SUBIDA, intervaloServidor, mismaEscena, type VistaCamara } from './vistaCamara';
 import type { Lado } from './vistaEnVivo';
 
 export type FotoEscena = { b64?: string; ts?: number; epoca?: number; lado?: string } | null;
@@ -26,10 +30,11 @@ export type IoEscena = {
   foto: () => Promise<FotoEscena>;
   ver: (b64: string) => Promise<VistaCamara | null>;
   /**
-   * Lo de este momento: si duerme, cuántas personas, si «Comenta lo que ve» pide escena, si la mesa piensa/habla y
-   * cuándo vio ML Kit el último cambio de la escena (llegó/se fue alguien, se movió el teléfono; 0 si no se sabe).
+   * Lo de este momento: si duerme, cuántas personas, si «Comenta lo que ve» pide escena, si la mesa piensa/habla,
+   * cuándo vio ML Kit el último cambio de la escena (llegó/se fue alguien; 0 si no se sabe) y cuándo se movió el
+   * teléfono por última vez (el acelerómetro; 0 si no se sabe).
    */
-  estado: () => { dormida: boolean; personas: number; necesitaEscena: boolean; ocupada: boolean; cambioEn?: number };
+  estado: () => { dormida: boolean; personas: number; necesitaEscena: boolean; ocupada: boolean; cambioEn?: number; movidaEn?: number };
   aplicar: (v: VistaFechada<VistaCamara> & { lado: Lado; epoca: number; foto?: string }) => void;
   /** Por qué no se aplicó algo (para las migas). */
   descartada?: (motivo: string) => void;
@@ -48,6 +53,9 @@ export class SubidaEscena {
   private vistaEn = 0;
   /** Subidas seguidas sin vista (el servidor no pudo ver). */
   private fallos = 0;
+  /** Cuándo salió cada subida en vivo de la última hora (el tope SUBIDA.vivoMaxHora). */
+  private vivasHora: number[] = [];
+  private topeAvisado = false;
 
   constructor(private io: IoEscena, private cerco: CercoCamara) {}
 
@@ -57,10 +65,23 @@ export class SubidaEscena {
     const st = this.io.estado();
     if (this.personasAntes >= 0 && st.personas !== this.personasAntes) this.sinCambios = 0;
     this.personasAntes = st.personas;
-    const cambio = !this.vistaEn || (st.cambioEn ?? 0) > this.vistaEn;
-    const cada = intervaloServidor({ mlkit: true, dormida: st.dormida, conPersona: st.personas > 0, necesitaEscena: st.necesitaEscena, sinCambios: this.sinCambios, ocupada: st.ocupada, cambio, fallos: this.fallos });
     const ahora = this.io.ahora();
+    // El teléfono movido después de la última vista cuenta solo si ya se quedó quieto en la posición nueva.
+    const movidaEn = st.movidaEn ?? 0;
+    const asentado = movidaEn > this.vistaEn && ahora - movidaEn >= SUBIDA.quietoTrasMoverMs;
+    const cambio = !this.vistaEn || (st.cambioEn ?? 0) > this.vistaEn || asentado;
+    const cada = intervaloServidor({ mlkit: true, dormida: st.dormida, conPersona: st.personas > 0, necesitaEscena: st.necesitaEscena, sinCambios: this.sinCambios, ocupada: st.ocupada, cambio, fallos: this.fallos });
     if (!(ahora - this.ultimo >= cada)) return null;
+    const enVivo = !st.necesitaEscena;
+    if (enVivo) {
+      this.vivasHora = this.vivasHora.filter((t) => ahora - t < 3_600_000);
+      if (this.vivasHora.length >= SUBIDA.vivoMaxHora) {
+        if (!this.topeAvisado) this.io.descartada?.(`tope de ${SUBIDA.vivoMaxHora} subidas en vivo por hora`);
+        this.topeAvisado = true;
+        return null;
+      }
+      this.topeAvisado = false;
+    }
     const previo = this.ultimo;
     this.ultimo = ahora;
     this.subiendo = true;
@@ -77,6 +98,8 @@ export class SubidaEscena {
         const m = this.cerco.admitirResultado(f, sello, this.io.ahora(), ORIGEN.fotoMaxMs);
         if (m !== 'ok') return this.io.descartada?.(`foto ${m}`);
         const capturada = typeof f.ts === 'number' && f.ts > 0 ? f.ts : ahora;
+        // Cuenta para el tope la que de verdad va al servidor.
+        if (enVivo) this.vivasHora.push(ahora);
         const v = await this.io.ver(f.b64).catch(() => null);
         if (!this.vivo) return;
         if (!v) {

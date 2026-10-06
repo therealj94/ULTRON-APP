@@ -160,3 +160,46 @@ test('qué es un aviso del servicio y qué es algo visto', () => {
   assert.equal(pareceErrorDeServicio('Una persona con camisa azul frente a una laptop; un cartel dice «CAFÉ L 45.00».'), false);
   assert.equal(pareceErrorDeServicio(''), false);
 });
+
+/* ── revisión del 6-oct ─────────────────────────────────────────────────────────────────────── */
+
+test('la subida en vivo de la cámara (continuo) mira primero con Bedrock: no gasta los créditos de Hugging Face del nodo', async (t) => {
+  const s = preparar(t, { ojo: () => new Response(JSON.stringify({ ok: true, texto: caso('corto-precio') }), { status: 200 }), bedrock: () => caso('bedrock-gemma-3-12b-it-documento-grande') });
+  const r = await verEstructurado(FOTO, 'escena', { continuo: true });
+  assert.deepEqual(s.orden, ['bedrock'], 'el nodo ni se toca si Bedrock ve');
+  assert.match(r.via, /^bedrock:/);
+  // El turno de «¿qué ves?» (sin continuo) sigue con el orden de siempre.
+  await verEstructurado(FOTO, 'escena');
+  assert.deepEqual(s.orden, ['bedrock', 'ojo']);
+  assert.deepEqual(ordenOjos({}, { continuo: true }), ['bedrock', 'ojo', 'gemini']);
+  assert.deepEqual(ordenOjos({ ULTRON_VISION_ORDEN: 'gemini' }, { continuo: true }), ['bedrock', 'gemini', 'ojo']);
+  assert.deepEqual(ordenOjos({ ULTRON_VISION_ORDEN_VIVO: 'ojo' }, { continuo: true }), ['ojo', 'gemini', 'bedrock'], 'ULTRON_VISION_ORDEN_VIVO lo cambia');
+  assert.deepEqual(ordenOjos({ ULTRON_VISION_ORDEN_VIVO: 'ojo' }), ['ojo', 'gemini', 'bedrock']);
+  // Si Bedrock no ve, el nodo queda de reserva.
+  const s2 = preparar(t, { ojo: () => new Response(JSON.stringify({ ok: true, texto: caso('corto-precio') }), { status: 200 }), bedrock: () => new Error('ThrottlingException') });
+  const r2 = await verEstructurado(FOTO, 'escena', { continuo: true });
+  assert.deepEqual(s2.orden, ['bedrock', 'ojo']);
+  assert.equal(r2.fallo, false);
+  // El servidor pasa `continuo` solo si la app lo pide (la subida en vivo), y la app lo pide solo ahí.
+  const server = readFileSync(path.join(process.cwd(), 'server.ts'), 'utf8');
+  assert.match(server, /verEstructurado\(String\(base64Data\), foco, \{ presupuesto: reloj, continuo: req\.body\?\.continuo === true \}\)/);
+  const api = readFileSync(path.join(process.cwd(), 'mobile', 'src', 'lib', 'api.ts'), 'utf8');
+  assert.match(api, /modo: 'estructurado', foco, \.\.\.\(o\.continuo \? \{ continuo: true \} : \{\}\)/);
+  const vivo = readFileSync(path.join(process.cwd(), 'mobile', 'src', 'components', 'CamaraVivo.tsx'), 'utf8');
+  assert.match(vivo, /verCamara\(b64, 'escena', undefined, \{ continuo: true \}\)/);
+});
+
+test('la descripción libre (PDF, prompt libre) tampoco toma un aviso del servicio por lo visto: 402 / Payment Required → siguiente ojo', async (t) => {
+  for (const aviso of ['402 Payment Required', 'Error 402: You have insufficient credits for this request.', '{"error":"insufficient_quota"}', 'HTTP 402 - Payment Required']) {
+    const s = preparar(t, { ojo: () => new Response(JSON.stringify({ ok: true, texto: aviso }), { status: 200 }), bedrock: () => 'Factura 0012: total L 402.00.' });
+    const v = await verImagen(FOTO, 'Lee el documento. Copia texto y números. No inventes.');
+    assert.deepEqual(s.orden, ['ojo', 'bedrock'], aviso);
+    assert.match(v.texto, /Factura 0012/, `${aviso}: no se leyó el aviso como el documento`);
+  }
+  assert.equal(pareceErrorDeServicio('402 Payment Required'), true);
+  assert.equal(pareceErrorDeServicio('Insufficient credits'), true);
+  assert.equal(pareceErrorDeServicio('insufficient_quota'), true);
+  assert.equal(pareceErrorDeServicio('Status: 402'), true);
+  assert.equal(pareceErrorDeServicio('Un cartel dice «Total L 402.00».'), false, 'un 402 en un precio no es un aviso');
+  assert.equal(pareceErrorDeServicio('Habitación 402, segundo piso.'), false);
+});

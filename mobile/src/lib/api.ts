@@ -864,7 +864,12 @@ const LISTA_VIEJA =
  * Ver con orden (POST /api/vision/analyze, modo «estructurado»): escena, objetos con caja, texto leído,
  * precios, según `foco`. El pedido al modelo lo arma el servidor. null si no se pudo ver.
  */
-export async function verCamara(base64Jpeg: string, foco: FocoVision = 'escena', timeoutMs = 35_000): Promise<RespuestaVista | null> {
+/**
+ * `continuo`: la subida en vivo de la cámara (components/CamaraVivo.tsx, CamaraVision.tsx), sin nadie esperando: el
+ * servidor mira primero con Bedrock y no gasta los créditos del nodo del ojo (lib/vision.ts ordenOjos). El turno de
+ * «¿qué ves?» no lo lleva.
+ */
+export async function verCamara(base64Jpeg: string, foco: FocoVision = 'escena', timeoutMs = 35_000, o: { continuo?: boolean } = {}): Promise<RespuestaVista | null> {
   try {
     const data = await api<{ summary?: string; vista?: unknown; etiquetas?: unknown }>(
       '/api/vision/analyze',
@@ -872,7 +877,7 @@ export async function verCamara(base64Jpeg: string, foco: FocoVision = 'escena',
         method: 'POST',
         // `prompt` solo lo usa un servidor anterior (sin modo estructurado): así devuelve la lista de
         // siempre y no prosa partida en «objetos». El servidor nuevo arma su propio pedido y lo ignora.
-        body: JSON.stringify({ mediaType: 'image/jpeg', fileName: 'desk.jpg', base64Data: `data:image/jpeg;base64,${base64Jpeg}`, modo: 'estructurado', foco, prompt: LISTA_VIEJA }),
+        body: JSON.stringify({ mediaType: 'image/jpeg', fileName: 'desk.jpg', base64Data: `data:image/jpeg;base64,${base64Jpeg}`, modo: 'estructurado', foco, ...(o.continuo ? { continuo: true } : {}), prompt: LISTA_VIEJA }),
       },
       timeoutMs
     );

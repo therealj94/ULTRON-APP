@@ -519,14 +519,17 @@ prueba('turno sin respuesta: la mesa deja la miga y la MANDA ya en los dos camin
 });
 
 // El 5-oct se decidió guardar el silencio entre sesiones y DECIRLO al arrancar; el 6-oct (APK 5.5.0) José lo siguió
-// viviendo como «a veces el micrófono falla» (migas: «arranca silenciado (la persona lo dejó así en otra sesión)»). Desde
-// entonces el silencio vale solo en su sesión (lib/silencioMesa.ts; tests/microfono-sesion-movil.test.ts): uno de otra
-// sesión no se arrastra; uno de esta sesión se queda, se DICE y queda en las migas.
-prueba('micrófono silenciado (José, 5 y 6-oct): solo vale en su sesión; si sigue, la mesa lo DICE y queda en las migas', () => {
+// viviendo como «a veces el micrófono falla» (migas: «arranca silenciado (la persona lo dejó así en otra sesión)»). La
+// 5.6.0 lo dejó valer solo en su proceso, y si Android mataba la app el micrófono volvía ABIERTO. Ahora el silencio
+// caduca por tiempo (lib/silencioMesa.ts, 8 h; tests/microfono-sesion-movil.test.ts): vigente, se queda y se DICE;
+// vencido, abre y también se dice; los dos quedan en las migas.
+prueba('micrófono silenciado (José, 5 y 6-oct): vale 8 h aunque Android cierre la app; la mesa lo DICE y queda en las migas', () => {
   const src = fs.readFileSync(path.join(RAIZ, 'mobile/src/screens/DeskScreen.tsx'), 'utf8');
-  assert.match(src, /const arranqueMic = arranqueDelMicrofono\(s, await sesionesDeEsteArranque\(\)\);/, 'el silencio guardado solo vale en su sesión (o tras una OTA)');
+  assert.match(src, /const arranqueMic = arranqueDelMicrofono\(s, Date\.now\(\), await silencioHeredado\(\)\);/, 'el silencio guardado vale por su hora (no por el proceso)');
   assert.match(src, /micMutedRef\.current = silenciada;/);
-  assert.match(src, /await say\(saludoArranque\([^)]*micSilenciado: micOk && silenciada/, 'el saludo lo dice');
+  assert.match(src, /const textoSaludo = saludoArranque\(conPresentacion, \{ micSilenciado: micOk && silenciada, micReabierto, en: [^}]+\}\);/, 'el saludo lo dice (silenciado o vencido)');
+  assert.match(src, /await say\(textoSaludo, 'HAPPY'/);
+  assert.match(src, /if \(micOk && \(silenciada \|\| micReabierto\) && !sonaraSaludo\) logUltron\(textoSaludo\);/, 'si el saludo no suena, el aviso queda en el chat');
   assert.match(src, /const migaMic = micOk \? migaArranqueMic\(arranqueMic\) : '';\s*if \(migaMic\) miga\(migaMic\);/, 'y queda en las migas');
   assert.match(src, /silenciadoPorPersona: \(\) => micMutedRef\.current/, 'la miga del oído distingue el silencio de la persona del oído sin abrir');
 });

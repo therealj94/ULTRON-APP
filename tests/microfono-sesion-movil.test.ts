@@ -7,54 +7,63 @@
  *   +11.2s segundo plano · lo suelta · +11.3s primer plano · lo toma
  *
  * Dos causas, dos arreglos (mobile/src/lib/silencioMesa.ts y lib/appDelante.ts):
- *  · el silencio del micrófono se arrastraba de una sesión a otra: ahora vale solo en la sesión en que se puso (si la
- *    mesa se vuelve a montar sin cerrar la app sigue, y se ve y se dice);
+ *  · el silencio del micrófono se arrastraba de una sesión a otra para siempre. La 5.6.0 lo dejó valer solo en su
+ *    proceso, y si Android mataba la app volvía con el micrófono ABIERTO (revisión del 6-oct). Ahora caduca por tiempo:
+ *    8 h desde que se puso (vigente: arranca silenciada y lo dice; vencido: abre y también lo dice);
  *  · un parpadeo de segundo plano de ~0,1 s soltaba y volvía a tomar el oído: ahora hay una gracia.
  * Lo de la mesa con el código real y lo nativo simulado: mobile/pruebas/sonidos (las dos últimas pruebas).
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { HEREDAR_MS, SESION_APP, arranqueDelMicrofono, migaArranqueMic, sesionesDelSilencio } from '../mobile/src/lib/silencioMesa';
+import { SILENCIO_VIGENCIA_MS, arranqueDelMicrofono, migaArranqueMic } from '../mobile/src/lib/silencioMesa';
 import { GRACIA_FONDO_MS, GraciaFondo } from '../mobile/src/lib/appDelante';
 
 const desk = fs.readFileSync(new URL('../mobile/src/screens/DeskScreen.tsx', import.meta.url), 'utf8');
 
-test('lo guardado por la 5.5.0 (micMuted sin sesión) ya no arranca silenciado: el micrófono abre y queda en la miga', () => {
+test('lo guardado por la 5.5.0 (micMuted sin hora) ya no arranca silenciado: el micrófono abre y queda en la miga', () => {
   const a = arranqueDelMicrofono({ micMuted: true });
   assert.deepEqual(a, { silenciada: false, motivo: 'otra-sesion' });
-  assert.equal(migaArranqueMic(a), 'micrófono: abierto (el silencio de una sesión anterior no se arrastra)');
+  assert.match(migaArranqueMic(a), /^micrófono: abierto \(el silencio guardado venció/);
 });
 
-test('silenciado en ESTA sesión (la mesa se volvió a montar sin cerrar la app): sigue silenciado, y se dice', () => {
-  const a = arranqueDelMicrofono({ micMuted: true, micMutedSesion: SESION_APP });
-  assert.deepEqual(a, { silenciada: true, motivo: 'misma-sesion' });
-  assert.match(migaArranqueMic(a), /sigue silenciado/);
-  assert.deepEqual(arranqueDelMicrofono({ micMuted: true, micMutedSesion: 'sesion-de-ayer' }), { silenciada: false, motivo: 'otra-sesion' });
-  assert.deepEqual(arranqueDelMicrofono({ micMuted: false, micMutedSesion: null }), { silenciada: false, motivo: 'abierto' });
+test('privacidad (revisión 6-oct a la 5.6.0): silenciado hace minutos y Android mató la app → la mesa vuelve SILENCIADA', () => {
+  const t = 90_000_000;
+  // Samsung mata la app en segundo plano, un ANR la cierra o una OTA monta tarde: es otro proceso, el silencio sigue.
+  for (const hace of [3 * 60_000, 2 * 60_000 + 1, 45 * 60_000, SILENCIO_VIGENCIA_MS - 1]) {
+    const a = arranqueDelMicrofono({ micMuted: true, micMutedEn: t - hace }, t);
+    assert.deepEqual(a, { silenciada: true, motivo: 'vigente', desde: t - hace }, `silenciado hace ${hace} ms`);
+  }
+  assert.match(migaArranqueMic(arranqueDelMicrofono({ micMuted: true, micMutedEn: t - 3 * 60_000 }, t), t), /sigue silenciado \(lo silenciaste hace 3 min; el silencio vale 8 h\)/);
+  // La 5.6.0 guardaba la sesión sin hora y la apuntaba antes de recargar por OTA: si llega esta OTA, cuenta desde ahí.
+  const heredado = { sesion: 'sesion-5.6.0', en: t - 20_000 };
+  assert.deepEqual(arranqueDelMicrofono({ micMuted: true, micMutedSesion: 'sesion-5.6.0' }, t, heredado), { silenciada: true, motivo: 'vigente', desde: t - 20_000 });
+  assert.deepEqual(arranqueDelMicrofono({ micMuted: true, micMutedSesion: 'otra' }, t, heredado), { silenciada: false, motivo: 'otra-sesion' });
 });
 
-test('una recarga por OTA NO es una sesión nueva: la sesión apuntada antes de recargar se hereda si vuelve a tiempo', () => {
-  const t = 5_000_000;
-  assert.deepEqual(sesionesDelSilencio(null, t), [SESION_APP]);
-  assert.deepEqual(sesionesDelSilencio({ sesion: 'antes-de-la-ota', en: t - 3_000 }, t), [SESION_APP, 'antes-de-la-ota']);
-  assert.deepEqual(sesionesDelSilencio({ sesion: 'antes-de-la-ota', en: t - HEREDAR_MS }, t), [SESION_APP], 'tarde: ya es otra sesión');
-  assert.deepEqual(sesionesDelSilencio({ sesion: 42, en: t } as any, t), [SESION_APP], 'basura: nada');
-  const heredadas = sesionesDelSilencio({ sesion: 'antes-de-la-ota', en: t - 3_000 }, t);
-  assert.deepEqual(arranqueDelMicrofono({ micMuted: true, micMutedSesion: 'antes-de-la-ota' }, heredadas), { silenciada: true, motivo: 'misma-sesion' });
-  const ota = fs.readFileSync(new URL('../mobile/src/lib/silencioHeredado.ts', import.meta.url), 'utf8');
-  assert.match(ota, /antesDeRecargar\('silencio-del-microfono', \(\) => AsyncStorage\.setItem\(CLAVE, JSON\.stringify\(\{ sesion: SESION_APP, en: Date\.now\(\) \}\)\)\);/);
+test('el silencio de ayer no deja sordo hoy: pasadas 8 h arranca abierto (motivo otra-sesion) y se dice', () => {
+  const t = 90_000_000;
+  assert.equal(SILENCIO_VIGENCIA_MS, 8 * 60 * 60_000, 'el plazo documentado');
+  assert.deepEqual(arranqueDelMicrofono({ micMuted: true, micMutedEn: t - SILENCIO_VIGENCIA_MS }, t), { silenciada: false, motivo: 'otra-sesion' });
+  assert.deepEqual(arranqueDelMicrofono({ micMuted: true, micMutedEn: t - 26 * 3_600_000 }, t), { silenciada: false, motivo: 'otra-sesion' });
+  assert.deepEqual(arranqueDelMicrofono({ micMuted: true, micMutedEn: t + 10 * 60_000 }, t).silenciada, true, 'reloj movido atrás un rato: no se abre');
+  assert.deepEqual(arranqueDelMicrofono({ micMuted: true, micMutedEn: t + 30 * 3_600_000 }, t).silenciada, false, 'una hora absurda no vale');
+  assert.deepEqual(arranqueDelMicrofono({ micMuted: false, micMutedEn: t }, t), { silenciada: false, motivo: 'abierto' });
+  assert.equal(migaArranqueMic({ silenciada: false, motivo: 'abierto' }), '');
 });
 
-test('DeskScreen: arranca con arranqueDelMicrofono, guarda la sesión al silenciar y limpia el silencio viejo', () => {
-  assert.match(desk, /const arranqueMic = arranqueDelMicrofono\(s, await sesionesDeEsteArranque\(\)\);/);
+test('DeskScreen: arranca con la hora del silencio, guarda la hora al silenciar, limpia el vencido y lo dice', () => {
+  assert.match(desk, /const arranqueMic = arranqueDelMicrofono\(s, Date\.now\(\), await silencioHeredado\(\)\);/);
   assert.match(desk, /micMutedRef\.current = silenciada;\s*setMicMuted\(silenciada\);/);
-  assert.match(desk, /if \(arranqueMic\.motivo === 'otra-sesion'\) void saveSettings\(\{ micMuted: false, micMutedSesion: null \}\);/);
-  assert.match(desk, /await saveSettings\(\{ micMuted: true, micMutedSesion: SESION_APP \}\);/);
-  assert.match(desk, /await saveSettings\(\{ micMuted: false, micMutedSesion: null \}\);/);
-  assert.match(desk, /saludoArranque\(conPresentacion, \{ micSilenciado: micOk && silenciada,/, 'el saludo lo dice si sigue silenciado');
-  assert.doesNotMatch(desk, /if \(micOk && !s\.micMuted\)/, 'ya no abre según el silencio guardado de otra sesión');
-  assert.doesNotMatch(desk, /arranca silenciado \(la persona lo dejó así en otra sesión\)/);
+  assert.match(desk, /if \(arranqueMic\.motivo === 'otra-sesion'\) void saveSettings\(\{ micMuted: false, micMutedEn: null, micMutedSesion: null \}\);/);
+  assert.match(desk, /await saveSettings\(\{ micMuted: true, micMutedEn: Date\.now\(\), micMutedSesion: null \}\);/);
+  assert.match(desk, /await saveSettings\(\{ micMuted: false, micMutedEn: null, micMutedSesion: null \}\);/);
+  assert.match(desk, /const micReabierto = micOk && arranqueMic\.motivo === 'otra-sesion';/);
+  assert.match(desk, /saludoArranque\(conPresentacion, \{ micSilenciado: micOk && silenciada, micReabierto,/, 'el saludo lo dice (silenciado o vencido)');
+  assert.doesNotMatch(desk, /SESION_APP|sesionesDeEsteArranque/, 'ya no depende del proceso');
+  assert.doesNotMatch(desk, /if \(micOk && !s\.micMuted\)/);
+  const her = fs.readFileSync(new URL('../mobile/src/lib/silencioHeredado.ts', import.meta.url), 'utf8');
+  assert.doesNotMatch(her, /antesDeRecargar\(/, 'el silencio lleva su hora: ya no se apunta nada antes de una OTA');
 });
 
 test('un parpadeo de segundo plano no suelta el oído; uno de verdad sí (y volver es inmediato)', () => {
@@ -105,4 +114,11 @@ test('DeskScreen: la app «delante» de la mesa pasa por la gracia (no por AppSt
   assert.match(desk, /const gracia = new GraciaFondo\(\{ alCambiar: setAppActiva, miga \}, AppState\.currentState !== 'background'\);/);
   assert.match(desk, /AppState\.addEventListener\('change', \(st\) => gracia\.estado\(st\)\)/);
   assert.doesNotMatch(desk, /AppState\.addEventListener\('change', \(st\) => setAppActiva\(st !== 'background'\)\)/);
+});
+
+test('CI: los sonidos de trabajo y el silencio del micrófono (mobile/pruebas/sonidos) corren con los otros arneses de la app', () => {
+  const flujo = fs.readFileSync(new URL('../.github/workflows/calidad-movil.yml', import.meta.url), 'utf8');
+  const arneses = flujo.slice(flujo.indexOf('- name: Arneses de la app'));
+  assert.match(arneses, /working-directory: mobile/);
+  assert.match(arneses, /\n\s+sh pruebas\/muletillas\/todas\.sh\n\s+sh pruebas\/sonidos\/todas\.sh\n/, 'con set -e, junto a oído y muletillas');
 });

@@ -9,7 +9,7 @@
 //  · los interruptores: los efectos, «Sonidos mientras trabaja» y AURA_AMBIENTE=0 (server/movil-config.ts);
 //  · los archivos: existen, son mp3 pequeños y suenan (no son silencio);
 //  · el contrato: los mismos nombres en el teléfono, su validador del canal de acciones y el servidor;
-//  · y del micrófono de la mesa: el silencio por sesión y la gracia del segundo plano (lib/silencioMesa, lib/appDelante).
+//  · y del micrófono de la mesa: el silencio con hora (8 h) y la gracia del segundo plano (lib/silencioMesa, lib/appDelante).
 'use strict';
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -401,15 +401,18 @@ prueba('la mesa (DeskScreen) los pide por señales reales: el turno en curso, la
 
 /* ── el micrófono de la mesa (de paso: lo otro que José vivió como «el micrófono falla») ─────────────────────── */
 
-prueba('micrófono: el silencio de OTRA sesión no se arrastra (antes: «arranca silenciado (la persona lo dejó así en otra sesión)»)', () => {
-  const { arranqueDelMicrofono, migaArranqueMic, SESION_APP } = B.SILENCIO;
-  assert.deepEqual(arranqueDelMicrofono({ micMuted: true }), { silenciada: false, motivo: 'otra-sesion' }, 'guardado sin sesión (de la 5.5.0)');
-  assert.deepEqual(arranqueDelMicrofono({ micMuted: true, micMutedSesion: 'otra' }), { silenciada: false, motivo: 'otra-sesion' });
-  assert.deepEqual(arranqueDelMicrofono({ micMuted: true, micMutedSesion: SESION_APP }), { silenciada: true, motivo: 'misma-sesion' });
-  assert.deepEqual(arranqueDelMicrofono({ micMuted: false, micMutedSesion: SESION_APP }), { silenciada: false, motivo: 'abierto' });
-  assert.match(migaArranqueMic({ silenciada: false, motivo: 'otra-sesion' }), /abierto/);
-  assert.match(migaArranqueMic({ silenciada: true, motivo: 'misma-sesion' }), /sigue silenciado/);
-  assert.equal(migaArranqueMic({ silenciada: false, motivo: 'abierto' }), '');
+prueba('micrófono: el silencio vale 8 h desde que se puso aunque Android cierre la app; pasado eso abre (y se dice)', () => {
+  const { arranqueDelMicrofono, migaArranqueMic, SILENCIO_VIGENCIA_MS } = B.SILENCIO;
+  const t = 50_000_000;
+  assert.equal(SILENCIO_VIGENCIA_MS, 8 * 3_600_000);
+  // La revisión del 6-oct a la 5.6.0: silenciado hace 3 min, Samsung mató la app en segundo plano → volvía ABIERTO.
+  assert.deepEqual(arranqueDelMicrofono({ micMuted: true, micMutedEn: t - 3 * 60_000 }, t), { silenciada: true, motivo: 'vigente', desde: t - 3 * 60_000 });
+  assert.deepEqual(arranqueDelMicrofono({ micMuted: true, micMutedEn: t - SILENCIO_VIGENCIA_MS }, t), { silenciada: false, motivo: 'otra-sesion' }, 'el de ayer no deja sordo hoy');
+  assert.deepEqual(arranqueDelMicrofono({ micMuted: true }, t), { silenciada: false, motivo: 'otra-sesion' }, 'guardado sin hora (de la 5.5.0)');
+  assert.deepEqual(arranqueDelMicrofono({ micMuted: false, micMutedEn: t }, t), { silenciada: false, motivo: 'abierto' });
+  assert.match(migaArranqueMic({ silenciada: false, motivo: 'otra-sesion' }, t), /abierto/);
+  assert.match(migaArranqueMic({ silenciada: true, motivo: 'vigente', desde: t - 3 * 60_000 }, t), /sigue silenciado \(lo silenciaste hace 3 min/);
+  assert.equal(migaArranqueMic({ silenciada: false, motivo: 'abierto' }, t), '');
 });
 
 prueba('micrófono: un parpadeo de segundo plano (~0,1 s) no suelta el oído; uno de verdad sí, pasada la gracia', () => {

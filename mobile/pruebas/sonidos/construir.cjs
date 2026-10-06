@@ -2,7 +2,7 @@
 // escuchen cosas como eso del teclado, tanto con el avatar como en la llamada»): la mesa (compa/trabajoMesa), la llamada
 // (compa/ambiente), lo puro (compa/sonidosTrabajo), el reproductor (compa/ambienteSonido, con expo-av simulado), el
 // ajuste y el interruptor remoto (lib/ambienteAjuste, con el disco y /api/movil/config simulados), el validador del
-// canal de acciones (compa/acciones) y, del micrófono de la mesa, el silencio por sesión (lib/silencioMesa) y la gracia
+// canal de acciones (compa/acciones) y, del micrófono de la mesa, el silencio con hora (lib/silencioMesa) y la gracia
 // del segundo plano (lib/appDelante). Los .mp3 se vuelven su nombre de archivo (para ver cuál se pidió).
 //
 // `SRC=/otra/copia/mobile/src node construir.cjs` empaqueta otra copia (la de main no trae nada de esto: falla).

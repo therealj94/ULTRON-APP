@@ -224,13 +224,25 @@ async function verConBedrock(imagen: string, prompt: string, reloj: Presupuesto,
 export type NombreOjo = 'ojo' | 'gemini' | 'bedrock';
 const ORDEN_OMISION: NombreOjo[] = ['ojo', 'gemini', 'bedrock'];
 
-/** El orden en que se pregunta (ULTRON_VISION_ORDEN=«bedrock,ojo»…); lo que falte del de siempre va detrás. */
-export function ordenOjos(env: NodeJS.ProcessEnv = process.env): NombreOjo[] {
-  const pedido = String(env.ULTRON_VISION_ORDEN || '')
+const ojosDe = (crudo: string | undefined): NombreOjo[] =>
+  String(crudo || '')
     .toLowerCase()
     .split(/[\s,;]+/)
     .filter((x): x is NombreOjo => (ORDEN_OMISION as string[]).includes(x));
-  return [...new Set([...pedido, ...ORDEN_OMISION])];
+
+/**
+ * El orden en que se pregunta (ULTRON_VISION_ORDEN=«bedrock,ojo»…); lo que falte del de siempre va detrás.
+ *
+ * `continuo`: la subida en vivo de la cámara de la app (modo estructurado sin nadie esperando; hasta 40 por hora,
+ * mobile/src/lib/vistaCamara.ts SUBIDA.vivoMaxHora). Ahí va Bedrock PRIMERO por omisión: son muchas fotos y no deben
+ * gastar los créditos de Hugging Face del nodo del ojo cuando vuelvan (revisión del 6-oct); el nodo y Gemini quedan
+ * de reserva. ULTRON_VISION_ORDEN_VIVO lo cambia («ojo,bedrock»…); el turno de «¿qué ves?» sigue con
+ * ULTRON_VISION_ORDEN.
+ */
+export function ordenOjos(env: NodeJS.ProcessEnv = process.env, o: { continuo?: boolean } = {}): NombreOjo[] {
+  const general = [...new Set([...ojosDe(env.ULTRON_VISION_ORDEN), ...ORDEN_OMISION])];
+  if (!o.continuo) return general;
+  return [...new Set([...ojosDe(env.ULTRON_VISION_ORDEN_VIVO || 'bedrock'), ...general])];
 }
 
 const VER: Record<NombreOjo, typeof verConOjo> = { ojo: verConOjo, gemini: verConGemini, bedrock: verConBedrock };
@@ -248,10 +260,12 @@ type PedidoOjos = {
   reloj: Presupuesto;
   /** ¿Sirve lo que contestó? Si no, se pregunta al siguiente (una vista vacía no es «ver»). */
   sirve?: (v: Vista) => boolean;
+  /** La subida en vivo de la cámara: otro orden (ver ordenOjos). */
+  continuo?: boolean;
 };
 
 async function verConLosOjos(imagen: string, p: PedidoOjos): Promise<Vista> {
-  const listos = ordenOjos().filter(ojoListo);
+  const listos = ordenOjos(process.env, { continuo: p.continuo }).filter(ojoListo);
   if (!listos.length) {
     console.warn('[vision] sin ojo: falta ULTRON_OJO_URL+ULTRON_OJO_CLAVE, GEMINI_API_KEY o credenciales de AWS (Bedrock)');
     return { texto: NO_PUDE_VER, via: 'ninguno' };
@@ -278,9 +292,14 @@ async function verConLosOjos(imagen: string, p: PedidoOjos): Promise<Vista> {
   return { texto: NO_PUDE_VER, via: p.reloj.alcanza() ? 'error' : 'tiempo' };
 }
 
+/**
+ * Descripción libre (PDFs, Telegram, /vision/analyze sin modo). Un aviso del servicio («402 Payment Required»,
+ * créditos agotados) devuelto como texto no es lo que se vio: cuenta como fallo de ese ojo y mira el siguiente (antes
+ * esto solo se hacía con la vista estructurada, y el aviso acababa leído como el contenido de un PDF).
+ */
 export async function verImagen(imagen: string, prompt?: string, opts: { presupuesto?: Presupuesto; json?: boolean } = {}): Promise<Vista> {
   const pedido = prompt || 'Describe solo lo visible: personas, gestos, objetos, texto y números. No inventes.';
-  return verConLosOjos(imagen, { prompt: () => pedido, json: opts.json, reloj: opts.presupuesto || presupuesto(PRESUPUESTO_SIN_APURO_MS) });
+  return verConLosOjos(imagen, { prompt: () => pedido, json: opts.json, reloj: opts.presupuesto || presupuesto(PRESUPUESTO_SIN_APURO_MS), sirve: (v) => !pareceErrorDeServicio(v.texto) });
 }
 
 /**
@@ -301,9 +320,10 @@ export type VistaVista = { vista: VistaEstructurada | null; via: string; fallo: 
  * del servicio rescatado como prosa) cuenta como fallo de ESE ojo y se pregunta al siguiente. `fallo` si
  * ninguno vio; `vista` null en ese caso.
  */
-export async function verEstructurado(imagen: string, foco: FocoVision = 'escena', opts: { presupuesto?: Presupuesto } = {}): Promise<VistaVista> {
+export async function verEstructurado(imagen: string, foco: FocoVision = 'escena', opts: { presupuesto?: Presupuesto; continuo?: boolean } = {}): Promise<VistaVista> {
   const vistas = new Map<Vista, VistaEstructurada>();
   const v = await verConLosOjos(imagen, {
+    continuo: opts.continuo,
     prompt: (n) => (n === 'gemini' ? promptEstructurado(foco) : promptCompacto(foco)),
     json: true,
     reloj: opts.presupuesto || presupuesto(PRESUPUESTO_SIN_APURO_MS),

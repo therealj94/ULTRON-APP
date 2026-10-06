@@ -324,7 +324,8 @@ function CamaraMotor({ activa, dormido, observar, lado, vista, capa, grabRef, on
         if (!b64 || b64.length < MINIMO_FOTO) return;
         avisarUnaVez('buena', `cámara: primera foto al servidor (${b64.length} car. base64)`);
         estadisticaCamara.subida();
-        const r = await verCamara(b64, 'escena');
+        // `continuo`: la subida sin nadie esperando, el servidor la mira primero con Bedrock (lib/api.ts verCamara).
+        const r = await verCamara(b64, 'escena', undefined, { continuo: true });
         fallosVista = r?.vista ? 0 : fallosVista + 1;
         // CAM-E: la respuesta de la cámara anterior no se aplica a la nueva.
         if (!vivo || !r?.vista || origen.lado !== ladoRef.current) return;

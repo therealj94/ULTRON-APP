@@ -20,6 +20,7 @@
  *
  * Puro (sin React Native): lo prueban tests/vista-turno.test.ts y pruebas/mesa/mesa.prueba.mjs.
  */
+import { alCambiarCuenta } from './generacionCuenta';
 import { resumenVista, type FocoVision, type VistaCamara } from './vistaCamara';
 
 export const VISTA_TURNO = {
@@ -80,21 +81,29 @@ export class VistaFresca {
 
 /** La de la app (una sola; la llenan CamaraVivo y CamaraVision, la lee la mesa). */
 export const vistaFresca = new VistaFresca();
+// La foto y lo visto son de quien estaba dentro: al salir o entrar otra persona no se le contesta «¿qué ves?» con la
+// escena (y la foto) de la anterior (revisión del 6-oct). La mesa, además, la suelta al desmontarse (DeskScreen).
+alCambiarCuenta(() => vistaFresca.invalidar());
+
+/** Lo que había al sacar la foto (la cámara y la gente): con eso se guarda lo que el servidor diga después. */
+export type AlSacar = { lado: string; personas: number };
 
 export type IoVistaTurno = {
   ahora: () => number;
   /** La foto en base64 (o null). */
   foto: () => Promise<string | null>;
+  /** La cámara y la gente de ESTE momento: se mira al pedir la foto (ver `alSacar`). */
+  escena?: () => AlSacar;
   ver: (b64: string, foco: FocoVision) => Promise<RespuestaDeVista | null>;
 };
 
 export type VistaTurno =
   /** La de la subida continua: al instante. */
   | { tipo: 'fresca'; visto: string; vista: VistaCamara; foto?: string; edadMs: number }
-  /** El servidor contestó dentro de la espera. */
-  | { tipo: 'vista'; visto: string; vista: VistaCamara; foto: string; esperaMs: number }
+  /** El servidor contestó dentro de la espera. `alSacar`: la cámara y la gente de cuando se sacó la foto. */
+  | { tipo: 'vista'; visto: string; vista: VistaCamara; foto: string; esperaMs: number; alSacar: AlSacar }
   /** El servidor contestó a tiempo pero sin el modo estructurado (servidor anterior): la foto va en el turno. */
-  | { tipo: 'foto'; foto: string; esperaMs: number; tarde: Promise<RespuestaDeVista | null>; motivo: 'tarde' | 'sin_vista' }
+  | { tipo: 'foto'; foto: string; esperaMs: number; tarde: Promise<RespuestaDeVista | null>; motivo: 'tarde' | 'sin_vista'; alSacar: AlSacar }
   /** No hubo foto a tiempo. */
   | { tipo: 'sin_foto'; esperaMs: number };
 
@@ -125,6 +134,10 @@ export async function vistaParaTurno(
     const f = guardadas.fresca({ ahora: t0, lado: o.lado, personas: o.personas });
     if (f) return { tipo: 'fresca', visto: f.visto, vista: f.vista, foto: f.foto, edadMs: Math.max(0, t0 - f.ts) };
   }
+  // La cámara y la gente AL SACAR la foto: lo que el servidor diga (quizá segundos después, con `tarde`) se guarda con
+  // esto, no con lo del momento de la respuesta (revisión del 6-oct: si entretanto se cambió de cámara o llegó
+  // alguien, la vista fresca quedaba con el lado o la gente equivocados).
+  const alSacar: AlSacar = io.escena ? io.escena() : { lado: o.lado, personas: o.personas ?? 0 };
   const foto = await conTope(
     io.foto().catch(() => null),
     o.fotoMs ?? VISTA_TURNO.fotoMs
@@ -134,6 +147,6 @@ export async function vistaParaTurno(
   const pedido = io.ver(foto, foco).catch(() => null);
   const r = await conTope(pedido, o.esperaMs ?? VISTA_TURNO.esperaMs);
   const espera = io.ahora() - t0;
-  if (r !== TARDE && r?.vista && r.estructurada && r.visto) return { tipo: 'vista', visto: r.visto, vista: r.vista, foto, esperaMs: espera };
-  return { tipo: 'foto', foto, esperaMs: espera, tarde: pedido, motivo: r === TARDE ? 'tarde' : 'sin_vista' };
+  if (r !== TARDE && r?.vista && r.estructurada && r.visto) return { tipo: 'vista', visto: r.visto, vista: r.vista, foto, esperaMs: espera, alSacar };
+  return { tipo: 'foto', foto, esperaMs: espera, tarde: pedido, motivo: r === TARDE ? 'tarde' : 'sin_vista', alSacar };
 }

@@ -358,6 +358,15 @@ export const SUBIDA = {
    * como mucho cada esto. Así «¿qué ves?» casi siempre tiene una vista fresca y contesta al instante.
    */
   vivoMs: 15_000,
+  /**
+   * Tope de esas subidas en vivo por hora (revisión del 6-oct): con el teléfono en la mano cada movimiento contaba como
+   * escena nueva y salían hasta 240 por hora (una cada 15 s). 40 por hora (una cada 90 s de media) alcanza para que
+   * «¿qué ves?» casi siempre tenga una vista fresca sin pagar una foto por cada vez que se mueve el teléfono. No toca a
+   * «Comenta lo que ve» (lo pidió la persona y tiene su propio ritmo).
+   */
+  vivoMaxHora: 40,
+  /** Mover el teléfono solo cuenta como escena nueva si después se queda quieto esto en la posición nueva. */
+  quietoTrasMoverMs: 2_500,
   /** Con el servidor fallando, cada fallo seguido duplica la espera hasta este techo (antes: cada 20 s sin fin). */
   fallosMaxMs: 120_000,
 };
