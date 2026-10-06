@@ -63,7 +63,7 @@ import {
   type SttEngine,
 } from '../lib/storage';
 import { playSfx, preloadSfx, setSfxEnabled } from '../lib/sfx';
-import { StreamSpeaker, fraccionSonando, registroVoz, setAvatarVoz, setSpeechLevelListener, speak, speakPrayer, speakReaccion, speakSong, stopSpeaking, type SongRequest } from '../lib/tts';
+import { StreamSpeaker, cuandoSuene, fraccionSonando, registroVoz, setAvatarVoz, setSpeechLevelListener, speak, speakPrayer, speakReaccion, speakSong, stopSpeaking, type SongRequest } from '../lib/tts';
 import { frase, saludoConNombre, type FraseId } from '../lib/frases';
 import { de, idiomaActual, tr, useIdioma } from '../i18n';
 import { quitarExpresiones } from '../lib/expresiones';
@@ -698,15 +698,18 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const onAudio = useCallback((f: FaceState) => {
     // Cuánto tardó en contestar con voz desde que el oído entregó la frase (José, 3-oct: «tarda mucho»).
     // Cada pocos turnos hablados se mandan las migas: así se ve en los logs del servidor sin esperar un error.
-    if (fraseOidaEn.current) {
+    // VOZ (auditoría 6-oct §7.1): se mide cuando el reproductor CONFIRMA que suena (cuandoSuene), no al pedir play.
+    const oida = fraseOidaEn.current;
+    if (oida) cuandoSuene(() => {
+      if (fraseOidaEn.current !== oida) return;
       // La traza del turno (lib/trazaTurno.ts): la misma miga de siempre con cada tramo detrás (José, 6-oct: ~6 s con la cámara).
       const ahora = Date.now();
-      const linea = trazaTurno.linea(ahora, { jsMax: pulsoJs.maxEntre(fraseOidaEn.current, ahora), camara: visionOnRef.current, caras: !!carasRef.current?.reconoce });
-      miga(linea || `mesa: contestó con voz ${ahora - fraseOidaEn.current} ms después de la frase`);
+      const linea = trazaTurno.linea(ahora, { jsMax: pulsoJs.maxEntre(oida, ahora), camara: visionOnRef.current, caras: !!carasRef.current?.reconoce });
+      miga(linea || `mesa: contestó con voz ${ahora - oida} ms después de la frase`);
       fraseOidaEn.current = 0;
       turnosHablados.current += 1;
       if (turnosHablados.current === 3 || turnosHablados.current % 8 === 0) reportarEstado(`voz: ${turnosHablados.current} turnos hablados`);
-    }
+    });
     pauseMicForTts(true);
     speakingRef.current = true;
     avisarMesa({ hablando: true, pensando: false });
@@ -1091,10 +1094,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
           void speak(vozDeEspera(f.texto, estado, quien), {
             emocion: 'neutral',
             hastaQue: corte,
-            onAudioStart: () => {
-              trazaTurno.marcar('rellenoSuena');
-              pauseMicForTts(true);
-            },
+            onAudioStart: () => pauseMicForTts(true),
+            // «Suena» cuando el reproductor lo confirma, no al pedir play (auditoría 6-oct §7.1).
+            onSuena: () => trazaTurno.marcar('rellenoSuena'),
             onEnd: () => !speakingRef.current && pauseMicForTts(false),
           }).then((sono) => !sono && trazaTurno.marcar('rellenoTirado'));
         },
@@ -1120,7 +1122,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
               speaker = new StreamSpeaker({
                 emocion,
                 onAudioStart: () => onAudio(faceForEmocion(emocion)),
-                onPrimerAudio: () => trazaTurno.marcar('audio'),
+                onAudioBajado: () => trazaTurno.marcar('audio'),
                 onSentence: (sentence) => {
                   showBubble(sentence);
                   // Con la mesa tapada lo dice la compañera: su globito lee lo mismo que suena.
