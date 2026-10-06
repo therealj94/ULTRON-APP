@@ -142,6 +142,7 @@ import { computadoraDisponible, correoDisponible, correrBucleHarness, extraerPed
 import { accionConBorrador, corregirPromesaSinHerramienta, cumplirLoDicho, daPorHecho, debeCorregirSinHerramienta, duroDeVoz, herramientasDelTurno, lineaDeHerramienta, lineaRespuestaHablada, notaDeCumplir, pasoDeLectura, pasoSinTopeDeVoz, preguntaFinal, prometeSinHacer, recorteDeVoz, reglasDeManos, topeConLectura, topeDeVoz, topeTrasPaso, vozCompletaDelTurno, vozRecortada, type CumplirLoDicho, type ManosDelTurno } from './lib/cerebro-manos';
 import { lineaTiemposTurno, type MedidaTurno } from './lib/tiempos-turno';
 import { reglasAppDelTurno } from './lib/prompt-voz';
+import { PulidorVoz, anotarApertura, aperturasPrevias, esVozLiteral } from './lib/habla-natural';
 import { correrCarteraConEstado } from './lib/cartera';
 import { notaDeVoz, pideNotaDeVoz } from './lib/voz';
 import { iniciarCentinela } from './lib/centinela';
@@ -4951,12 +4952,25 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
   const reloj = presupuesto(PRESUPUESTO_TURNO_MS);
   /** Dónde se van los segundos del turno (lib/tiempos-turno.ts): una línea en el log al terminar, sin texto. */
   const medida: MedidaTurno = { inicio: Date.now(), herramientas: [], hablado: !!opciones.voz || !!opciones.presupuestoVoz, camino: opciones.alTarea ? 'llamada' : 'mesa' };
+  /*
+   * HABLA NATURAL (lib/habla-natural.ts, José 6-oct: «que no se sepa que es AI»): en un turno hablado, lo que se dice
+   * pasa por el pulidor (sin fórmulas de asistente, una etiqueta de voz, sin repetir la apertura de la respuesta
+   * anterior, nunca «soy humana»). Lo literal (un borrador y su «¿Lo mando?», una lectura) no se toca: `vozLiteral`.
+   */
+  const claveHabla = String(body?.sesion?.correo || body?.aparato || '').toLowerCase();
+  let vozLiteral = () => false;
+  const pulido = opciones.voz
+    ? new PulidorVoz({ idioma, mensaje: String(body?.message || body?.text || ''), avatar: normalizarAvatar(body?.avatar), previas: aperturasPrevias(claveHabla), literal: () => vozLiteral() })
+    : null;
   const send = (event: string, data: unknown) => {
+    if (event === 'emocion') pulido?.ponerEmocion((data as { emocion?: unknown })?.emocion);
     if (!senal?.aborted) salida.enviar(event, data);
   };
   // Cada trozo sale dos veces: `text` para leer (sin expresiones; es lo único que entienden las APK
   // viejas) y `voz` con sus [risa]… para la voz. Los clientes nuevos hablan `voz` y enseñan `text`.
-  const soltar = (evento: 'delta' | 'replace', texto: string) => {
+  const soltar = (evento: 'delta' | 'replace', crudo: string) => {
+    const texto = pulido ? (evento === 'replace' ? pulido.reemplazo(crudo) : pulido.trozo(crudo)) : crudo;
+    if (!texto && crudo) return;
     if (texto.trim()) {
       trazaActual()?.marca('primer-texto');
       medida.primerTexto ??= Date.now();
@@ -5046,7 +5060,9 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
   // Un turno de confirmación (un borrador o algo que esperaba su «sí») no lleva tope (revisión del 5-oct, GRAVE-1), y
   // se le quita a mitad del turno si una herramienta deja un borrador o lee un correo o un chat (`sinTope`, abajo).
   let topeDelTurno = topeDeVoz(message, !!opciones.voz, { confirmacion: p.vozCompleta });
-  const vozConTope = (texto: string) => recorteDeVoz(texto, topeDelTurno).trim();
+  // Sin tope (un borrador, una confirmación) o con el de lectura: lo que se dice es literal y el pulidor no lo toca.
+  vozLiteral = () => esVozLiteral(topeDelTurno);
+  const vozConTope = (texto: string) => (pulido ? pulido.todo(recorteDeVoz(texto, topeDelTurno)) : recorteDeVoz(texto, topeDelTurno)).trim();
   /** Un borrador de correo o de WhatsApp espera su «sí» en esta conversación (de este turno o de uno anterior). */
   const hayBorradorPendiente = () => !!p.dueno && !!(borradorDe(p.dueno, p.ambito) || borradorWhatsappDe(p.dueno, p.ambito));
   /**
@@ -5064,7 +5080,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     // la dice; antes decía «Se me fue el hilo…»).
     if (app.sustituido) soltar('delta', app.texto);
     anotarHerramientasAura(reg, tools);
-    const leido = quitarExpresiones(app.texto).trim();
+    const leido = quitarExpresiones(pulido ? pulido.paraPantalla(app.texto) : app.texto).trim();
     const fin: Cierre = senal?.aborted && cierre.estado === 'completo' ? { estado: 'error', motivo: 'la persona interrumpió' } : cierre;
     const parcial = fin.estado !== 'completo';
     const autor = quienContesto(via, quien?.modelo, quien?.proveedor);
@@ -5085,6 +5101,8 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       ...(p.propuestaTaller ? { propuestaTaller: p.propuestaTaller } : {}),
     };
     send('done', datos);
+    // La apertura de esta respuesta: la siguiente no abre con la misma muletilla (lib/habla-natural.ts).
+    if (pulido) anotarApertura(claveHabla, pulido.apertura);
     // Una línea por turno de la mesa: dónde se fueron los segundos (sin lo que dijo ni lo que contestó).
     console.log(lineaTiemposTurno(reg.id, medida));
     if (senal?.aborted && corrioHerramienta) salida.resultado?.(datos);

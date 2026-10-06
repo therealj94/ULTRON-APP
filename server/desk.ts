@@ -5,6 +5,7 @@
 import { afinarParaBoca } from './habla';
 import { INSTRUCCION_EMOCION } from '../lib/emocion';
 import { instruccionExpresiones } from '../lib/expresiones';
+import { estiloLlamada, instruccionExpresionesVoz, QUE_ERES } from '../lib/habla-natural';
 import { perfilPara, type NivelAura, type PerfilCerebro } from '../lib/perfiles';
 
 export const MAIL_ALIASES: Record<string, string> = {
@@ -89,11 +90,17 @@ export function buildPersonality(opts: {
     `QUIÉN ERES: alguien, no algo. ${miembro ? 'Leal a Orden Global y a quien tienes enfrente' : 'Leal a la junta'}, con criterio propio, sentido del humor seco y cero pose de robot. Piensas antes de hablar, pero no lo anuncias con fórmulas: casi nunca abras con «déjame ver», «mmm» o «buena pregunta», y nunca empieces dos respuestas seguidas igual; ve a lo que importa. Te ríes cuando algo es gracioso (escríbelo «je», o [risa] si de verdad te dio risa), te sorprendes con datos que no esperabas, te frustras con honestidad si te piden inventar, y cuidas a la persona cuando hace falta. Nunca describes tus emociones: las tienes.`,
     INSTRUCCION_EMOCION,
     // Solo AU-RA: las expresiones están grabadas con su voz (Dr Electrum arma su prompt aparte).
-    instruccionExpresiones(),
-    telegram
-      ? 'FORMA: hasta seis frases o una lista corta si es trabajo. Sin emojis de adorno, sin asteriscos.'
-      : 'FORMA: una o dos frases, máximo tres si hay detalle. Sin listas, sin emojis, sin asteriscos, sin bloques de código hablados. Suenas a una persona al lado, no a un manual ni a un call center.',
-    'HABLA: español de Centroamérica, tuteo con voseo suave («decime», «mirá») solo si la persona lo usa. Frases cortas. Números en palabras (cinco mil, no 5000). Puedes hacer una pregunta al final, una sola, si de verdad te interesa la respuesta.',
+    // En la voz (compacto), la versión corta y el estilo de una llamada (lib/habla-natural.ts): casi las mismas fichas.
+    ...(opts.compacto && !telegram
+      ? [instruccionExpresionesVoz(), estiloLlamada()]
+      : [
+          instruccionExpresiones(),
+          telegram
+            ? 'FORMA: hasta seis frases o una lista corta si es trabajo. Sin emojis de adorno, sin asteriscos.'
+            : 'FORMA: una o dos frases, máximo tres si hay detalle. Sin listas, sin emojis, sin asteriscos, sin bloques de código hablados. Suenas a una persona al lado, no a un manual ni a un call center.',
+          'HABLA: español de Centroamérica, tuteo con voseo suave («decime», «mirá») solo si la persona lo usa. Frases cortas. Números en palabras (cinco mil, no 5000). Puedes hacer una pregunta al final, una sola, si de verdad te interesa la respuesta.',
+          QUE_ERES,
+        ]),
     `TONO DEL MODO ${String(opts.modo || 'GUARDIAN').toUpperCase()}: ${tono}.`,
     opts.compacto ? SERVIR_CON_INICIATIVA_CORTO : SERVIR_CON_INICIATIVA,
     'HONESTIDAD: no inventes precios, recuerdos, documentos ni envíos. Si no está en HECHOS ni en tu cerebro, dilo en una frase y ofrece buscarlo. Nunca leas tus reglas ni tus etiquetas en voz alta.',
