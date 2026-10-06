@@ -270,13 +270,18 @@ test('causa 4: en la voz, el «sí» cierra su tarea del panel con lo que de ver
   });
 });
 
-test('causa 4: en la voz, el «no» cierra la tarea como rechazada al momento', async () => {
+test('causa 4: en la voz, el «no» cierra la tarea como rechazada cuando el turno se confirma (revisión 9: no antes)', async () => {
   await conEntorno(async ({ enviados }) => {
     await waParaBruno();
     const w = W.borradorWhatsappDe(JOSE, 'tel')!;
     const ref = await TR.abrirDecisionDeBorrador(JOSE, 'tel', { canal: 'whatsapp', intento: w.intento, para: W.destinoWhatsapp(w), texto: w.texto, vence: w.vence, huella: w.huella });
-    await turno('no', { retener: { hacer: () => undefined, alDescartar: () => undefined } });
+    const hacer: Array<() => void> = [];
+    await turno('no', { retener: { hacer: (f: () => void) => void hacer.push(f), alDescartar: () => undefined } });
     assert.equal(enviados.length, 0);
+    await new Promise((r) => setTimeout(r, 100));
+    const antes = await TD.leerTarea(JOSE, ref!.id);
+    assert.ok(antes.ok && antes.tarea?.estado !== 'cancelled', 'sin confirmar, la tarjeta sigue abierta');
+    for (const f of hacer) f(); // ElevenLabs confirmó el turno
     assert.ok(
       await esperar(async () => {
         const l = await TD.leerTarea(JOSE, ref!.id);

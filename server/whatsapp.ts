@@ -45,7 +45,7 @@ import { cuentaSuspendida, cuentasDisponibles } from './cuentas';
 import { presentadoEnChat } from './presentacion-decision';
 import { claveConexion } from './veta-entrar';
 import { enviarUnaVez, huellaAprobacion, idMensajeWADeOperacion, operacionDeBorrador, type Reconciliacion, type ResultadoEnvio, type SalidaEnvio } from '../lib/envios';
-import { anotarVencido, ApartadosBorradores, resumenTexto, textoEditado, vencioPorTiempo, type EdicionBorrador } from './borradores-cola';
+import { anotarVencido, ApartadosBorradores, rechazadoEnPanel, resumenTexto, textoEditado, vencioPorTiempo, type EdicionBorrador } from './borradores-cola';
 
 export type ChatWA = {
   jid: string;
@@ -924,11 +924,12 @@ export function promoverApartadoWhatsapp(quien: string, ambito: string, intento:
   return () => {
     const ahora = BORRADORES.get(k);
     if (ahora && ahora.intento !== intento) return;
-    if (actual) {
+    // Revisión 9: lo que la persona rechazó en su panel o su ventana mientras tanto no vuelve (ni uno ni otro).
+    if (actual && !rechazadoEnPanel(actual.intento)) {
       APARTADOS.quitar(k, actual.intento);
       BORRADORES.set(k, actual);
     } else BORRADORES.delete(k);
-    if (!motivoBorrador(b, quien)) APARTADOS.apartar(k, b);
+    if (!motivoBorrador(b, quien) && !rechazadoEnPanel(b.intento)) APARTADOS.apartar(k, b);
   };
 }
 
@@ -1000,10 +1001,11 @@ export async function resolverBorradorWhatsappConEstado(quien: string, ambito: s
     canal: 'WHATSAPP',
     para: destinoWhatsapp(b),
     quitar: () => BORRADORES.delete(k),
-    ...(como.desdePanel ? {} : { apartar: () => void (b.soloPanel = true), reemplazoDe: b.reemplazoDe, aceptarCambio: () => void delete b.reemplazoDe, reponerCambio: ((antes) => () => void (b.reemplazoDe = antes))(b.reemplazoDe) }),
-    // Un turno de voz descartado lo repone, pero nunca encima de otro borrador (quizá a otro chat) armado después.
+    ...(como.desdePanel ? {} : { apartar: () => void (b.soloPanel = true), desapartar: ((antes) => () => void (BORRADORES.get(k) === b && (b.soloPanel = antes)))(b.soloPanel), reemplazoDe: b.reemplazoDe, aceptarCambio: () => void delete b.reemplazoDe, reponerCambio: ((antes) => () => void (b.reemplazoDe = antes))(b.reemplazoDe) }),
+    // Un turno de voz descartado lo repone, pero nunca encima de otro borrador (quizá a otro chat) armado después, ni si
+    // la persona lo rechazó en su panel mientras tanto (revisión 9).
     reponer: () => {
-      if (!BORRADORES.has(k) && !motivoBorrador(b, quien)) BORRADORES.set(k, b);
+      if (!BORRADORES.has(k) && !motivoBorrador(b, quien) && !rechazadoEnPanel(b.intento)) BORRADORES.set(k, b);
     },
     // Justo antes de mandar (en la voz, un rato después del «sí»): que no haya vencido ni sea de otra sesión, ni que el
     // plan haya cambiado a otro borrador (AUR13, sección 10: el «sí» era para el de antes).

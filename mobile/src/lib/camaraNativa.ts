@@ -255,22 +255,29 @@ export function guardiaValida(v: unknown): EstadoGuardia {
  * PLANO sin cerrarse (lib/reporte.ts: true = murió, false = se cerró bien o la recargó la OTA, null = no se
  * sabe). Con `murio === false` las marcas son viejas (una recarga a propósito) y no cuentan.
  */
-export function guardiaAlArrancar(e: EstadoGuardia, ahora: number, murio: boolean | null): { estado: EstadoGuardia; aviso?: string } {
+/**
+ * Cómo se llama en los avisos lo que la guardia cuida. La misma guardia vale para la voz en streaming
+ * (modules/aura-voz, lib/guardiaVoz.ts): solo cambian las palabras.
+ */
+export type TextosGuardia = { nombre: string; montar: string; montando: string };
+export const TEXTOS_CAMARA: TextosGuardia = { nombre: 'cámara nueva', montar: 'al montar la cámara nueva', montando: 'montándola' };
+
+export function guardiaAlArrancar(e: EstadoGuardia, ahora: number, murio: boolean | null, t: TextosGuardia = TEXTOS_CAMARA): { estado: EstadoGuardia; aviso?: string } {
   const golpes = (e.golpes || []).filter((t) => ahora - t <= GUARDIA.ventanaGolpesMs);
   let bloqueadaHasta = e.bloqueadaHasta && e.bloqueadaHasta > ahora ? e.bloqueadaHasta : undefined;
   let motivo = bloqueadaHasta ? e.motivo : undefined;
   let aviso: string | undefined;
   if (murio !== false && e.montando) {
     bloqueadaHasta = Math.max(bloqueadaHasta || 0, ahora + GUARDIA.bloqueoMontarMs);
-    motivo = 'se cerró al montar la cámara nueva';
-    aviso = `cámara nueva: la app se cerró montándola; la apago ${Math.round(GUARDIA.bloqueoMontarMs / DIA)} días en este teléfono`;
+    motivo = `se cerró ${t.montar}`;
+    aviso = `${t.nombre}: la app se cerró ${t.montando}; la apago ${Math.round(GUARDIA.bloqueoMontarMs / DIA)} días en este teléfono`;
   } else if (murio !== false && e.enUso) {
     golpes.push(ahora);
     if (golpes.length >= GUARDIA.golpesMax) {
       bloqueadaHasta = Math.max(bloqueadaHasta || 0, ahora + GUARDIA.bloqueoGolpesMs);
-      motivo = `se cerró ${golpes.length} veces con la cámara nueva`;
-      aviso = `cámara nueva: la app se cerró ${golpes.length} veces con ella encendida; la apago ${Math.round(GUARDIA.bloqueoGolpesMs / DIA)} días`;
-    } else aviso = 'cámara nueva: la app se cerró con ella encendida (1 aviso)';
+      motivo = `se cerró ${golpes.length} veces con la ${t.nombre}`;
+      aviso = `${t.nombre}: la app se cerró ${golpes.length} veces con ella encendida; la apago ${Math.round(GUARDIA.bloqueoGolpesMs / DIA)} días`;
+    } else aviso = `${t.nombre}: la app se cerró con ella encendida (1 aviso)`;
   }
   return {
     estado: { ...(golpes.length ? { golpes } : {}), ...(bloqueadaHasta ? { bloqueadaHasta, motivo } : {}) },

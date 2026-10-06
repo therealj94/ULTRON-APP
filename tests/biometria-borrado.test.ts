@@ -413,3 +413,33 @@ test('SEC-03: fusionarCopias — gana la versión más alta y las lápidas de la
   const todo = { version: 1, rev: 30, personas: [P('c', 60)], lapidas: [], borradoTodo: 50 };
   assert.deepEqual(D.fusionarCopias(rara, todo).cajon.personas.map((p: any) => p.id), ['c']);
 });
+
+/*
+ * Revisión 9 (MENOR 6): las lápidas tenían tope (MAX_LAPIDAS) y la más vieja se PERDÍA: pasado el tope, una copia vieja
+ * (otra instancia, un respaldo) con esa persona la devolvía. Ahora lo que sale del tope queda en una marca de agua.
+ */
+test('revisión 9: pasado el tope de lápidas, la persona olvidada primero NO vuelve desde una copia vieja (marca de agua); los vivos siguen', () => {
+  assert.equal(typeof D.compactarLapidas, 'function');
+  const P = (id: string, creado: number) => ({ id, nombre: id, creado });
+  let c: any = { version: 1, rev: 1, personas: [P('vieja-viva', 1), P('x0', 2)], lapidas: [] };
+  // Se olvida a x0 (la primera lápida) y después a MAX_LAPIDAS + 100 personas más.
+  c = D.siguiente(c, { version: 1, personas: [P('vieja-viva', 1)], lapidas: D.conLapidas(c, ['x0'], 10) });
+  for (let i = 0; i < D.MAX_LAPIDAS + 100; i++) c = D.siguiente(c, { version: 1, personas: c.personas, lapidas: D.conLapidas(c, [`m${i}`], 11 + i) });
+  assert.ok(c.lapidas.length <= D.MAX_LAPIDAS, 'las lápidas por id siguen acotadas');
+  assert.ok(!c.lapidas.some((l: any) => l.id === 'x0'), 'la de x0 salió del tope');
+  assert.ok(c.marcaLapidas >= 10, 'quedó en la marca de agua');
+  assert.deepEqual(c.vivosEnMarca, ['vieja-viva'], 'solo ids de quien sigue vivo (nada biométrico)');
+  // Una copia con versión más alta pero vieja de contenido (una instancia atrasada, un respaldo) trae a x0 sin su lápida.
+  const ahora = Date.now();
+  const rara = { version: 1, rev: c.rev + 1_000_000, personas: [P('vieja-viva', 1), P('x0', 2), P('m3', 14), P('nueva', ahora)], lapidas: [] };
+  const f = D.fusionarCopias(rara, c).cajon;
+  assert.deepEqual(f.personas.map((p: any) => p.id), ['vieja-viva', 'nueva'], 'x0 (y m3) no resucitan; la de antes y la nueva siguen');
+  assert.deepEqual(D.fusionarCopias(c, rara).cajon.personas.map((p: any) => p.id), ['vieja-viva', 'nueva'], 'en cualquier orden');
+  // La marca viaja en el JSON guardado (sanear) y se aplica a una copia sola.
+  const leido = D.sanearDurable(JSON.parse(JSON.stringify(c)));
+  assert.deepEqual(D.aplicarLapidas(rara.personas, leido).map((p: any) => p.id), ['vieja-viva', 'nueva']);
+  // Y se conserva al seguir guardando (otra persona nueva, otra lápida).
+  const d = D.siguiente(f, { version: 1, personas: [...f.personas, P('otra', ahora + 1)], lapidas: D.conLapidas(f, ['m-final'], ahora) });
+  assert.ok(d.marcaLapidas >= c.marcaLapidas && d.lapidas.length <= D.MAX_LAPIDAS);
+  assert.deepEqual(D.aplicarLapidas([...rara.personas, P('otra', ahora + 1)], d).map((p: any) => p.id), ['vieja-viva', 'nueva', 'otra']);
+});

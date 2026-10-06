@@ -4,7 +4,7 @@
  */
 import { abrirMicCrudo, micCrudoDisponible } from './auraMic';
 import { pedirPermisoTurbo, transcribirWav } from './api';
-import { MotorTurbo, type CallbacksTurbo, type WsTurbo } from './turboMotor';
+import { MotorTurbo, type CallbacksTurbo, type InfoTrozo, type WsTurbo } from './turboMotor';
 
 const motor = new MotorTurbo({
   abrirMic: abrirMicCrudo,
@@ -27,6 +27,10 @@ export const turboPausado = () => motor.estaPausado();
 export const turboEscuchando = () => motor.escuchando();
 export const turboVivo = () => motor.vivo();
 export const turboOirEncima = (on: boolean) => motor.setOirEncima(on);
+/** Las muletillas (lib/asentir.ts): el cancelador de eco en el micrófono de escucha, el tramo a ignorar y cada trozo. */
+export const turboEcoAlEscuchar = (on: boolean) => motor.setEcoAlEscuchar(on);
+export const turboIgnorarTramo = (ms: number) => motor.ignorarTramo(ms);
+export const turboOyenteTrozo = (fn: ((i: InfoTrozo) => void) | null) => motor.setOyenteTrozo(fn);
 export const turboTomarTurno = () => motor.tomarTurno();
 export const turboOyendoEncima = () => motor.oyendoEncima();
 /** El audio PCM de cada frase entregada (trozos de 0,1 s en base64), justo antes de su texto, con su id: las voces. */

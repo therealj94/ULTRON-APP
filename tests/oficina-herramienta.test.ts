@@ -54,7 +54,7 @@ test('se ofrece solo con sesión y nunca a un invitado; la computadora remite a 
   assert.ok(!nombres({ ...MANOS, documentos: false }).includes('crear_documento'));
   assert.ok(!nombres(manosDeInvitado(MANOS)).includes('crear_documento'));
   const compu = herramientasDelTurno(MANOS).find((t) => t.toolSpec!.name === 'computadora')!;
-  assert.match(compu.toolSpec!.description!, /Para CREAR documentos de Word, Excel o PDF usa crear_documento/);
+  assert.match(compu.toolSpec!.description!, /Para CREAR documentos de Word, Excel, PowerPoint o PDF usa crear_documento/);
   const doc = herramientasDelTurno(MANOS).find((t) => t.toolSpec!.name === 'crear_documento')!;
   assert.match(doc.toolSpec!.description!, /TODOS los pedidos en UNA llamada/);
   // Dijo que lo hacía sin usar la herramienta («voy a escribir el informe…»): la segunda vuelta puede pedir crear_documento.
@@ -212,6 +212,38 @@ test('revisión 8 (MEDIO-2): la tarjeta lleva un enlace https firmado que baja e
     assert.equal((await fetch(enlace)).status, 403, 'cuenta suspendida: no baja (SEC-04)');
     autoridad = 'desconocida';
     assert.equal((await fetch(enlace)).status, 503, 'sin poder comprobar la cuenta: no baja');
+  } finally {
+    await new Promise((ok) => srv.close(ok));
+  }
+});
+
+test('revisión 9 (MENOR 7): una descarga con sesión cuenta UNA vez en el limitador; con enlace firmado, también una', async () => {
+  const ctx = nuevoContextoTrabajos('turno-documentos-cupo-0004');
+  const arg = JSON.stringify({ archivos: [ENTRADA.archivos[1]] });
+  const r = await enTurnoConTrabajos(ctx, () => correrDocumento({ dueno: 'marta@ejemplo.com', arg, pedido: 'hazme el presupuesto en Excel' }));
+  assert.equal(r.estado, 'succeeded', r.texto);
+  const id = idArchivo('marta@ejemplo.com', await enTurnoConTrabajos(ctx, async () => pedidoDeDocumentos(arg).requestId), 'presupuesto.xlsx');
+  // El limitador de server.ts cuenta por IP y ruta: las dos rutas de /api/documentos/:id comparten la clave.
+  let cuenta = 0;
+  const app = express();
+  montarRutasDocumentos(app, {
+    exigirMesa: (_req, _res, next) => next(),
+    limitar: () => (_req, _res, next) => (cuenta++, next()),
+    sesionDe: (req) => (req.headers['x-prueba-sesion'] === undefined ? null : { correo: String(req.headers['x-prueba-sesion']) }),
+    autoridad: async () => 'permitida',
+  });
+  const srv = app.listen(0, '127.0.0.1');
+  await new Promise((ok) => srv.once('listening', ok));
+  const base = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
+  try {
+    const conSesion = await fetch(`${base}/api/documentos/${id}`, { headers: { 'x-prueba-sesion': 'marta@ejemplo.com' } });
+    assert.equal(conSesion.status, 200);
+    await conSesion.arrayBuffer();
+    assert.equal(cuenta, 1, 'con sesión: una sola vez (antes, dos: la ruta del enlace contaba antes de ceder)');
+    const conEnlace = await fetch(enlaceDocumento('marta@ejemplo.com', id, base));
+    assert.equal(conEnlace.status, 200);
+    await conEnlace.arrayBuffer();
+    assert.equal(cuenta, 2, 'con el enlace firmado: una vez');
   } finally {
     await new Promise((ok) => srv.close(ok));
   }

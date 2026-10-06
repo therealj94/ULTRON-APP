@@ -62,6 +62,7 @@ import { OtrasFormas } from './pantallas/OtrasFormas';
 import { abrirConversacion, abrirRuta, nav, pantallaDeRuta, RUTAS_DE_SESION, type RaizParams } from './rutas';
 import { useUsuario } from './sesion';
 import { usePush } from '../push/nativo';
+import { prepararVoz } from '../lib/guardiaVoz';
 
 const Pila = createNativeStackNavigator<RaizParams>();
 
@@ -107,6 +108,11 @@ export function AppAura() {
     void SystemUI.setBackgroundColorAsync(tema.fondo).catch(() => {});
     void estiloBarraAndroid(tema.oscuro);
   }, [tema]);
+
+  // La voz en streaming (modules/aura-voz): lo guardado, la guardia y el interruptor remoto. Hasta leerlos, la de siempre.
+  useEffect(() => {
+    void prepararVoz();
+  }, []);
 
   // El idioma se elige en muchos lugares (la entrada, la bienvenida, Ajustes, el menú de la mesa):
   // con sesión, también queda en el perfil.

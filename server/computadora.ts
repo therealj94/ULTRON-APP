@@ -1940,10 +1940,22 @@ export async function resolverPreguntaComputadora(quien: string, mensaje: string
   // Las marcas del propio teléfono («[[lectura:…]]», «[[sigues]]») no son la persona.
   if (/^\s*\[\[/.test(String(mensaje || ''))) return null;
   const r = respuestaSiNo(mensaje);
+  /**
+   * Revisión 9 (el freno de la voz): quitar el «¿sigo?» (habló de otra cosa, o dijo que no) en un turno de voz que se
+   * descarta (la frase seguía) no cuenta: se repone, solo si es la misma ronda y nadie la siguió por otro camino.
+   */
+  const gastarOfrece = (o: Mision) => {
+    const antes = o.ofreceSeguir;
+    const ronda = o.tareas.at(-1) ?? '';
+    o.ofreceSeguir = undefined;
+    retener?.alDescartar(() => {
+      if (antes !== undefined && o.ofreceSeguir === undefined && (o.tareas.at(-1) ?? '') === ronda && o.seguidaDesde !== ronda && o.final && !o.final.ok) o.ofreceSeguir = antes;
+    });
+  };
   if (!r) {
     // Habló de otra cosa: el «¿sigo?» ya no vale para un «sí» suelto de después (el botón Seguir sí).
     // La pregunta antes de algo sensible sigue esperando: los botones están en la app.
-    if (ofrece) ofrece.ofreceSeguir = undefined;
+    if (ofrece) gastarOfrece(ofrece);
     return null;
   }
   // Permisos exactos (4-oct): dos misiones esperan su sí a la vez. Un «sí» (o un «no») suelto no dice a cuál: antes
@@ -1998,7 +2010,8 @@ export async function resolverPreguntaComputadora(quien: string, mensaje: string
   const o = ofrece!;
   // La ronda que se decidió seguir: la de su última tarea (novena ronda: seguir es idempotente por ronda).
   const desde = o.tareas.at(-1) ?? '';
-  o.ofreceSeguir = undefined;
+  if (r === 'no') gastarOfrece(o);
+  else o.ofreceSeguir = undefined;
   if (r === 'no') return `COMPUTADORA: no quiere que sigas con «${o.instruccion.slice(0, 120)}». Dile que está bien, que ahí queda.`;
   if (retener) {
     // Décima ronda: un descarte repone «¿sigo?» solo si es la misma ronda y nadie la siguió por otro camino.

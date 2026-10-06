@@ -157,6 +157,7 @@ module.exports = {
     ORAR_ENDPOINT: 'https://prueba/api/orar',
     sessionHeaders: async () => ({}),
     ttsUrl: (text) => `https://prueba/api/tts?text=${encodeURIComponent(text)}`,
+    ttsPcmUrl: (text) => `https://prueba/api/tts/pcm?text=${encodeURIComponent(text)}`,
   },
   constants: { expoConfig: { extra: {}, version: 'prueba' } },
 };

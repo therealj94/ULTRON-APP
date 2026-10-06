@@ -18,7 +18,13 @@
  * Sin eso no se busca otro candidato: se vuelve a presentar ESA versión y se pregunta.
  *
  * En memoria (como el registro de la ventana): tras un reinicio no hay presentación y se vuelve a presentar.
+ *
+ * Revisión 9 (MENOR 5): la del chat se anota cuando el texto SE ENTREGÓ, no al armar el borrador. Dentro de un turno
+ * (presentacionesDelTurno, server.ts) presentadoEnChat solo la deja pendiente; el turno la entrega al terminar con su
+ * respuesta enviada (el `done` del stream, el JSON de /api/turno; en la voz, cuando el turno se confirma). Un turno que
+ * se corta antes, falla o se descarta no presenta nada: un «sí» escrito después no aprueba lo que no se vio.
  */
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { EnPantalla } from './decision-en-pantalla';
 
 export type Presentacion = { canal: 'correo' | 'whatsapp'; intento: string; huella: string; t: number; via: 'chat' | 'ventana'; aparato?: string };
@@ -47,9 +53,57 @@ function anotar(dueno: string, ambito: string, p: Presentacion) {
   while (PRESENTADAS.size > MAX) PRESENTADAS.delete(PRESENTADAS.keys().next().value!);
 }
 
-/** El texto exacto de este borrador salió en el chat de esta conversación (con su tarjeta y su huella). */
-export function presentadoEnChat(dueno: string, ambito: string, b: { canal: 'correo' | 'whatsapp'; intento: string; huella: string }, ahora = Date.now()) {
-  anotar(dueno, ambito, { canal: b.canal, intento: b.intento, huella: b.huella, t: ahora, via: 'chat' });
+/** Lo que un turno presentó y todavía no entregó (revisión 9). */
+type DelTurno = { pendientes: Array<() => void>; cerrado: boolean };
+const DEL_TURNO = new AsyncLocalStorage<DelTurno>();
+
+/**
+ * El texto exacto de este borrador sale en el chat de esta conversación (con su tarjeta y su huella). Dentro de un turno
+ * queda pendiente hasta que el turno lo entrega (presentacionesDelTurno); fuera de uno (Telegram, las pruebas), en el acto.
+ */
+export function presentadoEnChat(dueno: string, ambito: string, b: { canal: 'correo' | 'whatsapp'; intento: string; huella: string }, ahora?: number) {
+  const turno = DEL_TURNO.getStore();
+  // Entregada, la presentación toma la hora de la entrega (la pregunta más reciente es la que se vio al final).
+  const fijar = () => anotar(dueno, ambito, { canal: b.canal, intento: b.intento, huella: b.huella, t: ahora ?? Date.now(), via: 'chat' });
+  if (!turno) return fijar();
+  // Lo que el turno arma después de entregar su respuesta (o de cortarse) no salió en ella.
+  if (!turno.cerrado) turno.pendientes.push(fijar);
+}
+
+export type PresentacionesDelTurno = {
+  /** Corre el turno: lo que presente queda pendiente. */
+  correr: <T>(fn: () => T) => T;
+  /** La respuesta se entregó: lo presentado cuenta desde ahora (una vez). */
+  entregar: () => void;
+  /** El turno se cortó, falló o se descartó: nada de lo presentado cuenta. */
+  descartar: () => void;
+};
+
+function entregar(t: DelTurno | undefined) {
+  if (!t || t.cerrado) return;
+  t.cerrado = true;
+  for (const f of t.pendientes.splice(0)) f();
+}
+
+export function presentacionesDelTurno(): PresentacionesDelTurno {
+  const t: DelTurno = { pendientes: [], cerrado: false };
+  return {
+    correr: (fn) => DEL_TURNO.run(t, fn),
+    entregar: () => entregar(t),
+    descartar: () => {
+      t.cerrado = true;
+      t.pendientes.length = 0;
+    },
+  };
+}
+
+/**
+ * Desde dentro del turno: lo que entrega SUS presentaciones (para llamarlo al enviar el `done`, o cuando la voz confirma
+ * el turno, ya fuera de su contexto). Fuera de un turno, no hace nada.
+ */
+export function entregaDelTurno(): () => void {
+  const t = DEL_TURNO.getStore();
+  return () => entregar(t);
 }
 
 /** La ventana de decisión de un aparato lo muestra (se registró como visible). */

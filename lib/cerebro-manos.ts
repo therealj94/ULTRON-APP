@@ -158,7 +158,7 @@ export function herramientasDelTurno(d: ManosDelTurno): Tool[] {
     t.push(
       tool(
         'computadora',
-        `Usar TU computadora en la nube (Firefox, LibreOffice) para HACER algo en páginas: entrar a un sitio y buscar dentro, comparar páginas, sacar datos de una tabla, llenar un formulario; o cuando digan «usa tu computadora». La hace otro agente que no oyó la conversación: la misión va COMPLETA (sitio, qué hacer y qué traer). En su teléfono se abre sola la vista en vivo. Nunca para pagar, comprar ni poner contraseñas. Para una pregunta que una búsqueda contesta, usa buscar_web.${conDocumentos ? ' Para CREAR documentos de Word, Excel o PDF usa crear_documento, no la computadora.' : ''}`,
+        `Usar TU computadora en la nube (Firefox, LibreOffice) para HACER algo en páginas: entrar a un sitio y buscar dentro, comparar páginas, sacar datos de una tabla, llenar un formulario; o cuando digan «usa tu computadora». La hace otro agente que no oyó la conversación: la misión va COMPLETA (sitio, qué hacer y qué traer). En su teléfono se abre sola la vista en vivo. Nunca para pagar, comprar ni poner contraseñas. Para una pregunta que una búsqueda contesta, usa buscar_web.${conDocumentos ? ' Para CREAR documentos de Word, Excel, PowerPoint o PDF usa crear_documento, no la computadora.' : ''}`,
         {
           mision: str('La misión entera, o «parar», «pausar» o «seguir» para la que está en curso.'),
           plan: { type: 'array', items: { type: 'string' }, description: 'De 3 a 6 pasos cortos (ella los ve como lista).' },
@@ -264,16 +264,16 @@ function herramientaDocumento(): Tool {
   const spec = {
     type: 'object',
     description:
-      'Word/PDF: {titulo, subtitulo?, secciones:[{titulo, parrafos:[…], vinetas?:[…], tabla?:{cabecera:[…], filas:[[…]]}}]} o {carta:{lugar_fecha, destinatario:[…], asunto?, saludo, cuerpo:[…], despedida, firma:[…]}}. Excel: {titulo, cliente?, moneda:"L", partidas:[{concepto, unidad, cantidad, precio_unitario}], impuesto?:{nombre:"ISV", porcentaje:15}, descuento_porcentaje?, total_declarado? (solo si la persona dijo un total), notas?:[…]}: sin importes ni totales (los calcula el servidor). Todo completo y en español.',
+      'Word/PDF: {titulo, subtitulo?, secciones:[{titulo, parrafos:[…], vinetas?:[…], tabla?:{cabecera:[…], filas:[[…]]}}]} o {carta:{lugar_fecha, destinatario:[…], asunto?, saludo, cuerpo:[…], despedida, firma:[…]}}. Excel: {titulo, cliente?, moneda:"L", partidas:[{concepto, unidad, cantidad, precio_unitario}], impuesto?:{nombre:"ISV", porcentaje:15}, descuento_porcentaje?, total_declarado? (si dijo un total), notas?:[…]}; importes y totales los calcula el servidor. PowerPoint: {titulo, diapositivas:[{tipo:portada|vinetas|dos_columnas|tabla|cifras|grafico|cita|cierre, titulo, subtitulo?, vinetas?, columnas?:[{titulo, vinetas}]×2, tabla?, cifras?:[{valor, etiqueta}], grafico?:{tipo:barras|lineas|pastel, categorias, series:[{nombre, valores}]}, cita?:{texto, autor}, notas?}]}, tantas como pidió. Todo completo y en español.',
   };
   return tool(
     'crear_documento',
-    'Crear archivos de Word (.docx), Excel (.xlsx) o PDF en su cuenta («informe.docx, presupuesto.xlsx y carta.pdf»). TODOS los pedidos en UNA llamada, con sus nombres y el contenido completo escrito por ti; el servidor los genera, los comprueba y deja cada uno para bajar. Di que quedaron SOLO si dice «DOCUMENTOS LISTOS»; con «DOCUMENTOS A MEDIAS», qué quedó y qué falta. No uses la computadora para esto.',
+    'Crear archivos de Word (.docx), Excel (.xlsx), PowerPoint (.pptx) o PDF en su cuenta («informe.docx, presupuesto.xlsx y carta.pdf»). TODOS los pedidos en UNA llamada, con sus nombres y el contenido completo escrito por ti; el servidor los genera, comprueba y deja para bajar. Di que quedaron SOLO si dice «DOCUMENTOS LISTOS»; con «DOCUMENTOS A MEDIAS», qué quedó y qué falta. No uses la computadora para esto.',
     {
       archivos: {
         type: 'array',
         description: 'De 1 a 5.',
-        items: { type: 'object', properties: { tipo: str('docx, xlsx o pdf.', { enum: ['docx', 'xlsx', 'pdf'] }), nombre: str('Con su extensión.'), spec }, required: ['tipo', 'nombre', 'spec'] },
+        items: { type: 'object', properties: { tipo: str('docx, xlsx, pptx o pdf.', { enum: ['docx', 'xlsx', 'pptx', 'pdf'] }), nombre: str('Con su extensión.'), spec }, required: ['tipo', 'nombre', 'spec'] },
       },
     },
     ['archivos']
@@ -664,7 +664,7 @@ const QUE_PROMETE: Array<[RegExp, string[]]> = [
   [/\b(pag|cartera|wallet|saldo)/, ['preparar_pago', 'abrir_cartera', 'cartera_saldo']],
   [/\b(mision|tarea)/, ['mision', 'tarea']],
   // Los archivos de oficina (server/documentos.ts): «voy a escribir el informe en Word», «te mando el presupuesto en Excel».
-  [/\b(documentos?|informe|presupuesto|cotizacion|docx|xlsx|hoja de calculo)\b/, ['crear_documento']],
+  [/\b(documentos?|informe|presupuesto|cotizacion|docx|xlsx|pptx|hoja de calculo|presentacion|diapositivas|powerpoint)\b/, ['crear_documento']],
 ];
 
 /**

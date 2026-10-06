@@ -40,7 +40,7 @@ import { exito, fallo, incierto, type ResultadoHerramienta } from '../lib/recibo
 import { enviarUnaVez, huellaAprobacion, messageIdDeOperacion, operacionDeBorrador, type ResultadoEnvio, type SalidaEnvio } from '../lib/envios';
 import { dentroDe, intervaloDeCorreo, sinTiempo, type Intervalo } from '../lib/correo/intervalo';
 import { presentadoEnChat } from './presentacion-decision';
-import { anotarVencido, ApartadosBorradores, resumenTexto, textoEditado, vencioPorTiempo, type EdicionBorrador } from './borradores-cola';
+import { anotarVencido, ApartadosBorradores, rechazadoEnPanel, resumenTexto, textoEditado, vencioPorTiempo, type EdicionBorrador } from './borradores-cola';
 
 /* ------------------------------------------------------------------ el buzón (las pruebas ponen uno falso) */
 
@@ -945,11 +945,12 @@ export function promoverApartadoCorreo(quien: string, ambito: string, intento: s
   return () => {
     const ahora = BORRADORES.get(k);
     if (ahora && ahora.intento !== intento) return;
-    if (actual) {
+    // Revisión 9: lo que la persona rechazó en su panel o su ventana mientras tanto no vuelve (ni uno ni otro).
+    if (actual && !rechazadoEnPanel(actual.intento)) {
       APARTADOS.quitar(k, actual.intento);
       BORRADORES.set(k, actual);
     } else BORRADORES.delete(k);
-    if (!motivoBorrador(b, quien)) APARTADOS.apartar(k, b);
+    if (!motivoBorrador(b, quien) && !rechazadoEnPanel(b.intento)) APARTADOS.apartar(k, b);
   };
 }
 
@@ -1050,6 +1051,8 @@ type OpcionesDecidir = {
    * no lo resuelve) en vez de tirarse.
    */
   apartar?: () => void;
+  /** Revisión 9 (el freno de la voz): deshace `apartar` si el turno de voz se descarta (la frase seguía). */
+  desapartar?: () => void;
   /** Lo vuelve a poner (el turno de voz se descartó). */
   reponer: () => void;
   canal: 'CORREO' | 'WHATSAPP';
@@ -1088,6 +1091,9 @@ export async function decidirBorradorConEstado(o: OpcionesDecidir & { enviar: ()
   const r = respuestaAlBorrador(o.mensaje);
   if (!r && o.apartar) {
     o.apartar();
+    // Revisión 9 (el freno de la voz): «déjame pensar…» de un turno especulativo que se descarta (seguía «…bueno, sí,
+    // mándalo») no lo aparta: vuelve a esperar su respuesta en el chat. El turno espera su confirmación (decision-turno).
+    if (o.retener && o.desapartar) o.retener.alDescartar(o.desapartar);
     return fallo(
       `${o.canal}: había un borrador para ${o.para} esperando su «sí», pero siguió con otra cosa: NO se mandó. Queda en su panel de tareas hasta que venza, por si lo quiere aprobar ahí; un «sí» suelto en el chat ya no lo manda. Si lo quiere mandar ahora, arma uno nuevo y vuelve a preguntar.`,
       'apartado'
@@ -1103,6 +1109,9 @@ export async function decidirBorradorConEstado(o: OpcionesDecidir & { enviar: ()
     );
   }
   o.quitar();
+  // Revisión 9 (el freno de la voz): en la voz, el «no» («mejor no», «nel») y el «sí» de un turno que se descarta lo
+  // reponen: la frase seguía. Antes solo el «sí»: el «no» lo borraba para siempre aunque el turno no contara.
+  if (o.retener) o.retener.alDescartar(o.reponer);
   if (!r) return fallo(`${o.canal}: había un borrador para ${o.para} esperando su «sí», pero siguió con otra cosa: ya no vale y no se mandó. Si lo quiere mandar, arma uno nuevo y vuelve a preguntar.`, 'descartado');
   if (r === 'no') return exito(`${o.canal}: no se mandó; el borrador para ${o.para} quedó descartado. Díselo en pocas palabras.`, { efecto: 'ninguno', codigo: 'descartado' });
   const enviarSiVale = async (): Promise<ResultadoHerramienta> => {
@@ -1124,7 +1133,6 @@ export async function decidirBorradorConEstado(o: OpcionesDecidir & { enviar: ()
     return hecho;
   };
   if (!o.retener) return enviarSiVale();
-  o.retener.alDescartar(o.reponer);
   o.retener.hacer(() => {
     void enviarSiVale().then((hecho) => anotarAvisoEnvio(o.quien, o.ambito, hecho.texto));
   });
@@ -1213,10 +1221,11 @@ export async function resolverBorradorConEstado(quien: string, ambito: string, m
     canal: 'CORREO',
     para: b.para.join(', '),
     quitar: () => BORRADORES.delete(k),
-    ...(como.desdePanel ? {} : { apartar: () => void (b.soloPanel = true), reemplazoDe: b.reemplazoDe, aceptarCambio: () => void delete b.reemplazoDe, reponerCambio: ((antes) => () => void (b.reemplazoDe = antes))(b.reemplazoDe) }),
-    // Un turno de voz descartado lo repone, pero nunca encima de otro borrador que se armó después.
+    ...(como.desdePanel ? {} : { apartar: () => void (b.soloPanel = true), desapartar: ((antes) => () => void (BORRADORES.get(k) === b && (b.soloPanel = antes)))(b.soloPanel), reemplazoDe: b.reemplazoDe, aceptarCambio: () => void delete b.reemplazoDe, reponerCambio: ((antes) => () => void (b.reemplazoDe = antes))(b.reemplazoDe) }),
+    // Un turno de voz descartado lo repone, pero nunca encima de otro borrador que se armó después, ni si la persona lo
+    // rechazó en su panel mientras tanto (revisión 9).
     reponer: () => {
-      if (!BORRADORES.has(k) && !motivoBorrador(b, quien)) BORRADORES.set(k, b);
+      if (!BORRADORES.has(k) && !motivoBorrador(b, quien) && !rechazadoEnPanel(b.intento)) BORRADORES.set(k, b);
     },
     vigente: () => {
       const motivo = motivoBorrador(b, quien);

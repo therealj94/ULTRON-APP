@@ -14,6 +14,7 @@ import * as cloud from './speechCloud';
 import * as native from './speechNative';
 import * as turbo from './speechTurbo';
 import { cuentaInterrupcion, esInterrupcionReal, quitarEco } from './interrupcion';
+import type { OrquestaMuletillas } from './muletillas';
 import { registroVoz } from './tts';
 import { miga } from './reporte';
 
@@ -61,6 +62,28 @@ export function setOirEncima(on: boolean) {
 
 export function oyeEncima(): boolean {
   return oirEncima && engine === 'turbo';
+}
+
+/**
+ * LAS MULETILLAS (lib/asentir.ts, lib/muletillas.ts): solo con el oído Turbo, que es el que ignora el tramo del «mjm».
+ * La mesa (lib/muletillasMesa.ts) las arma; aquí se conectan al oído: cada trozo, el cancelador de eco en el micrófono
+ * de escucha, y lo que entendió (parcial, especulada y final) sin lo que se coló.
+ */
+let muletillas: OrquestaMuletillas | null = null;
+
+export function setMuletillas(m: OrquestaMuletillas | null) {
+  muletillas = m;
+  turbo.turboOyenteTrozo(m ? (i) => m.alTrozo(i) : null);
+}
+
+/** Con las muletillas encendidas, el micrófono de escucha de Turbo lleva el cancelador de eco del teléfono. */
+export function setEcoAlEscuchar(on: boolean) {
+  turbo.turboEcoAlEscuchar(on);
+}
+
+/** El oído ignora lo que entra durante `ms` (el «mjm» sonando por la bocina). Solo Turbo sabe hacerlo. */
+export function ignorarTramoOido(ms: number) {
+  if (engine === 'turbo') turbo.turboIgnorarTramo(ms);
 }
 
 let engine: SttEngine = turboPosible() ? 'turbo' : 'native';
@@ -115,7 +138,10 @@ function wire() {
   turbo.turboOirEncima(oirEncima);
   turbo.turboCallbacks({
     ...common,
-    onPartial: (t) => callbacks.onPartial?.(ecoAlCortar ? quitarEco(t, ecoAlCortar) : t),
+    onPartial: (t) => {
+      const sin = muletillas ? muletillas.limpiarParcial(t) : t;
+      callbacks.onPartial?.(ecoAlCortar ? quitarEco(sin, ecoAlCortar) : sin);
+    },
     // Mientras AU-RA habla: ¿es su eco, un «ajá», o la persona interrumpiendo? (lib/interrupcion.ts)
     onPartialEncima: (t) => {
       const dichos = registroVoz.dichos();
@@ -130,12 +156,15 @@ function wire() {
     onFinal: (t) => {
       const eco = ecoAlCortar;
       ecoAlCortar = null;
-      const texto = eco ? quitarEco(t, eco) : t;
+      // Sin las muletillas de AU-RA que se colaron al micrófono (lib/asentir.ts `quitarDelFinal`).
+      const sin = muletillas ? muletillas.limpiarFinal(t) : t;
+      const texto = eco ? quitarEco(sin, eco) : sin;
       if (texto) callbacks.onFinal?.(texto);
     },
     // Lo mismo que onFinal (sin el eco de su voz si la cortó): así la frase final y la especulada se comparan bien.
     onEspeculativa: (t) => {
-      const texto = ecoAlCortar ? quitarEco(t, ecoAlCortar) : t;
+      const sin = muletillas ? muletillas.limpiarEspeculada(t) : t;
+      const texto = ecoAlCortar ? quitarEco(sin, ecoAlCortar) : sin;
       if (texto) callbacks.onEspeculativa?.(texto);
     },
     onEspeculativaCancelada: () => callbacks.onEspeculativaCancelada?.(),
@@ -298,6 +327,8 @@ export async function unmuteMic() {
 
 /** Pausa la captura mientras AU-RA habla. */
 export function pauseMicForTts(pause: boolean) {
+  // Empieza a hablar AU-RA: una muletilla que todavía suene se calla (nunca encima de su voz).
+  if (pause) muletillas?.callar();
   if (suspendido) {
     queridoAlVolver.pausado = pause;
     return;

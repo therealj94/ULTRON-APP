@@ -99,6 +99,8 @@ export type AppSettings = {
   camaraLado?: 'frontal' | 'trasera';
   /** «Cámara rápida (nueva)»: la cámara en vivo (modules/aura-camara). Sin elegir = encendida donde exista (lib/guardiaCamara.ts). */
   camaraRapida?: boolean;
+  /** «Voz en vivo (nueva)»: la voz que suena a medida que llega (modules/aura-voz). Sin elegir = encendida donde exista (lib/guardiaVoz.ts). */
+  vozEnVivo?: boolean;
   /** Quién activó el reconocimiento de voces (por correo → cuándo). Sin esto no sale ningún audio a las voces. */
   vocesActivas: Record<string, number>;
   /** Quién ya vio (o saltó para siempre) el recorrido de primera vez (por correo). */

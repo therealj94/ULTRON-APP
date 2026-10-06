@@ -107,20 +107,109 @@ Todas son permisivas y compatibles con distribuir el servidor. Ninguna es copyle
 - `tests/oficina-herramienta.test.ts` — la herramienta nativa → línea → harness → runner, la tarea enlazada al turno, el
   reintento del mismo turno, y la ruta de descarga (dueño 200, otra cuenta 404, sin sesión 401).
 
-## PptxGenJS: no se adopta todavía
+## Presentaciones (.pptx) con PptxGenJS
 
-La auditoría lo deja «opcional, solo si se prueba». No se instala: no es parte del piloto FILE-02, su `package.json`
-depende de un paquete `https@^1.0.0` (un paquete de npm que sombrea un módulo de Node, mala señal de higiene) y de
-`image-size`; y anunciar PPTX exige su propio validador (texto por diapositiva con `paginasDePptx`, ya existente) y su
-piloto. El esquema rechaza hoy `tipo: "pptx"` con un mensaje claro.
+La auditoría lo dejaba «opcional, solo si se prueba». Ahora se prueba y se adopta, con su propio validador y su piloto
+(`tests/oficina-pptx.test.ts`). AU-RA hace presentaciones con la misma vara que Word, Excel y PDF:
+
+```
+crear_documento {tipo:"pptx", nombre, spec}   (o PEDIR_HERRAMIENTA: documento)       lib/cerebro-manos.ts, lib/harness.ts
+  → especificación: diapositivas con tipo, topes de legibilidad            lib/oficina/spec.ts (validarPresentacion)
+  → «de 8 diapositivas» dicho por la persona = requisito de contenido      lib/entregables.ts diapositivasPedidas
+                                                                           + lib/oficina/entrega.ts conDiapositivasPedidas
+  → PptxGenJS + diseño fijo (tema, tipografía, numeración, notas)          lib/oficina/pptx.ts
+  → estructura + relectura diapositiva por diapositiva                     lib/oficina/validar.ts (semanticaPptx)
+  → render opcional (LibreOffice Impress: una página por diapositiva) → recibo → descarga, igual que los demás
+```
+
+**Lo que pide el modelo** (`spec`): `{titulo, subtitulo?, autor?, tema?: azul|verde|grafito|vino, diapositivas: [...]}`.
+Cada diapositiva tiene `tipo` y `titulo` (en la cita es opcional) y, según el tipo: `portada`/`cierre` (subtítulo),
+`vinetas` (hasta 8, de hasta 220 caracteres), `dos_columnas` (exactamente 2 `{titulo?, vinetas}` de hasta 6), `tabla`
+(`{cabecera, filas}`, hasta 6 columnas y 10 filas), `cifras` (1 a 4 `{valor, etiqueta}`), `grafico`
+(`{tipo: barras|lineas|pastel, categorias, series: [{nombre, valores}], unidad?}`, hasta 12 categorías y 4 series; el
+pastel, una serie de hasta 8 valores no negativos), `cita` (`{texto, autor?}`); `notas` (del orador) en cualquiera. Lo
+que no cabe legible se rechaza con el porqué («divídela en dos diapositivas»); nada se encoge hasta no leerse ni se corta
+en silencio. Si la persona dijo «de 8 diapositivas» y la especificación trae otro número, ese archivo no se hace y el
+recibo lo dice para que el modelo lo rehaga.
+
+**El diseño lo pone el código**, siempre igual: 16:9, Arial (segura: Windows, macOS y Liberation Sans con las mismas
+medidas en Linux/LibreOffice), títulos de 30 pt y texto de 18 pt o más; cuatro temas sobrios donde cada par texto/fondo
+cumple el contraste AA de WCAG (≥ 4,5:1) y cada color de serie ≥ 3:1 (la prueba lo calcula); el título de cada
+diapositiva en el marcador de TÍTULO (idx 0: lo encuentran PowerPoint, los lectores de pantalla y python-pptx), idioma
+es-HN en todo el texto (también en las notas), numeración en todas menos portada y cierre, el título de la presentación
+al pie, gráficos nativos (editables en PowerPoint) con texto alternativo que lleva TODOS sus datos.
+
+**La validación** (además de la de todo OOXML: ZIP entero, partes obligatorias, XML bien formado, sin `vbaProject.bin`,
+ActiveX ni binarios, sin relaciones `TargetMode="External"`):
+
+- estructura: `ppt/presentation.xml` y sus relaciones; cada diapositiva de la lista `sldIdLst` existe (una diapositiva
+  faltante es un defecto); nada declarado `macroEnabled`; ningún objeto OLE; lo único incrustado que se acepta es el
+  libro de datos de un gráfico (`ppt/embeddings/*.xlsx`), revisado por dentro (entero, sin macros, sin enlaces de afuera);
+- relectura con `paginasDePptx` (lib/leer-oficina.ts, el lector de lo que LLEGA, sin código en común con PptxGenJS):
+  el número de diapositivas (y el que pidió la persona), cada título, viñeta, cifra y cita en SU diapositiva y en su
+  orden, las notas del orador;
+- desde el XML: cada tabla con sus filas, columnas y el texto de cada celda; cada gráfico con su tipo, sus series,
+  categorías y valores; la numeración; el título en su marcador; el texto alternativo; título en las propiedades; es-HN;
+- render (opcional, `AURA_OFICINA_RENDER=1`): LibreOffice con Impress lo pasa a PDF y tiene que dar una página por
+  diapositiva; sin LibreOffice, «omitido»; sin Impress (solo el núcleo), «fallido» con el porqué. Nunca bloquea.
+
+**Ficha de la dependencia** (fijada a versión exacta en `package.json`, sin `^`):
+
+| | `pptxgenjs` |
+|---|---|
+| Función concreta | Escribir el **.pptx**: patrones con marcador de título y numeración, texto con viñetas, tablas, gráficos nativos (barras, líneas, pastel) con su libro de datos, notas del orador, propiedades |
+| Opción propia existente | Ninguna para escribir PowerPoint (solo `paginasDePptx`, lector) |
+| Repositorio oficial | https://github.com/gitbrent/PptxGenJS |
+| Versión fijada | **4.0.1** (publicada 2025-06-26; la 4.0.0 es de mayo de 2025, la 3.12.0 de 2023) |
+| Licencia propia | MIT |
+| Node 22 / ESM | `exports` con ESM (`pptxgen.es.js`) y CJS (`pptxgen.cjs.js`): funciona con `tsx` y con el bundle CJS de `esbuild --packages=external`. **Sin navegador**: detecta Node y escribe con `write({outputType: 'nodebuffer'})` |
+| Tipos | Incluidos (`types/index.d.ts`) |
+| Permisos | Ninguno en lo que usamos: CPU y memoria. Solo carga `node:fs`/`node:https` para imágenes o medios por ruta/URL, que AU-RA no usa (y la validación rechaza cualquier relación de afuera) |
+| Datos enviados | Ninguno |
+| Coste medido | La presentación de 8 diapositivas de la prueba (tabla, gráfico, cifras, cita, notas): ≈47 KB; generar ≈0,14 s, validar ≈0,15 s; render con LibreOffice Impress ≈1,5–2 s |
+| Tamaño en disco | 2,6 MB (`node_modules/pptxgenjs`) + 0,5 MB (`image-size`) |
+
+Retoque propio tras generar (`retocar` en lib/oficina/pptx.ts, sin tocar el contenido): PptxGenJS pone `idx="101"` al
+marcador de título (los lectores que buscan el título por idx 0 no lo veían), marca las notas en-US y declara en
+`[Content_Types].xml` patrones que no existen; las tres cosas se corrigen al reempaquetar.
+
+Transitivas nuevas en `package-lock.json` (3; `jszip` y `@types/node` ya estaban y se deduplican):
+
+- **`https@1.0.0`** (ISC): es SOLO un `package.json` (sin código, sin scripts de instalación; revisado el tarball). Node
+  siempre resuelve `https`/`node:https` a su módulo propio, así que nunca se carga. Es mala higiene del autor de
+  PptxGenJS, no un riesgo; anotado.
+- **`image-size`** (MIT): PptxGenJS 4.0.1 lo declara pero su `dist` no lo importa (la función que lo usaba está
+  comentada). `npm audit` marcaba `image-size` ≤ 2.0.2 (GHSA-5p2g-fcmc-qvqq y GHSA-w3rx-r6r6-pgpr, alta: bucles infinitos
+  con JXL/HEIF/ICNS); aunque no es alcanzable, se fuerza a la corregida con un override fijado:
+  `"overrides": { "pptxgenjs": { "image-size": "2.0.4" } }`. Después: **0 advisories** en el árbol de PptxGenJS (lo que
+  `npm audit` sigue mostrando, `pdfjs-dist` y `source-map-js`, ya estaba).
+
+Salida: `npm uninstall pptxgenjs`, quitar el override, `lib/oficina/pptx.ts`, la rama `pptx` de `generarArchivo` y
+`semanticaPptx`, y `'pptx'` de `TIPOS_ARCHIVO` (el esquema vuelve a rechazarlo con un mensaje claro); o sustituirla
+reescribiendo solo `generarPptx` (p. ej. ZIP+XML propio sobre `jszip`): la especificación, la validación, la entrega y
+la descarga no cambian.
+
+## Pruebas de las presentaciones
+
+- `tests/oficina-pptx.test.ts` — la especificación y sus rechazos con porqué; el contraste AA de los cuatro temas; una
+  presentación realista de 8 diapositivas (tabla, gráfico, cifras, dos columnas, cita, notas) generada y releída entera;
+  un **segundo lector independiente** (python-pptx si hay un Python con `pptx` —`PYTHON_PPTX=/ruta/python`—, si no un
+  parseo DOM propio con @xmldom) que comprueba títulos, tabla celda por celda, series y valores del gráfico, notas y
+  16:9; barras, líneas y pastel; lo malo que se caza (ZIP cortado, diapositiva faltante, enlace de afuera, macros, tipo
+  `macroEnabled`, objeto OLE, libro incrustado con enlace externo, un docx disfrazado, viñeta/celda/fila/valor del
+  gráfico/numeración/título/orden alterados, una diapositiva menos); el render (omitido sin LibreOffice; con Impress,
+  8 páginas); los requisitos («una presentación de 8 diapositivas» es una presentación con 8; «presentación en
+  PowerPoint» es una sola); la entrega (8 pedidas y 8 hechas = completo; 8 pedidas y 6 en la especificación = no se
+  hace, con el porqué); la herramienta para el modelo; y de punta a punta: crear_documento → línea → harness → runner →
+  recibo → descarga con sesión (MIME, nombre saneado, sha256) y con el enlace firmado de la tarjeta.
 
 ## Salida / rollback
 
 1. Apagar sin desinstalar: quitar `documentos: !!duenoComputadora` de `manosTurno` en `server.ts` (o ponerlo en
    `false`) y la línea `conSesion ? INSTRUCCION_DOCUMENTO : ''` de `lib/harness.ts`. El modelo deja de ver la
    herramienta; lo ya entregado se sigue pudiendo bajar hasta que venza.
-2. Quitar del todo: `npm uninstall docx exceljs`, borrar el bloque `overrides` de `package.json`, `lib/oficina/`,
-   `server/documentos.ts`, la ruta `montarRutasDocumentos` y el runner `documento` en `server.ts`, y los cuatro
+2. Quitar del todo: `npm uninstall docx exceljs pptxgenjs`, borrar el bloque `overrides` de `package.json`, `lib/oficina/`,
+   `server/documentos.ts`, la ruta `montarRutasDocumentos` y el runner `documento` en `server.ts`, y los cinco
    `tests/oficina-*.test.ts`. Nada más depende de ellas (el PDF sigue siendo `lib/pdf.ts`).
 3. Sustituir solo una: el resto del pipeline (especificación, validación, entrega, descarga) no cambia; se reescribe
    `generarDocx` o `generarXlsx`/`semanticaXlsx` (p. ej. con un ZIP+XML propio sobre `jszip`, ya instalado).

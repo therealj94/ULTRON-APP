@@ -10,7 +10,8 @@
  *                 a medias), «Mi círculo», sus misiones (app/HojasCerebro.tsx), tus correos (ajustes/Correos.tsx),
  *                 su WhatsApp («Agregar mi WhatsApp» o, ya vinculado, «Desvincular WhatsApp»; José, 5-oct) y la
  *                 vibración
- *   Voz y oído    la voz del avatar y cómo convierte tu voz en texto (el teléfono o la nube)
+ *   Voz y oído    la voz del avatar y cómo convierte tu voz en texto (el teléfono o la nube); «Interrumpir hablando»
+ *                 y «Muletillas al escuchar» (el «mjm» mientras hablas largo, ajustes/Muletillas.tsx)
  *   La mesa       «comenta lo que ve», los efectos de sonido y, con AU-RA, su cara (el orbe o los anillos)
  *   Memoria       cuántos hechos guarda de ti y «Olvidar» (pregunta antes; borra aquí y en el servidor)
  *                 (José, 2-oct: estaban al final del menú de la mesa, en una columna angosta y cortada;
@@ -55,6 +56,8 @@ import { abrirBienvenida } from '../bienvenida/estado';
 import { abrirCartera } from '../cartera/estado';
 import type { SttEngine } from '../lib/storage';
 import { FilaCamaraRapida } from './CamaraRapida';
+import { FilaVozEnVivo } from './VozEnVivo';
+import { FilaMuletillas } from './Muletillas';
 
 /** Lo que corre: la OTA (o el JS de la APK), cuándo se publicó y la huella nativa. */
 function lineaOta(idioma: Idioma): string {
@@ -493,6 +496,8 @@ function SeccionesMesa({ mesa }: { mesa: NonNullable<ReturnType<typeof mesaAjust
           icono="microfono"
           derecha={<Interruptor valor={datos.interrumpir} onCambiar={(v) => v !== datos.interrumpir && acciones.alternarInterrumpir()} etiqueta={tr('Interrumpir hablando', 'Interrupt by talking')} />}
         />
+        {/* El «mjm» mientras hablas (lib/asentir.ts): solo donde puede existir. */}
+        <FilaMuletillas motor={datos.sttEngine} />
       </Grupo>
 
       <Grupo titulo={tr(`La mesa · ${de(av.nombre)}`, `The desk · ${de(av.nombre)}`)}>
@@ -504,6 +509,8 @@ function SeccionesMesa({ mesa }: { mesa: NonNullable<ReturnType<typeof mesaAjust
         />
         {/* La cámara en vivo (modules/aura-camara): solo donde existe. */}
         <FilaCamaraRapida />
+        {/* La voz en streaming (modules/aura-voz): solo donde existe. */}
+        <FilaVozEnVivo />
         <Fila
           titulo={tr('Efectos de sonido', 'Sound effects')}
           detalle={tr('Toques, los sonidos del orbe de AURA, blaster, sable', 'Taps, AURA’s orb sounds, blaster, saber')}

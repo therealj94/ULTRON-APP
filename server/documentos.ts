@@ -20,8 +20,7 @@ import { crearDocumentos, type ReciboLote } from '../lib/oficina/entrega';
 import { exito, fallo, type ResultadoHerramienta } from '../lib/recibo-herramienta';
 import { anotarTareaDelTurno, duenoDeTareas, pedidoDeDocumentos } from './trabajos';
 import { duenoDelEnlace } from './enlace-documento';
-import { comprobarAutoridad } from './autoridad-cuenta';
-import { identidadDelEntorno } from './seguridad';
+import { autoridadSinSesion } from './seguridad';
 
 export type DepsDocumentos = {
   exigirMesa: express.RequestHandler;
@@ -51,14 +50,16 @@ export function montarRutasDocumentos(app: express.Express, d: DepsDocumentos) {
    * Con el enlace firmado de la tarjeta (server/enlace-documento.ts): sin cabeceras, para que la app y la web lo abran en
    * el navegador. La cuenta sale de la firma (para ESE id, sin vencer) y tiene que seguir con autoridad (SEC-04).
    */
-  app.get('/api/documentos/:id', d.limitar(60), async (req, res, next) => {
-    if (req.query.t === undefined) return next();
+  // Revisión 9 (MENOR 7): sin `?t=` la petición pasa a la ruta con sesión ANTES del limitador; antes contaba dos veces en
+  // el mismo cupo (el de esta ruta y el de la otra) y cada descarga con sesión gastaba doble.
+  const conEnlace: express.RequestHandler = (req, _res, next) => (req.query.t === undefined ? next('route') : next());
+  app.get('/api/documentos/:id', conEnlace, d.limitar(60), async (req, res) => {
     res.setHeader('Cache-Control', 'private, no-store');
     res.setHeader('Referrer-Policy', 'no-referrer');
     const id = String(req.params.id || '');
     const dueno = duenoDeTareas(duenoDelEnlace(req.query.t, id) || '');
     if (!dueno) return res.status(403).json({ error: 'Ese enlace ya no vale (vence a los 15 minutos). Ábrelo otra vez desde la tarjeta de la tarea.', code: 'enlace_vencido', honesto: true });
-    const a = await (d.autoridad || autoridadDeEnlace)(dueno);
+    const a = await (d.autoridad || autoridadSinSesion)(dueno);
     if (a === 'suspendida') return res.status(403).json({ error: 'Esta cuenta está suspendida.', code: 'cuenta_suspendida', honesto: true });
     if (a === 'desconocida') return res.status(503).json({ error: 'No pude comprobar que tu cuenta sigue activa; prueba en un momento.', code: 'autoridad_desconocida', honesto: true });
     return servir(dueno, id, res);
@@ -71,13 +72,6 @@ export function montarRutasDocumentos(app: express.Express, d: DepsDocumentos) {
     if (!dueno) return res.status(sesion ? 403 : 401).json({ error: sesion ? 'Tus documentos van con tu cuenta de correo.' : 'Entra con tu sesión.', code: sesion ? 'sin_correo' : 'sesion_requerida', honesto: true });
     return servir(dueno, String(req.params.id || ''), res);
   });
-}
-
-/** La autoridad de la cuenta de un enlace (la misma regla que exigirAutoridadVigente para una sesión). */
-async function autoridadDeEnlace(correo: string): Promise<'permitida' | 'suspendida' | 'desconocida'> {
-  const r = await comprobarAutoridad(correo).catch(() => ({ estado: 'desconocida' as const }));
-  if (r.estado === 'desconocida' && identidadDelEntorno(correo)) return 'permitida';
-  return r.estado;
 }
 
 /** El recibo del lote → lo que contesta la herramienta (texto para el modelo, estado y recibo para la traza). */

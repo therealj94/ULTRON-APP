@@ -9,12 +9,15 @@
  *    (quien lo abra puede cambiar una cantidad y la hoja recalcula; `fullCalcOnLoad` lo pide al abrir). Ningún texto del
  *    pedido entra como fórmula: celdaSegura.
  *  · PDF: el escritor propio de siempre (lib/pdf.ts, multipágina, sin dependencias). No se trae otra biblioteca.
+ *  · PowerPoint (.pptx): PptxGenJS (MIT, fijado), en lib/oficina/pptx.ts: tema sobrio con contraste AA, títulos en el
+ *    marcador de título, numeración, notas del orador, tablas y gráficos nativos con texto alternativo.
  *
  * Generar no es entregar: lo que sale de aquí todavía pasa por la validación estructural y semántica (validar.ts).
  */
 import ExcelJS from 'exceljs';
 import { AlignmentType, BorderStyle, Document, HeadingLevel, Packer, Paragraph, ShadingType, Table, TableCell, TableRow, TextRun, WidthType } from 'docx';
 import { documentoPdf, type Bloque } from '../pdf';
+import { generarPptx } from './pptx';
 import { calcularTotales, celdaSegura, type ArchivoPedido, type EspecHoja, type EspecTexto, type Seccion } from './spec';
 
 /* ------------------------------------------------------------------ Word */
@@ -234,5 +237,6 @@ export function generarPdf(s: EspecTexto): Buffer {
 export async function generarArchivo(a: ArchivoPedido, ahora = new Date()): Promise<Buffer> {
   if (a.tipo === 'docx') return generarDocx(a.spec);
   if (a.tipo === 'xlsx') return generarXlsx(a.spec, ahora);
+  if (a.tipo === 'pptx') return generarPptx(a.spec);
   return generarPdf(a.spec);
 }

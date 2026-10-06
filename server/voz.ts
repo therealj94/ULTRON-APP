@@ -26,7 +26,7 @@ import type { Presupuesto } from '../lib/presupuesto';
 import type { AlineacionEleven } from '../lib/alineacion';
 import { s3GetJson, s3Listo, s3PutJson } from '../lib/s3';
 import { esFraseConocida } from '../lib/frases-conocidas';
-import { abrirEleven, aceptaEtiquetas, conMuletillas, elevenListo, estabilidadDe, guionEleven, hablarEleven, modeloDeLocucion, normalizarAvatar, normalizarIdioma, vozEleven, type AvatarVoz, type Idioma } from './eleven';
+import { abrirEleven, aceptaEtiquetas, conMuletillas, elevenListo, estabilidadDe, guionEleven, hablarEleven, HZ_PCM_ELEVEN, hzPcm, modeloDeLocucion, normalizarAvatar, normalizarIdioma, vozEleven, type AvatarVoz, type Idioma } from './eleven';
 
 export type Performance = 'speak' | 'sing';
 
@@ -521,7 +521,7 @@ export async function abrirVozEnVivo(opts: {
 }
 
 /** Lo que `pasarVozEnVivo` usa de la respuesta HTTP (express.Response lo cumple; las pruebas lo fingen). */
-type SalidaVoz = { write: (b: Buffer) => unknown; end: () => unknown; on: (evento: 'close', fn: () => void) => unknown; readonly writableEnded: boolean };
+type SalidaVoz = { write: (b: Buffer) => unknown; end: () => unknown; on: (evento: 'close', fn: () => void) => unknown; readonly writableEnded: boolean; destroy?: (e?: Error) => unknown };
 
 /**
  * Pasa la voz en vivo a la respuesta trozo a trozo y SOLO la guarda en la caché si ElevenLabs la
@@ -529,7 +529,17 @@ type SalidaVoz = { write: (b: Buffer) => unknown; end: () => unknown; on: (event
  * como un final normal: antes eso guardaba para siempre un MP3 cortado (basta con 400 bytes), y la
  * próxima vez esa frase sonaba mocha desde la caché. Devuelve si quedó guardada.
  */
-export async function pasarVozEnVivo(vivo: { cuerpo: ReadableStream<Uint8Array>; guardar: (audio: Buffer) => void }, res: SalidaVoz, etiqueta = '[voz]'): Promise<boolean> {
+export async function pasarVozEnVivo(
+  vivo: { cuerpo: ReadableStream<Uint8Array>; guardar: (audio: Buffer) => void },
+  res: SalidaVoz,
+  etiqueta = '[voz]',
+  /**
+   * `romperSiFalla`: si ElevenLabs se corta a media frase, la conexión se ROMPE (destroy) en vez de cerrarse bien. Lo
+   * pide el PCM del teléfono (server/voz-pcm.ts): un PCM crudo no tiene cabecera ni largo, y un final limpio diría
+   * «esta frase era así de corta». Con la conexión rota el reproductor sabe que se cortó.
+   */
+  o: { romperSiFalla?: boolean } = {}
+): Promise<boolean> {
   const lector = vivo.cuerpo.getReader();
   let cortada = false;
   // Si la persona interrumpe o cambia de pregunta, se deja de pedirle audio a ElevenLabs.
@@ -552,10 +562,104 @@ export async function pasarVozEnVivo(vivo: { cuerpo: ReadableStream<Uint8Array>;
     entero = false;
     console.warn(`${etiqueta} voz en vivo cortada`, String(e?.message || e).slice(0, 120));
   }
-  res.end();
+  // Con `romperSiFalla`, un final limpio SIN audio tampoco es un final: las cabeceras ya salieron y un 200 vacío diría
+  // «esta frase no tiene voz». Se rompe y no se guarda (server/voz-pcm.ts ya espera el primer audio antes de las cabeceras).
+  if (entero && o.romperSiFalla && !trozos.some((b) => b.length)) entero = false;
+  if (!entero && o.romperSiFalla && res.destroy) res.destroy(new Error('voz cortada'));
+  else res.end();
   if (!entero || cortada) return false;
   vivo.guardar(Buffer.concat(trozos));
   return true;
+}
+
+/* ---------------- La voz en PCM, para el teléfono que la suena a medida que llega ---------------- */
+
+/**
+ * El tipo de lo que manda /api/tts/pcm: PCM lineal de 16 bits, little-endian, mono, sin cabecera. La frecuencia va
+ * en `X-Ultron-Pcm-Hz` (no en el tipo: «audio/L16» sería big-endian por norma, y el reproductor lo leería al revés).
+ */
+export const TIPO_PCM = 'audio/pcm';
+
+/** Un WAV de 16 bits (Voicebox, el respaldo) pasado a PCM mono crudo, con su frecuencia. null si no es WAV de 16 bits. */
+export function pcmDeWav(wav: Buffer): { pcm: Buffer; hz: number } | null {
+  const leido = leerWav(wav);
+  if (!leido || !leido.muestras.length) return null;
+  const mono = leido.canales === 1 ? leido : adaptarPcm(leido, leido.hz, 1);
+  const pcm = Buffer.alloc(mono.muestras.length * 2);
+  for (let i = 0; i < mono.muestras.length; i++) pcm.writeInt16LE(mono.muestras[i], i * 2);
+  return { pcm, hz: mono.hz };
+}
+
+export type VozPcm =
+  /** Ya estaba (caché en memoria o en S3), entera. */
+  | { tipo: 'cache'; pcm: Buffer; hz: number; motor: string }
+  /** ElevenLabs la está generando: el cuerpo llega a trozos. `guardar` la deja en la caché si llegó entera. */
+  | { tipo: 'vivo'; hz: number; motor: string; cuerpo: ReadableStream<Uint8Array>; guardar: (audio: Buffer) => void }
+  /** Voicebox (respaldo o tope de minutos): entera, ya pasada a PCM. */
+  | { tipo: 'entero'; pcm: Buffer; hz: number; motor: string };
+
+/**
+ * LA VOZ EN STREAMING DEL TELÉFONO (docs/adr/ADR-voz-en-streaming.md). La misma locución que /api/tts (misma voz,
+ * modelo, guion, vecinos y tono: `pedidoEleven`), pedida a ElevenLabs por /stream en PCM, para que el teléfono la suene
+ * con el primer trozo en vez de esperar el archivo entero. Su caché va aparte (la clave lleva el formato: un MP3 no se
+ * sirve como PCM) y solo guarda lo que llegó entero. Si ElevenLabs no abre (o el miembro ya no tiene minutos,
+ * `sinEleven`), Voicebox, pasado a PCM. null: no hay voz (quien pide se queda con el camino de siempre).
+ */
+export async function abrirVozPcm(opts: {
+  texto: string;
+  emocion?: Emocion | string;
+  performance?: Performance;
+  avatar?: AvatarVoz | string;
+  idioma?: Idioma | string;
+  previo?: string;
+  siguiente?: string;
+  /** Un chat de la persona: ni se lee de la caché ni se guarda en ella. */
+  privado?: boolean;
+  /** Directo a Voicebox (el miembro gastó sus minutos de ElevenLabs de hoy). */
+  sinEleven?: boolean;
+  /** Para pruebas: la frecuencia (si no, ELEVENLABS_PCM_HZ o 22 050). */
+  hz?: number;
+}): Promise<VozPcm | null> {
+  const emocion = normalizarEmocion(opts.emocion);
+  const performance: Performance = opts.performance === 'sing' ? 'sing' : 'speak';
+  const avatar = normalizarAvatar(opts.avatar);
+  const idioma = normalizarIdioma(opts.idioma);
+  const hz = opts.hz && (HZ_PCM_ELEVEN as readonly number[]).includes(opts.hz) ? opts.hz : hzPcm();
+  const p = opts.sinEleven ? null : pedidoEleven({ texto: opts.texto, emocion, performance, plataforma: 'ultron', avatar, idioma, previo: opts.previo, siguiente: opts.siguiente });
+  if (p) {
+    const clave = crypto.createHash('sha1').update(`${p.clave}|pcm_${hz}`).digest('hex');
+    const tipo = `${TIPO_PCM};rate=${hz}`;
+    if (!opts.privado) {
+      const hit = cacheGet(clave);
+      if (hit) return { tipo: 'cache', pcm: hit.audio, hz, motor: hit.motor };
+    }
+    const guardable = persistible(p.guion, opts.texto, opts.privado);
+    const deS3 = guardable ? await leerVozDeS3(clave) : null;
+    if (deS3 && deS3.contentType === tipo) {
+      cacheSet(clave, deS3);
+      return { tipo: 'cache', pcm: deS3.audio, hz, motor: deS3.motor };
+    }
+    const r = await abrirEleven({ texto: p.guion, voz: p.voz, previo: opts.previo, siguiente: opts.siguiente, estabilidad: p.estabilidad, idioma, modelo: p.modelo, formato: `pcm_${hz}` });
+    if (r?.body) {
+      return {
+        tipo: 'vivo',
+        hz,
+        motor: p.motor,
+        cuerpo: r.body,
+        guardar: (audio) => {
+          // Lo privado no se guarda; un PCM de menos de 20 ms no es una frase.
+          if (opts.privado || audio.length < hz / 25) return;
+          cacheSet(clave, { audio, contentType: tipo, motor: p.motor });
+          if (guardable) guardarVozEnS3(clave, { audio, contentType: tipo, motor: p.motor });
+        },
+      };
+    }
+  }
+  // Respaldo: Voicebox (WAV de 16 bits), pasado a PCM. Sin ElevenLabs de por medio (ya se intentó o no toca).
+  const out = await hablar({ texto: opts.texto, emocion, performance, avatar, idioma, previo: opts.previo, siguiente: opts.siguiente, sinEleven: true, ...(opts.privado ? { sinCache: true, privado: true } : {}) });
+  if (!out || !/wav/i.test(out.contentType)) return null;
+  const crudo = pcmDeWav(out.audio);
+  return crudo ? { tipo: 'entero', pcm: crudo.pcm, hz: crudo.hz, motor: out.motor } : null;
 }
 
 export async function hablar(opts: {

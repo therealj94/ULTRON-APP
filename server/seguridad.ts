@@ -439,6 +439,17 @@ export function identidadDelEntorno(correo: string): boolean {
 }
 
 /**
+ * La autoridad de una cuenta que llega SIN sesión en la cabecera —el pase de la voz (server/voz-agente.ts), el enlace
+ * firmado de un documento (server/documentos.ts)—, con la misma regla que exigirAutoridadVigente: `desconocida` falla
+ * cerrado salvo la identidad configurada en el despliegue (identidadDelEntorno). Nunca lanza.
+ */
+export async function autoridadSinSesion(correo: string): Promise<'permitida' | 'suspendida' | 'desconocida'> {
+  const r = await comprobarAutoridad(correo).catch(() => ({ estado: 'desconocida' as const }));
+  if (r.estado === 'desconocida' && identidadDelEntorno(correo)) return 'permitida';
+  return r.estado;
+}
+
+/**
  * Lo público e inocuo que sigue aunque no se pueda comprobar (o se sepa suspendida) la cuenta de la sesión: oír, la voz,
  * el canto, el diagnóstico (RUTAS_SIN_CEREBRO, sin datos de nadie ni efectos) y cerrar la sesión.
  */
@@ -556,7 +567,7 @@ export function mesaAutorizada(req: Request): boolean {
  * Coincidencia EXACTA a propósito: con prefijo, `/api/voz` dejaba pasar `/api/voz/agente` (abrir una
  * conversación de ElevenLabs, que sí piensa con el 27B) por ser «una ruta de voz».
  */
-const RUTAS_SIN_CEREBRO = ['/api/tts', '/api/tts/stream', '/api/voz', '/api/stt', '/api/vision/analyze', '/api/cantar', '/api/orar', '/api/diag'];
+const RUTAS_SIN_CEREBRO = ['/api/tts', '/api/tts/stream', '/api/tts/pcm', '/api/voz', '/api/stt', '/api/vision/analyze', '/api/cantar', '/api/orar', '/api/diag'];
 
 function rutaConversacion(path: string) {
   const p = String(path || '').split('?')[0].replace(/\/+$/, '');
@@ -606,8 +617,35 @@ export function limitar(max: number, ventanaMs = 60_000, grupo?: string) {
     if (hits.size > 5000) {
       for (const [key, arr2] of hits) if (!arr2.some((t) => now - t < ventanaMs)) hits.delete(key);
     }
+    // Lo cobrado, por si la ruta lo devuelve (devolverLimite): el respaldo de la voz en streaming no cuenta doble.
+    if (res.locals) {
+      const cobrados: LimiteCobrado[] = Array.isArray(res.locals.limites) ? res.locals.limites : [];
+      cobrados.push({ k, grupo: grupo || req.path, marca: now, max, ventanaMs });
+      res.locals.limites = cobrados;
+    }
     next();
   };
+}
+
+/** Lo que `limitar` cobró en una petición (`res.locals.limites`). */
+export type LimiteCobrado = { k: string; grupo: string; marca: number; max: number; ventanaMs: number };
+
+/**
+ * Devuelve el lugar que `limitar(…, grupo)` cobró a ESTA petición: el pedido no se atendió por aquí y quien pidió lo
+ * repite por otra ruta del mismo cupo (/api/tts/pcm contesta 503 → el teléfono la dice por /api/tts). El freno sigue: a
+ * lo más `max` devoluciones por ventana y por IP; pasado eso, lo devuelto sí cuenta. Devuelve si lo devolvió.
+ */
+export function devolverLimite(res: Response, grupo: string): boolean {
+  const cobrados: LimiteCobrado[] = Array.isArray(res.locals?.limites) ? res.locals.limites : [];
+  const i = cobrados.findIndex((c) => c.grupo === grupo);
+  if (i < 0) return false;
+  const c = cobrados[i];
+  if (!gastarCupo(`devuelto-limite:${c.k}`, c.max, c.ventanaMs)) return false;
+  cobrados.splice(i, 1);
+  const arr = hits.get(c.k);
+  const j = arr ? arr.indexOf(c.marca) : -1;
+  if (j >= 0) arr!.splice(j, 1);
+  return true;
 }
 
 /**
@@ -657,6 +695,8 @@ export function cupoPorFrase(clave: (req: Request) => string | null, max: number
         frasesCobradas.set(frase, { t: ahora, n: 1 });
         if (frasesCobradas.size > 5000) for (const [f, v] of frasesCobradas) if (ahora - v.t >= ventanaMs) frasesCobradas.delete(f);
       }
+      // Revisión 9 (MENOR 3): lo cobrado, para devolverlo si el turno no llega a ser turno (devolverCupoDeFrase).
+      res.locals.cupoFrase = { clave: k, marca: ahora, frase, max, ventanaMs } satisfies CupoCobrado;
       return next();
     }
     res.setHeader('Retry-After', String(Math.ceil(ventanaMs / 1000)));
@@ -673,6 +713,24 @@ export function devolverCupo(claveCupo: string, marca: number) {
   const arr = hits.get(`cupo:${claveCupo}`);
   const i = arr ? arr.indexOf(marca) : -1;
   if (i >= 0) arr!.splice(i, 1);
+}
+
+/** Lo que cobró cupoPorFrase en una petición (`res.locals.cupoFrase`). */
+export type CupoCobrado = { clave: string; marca: number; frase: string; max: number; ventanaMs: number };
+
+/**
+ * Revisión 9 (MENOR 3): un turno especulativo que se descarta (la persona siguió hablando) no fue un turno: su lugar en
+ * el cupo por persona vuelve (y su frase deja de estar cobrada: si después llega de verdad, cobra una vez). El freno
+ * contra abuso sigue: a lo más DEVUELTOS_POR_CUPO veces el cupo por ventana; pasado eso, lo descartado sí cuenta (cada
+ * intento cuesta una llamada al modelo). Devuelve si lo devolvió.
+ */
+export const DEVUELTOS_POR_CUPO = 3;
+export function devolverCupoDeFrase(c: CupoCobrado | null | undefined): boolean {
+  if (!c?.clave) return false;
+  if (!gastarCupo(`devuelto:${c.clave}`, c.max * DEVUELTOS_POR_CUPO, c.ventanaMs)) return false;
+  devolverCupo(c.clave, c.marca);
+  if (c.frase && frasesCobradas.get(c.frase)?.t === c.marca) frasesCobradas.delete(c.frase);
+  return true;
 }
 
 /* ------------------------------------------------------- intentos de clave por cuenta */

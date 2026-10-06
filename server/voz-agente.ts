@@ -44,7 +44,7 @@ import { clave } from '../lib/boveda';
 import { quitarExpresiones } from '../lib/expresiones';
 import { afinarParaBoca, afinarParaBocaIngles } from './habla';
 import { interruptor } from '../lib/interruptores';
-import { devolverCupo, firmarDato, gastarCupo, huellaSesion, leerDato, mismoSecreto, secretoDerivado, sesionSigueViva, type Sesion } from './seguridad';
+import { autoridadSinSesion, devolverCupo, firmarDato, gastarCupo, huellaSesion, leerDato, mismoSecreto, secretoDerivado, sesionSigueViva, type Sesion } from './seguridad';
 import { apiEleven, etiquetaV4, normalizarAvatar, normalizarIdioma, TONO_V4, type AvatarVoz, type Idioma } from './eleven';
 import { modoValido } from './desk';
 import { aparatoValido, empujarAmbiente, empujarOrdenPc, lecturaDe, turnoDeRecordatorio, type EventoAmbiente } from '../lib/acciones-app';
@@ -780,6 +780,14 @@ export type RetencionAcciones = {
   alDescartar: (f: () => void) => void;
   /** Lo que el turno guarda en la memoria (la frase y la respuesta): igual que `hacer`, pero no es acción. */
   recordar: (f: () => void) => void;
+  /**
+   * Revisión 9 (el freno de la voz): el turno ya cambió algo que espera decisión —el «no» a un borrador, su apartado, el
+   * «¿sigo?» de su computadora— y lo repone `alDescartar`. Eso solo cuenta si el turno se confirma: la respuesta sigue
+   * abierta la espera de confirmación como la de un turno con acciones (sin esto, un turno sin acciones se daba por
+   * confirmado en cuanto terminaba, y «déjame pensar…» que seguía con «…bueno, sí, mándalo» ya había apartado el borrador).
+   * La mesa del teléfono siempre espera su POST de confirmar: ahí no hace falta.
+   */
+  esperarConfirmacion?: () => void;
 };
 
 type Deps = {
@@ -800,6 +808,8 @@ type Deps = {
   confirmarAccionMs?: number;
   /** Junta o miembro por correo (server/nivel.ts; las pruebas pueden poner otro). */
   nivelDe?: (correo: string) => NivelAura;
+  /** La autoridad vigente de la cuenta del pase (SEC-04; por omisión, seguridad.autoridadSinSesion). */
+  autoridad?: (correo: string) => Promise<'permitida' | 'suspendida' | 'desconocida'>;
   /**
    * Deja al cerebro con lo fijo del prompt de esta persona ya leído (server.ts calentarCerebro). Se
    * llama al pedir el permiso, que el teléfono pide mientras suena la llamada: al contestar, la primera
@@ -839,6 +849,8 @@ export const PHRASES = {
   listo: { es: 'Va, enseguida.', en: 'Okay, right away.' },
   noLei: { es: 'Perdón, no pude leértelo. Pídemelo otra vez.', en: "Sorry, I couldn't read it to you. Ask me again." },
   rapido: { es: 'Dame un segundito, que me llegó todo junto. ¿Me lo repites?', en: 'Give me a second, it all came in at once. Can you say it again?' },
+  // SEC-04 sin poder comprobar la cuenta: nada privado ni a su nombre (sin cerebro), con honestidad.
+  sinAutoridad: { es: 'Perdón, ahora no puedo comprobar que tu cuenta sigue activa, así que no puedo seguir. Prueba otra vez en un momento.', en: "Sorry, I can't confirm your account is still active right now, so I can't go on. Please try again in a moment." },
 };
 
 /**
@@ -971,6 +983,16 @@ export function montarVozAgente(app: express.Express, d: Deps): { llm: express.R
       return soloFrase(vencido.tope ? fraseTopeVoz(vencido.idioma) : PHRASES.vencida[vencido.idioma]);
     }
     if (!sesionSigueViva({ huella: pase.h, correo: pase.correo, at: pase.sat, exp: pase.sexp }, ahora)) return negar('la sesión de este pase se cerró');
+    /*
+     * Revisión 9 (MENOR 4): el pase de 20 min solo miraba la suspensión YA sabida. Ahora, como el resto de /api (SEC-04,
+     * exigirAutoridadVigente): suspendida, el pase deja de valer; desconocida (el registro falló o tardó, o no hay registro
+     * y el despliegue no declaró política), falla cerrado —una frase honesta, sin cerebro ni nada de la cuenta— salvo la
+     * identidad configurada en el despliegue. No es un 401: con un error ElevenLabs cuelga y el freno por IP (todas las
+     * conversaciones llegan de sus pocas IPs) castigaría a todo el mundo por una caída del registro.
+     */
+    const autoridad = await (d.autoridad ?? autoridadSinSesion)(pase.correo);
+    if (autoridad === 'suspendida') return negar('la cuenta de este pase está suspendida');
+    if (autoridad === 'desconocida') return soloFrase(PHRASES.sinAutoridad[pase.idioma]);
     const conv = tocarConversacion(pase, ahora);
     if (!conv) return negar('conversación cerrada o vencida');
     const claveTurnos = `voz-turnos:${pase.correo.toLowerCase()}`;
@@ -1135,6 +1157,8 @@ export function montarVozAgente(app: express.Express, d: Deps): { llm: express.R
     /** Lo que el turno guarda en la memoria: espera al turno siguiente, pero no alarga la respuesta. */
     const memoria: MemoriaTurno = { fs: [], estado: 'espera' };
     let accionesPedidas = 0;
+    /** Revisión 9: el turno resolvió algo que esperaba decisión; solo cuenta confirmado (RetencionAcciones.esperarConfirmacion). */
+    let pideConfirmar = false;
     let suerte: 'espera' | 'hecho' | 'descartado' = 'espera';
     /** `suerte` leída de nuevo (la cambian los relojes y el turno siguiente, no este código en línea). */
     const suerteAhora = () => suerte;
@@ -1179,6 +1203,9 @@ export function montarVozAgente(app: express.Express, d: Deps): { llm: express.R
       },
       // Una frase a medias que se descarta no queda en el hilo: el turno siguiente no la ve dos veces.
       recordar: (f) => recordarEnTurno(memoria, f),
+      esperarConfirmacion: () => {
+        if (suerte === 'espera') pideConfirmar = true;
+      },
     };
     let algo = false;
     // Lo que ya se le dio a la voz, en claro: sirve para seguir un «replace» y para saber, en el
@@ -1674,8 +1701,10 @@ export function montarVozAgente(app: express.Express, d: Deps): { llm: express.R
     }
     // Un turno que le pidió algo al teléfono: la respuesta sigue abierta un momento. Si ElevenLabs la
     // cierra sin reintentar (descartó la frase a medias del turno especulativo), las acciones no se hacen.
+    // Revisión 9: igual si resolvió algo que esperaba decisión (pideConfirmar): si en ese rato llega la frase que
+    // seguía, el turno se descarta y lo repone.
     const msConfirmar = d.confirmarAccionMs ?? interruptor('confirmarAccionVozMs');
-    if (retenidas.length && salidas.size && suerte === 'espera' && msConfirmar > 0) {
+    if ((retenidas.length || pideConfirmar) && salidas.size && suerte === 'espera' && msConfirmar > 0) {
       vivoDeEste.hasta = Date.now() + msConfirmar + (d.graciaReintentoMs ?? interruptor('graciaReintentoMs'));
       await new Promise<void>((listo) => {
         const h = setTimeout(() => {

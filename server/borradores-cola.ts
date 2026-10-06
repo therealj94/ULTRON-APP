@@ -121,8 +121,53 @@ export function tomarVencidos(llave: string): string[] {
   return xs;
 }
 
+/**
+ * Revisión 9 (MENOR 8): los avisos de lo vencido SIN gastarlos. En la voz el turno puede descartarse (la frase seguía):
+ * el aviso «se dice una vez» se gasta con `gastarVencidos` cuando el turno se confirma (retener.hacer), como la mención.
+ */
+export function verVencidos(llave: string): string[] {
+  return [...(VENCIDOS.get(llave) || [])];
+}
+
+/** Gasta esos avisos (los que se dijeron); los que llegaron después siguen esperando su turno. */
+export function gastarVencidos(llave: string, dichos: string[]) {
+  const xs = (VENCIDOS.get(llave) || []).filter((x) => !dichos.includes(x));
+  if (xs.length) VENCIDOS.set(llave, xs);
+  else VENCIDOS.delete(llave);
+}
+
 export function _olvidarVencidos() {
   VENCIDOS.clear();
+}
+
+/* ------------------------------------------------------------------ lo que el panel rechazó */
+
+/**
+ * Revisión 9 (el freno de la voz): un turno de voz que se descarta repone el borrador que su «no» quitó (la frase
+ * seguía). Si mientras tanto la persona lo RECHAZÓ en su panel o en su ventana de decisión, no vuelve: lo borrado por
+ * su decisión no reaparece. Por intento (ids al azar), con un tope y lo que vive un borrador.
+ */
+const RECHAZADOS = new Map<string, number>();
+const RECHAZO_VIVE_MS = 30 * 60_000;
+
+export function anotarRechazoDePanel(intento: string, ahora = Date.now()) {
+  if (!intento) return;
+  RECHAZADOS.delete(intento);
+  RECHAZADOS.set(intento, ahora);
+  for (const [k, t] of RECHAZADOS) {
+    if (RECHAZADOS.size <= 2000 && ahora - t <= RECHAZO_VIVE_MS) break;
+    RECHAZADOS.delete(k);
+  }
+}
+
+/** ¿La persona rechazó ese borrador por su panel o su ventana? (entonces nada lo repone). */
+export function rechazadoEnPanel(intento: string, ahora = Date.now()): boolean {
+  const t = RECHAZADOS.get(intento);
+  return t !== undefined && ahora - t <= RECHAZO_VIVE_MS;
+}
+
+export function _olvidarRechazos() {
+  RECHAZADOS.clear();
 }
 
 /* ------------------------------------------------------------------ editar desde la ventana de decisión */
