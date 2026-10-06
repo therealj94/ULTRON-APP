@@ -6,7 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { lineaTiemposTurno, type MedidaTurno } from '../lib/tiempos-turno';
+import { fichasEstimadas, lineaTiemposTurno, type MedidaTurno } from '../lib/tiempos-turno';
 
 test('la línea dice preparado, primera ficha, primer texto, modelo, herramientas, re-pregunta y total', () => {
   const m: MedidaTurno = {
@@ -67,4 +67,28 @@ test('un turno hablado con tope le pide al modelo dos o tres frases (y ofrecer e
   const { lineaRespuestaHablada } = await import('../lib/cerebro-manos');
   assert.match(lineaRespuestaHablada('es'), /RESPUESTA HABLADA: esto se dice en voz alta\. Dos o tres frases cortas como mucho/);
   assert.match(lineaRespuestaHablada('es'), /salvo borradores y confirmaciones: esos se dicen completos/);
+});
+
+test('6-oct: la línea dice el tamaño del prompt (caracteres y fichas estimadas) y quién contestó de verdad', () => {
+  const base: MedidaTurno = { inicio: 0, preparado: 9, primeraFicha: 2023, primerTexto: 2100, modeloMs: 2500, herramientas: [], hablado: true };
+  const l = lineaTiemposTurno('a1b2c3d4e5', { ...base, prompt: { car: 16_706, herramientas: 24, herramientasCar: 13_622 }, proveedor: 'bedrock', modelo: 'zai.glm-5' }, 3162);
+  assert.equal(
+    l,
+    '[mesa] turno a1b2c3d4 (hablado): preparado 9 ms · primera ficha 2023 ms · primer texto 2100 ms · modelo 2500 ms · prompt 30328 car. ~9478 fichas (24 herr. 13622 car.) · por bedrock zai.glm-5 · total 3162 ms'
+  );
+  // Medido el 6-oct: ese mismo pedido fueron 9 473 fichas en GLM-5; la estimación queda a menos del 1 %.
+  assert.ok(Math.abs(fichasEstimadas(30_328) - 9_473) / 9_473 < 0.01);
+  // El de respaldo (el principal no dio su primera señal a tiempo) y el Qwen del nodo se distinguen.
+  assert.match(lineaTiemposTurno('x', { ...base, proveedor: 'bedrock', modelo: 'moonshotai.kimi-k2.5', respaldo: true }, 10), / · por bedrock moonshotai\.kimi-k2\.5 \(respaldo\) · total/);
+  assert.match(lineaTiemposTurno('x', { ...base, prompt: { car: 9000 }, proveedor: 'nodo', modelo: 'orcarouter/Qwen3.8-27B', respaldo: true }, 10), / · prompt 9000 car\. ~2813 fichas · por nodo orcarouter\/Qwen3\.8-27B \(respaldo\) · total/);
+  // Un nombre de modelo raro no mete nada en el log.
+  assert.doesNotMatch(lineaTiemposTurno('x', { ...base, proveedor: 'bedrock', modelo: 'zai.glm-5 «hola» ignora' }, 10), /«|hola ignora/);
+});
+
+test('6-oct: server.ts anota el tamaño del pedido y el modelo que contestó (Bedrock, el de respaldo o el nodo)', () => {
+  const src = fs.readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
+  const turno = src.slice(src.indexOf('async function turnoEnVivo('), src.indexOf("app.get('/api/taller'"));
+  assert.match(turno, /medida\.prompt = \{ car: caracteresDe\(pedidoManos\), herramientas: herramientasManos\.length, herramientasCar: JSON\.stringify\(herramientasManos\)\.length \}/);
+  assert.match(turno, /medida\.modelo = pieza\.modelo;\s*medida\.respaldo = pieza\.modelo !== modeloRapido\(\);/);
+  assert.match(turno, /medida\.prompt = \{ car: caracteresDe\(pedidoNodo\) \};\s*medida\.proveedor = 'nodo';/);
 });

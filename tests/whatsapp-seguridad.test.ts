@@ -458,3 +458,50 @@ test('MENOR: fotos y archivos sin caché compartida (private, no-store); lo que 
     await p.cerrar();
   }
 });
+
+test('6-oct: el turno no espera a la base de cuentas: lo sabido vale ya (y se refresca por detrás); mandar sigue esperando a la base', async () => {
+  const p = await puente();
+  try {
+    await con(p.url, async () => {
+      let consultas = 0;
+      let suspendidas = new Set<string>();
+      // Una base lenta, como la de Render en frío (hasta 721 ms de «preparado» el 6-oct).
+      W._suspensionWhatsappDePrueba(async (c) => {
+        consultas++;
+        await new Promise((r) => setTimeout(r, 600));
+        return suspendidas.has(c);
+      });
+      try {
+        // Sin nada sabido: a lo más el tope (250 ms) y, sin respuesta, como si no se pudiera saber (los dueños sí).
+        let t0 = Date.now();
+        assert.equal(await W.whatsappPermitidoTurno(JOSE), true);
+        assert.ok(Date.now() - t0 < 450, `esperó ${Date.now() - t0} ms`);
+        t0 = Date.now();
+        assert.equal(await W.whatsappPermitidoTurno(ANA, { comunidad: true }), false, 'sin saber, la comunidad no pasa');
+        assert.ok(Date.now() - t0 < 450);
+        // La consulta siguió por detrás y quedó sabida: el turno siguiente no espera nada.
+        await new Promise((r) => setTimeout(r, 700));
+        t0 = Date.now();
+        assert.equal(await W.whatsappPermitidoTurno(ANA, { comunidad: true }), true);
+        assert.ok(Date.now() - t0 < 50, `con lo sabido esperó ${Date.now() - t0} ms`);
+        // Varias preguntas a la vez del mismo turno: una sola consulta a la base.
+        W._suspensionWhatsappDePrueba(async (c) => {
+          consultas++;
+          await new Promise((r) => setTimeout(r, 100));
+          return suspendidas.has(c);
+        });
+        consultas = 0;
+        await Promise.all([W.whatsappPermitidoTurno(BETO, { comunidad: true }, 1000), W.whatsappPermitidoTurno(BETO, { comunidad: true }, 1000), W.whatsappOfrecido(BETO, 400, { comunidad: true })]);
+        assert.equal(consultas, 1);
+        // Mandar no usa esto: whatsappPermitido espera a la base si lo sabido tiene más de 30 s (la suspensión manda).
+        suspendidas = new Set([BETO]);
+        W._suspensionWhatsappDePrueba(async (c) => suspendidas.has(c));
+        assert.equal(await W.whatsappPermitido(BETO, { comunidad: true }), false);
+      } finally {
+        W._suspensionWhatsappDePrueba(null);
+      }
+    });
+  } finally {
+    await p.cerrar();
+  }
+});

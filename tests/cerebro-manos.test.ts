@@ -567,9 +567,13 @@ test('GRAVE-2: server.ts pasa por debeCorregirSinHerramienta (NADA, borrador pen
   const src = fs.readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
   const turno = src.slice(src.indexOf('async function turnoEnVivo('), src.indexOf("app.get('/api/taller'"));
   // Revisión independiente (MEDIO-C): con lo dicho y el mensaje; la corrección perdona solo lo del borrador pendiente.
-  assert.match(turno, /const borradorPendiente = hayBorradorPendiente\(\);/);
+  // Revisión del 6-oct: «algo espera su sí» suma los apartados de la ventana de decisión y el mensaje listo de la app.
+  assert.match(turno, /const borradorPendiente = algoEsperaSuSi\(\);/);
+  assert.match(turno, /const algoEsperaSuSi = \(\) =>\s*hayBorradorPendiente\(\) \|\|/);
   assert.match(turno, /debeCorregirSinHerramienta\(\{ promesa, usoManos, borradorPendiente, pasos: pasosTurno, dicho: antes, mensaje: message \}\)/);
-  assert.match(turno, /corregirPromesaSinHerramienta\(reply, idioma === 'en' \? 'en' : 'es', \{ sinHerramienta: promesa\?\.correccion === 'local', borradorPendiente \}\)/);
+  assert.match(turno, /corregirPromesaSinHerramienta\(reply, idioma === 'en' \? 'en' : 'es', \{ sinHerramienta: promesa\?\.correccion === 'local', borradorPendiente, mensaje: message \}\)/);
+  // Y la re-pregunta tampoco se lanza por lo que se dice de eso.
+  assert.match(turno, /borradorPendiente: algoEsperaSuSi\(\),\s*repreguntar:/);
 });
 
 /* ------------------------------------------------------------------ revisión independiente del 5-oct (GRAVE-A … MENOR-E) */
@@ -745,4 +749,110 @@ test('tercera revisión (5-oct): en el stream la pregunta final se dice siempre 
   const M: Record<string, any> = await import('../lib/cerebro-manos');
   const q = M.preguntaFinal('x '.repeat(200) + '¿Te llamo a Ana a las 5?');
   assert.ok(q && q.length <= 120, String(q));
+});
+
+/* ------------------------------------------------------------------ revisión del 6-oct: re-preguntas de 3–4,6 s en la voz */
+
+/** Todas las manos de un turno del teléfono con cuenta (como el de José): la re-pregunta tiene de dónde escoger. */
+const delTelefonoCompleto: ManosDelTurno = {
+  app: true,
+  manos: ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'llamame', 'cartera', 'pagar'],
+  sistema: true,
+  computadora: true,
+  correo: true,
+  whatsapp: true,
+  sesion: true,
+  triaje: true,
+  investigar: true,
+};
+
+test('6-oct: describir la cámara en la misma respuesta («te leo lo que veo») no es una promesa', async () => {
+  const { prometeSinHacer } = await import('../lib/cerebro-manos');
+  for (const t of ['[EMO: neutral] Te leo lo que veo: una persona sonriendo.', 'Te digo lo que hay: dos personas y una mesa.', 'Le cuento quién está: José y Ana.', 'Te describo la escena: estás en la cocina.']) {
+    assert.equal(prometeSinHacer(t), false, t);
+  }
+  // Leer otra cosa sí sigue siendo promesa.
+  assert.equal(prometeSinHacer('Te leo tus correos.'), true);
+  assert.equal(prometeSinHacer('Ahí te llamo.'), true);
+});
+
+test('6-oct: lo que hace solo el teléfono (cámara, «Lo que veo», caras, voces) no lanza la segunda vuelta; se corrige con la frase que sirve', async () => {
+  const { cumplirLoDicho, debeCorregirSinHerramienta, corregirPromesaSinHerramienta, herramientasQueCumplen } = await import('../lib/cerebro-manos');
+  const disponibles = nombres(delTelefonoCompleto);
+  let vueltas = 0;
+  const repreguntar = () =>
+    (async function* () {
+      vueltas++;
+      yield { texto: 'NADA' };
+    })();
+  const casos: Array<[string, string]> = [
+    ['[EMO: neutral] Listo, te pongo la cámara trasera.', 'cambia a la cámara de atrás'],
+    ['[EMO: neutral] Va, la abro.', 'abre la cámara'],
+    ['[EMO: neutral] Ahí te la abro.', 'enciende la cámara por favor'],
+    ['[EMO: neutral] Listo, ya te abrí «Lo que veo».', 'enséñame lo que ves'],
+    ['[EMO: neutral] Va, te pongo la vista de lo que veo.', 'muéstrame lo que ves'],
+    ['[EMO: neutral] Listo, ya puse tu voz.', 'aprende mi voz'],
+  ];
+  for (const [dicho, mensaje] of casos) {
+    assert.deepEqual(herramientasQueCumplen(dicho, disponibles, { mensaje }), [], `${dicho} (${mensaje})`);
+    const p = await cumplirLoDicho({ dicho, disponibles, mensaje, repreguntar, usar: () => false });
+    assert.equal(p.correccion, 'local', dicho);
+    // Lo que dio por hecho no pasó: se corrige aquí, sin red, diciéndole cómo pedírselo al teléfono.
+    assert.equal(debeCorregirSinHerramienta({ promesa: p, usoManos: false, borradorPendiente: false, pasos: [], dicho, mensaje }), true, dicho);
+    const c = corregirPromesaSinHerramienta(dicho, 'es', { sinHerramienta: true, mensaje });
+    assert.match(c.texto, /lo hace tu teléfono cuando se lo dices tal cual/, c.texto);
+    assert.doesNotMatch(c.texto, /desde aquí no tengo cómo/);
+  }
+  assert.equal(vueltas, 0, 'ninguna segunda vuelta al modelo');
+  // Con algo que una herramienta sí hace en la misma frase, cuenta como siempre.
+  assert.ok(herramientasQueCumplen('Listo, te abro la cámara y te pongo el recordatorio.', disponibles, { mensaje: 'abre la cámara' }).includes('recordatorio'));
+});
+
+test('6-oct: con un borrador esperando, lo que se dice de él («¿Lo envío?», «tócale Sí y sale», la ventana de decisión) no se vuelve a pedir', async () => {
+  const { cumplirLoDicho, herramientasQueCumplen, debeCorregirSinHerramienta } = await import('../lib/cerebro-manos');
+  const disponibles = nombres(delTelefonoCompleto);
+  let vueltas = 0;
+  const repreguntar = () =>
+    (async function* () {
+      vueltas++;
+      yield { texto: 'NADA' };
+    })();
+  const casos = [
+    'Sigue esperando el correo para Ana. ¿Lo envío?',
+    'Está en tu ventana de decisión: tócale Sí y lo mando.',
+    'Si me dices que sí, te lo mando.',
+    'En cuanto me confirmes, lo envío.',
+    'Quedó pendiente el WhatsApp para Beto; lo tienes en tu ventana de decisión para que lo apruebes ahí.',
+  ];
+  for (const dicho of casos) {
+    assert.deepEqual(herramientasQueCumplen(dicho, disponibles, { mensaje: '¿qué pasó con lo de Ana?', borradorPendiente: true }), [], dicho);
+    const p = await cumplirLoDicho({ dicho, disponibles, mensaje: '¿qué pasó con lo de Ana?', borradorPendiente: true, repreguntar, usar: () => false });
+    assert.equal(p.correccion, 'local', dicho);
+    // Y no se borra: es verdad mientras el borrador espera.
+    assert.equal(debeCorregirSinHerramienta({ promesa: p, usoManos: false, borradorPendiente: true, pasos: [], dicho, mensaje: '¿qué pasó con lo de Ana?' }), false, dicho);
+  }
+  assert.equal(vueltas, 0);
+  // Sin borrador esperando, «tócale Sí y lo mando» promete un mensaje que no existe: se le vuelve a pedir.
+  assert.ok(herramientasQueCumplen('Tócale Sí y lo mando.', disponibles, { mensaje: 'mándale un WhatsApp a Beto' }).length > 0);
+  // «Ya lo mandé» con un borrador esperando sigue siendo falso (el borrador solo sale con su «sí»).
+  const ya = await cumplirLoDicho({ dicho: 'Listo, ya lo mandé.', disponibles, mensaje: 'mándalo', borradorPendiente: true, repreguntar, usar: () => false });
+  assert.equal(ya.correccion, 'repregunta');
+});
+
+test('6-oct: la promesa de verdad se sigue corrigiendo con la segunda vuelta («te llamo en 30 segundos» sin herramienta)', async () => {
+  const { cumplirLoDicho } = await import('../lib/cerebro-manos');
+  const usadas: string[] = [];
+  const p = await cumplirLoDicho({
+    dicho: '[EMO: feliz] ¡Va, te llamo en 30 segundos!',
+    disponibles: nombres(delTelefonoCompleto),
+    mensaje: 'llámame en 30 segundos',
+    borradorPendiente: true,
+    repreguntar: () =>
+      (async function* () {
+        yield { modelo: 'zai.glm-5' };
+        yield { herramienta: { nombre: 'llamarme', input: { en_segundos: 30 } } };
+      })(),
+    usar: (h) => (usadas.push(h.nombre), true),
+  });
+  assert.deepEqual([p.correccion, p.cumplida, usadas], ['repregunta', true, ['llamarme']]);
 });

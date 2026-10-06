@@ -148,6 +148,7 @@ async function suspendida(q: string): Promise<boolean | null> {
 export function _suspensionWhatsappDePrueba(f: ConsultaSuspension | null) {
   consultarSuspension = f || suspensionDeCuentas;
   SUSPENDIDAS.clear();
+  SUSPENSION_EN_CURSO.clear();
 }
 
 /**
@@ -162,6 +163,46 @@ export async function whatsappPermitido(correo: string, o: { comunidad?: boolean
   const q = normal(correo);
   if (!q || !permitidoPorAcceso(q, o.comunidad)) return false;
   const s = await suspendida(q);
+  return s === null ? esDuenoWhatsapp(q) : !s;
+}
+
+/** Lo que se acepta de la suspensión ya sabida en el camino caliente del turno (se refresca por detrás). */
+const SUSPENSION_RANCIA_MS = 15 * 60_000;
+/** Una sola consulta a la base por correo a la vez (el turno la pide desde tres sitios). */
+const SUSPENSION_EN_CURSO = new Map<string, Promise<boolean | null>>();
+function suspendidaCompartida(q: string): Promise<boolean | null> {
+  const ya = SUSPENSION_EN_CURSO.get(q);
+  if (ya) return ya;
+  const p = suspendida(q).finally(() => SUSPENSION_EN_CURSO.delete(q));
+  SUSPENSION_EN_CURSO.set(q, p);
+  return p;
+}
+
+/**
+ * ¿Su WhatsApp, para el TURNO? (ofrecer la herramienta, contar su borrador entre lo que espera su «sí»). José, 6-oct:
+ * «preparado» pasó de 9 a 24 ms de mediana (p75 78, máximo 721) porque cada turno hablado, con más de 30 s entre uno y
+ * otro, esperaba una consulta a la base de cuentas antes de decidir nada. Aquí:
+ *  · lo sabido de hace menos de 30 s vale tal cual (como whatsappPermitido);
+ *  · lo sabido de hace menos de 15 min vale YA y se vuelve a preguntar por detrás (el turno siguiente lo tiene fresco);
+ *  · sin nada sabido, se espera a lo más `ms`; si la base no contesta a tiempo, como si no se pudiera saber (solo los
+ *    dueños), igual que whatsappPermitido.
+ * Mandar (y aprobar desde el panel) sigue con whatsappPermitido, que con lo sabido de más de 30 s espera a la base antes
+ * de que salga nada: una cuenta suspendida no manda aunque un turno todavía le haya ofrecido la herramienta.
+ */
+export async function whatsappPermitidoTurno(correo: string, o: { comunidad?: boolean } = {}, ms = 250): Promise<boolean> {
+  const q = normal(correo);
+  if (!q || !permitidoPorAcceso(q, o.comunidad)) return false;
+  const visto = SUSPENDIDAS.get(q);
+  const edad = visto ? Date.now() - visto.t : Infinity;
+  let s: boolean | null;
+  if (visto && edad < SUSPENSION_VIVE_MS) s = visto.si;
+  else if (visto && edad < SUSPENSION_RANCIA_MS) {
+    void suspendidaCompartida(q).catch(() => undefined);
+    s = visto.si;
+  } else {
+    let reloj: ReturnType<typeof setTimeout> | undefined;
+    s = await Promise.race([suspendidaCompartida(q), new Promise<null>((r) => ((reloj = setTimeout(() => r(null), ms)), reloj.unref?.()))]).finally(() => clearTimeout(reloj));
+  }
   return s === null ? esDuenoWhatsapp(q) : !s;
 }
 
@@ -466,7 +507,8 @@ export function whatsappVinculadoSabido(quien: string): boolean {
  * marca firmada de la sesión del turno, si se tiene.
  */
 export async function whatsappOfrecido(quien: string, ms = 400, o: { comunidad?: boolean } = {}): Promise<boolean> {
-  if (!quien || !whatsappDisponible() || !(await whatsappPermitido(quien, o))) return false;
+  // Lo de la suspensión, como en el resto del turno (whatsappPermitidoTurno): sin esperar a la base si ya se sabe.
+  if (!quien || !whatsappDisponible() || !(await whatsappPermitidoTurno(quien, o))) return false;
   if (esDuenoWhatsapp(quien)) return true;
   return whatsappVinculadoRapido(quien, ms);
 }
