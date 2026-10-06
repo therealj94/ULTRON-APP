@@ -16,8 +16,10 @@
  *  · `apodo`      — después del verbo viene una palabra que no es cortesía ni «ya/ahorita»: «llámame
  *                   José», «call me Alex», «call me later/maybe/crazy». Un nombre o un «después» no es
  *                   «llámame ahora».
- *  · `contexto`   — hay algo esperando su «sí» (un borrador, una propuesta) o ya hay una llamada viva: un
- *                   «llámame» suelto en ese momento se lo deja al turno completo.
+ *  · `contexto`   — hay algo esperando su «sí» (un borrador, una propuesta): un «llámame» suelto en ese momento
+ *                   se lo deja al turno completo. (Con una llamada ya viva, «llámame» sí pasa: la voz contesta «Ya
+ *                   estamos en llamada» y no suena otra; lo que no puede pasar es que «cancela» o «no me llames»
+ *                   abran una: eso lo frenan la negación y la falta de pedido.)
  *  · `sin_pedido` — no hay ninguna expresión de «llámame» (p. ej. «¿puedes llamar?», «llama a Beto»).
  */
 
@@ -56,8 +58,6 @@ export type MotivoNoLlamar = 'negacion' | 'cita' | 'referido' | 'apodo' | 'conte
 export type ContextoLlamada = {
   /** Algo espera su «sí» (un borrador de AU-RA, una propuesta de llamar/recordar, lo escrito en el chat). */
   pendiente?: boolean;
-  /** Ya hay una llamada en curso. */
-  enLlamada?: boolean;
 };
 
 /**
@@ -87,7 +87,7 @@ export function motivoParaNoLlamar(texto: string, ctx: ContextoLlamada = {}): Mo
   // tiempo («later», «mañana») no es «llámame ahora».
   const cola = c.slice(m.index + m[0].length).trim();
   if (cola && cola.split(' ').some((w) => !COLA_PERMITIDA.has(w))) return 'apodo';
-  if (ctx.pendiente || ctx.enLlamada) return 'contexto';
+  if (ctx.pendiente) return 'contexto';
   return null;
 }
 

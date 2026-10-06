@@ -1221,7 +1221,7 @@ export function ordenPorReglas(
   const m = manoPorReglas(texto, { idioma, contexto: o.contexto, resolver: resolverContacto, ahora });
   if (!m) return null;
   // LANG-03: «llámame» por atajo solo si es inequívoco (sin cita, sin discurso referido, sin nada esperando
-  // su «sí» ni una llamada viva). Si no, el turno completo.
+  // su «sí»). Si no, el turno completo.
   if (m.tipo === 'accion' && m.accion.tipo === 'llamame' && motivoParaNoLlamar(texto, contextoDeLlamada(o))) return null;
   if (m.tipo === 'decir') return { accion: null, decir: m.decir, via: 'reglas', soloDecir: true };
   return m.tipo === 'propuesta' ? { accion: null, decir: m.decir, via: 'reglas', propuesta: m.propuesta } : { accion: m.accion, decir: m.decir, via: 'reglas' };
@@ -1477,9 +1477,9 @@ type OpcionesEtiqueta = {
   estadoControles?: EstadoControles;
 };
 
-/** Para lib/cognitivo/intencion-llamada: ¿algo espera su «sí»? ¿hay una llamada viva? */
+/** Para lib/cognitivo/intencion-llamada: ¿algo espera su «sí»? */
 function contextoDeLlamada(o: OpcionesEtiqueta) {
-  return { pendiente: !!(o.pendiente || o.propuesta), enLlamada: !!o.estadoControles?.llamada };
+  return { pendiente: !!(o.pendiente || o.propuesta) };
 }
 
 /**

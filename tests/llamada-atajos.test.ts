@@ -107,11 +107,11 @@ test('LANG-03: «no, llama a Beto» es una corrección: propuesta de llamar a Be
   }
 });
 
-test('LANG-03: con algo esperando su «sí» o una llamada viva, un «llámame» de atajo pasa al turno completo', async () => {
+test('LANG-03: con algo esperando su «sí», un «llámame» de atajo pasa al turno completo; en llamada, cancelar nunca llama', async () => {
   const pendiente = { para: 'beto@x.hn', texto: 'Hola Beto' };
   for (const t of ['oye llámame un ratito', 'llámame ya']) {
     assert.ok(!esLlamame(await ordenRapida(t, { contexto, pendiente, esperaLayaMs: 50 })), `${t} con borrador esperando`);
-    assert.ok(!esLlamame(await ordenRapida(t, { contexto, estadoControles: { llamada: true }, esperaLayaMs: 50 })), `${t} en llamada`);
+    assert.equal(motivoParaNoLlamar(t, { pendiente: true }), 'contexto');
   }
   // Cancelar durante una llamada: cuelga (o pregunta), nunca abre otra llamada.
   const colgar = await ordenRapida('cuelga', { contexto, estadoControles: { llamada: true }, esperaLayaMs: 50 });
