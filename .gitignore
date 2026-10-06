@@ -35,3 +35,5 @@ data/durable/
 # Las voces que conoce AURA (lib/voces-miembro.ts: números de cada cuenta) y el modelo que se baja solo.
 data/voces/
 data/modelos-voz/
+# Los archivos de oficina que genera AU-RA sin S3 (lib/oficina/almacen.ts): documentos privados de cada cuenta.
+data/documentos/

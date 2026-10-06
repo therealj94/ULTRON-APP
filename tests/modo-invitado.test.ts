@@ -86,16 +86,16 @@ test('herramientas: el invitado no tiene ninguna privada ni del teléfono de la 
   const nombres = (m: any) => herramientasDelTurno(m).map((t: any) => t.toolSpec.name);
   const deElla = nombres(dueña);
   const delInvitado = nombres(MI.manosDeInvitado(dueña));
-  for (const privada of ['correo', 'whatsapp', 'computadora', 'circulo', 'misiones', 'tarea', 'triaje', 'investigar', 'abrir_pantalla', 'chat_aura', 'estado_sistema', 'preparar_pago', 'abrir_cartera']) {
+  for (const privada of ['correo', 'whatsapp', 'computadora', 'circulo', 'misiones', 'tarea', 'triaje', 'investigar', 'abrir_pantalla', 'chat_aura', 'estado_sistema', 'preparar_pago', 'abrir_cartera', 'crear_documento']) {
     assert.ok(!delInvitado.some((n) => n.includes(privada)), `invitado sin ${privada}: ${delInvitado.join(', ')}`);
   }
-  assert.ok(deElla.some((n) => n.includes('correo')) && deElla.some((n) => n.includes('computadora')), `la dueña sigue igual: ${deElla.join(', ')}`);
+  assert.ok(deElla.some((n) => n.includes('correo')) && deElla.some((n) => n.includes('computadora')) && deElla.includes('crear_documento'), `la dueña sigue igual: ${deElla.join(', ')}`);
   assert.ok(delInvitado.includes('buscar_web'), 'lo público sigue (buscar en internet)');
   // El harness de texto (Qwen): sin correo, computadora, WhatsApp, misiones, círculo, tarea ni cartera.
   const sys = (o: Record<string, unknown>) => construirMensajes({ personalidad: 'x', user: 'explícame cómo va el proyecto de la planta', harness: true, nivel: 'miembro', ...o }).messages[0].content;
   const deEllaH = sys({ whatsapp: true, sesion: true });
   const invitadoH = sys({ whatsapp: true, sesion: true, invitado: true });
-  for (const h of ['correo', 'computadora', 'whatsapp', 'mision', 'circulo', 'tarea', 'cartera', 'triaje', 'investigar']) {
+  for (const h of ['correo', 'computadora', 'whatsapp', 'mision', 'circulo', 'tarea', 'cartera', 'triaje', 'investigar', 'documento']) {
     assert.doesNotMatch(invitadoH, new RegExp(`PEDIR_HERRAMIENTA: ${h}\\b`), `invitado sin ${h}`);
   }
   assert.match(deEllaH, /PEDIR_HERRAMIENTA: correo\b/);

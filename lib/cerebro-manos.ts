@@ -38,6 +38,8 @@ export type ManosDelTurno = {
   triaje: boolean;
   /** Con sesión y el servidor listo: investigar en segundo plano (server/investigar.ts). Sin el campo, con la sesión. */
   investigar?: boolean;
+  /** Con sesión: crear archivos de Word, Excel y PDF con la API (server/documentos.ts). Sin el campo, con la sesión. */
+  documentos?: boolean;
 };
 
 type Props = Record<string, unknown>;
@@ -151,11 +153,12 @@ export function herramientasDelTurno(d: ManosDelTurno): Tool[] {
     tool('leer_pagina', 'Leer una página web (una dirección https del hilo o que te dieron).', { url: str('La dirección https.') }, ['url'])
   );
   if (d.sistema) t.push(tool('estado_sistema', 'Ver el estado de los nodos y servicios de Orden Global (solo la junta).', {}));
+  const conDocumentos = d.sesion && d.documentos !== false;
   if (d.computadora)
     t.push(
       tool(
         'computadora',
-        'Usar TU computadora en la nube (Firefox, LibreOffice) para HACER algo en páginas: entrar a un sitio y buscar dentro, comparar páginas, sacar datos de una tabla, llenar un formulario; o cuando digan «usa tu computadora». La hace otro agente que no oyó la conversación: la misión va COMPLETA (sitio, qué hacer y qué traer). En su teléfono se abre sola la vista en vivo. Nunca para pagar, comprar ni poner contraseñas. Para una pregunta que una búsqueda contesta, usa buscar_web.',
+        `Usar TU computadora en la nube (Firefox, LibreOffice) para HACER algo en páginas: entrar a un sitio y buscar dentro, comparar páginas, sacar datos de una tabla, llenar un formulario; o cuando digan «usa tu computadora». La hace otro agente que no oyó la conversación: la misión va COMPLETA (sitio, qué hacer y qué traer). En su teléfono se abre sola la vista en vivo. Nunca para pagar, comprar ni poner contraseñas. Para una pregunta que una búsqueda contesta, usa buscar_web.${conDocumentos ? ' Para CREAR documentos de Word, Excel o PDF usa crear_documento, no la computadora.' : ''}`,
         {
           mision: str('La misión entera, o «parar», «pausar» o «seguir» para la que está en curso.'),
           plan: { type: 'array', items: { type: 'string' }, description: 'De 3 a 6 pasos cortos (ella los ve como lista).' },
@@ -245,11 +248,36 @@ export function herramientasDelTurno(d: ManosDelTurno): Tool[] {
         )
       );
   }
+  if (conDocumentos) t.push(herramientaDocumento());
   if (d.triaje)
     t.push(
       tool('ordenar_mensajes', 'Revisar sus mensajes (WhatsApp y correo), ordenarlos por importancia y sugerir respuestas cortas (borradores). «revisa mis mensajes», «¿qué tengo pendiente?».', { de: str('todo, whatsapp o correo.', { enum: ['todo', 'whatsapp', 'correo'] }) })
     );
   return t;
+}
+
+/**
+ * El esquema que llena el modelo para crear archivos (lib/oficina/spec.ts lo valida y normaliza). Compacto a propósito:
+ * va en cada turno hablado (tests/voz-presupuesto.test.ts) y la forma de `spec` cabe en una línea de su descripción.
+ */
+function herramientaDocumento(): Tool {
+  const spec = {
+    type: 'object',
+    description:
+      'Word/PDF: {titulo, subtitulo?, secciones:[{titulo, parrafos:[…], vinetas?:[…], tabla?:{cabecera:[…], filas:[[…]]}}]} o {carta:{lugar_fecha, destinatario:[…], asunto?, saludo, cuerpo:[…], despedida, firma:[…]}}. Excel: {titulo, cliente?, moneda:"L", partidas:[{concepto, unidad, cantidad, precio_unitario}], impuesto?:{nombre:"ISV", porcentaje:15}, descuento_porcentaje?, total_declarado? (solo si la persona dijo un total), notas?:[…]}: sin importes ni totales (los calcula el servidor). Todo completo y en español.',
+  };
+  return tool(
+    'crear_documento',
+    'Crear archivos de Word (.docx), Excel (.xlsx) o PDF en su cuenta («informe.docx, presupuesto.xlsx y carta.pdf»). TODOS los pedidos en UNA llamada, con sus nombres y el contenido completo escrito por ti; el servidor los genera, los comprueba y deja cada uno para bajar. Di que quedaron SOLO si dice «DOCUMENTOS LISTOS»; con «DOCUMENTOS A MEDIAS», qué quedó y qué falta. No uses la computadora para esto.',
+    {
+      archivos: {
+        type: 'array',
+        description: 'De 1 a 5.',
+        items: { type: 'object', properties: { tipo: str('docx, xlsx o pdf.', { enum: ['docx', 'xlsx', 'pdf'] }), nombre: str('Con su extensión.'), spec }, required: ['tipo', 'nombre', 'spec'] },
+      },
+    },
+    ['archivos']
+  );
 }
 
 /** Reglas cortas de las manos para el system del cerebro con herramientas (en lugar del protocolo de líneas). */
@@ -415,6 +443,14 @@ export function lineaDeHerramienta(nombre: string, input: Record<string, any> = 
     }
     case 'ordenar_mensajes':
       return pedido('triaje', i.de === 'whatsapp' || i.de === 'correo' ? i.de : 'revisar');
+    case 'crear_documento': {
+      // Uno suelto ({tipo, nombre, spec}) o varios ({archivos: […]}); la validación de verdad es del servidor (lib/oficina/spec.ts).
+      const archivos = Array.isArray(i.archivos) ? i.archivos : i.tipo ? [{ tipo: i.tipo, nombre: i.nombre, spec: i.spec ?? i }] : [];
+      if (!archivos.length) return null;
+      // Una sola línea: JSON.stringify escapa los saltos; U+2028/U+2029 cortan la línea para una expresión regular.
+      const json = JSON.stringify({ archivos: archivos.slice(0, 5) }).replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
+      return json.length <= 300_000 ? pedido('documento', json) : null;
+    }
     default:
       return null;
   }
@@ -575,6 +611,8 @@ const QUE_PROMETE: Array<[RegExp, string[]]> = [
   [/\b(guard|anot|apunt|save|note)/, ['recordar_de_mi', 'mision', 'tarea']],
   [/\b(pag|cartera|wallet|saldo)/, ['preparar_pago', 'abrir_cartera', 'cartera_saldo']],
   [/\b(mision|tarea)/, ['mision', 'tarea']],
+  // Los archivos de oficina (server/documentos.ts): «voy a escribir el informe en Word», «te mando el presupuesto en Excel».
+  [/\b(documentos?|informe|presupuesto|cotizacion|docx|xlsx|hoja de calculo)\b/, ['crear_documento']],
 ];
 
 /**

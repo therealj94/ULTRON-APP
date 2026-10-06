@@ -9,7 +9,7 @@ import { INSTRUCCION_MISIONES } from './misiones';
 import { exito, fallo, incierto, resultadoMemorizable, type EstadoHerramienta, type ReciboHerramienta, type ResultadoHerramienta } from './recibo-herramienta';
 import { lineaDeResultado, noUsaResultados, notaUsaResultados, resumenDeResultados } from './promesas';
 
-export type HerramientaHarness = 'web' | 'sistema' | 'ejecutor' | 'leer' | 'computadora' | 'correo' | 'whatsapp' | 'mision' | 'circulo' | 'triaje' | 'tarea' | 'cartera' | 'investigar';
+export type HerramientaHarness = 'web' | 'sistema' | 'ejecutor' | 'leer' | 'computadora' | 'correo' | 'whatsapp' | 'mision' | 'circulo' | 'triaje' | 'tarea' | 'cartera' | 'investigar' | 'documento';
 
 export type PedidoHerramienta = { herramienta: HerramientaHarness; arg: string };
 
@@ -110,6 +110,14 @@ PEDIR_HERRAMIENTA: cartera
 PEDIR_HERRAMIENTA: cartera <token, p. ej. ORIGEN>
 «¿Cuánto tengo en mi wallet?», «¿cuánto ORIGEN tengo?»: lee sus saldos de Veta Wallet (solo lectura). Nunca mueves dinero ni pides contraseñas: «mándale 5 ORIGEN a Ana» lo prepara la app para que ella lo revise y lo firme en Veta Wallet.`.trim();
 
+/**
+ * Crear archivos de oficina con la API (server/documentos.ts, lib/oficina/): va con sesión (los archivos son de su
+ * cuenta). Una sola línea de JSON con TODOS los archivos: el harness corre una herramienta por vuelta.
+ */
+export const INSTRUCCION_DOCUMENTO = `
+PEDIR_HERRAMIENTA: documento {"archivos":[{"tipo":"docx","nombre":"informe.docx","spec":{"titulo":"…","subtitulo":"…","secciones":[{"titulo":"…","parrafos":["…"],"vinetas":["…"],"tabla":{"cabecera":["…"],"filas":[["…"]]}}]}},{"tipo":"xlsx","nombre":"presupuesto.xlsx","spec":{"titulo":"…","cliente":"…","moneda":"L","partidas":[{"concepto":"…","unidad":"…","cantidad":1,"precio_unitario":100}],"impuesto":{"nombre":"ISV","porcentaje":15},"notas":["…"]}},{"tipo":"pdf","nombre":"carta.pdf","spec":{"carta":{"lugar_fecha":"…","destinatario":["…"],"asunto":"…","saludo":"…","cuerpo":["…"],"despedida":"…","firma":["…"]}}}]}
+Crear archivos de Word (.docx), Excel (.xlsx) o PDF: cuando pidan «hazme un informe en Word», «un presupuesto en Excel», «una carta en PDF». Escribe tú TODO el contenido, completo y en español, en UNA sola línea de JSON con todos los archivos pedidos (hasta 5), con los nombres que dijo. Un documento lleva secciones o una carta. En el Excel pon solo cantidades y precios: los importes y totales los calcula el servidor (si la persona dijo un total, ponlo en "total_declarado"). Para esto no uses la computadora. Di que quedaron SOLO si llega «DOCUMENTOS LISTOS»; con «DOCUMENTOS A MEDIAS» di exactamente qué quedó y qué falta. Nunca digas que se los mandaste por correo.`.trim();
+
 export function correoDisponible(): boolean {
   return !!clave('correo_cifrado');
 }
@@ -135,6 +143,7 @@ export function instruccionHarness(nivel: NivelAura = 'junta', conComputadora = 
     conSesion ? INSTRUCCION_CIRCULO : '',
     conSesion && conWhatsapp ? INSTRUCCION_TRIAJE : '',
     conSesion ? INSTRUCCION_CARTERA : '',
+    conSesion ? INSTRUCCION_DOCUMENTO : '',
   ]
     .filter(Boolean)
     .join('\n');
@@ -151,7 +160,7 @@ export function pedidoPermitido(ped: PedidoHerramienta, nivel: NivelAura): strin
   return null;
 }
 
-const RE = /^\s*PEDIR_HERRAMIENTA:\s*(web|sistema|ejecutor|leer|computadora|correo|whatsapp|mision|circulo|triaje|tarea|cartera|investigar)\s*(.*)$/im;
+const RE = /^\s*PEDIR_HERRAMIENTA:\s*(web|sistema|ejecutor|leer|computadora|correo|whatsapp|mision|circulo|triaje|tarea|cartera|investigar|documento)\s*(.*)$/im;
 
 /**
  * Lo que saca datos del turno hacia afuera por su cuenta: abrir una dirección, usar la computadora,
@@ -188,6 +197,8 @@ export const EFECTO_HERRAMIENTA: Record<HerramientaHarness, 'ninguno' | 'interno
   tarea: 'interno',
   // Deja una tarea durable en su panel y la trabaja en segundo plano (solo lee la web; avisa a la persona).
   investigar: 'interno',
+  // Deja archivos en SU cuenta (y una tarea en su panel); nada sale a otra persona.
+  documento: 'interno',
   computadora: 'externo',
   ejecutor: 'externo',
 };
@@ -252,6 +263,8 @@ export type RunnersHarness = {
   cartera?: (arg: string) => Contesta;
   /** Investigar en segundo plano con su tarea durable y su aviso (server/investigar.ts). */
   investigar?: (arg: string) => Contesta;
+  /** Crear archivos de oficina (server/documentos.ts): el arg es el JSON de la especificación. */
+  documento?: (arg: string) => Contesta;
 };
 
 /** El texto de lo que devolvió la herramienta (el de siempre). Para el estado, resolverPedidoConEstado. */
@@ -326,6 +339,12 @@ export async function resolverPedidoConEstado(
     if (!tema) return noCorrio('HARNESS investigar: no vino el tema. No empecé nada.');
     if (!runners.investigar) return noCorrio('HARNESS investigar: no está disponible aquí. No empecé nada: no digas que lo estás investigando.');
     return correr(() => runners.investigar!(tema));
+  }
+  if (ped.herramienta === 'documento') {
+    const spec = ped.arg.trim();
+    if (!spec) return noCorrio('HARNESS documento: no vino la especificación. No hice ningún archivo.');
+    if (!runners.documento) return noCorrio('HARNESS documento: no está disponible aquí. No hice ningún archivo: no digas que quedaron.');
+    return correr(() => runners.documento!(spec));
   }
   if (ped.herramienta === 'computadora') {
     const tarea = ped.arg.trim();
