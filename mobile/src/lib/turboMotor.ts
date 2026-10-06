@@ -35,6 +35,7 @@ import {
   wavDeTrozos,
   type Corroboracion,
 } from './turboLogica';
+import { CIERRE_MS, SONDEO_MS, cierreDe, finDeTurno, sePuedeEspecular, type FinDeTurno } from './finDeTurno';
 
 /** Por dónde salió una frase: en vivo, por la segunda escucha de dinero (con su resultado) o por el respaldo. */
 export type ViaFrase = 'vivo' | Corroboracion | 'respaldo';
@@ -78,6 +79,14 @@ export type CallbacksTurbo = {
    */
   onMedida?: (m: { vozMs: number; trasCallarMs: number; via: ViaFrase }) => void;
   onFinal?: (texto: string) => void;
+  /**
+   * FIN DE TURNO SEMÁNTICO (lib/finDeTurno.ts): a los SONDEO_MS de silencio Turbo ya dio el texto exacto y la idea parece
+   * terminada, pero la frase todavía no se cierra (se espera el silencio de su clase). Quien la recibe puede EMPEZAR el
+   * turno como especulativo (lib/turnoEspeculativo.ts): si después llega `onFinal` con el mismo texto, ese turno vale;
+   * si la persona sigue hablando llega `onEspeculativaCancelada` y se tira.
+   */
+  onEspeculativa?: (texto: string) => void;
+  onEspeculativaCancelada?: () => void;
   onListeningChange?: (on: boolean) => void;
   onError?: (motivo: string) => void;
   /** El micrófono crudo no abre: que el oído vuelva al reconocedor del teléfono. */
@@ -109,6 +118,27 @@ export const TIEMPOS = {
   textoQuietoMs: 2_000,
   /** Mientras AU-RA habla, la voz tiene que pasar el umbral por esto más (su eco no abre frases). */
   margenEncimaDb: 6,
+  /**
+   * A los cuántos ms de silencio se le pide a Turbo el texto exacto para decidir si terminó (lib/finDeTurno.ts). 0 lo
+   * apaga: se cierra solo por silencio con lo que iban diciendo los parciales (lo de antes del 6-oct).
+   */
+  sondeoMs: SONDEO_MS,
+};
+
+/** El sondeo de la frase en curso: el commit pedido a los `sondeoMs` de silencio y lo que trajo. */
+type Sondeo = { p: Pendiente; texto?: string; clase?: FinDeTurno; especulado?: boolean };
+/** Una frase cerrada (o un sondeo) que espera su texto de Turbo. */
+type Pendiente = {
+  trozos: string[];
+  vence: ReturnType<typeof setTimeout>;
+  tragar?: boolean;
+  m?: Medida;
+  id?: number;
+  /** Es un sondeo (la frase sigue abierta); `final`: la frase se cerró mientras esperaba su texto. */
+  sondeo?: boolean;
+  final?: boolean;
+  /** La persona siguió hablando después del sondeo: su texto va delante de lo que siga. */
+  continuar?: boolean;
 };
 
 const ABIERTO = 1;
@@ -156,7 +186,10 @@ export class MotorTurbo {
   private conectando = false;
   private cola: string[] = [];
   /** Frases cerradas que esperan su texto. `tragar`: no es de la persona (eco oído encima): no se entrega. */
-  private pendientes: { trozos: string[]; vence: ReturnType<typeof setTimeout>; tragar?: boolean; m?: Medida; id?: number }[] = [];
+  private pendientes: Pendiente[] = [];
+  /** El sondeo de la frase en curso (fin de turno semántico) y los trozos de silencio que no se le mandaron a Turbo. */
+  private sondeo: Sondeo | null = null;
+  private retenidos: string[] = [];
   private inactivo: ReturnType<typeof setTimeout> | null = null;
   private fallosVivo = 0;
   private sinVivoHasta = 0;
@@ -441,7 +474,15 @@ export class MotorTurbo {
     }
 
     this.trozosFrase.push(t.audio);
-    this.enviarAudio(t.audio, false);
+    if (this.sondeo) {
+      // Tras el sondeo, el silencio no se le manda a Turbo (lo ya dicho quedó cerrado ahí). Si vuelve la voz, la persona
+      // siguió: lo especulado se tira, el texto del sondeo va delante de lo nuevo y sigue la frase.
+      if (hayVoz) this.reanudarTrasSondeo(t.audio);
+      else {
+        this.retenidos.push(t.audio);
+        if (this.retenidos.length > 3) this.retenidos.shift();
+      }
+    } else this.enviarAudio(t.audio, false);
     if (hayVoz) this.ultimaVozEn = ahora;
     // Turbo oye en vivo y en todo este rato no entendió ni una palabra: era ruido (un ventilador, la tele
     // lejos). Se tira la frase y el ruido de fondo sube a lo que suena ahora, para no volver a caer.
@@ -455,7 +496,19 @@ export class MotorTurbo {
       return this.cerrarFrase();
     }
     if (ahora - this.vozDesde >= this.t.maximoFraseMs) return this.cerrarFrase();
-    if (ahora - this.ultimaVozEn >= silencioParaCerrar(this.parcial)) {
+    const callado = ahora - this.ultimaVozEn;
+    // FIN DE TURNO SEMÁNTICO (lib/finDeTurno.ts): con el texto exacto del sondeo, se cierra según su clase.
+    if (this.sondeo) {
+      const s = this.sondeo;
+      if (s.clase && callado >= cierreDe(s.clase)) return this.cerrarConSondeo();
+      // Su texto no llegó todavía: la frase se cierra con el silencio de siempre y sale cuando llegue.
+      if (!s.clase && callado >= Math.max(silencioParaCerrar(this.parcial), CIERRE_MS.dudoso)) return this.cerrarConSondeo();
+      return;
+    }
+    if (this.t.sondeoMs > 0 && !this.encima && this.wsAbierto && callado >= this.t.sondeoMs && (this.parcial.trim() || this.ultimaVozEn - this.vozDesde >= this.t.minimoFraseMs)) {
+      return this.enviarSondeo();
+    }
+    if (callado >= silencioParaCerrar(this.parcial)) {
       if (this.parcial.trim() || this.ultimaVozEn - this.vozDesde >= this.t.minimoFraseMs) this.cerrarFrase();
       else this.descartarFrase();
     }
@@ -478,9 +531,109 @@ export class MotorTurbo {
     }
   }
 
+  // ── fin de turno semántico: el sondeo ─────────────────────────────────────────────────────────
+  /** A los `sondeoMs` de silencio: un commit para tener el texto exacto de lo dicho (vuelve en ~50 ms). */
+  private enviarSondeo() {
+    this.enviarAudio(SILENCIO_COMMIT_B64, true);
+    const p: Pendiente = { trozos: [], sondeo: true, vence: setTimeout(() => this.vencioFinal(p), this.t.esperaFinalMs) };
+    this.pendientes.push(p);
+    this.sondeo = { p };
+    this.retenidos = [];
+  }
+
+  /** Llegó el texto de un sondeo. */
+  private alSondeo(p: Pendiente, texto: string) {
+    if (p.final) {
+      // La frase ya se cerró esperándolo: sale ahora.
+      const todo = this.juntar(this.prefijo, texto);
+      this.prefijo = '';
+      return this.entregar(todo, p.trozos, p.m, p.id);
+    }
+    if (p.continuar || !this.sondeo || this.sondeo.p !== p) {
+      // Siguió hablando: lo dicho va delante de lo que siga.
+      if (texto) this.prefijo = this.juntar(this.prefijo, texto) + ' ';
+      return;
+    }
+    const todo = this.juntar(this.prefijo, texto);
+    this.sondeo.texto = todo;
+    this.sondeo.clase = limpiarFinal(todo) ? finDeTurno(todo) : 'incompleto';
+    const callado = this.ahora() - this.ultimaVozEn;
+    if (callado >= cierreDe(this.sondeo.clase)) return this.cerrarConSondeo();
+    if (sePuedeEspecular(this.sondeo.clase) && limpiarFinal(todo)) {
+      this.sondeo.especulado = true;
+      try {
+        this.cb.onEspeculativa?.(limpiarFinal(todo));
+      } catch {
+        /* quien escucha no rompe la frase */
+      }
+    }
+  }
+
+  private juntar(a: string, b: string): string {
+    return `${a.trim()} ${String(b || '').trim()}`.trim();
+  }
+
+  /** Volvió la voz después del sondeo: la persona siguió hablando. */
+  private reanudarTrasSondeo(audio: string) {
+    const s = this.sondeo!;
+    this.sondeo = null;
+    if (s.texto !== undefined) this.prefijo = s.texto ? `${s.texto} ` : '';
+    else s.p.continuar = true;
+    if (s.especulado) this.cancelarEspeculada();
+    // El arranque de la palabra puede estar en el trozo de antes (bajo el umbral): van los últimos retenidos.
+    for (const a of this.retenidos) this.enviarAudio(a, false);
+    this.retenidos = [];
+    this.enviarAudio(audio, false);
+  }
+
+  private cancelarEspeculada() {
+    try {
+      this.cb.onEspeculativaCancelada?.();
+    } catch {
+      /* */
+    }
+  }
+
+  /** Se suelta el sondeo de la frase (se olvida, se tira o se cae la conexión): lo especulado ya no vale. */
+  private soltarSondeo() {
+    const s = this.sondeo;
+    this.sondeo = null;
+    this.retenidos = [];
+    if (!s) return;
+    // Su texto, si llega, no es de nadie: no va delante de la frase siguiente.
+    if (!s.p.final) s.p.tragar = true;
+    if (s.especulado) this.cancelarEspeculada();
+  }
+
+  /** Cierra la frase con el texto del sondeo (o, si no llegó, esperándolo: sin otro commit, no hubo audio nuevo). */
+  private cerrarConSondeo() {
+    const s = this.sondeo!;
+    this.sondeo = null;
+    this.retenidos = [];
+    this.enVoz = false;
+    const trozos = this.trozosFrase;
+    const m: Medida = { calloEn: this.ultimaVozEn, vozMs: Math.max(0, this.ultimaVozEn - this.vozDesde) };
+    this.trozosFrase = [];
+    this.prerollo = [];
+    this.parcial = '';
+    const id = ++this.idFrase;
+    this.darCierre(id, trozos);
+    if (s.texto !== undefined) {
+      this.prefijo = '';
+      this.entregar(s.texto, trozos, m, id);
+    } else {
+      // Sigue en la fila: su texto llega en orden y sale entonces (o por el respaldo si no llega).
+      Object.assign(s.p, { final: true, trozos, m, id });
+      clearTimeout(s.p.vence);
+      s.p.vence = setTimeout(() => this.vencioFinal(s.p), this.t.esperaFinalMs);
+    }
+    this.programarInactivo();
+  }
+
   /** Un golpe o un ruido corto sin texto: no es una frase. */
   private descartarFrase() {
     if (this.encima) return this.tragarFrase();
+    this.soltarSondeo();
     this.enVoz = false;
     this.trozosFrase = [];
     this.soltarParcial();
@@ -489,6 +642,7 @@ export class MotorTurbo {
 
   /** Pausa o silencio a media frase: se olvida lo que iba (lo mismo que hacen los otros oídos). */
   private olvidarFrase() {
+    this.soltarSondeo();
     this.enVoz = false;
     this.trozosFrase = [];
     this.prerollo = [];
@@ -505,6 +659,8 @@ export class MotorTurbo {
   private cerrarFrase() {
     // Oyendo encima y nadie tomó el turno: era su eco (o un «ajá»). Se cierra sin entregarla.
     if (this.encima) return this.tragarFrase();
+    // Ya se sondeó y no hubo voz después: se cierra con ese texto, sin otro commit.
+    if (this.sondeo) return this.cerrarConSondeo();
     this.enVoz = false;
     const trozos = this.trozosFrase;
     const m: Medida = { calloEn: this.ultimaVozEn, vozMs: Math.max(0, this.ultimaVozEn - this.vozDesde) };
@@ -534,6 +690,7 @@ export class MotorTurbo {
    * al comienzo de la frase siguiente.
    */
   private tragarFrase() {
+    this.soltarSondeo();
     const enviada = this.enVoz && this.trozosFrase.length >= 4 && (this.ws || this.conectando);
     this.enVoz = false;
     this.trozosFrase = [];
@@ -666,6 +823,7 @@ export class MotorTurbo {
         this.prefijo = '';
         return;
       }
+      if (p.sondeo) return this.alSondeo(p, texto);
       const todo = `${this.prefijo}${texto}`;
       this.prefijo = '';
       this.entregar(todo, p.trozos, p.m, p.id);
@@ -686,6 +844,12 @@ export class MotorTurbo {
 
   /** La conexión se cayó o no sirve: lo que esperaba respuesta se manda entero por /api/stt. */
   private tirarWs(contarFallo: boolean) {
+    // Lo que se iba juntando de la frase en curso (sondeos, cierres a medias de Turbo) se pierde con la conexión: la
+    // frase va entera otra vez (abajo) o por el respaldo, y no puede quedar repetido delante.
+    if (this.sondeo || this.prefijo) {
+      this.soltarSondeo();
+      this.prefijo = '';
+    }
     const w = this.ws;
     this.ws = null;
     this.wsAbierto = false;
@@ -714,6 +878,7 @@ export class MotorTurbo {
   }
 
   private falloVivo(motivo: string) {
+    this.soltarSondeo();
     this.conectando = false;
     this.cola = [];
     this.cb.onError?.(motivo);
@@ -756,6 +921,7 @@ export class MotorTurbo {
     for (const p of this.pendientes) clearTimeout(p.vence);
     this.pendientes = [];
     this.prefijo = '';
+    this.soltarSondeo();
     if (w) {
       w.onopen = w.onmessage = w.onerror = w.onclose = null;
       try {
