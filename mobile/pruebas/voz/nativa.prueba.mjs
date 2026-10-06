@@ -145,6 +145,10 @@ prueba('eventoVozValido: lo que manda el nativo, revisado; basura → null', () 
   assert.deepEqual(eventoVozValido({ tipo: 'termino', id: 'a', ms: 900, truncada: true, cortada: false }), { tipo: 'termino', id: 'a', ms: 900, truncada: true });
   assert.deepEqual(eventoVozValido({ tipo: 'error', id: 'a', codigo: 'http', status: 503, motivo: 'm' }), { tipo: 'error', id: 'a', codigo: 'http', status: 503, motivo: 'm' });
   assert.deepEqual(eventoVozValido({ tipo: 'error', id: 'a', codigo: '???', status: 0 }), { tipo: 'error', id: 'a', codigo: 'interno', motivo: 'interno' }, 'código desconocido: interno; status 0 no va');
+  assert.equal(eventoVozValido({ tipo: 'error', id: 'a', codigo: 'vacio', status: 200, motivo: 'llegó sin audio' }).codigo, 'vacio');
+  // Una APK de antes (sin «vacio») con este JS por aire: la frase sin audio llega como «formato» con su motivo.
+  assert.equal(eventoVozValido({ tipo: 'error', id: 'a', codigo: 'formato', status: 200, motivo: 'llegó sin audio' }).codigo, 'vacio', 'el nativo viejo');
+  assert.equal(eventoVozValido({ tipo: 'error', id: 'a', codigo: 'formato', status: 200, motivo: 'no es PCM (text/html, 0 Hz)' }).codigo, 'formato', 'sin PCM sigue siendo formato');
 });
 
 prueba('qué camino: el nuevo solo con todo a favor; si no, el de siempre y el motivo', () => {
@@ -167,6 +171,10 @@ prueba('cuándo un fallo apaga el camino nuevo en la sesión', () => {
   assert.equal(falloDeSesion({ codigo: 'http', status: 503 }, 1), false, 'un 503 suelto: solo esa frase');
   assert.equal(falloDeSesion({ codigo: 'red' }, 1), false, 'una caída de red: solo esa frase');
   assert.equal(falloDeSesion({ codigo: 'red' }, 2), true, 'dos seguidas: apagado');
+  // Revisión independiente (MENOR 4): una frase que llegó sin audio apagaba el camino nuevo hasta reabrir la app.
+  assert.equal(falloDeSesion({ codigo: 'vacio', status: 200 }, 1), false, 'llegó sin audio: solo esa frase');
+  assert.equal(falloDeSesion(eventoVozValido({ tipo: 'error', id: 'a', codigo: 'formato', status: 200, motivo: 'llegó sin audio' }), 1), false, 'tampoco con el nativo viejo');
+  assert.equal(falloDeSesion({ codigo: 'vacio' }, 2), true, 'dos seguidas sí: algo anda mal');
 });
 
 prueba('el interruptor remoto y las cabeceras', () => {
@@ -338,7 +346,8 @@ prueba('los avisos: cada tipo y campo que manda Kotlin es uno que eventoVozValid
   assert.deepEqual([...campos].sort(), ['codigo', 'cortada', 'hz', 'id', 'motivo', 'ms', 'nivel', 'status', 'tipo', 'truncada']);
   const codigos = new Set([...kt.matchAll(/"codigo" to "([a-z]+)"/g)].map((m) => m[1]));
   for (const c of ['pista']) assert.ok(codigos.has(c));
-  for (const c of [...kt.matchAll(/falloAntes\(f, "([a-z]+)"/g)].map((m) => m[1])) assert.ok(['red', 'http', 'formato'].includes(c), c);
+  for (const c of [...kt.matchAll(/falloAntes\(f, "([a-z]+)"/g)].map((m) => m[1])) assert.ok(['red', 'http', 'formato', 'vacio'].includes(c), c);
+  assert.match(kt, /falloAntes\(f, "vacio", "llegó sin audio"/, 'la frase sin audio es «vacio», no «formato»');
 });
 
 prueba('lo que el nativo pide es lo que el servidor da: ruta, tipo, cabecera de frecuencia', () => {

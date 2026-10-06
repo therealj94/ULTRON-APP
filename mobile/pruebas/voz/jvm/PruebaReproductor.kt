@@ -14,8 +14,9 @@ import kotlin.system.exitProcess
  *  · empieza a sonar con el prebúfer (no con la frase entera) y avisa listo → sonando → posicion… → bajado → termino;
  *  · dos frases encadenadas suenan SIN HUECO en la misma pista;
  *  · `esperar` no suena hasta `soltar`; cancelar la que suena la calla ya y sigue la de detrás; parar() calla todo;
- *  · fallar antes de sonar (404, sin PCM, red cortada antes del prebúfer) → «error»; la red cortada a media frase →
- *    suena lo que llegó y «termino» truncada; el volumen por bloques sale del audio real (la boca).
+ *  · fallar antes de sonar (404, sin PCM, PCM sin un byte, red cortada antes del prebúfer) → «error»; la red cortada a
+ *    media frase → suena lo que llegó y «termino» truncada; el volumen por bloques sale del audio real (la boca);
+ *  · sin nada que sonar, el escritor y el reloj NO despiertan (esperan sin plazo) y vuelven en cuanto llega trabajo.
  *
  *   sh mobile/pruebas/voz/jvm/correr.sh   (necesita kotlinc y un android.jar: ver correr.sh)
  */
@@ -48,7 +49,7 @@ private fun pcm(ms: Int, amplitud: Int = 8000): ByteArray {
 /**
  * El servidor, HTTP/1.1 a mano (para poder ROMPER la conexión a media frase, como hace res.destroy() en el servidor de
  * verdad): /pcm?ms=&ttfb=&vel=&corta=&amp= (chunked, `vel` veces más rápido que lo que dura; `corta`: a los N bytes se
- * cierra el socket sin el trozo final) ; /404 ; /sinpcm (un servidor viejo que contesta HTML).
+ * cierra el socket sin el trozo final) ; /404 ; /sinpcm (un servidor viejo que contesta HTML) ; /vacio (PCM sin un byte).
  */
 private class Servidor {
   val socket = java.net.ServerSocket(0, 50, java.net.InetAddress.getByName("127.0.0.1"))
@@ -89,6 +90,7 @@ private class Servidor {
       fun cabeceras(texto: String) = salida.write(texto.replace("\n", "\r\n").toByteArray(Charsets.ISO_8859_1))
       when (camino) {
         "/404" -> cabeceras("HTTP/1.1 404 Not Found\nContent-Length: 0\nConnection: close\n\n")
+        "/vacio" -> cabeceras("HTTP/1.1 200 OK\nContent-Type: audio/pcm\nX-Ultron-Pcm-Hz: $HZ\nTransfer-Encoding: chunked\nConnection: close\n\n0\n\n")
         "/sinpcm" -> {
           val b = "<html>viejo</html>"
           cabeceras("HTTP/1.1 200 OK\nContent-Type: text/html\nContent-Length: ${b.length}\nConnection: close\n\n$b")
@@ -228,11 +230,14 @@ fun main() {
     rep.encolar("f404", "$base/404", emptyMap(), false, 150)
     rep.encolar("fhtml", "$base/sinpcm", emptyMap(), false, 150)
     rep.encolar("fcorta", "$base/pcm?ms=2000&ttfb=50&vel=1&corta=2000", emptyMap(), false, 300)
-    r.espera(2000) { r.de("fcorta", "error").isNotEmpty() || r.de("fcorta", "termino").isNotEmpty() }
+    rep.encolar("fvacio", "$base/vacio", emptyMap(), false, 150)
+    r.espera(2000) { (r.de("fcorta", "error").isNotEmpty() || r.de("fcorta", "termino").isNotEmpty()) && r.de("fvacio", "error").isNotEmpty() }
     val e404 = r.de("f404", "error").firstOrNull()?.second
     ok("404: «error» http 404 antes de sonar", e404?.get("codigo") == "http" && e404["status"] == 404 && r.primero("f404", "sonando") < 0, e404)
     val ehtml = r.de("fhtml", "error").firstOrNull()?.second
     ok("un servidor viejo que no manda PCM: «error» formato", ehtml?.get("codigo") == "formato", ehtml)
+    val evacio = r.de("fvacio", "error").firstOrNull()?.second
+    ok("PCM sin un byte de audio: «error» vacio (un fallo suelto en JS, no «formato»)", evacio?.get("codigo") == "vacio" && r.primero("fvacio", "sonando") < 0, evacio)
     val ecorta = r.de("fcorta", "error").firstOrNull()?.second
     ok("red cortada antes de juntar el prebúfer: «error» red, nada sonó", ecorta?.get("codigo") == "red" && r.primero("fcorta", "sonando") < 0, r.de("fcorta", "error"))
 
@@ -254,6 +259,52 @@ fun main() {
     val th = r.de("h", "termino").firstOrNull()?.second
     ok("la cabeza vuelve a 0 al final: igual avisa «termino» con lo que sonó", th != null && (th["ms"] as Int) == 400, th)
     AudioTrack.cabezaACeroAlDrenar = false
+    rep.cerrar()
+  }
+
+  println("\n[aura-voz en la JVM] sin trabajo no hay despertares (batería)\n")
+  run {
+    // Los hilos de ESTE reproductor (los de las pruebas de arriba ya se cerraron o se están cerrando).
+    val antes = Thread.getAllStackTraces().keys.map { it.id }.toSet()
+    val r = Registro()
+    val rep = Reproductor(null) { r.anotar(it) }
+    fun hilos() = Thread.getAllStackTraces().filter { (t, _) -> t.id !in antes && t.isAlive && (t.name == "AuraVoz-escritor" || t.name == "AuraVoz-reloj") }
+    /** Cada ~50 ms durante `ms`: ¿todos los hilos esperan SIN plazo (WAITING, no TIMED_WAITING ni corriendo)? */
+    fun quietos(ms: Long): Pair<Boolean, String> {
+      val vistos = LinkedHashMap<String, String>()
+      val fin = System.currentTimeMillis() + ms
+      while (System.currentTimeMillis() < fin) {
+        Thread.sleep(50)
+        val h = hilos()
+        if (h.size < 2) return false to "faltan hilos: ${h.keys.map { it.name }}"
+        for ((t, pila) in h) if (t.state != Thread.State.WAITING) {
+          vistos[t.name] = "${t.name} ${t.state} en ${pila.take(4).joinToString(" ← ") { "${it.className.substringAfterLast('.')}.${it.methodName}" }}"
+        }
+      }
+      return vistos.isEmpty() to vistos.values.joinToString("\n      ")
+    }
+    rep.encolar("z1", "$base/pcm?ms=300&ttfb=50&vel=8", emptyMap(), false, 150)
+    r.espera(3000) { r.primero("z1", "termino") >= 0 }
+    r.espera(500) { AudioTrack.creadas.last().liberada }
+    ok("sonó y la pista se soltó", r.primero("z1", "termino") >= 0 && AudioTrack.creadas.last().liberada)
+    val avisos = r.eventos.size
+    val (q1, d1) = quietos(400)
+    ok("sin pista ni cola: el escritor y el reloj esperan sin plazo (cero despertares)", q1, d1)
+    ok("… y nadie avisó nada en ese rato (el reloj no corre sin pista)", r.eventos.size == avisos, r.eventos.drop(avisos).map { it.second })
+    // Una frase en espera (bajada, sin soltar): tampoco hay pista; el escritor espera sin plazo y `soltar` lo despierta.
+    rep.encolar("z2", "$base/pcm?ms=300&ttfb=50&vel=8", emptyMap(), true, 150)
+    r.espera(1500) { r.primero("z2", "bajado") >= 0 }
+    val (q2, d2) = quietos(300)
+    ok("con una frase bajada esperando `soltar`: tampoco despiertan", q2, d2)
+    val tSoltar = (System.nanoTime() - r.t0) / 1_000_000
+    rep.soltar("z2")
+    r.espera(1500) { r.primero("z2", "termino") >= 0 }
+    val suena2 = r.primero("z2", "sonando")
+    ok("`soltar` la despierta en el acto (ninguna espera sin plazo pierde un aviso)", suena2 >= 0 && suena2 - tSoltar < 250, "soltar=$tSoltar sonando=$suena2")
+    ok("… suena entera y la pista vuelve a soltarse", r.primero("z2", "termino") > suena2 && r.de("z2", "posicion").size >= 5)
+    r.espera(500) { AudioTrack.creadas.last().liberada }
+    val (q3, d3) = quietos(300)
+    ok("y vuelven a dormir sin plazo al terminar", q3, d3)
     rep.cerrar()
   }
 

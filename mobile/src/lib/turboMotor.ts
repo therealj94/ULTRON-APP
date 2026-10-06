@@ -88,6 +88,12 @@ export type InfoTrozo = {
   /** Con cuánto silencio (desde la última voz) se cerraría la frase ahora. */
   cierreMs: number;
   tramo?: EstadoTramo;
+  /**
+   * Lo que Turbo entregue desde aquí (sus parciales) empieza un texto NUEVO que va detrás de `parcial`: la persona siguió
+   * tras el sondeo (o Turbo cerró solo a media frase) y todavía no llegó un parcial nuevo. Las muletillas ubican así lo
+   * que se coló (lib/asentir.ts `quitarAsentimientos`).
+   */
+  deCero?: boolean;
 };
 
 export type CallbacksTurbo = {
@@ -156,6 +162,11 @@ export const TIEMPOS = {
   /** Un tramo nunca dura más que esto (un clip roto no deja sordo al oído). */
   maxTramoMs: 1500,
   /**
+   * Los últimos trozos del tramo (~0,2 s) que se guardan con su audio real: a Turbo le tocaba silencio, pero si enseguida
+   * la persona retoma encima, el arranque suave de su palabra (bajo el umbral de «retoma») va en su lugar, en orden.
+   */
+  retomaTramoTrozos: 2,
+  /**
    * A los cuántos ms de silencio se le pide a Turbo el texto exacto para decidir si terminó (lib/finDeTurno.ts). 0 lo
    * apaga: se cierra solo por silencio con lo que iban diciendo los parciales (lo de antes del 6-oct).
    */
@@ -205,6 +216,13 @@ export class MotorTurbo {
   private vozPersonaDb = -100;
   /** Un trozo de silencio del mismo largo que los del micrófono (base64), para mandarlo en lugar del tramo. */
   private silencioTrozo: { largo: number; b64: string } | null = null;
+  /**
+   * Los últimos trozos del tramo (hasta `retomaTramoTrozos`) con su audio REAL, en duda hasta el trozo que sigue al
+   * tramo: si la persona retomó encima, va su audio; si no, el silencio (`resolverDudosos`). `ref` es el trozo tal como
+   * espera su turno: en `retenidos` tras un sondeo, o sin mandar todavía (`diferido`). `lista`/`i`: su lugar en
+   * `trozosFrase` (el respaldo por /api/stt oye lo mismo que Turbo).
+   */
+  private dudosos: { ref: { audio: string }; real: string; diferido: boolean; lista: string[]; i: number }[] = [];
   private cerrarMic: (() => void) | null = null;
   private abriendoMic = false;
   private fallosMic = 0;
@@ -224,6 +242,12 @@ export class MotorTurbo {
   private parcial = '';
   /** Cuándo cambió por última vez lo que Turbo va entendiendo. */
   private parcialEn = 0;
+  /**
+   * Turbo empezó un texto nuevo (tras el sondeo, o cerró solo a media frase) y todavía no mandó un parcial: lo que
+   * entregue va detrás de lo dicho (`deCero`). `parcialViejo`: `parcial` es lo de antes, que ya va en `prefijo`.
+   */
+  private deCero = false;
+  private parcialViejo = false;
   /** Lo que Turbo cerró por su cuenta a media frase (frases larguísimas): va delante de la siguiente. */
   private prefijo = '';
 
@@ -235,7 +259,7 @@ export class MotorTurbo {
   private pendientes: Pendiente[] = [];
   /** El sondeo de la frase en curso (fin de turno semántico) y los trozos de silencio que no se le mandaron a Turbo. */
   private sondeo: Sondeo | null = null;
-  private retenidos: string[] = [];
+  private retenidos: { audio: string }[] = [];
   private inactivo: ReturnType<typeof setTimeout> | null = null;
   private fallosVivo = 0;
   private sinVivoHasta = 0;
@@ -540,6 +564,8 @@ export class MotorTurbo {
     // El tramo de una muletilla: lo que suena es AU-RA diciendo «mjm» por la bocina. Ni voz, ni ruido del cuarto, ni
     // audio para Turbo (va silencio del mismo largo): para el oído, la persona sigue callada.
     const enTramo = tramo === 'sonando';
+    // Lo que quedó en duda del tramo: la persona retomó encima (su arranque suave va a Turbo) o no (silencio).
+    if (!enTramo) this.resolverDudosos(tramo === 'cortado');
     const db = enTramo ? -100 : crudo;
     const audio = enTramo ? this.silencioComo(t.audio) : t.audio;
     // Con su voz sonando, el ruido del cuarto no se mide (su eco lo subiría) y la voz tiene que pasar
@@ -556,8 +582,35 @@ export class MotorTurbo {
       this.ultimoNivel = nivel;
       this.cb.onLevel?.(nivel);
     }
-    this.seguirFrase(audio, db, hayVoz, ahora);
+    this.seguirFrase(audio, db, hayVoz, ahora, enTramo ? t.audio : undefined);
     this.avisarTrozo(hayVoz, ahora, tramo);
+  }
+
+  /** Un trozo del tramo más, en duda; el más viejo pasado `retomaTramoTrozos` ya es silencio. */
+  private dudar(d: (typeof this.dudosos)[number]) {
+    this.dudosos.push(d);
+    while (this.dudosos.length > this.t.retomaTramoTrozos) this.resolverUno(this.dudosos.shift()!, false);
+  }
+
+  /** Se acabó el tramo: lo que estaba en duda va con su audio real (`retomo`: la persona retomó encima) o en silencio. */
+  private resolverDudosos(retomo: boolean) {
+    if (!this.dudosos.length) return;
+    const ds = this.dudosos;
+    this.dudosos = [];
+    for (const d of ds) this.resolverUno(d, retomo);
+  }
+
+  private resolverUno(d: (typeof this.dudosos)[number], real: boolean) {
+    // De otra frase (se cerró o se tiró entretanto): ya no va a ningún lado.
+    if (!this.enVoz || d.lista !== this.trozosFrase) return;
+    if (real) {
+      d.ref.audio = d.real;
+      d.lista[d.i] = d.real;
+    }
+    if (d.diferido) {
+      d.diferido = false;
+      this.enviarAudio(d.ref.audio, false);
+    }
   }
 
   /** ¿Hay un tramo de muletilla en este trozo, y cómo está? (`ignorarTramo`). */
@@ -597,18 +650,22 @@ export class MotorTurbo {
         voz,
         ahora,
         enVoz: this.enVoz,
-        parcial: this.sondeo?.texto ?? `${this.prefijo}${this.parcial}`.trim(),
+        parcial: this.sondeo?.texto ?? (this.parcialViejo ? this.prefijo : `${this.prefijo}${this.parcial}`).trim(),
         clase: this.sondeo?.clase,
         cierreMs: this.cierreActual(),
         ...(tramo ? { tramo } : {}),
+        ...(this.deCero && !this.sondeo ? { deCero: true } : {}),
       });
     } catch {
       /* el oyente nunca rompe la frase */
     }
   }
 
-  /** Lo que hace el trozo con la frase: abrirla, seguirla, sondearla o cerrarla. */
-  private seguirFrase(audio: string, db: number, hayVoz: boolean, ahora: number) {
+  /**
+   * Lo que hace el trozo con la frase: abrirla, seguirla, sondearla o cerrarla. `real`: es un trozo del tramo de una
+   * muletilla (`audio` es su silencio) y este es su audio de verdad, por si la persona retoma encima (`dudosos`).
+   */
+  private seguirFrase(audio: string, db: number, hayVoz: boolean, ahora: number, real?: string) {
     if (!this.enVoz) {
       if (hayVoz) return this.empezarFrase(audio, ahora);
       this.prerollo.push(audio);
@@ -616,16 +673,19 @@ export class MotorTurbo {
       return;
     }
 
-    this.trozosFrase.push(audio);
+    const i = this.trozosFrase.push(audio) - 1;
+    const ref = { audio };
     if (this.sondeo) {
       // Tras el sondeo, el silencio no se le manda a Turbo (lo ya dicho quedó cerrado ahí). Si vuelve la voz, la persona
       // siguió: lo especulado se tira, el texto del sondeo va delante de lo nuevo y sigue la frase.
       if (hayVoz) this.reanudarTrasSondeo(audio);
       else {
-        this.retenidos.push(audio);
+        this.retenidos.push(ref);
         if (this.retenidos.length > 3) this.retenidos.shift();
       }
-    } else this.enviarAudio(audio, false);
+    } else if (!real) this.enviarAudio(audio, false);
+    // Un trozo del tramo espera (sin mandar, o retenido) hasta saber si la persona retomó encima.
+    if (real) this.dudar({ ref, real, diferido: !this.sondeo, lista: this.trozosFrase, i });
     if (hayVoz) this.ultimaVozEn = ahora;
     // Turbo oye en vivo y en todo este rato no entendió ni una palabra: era ruido (un ventilador, la tele
     // lejos). Se tira la frase y el ruido de fondo sube a lo que suena ahora, para no volver a caer.
@@ -661,6 +721,7 @@ export class MotorTurbo {
     this.enVoz = true;
     this.vozDesde = this.ultimaVozEn = ahora;
     this.parcial = '';
+    this.deCero = this.parcialViejo = false;
     this.trozosFrase = [...this.prerollo, audio];
     this.prerollo = [];
     if (this.inactivo) {
@@ -681,7 +742,8 @@ export class MotorTurbo {
     const p: Pendiente = { trozos: [], sondeo: true, vence: setTimeout(() => this.vencioFinal(p), this.t.esperaFinalMs) };
     this.pendientes.push(p);
     this.sondeo = { p };
-    this.retenidos = [];
+    // Lo del tramo que esperaba sin mandar queda retenido, como el silencio de después del sondeo (va si sigue hablando).
+    this.retenidos = this.dudosos.filter((d) => d.diferido).map((d) => ((d.diferido = false), d.ref));
   }
 
   /** Llegó el texto de un sondeo. */
@@ -722,9 +784,13 @@ export class MotorTurbo {
     this.sondeo = null;
     if (s.texto !== undefined) this.prefijo = s.texto ? `${s.texto} ` : '';
     else s.p.continuar = true;
+    // Turbo empieza un texto nuevo: hasta su primer parcial, lo dicho es el del sondeo (no el parcial de antes).
+    this.deCero = true;
+    this.parcialViejo = s.texto !== undefined;
     if (s.especulado) this.cancelarEspeculada();
-    // El arranque de la palabra puede estar en el trozo de antes (bajo el umbral): van los últimos retenidos.
-    for (const a of this.retenidos) this.enviarAudio(a, false);
+    // El arranque de la palabra puede estar en el trozo de antes (bajo el umbral): van los últimos retenidos (los del
+    // tramo de una muletilla, con su audio real si la persona retomó encima: `resolverDudosos`).
+    for (const a of this.retenidos) this.enviarAudio(a.audio, false);
     this.retenidos = [];
     this.enviarAudio(audio, false);
   }
@@ -948,6 +1014,7 @@ export class MotorTurbo {
       if (this.enVoz && (!this.pausado || this.encima) && texto && texto !== this.parcial) {
         this.parcial = texto;
         this.parcialEn = this.ahora();
+        this.deCero = this.parcialViejo = false;
         if (this.encima) this.cb.onPartialEncima?.(texto);
         else this.cb.onPartial?.(texto);
       }
@@ -957,8 +1024,11 @@ export class MotorTurbo {
       const texto = String(j.text || '').trim();
       const p = this.pendientes.shift();
       if (!p) {
-        // Turbo cerró solo a media frase: lo dicho va delante de lo que siga.
-        if (texto) this.prefijo = `${this.prefijo}${texto} `;
+        // Turbo cerró solo a media frase: lo dicho va delante de lo que siga (y su próximo parcial empieza de cero).
+        if (texto) {
+          this.prefijo = `${this.prefijo}${texto} `;
+          if (this.enVoz) this.deCero = this.parcialViejo = true;
+        }
         return;
       }
       clearTimeout(p.vence);
@@ -992,6 +1062,7 @@ export class MotorTurbo {
     if (this.sondeo || this.prefijo) {
       this.soltarSondeo();
       this.prefijo = '';
+      this.deCero = this.parcialViejo = false;
     }
     const w = this.ws;
     this.ws = null;
@@ -1064,6 +1135,7 @@ export class MotorTurbo {
     for (const p of this.pendientes) clearTimeout(p.vence);
     this.pendientes = [];
     this.prefijo = '';
+    this.deCero = this.parcialViejo = false;
     this.soltarSondeo();
     if (w) {
       w.onopen = w.onmessage = w.onerror = w.onclose = null;

@@ -139,15 +139,29 @@ export type ErrorEspec = { nombre: string; errores: string[] };
 
 /* ------------------------------------------------------------------ texto */
 
-/** Una línea: sin controles ni saltos, espacios juntos, con tope. */
+/**
+ * Lo que XML 1.0 no admite aunque no sea un control: U+FFFE, U+FFFF y las mitades sueltas de un par sustituto (un emoji
+ * partido). Word, Excel y PowerPoint piden «reparar» el archivo si los encuentran, y el PDF los dibuja como basura.
+ */
+const NO_XML = /[\uFFFE\uFFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
+/** Quita lo que XML 1.0 no admite (ver NO_XML); un emoji entero queda. */
+export function sinNoXml(s: string): string {
+  return s.replace(NO_XML, '');
+}
+
+/**
+ * Una línea: sin controles ni saltos, sin lo que XML no admite, espacios juntos, con tope. Es el saneador común de los
+ * cuatro tipos (docx, xlsx, pptx, pdf). Se limpia otra vez después de cortar: cortar en medio de un emoji deja media
+ * pareja suelta.
+ */
 export function linea(v: unknown, max: number): string {
-  return String(v ?? '')
-    .normalize('NFC')
+  const corta = sinNoXml(String(v ?? '').normalize('NFC'))
     .replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
-    .slice(0, max)
-    .trim();
+    .slice(0, max);
+  return sinNoXml(corta).trim();
 }
 
 /** Un texto con párrafos: un salto de línea (o varios) separa párrafos; cada uno, una línea limpia. */
@@ -445,7 +459,7 @@ function validarPresentacion(v: unknown, errores: string[]): EspecPresentacion {
     if (o.notas !== undefined && o.notas !== null) {
       const notas = parrafos(o.notas, TOPES_PPTX.notas).join('\n');
       if (notas.length > TOPES_PPTX.notas) errores.push(`${donde}: las notas del orador pasan de ${TOPES_PPTX.notas} caracteres`);
-      if (notas) d.notas = notas.slice(0, TOPES_PPTX.notas);
+      if (notas) d.notas = sinNoXml(notas.slice(0, TOPES_PPTX.notas));
     }
     if (!d.titulo && tipo !== 'cita') errores.push(`${donde}: falta el título de la diapositiva`);
     if (tipo === 'vinetas') {

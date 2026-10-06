@@ -69,6 +69,8 @@ const leer = (req: express.Request): PeticionVozPcm => {
 
 const minutos = { cuenta: null as string | null, restante: 60_000, anotados: [] as Array<[string, number]> };
 const limites: Array<[number, number | undefined, string | undefined]> = [];
+/** Cuántas veces la ruta devolvió el lugar del cupo `voz` (el teléfono la pide por /api/tts, que cobra el suyo). */
+let devueltos = 0;
 const app = express();
 app.use(express.json());
 montarVozPcm(app, {
@@ -83,6 +85,7 @@ montarVozPcm(app, {
   restanteMs: () => minutos.restante,
   anotar: (c, ms) => minutos.anotados.push([c, ms]),
   msDeHabla: (t) => t.length * 60,
+  devolver: () => void devueltos++,
 });
 const servidor = app.listen(0);
 const base = `http://127.0.0.1:${(servidor.address() as AddressInfo).port}`;
@@ -121,6 +124,7 @@ const limpio = () => {
   minutos.cuenta = null;
   minutos.restante = 60_000;
   minutos.anotados.length = 0;
+  devueltos = 0;
 };
 
 test('la frecuencia: 22 050 por omisión; ELEVENLABS_PCM_HZ solo si es una que todos los planes dan', () => {
@@ -208,6 +212,44 @@ test('ElevenLabs se corta a media frase: la conexión se ROMPE (no un final limp
   assert.equal(r2.roto, false);
 });
 
+/*
+ * Revisión independiente (MENOR 4): ElevenLabs terminaba limpio SIN un byte y la ruta contestaba 200 vacío; el teléfono lo
+ * marcaba «formato» y apagaba el camino nuevo hasta reabrir la app, y el respaldo gastaba otro lugar del cupo `voz`.
+ */
+test('ElevenLabs termina sin audio (limpio, con trozos vacíos o roto antes del primer byte): 503 antes de las cabeceras, nada en la caché, el lugar vuelve', async () => {
+  for (const [como, armar] of [
+    ['limpio y vacío', (m: ReturnType<typeof cuerpoManual>) => m.cerrar()],
+    ['solo trozos vacíos', (m: ReturnType<typeof cuerpoManual>) => (m.dar(new Uint8Array(0)), m.dar(new Uint8Array(0)), m.cerrar())],
+    ['un byte suelto (ni una muestra)', (m: ReturnType<typeof cuerpoManual>) => (m.dar(new Uint8Array([7])), m.cerrar())],
+    ['roto antes del primer byte', (m: ReturnType<typeof cuerpoManual>) => m.romper()],
+  ] as const) {
+    limpio();
+    minutos.cuenta = 'ana@ejemplo.com';
+    const m = cuerpoManual();
+    responder = () => respuestaPcm(m.cuerpo);
+    const p = pedir(q('Una frase que no trae voz.'));
+    await new Promise((r) => setTimeout(r, 20));
+    armar(m);
+    const r = await p;
+    assert.equal(r.status, 503, `${como}: 503, no un 200 vacío`);
+    assert.match(String(r.headers['content-type']), /json/, como);
+    assert.equal(r.headers['x-ultron-pcm-hz'], undefined, `${como}: sin cabeceras de PCM`);
+    assert.equal(devueltos, 1, `${como}: el lugar del cupo vuelve (el respaldo cobra el suyo)`);
+    assert.deepEqual(minutos.anotados, [], `${como}: sin audio no se cobran minutos`);
+    // La segunda vez se pide de nuevo: nada vacío quedó en la caché.
+    const m2 = cuerpoManual();
+    responder = () => respuestaPcm(m2.cuerpo);
+    const p2 = pedir(q('Una frase que no trae voz.'));
+    m2.dar(pcm(4000));
+    m2.cerrar();
+    const r2 = await p2;
+    assert.equal(r2.status, 200, como);
+    assert.equal(r2.cuerpo.length, 4000, como);
+    assert.equal(llamadas.length, 2, `${como}: no se sirvió de la caché`);
+    assert.equal(devueltos, 1, `${como}: con audio no se devuelve nada`);
+  }
+});
+
 test('lo privado (un chat de la persona) ni se guarda ni se sirve de la caché', async () => {
   limpio();
   for (let i = 0; i < 2; i++) {
@@ -235,6 +277,7 @@ test('ElevenLabs no abre (500): Voicebox, pasado a PCM con SU frecuencia; sin vo
     const sin = await conVoicebox(undefined, undefined, () => pedir(q('Nadie tiene voz.')));
     assert.equal(sin.status, 503);
     assert.match(String(sin.headers['content-type']), /json/);
+    assert.equal(devueltos, 1, 'sin voz: el lugar del cupo vuelve (el teléfono la pide por /api/tts)');
   } finally {
     await vb.cerrar();
   }
@@ -272,8 +315,35 @@ test('las puertas: las de /api/tts/stream (ruta de voz EXACTA, cupo «voz» de 6
   const vacio = await pedir('/api/tts/pcm?text=');
   assert.equal(vacio.status, 400);
   const src = fs.readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
-  assert.match(src, /montarVozPcm\(app, \{ exigir: exigirMesaODesk, limitar, leer: leerPeticionVoz, cuentaMiembro: cuentaDeVozMiembro, restanteMs: restanteVozMs, anotar: anotarVoz, msDeHabla \}\);/);
+  assert.match(src, /montarVozPcm\(app, \{ exigir: exigirMesaODesk, limitar, leer: leerPeticionVoz, cuentaMiembro: cuentaDeVozMiembro, restanteMs: restanteVozMs, anotar: anotarVoz, msDeHabla, devolver: \(res\) => devolverLimite\(res, 'voz'\) \}\);/);
   assert.match(src, /app\.all\('\/api\/tts\/stream', exigirMesaODesk, limitar\(60, 60_000, 'voz'\), responderVozVivo\);/, '/api/tts/stream sigue igual');
+});
+
+test('devolverLimite: el lugar que cobró `limitar` a ESTE pedido vuelve; a lo más el cupo por ventana (el freno sigue)', async () => {
+  const { limitar, devolverLimite } = await import('../server/seguridad');
+  const lim = limitar(3, 60_000, 'voz-prueba-devolver');
+  const pedido = () => {
+    const req = { ip: '203.0.113.77', path: '/api/tts/pcm', socket: {} } as any;
+    const res = { locals: {} as Record<string, unknown>, estado: 200, status(n: number) { this.estado = n; return this; }, json() { return this; } } as any;
+    let paso = false;
+    lim(req, res, () => (paso = true));
+    return { res, paso };
+  };
+  // Tres pedidos llenan el cupo; el cuarto, 429.
+  const a = [pedido(), pedido(), pedido()];
+  assert.ok(a.every((x) => x.paso));
+  assert.equal(pedido().paso, false, 'lleno');
+  // Uno no se atendió (503) y se devuelve: entra otro.
+  assert.equal(devolverLimite(a[0].res, 'voz-prueba-devolver'), true);
+  assert.equal(devolverLimite(a[0].res, 'voz-prueba-devolver'), false, 'cada pedido devuelve una vez');
+  assert.equal(devolverLimite(a[1].res, 'otro-grupo'), false, 'solo el grupo que cobró');
+  assert.equal(pedido().paso, true, 'con el lugar devuelto, entra');
+  // El freno: a lo más el cupo (3) devoluciones por ventana.
+  assert.equal(devolverLimite(a[1].res, 'voz-prueba-devolver'), true);
+  assert.equal(devolverLimite(a[2].res, 'voz-prueba-devolver'), true);
+  const b = pedido();
+  assert.equal(b.paso, true);
+  assert.equal(devolverLimite(b.res, 'voz-prueba-devolver'), false, 'pasado el tope, lo devuelto sí cuenta');
 });
 
 test('MEDIDA: con un ElevenLabs que suelta 1,5 s de voz despacio, el teléfono empieza a sonar mucho antes que bajándola entera', async () => {

@@ -12,7 +12,8 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
-import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
@@ -71,6 +72,11 @@ internal class Frase(
  * avisa a JS: «sonando», «posicion» (ms y volumen ahí, para la boca), «termino». Un solo candado para todo, sin
  * candados anidados.
  *
+ * Sin nada que sonar, ningún hilo despierta (batería): el reloj corre SOLO mientras hay pista (se programa al abrirla y
+ * se cancela al soltarla) y el escritor, sin pista, espera sin plazo a que algo cambie (encolar, soltar, red, cancelar,
+ * parar, cerrar: todos avisan con `cambio` dentro del candado, así que ningún aviso se pierde). Con pista, el escritor
+ * sigue con su espera corta (8/20 ms): es el que la mantiene llena.
+ *
  * Atributos de audio: USAGE_MEDIA + CONTENT_TYPE_SPEECH, el mismo flujo (STREAM_MUSIC) por el que suena hoy expo-av.
  * Así el volumen, la salida (altavoz/auriculares) y la cancelación de eco del oído Turbo (aura-mic con
  * VOICE_COMMUNICATION + AcousticEchoCanceler) ven la voz igual que antes. USAGE_VOICE_COMMUNICATION la mandaría por la
@@ -81,7 +87,10 @@ internal class Reproductor(private val contexto: Context?, private val avisar: (
   private val cambio = candado.newCondition()
   private val cola = ArrayList<Frase>()
   private val red: ExecutorService = Executors.newCachedThreadPool { r -> Thread(r, "AuraVoz-red").apply { isDaemon = true } }
-  private val reloj: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "AuraVoz-reloj").apply { isDaemon = true } }
+  /** El hilo del reloj; sin pista no tiene nada programado (y una tarea cancelada sale de la fila al momento). */
+  private val reloj = ScheduledThreadPoolExecutor(1) { r -> Thread(r, "AuraVoz-reloj").apply { isDaemon = true } }.apply { removeOnCancelPolicy = true }
+  /** El tic de 30 Hz de la pista de ahora (null sin pista). */
+  private var tic: ScheduledFuture<*>? = null
   private var escritor: Thread? = null
   @Volatile private var vivo = true
 
@@ -94,10 +103,6 @@ internal class Reproductor(private val contexto: Context?, private val avisar: (
   private var ultimaCabeza = -1L
   private var cabezaQuietaDesde = 0L
   private var foco: AudioFocusRequest? = null
-
-  init {
-    reloj.scheduleAtFixedRate({ mirar() }, 33, 33, TimeUnit.MILLISECONDS)
-  }
 
   /** Pone una frase en la cola y empieza a bajarla. `esperar`: bajarla ya pero no sonarla hasta `soltar`. */
   fun encolar(id: String, url: String, cabeceras: Map<String, String>, esperar: Boolean, prebufferMs: Int) {
@@ -224,7 +229,9 @@ internal class Reproductor(private val contexto: Context?, private val avisar: (
         }
         cambio.signalAll()
       }
-      if (vacia) return falloAntes(f, "formato", "llegó sin audio", estado)
+      // Sin un solo byte de audio: esa frase (ElevenLabs no la dio), no un servidor sin PCM. JS la dice por el camino de
+      // siempre y NO apaga el camino nuevo (vozNativa.ts `falloDeSesion`: «vacio» es un fallo suelto).
+      if (vacia) return falloAntes(f, "vacio", "llegó sin audio", estado)
       if (listo) avisar(mapOf("tipo" to "listo", "id" to f.id, "hz" to hz))
       avisar(mapOf("tipo" to "bajado", "id" to f.id, "ms" to ms))
     } catch (e: Exception) {
@@ -325,7 +332,8 @@ internal class Reproductor(private val contexto: Context?, private val avisar: (
         val f = siguiente()
         if (f == null) {
           if (pista != null && !drenando && todoEscrito()) drenar()
-          cambio.await(20, TimeUnit.MILLISECONDS)
+          // Sin pista no hay nada que mantener lleno: a esperar sin plazo (cada cambio avisa). Con pista, la espera corta.
+          if (pista == null) cambio.await() else cambio.await(20, TimeUnit.MILLISECONDS)
           continue
         }
         if (!escribir(f)) cambio.await(8, TimeUnit.MILLISECONDS)
@@ -423,6 +431,14 @@ internal class Reproductor(private val contexto: Context?, private val avisar: (
     pista = t
     pistaHz = hz
     pistaGen += 1
+    // El reloj, solo mientras hay pista.
+    if (tic == null) {
+      tic = try {
+        reloj.scheduleAtFixedRate({ mirar() }, 33, 33, TimeUnit.MILLISECONDS)
+      } catch (_: Exception) {
+        null
+      }
+    }
     cuadrosEscritos = 0
     drenando = false
     ultimaCabeza = -1
@@ -492,6 +508,9 @@ internal class Reproductor(private val contexto: Context?, private val avisar: (
     pista = null
     pistaHz = 0
     drenando = false
+    // Sin pista, el reloj no tiene qué mirar: se cancela (si es él quien suelta, esta vuelta es la última).
+    tic?.cancel(false)
+    tic = null
     soltarFoco()
   }
 

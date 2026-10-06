@@ -43,7 +43,8 @@ export function nivelDeRms(rms: number): number {
   return Math.max(0, Math.min(1, (db + 50) / 38));
 }
 
-export type CodigoFallo = 'red' | 'http' | 'formato' | 'pista' | 'interno' | 'puente';
+/** `vacio`: el servidor contestó PCM pero sin un solo byte de audio (un ElevenLabs que terminó sin voz): un fallo suelto. */
+export type CodigoFallo = 'red' | 'http' | 'formato' | 'vacio' | 'pista' | 'interno' | 'puente';
 
 export type EventoVoz =
   /** Juntó el prebúfer (o bajó entera si era más corta): lo que la traza llama «audio» (lib/trazaTurno.ts). */
@@ -59,7 +60,9 @@ export type EventoVoz =
   /** Falló ANTES de sonar (nada de ella llegó a la pista): quien la pidió la dice por el camino de siempre. */
   | { tipo: 'error'; id: string; codigo: CodigoFallo; status?: number; motivo: string };
 
-const CODIGOS: readonly CodigoFallo[] = ['red', 'http', 'formato', 'pista', 'interno', 'puente'];
+const CODIGOS: readonly CodigoFallo[] = ['red', 'http', 'formato', 'vacio', 'pista', 'interno', 'puente'];
+/** Lo que dice el nativo de antes (APK sin `vacio`, con este JS por aire) cuando la frase llegó sin audio. */
+const SIN_AUDIO_VIEJO = /sin audio/i;
 const num = (x: unknown, min: number, max: number): number | null => (typeof x === 'number' && Number.isFinite(x) && x >= min && x <= max ? x : null);
 
 /** Lo que manda AuraVozModule (`onVoz`), revisado: basura → null. */
@@ -88,7 +91,9 @@ export function eventoVozValido(e: unknown): EventoVoz | null {
       return { tipo: 'termino', id, ms, ...(o.cortada === true ? { cortada: true } : {}), ...(o.truncada === true ? { truncada: true } : {}) };
     }
     case 'error': {
-      const codigo: CodigoFallo = CODIGOS.includes(o.codigo) ? o.codigo : 'interno';
+      let codigo: CodigoFallo = CODIGOS.includes(o.codigo) ? o.codigo : 'interno';
+      // El nativo de antes la marcaba «formato» («llegó sin audio»): es la misma frase vacía, no un servidor sin PCM.
+      if (codigo === 'formato' && SIN_AUDIO_VIEJO.test(String(o.motivo || ''))) codigo = 'vacio';
       const status = num(o.status, 100, 599);
       return { tipo: 'error', id, codigo, ...(status ? { status } : {}), motivo: String(o.motivo || codigo).slice(0, 160) };
     }
@@ -100,8 +105,9 @@ export function eventoVozValido(e: unknown): EventoVoz | null {
 /**
  * ¿Este fallo antes de sonar apaga el camino nuevo hasta reabrir la app? Sí si el módulo truena (la pista no abre, un
  * error interno o del puente), si el servidor no tiene la ruta (404/405: uno viejo) o no manda PCM; o si van
- * `fallosSeguidosMax` frases seguidas que no sonaron (red o 5xx). Una sola caída de red no: esa frase va por el camino
- * de siempre y la siguiente lo vuelve a intentar.
+ * `fallosSeguidosMax` frases seguidas que no sonaron (red, 5xx o sin audio). Una sola caída de red no: esa frase va por
+ * el camino de siempre y la siguiente lo vuelve a intentar. Una frase que llegó SIN audio (`vacio`) tampoco: es esa
+ * frase (ElevenLabs no la dio), no el servidor ni el teléfono.
  */
 export function falloDeSesion(f: { codigo: CodigoFallo; status?: number }, seguidos: number): boolean {
   if (f.codigo === 'pista' || f.codigo === 'interno' || f.codigo === 'puente' || f.codigo === 'formato') return true;

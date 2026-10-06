@@ -183,3 +183,25 @@ test('los intentos especulativos descartados de un miembro no gastan su cupo de 
   await r.text();
 });
 
+/*
+ * Revisión independiente (MENOR 5): un miembro que nunca confirma igual recibía el texto por `delta` y se le devolvía el
+ * lugar: respuestas gratis, hasta 4× el cupo. Un turno descartado que ya le dio texto al teléfono sí cuenta.
+ */
+test('un especulativo descartado que ya le mandó texto por `delta` sí gasta su lugar del cupo', { skip: !s.listo }, async () => {
+  contestar = () => ({ texto: '[EMO: neutral] Claro, te cuento.' });
+  const { emitirSesion } = await import('../server/seguridad');
+  const yo = emitirSesion({ correo: 'miembro.delta@ejemplo.org', nombre: 'Rita', rol: 'Miembro' }, { comunidad: true });
+  const h = { ...s.h, 'x-ultron-sesion': yo.token, 'x-aura-aparato': 'aparato-miembro-delta' };
+  for (let i = 0; i < TURNOS_MIEMBRO; i++) {
+    const t = abrirTurno(s.BASE, h, { message: `Oye, cuéntame algo ${i}`, hablado: true, idioma: 'es', avatar: 'aura', idTurno: id(`delta-${i}`), especulativo: true });
+    assert.ok(await esperarQue(() => t.hay('delta')), 'el texto llegó antes de confirmar');
+    t.cortar();
+    await t.fin;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  const r = await fetch(`${s.BASE}/api/turno/stream`, { method: 'POST', headers: h, body: JSON.stringify({ message: 'Oye, cuéntame otra cosa.', hablado: true, idioma: 'es', avatar: 'aura', idTurno: id('delta-final') }) });
+  const cuerpo = await r.text();
+  assert.equal(r.status, 429, `los turnos que ya dieron texto contaron: ${r.status} ${cuerpo.slice(0, 120)}`);
+  assert.match(cuerpo, /demasiados_turnos/);
+});
+

@@ -12,7 +12,8 @@
  *  · cuándo NO: mientras AU-RA habla, en un tema triste o delicado, en modo silencioso, si la persona lo apagó y si el
  *    micrófono NO tiene cancelación de eco (ver abajo).
  *  · lo que se coló: si el micrófono alcanzó a oír el «mjm» y Turbo lo escribió dentro de la frase de la persona,
- *    `quitarDelFinal` lo saca (solo la palabra que AU-RA dijo, tantas veces como la dijo).
+ *    `quitarDelFinal` lo saca: solo la palabra que AU-RA dijo y solo en el tramo del texto que Turbo entregó justo
+ *    después de que la persona retomó encima (`quitarAsentimientos`). Un «ya» de la persona no se toca.
  *
  * CÓMO SUENA SIN ROMPER EL OÍDO (desde el 6-oct; ADR docs/adr/ADR-muletillas.md). Antes estaba apagado porque, mientras
  * la persona habla, el oído Turbo abre el micrófono SIN cancelación de eco (lib/turboMotor.ts: la fuente de llamada solo
@@ -28,7 +29,8 @@
  *     frase se cierra exactamente cuando se habría cerrado sin el «mjm». Si la persona retoma encima (su voz pasa clara
  *     por encima de lo que se cuela), el tramo se corta y su voz sigue normal.
  *  3. `quitarDelFinal`, solo para los «mjm» cuyo tramo se cortó (ahí sí pudo colarse audio de la bocina): un «ya» o un
- *     «okey» de la persona en una frase sin colado no se toca.
+ *     «okey» de la persona en una frase sin colado no se toca. Y aun con colado, solo se quita la aparición que cae
+ *     justo detrás de lo que Turbo ya había escrito cuando la persona retomó (ver `quitarAsentimientos`).
  * Suena por el canal de efectos (lib/sfx.ts `sonarClipEfecto`, VOLUMEN_ASENTIR), NUNCA por la voz de AU-RA: no entra en
  * «AU-RA hablando», no pausa el micrófono, no pasa por lib/interrupcion.ts ni por el registro de lo dicho. El audio es la
  * MISMA voz del avatar: frases cortas pedidas una vez por GET /api/tts (la ruta de siempre) y guardadas en el disco del
@@ -173,7 +175,8 @@ export class Asentidor {
   private ultimoMs = -Infinity;
   private enTurno = 0;
   private parcial = '';
-  private dichas: string[] = [];
+  /** Las palabras que AU-RA dijo en este turno; las que se pudieron colar llevan dónde (`seColo`). */
+  private dichas: Dicha[] = [];
   private ultimaFrase = '';
   /** El tramo de la última palabra elegida (su clip + la cola), para quien la hace sonar. */
   ultimoTramoMs = 0;
@@ -249,7 +252,7 @@ export class Asentidor {
     this.enTurno++;
     this.ultimaFrase = frase;
     this.ultimoTramoMs = this.tramoDe(frase) ?? 0;
-    this.dichas.push(frase);
+    this.dichas.push({ frase });
     return frase;
   }
 
@@ -264,8 +267,27 @@ export class Asentidor {
 
   /** El audio de esta palabra nunca llegó al oído (su tramo terminó limpio): no hay nada que quitar de la frase. */
   noSeColo(frase: string): void {
-    const i = this.dichas.lastIndexOf(frase);
-    if (i >= 0) this.dichas.splice(i, 1);
+    for (let i = this.dichas.length - 1; i >= 0; i--) {
+      if (this.dichas[i].frase === frase && !this.dichas[i].colado) {
+        this.dichas.splice(i, 1);
+        return;
+      }
+    }
+  }
+
+  /**
+   * La persona retomó encima de esta palabra (su tramo se cortó): desde aquí su audio va a Turbo y puede llevar lo que
+   * quedaba del clip. `antes` es lo que Turbo ya había escrito de la frase (no puede traerla: mientras sonaba le llegó
+   * silencio) y `deCero`, que lo que Turbo entregue desde ahora empieza un texto nuevo (va detrás de `antes`).
+   */
+  seColo(frase: string, antes: string, deCero = false): void {
+    for (let i = this.dichas.length - 1; i >= 0; i--) {
+      const d = this.dichas[i];
+      if (d.frase === frase && !d.colado) {
+        d.colado = { antes: String(antes || ''), deCero };
+        return;
+      }
+    }
   }
 
   /** Olvida lo dicho sin limpiar nada (una frase que se tiró y nunca dio texto). */
@@ -273,32 +295,131 @@ export class Asentidor {
     this.dichas = [];
   }
 
-  /** Lo que se ve mientras habla, sin los «mjm» que se colaron (sin olvidarlos: la frase sigue). */
+  private colados(): Colado[] {
+    return this.dichas.flatMap((d) => (d.colado ? [{ frase: d.frase, ...d.colado }] : []));
+  }
+
+  /**
+   * Lo que se ve mientras habla (un parcial de Turbo), sin los «mjm» que se colaron (sin olvidarlos: la frase sigue). Un
+   * parcial puede traer solo lo nuevo (`deCero`): ahí el tramo es su comienzo.
+   */
   limpiar(texto: string): string {
-    return this.dichas.length ? quitarAsentimientos(texto, this.dichas) : texto;
+    const c = this.colados();
+    return c.length ? quitarAsentimientos(texto, c, { parcialTurbo: true }) : texto;
+  }
+
+  /** Lo especulado (la frase entera hasta el sondeo), sin los «mjm» que se colaron (sin olvidarlos). */
+  limpiarEntera(texto: string): string {
+    const c = this.colados();
+    return c.length ? quitarAsentimientos(texto, c) : texto;
   }
 
   /** Lo que entendió el oído, sin los «mjm» de AU-RA que se colaron al micrófono (y olvida los de este turno). */
   quitarDelFinal(texto: string): string {
-    const r = quitarAsentimientos(texto, this.dichas);
+    const c = this.colados();
     this.dichas = [];
-    return r;
+    return c.length ? quitarAsentimientos(texto, c) : texto;
   }
 }
 
+/** Una palabra que AU-RA dijo; `colado`, si la persona retomó encima (ver `Asentidor.seColo`). */
+type Dicha = { frase: string; colado?: { antes: string; deCero: boolean } };
+
 /**
- * Saca de lo que entendió el oído las palabras que AU-RA dijo para asentir (cada una tantas veces como la dijo), con su
- * coma o punto pegados. Lo demás queda tal cual: un «ajá» de la persona que AU-RA no dijo no se toca.
+ * Una palabra de AU-RA que se pudo colar al micrófono, y dónde: `antes` es lo que Turbo ya había escrito cuando la
+ * persona retomó encima (lo que va DELANTE del tramo) y `deCero`, que los parciales de Turbo desde ahí empiezan de cero.
  */
-export function quitarAsentimientos(texto: string, dichas: readonly string[]): string {
-  let t = String(texto || '');
-  for (const d of dichas) {
-    const forma = plano(d).replace(/[^a-z]/g, '');
-    if (!forma) continue;
-    const re = new RegExp(`(^|[\\s,.;])(${d.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}|${forma})[,.!…]?(?=\\s|$)`, 'i');
-    t = t.replace(re, '$1');
+export type Colado = { frase: string; antes: string; deCero?: boolean };
+
+/** El tramo del texto donde puede estar lo colado: las primeras palabras que Turbo escribió tras retomar la persona. */
+export const PALABRAS_TRAMO = 3;
+/** Cuántas palabras del final de `antes` sirven de ancla para hallar dónde empieza el tramo. */
+const PALABRAS_ANCLA = 3;
+
+const palabraPlana = (t: string) => plano(t).replace(/[^a-z0-9]/g, '');
+
+/** ¿Este pedazo del texto es la palabra de asentir (con su coma o punto pegados)? */
+function esLaPalabra(token: string, forma: string): boolean {
+  return plano(token).replace(/[,.!…]$/, '') === forma;
+}
+
+/** Dónde empieza cada aparición de `ancla` (palabras planas seguidas) en `palabras`. */
+function apariciones(palabras: string[], ancla: string[]): number[] {
+  const out: number[] = [];
+  for (let i = 0; i + ancla.length <= palabras.length; i++) if (ancla.every((a, k) => palabras[i + k] === a)) out.push(i);
+  return out;
+}
+
+/**
+ * El tramo (en palabras) donde Turbo pudo escribir lo colado, y si se ubicó con certeza:
+ *  · cierto: el final de `antes` (el ancla) aparece una sola vez en el texto → el tramo son las PALABRAS_TRAMO palabras
+ *    que le siguen; sin `antes`, el comienzo. Un parcial que empezó de cero (`deCero`) y no trae el ancla: su comienzo.
+ *  · aproximado: el ancla no está (Turbo reescribió algo) o está repetida → alrededor de donde terminaba `antes`
+ *    contando palabras.
+ */
+function ubicarTramo(palabras: string[], c: Colado, parcialTurbo: boolean): { desde: number; hasta: number; cierto: boolean } {
+  const antes = String(c.antes || '').split(/\s+/).map(palabraPlana).filter(Boolean);
+  if (!antes.length) return { desde: 0, hasta: PALABRAS_TRAMO, cierto: true };
+  const ancla = antes.slice(-PALABRAS_ANCLA);
+  const hay = apariciones(palabras, ancla);
+  if (hay.length === 1) {
+    const desde = hay[0] + ancla.length;
+    return { desde, hasta: desde + PALABRAS_TRAMO, cierto: true };
   }
-  return t.replace(/\s{2,}/g, ' ').replace(/^[\s,.;]+/, '').replace(/\s+([,.;!?])/g, '$1').trim();
+  if (!hay.length && parcialTurbo && c.deCero) return { desde: 0, hasta: PALABRAS_TRAMO, cierto: true };
+  return { desde: antes.length - 1, hasta: antes.length + PALABRAS_TRAMO, cierto: false };
+}
+
+/**
+ * Saca de lo que entendió el oído las palabras que AU-RA dijo para asentir y se pudieron colar, con su coma o punto
+ * pegados: cada una UNA vez y solo en su tramo, las primeras palabras que Turbo escribió después de que la persona
+ * retomó encima (antes de eso a Turbo le llegaba silencio en lugar del clip: no pudo escribirla ahí). Si el tramo se
+ * ubica con certeza, sale la aparición que cae en él; si solo se ubica aproximado, sale la ÚLTIMA aparición del texto y
+ * solo si cae en ese tramo; si no está en el tramo, no se toca nada. Un «ya» de la persona fuera del tramo (o cuando
+ * Turbo no escribió el «mjm») queda tal cual. `parcialTurbo`: el texto es un parcial de Turbo (puede empezar de cero).
+ */
+export function quitarAsentimientos(texto: string, colados: readonly Colado[], o: { parcialTurbo?: boolean } = {}): string {
+  const original = String(texto || '');
+  let tokens = original.split(/\s+/).filter(Boolean);
+  let quito = false;
+  // De la última a la primera: quitar una no mueve el ancla de las anteriores (que van delante).
+  for (const c of [...colados].reverse()) {
+    const forma = plano(c.frase).replace(/[^a-z]/g, '');
+    if (!forma) continue;
+    // Las palabras con letras o números (la puntuación suelta no cuenta) y a qué pedazo del texto corresponde cada una.
+    const idx: number[] = [];
+    const palabras: string[] = [];
+    tokens.forEach((t, i) => {
+      const p = palabraPlana(t);
+      if (p) {
+        idx.push(i);
+        palabras.push(p);
+      }
+    });
+    const tramo = ubicarTramo(palabras, c, !!o.parcialTurbo);
+    let k = -1;
+    if (tramo.cierto) {
+      for (let i = Math.max(0, tramo.desde); i < Math.min(palabras.length, tramo.hasta); i++) {
+        if (esLaPalabra(tokens[idx[i]], forma)) {
+          k = i;
+          break;
+        }
+      }
+    } else {
+      for (let i = palabras.length - 1; i >= 0; i--) {
+        if (esLaPalabra(tokens[idx[i]], forma)) {
+          k = i;
+          break;
+        }
+      }
+      if (k < tramo.desde || k >= tramo.hasta) k = -1;
+    }
+    if (k < 0) continue;
+    tokens = tokens.filter((_, i) => i !== idx[k]);
+    quito = true;
+  }
+  if (!quito) return original;
+  return tokens.join(' ').replace(/^[\s,.;]+/, '').replace(/\s+([,.;!?])/g, '$1').trim();
 }
 
 /** Lo que dice GET /api/movil/config de las muletillas (server/movil-config.ts). Sin dato o servidor viejo: permitidas. */

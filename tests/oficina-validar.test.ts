@@ -276,3 +276,56 @@ test('contenido difícil: comillas, &, <>, apóstrofos, tabuladores, palabras la
     if (a.tipo === 'pdf') assert.ok((v.paginas || 0) >= 3, 'la tabla se derrama a varias páginas');
   }
 });
+
+/*
+ * Revisión independiente (MENOR 6): `linea()` dejaba pasar U+FFFE, U+FFFF y mitades sueltas de un par sustituto (un emoji
+ * partido, también por el tope). Eso no es XML 1.0: Word, Excel y PowerPoint piden «reparar» el archivo. Es el saneador
+ * común: los cuatro tipos salen sin ellos y el emoji entero se conserva.
+ */
+test('lo que XML 1.0 no admite (U+FFFE, U+FFFF, sustitutos sueltos, un emoji partido por el tope) no llega a ningún archivo', async () => {
+  const MALO = /[\uFFFE\uFFFF\uFFFD]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+  const raro = 'Antes\uFFFE medio\uFFFF y \uD800suelto\uDC00 fin 😀 listo';
+  // 199 letras y un emoji: el tope de 200 lo corta por la mitad.
+  const partido = `${'T'.repeat(199)}😀`;
+  const conTexto = (t: string, titulo: string) => ({ titulo, subtitulo: t, autor: t, secciones: [{ titulo: t, parrafos: [t], vinetas: [t], tabla: { cabecera: [t, 'N'], filas: [[t, '1']] } }] });
+  // El PDF (fuentes estándar) no dibuja emojis y la validación ya lo dice: ahí van solo los caracteres que XML no admite.
+  const raroPdf = 'Antes\uFFFE medio\uFFFF y \uD800suelto\uDC00 fin listo';
+  const r = validarPedido({
+    archivos: [
+      { tipo: 'docx', nombre: 'nx.docx', spec: conTexto(raro, partido) },
+      { tipo: 'pdf', nombre: 'nx.pdf', spec: conTexto(raroPdf, raroPdf) },
+      { tipo: 'xlsx', nombre: 'nx.xlsx', spec: { titulo: raro, cliente: raro, partidas: [{ concepto: raro, unidad: 'u', cantidad: 1, precio_unitario: 1 }], notas: [raro] } },
+      { tipo: 'pptx', nombre: 'nx.pptx', spec: { titulo: raro, diapositivas: [{ tipo: 'portada', subtitulo: raro }, { tipo: 'vinetas', titulo: raro, vinetas: [raro], notas: `${'n'.repeat(2999)}😀` }] } },
+    ],
+  });
+  assert.deepEqual(r.errores, []);
+  const textos: string[] = [];
+  const juntar = (v: unknown): void => {
+    if (typeof v === 'string') textos.push(v);
+    else if (Array.isArray(v)) v.forEach(juntar);
+    else if (v && typeof v === 'object') Object.values(v).forEach(juntar);
+  };
+  juntar(r.archivos.map((a) => a.spec));
+  for (const t of textos) assert.doesNotMatch(t, MALO, `quedó en la especificación: ${JSON.stringify(t)}`);
+  assert.ok(textos.some((t) => t.includes('fin 😀 listo')), 'el emoji entero se conserva');
+  assert.ok(textos.includes('T'.repeat(199)), 'el emoji partido por el tope se va entero, no a medias');
+  for (const a of r.archivos) {
+    const datos = await generarArchivo(a);
+    const v = await validarArchivo(a, datos);
+    assert.equal(v.estructural.ok && v.semantico.ok, true, `${a.nombre}: ${JSON.stringify(v.semantico.comprobaciones.filter((c) => !c.ok))}`);
+    if (a.tipo === 'pdf') {
+      const leido = await textoPorPaginas(datos);
+      assert.ok(leido, 'el PDF se relee');
+      assert.doesNotMatch(leido!.paginas.join('\n'), /[\uFFFE\uFFFF]/, 'el PDF sin U+FFFE/U+FFFF');
+      continue;
+    }
+    // Cada parte XML del ZIP: UTF-8 válido y solo caracteres de XML 1.0 (un sustituto suelto saldría como U+FFFD).
+    const zip = await JSZip.loadAsync(datos);
+    const partes = Object.keys(zip.files).filter((n) => /\.(xml|rels)$/.test(n));
+    assert.ok(partes.length > 3, a.nombre);
+    for (const n of partes) {
+      const xml = new TextDecoder('utf-8', { fatal: true }).decode(await zip.file(n)!.async('uint8array'));
+      assert.doesNotMatch(xml, MALO, `${a.nombre} → ${n}`);
+    }
+  }
+});

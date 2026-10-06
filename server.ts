@@ -219,7 +219,7 @@ import { asegurarCuentaMiembro, cuentaDe, cuentasDisponibles, crearSolicitud, en
 import { aprobadores, montarRutasCuentas, plantilla } from './server/cuentas-rutas';
 import { montarRutasGenesis } from './server/genesis';
 import { esIdVeta, montarRutasVeta } from './server/veta-entrar';
-import { gastarCupo, exigirAutoridadVigente, devolverCupoDeFrase } from './server/seguridad';
+import { gastarCupo, exigirAutoridadVigente, devolverCupoDeFrase, devolverLimite } from './server/seguridad';
 import { describirPoliticaAutoridad } from './server/autoridad-cuenta';
 import { montarEnlacesApp } from './server/enlaces-app';
 import { enviarCorreo } from './lib/correo-ses';
@@ -2422,7 +2422,7 @@ async function responderVozVivo(req: express.Request, res: express.Response) {
 app.all('/api/tts', exigirMesaODesk, limitar(60, 60_000, 'voz'), responderVoz);
 app.all('/api/tts/stream', exigirMesaODesk, limitar(60, 60_000, 'voz'), responderVozVivo);
 // La voz en streaming del teléfono (PCM, sonando con el primer trozo): mismas puertas, cupo y minutos (server/voz-pcm.ts).
-montarVozPcm(app, { exigir: exigirMesaODesk, limitar, leer: leerPeticionVoz, cuentaMiembro: cuentaDeVozMiembro, restanteMs: restanteVozMs, anotar: anotarVoz, msDeHabla });
+montarVozPcm(app, { exigir: exigirMesaODesk, limitar, leer: leerPeticionVoz, cuentaMiembro: cuentaDeVozMiembro, restanteMs: restanteVozMs, anotar: anotarVoz, msDeHabla, devolver: (res) => devolverLimite(res, 'voz') });
 app.all('/api/voz', exigirMesaODesk, limitar(60, 60_000, 'voz'), responderVoz);
 
 /** Oración del día: AU-RA cierra los ojos y ora (clip grabado con la voz oficial). */
@@ -4984,8 +4984,11 @@ app.post('/api/turno/stream', medirTurno('stream'), exigirMesaODesk, limitar(60)
           }
         : null
     );
+  // El turno ya le dio texto al teléfono (un `delta` o un `replace` que salió de verdad): ya no es «un turno que no fue».
+  let textoEntregado = false;
   const salida: SalidaEnVivo = {
     enviar: (evento, datos) => {
+      if ((evento === 'delta' || evento === 'replace') && !corte.signal.aborted && !res.writableEnded) textoEntregado = true;
       if (evento === 'tools') herramientas = Array.isArray((datos as any)?.tools) ? (datos as any).tools : [];
       if (evento === 'done' && trabajos.refs.length && datos && typeof datos === 'object') datos = { ...(datos as object), tareas: trabajos.refs };
       if (evento === 'done') hecho = datos;
@@ -5012,8 +5015,9 @@ app.post('/api/turno/stream', medirTurno('stream'), exigirMesaODesk, limitar(60)
       if (ok) return;
       corte.abort();
       // Revisión 9 (MENOR 3): la frase a medias que se descartó no fue un turno: su lugar en el cupo del miembro vuelve
-      // (con su propio tope contra abuso, server/seguridad.ts devolverCupoDeFrase).
-      devolverCupoDeFrase(res.locals.cupoFrase);
+      // (con su propio tope contra abuso, server/seguridad.ts devolverCupoDeFrase). Pero si ya le llegó texto por `delta`,
+      // sí fue un turno (lo leyó o lo pudo leer): devolverlo regalaba respuestas sin confirmar, hasta 4× el cupo.
+      if (!textoEntregado) devolverCupoDeFrase(res.locals.cupoFrase);
     });
   }
   // ── fin del turno especulativo ──

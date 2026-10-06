@@ -32,9 +32,12 @@
    de siempre, voz del avatar e idioma de ahora; no se crea ni modifica ninguna voz de ElevenLabs) y se guardan en el
    disco del teléfono por avatar e idioma (`documentDirectory/asentir-v1/`). Solo se guardan si los hizo ElevenLabs
    (no la voz de respaldo) y si duran menos de 1 s.
-6. **Lo que se coló:** solo si el tramo se cortó, la palabra queda anotada y `quitarDelFinal` la saca del texto final
-   (y de los parciales y la especulada). Si sonó entero, a Turbo le llegó silencio y no se toca nada: un «ya» de la
-   persona queda.
+6. **Lo que se coló:** solo si el tramo se cortó, la palabra queda anotada con lo que Turbo ya había escrito en ese
+   momento, y `quitarDelFinal` la saca del texto final (y de los parciales y la especulada) UNA vez y solo en su tramo:
+   las primeras palabras que Turbo escribió tras retomar la persona (si el tramo solo se ubica aproximado, la última
+   aparición y solo si cae en él; si no, nada). Si sonó entero, a Turbo le llegó silencio y no se toca nada: un «ya» de
+   la persona queda. Los ~0,2 s del tramo justo antes del corte van a Turbo con su audio real (el arranque suave de la
+   palabra de la persona), no como silencio.
 7. **Encendido:** por omisión solo Android + micrófono crudo + cancelador disponible. iOS, nunca (no hay micrófono
    crudo con el que ignorar el tramo, y reproducir con el micrófono abierto puede cambiar la sesión de audio y cortar
    la grabación; no hay prueba en un iPhone que diga lo contrario). Los oídos «Teléfono» y «Nube», tampoco.

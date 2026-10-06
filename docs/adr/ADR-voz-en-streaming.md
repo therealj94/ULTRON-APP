@@ -26,7 +26,9 @@ sigue en el camino crítico, y cada frase siguiente arranca con un hueco (otro `
      conocidas, igual que la de siempre. **Solo se guarda lo que llegó entero**; lo privado no se guarda.
    - Si ElevenLabs se corta a media frase, la conexión se **rompe** (`res.destroy`) en vez de cerrarse bien: un PCM
      crudo no tiene largo y un final limpio lo haría pasar por entero.
-   - Si ElevenLabs no abre: Voicebox (WAV) pasado a PCM con su frecuencia. Sin voz: 503 (JSON).
+   - Si ElevenLabs no abre: Voicebox (WAV) pasado a PCM con su frecuencia. Sin voz: 503 (JSON). Las cabeceras esperan
+     al primer audio: si ElevenLabs termina sin un byte, también 503 (no un 200 vacío). Ese 503 devuelve el lugar del
+     cupo `voz` (`devolverLimite`, con su tope): el respaldo por /api/tts no cuenta doble.
 2. **Módulo nativo `mobile/modules/aura-voz`** (Kotlin, mismo molde que `aura-mic`/`aura-camara`, sin
    dependencias). `Reproductor.kt` baja cada frase (HttpURLConnection, cabeceras de sesión de `sessionHeaders`) y la
    escribe en UN `AudioTrack` en `MODE_STREAM` mientras llega:
@@ -39,7 +41,9 @@ sigue en el camino crítico, y cada frase siguiente arranca con un hueco (otro `
    - avisos a JS por `onVoz`: `listo` (prebúfer), `sonando` (la cabeza de la pista entró en la frase: el comienzo
      real), `posicion` (~30/s: ms por los **cuadros que sonaron**, y el volumen RMS de ese bloque de 20 ms),
      `bajado` (duración), `termino` (`cortada`/`truncada`) y `error` (solo si NADA de la frase llegó a la pista:
-     `red`/`http`/`formato`/`pista`);
+     `red`/`http`/`formato`/`vacio`/`pista`; `vacio`, PCM sin un byte, es un fallo suelto: no apaga el camino nuevo);
+   - sin nada que sonar ningún hilo despierta: el reloj de 30 Hz corre solo mientras hay pista y el escritor, sin
+     pista, espera sin plazo a que algo cambie;
    - atributos `USAGE_MEDIA + CONTENT_TYPE_SPEECH`: el mismo flujo (`STREAM_MUSIC`) por el que sonaba expo-av, así el
      volumen, la salida y la cancelación de eco del oído Turbo (`aura-mic` con `VOICE_COMMUNICATION` +
      `AcousticEchoCanceler`) ven la voz igual que antes; foco de audio transitorio «puede agachar».

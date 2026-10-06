@@ -14,7 +14,10 @@
  *    de verdad sonaron (bytes / 2 / hz), no con lo que bajó.
  *
  * Lo que no puede ir en PCM (un servidor sin voz) contesta 503 con JSON: el teléfono dice esa frase por el camino de
- * siempre (/api/tts, expo-av) sin perderla.
+ * siempre (/api/tts, expo-av) sin perderla. Lo mismo si ElevenLabs termina limpio SIN un solo byte de audio: las
+ * cabeceras esperan al primer audio (`primerAudio`), así que todavía se puede contestar 503; antes salía un 200 vacío,
+ * el teléfono lo tomaba por «no es PCM» y apagaba el camino nuevo hasta reabrir la app. Ese 503 (y el de «sin voz»)
+ * devuelve el lugar del cupo `voz` (`devolver`): el teléfono la pide por /api/tts, que cobra el suyo; no cuenta doble.
  */
 import type express from 'express';
 import { abrirVozPcm, pasarVozEnVivo, TIPO_PCM } from './voz';
@@ -42,7 +45,63 @@ export type DepsVozPcm = {
   restanteMs: (cuenta: string) => number;
   anotar: (cuenta: string, ms: number) => void;
   msDeHabla: (texto: string) => number;
+  /**
+   * Devuelve el lugar que `limitar` cobró a este pedido (server/seguridad.ts `devolverLimite`): la frase no salió por aquí
+   * (503) y el teléfono la pide por /api/tts, que cobra el suyo. Sin él, cada respaldo gastaba dos lugares.
+   */
+  devolver?: (res: express.Response) => void;
 };
+
+/** Lo mínimo que es audio: una muestra de 16 bits (el reproductor tampoco suena menos, Reproductor.kt `vacia`). */
+const MINIMO_AUDIO = 2;
+
+/**
+ * Espera el primer audio de ElevenLabs ANTES de comprometer las cabeceras. Devuelve un cuerpo equivalente (lo leído va
+ * delante, y cancelarlo cancela a ElevenLabs) o null si terminó, o se cortó, sin `MINIMO_AUDIO` bytes: así todavía se
+ * puede contestar 503 en vez de un 200 vacío.
+ */
+export async function primerAudio(cuerpo: ReadableStream<Uint8Array>, senal?: AbortSignal): Promise<ReadableStream<Uint8Array> | null> {
+  const lector = cuerpo.getReader();
+  const leidos: Uint8Array[] = [];
+  let bytes = 0;
+  // El teléfono se fue mientras se esperaba: se deja de pedirle audio a ElevenLabs (la lectura pendiente termina).
+  const soltar = () => void lector.cancel().catch(() => undefined);
+  senal?.addEventListener('abort', soltar, { once: true });
+  try {
+    while (bytes < MINIMO_AUDIO) {
+      const { done, value } = await lector.read();
+      if (done) break;
+      if (value?.length) {
+        leidos.push(value);
+        bytes += value.length;
+      }
+    }
+  } catch {
+    bytes = 0;
+  }
+  senal?.removeEventListener('abort', soltar);
+  if (bytes < MINIMO_AUDIO || senal?.aborted) {
+    lector.cancel().catch(() => undefined);
+    return null;
+  }
+  return new ReadableStream<Uint8Array>({
+    start(c) {
+      for (const b of leidos) c.enqueue(b);
+    },
+    async pull(c) {
+      try {
+        const { done, value } = await lector.read();
+        if (done) c.close();
+        else if (value) c.enqueue(value);
+      } catch (e) {
+        c.error(e);
+      }
+    },
+    cancel(motivo) {
+      return lector.cancel(motivo);
+    },
+  });
+}
 
 export const RUTA_VOZ_PCM = '/api/tts/pcm';
 
@@ -58,7 +117,20 @@ export function montarVozPcm(app: express.Express, d: DepsVozPcm) {
     } catch (e: any) {
       console.warn('[voz pcm]', String(e?.message || e).slice(0, 160));
     }
-    if (!voz) return res.status(503).json({ error: 'Voz no disponible', honesto: true });
+    // Un audio vacío (caché o Voicebox) no es una frase: 503, como sin voz.
+    if (voz && voz.tipo !== 'vivo' && voz.pcm.length < MINIMO_AUDIO) voz = null;
+    // En vivo: las cabeceras esperan al primer audio; si ElevenLabs no dio ni un byte, todavía se contesta 503.
+    const seFue = new AbortController();
+    const alCerrar = () => !res.writableEnded && seFue.abort();
+    res.on('close', alCerrar);
+    const cuerpo = voz?.tipo === 'vivo' ? await primerAudio(voz.cuerpo, seFue.signal) : null;
+    res.off('close', alCerrar);
+    if (seFue.signal.aborted) return;
+    if (!voz || (voz.tipo === 'vivo' && !cuerpo)) {
+      if (voz) console.warn('[voz pcm] ElevenLabs terminó sin audio: 503 (el teléfono usa el camino de siempre)');
+      d.devolver?.(res);
+      return res.status(503).json({ error: 'Voz no disponible', honesto: true });
+    }
     res.setHeader('Content-Type', TIPO_PCM);
     res.setHeader('X-Ultron-Pcm-Hz', String(voz.hz));
     res.setHeader('X-Ultron-Pcm-Canales', '1');
@@ -72,6 +144,6 @@ export function montarVozPcm(app: express.Express, d: DepsVozPcm) {
     res.setHeader('X-Ultron-Vivo', '1');
     // Las cabeceras salen ya: el teléfono sabe la frecuencia antes del primer trozo.
     res.flushHeaders();
-    await pasarVozEnVivo(voz, res, '[voz pcm]', { romperSiFalla: true });
+    await pasarVozEnVivo({ cuerpo: cuerpo!, guardar: voz.guardar }, res, '[voz pcm]', { romperSiFalla: true });
   });
 }

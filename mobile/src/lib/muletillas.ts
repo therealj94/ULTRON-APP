@@ -10,8 +10,9 @@
  *  2. Lo hace sonar por el canal de efectos, bajito. Nunca por la voz de AU-RA: no pausa el micrófono, no entra en
  *     «AU-RA hablando» (ni en lib/interrupcion.ts), no queda en lo dicho.
  *  3. Si el tramo se cortó (la persona retomó encima y su voz pasó con lo que quedaba del clip), la palabra queda
- *     anotada y `limpiarFinal` la saca del texto si Turbo la escribió; si sonó entero sin nadie encima, a Turbo le
- *     llegó silencio y no hay nada que quitar (un «ya» de la persona no se toca).
+ *     anotada con lo que Turbo ya había escrito en ese momento, y `limpiarFinal` la saca del texto si Turbo la escribió
+ *     justo detrás (lib/asentir.ts `quitarAsentimientos`); si sonó entero sin nadie encima, a Turbo le llegó silencio y
+ *     no hay nada que quitar. Un «ya» de la persona no se toca.
  *  4. Si AU-RA empieza a hablar, el clip se calla (`callar`).
  *
  * Sin React Native: el reloj, el oído y el audio se inyectan (tests/muletillas.test.ts y mobile/pruebas/muletillas).
@@ -66,6 +67,8 @@ export class OrquestaMuletillas {
       this.sonando = null;
       // Sonó entero sin nadie encima: a Turbo le llegó silencio en su lugar, no hay nada que quitar después.
       if (f && i.tramo === 'terminado') this.a.noSeColo(f);
+      // La persona retomó encima: lo que Turbo escriba desde aquí puede traerla, y solo eso (lo de antes, no).
+      if (f && i.tramo === 'cortado') this.a.seColo(f, i.parcial, !!i.deCero);
     }
     if (i.enVoz && !this.enFrase) {
       this.enFrase = true;
@@ -95,9 +98,14 @@ export class OrquestaMuletillas {
     this.d.miga?.(`muletilla: «${frase}» (${this.a.ultimoTramoMs} ms)`);
   }
 
-  /** Lo que se ve mientras habla, sin las muletillas que se colaron. */
+  /** Lo que se ve mientras habla (un parcial de Turbo), sin las muletillas que se colaron. */
   limpiarParcial(texto: string): string {
     return this.a.limpiar(texto);
+  }
+
+  /** La frase especulada (entera hasta el sondeo), sin las muletillas que se colaron (sin olvidarlas). */
+  limpiarEspeculada(texto: string): string {
+    return this.a.limpiarEntera(texto);
   }
 
   /** La frase final: sin las muletillas que se colaron (y las olvida). */

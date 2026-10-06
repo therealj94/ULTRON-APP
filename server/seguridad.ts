@@ -617,8 +617,35 @@ export function limitar(max: number, ventanaMs = 60_000, grupo?: string) {
     if (hits.size > 5000) {
       for (const [key, arr2] of hits) if (!arr2.some((t) => now - t < ventanaMs)) hits.delete(key);
     }
+    // Lo cobrado, por si la ruta lo devuelve (devolverLimite): el respaldo de la voz en streaming no cuenta doble.
+    if (res.locals) {
+      const cobrados: LimiteCobrado[] = Array.isArray(res.locals.limites) ? res.locals.limites : [];
+      cobrados.push({ k, grupo: grupo || req.path, marca: now, max, ventanaMs });
+      res.locals.limites = cobrados;
+    }
     next();
   };
+}
+
+/** Lo que `limitar` cobró en una petición (`res.locals.limites`). */
+export type LimiteCobrado = { k: string; grupo: string; marca: number; max: number; ventanaMs: number };
+
+/**
+ * Devuelve el lugar que `limitar(…, grupo)` cobró a ESTA petición: el pedido no se atendió por aquí y quien pidió lo
+ * repite por otra ruta del mismo cupo (/api/tts/pcm contesta 503 → el teléfono la dice por /api/tts). El freno sigue: a
+ * lo más `max` devoluciones por ventana y por IP; pasado eso, lo devuelto sí cuenta. Devuelve si lo devolvió.
+ */
+export function devolverLimite(res: Response, grupo: string): boolean {
+  const cobrados: LimiteCobrado[] = Array.isArray(res.locals?.limites) ? res.locals.limites : [];
+  const i = cobrados.findIndex((c) => c.grupo === grupo);
+  if (i < 0) return false;
+  const c = cobrados[i];
+  if (!gastarCupo(`devuelto-limite:${c.k}`, c.max, c.ventanaMs)) return false;
+  cobrados.splice(i, 1);
+  const arr = hits.get(c.k);
+  const j = arr ? arr.indexOf(c.marca) : -1;
+  if (j >= 0) arr!.splice(j, 1);
+  return true;
 }
 
 /**

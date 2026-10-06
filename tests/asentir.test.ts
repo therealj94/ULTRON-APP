@@ -125,11 +125,60 @@ test('lo que se le pide a la voz: palabras cortas en los dos idiomas, con su pun
   for (const i of ['es', 'en'] as const) for (const f of frasesAsentir(i)) assert.match(textoParaVoz(f), /^[A-ZÁ][\p{L}-]{0,7}\.$/u, f);
 });
 
-test('lo que se coló al micrófono sale de su frase (solo lo que AU-RA dijo, tantas veces como lo dijo)', () => {
-  assert.equal(quitarAsentimientos('y entonces mjm le dije que no', ['mjm']), 'y entonces le dije que no');
-  assert.equal(quitarAsentimientos('Ajá, y luego fuimos al banco', ['ajá']), 'y luego fuimos al banco');
-  assert.equal(quitarAsentimientos('aja y luego aja otra vez', ['ajá']), 'y luego aja otra vez');
+test('lo que se coló al micrófono sale de su frase (solo lo que AU-RA dijo, una vez, justo donde se coló)', () => {
+  assert.equal(quitarAsentimientos('y entonces mjm le dije que no', [{ frase: 'mjm', antes: 'y entonces' }]), 'y entonces le dije que no');
+  assert.equal(quitarAsentimientos('Ajá, y luego fuimos al banco', [{ frase: 'ajá', antes: '' }]), 'y luego fuimos al banco');
+  assert.equal(quitarAsentimientos('aja y luego aja otra vez', [{ frase: 'ajá', antes: '' }]), 'y luego aja otra vez');
   assert.equal(quitarAsentimientos('ya te dije que ya voy', []), 'ya te dije que ya voy', 'sin asentimientos, nada cambia');
   const a = new Asentidor({ activo: true, ecoCancelado: true });
   assert.equal(a.quitarDelFinal('okey, entonces mañana'), 'okey, entonces mañana', 'el «okey» es de la persona: AU-RA no lo dijo');
+});
+
+/*
+ * Revisión independiente (MEDIO 1): se quitaba la PRIMERA aparición de la palabra en todo el texto, no la que se coló.
+ * «ya le dije a Juan…, ya, y que traiga…» perdía el «ya» de la persona; y si Turbo no escribió el «mjm», igual se borraba
+ * un «ya» suyo. Regla: un «ya» de la persona no se toca; solo sale la aparición del tramo que Turbo entregó al retomar.
+ */
+test('un «ya» de la persona no se toca: solo sale la aparición que cae justo detrás de donde retomó', () => {
+  const colado = { frase: 'ya', antes: 'ya le dije a Juan que venga' };
+  assert.equal(quitarAsentimientos('Ya le dije a Juan que venga, ya, y que traiga el carro.', [colado]), 'Ya le dije a Juan que venga, y que traiga el carro.', 'sale el de AU-RA, no el primero (el de la persona)');
+  assert.equal(quitarAsentimientos('Ya le dije a Juan que venga y que traiga el carro.', [colado]), 'Ya le dije a Juan que venga y que traiga el carro.', 'Turbo no escribió el «ya» de AU-RA: nada se toca');
+  assert.equal(quitarAsentimientos('Ya le dije a Juan que venga y que traiga el carro, ya.', [colado]), 'Ya le dije a Juan que venga y que traiga el carro, ya.', 'un «ya» suyo lejos del tramo tampoco');
+  // Sin saber dónde retomó (el tramo nunca se cortó: a Turbo le llegó silencio), nada.
+  const a = new Asentidor({ activo: true, ecoCancelado: true, duracion: () => 300 });
+  a.oir('ya le dije a mi hermano lo del negocio y');
+  let t = 0;
+  for (let i = 0; i < 80; i++) a.trozo(true, (t += 100));
+  let dicha: string | null = null;
+  for (let i = 0; i < 6 && !dicha; i++) dicha = a.trozo(false, (t += 100));
+  assert.ok(dicha);
+  assert.equal(a.limpiar(`Ya le dije a mi hermano lo del negocio y ${dicha}, que venga`), `Ya le dije a mi hermano lo del negocio y ${dicha}, que venga`, 'sin «seColo» no hay colado');
+  // La persona retomó encima con lo que Turbo ya tenía escrito: sale solo la del tramo, una vez.
+  a.seColo(dicha!, 'ya le dije a mi hermano lo del negocio y');
+  const conDos = `Ya le dije a mi hermano lo del negocio y ${dicha}, que venga, ${dicha}`;
+  assert.equal(a.limpiar(conDos), `Ya le dije a mi hermano lo del negocio y que venga, ${dicha}`, 'el parcial: sin la colada');
+  assert.equal(a.quitarDelFinal(conDos), `Ya le dije a mi hermano lo del negocio y que venga, ${dicha}`, 'la final: igual (la segunda es de la persona)');
+  assert.equal(a.quitarDelFinal(conDos), conDos, 'y se olvidan al cerrar el turno');
+});
+
+test('dónde está lo colado: con certeza, aproximado o sin ubicar (entonces no se toca nada)', () => {
+  // Un parcial de Turbo que empezó de cero tras el sondeo (no trae lo de antes): su comienzo es el tramo.
+  const deCero = { frase: 'ya', antes: 'ya le dije a Juan que venga y', deCero: true };
+  assert.equal(quitarAsentimientos('ya, que traiga el carro', [deCero], { parcialTurbo: true }), 'que traiga el carro');
+  assert.equal(quitarAsentimientos('que traiga el carro, ya', [deCero], { parcialTurbo: true }), 'que traiga el carro, ya', 'fuera del tramo (las primeras palabras), no');
+  assert.equal(quitarAsentimientos('Ya, que traiga el carro.', [deCero]), 'Ya, que traiga el carro.', 'una frase entera sin el ancla no es un parcial de cero: no se adivina');
+  // Turbo reescribió lo de antes (el ancla no está): la ÚLTIMA aparición, y solo si cae cerca de donde terminaba.
+  const reescrito = { frase: 'okey', antes: 'okey mañana vamos al banco de la esquina' };
+  assert.equal(quitarAsentimientos('Okey, mañana vamos al banco de las esquinas okey y luego al mercado', [reescrito]), 'Okey, mañana vamos al banco de las esquinas y luego al mercado');
+  assert.equal(quitarAsentimientos('Okey, mañana vamos al banco de las esquinas y luego al mercado del centro, okey', [reescrito]), 'Okey, mañana vamos al banco de las esquinas y luego al mercado del centro, okey', 'la última está lejos del tramo: nada');
+  assert.equal(quitarAsentimientos('Okey, mañana vamos al banco de las esquinas okey y luego al mercado, okey', [reescrito]), 'Okey, mañana vamos al banco de las esquinas okey y luego al mercado, okey', 'aproximado: solo la ÚLTIMA, y esa no cae en el tramo');
+  // El ancla repetida tampoco es certeza: aproximado.
+  const repetida = { frase: 'mjm', antes: 'y que venga y que venga' };
+  assert.equal(quitarAsentimientos('y que venga y que venga mjm le dije', [repetida]), 'y que venga y que venga le dije');
+  // Dos coladas en la misma frase: cada una en su tramo (la segunda tiene la primera en lo de antes).
+  const dos = [
+    { frase: 'mjm', antes: 'le conté lo del terreno y' },
+    { frase: 'ajá', antes: 'le conté lo del terreno y mjm luego fuimos al banco y' },
+  ];
+  assert.equal(quitarAsentimientos('Le conté lo del terreno y mjm luego fuimos al banco y ajá, pagamos', dos), 'Le conté lo del terreno y luego fuimos al banco y pagamos');
 });

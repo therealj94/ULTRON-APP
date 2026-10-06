@@ -562,6 +562,9 @@ export async function pasarVozEnVivo(
     entero = false;
     console.warn(`${etiqueta} voz en vivo cortada`, String(e?.message || e).slice(0, 120));
   }
+  // Con `romperSiFalla`, un final limpio SIN audio tampoco es un final: las cabeceras ya salieron y un 200 vacío diría
+  // «esta frase no tiene voz». Se rompe y no se guarda (server/voz-pcm.ts ya espera el primer audio antes de las cabeceras).
+  if (entero && o.romperSiFalla && !trozos.some((b) => b.length)) entero = false;
   if (!entero && o.romperSiFalla && res.destroy) res.destroy(new Error('voz cortada'));
   else res.end();
   if (!entero || cortada) return false;

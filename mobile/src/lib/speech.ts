@@ -163,7 +163,7 @@ function wire() {
     },
     // Lo mismo que onFinal (sin el eco de su voz si la cortó): así la frase final y la especulada se comparan bien.
     onEspeculativa: (t) => {
-      const sin = muletillas ? muletillas.limpiarParcial(t) : t;
+      const sin = muletillas ? muletillas.limpiarEspeculada(t) : t;
       const texto = ecoAlCortar ? quitarEco(sin, ecoAlCortar) : sin;
       if (texto) callbacks.onEspeculativa?.(texto);
     },

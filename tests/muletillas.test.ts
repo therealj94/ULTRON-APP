@@ -20,6 +20,8 @@ const espera = (ms = 5) => new Promise((r) => setTimeout(r, ms));
 const PERSONA = 0x50;
 const BOCINA = 0x42;
 const CUARTO = 0x07;
+/** El arranque suave de una palabra de la persona: por debajo de lo que corta el tramo («retoma»), encima del umbral. */
+const SUAVE = 0x53;
 
 class WsFalso implements WsTurbo {
   readyState = 0;
@@ -144,6 +146,11 @@ function banco(o: Opciones = {}) {
   const callar = (k: number) => {
     for (let i = 0; i < k; i++) trozo(false);
   };
+  /** Un trozo a mano: estos bytes con este volumen (dBFS). */
+  const crudo = (byte: number, db: number) => {
+    reloj += 100;
+    alTrozo?.({ audio: Buffer.alloc(3200, byte).toString('base64'), db });
+  };
   /**
    * Habla `ms` diciendo `texto` (un parcial por segundo, que crece, como Turbo). Con un respiro de 0,1 s entre palabras
    * cada medio segundo, como la voz de verdad (sin ellos el ruido de fondo subiría hasta la voz).
@@ -170,7 +177,7 @@ function banco(o: Opciones = {}) {
     trozo(true);
     await espera();
   };
-  return { motor, orq, ws, finales, encima, cierres, sonidos, callar, hablar, contestar, empezar, reloj: () => reloj, callados: () => callados };
+  return { motor, orq, ws, finales, encima, cierres, sonidos, callar, crudo, hablar, contestar, empezar, reloj: () => reloj, callados: () => callados };
 }
 
 const MEDIA_IDEA = 'y entonces fuimos a ver lo del terreno con mi hermano y';
@@ -315,6 +322,100 @@ describe('Muletillas: no rompen el oído', () => {
     b.callar(8);
     await espera();
     assert.equal(b.finales.at(-1), `${MEDIA_IDEA} Ya te dije que no.`, 'lo suyo queda tal cual');
+  });
+
+  /*
+   * Revisión independiente (MEDIO 1): se quitaba la PRIMERA aparición en todo el texto. Con un «ya» de la persona al
+   * comienzo, se iba el suyo; y si Turbo no escribió el «ya» de AU-RA, igual se borraba uno de ella.
+   */
+  it('retoma encima de un «ya» de AU-RA que Turbo escribe: sale ESE, no el «ya» con que ella empezó la frase', async () => {
+    const b = banco({ duracion: (f) => (f === 'ya' ? 400 : null) });
+    await b.empezar();
+    b.hablar(8000, 'ya le dije a mi hermano lo del terreno que venga y');
+    b.contestar('Ya le dije a mi hermano lo del terreno que venga y');
+    b.callar(5);
+    assert.deepEqual(b.sonidos.map((s) => s.frase), ['ya']);
+    b.callar(1);
+    b.hablar(1500, 'ya que traiga el carro');
+    b.contestar('ya, que traiga el carro.');
+    b.callar(8);
+    await espera();
+    assert.deepEqual(b.finales, ['Ya le dije a mi hermano lo del terreno que venga y que traiga el carro.']);
+  });
+
+  it('retoma encima pero Turbo NO escribió el «ya» de AU-RA: ningún «ya» de la persona se toca', async () => {
+    const b = banco({ duracion: (f) => (f === 'ya' ? 400 : null) });
+    await b.empezar();
+    b.hablar(8000, 'ya le dije a mi hermano lo del terreno que venga y');
+    b.contestar('Ya le dije a mi hermano lo del terreno que venga y');
+    b.callar(5);
+    assert.deepEqual(b.sonidos.map((s) => s.frase), ['ya']);
+    b.callar(1);
+    b.hablar(1500, 'que traiga el carro ya');
+    b.contestar('que traiga el carro, ya.');
+    b.callar(8);
+    await espera();
+    assert.deepEqual(b.finales, ['Ya le dije a mi hermano lo del terreno que venga y que traiga el carro, ya.'], 'los dos «ya» son suyos');
+  });
+
+  /*
+   * Revisión independiente (MENOR 2): mientras suena el «mjm», lo que queda bajo el corte va a Turbo como silencio; el
+   * arranque suave de la palabra de la persona (justo antes de que su voz corte el tramo) se perdía.
+   */
+  // Sin sondeo la frase se cierra con 1 s de silencio: el «mjm» que cabe es más corto (tramo de 0,5 s: cuatro trozos).
+  for (const [modo, tiempos, clip, bocinas] of [
+    ['tras el sondeo (lo de siempre)', {}, 400, 3],
+    ['sin sondeo (el silencio va en vivo)', { sondeoMs: 0 }, 300, 2],
+  ] as const) {
+    it(`retoma encima del «mjm» ${modo}: su arranque suave (los ~0,2 s de antes) llega a Turbo en orden, no el silencio`, async () => {
+      const b = banco({ tiempos, duracion: () => clip });
+      await b.empezar();
+      b.hablar(8000, MEDIA_IDEA);
+      b.contestar('Y entonces fuimos a ver lo del terreno con mi hermano y');
+      b.callar(5);
+      assert.equal(b.sonidos.length, 1);
+      const w = b.ws[b.ws.length - 1];
+      const desde = w.enviados.length;
+      // El tramo: la bocina, y el arranque suave de la persona (bajo el corte: sigue «sonando»)…
+      for (let k = 0; k < bocinas; k++) b.crudo(BOCINA, -30);
+      b.crudo(SUAVE, -32);
+      const antesDelCorte = w.enviados.slice(desde).filter((m) => !m.commit).map((m) => Buffer.from(m.audio_base_64, 'base64')[0]);
+      assert.ok(!antesDelCorte.includes(SUAVE) && !antesDelCorte.includes(BOCINA), 'mientras está en duda, a Turbo no le llega nada del tramo');
+      // …y su voz corta el tramo.
+      b.crudo(PERSONA, -20);
+      const llegado = w.enviados
+        .slice(desde)
+        .filter((m) => !m.commit)
+        .map((m) => Buffer.from(m.audio_base_64, 'base64')[0]);
+      const i = llegado.indexOf(PERSONA);
+      assert.ok(i >= 2, `llegó: ${llegado.map((x) => x.toString(16))}`);
+      assert.deepEqual(llegado.slice(i - 2, i + 1), [BOCINA, SUAVE, PERSONA], 'los dos trozos de antes del corte, con su audio real y en orden');
+      assert.ok(llegado.slice(0, i - 2).every((x) => x === 0), 'lo más viejo del tramo, silencio (la bocina no)');
+    });
+  }
+
+  it('el tramo termina sin que nadie hable encima: lo guardado va como silencio (la bocina nunca llega)', async () => {
+    for (const [tiempos, clip] of [
+      [{}, 400],
+      [{ sondeoMs: 0 }, 300],
+    ] as const) {
+      const b = banco({ tiempos, duracion: () => clip });
+      await b.empezar();
+      b.hablar(8000, MEDIA_IDEA);
+      b.contestar('Y entonces fuimos a ver lo del terreno con mi hermano y');
+      b.callar(5);
+      assert.equal(b.sonidos.length, 1);
+      const w = b.ws[b.ws.length - 1];
+      const desde = w.enviados.length;
+      // Los trozos del tramo (clip + cola de 200, contados desde el trozo en que sonó)…
+      for (let k = 0; k < (clip + 200) / 100 - 1; k++) b.crudo(BOCINA, -30);
+      // …y ya terminó: la persona retoma después, con su voz normal.
+      b.crudo(CUARTO, -75);
+      b.crudo(PERSONA, -20);
+      const llegado = w.enviados.slice(desde).filter((m) => !m.commit).map((m) => Buffer.from(m.audio_base_64, 'base64')[0]);
+      assert.ok(!llegado.includes(BOCINA), `sin bocina: ${llegado.map((x) => x.toString(16))}`);
+      assert.equal(llegado.at(-1), PERSONA);
+    }
   });
 
   it('AU-RA empieza a hablar con el clip sonando: se calla', async () => {

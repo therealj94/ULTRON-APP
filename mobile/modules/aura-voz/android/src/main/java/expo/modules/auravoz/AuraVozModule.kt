@@ -18,7 +18,7 @@ import expo.modules.kotlin.modules.ModuleDefinition
  *
  * Avisa por `onVoz` ({ tipo, id, … }): «listo» (juntó el prebúfer), «sonando» (la pista avanzó dentro de la frase),
  * «posicion» (ms por los cuadros que sonaron + volumen ahí, ~30 por segundo), «bajado» (duración total), «termino»
- * (sonó; `cortada` / `truncada`) y «error» (falló ANTES de sonar: código red/http/formato/pista). Los revisa
+ * (sonó; `cortada` / `truncada`) y «error» (falló ANTES de sonar: código red/http/formato/vacio/pista). Los revisa
  * src/lib/vozNativa.ts (eventoVozValido).
  */
 class AuraVozModule : Module() {
