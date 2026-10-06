@@ -38,12 +38,23 @@ export const RECONOCER = { llegadaMs: 0, confirmarMs: 1200, atentoMs: 2500, calm
  * la misma cara en otra toma queda en 0,11 de mediana (máx. 0,27) y dos personas distintas nunca bajan de 0,50: 0,38 deja
  * margen de los dos lados. Con una sola persona guardada el margen es 1 (no hay segunda).
  */
-export const RAPIDO = { dMax: 0.38, margenMin: 0.12 };
+export const RAPIDO = { dMax: 0.38, margenMin: 0.12, dMaxUnica: 0.3 };
+/**
+ * Revisión 7 (M5): el seguimiento de ML Kit puede intercambiar los ids de dos caras (se cruzan) o el id puede saltar a
+ * otra cara (la caja brinca de lugar). Entonces el nombre votado ya no es de esa caja: se borra en las dos pistas y se
+ * vuelve a mirar YA (como a quien llega, aunque la mesa esté pensando). `cruceIou`: dos cajas que se solapan así se
+ * cruzan; `saltoIou`/`saltoCaras`: la misma pista con una caja que casi no se solapa con la anterior y cuyo centro se
+ * movió más de `saltoCaras` anchos de cara de una foto a otra.
+ */
+export const CAMBIO_PISTA = { cruceIou: 0.2, saltoIou: 0.05, saltoCaras: 1 };
 
 export type Identidad = { id: string; nombre: string; relacion: Relacion; parentesco?: string; distancia: number; desde: number; ultimoVoto: number };
-export type Voto = { id: string | null; nombre?: string; relacion?: Relacion; parentesco?: string; distancia: number; margen?: number; ts: number };
-/** `ext`: el trackingId de ML Kit de la cámara en vivo (modules/aura-camara), si la pista viene de ahí. */
-export type Pista = { id: number; caja: CajaN; visto: number; nacio: number; votos: Voto[]; identidad: Identidad | null; ext?: number };
+export type Voto = { id: string | null; nombre?: string; relacion?: Relacion; parentesco?: string; distancia: number; margen?: number; unica?: true; ts: number };
+/**
+ * `ext`: el trackingId de ML Kit de la cámara en vivo (modules/aura-camara), si la pista viene de ahí. `reinicio`: desde
+ * cuándo valen sus votos (tras un cruce o un salto). `cruce`: se está solapando con otra.
+ */
+export type Pista = { id: number; caja: CajaN; visto: number; nacio: number; votos: Voto[]; identidad: Identidad | null; ext?: number; reinicio?: number; cruce?: boolean };
 
 export function iou(a: CajaN, b: CajaN): number {
   const x1 = Math.max(a.x, b.x);
@@ -74,7 +85,8 @@ export function decidirIdentidad(votos: Voto[], actual: Identidad | null, ahora:
   }
   if (!actual) {
     const v = ultimos[ultimos.length - 1];
-    const seguro = !!v?.id && v.distancia <= RAPIDO.dMax && typeof v.margen === 'number' && v.margen >= RAPIDO.margenMin;
+    // Con una sola persona guardada (`unica`) el margen es 1 siempre: se pide una distancia mucho más corta.
+    const seguro = !!v?.id && (v.unica ? v.distancia <= RAPIDO.dMaxUnica : v.distancia <= RAPIDO.dMax && typeof v.margen === 'number' && v.margen >= RAPIDO.margenMin);
     if (!seguro || ultimos.some((x) => x.id && x.id !== v.id)) return null;
     return { id: v.id!, nombre: v.nombre || '', relacion: v.relacion || 'conocido', ...(v.parentesco ? { parentesco: v.parentesco } : {}), distancia: v.distancia, desde: ahora, ultimoVoto: v.ts };
   }
@@ -128,10 +140,15 @@ export class Seguidor {
       asignadas.set(i, p);
       usadas.add(p);
     }
-    return cajas.map((c, i) => {
+    const salida = cajas.map((c, i) => {
       const p = asignadas.get(i);
       const e = ext(i);
       if (p) {
+        // Revisión 7 (M5): el mismo id con la caja en otro lado (ML Kit pasó el id a otra cara): el nombre no es de ésta.
+        const centro = (k: CajaN) => ({ x: k.x + k.w / 2, y: k.y + k.h / 2 });
+        const a = centro(p.caja);
+        const b = centro(c);
+        if (iou(c, p.caja) < CAMBIO_PISTA.saltoIou && Math.hypot(a.x - b.x, a.y - b.y) > CAMBIO_PISTA.saltoCaras * Math.max(p.caja.w, c.w)) this.reiniciarPista(p, ts);
         p.caja = c;
         p.visto = ts;
         if (e !== undefined) p.ext = e;
@@ -142,6 +159,28 @@ export class Seguidor {
       this.nueva = true;
       return n;
     });
+    // Revisión 7 (M5): dos caras que se cruzan pueden salir con los ids cambiados. Al empezar a solaparse y al separarse,
+    // las dos pierden el nombre y se vuelven a mirar enseguida.
+    const deEsta = [...new Set(salida)];
+    for (const p of deEsta) {
+      const cruza = deEsta.some((q) => q !== p && iou(p.caja, q.caja) >= CAMBIO_PISTA.cruceIou);
+      if (cruza && !p.cruce) {
+        p.cruce = true;
+        this.reiniciarPista(p, ts);
+      } else if (!cruza && p.cruce && !deEsta.some((q) => q !== p && iou(p.caja, q.caja) > 0)) {
+        p.cruce = false;
+        this.reiniciarPista(p, ts);
+      }
+    }
+    return salida;
+  }
+
+  /** La pista pierde su nombre y sus votos (los de fotos de antes de `ts` ya no cuentan) y se vuelve a mirar ya. */
+  private reiniciarPista(p: Pista, ts: number) {
+    p.identidad = null;
+    p.votos = [];
+    p.reinicio = ts;
+    this.nueva = true;
   }
 
   /**
@@ -151,9 +190,11 @@ export class Seguidor {
   votar(id: number, r: Reconocida | null, ts: number): { pista: Pista | null; identidad: Identidad | null; confirmo: boolean; aFavor: number } {
     const p = this.pistas.find((x) => x.id === id);
     if (!p) return { pista: null, identidad: null, confirmo: false, aFavor: 0 };
+    // Un voto de una foto de antes del cruce o del salto (el análisis tardó) no es de esta cara.
+    if (p.reinicio !== undefined && ts < p.reinicio) return { pista: p, identidad: p.identidad, confirmo: false, aFavor: 0 };
     p.votos = [
       ...p.votos,
-      r ? { id: r.id, nombre: r.nombre, relacion: r.relacion, ...(r.parentesco ? { parentesco: r.parentesco } : {}), distancia: r.distancia, ...(typeof r.margen === 'number' ? { margen: r.margen } : {}), ts } : { id: null, distancia: 1, ts },
+      r ? { id: r.id, nombre: r.nombre, relacion: r.relacion, ...(r.parentesco ? { parentesco: r.parentesco } : {}), distancia: r.distancia, ...(typeof r.margen === 'number' ? { margen: r.margen } : {}), ...(r.unica ? { unica: true as const } : {}), ts } : { id: null, distancia: 1, ts },
     ].slice(-VOTOS);
     const antes = p.identidad;
     p.identidad = decidirIdentidad(p.votos, antes, ts);
@@ -198,6 +239,20 @@ export class Seguidor {
     const r: Identidad[] = [];
     for (const p of vivas) if (p.identidad && !r.some((x) => x.id === p.identidad!.id)) r.push(p.identidad);
     return { r, desconocidas: vivas.filter((p) => !p.identidad && p.votos.length >= CONFIRMAR).length };
+  }
+
+  /**
+   * Revisión 7 (G2): la última vez (0 si no) que se vio a la DUEÑA (relación «yo») confirmada por al menos `CONFIRMAR`
+   * votos, hace menos de `frescoMs`. Solo cuenta como presencia para la continuidad de la voz; nunca da permiso sola.
+   */
+  duenaConfirmadaEn(ts: number, frescoMs = 10_000): number {
+    let en = 0;
+    for (const p of this.pistas) {
+      if (ts - p.visto > frescoMs || p.identidad?.relacion !== 'yo') continue;
+      if (p.votos.filter((v) => v.id === p.identidad!.id).length < CONFIRMAR) continue;
+      en = Math.max(en, p.visto);
+    }
+    return en;
   }
 
   /** «Olvida a Ana»: su nombre se borra ya de la vista (y de los votos). */
