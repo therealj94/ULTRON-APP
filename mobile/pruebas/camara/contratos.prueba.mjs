@@ -415,6 +415,23 @@ prueba('voz primero: nada de la cámara nueva se espera en el camino del turno (
   assert.doesNotMatch(sub, /react-native|setTimeout\(/, 'la subida no agenda nada por su cuenta: la llama un intervalo de 1 s');
 });
 
+prueba('bloqueos y cierres (José, 6-oct: «al tocar la pantalla se cierra»): el vigía del hilo principal y las salidas de Android llegan a las migas', () => {
+  const vista = leer(`${KT}AuraCamaraView.kt`);
+  assert.match(vista, /"tipo" to "lento", "hilo" to "principal", "ms" to tarde\.toDouble\(\)/, 'el nativo avisa cuánto se trabó el hilo principal');
+  assert.match(vista, /corriendo = true\n\s*arrancarVigia\(\)/, 'el vigía corre con la cámara');
+  assert.match(vista, /pararVigia\(\)/);
+  const mod = leer(`${KT}AuraCamaraModule.kt`);
+  assert.match(mod, /getHistoricalProcessExitReasons\(/, 'Android dice cómo terminó (ANR, memoria, crash nativo)');
+  assert.match(mod, /6 -> "anr"/);
+  assert.match(mod, /Function\("version"\) \{ 2 \}/);
+  const cv = leer('src/components/CamaraVivo.tsx');
+  assert.match(cv, /m\.tipo === 'lento'/, 'JS lo pasa a las migas');
+  const rep = leer('src/lib/reporte.ts');
+  assert.match(rep, /salidasNativas\(/, 'al arrancar se leen las salidas previas');
+  const desk = leer('src/screens/DeskScreen.tsx');
+  assert.match(desk, /ponerAvisoBloqueo\(/, 'la mesa cuenta los bloqueos del hilo de JS');
+});
+
 for (const [nombre, f] of pruebas) {
   n += 1;
   try {

@@ -154,7 +154,7 @@ import { iniciarRevisionCampana } from './lib/campana-respuestas';
 import { clave, fotoBoveda, guardarCaja } from './lib/boveda';
 import { capturaPagina, verEstructurado, verImagen, vistaFallida, NO_PUDE_VER } from './lib/vision';
 import { etiquetasDeVista, focoDePregunta, focoValido, vistaAHechos } from './lib/vision-estructurada';
-import { presupuesto, PRESUPUESTO_OIDO_MS, PRESUPUESTO_TURNO_MS, PRESUPUESTO_VISION_MS, type Presupuesto } from './lib/presupuesto';
+import { presupuesto, PRESUPUESTO_OIDO_MS, PRESUPUESTO_TURNO_MS, PRESUPUESTO_VISION_MS, PRESUPUESTO_VISION_TURNO_MS, type Presupuesto } from './lib/presupuesto';
 import { destinoPublico } from './lib/red-publica';
 import { extraerPdf, dataUrlDeImagen, bufferDeCualquier } from './lib/leer-pdf';
 import { transcribirAudio, permisoTurbo, PROVEEDORES_OIDO_CONFIRMAR, PROVEEDORES_OIDO_ELECTRUM_CONFIRMAR, TERMINOS_ELECTRUM } from './lib/oido';
@@ -3223,7 +3223,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
       // ves?») y con orden (lib/vision-estructurada.ts): antes era siempre «describe lo visible», y un
       // cartel o un precio salían resumidos en vez de leídos.
       const foco = focoValido(body?.foco) || focoDePregunta(message) || 'escena';
-      const r = await verEstructurado(String(image), foco);
+      const r = await verEstructurado(String(image), foco, { presupuesto: presupuesto(PRESUPUESTO_VISION_TURNO_MS) });
       // Un fallo de visión NO se le pasa crudo al modelo: lo parafraseaba como «la cámara me muestra un
       // error técnico», que no le dice nada a nadie. Se le da la frase que tiene que decir.
       if (r.fallo || !r.vista) {

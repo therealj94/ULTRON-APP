@@ -38,7 +38,8 @@ import {
 import { MaquinaEscena, UMBRALES, observacionMlkit } from '../../src/lib/escena.ts';
 import { cajaEnPantalla } from '../../src/lib/vistaEnVivo.ts';
 import { Seguidor } from '../../src/caras/seguimiento.ts';
-import { RECONOCER_VIVO, elegirPistaParaReconocer, podarIntentos, prioridadPista } from '../../src/caras/pistaNativa.ts';
+import * as pistaNativa from '../../src/caras/pistaNativa.ts';
+const { RECONOCER_VIVO, elegirPistaParaReconocer, podarIntentos, prioridadPista } = pistaNativa;
 import { APRENDER } from '../../src/caras/caras.ts';
 
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
@@ -245,14 +246,61 @@ prueba('a quién mirar: la nueva YA; con un voto, confirmar enseguida; «no sé�
   const nose = { votos: [{ id: null, distancia: 1, ts: 0 }], identidad: null };
   assert.equal(prioridadPista(nose, { ultimo: 0, n: 1 }, R.reintentoMs - 1, false), null);
   assert.equal(prioridadPista(nose, { ultimo: 0, n: 1 }, R.reintentoMs, false), 2);
-  assert.equal(prioridadPista(nose, { ultimo: 0, n: R.intentosRapidos }, R.desconocidoMs - 1, false), null);
-  assert.equal(prioridadPista(nose, { ultimo: 0, n: R.intentosRapidos }, R.desconocidoVistaMs, true), 3, 'con «Lo que veo» abierto, más seguido');
+  // José, 6-oct («primer nombre 95376 ms después de ver la cara»): tras las rápidas, ~30 s atenta cada 2,5 s (como la
+  // cámara de fotos con alguien sin nombre); después, la calma de 5 s.
+  assert.equal(prioridadPista(nose, { ultimo: 0, n: R.intentosRapidos }, R.atentoMs - 1, false), null);
+  assert.equal(prioridadPista(nose, { ultimo: 0, n: R.intentosRapidos }, R.atentoMs, false), 3, 'atenta: cada 2,5 s, no cada 5');
+  assert.ok(R.atentoMs <= 2500 && R.intentosAtentos * R.atentoMs <= 35_000, 'la parte atenta dura ~30 s');
+  assert.equal(prioridadPista(nose, { ultimo: 0, n: R.intentosAtentos }, R.desconocidoMs - 1, false), null, 'quien no está guardado no se mira sin fin cada 2,5 s');
+  assert.equal(prioridadPista(nose, { ultimo: 0, n: R.intentosAtentos }, R.desconocidoMs, false), 3);
+  assert.equal(prioridadPista(nose, { ultimo: 0, n: R.intentosAtentos }, R.desconocidoVistaMs, true), 3, 'con «Lo que veo» abierto, más seguido');
   const ana = { votos: [], identidad: { id: 'ana', nombre: 'Ana', relacion: 'conocido', distancia: 0.3, desde: 0, ultimoVoto: 0 } };
   assert.equal(prioridadPista(ana, { ultimo: 0, n: 2 }, R.confirmadaMs - 1, false), null, 'confirmada: no se la vuelve a mirar a cada rato');
   assert.equal(prioridadPista(ana, { ultimo: 0, n: 2 }, R.confirmadaMs, false), 4);
   const dudosa = { ...ana, identidad: { ...ana.identidad, distancia: R.dudosaDistancia + 0.01 } };
   assert.equal(prioridadPista(dudosa, { ultimo: 0, n: 2 }, R.dudosaMs, false), 4, 'ganó por poco: repaso a los 5 s');
   assert.ok(R.confirmadaMs >= 10_000 && R.confirmadaMs <= 15_000);
+});
+
+prueba('el primer nombre con tomas malas al principio (cara de lado o movida): sale en segundos, no en decenas', () => {
+  // José, 6-oct: «primer nombre 95376 ms después de ver la cara». El recorrido real (Seguidor + prioridadPista) con un
+  // motor que tarda 250 ms y cuyas 4 primeras tomas no dicen nada (sin cara o «no sé»); la 5.ª y siguientes, José.
+  const s = new Seguidor();
+  const caja = { x: 0.3, y: 0.2, w: 0.3, h: 0.4 };
+  const intentos = new Map();
+  let analizandoHasta = -1;
+  let n = 0;
+  let nombreEn = null;
+  for (let t = 0; t <= 60_000 && nombreEn === null; t += 50) {
+    const [p] = s.actualizar([caja], t, [7]);
+    if (t < analizandoHasta) continue;
+    // Lo mismo que CamaraVivo.intentarReconocer antes de elegir.
+    pistaNativa.anotarVotos(intentos, [p]);
+    const elegida = elegirPistaParaReconocer([p], intentos, t, { ocupado: false, reconoce: true, vistaAbierta: false, alto: () => 200 });
+    if (!elegida) continue;
+    const i = intentos.get(p.id);
+    intentos.set(p.id, { ...i, ultimo: t, n: (i?.n ?? 0) + 1 });
+    n += 1;
+    analizandoHasta = t + 250;
+    const r = n <= 4 ? null : { id: 'jose', nombre: 'José', relacion: 'yo', distancia: 0.41, margen: 1 };
+    const v = s.votar(p.id, r, t + 250);
+    if (v.identidad) nombreEn = t + 250;
+  }
+  assert.ok(nombreEn !== null, 'tiene que salir el nombre');
+  assert.ok(nombreEn <= 8000, `el nombre salió a los ${nombreEn} ms (con 5 s entre tomas desde la cuarta: ~11,6 s)`);
+});
+
+prueba('por qué no sale el nombre: recortes, sin cara, «no sé» y la distancia más cercana', async () => {
+  const { DiagnosticoReconocer } = await import('../../src/caras/pistaNativa.ts');
+  const d = new DiagnosticoReconocer();
+  assert.equal(d.linea(3, 0.5), 'ningún recorte analizado');
+  d.analizado(3, { cara: false, reconocida: false });
+  d.analizado(3, { cara: true, reconocida: false, distancia: 0.58 });
+  d.analizado(3, { cara: true, reconocida: false, distancia: 0.54 });
+  d.analizado(3, { cara: true, reconocida: true, distancia: 0.31 });
+  assert.equal(d.linea(3, 0.5), '4 recortes: 1 sin cara, 2 «no sé» (la más parecida a 0.54; umbral 0.50)');
+  d.podar([{ id: 9 }]);
+  assert.equal(d.linea(3, 0.5), 'ningún recorte analizado', 'la pista que se fue se olvida');
 });
 
 prueba('a quién mirar: de a una, primero la nueva y la más grande; las muy chicas esperan; sin reconocer, nada', () => {

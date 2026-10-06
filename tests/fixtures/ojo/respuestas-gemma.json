@@ -1,0 +1,195 @@
+{
+ "descripcion": "Respuestas crudas reales del ojo (6-oct-2026) a fotos SINTÉTICAS generadas para la prueba (sin personas reales ni datos personales). Las usan tests/vision-estructurada.test.ts y tests/vision-proveedores.test.ts.",
+ "casos": [
+  {
+   "nombre": "largo-escena-sangria",
+   "fuente": "nodo",
+   "modelo": "google/gemma-3-4b-it (Hugging Face, nodo ultron-manos /ver, max_tokens 400)",
+   "pedido": "largo (promptEstructurado, cortado a 500 por el nodo)",
+   "imagen": "escritorio sintético 640×480: figura dibujada con camisa azul, portátil, taza, cartel «CAFÉ / L 45.00»",
+   "ms": 9569,
+   "ok": true,
+   "texto": "```json\n{\n  \"escena\": \"Un hombre está sentado frente a una computadora portátil en una mesa.\",\n  \"lugar\": \"Oficina o espacio de trabajo\",\n  \"personas\": [\n    {\n      \"que_hace\": \"Mirando la pantalla de la computadora\",\n      \"donde\": \"centro\"\n    }\n  ],\n  \"principal\": \"Computadora portátil\",\n  \"objetos\": [\n    {\n      \"nombre\": \"Taza\",\n      \"box_2d\": [\n        150,\n        350,\n        400,\n        470\n      ]\n    },\n    {\n      \"nombre\": \"Cartel\",\n      \"box_2d\": [\n        250,\n        150,\n        350,\n        450\n      ]\n    },\n    {\n      \"nombre\": \"Caja\",\n      \"box_2d\": [\n        50,\n        380,\n        100,\n        420\n      ]\n    }\n  ],\n  \"texto\": [\n    {\n      \"texto\": \"L 45.00\",\n      \"box_2d\": [\n        300,\n        300,\n        380,\n        400\n      ]\n    }\n  ]\n}\n```"
+  },
+  {
+   "nombre": "largo-leer-cortado-por-tope",
+   "fuente": "nodo",
+   "modelo": "google/gemma-3-4b-it (Hugging Face, nodo ultron-manos /ver, max_tokens 400)",
+   "pedido": "largo (cortado a 500)",
+   "imagen": "factura sintética «FACTURA 00123 / Ferretería El Tornillo / … / Total L 425.50» 640×480",
+   "ms": 11456,
+   "ok": true,
+   "texto": "```json\n{\n  \"escena\": \"Una factura con detalles de una compra.\",\n  \"lugar\": \"Un fondo neutro, posiblemente un papel o una pared.\",\n  \"personas\": [],\n  \"principal\": \"Texto de la factura\",\n  \"objetos\": [\n    {\n      \"nombre\": \"Factura\",\n      \"box_2d\": [\n        100,\n        100,\n        400,\n        600\n      ]\n    },\n    {\n      \"nombre\": \"Taza\",\n      \"box_2d\": [\n        180,\n        150,\n        220,\n        240\n      ]\n    },\n    {\n      \"nombre\": \"Caja clavos\",\n      \"box_2d\": [\n        350,\n        170,\n        270,\n        330\n      ]\n    }\n  ],\n  \"texto\": [\n    {\n      \"texto\": \"FACTURA 00123\",\n      \"box_2d\": [\n        120,\n        80,\n        250,\n        180\n      ]\n    },\n    {\n      \"texto\": \"Ferretería El Tornillo\",\n      \"box_2d\": [\n        120,\n        200,\n        300,\n        280\n      ]\n    },\n    {\n      \"texto\": \"2 Martillos ........ L 340.00\",\n      \"box_2d\": [\n        120,\n        280,\n        340,\n        380\n      ]\n    },\n    {\n      \"texto"
+  },
+  {
+   "nombre": "largo-escena-doc-cortado",
+   "fuente": "nodo",
+   "modelo": "google/gemma-3-4b-it (Hugging Face, nodo ultron-manos /ver, max_tokens 400)",
+   "pedido": "largo (cortado a 500)",
+   "imagen": "factura sintética «FACTURA 00123 / Ferretería El Tornillo / … / Total L 425.50» 640×480",
+   "ms": 14524,
+   "ok": true,
+   "texto": "```json\n{\n  \"escena\": \"Una factura con detalles de una compra.\",\n  \"lugar\": \"Papel\",\n  \"personas\": [],\n  \"principal\": \"La factura\",\n  \"objetos\": [\n    {\n      \"nombre\": \"Factura\",\n      \"box_2d\": [\n        100,\n        100,\n        500,\n        600\n      ]\n    }\n  ],\n  \"texto\": [\n    {\n      \"texto\": \"Ferretería El Tornillo\",\n      \"box_2d\": [\n        150,\n        150,\n        250,\n        250\n      ]\n    },\n    {\n      \"texto\": \"2 Martillos ………… L 340.00\",\n      \"box_2d\": [\n        300,\n        200,\n        400,\n        500\n      ]\n    },\n    {\n      \"texto\": \"1 Caja clavos ………… L 85.50\",\n      \"box_2d\": [\n        300,\n        550,\n        400,\n        650\n      ]\n    },\n    {\n      \"texto\": \"Total ………………. L 425.50\",\n      \"box_2d\": [\n        300,\n        700,\n        400,\n        800\n      ]\n    },\n    {\n      \"texto\": \"Gracias por su compra\",\n      \"box_2d\": [\n        450,\n        750,\n        550,\n        650\n      ]\n    }\n  ]\n"
+  },
+  {
+   "nombre": "largo-escena-grande-19s",
+   "fuente": "nodo",
+   "modelo": "google/gemma-3-4b-it (Hugging Face, nodo ultron-manos /ver, max_tokens 400)",
+   "pedido": "largo (cortado a 500)",
+   "imagen": "el mismo escritorio a 1280×960 con ruido de sensor, JPEG q50",
+   "ms": 19753,
+   "ok": true,
+   "texto": "```json\n{\n  \"escena\": \"Una persona está sentada frente a una computadora en una oficina, trabajando.\",\n  \"lugar\": \"oficina\",\n  \"personas\": [\n    {\n      \"que_hace\": \"mirando la pantalla de la computadora\",\n      \"donde\": \"centro\"\n    }\n  ],\n  \"principal\": \"laptop\",\n  \"objetos\": [\n    {\n      \"nombre\": \"taza\",\n      \"box_2d\": [\n        25.0,\n        102.5,\n        85.0,\n        130.0\n      ]\n    },\n    {\n      \"nombre\": \"computadora portátil\",\n      \"box_2d\": [\n        70.0,\n        130.0,\n        265.0,\n        365.0\n      ]\n    },\n    {\n      \"nombre\": \"cuadrado negro\",\n      \"box_2d\": [\n        280.0,\n        340.0,\n        350.0,\n        370.0\n      ]\n    },\n    {\n      \"nombre\": \"letrero\",\n      \"box_2d\": [\n        40.0,\n        360.0,\n        110.0,\n        420.0\n      ]\n    }\n  ],\n  \"texto\": [\n    {\n      \"texto\": \"CAFÉ L 45.00\",\n      \"box_2d\": [\n        40.0,\n        360.0,\n        110.0,\n        420.0\n      ]\n    }\n  ]"
+  },
+  {
+   "nombre": "corto-escena-grande",
+   "fuente": "nodo",
+   "modelo": "google/gemma-3-4b-it (Hugging Face, nodo ultron-manos /ver, max_tokens 400)",
+   "pedido": "corto (promptCompacto)",
+   "imagen": "el mismo escritorio a 1280×960 con ruido de sensor, JPEG q50",
+   "ms": 3115,
+   "ok": true,
+   "texto": "{\"escena\":\"Un hombre trabaja en un portátil en un café\",\"lugar\":\"café\",\"personas\":[{\"que_hace\":\"trabaja\",\"donde\":\"centro\"}],\"principal\":\"El portátil\",\"objetos\":[{\"nombre\":\"Portátil\",\"donde\":\"centro\"},{\"nombre\":\"Taza de café\",\"donde\":\"derecha\"},{\"nombre\":\"Libreta\",\"donde\":\"izquierda\"},{\"nombre\":\"Caja negra\",\"donde\":\"izquierda\"},{\"nombre\":\"Tarjeta de precio\",\"donde\":\"derecha\"}],\"texto\":[\"\",\"\"], \"precios\":[\"L 45.00\"]}"
+  },
+  {
+   "nombre": "corto-escena-vertical-cortado",
+   "fuente": "nodo",
+   "modelo": "google/gemma-3-4b-it (Hugging Face, nodo ultron-manos /ver, max_tokens 400)",
+   "pedido": "corto",
+   "imagen": "el mismo escritorio en vertical 960×1280 con ruido, JPEG q50",
+   "ms": 3225,
+   "ok": true,
+   "texto": "{\"escena\":\"Un hombre trabaja en un portátil en un café\",\"lugar\":\"Café\",\"personas\":[{\"que_hace\":\"Trabajando\",\"donde\":\"centro\"}],\"principal\":\"El portátil\",\"objetos\":[{\"nombre\":\"Ordenador portátil\",\"donde\":\"centro\"},{\"nombre\":\"Taza de café\",\"donde\":\"izquierda\"},{\"nombre\":\"Libreta\",\"donde\":\"derecha\"},{\"nombre\":\"Cuadro\",\"donde\":\"centro\"},{\"nombre\":\"Tablero\",\"donde\":\"izquierda\"},{\"nombre\":\"Cubierta\",\"donde\":\"centro\"}],\"texto\":[\"\",\"\"], \"precios\":[\"L 45.00\"]}"
+  },
+  {
+   "nombre": "corto-principal-lista",
+   "fuente": "nodo",
+   "modelo": "google/gemma-3-4b-it (Hugging Face, nodo ultron-manos /ver, max_tokens 400)",
+   "pedido": "corto",
+   "imagen": "factura sintética «FACTURA 00123 / Ferretería El Tornillo / … / Total L 425.50» 640×480",
+   "ms": 3520,
+   "ok": true,
+   "texto": "{\"escena\":\"Factura de ferretería\",\"lugar\":\"Página\",\"personas\":[],\"principal\":[\"Ferretería El Tornillo\",\"2 Martillos ... L 340.00\",\"1 Caja clavos ... L 85.50\",\"Total …………. L 425.50\"],\"objetos\":[{\"nombre\":\"Factura 00123\",\"donde\":\"centro\"},{\"nombre\":\"Gracias por su compra\",\"donde\":\"derecha\"}],\"texto\":[\"Gracias por su compra\"], \"precios\":[\"L 340.00\",\"L 85.50\",\"L 425.50\"]}"
+  },
+  {
+   "nombre": "corto-texto-con-saltos",
+   "fuente": "nodo",
+   "modelo": "google/gemma-3-4b-it (Hugging Face, nodo ultron-manos /ver, max_tokens 400)",
+   "pedido": "corto",
+   "imagen": "factura sintética «FACTURA 00123 / Ferretería El Tornillo / … / Total L 425.50» 640×480",
+   "ms": 3942,
+   "ok": true,
+   "texto": "{\"escena\":\"Factura de ferretería\",\"lugar\":\"Página\",\"personas\":[],\"principal\":\"Factura 00123, detalles de compra\",\"objetos\":[{\"nombre\":\"Texto de factura\",\"donde\":\"centro\"},{\"nombre\":\"Martillos\",\"donde\":\"izquierda\"},{\"nombre\":\"Caja clavos\",\"donde\":\"derecha\"},{\"nombre\":\"Moneda\",\"donde\":\"derecha\"}],\"texto\":[\"Ferretería El Tornillo\\n2 Martillos … L 340.00\\n1 Caja clavos …. L 85.50\\nTotal ………… L 425.50\\nGracias por su compra\"],\"precios\":[\"L 340.00\",\"L 85.50\",\"L 425.50\"]}"
+  },
+  {
+   "nombre": "corto-leer-grande",
+   "fuente": "nodo",
+   "modelo": "google/gemma-3-4b-it (Hugging Face, nodo ultron-manos /ver, max_tokens 400)",
+   "pedido": "corto",
+   "imagen": "la misma factura a 1280×960 con ruido, JPEG q50",
+   "ms": 4059,
+   "ok": true,
+   "texto": "{\"escena\":\"Factura de ferretería\",\"lugar\":\"Página\",\"personas\":[],\"principal\":\"Factura 00123\",\"objetos\":[{\"nombre\":\"FACTURA\",\"donde\":\"centro\"},{\"nombre\":\"Ferretería El Tornillo\",\"donde\":\"centro\"},{\"nombre\":\"2 Martillos\",\"donde\":\"centro\"},{\"nombre\":\"Caja clavos\",\"donde\":\"centro\"},{\"nombre\":\"Total\",\"donde\":\"centro\"}],\"texto\":[\"FACTURA 00123\",\"Ferretería El Tornillo\",\"2 Martillos ....... L 340.00\",\"1 Caja clavos ....... L 85.50\",\"Total ........... L 425.50\",\"Gracias por su compra\"],\"precios\":[\"L 340.00\",\"L 85.50\",\"L 425.50\"]}"
+  },
+  {
+   "nombre": "corto-precio",
+   "fuente": "nodo",
+   "modelo": "google/gemma-3-4b-it (Hugging Face, nodo ultron-manos /ver, max_tokens 400)",
+   "pedido": "corto",
+   "imagen": "escritorio sintético 640×480: figura dibujada con camisa azul, portátil, taza, cartel «CAFÉ / L 45.00»",
+   "ms": 1920,
+   "ok": true,
+   "texto": "{\"escena\":\"Un hombre está sentado en un café leyendo un portátil\",\"lugar\":\"Café\",\"personas\":[{\"que_hace\":\"Leyendo\",\"donde\":\"centro\"}],\"principal\":\"Portátil\",\"objetos\":[{\"nombre\":\"Mug\",\"donde\":\"derecha\"}],\"texto\":[\"CAFÉ L 45.00\"],\"precios\":[\"L 45.00\"]}"
+  },
+  {
+   "nombre": "nodo-creditos-agotados",
+   "fuente": "nodo",
+   "modelo": "google/gemma-3-4b-it (Hugging Face, nodo ultron-manos /ver, max_tokens 400)",
+   "pedido": "corto",
+   "imagen": "la misma factura a 1280×960 con ruido, JPEG q50",
+   "ms": 34,
+   "ok": false,
+   "texto": "You have depleted your monthly included credits. Purchase pre-paid credits to continue using Inference Providers. Alternatively, subscribe to PRO to get 20x more included usage."
+  },
+  {
+   "nombre": "primer-corto-lugar-posicion",
+   "fuente": "nodo",
+   "modelo": "google/gemma-3-4b-it (Hugging Face, nodo ultron-manos /ver, max_tokens 400)",
+   "pedido": "borrador corto (sin descripciones)",
+   "imagen": "el mismo escritorio en vertical 960×1280 con ruido, JPEG q50",
+   "ms": 6160,
+   "ok": true,
+   "texto": "{\"escena\":\"Cafetería\",\"lugar\":\"izquierda\",\"personas\":[{\"que_hace\":\"Sentado\",\"donde\":\"centro\"}],\"principal\":\"Un hombre trabajando en su laptop\",\"objetos\":[{\"nombre\":\"Laptop\",\"donde\":\"izquierda\"},{\"nombre\":\"Taza de café\",\"donde\":\"derecha\"},{\"nombre\":\"Café\",\"donde\":\"centro\"},{\"nombre\":\"Cuaderno\",\"donde\":\"abajo izquierda\"},{\"nombre\":\"Cuadrícula\",\"donde\":\"abajo derecha\"}],\"texto\":[\"\"],\"precios\":[\"45.00\"]}"
+  },
+  {
+   "nombre": "primer-corto-leer-con-cercas",
+   "fuente": "nodo",
+   "modelo": "google/gemma-3-4b-it (Hugging Face, nodo ultron-manos /ver, max_tokens 400)",
+   "pedido": "borrador corto",
+   "imagen": "la misma factura a 1280×960 con ruido, JPEG q50",
+   "ms": 10039,
+   "ok": true,
+   "texto": "```json\n{\"escena\":\"Factura\",\"lugar\":\"Tienda\",\"personas\":[],\"principal\":\"Factura 00123\",\"objetos\":[{\"nombre\":\"Factura\",\"donde\":\"izquierda\"},{\"nombre\":\"Ferretería El Tornillo\",\"donde\":\"izquierda\"},{\"nombre\":\"2 Martillos\",\"donde\":\"izquierda\"},{\"nombre\":\"Caja clavos\",\"donde\":\"izquierda\"},{\"nombre\":\"Total\",\"donde\":\"izquierda\"},{\"nombre\":\"Gracias por su compra\",\"donde\":\"izquierda\"}],\"texto\":[\"FACTURA 00123\",\"Ferretería El Tornillo\",\"2 Martillos ……… L 340.00\",\"1 Caja clavos ……… L 85.50\",\"Total ……… L 425.50\",\"Gracias por su compra\"], \"precios\":[\"L 340.00\",\"L 85.50\",\"L 425.50\"]}\n```"
+  },
+  {
+   "nombre": "bedrock-gemma-3-12b-it-escritorio-grande",
+   "fuente": "bedrock us-west-2",
+   "modelo": "google.gemma-3-12b-it",
+   "pedido": "corto",
+   "imagen": "el mismo escritorio a 1280×960 con ruido de sensor, JPEG q50",
+   "ms": 1711,
+   "ok": true,
+   "texto": "{\"escena\":\"persona trabajando con café\",\"lugar\":\"cafetería\",\"personas\":[{\"que_hace\":\"trabajando\",\"donde\":\"centro\"}],\"principal\":\"persona\",\"objetos\":[{\"nombre\":\"laptop\",\"donde\":\"izquierda\"},{\"nombre\":\"café\",\"donde\":\"derecha\"},{\"nombre\":\"ventana\",\"donde\":\"derecha\"}],\"texto\":[\"CAFÉ\",\"L 45.00\"],\"precios\":[\"45.00\"]}"
+  },
+  {
+   "nombre": "bedrock-gemma-3-12b-it-documento-grande",
+   "fuente": "bedrock us-west-2",
+   "modelo": "google.gemma-3-12b-it",
+   "pedido": "corto",
+   "imagen": "la misma factura a 1280×960 con ruido, JPEG q50",
+   "ms": 2147,
+   "ok": true,
+   "texto": "{\"escena\":\"Una factura de ferretería\",\"lugar\":\"Ferretería\",\"personas\":[],\"principal\":\"Factura\",\"objetos\":[{\"nombre\":\"Factura\",\"donde\":\"centro\"},{\"nombre\":\"Martillos\",\"donde\":\"centro\"},{\"nombre\":\"Caja clavos\",\"donde\":\"centro\"}],\"texto\":[\"FACTURA 00123\",\"Ferretería El Tornillo\",\"2 Martillos ………… L 340.00\",\"1 Caja clavos ………… L 85.50\",\"Total ……………… L 425.50\",\"Gracias por su compra\"],\"precios\":[\"L 340.00\",\"L 85.50\",\"L 425.50\"]}"
+  },
+  {
+   "nombre": "bedrock-gemma-3-4b-it-escritorio-grande",
+   "fuente": "bedrock us-west-2",
+   "modelo": "google.gemma-3-4b-it",
+   "pedido": "corto",
+   "imagen": "el mismo escritorio a 1280×960 con ruido de sensor, JPEG q50",
+   "ms": 1410,
+   "ok": true,
+   "texto": "```json\n{\"escena\":\"Una persona trabaja en un portátil en un café.\", \"lugar\":\"Café\", \"personas\":[{\"que_hace\":\"Trabaja en un portátil\", \"donde\":\"centro\"}], \"principal\":\"Portátil\", \"objetos\":[{\"nombre\":\"Portátil\", \"donde\":\"izquierda\"}, {\"nombre\":\"Taza de café\", \"donde\":\"derecha\"}, {\"nombre\":\"Libreta\", \"donde\":\"izquierda\"}, {\"nombre\":\"Ventana\", \"donde\":\"derecha\"}, {\"nombre\":\"Café\", \"donde\":\"derecha\"}, {\"nombre\":\"Tarjeta de precio\", \"donde\":\"derecha\"}], \"texto\":[\"\"], \"precios\":[\"L 45.00\"]}\n```"
+  },
+  {
+   "nombre": "bedrock-gemma-3-4b-it-documento-grande",
+   "fuente": "bedrock us-west-2",
+   "modelo": "google.gemma-3-4b-it",
+   "pedido": "corto",
+   "imagen": "la misma factura a 1280×960 con ruido, JPEG q50",
+   "ms": 1457,
+   "ok": true,
+   "texto": "```json\n{\"escena\":\"Factura de una ferretería\",\"lugar\":\"Papel\",\"personas\":[],\"principal\":\"Factura\",\"objetos\":[{\"nombre\":\"Factura\",\"donde\":\"centro\"},{\"nombre\":\"Martillos\",\"donde\":\"izquierda\"},{\"nombre\":\"Caja clavos\",\"donde\":\"izquierda\"},{\"nombre\":\"Moneda\",\"donde\":\"derecha\"}],\"texto\":[\"FACTURA 00123\",\"Ferretería El Tornillo\",\"2 Martillos ....... L 340.00\",\"1 Caja clavos ....... L 85.50\",\"Total ................. L 425.50\",\"Gracias por su compra\"],\"precios\":[\"L 340.00\",\"L 85.50\",\"L 425.50\"]}\n```"
+  },
+  {
+   "nombre": "bedrock-nova-2-lite-escritorio-grande",
+   "fuente": "bedrock us-west-2",
+   "modelo": "us.amazon.nova-2-lite-v1:0",
+   "pedido": "corto",
+   "imagen": "el mismo escritorio a 1280×960 con ruido de sensor, JPEG q50",
+   "ms": 1438,
+   "ok": true,
+   "texto": "```json\n{\"escena\":\"comprando café\",\"lugar\":\"café\",\"personas\":[{\"que_hace\":\"sentado\",\"donde\":\"centro\"}],\"principal\":\"café\",\"objetos\":[{\"nombre\":\"mesa\",\"donde\":\"centro\"},{\"nombre\":\"taza de café\",\"donde\":\"derecha\"},{\"nombre\":\"letrero\",\"donde\":\"derecha\"}],\"texto\":[\"CAFÉ\"],\"precios\":[\"L 45.00\"]}\n```"
+  },
+  {
+   "nombre": "bedrock-nova-2-lite-documento-grande",
+   "fuente": "bedrock us-west-2",
+   "modelo": "us.amazon.nova-2-lite-v1:0",
+   "pedido": "corto",
+   "imagen": "la misma factura a 1280×960 con ruido, JPEG q50",
+   "ms": 2074,
+   "ok": true,
+   "texto": "```json\n{\"escena\":\"factura\",\"lugar\":\"ferretería\",\"personas\":[],\"principal\":\"factura\",\"objetos\":[{\"nombre\":\"martillos\",\"donde\":\"centro\"},{\"nombre\":\"caja clavos\",\"donde\":\"centro\"}],\"texto\":[\"FACTURA 00123\",\"Ferretería El Tornillo\",\"2 Martillos ...... L 340.00\",\"1 Caja clavos ...... L 85.50\",\"Total ........... L 425.50\",\"Gracias por su compra\"],\"precios\":[\"L 340.00\",\"L 85.50\",\"L 425.50\"]}\n```"
+  }
+ ]
+}

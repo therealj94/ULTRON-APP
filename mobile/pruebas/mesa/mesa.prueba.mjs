@@ -614,6 +614,27 @@ prueba('voz (auditoría 6-oct): la traza mide cuando el reproductor confirma; el
   assert.match(cuerpo.slice(cuerpo.indexOf('// 2) JSON clásico')), /let out = await turno\(base, genTurno\);/);
 });
 
+prueba('«¿qué ves?» no espera al servidor: vista fresca al instante o la foto en el turno; «Lo que vi» no se queda congelado', () => {
+  // José, 6-oct: «toma como una foto de primera y se traba, queda pensando y hasta tocar la pantalla se cierra»
+  // (esc 28828: el turno esperó 28,8 s a /api/vision/analyze con «Lo que vi» mostrando la foto quieta).
+  const src = fs.readFileSync(path.join(RAIZ, 'mobile/src/screens/DeskScreen.tsx'), 'utf8');
+  const ini = src.indexOf('const whatDoYouSee = useCallback(');
+  const fn = src.slice(ini, src.indexOf('\n  }, [', ini));
+  assert.ok(ini > 0 && fn.length > 200, 'whatDoYouSee está');
+  assert.doesNotMatch(fn, /await verCamara\(/, 'el turno no espera la respuesta del servidor');
+  assert.match(fn, /vistaParaTurno\(/, 'pasa por lib/vistaTurno.ts (tope de ~1,5 s)');
+  assert.match(fn, /vt\.tarde\.then\(/, 'lo que vuelva tarde se aplica después');
+  assert.match(fn, /askBrain\(pedido, \{ image: /, 'sin vista a tiempo, la foto va en el turno');
+  // El visor con «mirando» se cierra o se completa cuando vuelve el pedido (nada de una foto congelada hasta tocarla).
+  assert.match(fn, /setVisor\(\(v\) => \(v && v\.foto === foto \? \(r\?\.vista \? \{ foto, vista: r\.vista, foco, mirando: false \} : null\) : v\)\)/);
+  // Las cámaras guardan la vista fresca y la sueltan al apagarse.
+  for (const f of ['CamaraVivo.tsx', 'CamaraVision.tsx']) {
+    const c = fs.readFileSync(path.join(RAIZ, 'mobile/src/components', f), 'utf8');
+    assert.match(c, /vistaFresca\.guardar\(/, `${f} guarda la vista fresca`);
+    assert.match(c, /vistaFresca\.invalidar\(\)/, `${f} la suelta`);
+  }
+});
+
 for (const [nombre, f] of pruebas) {
   n += 1;
   try {
