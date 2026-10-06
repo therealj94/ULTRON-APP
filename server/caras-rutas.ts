@@ -14,6 +14,7 @@
  * no sea un vector de 128 números se rechaza.
  */
 import type express from 'express';
+import { BorradoDegradado } from '../lib/biometria-durable';
 import { agregarCara, cargarCaras, CarasNoDisponibles, CarasNoGuardadas, olvidarCara, olvidarTodasLasCaras, sumarMuestras, validarAlta, validarMuestras } from '../lib/caras-miembro';
 import type { Sesion } from './seguridad';
 
@@ -28,6 +29,20 @@ const noGuardado = (res: express.Response) =>
   res.status(503).json({ error: 'No pude guardar el cambio de forma segura; intenta otra vez en un momento.', code: 'caras_no_guardadas', honesto: true });
 const noDisponible = (res: express.Response) =>
   res.status(503).json({ error: 'Ahora mismo no pude leer las caras guardadas; intenta en un momento.', code: 'caras_no_disponibles', honesto: true });
+
+/**
+ * SEC-03: S3 ya no la tiene, pero la copia local vieja no se pudo reescribir ni quitar. No es «borrada del todo»: 202
+ * con `completo: false` y el porqué. AURA no la usa (la caché y S3 están al día y la lectura aplica las lápidas).
+ */
+const borradoDegradado = (res: express.Response, extra: Record<string, unknown>) =>
+  res.status(202).json({
+    ok: true,
+    completo: false,
+    pendiente: 'copia_local',
+    ...extra,
+    aviso: 'La borré de la copia principal, pero una copia local vieja no se pudo quitar todavía. No la uso; vuelve a pedirlo en un momento para terminar.',
+    honesto: true,
+  });
 
 export function montarRutasCaras(app: express.Express, d: Deps) {
   app.get('/api/caras', d.exigirMesa, d.limitar(30), async (req, res) => {
@@ -84,6 +99,7 @@ export function montarRutasCaras(app: express.Express, d: Deps) {
       if (!p) return res.status(404).json({ error: 'No conozco esa cara.', honesto: true });
       return res.json({ ok: true, nombre: p.nombre, honesto: true });
     } catch (e) {
+      if (e instanceof BorradoDegradado) return borradoDegradado(res, { nombre: (e.resultado as { nombre?: string })?.nombre });
       if (e instanceof CarasNoDisponibles) return noDisponible(res);
       if (e instanceof CarasNoGuardadas) return noGuardado(res);
       throw e;
@@ -97,6 +113,7 @@ export function montarRutasCaras(app: express.Express, d: Deps) {
       const borradas = await olvidarTodasLasCaras(s.correo);
       return res.json({ ok: true, borradas, honesto: true });
     } catch (e) {
+      if (e instanceof BorradoDegradado) return borradoDegradado(res, { borradas: e.resultado });
       if (e instanceof CarasNoGuardadas) return noGuardado(res);
       throw e;
     }

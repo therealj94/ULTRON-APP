@@ -33,6 +33,7 @@ import {
 } from '../lib/voces-miembro';
 import { estadoMotorVoces, huellaDeVoz, MIN_VOZ_SEG, muestrasDeAudio, precalentarMotorVoces, soloVoz, VozNoDisponible } from '../lib/voces-motor';
 import type { Sesion } from './seguridad';
+import { BorradoDegradado } from '../lib/biometria-durable';
 
 type Deps = {
   exigirMesa: express.RequestHandler;
@@ -52,6 +53,20 @@ const sinMotor = (res: express.Response) =>
   res.status(503).json({ error: 'El reconocimiento de voz no está disponible ahora mismo.', code: 'voces_no_disponible', motor: estadoMotorVoces().estado, honesto: true });
 
 const publica = (p: PersonaVoz) => ({ id: p.id, nombre: p.nombre, relacion: p.relacion, ...(p.parentesco ? { parentesco: p.parentesco } : {}) });
+
+/**
+ * SEC-03: S3 ya no la tiene, pero la copia local vieja no se pudo reescribir ni quitar. No es «borrada del todo»: 202
+ * con `completo: false` y el porqué. AURA no la usa (la caché y S3 están al día y la lectura aplica las lápidas).
+ */
+const borradoDegradado = (res: express.Response, extra: Record<string, unknown>) =>
+  res.status(202).json({
+    ok: true,
+    completo: false,
+    pendiente: 'copia_local',
+    ...extra,
+    aviso: 'La borré de la copia principal, pero una copia local vieja no se pudo quitar todavía. No la uso; vuelve a pedirlo en un momento para terminar.',
+    honesto: true,
+  });
 
 function errorComun(res: express.Response, e: unknown) {
   if (e instanceof VozNoDisponible) return sinMotor(res);
@@ -149,6 +164,7 @@ export function montarRutasVoces(app: express.Express, d: Deps) {
       if (!p) return res.status(404).json({ error: 'No conozco esa voz.', honesto: true });
       return res.json({ ok: true, nombre: p.nombre, honesto: true });
     } catch (e) {
+      if (e instanceof BorradoDegradado) return borradoDegradado(res, { nombre: (e.resultado as { nombre?: string })?.nombre });
       return errorComun(res, e);
     }
   });
@@ -160,6 +176,7 @@ export function montarRutasVoces(app: express.Express, d: Deps) {
       const borradas = await olvidarTodasLasVoces(s.correo);
       return res.json({ ok: true, borradas, honesto: true });
     } catch (e) {
+      if (e instanceof BorradoDegradado) return borradoDegradado(res, { borradas: e.resultado });
       return errorComun(res, e);
     }
   });
