@@ -41,7 +41,6 @@ import {
   debeAprender,
   elegirMuestras,
   esConsentimiento,
-  frasePresentes,
   identificar,
   masGrande,
   pedidoDeCaras,
@@ -51,6 +50,8 @@ import {
   type Reconocida,
 } from './caras';
 import { CONFIRMAR, Seguidor, VistoRespaldo, tocaReconocer, tocaReconocerRespaldo, type CajaN } from './seguimiento';
+import { GeneracionCaras, analizarVigente } from './cercoReconocer';
+import { fraseEscenaCaras } from './escenaCaras';
 import { guardarCara, listarCaras, olvidarCara, olvidarTodasLasCaras, sumarMuestrasCara } from './api';
 
 /** Lo que vale lo reconocido para el cerebro (visto hace menos que esto). */
@@ -83,7 +84,14 @@ type Opciones = {
  * vivo, components/CamaraVivo.tsx): la foto es un RECORTE de la cara, así que su caja no dice qué tan grande
  * se veía; `tam` es su alto en la escala de las fotos de 720 px, para «aprender con el uso» (debeAprender).
  */
-export type FotoCaras = { b64: string; cajas: { pista: number; caja: CajaN; tam?: number }[]; ts: number };
+export type FotoCaras = {
+  b64: string;
+  cajas: { pista: number; caja: CajaN; tam?: number }[];
+  /** Hora de CAPTURA del cuadro (no de llegada). */
+  ts: number;
+  /** CAM-C: ¿sigue valiendo la cámara de donde salió? (época/lado de CamaraVivo); se mira al volver del motor. */
+  vigente?: () => boolean;
+};
 
 export type ApiCaras = {
   activas: boolean;
@@ -126,6 +134,8 @@ export function useCaras(o: Opciones): ApiCaras {
   /** El parentesco dicho al presentar («mi esposa Ana»), hasta su «sí». */
   const parentescoPendiente = useRef<string | undefined>(undefined);
   const seguidor = useRef(new Seguidor()).current;
+  /** CAM-C: cambiar de cámara o de cuenta, apagar o borrar sube la generación; lo que vuelva del motor después, no vale. */
+  const generacion = useRef(new GeneracionCaras()).current;
   /** Sin ML Kit no hay pistas: lo que vio la última foto del respaldo (revisión del 5-oct, M3). */
   const respaldo = useRef(new VistoRespaldo()).current;
   const saludados = useRef(new Set<string>());
@@ -159,6 +169,7 @@ export function useCaras(o: Opciones): ApiCaras {
   }, [activas, conocidas, refrescar]);
 
   const montarMotor = activas && o.camaraEncendida && o.mesaVisible;
+  useEffect(() => generacion.subir(), [generacion, montarMotor, o.lado, o.correo]);
   useEffect(() => {
     if (!montarMotor) {
       setMotorListo(false);
@@ -257,6 +268,7 @@ export function useCaras(o: Opciones): ApiCaras {
     const s = await loadSettings();
     await saveSettings({ carasActivas: conCarasActivas(s.carasActivas, op.current.correo, false) });
     setActivas(false);
+    generacion.subir();
     seguidor.olvidar();
     respaldo.olvidar();
     presentacion.terminar();
@@ -280,6 +292,7 @@ export function useCaras(o: Opciones): ApiCaras {
           void olvidarTodasLasCaras()
             .then((n) => {
               setConocidas([]);
+              generacion.subir();
               seguidor.olvidar();
               respaldo.olvidar();
               return op.current.decir(tr(`Listo, olvidé ${n === 1 ? 'la cara' : `las ${n} caras`} que conocía.`, `Done, I forgot ${n === 1 ? 'the face' : `the ${n} faces`} I knew.`));
@@ -410,6 +423,7 @@ export function useCaras(o: Opciones): ApiCaras {
           try {
             await olvidarCara(c.id);
             await refrescar();
+            generacion.subir();
             seguidor.olvidar(c.id);
             respaldo.olvidar(c.id);
             aprendido.current.delete(c.id);
@@ -440,7 +454,7 @@ export function useCaras(o: Opciones): ApiCaras {
           // Lo ya confirmado por votos (fresco) basta; si no hay, una foto aparte.
           const ya = seguidor.presentes(Date.now(), 3000);
           let r: Pick<Reconocida, 'nombre' | 'relacion'>[] = ya.r;
-          let total = ya.r.length + ya.desconocidas;
+          let total = ya.r.length + ya.desconocidas + ya.pendientes;
           if (!ya.r.length) {
             const caras = ((await verCaras(1)) || [])[0] || [];
             r = caras.map((c) => identificar(c.vector, conocidasRef.current)).filter((x): x is Reconocida => !!x);
@@ -501,9 +515,14 @@ export function useCaras(o: Opciones): ApiCaras {
       analizando.current = true;
       ultimaMirada.current = f.ts;
       seguidor.tomarNueva();
+      const gen = generacion.sello();
       void (async () => {
         try {
-          const caras = await motor.current?.analizar(f.b64, f.cajas.map((c) => c.caja));
+          // CAM-C: si en medio cambió la cámara/cuenta, se apagó o se borró algo, el resultado no se aplica.
+          const caras = await analizarVigente(
+            () => motor.current?.analizar(f.b64, f.cajas.map((c) => c.caja)),
+            () => generacion.vigente(gen) && reconoceRef.current && (f.vigente ? f.vigente() : true)
+          );
           if (!caras) return;
           for (const c of caras) {
             const de = typeof c.indice === 'number' ? f.cajas[c.indice] : null;
@@ -525,7 +544,7 @@ export function useCaras(o: Opciones): ApiCaras {
         }
       })();
     },
-    [aprender, seguidor]
+    [aprender, generacion, seguidor]
   );
 
   /**
@@ -542,9 +561,10 @@ export function useCaras(o: Opciones): ApiCaras {
       if (analizando.current || !motor.current?.listo()) return;
       analizando.current = true;
       ultimaMirada.current = f.ts;
+      const gen = generacion.sello();
       void (async () => {
         try {
-          const caras = await motor.current?.analizar(f.b64);
+          const caras = await analizarVigente(() => motor.current?.analizar(f.b64), () => generacion.vigente(gen) && reconoceRef.current);
           if (!caras) return;
           const r = caras.map((c) => identificar(c.vector, conocidasRef.current)).filter((x): x is Reconocida => !!x);
           respaldo.poner(r, caras.length - r.length, Date.now());
@@ -561,7 +581,7 @@ export function useCaras(o: Opciones): ApiCaras {
         }
       })();
     },
-    [respaldo]
+    [generacion, respaldo]
   );
 
   const escena = useCallback(() => {
@@ -569,8 +589,9 @@ export function useCaras(o: Opciones): ApiCaras {
     const ahora = Date.now();
     const p = seguidor.presentes(ahora, FRESCO_MS);
     // Con ML Kit, lo votado; sin él (no hay pistas), lo que vio la última foto del respaldo.
-    const q = p.r.length || p.desconocidas ? p : respaldo.presentes(ahora);
-    return frasePresentes(q.r, q.desconocidas, false, op.current.lado === 'trasera');
+    const q = p.r.length || p.desconocidas || p.pendientes ? p : respaldo.presentes(ahora);
+    // CAM-F: también quien está a la vista sin identificar todavía (o con el nombre vencido).
+    return fraseEscenaCaras(q, false, op.current.lado === 'trasera');
   }, [respaldo, seguidor]);
 
   const duenaVistaEn = useCallback(() => (reconoceRef.current ? seguidor.duenaConfirmadaEn(Date.now(), 10_000) : 0), [seguidor]);

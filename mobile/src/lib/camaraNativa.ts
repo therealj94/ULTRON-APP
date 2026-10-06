@@ -53,9 +53,19 @@ export type EventoCaras = {
   ms: number;
   /** Cuadros analizados por segundo (medido en el nativo). */
   fps: number;
+  /**
+   * Hora de CAPTURA del cuadro (ms, reloj de pared del teléfono, comparable con Date.now): el nativo la saca de
+   * `imageInfo.timestamp` del sensor y la pasa a hora de pared. Una APK anterior la fechaba después de ML Kit.
+   */
   ts: number;
   lado: 'frontal' | 'trasera';
   espejo: boolean;
+  /** Origen inmutable del cuadro (APK con el módulo nuevo): enlace de CameraX que lo produjo y número de cuadro. */
+  epoca?: number;
+  cuadro?: number;
+  /** La captura en el reloj monótono del nativo (elapsedRealtime, ms) y de dónde salió: 'sensor' o 'llegada'. */
+  tsMono?: number;
+  base?: 'sensor' | 'llegada';
 };
 
 const num = (v: unknown, d = 0) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
@@ -110,7 +120,16 @@ export function eventoValido(e: unknown): EventoCaras | null {
     ts: num(o.ts) > 0 ? num(o.ts) : Date.now(),
     lado: o.lado === 'trasera' ? 'trasera' : 'frontal',
     espejo: o.espejo !== false && o.lado !== 'trasera',
+    ...(entero(o.epoca) !== undefined ? { epoca: entero(o.epoca) } : {}),
+    ...(entero(o.cuadro) !== undefined ? { cuadro: entero(o.cuadro) } : {}),
+    ...(num(o.tsMono) > 0 ? { tsMono: num(o.tsMono) } : {}),
+    ...(o.base === 'sensor' || o.base === 'llegada' ? { base: o.base } : {}),
   };
+}
+
+/** Un entero ≥ 0 del nativo (época, número de cuadro), o undefined. */
+function entero(v: unknown): number | undefined {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.trunc(v) : undefined;
 }
 
 /**
@@ -265,7 +284,40 @@ export const guardiaAlSoltar = (e: EstadoGuardia): EstadoGuardia => ({ ...e, mon
 /** La cámara nueva falló sin cerrar la app (no abrió, sin cuadros): no bloquea días, solo la sesión. */
 export const guardiaBloqueada = (e: EstadoGuardia, ahora: number): boolean => !!e.bloqueadaHasta && e.bloqueadaHasta > ahora;
 
+/**
+ * Las escrituras de la guardia, en fila (CAM-D): «montando» y un «soltar» que llega enseguida no pueden quedar al
+ * revés en el disco, y quien espera la marca sabe si QUEDÓ escrita (`true`) o no (`false`). Antes el fallo se
+ * tragaba y la cámara nativa se montaba sin red de seguridad.
+ */
+export class FilaGuardia {
+  private fila: Promise<unknown> = Promise.resolve();
+  constructor(private escribir: (texto: string) => Promise<void>) {}
+
+  poner(e: EstadoGuardia): Promise<boolean> {
+    const texto = JSON.stringify(e);
+    const p = this.fila.then(() => this.escribir(texto)).then(
+      () => true,
+      () => false
+    );
+    this.fila = p;
+    return p;
+  }
+}
+
 /* ── el interruptor remoto ───────────────────────────────────────────────────────────────── */
+
+/**
+ * Cuándo volver a preguntar al servidor (antes: una sola vez por proceso, y el interruptor no llegaba a una sesión
+ * larga). Al volver al frente, si pasó `frenteMinMs` desde la última consulta; con la app delante, cada `ttlMs`.
+ * No promete apagado instantáneo: el peor caso es `ttlMs` (o la próxima vuelta al frente).
+ */
+export const REMOTA = { ttlMs: 10 * 60_000, frenteMinMs: 60_000 };
+
+export function tocaRefrescarRemota(o: { ahora: number; ultima: number; motivo: 'frente' | 'tic'; enCurso?: boolean }): boolean {
+  if (o.enCurso) return false;
+  const desde = o.ahora - o.ultima;
+  return o.motivo === 'frente' ? desde >= REMOTA.frenteMinMs : desde >= REMOTA.ttlMs;
+}
 
 export type ConfigCamaraRemota = { activa: boolean; ladoCorto?: number; hz?: number; fps?: number };
 

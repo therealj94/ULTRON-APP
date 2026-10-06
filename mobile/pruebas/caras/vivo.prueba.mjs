@@ -219,7 +219,7 @@ prueba('dibujo: «José · tú», «Ana · tu esposa», «Persona»; «mirando»
   ];
   const v = { escena: '', lugar: '', personas: [], objetos: [{ nombre: 'taza', donde: '', caja: { x: 0.1, y: 0.7, w: 0.1, h: 0.1 } }, { nombre: 'libro', donde: '' }], textos: [], precios: [], principal: '', cajasFiables: true, formato: 'json' };
   const m = marcasEnVivo({ pistas, mirando: true, lado: 'frontal', vista: { v, ts: 0 }, ahora: 1000 });
-  assert.deepEqual(m.map((x) => [x.tipo, x.etiqueta, x.detalle || '']), [['cara', 'José · tú', 'mirando'], ['cara', 'Persona', ''], ['objeto', 'taza', '']]);
+  assert.deepEqual(m.map((x) => [x.tipo, x.etiqueta, x.detalle || '']), [['cara', 'José · tú', 'mirando'], ['cara', 'Persona', ''], ['objeto', 'taza', 'foto · hace 1 s']]); // CAM-G: de una foto, con su edad
   assert.ok(!marcasEnVivo({ pistas, mirando: true, lado: 'trasera', vista: null, ahora: 0 }).some((x) => x.detalle), 'con la trasera nadie «mira la pantalla»');
   assert.equal(marcasEnVivo({ pistas: [], mirando: false, lado: 'frontal', vista: { v, ts: 0 }, ahora: VISTA_FRESCA_MS + 1 }).length, 0, 'objetos viejos no');
   assert.equal(marcasEnVivo({ pistas: [], mirando: false, lado: 'frontal', vista: { v: { ...v, cajasFiables: false }, ts: 0 }, ahora: 0 }).length, 0, 'cajas no fiables: no se inventan recuadros');

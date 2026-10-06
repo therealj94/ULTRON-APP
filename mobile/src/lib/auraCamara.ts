@@ -15,8 +15,12 @@ import type { ComponentType } from 'react';
 import { Platform, type ViewProps } from 'react-native';
 import type { CajaF } from './camaraNativa';
 
-export type RecorteNativo = { b64?: string; uri?: string; caja?: CajaF; w: number; h: number; ts: number; tam?: number; bytes?: number };
-export type FotoNativa = { b64?: string; uri?: string; w: number; h: number; origen?: 'captura' | 'cuadro'; bytes?: number };
+/**
+ * `ts`: hora de CAPTURA del cuadro (pared, ms). `epoca`/`cuadro`/`lado`: de qué enlace de CameraX y qué cuadro salió
+ * (APK con el módulo nuevo; una anterior no los manda) — lib/cercoCamara.ts los cerca antes de usarlos (CAM-C).
+ */
+export type RecorteNativo = { b64?: string; uri?: string; caja?: CajaF; w: number; h: number; ts: number; tam?: number; bytes?: number; epoca?: number; cuadro?: number; lado?: string };
+export type FotoNativa = { b64?: string; uri?: string; w: number; h: number; origen?: 'captura' | 'cuadro'; bytes?: number; ts?: number; epoca?: number; cuadro?: number; lado?: string };
 
 type ModuloCamara = {
   disponible(): boolean;

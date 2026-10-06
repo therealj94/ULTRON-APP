@@ -27,6 +27,7 @@ import { CapaEfectos, type ControlEfectos } from '../avatares/video/efectos/Capa
 import type { Efecto } from '../avatares/video/efectos/toques';
 import type { AvatarId } from '../avatares/catalogo';
 import type { Camara, EstadoAvatar } from './tipos';
+import type { FuenteMirada } from '../lib/miradaAvatar';
 
 type Props = {
   avatar: AvatarId;
@@ -40,6 +41,8 @@ type Props = {
    */
   voz: VozMesa;
   mirada: { x: number; y: number; activa: boolean };
+  /** CAM-A: la mirada de la cámara para que el cuerpo 3D la lea en su cuadro (lib/miradaAvatar.ts). */
+  fuenteMirada?: FuenteMirada;
   /** Las fotos de siempre: lo que se ve sin 3D. */
   respaldo: ReactNode;
   onTap: () => void;
@@ -59,7 +62,7 @@ type Props = {
   onRafaga?: (efecto: Efecto) => void;
 };
 
-export function CuerpoMesa({ avatar, camara, face, emocion, voz, mirada, respaldo, onTap, onLongPress, activo = true, senal = 0, conversando = false, ataque = null, onRafaga }: Props) {
+export function CuerpoMesa({ avatar, camara, face, emocion, voz, mirada, fuenteMirada, respaldo, onTap, onLongPress, activo = true, senal = 0, conversando = false, ataque = null, onRafaga }: Props) {
   const [lugar, setLugar] = useState({ w: 0, h: 0 });
   const [gesto, setGesto] = useState<EstadoAvatar['gesto']>(null);
   // Si el video no se puede usar en este teléfono, el cuerpo 3D (que mueve brazos y cuerpo) en vez de
@@ -119,7 +122,7 @@ export function CuerpoMesa({ avatar, camara, face, emocion, voz, mirada, respald
             <CuerpoVideo ref={video} avatar={avatar} camara={camara} estado={estado} ancho={lugar.w} alto={lugar.h} respaldo={respaldo} activo={activo} saludar onFallo={() => setSinVideo(true)} />
           </CapaEfectos>
         ) : (
-          <AvatarVivo ref={cuerpo} avatar={avatar} camara={camara} estado={estado} ancho={lugar.w} alto={lugar.h} fpsMax={60} respaldo={respaldo} activo={activo} />
+          <AvatarVivo ref={cuerpo} avatar={avatar} camara={camara} estado={estado} ancho={lugar.w} alto={lugar.h} fpsMax={60} respaldo={respaldo} activo={activo} fuenteMirada={fuenteMirada} />
         )
       ) : (
         respaldo

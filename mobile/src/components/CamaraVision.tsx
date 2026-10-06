@@ -60,6 +60,7 @@ import { miga, reportarEstado } from '../lib/reporte';
 import { idiomaActual, tr } from '../i18n';
 import { T } from '../tema';
 import { cajaEnPantalla, cajaNormal, etiquetaCara, lineaEstado, marcasEnVivo, marcoParaFoto, type Lado } from '../lib/vistaEnVivo';
+import type { VistaFechada } from '../lib/cercoCamara';
 import type { Seguidor } from '../caras/seguimiento';
 import type { FotoCaras } from '../caras/useCaras';
 import {
@@ -165,6 +166,8 @@ export type CamaraVisionProps = {
   onMotor?: (m: MotorVision) => void;
   /** La mesa piensa o habla (un turno en vuelo, su voz sonando): la cámara afloja (lib/camaraModo.ts ritmoFotos). */
   ocupada?: () => boolean;
+  /** Cuándo se movió el teléfono por última vez (ms): los objetos de una foto anterior dejan de dibujarse (CAM-G). */
+  movida?: () => number;
 };
 
 /** JPEG: el bucle (ML Kit + a veces el servidor) con poca; «qué ves» con algo más; leer con más. */
@@ -208,7 +211,8 @@ type MotorProps = {
    * dársela. Con ML Kit no se llama (las caras van por `onCaras`).
    */
   onFotoRespaldo: (ts: number) => ((b64: string) => void) | undefined;
-  onVista: (v: VistaCamara) => void;
+  /** La vista del servidor con la hora de CAPTURA de su foto y la cámara que la sacó (CAM-G). */
+  onVista: (v: VistaCamara, origen: { ts: number; lado: Lado }) => void;
 };
 
 function CamaraMotor({ activa, dormido, observar, lado, vista, capa, grabRef, onCaras, onSinDetector, onFotoRespaldo, onVista, mesaOcupada, vistaAbierta }: MotorProps) {
@@ -307,17 +311,18 @@ function CamaraMotor({ activa, dormido, observar, lado, vista, capa, grabRef, on
     let vistaAntes: VistaCamara | null = null;
     /** Una subida a la vez: con 35 s de tope y 20 s de ritmo podían ir dos juntas. */
     let subiendo = false;
-    const servidor = async (b64: string) => {
+    const servidor = async (b64: string, origen: { ts: number; lado: Lado }) => {
       subiendo = true;
       try {
         if (!b64 || b64.length < MINIMO_FOTO) return;
         avisarUnaVez('buena', `cámara: primera foto al servidor (${b64.length} car. base64)`);
         estadisticaCamara.subida();
         const r = await verCamara(b64, 'escena');
-        if (!vivo || !r?.vista) return;
+        // CAM-E: la respuesta de la cámara anterior no se aplica a la nueva.
+        if (!vivo || !r?.vista || origen.lado !== ladoRef.current) return;
         sinCambios = mismaEscena(vistaAntes, r.vista) ? sinCambios + 1 : 0;
         vistaAntes = r.vista;
-        cb.current.onVista(r.vista);
+        cb.current.onVista(r.vista, origen);
       } catch {
         /* sin vista esta vez */
       } finally {
@@ -382,7 +387,8 @@ function CamaraMotor({ activa, dormido, observar, lado, vista, capa, grabRef, on
           borrar(foto.uri);
           if (b64 && b64.length >= MINIMO_FOTO) {
             if (pedir) pedir(b64);
-            if (subir) void servidor(b64);
+            // CAM-G: fechada cuando se sacó la foto (t0), no cuando conteste el servidor.
+            if (subir) void servidor(b64, { ts: t0, lado: ladoFoto });
           }
           espera = mlOk.current ? ritmoFotos({ dormida, conPersona, vista: vistaAbiertaRef.current, ocupada, identificados }) : cadaServidor;
         }
@@ -455,6 +461,7 @@ export function CamaraVision({
   seguidor,
   caras,
   ocupada,
+  movida,
 }: CamaraVisionProps) {
   const cb = useRef({ onEscena, onGaze, onObjects, onVista, onMotor, caras, ocupada });
   cb.current = { onEscena, onGaze, onObjects, onVista, onMotor, caras, ocupada };
@@ -473,7 +480,7 @@ export function CamaraVision({
   const activa = enabled && appActiva;
   /** Lo último que se dibuja en la vista: tamaño de la foto y la vista del servidor (objetos con caja). */
   const foto = useRef<{ w: number; h: number } | null>(null);
-  const vistaServidor = useRef<{ v: VistaCamara; ts: number } | null>(null);
+  const vistaServidor = useRef<VistaFechada<VistaCamara> | null>(null);
   const [, setTic] = useState(0);
 
   const anunciarMotor = useCallback((m: MotorVision) => {
@@ -587,8 +594,8 @@ export function CamaraVision({
   // La vista del nodo de visión: objetos y comentarios siempre; la presencia solo si no hay ML Kit
   // (con ML Kit, quién está delante lo sabe el teléfono, y mejor).
   const onVistaMotor = useCallback(
-    (v: VistaCamara) => {
-      vistaServidor.current = { v, ts: Date.now() };
+    (v: VistaCamara, origen?: { ts: number; lado: Lado }) => {
+      vistaServidor.current = { v, ts: origen?.ts ?? Date.now(), ...(origen ? { lado: origen.lado } : {}) };
       const labels = etiquetasDeVista(v);
       if (labels.length) cb.current.onObjects?.(labels);
       cb.current.onVista?.(v);
@@ -617,7 +624,7 @@ export function CamaraVision({
     const en = idiomaActual() === 'en';
     const visibles = seguidor?.visibles(ahora) || [];
     const mirando = !!ultimaEscena.current?.principal?.mirando;
-    const marcas = marcasEnVivo({ pistas: visibles, mirando, lado, vista: vistaServidor.current, ahora, en });
+    const marcas = marcasEnVivo({ pistas: visibles, mirando, lado, vista: vistaServidor.current, ahora, en, movidaEn: movida?.() });
     const dims = foto.current || { w: m.w, h: m.h };
     const estado = lineaEstado({
       lado,

@@ -52,9 +52,10 @@ export type Identidad = { id: string; nombre: string; relacion: Relacion; parent
 export type Voto = { id: string | null; nombre?: string; relacion?: Relacion; parentesco?: string; distancia: number; margen?: number; unica?: true; ts: number };
 /**
  * `ext`: el trackingId de ML Kit de la cámara en vivo (modules/aura-camara), si la pista viene de ahí. `reinicio`: desde
- * cuándo valen sus votos (tras un cruce o un salto). `cruce`: se está solapando con otra.
+ * cuándo valen sus votos (tras un cruce o un salto). `cruce`: se está solapando con otra. `vencida`: cuándo venció su
+ * nombre por falta de un voto fresco (CAM-F).
  */
-export type Pista = { id: number; caja: CajaN; visto: number; nacio: number; votos: Voto[]; identidad: Identidad | null; ext?: number; reinicio?: number; cruce?: boolean };
+export type Pista = { id: number; caja: CajaN; visto: number; nacio: number; votos: Voto[]; identidad: Identidad | null; ext?: number; reinicio?: number; cruce?: boolean; vencida?: number };
 
 export function iou(a: CajaN, b: CajaN): number {
   const x1 = Math.max(a.x, b.x);
@@ -109,6 +110,7 @@ export class Seguidor {
    */
   actualizar(cajas: CajaN[], ts: number, ids?: (number | null | undefined)[]): Pista[] {
     this.pistas = this.pistas.filter((p) => ts - p.visto <= PERDIDA_MS);
+    for (const p of this.pistas) caducarIdentidad(p, ts); // CAM-F: seguir viendo la cara no renueva el nombre
     const ext = (i: number) => {
       const e = ids?.[i];
       return typeof e === 'number' && e >= 0 ? e : undefined;
@@ -196,6 +198,7 @@ export class Seguidor {
       ...p.votos,
       r ? { id: r.id, nombre: r.nombre, relacion: r.relacion, ...(r.parentesco ? { parentesco: r.parentesco } : {}), distancia: r.distancia, ...(typeof r.margen === 'number' ? { margen: r.margen } : {}), ...(r.unica ? { unica: true as const } : {}), ts } : { id: null, distancia: 1, ts },
     ].slice(-VOTOS);
+    caducarIdentidad(p, ts); // CAM-F: un nombre vencido no vuelve por los votos viejos
     const antes = p.identidad;
     p.identidad = decidirIdentidad(p.votos, antes, ts);
     const aFavor = p.identidad ? p.votos.filter((v) => v.id === p.identidad!.id).length : 0;
@@ -204,7 +207,9 @@ export class Seguidor {
 
   /** Las pistas que se ven ahora (para dibujar). */
   visibles(ts: number): Pista[] {
-    return this.pistas.filter((p) => ts - p.visto <= VIVA_MS);
+    const v = this.pistas.filter((p) => ts - p.visto <= VIVA_MS);
+    for (const p of v) caducarIdentidad(p, ts); // CAM-F
+    return v;
   }
 
   /** ¿Hay alguien a la vista sin nombre confirmado? */
@@ -230,15 +235,19 @@ export class Seguidor {
   }
 
   /**
-   * Quién está (para el cerebro): nombres confirmados y cuántas caras SIN nombre después de mirarlas al
-   * menos `CONFIRMAR` veces (a quien acaba de llegar todavía no se le dice «no te conozco»), vistas hace
-   * menos de `frescoMs`.
+   * Quién está (para el cerebro): nombres confirmados y FRESCOS (CAM-F: voto a favor hace ≤ `IDENTIDAD_FRESCA_MS`),
+   * cuántas caras SIN nombre después de mirarlas al menos `CONFIRMAR` veces (`desconocidas`) y cuántas todavía sin
+   * decidir (`pendientes`: recién llegadas, con un voto, o con el nombre vencido): ni conocidas ni «no te conozco»,
+   * pero tampoco ausentes. Vistas hace menos de `frescoMs`.
    */
-  presentes(ts: number, frescoMs = 10_000): { r: Identidad[]; desconocidas: number } {
+  presentes(ts: number, frescoMs = 10_000): { r: Identidad[]; desconocidas: number; pendientes: number } {
     const vivas = this.pistas.filter((p) => ts - p.visto <= frescoMs);
+    for (const p of vivas) caducarIdentidad(p, ts);
     const r: Identidad[] = [];
     for (const p of vivas) if (p.identidad && !r.some((x) => x.id === p.identidad!.id)) r.push(p.identidad);
-    return { r, desconocidas: vivas.filter((p) => !p.identidad && p.votos.length >= CONFIRMAR).length };
+    const sin = vivas.filter((p) => !p.identidad);
+    const desconocidas = sin.filter((p) => p.votos.length >= CONFIRMAR).length;
+    return { r, desconocidas, pendientes: sin.length - desconocidas };
   }
 
   /**
@@ -269,6 +278,35 @@ export class Seguidor {
     this.nueva = false;
   }
 }
+
+/* ── CAM-F (master §25.5): la frescura del NOMBRE, aparte de la vida de la pista ──────────────────────────────
+ * La pista vive mientras ML Kit siga viendo la cara (cada evento la renueva); el nombre, no: sin un voto a favor en
+ * `IDENTIDAD_FRESCA_MS` se vence y la pista vuelve a «pendiente» (se la vuelve a mirar; para el cerebro, sin
+ * nombre). Antes, con eventos de seguimiento llegando, un nombre seguía 40 s o más sin ningún voto fresco. */
+
+/** Sin un voto a favor en este tiempo, el nombre de una pista se vence (≤ 15 s; los repasos van cada 12 s). */
+export const IDENTIDAD_FRESCA_MS = 15_000;
+
+/** Vence el nombre de `p` si no tiene un voto a favor reciente. true si lo venció ahora. */
+export function caducarIdentidad(p: Pista, ts: number): boolean {
+  if (!p.identidad || ts - p.identidad.ultimoVoto <= IDENTIDAD_FRESCA_MS) return false;
+  p.identidad = null;
+  // Los votos viejos no lo devuelven: un voto nuevo tiene que confirmarlo otra vez.
+  p.votos = p.votos.filter((v) => ts - v.ts <= IDENTIDAD_FRESCA_MS);
+  p.vencida = ts;
+  return true;
+}
+
+export type EstadoIdentidadPista = 'pendiente' | 'desconocida' | 'probable' | 'vencida';
+
+/** El estado de identidad de una pista (§25.5): nunca «conocida» por seguir viéndola. */
+export function estadoIdentidad(p: Pista, ts: number): EstadoIdentidadPista {
+  caducarIdentidad(p, ts);
+  if (p.identidad) return 'probable';
+  if (p.votos.length >= CONFIRMAR) return 'desconocida';
+  return p.vencida !== undefined ? 'vencida' : 'pendiente';
+}
+/* ── fin CAM-F ───────────────────────────────────────────────────────────────────────────────────────────── */
 
 /**
  * ¿Toca analizar quién es? (nunca dos a la vez: `ocupado`). `mesaOcupada`: la mesa piensa o habla; con la vista cerrada
