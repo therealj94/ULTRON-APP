@@ -14,8 +14,10 @@
  *  · `cita`       — comillas en la frase («"llámame" dijo ella»): se está citando, no pidiendo.
  *  · `referido`   — discurso referido: «dijo que me llames», «me pidió que te llame», «she said call me».
  *  · `apodo`      — después del verbo viene una palabra que no es cortesía ni «ya/ahorita»: «llámame
- *                   José», «call me Alex», «call me later/maybe/crazy». Un nombre o un «después» no es
- *                   «llámame ahora».
+ *                   José», «call me Alex», «call me maybe/crazy». Un nombre no es «llámame ahora».
+ *  · `complemento`— después del verbo viene a quién, cuándo o para qué: «llámame a Beto», «llámame a las 5
+ *                   para recordarme…», «call me later». Es un pedido (otra mano lo hace: llamar a otro, un
+ *                   recordatorio con llamada), pero no el de «el avatar llama ya».
  *  · `contexto`   — hay algo esperando su «sí» (un borrador, una propuesta): un «llámame» suelto en ese momento
  *                   se lo deja al turno completo. (Con una llamada ya viva, «llámame» sí pasa: la voz contesta «Ya
  *                   estamos en llamada» y no suena otra; lo que no puede pasar es que «cancela» o «no me llames»
@@ -53,7 +55,10 @@ const COLA_PERMITIDA = new Set(
   )
 );
 
-export type MotivoNoLlamar = 'negacion' | 'cita' | 'referido' | 'apodo' | 'contexto' | 'sin_pedido';
+export type MotivoNoLlamar = 'negacion' | 'cita' | 'referido' | 'apodo' | 'complemento' | 'contexto' | 'sin_pedido';
+
+/** Lo que vuelve el pedido OTRA cosa que «llámame ya»: a quién, a qué hora, para qué («a Beto», «a las 5», «para recordarme…», "later"). */
+const COMPLEMENTO = /^(?:a|al|a la|a las|para|en|dentro|que me|y|mas tarde|despues|luego|manana|at|in|to|and|tomorrow|later|tonight|on|after|before)\b/;
 
 export type ContextoLlamada = {
   /** Algo espera su «sí» (un borrador de AU-RA, una propuesta de llamar/recordar, lo escrito en el chat). */
@@ -86,9 +91,18 @@ export function motivoParaNoLlamar(texto: string, ctx: ContextoLlamada = {}): Mo
   // Lo que sigue al pedido en su cláusula: solo cortesía o «ya/ahorita». Un nombre («José», «Alex») o un
   // tiempo («later», «mañana») no es «llámame ahora».
   const cola = c.slice(m.index + m[0].length).trim();
-  if (cola && cola.split(' ').some((w) => !COLA_PERMITIDA.has(w))) return 'apodo';
+  if (cola && cola.split(' ').some((w) => !COLA_PERMITIDA.has(w))) return COMPLEMENTO.test(cola) ? 'complemento' : 'apodo';
   if (ctx.pendiente) return 'contexto';
   return null;
+}
+
+/**
+ * ¿Es un PEDIDO de llamada (para clasificar la tarea), aunque no sea el atajo de «llámame ya»? Sí con complemento
+ * («llámame a las 5 para recordarme la junta») o con algo esperando su «sí»; no con negación, cita, referido o apodo.
+ */
+export function esPedidoDeLlamada(texto: string): boolean {
+  const m = motivoParaNoLlamar(texto);
+  return m === null || m === 'complemento';
 }
 
 /** La forma corta: ¿se puede llamar por atajo? */

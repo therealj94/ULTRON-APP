@@ -23,8 +23,8 @@
 import type { Clasificacion } from './traza';
 import { trazaActual } from './traza';
 import { consultarModelo, layaConfigurado as layaDelNodo, type RespuestaModelo } from '../laya';
-import { pideQueLaLlamen } from './intencion-llamada';
-export { motivoParaNoLlamar, pideQueLaLlamen, type MotivoNoLlamar } from './intencion-llamada';
+import { esPedidoDeLlamada } from './intencion-llamada';
+export { esPedidoDeLlamada, motivoParaNoLlamar, pideQueLaLlamen, type MotivoNoLlamar } from './intencion-llamada';
 
 export type Plataforma = 'ultron' | 'electrum';
 
@@ -117,7 +117,7 @@ const TAREA_REGLAS: Record<Plataforma, Regla[]> = {
     ['accion_taller', /\b(recuerdame|recuerda que|anota|apunta|agrega a|nueva tarea|pendientes)/],
     ['transaccion_valor', /\b(transfi|emit(e|ir|an)\b|mint\b|firma(r)? (la|el|una)|pag(a|ar|ale) (a|al|de)\b|mueve|swap|bridge)/],
     ['sistema', /\b(redeploy|redespl|mantenimiento|del sistema|como esta el sistema|los nodos|ejecuta|corre el codigo)/],
-    // «llámame» ya no es una palabra suelta (LANG-03): lo decide pideQueLaLlamen, más abajo.
+    // «llámame» ya no es una palabra suelta (LANG-03): lo decide esPedidoDeLlamada, más abajo.
     ['accion_taller', /\b(envia|manda|mandame|mandale|pdf|urgente|avisame)/],
     ['conocimiento_empresa', /\b(orden global|origen|auka|agka|ondk|mnka|junta|cadena|chain id|bloque|besu|qbft|validador|explorador|ordenscan|prospera|ciadi|zede|rfsa|aucorp|ordenex|minas? de|danli|choluteca|corpus|kiri|fundador|cofundador|lei\b|sede|gramin)/],
     ['dato_mercado', /\b(oro|plata|xau|xag|spot|onza|lempira|hnl|tipo de cambio|cotizaci|precio|dolar)/],
@@ -157,7 +157,9 @@ export function clasificarConReglas(mensaje: string, plataforma: Plataforma): Cl
   let tarea = TAREA_REGLAS[plataforma].find(([, re]) => re.test(q))?.[0] || 'conversacion';
   // «Llámame» es acción solo si lo es de verdad: «no me llames», «"llámame" dijo ella», «llámame José»
   // (apodo) o «call me Alex» siguen siendo charla (LANG-03, lib/cognitivo/intencion-llamada.ts).
-  if (plataforma === 'ultron' && tarea === 'conversacion' && pideQueLaLlamen(mensaje)) tarea = 'accion_taller';
+  // Va antes que el conocimiento de la empresa («llámame para recordarme la junta» es una acción, no «la junta»).
+  const antesDeLlamar = ['transaccion_valor', 'sistema'];
+  if (plataforma === 'ultron' && !antesDeLlamar.includes(tarea) && tarea !== 'accion_taller' && esPedidoDeLlamada(mensaje)) tarea = 'accion_taller';
   const inyeccion = INYECCION.test(q);
   let riesgo = MUEVE_VALOR.test(q) ? 90 : TOCA_SISTEMA.test(q) ? 85 : RIESGO_MEDIO.test(q) ? 40 : 10;
   if (inyeccion) riesgo = Math.max(riesgo, 85);
