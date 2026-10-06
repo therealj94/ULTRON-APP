@@ -9,10 +9,12 @@
  * Ahora el turno de la app, la voz y la mesa lo piensa un modelo de Bedrock con las manos como HERRAMIENTAS
  * de verdad (hablarConManos + lib/cerebro-manos.ts). Elegido con datos (scripts/voz/banco-cerebros.ts, con
  * el prompt real de AU-RA y los pedidos de José, la llamada del 3-oct incluida): GLM-5, 13–14 de 14, 0,8 s
- * a la primera reacción. Si no contesta a tiempo o falla antes de decir nada, el de respaldo (Kimi K2.5); si
- * tampoco, el Qwen 27B del nodo como siempre. Tres fallos seguidos lo apagan un rato
- * (lib/cognitivo/interruptor.ts). Se apaga del todo con CEREBRO_VOZ=qwen; el modelo se cambia con
- * CEREBRO_VOZ_MODELO y el respaldo con CEREBRO_VOZ_RESPALDO (variables del servidor, sin desplegar código).
+ * a la primera reacción. Si no da su primera señal a tiempo, se lanza también el de respaldo (Kimi K2.5) SIN
+ * cancelarlo y habla el primero que contesta (hablarConManos: cobertura en paralelo, orden según la salud de los
+ * últimos minutos); si ninguno, el Qwen 27B del nodo como siempre, con una frase de espera. Tres fallos seguidos lo
+ * apagan un rato (lib/cognitivo/interruptor.ts). Se apaga del todo con CEREBRO_VOZ=qwen; el modelo se cambia con
+ * CEREBRO_VOZ_MODELO, el respaldo con CEREBRO_VOZ_RESPALDO y se añaden coberturas con CEREBRO_VOZ_EXTRA (variables
+ * del servidor, sin desplegar código).
  *
  * hablarRapido, esSoloConversacion y PASO son del camino anterior (solo charla, sin manos): siguen aquí para
  * la prueba de arranque y sus pruebas.
@@ -36,12 +38,17 @@ function conf() {
     modo: String(process.env.CEREBRO_VOZ || 'nova').toLowerCase(),
     modelo: String(process.env.CEREBRO_VOZ_MODELO || MODELO_RAPIDO_OMISION),
     region: String(process.env.CEREBRO_VOZ_REGION || 'us-west-2'),
-    /** Sin la primera palabra en este rato, contesta Qwen. */
-    primeraMs: Number(process.env.CEREBRO_VOZ_PRIMERA_MS || 2500),
     /**
-     * Lo mismo para el de respaldo, que es el ÚLTIMO con herramientas: si tampoco contesta, el turno cae al Qwen
-     * del nodo, que no las tiene como tales (José, 4-oct: «[cerebro manos] no contestó; sigue Qwen: AbortError»
-     * dos veces en tres minutos, y ese turno contestó de memoria). Por omisión, una vez y media la del principal.
+     * Sin la primera señal útil del principal en este rato, se lanza también el de respaldo (sin cancelar el principal:
+     * hablarConManos). Medido el 6-oct con el pedido real (scripts/voz/latencia-voz.ts): GLM-5 da su primera señal en
+     * 2,5 s de mediana con manos y 1,8 s en charla, con una cola larga (p90 3,9–10 s); con 2 s, simulado sobre esas
+     * medidas, la primera señal con manos queda en p50 2,5 s y p90 3,4 s (en serie con 2,5 s: p50 3,4 s, p90 4,9 s).
+     */
+    primeraMs: Number(process.env.CEREBRO_VOZ_PRIMERA_MS || 2000),
+    /**
+     * La espera del de respaldo antes de lanzar el siguiente (otra vez el primero sano, un pedido nuevo). Si al final
+     * ninguno contesta, el turno cae al Qwen del nodo, que no tiene las manos como tales (José, 4-oct: «[cerebro manos]
+     * no contestó; sigue Qwen: AbortError» dos veces en tres minutos). Por omisión, una vez y media la del principal.
      */
     respaldoPrimeraMs: Number(process.env.CEREBRO_VOZ_RESPALDO_PRIMERA_MS || 0),
   };
@@ -182,7 +189,7 @@ function modeloRespaldo(): string | null {
   return !v || v === 'no' ? null : v;
 }
 
-/* ── latencia de la voz: la ruta de charla y el plazo total (José, 6-oct; auditoría VOZ-06) ─────────────────────── */
+/* ── latencia de la voz: la ruta de charla, la cobertura en paralelo y el orden por salud (José, 6-oct; VOZ-06) ───── */
 
 /**
  * LA CHARLA VA PRIMERO AL RÁPIDO. Medido el 6-oct con el pedido REAL de un turno hablado (scripts/voz/latencia-voz.ts:
@@ -200,41 +207,99 @@ function modeloCharla(): string | null {
   return !v || v === 'no' ? null : v;
 }
 /**
- * Cuánto se espera la primera señal del de charla (Kimi: p75 1,5 s con el pedido real) antes de pasar al principal.
- * CEREBRO_VOZ_CHARLA_PRIMERA_MS.
+ * Cuánto se espera la primera señal del de charla antes de lanzar también el principal (sin cancelarlo). Medido el 6-oct
+ * con el pedido real: Kimi en charla p50 1,2 s y p75 2,3 s. CEREBRO_VOZ_CHARLA_PRIMERA_MS.
  */
-export const CHARLA_PRIMERA_MS_OMISION = 2_000;
+export const CHARLA_PRIMERA_MS_OMISION = 1_500;
 /**
- * El plazo TOTAL para la primera señal útil, sumando los intentos (auditoría VOZ-06: 2,5 s + 3,75 s podían sumar 6,25 s
- * antes del Qwen del nodo). Cada intento espera lo suyo pero nunca más de lo que queda de esto. CEREBRO_VOZ_TOTAL_MS.
- * Medido el 6-oct con el servidor de verdad contra Bedrock (scripts/voz/latencia-voz.ts capturar --real): con 5 s, Kimi
- * de respaldo tras los 2,5 s de GLM-5 quedaba con 2,5 s y 3 de 8 turnos caían al Qwen del nodo (Kimi a veces pasa de
- * 2,5 s); con 6 s le quedan 3,5 s.
+ * El plazo TOTAL para la primera señal útil (auditoría VOZ-06). Con la cobertura en paralelo los intentos ya no se suman:
+ * el primero sigue vivo mientras se lanzan los demás, y a este plazo se cancelan todos y contesta el Qwen del nodo (en
+ * voz, con la frase de espera). CEREBRO_VOZ_TOTAL_MS.
  */
-export const TOTAL_PRIMERA_MS_OMISION = 6_000;
+export const TOTAL_PRIMERA_MS_OMISION = 7_000;
 /** Con menos de esto por delante no vale la pena empezar otro intento. */
 const MINIMO_INTENTO_MS = 150;
+/**
+ * Cuántos pedidos a Bedrock puede lanzar un turno como máximo, contando las coberturas. Con más que modelos en el plan, el
+ * siguiente vuelve a ser el primero sano (un pedido NUEVO: medido el 6-oct, lo lento es la cola del proveedor antes de las
+ * cabeceras, pedido a pedido, y el mismo modelo que tardó 6 s contesta el siguiente en 0,9 s). CEREBRO_VOZ_LANZAMIENTOS.
+ */
+export const LANZAMIENTOS_OMISION = 3;
+
+/**
+ * Modelos de más, al final del plan, separados por comas (CEREBRO_VOZ_EXTRA): otra cobertura de otro proveedor dentro de
+ * Bedrock, sin tocar el orden de siempre. Vacío por omisión.
+ */
+function modelosExtra(): string[] {
+  return String(process.env.CEREBRO_VOZ_EXTRA || '')
+    .split(',')
+    .map((m) => m.trim())
+    .filter((m) => !!m && m !== 'no');
+}
 
 /** Qué camino lleva el turno: `charla` (primero el rápido) o `manos` (primero el que mejor usa las herramientas). */
 export type RutaCerebro = 'charla' | 'manos';
 
-/** Lo que pasó con cada modelo probado: cuándo dio su primera señal útil o por qué se dejó (para el log y las pruebas). */
-export type IntentoManos = { modelo: string; primeraMs?: number; causa?: string };
+/**
+ * Lo que pasó con cada pedido lanzado (para el log y las pruebas): cuándo se lanzó desde el principio del turno
+ * (`desdeMs`), cuándo dio su primera señal útil contada desde que se lanzó (`primeraMs`), cuándo empezó a razonar
+ * (`razonMs`, si el modelo manda razonamiento) o por qué se dejó (`causa`).
+ */
+export type IntentoManos = { modelo: string; primeraMs?: number; causa?: string; desdeMs?: number; razonMs?: number };
 
 /** Sin un trozo nuevo durante esto, a media respuesta, se corta (el Qwen del nodo contesta si aún no se dijo nada). */
 function inactividadMs(): number {
   return Number(process.env.CEREBRO_VOZ_INACTIVIDAD_MS || 8_000);
 }
 
-/** Los modelos a probar en orden, cada uno con su espera de primera señal. */
-export function planDeModelos(ruta: RutaCerebro = 'manos'): { modelo: string; primeraMs: number }[] {
+/* ── la salud de cada modelo en los últimos minutos (el orden adaptativo) ── */
+
+/**
+ * Turnos SEGUIDOS en que un modelo no dio su primera señal útil dentro de su espera (o falló antes de decir algo) para
+ * pasarlo detrás de los sanos. Medido el 6-oct en producción: GLM-5 casi nunca la daba en 2,5 s por las tardes, y cada
+ * turno con manos esperaba esos 2,5 s antes de probar Kimi.
+ */
+export const FALLOS_PARA_DEGRADAR = 3;
+/** Un modelo degradado vuelve a su lugar si no falla durante esto (o en cuanto contesta a tiempo de segundo). */
+export const VENTANA_SALUD_MS = 5 * 60_000;
+type Salud = { fallosSeguidos: number; ultimoFallo: number };
+const salud = new Map<string, Salud>();
+
+/** Contestó a tiempo: vuelve a contar desde cero. */
+function saludExito(modelo: string): void {
+  salud.delete(modelo);
+}
+/** No dio su primera señal dentro de su espera o falló antes de decir algo (una vez por turno). */
+function saludFallo(modelo: string, ahora = Date.now()): void {
+  const s = salud.get(modelo);
+  const vigente = s && ahora - s.ultimoFallo < VENTANA_SALUD_MS;
+  salud.set(modelo, { fallosSeguidos: (vigente ? s.fallosSeguidos : 0) + 1, ultimoFallo: ahora });
+}
+/** ¿Va detrás de los sanos? */
+export function modeloDegradado(modelo: string, ahora = Date.now()): boolean {
+  const s = salud.get(modelo);
+  return !!s && s.fallosSeguidos >= FALLOS_PARA_DEGRADAR && ahora - s.ultimoFallo < VENTANA_SALUD_MS;
+}
+/** Para las pruebas: todos sanos. */
+export function reiniciarSaludModelos(): void {
+  salud.clear();
+}
+
+/**
+ * Los modelos a probar en orden, cada uno con su espera de primera señal antes de lanzar el siguiente (sin cancelar los
+ * anteriores). El orden de siempre (con `ruta: 'charla'`, primero el rápido; después el principal, el de respaldo y los
+ * extra) y los degradados detrás de los sanos. Las esperas van por PUESTO (el primero espera lo del primero), así que un
+ * principal degradado no le deja su espera corta al de respaldo ni se la quita.
+ */
+export function planDeModelos(ruta: RutaCerebro = 'manos', ahora = Date.now()): { modelo: string; primeraMs: number }[] {
   const c = conf();
   const respaldoMs = c.respaldoPrimeraMs > 0 ? c.respaldoPrimeraMs : Math.round(c.primeraMs * 1.5);
-  const respaldo = modeloRespaldo();
-  const plan = [{ modelo: c.modelo, primeraMs: c.primeraMs }, ...(respaldo ? [{ modelo: respaldo, primeraMs: respaldoMs }] : [])];
   const charla = ruta === 'charla' ? modeloCharla() : null;
-  const conCharla = charla ? [{ modelo: charla, primeraMs: Number(process.env.CEREBRO_VOZ_CHARLA_PRIMERA_MS || CHARLA_PRIMERA_MS_OMISION) }, ...plan] : plan;
-  return conCharla.filter((x, i, a) => !!x.modelo && a.findIndex((y) => y.modelo === x.modelo) === i);
+  const orden = [...(charla ? [charla] : []), c.modelo, ...(modeloRespaldo() ? [modeloRespaldo() as string] : []), ...modelosExtra()].filter((m, i, a) => !!m && a.indexOf(m) === i);
+  const esperas = [...(charla ? [Number(process.env.CEREBRO_VOZ_CHARLA_PRIMERA_MS || CHARLA_PRIMERA_MS_OMISION)] : []), c.primeraMs];
+  const espera = (i: number) => esperas[i] ?? respaldoMs;
+  const adaptado = [...orden.filter((m) => !modeloDegradado(m, ahora)), ...orden.filter((m) => modeloDegradado(m, ahora))];
+  return adaptado.map((modelo, i) => ({ modelo, primeraMs: espera(i) }));
 }
 
 /**
@@ -285,106 +350,175 @@ const FIN_NORMAL = new Set(['end_turn', 'tool_use', 'stop_sequence']);
 export type PiezaManos = { texto: string } | { herramienta: { nombre: string; input: Record<string, unknown> } } | { modelo: string } | { fin: FinManos };
 
 /**
+ * El reloj de la cascada: monótono (no salta con la hora del sistema ni con un Date simulado en las pruebas), en ms enteros.
+ */
+const reloj = () => Math.round(performance.now());
+
+/**
  * Un turno con las manos como herramientas (lib/cerebro-manos.ts), a trozos: el texto en cuanto sale y cada
- * herramienta cuando terminó de escribirse. Los modelos en orden (planDeModelos: con `ruta: 'charla'`, primero el
- * rápido), uno a la vez (nunca dos modelos pagados en paralelo); si uno no da su primera señal ÚTIL a tiempo o falla
- * antes, el siguiente, todo dentro del plazo total. De un intento que no llegó a decir algo útil no se entrega nada (ni su
- * etiqueta de ánimo): quien escucha nunca recibe una respuesta encima de otra. Con algo útil ya dicho, un corte no se
- * repite con otro modelo (se oiría dos veces): lanza. Lanza si ninguno pudo (quien llama sigue con el Qwen del nodo),
- * con `intentos` en el error. El primer evento es `{ modelo }`: cuál contestó.
+ * herramienta cuando terminó de escribirse. El primero es `{ modelo }`: cuál contestó.
+ *
+ * COBERTURA EN PARALELO (José, 6-oct: respuestas de voz de 9–38 s; en producción, la mitad de los turnos con manos
+ * esperaban 2,5 s a GLM-5, otros 3,5 s a Kimi y después 8–17 s al Qwen del nodo). Medido ese día con el pedido real
+ * (~8,7 k fichas, 25 herramientas; scripts/voz/latencia-voz.ts): ni GLM-5 ni Kimi razonan en Bedrock por omisión (cero
+ * fichas de razonamiento, la salida son solo las fichas dichas); lo lento es la cola del proveedor ANTES de las
+ * cabeceras, distinta en cada pedido (GLM-5: 0,9 s, 1,6 s, 6,2 s, 16,7 s con el mismo pedido). Por eso:
+ *   · se lanza el primero del plan; si en su espera no dio una señal útil, se lanza el siguiente SIN cancelar el
+ *     primero, y así hasta LANZAMIENTOS (con más lanzamientos que modelos, otra vez el primero sano: un pedido nuevo);
+ *   · el primero que da una señal útil (texto que no es solo la etiqueta de ánimo, o una herramienta ENTERA) GANA y los demás
+ *     se cancelan en ese instante (su stream se corta: no se genera ni se cobra una segunda respuesta). Antes de ganar,
+ *     un intento no entrega NADA (ni su etiqueta, ni una herramienta): solo el ganador habla y solo sus herramientas
+ *     llegan a quien llama, así que ninguna herramienta con efectos la piden dos modelos;
+ *   · el razonamiento (si un modelo lo manda) cuenta como VIVO para el silencio a media respuesta, nunca como útil ni
+ *     como algo que se dice;
+ *   · el orden se adapta a la salud de los últimos minutos (planDeModelos): tres turnos seguidos sin señal a tiempo y
+ *     ese modelo va detrás.
+ * Un fallo antes de la primera señal lanza el siguiente al momento. Con algo útil ya dicho, un corte no se repite con
+ * otro modelo (se oiría dos veces): lanza. Lanza también si ninguno dio señal en el plazo total, o si todos fallaron
+ * con error (quien llama sigue con el Qwen del nodo), con `intentos` en el error.
  */
 export async function* hablarConManos(mensajes: MensajeChat[], herramientas: Tool[], senal?: AbortSignal, o: { maxTokens?: number; ruta?: RutaCerebro } = {}): AsyncGenerator<PiezaManos> {
   const { system, messages } = aBedrock(mensajes);
   if (!messages.length) throw new Error('sin mensaje de la persona');
+  const t0 = reloj();
   const plan = planDeModelos(o.ruta);
   const totalMs = Number(process.env.CEREBRO_VOZ_TOTAL_MS || TOTAL_PRIMERA_MS_OMISION);
-  const t0 = Date.now();
+  const maxLanzamientos = Math.max(1, Math.round(Number(process.env.CEREBRO_VOZ_LANZAMIENTOS || LANZAMIENTOS_OMISION)) || 1);
   const intentos: IntentoManos[] = [];
   const conIntentos = (e: unknown) => Object.assign(e instanceof Error ? e : new Error(String(e)), { intentos });
   const anotarLog = () => {
     if (intentos.length > 1 || intentos.some((i) => i.causa)) {
-      console.warn(`[cerebro manos] intentos: ${intentos.map((i) => `${i.modelo} ${i.causa ? i.causa : `primera señal útil ${i.primeraMs} ms`}`).join(' → ')}`);
+      const uno = (i: IntentoManos) => `${i.modelo}${i.desdeMs ? ` (desde ${i.desdeMs} ms)` : ''} ${i.causa ? i.causa : `primera señal útil ${i.primeraMs} ms`}${i.razonMs !== undefined ? ` · razonó desde ${i.razonMs} ms` : ''}`;
+      console.warn(`[cerebro manos] intentos: ${intentos.map(uno).join(' → ')}`);
     }
   };
-  let ultimoError: unknown = null;
-  for (const paso of plan) {
-    const restante = totalMs - (Date.now() - t0);
-    if (restante < MINIMO_INTENTO_MS) {
-      intentos.push({ modelo: paso.modelo, causa: `sin probar (plazo total de ${totalMs} ms)` });
-      continue;
+
+  /** Un pedido lanzado a Bedrock y lo suyo. */
+  type Corrida = {
+    intento: IntentoManos;
+    modelo: string;
+    /** Su espera (la de su puesto): sin señal útil en ese rato, se lanza el siguiente y cuenta como lento. */
+    esperaMs: number;
+    desde: number;
+    corte: AbortController;
+    /** Ya no cuenta: perdió la carrera, se agotó el plazo o la persona interrumpió (lo que llegue se tira). */
+    cancelada: boolean;
+    terminada: boolean;
+    porQuieto: boolean;
+    quieto: ReturnType<typeof setTimeout> | null;
+    /** Lo que dijo antes de ganar: se entrega solo si gana. */
+    guardado: PiezaManos[];
+    escrito: string;
+  };
+  type Suceso = { corrida: Corrida; pieza?: PiezaManos; fin?: { motivo: string; estado: FinManos['estado'] }; error?: unknown };
+  const cola: Suceso[] = [];
+  let despertar: (() => void) | null = null;
+  const empujar = (s: Suceso) => {
+    cola.push(s);
+    despertar?.();
+  };
+  const corridas: Corrida[] = [];
+  // (con `as`: TypeScript no ve las asignaciones dentro de los cierres y lo daría por siempre null)
+  let ganador = null as Corrida | null;
+  /** Los modelos que fallaron con error en este turno (no se vuelven a lanzar) y los que ya se anotaron en la salud. */
+  const conError = new Set<string>();
+  const anotadosSalud = new Set<string>();
+  const anotarSalud = (modelo: string, bien: boolean) => {
+    if (anotadosSalud.has(modelo)) return;
+    anotadosSalud.add(modelo);
+    if (bien) saludExito(modelo);
+    else saludFallo(modelo);
+  };
+  const cancelar = (c: Corrida, causa: string) => {
+    if (c.cancelada || c.terminada) return;
+    c.cancelada = true;
+    c.intento.causa = causa;
+    if (c.quieto) clearTimeout(c.quieto);
+    c.corte.abort(new Error(causa));
+  };
+  const vigilar = (c: Corrida) => {
+    if (c.quieto) clearTimeout(c.quieto);
+    c.quieto = setTimeout(() => {
+      c.porQuieto = true;
+      c.corte.abort(new Error('se quedó callado a media respuesta'));
+    }, inactividadMs());
+  };
+  /**
+   * La primera señal útil de `c`: si nadie ganó todavía, gana (los demás se cancelan YA, antes de entregar nada suyo) y
+   * sale lo que guardaba. Síncrono: dos corridas no pueden ganar a la vez. false si ya ganó otra (esta se tira).
+   */
+  const reclamar = (c: Corrida): boolean => {
+    if (ganador === c) return true;
+    if (ganador || c.cancelada) return false;
+    ganador = c;
+    const ms = reloj() - c.desde;
+    c.intento.primeraMs = ms;
+    anotarSalud(c.modelo, ms <= c.esperaMs);
+    for (const otra of corridas) {
+      if (otra === c || otra.cancelada || otra.terminada) continue;
+      const lleva = reloj() - otra.desde;
+      // El que ya pasó su espera sin decir nada fue lento de verdad (cuenta para la salud); el recién lanzado, no se sabe.
+      if (lleva >= otra.esperaMs) anotarSalud(otra.modelo, false);
+      cancelar(otra, `sin primera señal útil en ${lleva} ms (contestó antes ${c.modelo}; cancelado)`);
     }
-    const intento: IntentoManos = { modelo: paso.modelo };
-    intentos.push(intento);
-    const tIntento = Date.now();
-    const corte = new AbortController();
-    const alCortar = () => corte.abort();
-    senal?.addEventListener('abort', alCortar, { once: true });
-    const primera = Math.min(paso.primeraMs, restante);
-    let porPlazo = false;
-    let porQuieto = false;
-    const vence = setTimeout(() => {
-      porPlazo = true;
-      corte.abort(new Error('sin primera señal a tiempo'));
-    }, primera);
-    // Ya con algo útil, un silencio largo a media respuesta también corta (auditoría de Codex del 3-oct).
-    let quieto: ReturnType<typeof setTimeout> | null = null;
-    const vigilar = () => {
-      if (quieto) clearTimeout(quieto);
-      quieto = setTimeout(() => {
-        porQuieto = true;
-        corte.abort(new Error('se quedó callado a media respuesta'));
-      }, inactividadMs());
-    };
-    let alguna = false;
-    let escrito = '';
-    /** Lo de este intento que todavía no se entrega (hasta que diga algo útil). */
-    const guardado: PiezaManos[] = [];
-    /** Primera señal útil (texto que no es solo la etiqueta, o una herramienta): desde aquí todo se entrega al momento. */
-    const util = function* (): Generator<PiezaManos> {
-      if (alguna) return;
-      alguna = true;
-      clearTimeout(vence);
-      intento.primeraMs = Date.now() - tIntento;
-      yield { modelo: paso.modelo };
-      yield* guardado.splice(0);
-    };
+    empujar({ corrida: c, pieza: { modelo: c.modelo } });
+    for (const p of c.guardado.splice(0)) empujar({ corrida: c, pieza: p });
+    return true;
+  };
+  /** Lo que dice el ganador, al momento (de otra corrida no se entrega nada). */
+  const entregar = (c: Corrida, pieza: PiezaManos) => {
+    if (ganador === c) empujar({ corrida: c, pieza });
+  };
+
+  const correr = async (c: Corrida) => {
     try {
       const r = await bedrock().send(
         new ConverseStreamCommand({
-          modelId: paso.modelo,
+          modelId: c.modelo,
           system,
           messages,
           ...(herramientas.length ? { toolConfig: { tools: herramientas } } : {}),
           inferenceConfig: { maxTokens: o.maxTokens ?? 900, temperature: 0.5 },
         }),
-        { abortSignal: corte.signal }
+        { abortSignal: c.corte.signal }
       );
       let actual: { nombre: string; json: string } | null = null;
       /** El motivo del messageStop. Sin él, el stream se cortó: no es un end_turn. */
       let motivo = '';
       for await (const ev of r.stream || []) {
+        if (c.cancelada) break;
         const err = ev.internalServerException || ev.modelStreamErrorException || ev.throttlingException || ev.validationException || ev.serviceUnavailableException;
         if (err) throw new Error(String(err.message || 'error de Bedrock'));
         if (ev.messageStop) motivo = String(ev.messageStop.stopReason || 'sin motivo');
+        const d = ev.contentBlockDelta?.delta;
+        // El razonamiento: vivo (a media respuesta no lo corta el silencio), nunca útil ni dicho.
+        if (d?.reasoningContent) {
+          c.intento.razonMs ??= reloj() - c.desde;
+          if (ganador === c) vigilar(c);
+        }
+        // Una herramienta GANA cuando llega entera (contentBlockStop), no al empezar: medido el 6-oct, GLM-5 a veces empieza
+        // una herramienta y se queda callado a media escritura 8–20 s; si eso contara como señal, cancelaba a los demás y
+        // el turno esperaba el silencio entero antes del Qwen del nodo. Mientras tanto la cobertura sigue corriendo.
         const inicio = ev.contentBlockStart?.start?.toolUse;
         if (inicio) {
-          yield* util();
-          vigilar();
+          if (ganador === c) vigilar(c);
           actual = { nombre: String(inicio.name || ''), json: '' };
         }
-        const d = ev.contentBlockDelta?.delta;
-        if (d?.toolUse?.input && actual) actual.json += d.toolUse.input;
+        if (d?.toolUse?.input && actual) {
+          actual.json += d.toolUse.input;
+          if (ganador === c) vigilar(c);
+        }
         if (d?.text) {
-          escrito += d.text;
-          // La etiqueta de ánimo sola («[EMO: neutral]») no es una respuesta: ni cuenta como primera señal ni se entrega.
-          if (alguna) {
-            vigilar();
-            yield { texto: d.text };
+          c.escrito += d.text;
+          if (ganador === c) {
+            vigilar(c);
+            entregar(c, { texto: d.text });
           } else {
-            guardado.push({ texto: d.text });
-            if (escrito.replace(/\[[^\]]*\]?/g, '').trim()) {
-              yield* util();
-              vigilar();
+            c.guardado.push({ texto: d.text });
+            // La etiqueta de ánimo sola («[EMO: neutral]») no es una respuesta: ni gana ni se entrega.
+            if (c.escrito.replace(/\[[^\]]*\]?/g, '').trim()) {
+              if (!reclamar(c)) break;
+              vigilar(c);
             }
           }
         }
@@ -395,51 +529,177 @@ export async function* hablarConManos(mensajes: MensajeChat[], herramientas: Too
           } catch {
             input = {};
           }
-          yield* util();
-          yield { herramienta: { nombre: actual.nombre, input } };
+          if (!reclamar(c)) break;
+          entregar(c, { herramienta: { nombre: actual.nombre, input } });
           actual = null;
         }
       }
-      // Se acabó el stream sin messageStop: se cortó (antes se anotaba como un end_turn). Antes de la primera
-      // señal, pasa al siguiente; con algo ya dicho, quien llama lo cierra como parcial.
+      if (c.cancelada) return;
+      // Se acabó el stream sin messageStop: se cortó. Antes de la primera señal es un fallo de este intento; con algo
+      // ya dicho, quien llama lo cierra como parcial.
       if (!motivo) throw new Error('Bedrock cerró el stream sin messageStop');
       const estado: FinManos['estado'] = FIN_NORMAL.has(motivo) ? 'completo' : 'truncado';
-      // Truncado sin haber dicho nada útil (solo la etiqueta de ánimo, o una herramienta a medio escribir): como
-      // un fallo antes de la primera frase, prueba el siguiente.
-      if (estado === 'truncado' && !alguna) throw new Error(`Bedrock terminó sin contestar (${motivo})`);
-      // Terminó bien pero sin nada útil (solo la etiqueta): lo poco que dijo sale igual; quien llama decide.
-      if (!alguna) {
-        yield { modelo: paso.modelo };
-        yield* guardado.splice(0);
-      }
-      anotarExitoRapido();
-      anotarLog();
-      yield { fin: { motivo, estado, ...(intentos.length > 1 ? { intentos } : {}) } };
-      return;
-    } catch (e: any) {
-      ultimoError = e;
-      intento.causa = senal?.aborted
-        ? 'la persona interrumpió'
-        : porPlazo
-          ? `sin primera señal útil en ${primera} ms`
-          : porQuieto
-            ? 'se quedó callado a media respuesta'
-            : `error: ${String(e?.name || '')} ${String(e?.message || e).slice(0, 120)}`.trim();
-      // Ya dijo algo: no se repite con otro (se oiría dos veces). Quien llama se queda con lo dicho.
-      if (alguna || senal?.aborted) {
-        if (!senal?.aborted) anotarFalloRapido();
-        anotarLog();
-        throw conIntentos(e);
-      }
+      // Truncado sin haber dicho nada útil (solo la etiqueta, o una herramienta a medio escribir): falló este intento.
+      if (estado === 'truncado' && ganador !== c) throw new Error(`Bedrock terminó sin contestar (${motivo})`);
+      // Terminó bien pero sin nada útil (solo «[EMO: neutral]», o vacío): mientras otra corrida siga viva, eso es un fallo
+      // de ESTA (y de la salud de su modelo), no una respuesta: antes ganaba y cortaba a la otra, que sí iba a contestar
+      // (revisión del 6-oct). Solo si es la última viva lo poco que dijo sale igual; quien llama decide.
+      if (ganador !== c && corridas.some((otra) => otra !== c && !otra.cancelada && !otra.terminada)) throw new Error(`Bedrock terminó sin nada útil (${motivo}) con otra corrida viva`);
+      if (ganador !== c && !reclamar(c)) return;
+      empujar({ corrida: c, fin: { motivo, estado } });
+    } catch (e) {
+      if (!c.cancelada) empujar({ corrida: c, error: e });
     } finally {
-      clearTimeout(vence);
-      if (quieto) clearTimeout(quieto);
-      senal?.removeEventListener('abort', alCortar);
+      c.terminada = true;
+      if (c.quieto) clearTimeout(c.quieto);
+    }
+  };
+
+  let lanzados = 0;
+  let ultimoError: unknown = null;
+  /** Cuándo toca lanzar el siguiente (sin señal útil hasta entonces). */
+  let proximoEn = t0;
+  /**
+   * Cuándo se rinde: el plazo total (las esperas solo dicen cuándo lanzar el siguiente; el que ya va en vuelo sigue
+   * hasta aquí, porque lo que viene después es el Qwen del nodo, 8–17 s). Antes, si todos fallaron con error.
+   */
+  const limite = t0 + totalMs;
+  /** El siguiente modelo a lanzar: el plan en orden y, con lanzamientos de sobra, otra vez desde el primero (sin los que fallaron con error). */
+  const siguientePaso = (): { modelo: string; primeraMs: number } | null => {
+    if (lanzados >= maxLanzamientos) return null;
+    if (lanzados < plan.length) return plan[lanzados];
+    const vivos = plan.filter((p) => !conError.has(p.modelo));
+    if (!vivos.length) return null;
+    const p = vivos[(lanzados - plan.length) % vivos.length];
+    return { modelo: p.modelo, primeraMs: plan[Math.min(lanzados, plan.length - 1)].primeraMs };
+  };
+  const lanzar = (paso: { modelo: string; primeraMs: number }) => {
+    const ahora = reloj();
+    const intento: IntentoManos = { modelo: paso.modelo, ...(ahora - t0 > 0 && lanzados > 0 ? { desdeMs: ahora - t0 } : {}) };
+    intentos.push(intento);
+    const corte = new AbortController();
+    const c: Corrida = { intento, modelo: paso.modelo, esperaMs: paso.primeraMs, desde: ahora, corte, cancelada: false, terminada: false, porQuieto: false, quieto: null, guardado: [], escrito: '' };
+    corridas.push(c);
+    lanzados++;
+    proximoEn = ahora + paso.primeraMs;
+    void correr(c);
+  };
+  /** Ya se cedió una vuelta al bucle de eventos antes de este lanzamiento (ver el empate, abajo). */
+  let cedido = false;
+  const alInterrumpir = () => despertar?.();
+  senal?.addEventListener('abort', alInterrumpir, { once: true });
+  const cancelarTodas = (causa: (c: Corrida) => string) => {
+    for (const c of corridas) cancelar(c, causa(c));
+  };
+  try {
+    for (;;) {
+      if (senal?.aborted) {
+        cancelarTodas(() => 'la persona interrumpió');
+        anotarLog();
+        throw conIntentos(senal.reason instanceof Error ? senal.reason : new Error('la persona interrumpió'));
+      }
+      const s = cola.shift();
+      if (s) {
+        const c = s.corrida;
+        if (s.pieza) {
+          if (c === ganador) yield s.pieza;
+          continue;
+        }
+        if (s.fin) {
+          if (c !== ganador) continue;
+          anotarExitoRapido();
+          anotarLog();
+          yield { fin: { ...s.fin, ...(intentos.length > 1 ? { intentos } : {}) } };
+          return;
+        }
+        // Un error de una corrida que sigue contando.
+        ultimoError = s.error;
+        const e: any = s.error;
+        c.intento.causa = c.porQuieto ? 'se quedó callado a media respuesta' : `error: ${String(e?.name || '')} ${String(e?.message || e).slice(0, 120)}`.trim();
+        if (c === ganador) {
+          // Ya dijo algo: no se repite con otro (se oiría dos veces). Quien llama se queda con lo dicho.
+          cancelarTodas((x) => `cancelado (${c.modelo} ya contestaba)`);
+          anotarFalloRapido();
+          anotarLog();
+          throw conIntentos(e);
+        }
+        conError.add(c.modelo);
+        anotarSalud(c.modelo, false);
+        // Falló antes de su primera señal: el siguiente sale ya, sin esperar su turno.
+        proximoEn = Math.min(proximoEn, reloj());
+        continue;
+      }
+      if (ganador) {
+        // Esperando lo que siga del ganador.
+        await new Promise<void>((r) => (despertar = r));
+        despertar = null;
+        continue;
+      }
+      const ahora = reloj();
+      const vivas = corridas.filter((c) => !c.terminada && !c.cancelada);
+      if (ahora >= proximoEn && ahora < limite) {
+        const paso = siguientePaso();
+        if (paso && t0 + totalMs - ahora >= MINIMO_INTENTO_MS) {
+          // Empate entre la primera señal de una corrida viva y el vencimiento de su espera (los dos en la misma vuelta
+          // del bucle de eventos): antes se lanzaba la cobertura y se cancelaba al instante (un pedido pagado de más).
+          // Se dejan correr los sucesos pendientes una vez (setImmediate: después de los relojes y la E/S de esta
+          // vuelta) y se vuelve a mirar; si nada llegó, se lanza.
+          if (vivas.length && !cedido) {
+            cedido = true;
+            await new Promise<void>((r) => setImmediate(r));
+            continue;
+          }
+          cedido = false;
+          lanzar(paso);
+          continue;
+        }
+        // Ya no hay a quién lanzar (o no queda tiempo): se espera a los vivos hasta el plazo total.
+        proximoEn = Infinity;
+      }
+      if (ahora >= limite || (!vivas.length && proximoEn === Infinity)) {
+        cancelarTodas((c) => `sin primera señal útil en ${reloj() - c.desde} ms`);
+        // Lento de verdad (agotó su espera sin decir nada): cuenta para la salud.
+        for (const c of corridas) if (!c.intento.primeraMs && reloj() - c.desde >= c.esperaMs) anotarSalud(c.modelo, false);
+        for (const p of plan.slice(lanzados)) intentos.push({ modelo: p.modelo, causa: `sin probar (plazo total de ${totalMs} ms)` });
+        anotarFalloRapido();
+        anotarLog();
+        throw conIntentos(ultimoError instanceof Error && !vivas.length ? ultimoError : new Error(`el cerebro con manos no dio su primera señal útil en ${reloj() - t0} ms`));
+      }
+      const hasta = Math.min(proximoEn, limite) - ahora;
+      await new Promise<void>((r) => {
+        const t = setTimeout(r, Math.max(0, hasta));
+        despertar = () => {
+          clearTimeout(t);
+          r();
+        };
+      });
+      despertar = null;
+    }
+  } finally {
+    senal?.removeEventListener('abort', alInterrumpir);
+    // Quien llama dejó de leer (o terminó): nada queda corriendo ni pagándose.
+    cancelarTodas(() => 'el turno ya no escucha');
+    if (ganador) {
+      const g: Corrida = ganador;
+      if (g.quieto) clearTimeout(g.quieto);
+      if (!g.terminada) g.corte.abort(new Error('el turno ya no escucha'));
     }
   }
-  if (!senal?.aborted) anotarFalloRapido();
-  anotarLog();
-  throw conIntentos(ultimoError instanceof Error ? ultimoError : new Error('el cerebro con manos no contestó'));
+}
+
+/**
+ * LA FRASE DE ESPERA HONESTA. Cuando ningún modelo de Bedrock dio su primera señal y el turno hablado pasa al Qwen del
+ * nodo (8–17 s a la primera ficha en producción el 6-oct), se le dice la verdad en vez de dejarla en silencio después del
+ * «déjame ver» del teléfono. Sin género (la dicen AU-RA, Claudio y el guardián) y sin prometer nada que no pase.
+ */
+const ESPERA_LENTA = {
+  es: ['Perdona la demora, hoy me está costando contestar rápido; dame unos segundos.', 'Se me está tardando la respuesta; dame unos segundos más, ya casi.'],
+  en: ["Sorry for the wait, I'm slower than usual right now; give me a few seconds.", "My answer is taking longer than it should; give me a few more seconds."],
+};
+let vueltaEspera = 0;
+export function fraseDeEsperaLenta(idioma: 'es' | 'en' = 'es'): string {
+  const lista = ESPERA_LENTA[idioma === 'en' ? 'en' : 'es'];
+  return lista[vueltaEspera++ % lista.length];
 }
 
 /** Prueba de arranque (una sola, barata): ¿contesta Bedrock con estas credenciales? Para los logs. */

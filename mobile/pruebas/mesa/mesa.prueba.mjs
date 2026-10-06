@@ -518,11 +518,19 @@ prueba('turno sin respuesta: la mesa deja la miga y la MANDA ya en los dos camin
   for (const m of src.matchAll(/migaFalloTurno\(\{[^}]*\}\)/g)) assert.ok(!/\bcmd\b|\bbase\b|message/.test(m[0]), m[0]);
 });
 
-prueba('micrófono silenciado de otra sesión (José, 5-oct): se guarda, pero al abrir la mesa se DICE y queda en las migas', () => {
+// El 5-oct se decidió guardar el silencio entre sesiones y DECIRLO al arrancar; el 6-oct (APK 5.5.0) José lo siguió
+// viviendo como «a veces el micrófono falla» (migas: «arranca silenciado (la persona lo dejó así en otra sesión)»). La
+// 5.6.0 lo dejó valer solo en su proceso, y si Android mataba la app el micrófono volvía ABIERTO. Ahora el silencio
+// caduca por tiempo (lib/silencioMesa.ts, 8 h; tests/microfono-sesion-movil.test.ts): vigente, se queda y se DICE;
+// vencido, abre y también se dice; los dos quedan en las migas.
+prueba('micrófono silenciado (José, 5 y 6-oct): vale 8 h aunque Android cierre la app; la mesa lo DICE y queda en las migas', () => {
   const src = fs.readFileSync(path.join(RAIZ, 'mobile/src/screens/DeskScreen.tsx'), 'utf8');
-  assert.match(src, /micMutedRef\.current = s\.micMuted;/, 'el silencio guardado se respeta (una recarga no abre sola el micrófono)');
-  assert.match(src, /await say\(saludoArranque\([^)]*micSilenciado: micOk && s\.micMuted/, 'el saludo lo dice');
-  assert.match(src, /miga\('micrófono: arranca silenciado/, 'y queda en las migas');
+  assert.match(src, /const arranqueMic = arranqueDelMicrofono\(s, Date\.now\(\), await silencioHeredado\(\)\);/, 'el silencio guardado vale por su hora (no por el proceso)');
+  assert.match(src, /micMutedRef\.current = silenciada;/);
+  assert.match(src, /const textoSaludo = saludoArranque\(conPresentacion, \{ micSilenciado: micOk && silenciada, micReabierto, en: [^}]+\}\);/, 'el saludo lo dice (silenciado o vencido)');
+  assert.match(src, /await say\(textoSaludo, 'HAPPY'/);
+  assert.match(src, /if \(micOk && \(silenciada \|\| micReabierto\) && !sonaraSaludo\) logUltron\(textoSaludo\);/, 'si el saludo no suena, el aviso queda en el chat');
+  assert.match(src, /const migaMic = micOk \? migaArranqueMic\(arranqueMic\) : '';\s*if \(migaMic\) miga\(migaMic\);/, 'y queda en las migas');
   assert.match(src, /silenciadoPorPersona: \(\) => micMutedRef\.current/, 'la miga del oído distingue el silencio de la persona del oído sin abrir');
 });
 
@@ -612,6 +620,27 @@ prueba('voz (auditoría 6-oct): la traza mide cuando el reproductor confirma; el
   assert.match(catchStream, /if \(speaker\) \(speaker as StreamSpeaker\)\.cancel\(\);/);
   assert.match(cuerpo, /^\s+idTurno,$/m, 'el idTurno va en base');
   assert.match(cuerpo.slice(cuerpo.indexOf('// 2) JSON clásico')), /let out = await turno\(base, genTurno\);/);
+});
+
+prueba('«¿qué ves?» no espera al servidor: vista fresca al instante o la foto en el turno; «Lo que vi» no se queda congelado', () => {
+  // José, 6-oct: «toma como una foto de primera y se traba, queda pensando y hasta tocar la pantalla se cierra»
+  // (esc 28828: el turno esperó 28,8 s a /api/vision/analyze con «Lo que vi» mostrando la foto quieta).
+  const src = fs.readFileSync(path.join(RAIZ, 'mobile/src/screens/DeskScreen.tsx'), 'utf8');
+  const ini = src.indexOf('const whatDoYouSee = useCallback(');
+  const fn = src.slice(ini, src.indexOf('\n  }, [', ini));
+  assert.ok(ini > 0 && fn.length > 200, 'whatDoYouSee está');
+  assert.doesNotMatch(fn, /await verCamara\(/, 'el turno no espera la respuesta del servidor');
+  assert.match(fn, /vistaParaTurno\(/, 'pasa por lib/vistaTurno.ts (tope de ~1,5 s)');
+  assert.match(fn, /vt\.tarde\.then\(/, 'lo que vuelva tarde se aplica después');
+  assert.match(fn, /askBrain\(pedido, \{ image: /, 'sin vista a tiempo, la foto va en el turno');
+  // El visor con «mirando» se cierra o se completa cuando vuelve el pedido (nada de una foto congelada hasta tocarla).
+  assert.match(fn, /setVisor\(\(v\) => \(v && v\.foto === foto \? \(r\?\.vista \? \{ foto, vista: r\.vista, foco, mirando: false \} : null\) : v\)\)/);
+  // Las cámaras guardan la vista fresca y la sueltan al apagarse.
+  for (const f of ['CamaraVivo.tsx', 'CamaraVision.tsx']) {
+    const c = fs.readFileSync(path.join(RAIZ, 'mobile/src/components', f), 'utf8');
+    assert.match(c, /vistaFresca\.guardar\(/, `${f} guarda la vista fresca`);
+    assert.match(c, /vistaFresca\.invalidar\(\)/, `${f} la suelta`);
+  }
 });
 
 for (const [nombre, f] of pruebas) {

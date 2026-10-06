@@ -1675,6 +1675,9 @@ prueba('micrófono (José, 5-oct: «hay algo no está bien»): la miga dice POR 
   const es = dueno.saludoArranque('Hola, José.', { micSilenciado: true, en: false });
   assert.match(es, /^Hola, José\. .*micrófono.*silencio.*toca/i);
   assert.match(dueno.saludoArranque('Hi, José.', { micSilenciado: true, en: true }), /^Hi, José\. .*microphone.*muted.*tap/i);
+  // El silencio que venció (más de 8 h) tampoco se abre a escondidas: el saludo dice que ya oye y cómo silenciarlo.
+  assert.match(dueno.saludoArranque('Hola, José.', { micSilenciado: false, micReabierto: true, en: false }), /^Hola, José\. .*silencio.*venció.*te oigo.*Toca el micrófono para silenciarlo/);
+  assert.match(dueno.saludoArranque('Hi, José.', { micSilenciado: false, micReabierto: true, en: true }), /^Hi, José\. .*expired.*hear you.*Tap the microphone to mute/);
 });
 
 prueba('al colgar la llamada del avatar, la mesa reabre su oído cuando la voz soltó el audio (Android: el stop tardío lo mataba)', async () => {

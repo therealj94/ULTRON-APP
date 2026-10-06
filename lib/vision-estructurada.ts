@@ -93,12 +93,74 @@ const PRIORIDAD: Record<FocoVision, string> = {
   que_es: 'Prioridad: el objeto que la persona sostiene o acerca a la cámara: qué es, marca o modelo si se lee y para qué sirve, en "principal".',
 };
 
-/** El pedido al ojo: JSON con el formato de arriba y la prioridad de la pregunta. */
+/** El pedido largo, con cajas (`box_2d`): para Gemini, que sabe señalar y no corta el pedido. */
 export function promptEstructurado(foco: FocoVision = 'escena'): string {
   return `Mira la foto y responde SOLO con JSON válido, sin texto alrededor ni \`\`\`, en español, con esta forma:\n${FORMATO}\n${PRIORIDAD[foco]}\n${REGLAS}`;
 }
 
+/**
+ * Lo que el nodo del ojo (ultron-manos, POST /ver) le pasa al modelo: corta el pedido a 500 caracteres
+ * (`pregunta.slice(0, 500)`). El pedido largo (~1000) llegaba partido en `"prec` —sin la prioridad ni las
+ * reglas— y gemma-3-4b contestaba JSON con sangría y cajas que el tope de 400 fichas del nodo cortaba a
+ * medias, en 8-20 s (medido el 6-oct con fotos sintéticas de 1280×960). El corto pide JSON en una línea, sin
+ * cajas (las de ese modelo no se dibujan: cajasConfiablesDe) y con `donde` en palabras: 2-5 s en el mismo
+ * nodo y ~2 s en Bedrock. Las pruebas exigen que quepa (tests/vision-estructurada.test.ts).
+ */
+export const TOPE_PEDIDO_OJO = 500;
+
+const FORMATO_CORTO =
+  '{"escena":"frase de qué pasa","lugar":"tipo de lugar","personas":[{"que_hace":"acción","donde":"izquierda|centro|derecha"}],' +
+  '"principal":"lo que acercan a la cámara","objetos":[{"nombre":"objeto","donde":"izquierda|centro|derecha"}],' +
+  '"texto":["texto leído"],"precios":["precio con moneda"]}';
+
+const PRIORIDAD_CORTA: Record<FocoVision, string> = {
+  escena: 'Prioriza qué pasa y los objetos.',
+  leer: 'Prioriza leer todo el texto en orden.',
+  precio: 'Prioriza precios exactos con su moneda.',
+  que_es: 'Prioriza qué es lo que acercan (marca si se lee).',
+};
+
+/** El pedido corto (nodo del ojo y Bedrock): cabe en TOPE_PEDIDO_OJO y pide una respuesta corta. */
+export function promptCompacto(foco: FocoVision = 'escena'): string {
+  return `Responde solo JSON compacto en una línea, sin \`\`\`, en español: ${FORMATO_CORTO}\nMáx 6 objetos. Sin nombres de personas. Copia el texto tal cual. Si no hay algo: "" o []. ${PRIORIDAD_CORTA[foco]}`;
+}
+
 /* ── parseo ─────────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Lo que los modelos chicos le ponen a un JSON y JSON.parse no acepta: comentarios (`// izquierda`, `/* … *\/`)
+ * y comas colgando antes de `}` o `]`. Fuera de las cadenas, nada más; el texto leído no se toca.
+ */
+function jsonSinAdornos(s: string): string {
+  let out = '';
+  let enCadena = false;
+  let escape = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (enCadena) {
+      out += c;
+      if (escape) escape = false;
+      else if (c === '\\') escape = true;
+      else if (c === '"') enCadena = false;
+      continue;
+    }
+    if (c === '"') {
+      enCadena = true;
+      out += c;
+    } else if (c === '/' && s[i + 1] === '/') {
+      while (i < s.length && s[i] !== '\n') i++;
+      out += '\n';
+    } else if (c === '/' && s[i + 1] === '*') {
+      const fin = s.indexOf('*/', i + 2);
+      i = fin < 0 ? s.length : fin + 1;
+    } else if (c === ',') {
+      let j = i + 1;
+      while (j < s.length && /\s/.test(s[j])) j++;
+      if (s[j] !== '}' && s[j] !== ']') out += c;
+    } else out += c;
+  }
+  return out;
+}
 
 /**
  * Recorta y repara un JSON que llegó entre ``` o cortado por el tope de caracteres: cierra la cadena
@@ -108,7 +170,7 @@ export function repararJson(crudo: string): unknown {
   const s0 = String(crudo || '').replace(/```(?:json)?/gi, '');
   const ini = s0.indexOf('{');
   if (ini < 0) return null;
-  const s = s0.slice(ini);
+  const s = jsonSinAdornos(s0.slice(ini));
   try {
     return JSON.parse(s.slice(0, s.lastIndexOf('}') + 1));
   } catch {
@@ -246,17 +308,70 @@ function vistaDeTexto(texto: string): VistaEstructurada {
   return { escena: esLista ? '' : t.slice(0, 1500), lugar: '', personas, objetos, textos, precios, principal: '', cajasFiables: false, formato: 'texto' };
 }
 
+/** Las claves que hacen de un objeto una vista (en español, como se piden, o en inglés, como a veces salen). */
+const CLAVES_VISTA = ['escena', 'scene', 'descripcion', 'description', 'lugar', 'place', 'location', 'personas', 'people', 'persons', 'objetos', 'objects', 'items', 'texto', 'textos', 'text', 'precios', 'prices', 'principal', 'main'];
+
+/**
+ * El objeto que trae la vista: el de arriba, el primero de una lista (`[{…}]`) o el de dentro de un envoltorio
+ * (`{"vista":{…}}`, `{"json":{…}}`, `{"response":{…}}`).
+ */
+function objetoDeVista(j: unknown): Record<string, unknown> | null {
+  const tieneClaves = (o: any) => !!o && typeof o === 'object' && !Array.isArray(o) && CLAVES_VISTA.some((k) => k in o);
+  if (Array.isArray(j)) return objetoDeVista(j.find((x) => x && typeof x === 'object'));
+  if (!j || typeof j !== 'object') return null;
+  if (tieneClaves(j)) return j as Record<string, unknown>;
+  const dentro = Object.values(j as Record<string, unknown>).find(tieneClaves);
+  return (dentro as Record<string, unknown>) || (j as Record<string, unknown>);
+}
+
+/** Todas las cadenas de un JSON (para rescatar una descripción con claves que no se pidieron). */
+function cadenasDe(v: unknown, out: string[] = []): string[] {
+  if (typeof v === 'string') {
+    if (v.trim()) out.push(v.trim());
+  } else if (Array.isArray(v)) v.forEach((x) => cadenasDe(x, out));
+  else if (v && typeof v === 'object') Object.values(v).forEach((x) => cadenasDe(x, out));
+  return out;
+}
+
+const POSICION = /^(izquierda|derecha|centro|arriba|abajo|left|right|center|centre)$/;
+
+/** `donde` en palabras de la app: minúsculas y en español («Left» → «izquierda»). */
+function dondeLimpio(v: unknown): string {
+  const d = limpio(v, 30).toLowerCase();
+  return ({ left: 'izquierda', right: 'derecha', center: 'centro', centre: 'centro' } as Record<string, string>)[d] || d;
+}
+
+/** Un campo que debía ser frase y vino como lista (gemma a veces pone `"principal":["…","…"]`). */
+const frase = (v: unknown, max: number) => limpio(Array.isArray(v) ? v.filter((x) => typeof x === 'string').join('; ') : v, max);
+
 /**
  * El texto del ojo → vista. `cajasConfiables`: el ojo que contestó sabe dibujar cajas (Gemini); sin
  * eso, las cajas se guardan para decir «a la izquierda» pero la app no las pinta.
+ *
+ * Si hay JSON pero no trae nada de una vista (claves inventadas, todo vacío) y alrededor o dentro hay una
+ * descripción, se rescata como prosa (vistaDeTexto): mejor eso que «no pude ver».
  */
 export function parsearVista(texto: string, opts: { cajasConfiables?: boolean } = {}): VistaEstructurada {
-  const j = repararJson(texto) as any;
-  if (!j || typeof j !== 'object' || Array.isArray(j)) return vistaDeTexto(texto);
+  const crudo = repararJson(texto);
+  const j = objetoDeVista(crudo) as any;
+  if (!j) return vistaDeTexto(texto);
+  const v = vistaDeObjeto(j, opts);
+  if (!vistaVacia(v)) return v;
+  // Un error del proveedor en JSON ({"error":…}, {"message":…}) no es una descripción: vacía, y que mire otro ojo.
+  if ('error' in j || 'detail' in j || ('message' in j && Object.keys(j).length <= 3)) return v;
+  // Lo que quede de prosa: el texto sin el bloque JSON, o las cadenas del JSON si las claves no eran las pedidas.
+  const ini = String(texto).indexOf('{');
+  const fuera = `${String(texto).slice(0, Math.max(0, ini))} ${String(texto).slice(String(texto).lastIndexOf('}') + 1)}`.replace(/```(?:json)?/gi, '').trim();
+  const dentro = CLAVES_VISTA.some((k) => k in j) ? '' : cadenasDe(crudo).join('. ');
+  const prosa = [fuera, dentro].filter(Boolean).join(' ');
+  return (prosa.match(/\p{L}/gu) || []).length >= 12 ? vistaDeTexto(prosa) : v;
+}
+
+function vistaDeObjeto(j: any, opts: { cajasConfiables?: boolean }): VistaEstructurada {
   const lista = (v: unknown): any[] => (Array.isArray(v) ? v : []);
   const vistos = new Set<string>();
   const objetos: ObjetoVisto[] = [];
-  for (const o of lista(j.objetos ?? j.objects)) {
+  for (const o of lista(j.objetos ?? j.objects ?? j.items)) {
     const nombre = limpio(typeof o === 'string' ? o : o?.nombre ?? o?.name ?? o?.label, 40).toLowerCase();
     const k = sinTildes(nombre);
     if (nombre.length < 2 || NO_OBJETO.test(k)) continue;
@@ -265,12 +380,14 @@ export function parsearVista(texto: string, opts: { cajasConfiables?: boolean } 
     const clave = caja ? `${k}@${Math.round((caja.x + caja.w / 2) * 10)},${Math.round((caja.y + caja.h / 2) * 10)}` : k;
     if (vistos.has(clave) || (!caja && [...vistos].some((v) => v.startsWith(`${k}@`)))) continue;
     vistos.add(clave);
-    objetos.push({ nombre, donde: dondeDeCaja(caja) || limpio(o?.donde, 30), ...(caja ? { caja } : {}) });
+    objetos.push({ nombre, donde: dondeDeCaja(caja) || dondeLimpio(o?.donde ?? o?.position ?? o?.location), ...(caja ? { caja } : {}) });
     if (objetos.length >= MAX_OBJETOS) break;
   }
   const textos: TextoVisto[] = [];
   const textosVistos = new Set<string>();
-  for (const t of lista(j.texto ?? j.textos ?? j.text)) {
+  // Una entrada por línea: gemma a veces mete todo lo leído en una sola cadena con saltos de línea.
+  const lineasDeTexto = lista(j.texto ?? j.textos ?? j.text).flatMap((t) => (typeof t === 'string' ? t.split(/\n+/) : [t]));
+  for (const t of lineasDeTexto) {
     const s = limpio(typeof t === 'string' ? t : t?.texto ?? t?.text, 240);
     const k = sinTildes(s);
     if (s.length < 1 || textosVistos.has(k)) continue;
@@ -281,26 +398,52 @@ export function parsearVista(texto: string, opts: { cajasConfiables?: boolean } 
   }
   // `texto` como cadena suelta (algunos modelos no hacen la lista).
   if (!textos.length && typeof j.texto === 'string' && limpio(j.texto)) textos.push({ texto: limpio(j.texto, 600) });
-  const personas: PersonaVista[] = lista(j.personas ?? j.people)
+  const personas: PersonaVista[] = lista(j.personas ?? j.people ?? j.persons)
     .slice(0, 6)
-    .map((p) => ({ que_hace: limpio(typeof p === 'string' ? p : p?.que_hace ?? p?.accion ?? p?.action, 80), donde: dondeDeCaja(cajaDe(p)) || limpio(p?.donde, 30) }));
+    .map((p) => ({ que_hace: limpio(typeof p === 'string' ? p : p?.que_hace ?? p?.accion ?? p?.action, 80), donde: dondeDeCaja(cajaDe(p)) || dondeLimpio(p?.donde ?? p?.position) }));
   // Un número suelto («personas»: 2) también vale.
   if (!personas.length && Number.isFinite(num(j.personas)) && num(j.personas) > 0) {
     for (let i = 0; i < Math.min(6, num(j.personas)); i++) personas.push({ que_hace: '', donde: '' });
   }
   const precios = [...new Set(lista(j.precios ?? j.prices).map((p) => limpio(typeof p === 'string' ? p : p?.precio ?? p?.texto, 60)).filter(Boolean))].slice(0, MAX_PRECIOS);
   const cajas = [...objetos, ...textos].map((o) => o.caja).filter((c): c is Caja => !!c);
+  // «"lugar":"izquierda"»: el modelo confundió el campo; una posición no es un lugar.
+  const lugar = frase(j.lugar ?? j.place ?? j.location, 60);
   return {
-    escena: limpio(j.escena ?? j.scene ?? j.descripcion, 400),
-    lugar: limpio(j.lugar ?? j.place, 60),
+    escena: frase(j.escena ?? j.scene ?? j.descripcion ?? j.description, 400),
+    lugar: POSICION.test(sinTildes(lugar)) ? '' : lugar,
     personas,
     objetos,
     textos,
     precios,
-    principal: limpio(j.principal ?? j.main, 200),
+    // «"principal":"persona"»: la persona no es lo que acerca a la cámara (va en `personas`).
+    principal: ((p) => (NO_OBJETO.test(sinTildes(p).toLowerCase()) ? '' : p))(frase(j.principal ?? j.main, 200)),
     cajasFiables: !!opts.cajasConfiables && cajasCreibles(cajas),
     formato: 'json',
   };
+}
+
+/**
+ * ¿Es un aviso del servicio y no algo visto? El nodo del ojo devuelve el error del proveedor como `texto` (6-oct:
+ * «You have depleted your monthly included credits…»): rescatado como prosa, el cerebro le habría dicho a la persona
+ * que la cámara «ve» eso. Solo se mira cuando NO vino una vista en JSON y el texto es corto, como esos avisos.
+ */
+export function pareceErrorDeServicio(texto: string): boolean {
+  const t = String(texto || '').trim();
+  if (!t || t.length > 600) return false;
+  // Lo que la cámara LEE no es un aviso del servicio: la foto de una pantalla con «503 Service Unavailable» o un cartel
+  // con «Unauthorized» es contenido (revisión del 6-oct). Lo citado no cuenta, y una descripción en español tampoco.
+  // Un JSON de error («{"error":"insufficient_quota"}») ES el aviso: sus comillas no son una cita.
+  const sinCitas = /^[{[]/.test(t) ? t : t.replace(/["“”«»][^"“”«»]{0,300}["“”«»]/g, ' ');
+  const describe = /\b(se (lee|ve|observa|aprecia)|muestra|aparece|dice|pantalla|cartel|letrero|imagen|foto|hay)\b/i.test(sinCitas);
+  // 402 / «Payment Required» / «insufficient credits» (revisión del 6-oct: cuando vuelvan los créditos de Hugging Face y
+  // se acaben otra vez, el aviso llega así). El «402» solo con algo de error al lado: «L 402» en un cartel es un precio.
+  const proveedor =
+    /\b(payment required|insufficient[ _-]?(credits?|quota|balance|funds))\b|\b(error|status|code|http)\s*[:=]?\s*402\b|\b402\s*[:-]?\s*(payment|client error)/i.test(sinCitas) ||
+    /\b(depleted|included credits|pre-?paid credits|quota|rate.?limit|too many requests|invalid (api )?(key|token)|api key|inference providers?|model .{0,40} (is )?(not supported|not found|currently loading))\b/i.test(sinCitas);
+  if (proveedor && !describe) return true;
+  // Los genéricos (forbidden, timed out, exceeded…) solo si el texto EMPIEZA con ellos, como un aviso, no en medio de lo leído.
+  return /^\s*(\{?\s*"?(error|message|detail)"?\s*[:=]\s*"?)?(\d{3}\s*[:-]?\s*)?(unauthori[sz]ed|forbidden|exceeded|overloaded|service unavailable|internal server error|bad gateway|gateway time-?out|timed out|request timed out)\b/i.test(t);
 }
 
 /** ¿Quedó algo? Una vista vacía es como no haber visto. */

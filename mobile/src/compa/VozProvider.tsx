@@ -43,7 +43,8 @@ import { miga, reportarEstado } from '../lib/reporte';
 import { emocionDeTexto } from '../lib/emocion';
 import { callarPorConversacion, escucharNivelVoz, nivelExterno, speak, stopSpeaking, suspenderVoz, vozSuspendida } from '../lib/tts';
 import { pauseMicForTts, suspenderOido } from '../lib/speech';
-import { sfxActivos, suspenderSfx } from '../lib/sfx';
+import { suspenderSfx } from '../lib/sfx';
+import { ambienteActivo, leerAmbiente, suscribirAmbiente } from '../lib/ambienteAjuste';
 import { quitarExpresiones } from '../lib/expresiones';
 import { idiomaActual, tr, useIdioma } from '../i18n';
 import { avatarActual } from '../avatares/actual';
@@ -208,7 +209,8 @@ export function VozProvider({ children, conCompanera = true }: Props) {
       reproductor: reproductorAmbiente,
       puede: () => {
         const v = control.vista();
-        return v.montada && !v.silenciada && !v.suspendida && (v.estado === 'escuchando' || v.estado === 'hablando') && AppState.currentState === 'active' && sfxActivos();
+        // ambienteActivo: los efectos de la app, «Sonidos mientras trabaja» y el servidor (AURA_AMBIENTE; lib/ambienteAjuste.ts).
+        return v.montada && !v.silenciada && !v.suspendida && (v.estado === 'escuchando' || v.estado === 'hablando') && AppState.currentState === 'active' && ambienteActivo();
       },
       miga,
     });
@@ -634,12 +636,20 @@ export function VozProvider({ children, conCompanera = true }: Props) {
   useEffect(() => {
     if (!(vista.montada && !vista.silenciada && !vista.suspendida && (vista.estado === 'escuchando' || vista.estado === 'hablando'))) ambiente.parar('conversación');
   }, [ambiente, vista.montada, vista.silenciada, vista.suspendida, vista.estado]);
+  // Mientras la voz del avatar suena, el sonido de trabajo calla debajo; vuelve al callar si la tarea sigue.
+  useEffect(() => {
+    ambiente.alHablar(vista.montada && vista.estado === 'hablando');
+  }, [ambiente, vista.montada, vista.estado]);
   useEffect(() => {
     const sub = AppState.addEventListener('change', (e) => {
       if (e !== 'active') ambiente.parar('detrás');
     });
+    // Los sonidos de trabajo apagados (Ajustes o el servidor, lib/ambienteAjuste.ts): el que suena se va al momento.
+    void leerAmbiente();
+    const quitar = suscribirAmbiente(() => !ambienteActivo() && ambiente.parar('apagados'));
     return () => {
       sub.remove();
+      quitar();
       ambiente.parar('fin');
     };
   }, [ambiente]);

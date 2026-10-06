@@ -17,6 +17,14 @@
  *                                     cancelador de eco (lo de antes). El teléfono lo lee al entrar a la mesa y cada
  *                                     10 min (mobile/src/lib/muletillasAjuste.ts).
  *
+ *  · Los sonidos de trabajo (José, 6-oct: «si está haciendo o pensando algo que se escuchen cosas como eso del
+ *    teclado, tanto con el avatar como en la llamada»; mobile/src/compa/ambiente.ts, compa/trabajoMesa.ts): tecleo al
+ *    escribir o buscar, papel al leer, clics al usar su computadora y un murmullo suave al pensar, bajito y por el canal
+ *    de efectos. Encendidos por omisión (la persona los apaga en Ajustes → Sonidos mientras trabaja):
+ *   AURA_AMBIENTE=0                 → no suena ninguno, ni en la mesa ni en la llamada: el teléfono lo lee al entrar a
+ *                                     la mesa y cada 10 min (mobile/src/lib/ambienteAjuste.ts) y el servidor deja de
+ *                                     mandar el `ambiente` de la llamada (server/voz-agente.ts) aunque el teléfono sea viejo.
+ *
  * El teléfono guarda lo último que leyó (lib/guardiaCamara.ts, lib/guardiaVoz.ts, lib/muletillasAjuste.ts): sin red,
  * vale lo guardado. Un servidor viejo sin esta ruta (404) deja lo de fábrica.
  */
@@ -26,6 +34,7 @@ export type ConfigMovil = {
   camaraRapida: { activa: boolean; ladoCorto?: number; hz?: number; fps?: number };
   vozStream: { activa: boolean };
   asentir: { activo: boolean };
+  ambiente: { activo: boolean };
 };
 
 function entero(v: string | undefined, min: number, max: number): number | undefined {
@@ -51,6 +60,7 @@ export function configMovil(env: NodeJS.ProcessEnv = process.env): ConfigMovil {
     },
     vozStream: { activa: !apagado(env.AURA_VOZ_STREAM) },
     asentir: { activo: !apagado(env.AURA_ASENTIR) },
+    ambiente: { activo: !apagado(env.AURA_AMBIENTE) },
   };
 }
 

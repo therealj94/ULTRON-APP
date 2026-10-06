@@ -14,6 +14,7 @@
  *
  *   npx tsx scripts/voz/latencia-voz.ts capturar  [--salida pedidos.json]       pedidos reales + costo del servidor
  *   npx tsx scripts/voz/latencia-voz.ts modelos   --de pedidos.json [--modelos a,b] [--n 3] [--sin-herramientas]
+ *   npx tsx scripts/voz/latencia-voz.ts cascada   --de pedidos.json [--n 2] [--manos] [--guardar r.json]   la cascada de verdad
  *   npx tsx scripts/voz/latencia-voz.ts voz       [--modelos eleven_v4_turbo,eleven_flash_v2_5] [--n 3]
  *   npx tsx scripts/voz/latencia-voz.ts oido      [--antes]                        (sin red; --antes: el cierre viejo)
  *   npx tsx scripts/voz/latencia-voz.ts presupuesto --de resultados.json
@@ -354,6 +355,68 @@ async function modelos() {
   if (archivo) fs.writeFileSync(archivo, JSON.stringify(resultados));
 }
 
+/* ------------------------------------------------------------------ cascada: hablarConManos de verdad contra Bedrock */
+
+/**
+ * La cascada entera (lib/cerebro-rapido.ts hablarConManos: cobertura en paralelo y orden por salud) con los pedidos
+ * capturados, contra Bedrock de verdad: cuándo llega la primera señal útil, quién gana y qué pasó con cada intento. Las
+ * herramientas que pida el modelo NO se ejecutan (aquí solo se anotan). `--manos` añade pedidos con manos sobre el hilo
+ * del capturado con manos.
+ */
+async function cascada() {
+  const { hablarConManos } = await import('../../lib/cerebro-rapido');
+  const de = opt('de', path.join(os.tmpdir(), 'aura-pedidos-voz.json'));
+  const capturados: { mensaje: string; conManos: boolean; body: any }[] = JSON.parse(fs.readFileSync(de, 'utf8')).filter((c: any) => c.body);
+  const plantilla = capturados.find((c) => c.conManos)?.body;
+  const extra = bandera('manos') && plantilla ? ['Recuérdame mañana a las cinco llamar al banco.', 'Busca el precio del oro de hoy.', 'Revisa mis correos.', 'Mándale un WhatsApp a Beto que ya voy.'] : [];
+  const casos = [
+    ...capturados.map((c) => ({ mensaje: c.mensaje, ruta: (c.conManos ? 'manos' : 'charla') as 'manos' | 'charla', body: c.body })),
+    ...extra.map((m) => ({ mensaje: m, ruta: 'manos' as const, body: { ...plantilla, messages: [...plantilla.messages.slice(0, -1), { role: 'user', content: [{ text: m }] }] } })),
+  ];
+  const n = Number(opt('n', '1'));
+  const filas: any[] = [];
+  for (let i = 0; i < n; i++)
+    for (const c of casos) {
+      // De vuelta a la forma de hablarConManos: el system y el hilo como mensajes.
+      const mensajes = [
+        ...(c.body.system || []).filter((b: any) => b.text).map((b: any) => ({ role: 'system', content: b.text })),
+        ...c.body.messages.map((m: any) => ({ role: m.role, content: (m.content || []).map((b: any) => b.text || '').join('') })),
+      ];
+      const t0 = performance.now();
+      let primera = NaN;
+      let quien = '';
+      let herramienta = '';
+      let texto = '';
+      let intentos: any[] = [];
+      let error = '';
+      try {
+        for await (const p of hablarConManos(mensajes, c.body.toolConfig?.tools || [], undefined, { ruta: c.ruta, maxTokens: 300 })) {
+          if ('modelo' in p) quien = p.modelo;
+          else if ('fin' in p) intentos = p.fin.intentos || [];
+          else {
+            if (!Number.isFinite(primera)) primera = performance.now() - t0;
+            if ('texto' in p) texto += p.texto;
+            else herramienta = p.herramienta.nombre;
+          }
+        }
+      } catch (e: any) {
+        error = String(e?.message || e).slice(0, 120);
+        intentos = e?.intentos || [];
+      }
+      const fila = { mensaje: c.mensaje, ruta: c.ruta, primeraMs: Math.round(primera), quien, herramienta, error, intentos };
+      filas.push(fila);
+      const det = intentos.map((x: any) => `${x.modelo}${x.desdeMs ? `@${x.desdeMs}` : ''} ${x.causa ? x.causa.replace(/ \(contestó antes.*$/, ' (cancelado)') : `${x.primeraMs} ms`}`).join(' | ');
+      console.log(`${c.ruta.padEnd(6)} «${c.mensaje.slice(0, 32).padEnd(32)}» ${error ? `ERROR ${error}` : `${ms(primera).padStart(5)} ms · ${quien}${herramienta ? ` [${herramienta}]` : ''}`} ${det ? `· ${det}` : ''} ${texto ? `«${texto.replace(/\s+/g, ' ').slice(0, 50)}»` : ''}`);
+    }
+  for (const ruta of ['charla', 'manos']) {
+    const p = filas.filter((f) => f.ruta === ruta && !f.error).map((f) => f.primeraMs);
+    const caidas = filas.filter((f) => f.ruta === ruta && f.error).length;
+    console.log(`${ruta}: primera señal útil mediana ${ms(mediana(p))} ms · p75 ${ms(percentil(p, 0.75))} ms · p90 ${ms(percentil(p, 0.9))} ms · máx ${ms(percentil(p, 1))} · al Qwen del nodo ${caidas}/${filas.filter((f) => f.ruta === ruta).length}`);
+  }
+  const archivo = opt('guardar');
+  if (archivo) fs.writeFileSync(archivo, JSON.stringify(filas, null, 1));
+}
+
 /* ------------------------------------------------------------------ voz: ElevenLabs de verdad */
 
 async function voz() {
@@ -529,7 +592,7 @@ async function oido() {
 
 /* ------------------------------------------------------------------ */
 
-const comandos: Record<string, () => Promise<void>> = { capturar, modelos, voz, oido };
+const comandos: Record<string, () => Promise<void>> = { capturar, modelos, cascada, voz, oido };
 if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith('latencia-voz.ts')) {
   const f = comandos[cmd];
   if (!f) {

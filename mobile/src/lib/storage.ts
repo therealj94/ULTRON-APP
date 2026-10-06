@@ -57,6 +57,13 @@ export type SttEngine = 'turbo' | 'native' | 'cloud';
 export type AppSettings = {
   voiceId: string;
   micMuted: boolean;
+  /**
+   * Cuándo se silenció (ms): el silencio vale lib/silencioMesa.ts SILENCIO_VIGENCIA_MS (8 h) desde ahí, aunque Android
+   * cierre la app entretanto; pasado eso la mesa arranca abierta (José, 6-oct: «el micrófono falla»).
+   */
+  micMutedEn?: number | null;
+  /** Solo lectura: la sesión con que la 5.6.0 guardaba el silencio (sin hora). Ver lib/silencioHeredado.ts. */
+  micMutedSesion?: string | null;
   visionEnabled: boolean;
   gazeEnabled: boolean;
   /** Oído: Scribe v2 Realtime Turbo en vivo, el reconocimiento del teléfono o grabación + Scribe en el servidor. */

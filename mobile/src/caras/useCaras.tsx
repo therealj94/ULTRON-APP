@@ -39,10 +39,12 @@ import {
   carasActivas,
   conCarasActivas,
   debeAprender,
+  distanciaMasCercana,
   elegirMuestras,
   esConsentimiento,
   identificar,
   masGrande,
+  UMBRAL,
   pedidoDeCaras,
   sumarMuestras,
   type CaraConocida,
@@ -52,6 +54,7 @@ import {
 import { CONFIRMAR, Seguidor, VistoRespaldo, tocaReconocer, tocaReconocerRespaldo, type CajaN } from './seguimiento';
 import { GeneracionCaras, analizarVigente } from './cercoReconocer';
 import { fraseEscenaCaras } from './escenaCaras';
+import { DiagnosticoReconocer } from './pistaNativa';
 import { guardarCara, listarCaras, olvidarCara, olvidarTodasLasCaras, sumarMuestrasCara } from './api';
 
 /** Lo que vale lo reconocido para el cerebro (visto hace menos que esto). */
@@ -123,6 +126,8 @@ export type ApiCaras = {
   ocupado: () => boolean;
   /** La mesa piensa o habla: la cámara en vivo no repasa a quien ya tiene nombre (solo reconoce a quien llega). */
   mesaOcupada: () => boolean;
+  /** Por qué una pista sigue sin nombre (recortes, sin cara, «no sé» y la distancia más cercana): para las migas. */
+  diagnosticoPista: (pista: number) => string;
 };
 
 export function useCaras(o: Opciones): ApiCaras {
@@ -134,6 +139,8 @@ export function useCaras(o: Opciones): ApiCaras {
   /** El parentesco dicho al presentar («mi esposa Ana»), hasta su «sí». */
   const parentescoPendiente = useRef<string | undefined>(undefined);
   const seguidor = useRef(new Seguidor()).current;
+  /** Por qué no sale el nombre de cada pista (lo lee la cámara en vivo para sus migas). */
+  const diagnostico = useRef(new DiagnosticoReconocer()).current;
   /** CAM-C: cambiar de cámara o de cuenta, apagar o borrar sube la generación; lo que vuelva del motor después, no vale. */
   const generacion = useRef(new GeneracionCaras()).current;
   /** Sin ML Kit no hay pistas: lo que vio la última foto del respaldo (revisión del 5-oct, M3). */
@@ -524,10 +531,16 @@ export function useCaras(o: Opciones): ApiCaras {
             () => generacion.vigente(gen) && reconoceRef.current && (f.vigente ? f.vigente() : true)
           );
           if (!caras) return;
+          // Las cajas en las que el motor no encontró cara también cuentan (para saber por qué no sale el nombre).
+          const conCara = new Set(caras.map((c) => c.indice));
+          f.cajas.forEach((caja, i) => {
+            if (!conCara.has(i)) diagnostico.analizado(caja.pista, { cara: false, reconocida: false });
+          });
           for (const c of caras) {
             const de = typeof c.indice === 'number' ? f.cajas[c.indice] : null;
             if (!de) continue;
             const r = identificar(c.vector, conocidasRef.current);
+            diagnostico.analizado(de.pista, { cara: true, reconocida: !!r, distancia: r ? r.distancia : distanciaMasCercana(c.vector, conocidasRef.current) });
             const v = seguidor.votar(de.pista, r, f.ts);
             // A un conocido presentado se le saluda una vez por sesión (a la dueña no: ya está hablando).
             if (v.confirmo && v.identidad?.relacion === 'conocido' && !saludados.current.has(sinTildes(v.identidad.nombre))) {
@@ -544,7 +557,7 @@ export function useCaras(o: Opciones): ApiCaras {
         }
       })();
     },
-    [aprender, generacion, seguidor]
+    [aprender, diagnostico, generacion, seguidor]
   );
 
   /**
@@ -606,6 +619,13 @@ export function useCaras(o: Opciones): ApiCaras {
   // Cámara en vivo (CamaraVivo): ¿el motor sigue con el recorte anterior?
   const ocupado = useCallback(() => analizando.current, []);
   const mesaOcupada = useCallback(() => !!op.current.ocupada?.(), []);
+  const diagnosticoPista = useCallback(
+    (pista: number) => {
+      diagnostico.podar(seguidor.visibles(Date.now()));
+      return diagnostico.linea(pista, UMBRAL);
+    },
+    [diagnostico, seguidor]
+  );
 
-  return { activas, estadoTexto, motor: nodoMotor, abrirOpciones, manejar, escena, duenaVistaEn, seguidor, reconoce, quiereFoto, recibirFoto, quiereFotoRespaldo, recibirFotoRespaldo, ocupado, mesaOcupada };
+  return { activas, estadoTexto, motor: nodoMotor, abrirOpciones, manejar, escena, duenaVistaEn, seguidor, reconoce, quiereFoto, recibirFoto, quiereFotoRespaldo, recibirFotoRespaldo, ocupado, mesaOcupada, diagnosticoPista };
 }

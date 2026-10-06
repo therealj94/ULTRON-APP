@@ -53,6 +53,7 @@ import { preguntaSigues, RE_LLAMADA, RE_SIGUES, saludoDeLlamada } from '../lib/m
 import { nivelDeCorreo, nivelMasEstrecho, nivelValido, type NivelAura } from './nivel';
 import { anotarVoz, fraseTopeVoz, restanteVozMs } from './tope-voz';
 import type { MedidaRuta } from './voz-medidas';
+import { configMovil } from './movil-config';
 // El narrador del trabajo: lo que de verdad pasa en el turno (event: progreso) en vez del «ya casi» genérico.
 import { ConductorNarrador, Narrador, eventoProgresoValido } from '../mobile/src/compa/narrador';
 import { memoriaNarradorDe } from '../lib/progreso-trabajo';
@@ -304,7 +305,7 @@ type Conversacion = {
    * en vez de matarlo y empezar de cero (1-oct: tres intentos de la misma pregunta, cada uno releyendo
    * 7 000 fichas en otro espacio del nodo, y el que se mataba antes de hablar dejaba la respuesta vacía).
    */
-  vivo?: { mensaje: string; hasta: number; vigente: () => boolean; enganchar: (r: express.Response) => Promise<void> } | null;
+  vivo?: { mensaje: string; hasta: number; vigente: () => boolean; pensando?: () => boolean; enganchar: (r: express.Response, o?: { desdeOido?: boolean }) => Promise<void> } | null;
   /**
    * Lo que el turno en curso ya le dio a la voz. Si llega otro turno antes de que termine, esto pasa
    * a ser lo audible de `anterior` (antes quedaba la del turno anterior y la interrupción no se notaba).
@@ -335,7 +336,33 @@ type Conversacion = {
   memoriaPendiente?: { mensaje: string; mem: MemoriaTurno; reloj: ReturnType<typeof setTimeout>; inicio: number } | null;
   /** Devuelve el lugar del cupo del turno en curso si todavía no dijo nada (una sola vez). */
   devolverTurno?: (() => void) | null;
+  /** Cuándo empezó el turno en curso (para reconocer una ráfaga de frases a medias). */
+  inicioEnCurso?: number;
+  /**
+   * Frases a medias seguidas que el turno especulativo reemplazó antes de decir nada (la persona seguía hablando). Va
+   * en la línea del turno que sí contesta: «· tras 5 frases a medias». El 6-oct a las 17:11:28–29 fueron cinco en
+   * 0,7 s, cada una con su «[cerebro manos] intentos: … la persona interrumpió»: no era una interrupción ni cortó nada.
+   */
+  rafaga?: number;
 };
+
+/** Una frase que reemplaza a otra que empezó hace menos de esto y no dijo nada: es la misma frase que sigue. */
+export const RAFAGA_MS = 1_500;
+
+/**
+ * ¿Lo que mandó ElevenLabs como «lo que dijo la persona» no trae ni una palabra? Vacío, puntos suspensivos o solo una
+ * marca de sonido del reconocedor («(ruido)», «[tecleo]», «(risas)»). Eso NO es un turno: antes cortaba el turno que
+ * estaba pensando (o diciendo) la respuesta y contestaba nada, y sonaba a que la llamada se cayó. Con el sonido de
+ * trabajo en el teléfono (tecleo, papel, el «pensando»; mobile/src/compa/ambiente.ts) importa más: si el reconocedor lo
+ * oyera, no puede matar la respuesta que se está esperando. Las marcas del teléfono («[[llamada]]», «[[lectura …]]»,
+ * «[[reconecta]]») sí son turnos.
+ */
+export function sinPalabrasDeLaPersona(mensaje: string): boolean {
+  const t = String(mensaje || '');
+  if (/\[\[/.test(t)) return false;
+  const sin = t.replace(/\([^)]*\)|\[[^\]]*\]|\*[^*]*\*/g, ' ');
+  return !/[\p{L}\p{N}]/u.test(sin);
+}
 const conversaciones = new Map<string, Conversacion>();
 
 /** Cuánto espera la memoria de un turno a saber si era una frase a medias. */
@@ -1028,6 +1055,27 @@ export function montarVozAgente(app: express.Express, d: Deps): { llm: express.R
     const id = `chatcmpl-${crypto.randomBytes(8).toString('hex')}`;
     const modelo = String(req.body?.model || 'aura');
 
+    // Sin una palabra (vacío, «...», solo «(ruido)» o «[tecleo]»): no es un turno (sinPalabrasDeLaPersona). No cuenta en el
+    // cupo, no va al cerebro y NO corta el turno que está pensando: si hay uno, esta petición se engancha a él (desde lo
+    // que ya llegó a la voz) y la respuesta sigue; si no, se contesta nada y la conversación sigue escuchando. Un turno
+    // que ya terminó y espera su confirmación no se engancha (eso confirmaría sus acciones): decide su propia gracia.
+    if (!reconexion && sinPalabrasDeLaPersona(recibido)) {
+      devolverCupo(claveTurnos, ahora);
+      req.socket.setNoDelay?.(true);
+      const enCurso = conv.vivo;
+      if (enCurso && ahora < enCurso.hasta && enCurso.pensando?.()) {
+        console.log(`[voz] sin palabras (${conv.cid.slice(0, 8)}): no es un turno; sigue el que estaba en curso`);
+        await enCurso.enganchar(res, { desdeOido: true });
+        return;
+      }
+      console.log(`[voz] sin palabras (${conv.cid.slice(0, 8)}): no es un turno`);
+      res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-store, no-transform');
+      res.write(trozoOpenAI(id, modelo, null, null, true));
+      res.write(trozoOpenAI(id, modelo, null, 'stop'));
+      return res.end('data: [DONE]\n\n');
+    }
+
     // ¿Un reintento de ElevenLabs? La misma frase mientras ese turno sigue pensando: se engancha a él.
     const vivo = conv.vivo;
     if (vivo && mensaje && vivo.mensaje === plana(mensaje) && ahora < vivo.hasta && vivo.vigente()) {
@@ -1050,6 +1098,8 @@ export function montarVozAgente(app: express.Express, d: Deps): { llm: express.R
     if (conv.enCurso) {
       // La frase a medias que esta reemplaza antes de decir nada no fue un turno: su lugar vuelve.
       if (!conv.algoEnCurso) conv.devolverTurno?.();
+      // Una ráfaga del turno especulativo (la persona seguía hablando): se cuenta para la línea del turno que conteste.
+      conv.rafaga = !conv.algoEnCurso && ahora - (conv.inicioEnCurso ?? 0) < RAFAGA_MS ? (conv.rafaga ?? 0) + 1 : 0;
       conv.enCurso.abort();
       conv.enCurso = null;
       conv.anterior = { id: conv.idEnCurso, completo: conv.completoEnCurso || conv.dichoEnCurso, audible: conv.dichoEnCurso };
@@ -1068,6 +1118,8 @@ export function montarVozAgente(app: express.Express, d: Deps): { llm: express.R
     // Un turno nuevo (la lectura que volvió del teléfono, o la persona que habló) quita el sonido de
     // fondo que hubiera: la tarea de antes ya terminó o ya nadie la espera.
     const avisarAmbiente = (sonido: SonidoAmbiente | null) => {
+      // El interruptor remoto (AURA_AMBIENTE=0, server/movil-config.ts): ningún sonido de trabajo empieza (quitar, sí).
+      if (sonido && !configMovil().ambiente.activo) return;
       try {
         (d.ambiente ?? empujarAmbiente)(pase.correo, pase.aparato, { sonido, on: !!sonido });
       } catch {
@@ -1150,6 +1202,9 @@ export function montarVozAgente(app: express.Express, d: Deps): { llm: express.R
 
     const corte = new AbortController();
     conv.enCurso = corte;
+    conv.inicioEnCurso = ahora;
+    /** Las frases a medias que este turno vino a reemplazar de corrido (la ráfaga del especulativo). */
+    const rafagaAntes = conv.rafaga ?? 0;
     conv.devolverTurno = devolverTurno;
     /** Las acciones de este turno, esperando a que se confirme (RetencionAcciones). */
     const retenidas: (() => void)[] = [];
@@ -1268,7 +1323,8 @@ export function montarVozAgente(app: express.Express, d: Deps): { llm: express.R
       hasta: t0 + TURNO_VOZ_MS,
       // Sigue pensando, o ya terminó sin que nadie lo oyera (su reintento llega tarde): se reproduce.
       vigente: () => terminado || !corte.signal.aborted,
-      enganchar: (r) =>
+      pensando: () => !terminado && !corte.signal.aborted,
+      enganchar: (r, o) =>
         new Promise<void>((listo) => {
           if (gracia) {
             clearTimeout(gracia);
@@ -1276,8 +1332,10 @@ export function montarVozAgente(app: express.Express, d: Deps): { llm: express.R
           }
           abrirSSE(r);
           r.write(trozoOpenAI(id, modelo, null, null, true));
-          // Lo que ya dijo este turno (y lo que pensó mientras nadie oía), de una vez.
-          if (dicho) r.write(trozoOpenAI(id, modelo, dicho));
+          // Lo que ya dijo este turno (y lo que pensó mientras nadie oía), de una vez. Enganchado por una petición sin
+          // palabras (`desdeOido`): solo lo que todavía no le había llegado a nadie (lo de antes ya sonó).
+          const pendiente = o?.desdeOido ? dicho.slice(oido) : dicho;
+          if (pendiente) r.write(trozoOpenAI(id, modelo, pendiente));
           if (terminado) {
             oido = dicho.length;
             conv.anterior = dichoEntero(id, dicho);
@@ -1741,7 +1799,9 @@ export function montarVozAgente(app: express.Express, d: Deps): { llm: express.R
     // Una línea por turno hablado, para ver la latencia real en el log (Render): la voz espera lo primero.
     const msDe = (t: number) => (t ? `${t - t0} ms` : '—');
     medir(false, porReloj);
-    console.log(`[voz] turno ${conv.cid.slice(0, 8)}: primer texto ${msDe(primeroEn)}${puenteDicho ? ' (espera)' : ''} · cerebro ${msDe(cerebroEn)} · total ${Date.now() - t0} ms${porReloj ? ' · TARDE' : ''}${accionesPedidas ? ` · acciones ${accionesPedidas} ${suerte}` : ''}`);
+    if (conv.rafaga === rafagaAntes) conv.rafaga = 0;
+    const rafagaTxt = rafagaAntes ? ` · tras ${rafagaAntes} frase${rafagaAntes === 1 ? '' : 's'} a medias (seguía hablando)` : '';
+    console.log(`[voz] turno ${conv.cid.slice(0, 8)}: primer texto ${msDe(primeroEn)}${puenteDicho ? ' (espera)' : ''} · cerebro ${msDe(cerebroEn)} · total ${Date.now() - t0} ms${porReloj ? ' · TARDE' : ''}${accionesPedidas ? ` · acciones ${accionesPedidas} ${suerte}` : ''}${rafagaTxt}`);
   };
   // ElevenLabs puede añadir /chat/completions a la URL o usarla tal cual: se aceptan las formas.
   app.post('/api/voz/llm', llm);

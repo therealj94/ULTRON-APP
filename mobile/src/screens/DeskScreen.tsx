@@ -3,7 +3,7 @@ import { miga, reportarEstado } from '../lib/reporte';
 import { TrazaTurno } from '../lib/trazaTurno';
 import { ControladorMirada } from '../lib/miradaAvatar';
 import { seMovioTelefono } from '../lib/cercoCamara';
-import { arrancarPulso, pulsoJs } from '../lib/pulsoJs';
+import { arrancarPulso, ponerAvisoBloqueo, pulsoJs } from '../lib/pulsoJs';
 import { RellenoTurno, esperaDeRelleno } from '../lib/relleno';
 // ── latencia de la voz: el turno especulativo (lib/turnoEspeculativo.ts) ──
 import { TurnoEspeculativo } from '../lib/turnoEspeculativo';
@@ -46,17 +46,23 @@ import {
   isMicPaused,
   micWatchdogOk,
   muteMic,
+  oidoAguantaFondo,
   oidoEscuchando,
   oidoVivoDeVerdad,
   pauseMicForTts,
   reabrirMic,
   restartMic,
+  setFondoPropio,
   setOirEncima,
   setSpeechCallbacks,
   setSttEngine,
   unmuteMic,
   volverANativoSiToca,
 } from '../lib/speech';
+import { arranqueDelMicrofono, migaArranqueMic } from '../lib/silencioMesa';
+import { silencioHeredado } from '../lib/silencioHeredado';
+import { GraciaFondo } from '../lib/appDelante';
+import { REFRESCO_AMBIENTE_MS, ambienteActivo, leerAmbiente, refrescarAmbienteRemoto, suscribirAmbiente } from '../lib/ambienteAjuste';
 import { TOPE_CORTADA } from '../lib/interrupcion';
 import {
   addLongFact,
@@ -70,7 +76,7 @@ import {
   type AppSettings,
   type SttEngine,
 } from '../lib/storage';
-import { playSfx, preloadSfx, setSfxEnabled, sfxActivos } from '../lib/sfx';
+import { playSfx, preloadSfx, setSfxEnabled } from '../lib/sfx';
 import { useMuletillasMesa } from '../lib/muletillasMesa';
 import { StreamSpeaker, cuandoSuene, fraccionSonando, registroVoz, setAvatarVoz, setSpeechLevelListener, speak, speakPrayer, speakReaccion, speakSong, stopSpeaking, type SongRequest } from '../lib/tts';
 import { frase, saludoConNombre, type FraseId } from '../lib/frases';
@@ -118,7 +124,8 @@ import { decidirPrivadoLocal, fraseNegarLocal, intencionPrivada, pedidoLocalPriv
 import { avatarActual } from '../avatares/actual';
 import { orientar } from '../lib/orientacion';
 import { esperarFrame } from '../lib/esperarFrame';
-import { COMENTARIOS, Comentarista, resumenVista, type FocoVision, type VistaCamara } from '../lib/vistaCamara';
+import { COMENTARIOS, Comentarista, etiquetasDeVista, resumenVista, type FocoVision, type VistaCamara } from '../lib/vistaCamara';
+import { vistaFresca, vistaParaTurno, type VistaTurno } from '../lib/vistaTurno';
 import { ladoValido, pedidoDeVista, type Lado } from '../lib/vistaEnVivo';
 import { VisorCamara, type EstadoVisor } from '../components/VisorCamara';
 import { HojaComputadora } from '../ajustes/Computadora';
@@ -377,6 +384,20 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const [progresoMesa, setProgresoMesa] = useState('');
   /** Las frases del narrador de esta mesa: ninguna se repite entre turnos (compa/narrador.ts). */
   const memoriaNarrador = useRef(new MemoriaNarrador());
+  /** El trabajo del turno en curso (sus sonidos): la persona que habla o un ajuste que cambia le avisan. */
+  const trabajoActual = useRef<TrabajoMesa | null>(null);
+  // Los sonidos de trabajo: lo guardado al entrar, lo del servidor (AURA_AMBIENTE) al entrar y cada 10 min, y un
+  // cambio (Ajustes, el servidor) se aplica al sonido del turno en curso al momento.
+  useEffect(() => {
+    void leerAmbiente().then(() => trabajoActual.current?.revisar());
+    void refrescarAmbienteRemoto(true);
+    const quitar = suscribirAmbiente(() => trabajoActual.current?.revisar());
+    const tic = setInterval(() => AppState.currentState === 'active' && void refrescarAmbienteRemoto(), REFRESCO_AMBIENTE_MS);
+    return () => {
+      quitar();
+      clearInterval(tic);
+    };
+  }, []);
   const [winkSide, setWinkSide] = useState<'L' | 'R'>('L');
   const [canciones, setCanciones] = useState<Cancion[]>(CANCIONES_LOCAL);
   const [settings, setSettings] = useState<Pick<AppSettings, 'sttEngine' | 'proactive' | 'sfx' | 'interrumpir'>>({ sttEngine: 'turbo', proactive: true, sfx: true, interrumpir: false });
@@ -426,8 +447,14 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   /** La app está delante (con la app detrás la mesa no oye, no mira ni mueve sensores). */
   const [appActiva, setAppActiva] = useState(AppState.currentState !== 'background');
   useEffect(() => {
-    const sub = AppState.addEventListener('change', (st) => setAppActiva(st !== 'background'));
-    return () => sub.remove();
+    // Un parpadeo de segundo plano (~0,1 s al bloquear la orientación en el Samsung de José) no suelta el oído: solo
+    // cuenta si dura más de GRACIA_FONDO_MS (lib/appDelante.ts).
+    const gracia = new GraciaFondo({ alCambiar: setAppActiva, miga }, AppState.currentState !== 'background');
+    const sub = AppState.addEventListener('change', (st) => gracia.estado(st));
+    return () => {
+      sub.remove();
+      gracia.soltar();
+    };
   }, []);
   /**
    * La mesa está viva: se ve y la app está delante. Los sensores (acelerómetro), la mirada errante, el
@@ -438,6 +465,17 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   // El pulso del hilo de JS (lib/pulsoJs.ts) mientras la mesa está viva: la traza del turno y el resumen de la cámara
   // dicen cuánto se trabó (José, 6-oct: ¿la cámara traba la voz?).
   useEffect(() => (mesaActiva ? arrancarPulso() : undefined), [mesaActiva]);
+  // Un bloqueo del hilo de JS (≥ 1,5 s sin atender toques) va a las migas con lo que pasaba; uno grave (≥ 5 s, cuando
+  // Android ya puede decir «no responde» y cerrarla al tocar) se manda enseguida (José, 6-oct: «al tocar se cierra»).
+  useEffect(() => {
+    ponerAvisoBloqueo(({ ms, grave }) => {
+      const que = [visionOnRef.current ? `cámara${carasRef.current?.reconoce ? '+caras' : ''}` : 'sin cámara', handling.current ? 'pensando' : '', speakingRef.current ? 'hablando' : ''].filter(Boolean).join(', ');
+      const linea = `JS bloqueado ${ms} ms (${que})`;
+      if (grave) reportarEstado(linea);
+      else miga(linea);
+    });
+    return () => ponerAvisoBloqueo(null);
+  }, []);
 
   // Las tareas durables (AUR08): el indicador mínimo y el panel. Cerrar el panel no cancela nada; el
   // servidor es la fuente de verdad y, al volver, la misma tarea (mismo id) sigue con su estado.
@@ -1147,11 +1185,16 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
             hastaQue: corte,
             onAudioStart: () => {
               trabajo?.yaSeDijo();
+              // Su voz suena: el sonido de trabajo se va (y vuelve al terminar si sigue trabajando).
+              trabajo?.vozEmpieza();
               pauseMicForTts(true);
             },
             // «Suena» cuando el reproductor lo confirma, no al pedir play (auditoría 6-oct §7.1).
             onSuena: () => trazaTurno.marcar('rellenoSuena'),
-            onEnd: () => !speakingRef.current && pauseMicForTts(false),
+            onEnd: () => {
+              trabajo?.vozTermina();
+              if (!speakingRef.current) pauseMicForTts(false);
+            },
           }).then((sono) => !sono && trazaTurno.marcar('rellenoTirado'));
         },
       });
@@ -1198,18 +1241,30 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
               void speak(texto, {
                 emocion: 'neutral',
                 hastaQue: corte,
-                onAudioStart: () => pauseMicForTts(true),
-                onEnd: () => !speakingRef.current && pauseMicForTts(false),
+                onAudioStart: () => {
+                  trabajo?.vozEmpieza();
+                  pauseMicForTts(true);
+                },
+                onEnd: () => {
+                  trabajo?.vozTermina();
+                  if (!speakingRef.current) pauseMicForTts(false);
+                },
               }),
             alLinea: (l) => {
               setProgresoMesa(l);
               setToolHint(l);
             },
-            // El tecleo solo con el micrófono de la mesa en silencio: abierto, lo oiría el propio oído.
+            // Los sonidos de trabajo (José, 6-oct): tecleo, papel, clics y el murmullo de «pensando», por el canal de
+            // efectos. Con el micrófono de la mesa abierto solo si el oído graba con el cancelador de eco (si no, el
+            // tecleo podría abrirle una frase); mientras suenan, el oído sube su umbral (setFondoPropio).
             ambiente: reproductorAmbiente,
-            sonido: () => micMutedRef.current && sfxActivos() && !conversandoRef.current && !enLlamadaRef.current,
+            sonido: () => ambienteActivo() && !conversandoRef.current && !enLlamadaRef.current && (micMutedRef.current || oidoAguantaFondo()),
+            pensando: true,
+            alFondo: setFondoPropio,
+            miga,
           });
           const trabajoTurno = trabajo;
+          trabajoActual.current = trabajoTurno;
           try {
             trazaTurno.marcar('envio');
             const st = streamDelTurno(base, {
@@ -1255,6 +1310,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
             let result = await st.promise.finally(() => {
               abortTurno.current = null;
               trabajoTurno.terminar();
+              if (trabajoActual.current === trabajoTurno) trabajoActual.current = null;
             });
             cancelMmm();
             if (turnoCancelado.current) {
@@ -1413,12 +1469,16 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     cerrarVisor();
   }, [visionOn, mesaVisible, cerrarVisor]);
   useEffect(() => () => void (cerrarVisorTimer.current && clearTimeout(cerrarVisorTimer.current)), []);
+  // Al desmontar la mesa (salir de la cuenta, otra ruta) la vista fresca (foto + lo visto, ~20 s) no sobrevive: la
+  // próxima mesa no contesta «¿qué ves?» con la escena de antes. El cambio de cuenta la suelta también (lib/vistaTurno.ts).
+  useEffect(() => () => vistaFresca.invalidar(), []);
 
   /**
-   * «¿Qué ves?», «léeme esto», «¿cuánto dice el precio?», «¿qué es esto?». Una foto (con más calidad si
-   * hay que leer), el servidor la mira CON ORDEN según el foco (/api/vision/analyze estructurado) y el
-   * turno recibe lo visto como texto: la foto sube una sola vez. Mientras, «Lo que vi» muestra la foto
-   * con lo reconocido. Para leer o reconocer algo, la vista de la cámara se ve un momento para apuntar.
+   * «¿Qué ves?», «léeme esto», «¿cuánto dice el precio?», «¿qué es esto?». El turno NUNCA espera a la visión más de
+   * ~1,5 s (lib/vistaTurno.ts; José, 6-oct: «toma como una foto y se traba, queda pensando»): «¿qué ves?» usa la vista
+   * fresca de la subida continua al instante; si no la hay, una foto (con más calidad si hay que leer) y, si el
+   * servidor no la ve a tiempo, el turno sale con la foto y «Lo que vi» se completa cuando vuelva. Para leer o
+   * reconocer algo, la vista de la cámara se ve un momento para apuntar.
    */
   const whatDoYouSee = useCallback(async (foco: FocoVision = 'escena') => {
     const apuntar = foco !== 'escena';
@@ -1428,12 +1488,18 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       return g ? () => g({ calidad }) : null;
     };
     let frame: string | null = null;
+    let vt: VistaTurno | null = null;
+    // `escena`: la cámara y la gente al sacar la foto; con eso se guarda la vista aunque llegue tarde (lib/vistaTurno.ts).
+    const alSacar = () => ({ lado: ladoCamaraRef.current, personas: escenaRef.current?.personas ?? 0 });
+    const io = (foto: () => Promise<string | null>, escena = alSacar) => ({ ahora: Date.now, foto, escena, ver: (b64: string, f: FocoVision) => verCamara(b64, f) });
+    const opciones = { lado: ladoCamaraRef.current, personas: escenaFresca(escenaRef.current) ? escenaRef.current.personas : undefined };
     if (apuntar) setPreviaCamara(true);
     try {
       // Con la cámara ya prendida y algo que mostrar: un momento para ponerlo delante y que enfoque.
       if (apuntar && grabFrame.current) await new Promise((r) => setTimeout(r, 900));
-      frame = grabFrame.current ? await grabFrame.current({ calidad }) : null;
-      if (!frame) {
+      const g = grabFrame.current;
+      if (g) vt = await vistaParaTurno(io(() => g({ calidad })), foco, opciones);
+      if (!vt || vt.tipo === 'sin_foto') {
         // La cámara arranca apagada: si pide «¿qué ves?», se prende SOLO AHORA para mirar (lo pidió) y se
         // dice; mientras enfoca, la línea de estado dice «mirando». Antes contestaba «aún no identifico
         // nada» sin prenderla (José, 2-oct: «una foto… no lo hace»).
@@ -1450,32 +1516,45 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         } finally {
           setToolHint('');
         }
+        // Lo de cuando se sacó (ya está sacada: es ahora mismo, antes de esperar al servidor).
+        const alSacarFrame = alSacar();
+        // La foto ya está: lo que diga el servidor tampoco traba el turno más de ~1,5 s.
+        const listo = frame;
+        if (listo) vt = await vistaParaTurno(io(async () => listo, () => alSacarFrame), foco, { ...opciones, lado: alSacarFrame.lado });
       }
     } finally {
       setPreviaCamara(false);
     }
-    if (frame) {
+    if (vt && vt.tipo !== 'sin_foto') {
       const [es, en] = PEDIDO_VISTA[foco];
-      setVisor({ foto: frame, vista: null, foco, mirando: true });
+      const pedido = tr(es, en);
       setFace('SCAN');
-      setToolHint(tr('mirando con la cámara', 'looking with the camera'));
-      let r: Awaited<ReturnType<typeof verCamara>> = null;
-      try {
-        r = await verCamara(frame, foco);
-      } finally {
-        setToolHint('');
-      }
-      if (r) {
-        setVisor({ foto: frame, vista: r.vista, foco, mirando: false });
-        if (r.etiquetas.length) setObjects(r.etiquetas);
-        // Con la vista ya armada, el turno lleva el texto; con un servidor anterior (sin modo
-        // estructurado), el camino de siempre: la foto en el turno.
-        await askBrain(tr(es, en), r.estructurada && r.visto ? { visto: r.visto, foco } : { image: `data:image/jpeg;base64,${frame}`, foco });
-        cerrarVisorEn(VISOR_MS);
+      miga(`vista del turno: ${vt.tipo === 'fresca' ? `fresca de hace ${Math.round(vt.edadMs / 1000)} s` : vt.tipo === 'vista' ? `vista en ${vt.esperaMs} ms` : `foto al turno (${vt.motivo} a los ${vt.esperaMs} ms)`}`);
+      if (vt.tipo === 'fresca' || vt.tipo === 'vista') {
+        if (vt.foto) setVisor({ foto: vt.foto, vista: vt.vista, foco, mirando: false });
+        const etiquetas = etiquetasDeVista(vt.vista);
+        if (etiquetas.length) setObjects(etiquetas);
+        // Solo la de «¿qué ves?» queda como vista fresca: el hecho de «léeme esto» lleva otra instrucción.
+        if (vt.tipo === 'vista' && foco === 'escena') vistaFresca.guardar({ vista: vt.vista, visto: vt.visto, ts: Date.now() - vt.esperaMs, lado: vt.alSacar.lado, personas: vt.alSacar.personas, foto: vt.foto });
+        await askBrain(pedido, { visto: vt.visto, foco });
+        if (vt.foto) cerrarVisorEn(VISOR_MS);
         return;
       }
-      cerrarVisor();
-      await say(tr('Ahora mismo no me está entrando bien la imagen. Dame un segundo y vuelve a preguntarme.', 'The picture isn’t coming through right now. Give me a second and ask me again.'), 'CONFUSED', { emocion: 'preocupado' });
+      // El servidor no la vio a tiempo: el turno sale YA con la foto (el servidor la mira dentro del turno) y «Lo que vi»
+      // se completa cuando vuelva el primer pedido; si no vuelve nada, se cierra solo (nada de una foto congelada).
+      const foto = vt.foto;
+      const tomadaEn = Date.now() - vt.esperaMs;
+      // La cámara y la gente de cuando se sacó: la respuesta puede llegar segundos después, con otra cámara u otra gente.
+      const { lado: ladoFoto, personas: personasFoto } = vt.alSacar;
+      setVisor({ foto, vista: null, foco, mirando: true });
+      void vt.tarde.then((r) => {
+        setVisor((v) => (v && v.foto === foto ? (r?.vista ? { foto, vista: r.vista, foco, mirando: false } : null) : v));
+        if (!r?.vista) return;
+        if (r.etiquetas.length) setObjects(r.etiquetas);
+        if (foco === 'escena') vistaFresca.guardar({ vista: r.vista, visto: r.estructurada ? r.visto : '', ts: tomadaEn, lado: ladoFoto, personas: personasFoto, foto });
+      });
+      await askBrain(pedido, { image: `data:image/jpeg;base64,${foto}`, foco });
+      cerrarVisorEn(VISOR_MS);
       return;
     }
     // Sin frame: lo que la detección local ya sabe (persona, lado, gesto) y las etiquetas del servidor.
@@ -1487,7 +1566,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       return;
     }
     await say(objs.length ? `${tr('Veo', 'I see')}: ${objs.join(', ')}.` : tr('La cámara no me dio imagen todavía. Apúntala hacia ti y pregúntame otra vez «¿qué ves?».', 'The camera hasn’t given me a picture yet. Point it at yourself and ask me again “what do you see?”.'), 'SCAN');
-  }, [askBrain, camara, cerrarVisor, cerrarVisorEn, encenderCamara, escenaFresca, say]);
+  }, [askBrain, camara, cerrarVisorEn, encenderCamara, escenaFresca, say]);
 
   const runGag = useCallback(
     async (gag: Gag) => {
@@ -2078,6 +2157,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       onEspeculativa: (t) => intentarEspecular(t),
       onEspeculativaCancelada: () => especulativo.cancelar(),
       onSpeechStart: () => {
+        // La persona habla: el sonido de trabajo del turno en curso se va y ya no vuelve en ese turno.
+        trabajoActual.current?.personaHabla();
         if (!speakingRef.current && !handling.current) setFace('LISTENING');
       },
       onPartial: (t) => {
@@ -2136,8 +2217,15 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     let alive = true;
     (async () => {
       const s = await loadSettings();
-      micMutedRef.current = s.micMuted;
-      setMicMuted(s.micMuted);
+      // El silencio vale 8 h desde que se puso (lib/silencioMesa.ts SILENCIO_VIGENCIA_MS), aunque Android haya cerrado
+      // la app entretanto: dentro del plazo arranca silenciada; pasado, abierta (José, 6-oct: «el micrófono falla»). Las
+      // dos cosas se DICEN en el saludo. El silencio de la 5.6.0 (sin hora) tras su OTA: lib/silencioHeredado.ts.
+      const arranqueMic = arranqueDelMicrofono(s, Date.now(), await silencioHeredado());
+      const silenciada = arranqueMic.silenciada;
+      micMutedRef.current = silenciada;
+      setMicMuted(silenciada);
+      if (arranqueMic.motivo === 'otra-sesion') void saveSettings({ micMuted: false, micMutedEn: null, micMutedSesion: null });
+      else if (silenciada && s.micMutedEn !== arranqueMic.desde) void saveSettings({ micMutedEn: arranqueMic.desde, micMutedSesion: null });
       // La cámara arranca apagada salvo que esta persona haya elegido «siempre» (y haya permiso).
       camara.arrancar(prefiereSiempre(s.camaraSiempre, user.correo) && !!camPerm?.granted);
       setLadoCamara(ladoValido(s.camaraLado));
@@ -2164,22 +2252,29 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
 
       const micOk = await ensureSpeechPermissions();
       if (!alive) return;
-      if (micOk && !s.micMuted) {
+      if (micOk && !silenciada) {
         await enableAlwaysOnMic();
         oidoListo.current = true;
         // Si mientras tanto el audio pasó a otro (la conversación, una llamada, otra pantalla), se suelta.
         if (!oidoMesa.current?.oye()) void muteMic();
         setStatus('listening');
       } else setStatus(micOk ? 'muted' : 'offline');
-      // El silencio se guarda entre sesiones (a propósito: una recarga no abre sola un micrófono que la persona
-      // cerró); que quede en las migas y que el saludo lo diga, para que no parezca que no oye.
-      if (micOk && s.micMuted) miga('micrófono: arranca silenciado (la persona lo dejó así en otra sesión)');
+      // Un silencio vencido no se arrastra (antes sí, y José lo vivía como «el micrófono falla»); uno vigente se queda,
+      // se ve tachado y el saludo lo dice. Los dos quedan en las migas.
+      const migaMic = micOk ? migaArranqueMic(arranqueMic) : '';
+      if (migaMic) miga(migaMic);
 
       // El avatar se eligió al entrar (App): si es recién elegido, se presenta él mismo con su voz.
       handling.current = true;
       const saludo = saludoConNombre(user.name);
       const conPresentacion = recienElegido ? `${saludo} ${de(avatarPorId(s.avatar).presentacion)}` : saludo;
-      await say(saludoArranque(conPresentacion, { micSilenciado: micOk && s.micMuted, en: idiomaActual() === 'en' }), 'HAPPY', { emocion: 'feliz' });
+      const micReabierto = micOk && arranqueMic.motivo === 'otra-sesion';
+      const textoSaludo = saludoArranque(conPresentacion, { micSilenciado: micOk && silenciada, micReabierto, en: idiomaActual() === 'en' });
+      // El aviso del micrófono (sigue en silencio, o el silencio venció) se VE siempre: el globo lo pone `say` y, si el
+      // saludo no va a sonar (conversación, llamada, el audio es de otro), también queda en el chat.
+      const sonaraSaludo = !conversandoRef.current && !enLlamadaRef.current && !!oidoMesa.current?.puedeHablar();
+      if (micOk && (silenciada || micReabierto) && !sonaraSaludo) logUltron(textoSaludo);
+      await say(textoSaludo, 'HAPPY', { emocion: 'feliz' });
       handling.current = false;
       // Después del saludo la mesa sigue al teléfono: en vertical, cuadro con la cara y el chat
       // (Claudio se pone de pie).
@@ -2583,7 +2678,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       }
       setMicMuted(true);
       setStatus('muted');
-      await saveSettings({ micMuted: true });
+      // Con su hora: el silencio sigue 8 h aunque Android cierre la app (lib/silencioMesa.ts), y después vence.
+      await saveSettings({ micMuted: true, micMutedEn: Date.now(), micMutedSesion: null });
       await say(tr('Micrófono en silencio.', 'Microphone muted.'), 'IDLE');
     } else {
       const ok = await ensureSpeechPermissions();
@@ -2593,7 +2689,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       micMutedRef.current = false;
       setMicMuted(false);
       setStatus('listening');
-      await saveSettings({ micMuted: false });
+      await saveSettings({ micMuted: false, micMutedEn: null, micMutedSesion: null });
       await say(tr('Te escucho de nuevo.', 'I’m listening again.'), 'HAPPY', { emocion: 'feliz' });
     }
   };
@@ -2639,6 +2735,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const toggleSfx = async () => {
     const next = !settings.sfx;
     setSfxEnabled(next);
+    // Sin efectos tampoco suenan los de trabajo: el del turno en curso se va ya.
+    trabajoActual.current?.revisar();
     setSettings((p) => ({ ...p, sfx: next }));
     await saveSettings({ sfx: next });
     if (next) playSfx('tap');

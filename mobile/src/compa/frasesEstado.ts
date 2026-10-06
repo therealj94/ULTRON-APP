@@ -552,10 +552,12 @@ export function empiezaConMuletilla(frase: string): boolean {
 
 /**
  * El sonido de fondo que pone el teléfono mientras dura una tarea lenta en la conversación (la
- * «animación» sonora): tecleo para buscar, hojas de papel para leer, lápiz para calcular. Los archivos
- * están en mobile/assets/sfx/<sonido>.mp3 (salieron de la API de efectos de sonido de ElevenLabs).
+ * «animación» sonora): tecleo para buscar o escribir, hojas de papel para leer, lápiz para calcular, clics al usar su
+ * computadora y un murmullo suave mientras piensa (José, 6-oct: «si está haciendo o pensando algo que se escuchen
+ * cosas como eso del teclado»). Los archivos están en mobile/assets/sfx/<sonido>.mp3: teclado, papel y lápiz salieron
+ * de la API de efectos de sonido de ElevenLabs; pensando y clics se sintetizaron (sin muestras de nadie).
  */
-export const SONIDOS_AMBIENTE = ['teclado', 'papel', 'lapiz'] as const;
+export const SONIDOS_AMBIENTE = ['teclado', 'papel', 'lapiz', 'clics', 'pensando'] as const;
 export type SonidoAmbiente = (typeof SONIDOS_AMBIENTE)[number];
 
 export type Tarea = {
@@ -596,7 +598,7 @@ export const TAREAS: Record<string, Tarea> = {
   escena: { estado: 'mirando', sonido: null, lenta: false },
   app: { estado: 'abriendo', sonido: null, lenta: false },
   /** «Usa tu computadora y…»: su propia computadora en la nube (server/computadora.ts), tarda minutos. */
-  computadora: { estado: 'haciendo', sonido: 'teclado', lenta: true },
+  computadora: { estado: 'haciendo', sonido: 'clics', lenta: true },
   /** «Revisa mi correo», «contéstale a Beto»: abre su buzón (server/correo.ts). */
   correo: { estado: 'leyendo', sonido: 'teclado', lenta: true },
   /** «¿Qué me escribió Beto por WhatsApp?», «contéstale»: su WhatsApp personal (server/whatsapp.ts). */
@@ -608,9 +610,22 @@ export function tareaDe(herramienta: string): Tarea | null {
   return TAREAS[String(herramienta || '').trim().toLowerCase()] || null;
 }
 
-/** El sonido que va con un estado cuando no se sabe la herramienta (el respaldo por la pregunta). */
+/**
+ * El sonido que va con un estado cuando no se sabe la herramienta (el respaldo por la pregunta). «Pensando» (la charla
+ * que tarda, sin herramienta) lleva el murmullo suave: solo suena si el turno de verdad llega al puente sin contestar.
+ */
 export function sonidoDeEstado(estado: EstadoFrase): SonidoAmbiente | null {
-  return estado === 'buscando' || estado === 'revisando' ? 'teclado' : estado === 'leyendo' ? 'papel' : estado === 'calculando' ? 'lapiz' : null;
+  return estado === 'buscando' || estado === 'revisando'
+    ? 'teclado'
+    : estado === 'leyendo'
+      ? 'papel'
+      : estado === 'calculando'
+        ? 'lapiz'
+        : estado === 'haciendo'
+          ? 'clics'
+          : estado === 'pensando'
+            ? 'pensando'
+            : null;
 }
 
 /**

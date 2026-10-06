@@ -75,7 +75,7 @@ import {
 import { detectarIdioma } from './lib/idioma-detectar';
 import { redirigirADominio } from './server/dominio';
 import { quitarExpresiones } from './lib/expresiones';
-import { puntoDeCorte } from './lib/trozos';
+import { cierreDeFrase, FRASE_EXTRA_VOZ, puntoDeCorte } from './lib/trozos';
 import { claveTurno, consultarTurno, efectoDelTurno, enTurnoUnico, idTurnoValido, reclamarTurno, turnoSinEfectos, type TurnoGuardado } from './server/turno-unico';
 import { atajoDeAppBloqueado, decisionEsperando, otraVozDe, pendientesDelTurno, resolverBorradorDesdePanel, resolverDecisionesDelTurno } from './server/decision-turno';
 import { avisoInvitado, conModoInvitado, hechoInvitado, manosDeInvitado, modoInvitadoDe } from './server/modo-invitado';
@@ -154,12 +154,12 @@ import { iniciarRevisionCampana } from './lib/campana-respuestas';
 import { clave, fotoBoveda, guardarCaja } from './lib/boveda';
 import { capturaPagina, verEstructurado, verImagen, vistaFallida, NO_PUDE_VER } from './lib/vision';
 import { etiquetasDeVista, focoDePregunta, focoValido, vistaAHechos } from './lib/vision-estructurada';
-import { presupuesto, PRESUPUESTO_OIDO_MS, PRESUPUESTO_TURNO_MS, PRESUPUESTO_VISION_MS, type Presupuesto } from './lib/presupuesto';
+import { presupuesto, PRESUPUESTO_OIDO_MS, PRESUPUESTO_TURNO_MS, PRESUPUESTO_VISION_MS, PRESUPUESTO_VISION_TURNO_MS, type Presupuesto } from './lib/presupuesto';
 import { destinoPublico } from './lib/red-publica';
 import { extraerPdf, dataUrlDeImagen, bufferDeCualquier } from './lib/leer-pdf';
 import { transcribirAudio, permisoTurbo, PROVEEDORES_OIDO_CONFIRMAR, PROVEEDORES_OIDO_ELECTRUM_CONFIRMAR, TERMINOS_ELECTRUM } from './lib/oido';
 import { conAcuse, hechoInterrumpida, oidoAlInterrumpir } from './lib/interrumpida';
-import { cerebroRapidoActivo, hablarConManos, modeloRapido, probarCerebroRapido } from './lib/cerebro-rapido';
+import { cerebroRapidoActivo, fraseDeEsperaLenta, hablarConManos, modeloRapido, probarCerebroRapido } from './lib/cerebro-rapido';
 // ── latencia de la voz (turno especulativo, ruta de charla): server/turno-especulativo.ts, lib/cerebro-rapido.ts ──
 import { esCharlaParaRuta, esSoloConversacion, planDeModelos, type RutaCerebro } from './lib/cerebro-rapido';
 import { abrirEspeculativo, confirmarEspeculativoConDetalle, descartarEspeculativo, type Especulativo } from './server/turno-especulativo';
@@ -2110,7 +2110,8 @@ app.post('/api/vision/analyze', exigirMesaODesk, limitar(20), async (req, res) =
   // servidor según el foco (lib/vision-estructurada.ts). No lleva prompt libre, así que vale sin sesión.
   if (req.body?.modo === 'estructurado') {
     const foco = focoValido(req.body?.foco) || 'escena';
-    const r = await verEstructurado(String(base64Data), foco, { presupuesto: reloj });
+    // `continuo`: la subida en vivo de la cámara (sin nadie esperando): Bedrock primero (lib/vision.ts ordenOjos).
+    const r = await verEstructurado(String(base64Data), foco, { presupuesto: reloj, continuo: req.body?.continuo === true });
     if (r.fallo || !r.vista) {
       console.error(`[AU-RA] /vision/analyze estructurado falló (${r.via}) con ${String(base64Data).length} car.`);
       return res.status(503).json({ error: `${NO_PUDE_VER} Inténtalo de nuevo en un momento.`, via: ojoQueLeyo(r.via), honesto: true });
@@ -3223,7 +3224,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
       // ves?») y con orden (lib/vision-estructurada.ts): antes era siempre «describe lo visible», y un
       // cartel o un precio salían resumidos en vez de leídos.
       const foco = focoValido(body?.foco) || focoDePregunta(message) || 'escena';
-      const r = await verEstructurado(String(image), foco);
+      const r = await verEstructurado(String(image), foco, { presupuesto: presupuesto(PRESUPUESTO_VISION_TURNO_MS) });
       // Un fallo de visión NO se le pasa crudo al modelo: lo parafraseaba como «la cámara me muestra un
       // error técnico», que no le dice nada a nadie. Se le da la frase que tiene que decir.
       if (r.fallo || !r.vista) {
@@ -5366,6 +5367,14 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       }
       if (corte > enviado) {
         if (topeDelTurno && enviado >= topeDelTurno) {
+          // Llegó al tope: solo se para en un final de frase (lib/trozos.ts cierreDeFrase; José, 6-oct: «de repente
+          // falló» era la voz callando en la coma de una cláusula). Si la frase sigue llegando, se espera su punto.
+          const c = cierreDeFrase(cuerpo, enviado, { limite: duroDeVoz(topeDelTurno) + FRASE_EXTRA_VOZ });
+          if (c.estado === 'esperar') return;
+          if (c.hasta > enviado) {
+            soltar('delta', cuerpo.slice(enviado, c.hasta));
+            enviado = c.hasta;
+          }
           topado = true;
           return;
         }
@@ -5503,6 +5512,17 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       if (senal?.aborted) {
         reg.cerrar({ error: 'la persona interrumpió' });
         return salida.fin();
+      }
+      /*
+       * EL RESPALDO LENTO, CON LA VERDAD (6-oct: turnos de 9–38 s). Ningún modelo de Bedrock dio su primera señal (con la
+       * cobertura en paralelo, ni el principal ni el de respaldo en todo el plazo) y contesta el Qwen del nodo, que tarda
+       * 8–17 s en su primera ficha: en voz se dice que va a tardar en vez de dejar el silencio. Va directo (sin el pulidor
+       * ni la respuesta): no es del modelo, no entra en `reply` ni en su memoria, y la respuesta abre como siempre.
+       */
+      if (!porRapido && medida.hablado && enviado === 0) {
+        const frase = fraseDeEsperaLenta(idioma);
+        medida.esperaLenta = Date.now();
+        send('delta', { text: `${frase} `, voz: `${frase} ` });
       }
     }
     if (!porRapido) {
@@ -5661,6 +5681,13 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
         }
         // Leyendo un resultado en voz es donde más se alarga: el mismo tope (salvo borrador o lectura: `sinTope`).
         if (topeDelTurno && dichoH.length >= topeDelTurno) {
+          // Como en el stream: se para en el final de la frase en curso, nunca en su coma (cierreDeFrase).
+          const c = cierreDeFrase(t, dichoH.length, { limite: duroDeVoz(topeDelTurno) + FRASE_EXTRA_VOZ });
+          if (c.estado === 'esperar') return;
+          if (c.hasta > dichoH.length) {
+            soltar('delta', t.slice(dichoH.length, c.hasta));
+            dichoH = t.slice(0, c.hasta);
+          }
           topado = true;
           return;
         }
@@ -5785,6 +5812,16 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       if (hasta > enviado) soltar('delta', decible.slice(enviado, hasta));
       enviado = hasta;
       if (enviado < decible.length) topado = true;
+    }
+    // Topado a media frase (el stream soltó hasta una coma, o la frase que pasaba del tope duro se quedó en su pausa): la
+    // frase en curso se termina antes de callar (lib/trozos.ts cierreDeFrase; José, 6-oct: «de repente falló»). Con la
+    // pregunta final ya dicha aparte no se toca: lo que sigue a lo dicho sonaría después de la pregunta.
+    if (topado && !preguntaDicha && enviado > 0 && enviado < decible.length) {
+      const c = cierreDeFrase(decible, enviado, { completo: true, limite: duroDeVoz(topeDelTurno) + FRASE_EXTRA_VOZ });
+      if (c.hasta > enviado) {
+        soltar('delta', decible.slice(enviado, c.hasta));
+        enviado = c.hasta;
+      }
     }
     // Recortado o no, la pregunta final a la persona («¿Lo mando?», «¿sigo?») siempre se oye (GRAVE-1): si no sonó
     // ya, va después de lo dicho. Sin ella, José podía contestar «sí» a algo que no oyó preguntar. Nunca pasa del tope

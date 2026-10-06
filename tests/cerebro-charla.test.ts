@@ -9,7 +9,8 @@
  * Y la auditoría (VOZ-06): los intentos en serie con 2,5 s y 3,75 s podían sumar 6,25 s antes del último respaldo. Ahora
  * hay un plazo TOTAL para la primera señal útil, cada intento deja su causa y su primera señal, nada de un intento que no
  * llegó a decir algo útil se le entrega a quien escucha (ni su etiqueta de ánimo: no hay «respuesta nueva» encima de otra),
- * y nunca se corren dos modelos pagados a la vez.
+ * y (desde la cobertura en paralelo del 6-oct, tests/cerebro-cobertura.test.ts) el que pierde la carrera se corta en
+ * cuanto otro da su primera señal útil.
  *
  * Contra un Bedrock FALSO (HTTP/2 + event-stream, como el de verdad) en este mismo proceso.
  */
@@ -96,6 +97,7 @@ function reiniciar(env: Record<string, string | undefined> = {}) {
   for (const k of ['CEREBRO_VOZ_CHARLA', 'CEREBRO_VOZ_CHARLA_PRIMERA_MS', 'CEREBRO_VOZ_TOTAL_MS', 'CEREBRO_VOZ_PRIMERA_MS', 'CEREBRO_VOZ_RESPALDO_PRIMERA_MS', 'CEREBRO_VOZ_MODELO', 'CEREBRO_VOZ_RESPALDO']) delete process.env[k];
   Object.assign(process.env, env);
   M.anotarExitoRapido();
+  M.reiniciarSaludModelos();
 }
 
 describe('cerebro de la voz: la charla va primero al rápido, las manos al que mejor las usa', () => {
@@ -112,14 +114,17 @@ describe('cerebro de la voz: la charla va primero al rápido, las manos al que m
     assert.deepEqual(manos.piezas[0], { modelo: 'zai.glm-5' });
   });
 
-  it('si el de charla no da la primera señal a tiempo, contesta el principal (en serie, nunca dos a la vez)', async () => {
+  it('si el de charla no da la primera señal a tiempo, se lanza también el principal; contesta él y el de charla se corta', async () => {
     reiniciar({ CEREBRO_VOZ_CHARLA_PRIMERA_MS: '200' });
     conductas['moonshotai.kimi-k2.5'] = { demoraMs: -1 };
     const r = await correr('charla');
     assert.equal(r.error, null);
     assert.deepEqual(pedidos.map((p) => p.modelo), ['moonshotai.kimi-k2.5', 'zai.glm-5']);
     assert.deepEqual(r.piezas[0], { modelo: 'zai.glm-5' });
-    assert.ok(pedidos[1].en - pedidos[0].en >= 190, 'el segundo empieza cuando se deja al primero: nunca dos modelos pagados a la vez');
+    // Cobertura en paralelo (6-oct): el segundo sale a la espera del primero, sin cancelarlo; al ganar, el primero se corta.
+    assert.ok(pedidos[1].en - pedidos[0].en >= 190, 'el segundo sale cuando el primero agotó su espera, no antes');
+    for (let i = 0; i < 50 && abiertos > 0; i++) await new Promise((ok) => setTimeout(ok, 10));
+    assert.equal(abiertos, 0, 'el que perdió no queda abierto (ni generando ni cobrándose)');
     assert.equal(r.fin.intentos.length, 2);
     assert.match(r.fin.intentos[0].causa, /primera señal/);
     assert.ok(Number.isFinite(r.fin.intentos[1].primeraMs), 'el que contestó deja cuándo dio su primera señal útil');

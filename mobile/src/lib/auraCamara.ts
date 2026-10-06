@@ -28,7 +28,12 @@ type ModuloCamara = {
   recorte(id: number, margen: number | null, lado: number | null, archivo: boolean | null): Promise<RecorteNativo | null>;
   foto(calidad: number | null, alta: boolean | null, archivo: boolean | null): Promise<FotoNativa | null>;
   limpiar(): boolean;
+  /** Desde la versión 2 del módulo (APK nueva); una anterior no la trae. */
+  salidas?(max: number | null): SalidaNativa[];
 };
+
+/** Cómo terminó la app una vez anterior, según Android (ApplicationExitInfo; módulo versión 2). */
+export type SalidaNativa = { motivo: string; codigo: number; ts: number; descripcion?: string; importancia?: number; rssKb?: number };
 
 export type PropsVistaNativa = ViewProps & {
   lado?: 'frontal' | 'trasera';
@@ -102,5 +107,20 @@ export function limpiarCamaraNativa() {
     camara()?.limpiar();
   } catch {
     /* */
+  }
+}
+
+/**
+ * Las últimas salidas de la app según Android (la más nueva primero): «anr», «crash», «crash-nativo», «memoria»…
+ * Vacío en iOS, con una APK anterior (módulo versión 1) o si el sistema no lo da (Android < 11).
+ */
+export function salidasNativas(max = 5): SalidaNativa[] {
+  try {
+    const m = camara();
+    if (!m || typeof m.salidas !== 'function') return [];
+    const r = m.salidas(max);
+    return Array.isArray(r) ? r.filter((x) => x && typeof x.motivo === 'string' && typeof x.ts === 'number') : [];
+  } catch {
+    return [];
   }
 }

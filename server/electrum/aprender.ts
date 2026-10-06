@@ -45,6 +45,7 @@ const nf = (n: number, d = 2) => new Intl.NumberFormat('es-ES', { minimumFractio
 export function ojoQueLeyo(via: string): string {
   const v = String(via || '');
   if (/gemini/i.test(v)) return 'el ojo de reserva (Gemini)';
+  if (/^bedrock:/i.test(v)) return 'el ojo de reserva (Bedrock)';
   if (/^https?:\/\//i.test(v) || /ojo/i.test(v)) return 'el ojo del nodo de visión';
   return 'el ojo de visión';
 }

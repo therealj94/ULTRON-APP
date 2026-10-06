@@ -356,15 +356,23 @@ export function motivoFalloVoz(detalle?: string, en = false): string {
 }
 
 /**
- * El saludo al abrir la mesa. Si la persona dejó el micrófono en silencio en otra sesión, sigue en silencio
- * (se guarda a propósito: una recarga por OTA o un cierre no le abre solo un micrófono que ella cerró), pero
- * se DICE: antes arrancaba sorda sin avisar y solo lo decía la etiqueta «Silenciado» de abajo (José, 5-oct:
- * «micrófono, hay algo no está bien»).
+ * El saludo al abrir la mesa. Si el micrófono sigue en silencio (un silencio de menos de 8 h: lib/silencioMesa.ts),
+ * se DICE con cómo abrirlo: antes arrancaba sorda sin avisar y solo lo decía la etiqueta «Silenciado» de abajo
+ * (José, 5-oct: «micrófono, hay algo no está bien»). Si había un silencio y venció (`micReabierto`), también se dice:
+ * el micrófono que la persona dejó cerrado no se abre a escondidas.
  */
-export function saludoArranque(saludo: string, o: { micSilenciado: boolean; en: boolean }): string {
-  if (!o.micSilenciado) return saludo;
-  const aviso = o.en
-    ? 'Heads up: my microphone is still muted from last time. Tap the microphone and I’ll hear you.'
-    : 'Ojo: tengo el micrófono en silencio desde la última vez. Toca el micrófono y te oigo.';
-  return `${saludo} ${aviso}`;
+export function saludoArranque(saludo: string, o: { micSilenciado: boolean; micReabierto?: boolean; en: boolean }): string {
+  if (o.micSilenciado) {
+    const aviso = o.en
+      ? 'Heads up: my microphone is still muted, as you left it. Tap the microphone and I’ll hear you.'
+      : 'Ojo: sigo con el micrófono en silencio, como lo dejaste. Toca el micrófono y te oigo.';
+    return `${saludo} ${aviso}`;
+  }
+  if (o.micReabierto) {
+    const aviso = o.en
+      ? 'The microphone mute you left has expired, so I can hear you again. Tap the microphone to mute it.'
+      : 'El silencio del micrófono que dejaste ya venció, así que te oigo de nuevo. Toca el micrófono para silenciarlo.';
+    return `${saludo} ${aviso}`;
+  }
+  return saludo;
 }
