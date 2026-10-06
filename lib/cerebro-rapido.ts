@@ -191,6 +191,8 @@ function modeloRespaldo(): string | null {
  * sigue siendo el mejor (13–14/14 contra 9–10/14 de Kimi), así que solo la charla sin pedidos (esSoloConversacion y
  * nada esperando su «sí»; lo decide server.ts) va primero a este; si no contesta a tiempo, el principal. Con las mismas
  * herramientas: si en la charla hace falta una, la usa igual. CEREBRO_VOZ_CHARLA cambia el modelo; «no» lo apaga.
+ * De punta a punta (el servidor de verdad contra Bedrock de verdad, 8 frases de charla habladas, primer texto del SSE):
+ * con la ruta de antes mediana 3,2 s y p75 5,0 s (3 de 8 cayeron al Qwen del nodo); con esta, 1,2 s y 1,2 s.
  */
 export const MODELO_CHARLA_OMISION = 'moonshotai.kimi-k2.5';
 function modeloCharla(): string | null {
@@ -205,8 +207,11 @@ export const CHARLA_PRIMERA_MS_OMISION = 2_000;
 /**
  * El plazo TOTAL para la primera señal útil, sumando los intentos (auditoría VOZ-06: 2,5 s + 3,75 s podían sumar 6,25 s
  * antes del Qwen del nodo). Cada intento espera lo suyo pero nunca más de lo que queda de esto. CEREBRO_VOZ_TOTAL_MS.
+ * Medido el 6-oct con el servidor de verdad contra Bedrock (scripts/voz/latencia-voz.ts capturar --real): con 5 s, Kimi
+ * de respaldo tras los 2,5 s de GLM-5 quedaba con 2,5 s y 3 de 8 turnos caían al Qwen del nodo (Kimi a veces pasa de
+ * 2,5 s); con 6 s le quedan 3,5 s.
  */
-export const TOTAL_PRIMERA_MS_OMISION = 5_000;
+export const TOTAL_PRIMERA_MS_OMISION = 6_000;
 /** Con menos de esto por delante no vale la pena empezar otro intento. */
 const MINIMO_INTENTO_MS = 150;
 
@@ -230,6 +235,36 @@ export function planDeModelos(ruta: RutaCerebro = 'manos'): { modelo: string; pr
   const charla = ruta === 'charla' ? modeloCharla() : null;
   const conCharla = charla ? [{ modelo: charla, primeraMs: Number(process.env.CEREBRO_VOZ_CHARLA_PRIMERA_MS || CHARLA_PRIMERA_MS_OMISION) }, ...plan] : plan;
   return conCharla.filter((x, i, a) => !!x.modelo && a.findIndex((y) => y.modelo === x.modelo) === i);
+}
+
+/**
+ * Lo que pide HACER algo (o lo privado, o confirmar): eso va primero al de las manos. Se compara sin tildes. A diferencia
+ * de PIDE_ALGO (abajo, pensado para un modelo SIN manos), aquí no están las consultas («busca», «el oro», «hoy», «el
+ * clima»): el de charla tiene las mismas herramientas y las usa si hacen falta.
+ */
+const PIDE_ACCION = new RegExp(
+  [
+    '\\b(abr[eai]\\w*|cierr\\w*|cerr\\w*|pon(me|lo|la|le|elo|ga|gas)?|poner\\w*|pongas?|cambi\\w*|apag\\w*|encend\\w*|enciend\\w*|prend\\w*|activ\\w*|desactiv\\w*|sub[ei]\\w*|baj[ae]\\w*)\\b',
+    '\\b(escrib\\w*|mand\\w*|envi\\w*|respond\\w*|contest\\w*|reenvi\\w*|borr\\w*|descart\\w*|redact\\w*|compart\\w*)\\b',
+    '\\b(llam[aeo]\\w*|marc[ao]\\w*|recuerd\\w*|record\\w*|alarm\\w*|avis\\w*|despiert\\w*|agend\\w*|program\\w*|cancel\\w*|timer|temporizador)\\b',
+    '\\b(guard\\w*|anot\\w*|apunt\\w*|olvid\\w*|descarg\\w*|computadora|naveg\\w*|fot\\w*|camara|pantalla)\\b',
+    '\\b(music\\w*|cancion\\w*|reproduc\\w*|toca\\w*|cant[ae]\\w*|playlist|spotify|youtube|video\\w*|radio)\\b',
+    '\\b(whats\\w*|wasap\\w*|correo\\w*|email\\w*|mensaje\\w*|chat\\w*|contacto\\w*|agenda|calendario|cita\\w*|reunion\\w*|pendiente\\w*|tarea\\w*|mision\\w*)\\b',
+    '\\b(saldo|cartera|billetera|wallet|pag[aoeu]\\w*|transfer\\w*|origen|veta|auka|concesi\\w*|expediente\\w*|catastro)\\b',
+    '\\b(modo|tema|oscuro|avatar|volumen|silencio|callate|calla|ajuste\\w*|perfil|idioma)\\b',
+    '^\\s*(si|no|dale|va|ok(ay)?|listo|claro|hazlo|hagale|perfecto|eso|ese|esa|otra\\s+vez|de\\s+nuevo|y\\s+(en|a|el|la|si))\\b',
+  ].join('|'),
+  'i'
+);
+/** Lo que pide ir a fondo: ahí manda la calidad, no la latencia (va al de las manos, el que mejor razona). */
+const PIDE_PROFUNDIDAD = /\b(a fondo|en detalle|a detalle|detallad\w*|paso a paso|con calma|analiza\w*|analisis|profund\w*)\b/i;
+
+/** ¿Va por la ruta de charla? (lo decide server.ts junto con que sea hablado y que nada espere su «sí»). */
+export function esCharlaParaRuta(texto: string): boolean {
+  const t = String(texto || '').trim();
+  if (!t || t.length > 400) return false;
+  const plano = t.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/ñ/gi, 'n');
+  return !PIDE_ACCION.test(plano) && !PIDE_PROFUNDIDAD.test(plano);
 }
 
 /* ── fin de la ruta de charla ── */

@@ -160,10 +160,21 @@ async function capturar() {
       TSX_TSCONFIG_PATH: path.join(RAIZ, 'tsconfig.json'),
       RED_LENTA_MS: '0',
       CEREBRO_VOZ: 'nova',
-      AWS_ACCESS_KEY_ID: 'AKIABANCO',
-      AWS_SECRET_ACCESS_KEY: 'banco',
+      // --real: el servidor contra el Bedrock DE VERDAD (las credenciales del entorno, nunca impresas): mide servidor +
+      // modelo de punta a punta. Sin --real, el Bedrock falso (captura del pedido y costo propio del servidor).
+      ...(bandera('real')
+        ? {
+            AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID || '',
+            AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY || '',
+            ...(process.env.AWS_SESSION_TOKEN ? { AWS_SESSION_TOKEN: process.env.AWS_SESSION_TOKEN } : {}),
+            ...(process.env.AWS_CA_BUNDLE ? { AWS_CA_BUNDLE: process.env.AWS_CA_BUNDLE } : {}),
+            ...(process.env.HTTPS_PROXY ? { HTTPS_PROXY: process.env.HTTPS_PROXY } : {}),
+            ...(process.env.NODE_EXTRA_CA_CERTS ? { NODE_EXTRA_CA_CERTS: process.env.NODE_EXTRA_CA_CERTS } : {}),
+          }
+        : { AWS_ACCESS_KEY_ID: 'AKIABANCO', AWS_SECRET_ACCESS_KEY: 'banco', AWS_ENDPOINT_URL_BEDROCK_RUNTIME: `http://127.0.0.1:${puerto(bedrock)}` }),
       AWS_REGION: 'us-west-2',
-      AWS_ENDPOINT_URL_BEDROCK_RUNTIME: `http://127.0.0.1:${puerto(bedrock)}`,
+      // --charla no: la ruta de antes (todo primero a GLM-5), para comparar.
+      ...(opt('charla') ? { CEREBRO_VOZ_CHARLA: opt('charla') } : {}),
       WHATSAPP_PUENTE_URL: `http://127.0.0.1:${puerto(puente)}`,
       WHATSAPP_PUENTE_CLAVE: 'clave-puente',
       WHATSAPP_DUENOS: CORREO,
@@ -175,6 +186,11 @@ async function capturar() {
     detached: true,
   });
   proc.stdout?.on('data', (d) => (stdout = (stdout + d).slice(-400_000)));
+  // Los intentos de cada modelo (lib/cerebro-rapido.ts, console.warn): con --ver se enseñan al momento.
+  proc.stderr?.on('data', (d) => {
+    if (!bandera('ver')) return;
+    for (const l of String(d).split('\n')) if (/\[cerebro manos\]|\[voz\]/.test(l)) console.log(`    ${l.trim().slice(0, 300)}`);
+  });
   const canal = new AbortController();
   const cerrar = () => {
     canal.abort();
@@ -242,7 +258,9 @@ async function capturar() {
     const destino = opt('salida', path.join(os.tmpdir(), 'aura-pedidos-voz.json'));
     fs.writeFileSync(destino, JSON.stringify(salida));
     const al = salida.filter((s) => !s.conManos).map((s) => s.servidor.alModeloMs);
-    console.log(`\nservidor (preparar hasta pedir al modelo), charla: mediana ${ms(mediana(al))} ms · p75 ${ms(percentil(al, 0.75))} ms`);
+    const primeros = salida.filter((s) => !s.conManos).map((s) => s.servidor.primerTextoMs);
+    if (!bandera('real')) console.log(`\nservidor (preparar hasta pedir al modelo), charla: mediana ${ms(mediana(al))} ms · p75 ${ms(percentil(al, 0.75))} ms`);
+    console.log(`servidor${bandera('real') ? ' + Bedrock de verdad' : ''}, charla: primer texto (delta) mediana ${ms(mediana(primeros))} ms · p75 ${ms(percentil(primeros, 0.75))} ms · n=${primeros.length}`);
     console.log(`guardado en ${destino}`);
   } finally {
     cerrar();

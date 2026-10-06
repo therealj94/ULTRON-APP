@@ -175,3 +175,49 @@ describe('cerebro de la voz: plazo total y nada de respuestas encimadas (VOZ-06)
     assert.equal(r.fin.intentos[1].modelo, 'moonshotai.kimi-k2.5');
   });
 });
+
+/*
+ * Qué va por la ruta de charla (esCharlaParaRuta). Medido el 6-oct con el servidor de verdad contra Bedrock de verdad:
+ * con esSoloConversacion (pensada para un modelo SIN manos) solo 4 de 8 frases de charla iban por ahí («hoy», «oro» o
+ * «inglés» las mandaban a GLM-5, que tardaba 2,5 s en no contestar y luego Kimi: 3,6 s). El de charla tiene las mismas
+ * herramientas: puede buscar o leer si hace falta. Lo que NO le toca es HACER algo (mandar, llamar, recordar, pagar,
+ * abrir, ajustar la app), un «sí»/«dale» que confirma, lo privado (correo, WhatsApp, agenda) o lo que pide ir a fondo.
+ */
+describe('cerebro de la voz: qué es charla para la ruta rápida', () => {
+  it('la charla de verdad, aunque nombre el oro, hoy o el inglés', () => {
+    for (const t of [
+      'Buenas, ¿cómo va todo por allá?',
+      '¿Qué opinas de que llueva tanto esta semana?',
+      'Fíjate que hoy me levanté cansado, dormí mal.',
+      '¿Tú crees que vale la pena aprender inglés a mi edad?',
+      'Cuéntame algo interesante del oro.',
+      '¿Y por qué el oro no se oxida?',
+      'Ja, qué bueno. ¿Y tú qué harías un domingo libre?',
+      'Dame un consejo para no estresarme tanto.',
+      '¿Cuánto vale el oro hoy?',
+      'Cuéntame un chiste.',
+    ])
+      assert.equal(M.esCharlaParaRuta(t), true, t);
+  });
+
+  it('hacer algo, confirmar, lo privado o lo que pide ir a fondo: no (va primero el de las manos)', () => {
+    for (const t of [
+      'Llámame en diez minutos.',
+      'Mándale un WhatsApp a Beto que ya voy.',
+      'Escríbele a Ana que llego tarde.',
+      'Recuérdame comprar leche.',
+      'Ponme música.',
+      'Abre mis correos.',
+      '¿Qué dice el último correo de Ana?',
+      'Sí, mándalo.',
+      'Dale.',
+      'Págale cien lempiras a Beto.',
+      '¿Cuánto tengo de saldo?',
+      'Ponlo en modo oscuro.',
+      'Analiza a fondo los riesgos de la mina.',
+      'Explícame paso a paso cómo se forma el oro.',
+      '',
+    ])
+      assert.equal(M.esCharlaParaRuta(t), false, t);
+  });
+});

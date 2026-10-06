@@ -52,7 +52,8 @@ test('prepararTurno arranca la clasificación y lo de la cuenta YA, a la par de 
   const src = fs.readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
   const prep = src.slice(src.indexOf('async function prepararTurno('), src.indexOf('async function respuestaChica('));
   const arranca = prep.indexOf("clasificar(message, 'ultron', { voz })");
-  const memoria = prep.indexOf("await aTiempoParaVoz(voz, 'memoria'");
+  // Con el plazo común de lo opcional (server/enriquecer-voz.ts, VOZ-04).
+  const memoria = prep.indexOf("await enriquecer.aTiempo('memoria'");
   assert.ok(arranca > 0 && memoria > 0 && arranca < memoria, 'Laya se pide antes de esperar la memoria');
   assert.ok(!/const clas = await clasificar\(/.test(prep), 'y no se vuelve a pedir después');
   assert.match(prep, /const vistaPedida = correoApp \? precargarVista\(correoApp\)/);

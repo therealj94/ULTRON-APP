@@ -155,7 +155,7 @@ import { transcribirAudio, permisoTurbo, PROVEEDORES_OIDO_CONFIRMAR, PROVEEDORES
 import { conAcuse, hechoInterrumpida, oidoAlInterrumpir } from './lib/interrumpida';
 import { cerebroRapidoActivo, hablarConManos, modeloRapido, probarCerebroRapido } from './lib/cerebro-rapido';
 // ── latencia de la voz (turno especulativo, ruta de charla): server/turno-especulativo.ts, lib/cerebro-rapido.ts ──
-import { esSoloConversacion, planDeModelos, type RutaCerebro } from './lib/cerebro-rapido';
+import { esCharlaParaRuta, esSoloConversacion, planDeModelos, type RutaCerebro } from './lib/cerebro-rapido';
 import { abrirEspeculativo, confirmarEspeculativo, descartarEspeculativo, type Especulativo } from './server/turno-especulativo';
 import { TOPE_ENRIQUECER_VOZ_MS, plazoDeEnriquecer } from './server/enriquecer-voz';
 import { COT_FORZADO, esTareaDeCodigo, requiereCot } from './lib/prompts/cot';
@@ -5319,10 +5319,10 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       medida.prompt = { car: caracteresDe(pedidoManos), herramientas: herramientasManos.length, herramientasCar: JSON.stringify(herramientasManos).length };
       // ── latencia: la charla HABLADA sin pedidos ni nada esperando su «sí» va primero al cerebro rápido de charla
       // (lib/cerebro-rapido.ts planDeModelos, medido el 6-oct: Kimi 1,0 s contra GLM-5 4,1 s a la primera palabra). Lo
-      // demás, como siempre: primero el que mejor usa las manos. Las herramientas van igual en los dos. Lo que pide una
-      // respuesta larga o a fondo (sin tope de voz: «analiza a fondo», «cuéntame un cuento») también va al de siempre.
-      const rutaCerebro: RutaCerebro =
-        medida.hablado && topeDelTurno > 0 && !p.foto && !p.vozCompleta && esSoloConversacion(p.crudo || message) && !algoEsperaSuSi() ? 'charla' : 'manos';
+      // demás, como siempre: primero el que mejor usa las manos. Las herramientas van igual en los dos, así que la charla
+      // que nombra el oro o «hoy» también va por ahí (si hace falta buscar, busca); hacer algo, confirmar, lo privado o lo
+      // que pide ir a fondo, no (esCharlaParaRuta).
+      const rutaCerebro: RutaCerebro = medida.hablado && !p.foto && !p.vozCompleta && esCharlaParaRuta(p.crudo || message) && !algoEsperaSuSi() ? 'charla' : 'manos';
       medida.ruta = rutaCerebro;
       const primeroDelPlan = planDeModelos(rutaCerebro)[0]?.modelo;
       try {
