@@ -149,6 +149,9 @@ const proc: ChildProcess = spawn(process.execPath, ['--import', import.meta.reso
     PATH: process.env.PATH || '',
     HOME: tmp,
     NODE_ENV: 'production',
+    // SEC-04: este despliegue de prueba no tiene registro de cuentas; lo declara (sin esto, en producción, las sesiones
+    // de la comunidad no leen datos privados: «no configurado» no es «no suspendido»). tests/sesion-suspension.test.ts.
+    AURA_SUSPENSIONES: 'ninguna',
     PORT: String(PORT),
     PLATAFORMA: 'ultron',
     ULTRON_SESION_SECRETO: SECRETO,

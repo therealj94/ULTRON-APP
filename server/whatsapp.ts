@@ -42,6 +42,7 @@ import type { RetencionAcciones } from './voz-agente';
 import { exito, fallo, incierto, type ResultadoHerramienta } from '../lib/recibo-herramienta';
 import { sesionAbreAura } from './seguridad';
 import { cuentaSuspendida, cuentasDisponibles } from './cuentas';
+import { presentadoEnChat } from './presentacion-decision';
 import { claveConexion } from './veta-entrar';
 import { enviarUnaVez, huellaAprobacion, idMensajeWADeOperacion, operacionDeBorrador, type Reconciliacion, type ResultadoEnvio, type SalidaEnvio } from '../lib/envios';
 import { anotarVencido, ApartadosBorradores, resumenTexto, textoEditado, vencioPorTiempo, type EdicionBorrador } from './borradores-cola';
@@ -829,6 +830,8 @@ function guardarBorrador(quien: string, ambito: string, b: Borrador): ResultadoH
   const viejas = APARTADOS.quitarDonde(k, mismoChat);
   if (viejas.length && !nota) nota = `Este borrador REEMPLAZA al que esperaba en su panel para el mismo chat («${resumenTexto(viejas[viejas.length - 1].texto)}»): ese ya no se manda. Díselo en una frase.\n`;
   BORRADORES.set(k, { ...b, ...(numero ? { numero } : {}), ...vigencia, huella, ...(reemplazo ? reemplazo : {}) });
+  // SEC-01: su texto exacto sale en la respuesta de este turno (y su tarjeta con la huella): es lo último presentado aquí.
+  presentadoEnChat(quien, ambito, { canal: 'whatsapp', intento: vigencia.intento, huella });
   const para = destinoWhatsapp({ ...b, numero });
   const aviso = reemplazo ? `OJO: este borrador REEMPLAZA al que esperaba para ${reemplazo.reemplazoDe}, que ya NO se manda. Díselo claro: el que espera ahora es para ${para}. Antes de mandarlo le vuelvo a confirmar a quién va.\n` : '';
   return exito(`BORRADOR DE WHATSAPP (NO enviado) para ${para}:\n${b.texto}\n${aviso}${nota}Léeselo tal cual (di a quién va) y pregúntale si lo mandas. Solo se manda si dice que sí; si quiere cambios, haz otro borrador.`, {

@@ -38,6 +38,8 @@ import type { RetencionAcciones } from './voz-agente';
 import { explicarFallo } from '../lib/correo/buzon';
 import { exito, fallo, incierto, type ResultadoHerramienta } from '../lib/recibo-herramienta';
 import { enviarUnaVez, huellaAprobacion, messageIdDeOperacion, operacionDeBorrador, type ResultadoEnvio, type SalidaEnvio } from '../lib/envios';
+import { dentroDe, intervaloDeCorreo, sinTiempo, type Intervalo } from '../lib/correo/intervalo';
+import { presentadoEnChat } from './presentacion-decision';
 import { anotarVencido, ApartadosBorradores, resumenTexto, textoEditado, vencioPorTiempo, type EdicionBorrador } from './borradores-cola';
 
 /* ------------------------------------------------------------------ el buzón (las pruebas ponen uno falso) */
@@ -48,6 +50,11 @@ let buzon: Buzon = BUZON_REAL;
 /** Solo pruebas: un buzón de mentira (sin IMAP ni SMTP). `null` vuelve al de verdad. */
 export function _buzonDePrueba(b: Partial<Buzon> | null) {
   buzon = b ? { ...BUZON_REAL, ...b } : BUZON_REAL;
+}
+/** El reloj de «el último correo de ayer» (LANG-02): las pruebas lo fijan. `null` vuelve al de verdad. */
+let reloj: () => number = () => Date.now();
+export function _relojDePrueba(f: (() => number) | null) {
+  reloj = f || (() => Date.now());
 }
 
 /* ------------------------------------------------------------------ la lista numerada y el borrador */
@@ -527,7 +534,11 @@ export function pideUltimoCorreo(texto: string): boolean {
   const m = ULTIMO_ES.exec(q) || ULTIMO_EN.exec(q);
   if (!m) return false;
   const despues = q.slice(m.index + m[0].length);
-  return !DE_ALGUIEN.test(despues) && !ES_TIEMPO.test(despues) && !OTRO_PEDIDO.test(despues);
+  if (ES_TIEMPO.test(despues)) return false;
+  // LANG-02: «de ayer», «de la última semana», «de esta tarde» no son un remitente: se quitan antes de mirar si nombra a
+  // alguien (y luego leerUltimo escoge DENTRO de ese intervalo).
+  const sinMomento = ` ${sinTiempo(despues)} `;
+  return !DE_ALGUIEN.test(sinMomento) && !OTRO_PEDIDO.test(sinMomento);
 }
 
 /** La referencia de `correo leer` es SOLO «el último» («último», «el más reciente», «el último correo que recibí», "latest"). */
@@ -538,12 +549,34 @@ const refEsElUltimo = (ref: string) => SOLO_ULTIMO.test(limpioParaBuscar(ref));
 /** Cuánto en el futuro se le cree a la fecha de un correo (relojes un poco adelantados); más que eso, es falsa. */
 const FUTURO_TOLERADO_MS = 10 * 60_000;
 
-/** Abre el más reciente de todas sus cuentas (por fecha, leído o no) y dice a cuál llegó. No abre ninguna tarea. */
-async function leerUltimo(quien: string, ambito: string): Promise<ResultadoHerramienta> {
-  const cuentas = await cuentasDe(quien);
-  if (!cuentas.length) return fallo(SIN_CUENTAS, 'sin-cuentas');
-  // Los pocos más nuevos de cada una (el UID más alto es el que llegó último); entre cuentas decide la fecha.
-  const consultas = await consultarCuentas(quien, cuentas, { n: 3 });
+/**
+ * Abre el más reciente de todas sus cuentas (por fecha, leído o no) y dice a cuál llegó. No abre ninguna tarea.
+ *
+ * LANG-02: con un intervalo («el último correo de AYER», «de esta tarde», «de la última semana»; hora de Honduras),
+ * escoge el más reciente DENTRO de él, aunque haya uno más nuevo fuera; con un remitente o tema (`buscar`), solo entre
+ * los que encajan; con una de sus cuentas nombrada, solo en esa. Un correo sin fecha no se cuenta dentro de ningún
+ * intervalo (no se puede saber); un momento que no ha llegado («de mañana») no abre nada. Sin intervalo: el de siempre.
+ */
+async function leerUltimo(quien: string, ambito: string, o: { intervalo?: Intervalo | null; buscar?: string; pedido?: string } = {}): Promise<ResultadoHerramienta> {
+  const todas = await cuentasDe(quien);
+  if (!todas.length) return fallo(SIN_CUENTAS, 'sin-cuentas');
+  const pedido = o.intervalo || null;
+  if (pedido?.futuro === true) {
+    const cual = /^(de|del)\b/.test(pedido.etiqueta) ? pedido.etiqueta : `de «${pedido.etiqueta}»`;
+    return exito(`CORREO: pidió el último correo ${cual}: ese momento todavía no llega (hora de Honduras), así que no puede haber correos de ahí. Díselo así; no abras otro en su lugar.`, { efecto: 'ninguno', proveedor: 'imap' });
+  }
+  const iv = pedido as Exclude<Intervalo, { futuro: true }> | null;
+  // Una cuenta nombrada («…de ayer en trabajo@empresa.com»): solo esa.
+  const dicho = plegar(o.pedido || '');
+  const nombradas = dicho ? todas.filter((c) => dicho.includes(plegar(c.correo))) : [];
+  const cuentas = nombradas.length ? nombradas : todas;
+  const ahora = reloj();
+  // Con intervalo o remitente hacen falta más que «los 3 más nuevos»: los de hoy pueden tapar los de ayer.
+  const consultas = await consultarCuentas(quien, cuentas, {
+    n: iv || o.buscar ? 200 : 3,
+    ...(o.buscar ? { buscar: o.buscar } : {}),
+    ...(iv ? { desde: new Date(iv.desde), hasta: new Date(iv.hasta) } : {}),
+  });
   const cob = coberturaDe(consultas);
   const cuentasR = cuentasDelRecibo(cob);
   const caidas = cob.filter((x) => x.fallo).map((x) => falloEnPalabras(x.fallo!));
@@ -551,27 +584,73 @@ async function leerUltimo(quien: string, ambito: string): Promise<ResultadoHerra
   // La fecha decide, pero una del futuro (más de 10 min: un encabezado Date falsificado, típico del spam) no cuenta: si
   // no, ese correo sería siempre «el último» (revisión del 5-oct, MENOR). La lista ya usa la hora en que lo recibió el
   // servidor (INTERNALDATE) cuando la hay; esto cubre cuando no. Sin fecha creíble, va después de los que sí la tienen.
-  const limite = Date.now() + FUTURO_TOLERADO_MS;
+  const limite = ahora + FUTURO_TOLERADO_MS;
   const cuando = (r: Resumen) => {
     const t = Date.parse(r.fecha);
     return Number.isFinite(t) && t <= limite ? t : -Infinity;
   };
-  const todos = consultas.flatMap((x) => (x.ok ? x.lista : [])).sort((a, b) => (cuando(a) === cuando(b) ? 0 : cuando(a) > cuando(b) ? -1 : 1));
-  const faltaron = caidas.length ? ` OJO: no pude mirar ${caidas.join('; ')}; puede haber uno más nuevo ahí: díselo.` : '';
+  const traidos = consultas.flatMap((x) => (x.ok ? x.lista : []));
+  const sinFecha = iv ? traidos.filter((r) => !Number.isFinite(cuando(r))).length : 0;
+  const todos = traidos.filter((r) => !iv || dentroDe(iv, cuando(r))).sort((a, b) => (cuando(a) === cuando(b) ? 0 : cuando(a) > cuando(b) ? -1 : 1));
+  // ¿Alcanzó a mirar hasta el intervalo? Si en una cuenta todo lo traído es más nuevo que el intervalo y quedaban más,
+  // lo de ese momento puede estar más atrás: no se dice «no hay» ni «es el último» sin avisarlo.
+  const sinAlcanzar = iv
+    ? consultas
+        .filter((x): x is Extract<ConsultaCuenta, { ok: true }> => x.ok)
+        .filter((x) => Number.isFinite(x.cob.total) && Number(x.cob.total) > x.lista.length && !x.lista.some((r) => cuando(r) < iv.hasta))
+        .map((x) => x.c.correo)
+    : [];
+  const momento = iv ? iv.etiqueta.replace(/^(de|del) /, '') : '';
+  const faltaron =
+    (caidas.length ? ` OJO: no pude mirar ${caidas.join('; ')}; puede haber uno más nuevo ahí: díselo.` : '') +
+    (sinAlcanzar.length ? ` OJO: en ${sinAlcanzar.join(', ')} hay muchos más nuevos y no alcancé a mirar hasta ${momento}: puede haber otro ahí; díselo.` : '') +
+    (sinFecha ? ` (${sinFecha} sin fecha no los conté: no se sabe si son ${iv ? iv.etiqueta : ''}.)` : '');
+  const incompleto = caidas.length > 0 || sinAlcanzar.length > 0;
+  const que = [o.buscar ? `de «${o.buscar}»` : '', iv ? iv.etiqueta : ''].filter(Boolean).join(' ');
   const el = todos[0];
   if (!el) {
     const miradas = cob.filter((x) => x.estado === 'consultada').map((x) => x.cuenta).join(', ');
-    return exito(`CORREO: no tiene ningún correo en la bandeja de entrada (miré ${miradas}).${faltaron}`, { efecto: 'ninguno', proveedor: 'imap', cuentas: cuentasR, ...(caidas.length ? { incompleto: true } : {}) });
+    const nada = que
+      ? `no tiene ningún correo ${que} en la bandeja de entrada (hora de Honduras; miré ${miradas}). No le abras otro en su lugar: díselo y pregúntale si quiere el último de otro momento.`
+      : `no tiene ningún correo en la bandeja de entrada (miré ${miradas}).`;
+    return exito(`CORREO: ${nada}${faltaron}`, { efecto: 'ninguno', proveedor: 'imap', cuentas: cuentasR, ...(incompleto ? { incompleto: true } : {}) });
   }
   // Si ya estaba en la lista numerada, conserva su número (y la tarea, si la hay, avanza con él).
   const lista = LISTAS.get(llave(quien, ambito)) || [];
   const i = lista.findIndex((x) => x.ref === el.ref);
   const varias = cuentas.length > 1;
   const aviso =
-    `ES EL ÚLTIMO QUE RECIBIÓ: el más reciente de ${varias ? `sus ${cuentas.length} cuentas` : 'su bandeja'}, leído o no${varias ? `; llegó a ${el.cuenta}: díselo` : ''}. ` +
+    `ES EL ÚLTIMO QUE RECIBIÓ${que ? ` ${que.toUpperCase()} (hora de Honduras)` : ''}: el más reciente ${que ? `${que} ` : ''}de ${varias ? `sus ${cuentas.length} cuentas` : 'su bandeja'}, leído o no${varias ? `; llegó a ${el.cuenta}: díselo` : ''}. ` +
+    (iv ? 'Puede haber otros más nuevos fuera de ese momento: no son lo que pidió. ' : '') +
     'Pidió uno solo: léeselo; no le listes los demás ni abras una tarea.' +
     faltaron;
-  return leerUbicado(quien, ambito, { ref: el.ref, ...(i >= 0 ? { n: i + 1 } : {}), resumen: el, aviso, ...(caidas.length ? { incompleto: true } : {}), cuentas: cuentasR });
+  return leerUbicado(quien, ambito, { ref: el.ref, ...(i >= 0 ? { n: i + 1 } : {}), resumen: el, aviso, ...(incompleto ? { incompleto: true } : {}), cuentas: cuentasR });
+}
+
+/**
+ * LANG-02: «el último (correo) de Ana de ayer», «el último de ayer» como referencia de `correo leer`: si la referencia
+ * pide el más reciente Y nombra un momento (o la persona lo nombró en el pedido y la referencia es la misma sin él), se
+ * escoge dentro de ese momento, con el remitente o tema que quede. Sin momento, null: la referencia sigue su camino.
+ */
+function ultimoConMomento(ref: string, pedido: string | undefined, ahora: number): { intervalo: Intervalo; buscar?: string } | null {
+  const q = limpioParaBuscar(ref);
+  if (!RECIENTE.test(q)) return null;
+  const intervalo = intervaloDeCorreo(ref, ahora) || (pedido && pideMomentoMismo(ref, pedido) ? intervaloDeCorreo(pedido, ahora) : null);
+  if (!intervalo) return null;
+  const fichas = sinTiempo(ref)
+    .split(' ')
+    .filter((w) => w && !RELLENO.has(w) && !/^(ultimo|ultima|mas|reciente|nuevo|nueva|recibi|entro|one|latest|last|newest|most|recent|the|my|from|email|mail)$/.test(w));
+  return { intervalo, ...(fichas.length ? { buscar: fichas.join(' ') } : {}) };
+}
+
+/** La referencia del modelo («el último de Ana») es la del pedido («el último correo de Ana de ayer») sin el momento. */
+function pideMomentoMismo(ref: string, pedido: string): boolean {
+  if (!RECIENTE.test(limpioParaBuscar(pedido))) return false;
+  const r = sinTiempo(ref)
+    .split(' ')
+    .filter((w) => w.length >= 3 && !RELLENO.has(w) && !/^(ultimo|ultima|reciente)$/.test(w));
+  const p = ` ${sinTiempo(pedido)} `;
+  return r.every((w) => p.includes(` ${w} `));
 }
 
 /** Abre el correo y lo deja listo para leer: cuerpo limpio en trozos, adjuntos con nombre. */
@@ -780,6 +859,8 @@ function guardarBorrador(quien: string, ambito: string, b: Borrador, nota = '', 
   const viejas = APARTADOS.quitarDonde(k, mismos);
   if (viejas.length && !version) version = `Este borrador REEMPLAZA al que esperaba en su panel para ${b.para.join(', ')} («${resumenTexto(viejas[viejas.length - 1].asunto, 60)}»): ese ya no se manda. Díselo en una frase.\n`;
   BORRADORES.set(k, { ...b, ...vigencia, huella, ...(reemplazo ? reemplazo : {}) });
+  // SEC-01: su texto exacto sale en la respuesta de este turno (y su tarjeta con la huella): es lo último presentado aquí.
+  presentadoEnChat(quien, ambito, { canal: 'correo', intento: vigencia.intento, huella });
   const aviso =
     (reemplazo
       ? `OJO: este borrador REEMPLAZA al que esperaba para ${reemplazo.reemplazoDe}, que ya NO se manda. Díselo claro: el que espera ahora es para ${b.para.join(', ')}. Antes de mandarlo le vuelvo a confirmar a quién va.\n`
@@ -1297,10 +1378,21 @@ export async function correrCorreoConEstado(quien: string, arg: string, ambito =
   const verbo = plegar(m?.[1] || 'revisar');
   let resto = (m?.[2] || '').trim();
   try {
-    if (/^(revisar|revisa|nuevos|bandeja)$/.test(verbo)) return pideUltimoCorreo(o.pedido || '') ? await leerUltimo(quien, ambito) : await revisar(quien, ambito);
+    // LANG-02: el intervalo que dijo la persona («el último correo de ayer») manda sobre «el más nuevo de todos».
+    if (/^(revisar|revisa|nuevos|bandeja)$/.test(verbo))
+      return pideUltimoCorreo(o.pedido || '') ? await leerUltimo(quien, ambito, { intervalo: intervaloDeCorreo(o.pedido || '', reloj()), pedido: o.pedido }) : await revisar(quien, ambito);
     if (/^(buscar|busca)$/.test(verbo)) return resto ? await revisar(quien, ambito, resto) : fallo('CORREO: ¿qué busco? Falta el texto.', 'falta-dato');
     // «El último» a secas: el más reciente de todas sus cuentas (con o sin lista).
-    if (/^(leer|lee|leeme|abrir|abre)$/.test(verbo) && resto && refEsElUltimo(resto)) return await leerUltimo(quien, ambito);
+    if (/^(leer|lee|leeme|abrir|abre)$/.test(verbo) && resto && refEsElUltimo(resto)) {
+      // «último» a secas del modelo, pero la persona dijo «el último correo de ayer»: ese intervalo.
+      const iv = o.pedido && pideUltimoCorreo(o.pedido) ? intervaloDeCorreo(o.pedido, reloj()) : null;
+      return await leerUltimo(quien, ambito, { intervalo: iv, pedido: o.pedido });
+    }
+    // «el último de ayer», «el último de Ana de ayer»: el más reciente DENTRO de ese momento (y de ese remitente).
+    if (/^(leer|lee|leeme|abrir|abre)$/.test(verbo) && resto) {
+      const um = ultimoConMomento(resto, o.pedido, reloj());
+      if (um) return await leerUltimo(quien, ambito, { ...um, pedido: o.pedido });
+    }
     // Sin decir cuál: el siguiente que falta (de la tarea, o el primero de la lista).
     if (/^(leer|lee|leeme|abrir|abre)$/.test(verbo)) return await leerRef(quien, ambito, resto, { siguiente: !resto });
     if (/^(siguiente|proximo|otro)$/.test(verbo)) return await leerRef(quien, ambito, '', { siguiente: true });

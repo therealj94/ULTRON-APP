@@ -217,7 +217,8 @@ import { asegurarCuentaMiembro, cuentaDe, cuentasDisponibles, crearSolicitud, en
 import { aprobadores, montarRutasCuentas, plantilla } from './server/cuentas-rutas';
 import { montarRutasGenesis } from './server/genesis';
 import { esIdVeta, montarRutasVeta } from './server/veta-entrar';
-import { gastarCupo } from './server/seguridad';
+import { gastarCupo, exigirAutoridadVigente } from './server/seguridad';
+import { describirPoliticaAutoridad } from './server/autoridad-cuenta';
 import { montarEnlacesApp } from './server/enlaces-app';
 import { enviarCorreo } from './lib/correo-ses';
 import { montarRutasBiblioteca } from './server/electrum/biblioteca-rutas';
@@ -355,6 +356,15 @@ app.use('/api', (req, res, next) => {
     error: `Esto es ${PLATAFORMA === 'electrum' ? 'Dr Electrum FP' : 'AU-RA FP'}. Esa ruta es de la otra plataforma.`,
     honesto: true,
   });
+});
+
+/*
+ * SEC-04 · AUTORIDAD VIGENTE DE LA SESIÓN: una sesión emitida (hasta 14 días) deja de leer datos privados y de causar
+ * efectos cuando la cuenta se suspende (permiso corto en caché, falla cerrado si no se puede saber; lo público inocuo
+ * sigue). Política sin registro de cuentas: server/autoridad-cuenta.ts y SECURITY.md.
+ */
+app.use('/api', (req, res, next) => {
+  exigirAutoridadVigente(req, res, next).catch(next);
 });
 
 /*
@@ -5993,6 +6003,8 @@ async function startServer() {
     iniciarCentinela(180_000);
     // Cada mañana a las 7:00 de Honduras, quién contestó el correo de la campaña SFSP.
     if (ES_ULTRON) console.log('[AU-RA] campaña SFSP', iniciarRevisionCampana());
+    // SEC-04: qué política de suspensiones rige (con registro, o sin él y declarada / cerrada).
+    console.log('[AU-RA] autoridad de sesiones:', describirPoliticaAutoridad());
     cargarSesionesCerradas()
       .then((d) => console.log('[AU-RA] sesiones', d))
       .catch((e) => console.warn('[AU-RA] sesiones', String(e?.message || e).slice(0, 160)));

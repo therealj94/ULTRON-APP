@@ -30,6 +30,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { s3GetJson, s3GetJsonConEtag, s3Listo, s3PutJson, s3PutJsonCondicional } from './s3';
 import { Generaciones } from './fila-por-cuenta';
+import { aplicarLapidas, BorradoDegradado, conLapidas, escribirLocal, fusionarCopias, sanearDurable, siguiente, type Durable } from './biometria-durable';
 
 export const LARGO_VECTOR = 128;
 export const MAX_PERSONAS = 30;
@@ -51,7 +52,8 @@ export type PersonaCara = {
   creado: number;
   actualizado: number;
 };
-export type CajonCaras = { version: 1; personas: PersonaCara[] };
+/** SEC-03: `rev`, `lapidas` y `borradoTodo` (lib/biometria-durable.ts): ids y horas, nada biométrico. */
+export type CajonCaras = { version: 1; personas: PersonaCara[] } & Durable;
 
 export class CarasNoDisponibles extends Error {}
 /** S3 no guardó el cambio: en disco quedó, pero un redeploy lo perdería (y volvería una cara «borrada»). */
@@ -184,7 +186,9 @@ function sanear(x: any): CajonCaras {
     })
     .filter(Boolean)
     .slice(0, MAX_PERSONAS) as PersonaCara[];
-  return { version: 1, personas };
+  // SEC-03: la versión y las lápidas viajan con el cajón; lo que tenga lápida no sale ni de una copia vieja.
+  const d = sanearDurable(x);
+  return { version: 1, personas: aplicarLapidas(personas, d), ...d };
 }
 
 function leerDeDisco(correo: string): CajonCaras | null {
@@ -195,15 +199,9 @@ function leerDeDisco(correo: string): CajonCaras | null {
   }
 }
 
-function escribirEnDisco(correo: string, c: CajonCaras) {
-  try {
-    fs.mkdirSync(carpeta(), { recursive: true });
-    const f = path.join(carpeta(), `${huellaCaras(correo)}.json`);
-    fs.writeFileSync(`${f}.tmp`, JSON.stringify(c), { mode: 0o600 });
-    fs.renameSync(`${f}.tmp`, f);
-  } catch (e: any) {
-    console.warn('[caras] no pude escribir el disco', String(e?.message || e).slice(0, 120));
-  }
+/** SEC-03: `ok`, `quitada` (no se pudo escribir pero ya no queda copia vieja) o `fallo` (la copia vieja sigue). */
+function escribirEnDisco(correo: string, c: CajonCaras): 'ok' | 'quitada' | 'fallo' {
+  return escribirLocal(carpeta(), path.join(carpeta(), `${huellaCaras(correo)}.json`), c);
 }
 
 /** Las caras de un correo: caché, disco, S3. Si S3 falla al leer (no «no existe»), CarasNoDisponibles. */
@@ -220,18 +218,22 @@ export async function cargarCaras(correo: string): Promise<CajonCaras> {
     refrescar(c);
     return hit;
   }
-  // Con S3, lo que vale es S3 (el disco es la copia de esta instancia, que otra pudo dejar atrás).
-  let cajon = conS3 ? null : leerDeDisco(c);
-  if (!cajon && conS3) {
+  // Con S3, lo que vale es S3 (el disco es la copia de esta instancia, que otra pudo dejar atrás). SEC-03: del disco solo
+  // cuentan su versión y sus lápidas (fusionarCopias: gana la versión más alta y las lápidas de las dos se aplican): una
+  // copia local vieja nunca devuelve a nadie y un S3 restaurado a una versión vieja no resucita lo que aquí se borró. Si S3
+  // no contesta, no se expone el disco solo: «no disponible» (falla cerrado).
+  const disco = leerDeDisco(c);
+  let cajon = conS3 ? null : disco;
+  if (conS3) {
     const g = generaciones.de(c);
     const r = await s3Lee.get(claveS3(c)).catch((e) => ({ ok: false, json: null, detalle: String(e?.message || e), missing: false }));
+    // Mientras S3 contestaba se guardó un cambio: lo leído es de antes; manda lo guardado.
     if (generaciones.cambioDesde(c, g)) return cache.get(c) || cargarCaras(c);
-    if (r.ok && r.json) {
-      cajon = sanear(r.json);
-      escribirEnDisco(c, cajon);
-    } else if (!r.ok && !r.missing) {
-      throw new CarasNoDisponibles(String(r.detalle || 'S3 no contestó'));
-    }
+    if (!r.ok && !r.missing) throw new CarasNoDisponibles(String(r.detalle || 'S3 no contestó'));
+    const f = fusionarCopias<PersonaCara, CajonCaras>(disco, r.ok && r.json ? sanear(r.json) : null);
+    cajon = f.cajon;
+    if (cajon && f.atrasada.includes('disco')) escribirEnDisco(c, cajon);
+    if (cajon && f.atrasada.includes('s3')) repararS3(c, cajon, g);
   }
   const final = cajon || vacio();
   cache.set(c, final);
@@ -247,7 +249,8 @@ function refrescar(c: string) {
     const g = generaciones.de(c);
     const r = await s3Lee.get(claveS3(c)).catch((e) => ({ ok: false, json: null, detalle: String(e?.message || e), missing: false }));
     if (!r.ok || generaciones.cambioDesde(c, g)) return;
-    const cajon = r.json ? sanear(r.json) : vacio();
+    // SEC-03: con la versión y las lápidas del disco (una copia vieja de S3 no resucita lo borrado aquí).
+    const cajon = fusionarCopias<PersonaCara, CajonCaras>(leerDeDisco(c), r.json ? sanear(r.json) : null).cajon || vacio();
     cache.set(c, cajon);
     leidoEn.set(c, Date.now());
     escribirEnDisco(c, cajon);
@@ -263,7 +266,8 @@ async function leerParaCambiar(c: string): Promise<{ cajon: CajonCaras; etag?: s
   if (s3Lee.getEtag && s3.putCond) {
     const r = await s3Lee.getEtag(claveS3(c)).catch((e) => ({ ok: false, json: null, etag: null, detalle: String(e?.message || e), missing: false }));
     if (!r.ok) throw new CarasNoDisponibles(String(r.detalle || 'S3 no contestó'));
-    const cajon = r.json ? sanear(r.json) : vacio();
+    // SEC-03: S3 (con su ETag, para la condición) fusionado con la versión y las lápidas del disco de esta instancia.
+    const cajon = fusionarCopias<PersonaCara, CajonCaras>(leerDeDisco(c), r.json ? sanear(r.json) : null).cajon || vacio();
     cache.set(c, cajon);
     leidoEn.set(c, Date.now());
     return { cajon, etag: r.missing ? null : r.etag || undefined };
@@ -273,23 +277,43 @@ async function leerParaCambiar(c: string): Promise<{ cajon: CajonCaras; etag?: s
 }
 
 /** Un cambio: leer S3 → cambiar → guardar con la condición de lo leído (412 → otra vez). `fn` da el cajón nuevo o null. */
-function cambiarCajon<T>(c: string, fn: (cajon: CajonCaras) => { cajon: CajonCaras | null; r: T }): Promise<T> {
+function cambiarCajon<T>(c: string, fn: (cajon: CajonCaras) => { cajon: CajonCaras | null; r: T }): Promise<{ r: T; estado: 'ok' | 'copia_local' }> {
   return unoALaVez(c, async () => {
     for (let intento = 0; intento < 4; intento++) {
       const leido = await leerParaCambiar(c);
       const { cajon, r } = fn(leido.cajon);
-      if (!cajon) return r;
-      if ((await guardar(c, cajon, leido.etag)) === 'ok') return r;
+      if (!cajon) return { r, estado: 'ok' as const };
+      // SEC-03: la versión sube (y las lápidas de lo leído se conservan).
+      const estado = await guardar(c, siguiente<CajonCaras>(leido.cajon, cajon), leido.etag);
+      if (estado !== 'conflicto') return { r, estado };
     }
     throw new CarasNoGuardadas('otra instancia cambió estas caras a la vez; intenta de nuevo');
   });
 }
 
-function guardar(c: string, cajon: CajonCaras, etag?: string | null): Promise<'ok' | 'conflicto'> {
+/** SEC-03: S3 quedó atrás (un respaldo restaurado, una lápida que solo tenía el disco): se le pone lo fusionado, en fila. */
+function repararS3(c: string, cajon: CajonCaras, g: number) {
+  if (!s3.listo()) return;
+  const previa = colas.get(c) || Promise.resolve();
+  const paso = previa.then(async () => {
+    if (generaciones.cambioDesde(c, g)) return;
+    await s3.put(claveS3(c), cajon).catch(() => null);
+  });
+  colas.set(c, paso.catch(() => undefined));
+}
+
+/** Las cuentas cuya copia local quedó vieja tras un borrado (S3 al día): estado degradado explícito. */
+const localDegradado = new Map<string, string>();
+/** ¿La copia local de esta cuenta quedó atrás (un borrado que S3 ya tiene y el disco no)? */
+export function copiaLocalDegradada(correo: string): string | null {
+  return localDegradado.get(correoNormal(correo)) ?? null;
+}
+
+function guardar(c: string, cajon: CajonCaras, etag?: string | null): Promise<'ok' | 'copia_local' | 'conflicto'> {
   cache.set(c, cajon);
   generaciones.cambio(c);
   const previa = colas.get(c) || Promise.resolve();
-  const paso = previa.then(async (): Promise<'ok' | 'conflicto'> => {
+  const paso = previa.then(async (): Promise<'ok' | 'copia_local' | 'conflicto'> => {
     // Primero lo durable (S3) y después el disco: si S3 falla no queda nada «adelantado» en disco ni
     // en caché, así que reintentar vuelve a encontrar la cara y la borra de verdad.
     if (s3.listo()) {
@@ -304,8 +328,19 @@ function guardar(c: string, cajon: CajonCaras, etag?: string | null): Promise<'o
         throw new CarasNoGuardadas(String((r as any).detalle || 'S3 no guardó'));
       }
     }
-    escribirEnDisco(c, cajon);
     leidoEn.set(c, Date.now());
+    // SEC-03: el disco ya no se traga su error. Sin S3 es el único almacén: si falla, el cambio NO quedó (se dice).
+    // Con S3: si no se pudo ni quitar la copia vieja, el estado queda degradado y quien borra lo dice.
+    const local = escribirEnDisco(c, cajon);
+    if (local !== 'ok' && !s3.listo()) {
+      if (cache.get(c) === cajon) cache.delete(c);
+      throw new CarasNoGuardadas('el disco no guardó el cambio');
+    }
+    if (local === 'fallo') {
+      localDegradado.set(c, 'la copia local no se pudo reescribir ni quitar');
+      return 'copia_local';
+    }
+    localDegradado.delete(c);
     return 'ok';
   });
   const cola = paso.catch(() => undefined);
@@ -364,8 +399,8 @@ export async function agregarCara(correo: string, alta: Exclude<ReturnType<typeo
       persona = { id: crypto.randomBytes(9).toString('base64url'), nombre: alta.nombre, relacion: alta.relacion, ...(alta.parentesco ? { parentesco: alta.parentesco } : {}), vectores: podarMuestras(alta.vectores), consentimiento: alta.consentimiento, creado: ahora, actualizado: ahora };
       personas.push(persona);
     }
-    return { cajon: { version: 1, personas }, r: persona };
-  });
+    return { cajon: { version: 1 as const, personas }, r: persona };
+  }).then((x) => x.r);
 }
 
 /**
@@ -380,18 +415,24 @@ export async function sumarMuestras(correo: string, id: string, vectores: number
     const personas = [...cajon.personas];
     const persona = { ...personas[i], vectores: podarMuestras([...personas[i].vectores, ...vectores]), actualizado: Date.now() };
     personas[i] = persona;
-    return { cajon: { version: 1, personas }, r: persona };
-  });
+    return { cajon: { version: 1 as const, personas }, r: persona };
+  }).then((x) => x.r);
 }
 
-/** Olvida una persona por id. null si no estaba. */
+/**
+ * Olvida una persona por id. null si no estaba. SEC-03: deja su lápida (ninguna copia vieja la devuelve); si S3 la
+ * borró pero la copia local vieja no se pudo reescribir ni quitar, lanza BorradoDegradado (con la persona): no se
+ * afirma un borrado completo.
+ */
 export async function olvidarCara(correo: string, id: string): Promise<PersonaCara | null> {
   const c = correoNormal(correo);
-  return cambiarCajon<PersonaCara | null>(c, (cajon) => {
+  const { r, estado } = await cambiarCajon<PersonaCara | null>(c, (cajon) => {
     const p = cajon.personas.find((x) => x.id === id) || null;
     if (!p) return { cajon: null, r: null };
-    return { cajon: { version: 1, personas: cajon.personas.filter((x) => x.id !== id) }, r: p };
+    return { cajon: { version: 1 as const, personas: cajon.personas.filter((x) => x.id !== id), lapidas: conLapidas(cajon, [id]) }, r: p };
   });
+  if (r && estado === 'copia_local') throw new BorradoDegradado(r);
+  return r;
 }
 
 /** Olvida todas las caras de este correo. Devuelve cuántas había. */
@@ -399,14 +440,19 @@ export async function olvidarTodasLasCaras(correo: string): Promise<number> {
   const c = correoNormal(correo);
   return unoALaVez(c, async () => {
     let n = 0;
+    let previo: CajonCaras | null = null;
     try {
       cache.delete(c);
-      n = (await cargarCaras(c)).personas.length;
+      previo = await cargarCaras(c);
+      n = previo.personas.length;
     } catch {
       /* sin leer, se borra igual: borrar nunca debe fallar por no poder contar */
     }
-    // Vacío sin condición: borrar todo gana siempre.
-    await guardar(c, vacio());
+    // Vacío sin condición: borrar todo gana siempre. SEC-03: deja su hora (`borradoTodo`): toda persona creada antes muere
+    // también en cualquier copia vieja (otra instancia, el disco, un respaldo restaurado).
+    const ahora = Date.now();
+    const estado = await guardar(c, siguiente<CajonCaras>(previo, { ...vacio(), lapidas: conLapidas(previo, (previo?.personas || []).map((p) => p.id), ahora), borradoTodo: ahora }));
+    if (estado === 'copia_local') throw new BorradoDegradado(n);
     return n;
   });
 }

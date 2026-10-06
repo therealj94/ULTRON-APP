@@ -286,7 +286,9 @@ const REGLAS: Regla[] = [
     id: 'llamame',
     max: 9,
     re: /^(?:(?:um|uh|eh|este|okay|ok|hey|antonio|so|can you|could you|puedes|podrias|me puedes|me podrias|quiero que|necesito que|mejor|claudio|guardian) )*(?:llamame|hazme una llamadita|haceme una llamadita|ponte en llamada conmigo|hablemos por llamada|hablemos por telefono|lets talk on a call|call my phone|llamarme|me llames|me llamas|marcame|marcarme|timbrame|hazme una llamada|haceme una llamada|dame una llamada|echame una llamada|dame un timbrazo|hablame por telefono|llamame por telefono|call me|give me a call|ring me|phone me|call me up|give me a ring)(?: (?:ahorita|ya|ahora|un rato|un ratito|porfa|porfis|por favor|please|now|right now|quiero platicar|que quiero platicar|que quiero hablar|para platicar|para hablar|quiero hablar contigo|al celular|al telefono|tu|vos|real quick|me|ok|for me|pues|dale|gracias))*$/,
-    build: () => ({ tipo: 'llamame' }),
+    // Una cita («"llámame"», 'call me') no es un pedido: normalizar() le quita las comillas de las puntas,
+    // así que se mira la frase cruda. Lo dudoso va al cerebro (el camino seguro: nadie recibe una llamada).
+    build: (_m, _q, raw) => (/["“”«»„‟]|(^|\s)['‘’]\S|\S['‘’](\s|$)/.test(raw) ? null : { tipo: 'llamame' }),
   },
   {
     id: 'conocer_salir',

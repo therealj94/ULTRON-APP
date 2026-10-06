@@ -36,7 +36,7 @@ import {
   tieneLuego,
 } from '../../src/lib/decisionesMesa.ts';
 import { crearClienteTrabajos, pospuestas, puedeActivar, textoIndicador } from '../../src/lib/trabajos.ts';
-import { campoDecisionVista, campoParaTurno, decisionVistaActual, fijarDecisionVista } from '../../src/lib/decisionVista.ts';
+import { campoDecisionVista, campoParaTurno, decisionVistaActual, fijarDecisionVista, trasAvisoPantalla } from '../../src/lib/decisionVista.ts';
 
 let fallos = 0;
 let pasan = 0;
@@ -394,7 +394,7 @@ await pruebaAsync('cliente (revisión 7.5, MENOR 2): oculta → visible seguidas
   assert.ok(cuerpos[3].seq >= Date.now() - 1000, 'un cliente nuevo no empieza de cero');
 });
 
-prueba('revisión del 6-oct (bloqueante 1): un turno HABLADO lleva lo que la ventana muestra (tarea, decisión y huella); lo escrito no', () => {
+prueba('revisión del 6-oct (bloqueante 1): un turno HABLADO lleva lo que la ventana muestra (tarea, decisión y huella); SEC-01: lo escrito con la ventana a la vista también, y «registrada: false» suelta la autoridad', () => {
   const t = borrador({ id: 'h1' });
   t.decision.fingerprint = 'a'.repeat(64);
   assert.deepEqual(campoDecisionVista(t), { tareaId: 'h1', decisionId: 'dc_h1', huella: 'a'.repeat(64) });
@@ -409,7 +409,17 @@ prueba('revisión del 6-oct (bloqueante 1): un turno HABLADO lleva lo que la ven
   fijarDecisionVista(campoDecisionVista(tareaEnPantalla(item, null)));
   assert.deepEqual(decisionVistaActual(), { tareaId: 'h1', decisionId: 'dc_h1', huella: 'a'.repeat(64) });
   assert.deepEqual(campoParaTurno(true), decisionVistaActual(), 'hablado: lo que se ve');
-  assert.equal(campoParaTurno(false), null, 'escrito: nada');
+  // SEC-01: lo ESCRITO con la ventana a la vista también lleva lo que muestra (el servidor lo ata igual).
+  assert.deepEqual(campoParaTurno(false), decisionVistaActual(), 'escrito con la ventana a la vista: lo que se ve');
+  // «registrada: false» al renovar es pérdida de autoridad: se suelta el campo (no se toma como éxito).
+  const visto = decisionVistaActual();
+  assert.equal(trasAvisoPantalla(visto, { ok: true, registrada: true }), false);
+  assert.deepEqual(decisionVistaActual(), visto, 'registrada: sigue');
+  assert.equal(trasAvisoPantalla({ ...visto, decisionId: 'otra' }, { ok: true, registrada: false }), false, 'de otra decisión: no toca la de ahora');
+  assert.equal(trasAvisoPantalla(visto, { ok: true, registrada: false }), true);
+  assert.equal(decisionVistaActual(), null, 'perdió la autoridad: ni lo hablado ni lo escrito lo llevan');
+  assert.equal(campoParaTurno(false), null);
+  fijarDecisionVista(visto);
   assert.equal(campoParaTurno(true, null), null, 'el explícito gana');
   fijarDecisionVista(null);
   assert.equal(campoParaTurno(true), null, 'cerrada: nada');

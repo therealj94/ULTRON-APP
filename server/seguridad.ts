@@ -8,6 +8,7 @@ import path from 'path';
 import { ipPrivada } from '../lib/red-publica';
 import { s3GetJson, s3Listo, s3PutJson } from '../lib/s3';
 import { modoDesarrollo } from '../lib/entorno';
+import { comprobarAutoridad, suspensionSabida } from './autoridad-cuenta';
 
 export type Sesion = {
   token: string;
@@ -355,6 +356,8 @@ export function sesionSigueViva(o: { huella: string; correo: string; at: number;
   const cerrada = cerradas.get(o.huella);
   if (cerrada !== undefined && cerrada > ahora) return false;
   if (o.exp && ahora > o.exp) return false;
+  // SEC-04: una cuenta que se sabe suspendida no sigue hablando por un pase de voz ya emitido.
+  if (suspensionSabida(o.correo)) return false;
   const desde = claveCambiadaEn(String(o.correo || '').toLowerCase());
   return !(desde && o.at < desde);
 }
@@ -393,14 +396,15 @@ export function sesionDe(req: Request): Sesion | null {
   }
   const cached = sesiones.get(t);
   if (cached) {
-    if (Date.now() - cached.at > SESION_TTL_MS || (cached.exp && Date.now() > cached.exp) || anteriorALaClave(cached)) {
+    // SEC-04: una suspensión ya sabida invalida la sesión emitida (no espera a que venza a los 14 días).
+    if (Date.now() - cached.at > SESION_TTL_MS || (cached.exp && Date.now() > cached.exp) || anteriorALaClave(cached) || suspensionSabida(cached.correo)) {
       sesiones.delete(t);
       return null;
     }
     return cached;
   }
   const firmada = leerSesionFirmada(t);
-  if (firmada && !anteriorALaClave(firmada)) {
+  if (firmada && !anteriorALaClave(firmada) && !suspensionSabida(firmada.correo)) {
     sesiones.set(t, firmada);
     return firmada;
   }
@@ -420,6 +424,65 @@ export function esInvitado(req: Request): boolean {
   // Una sesión que no da Dr Electrum (cuenta solo de AU-RA que entró con la llave de la demo) no
   // convierte al visitante en usuario de Electrum: mira como cualquier invitado.
   return !nivelDe(identidadDe(req), 'electrum');
+}
+
+/**
+ * ¿Este correo es una identidad CONFIGURADA en el despliegue (el padrón del entorno: la junta, ULTRON_PADRON)? No las
+ * cuentas aprobadas desde la web (viven en la base que acaso no contesta) ni los códigos temporales. Es la única que
+ * sigue cuando la autoridad es desconocida (SEC-04), como los dueños de WhatsApp cuando la base cae.
+ */
+export function identidadDelEntorno(correo: string): boolean {
+  const c = String(correo || '').trim().toLowerCase();
+  if (!c || c.endsWith(DOMINIO_CODIGO)) return false;
+  const p = personaPorCorreoExacto(c);
+  return !!p && (p as { origen?: string }).origen !== 'web';
+}
+
+/**
+ * Lo público e inocuo que sigue aunque no se pueda comprobar (o se sepa suspendida) la cuenta de la sesión: oír, la voz,
+ * el canto, el diagnóstico (RUTAS_SIN_CEREBRO, sin datos de nadie ni efectos) y cerrar la sesión.
+ */
+const SIGUE_SIN_AUTORIDAD = ['/api/ultron/salir', '/api/health'];
+
+/**
+ * SEC-04 · AUTORIDAD VIGENTE DE LA SESIÓN. Toda petición a /api con una sesión válida pasa por aquí antes de su ruta:
+ *  · cuenta suspendida (el registro lo dice, o ya se sabía): 403 `cuenta_suspendida`, y ESE token queda cerrado de forma
+ *    durable (una reactivación posterior no lo resucita: hay que volver a entrar);
+ *  · autoridad desconocida (el registro falló o tardó, o no hay registro y el despliegue no declaró política): 503
+ *    `autoridad_desconocida` — salvo la identidad configurada en el despliegue (identidadDelEntorno), que sigue;
+ *  · permitida (registro «activa» de hace < 30 s, o AURA_SUSPENSIONES=ninguna): sigue.
+ * Sin sesión, o en lo público inocuo (SIGUE_SIN_AUTORIDAD y RUTAS_SIN_CEREBRO), no se mira: cada ruta sigue con su
+ * propia puerta. Política y presupuesto de revocación: server/autoridad-cuenta.ts y SECURITY.md.
+ */
+export async function exigirAutoridadVigente(req: Request, res: Response, next: NextFunction) {
+  const t = tokenDe(req);
+  if (!t) return next();
+  const ruta = String(req.originalUrl || req.url || '').split('?')[0].replace(/\/+$/, '');
+  if (SIGUE_SIN_AUTORIDAD.includes(ruta) || RUTAS_SIN_CEREBRO.includes(ruta)) return next();
+  // Una cuenta que ya se sabe suspendida (sesionDe la rechaza): se confirma con el registro si lo sabido es viejo (una
+  // reactivación entra en el mismo presupuesto); si sigue suspendida, ESE token se cierra y se dice por qué.
+  const firmada = leerSesionFirmada(t);
+  if (firmada && suspensionSabida(firmada.correo) && !sesionCerrada(t)) {
+    const r = await comprobarAutoridad(firmada.correo);
+    if (r.estado === 'suspendida') {
+      await cerrarSesion(t).catch(() => null);
+      return res.status(403).json({ error: 'Esta cuenta está suspendida.', code: 'cuenta_suspendida', honesto: true });
+    }
+  }
+  const s = sesionDe(req);
+  if (!s) return next();
+  const r = await comprobarAutoridad(s.correo);
+  if (r.estado === 'permitida') return next();
+  if (r.estado === 'suspendida') {
+    await cerrarSesion(t).catch(() => null);
+    return res.status(403).json({ error: 'Esta cuenta está suspendida.', code: 'cuenta_suspendida', honesto: true });
+  }
+  if (identidadDelEntorno(s.correo)) return next();
+  return res.status(503).json({
+    error: 'No pude comprobar que tu cuenta sigue activa. No muestro datos privados ni hago nada a tu nombre hasta comprobarlo; inténtalo en un momento.',
+    code: 'autoridad_desconocida',
+    honesto: true,
+  });
 }
 
 export function exigirSesion(req: Request, res: Response, next: NextFunction) {
