@@ -29,6 +29,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { s3GetJson, s3Listo, s3PutJson } from './s3';
+import { Generaciones } from './fila-por-cuenta';
 
 export const LARGO_VECTOR = 128;
 export const MAX_PERSONAS = 30;
@@ -62,8 +63,16 @@ export function _s3DePrueba(o: Partial<typeof s3> | null) {
   s3 = o ? { ...s3, ...o } : { listo: s3Listo, put: s3PutJson };
 }
 
+/** La lectura de S3, inyectable aparte (las pruebas de carreras simulan un S3 lento). */
+let s3Lee = { listo: s3Listo, get: s3GetJson };
+export function _s3LecturaDePrueba(o: Partial<typeof s3Lee> | null) {
+  s3Lee = o ? { ...s3Lee, ...o } : { listo: s3Listo, get: s3GetJson };
+}
+
 const cache = new Map<string, CajonCaras>();
 const colas = new Map<string, Promise<void>>();
+/** Revisión del 6-oct: una lectura lenta de S3 que empezó antes de un cambio no pisa la caché (lib/fila-por-cuenta.ts). */
+const generaciones = new Generaciones();
 /** Un cambio a la vez por cuenta (leer → cambiar → guardar), ver `unoALaVez`. */
 const candados = new Map<string, Promise<unknown>>();
 
@@ -190,8 +199,10 @@ export async function cargarCaras(correo: string): Promise<CajonCaras> {
   const hit = cache.get(c);
   if (hit) return hit;
   let cajon = leerDeDisco(c);
-  if (!cajon && s3Listo()) {
-    const r = await s3GetJson(claveS3(c)).catch((e) => ({ ok: false, json: null, detalle: String(e?.message || e), missing: false }));
+  if (!cajon && s3Lee.listo()) {
+    const g = generaciones.de(c);
+    const r = await s3Lee.get(claveS3(c)).catch((e) => ({ ok: false, json: null, detalle: String(e?.message || e), missing: false }));
+    if (generaciones.cambioDesde(c, g)) return cache.get(c) || cargarCaras(c);
     if (r.ok && r.json) {
       cajon = sanear(r.json);
       escribirEnDisco(c, cajon);
@@ -206,6 +217,7 @@ export async function cargarCaras(correo: string): Promise<CajonCaras> {
 
 function guardar(c: string, cajon: CajonCaras): Promise<void> {
   cache.set(c, cajon);
+  generaciones.cambio(c);
   const previa = colas.get(c) || Promise.resolve();
   const paso = previa.then(async () => {
     // Primero lo durable (S3) y después el disco: si S3 falla no queda nada «adelantado» en disco ni

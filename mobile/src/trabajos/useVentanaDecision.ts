@@ -40,6 +40,7 @@ import {
 } from '../lib/decisionesMesa';
 import { respuestaPc, type TareaPc } from '../compa/computadora';
 import { clienteTrabajos, marcarVentanaAbierta, tareasDelUltimoTurno, type Trabajos } from './useTrabajos';
+import { campoDecisionVista, fijarDecisionVista } from '../lib/decisionVista';
 
 /** Lo que el turno acaba de preguntar cuenta como «primero» este rato (después, la fila vuelve a ser por antigüedad). */
 const DEL_TURNO_MS = 10 * 60_000;
@@ -158,6 +159,13 @@ export function useVentanaDecision(o: Opciones) {
   // tarde (revisión 7.5, MENOR 2; lib/trabajos.ts enPantalla).
   const visto = abierta ? tareaEnPantalla(actual, edicion) : null;
   const vistoClave = visto ? actual!.clave : '';
+  // Revisión del 6-oct (bloqueante 1): lo que se ve (tarea, decisión y huella) va con el próximo turno HABLADO; mientras
+  // edita, o cerrada, nada (lib/decisionVista.ts, lib/api.ts turnoBody).
+  const huellaVista = visto?.decision?.fingerprint || '';
+  useEffect(() => {
+    fijarDecisionVista(visto ? campoDecisionVista(visto) : null);
+    return () => fijarDecisionVista(null);
+  }, [vistoClave, huellaVista]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!visto) return;
     const t = visto;

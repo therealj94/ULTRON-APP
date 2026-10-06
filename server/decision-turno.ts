@@ -19,6 +19,7 @@ import { enPantallaDe, type EnPantalla } from './decision-en-pantalla';
 import { llaveConversacion, resumenTexto, tomarVencidos } from './borradores-cola';
 import type { RetencionAcciones } from './voz-agente';
 import { otraVozDelTurno } from '../lib/voces-miembro';
+import { decisionVistaDelTurno, hechoSiNoEstaLigada, vistaHablada, type VistaHablada } from './decision-hablada';
 
 /** Lo que la app (PULSE2CHAT) tiene esperando el «sí» de un turno anterior: un mensaje, una llamada, un recordatorio. */
 export type AppEsperando = { que: string; para: string; cuando?: number; huella?: string; video?: boolean };
@@ -63,6 +64,14 @@ export type OpcionesDecisionTurno = {
   quienHabla?: unknown;
   origen?: unknown;
   sesion?: { correo?: string; nombre?: string } | null;
+  /**
+   * Revisión del 6-oct (bloqueante 1, server/decision-hablada.ts): el turno fue HABLADO (la voz de la mesa, el dictado,
+   * la conversación de voz; con `retener` también). Un «sí» hablado solo manda el borrador atado a la huella que ese
+   * aparato muestra: `decisionVista` (el campo del teléfono) o el registro de la ventana de ese `aparato`.
+   */
+  hablado?: boolean;
+  decisionVista?: unknown;
+  aparato?: unknown;
 };
 
 export type SalidaDecisionTurno = {
@@ -258,8 +267,11 @@ export async function resolverDecisionesDelTurno(o: OpcionesDecisionTurno): Prom
   const hechos: string[] = [];
   const nada = (extra: Partial<SalidaDecisionTurno> = {}): SalidaDecisionTurno => ({ hechos, turnoVigente: true, delCorreo: null, delWhatsapp: null, deLaPregunta: null, ambiguo: false, appBloqueada: false, respondio: false, ...extra });
   if (!dueno) return nada();
-  // Lo que la persona tiene a la vista (la ventana de decisión de la mesa, o lo que AU-RA acaba de preguntar).
-  const vista = vistaDe({ dueno, ambito, enPantalla: o.enPantalla });
+  // Lo que la persona tiene a la vista (la ventana de decisión de la mesa, o lo que AU-RA acaba de preguntar). En un turno
+  // hablado, lo que dice el teléfono que muestra ESE aparato (o su registro): server/decision-hablada.ts.
+  const hablado = o.hablado === true || !!retener;
+  const hv: VistaHablada | null = hablado ? vistaHablada({ dueno, ambito, whatsapp: o.whatsapp, campo: decisionVistaDelTurno(o.decisionVista), aparato: o.aparato, registro: vistaDe({ dueno, ambito, enPantalla: o.enPantalla }) }) : null;
+  const vista = hv ? hv.vista : vistaDe({ dueno, ambito, enPantalla: o.enPantalla });
   // Lo que espera cuando la persona contestó (lo que estaba contestando).
   const pendientes = pendientesDelTurno({ dueno, ambito, whatsapp: o.whatsapp, app: o.app, enPantalla: vista });
   // Lo que quedó atrás (José, 5-oct): un borrador que venció sin decidirse se dice una vez («¿lo rehago?»), no desaparece.
@@ -292,6 +304,15 @@ export async function resolverDecisionesDelTurno(o: OpcionesDecisionTurno): Prom
       `HECHO: dijo «${message.slice(0, 80)}», pero ${porQue}: ni se mandó, ni se descartó, ni se contestó lo que esperaba (${decirPendiente(d.p)}). Dile con amabilidad que eso lo confirma ${otraVoz.duena}: con su voz (una frase un poco más larga, como «sí, mándalo») o tocando «Sí» en su ventana de decisión.`
     );
     return nada({ ambiguo: true, appBloqueada: !!o.app, appVista: o.app ?? null });
+  }
+  // Revisión del 6-oct (bloqueante 1): un «sí» HABLADO manda un correo o un WhatsApp solo si está atado a la huella exacta
+  // que ese aparato muestra. Si no (sin ventana, la de antes de editar, la de otro aparato), no se elige ni se manda nada.
+  if (hv && d.tipo === 'ejecutar' && (d.p.origen === 'correo' || d.p.origen === 'whatsapp')) {
+    const no = hechoSiNoEstaLigada(d.p, hv, message, decirPendiente(d.p));
+    if (no) {
+      hechos.push(no);
+      return nada({ ambiguo: true, appBloqueada: !!o.app, appVista: o.app ?? null });
+    }
   }
   const efecto = d.tipo === 'ejecutar' && d.p.origen !== 'app';
   // Un «sí» que va a mandar un borrador o soltar a su computadora: antes se deja anotado en el turno durable (AUR06,

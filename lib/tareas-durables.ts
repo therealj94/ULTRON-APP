@@ -1525,6 +1525,12 @@ export type TaskSnapshot = {
     expired: boolean;
     postponed: boolean;
     postponedUntil?: string;
+    /**
+     * Revisión del 6-oct (bloqueante 1): la huella del borrador que muestra esta decisión (destinatario, cuenta y
+     * contenido). El teléfono la manda con un «sí» HABLADO mientras la ventana la muestra (`decisionVista`): el servidor
+     * solo manda si el borrador que espera tiene exactamente esa huella. No es secreta (resume lo que ya se ve).
+     */
+    fingerprint?: string;
   } | null;
   resultId?: string;
   result?: { id: string; summary: string; evidence: Evidencia[]; partial: string[]; pending: string[]; at: string } | null;
@@ -1564,6 +1570,7 @@ export function vistaDecision(d: Decision | null | undefined, ahora: number): Ta
     expired,
     postponed: !!(d.pospuesta || (d.pospuestaHasta && d.pospuestaHasta > ahora)),
     ...(d.pospuestaHasta ? { postponedUntil: iso(d.pospuestaHasta) } : {}),
+    ...(d.vinculo?.tipo === 'borrador' && d.vinculo.hash ? { fingerprint: d.vinculo.hash } : {}),
   };
 }
 

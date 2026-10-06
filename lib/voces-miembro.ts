@@ -22,6 +22,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { s3GetJson, s3Listo, s3PutJson } from './s3';
 import { MODELO_VOZ, similitud } from './voces-motor';
+import { filaPorCuenta, Generaciones } from './fila-por-cuenta';
 
 export const LARGO_HUELLA = MODELO_VOZ.dim;
 export const MAX_PERSONAS = 20;
@@ -58,9 +59,21 @@ let s3 = { listo: s3Listo, put: s3PutJson };
 export function _s3DePrueba(o: Partial<typeof s3> | null) {
   s3 = o ? { ...s3, ...o } : { listo: s3Listo, put: s3PutJson };
 }
+/** La lectura de S3, inyectable aparte (las pruebas de carreras simulan un S3 lento). */
+let s3Lee = { listo: s3Listo, get: s3GetJson };
+export function _s3LecturaDePrueba(o: Partial<typeof s3Lee> | null) {
+  s3Lee = o ? { ...s3Lee, ...o } : { listo: s3Listo, get: s3GetJson };
+}
 
 const cache = new Map<string, CajonVoces>();
 const colas = new Map<string, Promise<void>>();
+/**
+ * Revisión del 6-oct: cada cambio (agregar, olvidar una, olvidar todas) lee el cajón DESPUÉS de que el
+ * anterior lo guardó; y una lectura lenta de S3 que empezó antes de un cambio no pisa la caché. Sin esto,
+ * un borrado y un alta a la vez podían hacer volver una voz borrada (lib/fila-por-cuenta.ts).
+ */
+const unoALaVez = filaPorCuenta();
+const generaciones = new Generaciones();
 
 const correoNormal = (c: string) => String(c || '').trim().toLowerCase();
 const vacio = (): CajonVoces => ({ version: 1, modelo: MODELO_VOZ.id, personas: [] });
@@ -132,8 +145,11 @@ export async function cargarVoces(correo: string): Promise<CajonVoces> {
   const hit = cache.get(c);
   if (hit) return hit;
   let cajon = leerDeDisco(c);
-  if (!cajon && s3Listo()) {
-    const r = await s3GetJson(claveS3(c)).catch((e) => ({ ok: false, json: null, detalle: String(e?.message || e), missing: false }));
+  if (!cajon && s3Lee.listo()) {
+    const g = generaciones.de(c);
+    const r = await s3Lee.get(claveS3(c)).catch((e) => ({ ok: false, json: null, detalle: String(e?.message || e), missing: false }));
+    // Mientras S3 contestaba se guardó un cambio: lo leído es de antes; manda lo guardado.
+    if (generaciones.cambioDesde(c, g)) return cache.get(c) || cargarVoces(c);
     if (r.ok && r.json) {
       cajon = sanear(r.json);
       escribirEnDisco(c, cajon);
@@ -148,6 +164,7 @@ export async function cargarVoces(correo: string): Promise<CajonVoces> {
 
 function guardar(c: string, cajon: CajonVoces): Promise<void> {
   cache.set(c, cajon);
+  generaciones.cambio(c);
   const previa = colas.get(c) || Promise.resolve();
   const paso = previa.then(async () => {
     // Primero lo durable (S3) y después el disco: si S3 falla no queda nada «adelantado».
@@ -195,6 +212,7 @@ const clave = (n: string) => n.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g
 export async function agregarVoz(correo: string, alta: AltaValida, vectores: number[][]): Promise<PersonaVoz> {
   if (!vectores.length || !vectores.every(huellaValida)) throw new TypeError('huellas inválidas');
   const c = correoNormal(correo);
+  return unoALaVez(c, async () => {
   const cajon = await cargarVoces(c);
   const ahora = Date.now();
   const i = cajon.personas.findIndex((p) => (alta.relacion === 'yo' ? p.relacion === 'yo' : p.relacion === 'conocido' && clave(p.nombre) === clave(alta.nombre)));
@@ -227,27 +245,32 @@ export async function agregarVoz(correo: string, alta: AltaValida, vectores: num
   }
   await guardar(c, { version: 1, modelo: MODELO_VOZ.id, personas });
   return persona;
+  });
 }
 
 export async function olvidarVoz(correo: string, id: string): Promise<PersonaVoz | null> {
   const c = correoNormal(correo);
-  const cajon = await cargarVoces(c);
-  const p = cajon.personas.find((x) => x.id === id) || null;
-  if (!p) return null;
-  await guardar(c, { version: 1, modelo: MODELO_VOZ.id, personas: cajon.personas.filter((x) => x.id !== id) });
-  return p;
+  return unoALaVez(c, async () => {
+    const cajon = await cargarVoces(c);
+    const p = cajon.personas.find((x) => x.id === id) || null;
+    if (!p) return null;
+    await guardar(c, { version: 1, modelo: MODELO_VOZ.id, personas: cajon.personas.filter((x) => x.id !== id) });
+    return p;
+  });
 }
 
 export async function olvidarTodasLasVoces(correo: string): Promise<number> {
   const c = correoNormal(correo);
-  let n = 0;
-  try {
-    n = (await cargarVoces(c)).personas.length;
-  } catch {
-    /* sin leer, se borra igual: borrar nunca debe fallar por no poder contar */
-  }
-  await guardar(c, vacio());
-  return n;
+  return unoALaVez(c, async () => {
+    let n = 0;
+    try {
+      n = (await cargarVoces(c)).personas.length;
+    } catch {
+      /* sin leer, se borra igual: borrar nunca debe fallar por no poder contar */
+    }
+    await guardar(c, vacio());
+    return n;
+  });
 }
 
 /* ── ¿de quién es esta voz? ──────────────────────────────────────────────────────────────────── */

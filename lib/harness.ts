@@ -122,11 +122,11 @@ export function computadoraDisponible(): boolean {
  * `conSesion`: el turno es de alguien con sesión (correo verificado): sus misiones y su círculo son suyos.
  * Sin sesión no se ofrecen (no hay de quién serían). El triaje va con su WhatsApp (lee también el correo).
  */
-export function instruccionHarness(nivel: NivelAura = 'junta', conComputadora = computadoraDisponible(), conWhatsapp = false, conSesion = false): string {
+export function instruccionHarness(nivel: NivelAura = 'junta', conComputadora = computadoraDisponible(), conWhatsapp = false, conSesion = false, conCorreo = correoDisponible()): string {
   const base = nivel === 'miembro' ? INSTRUCCION_HARNESS_MIEMBRO : INSTRUCCION_HARNESS;
   return [
     base,
-    correoDisponible() ? INSTRUCCION_CORREO : '',
+    conCorreo ? INSTRUCCION_CORREO : '',
     conComputadora ? INSTRUCCION_COMPUTADORA : '',
     conWhatsapp ? INSTRUCCION_WHATSAPP : '',
     conSesion ? INSTRUCCION_TAREA : '',

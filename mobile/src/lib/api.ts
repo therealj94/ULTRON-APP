@@ -22,6 +22,7 @@ import { avatarActual } from '../avatares/actual';
 import { idiomaActual } from '../i18n';
 import { etiquetasDeVista, vistaDeEtiquetas, vistaDeRespuesta, type FocoVision, type VistaCamara } from './vistaCamara';
 import { campoQuienHabla, type QuienHablaTurno } from '../voces/voces';
+import { campoParaTurno, type CampoDecisionVista } from './decisionVista';
 
 /** Tope de una renovación del token: una que nunca contesta no puede retener las peticiones. */
 export const TOPE_RENOVAR_MS = 10_000;
@@ -439,6 +440,12 @@ type TurnoOpts = {
    * no se supo (muy corta, tardó) y es la última voz que no es la dueña (revisión 7.5, M1′): solo precaución.
    */
   quienHabla?: QuienHablaTurno;
+  /**
+   * Revisión del 6-oct (bloqueante 1): lo que la ventana de decisión muestra (tarea, decisión y huella), solo en un turno
+   * HABLADO y solo mientras se ve y no se edita (lib/decisionVista.ts). Sin pasarlo, el de la ventana. El servidor manda
+   * con un «sí» dicho solo si el borrador que espera tiene exactamente esa huella.
+   */
+  decisionVista?: CampoDecisionVista | null;
 };
 
 /**
@@ -494,6 +501,7 @@ function turnoBody(opts: TurnoOpts) {
     ...(opts.soloRepetir && opts.idTurno ? { soloRepetir: true } : {}),
     ...(opts.interrumpido ? { interrumpido: { oido: String(opts.interrumpido.oido || '').slice(-400) } } : {}),
     ...(campoQuienHabla(opts.quienHabla) ? { quienHabla: campoQuienHabla(opts.quienHabla) } : {}),
+    ...(campoParaTurno(opts.hablado, opts.decisionVista) ? { decisionVista: campoParaTurno(opts.hablado, opts.decisionVista) } : {}),
     // Con quién habla la persona y en qué idioma: el cerebro contesta como ese avatar y en esa lengua.
     avatar: avatarActual(),
     idioma: idiomaActual(),

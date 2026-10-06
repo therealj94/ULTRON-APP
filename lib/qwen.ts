@@ -39,6 +39,11 @@ export function construirMensajes(opts: {
   /** El turno es de alguien con sesión: se le ofrecen sus misiones y su círculo (lib/harness.ts). */
   sesion?: boolean;
   /**
+   * Revisión del 6-oct (server/modo-invitado.ts): habla un invitado, no la dueña. Ni correo ni computadora (que el
+   * servidor ofrece a todos los que tienen sesión), además de lo que ya quita no tener sesión ni WhatsApp.
+   */
+  invitado?: boolean;
+  /**
    * Lo que cambia en cada turno (hora, app, HECHOS: server/prompt-turno.ts piezasDelTurno). Va al FINAL
    * del system, después de las reglas fijas: así el principio es igual turno a turno y el nodo reutiliza
    * lo que ya leyó en vez de releer miles de fichas.
@@ -60,7 +65,7 @@ export function construirMensajes(opts: {
   const parts: string[] = [codigo ? promptHonesto(nivel) : HONESTIDAD_CONVERSACION];
   if (!codigo) parts.push(telegram ? TEXTO_TELEGRAM : VOZ_ESCRITORIO);
   parts.push(String(opts.personalidad || '').trim());
-  if (harness) parts.push(instruccionHarness(nivel, undefined, !!opts.whatsapp, !!opts.sesion));
+  if (harness) parts.push(opts.invitado ? instruccionHarness(nivel, false, false, false, false) : instruccionHarness(nivel, undefined, !!opts.whatsapp, !!opts.sesion));
   if (cot) parts.push(COT_FORZADO);
   if (fewShot) parts.push(FEW_SHOT_HONESTO);
 

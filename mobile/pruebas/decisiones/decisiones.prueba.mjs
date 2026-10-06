@@ -36,6 +36,7 @@ import {
   tieneLuego,
 } from '../../src/lib/decisionesMesa.ts';
 import { crearClienteTrabajos, pospuestas, puedeActivar, textoIndicador } from '../../src/lib/trabajos.ts';
+import { campoDecisionVista, campoParaTurno, decisionVistaActual, fijarDecisionVista } from '../../src/lib/decisionVista.ts';
 
 let fallos = 0;
 let pasan = 0;
@@ -391,6 +392,27 @@ await pruebaAsync('cliente (revisión 7.5, MENOR 2): oculta → visible seguidas
   const otro = crearClienteTrabajos(async (_ruta, init) => (cuerpos.push(JSON.parse(init.body)), { status: 200, json: {} }));
   await otro.enPantalla(t, true);
   assert.ok(cuerpos[3].seq >= Date.now() - 1000, 'un cliente nuevo no empieza de cero');
+});
+
+prueba('revisión del 6-oct (bloqueante 1): un turno HABLADO lleva lo que la ventana muestra (tarea, decisión y huella); lo escrito no', () => {
+  const t = borrador({ id: 'h1' });
+  t.decision.fingerprint = 'a'.repeat(64);
+  assert.deepEqual(campoDecisionVista(t), { tareaId: 'h1', decisionId: 'dc_h1', huella: 'a'.repeat(64) });
+  // Un servidor de antes (sin huella): nada que atar.
+  assert.equal(campoDecisionVista(borrador({ id: 'h2' })), null);
+  assert.equal(campoDecisionVista(null), null);
+  // Mientras edita, la ventana no dice nada (tareaEnPantalla da null) y el turno hablado no lleva campo.
+  const item = colaVentana({ tareas: [t], ahora: T0 })[0];
+  const ed = empezarEdicion(item, 'es');
+  fijarDecisionVista(campoDecisionVista(tareaEnPantalla(item, ed)));
+  assert.equal(campoParaTurno(true), null, 'editando: nada');
+  fijarDecisionVista(campoDecisionVista(tareaEnPantalla(item, null)));
+  assert.deepEqual(decisionVistaActual(), { tareaId: 'h1', decisionId: 'dc_h1', huella: 'a'.repeat(64) });
+  assert.deepEqual(campoParaTurno(true), decisionVistaActual(), 'hablado: lo que se ve');
+  assert.equal(campoParaTurno(false), null, 'escrito: nada');
+  assert.equal(campoParaTurno(true, null), null, 'el explícito gana');
+  fijarDecisionVista(null);
+  assert.equal(campoParaTurno(true), null, 'cerrada: nada');
 });
 
 console.log(`\n${pasan} pasan, ${fallos} fallan`);

@@ -497,6 +497,30 @@ test('6-oct: el turno no espera a la base de cuentas: lo sabido vale ya (y se re
         suspendidas = new Set([BETO]);
         W._suspensionWhatsappDePrueba(async (c) => suspendidas.has(c));
         assert.equal(await W.whatsappPermitido(BETO, { comunidad: true }), false);
+        // Bloqueante 3 (revisión del 6-oct): un permiso sabido NO sobrevive a una consulta fallida, ni a los 2 min.
+        suspendidas = new Set();
+        W._suspensionWhatsappDePrueba(async (c) => suspendidas.has(c));
+        assert.equal(await W.whatsappPermitidoTurno(ANA, { comunidad: true }, 1000), true, 'sabido y fresco: pasa');
+        W._envejecerSuspensionWhatsapp(60_000);
+        let falla = true;
+        W._suspensionWhatsappDePrueba(async () => {
+          if (falla) throw new Error('base caída');
+          return false;
+        });
+        // _suspensionWhatsappDePrueba borra lo sabido: se vuelve a sembrar «no suspendida» y luego falla la base.
+        falla = false;
+        assert.equal(await W.whatsappPermitidoTurno(ANA, { comunidad: true }, 1000), true);
+        falla = true;
+        W._envejecerSuspensionWhatsapp(31_000);
+        assert.equal(await W.whatsappPermitidoTurno(ANA, { comunidad: true }, 1000), false, 'tras un fallo, la comunidad no pasa');
+        assert.equal(await W.whatsappPermitidoTurno(ANA, { comunidad: true }, 1000), false, 'ni en el turno siguiente');
+        assert.equal(await W.whatsappPermitidoTurno(JOSE, {}, 1000), true, 'el dueño sigue (por configuración)');
+        // Más de 2 min sin consulta que conteste: no vale lo viejo.
+        falla = false;
+        assert.equal(await W.whatsappPermitidoTurno(ANA, { comunidad: true }, 1000), true);
+        falla = true;
+        W._envejecerSuspensionWhatsapp(130_000);
+        assert.equal(await W.whatsappPermitidoTurno(ANA, { comunidad: true }, 1000), false, 'lo sabido de hace más de 2 min no vale');
       } finally {
         W._suspensionWhatsappDePrueba(null);
       }

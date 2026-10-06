@@ -1155,6 +1155,9 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
       const fresca = await reconciliar(dueno, e.reg, d, ahora());
       return res.status(409).json({ error: 'La tarea cambió mientras editabas. No envié nada: mira cómo quedó.', codigo: 'version', tarea: vistaTarea(fresca, ahora()), honesto: true });
     }
+    // Revisión del 6-oct (bloqueante 1): lo que la ventana registró era el texto de ANTES; deja de valer. La ventana
+    // vuelve a registrar la versión nueva cuando la muestra (y solo esa se aprueba diciendo «sí»).
+    soltarEnPantalla(dueno, e.reg.id);
     anotar(c.tarea);
     return res.json({ tarea: vistaTarea(c.tarea, ahora()), editada: true, honesto: true });
   });
@@ -1195,7 +1198,8 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
     if (!vinc || e.reg.estado !== 'awaiting_approval') return res.json({ registrada: false, honesto: true });
     // Mientras se leía la tarea llegó un aviso más nuevo del mismo aparato (la «oculta»): ese gana.
     if (!sigueSiendoUltimaSecuencia(dueno, aparato, b.seq)) return res.json({ registrada: false, vieja: true, honesto: true });
-    fijarEnPantalla(dueno, { canal: vinc.canal, ambito: vinc.ambito, intento: vinc.intento, huella: vinc.hash, tareaId: e.reg.id, decisionId: dec.id, via: 'pantalla' });
+    const deAparato = typeof aparato === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(aparato.trim()) ? aparato.trim() : '';
+    fijarEnPantalla(dueno, { canal: vinc.canal, ambito: vinc.ambito, intento: vinc.intento, huella: vinc.hash, tareaId: e.reg.id, decisionId: dec.id, via: 'pantalla', ...(deAparato ? { aparato: deAparato } : {}) });
     return res.json({ registrada: true, honesto: true });
   });
 

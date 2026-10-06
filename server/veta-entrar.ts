@@ -149,8 +149,10 @@ export type DepsVeta = {
   /** Un cupo con clave propia (seguridad.gastarCupo): true si todavía hay, y lo gasta. */
   cupo: (clave: string, max: number, ventanaMs: number) => boolean;
   emitirSesion: (u: { correo: string; nombre: string; rol: string }, o?: { comunidad?: boolean }) => { token: string };
-  /** ¿La cuenta (por su identidad `veta:…`) está suspendida? */
+  /** ¿La cuenta (por su identidad `veta:…`) está suspendida? Si lanza o tarda, no se entra (503). */
   suspendida?: (id: string) => Promise<boolean>;
+  /** Solo pruebas: el tope de la consulta de suspensión (por omisión TOPE_SUSPENSION_MS). */
+  topeSuspensionMs?: number;
   /** Abre (o deja como está) la cuenta de miembro de esta identidad. Un fallo no impide entrar. */
   registrarMiembro?: (m: { id: string; nombre: string }) => Promise<unknown>;
   /** Siembra el perfil con el apodo (nada de «Genesis compartió»: el nombre de la wallet no está verificado). */
@@ -160,6 +162,28 @@ export type DepsVeta = {
   /** Entradas por conexión (IPv4, o IPv6 por /64) cada 15 minutos; por omisión MAX_ENTRADAS. */
   maxConexion?: number;
 };
+
+/** Lo más que se espera la consulta de suspensión; pasado esto, no se entra (no se puede comprobar). */
+export const TOPE_SUSPENSION_MS = 5000;
+
+/**
+ * ¿Alguna de estas identidades está suspendida? Tres respuestas: 'suspendida', 'libre' (todas contestaron
+ * que no) o 'sin_comprobar' (alguna falló o tardó más de `topeMs`): sin comprobar es NO entrar.
+ */
+export async function comprobarSuspension(suspendida: (id: string) => Promise<boolean>, ids: string[], topeMs = TOPE_SUSPENSION_MS): Promise<'suspendida' | 'libre' | 'sin_comprobar'> {
+  let reloj: ReturnType<typeof setTimeout> | undefined;
+  const tope = new Promise<'tope'>((ok) => (reloj = setTimeout(() => ok('tope'), topeMs)));
+  try {
+    const r = await Promise.race([Promise.all(ids.map((i) => Promise.resolve().then(() => suspendida(i)))), tope]);
+    if (r === 'tope') return 'sin_comprobar';
+    if (r.some((x) => x === true)) return 'suspendida';
+    return r.every((x) => x === false) ? 'libre' : 'sin_comprobar';
+  } catch {
+    return 'sin_comprobar';
+  } finally {
+    clearTimeout(reloj);
+  }
+}
 
 type Salida = { status: number; body: Record<string, unknown> };
 const fallo = (status: number, codigo: string, error: string): Salida => ({ status, body: { ok: false, codigo, error } });
@@ -230,10 +254,16 @@ export function montarRutasVeta(app: Express, d: DepsVeta) {
     // 3. Suspendida (por su identidad Y por el correo de la wallet: quien suspendieron con su cuenta de correo
     //    o de Genesis no la esquiva entrando por aquí —revisión de seguridad del 5-oct, MEDIO-1—; el correo solo
     //    sirve para negar, nunca para dar), tope por dirección y la sesión de miembro.
+    //    Revisión del 6-oct (bloqueante 3, «ningún acceso si no puede comprobarse la autorización»): si la consulta
+    //    falla o tarda, NO se entra (antes un error contaba como «no suspendida»): 503 y sin sesión.
     if (d.suspendida) {
       const correoN = correoWallet.toLowerCase();
-      const [porId, porCorreo] = await Promise.all([d.suspendida(id).catch(() => false), d.suspendida(correoN).catch(() => false)]);
-      if (porId || porCorreo) return fallo(403, 'SUSPENDIDA', 'Esta cuenta está suspendida.');
+      const comprobado = await comprobarSuspension(d.suspendida, [id, correoN], d.topeSuspensionMs ?? TOPE_SUSPENSION_MS);
+      if (comprobado === 'sin_comprobar') {
+        console.error('[veta] no pude comprobar si la cuenta está suspendida: no entra');
+        return fallo(503, 'CUENTA_SIN_COMPROBAR', 'No pude comprobar tu cuenta. Intenta de nuevo.');
+      }
+      if (comprobado === 'suspendida') return fallo(403, 'SUSPENDIDA', 'Esta cuenta está suspendida.');
     }
     if (!d.cupo(`veta-entrar:${id}`, MAX_ENTRADAS, VENTANA_MS)) return fallo(429, 'LIMITE', 'Demasiados intentos con esta cuenta. Espera 15 minutos.');
     // El nombre de la cuenta; si no puso ninguno, algo del correo para saludar (solo para saludar: el

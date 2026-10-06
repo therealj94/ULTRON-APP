@@ -54,6 +54,8 @@ export type DecisionVista = {
   expired: boolean;
   postponed: boolean;
   postponedUntil?: string;
+  /** La huella del borrador que muestra (servidor nuevo): va con un «sí» hablado (lib/decisionVista.ts). */
+  fingerprint?: string;
 };
 export type EvidenciaVista = { id: string; tipo: string; etiqueta: string; ref?: string };
 export type ResultadoVista = { id: string; summary: string; evidence: EvidenciaVista[]; partial: string[]; pending: string[]; at: string };

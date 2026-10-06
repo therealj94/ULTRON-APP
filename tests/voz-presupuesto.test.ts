@@ -195,8 +195,10 @@ function medir(p: Pedido) {
   return { system, texto, herramientas, nombres: (p.body.toolConfig?.tools || []).map((t: any) => t.toolSpec?.name), total: texto + herramientas.length };
 }
 
+// Habla la dueña (con otra voz, el turno va en modo invitado: server/modo-invitado.ts, su propia prueba abajo).
 const ESCENA_PESADA =
-  'Por la voz, habla Ana (tu esposa), no José. Reconozco a José (quien te habla), Ana (tu esposa); 1 persona(s) que no conozco. Veo a tres personas, una muy cerca, una sonriendo, la más cercana mira la pantalla.';
+  'Reconozco a José (quien te habla), Ana (tu esposa); 1 persona(s) que no conozco. Veo a tres personas, una muy cerca, una sonriendo, la más cercana mira la pantalla.';
+const ESCENA_OTRA_VOZ = `Por la voz, habla Ana (tu esposa), no José. ${ESCENA_PESADA}`;
 
 /* ------------------------------------------------------------------ las pruebas */
 
@@ -228,11 +230,10 @@ test('un turno hablado pesado y realista cabe en el presupuesto y conserva lo qu
   console.log(`[presupuesto voz] system+mensajes ${m.texto} car. (~${fichas.texto} fichas) · herramientas ${m.nombres.length}: ${m.herramientas.length} car. (~${fichas.herramientas}) · total ~${fichas.total} fichas`);
   assert.ok(fichas.texto <= PRESUPUESTO_VOZ_TEXTO_FICHAS, `system y mensajes: ~${fichas.texto} fichas > ${PRESUPUESTO_VOZ_TEXTO_FICHAS}`);
   assert.ok(fichas.total <= PRESUPUESTO_VOZ_FICHAS, `todo: ~${fichas.total} fichas > ${PRESUPUESTO_VOZ_FICHAS}`);
-  // Lo que cuida a la persona, siempre: quién habla, el «sí» antes de mandar, nunca decir que salió sin el resultado.
-  assert.match(m.system, /QUIEN HABLA: por la voz, ahora te habla Ana, no José/);
+  // Lo que cuida a la persona, siempre: el «sí» antes de mandar, nunca decir que salió sin el resultado.
   assert.match(m.system, /primero queda listo y le preguntas; cuando diga que sí/);
   assert.match(m.system, /Nunca digas que algo salió, se creó o se hizo si el resultado de la herramienta no lo dice/);
-  assert.match(m.system, /ESCENA \(tu cámara, ahora mismo\): Por la voz, habla Ana/);
+  assert.match(m.system, /ESCENA \(tu cámara, ahora mismo\): Reconozco a José/);
   assert.match(m.herramientas, /solo deja un BORRADOR: léeselo y pregunta si lo mandas/);
   assert.ok(m.nombres.includes('whatsapp') && m.nombres.includes('llamar_contacto') && m.nombres.includes('correo'), 'las manos siguen todas');
   // Lo que casi nunca hace falta, fuera del camino caliente.
@@ -243,6 +244,14 @@ test('un turno hablado pesado y realista cabe en el presupuesto y conserva lo qu
   const linea = stdout.split('\n').filter((l) => /\[mesa\] turno .* \(hablado\)/.test(l)).at(-1) || '';
   assert.match(linea, / · prompt \d+ car\. ~\d+ fichas \(\d+ herr\. \d+ car\.\) · por bedrock zai\.glm-5 · total \d+ ms$/, linea);
   assert.equal(alNodo, 0, 'ningún turno cayó al nodo');
+});
+
+test('con otra voz (Ana), el turno pesado va sin las manos privadas de la dueña (modo invitado)', { skip: !listo }, async () => {
+  contestar = () => '[EMO: neutral] Te respondo en modo invitado.';
+  const { nuevos } = await turno('Léeme los últimos mensajes de WhatsApp de José.', { escena: ESCENA_OTRA_VOZ });
+  if (!nuevos.length) return; // el turno pudo resolverse sin modelo; lo que importa es que nada privado salga
+  const m = medir(nuevos[0]);
+  for (const privada of ['whatsapp', 'correo', 'llamar_contacto']) assert.ok(!m.nombres.includes(privada), `invitado con «${privada}»`);
 });
 
 test('cuando pregunta cómo o dónde, el menú de la app va; cuando pregunta qué puede hacer, la ficha; escrito, siempre', { skip: !listo }, async () => {
