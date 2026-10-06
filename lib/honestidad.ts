@@ -142,7 +142,7 @@ const SALIO = [
   rx(String.raw`${INI}(?:ya )?(?:salio|se fue|se envio|se mando)\b(?=\s*(?:$|[.,;:!…]|(?:tu|el|su) ${COSA_ENVIO}\b|(?:a|para) (?!las\b|los\b)[a-z]))`),
   rx(String.raw`${INI}${ART}${COSA_ENVIO} (?:ya )?(?:salio|se fue|le llego)\b${NO_DATO}`),
   // «Listo, ya le llegó.» suelto; «Ya le llegó el correo de Ana» lee un dato.
-  rx(String.raw`${INI}ya (?:le llego|les llego|lo recibio|la recibio|lo tiene|la tiene)\b(?=\s*(?:$|[.,;:!…]))`),
+  rx(String.raw`${INI}ya (?:le llego|les llego|lo recibio|la recibio|lo tiene|la tiene)\b(?=\s*(?:$|[.,;:!…]|(?:a|para) (?!las\b|los\b)[a-z]))`),
   rx(String.raw`${INI}(?:(?:your|the|my) )?(?:message|text|email|e-mail|whatsapp|it|mail|msg)(?: has| have)?(?: been| was|'s| is)?(?: just| already)? (?:sent|delivered)\b${NO_DATO}`),
   /\bi(?:'ve| have)? (just |already )?(sent|texted|emailed|messaged|forwarded)\b/,
   // M3: "Ok, sent it", "All set, sent", "Sent!".
@@ -270,7 +270,8 @@ export function afirmacionesDeHecho(texto: string, contexto: { mensaje?: string;
     // G1: presenta un borrador para aprobarlo (con su cita y la pregunta después, o habla del borrador mismo): no afirma.
     const aprueba = todas.slice(i + 1).some((x) => APRUEBA.test(plano(x.propia)));
     const salio = hay(SALIO, s);
-    if (aprueba && (CON_CITA.test(f.texto) || !salio)) return;
+    // Lo que dice que SALIÓ nunca se perdona, ni con cita ni con «¿te parece bien?» detrás (revisión de 78ac7c2).
+    if (aprueba && !salio) return;
     if (!salio && DEL_BORRADOR.test(s)) return;
     // «Ya quedó» o «te lo guardé» sueltos: de qué es lo dice la frase misma o, si no, lo que se habló.
     if (clase === 'generico' || clase === 'guardado') {
@@ -340,6 +341,8 @@ const OFRECE_ACCION = /¿[^?]*\b(escrib\w*|mand\w*|envi\w*|reenvi\w*|respond\w*|
 /** Lo que pide hacer algo («mándale», «agéndalo», «ponme la alarma»), sin lo agradecido («gracias por mandarlo»). */
 const PIDE_VERBO = /\b(mand|envi|escrib|agend|program|recuerd|guard|anot|llam|marc|pon)\w*/;
 const AGRADECE = /\b(gracias|thanks|thank you|thx|te pasaste|muy amable)\b/;
+/** Segunda persona en pasado: pregunta por lo que AU-RA ya hizo («ya lo mandaste», «le escribiste»). */
+const PREGUNTA_HECHO = /\b(mand|envi|reenvi|agend|program|guard|anot|llam|marc|avis)\w*aste\b|\b(escrib|respond|contest|pus|hic|dij)\w*iste\b/;
 
 /**
  * ¿El mensaje de la persona aprueba o pide hacer algo AHORA? Entonces lo de antes no respalda lo que se afirma. Un «sí»
@@ -353,6 +356,9 @@ function pideAhora(mensaje: string | undefined, o: { anterior?: string; borrador
   const a = analizarRespuesta(m);
   if (a.pregunta) return false;
   const p = plano(m);
+  // «ya se lo mandaste», «entonces ya le escribiste a mi viejo» sin «¿» (la transcripción de voz los pierde): pregunta por
+  // lo hecho, no pide hacerlo otra vez (revisión de 78ac7c2: se desmentía un envío real y la persona lo repetía).
+  if (PREGUNTA_HECHO.test(p) && !/\b(otra vez|de nuevo|otro|otra)\b/.test(p)) return false;
   const pide = PIDE_VERBO.test(p.replace(/\b(por|for) \w+/g, ' '));
   // «Gracias por mandarlo» agradece; «Gracias, ahora mándale a Pedro» pide otra cosa.
   if (AGRADECE.test(p)) return pide;

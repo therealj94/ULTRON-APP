@@ -185,3 +185,29 @@ describe('MENOR: la frase entera', () => {
     assert.deepEqual(h?.map((x) => x.texto), ['Sí, mándalo ya por favor.', 'No, mándalo ya por favor.']);
   });
 });
+
+describe('revisión de 78ac7c2: lo que dice que salió nunca se perdona; preguntar sin «¿» no desmiente lo hecho', () => {
+  beforeEach(() => _olvidarEfectos());
+  const t0 = 1_800_000_000_000;
+  it('«Listo, se lo mandé: «…». ¿Lo dejo así?» sin recibo se corrige (la cita no perdona un envío)', () => {
+    const ctx = { recibos: [] as ReciboEfecto[], borrador: { canal: 'whatsapp' as const, para: 'Viejo' }, mensaje: 'Sí, enviarlo.' };
+    for (const t of ['Listo, se lo mandé: «Viejo, ¿cómo vamos?». ¿Lo dejo así?', '¡Listo! Mensaje enviado a tu viejo: «¿Cómo vamos?». ¿Te parece bien?', 'Le mandé esto a tu viejo: «¿Cómo vamos?». ¿Está bien así?'])
+      assert.equal(guardaDeHonestidad(t, ctx).cambiada, true, t);
+    // Presentar sigue intacto.
+    assert.equal(guardaDeHonestidad('Listo, quedó así: «Viejo, ¿cómo vamos?». ¿Lo envío?', ctx).cambiada, false);
+  });
+  it('tras un envío real, «ya se lo mandaste» / «entonces ya le escribiste a mi viejo» sin «¿» no desmiente', () => {
+    anotarEfectoReal('dueno2@x.test', { canal: 'whatsapp', estado: 'confirmado', destino: 'Viejo +50477771234' }, t0);
+    const previos = efectosRecientes('dueno2@x.test', t0 + 60_000);
+    for (const mensaje of ['ya se lo mandaste', 'Va, ya lo mandaste', 'entonces ya le escribiste a mi viejo'])
+      assert.equal(guardaDeHonestidad('Sí, ya se lo mandé a tu viejo.', { recibos: [], previos, mensaje, ahora: t0 + 60_000 }).cambiada, false, mensaje);
+    // Pedir otro sí es nuevo: sin recibo de este turno, se corrige.
+    assert.equal(guardaDeHonestidad('Listo, ya se lo mandé a tu viejo.', { recibos: [], previos, mensaje: 'mándaselo otra vez', ahora: t0 + 60_000 }).cambiada, true);
+  });
+  it('«¡Hecho! Ya le llegó a Ana.» sin recibo se corrige entero (no queda «Todavía no lo hice. Ya le llegó a Ana.»)', () => {
+    const g = guardaDeHonestidad('¡Hecho! Ya le llegó a Ana.', { recibos: [], mensaje: 'Mándale a Ana que llego tarde.' });
+    assert.equal(g.cambiada, true);
+    assert.doesNotMatch(g.texto, /Ya le llegó a Ana/);
+    assert.equal(guardaDeHonestidad('Ya le llegó el correo de Ana.', NADA).cambiada, false, 'leer un dato');
+  });
+});
