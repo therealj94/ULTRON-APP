@@ -30,7 +30,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { s3GetJson, s3GetJsonConEtag, s3Listo, s3PutJson, s3PutJsonCondicional } from './s3';
 import { Generaciones } from './fila-por-cuenta';
-import { aplicarLapidas, BorradoDegradado, conLapidas, escribirLocal, fusionarCopias, sanearDurable, siguiente, type Durable } from './biometria-durable';
+import { aplicarLapidas, BorradoDegradado, conLapidas, escribirLocal, fusionarCopias, horaDeAlta, sanearDurable, siguiente, type Durable } from './biometria-durable';
 
 export const LARGO_VECTOR = 128;
 export const MAX_PERSONAS = 30;
@@ -396,7 +396,7 @@ export async function agregarCara(correo: string, alta: Exclude<ReturnType<typeo
       personas[i] = persona;
     } else {
       if (personas.length >= MAX_PERSONAS) throw new RangeError(`Ya conozco ${MAX_PERSONAS} caras; olvida alguna para agregar otra.`);
-      persona = { id: crypto.randomBytes(9).toString('base64url'), nombre: alta.nombre, relacion: alta.relacion, ...(alta.parentesco ? { parentesco: alta.parentesco } : {}), vectores: podarMuestras(alta.vectores), consentimiento: alta.consentimiento, creado: ahora, actualizado: ahora };
+      persona = { id: crypto.randomBytes(9).toString('base64url'), nombre: alta.nombre, relacion: alta.relacion, ...(alta.parentesco ? { parentesco: alta.parentesco } : {}), vectores: podarMuestras(alta.vectores), consentimiento: alta.consentimiento, creado: horaDeAlta(cajon, ahora), actualizado: ahora };
       personas.push(persona);
     }
     return { cajon: { version: 1 as const, personas }, r: persona };
