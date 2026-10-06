@@ -31,6 +31,7 @@
 import crypto from 'node:crypto';
 import { consultarModelo } from './laya';
 import { predecirApp, UMBRAL_LIGERA } from './laya-ligera';
+import { motivoParaNoLlamar } from './cognitivo/intencion-llamada';
 import { confirmaEnvioDeMensaje, decidirPendiente, soloNombraLaAccion, type DecisionPendiente, type Decidido } from './afirmacion';
 import {
   dichoDeMano,
@@ -1219,6 +1220,9 @@ export function ordenPorReglas(
   // Las manos nuevas que este teléfono sabe hacer.
   const m = manoPorReglas(texto, { idioma, contexto: o.contexto, resolver: resolverContacto, ahora });
   if (!m) return null;
+  // LANG-03: «llámame» por atajo solo si es inequívoco (sin cita, sin discurso referido, sin nada esperando
+  // su «sí» ni una llamada viva). Si no, el turno completo.
+  if (m.tipo === 'accion' && m.accion.tipo === 'llamame' && motivoParaNoLlamar(texto, contextoDeLlamada(o))) return null;
   if (m.tipo === 'decir') return { accion: null, decir: m.decir, via: 'reglas', soloDecir: true };
   return m.tipo === 'propuesta' ? { accion: null, decir: m.decir, via: 'reglas', propuesta: m.propuesta } : { accion: m.accion, decir: m.decir, via: 'reglas' };
 }
@@ -1463,6 +1467,21 @@ const UMBRAL_CON_PARAMETRO = 0.6;
 /** Más que esto no es una orden de la app dicha de corrido: ni Laya ligera la mira. */
 const PALABRAS_MAX_LIGERA = 10;
 
+/** Lo que necesita un atajo de Laya: idioma, contexto de la app y lo que está esperando o vivo (LANG-03). */
+type OpcionesEtiqueta = {
+  idioma?: 'es' | 'en';
+  contexto?: ContextoApp | null;
+  ahora?: number;
+  pendiente?: { para: string; texto: string; reemplazoDe?: string } | null;
+  propuesta?: PropuestaEsperando | null;
+  estadoControles?: EstadoControles;
+};
+
+/** Para lib/cognitivo/intencion-llamada: ¿algo espera su «sí»? ¿hay una llamada viva? */
+function contextoDeLlamada(o: OpcionesEtiqueta) {
+  return { pendiente: !!(o.pendiente || o.propuesta), enLlamada: !!o.estadoControles?.llamada };
+}
+
 /**
  * La mano que Laya decidió (el del nodo o el ligero), convertida en lo que hace la app, SOLO si el
  * parámetro sale claro de la frase: qué pantalla, qué tema, qué avatar, cómo se presenta, qué idioma, a
@@ -1473,7 +1492,7 @@ export function ordenDeEtiqueta(
   etiqueta: string,
   texto: string,
   via: OrdenRapida['via'],
-  o: { idioma?: 'es' | 'en'; contexto?: ContextoApp | null; ahora?: number } = {}
+  o: OpcionesEtiqueta = {}
 ): OrdenRapida | null {
   const q = frase(texto);
   if (!q) return null;
@@ -1531,6 +1550,9 @@ export function ordenDeEtiqueta(
     // Solo si la frase pide que LA llamen (me / call me) y no nombra a nadie ni una hora.
     case 'app_llamame': {
       if (!puedeMano(o.contexto, 'llamame') || n > 8) return null;
+      // LANG-03: la etiqueta del modelo no basta («no me llames» sale app_llamame con 0,90; «call me Alex»
+      // es un apodo). Negación, cita, discurso referido, un nombre detrás o algo esperando su «sí»: el cerebro.
+      if (motivoParaNoLlamar(texto, contextoDeLlamada(o))) return null;
       const pide = RE_LLAMAME.test(q) || /\b(llamame|llamarme|me llames|me llamas|marcame|timbrame|call me|ring me|phone me|give me a (call|ring))\b/.test(q);
       if (!pide || /\b(a las?|a la|at \d|en \d+|in \d+|manana|tomorrow|recuerd|remind|para que|so i)\b/.test(q)) return null;
       if (contactoMencionado(q, o.contexto?.contactos || []).tipo !== 'ninguno') return null;
@@ -1649,7 +1671,7 @@ export function pareceOrden(texto: string): boolean {
  */
 export function ordenPorLigera(
   texto: string,
-  o: { idioma?: 'es' | 'en'; contexto?: ContextoApp | null; ahora?: number } = {}
+  o: OpcionesEtiqueta = {}
 ): OrdenRapida | 'ninguna' | null {
   const q = frase(texto);
   if (!q || q.split(' ').length > PALABRAS_MAX_LIGERA) return null;

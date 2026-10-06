@@ -35,6 +35,10 @@ const check = (frase, esperado, ctx = {}) => {
 console.log('\n— «Llámame»: la llamada del avatar suena ya (sin servidor); lo parecido, no —');
 for (const f of ['llámame', 'Aura, llámame porfa', 'hazme una llamada', 'márcame un ratito', '¿me llamas?', 'quiero que me llames', 'call me', 'give me a call please', 'ponte en llamada conmigo']) check(f, 'llamame');
 for (const f of ['llámame Chepe', 'llámame a Beto', 'llámame a las 5 para recordarme la pastilla', 'mi mamá me llamó ayer', '¿me llamaste?', 'call me crazy']) check(f, (o) => o.tipo !== 'llamame');
+// LANG-03: negación, cita, discurso referido, apodo, «¿puedes llamar?» y una llamada ya viva: nunca llamada local.
+for (const f of ['no me llames', 'no, no me llames', 'ya no me llames', 'mejor no me llames', 'dijo que me llames', 'me dijo que me llames', 'llámame José', 'call me Alex', 'call me later', "please don't call me", 'never call me', 'no, llama a Beto', '¿puedes llamar?', '"llámame"', '«llámame» dijo ella', "'call me'"]) check(f, (o) => o.tipo !== 'llamame');
+for (const f of ['llámame', 'cancela', 'cuelga', 'no me llames']) check(f, (o) => o.tipo !== 'llamame', { llamada: true });
+check('cuelga', (o) => o.tipo === 'control' && o.control === 'colgar', { llamada: true });
 
 console.log('\n— Secuestros de la auditoría: deben ir al cerebro —');
 check('para mañana recuérdame revisar el contrato de la mina', 'cerebro');

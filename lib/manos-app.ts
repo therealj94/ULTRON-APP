@@ -33,6 +33,7 @@
  */
 import type { ContextoApp, Contacto, Resolucion } from './acciones-app';
 import { confirmaDecision } from './afirmacion';
+import { esCitaOReferido } from './cognitivo/intencion-llamada';
 
 /* ------------------------------------------------------------------ las formas */
 
@@ -610,7 +611,7 @@ export function manoPorReglas(texto: string, o: OpcionesMano): ResultadoMano | n
   };
 
   // «Llámame»: el avatar llama ya (sin «sí»: lo pidió ella y solo suena su propio teléfono).
-  if (puede('llamame') && n <= 9 && RE_LLAMAME.test(q)) {
+  if (puede('llamame') && n <= 9 && RE_LLAMAME.test(q) && !esCitaOReferido(texto)) {
     return { tipo: 'accion', accion: { tipo: 'llamame' }, decir: en ? 'Sure, calling you now!' : '¡Va, ya te llamo!' };
   }
   // Recordatorios, timers y despertadores con la app que sabe que el avatar llama: directo, con la hora dicha.
@@ -670,7 +671,8 @@ export function manoPorReglas(texto: string, o: OpcionesMano): ResultadoMano | n
           /^llamame (?:a|al) (?<con>.+)$/d.exec(q) ||
           /^quiero hablar con (?<con>.+?) (?:llamale|marcale|llamala|marcala)$/d.exec(q);
     const m = video || video2 || voz;
-    if (m?.groups?.con) {
+    // «call me Alex», «ring me later»: «me» no es un contacto (LANG-03): es un apodo o «llámame», no «llama a…».
+    if (m?.groups?.con && !/^me\b/.test(m.groups.con)) {
       const c = uno(m.groups.con);
       if (!c) return null;
       const p: Propuesta = { tipo: 'llamar', con: c.correo, nombre: c.nombre, video: !!(video || video2) };
@@ -722,7 +724,7 @@ export function manoPorReglas(texto: string, o: OpcionesMano): ResultadoMano | n
     }
   }
 
-  if (puede('perfil')) {
+  if (puede('perfil') && !esCitaOReferido(texto)) {
     const apodo = /^(?:(?<fijo>de ahora en adelante|desde ahora|a partir de ahora) )?(?<verbo>dime|decime|llamame|puedes decirme|quiero que me digas|prefiero que me digas|call me) (?<v>[a-zñ]+(?: [a-zñ]+)?)$/d.exec(q);
     if (apodo?.groups?.v) {
       const valor = tramo(q, orig, apodo.indices?.groups?.v);
