@@ -27,14 +27,15 @@ import {
   UltimaVoz,
   conVocesActivas,
   esCancelar,
-  fraseQuienHabla,
   nombreCon,
   pedidoDeVoces,
+  quienHablaDelTurno,
   recortarFrase,
   respuestaSiNo,
   vocesActivas,
   wavDeFrase,
   type PersonaVoz,
+  type QuienHablaTurno,
 } from './voces';
 import { aprenderVoz, listarVoces, olvidarTodasLasVoces, olvidarVoz, quienHabla, type VozGuardada } from './api';
 
@@ -65,7 +66,7 @@ export type ApiVoces = {
    * que no es la dueña, su id para el servidor (`quienHabla`). Espera lo de ESA frase hasta
    * `ESPERA_VOZ_TURNO_MS`; vacío si no hay nada seguro de esa frase.
    */
-  paraTurno: (oidaEn: number) => Promise<{ frase: string; quienHabla?: { id: string } }>;
+  paraTurno: (oidaEn: number) => Promise<{ frase: string; quienHabla?: QuienHablaTurno }>;
   /** El audio PCM de una frase terminada (trozos de 0,1 s en base64), su texto y su id. */
   alTerminarFrase: (trozos: string[], texto: string, id?: number) => void;
 };
@@ -443,12 +444,12 @@ export function useVoces(o: Opciones): ApiVoces {
   );
 
   const paraTurno = useCallback(
-    async (oidaEn: number): Promise<{ frase: string; quienHabla?: { id: string } }> => {
+    async (oidaEn: number): Promise<{ frase: string; quienHabla?: QuienHablaTurno }> => {
       // Sin voces activas o sin conocidas no hay nada que esperar (el turno no se demora ni un milisegundo).
       if (!activasRef.current || !conocidasRef.current.length || !oidaEn) return { frase: '' };
-      const p = await ident.paraTurno(oidaEn);
-      if (!p) return { frase: '' };
-      return { frase: fraseQuienHabla(p, op.current.nombre, idiomaActual() === 'en'), ...(p.relacion === 'conocido' ? { quienHabla: { id: p.id } } : {}) };
+      // Lo de ESA frase; si no se supo (un «sí» corto, la consulta tardó), la precaución de la última voz que no es la
+      // dueña (revisión 7.5, M1′): solo frena, nunca da permiso.
+      return quienHablaDelTurno(ident, oidaEn, op.current.nombre, idiomaActual() === 'en');
     },
     [ident]
   );

@@ -2855,6 +2855,11 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     registrarEfecto: () => efectoDelTurno('decision'),
     // La escena del teléfono: si la voz reconoce a OTRA persona (no la dueña), su «sí» no decide nada de la cuenta.
     escena: String(body?.escena || '').slice(0, 400),
+    // Lo mismo por el campo aparte (validado allá: solo la app, solo una voz guardada de ESA cuenta que no es la dueña),
+    // también la precaución `reciente` de un «sí» corto justo después de otra voz (revisión 7.5, M1′).
+    quienHabla: body?.quienHabla,
+    origen: body?.origen,
+    sesion: body?.sesion,
   });
   hechos.push(...decision.hechos);
   const { delCorreo, delWhatsapp, deLaPregunta } = decision;
@@ -4240,8 +4245,9 @@ async function ordenDeApp(body: any, opciones: OpcionesTurno = {}): Promise<{ de
   // Permisos exactos (4-oct): si además de lo que espera la app espera otra decisión (un borrador de correo o de
   // WhatsApp, la pregunta de su computadora), el «sí» no se resuelve aquí por la app: lo decide el turno completo
   // (server/decision-turno.ts), que pregunta cuál si no lo dice.
-  // La voz reconoce a OTRA persona (no la dueña): el atajo no cumple nada de la cuenta; el turno completo pide su sí.
-  if (otraVozDe(body?.escena)) return null;
+  // La voz reconoce a OTRA persona (no la dueña): el atajo no cumple nada de la cuenta; el turno completo pide su sí. Con el
+  // campo aparte `quienHabla` (también la precaución `reciente`, revisión 7.5 M1′), igual: lo valida el turno completo.
+  if (otraVozDe(body?.escena) || typeof body?.quienHabla?.id === 'string') return null;
   if (atajoDeAppBloqueado({ dueno: correo, ambito: ambitoDelTurno(body, opciones), whatsapp: await whatsappPermitido(correo, body?.sesion?.comunidad === true ? { comunidad: true } : {}), appEspera: !!appEsperandoDe(amb), mensaje: message, contexto })) return null;
   // `pendienteDe` aquí ya es solo el borrador del turno anterior: abrirTurnoApp soltó cualquier otro.
   // Lo mismo la propuesta (llamar, recordar): solo la del turno anterior puede cumplirse con un «sí».

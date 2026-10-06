@@ -354,6 +354,11 @@ test('para el cerebro: quién habla viaja aparte (quienHabla) y la regla no se c
   const r = await miembro.reglaQuienHablaDeTurno({ escena: larga, quienHabla: { id: ana.id }, origen: 'app', sesion });
   assert.match(r!, /te habla Ana, no José/);
   assert.match(r!, /No le leas ni le cuentes lo privado de José/);
+  // Revisión 7.5 (M1′): la precaución (`reciente`: de esa frase no se supo la voz) es otra regla, que no afirma quién habla.
+  const rp = await miembro.reglaQuienHablaDeTurno({ escena: '', quienHabla: { id: ana.id, reciente: true }, origen: 'app', sesion });
+  assert.match(rp!, /QUIEN HABLA \(precaución\).*hace un momento hablaba Ana, no José/);
+  assert.doesNotMatch(rp!, /ahora te habla Ana/);
+  assert.deepEqual(await miembro.otraVozDelTurno({ quienHabla: { id: ana.id, reciente: 'sí' }, origen: 'app', sesion }), { quien: 'Ana', duena: 'José', reciente: false });
   // Solo agrega cuidado: la voz de la dueña, un id que no es de esta cuenta o basura no hacen nada…
   assert.equal(await miembro.reglaQuienHablaDeTurno({ escena: '', quienHabla: { id: yo.id }, origen: 'app', sesion }), null);
   assert.equal(await miembro.reglaQuienHablaDeTurno({ escena: '', quienHabla: { id: 'no-existe' }, origen: 'app', sesion }), null);
