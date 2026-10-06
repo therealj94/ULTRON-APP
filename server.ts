@@ -139,7 +139,7 @@ import { listarTareas } from './lib/tareas';
 import { ejecutarCodigo, ejecutorActivo } from './lib/ejecutor';
 import { construirMensajes, extraerPython } from './lib/qwen';
 import { computadoraDisponible, correoDisponible, correrBucleHarness, extraerPedidoHerramienta, incierto, MINIMO_HERRAMIENTA_MS, quitarLineaPedido, resolverPedidoConEstado, type EstadoRespuesta, type PasoHarness, type ResultadoHerramienta, type VueltaHarness } from './lib/harness';
-import { accionConBorrador, corregirPromesaSinHerramienta, cumplirLoDicho, debeCorregirSinHerramienta, duroDeVoz, herramientasDelTurno, lineaDeHerramienta, lineaRespuestaHablada, notaDeCumplir, pasoDeLectura, pasoSinTopeDeVoz, preguntaFinal, prometeSinHacer, recorteDeVoz, reglasDeManos, topeConLectura, topeDeVoz, topeTrasPaso, vozCompletaDelTurno, vozRecortada, type CumplirLoDicho, type ManosDelTurno } from './lib/cerebro-manos';
+import { accionConBorrador, corregirPromesaSinHerramienta, cumplirLoDicho, daPorHecho, debeCorregirSinHerramienta, duroDeVoz, herramientasDelTurno, lineaDeHerramienta, lineaRespuestaHablada, notaDeCumplir, pasoDeLectura, pasoSinTopeDeVoz, preguntaFinal, prometeSinHacer, recorteDeVoz, reglasDeManos, topeConLectura, topeDeVoz, topeTrasPaso, vozCompletaDelTurno, vozRecortada, type CumplirLoDicho, type ManosDelTurno } from './lib/cerebro-manos';
 import { lineaTiemposTurno, type MedidaTurno } from './lib/tiempos-turno';
 import { reglasAppDelTurno } from './lib/prompt-voz';
 import { correrCarteraConEstado } from './lib/cartera';
@@ -5192,7 +5192,8 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       if (retenido) return;
       // Soltar solo hasta la última frase cerrada; lo que queda puede ser una línea de pedido.
       const corte = puntoDeCorte(cuerpo, enviado);
-      if (corte > enviado && (DA_POR_HECHO.test(cuerpo.slice(enviado, corte + 1)) || trozoPromete(cuerpo.slice(enviado, corte + 1)))) {
+      // Revisión 7 (LANG-01): también lo que da por hecho sin decir «mandé» («ya le respondí», «le avisé»): daPorHecho.
+      if (corte > enviado && (DA_POR_HECHO.test(cuerpo.slice(enviado, corte + 1)) || trozoPromete(cuerpo.slice(enviado, corte + 1)) || daPorHecho(cuerpo.slice(enviado, corte + 1)))) {
         retenido = true;
         return;
       }

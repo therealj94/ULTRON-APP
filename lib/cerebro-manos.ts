@@ -540,14 +540,51 @@ export function delTelefono(frase: string): boolean {
   return DEL_TELEFONO.test(p) && !CON_HERRAMIENTA.test(p.replace(DEL_TELEFONO, ' '));
 }
 
+/* ── Revisión 7 (LANG-01): lo que NO afirma que AU-RA hizo algo ─────────────────────────────────────────────────────
+ * La corrección local reescribía frases verdaderas: «No le mandé nada», «Dijo que lo llame mañana», «Ana me pidió que le
+ * mande la factura», «Nunca abrí tu correo» salían como «Eso todavía no lo hice: desde aquí no tengo cómo». Antes de
+ * buscar promesas se tapa (con espacios, del mismo largo) lo que no es una afirmación de AU-RA:
+ *   · la negación, hasta el fin de su cláusula («No le mandé nada», «Nunca abrí tu correo», «Ni le escribí ni lo
+ *     llamé»; en «No te preocupes, ya se lo mandé» lo de después de la coma sigue contando);
+ *   · el discurso referido de otra persona («dijo / dice / pidió / quiere / contó / escribió … que …», «… según me dijo
+ *     Ana»): lo que va después es lo que dijo o quiere ella, no lo que hizo AU-RA. «Te dije que ya lo mandé» (yo) sí cuenta;
+ *   · lo citado («…», "…");
+ *   · lo que se entrega ahí mismo («Te mando el resumen: son 4 correos nuevos», «te leo: …»).
+ * Lo que sí afirma («Listo, ya se lo mandé a Bruno», «Te llamo en 30 segundos») se sigue corrigiendo; lo hecho de verdad
+ * lo dice el recibo de la herramienta (`debeCorregirSinHerramienta`, por `pasos`).
+ */
+const tapar = (m: string) => ' '.repeat(m.length);
+const NEGACION = /\b(no|nunca|jamas|tampoco|ni|todavia no|aun no|sin)\b[^,;:.!?«»"“”]*?(?=\s*(?:[,;:.!?]|\bpero\b|\bporque\b|\bsino\b|\by (?:ya|luego|despues|ahora)\b|$))/gi;
+const REFERIDO = /\b(dijo|dice|dicen|dijeron|pidio|pide|piden|pidieron|quiere|quieren|queria|querian|conto|cuenta|cuentan|escribio|escribe|escribieron|avisa|aviso que nos|pregunta|preguntaba|prefiere|espera|necesita|sugirio|recomendo|insiste|insistio|comenta)\s+(que|si)\b[^.;!?]*/gi;
+const SEGUN = /[^.;!?]*\bsegun (me |te |le |nos )?(dijo|dice|dicen|conto|cuenta|escribio|comento|aviso)\b[^.;!?]*/gi;
+const ENTREGA_AHI = /\b(te|le) (mando|paso|leo|cuento|digo|resumo|doy|dejo)\b[^.:!?¿]{0,40}:(?=\s*\S)/gi;
+export function sinLoQueNoAfirma(planoTexto: string): string {
+  return sinCitas(planoTexto).replace(SEGUN, tapar).replace(REFERIDO, tapar).replace(NEGACION, tapar).replace(ENTREGA_AHI, tapar);
+}
+
+/**
+ * ¿El trozo DA POR HECHA una acción de AU-RA en este turno («Ya le respondí a Bruno», «Listo, le avisé», «ya hice la
+ * reservación»)? Para retenerlo en el stream hasta que el recibo de la herramienta lo confirme (revisión 7, LANG-01: si
+ * hay que corregirlo, antes de que suene). Sin la negación, lo referido ni lo citado (`sinLoQueNoAfirma`); lo de antes
+ * de este turno («ayer», «hace rato») no.
+ */
+export function daPorHecho(trozo: string): boolean {
+  const limpio = sinLoQueNoAfirma(String(trozo || '').normalize('NFD').replace(/[̀-ͯ]/g, '')).replace(/¿[^?]*\?/g, ' ');
+  return frases(limpio).some((f) => DADO_POR_HECHO.test(f) && !esDeAntes(f));
+}
+
 export function prometeSinHacer(texto: string): boolean {
+  // Revisión 7 (LANG-01): sin la negación, lo referido, lo citado ni lo que se entrega ahí mismo (`sinLoQueNoAfirma`).
+  const limpio = sinLoQueNoAfirma(
+    String(texto || '')
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+  );
   // También lo que lib/promesas.ts reconoce como trabajo o aviso prometido («voy a investigar», «ahí voy»,
   // «empiezo ya», «te aviso cuando termine»): José, 4-oct. Un estado de su computadora («ya está encendida»)
   // no: pedirle «la herramienta de lo que dijiste» ahí encargaría una misión sin tarea; eso lo corrige la guarda.
-  if (clasificarPromesas(texto).tipos.some((t) => t === 'trabajo' || t === 'aviso')) return true;
-  const plano = String(texto || '')
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
+  if (clasificarPromesas(limpio).tipos.some((t) => t === 'trabajo' || t === 'aviso')) return true;
+  const plano = limpio
     .replace(/\[[^\]]{0,30}\]/g, ' ')
     // Lo que describe de su cámara en esta misma respuesta («te leo lo que veo: …») no es una promesa.
     .replace(DESCRIBE_ESCENA, ' ');
