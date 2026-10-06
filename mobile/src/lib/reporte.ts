@@ -28,6 +28,13 @@ const MAX = 40;
 let migas: string[] = [];
 let sesionId = '';
 let arranqueMs = 0;
+/** Cómo terminó la vez anterior: true = murió en primer plano, false = se cerró bien, null = no se sabe. */
+let murioAntes: boolean | null = null;
+
+/** ¿La vez anterior la app murió en primer plano? (lo usa la guardia de la cámara nueva, lib/guardiaCamara.ts) */
+export function murioLaVezAnterior(): boolean | null {
+  return murioAntes;
+}
 
 function ahora() {
   return arranqueMs ? `+${((Date.now() - arranqueMs) / 1000).toFixed(1)}s` : '0s';
@@ -111,6 +118,7 @@ export async function iniciarReporte() {
   sesionId = Math.random().toString(36).slice(2, 10);
   try {
     const [previo, viva] = await Promise.all([AsyncStorage.getItem(CLAVE), AsyncStorage.getItem(CLAVE_VIVA)]);
+    murioAntes = viva === '1' ? true : viva === '0' ? false : null;
     // Sin la marca (primera vez con esta versión) no se sabe cómo terminó: no se acusa un crash.
     if (previo && viva === '1') {
       const lista = JSON.parse(previo) as string[];

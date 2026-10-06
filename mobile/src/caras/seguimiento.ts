@@ -33,7 +33,8 @@ export const RECONOCER = { llegadaMs: 0, confirmarMs: 1200, atentoMs: 2500, calm
 
 export type Identidad = { id: string; nombre: string; relacion: Relacion; parentesco?: string; distancia: number; desde: number; ultimoVoto: number };
 export type Voto = { id: string | null; nombre?: string; relacion?: Relacion; parentesco?: string; distancia: number; ts: number };
-export type Pista = { id: number; caja: CajaN; visto: number; nacio: number; votos: Voto[]; identidad: Identidad | null };
+/** `ext`: el trackingId de ML Kit de la cámara en vivo (modules/aura-camara), si la pista viene de ahí. */
+export type Pista = { id: number; caja: CajaN; visto: number; nacio: number; votos: Voto[]; identidad: Identidad | null; ext?: number };
 
 export function iou(a: CajaN, b: CajaN): number {
   const x1 = Math.max(a.x, b.x);
@@ -73,17 +74,40 @@ export class Seguidor {
   /** Nació una pista desde el último pedido de reconocer (alguien llegó). */
   private nueva = false;
 
-  /** Las cajas de una foto → la pista de cada una (mismo orden que `cajas`). */
-  actualizar(cajas: CajaN[], ts: number): Pista[] {
+  /**
+   * Las cajas de una foto → la pista de cada una (mismo orden que `cajas`). `ids` (cámara en vivo): el
+   * trackingId de ML Kit de cada caja (negativo o ausente = sin seguimiento). Con id, la pista es la de ESE
+   * id mientras viva (la identidad votada se queda con la persona aunque se cruce con otra); un id nuevo es
+   * una pista nueva aunque se solape con una vieja de otro id. Sin id, por solapamiento como siempre.
+   */
+  actualizar(cajas: CajaN[], ts: number, ids?: (number | null | undefined)[]): Pista[] {
     this.pistas = this.pistas.filter((p) => ts - p.visto <= PERDIDA_MS);
-    const pares: { i: number; p: Pista; o: number }[] = [];
-    cajas.forEach((c, i) => this.pistas.forEach((p) => {
-      const o = iou(c, p.caja);
-      if (o >= IOU_MIN) pares.push({ i, p, o });
-    }));
-    pares.sort((a, b) => b.o - a.o);
+    const ext = (i: number) => {
+      const e = ids?.[i];
+      return typeof e === 'number' && e >= 0 ? e : undefined;
+    };
     const asignadas = new Map<number, Pista>();
     const usadas = new Set<Pista>();
+    cajas.forEach((_, i) => {
+      const e = ext(i);
+      if (e === undefined) return;
+      const p = this.pistas.find((x) => x.ext === e);
+      if (p && !usadas.has(p)) {
+        asignadas.set(i, p);
+        usadas.add(p);
+      }
+    });
+    const pares: { i: number; p: Pista; o: number }[] = [];
+    cajas.forEach((c, i) => {
+      if (asignadas.has(i)) return;
+      const e = ext(i);
+      this.pistas.forEach((p) => {
+        if (usadas.has(p) || (e !== undefined && p.ext !== undefined && p.ext !== e)) return;
+        const o = iou(c, p.caja);
+        if (o >= IOU_MIN) pares.push({ i, p, o });
+      });
+    });
+    pares.sort((a, b) => b.o - a.o);
     for (const { i, p } of pares) {
       if (asignadas.has(i) || usadas.has(p)) continue;
       asignadas.set(i, p);
@@ -91,12 +115,14 @@ export class Seguidor {
     }
     return cajas.map((c, i) => {
       const p = asignadas.get(i);
+      const e = ext(i);
       if (p) {
         p.caja = c;
         p.visto = ts;
+        if (e !== undefined) p.ext = e;
         return p;
       }
-      const n: Pista = { id: this.siguiente++, caja: c, visto: ts, nacio: ts, votos: [], identidad: null };
+      const n: Pista = { id: this.siguiente++, caja: c, visto: ts, nacio: ts, votos: [], identidad: null, ...(e !== undefined ? { ext: e } : {}) };
       this.pistas.push(n);
       this.nueva = true;
       return n;

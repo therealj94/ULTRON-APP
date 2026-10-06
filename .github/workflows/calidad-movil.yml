@@ -113,5 +113,6 @@ jobs:
           npx tsx src/primeravez/pruebas/cumple.prueba.mjs
           npx tsx src/whatsapp/pruebas/whatsapp.prueba.mjs
           npx tsx pruebas/mesa/mesa.prueba.mjs
+          npx tsx pruebas/camara/nativa.prueba.mjs
           npx tsx src/lib/pruebas/entrarConClave.prueba.mjs
           sh pruebas/oido/todas.sh

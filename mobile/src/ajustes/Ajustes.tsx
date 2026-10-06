@@ -54,6 +54,7 @@ import { entradaWA, telefonoBonito, type EstadoWA } from '../whatsapp/logica';
 import { abrirBienvenida } from '../bienvenida/estado';
 import { abrirCartera } from '../cartera/estado';
 import type { SttEngine } from '../lib/storage';
+import { FilaCamaraRapida } from './CamaraRapida';
 
 /** Lo que corre: la OTA (o el JS de la APK), cuándo se publicó y la huella nativa. */
 function lineaOta(idioma: Idioma): string {
@@ -501,6 +502,8 @@ function SeccionesMesa({ mesa }: { mesa: NonNullable<ReturnType<typeof mesaAjust
           icono="ojo"
           derecha={<Interruptor valor={datos.proactive} onCambiar={(v) => v !== datos.proactive && acciones.alternarComentarios()} etiqueta={tr('Comenta lo que ve', 'Comments on what it sees')} />}
         />
+        {/* La cámara en vivo (modules/aura-camara): solo donde existe. */}
+        <FilaCamaraRapida />
         <Fila
           titulo={tr('Efectos de sonido', 'Sound effects')}
           detalle={tr('Toques, los sonidos del orbe de AURA, blaster, sable', 'Taps, AURA’s orb sounds, blaster, saber')}

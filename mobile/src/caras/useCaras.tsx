@@ -72,8 +72,12 @@ type Opciones = {
   encenderCamara: () => Promise<boolean>;
 };
 
-/** La foto del bucle de la cámara (base64) con las caras que ML Kit vio en ELLA, por pista. */
-export type FotoCaras = { b64: string; cajas: { pista: number; caja: CajaN }[]; ts: number };
+/**
+ * La foto del bucle de la cámara (base64) con las caras que ML Kit vio en ELLA, por pista. `tam` (cámara en
+ * vivo, components/CamaraVivo.tsx): la foto es un RECORTE de la cara, así que su caja no dice qué tan grande
+ * se veía; `tam` es su alto en la escala de las fotos de 720 px, para «aprender con el uso» (debeAprender).
+ */
+export type FotoCaras = { b64: string; cajas: { pista: number; caja: CajaN; tam?: number }[]; ts: number };
 
 export type ApiCaras = {
   activas: boolean;
@@ -99,6 +103,8 @@ export type ApiCaras = {
   quiereFotoRespaldo: (ts: number) => boolean;
   /** La foto del respaldo, sin cajas: el motor busca las caras; lo que sale va a la escena un rato. */
   recibirFotoRespaldo: (f: { b64: string; ts: number }) => void;
+  /** El motor está analizando (la cámara en vivo no le pide otro recorte hasta que termine). */
+  ocupado: () => boolean;
 };
 
 export function useCaras(o: Opciones): ApiCaras {
@@ -496,7 +502,7 @@ export function useCaras(o: Opciones): ApiCaras {
               void op.current.decir(tr(`¡Hola, ${v.identidad.nombre}!`, `Hi, ${v.identidad.nombre}!`), 'feliz');
             }
             const a = r ? aprendido.current.get(r.id) : undefined;
-            if (r && debeAprender(r, { confirmada: v.identidad?.id === r.id, tam: de.caja.h, ahora: Date.now(), ultima: a?.t, enSesion: a?.n || 0 })) void aprender(r, c.vector);
+            if (r && debeAprender(r, { confirmada: v.identidad?.id === r.id, tam: de.tam ?? de.caja.h, ahora: Date.now(), ultima: a?.t, enSesion: a?.n || 0 })) void aprender(r, c.vector);
           }
         } finally {
           analizando.current = false;
@@ -558,5 +564,8 @@ export function useCaras(o: Opciones): ApiCaras {
     [montarMotor]
   );
 
-  return { activas, estadoTexto, motor: nodoMotor, abrirOpciones, manejar, escena, seguidor, reconoce, quiereFoto, recibirFoto, quiereFotoRespaldo, recibirFotoRespaldo };
+  // Cámara en vivo (CamaraVivo): ¿el motor sigue con el recorte anterior?
+  const ocupado = useCallback(() => analizando.current, []);
+
+  return { activas, estadoTexto, motor: nodoMotor, abrirOpciones, manejar, escena, seguidor, reconoce, quiereFoto, recibirFoto, quiereFotoRespaldo, recibirFotoRespaldo, ocupado };
 }
