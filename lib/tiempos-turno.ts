@@ -46,6 +46,8 @@ export type MedidaTurno = {
   respaldo?: boolean;
   /** `charla`: la charla hablada fue primero al cerebro rápido (lib/cerebro-rapido.ts planDeModelos). */
   ruta?: 'charla' | 'manos';
+  /** Cuándo salió la frase de espera honesta (Bedrock no contestó y el turno hablado pasó al Qwen del nodo). */
+  esperaLenta?: number;
 };
 
 /**
@@ -77,6 +79,7 @@ const nombreModelo = (s?: string) =>
 export function lineaTiemposTurno(id: string, m: MedidaTurno, ahora = Date.now()): string {
   const desde = (t?: number) => (t ? ms(t - m.inicio) : '—');
   const partes = [`preparado ${desde(m.preparado)}`, `primera ficha ${desde(m.primeraFicha)}`, `primer texto ${desde(m.primerTexto)}`, `modelo ${ms(m.modeloMs)}`];
+  if (m.esperaLenta) partes.push(`frase de espera ${desde(m.esperaLenta)}`);
   if (m.herramientas.length || m.harnessMs !== undefined) {
     const lista = m.herramientas.map((h) => (h.ms === undefined ? nombre(h.nombre) : `${nombre(h.nombre)} ${ms(h.ms)}`)).join(', ') || 'ninguna';
     partes.push(`herramientas ${lista}${m.harnessMs !== undefined ? ` (harness ${ms(m.harnessMs)})` : ''}`);

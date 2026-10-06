@@ -159,7 +159,7 @@ import { destinoPublico } from './lib/red-publica';
 import { extraerPdf, dataUrlDeImagen, bufferDeCualquier } from './lib/leer-pdf';
 import { transcribirAudio, permisoTurbo, PROVEEDORES_OIDO_CONFIRMAR, PROVEEDORES_OIDO_ELECTRUM_CONFIRMAR, TERMINOS_ELECTRUM } from './lib/oido';
 import { conAcuse, hechoInterrumpida, oidoAlInterrumpir } from './lib/interrumpida';
-import { cerebroRapidoActivo, hablarConManos, modeloRapido, probarCerebroRapido } from './lib/cerebro-rapido';
+import { cerebroRapidoActivo, fraseDeEsperaLenta, hablarConManos, modeloRapido, probarCerebroRapido } from './lib/cerebro-rapido';
 // ── latencia de la voz (turno especulativo, ruta de charla): server/turno-especulativo.ts, lib/cerebro-rapido.ts ──
 import { esCharlaParaRuta, esSoloConversacion, planDeModelos, type RutaCerebro } from './lib/cerebro-rapido';
 import { abrirEspeculativo, confirmarEspeculativoConDetalle, descartarEspeculativo, type Especulativo } from './server/turno-especulativo';
@@ -5503,6 +5503,17 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       if (senal?.aborted) {
         reg.cerrar({ error: 'la persona interrumpió' });
         return salida.fin();
+      }
+      /*
+       * EL RESPALDO LENTO, CON LA VERDAD (6-oct: turnos de 9–38 s). Ningún modelo de Bedrock dio su primera señal (con la
+       * cobertura en paralelo, ni el principal ni el de respaldo en todo el plazo) y contesta el Qwen del nodo, que tarda
+       * 8–17 s en su primera ficha: en voz se dice que va a tardar en vez de dejar el silencio. Va directo (sin el pulidor
+       * ni la respuesta): no es del modelo, no entra en `reply` ni en su memoria, y la respuesta abre como siempre.
+       */
+      if (!porRapido && medida.hablado && enviado === 0) {
+        const frase = fraseDeEsperaLenta(idioma);
+        medida.esperaLenta = Date.now();
+        send('delta', { text: `${frase} `, voz: `${frase} ` });
       }
     }
     if (!porRapido) {

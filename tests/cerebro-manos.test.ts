@@ -136,6 +136,8 @@ test('«ahí te llamo» sin herramienta se nota (para pedírsela); una respuesta
 
 test('la etiqueta de ánimo sola no cuenta como respuesta: si después se calla, se corta y pasa al de respaldo', async () => {
   process.env.CEREBRO_VOZ_PRIMERA_MS = '60';
+  // «Se calla» = más que el plazo total (con la cobertura en paralelo, el que va en vuelo sigue hasta ese plazo).
+  process.env.CEREBRO_VOZ_TOTAL_MS = '400';
   const { BedrockRuntimeClient } = await import('@aws-sdk/client-bedrock-runtime');
   const { hablarConManos } = await import('../lib/cerebro-rapido');
   const original = BedrockRuntimeClient.prototype.send;
@@ -161,10 +163,12 @@ test('la etiqueta de ánimo sola no cuenta como respuesta: si después se calla,
       }
     });
     assert.ok(Date.now() - t0 < 900, 'no esperó al trozo tardío');
-    assert.equal(modelos.length, 2, 'probó el principal y el de respaldo');
+    // Cobertura en paralelo (6-oct): el principal, el de respaldo y un pedido nuevo al principal (CEREBRO_VOZ_LANZAMIENTOS).
+    assert.deepEqual(modelos, ['zai.glm-5', 'moonshotai.kimi-k2.5', 'zai.glm-5'], 'probó el principal, el de respaldo y otra vez el principal');
   } finally {
     (BedrockRuntimeClient.prototype as any).send = original;
     delete process.env.CEREBRO_VOZ_PRIMERA_MS;
+    delete process.env.CEREBRO_VOZ_TOTAL_MS;
   }
 });
 
