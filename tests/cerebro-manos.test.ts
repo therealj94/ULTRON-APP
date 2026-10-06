@@ -87,6 +87,8 @@ test('lo que corre el servidor sale como el pedido de siempre del harness', () =
   assert.deepEqual(ped(lineaDeHerramienta('buscar_web', { consulta: 'precio del oro hoy' })), { herramienta: 'web', arg: 'precio del oro hoy' });
   assert.deepEqual(ped(lineaDeHerramienta('correo', { accion: 'revisar' })), { herramienta: 'correo', arg: 'revisar' });
   assert.deepEqual(ped(lineaDeHerramienta('correo', { accion: 'responder', que: '3', texto: 'Hola, sí nos vemos el lunes. Saludos' })), { herramienta: 'correo', arg: 'responder 3 | Hola, sí nos vemos el lunes. Saludos' });
+  // Revisión 7.5 (MENOR 1): «rehacer» es la versión nueva del que ya armó (server/correo.ts lo reemplaza aunque cambie el asunto).
+  assert.deepEqual(ped(lineaDeHerramienta('correo', { accion: 'rehacer', para: 'ana@example.test', asunto: 'Informe', texto: 'Versión 2.' })), { herramienta: 'correo', arg: 'rehacer ana@example.test | Informe | Versión 2.' });
   assert.deepEqual(ped(lineaDeHerramienta('whatsapp', { accion: 'responder', chat: 'Mamá', texto: 'Ya voy' })), { herramienta: 'whatsapp', arg: 'responder Mamá | Ya voy' });
   assert.deepEqual(ped(lineaDeHerramienta('computadora', { mision: 'Entra a bch.hn y dime el tipo de cambio', plan: ['Entrar a bch.hn', 'Buscar el tipo de cambio'] })), {
     herramienta: 'computadora',

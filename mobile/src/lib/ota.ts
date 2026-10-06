@@ -25,7 +25,7 @@ import { ecoMesa, mensajeVoz } from '../compa/canales';
 import { VARIANTE } from '../variante';
 import { fijarDatosBuild } from './recepcion';
 import { datosDeExpo } from './recepcionDescriptor';
-import { QUIETO_TRAS_TRABAJO_MS, VENTANA_ARRANQUE_MS, decidirAplicar, marcarActividad, motivosParaNoRecargar, necesitaApkNueva, prepararRecarga, registrarTrabajoActivo, type Momento } from './barreraOta';
+import { QUIETO_TRAS_TRABAJO_MS, VENTANA_ARRANQUE_MS, decidirAplicar, marcarActividad, motivosContraArranque, motivosParaNoRecargar, necesitaApkNueva, prepararRecarga, registrarTrabajoActivo, type Momento } from './barreraOta';
 
 /** Entre preguntas con la app delante. */
 const ENTRE_BUSQUEDAS_MS = 15 * 60_000;
@@ -153,12 +153,14 @@ export function useActualizacionAlVolver() {
 
     const intentar = (momento: Momento, fueraMs?: number) => {
       const motivos = motivosParaNoRecargar();
+      // Recién entró o está en la primera vez: no es momento de `arranque` (revisión 7.5, MENOR 3).
+      const contraArranque = momento === 'arranque' ? motivosContraArranque() : [];
       // La app fuera (la pestaña de la wallet o de Genesis delante): nunca se recarga por detrás.
       const activa = AppState.currentState === 'active';
-      const que = decidirAplicar({ pendiente: !!pendiente.current, momento, fueraMs, motivos, activa });
+      const que = decidirAplicar({ pendiente: !!pendiente.current, momento, fueraMs, motivos, activa, contraArranque });
       if (que === 'aplicar') return recargar(momento);
       // Hay trabajo entre manos: no se corta. Una miga por cada motivo distinto, no una por tic.
-      const k = que === 'posponer' ? [...motivos, ...(activa ? [] : ['app-fuera'])].join(', ') : '';
+      const k = que === 'posponer' ? [...motivos, ...contraArranque, ...(activa ? [] : ['app-fuera'])].join(', ') : '';
       if (k && k !== pospuestoPor) miga(`ota: pospuesta (${k})`);
       pospuestoPor = k;
     };

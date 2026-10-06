@@ -7,7 +7,7 @@
 const { ok, fin } = require('../chat/comun.cjs');
 
 (async () => {
-  const M = require(process.env.IDENTIDAD || './out/identidad.cjs');
+  const M = require('./paquete.cjs')();
   const { RELEVO, CUENTA } = M;
   const ss = globalThis.__ss;
   console.log('identidad · la cuenta del chat\n');

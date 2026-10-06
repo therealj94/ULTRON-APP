@@ -9,7 +9,7 @@
  *   POST /api/trabajos/:id/decisiones {decisionId, expectedVersion, opcion, hasta?} → { tarea, … }
  *   POST /api/trabajos/:id/pausar | /reanudar | /cancelar             → { tarea, ack } (idempotentes)
  *   POST /api/trabajos/:id/editar {decisionId, expectedVersion, texto, asunto?} → { tarea } (nueva decisión para ESE texto; nada sale)
- *   POST /api/trabajos/:id/en-pantalla {decisionId, visible}          → { registrada } (la ventana de decisión de la mesa)
+ *   POST /api/trabajos/:id/en-pantalla {decisionId, visible, seq?}    → { registrada } (la ventana de decisión de la mesa)
  *
  * (`/api/tareas` ya es la lista de pendientes de la junta: no se renombra; lo nuevo va en `/api/trabajos`.)
  *
@@ -71,7 +71,7 @@ import {
   type VinculoTaller,
 } from '../lib/tareas-durables';
 import type { PropuestaAbierta, PropuestaTaller } from '../lib/taller';
-import { fijarEnPantalla, renovarEnPantalla, soltarEnPantalla } from './decision-en-pantalla';
+import { fijarEnPantalla, renovarEnPantalla, sigueSiendoUltimaSecuencia, soltarEnPantalla, tomarSecuenciaPantalla } from './decision-en-pantalla';
 import { esIdVeta } from './veta-entrar';
 
 /* ------------------------------------------------------------------ tipos */
@@ -1163,6 +1163,9 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
     if (!dueno) return sinDueno(req, res);
     const b = (req.body || {}) as Record<string, unknown>;
     const id = String(req.params.id || '');
+    // Revisión 7.5 (MENOR 2): un aviso más viejo que el último de este aparato (llegó tarde) no cuenta.
+    const aparato = req.headers['x-aura-aparato'];
+    if (!tomarSecuenciaPantalla(dueno, aparato, b.seq)) return res.json({ registrada: false, vieja: true, honesto: true });
     if (b.visible === false) {
       soltarEnPantalla(dueno, id, typeof b.decisionId === 'string' && b.decisionId ? b.decisionId : undefined);
       return res.json({ registrada: false, honesto: true });
@@ -1181,6 +1184,8 @@ export function montarRutasTrabajos(app: express.Express, d: DepsTrabajos) {
     if (dec.id !== decisionId) return res.status(409).json({ error: 'Esa propuesta ya cambió.', codigo: 'decision-vieja', tarea: vistaTarea(e.reg, ahora()), honesto: true });
     const vinc = dec.vinculo?.tipo === 'borrador' ? dec.vinculo : null;
     if (!vinc || e.reg.estado !== 'awaiting_approval') return res.json({ registrada: false, honesto: true });
+    // Mientras se leía la tarea llegó un aviso más nuevo del mismo aparato (la «oculta»): ese gana.
+    if (!sigueSiendoUltimaSecuencia(dueno, aparato, b.seq)) return res.json({ registrada: false, vieja: true, honesto: true });
     fijarEnPantalla(dueno, { canal: vinc.canal, ambito: vinc.ambito, intento: vinc.intento, huella: vinc.hash, tareaId: e.reg.id, decisionId: dec.id, via: 'pantalla' });
     return res.json({ registrada: true, honesto: true });
   });

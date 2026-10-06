@@ -32,6 +32,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { tr, useIdioma } from '../i18n';
 import { guardarPerfil, usePerfil } from '../lib/perfil';
 import { saveSettings } from '../lib/storage';
+import { frenarArranque } from '../lib/barreraOta';
 import { setAvatarVoz, stopSpeaking } from '../lib/tts';
 import { MEDIDA, useTema } from '../nucleo/tema';
 import { BarraProgreso, Boton, BotonRedondo, vibrar } from '../ui';
@@ -102,6 +103,10 @@ export function PrimeraVez(_: Props) {
   const plan = useMemo(() => pasosDelPlan(b), [b.objetivo, b.objetivoTexto, b.restriccion]); // eslint-disable-line react-hooks/exhaustive-deps
   const [paso, setPaso] = useState<PasoId>(PASOS[0]);
   const i = Math.max(0, plan.indexOf(paso));
+
+  // Mientras está en la primera vez, la actualización por aire no recarga como `arranque` (revisión 7.5, MENOR 3): se
+  // aplica en el próximo momento seguro.
+  useEffect(() => frenarArranque('primera-vez'), []);
 
   // Retomar donde se quedó (si Android cerró la app a la mitad), con su objetivo.
   useEffect(() => {

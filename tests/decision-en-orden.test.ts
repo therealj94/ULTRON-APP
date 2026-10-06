@@ -33,6 +33,7 @@ Object.assign(process.env, {
   ULTRON_TAREA_CURSO_DIR: path.join(DIR, 'tarea-en-curso'),
   ULTRON_ABIERTOS_DIR: path.join(DIR, 'abiertos'),
   ULTRON_DURABLE_DIR: path.join(DIR, 'durable'),
+  ULTRON_VOCES_DIR: path.join(DIR, 'voces'),
   ULTRON_MEMORIA_BUCKET: '',
 });
 after(() => fs.rmSync(DIR, { recursive: true, force: true }));
@@ -46,6 +47,9 @@ const TD = await import('../lib/tareas-durables');
 const DP = await import('../server/decision-en-pantalla');
 const COLA = await import('../server/borradores-cola');
 const { agregarCuenta, cuentasDe, quitarCuenta, _olvidarCuentas } = await import('../lib/correo/cuentas');
+const VOCES = await import('../lib/voces-miembro');
+const { MODELO_VOZ } = await import('../lib/voces-motor');
+const VOZ_TEL = await import('../mobile/src/voces/voces');
 type Envio = import('../lib/correo/buzon').Envio;
 
 const JOSE = 'jose-orden@example.test';
@@ -357,6 +361,35 @@ test('causa 6: no insiste: lo mismo no se menciona dos veces, y un «no» va a l
   });
 });
 
+test('MENOR 4 (revisión 7.5): un turno de voz descartado no gasta la mención de lo pendiente; uno confirmado sí', async () => {
+  await conEntorno(async ({ mandados }) => {
+    await waParaBruno();
+    await turno('otra cosa'); // el de Bruno queda apartado
+    await correoParaAna();
+    const voz = () => {
+      const hacer: Array<() => void> = [];
+      const descartes: Array<() => void> = [];
+      return { hacer, descartes, retener: { hacer: (f: () => void) => void hacer.push(f), alDescartar: (f: () => void) => void descartes.push(f), recordar: () => undefined } };
+    };
+    // La frase seguía: el turno especulativo se descarta (nada sale y la mención no se oyó).
+    const a = voz();
+    const r1 = await turno('sí', { retener: a.retener });
+    assert.match(r1.hechos.join('\n'), /PENDIENTE EN ORDEN:.*WhatsApp para Bruno/s);
+    for (const f of a.descartes) f();
+    assert.equal(mandados.length, 0);
+    // La frase entera: se vuelve a mencionar (antes ya estaba «dicha» y no se decía nunca).
+    const b = voz();
+    const r2 = await turno('sí', { retener: b.retener });
+    assert.match(r2.hechos.join('\n'), /PENDIENTE EN ORDEN:.*WhatsApp para Bruno/s, 'el descartado no gastó la mención');
+    for (const f of b.hacer) f();
+    assert.ok(await esperar(() => mandados.length === 1), 'confirmado, sale el correo');
+    // Confirmado: ya no se insiste.
+    await correoParaAna('Otra versión.');
+    const r3 = await turno('sí');
+    assert.doesNotMatch(r3.hechos.join('\n'), /PENDIENTE EN ORDEN/, 'la mención confirmada sí se gastó');
+  });
+});
+
 /* ------------------------------------------------------------------ revisión independiente */
 
 test('G1 (revisión): con un apartado a la vista y una pregunta NUEVA de la app (recordatorio), un «sí» no manda el de la ventana: pregunta cuál', async () => {
@@ -421,6 +454,63 @@ test('G3 (revisión): lo mismo con el correo (mismos destinatarios en otro orden
   });
 });
 
+test('MENOR 1 (revisión 7.5): un correo nuevo a la MISMA persona sobre OTRO asunto no tira el apartado (quedan los dos, con su tarjeta)', async () => {
+  await conEntorno(async ({ mandados }) => {
+    await C.correrCorreo(JOSE, 'escribir ana@example.test | Informe | Va el informe.', 'tel');
+    const informe = C.borradorDe(JOSE, 'tel')!;
+    await turno('otra cosa'); // el informe queda apartado para el panel
+    const r = await C.correrCorreo(JOSE, 'escribir ana@example.test | Cena del sábado | ¿Vienes a cenar el sábado?', 'tel');
+    assert.doesNotMatch(r, /REEMPLAZA/, 'otro asunto no es una versión nueva');
+    const ana = [C.borradorDe(JOSE, 'tel'), ...C.apartadosCorreoDe(JOSE, 'tel')].filter(Boolean).map((x) => x!.asunto);
+    assert.deepEqual(ana.sort(), ['Cena del sábado', 'Informe'], 'antes el informe desaparecía (y su tarjeta quedaba muerta)');
+    // Su tarjeta todavía lo manda.
+    const desdePanel = await T.resolverBorradorDesdePanel(JOSE, 'correo', 'tel', informe.intento, 'sí', informe.huella);
+    assert.notEqual(desdePanel.estado, 'stale', desdePanel.resumen);
+    assert.ok(await esperar(() => mandados.length === 1));
+    assert.equal(mandados[0].asunto, 'Informe');
+  });
+});
+
+test('MENOR 1 (revisión 7.5): el mismo asunto (con o sin «Re:») o «rehacer» sí son la versión nueva', async () => {
+  await conEntorno(async ({ mandados }) => {
+    // Mismo asunto (otra mayúscula, con «Re:»): reemplaza.
+    await C.correrCorreo(JOSE, 'escribir ana@example.test | Informe | Versión 1.', 'tel');
+    await turno('otra cosa');
+    const r = await C.correrCorreo(JOSE, 'escribir ana@example.test | RE: informe | Versión 2.', 'tel');
+    assert.match(r, /REEMPLAZA/);
+    assert.deepEqual([C.borradorDe(JOSE, 'tel'), ...C.apartadosCorreoDe(JOSE, 'tel')].filter(Boolean).map((x) => x!.texto), ['Versión 2.']);
+    // «Rehaz el correo para Ana» (la ventana de decisión): el modelo lo rehace aunque cambie el asunto: reemplaza.
+    await turno('otra cosa más');
+    const r2 = await C.correrCorreo(JOSE, 'rehacer ana@example.test | Informe de octubre | Versión 3.', 'tel');
+    assert.match(r2, /REEMPLAZA/);
+    assert.deepEqual([C.borradorDe(JOSE, 'tel'), ...C.apartadosCorreoDe(JOSE, 'tel')].filter(Boolean).map((x) => x!.texto), ['Versión 3.']);
+    assert.equal(mandados.length, 0);
+  });
+});
+
+test('MENOR 1 (revisión 7.5): la respuesta en el mismo hilo es la misma versión; otro hilo con el mismo asunto, no', () => {
+  const ana = ['ana@example.test'];
+  assert.equal(C.esVersionDe({ para: ana, asunto: 'Re: Informe', enRespuestaA: '<h1@x>' }, { para: ana, asunto: 'Re: Informe (corregido)', enRespuestaA: '<h1@x>' }), true);
+  assert.equal(C.esVersionDe({ para: ana, asunto: 'Re: Hola', enRespuestaA: '<h1@x>' }, { para: ana, asunto: 'Re: Hola', enRespuestaA: '<h2@x>' }), false);
+  assert.equal(C.esVersionDe({ para: ana, asunto: 'Informe' }, { para: ['ANA@example.test'], asunto: 'Fwd: INFORME' }), true);
+  assert.equal(C.esVersionDe({ para: ana, asunto: 'Informe' }, { para: ana, asunto: 'Cena' }), false);
+  assert.equal(C.esVersionDe({ para: ana, asunto: 'Informe' }, { para: ana, asunto: 'Cena' }, true), true, 'rehacer');
+  assert.equal(C.esVersionDe({ para: ana, asunto: 'Informe' }, { para: ['bruno@example.test'], asunto: 'Informe' }, true), false, 'rehacer a otra persona no reemplaza');
+});
+
+test('MENOR 1 (revisión 7.5): WhatsApp: el mismo chat es la misma conversación (la versión nueva reemplaza); otro chat, quedan los dos', async () => {
+  await conEntorno(async ({ enviados }) => {
+    await waParaBruno('Llego a las 5.');
+    await turno('otra cosa');
+    assert.match(await waParaBruno('Y llevo el pastel.'), /REEMPLAZA/);
+    await turno('otra cosa más');
+    await waParaTigo();
+    const todos = [W.borradorWhatsappDe(JOSE, 'tel'), ...W.apartadosWhatsappDe(JOSE, 'tel')].filter(Boolean).map((x) => x!.texto);
+    assert.deepEqual(todos.sort(), ['Mañana pago la factura.', 'Y llevo el pastel.']);
+    assert.equal(enviados.length, 0);
+  });
+});
+
 test('M2 (revisión): un turno de voz que se descarta deshace el cambio de lugar del apartado a la vista (el otro sigue esperando en el chat)', async () => {
   await conEntorno(async ({ enviados }) => {
     await waParaBruno();
@@ -455,6 +545,88 @@ test('MENOR c (revisión): si la voz dice que quien habla NO es el dueño, su «
     assert.equal(enviados.length, 1);
   });
 });
+/**
+ * Revisión 7.5 (M1′): un «sí» o un «no» corto (< 1,5 s: el servidor no saca quién habla) no traía nada, y el «sí» de Ana
+ * mandaba el borrador de José. De punta a punta por el campo de verdad: el identificador del teléfono, el campo tal como
+ * viaja en el cuerpo del turno (campoQuienHabla, JSON) y la decisión del servidor, que lo valida (app, voz guardada de
+ * ESA cuenta, que no es la dueña). Solo frena: nunca da permiso.
+ */
+async function vozDeAna() {
+  const v = (k: number) => Array.from({ length: MODELO_VOZ.dim }, (_, i) => (i === k ? 1 : 0.01));
+  const ana = await VOCES.agregarVoz(JOSE, { ok: true, nombre: 'Ana', relacion: 'conocido', parentesco: 'esposa', consentimiento: { como: 'voz', frase: 'sí', t: 1 } }, [v(3)]);
+  const yo = await VOCES.agregarVoz(JOSE, { ok: true, nombre: 'José', relacion: 'yo', consentimiento: { como: 'dueño', t: 1 } }, [v(9)]);
+  return { ana: { id: ana.id, nombre: 'Ana', relacion: 'conocido' as const, parentesco: 'esposa' }, yo: { id: yo.id, nombre: 'José', relacion: 'yo' as const } };
+}
+
+/** El teléfono: frases con lo que contesta el servidor de voces; devuelve el cuerpo del turno de la última. */
+async function telefono(frases: Array<{ quien: any; motivo?: string; ms?: number }>) {
+  const resp = new Map<string, { quien: any; motivo?: string; ms?: number }>();
+  const id = new VOZ_TEL.IdentificadorVoz(async (trozos) => {
+    const r = resp.get(trozos[0])!;
+    await new Promise((x) => setTimeout(x, r.ms ?? 2));
+    return { persona: r.quien, motivo: r.motivo || (r.quien ? 'reconocida' : 'nadie_cerca') };
+  });
+  let oida = 0;
+  for (const [i, f] of frases.entries()) {
+    resp.set(`f${i}`, f);
+    id.oir(i + 1, [`f${i}`]);
+    oida = Date.now();
+    id.entregada(i + 1, oida);
+    if (i < frases.length - 1) await id.paraTurno(oida);
+  }
+  const voz = await VOZ_TEL.quienHablaDelTurno(id, oida, 'José');
+  const q = VOZ_TEL.campoQuienHabla(voz.quienHabla);
+  // Lo que llega al servidor: el cuerpo en JSON, con la sesión y el origen que pone el servidor.
+  return { escena: voz.frase, ...JSON.parse(JSON.stringify(q ? { quienHabla: q } : {})), origen: 'app', sesion: { correo: JOSE, nombre: 'José' } };
+}
+
+test('M1′ (revisión 7.5): Ana habló y su «sí» corto (sin dato de voz) no manda el borrador de José ni su «no» lo descarta', async () => {
+  await conEntorno(async ({ enviados }) => {
+    VOCES._olvidarCacheVoces();
+    const { ana, yo } = await vozDeAna();
+    await waParaBruno();
+    // Ana dice algo largo (se la reconoce) y enseguida «sí» (muy corto: el servidor no sabe quién).
+    const cuerpo = await telefono([{ quien: ana }, { quien: ana, motivo: 'muy_corta' }]);
+    assert.deepEqual(cuerpo.quienHabla, { id: ana.id, reciente: true });
+    const r = await turno('sí', cuerpo);
+    assert.equal(enviados.length, 0, `antes salía: ${r.hechos.join(' | ')}`);
+    assert.equal(r.ambiguo, true);
+    assert.match(r.hechos.join('\n'), /NO hice nada/);
+    assert.match(r.hechos.join('\n'), /Ana/);
+    assert.match(r.hechos.join('\n'), /lo confirma José/);
+    // La consulta tardó más que lo que espera el turno: igual (lo de antes quedaba abierto).
+    const lento = await telefono([{ quien: ana }, { quien: ana, ms: VOZ_TEL.ESPERA_VOZ_TURNO_MS + 200 }]);
+    await turno('no', lento);
+    assert.ok(W.borradorWhatsappDe(JOSE, 'tel') && !W.borradorWhatsappDe(JOSE, 'tel')!.soloPanel, 'ni se descarta ni se aparta');
+    // José habló después de Ana: su «sí» corto manda (la precaución nunca frena a la dueña reconocida después).
+    const deJose = await telefono([{ quien: ana }, { quien: yo }, { quien: null, motivo: 'muy_corta' }]);
+    assert.equal(deJose.quienHabla, undefined);
+    await turno('sí', deJose);
+    assert.equal(enviados.length, 1);
+  });
+});
+
+test('M1′ (revisión 7.5): el campo solo vale desde la app, con una voz guardada de ESA cuenta que no sea la dueña', async () => {
+  await conEntorno(async ({ enviados }) => {
+    VOCES._olvidarCacheVoces();
+    const { ana, yo } = await vozDeAna();
+    const sesion = { correo: JOSE, nombre: 'José' };
+    await waParaBruno();
+    // También el campo de una frase reconocida (sin escena): frena igual que la escena.
+    assert.equal((await turno('sí', { quienHabla: { id: ana.id }, origen: 'app', sesion })).ambiguo, true);
+    assert.equal(enviados.length, 0);
+    // Lo que no es válido no frena (y tampoco da permiso de nada: el «sí» de la dueña sale como siempre).
+    await turno('sí', { quienHabla: { id: yo.id, reciente: true }, origen: 'app', sesion });
+    assert.equal(enviados.length, 1, 'la voz de la dueña no frena');
+    await waParaBruno('Otra cosa.');
+    await turno('sí', { quienHabla: { id: ana.id, reciente: true }, origen: 'web', sesion });
+    assert.equal(enviados.length, 2, 'fuera de la app el campo no vale');
+    await waParaBruno('Y otra.');
+    await turno('sí', { quienHabla: { id: ana.id, reciente: true }, origen: 'app', sesion: { correo: 'otra@example.test', nombre: 'Otra' } });
+    assert.equal(enviados.length, 3, 'una voz de otra cuenta no vale');
+  });
+});
+
 /* ------------------------------------------------------------------ 7. editar */
 
 test('causa 7: editar deja un borrador NUEVO (otro intento y huella) con el texto editado; el viejo ya no se manda', async () => {

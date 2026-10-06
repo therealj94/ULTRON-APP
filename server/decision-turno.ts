@@ -18,6 +18,7 @@ import { analizarRespuesta, decidirPendiente, type Decidido, type DecisionPendie
 import { enPantallaDe, type EnPantalla } from './decision-en-pantalla';
 import { llaveConversacion, resumenTexto, tomarVencidos } from './borradores-cola';
 import type { RetencionAcciones } from './voz-agente';
+import { otraVozDelTurno } from '../lib/voces-miembro';
 
 /** Lo que la app (PULSE2CHAT) tiene esperando el «sí» de un turno anterior: un mensaje, una llamada, un recordatorio. */
 export type AppEsperando = { que: string; para: string; cuando?: number; huella?: string; video?: boolean };
@@ -53,6 +54,15 @@ export type OpcionesDecisionTurno = {
    * («Por la voz, habla Ana (tu esposa), no José»: lib/voces-miembro.ts), su «sí» o su «no» no deciden nada de la cuenta.
    */
   escena?: string;
+  /**
+   * Revisión 7.5 (M1′): el campo aparte `quienHabla: { id, reciente? }` del teléfono, con el origen y la sesión del turno
+   * para validarlo (lib/voces-miembro.ts otraVozDelTurno: solo la app, solo una voz guardada de ESA cuenta que no es la
+   * dueña). Con `reciente` (un «sí» corto del que no se supo la voz, justo después de otra persona) también frena: solo
+   * frena, nunca da permiso.
+   */
+  quienHabla?: unknown;
+  origen?: unknown;
+  sesion?: { correo?: string; nombre?: string } | null;
 };
 
 export type SalidaDecisionTurno = {
@@ -221,10 +231,19 @@ export function pendientesEnOrden(dueno: string, ambito: string, whatsapp: boole
 const MENCIONADOS = new Map<string, string[]>();
 const MAX_MENCIONADOS = 30;
 
-function mencionarUnaVez(llave: string, intento: string): boolean {
-  const xs = MENCIONADOS.get(llave) || [];
-  if (xs.includes(intento)) return false;
-  MENCIONADOS.set(llave, [...xs, intento].slice(-MAX_MENCIONADOS));
+/**
+ * ¿Toca mencionarlo? (una vez por borrador). Revisión 7.5 (MENOR 4): la mención se GASTA solo si el turno cuenta. En la
+ * voz, con `retener`, se anota cuando el turno se confirma (`retener.hacer`): un turno especulativo que se descarta (la
+ * frase seguía) no se oyó, y antes dejaba la mención por dicha para siempre.
+ */
+function mencionarUnaVez(llave: string, intento: string, retener?: RetencionAcciones): boolean {
+  if ((MENCIONADOS.get(llave) || []).includes(intento)) return false;
+  const anotar = () => {
+    const xs = MENCIONADOS.get(llave) || [];
+    if (!xs.includes(intento)) MENCIONADOS.set(llave, [...xs, intento].slice(-MAX_MENCIONADOS));
+  };
+  if (retener) retener.hacer(anotar);
+  else anotar();
   return true;
 }
 
@@ -261,11 +280,16 @@ export async function resolverDecisionesDelTurno(o: OpcionesDecisionTurno): Prom
   // La regla única; con varias esperando, un «sí»/«no» puro es para la que tiene a la vista (conLaVista).
   const d = conLaVista(decidirPendiente(message, pendientes, { conocidos, conocidosIncompletos: !deChats.completo }), vista);
   // Revisión independiente (MENOR c): la voz reconoció a OTRA persona (no la dueña). Su «sí» no manda lo de la cuenta ni
-  // su «no» lo descarta: nada cambia y se pide la confirmación de la dueña (su voz, o tocar Sí en su ventana).
-  const otraVoz = otraVozDe(o.escena);
+  // su «no» lo descarta: nada cambia y se pide la confirmación de la dueña (su voz, o tocar Sí en su ventana). Por la
+  // escena o por el campo aparte `quienHabla` (validado); revisión 7.5 (M1′): también la precaución `reciente`.
+  const otraVoz = d.tipo === 'ejecutar' || d.tipo === 'no' ? (otraVozDe(o.escena) ?? (await otraVozDelTurno({ quienHabla: o.quienHabla, origen: o.origen, sesion: o.sesion }))) : null;
   if (otraVoz && (d.tipo === 'ejecutar' || d.tipo === 'no')) {
+    const porQue =
+      'reciente' in otraVoz && otraVoz.reciente
+        ? `la frase fue muy corta para saber por la voz quién la dijo, y hace un momento hablaba ${otraVoz.quien}, no ${otraVoz.duena} (la persona dueña de la cuenta). Por precaución NO hice nada`
+        : `la voz dice que quien habla es ${otraVoz.quien}, no ${otraVoz.duena} (la persona dueña de la cuenta). NO hice nada`;
     hechos.push(
-      `HECHO: dijo «${message.slice(0, 80)}», pero la voz dice que quien habla es ${otraVoz.quien}, no ${otraVoz.duena} (la persona dueña de la cuenta). NO hice nada: ni se mandó, ni se descartó, ni se contestó lo que esperaba (${decirPendiente(d.p)}). Dile con amabilidad que eso lo confirma ${otraVoz.duena}: con su voz o tocando «Sí» en su ventana de decisión.`
+      `HECHO: dijo «${message.slice(0, 80)}», pero ${porQue}: ni se mandó, ni se descartó, ni se contestó lo que esperaba (${decirPendiente(d.p)}). Dile con amabilidad que eso lo confirma ${otraVoz.duena}: con su voz (una frase un poco más larga, como «sí, mándalo») o tocando «Sí» en su ventana de decisión.`
     );
     return nada({ ambiguo: true, appBloqueada: !!o.app, appVista: o.app ?? null });
   }
@@ -350,7 +374,7 @@ export async function resolverDecisionesDelTurno(o: OpcionesDecisionTurno): Prom
   if (elegido && elegido.origen !== 'app') {
     const quedan = pendientesEnOrden(dueno, ambito, o.whatsapp).filter((x) => x.intento !== elegido.id);
     const sig = quedan[0];
-    if (sig && mencionarUnaVez(llaveConversacion(dueno, ambito), sig.intento)) {
+    if (sig && mencionarUnaVez(llaveConversacion(dueno, ambito), sig.intento, retener)) {
       const que = sig.canal === 'correo' ? `el correo para ${sig.para} («${resumenTexto(sig.texto, 60)}»)` : `el WhatsApp para ${sig.para} («${resumenTexto(sig.texto, 60)}»)`;
       const mas = quedan.length > 1 ? ` Después de ese quedan ${quedan.length - 1} más en su panel; no los enumeres.` : '';
       // Revisión independiente (G2): mencionarlo es SOLO información. Lo que espera en el chat (el borrador que se le leyó y

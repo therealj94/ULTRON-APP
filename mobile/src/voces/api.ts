@@ -10,7 +10,7 @@
  *   DELETE /api/voces            → { ok, borradas }
  */
 import { api } from '../lib/api';
-import type { PersonaVoz } from './voces';
+import { TOPE_CONSULTA_VOZ_MS, type PersonaVoz } from './voces';
 
 export const RUTA_VOCES = '/api/voces';
 
@@ -30,8 +30,12 @@ export async function aprenderVoz(o: { nombre: string; relacion: 'yo' | 'conocid
 
 export type RespuestaQuien = { persona: PersonaVoz | null; similitud: number; motivo: string };
 
+/**
+ * Con tope corto (revisión 7.5, M1′): las consultas van de a una y el turno solo espera 350 ms; una que tarda 25 s
+ * atascaba la fila. A los TOPE_CONSULTA_VOZ_MS se corta (y esa frase queda «sin dato»).
+ */
 export async function quienHabla(audio: string): Promise<RespuestaQuien> {
-  return api<RespuestaQuien>(`${RUTA_VOCES}/quien`, { method: 'POST', body: JSON.stringify({ audio }) }, 25_000);
+  return api<RespuestaQuien>(`${RUTA_VOCES}/quien`, { method: 'POST', body: JSON.stringify({ audio }) }, TOPE_CONSULTA_VOZ_MS);
 }
 
 export async function olvidarVoz(id: string): Promise<string> {

@@ -10,7 +10,7 @@ const { ok, fin } = require('../chat/comun.cjs');
 const tic = () => new Promise((r) => setTimeout(r, 0));
 
 (async () => {
-  const M = require(process.env.IDENTIDAD || './out/identidad.cjs');
+  const M = require('./paquete.cjs')();
   const { PERFIL } = M;
   const as = globalThis.__as;
   console.log('identidad · el perfil\n');

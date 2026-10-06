@@ -471,6 +471,13 @@ const AVISO_MAS_PAGINAS = 'Tienes más tareas de las que pude traer ahora; las q
 
 /** Las llamadas del panel, sobre el transporte de cada cliente (la `api` del teléfono, `fetch` de la web). */
 export function crearClienteTrabajos(pedir: Pedir) {
+  /**
+   * El número de orden de cada aviso de «en pantalla» (revisión 7.5, MENOR 2): creciente y basado en el reloj (tras recargar
+   * la app sigue creciendo). Cancelar una edición rápido manda «oculta» y «visible» a la vez; el servidor ignora la que
+   * llegue tarde con un número más viejo (server/decision-en-pantalla.ts).
+   */
+  let secuencia = 0;
+  const siguienteSecuencia = () => (secuencia = Math.max(Date.now(), secuencia + 1));
   const post = async (ruta: string, cuerpo: Record<string, unknown> = {}): Promise<ResultadoAccion> => {
     try {
       const r = await pedir(conEstados(ruta), { method: 'POST', body: JSON.stringify(cuerpo) });
@@ -578,7 +585,7 @@ export function crearClienteTrabajos(pedir: Pedir) {
       post(`/api/trabajos/${enc(t.id)}/editar`, { decisionId: t.decisionId || t.decision?.id || '', expectedVersion: t.version, texto: cambios.texto, ...(cambios.asunto !== undefined ? { asunto: cambios.asunto } : {}) }),
     /** La ventana avisa qué decisión muestra (o que la soltó): un «sí» dicho mientras se ve es para ESA. */
     enPantalla: (t: Pick<TareaVista, 'id' | 'decisionId' | 'decision'>, visible: boolean, o: { renovar?: boolean } = {}) =>
-      post(`/api/trabajos/${enc(t.id)}/en-pantalla`, { decisionId: t.decisionId || t.decision?.id || '', visible, ...(visible && o.renovar ? { renovar: true } : {}) }),
+      post(`/api/trabajos/${enc(t.id)}/en-pantalla`, { decisionId: t.decisionId || t.decision?.id || '', visible, ...(visible && o.renovar ? { renovar: true } : {}), seq: siguienteSecuencia() }),
     pausar: (id: string) => post(`/api/trabajos/${enc(id)}/pausar`),
     reanudar: (id: string) => post(`/api/trabajos/${enc(id)}/reanudar`),
     cancelar: (id: string) => post(`/api/trabajos/${enc(id)}/cancelar`),

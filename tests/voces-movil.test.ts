@@ -16,8 +16,12 @@ import { describe, it } from 'node:test';
 import {
   ESPERA_CONSENTIMIENTO_MS,
   ESPERA_MUESTRA_MS,
+  CAUTELA_VOZ_MS,
   ESPERA_VOZ_TURNO_MS,
   FRESCO_MS,
+  TOPE_CONSULTA_VOZ_MS,
+  campoQuienHabla,
+  quienHablaDelTurno,
   IdentificadorVoz,
   Inscripcion,
   escenaDelTurno,
@@ -259,6 +263,102 @@ describe('Voces (teléfono): quién dijo ESTA frase (revisión del 5-oct, M1)', 
     // Escrito (sin frase oída cerca): nada.
     assert.equal(await b.id.paraTurno(0), undefined);
     assert.equal(await b.id.paraTurno(Date.now() + 60_000, 0), undefined);
+  });
+});
+
+describe('Voces (teléfono): un «sí» corto después de otra voz (revisión 7.5, M1′)', () => {
+  const ana = { id: 'a', nombre: 'Ana', relacion: 'conocido' as const, parentesco: 'esposa' };
+  const jose = { id: 'j', nombre: 'José', relacion: 'yo' as const };
+  const dormir = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  /** Un banco con reloj propio (para las ventanas largas) y un servidor de mentira por frase. */
+  function banco(o: { topeMs?: number } = {}) {
+    let ahora = 1_000_000;
+    const reloj = () => ahora;
+    const respuestas = new Map<string, { quien: typeof ana | typeof jose | null; ms: number; motivo?: string; colgada?: boolean }>();
+    const llamadas: string[] = [];
+    const id = new IdentificadorVoz(
+      async (trozos) => {
+        const k = trozos[0];
+        llamadas.push(k);
+        const r = respuestas.get(k)!;
+        if (r.colgada) return new Promise<never>(() => {});
+        await dormir(r.ms);
+        return { persona: r.quien, motivo: r.motivo || (r.quien ? 'reconocida' : 'nadie_cerca') };
+      },
+      undefined,
+      { reloj, ...(o.topeMs ? { topeMs: o.topeMs } : {}) }
+    );
+    let n = 0;
+    const frase = async (quien: typeof ana | typeof jose | null, ms: number, x: { motivo?: string; colgada?: boolean; antes?: number } = {}) => {
+      if (x.antes) ahora += x.antes;
+      const k = `f-${++n}`;
+      respuestas.set(k, { quien, ms, motivo: x.motivo, colgada: x.colgada });
+      id.oir(n, [k]);
+      id.entregada(n, ahora);
+      return ahora;
+    };
+    return { id, frase, llamadas, avanzar: (ms: number) => (ahora += ms) };
+  }
+
+  it('Ana habló hace 5 s y ahora un «sí» muy corto (sin dato): va su id como precaución (reciente), sin frase en la escena', async () => {
+    const b = banco();
+    const t1 = await b.frase(ana, 5);
+    assert.deepEqual(await b.id.paraTurno(t1), ana);
+    const t2 = await b.frase(ana, 5, { motivo: 'muy_corta', antes: 5_000 });
+    const r = await quienHablaDelTurno(b.id, t2, 'José');
+    assert.deepEqual(r, { frase: '', quienHabla: { id: 'a', reciente: true } }, 'antes salía vacío y el «sí» de Ana mandaba el borrador de José');
+  });
+
+  it('si después de Ana se reconoció a la dueña, no hay precaución (y nunca da permiso: solo bloquea)', async () => {
+    const b = banco();
+    await b.id.paraTurno(await b.frase(ana, 5));
+    await b.id.paraTurno(await b.frase(jose, 5, { antes: 2_000 }));
+    const t3 = await b.frase(null, 5, { motivo: 'muy_corta', antes: 2_000 });
+    assert.deepEqual(await quienHablaDelTurno(b.id, t3, 'José'), { frase: '' });
+  });
+
+  it('lo de Ana de hace más de CAUTELA_VOZ_MS ya no cuenta', async () => {
+    const b = banco();
+    await b.id.paraTurno(await b.frase(ana, 5));
+    const t2 = await b.frase(null, 5, { motivo: 'muy_corta', antes: CAUTELA_VOZ_MS + 1_000 });
+    assert.deepEqual(await quienHablaDelTurno(b.id, t2, 'José'), { frase: '' });
+  });
+
+  it('la consulta tarda más que ESPERA_VOZ_TURNO_MS: también va la precaución (no queda abierto)', async () => {
+    const b = banco();
+    await b.id.paraTurno(await b.frase(ana, 5));
+    const t2 = await b.frase(jose, ESPERA_VOZ_TURNO_MS + 300, { antes: 3_000 });
+    assert.deepEqual(await quienHablaDelTurno(b.id, t2, 'José'), { frase: '', quienHabla: { id: 'a', reciente: true } });
+  });
+
+  it('una frase reconocida (aunque sea de Ana) va como siempre, sin la marca de precaución; una voz desconocida no hereda a Ana', async () => {
+    const b = banco();
+    const t1 = await b.frase(ana, 5);
+    const r = await quienHablaDelTurno(b.id, t1, 'José');
+    assert.deepEqual(r.quienHabla, { id: 'a' });
+    assert.match(r.frase, /Por la voz, habla Ana \(esposa de José\), no José/);
+    const t2 = await b.frase(null, 5, { antes: 1_000 });
+    assert.deepEqual(await quienHablaDelTurno(b.id, t2, 'José'), { frase: '' }, '«no la conozco» es un resultado, no falta de dato');
+  });
+
+  it('una consulta colgada se suelta a los TOPE_CONSULTA_VOZ_MS: la fila sigue y la frase siguiente se reconoce', async () => {
+    const b = banco({ topeMs: 60 });
+    const t1 = await b.frase(ana, 0, { colgada: true });
+    const t2 = await b.frase(ana, 5, { antes: 500 });
+    assert.equal(await b.id.paraTurno(t1, 10), undefined);
+    assert.deepEqual(await b.id.paraTurno(t2), ana, 'antes la fila quedaba atascada detrás de la colgada');
+    assert.deepEqual(b.llamadas, ['f-1', 'f-2']);
+    assert.ok(TOPE_CONSULTA_VOZ_MS >= 2_000 && TOPE_CONSULTA_VOZ_MS <= 6_000, `tope razonable: ${TOPE_CONSULTA_VOZ_MS}`);
+  });
+
+  it('el campo para el cuerpo del turno: solo {id, reciente?}; lo demás no viaja', () => {
+    assert.deepEqual(campoQuienHabla({ id: 'a', reciente: true }), { id: 'a', reciente: true });
+    assert.deepEqual(campoQuienHabla({ id: 'a' }), { id: 'a' });
+    assert.deepEqual(campoQuienHabla({ id: 'a', reciente: 'sí', otra: 1 }), { id: 'a' });
+    assert.equal(campoQuienHabla({ id: '' }), undefined);
+    assert.equal(campoQuienHabla('Ana'), undefined);
+    assert.equal(campoQuienHabla(undefined), undefined);
+    assert.equal(campoQuienHabla({ id: 'x'.repeat(80) })!.id.length, 40);
   });
 });
 

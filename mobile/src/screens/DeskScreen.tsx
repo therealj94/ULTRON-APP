@@ -631,10 +631,11 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
    * lo que reconocen las caras y la descripción de la cámara si es reciente y de un motor real. Lo de la voz
    * es de ESA frase: espera su resultado hasta ESPERA_VOZ_TURNO_MS (350 ms; casi siempre ya llegó porque se
    * consultó al cerrarse la frase) y, si no llegó, no dice quién habla. `quienHabla` va también aparte en el
-   * cuerpo (el servidor lo usa aunque la escena llegue cortada).
+   * cuerpo (el servidor lo usa aunque la escena llegue cortada); sin dato de esa frase puede ir, solo para frenar, la
+   * última voz que no es la dueña con `reciente` (revisión 7.5, M1′: un «sí» corto de Ana no manda lo de José).
    */
   const escenaReciente = useCallback(
-    async (oidaEn: number): Promise<{ escena?: string; quienHabla?: { id: string } }> => {
+    async (oidaEn: number): Promise<{ escena?: string; quienHabla?: { id: string; reciente?: true } }> => {
       const voz = (await vocesRef.current?.paraTurno(oidaEn).catch(() => null)) || { frase: '' };
       const e = escenaRef.current;
       const escena = escenaDelTurno({ voz: voz.frase, caras: carasRef.current?.escena() || '', camara: escenaFresca(e) ? e.descripcion : '' });

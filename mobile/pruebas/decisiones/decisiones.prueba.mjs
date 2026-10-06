@@ -369,8 +369,28 @@ await pruebaAsync('cliente: editar y en-pantalla van atados a la decisión y la 
   assert.match(pedidos[0].ruta, /^\/api\/trabajos\/a\/editar\?estados=respondida$/);
   await cliente.enPantalla(t, true);
   await cliente.enPantalla(t, false);
-  assert.deepEqual(pedidos[1].cuerpo, { decisionId: 'dc_a', visible: true });
-  assert.deepEqual(pedidos[2].cuerpo, { decisionId: 'dc_a', visible: false }, 'soltar dice CUÁL decisión (no suelta la versión nueva)');
+  const { seq: s1, ...c1 } = pedidos[1].cuerpo;
+  const { seq: s2, ...c2 } = pedidos[2].cuerpo;
+  assert.deepEqual(c1, { decisionId: 'dc_a', visible: true });
+  assert.deepEqual(c2, { decisionId: 'dc_a', visible: false }, 'soltar dice CUÁL decisión (no suelta la versión nueva)');
+  assert.ok(Number.isFinite(s1) && Number.isFinite(s2), 'cada aviso lleva su número de orden');
+});
+
+await pruebaAsync('cliente (revisión 7.5, MENOR 2): oculta → visible seguidas llevan números crecientes (el servidor ignora la vieja si llega después)', async () => {
+  const cuerpos = [];
+  const cliente = crearClienteTrabajos(async (_ruta, init) => {
+    cuerpos.push(JSON.parse(init.body));
+    return { status: 200, json: { registrada: true } };
+  });
+  const t = borrador({ id: 'a' });
+  // Sin esperar: como el efecto de la ventana al cancelar la edición (dos peticiones a la vez, el mismo milisegundo).
+  await Promise.all([cliente.enPantalla(t, false), cliente.enPantalla(t, true), cliente.enPantalla(t, true, { renovar: true })]);
+  const seqs = cuerpos.map((c) => c.seq);
+  assert.ok(seqs[0] < seqs[1] && seqs[1] < seqs[2], `crecientes: ${seqs.join(', ')}`);
+  // Basados en el reloj: tras recargar la app (un cliente nuevo) siguen creciendo.
+  const otro = crearClienteTrabajos(async (_ruta, init) => (cuerpos.push(JSON.parse(init.body)), { status: 200, json: {} }));
+  await otro.enPantalla(t, true);
+  assert.ok(cuerpos[3].seq >= Date.now() - 1000, 'un cliente nuevo no empieza de cero');
 });
 
 console.log(`\n${pasan} pasan, ${fallos} fallan`);
