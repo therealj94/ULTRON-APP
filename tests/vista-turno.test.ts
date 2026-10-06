@@ -111,18 +111,20 @@ test('revisión del 6-oct: la vista que llega tarde se guarda con la cámara y l
 
 test('revisión del 6-oct: la vista fresca (foto + lo visto) no sobrevive a un cambio de cuenta ni a desmontar la mesa', async () => {
   const { vistaFresca } = await import('../mobile/src/lib/vistaTurno');
-  const { fijarCuenta, _reiniciarCuenta } = await import('../mobile/src/lib/cuenta');
-  _reiniciarCuenta();
-  fijarCuenta('ana@prueba.local');
+  // generacionCuenta es lo que fijarCuenta (lib/cuenta.ts) abre al cambiar de persona; cuenta.ts trae @noble/hashes, que
+  // solo está en mobile/node_modules (el CI del servidor no lo instala).
+  const { abrirGeneracion, _reiniciarGeneracion } = await import('../mobile/src/lib/generacionCuenta');
+  _reiniciarGeneracion();
+  abrirGeneracion(); // entra Ana
   const guardar = () => vistaFresca.guardar({ vista: vista(), visto: 'Escena de Ana.', ts: Date.now(), lado: 'frontal', personas: 1, foto: B64 });
   guardar();
   assert.ok(vistaFresca.fresca({ ahora: Date.now(), lado: 'frontal' }));
-  fijarCuenta('beto@prueba.local');
+  abrirGeneracion(); // entra Beto
   assert.equal(vistaFresca.ultimaVista(), null, 'entró otra persona: la foto y lo visto de Ana ya no están');
   guardar();
-  fijarCuenta(null);
+  abrirGeneracion(); // cierra sesión
   assert.equal(vistaFresca.ultimaVista(), null, 'al cerrar sesión, tampoco');
-  _reiniciarCuenta();
+  _reiniciarGeneracion();
   const desk = readFileSync(new URL('../mobile/src/screens/DeskScreen.tsx', import.meta.url), 'utf8');
   assert.match(desk, /useEffect\(\(\) => \(\) => vistaFresca\.invalidar\(\), \[\]\);/, 'la mesa la suelta al desmontarse');
 });
