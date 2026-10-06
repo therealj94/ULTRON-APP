@@ -377,9 +377,9 @@ function arnes(o: { salida?: SalidaEnvio; tc?: TareaEnCursoMin[]; misiones?: Mis
   const srv = app.listen(0, '127.0.0.1');
   const listo = new Promise((r) => srv.once('listening', r));
   const base = () => `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
-  const pedir = async (ruta: string, quien: string | null, cuerpo?: unknown) => {
+  const pedir = async (ruta: string, quien: string | null, cuerpo?: unknown, cabeceras: Record<string, string> = {}) => {
     await listo;
-    const r = await fetch(`${base()}${ruta}`, { method: cuerpo ? 'POST' : 'GET', headers: { 'content-type': 'application/json', ...(quien ? { 'x-quien': quien } : {}) }, body: cuerpo ? JSON.stringify(cuerpo) : undefined });
+    const r = await fetch(`${base()}${ruta}`, { method: cuerpo ? 'POST' : 'GET', headers: { 'content-type': 'application/json', ...(quien ? { 'x-quien': quien } : {}), ...cabeceras }, body: cuerpo ? JSON.stringify(cuerpo) : undefined });
     return { status: r.status, json: (await r.json()) as any };
   };
   return { ll, pedir, cerrar: () => srv.close() };
@@ -1101,6 +1101,42 @@ test('en pantalla: la ventana registra SU decisión (borrador), una vieja es 409
     await h.pedir(`/api/trabajos/${t.id}/decisiones`, yo, { decisionId: t.decisionId, expectedVersion: t.version, opcion: 'rechazar' });
     assert.equal(enPantallaDe(yo, 'telefono'), null);
     assert.equal(h.ll.enviar, 0);
+  } finally {
+    h.cerrar();
+  }
+});
+
+test('revisión 7.5 (MENOR 2): «oculta» y «visible» en carrera (cancelar una edición rápido): gana la más nueva del aparato', async () => {
+  _usarAlmacenDurable(almacenEnMemoria());
+  _olvidarEnPantalla();
+  const yo = correo();
+  const h = arnes();
+  try {
+    const a = await abrirDecisionDeBorrador(yo, 'telefono', borrador('int-1'));
+    const t = (await h.pedir(`/api/trabajos/${a!.id}`, yo)).json.tarea;
+    const ruta = `/api/trabajos/${t.id}/en-pantalla`;
+    const tel = { 'x-aura-aparato': 'a-tel-1' };
+    // La ventana: oculta (seq 100) y enseguida visible (seq 101); la visible llega PRIMERO y la oculta después.
+    assert.equal((await h.pedir(ruta, yo, { decisionId: t.decisionId, visible: true, seq: 101 }, tel)).json.registrada, true);
+    const vieja = await h.pedir(ruta, yo, { decisionId: t.decisionId, visible: false, seq: 100 }, tel);
+    assert.equal(vieja.json.registrada, false);
+    assert.equal(enPantallaDe(yo, 'telefono')?.decisionId, t.decisionId, 'antes la oculta vieja borraba el registro nuevo');
+    // La misma secuencia otra vez no cuenta; una más nueva, sí.
+    await h.pedir(ruta, yo, { decisionId: t.decisionId, visible: false, seq: 101 }, tel);
+    assert.ok(enPantallaDe(yo, 'telefono'));
+    await h.pedir(ruta, yo, { decisionId: t.decisionId, visible: false, seq: 102 }, tel);
+    assert.equal(enPantallaDe(yo, 'telefono'), null);
+    // Es por aparato: otro teléfono con su propio reloj (más atrás) no queda ignorado.
+    assert.equal((await h.pedir(ruta, yo, { decisionId: t.decisionId, visible: true, seq: 5 }, { 'x-aura-aparato': 'a-tel-2' })).json.registrada, true);
+    // Una app de antes (sin seq) sigue como siempre.
+    await h.pedir(ruta, yo, { decisionId: t.decisionId, visible: false });
+    assert.equal(enPantallaDe(yo, 'telefono'), null);
+    // A la vez de verdad (visible 200 y oculta 201): sea cual sea el orden de llegada, queda la oculta (la más nueva).
+    for (let i = 0; i < 6; i++) {
+      const base = 300 + i * 10;
+      await Promise.all([h.pedir(ruta, yo, { decisionId: t.decisionId, visible: true, seq: base }, tel), h.pedir(ruta, yo, { decisionId: t.decisionId, visible: false, seq: base + 1 }, tel)]);
+      assert.equal(enPantallaDe(yo, 'telefono'), null, `vuelta ${i}: la visible vieja no queda registrada`);
+    }
   } finally {
     h.cerrar();
   }

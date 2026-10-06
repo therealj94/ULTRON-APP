@@ -87,6 +87,38 @@ export function olvidarEnPantallaDeConversacion(dueno: string, ambito: string) {
   if (e && e.ambito === String(ambito || '')) VISTAS.delete(llave(dueno));
 }
 
+/* ------------------------------------------------------------------ el orden de los avisos de cada aparato */
+
+/**
+ * Revisión 7.5 (MENOR 2): cancelar una edición rápido en la ventana manda «oculta» y enseguida «visible» —dos peticiones
+ * a la vez—. Si la «oculta» llegaba segunda, borraba el registro nuevo y el «sí» dicho mientras se veía ya no era para
+ * esa. Cada aviso trae su número de orden (`seq`, creciente por aparato: mobile/src/lib/trabajos.ts); uno más viejo que
+ * el último visto de ese aparato se ignora. Sin `seq` (una app de antes), como siempre.
+ */
+const SECUENCIAS = new Map<string, number>();
+const MAX_SECUENCIAS = 5_000;
+const llaveAparato = (dueno: string, aparato: unknown) => `${llave(dueno)}|${String(aparato ?? '').slice(0, 80)}`;
+const secuenciaValida = (seq: unknown): seq is number => typeof seq === 'number' && Number.isFinite(seq);
+
+/** ¿Es el aviso más nuevo de este aparato? Si lo es, queda anotado. Sin `seq`, siempre. */
+export function tomarSecuenciaPantalla(dueno: string, aparato: unknown, seq: unknown): boolean {
+  if (!secuenciaValida(seq)) return true;
+  const k = llaveAparato(dueno, aparato);
+  const antes = SECUENCIAS.get(k);
+  if (antes !== undefined && seq <= antes) return false;
+  SECUENCIAS.delete(k);
+  SECUENCIAS.set(k, seq);
+  // Tope de memoria: se van los aparatos que hace más que no avisan.
+  while (SECUENCIAS.size > MAX_SECUENCIAS) SECUENCIAS.delete(SECUENCIAS.keys().next().value!);
+  return true;
+}
+
+/** Tras esperar (leer la tarea), ¿sigue siendo el último aviso de este aparato? Otro más nuevo gana. Sin `seq`, sí. */
+export function sigueSiendoUltimaSecuencia(dueno: string, aparato: unknown, seq: unknown): boolean {
+  return !secuenciaValida(seq) || SECUENCIAS.get(llaveAparato(dueno, aparato)) === seq;
+}
+
 export function _olvidarEnPantalla() {
   VISTAS.clear();
+  SECUENCIAS.clear();
 }

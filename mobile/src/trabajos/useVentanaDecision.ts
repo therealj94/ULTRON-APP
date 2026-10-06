@@ -153,7 +153,9 @@ export function useVentanaDecision(o: Opciones) {
   }, [clave]);
 
   // El servidor sabe qué se ve (un «sí» dicho mientras tanto es para ESTA); se renueva mientras siga a la vista.
-  // Mientras edita, nada está «a la vista» para el servidor (un «sí» dicho no manda el texto viejo).
+  // Mientras edita, nada está «a la vista» para el servidor (un «sí» dicho no manda el texto viejo). Cancelar la edición
+  // rápido manda «oculta» y «visible» a la vez: cada aviso lleva su número de orden y el servidor ignora el que llegue
+  // tarde (revisión 7.5, MENOR 2; lib/trabajos.ts enPantalla).
   const visto = abierta ? tareaEnPantalla(actual, edicion) : null;
   const vistoClave = visto ? actual!.clave : '';
   useEffect(() => {
