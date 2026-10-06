@@ -154,6 +154,9 @@ import { extraerPdf, dataUrlDeImagen, bufferDeCualquier } from './lib/leer-pdf';
 import { transcribirAudio, permisoTurbo, PROVEEDORES_OIDO_CONFIRMAR, PROVEEDORES_OIDO_ELECTRUM_CONFIRMAR, TERMINOS_ELECTRUM } from './lib/oido';
 import { conAcuse, hechoInterrumpida, oidoAlInterrumpir } from './lib/interrumpida';
 import { cerebroRapidoActivo, hablarConManos, modeloRapido, probarCerebroRapido } from './lib/cerebro-rapido';
+// ── latencia de la voz (turno especulativo, ruta de charla): server/turno-especulativo.ts, lib/cerebro-rapido.ts ──
+import { esSoloConversacion } from './lib/cerebro-rapido';
+import { abrirEspeculativo, confirmarEspeculativo, descartarEspeculativo, type Especulativo } from './server/turno-especulativo';
 import { COT_FORZADO, esTareaDeCodigo, requiereCot } from './lib/prompts/cot';
 import { extraerEmocion, normalizarEmocion, type Emocion } from './lib/emocion';
 import { cabeceraAlineacion } from './lib/alineacion';
@@ -2539,6 +2542,12 @@ type OpcionesTurno = {
    * lo descarta (turno especulativo de ElevenLabs: server/voz-agente.ts, RetencionAcciones).
    */
   retener?: RetencionAcciones;
+  /**
+   * TURNO ESPECULATIVO de la mesa del teléfono (server/turno-especulativo.ts): empezó antes de saber si la persona terminó
+   * de hablar. El texto puede ir saliendo (el teléfono no lo suena hasta confirmar); todo lo que HACE el turno espera a
+   * `confirmado` (y `retener` lleva lo que se anota), y si se descarta el turno se corta sin hacer nada.
+   */
+  especulativo?: Especulativo;
 };
 
 /**
@@ -4925,14 +4934,49 @@ app.post('/api/turno/stream', medirTurno('stream'), exigirMesaODesk, limitar(60)
       if (!res.writableEnded) res.end();
     },
   };
+  // ── TURNO ESPECULATIVO (server/turno-especulativo.ts) ─────────────────────────────────────────────────────────────
+  // El teléfono lo empezó antes de saber si la persona terminó: lo que el turno hace espera su POST /api/turno/confirmar.
+  // Si corta el stream (siguió hablando) o no confirma a tiempo, se descarta y el turno se corta aquí mismo.
+  const claveEsp = (body as Record<string, unknown>).especulativo === true ? claveDelTurno(req, body) : null;
+  const especulativo = claveEsp ? abrirEspeculativo(claveEsp) : undefined;
+  if (especulativo && claveEsp) {
+    res.on('close', () => descartarEspeculativo(claveEsp, 'el teléfono cortó el stream'));
+    void especulativo.confirmado.then((ok) => {
+      if (!ok) corte.abort();
+    });
+  }
+  // ── fin del turno especulativo ──
   // La mesa del teléfono es de VOZ (oye, piensa, habla): lo que dijo en voz alta lleva los topes de la
   // voz (TOPE_PASO_VOZ_MS por paso que espera a internet o a la base). Antes esperaba como la mesa
   // escrita y, con la red lenta del campo, la primera palabra tardaba segundos.
   // `terminar` también al final: si algún camino no llamara a `fin`, un reintento no queda esperando.
   // Dentro del turno, cada efecto pasa antes por efectoDelTurno (persistir antes de actuar; fencing).
   return enTurnoConTrabajos(trabajos, () =>
-    enTurnoUnico(unico.terminar, () => turnoEnVivoConTraza(body, salida, { senal: corte.signal, voz: turnoHablado(body), presupuestoVoz: (body as Record<string, unknown>).hablado === true }))
+    enTurnoUnico(unico.terminar, () =>
+      turnoEnVivoConTraza(body, salida, {
+        senal: corte.signal,
+        voz: turnoHablado(body),
+        presupuestoVoz: (body as Record<string, unknown>).hablado === true,
+        ...(especulativo ? { especulativo, retener: especulativo.retener } : {}),
+      })
+    )
   ).finally(terminar);
+});
+
+/**
+ * El «sí» del turno especulativo (server/turno-especulativo.ts): la frase final que entregó el oído es la que el teléfono
+ * especuló, así que ese turno vale (sus acciones y su memoria corren). `cancelar: true` lo tira (también lo tira cortar el
+ * stream). Solo con la misma sesión o aparato y el mismo idTurno del stream.
+ */
+app.post('/api/turno/confirmar', exigirMesaODesk, limitar(120), (req, res) => {
+  const body = cuerpoTurnoHttp(req);
+  const clave = claveDelTurno(req, body);
+  if (!clave) return res.status(400).json({ error: 'idTurno inválido', honesto: true });
+  if (req.body?.cancelar === true) {
+    descartarEspeculativo(clave, 'el teléfono lo canceló');
+    return res.json({ estado: 'descartado', honesto: true });
+  }
+  return res.json({ estado: confirmarEspeculativo(clave), honesto: true });
 });
 
 /** Un turno dictado por voz (`hablado: true`) desde la app 5.0 o el .exe de Windows, con su cabecera. */
@@ -4946,6 +4990,18 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
   const reg = trazaActual()!;
   const senal = opciones.senal;
   const idioma = normalizarIdioma(body?.idioma);
+  // ── TURNO ESPECULATIVO (server/turno-especulativo.ts): nada con efecto antes del «sí» del teléfono ──
+  const esp = opciones.especulativo;
+  /** true si el turno vale (confirmado o no especulativo); false si se descartó (y ya quedó cerrado). */
+  const sigueEspeculativo = async (): Promise<boolean> => {
+    if (!esp || (await esp.confirmado)) return true;
+    reg.cerrar({ error: 'turno especulativo descartado' });
+    salida.fin();
+    return false;
+  };
+  // Lo que no es charla (pide hacer algo, o es un «sí»/«dale» que confirma algo) no empieza siquiera sin confirmar.
+  if (esp && !esSoloConversacion(String(body?.message || body?.text || '')) && !(await sigueEspeculativo())) return;
+  // ── fin ──
   // Un solo reloj para el turno entero (EXEC04): las llamadas al cerebro y las herramientas miran lo que queda.
   const reloj = presupuesto(PRESUPUESTO_TURNO_MS);
   /** Dónde se van los segundos del turno (lib/tiempos-turno.ts): una línea en el log al terminar, sin texto. */
@@ -5057,6 +5113,8 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     (!!p.dueno && (apartadosCorreoDe(p.dueno, p.ambito).length > 0 || apartadosWhatsappDe(p.dueno, p.ambito).length > 0)) ||
     (!!p.correoApp && appEsperandoDe(ambitoApp(p.correoApp, body?.aparato), p.contextoApp)?.que === 'mensaje');
   const terminar = async (texto: string, via: string, emocion: Emocion, delModelo = false, cierre: Cierre = COMPLETO, quien?: { modelo?: string; proveedor?: string }, corrioHerramienta = false) => {
+    // Turno especulativo: las acciones, la memoria y el `done` esperan el «sí» del teléfono.
+    if (!(await sigueEspeculativo())) return;
     const app = await accionesDelCerebro(texto, p, delModelo);
     // El modelo contestó solo con la acción: la frase de esa acción sale también como texto (la voz
     // la dice; antes decía «Se me fue el hilo…»).
@@ -5089,6 +5147,8 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     if (leido && !parcial && !senal?.aborted && memorizable) await recordarSegunNivel(body, { quienMem, rol: 'ultron', texto: leido, canal }, opciones.retener);
     salida.fin();
   };
+  // Turno especulativo: lo que no es solo pensar y hablar (taller, mercado, un «sí» pendiente, una foto) espera el «sí».
+  if (esp && (p.directo || p.propuestaTaller || p.vozCompleta || p.foto || algoEsperaSuSi()) && !(await sigueEspeculativo())) return;
   send('tools', { tools });
   if (p.directo) {
     const emo = extraerEmocion(p.directo);
@@ -5399,6 +5459,8 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       medida.modeloMs = (medida.modeloMs || 0) + (Date.now() - tNodo);
       if (!terminoNodo && !errorNodo && !senal?.aborted) errorNodo = 'el nodo cerró el stream sin «done»';
     }
+    // Turno especulativo: las herramientas (el harness) y el cierre esperan el «sí» del teléfono.
+    if (esp && !(await sigueEspeculativo())) return;
     if (errorNodo) {
       console.warn('[AU-RA] turno en vivo: el nodo terminó con error', errorNodo);
       // Lo que alcanzó a decir. Con una línea de pedido o una frase retenida («ya lo mandé» sin confirmar),
